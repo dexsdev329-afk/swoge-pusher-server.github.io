@@ -18,9 +18,12 @@ let _id = 1;
 
 class Table {
   constructor() {
-    this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -20, 0) });
+    // Slight FORWARD tilt (+Z) like a real coin pusher: coins gently drift to
+    // the front and fall off, so nothing needs a violent shove (no tunneling).
+    this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -18, 2.2) });
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
     this.world.allowSleep = true;
+    this.world.solver.iterations = 20; // stabler stacking, less tunneling
 
     const mat = new CANNON.Material('m');
     const cc = new CANNON.ContactMaterial(mat, mat, { friction: 0.4, restitution: 0.05 });
@@ -28,19 +31,22 @@ class Table {
     this.mat = mat;
 
     const W = TABLE.width, D = TABLE.depth;
-    // floor
-    this._addBox(0, -0.5, 0, W, 1, D, mat);           // shelf top at y=0
-    // back wall + sides (front open)
-    this._addBox(0, 3, -D / 2, W, 8, 1, mat);          // back
-    this._addBox(-W / 2, 3, 0, 1, 8, D, mat);          // left
-    this._addBox(W / 2, 3, 0, 1, 8, D, mat);           // right
+    // floor (thick so slammed coins can't tunnel through; top stays at y=0)
+    this._addBox(0, -1.5, 0, W, 3, D, mat);           // shelf top at y=0
+    // back wall + sides (front open). Tall so the strong pusher can't launch
+    // coins over them — coins leave via the FRONT (win) instead of the void.
+    this._addBox(0, 6, -D / 2 - 0.5, W + 2, 14, 2, mat);   // back (thick)
+    this._addBox(-W / 2 - 0.5, 6, 0, 2, 14, D, mat);       // left (thick)
+    this._addBox(W / 2 + 0.5, 6, 0, 2, 14, D, mat);        // right (thick)
 
-    // kinematic pusher (a block that slides in Z over the back half)
+    // kinematic pusher — a PLATE that retracts fully to the back wall and
+    // slides a long way forward to shove the pile off the front lip.
+    const PLATE_HALF_D = 1.5;                 // thin plate (depth 3)
     this.pusher = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, material: mat });
-    this.pusher.addShape(new CANNON.Box(new CANNON.Vec3(W / 2, 2.5, 4.5)));
-    this.pusher.position.set(0, 0.2, -D / 2 + 4);
+    this.pusher.addShape(new CANNON.Box(new CANNON.Vec3(W / 2, 2.5, PLATE_HALF_D)));
+    this._pusherBackZ = -D / 2 + PLATE_HALF_D; // retracted = back face touches the back wall
+    this.pusher.position.set(0, 0.2, this._pusherBackZ);
     this.world.addBody(this.pusher);
-    this._pusherBaseZ = -D / 2 + 4;
     this._t = 0;
 
     this.coins = new Map(); // id -> { body, value, owner, ownerName }
@@ -66,9 +72,10 @@ class Table {
     const q = new CANNON.Quaternion(); q.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI / 2);
     body.addShape(s, new CANNON.Vec3(0, 0, 0), q);
     const x = (this._rng01(id) - 0.5) * (TABLE.width - 2);
-    const z = -TABLE.depth / 2 + 5 + this._rng01(id * 7) * 1.5;
+    // drop just IN FRONT of the retracted pusher so it can push them forward
+    const z = -TABLE.depth / 2 + 4.5 + this._rng01(id * 7) * 3;
     body.position.set(x, TABLE.dropY, z);
-    body.linearDamping = 0.05; body.angularDamping = 0.4;
+    body.linearDamping = 0.12; body.angularDamping = 0.5;
     this.world.addBody(body);
     this.coins.set(id, { body, value: value | 0, owner, ownerName });
     return id;
@@ -81,15 +88,23 @@ class Table {
    * for coins that fell off the front (win) or off the sides (lost).
    */
   step(dt) {
-    // oscillate pusher in Z
+    // oscillate pusher in Z (fully back → far forward)
     this._t += dt;
     const travel = TABLE.pusherTravel;
-    const z = this._pusherBaseZ + (Math.sin(this._t * TABLE.pusherSpeed) * 0.5 + 0.5) * travel;
+    const z = this._pusherBackZ + (Math.sin(this._t * TABLE.pusherSpeed) * 0.5 + 0.5) * travel;
     const prevZ = this.pusher.position.z;
     this.pusher.position.z = z;
     this.pusher.velocity.z = (z - prevZ) / dt; // so it shoves coins
 
     this.world.step(1 / TABLE.stepHz, dt, 3);
+
+    // clamp coin speeds so a hard shove can't fling them through colliders
+    const MAXV = 18;
+    for (const c of this.coins.values()) {
+      const v = c.body.velocity;
+      const sp = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+      if (sp > MAXV) { const k = MAXV / sp; v.x *= k; v.y *= k; v.z *= k; }
+    }
 
     const wins = [], removed = [];
     for (const [id, c] of this.coins) {
