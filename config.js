@@ -1,24 +1,28 @@
 'use strict';
 // Central config. Everything overridable via environment variables so the same
 // code runs locally (defaults) and on Railway (env vars).
+// env() trims whitespace/newlines — pasting a key/address with a trailing
+// line break into Railway is a classic footgun, so we scrub it here.
+var env = function (name, def) { var v = process.env[name]; return (v === undefined ? def : String(v).trim()); };
+
 module.exports = {
-  PORT: parseInt(process.env.PORT || '8080', 10),
+  PORT: parseInt(env('PORT', '8080'), 10),
 
   // ---- Chain ----
-  RPC_URL: process.env.RPC_URL || 'https://rpc.mainnet.chain.robinhood.com',
-  CHAIN_ID: parseInt(process.env.CHAIN_ID || '4663', 10),
-  SWOGE_TOKEN: process.env.SWOGE_TOKEN || '0x8a166Fb41Cd659a0a43396272FF73973Ce29F817',
-  VAULT_ADDRESS: process.env.VAULT_ADDRESS || '', // set after deploying SwogePusherVault
+  RPC_URL: env('RPC_URL', 'https://rpc.mainnet.chain.robinhood.com'),
+  CHAIN_ID: parseInt(env('CHAIN_ID', '4663'), 10),
+  SWOGE_TOKEN: env('SWOGE_TOKEN', '0x8a166Fb41Cd659a0a43396272FF73973Ce29F817'),
+  VAULT_ADDRESS: env('VAULT_ADDRESS', ''), // set after deploying SwogePusherVault
   // Backend signer key = the `signer` set in the Vault. Authorizes withdrawals.
   // NEVER commit a real key. Set SIGNER_PRIVATE_KEY on Railway.
-  SIGNER_PRIVATE_KEY: process.env.SIGNER_PRIVATE_KEY || '',
-  DEPOSIT_POLL_MS: parseInt(process.env.DEPOSIT_POLL_MS || '6000', 10),
+  SIGNER_PRIVATE_KEY: env('SIGNER_PRIVATE_KEY', ''),
+  DEPOSIT_POLL_MS: parseInt(env('DEPOSIT_POLL_MS', '6000'), 10),
 
   // ---- Economy ----
   DECIMALS: 18,
-  DROP_COST: process.env.DROP_COST || '1',         // $SWOGE per coin dropped
-  MIN_WITHDRAW: process.env.MIN_WITHDRAW || '50',  // must match Vault.minWithdraw
-  VOUCHER_TTL_SEC: parseInt(process.env.VOUCHER_TTL_SEC || '3600', 10),
+  DROP_COST: env('DROP_COST', '1'),         // $SWOGE per coin dropped
+  MIN_WITHDRAW: env('MIN_WITHDRAW', '50'),  // must match Vault.minWithdraw
+  VOUCHER_TTL_SEC: parseInt(env('VOUCHER_TTL_SEC', '3600'), 10),
 
   // ---- Provably-fair pool (coin values in whole $SWOGE) ----
   // Same spirit as the client pool: mostly 0 (empty), a few prizes. ~80% RTP
