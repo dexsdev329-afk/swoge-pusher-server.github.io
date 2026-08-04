@@ -40,9 +40,9 @@ module.exports = {
   TABLE: {
     width: 11,        // X extent of the shelf
     depth: 18,        // Z extent
-    frontEdgeZ: 8,    // coins pushed beyond this Z fall off the front = WIN
-    pusherTravel: 3,  // how far the pusher slides in Z
-    pusherSpeed: 1.2, // slides/sec factor
+    frontEdgeZ: 6,    // coins pushed beyond this Z fall off the front = WIN
+    pusherTravel: 8,   // long stroke: retracts fully to the back, pushes far forward
+    pusherSpeed: 1.0,  // visible push; the forward tilt does the gentle flow
     coinRadius: 0.7,
     coinThickness: 0.35,
     dropY: 6,
