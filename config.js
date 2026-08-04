@@ -38,11 +38,11 @@ module.exports = {
 
   // ---- Physics / table (server units) ----
   TABLE: {
-    width: 11,        // X extent of the shelf
-    depth: 18,        // Z extent
-    frontEdgeZ: 6,    // coins pushed beyond this Z fall off the front = WIN
-    pusherTravel: 8,   // long stroke: retracts fully to the back, pushes far forward
-    pusherSpeed: 1.0,  // visible push; the forward tilt does the gentle flow
+    width: 11,         // X extent of the shelf
+    depth: 13,         // Z extent — SHORTER so coins actually reach the front
+    frontEdgeZ: 4.5,   // coins pushed beyond this Z fall off the front = WIN
+    pusherTravel: 7,   // long stroke: retracts fully to the back wall, pushes near the front
+    pusherSpeed: 1.0,  // visible push; the forward tilt helps the flow
     coinRadius: 0.7,
     coinThickness: 0.35,
     dropY: 6,
