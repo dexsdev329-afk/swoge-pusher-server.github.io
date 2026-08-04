@@ -18,9 +18,9 @@ let _id = 1;
 
 class Table {
   constructor() {
-    // Slight FORWARD tilt (+Z) like a real coin pusher: coins gently drift to
-    // the front and fall off, so nothing needs a violent shove (no tunneling).
-    this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -18, 2.2) });
+    // Stronger FORWARD tilt (+Z) like a real coin pusher: coins reliably drift
+    // to the front and fall off (higher collection ≈ RTP), no violent shove.
+    this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -17, 4.2) });
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
     this.world.allowSleep = true;
     this.world.solver.iterations = 20; // stabler stacking, less tunneling
@@ -39,9 +39,9 @@ class Table {
     this._addBox(-W / 2 - 0.5, 6, 0, 2, 14, D, mat);       // left (thick)
     this._addBox(W / 2 + 0.5, 6, 0, 2, 14, D, mat);        // right (thick)
 
-    // kinematic pusher — a PLATE that retracts fully to the back wall and
+    // kinematic pusher — a SOLID plate that retracts fully to the back wall and
     // slides a long way forward to shove the pile off the front lip.
-    const PLATE_HALF_D = 1.5;                 // thin plate (depth 3)
+    const PLATE_HALF_D = 2.0;                 // thicker = solid, no coins slip through
     this.pusher = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, material: mat });
     this.pusher.addShape(new CANNON.Box(new CANNON.Vec3(W / 2, 2.5, PLATE_HALF_D)));
     this._pusherBackZ = -D / 2 + PLATE_HALF_D; // retracted = back face touches the back wall
