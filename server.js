@@ -1,0 +1,144 @@
+'use strict';
+/*
+ * SWOGE Pusher — authoritative real-time game server.
+ *   • one shared physics table (physics.js)
+ *   • wallet-signature login, balances from Vault deposits (chain.js)
+ *   • provably-fair coin values, winnings (game.js)
+ *   • 20 Hz state broadcast over WebSocket to every client
+ *   • auto withdrawals via backend-signed EIP-712 vouchers
+ *
+ * The client only RENDERS what the server sends and forwards taps — so every
+ * player sees the exact same table, coins, and pile.
+ */
+const http = require('http');
+const crypto = require('crypto');
+const { WebSocketServer } = require('ws');
+const cfg = require('./config');
+const { Table } = require('./physics');
+const { Game } = require('./game');
+const { Chain } = require('./chain');
+
+const table = new Table();
+const game = new Game();
+const chain = new Chain();
+
+const clients = new Set();                 // all sockets
+const byAddr = new Map();                  // addr -> Set(sockets)
+
+function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+function toAddr(addr, obj) { const set = byAddr.get(addr); if (set) for (const ws of set) send(ws, obj); }
+function broadcast(obj) { const s = JSON.stringify(obj); for (const ws of clients) if (ws.readyState === 1) ws.send(s); }
+
+// ---- HTTP (health + tiny info) ----
+const server = http.createServer((req, res) => {
+  if (req.url === '/health') { res.writeHead(200); return res.end('ok'); }
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({
+    game: 'swoge-pusher', players: game.players.size, coins: table.coins.size,
+    serverSeedHash: game.serverSeedHash, vault: cfg.VAULT_ADDRESS || null,
+    signer: chain.signerAddress || null,
+  }));
+});
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', (ws) => {
+  ws.addr = null;
+  ws.nonce = crypto.randomBytes(16).toString('hex'); // login challenge
+  clients.add(ws);
+  send(ws, {
+    type: 'hello',
+    loginNonce: ws.nonce,
+    serverSeedHash: game.serverSeedHash,
+    dropCost: cfg.DROP_COST, minWithdraw: cfg.MIN_WITHDRAW,
+    vault: cfg.VAULT_ADDRESS || null, token: cfg.SWOGE_TOKEN, chainId: cfg.CHAIN_ID,
+  });
+
+  ws.on('message', async (buf) => {
+    let m; try { m = JSON.parse(buf); } catch { return; }
+    try {
+      if (m.type === 'login') {
+        // client signs exactly this message with their wallet
+        const expected = `SWOGE Pusher login\nnonce: ${ws.nonce}`;
+        if (m.message !== expected) return send(ws, { type: 'error', error: 'bad login message' });
+        const rec = chain.verifyLogin(m.message, m.signature);
+        if (!rec) return send(ws, { type: 'error', error: 'bad signature' });
+        ws.addr = rec;
+        if (!byAddr.has(rec)) byAddr.set(rec, new Set());
+        byAddr.get(rec).add(ws);
+        if (m.name) game.setName(rec, m.name);
+        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec) });
+      }
+      if (!ws.addr) return send(ws, { type: 'error', error: 'login required' });
+
+      if (m.type === 'drop') {
+        if (!game.canDrop(ws.addr)) return send(ws, { type: 'need_deposit', balance: game.balanceStr(ws.addr) });
+        const value = game.drop(ws.addr);
+        if (value === null) return;
+        table.dropCoin(ws.addr, game._p(ws.addr).name, value);
+        return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
+      }
+      if (m.type === 'devCredit' && process.env.DEV_FAUCET === '1') {
+        game.creditDeposit({ player: ws.addr, amount: require('ethers').ethers.utils.parseUnits('1000', cfg.DECIMALS), tx: 'dev:' + Date.now() + Math.random() });
+        return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
+      }
+      if (m.type === 'setClientSeed') { game.setClientSeed(ws.addr, m.seed); return send(ws, { type: 'fairness', fairness: game.fairness(ws.addr) }); }
+      if (m.type === 'balance') return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
+
+      if (m.type === 'withdraw') {
+        try {
+          const cumulative = game.requestWithdraw(ws.addr, m.amount);
+          const voucher = await chain.signVoucher(ws.addr, cumulative);
+          send(ws, { type: 'voucher', voucher, vault: cfg.VAULT_ADDRESS, balance: game.balanceStr(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+    } catch (e) { send(ws, { type: 'error', error: 'server error' }); }
+  });
+
+  ws.on('close', () => {
+    clients.delete(ws);
+    if (ws.addr && byAddr.has(ws.addr)) { byAddr.get(ws.addr).delete(ws); if (!byAddr.get(ws.addr).size) byAddr.delete(ws.addr); }
+  });
+});
+
+// ---- physics loop ----
+let last = process.hrtime.bigint();
+const stepInterval = setInterval(() => {
+  const now = process.hrtime.bigint();
+  let dt = Number(now - last) / 1e9; last = now;
+  if (dt > 0.1) dt = 0.1; // clamp after a stall
+  const { wins } = table.step(dt);
+  for (const w of wins) {
+    game.win(w.owner, w.value);
+    if (w.value > 0) {
+      toAddr(w.owner, { type: 'win', value: w.value, balance: game.balanceStr(w.owner) });
+      broadcast({ type: 'ticker', name: w.ownerName, value: w.value });
+    }
+  }
+}, Math.round(1000 / cfg.TABLE.stepHz));
+
+// ---- broadcast loop ----
+const bcInterval = setInterval(() => {
+  broadcast({ type: 'state', ...table.snapshot() });
+}, Math.round(1000 / cfg.BROADCAST_HZ));
+
+// ---- deposits ----
+(async () => {
+  try {
+    const fromBlock = chain.vault ? await chain.provider.getBlockNumber() : 0;
+    chain.watchDeposits(fromBlock, (d) => {
+      if (game.creditDeposit(d)) {
+        console.log(`[deposit] ${d.player} +${d.amount.toString()} (${d.tx})`);
+        toAddr(d.player, { type: 'deposit', balance: game.balanceStr(d.player) });
+      }
+    });
+  } catch (e) { console.warn('deposit watch init failed:', e.message); }
+})();
+
+server.listen(cfg.PORT, () => {
+  console.log(`SWOGE Pusher server on :${cfg.PORT}`);
+  console.log(`  vault=${cfg.VAULT_ADDRESS || '(none)'} signer=${chain.signerAddress || '(none)'} serverSeedHash=${game.serverSeedHash.slice(0,16)}…`);
+});
+
+process.on('SIGTERM', () => { clearInterval(stepInterval); clearInterval(bcInterval); server.close(); process.exit(0); });
+process.on('SIGINT', () => process.exit(0));

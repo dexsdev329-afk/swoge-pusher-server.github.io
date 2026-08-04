@@ -1,0 +1,14 @@
+{
+  "name": "swoge-pusher-server",
+  "version": "1.0.0",
+  "description": "Authoritative real-time server for the shared SWOGE Pusher table (one table for everyone).",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "cannon-es": "^0.20.0",
+    "ethers": "^5.8.0",
+    "ws": "^8.21.2"
+  },
+  "license": "MIT"
+}
