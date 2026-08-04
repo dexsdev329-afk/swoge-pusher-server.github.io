@@ -47,7 +47,7 @@ module.exports = {
     coinThickness: 0.35,
     dropY: 6,
     stepHz: 60,       // physics steps per second
-    maxCoins: 400,    // hard cap to protect CPU/bandwidth
+    maxCoins: 220,    // hard cap — keeps the server sim fast = smoother playback
   },
-  BROADCAST_HZ: parseInt(process.env.BROADCAST_HZ || '20', 10),
+  BROADCAST_HZ: parseInt(env('BROADCAST_HZ', '30'), 10), // 30 snapshots/sec = smoother
 };
