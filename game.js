@@ -25,9 +25,27 @@ const MINW = WEI(cfg.MIN_WITHDRAW);
 
 class Game {
   constructor() {
-    this.players = new Map(); // addr -> { balance, cumulativeAuthorized, clientSeed, nonce, name }
+    this.players = new Map(); // addr -> { balance, cumulativeAuthorized, clientSeed, nonce, name, dayNet, dayKey }
     this.seenTx = new Set();  // dedupe deposits
+    // progressive jackpot (all wei)
+    this.jackpotPot = WEI(cfg.JACKPOT_SEED);
+    this._jackpotSeed = WEI(cfg.JACKPOT_SEED);
+    this._rakeWei = COST.mul(Math.round(cfg.JACKPOT_RAKE_PCT * 100)).div(10000); // pct, 2-dec
     this._rotateSeed();
+  }
+
+  _today() { return new Date().toISOString().slice(0, 10); } // UTC day key
+  _bumpDay(p) { const t = this._today(); if (p.dayKey !== t) { p.dayKey = t; p.dayNet = ethers.BigNumber.from(0); } }
+  jackpotStr() { return ethers.utils.formatUnits(this.jackpotPot, cfg.DECIMALS); }
+
+  /** Top `n` players by today's net gain (winners only). */
+  leaderboard(n) {
+    const t = this._today(), arr = [];
+    for (const p of this.players.values()) {
+      if (p.dayKey === t && p.dayNet.gt(0)) arr.push({ name: p.name, net: ethers.utils.formatUnits(p.dayNet, cfg.DECIMALS) });
+    }
+    arr.sort((a, b) => parseFloat(b.net) - parseFloat(a.net));
+    return arr.slice(0, n);
   }
 
   _rotateSeed() {
@@ -40,7 +58,8 @@ class Game {
     let p = this.players.get(addr);
     if (!p) {
       p = { balance: ethers.BigNumber.from(0), cumulativeAuthorized: ethers.BigNumber.from(0),
-            clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6) };
+            clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
+            dayNet: ethers.BigNumber.from(0), dayKey: null };
       this.players.set(addr, p);
     }
     return p;
@@ -63,16 +82,35 @@ class Game {
 
   canDrop(addr) { return this._p(addr).balance.gte(COST); }
 
-  /** Consume 1 drop cost, return the provably-fair coin value (whole $SWOGE int). */
+  /**
+   * Consume 1 drop cost. Returns { value, jackpotWon } (both provably-fair):
+   *   value      = coin value paid when it reaches the front (0 = empty)
+   *   jackpotWon = wei won from the progressive pot on this drop (0 if not)
+   * Returns null if the balance can't cover the drop.
+   */
   drop(addr) {
     const p = this._p(addr);
     if (p.balance.lt(COST)) return null;
     p.balance = p.balance.sub(COST);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(COST);
     const h = crypto.createHmac('sha256', this.serverSeed)
       .update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
-    const idx = Number(BigInt('0x' + h.slice(0, 15)) % BigInt(cfg.POOL.length));
-    return cfg.POOL[idx]; // whole $SWOGE; 0 = empty
+    // weighted provably-fair pick over cfg.PRIZES ([value, weight]) — bits 0..14
+    let r = Number(BigInt('0x' + h.slice(0, 15)) % BigInt(cfg.PRIZE_TOTAL));
+    let value = 0;
+    for (let i = 0; i < cfg.PRIZES.length; i++) { r -= cfg.PRIZES[i][1]; if (r < 0) { value = cfg.PRIZES[i][0]; break; } }
+    // progressive jackpot: feed the pot, then roll the trigger on bits 15..29
+    this.jackpotPot = this.jackpotPot.add(this._rakeWei);
+    let jackpotWon = ethers.BigNumber.from(0);
+    const jr = Number(BigInt('0x' + h.slice(15, 30)) % BigInt(cfg.JACKPOT_ODDS));
+    if (jr === 0) {
+      jackpotWon = this.jackpotPot;
+      p.balance = p.balance.add(jackpotWon);
+      p.dayNet = p.dayNet.add(jackpotWon);
+      this.jackpotPot = this._jackpotSeed;
+    }
+    return { value, jackpotWon };
   }
 
   /** Give back a drop cost (the table was full, so no coin was placed). */
@@ -83,6 +121,7 @@ class Game {
     if (!value) return;
     const p = this._p(addr);
     p.balance = p.balance.add(WEI(value));
+    this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(value));
   }
 
   /** Request a withdrawal of `amountStr` $SWOGE. Returns cumulativeAuthorized (wei) or throws. */
