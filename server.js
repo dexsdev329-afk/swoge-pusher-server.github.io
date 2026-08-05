@@ -12,6 +12,7 @@
  */
 const http = require('http');
 const crypto = require('crypto');
+const { ethers } = require('ethers');
 const { WebSocketServer } = require('ws');
 const cfg = require('./config');
 const { Table } = require('./physics');
@@ -51,6 +52,7 @@ wss.on('connection', (ws) => {
     serverSeedHash: game.serverSeedHash,
     dropCost: cfg.DROP_COST, minWithdraw: cfg.MIN_WITHDRAW,
     vault: cfg.VAULT_ADDRESS || null, token: cfg.SWOGE_TOKEN, chainId: cfg.CHAIN_ID,
+    jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE),
   });
 
   ws.on('message', async (buf) => {
@@ -75,10 +77,16 @@ wss.on('connection', (ws) => {
         // Table full → refuse WITHOUT charging, so a big queued batch drains as
         // room frees instead of burning $SWOGE on coins that never appear.
         if (table.coins.size >= cfg.TABLE.maxCoins) return send(ws, { type: 'table_full' });
-        const value = game.drop(ws.addr);
-        if (value === null) return;
-        const id = table.dropCoin(ws.addr, game._p(ws.addr).name, value);
+        const res = game.drop(ws.addr);
+        if (res === null) return;
+        const id = table.dropCoin(ws.addr, game._p(ws.addr).name, res.value);
         if (id === null) { game.refund(ws.addr); return send(ws, { type: 'table_full', balance: game.balanceStr(ws.addr) }); }
+        // progressive jackpot hit → tell the winner + announce to everyone
+        if (res.jackpotWon && res.jackpotWon.gt(0)) {
+          const amt = ethers.utils.formatUnits(res.jackpotWon, cfg.DECIMALS);
+          toAddr(ws.addr, { type: 'jackpot', amount: amt, balance: game.balanceStr(ws.addr) });
+          broadcast({ type: 'jackpotWin', name: game._p(ws.addr).name, amount: amt, jackpot: game.jackpotStr() });
+        }
         return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
       }
       if (m.type === 'devCredit' && process.env.DEV_FAUCET === '1') {
@@ -126,6 +134,11 @@ const bcInterval = setInterval(() => {
   broadcast({ type: 'state', ...table.snapshot() });
 }, Math.round(1000 / cfg.BROADCAST_HZ));
 
+// ---- jackpot pot + daily leaderboard (low-frequency) ----
+const metaInterval = setInterval(() => {
+  broadcast({ type: 'meta', jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE) });
+}, 3000);
+
 // ---- deposits ----
 (async () => {
   try {
@@ -144,5 +157,5 @@ server.listen(cfg.PORT, () => {
   console.log(`  vault=${cfg.VAULT_ADDRESS || '(none)'} signer=${chain.signerAddress || '(none)'} serverSeedHash=${game.serverSeedHash.slice(0,16)}…`);
 });
 
-process.on('SIGTERM', () => { clearInterval(stepInterval); clearInterval(bcInterval); server.close(); process.exit(0); });
+process.on('SIGTERM', () => { clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); server.close(); process.exit(0); });
 process.on('SIGINT', () => process.exit(0));
