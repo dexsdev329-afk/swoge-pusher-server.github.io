@@ -22,6 +22,9 @@ class Chain {
     this.vault = cfg.VAULT_ADDRESS
       ? new ethers.Contract(cfg.VAULT_ADDRESS, VAULT_ABI, this.provider)
       : null;
+    this.token = cfg.SWOGE_TOKEN
+      ? new ethers.Contract(cfg.SWOGE_TOKEN, ['function totalSupply() view returns (uint256)'], this.provider)
+      : null;
     this.domain = {
       name: 'SwogePusherVault', version: '1',
       chainId: cfg.CHAIN_ID, verifyingContract: cfg.VAULT_ADDRESS,
@@ -35,8 +38,12 @@ class Chain {
 
   get signerAddress() { return this.signer ? this.signer.address : null; }
 
-  /** Poll Deposit events from `fromBlock`. Calls onDeposit({player, amount, tx, block}). */
-  async watchDeposits(fromBlock, onDeposit) {
+  /**
+   * Poll Deposit events from `fromBlock`. Calls onDeposit({player, amount, tx, block})
+   * per event, and onBlock(nextBlock) after each successful poll so the caller can
+   * persist the watermark (resume here after a restart, no missed/double credits).
+   */
+  async watchDeposits(fromBlock, onDeposit, onBlock) {
     if (!this.vault) { console.warn('[chain] no VAULT_ADDRESS set — deposit watch disabled'); return; }
     let last = fromBlock;
     const tick = async () => {
@@ -53,6 +60,7 @@ class Chain {
             });
           }
           last = tip + 1;
+          if (onBlock) onBlock(last);
         }
       } catch (err) { console.warn('[chain] deposit poll error:', err.message); }
       setTimeout(tick, cfg.DEPOSIT_POLL_MS);
@@ -75,6 +83,12 @@ class Chain {
     if (!this.vault) return ethers.BigNumber.from(0);
     try { return await this.vault.withdrawn(player); }
     catch { return ethers.BigNumber.from(0); }
+  }
+
+  /** SWOGE token total supply (wei) or null. */
+  async totalSupply() {
+    if (!this.token) return null;
+    try { return await this.token.totalSupply(); } catch { return null; }
   }
 
   /** Verify a login signature. Returns the recovered address (lowercased) or null. */
