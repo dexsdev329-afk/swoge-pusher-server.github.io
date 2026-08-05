@@ -61,8 +61,9 @@ module.exports = {
   STAKE_APR_BPS: parseInt(env('STAKE_APR_BPS', '5000'), 10), // 5000 = 50% APR
 
   // ---- Telegram notifications (deposits / big wins / stakes) ----
-  TG_BOT_TOKEN: env('TG_BOT_TOKEN', ''),        // BotFather token
-  TG_CHAT_ID: env('TG_CHAT_ID', ''),            // channel/group id (e.g. -100123…) or @channel
+  // Accepts either TG_* or the TELEGRAM_* names your other bots already use.
+  TG_BOT_TOKEN: env('TG_BOT_TOKEN', '') || env('TELEGRAM_BOT_TOKEN', ''),   // BotFather token
+  TG_CHAT_ID: env('TG_CHAT_ID', '') || env('TELEGRAM_CHAT_ID', ''),         // channel/group id (e.g. -100123…) or @channel
   EXPLORER: env('EXPLORER', 'https://robinhoodchain.blockscout.com'),
   NOTIFY_DEPOSIT_MIN: parseFloat(env('NOTIFY_DEPOSIT_MIN', '0')),  // notify deposits ≥ this
   NOTIFY_WIN_MIN: parseInt(env('NOTIFY_WIN_MIN', '500'), 10),      // notify single-coin wins ≥ this
