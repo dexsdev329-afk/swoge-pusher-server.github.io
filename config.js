@@ -8,11 +8,21 @@ var env = function (name, def) { var v = process.env[name]; return (v === undefi
 module.exports = {
   PORT: parseInt(env('PORT', '8080'), 10),
 
+  // Where the persistent game state (balances etc.) is written. On Railway,
+  // mount a VOLUME at this path so it survives redeploys/restarts.
+  DATA_DIR: env('DATA_DIR', './data'),
+  SAVE_MS: parseInt(env('SAVE_MS', '10000'), 10),
+
   // ---- Chain ----
   RPC_URL: env('RPC_URL', 'https://rpc.mainnet.chain.robinhood.com'),
   CHAIN_ID: parseInt(env('CHAIN_ID', '4663'), 10),
   SWOGE_TOKEN: env('SWOGE_TOKEN', '0x8a166Fb41Cd659a0a43396272FF73973Ce29F817'),
   VAULT_ADDRESS: env('VAULT_ADDRESS', ''), // set after deploying SwogePusherVault
+  // One-time recovery: on the FIRST run (no saved state), scan Deposit events
+  // from this block instead of the chain tip, so deposits made before
+  // persistence existed are re-credited. Set it once to the Vault's deploy
+  // block, then leave it — seenTx dedupes and the contract caps withdrawals.
+  SCAN_FROM_BLOCK: parseInt(env('SCAN_FROM_BLOCK', '0'), 10),
   // Backend signer key = the `signer` set in the Vault. Authorizes withdrawals.
   // NEVER commit a real key. Set SIGNER_PRIVATE_KEY on Railway.
   SIGNER_PRIVATE_KEY: env('SIGNER_PRIVATE_KEY', ''),
@@ -33,6 +43,22 @@ module.exports = {
   JACKPOT_RAKE_PCT: parseFloat(env('JACKPOT_RAKE_PCT', '3')),   // % of each drop → pot
   JACKPOT_ODDS: parseInt(env('JACKPOT_ODDS', '3000000'), 10),   // 1-in-N per drop
   LEADERBOARD_SIZE: parseInt(env('LEADERBOARD_SIZE', '10'), 10),
+
+  // ---- Daily quests ----
+  // Anti-Sybil: total rewards (50) < house edge on the wagering required to
+  // finish them (~300 drops → ~60 edge), AND claiming needs a real deposit.
+  // So farming with throwaway wallets costs more than it pays.
+  QUESTS: [
+    { id: 'daily',   label: 'Daily bonus',      metric: 'free',  target: 0,   reward: parseInt(env('Q_DAILY',  '5'),  10) },
+    { id: 'drop100', label: 'Drop 100 coins',   metric: 'drops', target: 100, reward: parseInt(env('Q_DROP100', '10'), 10) },
+    { id: 'drop300', label: 'Drop 300 coins',   metric: 'drops', target: 300, reward: parseInt(env('Q_DROP300', '25'), 10) },
+    { id: 'win3',    label: 'Win 3 prizes',     metric: 'wins',  target: 3,   reward: parseInt(env('Q_WIN3',    '15'), 10) },
+  ],
+  QUEST_REQUIRE_DEPOSIT: env('QUEST_REQUIRE_DEPOSIT', '1') === '1',
+
+  // ---- Staking (yield on staked $SWOGE, claimable anytime) ----
+  // Paid FROM the vault — fund it (ownerDeposit) or it drains. Tunable APR.
+  STAKE_APR_BPS: parseInt(env('STAKE_APR_BPS', '5000'), 10), // 5000 = 50% APR
 
   // ---- Provably-fair prize table (weighted tiers) ----
   // [value, weight] out of PRIZE_TOTAL (10,000,000). A weighted table (instead
