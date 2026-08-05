@@ -123,6 +123,16 @@ class Game {
   /** Sum of all staked balances (wei). */
   totalStaked() { let s = BN(0); for (const p of this.players.values()) s = s.add(p.staked); return s; }
 
+  /** Everything the vault OWES players right now (wei): balances + staked +
+   * accrued/pending yield + the jackpot pot. Owner surplus = vaultPot − this. */
+  totalOwed() {
+    let owed = this.jackpotPot;
+    for (const p of this.players.values()) {
+      owed = owed.add(p.balance).add(p.staked).add(p.stakeAccrued).add(this._pendingSince(p));
+    }
+    return owed;
+  }
+
   stakeInfo(addr) {
     const p = this._p(addr);
     const pending = p.stakeAccrued.add(this._pendingSince(p));
