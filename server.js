@@ -20,6 +20,7 @@ const { Game } = require('./game');
 const { Chain } = require('./chain');
 const store = require('./store');
 const tg = require('./telegram');
+const admin = require('./admin');
 
 const table = new Table();
 const game = new Game();
@@ -54,8 +55,34 @@ function toAddr(addr, obj) { const set = byAddr.get(addr); if (set) for (const w
 function broadcast(obj) { const s = JSON.stringify(obj); for (const ws of clients) if (ws.readyState === 1) ws.send(s); }
 
 // ---- HTTP (health + tiny info) ----
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
+  const path = req.url.split('?')[0];
+  const key = new URLSearchParams(req.url.split('?')[1] || '').get('key') || '';
+  const authed = !cfg.ADMIN_KEY || key === cfg.ADMIN_KEY; // open if no key configured
   if (req.url === '/health') { res.writeHead(200); return res.end('ok'); }
+  // Private owner dashboard (HTML)
+  if (path === '/admin') {
+    if (!authed) { res.writeHead(401, { 'content-type': 'text/html' }); return res.end('<h3>401 — add ?key=YOUR_ADMIN_KEY</h3>'); }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    return res.end(admin.page());
+  }
+  // Owner solvency view: how much is in the vault, how much is owed to players,
+  // and the SURPLUS you can safely ownerWithdraw without touching player funds.
+  if (path === '/stats') {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const owed = game.totalOwed();
+    const pot = await chain.vaultPot();
+    const fmt = (w) => (w ? ethers.utils.formatUnits(w, cfg.DECIMALS) : null);
+    const surplus = pot && pot.gt(owed) ? pot.sub(owed) : ethers.BigNumber.from(0);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({
+      vaultPot: fmt(pot),                    // $SWOGE currently in the contract
+      owedToPlayers: fmt(owed),              // balances + staked + pending yield + jackpot
+      ownerSurplus: fmt(pot ? surplus : null), // <-- safe amount you can withdraw
+      jackpot: game.jackpotStr(), totalStaked: fmt(game.totalStaked()),
+      players: game.players.size, vault: cfg.VAULT_ADDRESS || null,
+    }, null, 2));
+  }
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify({
     game: 'swoge-pusher', players: game.players.size, coins: table.coins.size,
