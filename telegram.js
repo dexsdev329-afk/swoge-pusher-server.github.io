@@ -26,4 +26,21 @@ function notify(text) {
   }).catch(() => {});
 }
 
-module.exports = { notify, enabled };
+function notifyPhoto(photo, caption) {
+  if (!photo) return notify(caption);         // no image → plain text
+  if (!enabled()) { console.warn('[tg] skipped photo (TG token/chat not set)'); return; }
+  chain = chain.then(async () => {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/sendPhoto`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: cfg.TG_CHAT_ID, photo, caption, parse_mode: 'HTML' }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!j.ok) { console.warn(`[tg] photo refused: ${j.error_code} ${j.description} — falling back to text`); notify(caption); }
+    } catch (e) { console.warn('[tg] photo failed:', e.message); }
+    await new Promise((r) => setTimeout(r, 400));
+  }).catch(() => {});
+}
+
+module.exports = { notify, notifyPhoto, enabled };
