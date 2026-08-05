@@ -75,6 +75,9 @@ class Game {
     return cfg.POOL[idx]; // whole $SWOGE; 0 = empty
   }
 
+  /** Give back a drop cost (the table was full, so no coin was placed). */
+  refund(addr) { const p = this._p(addr); p.balance = p.balance.add(COST); }
+
   /** A coin was pushed off the front → credit its owner. */
   win(addr, value) {
     if (!value) return;
