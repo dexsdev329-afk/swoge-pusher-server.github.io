@@ -216,6 +216,8 @@ const saveInterval = setInterval(persist, cfg.SAVE_MS);
 server.listen(cfg.PORT, () => {
   console.log(`SWOGE Pusher server on :${cfg.PORT}`);
   console.log(`  vault=${cfg.VAULT_ADDRESS || '(none)'} signer=${chain.signerAddress || '(none)'} serverSeedHash=${game.serverSeedHash.slice(0,16)}…`);
+  console.log(`  telegram=${tg.enabled() ? 'ON (chat ' + cfg.TG_CHAT_ID + ')' : 'OFF (set TG_BOT_TOKEN + TG_CHAT_ID)'}`);
+  tg.notify('🟢 <b>SWOGE server online</b> — notifications actives'); // startup ping = quick check that TG works
 });
 
 function shutdown() {
