@@ -72,9 +72,13 @@ wss.on('connection', (ws) => {
 
       if (m.type === 'drop') {
         if (!game.canDrop(ws.addr)) return send(ws, { type: 'need_deposit', balance: game.balanceStr(ws.addr) });
+        // Table full → refuse WITHOUT charging, so a big queued batch drains as
+        // room frees instead of burning $SWOGE on coins that never appear.
+        if (table.coins.size >= cfg.TABLE.maxCoins) return send(ws, { type: 'table_full' });
         const value = game.drop(ws.addr);
         if (value === null) return;
-        table.dropCoin(ws.addr, game._p(ws.addr).name, value);
+        const id = table.dropCoin(ws.addr, game._p(ws.addr).name, value);
+        if (id === null) { game.refund(ws.addr); return send(ws, { type: 'table_full', balance: game.balanceStr(ws.addr) }); }
         return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
       }
       if (m.type === 'devCredit' && process.env.DEV_FAUCET === '1') {
