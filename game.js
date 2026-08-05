@@ -47,7 +47,7 @@ class Game {
         s: p.clientSeed, n: p.nonce, name: p.name,
         dn: p.dayNet.toString(), dk: p.dayKey,
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
-        st: p.staked.toString(), ss: p.stakeSince, sa: p.stakeAccrued.toString(),
+        stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
       }]);
     }
     return { v: 1, serverSeed: this.serverSeed, jackpotPot: this.jackpotPot.toString(),
@@ -69,7 +69,12 @@ class Game {
         nonce: d.n || 0, name: d.name || addr.slice(0, 6),
         dayNet: ethers.BigNumber.from(d.dn || '0'), dayKey: d.dk || null,
         dropsToday: d.dt || 0, winsToday: d.wt || 0, questClaimed: d.qc || {}, hasDeposited: !!d.hd,
-        staked: ethers.BigNumber.from(d.st || '0'), stakeSince: d.ss || 0, stakeAccrued: ethers.BigNumber.from(d.sa || '0'),
+        stakes: Array.isArray(d.stk)
+          ? d.stk.map((x) => ({ a: ethers.BigNumber.from(x[0]), s: x[1], u: x[2] }))
+          : (d.st && d.st !== '0' // migrate old single-stake format → one locked position
+              ? [{ a: ethers.BigNumber.from(d.st), s: d.ss || Date.now(), u: (d.ss || Date.now()) + cfg.STAKE_LOCK_DAYS * 86400000 }]
+              : []),
+        stakeAccrued: ethers.BigNumber.from(d.sa || '0'),
       });
     }
   }
@@ -81,47 +86,64 @@ class Game {
   }
   jackpotStr() { return ethers.utils.formatUnits(this.jackpotPot, cfg.DECIMALS); }
 
-  // ---- Staking: yield accrues per second at STAKE_APR_BPS, claimable anytime ----
-  /** Yield (wei) accrued since stakeSince, without mutating (safe for display). */
-  _pendingSince(p) {
-    if (!p.staked.gt(0) || !p.stakeSince) return BN(0);
-    const elapsed = Date.now() - p.stakeSince; // ms
+  // ---- Staking: 100% APR, per-position soft lock; early exit forfeits 50% ----
+  _lockMs() { return cfg.STAKE_LOCK_DAYS * 86400000; }
+  _pendingPos(pos) {
+    const elapsed = Date.now() - pos.s;
     if (elapsed <= 0) return BN(0);
-    // staked × (aprBps/10000) × (elapsed/msPerYear), integer math (wei precision)
-    return p.staked.mul(this._stakeRateBps).mul(elapsed).div(10000).div(MS_YEAR);
+    return pos.a.mul(this._stakeRateBps).mul(elapsed).div(10000).div(MS_YEAR); // a × apr × elapsed/yr
   }
-  /** Fold pending yield into stakeAccrued and restart the clock. */
-  _settleStake(p) { p.stakeAccrued = p.stakeAccrued.add(this._pendingSince(p)); p.stakeSince = Date.now(); }
+  _pendingAll(p) { let y = BN(0); for (const pos of p.stakes) y = y.add(this._pendingPos(pos)); return y; }
+  _settleStakes(p) { const now = Date.now(); for (const pos of p.stakes) { p.stakeAccrued = p.stakeAccrued.add(this._pendingPos(pos)); pos.s = now; } }
+  _stakedTotal(p) { let s = BN(0); for (const pos of p.stakes) s = s.add(pos.a); return s; }
 
   stake(addr, amountStr) {
     const p = this._p(addr);
     const amount = WEI(amountStr);
     if (amount.lte(0)) throw new Error('enter an amount');
     if (amount.gt(p.balance)) throw new Error('amount exceeds balance');
-    this._settleStake(p);
+    this._settleStakes(p);
     p.balance = p.balance.sub(amount);
-    p.staked = p.staked.add(amount);
+    const now = Date.now();
+    p.stakes.push({ a: amount, s: now, u: now + this._lockMs() }); // a=amount, s=lastSettle, u=unlockAt
   }
-  unstake(addr, amountStr) {
-    const p = this._p(addr);
-    const amount = WEI(amountStr);
-    if (amount.lte(0)) throw new Error('enter an amount');
-    if (amount.gt(p.staked)) throw new Error('amount exceeds staked');
-    this._settleStake(p);
-    p.staked = p.staked.sub(amount);
-    p.balance = p.balance.add(amount);
-  }
+
   claimStake(addr) {
     const p = this._p(addr);
-    this._settleStake(p);
+    this._settleStakes(p);
     const reward = p.stakeAccrued;
     if (reward.lte(0)) throw new Error('no yield to claim yet');
     p.stakeAccrued = BN(0);
     p.balance = p.balance.add(reward);
     return ethers.utils.formatUnits(reward, cfg.DECIMALS);
   }
-  /** Sum of all staked balances (wei). */
-  totalStaked() { let s = BN(0); for (const p of this.players.values()) s = s.add(p.staked); return s; }
+
+  /** Unstake EVERYTHING + pay accrued yield. Unlocked positions return in full;
+   * still-locked ones return (1 − penalty), the rest is forfeited to the vault. */
+  unstakeAll(addr) {
+    const p = this._p(addr);
+    if (!p.stakes.length) throw new Error('nothing staked');
+    this._settleStakes(p);
+    const now = Date.now();
+    let returned = BN(0), penalty = BN(0);
+    for (const pos of p.stakes) {
+      if (now >= pos.u) { returned = returned.add(pos.a); }
+      else {
+        const keep = pos.a.mul(10000 - cfg.STAKE_EARLY_PENALTY_BPS).div(10000);
+        returned = returned.add(keep);
+        penalty = penalty.add(pos.a.sub(keep)); // forfeited → stays in the vault (house)
+      }
+    }
+    const yld = p.stakeAccrued;
+    p.stakeAccrued = BN(0);
+    p.stakes = [];
+    p.balance = p.balance.add(returned).add(yld);
+    const f = (w) => ethers.utils.formatUnits(w, cfg.DECIMALS);
+    return { returned: f(returned), penalty: f(penalty), yield: f(yld) };
+  }
+
+  /** Sum of all staked principal (wei). */
+  totalStaked() { let s = BN(0); for (const p of this.players.values()) s = s.add(this._stakedTotal(p)); return s; }
 
   /** Breakdown (wei) of what the vault owes: player balances, staked, pending
    * yield, and the jackpot reserve. */
@@ -129,8 +151,8 @@ class Game {
     let balances = BN(0), staked = BN(0), pending = BN(0);
     for (const p of this.players.values()) {
       balances = balances.add(p.balance);
-      staked = staked.add(p.staked);
-      pending = pending.add(p.stakeAccrued).add(this._pendingSince(p));
+      staked = staked.add(this._stakedTotal(p));
+      pending = pending.add(p.stakeAccrued).add(this._pendingAll(p));
     }
     return { balances, staked, pending, jackpot: this.jackpotPot };
   }
@@ -144,11 +166,18 @@ class Game {
 
   stakeInfo(addr) {
     const p = this._p(addr);
-    const pending = p.stakeAccrued.add(this._pendingSince(p));
+    const pending = p.stakeAccrued.add(this._pendingAll(p));
+    const now = Date.now();
+    let locked = BN(0), unlocked = BN(0), nextUnlock = null;
+    for (const pos of p.stakes) {
+      if (now >= pos.u) unlocked = unlocked.add(pos.a);
+      else { locked = locked.add(pos.a); if (nextUnlock === null || pos.u < nextUnlock) nextUnlock = pos.u; }
+    }
+    const f = (w) => ethers.utils.formatUnits(w, cfg.DECIMALS);
     return {
-      staked: ethers.utils.formatUnits(p.staked, cfg.DECIMALS),
-      pending: ethers.utils.formatUnits(pending, cfg.DECIMALS),
-      aprBps: cfg.STAKE_APR_BPS,
+      staked: f(this._stakedTotal(p)), locked: f(locked), unlocked: f(unlocked),
+      pending: f(pending), aprBps: cfg.STAKE_APR_BPS,
+      penaltyBps: cfg.STAKE_EARLY_PENALTY_BPS, lockDays: cfg.STAKE_LOCK_DAYS, nextUnlock,
     };
   }
 
@@ -204,7 +233,7 @@ class Game {
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
             dayNet: ethers.BigNumber.from(0), dayKey: null,
             dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false,
-            staked: ethers.BigNumber.from(0), stakeSince: 0, stakeAccrued: ethers.BigNumber.from(0) };
+            stakes: [], stakeAccrued: ethers.BigNumber.from(0) };
       this.players.set(addr, p);
     }
     return p;
