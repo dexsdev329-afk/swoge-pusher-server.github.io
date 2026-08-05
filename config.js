@@ -13,6 +13,10 @@ module.exports = {
   DATA_DIR: env('DATA_DIR', './data'),
   SAVE_MS: parseInt(env('SAVE_MS', '10000'), 10),
 
+  // Password for the private /admin dashboard + /stats (?key=…). Empty = open
+  // (fine for local dev; ALWAYS set it in production).
+  ADMIN_KEY: env('ADMIN_KEY', ''),
+
   // ---- Chain ----
   RPC_URL: env('RPC_URL', 'https://rpc.mainnet.chain.robinhood.com'),
   CHAIN_ID: parseInt(env('CHAIN_ID', '4663'), 10),
