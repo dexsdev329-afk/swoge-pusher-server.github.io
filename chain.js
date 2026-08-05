@@ -91,6 +91,12 @@ class Chain {
     try { return await this.token.totalSupply(); } catch { return null; }
   }
 
+  /** The vault's pot = all $SWOGE held by the contract (wei) or null. */
+  async vaultPot() {
+    if (!this.vault) return null;
+    try { return await this.vault.totalPot(); } catch { return null; }
+  }
+
   /** Verify a login signature. Returns the recovered address (lowercased) or null. */
   verifyLogin(message, signature) {
     try { return ethers.utils.verifyMessage(message, signature).toLowerCase(); }
