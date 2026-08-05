@@ -172,7 +172,7 @@ wss.on('connection', (ws) => {
       if (m.type === 'stake' || m.type === 'unstake' || m.type === 'claimStake') {
         try {
           if (m.type === 'stake') game.stake(ws.addr, m.amount);
-          else if (m.type === 'unstake') game.unstake(ws.addr, m.amount);
+          else if (m.type === 'unstake') { const r = game.unstakeAll(ws.addr); send(ws, { type: 'stakeUnstaked', ...r }); }
           else { const r = game.claimStake(ws.addr); send(ws, { type: 'stakeClaimed', reward: r }); }
           persistSoon();
           send(ws, { type: 'stakeInfo', ...game.stakeInfo(ws.addr), balance: game.balanceStr(ws.addr) });
