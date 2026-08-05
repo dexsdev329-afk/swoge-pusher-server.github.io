@@ -56,6 +56,7 @@ function broadcast(obj) { const s = JSON.stringify(obj); for (const ws of client
 
 // ---- HTTP (health + tiny info) ----
 const server = http.createServer(async (req, res) => {
+ try {
   const path = req.url.split('?')[0];
   const key = new URLSearchParams(req.url.split('?')[1] || '').get('key') || '';
   const authed = !cfg.ADMIN_KEY || key === cfg.ADMIN_KEY; // open if no key configured
@@ -89,7 +90,15 @@ const server = http.createServer(async (req, res) => {
     serverSeedHash: game.serverSeedHash, vault: cfg.VAULT_ADDRESS || null,
     signer: chain.signerAddress || null,
   }));
+ } catch (e) {
+  // An HTTP route must NEVER crash the game server.
+  console.warn('[http] handler error:', e.message);
+  try { res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); } catch (_) {}
+ }
 });
+// last-resort guards so nothing can take the process down
+process.on('unhandledRejection', (e) => console.warn('[unhandledRejection]', e && e.message));
+process.on('uncaughtException', (e) => console.warn('[uncaughtException]', e && e.message));
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
