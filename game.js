@@ -22,11 +22,15 @@ const cfg = require('./config');
 const WEI = (n) => ethers.utils.parseUnits(String(n), cfg.DECIMALS);
 const COST = WEI(cfg.DROP_COST);
 const MINW = WEI(cfg.MIN_WITHDRAW);
+const BN = (n) => ethers.BigNumber.from(n);
+const MS_YEAR = BN('31536000000'); // 365*24*3600*1000
 
 class Game {
   constructor() {
-    this.players = new Map(); // addr -> { balance, cumulativeAuthorized, clientSeed, nonce, name, dayNet, dayKey }
+    this.players = new Map(); // addr -> { balance, cumulativeAuthorized, clientSeed, nonce, name, dayNet, dayKey, dropsToday, winsToday, questClaimed, hasDeposited }
     this.seenTx = new Set();  // dedupe deposits
+    this.lastBlock = 0;       // deposit-scan watermark (persisted so a restart resumes)
+    this._stakeRateBps = BN(cfg.STAKE_APR_BPS);
     // progressive jackpot (all wei)
     this.jackpotPot = WEI(cfg.JACKPOT_SEED);
     this._jackpotSeed = WEI(cfg.JACKPOT_SEED);
@@ -34,9 +38,126 @@ class Game {
     this._rotateSeed();
   }
 
+  /** Snapshot the whole state for persistence (BigNumbers → strings). */
+  serialize() {
+    const players = [];
+    for (const [addr, p] of this.players) {
+      players.push([addr, {
+        b: p.balance.toString(), c: p.cumulativeAuthorized.toString(),
+        s: p.clientSeed, n: p.nonce, name: p.name,
+        dn: p.dayNet.toString(), dk: p.dayKey,
+        dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
+        st: p.staked.toString(), ss: p.stakeSince, sa: p.stakeAccrued.toString(),
+      }]);
+    }
+    return { v: 1, serverSeed: this.serverSeed, jackpotPot: this.jackpotPot.toString(),
+             lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx), players };
+  }
+
+  /** Restore a snapshot produced by serialize() (called once at startup). */
+  hydrate(st) {
+    if (!st) return;
+    if (st.serverSeed) { this.serverSeed = st.serverSeed; this.serverSeedHash = crypto.createHash('sha256').update(st.serverSeed).digest('hex'); }
+    if (st.jackpotPot) this.jackpotPot = ethers.BigNumber.from(st.jackpotPot);
+    if (st.lastBlock) this.lastBlock = st.lastBlock;
+    if (Array.isArray(st.seenTx)) this.seenTx = new Set(st.seenTx);
+    if (Array.isArray(st.players)) for (const [addr, d] of st.players) {
+      this.players.set(addr, {
+        balance: ethers.BigNumber.from(d.b || '0'),
+        cumulativeAuthorized: ethers.BigNumber.from(d.c || '0'),
+        clientSeed: d.s || crypto.randomBytes(8).toString('hex'),
+        nonce: d.n || 0, name: d.name || addr.slice(0, 6),
+        dayNet: ethers.BigNumber.from(d.dn || '0'), dayKey: d.dk || null,
+        dropsToday: d.dt || 0, winsToday: d.wt || 0, questClaimed: d.qc || {}, hasDeposited: !!d.hd,
+        staked: ethers.BigNumber.from(d.st || '0'), stakeSince: d.ss || 0, stakeAccrued: ethers.BigNumber.from(d.sa || '0'),
+      });
+    }
+  }
+
   _today() { return new Date().toISOString().slice(0, 10); } // UTC day key
-  _bumpDay(p) { const t = this._today(); if (p.dayKey !== t) { p.dayKey = t; p.dayNet = ethers.BigNumber.from(0); } }
+  _bumpDay(p) {
+    const t = this._today();
+    if (p.dayKey !== t) { p.dayKey = t; p.dayNet = ethers.BigNumber.from(0); p.dropsToday = 0; p.winsToday = 0; p.questClaimed = {}; }
+  }
   jackpotStr() { return ethers.utils.formatUnits(this.jackpotPot, cfg.DECIMALS); }
+
+  // ---- Staking: yield accrues per second at STAKE_APR_BPS, claimable anytime ----
+  /** Yield (wei) accrued since stakeSince, without mutating (safe for display). */
+  _pendingSince(p) {
+    if (!p.staked.gt(0) || !p.stakeSince) return BN(0);
+    const elapsed = Date.now() - p.stakeSince; // ms
+    if (elapsed <= 0) return BN(0);
+    // staked × (aprBps/10000) × (elapsed/msPerYear), integer math (wei precision)
+    return p.staked.mul(this._stakeRateBps).mul(elapsed).div(10000).div(MS_YEAR);
+  }
+  /** Fold pending yield into stakeAccrued and restart the clock. */
+  _settleStake(p) { p.stakeAccrued = p.stakeAccrued.add(this._pendingSince(p)); p.stakeSince = Date.now(); }
+
+  stake(addr, amountStr) {
+    const p = this._p(addr);
+    const amount = WEI(amountStr);
+    if (amount.lte(0)) throw new Error('enter an amount');
+    if (amount.gt(p.balance)) throw new Error('amount exceeds balance');
+    this._settleStake(p);
+    p.balance = p.balance.sub(amount);
+    p.staked = p.staked.add(amount);
+  }
+  unstake(addr, amountStr) {
+    const p = this._p(addr);
+    const amount = WEI(amountStr);
+    if (amount.lte(0)) throw new Error('enter an amount');
+    if (amount.gt(p.staked)) throw new Error('amount exceeds staked');
+    this._settleStake(p);
+    p.staked = p.staked.sub(amount);
+    p.balance = p.balance.add(amount);
+  }
+  claimStake(addr) {
+    const p = this._p(addr);
+    this._settleStake(p);
+    const reward = p.stakeAccrued;
+    if (reward.lte(0)) throw new Error('no yield to claim yet');
+    p.stakeAccrued = BN(0);
+    p.balance = p.balance.add(reward);
+    return ethers.utils.formatUnits(reward, cfg.DECIMALS);
+  }
+  stakeInfo(addr) {
+    const p = this._p(addr);
+    const pending = p.stakeAccrued.add(this._pendingSince(p));
+    return {
+      staked: ethers.utils.formatUnits(p.staked, cfg.DECIMALS),
+      pending: ethers.utils.formatUnits(pending, cfg.DECIMALS),
+      aprBps: cfg.STAKE_APR_BPS,
+    };
+  }
+
+  /** Per-player daily quest state (progress + claimable flags). */
+  questState(addr) {
+    const p = this._p(addr); this._bumpDay(p);
+    const locked = cfg.QUEST_REQUIRE_DEPOSIT && !p.hasDeposited;
+    return cfg.QUESTS.map((q) => {
+      const prog = q.metric === 'drops' ? p.dropsToday : q.metric === 'wins' ? p.winsToday : q.target; // 'free' → always met
+      const done = prog >= q.target;
+      const claimed = !!p.questClaimed[q.id];
+      return { id: q.id, label: q.label, metric: q.metric, target: q.target, reward: q.reward,
+               progress: Math.min(prog, q.target), done, claimed, locked, claimable: done && !claimed && !locked };
+    });
+  }
+
+  /** Claim a completed quest → credit its reward. Throws on any invalid claim. */
+  claimQuest(addr, id) {
+    const p = this._p(addr); this._bumpDay(p);
+    const q = cfg.QUESTS.find((x) => x.id === id);
+    if (!q) throw new Error('unknown quest');
+    if (cfg.QUEST_REQUIRE_DEPOSIT && !p.hasDeposited) throw new Error('deposit first to unlock quests');
+    const prog = q.metric === 'drops' ? p.dropsToday : q.metric === 'wins' ? p.winsToday : q.target;
+    if (prog < q.target) throw new Error('quest not complete yet');
+    if (p.questClaimed[q.id]) throw new Error('already claimed today');
+    p.questClaimed[q.id] = true;
+    const r = WEI(q.reward);
+    p.balance = p.balance.add(r);
+    p.dayNet = p.dayNet.add(r);
+    return q.reward;
+  }
 
   /** Top `n` players by today's net gain (winners only). */
   leaderboard(n) {
@@ -59,7 +180,9 @@ class Game {
     if (!p) {
       p = { balance: ethers.BigNumber.from(0), cumulativeAuthorized: ethers.BigNumber.from(0),
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
-            dayNet: ethers.BigNumber.from(0), dayKey: null };
+            dayNet: ethers.BigNumber.from(0), dayKey: null,
+            dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false,
+            staked: ethers.BigNumber.from(0), stakeSince: 0, stakeAccrued: ethers.BigNumber.from(0) };
       this.players.set(addr, p);
     }
     return p;
@@ -77,6 +200,7 @@ class Game {
     this.seenTx.add(tx);
     const p = this._p(player);
     p.balance = p.balance.add(amount);
+    p.hasDeposited = true; // unlocks daily quests (real skin in the game)
     return true;
   }
 
@@ -92,7 +216,7 @@ class Game {
     const p = this._p(addr);
     if (p.balance.lt(COST)) return null;
     p.balance = p.balance.sub(COST);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(COST);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(COST); p.dropsToday++;
     const h = crypto.createHmac('sha256', this.serverSeed)
       .update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
@@ -121,7 +245,7 @@ class Game {
     if (!value) return;
     const p = this._p(addr);
     p.balance = p.balance.add(WEI(value));
-    this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(value));
+    this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(value)); p.winsToday++;
   }
 
   /** Request a withdrawal of `amountStr` $SWOGE. Returns cumulativeAuthorized (wei) or throws. */
