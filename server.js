@@ -19,6 +19,7 @@ const { Table } = require('./physics');
 const { Game } = require('./game');
 const { Chain } = require('./chain');
 const store = require('./store');
+const tg = require('./telegram');
 
 const table = new Table();
 const game = new Game();
@@ -29,6 +30,16 @@ const saved = store.load();
 if (saved) { game.hydrate(saved); console.log(`[store] restored ${game.players.size} players, jackpot=${game.jackpotStr()}, lastBlock=${game.lastBlock}`); }
 else console.log('[store] no saved state (first run)');
 function persist() { store.save(game.serialize()); }
+
+// ---- Telegram notification helpers ----
+let supplyWei = null; // SWOGE total supply (for the % staked), fetched once
+const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '?';
+const fmtAmt = (s) => { const n = parseFloat(s || '0'); return n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : n.toFixed(n < 1 ? 4 : 0); };
+function stakedPct() {
+  if (!supplyWei || supplyWei.isZero()) return null;
+  const bps = game.totalStaked().mul(10000).div(supplyWei); // 2-dec %
+  return (bps.toNumber() / 100).toFixed(2);
+}
 
 const clients = new Set();                 // all sockets
 const byAddr = new Map();                  // addr -> Set(sockets)
@@ -93,6 +104,7 @@ wss.on('connection', (ws) => {
           const amt = ethers.utils.formatUnits(res.jackpotWon, cfg.DECIMALS);
           toAddr(ws.addr, { type: 'jackpot', amount: amt, balance: game.balanceStr(ws.addr) });
           broadcast({ type: 'jackpotWin', name: game._p(ws.addr).name, amount: amt, jackpot: game.jackpotStr() });
+          tg.notify(`🎰 <b>JACKPOT WON!</b>\n${game._p(ws.addr).name} just hit <b>${fmtAmt(amt)} $SWOGE</b> 🎉`);
         }
         return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
       }
@@ -115,6 +127,10 @@ wss.on('connection', (ws) => {
           else if (m.type === 'unstake') game.unstake(ws.addr, m.amount);
           else { const r = game.claimStake(ws.addr); send(ws, { type: 'stakeClaimed', reward: r }); }
           send(ws, { type: 'stakeInfo', ...game.stakeInfo(ws.addr), balance: game.balanceStr(ws.addr) });
+          if (m.type === 'stake' && parseFloat(m.amount) >= cfg.NOTIFY_STAKE_MIN) {
+            const pct = stakedPct();
+            tg.notify(`🔒 <b>New stake</b>\n${short(ws.addr)} staked <b>${fmtAmt(m.amount)} $SWOGE</b>` + (pct ? `\n📊 Total staked: <b>${pct}%</b> of supply` : ''));
+          }
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -150,6 +166,7 @@ const stepInterval = setInterval(() => {
     if (w.value > 0) {
       toAddr(w.owner, { type: 'win', value: w.value, balance: game.balanceStr(w.owner) });
       broadcast({ type: 'ticker', name: w.ownerName, value: w.value });
+      if (w.value >= cfg.NOTIFY_WIN_MIN) tg.notify(`🏆 <b>Big win!</b>\n${w.ownerName} just won <b>${w.value} $SWOGE</b> 🐕`);
     }
   }
 }, Math.round(1000 / cfg.TABLE.stepHz));
@@ -177,11 +194,20 @@ const saveInterval = setInterval(persist, cfg.SAVE_MS);
     // Resume from the persisted watermark so deposits made while the server was
     // down are still credited (seenTx dedupes anything already counted). On a
     // fresh install, SCAN_FROM_BLOCK (if set) re-credits historical deposits.
-    let fromBlock = game.lastBlock || cfg.SCAN_FROM_BLOCK || (chain.vault ? await chain.provider.getBlockNumber() : 0);
+    supplyWei = await chain.totalSupply(); // for the % staked in stake notifs
+    const tipNow = chain.vault ? await chain.provider.getBlockNumber() : 0;
+    let fromBlock = game.lastBlock || cfg.SCAN_FROM_BLOCK || tipNow;
+    // only Telegram-notify deposits at/after the current tip, so a historical
+    // re-scan (SCAN_FROM_BLOCK / resumed watermark) doesn't spam old deposits.
+    const liveFrom = tipNow;
     chain.watchDeposits(fromBlock, (d) => {
       if (game.creditDeposit(d)) {
         console.log(`[deposit] ${d.player} +${d.amount.toString()} (${d.tx})`);
         toAddr(d.player, { type: 'deposit', balance: game.balanceStr(d.player) });
+        const amt = ethers.utils.formatUnits(d.amount, cfg.DECIMALS);
+        if (d.block >= liveFrom && parseFloat(amt) >= cfg.NOTIFY_DEPOSIT_MIN) {
+          tg.notify(`💰 <b>New deposit</b>\n${short(d.player)} deposited <b>${fmtAmt(amt)} $SWOGE</b>\n<a href="${cfg.EXPLORER}/tx/${d.tx}">view tx ↗</a>`);
+        }
       }
     }, (nextBlock) => { game.lastBlock = nextBlock; });
   } catch (e) { console.warn('deposit watch init failed:', e.message); }
