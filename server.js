@@ -129,7 +129,7 @@ wss.on('connection', (ws) => {
           send(ws, { type: 'stakeInfo', ...game.stakeInfo(ws.addr), balance: game.balanceStr(ws.addr) });
           if (m.type === 'stake' && parseFloat(m.amount) >= cfg.NOTIFY_STAKE_MIN) {
             const pct = stakedPct();
-            tg.notify(`🔒 <b>New stake</b>\n${short(ws.addr)} staked <b>${fmtAmt(m.amount)} $SWOGE</b>` + (pct ? `\n📊 Total staked: <b>${pct}%</b> of supply` : ''));
+            tg.notifyPhoto(cfg.STAKE_IMAGE, `🔒 <b>New stake</b>\n${short(ws.addr)} staked <b>${fmtAmt(m.amount)} $SWOGE</b>` + (pct ? `\n📊 Total staked: <b>${pct}%</b> of supply` : ''));
           }
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
@@ -206,7 +206,7 @@ const saveInterval = setInterval(persist, cfg.SAVE_MS);
         toAddr(d.player, { type: 'deposit', balance: game.balanceStr(d.player) });
         const amt = ethers.utils.formatUnits(d.amount, cfg.DECIMALS);
         if (d.block >= liveFrom && parseFloat(amt) >= cfg.NOTIFY_DEPOSIT_MIN) {
-          tg.notify(`💰 <b>New deposit</b>\n${short(d.player)} deposited <b>${fmtAmt(amt)} $SWOGE</b>\n<a href="${cfg.EXPLORER}/tx/${d.tx}">view tx ↗</a>`);
+          tg.notifyPhoto(cfg.DEPOSIT_IMAGE, `💰 <b>New deposit</b>\n${short(d.player)} deposited <b>${fmtAmt(amt)} $SWOGE</b>\n<a href="${cfg.EXPLORER}/tx/${d.tx}">view tx ↗</a>`);
         }
       }
     }, (nextBlock) => { game.lastBlock = nextBlock; });
