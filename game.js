@@ -120,6 +120,9 @@ class Game {
     p.balance = p.balance.add(reward);
     return ethers.utils.formatUnits(reward, cfg.DECIMALS);
   }
+  /** Sum of all staked balances (wei). */
+  totalStaked() { let s = BN(0); for (const p of this.players.values()) s = s.add(p.staked); return s; }
+
   stakeInfo(addr) {
     const p = this._p(addr);
     const pending = p.stakeAccrued.add(this._pendingSince(p));
