@@ -46,8 +46,8 @@ function page() {
   <div class="card hl"><span>Safe surplus (withdrawable)</span><b id="surplus">—</b></div>
 </div>
 <div class="sub">
-  🎰 Jackpot <b id="jp">—</b> · 🔒 Staked <b id="stk">—</b> · 👥 Players <b id="pl">—</b><br>
-  updated <span id="upd">—</span> · <a href="#" id="refresh">refresh</a>
+  <b>Owed breakdown:</b> 💵 Balances <b id="ob">—</b> · 🔒 Staked <b id="os">—</b> · 📈 Yield <b id="oy">—</b> · 🎰 Jackpot reserve <b id="oj">—</b><br>
+  👥 Players <b id="pl">—</b> · updated <span id="upd">—</span> · <a href="#" id="refresh">refresh</a>
 </div>
 
 <div class="panel">
@@ -78,7 +78,9 @@ async function load(){
     var d=await r.json();
     $("#pot").textContent=fmt(d.vaultPot); $("#owed").textContent=fmt(d.owedToPlayers);
     $("#surplus").textContent=fmt(d.ownerSurplus); surplusNum=parseFloat(d.ownerSurplus||"0")||0;
-    $("#jp").textContent=fmt(d.jackpot); $("#stk").textContent=fmt(d.totalStaked); $("#pl").textContent=d.players;
+    $("#ob").textContent=fmt(d.owedBalances); $("#os").textContent=fmt(d.owedStaked);
+    $("#oy").textContent=fmt(d.owedPending); $("#oj").textContent=fmt(d.owedJackpot);
+    $("#pl").textContent=d.players;
     $("#upd").textContent=new Date().toLocaleTimeString();
   }catch(e){ msg("Could not load stats: "+e.message,"warn"); }
 }
