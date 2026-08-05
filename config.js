@@ -61,8 +61,11 @@ module.exports = {
   QUEST_REQUIRE_DEPOSIT: env('QUEST_REQUIRE_DEPOSIT', '1') === '1',
 
   // ---- Staking (yield on staked $SWOGE, claimable anytime) ----
-  // Paid FROM the vault — fund it (ownerDeposit) or it drains. Tunable APR.
-  STAKE_APR_BPS: parseInt(env('STAKE_APR_BPS', '5000'), 10), // 5000 = 50% APR
+  // Paid FROM the vault — fund it (ownerDeposit) or it drains. 100% APR is a
+  // BIG liability (you owe double after a year), so keep the vault funded.
+  STAKE_APR_BPS: parseInt(env('STAKE_APR_BPS', '10000'), 10),        // 10000 = 100% APR
+  STAKE_LOCK_DAYS: parseInt(env('STAKE_LOCK_DAYS', '365'), 10),      // soft-lock length
+  STAKE_EARLY_PENALTY_BPS: parseInt(env('STAKE_EARLY_PENALTY_BPS', '5000'), 10), // 5000 = lose 50% of principal if you exit before the lock ends
 
   // ---- Telegram notifications (deposits / big wins / stakes) ----
   // Accepts either TG_* or the TELEGRAM_* names your other bots already use.
