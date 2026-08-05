@@ -38,16 +38,16 @@ module.exports = {
 
   // ---- Physics / table (server units) ----
   TABLE: {
-    width: 11,         // X extent of the shelf
-    depth: 13,         // Z extent — SHORTER so coins actually reach the front
-    frontEdgeZ: 4.5,   // coins pushed beyond this Z fall off the front = WIN
-    pusherTravel: 7,   // long stroke: retracts fully to the back wall, pushes near the front
-    pusherSpeed: 1.0,  // visible push; the forward tilt helps the flow
+    width: 11,        // X extent of the shelf
+    depth: 18,        // Z extent
+    frontEdgeZ: 8,    // coins pushed beyond this Z fall off the front = WIN
+    pusherTravel: 3,  // how far the pusher slides in Z
+    pusherSpeed: 1.2, // slides/sec factor
     coinRadius: 0.7,
     coinThickness: 0.35,
     dropY: 6,
     stepHz: 60,       // physics steps per second
-    maxCoins: 220,    // hard cap — keeps the server sim fast = smoother playback
+    maxCoins: 400,    // hard cap to protect CPU/bandwidth
   },
-  BROADCAST_HZ: parseInt(env('BROADCAST_HZ', '30'), 10), // 30 snapshots/sec = smoother
+  BROADCAST_HZ: parseInt(process.env.BROADCAST_HZ || '20', 10),
 };
