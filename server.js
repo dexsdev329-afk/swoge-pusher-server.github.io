@@ -71,14 +71,19 @@ const server = http.createServer(async (req, res) => {
   // and the SURPLUS you can safely ownerWithdraw without touching player funds.
   if (path === '/stats') {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
-    const owed = game.totalOwed();
+    const bd = game.owedBreakdown();
+    const owed = bd.balances.add(bd.staked).add(bd.pending).add(bd.jackpot);
     const pot = await chain.vaultPot();
     const fmt = (w) => (w ? ethers.utils.formatUnits(w, cfg.DECIMALS) : null);
     const surplus = pot && pot.gt(owed) ? pot.sub(owed) : ethers.BigNumber.from(0);
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({
       vaultPot: fmt(pot),                    // $SWOGE currently in the contract
-      owedToPlayers: fmt(owed),              // balances + staked + pending yield + jackpot
+      owedToPlayers: fmt(owed),              // total owed (the 4 lines below)
+      owedBalances: fmt(bd.balances),        //   player balances
+      owedStaked: fmt(bd.staked),            //   staked
+      owedPending: fmt(bd.pending),          //   pending stake yield
+      owedJackpot: fmt(bd.jackpot),          //   jackpot reserve
       ownerSurplus: fmt(pot ? surplus : null), // <-- safe amount you can withdraw
       jackpot: game.jackpotStr(), totalStaked: fmt(game.totalStaked()),
       players: game.players.size, vault: cfg.VAULT_ADDRESS || null,
