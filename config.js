@@ -60,6 +60,14 @@ module.exports = {
   // Paid FROM the vault — fund it (ownerDeposit) or it drains. Tunable APR.
   STAKE_APR_BPS: parseInt(env('STAKE_APR_BPS', '5000'), 10), // 5000 = 50% APR
 
+  // ---- Telegram notifications (deposits / big wins / stakes) ----
+  TG_BOT_TOKEN: env('TG_BOT_TOKEN', ''),        // BotFather token
+  TG_CHAT_ID: env('TG_CHAT_ID', ''),            // channel/group id (e.g. -100123…) or @channel
+  EXPLORER: env('EXPLORER', 'https://robinhoodchain.blockscout.com'),
+  NOTIFY_DEPOSIT_MIN: parseFloat(env('NOTIFY_DEPOSIT_MIN', '0')),  // notify deposits ≥ this
+  NOTIFY_WIN_MIN: parseInt(env('NOTIFY_WIN_MIN', '500'), 10),      // notify single-coin wins ≥ this
+  NOTIFY_STAKE_MIN: parseFloat(env('NOTIFY_STAKE_MIN', '100')),    // notify stakes ≥ this
+
   // ---- Provably-fair prize table (weighted tiers) ----
   // [value, weight] out of PRIZE_TOTAL (10,000,000). A weighted table (instead
   // of a flat array) lets us express very rare big lots cleanly AND keep the
