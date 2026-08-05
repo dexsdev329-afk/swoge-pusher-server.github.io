@@ -61,11 +61,40 @@ function page() {
   <div id="msg"></div>
 </div>
 
+<div class="panel" style="margin-top:14px">
+  <h2>⚙️ Owner controls</h2>
+  <div style="font-size:12px;color:#8a7f6a;margin-bottom:10px">Connect the owner wallet above to enable these.</div>
+
+  <label style="font-size:13px;color:#c9bfa8">Fund the vault (adds bankroll)</label>
+  <input id="fundAmt" type="number" inputmode="decimal" placeholder="amount in $SWOGE">
+  <div class="row" style="margin-bottom:14px"><button id="fund" disabled>Approve + Fund →</button></div>
+
+  <label style="font-size:13px;color:#c9bfa8">Minimum withdraw — currently <b id="curMin" style="color:#E6A537">—</b></label>
+  <input id="minAmt" type="number" inputmode="decimal" placeholder="new minimum in $SWOGE">
+  <div class="row" style="margin-bottom:14px"><button class="ghost" id="setMin" disabled>Set minimum</button></div>
+
+  <label style="font-size:13px;color:#c9bfa8">Pause / resume</label>
+  <div class="row"><button class="ghost" id="pauseDep" disabled>Deposits: —</button><button class="ghost" id="pauseWd" disabled>Withdrawals: —</button></div>
+  <div id="cmsg" style="margin-top:12px;font-size:13px"></div>
+</div>
+
 <script>
 var KEY=new URLSearchParams(location.search).get('key')||'';
 var VAULT="${V}";
+var TOKEN="${cfg.SWOGE_TOKEN || ''}";
 var CHAIN={hex:"${CHAIN_HEX}",name:"${cfg.CHAIN_ID===4663?'Robinhood Chain':'Chain'}",rpc:"${cfg.RPC_URL}"};
-var ABI=["function ownerWithdraw(address to,uint256 amount)","function totalPot() view returns (uint256)"];
+var ABI=[
+  "function ownerWithdraw(address to,uint256 amount)",
+  "function ownerDeposit(uint256 amount)",
+  "function setDepositsPaused(bool paused)",
+  "function setWithdrawalsPaused(bool paused)",
+  "function setMinWithdraw(uint256 v)",
+  "function totalPot() view returns (uint256)",
+  "function depositsPaused() view returns (bool)",
+  "function withdrawalsPaused() view returns (bool)",
+  "function minWithdraw() view returns (uint256)"
+];
+var ERC20=["function approve(address s,uint256 a) returns (bool)","function allowance(address o,address s) view returns (uint256)"];
 var provider,signer,myAddr,surplusNum=0;
 function $(s){return document.querySelector(s);}
 function fmt(v){var n=parseFloat(v||"0");if(isNaN(n))return "—";return n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":n.toFixed(2);}
@@ -101,8 +130,44 @@ $("#conn").onclick=async function(){
     myAddr=await signer.getAddress();
     $("#conn").textContent=myAddr.slice(0,6)+"…"+myAddr.slice(-4);
     $("#go").disabled=false; msg("Wallet connected. Make sure it's the OWNER wallet.","ok");
+    refreshOwnerState();
   }catch(e){ msg(String(e.message||e).slice(0,100),"warn"); }
 };
+
+function cmsg(t,c){ $("#cmsg").textContent=t; $("#cmsg").className=c||""; }
+async function refreshOwnerState(){
+  try{
+    var c=new ethers.Contract(VAULT,ABI,provider);
+    var dp=await c.depositsPaused(), wp=await c.withdrawalsPaused(), mw=await c.minWithdraw();
+    $("#curMin").textContent=fmt(ethers.utils.formatUnits(mw,18));
+    $("#pauseDep").textContent="Deposits: "+(dp?"PAUSED — resume":"live — pause"); $("#pauseDep").dataset.on=dp?"1":"0";
+    $("#pauseWd").textContent="Withdrawals: "+(wp?"PAUSED — resume":"live — pause"); $("#pauseWd").dataset.on=wp?"1":"0";
+    ["fund","setMin","pauseDep","pauseWd"].forEach(function(id){ $("#"+id).disabled=false; });
+  }catch(e){ cmsg("Could not read contract state: "+(e.message||e),"warn"); }
+}
+async function tx(promise, okMsg){
+  try{ cmsg("Confirm in your wallet…"); var t=await promise; cmsg("Sending…"); await t.wait(); cmsg("✅ "+okMsg,"ok"); refreshOwnerState(); load(); }
+  catch(e){ cmsg("Failed: "+String(e.reason||e.message||e).slice(0,120),"warn"); }
+}
+$("#fund").onclick=async function(){
+  if(!signer) return cmsg("Connect wallet first","warn");
+  var v=($("#fundAmt").value||"").replace(",",".").trim(); if(!(parseFloat(v)>0)) return cmsg("Enter an amount","warn");
+  if(!TOKEN) return cmsg("Token address not set on server","warn");
+  try{
+    var amt=ethers.utils.parseUnits(v,18);
+    var tok=new ethers.Contract(TOKEN,ERC20,signer);
+    var al=await tok.allowance(myAddr,VAULT);
+    if(al.lt(amt)){ cmsg("Approve $SWOGE…"); var ta=await tok.approve(VAULT,ethers.constants.MaxUint256); await ta.wait(); }
+    await tx(new ethers.Contract(VAULT,ABI,signer).ownerDeposit(amt), "Vault funded with "+v+" $SWOGE"); $("#fundAmt").value="";
+  }catch(e){ cmsg("Failed: "+String(e.reason||e.message||e).slice(0,120),"warn"); }
+};
+$("#setMin").onclick=function(){
+  if(!signer) return cmsg("Connect wallet first","warn");
+  var v=($("#minAmt").value||"").replace(",",".").trim(); if(!(parseFloat(v)>=0)) return cmsg("Enter a value","warn");
+  tx(new ethers.Contract(VAULT,ABI,signer).setMinWithdraw(ethers.utils.parseUnits(v,18)), "Min withdraw set to "+v); $("#minAmt").value="";
+};
+$("#pauseDep").onclick=function(){ if(!signer) return; var on=$("#pauseDep").dataset.on==="1"; tx(new ethers.Contract(VAULT,ABI,signer).setDepositsPaused(!on), on?"Deposits resumed":"Deposits paused"); };
+$("#pauseWd").onclick=function(){ if(!signer) return; var on=$("#pauseWd").dataset.on==="1"; tx(new ethers.Contract(VAULT,ABI,signer).setWithdrawalsPaused(!on), on?"Withdrawals resumed":"Withdrawals paused"); };
 
 $("#go").onclick=async function(){
   if(!signer){ msg("Connect your wallet first","warn"); return; }
