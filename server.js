@@ -18,10 +18,17 @@ const cfg = require('./config');
 const { Table } = require('./physics');
 const { Game } = require('./game');
 const { Chain } = require('./chain');
+const store = require('./store');
 
 const table = new Table();
 const game = new Game();
 const chain = new Chain();
+
+// ---- restore persisted balances (survives Railway redeploys via a volume) ----
+const saved = store.load();
+if (saved) { game.hydrate(saved); console.log(`[store] restored ${game.players.size} players, jackpot=${game.jackpotStr()}, lastBlock=${game.lastBlock}`); }
+else console.log('[store] no saved state (first run)');
+function persist() { store.save(game.serialize()); }
 
 const clients = new Set();                 // all sockets
 const byAddr = new Map();                  // addr -> Set(sockets)
@@ -68,7 +75,7 @@ wss.on('connection', (ws) => {
         if (!byAddr.has(rec)) byAddr.set(rec, new Set());
         byAddr.get(rec).add(ws);
         if (m.name) game.setName(rec, m.name);
-        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec) });
+        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec) });
       }
       if (!ws.addr) return send(ws, { type: 'error', error: 'login required' });
 
@@ -94,6 +101,24 @@ wss.on('connection', (ws) => {
         return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
       }
       if (m.type === 'setClientSeed') { game.setClientSeed(ws.addr, m.seed); return send(ws, { type: 'fairness', fairness: game.fairness(ws.addr) }); }
+      if (m.type === 'claimQuest') {
+        try {
+          const reward = game.claimQuest(ws.addr, m.id);
+          send(ws, { type: 'questClaimed', id: m.id, reward, balance: game.balanceStr(ws.addr), quests: game.questState(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'quests') return send(ws, { type: 'quests', quests: game.questState(ws.addr) });
+      if (m.type === 'stake' || m.type === 'unstake' || m.type === 'claimStake') {
+        try {
+          if (m.type === 'stake') game.stake(ws.addr, m.amount);
+          else if (m.type === 'unstake') game.unstake(ws.addr, m.amount);
+          else { const r = game.claimStake(ws.addr); send(ws, { type: 'stakeClaimed', reward: r }); }
+          send(ws, { type: 'stakeInfo', ...game.stakeInfo(ws.addr), balance: game.balanceStr(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'stakeInfo') return send(ws, { type: 'stakeInfo', ...game.stakeInfo(ws.addr), balance: game.balanceStr(ws.addr) });
       if (m.type === 'balance') return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
 
       if (m.type === 'withdraw') {
@@ -134,21 +159,31 @@ const bcInterval = setInterval(() => {
   broadcast({ type: 'state', ...table.snapshot() });
 }, Math.round(1000 / cfg.BROADCAST_HZ));
 
-// ---- jackpot pot + daily leaderboard (low-frequency) ----
+// ---- jackpot pot + daily leaderboard + per-player quest progress ----
 const metaInterval = setInterval(() => {
   broadcast({ type: 'meta', jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE) });
+  for (const [addr, set] of byAddr) {
+    const qs = game.questState(addr), si = game.stakeInfo(addr);
+    for (const ws of set) { send(ws, { type: 'quests', quests: qs }); send(ws, { type: 'stakeInfo', ...si }); }
+  }
 }, 3000);
+
+// ---- persist balances/state periodically (survives redeploys via a volume) ----
+const saveInterval = setInterval(persist, cfg.SAVE_MS);
 
 // ---- deposits ----
 (async () => {
   try {
-    const fromBlock = chain.vault ? await chain.provider.getBlockNumber() : 0;
+    // Resume from the persisted watermark so deposits made while the server was
+    // down are still credited (seenTx dedupes anything already counted). On a
+    // fresh install, SCAN_FROM_BLOCK (if set) re-credits historical deposits.
+    let fromBlock = game.lastBlock || cfg.SCAN_FROM_BLOCK || (chain.vault ? await chain.provider.getBlockNumber() : 0);
     chain.watchDeposits(fromBlock, (d) => {
       if (game.creditDeposit(d)) {
         console.log(`[deposit] ${d.player} +${d.amount.toString()} (${d.tx})`);
         toAddr(d.player, { type: 'deposit', balance: game.balanceStr(d.player) });
       }
-    });
+    }, (nextBlock) => { game.lastBlock = nextBlock; });
   } catch (e) { console.warn('deposit watch init failed:', e.message); }
 })();
 
@@ -157,5 +192,10 @@ server.listen(cfg.PORT, () => {
   console.log(`  vault=${cfg.VAULT_ADDRESS || '(none)'} signer=${chain.signerAddress || '(none)'} serverSeedHash=${game.serverSeedHash.slice(0,16)}…`);
 });
 
-process.on('SIGTERM', () => { clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); server.close(); process.exit(0); });
-process.on('SIGINT', () => process.exit(0));
+function shutdown() {
+  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval);
+  persist(); // final save so nothing is lost on redeploy
+  server.close(); process.exit(0);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
