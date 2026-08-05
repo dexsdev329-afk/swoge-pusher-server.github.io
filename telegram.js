@@ -11,14 +11,16 @@ let chain = Promise.resolve();
 const enabled = () => !!(cfg.TG_BOT_TOKEN && cfg.TG_CHAT_ID);
 
 function notify(text) {
-  if (!enabled()) return;
+  if (!enabled()) { console.warn('[tg] skipped (TG_BOT_TOKEN/TG_CHAT_ID not set):', text.slice(0, 40)); return; }
   chain = chain.then(async () => {
     try {
-      await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/sendMessage`, {
+      const res = await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ chat_id: cfg.TG_CHAT_ID, text, parse_mode: 'HTML', disable_web_page_preview: true }),
       });
+      const j = await res.json().catch(() => ({}));
+      if (!j.ok) console.warn(`[tg] Telegram refused: ${j.error_code} ${j.description}`);
     } catch (e) { console.warn('[tg] send failed:', e.message); }
     await new Promise((r) => setTimeout(r, 400)); // stay under the rate limit
   }).catch(() => {});
