@@ -119,6 +119,10 @@ module.exports = {
   ],
   SPIN_TOTAL: 10000000,
 
+  // ---- SWOGE Blackjack ----
+  BJ_MAX_BET: parseInt(env('BJ_MAX_BET', '10000'), 10),  // max $SWOGE per hand
+  BJ_MIN_BET: parseInt(env('BJ_MIN_BET', '1'), 10),
+
   // ---- Physics / table (server units) ----
   TABLE: {
     width: 11,         // X extent of the shelf
