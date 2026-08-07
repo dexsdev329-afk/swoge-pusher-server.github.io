@@ -21,6 +21,7 @@ const cfg = require('./config');
 
 const WEI = (n) => ethers.utils.parseUnits(String(n), cfg.DECIMALS);
 const COST = WEI(cfg.DROP_COST);
+const SPIN_COST = WEI(cfg.SPIN_COST || '1');
 const MINW = WEI(cfg.MIN_WITHDRAW);
 const BN = (n) => ethers.BigNumber.from(n);
 const MS_YEAR = BN('31536000000'); // 365*24*3600*1000
@@ -290,6 +291,36 @@ class Game {
 
   /** Give back a drop cost (the table was full, so no coin was placed). */
   refund(addr) { const p = this._p(addr); p.balance = p.balance.add(COST); }
+
+  canSpin(addr) { return this._p(addr).balance.gte(SPIN_COST); }
+
+  /**
+   * SWOGE Smash: one spin. Deducts SPIN_COST, rolls a provably-fair multiplier
+   * from cfg.SPIN_PRIZES (RTP = 50%) and credits (multiplier × SPIN_COST).
+   * Fully synchronous — like drop() — so two concurrent spins can never both
+   * pass the balance check (Node is single-threaded; the second sees the
+   * already-deducted balance). Returns { mult, payout } or null if too poor.
+   */
+  spin(addr) {
+    const p = this._p(addr);
+    if (p.balance.lt(SPIN_COST)) return null;
+    p.balance = p.balance.sub(SPIN_COST);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(SPIN_COST); p.dropsToday++;
+    const h = crypto.createHmac('sha256', this.serverSeed)
+      .update(p.clientSeed + ':' + p.nonce).digest('hex');
+    p.nonce++;
+    let r = Number(BigInt('0x' + h.slice(0, 15)) % BigInt(cfg.SPIN_TOTAL));
+    let mult = 0;
+    for (let i = 0; i < cfg.SPIN_PRIZES.length; i++) { r -= cfg.SPIN_PRIZES[i][1]; if (r < 0) { mult = cfg.SPIN_PRIZES[i][0]; break; } }
+    let payout = 0;
+    if (mult > 0) {
+      const pay = SPIN_COST.mul(mult);
+      p.balance = p.balance.add(pay);
+      this._bumpDay(p); p.dayNet = p.dayNet.add(pay); p.winsToday++;
+      payout = mult * Number(cfg.SPIN_COST || '1');
+    }
+    return { mult, payout };
+  }
 
   /** A coin was pushed off the front → credit its owner. */
   win(addr, value) {
