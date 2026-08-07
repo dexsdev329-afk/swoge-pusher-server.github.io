@@ -43,8 +43,11 @@ const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '?';
 const fmtAmt = (s) => { const n = parseFloat(s || '0'); return n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : n.toFixed(n < 1 ? 4 : 0); };
 function stakedPct() {
   if (!supplyWei || supplyWei.isZero()) return null;
-  const bps = game.totalStaked().mul(10000).div(supplyWei); // 2-dec %
-  return (bps.toNumber() / 100).toFixed(2);
+  // percent × 1e4 → 4-decimal precision (0.01% basis points truncated tiny pools to 0.00%)
+  const p4 = game.totalStaked().mul(1000000).div(supplyWei);
+  const pct = p4.toNumber() / 10000;
+  // show up to 4 decimals but drop trailing zeros (5% not 5.0000%, 0.0012% stays)
+  return pct.toFixed(4).replace(/\.?0+$/, '');
 }
 
 const clients = new Set();                 // all sockets
@@ -201,7 +204,8 @@ wss.on('connection', (ws) => {
           send(ws, { type: 'stakeInfo', ...game.stakeInfo(ws.addr), balance: game.balanceStr(ws.addr) });
           if (m.type === 'stake' && parseFloat(m.amount) >= cfg.NOTIFY_STAKE_MIN) {
             const pct = stakedPct();
-            tg.notifyPhoto(cfg.STAKE_IMAGE, `🔒 <b>New stake</b>\n${short(ws.addr)} staked <b>${fmtAmt(m.amount)} $SWOGE</b>` + (pct ? `\n📊 Total staked: <b>${pct}%</b> of supply` : ''));
+            const totalStr = fmtAmt(ethers.utils.formatUnits(game.totalStaked(), cfg.DECIMALS));
+            tg.notifyPhoto(cfg.STAKE_IMAGE, `🔒 <b>New stake</b>\n${short(ws.addr)} staked <b>${fmtAmt(m.amount)} $SWOGE</b>` + `\n📊 Total staked: <b>${totalStr} $SWOGE</b>` + (pct ? ` (${pct}% of supply)` : ''));
           }
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
