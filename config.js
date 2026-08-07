@@ -103,6 +103,22 @@ module.exports = {
   ],
   PRIZE_TOTAL: 10000000,
 
+  // ---- SWOGE Smash (spin game) — provably-fair, RTP = 50% ----
+  // 1 spin costs SPIN_COST $SWOGE and pays (multiplier × SPIN_COST).
+  // [multiplier, weight] out of SPIN_TOTAL. Σ(weight·mult)/SPIN_TOTAL must equal
+  // the target RTP. Here Σ = 5,000,000 / 10,000,000 = 0.50 exactly (RTP 50%).
+  SPIN_COST: env('SPIN_COST', '1'),
+  SPIN_PRIZES: [
+    [0,    8576000],  // 85.76%  smash → nothing
+    [1,     900000],  //  9.00%  money back
+    [2,     300000],  //  3.00%
+    [5,     100000],  //  1.00%
+    [10,    100000],  //  1.00%
+    [50,     20000],  //  0.20%
+    [250,     4000],  //  0.04%  jackpot shard
+  ],
+  SPIN_TOTAL: 10000000,
+
   // ---- Physics / table (server units) ----
   TABLE: {
     width: 11,         // X extent of the shelf
