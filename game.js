@@ -18,6 +18,7 @@
 const crypto = require('crypto');
 const { ethers } = require('ethers');
 const cfg = require('./config');
+const volcano = require('./volcano');
 
 const WEI = (n) => ethers.utils.parseUnits(String(n), cfg.DECIMALS);
 const COST = WEI(cfg.DROP_COST);
@@ -49,7 +50,7 @@ class Game {
         dn: p.dayNet.toString(), dk: p.dayKey,
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
-        bj: p.bj || null,
+        bj: p.bj || null, vm: p.volcanoMeter || 0,
       }]);
     }
     return { v: 1, serverSeed: this.serverSeed, jackpotPot: this.jackpotPot.toString(),
@@ -77,7 +78,7 @@ class Game {
               ? [{ a: ethers.BigNumber.from(d.st), s: d.ss || Date.now(), u: (d.ss || Date.now()) + cfg.STAKE_LOCK_DAYS * 86400000 }]
               : []),
         stakeAccrued: ethers.BigNumber.from(d.sa || '0'),
-        bj: d.bj || null,
+        bj: d.bj || null, volcanoMeter: d.vm || 0,
       });
     }
   }
@@ -236,7 +237,7 @@ class Game {
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
             dayNet: ethers.BigNumber.from(0), dayKey: null,
             dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false,
-            stakes: [], stakeAccrued: ethers.BigNumber.from(0) };
+            stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0 };
       this.players.set(addr, p);
     }
     return p;
@@ -322,6 +323,59 @@ class Game {
       payout = mult * Number(cfg.SPIN_COST || '1');
     }
     return { mult, payout };
+  }
+
+  volcanoMeterOf(addr) { return this._p(addr).volcanoMeter || 0; }
+
+  /**
+   * SWOGE Spin (Volcano). One spin at `bet` $SWOGE. Deducts the bet, computes a
+   * provably-fair outcome server-side (client only animates it, so wins can't be
+   * faked), tracks the per-player collect meter, and credits base×bet. RTP ~70%.
+   * Returns { outcome, bet, payout, balance, fairness } or { error }.
+   */
+  volcanoSpin(addr, bet) {
+    const p = this._p(addr);
+    bet = Math.floor(Number(bet));
+    if (!cfg.VOLCANO_BETS.includes(bet)) throw new Error('invalid bet');
+    const betWei = WEI(bet);
+    if (p.balance.lt(betWei)) return { error: 'need_deposit' };
+    p.balance = p.balance.sub(betWei);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++;
+    const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':' + p.nonce).digest('hex');
+    p.nonce++;
+    const out = volcano.spinAll(volcano.rngFrom(h), p.volcanoMeter || 0);
+    p.volcanoMeter = out.meter;
+    let payout = 0;
+    if (out.totalInternal > 0) {
+      const payWei = WEI(out.totalInternal * bet);
+      p.balance = p.balance.add(payWei);
+      this._bumpDay(p); p.dayNet = p.dayNet.add(payWei); p.winsToday++;
+      payout = out.totalInternal * bet;
+    }
+    return { outcome: out, bet, payout, balance: this.balanceStr(addr), fairness: this.fairness(addr) };
+  }
+
+  /** Buy the bonus directly: costs bet × VOLCANO_BONUS_COST_MULT, runs a guaranteed bonus. */
+  volcanoBuyBonus(addr, bet) {
+    const p = this._p(addr);
+    bet = Math.floor(Number(bet));
+    if (!cfg.VOLCANO_BETS.includes(bet)) throw new Error('invalid bet');
+    const cost = bet * cfg.VOLCANO_BONUS_COST_MULT;
+    const costWei = WEI(cost);
+    if (p.balance.lt(costWei)) return { error: 'need_deposit' };
+    p.balance = p.balance.sub(costWei);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(costWei); p.dropsToday++;
+    const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':' + p.nonce).digest('hex');
+    p.nonce++;
+    const bonus = volcano.runBonus(3, volcano.rngFrom(h));
+    let payout = 0;
+    if (bonus.total > 0) {
+      const payWei = WEI(bonus.total * bet);
+      p.balance = p.balance.add(payWei);
+      this._bumpDay(p); p.dayNet = p.dayNet.add(payWei); p.winsToday++;
+      payout = bonus.total * bet;
+    }
+    return { outcome: { bonus }, bet, cost, payout, balance: this.balanceStr(addr), fairness: this.fairness(addr) };
   }
 
   // ===== SWOGE Blackjack (provably-fair, infinite deck, dealer stands on 17) =====
