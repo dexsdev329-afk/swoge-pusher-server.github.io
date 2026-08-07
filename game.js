@@ -49,6 +49,7 @@ class Game {
         dn: p.dayNet.toString(), dk: p.dayKey,
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
+        bj: p.bj || null,
       }]);
     }
     return { v: 1, serverSeed: this.serverSeed, jackpotPot: this.jackpotPot.toString(),
@@ -76,6 +77,7 @@ class Game {
               ? [{ a: ethers.BigNumber.from(d.st), s: d.ss || Date.now(), u: (d.ss || Date.now()) + cfg.STAKE_LOCK_DAYS * 86400000 }]
               : []),
         stakeAccrued: ethers.BigNumber.from(d.sa || '0'),
+        bj: d.bj || null,
       });
     }
   }
@@ -320,6 +322,92 @@ class Game {
       payout = mult * Number(cfg.SPIN_COST || '1');
     }
     return { mult, payout };
+  }
+
+  // ===== SWOGE Blackjack (provably-fair, infinite deck, dealer stands on 17) =====
+  // rank index: 0=A, 1..8 = 2..9, 9=10, 10=J, 11=Q, 12=K
+  _bjDraw(p) {
+    const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':bj:' + p.nonce).digest('hex');
+    p.nonce++;
+    return Number(BigInt('0x' + h.slice(0, 15)) % BigInt(13));
+  }
+  _bjVal(ranks) {
+    let sum = 0, aces = 0;
+    for (const r of ranks) { if (r === 0) { sum += 11; aces++; } else if (r >= 9) sum += 10; else sum += r + 1; }
+    while (sum > 21 && aces) { sum -= 10; aces--; }
+    return sum;
+  }
+  _bjDealerPlay(p) { while (this._bjVal(p.bj.dc) < 17) p.bj.dc.push(this._bjDraw(p)); }
+  _bjPublic(p, reveal) {
+    const b = p.bj, show = reveal || b.stage === 'done';
+    return {
+      bet: b.bet, doubled: !!b.doubled, stage: b.stage,
+      player: { cards: b.pc.slice(), value: this._bjVal(b.pc) },
+      dealer: { cards: show ? b.dc.slice() : [b.dc[0]], value: show ? this._bjVal(b.dc) : this._bjVal([b.dc[0]]), hidden: !show },
+      canDouble: b.stage === 'player' && b.pc.length === 2 && p.balance.gte(WEI(b.bet)),
+      result: b.result || null, payout: b.payout || 0,
+      balance: ethers.utils.formatUnits(p.balance, cfg.DECIMALS),
+      fairness: { serverSeedHash: this.serverSeedHash, nonce: p.nonce },
+    };
+  }
+  _bjSettle(p, stake) {   // stake already deducted; credit the return
+    const pv = this._bjVal(p.bj.pc), dv = this._bjVal(p.bj.dc);
+    let res, credit = 0;
+    if (pv > 21) res = 'bust';
+    else if (dv > 21 || pv > dv) { res = 'win'; credit = stake * 2; }
+    else if (pv < dv) res = 'lose';
+    else { res = 'push'; credit = stake; }
+    if (credit > 0) { p.balance = p.balance.add(WEI(credit)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(credit)); if (res === 'win') p.winsToday++; }
+    p.bj.stage = 'done'; p.bj.result = res; p.bj.payout = credit;
+  }
+
+  bjState(addr) { const p = this._p(addr); return p.bj ? this._bjPublic(p, false) : null; }
+
+  bjBet(addr, amountRaw) {
+    const p = this._p(addr);
+    if (p.bj && p.bj.stage !== 'done') throw new Error('hand in progress');
+    const amt = Math.floor(Number(amountRaw));
+    if (!(amt >= cfg.BJ_MIN_BET)) throw new Error('bet too small');
+    if (amt > cfg.BJ_MAX_BET) throw new Error('max bet is ' + cfg.BJ_MAX_BET + ' $SWOGE');
+    const w = WEI(amt);
+    if (p.balance.lt(w)) throw new Error('not enough $SWOGE');
+    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); p.dropsToday++;
+    p.bj = { bet: amt, pc: [this._bjDraw(p), this._bjDraw(p)], dc: [this._bjDraw(p), this._bjDraw(p)], stage: 'player', doubled: false, result: null, payout: 0 };
+    const pv = this._bjVal(p.bj.pc), dv = this._bjVal(p.bj.dc);
+    if (pv === 21 || dv === 21) {
+      if (pv === 21 && dv === 21) { p.bj.stage = 'done'; p.bj.result = 'push'; p.balance = p.balance.add(w); this._bumpDay(p); p.dayNet = p.dayNet.add(w); p.bj.payout = amt; }
+      else if (pv === 21) { const credit = amt * 2.5; p.balance = p.balance.add(WEI(credit)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(credit)); p.winsToday++; p.bj.stage = 'done'; p.bj.result = 'blackjack'; p.bj.payout = credit; }
+      else { p.bj.stage = 'done'; p.bj.result = 'dealer_blackjack'; p.bj.payout = 0; }
+    }
+    return this._bjPublic(p, p.bj.stage === 'done');
+  }
+
+  bjHit(addr) {
+    const p = this._p(addr);
+    if (!p.bj || p.bj.stage !== 'player') throw new Error('no active hand');
+    p.bj.pc.push(this._bjDraw(p));
+    if (this._bjVal(p.bj.pc) > 21) this._bjSettle(p, p.bj.doubled ? p.bj.bet * 2 : p.bj.bet);
+    return this._bjPublic(p, p.bj.stage === 'done');
+  }
+
+  bjStand(addr) {
+    const p = this._p(addr);
+    if (!p.bj || p.bj.stage !== 'player') throw new Error('no active hand');
+    this._bjDealerPlay(p);
+    this._bjSettle(p, p.bj.doubled ? p.bj.bet * 2 : p.bj.bet);
+    return this._bjPublic(p, true);
+  }
+
+  bjDouble(addr) {
+    const p = this._p(addr);
+    if (!p.bj || p.bj.stage !== 'player' || p.bj.pc.length !== 2) throw new Error('cannot double now');
+    const w = WEI(p.bj.bet);
+    if (p.balance.lt(w)) throw new Error('not enough to double');
+    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); p.bj.doubled = true;
+    p.bj.pc.push(this._bjDraw(p));
+    if (this._bjVal(p.bj.pc) <= 21) this._bjDealerPlay(p);
+    this._bjSettle(p, p.bj.bet * 2);
+    return this._bjPublic(p, true);
   }
 
   /** A coin was pushed off the front → credit its owner. */
