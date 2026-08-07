@@ -155,6 +155,15 @@ wss.on('connection', (ws) => {
         }
         return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
       }
+      if (m.type === 'spin') {
+        // SWOGE Smash: 1 spin = SPIN_COST $SWOGE, provably-fair, RTP 50%.
+        // Shares the exact same balance as the Pusher (same game.players map).
+        const r = game.spin(ws.addr);
+        if (r === null) return send(ws, { type: 'need_deposit', balance: game.balanceStr(ws.addr) });
+        persistSoon();
+        if (r.payout >= cfg.NOTIFY_WIN_MIN) tg.notify(`🎰 <b>Smash win!</b>\n${game._p(ws.addr).name} hit <b>${r.mult}×</b> for <b>${r.payout} $SWOGE</b> 🐕`);
+        return send(ws, { type: 'spinResult', mult: r.mult, payout: r.payout, balance: game.balanceStr(ws.addr), fairness: game.fairness(ws.addr) });
+      }
       if (m.type === 'devCredit' && process.env.DEV_FAUCET === '1') {
         game.creditDeposit({ player: ws.addr, amount: require('ethers').ethers.utils.parseUnits('1000', cfg.DECIMALS), tx: 'dev:' + Date.now() + Math.random() });
         return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
