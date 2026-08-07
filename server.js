@@ -135,7 +135,7 @@ wss.on('connection', (ws) => {
         if (!byAddr.has(rec)) byAddr.set(rec, new Set());
         byAddr.get(rec).add(ws);
         if (m.name) game.setName(rec, m.name);
-        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec) });
+        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec), volcano: { meter: game.volcanoMeterOf(rec) } });
       }
       if (!ws.addr) return send(ws, { type: 'error', error: 'login required' });
 
@@ -166,6 +166,18 @@ wss.on('connection', (ws) => {
         persistSoon();
         if (r.payout >= cfg.NOTIFY_WIN_MIN) tg.notify(`🎰 <b>Smash win!</b>\n${game._p(ws.addr).name} hit <b>${r.mult}×</b> for <b>${r.payout} $SWOGE</b> 🐕`);
         return send(ws, { type: 'spinResult', mult: r.mult, payout: r.payout, balance: game.balanceStr(ws.addr), fairness: game.fairness(ws.addr) });
+      }
+      if (m.type === 'volcanoSpin' || m.type === 'volcanoBuyBonus') {
+        // SWOGE Spin (Volcano). Server-authoritative, provably fair, RTP ~70%.
+        // Shares the same balance as every other game.
+        try {
+          const r = m.type === 'volcanoSpin' ? game.volcanoSpin(ws.addr, m.bet) : game.volcanoBuyBonus(ws.addr, m.bet);
+          if (r.error) return send(ws, { type: 'need_deposit', balance: game.balanceStr(ws.addr) });
+          persistSoon();
+          if (r.payout >= cfg.NOTIFY_WIN_MIN) tg.notify(`🌋 <b>SWOGE Spin win!</b>\n${game._p(ws.addr).name} won <b>${r.payout} $SWOGE</b> 🐕`);
+          send(ws, { type: 'volcanoResult', ...r });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
       }
       if (m.type === 'bj_bet' || m.type === 'bj_hit' || m.type === 'bj_stand' || m.type === 'bj_double') {
         // SWOGE Blackjack — same shared balance, provably-fair, server-authoritative.
