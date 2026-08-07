@@ -132,7 +132,7 @@ wss.on('connection', (ws) => {
         if (!byAddr.has(rec)) byAddr.set(rec, new Set());
         byAddr.get(rec).add(ws);
         if (m.name) game.setName(rec, m.name);
-        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec) });
+        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec) });
       }
       if (!ws.addr) return send(ws, { type: 'error', error: 'login required' });
 
@@ -163,6 +163,20 @@ wss.on('connection', (ws) => {
         persistSoon();
         if (r.payout >= cfg.NOTIFY_WIN_MIN) tg.notify(`🎰 <b>Smash win!</b>\n${game._p(ws.addr).name} hit <b>${r.mult}×</b> for <b>${r.payout} $SWOGE</b> 🐕`);
         return send(ws, { type: 'spinResult', mult: r.mult, payout: r.payout, balance: game.balanceStr(ws.addr), fairness: game.fairness(ws.addr) });
+      }
+      if (m.type === 'bj_bet' || m.type === 'bj_hit' || m.type === 'bj_stand' || m.type === 'bj_double') {
+        // SWOGE Blackjack — same shared balance, provably-fair, server-authoritative.
+        try {
+          let st;
+          if (m.type === 'bj_bet') st = game.bjBet(ws.addr, m.amount);
+          else if (m.type === 'bj_hit') st = game.bjHit(ws.addr);
+          else if (m.type === 'bj_stand') st = game.bjStand(ws.addr);
+          else st = game.bjDouble(ws.addr);
+          persistSoon();
+          if (st.stage === 'done' && st.payout >= cfg.NOTIFY_WIN_MIN) tg.notify(`🃏 <b>Blackjack win!</b>\n${game._p(ws.addr).name} won <b>${st.payout} $SWOGE</b> 🐕`);
+          send(ws, { type: 'bj', state: st });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
       }
       if (m.type === 'devCredit' && process.env.DEV_FAUCET === '1') {
         game.creditDeposit({ player: ws.addr, amount: require('ethers').ethers.utils.parseUnits('1000', cfg.DECIMALS), tx: 'dev:' + Date.now() + Math.random() });
