@@ -123,6 +123,11 @@ module.exports = {
   BJ_MAX_BET: parseInt(env('BJ_MAX_BET', '10000'), 10),  // max $SWOGE per hand
   BJ_MIN_BET: parseInt(env('BJ_MIN_BET', '1'), 10),
 
+  // ---- SWOGE Spin (Volcano slot) ----
+  // Allowed bets; each spin costs `bet` $SWOGE, payout = base × bet (RTP ~70%).
+  VOLCANO_BETS: [10, 20, 50, 100, 500, 1000, 10000, 100000],
+  VOLCANO_BONUS_COST_MULT: 100,   // "Buy Bonus" costs bet × this
+
   // ---- Physics / table (server units) ----
   TABLE: {
     width: 11,         // X extent of the shelf
