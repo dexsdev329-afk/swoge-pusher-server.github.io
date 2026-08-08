@@ -150,7 +150,7 @@ module.exports = {
   // ---- SWOGE Spin (Volcano slot) ----
   // Allowed bets; each spin costs `bet` $SWOGE, payout = base × bet (RTP ~70%).
   VOLCANO_BETS: [10, 20, 50, 100, 500, 1000, 10000, 100000],
-  VOLCANO_BONUS_COST_MULT: 100,   // "Buy Bonus" costs bet × this
+  VOLCANO_BONUS_COST_MULT: 33,   // "Buy Bonus" costs bet × this (tuned so the bought feature is ~70% RTP, matching the base game, after the fuller-board rebalance)
 
   // ---- Physics / table (server units) ----
   TABLE: {
