@@ -30,6 +30,7 @@ const MS_YEAR = BN('31536000000'); // 365*24*3600*1000
 class Game {
   constructor() {
     this.players = new Map(); // addr -> { balance, cumulativeAuthorized, clientSeed, nonce, name, dayNet, dayKey, dropsToday, winsToday, questClaimed, hasDeposited }
+    this.telegramMap = new Map(); // telegramId (string) -> addr, so the Adsgram reward postback can find the account
     this.seenTx = new Set();  // dedupe deposits
     this.lastBlock = 0;       // deposit-scan watermark (persisted so a restart resumes)
     this._stakeRateBps = BN(cfg.STAKE_APR_BPS);
@@ -51,10 +52,15 @@ class Game {
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
         bj: p.bj || null, vm: p.volcanoMeter || 0,
+        tg: p.tgId || null,
+        wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
+        sd: p.streakDay || 0, sl: p.streakLastClaimDay || null,
+        ac: p.adCount || 0, ak: p.adDayKey || null, al: p.adLastMs || 0,
       }]);
     }
     return { v: 1, serverSeed: this.serverSeed, jackpotPot: this.jackpotPot.toString(),
-             lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx), players };
+             lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx), players,
+             telegramMap: Array.from(this.telegramMap) };
   }
 
   /** Restore a snapshot produced by serialize() (called once at startup). */
@@ -79,11 +85,20 @@ class Game {
               : []),
         stakeAccrued: ethers.BigNumber.from(d.sa || '0'),
         bj: d.bj || null, volcanoMeter: d.vm || 0,
+        tgId: d.tg || null,
+        welcomeGranted: !!d.wg, welcomeWagered: !!d.ww, welcomeClaimed: !!d.wc,
+        streakDay: d.sd || 0, streakLastClaimDay: d.sl || null,
+        adCount: d.ac || 0, adDayKey: d.ak || null, adLastMs: d.al || 0,
       });
     }
+    if (Array.isArray(st.telegramMap)) this.telegramMap = new Map(st.telegramMap.map((e) => [String(e[0]), String(e[1]).toLowerCase()]));
   }
 
   _today() { return new Date().toISOString().slice(0, 10); } // UTC day key
+  // UTC day key shifted by `n` days (n<0 = past). Used for streak "was yesterday?".
+  _dayShift(n) { return new Date(Date.now() + n * 86400000).toISOString().slice(0, 10); }
+  // Called every time a player actually stakes a bet — unlocks the welcome claim.
+  _markWager(p) { if (p && !p.welcomeWagered) p.welcomeWagered = true; }
   _bumpDay(p) {
     const t = this._today();
     if (p.dayKey !== t) { p.dayKey = t; p.dayNet = ethers.BigNumber.from(0); p.dropsToday = 0; p.winsToday = 0; p.questClaimed = {}; }
@@ -214,6 +229,113 @@ class Game {
     return q.reward;
   }
 
+  // ---- Telegram link (for the Adsgram reward postback) ----
+  linkTelegram(addr, tgId) {
+    if (!tgId) return;
+    tgId = String(tgId);
+    const p = this._p(addr);
+    p.tgId = tgId;
+    this.telegramMap.set(tgId, addr.toLowerCase());
+  }
+
+  // ---- New-player welcome bonus (granted once, on first authenticated login) ----
+  /** Grant the demo credit exactly once. Returns the granted amount (0 if already given). */
+  grantWelcome(addr) {
+    const p = this._p(addr);
+    if (p.welcomeGranted) return 0;
+    p.welcomeGranted = true;
+    if (cfg.WELCOME_BONUS > 0) { p.balance = p.balance.add(WEI(cfg.WELCOME_BONUS)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(cfg.WELCOME_BONUS)); }
+    return cfg.WELCOME_BONUS;
+  }
+
+  /** Claim the extra welcome reward — allowed only after the player has wagered. */
+  claimWelcome(addr) {
+    const p = this._p(addr);
+    if (!p.welcomeGranted) throw new Error('welcome bonus not granted yet');
+    if (!p.welcomeWagered) throw new Error('play your welcome bonus first');
+    if (p.welcomeClaimed) throw new Error('welcome reward already claimed');
+    p.welcomeClaimed = true;
+    const r = WEI(cfg.WELCOME_CLAIM);
+    p.balance = p.balance.add(r); this._bumpDay(p); p.dayNet = p.dayNet.add(r);
+    return cfg.WELCOME_CLAIM;
+  }
+
+  // ---- 7-day login streak ----
+  /** The streak day that TODAY's claim would credit (1..N), without mutating. */
+  _streakToday(p) {
+    const rewards = cfg.STREAK_REWARDS, N = rewards.length || 1;
+    const today = this._today();
+    if (p.streakLastClaimDay === today) return { day: p.streakDay, claimedToday: true };
+    let day;
+    if (p.streakLastClaimDay === this._dayShift(-1)) day = (p.streakDay % N) + 1; // consecutive → next (wraps N→1)
+    else day = 1; // first ever, or a gap → restart
+    return { day, claimedToday: false };
+  }
+
+  /** Public streak state for the UI. */
+  streakState(addr) {
+    const p = this._p(addr);
+    const rewards = cfg.STREAK_REWARDS;
+    const s = this._streakToday(p);
+    return { day: s.day, claimedToday: s.claimedToday, rewards,
+             todayReward: rewards[(s.day - 1) % rewards.length] || 0,
+             claimable: !s.claimedToday };
+  }
+
+  /** Claim today's streak reward (once per UTC day). Returns { day, reward }. */
+  claimStreak(addr) {
+    const p = this._p(addr);
+    const s = this._streakToday(p);
+    if (s.claimedToday) throw new Error('streak already claimed today');
+    const reward = cfg.STREAK_REWARDS[(s.day - 1) % cfg.STREAK_REWARDS.length] || 0;
+    p.streakDay = s.day;
+    p.streakLastClaimDay = this._today();
+    if (reward > 0) { const r = WEI(reward); p.balance = p.balance.add(r); this._bumpDay(p); p.dayNet = p.dayNet.add(r); }
+    return { day: s.day, reward };
+  }
+
+  /** Combined welcome + streak state for the client. */
+  bonusState(addr) {
+    const p = this._p(addr);
+    return {
+      welcome: { granted: !!p.welcomeGranted, wagered: !!p.welcomeWagered, claimed: !!p.welcomeClaimed,
+                 amount: cfg.WELCOME_BONUS, reward: cfg.WELCOME_CLAIM,
+                 claimable: !!p.welcomeGranted && !!p.welcomeWagered && !p.welcomeClaimed },
+      streak: this.streakState(addr),
+      ad: this.adState(addr),
+    };
+  }
+
+  // ---- Rewarded video ads (Adsgram) ----
+  _adBump(p) { const t = this._today(); if (p.adDayKey !== t) { p.adDayKey = t; p.adCount = 0; } }
+  /** How many ad rewards are left today + cooldown remaining (seconds). */
+  adState(addr) {
+    const p = this._p(addr); this._adBump(p);
+    const left = Math.max(0, cfg.AD_DAILY_CAP - (p.adCount || 0));
+    const cool = Math.max(0, Math.ceil((p.adLastMs + cfg.AD_COOLDOWN_SEC * 1000 - Date.now()) / 1000));
+    return { reward: cfg.AD_REWARD, dailyCap: cfg.AD_DAILY_CAP, watchedToday: p.adCount || 0, left, cooldown: cool, blockId: cfg.ADSGRAM_BLOCK_ID };
+  }
+
+  /**
+   * Credit an Adsgram rewarded video, looked up by Telegram id. Enforces the
+   * daily cap + cooldown so the reward postback can't be replayed for free coins.
+   * Returns { ok, reward, balance, addr } or { ok:false, reason }.
+   */
+  grantAdReward(tgId) {
+    tgId = String(tgId || '');
+    const addr = this.telegramMap.get(tgId);
+    if (!addr) return { ok: false, reason: 'unknown_user' };
+    const p = this._p(addr); this._adBump(p);
+    const now = Date.now();
+    if (now < p.adLastMs + cfg.AD_COOLDOWN_SEC * 1000) return { ok: false, reason: 'cooldown', addr };
+    if ((p.adCount || 0) >= cfg.AD_DAILY_CAP) return { ok: false, reason: 'daily_cap', addr };
+    p.adCount = (p.adCount || 0) + 1;
+    p.adLastMs = now;
+    const r = WEI(cfg.AD_REWARD);
+    p.balance = p.balance.add(r); this._bumpDay(p); p.dayNet = p.dayNet.add(r);
+    return { ok: true, reward: cfg.AD_REWARD, balance: this.balanceStr(addr), addr };
+  }
+
   /** Top `n` players by today's net gain (winners only). */
   leaderboard(n) {
     const t = this._today(), arr = [];
@@ -237,7 +359,9 @@ class Game {
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
             dayNet: ethers.BigNumber.from(0), dayKey: null,
             dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false,
-            stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0 };
+            stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0,
+            tgId: null, welcomeGranted: false, welcomeWagered: false, welcomeClaimed: false,
+            streakDay: 0, streakLastClaimDay: null, adCount: 0, adDayKey: null, adLastMs: 0 };
       this.players.set(addr, p);
     }
     return p;
@@ -271,7 +395,7 @@ class Game {
     const p = this._p(addr);
     if (p.balance.lt(COST)) return null;
     p.balance = p.balance.sub(COST);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(COST); p.dropsToday++;
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(COST); p.dropsToday++; this._markWager(p);
     const h = crypto.createHmac('sha256', this.serverSeed)
       .update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
@@ -308,7 +432,7 @@ class Game {
     const p = this._p(addr);
     if (p.balance.lt(SPIN_COST)) return null;
     p.balance = p.balance.sub(SPIN_COST);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(SPIN_COST); p.dropsToday++;
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(SPIN_COST); p.dropsToday++; this._markWager(p);
     const h = crypto.createHmac('sha256', this.serverSeed)
       .update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
@@ -340,7 +464,7 @@ class Game {
     const betWei = WEI(bet);
     if (p.balance.lt(betWei)) return { error: 'need_deposit' };
     p.balance = p.balance.sub(betWei);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++;
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++; this._markWager(p);
     const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
     const out = volcano.spinAll(volcano.rngFrom(h), p.volcanoMeter || 0);
@@ -364,7 +488,7 @@ class Game {
     const costWei = WEI(cost);
     if (p.balance.lt(costWei)) return { error: 'need_deposit' };
     p.balance = p.balance.sub(costWei);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(costWei); p.dropsToday++;
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(costWei); p.dropsToday++; this._markWager(p);
     const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
     const bonus = volcano.runBonus(3, volcano.rngFrom(h));
@@ -425,7 +549,7 @@ class Game {
     if (amt > cfg.BJ_MAX_BET) throw new Error('max bet is ' + cfg.BJ_MAX_BET + ' $SWOGE');
     const w = WEI(amt);
     if (p.balance.lt(w)) throw new Error('not enough $SWOGE');
-    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); p.dropsToday++;
+    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); p.dropsToday++; this._markWager(p);
     p.bj = { bet: amt, pc: [this._bjDraw(p), this._bjDraw(p)], dc: [this._bjDraw(p), this._bjDraw(p)], stage: 'player', doubled: false, result: null, payout: 0 };
     const pv = this._bjVal(p.bj.pc), dv = this._bjVal(p.bj.dc);
     if (pv === 21 || dv === 21) {
