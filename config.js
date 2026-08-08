@@ -60,6 +60,30 @@ module.exports = {
   ],
   QUEST_REQUIRE_DEPOSIT: env('QUEST_REQUIRE_DEPOSIT', '1') === '1',
 
+  // ---- New-player welcome bonus (wager-locked) ----
+  // A brand-new player gets WELCOME_BONUS $SWOGE to try the game. Once they've
+  // actually WAGERED at least once (skin in the game — stops throwaway farming),
+  // they can claim an extra WELCOME_CLAIM reward, one time.
+  WELCOME_BONUS: parseFloat(env('WELCOME_BONUS', '1')),   // demo credit granted on first login
+  WELCOME_CLAIM: parseFloat(env('WELCOME_CLAIM', '5')),   // extra reward, unlocked after wagering
+
+  // ---- 7-day consecutive login streak ----
+  // One claim per UTC day; a skipped day resets the streak to day 1. Reward
+  // escalates J1→J7, then wraps back to J1. Comma-separated wei-free amounts.
+  STREAK_REWARDS: env('STREAK_REWARDS', '1,2,3,5,7,10,15')
+    .split(',').map(function (x) { return parseFloat(x.trim()) || 0; }),
+
+  // ---- Rewarded video ads (Adsgram) ----
+  // Adsgram calls REWARD_URL (server-to-server) when a user finishes a video.
+  // We credit AD_REWARD $SWOGE, capped at AD_DAILY_CAP/day with a cooldown so a
+  // single user can't spam. ADSGRAM_KEY guards the endpoint (must be non-empty
+  // in production, else the endpoint is disabled).
+  AD_REWARD: parseFloat(env('AD_REWARD', '10')),               // $SWOGE per finished video
+  AD_DAILY_CAP: parseInt(env('AD_DAILY_CAP', '5'), 10),        // max rewarded videos / day / player
+  AD_COOLDOWN_SEC: parseInt(env('AD_COOLDOWN_SEC', '30'), 10), // min seconds between two rewards
+  ADSGRAM_KEY: env('ADSGRAM_KEY', ''),                         // shared secret in the Reward URL
+  ADSGRAM_BLOCK_ID: env('ADSGRAM_BLOCK_ID', '41851'),          // Adsgram UnitID (sent to the client)
+
   // ---- Staking (yield on staked $SWOGE, claimable anytime) ----
   // Paid FROM the vault — fund it (ownerDeposit) or it drains. 100% APR is a
   // BIG liability (you owe double after a year), so keep the vault funded.
