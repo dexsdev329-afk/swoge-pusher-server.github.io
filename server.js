@@ -64,6 +64,30 @@ const server = http.createServer(async (req, res) => {
   const key = new URLSearchParams(req.url.split('?')[1] || '').get('key') || '';
   const authed = !cfg.ADMIN_KEY || key === cfg.ADMIN_KEY; // open if no key configured
   if (req.url === '/health') { res.writeHead(200); return res.end('ok'); }
+  // Adsgram rewarded-video postback (server-to-server). Adsgram GETs this when a
+  // user finishes a video: /adsgram/reward?userid=[TelegramId]&key=SECRET.
+  // We verify the shared secret, credit the (capped) reward and push the new
+  // balance to the player's live sockets. Always 200 on a valid key so Adsgram
+  // doesn't retry a cooldown/cap as a failure; 403 only on a bad/absent key.
+  if (path === '/adsgram/reward') {
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    const userid = qs.get('userid') || qs.get('userId') || qs.get('user_id') || '';
+    const rkey = qs.get('key') || '';
+    if (!cfg.ADSGRAM_KEY || rkey !== cfg.ADSGRAM_KEY) {
+      res.writeHead(403, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: 'forbidden' }));
+    }
+    const r = game.grantAdReward(userid);
+    if (r.ok) {
+      persistSoon();
+      toAddr(r.addr, { type: 'adReward', reward: r.reward, balance: r.balance, ad: game.adState(r.addr), bonus: game.bonusState(r.addr) });
+      console.log(`[adsgram] rewarded ${userid} → ${r.addr} +${r.reward} $SWOGE`);
+    } else {
+      console.log(`[adsgram] no reward for ${userid}: ${r.reason}`);
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(r));
+  }
   // Private owner dashboard (HTML)
   if (path === '/admin') {
     if (!authed) { res.writeHead(401, { 'content-type': 'text/html' }); return res.end('<h3>401 — add ?key=YOUR_ADMIN_KEY</h3>'); }
@@ -135,7 +159,10 @@ wss.on('connection', (ws) => {
         if (!byAddr.has(rec)) byAddr.set(rec, new Set());
         byAddr.get(rec).add(ws);
         if (m.name) game.setName(rec, m.name);
-        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec), volcano: { meter: game.volcanoMeterOf(rec) } });
+        if (m.tgId) game.linkTelegram(rec, m.tgId); // map Telegram id → account for the Adsgram reward postback
+        const welcome = game.grantWelcome(rec);      // one-time demo credit for a brand-new player
+        if (welcome > 0) persistSoon();
+        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec), volcano: { meter: game.volcanoMeterOf(rec) }, bonus: game.bonusState(rec), welcomeGranted: welcome });
       }
       if (!ws.addr) return send(ws, { type: 'error', error: 'login required' });
 
@@ -207,6 +234,23 @@ wss.on('connection', (ws) => {
         return;
       }
       if (m.type === 'quests') return send(ws, { type: 'quests', quests: game.questState(ws.addr) });
+      if (m.type === 'bonusState') return send(ws, { type: 'bonus', bonus: game.bonusState(ws.addr) });
+      if (m.type === 'claimWelcome') {
+        try {
+          const reward = game.claimWelcome(ws.addr);
+          persistSoon();
+          send(ws, { type: 'welcomeClaimed', reward, balance: game.balanceStr(ws.addr), bonus: game.bonusState(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'claimStreak') {
+        try {
+          const r = game.claimStreak(ws.addr);
+          persistSoon();
+          send(ws, { type: 'streakClaimed', day: r.day, reward: r.reward, balance: game.balanceStr(ws.addr), bonus: game.bonusState(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
       if (m.type === 'stake' || m.type === 'unstake' || m.type === 'claimStake') {
         try {
           if (m.type === 'stake') game.stake(ws.addr, m.amount);
@@ -269,8 +313,8 @@ const bcInterval = setInterval(() => {
 const metaInterval = setInterval(() => {
   broadcast({ type: 'meta', jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE) });
   for (const [addr, set] of byAddr) {
-    const qs = game.questState(addr), si = game.stakeInfo(addr);
-    for (const ws of set) { send(ws, { type: 'quests', quests: qs }); send(ws, { type: 'stakeInfo', ...si }); }
+    const qs = game.questState(addr), si = game.stakeInfo(addr), bs = game.bonusState(addr);
+    for (const ws of set) { send(ws, { type: 'quests', quests: qs }); send(ws, { type: 'stakeInfo', ...si }); send(ws, { type: 'bonus', bonus: bs }); }
   }
 }, 3000);
 
