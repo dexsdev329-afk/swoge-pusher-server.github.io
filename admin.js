@@ -36,6 +36,19 @@ function page() {
   #msg{margin-top:12px;font-size:13px;min-height:20px}
   .warn{color:#FF8A5B}.ok{color:#7CFF9B}
   a{color:#E6A537}
+  .tblwrap{overflow-x:auto;border:1px solid rgba(230,165,55,.18);border-radius:12px}
+  table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:720px}
+  th,td{padding:9px 10px;text-align:left;white-space:nowrap;border-bottom:1px solid rgba(230,165,55,.12)}
+  th{color:#E6A537;font-size:11px;text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;background:rgba(230,165,55,.06)}
+  th.n,td.n{text-align:right}
+  tbody tr:hover{background:rgba(230,165,55,.06)}
+  td.addr{font-size:11px;color:#c9bfa8}
+  td.addr b{display:block;color:#F7EEDA;font-size:12.5px}
+  .tg{color:#5AA9E6}
+  .nodep{opacity:.55}
+  .ptot{font-size:12px;color:#8a7f6a;margin-bottom:8px}
+  .ptot b{color:#E6A537}
+  .muted2{color:#8a7f6a;text-align:center;padding:16px}
 </style></head><body>
 <h1>🐕 SWOGE Vault — Admin</h1>
 <div class="muted">Private. Vault <code>${V || '(not set)'}</code></div>
@@ -59,6 +72,31 @@ function page() {
     <button id="go" disabled>Withdraw →</button>
   </div>
   <div id="msg"></div>
+</div>
+
+<div class="panel" style="margin-top:14px">
+  <h2>👥 Players</h2>
+  <div class="row" style="margin-bottom:10px">
+    <input id="q" placeholder="Search a wallet (0x…), a name or a Telegram id" style="flex:1;min-width:220px;margin-bottom:0">
+    <button class="ghost" id="clearQ">Clear</button>
+    <button class="ghost" id="csv">Export CSV</button>
+  </div>
+  <div class="ptot" id="ptot">—</div>
+  <div class="tblwrap">
+    <table id="ptbl">
+      <thead><tr>
+        <th data-k="name">Player</th>
+        <th data-k="balance" class="n">Balance</th>
+        <th data-k="staked" class="n">Staked</th>
+        <th data-k="pending" class="n">Yield</th>
+        <th data-k="total" class="n">Total held</th>
+        <th data-k="wagered" class="n">Played (lifetime)</th>
+        <th data-k="bets" class="n">Bets</th>
+        <th data-k="withdrawn" class="n">Withdrawn</th>
+      </tr></thead>
+      <tbody id="pbody"><tr><td colspan="8" class="muted2">loading…</td></tr></tbody>
+    </table>
+  </div>
 </div>
 
 <div class="panel" style="margin-top:14px">
@@ -114,6 +152,64 @@ async function load(){
   }catch(e){ msg("Could not load stats: "+e.message,"warn"); }
 }
 load(); setInterval(load,10000);
+
+/* ---------- Players table ---------- */
+var PLAYERS=[], sortKey="wagered", sortDir=-1;
+function num(v){ var n=parseFloat(v); return isNaN(n)?0:n; }
+function short(ad){ return ad.slice(0,6)+"…"+ad.slice(-4); }
+function drawPlayers(){
+  var q=($("#q").value||"").trim().toLowerCase();
+  var rows=PLAYERS.filter(function(p){
+    if(!q) return true;
+    return p.address.indexOf(q)>=0 || (p.name||"").toLowerCase().indexOf(q)>=0 || String(p.tgId||"")===q;
+  });
+  rows.sort(function(x,y){
+    var a=x[sortKey], b=y[sortKey];
+    if(sortKey==="name") return sortDir*String(a).localeCompare(String(b));
+    return sortDir*(num(a)-num(b));
+  });
+  var held=0, played=0, bets=0;
+  rows.forEach(function(p){ held+=num(p.total); played+=num(p.wagered); bets+=p.bets||0; });
+  $("#ptot").innerHTML="Showing <b>"+rows.length+"</b> of <b>"+PLAYERS.length+"</b> players · holding <b>"+
+    fmt(held)+"</b> $SWOGE · played <b>"+fmt(played)+"</b> $SWOGE over <b>"+bets+"</b> bets";
+  if(!rows.length){ $("#pbody").innerHTML='<tr><td colspan="8" class="muted2">no player matches</td></tr>'; return; }
+  var h="";
+  rows.forEach(function(p){
+    h+='<tr class="'+(p.deposited?"":"nodep")+'">'+
+       '<td class="addr"><b>'+esc(p.name)+(p.tgId?' <span class="tg">tg:'+esc(String(p.tgId))+'</span>':'')+'</b>'+esc(short(p.address))+'</td>'+
+       '<td class="n">'+fmt(p.balance)+'</td>'+
+       '<td class="n">'+fmt(p.staked)+'</td>'+
+       '<td class="n">'+fmt(p.pending)+'</td>'+
+       '<td class="n">'+fmt(p.total)+'</td>'+
+       '<td class="n">'+fmt(p.wagered)+'</td>'+
+       '<td class="n">'+(p.bets||0)+'</td>'+
+       '<td class="n">'+fmt(p.withdrawn)+'</td>'+
+       '</tr>';
+  });
+  $("#pbody").innerHTML=h;
+}
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+async function loadPlayers(){
+  try{
+    var r=await fetch("/players?limit=1000&key="+encodeURIComponent(KEY));
+    if(!r.ok){ $("#pbody").innerHTML='<tr><td colspan="8" class="muted2">could not load players ('+r.status+')</td></tr>'; return; }
+    var d=await r.json(); PLAYERS=d.players||[]; drawPlayers();
+  }catch(e){ $("#pbody").innerHTML='<tr><td colspan="8" class="muted2">'+esc(e.message)+'</td></tr>'; }
+}
+loadPlayers(); setInterval(loadPlayers,15000);
+$("#q").addEventListener("input",drawPlayers);
+$("#clearQ").onclick=function(){ $("#q").value=""; drawPlayers(); };
+[].forEach.call(document.querySelectorAll("#ptbl th"),function(th){
+  th.onclick=function(){ var k=th.dataset.k; if(sortKey===k){ sortDir=-sortDir; } else { sortKey=k; sortDir=(k==="name"?1:-1); } drawPlayers(); };
+});
+$("#csv").onclick=function(){
+  var cols=["address","name","balance","staked","pending","total","wagered","bets","withdrawn","tgId","deposited"];
+  var lines=[cols.join(",")];
+  PLAYERS.forEach(function(p){ lines.push(cols.map(function(c){ return '"'+String(p[c]==null?"":p[c]).replace(/"/g,'""')+'"'; }).join(",")); });
+  var blob=new Blob([lines.join(String.fromCharCode(10))],{type:"text/csv"});
+  var u=URL.createObjectURL(blob), link=document.createElement("a");
+  link.href=u; link.download="swoge-players.csv"; link.click(); URL.revokeObjectURL(u);
+};
 $("#refresh").onclick=function(e){e.preventDefault();load();};
 $("#max").onclick=function(){ $("#amt").value=surplusNum>0?String(Math.floor(surplusNum)):"0"; };
 
