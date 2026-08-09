@@ -94,6 +94,17 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     return res.end(admin.page());
   }
+  // Liste des joueurs (prive, meme cle admin que /stats). Filtre optionnel ?q=
+  if (path === '/players') {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    let rows = game.playersReport();
+    const q = String(qs.get('q') || '').trim().toLowerCase();
+    if (q) rows = rows.filter((r) => r.address.includes(q) || (r.name || '').toLowerCase().includes(q) || String(r.tgId || '') === q);
+    const limit = Math.min(1000, Math.max(1, parseInt(qs.get('limit') || '200', 10) || 200));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ count: rows.length, players: rows.slice(0, limit) }, null, 2));
+  }
   // Owner solvency view: how much is in the vault, how much is owed to players,
   // and the SURPLUS you can safely ownerWithdraw without touching player funds.
   if (path === '/stats') {
