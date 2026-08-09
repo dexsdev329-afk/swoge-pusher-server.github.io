@@ -51,6 +51,7 @@ class Game {
         dn: p.dayNet.toString(), dk: p.dayKey,
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
+        tw: (p.wagered || ethers.BigNumber.from(0)).toString(), bc: p.betCount || 0,
         bj: p.bj || null, vm: p.volcanoMeter || 0,
         tg: p.tgId || null,
         wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
@@ -84,6 +85,7 @@ class Game {
               ? [{ a: ethers.BigNumber.from(d.st), s: d.ss || Date.now(), u: (d.ss || Date.now()) + cfg.STAKE_LOCK_DAYS * 86400000 }]
               : []),
         stakeAccrued: ethers.BigNumber.from(d.sa || '0'),
+        wagered: ethers.BigNumber.from(d.tw || '0'), betCount: d.bc || 0,
         bj: d.bj || null, volcanoMeter: d.vm || 0,
         tgId: d.tg || null,
         welcomeGranted: !!d.wg, welcomeWagered: !!d.ww, welcomeClaimed: !!d.wc,
@@ -98,7 +100,13 @@ class Game {
   // UTC day key shifted by `n` days (n<0 = past). Used for streak "was yesterday?".
   _dayShift(n) { return new Date(Date.now() + n * 86400000).toISOString().slice(0, 10); }
   // Called every time a player actually stakes a bet — unlocks the welcome claim.
-  _markWager(p) { if (p && !p.welcomeWagered) p.welcomeWagered = true; }
+  // Appele a chaque mise reelle : debloque le bonus de bienvenue ET cumule le
+  // total joue a vie (affiche dans le tableau de bord admin).
+  _markWager(p, wei) {
+    if (!p) return;
+    if (!p.welcomeWagered) p.welcomeWagered = true;
+    if (wei) { p.wagered = (p.wagered || BN(0)).add(wei); p.betCount = (p.betCount || 0) + 1; }
+  }
   _bumpDay(p) {
     const t = this._today();
     if (p.dayKey !== t) { p.dayKey = t; p.dayNet = ethers.BigNumber.from(0); p.dropsToday = 0; p.winsToday = 0; p.questClaimed = {}; }
@@ -181,6 +189,31 @@ class Game {
   totalOwed() {
     const b = this.owedBreakdown();
     return b.balances.add(b.staked).add(b.pending).add(b.jackpot);
+  }
+
+  /** Une ligne par joueur pour le tableau de bord proprietaire (/players). */
+  playersReport() {
+    const f = (w) => ethers.utils.formatUnits(w || BN(0), cfg.DECIMALS);
+    const rows = [];
+    for (const [addr, p] of this.players) {
+      const staked = this._stakedTotal(p);
+      const pending = p.stakeAccrued.add(this._pendingAll(p));
+      rows.push({
+        address: addr,
+        name: p.name || addr.slice(0, 6),
+        balance: f(p.balance),
+        staked: f(staked),
+        pending: f(pending),
+        wagered: f(p.wagered),                     // total joue a vie
+        bets: p.betCount || 0,                     // nombre de mises
+        withdrawn: f(p.cumulativeAuthorized),
+        deposited: !!p.hasDeposited,
+        tgId: p.tgId || null,
+        total: f(p.balance.add(staked).add(pending)),
+      });
+    }
+    rows.sort((a, b) => parseFloat(b.wagered) - parseFloat(a.wagered));
+    return rows;
   }
 
   stakeInfo(addr) {
@@ -360,6 +393,7 @@ class Game {
             dayNet: ethers.BigNumber.from(0), dayKey: null,
             dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false,
             stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0,
+            wagered: ethers.BigNumber.from(0), betCount: 0,
             tgId: null, welcomeGranted: false, welcomeWagered: false, welcomeClaimed: false,
             streakDay: 0, streakLastClaimDay: null, adCount: 0, adDayKey: null, adLastMs: 0 };
       this.players.set(addr, p);
@@ -395,7 +429,7 @@ class Game {
     const p = this._p(addr);
     if (p.balance.lt(COST)) return null;
     p.balance = p.balance.sub(COST);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(COST); p.dropsToday++; this._markWager(p);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(COST); p.dropsToday++; this._markWager(p, COST);
     const h = crypto.createHmac('sha256', this.serverSeed)
       .update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
@@ -432,7 +466,7 @@ class Game {
     const p = this._p(addr);
     if (p.balance.lt(SPIN_COST)) return null;
     p.balance = p.balance.sub(SPIN_COST);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(SPIN_COST); p.dropsToday++; this._markWager(p);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(SPIN_COST); p.dropsToday++; this._markWager(p, SPIN_COST);
     const h = crypto.createHmac('sha256', this.serverSeed)
       .update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
@@ -464,7 +498,7 @@ class Game {
     const betWei = WEI(bet);
     if (p.balance.lt(betWei)) return { error: 'need_deposit' };
     p.balance = p.balance.sub(betWei);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++; this._markWager(p);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++; this._markWager(p, betWei);
     const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
     const out = volcano.spinAll(volcano.rngFrom(h), p.volcanoMeter || 0);
@@ -488,7 +522,7 @@ class Game {
     const costWei = WEI(cost);
     if (p.balance.lt(costWei)) return { error: 'need_deposit' };
     p.balance = p.balance.sub(costWei);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(costWei); p.dropsToday++; this._markWager(p);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(costWei); p.dropsToday++; this._markWager(p, costWei);
     const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
     const bonus = volcano.runBonus(3, volcano.rngFrom(h));
@@ -549,7 +583,7 @@ class Game {
     if (amt > cfg.BJ_MAX_BET) throw new Error('max bet is ' + cfg.BJ_MAX_BET + ' $SWOGE');
     const w = WEI(amt);
     if (p.balance.lt(w)) throw new Error('not enough $SWOGE');
-    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); p.dropsToday++; this._markWager(p);
+    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); p.dropsToday++; this._markWager(p, w);
     p.bj = { bet: amt, pc: [this._bjDraw(p), this._bjDraw(p)], dc: [this._bjDraw(p), this._bjDraw(p)], stage: 'player', doubled: false, result: null, payout: 0 };
     const pv = this._bjVal(p.bj.pc), dv = this._bjVal(p.bj.dc);
     if (pv === 21 || dv === 21) {
@@ -581,7 +615,7 @@ class Game {
     if (!p.bj || p.bj.stage !== 'player' || p.bj.pc.length !== 2) throw new Error('cannot double now');
     const w = WEI(p.bj.bet);
     if (p.balance.lt(w)) throw new Error('not enough to double');
-    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); p.bj.doubled = true;
+    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); this._markWager(p, w); p.bj.doubled = true;
     p.bj.pc.push(this._bjDraw(p));
     if (this._bjVal(p.bj.pc) <= 21) this._bjDealerPlay(p);
     this._bjSettle(p, p.bj.bet * 2);
