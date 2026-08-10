@@ -143,6 +143,11 @@ module.exports = {
   ],
   SPIN_TOTAL: 10000000,
 
+  // Mise variable au Smash : payout = multiplicateur x mise (max 250x).
+  // Exposition maximale = SMASH_MAX_BET x 250.
+  SMASH_MIN_BET: parseInt(env('SMASH_MIN_BET', '1'), 10),
+  SMASH_MAX_BET: parseInt(env('SMASH_MAX_BET', '1000'), 10),
+
   // ---- SWOGE Blackjack ----
   BJ_MAX_BET: parseInt(env('BJ_MAX_BET', '10000'), 10),  // max $SWOGE per hand
   BJ_MIN_BET: parseInt(env('BJ_MIN_BET', '1'), 10),
