@@ -462,11 +462,17 @@ class Game {
    * pass the balance check (Node is single-threaded; the second sees the
    * already-deducted balance). Returns { mult, payout } or null if too poor.
    */
-  spin(addr) {
+  spin(addr, betRaw) {
     const p = this._p(addr);
-    if (p.balance.lt(SPIN_COST)) return null;
-    p.balance = p.balance.sub(SPIN_COST);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(SPIN_COST); p.dropsToday++; this._markWager(p, SPIN_COST);
+    // Mise variable (defaut : l'ancien cout fixe, pour les clients pas encore a jour)
+    let bet = Math.floor(Number(betRaw));
+    if (!(bet >= 1)) bet = Number(cfg.SPIN_COST || '1');
+    if (bet < cfg.SMASH_MIN_BET) bet = cfg.SMASH_MIN_BET;
+    if (bet > cfg.SMASH_MAX_BET) return { error: 'max bet is ' + cfg.SMASH_MAX_BET + ' $SWOGE' };
+    const betWei = WEI(bet);
+    if (p.balance.lt(betWei)) return null;
+    p.balance = p.balance.sub(betWei);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++; this._markWager(p, betWei);
     const h = crypto.createHmac('sha256', this.serverSeed)
       .update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
@@ -475,12 +481,12 @@ class Game {
     for (let i = 0; i < cfg.SPIN_PRIZES.length; i++) { r -= cfg.SPIN_PRIZES[i][1]; if (r < 0) { mult = cfg.SPIN_PRIZES[i][0]; break; } }
     let payout = 0;
     if (mult > 0) {
-      const pay = SPIN_COST.mul(mult);
+      const pay = betWei.mul(mult);
       p.balance = p.balance.add(pay);
       this._bumpDay(p); p.dayNet = p.dayNet.add(pay); p.winsToday++;
-      payout = mult * Number(cfg.SPIN_COST || '1');
+      payout = mult * bet;
     }
-    return { mult, payout };
+    return { mult, payout, bet };
   }
 
   volcanoMeterOf(addr) { return this._p(addr).volcanoMeter || 0; }
