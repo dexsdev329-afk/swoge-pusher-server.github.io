@@ -152,6 +152,19 @@ module.exports = {
   BJ_MAX_BET: parseInt(env('BJ_MAX_BET', '10000'), 10),  // max $SWOGE per hand
   BJ_MIN_BET: parseInt(env('BJ_MIN_BET', '1'), 10),
 
+  // ---- SWOGE Poker (Texas Hold'em, 6 max, pas de bot) ----
+  // Une table ne distribue jamais tant qu'un deuxieme joueur reel n'est pas
+  // assis. Une minute par decision, exclusion apres 5 mains sans action.
+  POKER_ACTION_MS: parseInt(env('POKER_ACTION_MS', '60000'), 10),
+  POKER_IDLE_HANDS: parseInt(env('POKER_IDLE_HANDS', '5'), 10),
+  POKER_BETWEEN_HANDS_MS: parseInt(env('POKER_BETWEEN_HANDS_MS', '6000'), 10),
+  POKER_RAKE_BPS: parseInt(env('POKER_RAKE_BPS', '500'), 10),   // 5 %, seulement si le flop est vu
+  POKER_TABLES: [
+    { id: 'micro', name: 'Doge Micro', smallBlind: 5,   bigBlind: 10 },
+    { id: 'low',   name: 'Wolf Low',   smallBlind: 25,  bigBlind: 50 },
+    { id: 'high',  name: 'Bull High',  smallBlind: 250, bigBlind: 500 },
+  ],
+
   // ---- SWOGE Spin (Volcano slot) ----
   // Allowed bets; each spin costs `bet` $SWOGE, payout = base × bet (RTP ~70%).
   VOLCANO_BETS: [10, 20, 50, 100, 500, 1000, 10000, 100000],
