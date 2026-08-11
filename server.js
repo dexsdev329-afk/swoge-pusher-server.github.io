@@ -18,6 +18,7 @@ const cfg = require('./config');
 const { Table } = require('./physics');
 const { Game } = require('./game');
 const { Chain } = require('./chain');
+const { PokerRoom } = require('./poker_room');
 const store = require('./store');
 const tg = require('./telegram');
 const admin = require('./admin');
@@ -56,6 +57,40 @@ const byAddr = new Map();                  // addr -> Set(sockets)
 function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 function toAddr(addr, obj) { const set = byAddr.get(addr); if (set) for (const ws of set) send(ws, obj); }
 function broadcast(obj) { const s = JSON.stringify(obj); for (const ws of clients) if (ws.readyState === 1) ws.send(s); }
+
+// ---- poker ----
+// La salle ignore les sockets : elle previent par evenements, et c'est ici
+// qu'on decide qui recoit quoi. Chaque socket regarde au plus une table
+// (ws.pokerTable), et ne recoit que ses propres cartes.
+const poker = new PokerRoom(game, {
+  tables: cfg.POKER_TABLES,
+  actionMs: cfg.POKER_ACTION_MS,
+  idleHandsLimit: cfg.POKER_IDLE_HANDS,
+  betweenHandsMs: cfg.POKER_BETWEEN_HANDS_MS,
+  rakeBps: cfg.POKER_RAKE_BPS,
+  onEvent: (tableId, ev) => {
+    pokerToTable(tableId, { type: 'pokerEvent', table: tableId, event: ev });
+    if (ev.type === 'handEnd' || ev.type === 'leave' || ev.type === 'idleKick' || ev.type === 'busted') {
+      persistSoon();                       // des jetons ont bouge cote solde
+    }
+  },
+});
+
+function pokerViewers(tableId) {
+  const out = [];
+  for (const ws of clients) if (ws.pokerTable === tableId && ws.readyState === 1) out.push(ws);
+  return out;
+}
+function pokerToTable(tableId, obj) { for (const ws of pokerViewers(tableId)) send(ws, obj); }
+/** Envoie a chacun SA vue de la table (ses cartes, ses actions permises). */
+function pokerPush(tableId) {
+  for (const ws of pokerViewers(tableId)) {
+    const snap = poker.snapshot(tableId, ws.addr);
+    if (snap) send(ws, { type: 'poker', table: tableId, snapshot: snap, now: Date.now(),
+                         balance: ws.addr ? game.balanceStr(ws.addr) : null });
+  }
+}
+function pokerPushAll() { for (const id of poker.tables.keys()) pokerPush(id); }
 
 // ---- HTTP (health + tiny info) ----
 const server = http.createServer(async (req, res) => {
@@ -175,6 +210,18 @@ wss.on('connection', (ws) => {
         if (welcome > 0) persistSoon();
         return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec), volcano: { meter: game.volcanoMeterOf(rec) }, bonus: game.bonusState(rec), welcomeGranted: welcome });
       }
+      // le hall et l'observation d'une table sont publics : on peut regarder
+      // jouer avant de se connecter
+      if (m.type === 'pokerLobby') return send(ws, { type: 'pokerLobby', tables: poker.lobby() });
+      if (m.type === 'pokerWatch') {
+        const id = String(m.table || '');
+        if (!poker.tables.has(id)) return send(ws, { type: 'error', error: 'table inconnue' });
+        ws.pokerTable = id;
+        return send(ws, { type: 'poker', table: id, snapshot: poker.snapshot(id, ws.addr),
+                          balance: ws.addr ? game.balanceStr(ws.addr) : null });
+      }
+      if (m.type === 'pokerUnwatch') { ws.pokerTable = null; return; }
+
       if (!ws.addr) return send(ws, { type: 'error', error: 'login required' });
 
       if (m.type === 'drop') {
@@ -290,12 +337,71 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
+      // ---- poker (actions nominatives) ----
+      if (m.type === 'pokerJoin') {
+        try {
+          const id = String(m.table || '');
+          const r = poker.join(ws.addr, id, m.buyIn, {
+            seat: m.seat != null ? m.seat : -1,
+            name: game._p(ws.addr).name,
+            avatar: m.avatar,
+          });
+          ws.pokerTable = id;
+          persistSoon();
+          send(ws, { type: 'pokerJoined', ...r, balance: game.balanceStr(ws.addr) });
+          pokerPush(id);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'pokerLeave') {
+        const at = poker.where(ws.addr);
+        poker.leaveTable(ws.addr);
+        persistSoon();
+        send(ws, { type: 'pokerLeft', balance: game.balanceStr(ws.addr) });
+        if (at) pokerPush(at.tableId);
+        return;
+      }
+      if (m.type === 'pokerAct') {
+        try {
+          const id = poker.act(ws.addr, String(m.action || ''), Number(m.amount) || 0);
+          pokerPush(id);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'pokerSitOut') {
+        try {
+          poker.sitOut(ws.addr, !!m.out);
+          const at = poker.where(ws.addr);
+          if (at) pokerPush(at.tableId);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'pokerRebuy') {
+        try {
+          const stack = poker.rebuy(ws.addr, m.amount);
+          persistSoon();
+          send(ws, { type: 'pokerRebought', stack, balance: game.balanceStr(ws.addr) });
+          const at = poker.where(ws.addr);
+          if (at) pokerPush(at.tableId);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
     } catch (e) { send(ws, { type: 'error', error: 'server error' }); }
   });
 
   ws.on('close', () => {
     clients.delete(ws);
-    if (ws.addr && byAddr.has(ws.addr)) { byAddr.get(ws.addr).delete(ws); if (!byAddr.get(ws.addr).size) byAddr.delete(ws.addr); }
+    if (ws.addr && byAddr.has(ws.addr)) {
+      byAddr.get(ws.addr).delete(ws);
+      if (!byAddr.get(ws.addr).size) {
+        byAddr.delete(ws.addr);
+        // Plus aucune fenetre ouverte : on met le joueur en pause plutot que de
+        // le lever. Il garde sa place et son tapis s'il revient vite ; sinon le
+        // minuteur d'inactivite finira par le sortir et lui rendre ses jetons.
+        const at = poker.where(ws.addr);
+        if (at) { try { poker.sitOut(ws.addr, true); } catch (e) { /* deja parti */ } }
+      }
+    }
   });
 });
 
@@ -320,6 +426,14 @@ const stepInterval = setInterval(() => {
 const bcInterval = setInterval(() => {
   broadcast({ type: 'state', ...table.snapshot() });
 }, Math.round(1000 / cfg.BROADCAST_HZ));
+
+// ---- poker : minuteurs de decision + main suivante + diffusion ----
+// Une seconde suffit : le minuteur d'action est d'une minute, et l'echeance
+// exacte est envoyee au client, qui affiche le decompte lui-meme.
+const pokerInterval = setInterval(() => {
+  try { poker.tick(Date.now()); pokerPushAll(); }
+  catch (e) { console.warn('[poker]', e && e.message); }
+}, 1000);
 
 // ---- jackpot pot + daily leaderboard + per-player quest progress ----
 const metaInterval = setInterval(() => {
@@ -367,7 +481,7 @@ server.listen(cfg.PORT, () => {
 });
 
 function shutdown() {
-  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval);
+  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval);
   persist(); // final save so nothing is lost on redeploy
   server.close(); process.exit(0);
 }
