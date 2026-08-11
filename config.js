@@ -159,10 +159,17 @@ module.exports = {
   POKER_IDLE_HANDS: parseInt(env('POKER_IDLE_HANDS', '5'), 10),
   POKER_BETWEEN_HANDS_MS: parseInt(env('POKER_BETWEEN_HANDS_MS', '6000'), 10),
   POKER_RAKE_BPS: parseInt(env('POKER_RAKE_BPS', '500'), 10),   // 5 %, seulement si le flop est vu
+  // La cave par defaut vaut 20 a 200 grosses blindes : c'est ce qui rend le
+  // poker jouable. Une cave enorme sur de petites blindes ne sert a rien —
+  // a 10 M sur du 250/500 on serait a 20 000 blindes de profondeur, et plus
+  // aucune mise ne peserait vraiment sur la main. L'echelle monte donc avec les blindes.
   POKER_TABLES: [
-    { id: 'micro', name: 'Doge Micro', smallBlind: 5,   bigBlind: 10 },
-    { id: 'low',   name: 'Wolf Low',   smallBlind: 25,  bigBlind: 50 },
-    { id: 'high',  name: 'Bull High',  smallBlind: 250, bigBlind: 500 },
+    { id: 'micro', name: 'Doge Micro', smallBlind: 5,      bigBlind: 10,
+      minBuyIn: 200,       maxBuyIn: 2000 },
+    { id: 'low',   name: 'Wolf Low',   smallBlind: 250,    bigBlind: 500,
+      minBuyIn: 10000,     maxBuyIn: 100000 },
+    { id: 'high',  name: 'Bull High',  smallBlind: 12500,  bigBlind: 25000,
+      minBuyIn: 500000,    maxBuyIn: 10000000 },
   ],
 
   // ---- SWOGE Spin (Volcano slot) ----
