@@ -78,6 +78,11 @@ class PokerRoom {
 
   where(addr) { return this.seatOf.get(addr) || null; }
 
+  occupied(tableId) {
+    const t = this.tables.get(tableId);
+    return t ? t.occupied() : [];
+  }
+
   snapshot(tableId, addr) {
     const t = this.tables.get(tableId);
     if (!t) return null;
@@ -114,7 +119,12 @@ class PokerRoom {
     // on debite d'abord : si le solde est insuffisant, rien n'a bouge
     this.game.pokerBuyIn(addr, amt);
     try {
-      t.sit(place, { addr, name, stack: amt, avatar });
+      // L'avatar suit la place : six sieges, six animaux, donc jamais deux
+      // joueurs avec la meme tete a la meme table. Un choix explicite ne peut
+      // pas casser cette garantie, il est seulement pris comme preference.
+      const tete = (avatar != null && !this.occupied(tableId).some((i) => t.seats[i].avatar === (avatar % 6)))
+        ? (avatar % 6) : place % 6;
+      t.sit(place, { addr, name, stack: amt, avatar: tete });
     } catch (e) {
       this.game.pokerCashOut(addr, amt);          // annulation propre
       throw e;
