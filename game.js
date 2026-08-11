@@ -581,6 +581,45 @@ class Game {
 
   bjState(addr) { const p = this._p(addr); return p.bj ? this._bjPublic(p, false) : null; }
 
+  // ------------------------------------------------------------------ poker
+  // Le poker se joue en jetons entiers sur la table (1 jeton = 1 $SWOGE). La
+  // cave sort du solde a l'arrivee et y retourne au depart. Ce n'est pas une
+  // mise : ce qui est reellement joue est compte main par main via pokerWager.
+
+  /** Sort `amount` du solde pour l'emmener sur une table. */
+  pokerBuyIn(addr, amountRaw) {
+    const p = this._p(addr);
+    const amt = Math.floor(Number(amountRaw));
+    if (!(amt > 0)) throw new Error('invalid buy-in');
+    const w = WEI(amt);
+    if (p.balance.lt(w)) throw new Error('not enough $SWOGE');
+    p.balance = p.balance.sub(w);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(w);
+    return amt;
+  }
+
+  /** Ramene des jetons de table dans le solde (depart, exclusion, tapis vide). */
+  pokerCashOut(addr, amountRaw) {
+    const amt = Math.floor(Number(amountRaw));
+    if (!(amt > 0)) return 0;
+    const p = this._p(addr);
+    p.balance = p.balance.add(WEI(amt));
+    this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(amt));
+    return amt;
+  }
+
+  /** Ce qu'un joueur a reellement engage sur une main : compte comme une mise. */
+  pokerWager(addr, amountRaw) {
+    const amt = Math.floor(Number(amountRaw));
+    if (!(amt > 0)) return;
+    const p = this._p(addr);
+    this._bumpDay(p); p.dropsToday++;
+    this._markWager(p, WEI(amt));
+  }
+
+  /** Une main gagnee : compte pour les quetes et le classement du jour. */
+  pokerWin(addr) { const p = this._p(addr); this._bumpDay(p); p.winsToday++; }
+
   bjBet(addr, amountRaw) {
     const p = this._p(addr);
     if (p.bj && p.bj.stage !== 'done') throw new Error('hand in progress');
