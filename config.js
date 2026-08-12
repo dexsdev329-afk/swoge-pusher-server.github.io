@@ -152,6 +152,13 @@ module.exports = {
   BJ_MAX_BET: parseInt(env('BJ_MAX_BET', '10000'), 10),  // max $SWOGE per hand
   BJ_MIN_BET: parseInt(env('BJ_MIN_BET', '1'), 10),
 
+  // ---- SWOGE Casino (jeux contre la banque) ----
+  // Ici la MAISON joue son argent : contrairement au poker ou l'on prend une
+  // commission sans risque, une session courte peut couter cher malgre les
+  // 2,4 % d'avantage. Le plafond est donc volontairement bas.
+  CASINO_MIN_BET: parseInt(env('CASINO_MIN_BET', '10'), 10),
+  CASINO_MAX_BET: parseInt(env('CASINO_MAX_BET', '25000'), 10),
+
   // ---- SWOGE Poker (Texas Hold'em, 6 max, pas de bot) ----
   // Une table ne distribue jamais tant qu'un deuxieme joueur reel n'est pas
   // assis. Une minute par decision, exclusion apres 5 mains sans action.
