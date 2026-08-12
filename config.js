@@ -187,6 +187,28 @@ module.exports = {
   MINES_CHOIX: (env('MINES_CHOIX', '1,3,5,10,24').split(',')
     .map((x) => parseInt(x.trim(), 10)).filter((x) => x >= 1 && x <= 24)),
 
+  // ---- Plinko ----
+  // Avantage de la maison preleve sur le multiplicateur, comme au Mines : une
+  // bille est un coup unique, il n'y a pas de chaine sur laquelle prelever.
+  // Les tables sont ENGENDREES a partir de cette valeur (voir plinko.js), pas
+  // recopiees : changer le chiffre suffit, tout se remet a l'echelle.
+  // Reperes mesures : 300 bps -> 96,8 a 97,0 % selon la table · 0 -> ~100 %.
+  PLINKO_EDGE_BPS: parseInt(env('PLINKO_EDGE_BPS', '300'), 10),
+  PLINKO_RANGEES: parseInt(env('PLINKO_RANGEES', '12'), 10),   // plateau par defaut
+  PLINKO_RISQUE: env('PLINKO_RISQUE', 'medium'),
+
+  // ---- Sessions ----
+  // Duree pendant laquelle une signature vaut connexion. Passe ce delai, le
+  // joueur resigne une fois. Trente jours est le compromis habituel : assez
+  // long pour qu'on ne le remarque pas, assez court pour qu'un jeton vole
+  // finisse par mourir.
+  SESSION_TTL_SEC: parseInt(env('SESSION_TTL_SEC', String(30 * 86400)), 10),
+  // Secret qui signe les jetons. Laisse vide, il est engendre au premier
+  // demarrage et conserve avec l'etat — les sessions survivent donc aux
+  // redeploiements. Le changer deconnecte TOUT LE MONDE d'un coup : c'est le
+  // bouton d'urgence si un jeton fuite.
+  SESSION_SECRET: env('SESSION_SECRET', ''),
+
   CASINO_MIN_BET: parseInt(env('CASINO_MIN_BET', '10'), 10),
   // Plafond volontairement bas : ici c'est l'argent de la maison qui est en
   // jeu, et au Hold'em suivre engage 3x l'Ante, soit 30 000 sur une main.
