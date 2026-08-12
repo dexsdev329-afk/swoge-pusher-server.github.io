@@ -163,6 +163,14 @@ module.exports = {
   // reste. Reperes mesures : 0 -> 97,6 % · 1350 -> 92 % · 2000 -> 89 %
   // · 4200 -> 80 %. Une seule valeur a changer.
   CASINO_WIN_FEE_BPS: parseInt(env('CASINO_WIN_FEE_BPS', '1350'), 10),
+  // ---- Hi-Lo ----
+  // Avantage de la maison PAR PAS, applique sur le multiplicateur. Sur un jeu a
+  // chaine c'est le seul reglage qui donne le meme taux de retour au joueur
+  // prudent et au casse-cou. Reperes mesures sur 400 000 parties :
+  //   300 bps -> 96,7 % a un pas, 89,9 % a trois, 84,0 % a cinq
+  //     0 bps -> 99,7 % (le jeu est alors equitable, la maison ne gagne rien)
+  HILO_EDGE_BPS: parseInt(env('HILO_EDGE_BPS', '300'), 10),
+
   CASINO_MIN_BET: parseInt(env('CASINO_MIN_BET', '10'), 10),
   // Plafond volontairement bas : ici c'est l'argent de la maison qui est en
   // jeu, et au Hold'em suivre engage 3x l'Ante, soit 30 000 sur une main.
