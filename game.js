@@ -601,8 +601,12 @@ class Game {
     if (fini && s.result) {
       v.dealer = s.result.dealer ? s.result.dealer.slice() : (s.dealer || []).slice();
       v.board = (s.result.board || s.board || []).slice();
+      const engage = s.game === 'holdem'
+        ? s.ante * (s.called ? 3 : 1) + s.side
+        : s.ante * (s.called ? 2 : 1) + s.side;
       v.result = {
         outcome: s.result.outcome, payout: s.result.payout, detail: s.result.detail,
+        fee: s.result.fee || 0, staked: engage, net: s.result.payout - engage,
         playerHand: s.result.playerHand || null, dealerHand: s.result.dealerHand || null,
       };
     }
@@ -667,16 +671,17 @@ class Game {
       this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(extra)); this._markWager(p, WEI(extra));
     }
 
+    const feeBps = cfg.CASINO_WIN_FEE_BPS;
     const r = s.game === 'three'
-      ? casino.threeCard(Object.assign({}, s.graine, { ante: s.ante, pairPlus: s.side, play: !!suit }))
-      : casino.holdemResolve({ deal: s.deal, ante: s.ante, aa: s.side, call: !!suit });
+      ? casino.threeCard(Object.assign({}, s.graine, { ante: s.ante, pairPlus: s.side, play: !!suit, feeBps }))
+      : casino.holdemResolve({ deal: s.deal, ante: s.ante, aa: s.side, call: !!suit, feeBps });
 
     if (r.payout > 0) {
       p.balance = p.balance.add(WEI(r.payout));
       this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
       if (r.outcome === 'win' || r.outcome === 'dealer_not_qualified') p.winsToday++;
     }
-    s.result = r; s.stage = 'done';
+    s.result = r; s.stage = 'done'; s.called = !!suit;
     return this._casinoPublic(p, true);
   }
 
