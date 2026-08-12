@@ -18,6 +18,7 @@
 const crypto = require('crypto');
 const { ethers } = require('ethers');
 const cfg = require('./config');
+const casino = require('./casino');
 const volcano = require('./volcano');
 
 const WEI = (n) => ethers.utils.parseUnits(String(n), cfg.DECIMALS);
@@ -580,6 +581,104 @@ class Game {
   }
 
   bjState(addr) { const p = this._p(addr); return p.bj ? this._bjPublic(p, false) : null; }
+
+  // ----------------------------------------------------------------- casino
+  // Deux jeux contre la banque : Casino Hold'em et Three Card. Toute la logique
+  // de gain vit dans casino.js, teste hors ligne ; ici on ne fait que debiter,
+  // garder l'etat entre la donne et la decision, puis crediter.
+
+  /** Vue publique : jamais les cartes du croupier avant la decision. */
+  _casinoPublic(p, fini) {
+    const s = p.casino;
+    if (!s) return null;
+    const v = {
+      game: s.game, stage: fini ? 'done' : s.stage,
+      ante: s.ante, side: s.side,
+      player: s.player.slice(),
+      board: s.board ? s.board.slice() : [],
+      result: null,
+    };
+    if (fini && s.result) {
+      v.dealer = s.result.dealer ? s.result.dealer.slice() : (s.dealer || []).slice();
+      v.board = (s.result.board || s.board || []).slice();
+      v.result = {
+        outcome: s.result.outcome, payout: s.result.payout, detail: s.result.detail,
+        playerHand: s.result.playerHand || null, dealerHand: s.result.dealerHand || null,
+      };
+    }
+    return v;
+  }
+
+  casinoState(addr) { const p = this._p(addr); return p.casino ? this._casinoPublic(p, p.casino.stage === 'done') : null; }
+
+  /**
+   * Distribue une main. `side` est le Pair Plus (Three Card) ou le bonus AA
+   * (Hold'em). Les mises partent tout de suite : rien ne doit pouvoir etre
+   * distribue sans que le solde ait deja ete debite.
+   */
+  casinoDeal(addr, gameId, anteRaw, sideRaw) {
+    const p = this._p(addr);
+    if (p.casino && p.casino.stage !== 'done') throw new Error('hand in progress');
+    if (gameId !== 'holdem' && gameId !== 'three') throw new Error('unknown game');
+
+    const ante = Math.floor(Number(anteRaw));
+    const side = Math.max(0, Math.floor(Number(sideRaw) || 0));
+    if (!(ante >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
+    if (ante > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
+    if (side > cfg.CASINO_MAX_BET) throw new Error('side bet too large');
+
+    // Hold'em : suivre coute 2x l'Ante, on exige donc 3x l'Ante des le depart,
+    // sinon le joueur decouvre son flop sans pouvoir payer la suite.
+    const requis = ante * (gameId === 'holdem' ? 3 : 2) + side;
+    if (p.balance.lt(WEI(requis))) throw new Error('not enough $SWOGE to see the hand through');
+
+    const debit = WEI(ante + side);
+    p.balance = p.balance.sub(debit);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(debit); p.dropsToday++; this._markWager(p, debit);
+
+    p.nonce++;
+    const graine = { serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':casino', nonce: p.nonce };
+
+    if (gameId === 'three') {
+      const d = casino.shoe(graine.serverSeed, graine.clientSeed, graine.nonce);
+      p.casino = { game: 'three', stage: 'decide', ante, side, graine,
+                   player: [d[0], d[1], d[2]], dealer: [d[3], d[4], d[5]], board: [] };
+    } else {
+      const deal = casino.holdemDeal(graine);
+      p.casino = { game: 'holdem', stage: 'decide', ante, side, graine, deal,
+                   player: deal.player, dealer: deal.dealer, board: deal.board };
+    }
+    return this._casinoPublic(p, false);
+  }
+
+  /** Suivre ou se coucher. Credite le gain et referme la main. */
+  casinoDecide(addr, suit) {
+    const p = this._p(addr);
+    const s = p.casino;
+    if (!s || s.stage !== 'decide') throw new Error('no hand to decide');
+
+    // Suivre engage une mise supplementaire : elle doit etre debitee AVANT que
+    // le resultat soit connu, sinon un joueur a sec pourrait suivre gratuitement.
+    let extra = 0;
+    if (suit) extra = s.game === 'holdem' ? s.ante * 2 : s.ante;
+    if (extra > 0) {
+      if (p.balance.lt(WEI(extra))) throw new Error('not enough $SWOGE to call');
+      p.balance = p.balance.sub(WEI(extra));
+      this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(extra)); this._markWager(p, WEI(extra));
+    }
+
+    const r = s.game === 'three'
+      ? casino.threeCard(Object.assign({}, s.graine, { ante: s.ante, pairPlus: s.side, play: !!suit }))
+      : casino.holdemResolve({ deal: s.deal, ante: s.ante, aa: s.side, call: !!suit });
+
+    if (r.payout > 0) {
+      p.balance = p.balance.add(WEI(r.payout));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      if (r.outcome === 'win' || r.outcome === 'dealer_not_qualified') p.winsToday++;
+    }
+    s.result = r; s.stage = 'done';
+    return this._casinoPublic(p, true);
+  }
 
   // ------------------------------------------------------------------ poker
   // Le poker se joue en jetons entiers sur la table (1 jeton = 1 $SWOGE). La
