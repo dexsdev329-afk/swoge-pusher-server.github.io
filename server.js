@@ -60,7 +60,7 @@ function stakedPct() {
  * La mise et le retour sont rappeles sur la ligne du dessous : celui qui lit
  * n'a pas a deviner ce que couvre le chiffre.
  */
-const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo', mines: 'Mines' };
+const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo', mines: 'Mines', plinko: 'Plinko' };
 function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
   if (!(net >= cfg.NOTIFY_WIN_MIN)) return;
   tg.notify(`🃏 <b>${NOM_TABLE[jeu] || jeu}</b>\n` +
@@ -68,6 +68,15 @@ function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
             `Stake ${fmtAmt(String(staked))} · returned ${fmtAmt(String(payout))}` +
             (note ? ` · ${note}` : ''));
 }
+
+/* Le robinet de developpement ne s'ouvre QUE sur un serveur sans chaine. Un
+   serveur de production a forcement un coffre ou un signataire ; s'il en a un,
+   la variable d'environnement ne suffit plus. */
+const FAUCET_OK = process.env.DEV_FAUCET === '1' && !cfg.VAULT_ADDRESS && !cfg.SIGNER_PRIVATE_KEY;
+if (process.env.DEV_FAUCET === '1' && !FAUCET_OK)
+  console.warn('[secu] DEV_FAUCET=1 IGNORE : un coffre ou un signataire est configure, l argent est reel.');
+if (FAUCET_OK)
+  console.warn('[secu] DEV_FAUCET=1 ACTIF : n importe qui peut se crediter 1000 $SWOGE. A ne jamais laisser en production.');
 
 const clients = new Set();                 // all sockets
 const byAddr = new Map();                  // addr -> Set(sockets)
@@ -228,7 +237,9 @@ wss.on('connection', (ws) => {
         if (welcome > 0) persistSoon();
         return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec), casino: game.casinoState(rec), hilo: game.hiloState(rec), mines: game.minesState(rec),
           casinoPay: require('./casino').PAY, casinoMin: cfg.CASINO_MIN_BET, casinoMax: cfg.CASINO_MAX_BET, hiloEdgeBps: cfg.HILO_EDGE_BPS, minesEdgeBps: cfg.MINES_EDGE_BPS, minesDefaut: cfg.MINES_DEFAUT,
-          minesChoix: cfg.MINES_CHOIX, minesBareme: game.minesBareme(), volcano: { meter: game.volcanoMeterOf(rec) }, bonus: game.bonusState(rec), welcomeGranted: welcome });
+          minesChoix: cfg.MINES_CHOIX, minesBareme: game.minesBareme(),
+          plinkoBaremes: game.plinkoBaremes(), plinkoRangees: cfg.PLINKO_RANGEES,
+          plinkoRisque: cfg.PLINKO_RISQUE, plinkoEdgeBps: cfg.PLINKO_EDGE_BPS, volcano: { meter: game.volcanoMeterOf(rec) }, bonus: game.bonusState(rec), welcomeGranted: welcome });
       }
       // le hall et l'observation d'une table sont publics : on peut regarder
       // jouer avant de se connecter
@@ -299,7 +310,14 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
-      if (m.type === 'devCredit' && process.env.DEV_FAUCET === '1') {
+      /* Robinet de developpement : 1000 $SWOGE a la demande, sans limite.
+         C'est exactement ce dont un joueur a besoin pour "gagner a tous les
+         coups", et il ne tenait qu'a une variable d'environnement. Il est
+         desormais IMPOSSIBLE de l'ouvrir sur un serveur relie a la chaine :
+         des qu'un coffre ou un signataire est configure, l'argent est reel et
+         le robinet reste ferme quoi que dise DEV_FAUCET. */
+      if (m.type === 'devCredit') {
+        if (!FAUCET_OK) return send(ws, { type: 'error', error: 'disabled' });
         game.creditDeposit({ player: ws.addr, amount: require('ethers').ethers.utils.parseUnits('1000', cfg.DECIMALS), tx: 'dev:' + Date.now() + Math.random() });
         return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
       }
@@ -441,6 +459,19 @@ wss.on('connection', (ws) => {
           notifyTableWin(ws.addr, 'mines', { net: st.net, staked: st.mise, payout: st.payout,
                                              note: `${st.multi.toFixed(2)}× on ${st.ouvertes.length} tile${st.ouvertes.length > 1 ? 's' : ''}, ${st.nbMines} mine${st.nbMines > 1 ? 's' : ''}` });
           send(ws, { type: 'mines', state: st, balance: game.balanceStr(ws.addr),
+                     fairness: game.fairness(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+
+      // ---- plinko ----
+      if (m.type === 'plinkoDrop') {
+        try {
+          const r = game.plinkoDrop(ws.addr, m.bet, m.rows, m.risk);
+          persistSoon();
+          notifyTableWin(ws.addr, 'plinko', { net: r.net, staked: r.mise, payout: r.payout,
+                                              note: `${r.multi.toFixed(2)}× on ${r.rangees} rows, ${r.risque} risk` });
+          send(ws, { type: 'plinko', drop: r, balance: game.balanceStr(ws.addr),
                      fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
