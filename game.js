@@ -20,6 +20,7 @@ const { ethers } = require('ethers');
 const cfg = require('./config');
 const casino = require('./casino');
 const hilo = require('./hilo');
+const mines = require('./mines');
 const volcano = require('./volcano');
 
 const WEI = (n) => ethers.utils.parseUnits(String(n), cfg.DECIMALS);
@@ -754,6 +755,107 @@ class Game {
       if (r.net > 0) p.winsToday++;
     }
     const v = this._hiloPublic(p);
+    v.payout = r.payout; v.net = r.net;
+    return v;
+  }
+
+  // ------------------------------------------------------------------ mines
+  // Une grille de 25 cases, des bombes placees a l'ouverture. Tout le calcul
+  // vit dans mines.js, verifie hors ligne.
+
+  /**
+   * Vue publique. Les bombes ne sortent QUE lorsque la partie est finie : les
+   * envoyer plus tot reviendrait a donner la solution, et aucun affichage cote
+   * navigateur ne peut cacher une donnee qu'on lui a transmise.
+   */
+  _minesPublic(p) {
+    const s = p.mines;
+    if (!s) return null;
+    const e = s.etat;
+    const v = {
+      mise: e.mise, nbMines: e.nbMines,
+      ouvertes: e.ouvertes.slice(),
+      multi: e.multi,
+      fini: !!e.fini, perdu: !!e.perdu, encaisse: !!e.encaisse, complet: !!e.complet,
+      // ce que rapporterait la case suivante, pour l'afficher AVANT de cliquer
+      multiSuivant: e.fini ? 0
+        : mines.multiplicateur(e.nbMines, e.ouvertes.length + 1, e.edgeBps),
+      gain: Math.floor(e.mise * e.multi),
+      maximum: mines.maximum(e.nbMines, e.edgeBps),
+    };
+    if (e.fini) {
+      v.bombes = e.bombes.slice();          // la grille se decouvre a la fin
+      if (e.touchee != null) v.touchee = e.touchee;
+    }
+    return v;
+  }
+
+  minesState(addr) { const p = this._p(addr); return this._minesPublic(p); }
+
+  /**
+   * Multiplicateur de la PREMIERE case pour chaque nombre de bombes propose.
+   * Calcule ici, et envoye au navigateur, pour qu'il n'ait aucune formule a
+   * lui : deux sources de verite finissent toujours par diverger, et c'est
+   * l'affichage qui aurait tort au pire moment — juste avant de miser.
+   */
+  minesBareme() {
+    const out = {};
+    for (const m of cfg.MINES_CHOIX) out[m] = mines.multiplicateur(m, 1, cfg.MINES_EDGE_BPS);
+    return out;
+  }
+
+  /** Ouvre une partie : la mise est debitee tout de suite. */
+  minesStart(addr, miseRaw, nbMinesRaw) {
+    const p = this._p(addr);
+    if (p.mines && !p.mines.etat.fini) throw new Error('game in progress');
+
+    /* Pas de Math.floor ici, contrairement a la mise : le nombre de bombes est
+       un choix pris dans une liste, pas un montant. Recevoir 2,5 veut dire que
+       le client s'est trompe — l'arrondir en silence masquerait sa faute et
+       ferait jouer une grille que personne n'a demandee. */
+    const nbMines = Number(nbMinesRaw);
+    if (!Number.isInteger(nbMines) || nbMines < mines.MINES_MIN || nbMines > mines.MINES_MAX)
+      throw new Error('mines must be a whole number between ' + mines.MINES_MIN + ' and ' + mines.MINES_MAX);
+
+    const mise = Math.floor(Number(miseRaw));
+    if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
+    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+
+    p.balance = p.balance.sub(WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise));
+
+    p.nonce++;
+    const graine = { serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':mines', nonce: p.nonce };
+    p.mines = { graine, etat: mines.ouvrir(Object.assign({ mise, nbMines, edgeBps: cfg.MINES_EDGE_BPS }, graine)) };
+    return this._minesPublic(p);
+  }
+
+  /** Retourne une case. Rien n'est debite : la mise est deja partie. */
+  minesPick(addr, position) {
+    const p = this._p(addr);
+    const s = p.mines;
+    if (!s || s.etat.fini) throw new Error('no game in progress');
+    const r = mines.jouer({ etat: s.etat, position });
+    s.etat = r.etat;
+    const v = this._minesPublic(p);
+    v.dernier = { position: r.position, sure: r.sure };
+    return v;
+  }
+
+  /** Encaisse le multiplicateur courant. */
+  minesCashOut(addr) {
+    const p = this._p(addr);
+    const s = p.mines;
+    if (!s || s.etat.encaisse || s.etat.perdu) throw new Error('no game to cash out');
+    const r = mines.encaisser(s.etat);
+    s.etat = r.etat;
+    if (r.payout > 0) {
+      p.balance = p.balance.add(WEI(r.payout));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      if (r.net > 0) p.winsToday++;
+    }
+    const v = this._minesPublic(p);
     v.payout = r.payout; v.net = r.net;
     return v;
   }
