@@ -56,6 +56,7 @@ class Game {
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
         tw: (p.wagered || ethers.BigNumber.from(0)).toString(), bc: p.betCount || 0,
+        dp: (p.deposited || ethers.BigNumber.from(0)).toString(),
         bj: p.bj || null, vm: p.volcanoMeter || 0,
         tg: p.tgId || null,
         wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
@@ -90,6 +91,7 @@ class Game {
               : []),
         stakeAccrued: ethers.BigNumber.from(d.sa || '0'),
         wagered: ethers.BigNumber.from(d.tw || '0'), betCount: d.bc || 0,
+        deposited: ethers.BigNumber.from(d.dp || '0'),
         bj: d.bj || null, volcanoMeter: d.vm || 0,
         tgId: d.tg || null,
         welcomeGranted: !!d.wg, welcomeWagered: !!d.ww, welcomeClaimed: !!d.wc,
@@ -212,6 +214,14 @@ class Game {
         bets: p.betCount || 0,                     // nombre de mises
         withdrawn: f(p.cumulativeAuthorized),
         deposited: !!p.hasDeposited,
+        depositedAmount: f(p.deposited),
+        /* Le seul chiffre qui repond a « d'ou vient cet argent ? » :
+           ce qu'il detient, plus ce qu'il a sorti, moins ce qu'il a mis.
+           Un joueur normal est LEGEREMENT NEGATIF — c'est l'avantage de la
+           maison. Fortement positif sans mise correspondante, c'est une entree
+           d'argent qui ne vient pas du jeu. */
+        net: f(p.balance.add(staked).add(pending).add(p.cumulativeAuthorized)
+                .sub(p.deposited || BN(0))),
         tgId: p.tgId || null,
         total: f(p.balance.add(staked).add(pending)),
       });
@@ -394,6 +404,7 @@ class Game {
     if (!p) {
       p = { balance: ethers.BigNumber.from(0), cumulativeAuthorized: ethers.BigNumber.from(0),
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
+            deposited: BN(0),
             dayNet: ethers.BigNumber.from(0), dayKey: null,
             dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false,
             stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0,
@@ -437,6 +448,11 @@ class Game {
     const p = this._p(player);
     p.balance = p.balance.add(amount);
     p.hasDeposited = true; // unlocks daily quests (real skin in the game)
+    /* Le TOTAL depose, et pas seulement un oui/non. Sans lui il est impossible
+       de dire si un gros solde vient d'un gros depot ou de nulle part — c'est
+       exactement la question qu'on n'a pas su trancher le jour ou un joueur a
+       ete soupconne de tricher. */
+    p.deposited = (p.deposited || BN(0)).add(amount);
     return true;
   }
 
