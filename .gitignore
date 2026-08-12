@@ -1,0 +1,12 @@
+# Dependances : reinstallees par le Dockerfile (npm install --omit=dev).
+node_modules/
+
+# Etat du jeu (soldes, jackpot, chaine du Crash). Ecrit dans DATA_DIR, qui
+# pointe sur le volume Railway en production. Ne doit JAMAIS partir au depot :
+# il contient les soldes des joueurs et la graine de la chaine.
+data/
+state.json
+
+# Journaux
+*.log
+npm-debug.log
