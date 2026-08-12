@@ -171,6 +171,22 @@ module.exports = {
   //     0 bps -> 99,7 % (le jeu est alors equitable, la maison ne gagne rien)
   HILO_EDGE_BPS: parseInt(env('HILO_EDGE_BPS', '300'), 10),
 
+  // ---- Mines ----
+  // Avantage de la maison preleve UNE SEULE FOIS, sur le multiplicateur final.
+  // Volontairement different du Hi-Lo : la, chaque pas est un pari qu'on decide
+  // de prendre en connaissant sa cote ; ici on s'engage sur une grille, et
+  // prelever a chaque case donnerait 0,97^20 = 54 % de retour a qui va au bout,
+  // sans que rien ne l'annonce au moment de miser. Preleve une fois, le taux
+  // vaut (1 - avantage) qu'on ouvre une case ou vingt, avec une bombe ou
+  // vingt-quatre. Reperes mesures : 300 bps -> 97 % · 0 bps -> 100 %.
+  MINES_EDGE_BPS: parseInt(env('MINES_EDGE_BPS', '300'), 10),
+  // Nombre de bombes par defaut sur la grille de 25 cases.
+  MINES_DEFAUT: parseInt(env('MINES_DEFAUT', '3'), 10),
+  // Les paliers proposes. La liste est ENVOYEE au navigateur avec le bareme
+  // correspondant : changer les paliers ici suffit, aucune page a regenerer.
+  MINES_CHOIX: (env('MINES_CHOIX', '1,3,5,10,24').split(',')
+    .map((x) => parseInt(x.trim(), 10)).filter((x) => x >= 1 && x <= 24)),
+
   CASINO_MIN_BET: parseInt(env('CASINO_MIN_BET', '10'), 10),
   // Plafond volontairement bas : ici c'est l'argent de la maison qui est en
   // jeu, et au Hold'em suivre engage 3x l'Ante, soit 30 000 sur une main.
