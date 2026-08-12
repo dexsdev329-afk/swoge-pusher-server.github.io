@@ -22,6 +22,7 @@ const casino = require('./casino');
 const hilo = require('./hilo');
 const mines = require('./mines');
 const plinko = require('./plinko');
+const crash = require('./crash');
 const volcano = require('./volcano');
 
 const WEI = (n) => ethers.utils.parseUnits(String(n), cfg.DECIMALS);
@@ -45,7 +46,23 @@ class Game {
     /* Secret des jetons de session. Il vit avec l'etat : sans ca, chaque
        redeploiement deconnecterait tous les joueurs d'un coup. */
     this.sessionSecret = cfg.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+    /* La graine de la chaine du Crash vit avec l'etat, comme le secret de
+       session : la regenerer a chaque redeploiement casserait l'engagement
+       publie, et donc la seule chose qui prouve aux joueurs que les manches a
+       venir sont deja ecrites. */
+    this.crashGraine = cfg.CRASH_GRAINE || crypto.randomBytes(32).toString('hex');
     this._rotateSeed();
+    this._crashTable();
+  }
+
+  /** (Re)construit la table du Crash a partir de la graine courante. */
+  _crashTable() {
+    this.crash = new crash.Table({
+      graine: this.crashGraine, longueur: cfg.CRASH_CHAINE, sel: cfg.CRASH_SEL,
+      edgeBps: cfg.CRASH_EDGE_BPS, plafond: cfg.CRASH_PLAFOND,
+      vitesse: cfg.CRASH_VITESSE, attenteMs: cfg.CRASH_ATTENTE_MS,
+      apresMs: cfg.CRASH_APRES_MS,
+    });
   }
 
   /** Snapshot the whole state for persistence (BigNumbers → strings). */
@@ -69,6 +86,7 @@ class Game {
     }
     return { v: 1, serverSeed: this.serverSeed, sessionSecret: this.sessionSecret,
              jackpotPot: this.jackpotPot.toString(),
+             crashGraine: this.crashGraine, crash: this.crash.sauve(),
              lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx), players,
              telegramMap: Array.from(this.telegramMap) };
   }
@@ -81,6 +99,12 @@ class Game {
     if (st.sessionSecret && !cfg.SESSION_SECRET) this.sessionSecret = st.sessionSecret;
     if (st.serverSeed) { this.serverSeed = st.serverSeed; this.serverSeedHash = crypto.createHash('sha256').update(st.serverSeed).digest('hex'); }
     if (st.jackpotPot) this.jackpotPot = ethers.BigNumber.from(st.jackpotPot);
+    /* La graine d'environnement l'emporte, comme pour le secret de session :
+       c'est ainsi qu'on repart sur une chaine neuve volontairement. Sinon on
+       reprend celle de l'etat, et l'index sauve evite de rejouer un maillon
+       deja consomme — le meme maillon deux fois, ce serait la meme manche. */
+    if (st.crashGraine && !cfg.CRASH_GRAINE) { this.crashGraine = st.crashGraine; this._crashTable(); }
+    if (st.crash) this.crash.charge(st.crash);
     if (st.lastBlock) this.lastBlock = st.lastBlock;
     if (Array.isArray(st.seenTx)) this.seenTx = new Set(st.seenTx);
     if (Array.isArray(st.players)) for (const [addr, d] of st.players) {
@@ -987,6 +1011,86 @@ class Game {
     return { mise: r.mise, rangees: r.rangees, risque: r.risque,
              chemin: r.chemin, case: r.case, multi: r.multi,
              payout: r.payout, net: r.net, table: r.table };
+  }
+
+  // ------------------------------------------------------------------ crash
+  // Une seule manche pour tout le monde. Contrairement au Plinko, la mise part
+  // AVANT de savoir quoi que ce soit, et le gain revient plus tard — au retrait,
+  // ou jamais. Le solde suit donc deux chemins separes : le debit a la mise, le
+  // credit a l'encaissement.
+
+  /** L'etat de la table pour un joueur donne, avec son propre pari. */
+  crashEtat(now, addr) {
+    const e = this.crash.etat(now || Date.now());
+    e.edgeBps = cfg.CRASH_EDGE_BPS;
+    e.min = cfg.CASINO_MIN_BET;
+    e.max = cfg.CASINO_MAX_BET;
+    if (addr) e.moi = this.crash.pari(addr);
+    return e;
+  }
+
+  /**
+   * Poser une mise sur la manche en cours. La mise est debitee tout de suite :
+   * un solde qui ne bougerait qu'au crash laisserait le joueur miser deux fois
+   * le meme jeton sur deux onglets.
+   */
+  crashMise(addr, miseRaw, autoRaw, now) {
+    const p = this._p(addr);
+    const mise = Math.floor(Number(miseRaw));
+    if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
+    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+
+    // parier() est ce qui peut encore refuser (mises fermees, deja en table) :
+    // on l'appelle AVANT de toucher au solde, pour n'avoir rien a annuler.
+    const r = this.crash.parier(addr, mise, autoRaw, now || Date.now());
+
+    p.balance = p.balance.sub(WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise));
+    p.dropsToday++; this._markWager(p, WEI(mise));
+    return { manche: r.manche, mise, auto: r.auto, balance: this.balanceStr(addr) };
+  }
+
+  /** Encaisser a la main. Le multiplicateur vient de l'horloge du serveur. */
+  crashRetrait(addr, now) {
+    const ev = this.crash.retirer(addr, now || Date.now());
+    this._crediteRetrait(ev);
+    return ev;
+  }
+
+  /** Le credit d'un encaissement, manuel ou automatique — un seul chemin. */
+  _crediteRetrait(ev) {
+    const p = this._p(ev.addr);
+    if (ev.payout > 0) {
+      p.balance = p.balance.add(WEI(ev.payout));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(ev.payout));
+      if (ev.net > 0) p.winsToday++;
+    }
+    this._manche(p, 'crash', ev.mise, ev.payout);
+    ev.balance = this.balanceStr(ev.addr);
+    return ev;
+  }
+
+  /**
+   * Fait avancer la manche. Renvoie les evenements a diffuser tels quels ;
+   * les soldes, eux, sont deja a jour quand la fonction rend la main.
+   */
+  crashTick(now) {
+    const evs = this.crash.tick(now || Date.now());
+    for (const ev of evs) {
+      if (ev.type === 'crashRetrait') this._crediteRetrait(ev);
+      else if (ev.type === 'crashFin') {
+        // Les perdants ont ete debites a la mise : il ne reste qu'a inscrire la
+        // manche a leur compteur, pour que la comptabilite par jeu soit juste.
+        // La table garde les paris jusqu'a l'ouverture de la manche suivante :
+        // la mise perdue est donc encore lisible ici, et nulle part apres.
+        for (const addr of ev.perdants) {
+          const pari = this.crash.pari(addr);
+          this._manche(this._p(addr), 'crash', pari ? pari.mise : 0, 0);
+        }
+      }
+    }
+    return evs;
   }
 
   // ------------------------------------------------------------------ poker

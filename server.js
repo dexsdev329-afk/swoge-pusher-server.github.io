@@ -68,7 +68,8 @@ function stakedPct() {
  * n'a pas a deviner ce que couvre le chiffre.
  */
 const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo', mines: 'Mines',
-                    plinko: 'Plinko', bj: 'Blackjack', smash: 'Smash', spin: 'SWOGE Spin' };
+                    plinko: 'Plinko', bj: 'Blackjack', smash: 'Smash', spin: 'SWOGE Spin',
+                    crash: 'Crash' };
 function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
   if (!(net >= cfg.NOTIFY_WIN_MIN)) return;
   tg.notify(`🃏 <b>${NOM_TABLE[jeu] || jeu}</b>\n` +
@@ -105,6 +106,10 @@ function charge(ws, rec, extra) {
     minesChoix: cfg.MINES_CHOIX, minesBareme: game.minesBareme(),
     plinkoBaremes: game.plinkoBaremes(), plinkoRangees: cfg.PLINKO_RANGEES,
     plinkoRisque: cfg.PLINKO_RISQUE, plinkoEdgeBps: cfg.PLINKO_EDGE_BPS,
+    // La manche du Crash est en cours quoi qu'il arrive : un joueur qui se
+    // connecte a la 4e seconde doit voir la courbe la ou elle en est, pas un
+    // ecran vide jusqu'a la manche suivante.
+    crash: game.crashEtat(Date.now(), rec),
     volcano: { meter: game.volcanoMeterOf(rec) }, bonus: game.bonusState(rec),
     // le jeton qui evite de resigner a la page suivante
     session: session.emettre(game.sessionSecret, rec, cfg.SESSION_TTL_SEC),
@@ -125,6 +130,19 @@ const byAddr = new Map();                  // addr -> Set(sockets)
 function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 function toAddr(addr, obj) { const set = byAddr.get(addr); if (set) for (const ws of set) send(ws, obj); }
 function broadcast(obj) { const s = JSON.stringify(obj); for (const ws of clients) if (ws.readyState === 1) ws.send(s); }
+
+/**
+ * Un encaissement au Crash part a tout le monde — c'est ce qui fait le sel du
+ * jeu : on voit les autres sortir pendant qu'on tient. Le SOLDE, lui, ne
+ * regarde que son proprietaire, donc il ne voyage que vers lui.
+ */
+function crashDiffuse(ev) {
+  const { balance, ...publique } = ev;
+  broadcast({ ...publique, name: game._p(ev.addr).name });
+  toAddr(ev.addr, { type: 'crashRetrait', ...ev, moi: true });
+  notifyTableWin(ev.addr, 'crash', { net: ev.net, staked: ev.mise, payout: ev.payout,
+                                     note: `${ev.multi.toFixed(2)}× cash out` });
+}
 
 // ---- poker ----
 // La salle ignore les sockets : elle previent par evenements, et c'est ici
@@ -533,6 +551,28 @@ wss.on('connection', (ws) => {
         return;
       }
 
+      // ---- crash ----
+      if (m.type === 'crashBet') {
+        try {
+          const r = game.crashMise(ws.addr, m.bet, m.auto, Date.now());
+          send(ws, { type: 'crashBet', ...r });
+          // La table est le spectacle : les autres doivent voir la mise arriver.
+          broadcast({ type: 'crashJoueur', addr: ws.addr, name: game._p(ws.addr).name,
+                      mise: r.mise, auto: r.auto, manche: r.manche });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'crashCashOut') {
+        try {
+          const ev = game.crashRetrait(ws.addr, Date.now());
+          crashDiffuse(ev);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'crashState') {
+        return send(ws, { type: 'crash', ...game.crashEtat(Date.now(), ws.addr) });
+      }
+
       // ---- poker (actions nominatives) ----
       if (m.type === 'pokerJoin') {
         try {
@@ -631,6 +671,27 @@ const pokerInterval = setInterval(() => {
   catch (e) { console.warn('[poker]', e && e.message); }
 }, 1000);
 
+/* ---- crash : la manche partagee ----
+ * 100 ms suffisent, et ce n'est PAS un compromis sur l'equite : un retrait
+ * automatique est paye au multiplicateur de sa cible, pas a celui du tick qui
+ * le remarque. La cadence ne joue que sur le delai d'affichage. La courbe, elle,
+ * n'est jamais diffusee : le navigateur la calcule depuis l'heure de depart. */
+const crashInterval = setInterval(() => {
+  try {
+    for (const ev of game.crashTick(Date.now())) {
+      if (ev.type === 'crashRetrait') { crashDiffuse(ev); continue; }
+      broadcast(ev);
+      if (ev.type === 'crashFin') {
+        // Chaque perdant apprend son solde : il a ete debite a la mise, mais
+        // c'est maintenant que la manche est finie pour lui.
+        for (const addr of ev.perdants)
+          toAddr(addr, { type: 'crashPerdu', manche: ev.manche, point: ev.point,
+                         balance: game.balanceStr(addr) });
+      }
+    }
+  } catch (e) { console.warn('[crash]', e && e.message); }
+}, 100);
+
 // ---- jackpot pot + daily leaderboard + per-player quest progress ----
 const metaInterval = setInterval(() => {
   broadcast({ type: 'meta', jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE) });
@@ -677,7 +738,7 @@ server.listen(cfg.PORT, () => {
 });
 
 function shutdown() {
-  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval);
+  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval);
   persist(); // final save so nothing is lost on redeploy
   server.close(); process.exit(0);
 }

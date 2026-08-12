@@ -197,6 +197,35 @@ module.exports = {
   PLINKO_RANGEES: parseInt(env('PLINKO_RANGEES', '12'), 10),   // plateau par defaut
   PLINKO_RISQUE: env('PLINKO_RISQUE', 'medium'),
 
+  // ---- Crash ----
+  // L'avantage n'est PAS preleve sur les gains : c'est la probabilite que la
+  // manche crashe a 1.00x. Consequence a connaitre avant de toucher au chiffre :
+  // le retour est le meme quelle que soit la cible visee (voir crash.js), donc
+  // 300 bps = 97,00 % exactement, a 1.01x comme a 10 000x.
+  CRASH_EDGE_BPS: parseInt(env('CRASH_EDGE_BPS', '300'), 10),
+  // Plafond du multiplicateur. La maison doit pouvoir payer ce qu'elle affiche :
+  // 10 000x sur la mise maximale, c'est le vrai risque a couvrir.
+  CRASH_PLAFOND: parseFloat(env('CRASH_PLAFOND', '10000')),
+  // Vitesse de la courbe, par milliseconde : multi(t) = e^(vitesse x t).
+  // Reperes : 10 s -> 1,82x · 30 s -> 6,05x · 60 s -> 36,6x.
+  CRASH_VITESSE: parseFloat(env('CRASH_VITESSE', '0.00006')),
+  CRASH_ATTENTE_MS: parseInt(env('CRASH_ATTENTE_MS', '7000'), 10),  // fenetre de mises
+  CRASH_APRES_MS: parseInt(env('CRASH_APRES_MS', '4000'), 10),      // temps d'arret apres le crash
+  /* Le sel est PUBLIC et doit etre fixe une fois pour toutes : il prouve que la
+     chaine n'a pas ete tiree mille fois pour garder la pire. Publiez-le (un hash
+     de bloc a venir fait un excellent sel). Le changer invalide la verification
+     de tout l'historique deja joue. */
+  CRASH_SEL: env('CRASH_SEL', 'swoge-crash-v1'),
+  /* Longueur de la chaine, en manches. A ~15 s la manche, 50 000 tiennent une
+     semaine et demie. Quand elle est epuisee, le serveur en tire une nouvelle et
+     publie un nouvel engagement. */
+  CRASH_CHAINE: parseInt(env('CRASH_CHAINE', '50000'), 10),
+  /* La graine de la chaine. Laissee vide, elle est tiree au hasard au premier
+     demarrage puis conservee dans l'etat — la chaine survit aux redeploiements.
+     Ne JAMAIS la publier avant que la chaine soit epuisee : elle donne toutes
+     les manches a venir. */
+  CRASH_GRAINE: env('CRASH_GRAINE', ''),
+
   // ---- Sessions ----
   // Duree pendant laquelle une signature vaut connexion. Passe ce delai, le
   // joueur resigne une fois. Trente jours est le compromis habituel : assez
