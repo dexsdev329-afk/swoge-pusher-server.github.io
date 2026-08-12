@@ -60,7 +60,7 @@ function stakedPct() {
  * La mise et le retour sont rappeles sur la ligne du dessous : celui qui lit
  * n'a pas a deviner ce que couvre le chiffre.
  */
-const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo' };
+const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo', mines: 'Mines' };
 function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
   if (!(net >= cfg.NOTIFY_WIN_MIN)) return;
   tg.notify(`🃏 <b>${NOM_TABLE[jeu] || jeu}</b>\n` +
@@ -226,8 +226,9 @@ wss.on('connection', (ws) => {
         if (m.tgId) game.linkTelegram(rec, m.tgId); // map Telegram id → account for the Adsgram reward postback
         const welcome = game.grantWelcome(rec);      // one-time demo credit for a brand-new player
         if (welcome > 0) persistSoon();
-        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec), casino: game.casinoState(rec), hilo: game.hiloState(rec),
-          casinoPay: require('./casino').PAY, casinoMin: cfg.CASINO_MIN_BET, casinoMax: cfg.CASINO_MAX_BET, hiloEdgeBps: cfg.HILO_EDGE_BPS, volcano: { meter: game.volcanoMeterOf(rec) }, bonus: game.bonusState(rec), welcomeGranted: welcome });
+        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec), casino: game.casinoState(rec), hilo: game.hiloState(rec), mines: game.minesState(rec),
+          casinoPay: require('./casino').PAY, casinoMin: cfg.CASINO_MIN_BET, casinoMax: cfg.CASINO_MAX_BET, hiloEdgeBps: cfg.HILO_EDGE_BPS, minesEdgeBps: cfg.MINES_EDGE_BPS, minesDefaut: cfg.MINES_DEFAUT,
+          minesChoix: cfg.MINES_CHOIX, minesBareme: game.minesBareme(), volcano: { meter: game.volcanoMeterOf(rec) }, bonus: game.bonusState(rec), welcomeGranted: welcome });
       }
       // le hall et l'observation d'une table sont publics : on peut regarder
       // jouer avant de se connecter
@@ -408,6 +409,38 @@ wss.on('connection', (ws) => {
           notifyTableWin(ws.addr, 'hilo', { net: st.net, staked: st.mise, payout: st.payout,
                                             note: `${st.multi.toFixed(2)}× in ${st.pas} step${st.pas > 1 ? 's' : ''}` });
           send(ws, { type: 'hilo', state: st, balance: game.balanceStr(ws.addr),
+                     fairness: game.fairness(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+
+      // ---- mines ----
+      if (m.type === 'minesState') return send(ws, { type: 'mines', state: game.minesState(ws.addr) });
+      if (m.type === 'minesStart') {
+        try {
+          const st = game.minesStart(ws.addr, m.bet, m.mines);
+          persistSoon();
+          send(ws, { type: 'mines', state: st, balance: game.balanceStr(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'minesPick') {
+        try {
+          const st = game.minesPick(ws.addr, m.pos);
+          persistSoon();
+          send(ws, { type: 'mines', state: st, balance: game.balanceStr(ws.addr),
+                     fairness: game.fairness(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'minesCashOut') {
+        try {
+          const st = game.minesCashOut(ws.addr);
+          persistSoon();
+          // le nombre de bombes et de cases dit tout du risque pris
+          notifyTableWin(ws.addr, 'mines', { net: st.net, staked: st.mise, payout: st.payout,
+                                             note: `${st.multi.toFixed(2)}× on ${st.ouvertes.length} tile${st.ouvertes.length > 1 ? 's' : ''}, ${st.nbMines} mine${st.nbMines > 1 ? 's' : ''}` });
+          send(ws, { type: 'mines', state: st, balance: game.balanceStr(ws.addr),
                      fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
