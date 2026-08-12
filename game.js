@@ -21,6 +21,7 @@ const cfg = require('./config');
 const casino = require('./casino');
 const hilo = require('./hilo');
 const mines = require('./mines');
+const plinko = require('./plinko');
 const volcano = require('./volcano');
 
 const WEI = (n) => ethers.utils.parseUnits(String(n), cfg.DECIMALS);
@@ -405,7 +406,26 @@ class Game {
   }
 
   setName(addr, name) { this._p(addr).name = String(name || '').slice(0, 24) || addr.slice(0, 6); }
-  setClientSeed(addr, seed) { this._p(addr).clientSeed = String(seed || '').slice(0, 64) || this._p(addr).clientSeed; }
+  /**
+   * Graine du joueur. Le DEUX-POINTS est interdit, et ce n'est pas cosmetique.
+   *
+   * Chaque jeu fabrique son message en collant des morceaux avec ce separateur :
+   * la machine a sous utilise `graine:numero`, le blackjack `graine:bj:numero`,
+   * les autres `graine:casino`, `graine:hilo`, `graine:mines`, `graine:plinko`.
+   * Un joueur qui choisissait la graine « X:bj » obtenait pour la machine a
+   * sous le message « X:bj:12 » — exactement celui du blackjack pour la graine
+   * « X ». Deux jeux differents partageaient alors le meme tirage, et le
+   * cloisonnement sur lequel repose toute l'equite tombait.
+   *
+   * En retirant le separateur de ce que le joueur controle, aucune graine ne
+   * peut plus se faire passer pour un autre jeu.
+   */
+  setClientSeed(addr, seed) {
+    const p = this._p(addr);
+    const propre = String(seed || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+    if (propre) p.clientSeed = propre;
+    return p.clientSeed;
+  }
 
   balanceWei(addr) { return this._p(addr).balance; }
   balanceStr(addr) { return ethers.utils.formatUnits(this._p(addr).balance, cfg.DECIMALS); }
@@ -858,6 +878,58 @@ class Game {
     const v = this._minesPublic(p);
     v.payout = r.payout; v.net = r.net;
     return v;
+  }
+
+  // ----------------------------------------------------------------- plinko
+  // Une bille, un coup. Rien a conserver entre deux messages : il n'y a donc
+  // aucun etat qu'un joueur puisse abandonner en cours de route pour garder sa
+  // mise, contrairement au Hi-Lo et au Mines.
+
+  /** Le bareme complet, pour que le navigateur affiche les godets sans calculer. */
+  plinkoTable(rangees, risque) {
+    return plinko.table(rangees, risque, cfg.PLINKO_EDGE_BPS);
+  }
+
+  /** Toutes les tables d'un coup : envoyees a la connexion, jamais recalculees. */
+  plinkoBaremes() {
+    const out = {};
+    for (const r of plinko.RANGEES)
+      for (const q of plinko.RISQUES) out[r + ':' + q] = this.plinkoTable(r, q);
+    return out;
+  }
+
+  /** Lache une bille. La mise part et le gain revient dans le meme geste. */
+  plinkoDrop(addr, miseRaw, rangeesRaw, risqueRaw) {
+    const p = this._p(addr);
+
+    const rangees = Number(rangeesRaw);
+    if (!Number.isInteger(rangees) || plinko.RANGEES.indexOf(rangees) < 0)
+      throw new Error('rows must be one of ' + plinko.RANGEES.join(', '));
+    const risque = String(risqueRaw || '');
+    if (plinko.RISQUES.indexOf(risque) < 0)
+      throw new Error('risk must be one of ' + plinko.RISQUES.join(', '));
+
+    const mise = Math.floor(Number(miseRaw));
+    if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
+    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+
+    p.balance = p.balance.sub(WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise));
+
+    p.nonce++;
+    const r = plinko.lancer({
+      serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':plinko', nonce: p.nonce,
+      mise, rangees, risque, edgeBps: cfg.PLINKO_EDGE_BPS,
+    });
+    if (r.payout > 0) {
+      p.balance = p.balance.add(WEI(r.payout));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      if (r.net > 0) p.winsToday++;
+    }
+    return { mise: r.mise, rangees: r.rangees, risque: r.risque,
+             chemin: r.chemin, case: r.case, multi: r.multi,
+             payout: r.payout, net: r.net, table: r.table };
   }
 
   // ------------------------------------------------------------------ poker
