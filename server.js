@@ -52,15 +52,22 @@ function stakedPct() {
 }
 
 /*
- * Gains des jeux de cartes contre la banque (Hold'em, Three Card, Hi-Lo).
+ * Gains de TOUS les jeux contre la banque.
  *
  * On annonce le BENEFICE, pas ce qui revient : «a gagne 1000» pour une mise de
  * 900 rendue 1000 ne veut rien dire. Le seuil porte donc lui aussi sur le
  * benefice — sinon une grosse mise a peine gagnante remplirait le canal.
+ *
+ * C'est exactement ce qui est arrive : le blackjack annoncait le retour brut,
+ * mise comprise. Un joueur a la mise maximum de 10 000 declenchait « won
+ * 20,000 » a chaque main gagnee — et pas un mot quand il perdait les memes
+ * 10 000. Cent annonces plus tard, le canal donnait a voir un tricheur la ou
+ * il n'y avait qu'un gros joueur a l'equilibre.
  * La mise et le retour sont rappeles sur la ligne du dessous : celui qui lit
  * n'a pas a deviner ce que couvre le chiffre.
  */
-const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo', mines: 'Mines', plinko: 'Plinko' };
+const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo', mines: 'Mines',
+                    plinko: 'Plinko', bj: 'Blackjack', smash: 'Smash', spin: 'SWOGE Spin' };
 function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
   if (!(net >= cfg.NOTIFY_WIN_MIN)) return;
   tg.notify(`🃏 <b>${NOM_TABLE[jeu] || jeu}</b>\n` +
@@ -281,7 +288,8 @@ wss.on('connection', (ws) => {
         if (r === null) return send(ws, { type: 'need_deposit', balance: game.balanceStr(ws.addr) });
         if (r.error) return send(ws, { type: 'error', error: r.error });
         persistSoon();
-        if (r.payout >= cfg.NOTIFY_WIN_MIN) tg.notify(`🎰 <b>Smash win!</b>\n${game._p(ws.addr).name} hit <b>${r.mult}×</b> for <b>${r.payout} $SWOGE</b> 🐕`);
+        notifyTableWin(ws.addr, 'smash', { net: r.payout - r.bet, staked: r.bet,
+                                           payout: r.payout, note: `${r.mult}×` });
         return send(ws, { type: 'spinResult', mult: r.mult, payout: r.payout, bet: r.bet, balance: game.balanceStr(ws.addr), fairness: game.fairness(ws.addr) });
       }
       if (m.type === 'volcanoSpin' || m.type === 'volcanoBuyBonus') {
@@ -291,7 +299,7 @@ wss.on('connection', (ws) => {
           const r = m.type === 'volcanoSpin' ? game.volcanoSpin(ws.addr, m.bet) : game.volcanoBuyBonus(ws.addr, m.bet);
           if (r.error) return send(ws, { type: 'need_deposit', balance: game.balanceStr(ws.addr) });
           persistSoon();
-          if (r.payout >= cfg.NOTIFY_WIN_MIN) tg.notify(`🌋 <b>SWOGE Spin win!</b>\n${game._p(ws.addr).name} won <b>${r.payout} $SWOGE</b> 🐕`);
+          notifyTableWin(ws.addr, 'spin', { net: r.payout - r.bet, staked: r.bet, payout: r.payout });
           send(ws, { type: 'volcanoResult', ...r });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
@@ -305,7 +313,13 @@ wss.on('connection', (ws) => {
           else if (m.type === 'bj_stand') st = game.bjStand(ws.addr);
           else st = game.bjDouble(ws.addr);
           persistSoon();
-          if (st.stage === 'done' && st.payout >= cfg.NOTIFY_WIN_MIN) tg.notify(`🃏 <b>Blackjack win!</b>\n${game._p(ws.addr).name} won <b>${st.payout} $SWOGE</b> 🐕`);
+          /* La mise engagee vaut le double quand la main a ete doublee : sans
+             ca l'annonce compterait la seconde mise comme du benefice. */
+          if (st.stage === 'done') {
+            const engage = st.doubled ? st.bet * 2 : st.bet;
+            notifyTableWin(ws.addr, 'bj', { net: st.payout - engage, staked: engage,
+                                            payout: st.payout, note: st.result });
+          }
           send(ws, { type: 'bj', state: st });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
