@@ -203,7 +203,7 @@ $("#clearQ").onclick=function(){ $("#q").value=""; drawPlayers(); };
   th.onclick=function(){ var k=th.dataset.k; if(sortKey===k){ sortDir=-sortDir; } else { sortKey=k; sortDir=(k==="name"?1:-1); } drawPlayers(); };
 });
 $("#csv").onclick=function(){
-  var cols=["address","name","balance","staked","pending","total","wagered","bets","withdrawn","tgId","deposited"];
+  var cols=["address","name","balance","staked","pending","total","depositedAmount","net","wagered","bets","withdrawn","tgId","deposited"];
   var lines=[cols.join(",")];
   PLAYERS.forEach(function(p){ lines.push(cols.map(function(c){ return '"'+String(p[c]==null?"":p[c]).replace(/"/g,'""')+'"'; }).join(",")); });
   var blob=new Blob([lines.join(String.fromCharCode(10))],{type:"text/csv"});
