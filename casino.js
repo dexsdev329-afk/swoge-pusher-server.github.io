@@ -177,7 +177,7 @@ const T3_QUALIF = eval3([10, 1 + 13, 0 + 26]);
  *            payout, detail}}  `payout` = ce qui revient au joueur, mises
  *            comprises. Perdre tout renvoie 0.
  */
-function threeCard({ serverSeed, clientSeed, nonce, ante, pairPlus = 0, play }) {
+function threeCard({ serverSeed, clientSeed, nonce, ante, pairPlus = 0, play, feeBps = 0 }) {
   const d = shoe(serverSeed, clientSeed, nonce);
   const cards = [d[0], d[1], d[2]];
   const dealer = [d[3], d[4], d[5]];
@@ -193,8 +193,10 @@ function threeCard({ serverSeed, clientSeed, nonce, ante, pairPlus = 0, play }) 
   }
 
   if (!play) {
+    const miseF = ante + pairPlus;
+    const netF = commission(miseF, payout, feeBps);
     return { cards, dealer, playerScore: ps, dealerScore: ds, qualified: null,
-             outcome: 'fold', payout, detail };
+             outcome: 'fold', payout: netF.payout, fee: netF.fee, detail };
   }
 
   // Le bonus d'Ante tombe quoi qu'il arrive ensuite : il recompense la main,
@@ -221,7 +223,10 @@ function threeCard({ serverSeed, clientSeed, nonce, ante, pairPlus = 0, play }) 
     outcome = 'lose';
     detail.push({ bet: 'ante+play', x: -1, label: name3(ds) });
   }
-  return { cards, dealer, playerScore: ps, dealerScore: ds, qualified, outcome, payout, detail };
+  const mise = ante * 2 + pairPlus;           // Ante + Play + side
+  const net = commission(mise, payout, feeBps);
+  return { cards, dealer, playerScore: ps, dealerScore: ds, qualified, outcome,
+           payout: net.payout, fee: net.fee, detail };
 }
 
 // ---------------------------------------------------------- Casino Hold'em
@@ -254,7 +259,7 @@ function holdemDeal({ serverSeed, clientSeed, nonce }) {
  * @param aa     mise du bonus AA (0 si absente)
  * @param call   true = suit pour 2x l'Ante, false = se couche
  */
-function holdemResolve({ deal, ante, aa = 0, call }) {
+function holdemResolve({ deal, ante, aa = 0, call, feeBps = 0 }) {
   const detail = [];
   let payout = 0;
 
@@ -274,7 +279,9 @@ function holdemResolve({ deal, ante, aa = 0, call }) {
   }
 
   if (!call) {
-    return { board: deal.board.slice(), dealer: null, outcome: 'fold', payout, detail,
+    const netF = commission(ante + aa, payout, feeBps);
+    return { board: deal.board.slice(), dealer: null, outcome: 'fold',
+             payout: netF.payout, fee: netF.fee, detail,
              playerHand: null, dealerHand: null };
   }
 
@@ -306,11 +313,35 @@ function holdemResolve({ deal, ante, aa = 0, call }) {
     outcome = 'lose';
     detail.push({ bet: 'ante+call', x: -1, label: P.handName(ds) });
   }
-  return { board, dealer: deal.dealer.slice(), outcome, payout, detail,
+  const net = commission(ante * 3 + aa, payout, feeBps);   // Ante + Call(2x) + side
+  return { board, dealer: deal.dealer.slice(), outcome, payout: net.payout, fee: net.fee, detail,
            playerHand: P.handName(ps), dealerHand: P.handName(ds), qualified };
 }
 
+/**
+ * Commission de la maison sur le GAIN NET.
+ *
+ * On ne peut pas descendre a 80 % de retour en touchant aux baremes : la
+ * majeure partie de l'argent passe par le duel Ante/Call, paye 1:1, et le
+ * fausser rendrait le jeu incomprehensible ("j'ai gagne mais on me paie
+ * moins ?"). On prend donc une commission explicite sur ce que le joueur
+ * gagne AU-DELA de sa mise — comme le 5 % du banquier au baccara, mais plus
+ * eleve. Les mises rendues (egalites, mise Call retournee) ne sont jamais
+ * taxees : perdre son argent sur une egalite serait incomprehensible.
+ *
+ * @param mise   total engage par le joueur sur la main
+ * @param brut   ce qu'il recevrait sans commission
+ * @returns      ce qu'il recoit reellement, et la commission prelevee
+ */
+function commission(mise, brut, feeBps) {
+  if (!feeBps || brut <= mise) return { payout: brut, fee: 0 };
+  const gain = brut - mise;
+  const fee = Math.floor(gain * feeBps / 10000);
+  return { payout: brut - fee, fee };
+}
+
 module.exports = {
+  commission,
   shoe, eval3, name3, cat3, T3, T3_NAME, T3_QUALIF,
   PAY, catP, estRoyale, holdemQualifie,
   threeCard, holdemDeal, holdemResolve,
