@@ -22,6 +22,7 @@ const { PokerRoom } = require('./poker_room');
 const store = require('./store');
 const tg = require('./telegram');
 const admin = require('./admin');
+const session = require('./session');
 
 const table = new Table();
 const game = new Game();
@@ -84,6 +85,39 @@ if (process.env.DEV_FAUCET === '1' && !FAUCET_OK)
   console.warn('[secu] DEV_FAUCET=1 IGNORE : un coffre ou un signataire est configure, l argent est reel.');
 if (FAUCET_OK)
   console.warn('[secu] DEV_FAUCET=1 ACTIF : n importe qui peut se crediter 1000 $SWOGE. A ne jamais laisser en production.');
+
+/**
+ * Ce qu'un client recoit une fois identifie. Une seule definition pour la
+ * connexion par signature ET pour la reprise de session : deux charges
+ * distinctes finiraient par diverger, et la page reprise aurait un ecran
+ * different de la page connectee.
+ */
+function charge(ws, rec, extra) {
+  return Object.assign({
+    type: 'auth', address: rec, balance: game.balanceStr(rec),
+    fairness: game.fairness(rec), quests: game.questState(rec),
+    stake: game.stakeInfo(rec), bj: game.bjState(rec),
+    casino: game.casinoState(rec), hilo: game.hiloState(rec), mines: game.minesState(rec),
+    casinoPay: require('./casino').PAY,
+    casinoMin: cfg.CASINO_MIN_BET, casinoMax: cfg.CASINO_MAX_BET,
+    hiloEdgeBps: cfg.HILO_EDGE_BPS,
+    minesEdgeBps: cfg.MINES_EDGE_BPS, minesDefaut: cfg.MINES_DEFAUT,
+    minesChoix: cfg.MINES_CHOIX, minesBareme: game.minesBareme(),
+    plinkoBaremes: game.plinkoBaremes(), plinkoRangees: cfg.PLINKO_RANGEES,
+    plinkoRisque: cfg.PLINKO_RISQUE, plinkoEdgeBps: cfg.PLINKO_EDGE_BPS,
+    volcano: { meter: game.volcanoMeterOf(rec) }, bonus: game.bonusState(rec),
+    // le jeton qui evite de resigner a la page suivante
+    session: session.emettre(game.sessionSecret, rec, cfg.SESSION_TTL_SEC),
+    sessionTtl: cfg.SESSION_TTL_SEC,
+  }, extra || {});
+}
+
+/** Rattache une socket a un joueur. Meme chemin pour les deux facons d'entrer. */
+function attacher(ws, rec) {
+  ws.addr = rec;
+  if (!byAddr.has(rec)) byAddr.set(rec, new Set());
+  byAddr.get(rec).add(ws);
+}
 
 const clients = new Set();                 // all sockets
 const byAddr = new Map();                  // addr -> Set(sockets)
@@ -235,19 +269,27 @@ wss.on('connection', (ws) => {
         if (m.message !== expected) return send(ws, { type: 'error', error: 'bad login message' });
         const rec = chain.verifyLogin(m.message, m.signature);
         if (!rec) return send(ws, { type: 'error', error: 'bad signature' });
-        ws.addr = rec;
-        if (!byAddr.has(rec)) byAddr.set(rec, new Set());
-        byAddr.get(rec).add(ws);
+        attacher(ws, rec);
         if (m.name) game.setName(rec, m.name);
         if (m.tgId) game.linkTelegram(rec, m.tgId); // map Telegram id → account for the Adsgram reward postback
         const welcome = game.grantWelcome(rec);      // one-time demo credit for a brand-new player
         if (welcome > 0) persistSoon();
-        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec), casino: game.casinoState(rec), hilo: game.hiloState(rec), mines: game.minesState(rec),
-          casinoPay: require('./casino').PAY, casinoMin: cfg.CASINO_MIN_BET, casinoMax: cfg.CASINO_MAX_BET, hiloEdgeBps: cfg.HILO_EDGE_BPS, minesEdgeBps: cfg.MINES_EDGE_BPS, minesDefaut: cfg.MINES_DEFAUT,
-          minesChoix: cfg.MINES_CHOIX, minesBareme: game.minesBareme(),
-          plinkoBaremes: game.plinkoBaremes(), plinkoRangees: cfg.PLINKO_RANGEES,
-          plinkoRisque: cfg.PLINKO_RISQUE, plinkoEdgeBps: cfg.PLINKO_EDGE_BPS, volcano: { meter: game.volcanoMeterOf(rec) }, bonus: game.bonusState(rec), welcomeGranted: welcome });
+        return send(ws, charge(ws, rec, { welcomeGranted: welcome }));
       }
+
+      /* Reprise de session : le jeton remplace la signature. C'est ce qui evite
+         de refaire tout le chemin de connexion a chaque changement de page —
+         telecharger le SDK, reveiller la session distante, resigner. Un jeton
+         faux, perime ou bricole est simplement refuse, et la page retombe sur
+         la connexion normale. */
+      if (m.type === 'resume') {
+        const rec = session.lire(game.sessionSecret, m.token);
+        if (!rec) return send(ws, { type: 'resumeFailed' });
+        attacher(ws, rec);
+        if (m.tgId) game.linkTelegram(rec, m.tgId);
+        return send(ws, charge(ws, rec, { resumed: true }));
+      }
+
       // le hall et l'observation d'une table sont publics : on peut regarder
       // jouer avant de se connecter
       if (m.type === 'pokerLobby') return send(ws, { type: 'pokerLobby', tables: poker.lobby() });
