@@ -19,6 +19,7 @@ const crypto = require('crypto');
 const { ethers } = require('ethers');
 const cfg = require('./config');
 const casino = require('./casino');
+const hilo = require('./hilo');
 const volcano = require('./volcano');
 
 const WEI = (n) => ethers.utils.parseUnits(String(n), cfg.DECIMALS);
@@ -683,6 +684,78 @@ class Game {
     }
     s.result = r; s.stage = 'done'; s.called = !!suit;
     return this._casinoPublic(p, true);
+  }
+
+  // ------------------------------------------------------------------ hi-lo
+  // Plus haut ou plus bas. La mise part au premier tirage ; a partir de la, le
+  // joueur ne risque plus que ce qu'il a deja engage. Tout le calcul vit dans
+  // hilo.js, teste hors ligne.
+
+  _hiloPublic(p) {
+    const s = p.hilo;
+    if (!s) return null;
+    const e = s.etat;
+    return {
+      mise: e.mise, carte: e.carte, rang: e.rang, pas: e.pas,
+      multi: e.multi, fini: !!e.fini, perdu: !!e.perdu, encaisse: !!e.encaisse,
+      peutMonter: !!e.peutMonter, peutDescendre: !!e.peutDescendre,
+      // ce que rapporterait chaque pari, pour l'afficher AVANT de cliquer
+      multHigher: e.peutMonter ? hilo.multiplicateur(e.rang, 'higher', cfg.HILO_EDGE_BPS) : 0,
+      multLower: e.peutDescendre ? hilo.multiplicateur(e.rang, 'lower', cfg.HILO_EDGE_BPS) : 0,
+      gain: Math.floor(e.mise * e.multi),
+      dernier: s.dernier || null,
+    };
+  }
+
+  hiloState(addr) { const p = this._p(addr); return this._hiloPublic(p); }
+
+  /** Ouvre une partie : la mise est debitee tout de suite. */
+  hiloStart(addr, miseRaw) {
+    const p = this._p(addr);
+    if (p.hilo && !p.hilo.etat.fini) throw new Error('game in progress');
+
+    const mise = Math.floor(Number(miseRaw));
+    if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
+    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+
+    p.balance = p.balance.sub(WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise));
+
+    p.nonce++;
+    const graine = { serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':hilo', nonce: p.nonce };
+    p.hilo = { graine, etat: hilo.ouvrir(Object.assign({ mise }, graine)), dernier: null };
+    return this._hiloPublic(p);
+  }
+
+  /** Un pas : plus haut ou plus bas. Rien n'est debite, la mise est deja partie. */
+  hiloStep(addr, sens) {
+    const p = this._p(addr);
+    const s = p.hilo;
+    if (!s || s.etat.fini) throw new Error('no game in progress');
+    const avant = s.etat.carte;
+    const r = hilo.jouer(Object.assign({ etat: s.etat, sens, edgeBps: cfg.HILO_EDGE_BPS }, s.graine));
+    s.etat = r.etat;
+    s.dernier = { sens, avant, carte: r.carte, gagne: r.gagne,
+                  egalites: r.egalites, mult: r.multiplicateurDuPas };
+    return this._hiloPublic(p);
+  }
+
+  /** Encaisse le multiplicateur courant. */
+  hiloCashOut(addr) {
+    const p = this._p(addr);
+    const s = p.hilo;
+    if (!s || s.etat.fini) throw new Error('no game to cash out');
+    const r = hilo.encaisser(s.etat);
+    s.etat = r.etat;
+    if (r.payout > 0) {
+      p.balance = p.balance.add(WEI(r.payout));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      if (r.net > 0) p.winsToday++;
+    }
+    const v = this._hiloPublic(p);
+    v.payout = r.payout; v.net = r.net;
+    return v;
   }
 
   // ------------------------------------------------------------------ poker
