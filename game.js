@@ -42,6 +42,9 @@ class Game {
     this.jackpotPot = WEI(cfg.JACKPOT_SEED);
     this._jackpotSeed = WEI(cfg.JACKPOT_SEED);
     this._rakeWei = COST.mul(Math.round(cfg.JACKPOT_RAKE_PCT * 100)).div(10000); // pct, 2-dec
+    /* Secret des jetons de session. Il vit avec l'etat : sans ca, chaque
+       redeploiement deconnecterait tous les joueurs d'un coup. */
+    this.sessionSecret = cfg.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
     this._rotateSeed();
   }
 
@@ -64,7 +67,8 @@ class Game {
         ac: p.adCount || 0, ak: p.adDayKey || null, al: p.adLastMs || 0,
       }]);
     }
-    return { v: 1, serverSeed: this.serverSeed, jackpotPot: this.jackpotPot.toString(),
+    return { v: 1, serverSeed: this.serverSeed, sessionSecret: this.sessionSecret,
+             jackpotPot: this.jackpotPot.toString(),
              lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx), players,
              telegramMap: Array.from(this.telegramMap) };
   }
@@ -72,6 +76,9 @@ class Game {
   /** Restore a snapshot produced by serialize() (called once at startup). */
   hydrate(st) {
     if (!st) return;
+    /* Le secret fixe par l'environnement l'emporte : c'est ainsi qu'on revoque
+       toutes les sessions d'un coup, en le changeant sur le serveur. */
+    if (st.sessionSecret && !cfg.SESSION_SECRET) this.sessionSecret = st.sessionSecret;
     if (st.serverSeed) { this.serverSeed = st.serverSeed; this.serverSeedHash = crypto.createHash('sha256').update(st.serverSeed).digest('hex'); }
     if (st.jackpotPot) this.jackpotPot = ethers.BigNumber.from(st.jackpotPot);
     if (st.lastBlock) this.lastBlock = st.lastBlock;
