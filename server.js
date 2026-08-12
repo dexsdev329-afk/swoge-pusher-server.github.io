@@ -51,6 +51,24 @@ function stakedPct() {
   return pct.toFixed(4).replace(/\.?0+$/, '');
 }
 
+/*
+ * Gains des jeux de cartes contre la banque (Hold'em, Three Card, Hi-Lo).
+ *
+ * On annonce le BENEFICE, pas ce qui revient : «a gagne 1000» pour une mise de
+ * 900 rendue 1000 ne veut rien dire. Le seuil porte donc lui aussi sur le
+ * benefice — sinon une grosse mise a peine gagnante remplirait le canal.
+ * La mise et le retour sont rappeles sur la ligne du dessous : celui qui lit
+ * n'a pas a deviner ce que couvre le chiffre.
+ */
+const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo' };
+function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
+  if (!(net >= cfg.NOTIFY_WIN_MIN)) return;
+  tg.notify(`🃏 <b>${NOM_TABLE[jeu] || jeu}</b>\n` +
+            `${game._p(addr).name} won <b>+${fmtAmt(String(net))} $SWOGE</b> 🐕\n` +
+            `Stake ${fmtAmt(String(staked))} · returned ${fmtAmt(String(payout))}` +
+            (note ? ` · ${note}` : ''));
+}
+
 const clients = new Set();                 // all sockets
 const byAddr = new Map();                  // addr -> Set(sockets)
 
@@ -344,6 +362,9 @@ wss.on('connection', (ws) => {
         try {
           const st = game.casinoDeal(ws.addr, String(m.game || ''), m.ante, m.side);
           persistSoon();
+          // Une main peut se conclure des la donne (Pair Plus / bonus AA paye
+          // alors que le joueur se couche) : le gain doit s'annoncer ici aussi.
+          if (st.stage === 'done' && st.result) notifyTableWin(ws.addr, st.game, st.result);
           send(ws, { type: 'casino', state: st, balance: game.balanceStr(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
@@ -352,6 +373,7 @@ wss.on('connection', (ws) => {
         try {
           const st = game.casinoDecide(ws.addr, !!m.play);
           persistSoon();
+          if (st.result) notifyTableWin(ws.addr, st.game, st.result);
           send(ws, { type: 'casino', state: st, balance: game.balanceStr(ws.addr),
                      fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -381,6 +403,10 @@ wss.on('connection', (ws) => {
         try {
           const st = game.hiloCashOut(ws.addr);
           persistSoon();
+          // Le multiplicateur atteint est ce qui rend l'annonce interessante :
+          // «+3000» dit combien, «x16.20 en 4 pas» dit comment.
+          notifyTableWin(ws.addr, 'hilo', { net: st.net, staked: st.mise, payout: st.payout,
+                                            note: `${st.multi.toFixed(2)}× in ${st.pas} step${st.pas > 1 ? 's' : ''}` });
           send(ws, { type: 'hilo', state: st, balance: game.balanceStr(ws.addr),
                      fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
