@@ -156,8 +156,17 @@ module.exports = {
   // Ici la MAISON joue son argent : contrairement au poker ou l'on prend une
   // commission sans risque, une session courte peut couter cher malgre les
   // 2,4 % d'avantage. Le plafond est donc volontairement bas.
+  // Commission de la maison sur le GAIN NET (jamais sur les mises rendues :
+  // une egalite rend exactement la mise). 1350 bps = 13,5 % du gain, ce qui
+  // amene le retour joueur a 92 % — 8 % pour la maison. C'est deja bien
+  // au-dessus des 2-3 % d'un vrai casino, mais assez bas pour qu'un joueur
+  // reste. Reperes mesures : 0 -> 97,6 % · 1350 -> 92 % · 2000 -> 89 %
+  // · 4200 -> 80 %. Une seule valeur a changer.
+  CASINO_WIN_FEE_BPS: parseInt(env('CASINO_WIN_FEE_BPS', '1350'), 10),
   CASINO_MIN_BET: parseInt(env('CASINO_MIN_BET', '10'), 10),
-  CASINO_MAX_BET: parseInt(env('CASINO_MAX_BET', '25000'), 10),
+  // Plafond volontairement bas : ici c'est l'argent de la maison qui est en
+  // jeu, et au Hold'em suivre engage 3x l'Ante, soit 30 000 sur une main.
+  CASINO_MAX_BET: parseInt(env('CASINO_MAX_BET', '10000'), 10),
 
   // ---- SWOGE Poker (Texas Hold'em, 6 max, pas de bot) ----
   // Une table ne distribue jamais tant qu'un deuxieme joueur reel n'est pas
