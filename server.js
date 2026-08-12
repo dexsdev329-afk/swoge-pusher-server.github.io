@@ -208,7 +208,8 @@ wss.on('connection', (ws) => {
         if (m.tgId) game.linkTelegram(rec, m.tgId); // map Telegram id → account for the Adsgram reward postback
         const welcome = game.grantWelcome(rec);      // one-time demo credit for a brand-new player
         if (welcome > 0) persistSoon();
-        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec), volcano: { meter: game.volcanoMeterOf(rec) }, bonus: game.bonusState(rec), welcomeGranted: welcome });
+        return send(ws, { type: 'auth', address: rec, balance: game.balanceStr(rec), fairness: game.fairness(rec), quests: game.questState(rec), stake: game.stakeInfo(rec), bj: game.bjState(rec), casino: game.casinoState(rec),
+          casinoPay: require('./casino').PAY, casinoMin: cfg.CASINO_MIN_BET, casinoMax: cfg.CASINO_MAX_BET, volcano: { meter: game.volcanoMeterOf(rec) }, bonus: game.bonusState(rec), welcomeGranted: welcome });
       }
       // le hall et l'observation d'une table sont publics : on peut regarder
       // jouer avant de se connecter
@@ -337,6 +338,26 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
+      // ---- casino (jeux contre la banque) ----
+      if (m.type === 'casinoState') return send(ws, { type: 'casino', state: game.casinoState(ws.addr) });
+      if (m.type === 'casinoDeal') {
+        try {
+          const st = game.casinoDeal(ws.addr, String(m.game || ''), m.ante, m.side);
+          persistSoon();
+          send(ws, { type: 'casino', state: st, balance: game.balanceStr(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'casinoDecide') {
+        try {
+          const st = game.casinoDecide(ws.addr, !!m.play);
+          persistSoon();
+          send(ws, { type: 'casino', state: st, balance: game.balanceStr(ws.addr),
+                     fairness: game.fairness(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+
       // ---- poker (actions nominatives) ----
       if (m.type === 'pokerJoin') {
         try {
