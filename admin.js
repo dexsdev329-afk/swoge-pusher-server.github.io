@@ -82,6 +82,22 @@ function page() {
     <button class="ghost" id="csv">Export CSV</button>
   </div>
   <div class="ptot" id="ptot">—</div>
+  <style>
+    #ptbl tbody tr.pl{ cursor:pointer; }
+    #ptbl tbody tr.pl:hover{ background:rgba(255,255,255,.05); }
+    #ptbl tbody tr.pl.open{ background:rgba(230,165,55,.10); }
+    tr.det td{ padding:0 !important; background:rgba(0,0,0,.28); }
+    .det-in{ padding:10px 14px 14px; }
+    .det-in h5{ margin:0 0 8px; font-size:12px; letter-spacing:1px; text-transform:uppercase; color:#E7C97A; }
+    .det-t{ width:100%; border-collapse:collapse; font-size:12.5px; }
+    .det-t th{ text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:#9d9d9d; }
+    .det-t th, .det-t td{ padding:3px 8px; border-bottom:1px solid rgba(255,255,255,.06); }
+    .det-t td.n, .det-t th.n{ text-align:right; }
+    .det-t .haut{ color:#F2685E; font-weight:800; }
+    .det-t .bas{ color:#7CFF9B; }
+    .det-note{ margin-top:8px; font-size:11.5px; color:#9d9d9d; line-height:1.5; }
+    .det-vide{ color:#9d9d9d; font-size:12.5px; }
+  </style>
   <div class="tblwrap">
     <table id="ptbl">
       <thead><tr>
@@ -90,11 +106,13 @@ function page() {
         <th data-k="staked" class="n">Staked</th>
         <th data-k="pending" class="n">Yield</th>
         <th data-k="total" class="n">Total held</th>
+        <th data-k="depositedAmount" class="n">Deposited</th>
+        <th data-k="net" class="n">Net</th>
         <th data-k="wagered" class="n">Played (lifetime)</th>
         <th data-k="bets" class="n">Bets</th>
         <th data-k="withdrawn" class="n">Withdrawn</th>
       </tr></thead>
-      <tbody id="pbody"><tr><td colspan="8" class="muted2">loading…</td></tr></tbody>
+      <tbody id="pbody"><tr><td colspan="10" class="muted2">loading…</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -172,31 +190,90 @@ function drawPlayers(){
   rows.forEach(function(p){ held+=num(p.total); played+=num(p.wagered); bets+=p.bets||0; });
   $("#ptot").innerHTML="Showing <b>"+rows.length+"</b> of <b>"+PLAYERS.length+"</b> players · holding <b>"+
     fmt(held)+"</b> $SWOGE · played <b>"+fmt(played)+"</b> $SWOGE over <b>"+bets+"</b> bets";
-  if(!rows.length){ $("#pbody").innerHTML='<tr><td colspan="8" class="muted2">no player matches</td></tr>'; return; }
+  if(!rows.length){ $("#pbody").innerHTML='<tr><td colspan="10" class="muted2">no player matches</td></tr>'; return; }
   var h="";
   rows.forEach(function(p){
-    h+='<tr class="'+(p.deposited?"":"nodep")+'">'+
+    h+='<tr class="pl '+(p.deposited?"":"nodep")+'" data-a="'+esc(p.address)+'">'+
        '<td class="addr"><b>'+esc(p.name)+(p.tgId?' <span class="tg">tg:'+esc(String(p.tgId))+'</span>':'')+'</b>'+esc(short(p.address))+'</td>'+
        '<td class="n">'+fmt(p.balance)+'</td>'+
        '<td class="n">'+fmt(p.staked)+'</td>'+
        '<td class="n">'+fmt(p.pending)+'</td>'+
        '<td class="n">'+fmt(p.total)+'</td>'+
+       '<td class="n">'+fmt(p.depositedAmount)+'</td>'+
+       '<td class="n" style="font-weight:800;color:'+(num(p.net)>0?"#F2685E":"#7CFF9B")+'">'+fmt(p.net)+'</td>'+
        '<td class="n">'+fmt(p.wagered)+'</td>'+
        '<td class="n">'+(p.bets||0)+'</td>'+
        '<td class="n">'+fmt(p.withdrawn)+'</td>'+
-       '</tr>';
+       '</tr>'+
+       '<tr class="det" data-d="'+esc(p.address)+'" style="display:none"><td colspan="10">'+
+         detail(p)+'</td></tr>';
   });
   $("#pbody").innerHTML=h;
+}
+/* Detail par jeu. Deux chiffres, et ils ne disent PAS la meme chose :
+   - « gagnees » flatte : au blackjack on gagne pres d'une main sur deux et on
+     perd quand meme, parce qu'une main doublee perdue coute le double ;
+   - « retour » est le seul qui compte : ce qui revient divise par ce qui est
+     mise. Au-dessus de 100 % sur beaucoup de manches, l'argent ne vient pas
+     du jeu. Sur vingt manches, ca ne veut rien dire — d'ou le nombre affiche
+     en premier. */
+var NOMJEU={ bj:"Blackjack", holdem:"Casino Hold'em", three:"Three Card",
+             hilo:"Hi-Lo", mines:"Mines", plinko:"Plinko",
+             spin:"SWOGE Spin", spinBonus:"Spin — bonus achete", smash:"Smash" };
+function pct(x){ return (100*x).toFixed(1)+"%"; }
+function detail(p){
+  var j=p.jeux||{}, cles=Object.keys(j);
+  if(!cles.length) return '<div class="det-in"><span class="det-vide">Aucune manche enregistree pour ce joueur.</span></div>';
+  cles.sort(function(a,b){ return (j[b].mise||0)-(j[a].mise||0); });
+  var tot={n:0,mise:0,rendu:0,gagne:0};
+  var h='<div class="det-in"><h5>'+esc(p.name)+' — detail par jeu</h5>'+
+        '<table class="det-t"><tr><th>Jeu</th><th class="n">Manches</th>'+
+        '<th class="n">Gagnees</th><th class="n">Nulles</th><th class="n">Mise</th>'+
+        '<th class="n">Rendu</th><th class="n">Retour</th></tr>';
+  cles.forEach(function(k){
+    var g=j[k]; tot.n+=g.n; tot.mise+=g.mise; tot.rendu+=g.rendu; tot.gagne+=g.gagne;
+    var ret=g.mise>0?g.rendu/g.mise:0;
+    /* On ne crie qu'au-dessus de 100 % ET sur assez de manches : en dessous de
+       200 coups, la variance seule depasse largement l'ecart qu'on cherche. */
+    var suspect = ret>1 && g.n>=200;
+    h+='<tr><td>'+esc(NOMJEU[k]||k)+'</td>'+
+       '<td class="n">'+g.n+'</td>'+
+       '<td class="n">'+pct(g.n?g.gagne/g.n:0)+'</td>'+
+       '<td class="n">'+pct(g.n?(g.nul||0)/g.n:0)+'</td>'+
+       '<td class="n">'+fmt(g.mise)+'</td>'+
+       '<td class="n">'+fmt(g.rendu)+'</td>'+
+       '<td class="n '+(suspect?"haut":ret<1?"bas":"")+'">'+pct(ret)+'</td></tr>';
+  });
+  var retTot=tot.mise>0?tot.rendu/tot.mise:0;
+  h+='<tr><th>Tous jeux</th><th class="n">'+tot.n+'</th>'+
+     '<th class="n">'+pct(tot.n?tot.gagne/tot.n:0)+'</th><th></th>'+
+     '<th class="n">'+fmt(tot.mise)+'</th><th class="n">'+fmt(tot.rendu)+'</th>'+
+     '<th class="n '+(retTot>1&&tot.n>=200?"haut":"")+'">'+pct(retTot)+'</th></tr></table>';
+  h+='<div class="det-note">Le <b>retour</b> est le chiffre a lire : ce qui revient divise par ce qui est mise. '+
+     'La maison garde 3 a 8 % selon le jeu, donc un joueur normal reste <b>sous 100 %</b>. '+
+     'Au-dessus de 100 % sur plus de 200 manches, cet argent ne vient pas du jeu : il est marque en rouge. '+
+     'Le pourcentage de mains gagnees, lui, flatte : on peut en gagner la moitie et perdre quand meme.</div>';
+  return h+'</div>';
 }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
 async function loadPlayers(){
   try{
     var r=await fetch("/players?limit=1000&key="+encodeURIComponent(KEY));
-    if(!r.ok){ $("#pbody").innerHTML='<tr><td colspan="8" class="muted2">could not load players ('+r.status+')</td></tr>'; return; }
+    if(!r.ok){ $("#pbody").innerHTML='<tr><td colspan="10" class="muted2">could not load players ('+r.status+')</td></tr>'; return; }
     var d=await r.json(); PLAYERS=d.players||[]; drawPlayers();
-  }catch(e){ $("#pbody").innerHTML='<tr><td colspan="8" class="muted2">'+esc(e.message)+'</td></tr>'; }
+  }catch(e){ $("#pbody").innerHTML='<tr><td colspan="10" class="muted2">'+esc(e.message)+'</td></tr>'; }
 }
 loadPlayers(); setInterval(loadPlayers,15000);
+/* Un clic sur la ligne ouvre son detail, et referme celui qui l'etait : deux
+   panneaux ouverts noient le tableau. */
+$("#pbody").addEventListener("click",function(e){
+  var tr=e.target.closest("tr.pl"); if(!tr) return;
+  var a=tr.dataset.a, det=document.querySelector('tr.det[data-d="'+a+'"]');
+  var ouvert=tr.classList.contains("open");
+  [].forEach.call(document.querySelectorAll("#pbody tr.pl.open"),function(x){ x.classList.remove("open"); });
+  [].forEach.call(document.querySelectorAll("#pbody tr.det"),function(x){ x.style.display="none"; });
+  if(!ouvert && det){ tr.classList.add("open"); det.style.display=""; }
+});
 $("#q").addEventListener("input",drawPlayers);
 $("#clearQ").onclick=function(){ $("#q").value=""; drawPlayers(); };
 [].forEach.call(document.querySelectorAll("#ptbl th"),function(th){
