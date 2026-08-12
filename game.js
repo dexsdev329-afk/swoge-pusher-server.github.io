@@ -1025,8 +1025,18 @@ class Game {
     e.edgeBps = cfg.CRASH_EDGE_BPS;
     e.min = cfg.CASINO_MIN_BET;
     e.max = cfg.CASINO_MAX_BET;
+    e.joueurs = this._crashNoms(e.joueurs);
     if (addr) e.moi = this.crash.pari(addr);
     return e;
+  }
+
+  /**
+   * La table du Crash ne connait que des adresses — c'est voulu, elle ignore
+   * tout des joueurs. Mais une liste de 0x25…47f ne dit rien a personne : on y
+   * remet les noms au moment de sortir, la ou ils sont connus.
+   */
+  _crashNoms(liste) {
+    return (liste || []).map((j) => Object.assign({ name: this._p(j.addr).name }, j));
   }
 
   /**
@@ -1078,7 +1088,8 @@ class Game {
   crashTick(now) {
     const evs = this.crash.tick(now || Date.now());
     for (const ev of evs) {
-      if (ev.type === 'crashRetrait') this._crediteRetrait(ev);
+      if (ev.type === 'crashDepart') ev.joueurs = this._crashNoms(ev.joueurs);
+      else if (ev.type === 'crashRetrait') this._crediteRetrait(ev);
       else if (ev.type === 'crashFin') {
         // Les perdants ont ete debites a la mise : il ne reste qu'a inscrire la
         // manche a leur compteur, pour que la comptabilite par jeu soit juste.
