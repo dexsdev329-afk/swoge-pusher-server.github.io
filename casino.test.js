@@ -154,8 +154,8 @@ console.log('--- taux de retour : 300 000 mains de chaque jeu ---');
   const rtp3 = rendu3 / mise3 * 100, rtpPP = renduPP / misePP * 100;
   console.log(`    Three Card ante+play : retour ${rtp3.toFixed(2)} % (avantage maison ${(100 - rtp3).toFixed(2)} %)`);
   console.log(`    Three Card pair plus : retour ${rtpPP.toFixed(2)} % (avantage maison ${(100 - rtpPP).toFixed(2)} %)`);
-  ok(`ante+play entre 94 et 99 % (${rtp3.toFixed(2)})`, rtp3 > 94 && rtp3 < 99);
-  ok(`pair plus entre 92 et 99 % (${rtpPP.toFixed(2)})`, rtpPP > 92 && rtpPP < 99);
+  ok(`ante+play entre 94 et 99 % SANS commission (${rtp3.toFixed(2)})`, rtp3 > 94 && rtp3 < 99);
+  ok(`pair plus entre 92 et 99 % SANS commission (${rtpPP.toFixed(2)})`, rtpPP > 92 && rtpPP < 99);
 
   // Casino Hold'em : la strategie optimale se couche tres rarement (~18 %).
   // Approximation solide : on se couche seulement avec une hauteur faible qui
@@ -196,6 +196,49 @@ console.log('--- taux de retour : 300 000 mains de chaque jeu ---');
   const rtpAA = renduAA / miseAA * 100;
   console.log(`    bonus AA             : retour ${rtpAA.toFixed(2)} % (avantage maison ${(100 - rtpAA).toFixed(2)} %)`);
   ok(`bonus AA entre 88 et 98 % (${rtpAA.toFixed(2)})`, rtpAA > 88 && rtpAA < 98);
+}
+
+console.log('--- retour reel avec la commission de la maison ---');
+{
+  // La commission est le seul levier qui descend le retour a 80 % sans rendre
+  // les paiements incomprehensibles. On verifie qu'elle tape bien la cible, et
+  // surtout qu'elle ne touche JAMAIS une mise rendue.
+  const cfg = require('./config');
+  const FEE = cfg.CASINO_WIN_FEE_BPS;
+  const ANTE = 100, N = 120000;
+  const SEUIL3 = C.eval3([10, 4 + 13, 2 + 26]);
+  let mise = 0, rendu = 0, commissions = 0;
+
+  for (let i = 0; i < N; i++) {
+    const dry = C.threeCard({ serverSeed: 'fee3', clientSeed: 'c', nonce: i, ante: ANTE, play: false });
+    const suit = dry.playerScore >= SEUIL3;
+    const r = C.threeCard({ serverSeed: 'fee3', clientSeed: 'c', nonce: i, ante: ANTE,
+                            pairPlus: ANTE, play: suit, feeBps: FEE });
+    mise += ANTE + (suit ? ANTE : 0) + ANTE;
+    rendu += r.payout; commissions += r.fee || 0;
+  }
+  for (let i = 0; i < N; i++) {
+    const d = C.holdemDeal({ serverSeed: 'feeh', clientSeed: 'c', nonce: i });
+    const sc = P.evaluate(d.player.concat(d.board)), cat = C.catP(sc);
+    let suit = cat >= P.CAT.PAIR;
+    if (!suit) {
+      const rr = d.player.map((x) => x % 13).sort((a, b) => b - a);
+      const ass = ((d.player[0] / 13) | 0) === ((d.player[1] / 13) | 0);
+      suit = rr[0] >= 9 || ass || rr[0] - rr[1] <= 3;
+    }
+    const r = C.holdemResolve({ deal: d, ante: ANTE, aa: ANTE, call: suit, feeBps: FEE });
+    mise += ANTE + (suit ? ANTE * 2 : 0) + ANTE;
+    rendu += r.payout; commissions += r.fee || 0;
+  }
+  const rtp = rendu / mise * 100;
+  console.log(`    commission ${(FEE / 100).toFixed(1)} % du gain net -> retour ${rtp.toFixed(2)} %`);
+  console.log(`    (avantage maison ${(100 - rtp).toFixed(2)} %, ${commissions} preleves sur ${mise} mises)`);
+  ok(`le retour vise est atteint a 1,5 point pres (${rtp.toFixed(2)})`, Math.abs(rtp - 92) < 1.5);
+
+  // Une egalite rend exactement la mise : la commission ne doit pas mordre.
+  eq('commission nulle sur une mise rendue', C.commission(300, 300, FEE), { payout: 300, fee: 0 });
+  eq('commission nulle sur une perte', C.commission(300, 0, FEE), { payout: 0, fee: 0 });
+  eq('commission sur 100 de gain net', C.commission(300, 400, 1350), { payout: 387, fee: 13 });
 }
 
 console.log('--- frequences des mains a trois cartes ---');
