@@ -228,7 +228,11 @@ class Table {
     this.manche++;
     this.paris = new Map();
     this.maillon = null;
+    /* `duree` accompagne `jusqua` : l'horloge du navigateur n'est pas celle du
+       serveur, et un decompte calcule sur une echeance absolue afficherait
+       n'importe quoi chez un joueur dont la montre retarde de dix secondes. */
     return { type: 'crashAttente', manche: this.manche, jusqua: this.jusqua,
+             duree: this.attenteMs,
              engagement: this.engagement, precedent: this.precedent };
   }
 
@@ -336,6 +340,8 @@ class Table {
       multi: this.phase === VOL ? multiA(now - this.depart, this.vitesse) : 1,
       depart: this.phase === VOL ? this.depart : 0,
       jusqua: this.phase === VOL ? 0 : this.jusqua,
+      // le temps qu'il RESTE, pour un client dont l'horloge n'est pas la notre
+      reste: this.phase === VOL ? 0 : Math.max(0, this.jusqua - now),
       vitesse: this.vitesse, plafond: this.plafond,
       point: this.phase === APRES ? this.point : null,
       maillon: this.phase === APRES ? this.maillon : null,
