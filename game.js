@@ -56,7 +56,7 @@ class Game {
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
         tw: (p.wagered || ethers.BigNumber.from(0)).toString(), bc: p.betCount || 0,
-        dp: (p.deposited || ethers.BigNumber.from(0)).toString(),
+        dp: (p.deposited || ethers.BigNumber.from(0)).toString(), jx: p.jeux || {},
         bj: p.bj || null, vm: p.volcanoMeter || 0,
         tg: p.tgId || null,
         wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
@@ -91,7 +91,7 @@ class Game {
               : []),
         stakeAccrued: ethers.BigNumber.from(d.sa || '0'),
         wagered: ethers.BigNumber.from(d.tw || '0'), betCount: d.bc || 0,
-        deposited: ethers.BigNumber.from(d.dp || '0'),
+        deposited: ethers.BigNumber.from(d.dp || '0'), jeux: d.jx || {},
         bj: d.bj || null, volcanoMeter: d.vm || 0,
         tgId: d.tg || null,
         welcomeGranted: !!d.wg, welcomeWagered: !!d.ww, welcomeClaimed: !!d.wc,
@@ -113,6 +113,26 @@ class Game {
     if (!p.welcomeWagered) p.welcomeWagered = true;
     if (wei) { p.wagered = (p.wagered || BN(0)).add(wei); p.betCount = (p.betCount || 0) + 1; }
   }
+  /**
+   * Comptabilite PAR JEU. Le serveur ne retenait qu'un total de mises, tous
+   * jeux confondus : impossible de dire si un joueur gagne anormalement
+   * quelque part, ni meme a quoi il joue. On enregistre une manche a la fois,
+   * au moment ou elle se conclut.
+   *
+   * `mise` et `rendu` sont des NOMBRES, pas des wei : ce sont des chiffres
+   * d'affichage, jamais des soldes, et personne ne paie avec.
+   */
+  _manche(p, jeu, mise, rendu) {
+    if (!p || !jeu) return;
+    if (!p.jeux) p.jeux = {};
+    const j = p.jeux[jeu] || (p.jeux[jeu] = { n: 0, mise: 0, rendu: 0, gagne: 0, nul: 0 });
+    j.n++;
+    j.mise += Number(mise) || 0;
+    j.rendu += Number(rendu) || 0;
+    if (rendu > mise) j.gagne++;
+    else if (rendu === mise) j.nul++;
+  }
+
   _bumpDay(p) {
     const t = this._today();
     if (p.dayKey !== t) { p.dayKey = t; p.dayNet = ethers.BigNumber.from(0); p.dropsToday = 0; p.winsToday = 0; p.questClaimed = {}; }
@@ -222,6 +242,7 @@ class Game {
            d'argent qui ne vient pas du jeu. */
         net: f(p.balance.add(staked).add(pending).add(p.cumulativeAuthorized)
                 .sub(p.deposited || BN(0))),
+        jeux: p.jeux || {},
         tgId: p.tgId || null,
         total: f(p.balance.add(staked).add(pending)),
       });
@@ -404,7 +425,7 @@ class Game {
     if (!p) {
       p = { balance: ethers.BigNumber.from(0), cumulativeAuthorized: ethers.BigNumber.from(0),
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
-            deposited: BN(0),
+            deposited: BN(0), jeux: {},
             dayNet: ethers.BigNumber.from(0), dayKey: null,
             dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false,
             stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0,
@@ -525,6 +546,7 @@ class Game {
       this._bumpDay(p); p.dayNet = p.dayNet.add(pay); p.winsToday++;
       payout = mult * bet;
     }
+    this._manche(p, 'smash', bet, payout);
     return { mult, payout, bet };
   }
 
@@ -555,6 +577,7 @@ class Game {
       this._bumpDay(p); p.dayNet = p.dayNet.add(payWei); p.winsToday++;
       payout = out.totalInternal * bet;
     }
+    this._manche(p, 'spin', bet, payout);
     return { outcome: out, bet, payout, balance: this.balanceStr(addr), fairness: this.fairness(addr) };
   }
 
@@ -578,6 +601,7 @@ class Game {
       this._bumpDay(p); p.dayNet = p.dayNet.add(payWei); p.winsToday++;
       payout = bonus.total * bet;
     }
+    this._manche(p, 'spinBonus', cost, payout);
     return { outcome: { bonus }, bet, cost, payout, balance: this.balanceStr(addr), fairness: this.fairness(addr) };
   }
 
@@ -616,6 +640,7 @@ class Game {
     else { res = 'push'; credit = stake; }
     if (credit > 0) { p.balance = p.balance.add(WEI(credit)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(credit)); if (res === 'win') p.winsToday++; }
     p.bj.stage = 'done'; p.bj.result = res; p.bj.payout = credit;
+    this._manche(p, 'bj', stake, credit);
   }
 
   bjState(addr) { const p = this._p(addr); return p.bj ? this._bjPublic(p, false) : null; }
@@ -720,7 +745,9 @@ class Game {
       if (r.outcome === 'win' || r.outcome === 'dealer_not_qualified') p.winsToday++;
     }
     s.result = r; s.stage = 'done'; s.called = !!suit;
-    return this._casinoPublic(p, true);
+    const vue = this._casinoPublic(p, true);
+    this._manche(p, s.game, vue.result.staked, r.payout);
+    return vue;
   }
 
   // ------------------------------------------------------------------ hi-lo
@@ -775,6 +802,9 @@ class Game {
     s.etat = r.etat;
     s.dernier = { sens, avant, carte: r.carte, gagne: r.gagne,
                   egalites: r.egalites, mult: r.multiplicateurDuPas };
+    // une partie perdue se conclut ICI, pas a l'encaissement : sans ca on ne
+    // compterait que les parties gagnantes et le taux serait de 100 %
+    if (s.etat.fini && s.etat.perdu) this._manche(p, 'hilo', s.etat.mise, 0);
     return this._hiloPublic(p);
   }
 
@@ -792,6 +822,7 @@ class Game {
     }
     const v = this._hiloPublic(p);
     v.payout = r.payout; v.net = r.net;
+    this._manche(p, 'hilo', v.mise, r.payout);
     return v;
   }
 
@@ -874,6 +905,7 @@ class Game {
     if (!s || s.etat.fini) throw new Error('no game in progress');
     const r = mines.jouer({ etat: s.etat, position });
     s.etat = r.etat;
+    if (s.etat.fini && s.etat.perdu) this._manche(p, 'mines', s.etat.mise, 0);
     const v = this._minesPublic(p);
     v.dernier = { position: r.position, sure: r.sure };
     return v;
@@ -893,6 +925,7 @@ class Game {
     }
     const v = this._minesPublic(p);
     v.payout = r.payout; v.net = r.net;
+    this._manche(p, 'mines', v.mise, r.payout);
     return v;
   }
 
@@ -943,6 +976,7 @@ class Game {
       this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
       if (r.net > 0) p.winsToday++;
     }
+    this._manche(p, 'plinko', r.mise, r.payout);
     return { mise: r.mise, rangees: r.rangees, risque: r.risque,
              chemin: r.chemin, case: r.case, multi: r.multi,
              payout: r.payout, net: r.net, table: r.table };
@@ -999,9 +1033,9 @@ class Game {
     p.bj = { bet: amt, pc: [this._bjDraw(p), this._bjDraw(p)], dc: [this._bjDraw(p), this._bjDraw(p)], stage: 'player', doubled: false, result: null, payout: 0 };
     const pv = this._bjVal(p.bj.pc), dv = this._bjVal(p.bj.dc);
     if (pv === 21 || dv === 21) {
-      if (pv === 21 && dv === 21) { p.bj.stage = 'done'; p.bj.result = 'push'; p.balance = p.balance.add(w); this._bumpDay(p); p.dayNet = p.dayNet.add(w); p.bj.payout = amt; }
-      else if (pv === 21) { const credit = amt * 2.5; p.balance = p.balance.add(WEI(credit)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(credit)); p.winsToday++; p.bj.stage = 'done'; p.bj.result = 'blackjack'; p.bj.payout = credit; }
-      else { p.bj.stage = 'done'; p.bj.result = 'dealer_blackjack'; p.bj.payout = 0; }
+      if (pv === 21 && dv === 21) { p.bj.stage = 'done'; p.bj.result = 'push'; p.balance = p.balance.add(w); this._bumpDay(p); p.dayNet = p.dayNet.add(w); p.bj.payout = amt; this._manche(p, 'bj', amt, amt); }
+      else if (pv === 21) { const credit = amt * 2.5; p.balance = p.balance.add(WEI(credit)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(credit)); p.winsToday++; p.bj.stage = 'done'; p.bj.result = 'blackjack'; p.bj.payout = credit; this._manche(p, 'bj', amt, credit); }
+      else { p.bj.stage = 'done'; p.bj.result = 'dealer_blackjack'; p.bj.payout = 0; this._manche(p, 'bj', amt, 0); }
     }
     return this._bjPublic(p, p.bj.stage === 'done');
   }
