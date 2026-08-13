@@ -14,6 +14,7 @@
  * exemples : de l'argent en sort.
  */
 const assert = require('assert');
+const cfg = require('./config');
 const P = require('./puissance4');
 
 let n = 0;
@@ -206,8 +207,11 @@ const jete = (f, re, m) => { assert.throws(f, re, m); n++; };
   const RAKE = 500;   // 5 %
   // toute la plage de mises annoncee, au pas de 10 : de l'argent en sort, on ne
   // se contente pas de trois exemples
+  /* La borne vient de la CONFIGURATION, pas d'un nombre recopie ici : le jour
+     ou la mise maximale monte, la verification monte avec elle au lieu de
+     continuer a certifier une plage qui n'existe plus. */
   let pire = 0.05, souci = null;
-  for (let mise = 10; mise <= 100000 && !souci; mise += 10) {
+  for (let mise = cfg.P4_MIN; mise <= cfg.P4_MAX && !souci; mise += 10) {
     const r = P.partage(mise, RAKE, false, false);
     if (r.pot !== mise * 2) souci = `pot faux pour ${mise}`;
     else if (r.gain + r.rake !== r.pot) souci = `le pot ne se conserve pas pour ${mise}`;
@@ -216,7 +220,7 @@ const jete = (f, re, m) => { assert.throws(f, re, m); n++; };
     const part = r.rake / r.pot;
     if (Math.abs(part - 0.05) > Math.abs(pire - 0.05)) pire = part;
   }
-  ok(!souci, souci || 'le pot se conserve sur les 10 000 mises de la plage');
+  ok(!souci, souci || `le pot se conserve de ${cfg.P4_MIN} a ${cfg.P4_MAX}`);
   ok(Math.abs(pire - 0.05) < 0.001,
      `la commission reste a 5 % sur toute la plage (pire ecart : ${(pire * 100).toFixed(3)} %)`);
 
