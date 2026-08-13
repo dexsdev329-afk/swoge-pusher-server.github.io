@@ -262,6 +262,13 @@ module.exports = {
   // gagne, il n'y a rien a partager.
   P4_RAKE_SUR_NUL: env('P4_RAKE_SUR_NUL', '0') === '1',
 
+  /* ---- virements entre joueurs ----
+     Le depot prealable n'est pas une formalite : sans lui, ouvrir dix
+     portefeuilles jetables, ramasser dix bonus de bienvenue et tout rassembler
+     sur un onzieme ne couterait rien. */
+  TRANSFER_MIN: parseFloat(env('TRANSFER_MIN', '1')),
+  TRANSFER_REQUIRE_DEPOSIT: env('TRANSFER_REQUIRE_DEPOSIT', '1') === '1',
+
   // ---- Sessions ----
   // Duree pendant laquelle une signature vaut connexion. Passe ce delai, le
   // joueur resigne une fois. Trente jours est le compromis habituel : assez

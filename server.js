@@ -553,8 +553,51 @@ wss.on('connection', (ws) => {
          un horodatage — « ce qui precede cet instant » — plutot qu'un numero
          de page : rien ne se decale si une manche se termine entre deux
          demandes. */
+      /* ---- profil : nom, visage, amis, virement ---- */
+      if (m.type === 'setProfile') {
+        try {
+          const out = { type: 'profile' };
+          if (m.name !== undefined) out.name = game.setPublicName(ws.addr, m.name);
+          if (m.avatar !== undefined) out.avatar = game.setVisage(ws.addr, m.avatar);
+          persistSoon();
+          out.profile = game.profilPublic(ws.addr);
+          out.avatars = require('./game').Game.VISAGES;
+          send(ws, out);
+          /* Le nom s'affiche chez les AUTRES : les tables partagees doivent le
+             reprendre tout de suite, sinon un joueur se renomme et reste
+             affiche sous l'ancien nom jusqu'a la manche suivante. */
+          broadcast({ type: 'profilePublic', profile: game.profilPublic(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'profile') {
+        return send(ws, { type: 'profile', profile: game.profilPublic(ws.addr),
+                          avatars: require('./game').Game.VISAGES,
+                          friends: game.amis(ws.addr) });
+      }
+      if (m.type === 'friendAdd' || m.type === 'friendRemove') {
+        try {
+          const l = m.type === 'friendAdd' ? game.amiAjoute(ws.addr, m.address)
+                                           : game.amiRetire(ws.addr, m.address);
+          persistSoon();
+          send(ws, { type: 'friends', friends: l });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'transfer') {
+        try {
+          const r = game.transfere(ws.addr, m.address, m.amount);
+          persistSoon();
+          send(ws, { type: 'transferSent', ...r, balance: game.balanceStr(ws.addr) });
+          // le destinataire voit son solde monter sans avoir a recharger
+          toAddr(r.vers, { type: 'transferGot', amount: r.montant,
+                           from: ws.addr, fromName: game._p(ws.addr).name,
+                           balance: game.balanceStr(r.vers) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
       if (m.type === 'history') {
-        const genres = { dep: 'dep', wd: 'wd', r: 'r', st: 'st' };
+        const genres = { dep: 'dep', wd: 'wd', r: 'r', st: 'st', tr: 'tr' };
         const r = journal.lit(ws.addr, {
           genre: genres[m.kind] || null,
           /* `m.cursor` absent vaut « depuis la fin ». Attention : Number(null)

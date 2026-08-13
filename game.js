@@ -82,6 +82,7 @@ class Game {
         s: p.clientSeed, n: p.nonce, name: p.name,
         dn: p.dayNet.toString(), dk: p.dayKey,
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
+        vi: p.visage || null, am: p.amis || [],
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
         tw: (p.wagered || ethers.BigNumber.from(0)).toString(), bc: p.betCount || 0,
         dp: (p.deposited || ethers.BigNumber.from(0)).toString(), jx: p.jeux || {},
@@ -123,6 +124,7 @@ class Game {
         nonce: d.n || 0, name: d.name || addr.slice(0, 6),
         dayNet: ethers.BigNumber.from(d.dn || '0'), dayKey: d.dk || null,
         dropsToday: d.dt || 0, winsToday: d.wt || 0, questClaimed: d.qc || {}, hasDeposited: !!d.hd,
+        visage: d.vi || null, amis: Array.isArray(d.am) ? d.am : [],
         stakes: Array.isArray(d.stk)
           ? d.stk.map((x) => ({ a: ethers.BigNumber.from(x[0]), s: x[1], u: x[2] }))
           : (d.st && d.st !== '0' // migrate old single-stake format → one locked position
@@ -149,6 +151,13 @@ class Game {
   // total joue a vie (affiche dans le tableau de bord admin).
   _markWager(p, wei) {
     if (!p) return;
+    /* Le compteur AVANT le tirage. C'est le seul endroit traverse par tous les
+       jeux au moment ou la mise part, donc avant qu'aucune carte ne soit
+       tiree : en le notant ici et en relisant le compteur a la fin de la
+       manche, on obtient la PLAGE exacte de numeros utilises. Noter seulement
+       le compteur final serait faux des qu'un jeu tire plusieurs fois — au
+       blackjack, une main en consomme une dizaine. */
+    p.nonceDebut = p.nonce;
     if (!p.welcomeWagered) p.welcomeWagered = true;
     if (wei) { p.wagered = (p.wagered || BN(0)).add(wei); p.betCount = (p.betCount || 0) + 1; }
   }
@@ -168,7 +177,12 @@ class Game {
        nouveau jeu qui appelle _manche est journalise sans rien avoir a
        ajouter — et un jeu qui oublierait de l'appeler ne compterait deja pas
        dans les statistiques, ce qui se voit. */
-    if (p.addr) journal.ajoute(p.addr, { k: 'r', g: jeu, m: Number(mise) || 0, p: Number(rendu) || 0 });
+    if (p.addr) journal.ajoute(p.addr, { k: 'r', g: jeu, m: Number(mise) || 0, p: Number(rendu) || 0,
+      /* De quoi refaire le calcul soi-meme, une fois la graine du serveur
+         revelee : son empreinte, la graine du joueur, et les numeros utilises
+         par cette manche. */
+      sh: this.serverSeedHash, cs: p.clientSeed,
+      n0: p.nonceDebut == null ? p.nonce : p.nonceDebut, n1: p.nonce });
     if (!p.jeux) p.jeux = {};
     const j = p.jeux[jeu] || (p.jeux[jeu] = { n: 0, mise: 0, rendu: 0, gagne: 0, nul: 0 });
     j.n++;
@@ -493,7 +507,7 @@ class Game {
     if (!p) {
       p = { addr, balance: ethers.BigNumber.from(0), cumulativeAuthorized: ethers.BigNumber.from(0),
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
-            deposited: BN(0), jeux: {},
+            deposited: BN(0), jeux: {}, visage: null, amis: [],
             dayNet: ethers.BigNumber.from(0), dayKey: null,
             dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false,
             stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0,
@@ -506,6 +520,63 @@ class Game {
   }
 
   setName(addr, name) { this._p(addr).name = String(name || '').slice(0, 24) || addr.slice(0, 6); }
+
+  /* Les vingt-quatre visages proposes. Une LISTE FERMEE, et pas une chaine
+     libre : ce nom et cette image s'affichent chez les AUTRES joueurs, au
+     poker, au Crash, au Connect 4. Laisser passer n'importe quel texte, c'est
+     laisser un joueur en coller un autre dans le HTML de la table. */
+  /** La forme comparable d'un nom : sans casse et sans accents. */
+  static cleNom(n) {
+    return String(n || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  }
+
+  static get VISAGES() {
+    return ['🐕','🦴','💪','🔥','👑','💎','🚀','🎯','🍀','⚡','🌊','🐉',
+            '🦈','🐺','🦊','🐼','🎰','🃏','🎲','⚔️','🛡️','🏆','💰','🥇'];
+  }
+
+  /**
+   * Le nom public d'un joueur, tel qu'il choisit de le porter.
+   *
+   * Les espaces de bout sont retires — c'est une faute de frappe, pas une
+   * intention. Tout le reste est REFUSE plutot que corrige en silence : un
+   * joueur qui tape un nom pris, trop court ou plein de balises doit
+   * l'apprendre, pas se retrouver affiche sous autre chose.
+   */
+  setPublicName(addr, nom) {
+    const n = String(nom == null ? '' : nom).trim();
+    if (n.length < 3) throw new Error('name must be at least 3 characters');
+    if (n.length > 18) throw new Error('name must be 18 characters at most');
+    /* Lettres, chiffres, espace, tiret, souligne et point. Rien d'autre : ce
+       nom part dans le HTML des tables des autres joueurs. */
+    if (!/^[\p{L}\p{N} ._-]+$/u.test(n)) throw new Error('letters, digits, space, . _ - only');
+    if (/^\s|\s$|\s{2,}/.test(n)) throw new Error('no double or trailing spaces');
+    /* La cle d'unicite ignore la casse ET les accents : « Eliott » et
+       « Éliott » se ressemblent assez a l'ecran d'une table pour qu'on prenne
+       l'un pour l'autre, et se faire passer pour un autre joueur est
+       precisement ce qu'un nom public ne doit pas permettre. */
+    const cle = Game.cleNom(n);
+    for (const [a, p] of this.players)
+      if (a !== String(addr).toLowerCase() && Game.cleNom(p.name || '') === cle)
+        throw new Error('that name is taken');
+    this._p(addr).name = n;
+    return n;
+  }
+
+  /** Le visage, choisi dans la liste fermee. */
+  setVisage(addr, v) {
+    const liste = Game.VISAGES;
+    const s = String(v == null ? '' : v);
+    if (liste.indexOf(s) < 0) throw new Error('unknown avatar');
+    this._p(addr).visage = s;
+    return s;
+  }
+
+  /** Ce que les autres joueurs voient d'un joueur. */
+  profilPublic(addr) {
+    const p = this._p(addr);
+    return { address: String(addr).toLowerCase(), name: p.name, visage: p.visage || null };
+  }
   /**
    * Graine du joueur. Le DEUX-POINTS est interdit, et ce n'est pas cosmetique.
    *
@@ -1503,6 +1574,86 @@ class Game {
     journal.ajoute(addr, { k: 'wd', m: amountStr, to: String(addr).toLowerCase(),
                            cum: ethers.utils.formatUnits(p.cumulativeAuthorized, cfg.DECIMALS) });
     return p.cumulativeAuthorized;
+  }
+
+  // ------------------------------------------------------------- les amis
+  /*
+   * Une liste d'adresses, et un virement de solde a solde.
+   *
+   * Le virement ne touche PAS la chaine : il deplace deux nombres dans l'etat
+   * du serveur, ce qui est instantane et gratuit — c'est tout l'interet. Mais
+   * c'est de l'argent, donc trois regles :
+   *
+   *  1. l'expediteur doit avoir DEPOSE au moins une fois. Sans ca, ouvrir dix
+   *     portefeuilles jetables, ramasser dix bonus de bienvenue et tout
+   *     rassembler sur un onzieme ne couterait rien ;
+   *  2. on ne s'envoie rien a soi-meme — ca ne veut rien dire et ca fabrique
+   *     de faux mouvements dans l'historique ;
+   *  3. debit et credit dans la MEME instruction, sans await entre les deux.
+   *     Node est mono-thread : rien ne peut s'intercaler, donc la somme des
+   *     deux soldes ne peut pas bouger.
+   */
+  amis(addr) {
+    const p = this._p(addr);
+    return (p.amis || []).map((a) => {
+      const q = this.players.get(a);
+      return { address: a, name: q ? q.name : a.slice(0, 6), visage: q ? (q.visage || null) : null,
+               connu: !!q };
+    });
+  }
+
+  amiAjoute(addr, autre) {
+    const moi = String(addr).toLowerCase();
+    const a = String(autre || '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(a)) throw new Error('enter a valid 0x… address');
+    if (a === moi) throw new Error('that is your own address');
+    const p = this._p(addr);
+    if (!p.amis) p.amis = [];
+    if (p.amis.indexOf(a) >= 0) throw new Error('already in your friends');
+    if (p.amis.length >= 100) throw new Error('friend list is full (100)');
+    p.amis.push(a);
+    return this.amis(addr);
+  }
+
+  amiRetire(addr, autre) {
+    const a = String(autre || '').toLowerCase();
+    const p = this._p(addr);
+    p.amis = (p.amis || []).filter((x) => x !== a);
+    return this.amis(addr);
+  }
+
+  /**
+   * Envoie du $SWOGE d'un solde a un autre.
+   * @returns {{ montant:string, vers:string, solde:string }}
+   */
+  transfere(addr, vers, montantStr) {
+    const moi = String(addr).toLowerCase();
+    const dest = String(vers || '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(dest)) throw new Error('enter a valid 0x… address');
+    if (dest === moi) throw new Error('you cannot send to yourself');
+
+    const p = this._p(moi);
+    if (cfg.TRANSFER_REQUIRE_DEPOSIT && !p.hasDeposited)
+      throw new Error('deposit once before sending $SWOGE to others');
+
+    let montant;
+    try { montant = WEI(String(montantStr)); }
+    catch (e) { throw new Error('enter a valid amount'); }
+    if (montant.lte(0)) throw new Error('enter an amount');
+    if (montant.lt(WEI(String(cfg.TRANSFER_MIN)))) throw new Error('minimum transfer is ' + cfg.TRANSFER_MIN + ' $SWOGE');
+    if (montant.gt(p.balance)) throw new Error('amount exceeds your balance');
+
+    const q = this._p(dest);
+    // debit et credit d'un seul tenant : rien ne peut s'intercaler
+    p.balance = p.balance.sub(montant);
+    q.balance = q.balance.add(montant);
+
+    const m = ethers.utils.formatUnits(montant, cfg.DECIMALS);
+    journal.ajoute(moi, { k: 'tr', sens: 'out', m, autre: dest });
+    journal.ajoute(dest, { k: 'tr', sens: 'in', m, autre: moi });
+    return { montant: m, vers: dest,
+             solde: ethers.utils.formatUnits(p.balance, cfg.DECIMALS),
+             nomDest: q.name };
   }
 
   fairness(addr) {
