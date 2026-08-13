@@ -266,6 +266,10 @@ module.exports = {
      Le depot prealable n'est pas une formalite : sans lui, ouvrir dix
      portefeuilles jetables, ramasser dix bonus de bienvenue et tout rassembler
      sur un onzieme ne couterait rien. */
+  /* La photo de profil televersee s'affiche chez les AUTRES joueurs. On la
+     reserve donc a ceux qui ont depose au moins une fois : ca donne un compte
+     a qui parler si l'image pose probleme, et ca decourage le jetable. */
+  AVATAR_REQUIRE_DEPOSIT: env('AVATAR_REQUIRE_DEPOSIT', '1') === '1',
   TRANSFER_MIN: parseFloat(env('TRANSFER_MIN', '1')),
   TRANSFER_REQUIRE_DEPOSIT: env('TRANSFER_REQUIRE_DEPOSIT', '1') === '1',
 

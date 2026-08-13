@@ -24,6 +24,7 @@ const tg = require('./telegram');
 const admin = require('./admin');
 const session = require('./session');
 const journal = require('./journal');
+const avatars = require('./avatars');
 
 const table = new Table();
 const game = new Game();
@@ -264,6 +265,30 @@ const server = http.createServer(async (req, res) => {
     return res.end(admin.page());
   }
   // Liste des joueurs (prive, meme cle admin que /stats). Filtre optionnel ?q=
+  /* L'image d'un joueur. Publique : elle s'affiche deja a la table, la cacher
+     derriere une cle n'apporterait rien. Le cache du navigateur evite de la
+     redemander a chaque manche. */
+  if (path.startsWith('/avatar/')) {
+    const a = path.slice('/avatar/'.length).toLowerCase();
+    const img = avatars.lit(a);
+    if (!img) { res.writeHead(404); return res.end('no avatar'); }
+    res.writeHead(200, { 'content-type': img.mime, 'content-length': img.corps.length,
+                         'cache-control': 'public, max-age=300',
+                         'access-control-allow-origin': '*' });
+    return res.end(img.corps);
+  }
+  /* Retirer l'image d'un joueur — reserve a l'administration : c'est la seule
+     reponse possible si quelqu'un met devant les autres joueurs une image qui
+     n'a rien a y faire. */
+  if (path === '/avatar-remove') {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    const a = String(qs.get('addr') || '').toLowerCase();
+    const fait = avatars.supprime(a);
+    if (fait) { const p = game.players.get(a); if (p) p.photo = false; persistSoon(); }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ removed: fait }));
+  }
   if (path === '/players') {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
     const qs = new URLSearchParams(req.url.split('?')[1] || '');
@@ -311,7 +336,11 @@ const server = http.createServer(async (req, res) => {
 // last-resort guards so nothing can take the process down
 process.on('unhandledRejection', (e) => console.warn('[unhandledRejection]', e && e.message));
 process.on('uncaughtException', (e) => console.warn('[uncaughtException]', e && e.message));
-const wss = new WebSocketServer({ server });
+/* Une limite de charge explicite. Par defaut `ws` accepte cent megaoctets par
+   message : n'importe qui pouvait faire allouer cent megaoctets au serveur
+   avec un seul envoi. Deux cent cinquante-six kilo-octets couvrent largement
+   le plus gros message legitime — une photo de profil de 32 Ko encodee. */
+const wss = new WebSocketServer({ server, maxPayload: 256 * 1024 });
 
 /* ---- battement de coeur ----
  * Une connexion WebSocket qui ne dit rien pendant plusieurs minutes est
@@ -576,6 +605,32 @@ wss.on('connection', (ws) => {
         return send(ws, { type: 'profile', profile: game.profilPublic(ws.addr),
                           avatars: require('./game').Game.VISAGES,
                           friends: game.amis(ws.addr) });
+      }
+      /* La photo de profil televersee. Elle n'est PAS ouverte a tous : elle
+         s'affiche chez les autres joueurs, donc on demande d'avoir depose au
+         moins une fois — ce qui donne un compte a qui parler si l'image pose
+         probleme, et coute assez cher pour decourager le jetable. */
+      if (m.type === 'avatarUpload') {
+        try {
+          if (cfg.AVATAR_REQUIRE_DEPOSIT && !game._p(ws.addr).hasDeposited)
+            throw new Error('deposit once to upload your own picture');
+          const r = avatars.enregistre(ws.addr, m.data);
+          game._p(ws.addr).photo = true;
+          persistSoon();
+          send(ws, { type: 'profile', profile: game.profilPublic(ws.addr),
+                     avatars: require('./game').Game.VISAGES, uploaded: r.octets });
+          broadcast({ type: 'profilePublic', profile: game.profilPublic(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'avatarRemove') {
+        avatars.supprime(ws.addr);
+        game._p(ws.addr).photo = false;
+        persistSoon();
+        send(ws, { type: 'profile', profile: game.profilPublic(ws.addr),
+                   avatars: require('./game').Game.VISAGES });
+        broadcast({ type: 'profilePublic', profile: game.profilPublic(ws.addr) });
+        return;
       }
       if (m.type === 'friendAdd' || m.type === 'friendRemove') {
         try {

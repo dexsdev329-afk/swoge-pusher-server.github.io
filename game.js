@@ -82,7 +82,7 @@ class Game {
         s: p.clientSeed, n: p.nonce, name: p.name,
         dn: p.dayNet.toString(), dk: p.dayKey,
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
-        vi: p.visage || null, am: p.amis || [],
+        vi: p.visage || null, am: p.amis || [], ph: !!p.photo,
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
         tw: (p.wagered || ethers.BigNumber.from(0)).toString(), bc: p.betCount || 0,
         dp: (p.deposited || ethers.BigNumber.from(0)).toString(), jx: p.jeux || {},
@@ -124,7 +124,7 @@ class Game {
         nonce: d.n || 0, name: d.name || addr.slice(0, 6),
         dayNet: ethers.BigNumber.from(d.dn || '0'), dayKey: d.dk || null,
         dropsToday: d.dt || 0, winsToday: d.wt || 0, questClaimed: d.qc || {}, hasDeposited: !!d.hd,
-        visage: d.vi || null, amis: Array.isArray(d.am) ? d.am : [],
+        visage: d.vi || null, amis: Array.isArray(d.am) ? d.am : [], photo: !!d.ph,
         stakes: Array.isArray(d.stk)
           ? d.stk.map((x) => ({ a: ethers.BigNumber.from(x[0]), s: x[1], u: x[2] }))
           : (d.st && d.st !== '0' // migrate old single-stake format → one locked position
@@ -577,7 +577,11 @@ class Game {
   /** Ce que les autres joueurs voient d'un joueur. */
   profilPublic(addr) {
     const p = this._p(addr);
-    return { address: String(addr).toLowerCase(), name: p.name, visage: p.visage || null };
+    /* `photo` dit seulement QU'IL Y EN A UNE. L'image elle-meme se demande a
+       /avatar/<adresse>, ce qui la met dans le cache du navigateur au lieu de
+       la recopier dans chaque message de table. */
+    return { address: String(addr).toLowerCase(), name: p.name,
+             visage: p.visage || null, photo: !!p.photo };
   }
   /**
    * Graine du joueur. Le DEUX-POINTS est interdit, et ce n'est pas cosmetique.
