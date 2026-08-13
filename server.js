@@ -605,7 +605,41 @@ wss.on('connection', (ws) => {
         return send(ws, { type: 'profile', profile: game.profilPublic(ws.addr),
                           avatars: require('./game').Game.VISAGES,
                           friends: game.amis(ws.addr),
-                          pending: game.amisEnAttente(ws.addr) });
+                          pending: game.amisEnAttente(ws.addr),
+                          unread: game.transfertsNonLus(ws.addr),
+                          stats: game.stats(ws.addr) });
+      }
+      /* Le parrainage. Le lien s'attache une fois pour la vie ; le reste
+         n'est que de la lecture et un encaissement. */
+      if (m.type === 'referral') {
+        if (m.bind) {
+          try {
+            const r = game.lieParrain(ws.addr, m.bind);
+            persistSoon();
+            /* Le parrain doit VOIR arriver son filleul : c'est la seule
+               recompense immediate d'un lien partage, le reste vient plus
+               tard et par petits bouts. */
+            toAddr(r.parrain, { type: 'referral', ...game.parrainage(r.parrain),
+                                nouveau: game._p(ws.addr).name });
+          } catch (e) { return send(ws, { type: 'referral', ...game.parrainage(ws.addr), error: e.message }); }
+        }
+        return send(ws, { type: 'referral', ...game.parrainage(ws.addr) });
+      }
+      /* Le classement du mois : qui a fait tourner le plus de volume. */
+      if (m.type === 'leaderboard') {
+        return send(ws, { type: 'leaderboard', ...game.classementMois(ws.addr, 50) });
+      }
+      if (m.type === 'referralClaim') {
+        try {
+          const r = game.reclameParrainage(ws.addr);
+          persistSoon();
+          return send(ws, { type: 'referralClaimed', ...r, ...game.parrainage(ws.addr) });
+        } catch (e) { return send(ws, { type: 'error', error: e.message }); }
+      }
+      /* Le joueur a regarde ses envois recus : la pastille tombe. */
+      if (m.type === 'seenTransfers') {
+        game.vuTransferts(ws.addr); persistSoon();
+        return send(ws, { type: 'unread', unread: 0 });
       }
       /* La photo de profil televersee. Elle n'est PAS ouverte a tous : elle
          s'affiche chez les autres joueurs, donc on demande d'avoir depose au
@@ -667,6 +701,7 @@ wss.on('connection', (ws) => {
           // le destinataire voit son solde monter sans avoir a recharger
           toAddr(r.vers, { type: 'transferGot', amount: r.montant,
                            from: ws.addr, fromName: game._p(ws.addr).name,
+                           unread: game.transfertsNonLus(r.vers),
                            balance: game.balanceStr(r.vers) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;

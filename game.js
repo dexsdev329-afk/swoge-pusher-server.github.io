@@ -84,6 +84,12 @@ class Game {
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
         vi: p.visage || null, am: p.amis || [], ph: !!p.photo,
         dm: p.demandes || [], en: p.envoyees || [],
+        pa: p.parrain || null, fi: p.filleuls || [],
+        rd: (p.refDu || BN(0)).toString(), rt: (p.refTotal || BN(0)).toString(),
+        rc: p.revCumul || 0, rp: p.revPaye || 0,
+        rec: p.record || null, mj: p.meilleurJour || null, rb: !!p.refBienvenue,
+        mk: p.moisCle || null, mm: p.moisMise || 0,
+        sct: (p.stakeClaimTotal || BN(0)).toString(), tnl: p.trNonLus || 0,
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
         tw: (p.wagered || ethers.BigNumber.from(0)).toString(), bc: p.betCount || 0,
         dp: (p.deposited || ethers.BigNumber.from(0)).toString(), jx: p.jeux || {},
@@ -132,6 +138,12 @@ class Game {
         dropsToday: d.dt || 0, winsToday: d.wt || 0, questClaimed: d.qc || {}, hasDeposited: !!d.hd,
         visage: d.vi || null, amis: Array.isArray(d.am) ? d.am : [], photo: !!d.ph,
         demandes: Array.isArray(d.dm) ? d.dm : [], envoyees: Array.isArray(d.en) ? d.en : [],
+        parrain: d.pa || null, filleuls: Array.isArray(d.fi) ? d.fi : [],
+        refDu: ethers.BigNumber.from(d.rd || '0'), refTotal: ethers.BigNumber.from(d.rt || '0'),
+        revCumul: Number(d.rc || 0), revPaye: Number(d.rp || 0),
+        record: d.rec || null, meilleurJour: d.mj || null, refBienvenue: !!d.rb,
+        moisCle: d.mk || null, moisMise: Number(d.mm || 0),
+        stakeClaimTotal: ethers.BigNumber.from(d.sct || '0'), trNonLus: d.tnl || 0,
         stakes: Array.isArray(d.stk)
           ? d.stk.map((x) => ({ a: ethers.BigNumber.from(x[0]), s: x[1], u: x[2] }))
           : (d.st && d.st !== '0' // migrate old single-stake format → one locked position
@@ -190,6 +202,13 @@ class Game {
          par cette manche. */
       sh: this.serverSeedHash, cs: p.clientSeed,
       n0: p.nonceDebut == null ? p.nonce : p.nonceDebut, n1: p.nonce });
+    /* Le volume du MOIS. Il se remet a zero tout seul au changement de mois :
+       un classement mensuel qu'il faut penser a reinitialiser finit toujours
+       par afficher le mois d'avant. */
+    const mc = Game.moisCle();
+    if (p.moisCle !== mc) { p.moisCle = mc; p.moisMise = 0; }
+    p.moisMise = (p.moisMise || 0) + (Number(mise) || 0);
+
     if (!p.jeux) p.jeux = {};
     const j = p.jeux[jeu] || (p.jeux[jeu] = { n: 0, mise: 0, rendu: 0, gagne: 0, nul: 0 });
     j.n++;
@@ -197,11 +216,217 @@ class Game {
     j.rendu += Number(rendu) || 0;
     if (rendu > mise) j.gagne++;
     else if (rendu === mise) j.nul++;
+
+    /* Le plus gros gain d'une vie de joueur. On le retient au moment ou il
+       arrive : le recalculer plus tard voudrait dire relire tout le journal,
+       et une statistique qui coute une lecture de fichier ne s'affiche
+       jamais. */
+    const gain = (Number(rendu) || 0) - (Number(mise) || 0);
+    if (gain > 0 && (!p.record || gain > p.record.g))
+      p.record = { g: gain, x: mise > 0 ? Number((rendu / mise).toFixed(2)) : 0, j: jeu, t: Date.now() };
+
+    this._revenuParrain(p, jeu, mise, rendu);
+  }
+
+  /* ------------------------------------------------------------ parrainage
+   *
+   * Ce que le parrain touche vient du REVENU reel du filleul, pas de ses
+   * depots ni de son volume. Deux consequences qui font tout le systeme :
+   *
+   *  • se parrainer soi-meme ne rapporte rien. Pour se verser dix pour cent
+   *    de ses propres pertes, il faut d'abord en perdre cent. Aucune regle
+   *    anti-triche a ecrire : la triche est perdante par construction ;
+   *
+   *  • un filleul qui GAGNE fait baisser le compteur. Mais on ne reprend
+   *    jamais ce qui a ete verse : on garde une ligne d'eau — le plus haut
+   *    niveau deja paye — et on ne paie que ce qui la depasse. Un gros coup
+   *    du filleul suspend les gains du parrain le temps que le compteur
+   *    repasse au-dessus, sans jamais mettre personne en dette.
+   */
+  _revenuParrain(p, jeu, mise, rendu) {
+    if (!p || !p.parrain || !p.hasDeposited) return;
+    const parrain = this.players.get(p.parrain);
+    if (!parrain) return;
+
+    const rev = Game.PVP[jeu]
+      ? (Number(mise) || 0) * (cfg.REFERRAL_PVP_BPS / 10000)
+      : (Number(mise) || 0) - (Number(rendu) || 0);
+    if (!isFinite(rev)) return;
+
+    p.revCumul = (p.revCumul || 0) + rev;
+    if (p.revCumul <= (p.revPaye || 0)) return;         // sous la ligne d'eau : rien a verser
+
+    const du = (p.revCumul - (p.revPaye || 0)) * (cfg.REFERRAL_BPS / 10000);
+    p.revPaye = p.revCumul;
+    if (!(du > 0)) return;
+    const w = WEI(du.toFixed(6));
+    parrain.refDu = (parrain.refDu || BN(0)).add(w);
+    parrain.refTotal = (parrain.refTotal || BN(0)).add(w);
+  }
+
+  /** Les jeux ou l'argent va d'un joueur a l'autre, pas a la banque. */
+  static get PVP() { return { p4: true, poker: true }; }
+
+  static moisCle(d) {
+    const x = d || new Date();
+    return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0');
+  }
+
+  /**
+   * Le classement du mois, au VOLUME MISE.
+   *
+   * Pas au gain : classer sur les gains, c'est classer sur la chance, et le
+   * meme joueur y monte et descend sans rien changer a sa facon de jouer. Le
+   * volume, lui, ne depend que de ce qu'on a fait — et c'est la seule mesure
+   * qu'un joueur peut reconnaitre comme la sienne.
+   *
+   * Le demandeur recoit TOUJOURS son propre rang, meme s'il est trois-centieme :
+   * un classement ou l'on ne se trouve pas ne sert a personne.
+   */
+  classementMois(addr, limite) {
+    const mc = Game.moisCle();
+    const moi = String(addr || '').toLowerCase();
+    const arr = [];
+    for (const [a, p] of this.players) {
+      const v = p.moisCle === mc ? (p.moisMise || 0) : 0;
+      if (v > 0) arr.push({ address: a, name: p.name, visage: p.visage || null,
+                            photo: !!p.photo, mise: v });
+    }
+    arr.sort((x, y) => y.mise - x.mise);
+    arr.forEach((r, i) => { r.rang = i + 1; });
+    const mien = arr.find((r) => r.address === moi) || null;
+    return { mois: mc, joueurs: arr.length, top: arr.slice(0, limite || 50), moi: mien };
+  }
+
+  /**
+   * Le code d'invitation d'un joueur. Son NOM s'il en a choisi un — c'est
+   * lui qu'on partage de vive voix et qu'on retape sans se tromper — sinon
+   * huit caracteres de son adresse.
+   */
+  codeParrain(addr) {
+    const p = this._p(addr);
+    return p.nomChoisi && p.name ? p.name : String(addr).toLowerCase().slice(2, 10);
+  }
+
+  /** L'adresse derriere un code d'invitation, ou null. */
+  resoutCode(code) {
+    const c = String(code || '').trim();
+    if (!c) return null;
+    if (/^0x[0-9a-fA-F]{40}$/.test(c)) return c.toLowerCase();
+    const cle = Game.cleNom(c);
+    for (const [a, p] of this.players) {
+      if (p.nomChoisi && p.name && Game.cleNom(p.name) === cle) return a;
+      if (a.slice(2, 10) === c.toLowerCase()) return a;
+    }
+    return null;
+  }
+
+  /**
+   * Attache un filleul a son parrain. UNE SEULE FOIS, pour la vie : laisser
+   * changer de parrain, c'est laisser deux joueurs se renvoyer le meme
+   * filleul et ouvrir une negociation la ou il n'y a qu'un fait.
+   */
+  lieParrain(filleul, code) {
+    const f = String(filleul).toLowerCase();
+    const p = this._p(f);
+    if (p.parrain) throw new Error('you already have a sponsor');
+    const cible = this.resoutCode(code);
+    if (!cible) throw new Error('no such invite code');
+    if (cible === f) throw new Error('you cannot invite yourself');
+    const q = this._p(cible);
+    if (q.parrain === f) throw new Error('you two cannot sponsor each other');
+    p.parrain = cible;
+    if (!Array.isArray(q.filleuls)) q.filleuls = [];
+    if (q.filleuls.indexOf(f) < 0) q.filleuls.push(f);
+    /* Le compteur repart de zero a l'attache : le parrain ne touche rien sur
+       ce qui a ete joue avant lui. */
+    p.revCumul = 0; p.revPaye = 0;
+    return { parrain: cible, nom: q.name };
+  }
+
+  /** Ce que le parrain voit : son lien, ses filleuls, ce qu'ils rapportent. */
+  parrainage(addr) {
+    const a = String(addr).toLowerCase();
+    const p = this._p(a);
+    const liste = (p.filleuls || []).map((f) => {
+      const q = this._p(f);
+      return {
+        address: f, name: q.name, visage: q.visage || null, photo: !!q.photo,
+        depose: !!q.hasDeposited,
+        /* Ce que CE filleul a deja rapporte, et non ce qu'il a perdu : c'est
+           la seule facon de rendre le calcul verifiable par le parrain. */
+        rapporte: ethers.utils.formatUnits(WEI(Math.max(0, (q.revPaye || 0) * (cfg.REFERRAL_BPS / 10000)).toFixed(6)), cfg.DECIMALS),
+      };
+    });
+    const parrain = p.parrain ? { address: p.parrain, name: this._p(p.parrain).name } : null;
+    return {
+      code: this.codeParrain(a),
+      part: cfg.REFERRAL_BPS / 100,          // en pourcentage, pour l'affichage
+      partPvp: cfg.REFERRAL_PVP_BPS / 100,
+      bienvenue: cfg.REFERRAL_WELCOME,
+      parrain,
+      filleuls: liste,
+      du: ethers.utils.formatUnits(p.refDu || BN(0), cfg.DECIMALS),
+      total: ethers.utils.formatUnits(p.refTotal || BN(0), cfg.DECIMALS),
+    };
+  }
+
+  /** Le parrain encaisse. Un gain qui se cueille se remarque ; un gain qui
+      tombe tout seul dans le solde passe inapercu. */
+  reclameParrainage(addr) {
+    const p = this._p(addr);
+    const du = p.refDu || BN(0);
+    if (du.lte(0)) throw new Error('nothing to claim yet');
+    p.refDu = BN(0);
+    p.balance = p.balance.add(du);
+    const m = ethers.utils.formatUnits(du, cfg.DECIMALS);
+    journal.ajoute(String(addr).toLowerCase(), { k: 'rf', m, n: (p.filleuls || []).length });
+    return { montant: m, balance: this.balanceStr(addr) };
+  }
+
+  /**
+   * Les statistiques du profil. TOUT vient de ce qui est deja compte par
+   * ailleurs — les compteurs par jeu, le record, le journal. Une statistique
+   * qui aurait sa propre source finirait par contredire l'historique affiche
+   * juste en dessous, et c'est l'historique qu'on croit.
+   */
+  stats(addr) {
+    const p = this._p(addr);
+    const jeux = p.jeux || {};
+    let manches = 0, mise = 0, rendu = 0;
+    const parJeu = [];
+    for (const k of Object.keys(jeux)) {
+      const j = jeux[k];
+      manches += j.n || 0; mise += j.mise || 0; rendu += j.rendu || 0;
+      parJeu.push({ jeu: k, n: j.n || 0, mise: j.mise || 0 });
+    }
+    parJeu.sort((x, y) => y.n - x.n);
+    const r = journal.resume(String(addr).toLowerCase());
+    return {
+      depuis: r.depuis || null,
+      manches, mise, net: rendu - mise,
+      favoris: parJeu.slice(0, 3),
+      record: p.record || null,
+      meilleurJour: p.meilleurJour || null,
+      depose: ethers.utils.formatUnits(p.deposited || BN(0), cfg.DECIMALS),
+      stakeReclame: ethers.utils.formatUnits(p.stakeClaimTotal || BN(0), cfg.DECIMALS),
+      amis: (p.amis || []).length,
+      filleuls: (p.filleuls || []).length,
+      parrainGagne: ethers.utils.formatUnits(p.refTotal || BN(0), cfg.DECIMALS),
+    };
   }
 
   _bumpDay(p) {
     const t = this._today();
-    if (p.dayKey !== t) { p.dayKey = t; p.dayNet = ethers.BigNumber.from(0); p.dropsToday = 0; p.winsToday = 0; p.questClaimed = {}; }
+    if (p.dayKey === t) return;
+    /* Le jour qui se termine vaut peut-etre un record : c'est le seul moment
+       ou son total est encore la. Apres la remise a zero, il n'existe plus
+       nulle part. */
+    if (p.dayKey && p.dayNet && p.dayNet.gt(0)) {
+      const net = Number(ethers.utils.formatUnits(p.dayNet, cfg.DECIMALS));
+      if (!p.meilleurJour || net > p.meilleurJour.net) p.meilleurJour = { jour: p.dayKey, net };
+    }
+    p.dayKey = t; p.dayNet = ethers.BigNumber.from(0); p.dropsToday = 0; p.winsToday = 0; p.questClaimed = {};
   }
   jackpotStr() { return ethers.utils.formatUnits(this.jackpotPot, cfg.DECIMALS); }
 
@@ -236,6 +461,7 @@ class Game {
     if (reward.lte(0)) throw new Error('no yield to claim yet');
     p.stakeAccrued = BN(0);
     p.balance = p.balance.add(reward);
+    p.stakeClaimTotal = (p.stakeClaimTotal || BN(0)).add(reward);
     const r = ethers.utils.formatUnits(reward, cfg.DECIMALS);
     journal.ajoute(addr, { k: 'st', s: 'claim', m: r,
                            total: ethers.utils.formatUnits(this._stakedTotal(p), cfg.DECIMALS) });
@@ -518,6 +744,10 @@ class Game {
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
             nomChoisi: false,
             deposited: BN(0), jeux: {}, visage: null, amis: [], demandes: [], envoyees: [],
+            parrain: null, filleuls: [], refDu: BN(0), refTotal: BN(0), revCumul: 0, revPaye: 0,
+            record: null, meilleurJour: null, stakeClaimTotal: BN(0), trNonLus: 0,
+            moisCle: null, moisMise: 0,
+            refBienvenue: false,
             dayNet: ethers.BigNumber.from(0), dayKey: null,
             dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false,
             stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0,
@@ -660,6 +890,17 @@ class Game {
        a envoye — mais l'ecrire noir sur blanc evite d'avoir a le supposer. */
     journal.ajoute(player, { k: 'dep', m: ethers.utils.formatUnits(amount, cfg.DECIMALS),
                              tx, from: String(player).toLowerCase() });
+
+    /* Le cadeau du filleul, verse a son PREMIER depot reel et une seule fois.
+       Personne ne partage un lien qui ne donne rien a l'ami ; et l'attacher
+       au depot plutot qu'au clic empeche d'ouvrir cent comptes vides pour
+       ramasser cent cadeaux. */
+    if (p.parrain && !p.refBienvenue && Number(cfg.REFERRAL_WELCOME) > 0) {
+      p.refBienvenue = true;
+      const cadeau = WEI(cfg.REFERRAL_WELCOME);
+      p.balance = p.balance.add(cadeau);
+      journal.ajoute(player, { k: 'rf', s: 'welcome', m: String(cfg.REFERRAL_WELCOME) });
+    }
     return true;
   }
 
@@ -1658,6 +1899,10 @@ class Game {
   /** Combien de demandes attendent une reponse — pour la pastille. */
   amisEnAttente(addr) { return (this._p(addr).demandes || []).length; }
 
+  /** Les envois d'argent recus qu'il n'a pas encore regardes. */
+  transfertsNonLus(addr) { return this._p(addr).trNonLus || 0; }
+  vuTransferts(addr) { const p = this._p(addr); const n = p.trNonLus || 0; p.trNonLus = 0; return n; }
+
   /**
    * Cherche des joueurs par NOM. On cherche sur le nom choisi, pas sur
    * l'adresse : personne ne retient une adresse, et c'est justement pour ca
@@ -1782,6 +2027,10 @@ class Game {
     q.balance = q.balance.add(montant);
 
     const m = ethers.utils.formatUnits(montant, cfg.DECIMALS);
+    /* Le destinataire n'est peut-etre pas la. Un message qui passe pendant
+       qu'on est deconnecte n'a jamais existe : on compte donc les envois
+       recus non vus, et la pastille les porte jusqu'a ce qu'il regarde. */
+    q.trNonLus = (q.trNonLus || 0) + 1;
     journal.ajoute(moi, { k: 'tr', sens: 'out', m, autre: dest });
     journal.ajoute(dest, { k: 'tr', sens: 'in', m, autre: moi });
     return { montant: m, vers: dest,

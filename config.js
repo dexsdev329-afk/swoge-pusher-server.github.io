@@ -273,6 +273,28 @@ module.exports = {
   TRANSFER_MIN: parseFloat(env('TRANSFER_MIN', '1')),
   TRANSFER_REQUIRE_DEPOSIT: env('TRANSFER_REQUIRE_DEPOSIT', '1') === '1',
 
+  /* ---- le parrainage ----
+   *
+   * Le parrain touche une part du REVENU que son filleul rapporte a la
+   * maison. Ni un pourcentage des depots, ni un pourcentage du volume : le
+   * revenu reel. C'est ce qui rend le systeme etanche sans aucun garde-fou —
+   * pour se verser dix pour cent de ses propres pertes, il faut d'abord en
+   * perdre cent.
+   *
+   * Le revenu d'une manche vaut :
+   *   • contre la banque : la mise moins ce qui a ete rendu. Signe : une
+   *     manche gagnee par le filleul compte NEGATIVEMENT ;
+   *   • en un-contre-un (Connect 4, poker) : une fraction de la mise. Ce
+   *     que la maison prend vraiment y est plus gros, mais deux comptes
+   *     complices peuvent fabriquer du volume a volonte — on n'en compte
+   *     donc qu'une petite part, et la complicite reste perdante.
+   */
+  REFERRAL_BPS: parseInt(env('REFERRAL_BPS', '1000'), 10),        // 10 % du revenu
+  REFERRAL_PVP_BPS: parseInt(env('REFERRAL_PVP_BPS', '100'), 10), // 1 % de la mise en 1v1
+  // Ce que touche le FILLEUL en arrivant par un lien. Personne ne partage un
+  // lien qui ne donne rien a l'ami ; verse a son premier depot reel.
+  REFERRAL_WELCOME: env('REFERRAL_WELCOME', '500'),
+
   // ---- Sessions ----
   // Duree pendant laquelle une signature vaut connexion. Passe ce delai, le
   // joueur resigne une fois. Trente jours est le compromis habituel : assez
