@@ -184,6 +184,102 @@ function joue(g, id, coups, t0) {
   ok(jx && jx.n === 60, 'les soixante manches sont comptees au bon jeu');
 }
 
+// ------------------------------------------------------------- la revanche
+/* Une revanche est une table nominative. Ce qu'on verifie ici : qu'elle ne
+   s'offre qu'a l'adversaire, qu'elle reste invisible aux autres, que la somme
+   peut changer, et — surtout — que la mise revient si personne ne repond. */
+{
+  const g = neuf();
+  const m = g.p4Creer(A, 100, 1000);
+  g.p4Rejoindre(B, m.id, 2000);
+
+  jete(() => g.p4Revanche(A, m.id, 100, 3000), /not over yet/, 'pas de revanche avant la fin');
+  g.p4Abandonner(B, m.id, 3000);           // A gagne
+
+  jete(() => g.p4Revanche(C, m.id, 100, 3100), /were not in this match/, 'un tiers ne defie personne');
+  jete(() => g.p4Revanche(A, 'inconnue', 100, 3100), /previous match not found/, 'partie inconnue');
+  jete(() => g.p4Revanche(A, m.id, cfg.P4_MAX + 1, 3100), /maximum bet/, 'les bornes tiennent aussi');
+
+  // A relance, pour une somme differente
+  const avantA = sol(g, A);
+  const rev = g.p4Revanche(A, m.id, 500, 3200);
+  eq(sol(g, A), avantA - 500, 'la nouvelle mise part tout de suite');
+  eq(rev.reserve, B, 'la table est reservee a l adversaire');
+  eq(rev.revancheDe, m.id, 'elle rappelle de quelle partie elle vient');
+  eq(g.p4Lobby().length, 0, 'une revanche ne s affiche pas dans les tables ouvertes');
+  eq(g.p4Invitations(B, 3200).length, 1, 'B voit la demande');
+  eq(g.p4Invitations(B, 3200)[0].mise, 500, 'avec la somme demandee');
+  eq(g.p4Invitations(C, 3200).length, 0, 'personne d autre ne la voit');
+
+  jete(() => g.p4Rejoindre(C, rev.id, 3300), /reserved for another player/, 'un tiers ne peut pas s asseoir');
+  jete(() => g.p4Revanche(A, m.id, 500, 3300), /already have a match running/, 'une seule offre a la fois');
+
+  // B accepte
+  const avantB = sol(g, B);
+  g.p4Rejoindre(B, rev.id, 3400);
+  eq(sol(g, B), avantB - 500, 'B paie la meme somme');
+  eq(rev.phase, P.EN_COURS, 'la revanche demarre');
+  eq(g.p4Invitations(B, 3400).length, 0, 'la demande disparait une fois acceptee');
+}
+
+// -------------------------------- une revanche sans reponse rend la mise
+{
+  const g = neuf();
+  const m = g.p4Creer(A, 100, 1000);
+  g.p4Rejoindre(B, m.id, 2000);
+  g.p4Abandonner(B, m.id, 3000);
+  const avantA = sol(g, A);
+  const rev = g.p4Revanche(A, m.id, 1000, 3100);
+  eq(sol(g, A), avantA - 1000, 'la mise est immobilisee');
+  // elle tient moins longtemps qu'une table ouverte
+  g.p4Tick(3100 + cfg.P4_REVANCHE_MS - 10);
+  eq(rev.phase, P.ATTENTE, 'elle tient jusqu a son terme');
+  const evs = g.p4Tick(3100 + cfg.P4_REVANCHE_MS + 1);
+  ok(evs.some((e) => e.type === 'p4Expire'), 'puis elle expire');
+  eq(sol(g, A), avantA, 'la mise est rendue en entier');
+  ok(cfg.P4_REVANCHE_MS < cfg.P4_ATTENTE_MS, 'plus courte qu une table ouverte');
+}
+
+// ------------------- deux revanches croisees ne se bloquent pas l une l autre
+/* Le cas qui casse un mecanisme naif : les deux joueurs cliquent « rematch »
+   en meme temps. Chacun a alors une table a soi, et la regle « une seule
+   partie a la fois » les empeche tous les deux de s asseoir chez l autre.
+   S asseoir doit retirer sa propre table, et rendre sa mise. */
+{
+  const g = neuf();
+  const m = g.p4Creer(A, 100, 1000);
+  g.p4Rejoindre(B, m.id, 2000);
+  g.p4Abandonner(B, m.id, 3000);
+
+  const revA = g.p4Revanche(A, m.id, 200, 3100);
+  const revB = g.p4Revanche(B, m.id, 300, 3100);
+  eq(g.p4Invitations(A, 3100).length, 1, 'chacun voit celle de l autre');
+  eq(g.p4Invitations(B, 3100).length, 1, 'des deux cotes');
+
+  const avantA = sol(g, A), avantB = sol(g, B);
+  g.p4Rejoindre(A, revB.id, 3200);         // A accepte celle de B
+  eq(revB.phase, P.EN_COURS, 'la partie demarre');
+  eq(revA.phase, P.FINIE, 'la table de A est retiree');
+  eq(revA.raison, 'retiree', 'et marquee comme telle');
+  eq(sol(g, A), avantA + 200 - 300, 'A recupere sa mise retiree et paie celle de B');
+  eq(sol(g, B), avantB, 'B a deja paye a la creation');
+  eq(g.p4Invitations(B, 3200).length, 0, 'plus rien en attente');
+}
+
+// ------------------------------------ retirer sa table rend la mise entiere
+{
+  const g = neuf();
+  const avant = sol(g, A);
+  const m = g.p4Creer(A, 700, 1000);
+  jete(() => g.p4Annuler(B, m.id, 1100), /not yours/, 'on ne retire que sa table');
+  g.p4Annuler(A, m.id, 1100);
+  eq(sol(g, A), avant, 'la mise est rendue');
+  eq(g.p4Lobby().length, 0, 'la table disparait');
+  const m2 = g.p4Creer(A, 700, 1200);
+  g.p4Rejoindre(B, m2.id, 1300);
+  jete(() => g.p4Annuler(A, m2.id, 1400), /already started/, 'trop tard une fois commencee');
+}
+
 // ------------------------------------------------------- ce que voit le client
 {
   const g = neuf();

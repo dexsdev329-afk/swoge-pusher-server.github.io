@@ -165,6 +165,11 @@ function p4Pousse(partie, reglement) {
   }
 }
 function p4DiffuseLobby() { broadcast({ type: 'p4Lobby', tables: game.p4Lobby() }); }
+/* Les revanches sont nominatives : elles ne passent pas par le vestibule
+   public, il faut donc les pousser a la personne concernee. */
+function p4PousseInvites(addr) {
+  toAddr(addr, { type: 'p4Invites', invites: game.p4Invitations(addr, Date.now()) });
+}
 
 // ---- poker ----
 // La salle ignore les sockets : elle previent par evenements, et c'est ici
@@ -618,9 +623,37 @@ wss.on('connection', (ws) => {
           persistSoon();
           p4Pousse(partie);
           p4DiffuseLobby();
+          // le solde a pu changer deux fois : la mise part, et une table a soi
+          // qu'on abandonne en s'asseyant ici est remboursee
+          send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
+          for (const a of partie.joueurs) if (a) p4PousseInvites(a);
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
+      /* La revanche : une table nominative, adressee au seul adversaire de la
+         partie qu'on vient de finir, avec une somme qu'on choisit. */
+      if (m.type === 'p4Rematch') {
+        try {
+          const partie = game.p4Revanche(ws.addr, m.id, m.bet, Date.now());
+          persistSoon();
+          send(ws, { type: 'p4Match', match: game.p4Etat(partie.id, Date.now()),
+                     balance: game.balanceStr(ws.addr) });
+          p4PousseInvites(partie.reserve);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'p4Cancel') {
+        try {
+          const partie = game.p4Annuler(ws.addr, m.id, Date.now());
+          persistSoon();
+          send(ws, { type: 'p4Match', match: game.p4Etat(partie.id, Date.now()),
+                     balance: game.balanceStr(ws.addr) });
+          if (partie.reserve) p4PousseInvites(partie.reserve);
+          else p4DiffuseLobby();
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'p4Invites') return p4PousseInvites(ws.addr);
       if (m.type === 'p4Play') {
         try {
           const r = game.p4Jouer(ws.addr, m.id, m.col, Date.now());
@@ -758,9 +791,13 @@ const p4Interval = setInterval(() => {
     persistSoon();
     for (const e of evs) {
       p4Pousse(e.partie, e.reglement || null);
-      if (e.type === 'p4Expire')
+      if (e.type === 'p4Expire') {
         for (const a of e.partie.joueurs)
           if (a) toAddr(a, { type: 'p4Expire', id: e.partie.id, balance: game.balanceStr(a) });
+        // une revanche qui expire doit disparaitre de l'ecran de celui a qui
+        // elle etait adressee, pas seulement de celui qui l'avait envoyee
+        if (e.partie.reserve) p4PousseInvites(e.partie.reserve);
+      }
     }
     p4DiffuseLobby();
   } catch (e) { console.warn('[p4]', e && e.message); }

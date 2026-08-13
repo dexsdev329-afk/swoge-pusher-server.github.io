@@ -244,6 +244,10 @@ module.exports = {
   /* Duree de vie d'une table qui n'a jamais trouve d'adversaire. Au-dela, la
      mise est rendue a celui qui l'a posee. */
   P4_ATTENTE_MS: parseInt(env('P4_ATTENTE_MS', '600000'), 10),
+  /* Duree de vie d'une demande de revanche. Bien plus courte : elle s'adresse
+     a quelqu'un qui vient de finir la partie et qui est encore la, et elle
+     immobilise la mise du demandeur en attendant la reponse. */
+  P4_REVANCHE_MS: parseInt(env('P4_REVANCHE_MS', '90000'), 10),
   // Commission aussi sur les parties nulles ? Non par defaut : personne n'a
   // gagne, il n'y a rien a partager.
   P4_RAKE_SUR_NUL: env('P4_RAKE_SUR_NUL', '0') === '1',

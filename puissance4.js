@@ -146,6 +146,12 @@ class Partie {
     this.mise = o.mise;
     this.coupMs = o.coupMs || 45000;
     this.joueurs = [o.createur, null];   // index 0 -> jeton 1, index 1 -> jeton 2
+    /* Une revanche est une table comme une autre, a un detail pres : elle est
+       NOMINATIVE. Reserver la place plutot qu'inventer un second mecanisme
+       fait tomber gratuitement le debit, le remboursement a l'expiration et
+       le reglement — tout ce qui touche a l'argent est deja verifie ici. */
+    this.reserve = o.reserve || null;      // adresse seule autorisee a s'asseoir
+    this.revancheDe = o.revancheDe || null;
     this.grille = nouvelle();
     this.tour = 1;                       // le createur commence
     this.phase = ATTENTE;
@@ -161,6 +167,8 @@ class Partie {
   rejoindre(addr, now) {
     if (this.phase !== ATTENTE) throw new Error('this match is no longer open');
     if (addr === this.joueurs[0]) throw new Error('you cannot join your own match');
+    if (this.reserve && addr !== this.reserve)
+      throw new Error('this rematch is reserved for another player');
     this.joueurs[1] = addr;
     this.phase = EN_COURS;
     this.echeance = now + this.coupMs;
@@ -232,6 +240,7 @@ class Partie {
       joueurs: this.joueurs.slice(), grille: this.grille.slice(),
       tour: this.tour, gagnant: this.gagnant, raison: this.raison,
       ligne: this.ligne, coups: this.coups.slice(),
+      reserve: this.reserve, revancheDe: this.revancheDe,
       reste: this.phase === EN_COURS ? Math.max(0, this.echeance - (now || 0)) : 0,
       coupMs: this.coupMs,
     };

@@ -1161,11 +1161,77 @@ class Game {
        propre partie a besoin d'entendre « c'est la tienne », pas « tu as deja
        une partie en cours » — qui est vrai mais n'explique rien. */
     if (partie.joueurs[0] === addr) throw new Error('you cannot join your own match');
+    if (partie.reserve && partie.reserve !== addr)
+      throw new Error('this rematch is reserved for another player');
     const mise = this._p4Verifie(partie.mise, addr);
+    /* On ne tient qu'une partie a la fois — mais une table a soi qui attend
+       encore n'est pas une partie : on la retire et on rend la mise. Sans ca,
+       deux joueurs qui se proposent une revanche en meme temps se bloquent
+       l'un l'autre jusqu'a l'expiration. */
+    const retirees = [];
+    for (const m of this.p4.values()) {
+      if (m.phase !== p4.FINIE && m.jeton(addr)) {
+        if (m.phase === p4.ATTENTE && m.joueurs[0] === addr) { retirees.push(m); continue; }
+        throw new Error('you already have a match running');
+      }
+    }
+    const t = now || Date.now();
+    partie.rejoindre(addr, t);   // peut encore refuser : table deja prise
+    for (const m of retirees) this._p4Ferme(m, 'retiree', t);
+    this._p4Debite(addr, mise);
+    return partie;
+  }
+
+  /** Retirer sa propre table tant que personne ne s'est assis. */
+  p4Annuler(addr, id, now) {
+    const partie = this.p4.get(String(id));
+    if (!partie) throw new Error('match not found');
+    if (partie.joueurs[0] !== addr) throw new Error('this table is not yours');
+    if (partie.phase !== p4.ATTENTE) throw new Error('this match has already started');
+    this._p4Ferme(partie, 'retiree', now || Date.now());
+    return partie;
+  }
+
+  /** Ferme une table en attente et rend la mise. */
+  _p4Ferme(partie, raison, now) {
+    this._p4Rendre(partie);
+    partie.phase = p4.FINIE;
+    partie.raison = raison;
+    partie.finA = now || Date.now();
+  }
+
+  /**
+   * « On remet ca ? » — avec une somme, qui n'est pas forcement celle d'avant.
+   *
+   * L'offre EST une table, simplement nominative : le demandeur paie tout de
+   * suite, comme pour n'importe quelle table, et l'autre s'assied avec
+   * p4Rejoindre. Si personne ne repond, l'expiration rend la mise. Rien de
+   * neuf ne touche a l'argent, donc rien de neuf ne peut le perdre.
+   */
+  p4Revanche(addr, idPrecedent, miseRaw, now) {
+    const avant = this.p4.get(String(idPrecedent));
+    if (!avant) throw new Error('previous match not found');
+    if (avant.phase !== p4.FINIE) throw new Error('this match is not over yet');
+    if (!avant.jeton(addr)) throw new Error('you were not in this match');
+    const adversaire = avant.joueurs[avant.jeton(addr) === 1 ? 1 : 0];
+    if (!adversaire) throw new Error('there is no opponent to challenge');
+
+    const mise = this._p4Verifie(miseRaw, addr);
     for (const m of this.p4.values())
       if (m.phase !== p4.FINIE && m.jeton(addr)) throw new Error('you already have a match running');
-    partie.rejoindre(addr, now || Date.now());   // peut encore refuser : table deja prise
+    /* Une seule offre en attente vers le meme adversaire : sinon dix clics
+       bloquent dix mises et l'autre ne peut en accepter qu'une. */
+    for (const m of this.p4.values())
+      if (m.phase === p4.ATTENTE && m.reserve === adversaire && m.joueurs[0] === addr)
+        throw new Error('you already sent a rematch request');
+
+    const t = now || Date.now();
+    const id = 'p4' + (++this.p4Seq) + '-' + Math.floor(t / 1000).toString(36);
+    const partie = new p4.Partie({ id, mise, createur: addr, now: t,
+                                   coupMs: cfg.P4_COUP_MS,
+                                   reserve: adversaire, revancheDe: avant.id });
     this._p4Debite(addr, mise);
+    this.p4.set(id, partie);
     return partie;
   }
 
@@ -1228,7 +1294,11 @@ class Game {
     for (const [id, partie] of this.p4) {
       if (partie.phase === p4.EN_COURS) {
         if (partie.tick(t)) evs.push({ type: 'p4Fin', partie, reglement: this._p4Regle(partie) });
-      } else if (partie.phase === p4.ATTENTE && t - partie.creeA > cfg.P4_ATTENTE_MS) {
+      } else if (partie.phase === p4.ATTENTE &&
+                 t - partie.creeA > (partie.reserve ? cfg.P4_REVANCHE_MS : cfg.P4_ATTENTE_MS)) {
+        /* Une revanche tient moins longtemps qu'une table ouverte : elle
+           s'adresse a quelqu'un qui est encore devant son ecran, et elle
+           immobilise une mise en attendant sa reponse. */
         this._p4Rendre(partie);
         partie.phase = p4.FINIE; partie.raison = 'expiree';
         evs.push({ type: 'p4Expire', partie });
@@ -1239,15 +1309,33 @@ class Game {
     return evs;
   }
 
-  /** Les tables ouvertes, pour la fenetre « rejoindre une partie ». */
+  /**
+   * Les tables ouvertes, pour la fenetre « rejoindre une partie ».
+   * Les revanches n'y figurent pas : elles sont nominatives, et les voir
+   * afficher une place qu'on ne peut pas prendre serait pire que de ne pas
+   * les voir du tout.
+   */
   p4Lobby() {
     const out = [];
     for (const m of this.p4.values()) {
-      if (m.phase !== p4.ATTENTE) continue;
+      if (m.phase !== p4.ATTENTE || m.reserve) continue;
       out.push({ id: m.id, mise: m.mise, createur: m.joueurs[0],
                  nom: this._p(m.joueurs[0]).name, creeA: m.creeA });
     }
     return out.sort((a, b) => b.creeA - a.creeA);
+  }
+
+  /** Les demandes de revanche qui attendent la reponse de `addr`. */
+  p4Invitations(addr, now) {
+    const t = now || Date.now();
+    const out = [];
+    for (const m of this.p4.values()) {
+      if (m.phase !== p4.ATTENTE || m.reserve !== addr) continue;
+      out.push({ id: m.id, mise: m.mise, de: m.joueurs[0],
+                 nom: this._p(m.joueurs[0]).name, revancheDe: m.revancheDe,
+                 reste: Math.max(0, cfg.P4_REVANCHE_MS - (t - m.creeA)) });
+    }
+    return out.sort((a, b) => a.reste - b.reste);
   }
 
   /** L'etat d'une partie, avec les noms — la table n'en connait pas. */
