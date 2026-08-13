@@ -262,6 +262,38 @@ module.exports = {
   // gagne, il n'y a rien a partager.
   P4_RAKE_SUR_NUL: env('P4_RAKE_SUR_NUL', '0') === '1',
 
+  /* ---- Morpion, un contre un ----
+   * Le morpion est NUL a jeu parfait : deux joueurs attentifs font partie
+   * nulle a tous les coups. La commission sur la nulle reste donc a zero —
+   * faire payer une egalite que les deux peuvent forcer, et le jeu ne se
+   * joue pas deux fois. La pendule est courte : on voit le coup en une
+   * seconde, et quarante-cinq secondes devant trois cases sont une eternite.
+   */
+  MP_RAKE_BPS: parseInt(env('MP_RAKE_BPS', '500'), 10),
+  MP_MIN: parseInt(env('MP_MIN', '10'), 10),
+  MP_MAX: parseInt(env('MP_MAX', '10000000'), 10),
+  MP_MISES: (env('MP_MISES', '10,100,1000,10000,100000,1000000,10000000').split(',')
+    .map((x) => parseInt(x.trim(), 10)).filter((x) => x > 0)),
+  MP_COUP_MS: parseInt(env('MP_COUP_MS', '20000'), 10),
+  MP_ATTENTE_MS: parseInt(env('MP_ATTENTE_MS', '600000'), 10),
+  MP_REVANCHE_MS: parseInt(env('MP_REVANCHE_MS', '90000'), 10),
+  MP_RAKE_SUR_NUL: env('MP_RAKE_SUR_NUL', '0') === '1',
+
+  /* ---- Dames, un contre un ----
+   * Une partie de dames dure plus longtemps qu'un Connect 4 et demande plus
+   * de reflexion par coup : la pendule est donc plus large. Le reste est
+   * identique — meme commission, meme chemin d'argent.
+   */
+  DM_RAKE_BPS: parseInt(env('DM_RAKE_BPS', '500'), 10),
+  DM_MIN: parseInt(env('DM_MIN', '10'), 10),
+  DM_MAX: parseInt(env('DM_MAX', '10000000'), 10),
+  DM_MISES: (env('DM_MISES', '10,100,1000,10000,100000,1000000,10000000').split(',')
+    .map((x) => parseInt(x.trim(), 10)).filter((x) => x > 0)),
+  DM_COUP_MS: parseInt(env('DM_COUP_MS', '60000'), 10),
+  DM_ATTENTE_MS: parseInt(env('DM_ATTENTE_MS', '600000'), 10),
+  DM_REVANCHE_MS: parseInt(env('DM_REVANCHE_MS', '90000'), 10),
+  DM_RAKE_SUR_NUL: env('DM_RAKE_SUR_NUL', '0') === '1',
+
   /* ---- virements entre joueurs ----
      Le depot prealable n'est pas une formalite : sans lui, ouvrir dix
      portefeuilles jetables, ramasser dix bonus de bienvenue et tout rassembler

@@ -142,6 +142,7 @@ const FINIE = 'finie';
  */
 class Partie {
   constructor(o) {
+    this.jeu = 'p4';
     this.id = o.id;
     this.mise = o.mise;
     this.coupMs = o.coupMs || 45000;
@@ -236,7 +237,7 @@ class Partie {
   /** Ce qu'on envoie au navigateur. */
   etat(now) {
     return {
-      id: this.id, mise: this.mise, phase: this.phase,
+      jeu: 'p4', id: this.id, mise: this.mise, phase: this.phase,
       joueurs: this.joueurs.slice(), grille: this.grille.slice(),
       tour: this.tour, gagnant: this.gagnant, raison: this.raison,
       ligne: this.ligne, coups: this.coups.slice(),

@@ -25,6 +25,11 @@ const mines = require('./mines');
 const plinko = require('./plinko');
 const crash = require('./crash');
 const p4 = require('./puissance4');
+/* Les trois duels partagent la meme interface de moteur : une Partie qui sait
+   rejoindre, jouer, ticker et dire qui a gagne. C'est ce qui permet a un seul
+   chemin d'argent de les servir tous les trois. */
+const DUELS = { p4, mp: require('./morpion'), dm: require('./dames') };
+const ATTENTE = p4.ATTENTE, EN_COURS = p4.EN_COURS, FINIE = p4.FINIE;
 const volcano = require('./volcano');
 
 const WEI = (n) => ethers.utils.parseUnits(String(n), cfg.DECIMALS);
@@ -100,11 +105,23 @@ class Game {
         ac: p.adCount || 0, ak: p.adDayKey || null, al: p.adLastMs || 0,
       }]);
     }
+    /* Les duels en cours ne sont PAS rejoues au redemarrage — une grille a
+       moitie jouee dont les deux joueurs ont ete deconnectes n'a plus
+       d'arbitre. Mais les MISES, elles, ont bel et bien quitte les soldes et
+       sont ecrites sur le disque : sans cette liste, un redemarrage au milieu
+       d'une partie faisait disparaitre la table AVEC l'argent. On garde donc
+       le strict necessaire pour rembourser a la relecture. */
+    const duels = [];
+    for (const m of this.p4.values()) {
+      if (m.phase === FINIE) continue;
+      duels.push({ id: m.id, jeu: m.jeu || 'p4', mise: m.mise,
+                   joueurs: m.joueurs.filter(Boolean) });
+    }
     return { v: 1, serverSeed: this.serverSeed, sessionSecret: this.sessionSecret,
              jackpotPot: this.jackpotPot.toString(),
              crashGraine: this.crashGraine, crash: this.crash.sauve(),
              lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx), players,
-             telegramMap: Array.from(this.telegramMap) };
+             duels, telegramMap: Array.from(this.telegramMap) };
   }
 
   /** Restore a snapshot produced by serialize() (called once at startup). */
@@ -160,6 +177,25 @@ class Game {
       });
     }
     if (Array.isArray(st.telegramMap)) this.telegramMap = new Map(st.telegramMap.map((e) => [String(e[0]), String(e[1]).toLowerCase()]));
+
+    /* Les duels interrompus par l'arret : on ne reprend pas la partie — sans
+       arbitre ni joueurs connectes, une grille a moitie jouee ne veut plus
+       rien dire — mais ON REND LES MISES. Elles avaient quitte les soldes
+       avant l'arret ; sans ce remboursement elles disparaissaient avec la
+       table, et personne ne pouvait meme dire ou. */
+    if (Array.isArray(st.duels)) {
+      let rendues = 0, sommes = 0;
+      for (const d of st.duels) {
+        for (const a of (d.joueurs || [])) {
+          if (!a) continue;
+          const p = this._p(a);
+          p.balance = p.balance.add(WEI(d.mise));
+          sommes += Number(d.mise) || 0;
+        }
+        rendues++;
+      }
+      if (rendues) console.log(`[duels] ${rendues} partie(s) interrompue(s) : ${sommes} $SWOGE rendus`);
+    }
   }
 
   _today() { return new Date().toISOString().slice(0, 10); } // UTC day key
@@ -265,7 +301,7 @@ class Game {
   }
 
   /** Les jeux ou l'argent va d'un joueur a l'autre, pas a la banque. */
-  static get PVP() { return { p4: true, poker: true }; }
+  static get PVP() { return { p4: true, poker: true, mp: true, dm: true }; }
 
   static moisCle(d) {
     const x = d || new Date();
@@ -1501,21 +1537,46 @@ class Game {
   }
 
 
-  // ------------------------------------------------------------ connect 4
-  // Un contre un. La mise part a la creation ou a l'entree, et ne revient
-  // qu'a la fin : c'est ce qui garantit qu'un joueur ne peut pas s'engager
-  // sur une table avec un solde qu'il aura depense ailleurs entre-temps.
+  // ---------------------------------------------------------- les duels 1v1
+  /*
+   * Connect 4, morpion et dames partagent EXACTEMENT le meme argent : on mise
+   * a la creation ou a l'entree, la somme ne revient qu'a la fin, et le pot
+   * est partage de la meme facon. Il n'y a donc qu'un seul chemin d'argent
+   * pour les trois — et pas trois copies qui divergeraient au premier
+   * correctif.
+   *
+   * Ce qui change d'un jeu a l'autre tient dans le moteur de regles et dans
+   * quelques reglages (mises, pendule). Le moteur est designe par la partie
+   * elle-meme (`partie.jeu`), donc rejoindre, jouer, abandonner et regler
+   * n'ont meme pas besoin de savoir a quel jeu ils ont affaire : l'identifiant
+   * suffit.
+   */
 
-  _p4Verifie(miseRaw, addr) {
+  _duelCfg(jeu) {
+    const p = jeu === 'mp' ? 'MP' : jeu === 'dm' ? 'DM' : 'P4';
+    const v = (k, d) => (cfg[p + '_' + k] !== undefined ? cfg[p + '_' + k] : d);
+    return {
+      min: v('MIN', cfg.P4_MIN), max: v('MAX', cfg.P4_MAX),
+      coupMs: v('COUP_MS', cfg.P4_COUP_MS),
+      attenteMs: v('ATTENTE_MS', cfg.P4_ATTENTE_MS),
+      revancheMs: v('REVANCHE_MS', cfg.P4_REVANCHE_MS),
+      rakeBps: v('RAKE_BPS', cfg.P4_RAKE_BPS),
+      rakeSurNul: v('RAKE_SUR_NUL', cfg.P4_RAKE_SUR_NUL),
+    };
+  }
+  _moteur(jeu) { return DUELS[jeu] || DUELS.p4; }
+
+  _duelVerifie(jeu, miseRaw, addr) {
+    const c = this._duelCfg(jeu);
     const mise = Math.floor(Number(miseRaw));
-    if (!(mise >= cfg.P4_MIN)) throw new Error('minimum bet is ' + cfg.P4_MIN + ' $SWOGE');
-    if (mise > cfg.P4_MAX) throw new Error('maximum bet is ' + cfg.P4_MAX + ' $SWOGE');
+    if (!(mise >= c.min)) throw new Error('minimum bet is ' + c.min + ' $SWOGE');
+    if (mise > c.max) throw new Error('maximum bet is ' + c.max + ' $SWOGE');
     const p = this._p(addr);
     if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
     return mise;
   }
 
-  _p4Debite(addr, mise) {
+  _duelDebite(addr, mise) {
     const p = this._p(addr);
     p.balance = p.balance.sub(WEI(mise));
     // dropsToday compte pour les quetes du jour. Tous les autres jeux
@@ -1525,7 +1586,7 @@ class Game {
     this._markWager(p, WEI(mise));
   }
 
-  _p4Credite(addr, montant) {
+  _duelCredite(addr, montant) {
     if (!(montant > 0)) return;
     const p = this._p(addr);
     p.balance = p.balance.add(WEI(montant));
@@ -1533,20 +1594,21 @@ class Game {
   }
 
   /** Ouvre une table et attend un adversaire. */
-  p4Creer(addr, miseRaw, now) {
-    const mise = this._p4Verifie(miseRaw, addr);
+  duelCreer(jeu, addr, miseRaw, now) {
+    const mise = this._duelVerifie(jeu, miseRaw, addr);
     for (const m of this.p4.values())
-      if (m.phase !== p4.FINIE && m.jeton(addr)) throw new Error('you already have a match running');
-    const id = 'p4' + (++this.p4Seq) + '-' + Math.floor((now || Date.now()) / 1000).toString(36);
-    const partie = new p4.Partie({ id, mise, createur: addr, now: now || Date.now(),
-                                   coupMs: cfg.P4_COUP_MS });
-    this._p4Debite(addr, mise);
+      if (m.phase !== FINIE && m.jeton(addr)) throw new Error('you already have a match running');
+    const t = now || Date.now();
+    const id = jeu + (++this.p4Seq) + '-' + Math.floor(t / 1000).toString(36);
+    const partie = new (this._moteur(jeu).Partie)({
+      id, mise, createur: addr, now: t, coupMs: this._duelCfg(jeu).coupMs });
+    this._duelDebite(addr, mise);
     this.p4.set(id, partie);
     return partie;
   }
 
   /** S'asseoir en face. La partie demarre a cet instant. */
-  p4Rejoindre(addr, id, now) {
+  duelRejoindre(addr, id, now) {
     const partie = this.p4.get(String(id));
     if (!partie) throw new Error('match not found');
     /* Sa propre table AVANT le controle general : un joueur qui clique sur sa
@@ -1555,124 +1617,129 @@ class Game {
     if (partie.joueurs[0] === addr) throw new Error('you cannot join your own match');
     if (partie.reserve && partie.reserve !== addr)
       throw new Error('this rematch is reserved for another player');
-    const mise = this._p4Verifie(partie.mise, addr);
+    const mise = this._duelVerifie(partie.jeu || 'p4', partie.mise, addr);
     /* On ne tient qu'une partie a la fois — mais une table a soi qui attend
        encore n'est pas une partie : on la retire et on rend la mise. Sans ca,
-       deux joueurs qui se proposent une revanche en meme temps se bloquent
-       l'un l'autre jusqu'a l'expiration. */
+       ouvrir une table puis en rejoindre une autre serait impossible sans
+       passer par un bouton « annuler » que personne ne trouve. */
+    const t = now || Date.now();
     const retirees = [];
     for (const m of this.p4.values()) {
-      if (m.phase !== p4.FINIE && m.jeton(addr)) {
-        if (m.phase === p4.ATTENTE && m.joueurs[0] === addr) { retirees.push(m); continue; }
+      if (m.phase !== FINIE && m.jeton(addr)) {
+        if (m.phase === ATTENTE && m.joueurs[0] === addr) { retirees.push(m); continue; }
         throw new Error('you already have a match running');
       }
     }
-    const t = now || Date.now();
-    partie.rejoindre(addr, t);   // peut encore refuser : table deja prise
-    for (const m of retirees) this._p4Ferme(m, 'retiree', t);
-    this._p4Debite(addr, mise);
-    return partie;
+    for (const m of retirees) this._duelFerme(m, 'retiree', t);
+    this._duelDebite(addr, mise);
+    partie.rejoindre(addr, t);
+    return { partie, retirees };
   }
 
-  /** Retirer sa propre table tant que personne ne s'est assis. */
-  p4Annuler(addr, id, now) {
+  /** Le createur retire sa table tant que personne ne s'est assis. */
+  duelAnnuler(addr, id, now) {
     const partie = this.p4.get(String(id));
     if (!partie) throw new Error('match not found');
     if (partie.joueurs[0] !== addr) throw new Error('this table is not yours');
-    if (partie.phase !== p4.ATTENTE) throw new Error('this match has already started');
-    this._p4Ferme(partie, 'retiree', now || Date.now());
+    if (partie.phase !== ATTENTE) throw new Error('this match has already started');
+    this._duelFerme(partie, 'retiree', now || Date.now());
     return partie;
   }
 
-  /** Ferme une table en attente et rend la mise. */
-  _p4Ferme(partie, raison, now) {
-    this._p4Rendre(partie);
-    partie.phase = p4.FINIE;
+  _duelFerme(partie, raison, now) {
+    this._duelRendre(partie);
+    partie.phase = FINIE;
     partie.raison = raison;
-    partie.finA = now || Date.now();
+    partie.finA = now;
+    partie.echeance = 0;
+    return partie;
   }
 
   /**
-   * « On remet ca ? » — avec une somme, qui n'est pas forcement celle d'avant.
+   * La revanche : « On remet ca ? » — avec une somme, qui n'est pas forcement
+   * celle d'avant.
    *
    * L'offre EST une table, simplement nominative : le demandeur paie tout de
    * suite, comme pour n'importe quelle table, et l'autre s'assied avec
-   * p4Rejoindre. Si personne ne repond, l'expiration rend la mise. Rien de
+   * duelRejoindre. Si personne ne repond, l'expiration rend la mise. Rien de
    * neuf ne touche a l'argent, donc rien de neuf ne peut le perdre.
    */
-  p4Revanche(addr, idPrecedent, miseRaw, now) {
+  duelRevanche(addr, idPrecedent, miseRaw, now) {
     const avant = this.p4.get(String(idPrecedent));
     if (!avant) throw new Error('previous match not found');
-    if (avant.phase !== p4.FINIE) throw new Error('this match is not over yet');
+    if (avant.phase !== FINIE) throw new Error('this match is not over yet');
     if (!avant.jeton(addr)) throw new Error('you were not in this match');
     const adversaire = avant.joueurs[avant.jeton(addr) === 1 ? 1 : 0];
     if (!adversaire) throw new Error('there is no opponent to challenge');
 
-    const mise = this._p4Verifie(miseRaw, addr);
+    const jeu = avant.jeu || 'p4';
+    const mise = this._duelVerifie(jeu, miseRaw, addr);
     for (const m of this.p4.values())
-      if (m.phase !== p4.FINIE && m.jeton(addr)) throw new Error('you already have a match running');
+      if (m.phase !== FINIE && m.jeton(addr)) throw new Error('you already have a match running');
     /* Une seule offre en attente vers le meme adversaire : sinon dix clics
        bloquent dix mises et l'autre ne peut en accepter qu'une. */
     for (const m of this.p4.values())
-      if (m.phase === p4.ATTENTE && m.reserve === adversaire && m.joueurs[0] === addr)
+      if (m.phase === ATTENTE && m.reserve === adversaire && m.joueurs[0] === addr)
         throw new Error('you already sent a rematch request');
 
     const t = now || Date.now();
-    const id = 'p4' + (++this.p4Seq) + '-' + Math.floor(t / 1000).toString(36);
-    const partie = new p4.Partie({ id, mise, createur: addr, now: t,
-                                   coupMs: cfg.P4_COUP_MS,
-                                   reserve: adversaire, revancheDe: avant.id });
-    this._p4Debite(addr, mise);
+    const id = jeu + (++this.p4Seq) + '-' + Math.floor(t / 1000).toString(36);
+    const partie = new (this._moteur(jeu).Partie)({
+      id, mise, createur: addr, now: t, coupMs: this._duelCfg(jeu).coupMs,
+      reserve: adversaire, revancheDe: avant.id });
+    this._duelDebite(addr, mise);
     this.p4.set(id, partie);
     return partie;
   }
 
-  p4Jouer(addr, id, colonne, now) {
+  duelJouer(addr, id, coup, now) {
     const partie = this.p4.get(String(id));
     if (!partie) throw new Error('match not found');
-    const coup = partie.jouer(addr, colonne, now || Date.now());
-    const reglement = partie.phase === p4.FINIE ? this._p4Regle(partie) : null;
-    return { partie, coup, reglement };
+    const r = partie.jouer(addr, coup, now || Date.now());
+    const reglement = partie.phase === FINIE ? this._duelRegle(partie) : null;
+    return { partie, coup: r, reglement };
   }
 
-  p4Abandonner(addr, id, now) {
+  duelAbandonner(addr, id, now) {
     const partie = this.p4.get(String(id));
     if (!partie) throw new Error('match not found');
     partie.abandonner(addr, now || Date.now());
-    return { partie, reglement: this._p4Regle(partie) };
+    return { partie, reglement: this._duelRegle(partie) };
   }
 
   /**
    * Le reglement. Appele UNE SEULE FOIS par partie : `regle` garde la trace,
    * sinon un abandon suivi d'un tick paierait le gagnant deux fois.
    */
-  _p4Regle(partie) {
+  _duelRegle(partie) {
     if (partie.regle) return null;
     partie.regle = true;
+    const jeu = partie.jeu || 'p4';
+    const c = this._duelCfg(jeu);
     const nul = !partie.gagnant;
-    const r = p4.partage(partie.mise, cfg.P4_RAKE_BPS, nul, cfg.P4_RAKE_SUR_NUL);
+    const r = this._moteur(jeu).partage(partie.mise, c.rakeBps, nul, c.rakeSurNul);
     if (nul) {
       for (const a of partie.joueurs) if (a) {
-        this._p4Credite(a, r.rendu);
-        this._manche(this._p(a), 'p4', partie.mise, r.rendu);
+        this._duelCredite(a, r.rendu);
+        this._manche(this._p(a), jeu, partie.mise, r.rendu);
       }
     } else {
       const gagnant = partie.adresseGagnante();
       const perdant = partie.joueurs[partie.gagnant === 1 ? 1 : 0];
-      this._p4Credite(gagnant, r.gain);
+      this._duelCredite(gagnant, r.gain);
       const pg = this._p(gagnant);
       this._bumpDay(pg); pg.winsToday++;
-      this._manche(pg, 'p4', partie.mise, r.gain);
-      if (perdant) this._manche(this._p(perdant), 'p4', partie.mise, 0);
+      this._manche(pg, jeu, partie.mise, r.gain);
+      if (perdant) this._manche(this._p(perdant), jeu, partie.mise, 0);
     }
     return r;
   }
 
   /** Rend les mises : une table qu'on ferme sans avoir joue ne coute rien. */
-  _p4Rendre(partie) {
+  _duelRendre(partie) {
     if (partie.regle) return;
     partie.regle = true;
-    for (const a of partie.joueurs) if (a) this._p4Credite(a, partie.mise);
+    for (const a of partie.joueurs) if (a) this._duelCredite(a, partie.mise);
   }
 
   /**
@@ -1680,21 +1747,22 @@ class Game {
    * Deux echeances : le coup, et l'attente d'un adversaire — une table sans
    * preneur ne doit pas retenir une mise indefiniment.
    */
-  p4Tick(now) {
+  duelTick(now) {
     const t = now || Date.now();
     const evs = [];
     for (const [id, partie] of this.p4) {
-      if (partie.phase === p4.EN_COURS) {
-        if (partie.tick(t)) evs.push({ type: 'p4Fin', partie, reglement: this._p4Regle(partie) });
-      } else if (partie.phase === p4.ATTENTE &&
-                 t - partie.creeA > (partie.reserve ? cfg.P4_REVANCHE_MS : cfg.P4_ATTENTE_MS)) {
+      const c = this._duelCfg(partie.jeu || 'p4');
+      if (partie.phase === EN_COURS) {
+        if (partie.tick(t)) evs.push({ type: 'p4Fin', partie, reglement: this._duelRegle(partie) });
+      } else if (partie.phase === ATTENTE &&
+                 t - partie.creeA > (partie.reserve ? c.revancheMs : c.attenteMs)) {
         /* Une revanche tient moins longtemps qu'une table ouverte : elle
            s'adresse a quelqu'un qui est encore devant son ecran, et elle
            immobilise une mise en attendant sa reponse. */
-        this._p4Rendre(partie);
-        partie.phase = p4.FINIE; partie.raison = 'expiree';
+        this._duelRendre(partie);
+        partie.phase = FINIE; partie.raison = 'expiree';
         evs.push({ type: 'p4Expire', partie });
-      } else if (partie.phase === p4.FINIE && t - (partie.finA || partie.creeA) > 120000) {
+      } else if (partie.phase === FINIE && t - (partie.finA || partie.creeA) > 120000) {
         this.p4.delete(id);   // on ne garde pas les parties finies plus de deux minutes
       }
     }
@@ -1707,45 +1775,68 @@ class Game {
    * afficher une place qu'on ne peut pas prendre serait pire que de ne pas
    * les voir du tout.
    */
-  p4Lobby() {
+  duelLobby(jeu) {
     const out = [];
     for (const m of this.p4.values()) {
-      if (m.phase !== p4.ATTENTE || m.reserve) continue;
-      out.push({ id: m.id, mise: m.mise, createur: m.joueurs[0],
+      if (m.phase !== ATTENTE || m.reserve) continue;
+      if (jeu && (m.jeu || 'p4') !== jeu) continue;
+      out.push({ id: m.id, jeu: m.jeu || 'p4', mise: m.mise, createur: m.joueurs[0],
                  nom: this._p(m.joueurs[0]).name, creeA: m.creeA });
     }
     return out.sort((a, b) => b.creeA - a.creeA);
   }
 
   /** Les demandes de revanche qui attendent la reponse de `addr`. */
-  p4Invitations(addr, now) {
+  duelInvitations(addr, now, jeu) {
     const t = now || Date.now();
     const out = [];
     for (const m of this.p4.values()) {
-      if (m.phase !== p4.ATTENTE || m.reserve !== addr) continue;
-      out.push({ id: m.id, mise: m.mise, de: m.joueurs[0],
+      if (m.phase !== ATTENTE || m.reserve !== addr) continue;
+      if (jeu && (m.jeu || 'p4') !== jeu) continue;
+      out.push({ id: m.id, jeu: m.jeu || 'p4', mise: m.mise, de: m.joueurs[0],
                  nom: this._p(m.joueurs[0]).name, revancheDe: m.revancheDe,
-                 reste: Math.max(0, cfg.P4_REVANCHE_MS - (t - m.creeA)) });
+                 reste: Math.max(0, this._duelCfg(m.jeu || 'p4').revancheMs - (t - m.creeA)) });
     }
     return out.sort((a, b) => a.reste - b.reste);
   }
 
   /** L'etat d'une partie, avec les noms — la table n'en connait pas. */
-  p4Etat(id, now) {
+  duelEtat(id, now) {
     const m = this.p4.get(String(id));
     if (!m) return null;
     const e = m.etat(now || Date.now());
+    e.jeu = m.jeu || 'p4';
     e.noms = m.joueurs.map((a) => (a ? this._p(a).name : null));
-    e.rakeBps = cfg.P4_RAKE_BPS;
+    e.visages = m.joueurs.map((a) => (a ? { visage: this._p(a).visage || null, photo: !!this._p(a).photo, address: a } : null));
+    e.rakeBps = this._duelCfg(e.jeu).rakeBps;
     return e;
   }
 
   /** La partie en cours d'un joueur, s'il en a une. */
-  p4Mienne(addr) {
+  duelMienne(addr) {
     for (const m of this.p4.values())
-      if (m.phase !== p4.FINIE && m.jeton(addr)) return m;
+      if (m.phase !== FINIE && m.jeton(addr)) return m;
     return null;
   }
+
+  /* Les anciens noms restent : le Connect 4 est deja en service, et une
+     partie en cours ne doit pas tomber parce qu'on a range le code. */
+  p4Creer(addr, mise, now) { return this.duelCreer('p4', addr, mise, now); }
+  p4Rejoindre(addr, id, now) { return this.duelRejoindre(addr, id, now); }
+  p4Annuler(addr, id, now) { return this.duelAnnuler(addr, id, now); }
+  p4Revanche(addr, idAvant, mise, now) { return this.duelRevanche(addr, idAvant, mise, now); }
+  p4Jouer(addr, id, colonne, now) { return this.duelJouer(addr, id, colonne, now); }
+  p4Abandonner(addr, id, now) { return this.duelAbandonner(addr, id, now); }
+  p4Tick(now) { return this.duelTick(now); }
+  p4Lobby() { return this.duelLobby('p4'); }
+  p4Invitations(addr, now) { return this.duelInvitations(addr, now, 'p4'); }
+  p4Etat(id, now) { return this.duelEtat(id, now); }
+  p4Mienne(addr) { return this.duelMienne(addr); }
+  _p4Regle(partie) { return this._duelRegle(partie); }
+  _p4Rendre(partie) { return this._duelRendre(partie); }
+  _p4Credite(addr, m) { return this._duelCredite(addr, m); }
+  _p4Debite(addr, m) { return this._duelDebite(addr, m); }
+  _p4Verifie(mise, addr) { return this._duelVerifie('p4', mise, addr); }
 
   // ------------------------------------------------------------------ poker
   // Le poker se joue en jetons entiers sur la table (1 jeton = 1 $SWOGE). La

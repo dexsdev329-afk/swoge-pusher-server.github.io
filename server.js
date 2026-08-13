@@ -79,7 +79,7 @@ function stakedPct() {
  */
 const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo', mines: 'Mines',
                     plinko: 'Plinko', bj: 'Blackjack', smash: 'Smash', spin: 'SWOGE Spin',
-                    crash: 'Crash', p4: 'Connect 4' };
+                    crash: 'Crash', p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers' };
 /* L'image du jeu accompagne l'annonce. Ce sont les MEMES vignettes que sur la
    page des jeux, extraites une fois dans media/ : une annonce illustree se
    remarque dans un canal, et celle qui montre la table dont on parle se
@@ -187,6 +187,36 @@ function p4Pousse(partie, reglement) {
   }
 }
 function p4DiffuseLobby() { broadcast({ type: 'p4Lobby', tables: game.p4Lobby() }); }
+
+/*
+ * Le morpion et les dames parlent le MEME protocole que le Connect 4, sous
+ * d'autres noms de messages. Deux raisons de ne pas avoir simplement ajoute
+ * un champ aux messages `p4*` : la page du Connect 4 est deja en service et
+ * lit `tables` sans regarder de quel jeu il s'agit — elle afficherait les
+ * tables de morpion —, et un vestibule par jeu est de toute facon ce que
+ * chaque page veut.
+ */
+const NOM_DUEL = { p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers' };
+function duelPousse(partie, reglement) {
+  const etat = game.duelEtat(partie.id, Date.now());
+  for (const a of partie.joueurs) {
+    if (!a) continue;
+    toAddr(a, { type: 'duelMatch', match: etat, balance: game.balanceStr(a),
+                reglement: reglement || null });
+  }
+  if (reglement && partie.gagnant) {
+    const gagnant = partie.adresseGagnante();
+    notifyTableWin(gagnant, partie.jeu || 'p4', { net: reglement.gain - partie.mise,
+      staked: partie.mise, payout: reglement.gain,
+      note: `beat ${game._p(partie.joueurs[partie.gagnant === 1 ? 1 : 0]).name}` });
+  }
+}
+function duelDiffuseLobby(jeu) {
+  broadcast({ type: 'duelLobby', jeu, tables: game.duelLobby(jeu) });
+}
+function duelPousseInvites(addr, jeu) {
+  toAddr(addr, { type: 'duelInvites', jeu, invites: game.duelInvitations(addr, Date.now(), jeu) });
+}
 /* Les revanches sont nominatives : elles ne passent pas par le vestibule
    public, il faut donc les pousser a la personne concernee. */
 function p4PousseInvites(addr) {
@@ -934,6 +964,80 @@ wss.on('connection', (ws) => {
         return send(ws, { type: 'p4Match', match: id ? game.p4Etat(id, Date.now()) : null });
       }
 
+      // ---- morpion et dames (memes regles d'argent que le Connect 4) ----
+      if (m.type === 'duelCreate') {
+        try {
+          const jeu = m.jeu === 'dm' ? 'dm' : 'mp';
+          const partie = game.duelCreer(jeu, ws.addr, m.bet, Date.now());
+          persistSoon();
+          send(ws, { type: 'duelMatch', match: game.duelEtat(partie.id, Date.now()),
+                     balance: game.balanceStr(ws.addr) });
+          duelDiffuseLobby(jeu);
+          tg.notify(`\u2694\ufe0f <b>${NOM_DUEL[jeu]}</b>\n${game._p(ws.addr).name} is waiting for an opponent\n` +
+                    `Stake <b>${fmtAmt(String(partie.mise))} $SWOGE</b> \u00b7 winner takes the pot`);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'duelJoin') {
+        try {
+          const { partie } = game.duelRejoindre(ws.addr, m.id, Date.now());
+          persistSoon();
+          duelPousse(partie);
+          duelDiffuseLobby(partie.jeu);
+          send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
+          for (const a of partie.joueurs) if (a) duelPousseInvites(a, partie.jeu);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'duelRematch') {
+        try {
+          const partie = game.duelRevanche(ws.addr, m.id, m.bet, Date.now());
+          persistSoon();
+          send(ws, { type: 'duelMatch', match: game.duelEtat(partie.id, Date.now()),
+                     balance: game.balanceStr(ws.addr) });
+          duelPousseInvites(partie.reserve, partie.jeu);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'duelCancel') {
+        try {
+          const partie = game.duelAnnuler(ws.addr, m.id, Date.now());
+          persistSoon();
+          send(ws, { type: 'duelMatch', match: game.duelEtat(partie.id, Date.now()),
+                     balance: game.balanceStr(ws.addr) });
+          if (partie.reserve) duelPousseInvites(partie.reserve, partie.jeu);
+          else duelDiffuseLobby(partie.jeu);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'duelInvites') return duelPousseInvites(ws.addr, m.jeu === 'dm' ? 'dm' : 'mp');
+      if (m.type === 'duelPlay') {
+        try {
+          const r = game.duelJouer(ws.addr, m.id, m.coup, Date.now());
+          if (r.reglement) persistSoon();
+          duelPousse(r.partie, r.reglement);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'duelResign') {
+        try {
+          const r = game.duelAbandonner(ws.addr, m.id, Date.now());
+          persistSoon();
+          duelPousse(r.partie, r.reglement);
+          duelDiffuseLobby(r.partie.jeu);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'duelLobby') {
+        const jeu = m.jeu === 'dm' ? 'dm' : 'mp';
+        return send(ws, { type: 'duelLobby', jeu, tables: game.duelLobby(jeu) });
+      }
+      if (m.type === 'duelState') {
+        const mienne = game.duelMienne(ws.addr);
+        const id = m.id || (mienne && mienne.id);
+        return send(ws, { type: 'duelMatch', match: id ? game.duelEtat(id, Date.now()) : null });
+      }
+
       // ---- poker (actions nominatives) ----
       if (m.type === 'pokerJoin') {
         try {
@@ -1048,17 +1152,26 @@ const p4Interval = setInterval(() => {
     const evs = game.p4Tick(Date.now());
     if (!evs.length) return;
     persistSoon();
+    const jeux = new Set();
     for (const e of evs) {
-      p4Pousse(e.partie, e.reglement || null);
+      const jeu = e.partie.jeu || 'p4';
+      jeux.add(jeu);
+      if (jeu === 'p4') p4Pousse(e.partie, e.reglement || null);
+      else duelPousse(e.partie, e.reglement || null);
       if (e.type === 'p4Expire') {
         for (const a of e.partie.joueurs)
-          if (a) toAddr(a, { type: 'p4Expire', id: e.partie.id, balance: game.balanceStr(a) });
+          if (a) toAddr(a, { type: jeu === 'p4' ? 'p4Expire' : 'duelExpire',
+                             id: e.partie.id, balance: game.balanceStr(a) });
         // une revanche qui expire doit disparaitre de l'ecran de celui a qui
         // elle etait adressee, pas seulement de celui qui l'avait envoyee
-        if (e.partie.reserve) p4PousseInvites(e.partie.reserve);
+        if (e.partie.reserve) {
+          if (jeu === 'p4') p4PousseInvites(e.partie.reserve);
+          else duelPousseInvites(e.partie.reserve, jeu);
+        }
       }
     }
     p4DiffuseLobby();
+    for (const j of jeux) if (j !== 'p4') duelDiffuseLobby(j);
   } catch (e) { console.warn('[p4]', e && e.message); }
 }, 1000);
 
