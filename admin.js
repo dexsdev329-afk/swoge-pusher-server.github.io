@@ -96,25 +96,66 @@ function page() {
     .det-t .haut{ color:#F2685E; font-weight:800; }
     .det-t .bas{ color:#7CFF9B; }
     .det-note{ margin-top:8px; font-size:11.5px; color:#9d9d9d; line-height:1.5; }
+    /* Le detail par jeu a cinq colonnes chiffrees : sur un telephone il sort de
+       l'ecran. Il defile DANS SA BOITE plutot que de pousser la page — un
+       tableau de chiffres n'a pas de forme repliable, contrairement aux
+       fiches, et le tronquer perdrait la colonne qui interesse. */
+    .det-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin:0 -3px; padding:0 3px; }
+    .det-t{ min-width:430px; }
     .det-vide{ color:#9d9d9d; font-size:12.5px; }
+
+    /* ---- la liste des joueurs, en FICHES et non en tableau ----
+       Il y avait dix colonnes chiffrees dans un panneau de sept cents pixels :
+       le tableau faisait 2457 px de large, sept colonnes sur dix etaient hors
+       de l'ecran, et la fiche ouverte etait coupee en deux. Un tableau qui
+       demande de faire defiler pour lire le solde d'un joueur ne se lit pas.
+
+       Une fiche par joueur : le nom et l'adresse sur une ligne, les chiffres
+       en dessous dans une grille qui se replie toute seule. Aucune largeur a
+       respecter, donc rien a couper — du grand ecran au telephone. */
+    .plst{ display:flex; flex-direction:column; gap:9px; }
+    .pcard{ border:1px solid rgba(230,165,55,.20); border-radius:12px; overflow:hidden;
+            background:rgba(255,255,255,.025); transition:border-color .15s; }
+    .pcard:hover{ border-color:rgba(230,165,55,.45); }
+    .pcard.open{ border-color:rgba(230,165,55,.6); background:rgba(230,165,55,.06); }
+    .pcard.nodep{ opacity:.72; }
+    .pc-h{ display:flex; align-items:center; gap:10px; padding:11px 13px; cursor:pointer;
+           border-bottom:1px solid rgba(255,255,255,.06); }
+    .pc-h .who{ flex:1 1 auto; min-width:0; }
+    .pc-h .who b{ display:block; font-size:14px; font-weight:800; color:#f3ead6;
+                  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    /* L'adresse fait quarante-deux caracteres : sans coupure elle passe SOUS le
+       total et les deux se chevauchent sur telephone. Elle se tronque au bout
+       plutot que de deborder — le debut suffit a reconnaitre un joueur, et
+       elle reste selectionnable en entier. */
+    .pc-h .who span{ display:block; font-size:11px; color:#8a7f6a; margin-top:2px;
+                     font-family:'Space Mono',monospace;
+                     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    @media (max-width:560px){ .pc-h .who b{ font-size:13px; } .pc-h .tot b{ font-size:14px; } }
+    .pc-h .tot{ flex:0 0 auto; text-align:right; }
+    .pc-h .tot b{ display:block; font-size:16px; font-weight:800; color:#E8A33D;
+                  font-variant-numeric:tabular-nums; }
+    .pc-h .tot span{ font-size:10px; letter-spacing:1.1px; color:#8a7f6a; text-transform:uppercase; }
+    .pc-h .fl{ flex:0 0 auto; width:22px; text-align:center; color:#8a7f6a; font-size:12px; }
+    /* auto-fit : autant de colonnes que la largeur en autorise, jamais plus */
+    .pc-g{ display:grid; grid-template-columns:repeat(auto-fit,minmax(112px,1fr));
+           gap:1px; background:rgba(255,255,255,.06); }
+    .pc-g div{ padding:8px 11px; background:#14100a; }
+    .pc-g i{ display:block; font-style:normal; font-size:9.5px; letter-spacing:1.1px;
+             text-transform:uppercase; color:#8a7f6a; margin-bottom:3px; white-space:nowrap; }
+    .pc-g b{ font-size:13.5px; font-weight:800; color:#e9dfc8; font-variant-numeric:tabular-nums; }
+    .pc-g b.haut{ color:#F2685E; } .pc-g b.bas{ color:#7CFF9B; }
+    .pc-d{ padding:11px 13px; background:rgba(0,0,0,.3);
+           border-top:1px solid rgba(230,165,55,.2); }
+    .tri{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 10px;
+          font-size:11.5px; color:#8a7f6a; }
+    .tri button{ padding:5px 10px; border-radius:999px; cursor:pointer; font-family:inherit;
+                 font-size:11px; color:#c9bfa8; background:rgba(255,255,255,.05);
+                 border:1px solid rgba(255,255,255,.1); }
+    .tri button.on{ color:#14100a; background:#E8A33D; border-color:#E8A33D; font-weight:800; }
   </style>
-  <div class="tblwrap">
-    <table id="ptbl">
-      <thead><tr>
-        <th data-k="name">Player</th>
-        <th data-k="balance" class="n">Balance</th>
-        <th data-k="staked" class="n">Staked</th>
-        <th data-k="pending" class="n">Yield</th>
-        <th data-k="total" class="n">Total held</th>
-        <th data-k="depositedAmount" class="n">Deposited</th>
-        <th data-k="net" class="n">Net</th>
-        <th data-k="wagered" class="n">Played (lifetime)</th>
-        <th data-k="bets" class="n">Bets</th>
-        <th data-k="withdrawn" class="n">Withdrawn</th>
-      </tr></thead>
-      <tbody id="pbody"><tr><td colspan="10" class="muted2">loading…</td></tr></tbody>
-    </table>
-  </div>
+  <div class="tri" id="tri">Sort by</div>
+  <div class="plst" id="pbody"><div class="muted2">loading…</div></div>
 </div>
 
 <div class="panel" style="margin-top:14px">
@@ -190,25 +231,66 @@ function drawPlayers(){
   rows.forEach(function(p){ held+=num(p.total); played+=num(p.wagered); bets+=p.bets||0; });
   $("#ptot").innerHTML="Showing <b>"+rows.length+"</b> of <b>"+PLAYERS.length+"</b> players · holding <b>"+
     fmt(held)+"</b> $SWOGE · played <b>"+fmt(played)+"</b> $SWOGE over <b>"+bets+"</b> bets";
-  if(!rows.length){ $("#pbody").innerHTML='<tr><td colspan="10" class="muted2">no player matches</td></tr>'; return; }
+  if(!rows.length){ $("#pbody").innerHTML='<div class="muted2">no player matches</div>'; return; }
+  var ouverts={};
+  [].forEach.call(document.querySelectorAll(".pcard.open"),function(c){ ouverts[c.dataset.a]=1; });
   var h="";
   rows.forEach(function(p){
-    h+='<tr class="pl '+(p.deposited?"":"nodep")+'" data-a="'+esc(p.address)+'">'+
-       '<td class="addr"><b>'+esc(p.name)+(p.tgId?' <span class="tg">tg:'+esc(String(p.tgId))+'</span>':'')+'</b>'+esc(short(p.address))+'</td>'+
-       '<td class="n">'+fmt(p.balance)+'</td>'+
-       '<td class="n">'+fmt(p.staked)+'</td>'+
-       '<td class="n">'+fmt(p.pending)+'</td>'+
-       '<td class="n">'+fmt(p.total)+'</td>'+
-       '<td class="n">'+fmt(p.depositedAmount)+'</td>'+
-       '<td class="n" style="font-weight:800;color:'+(num(p.net)>0?"#F2685E":"#7CFF9B")+'">'+fmt(p.net)+'</td>'+
-       '<td class="n">'+fmt(p.wagered)+'</td>'+
-       '<td class="n">'+(p.bets||0)+'</td>'+
-       '<td class="n">'+fmt(p.withdrawn)+'</td>'+
-       '</tr>'+
-       '<tr class="det" data-d="'+esc(p.address)+'" style="display:none"><td colspan="10">'+
-         detail(p)+'</td></tr>';
+    /* « Net » du point de vue de la MAISON : positif = le joueur lui a coute.
+       La couleur suit ce sens-la et pas l'autre, sinon on lit l'inverse de ce
+       qu'on croit lire. */
+    var net=num(p.net);
+    h+='<div class="pcard '+(p.deposited?"":"nodep")+(ouverts[p.address]?" open":"")+'" data-a="'+esc(p.address)+'">'+
+       '<div class="pc-h">'+
+         '<div class="who"><b>'+esc(p.name)+(p.tgId?' <span class="tg">tg:'+esc(String(p.tgId))+'</span>':'')+'</b>'+
+         '<span>'+esc(p.address)+'</span></div>'+
+         '<div class="tot"><b>'+fmt(p.total)+'</b><span>total held</span></div>'+
+         '<div class="fl">'+(ouverts[p.address]?"▾":"▸")+'</div>'+
+       '</div>'+
+       '<div class="pc-g">'+
+         '<div><i>Balance</i><b>'+fmt(p.balance)+'</b></div>'+
+         '<div><i>Staked</i><b>'+fmt(p.staked)+'</b></div>'+
+         '<div><i>Yield</i><b>'+fmt(p.pending)+'</b></div>'+
+         '<div><i>Deposited</i><b>'+fmt(p.depositedAmount)+'</b></div>'+
+         '<div><i>Withdrawn</i><b>'+fmt(p.withdrawn)+'</b></div>'+
+         '<div><i>Net vs house</i><b class="'+(net>0?"haut":"bas")+'">'+fmt(p.net)+'</b></div>'+
+         '<div><i>Played</i><b>'+fmt(p.wagered)+'</b></div>'+
+         '<div><i>Bets</i><b>'+(p.bets||0)+'</b></div>'+
+       '</div>'+
+       '<div class="pc-d" data-d="'+esc(p.address)+'"'+(ouverts[p.address]?'':' style="display:none"')+'>'+
+         detail(p)+'</div>'+
+       '</div>';
   });
   $("#pbody").innerHTML=h;
+  dessineTri();
+}
+
+/* Le tri : il etait sur les en-tetes du tableau, qui n'existe plus. Des
+   pastilles disent en clair sur quoi on trie, ce qu'un en-tete cliquable ne
+   disait qu'a celui qui pensait a cliquer. */
+var TRIS=[["total","Total held"],["balance","Balance"],["net","Net vs house"],
+          ["wagered","Played"],["bets","Bets"],["depositedAmount","Deposited"],["name","Name"]];
+function dessineTri(){
+  var t=$("#tri"); if(!t||t.dataset.pret) return;
+  t.dataset.pret="1";
+  TRIS.forEach(function(o){
+    var b=document.createElement("button");
+    b.type="button"; b.textContent=o[1]; b.dataset.k=o[0];
+    b.onclick=function(){
+      if(sortKey===o[0]) sortDir=-sortDir; else { sortKey=o[0]; sortDir=(o[0]==="name"?1:-1); }
+      drawPlayers(); majTri();
+    };
+    t.appendChild(b);
+  });
+  majTri();
+}
+function majTri(){
+  [].forEach.call(document.querySelectorAll("#tri button"),function(b){
+    var actif=b.dataset.k===sortKey;
+    b.classList.toggle("on",actif);
+    b.textContent=(TRIS.filter(function(o){return o[0]===b.dataset.k;})[0]||["",""])[1]+
+                  (actif?(sortDir<0?" ↓":" ↑"):"");
+  });
 }
 /* Detail par jeu. Deux chiffres, et ils ne disent PAS la meme chose :
    - « gagnees » flatte : au blackjack on gagne pres d'une main sur deux et on
@@ -227,7 +309,7 @@ function detail(p){
   cles.sort(function(a,b){ return (j[b].mise||0)-(j[a].mise||0); });
   var tot={n:0,mise:0,rendu:0,gagne:0};
   var h='<div class="det-in"><h5>'+esc(p.name)+' — detail par jeu</h5>'+
-        '<table class="det-t"><tr><th>Jeu</th><th class="n">Manches</th>'+
+        '<div class="det-scroll"><table class="det-t"><tr><th>Jeu</th><th class="n">Manches</th>'+
         '<th class="n">Gagnees</th><th class="n">Nulles</th><th class="n">Mise</th>'+
         '<th class="n">Rendu</th><th class="n">Retour</th></tr>';
   cles.forEach(function(k){
@@ -248,7 +330,7 @@ function detail(p){
   h+='<tr><th>Tous jeux</th><th class="n">'+tot.n+'</th>'+
      '<th class="n">'+pct(tot.n?tot.gagne/tot.n:0)+'</th><th></th>'+
      '<th class="n">'+fmt(tot.mise)+'</th><th class="n">'+fmt(tot.rendu)+'</th>'+
-     '<th class="n '+(retTot>1&&tot.n>=200?"haut":"")+'">'+pct(retTot)+'</th></tr></table>';
+     '<th class="n '+(retTot>1&&tot.n>=200?"haut":"")+'">'+pct(retTot)+'</th></tr></table></div>';
   h+='<div class="det-note">Le <b>retour</b> est le chiffre a lire : ce qui revient divise par ce qui est mise. '+
      'La maison garde 3 a 8 % selon le jeu, donc un joueur normal reste <b>sous 100 %</b>. '+
      'Au-dessus de 100 % sur plus de 200 manches, cet argent ne vient pas du jeu : il est marque en rouge. '+
@@ -267,18 +349,22 @@ loadPlayers(); setInterval(loadPlayers,15000);
 /* Un clic sur la ligne ouvre son detail, et referme celui qui l'etait : deux
    panneaux ouverts noient le tableau. */
 $("#pbody").addEventListener("click",function(e){
-  var tr=e.target.closest("tr.pl"); if(!tr) return;
-  var a=tr.dataset.a, det=document.querySelector('tr.det[data-d="'+a+'"]');
-  var ouvert=tr.classList.contains("open");
-  [].forEach.call(document.querySelectorAll("#pbody tr.pl.open"),function(x){ x.classList.remove("open"); });
-  [].forEach.call(document.querySelectorAll("#pbody tr.det"),function(x){ x.style.display="none"; });
-  if(!ouvert && det){ tr.classList.add("open"); det.style.display=""; }
+  var carte=e.target.closest(".pcard"); if(!carte) return;
+  var ouvert=carte.classList.contains("open");
+  [].forEach.call(document.querySelectorAll(".pcard.open"),function(x){
+    x.classList.remove("open");
+    var d=x.querySelector(".pc-d"); if(d) d.style.display="none";
+    var f=x.querySelector(".fl"); if(f) f.textContent="▸";
+  });
+  if(!ouvert){
+    carte.classList.add("open");
+    var d=carte.querySelector(".pc-d"); if(d) d.style.display="";
+    var f=carte.querySelector(".fl"); if(f) f.textContent="▾";
+  }
 });
 $("#q").addEventListener("input",drawPlayers);
 $("#clearQ").onclick=function(){ $("#q").value=""; drawPlayers(); };
-[].forEach.call(document.querySelectorAll("#ptbl th"),function(th){
-  th.onclick=function(){ var k=th.dataset.k; if(sortKey===k){ sortDir=-sortDir; } else { sortKey=k; sortDir=(k==="name"?1:-1); } drawPlayers(); };
-});
+
 $("#csv").onclick=function(){
   var cols=["address","name","balance","staked","pending","total","depositedAmount","net","wagered","bets","withdrawn","tgId","deposited"];
   var lines=[cols.join(",")];
