@@ -348,6 +348,10 @@ const server = http.createServer(async (req, res) => {
       owedJackpot: fmt(bd.jackpot),          //   jackpot reserve
       ownerSurplus: fmt(pot ? surplus : null), // <-- safe amount you can withdraw
       jackpot: game.jackpotStr(), totalStaked: fmt(game.totalStaked()),
+      /* Preleve sur les retraits depuis toujours. Cette somme est DEJA dans le
+         coffre et compte deja dans le surplus : ce n'est pas un montant a
+         retirer en plus, c'est le chiffre a bruler si on veut le bruler. */
+      fraisRetraitsCumules: fmt(game.fraisCumules || ethers.BigNumber.from(0)),
       players: game.players.size, vault: cfg.VAULT_ADDRESS || null,
     }, null, 2));
   }

@@ -66,6 +66,9 @@ class Game {
        ete deconnectes n'a plus d'arbitre. */
     this.p4 = new Map();
     this.p4Seq = 0;
+    /* Le total preleve sur les retraits depuis toujours. Il ne bouge aucun
+       solde — il reste dans le coffre — mais c'est le chiffre a bruler. */
+    this.fraisCumules = BN(0);
   }
 
   /** (Re)construit la table du Crash a partir de la graine courante. */
@@ -121,6 +124,7 @@ class Game {
     return { v: 1, serverSeed: this.serverSeed, sessionSecret: this.sessionSecret,
              jackpotPot: this.jackpotPot.toString(),
              crashGraine: this.crashGraine, crash: this.crash.sauve(),
+             fraisCumules: (this.fraisCumules || BN(0)).toString(),
              lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx), players,
              duels, telegramMap: Array.from(this.telegramMap) };
   }
@@ -141,6 +145,7 @@ class Game {
     if (st.crash) this.crash.charge(st.crash);
     if (st.lastBlock) this.lastBlock = st.lastBlock;
     if (Array.isArray(st.seenTx)) this.seenTx = new Set(st.seenTx);
+    if (st.fraisCumules) this.fraisCumules = ethers.BigNumber.from(st.fraisCumules);
     if (Array.isArray(st.players)) for (const [addr, d] of st.players) {
       this.players.set(addr, {
         balance: ethers.BigNumber.from(d.b || '0'),
@@ -571,6 +576,7 @@ class Game {
       stakeReclame: ethers.utils.formatUnits(p.stakeClaimTotal || BN(0), cfg.DECIMALS),
       amis: (p.amis || []).length,
       filleuls: (p.filleuls || []).length,
+      frais: this.infoFrais(addr),
       parrainGagne: ethers.utils.formatUnits(p.refTotal || BN(0), cfg.DECIMALS),
     };
   }
@@ -2067,6 +2073,37 @@ class Game {
     this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(value)); p.winsToday++;
   }
 
+  /**
+   * Le frais de retrait, en wei, sur un montant brut.
+   *
+   * Zero pour qui a mise au moins ce qu'il a depose : un joueur ne paie
+   * jamais pour sortir. Le frais ne tombe que sur l'argent qui a traverse le
+   * casino sans y jouer — le cadeau ramasse et repris, le coffre utilise
+   * comme portefeuille, la somme lavee.
+   */
+  fraisRetrait(addr, brut) {
+    const p = this._p(addr);
+    if (!(cfg.WITHDRAW_FEE_BPS > 0)) return BN(0);
+    const joue = (p.wagered || BN(0)).gte(p.deposited || BN(0));
+    if (joue) return BN(0);
+    return brut.mul(cfg.WITHDRAW_FEE_BPS).div(10000);
+  }
+
+  /** Ce que le joueur doit savoir AVANT de valider : le taux, et s'il le paie. */
+  infoFrais(addr) {
+    const p = this._p(addr);
+    const du = cfg.WITHDRAW_FEE_BPS > 0 && (p.wagered || BN(0)).lt(p.deposited || BN(0));
+    return {
+      taux: cfg.WITHDRAW_FEE_BPS / 100,
+      du,
+      /* Ce qu'il lui reste a miser pour ne plus le payer. Un frais sans porte
+         de sortie se subit ; avec le chiffre, il se choisit. */
+      resteAMiser: du
+        ? ethers.utils.formatUnits((p.deposited || BN(0)).sub(p.wagered || BN(0)), cfg.DECIMALS)
+        : '0',
+    };
+  }
+
   /** Request a withdrawal of `amountStr` $SWOGE. Returns cumulativeAuthorized (wei) or throws. */
   requestWithdraw(addr, amountStr) {
     const p = this._p(addr);
@@ -2082,12 +2119,22 @@ class Game {
       throw new Error('play ' + ethers.utils.formatUnits(reste.gt(0) ? reste : BN(0), cfg.DECIMALS) +
                       ' $SWOGE more to unlock your referral gift');
     }
+    /* Le frais se prend sur le brut, et le joueur n'est autorise a tirer que
+       le NET : la difference reste dans le coffre, donc dans le surplus du
+       proprietaire. Rien n'est cree, rien n'est detruit ici — c'est un
+       deplacement, et il doit se retrouver au jeton pres. */
+    const frais = this.fraisRetrait(addr, amount);
+    const net = amount.sub(frais);
     p.balance = p.balance.sub(amount);
-    p.cumulativeAuthorized = p.cumulativeAuthorized.add(amount);
+    p.cumulativeAuthorized = p.cumulativeAuthorized.add(net);
+    this.fraisCumules = (this.fraisCumules || BN(0)).add(frais);
     /* On journalise l'AUTORISATION, pas l'encaissement : c'est le moment ou le
        solde quitte le compte, et c'est celui que le joueur reconnait. Le bon
        peut encore etre presente plus tard a la chaine — ou jamais. */
-    journal.ajoute(addr, { k: 'wd', m: amountStr, to: String(addr).toLowerCase(),
+    journal.ajoute(addr, { k: 'wd', m: ethers.utils.formatUnits(net, cfg.DECIMALS),
+                           brut: amountStr,
+                           frais: ethers.utils.formatUnits(frais, cfg.DECIMALS),
+                           to: String(addr).toLowerCase(),
                            cum: ethers.utils.formatUnits(p.cumulativeAuthorized, cfg.DECIMALS) });
     return p.cumulativeAuthorized;
   }

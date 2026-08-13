@@ -35,7 +35,7 @@ const B = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const C = '0xcccccccccccccccccccccccccccccccccccccccc';
 const sol = (g, a) => Number(g.balanceStr(a));
 
-function neuf(credit = 10000) {
+function neuf(credit = 100000) {
   const g = new Game();
   for (const a of [A, B, C]) {
     const p = g._p(a);
@@ -196,18 +196,20 @@ function neuf(credit = 10000) {
 {
   const g = neuf();
   const avant = sol(g, A) + sol(g, B);
-  const r = g.transfere(A, B, '250');
-  eq(r.montant, '250.0', 'le montant part');
-  eq(sol(g, A), 10000 - 250, 'debite chez l expediteur');
-  eq(sol(g, B), 10000 + 250, 'credite chez le destinataire');
+  const r = g.transfere(A, B, '25000');
+  eq(r.montant, '25000.0', 'le montant part');
+  eq(sol(g, A), 100000 - 25000, 'debite chez l expediteur');
+  eq(sol(g, B), 100000 + 25000, 'credite chez le destinataire');
   eq(sol(g, A) + sol(g, B), avant, 'CONSERVATION : la somme des deux soldes n a pas bouge');
 
-  jete(() => g.transfere(A, A, '10'), /to yourself/, 'a soi-meme : refuse');
+  jete(() => g.transfere(A, A, '25000'), /to yourself/, 'a soi-meme : refuse');
   jete(() => g.transfere(A, B, '0'), /enter an amount/, 'zero : refuse');
   jete(() => g.transfere(A, B, '-50'), /enter an amount/, 'un montant negatif : refuse');
   jete(() => g.transfere(A, B, '999999999'), /exceeds your balance/, 'plus que son solde : refuse');
-  jete(() => g.transfere(A, 'pas une adresse', '10'), /valid 0x/, 'vers n importe quoi : refuse');
+  jete(() => g.transfere(A, 'pas une adresse', '25000'), /valid 0x/, 'vers n importe quoi : refuse');
   jete(() => g.transfere(A, B, '0.001'), /minimum transfer/, 'sous le minimum : refuse');
+  jete(() => g.transfere(A, B, String(cfg.TRANSFER_MIN - 1)), /minimum transfer/,
+       'juste en dessous du minimum : refuse aussi');
 
   // et aucun de ces refus n'a bouge un seul jeton
   eq(sol(g, A) + sol(g, B), avant, 'CONSERVATION apres six refus : rien n a bouge');
@@ -218,10 +220,10 @@ function neuf(credit = 10000) {
   const g = neuf();
   g._p(C).hasDeposited = false;
   if (cfg.TRANSFER_REQUIRE_DEPOSIT) {
-    jete(() => g.transfere(C, A, '100'), /deposit once/,
+    jete(() => g.transfere(C, A, '20000'), /deposit once/,
          'sans depot, on ne peut pas vider son bonus chez un complice');
     g._p(C).hasDeposited = true;
-    ok(g.transfere(C, A, '100'), 'apres un depot, le virement passe');
+    ok(g.transfere(C, A, '20000'), 'apres un depot, le virement passe');
   } else {
     ok(true, 'le depot prealable est desactive dans cette configuration');
   }
@@ -238,7 +240,10 @@ function neuf(credit = 10000) {
   let passes = 0, refuses = 0;
   for (let i = 0; i < 100; i++) {
     const de = gens[i % 3], vers = gens[(i + 1 + (i % 2)) % 3];
-    const montant = String((i * 37) % 900 + 1);        // parfois trop, parfois zero-ish
+    /* Des montants qui encadrent le minimum : certains passent, d'autres sont
+       refuses parce que trop petits ou plus gros que le solde. Les deux cas
+       doivent laisser la somme des soldes intacte. */
+    const montant = String(((i * 3701) % 60000) + 1);
     try { g.transfere(de, vers, montant); passes++; }
     catch (e) { refuses++; }
   }

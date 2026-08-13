@@ -36,6 +36,23 @@ module.exports = {
   DECIMALS: 18,
   DROP_COST: env('DROP_COST', '1'),         // $SWOGE per coin dropped
   MIN_WITHDRAW: env('MIN_WITHDRAW', '50'),  // must match Vault.minWithdraw
+  /* ---- le frais de retrait ----
+   *
+   * Il ne rembourse rien : le joueur paie lui-meme le gaz en presentant son
+   * bon au coffre, un retrait ne coute donc rien a la maison. C'est de la
+   * marge, et il faut l'assumer comme telle — d'ou la regle qui suit.
+   *
+   * IL NE TOMBE QUE SUR L'ARGENT QUI N'A PAS ETE JOUE. Celui qui a mise au
+   * moins ce qu'il a depose ne le voit jamais. Ce qu'on taxe, ce sont les
+   * allers-retours sans jouer : ramasser un cadeau et partir, se servir du
+   * coffre comme d'un portefeuille, laver une somme. Le frais tombe donc
+   * exactement sur ceux dont on ne veut pas, et jamais sur un joueur.
+   *
+   * Le montant preleve reste dans le coffre : il grossit le surplus du
+   * proprietaire, qui peut le BRULER. « Chaque retrait brule du $SWOGE » se
+   * raconte mieux qu'une taxe, et c'est la meme somme.
+   */
+  WITHDRAW_FEE_BPS: parseInt(env('WITHDRAW_FEE_BPS', '100'), 10),   // 100 = 1 %
   VOUCHER_TTL_SEC: parseInt(env('VOUCHER_TTL_SEC', '3600'), 10),
 
   // ---- Progressive jackpot ----
@@ -302,7 +319,7 @@ module.exports = {
      reserve donc a ceux qui ont depose au moins une fois : ca donne un compte
      a qui parler si l'image pose probleme, et ca decourage le jetable. */
   AVATAR_REQUIRE_DEPOSIT: env('AVATAR_REQUIRE_DEPOSIT', '1') === '1',
-  TRANSFER_MIN: parseFloat(env('TRANSFER_MIN', '1')),
+  TRANSFER_MIN: parseFloat(env('TRANSFER_MIN', '10000')),
   TRANSFER_REQUIRE_DEPOSIT: env('TRANSFER_REQUIRE_DEPOSIT', '1') === '1',
 
   /* ---- le parrainage ----
