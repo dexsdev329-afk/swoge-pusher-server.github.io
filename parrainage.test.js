@@ -183,18 +183,96 @@ const manche = (g, a, mise, rendu, jeu) => g._manche(g._p(a), jeu || 'plinko', m
 }
 
 // ------------------------------------------- le cadeau du filleul
+/*
+ * CE QUI ETAIT OUVERT : le cadeau partait au premier depot, QUEL QUE SOIT LE
+ * MONTANT. Cent portefeuilles jetables, un jeton depose avec chacun, cent
+ * cadeaux — un depot reel mais derisoire, et l'operation etait rentable.
+ *
+ * Deux verrous ferment la porte, et il faut les deux : le depot minimum rend
+ * l'entree chere, la mise a atteindre rend la SORTIE couteuse. Le premier
+ * seul ne ferait que deplacer le prix ; le second seul laisserait entrer
+ * n'importe qui.
+ */
 {
-  const g = new Game();
-  g.lieParrain(B, A);
-  const avant = sol(g, B);
-  g.creditDeposit({ player: B, amount: ethers.utils.parseUnits('1000', cfg.DECIMALS), tx: '0x1' });
-  pres(sol(g, B) - avant, 1000 + Number(cfg.REFERRAL_WELCOME), 'le filleul recoit son cadeau au premier depot');
-  g.creditDeposit({ player: B, amount: ethers.utils.parseUnits('1000', cfg.DECIMALS), tx: '0x2' });
-  pres(sol(g, B) - avant, 2000 + Number(cfg.REFERRAL_WELCOME), 'une seule fois, pas a chaque depot');
+  const MIN = cfg.REFERRAL_WELCOME_MIN, CADEAU = Number(cfg.REFERRAL_WELCOME);
+  const depose = (g, qui, montant, tx) =>
+    g.creditDeposit({ player: qui, amount: ethers.utils.parseUnits(String(montant), cfg.DECIMALS), tx });
+
+  // --- le recolteur : il depose le minimum syndical
+  {
+    const g = new Game();
+    g.lieParrain(B, A);
+    depose(g, B, 1, '0x1');
+    pres(sol(g, B), 1, 'un depot derisoire ne donne AUCUN cadeau');
+    ok(MIN >= CADEAU * 10, `le depot minimum (${MIN}) vaut au moins dix fois le cadeau (${CADEAU})`);
+  }
+
+  // --- le vrai joueur : il depose pour de bon
+  {
+    const g = new Game();
+    g.lieParrain(B, A);
+    depose(g, B, MIN, '0x2');
+    pres(sol(g, B), MIN + CADEAU, 'au-dela du minimum, le cadeau tombe');
+    depose(g, B, MIN, '0x3');
+    pres(sol(g, B), MIN * 2 + CADEAU, 'une seule fois, pas a chaque depot');
+
+    // ... mais il ne peut pas repartir avec sans avoir joue
+    const p = g._p(B);
+    ok(p.bonusBloque.gt(0), 'le cadeau est dans le solde mais BLOQUE');
+    jete(() => g.requestWithdraw(B, String(MIN * 2 + CADEAU)), /unlock your referral gift/,
+         'retirer le tout avant d avoir joue : refuse');
+    g.requestWithdraw(B, String(MIN * 2));
+    pres(sol(g, B), CADEAU, 'mais son PROPRE argent sort sans entrave');
+
+    /* LE VERROU QUI COMPTE : il ne se leve pas sur du volume — qui se
+       contournerait par le jeu le moins cher — mais quand LA MAISON A GAGNE
+       le montant du cadeau sur ce joueur. */
+    manche(g, B, CADEAU / 2, 0);
+    ok(g._p(B).bonusBloque.gt(0), 'la maison a gagne la moitie du cadeau : toujours bloque');
+    manche(g, B, CADEAU / 2, 0);
+    eq(g._p(B).bonusBloque.toString(), '0',
+       'la maison a gagne le cadeau entier : il se debloque');
+    pres(Number(g.parrainage(B).bloque), 0, 'et plus rien n est retenu');
+  }
+
+  // --- pourquoi la recolte est PERDANTE, et pas seulement penible
+  /*
+   * Un simple volume a miser se contourne : vingt mille mises au blackjack,
+   * dont l'avantage maison est d'un demi pour cent, ne coutent que cent — pour
+   * un cadeau de cinq cents. La recolte resterait rentable.
+   *
+   * Ici le verrou ne porte pas sur le volume mais sur le RESULTAT : pour
+   * sortir cinq cents, il faut en avoir fait perdre cinq cents. Quel que soit
+   * le jeu, quelle que soit la mise, l'operation est nulle au mieux.
+   */
+  {
+    const g = new Game();
+    g.lieParrain(B, A);
+    depose(g, B, MIN, '0xf1');
+    const p = g._p(B);
+    // il joue au jeu le moins cher, longtemps, et gagne meme un peu
+    for (let i = 0; i < 200; i++) manche(g, B, 1000, 1000);
+    ok(p.bonusBloque.gt(0),
+       '200 000 mises sans rien perdre ne debloquent rien : le volume ne suffit pas');
+    ok(Number(g.parrainage(A).du) === 0, 'et le parrain n a rien touche non plus');
+  }
+
+  // --- la sortie de secours du joueur chanceux
+  /* Celui qui gagne ne doit pas rester bloque a vie : au-dela de deux cents
+     fois le cadeau mise, le compte est de toute facon largement rentable. */
+  {
+    const g = new Game();
+    g.lieParrain(B, A);
+    depose(g, B, MIN, '0xf2');
+    g._markWager(g._p(B), ethers.utils.parseUnits(
+      String(CADEAU * cfg.REFERRAL_WELCOME_ROLLOVER), cfg.DECIMALS));
+    eq(g._p(B).bonusBloque.toString(), '0',
+       `${CADEAU * cfg.REFERRAL_WELCOME_ROLLOVER} mises debloquent le joueur chanceux`);
+  }
 
   const g2 = new Game();
-  g2.creditDeposit({ player: C, amount: ethers.utils.parseUnits('1000', cfg.DECIMALS), tx: '0x3' });
-  eq(sol(g2, C), 1000, 'et personne ne le touche sans parrain');
+  depose(g2, C, MIN, '0x9');
+  eq(sol(g2, C), MIN, 'et sans parrain, personne ne touche rien');
 }
 
 // ------------------------------------------- ca survit au redemarrage

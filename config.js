@@ -323,9 +323,35 @@ module.exports = {
    */
   REFERRAL_BPS: parseInt(env('REFERRAL_BPS', '1000'), 10),        // 10 % du revenu
   REFERRAL_PVP_BPS: parseInt(env('REFERRAL_PVP_BPS', '100'), 10), // 1 % de la mise en 1v1
-  // Ce que touche le FILLEUL en arrivant par un lien. Personne ne partage un
-  // lien qui ne donne rien a l'ami ; verse a son premier depot reel.
+  /* Ce que touche le FILLEUL en arrivant par un lien. Personne ne partage un
+   * lien qui ne donne rien a l'ami.
+   *
+   * ---- pourquoi deux verrous, et pas un cadeau tout simple ----
+   *
+   * Un cadeau verse au premier depot, quel qu'en soit le montant, se recolte
+   * a la chaine : cent portefeuilles jetables, un jeton depose avec chacun,
+   * cent cadeaux. Le depot est reel mais derisoire, et l'operation est
+   * rentable. Deux verrous, donc :
+   *
+   *  1. un depot MINIMUM. Il faut engager vingt fois le cadeau pour l'avoir,
+   *     et cet argent-la est reellement immobilise sur la chaine ;
+   *  2. une MISE A ATTEINDRE avant que le cadeau puisse ressortir. C'est le
+   *     seul verrou qui coute vraiment quelque chose au recolteur : pour
+   *     retirer, il doit d'abord jouer, et jouer coute l'avantage de la
+   *     maison. Sans lui, le premier verrou ne fait que deplacer le prix
+   *     d'entree.
+   */
   REFERRAL_WELCOME: env('REFERRAL_WELCOME', '500'),
+  REFERRAL_WELCOME_MIN: parseFloat(env('REFERRAL_WELCOME_MIN', '10000')),
+  /* La sortie de secours, en multiples du cadeau. Le verrou principal n'est
+     PAS un volume a miser — il se contournerait par le jeu le moins cher :
+     miser au blackjack, dont l'avantage maison est d'un demi pour cent, ne
+     coute presque rien. Le verrou principal est que LA MAISON AIT GAGNE le
+     montant du cadeau sur ce joueur.
+     Ce volume-ci ne sert qu'au joueur honnete et chanceux, qui gagne et ne
+     debloquerait jamais : a deux cents fois le cadeau mise, le compte est
+     largement rentable meme au jeu le moins cher. */
+  REFERRAL_WELCOME_ROLLOVER: parseFloat(env('REFERRAL_WELCOME_ROLLOVER', '200')),
 
   // ---- Sessions ----
   // Duree pendant laquelle une signature vaut connexion. Passe ce delai, le

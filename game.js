@@ -93,6 +93,7 @@ class Game {
         rd: (p.refDu || BN(0)).toString(), rt: (p.refTotal || BN(0)).toString(),
         rc: p.revCumul || 0, rp: p.revPaye || 0,
         rec: p.record || null, mj: p.meilleurJour || null, rb: !!p.refBienvenue,
+        bb: (p.bonusBloque || BN(0)).toString(), bc2: p.bonusCible ? p.bonusCible.toString() : null,
         mk: p.moisCle || null, mm: p.moisMise || 0,
         sct: (p.stakeClaimTotal || BN(0)).toString(), tnl: p.trNonLus || 0,
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
@@ -159,6 +160,8 @@ class Game {
         refDu: ethers.BigNumber.from(d.rd || '0'), refTotal: ethers.BigNumber.from(d.rt || '0'),
         revCumul: Number(d.rc || 0), revPaye: Number(d.rp || 0),
         record: d.rec || null, meilleurJour: d.mj || null, refBienvenue: !!d.rb,
+        bonusBloque: ethers.BigNumber.from(d.bb || '0'),
+        bonusCible: d.bc2 ? ethers.BigNumber.from(d.bc2) : null,
         moisCle: d.mk || null, moisMise: Number(d.mm || 0),
         stakeClaimTotal: ethers.BigNumber.from(d.sct || '0'), trNonLus: d.tnl || 0,
         stakes: Array.isArray(d.stk)
@@ -215,6 +218,7 @@ class Game {
     p.nonceDebut = p.nonce;
     if (!p.welcomeWagered) p.welcomeWagered = true;
     if (wei) { p.wagered = (p.wagered || BN(0)).add(wei); p.betCount = (p.betCount || 0) + 1; }
+    this._libereCadeau(p);
   }
   /**
    * Comptabilite PAR JEU. Le serveur ne retenait qu'un total de mises, tous
@@ -298,6 +302,38 @@ class Game {
     const w = WEI(du.toFixed(6));
     parrain.refDu = (parrain.refDu || BN(0)).add(w);
     parrain.refTotal = (parrain.refTotal || BN(0)).add(w);
+    /* Le revenu vient de monter : c'est peut-etre le moment ou la maison a
+       fini de gagner le cadeau du filleul. */
+    this._libereCadeau(p);
+  }
+
+  /**
+   * Le cadeau de parrainage se debloque-t-il ?
+   *
+   * ---- pourquoi ce n'est PAS un simple volume a miser ----
+   *
+   * Une mise a atteindre se contourne par le jeu le moins cher : miser vingt
+   * mille au blackjack, dont l'avantage maison est d'un demi pour cent, ne
+   * coute que cent — pour un cadeau de cinq cents. Le verrou serait joli sur
+   * le papier et la recolte resterait rentable.
+   *
+   * On demande donc la seule chose qui ne se contourne pas : QUE LA MAISON
+   * AIT REELLEMENT GAGNE LE MONTANT DU CADEAU sur ce joueur. C'est deja
+   * compte, exactement, pour le parrainage (`revCumul`). Impossible de
+   * debloquer cinq cents sans en avoir fait perdre cinq cents — quel que
+   * soit le jeu choisi.
+   *
+   * Reste le joueur honnete et chanceux, qui gagne et ne debloquerait jamais.
+   * Pour lui, une sortie de secours au VOLUME : au bout de deux cents fois le
+   * cadeau mise, le compte est de toute facon largement rentable, meme au jeu
+   * le moins cher.
+   */
+  _libereCadeau(p) {
+    if (!p || !p.bonusBloque || p.bonusBloque.lte(0)) return;
+    const cadeau = Number(cfg.REFERRAL_WELCOME) || 0;
+    const gagne = (p.revCumul || 0) >= cadeau;
+    const volume = p.bonusCible && (p.wagered || BN(0)).gte(p.bonusCible);
+    if (gagne || volume) { p.bonusBloque = BN(0); p.bonusCible = null; }
   }
 
   /** Les jeux ou l'argent va d'un joueur a l'autre, pas a la banque. */
@@ -404,6 +440,16 @@ class Game {
       filleuls: liste,
       du: ethers.utils.formatUnits(p.refDu || BN(0), cfg.DECIMALS),
       total: ethers.utils.formatUnits(p.refTotal || BN(0), cfg.DECIMALS),
+      /* Ce qui est encore bloque, et combien il reste a miser pour le
+         debloquer. Un montant bloque sans compteur pousse le joueur a ecrire
+         au support ; avec le compteur, il joue. */
+      bloque: ethers.utils.formatUnits(p.bonusBloque || BN(0), cfg.DECIMALS),
+      /* Ce qu'il reste a « rendre a la maison » pour debloquer le cadeau.
+         C'est le vrai verrou, donc c'est ce chiffre-la qu'il faut montrer —
+         un compteur de volume ferait esperer une chose qui n'ouvre rien. */
+      resteADonner: (p.bonusBloque && p.bonusBloque.gt(0))
+        ? Math.max(0, Number(cfg.REFERRAL_WELCOME) - (p.revCumul || 0)) : 0,
+      depotMini: cfg.REFERRAL_WELCOME_MIN,
     };
   }
 
@@ -782,6 +828,7 @@ class Game {
             deposited: BN(0), jeux: {}, visage: null, amis: [], demandes: [], envoyees: [],
             parrain: null, filleuls: [], refDu: BN(0), refTotal: BN(0), revCumul: 0, revPaye: 0,
             record: null, meilleurJour: null, stakeClaimTotal: BN(0), trNonLus: 0,
+            bonusBloque: BN(0), bonusCible: null,
             moisCle: null, moisMise: 0,
             refBienvenue: false,
             dayNet: ethers.BigNumber.from(0), dayKey: null,
@@ -931,11 +978,19 @@ class Game {
        Personne ne partage un lien qui ne donne rien a l'ami ; et l'attacher
        au depot plutot qu'au clic empeche d'ouvrir cent comptes vides pour
        ramasser cent cadeaux. */
-    if (p.parrain && !p.refBienvenue && Number(cfg.REFERRAL_WELCOME) > 0) {
+    if (p.parrain && !p.refBienvenue && Number(cfg.REFERRAL_WELCOME) > 0 &&
+        (p.deposited || BN(0)).gte(WEI(cfg.REFERRAL_WELCOME_MIN))) {
       p.refBienvenue = true;
       const cadeau = WEI(cfg.REFERRAL_WELCOME);
       p.balance = p.balance.add(cadeau);
-      journal.ajoute(player, { k: 'rf', s: 'welcome', m: String(cfg.REFERRAL_WELCOME) });
+      /* Le cadeau entre dans le solde mais NE PEUT PAS EN SORTIR tant que la
+         mise a atteindre n'est pas faite. C'est le seul verrou qui coute
+         quelque chose a qui vient seulement le ramasser : pour retirer, il
+         faut jouer, et jouer coute l'avantage de la maison. */
+      p.bonusBloque = (p.bonusBloque || BN(0)).add(cadeau);
+      p.bonusCible = (p.wagered || BN(0)).add(cadeau.mul(Math.round(cfg.REFERRAL_WELCOME_ROLLOVER)));
+      journal.ajoute(player, { k: 'rf', s: 'welcome', m: String(cfg.REFERRAL_WELCOME),
+                               mise: ethers.utils.formatUnits(p.bonusCible.sub(p.wagered || BN(0)), cfg.DECIMALS) });
     }
     return true;
   }
@@ -1938,6 +1993,15 @@ class Game {
     const amount = WEI(amountStr);
     if (amount.lt(MINW)) throw new Error('below minimum withdraw (' + cfg.MIN_WITHDRAW + ' $SWOGE)');
     if (amount.gt(p.balance)) throw new Error('amount exceeds balance');
+    /* Le cadeau de parrainage ne sort pas tant qu'il n'a pas ete joue. Le
+       message dit COMBIEN il reste a miser : « bloque » sans chiffre ferait
+       revenir le joueur toutes les cinq minutes. */
+    const bloque = p.bonusBloque || BN(0);
+    if (bloque.gt(0) && amount.gt(p.balance.sub(bloque))) {
+      const reste = (p.bonusCible || BN(0)).sub(p.wagered || BN(0));
+      throw new Error('play ' + ethers.utils.formatUnits(reste.gt(0) ? reste : BN(0), cfg.DECIMALS) +
+                      ' $SWOGE more to unlock your referral gift');
+    }
     p.balance = p.balance.sub(amount);
     p.cumulativeAuthorized = p.cumulativeAuthorized.add(amount);
     /* On journalise l'AUTORISATION, pas l'encaissement : c'est le moment ou le
