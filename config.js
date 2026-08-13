@@ -226,6 +226,28 @@ module.exports = {
      les manches a venir. */
   CRASH_GRAINE: env('CRASH_GRAINE', ''),
 
+  // ---- Connect 4, un contre un ----
+  // La commission est prise sur LE POT ENTIER (les deux mises), pas sur le seul
+  // benefice : c'est ce qui est annonce au joueur, et 5 % du pot vaut le double
+  // de 5 % du gain.
+  P4_RAKE_BPS: parseInt(env('P4_RAKE_BPS', '500'), 10),        // 500 = 5 %
+  P4_MIN: parseInt(env('P4_MIN', '10'), 10),
+  P4_MAX: parseInt(env('P4_MAX', '100000'), 10),
+  // Les paliers proposes a la creation. Le joueur peut saisir n'importe quel
+  // montant entre le minimum et le maximum ; ceux-ci ne sont que des raccourcis.
+  P4_MISES: (env('P4_MISES', '10,100,1000,10000,100000').split(',')
+    .map((x) => parseInt(x.trim(), 10)).filter((x) => x > 0)),
+  /* Delai par coup. Sans lui, un joueur qui ferme son onglet gelerait la mise
+     de l'autre pour toujours — l'argent est bloque tant que la partie n'est pas
+     finie. Passe ce delai, celui qui devait jouer perd. */
+  P4_COUP_MS: parseInt(env('P4_COUP_MS', '45000'), 10),
+  /* Duree de vie d'une table qui n'a jamais trouve d'adversaire. Au-dela, la
+     mise est rendue a celui qui l'a posee. */
+  P4_ATTENTE_MS: parseInt(env('P4_ATTENTE_MS', '600000'), 10),
+  // Commission aussi sur les parties nulles ? Non par defaut : personne n'a
+  // gagne, il n'y a rien a partager.
+  P4_RAKE_SUR_NUL: env('P4_RAKE_SUR_NUL', '0') === '1',
+
   // ---- Sessions ----
   // Duree pendant laquelle une signature vaut connexion. Passe ce delai, le
   // joueur resigne une fois. Trente jours est le compromis habituel : assez

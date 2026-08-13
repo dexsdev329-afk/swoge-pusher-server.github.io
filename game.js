@@ -23,6 +23,7 @@ const hilo = require('./hilo');
 const mines = require('./mines');
 const plinko = require('./plinko');
 const crash = require('./crash');
+const p4 = require('./puissance4');
 const volcano = require('./volcano');
 
 const WEI = (n) => ethers.utils.parseUnits(String(n), cfg.DECIMALS);
@@ -53,6 +54,12 @@ class Game {
     this.crashGraine = cfg.CRASH_GRAINE || crypto.randomBytes(32).toString('hex');
     this._rotateSeed();
     this._crashTable();
+    /* Les parties de Connect 4. Elles ne sont PAS sauvegardees avec l'etat :
+       une partie interrompue par un redemarrage rendrait les deux mises (voir
+       _p4Rendre), parce qu'une grille a moitie jouee dont les deux joueurs ont
+       ete deconnectes n'a plus d'arbitre. */
+    this.p4 = new Map();
+    this.p4Seq = 0;
   }
 
   /** (Re)construit la table du Crash a partir de la graine courante. */
@@ -1102,6 +1109,162 @@ class Game {
       }
     }
     return evs;
+  }
+
+
+  // ------------------------------------------------------------ connect 4
+  // Un contre un. La mise part a la creation ou a l'entree, et ne revient
+  // qu'a la fin : c'est ce qui garantit qu'un joueur ne peut pas s'engager
+  // sur une table avec un solde qu'il aura depense ailleurs entre-temps.
+
+  _p4Verifie(miseRaw, addr) {
+    const mise = Math.floor(Number(miseRaw));
+    if (!(mise >= cfg.P4_MIN)) throw new Error('minimum bet is ' + cfg.P4_MIN + ' $SWOGE');
+    if (mise > cfg.P4_MAX) throw new Error('maximum bet is ' + cfg.P4_MAX + ' $SWOGE');
+    const p = this._p(addr);
+    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+    return mise;
+  }
+
+  _p4Debite(addr, mise) {
+    const p = this._p(addr);
+    p.balance = p.balance.sub(WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise));
+    this._markWager(p, WEI(mise));
+  }
+
+  _p4Credite(addr, montant) {
+    if (!(montant > 0)) return;
+    const p = this._p(addr);
+    p.balance = p.balance.add(WEI(montant));
+    this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(montant));
+  }
+
+  /** Ouvre une table et attend un adversaire. */
+  p4Creer(addr, miseRaw, now) {
+    const mise = this._p4Verifie(miseRaw, addr);
+    for (const m of this.p4.values())
+      if (m.phase !== p4.FINIE && m.jeton(addr)) throw new Error('you already have a match running');
+    const id = 'p4' + (++this.p4Seq) + '-' + Math.floor((now || Date.now()) / 1000).toString(36);
+    const partie = new p4.Partie({ id, mise, createur: addr, now: now || Date.now(),
+                                   coupMs: cfg.P4_COUP_MS });
+    this._p4Debite(addr, mise);
+    this.p4.set(id, partie);
+    return partie;
+  }
+
+  /** S'asseoir en face. La partie demarre a cet instant. */
+  p4Rejoindre(addr, id, now) {
+    const partie = this.p4.get(String(id));
+    if (!partie) throw new Error('match not found');
+    /* Sa propre table AVANT le controle general : un joueur qui clique sur sa
+       propre partie a besoin d'entendre « c'est la tienne », pas « tu as deja
+       une partie en cours » — qui est vrai mais n'explique rien. */
+    if (partie.joueurs[0] === addr) throw new Error('you cannot join your own match');
+    const mise = this._p4Verifie(partie.mise, addr);
+    for (const m of this.p4.values())
+      if (m.phase !== p4.FINIE && m.jeton(addr)) throw new Error('you already have a match running');
+    partie.rejoindre(addr, now || Date.now());   // peut encore refuser : table deja prise
+    this._p4Debite(addr, mise);
+    return partie;
+  }
+
+  p4Jouer(addr, id, colonne, now) {
+    const partie = this.p4.get(String(id));
+    if (!partie) throw new Error('match not found');
+    const coup = partie.jouer(addr, colonne, now || Date.now());
+    const reglement = partie.phase === p4.FINIE ? this._p4Regle(partie) : null;
+    return { partie, coup, reglement };
+  }
+
+  p4Abandonner(addr, id, now) {
+    const partie = this.p4.get(String(id));
+    if (!partie) throw new Error('match not found');
+    partie.abandonner(addr, now || Date.now());
+    return { partie, reglement: this._p4Regle(partie) };
+  }
+
+  /**
+   * Le reglement. Appele UNE SEULE FOIS par partie : `regle` garde la trace,
+   * sinon un abandon suivi d'un tick paierait le gagnant deux fois.
+   */
+  _p4Regle(partie) {
+    if (partie.regle) return null;
+    partie.regle = true;
+    const nul = !partie.gagnant;
+    const r = p4.partage(partie.mise, cfg.P4_RAKE_BPS, nul, cfg.P4_RAKE_SUR_NUL);
+    if (nul) {
+      for (const a of partie.joueurs) if (a) {
+        this._p4Credite(a, r.rendu);
+        this._manche(this._p(a), 'p4', partie.mise, r.rendu);
+      }
+    } else {
+      const gagnant = partie.adresseGagnante();
+      const perdant = partie.joueurs[partie.gagnant === 1 ? 1 : 0];
+      this._p4Credite(gagnant, r.gain);
+      const pg = this._p(gagnant);
+      this._bumpDay(pg); pg.winsToday++;
+      this._manche(pg, 'p4', partie.mise, r.gain);
+      if (perdant) this._manche(this._p(perdant), 'p4', partie.mise, 0);
+    }
+    return r;
+  }
+
+  /** Rend les mises : une table qu'on ferme sans avoir joue ne coute rien. */
+  _p4Rendre(partie) {
+    if (partie.regle) return;
+    partie.regle = true;
+    for (const a of partie.joueurs) if (a) this._p4Credite(a, partie.mise);
+  }
+
+  /**
+   * Fait avancer les parties. Renvoie ce qui a change, pour diffusion.
+   * Deux echeances : le coup, et l'attente d'un adversaire — une table sans
+   * preneur ne doit pas retenir une mise indefiniment.
+   */
+  p4Tick(now) {
+    const t = now || Date.now();
+    const evs = [];
+    for (const [id, partie] of this.p4) {
+      if (partie.phase === p4.EN_COURS) {
+        if (partie.tick(t)) evs.push({ type: 'p4Fin', partie, reglement: this._p4Regle(partie) });
+      } else if (partie.phase === p4.ATTENTE && t - partie.creeA > cfg.P4_ATTENTE_MS) {
+        this._p4Rendre(partie);
+        partie.phase = p4.FINIE; partie.raison = 'expiree';
+        evs.push({ type: 'p4Expire', partie });
+      } else if (partie.phase === p4.FINIE && t - (partie.finA || partie.creeA) > 120000) {
+        this.p4.delete(id);   // on ne garde pas les parties finies plus de deux minutes
+      }
+    }
+    return evs;
+  }
+
+  /** Les tables ouvertes, pour la fenetre « rejoindre une partie ». */
+  p4Lobby() {
+    const out = [];
+    for (const m of this.p4.values()) {
+      if (m.phase !== p4.ATTENTE) continue;
+      out.push({ id: m.id, mise: m.mise, createur: m.joueurs[0],
+                 nom: this._p(m.joueurs[0]).name, creeA: m.creeA });
+    }
+    return out.sort((a, b) => b.creeA - a.creeA);
+  }
+
+  /** L'etat d'une partie, avec les noms — la table n'en connait pas. */
+  p4Etat(id, now) {
+    const m = this.p4.get(String(id));
+    if (!m) return null;
+    const e = m.etat(now || Date.now());
+    e.noms = m.joueurs.map((a) => (a ? this._p(a).name : null));
+    e.rakeBps = cfg.P4_RAKE_BPS;
+    return e;
+  }
+
+  /** La partie en cours d'un joueur, s'il en a une. */
+  p4Mienne(addr) {
+    for (const m of this.p4.values())
+      if (m.phase !== p4.FINIE && m.jeton(addr)) return m;
+    return null;
   }
 
   // ------------------------------------------------------------------ poker

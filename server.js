@@ -69,7 +69,7 @@ function stakedPct() {
  */
 const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo', mines: 'Mines',
                     plinko: 'Plinko', bj: 'Blackjack', smash: 'Smash', spin: 'SWOGE Spin',
-                    crash: 'Crash' };
+                    crash: 'Crash', p4: 'Connect 4' };
 function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
   if (!(net >= cfg.NOTIFY_WIN_MIN)) return;
   tg.notify(`🃏 <b>${NOM_TABLE[jeu] || jeu}</b>\n` +
@@ -143,6 +143,28 @@ function crashDiffuse(ev) {
   notifyTableWin(ev.addr, 'crash', { net: ev.net, staked: ev.mise, payout: ev.payout,
                                      note: `${ev.multi.toFixed(2)}× cash out` });
 }
+
+
+/* ---- connect 4 ----
+ * Une partie n'interesse que ses deux joueurs : on pousse l'etat aux DEUX, pas
+ * a tout le monde. Le vestibule, lui, est public — c'est ce qui permet de
+ * trouver une table.
+ */
+function p4Pousse(partie, reglement) {
+  const etat = game.p4Etat(partie.id, Date.now());
+  for (const a of partie.joueurs) {
+    if (!a) continue;
+    toAddr(a, { type: 'p4Match', match: etat, balance: game.balanceStr(a),
+                reglement: reglement || null });
+  }
+  if (reglement && partie.gagnant) {
+    const gagnant = partie.adresseGagnante();
+    notifyTableWin(gagnant, 'p4', { net: reglement.gain - partie.mise,
+      staked: partie.mise, payout: reglement.gain,
+      note: `beat ${game._p(partie.joueurs[partie.gagnant === 1 ? 1 : 0]).name}` });
+  }
+}
+function p4DiffuseLobby() { broadcast({ type: 'p4Lobby', tables: game.p4Lobby() }); }
 
 // ---- poker ----
 // La salle ignore les sockets : elle previent par evenements, et c'est ici
@@ -573,6 +595,56 @@ wss.on('connection', (ws) => {
         return send(ws, { type: 'crash', ...game.crashEtat(Date.now(), ws.addr) });
       }
 
+      // ---- connect 4 (un contre un) ----
+      if (m.type === 'p4Create') {
+        try {
+          const partie = game.p4Creer(ws.addr, m.bet, Date.now());
+          persistSoon();
+          // le solde accompagne la reponse : sans lui, le joueur voit sa table
+          // creee mais son solde inchange, et croit que la mise n'est pas partie
+          send(ws, { type: 'p4Match', match: game.p4Etat(partie.id, Date.now()),
+                     balance: game.balanceStr(ws.addr) });
+          p4DiffuseLobby();
+          /* On previent le canal : une table sans adversaire ne sert a rien, et
+             c'est la seule facon qu'un joueur seul trouve quelqu'un. */
+          tg.notify(`\u2694\ufe0f <b>Connect 4</b>\n${game._p(ws.addr).name} is waiting for an opponent\n` +
+                    `Stake <b>${fmtAmt(String(partie.mise))} $SWOGE</b> \u00b7 winner takes the pot`);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'p4Join') {
+        try {
+          const partie = game.p4Rejoindre(ws.addr, m.id, Date.now());
+          persistSoon();
+          p4Pousse(partie);
+          p4DiffuseLobby();
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'p4Play') {
+        try {
+          const r = game.p4Jouer(ws.addr, m.id, m.col, Date.now());
+          if (r.reglement) persistSoon();
+          p4Pousse(r.partie, r.reglement);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'p4Resign') {
+        try {
+          const r = game.p4Abandonner(ws.addr, m.id, Date.now());
+          persistSoon();
+          p4Pousse(r.partie, r.reglement);
+          p4DiffuseLobby();
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'p4Lobby') return send(ws, { type: 'p4Lobby', tables: game.p4Lobby() });
+      if (m.type === 'p4State') {
+        const mienne = game.p4Mienne(ws.addr);
+        const id = m.id || (mienne && mienne.id);
+        return send(ws, { type: 'p4Match', match: id ? game.p4Etat(id, Date.now()) : null });
+      }
+
       // ---- poker (actions nominatives) ----
       if (m.type === 'pokerJoin') {
         try {
@@ -676,6 +748,24 @@ const pokerInterval = setInterval(() => {
  * automatique est paye au multiplicateur de sa cible, pas a celui du tick qui
  * le remarque. La cadence ne joue que sur le delai d'affichage. La courbe, elle,
  * n'est jamais diffusee : le navigateur la calcule depuis l'heure de depart. */
+/* Les echeances du Connect 4 : le coup, et la table qui n'a jamais trouve
+   preneur. Une seconde suffit — l'echeance exacte est envoyee au navigateur,
+   qui affiche le decompte lui-meme. */
+const p4Interval = setInterval(() => {
+  try {
+    const evs = game.p4Tick(Date.now());
+    if (!evs.length) return;
+    persistSoon();
+    for (const e of evs) {
+      p4Pousse(e.partie, e.reglement || null);
+      if (e.type === 'p4Expire')
+        for (const a of e.partie.joueurs)
+          if (a) toAddr(a, { type: 'p4Expire', id: e.partie.id, balance: game.balanceStr(a) });
+    }
+    p4DiffuseLobby();
+  } catch (e) { console.warn('[p4]', e && e.message); }
+}, 1000);
+
 const crashInterval = setInterval(() => {
   try {
     for (const ev of game.crashTick(Date.now())) {
@@ -738,7 +828,7 @@ server.listen(cfg.PORT, () => {
 });
 
 function shutdown() {
-  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval);
+  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval);
   persist(); // final save so nothing is lost on redeploy
   server.close(); process.exit(0);
 }
