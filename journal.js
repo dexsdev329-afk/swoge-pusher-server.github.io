@@ -53,6 +53,47 @@ function fichier(addr) {
   return path.join(dossier(), a + '.jsonl');
 }
 
+/*
+ * ---- pourquoi une file d'attente et pas un simple appendFile ----
+ *
+ * `fs.appendFile` OUVRE UN DESCRIPTEUR PAR APPEL. Une rafale — une table
+ * animee, dix-neuf fins de manche dans la meme seconde, un import — en ouvre
+ * autant en meme temps, et le systeme finit par refuser : « EMFILE, too many
+ * open files ». Chaque ligne refusee est une ligne d'historique PERDUE, avec
+ * un simple avertissement dans les traces. C'est arrive pour de vrai.
+ *
+ * On garde donc une seule ecriture en vol par fichier, et ce qui arrive
+ * pendant ce temps s'accumule pour partir d'un bloc a la suivante. Un seul
+ * descripteur par joueur, quelle que soit la cadence, et les lignes restent
+ * dans l'ordre.
+ */
+const files = new Map();               // chemin -> { lignes: [], occupe, essais }
+const MAX_ESSAIS = 5;
+
+function vide(f) {
+  const q = files.get(f);
+  if (!q || q.occupe || !q.lignes.length) return;
+  q.occupe = true;
+  const bloc = q.lignes.join('');
+  q.lignes = [];
+  fs.appendFile(f, bloc, (e) => {
+    q.occupe = false;
+    if (e) {
+      /* On ne jette pas la ligne a la premiere contrariete : une rafale se
+         calme. Mais on ne boucle pas non plus indefiniment sur un disque en
+         lecture seule — au bout de quelques essais, on le dit et on passe. */
+      if (++q.essais <= MAX_ESSAIS) {
+        q.lignes.unshift(bloc);
+        setTimeout(() => vide(f), 120 * q.essais);
+        return;
+      }
+      console.warn('[journal] perdu apres', MAX_ESSAIS, 'essais :', e.message);
+      q.essais = 0;
+    } else q.essais = 0;
+    if (q.lignes.length) vide(f);
+  });
+}
+
 /**
  * Ajoute un evenement. Ne rend rien, ne jette jamais : le journal ne doit
  * jamais empecher une partie de se terminer ni un depot d'etre credite.
@@ -63,7 +104,50 @@ function ajoute(addr, evt) {
   let ligne;
   try { ligne = JSON.stringify({ t: evt.t || Date.now(), ...evt }) + '\n'; }
   catch (e) { return; }
-  fs.appendFile(f, ligne, (e) => { if (e) console.warn('[journal]', e.message); });
+  let q = files.get(f);
+  if (!q) { q = { lignes: [], occupe: false, essais: 0 }; files.set(f, q); }
+  q.lignes.push(ligne);
+  vide(f);
+}
+
+/**
+ * Attend que tout ce qui est en attente soit ECRIT, puis rappelle.
+ *
+ * C'est la bonne facon de s'arreter : elle laisse partir l'ecriture deja en
+ * vol avant d'ecrire la suite, donc les lignes restent dans l'ordre. Le
+ * delai est une securite — on ne bloque pas un arret pour un disque muet.
+ */
+function draine(fin, delaiMax) {
+  const t0 = Date.now();
+  const max = delaiMax === undefined ? 3000 : delaiMax;
+  (function regarde() {
+    let reste = false;
+    for (const [f, q] of files) {
+      if (q.occupe || q.lignes.length) { reste = true; vide(f); }
+    }
+    if (!reste) return fin(0);
+    if (Date.now() - t0 > max) return fin(videSync());   // dernier recours
+    setTimeout(regarde, 25);
+  })();
+}
+
+/**
+ * Ecrit tout de suite ce qui attend encore, sans rien attendre. Dernier
+ * recours : une ligne qui n'est qu'en memoire au moment de l'arret n'a
+ * jamais existe. Si une ecriture est deja en vol, l'ordre des quelques
+ * lignes concernees peut s'inverser — chacune porte son horodatage, et
+ * mieux vaut une ligne mal placee qu'une ligne perdue.
+ */
+function videSync() {
+  let n = 0;
+  for (const [f, q] of files) {
+    if (!q.lignes.length) continue;
+    const bloc = q.lignes.join('');
+    q.lignes = [];
+    try { fs.appendFileSync(f, bloc); n += bloc.split('\n').length - 1; }
+    catch (e) { console.warn('[journal]', e.message); }
+  }
+  return n;
 }
 
 /** Version synchrone, pour les tests : la lecture qui suit voit l'ecriture. */
@@ -173,4 +257,4 @@ function resume(addr) {
   } catch (e) { return { lignes: 0, depuis: null, octets: 0 }; }
 }
 
-module.exports = { ajoute, ajouteSync, lit, resume, DOSSIER, fichier };
+module.exports = { ajoute, ajouteSync, videSync, draine, lit, resume, DOSSIER, fichier };

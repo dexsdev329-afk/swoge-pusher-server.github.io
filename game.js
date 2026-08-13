@@ -79,10 +79,11 @@ class Game {
     for (const [addr, p] of this.players) {
       players.push([addr, {
         b: p.balance.toString(), c: p.cumulativeAuthorized.toString(),
-        s: p.clientSeed, n: p.nonce, name: p.name,
+        s: p.clientSeed, n: p.nonce, name: p.name, nc: !!p.nomChoisi,
         dn: p.dayNet.toString(), dk: p.dayKey,
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
         vi: p.visage || null, am: p.amis || [], ph: !!p.photo,
+        dm: p.demandes || [], en: p.envoyees || [],
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
         tw: (p.wagered || ethers.BigNumber.from(0)).toString(), bc: p.betCount || 0,
         dp: (p.deposited || ethers.BigNumber.from(0)).toString(), jx: p.jeux || {},
@@ -122,9 +123,15 @@ class Game {
         cumulativeAuthorized: ethers.BigNumber.from(d.c || '0'),
         clientSeed: d.s || crypto.randomBytes(8).toString('hex'),
         nonce: d.n || 0, name: d.name || addr.slice(0, 6),
+        /* Les etats ecrits avant cette marque n'ont pas de `nc`. Un nom qui
+           n'est pas le debut de l'adresse a forcement ete choisi : on le
+           reconnait, sinon les joueurs deja nommes perdraient leur nom a la
+           premiere connexion suivant la mise a jour. */
+        nomChoisi: d.nc !== undefined ? !!d.nc : !!(d.name && d.name !== addr.slice(0, 6)),
         dayNet: ethers.BigNumber.from(d.dn || '0'), dayKey: d.dk || null,
         dropsToday: d.dt || 0, winsToday: d.wt || 0, questClaimed: d.qc || {}, hasDeposited: !!d.hd,
         visage: d.vi || null, amis: Array.isArray(d.am) ? d.am : [], photo: !!d.ph,
+        demandes: Array.isArray(d.dm) ? d.dm : [], envoyees: Array.isArray(d.en) ? d.en : [],
         stakes: Array.isArray(d.stk)
           ? d.stk.map((x) => ({ a: ethers.BigNumber.from(x[0]), s: x[1], u: x[2] }))
           : (d.st && d.st !== '0' // migrate old single-stake format → one locked position
@@ -509,7 +516,8 @@ class Game {
     if (!p) {
       p = { addr, balance: ethers.BigNumber.from(0), cumulativeAuthorized: ethers.BigNumber.from(0),
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
-            deposited: BN(0), jeux: {}, visage: null, amis: [],
+            nomChoisi: false,
+            deposited: BN(0), jeux: {}, visage: null, amis: [], demandes: [], envoyees: [],
             dayNet: ethers.BigNumber.from(0), dayKey: null,
             dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false,
             stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0,
@@ -521,7 +529,22 @@ class Game {
     return p;
   }
 
-  setName(addr, name) { this._p(addr).name = String(name || '').slice(0, 24) || addr.slice(0, 6); }
+  /**
+   * Le nom de DEPANNAGE, celui que la page envoie au moment de la connexion —
+   * en pratique les six premiers caracteres de l'adresse.
+   *
+   * Il ne doit JAMAIS ecraser un nom choisi. Toutes les pages envoient
+   * `name` a chaque connexion : sans cette garde, un joueur se donne un nom
+   * dans son profil, change de jeu, et se retrouve affiche « 0x24d7 » a la
+   * table suivante — son nom disparait au premier rechargement. C'est
+   * exactement ce qui arrivait.
+   */
+  setName(addr, name) {
+    const p = this._p(addr);
+    if (p.nomChoisi) return p.name;              // un nom choisi ne se remplace pas
+    p.name = String(name || '').slice(0, 24) || addr.slice(0, 6);
+    return p.name;
+  }
 
   /* Les vingt-quatre visages proposes. Une LISTE FERMEE, et pas une chaine
      libre : ce nom et cette image s'affichent chez les AUTRES joueurs, au
@@ -532,9 +555,16 @@ class Game {
     return String(n || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
   }
 
+  /* Les medailles peintes. Le serveur n'en connait que le CODE : l'image
+     vit sur le site, elle change sans qu'on redemarre quoi que ce soit, et
+     un joueur ne peut pas en inventer une — la liste fermee reste la seule
+     verite. Elles passent devant les frimousses : c'est ce qui se voit a
+     une table de poker. */
+  static get BADGES() { return ['b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7']; }
   static get VISAGES() {
-    return ['🐕','🦴','💪','🔥','👑','💎','🚀','🎯','🍀','⚡','🌊','🐉',
-            '🦈','🐺','🦊','🐼','🎰','🃏','🎲','⚔️','🛡️','🏆','💰','🥇'];
+    return Game.BADGES.concat(
+      ['🐕','🦴','💪','🔥','👑','💎','🚀','🎯','🍀','⚡','🌊','🐉',
+       '🦈','🐺','🦊','🐼','🎰','🃏','🎲','⚔️','🛡️','🏆','💰','🥇']);
   }
 
   /**
@@ -561,7 +591,11 @@ class Game {
     for (const [a, p] of this.players)
       if (a !== String(addr).toLowerCase() && Game.cleNom(p.name || '') === cle)
         throw new Error('that name is taken');
-    this._p(addr).name = n;
+    const p = this._p(addr);
+    p.name = n;
+    /* La marque qui protege ce nom : a partir d'ici, la connexion d'une page
+       ne le remplacera plus (voir setName). */
+    p.nomChoisi = true;
     return n;
   }
 
@@ -1599,33 +1633,126 @@ class Game {
    *     Node est mono-thread : rien ne peut s'intercaler, donc la somme des
    *     deux soldes ne peut pas bouger.
    */
-  amis(addr) {
-    const p = this._p(addr);
-    return (p.amis || []).map((a) => {
-      const q = this.players.get(a);
-      return { address: a, name: q ? q.name : a.slice(0, 6), visage: q ? (q.visage || null) : null,
-               connu: !!q };
-    });
+  /** La fiche publique d'une adresse, connue ou non. */
+  _vu(a) {
+    const q = this.players.get(a);
+    return { address: a, name: q ? q.name : a.slice(0, 6), visage: q ? (q.visage || null) : null,
+             photo: q ? !!q.photo : false, connu: !!q };
   }
 
-  amiAjoute(addr, autre) {
-    const moi = String(addr).toLowerCase();
-    const a = String(autre || '').trim().toLowerCase();
-    if (!/^0x[0-9a-f]{40}$/.test(a)) throw new Error('enter a valid 0x… address');
-    if (a === moi) throw new Error('that is your own address');
+  /**
+   * Tout ce que l'ecran des amis a besoin de savoir : les amis, les demandes
+   * RECUES et celles qu'on a envoyees. Les trois ensemble, parce qu'ils se
+   * lisent ensemble — savoir qu'on a une demande en attente sans savoir de
+   * qui ne sert a rien.
+   */
+  amis(addr) {
     const p = this._p(addr);
+    return {
+      amis: (p.amis || []).map((a) => this._vu(a)),
+      recues: (p.demandes || []).map((a) => this._vu(a)),
+      envoyees: (p.envoyees || []).map((a) => this._vu(a)),
+    };
+  }
+
+  /** Combien de demandes attendent une reponse — pour la pastille. */
+  amisEnAttente(addr) { return (this._p(addr).demandes || []).length; }
+
+  /**
+   * Cherche des joueurs par NOM. On cherche sur le nom choisi, pas sur
+   * l'adresse : personne ne retient une adresse, et c'est justement pour ca
+   * que les joueurs se donnent des noms.
+   */
+  chercheJoueurs(q, moi, max) {
+    const cle = Game.cleNom(String(q || '').trim());
+    if (cle.length < 2) return [];
+    const a_moi = String(moi || '').toLowerCase();
+    const debut = [], dedans = [];
+    for (const [a, p] of this.players) {
+      if (a === a_moi) continue;
+      const n = Game.cleNom(p.name || '');
+      if (!n) continue;
+      const i = n.indexOf(cle);
+      if (i === 0) debut.push(this._vu(a));
+      else if (i > 0) dedans.push(this._vu(a));
+      if (debut.length >= (max || 8)) break;
+    }
+    // ceux dont le nom COMMENCE par la recherche d'abord : c'est ce qu'on tape
+    return debut.concat(dedans).slice(0, max || 8);
+  }
+
+  /** L'adresse visee, donnee soit telle quelle, soit par un nom exact. */
+  _cible(x) {
+    const s = String(x || '').trim();
+    if (/^0x[0-9a-f]{40}$/i.test(s)) return s.toLowerCase();
+    const cle = Game.cleNom(s);
+    if (cle.length < 2) return null;
+    for (const [a, p] of this.players) if (Game.cleNom(p.name || '') === cle) return a;
+    return null;
+  }
+
+  /**
+   * Envoie une demande d'ami. On ne devient pas l'ami de quelqu'un sans qu'il
+   * l'ait accepte — sinon n'importe qui remplit la liste de n'importe qui.
+   * Si l'autre nous avait deja demande, on accepte au lieu de croiser deux
+   * demandes qui s'attendent.
+   */
+  amiDemande(addr, cible) {
+    const moi = String(addr).toLowerCase();
+    const a = this._cible(cible);
+    if (!a) throw new Error('no player found with that name or address');
+    if (a === moi) throw new Error('that is you');
+    const p = this._p(moi), q = this._p(a);
     if (!p.amis) p.amis = [];
     if (p.amis.indexOf(a) >= 0) throw new Error('already in your friends');
     if (p.amis.length >= 100) throw new Error('friend list is full (100)');
-    p.amis.push(a);
-    return this.amis(addr);
+
+    // il nous avait deja demande : on scelle tout de suite
+    if ((p.demandes || []).indexOf(a) >= 0) return this.amiAccepte(moi, a);
+
+    if (!p.envoyees) p.envoyees = [];
+    if (p.envoyees.indexOf(a) >= 0) throw new Error('request already sent');
+    if (!q.demandes) q.demandes = [];
+    if (q.demandes.length >= 200) throw new Error('that player has too many pending requests');
+    p.envoyees.push(a);
+    q.demandes.push(moi);
+    return { etat: this.amis(moi), vers: a };
   }
 
-  amiRetire(addr, autre) {
+  amiAccepte(addr, autre) {
+    const moi = String(addr).toLowerCase();
     const a = String(autre || '').toLowerCase();
-    const p = this._p(addr);
+    const p = this._p(moi), q = this._p(a);
+    if ((p.demandes || []).indexOf(a) < 0) throw new Error('no request from that player');
+    p.demandes = p.demandes.filter((x) => x !== a);
+    q.envoyees = (q.envoyees || []).filter((x) => x !== moi);
+    if (!p.amis) p.amis = [];
+    if (!q.amis) q.amis = [];
+    // l'amitie va DANS LES DEUX SENS : un seul cote et l'autre ne voit rien
+    if (p.amis.indexOf(a) < 0) p.amis.push(a);
+    if (q.amis.indexOf(moi) < 0) q.amis.push(moi);
+    return { etat: this.amis(moi), avec: a };
+  }
+
+  amiRefuse(addr, autre) {
+    const moi = String(addr).toLowerCase();
+    const a = String(autre || '').toLowerCase();
+    const p = this._p(moi), q = this._p(a);
+    p.demandes = (p.demandes || []).filter((x) => x !== a);
+    q.envoyees = (q.envoyees || []).filter((x) => x !== moi);
+    return this.amis(moi);
+  }
+
+  /** Retire des DEUX cotes : garder l'autre moitie n'aurait aucun sens. */
+  amiRetire(addr, autre) {
+    const moi = String(addr).toLowerCase();
+    const a = String(autre || '').toLowerCase();
+    const p = this._p(moi), q = this._p(a);
     p.amis = (p.amis || []).filter((x) => x !== a);
-    return this.amis(addr);
+    q.amis = (q.amis || []).filter((x) => x !== moi);
+    p.envoyees = (p.envoyees || []).filter((x) => x !== a);
+    q.demandes = (q.demandes || []).filter((x) => x !== moi);
+    return this.amis(moi);
   }
 
   /**

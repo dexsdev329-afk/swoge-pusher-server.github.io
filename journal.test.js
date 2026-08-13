@@ -158,5 +158,32 @@ const B = '0x2222222222222222222222222222222222222222';
   ok(true, 'ecrire n importe quoi ne jette pas : le journal ne doit jamais arreter une partie');
 }
 
-fs.rmSync(bac, { recursive: true, force: true });
-console.log(`journal.test.js : ${n} verifications OK`);
+// ---------------------------------------- une RAFALE ne perd aucune ligne
+/*
+ * CE QUI ARRIVAIT VRAIMENT : chaque `ajoute` ouvrait son propre descripteur.
+ * Quelques milliers d'ecritures lancees d'affilee — une table animee, un
+ * audit, dix-neuf fins de manche dans la meme seconde — et le systeme
+ * refusait d'en ouvrir davantage : « EMFILE, too many open files ». Chaque
+ * ligne refusee etait une ligne d'historique perdue, avec un simple
+ * avertissement dans les traces.
+ *
+ * Le test ecrit donc bien plus de lignes qu'il n'y a de descripteurs
+ * disponibles, et exige de toutes les relire — dans l'ordre.
+ */
+{
+  const F = '0x' + 'f'.repeat(40);
+  const COMBIEN = 4000;
+  for (let i = 0; i < COMBIEN; i++) journal.ajoute(F, { k: 'r', g: 'plinko', m: i });
+  journal.draine(() => {
+    const contenu = fs.readFileSync(journal.fichier(F), 'utf8').trim().split('\n');
+    ok(true, `${COMBIEN} ecritures d affilee : aucune n a fait tomber le journal`);
+    eq(contenu.length, COMBIEN, `les ${COMBIEN} lignes sont sur le disque, aucune perdue`);
+    const premiers = contenu.slice(0, 3).map((l) => JSON.parse(l).m);
+    assert.deepStrictEqual(premiers, [0, 1, 2], 'et dans l ordre ou elles ont ete jouees'); n++;
+    const dernier = JSON.parse(contenu[contenu.length - 1]).m;
+    eq(dernier, COMBIEN - 1, 'jusqu a la derniere');
+
+    fs.rmSync(bac, { recursive: true, force: true });
+    console.log(`journal.test.js : ${n} verifications OK`);
+  });
+}

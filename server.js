@@ -604,7 +604,8 @@ wss.on('connection', (ws) => {
       if (m.type === 'profile') {
         return send(ws, { type: 'profile', profile: game.profilPublic(ws.addr),
                           avatars: require('./game').Game.VISAGES,
-                          friends: game.amis(ws.addr) });
+                          friends: game.amis(ws.addr),
+                          pending: game.amisEnAttente(ws.addr) });
       }
       /* La photo de profil televersee. Elle n'est PAS ouverte a tous : elle
          s'affiche chez les autres joueurs, donc on demande d'avoir depose au
@@ -632,12 +633,29 @@ wss.on('connection', (ws) => {
         broadcast({ type: 'profilePublic', profile: game.profilPublic(ws.addr) });
         return;
       }
-      if (m.type === 'friendAdd' || m.type === 'friendRemove') {
+      if (m.type === 'friendSearch') {
+        return send(ws, { type: 'friendSearch', q: m.q || '',
+                          results: game.chercheJoueurs(m.q, ws.addr, 8) });
+      }
+      if (m.type === 'friendRequest' || m.type === 'friendAccept' ||
+          m.type === 'friendDecline' || m.type === 'friendRemove') {
         try {
-          const l = m.type === 'friendAdd' ? game.amiAjoute(ws.addr, m.address)
-                                           : game.amiRetire(ws.addr, m.address);
+          let etat, autre = null;
+          if (m.type === 'friendRequest') { const r = game.amiDemande(ws.addr, m.address); etat = r.etat; autre = r.vers; }
+          else if (m.type === 'friendAccept') { const r = game.amiAccepte(ws.addr, m.address); etat = r.etat; autre = r.avec; }
+          else if (m.type === 'friendDecline') etat = game.amiRefuse(ws.addr, m.address);
+          else etat = game.amiRetire(ws.addr, m.address);
           persistSoon();
-          send(ws, { type: 'friends', friends: l });
+          send(ws, { type: 'friends', friends: etat, pending: game.amisEnAttente(ws.addr) });
+          /* L'autre doit voir la demande arriver SANS recharger : c'est tout
+             l'interet d'une pastille de notification. */
+          if (autre) toAddr(autre, { type: 'friends', friends: game.amis(autre),
+                                     pending: game.amisEnAttente(autre),
+                                     nouvelle: m.type === 'friendRequest' ? game._p(ws.addr).name : null });
+          if (m.type === 'friendRemove' && m.address)
+            toAddr(String(m.address).toLowerCase(), { type: 'friends',
+              friends: game.amis(String(m.address).toLowerCase()),
+              pending: game.amisEnAttente(String(m.address).toLowerCase()) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -1073,7 +1091,10 @@ server.listen(cfg.PORT, () => {
 function shutdown() {
   clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
   persist(); // final save so nothing is lost on redeploy
-  server.close(); process.exit(0);
+  /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
+     qui attend encore doit partir maintenant, sinon les dernieres manches
+     jouees avant un redeploiement n'auront jamais existe. */
+  journal.draine(() => { server.close(); process.exit(0); }, 2000);
 }
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

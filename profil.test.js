@@ -76,6 +76,44 @@ function neuf(credit = 10000) {
   eq(g.setPublicName(A, 'Éliott le Fort'), 'Éliott le Fort', 'mais on peut regarder le sien');
 }
 
+// ------------------------------- le nom choisi survit aux reconnexions
+/*
+ * CE QUI ARRIVAIT VRAIMENT : chaque page envoie `name` avec sa connexion —
+ * les six premiers caracteres de l'adresse. Le serveur le posait par-dessus
+ * le nom choisi. Un joueur se nommait dans son profil, changeait de jeu, et
+ * se retrouvait affiche « 0x24d7 » a la table suivante. Le nom ne tenait pas
+ * une seule navigation.
+ */
+{
+  const g = neuf();
+  eq(g.setName(A, A.slice(0, 6)), A.slice(0, 6), 'sans nom choisi, la page pose le sien');
+  g.setPublicName(A, 'Le Costaud');
+  g.setName(A, A.slice(0, 6));                       // la page se reconnecte
+  eq(g.profilPublic(A).name, 'Le Costaud', 'une reconnexion N EFFACE PAS le nom choisi');
+  for (let i = 0; i < 5; i++) g.setName(A, A.slice(0, 6));
+  eq(g.profilPublic(A).name, 'Le Costaud', 'ni cinq pages d affilee');
+
+  const g2 = new Game();
+  g2.hydrate(g.serialize());
+  g2.setName(A, A.slice(0, 6));
+  eq(g2.profilPublic(A).name, 'Le Costaud', 'ni un redemarrage du serveur suivi d une connexion');
+
+  /* Les etats ecrits avant la marque n'ont pas de `nc` : un nom qui n'est pas
+     le debut de l'adresse a forcement ete choisi. Sans cette reprise, tous
+     les joueurs deja nommes perdraient leur nom au premier redemarrage. */
+  const vieux = g.serialize();
+  for (const [, d] of vieux.players) delete d.nc;
+  const g3 = new Game();
+  g3.hydrate(vieux);
+  g3.setName(A, A.slice(0, 6));
+  eq(g3.profilPublic(A).name, 'Le Costaud', 'et un nom d avant la mise a jour est reconnu comme choisi');
+
+  // celui qui n'a jamais rien choisi garde bien le nom de depannage
+  const g4 = neuf();
+  g4.setName(B, B.slice(0, 6));
+  eq(g4.profilPublic(B).name, B.slice(0, 6), 'qui n a rien choisi garde le nom court de sa page');
+}
+
 // ---------------------------------------------------------- le visage
 {
   const g = neuf();
@@ -88,17 +126,68 @@ function neuf(credit = 10000) {
 }
 
 // ------------------------------------------------------------ les amis
+/* On ne devient pas l'ami de quelqu'un sans qu'il l'ait accepte : sinon
+   n'importe qui remplit la liste de n'importe qui. */
 {
   const g = neuf();
-  eq(g.amis(A).length, 0, 'on commence sans ami');
-  eq(g.amiAjoute(A, B).length, 1, 'on en ajoute un');
-  eq(g.amis(A)[0].address, B, 'c est le bon');
-  jete(() => g.amiAjoute(A, B), /already in/, 'deux fois le meme : refuse');
-  jete(() => g.amiAjoute(A, A), /your own address/, 'soi-meme : refuse');
-  jete(() => g.amiAjoute(A, 'pas une adresse'), /valid 0x/, 'une adresse invalide : refuse');
   g.setPublicName(B, 'Bobby');
-  eq(g.amis(A)[0].name, 'Bobby', 'la liste montre le nom choisi par l ami');
-  eq(g.amiRetire(A, B).length, 0, 'et on peut le retirer');
+  eq(g.amis(A).amis.length, 0, 'on commence sans ami');
+
+  g.amiDemande(A, B);
+  eq(g.amis(A).amis.length, 0, 'une demande ne fait PAS un ami');
+  eq(g.amis(A).envoyees.length, 1, 'elle figure dans les demandes envoyees');
+  eq(g.amis(B).recues.length, 1, 'et chez B dans les demandes recues');
+  eq(g.amisEnAttente(B), 1, 'B a une demande en attente — c est la pastille');
+  eq(g.amis(B).recues[0].name, 'Alice' === undefined ? '' : g.amis(B).recues[0].name,
+     'la demande dit de qui elle vient');
+
+  jete(() => g.amiDemande(A, B), /already sent/, 'deux fois la meme demande : refuse');
+  jete(() => g.amiDemande(A, A), /that is you/, 'soi-meme : refuse');
+  jete(() => g.amiDemande(A, 'inconnu'), /no player found/, 'un nom inconnu : refuse');
+  jete(() => g.amiAccepte(A, B), /no request from/, 'accepter une demande qu on n a pas recue : refuse');
+
+  g.amiAccepte(B, A);
+  eq(g.amis(B).amis.length, 1, 'B accepte : il a un ami');
+  eq(g.amis(A).amis.length, 1, 'ET A AUSSI — l amitie va dans les deux sens');
+  eq(g.amis(A).amis[0].name, 'Bobby', 'chacun voit le nom choisi par l autre');
+  eq(g.amis(B).recues.length, 0, 'la demande a disparu des deux cotes');
+  eq(g.amis(A).envoyees.length, 0, 'y compris des envoyees');
+
+  g.amiRetire(A, B);
+  eq(g.amis(A).amis.length, 0, 'on peut retirer');
+  eq(g.amis(B).amis.length, 0, 'et ca retire DES DEUX COTES : garder l autre moitie n aurait pas de sens');
+}
+
+// ------------------------- deux demandes croisees ne s attendent pas
+/* A demande a B pendant que B demande a A : sans traitement, deux demandes
+   restent en attente et chacun attend que l autre clique. */
+{
+  const g = neuf();
+  g.amiDemande(A, B);
+  g.amiDemande(B, A);
+  eq(g.amis(A).amis.length, 1, 'la seconde demande scelle l amitie tout de suite');
+  eq(g.amis(B).amis.length, 1, 'des deux cotes');
+  eq(g.amisEnAttente(A) + g.amisEnAttente(B), 0, 'et plus rien n attend');
+}
+
+// ------------------------------------------- la recherche par nom
+{
+  const g = neuf();
+  g.setPublicName(A, 'Alexandre');
+  g.setPublicName(B, 'Alexis');
+  g.setPublicName(C, 'Bernard');
+  const r = g.chercheJoueurs('alex', C, 8);
+  eq(r.length, 2, 'deux joueurs trouves sur « alex »');
+  ok(r.every((x) => /^Alex/.test(x.name)), 'ce sont les bons', r.map((x) => x.name));
+  eq(g.chercheJoueurs('ALEX', C).length, 2, 'la casse ne compte pas');
+  eq(g.chercheJoueurs('a', C).length, 0, 'une seule lettre ne cherche rien : trop large');
+  ok(g.chercheJoueurs('alex', A).every((x) => x.address !== A),
+     'on ne se trouve pas soi-meme dans la recherche');
+  // on peut demander par NOM, pas seulement par adresse
+  const g2 = neuf();
+  g2.setPublicName(B, 'Bobby');
+  ok(g2.amiDemande(A, 'Bobby'), 'on peut envoyer une demande en tapant un nom');
+  eq(g2.amis(B).recues.length, 1, 'et elle arrive au bon joueur');
 }
 
 // -------------------------------------------------------- le virement
@@ -161,14 +250,18 @@ function neuf(credit = 10000) {
   const g = neuf();
   g.setPublicName(A, 'Champion');
   g.setVisage(A, Game.VISAGES[5]);
-  g.amiAjoute(A, B);
+  g.amiDemande(A, B); g.amiAccepte(B, A);
   const g2 = new Game();
   g2.hydrate(g.serialize());
   eq(g2.profilPublic(A).name, 'Champion', 'le nom est relu apres redemarrage');
   eq(g2.profilPublic(A).visage, Game.VISAGES[5], 'le visage aussi');
-  eq(g2.amis(A).length, 1, 'et la liste d amis');
-  eq(g2.amis(A)[0].address, B, 'avec le bon ami');
+  eq(g2.amis(A).amis.length, 1, 'et la liste d amis');
+  eq(g2.amis(A).amis[0].address, B, 'avec le bon ami');
 }
 
-fs.rmSync(bac, { recursive: true, force: true });
-console.log(`profil.test.js : ${n} verifications OK`);
+/* Le journal ecrit en differe : on le laisse finir avant d'effacer le bac,
+   sinon ses dernieres lignes cherchent un dossier qui n'existe plus. */
+require('./journal').draine(() => {
+  fs.rmSync(bac, { recursive: true, force: true });
+  console.log(`profil.test.js : ${n} verifications OK`);
+});
