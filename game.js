@@ -366,15 +366,23 @@ class Game {
     return cfg.WELCOME_CLAIM;
   }
 
-  // ---- 7-day login streak ----
-  /** The streak day that TODAY's claim would credit (1..N), without mutating. */
+  // ---- 7-day login ladder ----
+  /**
+   * Le palier que la reclamation d'AUJOURD'HUI crediterait (1..N), sans rien
+   * modifier.
+   *
+   * UN TROU NE REMET PLUS A ZERO. Avant, rater une journee renvoyait le joueur
+   * au palier 1 : il revenait le surlendemain, voyait « Claim day 1 » a la
+   * place de « day 2 » et concluait, a raison, que la reclamation ne marchait
+   * pas. Une echelle qui punit l'absence punit surtout ceux qui reviennent.
+   * On avance donc d'un palier a chaque journee reclamee, quel que soit
+   * l'ecart ; la seule regle qui reste est UNE reclamation par journee.
+   */
   _streakToday(p) {
     const rewards = cfg.STREAK_REWARDS, N = rewards.length || 1;
-    const today = this._today();
-    if (p.streakLastClaimDay === today) return { day: p.streakDay, claimedToday: true };
-    let day;
-    if (p.streakLastClaimDay === this._dayShift(-1)) day = (p.streakDay % N) + 1; // consecutive → next (wraps N→1)
-    else day = 1; // first ever, or a gap → restart
+    if (p.streakLastClaimDay === this._today()) return { day: p.streakDay, claimedToday: true };
+    // jamais rien reclame -> palier 1 ; sinon le suivant, qui reboucle N -> 1
+    const day = p.streakLastClaimDay ? (p.streakDay % N) + 1 : 1;
     return { day, claimedToday: false };
   }
 
@@ -1129,7 +1137,10 @@ class Game {
   _p4Debite(addr, mise) {
     const p = this._p(addr);
     p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise));
+    // dropsToday compte pour les quetes du jour. Tous les autres jeux
+    // l'incrementent a la mise ; le Connect 4 l'avait oublie, et une partie
+    // ne faisait donc avancer aucune quete.
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++;
     this._markWager(p, WEI(mise));
   }
 
