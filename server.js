@@ -292,8 +292,32 @@ process.on('unhandledRejection', (e) => console.warn('[unhandledRejection]', e &
 process.on('uncaughtException', (e) => console.warn('[uncaughtException]', e && e.message));
 const wss = new WebSocketServer({ server });
 
+/* ---- battement de coeur ----
+ * Une connexion WebSocket qui ne dit rien pendant plusieurs minutes est
+ * fermee par les intermediaires (Railway, proxys mobiles, box). La plupart
+ * des jeux parlent sans arret, mais pas le Connect 4 : entre deux coups il
+ * peut s'ecouler quarante-cinq secondes de silence complet, et une table qui
+ * attend un adversaire ne dit rien du tout. Le joueur se retrouvait alors
+ * deconnecte en pleine partie et on lui redemandait son portefeuille.
+ *
+ * Le ping est celui du PROTOCOLE, pas un message applicatif : le navigateur y
+ * repond tout seul, sans une ligne cote client, et rien n'apparait dans le
+ * jeu. Un client qui ne repond pas a deux tours est ferme franchement plutot
+ * que laisse en zombie.
+ */
+const PING_MS = 25000;
+const battement = setInterval(() => {
+  for (const ws of clients) {
+    if (ws.vivant === false) { try { ws.terminate(); } catch (e) {} continue; }
+    ws.vivant = false;
+    try { ws.ping(); } catch (e) {}
+  }
+}, PING_MS);
+
 wss.on('connection', (ws) => {
   ws.addr = null;
+  ws.vivant = true;
+  ws.on('pong', () => { ws.vivant = true; });
   ws.nonce = crypto.randomBytes(16).toString('hex'); // login challenge
   clients.add(ws);
   send(ws, {
@@ -865,7 +889,7 @@ server.listen(cfg.PORT, () => {
 });
 
 function shutdown() {
-  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval);
+  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement);
   persist(); // final save so nothing is lost on redeploy
   server.close(); process.exit(0);
 }
