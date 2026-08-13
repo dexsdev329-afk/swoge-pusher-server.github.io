@@ -296,6 +296,8 @@ class Game {
       rows.push({
         address: addr,
         name: p.name || addr.slice(0, 6),
+        visage: p.visage || null,          // le visage fait partie de l'identite affichee
+        amis: (p.amis || []).length,
         balance: f(p.balance),
         staked: f(staked),
         pending: f(pending),

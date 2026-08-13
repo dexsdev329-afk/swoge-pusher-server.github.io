@@ -121,6 +121,9 @@ function page() {
     .pcard.nodep{ opacity:.72; }
     .pc-h{ display:flex; align-items:center; gap:10px; padding:11px 13px; cursor:pointer;
            border-bottom:1px solid rgba(255,255,255,.06); }
+    .pcav{ flex:0 0 auto; width:32px; height:32px; border-radius:50%; display:flex;
+           align-items:center; justify-content:center; font-size:17px;
+           background:rgba(255,255,255,.05); border:1px solid rgba(230,165,55,.3); }
     .pc-h .who{ flex:1 1 auto; min-width:0; }
     .pc-h .who b{ display:block; font-size:14px; font-weight:800; color:#f3ead6;
                   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -242,6 +245,7 @@ function drawPlayers(){
     var net=num(p.net);
     h+='<div class="pcard '+(p.deposited?"":"nodep")+(ouverts[p.address]?" open":"")+'" data-a="'+esc(p.address)+'">'+
        '<div class="pc-h">'+
+         '<div class="pcav">'+esc(p.visage||"👤")+'</div>'+
          '<div class="who"><b>'+esc(p.name)+(p.tgId?' <span class="tg">tg:'+esc(String(p.tgId))+'</span>':'')+'</b>'+
          '<span>'+esc(p.address)+'</span></div>'+
          '<div class="tot"><b>'+fmt(p.total)+'</b><span>total held</span></div>'+
@@ -256,6 +260,7 @@ function drawPlayers(){
          '<div><i>Net vs house</i><b class="'+(net>0?"haut":"bas")+'">'+fmt(p.net)+'</b></div>'+
          '<div><i>Played</i><b>'+fmt(p.wagered)+'</b></div>'+
          '<div><i>Bets</i><b>'+(p.bets||0)+'</b></div>'+
+         '<div><i>Friends</i><b>'+(p.amis||0)+'</b></div>'+
        '</div>'+
        '<div class="pc-d" data-d="'+esc(p.address)+'"'+(ouverts[p.address]?'':' style="display:none"')+'>'+
          detail(p)+'</div>'+

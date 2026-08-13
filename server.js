@@ -373,6 +373,8 @@ wss.on('connection', (ws) => {
     vault: cfg.VAULT_ADDRESS || null, token: cfg.SWOGE_TOKEN, chainId: cfg.CHAIN_ID,
     jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE),
     joueurs: compte(),
+    // l'explorateur, pour que l'historique puisse pointer vers la transaction
+    explorer: cfg.EXPLORER,
   });
 
   ws.on('message', async (buf) => {
