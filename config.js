@@ -322,6 +322,17 @@ module.exports = {
    *     donc qu'une petite part, et la complicite reste perdante.
    */
   REFERRAL_BPS: parseInt(env('REFERRAL_BPS', '1000'), 10),        // 10 % du revenu
+  /* Le DELAI avant qu'un gain de parrainage soit encaissable.
+   *
+   * Sans lui, une part est versee des la manche perdue par le filleul — et si
+   * le filleul reprend tout le lendemain, la maison a paye sur un revenu
+   * qu'elle n'a plus. Avec le delai, le gain reste en attente pendant sept
+   * jours et REDESCEND si le filleul se refait dans l'intervalle. Ce qui est
+   * mur, en revanche, ne se reprend jamais.
+   *
+   * Sept jours parce que c'est l'ordre de grandeur d'une serie : au-dela, ce
+   * qui reste est du revenu que la maison a vraiment garde. */
+  REFERRAL_HOLD_DAYS: parseFloat(env('REFERRAL_HOLD_DAYS', '7')),
   REFERRAL_PVP_BPS: parseInt(env('REFERRAL_PVP_BPS', '100'), 10), // 1 % de la mise en 1v1
   /* Ce que touche le FILLEUL en arrivant par un lien. Personne ne partage un
    * lien qui ne donne rien a l'ami.

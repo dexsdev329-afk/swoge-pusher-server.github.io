@@ -91,7 +91,7 @@ class Game {
         dm: p.demandes || [], en: p.envoyees || [],
         pa: p.parrain || null, fi: p.filleuls || [],
         rd: (p.refDu || BN(0)).toString(), rt: (p.refTotal || BN(0)).toString(),
-        rc: p.revCumul || 0, rp: p.revPaye || 0,
+        rc: p.revCumul || 0, rp: p.revPaye || 0, att: p.attente || [],
         rec: p.record || null, mj: p.meilleurJour || null, rb: !!p.refBienvenue,
         bb: (p.bonusBloque || BN(0)).toString(), bc2: p.bonusCible ? p.bonusCible.toString() : null,
         mk: p.moisCle || null, mm: p.moisMise || 0,
@@ -159,6 +159,7 @@ class Game {
         parrain: d.pa || null, filleuls: Array.isArray(d.fi) ? d.fi : [],
         refDu: ethers.BigNumber.from(d.rd || '0'), refTotal: ethers.BigNumber.from(d.rt || '0'),
         revCumul: Number(d.rc || 0), revPaye: Number(d.rp || 0),
+        attente: Array.isArray(d.att) ? d.att : [],
         record: d.rec || null, meilleurJour: d.mj || null, refBienvenue: !!d.rb,
         bonusBloque: ethers.BigNumber.from(d.bb || '0'),
         bonusCible: d.bc2 ? ethers.BigNumber.from(d.bc2) : null,
@@ -294,17 +295,73 @@ class Game {
     if (!isFinite(rev)) return;
 
     p.revCumul = (p.revCumul || 0) + rev;
-    if (p.revCumul <= (p.revPaye || 0)) return;         // sous la ligne d'eau : rien a verser
+
+    /* ---- le filleul se refait : on reprend ce qui n'est pas encore mur ----
+     *
+     * Sans ca, une part est versee des la manche perdue, et si le filleul
+     * reprend tout le lendemain la maison a paye sur un revenu qu'elle n'a
+     * plus. Ce qui est deja MUR, en revanche, ne se reprend jamais : le
+     * parrain ne peut pas se retrouver en dette. */
+    if (p.revCumul < (p.revPaye || 0)) {
+      let manque = ((p.revPaye || 0) - p.revCumul) * (cfg.REFERRAL_BPS / 10000);
+      const seaux = p.attente || [];
+      while (manque > 1e-9 && seaux.length) {
+        const dernier = seaux[seaux.length - 1];
+        if (dernier[1] <= manque + 1e-9) { manque -= dernier[1]; seaux.pop(); }
+        else { dernier[1] -= manque; manque = 0; }
+      }
+      /* La ligne d'eau redescend d'autant : ce revenu-la est a regagner. Ce
+         qui a deja muri reste acquis, donc la ligne ne descend pas plus bas
+         que ce qu'on a pu reprendre. */
+      const repris = ((p.revPaye || 0) - p.revCumul) * (cfg.REFERRAL_BPS / 10000) - manque;
+      p.revPaye = (p.revPaye || 0) - repris / (cfg.REFERRAL_BPS / 10000);
+      return;
+    }
+    if (p.revCumul <= (p.revPaye || 0)) return;         // rien de neuf a verser
 
     const du = (p.revCumul - (p.revPaye || 0)) * (cfg.REFERRAL_BPS / 10000);
     p.revPaye = p.revCumul;
-    if (!(du > 0)) return;
-    const w = WEI(du.toFixed(6));
-    parrain.refDu = (parrain.refDu || BN(0)).add(w);
-    parrain.refTotal = (parrain.refTotal || BN(0)).add(w);
     /* Le revenu vient de monter : c'est peut-etre le moment ou la maison a
        fini de gagner le cadeau du filleul. */
     this._libereCadeau(p);
+    if (!(du > 0)) return;
+
+    /* Le gain part EN ATTENTE, range par jour. Un seau par jour et non par
+       manche : sept jours de parties feraient sinon des milliers de lignes
+       pour un seul filleul. */
+    const jour = Math.floor(Date.now() / 86400000);
+    if (!Array.isArray(p.attente)) p.attente = [];
+    const dernier = p.attente[p.attente.length - 1];
+    if (dernier && dernier[0] === jour) dernier[1] += du;
+    else p.attente.push([jour, du]);
+  }
+
+  /**
+   * Fait murir ce qui a passe le delai : les seaux assez vieux quittent le
+   * filleul et deviennent encaissables chez le parrain.
+   *
+   * Aucun minuteur : on regarde au moment ou quelqu'un demande. Un gain qui
+   * murit pendant que personne ne regarde n'a pas besoin d'evenement.
+   */
+  _murit(addr) {
+    const p = this._p(addr);
+    const limite = Math.floor(Date.now() / 86400000) - Math.max(0, cfg.REFERRAL_HOLD_DAYS);
+    for (const f of (p.filleuls || [])) {
+      const q = this._p(f);
+      if (!Array.isArray(q.attente) || !q.attente.length) continue;
+      const reste = [];
+      let mur = 0;
+      for (const seau of q.attente) {
+        if (seau[0] <= limite) mur += seau[1];
+        else reste.push(seau);
+      }
+      if (mur > 0) {
+        const w = WEI(mur.toFixed(6));
+        p.refDu = (p.refDu || BN(0)).add(w);
+        p.refTotal = (p.refTotal || BN(0)).add(w);
+        q.attente = reste;
+      }
+    }
   }
 
   /**
@@ -419,6 +476,7 @@ class Game {
   /** Ce que le parrain voit : son lien, ses filleuls, ce qu'ils rapportent. */
   parrainage(addr) {
     const a = String(addr).toLowerCase();
+    this._murit(a);
     const p = this._p(a);
     const liste = (p.filleuls || []).map((f) => {
       const q = this._p(f);
@@ -428,9 +486,21 @@ class Game {
         /* Ce que CE filleul a deja rapporte, et non ce qu'il a perdu : c'est
            la seule facon de rendre le calcul verifiable par le parrain. */
         rapporte: ethers.utils.formatUnits(WEI(Math.max(0, (q.revPaye || 0) * (cfg.REFERRAL_BPS / 10000)).toFixed(6)), cfg.DECIMALS),
+        // ce qui, chez lui, n'a pas encore passe le delai
+        attente: Number(((q.attente || []).reduce((n, x) => n + x[1], 0)).toFixed(6)),
       };
     });
     const parrain = p.parrain ? { address: p.parrain, name: this._p(p.parrain).name } : null;
+    /* Ce qui mûrit encore, tous filleuls confondus. */
+    const enAttente = { total: 0, plusTot: null };
+    for (const f of (p.filleuls || [])) {
+      for (const seau of (this._p(f).attente || [])) {
+        enAttente.total += seau[1];
+        const mur = (seau[0] + Math.max(0, cfg.REFERRAL_HOLD_DAYS)) * 86400000;
+        if (enAttente.plusTot === null || mur < enAttente.plusTot) enAttente.plusTot = mur;
+      }
+    }
+    enAttente.total = Number(enAttente.total.toFixed(6));
     return {
       code: this.codeParrain(a),
       part: cfg.REFERRAL_BPS / 100,          // en pourcentage, pour l'affichage
@@ -440,6 +510,12 @@ class Game {
       filleuls: liste,
       du: ethers.utils.formatUnits(p.refDu || BN(0), cfg.DECIMALS),
       total: ethers.utils.formatUnits(p.refTotal || BN(0), cfg.DECIMALS),
+      /* Ce qui n'est pas encore mur, et la date ou le plus vieux seau le
+         devient. Une somme « en attente » sans date fait croire a un blocage ;
+         avec la date, elle se comprend en une seconde. */
+      attente: enAttente.total,
+      attenteLe: enAttente.plusTot,
+      delaiJours: cfg.REFERRAL_HOLD_DAYS,
       /* Ce qui est encore bloque, et combien il reste a miser pour le
          debloquer. Un montant bloque sans compteur pousse le joueur a ecrire
          au support ; avec le compteur, il joue. */
@@ -456,6 +532,7 @@ class Game {
   /** Le parrain encaisse. Un gain qui se cueille se remarque ; un gain qui
       tombe tout seul dans le solde passe inapercu. */
   reclameParrainage(addr) {
+    this._murit(addr);
     const p = this._p(addr);
     const du = p.refDu || BN(0);
     if (du.lte(0)) throw new Error('nothing to claim yet');
@@ -827,6 +904,7 @@ class Game {
             nomChoisi: false,
             deposited: BN(0), jeux: {}, visage: null, amis: [], demandes: [], envoyees: [],
             parrain: null, filleuls: [], refDu: BN(0), refTotal: BN(0), revCumul: 0, revPaye: 0,
+            attente: [],
             record: null, meilleurJour: null, stakeClaimTotal: BN(0), trNonLus: 0,
             bonusBloque: BN(0), bonusCible: null,
             moisCle: null, moisMise: 0,
