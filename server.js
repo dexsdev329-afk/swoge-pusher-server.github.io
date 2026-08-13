@@ -23,13 +23,22 @@ const store = require('./store');
 const tg = require('./telegram');
 const admin = require('./admin');
 const session = require('./session');
+const journal = require('./journal');
 
 const table = new Table();
 const game = new Game();
 const chain = new Chain();
 
 // ---- restore persisted balances (survives Railway redeploys via a volume) ----
-const saved = store.load();
+/* Si l'etat existe mais n'est pas lisible, store.load() JETTE plutot que de
+   rendre null : demarrer a vide ferait ecraser tous les soldes par la premiere
+   sauvegarde automatique. On s'arrete franchement, avec le message. */
+let saved;
+try { saved = store.load(); }
+catch (e) {
+  console.error('\n' + (e && e.message) + '\n');
+  process.exit(1);
+}
 if (saved) { game.hydrate(saved); console.log(`[store] restored ${game.players.size} players, jackpot=${game.jackpotStr()}, lastBlock=${game.lastBlock}`); }
 else console.log('[store] no saved state (first run)');
 function persist() { store.save(game.serialize()); }
@@ -538,6 +547,28 @@ wss.on('connection', (ws) => {
       }
       if (m.type === 'stakeInfo') return send(ws, { type: 'stakeInfo', ...game.stakeInfo(ws.addr), balance: game.balanceStr(ws.addr) });
       if (m.type === 'balance') return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
+      /* L'historique du joueur. On rend une PAGE, pas tout : un joueur de la
+         premiere heure a des dizaines de milliers de manches, et les lui
+         envoyer d'un bloc bloquerait sa page comme le serveur. Le curseur est
+         un horodatage — « ce qui precede cet instant » — plutot qu'un numero
+         de page : rien ne se decale si une manche se termine entre deux
+         demandes. */
+      if (m.type === 'history') {
+        const genres = { dep: 'dep', wd: 'wd', r: 'r', st: 'st' };
+        const r = journal.lit(ws.addr, {
+          genre: genres[m.kind] || null,
+          /* `m.cursor` absent vaut « depuis la fin ». Attention : Number(null)
+             rend 0, et 0 est une position VALIDE — le debut du fichier. Sans
+             le test d'existence, une premiere demande sans curseur lisait
+             « tout ce qui precede l'octet 0 », c'est-a-dire rien. */
+          curseur: (m.cursor === null || m.cursor === undefined || !Number.isFinite(Number(m.cursor)))
+            ? null : Number(m.cursor),
+          limite: Number(m.limit) || 25,
+        });
+        return send(ws, { type: 'history', kind: m.kind || 'all',
+                          items: r.evenements, cursor: r.curseur, more: r.encore,
+                          summary: journal.resume(ws.addr) });
+      }
 
       if (m.type === 'withdraw') {
         try {

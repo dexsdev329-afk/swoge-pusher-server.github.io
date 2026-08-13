@@ -18,6 +18,7 @@
 const crypto = require('crypto');
 const { ethers } = require('ethers');
 const cfg = require('./config');
+const journal = require('./journal');
 const casino = require('./casino');
 const hilo = require('./hilo');
 const mines = require('./mines');
@@ -162,6 +163,12 @@ class Game {
    */
   _manche(p, jeu, mise, rendu) {
     if (!p || !jeu) return;
+    /* Le seul point de passage de TOUTES les manches, tous jeux confondus :
+       c'est donc ici que le journal se remplit, et nulle part ailleurs. Un
+       nouveau jeu qui appelle _manche est journalise sans rien avoir a
+       ajouter — et un jeu qui oublierait de l'appeler ne compterait deja pas
+       dans les statistiques, ce qui se voit. */
+    if (p.addr) journal.ajoute(p.addr, { k: 'r', g: jeu, m: Number(mise) || 0, p: Number(rendu) || 0 });
     if (!p.jeux) p.jeux = {};
     const j = p.jeux[jeu] || (p.jeux[jeu] = { n: 0, mise: 0, rendu: 0, gagne: 0, nul: 0 });
     j.n++;
@@ -197,6 +204,8 @@ class Game {
     p.balance = p.balance.sub(amount);
     const now = Date.now();
     p.stakes.push({ a: amount, s: now, u: now + this._lockMs() }); // a=amount, s=lastSettle, u=unlockAt
+    journal.ajoute(addr, { k: 'st', s: 'stake', m: ethers.utils.formatUnits(amount, cfg.DECIMALS),
+                           total: ethers.utils.formatUnits(this._stakedTotal(p), cfg.DECIMALS) });
   }
 
   claimStake(addr) {
@@ -206,7 +215,10 @@ class Game {
     if (reward.lte(0)) throw new Error('no yield to claim yet');
     p.stakeAccrued = BN(0);
     p.balance = p.balance.add(reward);
-    return ethers.utils.formatUnits(reward, cfg.DECIMALS);
+    const r = ethers.utils.formatUnits(reward, cfg.DECIMALS);
+    journal.ajoute(addr, { k: 'st', s: 'claim', m: r,
+                           total: ethers.utils.formatUnits(this._stakedTotal(p), cfg.DECIMALS) });
+    return r;
   }
 
   /** Unstake EVERYTHING + pay accrued yield. Unlocked positions return in full;
@@ -230,6 +242,11 @@ class Game {
     p.stakes = [];
     p.balance = p.balance.add(returned).add(yld);
     const f = (w) => ethers.utils.formatUnits(w, cfg.DECIMALS);
+    /* La PENALITE est journalisee separement de ce qui revient : c'est
+       exactement le chiffre qu'un joueur conteste six mois plus tard, et
+       « rendu 500 » sans « penalite 500 » ne permet pas de lui repondre. */
+    journal.ajoute(addr, { k: 'st', s: 'unstake', m: f(returned),
+                           pen: f(penalty), yld: f(yld), total: '0' });
     return { returned: f(returned), penalty: f(penalty), yield: f(yld) };
   }
 
@@ -468,8 +485,13 @@ class Game {
   _p(addr) {
     addr = addr.toLowerCase();
     let p = this.players.get(addr);
+    /* La fiche porte son adresse. Sans elle, tout code qui ne recoit que la
+       fiche — _manche, appele par les dix-neuf fins de manche — ne sait pas de
+       QUI il parle, et ne peut donc rien journaliser. Elle est reposee aussi
+       pour les fiches relues du disque, qui datent d'avant. */
+    if (p && !p.addr) p.addr = addr;
     if (!p) {
-      p = { balance: ethers.BigNumber.from(0), cumulativeAuthorized: ethers.BigNumber.from(0),
+      p = { addr, balance: ethers.BigNumber.from(0), cumulativeAuthorized: ethers.BigNumber.from(0),
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
             deposited: BN(0), jeux: {},
             dayNet: ethers.BigNumber.from(0), dayKey: null,
@@ -520,6 +542,13 @@ class Game {
        exactement la question qu'on n'a pas su trancher le jour ou un joueur a
        ete soupconne de tricher. */
     p.deposited = (p.deposited || BN(0)).add(amount);
+    /* L'adresse ET la transaction. Le joueur qui conteste un depot six mois
+       plus tard ne se souvient pas d'un montant : il se souvient d'un
+       virement, et c'est le hash qui permet d'aller le regarder sur la
+       chaine. L'adresse de depart est la sienne — le coffre credite celui qui
+       a envoye — mais l'ecrire noir sur blanc evite d'avoir a le supposer. */
+    journal.ajoute(player, { k: 'dep', m: ethers.utils.formatUnits(amount, cfg.DECIMALS),
+                             tx, from: String(player).toLowerCase() });
     return true;
   }
 
@@ -1468,6 +1497,11 @@ class Game {
     if (amount.gt(p.balance)) throw new Error('amount exceeds balance');
     p.balance = p.balance.sub(amount);
     p.cumulativeAuthorized = p.cumulativeAuthorized.add(amount);
+    /* On journalise l'AUTORISATION, pas l'encaissement : c'est le moment ou le
+       solde quitte le compte, et c'est celui que le joueur reconnait. Le bon
+       peut encore etre presente plus tard a la chaine — ou jamais. */
+    journal.ajoute(addr, { k: 'wd', m: amountStr, to: String(addr).toLowerCase(),
+                           cum: ethers.utils.formatUnits(p.cumulativeAuthorized, cfg.DECIMALS) });
     return p.cumulativeAuthorized;
   }
 
