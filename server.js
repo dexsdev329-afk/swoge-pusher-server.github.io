@@ -70,9 +70,21 @@ function stakedPct() {
 const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo', mines: 'Mines',
                     plinko: 'Plinko', bj: 'Blackjack', smash: 'Smash', spin: 'SWOGE Spin',
                     crash: 'Crash', p4: 'Connect 4' };
+/* L'image du jeu accompagne l'annonce. Ce sont les MEMES vignettes que sur la
+   page des jeux, extraites une fois dans media/ : une annonce illustree se
+   remarque dans un canal, et celle qui montre la table dont on parle se
+   remarque a bon escient. Telegram va chercher l'image lui-meme, d'ou une
+   adresse publique ; si elle ne repond pas, notifyPhoto retombe sur le texte
+   seul et l'annonce part quand meme. */
+function imageJeu(jeu) {
+  if (!cfg.GAME_IMAGE_BASE || !jeu) return null;
+  return `${cfg.GAME_IMAGE_BASE.replace(/\/+$/, '')}/jeu-${jeu}.jpg`;
+}
+
 function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
   if (!(net >= cfg.NOTIFY_WIN_MIN)) return;
-  tg.notify(`🃏 <b>${NOM_TABLE[jeu] || jeu}</b>\n` +
+  tg.notifyPhoto(imageJeu(jeu),
+            `🃏 <b>${NOM_TABLE[jeu] || jeu}</b>\n` +
             `${game._p(addr).name} won <b>+${fmtAmt(String(net))} $SWOGE</b> 🐕\n` +
             `Stake ${fmtAmt(String(staked))} · returned ${fmtAmt(String(payout))}` +
             (note ? ` · ${note}` : ''));
@@ -305,6 +317,30 @@ const wss = new WebSocketServer({ server });
  * jeu. Un client qui ne repond pas a deux tours est ferme franchement plutot
  * que laisse en zombie.
  */
+/* ---- combien de monde ----
+ * `enLigne` compte les JOUEURS identifies, pas les sockets : un joueur qui a
+ * la page ouverte dans deux onglets reste un joueur, et un visiteur qui n'a
+ * pas encore signe n'en est pas un. `total` est le nombre de comptes jamais
+ * crees. Les deux chiffres partent ensemble parce qu'ils ne se lisent bien
+ * qu'ensemble : « 7 en ligne » ne dit rien sans « sur 1 240 ».
+ */
+function compte() {
+  let enLigne = 0;
+  for (const set of byAddr.values()) {
+    for (const ws of set) if (ws.readyState === 1) { enLigne++; break; }
+  }
+  return { type: 'joueurs', enLigne, total: game.players.size };
+}
+/* Une diffusion groupee : dix connexions en une seconde ne doivent pas
+   declencher dix messages a tout le monde. */
+let compteT = null;
+function diffuseCompte() {
+  if (compteT) return;
+  compteT = setTimeout(() => { compteT = null; broadcast(compte()); }, 1200);
+}
+// et un rappel regulier, pour les onglets ouverts depuis longtemps
+const compteInterval = setInterval(() => broadcast(compte()), 60000);
+
 const PING_MS = 25000;
 const battement = setInterval(() => {
   for (const ws of clients) {
@@ -327,6 +363,7 @@ wss.on('connection', (ws) => {
     dropCost: cfg.DROP_COST, minWithdraw: cfg.MIN_WITHDRAW,
     vault: cfg.VAULT_ADDRESS || null, token: cfg.SWOGE_TOKEN, chainId: cfg.CHAIN_ID,
     jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE),
+    joueurs: compte(),
   });
 
   ws.on('message', async (buf) => {
@@ -338,11 +375,22 @@ wss.on('connection', (ws) => {
         if (m.message !== expected) return send(ws, { type: 'error', error: 'bad login message' });
         const rec = chain.verifyLogin(m.message, m.signature);
         if (!rec) return send(ws, { type: 'error', error: 'bad signature' });
-        attacher(ws, rec);
+        attacher(ws, rec); diffuseCompte();
         if (m.name) game.setName(rec, m.name);
         if (m.tgId) game.linkTelegram(rec, m.tgId); // map Telegram id → account for the Adsgram reward postback
+        /* Nouveau joueur ? On regarde AVANT d'accorder le bonus : `grantWelcome`
+           rend 0 aussi bien pour un habitue que pour un nouveau venu le jour ou
+           le bonus vaudrait zero. La question posee est « est-ce sa premiere
+           arrivee », pas « a-t-il touche quelque chose ». */
+        const nouveau = !game._p(rec).welcomeGranted;
         const welcome = game.grantWelcome(rec);      // one-time demo credit for a brand-new player
         if (welcome > 0) persistSoon();
+        if (nouveau && cfg.NOTIFY_NEW_PLAYER) {
+          const n = game.players.size;
+          tg.notifyPhoto(cfg.NEW_PLAYER_IMAGE,
+            `🐕 <b>New swoler</b>\n${game._p(rec).name} just joined the gym\n` +
+            `That makes <b>${n.toLocaleString('en-US')}</b> player${n > 1 ? 's' : ''} on $SWOGE`);
+        }
         return send(ws, charge(ws, rec, { welcomeGranted: welcome }));
       }
 
@@ -354,7 +402,7 @@ wss.on('connection', (ws) => {
       if (m.type === 'resume') {
         const rec = session.lire(game.sessionSecret, m.token);
         if (!rec) return send(ws, { type: 'resumeFailed' });
-        attacher(ws, rec);
+        attacher(ws, rec); diffuseCompte();
         if (m.tgId) game.linkTelegram(rec, m.tgId);
         return send(ws, charge(ws, rec, { resumed: true }));
       }
@@ -760,6 +808,7 @@ wss.on('connection', (ws) => {
       byAddr.get(ws.addr).delete(ws);
       if (!byAddr.get(ws.addr).size) {
         byAddr.delete(ws.addr);
+        diffuseCompte();          // un joueur de moins a l'ecran
         // Plus aucune fenetre ouverte : on met le joueur en pause plutot que de
         // le lever. Il garde sa place et son tapis s'il revient vite ; sinon le
         // minuteur d'inactivite finira par le sortir et lui rendre ses jetons.
@@ -782,7 +831,9 @@ const stepInterval = setInterval(() => {
     if (w.value > 0) {
       toAddr(w.owner, { type: 'win', value: w.value, balance: game.balanceStr(w.owner) });
       broadcast({ type: 'ticker', name: w.ownerName, value: w.value });
-      if (w.value >= cfg.NOTIFY_WIN_MIN) tg.notify(`🏆 <b>Big win!</b>\n${w.ownerName} just won <b>${w.value} $SWOGE</b> 🐕`);
+      // le Pusher aussi montre sa table : c'est le seul gain qui n'y passait pas
+      if (w.value >= cfg.NOTIFY_WIN_MIN)
+        tg.notifyPhoto(imageJeu('pusher'), `🏆 <b>Coin Pusher</b>\n${w.ownerName} just won <b>${w.value} $SWOGE</b> 🐕`);
     }
   }
 }, Math.round(1000 / cfg.TABLE.stepHz));
@@ -889,7 +940,7 @@ server.listen(cfg.PORT, () => {
 });
 
 function shutdown() {
-  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement);
+  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
   persist(); // final save so nothing is lost on redeploy
   server.close(); process.exit(0);
 }

@@ -100,6 +100,16 @@ module.exports = {
   DEPOSIT_IMAGE: env('DEPOSIT_IMAGE', 'https://i.ibb.co/jkCkzPpM/Chat-GPT-Image-5-ao-t-2026-15-41-22.png'), // image shown on deposit notifs ('' = none)
   STAKE_IMAGE: env('STAKE_IMAGE', 'https://i.ibb.co/4gKk59sQ/Chat-GPT-Image-5-ao-t-2026-15-53-47.png'),     // image shown on stake notifs ('' = none)
   NOTIFY_WIN_MIN: parseInt(env('NOTIFY_WIN_MIN', '500'), 10),      // notify single-coin wins ≥ this
+  /* Ou vivent les vignettes des jeux, pour les annonces de gain. Telegram va
+     CHERCHER l'image lui-meme : l'adresse doit donc etre publique, et c'est
+     le site qui les sert — les memes que sur la page des jeux, extraites une
+     fois dans media/. Vider la variable rend les annonces en texte seul. */
+  GAME_IMAGE_BASE: env('GAME_IMAGE_BASE', 'https://swoleeswoge.dog/media'),
+  /* Un nouveau joueur dans le canal. C'est la notification la plus utile de
+     toutes pour un canal qui veut voir la communaute grandir, et la seule qui
+     n'existait pas. */
+  NOTIFY_NEW_PLAYER: env('NOTIFY_NEW_PLAYER', '1') === '1',
+  NEW_PLAYER_IMAGE: env('NEW_PLAYER_IMAGE', ''),
   NOTIFY_STAKE_MIN: parseFloat(env('NOTIFY_STAKE_MIN', '100')),    // notify stakes ≥ this
 
   // ---- Provably-fair prize table (weighted tiers) ----
