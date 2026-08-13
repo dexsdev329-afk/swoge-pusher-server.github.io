@@ -118,7 +118,9 @@ function neuf(credit = 10000) {
 {
   const g = neuf();
   const liste = Game.VISAGES;
-  ok(liste.length >= 12, `${liste.length} visages proposes`);
+  ok(liste.length >= 6, `${liste.length} medailles proposees`);
+  ok(liste.every((v) => /^b[0-9]+$/.test(v)),
+     'et rien que des medailles peintes : plus une seule frimousse');
   eq(g.setVisage(A, liste[3]), liste[3], 'un visage de la liste est accepte');
   eq(g.profilPublic(A).visage, liste[3], 'et devient le visage public');
   jete(() => g.setVisage(A, '<script>'), /unknown avatar/, 'ce qui n est pas dans la liste : refuse');

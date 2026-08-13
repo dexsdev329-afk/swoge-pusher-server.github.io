@@ -952,11 +952,13 @@ class Game {
      verite. Elles passent devant les frimousses : c'est ce qui se voit a
      une table de poker. */
   static get BADGES() { return ['b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7']; }
-  static get VISAGES() {
-    return Game.BADGES.concat(
-      ['🐕','🦴','💪','🔥','👑','💎','🚀','🎯','🍀','⚡','🌊','🐉',
-       '🦈','🐺','🦊','🐼','🎰','🃏','🎲','⚔️','🛡️','🏆','💰','🥇']);
-  }
+  /* Les medailles, et rien d'autre. Les frimousses etaient la AVANT que les
+     medailles existent : les garder revenait a proposer deux qualites de
+     visage cote a cote, et a laisser un joueur choisir la moins bonne sans
+     savoir pourquoi. Celles deja portees par un joueur continuent de
+     s'afficher — on ne lui reprend pas son visage — mais on n'en propose
+     plus. */
+  static get VISAGES() { return Game.BADGES.slice(); }
 
   /**
    * Le nom public d'un joueur, tel qu'il choisit de le porter.
