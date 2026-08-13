@@ -576,7 +576,7 @@ class Game {
       stakeReclame: ethers.utils.formatUnits(p.stakeClaimTotal || BN(0), cfg.DECIMALS),
       amis: (p.amis || []).length,
       filleuls: (p.filleuls || []).length,
-      frais: this.infoFrais(addr),
+      frais: this.infoFrais(),
       parrainGagne: ethers.utils.formatUnits(p.refTotal || BN(0), cfg.DECIMALS),
     };
   }
@@ -2074,33 +2074,25 @@ class Game {
   }
 
   /**
-   * Le frais de retrait, en wei, sur un montant brut.
+   * Le frais de retrait, en wei, sur un montant brut. Le meme pour tous.
    *
-   * Zero pour qui a mise au moins ce qu'il a depose : un joueur ne paie
-   * jamais pour sortir. Le frais ne tombe que sur l'argent qui a traverse le
-   * casino sans y jouer — le cadeau ramasse et repris, le coffre utilise
-   * comme portefeuille, la somme lavee.
+   * Il n'est verse a personne : il reste dans le coffre pour etre BRULE. Un
+   * pour cent qui part dans la poche de la maison est une taxe ; le meme un
+   * pour cent retire de la circulation profite a tous les porteurs, celui qui
+   * retire compris.
    */
   fraisRetrait(addr, brut) {
-    const p = this._p(addr);
     if (!(cfg.WITHDRAW_FEE_BPS > 0)) return BN(0);
-    const joue = (p.wagered || BN(0)).gte(p.deposited || BN(0));
-    if (joue) return BN(0);
     return brut.mul(cfg.WITHDRAW_FEE_BPS).div(10000);
   }
 
-  /** Ce que le joueur doit savoir AVANT de valider : le taux, et s'il le paie. */
-  infoFrais(addr) {
-    const p = this._p(addr);
-    const du = cfg.WITHDRAW_FEE_BPS > 0 && (p.wagered || BN(0)).lt(p.deposited || BN(0));
+  /** Ce que le joueur doit savoir AVANT de valider. */
+  infoFrais() {
     return {
       taux: cfg.WITHDRAW_FEE_BPS / 100,
-      du,
-      /* Ce qu'il lui reste a miser pour ne plus le payer. Un frais sans porte
-         de sortie se subit ; avec le chiffre, il se choisit. */
-      resteAMiser: du
-        ? ethers.utils.formatUnits((p.deposited || BN(0)).sub(p.wagered || BN(0)), cfg.DECIMALS)
-        : '0',
+      du: cfg.WITHDRAW_FEE_BPS > 0,
+      brule: true,
+      mini: cfg.MIN_WITHDRAW,
     };
   }
 

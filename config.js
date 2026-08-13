@@ -35,22 +35,26 @@ module.exports = {
   // ---- Economy ----
   DECIMALS: 18,
   DROP_COST: env('DROP_COST', '1'),         // $SWOGE per coin dropped
-  MIN_WITHDRAW: env('MIN_WITHDRAW', '50'),  // must match Vault.minWithdraw
+  /* Le minimum de retrait. Le coffre a le sien, en dur dans le contrat : ce
+     nombre-ci ne peut qu'etre PLUS HAUT, jamais plus bas — un serveur plus
+     souple que la chaine signerait des bons que la chaine refuserait. */
+  MIN_WITHDRAW: env('MIN_WITHDRAW', '10000'),
   /* ---- le frais de retrait ----
    *
    * Il ne rembourse rien : le joueur paie lui-meme le gaz en presentant son
    * bon au coffre, un retrait ne coute donc rien a la maison. C'est de la
    * marge, et il faut l'assumer comme telle — d'ou la regle qui suit.
    *
-   * IL NE TOMBE QUE SUR L'ARGENT QUI N'A PAS ETE JOUE. Celui qui a mise au
-   * moins ce qu'il a depose ne le voit jamais. Ce qu'on taxe, ce sont les
-   * allers-retours sans jouer : ramasser un cadeau et partir, se servir du
-   * coffre comme d'un portefeuille, laver une somme. Le frais tombe donc
-   * exactement sur ceux dont on ne veut pas, et jamais sur un joueur.
+   * IL EST BRULE. C'est tout le raisonnement : un pour cent qui part dans la
+   * poche de la maison est une taxe, et se raconte comme telle. Le meme un
+   * pour cent retire de la circulation est une REDUCTION D'OFFRE, dont
+   * profitent tous les porteurs — celui qui retire compris. Pour un memecoin,
+   * ce n'est plus un prelevement, c'est un argument.
    *
-   * Le montant preleve reste dans le coffre : il grossit le surplus du
-   * proprietaire, qui peut le BRULER. « Chaque retrait brule du $SWOGE » se
-   * raconte mieux qu'une taxe, et c'est la meme somme.
+   * Techniquement le montant reste dans le coffre — il n'est verse a
+   * personne — et le tableau de bord le compte a part : c'est le chiffre a
+   * bruler. La promesse ne vaut que si le brulage a lieu ; ne pas le faire
+   * reviendrait a prendre l'argent tout en disant le contraire.
    */
   WITHDRAW_FEE_BPS: parseInt(env('WITHDRAW_FEE_BPS', '100'), 10),   // 100 = 1 %
   VOUCHER_TTL_SEC: parseInt(env('VOUCHER_TTL_SEC', '3600'), 10),

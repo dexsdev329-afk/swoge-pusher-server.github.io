@@ -44,13 +44,13 @@ function depose(montant) {
   return g;
 }
 
-// ------------------------------------- celui qui n a pas joue paie le frais
+// ------------------------------------------- le frais, le meme pour tous
 {
   const g = depose(100000);
-  const info = g.infoFrais(A);
-  eq(info.du, true, 'il n a rien mise : le frais s applique');
-  pres(Number(info.taux), cfg.WITHDRAW_FEE_BPS / 100, `et il vaut ${cfg.WITHDRAW_FEE_BPS / 100} %`);
-  pres(Number(info.resteAMiser), 100000, 'on lui dit combien il lui reste a miser pour ne plus le payer');
+  const info = g.infoFrais();
+  eq(info.du, true, 'le frais s applique');
+  eq(info.brule, true, 'et il est BRULE, pas encaisse par la maison');
+  pres(Number(info.taux), cfg.WITHDRAW_FEE_BPS / 100, `il vaut ${cfg.WITHDRAW_FEE_BPS / 100} %`);
 
   const avant = sol(g, A);
   g.requestWithdraw(A, '50000');
@@ -65,42 +65,37 @@ function depose(montant) {
        'solde + autorise + frais = exactement ce qu il y avait avant');
 }
 
-// --------------------------------- celui qui a joue ne paie RIEN
+// ------------------------------ le meme frais, quoi qu on ait fait avant
+/* Un taux qui depend de l'historique du joueur ne se raconte pas en une
+   phrase, et « every withdrawal burns $SWOGE » ne souffre aucune exception :
+   la promesse doit etre vraie pour tout le monde. */
+{
+  const g = depose(100000);
+  g._markWager(g._p(A), WEI(500000));            // gros joueur, a mise cinq fois son depot
+  const avant = sol(g, A);
+  g.requestWithdraw(A, '50000');
+  const frais = 50000 * cfg.WITHDRAW_FEE_BPS / 10000;
+  pres(nb(g._p(A).cumulativeAuthorized), 50000 - frais, 'il paie exactement le meme frais');
+  pres(nb(g.fraisCumules), frais, 'et il part au meme endroit : le tas a bruler');
+  pres(sol(g, A) + nb(g._p(A).cumulativeAuthorized) + nb(g.fraisCumules), avant,
+       'conservation, la aussi');
+}
+
+// -------------------------- le frais n est verse a PERSONNE
 /*
- * C'est la regle entiere. Un joueur qui a mise au moins ce qu'il a depose ne
- * doit jamais voir ce frais — sinon on fait payer la sortie a ceux qui font
- * vivre la maison, et c'est la seule chose qu'ils raconteront.
+ * C'est ce qui separe un brulage d'une taxe. Le montant quitte le joueur,
+ * n'arrive sur aucun solde, et reste dans le coffre : l'offre en circulation
+ * baisse d'autant. Si un solde grossissait quelque part, ce serait un
+ * prelevement deguise en brulage.
  */
 {
   const g = depose(100000);
-  g._markWager(g._p(A), WEI(100000));            // il a joue son depot
-  eq(g.infoFrais(A).du, false, 'il a mise son depot : plus de frais');
-  eq(nb(g.fraisRetrait(A, WEI(50000))), 0, 'le frais vaut zero');
-
-  const avant = sol(g, A);
+  const sommeAvant = [...g.players.values()].reduce((n, p) => n + nb(p.balance), 0);
   g.requestWithdraw(A, '50000');
-  pres(nb(g._p(A).cumulativeAuthorized), 50000, 'il est autorise a tirer TOUT ce qu il demande');
-  pres(sol(g, A), avant - 50000, 'et son solde baisse d autant, sans retenue');
-  eq(nb(g.fraisCumules), 0, 'rien n a ete preleve');
-}
-
-// ------------------------- jouer une PARTIE de son depot ne suffit pas
-{
-  const g = depose(100000);
-  g._markWager(g._p(A), WEI(99999));
-  eq(g.infoFrais(A).du, true, 'a un jeton pres, le frais s applique encore');
-  pres(Number(g.infoFrais(A).resteAMiser), 1, 'et il reste un jeton a miser');
-  g._markWager(g._p(A), WEI(1));
-  eq(g.infoFrais(A).du, false, 'ce jeton mise, c est fini');
-}
-
-// --------------------------- celui qui n a jamais depose ne paie rien
-/* Son solde vient du bonus de bienvenue ou d'un ami : il n'y a pas
-   d'aller-retour a decourager. */
-{
-  const g = new Game();
-  g._p(A).balance = WEI(1000);
-  eq(g.infoFrais(A).du, false, 'sans depot, pas de frais');
+  const sommeApres = [...g.players.values()].reduce((n, p) => n + nb(p.balance), 0);
+  const frais = 50000 * cfg.WITHDRAW_FEE_BPS / 10000;
+  pres(sommeApres, sommeAvant - 50000, 'aucun solde n a grossi d un seul jeton');
+  pres(nb(g.fraisCumules), frais, 'le frais n existe que dans le compteur a bruler');
 }
 
 // ---------------------------------- le frais survit au redemarrage
@@ -113,6 +108,21 @@ function depose(montant) {
        'le total preleve est relu apres redemarrage — sinon on ne saurait plus quoi bruler');
   pres(nb(g2._p(A).cumulativeAuthorized), nb(g._p(A).cumulativeAuthorized),
        'et l autorisation cumulee ne bouge pas d un jeton');
+}
+
+// --------------------------------------- le minimum de retrait
+/* Le coffre a le sien, en dur dans le contrat. Celui du serveur ne peut
+   qu'etre plus haut : plus bas, on signerait des bons que la chaine
+   refuserait, et le joueur verrait sa transaction echouer sans comprendre. */
+{
+  const g = depose(100000);
+  ok(Number(cfg.MIN_WITHDRAW) >= 10000, `le retrait minimum vaut ${cfg.MIN_WITHDRAW} $SWOGE`);
+  jete(() => g.requestWithdraw(A, '50'), /below minimum/, 'cinquante jetons : refuse');
+  jete(() => g.requestWithdraw(A, String(Number(cfg.MIN_WITHDRAW) - 1)), /below minimum/,
+       'juste en dessous : refuse');
+  const avant = sol(g, A);
+  g.requestWithdraw(A, String(cfg.MIN_WITHDRAW));
+  pres(sol(g, A), avant - Number(cfg.MIN_WITHDRAW), 'au minimum : accepte');
 }
 
 // ------------------------------------- l envoi a un ami a un minimum
