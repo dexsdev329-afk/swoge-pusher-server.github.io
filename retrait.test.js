@@ -195,7 +195,55 @@ function depose(montant) {
        'y compris le refus du doublon, apres redemarrage');
 }
 
+/* Le depot part maintenant ; ses verifications, qui RELISENT le fichier,
+   attendent que le journal soit vide sur le disque. */
+const D = '0xdddddddddddddddddddddddddddddddddddddddd';
+const gAudit = new Game();
+gAudit.creditDeposit({ player: D, amount: WEI(50000), tx: '0xaudit1' });
+
 require('./journal').draine(() => {
+  // ============================ le depot perdu, retrouve au journal
+  /*
+   * CE QUI EST ARRIVE : une ligne « Deposit +12 602 » dans l'historique du
+   * joueur, et pas un jeton de plus sur son solde.
+   *
+   * Les deux nombres sont ecrits dans la meme respiration, mais dans DEUX
+   * FICHIERS : le journal ligne a ligne, tout de suite ; l'etat en entier, une
+   * seconde plus tard. Un arret entre les deux laisse le journal en avance —
+   * et c'est cette avance, exactement, qu'il faut rendre.
+   */
+  {
+    /* Une adresse a elle : le journal est garde POUR LA VIE, donc l'adresse A
+       porte deja tous les depots des controles precedents de ce fichier. */
+    const g = gAudit;
+    const v = g.verifieDepots(D);
+    pres(v.journal, 50000, 'le journal connait le depot');
+    pres(v.etat, 50000, 'l etat aussi');
+    eq(v.ecart, 0, 'aucun ecart : tout va bien');
+    jete(() => g.repareDepots(D), /nothing to repair/, 'et il n y a rien a reparer');
+
+    /* On rejoue l'accident : l'etat revient en arriere — un redeploiement au
+       mauvais moment, deux instances qui se marchent dessus — alors que le
+       journal, lui, a garde la ligne. */
+    const p = g._p(D);
+    p.balance = p.balance.sub(WEI(12602.62));
+    p.deposited = p.deposited.sub(WEI(12602.62));
+
+    const cassé = g.verifieDepots(D);
+    pres(cassé.ecart, 12602.62, 'le controle voit l ecart, au centime pres');
+    ok(cassé.journal > cassé.etat, 'le journal est en avance sur l etat — c est la signature de la panne');
+
+    const avant = sol(g, D);
+    const r = g.repareDepots(D);
+    pres(r.rendu, 12602.62, 'la reparation rend exactement ce qui manquait');
+    pres(sol(g, D) - avant, 12602.62, 'le solde remonte d autant');
+    eq(g.verifieDepots(D).ecart, 0, 'et les deux fichiers se rejoignent');
+
+    /* On ne peut rien CREER avec : une deuxieme reparation ne rend rien. */
+    jete(() => g.repareDepots(D), /nothing to repair/,
+         'reparer deux fois : refuse — le montant est plafonne par l ecart');
+  }
+
   fs.rmSync(bac, { recursive: true, force: true });
   console.log(`retrait.test.js : ${n} verifications OK`);
 });

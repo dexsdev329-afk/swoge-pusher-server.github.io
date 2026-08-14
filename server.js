@@ -186,7 +186,22 @@ function p4Pousse(partie, reglement) {
       note: `beat ${game._p(partie.joueurs[partie.gagnant === 1 ? 1 : 0]).name}` });
   }
 }
-function p4DiffuseLobby() { broadcast({ type: 'p4Lobby', tables: game.p4Lobby() }); }
+function p4DiffuseLobby() {
+  broadcast({ type: 'p4Lobby', tables: game.p4Lobby() });
+  diffuseTousDuels();
+}
+
+/*
+ * TOUTES les tables qui attendent un adversaire, jeux confondus.
+ *
+ * Le vestibule de chaque page ne montre que son propre jeu — c'est ce qu'on
+ * veut quand on est deja sur une page. Mais une table ouverte au morpion
+ * n'est vue par personne tant que quelqu'un n'ouvre pas la page du morpion,
+ * et une table que personne ne voit ne trouve pas d'adversaire. Ce flux-la
+ * part a tout le monde, sur toutes les pages.
+ */
+function tousDuels() { return { type: 'duelsTous', tables: game.duelLobby(null) }; }
+function diffuseTousDuels() { broadcast(tousDuels()); }
 
 /*
  * Le morpion et les dames parlent le MEME protocole que le Connect 4, sous
@@ -213,6 +228,7 @@ function duelPousse(partie, reglement) {
 }
 function duelDiffuseLobby(jeu) {
   broadcast({ type: 'duelLobby', jeu, tables: game.duelLobby(jeu) });
+  diffuseTousDuels();
 }
 function duelPousseInvites(addr, jeu) {
   toAddr(addr, { type: 'duelInvites', jeu, invites: game.duelInvitations(addr, Date.now(), jeu) });
@@ -315,6 +331,37 @@ const server = http.createServer(async (req, res) => {
      d'administration fait la transaction avec son portefeuille, puis vient
      deposer la PREUVE ici — un hash que n'importe qui peut verifier. C'est
      alors, et alors seulement, que le canal l'annonce. */
+  /* Le controle des depots d'un joueur : ce que dit le journal, ce que dit
+     l'etat, et l'ecart. C'est le seul endroit qui permette de repondre a
+     « j'ai depose et ca n'est pas arrive » autrement qu'en croyant sur
+     parole — les deux fichiers sont ecrits separement, ils se contredisent
+     quand quelque chose s'est perdu. */
+  if (path === '/audit') {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    const a = String(qs.get('addr') || '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(a)) { res.writeHead(400); return res.end('addr=0x…'); }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(game.verifieDepots(a), null, 2));
+  }
+  /* La reparation. Plafonnee par l'ecart constate : on ne peut rien creer
+     avec, seulement rendre ce que l'etat a perdu. */
+  if (path === '/repare') {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    const a = String(qs.get('addr') || '').toLowerCase();
+    try {
+      const r = game.repareDepots(a);
+      persist();                       // tout de suite, pas dans une seconde
+      toAddr(a, { type: 'deposit', balance: game.balanceStr(a) });
+      console.log(`[repare] ${a} +${r.rendu} $SWOGE (depot perdu, retrouve au journal)`);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify(r, null, 2));
+    } catch (e) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+  }
   if (path === '/burn') {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
     const qs = new URLSearchParams(req.url.split('?')[1] || '');
@@ -464,6 +511,9 @@ wss.on('connection', (ws) => {
     vault: cfg.VAULT_ADDRESS || null, token: cfg.SWOGE_TOKEN, chainId: cfg.CHAIN_ID,
     jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE),
     joueurs: compte(),
+    // les tables qui attendent, pour que la pastille soit juste avant meme
+    // que le joueur se connecte
+    duels: game.duelLobby(null),
     // l'explorateur, pour que l'historique puisse pointer vers la transaction
     explorer: cfg.EXPLORER,
   });
@@ -1060,6 +1110,7 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
+      if (m.type === 'duelsTous') return send(ws, tousDuels());
       if (m.type === 'duelLobby') {
         const jeu = m.jeu === 'dm' ? 'dm' : 'mp';
         return send(ws, { type: 'duelLobby', jeu, tables: game.duelLobby(jeu) });
@@ -1249,6 +1300,11 @@ const saveInterval = setInterval(persist, cfg.SAVE_MS);
     const liveFrom = tipNow;
     chain.watchDeposits(fromBlock, (d) => {
       if (game.creditDeposit(d)) {
+        /* TOUT DE SUITE, et pas dans une seconde : c'est l'evenement le plus
+           cher du serveur. Une seconde de retard, c'est la fenetre pendant
+           laquelle un redeploiement fait disparaitre un depot deja credite —
+           la ligne reste au journal, et le solde ne l'a jamais vue. */
+        persist();
         console.log(`[deposit] ${d.player} +${d.amount.toString()} (${d.tx})`);
         persistSoon();
         toAddr(d.player, { type: 'deposit', balance: game.balanceStr(d.player) });

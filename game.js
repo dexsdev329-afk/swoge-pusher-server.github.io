@@ -2133,6 +2133,66 @@ class Game {
              reste: ethers.utils.formatUnits(this.aBruler(), cfg.DECIMALS) };
   }
 
+  /**
+   * Les depots du JOURNAL compares a ceux de l'ETAT.
+   *
+   * ---- pourquoi cette comparaison, et pas une autre ----
+   *
+   * Les deux nombres sont ecrits dans la meme respiration : le solde monte,
+   * puis la ligne part au journal. Mais ils vivent dans DEUX FICHIERS. Le
+   * journal est ajoute ligne a ligne, tout de suite ; l'etat est reecrit en
+   * entier, une seconde plus tard. Un arret entre les deux — un redeploiement,
+   * deux instances qui se marchent dessus — laisse donc le journal en avance
+   * sur l'etat : la ligne « Deposit +12 602 » existe, et le solde ne l'a
+   * jamais vue.
+   *
+   * C'est precisement ce cas que cette methode trouve, et l'ecart qu'elle
+   * rend est exactement ce qu'il faut recrediter.
+   */
+  verifieDepots(addr) {
+    const a = String(addr).toLowerCase();
+    const p = this._p(a);
+    /* Le journal ecrit en differe : ce qui attend encore en memoire doit
+       partir avant qu'on le relise, sinon le controle sous-estime le journal
+       et conclut qu'il n'y a rien a reparer. */
+    journal.videSync();
+    let curseur = null, lignes = [], somme = 0, tours = 0;
+    for (;;) {
+      const r = journal.lit(a, { genre: 'dep', curseur, limite: 200 });
+      for (const e of r.evenements) { somme += Number(e.m) || 0; lignes.push({ t: e.t, m: e.m, tx: e.tx }); }
+      if (!r.encore || r.curseur === null || ++tours > 40) break;
+      curseur = r.curseur;
+    }
+    const compte = Number(ethers.utils.formatUnits(p.deposited || BN(0), cfg.DECIMALS));
+    return {
+      address: a,
+      journal: Number(somme.toFixed(6)),
+      etat: compte,
+      ecart: Number((somme - compte).toFixed(6)),
+      solde: this.balanceStr(a),
+      depots: lignes.slice(0, 20),
+    };
+  }
+
+  /**
+   * Recredite un ecart constate. Ce n'est PAS un cadeau : c'est la reparation
+   * d'un depot reel dont la trace existe au journal et que l'etat a perdu.
+   * Le montant est donc plafonne par l'ecart — on ne peut rien creer avec.
+   */
+  repareDepots(addr) {
+    const v = this.verifieDepots(addr);
+    if (!(v.ecart > 0)) throw new Error('nothing to repair: state matches the journal');
+    const a = String(addr).toLowerCase();
+    const p = this._p(a);
+    const w = WEI(v.ecart.toFixed(6));
+    p.balance = p.balance.add(w);
+    p.deposited = (p.deposited || BN(0)).add(w);
+    p.hasDeposited = true;
+    journal.ajoute(a, { k: 'dep', m: v.ecart.toFixed(6), tx: 'repair',
+                        from: a, note: 'lost credit restored' });
+    return { ...this.verifieDepots(a), rendu: v.ecart };
+  }
+
   /** Request a withdrawal of `amountStr` $SWOGE. Returns cumulativeAuthorized (wei) or throws. */
   requestWithdraw(addr, amountStr) {
     const p = this._p(addr);
