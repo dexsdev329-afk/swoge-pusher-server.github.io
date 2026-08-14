@@ -75,7 +75,13 @@ const NATIF = '0x0000000000000000000000000000000000000000';
  *
  * Pour TRON c'est le repere du TRX, meme si l'on envoie de l'USDT : c'est la
  * chaine qui decide, pas le jeton. */
-/* CE QUI RESTE, ET POURQUOI RIEN D'AUTRE. Chaque ligne a rendu une vraie
+/* DEUX PROVENANCES, ET C'EST VOULU. Vingt-quatre chaines ont une route vers
+   Robinhood Chain — Base, Arbitrum, Optimism et vingt autres — mais chaque
+   tuile de plus dilue celles qui servent vraiment. Ethereum couvre ceux qui
+   tiennent leur ETH sur le reseau principal, Solana ceux qui n'en ont pas du
+   tout. Le reste s'ajoute en une ligne le jour ou quelqu'un le demande.
+ *
+   CE QUI NE PEUT PAS Y ETRE, ET POURQUOI. Chaque ligne a rendu une vraie
    adresse de depot sur la production ; les deux qui manquent ont ete retirees
    parce qu'elles ne le pouvaient pas :
  *
@@ -94,17 +100,6 @@ const DEPUIS = {
           repere: '11111111111111111111111111111111',
           symbole: 'SOL', decimales: 9, min: 0.01, max: 1000 },
   eth:  { chaine: 1,         jeton: NATIF, repere: NATIF,
-          symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
-  base: { chaine: 8453,      jeton: NATIF, repere: NATIF,
-          symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
-  /* Arbitrum et Optimism ajoutes apres avoir interroge TOUTES les chaines que
-     Relay dessert : sur les quarante-neuf candidates, vingt-quatre ont une
-     route vers Robinhood Chain, et ce sont les moins cheres avec Ethereum et
-     Base — 0,08 % de perte sur 0,02 ETH. Arbitrum est d'ailleurs la voisine
-     naturelle : Robinhood Chain est une chaine Orbit. */
-  arb:  { chaine: 42161,     jeton: NATIF, repere: NATIF,
-          symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
-  op:   { chaine: 10,        jeton: NATIF, repere: NATIF,
           symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
 };
 

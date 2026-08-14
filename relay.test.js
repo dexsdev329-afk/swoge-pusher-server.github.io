@@ -75,7 +75,7 @@ const G = (c) => fetch(`http://127.0.0.1:${PORT}${c}`);
 
     const l = await (await G('/relay/depuis')).json();
     eq(l.actif, false, 'la page peut demander AVANT d afficher un bouton qui echouerait');
-    ok(Array.isArray(l.provenances) && l.provenances.length === 5,
+    ok(Array.isArray(l.provenances) && l.provenances.length === 2,
        'et la liste des provenances reste lisible : ' + l.provenances.map((x) => x.cle).join(', '));
 
     ok(/pas de RELAY_API_KEY/.test(s.traces()),
@@ -90,7 +90,7 @@ const G = (c) => fetch(`http://127.0.0.1:${PORT}${c}`);
 
     /* Les provenances hors liste. Sans ce refus, la route serait un service de
        transfert gratuit pour n'importe qui, paye avec notre cle. */
-    for (const de of ['', 'doge', 'btc', 'tron', 'sol2', '../sol', 'SOL']) {
+    for (const de of ['', 'doge', 'btc', 'tron', 'base', 'arb', 'op', 'sol2', '../sol', 'SOL']) {
       const r = await G(`/relay/depot?de=${encodeURIComponent(de)}&vers=${MOI}&montant=1`);
       eq(r.status, 400, `provenance « ${de} » refusee`);
     }
@@ -202,9 +202,9 @@ const G = (c) => fetch(`http://127.0.0.1:${PORT}${c}`);
        'le repli aussi, sur la chaine de depart');
 
     /* La destination est IMPOSEE : meme si l'appelant en demande une autre. */
-    await G(`/relay/depot?de=base&vers=${MOI}&montant=0.05&destinationChainId=1&destinationCurrency=0xdead`);
+    await G(`/relay/depot?de=eth&vers=${MOI}&montant=0.05&destinationChainId=1&destinationCurrency=0xdead`);
     eq(vu.corps.destinationChainId, 4663, 'un parametre glisse dans l adresse ne detourne pas la destination');
-    eq(vu.corps.originChainId, 8453, 'et Base part bien de Base');
+    eq(vu.corps.originChainId, 1, 'et Ethereum part bien d Ethereum');
 
     arrete(s);
     await new Promise((r) => faux.close(r));
