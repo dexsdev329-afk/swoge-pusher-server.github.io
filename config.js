@@ -389,13 +389,28 @@ module.exports = {
   // Design: ~47.5% of coins show a WIN (lots of small ones = good feel), a
   // ladder up to a 1-in-10M "gros lot". Average value ≈ 1.043 $SWOGE/drop.
   // Real RTP = avg × collection-rate(≈0.77 on this table) ≈ 80%.
+  /* ---- Pourquoi si peu de pieces a 1 ----
+   *
+   * Elles faisaient 29 % des lachers, et 2 jetons 12 % de plus : quatre
+   * lachers sur dix rendaient une piece qu'on ne remarque pas. A l'ecran ca
+   * tombe sans arret et ca ne veut rien dire — « on voit que des petits
+   * tomber, on a l'impression que c'est infini ».
+   *
+   * La MOYENNE ne bouge pas : 1,043 par lacher, au chiffre pres, donc
+   * l'economie du jeu est exactement la meme. Ce qui change, c'est la forme.
+   * Les pieces a 1 passent de 29 % a 8 %, celles a 10 sont presque trois fois
+   * plus frequentes, celles a 25 deux fois. En echange il tombe plus souvent
+   * une piece sans valeur — elle pousse quand meme la pile, elle ne paie pas.
+   *
+   * C'est un choix assume : moins souvent, plus gros. Un jeu ou l'on gagne
+   * tout le temps trois fois rien ne se souvient de rien. */
   PRIZES: [
-    [0,      5246000],  // 52.46%  miss
-    [1,      2900000],  // 29.0%
-    [2,      1240000],  // 12.4%
-    [5,       480000],  // 4.80%
-    [10,       95000],  // 0.95%
-    [25,       28000],  // 0.28%
+    [0,      7495500],  // 74.96%  la piece pousse, elle ne paie pas
+    [1,       800000],  // 8.0%    (etait 29 %)
+    [2,       800000],  // 8.0%    (etait 12,4 %)
+    [5,       560000],  // 5.60%   (etait 4,8 %)
+    [10,      273500],  // 2.74%   (etait 0,95 %)
+    [25,       60000],  // 0.60%   (etait 0,28 %)
     [50,        7500],  // 0.075%
     [100,       2600],  // 0.026%   (~1 in 3,846)
     [250,        700],  // ~1 in 14,286

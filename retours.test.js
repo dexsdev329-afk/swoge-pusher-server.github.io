@@ -79,6 +79,22 @@ const PLANCHER = 88;
   const moyenne = somme / cfg.PRIZE_TOTAL;
   pres(moyenne, 1.043, 0.02,
        'la valeur moyenne d un lacher au pusher reste celle qui est documentee');
+
+  /* LA FORME, en plus du total. Les pieces a 1 faisaient 29 % des lachers :
+     a l'ecran ca tombait sans arret sans rien vouloir dire, et le joueur
+     n'avait pas l'impression de gagner, seulement que ca defilait. On borne
+     donc leur part — la moyenne, elle, ne bouge pas, c'est la repartition qui
+     change. */
+  {
+    let uns = 0, paye = 0;
+    for (const [valeur, w] of cfg.PRIZES) { if (valeur === 1) uns += w; if (valeur > 0) paye += w; }
+    const part = uns / cfg.PRIZE_TOTAL * 100;
+    ok(part <= 12,
+       `les pieces a 1 jeton font ${part.toFixed(1)} % des lachers, pas plus de 12`);
+    ok(uns / paye < 0.40,
+       `et ${(uns / paye * 100).toFixed(0)} % de ce qui paie, pas la moitie : ` +
+       'un jeu ou le gain typique est un jeton ne se souvient de rien');
+  }
   /* Le garde-fou qui compte quand meme : meme avec une collecte PARFAITE —
      toutes les pieces tombent — le jeu ne doit pas devenir un robinet. */
   ok(moyenne < 1.10,
