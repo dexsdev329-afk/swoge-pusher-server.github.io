@@ -65,6 +65,28 @@ function page() {
 </div>
 
 <div class="panel">
+  <h2>📊 This month&rsquo;s books</h2>
+  <div class="sub" style="margin:0 0 10px">
+    A deposit is <b>not</b> a profit &mdash; you owe it back. What the house actually keeps is
+    <b>stakes minus payouts</b>, less what it gives away.
+    <select id="moisSel" style="margin-left:8px"></select>
+  </div>
+  <div class="cards" style="margin-bottom:10px">
+    <div class="card"><span>Kept from play</span><b id="cRev">&mdash;</b></div>
+    <div class="card"><span>Given away</span><b id="cCout">&mdash;</b></div>
+    <div class="card hl" id="cResCard"><span>Month result</span><b id="cRes">&mdash;</b></div>
+  </div>
+  <div class="sub">
+    <b>Kept:</b> 🎰 staked <b id="cMise">&mdash;</b> &middot; paid back <b id="cRendu">&mdash;</b>
+    &middot; <b id="cManches">&mdash;</b> rounds &middot; edge <b id="cEdge">&mdash;</b><br>
+    <b>Given:</b> 🔒 staking yield <b id="cStk">&mdash;</b> &middot; 🎁 bonuses <b id="cBon">&mdash;</b>
+    &middot; 👥 referrals <b id="cPar">&mdash;</b> &middot; 🎰 jackpots <b id="cJck">&mdash;</b><br>
+    <b>Balance sheet (neither gain nor loss):</b> deposits <b id="cDep">&mdash;</b>
+    &middot; withdrawals <b id="cRet">&mdash;</b> &middot; 🔥 burned <b id="cBru">&mdash;</b>
+  </div>
+</div>
+
+<div class="panel">
   <h2>🔎 Check a player&rsquo;s deposits</h2>
   <div class="sub" style="margin:0 0 10px">
     &laquo; I deposited and it never arrived &raquo; has two answers: the credit was lost,
@@ -231,7 +253,7 @@ var ABI=[
   "function minWithdraw() view returns (uint256)"
 ];
 var ERC20=["function approve(address s,uint256 a) returns (bool)","function allowance(address o,address s) view returns (uint256)"];
-var provider,signer,myAddr,surplusNum=0,burnDu=0;
+var provider,signer,myAddr,surplusNum=0,burnDu=0,moisChoisi=null;
 var EXPL="${cfg.EXPLORER || ''}";
 function $(s){return document.querySelector(s);}
 /* Le visage d'un joueur dans une fiche.
@@ -250,7 +272,7 @@ function msg(t,c){$("#msg").textContent=t;$("#msg").className=c||"";}
 
 async function load(){
   try{
-    var r=await fetch("/stats",{headers:{"x-admin-key":KEY}});
+    var r=await fetch("/stats"+(moisChoisi?"?mois="+encodeURIComponent(moisChoisi):""),{headers:{"x-admin-key":KEY}});
     if(!r.ok){ msg("Wrong admin key or stats disabled ("+r.status+")","warn"); return; }
     var d=await r.json();
     $("#pot").textContent=fmt(d.vaultPot); $("#owed").textContent=fmt(d.owedToPlayers);
@@ -278,6 +300,25 @@ async function load(){
       return "🔥 "+fmt(b.m)+" &middot; "+new Date(b.t).toLocaleDateString()+
              ' &middot; <a href="'+EXPL+"/tx/"+b.tx+'" target="_blank">tx ↗</a>';
     }).join("<br>")||"Nothing burned yet.";
+    /* Le compte du mois. On garde le mois choisi si l utilisateur en a pris
+       un : recharger toutes les vingt secondes ne doit pas le ramener de
+       force sur le mois en cours. */
+    var c=d.comptes||{};
+    if(!$("#moisSel").options.length || $("#moisSel").options.length!==(d.moisConnus||[]).length){
+      $("#moisSel").innerHTML=(d.moisConnus||[]).map(function(m){return '<option>'+m+'</option>';}).join("");
+      if(moisChoisi) $("#moisSel").value=moisChoisi;
+    }
+    $("#cRev").textContent=fmt(String(c.revenu));
+    $("#cCout").textContent=fmt(String(c.couts));
+    $("#cRes").textContent=(c.resultat>=0?"+":"")+fmt(String(c.resultat));
+    $("#cResCard").classList.toggle("danger", c.resultat<0);
+    $("#cMise").textContent=fmt(String(c.mises)); $("#cRendu").textContent=fmt(String(c.rendus));
+    $("#cManches").textContent=c.manches||0;
+    $("#cEdge").textContent=c.mises>0?((c.revenu/c.mises*100).toFixed(2)+" %"):"—";
+    $("#cStk").textContent=fmt(String(c.staking)); $("#cBon").textContent=fmt(String(c.bonus));
+    $("#cPar").textContent=fmt(String(c.parrainage)); $("#cJck").textContent=fmt(String(c.jackpots));
+    $("#cDep").textContent=fmt(String(c.depots)); $("#cRet").textContent=fmt(String(c.retraits));
+    $("#cBru").textContent=fmt(String(c.brule));
     $("#upd").textContent=new Date().toLocaleTimeString();
   }catch(e){ msg("Could not load stats: "+e.message,"warn"); }
 }
@@ -506,6 +547,7 @@ $("#pauseWd").onclick=function(){ if(!signer) return; var on=$("#pauseWd").datas
    et laisserait un moment ou les jetons sont a lui — ce qui n'est plus tout a
    fait un brulage. */
 var audAdr=null;
+$("#moisSel").onchange=function(){ moisChoisi=$("#moisSel").value; load(); };
 $("#audGo").onclick=async function(){
   var a=($("#audAddr").value||"").trim().toLowerCase();
   if(!/^0x[0-9a-f]{40}$/.test(a)){ msg("Paste a full 0x… address","warn"); return; }

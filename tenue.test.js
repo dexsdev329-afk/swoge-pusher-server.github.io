@@ -111,6 +111,39 @@ function ouvre(g, i) { const a = adr(i); g._p(a); g.grantWelcome(a); return a; }
   ok(dt < 400, `et ${dt} ms de fil bloque (etait 1 014 ms)`);
 }
 
+// ============ la comptabilite ne doit pas regonfler le fichier
+/*
+ * ELLE L A FAIT. Le compte du mois garde un detail par joueur, et le credit
+ * d'essai etait note au nom de chacun : vingt mille comptes vides ont refait
+ * vingt mille lignes, et le fichier est repasse de 0,3 Ko a 1,8 Mo — par une
+ * autre porte, exactement le probleme qu'on venait de fermer.
+ *
+ * Deux reponses : ce qui est donne a TOUT LE MONDE ne se note pas par
+ * personne, et le detail est borne a l'ecriture.
+ */
+{
+  const g = new Game();
+  for (let i = 1; i <= 20000; i++) ouvre(g, i);
+  const ecrit = JSON.stringify(g.serialize());
+  ok(ecrit.length < 100 * 1024,
+     `vingt mille credits d essai n ajoutent rien au fichier : ${(ecrit.length / 1024).toFixed(1)} Ko`);
+  const relu = JSON.parse(ecrit);
+  const mois = relu.compta[Game.moisCle()];
+  ok(mois && mois.bonus > 0, 'le total des bonus est bien compte');
+  eq(Object.keys(mois.joueurs || {}).length, 0, 'mais sans une ligne par compte');
+
+  /* Et si vraiment beaucoup de joueurs JOUENT, le detail reste borne. */
+  const g2 = new Game();
+  for (let i = 1; i <= 3000; i++) {
+    const a = adr(i); const p = g2._p(a); p.balance = WEI(1000);
+    g2._manche(p, 'plinko', 100, i % 3 === 0 ? 200 : 0);
+  }
+  const m2 = JSON.parse(JSON.stringify(g2.serialize())).compta[Game.moisCle()];
+  ok(Object.keys(m2.joueurs).length <= 400,
+     `trois mille joueurs, ${Object.keys(m2.joueurs).length} lignes gardees — le detail est borne`);
+  ok(m2.mises === 300000, 'et les totaux, eux, restent justes pour TOUT LE MONDE');
+}
+
 // ==================================================== le classement partage
 {
   const g = new Game();

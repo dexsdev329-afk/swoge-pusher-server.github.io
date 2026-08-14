@@ -531,6 +531,7 @@ const server = http.createServer(async (req, res) => {
   if (path === '/stats') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
+    const qs2 = new URLSearchParams(req.url.split('?')[1] || '');
     const bd = game.owedBreakdown();
     const owed = bd.balances.add(bd.staked).add(bd.pending).add(bd.jackpot);
     const pot = await chain.vaultPot();
@@ -555,6 +556,10 @@ const server = http.createServer(async (req, res) => {
       dejaBrule: fmt(game.brule || ethers.BigNumber.from(0)),
       brulages: (game.brulages || []).slice(0, 10),
       adresseBrulage: cfg.BURN_ADDRESS,
+      /* Le compte du mois : le seul endroit qui reponde a « le casino a-t-il
+         gagne de l argent ». Les depots n y sont PAS un gain. */
+      comptes: game.comptes(qs2.get('mois') || null),
+      moisConnus: game.moisConnus(),
       players: game.players.size, vault: cfg.VAULT_ADDRESS || null,
     }, null, 2));
   }

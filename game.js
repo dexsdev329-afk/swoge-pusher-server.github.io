@@ -182,6 +182,7 @@ class Game {
                    joueurs: m.joueurs.filter(Boolean) });
     }
     return { v: 1, serverSeed: this.serverSeed, sessionSecret: this.sessionSecret,
+             compta: this._comptaEcrite(),
              graines: this.graines || [], graineDepuis: this.graineDepuis || null,
              manchesGraine: this.manchesGraine || 0,
              jackpotPot: this.jackpotPot.toString(),
@@ -202,6 +203,7 @@ class Game {
     /* Les graines revelees survivent a tout : elles sont la SEULE facon pour
        un joueur de verifier une manche d'il y a six mois. Les perdre au
        redemarrage reviendrait a retirer la preuve apres l'avoir donnee. */
+    if (st.compta) this.compta = st.compta;
     if (Array.isArray(st.graines)) this.graines = st.graines;
     if (st.graineDepuis) this.graineDepuis = st.graineDepuis;
     if (st.manchesGraine) this.manchesGraine = st.manchesGraine;
@@ -320,6 +322,12 @@ class Game {
       sh: this.serverSeedHash, cs: p.clientSeed,
       n0: p.nonceDebut == null ? p.nonce : p.nonceDebut, n1: p.nonce });
     this.manchesGraine = (this.manchesGraine || 0) + 1;
+    /* LE point de passage du revenu. Il vaut pour les jeux contre la banque
+       comme pour le 1v1 : la somme des mises moins la somme des rendus EST ce
+       que la maison garde, commission comprise. */
+    this.note('mises', Number(mise) || 0, p.addr);
+    this.note('rendus', Number(rendu) || 0, p.addr);
+    this.note('manches', 1);
     /* Le volume du MOIS. Il se remet a zero tout seul au changement de mois :
        un classement mensuel qu'il faut penser a reinitialiser finit toujours
        par afficher le mois d'avant. */
@@ -469,6 +477,121 @@ class Game {
     const volume = p.bonusCible && (p.wagered || BN(0)).gte(p.bonusCible);
     if (gagne || volume) { p.bonusBloque = BN(0); p.bonusCible = null; }
   }
+
+  /* ======================================================================
+   * LA COMPTABILITE DU MOIS
+   *
+   * ---- pourquoi le solde d'un joueur ne dit RIEN ----
+   *
+   * « Il depose 100 000, il lui en reste 80 000, donc il a perdu 20 000 » est
+   * faux, et c'est le piege central. La variation d'un solde melange CINQ
+   * choses : les depots, les retraits, le resultat des jeux, le rendement du
+   * staking, et les envois entre joueurs. Le meme joueur repasse « positif »
+   * le mois suivant sans avoir joue une seule fois, simplement parce qu'il a
+   * redepose ou touche son rendement.
+   *
+   * ---- ce qu'on compte, alors ----
+   *
+   * Le REVENU, c'est ce que la maison garde : mises moins rendus. Un seul
+   * point de passage suffit — _manche — et il vaut aussi pour le 1v1 : la
+   * somme des mises des deux joueurs moins la somme de ce qui leur est rendu
+   * EST la commission, sans avoir a la compter a part.
+   *
+   * Les COUTS, c'est ce que la maison donne sans contrepartie : rendement de
+   * staking, bonus, parrainage, jackpots.
+   *
+   * Et les DEPOTS ET RETRAITS NE SONT NI L'UN NI L'AUTRE. Un depot de 100 000
+   * n'enrichit personne : la maison le DOIT. Les compter comme un gain est
+   * l'erreur qui fait couler les casinos — on se croit riche de l'argent des
+   * joueurs.
+   * ====================================================================== */
+  _mois(cle) {
+    if (!this.compta) this.compta = {};
+    const k = cle || Game.moisCle();
+    if (!this.compta[k]) this.compta[k] = {
+      mises: 0, rendus: 0,                      // revenu = mises - rendus
+      staking: 0, bonus: 0, parrainage: 0, jackpots: 0,   // ce qu'on donne
+      depots: 0, retraits: 0, brule: 0,         // bilan, PAS resultat
+      manches: 0, joueurs: {},
+    };
+    return this.compta[k];
+  }
+  /**
+   * Le detail par joueur, reduit a ce qui se lit.
+   *
+   * Sans borne, il refait exactement le probleme qu'on vient de retirer : une
+   * ligne par compte, dans un fichier reecrit en entier toutes les dix
+   * secondes. Vingt mille comptes vides le faisaient repasser de 0,3 Ko a
+   * 1,8 Mo — mon propre test l'a attrape.
+   *
+   * On garde les deux cents plus gros de chaque cote. Personne n'a jamais lu
+   * la trois-centieme ligne d'un tableau, et ce detail n'est qu'un confort :
+   * la verite, elle, est au journal, qui n'oublie rien.
+   */
+  static _tailleDetail() { return 200; }
+  _comptaEcrite() {
+    const out = {};
+    for (const k of Object.keys(this.compta || {})) {
+      const m = this.compta[k];
+      const noms = Object.keys(m.joueurs || {});
+      let gardes = noms;
+      if (noms.length > Game._tailleDetail() * 2) {
+        const poids = (a) => Math.abs((m.joueurs[a].mises || 0) - (m.joueurs[a].rendus || 0))
+                           + (m.joueurs[a].staking || 0) + (m.joueurs[a].bonus || 0);
+        gardes = noms.sort((a, b) => poids(b) - poids(a)).slice(0, Game._tailleDetail() * 2);
+      }
+      const j = {};
+      for (const a of gardes) j[a] = m.joueurs[a];
+      out[k] = Object.assign({}, m, { joueurs: j });
+    }
+    return out;
+  }
+
+  /** Note un mouvement au mois en cours. `qui` sert au detail par joueur. */
+  note(quoi, montant, qui) {
+    const v = Number(montant) || 0;
+    if (!v) return;
+    const m = this._mois();
+    m[quoi] = Number(((m[quoi] || 0) + v).toFixed(6));
+    if (qui) {
+      const j = m.joueurs[qui] || (m.joueurs[qui] = { mises: 0, rendus: 0, staking: 0, bonus: 0 });
+      if (j[quoi] !== undefined) j[quoi] = Number((j[quoi] + v).toFixed(6));
+    }
+  }
+
+  /**
+   * Le compte du mois, pret a lire.
+   *
+   * `resultat` est le seul chiffre qui reponde a « le casino a-t-il gagne de
+   * l'argent ce mois-ci ». Tout le reste est du detail ou du bilan.
+   */
+  comptes(cle) {
+    const k = cle || Game.moisCle();
+    const m = (this.compta && this.compta[k]) || this._mois(k);
+    const revenu = Number((m.mises - m.rendus).toFixed(6));
+    const couts = Number((m.staking + m.bonus + m.parrainage + m.jackpots).toFixed(6));
+    return {
+      mois: k,
+      /* le revenu */
+      mises: m.mises, rendus: m.rendus, revenu, manches: m.manches,
+      /* ce qui est donne */
+      staking: m.staking, bonus: m.bonus, parrainage: m.parrainage, jackpots: m.jackpots,
+      couts,
+      resultat: Number((revenu - couts).toFixed(6)),
+      /* le bilan — ni gain ni perte */
+      depots: m.depots, retraits: m.retraits, brule: m.brule,
+      /* les dix joueurs qui ont le plus rapporte ce mois-ci, et les dix qui
+         ont le plus coute : c'est la meme question posee dans les deux sens */
+      joueurs: Object.keys(m.joueurs).map((a) => ({
+        address: a,
+        resultat: Number((m.joueurs[a].mises - m.joueurs[a].rendus).toFixed(6)),
+        recu: Number((m.joueurs[a].staking + m.joueurs[a].bonus).toFixed(6)),
+      })).sort((x, y) => y.resultat - x.resultat),
+    };
+  }
+
+  /** Les mois dont on a une trace, du plus recent au plus ancien. */
+  moisConnus() { return Object.keys(this.compta || {}).sort().reverse(); }
 
   /** Les jeux ou l'argent va d'un joueur a l'autre, pas a la banque. */
   static get PVP() { return { p4: true, poker: true, mp: true, dm: true }; }
@@ -629,6 +752,7 @@ class Game {
     p.refDu = BN(0);
     p.balance = p.balance.add(du);
     const m = ethers.utils.formatUnits(du, cfg.DECIMALS);
+    this.note('parrainage', m, String(addr).toLowerCase());
     journal.ajoute(String(addr).toLowerCase(), { k: 'rf', m, n: (p.filleuls || []).length });
     return { montant: m, balance: this.balanceStr(addr) };
   }
@@ -713,6 +837,7 @@ class Game {
     p.balance = p.balance.add(reward);
     p.stakeClaimTotal = (p.stakeClaimTotal || BN(0)).add(reward);
     const r = ethers.utils.formatUnits(reward, cfg.DECIMALS);
+    this.note('staking', r, String(addr).toLowerCase());
     journal.ajoute(addr, { k: 'st', s: 'claim', m: r,
                            total: ethers.utils.formatUnits(this._stakedTotal(p), cfg.DECIMALS) });
     return r;
@@ -867,7 +992,7 @@ class Game {
     const p = this._p(addr);
     if (p.welcomeGranted) return 0;
     p.welcomeGranted = true;
-    if (cfg.WELCOME_BONUS > 0) { p.balance = p.balance.add(WEI(cfg.WELCOME_BONUS)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(cfg.WELCOME_BONUS)); }
+    if (cfg.WELCOME_BONUS > 0) { p.balance = p.balance.add(WEI(cfg.WELCOME_BONUS)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(cfg.WELCOME_BONUS)); this.note('bonus', cfg.WELCOME_BONUS); }
     return cfg.WELCOME_BONUS;
   }
 
@@ -1244,6 +1369,7 @@ class Game {
        virement, et c'est le hash qui permet d'aller le regarder sur la
        chaine. L'adresse de depart est la sienne — le coffre credite celui qui
        a envoye — mais l'ecrire noir sur blanc evite d'avoir a le supposer. */
+    this.note('depots', ethers.utils.formatUnits(amount, cfg.DECIMALS));
     journal.ajouteSync(player, { k: 'dep', m: ethers.utils.formatUnits(amount, cfg.DECIMALS),
                                  tx, from: String(player).toLowerCase() });
 
@@ -1294,6 +1420,7 @@ class Game {
     const jr = Number(BigInt('0x' + h.slice(15, 30)) % BigInt(cfg.JACKPOT_ODDS));
     if (jr === 0) {
       jackpotWon = this.jackpotPot;
+      this.note('jackpots', ethers.utils.formatUnits(jackpotWon, cfg.DECIMALS), p.addr);
       p.balance = p.balance.add(jackpotWon);
       p.dayNet = p.dayNet.add(jackpotWon);
       this.jackpotPot = this._jackpotSeed;
@@ -2454,6 +2581,8 @@ class Game {
     p.balance = p.balance.sub(amount);
     p.cumulativeAuthorized = p.cumulativeAuthorized.add(net);
     this.fraisCumules = (this.fraisCumules || BN(0)).add(frais);
+    this.note('retraits', ethers.utils.formatUnits(net, cfg.DECIMALS));
+    this.note('brule', ethers.utils.formatUnits(frais, cfg.DECIMALS));
     /* On journalise l'AUTORISATION, pas l'encaissement : c'est le moment ou le
        solde quitte le compte, et c'est celui que le joueur reconnait. Le bon
        peut encore etre presente plus tard a la chaine — ou jamais. */
