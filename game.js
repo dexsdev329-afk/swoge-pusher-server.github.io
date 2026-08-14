@@ -30,7 +30,8 @@ const p4 = require('./puissance4');
    chemin d'argent de les servir tous les trois. */
 const DUELS = { p4, mp: require('./morpion'), dm: require('./dames'),
                 mf: require('./morpion_fantome'),
-                dc: require('./dernier_chiffre') };
+                dc: require('./dernier_chiffre'),
+                pf: require('./pierre_feuille_bandit') };
 const ATTENTE = p4.ATTENTE, EN_COURS = p4.EN_COURS, FINIE = p4.FINIE;
 const volcano = require('./volcano');
 
@@ -2864,7 +2865,7 @@ class Game {
     /* Le prefixe des reglages, par jeu. Une table plutot qu'une cascade de
        ternaires : le quatrieme jeu a montre que la cascade se relit mal et
        qu'on y oublie une branche. */
-    const p = { mp: 'MP', dm: 'DM', mf: 'MF', dc: 'DC', p4: 'P4' }[jeu] || 'P4';
+    const p = { mp: 'MP', dm: 'DM', mf: 'MF', dc: 'DC', pf: 'PF', p4: 'P4' }[jeu] || 'P4';
     const v = (k, d) => (cfg[p + '_' + k] !== undefined ? cfg[p + '_' + k] : d);
     return {
       min: v('MIN', cfg.P4_MIN), max: v('MAX', cfg.P4_MAX),
@@ -3007,7 +3008,25 @@ class Game {
     const partie = this.p4.get(String(id));
     if (!partie) throw new Error('match not found');
     const t = now || Date.now();
+    /* ---- LA MISE PEUT MONTER EN COURS DE PARTIE ----
+       Au Pierre-Feuille-Bandit, suivre une relance engage les DEUX joueurs
+       pour un tour de mise de plus. On verifie donc les deux soldes AVANT que
+       le coup existe : une relance acceptee qu'un joueur ne peut pas payer
+       laisserait une partie a moitie financee, et il n'y a pas de reparation
+       propre a ca. Le moteur annonce le cout, il ne connait aucun solde. */
+    if (typeof partie.coutSi === 'function') {
+      const du = partie.coutSi(addr, coup);
+      if (du > 0) for (const a of partie.joueurs) {
+        if (a && this._p(a).balance.lt(WEI(du)))
+          throw new Error('one of you cannot cover the raise (' + du + ' $SWOGE more each)');
+      }
+    }
     const r = partie.jouer(addr, coup, t);
+    /* Ce que le moteur a decide de prelever. On le draine tout de suite : une
+       file qui traine, c'est une mise engagee que personne n'a payee. */
+    if (Array.isArray(partie.aDebiter) && partie.aDebiter.length) {
+      for (const d of partie.aDebiter.splice(0)) this._duelDebite(d.addr, d.montant, partie.jeu);
+    }
     /* LE TIRAGE, pour les jeux qui en demandent un.
        Le moteur ne tire rien lui-meme : la graine du serveur vaut de l'argent
        tant qu'elle n'est pas revelee, et un moteur de duel finit dans l'etat

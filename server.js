@@ -295,11 +295,12 @@ function diffuseTousDuels() { broadcast(tousDuels()); }
  * chaque page veut.
  */
 const NOM_DUEL = { p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers',
-                   mf: 'Ghost Tic-Tac-Toe', dc: 'Last Number' };
+                   mf: 'Ghost Tic-Tac-Toe', dc: 'Last Number',
+                   pf: 'Rock Paper Bandit' };
 /* Les duels que la page peut demander. Une LISTE, pas une cascade de « dm ou
    sinon mp » : le troisieme jeu passait silencieusement pour un morpion, et
    c'est le genre de defaut qui se decouvre en jouant, pas en lisant. */
-const DUELS_OUVERTS = ['mp', 'dm', 'mf', 'dc'];
+const DUELS_OUVERTS = ['mp', 'dm', 'mf', 'dc', 'pf'];
 const duelDemande = (v) => (DUELS_OUVERTS.indexOf(String(v)) >= 0 ? String(v) : 'mp');
 /* Les sockets qui REGARDENT une partie sans y jouer. Un spectateur n'existe
    pas pour la partie : il ne mise pas, ne joue pas, et sa presence ne change
