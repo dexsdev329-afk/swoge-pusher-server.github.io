@@ -1074,22 +1074,6 @@ const server = http.createServer(async (req, res) => {
       owedPending: fmt(bd.pending),          //   pending stake yield
       owedJackpot: fmt(bd.jackpot),          //   jackpot reserve
       ownerSurplus: fmt(pot ? surplus : null), // <-- safe amount you can withdraw
-      /* CE QUE LA MAISON DETIENT VIA SES PROPRES COMPTES. C'est de l'argent du
-         projet, pas une dette envers un joueur — mais il reste dans le total
-         ci-dessus, parce qu'il peut encore sortir par un retrait ordinaire et
-         que le surplus doit rester ce qu'on peut prendre SANS risque. On le
-         montre a cote, on ne l'ajoute pas au retirable. */
-      maisonBalances: fmt(bd.maison.balances),
-      maisonStaked: fmt(bd.maison.staked),
-      maisonPending: fmt(bd.maison.pending),
-      maisonTotal: fmt(bd.maison.total),
-      /* La dette envers les joueurs REELS : le total moins les comptes du
-         projet. C'est ce chiffre-la qui dit ce qu'on doit vraiment. */
-      duJoueursReels: fmt(owed.sub(bd.maison.total)),
-      /* Tout ce que le projet controle : le surplus du coffre plus ce que ses
-         propres comptes portent. */
-      fondsMaison: fmt(pot ? surplus.add(bd.maison.total) : bd.maison.total),
-      maisonAdresses: cfg.MAISON_ADRESSES,
       jackpot: game.jackpotStr(), totalStaked: fmt(game.totalStaked()),
       /* Combien de temps le coffre tient au rythme actuel. L'alarme de
          solvabilite ne sonne qu'une fois passe dessous ; ceci previent. */

@@ -1493,14 +1493,8 @@ class Game {
   autonomie(pot) {
     const f = (w) => Number(ethers.utils.formatUnits(w, cfg.DECIMALS));
     const staked = f(this.totalStaked());
-    /* Ce que le staking coute chaque jour, que quelqu'un joue ou non.
-       LE STAKING DE LA MAISON N'EST PAS UN COUT : le rendement qu'il produit,
-       le projet se le doit a lui-meme. L'y laisser ferait clignoter une alarme
-       d'epuisement pour de l'argent qui ne sort de nulle part. */
-    const bMaison = this.owedBreakdown().maison;
-    const stakedMaison = f(bMaison.staked);
-    const stakedJoueurs = Math.max(0, staked - stakedMaison);
-    const rendementJour = stakedJoueurs * (cfg.STAKE_APR_BPS / 10000) / 365;
+    /* Ce que le staking coute chaque jour, que quelqu'un joue ou non. */
+    const rendementJour = staked * (cfg.STAKE_APR_BPS / 10000) / 365;
     /* Ce que la maison encaisse chaque jour, mesure sur le mois en cours et
        non estime : c'est le seul des deux chiffres qui puisse surprendre. */
     const c = this.comptes();
@@ -1513,8 +1507,7 @@ class Game {
     const surplus = pot ? f(pot) - du : null;
 
     return {
-      staked, stakedMaison, stakedJoueurs,
-      rendementJour: Number(rendementJour.toFixed(6)),
+      staked, rendementJour: Number(rendementJour.toFixed(6)),
       revenuJour: Number(revenuJour.toFixed(6)),
       drainJour: Number(drainJour.toFixed(6)),
       surplus: surplus === null ? null : Number(surplus.toFixed(6)),
@@ -1532,23 +1525,12 @@ class Game {
    * yield, and the jackpot reserve. */
   owedBreakdown() {
     let balances = BN(0), staked = BN(0), pending = BN(0);
-    let mB = BN(0), mS = BN(0), mP = BN(0);
-    for (const [a, p] of this.players) {
-      const b = p.balance, s = this._stakedTotal(p);
-      const y = p.stakeAccrued.add(this._pendingAll(p));
-      balances = balances.add(b); staked = staked.add(s); pending = pending.add(y);
-      /* La part qui appartient au projet. On la compte a cote SANS la retirer
-         des totaux : ceux-ci restent la vraie obligation du coffre, et c'est
-         eux que l'alarme de solvabilite doit continuer a regarder. */
-      if (Game.estMaison(a)) { mB = mB.add(b); mS = mS.add(s); mP = mP.add(y); }
+    for (const p of this.players.values()) {
+      balances = balances.add(p.balance);
+      staked = staked.add(this._stakedTotal(p));
+      pending = pending.add(p.stakeAccrued).add(this._pendingAll(p));
     }
-    return { balances, staked, pending, jackpot: this.jackpotPot,
-             maison: { balances: mB, staked: mS, pending: mP, total: mB.add(mS).add(mP) } };
-  }
-
-  /** Ce compte appartient-il au projet ? */
-  static estMaison(addr) {
-    return cfg.MAISON_ADRESSES.indexOf(String(addr || '').toLowerCase()) >= 0;
+    return { balances, staked, pending, jackpot: this.jackpotPot };
   }
 
   /** Everything the vault OWES players right now (wei): balances + staked +
