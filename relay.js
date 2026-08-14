@@ -1,0 +1,164 @@
+'use strict';
+/*
+ * Arriver depuis une autre chaine, sans quitter le site.
+ *
+ * ---- ce que ce fichier resout ----
+ *
+ * Le joueur tient du SOL, du BTC, de l'USDT sur TRON. Le casino tourne sur
+ * Robinhood Chain. Entre les deux il manquait un pont, et la premiere reponse
+ * — trois adresses de depot a nous, une par chaine, et une conversion au prix
+ * du marche — etait la mauvaise : elle nous faisait detenir l'argent des
+ * joueurs, et elle prenait le prix dans une reserve de deux ETH ou 188 $
+ * d'achat deplacent le cours de 10 %. N'importe qui pouvait faire tomber ce
+ * prix pour deux cents dollars, deposer, et racheter.
+ *
+ * Relay fait le trajet sans que rien ne passe par nous. Il rend une ADRESSE DE
+ * DEPOT : le joueur y envoie ses SOL — depuis son portefeuille ou depuis son
+ * compte d'echange, sans rien connecter — et l'ETH arrive a SON adresse sur
+ * Robinhood Chain. Nous ne touchons jamais les fonds.
+ *
+ * ---- pourquoi ca passe par le serveur ----
+ *
+ * L'adresse de depot demande une cle d'integrateur. Une cle posee dans
+ * swogebuy.js serait publique au premier « voir la source ». Le serveur
+ * appelle Relay a la place du navigateur et ne rend que l'adresse. La cle ne
+ * quitte pas la machine.
+ *
+ * ---- ce qui est verrouille ----
+ *
+ * La route est ouverte a tous — il le faut, un joueur qui n'a pas encore un
+ * jeton doit pouvoir s'en servir. Elle est donc etroite :
+ *
+ *   • la chaine et le jeton de depart viennent d'une LISTE FERMEE. Sans elle,
+ *     n'importe qui userait notre cle pour ses propres transferts ;
+ *   • la destination est toujours de l'ETH natif sur Robinhood Chain, jamais
+ *     ce que demande l'appelant ;
+ *   • le montant est borne des deux cotes : trop petit, les frais mangent
+ *     tout ; trop grand, c'est une faute de frappe ;
+ *   • rien de ce que Relay repond n'est renvoye tel quel. On recopie les
+ *     quelques champs utiles, ce qui evite de reexpedier un jour un detail
+ *     qu'on n'a pas lu.
+ */
+const cfg = require('./config');
+
+const RH = 4663;
+const NATIF = '0x0000000000000000000000000000000000000000';
+
+/* Les provenances qu'on accepte. Chacune a ete cotee pour de vrai avant
+   d'entrer ici — une route qui n'existe pas ferait un bouton qui echoue.
+   Le TRX natif n'en a pas ; l'USDT sur TRON, si, et c'est ce que detiennent
+   la plupart des porteurs TRON. */
+const DEPUIS = {
+  sol:  { chaine: 792703809, jeton: '11111111111111111111111111111111',
+          symbole: 'SOL', decimales: 9, min: 0.01, max: 1000 },
+  eth:  { chaine: 1,         jeton: NATIF,
+          symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
+  base: { chaine: 8453,      jeton: NATIF,
+          symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
+  tron: { chaine: 728126428, jeton: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+          symbole: 'USDT', decimales: 6, min: 1, max: 100000 },
+  btc:  { chaine: 8253038,   jeton: 'bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmql8k8',
+          symbole: 'BTC', decimales: 8, min: 0.0001, max: 10 },
+};
+
+const actif = () => !!cfg.RELAY_API_KEY;
+const provenances = () => Object.keys(DEPUIS).map((k) => ({
+  cle: k, symbole: DEPUIS[k].symbole, min: DEPUIS[k].min, max: DEPUIS[k].max,
+}));
+
+/** Le montant en plus petite unite, sans passer par les flottants au-dela du
+ *  raisonnable : un montant saisi a la main n'a jamais dix-huit decimales. */
+function enUnites(montant, decimales) {
+  const s = String(montant).replace(',', '.').trim();
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  const [ent, dec = ''] = s.split('.');
+  if (dec.length > decimales) return null;
+  const brut = (ent + dec.padEnd(decimales, '0')).replace(/^0+(?=\d)/, '');
+  return brut || '0';
+}
+
+async function appelle(chemin, corps) {
+  const r = await fetch(cfg.RELAY_API + chemin, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': cfg.RELAY_API_KEY },
+    body: JSON.stringify(corps),
+  });
+  const t = await r.text();
+  let j = null;
+  try { j = JSON.parse(t); } catch (e) {}
+  if (!r.ok) {
+    const m = (j && (j.message || j.error)) || t.slice(0, 200);
+    const e = new Error(m);
+    e.statut = r.status;
+    throw e;
+  }
+  return j;
+}
+
+/**
+ * L'adresse ou le joueur envoie ses fonds.
+ *
+ * @param {string} cle       une provenance de la liste fermee
+ * @param {string} vers      l'adresse du joueur sur Robinhood Chain
+ * @param {string} montant   ce qu'il compte envoyer, dans sa monnaie
+ */
+async function adresseDepot(cle, vers, montant) {
+  if (!actif()) { const e = new Error('no relay key'); e.statut = 503; throw e; }
+  const d = DEPUIS[cle];
+  if (!d) { const e = new Error('unknown origin'); e.statut = 400; throw e; }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(String(vers || ''))) {
+    const e = new Error('bad destination address'); e.statut = 400; throw e;
+  }
+  const n = parseFloat(String(montant).replace(',', '.'));
+  if (!(n >= d.min) || !(n <= d.max)) {
+    const e = new Error(`amount must be between ${d.min} and ${d.max} ${d.symbole}`);
+    e.statut = 400; throw e;
+  }
+  const brut = enUnites(montant, d.decimales);
+  if (brut === null) { const e = new Error('bad amount'); e.statut = 400; throw e; }
+
+  const j = await appelle('/quote/v2', {
+    useDepositAddress: true,
+    user: vers, recipient: vers,
+    originChainId: d.chaine, originCurrency: d.jeton,
+    /* La destination n'est PAS negociable : de l'ETH natif sur Robinhood
+       Chain, chez le joueur. C'est ce que le panneau sait acheter ensuite. */
+    destinationChainId: RH, destinationCurrency: NATIF,
+    amount: brut, tradeType: 'EXACT_INPUT',
+  });
+
+  const etape = (j.steps || []).find((s) => s.depositAddress) || {};
+  const adresse = etape.depositAddress;
+  if (!adresse) { const e = new Error('relay returned no deposit address'); e.statut = 502; throw e; }
+  const det = j.details || {};
+
+  /* On recopie, on ne reexpedie pas. Renvoyer la reponse entiere serait
+     renvoyer un jour un champ qu'on n'a pas lu. */
+  return {
+    adresse: adresse,
+    id: etape.requestId || (j.request && j.request.id) || null,
+    symbole: d.symbole,
+    envoie: det.currencyIn ? det.currencyIn.amountFormatted : String(montant),
+    recoit: det.currencyOut ? det.currencyOut.amountFormatted : null,
+    dollars: det.currencyOut ? det.currencyOut.amountUsd : null,
+    secondes: det.timeEstimate || null,
+  };
+}
+
+/** Ou en est l'envoi. Le joueur regarde cet ecran pendant que ca se fait. */
+async function etat(id) {
+  if (!actif()) { const e = new Error('no relay key'); e.statut = 503; throw e; }
+  if (!/^0x[0-9a-fA-F]{10,80}$/.test(String(id || ''))) {
+    const e = new Error('bad request id'); e.statut = 400; throw e;
+  }
+  const r = await fetch(`${cfg.RELAY_API}/intents/status/v3?requestId=${encodeURIComponent(id)}`,
+                        { headers: { 'x-api-key': cfg.RELAY_API_KEY } });
+  const t = await r.text();
+  let j = null;
+  try { j = JSON.parse(t); } catch (e) {}
+  if (!r.ok) { const e = new Error((j && j.message) || t.slice(0, 150)); e.statut = r.status; throw e; }
+  return { statut: (j && j.status) || 'unknown', fini: (j && j.status) === 'success',
+           tx: (j && j.txHashes && j.txHashes[0]) || null };
+}
+
+module.exports = { actif, provenances, adresseDepot, etat, DEPUIS, enUnites };

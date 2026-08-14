@@ -24,6 +24,7 @@ const fs = require('fs');
 const zlib = require('zlib');
 const tg = require('./telegram');
 const sante = require('./sante');
+const relay = require('./relay');
 const profilpage = require('./profilpage');
 const admin = require('./admin');
 const session = require('./session');
@@ -125,6 +126,13 @@ if (!cfg.TG_BACKUP_CHAT_ID && !cfg.TG_CHAT_ID)
 if (!cfg.ADMIN_KEY)
   console.warn('[secu] ADMIN_KEY absente : /admin, /players, /stats, /audit, /repare et /burn sont FERMES.\n' +
                '       Posez ADMIN_KEY dans les variables d environnement pour les ouvrir.');
+/* Le dire au demarrage plutot que de le laisser decouvrir par un bouton qui
+   renvoie ailleurs : sans cle, le panneau retombe sur un lien vers Relay, ce
+   qui marche, mais fait sortir le joueur du site. */
+console.log(relay.actif()
+  ? '[relay] cle presente : adresses de depot actives (SOL, BTC, USDT-TRON, ETH, Base)'
+  : '[relay] pas de RELAY_API_KEY : le panneau enverra les joueurs sur relay.link au lieu\n' +
+    '        d afficher une adresse de depot. Posez la variable pour garder le tunnel sur le site.');
 
 /**
  * Ce qu'un client recoit une fois identifie. Une seule definition pour la
@@ -611,6 +619,51 @@ const server = http.createServer(async (req, res) => {
                                       'cache-control': 'no-store' });
     return res.end(JSON.stringify(e, null, 2));
   }
+  /* ======================= ARRIVER D'UNE AUTRE CHAINE =======================
+   *
+   * Publique, et elle doit l'etre : un joueur qui n'a pas encore un jeton s'en
+   * sert avant de pouvoir prouver quoi que ce soit. Ce qui la protege, ce n'est
+   * pas une cle, c'est son etroitesse — voir relay.js : liste fermee de
+   * provenances, destination imposee, montant borne.
+   *
+   * L'argent ne passe jamais par nous : Relay livre a l'adresse du joueur.
+   * Notre cle sert seulement a obtenir l'adresse de depot, et elle reste ici.
+   */
+  if (path === '/relay/depuis') {
+    res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*',
+                         'cache-control': 'public, max-age=300' });
+    return res.end(JSON.stringify({ actif: relay.actif(), provenances: relay.provenances() }));
+  }
+  if (path === '/relay/depot') {
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    res.setHeader('access-control-allow-origin', '*');
+    try {
+      const r = await relay.adresseDepot(qs.get('de'), qs.get('vers'), qs.get('montant'));
+      console.log(`[relay] adresse de depot ${r.symbole} → ${String(qs.get('vers')).slice(0, 10)}…`);
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify(r));
+    } catch (e) {
+      /* Le 503 a un sens precis : la cle n'est pas posee. La page s'en sert
+         pour retomber sur le lien vers Relay au lieu d'afficher une panne. */
+      const code = e.statut || 502;
+      if (code !== 400) console.warn('[relay] depot :', e.message);
+      res.writeHead(code, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: String(e.message || e).slice(0, 200) }));
+    }
+  }
+  if (path === '/relay/etat') {
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    res.setHeader('access-control-allow-origin', '*');
+    try {
+      const r = await relay.etat(qs.get('id'));
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify(r));
+    } catch (e) {
+      res.writeHead(e.statut || 502, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: String(e.message || e).slice(0, 200) }));
+    }
+  }
+
   /* ------------------------------------------------- la page publique d'un joueur
    *
    * `/j/<nom>` — l'adresse qu'un joueur partage. Elle est rendue ICI et non

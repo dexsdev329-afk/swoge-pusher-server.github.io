@@ -266,6 +266,24 @@ module.exports = {
   MONITEUR_URL: env('MONITEUR_URL', ''),
   MONITEUR_SEC: parseInt(env('MONITEUR_SEC', '60'), 10),
 
+  /* ---- Arriver depuis une autre chaine ----
+   *
+   * Relay convertit du SOL, du BTC ou de l'USDT en ETH sur Robinhood Chain et
+   * le livre directement au joueur. Sans cle, on ne peut que L'ENVOYER chez
+   * eux, avec un lien prerempli. Avec la cle, on peut lui donner une ADRESSE
+   * DE DEPOT ici meme : il envoie depuis son portefeuille OU depuis son compte
+   * d'echange, sans rien connecter, et l'ETH arrive chez lui.
+   *
+   * La cle ne doit JAMAIS descendre dans la page : swogebuy.js est public. Le
+   * serveur appelle Relay a la place du navigateur et ne lui rend que
+   * l'adresse. C'est toute la raison d'etre de la route /relay/depot.
+   *
+   * Deux noms acceptes, parce que la variable est posee a la main chez
+   * l'hebergeur et qu'un serveur muet a cause d'un tiret bas ne dit pas
+   * pourquoi. */
+  RELAY_API_KEY: env('RELAY_API_KEY', '') || env('RELAY_KEY', ''),
+  RELAY_API: env('RELAY_API', 'https://api.relay.link'),
+
   MISSIONS_PAR_JOUR: parseInt(env('MISSIONS_PAR_JOUR', '3'), 10),
   MISSION_MISE: parseFloat(env('MISSION_MISE', '2000')),   // a miser sur le jeu du jour
   MISSION_GAIN: parseFloat(env('MISSION_GAIN', '12')),     // ce qu'elle rapporte
