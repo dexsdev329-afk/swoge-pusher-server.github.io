@@ -108,6 +108,10 @@ if (process.env.DEV_FAUCET === '1' && !FAUCET_OK)
   console.warn('[secu] DEV_FAUCET=1 IGNORE : un coffre ou un signataire est configure, l argent est reel.');
 if (FAUCET_OK)
   console.warn('[secu] DEV_FAUCET=1 ACTIF : n importe qui peut se crediter 1000 $SWOGE. A ne jamais laisser en production.');
+if (!cfg.TG_BACKUP_CHAT_ID)
+  console.warn('[secu] TG_BACKUP_CHAT_ID absente : AUCUNE sauvegarde ne quitte cette machine.\n' +
+               '       state.json et son .bak sont sur le meme volume — si ce volume disparait,\n' +
+               '       tous les soldes disparaissent avec lui.');
 if (!cfg.ADMIN_KEY)
   console.warn('[secu] ADMIN_KEY absente : /admin, /players, /stats, /audit, /repare et /burn sont FERMES.\n' +
                '       Posez ADMIN_KEY dans les variables d environnement pour les ouvrir.');
@@ -357,7 +361,11 @@ function rate(req, ok) {
  *  n'appellent pas la meme action : configurer une cle, ou en donner une. */
 function refuse(req, res, html) {
   const type = html ? 'text/html' : 'application/json';
-  if (!cfg.ADMIN_KEY) {
+  if (!cfg.TG_BACKUP_CHAT_ID)
+  console.warn('[secu] TG_BACKUP_CHAT_ID absente : AUCUNE sauvegarde ne quitte cette machine.\n' +
+               '       state.json et son .bak sont sur le meme volume — si ce volume disparait,\n' +
+               '       tous les soldes disparaissent avec lui.');
+if (!cfg.ADMIN_KEY) {
     res.writeHead(503, { 'content-type': type });
     return res.end(html
       ? '<h3>503 — this dashboard is closed</h3><p>Set ADMIN_KEY on the server to open it.</p>'
@@ -368,6 +376,40 @@ function refuse(req, res, html) {
   return res.end(html
     ? '<h3>401 — add ?key=YOUR_ADMIN_KEY</h3>'
     : JSON.stringify({ error: 'unauthorized' }));
+}
+
+/* ==================================================================
+ * LA SAUVEGARDE HORS MACHINE
+ *
+ * state.json et son .bak vivent sur LE MEME volume : cela protege d'une
+ * ecriture ratee, de rien d'autre. Si le volume disparait, tous les soldes
+ * partent avec lui et il ne reste RIEN pour reconstruire. C'est le seul
+ * risque encore ouvert capable de tuer le projet en une soiree.
+ *
+ * L'archive part donc chez un tiers — le canal Telegram prive du
+ * proprietaire — horodatee, telechargeable depuis un telephone, et sans
+ * aucune infrastructure a payer ni a maintenir.
+ * ================================================================== */
+async function sauvegarde(raison) {
+  const zlib = require('zlib');
+  const fsp = require('fs');
+  try {
+    persist();                                   // on part de l'etat le plus frais
+    const brut = fsp.readFileSync(store.FILE);
+    const gz = zlib.gzipSync(brut, { level: 9 });
+    const bd = game.owedBreakdown();
+    const du = bd.balances.add(bd.staked).add(bd.pending).add(bd.jackpot);
+    const jour = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const ok = await tg.sendDocument(gz, `swoge-etat-${jour}.json.gz`,
+      `💾 <b>Sauvegarde</b> · ${raison}\n` +
+      `${game.players.size} joueurs · ${fmtAmt(ethers.utils.formatUnits(du, cfg.DECIMALS))} $SWOGE dus\n` +
+      `${(brut.length / 1024).toFixed(0)} Ko → ${(gz.length / 1024).toFixed(0)} Ko compresses`);
+    console.log(`[backup] ${ok ? 'envoyee' : 'NON ENVOYEE'} (${(gz.length / 1024).toFixed(0)} Ko, ${raison})`);
+    return { ok, octets: gz.length, joueurs: game.players.size };
+  } catch (e) {
+    console.warn('[backup] echec :', e.message);
+    return { ok: false, error: e.message };
+  }
 }
 
 // ---- HTTP (health + tiny info) ----
@@ -486,6 +528,15 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ ok: false, error: e.message }));
     }
   }
+  /* Une sauvegarde a la demande — avant chaque operation risquee. Celle qu'on
+     declenche soi-meme vaut mieux que celle qu'on aurait voulu avoir. */
+  if (path === '/backup') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const r = await sauvegarde('a la demande');
+    res.writeHead(r.ok ? 200 : 500, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(r));
+  }
   if (path === '/burn') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
@@ -559,6 +610,7 @@ const server = http.createServer(async (req, res) => {
       /* Le compte du mois : le seul endroit qui reponde a « le casino a-t-il
          gagne de l argent ». Les depots n y sont PAS un gain. */
       comptes: game.comptes(qs2.get('mois') || null),
+      tunnel: game.tunnelJours(14),
       moisConnus: game.moisConnus(),
       players: game.players.size, vault: cfg.VAULT_ADDRESS || null,
     }, null, 2));
@@ -634,6 +686,41 @@ const compteInterval = setInterval(() => broadcast(compte()), 60000);
  * plus tard — mieux vaut tourner avec une heure de retard que couper une
  * manche en deux et la rendre invérifiable.
  */
+/* Toutes les heures on regarde s'il est temps ; le rendez-vous quotidien ne
+   survivrait a aucun redeploiement. */
+let derniereSauvegarde = 0;
+const backupInterval = setInterval(() => {
+  if (!cfg.TG_BACKUP_CHAT_ID) return;
+  if (Date.now() - derniereSauvegarde < cfg.BACKUP_HEURES * 3600000) return;
+  derniereSauvegarde = Date.now();
+  sauvegarde('quotidienne');
+}, 3600000);
+
+/* Le prix du classement se verse quand le mois a TOURNE, une seule fois. On
+   regarde toutes les dix minutes : un rendez-vous au 1er a minuit ne
+   survivrait pas au premier redeploiement, et le mois precedent ne bouge
+   plus — le verser avec une heure de retard ne change rien pour personne. */
+const prixInterval = setInterval(() => {
+  try {
+    const d = new Date(); d.setMonth(d.getMonth() - 1);
+    const passe = require('./game').Game.moisCle(d);
+    if (!game.compta || !game.compta[passe]) return;
+    if (game.prixVerses && game.prixVerses[passe]) return;
+    const r = game.verseClassement(passe);
+    persist();
+    console.log(`[prix] classement ${passe} : ${r.total} $SWOGE a ${r.gagnants.length} joueurs`);
+    tg.notify(`🏆 <b>${passe} leaderboard paid out</b>\n` +
+      `<b>${fmtAmt(String(r.total))} $SWOGE</b> shared between the top ${r.gagnants.length} — ` +
+      `1% of everything the house made last month.\n` +
+      r.gagnants.slice(0, 3).map((g, i) =>
+        `${['🥇', '🥈', '🥉'][i]} ${g.name} — ${fmtAmt(String(g.prix))}`).join('\n') +
+      `\n\nThis month's pot is already growing. Play to climb.`);
+    r.gagnants.forEach((g) => toAddr(g.address, { type: 'balance', balance: game.balanceStr(g.address) }));
+  } catch (e) {
+    if (!/already paid|nothing to share/.test(e.message)) console.warn('[prix]', e.message);
+  }
+}, 600000);
+
 const graineInterval = setInterval(() => {
   try {
     const age = Date.now() - (game.graineDepuis || 0);
@@ -688,6 +775,7 @@ wss.on('connection', (ws) => {
     explorer: cfg.EXPLORER,
   });
 
+  game.noteTunnel('pages');            // une page de plus s'est ouverte
   ws.on('message', async (buf) => {
     if (!autorise(ws)) return;
     let m; try { m = JSON.parse(buf); } catch { return; }
@@ -705,7 +793,9 @@ wss.on('connection', (ws) => {
            rend 0 aussi bien pour un habitue que pour un nouveau venu le jour ou
            le bonus vaudrait zero. La question posee est « est-ce sa premiere
            arrivee », pas « a-t-il touche quelque chose ». */
+        game.noteTunnel('connexions', rec);
         const nouveau = !game._p(rec).welcomeGranted;
+        if (nouveau) game.noteTunnel('nouveaux', rec);
         const welcome = game.grantWelcome(rec);      // one-time demo credit for a brand-new player
         if (welcome > 0) persistSoon();
         if (nouveau && cfg.NOTIFY_NEW_PLAYER) {
@@ -910,7 +1000,8 @@ wss.on('connection', (ws) => {
       }
       /* Le classement du mois : qui a fait tourner le plus de volume. */
       if (m.type === 'leaderboard') {
-        return send(ws, { type: 'leaderboard', ...game.classementMois(ws.addr, 50) });
+        return send(ws, { type: 'leaderboard', ...game.classementMois(ws.addr, 50),
+                          prix: game.prixClassement() });
       }
       if (m.type === 'referralClaim') {
         try {
@@ -1496,7 +1587,7 @@ server.listen(cfg.PORT, () => {
 });
 
 function shutdown() {
-  clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
+  clearInterval(prixInterval); clearInterval(backupInterval); clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
   persist(); // final save so nothing is lost on redeploy
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
      qui attend encore doit partir maintenant, sinon les dernieres manches

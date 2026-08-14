@@ -65,6 +65,26 @@ function page() {
 </div>
 
 <div class="panel">
+  <h2>💾 Off-machine backup</h2>
+  <div class="sub" style="margin:0 0 10px">
+    <code>state.json</code> and its <code>.bak</code> live on the <b>same volume</b>. That protects
+    against a failed write, nothing else &mdash; if the volume goes, every balance goes with it.
+    A daily copy is sent to your <b>private</b> Telegram channel. Take one before anything risky.
+    <span id="bkEtat"></span>
+  </div>
+  <div class="row"><button class="ghost" id="bkGo">Back up now</button></div>
+</div>
+
+<div class="panel">
+  <h2>📈 Where people stop</h2>
+  <div class="sub" style="margin:0 0 10px">
+    Knowing what you earn does not tell you <b>where it jams</b>. These three rates do:
+    traffic, wallet friction, or first deposit.
+  </div>
+  <div id="tunTable" class="sub"></div>
+</div>
+
+<div class="panel">
   <h2>📊 This month&rsquo;s books</h2>
   <div class="sub" style="margin:0 0 10px">
     A deposit is <b>not</b> a profit &mdash; you owe it back. What the house actually keeps is
@@ -319,6 +339,21 @@ async function load(){
     $("#cPar").textContent=fmt(String(c.parrainage)); $("#cJck").textContent=fmt(String(c.jackpots));
     $("#cDep").textContent=fmt(String(c.depots)); $("#cRet").textContent=fmt(String(c.retraits));
     $("#cBru").textContent=fmt(String(c.brule));
+    var t=(d.tunnel||[]);
+    $("#tunTable").innerHTML = t.length
+      ? '<table style="width:100%;border-collapse:collapse;font-size:12px">'+
+        '<tr style="color:#8DA0C4;text-align:right"><th style="text-align:left">day</th>'+
+        '<th>pages</th><th>wallets</th><th>→</th><th>deposits</th><th>→</th>'+
+        '<th>first bets</th><th>→</th><th>deposited</th></tr>'+
+        t.map(function(j){ return '<tr style="text-align:right">'+
+          '<td style="text-align:left">'+j.jour+'</td><td>'+j.pages+'</td><td>'+j.connexions+'</td>'+
+          '<td style="color:#C9A24A">'+(j.tauxConnexion==null?"—":j.tauxConnexion+"%")+'</td>'+
+          '<td>'+j.deposants+'</td>'+
+          '<td style="color:#C9A24A">'+(j.tauxDepot==null?"—":j.tauxDepot+"%")+'</td>'+
+          '<td>'+j.premieresMises+'</td>'+
+          '<td style="color:#C9A24A">'+(j.tauxPremiereMise==null?"—":j.tauxPremiereMise+"%")+'</td>'+
+          '<td>'+fmt(String(j.depose||0))+'</td></tr>'; }).join("")+'</table>'
+      : "Nothing recorded yet.";
     $("#upd").textContent=new Date().toLocaleTimeString();
   }catch(e){ msg("Could not load stats: "+e.message,"warn"); }
 }
@@ -547,6 +582,17 @@ $("#pauseWd").onclick=function(){ if(!signer) return; var on=$("#pauseWd").datas
    et laisserait un moment ou les jetons sont a lui — ce qui n'est plus tout a
    fait un brulage. */
 var audAdr=null;
+$("#bkGo").onclick=async function(){
+  $("#bkEtat").textContent=" · sending…";
+  try{
+    var r=await fetch("/backup",{headers:{"x-admin-key":KEY}});
+    var j=await r.json();
+    if(j.ok){ msg("✅ Backup sent to your private channel ("+Math.round(j.octets/1024)+" KB, "+j.joueurs+" players)","ok");
+      $("#bkEtat").innerHTML=' · <b style="color:#7CFF9B">last: '+new Date().toLocaleTimeString()+'</b>'; }
+    else { msg("Backup NOT sent — set TG_BACKUP_CHAT_ID on the server","warn");
+      $("#bkEtat").innerHTML=' · <b style="color:#F2685E">no private channel configured</b>'; }
+  }catch(e){ msg("Backup failed: "+e.message,"warn"); $("#bkEtat").textContent=""; }
+};
 $("#moisSel").onchange=function(){ moisChoisi=$("#moisSel").value; load(); };
 $("#audGo").onclick=async function(){
   var a=($("#audAddr").value||"").trim().toLowerCase();

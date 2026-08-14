@@ -84,6 +84,22 @@ module.exports = {
   // L'adresse publique du serveur, pour que l'annonce de rotation porte un
   // lien cliquable vers les graines.
   PUBLIC_URL: env('PUBLIC_URL', 'https://web-production-220a3.up.railway.app'),
+
+  /* ---- la sauvegarde hors machine ----
+   *
+   * state.json et son .bak vivent sur LE MEME volume. Cela protege d'une
+   * ecriture ratee, de rien d'autre : si le volume disparait — demonte par
+   * erreur au redeploiement, service supprime, incident chez l'hebergeur —
+   * tous les soldes partent avec, et il n'y a rien pour reconstruire.
+   *
+   * Une archive quotidienne part donc sur un canal Telegram PRIVE. Elle
+   * contient les adresses et les soldes de tous les joueurs : elle n'a rien a
+   * faire dans le canal public des annonces. D'ou une variable separee — sans
+   * elle on n'envoie rien du tout, plutot que de risquer une fuite qui ne se
+   * rattrape pas.
+   */
+  TG_BACKUP_CHAT_ID: env('TG_BACKUP_CHAT_ID', ''),
+  BACKUP_HEURES: parseFloat(env('BACKUP_HEURES', '24')),
   VOUCHER_TTL_SEC: parseInt(env('VOUCHER_TTL_SEC', '3600'), 10),
 
   // ---- Progressive jackpot ----
@@ -95,6 +111,20 @@ module.exports = {
   JACKPOT_RAKE_PCT: parseFloat(env('JACKPOT_RAKE_PCT', '3')),   // % of each drop → pot
   JACKPOT_ODDS: parseInt(env('JACKPOT_ODDS', '3000000'), 10),   // 1-in-N per drop
   LEADERBOARD_SIZE: parseInt(env('LEADERBOARD_SIZE', '10'), 10),
+
+  /* ---- le prix du classement ----
+   *
+   * Une part du REVENU du mois, partagee entre les dix premiers au volume.
+   * Une part du revenu et non un montant fixe : ainsi le prix ne peut jamais
+   * couter plus que ce que le mois a rapporte — il s'auto-finance par
+   * construction, et un mois creux ne se paie pas au prix d'un mois plein.
+   *
+   * La repartition decroit vite. Un partage plat ne fait courir personne ;
+   * un premier prix qui vaut le tiers de la cagnotte, si.
+   */
+  PRIX_CLASSEMENT_BPS: parseInt(env('PRIX_CLASSEMENT_BPS', '100'), 10),   // 1 % du revenu
+  PRIX_PARTS: env('PRIX_PARTS', '30,20,13,10,8,6,5,4,2.5,1.5')
+    .split(',').map(function (x) { return parseFloat(x.trim()) || 0; }),
 
   // ---- Daily quests ----
   // Anti-Sybil: total rewards (50) < house edge on the wagering required to

@@ -182,7 +182,8 @@ class Game {
                    joueurs: m.joueurs.filter(Boolean) });
     }
     return { v: 1, serverSeed: this.serverSeed, sessionSecret: this.sessionSecret,
-             compta: this._comptaEcrite(),
+             compta: this._comptaEcrite(), tunnel: this.tunnel || {},
+             prixVerses: this.prixVerses || {},
              graines: this.graines || [], graineDepuis: this.graineDepuis || null,
              manchesGraine: this.manchesGraine || 0,
              jackpotPot: this.jackpotPot.toString(),
@@ -204,6 +205,8 @@ class Game {
        un joueur de verifier une manche d'il y a six mois. Les perdre au
        redemarrage reviendrait a retirer la preuve apres l'avoir donnee. */
     if (st.compta) this.compta = st.compta;
+    if (st.tunnel) this.tunnel = st.tunnel;
+    if (st.prixVerses) this.prixVerses = st.prixVerses;
     if (Array.isArray(st.graines)) this.graines = st.graines;
     if (st.graineDepuis) this.graineDepuis = st.graineDepuis;
     if (st.manchesGraine) this.manchesGraine = st.manchesGraine;
@@ -296,7 +299,12 @@ class Game {
        blackjack, une main en consomme une dizaine. */
     p.nonceDebut = p.nonce;
     if (!p.welcomeWagered) p.welcomeWagered = true;
-    if (wei) { p.wagered = (p.wagered || BN(0)).add(wei); p.betCount = (p.betCount || 0) + 1; }
+    if (wei) {
+      /* La PREMIERE mise de sa vie : le dernier passage du tunnel, et celui
+         qui separe un curieux d'un joueur. */
+      if (!(p.betCount > 0) && p.addr) this.noteTunnel('premieresMises', p.addr);
+      p.wagered = (p.wagered || BN(0)).add(wei); p.betCount = (p.betCount || 0) + 1;
+    }
     this._libereCadeau(p);
   }
   /**
@@ -588,6 +596,131 @@ class Game {
         recu: Number((m.joueurs[a].staking + m.joueurs[a].bonus).toFixed(6)),
       })).sort((x, y) => y.resultat - x.resultat),
     };
+  }
+
+  /* ======================================================================
+   * LE TUNNEL — ou les gens s'arretent
+   *
+   * Savoir ce qu'on gagne ne dit pas OU CA COINCE. Quatre chiffres par jour y
+   * repondent : combien ouvrent une page, combien branchent un portefeuille,
+   * combien deposent, combien misent une premiere fois. Les trois passages
+   * entre ces quatre-la designent le probleme — le trafic, la friction du
+   * portefeuille, ou le premier depot — et evitent de depenser son energie au
+   * mauvais endroit.
+   *
+   * Les adresses vues du jour vivent EN MEMOIRE seulement : c'est un
+   * ensemble qui se vide chaque jour, et l'ecrire recreerait exactement le
+   * poids qu'on vient de retirer du fichier.
+   * ====================================================================== */
+  _jour(cle) {
+    if (!this.tunnel) this.tunnel = {};
+    const k = cle || new Date().toISOString().slice(0, 10);
+    if (!this.tunnel[k]) this.tunnel[k] = {
+      pages: 0, connexions: 0, nouveaux: 0, deposants: 0, premieresMises: 0, depose: 0,
+    };
+    return this.tunnel[k];
+  }
+  /** Une adresse ne compte qu'une fois par jour pour un passage donne. */
+  _uneFois(quoi, addr) {
+    const jour = new Date().toISOString().slice(0, 10);
+    if (!this._vus || this._vusJour !== jour) { this._vus = new Set(); this._vusJour = jour; }
+    const cle = quoi + ':' + addr;
+    if (this._vus.has(cle)) return false;
+    this._vus.add(cle);
+    return true;
+  }
+  noteTunnel(quoi, addr, montant) {
+    const j = this._jour();
+    if (addr && !this._uneFois(quoi, String(addr).toLowerCase())) return;
+    j[quoi] = (j[quoi] || 0) + 1;
+    if (montant) j.depose = Number(((j.depose || 0) + Number(montant)).toFixed(6));
+    /* On ne garde pas l'histoire complete : soixante jours suffisent a voir
+       une tendance, et le fichier ne doit pas grossir sans fin. */
+    const cles = Object.keys(this.tunnel).sort();
+    while (cles.length > 60) delete this.tunnel[cles.shift()];
+  }
+
+  /** Le tunnel des derniers jours, avec les taux de passage. */
+  tunnelJours(combien) {
+    const cles = Object.keys(this.tunnel || {}).sort().reverse().slice(0, combien || 14);
+    return cles.map((k) => {
+      const j = this.tunnel[k];
+      const t = (a, b) => (b > 0 ? Number((a / b * 100).toFixed(1)) : null);
+      return Object.assign({ jour: k }, j, {
+        tauxConnexion: t(j.connexions, j.pages),
+        tauxDepot: t(j.deposants, j.connexions),
+        tauxPremiereMise: t(j.premieresMises, j.deposants),
+      });
+    });
+  }
+
+  /* ======================================================================
+   * LE PRIX DU CLASSEMENT
+   *
+   * Une part du revenu du mois, partagee entre les premiers au volume. Une
+   * PART et non un montant fixe : le prix ne peut alors jamais couter plus
+   * que ce que le mois a rapporte. Un mois creux paie peu, un mois plein
+   * paie bien, et la maison ne peut pas se retrouver a distribuer de
+   * l'argent qu'elle n'a pas gagne.
+   * ====================================================================== */
+  cagnotte(cle) {
+    const c = this.comptes(cle);
+    const brut = Math.max(0, c.revenu) * (cfg.PRIX_CLASSEMENT_BPS / 10000);
+    return Number(brut.toFixed(6));
+  }
+
+  /** Qui gagnerait quoi si le mois se terminait maintenant. */
+  prixClassement(cle) {
+    const k = cle || Game.moisCle();
+    const total = this.cagnotte(k);
+    const parts = cfg.PRIX_PARTS;
+    const somme = parts.reduce((a, b) => a + b, 0) || 100;
+    /* Le classement d'un mois PASSE ne se relit pas depuis les compteurs
+       courants (ils ont ete remis a zero) : on le reconstruit depuis le
+       detail garde avec les comptes. */
+    let liste;
+    if (k === Game.moisCle()) {
+      liste = this.classementMois(null, parts.length).top;
+    } else {
+      const m = (this.compta || {})[k] || { joueurs: {} };
+      liste = Object.keys(m.joueurs || {})
+        .map((a) => ({ address: a, mise: m.joueurs[a].mises || 0, name: this._p(a).name }))
+        .sort((x, y) => y.mise - x.mise).slice(0, parts.length)
+        .map((r, i) => Object.assign(r, { rang: i + 1 }));
+    }
+    return {
+      mois: k, cagnotte: total, part: cfg.PRIX_CLASSEMENT_BPS / 100,
+      verse: !!(this.prixVerses && this.prixVerses[k]),
+      gagnants: liste.map((r, i) => ({
+        rang: i + 1, address: r.address, name: r.name, mise: r.mise,
+        prix: Number((total * (parts[i] || 0) / somme).toFixed(6)),
+      })),
+    };
+  }
+
+  /**
+   * Verse le prix d'un mois. UNE SEULE FOIS — un prix paye deux fois est de
+   * l'argent cree, et personne ne s'en plaindrait assez vite pour qu'on le
+   * remarque.
+   */
+  verseClassement(cle) {
+    const k = cle || Game.moisCle();
+    if (!this.prixVerses) this.prixVerses = {};
+    if (this.prixVerses[k]) throw new Error('prize already paid for ' + k);
+    const p = this.prixClassement(k);
+    if (!(p.cagnotte > 0)) throw new Error('nothing to share for ' + k);
+    const payes = [];
+    for (const g of p.gagnants) {
+      if (!(g.prix > 0)) continue;
+      const w = WEI(g.prix.toFixed(6));
+      const q = this._p(g.address);
+      q.balance = q.balance.add(w);
+      journal.ajoute(g.address, { k: 'rf', s: 'classement', m: g.prix.toFixed(6), rang: g.rang, mois: k });
+      payes.push({ rang: g.rang, address: g.address, name: q.name, prix: g.prix });
+    }
+    this.note('bonus', p.cagnotte);
+    this.prixVerses[k] = { t: Date.now(), total: p.cagnotte, n: payes.length };
+    return { mois: k, total: p.cagnotte, gagnants: payes };
   }
 
   /** Les mois dont on a une trace, du plus recent au plus ancien. */
@@ -1370,6 +1503,7 @@ class Game {
        chaine. L'adresse de depart est la sienne — le coffre credite celui qui
        a envoye — mais l'ecrire noir sur blanc evite d'avoir a le supposer. */
     this.note('depots', ethers.utils.formatUnits(amount, cfg.DECIMALS));
+    this.noteTunnel('deposants', player, ethers.utils.formatUnits(amount, cfg.DECIMALS));
     journal.ajouteSync(player, { k: 'dep', m: ethers.utils.formatUnits(amount, cfg.DECIMALS),
                                  tx, from: String(player).toLowerCase() });
 

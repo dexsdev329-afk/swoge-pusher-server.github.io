@@ -43,4 +43,38 @@ function notifyPhoto(photo, caption) {
   }).catch(() => {});
 }
 
-module.exports = { notify, notifyPhoto, enabled };
+/**
+ * Envoie un FICHIER. C'est ce qui permet a une sauvegarde de quitter la
+ * machine sans aucune infrastructure : le canal prive du proprietaire devient
+ * l'endroit ou vivent les copies, horodatees et telechargeables depuis un
+ * telephone.
+ *
+ * ---- pourquoi une adresse de canal separee ----
+ *
+ * L'etat porte les adresses et les soldes de tous les joueurs. Il n'a rien a
+ * faire dans le canal public des annonces de gains. Sans TG_BACKUP_CHAT_ID,
+ * on n'envoie RIEN plutot que de risquer une fuite : une sauvegarde publiee
+ * par erreur ne se rattrape pas.
+ *
+ * @returns {Promise<boolean>} vrai si Telegram l'a accepte
+ */
+async function sendDocument(buffer, nom, legende, chatId) {
+  const cible = chatId || cfg.TG_BACKUP_CHAT_ID;
+  if (!cfg.TG_BOT_TOKEN || !cible) {
+    console.warn('[tg] document non envoye : TG_BOT_TOKEN ou TG_BACKUP_CHAT_ID manquant');
+    return false;
+  }
+  try {
+    const form = new FormData();
+    form.append('chat_id', String(cible));
+    if (legende) { form.append('caption', legende); form.append('parse_mode', 'HTML'); }
+    form.append('document', new Blob([buffer], { type: 'application/gzip' }), nom);
+    const res = await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/sendDocument`,
+                            { method: 'POST', body: form });
+    const j = await res.json().catch(() => ({}));
+    if (!j.ok) { console.warn(`[tg] document refuse : ${j.error_code} ${j.description}`); return false; }
+    return true;
+  } catch (e) { console.warn('[tg] document echoue :', e.message); return false; }
+}
+
+module.exports = { notify, notifyPhoto, sendDocument, enabled };
