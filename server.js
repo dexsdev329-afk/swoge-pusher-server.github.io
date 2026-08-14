@@ -24,6 +24,7 @@ const fs = require('fs');
 const zlib = require('zlib');
 const tg = require('./telegram');
 const sante = require('./sante');
+const profilpage = require('./profilpage');
 const admin = require('./admin');
 const session = require('./session');
 const journal = require('./journal');
@@ -578,6 +579,33 @@ const server = http.createServer(async (req, res) => {
                                       'cache-control': 'no-store' });
     return res.end(JSON.stringify(e, null, 2));
   }
+  /* ------------------------------------------------- la page publique d'un joueur
+   *
+   * `/j/<nom>` — l'adresse qu'un joueur partage. Elle est rendue ICI et non
+   * sur le site parce que Telegram, X et Discord lisent la page eux-memes
+   * sans executer aucun JavaScript : sans balises `og:` dans le document
+   * renvoye, le lien colle reste nu, et un lien nu ne se propage pas.
+   *
+   * Publique et sans cle : c'est le principe. Elle ne porte que ce qui est
+   * deja dehors — nom, niveau, grosses victoires deja annoncees au canal —
+   * et jamais un solde. */
+  if (path.startsWith('/j/')) {
+    const nom = decodeURIComponent(path.slice(3)).trim();
+    const addr = game.parNom(nom);
+    const vue = addr ? game.profilPage(addr) : null;
+    res.writeHead(vue ? 200 : 404, { 'content-type': 'text/html; charset=utf-8',
+                                     'cache-control': 'public, max-age=60' });
+    return res.end(vue ? profilpage.rend(vue) : profilpage.absent(nom));
+  }
+  /* Les memes donnees en JSON, pour qui veut les afficher autrement. */
+  if (path.startsWith('/api/j/')) {
+    const nom = decodeURIComponent(path.slice(7)).trim();
+    const addr = game.parNom(nom);
+    res.writeHead(addr ? 200 : 404, { 'content-type': 'application/json; charset=utf-8',
+                                      'access-control-allow-origin': '*' });
+    return res.end(JSON.stringify(addr ? game.profilPage(addr) : { error: 'no such player' }));
+  }
+
   /* ------------------------------------------------------- la preuve d'equite
    *
    * PUBLIQUE, et elle doit l'etre : une preuve derriere une cle n'est pas une

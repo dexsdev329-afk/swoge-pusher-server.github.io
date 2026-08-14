@@ -162,7 +162,7 @@ class Game {
         np: !!p.nomPaye,
         dn: p.dayNet.toString(), dk: p.dayKey,
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
-        mij: p.miseJour || {},
+        mij: p.miseJour || {}, fac: p.face || {},
         vi: p.visage || null, am: p.amis || [], ph: !!p.photo,
         dm: p.demandes || [], en: p.envoyees || [],
         pa: p.parrain || null, fi: p.filleuls || [],
@@ -301,6 +301,7 @@ class Game {
         dayNet: ethers.BigNumber.from(d.dn || '0'), dayKey: d.dk || null,
         dropsToday: d.dt || 0, winsToday: d.wt || 0, questClaimed: d.qc || {}, hasDeposited: !!d.hd,
         miseJour: (d.mij && typeof d.mij === 'object') ? d.mij : {},
+        face: (d.fac && typeof d.fac === 'object') ? d.fac : {},
         visage: d.vi || null, amis: Array.isArray(d.am) ? d.am : [], photo: !!d.ph,
         demandes: Array.isArray(d.dm) ? d.dm : [], envoyees: Array.isArray(d.en) ? d.en : [],
         parrain: d.pa || null, filleuls: Array.isArray(d.fi) ? d.fi : [],
@@ -1765,7 +1766,7 @@ class Game {
             moisCle: null, moisMise: 0,
             refBienvenue: false,
             dayNet: ethers.BigNumber.from(0), dayKey: null,
-            dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false, miseJour: {},
+            dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false, miseJour: {}, face: {},
             stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0,
             wagered: ethers.BigNumber.from(0), betCount: 0,
             tgId: null, welcomeGranted: false, welcomeWagered: false, welcomeClaimed: false,
@@ -1924,10 +1925,89 @@ class Game {
        duels, dans la liste d'amis, au classement et aux tables, sans qu'aucun
        de ces endroits ait a le demander. */
     const n = this.niveau(addr);
-    return { address: String(addr).toLowerCase(), name: p.name,
+    /* `nomChoisi` dit si le nom est une IDENTITE ou juste le debut d'une
+       adresse. C'est la meme distinction qui decide si une page publique
+       existe : sans nom choisi, il n'y a rien a partager. */
+    return { address: String(addr).toLowerCase(), name: p.name, nomChoisi: !!p.nomChoisi,
              visage: p.visage || null, photo: !!p.photo,
              niveau: n.niveau, palier: n.palier, palierNo: n.palierNo };
   }
+  /**
+   * Ce qu'on montre sur une page de profil PUBLIQUE.
+   *
+   * Construit par ADDITION, jamais en filtrant `stats()`. La difference n'est
+   * pas de style : filtrer, c'est publier par defaut et retirer ensuite — le
+   * jour ou quelqu'un ajoute un champ a `stats()`, il se retrouve en ligne
+   * sans que personne l'ait decide. Ici, ce qui n'est pas ecrit ci-dessous
+   * n'existe pas.
+   *
+   * Ce qui n'y sera jamais : le solde, le total depose, le gain net, les
+   * revenus de parrainage. Le solde de quelqu'un ne regarde personne, et
+   * afficher combien il a depose designe une cible.
+   *
+   * Ce qui y est : ce que le canal Telegram annonce deja publiquement — le
+   * nom, le niveau, les grosses victoires — plus ce qui se lit deja aux
+   * tables : contre qui on joue, et comment ca tourne.
+   */
+  profilPage(addr) {
+    const a = String(addr).toLowerCase();
+    const p = this.players.get(a);
+    if (!p) return null;
+    const pub = this.profilPublic(a);
+    const n = this.niveau(a);
+    const jeux = p.jeux || {};
+
+    let manches = 0;
+    const parJeu = [];
+    for (const k of Object.keys(jeux)) {
+      const j = jeux[k];
+      manches += j.n || 0;
+      parJeu.push({ jeu: k, n: j.n || 0, gagne: j.gagne || 0 });
+    }
+    parJeu.sort((x, y) => y.n - x.n);
+
+    /* Les rivalites : ceux qu'on a le plus croises. Un adversaire rencontre
+       une fois n'est pas une rivalite, c'est une rencontre. */
+    const face = [];
+    for (const [adv, c] of Object.entries(p.face || {})) {
+      const total = (c.v || 0) + (c.d || 0) + (c.n || 0);
+      if (total < 2) continue;
+      const q = this.players.get(adv);
+      face.push({ adresse: adv, nom: q ? q.name : adv.slice(0, 6),
+                  niveau: q ? this.niveau(adv).niveau : 0,
+                  v: c.v || 0, d: c.d || 0, n: c.n || 0, total });
+    }
+    face.sort((x, y) => y.total - x.total);
+
+    return {
+      adresse: a, nom: pub.name, visage: pub.visage, photo: pub.photo,
+      niveau: pub.niveau, palier: pub.palier, palierNo: pub.palierNo,
+      volume: n.volume, seuil: n.seuil, prochain: n.prochain,
+      manches,
+      favoris: parJeu.filter((x) => x.n > 0).slice(0, 3),
+      /* La plus grosse victoire est deja annoncee dans le canal au moment ou
+         elle tombe : la republier ici n'apprend rien de nouveau a personne. */
+      record: p.record ? { gain: p.record.g, multi: p.record.x, jeu: p.record.j, quand: p.record.t } : null,
+      duels: {
+        joues: face.reduce((t, x) => t + x.total, 0),
+        gagnes: face.reduce((t, x) => t + x.v, 0),
+        rivaux: face.slice(0, 5),
+      },
+      amis: (p.amis || []).length,
+      depuis: journal.resume(a).depuis || null,
+    };
+  }
+
+  /** Trouve un joueur par son NOM public, pour les adresses partageables. */
+  parNom(nom) {
+    const q = String(nom || '').trim().toLowerCase();
+    if (!q) return null;
+    if (/^0x[0-9a-f]{40}$/.test(q)) return this.players.has(q) ? q : null;
+    for (const [a, p] of this.players)
+      if (p.nomChoisi && String(p.name || '').toLowerCase() === q) return a;
+    return null;
+  }
+
   /**
    * Graine du joueur. Le DEUX-POINTS est interdit, et ce n'est pas cosmetique.
    *
@@ -2779,6 +2859,7 @@ class Game {
         this._duelCredite(a, r.rendu);
         this._manche(this._p(a), jeu, partie.mise, r.rendu);
       }
+      this._faceAFace(partie.joueurs[0], partie.joueurs[1], 'n');
     } else {
       const gagnant = partie.adresseGagnante();
       const perdant = partie.joueurs[partie.gagnant === 1 ? 1 : 0];
@@ -2787,8 +2868,32 @@ class Game {
       this._bumpDay(pg); pg.winsToday++;
       this._manche(pg, jeu, partie.mise, r.gain);
       if (perdant) this._manche(this._p(perdant), jeu, partie.mise, 0);
+      this._faceAFace(gagnant, perdant, 'v');
     }
     return r;
+  }
+
+  /**
+   * Le face-a-face : qui a battu qui, et combien de fois.
+   *
+   * Sans ce compteur, « rivalites » ne veut rien dire — on saurait qu'un
+   * joueur a gagne quarante duels, jamais CONTRE QUI. Or c'est la seule
+   * statistique qui donne envie de reprendre une partie, et la seule qui
+   * fasse d'un adversaire quelqu'un plutot qu'une couleur.
+   *
+   * On le tient au reglement, le seul endroit traverse par toutes les fins de
+   * partie — victoire, nulle et abandon compris.
+   */
+  _faceAFace(gagnant, perdant, issue) {
+    if (!gagnant || !perdant || gagnant === perdant) return;
+    const pose = (a, b, k) => {
+      const p = this._p(a);
+      if (!p.face) p.face = {};
+      const c = p.face[String(b).toLowerCase()] || (p.face[String(b).toLowerCase()] = { v: 0, d: 0, n: 0 });
+      c[k]++;
+    };
+    if (issue === 'n') { pose(gagnant, perdant, 'n'); pose(perdant, gagnant, 'n'); }
+    else { pose(gagnant, perdant, 'v'); pose(perdant, gagnant, 'd'); }
   }
 
   /** Rend les mises : une table qu'on ferme sans avoir joue ne coute rien. */
