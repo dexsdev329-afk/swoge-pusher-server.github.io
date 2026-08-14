@@ -132,6 +132,10 @@ function charge(ws, rec, extra) {
     casino: game.casinoState(rec), hilo: game.hiloState(rec), mines: game.minesState(rec),
     casinoPay: require('./casino').PAY,
     casinoMin: cfg.CASINO_MIN_BET, casinoMax: cfg.CASINO_MAX_BET,
+    /* Les bornes du blackjack partent AVEC l'etat, comme celles du casino. La
+       page les cadenassait en dur a quatre endroits : changer la limite
+       demandait deux depots au lieu d'une variable. */
+    bjMin: cfg.BJ_MIN_BET, bjMax: cfg.BJ_MAX_BET,
     hiloEdgeBps: cfg.HILO_EDGE_BPS,
     minesEdgeBps: cfg.MINES_EDGE_BPS, minesDefaut: cfg.MINES_DEFAUT,
     minesChoix: cfg.MINES_CHOIX, minesBareme: game.minesBareme(),
@@ -359,19 +363,81 @@ function rate(req, ok) {
   else { e.n++; if (e.n === ESSAIS_MAX) console.warn(`[secu] ${ip} bloque apres ${ESSAIS_MAX} cles admin refusees`); }
 }
 
+/**
+ * POURQUOI la cle n'est pas vue.
+ *
+ * « Posez ADMIN_KEY sur le serveur » est un message inutile quand on VIENT de
+ * la poser : il ne distingue pas les trois causes reelles, et elles n'appellent
+ * pas du tout la meme action.
+ *
+ *   1. la variable existe chez l'hebergeur mais le process a demarre AVANT
+ *      qu'elle soit posee — il faut redeployer, pas re-saisir ;
+ *   2. le NOM est approchant — « admin_key », « ADMIN KEY », un espace de fin
+ *      colle au collage. Le process ne le trouvera jamais ;
+ *   3. la valeur est vide ou n'est que des espaces.
+ *
+ * On ne rend AUCUNE valeur : seulement des noms qui, une fois normalises,
+ * valent ADMINKEY, et l'heure de demarrage du process.
+ */
+/* Les noms de variables viennent de l'environnement. C'est l'operateur qui les
+   pose, donc le risque est mince — mais on les recrache dans une page HTML, et
+   « mince » n'est pas une raison de ne pas echapper. */
+function ech(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function diagnosticCle() {
+  const norme = (s) => String(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const proches = Object.keys(process.env).filter((k) => norme(k) === 'ADMINKEY' && k !== 'ADMIN_KEY');
+  const brut = process.env.ADMIN_KEY;
+  const minutes = Math.round(process.uptime() / 60);
+  const d = { proches, minutes, demarre: new Date(Date.now() - process.uptime() * 1000).toISOString() };
+  if (proches.length) {
+    d.cause = 'name';
+    d.message = 'This process sees a variable named ' + proches.map((k) => JSON.stringify(k)).join(', ') +
+      ' but none named exactly ADMIN_KEY. The name must match exactly — check for a lowercase letter, ' +
+      'a space, or a trailing character pasted with it.';
+  } else if (brut !== undefined) {
+    d.cause = 'empty';
+    d.message = 'ADMIN_KEY exists but is empty or only whitespace.';
+  } else {
+    d.cause = 'restart';
+    d.message = 'This process has no ADMIN_KEY at all. It started ' + minutes + ' minute(s) ago, at ' +
+      d.demarre + '. If you added the variable after that, the service has to be redeployed or ' +
+      'restarted — environment variables are read once, when the process boots.';
+  }
+  return d;
+}
+
 /** La reponse a un acces refuse. Elle distingue les deux cas, parce qu'ils
  *  n'appellent pas la meme action : configurer une cle, ou en donner une. */
 function refuse(req, res, html) {
   const type = html ? 'text/html' : 'application/json';
   if (!cfg.TG_BACKUP_CHAT_ID && !cfg.TG_CHAT_ID)
-  console.warn('[secu] aucun canal Telegram : AUCUNE sauvegarde ne quitte cette machine.\n' +
-               '       state.json et son .bak sont sur le meme volume — si ce volume disparait,\n' +
-               '       tous les soldes disparaissent avec lui.');
-if (!cfg.ADMIN_KEY) {
+    console.warn('[secu] aucun canal Telegram : AUCUNE sauvegarde ne quitte cette machine.\n' +
+                 '       state.json et son .bak sont sur le meme volume — si ce volume disparait,\n' +
+                 '       tous les soldes disparaissent avec lui.');
+  if (!cfg.ADMIN_KEY) {
+    const d = diagnosticCle();
+    console.warn('[secu] acces admin refuse — ' + d.cause + ' : ' + d.message);
     res.writeHead(503, { 'content-type': type });
     return res.end(html
-      ? '<h3>503 — this dashboard is closed</h3><p>Set ADMIN_KEY on the server to open it.</p>'
-      : JSON.stringify({ error: 'ADMIN_KEY is not configured on the server' }));
+      ? '<!doctype html><meta charset="utf-8"><title>Dashboard closed</title>' +
+        '<style>body{margin:0;background:#070B14;color:#EAF2FF;font:15px/1.6 ui-monospace,Menlo,Consolas,monospace;' +
+        'display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}' +
+        'main{max-width:620px}h3{color:#FFC53D;font-size:17px;margin:0 0 14px;letter-spacing:.5px}' +
+        'p{color:#C3CEE2;margin:0 0 12px}b{color:#EAF2FF}code{background:#111726;border:1px solid #232C42;' +
+        'padding:1px 6px;border-radius:4px;color:#FFD97A}small{color:#8494B4}</style>' +
+        '<main><h3>503 — this dashboard is closed</h3>' +
+        '<p>' + ech(d.message) + '</p>' +
+        (d.cause === 'restart'
+          ? '<p><b>On Railway:</b> add the variable, then <b>Deploy</b> (or restart the service). ' +
+            'Saving a variable alone does not reach a process that is already running.</p>'
+          : '') +
+        '<p><small>Process started ' + ech(d.demarre) + ' · ' + d.minutes + ' min ago. ' +
+        'No value is shown on this page, ever.</small></p></main>'
+      : JSON.stringify({ error: 'ADMIN_KEY is not configured on the server', ...d }, null, 2));
   }
   rate(req, false);
   res.writeHead(401, { 'content-type': type });

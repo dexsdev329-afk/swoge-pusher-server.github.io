@@ -284,7 +284,7 @@ module.exports = {
   SMASH_MAX_BET: parseInt(env('SMASH_MAX_BET', '1000'), 10),
 
   // ---- SWOGE Blackjack ----
-  BJ_MAX_BET: parseInt(env('BJ_MAX_BET', '10000'), 10),  // max $SWOGE per hand
+  BJ_MAX_BET: parseInt(env('BJ_MAX_BET', '100000'), 10),  // max $SWOGE per hand
   BJ_MIN_BET: parseInt(env('BJ_MIN_BET', '1'), 10),
 
   // ---- SWOGE Casino (jeux contre la banque) ----
