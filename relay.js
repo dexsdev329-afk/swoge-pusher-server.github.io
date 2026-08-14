@@ -48,32 +48,48 @@ const NATIF = '0x0000000000000000000000000000000000000000';
    d'entrer ici — une route qui n'existe pas ferait un bouton qui echoue.
    Le TRX natif n'en a pas ; l'USDT sur TRON, si, et c'est ce que detiennent
    la plupart des porteurs TRON. */
-/* `remboursement` : l'adresse ou revient l'argent si le pont ne peut pas
-   livrer. Elle DOIT etre valide sur la chaine de depart, et c'est ce qui
-   manquait — sans elle, Relay se rabat sur `user` comme adresse de repli, la
-   valide contre la chaine d'origine, et refuse : « Invalid address 0x2ee6… for
-   chain 792703809 ». Ca ne se voyait que sur les chaines NON-EVM : depuis
-   Ethereum et Base l'adresse du joueur est valide des deux cotes, donc ces
-   deux-la marchaient et cachaient le defaut.
+/* `repere` : l'adresse de la MONNAIE NATIVE de la chaine de depart.
  *
-   La valeur a poser est l'adresse de la MONNAIE NATIVE de la chaine de
-   depart — le repere que Relay reconnait pour « rends-le a celui qui a
-   envoye ». Pour TRON c'est celle du TRX, meme si l'on envoie de l'USDT : ce
-   n'est pas le jeton envoye, c'est la chaine qui compte. */
+ * ---- ce qu'elle repare, et ce que ca a coute de le savoir ----
+ *
+ * En production, le pont marchait depuis Ethereum et Base et echouait depuis
+ * Solana et TRON : « Invalid address 0x2ee6… for chain 792703809 » — le refus
+ * parlait de l'adresse du JOUEUR, valide, jugee contre la chaine de DEPART.
+ *
+ * La regle, etablie par quatre appels a l'API et non par lecture de la
+ * documentation, qui dit le contraire :
+ *
+ *   1. `user` est OBLIGATOIRE — sans lui : « body must have required property
+ *      'user' ». L'omettre n'est donc pas une option ;
+ *   2. `user` est valide contre la chaine d'ORIGINE, alors que la
+ *      documentation le decrit comme « le portefeuille destinataire sur la
+ *      chaine de destination » ;
+ *   3. `refundTo` n'y change rien : le refus tombe pareil.
+ *
+ * Ce qui marche : `user` = une adresse valide sur la chaine de depart, et
+ * `recipient` = le joueur. Comme personne n'a de portefeuille connecte du cote
+ * depart — c'est tout l'interet d'une adresse de depot — on y met le repere de
+ * la monnaie native, que la documentation autorise explicitement (« n'importe
+ * quelle adresse valide, y compris l'adresse nulle »). Verifie : Relay rend
+ * bien le joueur comme destinataire.
+ *
+ * Pour TRON c'est le repere du TRX, meme si l'on envoie de l'USDT : c'est la
+ * chaine qui decide, pas le jeton. */
+/* Le bitcoin N'EST PAS dans cette liste, et c'est mesure : aucune route vers
+   Robinhood Chain, a aucun montant — 0,002, 0,01, 0,05 et 0,2 BTC essayes, tous
+   refuses par « no routes found ». Un bouton qui echoue toujours est pire que
+   pas de bouton : le joueur croit que c'est lui qui s'y prend mal. */
 const DEPUIS = {
   sol:  { chaine: 792703809, jeton: '11111111111111111111111111111111',
-          remboursement: '11111111111111111111111111111111',
+          repere: '11111111111111111111111111111111',
           symbole: 'SOL', decimales: 9, min: 0.01, max: 1000 },
-  eth:  { chaine: 1,         jeton: NATIF, remboursement: NATIF,
+  eth:  { chaine: 1,         jeton: NATIF, repere: NATIF,
           symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
-  base: { chaine: 8453,      jeton: NATIF, remboursement: NATIF,
+  base: { chaine: 8453,      jeton: NATIF, repere: NATIF,
           symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
   tron: { chaine: 728126428, jeton: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
-          remboursement: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',   // le TRX, pas l USDT
+          repere: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',          // le TRX, pas l USDT
           symbole: 'USDT', decimales: 6, min: 1, max: 100000 },
-  btc:  { chaine: 8253038,   jeton: 'bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmql8k8',
-          remboursement: 'bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmql8k8',
-          symbole: 'BTC', decimales: 8, min: 0.0001, max: 10 },
 };
 
 const actif = () => !!cfg.RELAY_API_KEY;
@@ -132,40 +148,20 @@ async function adresseDepot(cle, vers, montant) {
   const brut = enUnites(montant, d.decimales);
   if (brut === null) { const e = new Error('bad amount'); e.statut = 400; throw e; }
 
-  const commun = {
+  const j = await appelle('/quote/v2', {
     useDepositAddress: true,
+    /* `user` porte le repere de la chaine de DEPART, `recipient` le joueur.
+       Voir le commentaire de DEPUIS : c'est l'inverse de ce que la
+       documentation laisse croire, et c'est ce que l'API accepte. */
+    user: d.repere,
     recipient: vers,
+    refundTo: d.repere,
     originChainId: d.chaine, originCurrency: d.jeton,
     /* La destination n'est PAS negociable : de l'ETH natif sur Robinhood
        Chain, chez le joueur. C'est ce que le panneau sait acheter ensuite. */
     destinationChainId: RH, destinationCurrency: NATIF,
     amount: brut, tradeType: 'EXACT_INPUT',
-    /* Voir le commentaire de DEPUIS. */
-    refundTo: d.remboursement,
-  };
-
-  /* DEUX LECTURES DU MEME CHAMP, essayees dans l'ordre.
-   *
-   * La documentation dit de `user` : « le portefeuille destinataire sur la
-   * chaine de DESTINATION, n'importe quelle adresse valide ». L'API, elle, l'a
-   * refuse contre la chaine d'ORIGINE — « Invalid address 0x2ee6… for chain
-   * 792703809 ». Les deux ne peuvent pas etre vrais en meme temps, et on ne
-   * peut pas trancher sans cle.
-   *
-   * Plutot que de parier, on essaie : d'abord avec `user`, puisque c'est ce
-   * que la documentation demande ; si le refus porte exactement sur la
-   * validite d'une adresse pour une chaine, on refait sans. Un aller-retour de
-   * plus dans ce seul cas, et le journal dit laquelle des deux lectures est la
-   * bonne — de quoi supprimer l'autre le jour ou on le saura. */
-  let j;
-  try {
-    j = await appelle('/quote/v2', Object.assign({ user: vers }, commun));
-  } catch (e) {
-    if (!/invalid address .* for chain/i.test(String(e.message || ''))) throw e;
-    console.log(`[relay] ${cle} : « ${e.message} » — deuxieme essai sans « user »`);
-    j = await appelle('/quote/v2', commun);
-    console.log(`[relay] ${cle} : sans « user », ca passe`);
-  }
+  });
 
   const etape = (j.steps || []).find((s) => s.depositAddress) || {};
   const adresse = etape.depositAddress;
