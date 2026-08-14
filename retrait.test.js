@@ -239,9 +239,40 @@ require('./journal').draine(() => {
     pres(sol(g, D) - avant, 12602.62, 'le solde remonte d autant');
     eq(g.verifieDepots(D).ecart, 0, 'et les deux fichiers se rejoignent');
 
-    /* On ne peut rien CREER avec : une deuxieme reparation ne rend rien. */
+    /* ---- ON NE PEUT RIEN CREER AVEC ----
+       Le piege : la reparation ecrit une ligne au journal pour que le joueur
+       voie la correction. Si cette ligne comptait dans le total, le journal
+       repasserait en avance sur l etat qu'on vient d'aligner, et la
+       reparation suivante recrediterait la meme somme. Une boucle qui cree de
+       l'argent a chaque tour. */
     jete(() => g.repareDepots(D), /nothing to repair/,
-         'reparer deux fois : refuse — le montant est plafonne par l ecart');
+         'reparer deux fois : refuse — la ligne de reparation ne se compte pas');
+    const apres = g.verifieDepots(D);
+    eq(apres.ecart, 0, 'et l ecart reste a zero, reparation comprise');
+    ok(apres.depots.some((x) => x.tx === 'repair'),
+       'la correction figure quand meme dans l historique du joueur');
+
+    /* ---- l ecart NEGATIF n est pas une panne ----
+       Le journal est plus jeune que les comptes : un depot fait avant sa mise
+       en service est dans l etat et pas dans le journal. Confondre les deux
+       sens, c est « reparer » un solde qui n a rien perdu — donc creer de
+       l argent. */
+    g._p(D).deposited = g._p(D).deposited.add(WEI(5000000));
+    const vieux = g.verifieDepots(D);
+    pres(vieux.ecart, -5000000, 'un depot anterieur au journal donne un ecart NEGATIF');
+    ok(/normal/.test(vieux.diagnostic), 'et le diagnostic le dit : ' + vieux.diagnostic);
+    jete(() => g.repareDepots(D), /nothing to repair/,
+         'et surtout : on ne repare RIEN dans ce sens-la');
+
+    /* ---- ou est passe l argent ----
+       « J ai depose et je ne le vois plus » a deux reponses : le credit s est
+       perdu, ou il a ete joue. Il faut les deux, sinon on repare un solde qui
+       n avait rien perdu. */
+    const mv = g.mouvements(D);
+    pres(mv.depots, 50000, 'les vrais depots sont totalises');
+    pres(mv.reparations, 12602.62, 'et la correction est comptee a part');
+    eq(mv.manches, 0, 'ce joueur n a jamais joue');
+    eq(mv.resultatDesJeux, 0, 'donc son resultat de jeu est nul');
   }
 
   fs.rmSync(bac, { recursive: true, force: true });

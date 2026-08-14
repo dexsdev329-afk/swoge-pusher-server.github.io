@@ -1062,8 +1062,8 @@ class Game {
        virement, et c'est le hash qui permet d'aller le regarder sur la
        chaine. L'adresse de depart est la sienne — le coffre credite celui qui
        a envoye — mais l'ecrire noir sur blanc evite d'avoir a le supposer. */
-    journal.ajoute(player, { k: 'dep', m: ethers.utils.formatUnits(amount, cfg.DECIMALS),
-                             tx, from: String(player).toLowerCase() });
+    journal.ajouteSync(player, { k: 'dep', m: ethers.utils.formatUnits(amount, cfg.DECIMALS),
+                                 tx, from: String(player).toLowerCase() });
 
     /* Le cadeau du filleul, verse a son PREMIER depot reel et une seule fois.
        Personne ne partage un lien qui ne donne rien a l'ami ; et l'attacher
@@ -2159,19 +2159,74 @@ class Game {
     let curseur = null, lignes = [], somme = 0, tours = 0;
     for (;;) {
       const r = journal.lit(a, { genre: 'dep', curseur, limite: 200 });
-      for (const e of r.evenements) { somme += Number(e.m) || 0; lignes.push({ t: e.t, m: e.m, tx: e.tx }); }
+      for (const e of r.evenements) {
+        /* LA LIGNE DE REPARATION NE COMPTE PAS. Elle est ecrite au journal
+           pour que le joueur voie la correction dans son historique — mais
+           l'inclure dans le total remettrait le journal en avance sur l'etat
+           qu'on vient d'aligner, et la reparation suivante recrediterait la
+           meme somme. Une boucle qui cree de l'argent a chaque tour. */
+        if (e.tx === 'repair') { lignes.push({ t: e.t, m: e.m, tx: 'repair' }); continue; }
+        somme += Number(e.m) || 0;
+        lignes.push({ t: e.t, m: e.m, tx: e.tx });
+      }
       if (!r.encore || r.curseur === null || ++tours > 40) break;
       curseur = r.curseur;
     }
     const compte = Number(ethers.utils.formatUnits(p.deposited || BN(0), cfg.DECIMALS));
+    const ecart = Number((somme - compte).toFixed(6));
     return {
       address: a,
       journal: Number(somme.toFixed(6)),
       etat: compte,
-      ecart: Number((somme - compte).toFixed(6)),
+      ecart,
+      /* Un ecart NEGATIF n'est pas une panne : le journal est plus jeune que
+         les comptes. Un depot fait avant sa mise en service est dans l'etat
+         et pas dans le journal, et c'est exactement ce que ca donne. Seul un
+         ecart POSITIF signale un credit perdu — le journal ne peut pas
+         inventer une ligne. */
+      diagnostic: ecart > 0.000001
+        ? 'CREDIT PERDU : le journal prouve ' + ecart + ' $SWOGE que l etat n a pas'
+        : ecart < -0.000001
+          ? 'normal : ' + (-ecart) + ' $SWOGE deposes avant la mise en service du journal'
+          : 'les deux fichiers disent la meme chose',
       solde: this.balanceStr(a),
+      mouvements: this.mouvements(a),
       depots: lignes.slice(0, 20),
     };
+  }
+
+  /**
+   * Ou est passe l'argent, par grande categorie.
+   *
+   * « J'ai depose et je ne le vois plus » a deux reponses possibles : le
+   * credit s'est perdu, ou il a ete joue. La premiere se lit dans l'ecart
+   * ci-dessus ; la seconde se lit ici, et il faut les deux — sinon on repare
+   * un solde qui n'avait rien perdu, et on cree de l'argent.
+   */
+  mouvements(addr) {
+    const a = String(addr).toLowerCase();
+    journal.videSync();
+    const t = { depots: 0, reparations: 0, retraits: 0, mise: 0, rendu: 0, recu: 0, envoye: 0,
+                stake: 0, stakeClaim: 0, parrainage: 0, manches: 0, lignes: 0 };
+    let curseur = null, tours = 0;
+    for (;;) {
+      const r = journal.lit(a, { curseur, limite: 200 });
+      for (const e of r.evenements) {
+        t.lignes++;
+        const m = Number(e.m) || 0;
+        if (e.k === 'dep') { if (e.tx === 'repair') t.reparations += m; else t.depots += m; }
+        else if (e.k === 'wd') t.retraits += m;
+        else if (e.k === 'r') { t.manches++; t.mise += Number(e.m) || 0; t.rendu += Number(e.p) || 0; }
+        else if (e.k === 'tr') { if (e.sens === 'in') t.recu += m; else t.envoye += m; }
+        else if (e.k === 'st') { if (e.s === 'claim') t.stakeClaim += m; else if (e.s === 'stake') t.stake += m; }
+        else if (e.k === 'rf') t.parrainage += m;
+      }
+      if (!r.encore || r.curseur === null || ++tours > 60) break;
+      curseur = r.curseur;
+    }
+    for (const k of Object.keys(t)) t[k] = Number(t[k].toFixed(6));
+    t.resultatDesJeux = Number((t.rendu - t.mise).toFixed(6));
+    return t;
   }
 
   /**
@@ -2188,8 +2243,8 @@ class Game {
     p.balance = p.balance.add(w);
     p.deposited = (p.deposited || BN(0)).add(w);
     p.hasDeposited = true;
-    journal.ajoute(a, { k: 'dep', m: v.ecart.toFixed(6), tx: 'repair',
-                        from: a, note: 'lost credit restored' });
+    journal.ajouteSync(a, { k: 'dep', m: v.ecart.toFixed(6), tx: 'repair',
+                            from: a, note: 'lost credit restored' });
     return { ...this.verifieDepots(a), rendu: v.ecart };
   }
 
