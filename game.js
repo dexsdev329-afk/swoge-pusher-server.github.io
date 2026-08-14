@@ -160,6 +160,11 @@ class Game {
         sct: (p.stakeClaimTotal || BN(0)).toString(), tnl: p.trNonLus || 0,
         stk: p.stakes.map((x) => [x.a.toString(), x.s, x.u]), sa: p.stakeAccrued.toString(),
         tw: (p.wagered || ethers.BigNumber.from(0)).toString(), bc: p.betCount || 0,
+        /* Le niveau ACQUIS. Sans lui au fichier, la marque se reperdrait a
+           chaque redemarrage et serait recalculee sur la courbe du moment —
+           donc le durcissement retrograderait tout le monde au premier
+           deploiement suivant. */
+        nx: p.nivMax || 0,
         dp: (p.deposited || ethers.BigNumber.from(0)).toString(), jx: p.jeux || {},
         bj: p.bj || null, vm: p.volcanoMeter || 0,
         tg: p.tgId || null,
@@ -281,6 +286,12 @@ class Game {
               : []),
         stakeAccrued: ethers.BigNumber.from(d.sa || '0'),
         wagered: ethers.BigNumber.from(d.tw || '0'), betCount: d.bc || 0,
+        /* Fiche relue du disque, donc anterieure au durcissement : si elle ne
+           porte pas encore de niveau acquis, on le retrouve avec la courbe qui
+           etait en vigueur. C'est la SEULE occasion ou l'ancienne courbe sert,
+           et elle ne sert qu'une fois par joueur. */
+        nivMax: d.nx !== undefined ? d.nx
+          : Game._niveauHerite(ethers.BigNumber.from(d.tw || '0')),
         deposited: ethers.BigNumber.from(d.dp || '0'), jeux: d.jx || {},
         bj: d.bj || null, volcanoMeter: d.vm || 0,
         tgId: d.tg || null,
@@ -331,13 +342,17 @@ class Game {
       /* La PREMIERE mise de sa vie : le dernier passage du tunnel, et celui
          qui separe un curieux d'un joueur. */
       if (!(p.betCount > 0) && p.addr) this.noteTunnel('premieresMises', p.addr);
-      const avant = Game.niveauDe(Number(ethers.utils.formatUnits(p.wagered || BN(0), cfg.DECIMALS)));
+      /* On compare des niveaux ACQUIS, pas des niveaux calcules. Un joueur
+         fige au-dessus de la courbe — parce qu'il avait deja atteint son
+         niveau avant qu'elle soit durcie — verrait sinon defiler des montees
+         de niveau pour des paliers qu'il a depuis longtemps depasses. */
+      const avant = this._niveauAcquis(p, Game.niveauDe(Number(ethers.utils.formatUnits(p.wagered || BN(0), cfg.DECIMALS))));
       p.wagered = (p.wagered || BN(0)).add(wei); p.betCount = (p.betCount || 0) + 1;
       /* La montee se constate ICI, au seul endroit ou l'experience bouge. On
          la met de cote plutot que de la notifier : _markWager est appele en
          plein milieu d'une manche, et une fenetre qui s'ouvre a cet instant
          couvrirait le jeu. Le serveur la ramasse une fois la manche finie. */
-      const apres = Game.niveauDe(Number(ethers.utils.formatUnits(p.wagered, cfg.DECIMALS)));
+      const apres = this._niveauAcquis(p, Game.niveauDe(Number(ethers.utils.formatUnits(p.wagered, cfg.DECIMALS))));
       if (apres > avant && p.addr) {
         if (!this.montees) this.montees = [];
         this.montees.push({ addr: p.addr, de: avant, a: apres,
@@ -801,10 +816,48 @@ class Game {
    * CE QU'IL RESTE A FAIRE. Un niveau sans la marche suivante ne donne envie
    * de rien ; « encore 293 970 mises » se vise.
    */
+  /**
+   * LE NIVEAU ACQUIS.
+   *
+   * Un niveau atteint ne se reprend pas — y compris quand la courbe est
+   * durcie. Sans cette marque, monter la difficulte retrograderait tous les
+   * joueurs existants d'un coup : celui qui etait niveau 34 se reveillerait
+   * niveau 21, sans rien avoir fait, et c'est exactement la punition que tout
+   * le systeme de niveaux est concu pour eviter.
+   *
+   * La marque se pose a la premiere lecture, avec la courbe QUI ETAIT EN
+   * VIGUEUR. La retrouver depuis l'ancienne puissance est la seule facon
+   * d'etre juste : figer le joueur a son niveau calcule aujourd'hui reviendrait
+   * a le retrograder puis a graver la retrogradation.
+   */
+  _niveauAcquis(p, calcule) {
+    if (!cfg.NIVEAU_ACQUIS) return calcule;
+    if (!(p.nivMax > calcule)) p.nivMax = calcule;      // il monte, il ne descend pas
+    return p.nivMax;
+  }
+
+  /**
+   * La migration, et le piege qu'elle cachait.
+   *
+   * Elle ne s'applique QU'AUX FICHES RELUES DU DISQUE — celles qui existaient
+   * donc avant le durcissement. Ma premiere version la posait paresseusement,
+   * a la premiere lecture de n'importe quelle fiche : un joueur NEUF avec le
+   * meme volume heritait alors de l'ancienne courbe et arrivait niveau 34 au
+   * lieu de 21. Le durcissement n'aurait servi a rien, et personne ne l'aurait
+   * vu avant des semaines.
+   */
+  static _niveauHerite(wagered) {
+    const v = Number(ethers.utils.formatUnits(wagered || BN(0), cfg.DECIMALS));
+    const av = cfg.NIVEAU_PUISSANCE_AVANT;
+    if (!v || v < cfg.NIVEAU_BASE || !(av > 0)) return 0;
+    return Math.max(0, Math.min(cfg.NIVEAU_MAX,
+      Math.floor(Math.pow(v / cfg.NIVEAU_BASE, 1 / av) + 1e-9)));
+  }
+
   niveau(addr) {
     const p = this._p(addr);
     const v = Number(ethers.utils.formatUnits(p.wagered || BN(0), cfg.DECIMALS));
-    const n = Game.niveauDe(v);
+    const n = this._niveauAcquis(p, Game.niveauDe(v));
     const suivant = Math.min(cfg.NIVEAU_MAX, n + 1);
     const bas = n === 0 ? 0 : Game.volumePour(n);
     const haut = Game.volumePour(suivant);

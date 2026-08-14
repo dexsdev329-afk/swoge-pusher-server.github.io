@@ -66,9 +66,16 @@ function joueur(volume) {
 
 // ============================== la courbe est bien celle annoncee
 {
-  eq(Math.round(Game.volumePour(100)), 500000000,
-     'le niveau 100 demande 500 millions de volume — la moitie de l offre totale');
-  ok(Game.volumePour(10) < 200000, `le niveau 10 s atteint vite (${Math.round(Game.volumePour(10))})`);
+  eq(Math.round(Game.volumePour(100)), 5000000000,
+     'le niveau 100 demande CINQ MILLIARDS de volume cumule');
+  ok(Game.volumePour(10) <= 500000, `le niveau 10 reste accessible (${Math.round(Game.volumePour(10))})`);
+  /* Le durcissement vaut DIX au sommet — c'est le chiffre demande — mais
+     seulement trois au niveau 10 : monter la puissance plutot que la base
+     laisse le debut de l'echelle atteignable. */
+  eq(Math.round(50 * Math.pow(100, 3.5) * 10), Math.round(Game.volumePour(100)),
+     'exactement dix fois l ancienne courbe au niveau 100');
+  ok(Game.volumePour(10) / (50 * Math.pow(10, 3.5)) < 4,
+     'mais moins de quatre fois au niveau 10 : le debut reste accessible');
   /* Chaque marche est plus haute que la precedente, et de plus en plus : une
      courbe qui s aplatirait rendrait la fin facile. */
   let precedent = 0;
@@ -100,9 +107,12 @@ function joueur(volume) {
 {
   const g = joueur();
   const p = g._p(A);
-  g._markWager(p, WEI(2000000));
+  /* On mise ce qu'il FAUT pour le niveau 20, quelle que soit la courbe : un
+     montant en dur devient faux au premier durcissement, et c'est le test qui
+     casse au lieu du code. */
+  g._markWager(p, WEI(Game.volumePour(20).toFixed(6)));
   const avant = g.niveau(A).niveau;
-  ok(avant >= 20, `il est monte au niveau ${avant} en misant`);
+  eq(avant, 20, `il est monte au niveau ${avant} en misant`);
 
   g._manche(p, 'plinko', 2000000, 0);      // il perd tout
   p.balance = ethers.BigNumber.from(0);
@@ -186,6 +196,50 @@ function joueur(volume) {
   eq(m.length, 1, 'la montee est signalee');
   eq(m[0].a, 10, 'au bon niveau');
   eq(g.montéesRecentes().length, 0, 'et une seule fois : on ne la fete pas deux fois');
+}
+
+// ============================== UN NIVEAU ATTEINT NE SE REPREND PAS
+/*
+ * Y COMPRIS QUAND LA COURBE CHANGE. C'est le cas qui compte : durcir la courbe
+ * sans cette regle retrograderait tous les joueurs existants d'un coup — celui
+ * qui etait niveau 34 se reveillerait niveau 21 sans rien avoir fait. C'est
+ * exactement la punition que le systeme de niveaux existe pour eviter.
+ */
+{
+  /* Une fiche ecrite AVANT le durcissement : elle ne porte pas de niveau
+     acquis, et son volume vaut le niveau 34 de l'ancienne courbe. */
+  const avant = new Game();
+  const p = avant._p(A); p.addr = A;
+  p.wagered = WEI((cfg.NIVEAU_BASE * Math.pow(34, cfg.NIVEAU_PUISSANCE_AVANT)).toFixed(6));
+  const etat = avant.serialize();
+  for (const [, d] of etat.players) delete d.nx;      // comme un fichier d'hier
+
+  const g = new Game(); g.hydrate(etat);
+  const n = g.niveau(A);
+  eq(n.niveau, 34, 'LE JOUEUR GARDE SON NIVEAU 34 apres le durcissement');
+  ok(Game.niveauDe(34e6) < 34, 'alors que la courbe neuve le mettrait bien plus bas');
+  eq(n.progression, 0, 'sa progression repart de zero vers la marche suivante');
+  ok(n.restant > 60000000, `et il lui reste ${Math.round(n.restant / 1e6)} M a miser pour le 35`);
+
+  /* Et il ne se reperd pas au redemarrage suivant. */
+  const g2 = new Game(); g2.hydrate(g.serialize());
+  eq(g2.niveau(A).niveau, 34, 'et il le garde au redemarrage suivant');
+
+  /* LE PIEGE : un joueur NEUF avec le meme volume ne doit PAS heriter de
+     l'ancienne courbe. Ma premiere version le faisait, et le durcissement
+     n'aurait servi a rien sans que ca se voie. */
+  const q = g._p(B); q.addr = B;
+  q.wagered = WEI((cfg.NIVEAU_BASE * Math.pow(34, cfg.NIVEAU_PUISSANCE_AVANT)).toFixed(6));
+  ok(g.niveau(B).niveau < 34,
+     `un joueur NEUF au meme volume est niveau ${g.niveau(B).niveau}, pas 34`);
+  eq(g.niveau(B).niveau, Game.niveauDe(Number(cfg.NIVEAU_BASE * Math.pow(34, cfg.NIVEAU_PUISSANCE_AVANT))),
+     'il est exactement la ou la courbe neuve le place');
+
+  /* Et le fige ne recoit pas de fausses montees de niveau en rejouant. */
+  g.montéesRecentes();
+  g._markWager(g._p(A), WEI(1000000));
+  eq(g.montéesRecentes().length, 0,
+     'le joueur fige au-dessus de la courbe ne recoit PAS de montees pour des paliers deja depasses');
 }
 
 require('./journal').draine(() => {

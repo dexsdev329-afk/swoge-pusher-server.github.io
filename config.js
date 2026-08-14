@@ -124,20 +124,45 @@ module.exports = {
    *  3. il ne depend pas de la chance. Un classement au gain monte et descend
    *     sans qu'on ait rien change a sa facon de jouer.
    *
-   * volume cumule pour le niveau n = 50 x n^3,5
-   *   niveau  10 :         158 114  (trois jours pour un joueur regulier)
-   *   niveau  50 :      44 194 174
-   *   niveau 100 :     500 000 000  — la moitie de l'offre totale, misee par
-   *                                   un seul joueur, soit pres d'un an au
-   *                                   rythme du plus gros joueur du site.
+   * volume cumule pour le niveau n = 50 x n^4
+   *   niveau  10 :         500 000
+   *   niveau  34 :      66 816 800
+   *   niveau  50 :     312 500 000
+   *   niveau 100 :   5 000 000 000  — cinq fois l'offre totale en volume
+   *                                   cumule, par un seul joueur.
    *
-   * Le niveau ne redescend JAMAIS : c'est un palmares, pas un classement. Le
-   * classement mensuel, lui, repart a zero — les deux moteurs ne se marchent
-   * pas dessus.
+   * ---- pourquoi la puissance et non la base ----
+   *
+   * La courbe a ete durcie d'un facteur DIX au sommet : un joueur atteignait
+   * le niveau 34 pour 11,5 millions de volume, ce qui rendait le haut de
+   * l'echelle atteignable trop vite.
+   *
+   * Deux facons de multiplier par dix. Multiplier la BASE (50 -> 500) durcit
+   * tout uniformement, y compris les dix premiers niveaux — ceux qui servent a
+   * accrocher un joueur qui vient d'arriver. Monter la PUISSANCE (3,5 -> 4)
+   * donne exactement le meme sommet, 5 milliards, mais laisse le debut
+   * accessible : le niveau 10 passe de 158 000 a 500 000 et non a 1,58 million.
+   * La difficulte monte donc progressivement, ce qui est la forme qu'on veut.
+   *
+   * Le niveau ne redescend JAMAIS — pas meme quand cette courbe change. Voir
+   * NIVEAU_ACQUIS ci-dessous : sans lui, durcir la courbe retrograderait tout
+   * le monde, ce qui est exactement la punition que le systeme evite.
    */
   NIVEAU_BASE: parseFloat(env('NIVEAU_BASE', '50')),
-  NIVEAU_PUISSANCE: parseFloat(env('NIVEAU_PUISSANCE', '3.5')),
+  NIVEAU_PUISSANCE: parseFloat(env('NIVEAU_PUISSANCE', '4')),
   NIVEAU_MAX: parseInt(env('NIVEAU_MAX', '100'), 10),
+  /* Un niveau atteint est ACQUIS. Le joueur garde le plus haut niveau qu'il
+     ait jamais eu, et progresse ensuite sur la courbe en vigueur.
+     Mettre a 0 pour recalculer tout le monde sur la courbe courante — ce qui
+     RETROGRADE les joueurs existants. A n'utiliser qu'en connaissance de
+     cause, et jamais sans le dire aux joueurs. */
+  NIVEAU_ACQUIS: env('NIVEAU_ACQUIS', '1') !== '0',
+  /* La puissance en vigueur AVANT le durcissement. Elle ne sert qu'une fois,
+     a la premiere lecture d'une fiche qui n'a pas encore de niveau acquis :
+     elle permet de retrouver le niveau que le joueur avait vraiment atteint.
+     Sans elle, la migration figerait tout le monde a son niveau NOUVEAU, donc
+     retrograde — le contraire du but. */
+  NIVEAU_PUISSANCE_AVANT: parseFloat(env('NIVEAU_PUISSANCE_AVANT', '3.5')),
 
   /* ---- le prix du classement ----
    *

@@ -104,21 +104,32 @@ ok(resultats[4][1] < 1.0, 'le tricheur ne passe pas au-dessus de 100 %');
 
 // ---------------------------------------------------- gestes interdits
 {
-  const g = neuf(1000);
-  const st = g.bjBet(ADR, 10);
-  if (st.stage === 'player') {
-    assert.throws(() => g.bjBet(ADR, 10), /in progress/); n++;
-    g.bjDouble(ADR);
-    assert.throws(() => g.bjDouble(ADR), /cannot double/); n++;
-    assert.throws(() => g.bjHit(ADR), /no active hand/); n++;
-    assert.throws(() => g.bjStand(ADR), /no active hand/); n++;
+  /* PIEGE : une main sur dix environ est un blackjack naturel et se resout des
+     la donne. Un simple « if (stage === 'player') » sautait alors CINQ
+     controles en silence — le compteur de verifications passait de 19 a 14 sans
+     que rien ne le signale. On redonne jusqu'a obtenir une main qui dure. */
+  const enCours = (g, mise) => {
+    for (let i = 0; i < 80; i++) { const st = g.bjBet(ADR, mise); if (st.stage === 'player') return st; }
+    throw new Error('aucune main en cours apres 80 donnes');
+  };
+
+  const g = neuf(100000);
+  enCours(g, 10);
+  assert.throws(() => g.bjBet(ADR, 10), /in progress/); n++;
+  g.bjDouble(ADR);
+  assert.throws(() => g.bjDouble(ADR), /cannot double/); n++;
+  assert.throws(() => g.bjHit(ADR), /no active hand/); n++;
+  assert.throws(() => g.bjStand(ADR), /no active hand/); n++;
+
+  /* Il a 15, il mise 10, il lui reste 5 : doubler en demande 10. */
+  let double = false;
+  for (let i = 0; i < 80 && !double; i++) {
+    const pauvre = neuf(0);
+    pauvre._p(ADR).balance = ethers.utils.parseUnits('15', cfg.DECIMALS);
+    if (pauvre.bjBet(ADR, 10).stage !== 'player') continue;
+    assert.throws(() => pauvre.bjDouble(ADR), /not enough/); n++; double = true;
   }
-  const pauvre = neuf(0);
-  pauvre._p(ADR).balance = ethers.utils.parseUnits('15', cfg.DECIMALS);
-  const s2 = pauvre.bjBet(ADR, 10);
-  if (s2.stage === 'player') {
-    assert.throws(() => pauvre.bjDouble(ADR), /not enough/); n++;   // 5 restants, il en faut 10
-  }
+  ok(double, 'le joueur sans les moyens ne peut pas doubler');
   assert.throws(() => neuf(1000).bjBet(ADR, cfg.BJ_MAX_BET + 1), /max bet/); n++;
   assert.throws(() => neuf(1000).bjBet(ADR, 0), /too small/); n++;
   assert.throws(() => neuf(1000).bjBet(ADR, -50), /too small/); n++;
