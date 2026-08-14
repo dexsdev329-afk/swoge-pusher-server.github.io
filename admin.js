@@ -64,6 +64,23 @@ function page() {
   👥 Players <b id="pl">—</b> · updated <span id="upd">—</span> · <a href="#" id="refresh">refresh</a>
 </div>
 
+<div class="panel" id="autoCard">
+  <h2>⏳ How long the vault lasts</h2>
+  <div class="sub" style="margin:0 0 10px">
+    The alarm above only rings once you are <b>already</b> under water &mdash; the day you
+    hear it from a player who cannot withdraw. At 100&nbsp;% APR the debt does not jump,
+    it <b>climbs, every second, by an amount you can compute</b>. The house edge earns
+    every day in the other direction. The two curves cross on a date, and that date can
+    be worked out today.
+  </div>
+  <div class="cards">
+    <div class="card"><span>Staking costs / day</span><b id="auCout">—</b></div>
+    <div class="card"><span>House earns / day</span><b id="auRev">—</b></div>
+    <div class="card hl" id="auCard"><span>Runway</span><b id="auJours">—</b><em id="auNote"></em></div>
+  </div>
+  <div class="sub" id="auLigne" style="margin-top:10px"></div>
+</div>
+
 <div class="panel">
   <h2>💾 Off-machine backup</h2>
   <div class="sub" style="margin:0 0 10px">
@@ -330,6 +347,36 @@ async function load(){
     else if(marge<0.10){ c.classList.add("attention");
       a.textContent="marge de "+(marge*100).toFixed(1)+"% seulement — un gros retrait passerait dessous"; }
     else a.textContent="";
+    /* L AUTONOMIE. Un niveau dit ou l on en est ; un rythme dit quand ca
+       casse. C est le second qui laisse le temps d agir. */
+    var A=d.autonomie||{};
+    $("#auCout").textContent=fmt(String(A.rendementJour||0));
+    $("#auRev").textContent=fmt(String(A.revenuJour||0));
+    var ac=$("#auCard"), an=$("#auNote"), al=$("#auLigne");
+    ac.classList.remove("danger","attention");
+    if(A.surplus===null||A.surplus===undefined){
+      $("#auJours").textContent="—"; an.textContent="vault balance unknown (no VAULT_ADDRESS)"; al.innerHTML="";
+    } else if(A.joursRestants===null){
+      $("#auJours").textContent="∞";
+      an.textContent="the house earns more than staking costs — the pool pays for itself";
+      al.innerHTML="Revenue covers the yield with <b>"+fmt(String(A.revenuJour-A.rendementJour))+
+        " $SWOGE/day</b> to spare. Nothing is draining.";
+    } else {
+      var j=A.joursRestants;
+      $("#auJours").textContent=j>=3650?"10y+":(j>=365?(j/365).toFixed(1)+" years":j+" days");
+      if(j<60){ ac.classList.add("danger"); an.textContent="⚠️ TOP THE VAULT UP OR LOWER THE CAP"; }
+      else if(j<180){ ac.classList.add("attention"); an.textContent="less than six months — plan the top-up now"; }
+      else an.textContent="";
+      var fin=new Date(Date.now()+j*86400000);
+      al.innerHTML="Net drain <b>"+fmt(String(A.drainJour))+" $SWOGE/day</b>. The surplus of <b>"+
+        fmt(String(A.surplus))+"</b> runs out around <b>"+fin.toLocaleDateString()+"</b>"+
+        " if nothing changes.<br>Revenue alone could carry <b>"+fmt(String(A.stakingAutofinance))+
+        " $SWOGE</b> of staking without topping the vault up"+
+        (d.capaciteStaking&&d.capaciteStaking.plafond
+          ? " — the cap is currently <b>"+fmt(String(d.capaciteStaking.plafond))+"</b>, and <b>"+
+            fmt(String(d.capaciteStaking.occupe))+"</b> is staked."
+          : ".");
+    }
     $("#ob").textContent=fmt(d.owedBalances); $("#os").textContent=fmt(d.owedStaked);
     $("#oy").textContent=fmt(d.owedPending); $("#oj").textContent=fmt(d.owedJackpot);
     $("#pl").textContent=d.players;
@@ -667,9 +714,13 @@ $("#rsLook").onclick=async function(){
 };
 $("#rsGo").onclick=async function(){
   if(!rsVu){ msg("Look at the file first","warn"); return; }
-  var q="Replace EVERY balance, stake, friendship and history with this file?\n\n"+
-        rsVu.actuel.joueurs+" players → "+rsVu.fichier.joueurs+" players\n"+
-        fmt(rsVu.actuel.duAuxJoueurs)+" → "+fmt(rsVu.fichier.duAuxJoueurs)+" $SWOGE owed\n\n"+
+  /* Les sauts de ligne s ECHAPPENT DEUX FOIS : cette page est fabriquee dans
+     un litteral gabarit, donc un simple \\n serait evalue ICI et emettrait un
+     vrai retour a la ligne au milieu d une chaine JavaScript de la page —
+     c est-a-dire une page qui ne se charge plus du tout. */
+  var q="Replace EVERY balance, stake, friendship and history with this file?\\n\\n"+
+        rsVu.actuel.joueurs+" players → "+rsVu.fichier.joueurs+" players\\n"+
+        fmt(rsVu.actuel.duAuxJoueurs)+" → "+fmt(rsVu.fichier.duAuxJoueurs)+" $SWOGE owed\\n\\n"+
         "Today's state is kept in a dated file first, so this can be undone.";
   if(!confirm(q)) return;
   if(prompt('Type RESTORE to go ahead.')!=="RESTORE") return;

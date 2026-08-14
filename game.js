@@ -1208,6 +1208,57 @@ class Game {
   /** Sum of all staked principal (wei). */
   totalStaked() { let s = BN(0); for (const p of this.players.values()) s = s.add(this._stakedTotal(p)); return s; }
 
+  /**
+   * COMBIEN DE TEMPS LE COFFRE TIENT.
+   *
+   * ---- pourquoi un niveau ne suffit pas ----
+   *
+   * L'alarme de solvabilite compare ce qu'il y a dans le coffre a ce qu'on
+   * doit. Elle sonne quand c'est deja passe dessous — c'est-a-dire le jour ou
+   * on l'apprend par un joueur qui n'arrive pas a retirer.
+   *
+   * A 100 % l'an, la dette ne saute pas : elle MONTE, a la seconde, d'un
+   * montant qui se calcule. Une salle a cent millions en staking fabrique cent
+   * millions de dette par an, soit environ 274 000 par jour, qu'il se passe
+   * quelque chose ou non.
+   *
+   * En face, l'avantage de la maison ENCAISSE tous les jours. Les deux
+   * courbes se croisent a une date, et cette date se calcule aujourd'hui.
+   * C'est le seul chiffre qui previent au lieu de constater.
+   *
+   * @param {BigNumber|null} pot ce qu'il y a reellement dans le coffre
+   */
+  autonomie(pot) {
+    const f = (w) => Number(ethers.utils.formatUnits(w, cfg.DECIMALS));
+    const staked = f(this.totalStaked());
+    /* Ce que le staking coute chaque jour, que quelqu'un joue ou non. */
+    const rendementJour = staked * (cfg.STAKE_APR_BPS / 10000) / 365;
+    /* Ce que la maison encaisse chaque jour, mesure sur le mois en cours et
+       non estime : c'est le seul des deux chiffres qui puisse surprendre. */
+    const c = this.comptes();
+    const jours = Math.max(1, new Date().getUTCDate());
+    const revenuJour = (c.revenu || 0) / jours;
+    const drainJour = rendementJour - revenuJour;
+
+    const b = this.owedBreakdown();
+    const du = f(b.balances.add(b.staked).add(b.pending).add(b.jackpot));
+    const surplus = pot ? f(pot) - du : null;
+
+    return {
+      staked, rendementJour: Number(rendementJour.toFixed(6)),
+      revenuJour: Number(revenuJour.toFixed(6)),
+      drainJour: Number(drainJour.toFixed(6)),
+      surplus: surplus === null ? null : Number(surplus.toFixed(6)),
+      /* null = le revenu couvre le rendement, la salle se paie toute seule.
+         0 = deja sous l'eau. Sinon, le nombre de jours qui restent. */
+      joursRestants: (surplus === null) ? null
+        : (drainJour <= 0 ? null : Math.max(0, Math.floor(surplus / drainJour))),
+      /* Le staking que le REVENU seul pourrait porter, sans rien remettre au
+         coffre. C'est le chiffre a comparer au plafond. */
+      stakingAutofinance: Number((revenuJour * 365 / (cfg.STAKE_APR_BPS / 10000)).toFixed(0)),
+    };
+  }
+
   /** Breakdown (wei) of what the vault owes: player balances, staked, pending
    * yield, and the jackpot reserve. */
   owedBreakdown() {

@@ -741,6 +741,10 @@ const server = http.createServer(async (req, res) => {
       owedJackpot: fmt(bd.jackpot),          //   jackpot reserve
       ownerSurplus: fmt(pot ? surplus : null), // <-- safe amount you can withdraw
       jackpot: game.jackpotStr(), totalStaked: fmt(game.totalStaked()),
+      /* Combien de temps le coffre tient au rythme actuel. L'alarme de
+         solvabilite ne sonne qu'une fois passe dessous ; ceci previent. */
+      autonomie: game.autonomie(pot),
+      capaciteStaking: game.capaciteStaking(),
       /* Preleve sur les retraits depuis toujours. Cette somme est DEJA dans le
          coffre et compte deja dans le surplus : ce n'est pas un montant a
          retirer en plus, c'est le chiffre a bruler si on veut le bruler. */

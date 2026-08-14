@@ -161,6 +161,72 @@ const riche = (g, i, montant) => { const p = g._p(adr(i)); p.balance = WEI(monta
   eq(g.capaciteStaking().occupe, 0, 'et la place est rendue EN ENTIER a la salle');
 }
 
+// ============================== COMBIEN DE TEMPS LE COFFRE TIENT
+/*
+ * L'alarme de solvabilite compare ce qu'il y a dans le coffre a ce qu'on doit,
+ * et sonne quand c'est DEJA passe dessous — c'est-a-dire le jour ou on
+ * l'apprend par un joueur qui n'arrive pas a retirer.
+ *
+ * A 100 % l'an la dette ne saute pas : elle monte a la seconde, d'un montant
+ * qui se calcule. En face, l'avantage de la maison encaisse tous les jours.
+ * Les deux courbes se croisent a une date, et cette date se calcule
+ * aujourd'hui. C'est le seul chiffre qui previent au lieu de constater.
+ */
+{
+  const g = new Game();
+  const a = riche(g, 1, 120000000);
+  g.stake(a, '100000000');
+
+  const nu = g.autonomie(null);
+  eq(nu.staked, 100000000, 'cent millions en staking');
+  ok(Math.abs(nu.rendementJour - 100000000 / 365) < 1,
+     `ils coutent ${Math.round(nu.rendementJour).toLocaleString('en-US')} $SWOGE par JOUR, joue ou pas`);
+  eq(nu.surplus, null, 'sans lecture du coffre, on n annonce pas un surplus qu on ne connait pas');
+  eq(nu.joursRestants, null, 'ni une echeance');
+
+  /* On fait tourner le casino : 850 000 de volume par jour, 3 % pour la
+     maison. C'est l'ordre de grandeur reel. */
+  const b = riche(g, 2, 60000000);
+  const jours = new Date().getUTCDate();
+  for (let i = 0; i < jours; i++) g._manche(g._p(b), 'plinko', 850000, 850000 * 0.97);
+
+  const av = g.autonomie(WEI(220000000));
+  ok(Math.abs(av.revenuJour - 25500) < 60, `la maison encaisse ${Math.round(av.revenuJour)} par jour`);
+  ok(av.drainJour > 0, 'le staking coute plus que la maison ne gagne : ca DRAINE');
+  ok(av.joursRestants > 30 && av.joursRestants < 400,
+     `et le surplus tient ${av.joursRestants} jours — une date, pas une inquietude`);
+
+  /* LE CHIFFRE QUI SERT A DECIDER : ce que le revenu seul pourrait porter. */
+  ok(Math.abs(av.stakingAutofinance - 25500 * 365) < 25000,
+     `le revenu seul porterait ${Math.round(av.stakingAutofinance).toLocaleString('en-US')} $SWOGE de staking`);
+  ok(av.stakingAutofinance < g.capaciteStaking().plafond,
+     'et c est BIEN EN DESSOUS du plafond : la difference se remet au coffre a la main');
+}
+
+// -------------------------------- quand le revenu couvre, il n y a plus d echeance
+{
+  const g = new Game();
+  const a = riche(g, 1, 200000);
+  g.stake(a, '100000');                       // 100 000 en staking = 274 par jour
+  const b = riche(g, 2, 90000000);
+  const jours = new Date().getUTCDate();
+  for (let i = 0; i < jours; i++) g._manche(g._p(b), 'plinko', 500000, 500000 * 0.97);
+  const av = g.autonomie(WEI(95000000));
+  ok(av.revenuJour > av.rendementJour, 'la maison gagne plus que le staking ne coute');
+  eq(av.joursRestants, null, 'IL N Y A PLUS D ECHEANCE : la salle se paie toute seule');
+  ok(av.drainJour < 0, 'et le drain est negatif — le surplus monte au lieu de baisser');
+}
+
+// -------------------------------- deja sous l eau : zero jour, pas un nombre rassurant
+{
+  const g = new Game();
+  const a = riche(g, 1, 10000000);
+  g.stake(a, '10000000');
+  const av = g.autonomie(WEI(1000000));       // le coffre ne couvre meme pas ce qui est en staking
+  ok(av.surplus < 0, 'le coffre ne couvre plus ce qu on doit');
+  eq(av.joursRestants, 0, 'ZERO JOUR — et surtout pas un nombre qui rassure');
+}
+
 require('./journal').draine(() => {
   fs.rmSync(bac, { recursive: true, force: true });
   console.log(`plafond.test.js : ${n} verifications OK`);
