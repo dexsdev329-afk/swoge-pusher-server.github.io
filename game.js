@@ -2754,6 +2754,35 @@ class Game {
     return out.sort((a, b) => b.creeA - a.creeA);
   }
 
+  /**
+   * LES PARTIES EN COURS, pour les regarder.
+   *
+   * Le vestibule ne montrait que les tables qui ATTENDENT. A quatre heures du
+   * matin il est vide, et une plateforme qui parait vide convertit tres mal —
+   * alors qu'une partie peut tres bien etre en train de se jouer.
+   *
+   * Ce que ca rend possible, et qui ne coute rien : un spectateur. Il ne mise
+   * pas, ne joue pas, n'existe pas pour la partie — il regarde. C'est ce qui
+   * transforme un moment a deux en evenement avec public, et ce qui fait qu'une
+   * page ouverte a n'importe quelle heure a quelque chose a montrer.
+   */
+  duelsEnCours(jeu) {
+    const out = [];
+    for (const m of this.p4.values()) {
+      if (m.phase !== EN_COURS) continue;
+      if (jeu && (m.jeu || 'p4') !== jeu) continue;
+      const j = m.joueurs.map((a) => (a ? this.profilPublic(a) : null));
+      out.push({
+        id: m.id, jeu: m.jeu || 'p4', mise: m.mise, depuis: m.creeA,
+        tour: m.tour,
+        joueurs: j.map((q) => q && { address: q.address, nom: q.name, niveau: q.niveau,
+                                     palier: q.palier, visage: q.visage, photo: q.photo }),
+      });
+    }
+    /* Les plus grosses mises en tete : c'est ce qu'on a envie de regarder. */
+    return out.sort((a, b) => (b.mise - a.mise) || (b.depuis - a.depuis));
+  }
+
   /** Les demandes de revanche qui attendent la reponse de `addr`. */
   duelInvitations(addr, now, jeu) {
     const t = now || Date.now();

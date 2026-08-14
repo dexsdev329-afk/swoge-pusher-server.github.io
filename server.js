@@ -220,6 +220,10 @@ function crashDiffuse(ev) {
  * a tout le monde. Le vestibule, lui, est public — c'est ce qui permet de
  * trouver une table.
  */
+/* La fin d'une partie : « finie » se lit au meme endroit pour les trois
+   jeux, c'est le module du Connect 4 qui porte les phases. */
+const DUEL_FINIE = require('./puissance4').FINIE;
+
 function p4Pousse(partie, reglement) {
   const etat = game.p4Etat(partie.id, Date.now());
   for (const a of partie.joueurs) {
@@ -227,6 +231,15 @@ function p4Pousse(partie, reglement) {
     toAddr(a, { type: 'p4Match', match: etat, balance: game.balanceStr(a),
                 reglement: reglement || null });
   }
+  /* Le Connect 4 a son propre chemin de diffusion : sans cette ligne il
+     apparaitrait bien dans la liste des parties en cours, mais le plateau du
+     spectateur se figerait a l'instant ou il commence a regarder. Ni solde ni
+     reglement : ce n'est pas son argent. */
+  duelSpectateurs(partie.id, { type: 'duelWatch', match: etat, fini: partie.phase === DUEL_FINIE });
+  /* Une partie terminee doit SORTIR de la liste des parties en cours. Sans
+     ca elle y reste jusqu'a ce qu'un autre evenement rafraichisse le
+     vestibule, et on propose de regarder une partie deja jouee. */
+  if (partie.phase === DUEL_FINIE) diffuseTousDuels();
   if (reglement && partie.gagnant) {
     const gagnant = partie.adresseGagnante();
     notifyTableWin(gagnant, 'p4', { net: reglement.gain - partie.mise,
@@ -248,7 +261,13 @@ function p4DiffuseLobby() {
  * et une table que personne ne voit ne trouve pas d'adversaire. Ce flux-la
  * part a tout le monde, sur toutes les pages.
  */
-function tousDuels() { return { type: 'duelsTous', tables: game.duelLobby(null) }; }
+/* Les tables qui ATTENDENT, et celles qui SE JOUENT. A quatre heures du
+   matin la premiere liste est vide et la seconde ne l'est pas forcement :
+   une bulle qui ne montrerait que l'attente ferait paraitre le site mort
+   alors qu'une partie est en cours. */
+function tousDuels() {
+  return { type: 'duelsTous', tables: game.duelLobby(null), enCours: game.duelsEnCours(null) };
+}
 function diffuseTousDuels() { broadcast(tousDuels()); }
 
 /*
@@ -260,6 +279,15 @@ function diffuseTousDuels() { broadcast(tousDuels()); }
  * chaque page veut.
  */
 const NOM_DUEL = { p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers' };
+/* Les sockets qui REGARDENT une partie sans y jouer. Un spectateur n'existe
+   pas pour la partie : il ne mise pas, ne joue pas, et sa presence ne change
+   rien au deroulement. Il recoit simplement le meme etat que les joueurs. */
+function duelSpectateurs(id, msg) {
+  const s = JSON.stringify(msg);
+  for (const ws of clients)
+    if (ws.duelWatch === id && ws.readyState === 1) ws.send(s);
+}
+
 function duelPousse(partie, reglement) {
   const etat = game.duelEtat(partie.id, Date.now());
   for (const a of partie.joueurs) {
@@ -267,6 +295,10 @@ function duelPousse(partie, reglement) {
     toAddr(a, { type: 'duelMatch', match: etat, balance: game.balanceStr(a),
                 reglement: reglement || null });
   }
+  /* Le spectateur ne recoit NI solde NI reglement : ce n'est pas son argent,
+     et lui envoyer un solde le ferait afficher a la place du sien. */
+  duelSpectateurs(partie.id, { type: 'duelWatch', match: etat, fini: partie.phase === DUEL_FINIE });
+  if (partie.phase === DUEL_FINIE) diffuseTousDuels();
   if (reglement && partie.gagnant) {
     const gagnant = partie.adresseGagnante();
     notifyTableWin(gagnant, partie.jeu || 'p4', { net: reglement.gain - partie.mise,
@@ -275,7 +307,8 @@ function duelPousse(partie, reglement) {
   }
 }
 function duelDiffuseLobby(jeu) {
-  broadcast({ type: 'duelLobby', jeu, tables: game.duelLobby(jeu) });
+  broadcast({ type: 'duelLobby', jeu, tables: game.duelLobby(jeu),
+              enCours: game.duelsEnCours(jeu) });
   diffuseTousDuels();
 }
 function duelPousseInvites(addr, jeu) {
@@ -1002,7 +1035,7 @@ wss.on('connection', (ws) => {
     joueurs: compte(),
     // les tables qui attendent, pour que la pastille soit juste avant meme
     // que le joueur se connecte
-    duels: game.duelLobby(null),
+    duels: game.duelLobby(null), duelsEnCours: game.duelsEnCours(null),
     // l'explorateur, pour que l'historique puisse pointer vers la transaction
     explorer: cfg.EXPLORER,
   });
@@ -1063,6 +1096,25 @@ wss.on('connection', (ws) => {
                           balance: ws.addr ? game.balanceStr(ws.addr) : null });
       }
       if (m.type === 'pokerUnwatch') { ws.pokerTable = null; return; }
+
+      /* Regarder un duel, comme on regarde une table de poker : c'est PUBLIC,
+         et ca ne demande pas d'etre connecte. Un visiteur qui tombe sur le
+         site doit pouvoir voir qu'il s'y passe quelque chose avant d'avoir
+         branche quoi que ce soit. */
+      if (m.type === 'duelWatch') {
+        const id = String(m.id || '');
+        const etat = game.duelEtat(id, Date.now());
+        if (!etat) return send(ws, { type: 'error', error: 'that duel is over' });
+        ws.duelWatch = id;
+        /* Une partie deja jouee se regarde encore quelques minutes : on dit
+           alors la verite tout de suite, plutot que d'annoncer « en cours »
+           un plateau qui ne bougera plus jamais. */
+        return send(ws, { type: 'duelWatch', match: etat, fini: etat.phase === DUEL_FINIE });
+      }
+      if (m.type === 'duelUnwatch') { ws.duelWatch = null; return; }
+      if (m.type === 'duelsEnCours')
+        return send(ws, { type: 'duelsTous', tables: game.duelLobby(null),
+                          enCours: game.duelsEnCours(null) });
 
       if (!ws.addr) return send(ws, { type: 'error', error: 'login required' });
 
@@ -1491,7 +1543,12 @@ wss.on('connection', (ws) => {
       }
       if (m.type === 'p4Join') {
         try {
-          const partie = game.p4Rejoindre(ws.addr, m.id, Date.now());
+          /* `duelRejoindre` rend `{ partie, retirees }` depuis que le morpion
+             et les dames partagent ce chemin. Lire la reponse comme si elle
+             etait la partie prenait bien les deux mises, puis jetait avant
+             d'avoir prevenu qui que ce soit : la table demarrait pour de vrai,
+             sans que personne ne voie le plateau. */
+          const { partie } = game.p4Rejoindre(ws.addr, m.id, Date.now());
           persistSoon();
           p4Pousse(partie);
           p4DiffuseLobby();
