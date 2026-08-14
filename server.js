@@ -288,6 +288,24 @@ function duelSpectateurs(id, msg) {
     if (ws.duelWatch === id && ws.readyState === 1) ws.send(s);
 }
 
+/* Une phrase dite a la table part aux DEUX joueurs et a ceux qui regardent :
+   c'est ce qui fait qu'on joue contre une personne et non contre un serveur.
+   Elle ne part jamais a qui a coupe le son. */
+function duelDiffusePhrase(partie, dit) {
+  const msg = { type: 'duelDit', match: partie.id, joueur: dit.joueur, id: dit.id,
+                emote: dit.emote, texte: dit.texte, nom: dit.nom };
+  const s = JSON.stringify(msg);
+  const orateur = partie.joueurs[dit.joueur - 1];
+  for (const ws of clients) {
+    if (ws.readyState !== 1) continue;
+    /* Couper le son, c'est faire taire l'AUTRE. Celui qui parle voit toujours
+       ce qu'il vient de dire, sans quoi il croirait que rien n'est parti. */
+    if (ws.duelMute && ws.addr !== orateur) continue;
+    const joue = ws.addr && partie.joueurs.indexOf(ws.addr) >= 0;
+    if (joue || ws.duelWatch === partie.id) ws.send(s);
+  }
+}
+
 function duelPousse(partie, reglement) {
   const etat = game.duelEtat(partie.id, Date.now());
   for (const a of partie.joueurs) {
@@ -1036,6 +1054,10 @@ wss.on('connection', (ws) => {
     // les tables qui attendent, pour que la pastille soit juste avant meme
     // que le joueur se connecte
     duels: game.duelLobby(null), duelsEnCours: game.duelsEnCours(null),
+    /* Les phrases viennent du SERVEUR : une liste ecrite en dur dans la page
+       finirait par diverger de celle qui est acceptee, et le joueur cliquerait
+       sur des boutons refuses sans comprendre pourquoi. */
+    phrases: cfg.PHRASES, phraseMax: cfg.PHRASE_MAX,
     // l'explorateur, pour que l'historique puisse pointer vers la transaction
     explorer: cfg.EXPLORER,
   });
@@ -1112,6 +1134,10 @@ wss.on('connection', (ws) => {
         return send(ws, { type: 'duelWatch', match: etat, fini: etat.phase === DUEL_FINIE });
       }
       if (m.type === 'duelUnwatch') { ws.duelWatch = null; return; }
+      /* Se taire : le choix vaut pour la socket, donc pour l'onglet ouvert.
+         Meme toutes faites, quinze phrases d'affilee agacent, et il faut
+         pouvoir les couper sans quitter la partie. */
+      if (m.type === 'duelMute') { ws.duelMute = !!m.on; return send(ws, { type: 'duelMute', on: ws.duelMute }); }
       if (m.type === 'duelsEnCours')
         return send(ws, { type: 'duelsTous', tables: game.duelLobby(null),
                           enCours: game.duelsEnCours(null) });
@@ -1659,6 +1685,17 @@ wss.on('connection', (ws) => {
           const r = game.duelJouer(ws.addr, m.id, m.coup, Date.now());
           if (r.reglement) persistSoon();
           duelPousse(r.partie, r.reglement);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      /* Parler a la table. Le client envoie un identifiant ; le serveur verifie
+         qu'il existe, que la personne est bien assise a cette table, et qu'elle
+         n'a pas deja trop parle. Aucun texte ne traverse le reseau. */
+      if (m.type === 'duelSay') {
+        try {
+          const dit = game.duelDire(ws.addr, m.id, m.phrase, Date.now());
+          duelDiffusePhrase(dit.partie, dit);
+          if (dit.reste <= 3) send(ws, { type: 'duelSayLeft', reste: dit.reste });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }

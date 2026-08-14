@@ -225,6 +225,39 @@ module.exports = {
     ['mp',     'Tic-Tac-Toe',    'morpion.html'],
     ['dm',     'Checkers',       'dames.html'],
   ],
+  /* ---- Ce qu'on peut se dire a la table ----
+   *
+   * Une liste FERMEE, et rien d'autre. Le texte libre demanderait une equipe
+   * de moderation que le projet n'a pas, et il suffit d'un seul message pour
+   * qu'une table devienne un endroit ou l'on ne revient pas. Ici c'est un
+   * IDENTIFIANT qui traverse le reseau, jamais une phrase : le serveur n'a
+   * donc rien a filtrer, et il n'existe aucune facon d'ecrire quoi que ce
+   * soit qui ne figure pas ci-dessous.
+   *
+   * Le choix des phrases n'est pas neutre : aucune ne doit pouvoir servir a
+   * narguer. « A toi de jouer » renseigne, « depeche-toi » harcele — la
+   * premiere est ici, la seconde n'y sera jamais.
+   */
+  PHRASES: [
+    ['hi',      '👋', 'Hi!'],
+    ['gl',      '🤝', 'Good luck'],
+    ['nice',    '🔥', 'Nice move'],
+    ['wow',     '😮', 'Wow'],
+    ['close',   '😬', 'That was close'],
+    ['think',   '🤔', 'Thinking...'],
+    ['turn',    '⏳', 'Your turn'],
+    ['oops',    '😅', 'Oops'],
+    ['lucky',   '🍀', 'Lucky!'],
+    ['ty',      '🙏', 'Thanks'],
+    ['gg',      '👏', 'Good game'],
+    ['rematch', '⚔️', 'Rematch?'],
+  ],
+  /* Meme toute faite, une phrase repetee vingt fois harcele. On espace, et on
+     plafonne : passe le plafond, la table redevient silencieuse pour celui qui
+     l'a atteint, sans rien changer a la partie. */
+  PHRASE_PAUSE_MS: parseInt(env('PHRASE_PAUSE_MS', '3000'), 10),
+  PHRASE_MAX: parseInt(env('PHRASE_MAX', '15'), 10),
+
   MISSIONS_PAR_JOUR: parseInt(env('MISSIONS_PAR_JOUR', '3'), 10),
   MISSION_MISE: parseFloat(env('MISSION_MISE', '2000')),   // a miser sur le jeu du jour
   MISSION_GAIN: parseFloat(env('MISSION_GAIN', '12')),     // ce qu'elle rapporte

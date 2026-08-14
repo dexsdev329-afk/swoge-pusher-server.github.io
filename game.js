@@ -2862,6 +2862,40 @@ class Game {
     return e;
   }
 
+  /**
+   * Une phrase toute faite, dite a la table.
+   *
+   * Ce qui arrive ici est un IDENTIFIANT, jamais un texte : il n'y a donc rien
+   * a filtrer, et rien qu'un joueur puisse ecrire. Un identifiant inconnu est
+   * refuse — c'est ce qui garantit que la liste est vraiment fermee, et non
+   * simplement celle que le client veut bien afficher.
+   *
+   * Seuls les DEUX joueurs parlent. Un spectateur entend la table sans jamais
+   * pouvoir y parler : il n'a rien mise, et lui ouvrir la parole rouvrirait
+   * a tout le monde la surface qu'on vient de fermer.
+   */
+  duelDire(addr, id, phraseId, now) {
+    const partie = this.p4.get(String(id));
+    if (!partie) throw new Error('match not found');
+    if (partie.phase !== EN_COURS) throw new Error('this match is not running');
+    const place = partie.joueurs.indexOf(addr);
+    if (place < 0) throw new Error('you are not at this table');
+    const phrase = (cfg.PHRASES || []).find((x) => x[0] === phraseId);
+    if (!phrase) throw new Error('unknown phrase');
+
+    const t = now || Date.now();
+    if (!partie.dits) partie.dits = {};
+    const d = partie.dits[addr] || (partie.dits[addr] = { t: 0, n: 0 });
+    /* On plafonne AVANT d'espacer : celui qui a tout dit doit lire « vous avez
+       assez parle », pas « attendez trois secondes » quinze fois de suite. */
+    if (d.n >= cfg.PHRASE_MAX) throw new Error('you have said enough for this match');
+    if (t - d.t < cfg.PHRASE_PAUSE_MS) throw new Error('slow down');
+    d.t = t; d.n++;
+
+    return { partie, joueur: place + 1, id: phrase[0], emote: phrase[1], texte: phrase[2],
+             nom: this._p(addr).name, reste: cfg.PHRASE_MAX - d.n };
+  }
+
   /** La partie en cours d'un joueur, s'il en a une. */
   duelMienne(addr) {
     for (const m of this.p4.values())
