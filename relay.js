@@ -75,10 +75,20 @@ const NATIF = '0x0000000000000000000000000000000000000000';
  *
  * Pour TRON c'est le repere du TRX, meme si l'on envoie de l'USDT : c'est la
  * chaine qui decide, pas le jeton. */
-/* Le bitcoin N'EST PAS dans cette liste, et c'est mesure : aucune route vers
-   Robinhood Chain, a aucun montant — 0,002, 0,01, 0,05 et 0,2 BTC essayes, tous
-   refuses par « no routes found ». Un bouton qui echoue toujours est pire que
-   pas de bouton : le joueur croit que c'est lui qui s'y prend mal. */
+/* CE QUI RESTE, ET POURQUOI RIEN D'AUTRE. Chaque ligne a rendu une vraie
+   adresse de depot sur la production ; les deux qui manquent ont ete retirees
+   parce qu'elles ne le pouvaient pas :
+ *
+     • le BITCOIN : aucune route vers Robinhood Chain, a aucun montant —
+       0,002, 0,01, 0,05 et 0,2 BTC essayes, tous « no routes found » ;
+     • le TRON : « Zero-address refundTo is only supported for EVM/BVM/SVM
+       deposit-address refunds ». Le repere de repli qui marche pour Solana et
+       les chaines EVM n'est pas accepte pour une machine virtuelle TRON, et
+       nous n'avons pas d'adresse TRON du joueur a mettre a la place — il n'a
+       rien connecte de ce cote, c'est tout l'interet d'une adresse de depot.
+ *
+   Un bouton qui echoue toujours est pire que pas de bouton : le joueur croit
+   que c'est lui qui s'y prend mal. */
 const DEPUIS = {
   sol:  { chaine: 792703809, jeton: '11111111111111111111111111111111',
           repere: '11111111111111111111111111111111',
@@ -87,9 +97,6 @@ const DEPUIS = {
           symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
   base: { chaine: 8453,      jeton: NATIF, repere: NATIF,
           symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
-  tron: { chaine: 728126428, jeton: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
-          repere: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',          // le TRX, pas l USDT
-          symbole: 'USDT', decimales: 6, min: 1, max: 100000 },
 };
 
 const actif = () => !!cfg.RELAY_API_KEY;
