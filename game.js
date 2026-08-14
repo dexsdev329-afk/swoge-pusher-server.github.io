@@ -69,6 +69,8 @@ class Game {
     /* Le total preleve sur les retraits depuis toujours. Il ne bouge aucun
        solde — il reste dans le coffre — mais c'est le chiffre a bruler. */
     this.fraisCumules = BN(0);
+    this.brule = BN(0);          // ce qui est DEJA parti a l'adresse morte
+    this.brulages = [];          // les dernieres transactions, pour pouvoir les montrer
   }
 
   /** (Re)construit la table du Crash a partir de la graine courante. */
@@ -125,6 +127,7 @@ class Game {
              jackpotPot: this.jackpotPot.toString(),
              crashGraine: this.crashGraine, crash: this.crash.sauve(),
              fraisCumules: (this.fraisCumules || BN(0)).toString(),
+             brule: (this.brule || BN(0)).toString(), brulages: this.brulages || [],
              lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx), players,
              duels, telegramMap: Array.from(this.telegramMap) };
   }
@@ -146,6 +149,8 @@ class Game {
     if (st.lastBlock) this.lastBlock = st.lastBlock;
     if (Array.isArray(st.seenTx)) this.seenTx = new Set(st.seenTx);
     if (st.fraisCumules) this.fraisCumules = ethers.BigNumber.from(st.fraisCumules);
+    if (st.brule) this.brule = ethers.BigNumber.from(st.brule);
+    if (Array.isArray(st.brulages)) this.brulages = st.brulages;
     if (Array.isArray(st.players)) for (const [addr, d] of st.players) {
       this.players.set(addr, {
         balance: ethers.BigNumber.from(d.b || '0'),
@@ -2094,6 +2099,38 @@ class Game {
       brule: true,
       mini: cfg.MIN_WITHDRAW,
     };
+  }
+
+  /**
+   * Ce qui attend d'etre brule : preleve moins deja brule.
+   *
+   * On garde les DEUX totaux et non un seul compteur qu'on remettrait a
+   * zero : « combien a-t-on brule depuis le debut » est la question qu'on
+   * pose quand on doute d'une promesse, et un compteur remis a zero ne sait
+   * plus y repondre.
+   */
+  aBruler() {
+    const p = (this.fraisCumules || BN(0)).sub(this.brule || BN(0));
+    return p.gt(0) ? p : BN(0);
+  }
+
+  /**
+   * Note un brulage qui a EU LIEU sur la chaine. Le serveur ne brule pas
+   * lui-meme : les jetons sont dans le coffre, et seule la cle du
+   * proprietaire peut les en sortir. Ce qu'on enregistre ici, c'est la
+   * preuve — un hash de transaction que n'importe qui peut aller verifier.
+   */
+  enregistreBrulage(montantStr, tx) {
+    const w = WEI(String(montantStr));
+    if (w.lte(0)) throw new Error('nothing to burn');
+    if (!/^0x[0-9a-fA-F]{64}$/.test(String(tx || ''))) throw new Error('a real transaction hash is required');
+    if (this.brulages.some((b) => b.tx.toLowerCase() === String(tx).toLowerCase()))
+      throw new Error('this transaction is already recorded');
+    this.brule = (this.brule || BN(0)).add(w);
+    this.brulages.unshift({ t: Date.now(), m: ethers.utils.formatUnits(w, cfg.DECIMALS), tx: String(tx) });
+    if (this.brulages.length > 50) this.brulages.length = 50;
+    return { total: ethers.utils.formatUnits(this.brule, cfg.DECIMALS),
+             reste: ethers.utils.formatUnits(this.aBruler(), cfg.DECIMALS) };
   }
 
   /** Request a withdrawal of `amountStr` $SWOGE. Returns cumulativeAuthorized (wei) or throws. */

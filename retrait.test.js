@@ -144,6 +144,57 @@ function depose(montant) {
   pres(sol(g, A) + sol(g, B), avant, 'au minimum : accepte, et la somme des deux soldes ne bouge pas');
 }
 
+// ================================================== le brulage
+/*
+ * Le serveur ne brule pas : les jetons sont dans le coffre, et seule la cle du
+ * proprietaire peut les en sortir. Ce qu'il enregistre, c'est une PREUVE — un
+ * hash que n'importe qui peut aller verifier. Tout le reste en decoule : sans
+ * preuve valable, pas d'annonce, parce qu'une annonce sans transaction serait
+ * une promesse en l'air.
+ */
+{
+  const g = depose(1000000);
+  g.requestWithdraw(A, '100000');
+  const frais = 100000 * cfg.WITHDRAW_FEE_BPS / 10000;
+  pres(nb(g.aBruler()), frais, 'apres un retrait, le prelevement attend d etre brule');
+  eq(nb(g.brule), 0, 'et rien n a encore ete brule');
+
+  const TX = '0x' + 'a'.repeat(64);
+  jete(() => g.enregistreBrulage(frais, 'pas un hash'), /real transaction hash/,
+       'sans hash de transaction : refuse');
+  jete(() => g.enregistreBrulage(frais, '0x1234'), /real transaction hash/,
+       'un hash tronque : refuse aussi');
+  jete(() => g.enregistreBrulage('0', TX), /nothing to burn/, 'bruler zero : refuse');
+
+  const r = g.enregistreBrulage(frais, TX);
+  pres(Number(r.total), frais, 'le total brule monte');
+  pres(nb(g.aBruler()), 0, 'et il ne reste plus rien en attente');
+
+  /* Le meme hash deux fois gonflerait le total brule sans qu'un seul jeton
+     supplementaire ait quitte le coffre. C'est la seule facon de mentir avec
+     ce mecanisme, donc la seule a fermer. */
+  jete(() => g.enregistreBrulage(frais, TX), /already recorded/,
+       'la MEME transaction deux fois : refuse');
+  jete(() => g.enregistreBrulage(frais, TX.toUpperCase().replace('0X', '0x')), /already recorded/,
+       'meme en changeant la casse');
+
+  eq(g.brulages.length, 1, 'une seule preuve gardee');
+  eq(g.brulages[0].tx, TX, 'avec son hash, pour pouvoir la montrer');
+
+  /* On garde les DEUX totaux : « combien a-t-on brule depuis le debut » est la
+     question qu'on pose quand on doute d'une promesse. */
+  g.requestWithdraw(A, '100000');
+  pres(nb(g.aBruler()), frais, 'un nouveau retrait remet du a bruler');
+  pres(nb(g.brule), frais, 'sans effacer ce qui a deja ete brule');
+
+  const g2 = new Game();
+  g2.hydrate(g.serialize());
+  pres(nb(g2.brule), frais, 'le total brule survit au redemarrage');
+  eq(g2.brulages.length, 1, 'et les preuves aussi');
+  jete(() => g2.enregistreBrulage(frais, TX), /already recorded/,
+       'y compris le refus du doublon, apres redemarrage');
+}
+
 require('./journal').draine(() => {
   fs.rmSync(bac, { recursive: true, force: true });
   console.log(`retrait.test.js : ${n} verifications OK`);

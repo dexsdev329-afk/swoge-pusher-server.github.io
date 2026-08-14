@@ -310,6 +310,29 @@ const server = http.createServer(async (req, res) => {
   /* Retirer l'image d'un joueur — reserve a l'administration : c'est la seule
      reponse possible si quelqu'un met devant les autres joueurs une image qui
      n'a rien a y faire. */
+  /* Le brulage. Le serveur ne brule pas lui-meme : les jetons sont dans le
+     coffre, et seule la cle du proprietaire peut les en sortir. La page
+     d'administration fait la transaction avec son portefeuille, puis vient
+     deposer la PREUVE ici — un hash que n'importe qui peut verifier. C'est
+     alors, et alors seulement, que le canal l'annonce. */
+  if (path === '/burn') {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    try {
+      const r = game.enregistreBrulage(qs.get('amount'), qs.get('tx'));
+      persistSoon();
+      const lien = `${cfg.EXPLORER.replace(/\/+$/, '')}/tx/${qs.get('tx')}`;
+      tg.notify(`🔥 <b>${fmtAmt(String(qs.get('amount')))} $SWOGE burned forever</b>\n` +
+                `Every withdrawal burns 1% — it leaves circulation for good.\n` +
+                `Total burned: <b>${fmtAmt(r.total)} $SWOGE</b>\n` +
+                `<a href="${lien}">view the transaction ↗</a>`);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, ...r }));
+    } catch (e) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+  }
   if (path === '/avatar-remove') {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
     const qs = new URLSearchParams(req.url.split('?')[1] || '');
@@ -352,6 +375,11 @@ const server = http.createServer(async (req, res) => {
          coffre et compte deja dans le surplus : ce n'est pas un montant a
          retirer en plus, c'est le chiffre a bruler si on veut le bruler. */
       fraisRetraitsCumules: fmt(game.fraisCumules || ethers.BigNumber.from(0)),
+      /* Ce qui attend d'etre brule, ce qui l'a deja ete, et les preuves. */
+      aBruler: fmt(game.aBruler()),
+      dejaBrule: fmt(game.brule || ethers.BigNumber.from(0)),
+      brulages: (game.brulages || []).slice(0, 10),
+      adresseBrulage: cfg.BURN_ADDRESS,
       players: game.players.size, vault: cfg.VAULT_ADDRESS || null,
     }, null, 2));
   }

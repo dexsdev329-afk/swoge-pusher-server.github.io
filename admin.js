@@ -64,6 +64,20 @@ function page() {
 </div>
 
 <div class="panel">
+  <h2>🔥 Burn the withdrawal fee</h2>
+  <div class="sub" style="margin:0 0 10px">
+    1% of every withdrawal stays in the vault to be burned. It is not yours to keep &mdash;
+    the players are told it leaves circulation, so it has to.<br>
+    Waiting to burn: <b id="burnDu">—</b> &middot; already burned: <b id="burnFait">—</b><br>
+    Burn address <code id="burnAddr">—</code>
+  </div>
+  <div class="row">
+    <button id="burnGo" disabled>Burn it all 🔥</button>
+  </div>
+  <div class="sub" id="burnList" style="margin-top:10px"></div>
+</div>
+
+<div class="panel">
   <h2>🏧 Owner withdraw</h2>
   <input id="amt" type="number" inputmode="decimal" placeholder="amount in $SWOGE">
   <div class="row">
@@ -195,7 +209,8 @@ var ABI=[
   "function minWithdraw() view returns (uint256)"
 ];
 var ERC20=["function approve(address s,uint256 a) returns (bool)","function allowance(address o,address s) view returns (uint256)"];
-var provider,signer,myAddr,surplusNum=0;
+var provider,signer,myAddr,surplusNum=0,burnDu=0;
+var EXPL="${cfg.EXPLORER || ''}";
 function $(s){return document.querySelector(s);}
 function fmt(v){var n=parseFloat(v||"0");if(isNaN(n))return "—";return n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":n.toFixed(2);}
 function msg(t,c){$("#msg").textContent=t;$("#msg").className=c||"";}
@@ -210,6 +225,14 @@ async function load(){
     $("#ob").textContent=fmt(d.owedBalances); $("#os").textContent=fmt(d.owedStaked);
     $("#oy").textContent=fmt(d.owedPending); $("#oj").textContent=fmt(d.owedJackpot);
     $("#pl").textContent=d.players;
+    burnDu=parseFloat(d.aBruler||"0")||0;
+    $("#burnDu").textContent=fmt(d.aBruler); $("#burnFait").textContent=fmt(d.dejaBrule);
+    $("#burnAddr").textContent=d.adresseBrulage||"—";
+    $("#burnGo").disabled=!(burnDu>0&&signer);
+    $("#burnList").innerHTML=(d.brulages||[]).map(function(b){
+      return "🔥 "+fmt(b.m)+" &middot; "+new Date(b.t).toLocaleDateString()+
+             ' &middot; <a href="'+EXPL+"/tx/"+b.tx+'" target="_blank">tx ↗</a>';
+    }).join("<br>")||"Nothing burned yet.";
     $("#upd").textContent=new Date().toLocaleTimeString();
   }catch(e){ msg("Could not load stats: "+e.message,"warn"); }
 }
@@ -432,6 +455,32 @@ $("#setMin").onclick=function(){
 };
 $("#pauseDep").onclick=function(){ if(!signer) return; var on=$("#pauseDep").dataset.on==="1"; tx(new ethers.Contract(VAULT,ABI,signer).setDepositsPaused(!on), on?"Deposits resumed":"Deposits paused"); };
 $("#pauseWd").onclick=function(){ if(!signer) return; var on=$("#pauseWd").dataset.on==="1"; tx(new ethers.Contract(VAULT,ABI,signer).setWithdrawalsPaused(!on), on?"Withdrawals resumed":"Withdrawals paused"); };
+
+/* Le brulage en une transaction : le coffre envoie directement a l'adresse
+   morte. Passer par le portefeuille du proprietaire ferait deux transactions
+   et laisserait un moment ou les jetons sont a lui — ce qui n'est plus tout a
+   fait un brulage. */
+$("#burnGo").onclick=async function(){
+  if(!signer){ msg("Connect your wallet first","warn"); return; }
+  if(!(burnDu>0)){ msg("Nothing to burn","warn"); return; }
+  var v=String(Math.floor(burnDu*1e6)/1e6);
+  if(!confirm("Burn "+v+" $SWOGE forever? This sends them to "+$("#burnAddr").textContent+" and nobody can ever get them back.")) return;
+  try{
+    msg("Confirm the burn in your wallet…");
+    var c=new ethers.Contract(VAULT,ABI,signer);
+    var t=await c.ownerWithdraw($("#burnAddr").textContent, ethers.utils.parseUnits(v,18));
+    msg("Sent, waiting for confirmation…");
+    await t.wait();
+    /* On ne previent le serveur QU APRES confirmation : il annonce le
+       brulage au canal avec le hash, et une annonce sans transaction
+       confirmee serait une promesse en l'air. */
+    var r=await fetch("/burn?key="+encodeURIComponent(KEY)+"&amount="+encodeURIComponent(v)+"&tx="+t.hash);
+    var j=await r.json();
+    if(!j.ok) throw new Error(j.error||"server refused the proof");
+    msg("🔥 Burned "+v+" $SWOGE — announced on Telegram","ok");
+    load();
+  }catch(e){ msg("Burn failed: "+String(e.reason||e.message||e).slice(0,140),"warn"); }
+};
 
 $("#go").onclick=async function(){
   if(!signer){ msg("Connect your wallet first","warn"); return; }

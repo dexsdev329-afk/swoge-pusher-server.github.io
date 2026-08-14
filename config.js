@@ -57,6 +57,9 @@ module.exports = {
    * reviendrait a prendre l'argent tout en disant le contraire.
    */
   WITHDRAW_FEE_BPS: parseInt(env('WITHDRAW_FEE_BPS', '100'), 10),   // 100 = 1 %
+  /* L'adresse ou l'on brule. Rien ne peut en ressortir : personne n'a la cle,
+     et c'est ce qui fait la difference entre « brule » et « mis de cote ». */
+  BURN_ADDRESS: env('BURN_ADDRESS', '0x000000000000000000000000000000000000dEaD'),
   VOUCHER_TTL_SEC: parseInt(env('VOUCHER_TTL_SEC', '3600'), 10),
 
   // ---- Progressive jackpot ----
@@ -337,10 +340,10 @@ module.exports = {
    * Le revenu d'une manche vaut :
    *   • contre la banque : la mise moins ce qui a ete rendu. Signe : une
    *     manche gagnee par le filleul compte NEGATIVEMENT ;
-   *   • en un-contre-un (Connect 4, poker) : une fraction de la mise. Ce
-   *     que la maison prend vraiment y est plus gros, mais deux comptes
-   *     complices peuvent fabriquer du volume a volonte — on n'en compte
-   *     donc qu'une petite part, et la complicite reste perdante.
+   *   • en un-contre-un (Connect 4, dames, morpion, poker) : une fraction de
+   *     la mise. Ce que la maison prend vraiment y est plus gros, mais deux
+   *     comptes complices peuvent fabriquer du volume a volonte — on n'en
+   *     compte donc qu'une petite part, et la complicite reste perdante.
    */
   REFERRAL_BPS: parseInt(env('REFERRAL_BPS', '1000'), 10),        // 10 % du revenu
   /* Le DELAI avant qu'un gain de parrainage soit encaissable.
