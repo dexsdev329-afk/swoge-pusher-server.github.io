@@ -31,7 +31,8 @@ const PRIVEES = ['/admin', '/players', '/stats',
                  '/audit?addr=0x' + 'a'.repeat(40),
                  '/repare?addr=0x' + 'a'.repeat(40),
                  '/burn?amount=1&tx=0x' + 'b'.repeat(64),
-                 '/avatar-remove?addr=0x' + 'a'.repeat(40)];
+                 '/avatar-remove?addr=0x' + 'a'.repeat(40),
+                 '/usage'];
 
 function lance(port, cle) {
   const bac = fs.mkdtempSync(path.join(os.tmpdir(), 'swoge-acces-'));
@@ -74,17 +75,22 @@ const code = async (port, chemin, entetes) => (await fetch(`http://127.0.0.1:${p
   {
     const CLE = 'cle-de-test-9f3a';
     const s = await lance(8792, CLE);
+    /* LA BONNE CLE D'ABORD. Les refus qui suivent nourrissent le compteur
+       d'essais rates, et passe le plafond le serveur bloque l'adresse — c'est
+       voulu. Verifier l'ouverture APRES une serie de refus ne testerait donc
+       plus la cle mais le blocage, et le test cassait des qu'on ajoutait une
+       porte a la liste. */
+    eq(await code(8792, '/stats?key=' + CLE), 200, 'la bonne cle ouvre');
+    eq(await code(8792, '/stats', { 'x-admin-key': CLE }), 200,
+       'et l en-tete marche aussi — une cle dans l adresse finit dans les journaux');
+    eq(await code(8792, '/admin?key=' + CLE), 200, 'le tableau de bord s ouvre');
+    eq(await code(8792, '/usage?key=' + CLE), 200, 'et le tableau de ce qui est joue');
+
     for (const porte of PRIVEES) {
       eq(await code(8792, porte), 401, `sans la cle, ${porte.split('?')[0]} refuse (401)`);
     }
     eq(await code(8792, '/stats?key=' + CLE + 'x'), 401, 'une cle presque juste : refusee');
     eq(await code(8792, '/stats?key=' + CLE.slice(0, -1)), 401, 'une cle tronquee : refusee');
-
-    // la bonne cle, dans l'adresse puis dans l'en-tete
-    eq(await code(8792, '/stats?key=' + CLE), 200, 'la bonne cle ouvre');
-    eq(await code(8792, '/stats', { 'x-admin-key': CLE }), 200,
-       'et l en-tete marche aussi — une cle dans l adresse finit dans les journaux');
-    eq(await code(8792, '/admin?key=' + CLE), 200, 'le tableau de bord s ouvre');
 
     /* Ce qui est derriere la porte ne doit jamais fuir par une autre. */
     const r = await fetch('http://127.0.0.1:8792/');

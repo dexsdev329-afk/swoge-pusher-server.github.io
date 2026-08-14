@@ -759,6 +759,57 @@ const server = http.createServer(async (req, res) => {
      « j'ai depose et ca n'est pas arrive » autrement qu'en croyant sur
      parole — les deux fichiers sont ecrits separement, ils se contredisent
      quand quelque chose s'est perdu. */
+  /* ======================= CE QUI EST JOUE =======================
+   *
+   * Privee comme le reste du tableau de bord : elle donne le detail de
+   * l'activite, joueurs distincts compris. En HTML plutot qu'en JSON, parce
+   * qu'on l'ouvre depuis un telephone pour repondre a une question simple —
+   * « est-ce que quelqu'un joue au Plinko ? » — et qu'un JSON brut a lire au
+   * pouce ne repond a rien.
+   */
+  if (path === '/usage') {
+    if (!authed) return refuse(req, res, true);
+    rate(req, true);
+    const jours = game.usageJours();
+    const qs2 = new URLSearchParams(req.url.split('?')[1] || '');
+    const combien = Math.max(1, Math.min(30, parseInt(qs2.get('jours') || '7', 10) || 7));
+    const esc = (x) => String(x).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const n = (x) => Number(x || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    let h = '<!doctype html><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<title>SWOGE — ce qui est joue</title>' +
+      '<style>body{margin:0;padding:16px;background:#0B0E16;color:#EAF2FF;' +
+      'font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}' +
+      'h2{margin:22px 0 8px;font-size:15px;color:#FFC53D}' +
+      'table{width:100%;border-collapse:collapse;margin-bottom:6px}' +
+      'th,td{padding:6px 6px;text-align:right;border-bottom:1px solid rgba(255,255,255,.08)}' +
+      'th:first-child,td:first-child{text-align:left}' +
+      'th{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#7E8FAC}' +
+      '.n{color:#7CFF9B}.p{color:#F2685E}.v{color:#8DA0C4;font-size:12px}</style>' +
+      `<p class="v">${jours.length} jour(s) enregistre(s) · les ${combien} derniers</p>`;
+    if (!jours.length) {
+      h += '<p class="v">Rien encore. La mesure commence au premier tour joue apres ce deploiement — ' +
+           'elle ne peut pas raconter le passe.</p>';
+    }
+    for (const j of jours.slice(0, combien)) {
+      const l = game.usageJour(j);
+      const tot = l.reduce((t, x) => ({ m: t.m + x.manches, mise: t.mise + x.mise, net: t.net + x.net }),
+                           { m: 0, mise: 0, net: 0 });
+      h += `<h2>${esc(j)}</h2><table><tr><th>jeu</th><th>manches</th><th>joueurs</th>` +
+           '<th>mise</th><th>retour</th><th>net maison</th></tr>';
+      for (const x of l) {
+        h += `<tr><td>${esc(x.jeu)}</td><td>${n(x.manches)}</td>` +
+             `<td>${n(x.joueurs)}${x.auDela ? '+' : ''}</td><td>${n(x.mise)}</td>` +
+             `<td>${x.retour === null ? '—' : x.retour + '%'}</td>` +
+             `<td class="${x.net >= 0 ? 'n' : 'p'}">${n(x.net)}</td></tr>`;
+      }
+      h += `<tr><td><b>tout</b></td><td><b>${n(tot.m)}</b></td><td></td><td><b>${n(tot.mise)}</b></td>` +
+           `<td></td><td class="${tot.net >= 0 ? 'n' : 'p'}"><b>${n(tot.net)}</b></td></tr></table>`;
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(h);
+  }
+
   if (path === '/audit') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);

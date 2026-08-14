@@ -212,6 +212,7 @@ class Game {
              fraisCumules: (this.fraisCumules || BN(0)).toString(),
              brule: (this.brule || BN(0)).toString(), brulages: this.brulages || [],
              lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx),
+             usage: this.usage || {},
              duels, telegramMap: Array.from(this.telegramMap) };
   }
 
@@ -270,6 +271,7 @@ class Game {
        un joueur de verifier une manche d'il y a six mois. Les perdre au
        redemarrage reviendrait a retirer la preuve apres l'avoir donnee. */
     if (st.compta) this.compta = st.compta;
+    if (st.usage) this.usage = st.usage;
     if (st.tunnel) this.tunnel = st.tunnel;
     if (st.prixVerses) this.prixVerses = st.prixVerses;
     if (Array.isArray(st.graines)) this.graines = st.graines;
@@ -429,6 +431,7 @@ class Game {
       sh: this.serverSeedHash, cs: p.clientSeed,
       n0: p.nonceDebut == null ? p.nonce : p.nonceDebut, n1: p.nonce });
     this.manchesGraine = (this.manchesGraine || 0) + 1;
+    this.noteJeu(p, jeu, mise, rendu);
     /* LE point de passage du revenu. Il vaut pour les jeux contre la banque
        comme pour le 1v1 : la somme des mises moins la somme des rendus EST ce
        que la maison garde, commission comprise. */
@@ -654,6 +657,75 @@ class Game {
     }
     return out;
   }
+
+  /* ==================== CE QUI EST JOUE, ET PAR COMBIEN ====================
+   *
+   * La comptabilite existante compte l'ARGENT, par mois : mises, rendus,
+   * staking. Elle ne dit pas QUEL JEU. Treize jeux tournent, et la seule facon
+   * de savoir lequel sert etait de lire les journaux joueur par joueur.
+   *
+   * Consequence concrete, et c'est ce qui a decide d'ecrire ceci : le bareme du
+   * Coin Pusher a ete rerregle sur un raisonnement, sans qu'aucun chiffre ne
+   * puisse dire ensuite si ca a change quoi que ce soit. On ne saura jamais
+   * pour hier ; on saura pour demain.
+   *
+   * Trois decisions :
+   *
+   *  1. PAR JOUR ET PAR JEU. Le mois est trop grossier pour voir l'effet d'un
+   *     changement, l'heure trop fine pour quinze joueurs.
+   *  2. LES JOUEURS DISTINCTS, pas seulement les manches. Mille manches d'une
+   *     seule personne et mille manches de cent personnes sont deux mondes, et
+   *     le total ne les distingue pas. On garde donc les adresses vues — mais
+   *     bornees : au-dela de PLAFOND_VUS on cesse de les retenir et on compte
+   *     ce qui deborde, ce qui est dit dans le resultat plutot que cache.
+   *  3. QUATRE-VINGT-DIX JOURS. De quoi comparer un avant et un apres sans
+   *     faire grossir l'etat sans fin.
+   */
+  noteJeu(p, jeu, mise, rendu) {
+    if (!jeu) return;
+    const jour = new Date().toISOString().slice(0, 10);
+    const u = this.usage || (this.usage = {});
+    const d = u[jour] || (u[jour] = {});
+    const g = d[jeu] || (d[jeu] = { m: 0, mise: 0, rendu: 0, vus: {}, plus: 0 });
+    g.m++;
+    g.mise = Number((g.mise + (Number(mise) || 0)).toFixed(6));
+    g.rendu = Number((g.rendu + (Number(rendu) || 0)).toFixed(6));
+    const a = p && p.addr;
+    if (a) {
+      if (g.vus[a]) g.vus[a]++;
+      else if (Object.keys(g.vus).length < Game.PLAFOND_VUS) g.vus[a] = 1;
+      else g.plus++;
+    }
+    /* On elague ici plutot que par une minuterie : le nettoyage suit l'usage,
+       un serveur qui ne joue pas n'a rien a nettoyer. */
+    const cles = Object.keys(u);
+    if (cles.length > Game.JOURS_USAGE) {
+      cles.sort();
+      for (const k of cles.slice(0, cles.length - Game.JOURS_USAGE)) delete u[k];
+    }
+  }
+
+  static get PLAFOND_VUS() { return 400; }
+  static get JOURS_USAGE() { return 90; }
+
+  /**
+   * Le tableau, pret a lire : un jour, une ligne par jeu, du plus joue au
+   * moins joue. `net` est ce que la maison garde — mises moins rendus.
+   */
+  usageJour(jour) {
+    const d = (this.usage || {})[jour] || {};
+    return Object.keys(d).map((jeu) => {
+      const g = d[jeu];
+      const distincts = Object.keys(g.vus || {}).length;
+      return { jeu, manches: g.m, joueurs: distincts, auDela: g.plus || 0,
+               mise: Number(g.mise.toFixed(6)), rendu: Number(g.rendu.toFixed(6)),
+               net: Number((g.mise - g.rendu).toFixed(6)),
+               retour: g.mise > 0 ? Number((g.rendu / g.mise * 100).toFixed(2)) : null };
+    }).sort((a, b) => b.manches - a.manches);
+  }
+
+  /** Les jours connus, du plus recent au plus ancien. */
+  usageJours() { return Object.keys(this.usage || {}).sort().reverse(); }
 
   /** Note un mouvement au mois en cours. `qui` sert au detail par joueur. */
   note(quoi, montant, qui) {
