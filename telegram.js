@@ -58,10 +58,40 @@ function notifyPhoto(photo, caption) {
  *
  * @returns {Promise<boolean>} vrai si Telegram l'a accepte
  */
+const _publics = new Map();
+/**
+ * Ce canal est-il joignable par n'importe qui ?
+ *
+ * On ne se fie pas a « il est prive », on le DEMANDE a Telegram. Un canal qui
+ * porte un nom d'utilisateur est atteignable par t.me/<nom> : n'importe qui
+ * peut y entrer et lire ce qui s'y trouve. Une sauvegarde publiee la
+ * exposerait l'adresse et le solde de chaque joueur, et ne se rattraperait
+ * pas.
+ */
+async function chatEstPublic(chatId) {
+  if (_publics.has(chatId)) return _publics.get(chatId);
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/getChat?chat_id=${encodeURIComponent(chatId)}`);
+    const j = await r.json();
+    /* Si Telegram ne repond pas clairement, on considere que c'est public :
+       en cas de doute sur une fuite, on s'abstient. */
+    const pub = !j.ok || !!(j.result && j.result.username);
+    _publics.set(chatId, pub);
+    if (pub) console.warn(`[tg] canal ${chatId} joignable publiquement (@${j.result && j.result.username || '?'}) — aucune sauvegarde n y sera envoyee`);
+    return pub;
+  } catch (e) { return true; }
+}
+
 async function sendDocument(buffer, nom, legende, chatId) {
-  const cible = chatId || cfg.TG_BACKUP_CHAT_ID;
+  /* A defaut de canal dedie, celui des notifications — a condition qu'il ne
+     soit pas public. */
+  const cible = chatId || cfg.TG_BACKUP_CHAT_ID || cfg.TG_CHAT_ID;
   if (!cfg.TG_BOT_TOKEN || !cible) {
-    console.warn('[tg] document non envoye : TG_BOT_TOKEN ou TG_BACKUP_CHAT_ID manquant');
+    console.warn('[tg] document non envoye : TG_BOT_TOKEN ou canal manquant');
+    return false;
+  }
+  if (await chatEstPublic(cible)) {
+    console.warn('[tg] document NON ENVOYE : ce canal est public. Posez TG_BACKUP_CHAT_ID sur un canal prive.');
     return false;
   }
   try {
@@ -77,4 +107,4 @@ async function sendDocument(buffer, nom, legende, chatId) {
   } catch (e) { console.warn('[tg] document echoue :', e.message); return false; }
 }
 
-module.exports = { notify, notifyPhoto, sendDocument, enabled };
+module.exports = { notify, notifyPhoto, sendDocument, chatEstPublic, enabled };

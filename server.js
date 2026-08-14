@@ -108,8 +108,8 @@ if (process.env.DEV_FAUCET === '1' && !FAUCET_OK)
   console.warn('[secu] DEV_FAUCET=1 IGNORE : un coffre ou un signataire est configure, l argent est reel.');
 if (FAUCET_OK)
   console.warn('[secu] DEV_FAUCET=1 ACTIF : n importe qui peut se crediter 1000 $SWOGE. A ne jamais laisser en production.');
-if (!cfg.TG_BACKUP_CHAT_ID)
-  console.warn('[secu] TG_BACKUP_CHAT_ID absente : AUCUNE sauvegarde ne quitte cette machine.\n' +
+if (!cfg.TG_BACKUP_CHAT_ID && !cfg.TG_CHAT_ID)
+  console.warn('[secu] aucun canal Telegram : AUCUNE sauvegarde ne quitte cette machine.\n' +
                '       state.json et son .bak sont sur le meme volume — si ce volume disparait,\n' +
                '       tous les soldes disparaissent avec lui.');
 if (!cfg.ADMIN_KEY)
@@ -361,8 +361,8 @@ function rate(req, ok) {
  *  n'appellent pas la meme action : configurer une cle, ou en donner une. */
 function refuse(req, res, html) {
   const type = html ? 'text/html' : 'application/json';
-  if (!cfg.TG_BACKUP_CHAT_ID)
-  console.warn('[secu] TG_BACKUP_CHAT_ID absente : AUCUNE sauvegarde ne quitte cette machine.\n' +
+  if (!cfg.TG_BACKUP_CHAT_ID && !cfg.TG_CHAT_ID)
+  console.warn('[secu] aucun canal Telegram : AUCUNE sauvegarde ne quitte cette machine.\n' +
                '       state.json et son .bak sont sur le meme volume — si ce volume disparait,\n' +
                '       tous les soldes disparaissent avec lui.');
 if (!cfg.ADMIN_KEY) {
@@ -690,7 +690,7 @@ const compteInterval = setInterval(() => broadcast(compte()), 60000);
    survivrait a aucun redeploiement. */
 let derniereSauvegarde = 0;
 const backupInterval = setInterval(() => {
-  if (!cfg.TG_BACKUP_CHAT_ID) return;
+  if (!cfg.TG_BACKUP_CHAT_ID && !cfg.TG_CHAT_ID) return;
   if (Date.now() - derniereSauvegarde < cfg.BACKUP_HEURES * 3600000) return;
   derniereSauvegarde = Date.now();
   sauvegarde('quotidienne');
