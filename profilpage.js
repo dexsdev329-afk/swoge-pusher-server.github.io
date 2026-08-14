@@ -208,4 +208,4 @@ font-family:ui-monospace,Menlo,monospace}a{color:#FFD97A}</style></head><body>
 </body></html>`;
 }
 
-module.exports = { rend, absent };
+module.exports = { rend, absent, urlVisage };

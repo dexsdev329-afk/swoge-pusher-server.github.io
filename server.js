@@ -1241,10 +1241,29 @@ const niveauInterval = setInterval(() => {
     /* Le canal n'est prevenu que pour un PALIER franchi : cent annonces de
        niveau par jour ne se lisent plus, dix passages de palier se fetent. */
     if (x.nouveauPalier && x.a >= 20) {
-      const nom = game._p(x.addr).name;
-      tg.notify(`⬆️ <b>${nom} reached ${x.palier}</b> — level ${x.a}\n` +
+      const p = game._p(x.addr);
+      const legende = `⬆️ <b>${p.name} reached ${x.palier}</b> — level ${x.a}\n` +
                 `${fmtAmt(String(Math.round(require('./game').Game.volumePour(x.a))))} $SWOGE wagered for life. ` +
-                `Only a handful will ever see level 100.`);
+                `Only a handful will ever see level 100.`;
+      /* AVEC SON VISAGE. Un palier franchi est la seule chose du jeu qui se
+         merite sur la duree ; annonce en texte nu, ca ressemble a un journal
+         systeme. Avec la tete du joueur, ca ressemble a quelqu'un.
+       *
+         L'image est celle qu'il a televersee, sinon son badge de palier. Elle
+         est prise par son ADRESSE PUBLIQUE — la meme que sert la page de
+         profil — donc Telegram va la chercher tout seul, sans qu'on ait a
+         charger un fichier depuis le disque.
+       *
+         `notifyPhoto` retombe sur le texte si Telegram refuse l'image : les
+         badges sont en WEBP, que sendPhoto n'accepte pas toujours. Une annonce
+         sans photo vaut mieux que pas d'annonce. */
+      let image = null;
+      try {
+        image = require('./profilpage').urlVisage({
+          adresse: String(x.addr).toLowerCase(), photo: !!p.photo, visage: p.visage,
+        });
+      } catch (e) {}
+      tg.notifyPhoto(image, legende);
     }
   }
 }, 500);
