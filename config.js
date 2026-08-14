@@ -334,6 +334,27 @@ module.exports = {
   ADSGRAM_KEY: env('ADSGRAM_KEY', ''),                         // shared secret in the Reward URL
   ADSGRAM_BLOCK_ID: env('ADSGRAM_BLOCK_ID', '41851'),          // Adsgram UnitID (sent to the client)
 
+  /* ---- LES COMPTES DE LA MAISON ----
+   *
+   * Des comptes de joueur qui appartiennent au projet. Ce qu'ils portent —
+   * solde, staking, rendement couru — est de l'argent DE LA MAISON, pas une
+   * dette envers un joueur. Le tableau de bord les comptait comme tout le
+   * monde : il annoncait donc une dette plus grosse que la vraie et des fonds
+   * plus petits que les vrais.
+   *
+   * Ce qui ne change PAS, et ne doit pas changer : le « surplus retirable »
+   * reste calcule sur la dette TOTALE, comptes maison inclus. Ces jetons
+   * peuvent encore sortir par le chemin normal d'un retrait de joueur ; les
+   * retirer du calcul autoriserait a vider le coffre deux fois — une fois par
+   * ownerWithdraw, une fois par le compte lui-meme. Le tableau les montre a
+   * cote, il ne les ajoute pas a ce qu'on peut prendre.
+   *
+   * Plusieurs adresses possibles, separees par des virgules.
+   */
+  MAISON_ADRESSES: String(env('MAISON_ADRESSES', '0x960b8687d019c971eb483ad114df3f4fc5bcf0f0'))
+    .split(',').map(function (x) { return x.trim().toLowerCase(); })
+    .filter(function (x) { return /^0x[0-9a-f]{40}$/.test(x); }),
+
   // ---- Staking (yield on staked $SWOGE, claimable anytime) ----
   // Paid FROM the vault — fund it (ownerDeposit) or it drains. 100% APR is a
   // BIG liability (you owe double after a year), so keep the vault funded.

@@ -55,12 +55,17 @@ function page() {
 
 <div class="cards">
   <div class="card"><span>In the vault</span><b id="pot">—</b></div>
-  <div class="card"><span>Owed to players</span><b id="owed">—</b></div>
+  <div class="card"><span>Owed to real players</span><b id="owedReel">—</b>
+    <em id="owedNote"></em></div>
   <div class="card hl" id="surCard"><span>Safe surplus (withdrawable)</span><b id="surplus">—</b>
     <em id="surAlerte"></em></div>
+  <div class="card" id="maisonCard"><span>Total house funds</span><b id="fondsMaison">—</b>
+    <em>surplus + the project's own accounts</em></div>
 </div>
 <div class="sub">
   <b>Owed breakdown:</b> 💵 Balances <b id="ob">—</b> · 🔒 Staked <b id="os">—</b> · 📈 Yield <b id="oy">—</b> · 🎰 Jackpot reserve <b id="oj">—</b><br>
+  <b>House accounts:</b> 💵 <b id="mb">—</b> · 🔒 <b id="ms">—</b> · 📈 <b id="my">—</b> — <b id="mt">—</b> in total,
+  held by <span id="madr">—</span>. <em id="maisonNote"></em><br>
   👥 Players <b id="pl">—</b> · updated <span id="upd">—</span> · <a href="#" id="refresh">refresh</a>
 </div>
 
@@ -333,8 +338,28 @@ async function load(){
     var r=await fetch("/stats"+(moisChoisi?"?mois="+encodeURIComponent(moisChoisi):""),{headers:{"x-admin-key":KEY}});
     if(!r.ok){ msg("Wrong admin key or stats disabled ("+r.status+")","warn"); return; }
     var d=await r.json();
-    $("#pot").textContent=fmt(d.vaultPot); $("#owed").textContent=fmt(d.owedToPlayers);
+    $("#pot").textContent=fmt(d.vaultPot);
     $("#surplus").textContent=fmt(d.ownerSurplus); surplusNum=parseFloat(d.ownerSurplus||"0")||0;
+    /* LA DETTE REELLE. Les comptes du projet etaient comptes comme ceux d un
+       joueur : le tableau annoncait une dette plus grosse que la vraie et des
+       fonds plus petits que les vrais. */
+    $("#owedReel").textContent=fmt(d.duJoueursReels!=null?d.duJoueursReels:d.owedToPlayers);
+    var mTot=parseFloat(d.maisonTotal||"0")||0;
+    $("#owedNote").textContent = mTot>0
+      ? "total owed by the vault: "+fmt(d.owedToPlayers)+" — "+fmt(d.maisonTotal)+" of it is the project's own"
+      : "";
+    $("#fondsMaison").textContent=fmt(d.fondsMaison);
+    $("#mb").textContent=fmt(d.maisonBalances); $("#ms").textContent=fmt(d.maisonStaked);
+    $("#my").textContent=fmt(d.maisonPending);  $("#mt").textContent=fmt(d.maisonTotal);
+    $("#madr").textContent=(d.maisonAdresses||[]).map(function(a){
+      return a.slice(0,6)+"…"+a.slice(-4); }).join(", ")||"(none set)";
+    /* Pourquoi ce montant n est PAS dans le surplus retirable : ces jetons
+       peuvent encore sortir par un retrait de joueur ordinaire. Les compter
+       deux fois autoriserait a vider le coffre. */
+    $("#maisonNote").textContent = mTot>0
+      ? "Not added to the withdrawable surplus — these tokens can still leave through a normal player withdrawal."
+      : "";
+    $("#maisonCard").style.display = mTot>0 ? "" : "none";
     /* L ALARME. Le surplus etait un nombre parmi d autres : il fallait
        l ouvrir et le lire pour savoir que le coffre ne couvre plus ce qu on
        doit. Le jour ou ca arrive, on l apprend par un joueur furieux. */
@@ -350,7 +375,11 @@ async function load(){
     /* L AUTONOMIE. Un niveau dit ou l on en est ; un rythme dit quand ca
        casse. C est le second qui laisse le temps d agir. */
     var A=d.autonomie||{};
-    $("#auCout").textContent=fmt(String(A.rendementJour||0));
+    /* Le staking DE LA MAISON ne coute rien : le projet se doit ce rendement a
+       lui-meme. Le compter faisait clignoter une alarme d epuisement pour de
+       l argent qui ne sort de nulle part. */
+    $("#auCout").textContent=fmt(String(A.rendementJour||0))+
+      (A.stakedMaison>0 ? " (hors "+fmt(String(A.stakedMaison))+" stakes par la maison)" : "");
     $("#auRev").textContent=fmt(String(A.revenuJour||0));
     var ac=$("#auCard"), an=$("#auNote"), al=$("#auLigne");
     ac.classList.remove("danger","attention");
