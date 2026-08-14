@@ -250,7 +250,7 @@ function msg(t,c){$("#msg").textContent=t;$("#msg").className=c||"";}
 
 async function load(){
   try{
-    var r=await fetch("/stats?key="+encodeURIComponent(KEY));
+    var r=await fetch("/stats",{headers:{"x-admin-key":KEY}});
     if(!r.ok){ msg("Wrong admin key or stats disabled ("+r.status+")","warn"); return; }
     var d=await r.json();
     $("#pot").textContent=fmt(d.vaultPot); $("#owed").textContent=fmt(d.owedToPlayers);
@@ -413,7 +413,7 @@ function detail(p){
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
 async function loadPlayers(){
   try{
-    var r=await fetch("/players?limit=1000&key="+encodeURIComponent(KEY));
+    var r=await fetch("/players?limit=1000",{headers:{"x-admin-key":KEY}});
     if(!r.ok){ $("#pbody").innerHTML='<tr><td colspan="10" class="muted2">could not load players ('+r.status+')</td></tr>'; return; }
     var d=await r.json(); PLAYERS=d.players||[]; drawPlayers();
   }catch(e){ $("#pbody").innerHTML='<tr><td colspan="10" class="muted2">'+esc(e.message)+'</td></tr>'; }
@@ -510,7 +510,7 @@ $("#audGo").onclick=async function(){
   var a=($("#audAddr").value||"").trim().toLowerCase();
   if(!/^0x[0-9a-f]{40}$/.test(a)){ msg("Paste a full 0x… address","warn"); return; }
   try{
-    var r=await fetch("/audit?key="+encodeURIComponent(KEY)+"&addr="+a);
+    var r=await fetch("/audit?addr="+a,{headers:{"x-admin-key":KEY}});
     var d=await r.json(), m=d.mouvements||{};
     audAdr=a; $("#audFix").disabled=!(d.ecart>0);
     var l=[];
@@ -534,7 +534,7 @@ $("#audFix").onclick=async function(){
   if(!audAdr) return;
   if(!confirm("Restore the missing amount to "+audAdr+"? Only what the journal proves is credited.")) return;
   try{
-    var r=await fetch("/repare?key="+encodeURIComponent(KEY)+"&addr="+audAdr);
+    var r=await fetch("/repare?addr="+audAdr,{headers:{"x-admin-key":KEY}});
     var d=await r.json();
     if(d.error) throw new Error(d.error);
     msg("✅ Restored "+fmt(String(d.rendu))+" $SWOGE","ok");
@@ -556,7 +556,7 @@ $("#burnGo").onclick=async function(){
     /* On ne previent le serveur QU APRES confirmation : il annonce le
        brulage au canal avec le hash, et une annonce sans transaction
        confirmee serait une promesse en l'air. */
-    var r=await fetch("/burn?key="+encodeURIComponent(KEY)+"&amount="+encodeURIComponent(v)+"&tx="+t.hash);
+    var r=await fetch("/burn?amount="+encodeURIComponent(v)+"&tx="+t.hash,{headers:{"x-admin-key":KEY}});
     var j=await r.json();
     if(!j.ok) throw new Error(j.error||"server refused the proof");
     msg("🔥 Burned "+v+" $SWOGE — announced on Telegram","ok");

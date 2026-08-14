@@ -108,6 +108,9 @@ if (process.env.DEV_FAUCET === '1' && !FAUCET_OK)
   console.warn('[secu] DEV_FAUCET=1 IGNORE : un coffre ou un signataire est configure, l argent est reel.');
 if (FAUCET_OK)
   console.warn('[secu] DEV_FAUCET=1 ACTIF : n importe qui peut se crediter 1000 $SWOGE. A ne jamais laisser en production.');
+if (!cfg.ADMIN_KEY)
+  console.warn('[secu] ADMIN_KEY absente : /admin, /players, /stats, /audit, /repare et /burn sont FERMES.\n' +
+               '       Posez ADMIN_KEY dans les variables d environnement pour les ouvrir.');
 
 /**
  * Ce qu'un client recoit une fois identifie. Une seule definition pour la
@@ -308,12 +311,84 @@ function pokerPush(tableId) {
 }
 function pokerPushAll() { for (const id of poker.tables.keys()) pokerPush(id); }
 
+/* La comparaison se fait en temps CONSTANT. Comparer deux chaines avec `===`
+   s'arrete au premier caractere different : le temps de reponse raconte alors
+   combien de caracteres sont justes, et une cle se devine lettre par lettre.
+   Le cout est le meme, autant le faire correctement. */
+function memeCle(a, b) {
+  const x = Buffer.from(String(a || ''));
+  const y = Buffer.from(String(b || ''));
+  if (x.length !== y.length) { try { crypto.timingSafeEqual(y, y); } catch (e) {} return false; }
+  try { return crypto.timingSafeEqual(x, y); } catch (e) { return false; }
+}
+
+/* Et on ne laisse pas essayer indefiniment. Une cle de dix caracteres se
+   devine en quelques heures a mille essais par seconde ; a dix essais par
+   dix minutes, il faut des siecles. */
+const essais = new Map();                  // ip -> { n, t }
+const ESSAIS_MAX = 10, ESSAIS_FENETRE = 600000;
+/* DERRIERE UN PROXY, toutes les requetes arrivent avec l'adresse du proxy.
+   Compter dessus reviendrait a bloquer TOUT LE MONDE — le proprietaire
+   compris — des qu'un inconnu essaie dix cles. On prend donc l'adresse
+   transmise quand il y en a une. Elle est falsifiable, donc contournable :
+   c'est assume. Ce qui protege vraiment, c'est la longueur de la cle ; ce
+   compteur ne fait que ralentir, et il ne doit surtout pas se retourner
+   contre celui qu'il protege. */
+function qui(req) {
+  const t = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return t || req.socket.remoteAddress || '?';
+}
+function bloque(req) {
+  const ip = qui(req);
+  const e = essais.get(ip);
+  if (!e) return false;
+  if (Date.now() - e.t > ESSAIS_FENETRE) { essais.delete(ip); return false; }
+  return e.n >= ESSAIS_MAX;
+}
+function rate(req, ok) {
+  const ip = qui(req);
+  if (ok) { essais.delete(ip); return; }
+  const e = essais.get(ip);
+  if (!e || Date.now() - e.t > ESSAIS_FENETRE) essais.set(ip, { n: 1, t: Date.now() });
+  else { e.n++; if (e.n === ESSAIS_MAX) console.warn(`[secu] ${ip} bloque apres ${ESSAIS_MAX} cles admin refusees`); }
+}
+
+/** La reponse a un acces refuse. Elle distingue les deux cas, parce qu'ils
+ *  n'appellent pas la meme action : configurer une cle, ou en donner une. */
+function refuse(req, res, html) {
+  const type = html ? 'text/html' : 'application/json';
+  if (!cfg.ADMIN_KEY) {
+    res.writeHead(503, { 'content-type': type });
+    return res.end(html
+      ? '<h3>503 — this dashboard is closed</h3><p>Set ADMIN_KEY on the server to open it.</p>'
+      : JSON.stringify({ error: 'ADMIN_KEY is not configured on the server' }));
+  }
+  rate(req, false);
+  res.writeHead(401, { 'content-type': type });
+  return res.end(html
+    ? '<h3>401 — add ?key=YOUR_ADMIN_KEY</h3>'
+    : JSON.stringify({ error: 'unauthorized' }));
+}
+
 // ---- HTTP (health + tiny info) ----
 const server = http.createServer(async (req, res) => {
  try {
   const path = req.url.split('?')[0];
-  const key = new URLSearchParams(req.url.split('?')[1] || '').get('key') || '';
-  const authed = !cfg.ADMIN_KEY || key === cfg.ADMIN_KEY; // open if no key configured
+  /* ---------------------------------------------- l'acces au tableau de bord
+   *
+   * ON ECHOUE FERME. Avant, une cle absente de la configuration ouvrait tout :
+   * l'oubli d'une variable d'environnement — la faute la plus banale d'un
+   * deploiement — publiait le solde de chaque joueur, son adresse, son total
+   * depose, et laissait n'importe qui appeler /repare ou /burn. Un oubli ne
+   * doit jamais elargir un acces.
+   *
+   * La cle se donne dans l'adresse ou dans l'en-tete `x-admin-key`. L'en-tete
+   * est preferable : une cle dans l'adresse se retrouve dans l'historique du
+   * navigateur et dans les journaux de tous les serveurs traverses.
+   */
+  const key = new URLSearchParams(req.url.split('?')[1] || '').get('key')
+            || req.headers['x-admin-key'] || '';
+  const authed = !!cfg.ADMIN_KEY && memeCle(key, cfg.ADMIN_KEY) && !bloque(req);
   if (req.url === '/health') { res.writeHead(200); return res.end('ok'); }
   // Adsgram rewarded-video postback (server-to-server). Adsgram GETs this when a
   // user finishes a video: /adsgram/reward?userid=[TelegramId]&key=SECRET.
@@ -341,7 +416,8 @@ const server = http.createServer(async (req, res) => {
   }
   // Private owner dashboard (HTML)
   if (path === '/admin') {
-    if (!authed) { res.writeHead(401, { 'content-type': 'text/html' }); return res.end('<h3>401 — add ?key=YOUR_ADMIN_KEY</h3>'); }
+    if (!authed) return refuse(req, res, true);
+    rate(req, true);
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     return res.end(admin.page());
   }
@@ -372,7 +448,8 @@ const server = http.createServer(async (req, res) => {
      parole — les deux fichiers sont ecrits separement, ils se contredisent
      quand quelque chose s'est perdu. */
   if (path === '/audit') {
-    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
     const qs = new URLSearchParams(req.url.split('?')[1] || '');
     const a = String(qs.get('addr') || '').toLowerCase();
     if (!/^0x[0-9a-f]{40}$/.test(a)) { res.writeHead(400); return res.end('addr=0x…'); }
@@ -382,7 +459,8 @@ const server = http.createServer(async (req, res) => {
   /* La reparation. Plafonnee par l'ecart constate : on ne peut rien creer
      avec, seulement rendre ce que l'etat a perdu. */
   if (path === '/repare') {
-    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
     const qs = new URLSearchParams(req.url.split('?')[1] || '');
     const a = String(qs.get('addr') || '').toLowerCase();
     try {
@@ -398,7 +476,8 @@ const server = http.createServer(async (req, res) => {
     }
   }
   if (path === '/burn') {
-    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
     const qs = new URLSearchParams(req.url.split('?')[1] || '');
     try {
       const r = game.enregistreBrulage(qs.get('amount'), qs.get('tx'));
@@ -416,7 +495,8 @@ const server = http.createServer(async (req, res) => {
     }
   }
   if (path === '/avatar-remove') {
-    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
     const qs = new URLSearchParams(req.url.split('?')[1] || '');
     const a = String(qs.get('addr') || '').toLowerCase();
     const fait = avatars.supprime(a);
@@ -425,7 +505,8 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify({ removed: fait }));
   }
   if (path === '/players') {
-    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
     const qs = new URLSearchParams(req.url.split('?')[1] || '');
     let rows = game.playersReport();
     const q = String(qs.get('q') || '').trim().toLowerCase();
@@ -437,7 +518,8 @@ const server = http.createServer(async (req, res) => {
   // Owner solvency view: how much is in the vault, how much is owed to players,
   // and the SURPLUS you can safely ownerWithdraw without touching player funds.
   if (path === '/stats') {
-    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
     const bd = game.owedBreakdown();
     const owed = bd.balances.add(bd.staked).add(bd.pending).add(bd.jackpot);
     const pot = await chain.vaultPot();
