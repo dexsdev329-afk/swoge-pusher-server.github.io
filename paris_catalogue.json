@@ -154,7 +154,9 @@
       "cotes": {
         "1": 1.69,
         "2": 2.13
-      }
+      },
+      "paysDomicile": "BE",
+      "paysExterieur": "AR"
     },
     {
       "id": "atp-20260815-kec-cob",
@@ -167,7 +169,9 @@
       "cotes": {
         "1": 2.05,
         "2": 1.75
-      }
+      },
+      "paysDomicile": "RS",
+      "paysExterieur": "IT"
     },
     {
       "id": "atp-20260815-lan-arn",
@@ -180,7 +184,9 @@
       "cotes": {
         "1": 1.78,
         "2": 2.01
-      }
+      },
+      "paysDomicile": "ES",
+      "paysExterieur": "IT"
     },
     {
       "id": "atp-20260815-bel-men",
@@ -193,7 +199,9 @@
       "cotes": {
         "1": 3.45,
         "2": 1.3
-      }
+      },
+      "paysDomicile": "IT",
+      "paysExterieur": "CZ"
     },
     {
       "id": "atp-20260815-djo-tir",
@@ -206,7 +214,9 @@
       "cotes": {
         "1": 1.25,
         "2": 3.8
-      }
+      },
+      "paysDomicile": "RS",
+      "paysExterieur": "AR"
     },
     {
       "id": "atp-20260815-val-vac",
@@ -219,7 +229,9 @@
       "cotes": {
         "1": 3.0,
         "2": 1.31
-      }
+      },
+      "paysDomicile": "PY",
+      "paysExterieur": "MC"
     },
     {
       "id": "atp-20260815-dar-hij",
@@ -232,7 +244,9 @@
       "cotes": {
         "1": 1.58,
         "2": 2.35
-      }
+      },
+      "paysDomicile": "IT",
+      "paysExterieur": "AU"
     },
     {
       "id": "atp-20260815-fer-duc",
@@ -245,7 +259,9 @@
       "cotes": {
         "1": 1.53,
         "2": 2.24
-      }
+      },
+      "paysDomicile": "GB",
+      "paysExterieur": "AU"
     },
     {
       "id": "atp-20260815-hal-dem",
@@ -258,7 +274,9 @@
       "cotes": {
         "1": 3.05,
         "2": 1.29
-      }
+      },
+      "paysDomicile": "FR",
+      "paysExterieur": "AU"
     },
     {
       "id": "atp-20260815-pau-hur",
@@ -271,7 +289,9 @@
       "cotes": {
         "1": 1.53,
         "2": 2.25
-      }
+      },
+      "paysDomicile": "US",
+      "paysExterieur": "PL"
     },
     {
       "id": "atp-20260815-str-tab",
@@ -284,7 +304,9 @@
       "cotes": {
         "1": 2.85,
         "2": 1.41
-      }
+      },
+      "paysDomicile": "DE",
+      "paysExterieur": "CL"
     },
     {
       "id": "atp-20260815-han-fil",
@@ -297,7 +319,9 @@
       "cotes": {
         "1": 3.0,
         "2": 1.3
-      }
+      },
+      "paysDomicile": "DE",
+      "paysExterieur": "FR"
     },
     {
       "id": "atp-20260815-leh-ber",
@@ -310,7 +334,9 @@
       "cotes": {
         "1": 1.58,
         "2": 2.15
-      }
+      },
+      "paysDomicile": "CZ",
+      "paysExterieur": "IT"
     },
     {
       "id": "atp-20260815-atm-etc",
@@ -323,7 +349,9 @@
       "cotes": {
         "1": 1.57,
         "2": 2.36
-      }
+      },
+      "paysDomicile": "FR",
+      "paysExterieur": "AR"
     }
   ]
 }

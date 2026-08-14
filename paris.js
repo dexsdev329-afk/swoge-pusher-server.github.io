@@ -101,6 +101,13 @@ function valide(brut) {
       id, sport: String(m.sport),
       competition: String(m.competition || ''), pays: String(m.pays || ''),
       domicile: String(m.domicile || ''), exterieur: String(m.exterieur || ''),
+      /* Le pays du joueur, en code ISO a deux lettres. La page en fait un
+         drapeau : au tennis on reconnait souvent un joueur a son pays avant de
+         lire son nom, et les noms arrivent abreges (« Etcheverry T. M. »).
+         On valide le format ici — un code de travers donnerait deux lettres
+         chinoises a l'ecran plutot qu'un drapeau. */
+      paysDomicile: /^[A-Z]{2}$/.test(m.paysDomicile || '') ? m.paysDomicile : null,
+      paysExterieur: /^[A-Z]{2}$/.test(m.paysExterieur || '') ? m.paysExterieur : null,
       debut, cotes, marge: mg, issues: issues(m.sport),
     };
   });
@@ -141,6 +148,7 @@ function vue(m, now) {
   return {
     id: m.id, sport: m.sport, competition: m.competition, pays: m.pays,
     domicile: m.domicile, exterieur: m.exterieur,
+    paysDomicile: m.paysDomicile, paysExterieur: m.paysExterieur,
     debut: m.debut, cotes: m.cotes, issues: m.issues,
     ouvert: m.debut > (now || Date.now()),
   };
