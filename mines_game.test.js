@@ -161,10 +161,24 @@ const premiereSure = (g) => [...Array(25).keys()].find((c) => bombesDe(g).indexO
 /* Le seul controle qui attrape une fuite : on additionne tout ce qui sort du
    solde et tout ce qui y rentre, et on compare au solde reel. */
 {
-  const g = neuf(1000000);
+  const g = neuf(20000000);
+  /* ---- POURQUOI VINGT MILLE ET PAS TROIS MILLE ----
+     Ce bloc verifiait sur trois mille parties que la maison garde un
+     avantage, et il tombait environ une fois sur cinq sans que rien ne soit
+     casse. Ce n'etait pas la faute du hasard : trois mille parties ne
+     SUFFISENT PAS a demontrer un avantage de trois pour cent. Mesure, graine
+     par graine, le retour va de 93,9 % a 98,5 % sur cet echantillon — a
+     vingt mille il tient entre 95,9 % et 97,5 %, a cent mille entre 95,9 % et
+     96,6 %.
+     La graine est fixee EN PLUS, pour que deux executions donnent le meme
+     chiffre : un echec veut alors dire que le bareme a change, pas que le
+     tirage a ete genereux. Un test qui echoue au hasard n'apprend pas qu'il y
+     a un defaut — il apprend a ignorer les echecs, et c'est le vrai degat. */
+  g.serverSeed = 'graine-fixe-pour-la-mesure-du-bareme-mines';
+  g._p(ADR).clientSeed = 'graine-joueur-fixe';   // les DEUX entrent dans le tirage
   const depart = sol(g);
   let sorti = 0, rentre = 0, parties = 0, gagnees = 0;
-  for (let i = 0; i < 3000; i++) {
+  for (let i = 0; i < 20000; i++) {
     const mise = 50, nb = 1 + (i % 8);
     if (sol(g) < mise) break;
     g.minesStart(ADR, mise, nb); sorti += mise; parties++;
@@ -176,8 +190,14 @@ const premiereSure = (g) => [...Array(25).keys()].find((c) => bombesDe(g).indexO
     }
   }
   eq(sol(g), depart - sorti + rentre, 'aucun jeton ne se perd ni ne se cree');
-  ok(parties > 2000, 'assez de parties jouees');
+  ok(parties > 19000, 'assez de parties jouees pour que l avantage domine la variance');
+  const retour = 100 * rentre / sorti;
   ok(rentre < sorti, `la maison garde un avantage (${sorti} mise, ${rentre} rendu)`);
+  /* Une borne des DEUX cotes. « La maison gagne » laisserait passer un bareme
+     qui rendrait 40 % — ce qui serait un defaut bien plus grave qu'une
+     maison legerement perdante. */
+  ok(retour > 90 && retour < 100,
+     `le retour reste dans la bande attendue : ${retour.toFixed(2)} % (avantage vise ${cfg.MINES_EDGE_BPS / 100} %)`);
   console.log('  %d parties, %d encaissees, retour %s %',
               parties, gagnees, (100 * rentre / sorti).toFixed(2));
 }

@@ -225,14 +225,14 @@ module.exports = {
     ['mp',     'Tic-Tac-Toe',    'morpion.html'],
     ['dm',     'Checkers',       'dames.html'],
     ['mf',     'Ghost Tic-Tac-Toe', 'morpion_fantome.html'],
+    ['dc',     'Last Number',       'dernier_chiffre.html'],
+    ['pf',     'Rock Paper Bandit', 'pierre_feuille_bandit.html'],
   ],
   /* UN JEU N'ENTRE PAS DANS CE CATALOGUE AVANT D'AVOIR SA PAGE.
      La mission du jour envoie le joueur sur l'adresse ci-dessus. Un moteur
      livre sans page y mettrait un lien mort — et pas n'importe lequel : celui
      qu'on met sous le nez de tout le monde le meme jour, avec une recompense
-     au bout. Le Dernier Chiffre et Pierre-Feuille-Bandit tournent cote
-     serveur ; ils reviendront ici avec dernier_chiffre.html et
-     pierre_feuille_bandit.html, pas avant. */
+     au bout. Les trois derniers ont attendu leur page pour entrer ici. */
   /* ---- Ce qu'on peut se dire a la table ----
    *
    * Une liste FERMEE, et rien d'autre. Le texte libre demanderait une equipe
