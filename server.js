@@ -44,7 +44,13 @@ catch (e) {
 }
 if (saved) { game.hydrate(saved); console.log(`[store] restored ${game.players.size} players, jackpot=${game.jackpotStr()}, lastBlock=${game.lastBlock}`); }
 else console.log('[store] no saved state (first run)');
-function persist() { store.save(game.serialize()); }
+/* La sauvegarde courante n'ecrit que ce qui a bouge ; elle glisse l'instantane
+   complet toutes les cinq minutes. Voir fragments.js pour la mesure qui a
+   motive le decoupage. */
+function persist() { store.sauveVite(game); }
+/* L'instantane COMPLET, tout de suite : avant un export, avant un import, et
+   a l'arret. On ne telecharge pas un fichier vieux de cinq minutes. */
+function persistComplet() { return store.save(game.serialize()); }
 // Coalesced immediate save: fires ~1.2s after an important event so an abrupt
 // kill (no SIGTERM) can't lose a deposit/stake/withdraw/jackpot/quest.
 let _saveT = null;
@@ -513,7 +519,9 @@ async function sauvegarde(raison) {
   const zlib = require('zlib');
   const fsp = require('fs');
   try {
-    persist();                                   // on part de l'etat le plus frais
+    /* L'instantane COMPLET : on lit `state.json` juste apres, et les fragments
+       seuls le laisseraient vieux de cinq minutes. */
+    persistComplet();
     const brut = fsp.readFileSync(store.FILE);
     const gz = zlib.gzipSync(brut, { level: 9 });
     const bd = game.owedBreakdown();
@@ -667,7 +675,7 @@ const server = http.createServer(async (req, res) => {
     /* On ecrit l'etat DU MOMENT avant de l'envoyer : sans ca on exporterait le
        dernier fichier ecrit, qui peut avoir dix secondes de retard — dix
        secondes de manches et de depots. */
-    persist();
+    persistComplet();
     const brut = fs.readFileSync(store.FILE);
     const etat = JSON.parse(brut.toString('utf8'));
     const gz = zlib.gzipSync(brut, { level: 9 });
@@ -758,7 +766,7 @@ const server = http.createServer(async (req, res) => {
     // ---- 1) on garde l'etat actuel, date, avant d'y toucher
     let filet = null;
     try {
-      persist();
+      persistComplet();          // le filet doit contenir TOUT l'etat
       filet = store.FILE + '.avant-restauration-' + new Date().toISOString().replace(/[:.]/g, '-');
       fs.copyFileSync(store.FILE, filet);
     } catch (e) {
@@ -784,7 +792,11 @@ const server = http.createServer(async (req, res) => {
     /* Les tables en cours n'appartiennent a aucun des deux etats : elles ont
        ete ouvertes avec des soldes qui n'existent plus. On les vide. */
     try { poker.tables.clear(); } catch (e) {}
-    store.save(game.serialize(), { force: qs.get('force') === '1' });
+    /* `reconstruire` : les fragments sont relus AVANT state.json. Sans cette
+       demande, le redemarrage suivant rendrait l'etat d'avant la restauration
+       — les joueurs effacés reviendraient, avec leur solde. */
+    store.save(game.serialize(), { force: qs.get('force') === '1', reconstruire: true });
+    game.sales = new Set();          // tout vient d'etre ecrit
 
     console.warn(`[import] RESTAURATION : ${r.avant} → ${r.apres} joueurs, ` +
                  `du ${apercu.actuel.duAuxJoueurs} → ${apercu.fichier.duAuxJoueurs} $SWOGE, ` +
@@ -1929,7 +1941,7 @@ server.listen(cfg.PORT, () => {
 
 function shutdown() {
   clearInterval(niveauInterval); clearInterval(prixInterval); clearInterval(backupInterval); clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
-  persist(); // final save so nothing is lost on redeploy
+  persistComplet(); // instantane complet : rien ne se perd au redeploiement
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
      qui attend encore doit partir maintenant, sinon les dernieres manches
      jouees avant un redeploiement n'auront jamais existe. */

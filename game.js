@@ -65,6 +65,9 @@ class Game {
        _p4Rendre), parce qu'une grille a moitie jouee dont les deux joueurs ont
        ete deconnectes n'a plus d'arbitre. */
     this.p4 = new Map();
+    /* Les fiches touchees depuis la derniere sauvegarde. Le magasin la vide
+       quand il a fini d'ecrire — et seulement s'il a reussi. */
+    this.sales = new Set();
     this.p4Seq = 0;
     /* Le total preleve sur les retraits depuis toujours. Il ne bouge aucun
        solde — il reste dans le coffre — mais c'est le chiffre a bruler. */
@@ -136,15 +139,22 @@ class Game {
   }
 
   /** Snapshot the whole state for persistence (BigNumbers → strings). */
-  serialize() {
-    const players = [];
-    let vides = 0;
-    for (const [addr, p] of this.players) {
-      /* Les fiches vides ne sont pas ecrites. C'est la seule barriere entre
-         un script qui ouvre mille comptes par minute et un fichier de soldes
-         qui devient trop lourd pour etre sauve. */
-      if (Game.estVide(p)) { vides++; continue; }
-      players.push([addr, {
+  /**
+   * UNE fiche, telle qu'elle est ecrite.
+   *
+   * Elle est sortie de `serialize()` pour qu'on puisse en ecrire une seule.
+   * Reecrire vingt mille fiches parce que trente ont bouge coute, a vingt
+   * mille joueurs, sept cents millisecondes pendant lesquelles le serveur ne
+   * repond a personne — mesure, pas suppose.
+   *
+   * Rend null pour une fiche vide : c'est la seule barriere entre un script
+   * qui ouvre mille comptes par minute et un fichier de soldes trop lourd
+   * pour etre sauve.
+   */
+  fiche(addr) {
+    const p = this.players.get(String(addr).toLowerCase());
+    if (!p || Game.estVide(p)) return null;
+    return {
         b: p.balance.toString(), c: p.cumulativeAuthorized.toString(),
         s: p.clientSeed, n: p.nonce, name: p.name, nc: !!p.nomChoisi,
         /* Le nom a ete PAYE. Sans ca au fichier, le joueur repaierait mille
@@ -175,9 +185,11 @@ class Game {
         wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
         sd: p.streakDay || 0, sl: p.streakLastClaimDay || null,
         ac: p.adCount || 0, ak: p.adDayKey || null, al: p.adLastMs || 0,
-      }]);
-    }
-    if (vides > 100) console.log(`[store] ${vides} fiche(s) vide(s) non ecrite(s)`);
+    };
+  }
+
+  /** Tout l'etat SAUF les fiches : c'est petit, et ca s'ecrit a chaque fois. */
+  serializeTete() {
     /* Les duels en cours ne sont PAS rejoues au redemarrage — une grille a
        moitie jouee dont les deux joueurs ont ete deconnectes n'a plus
        d'arbitre. Mais les MISES, elles, ont bel et bien quitte les soldes et
@@ -199,8 +211,24 @@ class Game {
              crashGraine: this.crashGraine, crash: this.crash.sauve(),
              fraisCumules: (this.fraisCumules || BN(0)).toString(),
              brule: (this.brule || BN(0)).toString(), brulages: this.brulages || [],
-             lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx), players,
+             lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx),
              duels, telegramMap: Array.from(this.telegramMap) };
+  }
+
+  /** L'etat COMPLET, tete et fiches. L'export, l'import et l'instantane de
+   *  secours passent par la ; la sauvegarde courante, non. */
+  serialize() {
+    const players = [];
+    let vides = 0;
+    for (const addr of this.players.keys()) {
+      const f = this.fiche(addr);
+      if (!f) { vides++; continue; }
+      players.push([addr, f]);
+    }
+    if (vides > 100) console.log(`[store] ${vides} fiche(s) vide(s) non ecrite(s)`);
+    const tete = this.serializeTete();
+    tete.players = players;
+    return tete;
   }
 
   /** Restore a snapshot produced by serialize() (called once at startup). */
@@ -1708,6 +1736,17 @@ class Game {
 
   _p(addr) {
     addr = addr.toLowerCase();
+    /* On note l'adresse comme SALE ici, au seul endroit par lequel passe
+       toute lecture et toute ecriture d'une fiche.
+     *
+     * Marquer trop est sans consequence : on reecrit une fiche qui n'avait
+     * pas bouge. Marquer trop peu perd de l'argent. Entre les deux il n'y a
+     * pas d'hesitation possible, et c'est pourquoi la marque est posee a
+     * l'ACCES et non a la mutation : il faudrait sinon retrouver les cent
+     * quarante endroits qui modifient une fiche, et n'en oublier aucun —
+     * aujourd'hui, et a chaque fonctionnalite ajoutee ensuite.
+     */
+    if (this.sales) this.sales.add(addr);
     let p = this.players.get(addr);
     /* La fiche porte son adresse. Sans elle, tout code qui ne recoit que la
        fiche — _manche, appele par les dix-neuf fins de manche — ne sait pas de

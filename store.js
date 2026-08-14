@@ -41,12 +41,19 @@
 const fs = require('fs');
 const path = require('path');
 const cfg = require('./config');
+const fragments = require('./fragments');
 
 const FILE = path.join(cfg.DATA_DIR, 'state.json');
 const BAK = FILE + '.bak';
 const SECOURS_MS = 5 * 60 * 1000;      // on rafraichit la copie de secours au plus toutes les 5 min
 
+const COMPLET_MS = 5 * 60 * 1000;      // et l'instantane complet, au plus toutes les 5 min
+/* En dessous, le fichier unique est plus rapide que les fragments : voir la
+   mesure dans le commentaire de `sauveVite`. */
+const SEUIL_FRAGMENTS = parseInt(process.env.SEUIL_FRAGMENTS || '2000', 10);
+
 let dernierSecours = 0;
+let dernierComplet = 0;
 let derniersJoueurs = 0;               // combien de joueurs dans le dernier etat CONNU bon
 
 /** Lit un fichier JSON. Rend { etat } , { absent:true } ou { casse:message }. */
@@ -69,6 +76,23 @@ function lis(p) {
  * @throws  si un fichier existe mais qu'aucune version lisible n'a ete trouvee
  */
 function load() {
+  /* Les fragments sont ecrits toutes les secondes, `state.json` toutes les
+     cinq minutes : quand les deux existent, les fragments sont forcement les
+     plus frais. On ne retombe sur le fichier unique que si leur lecture
+     ECHOUE — jamais si elle rend du vide, ce qui serait la meme confusion que
+     celle decrite plus haut, un cran plus bas. */
+  try {
+    const morceaux = fragments.charge();
+    if (morceaux) {
+      derniersJoueurs = morceaux.players.length;
+      console.log(`[store] etat relu depuis les fragments (${derniersJoueurs} joueurs)`);
+      return morceaux;
+    }
+  } catch (e) {
+    console.error('[store] FRAGMENTS ILLISIBLES : ' + e.message +
+                  ' — on retombe sur state.json, plus ancien mais entier.');
+  }
+
   const principal = lis(FILE);
   if (principal.etat) {
     derniersJoueurs = principal.etat.players.length;
@@ -137,9 +161,89 @@ function save(obj, o) {
     } finally { fs.closeSync(fd); }
     fs.renameSync(tmp, FILE);            // remplacement atomique
 
+    /* Les fragments sont relus AVANT `state.json` : quand l'etat est REMPLACE
+       — une restauration, une remise a zero — il faut donc les refaire, sinon
+       le redemarrage suivant rendrait l'ancien etat et la restauration
+       n'aurait servi a rien.
+     *
+     * Mais seulement dans ce cas. L'instantane periodique, lui, ne remplace
+     * rien : les fragments sont deja a jour, les reconstruire reecrirait des
+     * milliers de fichiers pour rien. */
+    if (o && o.reconstruire) {
+      try { fragments.reconstruit(obj); }
+      catch (e) { console.error('[store] fragments non reconstruits : ' + e.message); }
+    }
+
     derniersJoueurs = obj.players.length;
     return true;
   } catch (e) { console.error('[store] SAUVEGARDE RATEE:', e.message); return false; }
 }
 
-module.exports = { load, save, FILE, BAK };
+/**
+ * LA sauvegarde courante : elle n'ecrit que ce qui a bouge.
+ *
+ * Toutes les cinq minutes elle ecrit en plus l'instantane complet — celui
+ * qu'on telecharge, qu'on restaure, et qui reste lisible sans rien connaitre
+ * du decoupage. Le cout d'une reecriture entiere redevient acceptable a cette
+ * cadence : sept cents millisecondes toutes les cinq minutes a vingt mille
+ * joueurs, au lieu des memes sept cents millisecondes chaque seconde.
+ *
+ * @param {object} jeu l'objet Game
+ * @returns {boolean}
+ */
+function sauveVite(jeu) {
+  try {
+    /* Le decoupage ne s'allume que quand il paie.
+     *
+     * Chaque fragment paie son propre fsync. En dessous de quelques milliers
+     * de fiches, ecrire trente fragments coute PLUS cher que de reecrire le
+     * fichier entier — mesure a 205 joueurs avec trente actifs : 30 ms contre
+     * 5. Tant qu'on est petit, on garde donc exactement le comportement
+     * d'avant, et on ne paie rien pour un probleme qu'on n'a pas.
+     *
+     * Le passage est a sens unique : une fois le decoupage en service, il le
+     * reste. Faire l'aller-retour a chaque variation d'effectif reecrirait
+     * tout dans les deux sens pour rien.
+     */
+    if (!fragments.actif() && jeu.players.size < SEUIL_FRAGMENTS) {
+      const ok = save(jeu.serialize());
+      if (ok) jeu.sales = new Set();
+      return ok;
+    }
+    if (!fragments.actif()) {
+      console.log(`[store] ${jeu.players.size} fiches : passage a l'ecriture par fragments.`);
+      fragments.reconstruit(jeu.serialize());
+      jeu.sales = new Set();
+      return true;
+    }
+
+    const sales = jeu.sales;
+    /* Les fragments D'ABORD, toujours. Ce sont eux qui font autorite a la
+       relecture : ecrire l'instantane sans eux laisserait sur le disque des
+       fragments plus vieux que le fichier, et c'est le fragment qui gagne. */
+    if (sales && sales.size) {
+      fragments.sauve(jeu, sales);
+      /* On vide la liste APRES l'ecriture, et seulement si elle a reussi :
+         une adresse effacee d'une liste alors que son fragment n'est pas
+         ecrit ne serait plus jamais sauvee. */
+      jeu.sales = new Set();
+    }
+
+    /* L'instantane complet, de loin en loin : c'est celui qu'on telecharge,
+       celui qu'on restaure, et le seul lisible sans rien savoir du
+       decoupage. `save()` porte les garde-fous — refus d'ecraser un etat
+       peuple par du vide, copie de secours, rename atomique. */
+    const t = Date.now();
+    if (t - dernierComplet > COMPLET_MS) {
+      dernierComplet = t;
+      return save(jeu.serialize());
+    }
+    return true;
+  } catch (e) {
+    console.error('[store] SAUVEGARDE RAPIDE RATEE:', e.message,
+                  '— les fiches restent marquees, la prochaine reessaiera.');
+    return false;
+  }
+}
+
+module.exports = { load, save, sauveVite, FILE, BAK };
