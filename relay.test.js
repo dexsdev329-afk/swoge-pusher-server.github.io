@@ -75,7 +75,7 @@ const G = (c) => fetch(`http://127.0.0.1:${PORT}${c}`);
 
     const l = await (await G('/relay/depuis')).json();
     eq(l.actif, false, 'la page peut demander AVANT d afficher un bouton qui echouerait');
-    ok(Array.isArray(l.provenances) && l.provenances.length === 3,
+    ok(Array.isArray(l.provenances) && l.provenances.length === 5,
        'et la liste des provenances reste lisible : ' + l.provenances.map((x) => x.cle).join(', '));
 
     ok(/pas de RELAY_API_KEY/.test(s.traces()),

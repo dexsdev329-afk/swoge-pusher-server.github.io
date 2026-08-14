@@ -97,6 +97,15 @@ const DEPUIS = {
           symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
   base: { chaine: 8453,      jeton: NATIF, repere: NATIF,
           symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
+  /* Arbitrum et Optimism ajoutes apres avoir interroge TOUTES les chaines que
+     Relay dessert : sur les quarante-neuf candidates, vingt-quatre ont une
+     route vers Robinhood Chain, et ce sont les moins cheres avec Ethereum et
+     Base — 0,08 % de perte sur 0,02 ETH. Arbitrum est d'ailleurs la voisine
+     naturelle : Robinhood Chain est une chaine Orbit. */
+  arb:  { chaine: 42161,     jeton: NATIF, repere: NATIF,
+          symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
+  op:   { chaine: 10,        jeton: NATIF, repere: NATIF,
+          symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
 };
 
 const actif = () => !!cfg.RELAY_API_KEY;
