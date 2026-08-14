@@ -388,19 +388,33 @@ module.exports = {
   ],
   PRIZE_TOTAL: 10000000,
 
-  // ---- SWOGE Smash (spin game) — provably-fair, RTP = 50% ----
-  // 1 spin costs SPIN_COST $SWOGE and pays (multiplier × SPIN_COST).
-  // [multiplier, weight] out of SPIN_TOTAL. Σ(weight·mult)/SPIN_TOTAL must equal
-  // the target RTP. Here Σ = 5,000,000 / 10,000,000 = 0.50 exactly (RTP 50%).
+  /* ---- SWOGE Smash — equitable et verifiable, retour = 92 % ----
+   *
+   * Il etait a 50 %. C'est deux fois plus dur que le blackjack de la maison
+   * d'a cote, et un joueur qui compare — ils comparent — n'en conclut pas que
+   * ce jeu-la est dur : il en conclut que la maison n'est pas honnete, et
+   * cette impression contamine les treize autres jeux. Le gain de tresorerie
+   * ne payait pas ce prix-la.
+   *
+   * Ce qui a change n'est pas seulement le total. La forme comptait autant :
+   * 85,76 % des tours ne rendaient RIEN, et un cinquieme du retour venait des
+   * deux tirages les plus rares. On perdait donc presque toujours, en
+   * attendant un evenement qu'on ne voyait jamais. Desormais quatre tours sur
+   * dix rendent au moins la mise, et le 250x reste la pour la vitrine.
+   *
+   * Une mise coute SPIN_COST et rapporte (multiplicateur x mise).
+   * [multiplicateur, poids] sur SPIN_TOTAL : Σ(poids·mult)/SPIN_TOTAL EST le
+   * retour. Ici Σ = 9 200 000 / 10 000 000 = 0,92 exactement.
+   */
   SPIN_COST: env('SPIN_COST', '1'),
   SPIN_PRIZES: [
-    [0,    8576000],  // 85.76%  smash → nothing
-    [1,     900000],  //  9.00%  money back
-    [2,     300000],  //  3.00%
-    [5,     100000],  //  1.00%
-    [10,    100000],  //  1.00%
+    [0,    6066000],  // 60.66%  smash → rien
+    [1,    2600000],  // 26.00%  la mise revient
+    [2,     900000],  //  9.00%
+    [5,     260000],  //  2.60%
+    [10,    150000],  //  1.50%
     [50,     20000],  //  0.20%
-    [250,     4000],  //  0.04%  jackpot shard
+    [250,     4000],  //  0.04%  eclat de jackpot
   ],
   SPIN_TOTAL: 10000000,
 

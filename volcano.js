@@ -29,7 +29,34 @@ const COIN_TYPE_W  = { VALUE:100, MINI:0.5, MINOR:0.1, MAJOR:0.012, GRAND:0.004,
 const MULT_W       = { 2:78, 3:20, 5:2 };
 // Fuller boards + smaller frequent coins keep RTP ~70% (see _tune simulation).
 const P_COIN = 0.14, RESPINS = 3, START_CAP = 3;
-const VALUE_SCALE = 0.47;   // scales the frequent VALUE coins so 8–9 fills don't inflate RTP
+/*
+ * L'echelle des pieces frequentes — et le seul reglage du retour.
+ *
+ * Il etait a 0,47, soit un retour de 70,5 % : en dessous de tout ce qui se
+ * pratique, quand les machines physiques les plus dures tournent autour de
+ * 85 %. Il passe a 0,74, soit environ 90,5 % (mesure sur trois millions de
+ * tours, compteur reporte).
+ *
+ * ---- POURQUOI PAS PLUS ----
+ *
+ * Ce reglage n'est PAS un curseur, c'est une marche d'escalier, parce que la
+ * valeur d'une piece est ARRONDIE apres mise a l'echelle. La piece de valeur 2
+ * est la plus frequente du jeu (38 % des pieces) :
+ *
+ *     echelle 0,74 → round(1,48) = 1
+ *     echelle 0,75 → round(1,50) = 2      ← elle DOUBLE
+ *
+ * Mesure de part et d'autre de cette limite, trois millions de tours chacune :
+ *
+ *     0,72 → 89,5 %      0,74 →  90,8 %
+ *     0,73 → 90,4 %      0,75 → 103,6 %   ← le jeu paie plus qu'il ne prend
+ *
+ * Il n'existe donc rien entre 90,8 % et 103,6 % qui soit atteignable par ce
+ * bouton. Viser 93 % en montant l'echelle donne un robinet ouvert sur le
+ * coffre, et personne ne s'en apercoit avant qu'il soit vide. Pour aller
+ * au-dela il faut changer les VALEURS des pieces, pas leur echelle.
+ */
+const VALUE_SCALE = 0.74;
 const COLLECT_CAP = 300;    // SWOGE symbols to fill the volcano → eruption bonus
 
 /* Deterministic PRNG from a hex hash; re-hashes to extend the stream if needed. */
