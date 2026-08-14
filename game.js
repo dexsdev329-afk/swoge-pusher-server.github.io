@@ -700,6 +700,7 @@ class Game {
         address: addr,
         name: p.name || addr.slice(0, 6),
         visage: p.visage || null,          // le visage fait partie de l'identite affichee
+        photo: !!p.photo,                  // et sa photo, s'il en a televerse une
         amis: (p.amis || []).length,
         balance: f(p.balance),
         staked: f(staked),

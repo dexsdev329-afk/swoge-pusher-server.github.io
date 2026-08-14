@@ -56,11 +56,28 @@ function page() {
 <div class="cards">
   <div class="card"><span>In the vault</span><b id="pot">—</b></div>
   <div class="card"><span>Owed to players</span><b id="owed">—</b></div>
-  <div class="card hl"><span>Safe surplus (withdrawable)</span><b id="surplus">—</b></div>
+  <div class="card hl" id="surCard"><span>Safe surplus (withdrawable)</span><b id="surplus">—</b>
+    <em id="surAlerte"></em></div>
 </div>
 <div class="sub">
   <b>Owed breakdown:</b> 💵 Balances <b id="ob">—</b> · 🔒 Staked <b id="os">—</b> · 📈 Yield <b id="oy">—</b> · 🎰 Jackpot reserve <b id="oj">—</b><br>
   👥 Players <b id="pl">—</b> · updated <span id="upd">—</span> · <a href="#" id="refresh">refresh</a>
+</div>
+
+<div class="panel">
+  <h2>🔎 Check a player&rsquo;s deposits</h2>
+  <div class="sub" style="margin:0 0 10px">
+    &laquo; I deposited and it never arrived &raquo; has two answers: the credit was lost,
+    or it was played. This compares the journal with the balances and tells you which.
+  </div>
+  <input id="audAddr" placeholder="0x… player address">
+  <div class="row">
+    <button class="ghost" id="audGo">Check</button>
+    <button id="audFix" disabled>Restore the missing amount</button>
+  </div>
+  <pre id="audOut" style="display:none;margin:10px 0 0;padding:11px;border-radius:9px;
+    background:rgba(0,0,0,.35);border:1px solid var(--line);font-size:11.5px;
+    line-height:1.6;white-space:pre-wrap;word-break:break-word;"></pre>
 </div>
 
 <div class="panel">
@@ -135,7 +152,12 @@ function page() {
     .pcard.nodep{ opacity:.72; }
     .pc-h{ display:flex; align-items:center; gap:10px; padding:11px 13px; cursor:pointer;
            border-bottom:1px solid rgba(255,255,255,.06); }
-    .pcav{ flex:0 0 auto; width:32px; height:32px; border-radius:50%; display:flex;
+    .card.danger{ border-color:#F2685E !important; background:rgba(242,104,94,.10) !important; }
+    .card.danger b{ color:#F2685E !important; }
+    .card.attention{ border-color:#E7C97A !important; }
+    .card em{ display:block; margin-top:6px; font-style:normal; font-size:11px; line-height:1.5; color:#F2685E; }
+    .pcav img{ width:100%; height:100%; border-radius:50%; object-fit:cover; display:block; }
+    .pcav{ flex:0 0 auto; width:32px; height:32px; border-radius:50%; display:flex; overflow:hidden;
            align-items:center; justify-content:center; font-size:17px;
            background:rgba(255,255,255,.05); border:1px solid rgba(230,165,55,.3); }
     .pc-h .who{ flex:1 1 auto; min-width:0; }
@@ -212,6 +234,17 @@ var ERC20=["function approve(address s,uint256 a) returns (bool)","function allo
 var provider,signer,myAddr,surplusNum=0,burnDu=0;
 var EXPL="${cfg.EXPLORER || ''}";
 function $(s){return document.querySelector(s);}
+/* Le visage d'un joueur dans une fiche.
+   Il y a TROIS cas et non un seul, et c'est pour ca qu'il ne s'affichait pas :
+   une photo televersee (servie par le serveur a son adresse), une medaille
+   peinte (un CODE, « b3 », dont l'image vit sur le site), ou rien. Ecrire le
+   code tel quel donnait « b3 » en toutes lettres. */
+var MEDIA="${cfg.GAME_IMAGE_BASE || ''}";
+function visageDe(p){
+  if(p.photo) return '<div class="pcav"><img src="/avatar/'+p.address+'?v='+Date.now()+'" alt=""></div>';
+  if(/^b[0-9]{1,2}$/.test(p.visage||"")) return '<div class="pcav"><img src="'+MEDIA+'/badge-'+p.visage.slice(1)+'.webp" alt=""></div>';
+  return '<div class="pcav">'+esc(p.visage||"👤")+'</div>';
+}
 function fmt(v){var n=parseFloat(v||"0");if(isNaN(n))return "—";return n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":n.toFixed(2);}
 function msg(t,c){$("#msg").textContent=t;$("#msg").className=c||"";}
 
@@ -222,6 +255,18 @@ async function load(){
     var d=await r.json();
     $("#pot").textContent=fmt(d.vaultPot); $("#owed").textContent=fmt(d.owedToPlayers);
     $("#surplus").textContent=fmt(d.ownerSurplus); surplusNum=parseFloat(d.ownerSurplus||"0")||0;
+    /* L ALARME. Le surplus etait un nombre parmi d autres : il fallait
+       l ouvrir et le lire pour savoir que le coffre ne couvre plus ce qu on
+       doit. Le jour ou ca arrive, on l apprend par un joueur furieux. */
+    var pot=parseFloat(d.vaultPot||"0")||0, du=parseFloat(d.owedToPlayers||"0")||0;
+    var marge = du>0 ? (pot-du)/du : 1;
+    var c=$("#surCard"), a=$("#surAlerte");
+    c.classList.remove("danger","attention");
+    if(pot<du){ c.classList.add("danger");
+      a.textContent="⚠️ LE COFFRE NE COUVRE PLUS CE QUE VOUS DEVEZ — il manque "+fmt(String(du-pot))+" $SWOGE"; }
+    else if(marge<0.10){ c.classList.add("attention");
+      a.textContent="marge de "+(marge*100).toFixed(1)+"% seulement — un gros retrait passerait dessous"; }
+    else a.textContent="";
     $("#ob").textContent=fmt(d.owedBalances); $("#os").textContent=fmt(d.owedStaked);
     $("#oy").textContent=fmt(d.owedPending); $("#oj").textContent=fmt(d.owedJackpot);
     $("#pl").textContent=d.players;
@@ -268,7 +313,7 @@ function drawPlayers(){
     var net=num(p.net);
     h+='<div class="pcard '+(p.deposited?"":"nodep")+(ouverts[p.address]?" open":"")+'" data-a="'+esc(p.address)+'">'+
        '<div class="pc-h">'+
-         '<div class="pcav">'+esc(p.visage||"👤")+'</div>'+
+         visageDe(p)+
          '<div class="who"><b>'+esc(p.name)+(p.tgId?' <span class="tg">tg:'+esc(String(p.tgId))+'</span>':'')+'</b>'+
          '<span>'+esc(p.address)+'</span></div>'+
          '<div class="tot"><b>'+fmt(p.total)+'</b><span>total held</span></div>'+
@@ -460,6 +505,43 @@ $("#pauseWd").onclick=function(){ if(!signer) return; var on=$("#pauseWd").datas
    morte. Passer par le portefeuille du proprietaire ferait deux transactions
    et laisserait un moment ou les jetons sont a lui — ce qui n'est plus tout a
    fait un brulage. */
+var audAdr=null;
+$("#audGo").onclick=async function(){
+  var a=($("#audAddr").value||"").trim().toLowerCase();
+  if(!/^0x[0-9a-f]{40}$/.test(a)){ msg("Paste a full 0x… address","warn"); return; }
+  try{
+    var r=await fetch("/audit?key="+encodeURIComponent(KEY)+"&addr="+a);
+    var d=await r.json(), m=d.mouvements||{};
+    audAdr=a; $("#audFix").disabled=!(d.ecart>0);
+    var l=[];
+    l.push((d.ecart>0?"🔴 ":"✅ ")+d.diagnostic);
+    l.push("");
+    l.push("balance now        "+fmt(d.solde));
+    l.push("deposits (journal) "+fmt(String(m.depots||0)));
+    l.push("withdrawn          "+fmt(String(m.retraits||0)));
+    l.push("sent to friends    "+fmt(String(m.envoye||0)));
+    l.push("received           "+fmt(String(m.recu||0)));
+    l.push("STAKED             "+fmt(String(m.stake||0))+"   ← locked, not lost");
+    l.push("yield claimed      "+fmt(String(m.stakeClaim||0)));
+    l.push("wagered            "+fmt(String(m.mise||0))+" over "+(m.manches||0)+" rounds");
+    l.push("games result       "+fmt(String(m.resultatDesJeux||0)));
+    if(m.reparations) l.push("already restored   "+fmt(String(m.reparations)));
+    $("#audOut").textContent=l.join("\\n");
+    $("#audOut").style.display="block";
+  }catch(e){ msg("Check failed: "+e.message,"warn"); }
+};
+$("#audFix").onclick=async function(){
+  if(!audAdr) return;
+  if(!confirm("Restore the missing amount to "+audAdr+"? Only what the journal proves is credited.")) return;
+  try{
+    var r=await fetch("/repare?key="+encodeURIComponent(KEY)+"&addr="+audAdr);
+    var d=await r.json();
+    if(d.error) throw new Error(d.error);
+    msg("✅ Restored "+fmt(String(d.rendu))+" $SWOGE","ok");
+    $("#audGo").onclick();
+  }catch(e){ msg("Repair failed: "+e.message,"warn"); }
+};
+
 $("#burnGo").onclick=async function(){
   if(!signer){ msg("Connect your wallet first","warn"); return; }
   if(!(burnDu>0)){ msg("Nothing to burn","warn"); return; }
