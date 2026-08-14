@@ -225,6 +225,7 @@ module.exports = {
     ['mp',     'Tic-Tac-Toe',    'morpion.html'],
     ['dm',     'Checkers',       'dames.html'],
     ['mf',     'Ghost Tic-Tac-Toe', 'morpion_fantome.html'],
+    ['dc',     'Last Number',    'dernier_chiffre.html'],
   ],
   /* ---- Ce qu'on peut se dire a la table ----
    *
@@ -662,6 +663,38 @@ module.exports = {
   MF_ATTENTE_MS: parseInt(env('MF_ATTENTE_MS', '600000'), 10),
   MF_REVANCHE_MS: parseInt(env('MF_REVANCHE_MS', '90000'), 10),
   MF_RAKE_SUR_NUL: env('MF_RAKE_SUR_NUL', '0') === '1',
+
+  /* ---- Le Dernier Chiffre ----
+   *
+   * Chacun cache un nombre de 1 a 100 ; le plus proche du tirage SANS LE
+   * DEPASSER remporte le pot.
+   *
+   * La regle d'origine — « le plus proche gagne » — a ete mesuree avant
+   * d'etre ecrite : sur une cible uniforme, la meilleure reponse converge
+   * vers le milieu, les deux joueurs y arrivent, et la partie devient un pile
+   * ou face avec une commission dessus. « Sans depasser » fait basculer la
+   * meilleure reponse : sous 55 on monte juste au-dessus de l'adversaire,
+   * au-dessus on joue tres petit et on le laisse se griller. Aucun choix ne
+   * bat tous les autres, donc c'est un jeu.
+   *
+   * La pendule est large pour un jeu a un seul coup : il n'y a rien a jouer
+   * vite, et l'attente ne coute rien puisque les deux choisissent en meme
+   * temps. Vingt secondes suffiraient techniquement ; quarante-cinq laissent
+   * le temps de reflechir a la position, ce qui EST le jeu.
+   *
+   * RAKE_SUR_NUL a zero : la nulle arrive quand les deux ont depasse, donc
+   * sur un tirage bas que personne n'a choisi. Faire payer le hasard aux deux
+   * joueurs serait leur faire porter ce qu'ils ne controlent pas.
+   */
+  DC_RAKE_BPS: parseInt(env('DC_RAKE_BPS', '500'), 10),
+  DC_MIN: parseInt(env('DC_MIN', '10'), 10),
+  DC_MAX: parseInt(env('DC_MAX', '10000000'), 10),
+  DC_MISES: (env('DC_MISES', '10,100,1000,10000,100000,1000000,10000000').split(',')
+    .map((x) => parseInt(x.trim(), 10)).filter((x) => x > 0)),
+  DC_COUP_MS: parseInt(env('DC_COUP_MS', '45000'), 10),
+  DC_ATTENTE_MS: parseInt(env('DC_ATTENTE_MS', '600000'), 10),
+  DC_REVANCHE_MS: parseInt(env('DC_REVANCHE_MS', '90000'), 10),
+  DC_RAKE_SUR_NUL: env('DC_RAKE_SUR_NUL', '0') === '1',
 
   /* ---- virements entre joueurs ----
      Le depot prealable n'est pas une formalite : sans lui, ouvrir dix

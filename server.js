@@ -295,11 +295,11 @@ function diffuseTousDuels() { broadcast(tousDuels()); }
  * chaque page veut.
  */
 const NOM_DUEL = { p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers',
-                   mf: 'Ghost Tic-Tac-Toe' };
+                   mf: 'Ghost Tic-Tac-Toe', dc: 'Last Number' };
 /* Les duels que la page peut demander. Une LISTE, pas une cascade de « dm ou
    sinon mp » : le troisieme jeu passait silencieusement pour un morpion, et
    c'est le genre de defaut qui se decouvre en jouant, pas en lisant. */
-const DUELS_OUVERTS = ['mp', 'dm', 'mf'];
+const DUELS_OUVERTS = ['mp', 'dm', 'mf', 'dc'];
 const duelDemande = (v) => (DUELS_OUVERTS.indexOf(String(v)) >= 0 ? String(v) : 'mp');
 /* Les sockets qui REGARDENT une partie sans y jouer. Un spectateur n'existe
    pas pour la partie : il ne mise pas, ne joue pas, et sa presence ne change
@@ -329,14 +329,22 @@ function duelDiffusePhrase(partie, dit) {
 }
 
 function duelPousse(partie, reglement) {
-  const etat = game.duelEtat(partie.id, Date.now());
+  const t = Date.now();
+  /* UN ETAT PAR DESTINATAIRE. Un seul etat diffuse a tout le monde mettrait
+     le nombre cache de l'adversaire dans la page d'en face — au Dernier
+     Chiffre, ca donne la partie au second a choisir. Les autres jeux rendent
+     exactement le meme objet quel que soit le lecteur ; ca ne coute donc rien
+     la ou ce n'est pas necessaire. */
   for (const a of partie.joueurs) {
     if (!a) continue;
-    toAddr(a, { type: 'duelMatch', match: etat, balance: game.balanceStr(a),
-                reglement: reglement || null });
+    toAddr(a, { type: 'duelMatch', match: game.duelEtat(partie.id, t, a),
+                balance: game.balanceStr(a), reglement: reglement || null });
   }
   /* Le spectateur ne recoit NI solde NI reglement : ce n'est pas son argent,
-     et lui envoyer un solde le ferait afficher a la place du sien. */
+     et lui envoyer un solde le ferait afficher a la place du sien. Il ne
+     recoit pas non plus les choix caches — la vue sans destinataire est la
+     plus pauvre, et c'est le bon defaut. */
+  const etat = game.duelEtat(partie.id, t);
   duelSpectateurs(partie.id, { type: 'duelWatch', match: etat, fini: partie.phase === DUEL_FINIE });
   if (partie.phase === DUEL_FINIE) diffuseTousDuels();
   if (reglement && partie.gagnant) {
@@ -1892,7 +1900,7 @@ wss.on('connection', (ws) => {
           const jeu = duelDemande(m.jeu);
           const partie = game.duelCreer(jeu, ws.addr, m.bet, Date.now());
           persistSoon();
-          send(ws, { type: 'duelMatch', match: game.duelEtat(partie.id, Date.now()),
+          send(ws, { type: 'duelMatch', match: game.duelEtat(partie.id, Date.now(), ws.addr),
                      balance: game.balanceStr(ws.addr) });
           duelDiffuseLobby(jeu);
           tg.notify(`\u2694\ufe0f <b>${NOM_DUEL[jeu]}</b>\n${game._p(ws.addr).name} is waiting for an opponent\n` +
@@ -1915,7 +1923,7 @@ wss.on('connection', (ws) => {
         try {
           const partie = game.duelRevanche(ws.addr, m.id, m.bet, Date.now());
           persistSoon();
-          send(ws, { type: 'duelMatch', match: game.duelEtat(partie.id, Date.now()),
+          send(ws, { type: 'duelMatch', match: game.duelEtat(partie.id, Date.now(), ws.addr),
                      balance: game.balanceStr(ws.addr) });
           duelPousseInvites(partie.reserve, partie.jeu);
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -1925,7 +1933,7 @@ wss.on('connection', (ws) => {
         try {
           const partie = game.duelAnnuler(ws.addr, m.id, Date.now());
           persistSoon();
-          send(ws, { type: 'duelMatch', match: game.duelEtat(partie.id, Date.now()),
+          send(ws, { type: 'duelMatch', match: game.duelEtat(partie.id, Date.now(), ws.addr),
                      balance: game.balanceStr(ws.addr) });
           if (partie.reserve) duelPousseInvites(partie.reserve, partie.jeu);
           else duelDiffuseLobby(partie.jeu);
@@ -1969,7 +1977,7 @@ wss.on('connection', (ws) => {
       if (m.type === 'duelState') {
         const mienne = game.duelMienne(ws.addr);
         const id = m.id || (mienne && mienne.id);
-        return send(ws, { type: 'duelMatch', match: id ? game.duelEtat(id, Date.now()) : null });
+        return send(ws, { type: 'duelMatch', match: id ? game.duelEtat(id, Date.now(), ws.addr) : null });
       }
 
       // ---- poker (actions nominatives) ----

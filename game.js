@@ -29,7 +29,8 @@ const p4 = require('./puissance4');
    rejoindre, jouer, ticker et dire qui a gagne. C'est ce qui permet a un seul
    chemin d'argent de les servir tous les trois. */
 const DUELS = { p4, mp: require('./morpion'), dm: require('./dames'),
-                mf: require('./morpion_fantome') };
+                mf: require('./morpion_fantome'),
+                dc: require('./dernier_chiffre') };
 const ATTENTE = p4.ATTENTE, EN_COURS = p4.EN_COURS, FINIE = p4.FINIE;
 const volcano = require('./volcano');
 
@@ -2863,7 +2864,7 @@ class Game {
     /* Le prefixe des reglages, par jeu. Une table plutot qu'une cascade de
        ternaires : le quatrieme jeu a montre que la cascade se relit mal et
        qu'on y oublie une branche. */
-    const p = { mp: 'MP', dm: 'DM', mf: 'MF', p4: 'P4' }[jeu] || 'P4';
+    const p = { mp: 'MP', dm: 'DM', mf: 'MF', dc: 'DC', p4: 'P4' }[jeu] || 'P4';
     const v = (k, d) => (cfg[p + '_' + k] !== undefined ? cfg[p + '_' + k] : d);
     return {
       min: v('MIN', cfg.P4_MIN), max: v('MAX', cfg.P4_MAX),
@@ -3005,9 +3006,42 @@ class Game {
   duelJouer(addr, id, coup, now) {
     const partie = this.p4.get(String(id));
     if (!partie) throw new Error('match not found');
-    const r = partie.jouer(addr, coup, now || Date.now());
+    const t = now || Date.now();
+    const r = partie.jouer(addr, coup, t);
+    /* LE TIRAGE, pour les jeux qui en demandent un.
+       Le moteur ne tire rien lui-meme : la graine du serveur vaut de l'argent
+       tant qu'elle n'est pas revelee, et un moteur de duel finit dans l'etat
+       sauvegarde. Il dit QUAND, on lui rend le resultat et de quoi le
+       refaire. */
+    if (typeof partie.besoinTirage === 'function' && partie.besoinTirage()) {
+      const d = this._tirageDuel(partie);
+      partie.revele(d.nombre, d.preuve, t);
+    }
     const reglement = partie.phase === FINIE ? this._duelRegle(partie) : null;
     return { partie, coup: r, reglement };
+  }
+
+  /**
+   * Un tirage de duel, refaisable par n'importe qui une fois la graine
+   * revelee.
+   *
+   * Les DEUX choix entrent dans l'empreinte. Sans eux, le nombre ne
+   * dependrait que de la graine et de l'identifiant de partie — le serveur le
+   * connaitrait donc avant que les joueurs aient choisi. Avec eux, il ne peut
+   * etre calcule qu'une fois les deux nombres verrouilles, par personne
+   * d'autre que celui qui detient la graine, et personne ne detient la graine
+   * a ce moment-la sauf le serveur, qui s'est deja engage sur son empreinte.
+   */
+  _tirageDuel(partie) {
+    const moteur = this._moteur(partie.jeu);
+    const min = moteur.MIN || 1, max = moteur.MAX || 100;
+    const entree = [partie.id, partie.choix[1], partie.choix[2]].join(':');
+    const h = crypto.createHmac('sha256', this.serverSeed).update(entree).digest('hex');
+    const brut = parseInt(h.slice(0, 13), 16);
+    return {
+      nombre: min + (brut % (max - min + 1)),
+      preuve: { empreinte: this.serverSeedHash, entree, hmac: h },
+    };
   }
 
   duelAbandonner(addr, id, now) {
@@ -3169,10 +3203,20 @@ class Game {
   }
 
   /** L'etat d'une partie, avec les noms — la table n'en connait pas. */
-  duelEtat(id, now) {
+  /**
+   * L'etat d'une partie, VU PAR `pour`.
+   *
+   * Le second parametre n'existe que pour les jeux a information cachee : Le
+   * Dernier Chiffre ne doit pas descendre le nombre de l'adversaire dans la
+   * page, sinon le second a choisir gagne a tous les coups en ouvrant sa
+   * console. Les autres moteurs l'ignorent — leur plateau est public par
+   * nature. Sans `pour`, on obtient la vue d'un SPECTATEUR, qui est la plus
+   * pauvre : c'est le bon defaut, un oubli cache au lieu de reveler.
+   */
+  duelEtat(id, now, pour) {
     const m = this.p4.get(String(id));
     if (!m) return null;
-    const e = m.etat(now || Date.now());
+    const e = m.etat(now || Date.now(), pour || null);
     e.jeu = m.jeu || 'p4';
     e.noms = m.joueurs.map((a) => (a ? this._p(a).name : null));
     /* Le profil PUBLIC, pas des champs recopies a la main : nom, visage, photo
