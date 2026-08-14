@@ -1199,9 +1199,14 @@ wss.on('connection', (ws) => {
           const out = { type: 'profile' };
           if (m.name !== undefined) out.name = game.setPublicName(ws.addr, m.name);
           if (m.avatar !== undefined) out.avatar = game.setVisage(ws.addr, m.avatar);
-          persistSoon();
+          /* Un nom se PAIE, et le paiement doit etre ecrit tout de suite : un
+             redemarrage entre le debit et la sauvegarde periodique ferait
+             repayer le joueur. Meme raison que pour un depot. */
+          if (m.name !== undefined) persist(); else persistSoon();
           out.profile = game.profilPublic(ws.addr);
           out.avatars = require('./game').Game.VISAGES;
+          out.prixNom = game.prixNom(ws.addr);
+          out.balance = game.balanceStr(ws.addr);
           send(ws, out);
           /* Le nom s'affiche chez les AUTRES : les tables partagees doivent le
              reprendre tout de suite, sinon un joueur se renomme et reste
@@ -1211,7 +1216,7 @@ wss.on('connection', (ws) => {
         return;
       }
       if (m.type === 'profile') {
-        return send(ws, { type: 'profile', profile: game.profilPublic(ws.addr),
+        return send(ws, { type: 'profile', profile: game.profilPublic(ws.addr), prixNom: game.prixNom(ws.addr),
                           avatars: require('./game').Game.VISAGES,
                           friends: game.amis(ws.addr),
                           pending: game.amisEnAttente(ws.addr),
@@ -1263,7 +1268,7 @@ wss.on('connection', (ws) => {
           const r = avatars.enregistre(ws.addr, m.data);
           game._p(ws.addr).photo = true;
           persistSoon();
-          send(ws, { type: 'profile', profile: game.profilPublic(ws.addr),
+          send(ws, { type: 'profile', profile: game.profilPublic(ws.addr), prixNom: game.prixNom(ws.addr),
                      avatars: require('./game').Game.VISAGES, uploaded: r.octets });
           broadcast({ type: 'profilePublic', profile: game.profilPublic(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -1273,7 +1278,7 @@ wss.on('connection', (ws) => {
         avatars.supprime(ws.addr);
         game._p(ws.addr).photo = false;
         persistSoon();
-        send(ws, { type: 'profile', profile: game.profilPublic(ws.addr),
+        send(ws, { type: 'profile', profile: game.profilPublic(ws.addr), prixNom: game.prixNom(ws.addr),
                    avatars: require('./game').Game.VISAGES });
         broadcast({ type: 'profilePublic', profile: game.profilPublic(ws.addr) });
         return;

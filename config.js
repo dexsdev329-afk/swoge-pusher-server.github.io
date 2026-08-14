@@ -453,6 +453,25 @@ module.exports = {
      a qui parler si l'image pose probleme, et ca decourage le jetable. */
   AVATAR_REQUIRE_DEPOSIT: env('AVATAR_REQUIRE_DEPOSIT', '1') === '1',
   TRANSFER_MIN: parseFloat(env('TRANSFER_MIN', '10000')),
+  /* ---- LE PRIX D'UN NOM ----
+   *
+   * Un nom public est UNIQUE sur toute la plateforme : le prendre, c'est le
+   * retirer a tous les autres, pour toujours. Gratuit, cette rarete se fait
+   * ramasser par le premier qui passe — cent comptes jetables prennent cent
+   * bons noms en une soiree, et plus personne ne peut s'appeler comme il veut.
+   *
+   * Mille jetons, BRULES. Pas encaisses : bruler evite qu'un prix sur
+   * l'identite ressemble a un peage, et lie la rareté des noms a la rareté du
+   * jeton. C'est le sink le plus honnete du catalogue — le joueur paie pour
+   * quelque chose qu'il voulait, et on ne lui promet rien en retour.
+   *
+   * Ce qui reste GRATUIT, et doit le rester :
+   *   • le nom par defaut (les six premiers caracteres de l'adresse) ;
+   *   • reposer EXACTEMENT le nom qu'on possede deja — sinon un joueur paierait
+   *     pour changer sa photo, ce qu'il ne comprendrait pas ;
+   *   • les noms deja choisis avant l'entree en vigueur du prix.
+   */
+  NAME_PRICE: parseFloat(env('NAME_PRICE', '1000')),
   TRANSFER_REQUIRE_DEPOSIT: env('TRANSFER_REQUIRE_DEPOSIT', '1') === '1',
 
   /* ---- le parrainage ----

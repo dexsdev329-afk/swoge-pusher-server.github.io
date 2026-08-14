@@ -147,6 +147,9 @@ class Game {
       players.push([addr, {
         b: p.balance.toString(), c: p.cumulativeAuthorized.toString(),
         s: p.clientSeed, n: p.nonce, name: p.name, nc: !!p.nomChoisi,
+        /* Le nom a ete PAYE. Sans ca au fichier, le joueur repaierait mille
+           jetons a chaque redeploiement, et personne ne comprendrait pourquoi. */
+        np: !!p.nomPaye,
         dn: p.dayNet.toString(), dk: p.dayKey,
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
         vi: p.visage || null, am: p.amis || [], ph: !!p.photo,
@@ -290,6 +293,7 @@ class Game {
            porte pas encore de niveau acquis, on le retrouve avec la courbe qui
            etait en vigueur. C'est la SEULE occasion ou l'ancienne courbe sert,
            et elle ne sert qu'une fois par joueur. */
+        nomPaye: !!d.np,
         nivMax: d.nx !== undefined ? d.nx
           : Game._niveauHerite(ethers.BigNumber.from(d.tw || '0')),
         deposited: ethers.BigNumber.from(d.dp || '0'), jeux: d.jx || {},
@@ -1744,11 +1748,69 @@ class Game {
       if (a !== String(addr).toLowerCase() && Game.cleNom(p.name || '') === cle)
         throw new Error('that name is taken');
     const p = this._p(addr);
+
+    /* ---- LE PRIX DU NOM ----
+     *
+     * Un nom unique retire quelque chose a tous les autres joueurs, pour
+     * toujours. Gratuit, cette rarete se fait ramasser en une soiree.
+     *
+     * Trois cas ne paient PAS, et c'est deliberé :
+     *   • reposer exactement le nom qu'on possede deja — sinon changer sa
+     *     photo, qui passe par le meme formulaire, couterait mille jetons ;
+     *   • celui qui avait deja choisi son nom avant l'entree en vigueur du
+     *     prix : on ne facture pas retroactivement ;
+     *   • le prix mis a zero par configuration.
+     *
+     * Le montant est BRULE, pas encaisse : il rejoint le tas a bruler, celui
+     * des frais de retrait. Un prix sur l'identite qui finit dans une poche
+     * ressemble a un peage ; le meme prix retire de la circulation profite a
+     * tous les porteurs, y compris a celui qui vient de payer.
+     */
+    if (this.doitPayerNom(p)) {
+      const prix = Number(cfg.NAME_PRICE) || 0;
+      const w = WEI(String(prix));
+      if (p.balance.lt(w))
+        throw new Error('a unique name costs ' + prix + ' $SWOGE — you have ' +
+                        Number(ethers.utils.formatUnits(p.balance, cfg.DECIMALS)).toFixed(2));
+      p.balance = p.balance.sub(w);
+      /* Le meme tas que les frais de retrait : ce qui est ici attend d'etre
+         brule, et sera compte comme brule quand la transaction aura eu lieu. */
+      this.fraisCumules = (this.fraisCumules || BN(0)).add(w);
+      p.nomPaye = true;
+      this.note('brule', prix);
+      journal.ajoute(addr, { k: 'nm', s: 'name', m: String(prix), nom: n });
+    }
+
     p.name = n;
     /* La marque qui protege ce nom : a partir d'ici, la connexion d'une page
        ne le remplacera plus (voir setName). */
     p.nomChoisi = true;
     return n;
+  }
+
+  /**
+   * Qui doit payer. UNE SEULE FOIS dans sa vie : le prix achete le droit
+   * d'avoir un nom a soi, pas chaque changement. Facturer chaque changement
+   * ferait payer mille jetons une faute de frappe, et le joueur garderait le
+   * nom fautif plutot que de repayer — ce qui donne exactement le contraire de
+   * ce qu'on cherche.
+   *
+   * Et personne n'est facture retroactivement : celui qui avait deja choisi
+   * son nom avant l'entree en vigueur du prix le garde, et peut encore en
+   * changer. Ils sont une quinzaine ; les faire payer pour un nom qu'ils ont
+   * depuis des semaines serait incomprehensible.
+   */
+  doitPayerNom(p) {
+    return (Number(cfg.NAME_PRICE) || 0) > 0 && !p.nomPaye && p.nomChoisi !== true;
+  }
+
+  /** Ce que coute le prochain nom, pour l'afficher AVANT que le joueur tape
+   *  quoi que ce soit. Un prix decouvert au moment du refus se lit comme une
+   *  panne ; annonce d'avance, il se lit comme une regle. */
+  prixNom(addr) {
+    const p = this._p(addr);
+    return { prix: Number(cfg.NAME_PRICE) || 0, du: this.doitPayerNom(p) ? (Number(cfg.NAME_PRICE) || 0) : 0,
+             brule: true, solde: Number(ethers.utils.formatUnits(p.balance, cfg.DECIMALS)) };
   }
 
   /** Le visage, choisi dans la liste fermee. */
