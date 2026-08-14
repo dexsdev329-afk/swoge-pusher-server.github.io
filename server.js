@@ -517,24 +517,56 @@ function refuse(req, res, html) {
  * proprietaire — horodatee, telechargeable depuis un telephone, et sans
  * aucune infrastructure a payer ni a maintenir.
  * ================================================================== */
-async function sauvegarde(raison) {
+/**
+ * L'ARCHIVE : le fichier d'etat, plus les images de profil.
+ *
+ * Les images ne sont pas dans `state.json` — elles seraient reecrites toutes
+ * les dix secondes pour rien. Mais une sauvegarde qui les oublie rend, le jour
+ * de la restauration, des comptes complets avec des portraits casses. Elles
+ * sont donc recollees ICI, au moment de partir, et nulle part ailleurs.
+ *
+ * On repart du FICHIER, pas de la memoire : ce qui s'en va est exactement ce
+ * qui est sur le disque.
+ */
+function archiveComplete() {
   const zlib = require('zlib');
   const fsp = require('fs');
+  persistComplet();
+  const brut = fsp.readFileSync(store.FILE);
+  const etat = JSON.parse(brut.toString('utf8'));
+  const photos = avatars.exporte();
+  if (photos.n) etat.avatars = photos.images;
+  /* L'historique : « chaque manche, gardee a vie ». Il n'est pas dans
+     `state.json` pour la meme raison que les images — mais une restauration
+     qui rend l'argent devant un profil vide n'a rendu que la moitie. */
+  const histoire = journal.exporte();
+  if (histoire.n) etat.journal = histoire.lignes;
+  const gz = zlib.gzipSync(Buffer.from(JSON.stringify(etat)), { level: 9 });
+  return { gz, etat, photos, histoire, octetsEtat: brut.length };
+}
+
+async function sauvegarde(raison) {
   try {
-    /* L'instantane COMPLET : on lit `state.json` juste apres, et les fragments
-       seuls le laisseraient vieux de cinq minutes. */
-    persistComplet();
-    const brut = fsp.readFileSync(store.FILE);
-    const gz = zlib.gzipSync(brut, { level: 9 });
+    /* L'instantane COMPLET : `archiveComplete` ecrit l'etat du moment avant de
+       le lire, et les fragments seuls le laisseraient vieux de cinq minutes. */
+    const { gz, photos, histoire, octetsEtat } = archiveComplete();
     const bd = game.owedBreakdown();
     const du = bd.balances.add(bd.staked).add(bd.pending).add(bd.jackpot);
     const jour = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    /* Ce qu'on a laisse se DIT. Une sauvegarde qui tronque en silence se
+       decouvre le jour de la restauration, c'est-a-dire trop tard. */
+    const restees = (photos.laissees ? `\n⚠️ ${photos.laissees} image(s) laissee(s) — plafond atteint` : '') +
+                    (histoire.laisses ? `\n⚠️ ${histoire.laisses} journal/journaux laisse(s) — plafond atteint` : '');
     const ok = await tg.sendDocument(gz, `swoge-etat-${jour}.json.gz`,
       `💾 <b>Sauvegarde</b> · ${raison}\n` +
       `${game.players.size} joueurs · ${fmtAmt(ethers.utils.formatUnits(du, cfg.DECIMALS))} $SWOGE dus\n` +
-      `${(brut.length / 1024).toFixed(0)} Ko → ${(gz.length / 1024).toFixed(0)} Ko compresses`);
-    console.log(`[backup] ${ok ? 'envoyee' : 'NON ENVOYEE'} (${(gz.length / 1024).toFixed(0)} Ko, ${raison})`);
-    return { ok, octets: gz.length, joueurs: game.players.size };
+      `${photos.n} photo(s) · ${histoire.n} journal/journaux inclus\n` +
+      `${(octetsEtat / 1024).toFixed(0)} Ko d etat → ${(gz.length / 1024).toFixed(0)} Ko compresses` +
+      restees);
+    console.log(`[backup] ${ok ? 'envoyee' : 'NON ENVOYEE'} (${(gz.length / 1024).toFixed(0)} Ko, ` +
+                `${photos.n} photos, ${histoire.n} journaux, ${raison})`);
+    return { ok, octets: gz.length, joueurs: game.players.size,
+             photos: photos.n, journaux: histoire.n };
   } catch (e) {
     console.warn('[backup] echec :', e.message);
     return { ok: false, error: e.message };
@@ -719,21 +751,22 @@ const server = http.createServer(async (req, res) => {
   if (path === '/export') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
-    /* On ecrit l'etat DU MOMENT avant de l'envoyer : sans ca on exporterait le
-       dernier fichier ecrit, qui peut avoir dix secondes de retard — dix
-       secondes de manches et de depots. */
-    persistComplet();
-    const brut = fs.readFileSync(store.FILE);
-    const etat = JSON.parse(brut.toString('utf8'));
-    const gz = zlib.gzipSync(brut, { level: 9 });
+    /* Le MEME fichier que celui qui part sur Telegram — images de profil
+       comprises. `archiveComplete` ecrit l'etat du moment avant de le lire :
+       sans ca on exporterait le dernier fichier ecrit, qui peut avoir dix
+       secondes de retard — dix secondes de manches et de depots. */
+    const { gz, etat, photos, histoire } = archiveComplete();
     const nom = `swoge-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}-${etat.players.length}j.json.gz`;
     res.writeHead(200, {
       'content-type': 'application/gzip',
       'content-length': gz.length,
       'content-disposition': `attachment; filename="${nom}"`,
       'x-swoge-joueurs': String(etat.players.length),
+      'x-swoge-photos': String(photos.n),
+      'x-swoge-journaux': String(histoire.n),
     });
-    console.log(`[export] ${etat.players.length} joueurs, ${(gz.length / 1024).toFixed(1)} Ko → ${qui(req)}`);
+    console.log(`[export] ${etat.players.length} joueurs, ${photos.n} photos, ${histoire.n} journaux, ` +
+                `${(gz.length / 1024).toFixed(1)} Ko → ${qui(req)}`);
     return res.end(gz);
   }
 
@@ -792,8 +825,14 @@ const server = http.createServer(async (req, res) => {
       const b = g.owedBreakdown();
       return Number(ethers.utils.formatUnits(b.balances.add(b.staked).add(b.pending).add(b.jackpot), cfg.DECIMALS));
     };
+    /* Le temoin ne sert qu'a chiffrer ce que l'archive DOIT aux joueurs. On
+       lui donne les fiches deja lues plutot que de reparser le fichier : avec
+       les images et les journaux dedans, une archive fait des dizaines de
+       megaoctets, et l'analyser deux fois sur un serveur qui tient tous les
+       soldes en memoire n'apporte rien. `hydrate` ne fait que LIRE cette
+       liste — il construit des fiches neuves a partir d'elle. */
     const temoin = new (require('./game').Game)();
-    temoin.hydrate(JSON.parse(brut.toString('utf8')));
+    temoin.hydrate({ players: etat.players, jackpotPot: etat.jackpotPot });
     const apercu = {
       fichier: { joueurs: etat.players.length, duAuxJoueurs: sommeDue(temoin) },
       actuel: { joueurs: game.players.size, duAuxJoueurs: sommeDue(game) },
@@ -836,6 +875,16 @@ const server = http.createServer(async (req, res) => {
     let r;
     try { r = game.remplace(etat); }
     catch (e) { return repond(400, { remplace: false, filet, error: e.message }); }
+    /* Les portraits reviennent avec les comptes. Sans ca, une restauration sur
+       un volume neuf rendait des fiches completes qui disaient « j'ai une
+       photo » devant une adresse qui repondait 404. Elles repassent par le
+       controle des octets : une archive est un fichier comme un autre. */
+    let images = { poses: 0, refusees: 0 };
+    if (etat.avatars) { try { images = avatars.importe(etat.avatars); } catch (e) {} }
+    /* L'historique revient avec les comptes — mais jamais par-dessus celui
+       d'un joueur qui en a deja un : voir journal.importe(). */
+    let histoire = { poses: 0, gardes: 0 };
+    if (etat.journal) { try { histoire = journal.importe(etat.journal); } catch (e) {} }
     /* Les tables en cours n'appartiennent a aucun des deux etats : elles ont
        ete ouvertes avec des soldes qui n'existent plus. On les vide. */
     try { poker.tables.clear(); } catch (e) {}
@@ -847,12 +896,17 @@ const server = http.createServer(async (req, res) => {
 
     console.warn(`[import] RESTAURATION : ${r.avant} → ${r.apres} joueurs, ` +
                  `du ${apercu.actuel.duAuxJoueurs} → ${apercu.fichier.duAuxJoueurs} $SWOGE, ` +
-                 `${fermees} sockets fermees, filet : ${filet}`);
+                 `${images.poses} photo(s) reposee(s)` +
+                 (images.refusees ? `, ${images.refusees} refusee(s)` : '') +
+                 `, ${histoire.poses} journal/journaux repose(s)` +
+                 (histoire.gardes ? `, ${histoire.gardes} garde(s) intact(s)` : '') +
+                 `, ${fermees} sockets fermees, filet : ${filet}`);
     tg.notify(`♻️ <b>State restored from a backup file</b>\n` +
               `Players: ${r.avant} → <b>${r.apres}</b>\n` +
               `Owed to players: ${fmtAmt(String(apercu.actuel.duAuxJoueurs))} → <b>${fmtAmt(String(apercu.fichier.duAuxJoueurs))} $SWOGE</b>\n` +
               `Everyone was disconnected and will reconnect.`);
-    return repond(200, { remplace: true, ...apercu, joueurs: r, sessionsFermees: fermees,
+    return repond(200, { remplace: true, ...apercu, joueurs: r, photos: images,
+                         journaux: histoire, sessionsFermees: fermees,
                          filet, defaire: 'copy that file back over state.json and restart' });
   }
 

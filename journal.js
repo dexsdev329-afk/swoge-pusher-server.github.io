@@ -257,4 +257,86 @@ function resume(addr) {
   } catch (e) { return { lignes: 0, depuis: null, octets: 0 }; }
 }
 
-module.exports = { ajoute, ajouteSync, videSync, draine, lit, resume, DOSSIER, fichier };
+/* ====================== LE JOURNAL DANS LA SAUVEGARDE ======================
+ *
+ * L'archive n'emportait que `state.json`. Les soldes revenaient donc d'une
+ * restauration, mais l'historique — « chaque manche, gardee a vie » — repartait
+ * vide : le joueur retrouvait son argent devant un profil sans passe.
+ *
+ * Ce que ca coute, mesure et non suppose : 226 journaux reels tiennent en
+ * 351 Ko compresses. Ce n'est pas la taille qui posait probleme, c'est qu'on
+ * n'y avait pas pense.
+ *
+ * DEUX BORNES, parce qu'un journal n'a pas de fin :
+ *   • par joueur, on n'emporte que la QUEUE — les evenements recents, ceux que
+ *     le profil montre. Un seul compte d'essai a produit 3,7 Go a lui tout
+ *     seul ; sans cette borne il emporterait la sauvegarde avec lui ;
+ *   • en tout, un plafond, au-dela duquel on s'arrete — en le DISANT.
+ * ========================================================================= */
+const QUEUE_JOUEUR = 256 * 1024;         // ce que le profil montre, largement
+const MAX_SAUVEGARDE = 30 * 1024 * 1024; // Telegram refuse au-dela de 50 Mo
+
+/** Les journaux, tronques par la fin, pour etre glisses dans l'archive. */
+function exporte(plafond) {
+  const max = plafond || MAX_SAUVEGARDE;
+  const lignes = {};
+  let octets = 0, laisses = 0, n = 0, tronques = 0;
+  let noms = [];
+  try { noms = fs.readdirSync(dossier()); } catch (e) { return { lignes, octets: 0, laisses: 0, n: 0, tronques: 0 }; }
+  noms.sort();
+  for (const nom of noms) {
+    const m = /^(0x[0-9a-f]{40})\.jsonl$/.exec(nom);
+    if (!m) continue;
+    const p = path.join(dossier(), nom);
+    let taille;
+    try { taille = fs.statSync(p).size; } catch (e) { continue; }
+    if (!taille) continue;
+    if (octets >= max) { laisses++; continue; }
+    const prendre = Math.min(taille, QUEUE_JOUEUR, max - octets);
+    let texte;
+    try {
+      const fd = fs.openSync(p, 'r');
+      const buf = Buffer.alloc(prendre);
+      fs.readSync(fd, buf, 0, prendre, taille - prendre);
+      fs.closeSync(fd);
+      texte = buf.toString('utf8');
+    } catch (e) { continue; }
+    /* On a coupe au milieu d'une ligne : la premiere est un debris, pas un
+       evenement. Une ligne tronquee reintroduite ferait un profil qui affiche
+       du charabia. */
+    if (prendre < taille) { texte = texte.slice(texte.indexOf('\n') + 1); tronques++; }
+    if (!texte) continue;
+    octets += Buffer.byteLength(texte); n++;
+    lignes[m[1]] = texte;
+  }
+  return { lignes, octets, laisses, n, tronques };
+}
+
+/**
+ * Repose les journaux d'une archive.
+ *
+ * ON N ECRASE JAMAIS UN JOURNAL EXISTANT. Une restauration sert d'abord a
+ * remonter sur une machine vide ; mais elle peut aussi etre lancee sur un
+ * serveur qui tourne, avec un fichier d'hier. Ecrire par-dessus effacerait
+ * l'histoire d'aujourd'hui, et ajouter a la suite la dupliquerait. On ne
+ * touche donc qu'aux joueurs qui n'ont RIEN — exactement le cas du sinistre.
+ */
+function importe(paquets) {
+  let poses = 0, gardes = 0;
+  for (const a of Object.keys(paquets || {})) {
+    const f = fichier(a);
+    if (!f) continue;
+    try {
+      if (fs.existsSync(f) && fs.statSync(f).size > 0) { gardes++; continue; }
+      let t = String(paquets[a] || '');
+      if (t && !t.endsWith('\n')) t += '\n';
+      if (!t) continue;
+      fs.writeFileSync(f, t);
+      poses++;
+    } catch (e) {}
+  }
+  return { poses, gardes };
+}
+
+module.exports = { ajoute, ajouteSync, videSync, draine, lit, resume, exporte, importe,
+                   QUEUE_JOUEUR, MAX_SAUVEGARDE, DOSSIER, fichier };

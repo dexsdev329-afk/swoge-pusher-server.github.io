@@ -129,4 +129,57 @@ function lit(addr) {
 
 function existe(addr) { return !!fichier(addr); }
 
-module.exports = { enregistre, supprime, lit, existe, MAX_OCTETS, DOSSIER };
+/* ====================== LES IMAGES DANS LA SAUVEGARDE ======================
+ *
+ * Les images vivent a cote de `state.json` — c'est la bonne decision pour
+ * l'ecriture, qui a lieu toutes les dix secondes. Mais la SAUVEGARDE, elle,
+ * n'emportait que `state.json` : le jour d'une restauration sur un volume
+ * neuf, chaque joueur retrouvait ses jetons, son niveau, ses amis... et une
+ * image cassee, parce que sa fiche disait « il en a une » et que le fichier
+ * n'existait plus. Une seule ligne dans l'archive repare ca.
+ *
+ * Elles sont bornees : 32 Ko chacune, et un plafond global au-dela duquel on
+ * en laisse — en le DISANT, parce qu'une sauvegarde qui tronque en silence
+ * est pire que pas de photo du tout.
+ * ========================================================================= */
+const MAX_SAUVEGARDE = 20 * 1024 * 1024;   // Telegram refuse au-dela de 50 Mo
+
+/** Toutes les images, en data-URI, pour etre glissees dans l'archive. */
+function exporte(plafond) {
+  const max = plafond || MAX_SAUVEGARDE;
+  const images = {};
+  let octets = 0, laissees = 0, n = 0;
+  let noms = [];
+  try { noms = fs.readdirSync(dossier()); } catch (e) { return { images, octets: 0, laissees: 0, n: 0 }; }
+  noms.sort();                                   // meme archive pour le meme dossier
+  for (const nom of noms) {
+    const m = /^(0x[0-9a-f]{40})\.(jpg|png|webp)$/.exec(nom);
+    if (!m) continue;
+    const f = FORMATS.find((x) => x.ext === m[2]);
+    let buf;
+    try { buf = fs.readFileSync(path.join(dossier(), nom)); } catch (e) { continue; }
+    if (!buf.length || buf.length > MAX_OCTETS || octets + buf.length > max) { laissees++; continue; }
+    octets += buf.length; n++;
+    images[m[1]] = 'data:' + f.mime + ';base64,' + buf.toString('base64');
+  }
+  return { images, octets, laissees, n };
+}
+
+/**
+ * Repose les images d'une archive.
+ *
+ * Elles repassent par `enregistre()` — donc par le controle des octets
+ * d'en-tete et de la taille. Un fichier de sauvegarde est un fichier comme un
+ * autre : il a pu etre modifie entre l'envoi et le retour, et ce qui en sort
+ * s'affiche chez les autres joueurs. On ne le recopie pas les yeux fermes.
+ */
+function importe(images) {
+  let poses = 0, refusees = 0;
+  for (const a of Object.keys(images || {})) {
+    try { enregistre(a, images[a]); poses++; } catch (e) { refusees++; }
+  }
+  return { poses, refusees };
+}
+
+module.exports = { enregistre, supprime, lit, existe, exporte, importe,
+                   MAX_OCTETS, MAX_SAUVEGARDE, DOSSIER };
