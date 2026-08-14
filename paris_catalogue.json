@@ -14,57 +14,316 @@
     "Mesuree sur ce lot : 9,9 %."
   ],
   "sports": [
-    { "cle": "foot", "nom": "Football", "actif": true },
-    { "cle": "tennis", "nom": "Tennis", "actif": false },
-    { "cle": "nba", "nom": "NBA", "actif": false }
+    {
+      "cle": "foot",
+      "nom": "Football",
+      "actif": true
+    },
+    {
+      "cle": "tennis",
+      "nom": "Tennis",
+      "actif": true
+    },
+    {
+      "cle": "nba",
+      "nom": "NBA",
+      "actif": false
+    }
   ],
   "matchs": [
-    { "id": "efl-20260815-bol-pre", "sport": "foot",
-      "competition": "Championship", "pays": "England",
-      "domicile": "Bolton", "exterieur": "Preston",
+    {
+      "id": "efl-20260815-bol-pre",
+      "sport": "foot",
+      "competition": "Championship",
+      "pays": "England",
+      "domicile": "Bolton",
+      "exterieur": "Preston",
       "debut": "2026-08-15T12:30:00Z",
-      "cotes": { "1": 2.12, "N": 3.22, "2": 3.17 } },
-
-    { "id": "efl-20260815-bri-mil", "sport": "foot",
-      "competition": "Championship", "pays": "England",
-      "domicile": "Bristol City", "exterieur": "Millwall",
+      "cotes": {
+        "1": 2.12,
+        "N": 3.22,
+        "2": 3.17
+      }
+    },
+    {
+      "id": "efl-20260815-bri-mil",
+      "sport": "foot",
+      "competition": "Championship",
+      "pays": "England",
+      "domicile": "Bristol City",
+      "exterieur": "Millwall",
       "debut": "2026-08-15T15:00:00Z",
-      "cotes": { "1": 2.47, "N": 3.25, "2": 2.58 } },
-
-    { "id": "efl-20260815-cha-der", "sport": "foot",
-      "competition": "Championship", "pays": "England",
-      "domicile": "Charlton", "exterieur": "Derby",
+      "cotes": {
+        "1": 2.47,
+        "N": 3.25,
+        "2": 2.58
+      }
+    },
+    {
+      "id": "efl-20260815-cha-der",
+      "sport": "foot",
+      "competition": "Championship",
+      "pays": "England",
+      "domicile": "Charlton",
+      "exterieur": "Derby",
       "debut": "2026-08-15T15:00:00Z",
-      "cotes": { "1": 2.62, "N": 3.08, "2": 2.53 } },
-
-    { "id": "efl-20260815-mid-lin", "sport": "foot",
-      "competition": "Championship", "pays": "England",
-      "domicile": "Middlesbrough", "exterieur": "Lincoln",
+      "cotes": {
+        "1": 2.62,
+        "N": 3.08,
+        "2": 2.53
+      }
+    },
+    {
+      "id": "efl-20260815-mid-lin",
+      "sport": "foot",
+      "competition": "Championship",
+      "pays": "England",
+      "domicile": "Middlesbrough",
+      "exterieur": "Lincoln",
       "debut": "2026-08-15T15:00:00Z",
-      "cotes": { "1": 1.35, "N": 4.45, "2": 7.50 } },
-
-    { "id": "efl-20260815-nor-wba", "sport": "foot",
-      "competition": "Championship", "pays": "England",
-      "domicile": "Norwich", "exterieur": "West Brom",
+      "cotes": {
+        "1": 1.35,
+        "N": 4.45,
+        "2": 7.5
+      }
+    },
+    {
+      "id": "efl-20260815-nor-wba",
+      "sport": "foot",
+      "competition": "Championship",
+      "pays": "England",
+      "domicile": "Norwich",
+      "exterieur": "West Brom",
       "debut": "2026-08-15T15:00:00Z",
-      "cotes": { "1": 1.87, "N": 3.38, "2": 3.73 } },
-
-    { "id": "efl-20260815-por-qpr", "sport": "foot",
-      "competition": "Championship", "pays": "England",
-      "domicile": "Portsmouth", "exterieur": "QPR",
+      "cotes": {
+        "1": 1.87,
+        "N": 3.38,
+        "2": 3.73
+      }
+    },
+    {
+      "id": "efl-20260815-por-qpr",
+      "sport": "foot",
+      "competition": "Championship",
+      "pays": "England",
+      "domicile": "Portsmouth",
+      "exterieur": "QPR",
       "debut": "2026-08-15T15:00:00Z",
-      "cotes": { "1": 2.20, "N": 3.25, "2": 2.97 } },
-
-    { "id": "efl-20260815-sto-swa", "sport": "foot",
-      "competition": "Championship", "pays": "England",
-      "domicile": "Stoke", "exterieur": "Swansea",
+      "cotes": {
+        "1": 2.2,
+        "N": 3.25,
+        "2": 2.97
+      }
+    },
+    {
+      "id": "efl-20260815-sto-swa",
+      "sport": "foot",
+      "competition": "Championship",
+      "pays": "England",
+      "domicile": "Stoke",
+      "exterieur": "Swansea",
       "debut": "2026-08-15T15:00:00Z",
-      "cotes": { "1": 2.25, "N": 3.15, "2": 2.97 } },
-
-    { "id": "efl-20260815-shu-bir", "sport": "foot",
-      "competition": "Championship", "pays": "England",
-      "domicile": "Sheffield Utd", "exterieur": "Birmingham",
+      "cotes": {
+        "1": 2.25,
+        "N": 3.15,
+        "2": 2.97
+      }
+    },
+    {
+      "id": "efl-20260815-shu-bir",
+      "sport": "foot",
+      "competition": "Championship",
+      "pays": "England",
+      "domicile": "Sheffield Utd",
+      "exterieur": "Birmingham",
       "debut": "2026-08-15T17:30:00Z",
-      "cotes": { "1": 2.32, "N": 3.12, "2": 2.88 } }
+      "cotes": {
+        "1": 2.32,
+        "N": 3.12,
+        "2": 2.88
+      }
+    },
+    {
+      "id": "atp-20260815-blo-nav",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Blockx A.",
+      "exterieur": "Navone M.",
+      "debut": "2026-08-15T15:00:00Z",
+      "cotes": {
+        "1": 1.69,
+        "2": 2.13
+      }
+    },
+    {
+      "id": "atp-20260815-kec-cob",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Kecmanovic M.",
+      "exterieur": "Cobolli F.",
+      "debut": "2026-08-15T15:00:00Z",
+      "cotes": {
+        "1": 2.05,
+        "2": 1.75
+      }
+    },
+    {
+      "id": "atp-20260815-lan-arn",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Landaluce M.",
+      "exterieur": "Arnaldi M.",
+      "debut": "2026-08-15T15:00:00Z",
+      "cotes": {
+        "1": 1.78,
+        "2": 2.01
+      }
+    },
+    {
+      "id": "atp-20260815-bel-men",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Bellucci M.",
+      "exterieur": "Mensik J.",
+      "debut": "2026-08-15T16:30:00Z",
+      "cotes": {
+        "1": 3.45,
+        "2": 1.3
+      }
+    },
+    {
+      "id": "atp-20260815-djo-tir",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Djokovic N.",
+      "exterieur": "Tirante T. A.",
+      "debut": "2026-08-15T16:30:00Z",
+      "cotes": {
+        "1": 1.25,
+        "2": 3.8
+      }
+    },
+    {
+      "id": "atp-20260815-val-vac",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Vallejo D.",
+      "exterieur": "Vacherot V.",
+      "debut": "2026-08-15T17:00:00Z",
+      "cotes": {
+        "1": 3.0,
+        "2": 1.31
+      }
+    },
+    {
+      "id": "atp-20260815-dar-hij",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Darderi L.",
+      "exterieur": "Hijikata R.",
+      "debut": "2026-08-15T18:00:00Z",
+      "cotes": {
+        "1": 1.58,
+        "2": 2.35
+      }
+    },
+    {
+      "id": "atp-20260815-fer-duc",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Fery A.",
+      "exterieur": "Duckworth J.",
+      "debut": "2026-08-15T18:00:00Z",
+      "cotes": {
+        "1": 1.53,
+        "2": 2.24
+      }
+    },
+    {
+      "id": "atp-20260815-hal-dem",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Halys Q.",
+      "exterieur": "De Minaur A.",
+      "debut": "2026-08-15T18:00:00Z",
+      "cotes": {
+        "1": 3.05,
+        "2": 1.29
+      }
+    },
+    {
+      "id": "atp-20260815-pau-hur",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Paul T.",
+      "exterieur": "Hurkacz H.",
+      "debut": "2026-08-15T18:00:00Z",
+      "cotes": {
+        "1": 1.53,
+        "2": 2.25
+      }
+    },
+    {
+      "id": "atp-20260815-str-tab",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Struff J-L.",
+      "exterieur": "Tabilo A.",
+      "debut": "2026-08-15T18:30:00Z",
+      "cotes": {
+        "1": 2.85,
+        "2": 1.41
+      }
+    },
+    {
+      "id": "atp-20260815-han-fil",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Hanfmann Y.",
+      "exterieur": "Fils A.",
+      "debut": "2026-08-15T19:30:00Z",
+      "cotes": {
+        "1": 3.0,
+        "2": 1.3
+      }
+    },
+    {
+      "id": "atp-20260815-leh-ber",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Lehecka J.",
+      "exterieur": "Berrettini M.",
+      "debut": "2026-08-15T19:30:00Z",
+      "cotes": {
+        "1": 1.58,
+        "2": 2.15
+      }
+    },
+    {
+      "id": "atp-20260815-atm-etc",
+      "sport": "tennis",
+      "competition": "Cincinnati ATP",
+      "pays": "USA",
+      "domicile": "Atmane T.",
+      "exterieur": "Etcheverry T. M.",
+      "debut": "2026-08-15T20:00:00Z",
+      "cotes": {
+        "1": 1.57,
+        "2": 2.36
+      }
+    }
   ]
 }

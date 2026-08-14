@@ -30,9 +30,14 @@
 const fs = require('fs');
 const path = require('path');
 
-/** Les trois issues d'un match de football. Une liste FERMEE : ce qui traverse
-    le reseau ne peut etre que l'un de ces trois. */
-const ISSUES = ['1', 'N', '2'];
+/* Les issues, PAR SPORT. Une liste fermee : ce qui traverse le reseau ne peut
+   etre que l'une d'elles.
+   Le tennis n'a pas de match nul — proposer un « N » a 0 % serait offrir un
+   pari qui ne peut jamais passer, et le validateur de marge s'en etranglerait
+   a juste titre. */
+const ISSUES_PAR_SPORT = { foot: ['1', 'N', '2'], tennis: ['1', '2'], nba: ['1', '2'] };
+const ISSUES = ISSUES_PAR_SPORT.foot;
+function issues(sport) { return ISSUES_PAR_SPORT[sport] || ISSUES; }
 
 /* Bornes de bon sens sur une cote. En dessous de 1,01 le pari ne rapporte
    rien et ressemble a une erreur ; au-dessus de 100 une mise au plafond
@@ -51,9 +56,9 @@ function nombre(x, quoi, id) {
 }
 
 /** La marge du bookmaker sur un match, en fraction (0,099 = 9,9 %). */
-function marge(cotes) {
+function marge(cotes, sport) {
   let s = 0;
-  for (const i of ISSUES) s += 1 / cotes[i];
+  for (const i of issues(sport)) s += 1 / cotes[i];
   return s - 1;
 }
 
@@ -81,13 +86,13 @@ function valide(brut) {
     if (!isFinite(debut)) throw new Error(`paris : date de debut illisible sur « ${id} »`);
 
     const cotes = {};
-    for (const i of ISSUES) {
+    for (const i of issues(m.sport)) {
       const c = nombre(m.cotes && m.cotes[i], `cote « ${i} »`, id);
       if (c < COTE_MIN || c > COTE_MAX)
         throw new Error(`paris : cote « ${i} » hors bornes sur « ${id} » (${c})`);
       cotes[i] = c;
     }
-    const mg = marge(cotes);
+    const mg = marge(cotes, m.sport);
     if (mg < MARGE_MIN)
       throw new Error(`paris : marge trop faible sur « ${id} » (${(mg * 100).toFixed(2)} %) — ` +
                       'une cote a probablement ete recopiee de travers');
@@ -96,7 +101,7 @@ function valide(brut) {
       id, sport: String(m.sport),
       competition: String(m.competition || ''), pays: String(m.pays || ''),
       domicile: String(m.domicile || ''), exterieur: String(m.exterieur || ''),
-      debut, cotes, marge: mg,
+      debut, cotes, marge: mg, issues: issues(m.sport),
     };
   });
 
@@ -136,12 +141,12 @@ function vue(m, now) {
   return {
     id: m.id, sport: m.sport, competition: m.competition, pays: m.pays,
     domicile: m.domicile, exterieur: m.exterieur,
-    debut: m.debut, cotes: m.cotes,
+    debut: m.debut, cotes: m.cotes, issues: m.issues,
     ouvert: m.debut > (now || Date.now()),
   };
 }
 
 module.exports = {
-  ISSUES, COTE_MIN, COTE_MAX, MARGE_MIN,
+  ISSUES, ISSUES_PAR_SPORT, issues, COTE_MIN, COTE_MAX, MARGE_MIN,
   charge, catalogue, match, ouverts, rapport, vue, marge, valide,
 };

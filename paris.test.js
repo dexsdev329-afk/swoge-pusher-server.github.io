@@ -52,7 +52,8 @@ function jeu(credit) {
    pari equitable a des gens qui savent compter. */
 {
   const c = paris.catalogue();
-  eq(c.matchs.length, 8, 'les huit rencontres du 15 aout sont chargees');
+  eq(c.matchs.filter((m) => m.sport === 'foot').length, 8, 'les huit matchs de football');
+  eq(c.matchs.filter((m) => m.sport === 'tennis').length, 14, 'et les quatorze de tennis');
   let mini = 1;
   for (const m of c.matchs) {
     ok(m.marge >= paris.MARGE_MIN, `${m.domicile}-${m.exterieur} : marge ${(m.marge * 100).toFixed(2)} %`);
@@ -60,8 +61,14 @@ function jeu(credit) {
   }
   ok(mini > 0.05, `la plus faible marge du lot vaut ${(mini * 100).toFixed(2)} % — ` +
      'l avantage de la maison est trois fois celui du casino');
-  eq(c.sports.filter((s) => s.actif).map((s) => s.cle).join(','), 'foot',
-     'seul le football est ouvert pour l instant');
+  eq(c.sports.filter((s) => s.actif).map((s) => s.cle).join(','), 'foot,tennis',
+     'football et tennis sont ouverts, la NBA pas encore');
+  /* LE TENNIS N A PAS DE MATCH NUL. Proposer un « N » a 0 % serait offrir un
+     pari qui ne peut jamais passer. */
+  const t = c.matchs.find((m) => m.sport === 'tennis');
+  eq(t.issues.join(','), '1,2', 'un match de tennis n a que deux issues');
+  eq(c.matchs.find((m) => m.sport === 'foot').issues.join(','), '1,N,2',
+     'un match de football en a trois');
 }
 
 // ============================ un catalogue de travers NE SE CHARGE PAS
@@ -145,7 +152,7 @@ function jeu(credit) {
 {
   const g = jeu();
   jete(() => g.parie(A, 'inconnu', '1', 1000, AVANT), /unknown match/, 'un match qui n existe pas');
-  jete(() => g.parie(A, M, 'X', 1000, AVANT), /1, N or 2/, 'une issue hors des trois');
+  jete(() => g.parie(A, M, 'X', 1000, AVANT), /pick 1, N, 2/, 'une issue hors des trois');
   jete(() => g.parie(A, M, '1', 1, AVANT), /minimum/, 'sous le minimum');
   jete(() => g.parie(A, M, '1', cfg.PARI_MAX + 1, AVANT), /maximum/,
        `au-dessus du plafond de ${cfg.PARI_MAX}`);
@@ -224,6 +231,99 @@ function jeu(credit) {
   const u = g.usageJour(new Date().toISOString().slice(0, 10)).find((x) => x.jeu === 'paris');
   ok(u, 'et les paris apparaissent dans la mesure d usage');
   eq(u.joueurs, 2, 'avec leurs deux joueurs');
+}
+
+
+
+// ============================================ LE COMBINE
+/* Les cotes se multiplient et TOUTES les jambes doivent passer. Une seule
+   fausse et le pari entier tombe — c'est ce qui le rend interessant des deux
+   cotes : des rapports impossibles en simple pour le joueur, des marges qui
+   se multiplient pour la maison. */
+const T1 = 'atp-20260815-djo-tir';   // Djokovic 1.25 / Tirante 3.80
+const T2 = 'atp-20260815-pau-hur';   // Paul 1.53 / Hurkacz 2.25
+const T3 = 'atp-20260815-fer-duc';   // Fery 1.53 / Duckworth 2.24
+
+{
+  const g = jeu();
+  const p = g.parieCombine(A, [{ match: T1, choix: '1' }, { match: T2, choix: '1' }], 1000, AVANT);
+  eq(p.jambes.length, 2, 'deux jambes');
+  eq(p.cote, 1.9125, 'les cotes se MULTIPLIENT : 1,25 x 1,53');
+  eq(p.rapport, 1912.5, 'et le rapport suit');
+  eq(sol(g, A), 999000, 'une seule mise part, pas une par jambe');
+  eq(g.engagementMatch(T1), 1912.5, 'le gain ENTIER pese sur la premiere jambe…');
+  eq(g.engagementMatch(T2), 1912.5, '…et sur la seconde : un garde-fou doit majorer');
+}
+
+// ---- une jambe fausse fait tomber tout le pari, sans attendre les autres
+{
+  const g = jeu();
+  g.parieCombine(A, [{ match: T1, choix: '1' }, { match: T2, choix: '1' }], 1000, AVANT);
+  const r = g.regleMatch(T1, '2');                 // Djokovic perd : le combine est mort
+  eq(r.perdus, 1, 'le combine est perdu des la premiere jambe fausse');
+  eq(r.enAttente, 0, 'on n attend pas le second match pour le dire');
+  eq(sol(g, A), 999000, 'et rien n est rendu');
+  eq(g.engagementMatch(T2), 0, 'l engagement du second match retombe aussi');
+}
+
+// ---- une jambe gagnee NE PAIE PAS : il faut les avoir toutes
+{
+  const g = jeu();
+  g.parieCombine(A, [{ match: T1, choix: '1' }, { match: T2, choix: '1' }], 1000, AVANT);
+  const r1 = g.regleMatch(T1, '1');                 // premiere jambe gagnee
+  eq(r1.gagnants, 0, 'une jambe gagnee ne paie rien…');
+  eq(r1.enAttente, 1, '…le pari reste en attente de la seconde');
+  eq(sol(g, A), 999000, 'le solde ne bouge pas');
+
+  const r2 = g.regleMatch(T2, '1');                 // seconde gagnee
+  eq(r2.gagnants, 1, 'la derniere jambe declenche le paiement');
+  eq(r2.paye, 1912.5, 'au rapport combine');
+  eq(sol(g, A), 999000 + 1912.5, 'et le joueur est credite une seule fois');
+}
+
+// ---- ce qui est refuse sur un combine
+{
+  const g = jeu();
+  jete(() => g.parieCombine(A, [], 1000, AVANT), /at least one/, 'un bulletin vide');
+  jete(() => g.parieCombine(A, [{ match: T1, choix: '1' }, { match: T1, choix: '2' }], 1000, AVANT),
+       /one selection per match/,
+       'DEUX JAMBES SUR LE MEME MATCH : contradictoires, ou un simple deguise en combine');
+  jete(() => g.parieCombine(A, [{ match: T1, choix: 'N' }], 1000, AVANT), /pick 1, 2/,
+       'un match nul au tennis, ca n existe pas');
+  const trop = [];
+  for (const m of paris.catalogue().matchs.slice(0, cfg.PARI_JAMBES_MAX + 1))
+    trop.push({ match: m.id, choix: '1' });
+  jete(() => g.parieCombine(A, trop, 1000, AVANT), /at most/,
+       `au-dela de ${cfg.PARI_JAMBES_MAX} jambes, on refuse`);
+}
+
+// ---- LE PLAFOND DE GAIN, qui n existait pas pour un simple
+/* Cinq selections a 2,00 font trente-deux fois la mise : au plafond, c est
+   plusieurs millions dus sur UN pari. */
+{
+  const g = jeu(100000000);
+  const grosses = [{ match: T1, choix: '2' }, { match: T2, choix: '2' },
+                   { match: T3, choix: '2' }, { match: 'atp-20260815-hal-dem', choix: '1' }];
+  let cote = 1;
+  for (const j of grosses) cote *= paris.match(j.match).cotes[j.choix];
+  ok(cote > 50, `quatre outsiders font une cote de ${cote.toFixed(1)}`);
+  jete(() => g.parieCombine(A, grosses, cfg.PARI_MAX, AVANT), /the cap is/,
+       'au plafond de mise, ce combine depasse le gain maximum et il est refuse');
+  /* Avec une mise raisonnable, il passe : c est un plafond de GAIN, pas une
+     interdiction du combine. */
+  const p = g.parieCombine(A, grosses, 1000, AVANT);
+  ok(p.rapport <= cfg.PARI_GAIN_MAX, `a mise raisonnable il passe (${Math.round(p.rapport)})`);
+}
+
+// ---- un combine survit au redemarrage, jambes comprises
+{
+  const g = jeu();
+  g.parieCombine(A, [{ match: T1, choix: '1' }, { match: T2, choix: '1' }], 2000, AVANT);
+  const g2 = new Game();
+  g2.hydrate(JSON.parse(JSON.stringify(g.serialize())));
+  eq(g2.mesParis(A)[0].jambes.length, 2, 'les deux jambes sont relues');
+  g2.regleMatch(T1, '1'); g2.regleMatch(T2, '1');
+  eq(Math.round(sol(g2, A)), Math.round(1000000 - 2000 + 3825), 'et le combine se paie apres relecture');
 }
 
 console.log(`paris.test.js : ${n} verifications OK`);

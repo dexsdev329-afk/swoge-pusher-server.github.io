@@ -758,6 +758,29 @@ module.exports = {
   PARI_MAX: parseInt(env('PARI_MAX', '100000'), 10),
   PARI_ENGAGEMENT_MAX: parseFloat(env('PARI_ENGAGEMENT_MAX', '2000000')),
 
+  /* ---- LE COMBINE ----
+   *
+   * Plusieurs selections sur un seul bulletin : les cotes se MULTIPLIENT et
+   * toutes doivent passer. Une seule fausse et le pari entier tombe.
+   *
+   * C'est bon pour les deux cotes, et il faut le dire honnetement : le joueur
+   * atteint des rapports impossibles en simple, et la maison voit ses marges
+   * se multiplier aussi. A 7,7 % la selection, un combine de cinq porte 45 %
+   * de marge. Ce n'est pas un piege — c'est le prix du rapport, et il est
+   * affiche.
+   *
+   * MAIS L'ENGAGEMENT EXPLOSE AVEC LE RAPPORT. Cinq selections a 2,00 font
+   * trente-deux fois la mise : au plafond, plusieurs millions dus sur UN
+   * pari. Deux bornes de plus que pour un simple :
+   *   • JAMBES_MAX limite la longueur, donc la cote atteignable ;
+   *   • GAIN_MAX plafonne ce qu'un seul bulletin peut rapporter, quelle que
+   *     soit la combinaison. C'est la borne qui compte vraiment : elle tient
+   *     meme si quelqu'un trouve une suite d'outsiders a laquelle on n'avait
+   *     pas pense.
+   */
+  PARI_JAMBES_MAX: parseInt(env('PARI_JAMBES_MAX', '8'), 10),
+  PARI_GAIN_MAX: parseFloat(env('PARI_GAIN_MAX', '5000000')),
+
   /* ---- virements entre joueurs ----
      Le depot prealable n'est pas une formalite : sans lui, ouvrir dix
      portefeuilles jetables, ramasser dix bonus de bienvenue et tout rassembler

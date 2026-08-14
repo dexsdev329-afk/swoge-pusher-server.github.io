@@ -1436,6 +1436,7 @@ wss.on('connection', (ws) => {
                           sports: require('./paris').catalogue().sports,
                           matchs: game.parisOuverts(Date.now()),
                           min: cfg.PARI_MIN, max: cfg.PARI_MAX,
+                          jambesMax: cfg.PARI_JAMBES_MAX, gainMax: cfg.PARI_GAIN_MAX,
                           mesParis: ws.addr ? game.mesParis(ws.addr, 40) : [] });
       }
 
@@ -2008,7 +2009,11 @@ wss.on('connection', (ws) => {
       if (m.type === 'parie') {
         if (!ws.addr) return send(ws, { type: 'error', error: 'connect first' });
         try {
-          const pari = game.parie(ws.addr, m.match, m.choix, m.mise, Date.now());
+          /* Un bulletin, une ou plusieurs selections. Le simple reste accepte
+             tel quel : les pages en service l'envoient encore. */
+          const pari = Array.isArray(m.selections)
+            ? game.parieCombine(ws.addr, m.selections, m.mise, Date.now())
+            : game.parie(ws.addr, m.match, m.choix, m.mise, Date.now());
           persistSoon();
           send(ws, { type: 'pariPose', pari, balance: game.balanceStr(ws.addr),
                      matchs: game.parisOuverts(Date.now()),

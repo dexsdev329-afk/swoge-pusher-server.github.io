@@ -1298,7 +1298,15 @@ class Game {
 
   /** Tous les paris d'un match, regles ou non. */
   _parisDe(matchId) {
-    return (this.paris || []).filter((p) => p.match === matchId);
+    return (this.paris || []).filter((p) =>
+      (p.jambes || [{ match: p.match, choix: p.choix }]).some((j) => j.match === matchId));
+  }
+
+  /** Ce qu'un pari a choisi sur ce match, ou null s'il n'y touche pas. */
+  _jambeSur(pari, matchId) {
+    const l = pari.jambes || [{ match: pari.match, choix: pari.choix }];
+    for (const j of l) if (j.match === matchId) return j;
+    return null;
   }
 
   /**
@@ -1307,12 +1315,16 @@ class Game {
    * pour savoir si l'on peut accepter un pari de plus.
    */
   engagementMatch(matchId) {
-    const par = { 1: 0, N: 0, 2: 0 };
+    const par = {};
     for (const p of this._parisDe(matchId)) {
       if (p.regle) continue;
-      par[p.choix] = (par[p.choix] || 0) + p.rapport;
+      const j = this._jambeSur(p, matchId);
+      if (!j) continue;
+      par[j.choix] = (par[j.choix] || 0) + p.rapport;
     }
-    return Math.max(par['1'], par.N, par['2']);
+    let pire = 0;
+    for (const k of Object.keys(par)) pire = Math.max(pire, par[k]);
+    return pire;
   }
 
   /** Les matchs ouverts, avec la place qu'il reste sur chacun. */
@@ -1326,15 +1338,50 @@ class Game {
     });
   }
 
-  /** Poser un pari. Debite tout de suite : la mise a quitte le solde. */
+  /**
+   * Poser un pari : une seule selection, ou un COMBINE.
+   *
+   * Le combine multiplie les cotes et exige que TOUTES les selections
+   * passent. Une seule fausse et le pari entier est perdu — c'est ce qui le
+   * rend interessant pour le joueur (des rapports impossibles en simple) et
+   * pour la maison (les marges se multiplient aussi : a 7,7 % la selection,
+   * un combine de cinq porte 45 % de marge).
+   *
+   * MAIS L'ENGAGEMENT EXPLOSE AVEC LUI. Cinq selections a 2,00 font 32 fois
+   * la mise : au plafond de mise, c'est 3,2 millions dus sur UN pari. Trois
+   * bornes tiennent ca :
+   *   • le GAIN d'un pari est plafonne, quel que soit le nombre de jambes ;
+   *   • l'engagement d'un match compte le gain ENTIER de chaque combine qui
+   *     le touche. C'est majorant — le combine peut encore tomber sur une
+   *     autre jambe — et c'est exactement ce qu'on veut d'un garde-fou ;
+   *   • deux jambes sur le MEME match sont refusees : elles seraient soit
+   *     contradictoires, soit une facon de deguiser un simple en combine.
+   */
   parie(addr, matchId, choixRaw, miseRaw, now) {
-    const t = now || Date.now();
-    const m = paris.match(matchId);
-    if (!m) throw new Error('unknown match');
-    if (m.debut <= t) throw new Error('betting is closed on this match');
+    return this.parieCombine(addr, [{ match: matchId, choix: choixRaw }], miseRaw, now);
+  }
 
-    const choix = String(choixRaw);
-    if (paris.ISSUES.indexOf(choix) < 0) throw new Error('pick 1, N or 2');
+  parieCombine(addr, selectionsRaw, miseRaw, now) {
+    const t = now || Date.now();
+    const sel = Array.isArray(selectionsRaw) ? selectionsRaw : [];
+    if (!sel.length) throw new Error('pick at least one selection');
+    if (sel.length > cfg.PARI_JAMBES_MAX)
+      throw new Error('at most ' + cfg.PARI_JAMBES_MAX + ' selections in one bet');
+
+    const vus = new Set();
+    const jambes = sel.map((x) => {
+      const m = paris.match(x && x.match);
+      if (!m) throw new Error('unknown match');
+      if (m.debut <= t) throw new Error('betting is closed on ' + m.domicile + ' v ' + m.exterieur);
+      /* Deux jambes sur le meme match : soit contradictoires, soit un simple
+         deguise en combine pour contourner le plafond de gain. */
+      if (vus.has(m.id)) throw new Error('only one selection per match');
+      vus.add(m.id);
+      const choix = String(x.choix);
+      if (m.issues.indexOf(choix) < 0)
+        throw new Error('pick ' + m.issues.join(', ') + ' on ' + m.domicile + ' v ' + m.exterieur);
+      return { match: m.id, choix, cote: m.cotes[choix] };
+    });
 
     const mise = Math.floor(Number(miseRaw));
     if (!(mise >= cfg.PARI_MIN)) throw new Error('minimum bet is ' + cfg.PARI_MIN + ' $SWOGE');
@@ -1343,19 +1390,35 @@ class Game {
     const p = this._p(addr);
     if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
 
-    /* Le plafond se verifie sur ce que CE pari ajouterait, pas sur ce qui est
-       deja engage : sinon le dernier pari accepte pourrait franchir la borne
-       tout seul. */
-    const cote = m.cotes[choix];
+    let cote = 1;
+    for (const j of jambes) cote *= j.cote;
+    cote = Math.floor(cote * 1e4) / 1e4;
     const rapport = paris.rapport(cote, mise);
-    const dejaLa = this.engagementMatch(matchId);
-    const par = { 1: 0, N: 0, 2: 0 };
-    for (const q of this._parisDe(matchId)) if (!q.regle) par[q.choix] += q.rapport;
-    par[choix] += rapport;
-    const apres = Math.max(par['1'], par.N, par['2']);
-    if (apres > cfg.PARI_ENGAGEMENT_MAX)
-      throw new Error('this match is full — ' +
-        Math.max(0, Math.floor(cfg.PARI_ENGAGEMENT_MAX - dejaLa)) + ' $SWOGE of exposure left');
+    if (rapport > cfg.PARI_GAIN_MAX)
+      throw new Error('this bet could return ' + Math.floor(rapport) +
+        ' $SWOGE — the cap is ' + cfg.PARI_GAIN_MAX + '. Lower the stake or drop a leg.');
+
+    /* Le plafond, match par match. Le gain ENTIER pese sur CHAQUE match
+       touche : c'est majorant, et un garde-fou doit majorer. */
+    for (const j of jambes) {
+      const cumul = {};
+      for (const q of (this.paris || [])) {
+        if (q.regle) continue;
+        for (const b of (q.jambes || [])) {
+          if (b.match !== j.match) continue;
+          cumul[b.choix] = (cumul[b.choix] || 0) + q.rapport;
+        }
+      }
+      cumul[j.choix] = (cumul[j.choix] || 0) + rapport;
+      let pire = 0;
+      for (const k of Object.keys(cumul)) pire = Math.max(pire, cumul[k]);
+      if (pire > cfg.PARI_ENGAGEMENT_MAX) {
+        const m = paris.match(j.match);
+        throw new Error(m.domicile + ' v ' + m.exterieur + ' is full — ' +
+          Math.max(0, Math.floor(cfg.PARI_ENGAGEMENT_MAX - this.engagementMatch(j.match))) +
+          ' $SWOGE of exposure left');
+      }
+    }
 
     p.balance = p.balance.sub(WEI(mise));
     this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++;
@@ -1364,14 +1427,17 @@ class Game {
     if (!this.paris) this.paris = [];
     const pari = {
       id: 'b' + (++this.parisSeq) + '-' + Math.floor(t / 1000).toString(36),
-      addr: String(addr).toLowerCase(), match: matchId, choix,
-      /* LA COTE EST RECOPIEE ICI. Le catalogue peut changer demain ; ce que
-         le joueur a accepte, non. */
-      cote, mise, rapport, t, regle: false, gagne: null,
+      addr: String(addr).toLowerCase(),
+      jambes, cote, mise, rapport, t,
+      regle: false, gagne: null,
+      /* Les champs d'un simple restent remplis : les paris deja poses et les
+         pages en service les lisent. */
+      match: jambes[0].match, choix: jambes[0].choix,
     };
     this.paris.push(pari);
-    journal.ajoute(pari.addr, { k: 'pa', s: 'pose', m: String(mise), match: matchId,
-                                choix, cote, rapport });
+    journal.ajoute(pari.addr, { k: 'pa', s: 'pose', m: String(mise),
+                                match: jambes.map((j) => j.match).join('+'),
+                                choix: jambes.map((j) => j.choix).join('+'), cote, rapport });
     return pari;
   }
 
@@ -1399,35 +1465,57 @@ class Game {
   regleMatch(matchId, resultat) {
     const m = paris.match(matchId);
     if (!m) throw new Error('unknown match');
-    if (paris.ISSUES.indexOf(String(resultat)) < 0) throw new Error('result must be 1, N or 2');
+    if (m.issues.indexOf(String(resultat)) < 0)
+      throw new Error('result must be one of ' + m.issues.join(', '));
     if (!this.parisRegles) this.parisRegles = {};
     if (this.parisRegles[matchId]) throw new Error('already settled');
 
-    const liste = this._parisDe(matchId).filter((p) => !p.regle);
-    let paye = 0, gagnants = 0, mise = 0;
-    for (const p of liste) {
-      p.regle = true;
-      p.gagne = (p.choix === String(resultat));
+    /* On enregistre le resultat AVANT de regarder les paris : un combine ne
+       peut etre juge que quand toutes ses jambes ont un resultat, et c'est
+       cette table qui le dit. */
+    this.parisRegles[matchId] = { t: Date.now(), resultat: String(resultat) };
+
+    let paye = 0, gagnants = 0, mise = 0, perdus = 0, attente = 0;
+    for (const p of this._parisDe(matchId)) {
+      if (p.regle) continue;
+      const v = this._jugePari(p);
+      if (v === null) { attente++; continue; }      // il reste des jambes a jouer
+      p.regle = true; p.gagne = v;
       mise += p.mise;
-      const rendu = p.gagne ? p.rapport : 0;
+      const rendu = v ? p.rapport : 0;
       if (rendu > 0) {
         const q = this._p(p.addr);
         q.balance = q.balance.add(WEI(rendu));
         this._bumpDay(q); q.dayNet = q.dayNet.add(WEI(rendu)); q.winsToday++;
         paye += rendu; gagnants++;
-      }
+      } else perdus++;
       journal.ajoute(p.addr, { k: 'pa', s: 'regle', m: String(p.mise), match: matchId,
-                               choix: p.choix, cote: p.cote, resultat: String(resultat),
-                               rendu: String(rendu) });
-      /* Le pari passe par le point de reglage commun : classement du mois,
-         revenu de la maison, mesure d'usage. Sans ca, les paris seraient
-         invisibles exactement comme l'etaient le pusher et le poker. */
+                               cote: p.cote, resultat: String(resultat), rendu: String(rendu) });
       this._manche(this._p(p.addr), 'paris', p.mise, rendu);
     }
-    this.parisRegles[matchId] = { t: Date.now(), resultat: String(resultat),
-                                  paris: liste.length, paye, gagnants };
-    return { match: matchId, resultat: String(resultat), paris: liste.length,
-             gagnants, paye, mise, net: mise - paye };
+    const r = this.parisRegles[matchId];
+    r.gagnants = gagnants; r.paye = paye; r.perdus = perdus; r.attente = attente;
+    return { match: matchId, resultat: String(resultat), gagnants, perdus,
+             enAttente: attente, paye, mise, net: mise - paye };
+  }
+
+  /**
+   * Un pari est-il gagne, perdu, ou pas encore jugeable ?
+   *
+   *   true  : toutes les jambes sont tombees du bon cote ;
+   *   false : au moins une jambe est perdue — inutile d'attendre les autres,
+   *           un combine tombe entierement des la premiere erreur ;
+   *   null  : il reste des matchs a jouer.
+   */
+  _jugePari(pari) {
+    const l = pari.jambes || [{ match: pari.match, choix: pari.choix }];
+    let complet = true;
+    for (const j of l) {
+      const r = (this.parisRegles || {})[j.match];
+      if (!r || r.rembourse) { complet = false; continue; }
+      if (r.resultat !== j.choix) return false;      // une seule fausse suffit
+    }
+    return complet ? true : null;
   }
 
   /**
