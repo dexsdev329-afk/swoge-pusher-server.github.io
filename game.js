@@ -3059,6 +3059,13 @@ class Game {
     const e = m.etat(now || Date.now());
     e.jeu = m.jeu || 'p4';
     e.noms = m.joueurs.map((a) => (a ? this._p(a).name : null));
+    /* Le profil PUBLIC, pas des champs recopies a la main : nom, visage, photo
+       et niveau viennent tous de la meme source, donc la table montre
+       exactement ce que montrent le vestibule, la liste d'amis et le
+       classement. Deux sources finiraient par se contredire, et c'est celle
+       qu'on a sous les yeux pendant la partie qu'on croit. */
+    e.profils = m.joueurs.map((a) => (a ? this.profilPublic(a) : null));
+    /* L'ancien champ reste : les pages en service le lisent encore. */
     e.visages = m.joueurs.map((a) => (a ? { visage: this._p(a).visage || null, photo: !!this._p(a).photo, address: a } : null));
     e.rakeBps = this._duelCfg(e.jeu).rakeBps;
     return e;
