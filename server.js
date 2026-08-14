@@ -390,6 +390,17 @@ const server = http.createServer(async (req, res) => {
             || req.headers['x-admin-key'] || '';
   const authed = !!cfg.ADMIN_KEY && memeCle(key, cfg.ADMIN_KEY) && !bloque(req);
   if (req.url === '/health') { res.writeHead(200); return res.end('ok'); }
+  /* ------------------------------------------------------- la preuve d'equite
+   *
+   * PUBLIQUE, et elle doit l'etre : une preuve derriere une cle n'est pas une
+   * preuve. On y trouve l'empreinte en cours, les graines DEJA RETIREES DU
+   * SERVICE avec leur periode, et les formules jeu par jeu. La graine en cours
+   * n'y figure jamais — la publier laisserait predire les manches a venir. */
+  if (path === '/fairness') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*' });
+    return res.end(JSON.stringify(game.equite(), null, 2));
+  }
   // Adsgram rewarded-video postback (server-to-server). Adsgram GETs this when a
   // user finishes a video: /adsgram/reward?userid=[TelegramId]&key=SECRET.
   // We verify the shared secret, credit the (capped) reward and push the new
@@ -610,6 +621,31 @@ const compteInterval = setInterval(() => broadcast(compte()), 60000);
    meme un script les empiler jusqu'a l'etouffement. Les adresses connectees
    sont protegees : retirer la fiche de quelqu'un qui est devant son ecran lui
    reprendrait son credit d'essai au milieu de sa visite. */
+/* ------------------------------------------------- la rotation de la graine
+ *
+ * On regarde toutes les dix minutes plutot que de programmer un rendez-vous a
+ * la semaine : le serveur redemarre a chaque deploiement, et un rendez-vous
+ * lointain ne survivrait a aucun d'eux. Si une main est en cours, on repasse
+ * plus tard — mieux vaut tourner avec une heure de retard que couper une
+ * manche en deux et la rendre invérifiable.
+ */
+const graineInterval = setInterval(() => {
+  try {
+    const age = Date.now() - (game.graineDepuis || 0);
+    if (age < cfg.FAIRNESS_ROTATE_HOURS * 3600000) return;
+    const r = game.tourneGraine();          // jette si une main tourne encore
+    persist();
+    console.log(`[equite] graine tournee, ${r.revelee.n} manche(s) revelees : ${r.revelee.h.slice(0, 16)}…`);
+    tg.notify(`🎲 <b>Seed rotated — you can now verify</b>\n` +
+              `The previous server seed is public. Recompute any of the ` +
+              `<b>${r.revelee.n}</b> rounds played under it and check we did not touch a thing.\n` +
+              `<a href="${cfg.PUBLIC_URL || ''}/fairness">the seeds and the formulas ↗</a>`);
+  } catch (e) {
+    /* Une main en cours n'est pas une erreur : on redemande dans dix minutes. */
+    if (!/hand\(s\) still running/.test(e.message)) console.warn('[equite]', e.message);
+  }
+}, 600000);
+
 const purgeInterval = setInterval(() => {
   try {
     const n = game.purge(new Set(byAddr.keys()));
@@ -1455,7 +1491,7 @@ server.listen(cfg.PORT, () => {
 });
 
 function shutdown() {
-  clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
+  clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
   persist(); // final save so nothing is lost on redeploy
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
      qui attend encore doit partir maintenant, sinon les dernieres manches

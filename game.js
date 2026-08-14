@@ -182,6 +182,8 @@ class Game {
                    joueurs: m.joueurs.filter(Boolean) });
     }
     return { v: 1, serverSeed: this.serverSeed, sessionSecret: this.sessionSecret,
+             graines: this.graines || [], graineDepuis: this.graineDepuis || null,
+             manchesGraine: this.manchesGraine || 0,
              jackpotPot: this.jackpotPot.toString(),
              crashGraine: this.crashGraine, crash: this.crash.sauve(),
              fraisCumules: (this.fraisCumules || BN(0)).toString(),
@@ -197,6 +199,12 @@ class Game {
        toutes les sessions d'un coup, en le changeant sur le serveur. */
     if (st.sessionSecret && !cfg.SESSION_SECRET) this.sessionSecret = st.sessionSecret;
     if (st.serverSeed) { this.serverSeed = st.serverSeed; this.serverSeedHash = crypto.createHash('sha256').update(st.serverSeed).digest('hex'); }
+    /* Les graines revelees survivent a tout : elles sont la SEULE facon pour
+       un joueur de verifier une manche d'il y a six mois. Les perdre au
+       redemarrage reviendrait a retirer la preuve apres l'avoir donnee. */
+    if (Array.isArray(st.graines)) this.graines = st.graines;
+    if (st.graineDepuis) this.graineDepuis = st.graineDepuis;
+    if (st.manchesGraine) this.manchesGraine = st.manchesGraine;
     if (st.jackpotPot) this.jackpotPot = ethers.BigNumber.from(st.jackpotPot);
     /* La graine d'environnement l'emporte, comme pour le secret de session :
        c'est ainsi qu'on repart sur une chaine neuve volontairement. Sinon on
@@ -311,6 +319,7 @@ class Game {
          par cette manche. */
       sh: this.serverSeedHash, cs: p.clientSeed,
       n0: p.nonceDebut == null ? p.nonce : p.nonceDebut, n1: p.nonce });
+    this.manchesGraine = (this.manchesGraine || 0) + 1;
     /* Le volume du MOIS. Il se remet a zero tout seul au changement de mois :
        un classement mensuel qu'il faut penser a reinitialiser finit toujours
        par afficher le mois d'avant. */
@@ -971,6 +980,107 @@ class Game {
   _rotateSeed() {
     this.serverSeed = crypto.randomBytes(32).toString('hex');
     this.serverSeedHash = crypto.createHash('sha256').update(this.serverSeed).digest('hex');
+    this.graineDepuis = Date.now();
+    this.manchesGraine = 0;
+  }
+
+  /**
+   * Y a-t-il une main EN COURS quelque part ?
+   *
+   * Une main de blackjack, une grille de Mines, une serie de Hi-Lo tirent
+   * plusieurs fois, a plusieurs secondes d'intervalle. Tourner la graine au
+   * milieu ferait tirer les premieres cartes avec l'ancienne et les suivantes
+   * avec la nouvelle : la manche porterait UNE empreinte alors que deux
+   * graines l'ont produite, et elle serait invérifiable — exactement le
+   * contraire du but recherche. On attend donc que les tables soient vides.
+   */
+  partiesEnCours() {
+    let n = 0;
+    for (const p of this.players.values()) {
+      /* Le blackjack tire AU FIL DE L'EAU, avec la graine du moment : une
+         rotation en pleine main ferait tirer les premieres cartes avec
+         l'ancienne et les suivantes avec la nouvelle. C'est le cas grave. */
+      if (p.bj && p.bj.stage !== 'done') { n++; continue; }
+      /* Les Mines, le Hi-Lo et les tables de casino, eux, FIGENT leur graine
+         au debut de la manche (p.X.graine) : une rotation ne les couperait
+         pas. On les attend quand meme, pour une autre raison — la ligne
+         d'historique porte l'empreinte EN VIGUEUR a la fin de la manche, et
+         apres une rotation ce serait la nouvelle alors que l'ancienne a tire.
+         Le joueur verifierait avec la mauvaise graine et croirait a une
+         tricherie. */
+      if (p.mines && p.mines.etat && !p.mines.etat.fini) { n++; continue; }
+      if (p.hilo && p.hilo.etat && !p.hilo.etat.fini) { n++; continue; }
+      if (p.casino && p.casino.stage && p.casino.stage !== 'done') { n++; continue; }
+    }
+    return n;
+  }
+
+  /**
+   * Tourne la graine et REVELE la precedente.
+   *
+   * C'est le geste qui donne son sens a tout le reste. L'empreinte annoncee
+   * d'avance engage la maison ; la graine publiee apres coup permet de
+   * VERIFIER. Sans elle, le joueur n'a qu'une promesse : il ne peut recalculer
+   * aucune manche, et « provably fair » ne veut rien dire.
+   *
+   * @param {boolean} force  tourner meme si une main est en cours (a eviter)
+   */
+  tourneGraine(force) {
+    const enCours = this.partiesEnCours();
+    if (enCours && !force)
+      throw new Error(`${enCours} hand(s) still running — rotation would split a round in two`);
+    const revelee = {
+      h: this.serverSeedHash,
+      s: this.serverSeed,
+      t0: this.graineDepuis || null,
+      t1: Date.now(),
+      n: this.manchesGraine || 0,
+    };
+    if (!Array.isArray(this.graines)) this.graines = [];
+    this.graines.unshift(revelee);
+    if (this.graines.length > cfg.FAIRNESS_GARDE) this.graines.length = cfg.FAIRNESS_GARDE;
+    this._rotateSeed();
+    return { revelee, nouvelle: this.serverSeedHash };
+  }
+
+  /**
+   * Ce que tout le monde peut lire — y compris qui n'a pas de compte.
+   *
+   * La graine EN COURS n'y figure jamais : la publier laisserait predire les
+   * manches a venir. Seules les graines retirees du service sont ouvertes.
+   */
+  equite() {
+    return {
+      empreinteActuelle: this.serverSeedHash,
+      depuis: this.graineDepuis || null,
+      manches: this.manchesGraine || 0,
+      /* Les formules, jeu par jeu. Une preuve qu'on ne sait pas refaire n'est
+         pas une preuve : le mode d'emploi fait partie de la promesse. */
+      /* Les formules, jeu par jeu — et A LA VIRGULE PRES.
+       *
+       * Ce bloc a ete ecrit deux fois : la premiere version oubliait que
+       * chaque jeu SUFFIXE la graine du joueur (« …:plinko », « …:mines »)
+       * et que le numero est incremente AVANT le tirage. Un joueur qui aurait
+       * suivi cette documentation aurait trouve un resultat different du sien
+       * et en aurait conclu qu'on triche. Une preuve fausse est pire que pas
+       * de preuve : elle accuse.
+       */
+      formules: {
+        empreinte: 'sha256(graine_serveur) == empreinte annoncee',
+        numero: "le numero utilise par une manche est n1 (celui d'ARRIVEE) : il est incremente avant le tirage. n0 et n1 encadrent les numeros consommes, utile au blackjack qui en prend une dizaine par main.",
+        graineJoueur: "chaque jeu ajoute son propre suffixe a la graine du joueur : ':plinko', ':mines', ':hilo', ':casino' (Hold'em et Three Card). Le Coin Pusher n'en ajoute aucun ; le blackjack place ':bj:' avant le numero.",
+        pusher: "HMAC_SHA256(graine_serveur, graine_joueur + ':' + n1)",
+        blackjack: "HMAC_SHA256(graine_serveur, graine_joueur + ':bj:' + numero), un tirage par carte",
+        plinko: "flux d'octets, compteur a partir de 0 : HMAC_SHA256(graine_serveur, graine_joueur + ':plinko' + ':' + n1 + ':' + compteur). Un bit par rangee, du bit de poids fort au plus faible ; 1 = a droite. La case d'arrivee est la somme des bits.",
+        mines: "meme flux, avec le suffixe ':mines'",
+        holdem_three: "meme flux, avec le suffixe ':casino'",
+        hilo: "flux : HMAC_SHA256(graine_serveur, graine_joueur + ':hilo' + ':' + n1 + ':' + pas + ':' + essai + ':' + compteur)",
+        note: "chaque ligne d'historique porte l'empreinte en vigueur (sh), la graine du joueur (cs) et la plage de numeros de la manche (n0, n1)",
+      },
+      graines: (this.graines || []).map((g) => ({
+        empreinte: g.h, graine: g.s, du: g.t0, au: g.t1, manches: g.n,
+      })),
+    };
   }
 
   _p(addr) {

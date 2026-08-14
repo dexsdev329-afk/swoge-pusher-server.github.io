@@ -60,6 +60,30 @@ module.exports = {
   /* L'adresse ou l'on brule. Rien ne peut en ressortir : personne n'a la cle,
      et c'est ce qui fait la difference entre « brule » et « mis de cote ». */
   BURN_ADDRESS: env('BURN_ADDRESS', '0x000000000000000000000000000000000000dEaD'),
+
+  /* ---- la preuve d'equite ----
+   *
+   * Chaque manche est tiree par HMAC(graine du serveur, graine du joueur:numero).
+   * Le joueur recoit d'avance l'EMPREINTE de la graine du serveur : elle
+   * l'engage, puisqu'on ne peut plus changer la graine sans changer
+   * l'empreinte.
+   *
+   * Mais une empreinte qu'on n'ouvre JAMAIS ne prouve rien. Tant que la graine
+   * n'est pas revelee, le joueur ne peut recalculer aucune manche — il n'a
+   * qu'une promesse. La graine tourne donc regulierement, et la PRECEDENTE est
+   * publiee : chacun peut alors verifier que son empreinte correspond, et
+   * refaire le calcul de chaque manche jouee sous elle.
+   *
+   * Pourquoi pas plus souvent : chaque rotation coupe la verification en
+   * tranches et multiplie les graines a garder. Pourquoi pas plus rarement :
+   * plus la periode est longue, plus le joueur attend avant de pouvoir
+   * verifier ce qu'il a joue. Une semaine est le compromis d'usage.
+   */
+  FAIRNESS_ROTATE_HOURS: parseFloat(env('FAIRNESS_ROTATE_HOURS', '168')),
+  FAIRNESS_GARDE: parseInt(env('FAIRNESS_GARDE', '104'), 10),   // deux ans de graines
+  // L'adresse publique du serveur, pour que l'annonce de rotation porte un
+  // lien cliquable vers les graines.
+  PUBLIC_URL: env('PUBLIC_URL', 'https://web-production-220a3.up.railway.app'),
   VOUCHER_TTL_SEC: parseInt(env('VOUCHER_TTL_SEC', '3600'), 10),
 
   // ---- Progressive jackpot ----
