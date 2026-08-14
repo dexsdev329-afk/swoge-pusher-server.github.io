@@ -185,10 +185,49 @@ module.exports = {
   QUESTS: [
     { id: 'daily',   label: 'Daily bonus',      metric: 'free',  target: 0,   reward: parseInt(env('Q_DAILY',  '5'),  10) },
     { id: 'drop100', label: 'Drop 100 coins',   metric: 'drops', target: 100, reward: parseInt(env('Q_DROP100', '10'), 10) },
-    { id: 'drop300', label: 'Drop 300 coins',   metric: 'drops', target: 300, reward: parseInt(env('Q_DROP300', '25'), 10) },
     { id: 'win3',    label: 'Win 3 prizes',     metric: 'wins',  target: 3,   reward: parseInt(env('Q_WIN3',    '15'), 10) },
   ],
   QUEST_REQUIRE_DEPOSIT: env('QUEST_REQUIRE_DEPOSIT', '1') === '1',
+
+  /* ---- Les missions du jour, jeu par jeu ----
+   *
+   * Les quetes globales se remplissaient toutes seules : un joueur de Plinko
+   * finissait « lachez 300 pieces » sans jamais avoir ouvert autre chose. Une
+   * mission NOMME un jeu, et le jeu change chaque jour — c'est de la
+   * distribution gratuite vers tout le catalogue, sans une ligne de contenu
+   * nouveau. Elles remplacent la quete « 300 pieces », elles ne s'ajoutent
+   * pas : ce qui est distribue chaque jour reste du meme ordre.
+   *
+   * Le compteur est la MISE du jour sur ce jeu, pas le nombre de manches. Un
+   * nombre de manches se remplirait a la mise minimum, et la recompense
+   * passerait alors devant l'avantage de la maison — c'est-a-dire qu'on
+   * paierait quelqu'un pour ne rien risquer. Sur MISSION_MISE misees,
+   * l'avantage le plus faible du catalogue (le blackjack, 2,6 %) rend deja
+   * plusieurs fois MISSION_GAIN.
+   *
+   * La rotation est calculee, pas tiree : tout le monde voit les memes jeux le
+   * meme jour, et le pas (MISSIONS_PAR_JOUR) etant premier avec la longueur du
+   * catalogue, chaque jeu revient a intervalle regulier.
+   */
+  MISSION_CATALOGUE: [
+    ['plinko', 'Plinko',         'plinko.html'],
+    ['mines',  'Mines',          'swoge_casino.html?game=mines'],
+    ['crash',  'Crash',          'crash.html'],
+    ['bj',     'Blackjack',      'swoge_blackjack.html'],
+    ['hilo',   'Hi-Lo',          'swoge_casino.html?game=hilo'],
+    ['spin',   'SWOGE Spin',     'swoge_spin.html'],
+    ['smash',  'SWOGE Smash',    'swoge_smash.html'],
+    ['holdem', "Casino Hold'em", 'swoge_casino.html?game=holdem'],
+    ['three',  'Three Card',     'swoge_casino.html?game=three'],
+    ['pusher', 'Coin Pusher',    'swoge_pusher_live.html'],
+    ['poker',  'Poker',          'swoge_poker.html'],
+    ['p4',     'Connect 4',      'connect4.html'],
+    ['mp',     'Tic-Tac-Toe',    'morpion.html'],
+    ['dm',     'Checkers',       'dames.html'],
+  ],
+  MISSIONS_PAR_JOUR: parseInt(env('MISSIONS_PAR_JOUR', '3'), 10),
+  MISSION_MISE: parseFloat(env('MISSION_MISE', '2000')),   // a miser sur le jeu du jour
+  MISSION_GAIN: parseFloat(env('MISSION_GAIN', '12')),     // ce qu'elle rapporte
 
   // ---- New-player welcome bonus (wager-locked) ----
   // A brand-new player gets WELCOME_BONUS $SWOGE to try the game. Once they've

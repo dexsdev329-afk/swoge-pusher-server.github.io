@@ -152,6 +152,7 @@ class Game {
         np: !!p.nomPaye,
         dn: p.dayNet.toString(), dk: p.dayKey,
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
+        mij: p.miseJour || {},
         vi: p.visage || null, am: p.amis || [], ph: !!p.photo,
         dm: p.demandes || [], en: p.envoyees || [],
         pa: p.parrain || null, fi: p.filleuls || [],
@@ -271,6 +272,7 @@ class Game {
         nomChoisi: d.nc !== undefined ? !!d.nc : !!(d.name && d.name !== addr.slice(0, 6)),
         dayNet: ethers.BigNumber.from(d.dn || '0'), dayKey: d.dk || null,
         dropsToday: d.dt || 0, winsToday: d.wt || 0, questClaimed: d.qc || {}, hasDeposited: !!d.hd,
+        miseJour: (d.mij && typeof d.mij === 'object') ? d.mij : {},
         visage: d.vi || null, amis: Array.isArray(d.am) ? d.am : [], photo: !!d.ph,
         demandes: Array.isArray(d.dm) ? d.dm : [], envoyees: Array.isArray(d.en) ? d.en : [],
         parrain: d.pa || null, filleuls: Array.isArray(d.fi) ? d.fi : [],
@@ -332,7 +334,7 @@ class Game {
   // Called every time a player actually stakes a bet — unlocks the welcome claim.
   // Appele a chaque mise reelle : debloque le bonus de bienvenue ET cumule le
   // total joue a vie (affiche dans le tableau de bord admin).
-  _markWager(p, wei) {
+  _markWager(p, wei, jeu) {
     if (!p) return;
     /* Le compteur AVANT le tirage. C'est le seul endroit traverse par tous les
        jeux au moment ou la mise part, donc avant qu'aucune carte ne soit
@@ -342,6 +344,15 @@ class Game {
        blackjack, une main en consomme une dizaine. */
     p.nonceDebut = p.nonce;
     if (!p.welcomeWagered) p.welcomeWagered = true;
+    /* La mise du jour, JEU PAR JEU : c'est le compteur des missions. Il se
+       tient ici et nulle part ailleurs, pour la meme raison que le reste —
+       un jeu qui oublierait de passer par la ne compterait deja ni pour le
+       niveau ni pour le tunnel, ce qui se voit tout de suite. */
+    if (jeu && wei) {
+      this._bumpDay(p);
+      if (!p.miseJour) p.miseJour = {};
+      p.miseJour[jeu] = (p.miseJour[jeu] || 0) + Number(ethers.utils.formatUnits(wei, cfg.DECIMALS));
+    }
     if (wei) {
       /* La PREMIERE mise de sa vie : le dernier passage du tunnel, et celui
          qui separe un curieux d'un joueur. */
@@ -1127,6 +1138,7 @@ class Game {
       if (!p.meilleurJour || net > p.meilleurJour.net) p.meilleurJour = { jour: p.dayKey, net };
     }
     p.dayKey = t; p.dayNet = ethers.BigNumber.from(0); p.dropsToday = 0; p.winsToday = 0; p.questClaimed = {};
+    p.miseJour = {};
   }
   jackpotStr() { return ethers.utils.formatUnits(this.jackpotPot, cfg.DECIMALS); }
 
@@ -1393,27 +1405,68 @@ class Game {
     };
   }
 
+  /**
+   * Les missions du jour : trois jeux nommes, qui changent chaque jour.
+   *
+   * Le tirage n'en est pas un — c'est une rotation calculee a partir du numero
+   * du jour. Tout le monde voit donc les memes jeux le meme jour (ce qui se
+   * raconte dans le canal), personne ne peut la faire tourner en rechargeant,
+   * et le pas etant premier avec la longueur du catalogue, chaque jeu revient
+   * a intervalle regulier au lieu d'etre oublie des semaines.
+   */
+  missionsDuJour(jourKey) {
+    const cat = cfg.MISSION_CATALOGUE || [];
+    const k = Math.max(0, Math.min(cfg.MISSIONS_PAR_JOUR || 0, cat.length));
+    if (!k) return [];
+    /* Le numero du jour depuis l'epoque, lu sur la CLE du jour et non sur
+       l'horloge : la cle est ce qui remet les compteurs a zero, les deux
+       doivent basculer au meme instant. */
+    const jour = Math.floor(Date.parse((jourKey || this._today()) + 'T00:00:00Z') / 86400000);
+    const out = [];
+    for (let i = 0; i < k; i++) {
+      const [jeu, nom, page] = cat[(((jour * k + i) % cat.length) + cat.length) % cat.length];
+      out.push({ id: 'm:' + jeu, jeu, nom, page, metric: 'mise',
+                 label: 'Wager ' + cfg.MISSION_MISE.toLocaleString('en-US') + ' $SWOGE on ' + nom,
+                 target: cfg.MISSION_MISE, reward: cfg.MISSION_GAIN });
+    }
+    return out;
+  }
+
+  /* Une quete, vue par le joueur. Le meme calcul sert a l'affichage et a la
+     reclamation : deux calculs finiraient par diverger, et celui qui diverge
+     paie ou refuse de payer a tort. */
+  _queteVue(p, q, locked) {
+    const prog = q.metric === 'drops' ? p.dropsToday
+               : q.metric === 'wins' ? p.winsToday
+               : q.metric === 'mise' ? ((p.miseJour || {})[q.jeu] || 0)
+               : q.target;                                   // 'free' → toujours remplie
+    const done = prog >= q.target;
+    const claimed = !!p.questClaimed[q.id];
+    return { id: q.id, label: q.label, metric: q.metric, target: q.target, reward: q.reward,
+             jeu: q.jeu || null, nom: q.nom || null, page: q.page || null,
+             progress: Math.min(prog, q.target), done, claimed, locked,
+             claimable: done && !claimed && !locked };
+  }
+
   /** Per-player daily quest state (progress + claimable flags). */
   questState(addr) {
     const p = this._p(addr); this._bumpDay(p);
     const locked = cfg.QUEST_REQUIRE_DEPOSIT && !p.hasDeposited;
-    return cfg.QUESTS.map((q) => {
-      const prog = q.metric === 'drops' ? p.dropsToday : q.metric === 'wins' ? p.winsToday : q.target; // 'free' → always met
-      const done = prog >= q.target;
-      const claimed = !!p.questClaimed[q.id];
-      return { id: q.id, label: q.label, metric: q.metric, target: q.target, reward: q.reward,
-               progress: Math.min(prog, q.target), done, claimed, locked, claimable: done && !claimed && !locked };
-    });
+    return cfg.QUESTS.concat(this.missionsDuJour(p.dayKey))
+      .map((q) => this._queteVue(p, q, locked));
   }
 
   /** Claim a completed quest → credit its reward. Throws on any invalid claim. */
   claimQuest(addr, id) {
     const p = this._p(addr); this._bumpDay(p);
-    const q = cfg.QUESTS.find((x) => x.id === id);
+    /* Les missions du jour se cherchent dans la liste DU JOUR : celle d'hier
+       n'existe plus, et un identifiant garde de la veille ne doit pas payer
+       aujourd'hui. */
+    const q = cfg.QUESTS.concat(this.missionsDuJour(p.dayKey)).find((x) => x.id === id);
     if (!q) throw new Error('unknown quest');
     if (cfg.QUEST_REQUIRE_DEPOSIT && !p.hasDeposited) throw new Error('deposit first to unlock quests');
-    const prog = q.metric === 'drops' ? p.dropsToday : q.metric === 'wins' ? p.winsToday : q.target;
-    if (prog < q.target) throw new Error('quest not complete yet');
+    const vue = this._queteVue(p, q, false);
+    if (!vue.done) throw new Error('quest not complete yet');
     if (p.questClaimed[q.id]) throw new Error('already claimed today');
     p.questClaimed[q.id] = true;
     const r = WEI(q.reward);
@@ -1673,7 +1726,7 @@ class Game {
             moisCle: null, moisMise: 0,
             refBienvenue: false,
             dayNet: ethers.BigNumber.from(0), dayKey: null,
-            dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false,
+            dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false, miseJour: {},
             stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0,
             wagered: ethers.BigNumber.from(0), betCount: 0,
             tgId: null, welcomeGranted: false, welcomeWagered: false, welcomeClaimed: false,
@@ -1915,7 +1968,7 @@ class Game {
     const p = this._p(addr);
     if (p.balance.lt(COST)) return null;
     p.balance = p.balance.sub(COST);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(COST); p.dropsToday++; this._markWager(p, COST);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(COST); p.dropsToday++; this._markWager(p, COST, 'pusher');
     const h = crypto.createHmac('sha256', this.serverSeed)
       .update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
@@ -1959,7 +2012,7 @@ class Game {
     const betWei = WEI(bet);
     if (p.balance.lt(betWei)) return null;
     p.balance = p.balance.sub(betWei);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++; this._markWager(p, betWei);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++; this._markWager(p, betWei, 'smash');
     const h = crypto.createHmac('sha256', this.serverSeed)
       .update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
@@ -1992,7 +2045,7 @@ class Game {
     const betWei = WEI(bet);
     if (p.balance.lt(betWei)) return { error: 'need_deposit' };
     p.balance = p.balance.sub(betWei);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++; this._markWager(p, betWei);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++; this._markWager(p, betWei, 'spin');
     const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
     const out = volcano.spinAll(volcano.rngFrom(h), p.volcanoMeter || 0);
@@ -2017,7 +2070,7 @@ class Game {
     const costWei = WEI(cost);
     if (p.balance.lt(costWei)) return { error: 'need_deposit' };
     p.balance = p.balance.sub(costWei);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(costWei); p.dropsToday++; this._markWager(p, costWei);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(costWei); p.dropsToday++; this._markWager(p, costWei, 'spin');
     const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
     const bonus = volcano.runBonus(3, volcano.rngFrom(h));
@@ -2128,7 +2181,7 @@ class Game {
 
     const debit = WEI(ante + side);
     p.balance = p.balance.sub(debit);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(debit); p.dropsToday++; this._markWager(p, debit);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(debit); p.dropsToday++; this._markWager(p, debit, gameId);
 
     p.nonce++;
     const graine = { serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':casino', nonce: p.nonce };
@@ -2158,7 +2211,7 @@ class Game {
     if (extra > 0) {
       if (p.balance.lt(WEI(extra))) throw new Error('not enough $SWOGE to call');
       p.balance = p.balance.sub(WEI(extra));
-      this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(extra)); this._markWager(p, WEI(extra));
+      this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(extra)); this._markWager(p, WEI(extra), s.game);
     }
 
     const feeBps = cfg.CASINO_WIN_FEE_BPS;
@@ -2211,7 +2264,7 @@ class Game {
     if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
 
     p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise), 'hilo');
 
     p.nonce++;
     const graine = { serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':hilo', nonce: p.nonce };
@@ -2317,7 +2370,7 @@ class Game {
     if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
 
     p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise), 'mines');
 
     p.nonce++;
     const graine = { serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':mines', nonce: p.nonce };
@@ -2391,7 +2444,7 @@ class Game {
     if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
 
     p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise), 'plinko');
 
     p.nonce++;
     const r = plinko.lancer({
@@ -2453,7 +2506,7 @@ class Game {
 
     p.balance = p.balance.sub(WEI(mise));
     this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise));
-    p.dropsToday++; this._markWager(p, WEI(mise));
+    p.dropsToday++; this._markWager(p, WEI(mise), 'crash');
     return { manche: r.manche, mise, auto: r.auto, balance: this.balanceStr(addr) };
   }
 
@@ -2540,14 +2593,14 @@ class Game {
     return mise;
   }
 
-  _duelDebite(addr, mise) {
+  _duelDebite(addr, mise, jeu) {
     const p = this._p(addr);
     p.balance = p.balance.sub(WEI(mise));
     // dropsToday compte pour les quetes du jour. Tous les autres jeux
     // l'incrementent a la mise ; le Connect 4 l'avait oublie, et une partie
     // ne faisait donc avancer aucune quete.
     this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++;
-    this._markWager(p, WEI(mise));
+    this._markWager(p, WEI(mise), jeu);
   }
 
   _duelCredite(addr, montant) {
@@ -2566,7 +2619,7 @@ class Game {
     const id = jeu + (++this.p4Seq) + '-' + Math.floor(t / 1000).toString(36);
     const partie = new (this._moteur(jeu).Partie)({
       id, mise, createur: addr, now: t, coupMs: this._duelCfg(jeu).coupMs });
-    this._duelDebite(addr, mise);
+    this._duelDebite(addr, mise, jeu);
     this.p4.set(id, partie);
     return partie;
   }
@@ -2595,7 +2648,7 @@ class Game {
       }
     }
     for (const m of retirees) this._duelFerme(m, 'retiree', t);
-    this._duelDebite(addr, mise);
+    this._duelDebite(addr, mise, partie.jeu || 'p4');
     partie.rejoindre(addr, t);
     return { partie, retirees };
   }
@@ -2651,7 +2704,7 @@ class Game {
     const partie = new (this._moteur(jeu).Partie)({
       id, mise, createur: addr, now: t, coupMs: this._duelCfg(jeu).coupMs,
       reserve: adversaire, revancheDe: avant.id });
-    this._duelDebite(addr, mise);
+    this._duelDebite(addr, mise, jeu);
     this.p4.set(id, partie);
     return partie;
   }
@@ -2832,7 +2885,7 @@ class Game {
   _p4Regle(partie) { return this._duelRegle(partie); }
   _p4Rendre(partie) { return this._duelRendre(partie); }
   _p4Credite(addr, m) { return this._duelCredite(addr, m); }
-  _p4Debite(addr, m) { return this._duelDebite(addr, m); }
+  _p4Debite(addr, m) { return this._duelDebite(addr, m, 'p4'); }
   _p4Verifie(mise, addr) { return this._duelVerifie('p4', mise, addr); }
 
   // ------------------------------------------------------------------ poker
@@ -2868,7 +2921,7 @@ class Game {
     if (!(amt > 0)) return;
     const p = this._p(addr);
     this._bumpDay(p); p.dropsToday++;
-    this._markWager(p, WEI(amt));
+    this._markWager(p, WEI(amt), 'poker');
   }
 
   /** Une main gagnee : compte pour les quetes et le classement du jour. */
@@ -2882,7 +2935,7 @@ class Game {
     if (amt > cfg.BJ_MAX_BET) throw new Error('max bet is ' + cfg.BJ_MAX_BET + ' $SWOGE');
     const w = WEI(amt);
     if (p.balance.lt(w)) throw new Error('not enough $SWOGE');
-    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); p.dropsToday++; this._markWager(p, w);
+    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); p.dropsToday++; this._markWager(p, w, 'bj');
     p.bj = { bet: amt, pc: [this._bjDraw(p), this._bjDraw(p)], dc: [this._bjDraw(p), this._bjDraw(p)], stage: 'player', doubled: false, result: null, payout: 0 };
     const pv = this._bjVal(p.bj.pc), dv = this._bjVal(p.bj.dc);
     if (pv === 21 || dv === 21) {
@@ -2914,7 +2967,7 @@ class Game {
     if (!p.bj || p.bj.stage !== 'player' || p.bj.pc.length !== 2) throw new Error('cannot double now');
     const w = WEI(p.bj.bet);
     if (p.balance.lt(w)) throw new Error('not enough to double');
-    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); this._markWager(p, w); p.bj.doubled = true;
+    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); this._markWager(p, w, 'bj'); p.bj.doubled = true;
     p.bj.pc.push(this._bjDraw(p));
     if (this._bjVal(p.bj.pc) <= 21) this._bjDealerPlay(p);
     this._bjSettle(p, p.bj.bet * 2);
