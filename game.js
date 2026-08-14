@@ -417,27 +417,37 @@ class Game {
    * `mise` et `rendu` sont des NOMBRES, pas des wei : ce sont des chiffres
    * d'affichage, jamais des soldes, et personne ne paie avec.
    */
-  _manche(p, jeu, mise, rendu) {
+  /* `opts` sert aux jeux dont l'argent ne part pas et ne revient pas dans le
+     meme instant. Le Coin Pusher en est un : on lache une piece maintenant,
+     et une piece — pas forcement la sienne — tombe plus tard. Les deux moments
+     doivent compter, mais une seule fois chacun.
+       • suite       : ce versement prolonge une manche deja comptee. On
+                       enregistre l'argent, pas une deuxieme manche.
+       • sansJournal : pas de ligne d'historique. Trois cents chutes a un jeton
+                       noieraient l'onglet « Rounds » et cacheraient tout le
+                       reste ; les compteurs, eux, ont besoin de chacune. */
+  _manche(p, jeu, mise, rendu, opts) {
     if (!p || !jeu) return;
+    const suite = !!(opts && opts.suite);
     /* Le seul point de passage de TOUTES les manches, tous jeux confondus :
        c'est donc ici que le journal se remplit, et nulle part ailleurs. Un
        nouveau jeu qui appelle _manche est journalise sans rien avoir a
        ajouter — et un jeu qui oublierait de l'appeler ne compterait deja pas
        dans les statistiques, ce qui se voit. */
-    if (p.addr) journal.ajoute(p.addr, { k: 'r', g: jeu, m: Number(mise) || 0, p: Number(rendu) || 0,
+    if (p.addr && !(opts && opts.sansJournal)) journal.ajoute(p.addr, { k: 'r', g: jeu, m: Number(mise) || 0, p: Number(rendu) || 0,
       /* De quoi refaire le calcul soi-meme, une fois la graine du serveur
          revelee : son empreinte, la graine du joueur, et les numeros utilises
          par cette manche. */
       sh: this.serverSeedHash, cs: p.clientSeed,
       n0: p.nonceDebut == null ? p.nonce : p.nonceDebut, n1: p.nonce });
     this.manchesGraine = (this.manchesGraine || 0) + 1;
-    this.noteJeu(p, jeu, mise, rendu);
+    this.noteJeu(p, jeu, mise, rendu, suite);
     /* LE point de passage du revenu. Il vaut pour les jeux contre la banque
        comme pour le 1v1 : la somme des mises moins la somme des rendus EST ce
        que la maison garde, commission comprise. */
     this.note('mises', Number(mise) || 0, p.addr);
     this.note('rendus', Number(rendu) || 0, p.addr);
-    this.note('manches', 1);
+    if (!suite) this.note('manches', 1);
     /* Le volume du MOIS. Il se remet a zero tout seul au changement de mois :
        un classement mensuel qu'il faut penser a reinitialiser finit toujours
        par afficher le mois d'avant. */
@@ -447,11 +457,13 @@ class Game {
 
     if (!p.jeux) p.jeux = {};
     const j = p.jeux[jeu] || (p.jeux[jeu] = { n: 0, mise: 0, rendu: 0, gagne: 0, nul: 0 });
-    j.n++;
+    if (!suite) j.n++;
     j.mise += Number(mise) || 0;
     j.rendu += Number(rendu) || 0;
-    if (rendu > mise) j.gagne++;
-    else if (rendu === mise) j.nul++;
+    if (!suite) {
+      if (rendu > mise) j.gagne++;
+      else if (rendu === mise) j.nul++;
+    }
 
     /* Le plus gros gain d'une vie de joueur. On le retient au moment ou il
        arrive : le recalculer plus tard voudrait dire relire tout le journal,
@@ -681,13 +693,16 @@ class Game {
    *  3. QUATRE-VINGT-DIX JOURS. De quoi comparer un avant et un apres sans
    *     faire grossir l'etat sans fin.
    */
-  noteJeu(p, jeu, mise, rendu) {
+  noteJeu(p, jeu, mise, rendu, suite) {
     if (!jeu) return;
     const jour = new Date().toISOString().slice(0, 10);
     const u = this.usage || (this.usage = {});
     const d = u[jour] || (u[jour] = {});
     const g = d[jeu] || (d[jeu] = { m: 0, mise: 0, rendu: 0, vus: {}, plus: 0 });
-    g.m++;
+    /* `suite` : un versement qui prolonge une manche deja comptee. L'argent
+       compte, la manche non — sinon le Coin Pusher afficherait deux fois plus
+       de parties qu'il n'y a eu de chutes. */
+    if (!suite) g.m++;
     g.mise = Number((g.mise + (Number(mise) || 0)).toFixed(6));
     g.rendu = Number((g.rendu + (Number(rendu) || 0)).toFixed(6));
     const a = p && p.addr;
@@ -2237,6 +2252,12 @@ class Game {
     if (p.balance.lt(COST)) return null;
     p.balance = p.balance.sub(COST);
     this._bumpDay(p); p.dayNet = p.dayNet.sub(COST); p.dropsToday++; this._markWager(p, COST, 'pusher');
+    /* LA CHUTE EST LA MANCHE. Le Coin Pusher ne passait par aucun point de
+       reglage : il ne comptait ni pour le classement du mois, ni pour le
+       revenu de la maison, ni pour la mesure d'usage — le jeu qui donne son
+       nom au serveur etait invisible aux trois. Ce qui revient plus tard
+       arrive par win(), et se raccroche a cette manche-ci. */
+    this._manche(p, 'pusher', Number(cfg.DROP_COST) || 0, 0, { sansJournal: true });
     const h = crypto.createHmac('sha256', this.serverSeed)
       .update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
@@ -3261,6 +3282,22 @@ class Game {
   /** Une main gagnee : compte pour les quetes et le classement du jour. */
   pokerWin(addr) { const p = this._p(addr); this._bumpDay(p); p.winsToday++; }
 
+  /**
+   * Une main de poker, reglee.
+   *
+   * Le poker ne passait par aucun point de reglage : ni classement, ni
+   * revenu, ni mesure d'usage. Il en a pourtant tout ce qu'il faut — ce que
+   * chaque siege a REELLEMENT engage (le remboursement de la mise non suivie
+   * est deja retire) et ce que chaque siege a recu. Leur difference, sur une
+   * main entiere, EST le rake : la comptabilite tombe juste sans qu'on ait a
+   * lui declarer la commission separement.
+   */
+  pokerManche(addr, mise, rendu) {
+    const m = Number(mise) || 0;
+    if (!(m > 0)) return;
+    this._manche(this._p(addr), 'poker', m, Number(rendu) || 0);
+  }
+
   bjBet(addr, amountRaw) {
     const p = this._p(addr);
     if (p.bj && p.bj.stage !== 'done') throw new Error('hand in progress');
@@ -3314,6 +3351,10 @@ class Game {
     const p = this._p(addr);
     p.balance = p.balance.add(WEI(value));
     this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(value)); p.winsToday++;
+    /* Ce qui tombe se rattache a la chute deja comptee : `suite`. Une piece
+       qui atteint le bord n'est pas une nouvelle partie — souvent ce n'est
+       meme pas la piece qu'on vient de lacher. */
+    this._manche(p, 'pusher', 0, Number(value) || 0, { suite: true, sansJournal: true });
   }
 
   /**

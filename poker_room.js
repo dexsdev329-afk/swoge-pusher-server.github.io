@@ -237,10 +237,20 @@ class PokerRoom {
     for (const ev of t.drainEvents()) {
       if (ev.type === 'handEnd') {
         this.rakeCollected += ev.rake || 0;
+        /* Ce que chaque siege a RECU sur cette main. On le rassemble avant de
+           regler : un joueur peut toucher plusieurs pots (principal et
+           lateraux), et ne compter que le premier ferait apparaitre du revenu
+           que la maison n'a pas encaisse. */
+        const recu = {};
+        for (const r of ev.results || []) recu[r.seat] = (recu[r.seat] || 0) + (r.amount || 0);
         // ce qui a ete reellement engage compte comme mise
         for (const [seat, montant] of Object.entries(ev.contrib || {})) {
           const a = ev.addrs && ev.addrs[seat];
-          if (a) this.game.pokerWager(a, montant);
+          if (!a) continue;
+          this.game.pokerWager(a, montant);
+          /* Et la main est REGLEE : classement du mois, revenu, usage. Sans
+             cet appel, le poker restait invisible aux trois. */
+          this.game.pokerManche(a, montant, recu[seat] || 0);
         }
         for (const r of ev.results || []) {
           const a = ev.addrs && ev.addrs[r.seat];
