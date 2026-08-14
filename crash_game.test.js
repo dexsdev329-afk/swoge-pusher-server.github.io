@@ -127,6 +127,12 @@ function envole(g) {
     // on saute directement a la fin de la manche, sans jamais appeler retirer()
     const fin = depart + C.msPour(point, cfg.CRASH_VITESSE);
     const evs = g.crashTick(fin);
+    /* Quatre pour cent des manches cassent a EXACTEMENT 1.00x — une explosion
+       instantanee. `msPour(1)` vaut alors zero : on vient de tiquer sur
+       l'instant du depart lui-meme, et la manche n'est pas encore finie. Un
+       tour d'horloge de plus la termine. Sans ca, ce controle echouait une
+       fois sur huit, ce qui apprend surtout a ignorer les echecs. */
+    if (!evs.some((e) => e.type === 'crashFin')) evs.push(...g.crashTick(fin + 1));
     if (point >= 1.5) {
       eq(sol(g, A), apresMise + 600, `cible 1.5x atteinte (crash ${point}x) : 400 a 1.5x = 600`);
       const ev = evs.find((e) => e.type === 'crashRetrait' && e.addr === A);

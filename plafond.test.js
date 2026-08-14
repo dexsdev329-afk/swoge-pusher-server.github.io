@@ -43,6 +43,18 @@ const WEI = (x) => ethers.utils.parseUnits(String(x), cfg.DECIMALS);
 const adr = (i) => '0x' + i.toString(16).padStart(40, '0');
 const riche = (g, i, montant) => { const p = g._p(adr(i)); p.balance = WEI(montant); p.hasDeposited = true; return adr(i); };
 
+/* Ce fichier teste le plafond GLOBAL — celui de la salle. Le plafond par
+   PORTEFEUILLE, arrive apres, est teste dans plafond_joueur.test.js et
+   empecherait ici de remplir la salle depuis un seul compte, ce qui
+   masquerait ce qu'on veut voir. On le neutralise donc explicitement autour
+   des blocs qui remplissent la salle d'un coup, plutot que de repartir les
+   mises sur cent portefeuilles et de rendre chaque bloc illisible. */
+function sansPlafondJoueur(f) {
+  const avant = cfg.STAKE_CAP_JOUEUR_BPS;
+  cfg.STAKE_CAP_JOUEUR_BPS = 0;
+  try { return f(); } finally { cfg.STAKE_CAP_JOUEUR_BPS = avant; }
+}
+
 // ============================== le plafond vaut ce qu'il annonce
 {
   const g = new Game();
@@ -54,7 +66,7 @@ const riche = (g, i, montant) => { const p = g._p(adr(i)); p.balance = WEI(monta
 }
 
 // ============================== on ne passe pas au-dessus, en une fois
-{
+sansPlafondJoueur(() => {
   const g = new Game();
   const a = riche(g, 1, 300000000);
   jete(() => g.stake(a, '250000000'), /room left in the staking pool/,
@@ -69,28 +81,37 @@ const riche = (g, i, montant) => { const p = g._p(adr(i)); p.balance = WEI(monta
   /* Le refus porte le chiffre exact qui reste : « pool full » tout seul fait
      ecrire au support, « il reste 200 000 000 » fait retaper le montant. */
   jete(() => g.stake(a, '250000000'), /200,000,000/, 'et il dit COMBIEN il reste');
-}
+});
 
 // ============================== ni en mille fois
 /* Un plafond qui ne tient que sur un gros depot ne tient pas : il suffirait de
-   le decouper. */
+   le decouper.
+ *
+ * Le nombre de portefeuilles necessaires a change le jour ou le plafond PAR
+ * PORTEFEUILLE est arrive : il en fallait vingt a dix millions, il en faut
+ * maintenant cent au maximum autorise. C'est exactement l'effet recherche —
+ * la subvention atteint cent portefeuilles au lieu de vingt — et le voir ici
+ * vaut mieux que de le supposer. */
 {
   const g = new Game();
-  for (let i = 1; i <= 21; i++) {
-    const a = riche(g, i, 10000000);
-    try { g.stake(a, '10000000'); } catch (e) { /* le vingt-et-unieme est refuse */ }
+  const max = Number(ethers.utils.formatUnits(g.plafondJoueur(), cfg.DECIMALS));
+  const combien = Math.ceil(200000000 / max);
+  eq(combien, 100, 'il faut cent portefeuilles au plafond pour remplir la salle');
+  for (let i = 1; i <= combien + 1; i++) {
+    const a = riche(g, i, max);
+    try { g.stake(a, String(max)); } catch (e) { /* le cent-unieme est refuse */ }
   }
   const c = g.capaciteStaking();
-  eq(c.occupe, 200000000, 'vingt joueurs de dix millions remplissent la salle, le vingt-et-unieme non');
+  eq(c.occupe, 200000000, 'cent portefeuilles au plafond remplissent la salle, le cent-unieme non');
   ok(c.occupe <= c.plafond, 'LA SOMME NE DEPASSE JAMAIS LE PLAFOND');
   eq(c.plein, true, 'et la salle se declare pleine');
-  eq(g.balanceStr(adr(21)), '10000000.0', 'le refuse a garde tous ses jetons');
+  eq(Number(g.balanceStr(adr(combien + 1))), max, 'le refuse a garde tous ses jetons');
 }
 
 // ============================== la place se libere quand quelqu un sort
 /* Sinon ce n'est pas un plafond, c'est une porte fermee — et le systeme
    mourrait au premier remplissage. */
-{
+sansPlafondJoueur(() => {
   const g = new Game();
   const a = riche(g, 1, 200000000);
   g.stake(a, '200000000');
@@ -102,12 +123,12 @@ const riche = (g, i, montant) => { const p = g._p(adr(i)); p.balance = WEI(monta
   eq(g.capaciteStaking().plein, false, 'le premier sort : la salle n est plus pleine');
   g.stake(b, '50000');
   eq(g.capaciteStaking().occupe, 50000, 'et le suivant entre');
-}
+});
 
 // ============================== le taux affiche ne ment pas
 /* A 99,9995 %, un arrondi au plus proche affiche « 100 % » alors qu'il reste
    de la place : le joueur renonce a une salle qui l'aurait accepte. */
-{
+sansPlafondJoueur(() => {
   const g = new Game();
   const a = riche(g, 1, 200000000);
   g.stake(a, '199999000');
@@ -117,21 +138,21 @@ const riche = (g, i, montant) => { const p = g._p(adr(i)); p.balance = WEI(monta
   eq(c.libre, 1000, 'elle annonce exactement ce qui reste');
   g.stake(a, '1000');
   eq(g.capaciteStaking().taux, 100, 'cent pour cent ne s affiche que quand c est vraiment plein');
-}
+});
 
 // ============================== il suit l offre REELLE de la chaine
 /* Un plafond fige sur un chiffre ecrit a la main finirait par ne plus vouloir
    dire 20 % le jour ou des jetons sont brules. */
-{
+sansPlafondJoueur(() => {
   const g = new Game();
   g.offreTotale = WEI(500000000);            // la moitie a ete brulee
   eq(g.capaciteStaking().plafond, 100000000, 'l offre baisse de moitie : le plafond aussi');
   const a = riche(g, 1, 200000000);
   jete(() => g.stake(a, '150000000'), /room left/, 'et il s applique tout de suite');
-}
+});
 
 // ============================== le plafond survit au redemarrage
-{
+sansPlafondJoueur(() => {
   const g = new Game();
   const a = riche(g, 1, 200000000);
   g.stake(a, '199000000');
@@ -139,7 +160,7 @@ const riche = (g, i, montant) => { const p = g._p(adr(i)); p.balance = WEI(monta
   eq(g2.capaciteStaking().occupe, 199000000, 'ce qui est en staking revient apres un redemarrage');
   const b = riche(g2, 2, 5000000);
   jete(() => g2.stake(b, '5000000'), /room left/, 'et le plafond tient toujours');
-}
+});
 
 // ============================== le staking lui-meme n a pas change
 /* Le plafond ne doit rien casser de ce qui marchait : ce qui est mis revient,
@@ -172,7 +193,7 @@ const riche = (g, i, montant) => { const p = g._p(adr(i)); p.balance = WEI(monta
  * Les deux courbes se croisent a une date, et cette date se calcule
  * aujourd'hui. C'est le seul chiffre qui previent au lieu de constater.
  */
-{
+sansPlafondJoueur(() => {
   const g = new Game();
   const a = riche(g, 1, 120000000);
   g.stake(a, '100000000');
@@ -201,7 +222,7 @@ const riche = (g, i, montant) => { const p = g._p(adr(i)); p.balance = WEI(monta
      `le revenu seul porterait ${Math.round(av.stakingAutofinance).toLocaleString('en-US')} $SWOGE de staking`);
   ok(av.stakingAutofinance < g.capaciteStaking().plafond,
      'et c est BIEN EN DESSOUS du plafond : la difference se remet au coffre a la main');
-}
+});
 
 // -------------------------------- quand le revenu couvre, il n y a plus d echeance
 {
@@ -218,14 +239,14 @@ const riche = (g, i, montant) => { const p = g._p(adr(i)); p.balance = WEI(monta
 }
 
 // -------------------------------- deja sous l eau : zero jour, pas un nombre rassurant
-{
+sansPlafondJoueur(() => {
   const g = new Game();
   const a = riche(g, 1, 10000000);
   g.stake(a, '10000000');
   const av = g.autonomie(WEI(1000000));       // le coffre ne couvre meme pas ce qui est en staking
   ok(av.surplus < 0, 'le coffre ne couvre plus ce qu on doit');
   eq(av.joursRestants, 0, 'ZERO JOUR — et surtout pas un nombre qui rassure');
-}
+});
 
 require('./journal').draine(() => {
   fs.rmSync(bac, { recursive: true, force: true });

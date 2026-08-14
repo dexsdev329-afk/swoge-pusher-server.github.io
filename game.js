@@ -1203,14 +1203,53 @@ class Game {
     return offre.mul(pct).div(10000);
   }
 
+  /**
+   * Le plafond d'UN portefeuille : une part de la salle, pas de l'offre.
+   *
+   * Si le plafond global bouge, celui-ci suit, et le rapport « combien de
+   * portefeuilles au minimum pour remplir la salle » reste celui qui a ete
+   * choisi. Rend null quand il n'y a pas de plafond global : plafonner une
+   * part d'un infini n'aurait pas de sens.
+   */
+  plafondJoueur() {
+    const salle = this.plafondStaking();
+    if (!salle) return null;
+    const pct = Math.max(0, Math.min(10000, cfg.STAKE_CAP_JOUEUR_BPS || 0));
+    if (!pct) return null;                                   // 0 = pas de plafond par joueur
+    return salle.mul(pct).div(10000);
+  }
+
+  /**
+   * Ce qu'il reste a CE portefeuille.
+   *
+   * Une position deja ouverte au-dessus du plafond n'est pas rognee : elle
+   * reste, et il reste zero. On ne casse pas un engagement pris sous une
+   * autre regle — on empeche seulement d'en ajouter.
+   */
+  placeJoueur(addr) {
+    const max = this.plafondJoueur();
+    if (!max) return null;
+    const deja = this._stakedTotal(this._p(addr));
+    return max.gt(deja) ? max.sub(deja) : BN(0);
+  }
+
   /** Ou en est la salle : ce qui est pris, ce qui reste, et le taux de
    *  remplissage. C'est ce que la page de staking affiche AVANT que le joueur
    *  tape un montant — un refus qui arrive apres la saisie est une brimade. */
-  capaciteStaking() {
+  capaciteStaking(addr) {
     const f = (w) => Number(ethers.utils.formatUnits(w, cfg.DECIMALS));
     const plafond = this.plafondStaking();
     const occupe = this.totalStaked();
-    if (!plafond) return { plafond: null, occupe: f(occupe), libre: null, taux: 0, plein: false };
+    /* Le plafond personnel part AVEC la capacite de la salle, pour la meme
+       raison qu'elle : un refus qui arrive apres la saisie est une brimade. */
+    const maxJoueur = this.plafondJoueur();
+    const perso = addr && maxJoueur ? {
+      plafondJoueur: f(maxJoueur),
+      dejaJoueur: f(this._stakedTotal(this._p(addr))),
+      libreJoueur: f(this.placeJoueur(addr)),
+      partSalle: cfg.STAKE_CAP_JOUEUR_BPS / 100,
+    } : (maxJoueur ? { plafondJoueur: f(maxJoueur), partSalle: cfg.STAKE_CAP_JOUEUR_BPS / 100 } : {});
+    if (!plafond) return { plafond: null, occupe: f(occupe), libre: null, taux: 0, plein: false, ...perso };
     const libre = plafond.gt(occupe) ? plafond.sub(occupe) : BN(0);
     /* On ARRONDIT VERS LE BAS. A 99,9995 %, un arrondi au plus proche affiche
        « 100 % » alors qu'il reste de la place : le joueur renonce a une salle
@@ -1221,6 +1260,7 @@ class Game {
       plafond: f(plafond), occupe: f(occupe), libre: f(libre), taux,
       plein: libre.lte(0),
       partOffre: cfg.STAKE_CAP_BPS / 100,
+      ...perso,
     };
   }
 
@@ -1250,6 +1290,24 @@ class Game {
       if (amount.gt(libre))
         throw new Error('only ' + joli(libre) + ' $SWOGE of room left in the staking pool (cap ' +
           joli(plafond) + ', ' + (cfg.STAKE_CAP_BPS / 100) + '% of supply)');
+    }
+    /* Le plafond PAR PORTEFEUILLE. Le rendement est une subvention payee par
+       les manches de tout le monde : qu'un seul portefeuille l'absorbe revient
+       a faire payer la salle pour une personne.
+     *
+     * Ce qui est deja stake n'est pas touche. Une position ouverte sous une
+     * autre regle le reste — on empeche d'AJOUTER, on ne retire pas. */
+    const maxJoueur = this.plafondJoueur();
+    if (maxJoueur) {
+      const joli = (w) => Number(ethers.utils.formatUnits(w, cfg.DECIMALS))
+        .toLocaleString('en-US', { maximumFractionDigits: 0 });
+      const place = this.placeJoueur(addr);
+      if (place.lte(0))
+        throw new Error('you have reached the per-wallet staking cap of ' + joli(maxJoueur) +
+          ' $SWOGE — your current stake stays untouched, you just cannot add to it');
+      if (amount.gt(place))
+        throw new Error('you can stake ' + joli(place) + ' $SWOGE more (per-wallet cap ' +
+          joli(maxJoueur) + ', ' + (cfg.STAKE_CAP_JOUEUR_BPS / 100) + '% of the pool)');
     }
     this._settleStakes(p);
     p.balance = p.balance.sub(amount);
@@ -1430,7 +1488,7 @@ class Game {
       /* La salle, vue de l'exterieur. Elle part AVEC l'etat du joueur : sinon
          il decouvre que c'est plein apres avoir tape son montant, ce qui se
          lit comme une panne et non comme une regle. */
-      capacite: this.capaciteStaking(),
+      capacite: this.capaciteStaking(addr),
     };
   }
 

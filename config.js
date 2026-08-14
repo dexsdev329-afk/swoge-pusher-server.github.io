@@ -320,6 +320,27 @@ module.exports = {
    */
   TOKEN_SUPPLY: parseFloat(env('TOKEN_SUPPLY', '1000000000')),       // l offre totale, verifiee sur la chaine
   STAKE_CAP_BPS: parseInt(env('STAKE_CAP_BPS', '2000'), 10),         // 2000 = 20 % de l offre, tous joueurs confondus
+  /*
+   * ---- et le plafond PAR PORTEFEUILLE ----
+   *
+   * Un plafond global de 20 % laisse un seul porteur le prendre en entier. Le
+   * rendement est une subvention : elle est payee par la maison, donc par les
+   * manches jouees par tout le monde. Qu'un portefeuille l'absorbe seul
+   * revient a faire payer la salle pour une personne, et ce n'est pas le but.
+   *
+   * La mesure du jour ou ce plafond est ecrit : sur quatre portefeuilles qui
+   * stakent, UN SEUL en tenait 92,6 %. Le probleme n'est pas theorique.
+   *
+   * Exprime en part de la SALLE, pas de l'offre : si le plafond global bouge,
+   * celui-ci suit, et le rapport « combien de portefeuilles au minimum pour
+   * remplir » reste celui qu'on a choisi. A 100 points de base, il en faut au
+   * moins cent.
+   *
+   * Ce plafond ne retire RIEN a personne. Une position deja ouverte reste
+   * ouverte, meme au-dessus : on ne casse pas un engagement pris sous une
+   * autre regle. Il empeche seulement d'en AJOUTER.
+   */
+  STAKE_CAP_JOUEUR_BPS: parseInt(env('STAKE_CAP_JOUEUR_BPS', '100'), 10),  // 100 = 1 % de la salle
 
   // ---- Telegram notifications (deposits / big wins / stakes) ----
   // Accepts either TG_* or the TELEGRAM_* names your other bots already use.
