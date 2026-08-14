@@ -338,8 +338,31 @@ module.exports = {
   // Paid FROM the vault — fund it (ownerDeposit) or it drains. 100% APR is a
   // BIG liability (you owe double after a year), so keep the vault funded.
   STAKE_APR_BPS: parseInt(env('STAKE_APR_BPS', '10000'), 10),        // 10000 = 100% APR
-  STAKE_LOCK_DAYS: parseInt(env('STAKE_LOCK_DAYS', '365'), 10),      // soft-lock length
-  STAKE_EARLY_PENALTY_BPS: parseInt(env('STAKE_EARLY_PENALTY_BPS', '5000'), 10), // 5000 = lose 50% of principal if you exit before the lock ends
+  STAKE_LOCK_DAYS: parseInt(env('STAKE_LOCK_DAYS', '365'), 10),      // duree d echeance, sans effet tant que la penalite vaut 0
+
+  /* ---- LA SORTIE EST LIBRE ----
+   *
+   * Zero. Le staking se quitte a tout moment, et tout revient : le capital en
+   * entier, plus le rendement couru jusqu'a la seconde ou l'on part.
+   *
+   * Ce qui a ete retire : la moitie du capital encore bloque partait a la
+   * maison. Une part sur deux, ce n'est pas une friction, c'est une perte
+   * seche — et elle frappait exactement celui qui en avait besoin, celui qui
+   * doit reprendre son argent avant terme. Un joueur qui l'apprend le jour ou
+   * il veut sortir ne revient pas, et il le raconte.
+   *
+   * Ce qu'on ne perd pas en l'enlevant : le rendement est PROPORTIONNEL au
+   * temps passe. Entrer et ressortir dans la seconde ne rapporte rien du
+   * tout ; il n'y a donc rien a fermer contre ca, et il n'y en a jamais eu.
+   *
+   * Le VRAI garde-fou reste le coffre : a 100 % l'an, ce qui est promis doit
+   * y etre. C'est le plafond de staking qui s'en charge, pas le verrou.
+   *
+   * Remettre une valeur > 0 reactive le verrou ET la penalite d'un coup : le
+   * blocage est defini par la penalite, pas par la date (voir _verrouille
+   * dans game.js). Les positions deja prises suivent sans migration.
+   */
+  STAKE_EARLY_PENALTY_BPS: parseInt(env('STAKE_EARLY_PENALTY_BPS', '0'), 10),
 
   /* ---- LE PLAFOND DE STAKING ----
    *

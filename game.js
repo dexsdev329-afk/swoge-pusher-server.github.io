@@ -1243,8 +1243,26 @@ class Game {
   }
   jackpotStr() { return ethers.utils.formatUnits(this.jackpotPot, cfg.DECIMALS); }
 
-  // ---- Staking: 100% APR, per-position soft lock; early exit forfeits 50% ----
+  // ---- Staking: 100% APR, sortie libre a tout moment ----
   _lockMs() { return cfg.STAKE_LOCK_DAYS * 86400000; }
+
+  /* ---- CE QUI FAIT QU UNE POSITION EST BLOQUEE ----
+   *
+   * C'est la PENALITE, pas la date. Un verrou qui ne coute rien a franchir
+   * n'est pas un verrou : l'annoncer quand meme afficherait « bloque jusqu'au
+   * 14 aout 2027 » a quelqu'un qui peut sortir dans la seconde, et c'est la
+   * pire des deux erreurs — celle qui retient un joueur qui n'avait aucune
+   * raison de rester dehors.
+   *
+   * Poser la question dans ce sens regle aussi les positions DEJA PRISES :
+   * elles portent une date d'echeance ecrite au moment du depot, et rien ne
+   * la reecrira jamais. En faisant dependre le verrou de la penalite en
+   * vigueur, elles se deverrouillent toutes seules le jour ou la penalite
+   * tombe a zero, sans migration ni retouche de l'etat.
+   */
+  _verrouille(pos, now) {
+    return cfg.STAKE_EARLY_PENALTY_BPS > 0 && now < pos.u;
+  }
   _pendingPos(pos) {
     const elapsed = Date.now() - pos.s;
     if (elapsed <= 0) return BN(0);
@@ -1404,8 +1422,9 @@ class Game {
     return r;
   }
 
-  /** Unstake EVERYTHING + pay accrued yield. Unlocked positions return in full;
-   * still-locked ones return (1 − penalty), the rest is forfeited to the vault. */
+  /** Unstake EVERYTHING + pay accrued yield. Sortie libre par defaut : tout
+   * revient en entier. Si une penalite est remise en vigueur, seules les
+   * positions encore bloquees rendent (1 − penalite). */
   unstakeAll(addr) {
     const p = this._p(addr);
     if (!p.stakes.length) throw new Error('nothing staked');
@@ -1413,7 +1432,7 @@ class Game {
     const now = Date.now();
     let returned = BN(0), penalty = BN(0);
     for (const pos of p.stakes) {
-      if (now >= pos.u) { returned = returned.add(pos.a); }
+      if (!this._verrouille(pos, now)) { returned = returned.add(pos.a); }
       else {
         const keep = pos.a.mul(10000 - cfg.STAKE_EARLY_PENALTY_BPS).div(10000);
         returned = returned.add(keep);
@@ -1549,7 +1568,7 @@ class Game {
     const now = Date.now();
     let locked = BN(0), unlocked = BN(0), nextUnlock = null;
     for (const pos of p.stakes) {
-      if (now >= pos.u) unlocked = unlocked.add(pos.a);
+      if (!this._verrouille(pos, now)) unlocked = unlocked.add(pos.a);
       else { locked = locked.add(pos.a); if (nextUnlock === null || pos.u < nextUnlock) nextUnlock = pos.u; }
     }
     const f = (w) => ethers.utils.formatUnits(w, cfg.DECIMALS);

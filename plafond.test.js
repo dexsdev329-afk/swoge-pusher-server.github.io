@@ -174,11 +174,13 @@ sansPlafondJoueur(() => {
   const apres = g.owedBreakdown();
   eq(apres.balances.add(apres.staked).toString(), avant.balances.add(avant.staked).toString(),
      'ET RIEN NE SE CREE : solde + staking est le meme avant et apres');
-  /* A la sortie AVANT terme, la moitie du principal reste a la maison : c'est
-     la penalite qui existait deja, et le plafond n'y touche pas. */
+  /* LA SORTIE EST LIBRE. Ce qui a ete mis revient EN ENTIER, immediatement,
+     sans attendre aucune echeance. Avant, la moitie du principal restait a la
+     maison : c'est cette regle-la qui a ete retiree, et ce test est ce qui
+     empeche de la reintroduire par inadvertance. */
   const r = g.unstakeAll(a);
-  eq(r.returned, '30000.0', 'sortie avant terme : la moitie du principal revient, comme avant');
-  eq(r.penalty, '30000.0', 'et l autre moitie reste a la maison');
+  eq(r.returned, '60000.0', 'sortie immediate : TOUT le principal revient');
+  eq(r.penalty, '0.0', 'et rien ne reste a la maison');
   eq(g.capaciteStaking().occupe, 0, 'et la place est rendue EN ENTIER a la salle');
 }
 
