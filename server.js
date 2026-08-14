@@ -960,6 +960,10 @@ wss.on('connection', (ws) => {
           else { const r = game.claimStake(ws.addr); send(ws, { type: 'stakeClaimed', reward: r }); }
           persistSoon();
           send(ws, { type: 'stakeInfo', ...game.stakeInfo(ws.addr), balance: game.balanceStr(ws.addr) });
+          /* La salle a change de taille pour TOUT LE MONDE. Sans cette ligne,
+             les autres joueurs voient une jauge d'il y a une heure et tapent
+             un montant qui sera refuse. */
+          broadcast({ type: 'stakePool', capacite: game.capaciteStaking() });
           if (m.type === 'stake' && parseFloat(m.amount) >= cfg.NOTIFY_STAKE_MIN) {
             const pct = stakedPct();
             const totalStr = fmtAmt(ethers.utils.formatUnits(game.totalStaked(), cfg.DECIMALS));
@@ -1575,6 +1579,11 @@ const saveInterval = setInterval(persist, cfg.SAVE_MS);
     // down are still credited (seenTx dedupes anything already counted). On a
     // fresh install, SCAN_FROM_BLOCK (if set) re-credits historical deposits.
     supplyWei = await chain.totalSupply(); // for the % staked in stake notifs
+    /* Le plafond de staking se calcule sur l'offre REELLE lue sur la chaine
+       des qu'on l'a. La valeur du fichier de config n'est qu'un filet : si le
+       jeton etait brule ou remis en circulation, un plafond fige sur un
+       chiffre ecrit a la main finirait par ne plus vouloir dire 20 %. */
+    if (supplyWei && !supplyWei.isZero()) game.offreTotale = supplyWei;
     const tipNow = chain.vault ? await chain.provider.getBlockNumber() : 0;
     let fromBlock = game.lastBlock || cfg.SCAN_FROM_BLOCK || tipNow;
     // only Telegram-notify deposits at/after the current tip, so a historical

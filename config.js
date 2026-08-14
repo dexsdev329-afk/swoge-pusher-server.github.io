@@ -196,6 +196,26 @@ module.exports = {
   STAKE_LOCK_DAYS: parseInt(env('STAKE_LOCK_DAYS', '365'), 10),      // soft-lock length
   STAKE_EARLY_PENALTY_BPS: parseInt(env('STAKE_EARLY_PENALTY_BPS', '5000'), 10), // 5000 = lose 50% of principal if you exit before the lock ends
 
+  /* ---- LE PLAFOND DE STAKING ----
+   *
+   * A 100 % l'an, chaque jeton depose engage la maison a en rendre DEUX au
+   * bout d'un an. Sans plafond, cette dette n'a aucune borne : il suffit qu'un
+   * gros porteur arrive avec cinquante millions pour que le coffre doive
+   * cinquante millions de plus l'annee suivante, et personne ne s'en apercoit
+   * le jour ou ca arrive — on s'en apercoit douze mois plus tard.
+   *
+   * Le plafond met une borne CONNUE D'AVANCE a cette dette. Vingt pour cent de
+   * l'offre = 200 millions au maximum en staking, donc 200 millions de
+   * rendement maximum sur l'annee. C'est un chiffre qu'on peut regarder en
+   * face et budgeter.
+   *
+   * Il ne bloque personne definitivement : quand un joueur sort ou qu'un
+   * verrou arrive a terme, la place se libere et le suivant entre. C'est
+   * exactement ce que fait une salle pleine.
+   */
+  TOKEN_SUPPLY: parseFloat(env('TOKEN_SUPPLY', '1000000000')),       // l offre totale, verifiee sur la chaine
+  STAKE_CAP_BPS: parseInt(env('STAKE_CAP_BPS', '2000'), 10),         // 2000 = 20 % de l offre, tous joueurs confondus
+
   // ---- Telegram notifications (deposits / big wins / stakes) ----
   // Accepts either TG_* or the TELEGRAM_* names your other bots already use.
   TG_BOT_TOKEN: env('TG_BOT_TOKEN', '') || env('TELEGRAM_BOT_TOKEN', ''),   // BotFather token
@@ -426,7 +446,26 @@ module.exports = {
    *     comptes complices peuvent fabriquer du volume a volonte — on n'en
    *     compte donc qu'une petite part, et la complicite reste perdante.
    */
-  REFERRAL_BPS: parseInt(env('REFERRAL_BPS', '1000'), 10),        // 10 % du revenu
+  REFERRAL_BPS: parseInt(env('REFERRAL_BPS', '1000'), 10),        // 10 % du revenu — le palier de depart
+  /* ---- LA PART MONTE PAR PALIER DE NIVEAU ----
+   *
+   * Un point par palier, de 10 % a Bronze jusqu'a 20 % a SWOLE. Deux points
+   * d'un coup sur le dernier : le palier qui demande cinq cents millions de
+   * volume ne peut pas valoir la meme marche que les autres.
+   *
+   * C'est le SEUL avantage chiffre du systeme de niveaux, et le seul qu'on
+   * puisse accorder sans risque : ce n'est pas un montant, c'est une PART DU
+   * REVENU REEL du filleul. Doubler la part ne peut donc jamais couter plus
+   * que ce que le filleul a rapporte — au pire la maison garde 80 % au lieu
+   * de 90 % de quelque chose qu'elle a deja encaisse. Un bonus fixe, lui,
+   * aurait pu couter plus que ce qu'il rapporte.
+   *
+   *   Bronze 10 · Silver 11 · Gold 12 · Platinum 13 · Diamond 14
+   *   Master 15 · Champion 16 · Legend 17 · Mythic 18 · SWOLE 20
+   */
+  REFERRAL_PALIER_BPS: String(env('REFERRAL_PALIER_BPS',
+    '1000,1100,1200,1300,1400,1500,1600,1700,1800,2000'))
+    .split(',').map((x) => parseInt(x, 10)).filter((x) => x > 0),
   /* Le DELAI avant qu'un gain de parrainage soit encaissable.
    *
    * Sans lui, une part est versee des la manche perdue par le filleul — et si

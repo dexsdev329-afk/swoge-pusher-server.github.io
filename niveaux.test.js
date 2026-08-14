@@ -156,12 +156,24 @@ function joueur(volume) {
   neuf._p(A).wagered = WEI(Game.volumePour(5).toFixed(6));
   eq(neuf.peutTeleverser(A), true, 'au niveau 5, elle s ouvre sans avoir depose');
 
-  /* Le parrainage monte d'un point tous les vingt-cinq niveaux — et reste un
-     pourcentage du REVENU, donc plafonne par ce que le filleul rapporte. */
+  /* Le parrainage monte d'un point PAR PALIER — et reste un pourcentage du
+     REVENU, donc plafonne par ce que le filleul rapporte. */
   eq(bas.partParrainage(A), cfg.REFERRAL_BPS, 'au debut, la part de parrainage est celle de tout le monde');
   const haut = joueur(Game.volumePour(100).toFixed(6));
-  eq(haut.partParrainage(A), cfg.REFERRAL_BPS + 400, 'au niveau 100, quatre points de plus');
+  eq(haut.partParrainage(A), 2000, 'a SWOLE, le double : 20 %');
   ok(haut.partParrainage(A) < 10000, 'et jamais plus que ce que le filleul rapporte');
+  /* Un palier apres l'autre, sans trou ni retour en arriere. */
+  let avant = 0;
+  for (let t = 1; t <= 10; t++) {
+    const g = joueur(Game.volumePour((t - 1) * 10 + 1).toFixed(6));
+    const part = g.partParrainage(A);
+    ok(part > avant, t === 1 ? 'la part monte a CHAQUE palier, jamais elle ne redescend' : true);
+    if (t > 1) n--;
+    avant = part;
+  }
+  n++;
+  eq(joueur(0).partParrainage(A), cfg.REFERRAL_BPS,
+     'et celui qui n a jamais mise touche quand meme la part de base');
 }
 
 // ============================== la montee se remarque

@@ -818,12 +818,14 @@ class Game {
     return base;
   }
 
-  /** La part de parrainage monte d'un point tous les vingt-cinq niveaux.
-   *  Elle reste un pourcentage du REVENU : elle ne peut donc jamais couter
-   *  plus que ce que le filleul a rapporte. */
+  /** La part de parrainage monte d'un point PAR PALIER : 10 % a Bronze,
+   *  20 % a SWOLE. Elle reste un pourcentage du REVENU, donc elle ne peut
+   *  jamais couter plus que ce que le filleul a rapporte. */
   partParrainage(addr) {
-    const n = this.niveau(addr).niveau;
-    return cfg.REFERRAL_BPS + Math.floor(n / 25) * 100;
+    const t = cfg.REFERRAL_PALIER_BPS;
+    if (!t || !t.length) return cfg.REFERRAL_BPS;
+    const i = Math.max(1, this.niveau(addr).palierNo || 1) - 1;
+    return t[Math.min(i, t.length - 1)];
   }
 
   /** Les jeux ou l'argent va d'un joueur a l'autre, pas a la banque. */
@@ -924,6 +926,9 @@ class Game {
     const a = String(addr).toLowerCase();
     this._murit(a);
     const p = this._p(a);
+    /* SA part a lui, pas celle de tout le monde : afficher 10 % a un joueur
+       qui en touche 18 le ferait douter du compte affiche juste a cote. */
+    const part = this.partParrainage(a);
     const liste = (p.filleuls || []).map((f) => {
       const q = this._p(f);
       return {
@@ -931,7 +936,7 @@ class Game {
         depose: !!q.hasDeposited,
         /* Ce que CE filleul a deja rapporte, et non ce qu'il a perdu : c'est
            la seule facon de rendre le calcul verifiable par le parrain. */
-        rapporte: ethers.utils.formatUnits(WEI(Math.max(0, (q.revPaye || 0) * (cfg.REFERRAL_BPS / 10000)).toFixed(6)), cfg.DECIMALS),
+        rapporte: ethers.utils.formatUnits(WEI(Math.max(0, (q.revPaye || 0) * (part / 10000)).toFixed(6)), cfg.DECIMALS),
         // ce qui, chez lui, n'a pas encore passe le delai
         attente: Number(((q.attente || []).reduce((n, x) => n + x[1], 0)).toFixed(6)),
       };
@@ -949,7 +954,10 @@ class Game {
     enAttente.total = Number(enAttente.total.toFixed(6));
     return {
       code: this.codeParrain(a),
-      part: cfg.REFERRAL_BPS / 100,          // en pourcentage, pour l'affichage
+      part: part / 100,                      // SA part, en pourcentage, pour l'affichage
+      partMax: Math.max.apply(null, cfg.REFERRAL_PALIER_BPS) / 100,
+      partPalier: (cfg.REFERRAL_PALIER_BPS || []).map((b, i) => ({
+        palier: Game.PALIERS[i] || ('palier ' + (i + 1)), part: b / 100 })),
       partPvp: cfg.REFERRAL_PVP_BPS / 100,
       bienvenue: cfg.REFERRAL_WELCOME,
       parrain,
@@ -1048,11 +1056,75 @@ class Game {
   _settleStakes(p) { const now = Date.now(); for (const pos of p.stakes) { p.stakeAccrued = p.stakeAccrued.add(this._pendingPos(pos)); pos.s = now; } }
   _stakedTotal(p) { let s = BN(0); for (const pos of p.stakes) s = s.add(pos.a); return s; }
 
+  /* ---- LE PLAFOND, TOUS JOUEURS CONFONDUS ----
+   *
+   * A 100 % l'an, chaque jeton en staking engage la maison a en rendre deux
+   * dans un an. Le plafond met une borne CONNUE D'AVANCE a cette dette : au
+   * maximum 20 % de l'offre en staking, donc au maximum 20 % de l'offre de
+   * rendement sur l'annee. Sans lui, un seul gros porteur peut engager le
+   * coffre pour une somme qu'on ne decouvrira que douze mois plus tard.
+   *
+   * La place se LIBERE quand quelqu'un sort : ce n'est pas une porte fermee,
+   * c'est une salle pleine.
+   */
+  plafondStaking() {
+    const pct = Math.max(0, Math.min(10000, cfg.STAKE_CAP_BPS || 0));
+    if (!pct) return null;                                   // 0 = pas de plafond
+    /* L'offre lue sur la chaine si le serveur l'a eue, sinon celle du fichier
+       de config. */
+    const offre = (this.offreTotale && !this.offreTotale.isZero())
+      ? this.offreTotale : WEI(String(cfg.TOKEN_SUPPLY));
+    return offre.mul(pct).div(10000);
+  }
+
+  /** Ou en est la salle : ce qui est pris, ce qui reste, et le taux de
+   *  remplissage. C'est ce que la page de staking affiche AVANT que le joueur
+   *  tape un montant — un refus qui arrive apres la saisie est une brimade. */
+  capaciteStaking() {
+    const f = (w) => Number(ethers.utils.formatUnits(w, cfg.DECIMALS));
+    const plafond = this.plafondStaking();
+    const occupe = this.totalStaked();
+    if (!plafond) return { plafond: null, occupe: f(occupe), libre: null, taux: 0, plein: false };
+    const libre = plafond.gt(occupe) ? plafond.sub(occupe) : BN(0);
+    /* On ARRONDIT VERS LE BAS. A 99,9995 %, un arrondi au plus proche affiche
+       « 100 % » alors qu'il reste de la place : le joueur renonce a une salle
+       qui l'aurait accepte. Cent pour cent ne s'affiche que quand c'est
+       vraiment plein. */
+    const taux = libre.lte(0) ? 100 : Math.min(99.99, Math.floor(f(occupe) / f(plafond) * 10000) / 100);
+    return {
+      plafond: f(plafond), occupe: f(occupe), libre: f(libre), taux,
+      plein: libre.lte(0),
+      partOffre: cfg.STAKE_CAP_BPS / 100,
+    };
+  }
+
   stake(addr, amountStr) {
     const p = this._p(addr);
     const amount = WEI(amountStr);
     if (amount.lte(0)) throw new Error('enter an amount');
     if (amount.gt(p.balance)) throw new Error('amount exceeds balance');
+    /* Le plafond se verifie AVANT de toucher au solde. Un refus qui arrive
+       apres le debit laisserait un joueur sans ses jetons ni son staking. */
+    /* On RECOMPTE, on ne tient pas de compteur a cote. Un compteur qui derive
+       d'un seul jeton laisserait entrer un peu plus que le plafond a chaque
+       fois, sans que rien ne le signale ; la somme, elle, ne peut pas mentir.
+       Et une mise en staking est mille fois plus rare qu'une manche : le
+       parcours des fiches ne se voit pas. */
+    const plafond = this.plafondStaking();
+    if (plafond) {
+      const occupe = this.totalStaked();
+      const libre = plafond.gt(occupe) ? plafond.sub(occupe) : BN(0);
+      const joli = (w) => Number(ethers.utils.formatUnits(w, cfg.DECIMALS))
+        .toLocaleString('en-US', { maximumFractionDigits: 0 });
+      /* Le refus porte TOUJOURS le chiffre exact qui reste. « Pool full » tout
+         seul fait ecrire au support ; « il reste 12 400 » fait retaper 12 400. */
+      if (libre.lte(0))
+        throw new Error('staking pool is full (' + (cfg.STAKE_CAP_BPS / 100) +
+          '% of supply) — wait for someone to unstake');
+      if (amount.gt(libre))
+        throw new Error('only ' + joli(libre) + ' $SWOGE of room left in the staking pool (cap ' +
+          joli(plafond) + ', ' + (cfg.STAKE_CAP_BPS / 100) + '% of supply)');
+    }
     this._settleStakes(p);
     p.balance = p.balance.sub(amount);
     const now = Date.now();
@@ -1178,6 +1250,10 @@ class Game {
       staked: f(this._stakedTotal(p)), locked: f(locked), unlocked: f(unlocked),
       pending: f(pending), aprBps: cfg.STAKE_APR_BPS,
       penaltyBps: cfg.STAKE_EARLY_PENALTY_BPS, lockDays: cfg.STAKE_LOCK_DAYS, nextUnlock,
+      /* La salle, vue de l'exterieur. Elle part AVEC l'etat du joueur : sinon
+         il decouvre que c'est plein apres avoir tape son montant, ce qui se
+         lit comme une panne et non comme une regle. */
+      capacite: this.capaciteStaking(),
     };
   }
 

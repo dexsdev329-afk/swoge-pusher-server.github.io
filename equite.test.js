@@ -123,8 +123,15 @@ function joueur() {
   g.tourneGraine();
   ok(true, 'et la rotation passe');
 
-  g.bjBet(A, '100');
-  ok(g.partiesEnCours() >= 1, 'une main de blackjack est en cours');
+  /* PIEGE : une main sur dix environ est un blackjack naturel, et elle se
+     resout des la donne — la table est alors deja libre. Ce test echouait une
+     fois sur six, ce qui est la pire des frequences : assez rare pour qu'on
+     l'appelle « un hasard », assez frequent pour qu'il revienne. On redonne
+     jusqu'a obtenir une main qui DURE : c'est celle-la que la rotation ne doit
+     pas couper en deux. */
+  let donnes = 0;
+  do { g.bjBet(A, '100'); donnes++; } while (g.partiesEnCours() === 0 && donnes < 60);
+  ok(g.partiesEnCours() >= 1, `une main de blackjack est en cours (apres ${donnes} donne(s))`);
   jete(() => g.tourneGraine(), /still running/,
        'la rotation REFUSE : elle couperait la main en deux');
   const avant = g.serverSeedHash;
@@ -153,8 +160,16 @@ function joueur() {
   g.minesStart(A, '100', 3);
   ok(g.partiesEnCours() >= 1, 'une grille de Mines ouverte compte comme une manche en cours');
   jete(() => g.tourneGraine(), /still running/, 'et la rotation attend');
-  g.minesPick(A, 0);          // il faut avoir ouvert une case pour encaisser
-  g.minesCashOut(A);
+  /* LE MEME PIEGE que le blackjack naturel : la premiere case peut etre une
+     bombe — trois sur vingt-cinq — et la grille est alors perdue, donc
+     inencaissable. On rouvre jusqu'a une ouverture sans degat. Ce qu'on veut
+     verifier ici n'est pas la chance du tirage, c'est que la table se libere. */
+  let grilles = 1, encaisse = false;
+  while (!encaisse && grilles < 80) {
+    try { g.minesPick(A, 0); g.minesCashOut(A); encaisse = true; }
+    catch (e) { g.minesStart(A, '100', 3); grilles++; }
+  }
+  ok(encaisse, `la grille a fini par etre encaissee (${grilles} grille(s))`);
   eq(g.partiesEnCours(), 0, 'encaissee, la grille libere la table');
 
   const g2 = joueur();
