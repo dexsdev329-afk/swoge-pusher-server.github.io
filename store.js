@@ -42,6 +42,7 @@ const fs = require('fs');
 const path = require('path');
 const cfg = require('./config');
 const fragments = require('./fragments');
+const sante = require('./sante');
 
 const FILE = path.join(cfg.DATA_DIR, 'state.json');
 const BAK = FILE + '.bak';
@@ -138,6 +139,7 @@ function save(obj, o) {
     if (!(o && o.force) && obj.players.length === 0 && derniersJoueurs > 0) {
       console.error(`[store] ECRITURE REFUSEE : 0 joueur a ecrire alors que le dernier etat connu en ` +
                     `avait ${derniersJoueurs}. C'est le signe d'un demarrage rate, pas d'une partie.`);
+      sante.noteEcriture(false);
       return false;
     }
 
@@ -175,8 +177,15 @@ function save(obj, o) {
     }
 
     derniersJoueurs = obj.players.length;
+    sante.noteEcriture(true);
     return true;
-  } catch (e) { console.error('[store] SAUVEGARDE RATEE:', e.message); return false; }
+  } catch (e) {
+    console.error('[store] SAUVEGARDE RATEE:', e.message);
+    /* Le signal le plus important de tout le serveur : sans ecriture, les
+       joueurs jouent pour rien et le decouvriront au redemarrage. */
+    sante.noteEcriture(false);
+    return false;
+  }
 }
 
 /**
@@ -227,6 +236,7 @@ function sauveVite(jeu) {
          une adresse effacee d'une liste alors que son fragment n'est pas
          ecrit ne serait plus jamais sauvee. */
       jeu.sales = new Set();
+      sante.noteEcriture(true);
     }
 
     /* L'instantane complet, de loin en loin : c'est celui qu'on telecharge,
@@ -242,6 +252,7 @@ function sauveVite(jeu) {
   } catch (e) {
     console.error('[store] SAUVEGARDE RAPIDE RATEE:', e.message,
                   '— les fiches restent marquees, la prochaine reessaiera.');
+    sante.noteEcriture(false);
     return false;
   }
 }

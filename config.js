@@ -258,6 +258,14 @@ module.exports = {
   PHRASE_PAUSE_MS: parseInt(env('PHRASE_PAUSE_MS', '3000'), 10),
   PHRASE_MAX: parseInt(env('PHRASE_MAX', '15'), 10),
 
+  /* ---- La surveillance ----
+   * MONITEUR_URL : l'adresse a laquelle le serveur fait signe qu'il est
+   * vivant. C'est le SILENCE qui alerte — la seule facon d'etre prevenu quand
+   * le processus est mort, puisqu'un processus mort n'envoie rien. Gratuit
+   * chez healthchecks.io, Better Stack ou Cronitor ; voir EXPLOITATION.md. */
+  MONITEUR_URL: env('MONITEUR_URL', ''),
+  MONITEUR_SEC: parseInt(env('MONITEUR_SEC', '60'), 10),
+
   MISSIONS_PAR_JOUR: parseInt(env('MISSIONS_PAR_JOUR', '3'), 10),
   MISSION_MISE: parseFloat(env('MISSION_MISE', '2000')),   // a miser sur le jeu du jour
   MISSION_GAIN: parseFloat(env('MISSION_GAIN', '12')),     // ce qu'elle rapporte

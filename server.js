@@ -23,6 +23,7 @@ const store = require('./store');
 const fs = require('fs');
 const zlib = require('zlib');
 const tg = require('./telegram');
+const sante = require('./sante');
 const admin = require('./admin');
 const session = require('./session');
 const journal = require('./journal');
@@ -558,7 +559,25 @@ const server = http.createServer(async (req, res) => {
   const key = new URLSearchParams(req.url.split('?')[1] || '').get('key')
             || req.headers['x-admin-key'] || '';
   const authed = !!cfg.ADMIN_KEY && memeCle(key, cfg.ADMIN_KEY) && !bloque(req);
-  if (req.url === '/health') { res.writeHead(200); return res.end('ok'); }
+  /* ------------------------------------------------------------- la sante
+   *
+   * Elle repondait `ok` a tout coup : elle ne disait donc qu'une chose, « un
+   * processus ecoute ce port ». Or les pannes qui coutent de l'argent
+   * laissent le processus vivant — les ecritures qui echouent, la veille de
+   * chaine arretee. Un moniteur branche sur une page qui dit toujours oui ne
+   * surveille rien.
+   *
+   * 503 quand quelque chose de grave se passe : c'est ce code que tous les
+   * services de surveillance savent lire, et c'est lui qui fait sonner un
+   * telephone. Publique par necessite — un moniteur ne sait pas
+   * s'authentifier — donc aucun solde, aucune adresse : des durees et des
+   * compteurs. */
+  if (path === '/health') {
+    const e = sante.etat();
+    res.writeHead(e.ok ? 200 : 503, { 'content-type': 'application/json; charset=utf-8',
+                                      'cache-control': 'no-store' });
+    return res.end(JSON.stringify(e, null, 2));
+  }
   /* ------------------------------------------------------- la preuve d'equite
    *
    * PUBLIQUE, et elle doit l'etre : une preuve derriere une cle n'est pas une
@@ -904,8 +923,19 @@ const server = http.createServer(async (req, res) => {
  }
 });
 // last-resort guards so nothing can take the process down
-process.on('unhandledRejection', (e) => console.warn('[unhandledRejection]', e && e.message));
-process.on('uncaughtException', (e) => console.warn('[uncaughtException]', e && e.message));
+/* Une exception non rattrapee etait SEULEMENT affichee. Personne ne lit les
+   journaux d'un serveur qui repond encore : elle n'apprenait donc rien a
+   personne. On la compte, et /health la rapporte. On ne tue pas le processus
+   pour autant — un serveur de jeu qui survit a une exception isolee vaut mieux
+   qu'un serveur qui redemarre et coupe toutes les parties en cours. */
+process.on('unhandledRejection', (e) => {
+  console.warn('[unhandledRejection]', e && e.message);
+  sante.noteIncident('rejet', e && e.message);
+});
+process.on('uncaughtException', (e) => {
+  console.warn('[uncaughtException]', e && e.message);
+  sante.noteIncident('exception', e && e.message);
+});
 /* Une limite de charge explicite. Par defaut `ws` accepte cent megaoctets par
    message : n'importe qui pouvait faire allouer cent megaoctets au serveur
    avec un seul envoi. Deux cent cinquante-six kilo-octets couvrent largement
@@ -1928,7 +1958,7 @@ const saveInterval = setInterval(persist, cfg.SAVE_MS);
           tg.notifyPhoto(cfg.DEPOSIT_IMAGE, `💰 <b>New deposit</b>\n${short(d.player)} deposited <b>${fmtAmt(amt)} $SWOGE</b>\n<a href="${cfg.EXPLORER}/tx/${d.tx}">view tx ↗</a>`);
         }
       }
-    }, (nextBlock) => { game.lastBlock = nextBlock; });
+    }, (nextBlock) => { game.lastBlock = nextBlock; sante.noteBloc(); });
   } catch (e) { console.warn('deposit watch init failed:', e.message); }
 })();
 
@@ -1937,6 +1967,7 @@ server.listen(cfg.PORT, () => {
   console.log(`  vault=${cfg.VAULT_ADDRESS || '(none)'} signer=${chain.signerAddress || '(none)'} serverSeedHash=${game.serverSeedHash.slice(0,16)}…`);
   console.log(`  telegram=${tg.enabled() ? 'ON (chat ' + cfg.TG_CHAT_ID + ')' : 'OFF (set TG_BOT_TOKEN + TG_CHAT_ID)'}`);
   tg.notify('🟢 <b>SWOGE server online</b> — notifications actives'); // startup ping = quick check that TG works
+  sante.demarre({ jeu: game, tg });
 });
 
 function shutdown() {
