@@ -126,7 +126,7 @@ function charge(ws, rec, extra) {
   return Object.assign({
     type: 'auth', address: rec, balance: game.balanceStr(rec),
     fairness: game.fairness(rec), quests: game.questState(rec),
-    stake: game.stakeInfo(rec), bj: game.bjState(rec),
+    stake: game.stakeInfo(rec), bj: game.bjState(rec), niveau: game.niveau(rec),
     casino: game.casinoState(rec), hilo: game.hiloState(rec), mines: game.minesState(rec),
     casinoPay: require('./casino').PAY,
     casinoMin: cfg.CASINO_MIN_BET, casinoMax: cfg.CASINO_MAX_BET,
@@ -738,6 +738,25 @@ const graineInterval = setInterval(() => {
   }
 }, 600000);
 
+/* Les montees de niveau, ramassees deux fois par seconde. On ne les annonce
+   pas depuis le coeur d'une manche : une fenetre qui s'ouvre pendant que la
+   bille tombe couvre le jeu au pire moment. */
+const niveauInterval = setInterval(() => {
+  const m = game.montéesRecentes();
+  for (const x of m) {
+    toAddr(x.addr, { type: 'levelUp', niveau: x.a, palier: x.palier,
+                     nouveauPalier: x.nouveauPalier, profil: game.niveau(x.addr) });
+    /* Le canal n'est prevenu que pour un PALIER franchi : cent annonces de
+       niveau par jour ne se lisent plus, dix passages de palier se fetent. */
+    if (x.nouveauPalier && x.a >= 20) {
+      const nom = game._p(x.addr).name;
+      tg.notify(`⬆️ <b>${nom} reached ${x.palier}</b> — level ${x.a}\n` +
+                `${fmtAmt(String(Math.round(require('./game').Game.volumePour(x.a))))} $SWOGE wagered for life. ` +
+                `Only a handful will ever see level 100.`);
+    }
+  }
+}, 500);
+
 const purgeInterval = setInterval(() => {
   try {
     const n = game.purge(new Set(byAddr.keys()));
@@ -980,6 +999,7 @@ wss.on('connection', (ws) => {
                           friends: game.amis(ws.addr),
                           pending: game.amisEnAttente(ws.addr),
                           unread: game.transfertsNonLus(ws.addr),
+                          niveau: game.niveau(ws.addr),
                           stats: game.stats(ws.addr) });
       }
       /* Le parrainage. Le lien s'attache une fois pour la vie ; le reste
@@ -1021,8 +1041,8 @@ wss.on('connection', (ws) => {
          probleme, et coute assez cher pour decourager le jetable. */
       if (m.type === 'avatarUpload') {
         try {
-          if (cfg.AVATAR_REQUIRE_DEPOSIT && !game._p(ws.addr).hasDeposited)
-            throw new Error('deposit once to upload your own picture');
+          if (!game.peutTeleverser(ws.addr))
+            throw new Error('deposit once, or reach level 5, to upload your own picture');
           const r = avatars.enregistre(ws.addr, m.data);
           game._p(ws.addr).photo = true;
           persistSoon();
@@ -1587,7 +1607,7 @@ server.listen(cfg.PORT, () => {
 });
 
 function shutdown() {
-  clearInterval(prixInterval); clearInterval(backupInterval); clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
+  clearInterval(niveauInterval); clearInterval(prixInterval); clearInterval(backupInterval); clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
   persist(); // final save so nothing is lost on redeploy
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
      qui attend encore doit partir maintenant, sinon les dernieres manches

@@ -112,6 +112,33 @@ module.exports = {
   JACKPOT_ODDS: parseInt(env('JACKPOT_ODDS', '3000000'), 10),   // 1-in-N per drop
   LEADERBOARD_SIZE: parseInt(env('LEADERBOARD_SIZE', '10'), 10),
 
+  /* ---- les cent niveaux ----
+   *
+   * L'experience, c'est le VOLUME MISE — et rien d'autre. Trois raisons :
+   *
+   *  1. il est deja compte, sur chaque fiche, depuis le premier jour. Le jour
+   *     du deploiement, chacun a deja son vrai niveau, gagne pour de bon. Pas
+   *     de « ca commence aujourd'hui », qui aurait puni les anciens ;
+   *  2. il ne se triche pas : chaque point coute l'avantage de la maison.
+   *     Farmer un niveau, c'est payer le casino ;
+   *  3. il ne depend pas de la chance. Un classement au gain monte et descend
+   *     sans qu'on ait rien change a sa facon de jouer.
+   *
+   * volume cumule pour le niveau n = 50 x n^3,5
+   *   niveau  10 :         158 114  (trois jours pour un joueur regulier)
+   *   niveau  50 :      44 194 174
+   *   niveau 100 :     500 000 000  — la moitie de l'offre totale, misee par
+   *                                   un seul joueur, soit pres d'un an au
+   *                                   rythme du plus gros joueur du site.
+   *
+   * Le niveau ne redescend JAMAIS : c'est un palmares, pas un classement. Le
+   * classement mensuel, lui, repart a zero — les deux moteurs ne se marchent
+   * pas dessus.
+   */
+  NIVEAU_BASE: parseFloat(env('NIVEAU_BASE', '50')),
+  NIVEAU_PUISSANCE: parseFloat(env('NIVEAU_PUISSANCE', '3.5')),
+  NIVEAU_MAX: parseInt(env('NIVEAU_MAX', '100'), 10),
+
   /* ---- le prix du classement ----
    *
    * Une part du REVENU du mois, partagee entre les dix premiers au volume.

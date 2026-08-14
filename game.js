@@ -303,7 +303,19 @@ class Game {
       /* La PREMIERE mise de sa vie : le dernier passage du tunnel, et celui
          qui separe un curieux d'un joueur. */
       if (!(p.betCount > 0) && p.addr) this.noteTunnel('premieresMises', p.addr);
+      const avant = Game.niveauDe(Number(ethers.utils.formatUnits(p.wagered || BN(0), cfg.DECIMALS)));
       p.wagered = (p.wagered || BN(0)).add(wei); p.betCount = (p.betCount || 0) + 1;
+      /* La montee se constate ICI, au seul endroit ou l'experience bouge. On
+         la met de cote plutot que de la notifier : _markWager est appele en
+         plein milieu d'une manche, et une fenetre qui s'ouvre a cet instant
+         couvrirait le jeu. Le serveur la ramasse une fois la manche finie. */
+      const apres = Game.niveauDe(Number(ethers.utils.formatUnits(p.wagered, cfg.DECIMALS)));
+      if (apres > avant && p.addr) {
+        if (!this.montees) this.montees = [];
+        this.montees.push({ addr: p.addr, de: avant, a: apres,
+                            palier: Game.PALIERS[Math.min(Math.floor((apres - 1) / 10), 9)],
+                            nouveauPalier: Math.floor((apres - 1) / 10) !== Math.floor(Math.max(0, avant - 1) / 10) });
+      }
     }
     this._libereCadeau(p);
   }
@@ -412,7 +424,8 @@ class Game {
     }
     if (p.revCumul <= (p.revPaye || 0)) return;         // rien de neuf a verser
 
-    const du = (p.revCumul - (p.revPaye || 0)) * (cfg.REFERRAL_BPS / 10000);
+    /* La part depend du niveau du PARRAIN : c'est lui qu'on recompense. */
+    const du = (p.revCumul - (p.revPaye || 0)) * (this.partParrainage(p.parrain) / 10000);
     p.revPaye = p.revCumul;
     /* Le revenu vient de monter : c'est peut-etre le moment ou la maison a
        fini de gagner le cadeau du filleul. */
@@ -725,6 +738,93 @@ class Game {
 
   /** Les mois dont on a une trace, du plus recent au plus ancien. */
   moisConnus() { return Object.keys(this.compta || {}).sort().reverse(); }
+
+  /* ======================================================================
+   * LES CENT NIVEAUX
+   *
+   * L'experience est le volume mise, qui est deja compte depuis toujours :
+   * chacun a donc son vrai niveau des le premier jour, sans migration et sans
+   * avoir rien perdu. Et il ne se triche pas — chaque point coute l'avantage
+   * de la maison.
+   * ====================================================================== */
+  static get PALIERS() {
+    return ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond',
+            'Master', 'Champion', 'Legend', 'Mythic', 'SWOLE'];
+  }
+  /** Le volume cumule qu'il faut pour atteindre le niveau n. */
+  static volumePour(n) {
+    const x = Math.max(1, Math.min(cfg.NIVEAU_MAX, Number(n) || 1));
+    return cfg.NIVEAU_BASE * Math.pow(x, cfg.NIVEAU_PUISSANCE);
+  }
+  /** Le niveau que donne un volume. */
+  static niveauDe(volume) {
+    const v = Number(volume) || 0;
+    if (v < cfg.NIVEAU_BASE) return 0;
+    /* Le petit epsilon n'est pas cosmetique : `pow(1788854/50, 1/3.5)` rend
+       19,999999998 et non 20. Sans lui, le joueur qui atteint EXACTEMENT le
+       seuil reste au niveau precedent — et c'est precisement le moment ou il
+       regarde. */
+    const n = Math.floor(Math.pow(v / cfg.NIVEAU_BASE, 1 / cfg.NIVEAU_PUISSANCE) + 1e-9);
+    return Math.max(0, Math.min(cfg.NIVEAU_MAX, n));
+  }
+
+  /**
+   * Le niveau d'un joueur, avec de quoi l'afficher : son palier, et surtout
+   * CE QU'IL RESTE A FAIRE. Un niveau sans la marche suivante ne donne envie
+   * de rien ; « encore 293 970 mises » se vise.
+   */
+  niveau(addr) {
+    const p = this._p(addr);
+    const v = Number(ethers.utils.formatUnits(p.wagered || BN(0), cfg.DECIMALS));
+    const n = Game.niveauDe(v);
+    const suivant = Math.min(cfg.NIVEAU_MAX, n + 1);
+    const bas = n === 0 ? 0 : Game.volumePour(n);
+    const haut = Game.volumePour(suivant);
+    const max = n >= cfg.NIVEAU_MAX;
+    return {
+      niveau: n,
+      palier: Game.PALIERS[Math.min(Math.floor(Math.max(0, n - 1) / 10), 9)],
+      palierNo: Math.min(Math.floor(Math.max(0, n - 1) / 10) + 1, 10),
+      volume: Number(v.toFixed(2)),
+      seuil: Math.round(bas),
+      prochain: max ? null : Math.round(haut),
+      restant: max ? 0 : Math.max(0, Math.round(haut - v)),
+      progression: max ? 100 : Number(Math.max(0, Math.min(100, (v - bas) / (haut - bas) * 100)).toFixed(1)),
+      max,
+    };
+  }
+
+  /* ---- ce que le niveau ouvre ----
+   * On ne code ici que ce qui NE COUTE RIEN a la maison. Tout avantage
+   * monetaire doit rester indexe sur ce que le joueur rapporte, sinon on
+   * refait la dette du staking en plus petit. */
+
+  /** Les montees de niveau depuis la derniere fois qu'on a regarde. */
+  montéesRecentes() { const m = this.montees || []; this.montees = []; return m; }
+
+  /** La photo personnelle : un depot OU le niveau 5. Le niveau est le
+   *  meilleur filtre des deux — il demande d'avoir joue, pas seulement
+   *  d'etre passe. */
+  peutTeleverser(addr) {
+    return !cfg.AVATAR_REQUIRE_DEPOSIT || this._p(addr).hasDeposited || this.niveau(addr).niveau >= 5;
+  }
+
+  /** Le retrait minimum baisse avec le palier — pure commodite, cout nul. */
+  minRetraitDe(addr) {
+    const n = this.niveau(addr).niveau;
+    const base = Number(cfg.MIN_WITHDRAW);
+    if (n >= 40) return Math.max(2000, base / 5);
+    if (n >= 20) return Math.max(5000, base / 2);
+    return base;
+  }
+
+  /** La part de parrainage monte d'un point tous les vingt-cinq niveaux.
+   *  Elle reste un pourcentage du REVENU : elle ne peut donc jamais couter
+   *  plus que ce que le filleul a rapporte. */
+  partParrainage(addr) {
+    const n = this.niveau(addr).niveau;
+    return cfg.REFERRAL_BPS + Math.floor(n / 25) * 100;
+  }
 
   /** Les jeux ou l'argent va d'un joueur a l'autre, pas a la banque. */
   static get PVP() { return { p4: true, poker: true, mp: true, dm: true }; }
@@ -1458,8 +1558,13 @@ class Game {
     /* `photo` dit seulement QU'IL Y EN A UNE. L'image elle-meme se demande a
        /avatar/<adresse>, ce qui la met dans le cache du navigateur au lieu de
        la recopier dans chaque message de table. */
+    /* Le niveau part avec le profil public : il apparait donc d'un coup aux
+       duels, dans la liste d'amis, au classement et aux tables, sans qu'aucun
+       de ces endroits ait a le demander. */
+    const n = this.niveau(addr);
     return { address: String(addr).toLowerCase(), name: p.name,
-             visage: p.visage || null, photo: !!p.photo };
+             visage: p.visage || null, photo: !!p.photo,
+             niveau: n.niveau, palier: n.palier, palierNo: n.palierNo };
   }
   /**
    * Graine du joueur. Le DEUX-POINTS est interdit, et ce n'est pas cosmetique.
@@ -2369,8 +2474,12 @@ class Game {
     for (const m of this.p4.values()) {
       if (m.phase !== ATTENTE || m.reserve) continue;
       if (jeu && (m.jeu || 'p4') !== jeu) continue;
+      /* Le profil public porte le niveau, le visage et la photo : le
+         vestibule les recoit donc sans avoir a les demander. */
+      const q = this.profilPublic(m.joueurs[0]);
       out.push({ id: m.id, jeu: m.jeu || 'p4', mise: m.mise, createur: m.joueurs[0],
-                 nom: this._p(m.joueurs[0]).name, creeA: m.creeA });
+                 nom: q.name, niveau: q.niveau, palier: q.palier,
+                 visage: q.visage, photo: q.photo, creeA: m.creeA });
     }
     return out.sort((a, b) => b.creeA - a.creeA);
   }
@@ -2695,7 +2804,10 @@ class Game {
   requestWithdraw(addr, amountStr) {
     const p = this._p(addr);
     const amount = WEI(amountStr);
-    if (amount.lt(MINW)) throw new Error('below minimum withdraw (' + cfg.MIN_WITHDRAW + ' $SWOGE)');
+    /* Le minimum baisse avec le palier : c'est un confort qui ne coute rien
+       a la maison, et qui se remarque tout de suite. */
+    const mini = this.minRetraitDe(addr);
+    if (amount.lt(WEI(String(mini)))) throw new Error('below minimum withdraw (' + mini + ' $SWOGE)');
     if (amount.gt(p.balance)) throw new Error('amount exceeds balance');
     /* Le cadeau de parrainage ne sort pas tant qu'il n'a pas ete joue. Le
        message dit COMBIEN il reste a miser : « bloque » sans chiffre ferait
@@ -2748,8 +2860,11 @@ class Game {
   /** La fiche publique d'une adresse, connue ou non. */
   _vu(a) {
     const q = this.players.get(a);
-    return { address: a, name: q ? q.name : a.slice(0, 6), visage: q ? (q.visage || null) : null,
-             photo: q ? !!q.photo : false, connu: !!q };
+    if (!q) return { address: a, name: a.slice(0, 6), visage: null, photo: false, connu: false };
+    /* On passe par le profil public : ainsi une ligne d'ami porte exactement
+       ce qu'une ligne de duel ou de classement porte — meme nom, meme visage,
+       meme niveau. Les recopier a la main ici les ferait diverger un jour. */
+    return Object.assign(this.profilPublic(a), { connu: true });
   }
 
   /**
