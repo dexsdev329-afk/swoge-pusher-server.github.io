@@ -48,16 +48,31 @@ const NATIF = '0x0000000000000000000000000000000000000000';
    d'entrer ici — une route qui n'existe pas ferait un bouton qui echoue.
    Le TRX natif n'en a pas ; l'USDT sur TRON, si, et c'est ce que detiennent
    la plupart des porteurs TRON. */
+/* `remboursement` : l'adresse ou revient l'argent si le pont ne peut pas
+   livrer. Elle DOIT etre valide sur la chaine de depart, et c'est ce qui
+   manquait — sans elle, Relay se rabat sur `user` comme adresse de repli, la
+   valide contre la chaine d'origine, et refuse : « Invalid address 0x2ee6… for
+   chain 792703809 ». Ca ne se voyait que sur les chaines NON-EVM : depuis
+   Ethereum et Base l'adresse du joueur est valide des deux cotes, donc ces
+   deux-la marchaient et cachaient le defaut.
+ *
+   La valeur a poser est l'adresse de la MONNAIE NATIVE de la chaine de
+   depart — le repere que Relay reconnait pour « rends-le a celui qui a
+   envoye ». Pour TRON c'est celle du TRX, meme si l'on envoie de l'USDT : ce
+   n'est pas le jeton envoye, c'est la chaine qui compte. */
 const DEPUIS = {
   sol:  { chaine: 792703809, jeton: '11111111111111111111111111111111',
+          remboursement: '11111111111111111111111111111111',
           symbole: 'SOL', decimales: 9, min: 0.01, max: 1000 },
-  eth:  { chaine: 1,         jeton: NATIF,
+  eth:  { chaine: 1,         jeton: NATIF, remboursement: NATIF,
           symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
-  base: { chaine: 8453,      jeton: NATIF,
+  base: { chaine: 8453,      jeton: NATIF, remboursement: NATIF,
           symbole: 'ETH', decimales: 18, min: 0.001, max: 100 },
   tron: { chaine: 728126428, jeton: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+          remboursement: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',   // le TRX, pas l USDT
           symbole: 'USDT', decimales: 6, min: 1, max: 100000 },
   btc:  { chaine: 8253038,   jeton: 'bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmql8k8',
+          remboursement: 'bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmql8k8',
           symbole: 'BTC', decimales: 8, min: 0.0001, max: 10 },
 };
 
@@ -117,15 +132,40 @@ async function adresseDepot(cle, vers, montant) {
   const brut = enUnites(montant, d.decimales);
   if (brut === null) { const e = new Error('bad amount'); e.statut = 400; throw e; }
 
-  const j = await appelle('/quote/v2', {
+  const commun = {
     useDepositAddress: true,
-    user: vers, recipient: vers,
+    recipient: vers,
     originChainId: d.chaine, originCurrency: d.jeton,
     /* La destination n'est PAS negociable : de l'ETH natif sur Robinhood
        Chain, chez le joueur. C'est ce que le panneau sait acheter ensuite. */
     destinationChainId: RH, destinationCurrency: NATIF,
     amount: brut, tradeType: 'EXACT_INPUT',
-  });
+    /* Voir le commentaire de DEPUIS. */
+    refundTo: d.remboursement,
+  };
+
+  /* DEUX LECTURES DU MEME CHAMP, essayees dans l'ordre.
+   *
+   * La documentation dit de `user` : « le portefeuille destinataire sur la
+   * chaine de DESTINATION, n'importe quelle adresse valide ». L'API, elle, l'a
+   * refuse contre la chaine d'ORIGINE — « Invalid address 0x2ee6… for chain
+   * 792703809 ». Les deux ne peuvent pas etre vrais en meme temps, et on ne
+   * peut pas trancher sans cle.
+   *
+   * Plutot que de parier, on essaie : d'abord avec `user`, puisque c'est ce
+   * que la documentation demande ; si le refus porte exactement sur la
+   * validite d'une adresse pour une chaine, on refait sans. Un aller-retour de
+   * plus dans ce seul cas, et le journal dit laquelle des deux lectures est la
+   * bonne — de quoi supprimer l'autre le jour ou on le saura. */
+  let j;
+  try {
+    j = await appelle('/quote/v2', Object.assign({ user: vers }, commun));
+  } catch (e) {
+    if (!/invalid address .* for chain/i.test(String(e.message || ''))) throw e;
+    console.log(`[relay] ${cle} : « ${e.message} » — deuxieme essai sans « user »`);
+    j = await appelle('/quote/v2', commun);
+    console.log(`[relay] ${cle} : sans « user », ca passe`);
+  }
 
   const etape = (j.steps || []).find((s) => s.depositAddress) || {};
   const adresse = etape.depositAddress;

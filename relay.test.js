@@ -186,6 +186,12 @@ const G = (c) => fetch(`http://127.0.0.1:${PORT}${c}`);
     eq(vu.corps.originChainId, 792703809, 'depuis Solana');
     eq(vu.corps.originCurrency, '11111111111111111111111111111111', 'en SOL natif');
     eq(vu.corps.amount, '1500000000', 'le montant converti en lamports, sans flottant');
+    /* L'adresse de repli, sur la chaine de DEPART. Sans elle, Relay se rabat
+       sur `user`, le valide contre la chaine d'origine et refuse tout ce qui
+       n'est pas EVM — le defaut ne s'est vu qu'en production, parce que depuis
+       Ethereum et Base l'adresse du joueur passe des deux cotes. */
+    eq(vu.corps.refundTo, '11111111111111111111111111111111',
+       'le repli est l adresse de la monnaie native de Solana');
     eq(vu.corps.destinationChainId, 4663, 'vers Robinhood Chain');
     eq(vu.corps.destinationCurrency, '0x0000000000000000000000000000000000000000',
        'en ETH natif — ce que le panneau sait acheter ensuite');
@@ -198,6 +204,51 @@ const G = (c) => fetch(`http://127.0.0.1:${PORT}${c}`);
     eq(vu.corps.originChainId, 728126428, 'et TRON part bien de TRON');
     eq(vu.corps.originCurrency, 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', 'en USDT — le TRX natif n a pas de route');
     eq(vu.corps.amount, '50000000', 'six decimales pour l USDT, pas dix-huit');
+    eq(vu.corps.refundTo, 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',
+       'et pour TRON c est le TRX, pas l USDT : c est la chaine qui decide, pas le jeton envoye');
+
+    /* LE DEUXIEME ESSAI. Quand Relay refuse en parlant d'une adresse invalide
+       pour une chaine, on refait sans `user`. C'est exactement le refus qui a
+       casse Solana, Bitcoin et TRON en production pendant qu Ethereum et Base
+       marchaient — donc il faut que ce rattrapage soit verifie, pas suppose. */
+    let essais = 0;
+    faux.removeAllListeners('request');
+    faux.on('request', (rq, rp) => {
+      let corps = '';
+      rq.on('data', (c) => { corps += c; });
+      rq.on('end', () => {
+        essais++;
+        vu = { url: rq.url, entetes: rq.headers, corps: JSON.parse(corps || '{}') };
+        if ('user' in vu.corps) {
+          rp.writeHead(400, { 'content-type': 'application/json' });
+          return rp.end(JSON.stringify({ message: 'Invalid address 0xabc for chain 792703809' }));
+        }
+        rp.writeHead(200, { 'content-type': 'application/json' });
+        rp.end(JSON.stringify({ steps: [{ depositAddress: 'SoLaNa2', requestId: '0x' + 'ef'.repeat(32) }],
+                                details: { currencyIn: { amountFormatted: '1.5' } } }));
+      });
+    });
+    const r2 = await G(`/relay/depot?de=sol&vers=${MOI}&montant=1.5`);
+    eq(r2.status, 200, 'le refus « adresse invalide pour la chaine » est rattrape');
+    eq((await r2.json()).adresse, 'SoLaNa2', 'et l adresse finit par arriver');
+    eq(essais, 2, 'en exactement deux essais, pas plus');
+    ok(!('user' in vu.corps), 'le second part sans « user » — c est ce que l API reclamait');
+    eq(vu.corps.refundTo, '11111111111111111111111111111111',
+       'et il garde l adresse de repli sur la chaine de depart');
+
+    /* Un refus qui n'est PAS celui-la ne doit pas declencher de deuxieme
+       essai : reessayer sur n'importe quelle erreur double la facture et cache
+       la vraie cause. */
+    essais = 0;
+    faux.removeAllListeners('request');
+    faux.on('request', (rq, rp) => {
+      rq.on('data', () => {});
+      rq.on('end', () => { essais++; rp.writeHead(400, { 'content-type': 'application/json' });
+                           rp.end(JSON.stringify({ message: 'route temporarily unavailable' })); });
+    });
+    const r3 = await G(`/relay/depot?de=sol&vers=${MOI}&montant=1.5`);
+    eq(r3.status, 400, 'une autre erreur remonte telle quelle');
+    eq(essais, 1, 'et sans deuxieme essai');
 
     arrete(s);
     await new Promise((r) => faux.close(r));
