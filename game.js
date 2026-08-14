@@ -28,7 +28,8 @@ const p4 = require('./puissance4');
 /* Les trois duels partagent la meme interface de moteur : une Partie qui sait
    rejoindre, jouer, ticker et dire qui a gagne. C'est ce qui permet a un seul
    chemin d'argent de les servir tous les trois. */
-const DUELS = { p4, mp: require('./morpion'), dm: require('./dames') };
+const DUELS = { p4, mp: require('./morpion'), dm: require('./dames'),
+                mf: require('./morpion_fantome') };
 const ATTENTE = p4.ATTENTE, EN_COURS = p4.EN_COURS, FINIE = p4.FINIE;
 const volcano = require('./volcano');
 
@@ -2859,7 +2860,10 @@ class Game {
    */
 
   _duelCfg(jeu) {
-    const p = jeu === 'mp' ? 'MP' : jeu === 'dm' ? 'DM' : 'P4';
+    /* Le prefixe des reglages, par jeu. Une table plutot qu'une cascade de
+       ternaires : le quatrieme jeu a montre que la cascade se relit mal et
+       qu'on y oublie une branche. */
+    const p = { mp: 'MP', dm: 'DM', mf: 'MF', p4: 'P4' }[jeu] || 'P4';
     const v = (k, d) => (cfg[p + '_' + k] !== undefined ? cfg[p + '_' + k] : d);
     return {
       min: v('MIN', cfg.P4_MIN), max: v('MAX', cfg.P4_MAX),

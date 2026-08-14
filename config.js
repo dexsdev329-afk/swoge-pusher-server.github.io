@@ -224,6 +224,7 @@ module.exports = {
     ['p4',     'Connect 4',      'connect4.html'],
     ['mp',     'Tic-Tac-Toe',    'morpion.html'],
     ['dm',     'Checkers',       'dames.html'],
+    ['mf',     'Ghost Tic-Tac-Toe', 'morpion_fantome.html'],
   ],
   /* ---- Ce qu'on peut se dire a la table ----
    *
@@ -636,6 +637,31 @@ module.exports = {
   DM_ATTENTE_MS: parseInt(env('DM_ATTENTE_MS', '600000'), 10),
   DM_REVANCHE_MS: parseInt(env('DM_REVANCHE_MS', '90000'), 10),
   DM_RAKE_SUR_NUL: env('DM_RAKE_SUR_NUL', '0') === '1',
+
+  /* ---- Morpion Fantome ----
+   *
+   * Trois pions chacun ; le quatrieme efface le plus ancien des siens. La
+   * grille ne se remplit donc jamais, et le jeu n'a pas la nulle systematique
+   * qui tue le morpion ordinaire des que les deux joueurs savent jouer.
+   *
+   * La pendule est celle du morpion, pas celle des dames : on voit le coup en
+   * une seconde, et attendre une minute devant trois cases est insupportable.
+   * Elle est un peu plus large quand meme — il faut aussi regarder quel pion
+   * va disparaitre, ce qui est une question de plus a chaque coup.
+   *
+   * RAKE_SUR_NUL a zero, comme partout ailleurs en 1v1 : la seule nulle
+   * possible ici est le plafond de coups, et faire payer deux joueurs parce
+   * qu'ils ont tourne en rond transformerait la patience en piege.
+   */
+  MF_RAKE_BPS: parseInt(env('MF_RAKE_BPS', '500'), 10),
+  MF_MIN: parseInt(env('MF_MIN', '10'), 10),
+  MF_MAX: parseInt(env('MF_MAX', '10000000'), 10),
+  MF_MISES: (env('MF_MISES', '10,100,1000,10000,100000,1000000,10000000').split(',')
+    .map((x) => parseInt(x.trim(), 10)).filter((x) => x > 0)),
+  MF_COUP_MS: parseInt(env('MF_COUP_MS', '30000'), 10),
+  MF_ATTENTE_MS: parseInt(env('MF_ATTENTE_MS', '600000'), 10),
+  MF_REVANCHE_MS: parseInt(env('MF_REVANCHE_MS', '90000'), 10),
+  MF_RAKE_SUR_NUL: env('MF_RAKE_SUR_NUL', '0') === '1',
 
   /* ---- virements entre joueurs ----
      Le depot prealable n'est pas une formalite : sans lui, ouvrir dix

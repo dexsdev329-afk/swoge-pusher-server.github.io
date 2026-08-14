@@ -294,7 +294,13 @@ function diffuseTousDuels() { broadcast(tousDuels()); }
  * tables de morpion —, et un vestibule par jeu est de toute facon ce que
  * chaque page veut.
  */
-const NOM_DUEL = { p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers' };
+const NOM_DUEL = { p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers',
+                   mf: 'Ghost Tic-Tac-Toe' };
+/* Les duels que la page peut demander. Une LISTE, pas une cascade de « dm ou
+   sinon mp » : le troisieme jeu passait silencieusement pour un morpion, et
+   c'est le genre de defaut qui se decouvre en jouant, pas en lisant. */
+const DUELS_OUVERTS = ['mp', 'dm', 'mf'];
+const duelDemande = (v) => (DUELS_OUVERTS.indexOf(String(v)) >= 0 ? String(v) : 'mp');
 /* Les sockets qui REGARDENT une partie sans y jouer. Un spectateur n'existe
    pas pour la partie : il ne mise pas, ne joue pas, et sa presence ne change
    rien au deroulement. Il recoit simplement le meme etat que les joueurs. */
@@ -1883,7 +1889,7 @@ wss.on('connection', (ws) => {
       // ---- morpion et dames (memes regles d'argent que le Connect 4) ----
       if (m.type === 'duelCreate') {
         try {
-          const jeu = m.jeu === 'dm' ? 'dm' : 'mp';
+          const jeu = duelDemande(m.jeu);
           const partie = game.duelCreer(jeu, ws.addr, m.bet, Date.now());
           persistSoon();
           send(ws, { type: 'duelMatch', match: game.duelEtat(partie.id, Date.now()),
@@ -1926,7 +1932,7 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
-      if (m.type === 'duelInvites') return duelPousseInvites(ws.addr, m.jeu === 'dm' ? 'dm' : 'mp');
+      if (m.type === 'duelInvites') return duelPousseInvites(ws.addr, duelDemande(m.jeu));
       if (m.type === 'duelPlay') {
         try {
           const r = game.duelJouer(ws.addr, m.id, m.coup, Date.now());
@@ -1957,7 +1963,7 @@ wss.on('connection', (ws) => {
       }
       if (m.type === 'duelsTous') return send(ws, tousDuels());
       if (m.type === 'duelLobby') {
-        const jeu = m.jeu === 'dm' ? 'dm' : 'mp';
+        const jeu = duelDemande(m.jeu);
         return send(ws, { type: 'duelLobby', jeu, tables: game.duelLobby(jeu) });
       }
       if (m.type === 'duelState') {
