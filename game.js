@@ -195,6 +195,34 @@ class Game {
   }
 
   /** Restore a snapshot produced by serialize() (called once at startup). */
+  /**
+   * REMPLACE tout l'etat par celui d'une archive. C'est la restauration.
+   *
+   * ---- pourquoi ce n'est pas hydrate() ----
+   *
+   * hydrate() AJOUTE : il pose les fiches de l'archive par-dessus celles qui
+   * sont deja en memoire. C'est ce qu'il faut au demarrage — la memoire est
+   * vide. Ce n'est surtout pas ce qu'il faut pour une restauration : les
+   * joueurs qui existent aujourd'hui mais pas dans l'archive resteraient la,
+   * avec leur solde d'aujourd'hui, melanges a des soldes d'hier. On croirait
+   * avoir restaure ; on aurait fabrique un etat qui n'a jamais existe.
+   *
+   * On construit donc une instance NEUVE, on l'hydrate, et on transplante ses
+   * champs un par un. Tout ce qui existe sur un Game frais est remplace, donc
+   * rien de l'ancien ne survit par oubli — pas meme un champ ajoute plus tard
+   * dont on aurait oublie de s'occuper ici.
+   */
+  remplace(st) {
+    if (!st || typeof st !== 'object' || !Array.isArray(st.players))
+      throw new Error('this file is not a SWOGE state (no players list)');
+    const neuf = new Game();
+    neuf.hydrate(st);
+    const avant = this.players.size;
+    for (const k of Object.keys(this)) delete this[k];
+    for (const k of Object.keys(neuf)) this[k] = neuf[k];
+    return { avant, apres: this.players.size };
+  }
+
   hydrate(st) {
     if (!st) return;
     /* Le secret fixe par l'environnement l'emporte : c'est ainsi qu'on revoque

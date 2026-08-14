@@ -20,6 +20,8 @@ const { Game } = require('./game');
 const { Chain } = require('./chain');
 const { PokerRoom } = require('./poker_room');
 const store = require('./store');
+const fs = require('fs');
+const zlib = require('zlib');
 const tg = require('./telegram');
 const admin = require('./admin');
 const session = require('./session');
@@ -537,6 +539,147 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(r.ok ? 200 : 500, { 'content-type': 'application/json' });
     return res.end(JSON.stringify(r));
   }
+  /* ================= TELECHARGER TOUTES LES DONNEES =================
+   *
+   * Le meme fichier que celui qui part sur Telegram, mais dans le navigateur.
+   * Une sauvegarde qui dort sur la machine qu'elle protege ne protege rien :
+   * celle-ci finit sur un disque a soi. */
+  if (path === '/export') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    /* On ecrit l'etat DU MOMENT avant de l'envoyer : sans ca on exporterait le
+       dernier fichier ecrit, qui peut avoir dix secondes de retard — dix
+       secondes de manches et de depots. */
+    persist();
+    const brut = fs.readFileSync(store.FILE);
+    const etat = JSON.parse(brut.toString('utf8'));
+    const gz = zlib.gzipSync(brut, { level: 9 });
+    const nom = `swoge-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}-${etat.players.length}j.json.gz`;
+    res.writeHead(200, {
+      'content-type': 'application/gzip',
+      'content-length': gz.length,
+      'content-disposition': `attachment; filename="${nom}"`,
+      'x-swoge-joueurs': String(etat.players.length),
+    });
+    console.log(`[export] ${etat.players.length} joueurs, ${(gz.length / 1024).toFixed(1)} Ko → ${qui(req)}`);
+    return res.end(gz);
+  }
+
+  /* ===================== REMETTRE LE FICHIER =====================
+   *
+   * Le jour ou l'on en a besoin, on est dans le pire moment possible. Cette
+   * route est donc ecrite pour ce moment-la, pas pour un jour calme :
+   *
+   *   1. elle REGARDE d'abord. Sans ?confirm=REPLACE-ALL elle ne remplace
+   *      rien : elle dit ce que l'archive contient et ce qu'on perdrait ;
+   *   2. elle GARDE l'etat actuel avant d'y toucher, dans un fichier date. Une
+   *      restauration ratee se defait ;
+   *   3. elle REFUSE une archive vide par-dessus un casino peuple, sauf a le
+   *      demander explicitement — c'est la signature d'un mauvais fichier ;
+   *   4. elle FERME les sockets : un joueur dont la page garde en memoire un
+   *      solde d'avant la restauration verrait deux chiffres differents et
+   *      croirait qu'on lui a pris quelque chose.
+   */
+  if (path === '/import') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    const repond = (code, obj) => {
+      res.writeHead(code, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(obj, null, 2));
+    };
+    if (req.method !== 'POST')
+      return repond(405, { error: 'POST the .json or .json.gz file as the request body' });
+
+    // ---- lire le corps, sans laisser quelqu'un remplir la memoire
+    const MAX = 200 * 1024 * 1024;
+    const bouts = []; let taille = 0, trop = false;
+    for await (const b of req) {
+      taille += b.length;
+      if (taille > MAX) { trop = true; break; }
+      bouts.push(b);
+    }
+    if (trop) return repond(413, { error: 'file too large' });
+    if (!taille) return repond(400, { error: 'empty body — POST the backup file itself' });
+    let brut = Buffer.concat(bouts);
+
+    // ---- gzip ou JSON : on reconnait au nombre magique, pas au nom
+    if (brut[0] === 0x1f && brut[1] === 0x8b) {
+      try { brut = zlib.gunzipSync(brut); }
+      catch (e) { return repond(400, { error: 'the .gz archive is damaged and was NOT restored: ' + e.message }); }
+    }
+    let etat;
+    try { etat = JSON.parse(brut.toString('utf8')); }
+    catch (e) { return repond(400, { error: 'not readable JSON: ' + e.message }); }
+    if (!etat || !Array.isArray(etat.players))
+      return repond(400, { error: 'this file is not a SWOGE state (no players list)' });
+
+    /* ---- CE QU'ON VERRAIT CHANGER. On le calcule avant de decider, et on le
+       rend meme quand on remplace : c'est la ligne qu'on relira plus tard. */
+    const sommeDue = (g) => {
+      const b = g.owedBreakdown();
+      return Number(ethers.utils.formatUnits(b.balances.add(b.staked).add(b.pending).add(b.jackpot), cfg.DECIMALS));
+    };
+    const temoin = new (require('./game').Game)();
+    temoin.hydrate(JSON.parse(brut.toString('utf8')));
+    const apercu = {
+      fichier: { joueurs: etat.players.length, duAuxJoueurs: sommeDue(temoin) },
+      actuel: { joueurs: game.players.size, duAuxJoueurs: sommeDue(game) },
+    };
+    apercu.difference = Number((apercu.fichier.duAuxJoueurs - apercu.actuel.duAuxJoueurs).toFixed(6));
+
+    if (qs.get('confirm') !== 'REPLACE-ALL')
+      return repond(200, { remplace: false, ...apercu,
+        pourRemplacer: 'repost the same file with &confirm=REPLACE-ALL',
+        avertissement: 'this replaces EVERY balance, stake, friendship and history with the file' });
+
+    if (!etat.players.length && game.players.size > 0 && qs.get('force') !== '1')
+      return repond(400, { remplace: false, ...apercu,
+        error: `the file has 0 players and the live casino has ${game.players.size}. ` +
+               'That is what a wrong file looks like. Add &force=1 if you really mean it.' });
+
+    // ---- 1) on garde l'etat actuel, date, avant d'y toucher
+    let filet = null;
+    try {
+      persist();
+      filet = store.FILE + '.avant-restauration-' + new Date().toISOString().replace(/[:.]/g, '-');
+      fs.copyFileSync(store.FILE, filet);
+    } catch (e) {
+      return repond(500, { remplace: false, error: 'could NOT snapshot the current state, so nothing was replaced: ' + e.message });
+    }
+
+    /* ---- 2) ON DETACHE TOUT LE MONDE AVANT DE REMPLACER, pas apres.
+       Mesure faite : en fermant les sockets APRES, une manche encore en vol —
+       une bille du pusher, une mise au Crash — appelait _p() sur un joueur que
+       la restauration venait de retirer, et le ressuscitait. La fiche etait
+       vide, donc sans un jeton dessus et jamais ecrite dans le fichier, mais
+       un etat restaure qui contient un joueur absent de l'archive n'est plus
+       l'archive. On coupe le lien d'abord : une socket sans adresse ne peut
+       plus rien toucher. */
+    let fermees = 0;
+    for (const ws of clients) { try { ws.addr = null; ws.close(4001, 'state restored'); fermees++; } catch (e) {} }
+    byAddr.clear();
+
+    // ---- 3) on remplace pour de bon
+    let r;
+    try { r = game.remplace(etat); }
+    catch (e) { return repond(400, { remplace: false, filet, error: e.message }); }
+    /* Les tables en cours n'appartiennent a aucun des deux etats : elles ont
+       ete ouvertes avec des soldes qui n'existent plus. On les vide. */
+    try { poker.tables.clear(); } catch (e) {}
+    store.save(game.serialize(), { force: qs.get('force') === '1' });
+
+    console.warn(`[import] RESTAURATION : ${r.avant} → ${r.apres} joueurs, ` +
+                 `du ${apercu.actuel.duAuxJoueurs} → ${apercu.fichier.duAuxJoueurs} $SWOGE, ` +
+                 `${fermees} sockets fermees, filet : ${filet}`);
+    tg.notify(`♻️ <b>State restored from a backup file</b>\n` +
+              `Players: ${r.avant} → <b>${r.apres}</b>\n` +
+              `Owed to players: ${fmtAmt(String(apercu.actuel.duAuxJoueurs))} → <b>${fmtAmt(String(apercu.fichier.duAuxJoueurs))} $SWOGE</b>\n` +
+              `Everyone was disconnected and will reconnect.`);
+    return repond(200, { remplace: true, ...apercu, joueurs: r, sessionsFermees: fermees,
+                         filet, defaire: 'copy that file back over state.json and restart' });
+  }
+
   if (path === '/burn') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);

@@ -72,7 +72,28 @@ function page() {
     A daily copy is sent to your <b>private</b> Telegram channel. Take one before anything risky.
     <span id="bkEtat"></span>
   </div>
-  <div class="row"><button class="ghost" id="bkGo">Back up now</button></div>
+  <div class="row"><button class="ghost" id="bkGo">Back up now</button>
+    <button class="ghost" id="bkDl">⬇ Download the file</button></div>
+</div>
+
+<div class="panel" style="border-color:rgba(242,104,94,.45)">
+  <h2>♻️ Restore from a file</h2>
+  <div class="sub" style="margin:0 0 10px">
+    The day you need this, you are in the worst possible moment. So it
+    <b>looks first</b>: pick a file and it tells you what is in it and what you
+    would lose &mdash; nothing is replaced until you confirm.<br>
+    It keeps a dated copy of today&rsquo;s state before touching anything, so a bad
+    restore can be undone. Every player is disconnected and reconnects, because a
+    page holding a balance from before the restore would show two different numbers.
+    <b style="color:#F2685E">Tables in progress are dropped</b> &mdash; they were opened
+    with balances that no longer exist.
+  </div>
+  <div class="row">
+    <input type="file" id="rsFile" accept=".gz,.json,application/gzip,application/json">
+    <button class="ghost" id="rsLook">Look at this file</button>
+    <button class="ghost" id="rsGo" disabled style="border-color:rgba(242,104,94,.6);color:#F2685E">Replace everything</button>
+  </div>
+  <div id="rsOut" class="sub" style="margin-top:10px"></div>
 </div>
 
 <div class="panel">
@@ -592,6 +613,77 @@ $("#bkGo").onclick=async function(){
     else { msg("Backup NOT sent — set TG_BACKUP_CHAT_ID on the server","warn");
       $("#bkEtat").innerHTML=' · <b style="color:#F2685E">no private channel configured</b>'; }
   }catch(e){ msg("Backup failed: "+e.message,"warn"); $("#bkEtat").textContent=""; }
+};
+
+/* ---- telecharger, et remettre ----
+   Le telechargement passe par un blob et non par un simple lien : la cle
+   d'administration voyage dans un en-tete, pas dans l'adresse — une adresse
+   se retrouve dans l'historique du navigateur, et une cle dans l'historique
+   n'est plus une cle. */
+$("#bkDl").onclick=async function(){
+  $("#bkEtat").textContent=" · preparing…";
+  try{
+    var r=await fetch("/export",{headers:{"x-admin-key":KEY}});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    var nom=(r.headers.get("content-disposition")||"").match(/filename="([^"]+)"/);
+    var b=await r.blob();
+    var u=URL.createObjectURL(b), a=document.createElement("a");
+    a.href=u; a.download=nom?nom[1]:"swoge-state.json.gz"; document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(u); a.remove(); },1500);
+    msg("✅ Downloaded "+Math.round(b.size/1024)+" KB — "+(r.headers.get("x-swoge-joueurs")||"?")+" players","ok");
+    $("#bkEtat").innerHTML=' · <b style="color:#7CFF9B">downloaded '+new Date().toLocaleTimeString()+'</b>';
+  }catch(e){ msg("Download failed: "+e.message,"warn"); $("#bkEtat").textContent=""; }
+};
+
+var rsVu=null;
+function rsLigne(t,c){ return '<div style="color:'+(c||"#8DA0C4")+'">'+t+'</div>'; }
+async function rsEnvoie(confirme){
+  var f=$("#rsFile").files[0];
+  if(!f){ msg("Pick a backup file first","warn"); return null; }
+  var url="/import"+(confirme?"?confirm=REPLACE-ALL":"");
+  var r=await fetch(url,{method:"POST",headers:{"x-admin-key":KEY,"content-type":"application/octet-stream"},body:f});
+  return await r.json();
+}
+$("#rsLook").onclick=async function(){
+  $("#rsOut").innerHTML=rsLigne("reading…");
+  $("#rsGo").disabled=true; rsVu=null;
+  try{
+    var j=await rsEnvoie(false);
+    if(!j) { $("#rsOut").innerHTML=""; return; }
+    if(j.error){ $("#rsOut").innerHTML=rsLigne("✕ "+j.error,"#F2685E"); return; }
+    var d=j.difference, sens=d>0?"more":"less";
+    rsVu=j; $("#rsGo").disabled=false;
+    $("#rsOut").innerHTML=
+      rsLigne("<b style='color:#EAF2FF'>The file holds</b> "+j.fichier.joueurs+" players · "+
+              fmt(j.fichier.duAuxJoueurs)+" $SWOGE owed to players")+
+      rsLigne("<b style='color:#EAF2FF'>Live right now</b> "+j.actuel.joueurs+" players · "+
+              fmt(j.actuel.duAuxJoueurs)+" $SWOGE owed to players")+
+      rsLigne("Restoring would make the house owe <b>"+fmt(Math.abs(d))+" $SWOGE "+sens+"</b>"+
+              (j.fichier.joueurs<j.actuel.joueurs
+                ? " and drop <b>"+(j.actuel.joueurs-j.fichier.joueurs)+" players</b> that exist today"
+                : ""), d===0?"#8DA0C4":"#FFC53D")+
+      rsLigne("Nothing has been replaced. Press <b>Replace everything</b> to go through with it.","#8DA0C4");
+  }catch(e){ $("#rsOut").innerHTML=rsLigne("✕ "+e.message,"#F2685E"); }
+};
+$("#rsGo").onclick=async function(){
+  if(!rsVu){ msg("Look at the file first","warn"); return; }
+  var q="Replace EVERY balance, stake, friendship and history with this file?\n\n"+
+        rsVu.actuel.joueurs+" players → "+rsVu.fichier.joueurs+" players\n"+
+        fmt(rsVu.actuel.duAuxJoueurs)+" → "+fmt(rsVu.fichier.duAuxJoueurs)+" $SWOGE owed\n\n"+
+        "Today's state is kept in a dated file first, so this can be undone.";
+  if(!confirm(q)) return;
+  if(prompt('Type RESTORE to go ahead.')!=="RESTORE") return;
+  $("#rsOut").innerHTML=rsLigne("restoring…");
+  try{
+    var j=await rsEnvoie(true);
+    if(!j.remplace){ $("#rsOut").innerHTML=rsLigne("✕ "+(j.error||"not replaced"),"#F2685E"); return; }
+    msg("♻️ Restored — "+j.joueurs.apres+" players, "+j.sessionsFermees+" sessions closed","ok");
+    $("#rsOut").innerHTML=
+      rsLigne("✅ Restored: "+j.joueurs.avant+" → <b>"+j.joueurs.apres+"</b> players","#7CFF9B")+
+      rsLigne("Everyone was disconnected and reconnects on their own.")+
+      rsLigne("To undo: copy <code>"+j.filet+"</code> back over <code>state.json</code> and restart.","#FFC53D");
+    load();
+  }catch(e){ $("#rsOut").innerHTML=rsLigne("✕ "+e.message,"#F2685E"); }
 };
 $("#moisSel").onchange=function(){ moisChoisi=$("#moisSel").value; load(); };
 $("#audGo").onclick=async function(){
