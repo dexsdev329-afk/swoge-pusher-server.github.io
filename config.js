@@ -288,11 +288,33 @@ module.exports = {
   MISSION_MISE: parseFloat(env('MISSION_MISE', '2000')),   // a miser sur le jeu du jour
   MISSION_GAIN: parseFloat(env('MISSION_GAIN', '12')),     // ce qu'elle rapporte
 
-  // ---- New-player welcome bonus (wager-locked) ----
-  // A brand-new player gets WELCOME_BONUS $SWOGE to try the game. Once they've
-  // actually WAGERED at least once (skin in the game — stops throwaway farming),
-  // they can claim an extra WELCOME_CLAIM reward, one time.
-  WELCOME_BONUS: parseFloat(env('WELCOME_BONUS', '1')),   // demo credit granted on first login
+  /* ---- Le credit d'essai d'un arrivant ----
+   *
+   * IL DOIT VALOIR PLUSIEURS MANCHES DE CASINO. Il valait 1 : moins que
+   * CASINO_MIN_BET. Mines, Hi-Lo, Hold'em et Three Card etaient donc
+   * cliquables et refusaient la mise, sur la premiere minute du produit —
+   * le seul moment ou personne ne se plaint, parce que celui qui ne peut rien
+   * jouer s'en va sans le dire. Les deux nombres vivent a quatre cents lignes
+   * d'ecart ; c'est bienvenue.test.js qui les compare desormais, et qui ouvre
+   * une vraie partie avec le credit seul pour le prouver.
+   *
+   * CE QUI AUTORISE A LE DONNER SANS DEPOT, c'est qu'il ne peut pas SORTIR :
+   * le retrait demande MIN_WITHDRAW (cent fois le credit), le virement vers un
+   * complice demande un depot ET TRANSFER_MIN, et les quetes demandent un
+   * depot. Un compte jetable peut jouer le credit, et rien d'autre. Les trois
+   * portes sont verrouillees par le test : le jour ou l'une s'ouvre, il tombe.
+   *
+   * Le montant, lui, ne coute presque rien a la maison — cent jetons valent
+   * une fraction de centime au prix de la reserve. Ce qu'il achete, c'est une
+   * vraie premiere partie.
+   *
+   * ATTENTION : si WELCOME_BONUS est pose en variable d'environnement chez
+   * l'hebergeur, c'est ELLE qui gagne et ce defaut revient sans prevenir.
+   *
+   * Une fois qu'il a MISE au moins une fois, le joueur peut reclamer
+   * WELCOME_CLAIM en plus, une seule fois.
+   */
+  WELCOME_BONUS: parseFloat(env('WELCOME_BONUS', '100')),   // credit d'essai, a la premiere connexion
   WELCOME_CLAIM: parseFloat(env('WELCOME_CLAIM', '5')),   // extra reward, unlocked after wagering
 
   // ---- 7-day consecutive login streak ----
