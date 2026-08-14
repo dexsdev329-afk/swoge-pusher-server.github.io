@@ -149,6 +149,41 @@ function attacher(ws, rec) {
 const clients = new Set();                 // all sockets
 const byAddr = new Map();                  // addr -> Set(sockets)
 
+/* ------------------------------------------------------- le debit d'entree
+ *
+ * Une socket peut envoyer aussi vite que le reseau le permet, et rien ne l'en
+ * empechait : le seul garde-fou etait la TAILLE d'un message, pas leur
+ * nombre. Or Node n'a qu'un fil d'execution — quelques centaines de messages
+ * par seconde suffisent a ne plus servir personne, et trois lignes dans une
+ * console de navigateur suffisent a les envoyer.
+ *
+ * Un seau a jetons : vingt messages par seconde en regime, quarante en
+ * reserve pour les rafales normales — cliquer vite au Plinko, poser dix
+ * jetons d'affilee. Au-dela on ignore ; tres au-dela on ferme, parce qu'a ce
+ * stade ce n'est plus un joueur presse.
+ */
+const DEBIT_PAR_SEC = parseInt(process.env.DEBIT_PAR_SEC || '20', 10);
+const DEBIT_RESERVE = parseInt(process.env.DEBIT_RESERVE || '40', 10);
+const DEBIT_ROMPT = 400;               // messages refuses avant de fermer
+
+function autorise(ws) {
+  const t = Date.now();
+  if (ws.jetons === undefined) { ws.jetons = DEBIT_RESERVE; ws.jetonsT = t; ws.refuses = 0; }
+  ws.jetons = Math.min(DEBIT_RESERVE, ws.jetons + ((t - ws.jetonsT) / 1000) * DEBIT_PAR_SEC);
+  ws.jetonsT = t;
+  if (ws.jetons < 1) {
+    ws.refuses++;
+    /* On le dit UNE FOIS : un message d'erreur par message refuse doublerait
+       le trafic qu'on essaie justement de reduire. */
+    if (ws.refuses === 1) send(ws, { type: 'error', error: 'slow down' });
+    if (ws.refuses > DEBIT_ROMPT) { try { ws.close(1008, 'too many messages'); } catch (e) {} }
+    return false;
+  }
+  ws.jetons -= 1;
+  if (ws.refuses) ws.refuses = 0;
+  return true;
+}
+
 function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 function toAddr(addr, obj) { const set = byAddr.get(addr); if (set) for (const ws of set) send(ws, obj); }
 function broadcast(obj) { const s = JSON.stringify(obj); for (const ws of clients) if (ws.readyState === 1) ws.send(s); }
@@ -488,6 +523,18 @@ function diffuseCompte() {
 // et un rappel regulier, pour les onglets ouverts depuis longtemps
 const compteInterval = setInterval(() => broadcast(compte()), 60000);
 
+/* Les fiches qui n'ont jamais rien fait quittent aussi la memoire. Elles ne
+   sont deja plus ecrites sur le disque ; les garder en RAM laisserait quand
+   meme un script les empiler jusqu'a l'etouffement. Les adresses connectees
+   sont protegees : retirer la fiche de quelqu'un qui est devant son ecran lui
+   reprendrait son credit d'essai au milieu de sa visite. */
+const purgeInterval = setInterval(() => {
+  try {
+    const n = game.purge(new Set(byAddr.keys()));
+    if (n) console.log(`[purge] ${n} fiche(s) vide(s) retiree(s) de la memoire`);
+  } catch (e) { console.warn('[purge]', e && e.message); }
+}, 3600000);
+
 const PING_MS = 25000;
 const battement = setInterval(() => {
   for (const ws of clients) {
@@ -519,6 +566,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('message', async (buf) => {
+    if (!autorise(ws)) return;
     let m; try { m = JSON.parse(buf); } catch { return; }
     try {
       if (m.type === 'login') {
@@ -1325,7 +1373,7 @@ server.listen(cfg.PORT, () => {
 });
 
 function shutdown() {
-  clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
+  clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
   persist(); // final save so nothing is lost on redeploy
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
      qui attend encore doit partir maintenant, sinon les dernieres manches

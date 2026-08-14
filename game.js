@@ -83,10 +83,67 @@ class Game {
     });
   }
 
+  /**
+   * Une fiche qui n'a JAMAIS RIEN FAIT.
+   *
+   * ---- pourquoi cette question se pose ----
+   *
+   * Ouvrir un compte ne coute rien : on fabrique une paire de cles chez soi
+   * et on signe une phrase. Pas de gaz, pas de transaction, pas de courriel.
+   * Le serveur ne peut donc pas distinguer un faux compte d'un vrai AU
+   * MOMENT DE LA CONNEXION — a cet instant ils sont identiques.
+   *
+   * Et chaque fiche pese 559 octets dans un fichier qui est REECRIT EN ENTIER
+   * toutes les dix secondes, par un JSON.stringify qui bloque le seul fil
+   * d'execution. Vingt mille fiches vides, c'est une seconde de gel a chaque
+   * sauvegarde ; deux cent mille, c'est dix secondes toutes les dix secondes,
+   * et plus aucune partie ne tourne.
+   *
+   * On ne filtre donc pas a l'entree — c'est impossible — mais A L'ECRITURE.
+   * La difference entre un vrai joueur et une ferme n'apparait que lorsqu'il
+   * FAIT quelque chose ; on garde tout ce qui a fait quelque chose, et rien
+   * d'autre. Le credit d'essai ne compte pas : il est donne, pas gagne.
+   */
+  static estVide(p) {
+    if (!p) return true;
+    const z = (w) => !w || ethers.BigNumber.from(w).isZero();
+    return p.balance.lte(WEI(String(cfg.WELCOME_BONUS || 0)))
+      && !p.hasDeposited && z(p.deposited)
+      && z(p.wagered) && !(p.betCount > 0)
+      && !p.nomChoisi && !p.visage && !p.photo
+      && !(p.amis || []).length && !(p.demandes || []).length && !(p.envoyees || []).length
+      && !p.parrain && !(p.filleuls || []).length
+      && !(p.stakes || []).length && z(p.stakeAccrued) && z(p.stakeClaimTotal)
+      && z(p.cumulativeAuthorized) && !p.tgId
+      && z(p.refDu) && z(p.refTotal) && !(p.attente || []).length;
+  }
+
+  /**
+   * Retire de la memoire les fiches qui n'ont jamais rien fait.
+   *
+   * `protegees` porte les adresses actuellement connectees : retirer la fiche
+   * de quelqu'un qui est devant son ecran lui reprendrait son credit d'essai
+   * au milieu de sa visite. Elles reviendront a la purge suivante s'il n'a
+   * toujours rien fait.
+   */
+  purge(protegees) {
+    let n = 0;
+    for (const [addr, p] of this.players) {
+      if (protegees && protegees.has(addr)) continue;
+      if (Game.estVide(p)) { this.players.delete(addr); n++; }
+    }
+    return n;
+  }
+
   /** Snapshot the whole state for persistence (BigNumbers → strings). */
   serialize() {
     const players = [];
+    let vides = 0;
     for (const [addr, p] of this.players) {
+      /* Les fiches vides ne sont pas ecrites. C'est la seule barriere entre
+         un script qui ouvre mille comptes par minute et un fichier de soldes
+         qui devient trop lourd pour etre sauve. */
+      if (Game.estVide(p)) { vides++; continue; }
       players.push([addr, {
         b: p.balance.toString(), c: p.cumulativeAuthorized.toString(),
         s: p.clientSeed, n: p.nonce, name: p.name, nc: !!p.nomChoisi,
@@ -111,6 +168,7 @@ class Game {
         ac: p.adCount || 0, ak: p.adDayKey || null, al: p.adLastMs || 0,
       }]);
     }
+    if (vides > 100) console.log(`[store] ${vides} fiche(s) vide(s) non ecrite(s)`);
     /* Les duels en cours ne sont PAS rejoues au redemarrage — une grille a
        moitie jouee dont les deux joueurs ont ete deconnectes n'a plus
        d'arbitre. Mais les MISES, elles, ont bel et bien quitte les soldes et
@@ -425,14 +483,27 @@ class Game {
   classementMois(addr, limite) {
     const mc = Game.moisCle();
     const moi = String(addr || '').toLowerCase();
-    const arr = [];
-    for (const [a, p] of this.players) {
-      const v = p.moisCle === mc ? (p.moisMise || 0) : 0;
-      if (v > 0) arr.push({ address: a, name: p.name, visage: p.visage || null,
-                            photo: !!p.photo, mise: v });
+    /* ---- UNE SEULE FABRICATION PAR SECONDE ----
+     * Ce calcul parcourt TOUS les joueurs, les trie, et coute 6,6 ms a vingt
+     * mille fiches. Node n'a qu'un fil : cent cinquante demandes par seconde
+     * — qu'une seule socket envoie sans effort — suffisent a saturer un coeur
+     * et a ne plus servir personne. Or le classement ne change pas de facon
+     * perceptible en une seconde. On le fabrique donc au plus une fois par
+     * seconde et tout le monde recoit le meme, ce qui ramene le cout par
+     * demande a rien. */
+    const t = Date.now();
+    if (!this._clCache || this._clCache.mois !== mc || t - this._clCache.t > 1000) {
+      const liste = [];
+      for (const [a, p] of this.players) {
+        const v = p.moisCle === mc ? (p.moisMise || 0) : 0;
+        if (v > 0) liste.push({ address: a, name: p.name, visage: p.visage || null,
+                                photo: !!p.photo, mise: v });
+      }
+      liste.sort((x, y) => y.mise - x.mise);
+      liste.forEach((r, i) => { r.rang = i + 1; });
+      this._clCache = { t, mois: mc, liste };
     }
-    arr.sort((x, y) => y.mise - x.mise);
-    arr.forEach((r, i) => { r.rang = i + 1; });
+    const arr = this._clCache.liste;
     const mien = arr.find((r) => r.address === moi) || null;
     return { mois: mc, joueurs: arr.length, top: arr.slice(0, limite || 50), moi: mien };
   }
