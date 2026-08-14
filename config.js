@@ -734,6 +734,30 @@ module.exports = {
   PF_REVANCHE_MS: parseInt(env('PF_REVANCHE_MS', '90000'), 10),
   PF_RAKE_SUR_NUL: env('PF_RAKE_SUR_NUL', '0') === '1',
 
+  /* ---- LES PARIS SPORTIFS ----
+   *
+   * Les cotes sont RECOPIEES chez un bookmaker, telles quelles. Ce n'est pas
+   * de la paresse : leur somme inverse depasse 1, et ce surplus est la marge
+   * du bookmaker — donc la notre. Mesuree sur le premier lot recopie :
+   * 9,9 %, soit trois fois l'avantage du casino. Un lot dont la marge serait
+   * nulle ou negative est refuse au chargement, parce que ca voudrait dire
+   * qu'une cote a ete recopiee de travers.
+   *
+   * CE QUI REND CE SYSTEME DIFFERENT DE TOUT LE RESTE : la mise part
+   * aujourd'hui et le resultat tombe dans trois jours. Entre les deux, la
+   * maison porte un engagement qui n'existe nulle part ailleurs ici.
+   *
+   * D'ou le plafond d'ENGAGEMENT, qui n'est pas un plafond de mise : c'est
+   * ce que la maison peut devoir sur UN match, toutes issues confondues, en
+   * prenant la pire. Sans lui, quinze joueurs au plafond sur la meme issue a
+   * 7,50 engagent onze millions et demi sur un seul resultat. L'avantage est
+   * reel a la longue — mais « a la longue » ne paie pas un coffre vide
+   * samedi soir.
+   */
+  PARI_MIN: parseInt(env('PARI_MIN', '100'), 10),
+  PARI_MAX: parseInt(env('PARI_MAX', '100000'), 10),
+  PARI_ENGAGEMENT_MAX: parseFloat(env('PARI_ENGAGEMENT_MAX', '2000000')),
+
   /* ---- virements entre joueurs ----
      Le depot prealable n'est pas une formalite : sans lui, ouvrir dix
      portefeuilles jetables, ramasser dix bonus de bienvenue et tout rassembler

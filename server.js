@@ -1071,7 +1071,27 @@ const server = http.createServer(async (req, res) => {
   }
   // Owner solvency view: how much is in the vault, how much is owed to players,
   // and the SURPLUS you can safely ownerWithdraw without touching player funds.
-  if (path === '/stats') {
+  /* Regler un match, et rembourser un match. RESERVE A L ADMIN : ces deux
+     routes deplacent de l'argent chez des joueurs, et la seconde le rend a
+     tout le monde. Elles ne sont jamais accessibles depuis une page. */
+  if (path === '/paris/regle' || path === '/paris/rembourse') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    try {
+      const r = path === '/paris/regle'
+        ? game.regleMatch(q.get('match'), q.get('resultat'))
+        : game.rembourseMatch(q.get('match'));
+      persist();
+      console.log('[paris]', JSON.stringify(r));
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify(r));
+    } catch (e) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+    if (path === '/stats') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
     const qs2 = new URLSearchParams(req.url.split('?')[1] || '');
@@ -1403,6 +1423,21 @@ wss.on('connection', (ws) => {
       if (m.type === 'duelsEnCours')
         return send(ws, { type: 'duelsTous', tables: game.duelLobby(null),
                           enCours: game.duelsEnCours(null) });
+
+      /* ---- LE TABLEAU DES COTES EST PUBLIC ----
+         Il est lu AVANT la porte d'authentification, volontairement. Un
+         visiteur qui arrive doit pouvoir regarder les matchs et les cotes
+         sans avoir branche quoi que ce soit — demander de se connecter pour
+         voir un tableau d'affichage, c'est demander de payer pour lire le
+         menu. Poser un pari, en revanche, est de l'autre cote de la porte. */
+      // ---- les paris sportifs ----
+      if (m.type === 'parisListe') {
+        return send(ws, { type: 'parisListe',
+                          sports: require('./paris').catalogue().sports,
+                          matchs: game.parisOuverts(Date.now()),
+                          min: cfg.PARI_MIN, max: cfg.PARI_MAX,
+                          mesParis: ws.addr ? game.mesParis(ws.addr, 40) : [] });
+      }
 
       if (!ws.addr) return send(ws, { type: 'error', error: 'login required' });
 
@@ -1970,7 +2005,18 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
-      if (m.type === 'duelsTous') return send(ws, tousDuels());
+      if (m.type === 'parie') {
+        if (!ws.addr) return send(ws, { type: 'error', error: 'connect first' });
+        try {
+          const pari = game.parie(ws.addr, m.match, m.choix, m.mise, Date.now());
+          persistSoon();
+          send(ws, { type: 'pariPose', pari, balance: game.balanceStr(ws.addr),
+                     matchs: game.parisOuverts(Date.now()),
+                     mesParis: game.mesParis(ws.addr, 40) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+            if (m.type === 'duelsTous') return send(ws, tousDuels());
       if (m.type === 'duelLobby') {
         const jeu = duelDemande(m.jeu);
         return send(ws, { type: 'duelLobby', jeu, tables: game.duelLobby(jeu) });

@@ -28,6 +28,7 @@ const p4 = require('./puissance4');
 /* Les trois duels partagent la meme interface de moteur : une Partie qui sait
    rejoindre, jouer, ticker et dire qui a gagne. C'est ce qui permet a un seul
    chemin d'argent de les servir tous les trois. */
+const paris = require('./paris');
 const DUELS = { p4, mp: require('./morpion'), dm: require('./dames'),
                 mf: require('./morpion_fantome'),
                 dc: require('./dernier_chiffre'),
@@ -44,6 +45,9 @@ const MS_YEAR = BN('31536000000'); // 365*24*3600*1000
 
 class Game {
   constructor() {
+    /* Les paris sportifs. Ils vivent plus longtemps qu'une manche : poses
+       aujourd'hui, regles apres le match. */
+    this.paris = []; this.parisRegles = {}; this.parisSeq = 0;
     this.players = new Map(); // addr -> { balance, cumulativeAuthorized, clientSeed, nonce, name, dayNet, dayKey, dropsToday, winsToday, questClaimed, hasDeposited }
     this.telegramMap = new Map(); // telegramId (string) -> addr, so the Adsgram reward postback can find the account
     this.seenTx = new Set();  // dedupe deposits
@@ -210,6 +214,11 @@ class Game {
              prixVerses: this.prixVerses || {},
              graines: this.graines || [], graineDepuis: this.graineDepuis || null,
              manchesGraine: this.manchesGraine || 0,
+             /* Les paris traversent les jours : sans eux dans la sauvegarde,
+                un redeploiement le vendredi soir efface tout ce qui a ete
+                pose pour le samedi. */
+             paris: this.paris || [], parisRegles: this.parisRegles || {},
+             parisSeq: this.parisSeq || 0,
              jackpotPot: this.jackpotPot.toString(),
              crashGraine: this.crashGraine, crash: this.crash.sauve(),
              fraisCumules: (this.fraisCumules || BN(0)).toString(),
@@ -275,6 +284,9 @@ class Game {
        redemarrage reviendrait a retirer la preuve apres l'avoir donnee. */
     if (st.compta) this.compta = st.compta;
     if (st.usage) this.usage = st.usage;
+    if (Array.isArray(st.paris)) this.paris = st.paris;
+    if (st.parisRegles) this.parisRegles = st.parisRegles;
+    if (st.parisSeq) this.parisSeq = st.parisSeq;
     if (st.tunnel) this.tunnel = st.tunnel;
     if (st.prixVerses) this.prixVerses = st.prixVerses;
     if (Array.isArray(st.graines)) this.graines = st.graines;
@@ -1260,6 +1272,197 @@ class Game {
     p.miseJour = {};
   }
   jackpotStr() { return ethers.utils.formatUnits(this.jackpotPot, cfg.DECIMALS); }
+
+  /* ==================================================================
+   * LES PARIS SPORTIFS
+   *
+   * Ce n'est pas un jeu de casino, et la difference est toute la
+   * difficulte : la mise part aujourd'hui, le resultat tombe dans trois
+   * jours. Entre les deux, la maison porte un ENGAGEMENT — ce qu'elle devra
+   * payer si les paris passent — qui n'existe nulle part ailleurs dans ce
+   * serveur, ou chaque manche se regle dans la seconde.
+   *
+   * Trois regles en decoulent, et aucune n'est negociable :
+   *
+   *  1. LA COTE EST FIGEE A LA PRISE DU PARI. Elle est recopiee dans le
+   *     pari lui-meme. Corriger une faute de frappe dans le catalogue ne
+   *     doit jamais changer ce qu'un joueur croyait avoir accepte ;
+   *  2. L'ENGAGEMENT EST PLAFONNE PAR MATCH. Sans plafond, quinze joueurs
+   *     au maximum sur la meme issue a 7,50 engagent onze millions et
+   *     demi sur un seul resultat. L'avantage de la maison est reel a la
+   *     longue, mais « a la longue » ne paie pas un coffre vide samedi soir ;
+   *  3. LE REGLEMENT NE PAIE QU'UNE FOIS. Un match regle deux fois, c'est
+   *     de l'argent cree, et personne ne s'en plaindra assez vite pour
+   *     qu'on le remarque.
+   * ================================================================== */
+
+  /** Tous les paris d'un match, regles ou non. */
+  _parisDe(matchId) {
+    return (this.paris || []).filter((p) => p.match === matchId);
+  }
+
+  /**
+   * Ce que la maison devrait payer sur ce match si TOUTE issue tombait — on
+   * prend la pire, celle qui coute le plus. C'est le seul chiffre qui compte
+   * pour savoir si l'on peut accepter un pari de plus.
+   */
+  engagementMatch(matchId) {
+    const par = { 1: 0, N: 0, 2: 0 };
+    for (const p of this._parisDe(matchId)) {
+      if (p.regle) continue;
+      par[p.choix] = (par[p.choix] || 0) + p.rapport;
+    }
+    return Math.max(par['1'], par.N, par['2']);
+  }
+
+  /** Les matchs ouverts, avec la place qu'il reste sur chacun. */
+  parisOuverts(now) {
+    const t = now || Date.now();
+    return paris.ouverts(t).map((m) => {
+      const v = paris.vue(m, t);
+      v.engagement = Number(this.engagementMatch(m.id).toFixed(6));
+      v.place = Math.max(0, cfg.PARI_ENGAGEMENT_MAX - v.engagement);
+      return v;
+    });
+  }
+
+  /** Poser un pari. Debite tout de suite : la mise a quitte le solde. */
+  parie(addr, matchId, choixRaw, miseRaw, now) {
+    const t = now || Date.now();
+    const m = paris.match(matchId);
+    if (!m) throw new Error('unknown match');
+    if (m.debut <= t) throw new Error('betting is closed on this match');
+
+    const choix = String(choixRaw);
+    if (paris.ISSUES.indexOf(choix) < 0) throw new Error('pick 1, N or 2');
+
+    const mise = Math.floor(Number(miseRaw));
+    if (!(mise >= cfg.PARI_MIN)) throw new Error('minimum bet is ' + cfg.PARI_MIN + ' $SWOGE');
+    if (mise > cfg.PARI_MAX) throw new Error('maximum bet is ' + cfg.PARI_MAX + ' $SWOGE');
+
+    const p = this._p(addr);
+    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+
+    /* Le plafond se verifie sur ce que CE pari ajouterait, pas sur ce qui est
+       deja engage : sinon le dernier pari accepte pourrait franchir la borne
+       tout seul. */
+    const cote = m.cotes[choix];
+    const rapport = paris.rapport(cote, mise);
+    const dejaLa = this.engagementMatch(matchId);
+    const par = { 1: 0, N: 0, 2: 0 };
+    for (const q of this._parisDe(matchId)) if (!q.regle) par[q.choix] += q.rapport;
+    par[choix] += rapport;
+    const apres = Math.max(par['1'], par.N, par['2']);
+    if (apres > cfg.PARI_ENGAGEMENT_MAX)
+      throw new Error('this match is full — ' +
+        Math.max(0, Math.floor(cfg.PARI_ENGAGEMENT_MAX - dejaLa)) + ' $SWOGE of exposure left');
+
+    p.balance = p.balance.sub(WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++;
+    this._markWager(p, WEI(mise), 'paris');
+
+    if (!this.paris) this.paris = [];
+    const pari = {
+      id: 'b' + (++this.parisSeq) + '-' + Math.floor(t / 1000).toString(36),
+      addr: String(addr).toLowerCase(), match: matchId, choix,
+      /* LA COTE EST RECOPIEE ICI. Le catalogue peut changer demain ; ce que
+         le joueur a accepte, non. */
+      cote, mise, rapport, t, regle: false, gagne: null,
+    };
+    this.paris.push(pari);
+    journal.ajoute(pari.addr, { k: 'pa', s: 'pose', m: String(mise), match: matchId,
+                                choix, cote, rapport });
+    return pari;
+  }
+
+  /** Les paris d'un joueur, du plus recent au plus ancien. */
+  mesParis(addr, limite) {
+    const a = String(addr).toLowerCase();
+    return (this.paris || []).filter((p) => p.addr === a)
+      .sort((x, y) => y.t - x.t).slice(0, limite || 50)
+      .map((p) => {
+        const m = paris.match(p.match);
+        return Object.assign({}, p, {
+          domicile: m ? m.domicile : '?', exterieur: m ? m.exterieur : '?',
+          debut: m ? m.debut : null, competition: m ? m.competition : '',
+        });
+      });
+  }
+
+  /**
+   * Regler un match. Paie les gagnants, marque les perdants, UNE SEULE FOIS.
+   *
+   * Le resultat est celui du terrain : '1', 'N' ou '2'. Le reglement se fait
+   * a la main, et c'est assume — un service de resultats automatique qui se
+   * trompe paie les mauvaises personnes sans que personne ne le sache.
+   */
+  regleMatch(matchId, resultat) {
+    const m = paris.match(matchId);
+    if (!m) throw new Error('unknown match');
+    if (paris.ISSUES.indexOf(String(resultat)) < 0) throw new Error('result must be 1, N or 2');
+    if (!this.parisRegles) this.parisRegles = {};
+    if (this.parisRegles[matchId]) throw new Error('already settled');
+
+    const liste = this._parisDe(matchId).filter((p) => !p.regle);
+    let paye = 0, gagnants = 0, mise = 0;
+    for (const p of liste) {
+      p.regle = true;
+      p.gagne = (p.choix === String(resultat));
+      mise += p.mise;
+      const rendu = p.gagne ? p.rapport : 0;
+      if (rendu > 0) {
+        const q = this._p(p.addr);
+        q.balance = q.balance.add(WEI(rendu));
+        this._bumpDay(q); q.dayNet = q.dayNet.add(WEI(rendu)); q.winsToday++;
+        paye += rendu; gagnants++;
+      }
+      journal.ajoute(p.addr, { k: 'pa', s: 'regle', m: String(p.mise), match: matchId,
+                               choix: p.choix, cote: p.cote, resultat: String(resultat),
+                               rendu: String(rendu) });
+      /* Le pari passe par le point de reglage commun : classement du mois,
+         revenu de la maison, mesure d'usage. Sans ca, les paris seraient
+         invisibles exactement comme l'etaient le pusher et le poker. */
+      this._manche(this._p(p.addr), 'paris', p.mise, rendu);
+    }
+    this.parisRegles[matchId] = { t: Date.now(), resultat: String(resultat),
+                                  paris: liste.length, paye, gagnants };
+    return { match: matchId, resultat: String(resultat), paris: liste.length,
+             gagnants, paye, mise, net: mise - paye };
+  }
+
+  /**
+   * Rembourser un match — report, annulation, cote saisie de travers.
+   *
+   * Rendre la mise n'est pas une faveur : un match qui ne se joue pas n'a
+   * produit aucun resultat, et garder l'argent reviendrait a encaisser un
+   * pari qui n'a jamais eu lieu.
+   */
+  rembourseMatch(matchId) {
+    if (!this.parisRegles) this.parisRegles = {};
+    if (this.parisRegles[matchId]) throw new Error('already settled');
+    const liste = this._parisDe(matchId).filter((p) => !p.regle);
+    let rendu = 0;
+    for (const p of liste) {
+      p.regle = true; p.gagne = null;
+      const q = this._p(p.addr);
+      q.balance = q.balance.add(WEI(p.mise));
+      this._bumpDay(q); q.dayNet = q.dayNet.add(WEI(p.mise));
+      rendu += p.mise;
+      journal.ajoute(p.addr, { k: 'pa', s: 'rembourse', m: String(p.mise), match: matchId });
+    }
+    this.parisRegles[matchId] = { t: Date.now(), resultat: null, rembourse: true,
+                                  paris: liste.length, rendu };
+    return { match: matchId, paris: liste.length, rendu };
+  }
+
+  /** Ce que la maison doit encore sur l'ensemble des paris non regles. */
+  engagementTotal() {
+    const vus = new Set();
+    let total = 0;
+    for (const p of (this.paris || [])) if (!p.regle) vus.add(p.match);
+    for (const id of vus) total += this.engagementMatch(id);
+    return Number(total.toFixed(6));
+  }
 
   // ---- Staking: 100% APR, sortie libre a tout moment ----
   _lockMs() { return cfg.STAKE_LOCK_DAYS * 86400000; }

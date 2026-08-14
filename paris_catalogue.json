@@ -1,0 +1,70 @@
+{
+  "_lisezmoi": [
+    "Le calendrier des paris. Ce fichier est la SEULE source des rencontres et des cotes.",
+    "",
+    "Les heures sont en UTC (suffixe Z). Le championnat anglais joue a l'heure d'ete",
+    "britannique en aout, soit UTC+1 : 13h30 sur place = 12:30Z.",
+    "",
+    "`ferme` est l'instant ou les paris cessent d'etre acceptes. Il vaut le coup",
+    "d'envoi : accepter un pari sur un match commence, c'est accepter un pari de",
+    "quelqu'un qui regarde le score.",
+    "",
+    "Les cotes sont recopiees telles quelles. Leur somme inverse depasse 1 — c'est",
+    "la marge du bookmaker, et c'est elle qui fait l'avantage de la maison ici.",
+    "Mesuree sur ce lot : 9,9 %."
+  ],
+  "sports": [
+    { "cle": "foot", "nom": "Football", "actif": true },
+    { "cle": "tennis", "nom": "Tennis", "actif": false },
+    { "cle": "nba", "nom": "NBA", "actif": false }
+  ],
+  "matchs": [
+    { "id": "efl-20260815-bol-pre", "sport": "foot",
+      "competition": "Championship", "pays": "England",
+      "domicile": "Bolton", "exterieur": "Preston",
+      "debut": "2026-08-15T12:30:00Z",
+      "cotes": { "1": 2.12, "N": 3.22, "2": 3.17 } },
+
+    { "id": "efl-20260815-bri-mil", "sport": "foot",
+      "competition": "Championship", "pays": "England",
+      "domicile": "Bristol City", "exterieur": "Millwall",
+      "debut": "2026-08-15T15:00:00Z",
+      "cotes": { "1": 2.47, "N": 3.25, "2": 2.58 } },
+
+    { "id": "efl-20260815-cha-der", "sport": "foot",
+      "competition": "Championship", "pays": "England",
+      "domicile": "Charlton", "exterieur": "Derby",
+      "debut": "2026-08-15T15:00:00Z",
+      "cotes": { "1": 2.62, "N": 3.08, "2": 2.53 } },
+
+    { "id": "efl-20260815-mid-lin", "sport": "foot",
+      "competition": "Championship", "pays": "England",
+      "domicile": "Middlesbrough", "exterieur": "Lincoln",
+      "debut": "2026-08-15T15:00:00Z",
+      "cotes": { "1": 1.35, "N": 4.45, "2": 7.50 } },
+
+    { "id": "efl-20260815-nor-wba", "sport": "foot",
+      "competition": "Championship", "pays": "England",
+      "domicile": "Norwich", "exterieur": "West Brom",
+      "debut": "2026-08-15T15:00:00Z",
+      "cotes": { "1": 1.87, "N": 3.38, "2": 3.73 } },
+
+    { "id": "efl-20260815-por-qpr", "sport": "foot",
+      "competition": "Championship", "pays": "England",
+      "domicile": "Portsmouth", "exterieur": "QPR",
+      "debut": "2026-08-15T15:00:00Z",
+      "cotes": { "1": 2.20, "N": 3.25, "2": 2.97 } },
+
+    { "id": "efl-20260815-sto-swa", "sport": "foot",
+      "competition": "Championship", "pays": "England",
+      "domicile": "Stoke", "exterieur": "Swansea",
+      "debut": "2026-08-15T15:00:00Z",
+      "cotes": { "1": 2.25, "N": 3.15, "2": 2.97 } },
+
+    { "id": "efl-20260815-shu-bir", "sport": "foot",
+      "competition": "Championship", "pays": "England",
+      "domicile": "Sheffield Utd", "exterieur": "Birmingham",
+      "debut": "2026-08-15T17:30:00Z",
+      "cotes": { "1": 2.32, "N": 3.12, "2": 2.88 } }
+  ]
+}
