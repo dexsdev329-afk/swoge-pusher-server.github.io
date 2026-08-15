@@ -129,25 +129,31 @@ async function joueur() {
     eq(p0.match.grille.length, 9, 'un morpion : neuf cases');
     eq(p0.balance, undefined, 'et AUCUN solde ne lui est pousse');
 
-    env(A.ws, { type: 'duelPlay', id, coup: 0 });
+    /* QUI OUVRE EST TIRE AU SORT. On lit le trait sur l'etat que le visiteur
+       vient de recevoir, et on fait jouer celui qui l'a — ce qui est teste
+       ici, c'est la DIFFUSION du coup, pas l'identite du joueur. */
+    const t0 = p0.match.tour;
+    const ouvre = t0 === 2 ? B : A;
+    const suit  = ouvre === A ? B : A;
+    env(ouvre.ws, { type: 'duelPlay', id, coup: 0 });
     await dors(300);
     const p1 = dernier(V.recu, 'duelWatch');
-    eq(p1.match.grille[0], 1, 'le coup lui arrive sans qu il demande rien');
+    eq(p1.match.grille[0], t0, 'le coup lui arrive sans qu il demande rien');
     eq(p1.fini, false, 'la partie n est pas finie');
     eq(p1.balance, undefined, 'toujours aucun solde');
     eq(p1.reglement, undefined, 'et aucun reglement : ce n est pas son argent');
 
-    // 0,1,2 pour A ; 3,4 pour B
-    env(B.ws, { type: 'duelPlay', id, coup: 3 }); await dors(200);
-    env(A.ws, { type: 'duelPlay', id, coup: 1 }); await dors(200);
-    env(B.ws, { type: 'duelPlay', id, coup: 4 }); await dors(200);
+    // 0,1,2 pour celui qui ouvre ; 3,4 pour l'autre
+    env(suit.ws,  { type: 'duelPlay', id, coup: 3 }); await dors(200);
+    env(ouvre.ws, { type: 'duelPlay', id, coup: 1 }); await dors(200);
+    env(suit.ws,  { type: 'duelPlay', id, coup: 4 }); await dors(200);
     /* On compte les vestibules recus AVANT le coup gagnant : ce qui doit
        arriver ensuite est un rafraichissement que PERSONNE n'a demande. */
     const vestibulesAvant = tous(V.recu, 'duelsTous').length;
-    env(A.ws, { type: 'duelPlay', id, coup: 2 }); await dors(350);
+    env(ouvre.ws, { type: 'duelPlay', id, coup: 2 }); await dors(350);
 
     const pf = dernier(V.recu, 'duelWatch');
-    eq(pf.match.gagnant, 1, 'la victoire lui parvient');
+    eq(pf.match.gagnant, t0, 'la victoire lui parvient');
     eq(pf.fini, true, 'et elle est annoncee comme finale');
     eq(pf.match.ligne.length, 3, 'avec la ligne gagnante');
     eq(pf.balance, undefined, 'sans solde, jusqu au bout');
