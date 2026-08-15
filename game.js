@@ -23,6 +23,7 @@ const casino = require('./casino');
 const hilo = require('./hilo');
 const mines = require('./mines');
 const plinko = require('./plinko');
+const boulier = require('./boulier');
 const crash = require('./crash');
 const p4 = require('./puissance4');
 /* Les trois duels partagent la meme interface de moteur : une Partie qui sait
@@ -57,6 +58,11 @@ class Game {
     this.jackpotPot = WEI(cfg.JACKPOT_SEED);
     this._jackpotSeed = WEI(cfg.JACKPOT_SEED);
     this._rakeWei = COST.mul(Math.round(cfg.JACKPOT_RAKE_PCT * 100)).div(10000); // pct, 2-dec
+    /* La cagnotte du Boulier. Elle vit a part du jackpot du Coin Pusher : les
+       deux montent avec les mises de leur propre jeu, et les melanger ferait
+       payer un plein a 90 boules avec l'argent des pieces poussees. */
+    this.boulierPot = WEI(cfg.BOULIER_CAGNOTTE_AMORCE);
+    this.boulierPleins = [];   // les derniers pleins, pour la page et l'admin
     /* Secret des jetons de session. Il vit avec l'etat : sans ca, chaque
        redeploiement deconnecterait tous les joueurs d'un coup. */
     this.sessionSecret = cfg.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
@@ -220,6 +226,8 @@ class Game {
              paris: this.paris || [], parisRegles: this.parisRegles || {},
              parisSeq: this.parisSeq || 0,
              jackpotPot: this.jackpotPot.toString(),
+             boulierPot: this.boulierPot.toString(),
+             boulierPleins: this.boulierPleins || [],
              crashGraine: this.crashGraine, crash: this.crash.sauve(),
              fraisCumules: (this.fraisCumules || BN(0)).toString(),
              brule: (this.brule || BN(0)).toString(), brulages: this.brulages || [],
@@ -293,6 +301,12 @@ class Game {
     if (st.graineDepuis) this.graineDepuis = st.graineDepuis;
     if (st.manchesGraine) this.manchesGraine = st.manchesGraine;
     if (st.jackpotPot) this.jackpotPot = ethers.BigNumber.from(st.jackpotPot);
+    /* La cagnotte se relit telle quelle, meme a zero — un `if (st.boulierPot)`
+       la remettrait a un million au premier redemarrage suivant un plein, et
+       la maison offrirait le cadeau d'ouverture a chaque deploiement. */
+    if (st.boulierPot !== undefined && st.boulierPot !== null)
+      this.boulierPot = ethers.BigNumber.from(st.boulierPot);
+    if (Array.isArray(st.boulierPleins)) this.boulierPleins = st.boulierPleins;
     /* La graine d'environnement l'emporte, comme pour le secret de session :
        c'est ainsi qu'on repart sur une chaine neuve volontairement. Sinon on
        reprend celle de l'etat, et l'index sauve evite de rejouer un maillon
@@ -1979,7 +1993,13 @@ class Game {
   }
 
   /** Breakdown (wei) of what the vault owes: player balances, staked, pending
-   * yield, and the jackpot reserve. */
+   * yield, and the two progressive pots.
+   *
+   * LES DEUX CAGNOTTES SONT UNE DETTE, pas une reserve de la maison. Elles ont
+   * ete promises : le pot du Coin Pusher se paie au prochain declencheur, celui
+   * du Boulier au prochain 10/10. Les laisser hors de ce calcul ferait afficher
+   * un surplus retirable superieur d'un million au reel — et le proprietaire
+   * retirerait de bonne foi l'argent d'un gagnant qui n'a pas encore joue. */
   owedBreakdown() {
     let balances = BN(0), staked = BN(0), pending = BN(0);
     for (const p of this.players.values()) {
@@ -1987,7 +2007,9 @@ class Game {
       staked = staked.add(this._stakedTotal(p));
       pending = pending.add(p.stakeAccrued).add(this._pendingAll(p));
     }
-    return { balances, staked, pending, jackpot: this.jackpotPot };
+    return { balances, staked, pending,
+             jackpot: this.jackpotPot.add(this.boulierPot),
+             jackpotPusher: this.jackpotPot, jackpotBoulier: this.boulierPot };
   }
 
   /** Everything the vault OWES players right now (wei): balances + staked +
@@ -2341,11 +2363,12 @@ class Game {
       formules: {
         empreinte: 'sha256(graine_serveur) == empreinte annoncee',
         numero: "le numero utilise par une manche est n1 (celui d'ARRIVEE) : il est incremente avant le tirage. n0 et n1 encadrent les numeros consommes, utile au blackjack qui en prend une dizaine par main.",
-        graineJoueur: "chaque jeu ajoute son propre suffixe a la graine du joueur : ':plinko', ':mines', ':hilo', ':casino' (Hold'em et Three Card). Le Coin Pusher n'en ajoute aucun ; le blackjack place ':bj:' avant le numero.",
+        graineJoueur: "chaque jeu ajoute son propre suffixe a la graine du joueur : ':plinko', ':mines', ':hilo', ':boulier', ':casino' (Hold'em et Three Card). Le Coin Pusher n'en ajoute aucun ; le blackjack place ':bj:' avant le numero.",
         pusher: "HMAC_SHA256(graine_serveur, graine_joueur + ':' + n1)",
         blackjack: "HMAC_SHA256(graine_serveur, graine_joueur + ':bj:' + numero), un tirage par carte",
         plinko: "flux d'octets, compteur a partir de 0 : HMAC_SHA256(graine_serveur, graine_joueur + ':plinko' + ':' + n1 + ':' + compteur). Un bit par rangee, du bit de poids fort au plus faible ; 1 = a droite. La case d'arrivee est la somme des bits.",
         mines: "meme flux, avec le suffixe ':mines'",
+        boulier: "meme flux, avec le suffixe ':boulier'. Melange de Fisher-Yates partiel sur une urne 1..90 : a chaque pas i de 0 a 29 on tire j uniforme dans [i, 89] (rejet au-dela de 256 - 256 % (90 - i)), on echange, et urne[i] est la boule qui sort. L'ordre rendu est celui du boulier.",
         holdem_three: "meme flux, avec le suffixe ':casino'",
         hilo: "flux : HMAC_SHA256(graine_serveur, graine_joueur + ':hilo' + ':' + n1 + ':' + pas + ':' + essai + ':' + compteur)",
         note: "chaque ligne d'historique porte l'empreinte en vigueur (sh), la graine du joueur (cs) et la plage de numeros de la manche (n0, n1)",
@@ -3377,6 +3400,116 @@ class Game {
     return { mise: r.mise, rangees: r.rangees, risque: r.risque,
              chemin: r.chemin, case: r.case, multi: r.multi,
              payout: r.payout, net: r.net, table: r.table };
+  }
+
+  // ---------------------------------------------------------------- boulier
+  // 90 boules, 30 sortent, une grille de 10. Un coup unique comme le Plinko :
+  // rien a conserver entre deux messages, donc rien qu'un joueur puisse
+  // abandonner en cours de route pour garder sa mise.
+  //
+  // La difference avec tous les autres jeux de la maison : le prix est FIXE.
+  // C'est la cagnotte qui l'impose (voir BOULIER_PRIX dans config.js). On joue
+  // plusieurs grilles au lieu de miser plus gros — et les grilles d'une meme
+  // manche partagent les memes 30 boules, parce qu'un boulier ne tourne qu'une
+  // fois.
+
+  /** Ce qu'il faut au navigateur pour tout afficher sans calculer une formule. */
+  boulierBareme() {
+    return {
+      boules: boulier.BOULES, tirees: boulier.TIREES, grille: boulier.GRILLE,
+      prix: cfg.BOULIER_PRIX, grillesMax: cfg.BOULIER_GRILLES_MAX,
+      table: boulier.table(),
+      partCagnotteBps: boulier.CAGNOTTE_BPS,
+      partPleinBps: boulier.CAGNOTTE_PART_BPS,
+      retourBareme: boulier.retourBareme(),
+      retourTotal: boulier.retourTotal(),
+    };
+  }
+
+  /** La cagnotte en SWOGE lisibles, comme jackpotStr() pour le Coin Pusher. */
+  boulierPotStr() { return ethers.utils.formatUnits(this.boulierPot, cfg.DECIMALS); }
+
+  /** L'etat affiche a la connexion et apres chaque manche. */
+  boulierEtat() {
+    return {
+      cagnotte: this.boulierPotStr(),
+      pleins: (this.boulierPleins || []).slice(0, 10),
+    };
+  }
+
+  /**
+   * Joue une manche : de 1 a BOULIER_GRILLES_MAX grilles sur un seul tirage.
+   *
+   * L'ordre des operations n'est pas negociable. La cagnotte est alimentee
+   * AVANT d'etre distribuee : sinon un joueur qui fait un plein du premier
+   * coup emporterait un pot auquel sa propre mise n'a pas encore contribue,
+   * et le pot repartirait en dessous de ce que le cycle a collecte.
+   */
+  boulierJoue(addr, grillesRaw) {
+    const p = this._p(addr);
+
+    if (!Array.isArray(grillesRaw) || grillesRaw.length < 1)
+      throw new Error('play at least one grid');
+    if (grillesRaw.length > cfg.BOULIER_GRILLES_MAX)
+      throw new Error('at most ' + cfg.BOULIER_GRILLES_MAX + ' grids per draw');
+    const grilles = grillesRaw.map((g) => boulier.valideGrille(g));
+
+    const prix = cfg.BOULIER_PRIX;
+    const mise = prix * grilles.length;
+    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+
+    p.balance = p.balance.sub(WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++;
+    this._markWager(p, WEI(mise), 'boulier');
+
+    /* La part cagnotte entre dans le pot tout de suite, pour toutes les
+       grilles de la manche. */
+    const versement = boulier.partCagnotte(prix) * grilles.length;
+    this.boulierPot = this.boulierPot.add(WEI(versement));
+
+    p.nonce++;
+    const sortie = boulier.tirage(this.serverSeed, p.clientSeed + ':boulier', p.nonce);
+
+    let payout = 0;
+    let cagnotteGagnee = 0;
+    const lignes = grilles.map((g) => {
+      const t = boulier.touches(g, sortie);
+      const l = { grille: g, touches: t, n: t.length, lot: boulier.lot(t.length, prix), plein: false };
+      if (t.length === boulier.GRILLE) {
+        /* Les 80 % se calculent en wei, mais le pot est debite de ce qui est
+           REELLEMENT verse, pas de la part brute. Les deux different : un pot
+           de 200 002 donne 160 001,6, et le solde du joueur ne connait que des
+           SWOGE entiers. Debiter la part brute ferait sortir du pot 0,6 SWOGE
+           que personne ne recevrait — a chaque plein. Le reste fractionnaire
+           demeure donc dans le pot, ou il servira au gagnant suivant. */
+        const part = this.boulierPot.mul(boulier.CAGNOTTE_PART_BPS).div(10000);
+        const swoge = Math.floor(Number(ethers.utils.formatUnits(part, cfg.DECIMALS)));
+        this.boulierPot = this.boulierPot.sub(WEI(swoge));
+        l.plein = true; l.cagnotte = swoge;
+        cagnotteGagnee += swoge;
+        payout += swoge;
+      }
+      payout += l.lot;
+      return l;
+    });
+
+    if (cagnotteGagnee > 0) {
+      this.boulierPleins.unshift({ t: Date.now(), addr, nom: p.name, gain: cagnotteGagnee });
+      this.boulierPleins = this.boulierPleins.slice(0, 50);
+    }
+
+    if (payout > 0) {
+      p.balance = p.balance.add(WEI(payout));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(payout));
+      if (payout > mise) p.winsToday++;
+    }
+    this._manche(p, 'boulier', mise, payout);
+
+    return {
+      prix, mise, sortie, lignes, payout, net: payout - mise,
+      cagnotteGagnee, cagnotte: this.boulierPotStr(),
+      pleins: (this.boulierPleins || []).slice(0, 10),
+    };
   }
 
   // ------------------------------------------------------------------ crash

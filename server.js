@@ -109,6 +109,7 @@ function stakedPct() {
  */
 const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo', mines: 'Mines',
                     plinko: 'Plinko', bj: 'Blackjack', smash: 'Smash', spin: 'SWOGE Spin',
+                    boulier: 'Boulier',
                     crash: 'Crash', p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers',
                     paris: 'SWOGE Bet' };
 /* L'image du jeu accompagne l'annonce. Ce sont les MEMES vignettes que sur la
@@ -330,6 +331,11 @@ function charge(ws, rec, extra) {
     minesChoix: cfg.MINES_CHOIX, minesBareme: game.minesBareme(),
     plinkoBaremes: game.plinkoBaremes(), plinkoRangees: cfg.PLINKO_RANGEES,
     plinkoRisque: cfg.PLINKO_RISQUE, plinkoEdgeBps: cfg.PLINKO_EDGE_BPS,
+    /* Le bareme du boulier et la cagnotte partent avec l'etat : la page ne
+       calcule aucune probabilite et n'ecrit aucun lot en dur, sinon les deux
+       finissent par diverger et c'est l'affichage qui a tort juste avant de
+       miser. */
+    boulierBareme: game.boulierBareme(), boulier: game.boulierEtat(),
     // La manche du Crash est en cours quoi qu'il arrive : un joueur qui se
     // connecte a la 4e seconde doit voir la courbe la ou elle en est, pas un
     // ecran vide jusqu'a la manche suivante.
@@ -1336,9 +1342,12 @@ const server = http.createServer(async (req, res) => {
       owedBalances: fmt(bd.balances),        //   player balances
       owedStaked: fmt(bd.staked),            //   staked
       owedPending: fmt(bd.pending),          //   pending stake yield
-      owedJackpot: fmt(bd.jackpot),          //   jackpot reserve
+      owedJackpot: fmt(bd.jackpot),          //   les deux cagnottes progressives
+      owedJackpotPusher: fmt(bd.jackpotPusher),
+      owedJackpotBoulier: fmt(bd.jackpotBoulier),
       ownerSurplus: fmt(pot ? surplus : null), // <-- safe amount you can withdraw
-      jackpot: game.jackpotStr(), totalStaked: fmt(game.totalStaked()),
+      jackpot: game.jackpotStr(), cagnotteBoulier: game.boulierPotStr(),
+      totalStaked: fmt(game.totalStaked()),
       /* Combien de temps le coffre tient au rythme actuel. L'alarme de
          solvabilite ne sonne qu'une fois passe dessous ; ceci previent. */
       autonomie: game.autonomie(pot),
@@ -2067,6 +2076,33 @@ wss.on('connection', (ws) => {
                                              note: `${st.multi.toFixed(2)}× on ${st.ouvertes.length} tile${st.ouvertes.length > 1 ? 's' : ''}, ${st.nbMines} mine${st.nbMines > 1 ? 's' : ''}` });
           send(ws, { type: 'mines', state: st, balance: game.balanceStr(ws.addr),
                      fairness: game.fairness(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+
+      // ---- boulier ----
+      if (m.type === 'boulierEtat') {
+        send(ws, { type: 'boulier', etat: game.boulierEtat(), bareme: game.boulierBareme() });
+        return;
+      }
+      if (m.type === 'boulierJoue') {
+        try {
+          const r = game.boulierJoue(ws.addr, m.grids);
+          persistSoon();
+          /* Un plein s'annonce meme sous le seuil habituel : c'est l'evenement
+             que la page entiere attend, et il tombe une fois sur 190 402. */
+          if (r.cagnotteGagnee > 0) {
+            tg.notifyPhoto(imageJeu('boulier'),
+              `\ud83c\udfb1 <b>BOULIER JACKPOT</b>\n` +
+              `${escHtml(game._p(ws.addr).name)} hit <b>10/10</b> and took ` +
+              `<b>${fmtAmt(String(r.cagnotteGagnee))} $SWOGE</b> \ud83d\udc15`);
+          } else {
+            const best = r.lignes.reduce((a2, l) => (l.n > a2 ? l.n : a2), 0);
+            notifyTableWin(ws.addr, 'boulier', { net: r.net, staked: r.mise, payout: r.payout,
+              note: `${best}/${r.lignes.length > 1 ? '10 on ' + r.lignes.length + ' grids' : '10'}` });
+          }
+          send(ws, { type: 'boulier', manche: r, etat: game.boulierEtat(),
+                     balance: game.balanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }

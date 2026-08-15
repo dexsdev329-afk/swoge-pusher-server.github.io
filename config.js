@@ -596,6 +596,24 @@ module.exports = {
   MINES_CHOIX: (env('MINES_CHOIX', '1,3,5,10,24').split(',')
     .map((x) => parseInt(x.trim(), 10)).filter((x) => x >= 1 && x <= 24)),
 
+  // ---- Boulier ----
+  // Le prix d'UNE grille. Il est FIXE, et c'est la seule facon de rendre la
+  // cagnotte honnete : si la mise variait, un plein a 10 SWOGE emporterait le
+  // meme pot qu'un plein a 1000, alors qu'il l'aurait alimente dix fois moins.
+  // Toutes les autres tables du casino laissent choisir la mise ; celle-ci ne
+  // le peut pas. On joue plusieurs grilles au lieu de miser plus gros.
+  // 100 SWOGE : le prix d'un jeton, accessible, et 190 402 grilles a 5 % font
+  // les 952 012 SWOGE d'un cycle de cagnotte.
+  BOULIER_PRIX: parseInt(env('BOULIER_PRIX', '100'), 10),
+  // Nombre de grilles jouables sur un meme tirage. Elles partagent les 30
+  // boules — c'est un vrai boulier, il ne tourne qu'une fois par manche.
+  BOULIER_GRILLES_MAX: parseInt(env('BOULIER_GRILLES_MAX', '10'), 10),
+  // Ce que la maison met dans le pot le jour de l'ouverture. Ce n'est PAS un
+  // reamorcage recurrent : apres le premier plein le pot se finance seul (le
+  // gagnant emporte 80 %, 20 % restent). Ce million est un cadeau unique, il
+  // ne pese sur la marge que la premiere fois.
+  BOULIER_CAGNOTTE_AMORCE: env('BOULIER_CAGNOTTE_AMORCE', '1000000'),
+
   // ---- Plinko ----
   // Avantage de la maison preleve sur le multiplicateur, comme au Mines : une
   // bille est un coup unique, il n'y a pas de chaine sur laquelle prelever.
