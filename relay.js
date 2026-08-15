@@ -187,6 +187,53 @@ async function adresseDepot(cle, vers, montant) {
     symbole: d.symbole,
     envoie: det.currencyIn ? det.currencyIn.amountFormatted : String(montant),
     recoit: det.currencyOut ? det.currencyOut.amountFormatted : null,
+    /* Les deux cotes en dollars, pas seulement l'arrivee. Le joueur tape un
+       nombre de SOL ou d'ETH : sans le montant de DEPART chiffre, il n'a
+       aucun moyen de savoir s'il vient d'engager dix dollars ou mille, et
+       0,05 ETH ne dit rien a personne. */
+    dollarsEnvoi: det.currencyIn ? det.currencyIn.amountUsd : null,
+    dollars: det.currencyOut ? det.currencyOut.amountUsd : null,
+    secondes: det.timeEstimate || null,
+  };
+}
+
+/**
+ * Ce que vaut un montant, sans rien reserver.
+ *
+ * MEME APPEL que l'adresse de depot, sans `useDepositAddress`. C'est un
+ * chiffrage : Relay cote la route et rend les deux cotes en dollars, mais
+ * n'ouvre aucune adresse. Il fallait cette distinction — le champ se chiffre
+ * a chaque frappe, et ouvrir une adresse de depot par frappe en creerait
+ * trente pour un seul envoi.
+ *
+ * Tout ce qui echoue ici est SANS CONSEQUENCE : la page n'affiche simplement
+ * pas la ligne en dollars. C'est un confort, pas une etape du parcours, et il
+ * ne doit jamais empecher un depot de partir.
+ */
+async function prix(cle, montant) {
+  if (!actif()) { const e = new Error('no relay key'); e.statut = 503; throw e; }
+  const d = DEPUIS[cle];
+  if (!d) { const e = new Error('unknown origin'); e.statut = 400; throw e; }
+  const n = parseFloat(String(montant).replace(',', '.'));
+  if (!(n >= d.min) || !(n <= d.max)) {
+    const e = new Error(`amount must be between ${d.min} and ${d.max} ${d.symbole}`);
+    e.statut = 400; throw e;
+  }
+  const brut = enUnites(montant, d.decimales);
+  if (brut === null) { const e = new Error('bad amount'); e.statut = 400; throw e; }
+
+  const j = await appelle('/quote/v2', {
+    user: d.repere, recipient: d.repere, refundTo: d.repere,
+    originChainId: d.chaine, originCurrency: d.jeton,
+    destinationChainId: RH, destinationCurrency: NATIF,
+    amount: brut, tradeType: 'EXACT_INPUT',
+  });
+  const det = j.details || {};
+  return {
+    symbole: d.symbole,
+    envoie: det.currencyIn ? det.currencyIn.amountFormatted : String(montant),
+    dollarsEnvoi: det.currencyIn ? det.currencyIn.amountUsd : null,
+    recoit: det.currencyOut ? det.currencyOut.amountFormatted : null,
     dollars: det.currencyOut ? det.currencyOut.amountUsd : null,
     secondes: det.timeEstimate || null,
   };
@@ -208,4 +255,4 @@ async function etat(id) {
            tx: (j && j.txHashes && j.txHashes[0]) || null };
 }
 
-module.exports = { actif, provenances, adresseDepot, etat, DEPUIS, enUnites };
+module.exports = { actif, provenances, adresseDepot, prix, etat, DEPUIS, enUnites };

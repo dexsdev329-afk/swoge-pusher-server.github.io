@@ -296,51 +296,62 @@ function sortieVide() {
    double credit, mauvais arrondi, part cagnotte oubliee — se verrait ici et
    nulle part ailleurs.
  *
- * Les trois premieres verifications sont des IDENTITES : elles sont vraies a
- * l'unite pres quelle que soit la chance du tirage, donc elles ne peuvent pas
- * echouer par hasard. C'est ce qu'on veut d'un test de comptabilite.
+ * LE PLEIN EST SEPARE DU RESTE, et ce n'est pas un detail : il tombe une fois
+ * sur 190 402, donc sur 60 000 manches il arrive une fois sur trois. Melange
+ * aux lots fixes, il faisait deux degats a la fois — l'identite comptable
+ * comparait un rendu contenant la cagnotte a un bareme qui ne la paie pas, et
+ * la bande de tolerance de la marge, calculee sur le seul bareme, sautait de
+ * dix-sept points le jour ou il sortait. Le test echouait une execution sur
+ * trois sans qu'aucun bug n'existe.
  *
- * La marge, elle, ne peut etre verifiee que dans une bande — et la bande est
- * LARGE. L'ecart-type du retour d'une grille vaut 15,1 fois la mise (le 9/10
- * paie 1200 et tombe une fois sur 6 664) : sur 60 000 manches la marge mesuree
- * bouge encore de 6 points a un ecart-type. On calcule donc la tolerance a
- * partir du bareme lui-meme, au lieu d'ecrire un chiffre au juge — un test
- * cale trop serre echouerait une fois sur trois sans qu'aucun bug n'existe. */
+ * Les trois premieres verifications sont des IDENTITES : vraies a l'unite pres
+ * quelle que soit la chance du tirage, donc elles ne peuvent pas echouer par
+ * hasard. C'est ce qu'on veut d'un test de comptabilite.
+ *
+ * La marge, elle, ne se verifie que dans une bande, et la bande est LARGE :
+ * l'ecart-type du retour d'une grille vaut 15,1 fois la mise (le 9/10 paie
+ * 1200 et tombe une fois sur 6 664). On calcule donc la tolerance a partir du
+ * bareme lui-meme au lieu d'ecrire un chiffre au juge. */
 {
   const g = neuf(1e9);
   const TOURS = 60000;
-  let mise = 0, rendu = 0;
+  let mise = 0, rendu = 0, cagnotte = 0;
   const hist = new Array(11).fill(0);
   const p0 = pot(g);
   for (let i = 0; i < TOURS; i++) {
     const r = g.boulierJoue(ADR, [G()]);
-    mise += r.mise; rendu += r.payout;
+    mise += r.mise; rendu += r.payout; cagnotte += r.cagnotteGagnee;
     hist[r.lignes[0].n]++;
   }
+  const fixe = rendu - cagnotte;            // ce que le BAREME a paye
 
-  /* 1. Ce qui a ete paye est EXACTEMENT ce que le bareme annonce pour les
-        resultats reellement sortis. Un lot mal branche se voit tout de suite. */
+  /* 1. Le bareme a paye EXACTEMENT ce qu'il annonce pour les resultats
+        reellement sortis. Un lot mal branche se voit tout de suite. */
   let attendu = 0;
   for (let k = 0; k <= 10; k++) attendu += hist[k] * B.lot(k, cfg.BOULIER_PRIX);
-  eq(rendu, attendu, 'chaque manche a paye ce que le bareme annonce');
+  eq(fixe, attendu, 'chaque manche a paye ce que le bareme annonce');
 
-  /* 2. La cagnotte a recu 5 % de tout, ni plus ni moins. */
-  eq(pot(g) - p0, B.partCagnotte(cfg.BOULIER_PRIX) * TOURS, 'la cagnotte a recu 5 % de tout');
+  /* 2. La cagnotte : elle a recu 5 % de tout, et ce qu'elle a verse en est
+        sorti. Le pot d'arrivee est donc entierement determine — y compris les
+        manches ou un plein l'a vide. */
+  const verse = B.partCagnotte(cfg.BOULIER_PRIX) * TOURS;
+  eq(pot(g) - p0, verse - cagnotte, 'pot final = pot initial + 5 % de tout - ce qui a ete gagne');
+  if (cagnotte > 0) ok(hist[10] > 0, 'une cagnotte gagnee vient bien d un plein');
+  eq(hist[10] > 0, cagnotte > 0, 'un plein paie la cagnotte, et rien d autre ne la paie');
 
   /* 3. Aucun jeton n'est apparu ni disparu. */
   eq(sol(g), 1e9 - mise + rendu, 'le solde est exactement mise - rendu');
 
-  /* 4. La marge, dans la bande que la variance autorise. */
-  const versCagnotte = pot(g) - p0;
-  const garde = (mise - rendu - versCagnotte) / mise;
+  /* 4. La marge du BAREME, dans la bande que sa variance autorise. La cagnotte
+        en est exclue des deux cotes : ce qu'elle encaisse ne reste pas a la
+        maison, et ce qu'elle verse ne lui coute rien de plus. */
+  const garde = (mise - fixe - verse) / mise;
   let e1 = 0, e2 = 0;
   for (let k = 0; k <= 10; k++) { const m = B.BAREME[k]; e1 += m * B.chance(k); e2 += m * m * B.chance(k); }
   const sigma = Math.sqrt(e2 - e1 * e1) / Math.sqrt(TOURS);
   const vise = 1 - B.retourTotal();
   ok(Math.abs(garde - vise) < 4 * sigma,
      `marge ${(garde * 100).toFixed(2)} % · visee ${(vise * 100).toFixed(2)} % · tolerance ${(4 * sigma * 100).toFixed(1)} pts`);
-  /* Et sur la duree, la marge visee est bien positive : c'est elle qui compte,
-     pas l'echantillon. */
   ok(vise > 0.09 && vise < 0.11, `la maison garde ${(vise * 100).toFixed(2)} % en esperance`);
 }
 

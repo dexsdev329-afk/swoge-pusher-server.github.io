@@ -845,6 +845,28 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: String(e.message || e).slice(0, 200) }));
     }
   }
+  /* Le chiffrage en dollars du montant saisi. Route SEPAREE de /relay/depot :
+     elle est appelee a chaque frappe (amortie cote page) et ne doit ouvrir
+     aucune adresse de depot. Un echec ici n'est pas une panne — la page
+     n'affiche pas la ligne, et le depot part quand meme. */
+  if (path === '/relay/prix') {
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    res.setHeader('access-control-allow-origin', '*');
+    try {
+      const r = await relay.prix(qs.get('de'), qs.get('montant'));
+      res.writeHead(200, { 'content-type': 'application/json',
+                           /* Quinze secondes : le cours ne bouge pas assez en
+                              quinze secondes pour tromper qui que ce soit, et
+                              ca absorbe les allers-retours d'un joueur qui
+                              corrige son montant chiffre par chiffre. */
+                           'cache-control': 'public, max-age=15' });
+      return res.end(JSON.stringify(r));
+    } catch (e) {
+      const code = e.statut || 502;
+      res.writeHead(code, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: String(e.message || e).slice(0, 200) }));
+    }
+  }
   if (path === '/relay/etat') {
     const qs = new URLSearchParams(req.url.split('?')[1] || '');
     res.setHeader('access-control-allow-origin', '*');
@@ -2153,8 +2175,14 @@ wss.on('connection', (ws) => {
                      balance: game.balanceStr(ws.addr) });
           p4DiffuseLobby();
           /* On previent le canal : une table sans adversaire ne sert a rien, et
-             c'est la seule facon qu'un joueur seul trouve quelqu'un. */
-          tg.notify(`\u2694\ufe0f <b>Connect 4</b>\n${game._p(ws.addr).name} is waiting for an opponent\n` +
+             c'est la seule facon qu'un joueur seul trouve quelqu'un.
+             AVEC L'IMAGE DU JEU, comme les annonces de gain. Une table qui
+             attend est le seul message du canal qui demande une reponse tout
+             de suite — deux lignes de texte au milieu d'annonces illustrees
+             passaient inapercues, et une table que personne ne rejoint finit
+             par etre annulee. */
+          tg.notifyPhoto(imageJeu('p4'),
+                    `\u2694\ufe0f <b>Connect 4</b>\n${escHtml(game._p(ws.addr).name)} is waiting for an opponent\n` +
                     `Stake <b>${fmtAmt(String(partie.mise))} $SWOGE</b> \u00b7 winner takes the pot`);
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
@@ -2234,7 +2262,12 @@ wss.on('connection', (ws) => {
           send(ws, { type: 'duelMatch', match: game.duelEtat(partie.id, Date.now(), ws.addr),
                      balance: game.balanceStr(ws.addr) });
           duelDiffuseLobby(jeu);
-          tg.notify(`\u2694\ufe0f <b>${NOM_DUEL[jeu]}</b>\n${game._p(ws.addr).name} is waiting for an opponent\n` +
+          /* Meme annonce illustree que le Connect 4. La cle du duel EST celle
+             de l'image — 'mp', 'dm', 'mf', 'dc', 'pf' — donc un sixieme jeu
+             ajoute a DUELS_OUVERTS est annonce avec sa vignette sans qu'on
+             touche a cette ligne. */
+          tg.notifyPhoto(imageJeu(jeu),
+                    `\u2694\ufe0f <b>${NOM_DUEL[jeu]}</b>\n${escHtml(game._p(ws.addr).name)} is waiting for an opponent\n` +
                     `Stake <b>${fmtAmt(String(partie.mise))} $SWOGE</b> \u00b7 winner takes the pot`);
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
