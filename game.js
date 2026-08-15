@@ -1476,6 +1476,7 @@ class Game {
     this.parisRegles[matchId] = { t: Date.now(), resultat: String(resultat) };
 
     let paye = 0, gagnants = 0, mise = 0, perdus = 0, attente = 0;
+    let top = null;
     for (const p of this._parisDe(matchId)) {
       if (p.regle) continue;
       const v = this._jugePari(p);
@@ -1489,6 +1490,14 @@ class Game {
         this._bumpDay(q); q.dayNet = q.dayNet.add(WEI(rendu)); q.winsToday++;
         paye += rendu; gagnants++;
       } else perdus++;
+      /* LE PLUS GROS GAGNANT DE CE REGLEMENT. On le retient au passage plutot
+         que de rendre la liste entiere : un match populaire peut regler des
+         centaines de paris, et l'appelant n'a besoin que de celui-la pour
+         l'annoncer. Retenir tout le tableau ferait porter a chaque reglement
+         le poids de son affluence. */
+      if (rendu > 0 && (!top || rendu > top.rendu))
+        top = { addr: p.addr, mise: p.mise, rendu, cote: p.cote,
+                jambes: (p.jambes || []).length || 1 };
       journal.ajoute(p.addr, { k: 'pa', s: 'regle', m: String(p.mise), match: matchId,
                                cote: p.cote, resultat: String(resultat), rendu: String(rendu) });
       this._manche(this._p(p.addr), 'paris', p.mise, rendu);
@@ -1496,7 +1505,7 @@ class Game {
     const r = this.parisRegles[matchId];
     r.gagnants = gagnants; r.paye = paye; r.perdus = perdus; r.attente = attente;
     return { match: matchId, resultat: String(resultat), gagnants, perdus,
-             enAttente: attente, paye, mise, net: mise - paye };
+             enAttente: attente, paye, mise, net: mise - paye, top };
   }
 
   /**

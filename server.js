@@ -72,6 +72,11 @@ const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '?';
    la ou les annonces en ont besoin. */
 const escHtml = (x) => String(x == null ? '' : x)
   .replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+/* fmtAmt abrege — 68.6k. C'est ce qu'il faut pour une annonce de gain, ou
+   l'ordre de grandeur suffit. Un BULLETIN, lui, se lit au jeton pres : « peut
+   rapporter 39.8k » quand le ticket dit 39 774 fait douter du chiffre, et un
+   pari se prend sur un chiffre exact. Les paris sportifs utilisent celui-ci. */
+const fmtExact = (n) => Math.round(Number(n) || 0).toLocaleString('en-US');
 const fmtAmt = (s) => { const n = parseFloat(s || '0'); return n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : n.toFixed(n < 1 ? 4 : 0); };
 function stakedPct() {
   if (!supplyWei || supplyWei.isZero()) return null;
@@ -99,7 +104,8 @@ function stakedPct() {
  */
 const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo', mines: 'Mines',
                     plinko: 'Plinko', bj: 'Blackjack', smash: 'Smash', spin: 'SWOGE Spin',
-                    crash: 'Crash', p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers' };
+                    crash: 'Crash', p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers',
+                    paris: 'SWOGE Bet' };
 /* L'image du jeu accompagne l'annonce. Ce sont les MEMES vignettes que sur la
    page des jeux, extraites une fois dans media/ : une annonce illustree se
    remarque dans un canal, et celle qui montre la table dont on parle se
@@ -139,33 +145,99 @@ function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
  */
 const NOM_ISSUE   = { '1': 'Home', 'N': 'Draw', '2': 'Away' };
 const NOM_ISSUE_2 = { '1': 'Player 1', '2': 'Player 2' };   // tennis, NBA : pas de domicile
+const ICONE_SPORT = { foot: '⚽', tennis: '🎾', nba: '🏀' };
+
+/* L'HEURE DU COUP D'ENVOI FAIT LA DIFFERENCE ENTRE UNE ANNONCE ET UN BULLETIN.
+   Quelqu'un qui lit le canal peut encore prendre le meme pari — mais seulement
+   si le match n'a pas commence. Sans l'heure, il doit ouvrir la page pour le
+   savoir. On l'ecrit en UTC : le canal est international, une heure locale
+   serait celle du serveur et de personne d'autre. */
+function heureMatch(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const j = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
+  const mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()];
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  const auj = new Date();
+  const memeJour = d.getUTCFullYear() === auj.getUTCFullYear() && d.getUTCMonth() === auj.getUTCMonth()
+                && d.getUTCDate() === auj.getUTCDate();
+  return memeJour ? `today ${hh}:${mm} UTC` : `${j} ${d.getUTCDate()} ${mo}, ${hh}:${mm} UTC`;
+}
 
 function notifyBetPlaced(addr, pari) {
   if (!pari || !(pari.mise >= cfg.NOTIFY_BET_MIN)) return;
   const jambes = pari.jambes || [];
   const n = jambes.length;
 
+  /* Deux lignes par selection : l'affiche, puis le pari. Sur huit jambes, une
+     seule ligne par selection depasse la largeur d'un telephone et se replie
+     n'importe ou — la deuxieme ligne est ce qui rend la liste lisible. */
   const ligne = (j) => {
     const m = paris.match(j.match);
     if (!m) return null;
     const deux = (m.issues || []).length === 2;
     const nom = (deux ? NOM_ISSUE_2 : NOM_ISSUE)[j.choix] || j.choix;
-    return `• ${escHtml(m.domicile)} – ${escHtml(m.exterieur)} · <b>${escHtml(nom)}</b> @ ${Number(j.cote).toFixed(2)}`;
+    const ic = ICONE_SPORT[m.sport] || '•';
+    const quand = heureMatch(m.debut);
+    return `${ic} <b>${escHtml(m.domicile)} – ${escHtml(m.exterieur)}</b>` +
+           (m.competition ? `  <i>${escHtml(m.competition)}</i>` : '') + '\n' +
+           `      ${escHtml(nom)} @ ${Number(j.cote).toFixed(2)}` + (quand ? ` · ${quand}` : '');
   };
 
   let lignes = jambes.map(ligne).filter(Boolean);
-  const LIMITE = 700;                        // on garde de la marge sous les 1024
+  /* La legende d'une photo Telegram est bornee a 1024 caracteres, et l'API
+     refuse TOUT le message au-dela. On coupe la liste et on annonce ce qu'on a
+     coupe, plutot que de laisser croire au combine entier. */
+  const LIMITE = 720;
   let coupees = 0;
   while (lignes.join('\n').length > LIMITE && lignes.length > 1) { lignes.pop(); coupees++; }
-  if (coupees) lignes.push(`• … et ${coupees} autre${coupees > 1 ? 's' : ''} selection${coupees > 1 ? 's' : ''}`);
+  if (coupees) lignes.push(`      … and ${coupees} more selection${coupees > 1 ? 's' : ''}`);
 
-  const titre = n > 1 ? `Accumulator · ${n} selections` : 'Single bet';
+  const titre = n > 1 ? `${n}-fold accumulator` : 'Single bet';
+  const benefice = Math.max(0, Math.round(pari.rapport - pari.mise));
   tg.notifyPhoto(imageJeu('paris'),
-    `🎟️ <b>SWOGE Bet</b> — ${titre}\n` +
-    `${escHtml(game._p(addr).name)} just placed a bet 🐕\n\n` +
+    `🎟️ <b>SWOGE BET</b> · ${titre}\n` +
+    `<b>${escHtml(game._p(addr).name)}</b> just placed a bet\n\n` +
     lignes.join('\n') + '\n\n' +
-    `Odds <b>${Number(pari.cote).toFixed(2)}</b> · stake <b>${fmtAmt(String(pari.mise))} $SWOGE</b>\n` +
-    `Could return <b>${fmtAmt(String(pari.rapport))} $SWOGE</b>`);
+    `Total odds <b>${Number(pari.cote).toFixed(2)}</b>\n` +
+    `Stake <b>${fmtExact(pari.mise)} $SWOGE</b>\n` +
+    `Returns <b>${fmtExact(pari.rapport)} $SWOGE</b> <i>(+${fmtExact(benefice)})</i>`);
+}
+
+/* ------------------------------------------------- un match vient de tomber
+ *
+ * Le canal annoncait la POSE et jamais l'issue : on voyait partir des combines
+ * a trente fois la mise sans jamais savoir ce qu'ils etaient devenus. Une
+ * moitie d'histoire ne tient pas un canal.
+ *
+ * UNE ANNONCE PAR MATCH REGLE, PAS UNE PAR PARI. Un match populaire regle des
+ * centaines de bulletins ; les annoncer un par un noierait le canal le temps
+ * d'un coup de sifflet. On donne le total et le plus gros gagnant — c'est ce
+ * qu'un tableau d'affichage montre.
+ *
+ * ET SEULEMENT S'IL Y A UN GAGNANT. Le canal ne publie que des gains ; un
+ * « personne n'a gagne » repete a chaque match serait du bruit, et ce n'est
+ * pas le genre de nouvelle qu'on va chercher.
+ */
+function notifyBetsSettled(r) {
+  if (!r || !(r.gagnants > 0)) return;
+  const m = paris.match(r.match);
+  const deux = m && (m.issues || []).length === 2;
+  const issue = (deux ? NOM_ISSUE_2 : NOM_ISSUE)[r.resultat] || r.resultat;
+  const affiche = m ? `${escHtml(m.domicile)} – ${escHtml(m.exterieur)}` : escHtml(r.match);
+  const ic = (m && ICONE_SPORT[m.sport]) || '✅';
+
+  let txt = `${ic} <b>SWOGE BET</b> · full time\n` +
+            `<b>${affiche}</b> — ${escHtml(issue)}\n\n` +
+            `${r.gagnants} winning bet${r.gagnants > 1 ? 's' : ''} · ` +
+            `<b>${fmtExact(r.paye)} $SWOGE</b> paid out`;
+  if (r.top) {
+    const t = r.top;
+    txt += `\nBiggest: <b>${escHtml(game._p(t.addr).name)}</b> +${fmtExact(t.rendu - t.mise)} $SWOGE` +
+           ` · ${t.jambes > 1 ? t.jambes + '-fold' : 'single'} @ ${Number(t.cote).toFixed(2)}`;
+  }
+  tg.notifyPhoto(imageJeu('paris'), txt);
 }
 
 /* Le robinet de developpement ne s'ouvre QUE sur un serveur sans chaine. Un
@@ -1145,6 +1217,7 @@ const server = http.createServer(async (req, res) => {
         ? game.regleMatch(q.get('match'), q.get('resultat'))
         : game.rembourseMatch(q.get('match'));
       persist();
+      if (path === '/paris/regle') notifyBetsSettled(r);
       console.log('[paris]', JSON.stringify(r));
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(r));
