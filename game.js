@@ -2698,6 +2698,49 @@ class Game {
    */
   static rangDe(carte) { return ((Number(carte) || 0) % 13 + 13) % 13; }
   static enseigneDe(carte) { return Math.floor(((Number(carte) || 0) % 52 + 52) % 52 / 13); }
+  /* L'ordre des enseignes est celui des planches de la page : 0 coeur,
+     1 carreau, 2 trefle, 3 pique. Les deux premieres sont rouges. Perfect
+     Pairs distingue trois paliers et c'est la SEULE chose qui les separe. */
+  static couleurDe(carte) { return Game.enseigneDe(carte) < 2 ? 0 : 1; }
+
+  /* ---------------------------------------------------- LES PARIS ANNEXES
+   *
+   * Les deux premiers se jouent AVANT la donne et se resolvent DES la donne :
+   * ils ne lisent que les deux cartes du joueur et la carte VISIBLE du
+   * croupier. Aucun des deux ne touche a la carte cachee, donc les payer tout
+   * de suite ne revele rien — c'est ce qui permet de les regler avant meme
+   * que le joueur ait tire.
+   *
+   * L'assurance, elle, est d'une autre nature : elle se propose APRES la donne,
+   * uniquement sur un As decouvert, et elle PARIE sur la carte cachee. Elle a
+   * donc son propre temps de jeu (l'etape 'insurance'), et pas une case a
+   * remplir avant de distribuer.
+   *
+   * Les deux fonctions ci-dessous sont pures : elles ne lisent que des cartes.
+   * C'est ce qui les rend mesurables a un million de coups sans lancer une
+   * seule partie — voir bj_annexes.test.js.
+   */
+  /** Perfect Pairs : les deux cartes du joueur. null si ce n'est pas une paire. */
+  static ppRang(a, b) {
+    if (Game.rangDe(a) !== Game.rangDe(b)) return null;
+    if (Game.enseigneDe(a) === Game.enseigneDe(b)) return 'parfaite';
+    if (Game.couleurDe(a) === Game.couleurDe(b)) return 'couleur';
+    return 'mixte';
+  }
+  /** 21+3 : les deux cartes du joueur et la carte visible du croupier. */
+  static tp3Rang(a, b, c) {
+    const r = [a, b, c].map(Game.rangDe).sort((x, y) => x - y);
+    const memeEnseigne = Game.enseigneDe(a) === Game.enseigneDe(b) && Game.enseigneDe(b) === Game.enseigneDe(c);
+    if (r[0] === r[1] && r[1] === r[2]) return memeEnseigne ? 'brelanServi' : 'brelan';
+    /* L'As vaut UN ou QUATORZE : A-2-3 se lit tel quel (rangs 0,1,2), mais
+       D-R-A se trie en 0,11,12 et demande son propre cas. L'oublier retirerait
+       une suite sur douze au joueur, silencieusement. */
+    const suite = (r[0] + 1 === r[1] && r[1] + 1 === r[2]) || (r[0] === 0 && r[1] === 11 && r[2] === 12);
+    if (suite && memeEnseigne) return 'quinteFlush';
+    if (memeEnseigne) return 'couleur';
+    if (suite) return 'quinte';
+    return null;
+  }
 
   _bjDraw(p) {
     const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':bj:' + p.nonce).digest('hex');
@@ -2712,17 +2755,115 @@ class Game {
     return sum;
   }
   _bjDealerPlay(p) { while (this._bjVal(p.bj.dc) < 17) p.bj.dc.push(this._bjDraw(p)); }
+  /* Une main COMMENCEE AVANT ce deploiement — ou relue d'une sauvegarde — n'a
+     pas de case annexe. On la lui donne, vide, plutot que de laisser chaque
+     lecteur tester l'existence du champ : c'est le meme choix qu'a l'arrivee
+     des enseignes, on ne casse pas une main en cours. */
+  static _bjAnn(b) {
+    if (!b.ann) b.ann = {};
+    for (const k of ['pp', 'tp', 'ins']) if (!b.ann[k]) b.ann[k] = { mise: 0, rang: null, gain: 0 };
+    return b.ann;
+  }
   _bjPublic(p, reveal) {
     const b = p.bj, show = reveal || b.stage === 'done';
+    Game._bjAnn(b);
     return {
       bet: b.bet, doubled: !!b.doubled, stage: b.stage,
       player: { cards: b.pc.slice(), value: this._bjVal(b.pc) },
       dealer: { cards: show ? b.dc.slice() : [b.dc[0]], value: show ? this._bjVal(b.dc) : this._bjVal([b.dc[0]]), hidden: !show },
       canDouble: b.stage === 'player' && b.pc.length === 2 && p.balance.gte(WEI(b.bet)),
       result: b.result || null, payout: b.payout || 0,
+      /* Les annexes voyagent toujours, meme vides : la page peut alors les
+         peindre sans se demander si le champ existe. */
+      annexes: {
+        pp:  { mise: b.ann.pp.mise,  rang: b.ann.pp.rang,  gain: b.ann.pp.gain },
+        tp:  { mise: b.ann.tp.mise,  rang: b.ann.tp.rang,  gain: b.ann.tp.gain },
+        ins: { mise: b.ann.ins.mise, rang: b.ann.ins.rang, gain: b.ann.ins.gain },
+      },
+      /* Ce que le joueur a le droit de poser sur l'assurance, MAINTENANT. La
+         page ne recalcule pas la moitie de la mise dans son coin : elle
+         afficherait un maximum que le serveur refuse des que le solde manque. */
+      insuranceMax: b.stage === 'insurance' ? this._bjAssuranceMax(p) : 0,
       balance: ethers.utils.formatUnits(p.balance, cfg.DECIMALS),
       fairness: { serverSeedHash: this.serverSeedHash, nonce: p.nonce },
     };
+  }
+  /** Mise annexe acceptable, ou l'erreur exacte qui dit pourquoi elle ne l'est pas. */
+  _bjMiseAnnexe(v, nom) {
+    if (v == null || v === '') return 0;
+    const m = Math.floor(Number(v));
+    if (!isFinite(m) || m < 0) throw new Error('bad ' + nom + ' side bet');
+    if (m === 0) return 0;
+    if (m > cfg.BJ_SIDE_MAX_BET) throw new Error('side bets are capped at ' + cfg.BJ_SIDE_MAX_BET + ' $SWOGE');
+    return m;
+  }
+  _bjAssuranceMax(p) {
+    const moitie = Math.floor(p.bj.bet / 2);
+    const solde = Math.floor(Number(ethers.utils.formatUnits(p.balance, cfg.DECIMALS)));
+    return Math.max(0, Math.min(moitie, solde));
+  }
+  /** Credite un pari annexe et l'inscrit sous son propre nom de jeu. */
+  _bjPaieAnnexe(p, cle, jeu, rang, mult) {
+    const a = Game._bjAnn(p.bj)[cle];
+    if (!(a.mise > 0)) return;
+    a.rang = rang;
+    a.gain = rang ? a.mise * (mult + 1) : 0;
+    if (a.gain > 0) {
+      p.balance = p.balance.add(WEI(a.gain));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(a.gain)); p.winsToday++;
+    }
+    /* Chaque annexe tient SON compte, sous son propre nom. Les noyer dans
+       « bj » cacherait exactement ce qu'on a besoin de surveiller : une table
+       de gain trop genereuse se voit sur la ligne du pari concerne, pas sur
+       celle de la main principale qui, elle, est saine. */
+    this._manche(p, jeu, a.mise, a.gain);
+  }
+  /* Les deux annexes d'avant-donne, reglees d'un coup. Elles ne lisent que
+     pc[0], pc[1] et dc[0] : la carte cachee n'entre pas dans le calcul. */
+  _bjResoutAnnexes(p) {
+    const b = p.bj; Game._bjAnn(b);
+    if (b.ann.pp.mise > 0) {
+      const rang = Game.ppRang(b.pc[0], b.pc[1]);
+      this._bjPaieAnnexe(p, 'pp', 'bj_pp', rang, rang ? cfg.BJ_PP_PAY[rang] : 0);
+    }
+    if (b.ann.tp.mise > 0) {
+      const rang = Game.tp3Rang(b.pc[0], b.pc[1], b.dc[0]);
+      this._bjPaieAnnexe(p, 'tp', 'bj_213', rang, rang ? cfg.BJ_213_PAY[rang] : 0);
+    }
+  }
+  /* Les naturels. Extrait de bjBet parce que l'assurance s'intercale avant :
+     sur un As decouvert, on demande d'abord au joueur, ON REGARDE ENSUITE. */
+  _bjNaturels(p) {
+    const b = p.bj, amt = b.bet, w = WEI(amt);
+    const pv = this._bjVal(b.pc), dv = this._bjVal(b.dc);
+    if (pv !== 21 && dv !== 21) { b.stage = 'player'; return; }
+    if (pv === 21 && dv === 21) {
+      b.stage = 'done'; b.result = 'push'; b.payout = amt;
+      p.balance = p.balance.add(w); this._bumpDay(p); p.dayNet = p.dayNet.add(w);
+      this._manche(p, 'bj', amt, amt);
+    } else if (pv === 21) {
+      const credit = amt * 2.5;
+      p.balance = p.balance.add(WEI(credit)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(credit)); p.winsToday++;
+      b.stage = 'done'; b.result = 'blackjack'; b.payout = credit;
+      this._manche(p, 'bj', amt, credit);
+    } else {
+      b.stage = 'done'; b.result = 'dealer_blackjack'; b.payout = 0;
+      this._manche(p, 'bj', amt, 0);
+    }
+  }
+  /* L'assurance non repondue vaut REFUS. Un client qui ignore l'etape (une
+     page pas encore rechargee, un script tiers) doit pouvoir tirer ou rester
+     comme avant : sans ca, sa main resterait ouverte pour toujours et il ne
+     pourrait plus miser.
+     Rend vrai quand ce refus a TERMINE la main — le croupier avait son
+     blackjack. Le geste demande n'a alors plus lieu d'etre, et ce n'est pas
+     une faute du joueur : on lui rend l'etat final au lieu d'une erreur. Le
+     signal est volontairement etroit : rester sur une main deja finie AUTREMENT
+     reste une erreur, et l'audit y tient. */
+  _bjPasseAssurance(addr, p) {
+    if (!p.bj || p.bj.stage !== 'insurance') return false;
+    this.bjInsure(addr, 0);
+    return p.bj.stage === 'done';
   }
   _bjSettle(p, stake) {   // stake already deducted; credit the return
     const pv = this._bjVal(p.bj.pc), dv = this._bjVal(p.bj.dc);
@@ -3686,27 +3827,64 @@ class Game {
     this._manche(this._p(addr), 'poker', m, Number(rendu) || 0);
   }
 
-  bjBet(addr, amountRaw) {
+  /**
+   * @param annexes {pp, tp} — les mises annexes d'avant-donne, en $SWOGE.
+   *
+   * TOUT EST DEBITE AVANT LE PREMIER TIRAGE. Debiter la main, distribuer, puis
+   * decouvrir que l'annexe ne passe pas laisserait une main jouee sur une mise
+   * que le joueur n'a pas les moyens de tenir. On refuse d'abord, on donne
+   * ensuite — et le refus ne consomme aucun jeton de la suite provably-fair.
+   */
+  bjBet(addr, amountRaw, annexes) {
     const p = this._p(addr);
     if (p.bj && p.bj.stage !== 'done') throw new Error('hand in progress');
     const amt = Math.floor(Number(amountRaw));
     if (!(amt >= cfg.BJ_MIN_BET)) throw new Error('bet too small');
     if (amt > cfg.BJ_MAX_BET) throw new Error('max bet is ' + cfg.BJ_MAX_BET + ' $SWOGE');
-    const w = WEI(amt);
+    const pp = this._bjMiseAnnexe(annexes && annexes.pp, 'perfect pairs');
+    const tp = this._bjMiseAnnexe(annexes && annexes.tp, '21+3');
+    const w = WEI(amt + pp + tp);
     if (p.balance.lt(w)) throw new Error('not enough $SWOGE');
     p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); p.dropsToday++; this._markWager(p, w, 'bj');
-    p.bj = { bet: amt, pc: [this._bjDraw(p), this._bjDraw(p)], dc: [this._bjDraw(p), this._bjDraw(p)], stage: 'player', doubled: false, result: null, payout: 0 };
-    const pv = this._bjVal(p.bj.pc), dv = this._bjVal(p.bj.dc);
-    if (pv === 21 || dv === 21) {
-      if (pv === 21 && dv === 21) { p.bj.stage = 'done'; p.bj.result = 'push'; p.balance = p.balance.add(w); this._bumpDay(p); p.dayNet = p.dayNet.add(w); p.bj.payout = amt; this._manche(p, 'bj', amt, amt); }
-      else if (pv === 21) { const credit = amt * 2.5; p.balance = p.balance.add(WEI(credit)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(credit)); p.winsToday++; p.bj.stage = 'done'; p.bj.result = 'blackjack'; p.bj.payout = credit; this._manche(p, 'bj', amt, credit); }
-      else { p.bj.stage = 'done'; p.bj.result = 'dealer_blackjack'; p.bj.payout = 0; this._manche(p, 'bj', amt, 0); }
+    p.bj = { bet: amt, pc: [this._bjDraw(p), this._bjDraw(p)], dc: [this._bjDraw(p), this._bjDraw(p)], stage: 'player', doubled: false, result: null, payout: 0,
+             ann: { pp: { mise: pp, rang: null, gain: 0 }, tp: { mise: tp, rang: null, gain: 0 }, ins: { mise: 0, rang: null, gain: 0 } } };
+    this._bjResoutAnnexes(p);
+    /* L'ASSURANCE PASSE AVANT LE NATUREL DU CROUPIER. C'est tout son interet :
+       on la propose sans savoir, et le tour d'apres on regarde. Verifier le
+       blackjack du croupier d'abord la viderait de son sens. */
+    if (Game.rangDe(p.bj.dc[0]) === 0 && this._bjAssuranceMax(p) > 0) p.bj.stage = 'insurance';
+    else this._bjNaturels(p);
+    return this._bjPublic(p, p.bj.stage === 'done');
+  }
+
+  /**
+   * L'assurance. Se propose sur un As decouvert, se borne a la moitie de la
+   * main, paie 2:1 si la carte cachee vaut dix. Zero = refus, et refuser est
+   * une reponse valide qui fait avancer la main.
+   */
+  bjInsure(addr, amountRaw) {
+    const p = this._p(addr);
+    if (!p.bj || p.bj.stage !== 'insurance') throw new Error('no insurance to take');
+    const max = this._bjAssuranceMax(p);
+    const m = Math.floor(Number(amountRaw) || 0);
+    if (m < 0) throw new Error('bad insurance');
+    if (m > max) throw new Error('insurance is at most half your bet');
+    if (m > 0) {
+      const w = WEI(m);
+      p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); this._markWager(p, w, 'bj');
+      Game._bjAnn(p.bj).ins.mise = m;
+      /* On lit la carte cachee ICI, pour l'assurance seulement. Elle reste
+         cachee dans l'etat public : _bjPublic ne la revele qu'a 'done'. */
+      const naturel = this._bjVal(p.bj.dc) === 21;
+      this._bjPaieAnnexe(p, 'ins', 'bj_ins', naturel ? 'payee' : null, cfg.BJ_INS_PAY);
     }
+    this._bjNaturels(p);
     return this._bjPublic(p, p.bj.stage === 'done');
   }
 
   bjHit(addr) {
     const p = this._p(addr);
+    if (this._bjPasseAssurance(addr, p)) return this._bjPublic(p, true);
     if (!p.bj || p.bj.stage !== 'player') throw new Error('no active hand');
     p.bj.pc.push(this._bjDraw(p));
     if (this._bjVal(p.bj.pc) > 21) this._bjSettle(p, p.bj.doubled ? p.bj.bet * 2 : p.bj.bet);
@@ -3715,6 +3893,7 @@ class Game {
 
   bjStand(addr) {
     const p = this._p(addr);
+    if (this._bjPasseAssurance(addr, p)) return this._bjPublic(p, true);
     if (!p.bj || p.bj.stage !== 'player') throw new Error('no active hand');
     this._bjDealerPlay(p);
     this._bjSettle(p, p.bj.doubled ? p.bj.bet * 2 : p.bj.bet);
@@ -3723,6 +3902,7 @@ class Game {
 
   bjDouble(addr) {
     const p = this._p(addr);
+    if (this._bjPasseAssurance(addr, p)) return this._bjPublic(p, true);
     if (!p.bj || p.bj.stage !== 'player' || p.bj.pc.length !== 2) throw new Error('cannot double now');
     const w = WEI(p.bj.bet);
     if (p.balance.lt(w)) throw new Error('not enough to double');

@@ -152,6 +152,11 @@ function charge(ws, rec, extra) {
        page les cadenassait en dur a quatre endroits : changer la limite
        demandait deux depots au lieu d'une variable. */
     bjMin: cfg.BJ_MIN_BET, bjMax: cfg.BJ_MAX_BET,
+    /* Le plafond annexe et les tables de gain suivent le meme chemin : la page
+       affiche « 25:1 » parce que le serveur paie 25:1, pas parce qu'un
+       graphiste l'a ecrit dans une image. */
+    bjSideMax: cfg.BJ_SIDE_MAX_BET,
+    bjPay: { pp: cfg.BJ_PP_PAY, tp: cfg.BJ_213_PAY, ins: cfg.BJ_INS_PAY },
     hiloEdgeBps: cfg.HILO_EDGE_BPS,
     minesEdgeBps: cfg.MINES_EDGE_BPS, minesDefaut: cfg.MINES_DEFAUT,
     minesChoix: cfg.MINES_CHOIX, minesBareme: game.minesBareme(),
@@ -1484,21 +1489,29 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
-      if (m.type === 'bj_bet' || m.type === 'bj_hit' || m.type === 'bj_stand' || m.type === 'bj_double') {
+      if (m.type === 'bj_bet' || m.type === 'bj_hit' || m.type === 'bj_stand' || m.type === 'bj_double' || m.type === 'bj_insure') {
         // SWOGE Blackjack — same shared balance, provably-fair, server-authoritative.
         try {
           let st;
-          if (m.type === 'bj_bet') st = game.bjBet(ws.addr, m.amount);
+          if (m.type === 'bj_bet') st = game.bjBet(ws.addr, m.amount, m.annexes);
+          else if (m.type === 'bj_insure') st = game.bjInsure(ws.addr, m.amount);
           else if (m.type === 'bj_hit') st = game.bjHit(ws.addr);
           else if (m.type === 'bj_stand') st = game.bjStand(ws.addr);
           else st = game.bjDouble(ws.addr);
           persistSoon();
           /* La mise engagee vaut le double quand la main a ete doublee : sans
-             ca l'annonce compterait la seconde mise comme du benefice. */
+             ca l'annonce compterait la seconde mise comme du benefice. Les
+             paris annexes entrent dans le meme compte — un 21+3 a cent fois la
+             mise est precisement ce que la table a envie de voir passer, et
+             l'annoncer sans sa mise en gonflerait le net. */
           if (st.stage === 'done') {
-            const engage = st.doubled ? st.bet * 2 : st.bet;
-            notifyTableWin(ws.addr, 'bj', { net: st.payout - engage, staked: engage,
-                                            payout: st.payout, note: st.result });
+            const a = st.annexes || {};
+            const miseAnn = (a.pp ? a.pp.mise : 0) + (a.tp ? a.tp.mise : 0) + (a.ins ? a.ins.mise : 0);
+            const gainAnn = (a.pp ? a.pp.gain : 0) + (a.tp ? a.tp.gain : 0) + (a.ins ? a.ins.gain : 0);
+            const engage = (st.doubled ? st.bet * 2 : st.bet) + miseAnn;
+            const rendu = st.payout + gainAnn;
+            notifyTableWin(ws.addr, 'bj', { net: rendu - engage, staked: engage,
+                                            payout: rendu, note: st.result });
           }
           send(ws, { type: 'bj', state: st });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
