@@ -2670,12 +2670,42 @@ class Game {
 
   // ===== SWOGE Blackjack (provably-fair, infinite deck, dealer stands on 17) =====
   // rank index: 0=A, 1..8 = 2..9, 9=10, 10=J, 11=Q, 12=K
+  /* ---- LA CARTE PORTE SON ENSEIGNE ----
+   *
+   * Le tirage rendait un RANG (0..12) et la page inventait l'enseigne dans le
+   * navigateur, a partir d'un sel local. Deux consequences :
+   *
+   *   • un joueur qui verifie l'equite ne pouvait pas reconstituer sa main
+   *     TELLE QU'IL L'AVAIT VUE — les piques affiches n'existaient nulle part
+   *     sur le serveur ;
+   *   • aucun pari annexe n'etait constructible. Perfect Pairs et 21+3
+   *     demandent l'enseigne, et les batir sur celle du navigateur aurait
+   *     laisse le joueur recharger la page jusqu'a tomber sur une paire
+   *     parfaite a 25:1.
+   *
+   * La carte est un nombre de 0 a 51 : rang = n % 13, enseigne = n / 13. Le
+   * tirage consomme le meme jeton de la suite provably-fair qu'avant, seule
+   * l'interpretation change — les graines deja publiees restent verifiables.
+   *
+   * LES MAINS EN COURS AU DEPLOIEMENT portent des valeurs 0..12 : elles se
+   * relisent comme des cartes d'enseigne 0. Faux, mais jouable — on ne casse
+   * pas une main en cours pour une enseigne.
+   *
+   * ATTENTION A QUI LIT UNE CARTE : tout code qui comparait la valeur brute a
+   * un rang (« r >= 9 donc c'est une figure ») doit passer par rangDe. C'est
+   * exactement ce qui a fait tomber bj_audit.test.js au premier essai, et le
+   * defaut etait dans le test, pas ici.
+   */
+  static rangDe(carte) { return ((Number(carte) || 0) % 13 + 13) % 13; }
+  static enseigneDe(carte) { return Math.floor(((Number(carte) || 0) % 52 + 52) % 52 / 13); }
+
   _bjDraw(p) {
     const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':bj:' + p.nonce).digest('hex');
     p.nonce++;
-    return Number(BigInt('0x' + h.slice(0, 15)) % BigInt(13));
+    return Number(BigInt('0x' + h.slice(0, 15)) % BigInt(52));
   }
-  _bjVal(ranks) {
+  _bjVal(cartes) { return this._bjValRangs((cartes || []).map(Game.rangDe)); }
+  _bjValRangs(ranks) {
     let sum = 0, aces = 0;
     for (const r of ranks) { if (r === 0) { sum += 11; aces++; } else if (r >= 9) sum += 10; else sum += r + 1; }
     while (sum > 21 && aces) { sum -= 10; aces--; }

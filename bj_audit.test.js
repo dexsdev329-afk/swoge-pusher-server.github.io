@@ -24,6 +24,16 @@ function neuf(credit = 10000000) {
 }
 
 /** Valeur d'une main, meme regle que le moteur. */
+/* ---- LE SERVEUR REND DES CARTES, PAS DES RANGS ----
+   Depuis que le paquet porte ses enseignes, une carte vaut 0..51. Les aides
+   ci-dessous raisonnent en RANGS (« r >= 9 donc c'est une figure ») : leur
+   passer une carte brute ferait compter dix a presque toutes, la strategie
+   simulee deviendrait absurde et le rendement mesure s'effondrerait. Ce
+   fichier a effectivement chute a 86,8 % avant cette conversion — et c'etait
+   lui qui avait tort, pas le moteur. */
+const rang = (c) => ((Number(c) || 0) % 13 + 13) % 13;
+const rangs = (cs) => (cs || []).map(rang);
+
 function val(ranks) {
   let s = 0, as = 0;
   for (const r of ranks) { if (r === 0) { s += 11; as++; } else if (r >= 9) s += 10; else s += r + 1; }
@@ -60,7 +70,9 @@ function joue({ parties, mise, strategie, triche }) {
     while (st.stage === 'player') {
       // le tricheur change sa graine AVANT chaque tirage
       if (triche) g.setClientSeed(ADR, 'triche-' + i + '-' + st.player.cards.length);
-      const a = strategie(st.player.cards, st.dealer.cards[0], st);
+      /* On convertit ICI, au seul endroit ou les cartes du serveur entrent
+         dans les aides : elles raisonnent en rangs. */
+      const a = strategie(rangs(st.player.cards), rang(st.dealer.cards[0]), st);
       if (a === 'double' && st.canDouble) { st = g.bjDouble(ADR); engage += mise; }
       else if (a === 'hit') st = g.bjHit(ADR);
       else st = g.bjStand(ADR);
