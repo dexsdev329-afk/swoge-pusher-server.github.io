@@ -24,6 +24,7 @@ const hilo = require('./hilo');
 const mines = require('./mines');
 const plinko = require('./plinko');
 const boulier = require('./boulier');
+const { Salle: BoulierSalle } = require('./boulier_salle');
 const crash = require('./crash');
 const p4 = require('./puissance4');
 /* Les trois duels partagent la meme interface de moteur : une Partie qui sait
@@ -63,6 +64,13 @@ class Game {
        payer un plein a 90 boules avec l'argent des pieces poussees. */
     this.boulierPot = WEI(cfg.BOULIER_CAGNOTTE_AMORCE);
     this.boulierPleins = [];   // les derniers pleins, pour la page et l'admin
+    /* La salle : un tirage, tout le monde dessus. Elle ne connait ni les
+       soldes ni les sockets — elle compte le temps et tire. */
+    this.boulierSalle = new BoulierSalle({
+      graine: cfg.BOULIER_GRAINE || undefined,
+      attenteMs: cfg.BOULIER_ATTENTE_MS, tirageMs: cfg.BOULIER_TIRAGE_MS,
+      apresMs: cfg.BOULIER_APRES_MS,
+    });
     /* Secret des jetons de session. Il vit avec l'etat : sans ca, chaque
        redeploiement deconnecterait tous les joueurs d'un coup. */
     this.sessionSecret = cfg.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
@@ -228,6 +236,7 @@ class Game {
              jackpotPot: this.jackpotPot.toString(),
              boulierPot: this.boulierPot.toString(),
              boulierPleins: this.boulierPleins || [],
+             boulierSalle: this.boulierSalle.sauve(),
              crashGraine: this.crashGraine, crash: this.crash.sauve(),
              fraisCumules: (this.fraisCumules || BN(0)).toString(),
              brule: (this.brule || BN(0)).toString(), brulages: this.brulages || [],
@@ -307,6 +316,12 @@ class Game {
     if (st.boulierPot !== undefined && st.boulierPot !== null)
       this.boulierPot = ethers.BigNumber.from(st.boulierPot);
     if (Array.isArray(st.boulierPleins)) this.boulierPleins = st.boulierPleins;
+    /* La salle reprend son NUMERO DE MAILLON, pas ses joueurs. Un maillon
+       rejoue serait deux manches identiques ; une manche a moitie inscrite dont
+       tout le monde a ete deconnecte n'a plus d'arbitre. La fenetre
+       d'inscription dure dix secondes, l'exposition est donc de dix secondes —
+       la meme que celle du Crash, qui fait pareil depuis toujours. */
+    if (st.boulierSalle) this.boulierSalle.charge(st.boulierSalle);
     /* La graine d'environnement l'emporte, comme pour le secret de session :
        c'est ainsi qu'on repart sur une chaine neuve volontairement. Sinon on
        reprend celle de l'etat, et l'index sauve evite de rejouer un maillon
@@ -3429,87 +3444,113 @@ class Game {
   /** La cagnotte en SWOGE lisibles, comme jackpotStr() pour le Coin Pusher. */
   boulierPotStr() { return ethers.utils.formatUnits(this.boulierPot, cfg.DECIMALS); }
 
-  /** L'etat affiche a la connexion et apres chaque manche. */
-  boulierEtat() {
-    return {
-      cagnotte: this.boulierPotStr(),
-      pleins: (this.boulierPleins || []).slice(0, 10),
-    };
+  /** L'etat affiche a la connexion et a chaque changement de phase. */
+  boulierEtat(now, addr) {
+    const e = this.boulierSalle.etat(now || Date.now(), addr);
+    e.cagnotte = this.boulierPotStr();
+    e.pleins = (this.boulierPleins || []).slice(0, 10);
+    return e;
   }
 
   /**
-   * Joue une manche : de 1 a BOULIER_GRILLES_MAX grilles sur un seul tirage.
+   * Inscrit des grilles sur la manche EN COURS D'ATTENTE.
    *
-   * L'ordre des operations n'est pas negociable. La cagnotte est alimentee
-   * AVANT d'etre distribuee : sinon un joueur qui fait un plein du premier
-   * coup emporterait un pot auquel sa propre mise n'a pas encore contribue,
-   * et le pot repartirait en dessous de ce que le cycle a collecte.
+   * L'ordre des operations n'est pas negociable. La cagnotte est alimentee a
+   * l'inscription, pas au tirage : sinon un joueur qui fait un plein emporterait
+   * un pot auquel sa propre mise n'a pas encore contribue, et le pot repartirait
+   * en dessous de ce que le cycle a collecte.
    */
-  boulierJoue(addr, grillesRaw) {
+  boulierInscrit(addr, grillesRaw, now) {
     const p = this._p(addr);
-
     if (!Array.isArray(grillesRaw) || grillesRaw.length < 1)
       throw new Error('play at least one grid');
     if (grillesRaw.length > cfg.BOULIER_GRILLES_MAX)
       throw new Error('at most ' + cfg.BOULIER_GRILLES_MAX + ' grids per draw');
-    const grilles = grillesRaw.map((g) => boulier.valideGrille(g));
 
     const prix = cfg.BOULIER_PRIX;
-    const mise = prix * grilles.length;
+    const mise = prix * grillesRaw.length;
     if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+
+    /* La salle valide et refuse AVANT tout debit : phase fermee, plafond de la
+       manche atteint, grille mal formee. Une manche refusee ne doit rien avoir
+       touche. */
+    this.boulierSalle.inscrire(addr, p.name, grillesRaw, prix, cfg.BOULIER_GRILLES_MAX);
 
     p.balance = p.balance.sub(WEI(mise));
     this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++;
     this._markWager(p, WEI(mise), 'boulier');
 
-    /* La part cagnotte entre dans le pot tout de suite, pour toutes les
-       grilles de la manche. */
-    const versement = boulier.partCagnotte(prix) * grilles.length;
+    const versement = boulier.partCagnotte(prix) * grillesRaw.length;
     this.boulierPot = this.boulierPot.add(WEI(versement));
 
-    p.nonce++;
-    const sortie = boulier.tirage(this.serverSeed, p.clientSeed + ':boulier', p.nonce);
+    return { etat: this.boulierEtat(now || Date.now(), addr), mise };
+  }
 
-    let payout = 0;
-    let cagnotteGagnee = 0;
-    const lignes = grilles.map((g) => {
-      const t = boulier.touches(g, sortie);
-      const l = { grille: g, touches: t, n: t.length, lot: boulier.lot(t.length, prix), plein: false };
-      if (t.length === boulier.GRILLE) {
-        /* Les 80 % se calculent en wei, mais le pot est debite de ce qui est
-           REELLEMENT verse, pas de la part brute. Les deux different : un pot
-           de 200 002 donne 160 001,6, et le solde du joueur ne connait que des
-           SWOGE entiers. Debiter la part brute ferait sortir du pot 0,6 SWOGE
-           que personne ne recevrait — a chaque plein. Le reste fractionnaire
-           demeure donc dans le pot, ou il servira au gagnant suivant. */
-        const part = this.boulierPot.mul(boulier.CAGNOTTE_PART_BPS).div(10000);
-        const swoge = Math.floor(Number(ethers.utils.formatUnits(part, cfg.DECIMALS)));
-        this.boulierPot = this.boulierPot.sub(WEI(swoge));
-        l.plein = true; l.cagnotte = swoge;
-        cagnotteGagnee += swoge;
-        payout += swoge;
+  /**
+   * Le tirage est sorti : on paie tout le monde.
+   *
+   * Les joueurs sont servis DANS L'ORDRE D'INSCRIPTION. Ca ne compte que pour
+   * la cagnotte — deux pleins la meme manche prennent chacun 80 % de ce qui
+   * RESTE — mais alors ca compte vraiment, et un ordre qui depend du parcours
+   * d'une Map serait un ordre que personne ne peut prevoir ni verifier.
+   */
+  boulierRegle(sortie) {
+    const prix = cfg.BOULIER_PRIX;
+    const out = [];
+    for (const [addr, j] of this.boulierSalle.joueurs) {
+      const p = this._p(addr);
+      let payout = 0, cagnotteGagnee = 0;
+      const lignes = j.grilles.map((g) => {
+        const t = boulier.touches(g, sortie);
+        const l = { grille: g.slice(), touches: t, n: t.length,
+                    lot: boulier.lot(t.length, prix), plein: false };
+        if (t.length === boulier.GRILLE) {
+          /* Le pot est debite de ce qui est REELLEMENT verse, pas de la part
+             brute : un pot de 200 002 donne 160 001,6 et le solde ne connait
+             que des SWOGE entiers. Le reste fractionnaire demeure dans le pot,
+             ou il servira au gagnant suivant. */
+          const part = this.boulierPot.mul(boulier.CAGNOTTE_PART_BPS).div(10000);
+          const swoge = Math.floor(Number(ethers.utils.formatUnits(part, cfg.DECIMALS)));
+          this.boulierPot = this.boulierPot.sub(WEI(swoge));
+          l.plein = true; l.cagnotte = swoge;
+          cagnotteGagnee += swoge; payout += swoge;
+        }
+        payout += l.lot;
+        return l;
+      });
+
+      if (cagnotteGagnee > 0) {
+        this.boulierPleins.unshift({ t: Date.now(), addr, nom: p.name, gain: cagnotteGagnee });
+        this.boulierPleins = this.boulierPleins.slice(0, 50);
       }
-      payout += l.lot;
-      return l;
-    });
-
-    if (cagnotteGagnee > 0) {
-      this.boulierPleins.unshift({ t: Date.now(), addr, nom: p.name, gain: cagnotteGagnee });
-      this.boulierPleins = this.boulierPleins.slice(0, 50);
+      if (payout > 0) {
+        p.balance = p.balance.add(WEI(payout));
+        this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(payout));
+        if (payout > j.mise) p.winsToday++;
+      }
+      this._manche(p, 'boulier', j.mise, payout);
+      this.boulierSalle.note(addr, lignes, payout, cagnotteGagnee);
+      out.push({ addr, mise: j.mise, lignes, payout, net: payout - j.mise,
+                 cagnotteGagnee, balance: this.balanceStr(addr) });
     }
+    return out;
+  }
 
-    if (payout > 0) {
-      p.balance = p.balance.add(WEI(payout));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(payout));
-      if (payout > mise) p.winsToday++;
+  /** L'horloge de la salle. server.js diffuse ce qui en sort. */
+  boulierTick(now) {
+    const evs = this.boulierSalle.tick(now);
+    for (const ev of evs) {
+      /* Le reglement se fait A LA SORTIE DES BOULES, pas a la fin de
+         l'animation : le joueur qui ferme l'onglet pendant que les boules
+         tombent a deja ete paye, exactement comme au solo. L'animation ne fait
+         que raconter. */
+      if (ev.type === 'boulierTirage') {
+        ev.resultats = this.boulierRegle(ev.sortie);
+        ev.joueurs = this.boulierSalle.liste();
+        ev.cagnotte = this.boulierPotStr();
+      }
     }
-    this._manche(p, 'boulier', mise, payout);
-
-    return {
-      prix, mise, sortie, lignes, payout, net: payout - mise,
-      cagnotteGagnee, cagnotte: this.boulierPotStr(),
-      pleins: (this.boulierPleins || []).slice(0, 10),
-    };
+    return evs;
   }
 
   // ------------------------------------------------------------------ crash

@@ -335,7 +335,7 @@ function charge(ws, rec, extra) {
        calcule aucune probabilite et n'ecrit aucun lot en dur, sinon les deux
        finissent par diverger et c'est l'affichage qui a tort juste avant de
        miser. */
-    boulierBareme: game.boulierBareme(), boulier: game.boulierEtat(),
+    boulierBareme: game.boulierBareme(), boulier: game.boulierEtat(Date.now(), rec),
     // La manche du Crash est en cours quoi qu'il arrive : un joueur qui se
     // connecte a la 4e seconde doit voir la courbe la ou elle en est, pas un
     // ecran vide jusqu'a la manche suivante.
@@ -2104,27 +2104,20 @@ wss.on('connection', (ws) => {
 
       // ---- boulier ----
       if (m.type === 'boulierEtat') {
-        send(ws, { type: 'boulier', etat: game.boulierEtat(), bareme: game.boulierBareme() });
+        send(ws, { type: 'boulier', etat: game.boulierEtat(Date.now(), ws.addr),
+                   bareme: game.boulierBareme() });
         return;
       }
       if (m.type === 'boulierJoue') {
         try {
-          const r = game.boulierJoue(ws.addr, m.grids);
+          const r = game.boulierInscrit(ws.addr, m.grids, Date.now());
           persistSoon();
-          /* Un plein s'annonce meme sous le seuil habituel : c'est l'evenement
-             que la page entiere attend, et il tombe une fois sur 190 402. */
-          if (r.cagnotteGagnee > 0) {
-            tg.notifyPhoto(imageJeu('boulier'),
-              `\ud83c\udfb1 <b>BOULIER JACKPOT</b>\n` +
-              `${escHtml(game._p(ws.addr).name)} hit <b>10/10</b> and took ` +
-              `<b>${fmtAmt(String(r.cagnotteGagnee))} $SWOGE</b> \ud83d\udc15`);
-          } else {
-            const best = r.lignes.reduce((a2, l) => (l.n > a2 ? l.n : a2), 0);
-            notifyTableWin(ws.addr, 'boulier', { net: r.net, staked: r.mise, payout: r.payout,
-              note: `${best}/${r.lignes.length > 1 ? '10 on ' + r.lignes.length + ' grids' : '10'}` });
-          }
-          send(ws, { type: 'boulier', manche: r, etat: game.boulierEtat(),
-                     balance: game.balanceStr(ws.addr), fairness: game.fairness(ws.addr) });
+          send(ws, { type: 'boulier', etat: r.etat, balance: game.balanceStr(ws.addr) });
+          /* La salle change des qu'un joueur s'inscrit : le compteur, la mise
+             totale et le classement bougent pour TOUT LE MONDE, pas seulement
+             pour celui qui vient de payer. C'est la moitie de l'interet d'un
+             tirage partage. */
+          boulierDiffuse();
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -2495,6 +2488,57 @@ const p4Interval = setInterval(() => {
     p4DiffuseLobby();
     for (const j of jeux) if (j !== 'p4') duelDiffuseLobby(j);
   } catch (e) { console.warn('[p4]', e && e.message); }
+}, 1000);
+
+/* ---- boulier : la salle partagee ----
+ * Une seconde suffit : les trois phases durent dix secondes ou plus, et le
+ * decompte est calcule par le navigateur depuis l'echeance qu'on lui envoie.
+ * Le TIRAGE, lui, part en une seule fois — les trente boules sont dans
+ * l'evenement, et c'est le navigateur qui les lache une par une. */
+function boulierDiffuse() {
+  const now = Date.now();
+  for (const [addr, set] of byAddr)
+    for (const ws2 of set) send(ws2, { type: 'boulier', etat: game.boulierEtat(now, addr) });
+  /* Les spectateurs non connectes voient la salle aussi : c'est ce qui donne
+     envie de s'asseoir. Ils n'ont pas de `moi`, donc pas d'adresse a passer. */
+  const publique = { type: 'boulier', etat: game.boulierEtat(now) };
+  for (const ws2 of wss.clients) if (!ws2.addr && ws2.readyState === 1) send(ws2, publique);
+}
+
+const boulierInterval = setInterval(() => {
+  try {
+    const evs = game.boulierTick(Date.now());
+    if (!evs.length) return;
+    for (const ev of evs) {
+      if (ev.type === 'boulierTirage') {
+        persistSoon();
+        /* Chacun recoit SES lignes : les grilles des autres ne le regardent
+           pas, et cinquante grilles par joueur diffusees a tout le monde
+           feraient un message par manche que personne ne lit. */
+        for (const r of ev.resultats) {
+          toAddr(r.addr, { type: 'boulierMien', manche: ev.manche, mise: r.mise,
+                           lignes: r.lignes, payout: r.payout, net: r.net,
+                           cagnotteGagnee: r.cagnotteGagnee, balance: r.balance });
+          if (r.cagnotteGagnee > 0) {
+            /* Un plein s'annonce meme sous le seuil habituel : c'est
+               l'evenement que la salle entiere attend, et il tombe une fois
+               sur 190 402. */
+            tg.notifyPhoto(imageJeu('boulier'),
+              `\ud83c\udfb1 <b>BOULIER JACKPOT</b>\n` +
+              `${escHtml(game._p(r.addr).name)} hit <b>10/10</b> and took ` +
+              `<b>${fmtAmt(String(r.cagnotteGagnee))} $SWOGE</b> \ud83d\udc15`);
+          } else {
+            const best = r.lignes.reduce((a2, l) => (l.n > a2 ? l.n : a2), 0);
+            notifyTableWin(r.addr, 'boulier', { net: r.net, staked: r.mise, payout: r.payout,
+              note: `${best}/10 on ${r.lignes.length} grid${r.lignes.length > 1 ? 's' : ''}` });
+          }
+        }
+        delete ev.resultats;      // ils sont partis en prive, pas en diffusion
+      }
+      broadcast(ev);
+    }
+    boulierDiffuse();
+  } catch (e) { console.warn('[boulier]', e && e.message); }
 }, 1000);
 
 const crashInterval = setInterval(() => {

@@ -45,6 +45,43 @@ function avecTirage(sortie, f) {
   B.tirage = () => sortie.slice();
   try { return f(); } finally { B.tirage = vrai; }
 }
+
+/* ---- une manche entiere, en un appel ----
+ *
+ * Le jeu est passe d'un tirage a la demande a une SALLE : on s'inscrit pendant
+ * dix secondes, puis le serveur tire pour tout le monde. Les verifications
+ * d'argent ci-dessous n'ont pas change de nature pour autant — c'est toujours
+ * la meme mise, le meme bareme et la meme cagnotte. Cet adaptateur ouvre la
+ * salle, inscrit, force l'echeance et rend le resultat du joueur dans la forme
+ * que les tests attendent. Tout ce qui suit teste donc l'ARGENT ; les phases,
+ * elles, sont verifiees dans boulier_salle.test.js. */
+function ouvre(g) {
+  g.boulierSalle.phase = 'apres';
+  g.boulierSalle.jusqua = 0;
+  g.boulierTick(Date.now());
+}
+function joue(g, grilles, adr) {
+  const a = adr || ADR;
+  if (g.boulierSalle.phase !== 'attente') ouvre(g);
+  g.boulierInscrit(a, grilles, Date.now());
+  return g;
+}
+/** Ferme l'attente et tire. Rend le resultat du joueur demande. */
+function tire(g, adr) {
+  g.boulierSalle.jusqua = 0;
+  const evs = g.boulierTick(Date.now());
+  const ev = evs.filter((e) => e.type === 'boulierTirage')[0];
+  if (!ev) throw new Error('pas de tirage');
+  const r = (ev.resultats || []).filter((x) => x.addr === (adr || ADR))[0];
+  return Object.assign({ prix: cfg.BOULIER_PRIX, sortie: ev.sortie },
+                       r || { mise: 0, lignes: [], payout: 0, net: 0, cagnotteGagnee: 0 },
+                       { cagnotte: g.boulierPotStr(), pleins: g.boulierPleins.slice(0, 10) });
+}
+/** Inscription + tirage force, l'equivalent exact de l'ancien boulierJoue. */
+function manche(g, grilles, sortie, adr) {
+  joue(g, grilles, adr);
+  return sortie ? avecTirage(sortie, () => tire(g, adr)) : tire(g, adr);
+}
 /** 30 boules dont les 10 premieres sont celles de la grille. */
 function sortiePleine(grille) {
   const s = grille.slice();
@@ -86,7 +123,7 @@ function sortieVide() {
   const g = neuf();
   const avant = sol(g);
   const p0 = pot(g);
-  const r = avecTirage(sortieVide(G()), () => g.boulierJoue(ADR, [G()]));
+  const r = manche(g, [G()], sortieVide(G()));
   eq(r.mise, cfg.BOULIER_PRIX, 'une grille coute le prix affiche');
   eq(r.lignes.length, 1, 'une ligne par grille');
   eq(r.lignes[0].n, 0, '0 touche sur une sortie choisie sans aucun numero');
@@ -106,7 +143,7 @@ function sortieVide() {
   const p0 = pot(g);
   const grilles = [G(), G([11, 12, 13, 14, 15, 16, 17, 18, 19, 20]),
                    G([21, 22, 23, 24, 25, 26, 27, 28, 29, 30])];
-  const r = avecTirage(sortieVide.apply(null, grilles), () => g.boulierJoue(ADR, grilles));
+  const r = manche(g, grilles, sortieVide.apply(null, grilles));
   eq(r.mise, cfg.BOULIER_PRIX * 3, 'trois grilles coutent trois fois le prix');
   eq(r.lignes.length, 3, 'trois lignes');
   eq(pot(g), p0 + B.partCagnotte(cfg.BOULIER_PRIX) * 3, 'la cagnotte encaisse par grille');
@@ -119,14 +156,20 @@ function sortieVide() {
 // ------------------------------------------------------- les refus
 {
   const g = neuf();
-  jete(() => g.boulierJoue(ADR, []), /at least one grid/, 'zero grille');
-  jete(() => g.boulierJoue(ADR, 'grille'), /at least one grid/, 'pas une liste');
+  /* La salle refuse tout hors de la fenetre d'inscription, et ce refus-la
+     passe AVANT la lecture des grilles : sans l'ouvrir, tous les tests qui
+     suivent verifieraient le mauvais message. */
+  jete(() => g.boulierInscrit(ADR, [G()], Date.now()), /closed/, 'inscription hors fenetre');
+  eq(sol(g), 100000, 'un refus de phase ne debite pas');
+  ouvre(g);
+  jete(() => g.boulierInscrit(ADR, [], Date.now()), /at least one grid/, 'zero grille');
+  jete(() => g.boulierInscrit(ADR, 'grille', Date.now()), /at least one grid/, 'pas une liste');
   const trop = [];
   for (let i = 0; i <= cfg.BOULIER_GRILLES_MAX; i++) trop.push(G());
-  jete(() => g.boulierJoue(ADR, trop), /at most/, 'trop de grilles');
-  jete(() => g.boulierJoue(ADR, [[1, 2, 3]]), /exactly 10/, 'grille incomplete');
-  jete(() => g.boulierJoue(ADR, [[1, 1, 2, 3, 4, 5, 6, 7, 8, 9]]), /twice/, 'doublon');
-  jete(() => g.boulierJoue(ADR, [[0, 2, 3, 4, 5, 6, 7, 8, 9, 10]]), /between 1 and 90/, 'hors bornes');
+  jete(() => g.boulierInscrit(ADR, trop, Date.now()), /at most/, 'trop de grilles');
+  jete(() => g.boulierInscrit(ADR, [[1, 2, 3]], Date.now()), /exactly 10/, 'grille incomplete');
+  jete(() => g.boulierInscrit(ADR, [[1, 1, 2, 3, 4, 5, 6, 7, 8, 9]], Date.now()), /twice/, 'doublon');
+  jete(() => g.boulierInscrit(ADR, [[0, 2, 3, 4, 5, 6, 7, 8, 9, 10]], Date.now()), /between 1 and 90/, 'hors bornes');
   /* Une manche refusee ne doit RIEN avoir touche. */
   eq(sol(g), 100000, 'un refus ne debite pas');
   eq(pot(g), Number(cfg.BOULIER_CAGNOTTE_AMORCE), 'un refus n alimente pas la cagnotte');
@@ -135,12 +178,13 @@ function sortieVide() {
   /* Solde insuffisant : le prix etant fixe, c'est le NOMBRE de grilles qui
      doit etre refuse, et le refus doit arriver avant tout debit. */
   const g = neuf(250);
-  jete(() => g.boulierJoue(ADR, [G(), G([11, 12, 13, 14, 15, 16, 17, 18, 19, 20]),
-                                 G([21, 22, 23, 24, 25, 26, 27, 28, 29, 30])]),
+  ouvre(g);
+  jete(() => g.boulierInscrit(ADR, [G(), G([11, 12, 13, 14, 15, 16, 17, 18, 19, 20]),
+                                    G([21, 22, 23, 24, 25, 26, 27, 28, 29, 30])], Date.now()),
        /not enough/, 'trois grilles a 250 de solde');
   eq(sol(g), 250, 'le solde n a pas bouge');
   const deux = [G(), G([11, 12, 13, 14, 15, 16, 17, 18, 19, 20])];
-  const r = avecTirage(sortieVide.apply(null, deux), () => g.boulierJoue(ADR, deux));
+  const r = manche(g, deux, sortieVide.apply(null, deux));
   eq(r.mise, 200, 'deux grilles passent');
 }
 
@@ -156,7 +200,7 @@ function sortieVide() {
     const s = grille.slice(0, k);
     for (let x = 11; x <= 90 && s.length < 30; x++) s.push(x);
     const avant = sol(g);
-    const r = avecTirage(s, () => g.boulierJoue(ADR, [grille]));
+    const r = manche(g, [grille], s);
     eq(r.lignes[0].n, k, `${k} touches forcees`);
     eq(r.lignes[0].lot, B.lot(k, cfg.BOULIER_PRIX), `lot de ${k} touches`);
     eq(r.lignes[0].plein, false, `${k} touches n est pas un plein`);
@@ -170,7 +214,7 @@ function sortieVide() {
   const grille = G();
   const p0 = pot(g);
   const avant = sol(g);
-  const r = avecTirage(sortiePleine(grille), () => g.boulierJoue(ADR, [grille]));
+  const r = manche(g, [grille], sortiePleine(grille));
   eq(r.lignes[0].n, 10, 'dix touches');
   eq(r.lignes[0].plein, true, 'la ligne est marquee pleine');
   eq(r.lignes[0].lot, 0, 'le bareme ne paie rien : c est la cagnotte qui paie');
@@ -202,7 +246,7 @@ function sortieVide() {
   const g = neuf();
   const grille = G();
   const p0 = pot(g);
-  const r = avecTirage(sortiePleine(grille), () => g.boulierJoue(ADR, [grille, grille.slice()]));
+  const r = manche(g, [grille, grille.slice()], sortiePleine(grille));
   const alimente = p0 + B.partCagnotte(cfg.BOULIER_PRIX) * 2;
   const un = Math.floor(alimente * 0.8);
   const reste = alimente - un;
@@ -216,15 +260,18 @@ function sortieVide() {
 // ----------------------------------------------------- equite verifiable
 {
   const g = neuf();
-  const p = g._p(ADR);
-  const n0 = p.nonce;
-  const r = g.boulierJoue(ADR, [G()]);
-  eq(p.nonce, n0 + 1, 'un numero de manche par tirage');
-  /* Le tirage rendu doit etre EXACTEMENT celui qu'un joueur refait chez lui a
-     partir de la graine revelee. Le suffixe ':boulier' est documente dans la
-     page d'equite : s'il change ici, il change la-bas. */
-  assert.deepStrictEqual(r.sortie, B.tirage(g.serverSeed, p.clientSeed + ':boulier', p.nonce));
-  n++;
+  ouvre(g);
+  g.boulierInscrit(ADR, [G()], Date.now());
+  g.boulierSalle.jusqua = 0;
+  const ev = g.boulierTick(Date.now()).filter((e) => e.type === 'boulierTirage')[0];
+  const r = { sortie: ev.sortie };
+  /* LE TIRAGE VIENT DU MAILLON, plus de la graine du joueur. Une manche
+     partagee n'appartient a personne : elle se verifie avec l'engagement
+     public annonce avant que quiconque ait mise, et le maillon revele avec les
+     boules. C'est le meme melange, la meme fonction — seule la graine change
+     de proprietaire. */
+  assert.deepStrictEqual(r.sortie, B.tirage(ev.maillon, ev.sel, ev.manche)); n++;
+  ok(ev.maillon && /^[0-9a-f]{64}$/.test(ev.maillon), 'le maillon est revele avec les boules');
   eq(r.sortie.length, 30, 'les 30 boules sont rendues');
   eq(new Set(r.sortie).size, 30, 'toutes distinctes');
   /* Rendues DANS L'ORDRE de sortie, pas triees : l'animation les lache une par
@@ -236,7 +283,7 @@ function sortieVide() {
 {
   const g = neuf();
   const deux = [G(), G([11, 12, 13, 14, 15, 16, 17, 18, 19, 20])];
-  const r = avecTirage(sortieVide.apply(null, deux), () => g.boulierJoue(ADR, deux));
+  const r = manche(g, deux, sortieVide.apply(null, deux));
   const j = g._p(ADR).jeux.boulier;
   ok(j, 'le jeu est compte sous son nom');
   eq(j.n, 1, 'une manche, pas une par grille');
@@ -252,7 +299,7 @@ function sortieVide() {
 // ------------------------------------------------- la cagnotte se sauvegarde
 {
   const g = neuf();
-  avecTirage(sortieVide(G()), () => g.boulierJoue(ADR, [G()]));
+  manche(g, [G()], sortieVide(G()));
   const attendu = pot(g);
   ok(attendu > Number(cfg.BOULIER_CAGNOTTE_AMORCE), 'le pot a monte');
 
@@ -270,7 +317,7 @@ function sortieVide() {
 
   /* Les pleins aussi : c'est l'historique que la page affiche. */
   const g2 = neuf();
-  avecTirage(sortiePleine(G()), () => g2.boulierJoue(ADR, [G()]));
+  manche(g2, [G()], sortiePleine(G()));
   const relu2 = new Game();
   relu2.hydrate(g2.serialize());
   eq(relu2.boulierPleins.length, 1, 'les pleins survivent au redemarrage');
@@ -285,8 +332,8 @@ function sortieVide() {
   const AUTRE = '0x5555555555555555555555555555555555555555';
   g._p(AUTRE).balance = ethers.utils.parseUnits('100000', cfg.DECIMALS);
   const p0 = pot(g);
-  avecTirage(sortieVide(G()), () => g.boulierJoue(ADR, [G()]));
-  avecTirage(sortieVide(G()), () => g.boulierJoue(AUTRE, [G()]));
+  manche(g, [G()], sortieVide(G()));
+  manche(g, [G()], sortieVide(G()), AUTRE);
   eq(pot(g), p0 + B.partCagnotte(cfg.BOULIER_PRIX) * 2, 'les deux joueurs alimentent le meme pot');
 }
 
@@ -319,7 +366,7 @@ function sortieVide() {
   const hist = new Array(11).fill(0);
   const p0 = pot(g);
   for (let i = 0; i < TOURS; i++) {
-    const r = g.boulierJoue(ADR, [G()]);
+    const r = manche(g, [G()]);
     mise += r.mise; rendu += r.payout; cagnotte += r.cagnotteGagnee;
     hist[r.lignes[0].n]++;
   }

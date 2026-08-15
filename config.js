@@ -623,6 +623,19 @@ module.exports = {
   // gagnant emporte 80 %, 20 % restent). Ce million est un cadeau unique, il
   // ne pese sur la marge que la premiere fois.
   BOULIER_CAGNOTTE_AMORCE: env('BOULIER_CAGNOTTE_AMORCE', '1000000'),
+  // Les trois phases de la salle. Dix secondes pour s'inscrire : assez pour
+  // choisir un nombre de grilles et appuyer, trop court pour aller faire
+  // autre chose — c'est ce qui garde tout le monde devant la cage.
+  // Le tirage dure ce que dure l'animation du navigateur (30 boules a
+  // 300 ms, plus une seconde de mise en route) : plus court, la salle
+  // rouvrirait les mises pendant que les boules tombent encore.
+  BOULIER_ATTENTE_MS: parseInt(env('BOULIER_ATTENTE_MS', '10000'), 10),
+  BOULIER_TIRAGE_MS: parseInt(env('BOULIER_TIRAGE_MS', '10500'), 10),
+  BOULIER_APRES_MS: parseInt(env('BOULIER_APRES_MS', '5000'), 10),
+  // La graine de la chaine d'engagement. Posee, elle survit aux
+  // redeploiements : l'empreinte annoncee reste verifiable. Absente, une
+  // chaine neuve est tiree au demarrage — et l'engagement change.
+  BOULIER_GRAINE: env('BOULIER_GRAINE', ''),
 
   // ---- Plinko ----
   // Avantage de la maison preleve sur le multiplicateur, comme au Mines : une
