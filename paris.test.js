@@ -326,4 +326,56 @@ const T3 = 'atp-20260815-fer-duc';   // Fery 1.53 / Duckworth 2.24
   eq(Math.round(sol(g2, A)), Math.round(1000000 - 2000 + 3825), 'et le combine se paie apres relecture');
 }
 
+/* ---- ce que le profil montre : « Open bets » et « Settled bets »
+ *
+ * Le panneau de profil sert ces deux onglets depuis le MOTEUR, pas depuis le
+ * journal : un pari change d'etat apres avoir ete ecrit, et un journal ne se
+ * reecrit pas. Ce qui est verifie ici, c'est le contrat dont la page depend —
+ * la separation en cours / regle, et le fait que CHAQUE jambe porte le nom de
+ * sa rencontre. Sans ce dernier point, un combine regle s'affiche avec une
+ * seule ligne, les autres matchs n'etant plus au calendrier ouvert.
+ */
+{
+  const g = jeu();
+  g.parieCombine(A, [{ match: T1, choix: '1' }], 1000, AVANT);
+  g.parieCombine(A, [{ match: T2, choix: '1' }, { match: T3, choix: '1' }], 500, AVANT);
+  g.parieCombine(B, [{ match: T1, choix: '2' }], 300, AVANT);
+
+  const tousA = () => g.mesParis(A, 100);
+  const ouverts = () => tousA().filter((x) => !x.regle);
+  const regles = () => tousA().filter((x) => x.regle);
+
+  eq(ouverts().length, 2, 'les deux paris de A sont en cours');
+  eq(regles().length, 0, 'et aucun n est encore solde');
+  eq(tousA().length, 2, 'le pari de B ne figure pas chez A');
+
+  /* Chaque jambe porte SA rencontre — c est ce que la page affiche. */
+  const combine = ouverts().filter((x) => x.jambes.length === 2)[0];
+  ok(combine.jambes.every((j) => j.domicile && j.domicile !== '?'),
+     'chaque jambe du combine porte le nom de son match');
+  ok(combine.jambes.every((j) => Array.isArray(j.issues) && j.issues.length >= 2),
+     'et ses issues, dont la page tire « Home / Draw / Away » ou « Player 1 / 2 »');
+  /* On enrichit une COPIE : l objet range dans le moteur sert au reglement,
+     et le maquiller casserait le paiement. */
+  ok(g.paris.every((x) => x.jambes.every((j) => j.domicile === undefined)),
+     'et le pari range dans le moteur n a pas ete maquille');
+
+  g.regleMatch(T1, '1');
+  eq(ouverts().length, 1, 'le simple regle quitte les paris en cours');
+  eq(regles().length, 1, 'et rejoint les paris finis');
+  eq(regles()[0].gagne, true, 'gagne, en l occurrence');
+
+  g.regleMatch(T2, '2');
+  eq(ouverts().length, 0, 'une jambe perdue solde tout le combine');
+  eq(regles().filter((x) => x.gagne === false).length, 1, 'du cote perdant');
+
+  /* La pagination du panneau : un rang dans la liste, pas une position dans
+     un fichier — la liste est refaite a chaque demande. */
+  const page = (debut, n) => regles().slice(debut, debut + n);
+  eq(page(0, 1).length, 1, 'la premiere page rend une ligne');
+  eq(page(1, 1).length, 1, 'la seconde en rend une autre');
+  ok(page(0, 1)[0].id !== page(1, 1)[0].id, 'et ce ne sont pas les memes');
+  eq(page(2, 1).length, 0, 'passe la fin, il n y a plus rien');
+}
+
 console.log(`paris.test.js : ${n} verifications OK`);

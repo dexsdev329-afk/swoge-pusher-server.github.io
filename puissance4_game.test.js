@@ -124,12 +124,17 @@ function joue(g, id, coups, t0) {
   const avantA = sol(g, A), avantB = sol(g, B);
   const m = g.p4Creer(A, 500, 1000);
   g.p4Rejoindre(B, m.id, 2000);
-  // A ne joue jamais : passe l'echeance, il perd
+  /* Celui qui perd au temps est celui qui DEVAIT jouer — et ce n'est plus
+     forcement celui qui a ouvert la table : le premier coup se tire au
+     sort. Personne ne joue, l'echeance passe. */
+  const perdant = m.tour, gagnant = perdant === 1 ? 2 : 1;
+  const encaisse = gagnant === 1 ? A : B;
+  const avantGagnant = gagnant === 1 ? avantA : avantB;
   const evs = g.p4Tick(2000 + cfg.P4_COUP_MS + 1);
   eq(evs.length, 1, 'un evenement de fin');
   eq(evs[0].partie.raison, 'temps', 'la raison est le temps');
-  eq(evs[0].partie.gagnant, 2, 'B gagne sans jouer');
-  eq(sol(g, B), avantB - 500 + 950, 'B encaisse le pot moins 5 %');
+  eq(evs[0].partie.gagnant, gagnant, 'celui qui n avait pas la main gagne');
+  eq(sol(g, encaisse), avantGagnant - 500 + 950, 'il encaisse le pot moins 5 %');
   eq((avantA + avantB) - (sol(g, A) + sol(g, B)), 50, 'CONSERVATION');
 }
 
@@ -296,7 +301,10 @@ function joue(g, id, coups, t0) {
   g.p4Rejoindre(B, m.id, 2000);
   const e = g.p4Etat(m.id, 2500);
   eq(e.grille.length, 42, 'la grille complete est envoyee');
-  eq(e.tour, 1, 'le tour est annonce');
+  /* Le premier a jouer est tire au sort, pas donne a celui qui a ouvert la
+     table : l'etat doit annoncer CE tirage, quel qu'il soit. */
+  ok(e.tour === 1 || e.tour === 2, 'le tour est annonce');
+  eq(e.tour, g.p4Mienne(A).tour, 'et c est bien celui de la partie');
   eq(e.rakeBps, cfg.P4_RAKE_BPS, 'la commission est annoncee');
   eq(e.noms.length, 2, 'les deux noms sont la');
   ok(e.reste > 0 && e.reste <= cfg.P4_COUP_MS, 'le temps restant est annonce');

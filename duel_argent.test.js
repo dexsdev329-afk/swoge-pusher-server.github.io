@@ -145,9 +145,12 @@ function neuf(credit = 1000000) {
   const avant = total(g);
   const m = g.duelCreer('mp', A, 3000, 1000);
   g.duelRejoindre(B, m.id, 1100);
+  /* Qui a la main est TIRE AU SORT : on releve le tirage avant le tick,
+     puisque c'est lui qui designe le perdant. */
+  const devait = m.tour;
   const evs = g.duelTick(1100 + cfg.MP_COUP_MS + 1);
   eq(evs.length, 1, 'la partie tombe au temps');
-  eq(m.gagnant, 2, 'celui qui devait jouer perd');
+  eq(m.gagnant, devait === 1 ? 2 : 1, 'celui qui devait jouer perd');
   const rake = Math.floor(6000 * cfg.MP_RAKE_BPS / 10000);
   eq(total(g), avant - rake, 'et le pot est bien verse, commission comprise');
 }

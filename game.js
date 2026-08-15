@@ -1451,6 +1451,19 @@ class Game {
         return Object.assign({}, p, {
           domicile: m ? m.domicile : '?', exterieur: m ? m.exterieur : '?',
           debut: m ? m.debut : null, competition: m ? m.competition : '',
+          /* Chaque jambe porte SA rencontre. Sans ca, un combine regle
+             n'affiche que la premiere : les pages lisent les noms dans le
+             calendrier des matchs OUVERTS, et un match joue n'y est plus.
+             On recopie la jambe — l'objet range dans `this.paris` ne doit
+             pas bouger, il sert au reglement. */
+          jambes: (p.jambes || []).map((j) => {
+            const mj = paris.match(j.match);
+            return Object.assign({}, j, {
+              domicile: mj ? mj.domicile : '?', exterieur: mj ? mj.exterieur : '?',
+              debut: mj ? mj.debut : null, competition: mj ? mj.competition : '',
+              issues: mj ? mj.issues.slice() : [],
+            });
+          }),
         });
       });
   }

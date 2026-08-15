@@ -1842,6 +1842,27 @@ wss.on('connection', (ws) => {
         return;
       }
       if (m.type === 'history') {
+        /* Les paris ne se servent PAS depuis le journal. Un pari change
+           d'etat apres avoir ete ecrit — pose, puis gagne, perdu ou
+           rembourse — et un journal ne se reecrit pas : la ligne « pose »
+           dirait « en cours » pour toujours. On les prend donc dans le
+           moteur, ou l'etat est celui d'aujourd'hui. */
+        if (m.kind === 'bo' || m.kind === 'bs') {
+          const regles = m.kind === 'bs';
+          const tous = game.mesParis(ws.addr, 5000).filter((p) => !!p.regle === regles);
+          /* Ici le curseur est un RANG dans la liste, pas une position dans
+             un fichier : la liste est reconstruite a chaque demande. */
+          const debut = Number.isFinite(Number(m.cursor)) ? Math.max(0, Number(m.cursor)) : 0;
+          const page = tous.slice(debut, debut + Math.min(50, Number(m.limit) || 25));
+          return send(ws, {
+            type: 'history', kind: m.kind,
+            items: page.map((p) => Object.assign({ k: 'pa' }, p)),
+            cursor: debut + page.length,
+            more: debut + page.length < tous.length,
+            summary: { lignes: tous.length, mot: 'bet',
+                       depuis: tous.length ? tous[tous.length - 1].t : null },
+          });
+        }
         const genres = { dep: 'dep', wd: 'wd', r: 'r', st: 'st', tr: 'tr' };
         const r = journal.lit(ws.addr, {
           genre: genres[m.kind] || null,
