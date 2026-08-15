@@ -37,6 +37,7 @@ const DUELS = { p4, mp: require('./morpion'), dm: require('./dames'),
                 pf: require('./pierre_feuille_bandit') };
 const ATTENTE = p4.ATTENTE, EN_COURS = p4.EN_COURS, FINIE = p4.FINIE;
 const volcano = require('./volcano');
+const { Entrainement } = require('./entrainement');
 
 const WEI = (n) => ethers.utils.parseUnits(String(n), cfg.DECIMALS);
 const COST = WEI(cfg.DROP_COST);
@@ -90,6 +91,13 @@ class Game {
        quand il a fini d'ecrire — et seulement s'il a reussi. */
     this.sales = new Set();
     this.p4Seq = 0;
+    /* LES TABLES D'ENTRAINEMENT. Elles vivent a cote des duels payants, pas
+       dedans : aucun solde ne les traverse, rien n'y est sauvegarde, et elles
+       meurent avec le processus. Le seul lien avec la maison est le tirage du
+       Dernier Chiffre, qui a besoin de la graine du serveur. */
+    this.entrainement = new Entrainement({
+      tirage: (partie) => this._tirageDuel(partie),
+    });
     /* Le total preleve sur les retraits depuis toujours. Il ne bouge aucun
        solde — il reste dans le coffre — mais c'est le chiffre a bruler. */
     this.fraisCumules = BN(0);
@@ -4112,6 +4120,59 @@ class Game {
   }
 
   /** La partie en cours d'un joueur, s'il en a une. */
+  // ------------------------------------------------- le mode entrainement
+  /*
+   * Les memes six jeux, contre un bot, gratuitement.
+   *
+   * Ces methodes ne sont qu'un guichet : tout est dans entrainement.js, qui
+   * n'a acces a aucun solde. On les met ici pour que server.js n'ait qu'un
+   * seul interlocuteur — et pour que la frontiere reste visible, c'est-a-dire
+   * qu'on voie d'un coup d'oeil que RIEN dans ce bloc ne touche a l'argent.
+   */
+
+  entrainementOuvrir(addr, jeu, now) {
+    return this.entrainement.ouvrir(addr, String(jeu || ''), now || Date.now());
+  }
+  entrainementJouer(addr, coup, now) {
+    return this.entrainement.jouer(addr, coup, now || Date.now());
+  }
+  entrainementAbandonner(addr, now) {
+    return this.entrainement.abandonner(addr, now || Date.now());
+  }
+  entrainementFermer(addr) { return this.entrainement.fermer(addr); }
+  /**
+   * L'etat d'une table d'entrainement, HABILLE COMME UNE VRAIE.
+   *
+   * C'est tout le truc : les six pages savent deja dessiner une table de duel,
+   * avec les deux visages, les deux noms et la pendule. On leur rend donc
+   * exactement la meme forme — `noms`, `profils`, `visages` — et elles peignent
+   * la partie d'entrainement sans une ligne de code en plus. Une deuxieme
+   * facon de dessiner un damier, c'est un deuxieme endroit ou le corriger.
+   *
+   * Le bot recoit un nom et un visage comme n'importe qui. Sans ca la page
+   * affiche un siege vide en face du joueur, et la partie a l'air cassee.
+   */
+  entrainementEtat(addr, now) {
+    const e = this.entrainement.etat(addr, now || Date.now());
+    if (!e) return null;
+    const moi = this._p(addr);
+    e.noms = e.joueurs.map((a) => (a === Entrainement.BOT ? e.botNom : (a ? moi.name : null)));
+    e.profils = e.joueurs.map((a) => (a === Entrainement.BOT
+      ? { name: e.botNom, visage: 'robot', photo: false, address: Entrainement.BOT, niveau: 0, bot: true }
+      : (a ? this.profilPublic(a) : null)));
+    e.visages = e.joueurs.map((a) => (a === Entrainement.BOT
+      ? { visage: 'robot', photo: false, address: Entrainement.BOT }
+      : (a ? { visage: moi.visage || null, photo: !!moi.photo, address: a } : null)));
+    /* Aucune commission : il n'y a pas de pot. La page lit ce champ pour
+       annoncer « le gagnant prend X moins Y » — a zero, elle n'annonce rien,
+       ce qui est exactement juste. */
+    e.rakeBps = 0;
+    return e;
+  }
+  /** La pendule des tables d'entrainement. Rend celles qui viennent d'expirer,
+      pour que le serveur previenne leurs joueurs. */
+  entrainementTick(now) { return this.entrainement.tick(now || Date.now()); }
+
   duelMienne(addr) {
     for (const m of this.p4.values())
       if (m.phase !== FINIE && m.jeton(addr)) return m;

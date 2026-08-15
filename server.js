@@ -393,6 +393,30 @@ function autorise(ws) {
 }
 
 function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+/* ---- le guichet du mode entrainement ----
+ * Ces trois fonctions vivent ici, au niveau du module, et pas dans le
+ * gestionnaire de messages : elles y servent AVANT d'y etre ecrites (le coup du
+ * Connect 4 est traite plus haut que le bloc entrainement), et une `const`
+ * flechee declaree plus bas leverait une ReferenceError a l'execution — une
+ * panne qui ne se voit ni a la lecture ni au demarrage, seulement au premier
+ * coup joue.
+ *
+ * Le nom du message est celui que la page attend deja : le Connect 4 parle
+ * `p4Match`, les cinq autres `duelMatch`. */
+function entMsg(jeu) { return jeu === 'p4' ? 'p4Match' : 'duelMatch'; }
+function entRepond(ws, jeu) {
+  send(ws, { type: entMsg(jeu), match: game.entrainementEtat(ws.addr, Date.now()) });
+}
+/** La table d'entrainement de CE joueur, si l'identifiant recu est le sien.
+    C'est ce test qui aiguille un coup vers l'entrainement plutot que vers une
+    table payante — et comme il compare a la table du joueur lui-meme, personne
+    ne peut jouer sur celle d'un autre. */
+function entSienne(ws, id) {
+  if (!ws.addr || !id) return null;
+  const t = game.entrainement.mienne(ws.addr);
+  return t && String(t.id) === String(id) ? t : null;
+}
+
 function toAddr(addr, obj) { const set = byAddr.get(addr); if (set) for (const ws of set) send(ws, obj); }
 function broadcast(obj) { const s = JSON.stringify(obj); for (const ws of clients) if (ws.readyState === 1) ws.send(s); }
 
@@ -2224,6 +2248,15 @@ wss.on('connection', (ws) => {
       if (m.type === 'p4Invites') return p4PousseInvites(ws.addr);
       if (m.type === 'p4Play') {
         try {
+          /* Le Connect 4 nomme sa colonne `col` la ou les cinq autres duels
+             envoient `coup`. On accepte les deux : la page d'entrainement est
+             la meme page, et lui demander de changer de vocabulaire selon
+             l'adversaire serait une regle de plus a retenir. */
+          const ent = entSienne(ws, m.id);
+          if (ent) {
+            game.entrainementJouer(ws.addr, m.col != null ? m.col : m.coup, Date.now());
+            return entRepond(ws, ent.jeu);
+          }
           const r = game.p4Jouer(ws.addr, m.id, m.col, Date.now());
           if (r.reglement) persistSoon();
           p4Pousse(r.partie, r.reglement);
@@ -2232,6 +2265,8 @@ wss.on('connection', (ws) => {
       }
       if (m.type === 'p4Resign') {
         try {
+          const ent = entSienne(ws, m.id);
+          if (ent) { game.entrainementAbandonner(ws.addr, Date.now()); return entRepond(ws, ent.jeu); }
           const r = game.p4Abandonner(ws.addr, m.id, Date.now());
           persistSoon();
           p4Pousse(r.partie, r.reglement);
@@ -2300,6 +2335,12 @@ wss.on('connection', (ws) => {
       if (m.type === 'duelInvites') return duelPousseInvites(ws.addr, duelDemande(m.jeu));
       if (m.type === 'duelPlay') {
         try {
+          /* La table d'entrainement passe par le meme message que la table
+             payante : la page n'a donc rien a savoir, et il n'y a pas deux
+             chemins de coup a garder d'accord. L'aiguillage tient dans
+             l'identifiant, qui n'appartient qu'a ce joueur. */
+          const ent = entSienne(ws, m.id);
+          if (ent) { game.entrainementJouer(ws.addr, m.coup, Date.now()); return entRepond(ws, ent.jeu); }
           const r = game.duelJouer(ws.addr, m.id, m.coup, Date.now());
           if (r.reglement) persistSoon();
           duelPousse(r.partie, r.reglement);
@@ -2319,6 +2360,8 @@ wss.on('connection', (ws) => {
       }
       if (m.type === 'duelResign') {
         try {
+          const ent = entSienne(ws, m.id);
+          if (ent) { game.entrainementAbandonner(ws.addr, Date.now()); return entRepond(ws, ent.jeu); }
           const r = game.duelAbandonner(ws.addr, m.id, Date.now());
           persistSoon();
           duelPousse(r.partie, r.reglement);
@@ -2351,6 +2394,47 @@ wss.on('connection', (ws) => {
         const mienne = game.duelMienne(ws.addr);
         const id = m.id || (mienne && mienne.id);
         return send(ws, { type: 'duelMatch', match: id ? game.duelEtat(id, Date.now(), ws.addr) : null });
+      }
+
+      // ---- le mode entrainement : les memes jeux, contre un bot, gratuits ----
+      /*
+       * ---- POURQUOI CES REPONSES S'APPELLENT « p4Match » ET « duelMatch » ----
+       *
+       * Les six pages savent deja peindre une table de duel : le plateau, les
+       * deux visages, la pendule, le vainqueur. Leur envoyer un message d'un
+       * NOUVEAU type aurait demande d'ecrire, dans chacune des six, un second
+       * afficheur a cote du premier — six copies a garder d'accord, sur des
+       * pages de trois mega-octets.
+       *
+       * On renvoie donc l'etat d'entrainement sous le nom que la page attend
+       * deja, et elle le dessine sans savoir que l'adversaire est un bot. Ce
+       * n'est pas un deguisement : c'est LA MEME CHOSE — le meme moteur de
+       * regles, le meme etat, la meme pendule. Seuls la mise (zero) et
+       * l'adversaire changent, et l'etat le dit (`entrainement`, `gratuit`,
+       * `botJeton`) pour les pages qui voudront l'annoncer.
+       *
+       * Aucun de ces messages n'appelle persistSoon() : une table
+       * d'entrainement ne se sauvegarde pas, et faire ecrire le magasin pour
+       * des parties qui ne valent rien userait le disque pour rien.
+       */
+      if (m.type === 'entrainementStart') {
+        if (!ws.addr) return send(ws, { type: 'error', error: 'connect first' });
+        try {
+          const t = game.entrainementOuvrir(ws.addr, m.jeu, Date.now());
+          entRepond(ws, t.jeu);
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'entrainementQuit') {
+        const t = ws.addr ? game.entrainement.mienne(ws.addr) : null;
+        const jeu = t ? t.jeu : 'p4';
+        if (ws.addr) game.entrainementFermer(ws.addr);
+        return send(ws, { type: entMsg(jeu), match: null });
+      }
+      if (m.type === 'entrainementState') {
+        if (!ws.addr) return send(ws, { type: 'duelMatch', match: null });
+        const t = game.entrainement.mienne(ws.addr);
+        return entRepond(ws, t ? t.jeu : 'p4');
       }
 
       // ---- poker (actions nominatives) ----
@@ -2462,6 +2546,20 @@ const pokerInterval = setInterval(() => {
 /* Les echeances du Connect 4 : le coup, et la table qui n'a jamais trouve
    preneur. Une seconde suffit — l'echeance exacte est envoyee au navigateur,
    qui affiche le decompte lui-meme. */
+/* La pendule des tables d'entrainement. Elle vit a cote de celle des duels
+   plutot que dedans : les duels sauvegardent et diffusent au salon, une table
+   d'entrainement ne fait ni l'un ni l'autre, et les melanger ferait ecrire le
+   magasin pour des parties qui ne valent rien. */
+const entrainementInterval = setInterval(() => {
+  try {
+    for (const f of game.entrainementTick(Date.now())) {
+      toAddr(f.addr, { type: entMsg(f.partie.jeu),
+                       match: game.entrainementEtat(f.addr, Date.now()) });
+    }
+  } catch (e) { console.error('entrainement tick', e && e.message); }
+}, 1000);
+if (entrainementInterval.unref) entrainementInterval.unref();
+
 const p4Interval = setInterval(() => {
   try {
     const evs = game.p4Tick(Date.now());

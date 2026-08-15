@@ -600,14 +600,16 @@ function pfSerie(humain, parties, graine) {
   for (let i = 0; i < 300; i++) vus.add(B.pfCoup(hist, rnd));
   eq(vus.size, 3, 'meme face a un motif evident, il ne joue pas toujours pareil');
 }
-/* La relance suit une regle qui se raconte : on met plus quand on est devant
-   et que la fin approche ; on ne se couche que si la remontee est perdue. */
+/* LA RELANCE ET LA COUCHE. Se coucher ne rend pas la manche : le moteur donne
+   la PARTIE au relanceur. Relancer, symetriquement, ne peut jamais couter le
+   match — l'autre suit et rien ne change, ou il se couche et on gagne. Les
+   deux reponses sont donc « toujours », et ce test fige ce raisonnement pour
+   que personne ne le « raffine » sans relire le moteur. */
 {
-  ok(B.pfRelance(3, 1, 2), 'il relance quand il mene et qu il reste peu');
-  ok(!B.pfRelance(1, 3, 2), 'il ne relance pas quand il est derriere');
-  ok(!B.pfRelance(3, 1, 6), 'ni trop tot');
-  ok(B.pfSuit(2, 2, 4), 'il suit a egalite');
-  ok(!B.pfSuit(0, 3, 1), 'il se couche quand la remontee est arithmetiquement morte');
+  for (const [m, l, r] of [[0, 0, 7], [3, 1, 2], [0, 3, 1], [1, 3, 4]]) {
+    ok(B.pfRelance(m, l, r), `il relance meme a ${m}-${l} (${r} manches restantes)`);
+    ok(B.pfSuit(m, l, r), `il suit meme a ${m}-${l} (${r} manches restantes)`);
+  }
 }
 
 console.log(`bots.test.js : ${n} verifications OK`);
