@@ -28,6 +28,7 @@ const relay = require('./relay');
 const profilpage = require('./profilpage');
 const admin = require('./admin');
 const session = require('./session');
+const paris = require('./paris');
 const journal = require('./journal');
 const avatars = require('./avatars');
 
@@ -63,6 +64,14 @@ console.log('[store] state file →', require('path').resolve(store.FILE), '(mus
 // ---- Telegram notification helpers ----
 let supplyWei = null; // SWOGE total supply (for the % staked), fetched once
 const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '?';
+/* Les annonces Telegram partent en parse_mode HTML, et le NOM DU JOUEUR est
+   une chaine libre de 24 caracteres qu'il choisit lui-meme (setName). Sans
+   echappement, un nom contenant un chevron casse le message — au mieux ; au
+   pire il y injecte son propre balisage. Il existait deja un `esc` dans ce
+   fichier, mais enferme dans une fonction : celui-ci est au niveau du module,
+   la ou les annonces en ont besoin. */
+const escHtml = (x) => String(x == null ? '' : x)
+  .replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const fmtAmt = (s) => { const n = parseFloat(s || '0'); return n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : n.toFixed(n < 1 ? 4 : 0); };
 function stakedPct() {
   if (!supplyWei || supplyWei.isZero()) return null;
@@ -106,9 +115,57 @@ function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
   if (!(net >= cfg.NOTIFY_WIN_MIN)) return;
   tg.notifyPhoto(imageJeu(jeu),
             `🃏 <b>${NOM_TABLE[jeu] || jeu}</b>\n` +
-            `${game._p(addr).name} won <b>+${fmtAmt(String(net))} $SWOGE</b> 🐕\n` +
+            `${escHtml(game._p(addr).name)} won <b>+${fmtAmt(String(net))} $SWOGE</b> 🐕\n` +
             `Stake ${fmtAmt(String(staked))} · returned ${fmtAmt(String(payout))}` +
             (note ? ` · ${note}` : ''));
+}
+
+/* ------------------------------------------------ un pari vient d'etre pose
+ *
+ * Les autres annonces racontent un GAIN — elles arrivent apres coup, quand
+ * tout est joue. Celle-ci raconte un ENGAGEMENT : un pari sportif reste ouvert
+ * jusqu'au coup de sifflet, parfois des heures. C'est la seule annonce du
+ * canal qu'on peut encore suivre en direct, et la seule qui donne envie de
+ * prendre le meme.
+ *
+ * ELLE PART A LA POSE, PAS AU REGLEMENT. Annoncer un combine a 32 fois la mise
+ * une fois qu'il est perdu n'interesse personne ; l'annoncer pendant que les
+ * matchs se jouent, si.
+ *
+ * LA LEGENDE D'UNE PHOTO TELEGRAM EST BORNEE A 1024 CARACTERES. Huit jambes de
+ * noms d'equipes longs peuvent en approcher : au-dela, l'API refuse TOUT le
+ * message. On coupe donc la liste et on annonce ce qu'on a coupe, plutot que
+ * de risquer une annonce qui ne part pas.
+ */
+const NOM_ISSUE   = { '1': 'Home', 'N': 'Draw', '2': 'Away' };
+const NOM_ISSUE_2 = { '1': 'Player 1', '2': 'Player 2' };   // tennis, NBA : pas de domicile
+
+function notifyBetPlaced(addr, pari) {
+  if (!pari || !(pari.mise >= cfg.NOTIFY_BET_MIN)) return;
+  const jambes = pari.jambes || [];
+  const n = jambes.length;
+
+  const ligne = (j) => {
+    const m = paris.match(j.match);
+    if (!m) return null;
+    const deux = (m.issues || []).length === 2;
+    const nom = (deux ? NOM_ISSUE_2 : NOM_ISSUE)[j.choix] || j.choix;
+    return `• ${escHtml(m.domicile)} – ${escHtml(m.exterieur)} · <b>${escHtml(nom)}</b> @ ${Number(j.cote).toFixed(2)}`;
+  };
+
+  let lignes = jambes.map(ligne).filter(Boolean);
+  const LIMITE = 700;                        // on garde de la marge sous les 1024
+  let coupees = 0;
+  while (lignes.join('\n').length > LIMITE && lignes.length > 1) { lignes.pop(); coupees++; }
+  if (coupees) lignes.push(`• … et ${coupees} autre${coupees > 1 ? 's' : ''} selection${coupees > 1 ? 's' : ''}`);
+
+  const titre = n > 1 ? `Accumulator · ${n} selections` : 'Single bet';
+  tg.notifyPhoto(imageJeu('paris'),
+    `🎟️ <b>SWOGE Bet</b> — ${titre}\n` +
+    `${escHtml(game._p(addr).name)} just placed a bet 🐕\n\n` +
+    lignes.join('\n') + '\n\n' +
+    `Odds <b>${Number(pari.cote).toFixed(2)}</b> · stake <b>${fmtAmt(String(pari.mise))} $SWOGE</b>\n` +
+    `Could return <b>${fmtAmt(String(pari.rapport))} $SWOGE</b>`);
 }
 
 /* Le robinet de developpement ne s'ouvre QUE sur un serveur sans chaine. Un
@@ -2028,6 +2085,7 @@ wss.on('connection', (ws) => {
             ? game.parieCombine(ws.addr, m.selections, m.mise, Date.now())
             : game.parie(ws.addr, m.match, m.choix, m.mise, Date.now());
           persistSoon();
+          notifyBetPlaced(ws.addr, pari);
           send(ws, { type: 'pariPose', pari, balance: game.balanceStr(ws.addr),
                      matchs: game.parisOuverts(Date.now()),
                      mesParis: game.mesParis(ws.addr, 40) });

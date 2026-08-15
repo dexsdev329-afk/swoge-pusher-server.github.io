@@ -434,6 +434,15 @@ module.exports = {
   NEW_PLAYER_IMAGE: env('NEW_PLAYER_IMAGE', ''),
   NOTIFY_STAKE_MIN: parseFloat(env('NOTIFY_STAKE_MIN', '100')),    // notify stakes ≥ this
 
+  /* ---- l'annonce d'un pari sportif ----
+   * Les autres annonces racontent un GAIN, apres coup. Celle-ci raconte un
+   * ENGAGEMENT : un pari reste ouvert jusqu'au coup de sifflet, c'est la seule
+   * du canal qu'on peut suivre en direct.
+   * Le seuil est a ZERO : tout pari est annonce, comme demande. Si le canal
+   * devient bruyant, c'est la seule valeur a bouger — la mettre a 1000
+   * n'annoncerait que les paris qui valent le coup d'oeil. */
+  NOTIFY_BET_MIN: parseFloat(env('NOTIFY_BET_MIN', '0')),
+
   // ---- Provably-fair prize table (weighted tiers) ----
   // [value, weight] out of PRIZE_TOTAL (10,000,000). A weighted table (instead
   // of a flat array) lets us express very rare big lots cleanly AND keep the
