@@ -2443,7 +2443,11 @@ server.listen(cfg.PORT, () => {
    * d'envoyer la liste sur Telegram, avec le score et la commande a lancer.
    * Une liste ecrite dans un journal que personne ne lit laisserait les paris
    * ouverts indefiniment. */
-  calendrierAuto = parisImport.planifie((finis) => {
+  /* Le rappel est nomme et pose sur `global` pour qu'un test puisse le
+     jouer : sinon il n'est atteignable qu'apres une vraie minuterie et un
+     vrai appel reseau, c'est-a-dire jamais en test. C'est le SEUL chemin par
+     lequel le serveur paie tout seul — il doit pouvoir etre exerce. */
+  const reglementAuto = (finis) => {
     /* Le tri est fait par le module d'import, qui ne connait pas le moteur —
        il ne peut donc pas payer tout seul. Le paiement se fait ICI, par le
        meme appel que la route d'admin. */
@@ -2492,7 +2496,9 @@ server.listen(cfg.PORT, () => {
       : '';
     tg.notify(tete + '\n\n' + l.slice(0, 14).join('\n') +
               (l.length > 14 ? `\n• … et ${l.length - 14} autre(s)` : '') + pied);
-  });
+  };
+  global.__swogeReglementAuto = reglementAuto;
+  calendrierAuto = parisImport.planifie(reglementAuto);
 });
 
 function shutdown() {
