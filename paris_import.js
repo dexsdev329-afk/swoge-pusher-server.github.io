@@ -79,6 +79,69 @@ const LIGUES = (process.env.ODDS_API_LIGUES || [
   return { sport: (sport || '').trim(), clef: (clef || '').trim() };
 }).filter((x) => x.sport && x.clef);
 
+/*
+ * ---- LES DRAPEAUX ----
+ *
+ * `/events` ne rend que des NOMS d'equipe : ni pays, ni code, ni logo. Or la
+ * page affiche un drapeau a cote de chaque nom, et au tennis c'est souvent lui
+ * qu'on reconnait en premier — les noms arrivent abreges, « Etcheverry T. M. »
+ * ne dit rien a personne, « AR » si.
+ *
+ * Deux sources, dans cet ordre :
+ *
+ *  1. LA LIGUE. Un championnat national se joue entre clubs de son pays :
+ *     tout ce qui est en Ligue 1 est francais, sans exception. C'est exact
+ *     pour les cinq championnats suivis, et ca ne demande aucune saisie.
+ *
+ *  2. UNE TABLE, pour le reste. La Ligue des champions melange les pays, et
+ *     le tennis n'a pas de « pays de la competition » qui vaille pour les
+ *     joueurs. `paris_pays.json` fait la correspondance nom → code ISO, et
+ *     s'edite a la main : une ligne par joueur ou par club, ajoutee quand on
+ *     la croise.
+ *
+ * Un pays inconnu vaut `null`, PAS un drapeau au hasard. La page n'affiche
+ * alors rien — ce qui est honnete — la ou un mauvais drapeau serait pris pour
+ * une information.
+ */
+/* Les competitions dont TOUS les participants sont d'un meme pays. */
+const PAYS_LIGUE = {
+  soccer_epl: 'GB', soccer_efl_champ: 'GB', soccer_england_league1: 'GB',
+  soccer_france_ligue_one: 'FR', soccer_france_ligue_two: 'FR',
+  soccer_spain_la_liga: 'ES', soccer_spain_segunda_division: 'ES',
+  soccer_italy_serie_a: 'IT', soccer_italy_serie_b: 'IT',
+  soccer_germany_bundesliga: 'DE', soccer_germany_bundesliga2: 'DE',
+  soccer_netherlands_eredivisie: 'NL', soccer_portugal_primeira_liga: 'PT',
+  soccer_belgium_first_div: 'BE', soccer_turkey_super_league: 'TR',
+  soccer_usa_mls: 'US', basketball_nba: 'US',
+};
+/* Le nom du pays, pour le champ `pays` de la rencontre. */
+const NOM_PAYS = {
+  GB: 'England', FR: 'France', ES: 'Spain', IT: 'Italy', DE: 'Germany',
+  NL: 'Netherlands', PT: 'Portugal', BE: 'Belgium', TR: 'Turkey', US: 'USA',
+};
+
+const FICHIER_PAYS = path.join(__dirname, 'paris_pays.json');
+let PAYS = null;
+function chargePays(fichier) {
+  try { PAYS = JSON.parse(fs.readFileSync(fichier || FICHIER_PAYS, 'utf8')); }
+  catch (e) { if (e.code !== 'ENOENT') throw e; PAYS = {}; }
+  return PAYS;
+}
+/* La meme normalisation que pour les forces Elo : « Paris SG » et
+   « PARIS  sg » doivent tomber sur la meme entree. */
+function clePays(nom) {
+  return String(nom || '').toLowerCase().normalize('NFD')
+    .replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+/** Le code ISO d'une equipe ou d'un joueur, ou null. */
+function paysDe(nom, ligue) {
+  if (!PAYS) chargePays();
+  const t = PAYS[clePays(nom)];
+  if (/^[A-Z]{2}$/.test(String(t || ''))) return t;
+  const l = PAYS_LIGUE[ligue];
+  return /^[A-Z]{2}$/.test(String(l || '')) ? l : null;
+}
+
 /* La region et le marche pour l'etalonnage. UN de chaque : le cout est le
    produit des deux, donc deux regions coutent deux fois plus cher pour une
    information qu'on utilise a peine. */
@@ -228,8 +291,10 @@ async function importeMatchs() {
       if (!ev.home_team || !ev.away_team) continue;      // tennis : adversaire inconnu
       matchs.push({
         id: identifiant(l, ev), sport: l.sport,
-        competition: NOM_COMPET(l.clef), pays: '',
+        competition: NOM_COMPET(l.clef), pays: NOM_PAYS[PAYS_LIGUE[l.clef]] || '',
         domicile: ev.home_team, exterieur: ev.away_team,
+        paysDomicile: paysDe(ev.home_team, l.clef),
+        paysExterieur: paysDe(ev.away_team, l.clef),
         debut: new Date(t).toISOString(),
         source: { fournisseur: 'the-odds-api', ligue: l.clef, evenement: ev.id },
       });
@@ -260,7 +325,9 @@ async function importeMatchs() {
     try { h = cotes.habille(m); }
     catch (e) { ecartes.push(`${m.domicile} – ${m.exterieur} : ${e.message.split('— ')[1] || e.message}`); continue; }
     habilles.push({ id: h.id, sport: h.sport, competition: h.competition, pays: h.pays,
-                    domicile: h.domicile, exterieur: h.exterieur, debut: h.debut,
+                    domicile: h.domicile, exterieur: h.exterieur,
+                    paysDomicile: h.paysDomicile || null, paysExterieur: h.paysExterieur || null,
+                    debut: h.debut,
                     cotes: h.cotes, cotesGenerees: !!h.cotesGenerees, source: h.source });
   }
   if (ecartes.length) {
@@ -627,4 +694,5 @@ if (require.main === module) {
 
 module.exports = { LIGUES, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie,
                    trieReglements, AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
+                   PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
                    partDuJour, joursRestants, autorise, identifiant, etatQuota };

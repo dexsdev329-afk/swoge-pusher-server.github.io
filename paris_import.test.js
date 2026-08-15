@@ -189,6 +189,37 @@ const cotes = require('./cotes');
     await imp.importeMatchs();
   }
 
+  // ==== 1ter. LES DRAPEAUX
+  {
+    /* `/events` ne rend QUE des noms : ni pays, ni code, ni logo. Le drapeau
+       vient donc d'ailleurs, et il vaut mieux ne pas en mettre que d'en
+       mettre un faux — un mauvais drapeau est pris pour une information. */
+    eq(imp.paysDe('Bolton', 'soccer_epl'), 'GB',
+       'un club de championnat national herite du pays de sa ligue');
+    eq(imp.paysDe('Lyon', 'soccer_france_ligue_one'), 'FR', 'idem en Ligue 1');
+    eq(imp.paysDe('Real Madrid', 'soccer_uefa_champs_league'), 'ES',
+       'en Ligue des champions la ligue ne dit rien : la table prend le relais');
+    eq(imp.paysDe('PARIS  sg', 'soccer_uefa_champs_league'), 'FR',
+       'et elle ignore la casse et les espaces en trop');
+    eq(imp.paysDe('Etcheverry T. M.', 'tennis_atp_us_open'), 'AR',
+       'au tennis c est la table seule — et c est la que le drapeau sert le plus');
+    eq(imp.paysDe('Equipe Jamais Vue', 'tennis_atp_us_open'), null,
+       'un nom inconnu ne recoit AUCUN drapeau, jamais un au hasard');
+    eq(imp.paysDe('Equipe Jamais Vue', 'soccer_epl'), 'GB',
+       'sauf si sa ligue le dit avec certitude');
+
+    /* Et le catalogue ecrit les porte bien. */
+    const cat = JSON.parse(fs.readFileSync(CAT, 'utf8'));
+    const avecDrapeau = cat.matchs.filter((m) => m.paysDomicile && m.paysExterieur);
+    ok(avecDrapeau.length > 0, `${avecDrapeau.length} rencontre(s) sur ${cat.matchs.length} portent leurs deux drapeaux`);
+    ok(cat.matchs.every((m) => m.paysDomicile === null || /^[A-Z]{2}$/.test(m.paysDomicile)),
+       'et un code de pays est toujours soit null, soit deux majuscules');
+    /* Le validateur du serveur refuse tout ce qui n'est pas ISO2 : un code de
+       travers donnerait deux lettres chinoises a l'ecran au lieu d'un drapeau. */
+    const v = paris.valide(cat);
+    ok(v.matchs.some((m) => m.paysDomicile), 'le validateur du serveur les garde');
+  }
+
   // ==== 2. les scores : seulement les ligues qui ont quelque chose a rattraper
   {
     appels.length = 0;
