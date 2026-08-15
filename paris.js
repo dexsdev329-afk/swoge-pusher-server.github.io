@@ -109,6 +109,21 @@ function valide(brut) {
       paysDomicile: /^[A-Z]{2}$/.test(m.paysDomicile || '') ? m.paysDomicile : null,
       paysExterieur: /^[A-Z]{2}$/.test(m.paysExterieur || '') ? m.paysExterieur : null,
       debut, cotes, marge: mg, issues: issues(m.sport),
+      /* D'ou vient la rencontre, quand elle a ete importee plutot qu'ecrite a
+         la main. `paris_import.js --scores` s'en sert pour retrouver le match
+         chez le fournisseur, et surtout pour n'interroger QUE les ligues qui
+         ont une rencontre a regler — le reste du forfait en depend.
+         Rien de tout ca ne descend dans la page : `vue()` ne le recopie pas.
+         C'est deliberé — un identifiant de fournisseur n'apprend rien a un
+         joueur et donne une prise de plus a qui regarde le trafic. */
+      source: (m.source && typeof m.source === 'object') ? {
+        fournisseur: String(m.source.fournisseur || ''),
+        ligue: String(m.source.ligue || ''),
+        evenement: String(m.source.evenement || ''),
+      } : null,
+      /* Une cote fabriquee se dit. Le jour ou un pari se conteste, on veut
+         savoir si le chiffre venait d'un bookmaker ou de notre modele. */
+      cotesGenerees: !!m.cotesGenerees,
     };
   });
 

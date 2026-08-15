@@ -29,6 +29,11 @@ const profilpage = require('./profilpage');
 const admin = require('./admin');
 const session = require('./session');
 const paris = require('./paris');
+/* L'alimentation du calendrier des paris. Le module ne sort sur le reseau
+   que si ODDS_API_KEY est posee — sans elle il le dit au demarrage et ne
+   fait rien, le calendrier reste celui du depot. */
+const parisImport = require('./paris_import');
+let calendrierAuto = null;          // les minuteries de l alimentation
 const journal = require('./journal');
 const avatars = require('./avatars');
 
@@ -2404,10 +2409,37 @@ server.listen(cfg.PORT, () => {
   console.log(`  telegram=${tg.enabled() ? 'ON (chat ' + cfg.TG_CHAT_ID + ')' : 'OFF (set TG_BOT_TOKEN + TG_CHAT_ID)'}`);
   tg.notify('🟢 <b>SWOGE server online</b> — notifications actives'); // startup ping = quick check that TG works
   sante.demarre({ jeu: game, tg });
+
+  /* ---- le calendrier des paris s'alimente tout seul ----
+   *
+   * Sans cle, rien ne part sur le reseau et le calendrier reste celui du
+   * depot : c'est le comportement d'avant, inchange.
+   *
+   * Les rencontres ne coutent AUCUN credit (endpoint /events), donc on peut
+   * les reprendre deux fois par jour. Les scores coutent, donc une fois par
+   * jour et seulement pour les ligues qui ont une rencontre finie. Le detail
+   * du budget est dans EXPLOITATION.md, section 8.
+   *
+   * Le reglement, lui, reste A LA MAIN — c'est la meme raison qu'ailleurs
+   * dans ce fichier : un service de resultats qui se trompe paie les
+   * mauvaises personnes sans que personne ne le sache. On se contente donc
+   * d'envoyer la liste sur Telegram, avec le score et la commande a lancer.
+   * Une liste ecrite dans un journal que personne ne lit laisserait les paris
+   * ouverts indefiniment. */
+  calendrierAuto = parisImport.planifie((finis) => {
+    const lignes = finis.slice(0, 12).map((f) =>
+      `• ${escHtml(f.domicile)} <b>${escHtml(f.score)}</b> ${escHtml(f.exterieur)} → ` +
+      `<code>${escHtml(f.id)}</code> résultat <b>${escHtml(f.resultat)}</b>`);
+    if (finis.length > 12) lignes.push(`• … et ${finis.length - 12} autre(s)`);
+    tg.notify(`⚽ <b>${finis.length} rencontre(s) à régler</b>\n` +
+              `Vérifiez le score, puis appelez <code>/paris/regle</code> :\n\n` +
+              lignes.join('\n'));
+  });
 });
 
 function shutdown() {
   clearInterval(niveauInterval); clearInterval(prixInterval); clearInterval(backupInterval); clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
+  if (calendrierAuto) calendrierAuto.arrete();
   persistComplet(); // instantane complet : rien ne se perd au redeploiement
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
      qui attend encore doit partir maintenant, sinon les dernieres manches
