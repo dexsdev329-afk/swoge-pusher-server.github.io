@@ -192,6 +192,36 @@ function page() {
 </div>
 
 <div class="panel" style="margin-top:14px">
+  <h2>&#9203; Matches waiting for a result</h2>
+  <div class="sub" style="margin:0 0 10px">
+    Kick-off has passed, bets are riding on it, and nothing has been decided.
+    <b>While this list is not empty, players are waiting to be paid.</b><br>
+    Each button shows what <b>that</b> outcome pays out. One combined total
+    would tell you nothing &mdash; it is the gap between outcomes that lets you
+    catch a wrong result before it pays.<br>
+    <b>Settling cannot be undone.</b> Check the score, then click.
+  </div>
+  <div id="argBody"><div class="muted2">loading&hellip;</div></div>
+  <style>
+    .arg{ padding:11px 12px; margin-bottom:9px; border-radius:12px;
+      background:rgba(255,154,61,.07); border:1px solid rgba(255,154,61,.3); }
+    .arg.vieux{ background:rgba(242,104,94,.09); border-color:rgba(242,104,94,.45); }
+    .arg h4{ margin:0 0 3px; font-size:13.5px; }
+    .arg .meta{ font-size:11.5px; color:#8a7f6a; margin-bottom:9px; }
+    .arg .row{ gap:7px; flex-wrap:wrap; }
+    /* Chaque bouton porte SON exposition : on ne clique pas « 1 », on clique
+       « Home, et ca coute 4 738 ». Le chiffre est sur le bouton, pas dans un
+       tableau a cote — c'est la seule facon qu'il soit lu. */
+    .arg button{ display:flex; flex-direction:column; align-items:flex-start;
+      gap:2px; padding:8px 12px; min-width:104px; line-height:1.25; }
+    .arg button small{ font-weight:600; opacity:.8; font-size:10.5px; }
+    .arg .rmb{ background:rgba(255,255,255,.08); color:#EAF2FF;
+      border:1px solid rgba(255,255,255,.18); }
+    .argok{ color:#7CFF9B; } .argko{ color:#F2685E; }
+  </style>
+</div>
+
+<div class="panel" style="margin-top:14px">
   <h2>&#127942; Sports bets</h2>
   <div class="sub" style="margin:0 0 10px">
     Chaque pari porte un <b>identifiant</b>, affiche au joueur et repris ici.
@@ -785,6 +815,76 @@ $("#bcsv").onclick=function(){
   a.href=u; a.download="swoge-bets.csv"; a.click(); URL.revokeObjectURL(u);
 };
 loadBets(false); setInterval(function(){ if(!$("#bq").value) loadBets(false); },20000);
+
+/* ============ LES RENCONTRES QUI ATTENDENT UN RESULTAT ============
+ *
+ * C'etait la seule chose du panneau qui demandait encore une ligne de
+ * commande : vingt-deux rencontres a regler, c'etait vingt-deux « curl » a
+ * taper, sur un telephone. D'ou des paris qui restent ouverts — et un pari
+ * gagnant non paye est pire qu'une erreur de paiement.
+ */
+var ISS={'1':'Home','N':'Draw','2':'Away'}, ISS2={'1':'Player 1','2':'Player 2'};
+function argNom(m,i){ return ((m.issues||[]).length===2?ISS2:ISS)[i]||i; }
+async function loadAregler(){
+  try{
+    var r=await fetch("/paris/aregler",{headers:{"x-admin-key":KEY}});
+    if(!r.ok){ $("#argBody").innerHTML='<div class="muted2">could not load ('+r.status+')</div>'; return; }
+    var d=await r.json(), ms=d.matchs||[];
+    if(!ms.length){ $("#argBody").innerHTML='<div class="muted2">Nothing waiting — every played match is settled ✓</div>'; return; }
+    $("#argBody").innerHTML=ms.map(function(m){
+      var h=Math.floor(m.attendDepuisMin/60);
+      /* Une rencontre qui attend depuis plus de six heures est une rencontre
+         qu'on a oubliee : elle se signale d'elle-meme. */
+      var vieux=m.attendDepuisMin>360?" vieux":"";
+      var attente = h>=1 ? ("waiting "+h+" h "+(m.attendDepuisMin%60)+" min")
+                         : ("waiting "+m.attendDepuisMin+" min");
+      return '<div class="arg'+vieux+'" data-id="'+esc(m.id)+'">'+
+        '<h4>'+esc(m.domicile)+' &ndash; '+esc(m.exterieur)+'</h4>'+
+        '<div class="meta">'+esc(m.competition||m.sport)+' &middot; '+
+          new Date(m.debut).toLocaleString('en-GB')+' &middot; <b>'+attente+'</b><br>'+
+          m.paris+' bet(s) from '+m.joueurs+' player(s) &middot; staked '+fmt(m.mise)+
+          ' &middot; <code>'+esc(m.id)+'</code></div>'+
+        '<div class="row">'+
+          m.issues.map(function(i){
+            return '<button data-res="'+esc(i)+'">'+esc(argNom(m,i))+
+                   '<small>pays '+fmt(m.expo[i]||0)+'</small></button>'; }).join('')+
+          '<button class="rmb" data-res="__rembourse">Refund all<small>returns '+fmt(m.mise)+'</small></button>'+
+        '</div><div class="argmsg" style="margin-top:7px;font-size:12px"></div></div>';
+    }).join("");
+  }catch(e){ $("#argBody").innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
+}
+$("#argBody").addEventListener("click",async function(ev){
+  var b=ev.target.closest("button"); if(!b) return;
+  var carte=b.closest(".arg"), id=carte.getAttribute("data-id"), res=b.getAttribute("data-res");
+  var titre=carte.querySelector("h4").textContent;
+  var quoi = res==="__rembourse" ? "REFUND every bet on" : ("settle "+titre+" as "+b.childNodes[0].textContent+" —");
+  /* Une confirmation qui NOMME la rencontre et le resultat. « Etes-vous
+     sur ? » ne protege de rien : on clique oui sans lire. */
+  /* Le saut de ligne doit sortir ECHAPPE : ce script vit dans un littéral de
+     gabarit, ou « \n » est interprete a la construction de la page et
+     produirait un vrai retour a la ligne au milieu d'une chaine — donc une
+     SyntaxError, et tout le bloc mort. */
+  if(!confirm(quoi+" "+titre+"\\n\\nThis pays players immediately and CANNOT be undone.")) return;
+  var boutons=carte.querySelectorAll("button");
+  [].forEach.call(boutons,function(x){ x.disabled=true; });
+  var msg=carte.querySelector(".argmsg"); msg.textContent="settling…"; msg.className="argmsg";
+  try{
+    var url = res==="__rembourse"
+      ? "/paris/rembourse?match="+encodeURIComponent(id)
+      : "/paris/regle?match="+encodeURIComponent(id)+"&resultat="+encodeURIComponent(res);
+    var r=await fetch(url,{headers:{"x-admin-key":KEY}});
+    var j=await r.json();
+    if(j.error){ msg.textContent="✗ "+j.error; msg.className="argmsg argko";
+                 [].forEach.call(boutons,function(x){ x.disabled=false; }); return; }
+    msg.className="argmsg argok";
+    msg.textContent = res==="__rembourse"
+      ? ("✓ refunded "+fmt(j.rendu||0)+" $SWOGE to "+(j.paris||0)+" bet(s)")
+      : ("✓ "+(j.gagnants||0)+" paid, "+(j.perdus||0)+" lost, "+fmt(j.paye||0)+" $SWOGE out");
+    setTimeout(function(){ loadAregler(); loadBets(false); },1400);
+  }catch(e){ msg.textContent="✗ "+e.message; msg.className="argmsg argko";
+             [].forEach.call(boutons,function(x){ x.disabled=false; }); }
+});
+loadAregler(); setInterval(loadAregler,30000);
 /* Un clic sur la ligne ouvre son detail, et referme celui qui l'etait : deux
    panneaux ouverts noient le tableau. */
 $("#pbody").addEventListener("click",function(e){

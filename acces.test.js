@@ -37,6 +37,7 @@ const PRIVEES = ['/admin', '/players', '/stats',
                     quoi et combien — et sur un site ou l on peut suivre une
                     adresse, ca suffit a cibler quelqu un. */
                  '/paris/liste',
+                 '/paris/aregler',
                  '/usage'];
 
 function lance(port, cle) {

@@ -1523,6 +1523,60 @@ class Game {
     };
   }
 
+  /**
+   * Les rencontres qui ATTENDENT un resultat, pour le panneau.
+   *
+   * C'est la seule liste qui demande une action humaine : le coup d'envoi est
+   * passe, des paris sont en jeu, et rien n'a encore ete decide. Tant qu'elle
+   * n'est pas vide, des joueurs attendent d'etre payes.
+   *
+   * On rend l'exposition ISSUE PAR ISSUE, et c'est le point important : avant
+   * de cliquer, on doit voir ce que CHAQUE resultat coute a la maison. Un
+   * seul total ne dit rien — c'est la difference entre les issues qui permet
+   * de reperer une erreur de saisie avant qu'elle ne paie.
+   */
+  parisAregler(now) {
+    const t = Number(now) || Date.now();
+    if (!this.parisRegles) this.parisRegles = {};
+    const parMatch = new Map();
+    for (const p of (this.paris || [])) {
+      if (p.regle) continue;
+      for (const j of (p.jambes || [])) {
+        if (!parMatch.has(j.match)) parMatch.set(j.match, []);
+        parMatch.get(j.match).push({ p, j });
+      }
+    }
+    const sortie = [];
+    for (const [id, lignes] of parMatch) {
+      if (this.parisRegles[id]) continue;             // deja tranchee
+      const m = paris.match(id);
+      if (!m || m.debut > t) continue;                // pas encore jouee
+      const expo = {};
+      for (const i of m.issues) expo[i] = 0;
+      let mise = 0;
+      const joueurs = new Set();
+      for (const { p, j } of lignes) {
+        /* Le gain ENTIER pese sur l'issue choisie : un combine ne paie que si
+           toutes ses jambes passent, mais du point de vue de CE match, c'est
+           ce choix-la qui ouvre la porte. Majorant, et un garde-fou majore. */
+        expo[j.choix] = (expo[j.choix] || 0) + p.rapport;
+        mise += p.mise;
+        joueurs.add(p.addr);
+      }
+      sortie.push({
+        id, sport: m.sport, competition: m.competition,
+        domicile: m.domicile, exterieur: m.exterieur, debut: m.debut,
+        issues: m.issues.slice(), cotes: Object.assign({}, m.cotes),
+        paris: lignes.length, joueurs: joueurs.size, mise: Math.round(mise),
+        expo: Object.fromEntries(m.issues.map((i) => [i, Math.round(expo[i] || 0)])),
+        /* Depuis combien de temps elle attend. Une rencontre qui attend depuis
+           deux jours est une rencontre qu'on a oubliee. */
+        attendDepuisMin: Math.round((t - m.debut) / 60000),
+      });
+    }
+    return sortie.sort((a, b) => a.debut - b.debut);
+  }
+
   /** Les paris d'un joueur, du plus recent au plus ancien. */
   mesParis(addr, limite) {
     const a = String(addr).toLowerCase();

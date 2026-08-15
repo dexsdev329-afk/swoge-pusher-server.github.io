@@ -1217,6 +1217,15 @@ const server = http.createServer(async (req, res) => {
      joueur : quand quelqu'un ecrit « mon pari b41-mfx2 n'a pas ete paye », on
      le retrouve en une recherche au lieu de fouiller un fichier. La recherche
      porte sur l'identifiant du pari, celui du match, l'adresse et le nom. */
+  /* Ce qui ATTEND un resultat. C'est la seule liste du panneau qui demande une
+     action : tant qu'elle n'est pas vide, des joueurs attendent d'etre payes. */
+  if (path === '/paris/aregler') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ matchs: game.parisAregler(Date.now()) }));
+  }
+
   if (path === '/paris/liste') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
