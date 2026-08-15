@@ -58,15 +58,28 @@ function decide(pc, upcard) {
   return 'hit';
 }
 
-function joue({ parties, mise, strategie, triche }) {
+/* @param annexes  mises annexes posees avant la donne, {pp, tp}.
+ * @param assure   fraction de l'assurance prise quand le croupier montre un As
+ *                 (0 = refus, 1 = le maximum). */
+function joue({ parties, mise, strategie, triche, annexes, assure }) {
   const g = neuf();
   const depart = sol(g);
   let engage = 0;
   for (let i = 0; i < parties; i++) {
-    if (sol(g) < mise * 3) break;
+    if (sol(g) < mise * 4) break;
     let st;
-    try { st = g.bjBet(ADR, mise); } catch (e) { break; }
-    engage += mise;
+    try { st = g.bjBet(ADR, mise, annexes); } catch (e) { break; }
+    engage += mise + ((annexes && annexes.pp) || 0) + ((annexes && annexes.tp) || 0);
+    /* L'ETAPE DE L'ASSURANCE. Elle s'intercale entre la donne et le tour du
+       joueur des que le croupier montre un As. La sauter laisserait la main
+       ouverte : la donne suivante serait refusee, la boucle casserait, et le
+       taux de retour se lirait sur trois mains au lieu de cent-vingt mille —
+       exactement le faux positif qu'un audit ne doit pas produire. */
+    if (st.stage === 'insurance') {
+      const m = Math.floor(st.insuranceMax * (assure || 0));
+      engage += m;
+      st = g.bjInsure(ADR, m);
+    }
     while (st.stage === 'player') {
       // le tricheur change sa graine AVANT chaque tirage
       if (triche) g.setClientSeed(ADR, 'triche-' + i + '-' + st.player.cards.length);
@@ -88,18 +101,29 @@ const cas = [
   ['tirer jusqu a 17     ', (pc) => (val(pc) < 17 ? 'hit' : 'stand'), false],
   ['double des que permis', (pc, up, st) => (st.canDouble ? 'double' : decide(pc, up)), false],
   ['base + graine changee', (pc, up) => decide(pc, up), true],
+  /* Les deux facons de jouer les annexes. Un joueur qui ASSURE TOUJOURS doit
+     rendre MOINS qu'un joueur de base : l'assurance est le plus mauvais pari
+     de la table (92,3 %). Si elle rapportait, c'est qu'elle serait payee sur
+     autre chose que le blackjack du croupier. */
+  ['base + assurance max ', (pc, up) => decide(pc, up), false, null, 1, 80000],
+  ['base + annexes       ', (pc, up) => decide(pc, up), false, { pp: 10, tp: 10 }, 0, 80000],
 ];
 const resultats = [];
-for (const [nom, strat, triche] of cas) {
-  const r = joue({ parties: 120000, mise: 10, strategie: strat, triche });
+for (const [nom, strat, triche, annexes, assure, parties] of cas) {
+  const r = joue({ parties: parties || 120000, mise: 10, strategie: strat, triche, annexes, assure });
   console.log('    %s : %s %%  (%s mise)', nom, (100 * r.retour).toFixed(2), r.engage);
   resultats.push([nom, r.retour]);
 }
 
 /* Le seuil. Un blackjack correct rend 99,5 % en strategie de base ; l'ecart-type
    sur 120 000 mains vaut environ 0,3 %. Au-dessus de 101 % il y a une faille,
-   pas de la chance. */
-for (const [nom, r] of resultats) {
+   pas de la chance.
+   LES DEUX DERNIERS CAS SONT JUGES A PART : ils portent des paris annexes, dont
+   le retour est fixe par une table de gain et non par le moteur. Les passer au
+   meme seuil ferait echouer l'audit du moteur pour une valeur de config — on
+   ne veut pas apprendre a lire « bj_audit rouge » comme « la table est
+   genereuse ». */
+for (const [nom, r] of resultats.slice(0, 5)) {
   ok(r < 1.01, `${nom.trim()} : retour ${(100 * r).toFixed(2)} % — AU-DESSUS DE 100 %, faille probable`);
 }
 // et la strategie de base doit rendre a peu pres ce qu'un blackjack rend
@@ -113,6 +137,28 @@ const ecart = Math.abs(resultats[4][1] - base);
 console.log('    ecart du tricheur : %s point(s) de pourcentage', (100 * ecart).toFixed(2));
 ok(ecart < 0.014, `changer de graine ne change pas le retour (ecart ${(100 * ecart).toFixed(2)} %)`);
 ok(resultats[4][1] < 1.0, 'le tricheur ne passe pas au-dessus de 100 %');
+
+/* ---- LES ANNEXES, JUGEES SUR CE QU'ELLES SONT ----
+ *
+ * L'ASSURANCE COUTE. Elle rend 92,3 % contre 99,5 % pour la main : la prendre
+ * a chaque As doit donc FAIRE BAISSER le retour d'ensemble. Si elle le faisait
+ * monter, elle serait payee sur autre chose que le blackjack du croupier —
+ * c'est le seul defaut qui compte ici, et il se voit a ce signe-la.
+ */
+const avecAssurance = resultats[5][1];
+ok(avecAssurance < base + 0.015,
+   `assurer a chaque As ne rapporte pas (${(100 * avecAssurance).toFixed(2)} % contre ${(100 * base).toFixed(2)} % sans)`);
+
+/* LES DEUX PARIS D'AVANT-DONNE. Le retour attendu est la moyenne ponderee des
+ * trois paris — main 99,5 %, perfect pairs 101,9 %, 21+3 99,2 % sur des mises
+ * egales, soit environ 100,2 %. On borne LARGE (± 3 points) : les 25:1 et les
+ * 100:1 font une variance enorme, et un seuil serre clignoterait au hasard
+ * une execution sur dix. Ce qu'on attrape ici, c'est une table de gain
+ * branchee de travers, pas un ecart de troisieme decimale — la mesure fine des
+ * annexes vit dans bj_annexes.test.js, sur deux millions de tirages. */
+const avecAnnexes = resultats[6][1];
+ok(avecAnnexes > 0.96 && avecAnnexes < 1.03,
+   `les annexes rendent ce que leur table dit (${(100 * avecAnnexes).toFixed(2)} %)`);
 
 // ---------------------------------------------------- gestes interdits
 {

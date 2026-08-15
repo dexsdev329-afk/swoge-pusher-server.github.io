@@ -513,6 +513,45 @@ module.exports = {
   BJ_MAX_BET: parseInt(env('BJ_MAX_BET', '100000'), 10),  // max $SWOGE per hand
   BJ_MIN_BET: parseInt(env('BJ_MIN_BET', '1'), 10),
 
+  /* ---- Les paris annexes ----
+   *
+   * LE PLAFOND SEPARE, D'ABORD. Le 21+3 paie cent fois. Sans plafond propre,
+   * une mise annexe au maximum de la table engagerait cent fois le maximum de
+   * la table sur UNE carte — la banque peut perdre en une donne ce qu'elle
+   * gagne en un mois. Le plafond est choisi pour que l'exposition annexe
+   * maximale (1000 x 100 = 100 000) ne depasse pas celle d'une main principale
+   * au maximum (100 000 x 2,5 = 250 000). On ne compte pas sur BJ_MAX_BET pour
+   * borner l'annexe : ce sont deux risques de nature differente.
+   *
+   * L'ASSURANCE N'EST PAS PLAFONNEE ICI. Elle ne se pose pas avant la donne :
+   * elle se propose quand le croupier montre un As, et la regle du jeu la borne
+   * deja a la MOITIE de la main. Elle paie 2:1, donc son exposition suit la
+   * main principale — lui appliquer le plafond annexe reviendrait a interdire
+   * l'assurance des qu'on mise plus de 2000, ce qui n'a aucun sens.
+   *
+   * LES TABLES DE GAIN sont en « X pour 1 » : le joueur recoit X fois sa mise
+   * EN PLUS de sa mise (donc X+1 rendus). Avantage maison MESURE par
+   * bj_annexes.test.js sur ce moteur — et il faut lire ce chiffre-la, pas celui
+   * d'un casino : notre sabot est INFINI, chaque carte est tiree independamment
+   * des autres. Une paire parfaite y sort une fois sur 52 au lieu d'une fois
+   * sur 62 dans un sabot de six jeux, et c'est tout ce qui separe les deux
+   * mondes ici.
+   *
+   *   Perfect Pairs 6/12/25 ... RETOUR 101,9 % — LA MAISON PERD 1,9 %
+   *   21+3 5/10/30/40/100 .... retour  99,2 %
+   *   Assurance 2:1 .......... retour  92,3 %
+   *
+   * PERFECT PAIRS EST DONC FAVORABLE AU JOUEUR sur un sabot infini, et c'est le
+   * seul palier « parfaite » qui le rend tel. La table demandee est posee telle
+   * quelle ; le jour ou on veut la maison gagnante, UNE valeur suffit :
+   * parfaite 22 rend 96,2 %, parfaite 23 rend 98,1 %. Le test mesure le retour
+   * et l'affiche a chaque execution — il ne se degradera pas en silence.
+   */
+  BJ_SIDE_MAX_BET: parseInt(env('BJ_SIDE_MAX_BET', '1000'), 10),
+  BJ_PP_PAY:  { parfaite: 25, couleur: 12, mixte: 6 },
+  BJ_213_PAY: { brelanServi: 100, quinteFlush: 40, brelan: 30, quinte: 10, couleur: 5 },
+  BJ_INS_PAY: 2,
+
   // ---- SWOGE Casino (jeux contre la banque) ----
   // Ici la MAISON joue son argent : contrairement au poker ou l'on prend une
   // commission sans risque, une session courte peut couter cher malgre les
