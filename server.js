@@ -853,7 +853,7 @@ const server = http.createServer(async (req, res) => {
     const qs = new URLSearchParams(req.url.split('?')[1] || '');
     res.setHeader('access-control-allow-origin', '*');
     try {
-      const r = await relay.prix(qs.get('de'), qs.get('montant'));
+      const r = await relay.prix(qs.get('de'), qs.get('vers'), qs.get('montant'));
       res.writeHead(200, { 'content-type': 'application/json',
                            /* Quinze secondes : le cours ne bouge pas assez en
                               quinze secondes pour tromper qui que ce soit, et

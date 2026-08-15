@@ -210,10 +210,25 @@ async function adresseDepot(cle, vers, montant) {
  * pas la ligne en dollars. C'est un confort, pas une etape du parcours, et il
  * ne doit jamais empecher un depot de partir.
  */
-async function prix(cle, montant) {
+async function prix(cle, vers, montant) {
   if (!actif()) { const e = new Error('no relay key'); e.statut = 503; throw e; }
   const d = DEPUIS[cle];
   if (!d) { const e = new Error('unknown origin'); e.statut = 400; throw e; }
+  /* LE DESTINATAIRE EST LE JOUEUR, pas le repere de la chaine de depart.
+   *
+   * Premiere version : `recipient: d.repere`. Le chiffrage marchait depuis
+   * Ethereum et pas depuis Solana — et pour une raison qui saute aux yeux une
+   * fois vue : le repere d'Ethereum est 0x000…0, une adresse 0x parfaitement
+   * valide sur Robinhood Chain, tandis que celui de Solana est
+   * « 1111…1111 », que Relay refuse comme destinataire d'une chaine EVM. Le
+   * bogue etait invisible sur la moitie des provenances.
+   *
+   * L'appel a donc EXACTEMENT la meme forme que celui de l'adresse de depot,
+   * a `useDepositAddress` pres — c'est justement la divergence entre les deux
+   * qui l'avait cree. */
+  if (!/^0x[0-9a-fA-F]{40}$/.test(String(vers || ''))) {
+    const e = new Error('bad destination address'); e.statut = 400; throw e;
+  }
   const n = parseFloat(String(montant).replace(',', '.'));
   if (!(n >= d.min) || !(n <= d.max)) {
     const e = new Error(`amount must be between ${d.min} and ${d.max} ${d.symbole}`);
@@ -223,7 +238,7 @@ async function prix(cle, montant) {
   if (brut === null) { const e = new Error('bad amount'); e.statut = 400; throw e; }
 
   const j = await appelle('/quote/v2', {
-    user: d.repere, recipient: d.repere, refundTo: d.repere,
+    user: d.repere, recipient: vers, refundTo: d.repere,
     originChainId: d.chaine, originCurrency: d.jeton,
     destinationChainId: RH, destinationCurrency: NATIF,
     amount: brut, tradeType: 'EXACT_INPUT',
