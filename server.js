@@ -404,8 +404,14 @@ function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); 
  * Le nom du message est celui que la page attend deja : le Connect 4 parle
  * `p4Match`, les cinq autres `duelMatch`. */
 function entMsg(jeu) { return jeu === 'p4' ? 'p4Match' : 'duelMatch'; }
-function entRepond(ws, jeu) {
-  send(ws, { type: entMsg(jeu), match: game.entrainementEtat(ws.addr, Date.now()) });
+function entRepond(ws, jeu, prime) {
+  const o = { type: entMsg(jeu), match: game.entrainementEtat(ws.addr, Date.now()) };
+  /* La prime a bouge le solde : on le renvoie dans le MEME message. Les pages
+     lisent `balance` sur `p4Match` / `duelMatch` depuis toujours — c'est comme
+     ca que le gain d'une table payante s'affiche — donc le chiffre en haut de
+     l'ecran se met a jour tout seul, sans un mot de code en plus. */
+  if (prime) { o.prime = prime; o.balance = game.balanceStr(ws.addr); }
+  send(ws, o);
 }
 /** La table d'entrainement de CE joueur, si l'identifiant recu est le sien.
     C'est ce test qui aiguille un coup vers l'entrainement plutot que vers une
@@ -2254,8 +2260,9 @@ wss.on('connection', (ws) => {
              l'adversaire serait une regle de plus a retenir. */
           const ent = entSienne(ws, m.id);
           if (ent) {
-            game.entrainementJouer(ws.addr, m.col != null ? m.col : m.coup, Date.now());
-            return entRepond(ws, ent.jeu);
+            const r = game.entrainementJouer(ws.addr, m.col != null ? m.col : m.coup, Date.now());
+            if (r.prime && r.prime.prime > 0) persistSoon();
+            return entRepond(ws, ent.jeu, r.prime);
           }
           const r = game.p4Jouer(ws.addr, m.id, m.col, Date.now());
           if (r.reglement) persistSoon();
@@ -2348,7 +2355,11 @@ wss.on('connection', (ws) => {
              chemins de coup a garder d'accord. L'aiguillage tient dans
              l'identifiant, qui n'appartient qu'a ce joueur. */
           const ent = entSienne(ws, m.id);
-          if (ent) { game.entrainementJouer(ws.addr, m.coup, Date.now()); return entRepond(ws, ent.jeu); }
+          if (ent) {
+            const r = game.entrainementJouer(ws.addr, m.coup, Date.now());
+            if (r.prime && r.prime.prime > 0) persistSoon();
+            return entRepond(ws, ent.jeu, r.prime);
+          }
           const r = game.duelJouer(ws.addr, m.id, m.coup, Date.now());
           if (r.reglement) persistSoon();
           duelPousse(r.partie, r.reglement);
@@ -2567,8 +2578,10 @@ const pokerInterval = setInterval(() => {
 const entrainementInterval = setInterval(() => {
   try {
     for (const f of game.entrainementTick(Date.now())) {
-      toAddr(f.addr, { type: entMsg(f.partie.jeu),
-                       match: game.entrainementEtat(f.addr, Date.now()) });
+      const o = { type: entMsg(f.partie.jeu),
+                  match: game.entrainementEtat(f.addr, Date.now()) };
+      if (f.prime) { o.prime = f.prime; o.balance = game.balanceStr(f.addr); }
+      toAddr(f.addr, o);
     }
   } catch (e) { console.error('entrainement tick', e && e.message); }
 }, 1000);

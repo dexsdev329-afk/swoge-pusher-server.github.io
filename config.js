@@ -322,6 +322,28 @@ module.exports = {
    * Une fois qu'il a MISE au moins une fois, le joueur peut reclamer
    * WELCOME_CLAIM en plus, une seule fois.
    */
+  /* ---- LA PRIME D'ENTRAINEMENT ----
+   *
+   * Battre un bot rapporte. Le mode entrainement ne coute rien a jouer, donc
+   * la prime est le seul $SWOGE qui en sorte — et c'est aussi, pour la meme
+   * raison, le seul endroit du serveur ou de l'argent est cree sans qu'une
+   * mise ait ete posee. Il fallait donc un plafond, et lequel n'est pas
+   * indifferent.
+   *
+   * UNE PRIME PAR JEU ET PAR JOUR, pas N primes par jour. La difference est
+   * tout : les six bots ne sont pas egalement durs. Le morpion est parfait et
+   * ne peut PAS etre battu ; le Puissance 4 gagne 100 parties sur 100 contre
+   * un joueur attentif. Mais le Dernier Chiffre est un jeu de hasard cache —
+   * le bot y joue l'equilibre, ce qui le rend inexploitable mais pas
+   * invincible : un joueur en gagne environ une sur quatre, et une partie
+   * tient en un seul message. Un plafond global de six primes se remplirait
+   * donc en une minute, au meme jeu, par un script.
+   *
+   * Par jeu, il faut battre six adversaires differents — dont un qu'on ne peut
+   * qu'egaler. C'est le plafond qui recompense ce qu'on voulait recompenser. */
+  ENTRAINEMENT_PRIME: parseFloat(env('ENTRAINEMENT_PRIME', '10')),
+  ENTRAINEMENT_PRIMES_JOUR: parseInt(env('ENTRAINEMENT_PRIMES_JOUR', '1'), 10),
+
   WELCOME_BONUS: parseFloat(env('WELCOME_BONUS', '100')),   // credit d'essai, a la premiere connexion
   WELCOME_CLAIM: parseFloat(env('WELCOME_CLAIM', '5')),   // extra reward, unlocked after wagering
 

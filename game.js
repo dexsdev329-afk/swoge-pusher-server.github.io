@@ -191,6 +191,7 @@ class Game {
         np: !!p.nomPaye,
         dn: p.dayNet.toString(), dk: p.dayKey,
         dt: p.dropsToday, wt: p.winsToday, qc: p.questClaimed, hd: p.hasDeposited,
+        pe: p.primesEntrainement,
         mij: p.miseJour || {}, fac: p.face || {},
         vi: p.visage || null, am: p.amis || [], ph: !!p.photo,
         dm: p.demandes || [], en: p.envoyees || [],
@@ -354,6 +355,7 @@ class Game {
         nomChoisi: d.nc !== undefined ? !!d.nc : !!(d.name && d.name !== addr.slice(0, 6)),
         dayNet: ethers.BigNumber.from(d.dn || '0'), dayKey: d.dk || null,
         dropsToday: d.dt || 0, winsToday: d.wt || 0, questClaimed: d.qc || {}, hasDeposited: !!d.hd,
+        primesEntrainement: d.pe || {},
         miseJour: (d.mij && typeof d.mij === 'object') ? d.mij : {},
         face: (d.fac && typeof d.fac === 'object') ? d.fac : {},
         visage: d.vi || null, amis: Array.isArray(d.am) ? d.am : [], photo: !!d.ph,
@@ -1306,6 +1308,7 @@ class Game {
       if (!p.meilleurJour || net > p.meilleurJour.net) p.meilleurJour = { jour: p.dayKey, net };
     }
     p.dayKey = t; p.dayNet = ethers.BigNumber.from(0); p.dropsToday = 0; p.winsToday = 0; p.questClaimed = {};
+    p.primesEntrainement = {};
     p.miseJour = {};
   }
   jackpotStr() { return ethers.utils.formatUnits(this.jackpotPot, cfg.DECIMALS); }
@@ -2434,6 +2437,7 @@ class Game {
             refBienvenue: false,
             dayNet: ethers.BigNumber.from(0), dayKey: null,
             dropsToday: 0, winsToday: 0, questClaimed: {}, hasDeposited: false, miseJour: {}, face: {},
+            primesEntrainement: {},
             stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0,
             wagered: ethers.BigNumber.from(0), betCount: 0,
             tgId: null, welcomeGranted: false, welcomeWagered: false, welcomeClaimed: false,
@@ -4134,10 +4138,70 @@ class Game {
     return this.entrainement.ouvrir(addr, String(jeu || ''), now || Date.now());
   }
   entrainementJouer(addr, coup, now) {
-    return this.entrainement.jouer(addr, coup, now || Date.now());
+    const r = this.entrainement.jouer(addr, coup, now || Date.now());
+    r.prime = this._entrainementPrime(addr, r.partie);
+    return r;
+  }
+
+  /**
+   * LA PRIME : battre un bot rapporte des $SWOGE.
+   *
+   * ---- pourquoi elle est payee ICI et pas dans entrainement.js ----
+   *
+   * entrainement.js n'a acces a aucun solde, et c'est une propriete qu'on
+   * tient a garder : elle se verifie en lisant le fichier. Il annonce donc
+   * qu'une partie est finie et qui l'a gagnee ; c'est ce guichet-ci, qui a
+   * deja les soldes en main, qui decide de payer. Toute la creation de
+   * $SWOGE du mode entrainement tient donc dans cette seule fonction.
+   *
+   * ---- ce qui est verifie, et pourquoi chaque verification existe ----
+   *
+   * • GAGNER, pas finir. Une nulle ne paie pas : au morpion le bot est
+   *   parfait, donc la nulle est le meilleur resultat atteignable et serait
+   *   sinon une rente a un coup ;
+   * • UNE SEULE FOIS PAR PARTIE. Le drapeau est pose sur la partie elle-meme.
+   *   Sans lui, redemander l'etat d'une partie gagnee la repaierait ;
+   * • UNE SEULE FOIS PAR JEU ET PAR JOUR. C'est le plafond, et il porte sur
+   *   LE JEU, pas sur le compte : voir config.js pour le raisonnement — en
+   *   deux mots, le Dernier Chiffre se gagne une fois sur quatre en un seul
+   *   message, donc un plafond global se viderait au meme jeu en une minute.
+   *
+   * Rend null quand il n'y a rien a payer, et un objet quand il y a quelque
+   * chose a annoncer — y compris « plafond atteint », que le joueur doit voir
+   * plutot que de croire a un oubli.
+   */
+  _entrainementPrime(addr, partie) {
+    if (!partie || partie.phase !== FINIE) return null;
+    const jeton = partie.jeton(addr);
+    if (!jeton || partie.gagnant !== jeton) return null;     // nulle ou defaite
+    if (partie.primeVue) return null;                        // deja traitee
+    partie.primeVue = true;
+
+    const prime = Number(cfg.ENTRAINEMENT_PRIME) || 0;
+    if (prime <= 0) return null;
+    const jeu = partie.jeu;
+    const p = this._p(addr);
+    this._bumpDay(p);
+    if (!p.primesEntrainement) p.primesEntrainement = {};
+    const max = Number(cfg.ENTRAINEMENT_PRIMES_JOUR) || 0;
+    const deja = p.primesEntrainement[jeu] || 0;
+    if (max > 0 && deja >= max) return { jeu, prime: 0, plafond: true };
+
+    p.primesEntrainement[jeu] = deja + 1;
+    p.balance = p.balance.add(WEI(prime));
+    p.dayNet = p.dayNet.add(WEI(prime));
+    this.sales.add(addr);
+    return { jeu, prime, plafond: false };
   }
   entrainementAbandonner(addr, now) {
-    return this.entrainement.abandonner(addr, now || Date.now());
+    /* Abandonner, c'est perdre, et une partie perdue ne peut jamais payer :
+       le controle du vainqueur echoue a chaque appel, autant de fois qu'on
+       demande. On passe quand meme par le guichet plutot que de decider ici
+       qu'il n'y a rien a faire — le jour ou l'abandon donnerait autre chose
+       qu'une defaite, c'est la-bas que ce serait ecrit. */
+    const partie = this.entrainement.abandonner(addr, now || Date.now());
+    this._entrainementPrime(addr, partie);
+    return partie;
   }
   entrainementFermer(addr) { return this.entrainement.fermer(addr); }
   /**
@@ -4171,7 +4235,15 @@ class Game {
   }
   /** La pendule des tables d'entrainement. Rend celles qui viennent d'expirer,
       pour que le serveur previenne leurs joueurs. */
-  entrainementTick(now) { return this.entrainement.tick(now || Date.now()); }
+  entrainementTick(now) {
+    const finies = this.entrainement.tick(now || Date.now());
+    /* La pendule peut, en principe, faire perdre le bot : aux jeux a coups
+       simultanes il n'a pas de tour a lui, et l'echeance tombe sur les deux.
+       On passe donc par le meme guichet plutot que de supposer que le joueur
+       est forcement le perdant. */
+    for (const f of finies) f.prime = this._entrainementPrime(f.addr, f.partie);
+    return finies;
+  }
 
   duelMienne(addr) {
     for (const m of this.p4.values())
