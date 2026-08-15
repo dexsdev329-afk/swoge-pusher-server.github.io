@@ -3390,7 +3390,35 @@ class Game {
     return partie;
   }
 
-  /** S'asseoir en face. La partie demarre a cet instant. */
+  /* ---- QUI OUVRE LE JEU ----
+   *
+   * Celui qui posait la table jouait toujours le premier coup. Au Puissance 4
+   * et au morpion ce n'est pas un detail : le premier joueur a un avantage
+   * connu et mesurable — au Puissance 4 il gagne meme la partie parfaite.
+   * Ouvrir une table revenait donc a choisir le bon cote, et l'autre payait la
+   * meme mise pour le mauvais.
+   *
+   * LE TIRAGE SORT DE LA GRAINE DU SERVEUR, pas de Math.random. Trois raisons :
+   *
+   *   • aucun des deux joueurs ne peut le predire — l'identifiant de la table
+   *     est fabrique ici, et la graine n'est connue de personne avant sa
+   *     revelation ;
+   *   • personne ne peut CHOISIR sa table : un robot qui ne rejoindrait que
+   *     les parties ou il ouvre devrait deviner la graine ;
+   *   • il se VERIFIE apres coup, comme le reste de la maison. La graine
+   *     revelee, n'importe qui recalcule HMAC(graine, 'duel:<id>') et retrouve
+   *     qui devait commencer.
+   *
+   * On ne consomme aucun jeton de la suite provably-fair : le tirage se derive
+   * de l'identifiant seul, et ne decale donc ni les cartes ni les billes des
+   * autres jeux.
+   */
+  _duelPremier(id) {
+    const h = crypto.createHmac('sha256', this.serverSeed).update('duel:' + String(id)).digest('hex');
+    return Number(BigInt('0x' + h.slice(0, 15)) % BigInt(2)) === 0 ? 1 : 2;
+  }
+
+  /** S'asseoir en face. La partie demarre a cet instant, et le tirage dit qui ouvre. */
   duelRejoindre(addr, id, now) {
     const partie = this.p4.get(String(id));
     if (!partie) throw new Error('match not found');
@@ -3415,7 +3443,7 @@ class Game {
     }
     for (const m of retirees) this._duelFerme(m, 'retiree', t);
     this._duelDebite(addr, mise, partie.jeu || 'p4');
-    partie.rejoindre(addr, t);
+    partie.rejoindre(addr, t, this._duelPremier(partie.id));
     return { partie, retirees };
   }
 

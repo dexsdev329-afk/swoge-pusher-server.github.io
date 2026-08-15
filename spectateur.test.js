@@ -88,7 +88,11 @@ async function joueur() {
     await dors(250);
     eq(dernier(V.recu, 'duelWatch').match.grille.length, 42,
        'un visiteur recoit le plateau du Connect 4, quarante-deux cases');
-    env(A.ws, { type: 'p4Play', id: table.match.id, col: 3 });
+    /* QUI OUVRE EST TIRE AU SORT : on fait jouer celui qui a le trait, lu sur
+       l'etat que le visiteur vient justement de recevoir. Ce qui est teste ici
+       c'est la DIFFUSION du coup, pas l'identite de celui qui le joue. */
+    const trait = dernier(V.recu, 'duelWatch').match.tour;
+    env((trait === 2 ? B : A).ws, { type: 'p4Play', id: table.match.id, col: 3 });
     await dors(300);
     const suite = dernier(V.recu, 'duelWatch');
     eq(suite.match.grille.filter((c) => c !== 0).length, 1,

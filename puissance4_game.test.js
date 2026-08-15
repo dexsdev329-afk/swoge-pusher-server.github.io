@@ -77,25 +77,32 @@ function joue(g, id, coups, t0) {
   const m = g.p4Creer(A, 100, 1000);
   g.p4Rejoindre(B, m.id, 2000);
 
-  // A aligne quatre en bas : colonnes 0,1,2,3 ; B empile ailleurs
-  const r = g.p4Jouer(A, m.id, 0, 3000).partie;
-  joue(g, m.id, [[B, 6], [A, 1], [B, 6], [A, 2], [B, 6]], 4000);
-  const fin = g.p4Jouer(A, m.id, 3, 10000);
+  /* QUI OUVRE EST TIRE AU SORT depuis que le createur n'a plus le trait
+     d'office. On fait donc gagner CELUI QUI OUVRE — l'alignement en bas sur
+     les colonnes 0 a 3 marche pour l'un comme pour l'autre — et on suit
+     l'argent sur lui. */
+  const ouvre = m.tour === 1 ? A : B;
+  const suit  = ouvre === A ? B : A;
+  const gagnantAttendu = m.tour;
+
+  g.p4Jouer(ouvre, m.id, 0, 3000);
+  joue(g, m.id, [[suit, 6], [ouvre, 1], [suit, 6], [ouvre, 2], [suit, 6]], 4000);
+  const fin = g.p4Jouer(ouvre, m.id, 3, 10000);
 
   eq(fin.partie.phase, P.FINIE, 'la partie est finie');
-  eq(fin.partie.gagnant, 1, 'A gagne');
+  eq(fin.partie.gagnant, gagnantAttendu, 'celui qui ouvre aligne quatre et gagne');
   eq(fin.reglement.pot, 200, 'le pot vaut les deux mises');
   eq(fin.reglement.rake, 10, 'la maison prend 5 % du pot');
   eq(fin.reglement.gain, 190, 'le gagnant repart avec 190');
-  eq(sol(g, A), avantA - 100 + 190, 'le solde du gagnant');
-  eq(sol(g, B), avantB - 100, 'le perdant a paye sa mise');
+  eq(sol(g, ouvre), (ouvre === A ? avantA : avantB) - 100 + 190, 'le solde du gagnant');
+  eq(sol(g, suit), (suit === A ? avantA : avantB) - 100, 'le perdant a paye sa mise');
   eq((avantA + avantB) - (sol(g, A) + sol(g, B)), 10,
      'CONSERVATION : il manque exactement la commission');
 
   // et on ne paie pas deux fois
-  jete(() => g.p4Jouer(A, m.id, 4, 11000), /not running/, 'on ne joue plus');
+  jete(() => g.p4Jouer(ouvre, m.id, 4, 11000), /not running/, 'on ne joue plus');
   eq(g._p4Regle(fin.partie), null, 'un second reglement ne paie rien');
-  eq(sol(g, A), avantA - 100 + 190, 'le solde n a pas bouge');
+  eq(sol(g, ouvre), (ouvre === A ? avantA : avantB) - 100 + 190, 'le solde n a pas bouge');
 }
 
 // --------------------------------------------------- l abandon paie l autre
@@ -155,10 +162,12 @@ function joue(g, id, coups, t0) {
     parties++;
 
     if (k % 4 === 0) {
-      // alignement : A gagne en bas
-      g.p4Jouer(A, m.id, 0, t); t += 100;
-      for (const [q, c] of [[B, 6], [A, 1], [B, 6], [A, 2], [B, 6]]) { g.p4Jouer(q, m.id, c, t); t += 100; }
-      g.p4Jouer(A, m.id, 3, t); t += 100;
+      /* Alignement en bas par CELUI QUI OUVRE — le trait est tire au sort, la
+         suite de coups vaut pour l'un comme pour l'autre. */
+      const o = m.tour === 1 ? A : B, u = o === A ? B : A;
+      g.p4Jouer(o, m.id, 0, t); t += 100;
+      for (const [q, c] of [[u, 6], [o, 1], [u, 6], [o, 2], [u, 6]]) { g.p4Jouer(q, m.id, c, t); t += 100; }
+      g.p4Jouer(o, m.id, 3, t); t += 100;
       rakeAttendu += Math.floor(mise * 2 * cfg.P4_RAKE_BPS / 10000);
     } else if (k % 4 === 1) {
       g.p4Abandonner(B, m.id, t); t += 100;

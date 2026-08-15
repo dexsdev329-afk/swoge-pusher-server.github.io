@@ -163,12 +163,24 @@ class Partie {
     this.calme = 0;                 // demi-coups sans prise ni avance de pion
   }
 
-  rejoindre(addr, now) {
+  /**
+   * S'asseoir en face. La partie demarre a cet instant.
+   *
+   * @param premier 1 ou 2 — QUI OUVRE LE JEU. Celui qui pose la table jouait
+   *   toujours le premier coup, et au Puissance 4 comme au morpion c'est un
+   *   avantage connu et mesurable : le premier joueur gagne la partie parfaite.
+   *   Ouvrir une table revenait donc a choisir le bon cote. Le tirage vient de
+   *   game.js, qui seul detient la graine du serveur ; ce module ne decide de
+   *   rien, il applique. Sans valeur, on garde l'ancien comportement — les
+   *   tests qui appellent rejoindre a deux arguments continuent de passer.
+   */
+  rejoindre(addr, now, premier) {
     if (this.phase !== ATTENTE) throw new Error('this match is no longer open');
     if (addr === this.joueurs[0]) throw new Error('you cannot join your own match');
     if (this.reserve && addr !== this.reserve)
       throw new Error('this rematch is reserved for another player');
     this.joueurs[1] = addr;
+    if (premier === 1 || premier === 2) this.tour = premier;
     this.phase = EN_COURS;
     this.echeance = now + this.coupMs;
     return this;

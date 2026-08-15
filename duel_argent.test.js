@@ -56,14 +56,18 @@ function neuf(credit = 1000000) {
   g.duelRejoindre(B, m.id, 1100);
   eq(sol(g, B), 1000000 - 1000, 'l adversaire paie en s asseyant');
 
-  // A aligne la premiere rangee
+  /* LE TRAIT EST TIRE AU SORT depuis que le createur n'ouvre plus d'office.
+     Le test ne peut donc plus ecrire l'ordre des coups en dur : il fait gagner
+     CELUI QUI OUVRE, quel qu'il soit, et verifie l'argent sur lui. */
+  const ouvre = m.tour === 1 ? A : B;
+  const suit  = ouvre === A ? B : A;
   let t = 1200;
-  for (const [addr, c] of [[A, 0], [B, 3], [A, 1], [B, 4], [A, 2]]) { g.duelJouer(addr, m.id, c, t); t += 100; }
+  for (const [addr, c] of [[ouvre, 0], [suit, 3], [ouvre, 1], [suit, 4], [ouvre, 2]]) { g.duelJouer(addr, m.id, c, t); t += 100; }
   eq(m.phase, 'finie', 'la partie est finie');
-  eq(m.adresseGagnante(), A, 'A a gagne');
+  eq(m.adresseGagnante(), ouvre, 'celui qui ouvre a aligne la premiere rangee');
 
   const pot = 2000, rake = Math.floor(pot * cfg.MP_RAKE_BPS / 10000);
-  eq(sol(g, A), 1000000 - 1000 + (pot - rake), 'le gagnant ramasse le pot moins la commission');
+  eq(sol(g, ouvre), 1000000 - 1000 + (pot - rake), 'le gagnant ramasse le pot moins la commission');
   eq(total(g), avant - rake, 'et rien ne se perd : tout est chez les joueurs ou chez la maison');
 }
 
@@ -75,8 +79,12 @@ function neuf(credit = 1000000) {
   const avant = total(g);
   const m = g.duelCreer('mp', A, 5000, 1000);
   g.duelRejoindre(B, m.id, 1100);
+  /* Meme raison qu'au-dessus : c'est CELUI QUI OUVRE qui joue les coups
+     impairs, et le tirage decide qui c'est. La suite de cases, elle, ne change
+     pas — elle donne une grille pleine sans alignement. */
+  const ouv = m.tour === 1 ? A : B, sui = ouv === A ? B : A;
   let t = 1200;
-  [0, 1, 2, 4, 3, 5, 7, 6, 8].forEach((c, k) => { g.duelJouer(k % 2 === 0 ? A : B, m.id, c, t); t += 100; });
+  [0, 1, 2, 4, 3, 5, 7, 6, 8].forEach((c, k) => { g.duelJouer(k % 2 === 0 ? ouv : sui, m.id, c, t); t += 100; });
   eq(m.gagnant, null, 'personne ne gagne');
   eq(total(g), avant, 'chacun a repris exactement sa mise');
 }
@@ -94,6 +102,10 @@ function neuf(credit = 1000000) {
      est verifie ici, c'est l'ARGENT, pas les regles. */
   m.grille = new Array(dm.CASES).fill(0);
   m.grille[42] = dm.PION1; m.grille[35] = dm.PION2;
+  /* LE TRAIT FAIT PARTIE DE LA POSITION. On plante la grille, on plante donc
+     aussi a qui c'est de jouer — sans quoi le test dependrait du tirage au
+     sort qui decide desormais qui ouvre. */
+  m.tour = 1;
   g.duelJouer(A, m.id, { de: 42, vers: 28 }, 1200);
   eq(m.phase, 'finie', 'plus une piece en face : la partie est finie');
   eq(m.adresseGagnante(), A, 'et A a gagne');
