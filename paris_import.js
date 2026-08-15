@@ -415,22 +415,44 @@ async function importeMatchs() {
     return 0;
   }
 
-  /* Une ligue qui a echoue toute seule — un 502 passager, une competition qui
-     rend 404 le temps d'une intersaison — ne doit pas faire disparaitre ses
-     rencontres deja au calendrier. On reprend les siennes telles quelles. */
-  if (echouees.size) {
-    let repris = 0;
+  /* ---- ON COMPLETE, ON NE REMPLACE PAS ----
+   *
+   * Le premier import reel a efface vingt et une rencontres du calendrier —
+   * sept de Championship et quatorze de tennis, ecrites a la main — parce
+   * qu'aucune ligue suivie ne les rendait. Des paris etaient poses dessus.
+   *
+   * Ce n'est pas une perte cosmetique. Un pari porte l'identifiant de son
+   * match ; si le match quitte le catalogue, `regleMatch` jette « unknown
+   * match ». La rencontre ne peut plus etre REGLEE — seulement remboursee.
+   * Autrement dit : celui qui avait gagne ne peut plus etre paye.
+   *
+   * On reprend donc TOUTE rencontre precedente qui pourrait encore porter un
+   * pari : celles a venir, et celles jouees recemment qui attendent peut-etre
+   * leur resultat. Une rencontre importee du meme identifiant remplace
+   * l'ancienne — c'est la seule chose qu'on ecrase, et c'est voulu : les
+   * cotes et l'horaire d'un match qui n'a pas commence peuvent bouger.
+   *
+   * Le module ne connait pas le moteur et ne peut donc pas demander « ce
+   * match a-t-il des paris ? ». On garde donc sur un critere de TEMPS, plus
+   * large que necessaire : garder une rencontre de trop ne coute rien, en
+   * perdre une bloque de l'argent.
+   */
+  const RETENTION_JOURS = Number(process.env.ODDS_API_RETENTION || 45);
+  {
+    let repris = 0, vieilles = 0;
     try {
       const avant = JSON.parse(fs.readFileSync(FICHIER_CAT, 'utf8'));
+      const limiteBasse = Date.now() - RETENTION_JOURS * 86400000;
       for (const m of avant.matchs || []) {
-        const lg = m.source && m.source.ligue;
-        if (!lg || !echouees.has(lg)) continue;
-        if (Date.parse(m.debut) <= Date.now()) continue;
-        if (vus.has(m.id)) continue;
+        if (vus.has(m.id)) continue;                 // remplacee par la version fraiche
+        const t = Date.parse(m.debut);
+        if (!isFinite(t)) continue;
+        if (t < limiteBasse) { vieilles++; continue; }
         habilles.push(m); repris++;
       }
     } catch (e) { /* pas de catalogue precedent : rien a reprendre */ }
-    if (repris) console.log(`[odds] ${repris} rencontre(s) conservee(s) des ligues en echec`);
+    if (repris) console.log(`[odds] ${repris} rencontre(s) precedente(s) conservee(s)` +
+      (vieilles ? `, ${vieilles} trop ancienne(s) retiree(s)` : ''));
   }
 
   if (!habilles.length) {
@@ -456,8 +478,9 @@ async function importeMatchs() {
   fs.writeFileSync(FICHIER_CAT, JSON.stringify(catalogue, null, 1) + '\n');
   console.log(`[odds] catalogue ecrit : ${habilles.length} rencontre(s), 0 credit depense`);
   noteDernier('matchs', { ok: true, ecrit: true, rencontres: habilles.length,
-    repondues, parLigue: parLigueCompte, echouees: [...echouees],
-    erreurs: erreurs.slice(0, 12), ecartees: ecartes.slice(0, 12) });
+    importees: vus.size, repondues, parLigue: parLigueCompte,
+    echouees: [...echouees], erreurs: erreurs.slice(0, 12),
+    ecartees: ecartes.slice(0, 12) });
   return habilles.length;
 }
 

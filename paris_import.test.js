@@ -126,7 +126,13 @@ const cotes = require('./cotes');
 
     /* Toutes les cotes sont fabriquees, et le catalogue passe le validateur du
        serveur — c'est la seule chose qui compte au demarrage. */
-    ok(cat.matchs.every((m) => m.cotesGenerees), 'toutes les cotes sont fabriquees');
+    /* Les rencontres IMPORTEES ont des cotes fabriquees. Les autres — celles
+       du calendrier precedent, que l'import conserve desormais — gardent les
+       leurs : une cote relevee a la main vaut mieux que la notre. */
+    const importees = cat.matchs.filter((m) => m.source);
+    ok(importees.length > 0, `${importees.length} rencontre(s) importee(s)`);
+    ok(importees.every((m) => m.cotesGenerees),
+       'toutes les cotes des rencontres importees sont fabriquees');
     const v = paris.valide(cat);
     eq(v.matchs.length, cat.matchs.length, 'le validateur du serveur accepte le catalogue');
     ok(v.matchs.every((m) => m.marge >= paris.MARGE_MIN), 'avec une marge suffisante partout');
@@ -140,6 +146,47 @@ const cotes = require('./cotes');
       'les identifiants ne bougent pas d un import a l autre'); n++;
     assert.deepStrictEqual(cat2.matchs.map((m) => m.cotes), cat.matchs.map((m) => m.cotes),
       'et les cotes non plus, a forces egales'); n++;
+  }
+
+  // ==== 1bis-a. UN IMPORT REUSSI N'EFFACE PAS LES AUTRES RENCONTRES
+  {
+    /* Le bug le plus couteux de la serie, et il s'est produit EN PRODUCTION :
+       le premier import reel a efface vingt et une rencontres ecrites a la
+       main — sept de Championship, quatorze de tennis — parce qu'aucune ligue
+       suivie ne les rendait.
+       Ce n'est pas cosmetique. Un pari porte l'identifiant de son match ; si
+       le match quitte le catalogue, `regleMatch` jette « unknown match ». La
+       rencontre ne peut plus etre REGLEE, seulement remboursee — donc celui
+       qui avait gagne ne peut plus etre paye. */
+    const cat = JSON.parse(fs.readFileSync(CAT, 'utf8'));
+    const etranger = {
+      id: 'ecrit-a-la-main-1', sport: 'foot', competition: 'Championship', pays: '',
+      domicile: 'Bristol City', exterieur: 'Millwall',
+      debut: new Date(Date.now() + 3 * 86400000).toISOString(),
+      cotes: { 1: 2.1, N: 3.3, 2: 3.4 },
+    };
+    const vieux = Object.assign({}, etranger, { id: 'ecrit-a-la-main-vieux',
+      debut: new Date(Date.now() - 120 * 86400000).toISOString() });
+    cat.matchs.push(etranger, vieux);
+    fs.writeFileSync(CAT, JSON.stringify(cat, null, 1));
+
+    appels.length = 0;
+    await imp.importeMatchs();
+    const apres = JSON.parse(fs.readFileSync(CAT, 'utf8'));
+    const ids = apres.matchs.map((m) => m.id);
+
+    ok(ids.includes('ecrit-a-la-main-1'),
+       'une rencontre a venir qu AUCUNE ligue ne rend est CONSERVEE — sinon ses paris sont bloques');
+    ok(ids.some((x) => x.startsWith('epl-')) || apres.matchs.some((m) => m.source),
+       'et les rencontres importees sont bien la, elles aussi');
+    ok(!ids.includes('ecrit-a-la-main-vieux'),
+       'une rencontre vieille de quatre mois finit par sortir du catalogue');
+
+    /* Le remplacement reste possible : une rencontre importee ECRASE
+       l'ancienne de meme identifiant — horaire et cotes peuvent bouger. */
+    const doublons = ids.filter((x, i) => ids.indexOf(x) !== i);
+    eq(doublons.length, 0, 'et aucun identifiant n apparait deux fois');
+    paris.valide(apres); n++;
   }
 
   // ==== 1bis. UN IMPORT RATE N'EFFACE RIEN
@@ -212,8 +259,13 @@ const cotes = require('./cotes');
     const cat = JSON.parse(fs.readFileSync(CAT, 'utf8'));
     const avecDrapeau = cat.matchs.filter((m) => m.paysDomicile && m.paysExterieur);
     ok(avecDrapeau.length > 0, `${avecDrapeau.length} rencontre(s) sur ${cat.matchs.length} portent leurs deux drapeaux`);
-    ok(cat.matchs.every((m) => m.paysDomicile === null || /^[A-Z]{2}$/.test(m.paysDomicile)),
-       'et un code de pays est toujours soit null, soit deux majuscules');
+    /* Absent, null, ou deux majuscules : les rencontres conservees du
+       calendrier precedent n'ont pas forcement la clef, et `paris.valide`
+       transforme l'absence en null. Ce qu'on interdit, c'est une valeur
+       PRESENTE et mal formee — elle donnerait deux lettres a l'ecran au lieu
+       d'un drapeau. */
+    ok(cat.matchs.every((m) => m.paysDomicile == null || /^[A-Z]{2}$/.test(m.paysDomicile)),
+       'un code de pays est soit absent, soit deux majuscules — jamais autre chose');
     /* Le validateur du serveur refuse tout ce qui n'est pas ISO2 : un code de
        travers donnerait deux lettres chinoises a l'ecran au lieu d'un drapeau. */
     const v = paris.valide(cat);
