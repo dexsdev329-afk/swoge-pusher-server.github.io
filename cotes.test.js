@@ -192,6 +192,37 @@ cotes.chargeNotes(TMP);
      `une victoire d outsider vaut plus (+${gainOutsider.toFixed(1)} vs +${gainFavori.toFixed(1)})`);
 }
 
+// ---- une cote FABRIQUEE se refait tant que le match n'a pas commence
+{
+  /* Sans ca, tout le calendrier reste a jamais sur les cotes du premier
+     jour — celles ou toutes les equipes valaient 1500 et ou chaque match
+     sortait a 2,08 / 3,61 / 2,92. C'est exactement ce qui s'est produit en
+     production : les forces ont ete corrigees, les cotes ne bougeaient pas. */
+  cotes.poseNote('foot', 'GROS', 1500); cotes.poseNote('foot', 'PETIT', 1500);
+  const futur = { id: 'refait-1', sport: 'foot', domicile: 'GROS', exterieur: 'PETIT',
+                  debut: new Date(Date.now() + 86400000).toISOString() };
+  const a = cotes.habille(futur);
+  ok(a.cotesGenerees, 'la premiere cote est fabriquee');
+
+  cotes.poseNote('foot', 'GROS', 1950);        // le favori se revele
+  const b = cotes.habille(a);
+  ok(b.cotes['1'] < a.cotes['1'] - 0.2,
+     `la cote se refait quand la force change (${a.cotes['1']} → ${b.cotes['1']})`);
+
+  /* Une rencontre COMMENCEE ne bouge plus : les paris y sont poses a la cote
+     affichee, la changer apres coup changerait ce qui a ete accepte. */
+  const commence = Object.assign({}, b, { debut: new Date(Date.now() - 3600000).toISOString() });
+  cotes.poseNote('foot', 'GROS', 1300);
+  eq(cotes.habille(commence).cotes['1'], b.cotes['1'],
+     'une rencontre commencee garde ses cotes, quoi qu il arrive aux forces');
+
+  /* Et une cote RELEVEE A LA MAIN reste intouchable, elle. */
+  const main = { id: 'refait-2', sport: 'foot', domicile: 'GROS', exterieur: 'PETIT',
+                 debut: new Date(Date.now() + 86400000).toISOString(),
+                 cotes: { 1: 1.9, N: 3.5, 2: 4.2 } };
+  eq(cotes.habille(main).cotes['1'], 1.9, 'une cote relevee a la main ne se refait jamais');
+}
+
 // ---- une cote deja presente n'est JAMAIS remplacee
 {
   const m = { id: 'x-1', sport: 'foot', domicile: 'A', exterieur: 'B',

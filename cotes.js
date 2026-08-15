@@ -302,11 +302,23 @@ function cotesDe(sport, domicile, exterieur, margeVoulue) {
  * quelqu'un a pris la peine d'en relever une chez un bookmaker, elle vaut
  * mieux que la notre, et l'ecraser serait une mauvaise surprise.
  */
-function habille(m, margeVoulue) {
+function habille(m, margeVoulue, now) {
   if (!m || !m.sport) throw new Error('cotes : match sans sport');
   const iss = paris.issues(m.sport);
   const deja = m.cotes && iss.every((i) => isFinite(Number(m.cotes[i])));
-  if (deja) return m;
+  /* Une cote FABRIQUEE se refait tant que la rencontre n'a pas commence.
+     C'est ce qui permet aux cotes de s'ameliorer : les forces Elo changent —
+     un etalonnage, un resultat — et sans ce refus de se figer, tout le
+     calendrier resterait a jamais sur les cotes du premier jour, celles ou
+     toutes les equipes valaient 1500 et ou chaque match affichait
+     2,08 / 3,61 / 2,92.
+     Une cote RELEVEE A LA MAIN n'est jamais touchee : quelqu'un a pris la
+     peine de la chercher, elle vaut mieux que la notre.
+     Et une rencontre COMMENCEE ne bouge plus, evidemment : les paris y sont
+     deja poses a la cote affichee. */
+  const t = Number(now) || Date.now();
+  const commence = isFinite(Date.parse(m.debut)) && Date.parse(m.debut) <= t;
+  if (deja && (!m.cotesGenerees || commence)) return m;
   return Object.assign({}, m, {
     cotes: cotesDe(m.sport, m.domicile, m.exterieur, margeVoulue),
     /* Une cote fabriquee se dit. Le jour ou un pari se conteste, on veut

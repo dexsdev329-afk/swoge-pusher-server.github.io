@@ -448,7 +448,16 @@ async function importeMatchs() {
         const t = Date.parse(m.debut);
         if (!isFinite(t)) continue;
         if (t < limiteBasse) { vieilles++; continue; }
-        habilles.push(m); repris++;
+        /* Une rencontre conservee dont la cote est FABRIQUEE se retarife :
+           les forces ont pu changer depuis. Celle qui a commence, non — les
+           paris y sont poses a la cote affichee. */
+        let g = m;
+        if (m.cotesGenerees && t > Date.now()) {
+          try { g = cotes.habille(m); }
+          catch (e) { /* devenue incotable : on la garde telle quelle plutot
+                         que de la faire disparaitre avec ses paris */ }
+        }
+        habilles.push(g); repris++;
       }
     } catch (e) { /* pas de catalogue precedent : rien a reprendre */ }
     if (repris) console.log(`[odds] ${repris} rencontre(s) precedente(s) conservee(s)` +
@@ -677,6 +686,7 @@ async function calibre(ligueDemandee) {
   }
   cotes.sauveNotes();
   console.log(`[odds] ${bouges} rencontre(s) ont recale les forces — paris_notes.json ecrit`);
+  noteDernier('calibre', { rencontres: bouges, ligues: cibles.map((l) => l.clef) });
   return bouges;
 }
 
@@ -754,18 +764,35 @@ function planifie(signale) {
 
   /* On laisse le serveur finir de demarrer avant de sortir sur le reseau :
      un import qui echoue ne doit pas se confondre avec un demarrage rate. */
+  /* L'ETALONNAGE. Il etait documente et jamais programme — l'oubli le plus
+     couteux du lot, parce qu'il ne se voit pas : les cotes restent valides,
+     avec la bonne marge, simplement fausses. Sans forces a jour, toutes les
+     rencontres sortaient a 2,08 / 3,61 / 2,92, et « Hull City – Manchester
+     United » donnait Hull favori. Une marge de 10 % sur un prix faux perd de
+     l'argent contre quiconque connait le sport.
+     Une fois par semaine, un credit par ligue. */
+  const etalonne = () => sur('calibre', async () => {
+    await calibre();
+    await rafraichit();     // les cotes se refont avec les forces corrigees
+  });
+
   const minuteries = [
     setTimeout(rafraichit, 30000),
     setInterval(rafraichit, 12 * H),
     setTimeout(releve, 5 * 60000),
     setInterval(releve, 24 * H),
+    /* Pas au demarrage : un redeploiement ne doit pas couter de credits.
+       Le premier etalonnage a lieu une heure apres, puis chaque semaine. */
+    setTimeout(etalonne, H),
+    setInterval(etalonne, 7 * 24 * H),
   ];
   console.log(`[odds] alimentation automatique : rencontres toutes les 12 h (0 credit), ` +
-              `scores une fois par jour. ${etatQuota().reste} credit(s), ` +
+              `scores une fois par jour, etalonnage une fois par semaine. ` +
+              `${etatQuota().reste} credit(s), ` +
               `part du jour ${partDuJour(etatQuota().reste)} jusqu au ${FIN}`);
   /* On rend les minuteries : une minuterie oubliee garde le processus en
      vie a l arret et peut refaire un appel reseau en plein redeploiement. */
-  return { rafraichit, releve, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
+  return { rafraichit, releve, etalonne, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
 }
 
 // ---------------------------------------------------------------- l'appel
