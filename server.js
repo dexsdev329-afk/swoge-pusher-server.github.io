@@ -2278,6 +2278,14 @@ wss.on('connection', (ws) => {
       if (m.type === 'p4State') {
         const mienne = game.p4Mienne(ws.addr);
         const id = m.id || (mienne && mienne.id);
+        /* Pas de table payante ? On regarde l'entrainement avant de repondre
+           « rien ». Sans ca, rafraichir la page pendant une partie contre le
+           bot l'efface de l'ecran alors qu'elle tourne toujours, et le joueur
+           croit l'avoir perdue. */
+        if (!id) {
+          const ent = ws.addr ? game.entrainement.mienne(ws.addr) : null;
+          if (ent && ent.jeu === 'p4') return entRepond(ws, 'p4');
+        }
         return send(ws, { type: 'p4Match', match: id ? game.p4Etat(id, Date.now()) : null });
       }
 
@@ -2393,6 +2401,12 @@ wss.on('connection', (ws) => {
       if (m.type === 'duelState') {
         const mienne = game.duelMienne(ws.addr);
         const id = m.id || (mienne && mienne.id);
+        /* Meme raison qu'au Connect 4 : une partie d'entrainement en cours
+           survit a un rafraichissement de page. */
+        if (!id) {
+          const ent = ws.addr ? game.entrainement.mienne(ws.addr) : null;
+          if (ent && ent.jeu !== 'p4') return entRepond(ws, ent.jeu);
+        }
         return send(ws, { type: 'duelMatch', match: id ? game.duelEtat(id, Date.now(), ws.addr) : null });
       }
 
