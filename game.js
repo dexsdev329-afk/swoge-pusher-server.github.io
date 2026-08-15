@@ -1441,6 +1441,88 @@ class Game {
     return pari;
   }
 
+  /**
+   * TOUS les paris, pour le panneau d'administration.
+   *
+   * Pourquoi une methode a part plutot que `mesParis` sans adresse : ce qui
+   * est demande ici n'est pas la meme chose. Le joueur veut SES paris, en
+   * clair ; l'exploitant veut retrouver UN pari a partir de son identifiant,
+   * savoir qui l'a pose, et voir ce qui est encore en jeu. La recherche porte
+   * donc sur l'identifiant du pari, celui du match, l'adresse et le nom —
+   * les quatre choses qu'on a sous la main quand quelqu'un signale un
+   * probleme.
+   *
+   * L'identifiant du pari est la piece maitresse : il est affiche au joueur,
+   * ecrit dans le journal, et repris ici. Un joueur qui ecrit « mon pari
+   * b41-mfx2 n'a pas ete paye » se verifie en une recherche au lieu de
+   * fouiller un fichier.
+   */
+  tousParis(opt) {
+    const o = opt || {};
+    const q = String(o.q || '').trim().toLowerCase();
+    const etat = String(o.etat || 'tous');
+    const t = Number(o.now) || Date.now();
+
+    let liste = (this.paris || []);
+    if (etat === 'ouvert') liste = liste.filter((p) => !p.regle);
+    else if (etat === 'regle') liste = liste.filter((p) => p.regle);
+
+    if (q) {
+      liste = liste.filter((p) => {
+        if (String(p.id).toLowerCase().includes(q)) return true;
+        if (String(p.addr).toLowerCase().includes(q)) return true;
+        const f = this.players.get(p.addr);
+        const nom = (f && f.name) || '';
+        if (nom && String(nom).toLowerCase().includes(q)) return true;
+        return (p.jambes || []).some((j) => String(j.match).toLowerCase().includes(q));
+      });
+    }
+
+    const total = liste.length;
+    /* Le total AVANT la tranche : « 3 sur 412 » se lit, « 3 » ne dit rien. */
+    const debut = Math.max(0, Number(o.debut) || 0);
+    const page = liste.sort((x, y) => y.t - x.t)
+      .slice(debut, debut + (Number(o.limite) || 50));
+
+    /* Les sommes portent sur TOUT ce qui est filtre, pas sur la page : c'est
+       l'engagement reel qu'on veut voir, pas celui des cinquante premiers. */
+    let mise = 0, engage = 0, paye = 0;
+    for (const p of liste) {
+      mise += p.mise;
+      if (!p.regle) engage += p.rapport;
+      else if (p.gagne) paye += p.rapport;
+      else if (p.gagne === null) paye += p.mise;
+    }
+
+    return {
+      total, debut, encore: debut + page.length < total,
+      resume: { mise: Math.round(mise), engage: Math.round(engage), paye: Math.round(paye),
+                ouverts: (this.paris || []).filter((x) => !x.regle).length },
+      paris: page.map((p) => {
+        const j0 = paris.match(p.match);
+        return {
+          id: p.id, addr: p.addr,
+          nom: (this.players.get(p.addr) || {}).name || null,
+          t: p.t, mise: p.mise, cote: p.cote, rapport: p.rapport,
+          regle: !!p.regle, gagne: p.regle ? p.gagne : null,
+          /* L'etat en un mot, calcule ici : trois pages differentes le
+             deduisaient chacune a sa facon, et une seule s'y prenait bien. */
+          etat: !p.regle ? (j0 && j0.debut <= t ? 'a regler' : 'en cours')
+                         : p.gagne === null ? 'rembourse' : p.gagne ? 'gagne' : 'perdu',
+          jambes: (p.jambes || []).map((j) => {
+            const m = paris.match(j.match);
+            return { match: j.match, choix: j.choix, cote: j.cote,
+                     domicile: m ? m.domicile : '?', exterieur: m ? m.exterieur : '?',
+                     debut: m ? m.debut : null, issues: m ? m.issues.slice() : [],
+                     regle: !!(this.parisRegles && this.parisRegles[j.match]),
+                     resultat: (this.parisRegles && this.parisRegles[j.match]
+                                && this.parisRegles[j.match].resultat) || null };
+          }),
+        };
+      }),
+    };
+  }
+
   /** Les paris d'un joueur, du plus recent au plus ancien. */
   mesParis(addr, limite) {
     const a = String(addr).toLowerCase();

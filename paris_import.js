@@ -392,6 +392,82 @@ async function importeScores() {
   return finis;
 }
 
+/*
+ * ======================= LE REGLEMENT AUTOMATIQUE =======================
+ *
+ * Regler a la main etait un choix, pas un oubli : un service de resultats qui
+ * se trompe paie les mauvaises personnes, et un reglement ne se defait pas —
+ * l'argent est parti. Le calendrier ne comptait que quelques rencontres par
+ * semaine, la verification tenait en deux minutes.
+ *
+ * Avec un calendrier qui s'alimente tout seul, ce n'est plus tenable : des
+ * dizaines de rencontres par semaine, et des paris qui restent ouverts parce
+ * que personne n'a eu le temps. Un pari gagnant non paye est pire qu'une
+ * erreur de paiement : le joueur voit qu'il a gagne, et ne recoit rien.
+ *
+ * On automatise donc, avec quatre verrous. Aucun n'est decoratif :
+ *
+ *  1. LA SOURCE DOIT ETRE NETTE. `completed` vrai, les deux scores presents
+ *     et numeriques, les deux noms retrouves. Au moindre doute on ne touche
+ *     a rien et on signale.
+ *
+ *  2. UN PLAFOND D'EXPOSITION. Au-dessus, on ne regle pas tout seul. C'est
+ *     le verrou qui compte : une erreur sur une rencontre a faible enjeu se
+ *     repare a la main, la meme sur une rencontre ou la maison doit deux
+ *     millions ne se repare pas. Le seuil se regle, et il est volontairement
+ *     bas par defaut.
+ *
+ *  3. UN DELAI. On attend que la rencontre soit finie depuis un moment
+ *     avant de payer. Un score « final » publie a la 90e minute peut encore
+ *     bouger — prolongations, tirs au but, match arrete puis repris, et
+ *     surtout la correction d'une saisie fausse. Ce delai ne coute rien a
+ *     personne et evite la seule erreur qu'on ne peut pas defaire.
+ *
+ *  4. TOUT EST DIT. Chaque reglement automatique part sur Telegram avec le
+ *     score, la source et ce qui a ete paye. Un automate silencieux est un
+ *     automate que personne ne surveille.
+ */
+
+/* Au-dessus de cette exposition, la rencontre attend une main humaine. */
+const AUTO_PLAFOND = Number(process.env.PARIS_AUTO_PLAFOND || 200000);
+/* Depuis combien de temps la rencontre doit etre finie. */
+const AUTO_DELAI_MIN = Number(process.env.PARIS_AUTO_DELAI_MIN || 90);
+/* Le coupe-circuit. `0` remet tout a la main, sans redeployer. */
+const AUTO_ACTIF = String(process.env.PARIS_AUTO || '1') !== '0';
+
+/**
+ * Trier les rencontres finies : celles qu'on regle, celles qui attendent.
+ *
+ * `expositionDe` est fourni par l'appelant — le module d'import ne connait
+ * pas le moteur, et c'est voulu : il ne doit pas pouvoir payer tout seul.
+ */
+function trieReglements(finis, expositionDe, now) {
+  const t = Number(now) || Date.now();
+  const auto = [], mains = [];
+  for (const f of finis) {
+    const m = paris.match(f.id);
+    const depuis = m && m.debut ? (t - m.debut) / 60000 : null;
+    const expo = Number(expositionDe(f.id)) || 0;
+
+    if (!AUTO_ACTIF) { mains.push(Object.assign({ raison: 'reglement automatique desactive' }, f)); continue; }
+    if (depuis === null) { mains.push(Object.assign({ raison: 'rencontre absente du calendrier' }, f)); continue; }
+    /* Le delai se compte depuis le COUP D'ENVOI, faute de mieux : le
+       fournisseur ne dit pas quand la rencontre s'est terminee. On y ajoute
+       donc la duree d'un match, genereusement. */
+    if (depuis < AUTO_DELAI_MIN + 110) {
+      mains.push(Object.assign({ raison: `finie depuis trop peu (${Math.round(depuis)} min)` }, f));
+      continue;
+    }
+    if (expo > AUTO_PLAFOND) {
+      mains.push(Object.assign({ raison: `exposition ${Math.round(expo)} > plafond ${AUTO_PLAFOND}` }, f));
+      continue;
+    }
+    auto.push(f);
+  }
+  return { auto, mains };
+}
+
+
 /**
  * Recaler les forces Elo sur de vraies cotes. 1 credit par ligue.
  *
@@ -550,4 +626,5 @@ if (require.main === module) {
 }
 
 module.exports = { LIGUES, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie,
+                   trieReglements, AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    partDuJour, joursRestants, autorise, identifiant, etatQuota };

@@ -1213,6 +1213,23 @@ const server = http.createServer(async (req, res) => {
   /* Regler un match, et rembourser un match. RESERVE A L ADMIN : ces deux
      routes deplacent de l'argent chez des joueurs, et la seconde le rend a
      tout le monde. Elles ne sont jamais accessibles depuis une page. */
+  /* Tous les paris, cherchables. C'est le pendant de l'identifiant affiche au
+     joueur : quand quelqu'un ecrit « mon pari b41-mfx2 n'a pas ete paye », on
+     le retrouve en une recherche au lieu de fouiller un fichier. La recherche
+     porte sur l'identifiant du pari, celui du match, l'adresse et le nom. */
+  if (path === '/paris/liste') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const r = game.tousParis({
+      q: q.get('q'), etat: q.get('etat') || 'tous',
+      debut: Number(q.get('debut')) || 0,
+      limite: Math.min(200, Number(q.get('limite')) || 50),
+    });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(r));
+  }
+
   if (path === '/paris/regle' || path === '/paris/rembourse') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
@@ -2427,13 +2444,54 @@ server.listen(cfg.PORT, () => {
    * Une liste ecrite dans un journal que personne ne lit laisserait les paris
    * ouverts indefiniment. */
   calendrierAuto = parisImport.planifie((finis) => {
-    const lignes = finis.slice(0, 12).map((f) =>
-      `• ${escHtml(f.domicile)} <b>${escHtml(f.score)}</b> ${escHtml(f.exterieur)} → ` +
-      `<code>${escHtml(f.id)}</code> résultat <b>${escHtml(f.resultat)}</b>`);
-    if (finis.length > 12) lignes.push(`• … et ${finis.length - 12} autre(s)`);
-    tg.notify(`⚽ <b>${finis.length} rencontre(s) à régler</b>\n` +
-              `Vérifiez le score, puis appelez <code>/paris/regle</code> :\n\n` +
-              lignes.join('\n'));
+    /* Le tri est fait par le module d'import, qui ne connait pas le moteur —
+       il ne peut donc pas payer tout seul. Le paiement se fait ICI, par le
+       meme appel que la route d'admin. */
+    const { auto, mains } = parisImport.trieReglements(
+      finis, (id) => game.engagementMatch(id), Date.now());
+
+    const faits = [], rates = [];
+    for (const f of auto) {
+      try {
+        const r = game.regleMatch(f.id, f.resultat);
+        faits.push({ f, r });
+        notifyBetsSettled(r);
+        console.log('[paris] auto', JSON.stringify({ match: f.id, score: f.score, ...r }));
+      } catch (e) {
+        /* « already settled » arrive normalement : un reglement a la main est
+           passe avant. Ce n'est pas une panne, mais ca se dit. */
+        rates.push({ f, erreur: e.message });
+        console.log('[paris] auto REFUSE', f.id, ':', e.message);
+      }
+    }
+    if (faits.length) persist();
+
+    const l = [];
+    for (const { f, r } of faits) {
+      l.push(`✅ ${escHtml(f.domicile)} <b>${escHtml(f.score)}</b> ${escHtml(f.exterieur)}` +
+             ` · <code>${escHtml(f.id)}</code> → <b>${escHtml(f.resultat)}</b>` +
+             ` · ${r.gagnants} payé(s), ${fmtExact(r.paye)} $SWOGE`);
+    }
+    /* Ce qui n'a PAS ete regle doit ressortir aussi visiblement que le
+       reste, avec sa raison : sinon on croit que tout est fait. */
+    for (const f of mains) {
+      l.push(`⏸️ ${escHtml(f.domicile)} <b>${escHtml(f.score)}</b> ${escHtml(f.exterieur)}` +
+             ` · <code>${escHtml(f.id)}</code> → <b>${escHtml(f.resultat)}</b>` +
+             ` · <i>${escHtml(f.raison)}</i>`);
+    }
+    for (const { f, erreur } of rates) {
+      l.push(`⚠️ <code>${escHtml(f.id)}</code> · ${escHtml(erreur)}`);
+    }
+    if (!l.length) return;
+
+    const tete = faits.length
+      ? `⚽ <b>${faits.length} rencontre(s) réglée(s) automatiquement</b>`
+      : `⚽ <b>${mains.length} rencontre(s) à régler à la main</b>`;
+    const pied = mains.length
+      ? `\n\nPour celles en attente : <code>/paris/regle?match=…&amp;resultat=…</code>`
+      : '';
+    tg.notify(tete + '\n\n' + l.slice(0, 14).join('\n') +
+              (l.length > 14 ? `\n• … et ${l.length - 14} autre(s)` : '') + pied);
   });
 });
 

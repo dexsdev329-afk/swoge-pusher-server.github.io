@@ -32,6 +32,11 @@ const PRIVEES = ['/admin', '/players', '/stats',
                  '/repare?addr=0x' + 'a'.repeat(40),
                  '/burn?amount=1&tx=0x' + 'b'.repeat(64),
                  '/avatar-remove?addr=0x' + 'a'.repeat(40),
+                 /* La liste des paris nomme CHAQUE joueur et montre ce qu il
+                    a mise. Ouverte, elle dirait a n importe qui qui parie
+                    quoi et combien — et sur un site ou l on peut suivre une
+                    adresse, ca suffit a cibler quelqu un. */
+                 '/paris/liste',
                  '/usage'];
 
 function lance(port, cle) {

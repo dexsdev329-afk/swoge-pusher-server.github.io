@@ -119,7 +119,13 @@ function page() {
     Knowing what you earn does not tell you <b>where it jams</b>. These three rates do:
     traffic, wallet friction, or first deposit.
   </div>
-  <div id="tunTable" class="sub"></div>
+  <!-- Ce tableau porte neuf colonnes. Sur un telephone il faisait deborder
+       la PAGE ENTIERE de 369 px vers la droite — pas seulement lui-meme —
+       parce qu'un tableau se dimensionne sur son contenu et pousse tout ce
+       qui l'entoure. Il defile maintenant dans sa propre boite. Le
+       defaut ne se voyait qu'une fois les donnees chargees : sur un panneau
+       vide, il n'y avait rien a deborder. -->
+  <div id="tunTable" class="sub btwrap"></div>
 </div>
 
 <div class="panel">
@@ -183,6 +189,120 @@ function page() {
     <button id="go" disabled>Withdraw →</button>
   </div>
   <div id="msg"></div>
+</div>
+
+<div class="panel" style="margin-top:14px">
+  <h2>&#127942; Sports bets</h2>
+  <div class="sub" style="margin:0 0 10px">
+    Chaque pari porte un <b>identifiant</b>, affiche au joueur et repris ici.
+    Quand quelqu'un ecrit &laquo;&nbsp;mon pari <code>b41-mfx2</code> n'a pas ete
+    paye&nbsp;&raquo;, on le retrouve en une recherche &mdash; l'identifiant, le
+    match, l'adresse ou le nom.<br>
+    <b>&laquo;&nbsp;A regler&nbsp;&raquo;</b> = le coup d'envoi est passe et le
+    match n'a pas encore de resultat. C'est la seule colonne qui demande une
+    action.
+  </div>
+  <div class="row" style="margin-bottom:10px">
+    <input id="bq" placeholder="Bet id, match id, wallet or name" style="flex:1;min-width:220px;margin-bottom:0">
+    <select id="betat" style="margin-bottom:0">
+      <option value="tous">All</option>
+      <option value="ouvert">Open</option>
+      <option value="regle">Settled</option>
+    </select>
+    <button class="ghost" id="bclear">Clear</button>
+    <button class="ghost" id="bcsv">Export CSV</button>
+  </div>
+  <div class="ptot" id="btot">&mdash;</div>
+  <style>
+    #btbl{ width:100%; border-collapse:collapse; font-size:12px; }
+    #btbl th,#btbl td{ padding:7px 8px; text-align:left; border-bottom:1px solid var(--line);
+      vertical-align:top; }
+    #btbl th{ color:#8DA0C4; font-weight:700; font-size:11px; text-transform:uppercase;
+      letter-spacing:.6px; }
+    #btbl td.n{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    /* L'identifiant se COPIE : c'est ce qu'on recolle dans un message au
+       joueur, ou dans la commande de reglement. */
+    #btbl code.bid{ cursor:pointer; font-size:11.5px; color:#FFD97A; }
+    #btbl code.bid:hover{ text-decoration:underline; }
+    .bj{ display:block; color:#B9C8E4; font-size:11.5px; line-height:1.5;
+      padding-left:8px; border-left:2px solid rgba(255,197,61,.35); margin-top:3px;
+      overflow-wrap:anywhere; }
+    .bj .bid2{ display:block; }
+    .bet{ display:inline-block; padding:1px 7px; border-radius:999px; font-size:10.5px;
+      font-weight:700; text-transform:uppercase; letter-spacing:.4px;
+      border:1px solid rgba(255,255,255,.14); }
+    .bet.att{ color:#E7C97A; border-color:rgba(231,201,122,.4); }
+    .bet.act{ color:#FF9A3D; border-color:rgba(255,154,61,.5); background:rgba(255,154,61,.12); }
+    .bet.g{ color:#7CFF9B; border-color:rgba(124,255,155,.4); }
+    .bet.p{ color:#F2685E; border-color:rgba(242,104,94,.4); }
+    /* Sur telephone un tableau de sept colonnes ne rentre pas : il defile
+       DANS sa boite plutot que de faire deborder la page entiere.
+       « overflow-x:auto » NE SUFFIT PAS. Un tableau se dimensionne sur son
+       contenu : « width:100% » n'est qu'un minimum pour lui, il s'elargit
+       quand meme, et la boite se laisse pousser faute de contrainte. Il faut
+       les trois : une largeur maximale sur la boite, « min-width:0 » pour
+       qu'elle accepte d'etre plus etroite que son contenu, et une largeur
+       MINIMALE sur le tableau pour qu'il assume de deborder — c'est ce
+       debordement-la qui declenche le defilement. Sans ca la page entiere
+       partait de 369 px a droite sur un ecran de 390. */
+    .btwrap{ max-width:100%; min-width:0; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    #btbl{ min-width:720px; }
+    /* Le tunnel porte neuf colonnes : meme traitement. */
+    #tunTable table{ min-width:640px; }
+    .surtel{ display:none; }
+    /* « .muted2 » porte padding:16px et text-align:center — c'est le style de
+       la cellule « loading… », pas celui d'un fragment en ligne. L'utiliser
+       au milieu d'une phrase decalait chaque identifiant de match de seize
+       pixels et poussait la ligne hors de la carte. D'ou ces deux classes,
+       faites pour vivre DANS une phrase. */
+    .bmut{ color:#8a7f6a; font-size:11px; }
+    .bid2{ color:#8a7f6a; font-size:10.5px; word-break:break-all; }
+    .bres{ color:#E7C97A; }
+    /* ---- sur telephone, des CARTES, pas un tableau ----
+       Sept colonnes sur 390 px, c'est deux colonnes visibles et cinq a
+       aller chercher en glissant de cote. Or ce panneau se consulte
+       justement depuis un telephone, quand un joueur signale un probleme.
+       Les memes lignes se replient donc en cartes : l'identifiant et
+       l'etat en tete — les deux choses qu'on vient chercher — puis le
+       reste avec son libelle. Le tableau des joueurs, juste en dessous,
+       fait deja ca. */
+    @media (max-width:720px){
+      /* « #bwrap » et non « .btwrap » : la meme classe habille la boite du
+         tunnel, qui elle doit RESTER defilante — ses neuf colonnes ne se
+         replient pas en cartes. Deplier les deux faisait deborder la page
+         de 289 px vers la droite. */
+      #bwrap{ overflow-x:visible; }
+      #btbl{ min-width:0; }
+      #btbl thead{ display:none; }
+      #btbl, #btbl tbody, #btbl tr, #btbl td{ display:block; width:auto; }
+      #btbl tr{ padding:10px 11px; margin-bottom:9px; border-radius:12px;
+        background:rgba(255,255,255,.04); border:1px solid var(--line); }
+      #btbl td{ border:0; padding:3px 0; }
+      /* Le libelle vient de l'attribut : pas de balise en plus a poser dans
+         chaque cellule, et le tableau reste un tableau sur grand ecran. */
+      #btbl td[data-l]:before{ content:attr(data-l) " "; color:#8DA0C4;
+        font-size:10.5px; text-transform:uppercase; letter-spacing:.5px; }
+      #btbl td.n{ display:inline-block; text-align:left; margin-right:14px; }
+      #btbl td.tete{ display:flex; align-items:center; justify-content:space-between;
+        gap:10px; padding-bottom:6px; }
+      #btbl td.vide{ display:none; }
+      .surtel{ display:inline; }
+    }
+    /* Et la table des joueurs, juste en dessous, doit pouvoir se retrecir :
+       une colonne flex refuse par defaut de passer sous sa largeur de
+       contenu, et c'est elle qui repoussait la page. */
+    .panel{ min-width:0; }
+  </style>
+  <div class="btwrap" id="bwrap">
+    <table id="btbl">
+      <thead><tr><th>Bet id</th><th>Player</th><th>Selections</th>
+        <th class="n">Stake</th><th class="n">Odds</th><th class="n">Returns</th><th>State</th></tr></thead>
+      <tbody id="bbody"><tr><td colspan="7" class="muted2">loading…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <button class="ghost" id="bmore" style="display:none">Load more</button>
+  </div>
 </div>
 
 <div class="panel" style="margin-top:14px">
@@ -563,6 +683,108 @@ async function loadPlayers(){
   }catch(e){ $("#pbody").innerHTML='<tr><td colspan="10" class="muted2">'+esc(e.message)+'</td></tr>'; }
 }
 loadPlayers(); setInterval(loadPlayers,15000);
+
+/* ================= LES PARIS SPORTIFS =================
+ *
+ * Le filtrage se fait AU SERVEUR, contrairement au tableau des joueurs qui
+ * charge tout et trie dans la page. La difference n'est pas un caprice : un
+ * joueur, c'est une ligne ; un pari, c'est une ligne plus ses jambes, et le
+ * nombre de paris grandit sans limite alors que le nombre de joueurs, non.
+ * Tout charger finirait par prendre des secondes pour afficher cinquante
+ * lignes.
+ */
+var BETS=[], BDEBUT=0, BENCORE=false, bTimer=null;
+
+function betat(e){
+  if(e==='a regler') return '<span class="bet act">to settle</span>';
+  if(e==='en cours')  return '<span class="bet att">running</span>';
+  if(e==='gagne')     return '<span class="bet g">won</span>';
+  if(e==='perdu')     return '<span class="bet p">lost</span>';
+  return '<span class="bet">refunded</span>';
+}
+var BNOM={'1':'Home','N':'Draw','2':'Away'}, BNOM2={'1':'Player 1','2':'Player 2'};
+function bJambe(j){
+  var nom=((j.issues||[]).length===2?BNOM2:BNOM)[j.choix]||j.choix;
+  /* Le resultat tombe a cote de la selection : c'est la seule facon de voir
+     d'un coup d'oeil POURQUOI un combine est perdu. */
+  var res=j.resultat ? ' &middot; result <b class="bres">'+esc(((j.issues||[]).length===2?BNOM2:BNOM)[j.resultat]||j.resultat)+'</b>' : '';
+  /* Le resultat descend sur la SECONDE ligne, avec l'identifiant du match.
+     Sur la premiere il finissait contre le bord de la carte a 390 px, et
+     « result Home » se lisait « result Ho ». */
+  return '<span class="bj">'+esc(j.domicile)+' &ndash; '+esc(j.exterieur)+
+         ' &middot; <b>'+esc(nom)+'</b> @ '+Number(j.cote||1).toFixed(2)+
+         '<span class="bid2">'+esc(j.match)+res+'</span></span>';
+}
+function drawBets(){
+  var b=$("#bbody");
+  if(!BETS.length){ b.innerHTML='<tr><td colspan="7" class="muted2">no bet matches</td></tr>'; return; }
+  b.innerHTML=BETS.map(function(p){
+    var qui=p.nom ? esc(p.nom)+' <span class="bmut">'+short(p.addr)+'</span>'
+                  : '<span class="bmut">'+short(p.addr)+'</span>';
+    var titre=(p.jambes.length>1?p.jambes.length+'-fold':'Single');
+    /* L'etat est dessine DEUX fois : dans la cellule de tete, visible
+       seulement en cartes, et dans sa colonne, cachee en cartes. Deux
+       markups valent mieux qu'un tableau qu'on deplace en JavaScript selon
+       la largeur — celui-la se retrompe a chaque rotation de l'ecran. */
+    return '<tr>'+
+      '<td class="tete"><span><code class="bid" title="click to copy">'+esc(p.id)+'</code><br>'+
+        '<span class="bmut">'+new Date(p.t).toLocaleString('en-GB')+'</span></span>'+
+        '<span class="surtel">'+betat(p.etat)+'</span></td>'+
+      '<td data-l="player">'+qui+'</td>'+
+      '<td><b>'+titre+'</b>'+p.jambes.map(bJambe).join('')+'</td>'+
+      '<td class="n" data-l="stake">'+fmt(p.mise)+'</td>'+
+      '<td class="n" data-l="odds">'+Number(p.cote||1).toFixed(2)+'</td>'+
+      '<td class="n" data-l="returns">'+fmt(p.rapport)+'</td>'+
+      '<td class="vide">'+betat(p.etat)+'</td></tr>';
+  }).join("");
+}
+async function loadBets(ajoute){
+  var q=$("#bq").value.trim(), etat=$("#betat").value;
+  if(!ajoute) BDEBUT=0;
+  try{
+    var r=await fetch("/paris/liste?limite=50&debut="+BDEBUT+"&etat="+encodeURIComponent(etat)+
+                      (q?"&q="+encodeURIComponent(q):""),{headers:{"x-admin-key":KEY}});
+    if(!r.ok){ $("#bbody").innerHTML='<tr><td colspan="7" class="muted2">could not load bets ('+r.status+')</td></tr>'; return; }
+    var d=await r.json();
+    BETS = ajoute ? BETS.concat(d.paris||[]) : (d.paris||[]);
+    BDEBUT = (d.debut||0) + (d.paris||[]).length;
+    BENCORE = !!d.encore;
+    var s=d.resume||{};
+    $("#btot").innerHTML = BETS.length+' shown of '+(d.total||0)+
+      ' &middot; staked <b>'+fmt(s.mise)+'</b>'+
+      ' &middot; <b>'+(s.ouverts||0)+'</b> still open, exposure <b>'+fmt(s.engage)+'</b>'+
+      ' &middot; paid out <b>'+fmt(s.paye)+'</b> $SWOGE';
+    $("#bmore").style.display = BENCORE ? "" : "none";
+    drawBets();
+  }catch(e){ $("#bbody").innerHTML='<tr><td colspan="7" class="muted2">'+esc(e.message)+'</td></tr>'; }
+}
+/* On attend que la frappe s'arrete : une requete par touche ferait dix
+   allers-retours pour un identifiant de dix caracteres. */
+$("#bq").addEventListener("input",function(){ clearTimeout(bTimer); bTimer=setTimeout(function(){ loadBets(false); },250); });
+$("#betat").addEventListener("change",function(){ loadBets(false); });
+$("#bclear").onclick=function(){ $("#bq").value=""; $("#betat").value="tous"; loadBets(false); };
+$("#bmore").onclick=function(){ loadBets(true); };
+/* L'identifiant se copie d'un clic : c'est ce qu'on recolle dans une reponse
+   au joueur ou dans la commande de reglement. */
+$("#bbody").addEventListener("click",function(e){
+  var c=e.target.closest("code.bid"); if(!c) return;
+  var t=c.textContent;
+  try{ navigator.clipboard.writeText(t); }catch(err){}
+  var avant=c.textContent; c.textContent="copied ✓";
+  setTimeout(function(){ c.textContent=avant; },900);
+});
+$("#bcsv").onclick=function(){
+  var lignes=[["bet id","placed","wallet","name","selections","stake","odds","returns","state"].join(",")];
+  BETS.forEach(function(p){
+    var sel=p.jambes.map(function(j){ return j.domicile+" v "+j.exterieur+" ["+j.choix+"] @"+j.cote; }).join(" + ");
+    lignes.push([p.id,new Date(p.t).toISOString(),p.addr,p.nom||"",sel,p.mise,p.cote,p.rapport,p.etat]
+      .map(function(x){ return '"'+String(x==null?"":x).replace(/"/g,'""')+'"'; }).join(","));
+  });
+  var blob=new Blob([lignes.join(String.fromCharCode(10))],{type:"text/csv"});
+  var u=URL.createObjectURL(blob), a=document.createElement("a");
+  a.href=u; a.download="swoge-bets.csv"; a.click(); URL.revokeObjectURL(u);
+};
+loadBets(false); setInterval(function(){ if(!$("#bq").value) loadBets(false); },20000);
 /* Un clic sur la ligne ouvre son detail, et referme celui qui l'etait : deux
    panneaux ouverts noient le tableau. */
 $("#pbody").addEventListener("click",function(e){

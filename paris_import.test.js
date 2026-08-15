@@ -273,5 +273,51 @@ const cotes = require('./cotes');
     ok(imp.LIGUES.length >= 1, `la liste lue vaut ${imp.LIGUES.length} ligue(s)`);
   }
 
+  // ==== 6. LES VERROUS DU REGLEMENT AUTOMATIQUE
+  {
+    /* Un reglement ne se defait pas : l'argent est parti. Ces quatre verrous
+       sont la seule chose entre un score faux et des paiements irreversibles,
+       et ce sont eux qu'on verifie — pas le chemin heureux. */
+    const cat = JSON.parse(fs.readFileSync(CAT, 'utf8'));
+    const m = cat.matchs[0];
+    const T = Date.parse(m.debut);
+
+    const fini = { id: m.id, sport: m.sport, domicile: m.domicile,
+                   exterieur: m.exterieur, score: '2-1', resultat: '1' };
+    const sansExpo = () => 0;
+
+    // -- le delai : on ne paie pas sur un score publie a la 90e minute
+    let r = imp.trieReglements([fini], sansExpo, T + 60 * 60000);
+    eq(r.auto.length, 0, 'une rencontre finie depuis une heure n est pas reglee');
+    eq(r.mains.length, 1, 'elle attend');
+    ok(/trop peu/.test(r.mains[0].raison), 'et la raison le dit : ' + r.mains[0].raison);
+
+    r = imp.trieReglements([fini], sansExpo, T + 5 * 3600000);
+    eq(r.auto.length, 1, 'cinq heures apres le coup d envoi, elle passe');
+
+    // -- le plafond d exposition : le verrou qui compte
+    const enorme = () => imp.AUTO_PLAFOND + 1;
+    r = imp.trieReglements([fini], enorme, T + 5 * 3600000);
+    eq(r.auto.length, 0, 'au-dessus du plafond d exposition, on ne regle pas seul');
+    ok(/plafond/.test(r.mains[0].raison), 'et la raison le dit : ' + r.mains[0].raison);
+    /* Juste EN DESSOUS du plafond, ca passe : un verrou qui bloque tout ne
+       protege de rien, il fait juste croire que l automate marche. */
+    r = imp.trieReglements([fini], () => imp.AUTO_PLAFOND - 1, T + 5 * 3600000);
+    eq(r.auto.length, 1, 'juste en dessous, elle passe');
+
+    // -- une rencontre hors calendrier n est jamais reglee a l aveugle
+    r = imp.trieReglements([{ id: 'jamais-vu-ici', domicile: 'A', exterieur: 'B',
+                              score: '1-0', resultat: '1' }], sansExpo, T + 5 * 3600000);
+    eq(r.auto.length, 0, 'une rencontre absente du calendrier n est pas reglee');
+    ok(/absente/.test(r.mains[0].raison), 'et la raison le dit : ' + r.mains[0].raison);
+
+    /* Rien ne se perd : tout ce qui entre ressort d un cote ou de l autre.
+       Un reglement qui disparaitrait du tri laisserait des paris ouverts
+       sans que rien ne le signale. */
+    const lot = [fini, { id: 'inconnu-x', domicile: 'C', exterieur: 'D', score: '0-0', resultat: 'N' }];
+    r = imp.trieReglements(lot, sansExpo, T + 5 * 3600000);
+    eq(r.auto.length + r.mains.length, lot.length, 'aucune rencontre ne se perd dans le tri');
+  }
+
   console.log(`paris_import.test.js : ${n} verifications OK`);
 })().catch((e) => { console.error(e); process.exit(1); });
