@@ -59,7 +59,16 @@ const NOTE_DEFAUT = 1500;
    europeens. En NBA il est plus fort — le deplacement coute, les rotations
    sont courtes. Au tennis il n'existe pas : le « domicile » n'est qu'une
    convention d'affichage, les deux joueurs sont sur le meme court. */
-const TERRAIN = { foot: 65, nba: 100, tennis: 0 };
+const TERRAIN = {
+  foot: 65, nba: 100, tennis: 0,
+  /* NFL : l'avantage du terrain vaut environ 2 points sur un ecart type de
+     score de 13, soit une cinquantaine de points Elo. Il a nettement baisse
+     depuis vingt ans, on ne le surestime pas. */
+  nfl: 55,
+  /* Cricket en format limite : l'avantage est reel — conditions locales,
+     rosee, public — mais plus faible qu'au football. */
+  cricket: 40,
+};
 
 /* Le nul, au football.
  *

@@ -1513,7 +1513,8 @@ class Game {
             const m = paris.match(j.match);
             return { match: j.match, choix: j.choix, cote: j.cote,
                      domicile: m ? m.domicile : '?', exterieur: m ? m.exterieur : '?',
-                     debut: m ? m.debut : null, issues: m ? m.issues.slice() : [],
+                     debut: m ? m.debut : null, sport: m ? m.sport : null,
+                     issues: m ? m.issues.slice() : [],
                      regle: !!(this.parisRegles && this.parisRegles[j.match]),
                      resultat: (this.parisRegles && this.parisRegles[j.match]
                                 && this.parisRegles[j.match].resultat) || null };
@@ -1597,6 +1598,10 @@ class Game {
             return Object.assign({}, j, {
               domicile: mj ? mj.domicile : '?', exterieur: mj ? mj.exterieur : '?',
               debut: mj ? mj.debut : null, competition: mj ? mj.competition : '',
+              /* Le SPORT, sans quoi la page ne sait pas si « 1 » se dit
+                 « Home » ou « Player 1 » : la NFL et le cricket n'ont que
+                 deux issues eux aussi, mais opposent des EQUIPES. */
+              sport: mj ? mj.sport : null,
               issues: mj ? mj.issues.slice() : [],
             });
           }),

@@ -378,4 +378,29 @@ const T3 = 'atp-20260815-fer-duc';   // Fery 1.53 / Duckworth 2.24
   eq(page(2, 1).length, 0, 'passe la fin, il n y a plus rien');
 }
 
+/* ---- les sports a deux issues ne sont pas tous des duels
+ *
+ * NFL, NBA et cricket n'ont que deux issues, comme le tennis. Mais leurs
+ * deux cotes sont des EQUIPES : afficher « Player 1 » sur un match des
+ * Chiefs fait douter de ce sur quoi on parie, au moment precis ou l'on mise
+ * — et au moment ou l'on REGLE, ce qui est pire. La distinction se fait donc
+ * sur le SPORT, jamais sur le nombre d'issues.
+ */
+{
+  eq(paris.issues('nfl').length, 2, 'la NFL se cote en deux issues');
+  eq(paris.issues('cricket').length, 2, 'le cricket en format limite aussi');
+  eq(paris.issues('foot').length, 3, 'le football en garde trois');
+  /* Le cricket TEST finit reellement par un nul une fois sur trois. Il n'est
+     pas suivi, et c'est deliberé : l'ajouter sans troisieme issue paierait
+     le mauvais camp. Si un jour il l'est, ce test doit tomber. */
+  eq(paris.ISSUES_PAR_SPORT.cricket.indexOf('N'), -1,
+     'le cricket n a pas de nul ici — donc pas de format Test au calendrier');
+  for (const s of ['foot', 'nba', 'nfl', 'cricket'])
+    ok(paris.SPORTS_EQUIPE.indexOf(s) >= 0, s + ' oppose des equipes');
+  eq(paris.SPORTS_EQUIPE.indexOf('tennis'), -1, 'seul le tennis oppose deux personnes');
+  /* Un sport inconnu retombe sur le 1-N-2 plutot que de jeter : un catalogue
+     qui refuse de se charger arrete le serveur. */
+  eq(paris.issues('petanque').length, 3, 'un sport inconnu retombe sur trois issues');
+}
+
 console.log(`paris.test.js : ${n} verifications OK`);

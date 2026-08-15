@@ -759,10 +759,11 @@ function betat(e){
 }
 var BNOM={'1':'Home','N':'Draw','2':'Away'}, BNOM2={'1':'Player 1','2':'Player 2'};
 function bJambe(j){
-  var nom=((j.issues||[]).length===2?BNOM2:BNOM)[j.choix]||j.choix;
+  var duel = j.sport==='tennis' && (j.issues||[]).length===2;
+  var nom=(duel?BNOM2:BNOM)[j.choix]||j.choix;
   /* Le resultat tombe a cote de la selection : c'est la seule facon de voir
      d'un coup d'oeil POURQUOI un combine est perdu. */
-  var res=j.resultat ? ' &middot; result <b class="bres">'+esc(((j.issues||[]).length===2?BNOM2:BNOM)[j.resultat]||j.resultat)+'</b>' : '';
+  var res=j.resultat ? ' &middot; result <b class="bres">'+esc((duel?BNOM2:BNOM)[j.resultat]||j.resultat)+'</b>' : '';
   /* Le resultat descend sur la SECONDE ligne, avec l'identifiant du match.
      Sur la premiere il finissait contre le bord de la carte a 390 px, et
      « result Home » se lisait « result Ho ». */
@@ -849,7 +850,11 @@ loadBets(false); setInterval(function(){ if(!$("#bq").value) loadBets(false); },
  * gagnant non paye est pire qu'une erreur de paiement.
  */
 var ISS={'1':'Home','N':'Draw','2':'Away'}, ISS2={'1':'Player 1','2':'Player 2'};
-function argNom(m,i){ return ((m.issues||[]).length===2?ISS2:ISS)[i]||i; }
+/* Le libelle depend du SPORT : la NFL, la NBA et le cricket n'ont que deux
+   issues eux aussi, mais opposent des EQUIPES. Seul le tennis oppose deux
+   personnes — et c est au moment de REGLER qu il ne faut pas douter de ce
+   qu on clique. */
+function argNom(m,i){ return (m&&m.sport==='tennis'&&(m.issues||[]).length===2?ISS2:ISS)[i]||i; }
 async function loadAregler(){
   try{
     var r=await fetch("/paris/aregler",{headers:{"x-admin-key":KEY}});

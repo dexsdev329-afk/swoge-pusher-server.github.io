@@ -149,7 +149,14 @@ function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
  * de risquer une annonce qui ne part pas.
  */
 const NOM_ISSUE   = { '1': 'Home', 'N': 'Draw', '2': 'Away' };
-const NOM_ISSUE_2 = { '1': 'Player 1', '2': 'Player 2' };   // tennis, NBA : pas de domicile
+const NOM_ISSUE_2 = { '1': 'Player 1', '2': 'Player 2' };
+/* Le libelle depend du SPORT, pas du nombre d'issues : la NFL, la NBA et le
+   cricket n'en ont que deux eux aussi, mais opposent des EQUIPES. Seul le
+   tennis oppose deux personnes. */
+const nomIssue = (m, choix) => {
+  const duel = m && m.sport === 'tennis' && (m.issues || []).length === 2;
+  return (duel ? NOM_ISSUE_2 : NOM_ISSUE)[choix] || choix;
+};   // tennis, NBA : pas de domicile
 const ICONE_SPORT = { foot: '⚽', tennis: '🎾', nba: '🏀' };
 
 /* L'HEURE DU COUP D'ENVOI FAIT LA DIFFERENCE ENTRE UNE ANNONCE ET UN BULLETIN.
@@ -181,8 +188,7 @@ function notifyBetPlaced(addr, pari) {
   const ligne = (j) => {
     const m = paris.match(j.match);
     if (!m) return null;
-    const deux = (m.issues || []).length === 2;
-    const nom = (deux ? NOM_ISSUE_2 : NOM_ISSUE)[j.choix] || j.choix;
+    const nom = nomIssue(m, j.choix);
     const ic = ICONE_SPORT[m.sport] || '•';
     const quand = heureMatch(m.debut);
     return `${ic} <b>${escHtml(m.domicile)} – ${escHtml(m.exterieur)}</b>` +
@@ -228,8 +234,7 @@ function notifyBetPlaced(addr, pari) {
 function notifyBetsSettled(r) {
   if (!r || !(r.gagnants > 0)) return;
   const m = paris.match(r.match);
-  const deux = m && (m.issues || []).length === 2;
-  const issue = (deux ? NOM_ISSUE_2 : NOM_ISSUE)[r.resultat] || r.resultat;
+  const issue = nomIssue(m, r.resultat);
   const affiche = m ? `${escHtml(m.domicile)} – ${escHtml(m.exterieur)}` : escHtml(r.match);
   const ic = (m && ICONE_SPORT[m.sport]) || '✅';
 

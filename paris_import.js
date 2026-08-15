@@ -74,6 +74,14 @@ const LIGUES = (process.env.ODDS_API_LIGUES || [
   'tennis=tennis_atp_us_open',
   'tennis=tennis_wta_us_open',
   'nba=basketball_nba',
+  'nfl=americanfootball_nfl',
+  /* Cricket : uniquement les formats LIMITES, qui se decident toujours. Le
+     format Test finit reellement par un nul une fois sur trois et n'a pas
+     de troisieme issue ici — l'ajouter paierait le mauvais camp. */
+  'cricket=cricket_the_hundred',
+  'cricket=cricket_international_t20',
+  'cricket=cricket_t20_blast',
+  'cricket=cricket_odi',
 ].join(',')).split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
   const [sport, clef] = x.split('=');
   return { sport: (sport || '').trim(), clef: (clef || '').trim() };
@@ -112,7 +120,8 @@ const PAYS_LIGUE = {
   soccer_germany_bundesliga: 'DE', soccer_germany_bundesliga2: 'DE',
   soccer_netherlands_eredivisie: 'NL', soccer_portugal_primeira_liga: 'PT',
   soccer_belgium_first_div: 'BE', soccer_turkey_super_league: 'TR',
-  soccer_usa_mls: 'US', basketball_nba: 'US',
+  soccer_usa_mls: 'US', basketball_nba: 'US', americanfootball_nfl: 'US',
+  cricket_t20_blast: 'GB', cricket_the_hundred: 'GB',
 };
 /* Le nom du pays, pour le champ `pays` de la rencontre. */
 const NOM_PAYS = {
@@ -473,10 +482,15 @@ async function importeMatchs() {
   }
 
   habilles.sort((a, b) => Date.parse(a.debut) - Date.parse(b.debut));
-  const NOMS = { foot: 'Football', tennis: 'Tennis', nba: 'NBA' };
+  const NOMS = { foot: 'Football', tennis: 'Tennis', nba: 'NBA',
+                 nfl: 'NFL', cricket: 'Cricket' };
   const retenus = new Set(habilles.map((m) => m.sport));
+  /* Tous les sports connus figurent au catalogue, meme sans rencontre : la
+     page les montre alors grises avec « soon », ce qui annonce ce qui arrive
+     au lieu de le faire apparaitre un matin sans prevenir. */
   const catalogue = {
-    sports: ['foot', 'tennis', 'nba'].map((c) => ({ cle: c, nom: NOMS[c], actif: retenus.has(c) })),
+    sports: ['foot', 'tennis', 'nba', 'nfl', 'cricket']
+      .map((c) => ({ cle: c, nom: NOMS[c], actif: retenus.has(c) })),
     matchs: habilles,
   };
 
