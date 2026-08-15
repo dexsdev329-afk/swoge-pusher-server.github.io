@@ -1219,6 +1219,35 @@ const server = http.createServer(async (req, res) => {
      porte sur l'identifiant du pari, celui du match, l'adresse et le nom. */
   /* Ce qui ATTEND un resultat. C'est la seule liste du panneau qui demande une
      action : tant qu'elle n'est pas vide, des joueurs attendent d'etre payes. */
+  /* L'etat de l'alimentation, et de quoi la relancer a la main.
+     « Pourquoi n'y a-t-il pas plus de matchs ? » avait trois reponses
+     possibles — pas de cle, cle invalide, ligues hors saison — qui ne se
+     distinguaient qu'en lisant les journaux de l'hebergeur. Elle se lit
+     maintenant dans le panneau. La cle n'est JAMAIS rendue, seulement le
+     fait qu'elle soit posee. */
+  if (path === '/paris/import') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    if (q.get('go') === '1') {
+      try {
+        /* Les rencontres ne coutent AUCUN credit : ce bouton est gratuit,
+           on peut le presser sans compter. */
+        const combien = await parisImport.importeMatchs();
+        paris.charge();                       // sinon le serveur sert l'ancien
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ lance: true, rencontres: combien,
+                                        etat: parisImport.etatImport() }));
+      } catch (e) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ lance: true, error: e.message,
+                                        etat: parisImport.etatImport() }));
+      }
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(parisImport.etatImport()));
+  }
+
   if (path === '/paris/aregler') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);

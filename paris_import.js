@@ -205,6 +205,52 @@ function autorise(cout, quoi) {
   return q;
 }
 
+// --------------------------------------------------- ce qui s'est passe
+
+/*
+ * Le compte rendu du DERNIER import.
+ *
+ * Sans lui, « pourquoi n'y a-t-il pas plus de matchs ? » n'a pas de reponse
+ * accessible : il faut ouvrir les journaux de l'hebergeur, et les trois causes
+ * possibles — pas de cle, cle invalide, ligues hors saison — y produisent des
+ * lignes differentes qu'il faut savoir chercher. Or c'est exactement la
+ * question qu'on se pose quand le calendrier ne bouge pas.
+ *
+ * On garde donc le resultat de chaque passage, et le panneau l'affiche. La
+ * cle elle-meme n'y figure JAMAIS — seulement le fait qu'elle soit posee.
+ */
+const FICHIER_ETAT = path.join(process.env.DATA_DIR || __dirname, 'odds_dernier.json');
+let DERNIER = null;
+function litDernier() {
+  if (DERNIER) return DERNIER;
+  try { DERNIER = JSON.parse(fs.readFileSync(FICHIER_ETAT, 'utf8')); }
+  catch (e) { DERNIER = {}; }
+  return DERNIER;
+}
+function noteDernier(quoi, info) {
+  const d = litDernier();
+  d[quoi] = Object.assign({ quand: new Date().toISOString() }, info);
+  try { fs.writeFileSync(FICHIER_ETAT, JSON.stringify(d, null, 2) + '\n'); } catch (e) {}
+  return d[quoi];
+}
+
+/** Tout ce qu'il faut pour comprendre l'etat de l'alimentation, sans journaux. */
+function etatImport() {
+  const q = etatQuota();
+  return {
+    /* Jamais la cle — seulement si elle est la. */
+    cle: !!CLE,
+    ligues: LIGUES.map((l) => l.sport + '=' + l.clef),
+    horizonJours: HORIZON_JOURS,
+    fin: FIN,
+    joursRestants: joursRestants(),
+    quota: { reste: q.reste, utilise: q.utilise, depenseDuJour: q.depenseDuJour,
+             partDuJour: partDuJour(q.reste), vu: q.vu },
+    auto: { actif: AUTO_ACTIF, plafond: AUTO_PLAFOND, delaiMin: AUTO_DELAI_MIN },
+    dernier: litDernier(),
+  };
+}
+
 // ------------------------------------------------------------- les appels
 
 async function appel(chemin, params, coutAttendu, quoi) {
@@ -218,12 +264,25 @@ async function appel(chemin, params, coutAttendu, quoi) {
 
   const rep = await fetch(u.toString());
   /* Les compteurs sont dans les EN-TETES, y compris sur les appels gratuits :
-     c'est la seule mesure fiable, la notre n'est qu'une prevision. */
-  const reste = Number(rep.headers.get('x-requests-remaining'));
-  const dernier = Number(rep.headers.get('x-requests-last'));
-  if (isFinite(reste)) q.reste = reste;
-  if (isFinite(Number(rep.headers.get('x-requests-used')))) q.utilise = Number(rep.headers.get('x-requests-used'));
-  if (isFinite(dernier) && dernier > 0) q.depenseDuJour += dernier;
+     c'est la seule mesure fiable, la notre n'est qu'une prevision.
+     ATTENTION au piege : une reponse d'ERREUR — 401 sur une cle invalide,
+     502 passager — ne porte AUCUN de ces en-tetes. Or `Number(null)` vaut
+     ZERO, et zero est fini : on ecrivait donc « 0 credit restant » a la
+     premiere erreur venue. Le garde-fou refusait ensuite tout appel payant,
+     et plus rien ne se reglait — pour une cle mal recopiee. On exige donc
+     que l'en-tete SOIT LA avant de lire quoi que ce soit. */
+  const lis = (nom) => {
+    const brut = rep.headers.get(nom);
+    if (brut === null || brut === undefined || brut === '') return null;
+    const v = Number(brut);
+    return isFinite(v) ? v : null;
+  };
+  const reste = lis('x-requests-remaining');
+  const utilise = lis('x-requests-used');
+  const dernier = lis('x-requests-last');
+  if (reste !== null) q.reste = reste;
+  if (utilise !== null) q.utilise = utilise;
+  if (dernier !== null && dernier > 0) q.depenseDuJour += dernier;
   q.vu = new Date().toISOString();
   ecritQuota(q);
 
@@ -233,7 +292,7 @@ async function appel(chemin, params, coutAttendu, quoi) {
   }
   const j = await rep.json();
   if (paye) {
-    console.log(`[odds] ${quoi} : ${isFinite(dernier) ? dernier : '?'} credit(s), ` +
+    console.log(`[odds] ${quoi} : ${dernier === null ? '?' : dernier} credit(s), ` +
                 `${q.reste} restant(s), part du jour ${partDuJour(q.reste)}`);
   }
   return j;
@@ -267,7 +326,7 @@ async function importeMatchs() {
   const matchs = [];
   const sports = new Set();
 
-  const echouees = new Set();
+  const echouees = new Set(), erreurs = [], parLigueCompte = {};
   let repondues = 0;
   for (const l of LIGUES) {
     let evs;
@@ -281,6 +340,7 @@ async function importeMatchs() {
          ligues : on le retient pour ne pas ecraser le calendrier avec du
          vide. */
       echouees.add(l.clef);
+      erreurs.push(l.clef + ' : ' + String(e.message).slice(0, 120));
       console.log('[odds] ' + l.clef + ' ignore : ' + e.message.slice(0, 90));
       continue;
     }
@@ -301,6 +361,7 @@ async function importeMatchs() {
       sports.add(l.sport);
       pris++;
     }
+    parLigueCompte[l.clef] = { vues: (evs || []).length, retenues: pris };
     console.log(`[odds] ${l.clef} : ${pris} rencontre(s) retenue(s) sur ${(evs || []).length}`);
   }
 
@@ -348,6 +409,9 @@ async function importeMatchs() {
   if (!repondues) {
     console.error(`[odds] AUCUNE ligue n a repondu (${echouees.size} en echec) — ` +
                   'le calendrier existant est CONSERVE, rien n a ete ecrit');
+    noteDernier('matchs', { ok: false, ecrit: false, repondues: 0,
+      echouees: [...echouees], erreurs: erreurs.slice(0, 12),
+      pourquoi: 'no league answered — the existing calendar was kept' });
     return 0;
   }
 
@@ -371,6 +435,9 @@ async function importeMatchs() {
 
   if (!habilles.length) {
     console.error('[odds] aucune rencontre retenue — le calendrier existant est CONSERVE');
+    noteDernier('matchs', { ok: false, ecrit: false, repondues, parLigue: parLigueCompte,
+      echouees: [...echouees], erreurs: erreurs.slice(0, 12),
+      pourquoi: 'no fixture within the horizon — the existing calendar was kept' });
     return 0;
   }
 
@@ -388,6 +455,9 @@ async function importeMatchs() {
   paris.valide(catalogue);
   fs.writeFileSync(FICHIER_CAT, JSON.stringify(catalogue, null, 1) + '\n');
   console.log(`[odds] catalogue ecrit : ${habilles.length} rencontre(s), 0 credit depense`);
+  noteDernier('matchs', { ok: true, ecrit: true, rencontres: habilles.length,
+    repondues, parLigue: parLigueCompte, echouees: [...echouees],
+    erreurs: erreurs.slice(0, 12), ecartees: ecartes.slice(0, 12) });
   return habilles.length;
 }
 
@@ -693,6 +763,7 @@ if (require.main === module) {
 }
 
 module.exports = { LIGUES, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie,
+                   etatImport, noteDernier,
                    trieReglements, AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
                    partDuJour, joursRestants, autorise, identifiant, etatQuota };

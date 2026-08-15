@@ -192,6 +192,31 @@ function page() {
 </div>
 
 <div class="panel" style="margin-top:14px">
+  <h2>&#128225; Fixture feed</h2>
+  <div class="sub" style="margin:0 0 10px">
+    Where the calendar comes from. Fixtures cost <b>no credits</b> at all
+    (<code>/events</code> is free), so the button below can be pressed as often
+    as you like &mdash; only scores and calibration spend quota.
+  </div>
+  <div id="impBody"><div class="muted2">loading&hellip;</div></div>
+  <div class="row" style="margin-top:10px">
+    <button class="ghost" id="impGo">Fetch fixtures now (0 credits)</button>
+    <span id="impMsg" style="font-size:12px"></span>
+  </div>
+  <style>
+    .impg{ display:grid; gap:7px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+    .impc{ padding:9px 11px; border-radius:11px; background:rgba(255,255,255,.05);
+      border:1px solid var(--line); }
+    .impc span{ display:block; font-size:10.5px; color:#8a7f6a; text-transform:uppercase;
+      letter-spacing:.5px; }
+    .impc b{ font-size:15px; }
+    .impbad{ color:#F2685E; } .impok{ color:#7CFF9B; } .impwarn{ color:#E7C97A; }
+    .impl{ font-size:11.5px; color:#B9C8E4; margin-top:9px; line-height:1.6;
+      overflow-wrap:anywhere; }
+  </style>
+</div>
+
+<div class="panel" style="margin-top:14px">
   <h2>&#9203; Matches waiting for a result</h2>
   <div class="sub" style="margin:0 0 10px">
     Kick-off has passed, bets are riding on it, and nothing has been decided.
@@ -885,6 +910,78 @@ $("#argBody").addEventListener("click",async function(ev){
              [].forEach.call(boutons,function(x){ x.disabled=false; }); }
 });
 loadAregler(); setInterval(loadAregler,30000);
+
+/* ============ D OU VIENT LE CALENDRIER ============
+ *
+ * « Pourquoi n'y a-t-il pas plus de matchs ? » avait trois reponses possibles
+ * — pas de cle, cle invalide, ligues hors saison — qui ne se distinguaient
+ * qu'en lisant les journaux de l'hebergeur. Elle se lit ici.
+ */
+function impRend(e){
+  var d=(e.dernier||{}).matchs||null;
+  var cle = e.cle ? '<b class="impok">set ✓</b>' : '<b class="impbad">MISSING</b>';
+  var cartes =
+    '<div class="impc"><span>API key</span>'+cle+'</div>'+
+    '<div class="impc"><span>Credits left</span><b>'+(e.quota.reste)+'</b></div>'+
+    '<div class="impc"><span>Today’s share</span><b>'+e.quota.partDuJour+
+      '</b><span>'+e.joursRestants+' days to '+esc(e.fin)+'</span></div>'+
+    '<div class="impc"><span>Auto-settle</span><b class="'+(e.auto.actif?'impok':'impwarn')+'">'+
+      (e.auto.actif?'on':'OFF')+'</b><span>cap '+fmt(e.auto.plafond)+'</span></div>';
+
+  var l='';
+  if(!e.cle){
+    l='<div class="impl impbad"><b>ODDS_API_KEY is not set on this server.</b><br>'+
+      'Nothing is fetched, and the calendar stays exactly as it is in the repo. '+
+      'Add the variable on the host and redeploy — a variable set after the '+
+      'last deploy is not seen by the running process.</div>';
+  } else if(!d){
+    l='<div class="impl impwarn">No import has run yet since this server started. '+
+      'It runs 30 s after boot, then every 12 h — or press the button.</div>';
+  } else {
+    var quand=new Date(d.quand).toLocaleString('en-GB');
+    l='<div class="impl">Last run <b>'+quand+'</b> — '+
+      (d.ecrit ? '<b class="impok">wrote '+d.rencontres+' fixture(s)</b>'
+               : '<b class="impbad">wrote nothing</b>'+(d.pourquoi?' — '+esc(d.pourquoi):''))+'<br>';
+    if(d.parLigue){
+      l+=Object.keys(d.parLigue).map(function(k){
+        var v=d.parLigue[k];
+        return '<code>'+esc(k)+'</code> '+v.retenues+'/'+v.vues;
+      }).join(' &middot; ')+'<br>';
+    }
+    if((d.echouees||[]).length){
+      l+='<span class="impbad">failed: '+d.echouees.map(esc).join(', ')+'</span><br>';
+      (d.erreurs||[]).slice(0,4).forEach(function(x){ l+='<span class="impbad">· '+esc(x)+'</span><br>'; });
+    }
+    if((d.ecartees||[]).length){
+      l+='<span class="impwarn">dropped as unpriceable: '+d.ecartees.length+'</span><br>';
+    }
+    l+='</div>';
+  }
+  l+='<div class="impl">Leagues followed: '+e.ligues.map(function(x){ return '<code>'+esc(x)+'</code>'; }).join(' ')+
+     '<br><span class="muted2" style="padding:0;text-align:left;display:inline">'+
+     'Tennis keys are per tournament — they disappear when the tournament ends.</span></div>';
+  $("#impBody").innerHTML='<div class="impg">'+cartes+'</div>'+l;
+}
+async function loadImport(){
+  try{
+    var r=await fetch("/paris/import",{headers:{"x-admin-key":KEY}});
+    if(!r.ok){ $("#impBody").innerHTML='<div class="muted2">could not load ('+r.status+')</div>'; return; }
+    impRend(await r.json());
+  }catch(e){ $("#impBody").innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
+}
+$("#impGo").onclick=async function(){
+  var b=$("#impGo"); b.disabled=true; $("#impMsg").textContent="fetching…"; $("#impMsg").className="";
+  try{
+    var r=await fetch("/paris/import?go=1",{headers:{"x-admin-key":KEY}});
+    var j=await r.json();
+    if(j.error){ $("#impMsg").textContent="✗ "+j.error; $("#impMsg").className="impbad"; }
+    else { $("#impMsg").textContent="✓ "+j.rencontres+" fixture(s) in the calendar";
+           $("#impMsg").className="impok"; }
+    if(j.etat) impRend(j.etat); else loadImport();
+  }catch(e){ $("#impMsg").textContent="✗ "+e.message; $("#impMsg").className="impbad"; }
+  b.disabled=false;
+};
+loadImport(); setInterval(loadImport,60000);
 /* Un clic sur la ligne ouvre son detail, et referme celui qui l'etait : deux
    panneaux ouverts noient le tableau. */
 $("#pbody").addEventListener("click",function(e){

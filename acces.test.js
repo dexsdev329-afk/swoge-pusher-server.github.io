@@ -38,6 +38,7 @@ const PRIVEES = ['/admin', '/players', '/stats',
                     adresse, ca suffit a cibler quelqu un. */
                  '/paris/liste',
                  '/paris/aregler',
+                 '/paris/import',
                  '/usage'];
 
 function lance(port, cle) {

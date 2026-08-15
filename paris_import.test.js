@@ -220,6 +220,43 @@ const cotes = require('./cotes');
     ok(v.matchs.some((m) => m.paysDomicile), 'le validateur du serveur les garde');
   }
 
+  // ==== 1quater. UNE ERREUR NE DOIT PAS VIDER LE COMPTEUR
+  {
+    /* Le piege : une reponse d'erreur ne porte AUCUN en-tete de quota, et
+       `Number(null)` vaut ZERO — qui est fini. On ecrivait donc « 0 credit
+       restant » a la premiere erreur venue, apres quoi le garde-fou refusait
+       tout appel payant et plus rien ne se reglait. Pour une cle mal
+       recopiee. */
+    const vraiFetch = global.fetch;
+    const avant = imp.etatQuota().reste;
+    ok(avant > 0, `on part de ${avant} credit(s)`);
+
+    global.fetch = async () => ({ ok: false, status: 401,
+      headers: { get: () => null },              // une erreur : pas d en-tetes
+      text: async () => '{"message":"API key is not valid"}', json: async () => ({}) });
+    await imp.importeMatchs();
+    global.fetch = vraiFetch;
+
+    eq(imp.etatQuota().reste, avant,
+       'une reponse sans en-tete de quota ne touche PAS au compteur');
+    ok(imp.partDuJour(imp.etatQuota().reste) > 1,
+       'et la part du jour reste utilisable — sinon plus rien ne se reglerait');
+
+    /* Le compte rendu doit dire ce qui s'est passe, sinon la question
+       « pourquoi pas plus de matchs ? » n'a pas de reponse lisible. */
+    const e = imp.etatImport();
+    eq(e.cle, true, 'l etat dit que la cle est posee');
+    ok(e.dernier.matchs && e.dernier.matchs.ecrit === false,
+       'et que le dernier import n a rien ecrit');
+    ok(/no league answered/.test(e.dernier.matchs.pourquoi || ''),
+       'en disant pourquoi : ' + e.dernier.matchs.pourquoi);
+    ok((e.dernier.matchs.echouees || []).length > 0, 'et quelles ligues ont echoue');
+    /* La cle elle-meme ne doit JAMAIS ressortir. */
+    ok(!JSON.stringify(e).includes(process.env.ODDS_API_KEY),
+       'et la cle n apparait nulle part dans l etat');
+    await imp.importeMatchs();                 // on remet le catalogue d aplomb
+  }
+
   // ==== 2. les scores : seulement les ligues qui ont quelque chose a rattraper
   {
     appels.length = 0;
