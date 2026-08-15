@@ -607,7 +607,17 @@ module.exports = {
   BOULIER_PRIX: parseInt(env('BOULIER_PRIX', '100'), 10),
   // Nombre de grilles jouables sur un meme tirage. Elles partagent les 30
   // boules — c'est un vrai boulier, il ne tourne qu'une fois par manche.
-  BOULIER_GRILLES_MAX: parseInt(env('BOULIER_GRILLES_MAX', '10'), 10),
+  //
+  // 50 et non 10. A 10 grilles la mise plafonnait a 1 000 SWOGE quand le
+  // blackjack en accepte 10 000 : le seul jeu a cagnotte du casino etait
+  // aussi celui ou l'on pouvait le moins engager, et un joueur qui vise le
+  // plein a 1 sur 190 402 veut multiplier ses chances, c'est tout l'objet
+  // d'acheter plusieurs grilles. A 50 la manche coute 5 000 SWOGE, dans
+  // l'ordre de grandeur des autres tables.
+  // Rien ne change pour la maison : chaque grille garde son prix, son
+  // esperance et sa part de cagnotte. Dix fois plus de grilles, c'est dix
+  // fois la meme chose, pas un pari different.
+  BOULIER_GRILLES_MAX: parseInt(env('BOULIER_GRILLES_MAX', '50'), 10),
   // Ce que la maison met dans le pot le jour de l'ouverture. Ce n'est PAS un
   // reamorcage recurrent : apres le premier plein le pot se finance seul (le
   // gagnant emporte 80 %, 20 % restent). Ce million est un cadeau unique, il
