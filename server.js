@@ -117,6 +117,34 @@ const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo'
    remarque a bon escient. Telegram va chercher l'image lui-meme, d'ou une
    adresse publique ; si elle ne repond pas, notifyPhoto retombe sur le texte
    seul et l'annonce part quand meme. */
+/* Les sports pour lesquels une image existe reellement dans /media. Une
+   liste EN DUR et non une construction de nom : `imageJeu` fabrique une URL
+   sans verifier qu'elle repond, et Telegram refuse l'envoi entier quand la
+   photo est introuvable. Un sport de plus ici, c'est un fichier de plus a
+   deposer — dans cet ordre. */
+const IMAGE_SPORT = { foot: 1, tennis: 1, nba: 1, nfl: 1, cricket: 1 };
+
+/**
+ * L'image d'un bulletin.
+ *
+ * Un pari sur UN SEUL sport merite l'image de ce sport : on voit de quoi il
+ * s'agit avant d'avoir lu une ligne. Un combine qui melange foot et tennis
+ * n'a pas d'image juste — la carte generique est alors la seule honnete.
+ *
+ * La regle porte sur le nombre de SPORTS, pas sur le nombre de jambes : un
+ * combine de trois matchs de foot est tout aussi identifiable qu'un simple,
+ * et meritait donc le meme traitement.
+ */
+function imageBulletin(jambes) {
+  const sports = new Set();
+  for (const j of (jambes || [])) {
+    const m = paris.match(j.match);
+    if (m && m.sport) sports.add(m.sport);
+  }
+  const seul = sports.size === 1 ? [...sports][0] : null;
+  return (seul && IMAGE_SPORT[seul]) ? imageJeu('paris-' + seul) : imageJeu('paris');
+}
+
 function imageJeu(jeu) {
   if (!cfg.GAME_IMAGE_BASE || !jeu) return null;
   return `${cfg.GAME_IMAGE_BASE.replace(/\/+$/, '')}/jeu-${jeu}.jpg`;
@@ -207,7 +235,7 @@ function notifyBetPlaced(addr, pari) {
 
   const titre = n > 1 ? `${n}-fold accumulator` : 'Single bet';
   const benefice = Math.max(0, Math.round(pari.rapport - pari.mise));
-  tg.notifyPhoto(imageJeu('paris'),
+  tg.notifyPhoto(imageBulletin(jambes),
     `🎟️ <b>SWOGE BET</b> · ${titre}\n` +
     `<b>${escHtml(game._p(addr).name)}</b> just placed a bet\n\n` +
     lignes.join('\n') + '\n\n' +
@@ -247,7 +275,8 @@ function notifyBetsSettled(r) {
     txt += `\nBiggest: <b>${escHtml(game._p(t.addr).name)}</b> +${fmtExact(t.rendu - t.mise)} $SWOGE` +
            ` · ${t.jambes > 1 ? t.jambes + '-fold' : 'single'} @ ${Number(t.cote).toFixed(2)}`;
   }
-  tg.notifyPhoto(imageJeu('paris'), txt);
+  /* Le reglement porte sur UN match : son sport est connu sans ambiguite. */
+  tg.notifyPhoto(imageBulletin([{ match: r.match }]), txt);
 }
 
 /* Le robinet de developpement ne s'ouvre QUE sur un serveur sans chaine. Un
