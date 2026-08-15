@@ -226,9 +226,20 @@ async function prix(cle, vers, montant) {
    * L'appel a donc EXACTEMENT la meme forme que celui de l'adresse de depot,
    * a `useDepositAddress` pres — c'est justement la divergence entre les deux
    * qui l'avait cree. */
-  if (!/^0x[0-9a-fA-F]{40}$/.test(String(vers || ''))) {
-    const e = new Error('bad destination address'); e.statut = 400; throw e;
-  }
+  /* LE DESTINATAIRE EST FACULTATIF ICI, et c'est la difference avec l'adresse
+   * de depot. Chiffrer une route ne verse rien a personne : il suffit d'une
+   * adresse VALIDE sur la chaine d'arrivee, pas de celle du joueur.
+   *
+   * L'exiger avait un cout invisible : la page ne peut la fournir que si un
+   * portefeuille est connecte, et dans le webview Telegram ou apres une
+   * connexion par e-mail, `window.ethereum` n'existe pas. Le chiffrage ne
+   * partait donc jamais pour ces joueurs-la — ni sur le pont, ni pour la
+   * valeur du solde en dollars. Et comme un chiffrage rate n'affiche rien par
+   * conception, il n'y avait rien a voir, pas meme une erreur.
+   *
+   * L'adresse nulle est valide sur Robinhood Chain : c'est deja elle que la
+   * cotation depuis Ethereum utilisait comme repere, et elle passait. */
+  const dest = /^0x[0-9a-fA-F]{40}$/.test(String(vers || '')) ? vers : NATIF;
   const n = parseFloat(String(montant).replace(',', '.'));
   if (!(n >= d.min) || !(n <= d.max)) {
     const e = new Error(`amount must be between ${d.min} and ${d.max} ${d.symbole}`);
@@ -238,7 +249,7 @@ async function prix(cle, vers, montant) {
   if (brut === null) { const e = new Error('bad amount'); e.statut = 400; throw e; }
 
   const j = await appelle('/quote/v2', {
-    user: d.repere, recipient: vers, refundTo: d.repere,
+    user: d.repere, recipient: dest, refundTo: d.repere,
     originChainId: d.chaine, originCurrency: d.jeton,
     destinationChainId: RH, destinationCurrency: NATIF,
     amount: brut, tradeType: 'EXACT_INPUT',
