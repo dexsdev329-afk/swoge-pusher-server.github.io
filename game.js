@@ -1587,11 +1587,25 @@ class Game {
         parMatch.get(j.match).push({ p, j });
       }
     }
+    /* ---- ON PART DU CATALOGUE, PAS DES PARIS ----
+     *
+     * La liste ne montrait que les rencontres SUR LESQUELLES QUELQU'UN AVAIT
+     * MISE. Une rencontre jouee que personne n'avait prise n'apparaissait donc
+     * nulle part : elle restait indefiniment « en attente » sans qu'aucun
+     * ecran ne le dise, et le jour ou un pari tombait dessus — un combine, un
+     * retardataire — elle sortait de nulle part avec plusieurs jours de retard.
+     *
+     * On enumere donc toutes les rencontres du calendrier, et les paris ne font
+     * plus que RENSEIGNER celles qui en ont. Une rencontre sans pari s'affiche
+     * a zero : elle ne coute rien a trancher, et la trancher la sort de la
+     * liste au lieu de la laisser trainer.
+     */
     const sortie = [];
-    for (const [id, lignes] of parMatch) {
+    for (const m of paris.catalogue().matchs) {
+      const id = m.id;
       if (this.parisRegles[id]) continue;             // deja tranchee
-      const m = paris.match(id);
-      if (!m || m.debut > t) continue;                // pas encore jouee
+      if (m.debut > t) continue;                      // pas encore jouee
+      const lignes = parMatch.get(id) || [];
       const expo = {};
       for (const i of m.issues) expo[i] = 0;
       let mise = 0;
