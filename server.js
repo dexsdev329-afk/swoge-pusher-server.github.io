@@ -151,13 +151,45 @@ function imageJeu(jeu) {
   return `${cfg.GAME_IMAGE_BASE.replace(/\/+$/, '')}/jeu-${jeu}.jpg`;
 }
 
+/* ---- LE LIEN DE LA TABLE, DANS L'ANNONCE ----
+ *
+ * Une annonce disait qui avait gagne, combien, et montrait la table — mais
+ * n'y menait pas. Le lecteur devait retenir le nom, quitter le canal,
+ * retrouver le site, puis la bonne page : trois gestes entre l'envie de jouer
+ * et la table, alors que l'annonce arrive justement au moment ou l'envie est
+ * la.
+ *
+ * L'adresse se deduit de celle des images — meme site, un dossier au-dessus.
+ * Rien de nouveau a configurer, et si `GAME_IMAGE_BASE` change de domaine, les
+ * liens suivent.
+ */
+const PAGE_JEU = {
+  holdem: 'swoge_casino.html?game=holdem', three: 'swoge_casino.html?game=three',
+  hilo: 'swoge_casino.html?game=hilo', mines: 'swoge_casino.html?game=mines',
+  plinko: 'plinko.html', bj: 'swoge_blackjack.html', smash: 'swoge_smash.html',
+  spin: 'swoge_spin.html', boulier: 'boulier.html', crash: 'crash.html',
+  p4: 'connect4.html', mp: 'morpion.html', dm: 'dames.html',
+  pusher: 'swoge_pusher_live.html', paris: 'swogebet.html',
+};
+function siteBase() {
+  if (!cfg.GAME_IMAGE_BASE) return null;
+  return cfg.GAME_IMAGE_BASE.replace(/\/+$/, '').replace(/\/media$/, '');
+}
+/** La ligne « ouvrir la table », prete a coller au bas d'une annonce. Vide si
+ *  le jeu n'a pas de page a lui : mieux vaut pas de lien qu'un lien mort. */
+function lienJeu(jeu, libelle) {
+  const base = siteBase(), page = PAGE_JEU[jeu];
+  if (!base || !page) return '';
+  return '\n<a href="' + base + '/' + page + '">' + (libelle || 'Play this table') + ' \u2197</a>';
+}
+
 function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
   if (!(net >= cfg.NOTIFY_WIN_MIN)) return;
   tg.notifyPhoto(imageJeu(jeu),
             `🃏 <b>${NOM_TABLE[jeu] || jeu}</b>\n` +
             `${escHtml(game._p(addr).name)} won <b>+${fmtAmt(String(net))} $SWOGE</b> 🐕\n` +
             `Stake ${fmtAmt(String(staked))} · returned ${fmtAmt(String(payout))}` +
-            (note ? ` · ${note}` : ''));
+            (note ? ` · ${note}` : '') + lienJeu(jeu));
 }
 
 /* ------------------------------------------------ un pari vient d'etre pose
@@ -2545,7 +2577,7 @@ const stepInterval = setInterval(() => {
       broadcast({ type: 'ticker', name: w.ownerName, value: w.value });
       // le Pusher aussi montre sa table : c'est le seul gain qui n'y passait pas
       if (w.value >= cfg.NOTIFY_WIN_MIN)
-        tg.notifyPhoto(imageJeu('pusher'), `🏆 <b>Coin Pusher</b>\n${w.ownerName} just won <b>${w.value} $SWOGE</b> 🐕`);
+        tg.notifyPhoto(imageJeu('pusher'), `🏆 <b>Coin Pusher</b>\n${w.ownerName} just won <b>${w.value} $SWOGE</b> 🐕` + lienJeu('pusher'));
     }
   }
 }, Math.round(1000 / cfg.TABLE.stepHz));
