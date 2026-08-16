@@ -595,8 +595,25 @@ class Game {
     if (!Array.isArray(p.attente)) p.attente = [];
     const dernier = p.attente[p.attente.length - 1];
     if (dernier && dernier[0] === jour) dernier[1] += du;
-    else p.attente.push([jour, du]);
+    else {
+      p.attente.push([jour, du]);
+      /* ---- LE PARRAIN APPREND QUE SON FILLEUL LUI RAPPORTE ----
+       *
+       * Une seule fois par filleul et par jour : c'est le seau du jour qui
+       * vient de s'ouvrir. Annoncer chaque manche ferait des centaines de
+       * messages pour un joueur actif, et un signal qu'on coupe ne signale
+       * plus rien.
+       *
+       * On ne fait qu'une NOTE ici — game.js ne connait aucune socket. Le
+       * serveur la ramasse, comme il ramasse deja les montees de niveau. */
+      (this.gainsParrain = this.gainsParrain || [])
+        .push({ parrain: p.parrain, filleul: p.name || null });
+    }
   }
+
+  /** Les filleuls qui ont commence a rapporter depuis la derniere fois qu'on
+   *  a regarde. Se vide en le lisant, comme `montéesRecentes`. */
+  gainsParrainRecents() { const g = this.gainsParrain || []; this.gainsParrain = []; return g; }
 
   /**
    * Fait murir ce qui a passe le delai : les seaux assez vieux quittent le

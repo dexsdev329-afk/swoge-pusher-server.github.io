@@ -1606,6 +1606,21 @@ const graineInterval = setInterval(() => {
    pas depuis le coeur d'une manche : une fenetre qui s'ouvre pendant que la
    bille tombe couvre le jeu au pire moment. */
 const niveauInterval = setInterval(() => {
+  /* ---- « ton filleul vient de te rapporter » ----
+   *
+   * Sans ca, l'ecran d'invitation se consulte une fois puis s'oublie : les
+   * gains murissent en silence, et rien ne rappelle jamais qu'inviter paie.
+   * Une note par filleul et par jour, deja limitee a la source.
+   *
+   * On renvoie l'etat COMPLET du parrainage avec, pour que l'ecran se
+   * rafraichisse d'un coup s'il est ouvert. */
+  for (const g of game.gainsParrainRecents()) {
+    try {
+      toAddr(g.parrain, { type: 'referral', ...game.parrainage(g.parrain),
+                          rapporte: g.filleul || 'A friend' });
+    } catch (e) {}
+  }
+
   const m = game.montéesRecentes();
   for (const x of m) {
     toAddr(x.addr, { type: 'levelUp', niveau: x.a, palier: x.palier,
