@@ -146,9 +146,24 @@ function imageBulletin(jambes) {
   return (seul && IMAGE_SPORT[seul]) ? imageJeu('paris-' + seul) : imageJeu('paris');
 }
 
+/* ---- POURQUOI UN NUMERO DE TIRAGE DANS L'ADRESSE ----
+ *
+ * Telegram ne retelecharge pas une photo qu'il a deja vue : il retient
+ * l'ADRESSE et renvoie le fichier qu'il en avait tire la premiere fois. Les
+ * vignettes ont ete redessinees sans changer de nom de fichier — le site sert
+ * bien les nouvelles, mais le canal continuait d'afficher les anciennes,
+ * indefiniment.
+ *
+ * Le numero fait de chaque refonte une adresse neuve. A BUMPER a chaque fois
+ * qu'on remplace le contenu de media/jeu-*.jpg ; ne rien changer d'autre. Le
+ * serveur qui sert les images ignore la chaine de requete, elle ne coute donc
+ * rien de plus qu'un cache vide chez Telegram.
+ */
+const TIRAGE_VIGNETTES = 2;
+
 function imageJeu(jeu) {
   if (!cfg.GAME_IMAGE_BASE || !jeu) return null;
-  return `${cfg.GAME_IMAGE_BASE.replace(/\/+$/, '')}/jeu-${jeu}.jpg`;
+  return `${cfg.GAME_IMAGE_BASE.replace(/\/+$/, '')}/jeu-${jeu}.jpg?v=${TIRAGE_VIGNETTES}`;
 }
 
 /* ---- LE LIEN DE LA TABLE, DANS L'ANNONCE ----
