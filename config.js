@@ -488,20 +488,45 @@ module.exports = {
    *
    * C'est un choix assume : moins souvent, plus gros. Un jeu ou l'on gagne
    * tout le temps trois fois rien ne se souvient de rien. */
+  /* ---- DEUXIEME PASSE : encore moins de petit, encore plus de gros ----
+   *
+   * La passe precedente avait deja fait tomber les pieces a 1 de 29 % a 8 %.
+   * Ca ne suffisait pas : une piece sur six rendait encore 1 ou 2 jetons,
+   * c'est-a-dire rien qu'on remarque, et il fallait en moyenne neuf cents
+   * lachers pour voir tomber une piece a 50.
+   *
+   * LA MOYENNE NE BOUGE PAS — 1,0430 par lacher, au dix-millieme. C'est la
+   * contrainte, et elle n'est pas negociable : la changer reviendrait a
+   * deplacer le retour du jeu en croyant ne toucher qu'a la sensation.
+   *
+   * A moyenne fixe il n'y a qu'un seul arbitrage, et il faut le dire : moins
+   * de petites pieces veut dire PLUS de pieces qui ne paient pas. Elles
+   * poussent la pile quand meme — mais elles ne paient pas, et elles passent
+   * de trois lachers sur quatre a presque neuf sur dix. C'est le prix de
+   * « moins souvent, plus gros », et il se paie la.
+   *
+   *                        avant     apres
+   *   piece a 1 ou 2      16,00 %    3,90 %   quatre fois moins
+   *   gain >= 10         1 / 29     1 / 23
+   *   gain >= 25         1 / 141    1 / 79
+   *   gain >= 50         1 / 909    1 / 368   deux fois et demie plus souvent
+   *   gain >= 100        1 / 2857   1 / 1395
+   *   ne paie pas        74,95 %   87,68 %   <- le prix
+   */
   PRIZES: [
-    [0,      7495500],  // 74.96%  la piece pousse, elle ne paie pas
-    [1,       800000],  // 8.0%    (etait 29 %)
-    [2,       800000],  // 8.0%    (etait 12,4 %)
-    [5,       560000],  // 5.60%   (etait 4,8 %)
-    [10,      273500],  // 2.74%   (etait 0,95 %)
-    [25,       60000],  // 0.60%   (etait 0,28 %)
-    [50,        7500],  // 0.075%
-    [100,       2600],  // 0.026%   (~1 in 3,846)
-    [250,        700],  // ~1 in 14,286
-    [500,        160],  // ~1 in 62,500
-    [1000,        35],  // ~1 in 285,714
-    [5000,         4],  // ~1 in 2,500,000
-    [50000,        1],  // ~1 in 10,000,000  ← the "gros lot"
+    [0,      8767830],  // 87.68%  la piece pousse, elle ne paie pas
+    [1,       150000],  // 1.50%   (etait 8 %, et 29 % avant)
+    [2,       240000],  // 2.40%   (etait 8 %)
+    [5,       415000],  // 4.15%   (etait 5,6 %)
+    [10,      300000],  // 3.00%   (etait 2,74 %)
+    [25,      100000],  // 1.00%   (etait 0,60 %)
+    [50,       20000],  // 0.20%   (etait 0,075 %)  ~1 sur 500
+    [100,       5500],  // 0.055%  (etait 0,026 %)  ~1 sur 1 818
+    [250,       1300],  // ~1 sur 7 692
+    [500,        300],  // ~1 sur 33 333
+    [1000,        60],  // ~1 sur 166 667
+    [5000,         8],  // ~1 sur 1 250 000
+    [50000,        2],  // ~1 sur 5 000 000  <- le gros lot, deux fois plus proche
   ],
   PRIZE_TOTAL: 10000000,
 
