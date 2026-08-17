@@ -361,6 +361,17 @@ function page() {
 </div>
 
 <div class="panel" style="margin-top:14px">
+  <h2>&#127822; The fruit collection</h2>
+  <div class="sub" style="margin:0 0 10px">
+    What is left of the edition, and who holds it. Every number here comes from the
+    global mint register &mdash; the same one that stops a chest from going over the cap.
+  </div>
+  <div class="row"><button class="ghost" id="btGo">Load</button>
+    <span id="btResume" style="align-self:center;color:#8DA0C4;font-size:12px"></span></div>
+  <div id="btOut" style="margin-top:10px"></div>
+</div>
+
+<div class="panel" style="margin-top:14px">
   <h2>👥 Players</h2>
   <div class="row" style="margin-bottom:10px">
     <input id="q" placeholder="Search a wallet (0x…), a name or a Telegram id" style="flex:1;min-width:220px;margin-bottom:0">
@@ -1033,6 +1044,70 @@ $("#conn").onclick=async function(){
     refreshOwnerState();
   }catch(e){ msg(String(e.message||e).slice(0,100),"warn"); }
 };
+
+/* ---------------------------------------------------- la collection
+ *
+ * Deux niveaux : une ligne par fruit, et ses detenteurs qu'on deplie.
+ * Le detail est REPLIE par defaut — trente fruits deplies feraient trois
+ * cents lignes, et ce qu'on vient chercher ici c'est d'abord « combien il
+ * reste », pas « qui ».
+ */
+async function btCharge(){
+  $("#btResume").textContent="loading…";
+  try{
+    var r=await fetch("/boutique/etat",{headers:{"x-admin-key":KEY}});
+    var d=await r.json();
+    if(d.error){ $("#btResume").textContent=d.error; return; }
+    btRend(d);
+  }catch(e){ $("#btResume").textContent=String(e.message||e); }
+}
+function btRend(d){
+  $("#btResume").textContent=d.sortis+" of "+d.edition+" minted \u00b7 "+
+    (d.edition-d.sortis)+" left in the edition";
+  var h='<table style="width:100%;border-collapse:collapse;font-size:12px">';
+  h+='<tr><th style="text-align:left;padding:4px 6px">Fruit</th>'+
+     '<th style="text-align:left;padding:4px 6px">Rarity</th>'+
+     '<th style="text-align:right;padding:4px 6px">Minted</th>'+
+     '<th style="text-align:right;padding:4px 6px">Left</th>'+
+     '<th style="text-align:right;padding:4px 6px">Holders</th>'+
+     '<th style="padding:4px 6px"></th></tr>';
+  var coul={}; (d.parRarete||[]).forEach(function(r){ coul[r.cle]=r.couleur; });
+  d.items.forEach(function(o){
+    /* Le registre et la somme des inventaires DOIVENT concorder. S'ils
+       divergent, la page le dit — elle ne choisit pas lequel croire. */
+    var ecart = o.emis!==o.detenu
+      ? ' <b style="color:#F2685E" title="register '+o.emis+' vs inventories '+o.detenu+'">\u26a0</b>' : '';
+    var barre = o.plafond ? Math.round(100*o.emis/o.plafond) : 0;
+    h+='<tr style="border-top:1px solid rgba(255,255,255,.07)">'+
+       '<td style="padding:4px 6px">'+esc(o.nom)+ecart+'</td>'+
+       '<td style="padding:4px 6px;color:'+(coul[o.rarete]||"#8DA0C4")+'">'+esc(o.rarete)+'</td>'+
+       '<td style="padding:4px 6px;text-align:right">'+o.emis+' / '+o.plafond+
+         '<div style="height:3px;border-radius:2px;background:rgba(255,255,255,.1);margin-top:2px">'+
+         '<div style="height:3px;border-radius:2px;width:'+barre+'%;background:'+
+           (coul[o.rarete]||"#8DA0C4")+'"></div></div></td>'+
+       '<td style="padding:4px 6px;text-align:right;'+
+         (o.reste===0?'color:#F2685E;font-weight:800':'')+'">'+o.reste+'</td>'+
+       '<td style="padding:4px 6px;text-align:right">'+o.porteurs+'</td>'+
+       '<td style="padding:4px 6px;text-align:right">'+
+         (o.porteurs?'<button class="ghost" data-bt="'+o.id+'" style="padding:2px 8px;font-size:11px">who</button>':'')+
+       '</td></tr>';
+    if(o.porteurs) h+='<tr id="btd'+o.id+'" style="display:none"><td colspan="6" '+
+      'style="padding:2px 6px 8px 18px;color:#8DA0C4">'+
+      o.detenteurs.map(function(x){ return esc(x.nom)+' <span style="opacity:.6">'+
+        short(x.addr)+'</span> \u00d7'+x.q; }).join(' &nbsp;\u00b7&nbsp; ')+
+      (o.porteurs>o.detenteurs.length?' &nbsp;\u2026 and '+(o.porteurs-o.detenteurs.length)+' more':'')+
+      '</td></tr>';
+  });
+  h+='</table>';
+  $("#btOut").innerHTML=h;
+  [].forEach.call($("#btOut").querySelectorAll("[data-bt]"),function(b){
+    b.addEventListener("click",function(){
+      var l=$("#btd"+b.dataset.bt);
+      l.style.display = l.style.display==="none" ? "" : "none";
+    });
+  });
+}
+$("#btGo").addEventListener("click",btCharge);
 
 function cmsg(t,c){ $("#cmsg").textContent=t; $("#cmsg").className=c||""; }
 async function refreshOwnerState(){

@@ -1441,6 +1441,13 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(parisImport.etatImport()));
   }
 
+  /* L'etat de la boutique : ce qui reste, et qui detient quoi. */
+  if (path === '/boutique/etat') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(game.boutiqueAdmin()));
+  }
   if (path === '/paris/aregler') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);

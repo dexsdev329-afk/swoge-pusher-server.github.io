@@ -3728,6 +3728,71 @@ class Game {
    * du cote de la maison.
    */
 
+  /**
+   * L'ETAT DE LA BOUTIQUE POUR L'EXPLOITANT.
+   *
+   * Deux questions, et elles n'ont pas la meme reponse :
+   *
+   *   • COMBIEN IL RESTE — ca se lit dans le registre global, et c'est ce qui
+   *     dit si l'edition approche de sa fin ;
+   *   • QUI A QUOI — ca demande de parcourir les fiches. Le registre sait
+   *     combien de Void Fruits sont sortis, il ne sait pas chez qui.
+   *
+   * ---- pourquoi on parcourt tout, et pourquoi ce n'est pas grave ----
+   *
+   * Il n'existe pas d'index inverse objet -> joueurs, et on n'en construit pas
+   * un : il faudrait le tenir a jour a chaque achat, donc un deuxieme endroit
+   * qui peut se desynchroniser du premier. Le parcours coute une passe sur les
+   * fiches, sur une page d'administration qu'une personne ouvre de temps en
+   * temps. Le mauvais echange serait l'inverse.
+   *
+   * Les detenteurs sont TRIES par quantite : sur un mythique a dix
+   * exemplaires, savoir que quelqu'un en detient quatre est l'information qui
+   * compte.
+   */
+  boutiqueAdmin() {
+    const emis = this.boutiqueEmis || {};
+    /* Une seule passe sur les fiches, pour tous les objets a la fois. */
+    const parObjet = new Map();
+    for (const [addr, p] of this.players) {
+      const inv = p.objets;
+      if (!inv) continue;
+      for (const id of Object.keys(inv)) {
+        const q = inv[id];
+        if (!(q > 0)) continue;
+        if (!parObjet.has(id)) parObjet.set(id, []);
+        parObjet.get(id).push({ addr, nom: p.name || addr.slice(0, 6), q });
+      }
+    }
+    const items = boutique.ITEMS.map((o) => {
+      const det = (parObjet.get(String(o.id)) || []).sort((a, b) => b.q - a.q);
+      const plafond = boutique.rarete(o.rarete).plafond;
+      const sorti = emis[o.id] || 0;
+      return {
+        id: o.id, nom: o.nom, cle: o.cle, rarete: o.rarete, famille: o.famille,
+        plafond, emis: sorti, reste: Math.max(0, plafond - sorti),
+        /* La somme des inventaires DOIT egaler le registre. Si elle ne
+           l'egale pas, l'un des deux ment et la page doit le montrer plutot
+           que de choisir lequel croire. */
+        detenu: det.reduce((a, d) => a + d.q, 0),
+        porteurs: det.length,
+        detenteurs: det.slice(0, 12),
+      };
+    });
+    const parRarete = boutique.RARETES.map((r) => {
+      const l = items.filter((o) => o.rarete === r.cle);
+      return { cle: r.cle, nom: r.nom, couleur: r.couleur, plafond: r.plafond,
+               emis: l.reduce((a, o) => a + o.emis, 0),
+               total: r.plafond * l.length };
+    });
+    return {
+      items, parRarete,
+      familles: boutique.FAMILLES.map((f) => ({ cle: f.cle, nom: f.nom, couleur: f.couleur })),
+      edition: boutique.RARETES.reduce((a, r) => a + r.plafond * boutique.FAMILLES.length, 0),
+      sortis: Object.values(emis).reduce((a, b) => a + b, 0),
+    };
+  }
+
   /** Le catalogue et l'inventaire du joueur, prets a peindre. */
   boutiqueEtat(addr) {
     const p = this._p(addr);
