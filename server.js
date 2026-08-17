@@ -224,18 +224,36 @@ function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
  *
  * ---- ce qui est ANNONCE, et ce qui ne l'est pas ----
  *
- * EPIQUE ET AU-DESSUS, pas en dessous. Le seuil est une rarete et pas un
- * montant : c'est le seul critere qui ait un sens ici, puisqu'un coffre ne
- * rend jamais de jetons.
+ * Le seuil est une RARETE et pas un montant : c'est le seul critere qui ait
+ * un sens ici, puisqu'un coffre ne rend jamais de jetons.
  *
- * Le chiffre a ete mesure avant d'etre choisi. A « rare et au-dessus », un
- * coffre de bois sur QUATRE partait dans le canal — cent ouvertures d'un seul
- * joueur auraient fait vingt-quatre messages, et le mythique se serait perdu
- * au milieu. A « epique et au-dessus » : 3 % du coffre de bois, 17 % du
- * dore, 56 % du mythique. Le dernier est haut, mais un coffre a deux
- * millions et demi ne s'ouvre pas en rafale.
+ * ---- il avait ete regle trop haut ----
+ *
+ * A « epique et au-dessus », le canal ne recevait plus rien : 3 % des
+ * ouvertures d'un coffre de bois, soit UNE ANNONCE TOUTES LES TRENTE-TROIS.
+ * On ouvre dix coffres pour essayer, on ne voit rien, et on croit que la
+ * fonction est cassee. C'est exactement ce qui s'est passe.
+ *
+ * Le raisonnement d'origine tenait pourtant — a « rare et au-dessus », cent
+ * ouvertures d'un seul joueur font vingt-quatre messages et le mythique s'y
+ * perd — mais il repondait a un probleme de GROS TRAFIC sur une boutique qui
+ * vient d'ouvrir. Une annonce trop rare est un defaut certain aujourd'hui ;
+ * une annonce trop frequente est un risque a partir d'un certain volume.
+ *
+ * Le seuil descend donc a « rare », et il devient reglable sans redeployer :
+ * COFFRE_ANNONCE_MIN prend un nom de rarete. Le jour ou le canal sature, on
+ * remonte d'un cran depuis les variables d'environnement.
+ *
+ * Frequences mesurees, par coffre :
+ *   rare+     bois 24 %   dore 55 %   mythique 90 %
+ *   epique+   bois  3 %   dore 17 %   mythique 56 %
  */
-const COFFRE_ANNONCE = ['epique', 'legendaire', 'mythique'];
+const COFFRE_RANGS = ['commun', 'rare', 'epique', 'legendaire', 'mythique'];
+const COFFRE_ANNONCE = (() => {
+  const mini = String(process.env.COFFRE_ANNONCE_MIN || 'rare').toLowerCase();
+  const i = COFFRE_RANGS.indexOf(mini);
+  return COFFRE_RANGS.slice(i < 0 ? 1 : i);
+})();
 function notifyCoffre(addr, g) {
   /* UNE LIGNE COMPLETEE PART TOUJOURS, quelle que soit la rarete du dernier
      fruit. C'est l'annonce la plus forte du canal — il n'y en aura que trois
