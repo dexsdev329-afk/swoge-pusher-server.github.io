@@ -3772,6 +3772,72 @@ class Game {
     return g;
   }
 
+  /**
+   * LE CLASSEMENT DES COLLECTIONNEURS.
+   *
+   * ---- ce qu'on classe, et pourquoi pas autre chose ----
+   *
+   * Le rang se joue sur le nombre de fruits DIFFERENTS, pas sur la quantite
+   * totale. Compter les doublons ferait gagner celui qui ouvre le plus de
+   * coffres de bois, alors que la collection se termine en trouvant ce qu'on
+   * n'a pas — et c'est ce que la planche montre depuis le debut.
+   *
+   * A egalite, on departage par la RARETE : un joueur a douze fruits dont un
+   * mythique passe devant un joueur a douze communs. Le poids d'une rarete
+   * est l'inverse de son plafond — dix mythiques contre mille communs, donc
+   * un mythique vaut cent communs. Le bareme n'est pas invente : il sort des
+   * plafonds, et il se recalculera tout seul si on les change.
+   *
+   * ---- le cout ----
+   *
+   * Une passe sur les fiches, comme le panneau d'administration. La
+   * difference est qu'ici tout le monde peut demander — on renvoie donc
+   * seulement le haut du classement et la ligne du demandeur, jamais la
+   * liste entiere.
+   */
+  boutiqueClassement(addr, limite) {
+    const poids = {};
+    for (const r of boutique.RARETES) poids[r.cle] = 1000 / r.plafond;
+    const rangRarete = {};
+    boutique.RARETES.forEach((r, i) => { rangRarete[r.cle] = i; });
+
+    const l = [];
+    for (const [a, p] of this.players) {
+      const inv = p.objets;
+      if (!inv) continue;
+      let sortes = 0, score = 0, meilleure = -1, familles = {};
+      for (const o of boutique.ITEMS) {
+        if (!inv[o.id]) continue;
+        sortes++;
+        score += poids[o.rarete] || 0;
+        if (rangRarete[o.rarete] > meilleure) meilleure = rangRarete[o.rarete];
+        familles[o.famille] = (familles[o.famille] || 0) + 1;
+      }
+      if (!sortes) continue;
+      /* Les familles COMPLETES, parce que c'est ce que la course recompense
+         et que le classement doit parler de la meme chose que la course. */
+      let pleines = 0;
+      for (const k of Object.keys(familles)) if (familles[k] === boutique.RARETES.length) pleines++;
+      l.push({ addr: a, nom: p.name || a.slice(0, 6), sortes, score: Math.round(score),
+               pleines, meilleure: meilleure >= 0 ? boutique.RARETES[meilleure].cle : null });
+    }
+    l.sort((x, y) => (y.sortes - x.sortes) || (y.score - x.score) || (y.pleines - x.pleines));
+    l.forEach((x, i) => { x.rang = i + 1; });
+
+    const moi = addr ? l.find((x) => x.addr === String(addr).toLowerCase()) : null;
+    const n = Math.max(1, Math.min(50, Number(limite) || 10));
+    return {
+      total: l.length,
+      top: l.slice(0, n).map((x) => ({ rang: x.rang, nom: x.nom, sortes: x.sortes,
+                                       pleines: x.pleines, meilleure: x.meilleure })),
+      /* Sa ligne part TOUJOURS, meme s'il est deja dans le haut : la page
+         choisit de la repeter ou non, le serveur ne devine pas. */
+      moi: moi ? { rang: moi.rang, sortes: moi.sortes, pleines: moi.pleines,
+                   meilleure: moi.meilleure } : null,
+      sur: boutique.ITEMS.length,
+    };
+  }
+
   /** Les places restantes et les gagnants, pour la page et l'annonce. */
   boutiqueCourse() {
     const gagnants = this.boutiqueLignes || [];
@@ -3853,7 +3919,8 @@ class Game {
     const p = this._p(addr);
     return { catalogue: boutique.catalogue(this.boutiqueEmis || {}),
              inventaire: p.objets || {},
-             course: this.boutiqueCourse() };
+             course: this.boutiqueCourse(),
+             classement: this.boutiqueClassement(addr, 10) };
   }
 
   /**
