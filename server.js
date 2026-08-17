@@ -1440,6 +1440,40 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ ok: false, error: e.message }));
     }
   }
+  /* ================= CREDITER UN JOUEUR =================
+   *
+   * RESERVE A L ADMIN, comme /repare et /burn : cette route cree des jetons
+   * qui ne viennent d'aucun depot. L'enveloppe glissante vit dans le moteur —
+   * c'est-a-dire dans l'etat sauvegarde — et pas ici : un plafond garde en
+   * memoire du processus se remet a zero a chaque redeploiement, ce qui
+   * revient a ne pas avoir de plafond.
+   */
+  if (path === '/credit/etat') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(game.enveloppeCredit(Date.now())));
+  }
+  if (path === '/credit') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    try {
+      const r = game.crediteJoueur(qs.get('joueur'), qs.get('montant'), Date.now(), qs.get('note'));
+      persist();                       // tout de suite : c'est de l'argent
+      /* Le joueur voit son solde bouger SANS RECHARGER. Sans ca, il decouvre
+         le credit au prochain rafraichissement — ou l'annonce arrive avant
+         l'argent, ce qui est pire que l'inverse. */
+      toAddr(r.addr, { type: 'balance', balance: r.solde });
+      console.log(`[credit] ${r.addr} +${r.montant} $SWOGE ` +
+                  `(reste ${r.enveloppe.reste} sur ${r.enveloppe.max})`);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, ...r }));
+    } catch (e) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+  }
   if (path === '/avatar-remove') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);

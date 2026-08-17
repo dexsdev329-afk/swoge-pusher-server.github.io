@@ -992,6 +992,28 @@ module.exports = {
      largement rentable meme au jeu le moins cher. */
   REFERRAL_WELCOME_ROLLOVER: parseFloat(env('REFERRAL_WELCOME_ROLLOVER', '200')),
 
+  /* ---- LE ROBINET DE L EXPLOITANT ----
+   *
+   * Crediter un joueur depuis le panneau, sans passer par la chaine : un
+   * dedommagement, un lot de concours, une erreur a rattraper. C'est
+   * commode, et c'est exactement pour ca que ca demande une borne.
+   *
+   * Ces jetons-la ne viennent d'AUCUN depot. Ils augmentent ce que la maison
+   * doit sans rien ajouter au coffre : cent envois d'un million, et le
+   * surplus affiche par /stats passe sous zero — c'est-a-dire que tout le
+   * monde ne peut plus etre paye. La borne n'est donc pas une precaution
+   * d'usage, c'est la seule chose qui separe « un geste commercial » de
+   * « le coffre est vide ».
+   *
+   * Une ENVELOPPE GLISSANTE, pas un compteur par envoi : ce qui compte est
+   * ce qui est sorti sur les douze dernieres heures, quel que soit le nombre
+   * de joueurs servis. Un plafond par envoi seul se contourne en dix clics.
+   * L'enveloppe se libere au fur et a mesure que les envois vieillissent —
+   * le panneau montre les deux : la jauge, et quand le prochain jeton
+   * revient. */
+  CREDIT_ADMIN_MAX: parseFloat(env('CREDIT_ADMIN_MAX', '500000')),
+  CREDIT_ADMIN_FENETRE_H: parseFloat(env('CREDIT_ADMIN_FENETRE_H', '12')),
+
   // ---- Sessions ----
   // Duree pendant laquelle une signature vaut connexion. Passe ce delai, le
   // joueur resigne une fois. Trente jours est le compromis habituel : assez

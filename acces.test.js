@@ -39,6 +39,11 @@ const PRIVEES = ['/admin', '/players', '/stats',
                  '/paris/liste',
                  '/paris/aregler',
                  '/paris/import',
+                 /* Le robinet. Ouvert, il ne fuit pas des informations : il
+                    fabrique des jetons que personne n'a deposes. C'est la
+                    porte a laisser fermee avant toutes les autres. */
+                 '/credit?joueur=x&montant=1',
+                 '/credit/etat',
                  '/usage'];
 
 function lance(port, cle) {

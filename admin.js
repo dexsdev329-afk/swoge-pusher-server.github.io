@@ -166,6 +166,48 @@ function page() {
     line-height:1.6;white-space:pre-wrap;word-break:break-word;"></pre>
 </div>
 
+<div class="panel" style="margin-top:14px">
+  <h2>&#128176; Credit a player</h2>
+  <div class="sub" style="margin:0 0 10px">
+    Straight to a player&rsquo;s balance &mdash; a goodwill gesture, a prize, a mistake to
+    put right. Type the <b>player name</b> (or paste an address) and the amount.<br>
+    <b>These tokens come from no deposit.</b> They raise what the house owes without
+    adding anything to the vault, so they are capped:
+    <b>${Math.floor(cfg.CREDIT_ADMIN_MAX).toLocaleString('en-GB')} $SWOGE per rolling
+    ${cfg.CREDIT_ADMIN_FENETRE_H} h</b>, counted across <b>every</b> player. The envelope
+    frees itself up as each send ages out &mdash; it is not a midnight reset.
+  </div>
+  <div id="crJauge"><div class="muted2">loading&hellip;</div></div>
+  <input id="crQui" placeholder="player name, or 0x… address" autocomplete="off">
+  <input id="crMontant" type="number" inputmode="numeric" min="1"
+         step="1" placeholder="amount in $SWOGE">
+  <input id="crNote" maxlength="120" autocomplete="off"
+         placeholder="what it is for (optional — the player sees it in their history)">
+  <div class="row">
+    <button class="ghost" id="crMax">Fill what is left</button>
+    <button id="crGo">Send →</button>
+    <span id="crMsg" style="font-size:12.5px;align-self:center"></span>
+  </div>
+  <div id="crDerniers" style="margin-top:11px"></div>
+  <style>
+    /* La jauge et la barre de temps repondent a deux questions differentes :
+       « combien reste-t-il » et « quand est-ce que ca revient ». Une seule
+       barre pour les deux ferait croire que l'enveloppe se vide avec le
+       temps, alors que c'est l'inverse — elle se REMPLIT en vieillissant. */
+    .crb{ height:9px; border-radius:6px; background:rgba(255,255,255,.09);
+      overflow:hidden; margin:5px 0 3px; }
+    .crb i{ display:block; height:100%; border-radius:6px;
+      background:linear-gradient(90deg,#7CFF9B,#E6A537); transition:width .4s; }
+    .crb.plein i{ background:linear-gradient(90deg,#F2685E,#FF8A5B); }
+    .crb.t i{ background:linear-gradient(90deg,#5AA9E6,#7CFF9B); }
+    .crl{ font-size:11.5px; color:#8a7f6a; line-height:1.6; }
+    .crl b{ color:#F7EEDA; }
+    .crl .p{ color:#F2685E; }
+    .crd{ font-size:11.5px; color:#8a7f6a; line-height:1.7; }
+    .crd b{ color:#F7EEDA; }
+  </style>
+</div>
+
 <div class="panel">
   <h2>🔥 Burn the withdrawal fee</h2>
   <div class="sub" style="margin:0 0 10px">
@@ -944,6 +986,93 @@ $("#argBody").addEventListener("click",async function(ev){
              [].forEach.call(boutons,function(x){ x.disabled=false; }); }
 });
 loadAregler(); setInterval(loadAregler,30000);
+
+/* ==================== CREDITER UN JOUEUR ====================
+ *
+ * Deux barres, et elles ne disent pas la meme chose :
+ *
+ *   • LA JAUGE — ce qui reste de l'enveloppe. Elle se vide a mesure qu'on
+ *     envoie.
+ *   • LA BARRE DE TEMPS — ou en est le plus ancien envoi de sa fenetre. Elle
+ *     se remplit toute seule, et quand elle est pleine, l'enveloppe rend sa
+ *     part. C'est la reponse a « quand est-ce que je peux renvoyer », qui est
+ *     la seule question qu'on se pose devant un bouton grise.
+ *
+ * Le compte a rebours tourne EN LOCAL entre deux lectures : demander l'etat
+ * au serveur chaque seconde pour afficher une minute qui descend serait
+ * quinze mille requetes par nuit pour rien.
+ */
+var CRE=null, CRE_LU=0;
+function crDuree(ms){
+  if(ms<=0) return "now";
+  var m=Math.ceil(ms/60000), h=Math.floor(m/60);
+  return h>=1 ? (h+" h "+(m%60)+" min") : (m+" min");
+}
+function crRend(){
+  var e=CRE; if(!e){ return; }
+  /* Le temps ecoule depuis la lecture : c'est ce qui fait descendre le
+     rebours sans redemander l'etat. */
+  var passe=Date.now()-CRE_LU;
+  var libere=Math.max(0,e.libereDansMs-passe), vide=Math.max(0,e.videDansMs-passe);
+  var pct = e.max ? Math.min(100, e.utilise/e.max*100) : 0;
+  var plein = e.reste<=0;
+  var fenetreMs = e.fenetreH*3600000;
+  var tpct = e.envois ? Math.max(0,Math.min(100,(1-libere/fenetreMs)*100)) : 0;
+  $("#crJauge").innerHTML=
+    '<div class="crb'+(plein?" plein":"")+'"><i style="width:'+pct.toFixed(1)+'%"></i></div>'+
+    '<div class="crl"><b>'+fmt(Math.floor(e.reste))+'</b> $SWOGE left of '+fmt(e.max)+
+      ' in this '+e.fenetreH+' h window &middot; '+fmt(e.utilise)+' sent in '+
+      e.envois+' transfer'+(e.envois===1?'':'s')+
+      (plein?' &middot; <span class="p">envelope empty &mdash; nothing can be sent yet</span>':'')+
+    '</div>'+
+    (e.envois
+      ? '<div class="crb t"><i style="width:'+tpct.toFixed(1)+'%"></i></div>'+
+        '<div class="crl">+'+fmt(e.libereMontant)+' frees up in <b>'+crDuree(libere)+'</b>'+
+        ' &middot; the full '+fmt(e.max)+' is back in <b>'+crDuree(vide)+'</b></div>'
+      : '');
+  $("#crDerniers").innerHTML = (e.derniers&&e.derniers.length)
+    ? '<div class="crd"><b>Recent sends</b><br>'+e.derniers.map(function(d){
+        return new Date(d.t).toLocaleString('en-GB')+' &middot; <b>'+fmt(d.montant)+
+               '</b> &rarr; '+(d.nom?esc(d.nom)+' ':'')+
+               '<span class="bmut">'+short(d.addr)+'</span>'; }).join('<br>')+'</div>'
+    : '';
+}
+async function loadCredit(){
+  try{
+    var r=await fetch("/credit/etat",{headers:{"x-admin-key":KEY}});
+    if(!r.ok){ $("#crJauge").innerHTML='<div class="muted2">could not load ('+r.status+')</div>'; return; }
+    CRE=await r.json(); CRE_LU=Date.now(); crRend();
+  }catch(e){ $("#crJauge").innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
+}
+function crMsg(t,ko){ var m=$("#crMsg"); m.innerHTML=t; m.className=ko?"warn":"ok"; }
+$("#crMax").onclick=function(){
+  if(CRE) $("#crMontant").value=Math.floor(CRE.reste);
+};
+$("#crGo").onclick=async function(){
+  var qui=$("#crQui").value.trim();
+  var montant=Math.floor(Number($("#crMontant").value));
+  if(!qui) return crMsg("type a player name or paste an address",true);
+  if(!(montant>0)) return crMsg("type an amount",true);
+  /* Une confirmation qui NOMME le joueur et le montant, et qui dit d'ou
+     vient l'argent. « Etes-vous sur ? » ne protege de rien. */
+  if(!confirm("Credit "+montant+" $SWOGE to "+qui+"?\\n\\nThese tokens are backed by no deposit "+
+              "and this CANNOT be undone."))return;
+  $("#crGo").disabled=true; crMsg("sending…",false);
+  try{
+    var u="/credit?joueur="+encodeURIComponent(qui)+"&montant="+encodeURIComponent(montant)+
+          "&note="+encodeURIComponent($("#crNote").value.trim());
+    var r=await fetch(u,{headers:{"x-admin-key":KEY}});
+    var j=await r.json();
+    if(!j.ok){ crMsg("✗ "+esc(j.error||("HTTP "+r.status)),true); return; }
+    crMsg("✓ "+fmt(j.montant)+" $SWOGE → "+esc(j.nom||short(j.addr))+
+          " &middot; new balance "+fmt(j.solde),false);
+    $("#crMontant").value=""; $("#crNote").value="";
+    CRE=j.enveloppe; CRE_LU=Date.now(); crRend();
+    loadPlayers();
+  }catch(e){ crMsg("✗ "+esc(e.message),true); }
+  finally{ $("#crGo").disabled=false; }
+};
+loadCredit(); setInterval(loadCredit,20000); setInterval(crRend,1000);
 
 /* ============ D OU VIENT LE CALENDRIER ============
  *

@@ -51,6 +51,10 @@ class Game {
     /* Les paris sportifs. Ils vivent plus longtemps qu'une manche : poses
        aujourd'hui, regles apres le match. */
     this.paris = []; this.parisRegles = {}; this.parisSeq = 0;
+    /* Les credits envoyes depuis le panneau, sur la fenetre glissante. Ils
+       sont l'enveloppe : les perdre au redemarrage rendrait le plafond
+       contournable d'un simple redeploiement. */
+    this.dons = [];
     /* LE REGISTRE DES EMIS. { id d'objet : nombre deja sorti }, pour toute la
        plateforme. C'est lui qui fait exister les plafonds : sans un compteur
        GLOBAL, chaque inventaire ne connait que sa propre quantite et personne
@@ -255,6 +259,7 @@ class Game {
                 pose pour le samedi. */
              paris: this.paris || [], parisRegles: this.parisRegles || {},
              parisSeq: this.parisSeq || 0,
+             dons: this.dons || [],
              jackpotPot: this.jackpotPot.toString(),
              boulierPot: this.boulierPot.toString(),
              boulierPleins: this.boulierPleins || [],
@@ -333,6 +338,7 @@ class Game {
     if (Array.isArray(st.paris)) this.paris = st.paris;
     if (st.parisRegles) this.parisRegles = st.parisRegles;
     if (st.parisSeq) this.parisSeq = st.parisSeq;
+    if (Array.isArray(st.dons)) this.dons = st.dons;
     if (st.tunnel) this.tunnel = st.tunnel;
     if (st.prixVerses) this.prixVerses = st.prixVerses;
     if (Array.isArray(st.graines)) this.graines = st.graines;
@@ -726,6 +732,11 @@ class Game {
     if (!this.compta[k]) this.compta[k] = {
       mises: 0, rendus: 0,                      // revenu = mises - rendus
       staking: 0, bonus: 0, parrainage: 0, jackpots: 0,   // ce qu'on donne
+      /* Les credits envoyes depuis le panneau. Ils COUTENT, au meme titre
+         qu'un bonus : les ranger dans le bilan les rendrait invisibles au
+         resultat du mois, et un resultat qui ignore ce qu'on donne se lit
+         comme un benefice. */
+      cadeaux: 0,
       depots: 0, retraits: 0, brule: 0,         // bilan, PAS resultat
       manches: 0, joueurs: {},
     };
@@ -856,13 +867,15 @@ class Game {
     const k = cle || Game.moisCle();
     const m = (this.compta && this.compta[k]) || this._mois(k);
     const revenu = Number((m.mises - m.rendus).toFixed(6));
-    const couts = Number((m.staking + m.bonus + m.parrainage + m.jackpots).toFixed(6));
+    const couts = Number((m.staking + m.bonus + m.parrainage + m.jackpots +
+                          (m.cadeaux || 0)).toFixed(6));
     return {
       mois: k,
       /* le revenu */
       mises: m.mises, rendus: m.rendus, revenu, manches: m.manches,
       /* ce qui est donne */
       staking: m.staking, bonus: m.bonus, parrainage: m.parrainage, jackpots: m.jackpots,
+      cadeaux: m.cadeaux || 0,
       couts,
       resultat: Number((revenu - couts).toFixed(6)),
       /* le bilan — ni gain ni perte */
@@ -5019,6 +5032,126 @@ class Game {
     journal.ajouteSync(a, { k: 'dep', m: v.ecart.toFixed(6), tx: 'repair',
                             from: a, note: 'lost credit restored' });
     return { ...this.verifieDepots(a), rendu: v.ecart };
+  }
+
+  /* ================================================================
+   * CREDITER UN JOUEUR DEPUIS LE PANNEAU
+   *
+   * Un dedommagement, un lot de concours, une erreur a rattraper. Ces jetons
+   * ne viennent d'AUCUN depot : ils augmentent ce que la maison doit sans
+   * rien ajouter au coffre. C'est pour ca que ca se compte.
+   *
+   * UNE ENVELOPPE GLISSANTE, pas un compteur par envoi. Ce qui est borne est
+   * le TOTAL sorti sur les douze dernieres heures, tous joueurs confondus :
+   * un plafond par envoi se contourne en dix clics, et dix clics passent
+   * inapercus la ou un seul gros montant se remarque.
+   *
+   * Elle se libere au fur et a mesure : un envoi de cent mille fait de la
+   * place douze heures apres avoir ete fait, pas au prochain minuit. Le
+   * panneau montre les deux, la jauge et le compte a rebours, parce que
+   * « vous ne pouvez plus envoyer » sans dire QUAND se lit comme une panne.
+   * ================================================================ */
+
+  /** Les envois encore DANS la fenetre, du plus recent au plus ancien. */
+  _donsRecents(now) {
+    const t = Number(now) || Date.now();
+    const depuis = t - cfg.CREDIT_ADMIN_FENETRE_H * 3600000;
+    /* On PURGE : la liste ne sert qu'a la fenetre, et un tableau qui grandit
+       pour toujours finit dans chaque sauvegarde, toutes les dix secondes. */
+    this.dons = (this.dons || []).filter((d) => d && Number(d.t) > depuis);
+    return this.dons.slice().sort((a, b) => b.t - a.t);
+  }
+
+  /**
+   * Ce qui reste a envoyer, et quand le reste revient. C'est ce que le
+   * panneau dessine — jauge et barre de temps.
+   */
+  enveloppeCredit(now) {
+    const t = Number(now) || Date.now();
+    const fenetre = cfg.CREDIT_ADMIN_FENETRE_H * 3600000;
+    const dons = this._donsRecents(t);
+    const utilise = dons.reduce((s, d) => s + (Number(d.montant) || 0), 0);
+    const reste = Math.max(0, cfg.CREDIT_ADMIN_MAX - utilise);
+    /* Le PROCHAIN envoi a sortir de la fenetre : c'est lui qui rend de la
+       place, et c'est donc l'heure qu'il faut afficher — pas celle du dernier
+       envoi, qui est la plus lointaine des deux. */
+    const plusVieux = dons.length ? dons[dons.length - 1] : null;
+    return {
+      max: cfg.CREDIT_ADMIN_MAX, fenetreH: cfg.CREDIT_ADMIN_FENETRE_H,
+      utilise: Number(utilise.toFixed(6)), reste: Number(reste.toFixed(6)),
+      envois: dons.length,
+      /* Dans combien de temps de la place se libere, et combien. */
+      libereDansMs: plusVieux ? Math.max(0, plusVieux.t + fenetre - t) : 0,
+      libereMontant: plusVieux ? Number(plusVieux.montant) || 0 : 0,
+      /* Et dans combien de temps l'enveloppe est ENTIEREMENT rendue. */
+      videDansMs: dons.length ? Math.max(0, dons[0].t + fenetre - t) : 0,
+      derniers: dons.slice(0, 12).map((d) => ({
+        t: d.t, addr: d.addr, montant: Number(d.montant) || 0,
+        nom: (this.players.get(d.addr) || {}).name || null,
+      })),
+    };
+  }
+
+  /** Le joueur vise : son nom public, ou son adresse. */
+  trouveJoueur(cible) {
+    const s = String(cible || '').trim();
+    if (!s) return null;
+    const bas = s.toLowerCase();
+    if (/^0x[0-9a-f]{40}$/.test(bas)) return this.players.has(bas) ? bas : null;
+    /* La MEME cle que l'unicite des noms : sans elle, « Éliott » ne
+       retrouverait pas « Eliott », et l'exploitant conclurait que le joueur
+       n'existe pas. */
+    const cle = Game.cleNom(s);
+    for (const [a, p] of this.players)
+      if (p.name && Game.cleNom(p.name) === cle) return a;
+    return null;
+  }
+
+  /**
+   * Crediter. Le montant est en $SWOGE entiers, la cible un nom ou une
+   * adresse. Rend de quoi rafraichir le panneau ET prevenir le joueur.
+   */
+  crediteJoueur(cible, montantRaw, now, note) {
+    const t = Number(now) || Date.now();
+    const addr = this.trouveJoueur(cible);
+    if (!addr) throw new Error('unknown player — check the name, or paste the address');
+
+    const montant = Math.floor(Number(montantRaw));
+    if (!(montant > 0)) throw new Error('amount must be a positive whole number');
+
+    const env = this.enveloppeCredit(t);
+    if (env.reste <= 0) {
+      const h = Math.floor(env.libereDansMs / 3600000);
+      const mn = Math.round((env.libereDansMs % 3600000) / 60000);
+      throw new Error(`${env.max} $SWOGE already sent in the last ${env.fenetreH} h — ` +
+        `${env.libereMontant} frees up in ${h} h ${mn} min`);
+    }
+    if (montant > env.reste)
+      throw new Error(`only ${Math.floor(env.reste)} $SWOGE left in this ${env.fenetreH} h window ` +
+        `(cap ${env.max})`);
+
+    const p = this._p(addr);
+    const w = WEI(montant);
+    p.balance = p.balance.add(w);
+    this._bumpDay(p); p.dayNet = p.dayNet.add(w);
+
+    if (!this.dons) this.dons = [];
+    this.dons.push({ t, addr, montant, note: note ? String(note).slice(0, 120) : '' });
+
+    /* Le joueur doit pouvoir le LIRE dans son historique : un solde qui monte
+       tout seul, sans ligne pour l'expliquer, se signale comme un bug — ou
+       pire, se prend pour un gain qu'on ira chercher a nouveau. */
+    journal.ajoute(addr, { k: 'ca', m: String(montant),
+                           note: note ? String(note).slice(0, 120) : '' });
+    /* La comptabilite le compte a part : ce n'est ni un depot, ni un gain de
+       jeu, et le confondre avec l'un des deux fausserait les deux. */
+    this.note('cadeaux', String(montant));
+
+    return {
+      addr, nom: (this.players.get(addr) || {}).name || null,
+      montant, solde: this.balanceStr(addr),
+      enveloppe: this.enveloppeCredit(t),
+    };
   }
 
   /** Request a withdrawal of `amountStr` $SWOGE. Returns cumulativeAuthorized (wei) or throws. */
