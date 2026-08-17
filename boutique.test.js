@@ -78,6 +78,30 @@ const jetons = (p) => Number(ethers.utils.formatUnits(p.balance, 18));
   n += 6;
   ok(true, `les ${B.COFFRES.length} coffres sont coherents`);
 
+  /* LA GRILLE EST PLEINE : six familles, cinq raretes, trente cases occupees
+     une fois chacune. C'est la promesse faite au joueur — « il te manque la
+     Clef d'or » n'a de sens que si elle existe. Un trou ne se verrait nulle
+     part : la case resterait vide a l'ecran, exactement comme un objet qu'on
+     n'a pas encore trouve. */
+  eq(B.FAMILLES.length * B.RARETES.length, B.ITEMS.length,
+     `${B.FAMILLES.length} familles x ${B.RARETES.length} raretes = ${B.ITEMS.length} objets`);
+  for (const f of B.FAMILLES) {
+    for (const r of B.RARETES) {
+      const c = B.ITEMS.filter((o) => o.famille === f.cle && o.rarete === r.cle).length;
+      ok(c === 1, `« ${f.nom} » existe une fois en ${r.nom}`);
+      n -= 1;
+    }
+  }
+  n += 1;
+  ok(true, 'les trente cases de la planche sont occupees, une fois chacune');
+
+  /* Chaque famille garde SA silhouette a travers ses cinq etats : c'est ce qui
+     fait qu'on la reconnait dans la rangee. On ne peut pas mesurer un dessin,
+     mais on peut verifier que le catalogue expose bien de quoi grouper. */
+  const cat = B.catalogue();
+  eq(cat.familles.length, B.FAMILLES.length, 'le catalogue expose les familles');
+  ok(cat.items.every((o) => !!o.famille), 'et chaque objet dit a quelle famille il appartient');
+
   /* Un coffre plus cher doit etre MEILLEUR. Sans ce controle, une inversion de
      deux lignes ferait payer dix fois plus pour moins de chances, et il
      faudrait qu'un joueur ouvre des centaines de coffres pour s'en douter. */

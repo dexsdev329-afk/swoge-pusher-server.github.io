@@ -57,51 +57,81 @@ const RARETES = [
   { cle: 'mythique',   nom: 'Mythic',    bloc: 5000, couleur: '#FF4655' },
 ];
 
-/* Les objets. `cle` donne le nom du fichier image — `img/shop/<cle>.webp` —
-   pour qu'ajouter un objet ne demande pas de toucher a la page.
-   `genre` dit ce que l'objet fera plus tard : une bordure de photo, un
-   habillage de table, un trophee de profil. Rien n'est branche pour l'instant
-   et c'est voulu : l'objet existe, se gagne et se garde avant de servir. */
+/* Les six familles. `genre` dit ce que la famille servira plus tard — une
+   bordure de photo, un avatar, un habillage de table, un trophee de profil.
+   Il est porte par la FAMILLE et non par l'objet : les cinq etats d'une clef
+   sont la meme clef, ils ne peuvent pas servir a des choses differentes.
+   Rien n'est branche pour l'instant, et c'est voulu : l'objet existe, se
+   gagne et se garde avant de servir.
+   `cle`, sur l'objet, donne le nom du fichier image — `img/shop/<cle>.webp`. */
+const FAMILLES = [
+  { cle: 'jeton',  nom: 'The Chip',   genre: 'cadre'   },
+  { cle: 'masque', nom: 'The Mask',   genre: 'avatar'  },
+  { cle: 'carte',  nom: 'The Card',   genre: 'table'   },
+  { cle: 'gemme',  nom: 'The Gem',    genre: 'cadre'   },
+  { cle: 'cle',    nom: 'The Key',    genre: 'trophee' },
+  { cle: 'coupe',  nom: 'The Cup',    genre: 'trophee' },
+];
+
+/*
+ * Les objets, en GRILLE : six familles, cinq raretes chacune. Ce n'est pas un
+ * rangement, c'est le sujet.
+ *
+ * Trente objets sans lien ne font pas une collection : on en gagne un, on le
+ * regarde, et il ne manque rien. Le meme objet decline en cinq etats fait le
+ * contraire — posseder la Clef de bronze fait exister, a cote, la Clef d'or
+ * qu'on n'a pas. C'est la case vide qui donne envie d'ouvrir le coffre
+ * suivant, pas celle qui est pleine.
+ *
+ * Six SILHOUETTES differentes, et c'est delibere : un disque, un visage, un
+ * rectangle, une pierre taillee, une tige, une coupe. Dans une grille a
+ * soixante-dix-huit pixels, la forme est tout ce qu'on lit — deux familles qui
+ * se ressemblent de loin seraient deux familles qu'on confond.
+ *
+ * Les identifiants gardent leur bloc de rarete et suivent l'ordre des
+ * familles : 1001 est le commun de la premiere famille, 4003 le legendaire de
+ * la troisieme. Un identifiant se lit donc sans table.
+ */
 const ITEMS = [
-  // ---- communs (1000) ----
-  { id: 1001, cle: 'jeton_bois',      nom: 'Wooden Chip',        rarete: 'commun',     genre: 'cadre' },
-  { id: 1002, cle: 'os_shiba',        nom: 'Shiba Bone',         rarete: 'commun',     genre: 'trophee' },
-  { id: 1003, cle: 'des_pierre',      nom: 'Stone Dice',         rarete: 'commun',     genre: 'trophee' },
-  { id: 1004, cle: 'collier_cuir',    nom: 'Leather Collar',     rarete: 'commun',     genre: 'avatar' },
-  { id: 1005, cle: 'carte_cornee',    nom: 'Dog-eared Card',     rarete: 'commun',     genre: 'trophee' },
-  { id: 1006, cle: 'torche_eteinte',  nom: 'Spent Torch',        rarete: 'commun',     genre: 'cadre' },
-  { id: 1007, cle: 'gobelet_etain',   nom: 'Tin Cup',            rarete: 'commun',     genre: 'trophee' },
-  { id: 1008, cle: 'tapis_use',       nom: 'Worn Felt',          rarete: 'commun',     genre: 'table' },
-  { id: 1009, cle: 'patte_boue',      nom: 'Muddy Paw',          rarete: 'commun',     genre: 'avatar' },
-  { id: 1010, cle: 'cle_rouillee',    nom: 'Rusted Key',         rarete: 'commun',     genre: 'trophee' },
+  // ---- communs (1000) : matiere brute, pas d'or, pas de lumiere
+  { id: 1001, cle: 'jeton_argile',    nom: 'Clay Chip',        rarete: 'commun',     famille: 'jeton' },
+  { id: 1002, cle: 'masque_paille',   nom: 'Straw Mask',       rarete: 'commun',     famille: 'masque' },
+  { id: 1003, cle: 'carte_cornee',    nom: 'Dog-eared Card',   rarete: 'commun',     famille: 'carte' },
+  { id: 1004, cle: 'eclat_brut',      nom: 'Rough Shard',      rarete: 'commun',     famille: 'gemme' },
+  { id: 1005, cle: 'cle_rouillee',    nom: 'Rusted Key',       rarete: 'commun',     famille: 'cle' },
+  { id: 1006, cle: 'coupe_etain',     nom: 'Tin Cup',          rarete: 'commun',     famille: 'coupe' },
 
-  // ---- rares (2000) ----
-  { id: 2001, cle: 'jeton_argent',    nom: 'Silver Chip',        rarete: 'rare',       genre: 'cadre' },
-  { id: 2002, cle: 'medaille_lune',   nom: 'Moon Medal',         rarete: 'rare',       genre: 'trophee' },
-  { id: 2003, cle: 'lunettes_shiba',  nom: 'Shiba Shades',       rarete: 'rare',       genre: 'avatar' },
-  { id: 2004, cle: 'tapis_velours',   nom: 'Velvet Felt',        rarete: 'rare',       genre: 'table' },
-  { id: 2005, cle: 'sablier_bleu',    nom: 'Azure Hourglass',    rarete: 'rare',       genre: 'trophee' },
-  { id: 2006, cle: 'brasero',         nom: 'Temple Brazier',     rarete: 'rare',       genre: 'cadre' },
-  { id: 2007, cle: 'gemme_violette',  nom: 'Violet Gem',         rarete: 'rare',       genre: 'trophee' },
-  { id: 2008, cle: 'foulard_soie',    nom: 'Silk Scarf',         rarete: 'rare',       genre: 'avatar' },
+  // ---- rares (2000) : argent et email bleu, une gemme
+  { id: 2001, cle: 'jeton_argent',    nom: 'Silver Chip',      rarete: 'rare',       famille: 'jeton' },
+  { id: 2002, cle: 'masque_bronze',   nom: 'Bronze Mask',      rarete: 'rare',       famille: 'masque' },
+  { id: 2003, cle: 'carte_laquee',    nom: 'Lacquered Card',   rarete: 'rare',       famille: 'carte' },
+  { id: 2004, cle: 'gemme_azur',      nom: 'Azure Gem',        rarete: 'rare',       famille: 'gemme' },
+  { id: 2005, cle: 'cle_laiton',      nom: 'Brass Key',        rarete: 'rare',       famille: 'cle' },
+  { id: 2006, cle: 'coupe_argent',    nom: 'Silver Cup',       rarete: 'rare',       famille: 'coupe' },
 
-  // ---- epiques (3000) ----
-  { id: 3001, cle: 'jeton_or',        nom: 'Golden Chip',        rarete: 'epique',     genre: 'cadre' },
-  { id: 3002, cle: 'couronne_shiba',  nom: 'Shiba Crown',        rarete: 'epique',     genre: 'avatar' },
-  { id: 3003, cle: 'tapis_obsidienne',nom: 'Obsidian Felt',      rarete: 'epique',     genre: 'table' },
-  { id: 3004, cle: 'grimoire',        nom: 'Odds Grimoire',      rarete: 'epique',     genre: 'trophee' },
-  { id: 3005, cle: 'cadre_temple',    nom: 'Temple Frame',       rarete: 'epique',     genre: 'cadre' },
-  { id: 3006, cle: 'orbe_crash',      nom: 'Crash Orb',          rarete: 'epique',     genre: 'trophee' },
+  // ---- epiques (3000) : or et violet, plusieurs gemmes, une lueur
+  { id: 3001, cle: 'jeton_or',        nom: 'Golden Chip',      rarete: 'epique',     famille: 'jeton' },
+  { id: 3002, cle: 'masque_jade',     nom: 'Jade Mask',        rarete: 'epique',     famille: 'masque' },
+  { id: 3003, cle: 'carte_email',     nom: 'Enamel Card',      rarete: 'epique',     famille: 'carte' },
+  { id: 3004, cle: 'gemme_violette',  nom: 'Violet Gem',       rarete: 'epique',     famille: 'gemme' },
+  { id: 3005, cle: 'cle_gravee',      nom: 'Runed Key',        rarete: 'epique',     famille: 'cle' },
+  { id: 3006, cle: 'coupe_or',        nom: 'Golden Cup',       rarete: 'epique',     famille: 'coupe' },
 
-  // ---- legendaires (4000) ----
-  { id: 4001, cle: 'plaque_swoge',    nom: 'SWOGE Plate',        rarete: 'legendaire', genre: 'cadre' },
-  { id: 4002, cle: 'trone_shiba',     nom: 'Shiba Throne',       rarete: 'legendaire', genre: 'table' },
-  { id: 4003, cle: 'sceptre_volcan',  nom: 'Volcano Sceptre',    rarete: 'legendaire', genre: 'trophee' },
-  { id: 4004, cle: 'masque_or',       nom: 'Gilded Mask',        rarete: 'legendaire', genre: 'avatar' },
+  // ---- legendaires (4000) : or massif, halo, gemmes partout
+  { id: 4001, cle: 'jeton_obsidienne',nom: 'Obsidian Chip',    rarete: 'legendaire', famille: 'jeton' },
+  { id: 4002, cle: 'masque_dore',     nom: 'Gilded Mask',      rarete: 'legendaire', famille: 'masque' },
+  { id: 4003, cle: 'carte_feuille_or',nom: 'Gold-leaf Card',   rarete: 'legendaire', famille: 'carte' },
+  { id: 4004, cle: 'gemme_solaire',   nom: 'Solar Gem',        rarete: 'legendaire', famille: 'gemme' },
+  { id: 4005, cle: 'cle_coffre',      nom: 'Vault Key',        rarete: 'legendaire', famille: 'cle' },
+  { id: 4006, cle: 'coupe_sertie',    nom: 'Jewelled Cup',     rarete: 'legendaire', famille: 'coupe' },
 
-  // ---- mythiques (5000) ----
-  { id: 5001, cle: 'coeur_swoge',     nom: 'Heart of SWOGE',     rarete: 'mythique',   genre: 'cadre' },
-  { id: 5002, cle: 'shiba_ascendant', nom: 'Ascendant Shiba',    rarete: 'mythique',   genre: 'avatar' },
+  // ---- mythiques (5000) : la lumiere vient de l'interieur
+  { id: 5001, cle: 'jeton_eternel',   nom: 'Eternal Chip',     rarete: 'mythique',   famille: 'jeton' },
+  { id: 5002, cle: 'masque_ascendant',nom: 'Ascendant Mask',   rarete: 'mythique',   famille: 'masque' },
+  { id: 5003, cle: 'carte_vivante',   nom: 'Living Card',      rarete: 'mythique',   famille: 'carte' },
+  { id: 5004, cle: 'coeur_swoge',     nom: 'Heart of SWOGE',   rarete: 'mythique',   famille: 'gemme' },
+  { id: 5005, cle: 'cle_maitresse',   nom: 'Master Key',       rarete: 'mythique',   famille: 'cle' },
+  { id: 5006, cle: 'coupe_eternite',  nom: 'Cup of Eternity',  rarete: 'mythique',   famille: 'coupe' },
 ];
 
 /* Les coffres. Le prix est en $SWOGE, la table en dix-milliemes.
@@ -124,6 +154,7 @@ const COFFRES = [
 
 const PAR_ID = new Map(ITEMS.map((o) => [o.id, o]));
 const PAR_RARETE = new Map(RARETES.map((r) => [r.cle, ITEMS.filter((o) => o.rarete === r.cle)]));
+const FAMILLE = new Map(FAMILLES.map((f) => [f.cle, f]));
 const RARETE = new Map(RARETES.map((r) => [r.cle, r]));
 const COFFRE = new Map(COFFRES.map((c) => [c.cle, c]));
 
@@ -131,6 +162,7 @@ function item(id) { return PAR_ID.get(Number(id)) || null; }
 function coffre(cle) { return COFFRE.get(String(cle)) || null; }
 function itemsDe(rarete) { return PAR_RARETE.get(String(rarete)) || []; }
 function rarete(cle) { return RARETE.get(String(cle)) || null; }
+function famille(cle) { return FAMILLE.get(String(cle)) || null; }
 
 // -------------------------------------------------------------- le controle
 
@@ -152,6 +184,20 @@ function rarete(cle) { return RARETE.get(String(cle)) || null; }
        renumeroter, et un identifiant hors bloc casse la promesse en silence. */
     if (o.id < r.bloc || o.id >= r.bloc + 1000)
       throw new Error('boutique : ' + o.id + ' est hors du bloc ' + r.bloc + ' de ' + o.rarete);
+    if (!FAMILLE.has(o.famille))
+      throw new Error('boutique : famille inconnue pour ' + o.id + ', ' + o.famille);
+  }
+  /* LA GRILLE DOIT ETRE PLEINE. Six familles, cinq raretes : trente cases,
+     chacune occupee une fois exactement. C'est toute la promesse faite au
+     joueur — « il te manque la Clef d'or » n'a de sens que si elle existe.
+     Un trou ne se verrait nulle part ailleurs : la case resterait vide a
+     l'ecran et ressemblerait a un objet qu'on n'a pas encore trouve. */
+  for (const f of FAMILLES) {
+    for (const r of RARETES) {
+      const n = ITEMS.filter((o) => o.famille === f.cle && o.rarete === r.cle).length;
+      if (n !== 1)
+        throw new Error('boutique : ' + f.nom + ' en ' + r.nom + ' apparait ' + n + ' fois, pas une');
+    }
   }
   for (const c of COFFRES) {
     let somme = 0;
@@ -211,12 +257,14 @@ function chances(cle) {
 function catalogue() {
   return {
     raretes: RARETES.map((r) => ({ cle: r.cle, nom: r.nom, couleur: r.couleur })),
-    items: ITEMS.map((o) => ({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete, genre: o.genre })),
+    familles: FAMILLES.map((f) => ({ cle: f.cle, nom: f.nom, genre: f.genre })),
+    items: ITEMS.map((o) => ({ id: o.id, cle: o.cle, nom: o.nom,
+                               rarete: o.rarete, famille: o.famille })),
     coffres: COFFRES.map((c) => ({ cle: c.cle, nom: c.nom, prix: c.prix, chances: chances(c.cle) })),
   };
 }
 
 module.exports = {
-  RARETES, ITEMS, COFFRES, TOTAL,
-  item, coffre, itemsDe, rarete, tire, chances, catalogue,
+  RARETES, FAMILLES, ITEMS, COFFRES, TOTAL,
+  item, coffre, itemsDe, rarete, famille, tire, chances, catalogue,
 };
