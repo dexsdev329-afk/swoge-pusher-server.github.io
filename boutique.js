@@ -57,81 +57,117 @@ const RARETES = [
   { cle: 'mythique',   nom: 'Mythic',    bloc: 5000, couleur: '#FF4655' },
 ];
 
-/* Les six familles. `genre` dit ce que la famille servira plus tard — une
-   bordure de photo, un avatar, un habillage de table, un trophee de profil.
-   Il est porte par la FAMILLE et non par l'objet : les cinq etats d'une clef
-   sont la meme clef, ils ne peuvent pas servir a des choses differentes.
-   Rien n'est branche pour l'instant, et c'est voulu : l'objet existe, se
-   gagne et se garde avant de servir.
-   `cle`, sur l'objet, donne le nom du fichier image — `img/shop/<cle>.webp`. */
+/* Les six pouvoirs. Chacun a SA silhouette de fruit et SA couleur : c'est ce
+   qui les distingue dans une rangee, bien avant qu'on lise un nom.
+   `genre` dit ce que la famille servira plus tard — bordure de photo, avatar,
+   habillage de table, trophee. Il est porte par la FAMILLE et non par le
+   fruit : les cinq etats d'un meme pouvoir sont le meme pouvoir. */
 const FAMILLES = [
-  { cle: 'jeton',  nom: 'The Chip',   genre: 'cadre'   },
-  { cle: 'masque', nom: 'The Mask',   genre: 'avatar'  },
-  { cle: 'carte',  nom: 'The Card',   genre: 'table'   },
-  { cle: 'gemme',  nom: 'The Gem',    genre: 'cadre'   },
-  { cle: 'cle',    nom: 'The Key',    genre: 'trophee' },
-  { cle: 'coupe',  nom: 'The Cup',    genre: 'trophee' },
+  { cle: 'chance', nom: 'Luck',   forme: 'pomme',   couleur: '#7CFF9B', genre: 'cadre'   },
+  { cle: 'or',     nom: 'Gold',   forme: 'poire',   couleur: '#FFC53D', genre: 'cadre'   },
+  { cle: 'eclair', nom: 'Flash',  forme: 'banane',  couleur: '#5AC8FF', genre: 'table'   },
+  { cle: 'oeil',   nom: 'Sight',  forme: 'raisin',  couleur: '#C07BFF', genre: 'avatar'  },
+  { cle: 'garde',  nom: 'Guard',  forme: 'courge',  couleur: '#8DA0C4', genre: 'trophee' },
+  { cle: 'chaos',  nom: 'Chaos',  forme: 'carambole', couleur: '#FF4655', genre: 'trophee' },
 ];
 
 /*
- * Les objets, en GRILLE : six familles, cinq raretes chacune. Ce n'est pas un
- * rangement, c'est le sujet.
+ * LES FRUITS DU SWOGE — six pouvoirs, cinq degres chacun.
  *
- * Trente objets sans lien ne font pas une collection : on en gagne un, on le
- * regarde, et il ne manque rien. Le meme objet decline en cinq etats fait le
- * contraire — posseder la Clef de bronze fait exister, a cote, la Clef d'or
- * qu'on n'a pas. C'est la case vide qui donne envie d'ouvrir le coffre
- * suivant, pas celle qui est pleine.
+ * ---- pourquoi des fruits, et pas trente objets ----
  *
- * Six SILHOUETTES differentes, et c'est delibere : un disque, un visage, un
- * rectangle, une pierre taillee, une tige, une coupe. Dans une grille a
- * soixante-dix-huit pixels, la forme est tout ce qu'on lit — deux familles qui
- * se ressemblent de loin seraient deux familles qu'on confond.
+ * Une collection se reconnait a son LANGAGE, pas a ses sujets. Un os, des des
+ * et un tapis n'ont rien en commun : trente dessins, trente directions. Un
+ * fruit couvert de spirales est immediatement du meme monde que le suivant,
+ * quelle que soit sa forme — c'est le motif qui fait la serie, la silhouette
+ * qui fait l'objet, et la couleur qui fait le pouvoir.
  *
- * Les identifiants gardent leur bloc de rarete et suivent l'ordre des
- * familles : 1001 est le commun de la premiere famille, 4003 le legendaire de
- * la troisieme. Un identifiant se lit donc sans table.
+ * Six silhouettes franchement differentes : ronde, en poire, allongee et
+ * courbee, en grappe, cotelee, etoilee. A soixante-dix-huit pixels dans une
+ * grille, la forme est tout ce qu'on lit.
+ *
+ * ---- LE POUVOIR EST DU DECOR, ET C'EST ECRIT ----
+ *
+ * `pouvoir` est une phrase, pas une regle. Aucun fruit ne touche a quoi que
+ * ce soit — ni aux chances, ni aux gains, ni a une mise. Sur un site ou l'on
+ * joue de l'argent, un objet qui a l'air de « donner de la chance » serait
+ * une affirmation fausse sur un produit de jeu, et le fait qu'elle soit
+ * sous-entendue plutot qu'ecrite n'y changerait rien. La page le dit donc
+ * noir sur blanc, sous la collection.
+ *
+ * Le jour ou un fruit servira vraiment a quelque chose, ce sera cosmetique —
+ * une bordure, un avatar, un habillage de table — et jamais une odds.
  */
 const ITEMS = [
-  // ---- communs (1000) : matiere brute, pas d'or, pas de lumiere
-  { id: 1001, cle: 'jeton_argile',    nom: 'Clay Chip',        rarete: 'commun',     famille: 'jeton' },
-  { id: 1002, cle: 'masque_paille',   nom: 'Straw Mask',       rarete: 'commun',     famille: 'masque' },
-  { id: 1003, cle: 'carte_cornee',    nom: 'Dog-eared Card',   rarete: 'commun',     famille: 'carte' },
-  { id: 1004, cle: 'eclat_brut',      nom: 'Rough Shard',      rarete: 'commun',     famille: 'gemme' },
-  { id: 1005, cle: 'cle_rouillee',    nom: 'Rusted Key',       rarete: 'commun',     famille: 'cle' },
-  { id: 1006, cle: 'coupe_etain',     nom: 'Tin Cup',          rarete: 'commun',     famille: 'coupe' },
+  // ---- communs (1000) : le fruit encore vert, spirales ternes, aucune lueur
+  { id: 1001, cle: 'fruit_pousse',   nom: 'Sprout Fruit',   rarete: 'commun', famille: 'chance',
+    pouvoir: 'A faint tug on the odds. Nobody has ever proven it.' },
+  { id: 1002, cle: 'fruit_cuivre',   nom: 'Copper Fruit',   rarete: 'commun', famille: 'or',
+    pouvoir: 'Coins feel slightly heavier in your hand.' },
+  { id: 1003, cle: 'fruit_brise',    nom: 'Breeze Fruit',   rarete: 'commun', famille: 'eclair',
+    pouvoir: 'You blink a little faster than the table.' },
+  { id: 1004, cle: 'fruit_lueur',    nom: 'Glimpse Fruit',  rarete: 'commun', famille: 'oeil',
+    pouvoir: 'You catch the edge of what is coming, then lose it.' },
+  { id: 1005, cle: 'fruit_ecorce',   nom: 'Bark Fruit',     rarete: 'commun', famille: 'garde',
+    pouvoir: 'A thin skin between you and a bad night.' },
+  { id: 1006, cle: 'fruit_etincelle',nom: 'Spark Fruit',    rarete: 'commun', famille: 'chaos',
+    pouvoir: 'Small things go wrong around you. Rarely yours.' },
 
-  // ---- rares (2000) : argent et email bleu, une gemme
-  { id: 2001, cle: 'jeton_argent',    nom: 'Silver Chip',      rarete: 'rare',       famille: 'jeton' },
-  { id: 2002, cle: 'masque_bronze',   nom: 'Bronze Mask',      rarete: 'rare',       famille: 'masque' },
-  { id: 2003, cle: 'carte_laquee',    nom: 'Lacquered Card',   rarete: 'rare',       famille: 'carte' },
-  { id: 2004, cle: 'gemme_azur',      nom: 'Azure Gem',        rarete: 'rare',       famille: 'gemme' },
-  { id: 2005, cle: 'cle_laiton',      nom: 'Brass Key',        rarete: 'rare',       famille: 'cle' },
-  { id: 2006, cle: 'coupe_argent',    nom: 'Silver Cup',       rarete: 'rare',       famille: 'coupe' },
+  // ---- rares (2000) : le fruit mur, spirales nettes, un liseré de lumiere
+  { id: 2001, cle: 'fruit_trefle',   nom: 'Clover Fruit',   rarete: 'rare', famille: 'chance',
+    pouvoir: 'Four leaves. You stopped counting after the third.' },
+  { id: 2002, cle: 'fruit_argent',   nom: 'Silver Fruit',   rarete: 'rare', famille: 'or',
+    pouvoir: 'Every pocket you reach into has something in it.' },
+  { id: 2003, cle: 'fruit_elan',     nom: 'Dash Fruit',     rarete: 'rare', famille: 'eclair',
+    pouvoir: 'You act before the clock finishes its swing.' },
+  { id: 2004, cle: 'fruit_intuition',nom: 'Insight Fruit',  rarete: 'rare', famille: 'oeil',
+    pouvoir: 'You know which card he wishes he had.' },
+  { id: 2005, cle: 'fruit_fer',      nom: 'Iron Fruit',     rarete: 'rare', famille: 'garde',
+    pouvoir: 'What hits you leaves a mark on itself.' },
+  { id: 2006, cle: 'fruit_ruse',     nom: 'Trick Fruit',    rarete: 'rare', famille: 'chaos',
+    pouvoir: 'The table changes its mind. So do you.' },
 
-  // ---- epiques (3000) : or et violet, plusieurs gemmes, une lueur
-  { id: 3001, cle: 'jeton_or',        nom: 'Golden Chip',      rarete: 'epique',     famille: 'jeton' },
-  { id: 3002, cle: 'masque_jade',     nom: 'Jade Mask',        rarete: 'epique',     famille: 'masque' },
-  { id: 3003, cle: 'carte_email',     nom: 'Enamel Card',      rarete: 'epique',     famille: 'carte' },
-  { id: 3004, cle: 'gemme_violette',  nom: 'Violet Gem',       rarete: 'epique',     famille: 'gemme' },
-  { id: 3005, cle: 'cle_gravee',      nom: 'Runed Key',        rarete: 'epique',     famille: 'cle' },
-  { id: 3006, cle: 'coupe_or',        nom: 'Golden Cup',       rarete: 'epique',     famille: 'coupe' },
+  // ---- epiques (3000) : la peau s'illumine, les spirales rougeoient
+  { id: 3001, cle: 'fruit_fortune',  nom: 'Fortune Fruit',  rarete: 'epique', famille: 'chance',
+    pouvoir: 'Doors you never knocked on open anyway.' },
+  { id: 3002, cle: 'fruit_or',       nom: 'Gold Fruit',     rarete: 'epique', famille: 'or',
+    pouvoir: 'What you touch keeps a little of its shine on you.' },
+  { id: 3003, cle: 'fruit_eclair',   nom: 'Flash Fruit',    rarete: 'epique', famille: 'eclair',
+    pouvoir: 'Between two heartbeats you have already decided.' },
+  { id: 3004, cle: 'fruit_oracle',   nom: 'Oracle Fruit',   rarete: 'epique', famille: 'oeil',
+    pouvoir: 'You see the round end while it is still starting.' },
+  { id: 3005, cle: 'fruit_bastion',  nom: 'Bastion Fruit',  rarete: 'epique', famille: 'garde',
+    pouvoir: 'A wall grows where you stand still.' },
+  { id: 3006, cle: 'fruit_fracas',   nom: 'Havoc Fruit',    rarete: 'epique', famille: 'chaos',
+    pouvoir: 'Order leaves the room when you enter it.' },
 
-  // ---- legendaires (4000) : or massif, halo, gemmes partout
-  { id: 4001, cle: 'jeton_obsidienne',nom: 'Obsidian Chip',    rarete: 'legendaire', famille: 'jeton' },
-  { id: 4002, cle: 'masque_dore',     nom: 'Gilded Mask',      rarete: 'legendaire', famille: 'masque' },
-  { id: 4003, cle: 'carte_feuille_or',nom: 'Gold-leaf Card',   rarete: 'legendaire', famille: 'carte' },
-  { id: 4004, cle: 'gemme_solaire',   nom: 'Solar Gem',        rarete: 'legendaire', famille: 'gemme' },
-  { id: 4005, cle: 'cle_coffre',      nom: 'Vault Key',        rarete: 'legendaire', famille: 'cle' },
-  { id: 4006, cle: 'coupe_sertie',    nom: 'Jewelled Cup',     rarete: 'legendaire', famille: 'coupe' },
+  // ---- legendaires (4000) : le fruit rayonne, halo dore, spirales vivantes
+  { id: 4001, cle: 'fruit_miracle',  nom: 'Miracle Fruit',  rarete: 'legendaire', famille: 'chance',
+    pouvoir: 'The impossible happens once. To you, twice.' },
+  { id: 4002, cle: 'fruit_tresor',   nom: 'Treasure Fruit', rarete: 'legendaire', famille: 'or',
+    pouvoir: 'Buried things surface where you walk.' },
+  { id: 4003, cle: 'fruit_foudre',   nom: 'Thunder Fruit',  rarete: 'legendaire', famille: 'eclair',
+    pouvoir: 'The sound arrives long after you are gone.' },
+  { id: 4004, cle: 'fruit_prescience',nom: 'Foresight Fruit', rarete: 'legendaire', famille: 'oeil',
+    pouvoir: 'Tomorrow is a room you have already walked through.' },
+  { id: 4005, cle: 'fruit_egide',    nom: 'Aegis Fruit',    rarete: 'legendaire', famille: 'garde',
+    pouvoir: 'Nothing has reached you in a very long time.' },
+  { id: 4006, cle: 'fruit_tempete',  nom: 'Storm Fruit',    rarete: 'legendaire', famille: 'chaos',
+    pouvoir: 'You do not break the rules. They break near you.' },
 
-  // ---- mythiques (5000) : la lumiere vient de l'interieur
-  { id: 5001, cle: 'jeton_eternel',   nom: 'Eternal Chip',     rarete: 'mythique',   famille: 'jeton' },
-  { id: 5002, cle: 'masque_ascendant',nom: 'Ascendant Mask',   rarete: 'mythique',   famille: 'masque' },
-  { id: 5003, cle: 'carte_vivante',   nom: 'Living Card',      rarete: 'mythique',   famille: 'carte' },
-  { id: 5004, cle: 'coeur_swoge',     nom: 'Heart of SWOGE',   rarete: 'mythique',   famille: 'gemme' },
-  { id: 5005, cle: 'cle_maitresse',   nom: 'Master Key',       rarete: 'mythique',   famille: 'cle' },
-  { id: 5006, cle: 'coupe_eternite',  nom: 'Cup of Eternity',  rarete: 'mythique',   famille: 'coupe' },
+  // ---- mythiques (5000) : la lumiere sort de l'interieur, le fruit flotte
+  { id: 5001, cle: 'fruit_destin',   nom: 'Destiny Fruit',  rarete: 'mythique', famille: 'chance',
+    pouvoir: 'It was always going to be you.' },
+  { id: 5002, cle: 'fruit_midas',    nom: 'Midas Fruit',    rarete: 'mythique', famille: 'or',
+    pouvoir: 'Even the things you regret turn to gold.' },
+  { id: 5003, cle: 'fruit_temps',    nom: 'Time Fruit',     rarete: 'mythique', famille: 'eclair',
+    pouvoir: 'You have already read this line.' },
+  { id: 5004, cle: 'fruit_omniscient',nom: 'Omniscient Fruit', rarete: 'mythique', famille: 'oeil',
+    pouvoir: 'There is nothing left to guess. That is the curse.' },
+  { id: 5005, cle: 'fruit_immortel', nom: 'Immortal Fruit', rarete: 'mythique', famille: 'garde',
+    pouvoir: 'The house has stopped trying.' },
+  { id: 5006, cle: 'fruit_neant',    nom: 'Void Fruit',     rarete: 'mythique', famille: 'chaos',
+    pouvoir: 'Where it is, the rules simply are not written yet.' },
 ];
 
 /* Les coffres. Le prix est en $SWOGE, la table en dix-milliemes.
@@ -257,9 +293,9 @@ function chances(cle) {
 function catalogue() {
   return {
     raretes: RARETES.map((r) => ({ cle: r.cle, nom: r.nom, couleur: r.couleur })),
-    familles: FAMILLES.map((f) => ({ cle: f.cle, nom: f.nom, genre: f.genre })),
-    items: ITEMS.map((o) => ({ id: o.id, cle: o.cle, nom: o.nom,
-                               rarete: o.rarete, famille: o.famille })),
+    familles: FAMILLES.map((f) => ({ cle: f.cle, nom: f.nom, couleur: f.couleur, genre: f.genre })),
+    items: ITEMS.map((o) => ({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+                               famille: o.famille, pouvoir: o.pouvoir })),
     coffres: COFFRES.map((c) => ({ cle: c.cle, nom: c.nom, prix: c.prix, chances: chances(c.cle) })),
   };
 }
