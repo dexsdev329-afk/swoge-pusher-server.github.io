@@ -20,7 +20,6 @@ const { Entrainement, BOT } = require('./entrainement');
 const bots = require('./bots');
 const p4 = require('./puissance4');
 const dm = require('./dames');
-const pf = require('./pierre_feuille_bandit');
 
 let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n++; };
@@ -58,9 +57,6 @@ function coupAuHasard(partie, rnd) {
       return x ? { de: x.de, vers: x.vers } : null;
     }
     case 'dc': return 1 + Math.floor(rnd() * 100);
-    case 'pf':
-      if (partie.etape === pf.RELANCE) return rnd() < 0.5 ? 'r' : 'n';
-      if (partie.etape === pf.SUIVRE) return rnd() < 0.9 ? 's' : 'x';
       return ['p', 'f', 'c'][Math.floor(rnd() * 3)];
     default: return null;
   }
@@ -111,32 +107,6 @@ function partie(E, jeu, rnd, t0) {
   }
 }
 
-/* Au Pierre-Feuille-Bandit, la relance suivie fait monter la mise. A mise de
-   depart nulle elle doit rester nulle — sinon une partie gratuite finirait par
-   reclamer de l'argent. */
-{
-  const rnd = alea(2);
-  const E = new Entrainement({ alea: rnd, tirage: faitTirage(rnd) });
-  let vues = 0;
-  for (let i = 0; i < 30; i++) {
-    const p = E.ouvrir(MOI, 'pf', 1000 + i * 100000);
-    let t = 1000 + i * 100000;
-    for (let k = 0; k < 200 && p.phase === 'en_cours'; k++) {
-      t += 1000;
-      if (p.etape === pf.RELANCE && p.relanceur === p.jeton(MOI)) { vues++; E.jouer(MOI, 'r', t); continue; }
-      if (p.etape === pf.SUIVRE && p.relanceur !== p.jeton(MOI)) { E.jouer(MOI, 's', t); continue; }
-      const c = coupAuHasard(p, rnd);
-      if (c == null) break;
-      E.jouer(MOI, c, t);
-    }
-    eq(p.mise, 0, 'la mise reste nulle malgre les relances');
-    ok(!p.aDebiter || !p.aDebiter.length, 'et rien n est jamais a prelever');
-    n -= 2;
-  }
-  n += 2;
-  ok(vues > 0, `on a bien traverse ${vues} relances`);
-}
-
 // ============================ le bot ne voit pas les coups caches
 
 /* AU DERNIER CHIFFRE, LE BOT JOUE APRES LE JOUEUR. Le coup cache est donc dans
@@ -161,23 +131,7 @@ function partie(E, jeu, rnd, t0) {
   ok(bot > joueur, 'mais il bat quand meme un joueur qui tire au hasard');
 }
 
-/* Meme controle a Pierre-Feuille-Bandit : contre un joueur qui tire vraiment au
-   hasard, personne ne peut gagner, pas meme un bot parfait. Un bot qui
-   gagnerait nettement plus de la moitie des parties aurait vu le coup cache. */
-{
-  const rnd = alea(777);
-  const E = new Entrainement({ alea: rnd, tirage: faitTirage(rnd) });
-  let bot = 0, joueur = 0, nul = 0;
-  for (let i = 0; i < 200; i++) {
-    const r = partie(E, 'pf', rnd, 1000 + i * 1000000);
-    if (r === 'bot') bot++; else if (r === 'joueur') joueur++; else nul++;
-  }
-  console.log(`  Pierre-Feuille-Bandit · le bot gagne ${bot} parties sur 200 ` +
-              `(${joueur} au joueur, ${nul} nulles)`);
-  ok(bot / 200 < 0.72, `le bot ne voit pas le coup cache (${bot}/200)`);
-}
-
-// ================================== les six jeux vont jusqu'au bout
+// ================================== les cinq jeux vont jusqu'au bout
 
 /* Et le bot GAGNE. C'est tout l'interet du mode : un adversaire qui se
    coucherait n'apprendrait rien a personne. Le joueur simule ici joue au
@@ -332,7 +286,7 @@ function partie(E, jeu, rnd, t0) {
   const rnd = alea(20260815);
   let jouees = 0;
   const gagnes = {};                       // les jeux ou le joueur a gagne au moins une fois
-  for (const jeu of ['p4', 'mp', 'mf', 'dm', 'dc', 'pf']) {
+  for (const jeu of ['p4', 'mp', 'mf', 'dm', 'dc']) {
     for (let i = 0; i < 4; i++) {
       const t0 = 1000 + jouees * 1000000;
       const partie = g.entrainementOuvrir(A, jeu, t0);
@@ -460,7 +414,7 @@ function partie(E, jeu, rnd, t0) {
      fois qu'on insistera. C'est une garantie plus solide qu'un drapeau, parce
      qu'elle ne depend d'aucun etat. */
   const avantAb = solde();
-  g.entrainementOuvrir(A, 'pf', 700000);
+  g.entrainementOuvrir(A, 'dc', 700000);
   const ab = g.entrainementAbandonner(A, 700001);
   eq(solde(), avantAb, 'abandonner ne paie rien');
   for (let i = 0; i < 5; i++) eq(g._entrainementPrime(A, ab), null, 'ni au ' + (i + 2) + 'e essai');

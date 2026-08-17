@@ -226,7 +226,6 @@ module.exports = {
     ['dm',     'Checkers',       'dames.html'],
     ['mf',     'Ghost Tic-Tac-Toe', 'morpion_fantome.html'],
     ['dc',     'Last Number',       'dernier_chiffre.html'],
-    ['pf',     'Rock Paper Bandit', 'pierre_feuille_bandit.html'],
   ],
   /* UN JEU N'ENTRE PAS DANS CE CATALOGUE AVANT D'AVOIR SA PAGE.
      La mission du jour envoie le joueur sur l'adresse ci-dessus. Un moteur
@@ -837,38 +836,6 @@ module.exports = {
   DC_ATTENTE_MS: parseInt(env('DC_ATTENTE_MS', '600000'), 10),
   DC_REVANCHE_MS: parseInt(env('DC_REVANCHE_MS', '90000'), 10),
   DC_RAKE_SUR_NUL: env('DC_RAKE_SUR_NUL', '0') === '1',
-
-  /* ---- Pierre-Feuille-Bandit ----
-   *
-   * Sept manches, quatre pour gagner, et une relance entre chacune : celui
-   * qui vient de perdre peut remonter la mise, l'autre suit ou se couche.
-   *
-   * C'est le SEUL de ces jeux ou le coup passe de l'adversaire renseigne sur
-   * son coup suivant — un humain ne joue pas au hasard, il repete et il
-   * alterne. C'est donc le seul ou le mot « bluff » veut dire quelque chose.
-   *
-   * LA MISE MONTE EN COURS DE PARTIE, ce qu'aucun autre duel ne fait. Chaque
-   * relance ajoute la mise de DEPART, jamais le double, et au plus trois
-   * fois : au pire on finit a quatre fois ce qu'on a pose en s'asseyant, ce
-   * qu'un joueur peut se representer avant de commencer. Doubler trois fois
-   * ferait seize, et deux joueurs qui se repondent iraient a la ruine sur un
-   * jeu ou personne ne controle rien.
-   *
-   * La pendule est courte : le coup se choisit en une seconde, et attendre
-   * devant trois boutons est insupportable.
-   */
-  PF_RAKE_BPS: parseInt(env('PF_RAKE_BPS', '500'), 10),
-  PF_MIN: parseInt(env('PF_MIN', '10'), 10),
-  /* Le maximum tient compte de la relance : quatre fois PF_MAX pourrait etre
-     engage au total, et le plafond doit rester sous ce qu'un joueur peut
-     perdre sans que ce soit une catastrophe. */
-  PF_MAX: parseInt(env('PF_MAX', '2500000'), 10),
-  PF_MISES: (env('PF_MISES', '10,100,1000,10000,100000,1000000').split(',')
-    .map((x) => parseInt(x.trim(), 10)).filter((x) => x > 0)),
-  PF_COUP_MS: parseInt(env('PF_COUP_MS', '20000'), 10),
-  PF_ATTENTE_MS: parseInt(env('PF_ATTENTE_MS', '600000'), 10),
-  PF_REVANCHE_MS: parseInt(env('PF_REVANCHE_MS', '90000'), 10),
-  PF_RAKE_SUR_NUL: env('PF_RAKE_SUR_NUL', '0') === '1',
 
   /* ---- LES PARIS SPORTIFS ----
    *

@@ -33,8 +33,7 @@ const p4 = require('./puissance4');
 const paris = require('./paris');
 const DUELS = { p4, mp: require('./morpion'), dm: require('./dames'),
                 mf: require('./morpion_fantome'),
-                dc: require('./dernier_chiffre'),
-                pf: require('./pierre_feuille_bandit') };
+                dc: require('./dernier_chiffre') };
 const ATTENTE = p4.ATTENTE, EN_COURS = p4.EN_COURS, FINIE = p4.FINIE;
 const volcano = require('./volcano');
 const { Entrainement } = require('./entrainement');
@@ -3707,7 +3706,7 @@ class Game {
     /* Le prefixe des reglages, par jeu. Une table plutot qu'une cascade de
        ternaires : le quatrieme jeu a montre que la cascade se relit mal et
        qu'on y oublie une branche. */
-    const p = { mp: 'MP', dm: 'DM', mf: 'MF', dc: 'DC', pf: 'PF', p4: 'P4' }[jeu] || 'P4';
+    const p = { mp: 'MP', dm: 'DM', mf: 'MF', dc: 'DC', p4: 'P4' }[jeu] || 'P4';
     const v = (k, d) => (cfg[p + '_' + k] !== undefined ? cfg[p + '_' + k] : d);
     return {
       min: v('MIN', cfg.P4_MIN), max: v('MAX', cfg.P4_MAX),

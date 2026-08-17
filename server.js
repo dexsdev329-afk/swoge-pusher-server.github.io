@@ -551,12 +551,11 @@ function diffuseTousDuels() { broadcast(tousDuels()); }
  * chaque page veut.
  */
 const NOM_DUEL = { p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers',
-                   mf: 'Ghost Tic-Tac-Toe', dc: 'Last Number',
-                   pf: 'Rock Paper Bandit' };
+                   mf: 'Ghost Tic-Tac-Toe', dc: 'Last Number' };
 /* Les duels que la page peut demander. Une LISTE, pas une cascade de « dm ou
    sinon mp » : le troisieme jeu passait silencieusement pour un morpion, et
    c'est le genre de defaut qui se decouvre en jouant, pas en lisant. */
-const DUELS_OUVERTS = ['mp', 'dm', 'mf', 'dc', 'pf'];
+const DUELS_OUVERTS = ['mp', 'dm', 'mf', 'dc'];
 const duelDemande = (v) => (DUELS_OUVERTS.indexOf(String(v)) >= 0 ? String(v) : 'mp');
 /* Les sockets qui REGARDENT une partie sans y jouer. Un spectateur n'existe
    pas pour la partie : il ne mise pas, ne joue pas, et sa presence ne change
@@ -2368,7 +2367,7 @@ wss.on('connection', (ws) => {
                      balance: game.balanceStr(ws.addr) });
           duelDiffuseLobby(jeu);
           /* Meme annonce illustree que le Connect 4. La cle du duel EST celle
-             de l'image — 'mp', 'dm', 'mf', 'dc', 'pf' — donc un sixieme jeu
+             de l'image — 'mp', 'dm', 'mf', 'dc' — donc un cinquieme jeu
              ajoute a DUELS_OUVERTS est annonce avec sa vignette sans qu'on
              touche a cette ligne. */
           tg.notifyPhoto(imageJeu(jeu),

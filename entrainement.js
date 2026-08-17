@@ -35,23 +35,20 @@
  * Aux quatre jeux a information parfaite, il n'y a rien a cacher : le bot voit
  * le plateau, comme le joueur.
  *
- * Aux DEUX jeux a coups simultanes — le Dernier Chiffre et
- * Pierre-Feuille-Bandit — le bot joue apres le joueur dans le temps du
- * serveur, donc le coup adverse est physiquement a sa portee. Il ne le regarde
- * pas, et ce n'est pas une question de discipline : les fonctions de bots.js
- * ne le recoivent pas. `dcCoup` ne prend qu'une source d'alea, `pfCoup` ne
- * prend que `partie.historique`, qui ne contient que les manches DEJA
- * terminees. Un bot a qui on ne donne pas l'information ne peut pas s'en
- * servir par accident au prochain correctif.
+ * Au SEUL jeu a coups simultanes — le Dernier Chiffre — le bot joue apres le
+ * joueur dans le temps du serveur, donc le coup adverse est physiquement a sa
+ * portee. Il ne le regarde pas, et ce n'est pas une question de discipline :
+ * la fonction de bots.js ne le recoit pas. `dcCoup` ne prend qu'une source
+ * d'alea. Un bot a qui on ne donne pas l'information ne peut pas s'en servir
+ * par accident au prochain correctif.
  */
 
 const bots = require('./bots');
 const p4 = require('./puissance4');
-const pf = require('./pierre_feuille_bandit');
 
 const MOTEURS = {
   p4, mp: require('./morpion'), dm: require('./dames'),
-  mf: require('./morpion_fantome'), dc: require('./dernier_chiffre'), pf,
+  mf: require('./morpion_fantome'), dc: require('./dernier_chiffre'),
 };
 const JEUX = Object.keys(MOTEURS);
 
@@ -65,7 +62,7 @@ const ATTENTE = p4.ATTENTE, EN_COURS = p4.EN_COURS, FINIE = p4.FINIE;
     plutot qu'une etiquette « bot ». */
 const NOMS = {
   p4: 'Quatre', mp: 'Croix', dm: 'Damier',
-  mf: 'Fantome', dc: 'Chiffre', pf: 'Bandit',
+  mf: 'Fantome', dc: 'Chiffre',
 };
 
 class Entrainement {
@@ -206,12 +203,6 @@ class Entrainement {
     const jeton = partie.jeton(BOT);
     if (!jeton) return false;
     if (partie.jeu === 'dc') return partie.choix[jeton] == null;
-    if (partie.jeu === 'pf') {
-      if (partie.etape === pf.COUPS_PHASE) return partie.choix[jeton] == null;
-      if (partie.etape === pf.RELANCE) return partie.relanceur === jeton;
-      if (partie.etape === pf.SUIVRE) return partie.relanceur !== jeton;
-      return false;
-    }
     return partie.tour === jeton;
   }
 
@@ -235,39 +226,9 @@ class Entrainement {
            d'equilibre. Le coup cache du joueur est a portee de main ici, et
            c'est precisement pour ca qu'on ne le passe pas. */
         return bots.dcCoup(this.alea);
-      case 'pf':
-        return this._choisitPf(partie, jeton);
       default:
         return null;
     }
-  }
-
-  /**
-   * Pierre-Feuille-Bandit : trois decisions possibles selon l'etape.
-   *
-   * L'historique est TRADUIT du point de vue du bot — `moi`, `lui`, et le
-   * resultat de L'ADVERSAIRE, qui est ce que `pfCoup` attend. Se tromper de
-   * point de vue ici ferait un bot qui lit ses propres habitudes au lieu de
-   * celles du joueur, et qui perdrait donc contre lui-meme.
-   */
-  _choisitPf(partie, jeton) {
-    const autre = jeton === 1 ? 2 : 1;
-    if (partie.etape === pf.RELANCE) {
-      const reste = pf.MANCHES - partie.manche + 1;
-      return bots.pfRelance(partie.points[jeton], partie.points[autre], reste) ? 'r' : 'n';
-    }
-    if (partie.etape === pf.SUIVRE) {
-      const reste = pf.MANCHES - partie.manche + 1;
-      return bots.pfSuit(partie.points[jeton], partie.points[autre], reste) ? 's' : 'x';
-    }
-    /* `historique` ne contient que les manches TERMINEES : la manche en cours
-       n'y entre qu'une fois les deux coups poses et compares. Le bot ne peut
-       donc pas y lire le coup que le joueur vient de verrouiller. */
-    const h = (partie.historique || []).map((m) => ({
-      moi: m[jeton], lui: m[autre],
-      resultat: m.vainqueur === null ? 'nul' : (m.vainqueur === autre ? 'gagne' : 'perdu'),
-    }));
-    return bots.pfCoup(h, this.alea);
   }
 
   // ------------------------------------------------------------- l'affichage
