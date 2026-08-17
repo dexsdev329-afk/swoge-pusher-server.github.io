@@ -267,12 +267,13 @@ const TOTAL = 10000;
  * Un dixieme centile a 50 M impose donc un quatre-vingt-dix-neuvieme vers
  * 930 M. C'est le choix qui a ete fait, en connaissance de cause.
  *
- * Etat actuel, coffre dore a 400 000 :
+ * Etat actuel, coffre dore a 40 000 — les montants ont ensuite ete divises
+ * par dix pour rentrer dans l'echelle du jeton, voir le bloc des prix :
  *
- *   1 sur 10 avant     52 M
- *   la moitie avant   166 M
- *   9 sur 10 avant    461 M
- *   99 sur 100 avant  927 M
+ *   1 sur 10 avant      5,2 M   0,5 % de la supply
+ *   la moitie avant    16,6 M   1,7 %
+ *   9 sur 10 avant     46,1 M   4,6 %
+ *   99 sur 100 avant   92,7 M   9,3 %
  *
  * ---- ce qui pourrait couper la queue, et n'est pas en place ----
  *
@@ -287,11 +288,11 @@ const TOTAL = 10000;
  * completes. On rend la collection accessible sans la rendre commune.
  */
 const COFFRES = [
-  { cle: 'bois', nom: 'Wooden Chest', prix: 40000,
+  { cle: 'bois', nom: 'Wooden Chest', prix: 4000,
     table: [['commun', 7600], ['rare', 2100], ['epique', 280], ['legendaire', 19], ['mythique', 1]] },
-  { cle: 'or', nom: 'Golden Chest', prix: 400000,
+  { cle: 'or', nom: 'Golden Chest', prix: 40000,
     table: [['commun', 4500], ['rare', 3800], ['epique', 1400], ['legendaire', 280], ['mythique', 20]] },
-  { cle: 'mythe', nom: 'Mythic Chest', prix: 4000000,
+  { cle: 'mythe', nom: 'Mythic Chest', prix: 400000,
     table: [['commun', 1000], ['rare', 3400], ['epique', 3900], ['legendaire', 1500], ['mythique', 200]] },
 ];
 
@@ -328,7 +329,37 @@ const COFFRES = [
  * desormais mener a un gain — une fois, au bout d'une collection, pour trois
  * joueurs. Le gain est donc journalise comme tel.
  */
-const PRIX_LIGNE = [50000000, 30000000, 10000000];
+/*
+ * ---- L'ECHELLE A ETE RATTRAPEE PAR LA SUPPLY, PAS PAR LE RAISONNEMENT ----
+ *
+ * Ces montants ont d'abord ete cales les uns SUR LES AUTRES : combien coute
+ * une ligne, combien rapporte de la completer. Personne n'avait rapporte le
+ * resultat au jeton. Il valait 50, 30 et 10 millions, soit NEUF POUR CENT de
+ * la supply totale distribues a trois joueurs — et le coffre mythique a lui
+ * seul coutait 0,4 % de tout ce qui existera.
+ *
+ * Les reperes du site donnent l'echelle juste, et ils etaient sous les yeux :
+ *
+ *   un jeton lache au Coin Pusher              1
+ *   graine du jackpot, retrait minimum    10 000    0,001 %
+ *   pari sportif maximum                 100 000    0,01 %
+ *   gain maximum d'un bulletin         5 000 000    0,5 %
+ *
+ * Tout le jeu vit entre un et cent mille. La boutique tournait trois ordres
+ * de grandeur au-dessus.
+ *
+ * Apres division par dix, chaque montant retombe sur un repere qui existe
+ * deja : le coffre mythique vaut quatre paris sportifs au plafond, et le
+ * premier prix vaut exactement le gain maximum d'un bulletin combine — la
+ * plus grosse chose qu'on puisse deja gagner sur ce site.
+ *
+ *   premier prix   5 000 000   0,5 %
+ *   deuxieme       3 000 000   0,3 %
+ *   troisieme      1 000 000   0,1 %
+ *   ------------------------------------
+ *   total          9 000 000   0,9 % de la supply
+ */
+const PRIX_LIGNE = [5000000, 3000000, 1000000];
 
 // ------------------------------------------------------------ les recherches
 
