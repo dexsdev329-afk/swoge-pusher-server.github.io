@@ -261,7 +261,7 @@ function notifyCoffre(addr, g) {
      case etait un commun serait absurde. */
   if (g && g.ligne) {
     const base0 = siteBase();
-    tg.notifyPhoto(base0 ? base0 + '/img/shop/' + g.item.cle + '.webp' : null,
+    tg.notifyPhoto(base0 ? base0 + '/img/shop/tg/' + g.item.cle + '.jpg' : null,
       `\uD83C\uDFC6 <b>${g.ligne.rang === 1 ? 'FIRST' : g.ligne.rang === 2 ? 'SECOND' : 'THIRD'} COMPLETE LINE</b>\n` +
       `${escHtml(g.ligne.nom)} finished the <b>${escHtml(g.ligne.familleNom)}</b> collection — all five tiers\n\n` +
       `Prize: <b>${fmtAmt(String(g.ligne.prix))} $SWOGE</b>\n` +
@@ -284,7 +284,21 @@ function notifyCoffre(addr, g) {
      essaie autre chose, et l'annonce aurait montre un fruit qui n'est pas
      celui du serveur qui parle. */
   const base = siteBase();
-  tg.notifyPhoto(base ? base + '/img/shop/' + g.item.cle + '.webp' : null,
+  /* ---- L'IMAGE PART EN JPEG, PAS EN WEBP ----
+   *
+   * `sendPhoto` de Telegram accepte JPEG, PNG et GIF. Le WebP n'est accepte
+   * que pour les AUTOCOLLANTS : une photo en .webp est refusee, et le module
+   * retombe sur un message texte sans image.
+   *
+   * Le defaut etait invisible de l'interieur — un test de bout en bout a
+   * montre trente-neuf appels partis sur quarante ouvertures, tous corrects,
+   * tous en .webp. Le code marchait ; c'est Telegram qui refusait au bout du
+   * fil.
+   *
+   * Les trente-six dessins ont donc un double en JPEG, composes sur le fond
+   * sombre du site — le JPEG n'a pas de transparence, et sans fond choisi le
+   * vide devient noir pur et les fruits sombres disparaissent dedans. */
+  tg.notifyPhoto(base ? base + '/img/shop/tg/' + g.item.cle + '.jpg' : null,
     `\uD83C\uDF4E <b>${escHtml(rar.nom.toUpperCase())} FRUIT</b>\n` +
     `${escHtml(game._p(addr).name)} pulled <b>${escHtml(g.item.nom)}</b> ` +
     `from a ${escHtml(g.coffreNom)}\n\n` +
