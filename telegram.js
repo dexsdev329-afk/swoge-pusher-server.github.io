@@ -10,8 +10,48 @@ const cfg = require('./config');
 let chain = Promise.resolve();
 const enabled = () => !!(cfg.TG_BOT_TOKEN && cfg.TG_CHAT_ID);
 
+/* ------------------------------------------------------- LE CARNET D'ENVOI
+ *
+ * « Je ne vois toujours rien dans le canal » a occupe trois allers-retours,
+ * et chacun a corrige une cause plausible sans jamais VOIR ce qui se passait
+ * au bout du fil : d'abord le seuil de rarete, puis le format d'image refuse
+ * par sendPhoto. Deux corrections justes, un symptome inchange — parce que
+ * les deux fois j'ai raisonne sur le code au lieu de regarder la reponse de
+ * Telegram.
+ *
+ * Toutes les pannes possibles laissent pourtant une trace differente : jeton
+ * absent, canal introuvable, image refusee, cadence depassee, reseau coupe.
+ * Cette trace existait deja — elle partait dans console.warn, c'est-a-dire
+ * dans les journaux d'un hebergeur que personne ne lit a trois heures du
+ * matin depuis un telephone.
+ *
+ * On garde donc les trente derniers envois EN MEMOIRE, et une route
+ * d'administration les rend. Un seul appel et la question est tranchee, au
+ * lieu d'une nouvelle hypothese. La memoire suffit : ce carnet sert a
+ * diagnostiquer maintenant, pas a archiver.
+ *
+ * Il contient des noms de joueurs et des montants — d'ou la route protegee,
+ * jamais /health.
+ */
+const CARNET_MAX = 30;
+const carnet = [];
+let envoyes = 0, refuses = 0;
+function note(route, ok, code, desc, apercu) {
+  if (ok) envoyes++; else refuses++;
+  carnet.push({ a: new Date().toISOString(), route, ok, code: code || null,
+                desc: desc || null, apercu: String(apercu || '').replace(/<[^>]*>/g, '').slice(0, 90) });
+  if (carnet.length > CARNET_MAX) carnet.shift();
+}
+/** Les derniers envois, du plus recent au plus ancien, + les compteurs. */
+function journal() {
+  return { actif: enabled(), envoyes, refuses, derniers: [...carnet].reverse() };
+}
+
 function notify(text) {
-  if (!enabled()) { console.warn('[tg] skipped (TG_BOT_TOKEN/TG_CHAT_ID not set):', text.slice(0, 40)); return; }
+  if (!enabled()) {
+    console.warn('[tg] skipped (TG_BOT_TOKEN/TG_CHAT_ID not set):', text.slice(0, 40));
+    return note('sendMessage', false, 'config', 'TG_BOT_TOKEN ou TG_CHAT_ID absent', text);
+  }
   chain = chain.then(async () => {
     try {
       const res = await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/sendMessage`, {
@@ -21,14 +61,18 @@ function notify(text) {
       });
       const j = await res.json().catch(() => ({}));
       if (!j.ok) console.warn(`[tg] Telegram refused: ${j.error_code} ${j.description}`);
-    } catch (e) { console.warn('[tg] send failed:', e.message); }
+      note('sendMessage', !!j.ok, j.error_code, j.description, text);
+    } catch (e) { console.warn('[tg] send failed:', e.message); note('sendMessage', false, 'reseau', e.message, text); }
     await new Promise((r) => setTimeout(r, 400)); // stay under the rate limit
   }).catch(() => {});
 }
 
 function notifyPhoto(photo, caption) {
   if (!photo) return notify(caption);         // no image → plain text
-  if (!enabled()) { console.warn('[tg] skipped photo (TG token/chat not set)'); return; }
+  if (!enabled()) {
+    console.warn('[tg] skipped photo (TG token/chat not set)');
+    return note('sendPhoto', false, 'config', 'TG_BOT_TOKEN ou TG_CHAT_ID absent', caption);
+  }
   chain = chain.then(async () => {
     try {
       const res = await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/sendPhoto`, {
@@ -37,8 +81,9 @@ function notifyPhoto(photo, caption) {
         body: JSON.stringify({ chat_id: cfg.TG_CHAT_ID, photo, caption, parse_mode: 'HTML' }),
       });
       const j = await res.json().catch(() => ({}));
+      note('sendPhoto', !!j.ok, j.error_code, j.description, photo);
       if (!j.ok) { console.warn(`[tg] photo refused: ${j.error_code} ${j.description} — falling back to text`); notify(caption); }
-    } catch (e) { console.warn('[tg] photo failed:', e.message); }
+    } catch (e) { console.warn('[tg] photo failed:', e.message); note('sendPhoto', false, 'reseau', e.message, photo); }
     await new Promise((r) => setTimeout(r, 400));
   }).catch(() => {});
 }
@@ -107,4 +152,4 @@ async function sendDocument(buffer, nom, legende, chatId) {
   } catch (e) { console.warn('[tg] document echoue :', e.message); return false; }
 }
 
-module.exports = { notify, notifyPhoto, sendDocument, chatEstPublic, enabled };
+module.exports = { notify, notifyPhoto, sendDocument, chatEstPublic, enabled, journal };

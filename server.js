@@ -240,19 +240,32 @@ function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
  * vient d'ouvrir. Une annonce trop rare est un defaut certain aujourd'hui ;
  * une annonce trop frequente est un risque a partir d'un certain volume.
  *
- * Le seuil descend donc a « rare », et il devient reglable sans redeployer :
- * COFFRE_ANNONCE_MIN prend un nom de rarete. Le jour ou le canal sature, on
- * remonte d'un cran depuis les variables d'environnement.
+ * ---- puis descendu jusqu'a zero, parce qu'il n'aurait jamais du exister ----
+ *
+ * Passe a « rare », le canal restait muet : trois coffres de bois ouverts
+ * pour essayer ont sept chances sur dix de ne rendre que des communs. Le
+ * seuil ne s'etait pas trompe de valeur, il s'etait trompe d'existence — la
+ * demande etait « si quelqu'un achete, une notification apparait avec le
+ * fruit qu'il a obtenu », sans condition. J'ai ajoute un filtre que personne
+ * n'avait demande, pour resoudre un probleme que personne n'avait, et il a
+ * fait passer une fonctionnalite qui marche pour une fonctionnalite cassee.
+ *
+ * CHAQUE ouverture est donc annoncee. Le reglage reste, inverse : il ne
+ * protege plus par defaut, il sert le jour ou le canal sature vraiment —
+ * COFFRE_ANNONCE_MIN=rare et on remonte d'un cran sans redeployer. Un
+ * garde-fou qu'on active en voyant le probleme vaut mieux qu'un garde-fou
+ * pose d'avance contre un probleme imagine.
  *
  * Frequences mesurees, par coffre :
- *   rare+     bois 24 %   dore 55 %   mythique 90 %
- *   epique+   bois  3 %   dore 17 %   mythique 56 %
+ *   tout      bois 100 %  dore 100 %  mythique 100 %
+ *   rare+     bois  24 %  dore  55 %  mythique  90 %
+ *   epique+   bois   3 %  dore  17 %  mythique  56 %
  */
 const COFFRE_RANGS = ['commun', 'rare', 'epique', 'legendaire', 'mythique'];
 const COFFRE_ANNONCE = (() => {
-  const mini = String(process.env.COFFRE_ANNONCE_MIN || 'rare').toLowerCase();
+  const mini = String(process.env.COFFRE_ANNONCE_MIN || 'commun').toLowerCase();
   const i = COFFRE_RANGS.indexOf(mini);
-  return COFFRE_RANGS.slice(i < 0 ? 1 : i);
+  return COFFRE_RANGS.slice(i < 0 ? 0 : i);
 })();
 function notifyCoffre(addr, g) {
   /* UNE LIGNE COMPLETEE PART TOUJOURS, quelle que soit la rarete du dernier
@@ -1486,6 +1499,28 @@ const server = http.createServer(async (req, res) => {
     }
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify(parisImport.etatImport()));
+  }
+
+  /* ---- LES TRENTE DERNIERS ENVOIS VERS TELEGRAM ----
+   *
+   * A brancher des qu'une annonce manque. Elle repond a la seule question qui
+   * compte et que le code ne peut pas trancher : est-ce que l'appel est PARTI,
+   * et qu'est-ce que Telegram a REPONDU ?
+   *
+   *   actif:false          → TG_BOT_TOKEN ou TG_CHAT_ID n'est pas pose ici
+   *   code:400 desc:"...wrong file identifier/HTTP URL specified"
+   *                        → l'image est injoignable ou dans un format refuse
+   *   code:403             → le robot n'est pas dans le canal, ou en a ete sorti
+   *   code:429             → cadence depassee, les envois s'empilent
+   *   code:'reseau'        → l'appel n'est jamais arrive jusqu'a Telegram
+   *   aucune ligne du tout → l'annonce n'a pas ete declenchee cote jeu
+   *
+   * Protegee : le carnet porte des noms de joueurs et des montants. */
+  if (path === '/tg/journal') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(tg.journal(), null, 2));
   }
 
   /* L'etat de la boutique : ce qui reste, et qui detient quoi. */

@@ -122,6 +122,22 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
 
   const photos = recuTg.filter((x) => x.route === 'sendPhoto');
   ok(photos.length > 0, `dont ${photos.length} envoi(s) de photo`);
+
+  /* ---- CHAQUE OUVERTURE EST ANNONCEE, SANS SEUIL ----
+   *
+   * C'est la regle qui a manque le plus longtemps : un filtre de rarete pose
+   * d'avance rendait le canal muet sur les premieres ouvertures, et faisait
+   * passer une fonction qui marche pour une fonction cassee. Le test le tient
+   * maintenant par le NOMBRE — un seuil qui reviendrait, a n'importe quel
+   * cran, casse cette ligne immediatement.
+   *
+   * On compare a « au moins » : une ligne completee ajoute sa propre annonce
+   * par-dessus celle du fruit. */
+  ok(photos.length >= shops.length,
+     `${photos.length} annonce(s) pour ${shops.length} ouverture(s) — aucune n'est filtree`);
+  const communs = shops.filter((m) => m.gagne.rarete === 'commun').length;
+  ok(communs === 0 || photos.length >= communs,
+     `dont les ${communs} commun(s), qu'un seuil aurait fait disparaitre`);
   const ex = photos[0];
   console.log('  1re photo  :', ex.photo);
   console.log('  legende    :', String(ex.caption || '').split('\n')[0]);
