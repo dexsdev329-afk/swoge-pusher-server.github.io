@@ -295,6 +295,41 @@ const COFFRES = [
     table: [['commun', 1000], ['rare', 3400], ['epique', 3900], ['legendaire', 1500], ['mythique', 200]] },
 ];
 
+/*
+ * ---- LA COURSE AUX TROIS PREMIERES LIGNES ----
+ *
+ * Completer une famille — ses cinq raretes — paie, pour les trois premiers
+ * joueurs seulement. Ensuite la course est finie, definitivement.
+ *
+ * Quatre regles, qui doivent exister AVANT le premier coffre parce qu'on ne
+ * peut pas les inventer quand quelqu'un reclame :
+ *
+ *   1. UN SEUL PRIX PAR JOUEUR. Sans cette regle, celui qui complete trois
+ *      familles rafle les trois places, et la course n'oppose personne. Le
+ *      deuxieme prix va au deuxieme JOUEUR, pas a la deuxieme ligne.
+ *
+ *   2. L'ORDRE EST CELUI DU SERVEUR. Les achats sont traites un par un, dans
+ *      l'ordre d'arrivee : deux joueurs ne peuvent pas completer « en meme
+ *      temps ». Il n'y a donc pas de regle d'egalite a ecrire, et c'est
+ *      voulu — une egalite sur un prix de cinquante millions n'a aucune
+ *      solution qui paraisse juste a tout le monde.
+ *
+ *   3. LE PRIX EST PAYE AU MOMENT OU LA CINQUIEME CASE SE REMPLIT, pas sur
+ *      reclamation. Un prix qu'il faut aller chercher est un prix que
+ *      quelqu'un oubliera, et il n'y a aucune raison de le lui faire perdre.
+ *
+ *   4. LA LISTE DES GAGNANTS PART AU FICHIER. Sans ca, un redemarrage
+ *      rouvrirait la course et repaierait — le genre de defaut qui coute
+ *      quatre-vingt-dix millions sans rien afficher d'anormal.
+ *
+ * Ce que ca change a la nature de la boutique, et qu'il faut assumer : un
+ * coffre pouvait jusqu'ici ne JAMAIS rendre de jetons, ce qui justifiait
+ * qu'il ne compte ni dans les quetes ni dans le retour par jeu. Il peut
+ * desormais mener a un gain — une fois, au bout d'une collection, pour trois
+ * joueurs. Le gain est donc journalise comme tel.
+ */
+const PRIX_LIGNE = [50000000, 30000000, 10000000];
+
 // ------------------------------------------------------------ les recherches
 
 const PAR_ID = new Map(ITEMS.map((o) => [o.id, o]));
@@ -450,6 +485,6 @@ function catalogue(emis) {
 }
 
 module.exports = {
-  RARETES, FAMILLES, ITEMS, COFFRES, TOTAL,
+  RARETES, FAMILLES, ITEMS, COFFRES, TOTAL, PRIX_LIGNE,
   item, coffre, itemsDe, rarete, famille, tire, restant, chances, catalogue,
 };

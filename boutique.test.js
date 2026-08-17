@@ -430,4 +430,117 @@ for (const c of B.COFFRES) {
   ok(r.emis <= r.plafond, `« ${r.item.nom} » n ${r.emis} sur ${r.plafond}`);
 }
 
+// ============================== 9. LA COURSE AUX TROIS PREMIERES LIGNES
+
+/*
+ * Quatre-vingt-dix millions de jetons se jouent ici, une seule fois dans la
+ * vie de l'edition. Chaque regle est donc verrouillee par un controle.
+ */
+{
+  const g = new Game();
+  const chaos = B.ITEMS.filter((o) => o.famille === 'chaos');
+  const adr = (i) => '0x' + String(i).repeat(40).slice(0, 40);
+
+  /* Quatre joueurs completent la meme famille, l'un apres l'autre. */
+  const rangs = [];
+  for (let i = 1; i <= 4; i++) {
+    const p = g._p(adr(i)); p.name = 'J' + i;
+    for (const o of chaos) p.objets[o.id] = 1;
+    const r = g._boutiqueLigne(p, chaos[4], 1000 + i);
+    rangs.push(r ? r.prix : null);
+  }
+  eq(rangs[0], B.PRIX_LIGNE[0], 'le premier touche 50 M');
+  eq(rangs[1], B.PRIX_LIGNE[1], 'le deuxieme touche 30 M');
+  eq(rangs[2], B.PRIX_LIGNE[2], 'le troisieme touche 10 M');
+  eq(rangs[3], null, 'le quatrieme ne touche rien — la course est finie');
+  eq(g.boutiqueCourse().restant, 0, 'et il ne reste aucune place');
+
+  /* Le solde a REELLEMENT bouge. Un prix annonce mais pas credite serait le
+     pire des deux mondes. */
+  eq(jetons(g._p(adr(1))), B.PRIX_LIGNE[0] / 1, 'le solde du premier a bien monte de 50 M');
+}
+
+/* UN SEUL PRIX PAR JOUEUR. Sans cette regle, celui qui complete trois
+   familles rafle les trois places et la course n'oppose personne. */
+{
+  const g = new Game();
+  const p = g._p(A); p.name = 'Solo';
+  let payes = 0;
+  for (const f of B.FAMILLES.slice(0, 3)) {
+    const lot = B.ITEMS.filter((o) => o.famille === f.cle);
+    for (const o of lot) p.objets[o.id] = 1;
+    if (g._boutiqueLigne(p, lot[4], 1000)) payes++;
+  }
+  eq(payes, 1, 'trois familles completees par le meme joueur ne paient qu une fois');
+  eq(g.boutiqueCourse().restant, 2, 'et les deux autres places restent ouvertes');
+}
+
+/* UNE FAMILLE INCOMPLETE NE PAIE PAS. Le controle porte sur les cinq cases,
+   pas sur « il vient d'en gagner une de cette famille ». */
+{
+  const g = new Game();
+  const p = g._p(A);
+  const lot = B.ITEMS.filter((o) => o.famille === 'chaos');
+  for (const o of lot.slice(0, 4)) p.objets[o.id] = 1;   // quatre sur cinq
+  eq(g._boutiqueLigne(p, lot[0], 1000), null, 'quatre cases sur cinq ne paient pas');
+  eq(g.boutiqueCourse().restant, 3, 'et aucune place n est consommee');
+}
+
+/*
+ * LA LISTE DES GAGNANTS SURVIT AU DISQUE.
+ *
+ * C'est le defaut le plus cher du fichier : un registre perdu au redemarrage
+ * ROUVRE la course et repaie quatre-vingt-dix millions, sans rien afficher
+ * d'anormal. La boutique continuerait de fonctionner parfaitement.
+ */
+{
+  const g = new Game();
+  const chaos = B.ITEMS.filter((o) => o.famille === 'chaos');
+  const p = g._p(A); p.name = 'Enzo';
+  for (const o of chaos) p.objets[o.id] = 1;
+  g._boutiqueLigne(p, chaos[4], 1000);
+  eq(g.boutiqueCourse().restant, 2, 'une place prise avant sauvegarde');
+
+  const g2 = new Game();
+  g2.hydrate(JSON.parse(JSON.stringify(g.serialize())));
+  eq(g2.boutiqueCourse().restant, 2, 'et toujours deux places apres relecture');
+  eq(g2.boutiqueCourse().gagnants[0].nom, 'Enzo', 'le gagnant est retrouve par son nom');
+
+  /* Et il ne peut pas regagner apres le redemarrage. */
+  const p2 = g2._p(A);
+  const luck = B.ITEMS.filter((o) => o.famille === 'chance');
+  for (const o of luck) p2.objets[o.id] = 1;
+  eq(g2._boutiqueLigne(p2, luck[4], 2000), null,
+     'un gagnant d avant le redemarrage ne regagne pas apres');
+}
+
+/*
+ * L'achat REEL porte bien la ligne dans sa reponse : sans ca, ni l'annonce
+ * Telegram ni la page ne sauraient qu'il s'est passe quelque chose.
+ *
+ * Premiere version de ce controle : on epuisait tout SAUF le mythique voulu,
+ * pour le forcer a sortir. Elle heurtait la regle d'epuisement — qui DESCEND
+ * et ne remonte jamais : un tirage tombant sur une rarete basse n'avait plus
+ * rien en dessous et jetait. Le test etait faux, pas la regle. On epuise donc
+ * seulement les cinq AUTRES mythiques et on achete jusqu'a en voir un.
+ */
+{
+  const g = new Game();
+  const p = g._p(A); p.balance = WEI(100000000000);
+  const chaos = B.ITEMS.filter((o) => o.famille === 'chaos');
+  for (const o of chaos.slice(0, 4)) p.objets[o.id] = 1;
+  for (const o of B.itemsDe('mythique'))
+    if (o.id !== chaos[4].id) g.boutiqueEmis[o.id] = B.rarete('mythique').plafond;
+
+  let r = null;
+  for (let i = 0; i < 3000 && !(r && r.ligne); i++) {
+    p.balance = WEI(100000000000);
+    r = g.boutiqueAchat(A, 'mythe');
+  }
+  ok(!!(r && r.ligne), 'la reponse d achat porte la ligne completee');
+  eq(r.item.id, chaos[4].id, 'et c est bien le mythique manquant qui l a fermee');
+  eq(r.ligne.prix, B.PRIX_LIGNE[0], 'avec le premier prix');
+  eq(r.ligne.familleNom, 'Chaos', 'et le nom de la famille, pour l annonce');
+}
+
 console.log(`boutique.test.js : ${n} verifications OK`);

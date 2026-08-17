@@ -237,6 +237,21 @@ function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
  */
 const COFFRE_ANNONCE = ['epique', 'legendaire', 'mythique'];
 function notifyCoffre(addr, g) {
+  /* UNE LIGNE COMPLETEE PART TOUJOURS, quelle que soit la rarete du dernier
+     fruit. C'est l'annonce la plus forte du canal — il n'y en aura que trois
+     dans toute la vie de l'edition — et la retenir parce que la cinquieme
+     case etait un commun serait absurde. */
+  if (g && g.ligne) {
+    const base0 = siteBase();
+    tg.notifyPhoto(base0 ? base0 + '/img/shop/' + g.item.cle + '.webp' : null,
+      `\uD83C\uDFC6 <b>${g.ligne.rang === 1 ? 'FIRST' : g.ligne.rang === 2 ? 'SECOND' : 'THIRD'} COMPLETE LINE</b>\n` +
+      `${escHtml(g.ligne.nom)} finished the <b>${escHtml(g.ligne.familleNom)}</b> collection — all five tiers\n\n` +
+      `Prize: <b>${fmtAmt(String(g.ligne.prix))} $SWOGE</b>\n` +
+      (game.boutiqueCourse().restant
+        ? `${game.boutiqueCourse().restant} prize(s) left \u2014 first line wins 50M, then 30M, then 10M`
+        : `<b>All three prizes are gone.</b> The race is over.`) +
+      (base0 ? `\n<a href="${base0}/games.html">Open a chest \u2197</a>` : ''));
+  }
   if (!g || !g.item || COFFRE_ANNONCE.indexOf(g.rarete) < 0) return;
   const cat = boutique;
   const fam = cat.famille(g.item.famille);

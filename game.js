@@ -57,6 +57,10 @@ class Game {
        ne sait combien de Void Fruits existent. Il vit dans la tete de l'etat,
        pas dans les fiches — il n'appartient a aucun joueur. */
     this.boutiqueEmis = {};
+    /* LES TROIS PREMIERES LIGNES. Une entree par gagnant, dans l'ordre :
+       { addr, nom, famille, prix, t }. C'est cette liste qui dit combien de
+       places restent — pas un compteur a cote, qui pourrait diverger. */
+    this.boutiqueLignes = [];
     this.players = new Map(); // addr -> { balance, cumulativeAuthorized, clientSeed, nonce, name, dayNet, dayKey, dropsToday, winsToday, questClaimed, hasDeposited }
     this.telegramMap = new Map(); // telegramId (string) -> addr, so the Adsgram reward postback can find the account
     this.seenTx = new Set();  // dedupe deposits
@@ -241,6 +245,7 @@ class Game {
     }
     return { v: 1, serverSeed: this.serverSeed, sessionSecret: this.sessionSecret,
              boutiqueEmis: this.boutiqueEmis || {},
+             boutiqueLignes: this.boutiqueLignes || [],
              compta: this._comptaEcrite(), tunnel: this.tunnel || {},
              prixVerses: this.prixVerses || {},
              graines: this.graines || [], graineDepuis: this.graineDepuis || null,
@@ -316,6 +321,9 @@ class Game {
        et les plafonds ne borneraient plus rien — le pire des defauts
        silencieux : la boutique continuerait de fonctionner. */
     if (st.boutiqueEmis && typeof st.boutiqueEmis === 'object') this.boutiqueEmis = st.boutiqueEmis;
+    /* Sans cette ligne, un redemarrage ROUVRIRAIT la course et repaierait
+       quatre-vingt-dix millions, sans rien afficher d'anormal. */
+    if (Array.isArray(st.boutiqueLignes)) this.boutiqueLignes = st.boutiqueLignes;
     if (st.serverSeed) { this.serverSeed = st.serverSeed; this.serverSeedHash = crypto.createHash('sha256').update(st.serverSeed).digest('hex'); }
     /* Les graines revelees survivent a tout : elles sont la SEULE facon pour
        un joueur de verifier une manche d'il y a six mois. Les perdre au
@@ -3729,6 +3737,53 @@ class Game {
    */
 
   /**
+   * LA COURSE AUX TROIS PREMIERES LIGNES.
+   *
+   * Appelee apres chaque objet range. Rend l'entree du gagnant si ce fruit
+   * vient de completer une famille et qu'il reste une place, sinon null.
+   *
+   * Le controle « ce joueur a-t-il deja gagne » porte sur l'ADRESSE et pas
+   * sur la famille : celui qui complete trois familles ne doit pas rafler
+   * les trois places, sinon la course n'oppose personne.
+   */
+  _boutiqueLigne(p, item, now) {
+    if (!this.boutiqueLignes) this.boutiqueLignes = [];
+    if (this.boutiqueLignes.length >= boutique.PRIX_LIGNE.length) return null;
+    if (this.boutiqueLignes.some((g) => g.addr === p.addr)) return null;
+
+    const inv = p.objets || {};
+    const manque = boutique.ITEMS.some(
+      (o) => o.famille === item.famille && !inv[o.id]);
+    if (manque) return null;
+
+    const rang = this.boutiqueLignes.length;          // 0, 1 ou 2
+    const prix = boutique.PRIX_LIGNE[rang];
+    p.balance = p.balance.add(WEI(prix));
+    this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(prix));
+    const fam = boutique.famille(item.famille);
+    const g = { addr: p.addr, nom: p.name || p.addr.slice(0, 6),
+                famille: item.famille, familleNom: fam ? fam.nom : item.famille,
+                rang: rang + 1, prix, t: now || Date.now() };
+    this.boutiqueLignes.push(g);
+    /* Journalise comme un gain, parce que c'en est un : un coffre pouvait
+       jusqu'ici ne jamais rendre de jetons, ce n'est plus vrai. */
+    journal.ajoute(p.addr, { k: 'r', g: 'boutique', m: 0, p: prix });
+    this.note('primes', prix, p.addr);
+    return g;
+  }
+
+  /** Les places restantes et les gagnants, pour la page et l'annonce. */
+  boutiqueCourse() {
+    const gagnants = this.boutiqueLignes || [];
+    return {
+      prix: boutique.PRIX_LIGNE,
+      gagnants: gagnants.map((g) => ({ nom: g.nom, familleNom: g.familleNom,
+                                       rang: g.rang, prix: g.prix, t: g.t })),
+      restant: Math.max(0, boutique.PRIX_LIGNE.length - gagnants.length),
+    };
+  }
+
+  /**
    * L'ETAT DE LA BOUTIQUE POUR L'EXPLOITANT.
    *
    * Deux questions, et elles n'ont pas la meme reponse :
@@ -3797,7 +3852,8 @@ class Game {
   boutiqueEtat(addr) {
     const p = this._p(addr);
     return { catalogue: boutique.catalogue(this.boutiqueEmis || {}),
-             inventaire: p.objets || {} };
+             inventaire: p.objets || {},
+             course: this.boutiqueCourse() };
   }
 
   /**
@@ -3834,7 +3890,15 @@ class Game {
 
     this.note('boutique', c.prix, addr);
 
+    /* La ligne vient-elle de se completer ? On regarde APRES avoir range
+       l'objet : c'est le seul instant ou la reponse peut changer. */
+    /* `boutiqueAchat` ne recoit pas d horloge — les autres jeux en passent une
+       pour etre rejouables, celui-ci n en a pas besoin : le tirage vient du
+       HMAC, pas du temps. L horodatage du gagnant est donc pris ici. */
+    const ligne = this._boutiqueLigne(p, t.item, Date.now());
+
     return { coffre: c.cle, coffreNom: c.nom, prix: c.prix,
+             ligne,
              item: t.item, rarete: t.rarete,
              quantite: p.objets[t.item.id],
              emis: this.boutiqueEmis[t.item.id],
