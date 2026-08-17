@@ -47,8 +47,54 @@
  * bloc, jamais renumeroter.
  */
 
+/*
+ * ============================== LES SAISONS ==============================
+ *
+ * Une saison est une COLLECTION FERMEE : ses six familles, ses trente objets,
+ * ses trois coffres, ses plafonds. Elle ne se melange a aucune autre — on ne
+ * peut pas tirer une arme dans un coffre a fruits, et la planche de collection
+ * d'une saison ne montre jamais les objets d'une autre.
+ *
+ * ---- pourquoi une saison plutot qu'une grande collection ----
+ *
+ * L'alternative etait d'ajouter les armes aux fruits : une planche de soixante
+ * cases, puis quatre-vingt-dix avec les armures. Elle a ete ecartee pour une
+ * raison qui n'est pas d'ergonomie mais de parole donnee — ceux qui ont achete
+ * des fruits l'ont fait sur l'annonce d'une edition de 9 600 pieces. Gonfler
+ * cette edition apres coup dilue ce qu'ils ont paye, et aucune explication ne
+ * rattrape ca.
+ *
+ * ---- CE QUI OUVRE LA SAISON SUIVANTE ----
+ *
+ * La regle, une fois pour toutes :
+ *
+ *   • une saison s'ouvre a TOUT LE MONDE quand la precedente a rendu ses trois
+ *     lignes completes — la course finie est ce qui « termine » une saison ;
+ *   • les trois gagnants y entrent DES LEUR PROPRE LIGNE finie, sans attendre
+ *     les autres. C'est la recompense d'etre arrive premier, et elle a un
+ *     effet reel : le premier entre seul dans une edition intacte.
+ *
+ * Une consequence qui n'est pas un defaut mais qu'il vaut mieux avoir vue : le
+ * TROISIEME gagnant n'a aucune avance. Sa ligne finie est exactement l'instant
+ * ou la saison s'ouvre pour tous. L'avance existe pour le premier et le
+ * deuxieme, et c'est tout — la regle reste enonçable en une phrase, ce qui
+ * vaut mieux qu'une exception ecrite pour rattraper un cas sans importance.
+ *
+ * La saison 1 n'a pas de condition : elle est le point de depart.
+ */
+const SAISONS = [
+  { n: 1, cle: 'fruits', nom: 'Season 1 — Devil Fruits', sujet: 'fruit' },
+  { n: 2, cle: 'armes',  nom: 'Season 2 — Weapons',      sujet: 'weapon' },
+];
+
 /* Les raretes, de la plus commune a la plus rare. L'ordre compte : il sert a
-   trier l'inventaire et a peindre la page. */
+   trier l'inventaire et a peindre la page.
+
+   Elles sont COMMUNES A TOUTES LES SAISONS, plafonds compris : une arme
+   mythique est aussi rare qu'un fruit mythique, a dix exemplaires. Donner a
+   chaque saison ses propres plafonds aurait rendu les deux collections
+   incomparables — et la premiere question d'un acheteur sur un marche
+   secondaire est « c'est rare comment, par rapport a quoi ? ». */
 const RARETES = [
   { cle: 'commun',     nom: 'Common',    bloc: 1000, couleur: '#9AA7BF', plafond: 1000 },
   { cle: 'rare',       nom: 'Rare',      bloc: 2000, couleur: '#5AC8FF', plafond:  400 },
@@ -119,12 +165,28 @@ const RARETES = [
    habillage de table, trophee. Il est porte par la FAMILLE et non par le
    fruit : les cinq etats d'un meme pouvoir sont le meme pouvoir. */
 const FAMILLES = [
-  { cle: 'chance', nom: 'Luck',   forme: 'pomme',   couleur: '#7CFF9B', genre: 'cadre'   },
-  { cle: 'or',     nom: 'Gold',   forme: 'poire',   couleur: '#FFC53D', genre: 'cadre'   },
-  { cle: 'eclair', nom: 'Flash',  forme: 'banane',  couleur: '#5AC8FF', genre: 'table'   },
-  { cle: 'oeil',   nom: 'Sight',  forme: 'raisin',  couleur: '#C07BFF', genre: 'avatar'  },
-  { cle: 'garde',  nom: 'Guard',  forme: 'courge',  couleur: '#8DA0C4', genre: 'trophee' },
-  { cle: 'chaos',  nom: 'Chaos',  forme: 'carambole', couleur: '#FF4655', genre: 'trophee' },
+  // ---- saison 1, les fruits
+  { saison: 1, cle: 'chance', nom: 'Luck',   forme: 'pomme',   couleur: '#7CFF9B', genre: 'cadre'   },
+  { saison: 1, cle: 'or',     nom: 'Gold',   forme: 'poire',   couleur: '#FFC53D', genre: 'cadre'   },
+  { saison: 1, cle: 'eclair', nom: 'Flash',  forme: 'banane',  couleur: '#5AC8FF', genre: 'table'   },
+  { saison: 1, cle: 'oeil',   nom: 'Sight',  forme: 'raisin',  couleur: '#C07BFF', genre: 'avatar'  },
+  { saison: 1, cle: 'garde',  nom: 'Guard',  forme: 'courge',  couleur: '#8DA0C4', genre: 'trophee' },
+  { saison: 1, cle: 'chaos',  nom: 'Chaos',  forme: 'carambole', couleur: '#FF4655', genre: 'trophee' },
+
+  /* ---- saison 2, les armes ----
+   *
+   * `forme` porte ici l'ORIENTATION autant que la silhouette, et ce n'est pas
+   * de la decoration : dans la rangee du classement une vignette fait trente
+   * pixels, et a cette taille une epee et une lance sont toutes les deux « un
+   * trait vertical ». Chaque famille a donc sa pose — droite, de biais, en
+   * diagonale, en arc, tete lourde en haut, croisee en X — et c'est ce qui
+   * rend la rangee lisible au lieu de six traits identiques. */
+  { saison: 2, cle: 'lame',    nom: 'Blade',   forme: 'epee droite',      couleur: '#5AC8FF', genre: 'cadre'   },
+  { saison: 2, cle: 'hache',   nom: 'Axe',     forme: 'hache de biais',   couleur: '#E08A3C', genre: 'trophee' },
+  { saison: 2, cle: 'lance',   nom: 'Spear',   forme: 'lance diagonale',  couleur: '#7CFF9B', genre: 'table'   },
+  { saison: 2, cle: 'arc',     nom: 'Bow',     forme: 'arc courbe',       couleur: '#FFC53D', genre: 'avatar'  },
+  { saison: 2, cle: 'marteau', nom: 'Hammer',  forme: 'marteau lourd',    couleur: '#B48CFF', genre: 'trophee' },
+  { saison: 2, cle: 'dagues',  nom: 'Daggers', forme: 'dagues croisees',  couleur: '#FF4655', genre: 'cadre'   },
 ];
 
 /*
@@ -224,6 +286,89 @@ const ITEMS = [
     pouvoir: 'The house has stopped trying.' },
   { id: 5006, cle: 'fruit_neant',    nom: 'Void Fruit',     rarete: 'mythique', famille: 'chaos',
     pouvoir: 'Where it is, the rules simply are not written yet.' },
+
+  /* ==================== SAISON 2 — LES ARMES ====================
+   *
+   * Meme grille : six familles, cinq degres. La rarete se lit sur l'ETAT de
+   * l'arme et non sur sa forme — ebrechee, entretenue, gravee de lueurs,
+   * auréolée d'or, puis fendue de lumiere. C'est la meme progression que les
+   * fruits verts jusqu'aux fruits incandescents, et c'est voulu : un joueur
+   * qui a appris a lire une collection sait deja lire l'autre.
+   *
+   * Les identifiants continuent dans les memes blocs de rarete — 1007 a 1012
+   * pour les communes. Les blocs de mille existaient exactement pour ca :
+   * ajouter sans renumeroter, parce qu'un identifiant qui bouge apres coup
+   * ferait pointer un jeton deja emis sur un autre objet. */
+
+  // ---- communes : l'arme de troupe, piquee, ebrechee, sans lueur
+  { id: 1007, cle: 'arme_ebreche',  nom: 'Notched Blade',   rarete: 'commun', famille: 'lame',
+    pouvoir: 'It has cut something. Nobody remembers what.' },
+  { id: 1008, cle: 'arme_bucheron', nom: "Woodsman's Axe",  rarete: 'commun', famille: 'hache',
+    pouvoir: 'Honest work first, everything else after.' },
+  { id: 1009, cle: 'arme_chasse',   nom: 'Hunting Spear',   rarete: 'commun', famille: 'lance',
+    pouvoir: 'Reach is the whole argument.' },
+  { id: 1010, cle: 'arme_arc_court', nom: "Hunter's Bow",   rarete: 'commun', famille: 'arc',
+    pouvoir: 'Quiet, patient, and already gone.' },
+  { id: 1011, cle: 'arme_maillet',  nom: 'Iron Maul',       rarete: 'commun', famille: 'marteau',
+    pouvoir: 'No edge. It never needed one.' },
+  { id: 1012, cle: 'arme_couteaux', nom: 'Rusted Knives',   rarete: 'commun', famille: 'dagues',
+    pouvoir: 'Two of them, because one is never enough.' },
+
+  // ---- rares : entretenue, tranchant net, poignee refaite
+  { id: 2007, cle: 'arme_tranchant', nom: 'Keen Blade',     rarete: 'rare', famille: 'lame',
+    pouvoir: 'The edge finds the gap before you do.' },
+  { id: 2008, cle: 'arme_guerre',    nom: 'War Axe',        rarete: 'rare', famille: 'hache',
+    pouvoir: 'It stopped being a tool a long time ago.' },
+  { id: 2009, cle: 'arme_pique',     nom: 'Pike',           rarete: 'rare', famille: 'lance',
+    pouvoir: 'A wall of them decides the field.' },
+  { id: 2010, cle: 'arme_arc_long',  nom: 'Longbow',        rarete: 'rare', famille: 'arc',
+    pouvoir: 'The answer arrives before the question.' },
+  { id: 2011, cle: 'arme_marteau',   nom: 'War Hammer',     rarete: 'rare', famille: 'marteau',
+    pouvoir: 'Armour is a suggestion.' },
+  { id: 2012, cle: 'arme_jumelles',  nom: 'Twin Fangs',     rarete: 'rare', famille: 'dagues',
+    pouvoir: 'One to parry. One to finish.' },
+
+  // ---- epiques : les gravures s'allument de l'interieur
+  { id: 3007, cle: 'arme_runes',   nom: 'Runed Blade',      rarete: 'epique', famille: 'lame',
+    pouvoir: 'The grooves hum when something is coming.' },
+  { id: 3008, cle: 'arme_fendoir', nom: 'Stormsplitter',    rarete: 'epique', famille: 'hache',
+    pouvoir: 'The air parts before the head does.' },
+  { id: 3009, cle: 'arme_croc',    nom: "Serpent's Fang",   rarete: 'epique', famille: 'lance',
+    pouvoir: 'It strikes twice on the same thrust.' },
+  { id: 3010, cle: 'arme_murmure', nom: 'Whisperwind',      rarete: 'epique', famille: 'arc',
+    pouvoir: 'You never hear the string.' },
+  { id: 3011, cle: 'arme_tonnerre', nom: 'Thunderhead',     rarete: 'epique', famille: 'marteau',
+    pouvoir: 'The sound lands a full second late.' },
+  { id: 3012, cle: 'arme_ombre',   nom: 'Shadowbite',       rarete: 'epique', famille: 'dagues',
+    pouvoir: 'They are drawn before the room notices.' },
+
+  // ---- legendaires : halo dore, gravures en fusion
+  { id: 4007, cle: 'arme_aube',    nom: 'Dawnbreaker',      rarete: 'legendaire', famille: 'lame',
+    pouvoir: 'Night ends where it is pointed.' },
+  { id: 4008, cle: 'arme_bourreau', nom: 'Skullrender',     rarete: 'legendaire', famille: 'hache',
+    pouvoir: 'It has never needed a second swing.' },
+  { id: 4009, cle: 'arme_perceciel', nom: 'Skypiercer',     rarete: 'legendaire', famille: 'lance',
+    pouvoir: 'Thrown once. It has not come down.' },
+  { id: 4010, cle: 'arme_corde_solaire', nom: 'Sunstring',  rarete: 'legendaire', famille: 'arc',
+    pouvoir: 'The arrow is light, and light does not miss.' },
+  { id: 4011, cle: 'arme_seisme',  nom: 'Earthshaker',      rarete: 'legendaire', famille: 'marteau',
+    pouvoir: 'The ground agrees with it.' },
+  { id: 4012, cle: 'arme_sang',    nom: 'Bloodwhisper',     rarete: 'legendaire', famille: 'dagues',
+    pouvoir: 'They tell you where to cut. You listen.' },
+
+  // ---- mythiques : le metal se fend, la lumiere sort, l'arme flotte
+  { id: 5007, cle: 'arme_faille',  nom: 'Worldcleaver',     rarete: 'mythique', famille: 'lame',
+    pouvoir: 'The cut stays open after the blade is gone.' },
+  { id: 5008, cle: 'arme_montagne', nom: 'Mountainfall',    rarete: 'mythique', famille: 'hache',
+    pouvoir: 'It was a mountain. Then it was not.' },
+  { id: 5009, cle: 'arme_lance_divine', nom: 'Godspear',    rarete: 'mythique', famille: 'lance',
+    pouvoir: 'It was thrown from somewhere above the sky.' },
+  { id: 5010, cle: 'arme_chant_final', nom: 'Endsong',      rarete: 'mythique', famille: 'arc',
+    pouvoir: 'The last note anyone hears.' },
+  { id: 5011, cle: 'arme_enclume', nom: 'Worldanvil',       rarete: 'mythique', famille: 'marteau',
+    pouvoir: 'Everything that exists was shaped on it.' },
+  { id: 5012, cle: 'arme_faucheuse', nom: "Reaper's Pair",  rarete: 'mythique', famille: 'dagues',
+    pouvoir: 'One takes the body. One takes the rest.' },
 ];
 
 /* Les coffres. Le prix est en $SWOGE, la table en dix-milliemes.
@@ -288,11 +433,32 @@ const TOTAL = 10000;
  * completes. On rend la collection accessible sans la rendre commune.
  */
 const COFFRES = [
-  { cle: 'bois', nom: 'Wooden Chest', prix: 4000,
+  // ---- saison 1
+  { saison: 1, cle: 'bois', nom: 'Wooden Chest', prix: 4000, image: 'bois',
     table: [['commun', 7600], ['rare', 2100], ['epique', 280], ['legendaire', 19], ['mythique', 1]] },
-  { cle: 'or', nom: 'Golden Chest', prix: 40000,
+  { saison: 1, cle: 'or', nom: 'Golden Chest', prix: 40000, image: 'or',
     table: [['commun', 4500], ['rare', 3800], ['epique', 1400], ['legendaire', 280], ['mythique', 20]] },
-  { cle: 'mythe', nom: 'Mythic Chest', prix: 400000,
+  { saison: 1, cle: 'mythe', nom: 'Mythic Chest', prix: 400000, image: 'mythe',
+    table: [['commun', 1000], ['rare', 3400], ['epique', 3900], ['legendaire', 1500], ['mythique', 200]] },
+
+  /* ---- saison 2 ----
+   *
+   * MEMES PRIX ET MEMES TABLES que la saison 1, et ce n'est pas de la
+   * paresse : les plafonds sont les memes, donc le cout d'une ligne est le
+   * meme, donc changer les prix rendrait une saison mecaniquement plus chere a
+   * collectionner que l'autre sans que rien ne le justifie. Le jour ou une
+   * saison doit couter plus, ce sera une decision ecrite ici, avec sa raison.
+   *
+   * `image` est SEPARE de `cle`. Le dessin des caisses d'armes n'existe pas
+   * encore ; en attendant elles empruntent celui des coffres a fruits, et le
+   * jour ou l'art arrive on change ce seul mot. Sans ce champ, il aurait fallu
+   * ou bien renommer les clefs — qui partent dans les fiches des joueurs — ou
+   * bien afficher trois cadres casses. */
+  { saison: 2, cle: 'armes_bois', nom: 'Weapon Crate', prix: 4000, image: 'bois',
+    table: [['commun', 7600], ['rare', 2100], ['epique', 280], ['legendaire', 19], ['mythique', 1]] },
+  { saison: 2, cle: 'armes_or', nom: 'Golden Armoury', prix: 40000, image: 'or',
+    table: [['commun', 4500], ['rare', 3800], ['epique', 1400], ['legendaire', 280], ['mythique', 20]] },
+  { saison: 2, cle: 'armes_mythe', nom: 'Mythic Armoury', prix: 400000, image: 'mythe',
     table: [['commun', 1000], ['rare', 3400], ['epique', 3900], ['legendaire', 1500], ['mythique', 200]] },
 ];
 
@@ -363,17 +529,46 @@ const PRIX_LIGNE = [5000000, 3000000, 1000000];
 
 // ------------------------------------------------------------ les recherches
 
-const PAR_ID = new Map(ITEMS.map((o) => [o.id, o]));
-const PAR_RARETE = new Map(RARETES.map((r) => [r.cle, ITEMS.filter((o) => o.rarete === r.cle)]));
 const FAMILLE = new Map(FAMILLES.map((f) => [f.cle, f]));
 const RARETE = new Map(RARETES.map((r) => [r.cle, r]));
 const COFFRE = new Map(COFFRES.map((c) => [c.cle, c]));
 
+/* ---- LA SAISON D'UN OBJET SE DEDUIT DE SA FAMILLE ----
+ *
+ * Elle n'est ecrite nulle part sur les trente lignes d'objets, et c'est
+ * volontaire : une famille appartient a une seule saison, donc l'objet aussi.
+ * Portee deux fois, l'information finirait par diverger — un objet marque
+ * saison 1 dans une famille de saison 2 se tirerait dans le mauvais coffre, et
+ * rien a l'ecran ne le dirait. Ici la question ne peut pas se poser. */
+for (const o of ITEMS) {
+  const f = FAMILLE.get(o.famille);
+  if (!f) throw new Error('boutique : famille inconnue pour ' + o.id + ', ' + o.famille);
+  o.saison = f.saison;
+}
+
+const PAR_ID = new Map(ITEMS.map((o) => [o.id, o]));
+/* Indexe par SAISON ET rarete. La clef composee evite le piege qui aurait
+   coute le plus cher : `itemsDe('mythique')` rendant les douze mythiques des
+   deux saisons, donc un coffre a fruits capable de rendre une arme. */
+const PAR_RARETE = new Map();
+for (const s of SAISONS)
+  for (const r of RARETES)
+    PAR_RARETE.set(s.n + ':' + r.cle,
+      ITEMS.filter((o) => o.saison === s.n && o.rarete === r.cle));
+const SAISON = new Map(SAISONS.map((s) => [s.n, s]));
+
 function item(id) { return PAR_ID.get(Number(id)) || null; }
 function coffre(cle) { return COFFRE.get(String(cle)) || null; }
-function itemsDe(rarete) { return PAR_RARETE.get(String(rarete)) || []; }
+/** Les objets d'une rarete DANS UNE SAISON. La saison n'a pas de defaut :
+ *  l'oubli doit rendre une liste vide et casser le test, pas retomber en
+ *  silence sur la saison 1. */
+function itemsDe(rarete, saison) { return PAR_RARETE.get(Number(saison) + ':' + String(rarete)) || []; }
 function rarete(cle) { return RARETE.get(String(cle)) || null; }
 function famille(cle) { return FAMILLE.get(String(cle)) || null; }
+function saison(n) { return SAISON.get(Number(n)) || null; }
+function itemsDeSaison(n) { return ITEMS.filter((o) => o.saison === Number(n)); }
+function famillesDe(n) { return FAMILLES.filter((f) => f.saison === Number(n)); }
+function coffresDe(n) { return COFFRES.filter((c) => c.saison === Number(n)); }
 
 // -------------------------------------------------------------- le controle
 
@@ -398,25 +593,54 @@ function famille(cle) { return FAMILLE.get(String(cle)) || null; }
     if (!FAMILLE.has(o.famille))
       throw new Error('boutique : famille inconnue pour ' + o.id + ', ' + o.famille);
   }
-  /* LA GRILLE DOIT ETRE PLEINE. Six familles, cinq raretes : trente cases,
-     chacune occupee une fois exactement. C'est toute la promesse faite au
-     joueur — « il te manque la Clef d'or » n'a de sens que si elle existe.
-     Un trou ne se verrait nulle part ailleurs : la case resterait vide a
-     l'ecran et ressemblerait a un objet qu'on n'a pas encore trouve. */
-  for (const f of FAMILLES) {
-    for (const r of RARETES) {
-      const n = ITEMS.filter((o) => o.famille === f.cle && o.rarete === r.cle).length;
-      if (n !== 1)
-        throw new Error('boutique : ' + f.nom + ' en ' + r.nom + ' apparait ' + n + ' fois, pas une');
+  /* LA GRILLE DOIT ETRE PLEINE, SAISON PAR SAISON. Six familles, cinq
+     raretes : trente cases, chacune occupee une fois exactement. C'est toute
+     la promesse faite au joueur — « il te manque la Clef d'or » n'a de sens
+     que si elle existe. Un trou ne se verrait nulle part ailleurs : la case
+     resterait vide a l'ecran et ressemblerait a un objet qu'on n'a pas encore
+     trouve.
+
+     Le controle est par SAISON depuis qu'il y en a deux. Fait sur l'ensemble,
+     il aurait laisse passer une saison a sept familles et une autre a cinq :
+     les totaux se compensent, la planche est fausse, et personne ne le voit
+     avant qu'un joueur cherche une case qui n'existe pas. */
+  for (const s of SAISONS) {
+    const fams = famillesDe(s.n);
+    if (fams.length !== 6)
+      throw new Error('boutique : saison ' + s.n + ' a ' + fams.length + ' familles, pas six');
+    for (const f of fams) {
+      for (const r of RARETES) {
+        const n = ITEMS.filter((o) => o.famille === f.cle && o.rarete === r.cle).length;
+        if (n !== 1)
+          throw new Error('boutique : ' + f.nom + ' en ' + r.nom + ' apparait ' + n + ' fois, pas une');
+      }
     }
+    if (!coffresDe(s.n).length)
+      throw new Error('boutique : saison ' + s.n + ' n a aucun coffre, ses objets sont introuvables');
+  }
+  /* Une clef de famille appartient a UNE saison. Deux saisons qui partagent
+     « chaos » melangeraient leurs lignes completes : terminer les cinq fruits
+     Chaos et les cinq armes Chaos compterait pour une seule et meme ligne. */
+  const vuesFam = new Set();
+  for (const f of FAMILLES) {
+    if (vuesFam.has(f.cle)) throw new Error('boutique : famille en double, ' + f.cle);
+    vuesFam.add(f.cle);
+    if (!SAISON.has(f.saison))
+      throw new Error('boutique : saison inconnue pour la famille ' + f.cle + ', ' + f.saison);
   }
   for (const c of COFFRES) {
+    if (!SAISON.has(c.saison))
+      throw new Error('boutique : saison inconnue pour le coffre ' + c.cle + ', ' + c.saison);
     let somme = 0;
     for (const [cle, poids] of c.table) {
       if (!RARETE.has(cle)) throw new Error('boutique : coffre ' + c.cle + ', rarete inconnue ' + cle);
       if (!(poids > 0)) throw new Error('boutique : coffre ' + c.cle + ', poids nul pour ' + cle);
-      if (!itemsDe(cle).length)
-        throw new Error('boutique : coffre ' + c.cle + ' peut sortir un ' + cle + ', mais aucun objet ne l est');
+      /* DANS SA SAISON. Un coffre d'armes dont la table promet du mythique
+         alors qu'aucune arme mythique n'existe rendrait un legendaire par la
+         regle d'epuisement — en silence, et en faisant mentir le bouton. */
+      if (!itemsDe(cle, c.saison).length)
+        throw new Error('boutique : coffre ' + c.cle + ' peut sortir un ' + cle +
+                        ', mais aucun objet de la saison ' + c.saison + ' ne l est');
       somme += poids;
     }
     if (somme !== TOTAL)
@@ -471,15 +695,19 @@ function tire(hex, cle, emis) {
   let reste = r1, quelle = c.table[c.table.length - 1][0];
   for (const [rar, poids] of c.table) { reste -= poids; if (reste < 0) { quelle = rar; break; } }
 
-  /* On descend jusqu'a une rarete qui a encore du stock. */
+  /* On descend jusqu'a une rarete qui a encore du stock — DANS LA SAISON DU
+     COFFRE, jamais ailleurs. Une caisse d'armes dont les mythiques sont
+     epuisees descend sur les armes legendaires, pas sur les fruits : deux
+     saisons qui se vident l'une dans l'autre n'en font plus qu'une, et
+     l'edition annoncee pour chacune devient fausse. */
   const rangs = RARETES.map((r) => r.cle);
   const epuise = [];
   let i = rangs.indexOf(quelle);
-  let lot = itemsDe(rangs[i]).filter((o) => restant(o.id, emis) > 0);
+  let lot = itemsDe(rangs[i], c.saison).filter((o) => restant(o.id, emis) > 0);
   while (!lot.length) {
     epuise.push(rangs[i]);
     if (--i < 0) throw new Error('the collection is fully minted');
-    lot = itemsDe(rangs[i]).filter((o) => restant(o.id, emis) > 0);
+    lot = itemsDe(rangs[i], c.saison).filter((o) => restant(o.id, emis) > 0);
   }
 
   /* Bits 60..119 : l'objet, uniformement parmi CEUX QUI RESTENT. Une tranche
@@ -497,25 +725,36 @@ function chances(cle) {
   if (!c) return null;
   return c.table.map(([rar, poids]) => ({
     rarete: rar, nom: rarete(rar).nom, couleur: rarete(rar).couleur,
-    poids, pourcent: (poids * 100) / TOTAL, objets: itemsDe(rar).length,
+    poids, pourcent: (poids * 100) / TOTAL, objets: itemsDe(rar, c.saison).length,
   }));
 }
 
-/** Le catalogue entier, pour la page. */
-function catalogue(emis) {
+/**
+ * Le catalogue D'UNE SAISON, pour la page.
+ *
+ * La page n'en recoit jamais deux a la fois : la planche, le classement et les
+ * coffres parlent tous de la saison qu'on regarde. Envoyer les soixante objets
+ * et laisser la page trier aurait donne deux endroits qui decident de la meme
+ * chose — et le jour ou ils ne sont plus d'accord, c'est l'affichage qui ment.
+ */
+function catalogue(emis, n) {
+  const s = saison(n) || SAISONS[0];
   return {
+    saison: s.n, saisonNom: s.nom, sujet: s.sujet,
     raretes: RARETES.map((r) => ({ cle: r.cle, nom: r.nom, couleur: r.couleur,
                                    plafond: r.plafond })),
-    familles: FAMILLES.map((f) => ({ cle: f.cle, nom: f.nom, couleur: f.couleur, genre: f.genre })),
-    items: ITEMS.map((o) => ({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+    familles: famillesDe(s.n).map((f) => ({ cle: f.cle, nom: f.nom, couleur: f.couleur, genre: f.genre })),
+    items: itemsDeSaison(s.n).map((o) => ({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
                                famille: o.famille, pouvoir: o.pouvoir,
                                plafond: rarete(o.rarete).plafond,
                                emis: (emis && emis[o.id]) || 0 })),
-    coffres: COFFRES.map((c) => ({ cle: c.cle, nom: c.nom, prix: c.prix, chances: chances(c.cle) })),
+    coffres: coffresDe(s.n).map((c) => ({ cle: c.cle, nom: c.nom, prix: c.prix,
+                                          image: c.image || c.cle, chances: chances(c.cle) })),
   };
 }
 
 module.exports = {
-  RARETES, FAMILLES, ITEMS, COFFRES, TOTAL, PRIX_LIGNE,
+  RARETES, FAMILLES, ITEMS, COFFRES, TOTAL, PRIX_LIGNE, SAISONS,
   item, coffre, itemsDe, rarete, famille, tire, restant, chances, catalogue,
+  saison, itemsDeSaison, famillesDe, coffresDe,
 };
