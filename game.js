@@ -51,6 +51,12 @@ class Game {
     /* Les paris sportifs. Ils vivent plus longtemps qu'une manche : poses
        aujourd'hui, regles apres le match. */
     this.paris = []; this.parisRegles = {}; this.parisSeq = 0;
+    /* LE REGISTRE DES EMIS. { id d'objet : nombre deja sorti }, pour toute la
+       plateforme. C'est lui qui fait exister les plafonds : sans un compteur
+       GLOBAL, chaque inventaire ne connait que sa propre quantite et personne
+       ne sait combien de Void Fruits existent. Il vit dans la tete de l'etat,
+       pas dans les fiches — il n'appartient a aucun joueur. */
+    this.boutiqueEmis = {};
     this.players = new Map(); // addr -> { balance, cumulativeAuthorized, clientSeed, nonce, name, dayNet, dayKey, dropsToday, winsToday, questClaimed, hasDeposited }
     this.telegramMap = new Map(); // telegramId (string) -> addr, so the Adsgram reward postback can find the account
     this.seenTx = new Set();  // dedupe deposits
@@ -234,6 +240,7 @@ class Game {
                    joueurs: m.joueurs.filter(Boolean) });
     }
     return { v: 1, serverSeed: this.serverSeed, sessionSecret: this.sessionSecret,
+             boutiqueEmis: this.boutiqueEmis || {},
              compta: this._comptaEcrite(), tunnel: this.tunnel || {},
              prixVerses: this.prixVerses || {},
              graines: this.graines || [], graineDepuis: this.graineDepuis || null,
@@ -305,6 +312,10 @@ class Game {
     /* Le secret fixe par l'environnement l'emporte : c'est ainsi qu'on revoque
        toutes les sessions d'un coup, en le changeant sur le serveur. */
     if (st.sessionSecret && !cfg.SESSION_SECRET) this.sessionSecret = st.sessionSecret;
+    /* Sans cette ligne, un redemarrage remettrait tous les compteurs a zero
+       et les plafonds ne borneraient plus rien — le pire des defauts
+       silencieux : la boutique continuerait de fonctionner. */
+    if (st.boutiqueEmis && typeof st.boutiqueEmis === 'object') this.boutiqueEmis = st.boutiqueEmis;
     if (st.serverSeed) { this.serverSeed = st.serverSeed; this.serverSeedHash = crypto.createHash('sha256').update(st.serverSeed).digest('hex'); }
     /* Les graines revelees survivent a tout : elles sont la SEULE facon pour
        un joueur de verifier une manche d'il y a six mois. Les perdre au
@@ -3720,7 +3731,8 @@ class Game {
   /** Le catalogue et l'inventaire du joueur, prets a peindre. */
   boutiqueEtat(addr) {
     const p = this._p(addr);
-    return { catalogue: boutique.catalogue(), inventaire: p.objets || {} };
+    return { catalogue: boutique.catalogue(this.boutiqueEmis || {}),
+             inventaire: p.objets || {} };
   }
 
   /**
@@ -3746,15 +3758,23 @@ class Game {
       .update(p.clientSeed + ':shop:' + nonce).digest('hex');
     p.nonce++;
 
-    const t = boutique.tire(h, cle);
+    this.boutiqueEmis = this.boutiqueEmis || {};
+    const t = boutique.tire(h, cle, this.boutiqueEmis);
     p.objets = p.objets || {};
     p.objets[t.item.id] = (p.objets[t.item.id] || 0) + 1;
+    /* Le compteur global monte ICI, au meme instant que l'inventaire. Les
+       deux ne peuvent pas diverger : il n'y a pas de chemin entre les deux
+       lignes ou une erreur puisse s'inserer. */
+    this.boutiqueEmis[t.item.id] = (this.boutiqueEmis[t.item.id] || 0) + 1;
 
     this.note('boutique', c.prix, addr);
 
     return { coffre: c.cle, coffreNom: c.nom, prix: c.prix,
              item: t.item, rarete: t.rarete,
              quantite: p.objets[t.item.id],
+             emis: this.boutiqueEmis[t.item.id],
+             plafond: boutique.rarete(t.item.rarete).plafond,
+             epuise: t.epuise,
              balance: this.balanceStr(addr),
              preuve: { sh: this.serverSeedHash, cs: p.clientSeed, n: nonce, r1: t.r1, r2: t.r2 } };
   }

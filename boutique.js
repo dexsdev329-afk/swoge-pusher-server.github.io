@@ -50,12 +50,47 @@
 /* Les raretes, de la plus commune a la plus rare. L'ordre compte : il sert a
    trier l'inventaire et a peindre la page. */
 const RARETES = [
-  { cle: 'commun',     nom: 'Common',    bloc: 1000, couleur: '#9AA7BF' },
-  { cle: 'rare',       nom: 'Rare',      bloc: 2000, couleur: '#5AC8FF' },
-  { cle: 'epique',     nom: 'Epic',      bloc: 3000, couleur: '#C07BFF' },
-  { cle: 'legendaire', nom: 'Legendary', bloc: 4000, couleur: '#FFC53D' },
-  { cle: 'mythique',   nom: 'Mythic',    bloc: 5000, couleur: '#FF4655' },
+  { cle: 'commun',     nom: 'Common',    bloc: 1000, couleur: '#9AA7BF', plafond: 25000 },
+  { cle: 'rare',       nom: 'Rare',      bloc: 2000, couleur: '#5AC8FF', plafond:  7500 },
+  { cle: 'epique',     nom: 'Epic',      bloc: 3000, couleur: '#C07BFF', plafond:  1500 },
+  { cle: 'legendaire', nom: 'Legendary', bloc: 4000, couleur: '#FFC53D', plafond:   250 },
+  { cle: 'mythique',   nom: 'Mythic',    bloc: 5000, couleur: '#FF4655', plafond:    50 },
 ];
+
+/*
+ * ---- LES PLAFONDS, ET POURQUOI ILS SONT ICI ET PAS DANS UNE NOTE « A FAIRE »
+ *
+ * « Mythique 0,01 % » dit a quel point c'est DUR A OBTENIR. Ca ne dit rien de
+ * COMBIEN IL EN EXISTERA. Sans plafond, les deux n'ont aucun rapport : les
+ * coffres etant illimites, le nombre de Void Fruits monte tant que les gens
+ * jouent, et un objet dont l'offre n'a pas de borne ne peut pas tenir sa
+ * valeur — l'offre grimpe, la demande est finie.
+ *
+ * Un plafond ne se pose pas apres coup. On ne peut pas reprendre des
+ * exemplaires deja distribues : le jour ou la boutique ouvre, la quantite
+ * maximale de chaque fruit est fixee pour toujours.
+ *
+ * L'edition entiere, six fruits par rarete :
+ *
+ *   commun      25 000 x 6 = 150 000
+ *   rare         7 500 x 6 =  45 000
+ *   epique       1 500 x 6 =   9 000
+ *   legendaire     250 x 6 =   1 500
+ *   mythique        50 x 6 =     300
+ *                             -------
+ *                             205 800 fruits, jamais un de plus
+ *
+ * Ce sont des nombres de DEPART : ils se changent sur ces cinq lignes tant
+ * que rien n'est ouvert. Ce qui ne se change pas, c'est le mecanisme.
+ *
+ * ---- ET CE QUE CE PLAFOND NE VAUT PAS ----
+ *
+ * Un compteur dans ce fichier est une PROMESSE. Personne d'exterieur ne peut
+ * l'auditer, et pour qui achete sur un marche secondaire, une rarete
+ * invérifiable ne vaut rien. Le meme plafond dans le `maxSupply` du contrat
+ * ERC-1155 est une GARANTIE, verifiable par n'importe qui, pour toujours.
+ * Les deux doivent porter les memes nombres, et c'est le contrat qui compte.
+ */
 
 /* Les six pouvoirs. Chacun a SA silhouette de fruit et SA couleur : c'est ce
    qui les distingue dans une rangee, bien avant qu'on lise un nom.
@@ -251,16 +286,42 @@ function famille(cle) { return FAMILLE.get(String(cle)) || null; }
 
 // --------------------------------------------------------------- le tirage
 
+/** Combien il reste d'exemplaires d'un objet, vu un registre d'emis. */
+function restant(id, emis) {
+  const o = item(id);
+  if (!o) return 0;
+  return Math.max(0, rarete(o.rarete).plafond - ((emis && emis[id]) || 0));
+}
+
 /**
  * L'objet que rend un coffre, pour une empreinte donnee.
  *
- * @param hex  l'empreinte HMAC-SHA256 en hexadecimal, telle que `game.js` la
- *   fabrique avec la graine du serveur, celle du joueur et le compteur.
- * @param cle  la clef du coffre.
- * @returns { item, rarete, r1, r2 } — les deux tirages sont rendus pour que
- *   le joueur puisse refaire le calcul lui-meme une fois la graine revelee.
+ * @param hex   l'empreinte HMAC-SHA256, telle que `game.js` la fabrique avec
+ *   la graine du serveur, celle du joueur et le compteur.
+ * @param cle   la clef du coffre.
+ * @param emis  { id: nombre deja sorti }. Facultatif : sans lui, rien n'est
+ *   epuise et le tirage se comporte comme avant les plafonds.
+ * @returns { item, rarete, r1, r2, epuise }
+ *
+ * ---- CE QUI SE PASSE QUAND UN FRUIT EST EPUISE ----
+ *
+ * La regle est ecrite ici, une seule fois, et elle est publiable telle quelle :
+ *
+ *   1. on retire dans la MEME rarete, parmi les fruits qui restent ;
+ *   2. si toute la rarete est epuisee, on descend d'un cran, puis encore ;
+ *   3. si tout est epuise, la collection est complete — `tire` jette plutot
+ *      que de rendre quelque chose qui n'existe plus.
+ *
+ * Un coffre paye rend TOUJOURS un objet tant qu'il en reste un seul. Le cas
+ * « rien » n'existe pas, et il ne doit pas exister : c'est le seul endroit ou
+ * l'epuisement pourrait couter de l'argent a un joueur sans qu'il l'ait vu
+ * venir.
+ *
+ * On DESCEND, jamais on ne monte. Un mythique epuise qui ferait pleuvoir des
+ * legendaires sur les coffres de bois rendrait fausse, dans le mauvais sens,
+ * la chance affichee sur le bouton — et c'est la maison qui paierait.
  */
-function tire(hex, cle) {
+function tire(hex, cle, emis) {
   const c = coffre(cle);
   if (!c) throw new Error('unknown chest');
   const h = String(hex);
@@ -270,13 +331,24 @@ function tire(hex, cle) {
   let reste = r1, quelle = c.table[c.table.length - 1][0];
   for (const [rar, poids] of c.table) { reste -= poids; if (reste < 0) { quelle = rar; break; } }
 
-  /* Bits 60..119 : l'objet, uniformement dans la rarete tiree. Une tranche
+  /* On descend jusqu'a une rarete qui a encore du stock. */
+  const rangs = RARETES.map((r) => r.cle);
+  const epuise = [];
+  let i = rangs.indexOf(quelle);
+  let lot = itemsDe(rangs[i]).filter((o) => restant(o.id, emis) > 0);
+  while (!lot.length) {
+    epuise.push(rangs[i]);
+    if (--i < 0) throw new Error('the collection is fully minted');
+    lot = itemsDe(rangs[i]).filter((o) => restant(o.id, emis) > 0);
+  }
+
+  /* Bits 60..119 : l'objet, uniformement parmi CEUX QUI RESTENT. Une tranche
      DIFFERENTE de la meme empreinte : reutiliser la premiere lierait l'objet
      a la rarete, et l'objet en tete de liste sortirait bien plus souvent. */
-  const lot = itemsDe(quelle);
   const r2 = Number(BigInt('0x' + h.slice(15, 30)) % BigInt(lot.length));
 
-  return { item: lot[r2], rarete: quelle, r1, r2 };
+  return { item: lot[r2], rarete: rangs[i], r1, r2,
+           epuise: epuise.length ? epuise : undefined };
 }
 
 /** La table d'un coffre, prete a afficher : rarete, chance en %, exemples. */
@@ -290,17 +362,20 @@ function chances(cle) {
 }
 
 /** Le catalogue entier, pour la page. */
-function catalogue() {
+function catalogue(emis) {
   return {
-    raretes: RARETES.map((r) => ({ cle: r.cle, nom: r.nom, couleur: r.couleur })),
+    raretes: RARETES.map((r) => ({ cle: r.cle, nom: r.nom, couleur: r.couleur,
+                                   plafond: r.plafond })),
     familles: FAMILLES.map((f) => ({ cle: f.cle, nom: f.nom, couleur: f.couleur, genre: f.genre })),
     items: ITEMS.map((o) => ({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
-                               famille: o.famille, pouvoir: o.pouvoir })),
+                               famille: o.famille, pouvoir: o.pouvoir,
+                               plafond: rarete(o.rarete).plafond,
+                               emis: (emis && emis[o.id]) || 0 })),
     coffres: COFFRES.map((c) => ({ cle: c.cle, nom: c.nom, prix: c.prix, chances: chances(c.cle) })),
   };
 }
 
 module.exports = {
   RARETES, FAMILLES, ITEMS, COFFRES, TOTAL,
-  item, coffre, itemsDe, rarete, famille, tire, chances, catalogue,
+  item, coffre, itemsDe, rarete, famille, tire, restant, chances, catalogue,
 };

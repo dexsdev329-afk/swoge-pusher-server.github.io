@@ -275,4 +275,134 @@ for (const c of B.COFFRES) {
   eq(mois.boutique, 20 * B.coffre('bois').prix, 'les vingt achats sont portes au compte du mois');
 }
 
+// ================================================ 7. LES PLAFONDS
+
+/*
+ * Sans plafond, « mythique 0,01 % » ne dit rien du nombre qui existera : les
+ * coffres sont illimites, donc l'offre monte tant que les gens jouent. Ces
+ * controles sont ce qui separe une rarete affichee d'une rarete reelle.
+ */
+{
+  /* Chaque rarete a un plafond, et il DECROIT avec la rarete. Une inversion
+     rendrait les mythiques plus nombreux que les communs sans qu'aucun
+     affichage ne bronche. */
+  for (const r of B.RARETES) ok(r.plafond > 0, `${r.nom} a un plafond (${r.plafond})`);
+  for (let i = 1; i < B.RARETES.length; i++)
+    ok(B.RARETES[i].plafond < B.RARETES[i - 1].plafond,
+       `${B.RARETES[i].nom} est plus rare que ${B.RARETES[i - 1].nom}`);
+
+  const edition = B.RARETES.reduce((a, r) => a + r.plafond * B.FAMILLES.length, 0);
+  console.log(`  edition complete : ${edition} fruits, ` +
+    B.RARETES.map((r) => `${r.nom} ${r.plafond}x${B.FAMILLES.length}`).join(', '));
+  ok(edition > 0, `l edition entiere fait ${edition} fruits`);
+
+  /* `restant` compte juste, et ne descend jamais sous zero meme si le
+     registre porte plus que le plafond — ce qui ne devrait pas arriver, mais
+     un nombre negatif se propagerait en silence dans l'affichage. */
+  const m = B.itemsDe('mythique')[0];
+  eq(B.restant(m.id, {}), B.rarete('mythique').plafond, 'un objet neuf est entier');
+  eq(B.restant(m.id, { [m.id]: 3 }), B.rarete('mythique').plafond - 3, 'trois sortis, trois de moins');
+  eq(B.restant(m.id, { [m.id]: 999999 }), 0, 'un registre incoherent rend zero, pas un negatif');
+}
+
+/* L'EPUISEMENT NE FAIT JAMAIS SORTIR UN OBJET QUI N'EXISTE PLUS. On epuise
+   toute une rarete et on tire des milliers de fois : elle ne doit plus
+   apparaitre, et le tirage doit descendre — jamais monter. */
+{
+  const emis = {};
+  for (const o of B.itemsDe('mythique')) emis[o.id] = B.rarete('mythique').plafond;
+  let mythiques = 0, montes = 0;
+  const rangs = B.RARETES.map((r) => r.cle);
+  for (let i = 0; i < 5000; i++) {
+    const h = crypto.createHash('sha256').update('epuise:' + i).digest('hex');
+    const t = B.tire(h, 'mythe', emis);
+    if (t.rarete === 'mythique') mythiques++;
+    if (t.epuise && rangs.indexOf(t.rarete) > rangs.indexOf(t.epuise[0])) montes++;
+  }
+  eq(mythiques, 0, 'une rarete epuisee ne sort plus jamais');
+  eq(montes, 0, 'un tirage epuise DESCEND, il ne monte jamais');
+}
+
+/* Et l'objet epuise dans une rarete NON epuisee : les autres le remplacent,
+   lui seul disparait. */
+{
+  const lot = B.itemsDe('legendaire');
+  const emis = { [lot[0].id]: B.rarete('legendaire').plafond };
+  let vu = 0, autres = 0;
+  for (let i = 0; i < 20000; i++) {
+    const t = B.tire(crypto.createHash('sha256').update('un:' + i).digest('hex'), 'mythe', emis);
+    if (t.item.id === lot[0].id) vu++;
+    else if (t.rarete === 'legendaire') autres++;
+  }
+  eq(vu, 0, `« ${lot[0].nom} » epuise ne sort plus`);
+  ok(autres > 100, `mais les ${lot.length - 1} autres legendaires sortent toujours (${autres})`);
+}
+
+/* Tout epuise : la collection est complete et le tirage JETTE. Il ne doit
+   surtout pas rendre un objet inexistant, ni `null` — un coffre debite qui
+   rend null serait de l'argent pris pour rien. */
+{
+  const emis = {};
+  for (const o of B.ITEMS) emis[o.id] = B.rarete(o.rarete).plafond;
+  assert.throws(() => B.tire(crypto.createHash('sha256').update('fin').digest('hex'), 'bois', emis),
+                /fully minted/); n++;
+}
+
+// =========================== 8. LE COMPTEUR GLOBAL SURVIT AU DISQUE
+
+/*
+ * C'est le defaut le plus dangereux du lot, parce qu'il est INVISIBLE : un
+ * registre perdu au redemarrage remet tous les compteurs a zero, les
+ * plafonds cessent de borner quoi que ce soit, et la boutique continue de
+ * fonctionner normalement. Personne ne s'en apercoit avant qu'il existe
+ * trois cents mythiques au lieu de cinquante.
+ */
+{
+  const g = new Game();
+  const p = g._p(A);
+  for (let i = 0; i < 40; i++) { p.balance = WEI(10000000); g.boutiqueAchat(A, 'or'); }
+  const total = Object.values(g.boutiqueEmis).reduce((a, b) => a + b, 0);
+  eq(total, 40, 'quarante coffres ouverts, quarante emissions comptees');
+
+  const g2 = new Game();
+  g2.hydrate(JSON.parse(JSON.stringify(g.serialize())));
+  eq(JSON.stringify(g2.boutiqueEmis), JSON.stringify(g.boutiqueEmis),
+     'le registre des emis survit a une sauvegarde et une relecture');
+
+  /* Le compteur global et la somme des inventaires disent la meme chose.
+     Ils montent sur deux lignes voisines ; s'ils divergeaient, l'un des deux
+     mentirait et rien ne dirait lequel. */
+  const inv = Object.values(g._p(A).objets).reduce((a, b) => a + b, 0);
+  eq(inv, total, 'l inventaire du joueur et le registre global concordent');
+}
+
+/* Le plafond tient POUR DE VRAI a travers le jeu, pas seulement dans le
+   module : on epuise un mythique par des achats reels et on verifie qu'il
+   n'en sort pas un de plus. */
+{
+  const g = new Game();
+  const p = g._p(A);
+  const cible = B.itemsDe('mythique')[0];
+  const max = B.rarete('mythique').plafond;
+  g.boutiqueEmis[cible.id] = max - 1;          // il en reste UN
+  let sortis = 0;
+  for (let i = 0; i < 3000; i++) {
+    p.balance = WEI(10000000);
+    if (g.boutiqueAchat(A, 'mythe').item.id === cible.id) sortis++;
+  }
+  eq(sortis, 1, `le dernier exemplaire sort une fois, et une seule (${max} au plafond)`);
+  eq(g.boutiqueEmis[cible.id], max, 'le registre s arrete pile au plafond');
+}
+
+/* La reponse d'achat porte de quoi afficher la rarete reelle. */
+{
+  const g = new Game();
+  const p = g._p(A);
+  p.balance = WEI(10000000);
+  const r = g.boutiqueAchat(A, 'bois');
+  eq(r.emis, 1, 'la reponse dit le numero d emission');
+  eq(r.plafond, B.rarete(r.item.rarete).plafond, 'et le plafond de sa rarete');
+  ok(r.emis <= r.plafond, `« ${r.item.nom} » n ${r.emis} sur ${r.plafond}`);
+}
+
 console.log(`boutique.test.js : ${n} verifications OK`);
