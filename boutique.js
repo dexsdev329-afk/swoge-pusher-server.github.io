@@ -249,29 +249,49 @@ const TOTAL = 10000;
  * un sur cinq cents. Le cout reel etait cinq fois plus bas que le chiffre
  * qu'on regardait.
  *
- * Cible retenue : que 99 joueurs sur 100 completent une ligne sous cent
- * millions. Mesure par simulation sur trois mille parcours, coffre dore :
+ * ---- LE PRIX NE PEUT PAS TOUT ----
  *
- *   1 sur 10 avant    5 M
- *   la moitie avant  17 M
- *   9 sur 10 avant   46 M
- *   99 sur 100 avant 93 M   <- la cible
+ * Il a d'abord ete cale pour que 99 joueurs sur 100 restent sous cent
+ * millions, ce qui donnait un dixieme centile a cinq millions. Trop bon
+ * marche a l'entree : la cible est devenue « que le joueur chanceux paie
+ * deja cinquante millions ».
  *
- * Le mot « maximum » merite une reserve : un tirage aleatoire n'a pas de
- * maximum absolu, et le centieme joueur peut depasser. Un plafond DUR
- * demanderait un compteur de pitie — « apres N coffres sans mythique, le
- * suivant en est un ». Ce n'est pas en place.
+ * LES DEUX NE PEUVENT PAS TENIR ENSEMBLE, et c'est arithmetique. Le prix est
+ * un simple multiplicateur : il deplace TOUS les centiles dans le meme
+ * rapport. L'ecart entre le chanceux et le malchanceux, lui, est fixe par la
+ * LOI du tirage. Mesure sur quatre mille parcours au coffre dore :
+ *
+ *   126 coffres au dixieme centile, 2 345 au quatre-vingt-dix-neuvieme,
+ *   soit un rapport de 18,6 — INDEPENDANT du prix.
+ *
+ * Un dixieme centile a 50 M impose donc un quatre-vingt-dix-neuvieme vers
+ * 930 M. C'est le choix qui a ete fait, en connaissance de cause.
+ *
+ * Etat actuel, coffre dore a 400 000 :
+ *
+ *   1 sur 10 avant     52 M
+ *   la moitie avant   166 M
+ *   9 sur 10 avant    461 M
+ *   99 sur 100 avant  927 M
+ *
+ * ---- ce qui pourrait couper la queue, et n'est pas en place ----
+ *
+ * Un COMPTEUR DE PITIE — « apres N coffres sans mythique, le suivant en est
+ * un » — tronque la loi au lieu de la deplacer, et donne un vrai maximum.
+ * Mesure a 2 500 coffres : pire cas exactement N x prix, sans rien changer
+ * au dixieme centile ni a la mediane. C'est le SEUL levier qui agit sur
+ * l'ecart ; le prix, non.
  *
  * Ces prix ne touchent PAS a la rarete : les plafonds en sont independants.
  * Il y aura toujours soixante mythiques et quatre collections mythiques
  * completes. On rend la collection accessible sans la rendre commune.
  */
 const COFFRES = [
-  { cle: 'bois', nom: 'Wooden Chest', prix: 4000,
+  { cle: 'bois', nom: 'Wooden Chest', prix: 40000,
     table: [['commun', 7600], ['rare', 2100], ['epique', 280], ['legendaire', 19], ['mythique', 1]] },
-  { cle: 'or', nom: 'Golden Chest', prix: 40000,
+  { cle: 'or', nom: 'Golden Chest', prix: 400000,
     table: [['commun', 4500], ['rare', 3800], ['epique', 1400], ['legendaire', 280], ['mythique', 20]] },
-  { cle: 'mythe', nom: 'Mythic Chest', prix: 400000,
+  { cle: 'mythe', nom: 'Mythic Chest', prix: 4000000,
     table: [['commun', 1000], ['rare', 3400], ['epique', 3900], ['legendaire', 1500], ['mythique', 200]] },
 ];
 
