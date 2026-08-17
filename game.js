@@ -3818,8 +3818,16 @@ class Game {
          et que le classement doit parler de la meme chose que la course. */
       let pleines = 0;
       for (const k of Object.keys(familles)) if (familles[k] === boutique.RARETES.length) pleines++;
+      /* CE QU'IL POSSEDE, en trente caracteres.
+         La page dessine la rangee de fruits en allumant ceux qu'il a : il lui
+         faut donc la liste, pas seulement le compte. Une chaine de 0 et de 1
+         dans l'ordre du catalogue tient en trente octets par joueur — envoyer
+         un tableau d'identifiants en couterait cinq fois plus pour dire la
+         meme chose, et il faudrait le croiser cote page. */
+      const avoir = boutique.ITEMS.map((o) => (inv[o.id] ? '1' : '0')).join('');
       l.push({ addr: a, nom: p.name || a.slice(0, 6), sortes, score: Math.round(score),
-               pleines, meilleure: meilleure >= 0 ? boutique.RARETES[meilleure].cle : null });
+               pleines, avoir,
+               meilleure: meilleure >= 0 ? boutique.RARETES[meilleure].cle : null });
     }
     l.sort((x, y) => (y.sortes - x.sortes) || (y.score - x.score) || (y.pleines - x.pleines));
     l.forEach((x, i) => { x.rang = i + 1; });
@@ -3829,11 +3837,12 @@ class Game {
     return {
       total: l.length,
       top: l.slice(0, n).map((x) => ({ rang: x.rang, nom: x.nom, sortes: x.sortes,
-                                       pleines: x.pleines, meilleure: x.meilleure })),
+                                       pleines: x.pleines, meilleure: x.meilleure,
+                                       avoir: x.avoir })),
       /* Sa ligne part TOUJOURS, meme s'il est deja dans le haut : la page
          choisit de la repeter ou non, le serveur ne devine pas. */
       moi: moi ? { rang: moi.rang, sortes: moi.sortes, pleines: moi.pleines,
-                   meilleure: moi.meilleure } : null,
+                   meilleure: moi.meilleure, avoir: moi.avoir } : null,
       sur: boutique.ITEMS.length,
     };
   }
