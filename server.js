@@ -311,8 +311,13 @@ function notifyCoffre(addr, g) {
    * Les trente-six dessins ont donc un double en JPEG, composes sur le fond
    * sombre du site — le JPEG n'a pas de transparence, et sans fond choisi le
    * vide devient noir pur et les fruits sombres disparaissent dedans. */
+  /* Le mot et l'embl\u00E8me suivent la SAISON. \u00AB MYTHIC FRUIT \u00BB sous le dessin
+     d'une hache aurait fait douter de tout le reste du message. */
+  const sai = boutique.saison(g.saison) || boutique.SAISONS[0];
+  const mot = String(sai.sujet || 'item').toUpperCase();
+  const embleme = sai.n === 1 ? '\uD83C\uDF4E' : '\u2694\uFE0F';
   tg.notifyPhoto(base ? base + '/img/shop/tg/' + g.item.cle + '.jpg' : null,
-    `\uD83C\uDF4E <b>${escHtml(rar.nom.toUpperCase())} FRUIT</b>\n` +
+    `${embleme} <b>${escHtml(rar.nom.toUpperCase())} ${mot}</b>\n` +
     `${escHtml(game._p(addr).name)} pulled <b>${escHtml(g.item.nom)}</b> ` +
     `from a ${escHtml(g.coffreNom)}\n\n` +
     `<b>#${g.emis} of ${g.plafond}</b>` +
@@ -2159,18 +2164,21 @@ wss.on('connection', (ws) => {
          apres l'ouverture, pour que la page n'ait pas a recoller l'inventaire
          elle-meme : elle recoit l'objet gagne ET l'etat qui en decoule. */
       if (m.type === 'shop') {
-        return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr),
+        return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr, m.season),
                           balance: game.balanceStr(ws.addr) });
       }
       if (m.type === 'shopOpen') {
         let gagne;
         try {
           gagne = game.boutiqueAchat(ws.addr, m.chest);
-        } catch (e) { return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr),
+        } catch (e) { return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr, m.season),
                                         balance: game.balanceStr(ws.addr), error: e.message }); }
         persistSoon();
         notifyCoffre(ws.addr, gagne);
-        return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr),
+        /* L'etat rendu est celui de la saison du COFFRE, pas de la saison
+           demandee : on vient d'ouvrir une caisse d'armes, la planche qui
+           s'affiche derriere doit etre celle des armes. */
+        return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr, gagne.saison),
                           balance: gagne.balance, gagne });
       }
       /* Le classement du mois : qui a fait tourner le plus de volume. */

@@ -3973,6 +3973,20 @@ class Game {
    */
   _boutiqueLigne(p, item, now) {
     if (!this.boutiqueLignes) this.boutiqueLignes = [];
+    /* ---- CETTE COURSE EST CELLE DE LA SAISON 1 ----
+     *
+     * Le controle est explicite plutot que deduit. Aujourd'hui il ne change
+     * rien : la saison 2 n'ouvre a personne avant que les trois lignes de la
+     * saison 1 soient tombees, et les trois gagnants sont deja bloques par la
+     * regle d'adresse — aucune ligne d'armes ne peut donc atteindre un prix.
+     * Mais « ca ne peut pas arriver » est une propriete de l'enchainement
+     * actuel, pas une regle ecrite, et la premiere personne qui touchera a la
+     * porte la cassera sans le voir.
+     *
+     * Quand la saison 2 aura sa propre course, elle aura sa propre liste et
+     * ses propres montants. Elle ne se greffe pas sur celle-ci : les trois
+     * places de la saison 1 appartiennent a la saison 1, definitivement. */
+    if (boutique.famille(item.famille).saison !== 1) return null;
     if (this.boutiqueLignes.length >= boutique.PRIX_LIGNE.length) return null;
     if (this.boutiqueLignes.some((g) => g.addr === p.addr)) return null;
 
@@ -4020,7 +4034,8 @@ class Game {
    * seulement le haut du classement et la ligne du demandeur, jamais la
    * liste entiere.
    */
-  boutiqueClassement(addr, limite) {
+  boutiqueClassement(addr, limite, saison) {
+    const objets = boutique.itemsDeSaison(saison || 1);
     const poids = {};
     for (const r of boutique.RARETES) poids[r.cle] = 1000 / r.plafond;
     const rangRarete = {};
@@ -4031,7 +4046,7 @@ class Game {
       const inv = p.objets;
       if (!inv) continue;
       let sortes = 0, score = 0, meilleure = -1, familles = {};
-      for (const o of boutique.ITEMS) {
+      for (const o of objets) {
         if (!inv[o.id]) continue;
         sortes++;
         score += poids[o.rarete] || 0;
@@ -4049,7 +4064,7 @@ class Game {
          dans l'ordre du catalogue tient en trente octets par joueur — envoyer
          un tableau d'identifiants en couterait cinq fois plus pour dire la
          meme chose, et il faudrait le croiser cote page. */
-      const avoir = boutique.ITEMS.map((o) => (inv[o.id] ? '1' : '0')).join('');
+      const avoir = objets.map((o) => (inv[o.id] ? '1' : '0')).join('');
       l.push({ addr: a, nom: p.name || a.slice(0, 6), sortes, score: Math.round(score),
                pleines, avoir,
                meilleure: meilleure >= 0 ? boutique.RARETES[meilleure].cle : null });
@@ -4068,8 +4083,70 @@ class Game {
          choisit de la repeter ou non, le serveur ne devine pas. */
       moi: moi ? { rang: moi.rang, sortes: moi.sortes, pleines: moi.pleines,
                    meilleure: moi.meilleure, avoir: moi.avoir } : null,
-      sur: boutique.ITEMS.length,
+      sur: objets.length,
     };
+  }
+
+  /**
+   * ================== LA PORTE DE LA SAISON SUIVANTE ==================
+   *
+   * Une saison s'ouvre a tout le monde quand la precedente a rendu ses TROIS
+   * lignes completes. Les trois gagnants, eux, y entrent des leur propre ligne
+   * finie — sans attendre les deux autres.
+   *
+   * ---- pourquoi la question se pose a l'ACHAT et nulle part ailleurs ----
+   *
+   * On pourrait cacher les coffres verrouilles dans la page et s'arreter la.
+   * Ce serait une porte peinte : la page envoie un message, et n'importe qui
+   * peut envoyer le meme message a la main. La seule porte qui ferme est celle
+   * que le serveur tient au moment ou il debite. La page, elle, sert a ne pas
+   * proposer un bouton qui refusera — c'est du confort, pas de la securite.
+   *
+   * ---- ce qui n'est PAS verifie ici ----
+   *
+   * On ne demande pas au joueur d'avoir fini quoi que ce soit. La saison 2 est
+   * ouverte a un joueur qui n'a jamais achete un seul fruit, du moment que la
+   * course de la saison 1 est terminee. C'est voulu : la porte recompense les
+   * trois premiers par de l'AVANCE, pas par de l'exclusivite. Une saison
+   * reservee a ceux qui ont fini la precedente fermerait le jeu a tout nouvel
+   * arrivant, ce qui est l'inverse du but.
+   */
+  boutiqueSaisonOuverte(addr, n) {
+    const s = Number(n) || 1;
+    if (s <= 1) return true;
+    const l = this.boutiqueLignes || [];
+    /* La course finie ouvre pour tous. */
+    if (l.length >= boutique.PRIX_LIGNE.length) return true;
+    /* Sinon, seuls ceux qui ont deja une ligne a leur nom. */
+    const a = String(addr || '').toLowerCase();
+    return l.some((g) => String(g.addr || '').toLowerCase() === a);
+  }
+
+  /**
+   * L'etat de chaque saison POUR CE JOUEUR : ouverte ou non, et pourquoi.
+   *
+   * Le « pourquoi » compte autant que le verrou. Une saison grisee sans
+   * explication se lit comme une panne ; la meme saison avec « 2 lignes sur 3
+   * — la saison 2 ouvre a la troisieme » se lit comme une raison de jouer, et
+   * c'est exactement ce qu'on veut qu'elle soit.
+   */
+  boutiqueSaisons(addr) {
+    const l = this.boutiqueLignes || [];
+    const total = boutique.PRIX_LIGNE.length;
+    const a = String(addr || '').toLowerCase();
+    const gagnant = l.find((g) => String(g.addr || '').toLowerCase() === a);
+    return boutique.SAISONS.map((s) => {
+      const ouverte = this.boutiqueSaisonOuverte(addr, s.n);
+      return {
+        n: s.n, nom: s.nom, sujet: s.sujet, ouverte,
+        /* `avance` distingue les deux facons d'etre entre : par la course
+           finie, ou par sa propre ligne avant les autres. La page en fait une
+           mention — « you are in early, rank #1 » — qui n'a de sens que la. */
+        avance: !!(ouverte && s.n > 1 && l.length < total && gagnant),
+        rang: gagnant ? gagnant.rang : null,
+        faites: l.length, sur: total,
+      };
+    });
   }
 
   /** Les places restantes et les gagnants, pour la page et l'annonce. */
@@ -4125,6 +4202,7 @@ class Game {
       const sorti = emis[o.id] || 0;
       return {
         id: o.id, nom: o.nom, cle: o.cle, rarete: o.rarete, famille: o.famille,
+        saison: o.saison,
         plafond, emis: sorti, reste: Math.max(0, plafond - sorti),
         /* La somme des inventaires DOIT egaler le registre. Si elle ne
            l'egale pas, l'un des deux ment et la page doit le montrer plutot
@@ -4140,21 +4218,42 @@ class Game {
                emis: l.reduce((a, o) => a + o.emis, 0),
                total: r.plafond * l.length };
     });
+    /* Le detail PAR SAISON. Sans lui, « 412 sur 19 200 » melangeait une
+       edition ouverte depuis des mois et une qui n'a pas commence, et le
+       chiffre qui compte — « ou en est la saison en cours » — n'etait affiche
+       nulle part. */
+    const parSaison = boutique.SAISONS.map((s) => {
+      const l = items.filter((o) => o.saison === s.n);
+      return { n: s.n, nom: s.nom,
+               emis: l.reduce((a, o) => a + o.emis, 0),
+               edition: l.reduce((a, o) => a + o.plafond, 0),
+               porteurs: new Set(l.flatMap((o) => o.detenteurs.map((d) => d.addr))).size };
+    });
     return {
-      items, parRarete,
-      familles: boutique.FAMILLES.map((f) => ({ cle: f.cle, nom: f.nom, couleur: f.couleur })),
-      edition: boutique.RARETES.reduce((a, r) => a + r.plafond * boutique.FAMILLES.length, 0),
+      items, parRarete, parSaison,
+      lignes: (this.boutiqueLignes || []).map((g) => ({ nom: g.nom, rang: g.rang,
+                                                        familleNom: g.familleNom, prix: g.prix, t: g.t })),
+      familles: boutique.FAMILLES.map((f) => ({ cle: f.cle, nom: f.nom, couleur: f.couleur, saison: f.saison })),
+      edition: boutique.ITEMS.reduce((a, o) => a + boutique.rarete(o.rarete).plafond, 0),
       sortis: Object.values(emis).reduce((a, b) => a + b, 0),
     };
   }
 
   /** Le catalogue et l'inventaire du joueur, prets a peindre. */
-  boutiqueEtat(addr) {
+  boutiqueEtat(addr, saison) {
     const p = this._p(addr);
-    return { catalogue: boutique.catalogue(this.boutiqueEmis || {}),
+    const saisons = this.boutiqueSaisons(addr);
+    /* Une saison demandee mais fermee retombe sur la saison 1 : la page recoit
+       alors une collection qu'elle a le droit de montrer, et la liste des
+       saisons lui dit pourquoi l'autre n'est pas la. Rendre une erreur aurait
+       laisse un panneau vide pour un cas qui n'est pas une faute. */
+    let n = Number(saison) || 1;
+    if (!this.boutiqueSaisonOuverte(addr, n)) n = 1;
+    return { catalogue: boutique.catalogue(this.boutiqueEmis || {}, n),
              inventaire: p.objets || {},
+             saisons, saison: n,
              course: this.boutiqueCourse(),
-             classement: this.boutiqueClassement(addr, 10) };
+             classement: this.boutiqueClassement(addr, 10, n) };
   }
 
   /**
@@ -4164,6 +4263,14 @@ class Game {
   boutiqueAchat(addr, cle) {
     const c = boutique.coffre(cle);
     if (!c) throw new Error('unknown chest');
+    /* LA PORTE, AVANT LE DEBIT. Elle est ici et pas dans la page : la page ne
+       peut que cacher un bouton, et un message se refabrique a la main. */
+    if (!this.boutiqueSaisonOuverte(addr, c.saison)) {
+      const l = this.boutiqueLignes || [];
+      throw new Error('season ' + c.saison + ' opens when the season ' + (c.saison - 1) +
+                      ' race ends — ' + l.length + ' of ' + boutique.PRIX_LIGNE.length +
+                      ' lines completed');
+    }
     const p = this._p(addr);
     const prix = WEI(c.prix);
     if (p.balance.lt(prix)) throw new Error('not enough $SWOGE');
@@ -4199,6 +4306,7 @@ class Game {
     const ligne = this._boutiqueLigne(p, t.item, Date.now());
 
     return { coffre: c.cle, coffreNom: c.nom, prix: c.prix,
+             coffreImage: c.image || c.cle, saison: c.saison,
              ligne,
              item: t.item, rarete: t.rarete,
              quantite: p.objets[t.item.id],

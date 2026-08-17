@@ -71,7 +71,8 @@ const jetons = (p) => Number(ethers.utils.formatUnits(p.balance, 18));
     const somme = c.table.reduce((a, [, p]) => a + p, 0);
     eq(somme, B.TOTAL, `la table du coffre « ${c.nom} » somme a ${B.TOTAL}`);
     for (const [rar] of c.table)
-      ok(B.itemsDe(rar).length > 0, `« ${c.nom} » promet du ${rar}, et il en existe`);
+      ok(B.itemsDe(rar, c.saison).length > 0,
+         `« ${c.nom} » promet du ${rar}, et il en existe en saison ${c.saison}`);
     ok(c.prix > 0, `« ${c.nom} » a un prix`);
     n -= 5 + 1;
   }
@@ -93,13 +94,21 @@ const jetons = (p) => Number(ethers.utils.formatUnits(p.balance, 18));
     }
   }
   n += 1;
-  ok(true, 'les trente cases de la planche sont occupees, une fois chacune');
+  ok(true, 'les cases de chaque planche sont occupees, une fois chacune');
+  /* Et chaque SAISON porte sa propre grille pleine. Le controle global
+     ci-dessus se laisserait tromper par une saison a sept familles et une
+     autre a cinq : les totaux se compensent. */
+  for (const s of B.SAISONS) {
+    eq(B.famillesDe(s.n).length, 6, `saison ${s.n} : six familles`);
+    eq(B.itemsDeSaison(s.n).length, 30, `saison ${s.n} : trente objets`);
+    ok(B.coffresDe(s.n).length > 0, `saison ${s.n} : au moins un coffre`);
+  }
 
   /* Chaque famille garde SA silhouette a travers ses cinq etats : c'est ce qui
      fait qu'on la reconnait dans la rangee. On ne peut pas mesurer un dessin,
      mais on peut verifier que le catalogue expose bien de quoi grouper. */
-  const cat = B.catalogue();
-  eq(cat.familles.length, B.FAMILLES.length, 'le catalogue expose les familles');
+  const cat = B.catalogue({}, 1);
+  eq(cat.familles.length, 6, 'le catalogue d une saison expose ses six familles');
   ok(cat.items.every((o) => !!o.famille), 'et chaque objet dit a quelle famille il appartient');
 
   /* Un coffre plus cher doit etre MEILLEUR. Sans ce controle, une inversion de
@@ -108,7 +117,7 @@ const jetons = (p) => Number(ethers.utils.formatUnits(p.balance, 18));
   const rangs = B.RARETES.map((r) => r.cle);
   const esperance = (c) => B.coffre(c).table
     .reduce((a, [rar, p]) => a + p * rangs.indexOf(rar), 0) / B.TOTAL;
-  const tries = B.COFFRES.slice().sort((a, b) => a.prix - b.prix);
+  const tries = B.coffresDe(1).slice().sort((a, b) => a.prix - b.prix);
   for (let i = 1; i < tries.length; i++)
     ok(esperance(tries[i].cle) > esperance(tries[i - 1].cle),
        `« ${tries[i].nom} » est meilleur que « ${tries[i - 1].nom} »`);
@@ -160,7 +169,7 @@ for (const c of B.COFFRES) {
 {
   const { parObjet } = serie('bois', TOURS);
   for (const rar of ['commun', 'rare']) {
-    const lot = B.itemsDe(rar);
+    const lot = B.itemsDe(rar, 1);
     const total = lot.reduce((a, o) => a + (parObjet[o.id] || 0), 0);
     const attendu = total / lot.length;
     let pire = 0, quel = null;
@@ -291,15 +300,20 @@ for (const c of B.COFFRES) {
     ok(B.RARETES[i].plafond < B.RARETES[i - 1].plafond,
        `${B.RARETES[i].nom} est plus rare que ${B.RARETES[i - 1].nom}`);
 
-  const edition = B.RARETES.reduce((a, r) => a + r.plafond * B.FAMILLES.length, 0);
-  console.log(`  edition complete : ${edition} fruits, ` +
-    B.RARETES.map((r) => `${r.nom} ${r.plafond}x${B.FAMILLES.length}`).join(', '));
-  ok(edition > 0, `l edition entiere fait ${edition} fruits`);
+  /* PAR SAISON. Une edition qui additionne les deux collections ne dit plus
+     rien : c'est le chiffre d'UNE saison qu'on annonce aux joueurs. */
+  for (const sa of B.SAISONS) {
+    const fams = B.famillesDe(sa.n).length;
+    const edition = B.RARETES.reduce((a, r) => a + r.plafond * fams, 0);
+    console.log(`  saison ${sa.n} : ${edition} pieces, ` +
+      B.RARETES.map((r) => `${r.nom} ${r.plafond}x${fams}`).join(', '));
+    eq(edition, 9600, `l edition de la saison ${sa.n} fait 9 600 pieces`);
+  }
 
   /* `restant` compte juste, et ne descend jamais sous zero meme si le
      registre porte plus que le plafond — ce qui ne devrait pas arriver, mais
      un nombre negatif se propagerait en silence dans l'affichage. */
-  const m = B.itemsDe('mythique')[0];
+  const m = B.itemsDe('mythique', 1)[0];
   eq(B.restant(m.id, {}), B.rarete('mythique').plafond, 'un objet neuf est entier');
   eq(B.restant(m.id, { [m.id]: 3 }), B.rarete('mythique').plafond - 3, 'trois sortis, trois de moins');
   eq(B.restant(m.id, { [m.id]: 999999 }), 0, 'un registre incoherent rend zero, pas un negatif');
@@ -310,7 +324,7 @@ for (const c of B.COFFRES) {
    apparaitre, et le tirage doit descendre — jamais monter. */
 {
   const emis = {};
-  for (const o of B.itemsDe('mythique')) emis[o.id] = B.rarete('mythique').plafond;
+  for (const o of B.itemsDe('mythique', 1)) emis[o.id] = B.rarete('mythique').plafond;
   let mythiques = 0, montes = 0;
   const rangs = B.RARETES.map((r) => r.cle);
   for (let i = 0; i < 5000; i++) {
@@ -326,7 +340,7 @@ for (const c of B.COFFRES) {
 /* Et l'objet epuise dans une rarete NON epuisee : les autres le remplacent,
    lui seul disparait. */
 {
-  const lot = B.itemsDe('legendaire');
+  const lot = B.itemsDe('legendaire', 1);
   const emis = { [lot[0].id]: B.rarete('legendaire').plafond };
   let vu = 0, autres = 0;
   for (let i = 0; i < 20000; i++) {
@@ -395,10 +409,10 @@ for (const c of B.COFFRES) {
   const g = new Game();
   g.serverSeed = 'graine-fixe-pour-ce-test';
   const p = g._p(A);
-  const cible = B.itemsDe('mythique')[0];
+  const cible = B.itemsDe('mythique', 1)[0];
   const max = B.rarete('mythique').plafond;
   /* Tous les autres mythiques epuises ; la cible a un seul exemplaire. */
-  for (const o of B.itemsDe('mythique')) g.boutiqueEmis[o.id] = max;
+  for (const o of B.itemsDe('mythique', 1)) g.boutiqueEmis[o.id] = max;
   g.boutiqueEmis[cible.id] = max - 1;
   let sortis = 0;
   for (let i = 0; i < 2000; i++) {
@@ -529,7 +543,7 @@ for (const c of B.COFFRES) {
   const p = g._p(A); p.balance = WEI(100000000000);
   const chaos = B.ITEMS.filter((o) => o.famille === 'chaos');
   for (const o of chaos.slice(0, 4)) p.objets[o.id] = 1;
-  for (const o of B.itemsDe('mythique'))
+  for (const o of B.itemsDe('mythique', 1))
     if (o.id !== chaos[4].id) g.boutiqueEmis[o.id] = B.rarete('mythique').plafond;
 
   let r = null;
@@ -541,6 +555,159 @@ for (const c of B.COFFRES) {
   eq(r.item.id, chaos[4].id, 'et c est bien le mythique manquant qui l a fermee');
   eq(r.ligne.prix, B.PRIX_LIGNE[0], 'avec le premier prix');
   eq(r.ligne.familleNom, 'Chaos', 'et le nom de la famille, pour l annonce');
+}
+
+/*
+ * ==================== 7. LA PORTE DE LA SAISON 2 ====================
+ *
+ * La regle : la saison 2 s'ouvre a tous quand la saison 1 a rendu ses trois
+ * lignes ; les gagnants y entrent des leur propre ligne finie.
+ *
+ * ---- pourquoi ces controles-la et pas un seul ----
+ *
+ * Une porte a deux facons de se tromper, et elles ne coutent pas la meme
+ * chose. Trop fermee, un gagnant reste dehors : il rale, on corrige. Trop
+ * ouverte, tout le monde entre avant l'heure — et une edition entamee ne se
+ * referme pas. On verifie donc les deux sens a chaque etape, et on verifie
+ * surtout ce qui ne doit PAS arriver.
+ *
+ * Les lignes sont posees a la main dans `boutiqueLignes` : les faire gagner
+ * pour de vrai demanderait des milliers d'achats par joueur et ne testerait
+ * pas la porte, mais le tirage — qui a deja sa section.
+ */
+{
+  const C = '0x' + '22'.repeat(20);
+  const D = '0x' + '33'.repeat(20);
+  const E = '0x' + '44'.repeat(20);
+  const ligne = (addr, rang) => ({ addr: String(addr).toLowerCase(), nom: 'j' + rang,
+                                   famille: 'chaos', familleNom: 'Chaos',
+                                   rang, prix: B.PRIX_LIGNE[rang - 1], t: 1 });
+  const achete = (g, addr, coffre) => {
+    g._p(addr).balance = WEI(100000000);
+    try { g.boutiqueAchat(addr, coffre); return null; } catch (e) { return e.message; }
+  };
+
+  // ---- rien de gagne : la saison 2 est fermee pour tout le monde
+  {
+    const g = new Game();
+    eq(g.boutiqueSaisonOuverte(C, 1), true, 'la saison 1 est ouverte sans condition');
+    eq(g.boutiqueSaisonOuverte(C, 2), false, 'la saison 2 est fermee tant que rien n est gagne');
+    ok(/season 2 opens/.test(achete(g, C, 'armes_bois') || ''),
+       'et le serveur REFUSE la caisse d armes, il ne se contente pas de la cacher');
+    eq(achete(g, C, 'bois'), null, 'pendant que le coffre de la saison 1 s ouvre normalement');
+    /* Le refus doit arriver AVANT le debit. Un joueur a qui l'on prend
+       quatre mille jetons pour lui rendre une erreur ne le remarque pas tout
+       de suite, et c'est le pire moment pour s'en apercevoir. */
+    const p = g._p(D); p.balance = WEI(100000);
+    try { g.boutiqueAchat(D, 'armes_bois'); } catch (e) {}
+    eq(p.balance.toString(), WEI(100000).toString(), 'et RIEN n a ete debite au passage');
+  }
+
+  // ---- une seule ligne : le gagnant entre, personne d'autre
+  {
+    const g = new Game();
+    g.boutiqueLignes = [ligne(C, 1)];
+    eq(g.boutiqueSaisonOuverte(C, 2), true, 'le premier gagnant entre des sa ligne finie');
+    eq(g.boutiqueSaisonOuverte(D, 2), false, 'les autres attendent encore');
+    eq(achete(g, C, 'armes_bois'), null, 'le gagnant ouvre bien une caisse d armes');
+    ok(!!achete(g, D, 'armes_bois'), 'et le voisin se fait refuser la meme caisse');
+    /* La casse de l'adresse ne doit pas decider de l'acces. */
+    eq(g.boutiqueSaisonOuverte(C.toUpperCase(), 2), true,
+       'l adresse en majuscules ouvre la meme porte');
+  }
+
+  // ---- deux lignes : toujours seulement les deux gagnants
+  {
+    const g = new Game();
+    g.boutiqueLignes = [ligne(C, 1), ligne(D, 2)];
+    eq(g.boutiqueSaisonOuverte(C, 2), true, 'le premier est dedans');
+    eq(g.boutiqueSaisonOuverte(D, 2), true, 'le deuxieme aussi');
+    eq(g.boutiqueSaisonOuverte(E, 2), false, 'le reste du monde attend la troisieme ligne');
+  }
+
+  // ---- trois lignes : la saison s'ouvre a tous, gagnants ou non
+  {
+    const g = new Game();
+    g.boutiqueLignes = [ligne(C, 1), ligne(D, 2), ligne(E, 3)];
+    const inconnu = '0x' + '55'.repeat(20);
+    eq(g.boutiqueSaisonOuverte(inconnu, 2), true,
+       'la course finie ouvre la saison 2 a un joueur qui n a jamais rien achete');
+    eq(achete(g, inconnu, 'armes_mythe'), null, 'et il peut ouvrir tout de suite');
+  }
+
+  // ---- ce que la page recoit, et pourquoi
+  {
+    const g = new Game();
+    let s = g.boutiqueSaisons(C);
+    eq(s.length, 2, 'la page recoit les deux saisons, pas seulement celles qu on peut ouvrir');
+    eq(s[1].ouverte, false, 'la deuxieme est annoncee fermee');
+    eq(s[1].faites + '/' + s[1].sur, '0/3', 'avec le compte qui dit ce qu il manque');
+
+    g.boutiqueLignes = [ligne(C, 1)];
+    s = g.boutiqueSaisons(C);
+    eq(s[1].ouverte, true, 'le gagnant la voit ouverte');
+    eq(s[1].avance, true, 'et sait qu il y est EN AVANCE');
+    eq(s[1].rang, 1, 'avec son rang, pour le dire');
+    eq(g.boutiqueSaisons(D)[1].avance, false, 'le voisin n a aucune avance a afficher');
+
+    g.boutiqueLignes = [ligne(C, 1), ligne(D, 2), ligne(E, 3)];
+    eq(g.boutiqueSaisons(C)[1].avance, false,
+       'et l avance disparait quand la course est finie : plus personne n est en avance');
+  }
+
+  // ---- une saison fermee ne fuit pas par l'etat
+  {
+    const g = new Game();
+    const e = g.boutiqueEtat(C, 2);
+    eq(e.saison, 1, 'demander une saison fermee retombe sur la saison 1');
+    ok(e.catalogue.items.every((o) => o.saison === undefined || o.saison === 1),
+       'et le catalogue rendu ne contient aucun objet de la saison fermee');
+    eq(e.catalogue.items.length, 30, 'trente objets, pas soixante');
+    g.boutiqueLignes = [ligne(C, 1)];
+    eq(g.boutiqueEtat(C, 2).saison, 2, 'le gagnant, lui, recoit bien la saison 2');
+    eq(g.boutiqueEtat(D, 2).saison, 1, 'et le voisin retombe sur la premiere');
+  }
+
+  // ---- le classement compte PAR saison
+  {
+    const g = new Game();
+    const p = g._p(C);
+    for (const o of B.itemsDeSaison(1).slice(0, 7)) p.objets[o.id] = 1;
+    const c1 = g.boutiqueClassement(C, 10, 1);
+    const c2 = g.boutiqueClassement(C, 10, 2);
+    eq(c1.sur, 30, 'le classement de la saison 1 porte sur trente objets');
+    eq(c1.moi.sortes, 7, 'et compte les sept fruits');
+    eq(c2.total, 0, 'celui de la saison 2 ne connait encore personne');
+    eq(c2.sur, 30, 'mais sait deja sur combien il porte');
+    eq(c1.moi.avoir.length, 30, 'la rangee allumee fait trente cases, pas soixante');
+  }
+
+  // ---- LA COURSE APPARTIENT A LA SAISON 1
+  {
+    const g = new Game();
+    const p = g._p(C); p.balance = WEI(100000000000);
+    /* On lui donne quatre armes Blade sur cinq, puis on epuise les autres
+       mythiques d armes pour forcer la cinquieme a sortir. */
+    const lame = B.ITEMS.filter((o) => o.famille === 'lame');
+    for (const o of lame.slice(0, 4)) p.objets[o.id] = 1;
+    for (const o of B.itemsDe('mythique', 2))
+      if (o.id !== lame[4].id) g.boutiqueEmis[o.id] = B.rarete('mythique').plafond;
+    g.boutiqueLignes = [ligne(D, 1)];        // une place encore libre, et C n a rien gagne
+    /* C n'a pas acces... on l'ouvre en le faisant gagnant d'une ligne de la
+       saison 1 sur une AUTRE adresse ? Non : on le rend gagnant lui-meme,
+       c'est le seul chemin par lequel il pourrait toucher une deuxieme fois. */
+    g.boutiqueLignes = [ligne(C, 1)];
+    let r = null, ligneRendue = null;
+    for (let i = 0; i < 3000 && !ligneRendue; i++) {
+      p.balance = WEI(100000000000);
+      r = g.boutiqueAchat(C, 'armes_mythe');
+      if (r.ligne) ligneRendue = r.ligne;
+      if (r.item.id === lame[4].id) break;
+    }
+    eq(ligneRendue, null,
+       'completer une famille d ARMES ne prend aucune des trois places de la saison 1');
+    eq(g.boutiqueLignes.length, 1, 'et la liste des gagnants n a pas bouge');
+  }
 }
 
 console.log(`boutique.test.js : ${n} verifications OK`);
