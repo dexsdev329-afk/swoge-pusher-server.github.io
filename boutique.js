@@ -50,11 +50,11 @@
 /* Les raretes, de la plus commune a la plus rare. L'ordre compte : il sert a
    trier l'inventaire et a peindre la page. */
 const RARETES = [
-  { cle: 'commun',     nom: 'Common',    bloc: 1000, couleur: '#9AA7BF', plafond: 25000 },
-  { cle: 'rare',       nom: 'Rare',      bloc: 2000, couleur: '#5AC8FF', plafond:  7500 },
-  { cle: 'epique',     nom: 'Epic',      bloc: 3000, couleur: '#C07BFF', plafond:  1500 },
-  { cle: 'legendaire', nom: 'Legendary', bloc: 4000, couleur: '#FFC53D', plafond:   250 },
-  { cle: 'mythique',   nom: 'Mythic',    bloc: 5000, couleur: '#FF4655', plafond:    50 },
+  { cle: 'commun',     nom: 'Common',    bloc: 1000, couleur: '#9AA7BF', plafond: 1000 },
+  { cle: 'rare',       nom: 'Rare',      bloc: 2000, couleur: '#5AC8FF', plafond:  400 },
+  { cle: 'epique',     nom: 'Epic',      bloc: 3000, couleur: '#C07BFF', plafond:  150 },
+  { cle: 'legendaire', nom: 'Legendary', bloc: 4000, couleur: '#FFC53D', plafond:   40 },
+  { cle: 'mythique',   nom: 'Mythic',    bloc: 5000, couleur: '#FF4655', plafond:   10 },
 ];
 
 /*
@@ -72,13 +72,34 @@ const RARETES = [
  *
  * L'edition entiere, six fruits par rarete :
  *
- *   commun      25 000 x 6 = 150 000
- *   rare         7 500 x 6 =  45 000
- *   epique       1 500 x 6 =   9 000
- *   legendaire     250 x 6 =   1 500
- *   mythique        50 x 6 =     300
- *                             -------
- *                             205 800 fruits, jamais un de plus
+ *   commun       1 000 x 6 = 6 000
+ *   rare           400 x 6 = 2 400
+ *   epique         150 x 6 =   900
+ *   legendaire      40 x 6 =   240
+ *   mythique        10 x 6 =    60
+ *                             -----
+ *                             9 600 fruits, jamais un de plus
+ *
+ * ---- ce que ces nombres decident, et qu'on ne voit pas en les lisant ----
+ *
+ * Reunir les six fruits d'une rarete demande en moyenne 6 x H6 = 14,7
+ * exemplaires de cette rarete — c'est le probleme du collectionneur de
+ * vignettes, et le chiffre ne depend NI du coffre NI du prix. Le plafond
+ * decide donc directement combien de collections completes existeront :
+ *
+ *   commun      6 000 / 14,7 =  408 colonnes completes possibles
+ *   rare        2 400 / 14,7 =  163
+ *   epique        900 / 14,7 =   61
+ *   legendaire    240 / 14,7 =   16
+ *   mythique       60 / 14,7 =    4
+ *
+ * QUATRE joueurs, au total, pourront un jour aligner les six mythiques. Ce
+ * n'est pas un effet de bord du plafond, c'est ce que le plafond VEUT dire —
+ * et c'est la seule facon de le comprendre avant de le figer.
+ *
+ * L'autre consequence : le coffre de bois epuise les communs vers 7 900
+ * ouvertures. La boutique n'est pas un robinet, c'est une edition qui se
+ * ferme.
  *
  * Ce sont des nombres de DEPART : ils se changent sur ces cinq lignes tant
  * que rien n'est ouvert. Ce qui ne se change pas, c'est le mecanisme.

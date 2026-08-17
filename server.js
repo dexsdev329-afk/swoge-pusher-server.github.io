@@ -33,6 +33,7 @@ const paris = require('./paris');
    que si ODDS_API_KEY est posee — sans elle il le dit au demarrage et ne
    fait rien, le calendrier reste celui du depot. */
 const parisImport = require('./paris_import');
+const boutique = require('./boutique');
 let calendrierAuto = null;          // les minuteries de l alimentation
 const journal = require('./journal');
 const avatars = require('./avatars');
@@ -205,6 +206,60 @@ function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
             `${escHtml(game._p(addr).name)} won <b>+${fmtAmt(String(net))} $SWOGE</b> 🐕\n` +
             `Stake ${fmtAmt(String(staked))} · returned ${fmtAmt(String(payout))}` +
             (note ? ` · ${note}` : '') + lienJeu(jeu));
+}
+
+/* ---------------------------------------------- un coffre vient de s'ouvrir
+ *
+ * Les autres annonces racontent un gain en jetons. Celle-ci raconte une
+ * TROUVAILLE, et ce qui la rend interessante n'est pas ce que le joueur a
+ * gagne : c'est ce qu'il lui RESTE A TROUVER.
+ *
+ * Deux chiffres, donc, et pas un de plus :
+ *
+ *   • le numero d'emission — « #7 of 10 ». Sur un mythique, cette ligne dit
+ *     a tout le canal qu'il n'en reste que trois au monde. C'est la seule
+ *     information qui fait ouvrir un coffre a quelqu'un d'autre ;
+ *   • l'avancee du joueur dans SA famille — « Chaos 4/5 ». Un compteur qui
+ *     approche de cinq se lit comme une histoire en cours.
+ *
+ * ---- ce qui est ANNONCE, et ce qui ne l'est pas ----
+ *
+ * EPIQUE ET AU-DESSUS, pas en dessous. Le seuil est une rarete et pas un
+ * montant : c'est le seul critere qui ait un sens ici, puisqu'un coffre ne
+ * rend jamais de jetons.
+ *
+ * Le chiffre a ete mesure avant d'etre choisi. A « rare et au-dessus », un
+ * coffre de bois sur QUATRE partait dans le canal — cent ouvertures d'un seul
+ * joueur auraient fait vingt-quatre messages, et le mythique se serait perdu
+ * au milieu. A « epique et au-dessus » : 3 % du coffre de bois, 17 % du
+ * dore, 56 % du mythique. Le dernier est haut, mais un coffre a deux
+ * millions et demi ne s'ouvre pas en rafale.
+ */
+const COFFRE_ANNONCE = ['epique', 'legendaire', 'mythique'];
+function notifyCoffre(addr, g) {
+  if (!g || !g.item || COFFRE_ANNONCE.indexOf(g.rarete) < 0) return;
+  const cat = boutique;
+  const fam = cat.famille(g.item.famille);
+  const rar = cat.rarete(g.rarete);
+  const inv = game._p(addr).objets || {};
+  /* Combien de fruits de cette famille le joueur possede, sur cinq. */
+  const eus = cat.ITEMS.filter((o) => o.famille === g.item.famille && inv[o.id]).length;
+
+  const reste = g.plafond - g.emis;
+  /* L'adresse du dessin se DEDUIT du site, elle ne s'ecrit pas ici : posee en
+     dur, elle aurait continue de pointer sur la production le jour ou l'on
+     essaie autre chose, et l'annonce aurait montre un fruit qui n'est pas
+     celui du serveur qui parle. */
+  const base = siteBase();
+  tg.notifyPhoto(base ? base + '/img/shop/' + g.item.cle + '.webp' : null,
+    `\uD83C\uDF4E <b>${escHtml(rar.nom.toUpperCase())} FRUIT</b>\n` +
+    `${escHtml(game._p(addr).name)} pulled <b>${escHtml(g.item.nom)}</b> ` +
+    `from a ${escHtml(g.coffreNom)}\n\n` +
+    `<b>#${g.emis} of ${g.plafond}</b>` +
+    (reste > 0 ? ` \u00b7 only ${reste} left` : ' \u00b7 <b>the last one</b>') + `\n` +
+    `${escHtml(fam.nom)} collection: <b>${eus}/5</b>` +
+    (eus === 5 ? ' \u2705 complete' : '') +
+    (base ? `\n<a href="${base}/games.html">Open a chest \u2197</a>` : ''));
 }
 
 /* ------------------------------------------------ un pari vient d'etre pose
@@ -1991,6 +2046,7 @@ wss.on('connection', (ws) => {
         } catch (e) { return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr),
                                         balance: game.balanceStr(ws.addr), error: e.message }); }
         persistSoon();
+        notifyCoffre(ws.addr, gagne);
         return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr),
                           balance: gagne.balance, gagne });
       }

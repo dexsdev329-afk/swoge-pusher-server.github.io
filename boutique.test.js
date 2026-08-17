@@ -376,22 +376,47 @@ for (const c of B.COFFRES) {
   eq(inv, total, 'l inventaire du joueur et le registre global concordent');
 }
 
-/* Le plafond tient POUR DE VRAI a travers le jeu, pas seulement dans le
-   module : on epuise un mythique par des achats reels et on verifie qu'il
-   n'en sort pas un de plus. */
+/*
+ * Le plafond tient POUR DE VRAI a travers le jeu, pas seulement dans le
+ * module : on laisse UN seul mythique en stock et on achete jusqu'a le voir
+ * sortir, puis on continue.
+ *
+ * ---- pourquoi la graine est fixee ----
+ *
+ * `new Game()` tire une graine de serveur au hasard, donc la suite des achats
+ * change a chaque execution. Avec l'ancien plafond de cinquante, trois mille
+ * coffres mythiques n'entamaient qu'une partie du stock et le test passait
+ * toujours ; a dix, ils consomment TOUT — et le resultat se mettait a
+ * dependre du hasard du jour. Un test qui passe une fois sur deux ne prouve
+ * rien, et pire, il apprend a ignorer un rouge. On fixe donc la graine : le
+ * plafond, lui, doit tenir quelle qu'elle soit.
+ */
 {
   const g = new Game();
+  g.serverSeed = 'graine-fixe-pour-ce-test';
   const p = g._p(A);
   const cible = B.itemsDe('mythique')[0];
   const max = B.rarete('mythique').plafond;
-  g.boutiqueEmis[cible.id] = max - 1;          // il en reste UN
+  /* Tous les autres mythiques epuises ; la cible a un seul exemplaire. */
+  for (const o of B.itemsDe('mythique')) g.boutiqueEmis[o.id] = max;
+  g.boutiqueEmis[cible.id] = max - 1;
   let sortis = 0;
-  for (let i = 0; i < 3000; i++) {
+  for (let i = 0; i < 2000; i++) {
     p.balance = WEI(10000000);
     if (g.boutiqueAchat(A, 'mythe').item.id === cible.id) sortis++;
   }
   eq(sortis, 1, `le dernier exemplaire sort une fois, et une seule (${max} au plafond)`);
   eq(g.boutiqueEmis[cible.id], max, 'le registre s arrete pile au plafond');
+  ok(B.restant(cible.id, g.boutiqueEmis) === 0, 'et il n en reste zero');
+
+  /* Deux mille achats de plus, avec tous les mythiques a sec : aucun ne doit
+     sortir, et aucun achat ne doit echouer — il reste des raretes en dessous. */
+  let apres = 0;
+  for (let i = 0; i < 2000; i++) {
+    p.balance = WEI(10000000);
+    if (g.boutiqueAchat(A, 'mythe').rarete === 'mythique') apres++;
+  }
+  eq(apres, 0, 'la rarete epuisee ne ressort jamais, meme apres deux mille coffres');
 }
 
 /* La reponse d'achat porte de quoi afficher la rarete reelle. */
