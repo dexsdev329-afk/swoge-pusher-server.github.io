@@ -1374,6 +1374,41 @@ class Game {
    *     qu'on le remarque.
    * ================================================================== */
 
+  /**
+   * Ce qu'on sait d'un match : le catalogue d'abord, LES PARIS ensuite.
+   *
+   * Un match peut quitter le calendrier — import qui ne le rend plus, volume
+   * remis a zero, retention depassee. Tant qu'aucun pari n'y touche, ca n'a
+   * aucune importance. Des qu'un pari y touche, c'est de l'argent bloque :
+   * la rencontre ne s'affiche plus (« ? – ? »), elle ne remonte plus dans la
+   * liste a regler, et `regleMatch` jetait « unknown match ». Le gagnant ne
+   * pouvait plus etre paye du tout.
+   *
+   * On retombe donc sur ce que le pari a GARDE au moment de sa pose. C'est la
+   * bonne source de verite : ce qui a ete vendu au joueur, pas ce que le
+   * calendrier raconte aujourd'hui. Les paris poses avant que les jambes ne
+   * portent cette copie rendent `null` — ils restent reglables, mais a
+   * l'aveugle : voir `parisAregler` et `regleMatch`.
+   */
+  _infosMatch(matchId) {
+    const id = String(matchId || '');
+    const m = paris.match(id);
+    if (m) return m;
+    for (const p of (this.paris || [])) {
+      for (const j of (p.jambes || [])) {
+        if (j.match !== id || !j.domicile) continue;
+        return {
+          id, sport: j.sport || null, competition: j.competition || '',
+          domicile: j.domicile, exterieur: j.exterieur,
+          debut: Number(j.debut) || p.t,
+          issues: (j.issues && j.issues.length) ? j.issues.slice() : paris.issues(j.sport),
+          cotes: {}, horsCalendrier: true,
+        };
+      }
+    }
+    return null;
+  }
+
   /** Tous les paris d'un match, regles ou non. */
   _parisDe(matchId) {
     return (this.paris || []).filter((p) =>
@@ -1458,7 +1493,15 @@ class Game {
       const choix = String(x.choix);
       if (m.issues.indexOf(choix) < 0)
         throw new Error('pick ' + m.issues.join(', ') + ' on ' + m.domicile + ' v ' + m.exterieur);
-      return { match: m.id, choix, cote: m.cotes[choix] };
+      /* LA JAMBE GARDE SA RENCONTRE. Les noms, le coup d'envoi et les issues
+         sont recopies ici, une fois, au moment de la vente. Ils ne changeront
+         plus : c'est le ticket, pas le calendrier. Sans cette copie, un match
+         qui quitte le catalogue emporte avec lui de quoi afficher ET de quoi
+         regler le pari — le gagnant devient impayable. Quelques octets par
+         pari contre de l'argent bloque : le choix n'en est pas un. */
+      return { match: m.id, choix, cote: m.cotes[choix],
+               domicile: m.domicile, exterieur: m.exterieur, debut: m.debut,
+               sport: m.sport, competition: m.competition, issues: m.issues.slice() };
     });
 
     const mise = Math.floor(Number(miseRaw));
@@ -1577,7 +1620,7 @@ class Game {
       resume: { mise: Math.round(mise), engage: Math.round(engage), paye: Math.round(paye),
                 ouverts: (this.paris || []).filter((x) => !x.regle).length },
       paris: page.map((p) => {
-        const j0 = paris.match(p.match);
+        const j0 = this._infosMatch(p.match);
         return {
           id: p.id, addr: p.addr,
           nom: (this.players.get(p.addr) || {}).name || null,
@@ -1585,14 +1628,20 @@ class Game {
           regle: !!p.regle, gagne: p.regle ? p.gagne : null,
           /* L'etat en un mot, calcule ici : trois pages differentes le
              deduisaient chacune a sa facon, et une seule s'y prenait bien. */
-          etat: !p.regle ? (j0 && j0.debut <= t ? 'a regler' : 'en cours')
+          /* Rencontre introuvable — ni au calendrier, ni sur le ticket : elle
+             ne se jouera plus jamais « plus tard ». « running » laissait
+             croire qu'il n'y avait rien a faire ; c'est justement l'inverse. */
+          etat: !p.regle ? (!j0 || j0.debut <= t ? 'a regler' : 'en cours')
                          : p.gagne === null ? 'rembourse' : p.gagne ? 'gagne' : 'perdu',
           jambes: (p.jambes || []).map((j) => {
-            const m = paris.match(j.match);
+            const m = this._infosMatch(j.match);
             return { match: j.match, choix: j.choix, cote: j.cote,
                      domicile: m ? m.domicile : '?', exterieur: m ? m.exterieur : '?',
                      debut: m ? m.debut : null, sport: m ? m.sport : null,
                      issues: m ? m.issues.slice() : [],
+                     /* La rencontre n'est plus au calendrier : le panneau le
+                        dit plutot que d'afficher « ? – ? » sans explication. */
+                     horsCalendrier: !!(m && m.horsCalendrier) || !m,
                      regle: !!(this.parisRegles && this.parisRegles[j.match]),
                      resultat: (this.parisRegles && this.parisRegles[j.match]
                                 && this.parisRegles[j.match].resultat) || null };
@@ -1638,11 +1687,45 @@ class Game {
      * a zero : elle ne coute rien a trancher, et la trancher la sort de la
      * liste au lieu de la laisser trainer.
      */
+    /* ---- ET LES RENCONTRES QUI ONT QUITTE LE CATALOGUE ----
+     *
+     * Partir du calendrier ne suffit pas : une rencontre peut en SORTIR alors
+     * que des paris y dorment encore. Elle n'apparaissait alors nulle part,
+     * aucun bouton ne permettait de la trancher, et `regleMatch` la refusait.
+     * Le pari restait ouvert pour toujours — c'est precisement ce qui est
+     * arrive au 17 aout, apres un redemarrage qui a rendu au conteneur le
+     * calendrier du depot.
+     *
+     * On ajoute donc toute rencontre PORTANT UN PARI NON REGLE et absente du
+     * calendrier. Ce qu'on sait d'elle vient du ticket ; les paris poses avant
+     * que les jambes ne gardent leur rencontre n'ont pas de fiche du tout, et
+     * on l'affiche alors telle quelle — l'identifiant seul (« spainlaliga-
+     * 20260817-dep-elc ») dit deja quelle rencontre c'etait, et le bouton
+     * « Refund all » reste toujours disponible en cas de doute.
+     */
+    const rencontres = paris.catalogue().matchs.slice();
+    const auCatalogue = new Set(rencontres.map((m) => m.id));
+    for (const id of parMatch.keys()) {
+      if (auCatalogue.has(id)) continue;
+      const su = this._infosMatch(id);
+      rencontres.push(su || {
+        id, sport: null, competition: '', domicile: '?', exterieur: '?',
+        /* Faute de mieux, la pose du pari : un pari se pose AVANT le coup
+           d'envoi, donc l'attente affichee est un minorant honnete. */
+        debut: Math.min(...parMatch.get(id).map((x) => x.p.t)),
+        issues: paris.ISSUES.slice(), cotes: {},
+        horsCalendrier: true, sansFiche: true,
+      });
+    }
+
     const sortie = [];
-    for (const m of paris.catalogue().matchs) {
+    for (const m of rencontres) {
       const id = m.id;
       if (this.parisRegles[id]) continue;             // deja tranchee
-      if (m.debut > t) continue;                      // pas encore jouee
+      /* Une rencontre du calendrier qui n'a pas commence n'attend rien. Une
+         rencontre SORTIE du calendrier, si : elle ne reviendra pas toute
+         seule, et ses paris sont bloques des maintenant. */
+      if (m.debut > t && !m.horsCalendrier) continue;
       const lignes = parMatch.get(id) || [];
       const expo = {};
       for (const i of m.issues) expo[i] = 0;
@@ -1664,7 +1747,11 @@ class Game {
         expo: Object.fromEntries(m.issues.map((i) => [i, Math.round(expo[i] || 0)])),
         /* Depuis combien de temps elle attend. Une rencontre qui attend depuis
            deux jours est une rencontre qu'on a oubliee. */
-        attendDepuisMin: Math.round((t - m.debut) / 60000),
+        attendDepuisMin: Math.max(0, Math.round((t - m.debut) / 60000)),
+        /* Le panneau doit pouvoir le DIRE : une rencontre hors calendrier se
+           regle a la main, sans cotes affichees, et merite qu'on regarde son
+           identifiant avant de cliquer. */
+        horsCalendrier: !!m.horsCalendrier, sansFiche: !!m.sansFiche,
       });
     }
     return sortie.sort((a, b) => a.debut - b.debut);
@@ -1676,7 +1763,7 @@ class Game {
     return (this.paris || []).filter((p) => p.addr === a)
       .sort((x, y) => y.t - x.t).slice(0, limite || 50)
       .map((p) => {
-        const m = paris.match(p.match);
+        const m = this._infosMatch(p.match);
         return Object.assign({}, p, {
           domicile: m ? m.domicile : '?', exterieur: m ? m.exterieur : '?',
           debut: m ? m.debut : null, competition: m ? m.competition : '',
@@ -1686,7 +1773,7 @@ class Game {
              On recopie la jambe — l'objet range dans `this.paris` ne doit
              pas bouger, il sert au reglement. */
           jambes: (p.jambes || []).map((j) => {
-            const mj = paris.match(j.match);
+            const mj = this._infosMatch(j.match);
             return Object.assign({}, j, {
               domicile: mj ? mj.domicile : '?', exterieur: mj ? mj.exterieur : '?',
               debut: mj ? mj.debut : null, competition: mj ? mj.competition : '',
@@ -1709,10 +1796,24 @@ class Game {
    * trompe paie les mauvaises personnes sans que personne ne le sache.
    */
   regleMatch(matchId, resultat) {
-    const m = paris.match(matchId);
-    if (!m) throw new Error('unknown match');
-    if (m.issues.indexOf(String(resultat)) < 0)
-      throw new Error('result must be one of ' + m.issues.join(', '));
+    /* ---- UNE RENCONTRE ABSENTE DU CALENDRIER RESTE REGLABLE ----
+     *
+     * Refuser net (« unknown match ») protegeait d'une faute de frappe, mais
+     * au prix bien plus lourd de rendre IMPAYABLE tout pari dont la rencontre
+     * avait quitte le catalogue. Entre les deux, il n'y a pas photo : une
+     * faute de frappe sur un identifiant sans pari ne coute rien, un gagnant
+     * qu'on ne peut plus payer coute la confiance.
+     *
+     * On accepte donc a deux conditions : ou bien on sait de quoi il s'agit
+     * (catalogue, ou fiche gardee par le ticket), ou bien la rencontre porte
+     * au moins un pari NON REGLE — un identifiant invente n'en porte aucun.
+     */
+    const m = this._infosMatch(matchId);
+    const issues = m ? m.issues
+      : (this._parisDe(matchId).some((p) => !p.regle) ? paris.ISSUES : null);
+    if (!issues) throw new Error('unknown match');
+    if (issues.indexOf(String(resultat)) < 0)
+      throw new Error('result must be one of ' + issues.join(', '));
     if (!this.parisRegles) this.parisRegles = {};
     if (this.parisRegles[matchId]) throw new Error('already settled');
 

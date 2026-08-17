@@ -149,9 +149,38 @@ function valide(brut) {
   return { sports, matchs, parId: new Map(matchs.map((m) => [m.id, m])) };
 }
 
+/* ---- OU VIT LE CATALOGUE ----
+ *
+ * Deux fichiers, et la distinction porte de l'argent.
+ *
+ *   • celui du DEPOT est une amorce : les rencontres ecrites a la main, celles
+ *     qui partent dans l'image Docker. Il ne bouge qu'avec un commit.
+ *   • celui du VOLUME est le vrai calendrier : c'est la que l'import ecrit,
+ *     et c'est le seul qui survive a un redeploiement.
+ *
+ * L'import ecrivait dans le dossier de l'application — donc dans le systeme de
+ * fichiers du conteneur, efface a chaque redemarrage. Le calendrier revenait
+ * alors a l'amorce du depot, et TOUTE rencontre importee disparaissait avec.
+ * Une rencontre disparue n'est pas une gene d'affichage : un pari porte
+ * l'identifiant de son match, `regleMatch` jette « unknown match », la
+ * rencontre ne remonte plus dans « a regler » — et le gagnant ne peut plus
+ * etre paye. C'est exactement ce qui est arrive a la Liga du 17 aout.
+ *
+ * On lit donc le volume des qu'il existe, l'amorce sinon. La bascule se fait
+ * toute seule au premier import reussi.
+ */
+const FICHIER_DEPOT = path.join(__dirname, 'paris_catalogue.json');
+const DOSSIER_DONNEES = (process.env.DATA_DIR || './data').trim();
+const FICHIER_VOLUME = path.join(DOSSIER_DONNEES, 'paris_catalogue.json');
+/** Le fichier a LIRE : le volume s'il est deja ecrit, l'amorce du depot sinon. */
+function fichier() {
+  try { if (fs.existsSync(FICHIER_VOLUME)) return FICHIER_VOLUME; } catch (e) {}
+  return FICHIER_DEPOT;
+}
+
 let CAT = null;
-function charge(fichier) {
-  const f = fichier || path.join(__dirname, 'paris_catalogue.json');
+function charge(f0) {
+  const f = f0 || fichier();
   CAT = valide(JSON.parse(fs.readFileSync(f, 'utf8')));
   return CAT;
 }
@@ -191,4 +220,5 @@ function vue(m, now) {
 module.exports = {
   ISSUES, ISSUES_PAR_SPORT, SPORTS_EQUIPE, issues, COTE_MIN, COTE_MAX, MARGE_MIN,
   charge, catalogue, match, ouverts, rapport, vue, marge, valide,
+  FICHIER_DEPOT, FICHIER_VOLUME, fichier,
 };

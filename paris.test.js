@@ -355,10 +355,18 @@ const T3 = 'atp-20260815-fer-duc';   // Fery 1.53 / Duckworth 2.24
      'chaque jambe du combine porte le nom de son match');
   ok(combine.jambes.every((j) => Array.isArray(j.issues) && j.issues.length >= 2),
      'et ses issues, dont la page tire « Home / Draw / Away » ou « Player 1 / 2 »');
-  /* On enrichit une COPIE : l objet range dans le moteur sert au reglement,
-     et le maquiller casserait le paiement. */
-  ok(g.paris.every((x) => x.jambes.every((j) => j.domicile === undefined)),
-     'et le pari range dans le moteur n a pas ete maquille');
+  /* LA JAMBE RANGEE PORTE SA FICHE, DES LA POSE. Elle ne la portait pas : les
+     noms etaient recolles a l'affichage depuis le calendrier du jour, et le
+     jour ou une rencontre en sortait, le pari devenait « ? – ? » — plus
+     affichable, et plus reglable non plus. Ce qui a ete vendu au joueur se
+     garde sur le ticket. */
+  ok(g.paris.every((x) => x.jambes.every((j) => j.domicile && j.match && j.choix)),
+     'le pari range dans le moteur porte sa fiche des la pose');
+  /* Ce qui reste vrai : la page recoit une COPIE. L'objet range sert au
+     reglement, et le maquiller casserait le paiement. */
+  ouverts()[0].jambes[0].domicile = 'MAQUILLE';
+  ok(g.paris.every((x) => x.jambes.every((j) => j.domicile !== 'MAQUILLE')),
+     'et retoucher la vue ne touche pas le pari range dans le moteur');
 
   g.regleMatch(T1, '1');
   eq(ouverts().length, 1, 'le simple regle quitte les paris en cours');

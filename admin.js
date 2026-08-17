@@ -242,6 +242,10 @@ function page() {
     .arg button small{ font-weight:600; opacity:.8; font-size:10.5px; }
     .arg .rmb{ background:rgba(255,255,255,.08); color:#EAF2FF;
       border:1px solid rgba(255,255,255,.18); }
+    /* Hors calendrier : l'avertissement doit se voir AVANT les boutons, pas
+       se deviner apres coup. */
+    .arg.hors{ background:rgba(242,104,94,.09); border-color:rgba(242,104,94,.45); }
+    .arg .argh{ font-size:11.5px; color:#F2685E; margin:-4px 0 9px; line-height:1.35; }
     .argok{ color:#7CFF9B; } .argko{ color:#F2685E; }
   </style>
 </div>
@@ -778,7 +782,12 @@ function bJambe(j){
   /* Le resultat descend sur la SECONDE ligne, avec l'identifiant du match.
      Sur la premiere il finissait contre le bord de la carte a 390 px, et
      « result Home » se lisait « result Ho ». */
-  return '<span class="bj">'+esc(j.domicile)+' &ndash; '+esc(j.exterieur)+
+  /* « ? – ? » ne disait pas POURQUOI. C'est une rencontre qui a quitte le
+     calendrier : le pari reste reglable depuis la liste d'attente, et c'est
+     ce qu'il faut lire ici plutot que deux points d'interrogation. */
+  var titre = j.horsCalendrier && j.domicile==='?'
+    ? '<i>off calendar</i>' : esc(j.domicile)+' &ndash; '+esc(j.exterieur);
+  return '<span class="bj">'+titre+
          ' &middot; <b>'+esc(nom)+'</b> @ '+Number(j.cote||1).toFixed(2)+
          '<span class="bid2">'+esc(j.match)+res+'</span></span>';
 }
@@ -879,12 +888,21 @@ async function loadAregler(){
       var vieux=m.attendDepuisMin>360?" vieux":"";
       var attente = h>=1 ? ("waiting "+h+" h "+(m.attendDepuisMin%60)+" min")
                          : ("waiting "+m.attendDepuisMin+" min");
-      return '<div class="arg'+vieux+'" data-id="'+esc(m.id)+'">'+
+      /* Une rencontre qui a QUITTE le calendrier se regle quand meme, mais on
+         le dit : son titre peut etre « ? – ? », ses cotes ont disparu, et
+         c'est l'identifiant qui porte l'information. Le cacher reviendrait a
+         faire cliquer a l'aveugle. */
+      var hors = m.horsCalendrier
+        ? '<div class="argh">&#9888; off the calendar &mdash; this fixture is no longer in the '+
+          'fixture list'+(m.sansFiche?', and the bets predate fixture snapshots':'')+
+          '. Check the score against the id below, then settle it (or refund).</div>'
+        : '';
+      return '<div class="arg'+vieux+(m.horsCalendrier?' hors':'')+'" data-id="'+esc(m.id)+'">'+
         '<h4>'+esc(m.domicile)+' &ndash; '+esc(m.exterieur)+'</h4>'+
-        '<div class="meta">'+esc(m.competition||m.sport)+' &middot; '+
+        '<div class="meta">'+esc(m.competition||m.sport||'off calendar')+' &middot; '+
           new Date(m.debut).toLocaleString('en-GB')+' &middot; <b>'+attente+'</b><br>'+
           m.paris+' bet(s) from '+m.joueurs+' player(s) &middot; staked '+fmt(m.mise)+
-          ' &middot; <code>'+esc(m.id)+'</code></div>'+
+          ' &middot; <code>'+esc(m.id)+'</code></div>'+ hors+
         '<div class="row">'+
           m.issues.map(function(i){
             return '<button data-res="'+esc(i)+'">'+esc(argNom(m,i))+
