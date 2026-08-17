@@ -1975,6 +1975,25 @@ wss.on('connection', (ws) => {
         }
         return send(ws, { type: 'referral', ...game.parrainage(ws.addr) });
       }
+      /* LA BOUTIQUE. Deux messages : lire, et ouvrir un coffre.
+         `shop` sans rien est une lecture pure — le catalogue et l'inventaire.
+         `shopOpen` debite et tire. On repond TOUJOURS par un `shop` complet
+         apres l'ouverture, pour que la page n'ait pas a recoller l'inventaire
+         elle-meme : elle recoit l'objet gagne ET l'etat qui en decoule. */
+      if (m.type === 'shop') {
+        return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr),
+                          balance: game.balanceStr(ws.addr) });
+      }
+      if (m.type === 'shopOpen') {
+        let gagne;
+        try {
+          gagne = game.boutiqueAchat(ws.addr, m.chest);
+        } catch (e) { return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr),
+                                        balance: game.balanceStr(ws.addr), error: e.message }); }
+        persistSoon();
+        return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr),
+                          balance: gagne.balance, gagne });
+      }
       /* Le classement du mois : qui a fait tourner le plus de volume. */
       if (m.type === 'leaderboard') {
         return send(ws, { type: 'leaderboard', ...game.classementMois(ws.addr, 50),

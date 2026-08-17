@@ -31,6 +31,7 @@ const p4 = require('./puissance4');
    rejoindre, jouer, ticker et dire qui a gagne. C'est ce qui permet a un seul
    chemin d'argent de les servir tous les trois. */
 const paris = require('./paris');
+const boutique = require('./boutique');
 const DUELS = { p4, mp: require('./morpion'), dm: require('./dames'),
                 mf: require('./morpion_fantome'),
                 dc: require('./dernier_chiffre') };
@@ -210,6 +211,7 @@ class Game {
         nx: p.nivMax || 0,
         dp: (p.deposited || ethers.BigNumber.from(0)).toString(), jx: p.jeux || {},
         bj: p.bj || null, vm: p.volcanoMeter || 0,
+        ob: p.objets || {},
         tg: p.tgId || null,
         wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
         sd: p.streakDay || 0, sl: p.streakLastClaimDay || null,
@@ -364,6 +366,7 @@ class Game {
         revCumul: Number(d.rc || 0), revPaye: Number(d.rp || 0),
         attente: Array.isArray(d.att) ? d.att : [],
         record: d.rec || null, meilleurJour: d.mj || null, refBienvenue: !!d.rb,
+        objets: (d.ob && typeof d.ob === 'object') ? d.ob : {},
         bonusBloque: ethers.BigNumber.from(d.bb || '0'),
         bonusCible: d.bc2 ? ethers.BigNumber.from(d.bc2) : null,
         moisCle: d.mk || null, moisMise: Number(d.mm || 0),
@@ -2471,7 +2474,10 @@ class Game {
             stakes: [], stakeAccrued: ethers.BigNumber.from(0), volcanoMeter: 0,
             wagered: ethers.BigNumber.from(0), betCount: 0,
             tgId: null, welcomeGranted: false, welcomeWagered: false, welcomeClaimed: false,
-            streakDay: 0, streakLastClaimDay: null, adCount: 0, adDayKey: null, adLastMs: 0 };
+            streakDay: 0, streakLastClaimDay: null, adCount: 0, adDayKey: null, adLastMs: 0,
+            /* L'inventaire de la boutique : identifiant d'objet -> quantite.
+               Un objet plat, pas une Map : il part au fichier tel quel. */
+            objets: {} };
       this.players.set(addr, p);
     }
     return p;
@@ -3686,6 +3692,72 @@ class Game {
     return evs;
   }
 
+
+  // ------------------------------------------------------------ LA BOUTIQUE
+  /*
+   * Un coffre s'achete avec le solde de jeu, comme une mise, et rend un objet
+   * au lieu de jetons.
+   *
+   * ---- ce que ce n'est PAS, et pourquoi ca compte ----
+   *
+   * Un achat de coffre n'est PAS une manche. Il ne passe donc ni par
+   * `_manche`, ni par `_markWager`, et il n'avance aucune quete du jour.
+   *
+   * Deux raisons, et la seconde suffirait :
+   *
+   *   • le journal et l'audit calculent un retour par jeu — mise contre
+   *     rendu. Un coffre ne rend jamais de jetons : le compter comme une mise
+   *     ferait apparaitre un jeu a 0 % de retour au milieu des autres, et
+   *     fausserait le retour global du site, qui est publie ;
+   *   • les quetes du jour paient en jetons. Si acheter un coffre les faisait
+   *     avancer, on pourrait les remplir sans jamais jouer — et une quete qui
+   *     s'achete ne recompense plus rien.
+   *
+   * L'argent, lui, est bien compte : `note('boutique', ...)` le porte au mois,
+   * du cote de la maison.
+   */
+
+  /** Le catalogue et l'inventaire du joueur, prets a peindre. */
+  boutiqueEtat(addr) {
+    const p = this._p(addr);
+    return { catalogue: boutique.catalogue(), inventaire: p.objets || {} };
+  }
+
+  /**
+   * Ouvre un coffre. Debite, tire, range l'objet, et rend de quoi refaire le
+   * calcul soi-meme une fois la graine du serveur revelee.
+   */
+  boutiqueAchat(addr, cle) {
+    const c = boutique.coffre(cle);
+    if (!c) throw new Error('unknown chest');
+    const p = this._p(addr);
+    const prix = WEI(c.prix);
+    if (p.balance.lt(prix)) throw new Error('not enough $SWOGE');
+
+    p.balance = p.balance.sub(prix);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(prix);
+
+    /* `:shop:` separe ce tirage de tous les autres. Sans cette marque, un
+       coffre et un lancer du Coin Pusher tires au MEME numero par le meme
+       joueur donneraient la meme empreinte — et deux jeux qui partagent leur
+       hasard ne sont plus verifiables independamment. */
+    const nonce = p.nonce;
+    const h = crypto.createHmac('sha256', this.serverSeed)
+      .update(p.clientSeed + ':shop:' + nonce).digest('hex');
+    p.nonce++;
+
+    const t = boutique.tire(h, cle);
+    p.objets = p.objets || {};
+    p.objets[t.item.id] = (p.objets[t.item.id] || 0) + 1;
+
+    this.note('boutique', c.prix, addr);
+
+    return { coffre: c.cle, coffreNom: c.nom, prix: c.prix,
+             item: t.item, rarete: t.rarete,
+             quantite: p.objets[t.item.id],
+             balance: this.balanceStr(addr),
+             preuve: { sh: this.serverSeedHash, cs: p.clientSeed, n: nonce, r1: t.r1, r2: t.r2 } };
+  }
 
   // ---------------------------------------------------------- les duels 1v1
   /*
