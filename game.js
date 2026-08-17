@@ -1336,6 +1336,10 @@ class Game {
     return {
       depuis: r.depuis || null,
       manches, mise, net: rendu - mise,
+      /* Les paris ne sont PAS dans `p.jeux` tant qu'ils ne sont pas regles :
+         ils ont leur bilan a eux, tenu depuis les paris eux-memes. Sans lui,
+         un joueur qui n'a fait que parier voit des zeros partout. */
+      paris: this.statsParis(addr),
       favoris: parJeu.slice(0, 3),
       record: p.record || null,
       meilleurJour: p.meilleurJour || null,
@@ -1768,6 +1772,103 @@ class Game {
       });
     }
     return sortie.sort((a, b) => a.debut - b.debut);
+  }
+
+  /* ================= LE BILAN DES PARIS, PAR JOUEUR =================
+   *
+   * ---- pourquoi ca ne pouvait pas venir de `p.jeux` ----
+   *
+   * Les compteurs du profil et du panneau lisent `p.jeux`, qui est ecrit par
+   * `_manche` — c'est-a-dire A LA FIN d'une manche. Un pari sportif n'a pas
+   * de fin le jour ou il est pose : il se regle le lendemain, ou jamais si le
+   * match a disparu du calendrier. Un joueur qui avait mise trois mille
+   * jetons le samedi affichait donc « aucune manche enregistree » et zero
+   * partout, ce qui se lit comme un compteur casse — et qui l'etait, en un
+   * sens : il comptait autre chose que ce qu'on lui demandait.
+   *
+   * On repart donc de `this.paris`, qui est la source de verite : chaque
+   * pari y est range des sa pose, et son etat y est celui d'aujourd'hui.
+   *
+   * ---- ce que chaque chiffre veut dire, exactement ----
+   *
+   *   • le TAUX DE REUSSITE porte sur les paris TRANCHES, remboursements
+   *     exclus : un match annule n'est ni gagne ni perdu, et le compter en
+   *     defaite ferait baisser un taux sans qu'aucun pari n'ait ete perdu ;
+   *   • le RESULTAT ne compte que les paris regles. Un pari en cours n'est
+   *     ni gagne ni perdu, et l'inscrire en perte affiche un joueur perdant
+   *     le samedi soir qui redevient gagnant le dimanche sans avoir rien
+   *     fait ;
+   *   • ce qui est EN JEU et ce qui EST A GAGNER se disent a part. C'est la
+   *     seule paire de chiffres qui reponde a « ou j'en suis, la, tout de
+   *     suite ».
+   * ================================================================ */
+
+  /** Le bilan de TOUS les parieurs en une passe. `Map` adresse -> bilan. */
+  _bilansParis() {
+    const par = new Map();
+    const vide = () => ({
+      total: 0, ouverts: 0, gagnes: 0, perdus: 0, rembourses: 0,
+      mise: 0, miseJugee: 0, rendu: 0, enJeu: 0, aGagner: 0, plusGros: null,
+    });
+    for (const p of (this.paris || [])) {
+      const a = String(p.addr || '').toLowerCase();
+      if (!a) continue;
+      let b = par.get(a);
+      if (!b) { b = vide(); par.set(a, b); }
+      b.total++;
+      b.mise += p.mise;
+      if (!p.regle) { b.ouverts++; b.enJeu += p.mise; b.aGagner += p.rapport; continue; }
+      /* `gagne === null` : rembourse. La mise revient, donc le resultat ne
+         bouge pas — et le pari ne compte dans aucun des deux camps. */
+      if (p.gagne === null) { b.rembourses++; continue; }
+      b.miseJugee += p.mise;
+      if (p.gagne) {
+        b.gagnes++; b.rendu += p.rapport;
+        if (!b.plusGros || p.rapport > b.plusGros.rendu)
+          b.plusGros = { id: p.id, mise: p.mise, cote: p.cote, rendu: p.rapport, t: p.t };
+      } else b.perdus++;
+    }
+    for (const b of par.values()) this._finBilan(b);
+    return par;
+  }
+
+  /** Les chiffres derives, poses une seule fois, au meme endroit. */
+  _finBilan(b) {
+    const juges = b.gagnes + b.perdus;
+    b.juges = juges;
+    /* Sans un seul pari tranche, le taux n'est pas « 0 % » — il n'existe pas.
+       Afficher 0 % a quelqu'un dont le premier pari court encore serait une
+       information fausse, et decourageante pour rien. */
+    b.taux = juges ? Number(((b.gagnes / juges) * 100).toFixed(1)) : null;
+    b.net = Number((b.rendu - b.miseJugee).toFixed(6));
+    b.mise = Number(b.mise.toFixed(6));
+    b.miseJugee = Number(b.miseJugee.toFixed(6));
+    b.rendu = Number(b.rendu.toFixed(6));
+    b.enJeu = Number(b.enJeu.toFixed(6));
+    b.aGagner = Number(b.aGagner.toFixed(6));
+    return b;
+  }
+
+  /** Le bilan d'UN joueur. Zero partout s'il n'a jamais parie. */
+  statsParis(addr) {
+    const a = String(addr || '').toLowerCase();
+    const b = {
+      total: 0, ouverts: 0, gagnes: 0, perdus: 0, rembourses: 0,
+      mise: 0, miseJugee: 0, rendu: 0, enJeu: 0, aGagner: 0, plusGros: null,
+    };
+    for (const p of (this.paris || [])) {
+      if (String(p.addr || '').toLowerCase() !== a) continue;
+      b.total++; b.mise += p.mise;
+      if (!p.regle) { b.ouverts++; b.enJeu += p.mise; b.aGagner += p.rapport; continue; }
+      if (p.gagne === null) { b.rembourses++; continue; }
+      b.miseJugee += p.mise;
+      if (p.gagne) {
+        b.gagnes++; b.rendu += p.rapport;
+        if (!b.plusGros || p.rapport > b.plusGros.rendu)
+          b.plusGros = { id: p.id, mise: p.mise, cote: p.cote, rendu: p.rapport, t: p.t };
+      } else b.perdus++;
+    }
+    return this._finBilan(b);
   }
 
   /** Les paris d'un joueur, du plus recent au plus ancien. */
@@ -2215,6 +2316,10 @@ class Game {
   playersReport() {
     const f = (w) => ethers.utils.formatUnits(w || BN(0), cfg.DECIMALS);
     const rows = [];
+    /* EN UNE PASSE, pas une par joueur : deux cents joueurs fois dix mille
+       paris feraient deux millions de comparaisons a chaque rafraichissement
+       du panneau, toutes les quinze secondes. */
+    const bilans = this._bilansParis();
     for (const [addr, p] of this.players) {
       const staked = this._stakedTotal(p);
       const pending = p.stakeAccrued.add(this._pendingAll(p));
@@ -2228,7 +2333,13 @@ class Game {
         staked: f(staked),
         pending: f(pending),
         wagered: f(p.wagered),                     // total joue a vie
-        bets: p.betCount || 0,                     // nombre de mises
+        bets: p.betCount || 0,                     // nombre de mises, tous jeux
+        /* LES PARIS SPORTIFS A PART. `bets` compte les mises de casino, qui
+           se reglent dans la seconde ; un pari vit plusieurs jours et n'entre
+           dans aucun compteur de manche tant qu'il n'est pas tranche. Le
+           panneau affichait donc zero pour quelqu'un qui avait trois mille
+           jetons engages. */
+        paris: bilans.get(addr) || null,
         withdrawn: f(p.cumulativeAuthorized),
         deposited: !!p.hasDeposited,
         depositedAmount: f(p.deposited),

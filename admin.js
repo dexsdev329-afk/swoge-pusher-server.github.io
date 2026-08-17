@@ -446,6 +446,17 @@ function page() {
     .det-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin:0 -3px; padding:0 3px; }
     .det-t{ min-width:430px; }
     .det-vide{ color:#9d9d9d; font-size:12.5px; }
+    /* Le bilan des paris : des cases, pas un tableau. Il n'a pas de lignes —
+       c'est un seul jeu, decrit par huit chiffres — et une grille tient sur
+       un telephone la ou un tableau de huit colonnes ne tient pas. */
+    .det-paris{ margin-top:12px; padding-top:11px; border-top:1px solid rgba(255,255,255,.09); }
+    .dp-g{ display:grid; gap:7px; grid-template-columns:repeat(auto-fit,minmax(112px,1fr)); }
+    .dp-g div{ padding:7px 9px; border-radius:10px; background:rgba(255,255,255,.05);
+      border:1px solid rgba(230,165,55,.22); }
+    .dp-g i{ display:block; font-style:normal; font-size:10px; color:#8a7f6a;
+      text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
+    .dp-g b{ font-size:14px; }
+    .dp-g .haut{ color:#F2685E; } .dp-g .bas{ color:#7CFF9B; }
 
     /* ---- la liste des joueurs, en FICHES et non en tableau ----
        Il y avait dix colonnes chiffrees dans un panneau de sept cents pixels :
@@ -670,14 +681,20 @@ function drawPlayers(){
     return p.address.indexOf(q)>=0 || (p.name||"").toLowerCase().indexOf(q)>=0 || String(p.tgId||"")===q;
   });
   rows.sort(function(x,y){
-    var a=x[sortKey], b=y[sortKey];
+    /* Le nombre de paris n'est pas un champ de la ligne, il est dans son
+       bilan : on le sort de la ou il est plutot que de recopier un compteur
+       de plus dans la reponse du serveur. */
+    var a=sortKey==="parisN"?((x.paris||{}).total||0):x[sortKey];
+    var b=sortKey==="parisN"?((y.paris||{}).total||0):y[sortKey];
     if(sortKey==="name") return sortDir*String(a).localeCompare(String(b));
     return sortDir*(num(a)-num(b));
   });
-  var held=0, played=0, bets=0;
-  rows.forEach(function(p){ held+=num(p.total); played+=num(p.wagered); bets+=p.bets||0; });
+  var held=0, played=0, bets=0, paris=0, parisMise=0;
+  rows.forEach(function(p){ held+=num(p.total); played+=num(p.wagered); bets+=p.bets||0;
+    if(p.paris){ paris+=p.paris.total||0; parisMise+=num(p.paris.mise); } });
   $("#ptot").innerHTML="Showing <b>"+rows.length+"</b> of <b>"+PLAYERS.length+"</b> players · holding <b>"+
-    fmt(held)+"</b> $SWOGE · played <b>"+fmt(played)+"</b> $SWOGE over <b>"+bets+"</b> bets";
+    fmt(held)+"</b> $SWOGE · played <b>"+fmt(played)+"</b> $SWOGE over <b>"+bets+"</b> rounds"+
+    (paris?" · <b>"+paris+"</b> sports bets for <b>"+fmt(parisMise)+"</b> $SWOGE":"");
   if(!rows.length){ $("#pbody").innerHTML='<div class="muted2">no player matches</div>'; return; }
   var ouverts={};
   [].forEach.call(document.querySelectorAll(".pcard.open"),function(c){ ouverts[c.dataset.a]=1; });
@@ -687,6 +704,7 @@ function drawPlayers(){
        La couleur suit ce sens-la et pas l'autre, sinon on lit l'inverse de ce
        qu'on croit lire. */
     var net=num(p.net);
+    var pb=parisResume(p);
     h+='<div class="pcard '+(p.deposited?"":"nodep")+(ouverts[p.address]?" open":"")+'" data-a="'+esc(p.address)+'">'+
        '<div class="pc-h">'+
          visageDe(p)+
@@ -703,7 +721,14 @@ function drawPlayers(){
          '<div><i>Withdrawn</i><b>'+fmt(p.withdrawn)+'</b></div>'+
          '<div><i>Net vs house</i><b class="'+(net>0?"haut":"bas")+'">'+fmt(p.net)+'</b></div>'+
          '<div><i>Played</i><b>'+fmt(p.wagered)+'</b></div>'+
-         '<div><i>Bets</i><b>'+(p.bets||0)+'</b></div>'+
+         '<div><i>Rounds</i><b>'+(p.bets||0)+'</b></div>'+
+         /* LES PARIS SPORTIFS ONT LEURS PROPRES CASES. « Rounds » compte les
+            manches de casino, qui se reglent dans la seconde ; un pari vit
+            plusieurs jours et n'entre dans aucun compteur de manche tant
+            qu'il n'est pas tranche. La carte affichait donc zero pour
+            quelqu'un qui avait des milliers de jetons engages. */
+         '<div><i>Sports bets</i><b>'+pb.n+'</b></div>'+
+         '<div><i>Bet win rate</i><b>'+pb.taux+'</b></div>'+
          '<div><i>Friends</i><b>'+(p.amis||0)+'</b></div>'+
        '</div>'+
        '<div class="pc-d" data-d="'+esc(p.address)+'"'+(ouverts[p.address]?'':' style="display:none"')+'>'+
@@ -718,7 +743,8 @@ function drawPlayers(){
    pastilles disent en clair sur quoi on trie, ce qu'un en-tete cliquable ne
    disait qu'a celui qui pensait a cliquer. */
 var TRIS=[["total","Total held"],["balance","Balance"],["net","Net vs house"],
-          ["wagered","Played"],["bets","Bets"],["depositedAmount","Deposited"],["name","Name"]];
+          ["wagered","Played"],["bets","Rounds"],["parisN","Sports bets"],
+          ["depositedAmount","Deposited"],["name","Name"]];
 function dessineTri(){
   var t=$("#tri"); if(!t||t.dataset.pret) return;
   t.dataset.pret="1";
@@ -741,6 +767,37 @@ function majTri(){
                   (actif?(sortDir<0?" ↓":" ↑"):"");
   });
 }
+/* Le bilan des paris sportifs, tel qu'il s'affiche sur la carte.
+   Le taux porte sur les paris TRANCHES, remboursements exclus : un match
+   annule n'est ni gagne ni perdu, et le compter en defaite ferait baisser un
+   taux sans qu'aucun pari n'ait ete perdu. Sans un seul pari tranche il n'y a
+   pas de taux — « 0 % » serait faux, pas prudent. */
+function parisResume(p){
+  var b=p.paris;
+  if(!b||!b.total) return { n:0, taux:"—", ligne:"" };
+  var net=Number(b.net)||0;
+  var l='<div class="det-paris"><h5>Sports bets</h5><div class="dp-g">'+
+    '<div><i>Bets placed</i><b>'+b.total+'</b></div>'+
+    '<div><i>Staked</i><b>'+fmt(b.mise)+'</b></div>'+
+    '<div><i>Won</i><b>'+b.gagnes+'</b></div>'+
+    '<div><i>Lost</i><b>'+b.perdus+'</b></div>'+
+    (b.rembourses?'<div><i>Refunded</i><b>'+b.rembourses+'</b></div>':'')+
+    '<div><i>Win rate</i><b>'+(b.taux==null?"—":b.taux+"%")+'</b></div>'+
+    /* Le resultat est celui du JOUEUR : positif = il a gagne. La carte parle
+       « net vs house » ailleurs, dans l'autre sens — d'ou le libelle explicite,
+       parce que deux sens opposes sur la meme carte se lisent de travers. */
+    '<div><i>Player result</i><b class="'+(net>0?"bas":net<0?"haut":"")+'">'+
+      (net>0?"+":"")+fmt(net)+'</b></div>'+
+    (b.ouverts?'<div><i>Still running</i><b>'+b.ouverts+' &middot; '+fmt(b.enJeu)+
+      ' at stake</b></div>':'')+
+    '</div>'+
+    (b.plusGros?'<div class="det-note">Biggest win: <b>'+fmt(b.plusGros.rendu)+
+      '</b> $SWOGE from '+fmt(b.plusGros.mise)+' @ '+Number(b.plusGros.cote||1).toFixed(2)+
+      ' &middot; <code>'+esc(b.plusGros.id||"")+'</code></div>':'')+
+    '</div>';
+  return { n:b.total, taux:(b.taux==null?"—":b.taux+"%"), ligne:l };
+}
+
 /* Detail par jeu. Deux chiffres, et ils ne disent PAS la meme chose :
    - « gagnees » flatte : au blackjack on gagne pres d'une main sur deux et on
      perd quand meme, parce qu'une main doublee perdue coute le double ;
@@ -754,7 +811,11 @@ var NOMJEU={ bj:"Blackjack", holdem:"Casino Hold'em", three:"Three Card",
 function pct(x){ return (100*x).toFixed(1)+"%"; }
 function detail(p){
   var j=p.jeux||{}, cles=Object.keys(j);
-  if(!cles.length) return '<div class="det-in"><span class="det-vide">Aucune manche enregistree pour ce joueur.</span></div>';
+  var pb=parisResume(p);
+  /* Un joueur qui n'a fait QUE parier n'a aucune manche : le detail disait
+     « aucune manche enregistree » et s'arretait la, en cachant ses paris. */
+  if(!cles.length) return '<div class="det-in">'+(pb.ligne||
+    '<span class="det-vide">Aucune manche ni pari enregistre pour ce joueur.</span>')+'</div>';
   cles.sort(function(a,b){ return (j[b].mise||0)-(j[a].mise||0); });
   var tot={n:0,mise:0,rendu:0,gagne:0};
   var h='<div class="det-in"><h5>'+esc(p.name)+' — detail par jeu</h5>'+
@@ -784,7 +845,7 @@ function detail(p){
      'La maison garde 3 a 8 % selon le jeu, donc un joueur normal reste <b>sous 100 %</b>. '+
      'Au-dessus de 100 % sur plus de 200 manches, cet argent ne vient pas du jeu : il est marque en rouge. '+
      'Le pourcentage de mains gagnees, lui, flatte : on peut en gagner la moitie et perdre quand meme.</div>';
-  return h+'</div>';
+  return h+pb.ligne+'</div>';
 }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
 async function loadPlayers(){
