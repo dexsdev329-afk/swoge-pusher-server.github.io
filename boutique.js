@@ -233,12 +233,45 @@ const ITEMS = [
    serait invendable a qui n'a pas 2,5 millions, et il n'aurait aucune valeur
    pour les autres. */
 const TOTAL = 10000;
+
+/*
+ * ---- LES PRIX SONT CALES SUR LE COUT D'UNE LIGNE ----
+ *
+ * Une LIGNE, ce sont les cinq raretes d'une meme famille. Et il a fallu
+ * corriger une erreur de raisonnement avant de pouvoir chiffrer quoi que ce
+ * soit : on calculait le cout d'une ligne CHOISIE D'AVANCE — « je veux les
+ * cinq Chaos ». Personne ne joue comme ca. Un collectionneur ouvre des
+ * coffres et termine la famille qui se presente : c'est le mythique qui
+ * decide de la ligne, pas l'inverse.
+ *
+ * La difference n'est pas un detail. Attendre UN mythique precis, c'est un
+ * sur trois mille par coffre dore ; attendre N'IMPORTE LEQUEL des six, c'est
+ * un sur cinq cents. Le cout reel etait cinq fois plus bas que le chiffre
+ * qu'on regardait.
+ *
+ * Cible retenue : que 99 joueurs sur 100 completent une ligne sous cent
+ * millions. Mesure par simulation sur trois mille parcours, coffre dore :
+ *
+ *   1 sur 10 avant    5 M
+ *   la moitie avant  17 M
+ *   9 sur 10 avant   46 M
+ *   99 sur 100 avant 93 M   <- la cible
+ *
+ * Le mot « maximum » merite une reserve : un tirage aleatoire n'a pas de
+ * maximum absolu, et le centieme joueur peut depasser. Un plafond DUR
+ * demanderait un compteur de pitie — « apres N coffres sans mythique, le
+ * suivant en est un ». Ce n'est pas en place.
+ *
+ * Ces prix ne touchent PAS a la rarete : les plafonds en sont independants.
+ * Il y aura toujours soixante mythiques et quatre collections mythiques
+ * completes. On rend la collection accessible sans la rendre commune.
+ */
 const COFFRES = [
-  { cle: 'bois', nom: 'Wooden Chest', prix: 25000,
+  { cle: 'bois', nom: 'Wooden Chest', prix: 4000,
     table: [['commun', 7600], ['rare', 2100], ['epique', 280], ['legendaire', 19], ['mythique', 1]] },
-  { cle: 'or', nom: 'Golden Chest', prix: 250000,
+  { cle: 'or', nom: 'Golden Chest', prix: 40000,
     table: [['commun', 4500], ['rare', 3800], ['epique', 1400], ['legendaire', 280], ['mythique', 20]] },
-  { cle: 'mythe', nom: 'Mythic Chest', prix: 2500000,
+  { cle: 'mythe', nom: 'Mythic Chest', prix: 400000,
     table: [['commun', 1000], ['rare', 3400], ['epique', 3900], ['legendaire', 1500], ['mythique', 200]] },
 ];
 
