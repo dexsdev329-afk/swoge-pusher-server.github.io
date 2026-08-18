@@ -42,14 +42,16 @@ const J = '0x' + '11'.repeat(20);
   eq(g.estMaison(null), false, 'ni rien du tout');
 }
 
-// ================== 2. ILS RESTENT UNE DETTE, ET C'EST LE POINT
+// ================== 2. LES DEUX MOITIES, ET ELLES SONT INDISSOCIABLES
 /*
- * Ma premiere version les sortait du « du », ce qui faisait monter le surplus
- * d'autant. C'etait juste A UNE CONDITION : qu'ils ne puissent plus retirer.
- * Ils le peuvent — decision du proprietaire — donc les sortir aurait annonce
- * quatre-vingt-un millions de surplus qui peuvent partir a tout moment.
+ * L'exclusion du « du » et le verrou de retrait ne se testent pas separement,
+ * parce qu'ils ne se DEPLOIENT pas separement. Le danger n'est pas dans la
+ * formule — a tout instant l'exclusion est juste — il est dans l'ORDRE DES
+ * GESTES : le proprietaire lit « surplus 92 M » et le retire, le coffre tombe
+ * a ce qu'on doit aux joueurs, et la fiche du compte maison porte toujours une
+ * creance de 81 M que `requestWithdraw` ne saurait pas refuser.
  *
- * Un chiffre de solvabilite se calcule au pire. Jamais au mieux.
+ * Ce bloc echoue si l'une des deux disparait.
  */
 {
   const g = new Game();
@@ -60,22 +62,40 @@ const J = '0x' + '11'.repeat(20);
   const duApres = f(g.totalOwed());
   const b = g.owedBreakdown();
 
-  pres(duApres - duAvant, 9000000, 0.01,
-       'les jetons d un compte maison RESTENT une dette — il peut les retirer');
+  eq(duApres, duAvant, 'MOITIE 1 : les jetons d un compte maison ne sont pas une dette');
   eq(f(b.maison), 9000000, 'et ils sont comptes a part, pour l affichage');
   eq(b.maisonN, 1, 'un seul compte concerne');
+
+  const p = g._p(MAISON); p.hasDeposited = true;
+  assert.throws(() => g.requestWithdraw(MAISON, '50000'), /do not withdraw/); n++;
+  eq(f(p.balance), 9000000,
+     'MOITIE 2 : et il ne peut pas les retirer. Sans ce refus, la moitie 1 ' +
+     'annonce un surplus que la fiche peut encore reclamer');
+
+  /* Un joueur ordinaire retire toujours : le verrou vise ce compte, pas le
+     mecanisme. */
+  const q = g._p(J); q.balance = WEI(9000000); q.hasDeposited = true;
+  const avant = f(q.balance);
+  g.requestWithdraw(J, '50000');
+  pres(avant - f(q.balance), 50000, 0.01, 'un joueur ordinaire retire normalement');
 }
 
-// ================== 3. IL RETIRE COMME TOUT LE MONDE
+// ================== 3. UN VIREMENT VERS UN JOUEUR SE CORRIGE TOUT SEUL
+/*
+ * Le compte maison peut envoyer des jetons — c'est meme sa raison d'etre.
+ * Aucun trou : les jetons quittent un compte exclu pour un compte compte, donc
+ * la dette monte du meme montant a l'instant ou ils arrivent. Le surplus
+ * baisse tout seul, sans qu'on ait rien a ecrire.
+ */
 {
   const g = new Game();
-  const p = g._p(MAISON);
-  p.balance = WEI(9000000); p.hasDeposited = true;
-  const avant = f(p.balance);
-  g.requestWithdraw(MAISON, '50000');
-  pres(avant - f(p.balance), 50000, 0.01,
-       'un compte maison retire normalement — c est la raison pour laquelle ses ' +
-       'jetons doivent rester dans le du');
+  const p = g._p(MAISON); p.balance = WEI(9000000); p.hasDeposited = true;
+  g._p(J).balance = WEI(0);
+  const du0 = f(g.totalOwed());
+  g.transfere(MAISON, J, '1000000');
+  pres(f(g.totalOwed()) - du0, 1000000, 0.01,
+       'un million envoye a un joueur devient un million de dette — immediatement');
+  pres(f(g.owedBreakdown().maison), 8000000, 0.01, 'et la maison n en tient plus que huit');
 }
 
 // ================== 4. IL JOUE COMME TOUT LE MONDE
@@ -110,9 +130,9 @@ const J = '0x' + '11'.repeat(20);
   eq(a.maisonN, 1, 'l administration recoit le nombre de comptes maison');
   eq(a.maison, 9000000, 'et ce qu ils tiennent, pour l afficher a cote du surplus');
   ok(a.surplus > 0, `le surplus au pire est calcule (${a.surplus})`);
-  pres(a.surplusAvecMaison - a.surplus, 9000000, 0.01,
-       'le second chiffre — surplus en considerant la maison comme acquise — ' +
-       'vaut exactement le premier plus ce qu elle tient. Deux nombres, jamais un seul qui melange');
+  pres(a.surplus - a.surplusHorsMaison, 9000000, 0.01,
+       'le second chiffre dit ce que vaudrait le surplus SANS cet argent — ' +
+       'exactement le premier moins ce que la maison tient');
 
   /* Sans compte maison, la ligne n'a rien a dire. */
   const g2 = new Game();
@@ -120,16 +140,18 @@ const J = '0x' + '11'.repeat(20);
   eq(g2.autonomie(WEI(50000000)).maisonN, 0, 'sans compte maison, rien a signaler');
   eq(g2.autonomie(WEI(50000000)).maison, 0, 'et rien a compter a part');
 
-  /* LE SURPLUS D'ALARME NE BOUGE PAS D'UN JETON. C'est la propriete qui
-     protege : quoi qu'on configure, le chiffre qui declenche l'alerte reste
-     calcule au pire. */
-  const pot = WEI(50000000);
-  const g3 = new Game(); g3._p(J).balance = WEI(1000000);
-  const sansConfig = g3.autonomie(pot).surplus;
-  const g4 = new Game(); g4._p(J).balance = WEI(1000000);
-  g4._p(MAISON).balance = WEI(9000000);
-  pres(g4.autonomie(pot).surplus, sansConfig - 9000000, 0.01,
-       'le surplus d alarme BAISSE de neuf millions, comme pour n importe quel joueur');
+  /* LE CAS QUI JUSTIFIE LE SECOND CHIFFRE : le coffre ne tient QUE grace a
+     l'argent de la maison. Le surplus affiche quatre-vingts millions et
+     pourtant, sans cet argent, on ne pourrait pas payer les joueurs. C'est
+     exactement ce qu'on decouvre trop tard si personne ne l'affiche. */
+  const g5 = new Game();
+  g5._p(J).balance = WEI(13500000);
+  g5._p(MAISON).balance = WEI(81500000);
+  const a5 = g5.autonomie(WEI(95000000));
+  ok(a5.surplus > 79000000, `le surplus affiche ${Math.round(a5.surplus).toLocaleString('fr')}`);
+  ok(a5.surplusHorsMaison < 0,
+     `et pourtant, sans la maison, il manquerait ${Math.round(-a5.surplusHorsMaison).toLocaleString('fr')} ` +
+     'pour payer les joueurs — le second chiffre existe pour ce cas-la');
 }
 
 // ================== 6. UNE CONFIGURATION SALE NE CASSE RIEN

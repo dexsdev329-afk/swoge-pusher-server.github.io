@@ -2442,10 +2442,11 @@ class Game {
          proprietaire lise sa vraie position sans que le chiffre de
          solvabilite devienne faux. */
       maison: f(b.maison), maisonN: b.maisonN, maisonStaked: stakedMaison,
-      /* Le surplus si l'on considere les comptes maison comme deja acquis.
-         C'est un CONFORT DE LECTURE, jamais le chiffre d'alarme : celui-la
-         reste `surplus`, calcule au pire. */
-      surplusAvecMaison: surplus === null ? null : Number((surplus + f(b.maison)).toFixed(6)),
+      /* Le surplus SANS les comptes maison — ce qu'il vaudrait si leurs jetons
+         etaient une dette. Il n'est plus le chiffre d'alarme, mais il reste
+         celui qu'on veut lire le jour ou l'on se demande « et si je devais
+         rendre meme ca ». */
+      surplusHorsMaison: surplus === null ? null : Number((surplus - f(b.maison)).toFixed(6)),
       staked, rendementJour: Number(rendementJour.toFixed(6)),
       rendementJoueurs: Number(rendementJoueurs.toFixed(6)),
       revenuJour: Number(revenuJour.toFixed(6)),
@@ -2495,10 +2496,27 @@ class Game {
        * Ils sont comptes A PART pour l'affichage : le proprietaire doit
        * pouvoir lire « le coffre couvre tout, et 81 M de ce qu'il couvre sont
        * a moi » — deux nombres, pas un seul qui melange les deux. */
+      /* ---- EXCLU DU « DU », ET C'EST INDISSOCIABLE DU VERROU DE RETRAIT ----
+       *
+       * A tout instant, l'exclusion est une comptabilite juste : ces jetons
+       * sont a la maison, ils n'attendent aucun joueur. Le danger n'est pas
+       * dans la formule, il est dans L'ORDRE DES GESTES.
+       *
+       * Le proprietaire lit « surplus : 92 M » et le retire. Le coffre tombe
+       * a ce qu'on doit aux joueurs. Or la fiche du compte maison porte
+       * toujours une creance de 81 M — `p.balance` ne sait pas qu'elle a ete
+       * exclue — et `requestWithdraw` ne regarde que cette fiche. Il signerait
+       * un bon pour de l'argent qui n'est plus la, et ce sont les joueurs qui
+       * paieraient.
+       *
+       * Le verrou de `requestWithdraw` fait que cette creance ne peut JAMAIS
+       * etre exercee. Les deux moities tiennent ensemble ; retirer l'une sans
+       * l'autre est le trou. `maison.test.js` echoue si l'une disparait. */
       if (this.estMaison(addr)) {
         maison = maison.add(p.balance).add(st).add(pe);
         maisonStaked = maisonStaked.add(st);
         maisonN++;
+        continue;
       }
       balances = balances.add(p.balance);
       staked = staked.add(st);
@@ -6022,6 +6040,19 @@ class Game {
 
   /** Request a withdrawal of `amountStr` $SWOGE. Returns cumulativeAuthorized (wei) or throws. */
   requestWithdraw(addr, amountStr) {
+    /* ---- L'AUTRE MOITIE DE `COMPTES_MAISON` ----
+     *
+     * Les jetons de ce compte ont ete sortis du « du », donc annonces comme
+     * surplus retirable par le proprietaire. Sa fiche porte pourtant toujours
+     * la creance : si le surplus est retire ET que ce bon est signe, le coffre
+     * doit deux fois la meme somme, et ce sont les joueurs qui n'obtiennent
+     * plus leur retrait.
+     *
+     * Ce refus n'est pas une precaution : c'est ce qui rend l'exclusion sure.
+     * L'argent d'un compte maison sort par le retrait du proprietaire — qui,
+     * lui, se lit dans le surplus et le fait donc baisser. */
+    if (this.estMaison(addr))
+      throw new Error('house accounts do not withdraw — their tokens are already counted as house surplus. Use the owner withdrawal.');
     const p = this._p(addr);
     const amount = WEI(amountStr);
     /* Le minimum baisse avec le palier : c'est un confort qui ne coute rien

@@ -61,7 +61,7 @@ function page() {
 </div>
 <div class="sub">
   <b>Owed breakdown:</b> 💵 Balances <b id="ob">—</b> · 🔒 Staked <b id="os">—</b> · 📈 Yield <b id="oy">—</b> · 🎰 Jackpot reserve <b id="oj">—</b><br>
-  <span id="maisonL" style="display:none">🏛️ <b>Held by house accounts</b> <b id="omz">—</b> <em id="omn"></em> — <b>counted inside what is owed</b> (these accounts can withdraw). Surplus if you treat it as yours: <b id="omsur">—</b><br></span>
+  <span id="maisonL" style="display:none">🏛️ <b>Held by house accounts</b> <b id="omz">—</b> <em id="omn"></em> — excluded from what is owed; these accounts cannot withdraw. <b>Without them the surplus would be <span id="omsur">—</span></b><br></span>
   👥 Players <b id="pl">—</b> · updated <span id="upd">—</span> · <a href="#" id="refresh">refresh</a>
 </div>
 
@@ -602,7 +602,15 @@ async function load(){
       $("#maisonL").style.display="";
       $("#omz").textContent=fmt(String(A.maison));
       $("#omn").textContent="("+A.maisonN+" account"+(A.maisonN>1?"s":"")+")";
-      $("#omsur").textContent=A.surplusAvecMaison==null?"—":fmt(String(A.surplusAvecMaison));
+      var sh=A.surplusHorsMaison;
+      $("#omsur").textContent = sh==null ? "—" : fmt(String(sh));
+      /* SI LE COFFRE NE TIENT QUE GRACE A LA MAISON, IL FAUT LE VOIR. Le
+         surplus peut afficher quatre-vingts millions et le coffre etre en
+         realite incapable de payer les joueurs sans cet argent-la. C'est
+         exactement le genre de chose qu'on decouvre trop tard. */
+      $("#maisonL").style.color = (sh!=null && sh<0) ? "#FF6B6B" : "";
+      if(sh!=null && sh<0) $("#omsur").textContent =
+        fmt(String(sh))+" — the vault does NOT cover players without this money";
     } else if($("#maisonL")) $("#maisonL").style.display="none";
     /* LE COUT QUI COMPTE est celui qui part vraiment. Le rendement que la
        maison se verse a elle-meme tourne en rond : l'afficher comme un cout
