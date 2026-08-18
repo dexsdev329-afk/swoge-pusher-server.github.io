@@ -39,27 +39,27 @@ const PUISSANCE_PRIX = { 1: 15000, 2: 35000, 3: 75000, 4: 150000, 5: 300000 };
 const SKINS = [
   {
     id: 'andy', nom: 'Andy', puissance: 1,
-    pouvoir: 'Toujours surpris. Jamais preparé.',
+    pouvoir: 'Always caught off guard. Never ready.',
     couleur: '#FFC53D',
   },
   {
     id: 'claude', nom: 'Claude', puissance: 2,
-    pouvoir: 'Répond à tout, même à ce qu on ne lui a pas demandé.',
+    pouvoir: 'Answers everything, even what nobody asked.',
     couleur: '#E08A3C',
   },
   {
     id: 'pepe', nom: 'Pepe', puissance: 3,
-    pouvoir: 'Le plus vieux mème encore debout court le plus vite.',
+    pouvoir: 'The oldest meme still standing runs the fastest.',
     couleur: '#7CFF9B',
   },
   {
     id: 'landwolf', nom: 'Landwolf', puissance: 4,
-    pouvoir: 'Un verre à la main, jamais pressé de gagner.',
+    pouvoir: 'A drink in hand, never in a hurry to win.',
     couleur: '#B48CFF',
   },
   {
     id: 'ogswoge', nom: 'OG Swoge', puissance: 5,
-    pouvoir: 'La mascotte elle-même. Il n y a rien au-dessus.',
+    pouvoir: 'The mascot itself. There is nothing above it.',
     couleur: '#FF4655',
   },
 ];
