@@ -106,13 +106,12 @@ function avance(g, addr, jours) {
   g.p4Rejoindre(B, m.id, 2000);
   eq(g._p(B).dropsToday || 0, 1, 's asseoir aussi');
 
-  const quete = cfg.QUESTS.find((q) => q.metric === 'drops');
-  if (quete) {
-    const vue = g.questState(A).find((q) => q.id === quete.id);
-    eq(vue.progress, 1, `la quete « ${quete.label} » avance de la partie jouee`);
-  } else {
-    ok(true, 'aucune quete au compteur de manches dans cette configuration');
-  }
+  /* La quete au compteur de manches n'est plus fixe : elle sort du pool du
+     jour. On la cherche donc dans les quetes REELLES, et on ne conclut que si
+     le jour en propose une. */
+  const vue = g.questState(A).find((q) => q.metric === 'drops');
+  if (vue) eq(vue.progress, 1, `la quete « ${vue.label} » avance de la partie jouee`);
+  else ok(true, 'aucune quete au compteur de manches ce jour-la');
 }
 
 // --------------------------------------------- les quetes demandent un depot
@@ -133,7 +132,21 @@ function avance(g, addr, jours) {
     eq(sol(g, A) - avant, gain, 'ce qui est verse correspond a la recompense');
     jete(() => g.claimQuest(A, libre.id), /already claimed/, 'une quete ne paie qu une fois');
   } else {
-    ok(q.every((x) => !x.locked), 'les quetes sont ouvertes sans depot dans cette configuration');
+    /* ---- LE VERROU A CHANGE DE NATURE ----
+     *
+     * Il fermait TOUT avant le premier depot, donc il eteignait la retention
+     * pour ceux qu'on cherche a garder. Il ne retient plus que les JETONS :
+     * les quetes se font, l'XP se gagne, et une adresse jetable ne rapporte
+     * rien qui se retire. */
+    ok(q.every((x) => !x.locked), 'les quetes sont ouvertes sans depot');
+    if (cfg.QUETE_JETONS_APRES_DEPOT) {
+      ok(q.every((x) => x.reward === 0), 'mais elles ne paient aucun jeton avant le premier depot');
+      ok(q.every((x) => x.xp > 0), 'alors qu elles paient toute leur XP');
+      ok(q.some((x) => x.recompenseBloquee), 'et la page peut le dire, le champ est la');
+      g._p(A).hasDeposited = true;
+      const q2 = g.questState(A);
+      ok(q2.some((x) => x.reward > 0), 'apres un depot, les jetons apparaissent');
+    }
   }
 }
 

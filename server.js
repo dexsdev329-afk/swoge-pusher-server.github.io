@@ -484,6 +484,7 @@ function charge(ws, rec, extra) {
        la pastille doit etre allumee AVANT qu'il pense a regarder, sinon elle
        ne sert a rien — c'est elle qui le ramene, pas le bouton. */
     attente: game.enAttente(rec), offert: game.coffreOffert(rec),
+    parfait: game.parfaitEtat(rec),
     stake: game.stakeInfo(rec), bj: game.bjState(rec), niveau: game.niveau(rec),
     casino: game.casinoState(rec), hilo: game.hiloState(rec), mines: game.minesState(rec),
     casinoPay: require('./casino').PAY,
@@ -2072,7 +2073,23 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
-      if (m.type === 'quests') return send(ws, { type: 'quests', quests: game.questState(ws.addr) });
+      if (m.type === 'quests') return send(ws, { type: 'quests', quests: game.questState(ws.addr),
+                                                parfait: game.parfaitEtat(ws.addr),
+                                                attente: game.enAttente(ws.addr) });
+      /* LA JOURNEE PARFAITE. Un message a part et pas un effet de bord de la
+         derniere quete reclamee : le coffre doit partir sur un geste, pour
+         qu'on le voie s'ouvrir. */
+      if (m.type === 'perfectDay') {
+        try {
+          const r = game.reclameParfait(ws.addr);
+          persistSoon();
+          if (r.gagne) notifyCoffre(ws.addr, r.gagne);
+          return send(ws, { type: 'perfectDay', ...r, parfait: game.parfaitEtat(ws.addr),
+                            niveau: game.niveau(ws.addr), balance: game.balanceStr(ws.addr),
+                            ...(r.gagne ? game.boutiqueEtat(ws.addr, r.gagne.saison) : {}),
+                            attente: game.enAttente(ws.addr) });
+        } catch (e) { return send(ws, { type: 'error', error: e.message }); }
+      }
       if (m.type === 'bonusState') return send(ws, { type: 'bonus', bonus: game.bonusState(ws.addr),
                                                     attente: game.enAttente(ws.addr),
                                                     offert: game.coffreOffert(ws.addr) });

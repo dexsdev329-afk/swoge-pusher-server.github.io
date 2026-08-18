@@ -162,9 +162,14 @@ const mise = (g, a, jeu) => ((g._p(a).miseJour || {})[jeu] || 0);
 {
   const g = new Game();
   const jourKey = g._today();
-  const mission = g.missionsDuJour(jourKey)[0];
   riche(g, A, 5000000);
   g._p(A).hasDeposited = true;
+  /* L'identifiant de la mission n'est plus « m:<jeu> » mais « n_jeu » : le
+     jeu du jour a son propre creneau dans le pool, ce qui evite d'avoir deux
+     « misez sur X » le meme jour. On la trouve donc par son PALIER, et c'est
+     elle qui dit quel jeu elle nomme. */
+  const mission = g.questState(A).find((q) => q.palier === 'jeu');
+  ok(mission, 'le jeu du jour a bien sa quete');
 
   const vue0 = g.questState(A).find((q) => q.id === mission.id);
   ok(vue0, 'la mission du jour figure dans les quetes');
@@ -173,39 +178,42 @@ const mise = (g, a, jeu) => ((g._p(a).miseJour || {})[jeu] || 0);
   jete(() => g.claimQuest(A, mission.id), /not complete/, 'reclamer trop tot est refuse');
 
   /* On mise la moitie : la mission doit avancer sans s'ouvrir. */
-  g._markWager(g._p(A), ethers.utils.parseUnits(String(cfg.MISSION_MISE / 2), cfg.DECIMALS), mission.jeu);
+  g._markWager(g._p(A), ethers.utils.parseUnits(String(mission.target / 2), cfg.DECIMALS), mission.jeu);
   const vue1 = g.questState(A).find((q) => q.id === mission.id);
-  eq(vue1.progress, cfg.MISSION_MISE / 2, 'la mission avance a la mise');
+  eq(vue1.progress, mission.target / 2, 'la mission avance a la mise');
   eq(vue1.claimable, false, 'mais ne s ouvre pas a moitie');
 
   /* Miser sur un AUTRE jeu ne doit pas la faire avancer : c'est tout l'objet
      de la mission. */
   const autre = cfg.MISSION_CATALOGUE.map((c) => c[0]).find((j) => j !== mission.jeu);
   g._markWager(g._p(A), ethers.utils.parseUnits(String(cfg.MISSION_MISE * 5), cfg.DECIMALS), autre);
-  eq(g.questState(A).find((q) => q.id === mission.id).progress, cfg.MISSION_MISE / 2,
+  eq(g.questState(A).find((q) => q.id === mission.id).progress, mission.target / 2,
      'miser ailleurs ne la fait pas avancer d un jeton');
 
-  g._markWager(g._p(A), ethers.utils.parseUnits(String(cfg.MISSION_MISE / 2), cfg.DECIMALS), mission.jeu);
+  g._markWager(g._p(A), ethers.utils.parseUnits(String(mission.target / 2), cfg.DECIMALS), mission.jeu);
   const vue2 = g.questState(A).find((q) => q.id === mission.id);
-  eq(vue2.progress, cfg.MISSION_MISE, 'la mise atteinte la remplit');
+  eq(vue2.progress, mission.target, 'la mise atteinte la remplit');
   eq(vue2.claimable, true, 'et elle devient reclamable');
 
   const avant = Number(g.balanceStr(A));
   const gain = g.claimQuest(A, mission.id);
-  eq(gain, cfg.MISSION_GAIN, 'elle rapporte ce qui etait annonce');
-  pres(Number(g.balanceStr(A)) - avant, cfg.MISSION_GAIN, 1e-9, 'et le solde le recoit');
+  eq(gain, mission.reward, 'elle rapporte ce qui etait annonce');
+  pres(Number(g.balanceStr(A)) - avant, mission.reward, 1e-9, 'et le solde le recoit');
   jete(() => g.claimQuest(A, mission.id), /already claimed/, 'une seule fois par jour');
 
   /* La mission d'un AUTRE jour ne se reclame pas aujourd'hui, meme remplie :
      un identifiant garde de la veille ne doit rien payer. */
-  const dautrejour = g.missionsDuJour('2026-01-01')
-    .map((m) => m.id).find((id) => !g.missionsDuJour(jourKey).some((m) => m.id === id));
-  if (dautrejour) {
-    g._p(A).miseJour[dautrejour.slice(2)] = cfg.MISSION_MISE * 10;
-    jete(() => g.claimQuest(A, dautrejour), /unknown quest/,
-         'une mission qui n est pas au programme du jour ne paie pas');
+  /* Une quete qui n'est PAS au programme du jour ne paie pas, quel que soit
+     l'avancement du compteur qu'elle lit. C'est ce qui empeche de garder un
+     identifiant de la veille et de le rejouer. */
+  const auProgramme = g.quetesDuJour(A).map((q) => q.id);
+  const absente = (cfg.QUETES_POOL || []).map((q) => q.id).find((id) => auProgramme.indexOf(id) < 0);
+  if (absente) {
+    g._p(A).dropsToday = 9999; g._p(A).winsToday = 9999;
+    jete(() => g.claimQuest(A, absente), /unknown quest/,
+         'une quete hors programme ne paie pas, meme son compteur rempli');
   } else {
-    ok(true, 'toutes les missions du catalogue sont au programme aujourd hui');
+    ok(true, 'tout le pool est au programme aujourd hui');
   }
 }
 
@@ -214,8 +222,8 @@ const mise = (g, a, jeu) => ((g._p(a).miseJour || {})[jeu] || 0);
   const g = new Game();
   riche(g, A, 5000000);
   g._p(A).hasDeposited = true;
-  const mission = g.missionsDuJour(g._today())[0];
-  g._markWager(g._p(A), ethers.utils.parseUnits(String(cfg.MISSION_MISE), cfg.DECIMALS), mission.jeu);
+  const mission = g.questState(A).find((q) => q.palier === 'jeu');
+  g._markWager(g._p(A), ethers.utils.parseUnits(String(mission.target), cfg.DECIMALS), mission.jeu);
   g.claimQuest(A, mission.id);
 
   g._p(A).dayKey = '2020-01-01';           // on force le passage d'un jour
@@ -246,21 +254,29 @@ const mise = (g, a, jeu) => ((g._p(a).miseJour || {})[jeu] || 0);
    On prend l'avantage le PLUS FAIBLE du catalogue, pas la moyenne. */
 {
   const AVANTAGE_MINIMAL = 0.025;   // blackjack ~2,6 % ; tout le reste est au-dessus
-  const preleve = cfg.MISSION_MISE * AVANTAGE_MINIMAL;
-  ok(preleve > cfg.MISSION_GAIN * 3,
-     `la maison prend ~${preleve} sur la mise exigee, la mission en rend ` +
-     `${cfg.MISSION_GAIN} : au moins trois fois moins`);
-
-  /* Et l'ensemble de la journee, missions comprises, doit tenir la meme
-     regle — c'est la promesse ecrite au-dessus de QUESTS. */
   const g = new Game();
-  const totalJour = cfg.QUESTS.reduce((s, q) => s + q.reward, 0)
-                  + g.missionsDuJour('2026-08-14').reduce((s, m) => s + m.reward, 0);
-  const exige = cfg.MISSION_MISE * cfg.MISSIONS_PAR_JOUR;
-  ok(exige * AVANTAGE_MINIMAL > totalJour,
-     `la journee entiere rend ${totalJour} pour ~${exige * AVANTAGE_MINIMAL} preleves`);
-  ok(cfg.QUEST_REQUIRE_DEPOSIT,
-     'et il faut avoir depose de l argent reel pour toucher quoi que ce soit');
+  riche(g, A, 5000000);
+  g._p(A).hasDeposited = true;
+  const l = g.questState(A);
+  const m = l.find((q) => q.palier === 'jeu');
+  const preleve = m.target * AVANTAGE_MINIMAL;
+  ok(preleve > m.reward * 3,
+     `la maison prend ~${Math.round(preleve)} sur la mise exigee, la quete du jeu ` +
+     `en rend ${m.reward} : au moins trois fois moins`);
+
+  /* ET LA JOURNEE ENTIERE. C'est le controle qui compte : la refonte a fait
+     passer le volume exige de 6 000 a ~2 000 en reduisant a cinq quetes, et
+     laisser le gain intact aurait rendu la journee RENTABLE a elle seule.
+     Le test l'a attrape avant la mise en ligne. */
+  const totalJour = l.reduce((s, q) => s + q.reward, 0);
+  ok(preleve > totalJour,
+     `la journee entiere rend ${totalJour} pour ~${Math.round(preleve)} preleves sur la seule quete du jeu`);
+
+  /* Le verrou du depot ne ferme plus les quetes — il ne retient que les
+     JETONS. L'XP et le coffre du jour restent ouverts a tous, sinon la
+     retention serait reservee a ceux qui sont deja clients. */
+  ok(!cfg.QUEST_REQUIRE_DEPOSIT, 'les quetes ne sont plus fermees avant un depot');
+  ok(cfg.QUETE_JETONS_APRES_DEPOT, 'mais les jetons, eux, attendent le premier depot');
 }
 
 console.log(`missions.test.js : ${n} verifications OK`);

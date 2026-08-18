@@ -247,7 +247,8 @@ class Game {
            recalcule. Persister une somme deja derivable, c'est se donner deux
            verites a tenir d'accord. */
         xp: p.xp || 0, xps: p.xpSources || undefined, xpf: p.xpFilleuls || undefined,
-        cof: p.coffreOffertJour || null,
+        cof: p.coffreOffertJour || null, jc: p.jourColl || undefined,
+        cre: p.creeLe || undefined, pj: p.parfaitJour || undefined,
         sd: p.streakDay || 0, sl: p.streakLastClaimDay || null,
         ac: p.adCount || 0, ak: p.adDayKey || null, al: p.adLastMs || 0,
     };
@@ -436,6 +437,8 @@ class Game {
         welcomeGranted: !!d.wg, welcomeWagered: !!d.ww, welcomeClaimed: !!d.wc,
         xp: Number(d.xp) || 0, xpSources: d.xps || {}, xpFilleuls: d.xpf || {},
         coffreOffertJour: d.cof || null,
+        jourColl: d.jc || { coffres: 0, neufs: 0, rarete: 0 },
+        creeLe: d.cre || 0, parfaitJour: d.pj || null,
         streakDay: d.sd || 0, streakLastClaimDay: d.sl || null,
         adCount: d.ac || 0, adDayKey: d.ak || null, adLastMs: d.al || 0,
       });
@@ -1495,6 +1498,10 @@ class Game {
     p.dayKey = t; p.dayNet = ethers.BigNumber.from(0); p.dropsToday = 0; p.winsToday = 0; p.questClaimed = {};
     p.primesEntrainement = {};
     p.miseJour = {};
+    /* Les compteurs de collection du jour. Ils vivent ici, avec les autres,
+       parce qu'ils se remettent a zero au meme instant — un compteur du jour
+       qui a son propre reveil finit par se decaler d'un jour. */
+    p.jourColl = { coffres: 0, neufs: 0, rarete: 0 };
   }
   jackpotStr() { return ethers.utils.formatUnits(this.jackpotPot, cfg.DECIMALS); }
 
@@ -2537,28 +2544,262 @@ class Game {
     return out;
   }
 
+  /* ====================================================================
+   * LES CINQ QUETES DU JOUR
+   * ====================================================================
+   *
+   * ---- la selection est CALCULEE, jamais tiree ----
+   *
+   * Elle se rejoue a partir de la date seule. C'est ce qui permet de repondre
+   * a « pourquoi j'ai eu ca » sans stocker un tirage par joueur, et ce qui
+   * fait que deux joueurs comparent la meme journee.
+   *
+   * ---- l'anti-repetition est STRUCTURELLE, pas historique ----
+   *
+   * Ma premiere idee etait « une quete ne revient pas avant trois jours »,
+   * verifiee contre les journees precedentes. Elle ne tient pas : pour
+   * calculer aujourd'hui il faudrait calculer hier, qui a besoin d'avant-hier,
+   * et ainsi de suite sans fin.
+   *
+   * Le pas modulaire regle ca sans memoire : la quete d'indice i d'un palier
+   * de N sort le jour ou (jour * k + slot) % N == i. Chaque quete revient donc
+   * exactement tous les N/k jours, et il suffit que N/k depasse trois. C'est
+   * la meme mecanique que la rotation des jeux, qui marchait deja.
+   *
+   * ---- ce qui est FILTRE avant de tourner ----
+   *
+   * Les quetes de collection ne sont proposees qu'a qui possede deja un objet,
+   * celle du parrainage qu'a qui a un filleul, et les paliers Hard et Elite
+   * n'apparaissent qu'apres quelques jours. Une quete impossible sur le papier
+   * est pire qu'une quete absente : elle apprend a ne pas lire la liste.
+   *
+   * Le filtre casse la promesse « tout le monde voit la meme chose », et c'est
+   * assume : un debutant voit MOINS de quetes, jamais d'autres.
+   */
+  _queteEligible(p, q, jours) {
+    if (q.cond === 'aDesObjets' && !Object.keys(p.objets || {}).length) return false;
+    if (q.cond === 'aDesFilleuls' && !(p.filleuls || []).length) return false;
+    /* L'introduction progressive. Montrer les cinq paliers a quelqu'un qui
+       n'a rien lui montre surtout ce qu'il n'a pas. */
+    if (q.palier === 'hard' && jours < 3) return false;
+    if (q.palier === 'elite' && !Object.keys(p.objets || {}).length) return false;
+    return true;
+  }
+
+  /** Depuis combien de jours cette fiche existe. Sert a l'introduction. */
+  _anciennete(p) {
+    if (!p.creeLe) return 99;            // fiche d'avant ce champ : pas un debutant
+    return Math.max(0, Math.floor((Date.now() - p.creeLe) / 86400000));
+  }
+
+  /** La cible d'une quete de volume, calee sur le solde du joueur. */
+  _queteCible(p) {
+    const solde = Number(ethers.utils.formatUnits(p.balance || BN(0), cfg.DECIMALS));
+    const c = Math.min(cfg.QUETE_CIBLE_MAX, solde * cfg.QUETE_CIBLE_MULT);
+    return Math.max(cfg.QUETE_CIBLE_MIN, Math.round(c / 10) * 10);
+  }
+
+  quetesDuJour(addr) {
+    const p = this._p(addr); this._bumpDay(p);
+    const jour = Math.floor(Date.parse((p.dayKey || this._today()) + 'T00:00:00Z') / 86400000);
+    const anc = this._anciennete(p);
+    const pool = cfg.QUETES_POOL || [];
+    const jeux = this.missionsDuJour(p.dayKey);       // la rotation des jeux, deja en place
+    const cible = this._queteCible(p);
+
+    /* Un compteur de creneau par palier : deux Normal le meme jour doivent
+       piocher a deux endroits differents de leur liste. */
+    const pris = {}, sortie = [], vus = new Set(), jeuxVus = new Set();
+    (cfg.QUETE_COMPO || []).forEach((palier, slot) => {
+      const lot = pool.filter((q) => q.palier === palier && this._queteEligible(p, q, anc));
+      if (!lot.length) return;
+      const k = pris[palier] = (pris[palier] || 0);
+      pris[palier]++;
+      /* On part de la position calculee, et on avance jusqu'a une quete pas
+         encore prise ce jour-la. Sans cette avance, deux creneaux du meme
+         palier tomberaient sur la meme quete des que la liste est courte. */
+      /* ---- LE PAS DOIT ETRE PREMIER AVEC LA LONGUEUR ----
+       *
+       * Ma premiere version avancait de `QUETE_COMPO.length` par jour. Sur un
+       * palier qui compte exactement ce nombre de quetes, le terme du jour
+       * s'annule modulo la longueur : la selection ne bougeait plus JAMAIS.
+       * Mesure : huit jours d'affilee, les deux memes quetes Normal.
+       *
+       * Un pas de 1 est premier avec n'importe quelle longueur — c'est la
+       * seule valeur qui ne peut pas retomber dans ce piege quel que soit le
+       * nombre de quetes qu'on ajoutera ensuite. Le decalage par creneau
+       * suffit a separer deux creneaux d'un meme palier. */
+      let q = null;
+      for (let d = 0; d < lot.length; d++) {
+        const cand = lot[(((jour + slot + d) % lot.length) + lot.length) % lot.length];
+        if (vus.has(cand.id)) continue;
+        q = cand; break;
+      }
+      if (!q) return;
+      vus.add(q.id);
+
+      const vue = { id: q.id, palier: q.palier, metric: q.metric, cible: q.cible || 1,
+                    label: q.label, jeu: null, nom: null, page: null };
+      if (q.volume) vue.cible = cible;
+      if (q.jeuDuJour) {
+        /* PAS DEUX FOIS LE MEME JEU : sinon la journee entiere se joue sur une
+           seule table, et on perd la distribution qui est le meilleur effet du
+           systeme. */
+        const libre = jeux.filter((m) => !jeuxVus.has(m.jeu));
+        const m = libre[0] || jeux[k % Math.max(1, jeux.length)];
+        if (!m) return;
+        jeuxVus.add(m.jeu);
+        vue.jeu = m.jeu; vue.nom = m.nom; vue.page = m.page;
+        vue.cible = cible;
+      }
+      vue.label = String(q.label)
+        .replace('{cible}', Number(vue.cible).toLocaleString('en-US'))
+        .replace('{jeu}', vue.nom || '');
+      vue.reward = (cfg.QUETE_GAIN || {})[q.palier] || 0;
+      vue.xp = (cfg.QUETE_XP || {})[q.palier] || 0;
+      sortie.push(vue);
+    });
+    return sortie;
+  }
+
   /* Une quete, vue par le joueur. Le meme calcul sert a l'affichage et a la
      reclamation : deux calculs finiraient par diverger, et celui qui diverge
      paie ou refuse de payer a tort. */
   _queteVue(p, q, locked) {
-    const prog = q.metric === 'drops' ? p.dropsToday
-               : q.metric === 'wins' ? p.winsToday
-               : q.metric === 'mise' ? ((p.miseJour || {})[q.jeu] || 0)
-               : q.target;                                   // 'free' → toujours remplie
-    const done = prog >= q.target;
+    const cible = q.cible !== undefined ? q.cible : q.target;
+    const prog = this._queteProgres(p, q);
+    const done = prog >= cible;
     const claimed = !!p.questClaimed[q.id];
-    return { id: q.id, label: q.label, metric: q.metric, target: q.target, reward: q.reward,
+    /* LES JETONS ATTENDENT LE PREMIER DEPOT, L'XP NON. La marge anti-farming
+       vient du volume mise ; un debutant a 100 jetons voit sa cible tomber a
+       300, donc huit d'esperance contre trente distribues. Couper en deux ce
+       qui etait ferme d'un bloc garde la retention ouverte a tous et laisse
+       une adresse jetable ne rapporter que de l'XP — qui ne se retire pas. */
+    const jetons = (cfg.QUETE_JETONS_APRES_DEPOT && !p.hasDeposited) ? 0 : (q.reward || 0);
+    return { id: q.id, label: q.label, metric: q.metric, target: cible, reward: jetons,
+             recompenseBloquee: jetons !== (q.reward || 0),
+             xp: q.xp || 0, palier: q.palier || null,
              jeu: q.jeu || null, nom: q.nom || null, page: q.page || null,
-             progress: Math.min(prog, q.target), done, claimed, locked,
+             progress: Math.min(prog, cible), done, claimed, locked,
              claimable: done && !claimed && !locked };
   }
+
+  /**
+   * OU EN EST LE JOUEUR SUR CE COMPTEUR.
+   *
+   * Un seul endroit qui traduit un `metric` en nombre. Deux endroits — un pour
+   * l'affichage, un pour la reclamation — finiraient par diverger, et celui
+   * qui diverge paie ou refuse de payer a tort.
+   *
+   * Aucun de ces compteurs n'a demande de toucher au moteur d'un jeu : ils se
+   * lisent tous sur ce qui etait deja compte. `jeux` est le nombre de clefs de
+   * `miseJour`, et un duel y depose deja son identifiant.
+   */
+  _queteProgres(p, q) {
+    const inv = p.objets || {};
+    const mj = p.miseJour || {};
+    const jc = p.jourColl || {};
+    switch (q.metric) {
+      case 'drops': return p.dropsToday || 0;
+      case 'wins':  return p.winsToday || 0;
+      case 'mise':  return mj[q.jeu] || 0;
+      case 'jeux':  return Object.keys(mj).length;
+      case 'total': return Object.values(mj).reduce((a, b) => a + b, 0);
+      case 'paris': return (mj.paris || 0) > 0 ? 1 : 0;
+      case 'duel':  return Game.JEUX_DUEL.some((j) => (mj[j] || 0) > 0) ? 1 : 0;
+      case 'parisGagnes': return p.parisGagnesJour || 0;
+      case 'coffres': return jc.coffres || 0;
+      case 'neufs':   return jc.neufs || 0;
+      /* Le RANG de rarete, pas la quantite : « rare ou mieux » est un seuil
+         sur l'echelle, et l'echelle est celle de la boutique. */
+      case 'rarete':  return jc.rarete || 0;
+      case 'sortes':  return Object.keys(inv).filter((k) => inv[k] > 0).length;
+      case 'pleines': {
+        const fams = {};
+        for (const o of boutique.ITEMS) if (inv[o.id]) fams[o.famille] = (fams[o.famille] || 0) + 1;
+        return Object.values(fams).filter((n) => n === boutique.RARETES.length).length;
+      }
+      case 'serie': return p.streakLastClaimDay === this._today() ? 1 : 0;
+      case 'filleul': {
+        const t = this._today();
+        return (p.filleuls || []).some((f) => {
+          const q2 = this.players.get(String(f).toLowerCase());
+          return !!(q2 && q2.dayKey === t && Object.keys(q2.miseJour || {}).length);
+        }) ? 1 : 0;
+      }
+      default: return q.cible !== undefined ? q.cible : (q.target || 0);
+    }
+  }
+
+  static get JEUX_DUEL() { return ['p4', 'mp', 'dm', 'mf', 'dc']; }
 
   /** Per-player daily quest state (progress + claimable flags). */
   questState(addr) {
     const p = this._p(addr); this._bumpDay(p);
     const locked = cfg.QUEST_REQUIRE_DEPOSIT && !p.hasDeposited;
-    return cfg.QUESTS.concat(this.missionsDuJour(p.dayKey))
-      .map((q) => this._queteVue(p, q, locked));
+    return this.quetesDuJour(addr).map((q) => this._queteVue(p, q, locked));
+  }
+
+  /**
+   * LA JOURNEE PARFAITE.
+   *
+   * Les cinq quetes du jour reclamees. Elle paie un coffre de bois — le
+   * meilleur objet de recompense du site : une emotion, un objet plafonne,
+   * aucune valeur monetaire a defendre.
+   *
+   * ---- LE PLAFOND N'EST PAS DECORATIF ----
+   *
+   * La saison 1 compte 9 600 pieces. Un coffre par joueur et par jour, c'est
+   * l'edition entiere en six cents jours a seize joueurs — et en DIX-NEUF a
+   * cinq cents. Une edition brulee ne se rattrape pas, et personne ne s'en
+   * apercevrait avant qu'il soit trop tard. Le compteur est donc global, remis
+   * a zero chaque jour, et il rend l'XP seule quand il est atteint plutot que
+   * de refuser : le joueur a fait le travail.
+   */
+  parfaitEtat(addr) {
+    const p = this._p(addr); this._bumpDay(p);
+    const l = this.questState(addr);
+    const total = l.length;
+    const faites = l.filter((q) => q.claimed).length;
+    return {
+      total, faites,
+      pret: total > 0 && faites >= total && p.parfaitJour !== p.dayKey,
+      pris: p.parfaitJour === p.dayKey,
+      coffre: Game.COFFRE_OFFERT,
+      xp: cfg.PARFAIT_XP,
+      restantGlobal: Math.max(0, cfg.COFFRES_GRATUITS_JOUR - this._coffresGratuitsDuJour()),
+    };
+  }
+
+  /* Le compteur global des coffres gratuits — coffre du jour ET journee
+     parfaite. Il vit en memoire et repart a zero chaque jour : sa raison
+     d'etre est de borner une ferme d'adresses dans la journee, pas de tenir
+     une comptabilite. Un redemarrage le remet a zero, ce qui est le bon
+     compromis : l'edition, elle, est protegee par ses plafonds par objet. */
+  _coffresGratuitsDuJour() {
+    const t = this._today();
+    if (this.coffresGratuitsJour !== t) { this.coffresGratuits = 0; this.coffresGratuitsJour = t; }
+    return this.coffresGratuits || 0;
+  }
+  _prendCoffreGratuit() {
+    if (this._coffresGratuitsDuJour() >= cfg.COFFRES_GRATUITS_JOUR) return false;
+    this.coffresGratuits = this._coffresGratuitsDuJour() + 1;
+    return true;
+  }
+
+  reclameParfait(addr) {
+    const p = this._p(addr); this._bumpDay(p);
+    const e = this.parfaitEtat(addr);
+    if (e.pris) throw new Error('already claimed today');
+    if (!e.pret) throw new Error(`finish all ${e.total} quests first (${e.faites}/${e.total})`);
+    p.parfaitJour = p.dayKey;
+    this._gagneXp(p, cfg.PARFAIT_XP, 'parfait');
+    /* Le coffre passe par le MEME chemin que tous les autres. Sous le plafond
+       global il part ; au-dessus, l'XP seule — refuser apres coup une
+       recompense annoncee serait pire que la reduire. */
+    let gagne = null;
+    if (this._prendCoffreGratuit()) gagne = this.boutiqueAchat(addr, Game.COFFRE_OFFERT, { gratuit: true });
+    return { xp: cfg.PARFAIT_XP, gagne, plafonne: !gagne };
   }
 
   /** Claim a completed quest → credit its reward. Throws on any invalid claim. */
@@ -2567,18 +2808,27 @@ class Game {
     /* Les missions du jour se cherchent dans la liste DU JOUR : celle d'hier
        n'existe plus, et un identifiant garde de la veille ne doit pas payer
        aujourd'hui. */
-    const q = cfg.QUESTS.concat(this.missionsDuJour(p.dayKey)).find((x) => x.id === id);
+    /* Les quetes du jour se cherchent dans la liste DU JOUR : celle d'hier
+       n'existe plus, et un identifiant garde de la veille ne doit pas payer
+       aujourd'hui. */
+    const q = this.quetesDuJour(addr).find((x) => x.id === id);
     if (!q) throw new Error('unknown quest');
     if (cfg.QUEST_REQUIRE_DEPOSIT && !p.hasDeposited) throw new Error('deposit first to unlock quests');
     const vue = this._queteVue(p, q, false);
     if (!vue.done) throw new Error('quest not complete yet');
     if (p.questClaimed[q.id]) throw new Error('already claimed today');
     p.questClaimed[q.id] = true;
-    const r = WEI(q.reward);
+    /* On paie CE QUE LA VUE ANNONCE, jamais la valeur brute du pool : deux
+       calculs de la recompense finiraient par diverger, et celui qui diverge
+       paie ce que le joueur n'a pas vu. */
+    const r = WEI(vue.reward);
     p.balance = p.balance.add(r);
     p.dayNet = p.dayNet.add(r);
-    this._gagneXp(p, cfg.XP_QUETE, 'quete');
-    return q.reward;
+    /* L'XP suit le PALIER de la quete. C'est elle qui porte la progression :
+       les jetons restent symboliques parce qu'ils se comparent a une mise et
+       perdent la comparaison, l'XP ne se compare a rien. */
+    this._gagneXp(p, q.xp || cfg.XP_QUETE, 'quete');
+    return vue.reward;
   }
 
   // ---- Telegram link (for the Adsgram reward postback) ----
@@ -2857,6 +3107,7 @@ class Game {
                n'est donc pas ici : un compteur derivable qu'on stocke est un
                deuxieme endroit ou la verite peut diverger. */
             xp: 0, xpSources: {}, xpFilleuls: {}, coffreOffertJour: null,
+            jourColl: { coffres: 0, neufs: 0, rarete: 0 }, creeLe: Date.now(),
             /* L'inventaire de la boutique : identifiant d'objet -> quantite.
                Un objet plat, pas une Map : il part au fichier tel quel. */
             objets: {} };
@@ -4446,6 +4697,11 @@ class Game {
     const p = this._p(addr);
     const jour = this._today();
     if (p.coffreOffertJour === jour) throw new Error('today\'s free chest is already open — come back tomorrow');
+    /* Le MEME plafond que la journee parfaite. Les deux sortent de la meme
+       edition ; un plafond sur l'une et pas sur l'autre ne protege rien,
+       il suffit de prendre l'autre. */
+    if (!this._prendCoffreGratuit())
+      throw new Error('today\'s free chests are all gone — come back tomorrow');
     p.coffreOffertJour = jour;
     return this.boutiqueAchat(addr, Game.COFFRE_OFFERT, { gratuit: true });
   }
@@ -4470,8 +4726,11 @@ class Game {
     let quetes = 0;
     try { quetes = this.questState(addr).filter((q) => q.done && !q.claimed).length; } catch (e) {}
     const transferts = p.trNonLus || 0;
-    return { coffre, serie, quetes, transferts,
-             total: (coffre ? 1 : 0) + (serie ? 1 : 0) + quetes + (transferts ? 1 : 0) };
+    let parfait = false;
+    try { parfait = this.parfaitEtat(addr).pret; } catch (e) {}
+    return { coffre, serie, quetes, transferts, parfait,
+             total: (coffre ? 1 : 0) + (serie ? 1 : 0) + quetes + (transferts ? 1 : 0) +
+                    (parfait ? 1 : 0) };
   }
 
   /**
@@ -4544,6 +4803,16 @@ class Game {
      * La famille complete paie une deuxieme fois, et sans condition de course :
      * les trois prix de la saison 1 recompensent les trois PREMIERS, l'XP
      * recompense l'exploit lui-meme, pour tout le monde et a tout moment. */
+    /* Les quetes de collection lisent ces trois-la. Le rang de rarete est
+       garde au MAXIMUM du jour et non au dernier tire : « sors un rare »
+       serait sinon annule par le commun suivant. */
+    this._bumpDay(p);
+    p.jourColl = p.jourColl || { coffres: 0, neufs: 0, rarete: 0 };
+    p.jourColl.coffres++;
+    if (neuf) p.jourColl.neufs++;
+    const rangR = boutique.RARETES.findIndex((r) => r.cle === t.item.rarete);
+    if (rangR > (p.jourColl.rarete || 0)) p.jourColl.rarete = rangR;
+
     let xpGagne = 0;
     if (neuf) {
       const r = xpDeRarete(t.item.rarete);

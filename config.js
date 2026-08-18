@@ -246,12 +246,174 @@ module.exports = {
   // Anti-Sybil: total rewards (50) < house edge on the wagering required to
   // finish them (~300 drops → ~60 edge), AND claiming needs a real deposit.
   // So farming with throwaway wallets costs more than it pays.
-  QUESTS: [
-    { id: 'daily',   label: 'Daily bonus',      metric: 'free',  target: 0,   reward: parseInt(env('Q_DAILY',  '5'),  10) },
-    { id: 'drop100', label: 'Drop 100 coins',   metric: 'drops', target: 100, reward: parseInt(env('Q_DROP100', '10'), 10) },
-    { id: 'win3',    label: 'Win 3 prizes',     metric: 'wins',  target: 3,   reward: parseInt(env('Q_WIN3',    '15'), 10) },
+  /* ---- LES TROIS QUETES FIXES SONT PARTIES ----
+   *
+   * Elles ne changeaient jamais, et l'une d'elles avait pour cible ZERO :
+   * finie a l'instant ou elle apparaissait. Les deux autres portaient des
+   * libelles de Coin Pusher — « Drop 100 coins », « Win 3 prizes » — alors
+   * que leurs compteurs etaient alimentes par QUATORZE jeux : un joueur de
+   * blackjack croyait qu'elles ne le concernaient pas et ignorait une
+   * recompense qu'il gagnait deja.
+   *
+   * Elles sont remplacees par QUETES_POOL ci-dessous, dont les libelles
+   * disent ce que les compteurs mesurent vraiment. On ne les garde pas « au
+   * cas ou » : une configuration que plus personne ne lit finit par etre
+   * modifiee par quelqu'un qui croit qu'elle sert encore.
+   */
+  /* ---- LE VERROU DU DEPOT TOMBE ----
+   *
+   * Il etait pose a 1 : les quetes etaient fermees tant qu'on n'avait pas
+   * depose. Le mecanisme concu pour faire revenir les gens etait donc eteint
+   * pour ceux qui ne sont pas encore clients — l'outil de retention reserve
+   * aux joueurs deja retenus.
+   *
+   * La raison invoquee etait l'anti-Sybil. Elle ne tient pas : finir toutes
+   * les quetes demande environ 6 000 $SWOGE mises, sur lesquels l'avantage le
+   * plus faible du catalogue (blackjack, 2,6 %) represente ~156 d'esperance de
+   * perte, contre ~70 distribues. La marge est de 2,2x SANS ce verrou. C'etait
+   * un second verrou sur une porte deja fermee, et il coutait exactement la
+   * population qu'on cherche a garder.
+   */
+  QUEST_REQUIRE_DEPOSIT: env('QUEST_REQUIRE_DEPOSIT', '0') === '1',
+
+  /* =====================================================================
+   * LES QUETES DU JOUR — cinq par jour, quatre paliers
+   * =====================================================================
+   *
+   * ---- ce qui n'allait pas ----
+   *
+   * Trois quetes fixes qui ne changeaient JAMAIS, plus trois missions qui
+   * changeaient de jeu mais jamais d'objectif : la meme phrase seize fois,
+   * « misez 2 000 sur X ». Il n'y avait qu'un seul verbe dans tout le
+   * systeme, et la variete percue vient du verbe, pas du complement.
+   *
+   * Et « Daily bonus » avait pour cible ZERO : elle etait finie a l'instant
+   * ou elle apparaissait. Elle enseignait que le panneau de quetes est un
+   * bouton a presser, ce qui est precisement l'habitude qu'on veut eviter.
+   *
+   * ---- LA MONNAIE ----
+   *
+   * L'XP porte la progression, les jetons restent symboliques. Le total en
+   * jetons est volontairement inchange (~70/jour) : la marge anti-farming en
+   * depend, et la multiplier par dix rendrait la quete rentable a elle seule.
+   * L'XP, elle, ne se compare a aucune mise et ne peut rien casser.
+   *
+   * Chaque quete garde un petit gain en jetons : les panneaux des dix-huit
+   * pages affichent « CLAIM +N $SWOGE », et une quete a zero y afficherait
+   * « +0 ».
+   *
+   * ---- CE QUI N'EST PAS ICI, ET POURQUOI ----
+   *
+   * Pas de quete dont l'objectif serait un MONTANT PERDU, une suite de mises
+   * croissantes, ou un retour apres une perte. Ces trois-la existent dans le
+   * secteur ; aucune n'entrera ici.
+   *
+   * Pas non plus de quete « regarde tel panneau » : recompenser l'ouverture
+   * d'un ecran gonfle le compte sans rien faire jouer.
+   *
+   * `cond` dit quand une quete peut etre PROPOSEE. Une quete impossible sur
+   * le papier est pire qu'une quete absente : elle apprend a ne pas lire la
+   * liste.
+   */
+  /* ---- LE GAIN EN JETONS SUIT LE VOLUME EXIGE, PAS L'HABITUDE ----
+   *
+   * L'ancien systeme payait 66 pour 6 000 a miser : l'avantage de la maison le
+   * plus faible du catalogue (blackjack, 2,6 %) rendait ~156, soit une marge
+   * de 2,4x. La refonte passe a cinq quetes et n'exige plus que ~2 000 —
+   * l'esperance tombe a 52. Garder 70 aurait rendu la quete RENTABLE a elle
+   * seule, c'est-a-dire payer quelqu'un pour ne rien risquer.
+   *
+   * Le total descend donc a 30, ce qui restaure une marge de 1,7x. Ce n'est
+   * pas un appauvrissement : l'XP passe de 120 a 950 par jour, et la journee
+   * parfaite rend un coffre — 4 000 de valeur affichee, qui ne sort pas de la
+   * tresorerie mais de l'edition plafonnee.
+   *
+   * Trouve par le test, pas a la lecture : j'avais divise le volume exige par
+   * trois et laisse le gain intact.
+   */
+  QUETE_GAIN: { easy: 2, jeu: 8, normal: 6, hard: 8, elite: 6 },
+  QUETE_XP:   { easy: 60, jeu: 120, normal: 120, hard: 250, elite: 400 },
+  /* ---- L'XP POUR TOUS, LES JETONS APRES LE PREMIER DEPOT ----
+   *
+   * Le verrou global est tombe : fermer les quetes aux non-deposants eteignait
+   * la retention pour ceux qu'on cherche justement a garder. Mais la marge
+   * anti-farming, elle, vient du VOLUME MISE — et un debutant a 100 jetons
+   * voit sa cible tomber a 300, donc une esperance de 8 contre 30 distribues.
+   *
+   * On coupe donc en deux ce qui etait ferme d'un bloc : la PROGRESSION (XP,
+   * serie, coffre du jour, journee parfaite) est ouverte a tout le monde, les
+   * JETONS attendent le premier depot. Une adresse jetable ne rapporte alors
+   * que de l'XP, qui ne se retire pas et ne se vend pas — le farm n'a plus
+   * d'objet.
+   */
+  QUETE_JETONS_APRES_DEPOT: env('QUETE_JETONS_APRES_DEPOT', '1') === '1',
+  /* La cible d'une quete de volume suit le SOLDE. Une cible fixe a 2 000 est
+     vingt fois le credit d'essai d'un debutant et un cinquieme de mise
+     maximum pour un joueur installe — elle ne peut pas servir les deux. */
+  QUETE_CIBLE_MAX: parseFloat(env('QUETE_CIBLE_MAX', '2000')),
+  QUETE_CIBLE_MULT: parseFloat(env('QUETE_CIBLE_MULT', '3')),
+  QUETE_CIBLE_MIN: parseFloat(env('QUETE_CIBLE_MIN', '200')),
+  /* Un Easy, deux Normal, un Hard, un Elite. */
+  /* Un Easy, le jeu du jour, un Normal, un Hard, un Elite. */
+  QUETE_COMPO: (env('QUETE_COMPO', 'easy,jeu,normal,hard,elite')).split(','),
+  /* La journee parfaite paie un coffre de bois. LE PLAFOND N'EST PAS
+     DECORATIF : la saison 1 compte 9 600 pieces, et un coffre par joueur et
+     par jour la brule en dix-neuf jours a cinq cents joueurs. */
+  PARFAIT_XP: parseInt(env('PARFAIT_XP', '300'), 10),
+  /* ---- UN SEUL PLAFOND POUR TOUS LES COFFRES GRATUITS ----
+   *
+   * Le coffre du jour et celui de la journee parfaite sortent de la MEME
+   * edition plafonnee. Un plafond sur l'un et pas sur l'autre ne protege rien :
+   * il suffit de prendre l'autre. Et le vrai danger n'est pas le joueur
+   * regulier, c'est la ferme d'adresses — un compteur global est la seule
+   * borne qui tienne quel que soit le nombre de comptes.
+   *
+   * Il borne les DEUX sources ensemble. Au-dela, l'XP part quand meme :
+   * refuser apres coup une recompense annoncee serait pire que la reduire.
+   */
+  COFFRES_GRATUITS_JOUR: parseInt(env('COFFRES_GRATUITS_JOUR', '80'), 10),
+
+  QUETES_POOL: [
+    // ---- EASY : une action, n'importe quel jeu. Elles font cocher la
+    //      premiere case, et c'est ce qui donne envie de lire les autres.
+    { id: 'e_tour',  palier: 'easy', metric: 'drops', cible: 1,  label: 'Play 1 round' },
+    { id: 'e_gagne', palier: 'easy', metric: 'wins',  cible: 1,  label: 'Win 1 round' },
+    { id: 'e_dix',   palier: 'easy', metric: 'drops', cible: 10, label: 'Place 10 bets' },
+    { id: 'e_serie', palier: 'easy', metric: 'serie', cible: 1,  label: 'Claim your daily streak' },
+
+    // ---- NORMAL : du volume, sur un jeu NOMME. C'est la distribution
+    //      gratuite vers tout le catalogue, et c'est ce qui marche deja.
+    /* Le palier `jeu` a SON creneau, tous les jours. C'est la mecanique qui
+       marche deja — elle envoie tout le catalogue sous les yeux de tout le
+       monde sans une ligne de contenu neuf — et la garder a part evite d'avoir
+       deux « misez sur X » le meme jour, ce qui se lit comme une seule quete
+       comptee deux fois. */
+    { id: 'n_jeu',   palier: 'jeu', metric: 'mise', jeuDuJour: true, label: 'Wager {cible} $SWOGE on {jeu}' },
+    { id: 'n_trois', palier: 'normal', metric: 'jeux', cible: 3, label: 'Play 3 different games' },
+    { id: 'n_paris', palier: 'normal', metric: 'paris', cible: 1, label: 'Place 1 sports bet' },
+    { id: 'n_duel',  palier: 'normal', metric: 'duel',  cible: 1, label: 'Finish 1 duel' },
+    { id: 'n_total', palier: 'normal', metric: 'total', label: 'Wager {cible} $SWOGE across any games',
+      volume: true },
+
+    // ---- HARD : un RESULTAT, pas seulement du volume.
+    { id: 'h_cinq',  palier: 'hard', metric: 'wins', cible: 5, label: 'Win 5 rounds today' },
+    { id: 'h_cinqj', palier: 'hard', metric: 'jeux', cible: 5, label: 'Play 5 different games' },
+    { id: 'h_vingt', palier: 'hard', metric: 'drops', cible: 40, label: 'Place 40 bets' },
+    { id: 'h_parisg', palier: 'hard', metric: 'parisGagnes', cible: 1, label: 'Win a sports bet' },
+
+    // ---- ELITE : la collection. Le seul verbe qui n'est pas « miser ».
+    { id: 'x_coffre', palier: 'elite', metric: 'coffres', cible: 1, label: 'Open a chest' },
+    { id: 'x_neuf',   palier: 'elite', metric: 'neufs',   cible: 1, label: 'Find an item you never owned',
+      cond: 'aDesObjets' },
+    { id: 'x_rare',   palier: 'elite', metric: 'rarete',  cible: 2, label: 'Pull a Rare item or better',
+      cond: 'aDesObjets' },
+    { id: 'x_dix',    palier: 'elite', metric: 'sortes',  cible: 10, label: 'Own 10 different items',
+      cond: 'aDesObjets' },
+    { id: 'x_famille', palier: 'elite', metric: 'pleines', cible: 1, label: 'Complete a full family',
+      cond: 'aDesObjets' },
+    { id: 'x_parrain', palier: 'elite', metric: 'filleul', cible: 1, label: 'One of your invitees plays today',
+      cond: 'aDesFilleuls' },
   ],
-  QUEST_REQUIRE_DEPOSIT: env('QUEST_REQUIRE_DEPOSIT', '1') === '1',
 
   /* ---- Les missions du jour, jeu par jeu ----
    *
