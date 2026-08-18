@@ -29,12 +29,12 @@
  * ---- LE PRIX SUIT LA PUISSANCE, PAS L'ORDRE D'ARRIVEE ----
  *
  * `puissance` va de 1 (le plus abordable) a 5 (le plus cher). Le barème est
- * une PROGRESSION, pas cinq nombres tapes au hasard : chaque palier vaut
+ * une PROGRESSION, pas des nombres tapes au hasard : chaque palier vaut
  * environ le double du precedent, pour que la difference se voit sur le
  * porte-monnaie autant que sur le personnage.
  */
 
-const PUISSANCE_PRIX = { 1: 15000, 2: 35000, 3: 75000, 4: 150000, 5: 300000 };
+const PUISSANCE_PRIX = { 1: 15000, 2: 35000, 3: 75000, 4: 150000, 5: 300000, 6: 600000 };
 
 const SKINS = [
   {
@@ -54,15 +54,29 @@ const SKINS = [
   },
   {
     id: 'landwolf', nom: 'Landwolf', puissance: 4,
-    pouvoir: 'A drink in hand, never in a hurry to win.',
+    pouvoir: 'Never in a hurry. Never puts the cigarette down either.',
     couleur: '#B48CFF',
   },
   {
     id: 'ogswoge', nom: 'OG Swoge', puissance: 5,
-    pouvoir: 'The mascot itself. There is nothing above it.',
+    pouvoir: 'The mascot itself. Rarely dethroned.',
     couleur: '#FF4655',
   },
+  {
+    id: 'brett', nom: 'Brett', puissance: 6,
+    pouvoir: 'Grins at everything. Understands none of it.',
+    couleur: '#5AC8FF',
+  },
 ];
+
+/* ---- LE CADEAU PIXEL ----
+ *
+ * Chacun des six a maintenant une seconde image : une version pixel, offerte
+ * a l'achat. `pixel: true` le DIT plutot que de le laisser deviner par
+ * convention de fichier — le jour ou un skin arrive sans cadeau, un flag
+ * absent est une reponse claire, une absence de fichier serait juste une
+ * image cassee que personne ne comprendrait. */
+const CADEAU_PIXEL = new Set(['andy', 'claude', 'pepe', 'landwolf', 'ogswoge', 'brett']);
 
 /* Un identifiant qui n'existe pas doit se comporter comme un identifiant
    absent, jamais comme une exception qui remonte n'importe ou. */
@@ -74,11 +88,12 @@ function prixDe(id) {
 }
 
 /* Le catalogue complet, pret pour la page — le prix est CALCULE ici et
-   jamais tape a la main sur une fiche, pour que les cinq skins restent sur
+   jamais tape a la main sur une fiche, pour que les skins restent sur
    la meme droite si un jour on ajuste le barème. */
 function catalogue() {
   return SKINS.map((s) => ({ id: s.id, nom: s.nom, puissance: s.puissance,
-                             prix: prixDe(s.id), pouvoir: s.pouvoir, couleur: s.couleur }));
+                             prix: prixDe(s.id), pouvoir: s.pouvoir, couleur: s.couleur,
+                             pixel: CADEAU_PIXEL.has(s.id) }));
 }
 
-module.exports = { SKINS, PUISSANCE_PRIX, skin, prixDe, catalogue };
+module.exports = { SKINS, PUISSANCE_PRIX, CADEAU_PIXEL, skin, prixDe, catalogue };

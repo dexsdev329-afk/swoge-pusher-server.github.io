@@ -6,8 +6,8 @@
  *
  * 1. RIEN A VOIR AVEC LES SAISONS. Le catalogue ne prend aucun parametre de
  *    saison, il ne verifie aucune ligne, et il ne se ferme jamais.
- * 2. LE PRIX SUIT LA PUISSANCE. Cinq skins, cinq prix, une progression
- *    stricte — pas cinq nombres tapes au hasard.
+ * 2. LE PRIX SUIT LA PUISSANCE. Six skins, six prix, une progression
+ *    stricte — pas six nombres tapes au hasard.
  * 3. L'ACHAT EST UNE DEPENSE REELLE : le solde baisse exactement du prix
  *    affiche, et la ligne part en RECETTE ('boutique'), comme un coffre.
  * 4. ON NE PEUT PAS RACHETER CE QU'ON A DEJA. Et acheter un second skin ne
@@ -34,15 +34,15 @@ const pose = (g, addr, credit) => {
   return p;
 };
 
-// ================== 1. LE CATALOGUE — CINQ SKINS, RIEN DE SAISONNIER
+// ================== 1. LE CATALOGUE — SIX SKINS, RIEN DE SAISONNIER
 {
   const c = S.catalogue();
-  eq(c.length, 5, 'cinq skins');
-  eq(new Set(c.map((s) => s.id)).size, 5, 'cinq identifiants distincts');
+  eq(c.length, 6, 'six skins');
+  eq(new Set(c.map((s) => s.id)).size, 6, 'six identifiants distincts');
   ok(c.every((s) => !('saison' in s)), 'aucun skin ne porte de saison');
   ok(c.every((s) => s.prix > 0), 'chaque skin a un prix');
-  ok(c.every((s) => s.puissance >= 1 && s.puissance <= 5), 'puissance entre 1 et 5');
-  eq(new Set(c.map((s) => s.puissance)).size, 5, 'cinq puissances distinctes — un classement, pas des ex-aequo');
+  ok(c.every((s) => s.puissance >= 1 && s.puissance <= 6), 'puissance entre 1 et 6');
+  eq(new Set(c.map((s) => s.puissance)).size, 6, 'six puissances distinctes — un classement, pas des ex-aequo');
 }
 
 // ================== 2. LE PRIX SUIT LA PUISSANCE, EN PROGRESSION STRICTE
@@ -201,7 +201,7 @@ const pose = (g, addr, credit) => {
   eq(p2.skinActif, 'pepe', 'et le skin porte a traverse le redemarrage');
 }
 
-// ================== 16. LES CINQ SKINS SONT ACHETABLES DE BOUT EN BOUT
+// ================== 16. LES SIX SKINS SONT ACHETABLES DE BOUT EN BOUT
 {
   const g = new Game();
   pose(g, A, 100000000);
@@ -214,8 +214,16 @@ const pose = (g, addr, credit) => {
   });
   eq(g._p(A).skinActif, S.catalogue()[S.catalogue().length - 1].id,
      'le dernier achete est celui qu on porte');
-  eq(Object.keys(g._p(A).skins).length, 5, 'les cinq sont possedes');
+  eq(Object.keys(g._p(A).skins).length, 6, 'les six sont possedes');
   ok(depense > 0, 'et l ensemble a bien coute quelque chose');
+}
+
+// ================== 17. LE CADEAU PIXEL EST DECLARE, PAS SUPPOSE
+{
+  const c = S.catalogue();
+  ok(c.every((s) => typeof s.pixel === 'boolean'), 'chaque skin dit s il a un cadeau pixel');
+  ok(c.every((s) => s.pixel === S.CADEAU_PIXEL.has(s.id)),
+     'le champ suit exactement le registre — pas de skin qui pretend en avoir un sans y etre');
 }
 
 console.log(`skins.test.js : ${n} verifications OK`);
