@@ -123,6 +123,15 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
   eq(r1.equipFruit.item, fruit.id, 'le bon fruit est equipe');
   const r2 = g.equipeArme(A, 'brett', arme.id);
   eq(r2.equipArme.item, arme.id, 'la bonne arme est equipee');
+
+  /* La couleur de la case d'equipement vient de la MEME rarete que le
+     catalogue — sinon un legendaire s'affiche avec la bordure d'un
+     commun, et la page ment sur ce qu'on porte. */
+  const raretF = B.rarete(fruit.rarete), raretA = B.rarete(arme.rarete);
+  eq(r1.equipFruit.rarete, fruit.rarete, 'la rarete du fruit equipe est rendue');
+  eq(r1.equipFruit.couleur, raretF.couleur, 'et sa couleur suit celle du catalogue');
+  eq(r2.equipArme.rarete, arme.rarete);
+  eq(r2.equipArme.couleur, raretA.couleur);
 }
 
 // ================== 8. DESEQUIPER REND LE SLOT VIDE
@@ -192,6 +201,40 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
     const e = g.personnageEtat(A, s.id);
     eq(e.niveau, 3, `${s.id} : niveau 3 atteint sous son propre volume`);
   });
+}
+
+// ================== 12. equipablesPour() : SEULEMENT CE QU'ON POSSEDE
+{
+  const g = new Game();
+  const p = pose(g, A);
+  eq(g.equipablesPour(A).fruits.length, 0, 'rien possede, rien a equiper');
+  eq(g.equipablesPour(A).armes.length, 0);
+
+  const fruit = B.itemsDeSaison(1)[0];
+  const arme = B.itemsDeSaison(2)[0];
+  p.objets[fruit.id] = 2; p.objets[arme.id] = 1;
+  const eq1 = g.equipablesPour(A);
+  eq(eq1.fruits.length, 1, 'le fruit possede apparait');
+  eq(eq1.armes.length, 1, 'l arme possedee apparait');
+  eq(eq1.fruits[0].id, fruit.id);
+  eq(eq1.fruits[0].quantite, 2, 'la quantite possedee est rendue');
+  eq(eq1.fruits[0].stat, P.FAMILLE_STAT[fruit.famille], 'la stat visee vient de la meme table que le bonus reel');
+  eq(eq1.fruits[0].bonus, P.bonusDe(fruit.rarete, (r) => { const x = B.rarete(r); return x ? x.plafond : 0; }),
+     'le bonus annonce est celui qui sera vraiment applique');
+}
+
+// ================== 13. equipablesPour() : ETANCHE A LA SAISON PARCOURUE
+{
+  /* La boutique peut etre ouverte sur n importe quelle saison au moment de
+     l appel — equipablesPour() ne prend aucun parametre de saison et doit
+     toujours rendre fruits ET armes possedes, les deux a la fois. */
+  const g = new Game();
+  const p = pose(g, A);
+  const fruit = B.itemsDeSaison(1)[0];
+  const arme = B.itemsDeSaison(2)[0];
+  p.objets[fruit.id] = 1; p.objets[arme.id] = 1;
+  const r = g.equipablesPour(A);
+  ok(r.fruits.length === 1 && r.armes.length === 1, 'les deux saisons sont rendues ensemble, sans etre demandees');
 }
 
 console.log(`perso.test.js : ${n} verifications OK`);

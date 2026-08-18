@@ -2794,6 +2794,11 @@ wss.on('connection', (ws) => {
         return send(ws, { type: 'personnage', skin: m.skin, etat: r,
                           error: err || undefined });
       }
+      /* La liste de ce qu'il y a a equiper — fruits et armes possedes, quelle
+         que soit la saison ouverte dans la boutique en ce moment. */
+      if (m.type === 'equipable') {
+        return send(ws, { type: 'equipable', ...game.equipablesPour(ws.addr) });
+      }
       /* Le classement du mois : qui a fait tourner le plus de volume. */
       if (m.type === 'leaderboard') {
         return send(ws, { type: 'leaderboard', ...game.classementMois(ws.addr, 50),

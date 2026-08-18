@@ -26,48 +26,49 @@
  * du futur jeu de personnage, pas celui d'un skin. Un skin change une
  * apparence ; il ne joue a rien tout seul.
  *
- * ---- LE PRIX SUIT LA PUISSANCE, PAS L'ORDRE D'ARRIVEE ----
+ * ---- LE PRIX SUIT LA PUISSANCE, ET LA PUISSANCE SUIT LES VRAIES STATS ----
  *
- * `puissance` va de 1 (le plus abordable) a 5 (le plus cher). Le barème est
- * une PROGRESSION, pas des nombres tapes au hasard : chaque palier vaut
- * environ le double du precedent, pour que la difference se voit sur le
- * porte-monnaie autant que sur le personnage.
+ * `puissance` ne se tape plus a la main sur chaque fiche : un chiffre pose
+ * a cote finit toujours par mentir un jour, le jour ou on ajuste une stat
+ * dans personnages.js sans repenser a venir corriger celui-la. Elle vient
+ * maintenant du classement par somme des 8 stats de base (personnages.BASE)
+ * — le skin le plus fort coute forcement le plus cher, parce que c'est la
+ * MEME donnee qui decide des deux.
+ *
+ * Le barème lui-meme reste une PROGRESSION, pas des nombres tapes au
+ * hasard : chaque palier vaut environ le double du precedent, pour que la
+ * difference se voit sur le porte-monnaie autant que sur le personnage.
  */
+
+const personnages = require('./personnages');
 
 const PUISSANCE_PRIX = { 1: 15000, 2: 35000, 3: 75000, 4: 150000, 5: 300000, 6: 600000 };
 
-const SKINS = [
-  {
-    id: 'andy', nom: 'Andy', puissance: 1,
-    pouvoir: 'Always caught off guard. Never ready.',
-    couleur: '#FFC53D',
-  },
-  {
-    id: 'claude', nom: 'Claude', puissance: 2,
-    pouvoir: 'Answers everything, even what nobody asked.',
-    couleur: '#E08A3C',
-  },
-  {
-    id: 'pepe', nom: 'Pepe', puissance: 3,
-    pouvoir: 'The oldest meme still standing runs the fastest.',
-    couleur: '#7CFF9B',
-  },
-  {
-    id: 'landwolf', nom: 'Landwolf', puissance: 4,
-    pouvoir: 'Never in a hurry. Never puts the cigarette down either.',
-    couleur: '#B48CFF',
-  },
-  {
-    id: 'ogswoge', nom: 'OG Swoge', puissance: 5,
-    pouvoir: 'The mascot itself. Rarely dethroned.',
-    couleur: '#FF4655',
-  },
-  {
-    id: 'brett', nom: 'Brett', puissance: 6,
-    pouvoir: 'Grins at everything. Understands none of it.',
-    couleur: '#5AC8FF',
-  },
+/* La somme des 8 stats de base — un seul nombre par skin, direct et sans
+   ponderation, pour classer sans avoir a choisir quelle stat compte plus
+   qu'une autre. */
+function forceBrute(id) {
+  const b = personnages.BASE[id];
+  if (!b) return 0;
+  return personnages.STATS.reduce((total, cle) => total + (b[cle] || 0), 0);
+}
+
+const SKINS_SANS_PUISSANCE = [
+  { id: 'andy', nom: 'Andy', pouvoir: 'Always caught off guard. Never ready.', couleur: '#FFC53D' },
+  { id: 'claude', nom: 'Claude', pouvoir: 'Answers everything, even what nobody asked.', couleur: '#E08A3C' },
+  { id: 'pepe', nom: 'Pepe', pouvoir: 'The oldest meme still standing runs the fastest.', couleur: '#7CFF9B' },
+  { id: 'landwolf', nom: 'Landwolf', pouvoir: 'Never in a hurry. Never puts the cigarette down either.', couleur: '#B48CFF' },
+  { id: 'ogswoge', nom: 'OG Swoge', pouvoir: 'The mascot itself. Rarely dethroned.', couleur: '#FF4655' },
+  { id: 'brett', nom: 'Brett', pouvoir: 'Grins at everything. Understands none of it.', couleur: '#5AC8FF' },
 ];
+
+/* Trie une fois par la force reelle, puis numerote 1..6 dans cet ordre —
+   la puissance affichee EST le rang, jamais un champ qu'on pourrait
+   desynchroniser d'une future retouche de stats. */
+const SKINS = SKINS_SANS_PUISSANCE
+  .slice()
+  .sort((a, b) => forceBrute(a.id) - forceBrute(b.id))
+  .map((s, i) => Object.assign({}, s, { puissance: i + 1 }));
 
 /* ---- LE CADEAU PIXEL ----
  *

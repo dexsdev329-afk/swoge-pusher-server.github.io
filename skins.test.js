@@ -19,6 +19,7 @@ const assert = require('assert');
 const ethers = require('ethers');
 const { Game } = require('./game');
 const S = require('./skins');
+const P = require('./personnages');
 const cfg = require('./config');
 let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n++; };
@@ -43,6 +44,20 @@ const pose = (g, addr, credit) => {
   ok(c.every((s) => s.prix > 0), 'chaque skin a un prix');
   ok(c.every((s) => s.puissance >= 1 && s.puissance <= 6), 'puissance entre 1 et 6');
   eq(new Set(c.map((s) => s.puissance)).size, 6, 'six puissances distinctes — un classement, pas des ex-aequo');
+}
+
+// ================== 1b. LA PUISSANCE SUIT LES VRAIES STATS, PAS UN CHIFFRE POSE A COTE
+{
+  /* Si un skin possede plus de stats brutes qu'un autre, il DOIT couter
+     plus cher — sinon un joueur qui regarde sa fiche de personnage voit un
+     skin plus fort moins cher qu'un skin plus faible, et le prix ment. */
+  const force = (id) => P.STATS.reduce((t, k) => t + (P.BASE[id][k] || 0), 0);
+  const c = S.catalogue();
+  eq(new Set(c.map((s) => force(s.id))).size, 6, 'les six sommes de stats sont distinctes — sinon le classement serait arbitraire entre deux ex-aequo');
+  const parForce = c.slice().sort((a, b) => force(a.id) - force(b.id));
+  const parPuissance = c.slice().sort((a, b) => a.puissance - b.puissance);
+  eq(parForce.map((s) => s.id).join(','), parPuissance.map((s) => s.id).join(','),
+     'le classement par puissance (et donc par prix) est EXACTEMENT le classement par force reelle');
 }
 
 // ================== 2. LE PRIX SUIT LA PUISSANCE, EN PROGRESSION STRICTE

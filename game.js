@@ -4988,7 +4988,12 @@ class Game {
       const stat = personnages.FAMILLE_STAT[o.famille];
       if (!stat) return null;
       const val = personnages.bonusDe(o.rarete, (r) => { const x = boutique.rarete(r); return x ? x.plafond : 0; });
-      return { item: o.id, nom: o.nom, cle: o.cle, stat, bonus: val };
+      /* La couleur suit ici : la page dessine la case d'equipement dans la
+         MEME couleur que la carte du catalogue, sans avoir a recharger le
+         catalogue juste pour ca. */
+      const r = boutique.rarete(o.rarete);
+      return { item: o.id, nom: o.nom, cle: o.cle, rarete: o.rarete,
+               couleur: r ? r.couleur : '#8DA0C4', stat, bonus: val };
     };
     const bFruit = bonusDe(c.ef);
     const bArme = bonusDe(c.ea);
@@ -5038,6 +5043,33 @@ class Game {
   }
   equipeFruit(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'fruit'); }
   equipeArme(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'arme'); }
+
+  /**
+   * Ce que le joueur peut equiper : ses fruits (saison 1) et ses armes
+   * (saison 2) qu'il possede reellement, avec le bonus que chacun donnerait.
+   *
+   * Independant de la saison actuellement parcourue dans la boutique — un
+   * fruit achete pendant la saison 1 reste equipable meme si la page est
+   * ouverte sur la saison 2. C'est pour ca que ce n'est pas `boutiqueEtat`
+   * qui repond ici : celui-la ne rend qu'UNE saison a la fois.
+   */
+  equipablesPour(addr) {
+    const p = this._p(addr);
+    const objets = p.objets || {};
+    const ligne = (o) => {
+      const r = boutique.rarete(o.rarete);
+      return { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+               couleur: r ? r.couleur : '#8DA0C4', famille: o.famille, pouvoir: o.pouvoir,
+               stat: personnages.FAMILLE_STAT[o.famille] || null,
+               bonus: personnages.bonusDe(o.rarete, (rar) => { const x = boutique.rarete(rar); return x ? x.plafond : 0; }),
+               quantite: objets[o.id] || 0 };
+    };
+    const possede = (o) => (objets[o.id] || 0) > 0;
+    return {
+      fruits: boutique.itemsDeSaison(1).filter(possede).map(ligne),
+      armes: boutique.itemsDeSaison(2).filter(possede).map(ligne),
+    };
+  }
 
   /** Le catalogue et l'inventaire du joueur, prets a peindre. */
   boutiqueEtat(addr, saison) {
