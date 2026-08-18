@@ -36,6 +36,8 @@ const parisImport = require('./paris_import');
 const boutique = require('./boutique');
 let calendrierAuto = null;          // les minuteries de l alimentation
 const journal = require('./journal');
+const adminlog = require('./adminlog');
+const reglages = require('./reglages');
 const avatars = require('./avatars');
 
 const table = new Table();
@@ -46,6 +48,11 @@ const chain = new Chain();
 /* Si l'etat existe mais n'est pas lisible, store.load() JETTE plutot que de
    rendre null : demarrer a vide ferait ecraser tous les soldes par la premiere
    sauvegarde automatique. On s'arrete franchement, avec le message. */
+/* Les surcharges a chaud sont posees AVANT que quoi que ce soit lise `cfg`.
+   Chargees apres, le premier tirage de la journee aurait applique la valeur
+   d'origine pendant que le panneau affichait la surcharge. */
+reglages.charge();
+
 let saved;
 try { saved = store.load(); }
 catch (e) {
@@ -825,6 +832,159 @@ function rate(req, ok) {
   else { e.n++; if (e.n === ESSAIS_MAX) console.warn(`[secu] ${ip} bloque apres ${ESSAIS_MAX} cles admin refusees`); }
 }
 
+/* ==================================================================
+ * LA SESSION ADMIN
+ * ==================================================================
+ *
+ * On echange la cle CONTRE UN JETON, une fois, et c'est le jeton qui circule
+ * ensuite — dans un cookie que le navigateur joint tout seul.
+ *
+ * Ce que ca change, concretement :
+ *
+ *   - la cle n'apparait plus dans aucune adresse, donc plus dans l'historique
+ *     ni dans les journaux ;
+ *   - `HttpOnly` : aucun script de la page ne peut lire le jeton. Une faille
+ *     d'injection ne l'emporte plus ;
+ *   - `SameSite=Strict` : le navigateur ne joint pas le cookie aux requetes
+ *     venues d'un autre site. Un lien piege ne peut donc plus rien declencher ;
+ *   - le jeton EXPIRE. La cle, elle, ne changeait jamais.
+ *
+ * Les sessions vivent en memoire. Un redemarrage les jette : il faut se
+ * reconnecter, ce qui est le bon comportement — un jeton qui survivrait a un
+ * redemarrage devrait etre persiste, donc sauvegarde, donc envoye sur Telegram
+ * avec la sauvegarde quotidienne.
+ */
+const sessions = new Map();                 // jeton -> { t, acteur, csrf, ip }
+const SESSION_MS = 12 * 3600000;            // douze heures
+
+function purgeSessions() {
+  const t = Date.now();
+  for (const [k, s] of sessions) if (t - s.t > SESSION_MS) sessions.delete(k);
+}
+
+function ouvreSession(acteur, ip) {
+  purgeSessions();
+  const jeton = crypto.randomBytes(32).toString('hex');
+  /* Un SECOND secret, different du jeton : le jeton est dans le cookie que le
+     script ne peut pas lire, le csrf est dans la page que le script lit. Les
+     deux doivent etre presentes pour ecrire, et un site tiers n'a ni l'un ni
+     l'autre — il ne peut pas lire la page (meme origine) pour prendre le csrf. */
+  const csrf = crypto.randomBytes(24).toString('hex');
+  sessions.set(jeton, { t: Date.now(), acteur: acteur || 'admin', csrf, ip });
+  return { jeton, csrf };
+}
+
+function sessionValide(jeton) {
+  const s = sessions.get(jeton);
+  if (!s) return null;
+  if (Date.now() - s.t > SESSION_MS) { sessions.delete(jeton); return null; }
+  return s;
+}
+
+/* Les cookies arrivent dans une seule chaine. On ne prend que le notre, et on
+   ne fait confiance a rien : un nom qui contient le notre en prefixe ne doit
+   pas passer pour lui. */
+function cookieDe(req, nom) {
+  const brut = req.headers.cookie;
+  if (!brut) return '';
+  for (const part of String(brut).split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    if (part.slice(0, i).trim() !== nom) continue;
+    return decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return '';
+}
+
+/* `Secure` seulement en HTTPS : pose sur du HTTP en local, le navigateur
+   refuse le cookie et la connexion echoue sans rien dire. Railway termine le
+   TLS devant nous, donc c'est l'en-tete transmis qui fait foi. */
+function surHttps(req) {
+  const p = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  return p ? p === 'https' : !!req.socket.encrypted;
+}
+
+function poseCookie(res, req, jeton) {
+  const bouts = ['swadm=' + encodeURIComponent(jeton), 'Path=/', 'HttpOnly',
+                 'SameSite=Strict', 'Max-Age=' + Math.floor(SESSION_MS / 1000)];
+  if (surHttps(req)) bouts.push('Secure');
+  res.setHeader('set-cookie', bouts.join('; '));
+}
+
+function retireCookie(res, req) {
+  const bouts = ['swadm=', 'Path=/', 'HttpOnly', 'SameSite=Strict', 'Max-Age=0'];
+  if (surHttps(req)) bouts.push('Secure');
+  res.setHeader('set-cookie', bouts.join('; '));
+}
+
+/* Lit un corps de requete borne. Sans plafond, un POST peut faire allouer
+   autant de memoire que l'expediteur en envoie. */
+function corps(req, maxOctets) {
+  return new Promise((resolve, reject) => {
+    const max = maxOctets || 64 * 1024;
+    let n = 0; const bouts = [];
+    req.on('data', (c) => {
+      n += c.length;
+      if (n > max) { reject(new Error('body too large')); req.destroy(); return; }
+      bouts.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(bouts)));
+    req.on('error', reject);
+  });
+}
+
+/**
+ * LE GARDE DES ECRITURES.
+ *
+ * Trois conditions, et chacune ferme une porte differente :
+ *
+ *   1. METHODE POST. `/credit`, `/repare` et `/burn` etaient des GET qui
+ *      deplacaient de l'argent : une adresse collee dans un onglet, prechargee
+ *      par le navigateur ou laissee dans un historique suffisait a crediter un
+ *      joueur. Une methode ne protege de rien a elle seule, mais elle retire
+ *      le geste de tout ce qui suit un lien.
+ *   2. JETON ANTI-REJEU. Le csrf de la session, envoye en en-tete. Un site
+ *      tiers ne peut pas le lire : il faudrait qu'il lise la page, ce que la
+ *      politique d'origine lui interdit.
+ *   3. MOTIF, pour les gestes qui deplacent de l'argent. La liste est dans
+ *      adminlog.js, en un seul endroit.
+ *
+ * Renvoie `null` si tout va bien, ou une chaine d'erreur.
+ */
+/* Les parametres d'un geste d'ecriture arrivent maintenant dans le CORPS, pas
+   dans l'adresse. Un corps ne va ni dans l'historique du navigateur ni dans les
+   journaux d'acces ; `?montant=500000` y allait. On tolere encore la chaine de
+   requete en repli pour ne pas casser un script existant — la methode POST et
+   le jeton restent exiges de toute facon. */
+async function donPost(req) {
+  const o = {};
+  for (const [k, v] of new URLSearchParams(req.url.split('?')[1] || '')) o[k] = v;
+  if (req.method === 'POST') {
+    try {
+      const b = (await corps(req, 64 * 1024)).toString('utf8');
+      if (b) Object.assign(o, JSON.parse(b));
+    } catch (e) { /* corps absent ou illisible : la chaine de requete suffit */ }
+  }
+  return o;
+}
+
+function refusEcriture(res, raison) {
+  res.writeHead(raison === 'this endpoint needs POST' ? 405 : 400,
+                { 'content-type': 'application/json' });
+  return res.end(JSON.stringify({ ok: false, error: raison }));
+}
+
+function gardeEcriture(req, session, action, motif) {
+  if (req.method !== 'POST') return 'this endpoint needs POST';
+  if (session) {
+    const t = req.headers['x-admin-token'] || '';
+    if (!t || !memeCle(t, session.csrf)) return 'stale page — reload the dashboard';
+  }
+  if (adminlog.motifRequis(action) && !String(motif || '').trim())
+    return 'a reason is required for anything that moves money';
+  return null;
+}
+
 /**
  * POURQUOI la cle n'est pas vue.
  *
@@ -992,9 +1152,36 @@ const server = http.createServer(async (req, res) => {
    * est preferable : une cle dans l'adresse se retrouve dans l'historique du
    * navigateur et dans les journaux de tous les serveurs traverses.
    */
-  const key = new URLSearchParams(req.url.split('?')[1] || '').get('key')
-            || req.headers['x-admin-key'] || '';
-  const authed = !!cfg.ADMIN_KEY && memeCle(key, cfg.ADMIN_KEY) && !bloque(req);
+  /* ---- LA CLE NE VOYAGE PLUS DANS L'ADRESSE ----
+   *
+   * Elle etait lue dans `?key=`. Une cle dans l'adresse se retrouve dans
+   * l'historique du navigateur, dans les journaux de l'hebergeur, dans ceux de
+   * tous les intermediaires — et dans l'en-tete `Referer` envoye a chaque
+   * ressource externe que la page charge. Ce n'est pas une hypothese : le
+   * panneau chargeait ethers depuis un CDN, donc la cle partait chez un tiers
+   * a chaque ouverture.
+   *
+   * Trois chemins la remplacent, dans cet ordre :
+   *
+   *   1. LE COOKIE de session. C'est celui du navigateur. `HttpOnly` — aucun
+   *      script ne peut le lire, donc une faille d'injection ne l'emporte pas.
+   *      `SameSite=Strict` — il n'est pas joint aux requetes venues d'un autre
+   *      site, ce qui ferme la falsification de requete.
+   *   2. L'EN-TETE `x-admin-key`. C'est celui des scripts et de curl. Un
+   *      en-tete ne va ni dans l'historique ni dans le `Referer`.
+   *   3. `?key=` UNIQUEMENT sur /admin, et seulement pour poser le cookie
+   *      avant de rediriger vers une adresse propre. C'est le pont pour le
+   *      marque-page existant, et il se ferme derriere lui : la cle quitte la
+   *      barre d'adresse a la premiere seconde. Voir plus bas.
+   */
+  const enTete = req.headers['x-admin-key'] || '';
+  const jeton = cookieDe(req, 'swadm');
+  const session = jeton ? sessionValide(jeton) : null;
+  const authed = !!cfg.ADMIN_KEY && !bloque(req)
+              && (!!session || (!!enTete && memeCle(enTete, cfg.ADMIN_KEY)));
+  /* Qui a agi, pour le journal. Une session nommee un jour ; « admin » en
+     attendant, et « cle » quand le geste vient d'un script. */
+  const acteur = session ? session.acteur : (authed ? 'cle' : 'anonyme');
   /* ------------------------------------------------------------- la sante
    *
    * Elle repondait `ok` a tout coup : elle ne disait donc qu'une chose, « un
@@ -1143,12 +1330,95 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify(r));
   }
+  /* ---- SE CONNECTER ----
+   *
+   * La cle part en POST, dans un corps, jamais dans une adresse. On rend un
+   * jeton de session dans un cookie que le script ne peut pas lire, et le csrf
+   * dans le corps de la reponse — c'est la page qui le gardera en memoire.
+   */
+  if (path === '/admin/login') {
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
+    if (!cfg.ADMIN_KEY) return refuse(req, res, false);
+    if (bloque(req)) { res.writeHead(429, { 'content-type': 'application/json' });
+                       return res.end(JSON.stringify({ error: 'too many attempts — wait 10 minutes' })); }
+    let don = {};
+    try { don = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) {}
+    if (!memeCle(don.key || '', cfg.ADMIN_KEY)) {
+      rate(req, false);
+      res.writeHead(401, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'wrong key' }));
+    }
+    rate(req, true);
+    const s = ouvreSession('admin', qui(req));
+    poseCookie(res, req, s.jeton);
+    adminlog.ajoute({ acteur: 'admin', action: 'login', cible: null, ip: qui(req) });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, csrf: s.csrf }));
+  }
+  if (path === '/admin/logout') {
+    const j = cookieDe(req, 'swadm');
+    if (j) sessions.delete(j);
+    retireCookie(res, req);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true }));
+  }
+  /* La bibliotheque ethers, servie PAR NOUS.
+   *
+   * Elle venait de cdnjs. Chaque ouverture du panneau envoyait donc a un tiers
+   * l'adresse complete de la page — cle comprise, a l'epoque ou elle y etait —
+   * dans l'en-tete `Referer`. Et un CDN compromis executait son code sur la
+   * page qui signe les transactions du proprietaire. Le fichier est deja dans
+   * node_modules ; le servir ne coute rien. */
+  if (path === '/admin/ethers.js') {
+    if (!authed) return refuse(req, res, false);
+    try {
+      const p = require.resolve('ethers/dist/ethers.umd.min.js');
+      res.writeHead(200, { 'content-type': 'application/javascript; charset=utf-8',
+                           'cache-control': 'public, max-age=86400' });
+      return res.end(require('fs').readFileSync(p));
+    } catch (e) {
+      res.writeHead(500, { 'content-type': 'application/javascript' });
+      return res.end('/* ethers introuvable : ' + String(e.message).replace(/\*/g, '') + ' */');
+    }
+  }
   // Private owner dashboard (HTML)
   if (path === '/admin') {
-    if (!authed) return refuse(req, res, true);
+    /* ---- LE PONT POUR LE MARQUE-PAGE ----
+     *
+     * `?key=` n'ouvre plus rien nulle part ailleurs. Ici, et ici seulement, il
+     * pose le cookie et REDIRIGE vers une adresse propre. La cle quitte la
+     * barre d'adresse a la premiere seconde, et les requetes suivantes n'en
+     * portent plus. Sans ce pont, le marque-page existant cesserait de
+     * fonctionner du jour au lendemain sans dire pourquoi — et la reaction
+     * naturelle serait de remettre la cle partout. */
+    const q = new URLSearchParams(req.url.split('?')[1] || '').get('key');
+    if (q && !session && cfg.ADMIN_KEY && !bloque(req) && memeCle(q, cfg.ADMIN_KEY)) {
+      rate(req, true);
+      const s = ouvreSession('admin', qui(req));
+      poseCookie(res, req, s.jeton);
+      adminlog.ajoute({ acteur: 'admin', action: 'login', cible: 'via ?key= (marque-page)',
+                        ip: qui(req) });
+      console.warn('[secu] connexion par ?key= : la cle est passee dans une adresse. ' +
+                   'Mettez votre marque-page sur /admin tout court.');
+      res.writeHead(302, { location: '/admin' });
+      return res.end();
+    }
+    /* Pas de session : on rend la PAGE DE CONNEXION, pas une erreur. Un 401 nu
+       laisse devant une page blanche quelqu'un qui a simplement une session
+       expiree. */
+    if (!session && !authed) {
+      if (!cfg.ADMIN_KEY) return refuse(req, res, true);
+      rate(req, false);
+      res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' });
+      return res.end(admin.connexion());
+    }
     rate(req, true);
+    /* Le csrf voyage DANS LA PAGE. Un tiers ne peut pas la lire, donc il ne
+       peut pas l'obtenir — c'est ce qui rend le jeton utile. */
+    const s = session || ouvreSession('admin', qui(req));
+    if (!session) poseCookie(res, req, s.jeton);
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    return res.end(admin.page());
+    return res.end(admin.page(s.csrf));
   }
   // Liste des joueurs (prive, meme cle admin que /stats). Filtre optionnel ?q=
   /* L'image d'un joueur. Publique : elle s'affiche deja a la table, la cacher
@@ -1241,12 +1511,17 @@ const server = http.createServer(async (req, res) => {
   if (path === '/repare') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
-    const qs = new URLSearchParams(req.url.split('?')[1] || '');
-    const a = String(qs.get('addr') || '').toLowerCase();
+    const d = await donPost(req);
+    const a = String(d.addr || '').toLowerCase();
+    const nonV = gardeEcriture(req, session, 'repare', d.motif);
+    if (nonV) return refusEcriture(res, nonV);
     try {
+      const avant = game.balanceStr(a);
       const r = game.repareDepots(a);
       persist();                       // tout de suite, pas dans une seconde
       toAddr(a, { type: 'deposit', balance: game.balanceStr(a) });
+      adminlog.ajoute({ acteur, action: 'repare', cible: a, motif: d.motif,
+                        avant, apres: game.balanceStr(a), ip: qui(req) });
       console.log(`[repare] ${a} +${r.rendu} $SWOGE (depot perdu, retrouve au journal)`);
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(r, null, 2));
@@ -1260,7 +1535,12 @@ const server = http.createServer(async (req, res) => {
   if (path === '/backup') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
+    const nonVB = gardeEcriture(req, session, 'backup', 'x');
+    if (nonVB) return refusEcriture(res, nonVB);
     const r = await sauvegarde('a la demande');
+    adminlog.ajoute({ acteur, action: 'backup', cible: null,
+                      apres: r.ok ? `${r.joueurs} joueurs, ${Math.round((r.octets || 0) / 1024)} Ko`
+                                  : 'ECHEC : ' + (r.error || '?'), ip: qui(req) });
     res.writeHead(r.ok ? 200 : 500, { 'content-type': 'application/json' });
     return res.end(JSON.stringify(r));
   }
@@ -1365,6 +1645,14 @@ const server = http.createServer(async (req, res) => {
         pourRemplacer: 'repost the same file with &confirm=REPLACE-ALL',
         avertissement: 'this replaces EVERY balance, stake, friendship and history with the file' });
 
+    /* Le garde ne s'applique qu'a la VRAIE restauration. Le premier envoi ne
+       fait que regarder le fichier — exiger un motif pour regarder ferait
+       taper un motif a quelqu'un qui ne sait pas encore s'il va restaurer. */
+    const motifR = qs.get('motif') || req.headers['x-admin-motif'] || '';
+    const nonVR = gardeEcriture(req, session, 'restore', motifR);
+    if (nonVR) return repond(nonVR === 'this endpoint needs POST' ? 405 : 400,
+                             { remplace: false, error: nonVR });
+
     if (!etat.players.length && game.players.size > 0 && qs.get('force') !== '1')
       return repond(400, { remplace: false, ...apercu,
         error: `the file has 0 players and the live casino has ${game.players.size}. ` +
@@ -1376,6 +1664,15 @@ const server = http.createServer(async (req, res) => {
       persistComplet();          // le filet doit contenir TOUT l'etat
       filet = store.FILE + '.avant-restauration-' + new Date().toISOString().replace(/[:.]/g, '-');
       fs.copyFileSync(store.FILE, filet);
+      /* On journalise AVANT de remplacer. Si la restauration echoue a
+         mi-chemin, la ligne qui dit qu'on a essaye est deja ecrite — et c'est
+         precisement le cas ou on aura besoin de le savoir. Le journal admin
+         vit hors de state.json, donc la restauration ne l'ecrase pas : c'est
+         toute la raison pour laquelle il est dans son propre fichier. */
+      adminlog.ajoute({ acteur, action: 'restore', cible: filet, motif: motifR,
+                        avant: `${apercu.actuel.joueurs} joueurs, ${apercu.actuel.duAuxJoueurs} dus`,
+                        apres: `${apercu.fichier.joueurs} joueurs, ${apercu.fichier.duAuxJoueurs} dus`,
+                        ip: qui(req) });
     } catch (e) {
       return repond(500, { remplace: false, error: 'could NOT snapshot the current state, so nothing was replaced: ' + e.message });
     }
@@ -1434,12 +1731,18 @@ const server = http.createServer(async (req, res) => {
   if (path === '/burn') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
-    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    const qs = await donPost(req);
+    const nonV = gardeEcriture(req, session, 'burn', qs.motif);
+    if (nonV) return refusEcriture(res, nonV);
+    const g = (k) => qs[k];
     try {
-      const r = game.enregistreBrulage(qs.get('amount'), qs.get('tx'));
+      const avant = game.brule ? ethers.utils.formatUnits(game.brule, cfg.DECIMALS) : '0';
+      const r = game.enregistreBrulage(g('amount'), g('tx'));
       persistSoon();
-      const lien = `${cfg.EXPLORER.replace(/\/+$/, '')}/tx/${qs.get('tx')}`;
-      tg.notify(`🔥 <b>${fmtAmt(String(qs.get('amount')))} $SWOGE burned forever</b>\n` +
+      adminlog.ajoute({ acteur, action: 'burn', cible: String(g('tx') || ''),
+                        avant, apres: r.total, motif: qs.motif, ip: qui(req) });
+      const lien = `${cfg.EXPLORER.replace(/\/+$/, '')}/tx/${g('tx')}`;
+      tg.notify(`🔥 <b>${fmtAmt(String(g('amount')))} $SWOGE burned forever</b>\n` +
                 `Every withdrawal burns 1% — it leaves circulation for good.\n` +
                 `Total burned: <b>${fmtAmt(r.total)} $SWOGE</b>\n` +
                 `<a href="${lien}">view the transaction ↗</a>`);
@@ -1467,9 +1770,19 @@ const server = http.createServer(async (req, res) => {
   if (path === '/credit') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
-    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    const d = await donPost(req);
+    /* Le motif du credit s'appelait deja `note` et partait au journal du
+       joueur. On garde ce nom cote appelant et on le passe AUSSI au journal
+       admin : un seul motif saisi, deux endroits qui le portent. */
+    const motif = d.motif || d.note || '';
+    const nonV = gardeEcriture(req, session, 'credit', motif);
+    if (nonV) return refusEcriture(res, nonV);
     try {
-      const r = game.crediteJoueur(qs.get('joueur'), qs.get('montant'), Date.now(), qs.get('note'));
+      const cible0 = game.trouveJoueur(d.joueur);
+      const avant = cible0 ? game.balanceStr(cible0) : null;
+      const r = game.crediteJoueur(d.joueur, d.montant, Date.now(), motif);
+      adminlog.ajoute({ acteur, action: 'credit', cible: r.addr, motif,
+                        avant, apres: r.solde, ip: qui(req) });
       persist();                       // tout de suite : c'est de l'argent
       /* Le joueur voit son solde bouger SANS RECHARGER. Sans ca, il decouvre
          le credit au prochain rafraichissement — ou l'annonce arrive avant
@@ -1487,9 +1800,13 @@ const server = http.createServer(async (req, res) => {
   if (path === '/avatar-remove') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
-    const qs = new URLSearchParams(req.url.split('?')[1] || '');
-    const a = String(qs.get('addr') || '').toLowerCase();
+    const qs = await donPost(req);
+    const nonV = gardeEcriture(req, session, 'avatarRetire', qs.motif);
+    if (nonV) return refusEcriture(res, nonV);
+    const a = String(qs.addr || '').toLowerCase();
     const fait = avatars.supprime(a);
+    if (fait) adminlog.ajoute({ acteur, action: 'avatarRetire', cible: a,
+                                motif: qs.motif, avant: 'photo', apres: 'aucune', ip: qui(req) });
     if (fait) { const p = game.players.get(a); if (p) p.photo = false; persistSoon(); }
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({ removed: fait }));
@@ -1525,12 +1842,18 @@ const server = http.createServer(async (req, res) => {
   if (path === '/paris/import') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
-    const q = new URLSearchParams(req.url.split('?')[1] || '');
-    if (q.get('go') === '1') {
+    const q = await donPost(req);
+    if (String(q.go) === '1') {
+      /* L'import ne deplace pas d'argent — pas de motif exige — mais il change
+         ce sur quoi les gens parient. Il reste donc un POST journalise. */
+      const nonV = gardeEcriture(req, session, 'parisImport', 'x');
+      if (nonV) return refusEcriture(res, nonV);
       try {
         /* Les rencontres ne coutent AUCUN credit : ce bouton est gratuit,
            on peut le presser sans compter. */
         const combien = await parisImport.importeMatchs();
+        adminlog.ajoute({ acteur, action: 'parisImport', cible: null,
+                          apres: `${combien} rencontre(s)`, ip: qui(req) });
         paris.charge();                       // sinon le serveur sert l'ancien
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ lance: true, rencontres: combien,
@@ -1571,6 +1894,70 @@ const server = http.createServer(async (req, res) => {
      chiffres plutot qu'au jugement. Protegee non parce que c'est sensible —
      il n'y a aucune adresse la-dedans — mais parce que c'est un outil
      d'exploitation, et qu'une page publique de plus est une surface de plus. */
+  /* ---- LIRE LE JOURNAL ADMIN ----
+   *
+   * « Un journal qu'on ne lit pas ne sert qu'apres coup. » Il a donc une route
+   * et un onglet. Cherchable sur la cible, le motif, le geste et l'acteur :
+   * les quatre questions qu'on se pose devant un chiffre faux. */
+  /* ---- LES REGLAGES A CHAUD ----
+   *
+   * Lire est libre ; ecrire est un POST journalise avec l'avant et l'apres.
+   * C'est la ligne de journal qui rend ce pouvoir tenable : un reglage qui
+   * change sans laisser de trace est un chiffre qu'on ne saura jamais
+   * expliquer trois semaines plus tard. */
+  if (path === '/reglages') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    if (req.method !== 'POST') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ reglages: reglages.etat(), fichier: reglages.FICHIER }, null, 2));
+    }
+    const d = await donPost(req);
+    const nonV = gardeEcriture(req, session, 'reglage', d.motif);
+    if (nonV) return refusEcriture(res, nonV);
+    const r = reglages.pose(d.cle, d.valeur === undefined ? null : d.valeur);
+    if (!r.ok) return refusEcriture(res, r.error);
+    adminlog.ajoute({ acteur, action: 'reglage', cible: String(d.cle),
+                      avant: String(r.avant), apres: String(r.apres),
+                      motif: d.motif || (r.remis ? 'remise a la valeur d origine' : ''),
+                      ip: qui(req) });
+    console.log(`[reglages] ${d.cle} : ${r.avant} -> ${r.apres}${r.remis ? ' (remis)' : ''}`);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, ...r, reglages: reglages.etat() }));
+  }
+  if (path === '/adminlog') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(adminlog.lit({
+      q: q.get('q'), action: q.get('action'),
+      limite: q.get('limite'), debut: q.get('debut'),
+    }), null, 2));
+  }
+  /* ---- LA FICHE D'UN JOUEUR ----
+   *
+   * Le panneau n'avait qu'une ligne depliable. « Je n'ai pas recu mon gain »
+   * n'avait donc pas de reponse en moins de dix minutes — c'est le message le
+   * plus frequent qu'un exploitant recoit, et celui que le panneau soutenait
+   * le moins. Tout ce qu'il faut pour repondre tient ici, y compris le journal
+   * du joueur, qui existait deja dans journal.js et que rien n'affichait. */
+  if (path === '/player') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const a = String(q.get('addr') || '').toLowerCase();
+    const cible = /^0x[0-9a-f]{40}$/.test(a) ? a : game.trouveJoueur(q.get('addr'));
+    if (!cible) {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'unknown player' }));
+    }
+    let histo = { evenements: [] };
+    try { histo = journal.lit(cible, { limite: 120 }); }
+    catch (e) { histo = { evenements: [], erreur: e.message }; }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ...game.ficheAdmin(cible), journal: histo }, null, 2));
+  }
   if (path === '/taps') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
@@ -1608,13 +1995,23 @@ const server = http.createServer(async (req, res) => {
   if (path === '/paris/regle' || path === '/paris/rembourse') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
-    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const q = await donPost(req);
+    const geste = path === '/paris/regle' ? 'pariRegle' : 'pariRembourse';
+    const nonV = gardeEcriture(req, session, geste, q.motif);
+    if (nonV) return refusEcriture(res, nonV);
     try {
       const r = path === '/paris/regle'
-        ? game.regleMatch(q.get('match'), q.get('resultat'))
-        : game.rembourseMatch(q.get('match'));
+        ? game.regleMatch(q.match, q.resultat)
+        : game.rembourseMatch(q.match);
       persist();
       if (path === '/paris/regle') notifyBetsSettled(r);
+      /* `avant` porte le RESULTAT CHOISI, pas un solde : c'est la seule chose
+         qui puisse etre fausse dans ce geste, et la seule qu'on voudra relire
+         quand un joueur contestera. */
+      adminlog.ajoute({ acteur, action: geste, cible: String(q.match || ''),
+                        avant: geste === 'pariRegle' ? String(q.resultat) : null,
+                        apres: `${r.payes || 0} paye(s), ${r.total || 0} $SWOGE`,
+                        motif: q.motif, ip: qui(req) });
       console.log('[paris]', JSON.stringify(r));
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(r));
@@ -1689,6 +2086,30 @@ process.on('unhandledRejection', (e) => {
   sante.noteIncident('rejet', e && e.message);
 });
 process.on('uncaughtException', (e) => {
+  /* ---- NE PAS SURVIVRE A UN PORT OCCUPE ----
+   *
+   * Laisser vivre le processus est le bon choix pour une exception isolee au
+   * milieu d'une manche. Ca ne l'est PAS pour une erreur d'ecoute : le serveur
+   * n'ecoute alors sur rien et reste en vie comme un processus en bonne sante
+   * qui ne sert personne. Sur l'hebergeur, c'est la silhouette d'un
+   * deploiement « reussi » qui ne repond a aucun joueur.
+   *
+   * Le test se fait ICI et pas sur `server.on('error')` : `ws` pose son propre
+   * ecouteur d'erreur sur le meme serveur, il passe AVANT, et il releve —
+   * l'exception arrive donc au processus sans que le notre ait ete appele.
+   * Mesure faite : deux ecouteurs, et seul le premier compte.
+   *
+   * Trouve en enchainant des tests : un serveur orphelin gardait le port, le
+   * suivant echouait en silence, et l'attente d'un port qui ne s'ouvrirait
+   * jamais passait pour un test qui rame. */
+  if (e && (e.code === 'EADDRINUSE' || e.code === 'EACCES') &&
+      /listen/i.test(String(e.message || ''))) {
+    console.error(`\n[fatal] impossible d ecouter sur le port ${cfg.PORT} : ` +
+                  (e.code === 'EADDRINUSE' ? 'il est deja pris par un autre processus.'
+                                           : 'permission refusee.') +
+                  '\n        Ce serveur ne peut rien servir : il s arrete plutot que de faire semblant.\n');
+    process.exit(1);
+  }
   console.warn('[uncaughtException]', e && e.message);
   sante.noteIncident('exception', e && e.message);
 });

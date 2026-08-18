@@ -2598,10 +2598,124 @@ class Game {
         jeux: p.jeux || {},
         tgId: p.tgId || null,
         total: f(p.balance.add(staked).add(pending)),
+        /* ---- CE QUE LA TABLE NE DISAIT PAS ----
+         *
+         * Inscription, derniere visite, niveau, serie, collection. Tous ces
+         * champs existaient dans la fiche et aucun n'arrivait au panneau : on
+         * ne pouvait donc pas trier les joueurs par anciennete, ni voir d'un
+         * coup d'oeil qui n'est plus venu depuis un mois.
+         *
+         * Ils sont pris DIRECTEMENT sur la fiche, sans recalcul : le niveau
+         * et la collection se lisent, ils ne se comptent pas. La table passe
+         * toutes les quinze secondes sur deux cents joueurs — ce qui coute
+         * cher ici le coute deux cents fois. */
+        creeLe: p.creeLe || 0,
+        dernierJour: p.dayKey || null,
+        niveau: this.niveauDeFiche(p),
+        xp: Math.round(this._xpTotale(p)),
+        streak: p.streakDay || 0,
+        objets: Object.keys(p.objets || {}).length,
       });
     }
     rows.sort((a, b) => parseFloat(b.wagered) - parseFloat(a.wagered));
     return rows;
+  }
+
+  /**
+   * LA FICHE COMPLETE D'UN JOUEUR, pour le panneau.
+   *
+   * ---- pourquoi elle ne passe pas par playersReport ----
+   *
+   * `playersReport()` sert la TABLE : deux cents lignes toutes les quinze
+   * secondes. Y ajouter la collection, les quetes du jour et le detail du
+   * staking ferait payer a chaque rafraichissement le prix d'une information
+   * qu'on ne regarde que sur un joueur a la fois. Les deux vues ont des couts
+   * differents parce qu'elles ont des cadences differentes.
+   *
+   * ---- ce qu'elle doit permettre ----
+   *
+   * Repondre a « je n'ai pas recu mon gain » sans ouvrir un fichier. Donc :
+   * qui il est, ce qu'il a, d'ou ca vient, ou il en est, et ce qu'il a fait.
+   * Le `net` est le chiffre qui repond a la derniere question — ce qu'il
+   * detient plus ce qu'il a sorti, moins ce qu'il a mis. Un joueur normal est
+   * legerement negatif : c'est l'avantage de la maison.
+   */
+  ficheAdmin(addr) {
+    const a = String(addr || '').toLowerCase();
+    const p = this.players.get(a);
+    if (!p) return null;
+    const f = (w) => ethers.utils.formatUnits(w || BN(0), cfg.DECIMALS);
+    const staked = this._stakedTotal(p);
+    const pending = p.stakeAccrued.add(this._pendingAll(p));
+
+    /* La collection, comptee sur le catalogue et pas sur l'inventaire : c'est
+       « 12 sur 30 » qui renseigne, pas « 12 ». */
+    const objets = p.objets || {};
+    const possedes = boutique.ITEMS.filter((o) => objets[o.id]);
+    const familles = boutique.FAMILLES.map((fa) => {
+      const l = boutique.ITEMS.filter((o) => o.famille === fa.cle);
+      const ai = l.filter((o) => objets[o.id]).length;
+      return { cle: fa.cle, nom: fa.nom, saison: fa.saison, a: ai, sur: l.length,
+               complete: l.length > 0 && ai === l.length };
+    });
+
+    let quetes = [];
+    try { quetes = this.quetesDuJour(a).map((q) => this._queteVue(p, q, false)); }
+    catch (e) { quetes = []; }
+
+    return {
+      /* ---- qui ---- */
+      address: a,
+      name: p.name || null, nomChoisi: !!p.nomChoisi, nomPaye: !!p.nomPaye,
+      visage: p.visage || null, photo: !!p.photo,
+      tgId: p.tgId || null,
+      /* `creeLe` vaut 0 sur les fiches anterieures a son arrivee. On rend le
+         zero tel quel plutot qu'une date inventee : « inconnu » est une
+         reponse, « 1er janvier 1970 » est un mensonge. */
+      creeLe: p.creeLe || 0,
+      dernierJour: p.dayKey || null,
+
+      /* ---- l'argent ---- */
+      argent: {
+        balance: f(p.balance), staked: f(staked), pending: f(pending),
+        total: f(p.balance.add(staked).add(pending)),
+        deposited: f(p.deposited), hasDeposited: !!p.hasDeposited,
+        withdrawn: f(p.cumulativeAuthorized),
+        wagered: f(p.wagered), bets: p.betCount || 0,
+        net: f(p.balance.add(staked).add(pending).add(p.cumulativeAuthorized)
+               .sub(p.deposited || BN(0))),
+        dayNet: f(p.dayNet), meilleurJour: p.meilleurJour || null,
+      },
+
+      /* ---- ou il en est ---- */
+      progression: {
+        niveau: this.niveauDeFiche(p),
+        xp: Math.round(this._xpTotale(p)),
+        xpGagnee: Math.round(p.xp || 0),
+        xpSources: p.xpSources || {},
+        collection: { a: possedes.length, sur: boutique.ITEMS.length },
+        familles,
+        rachatOuvert: this.rachatVerrou(a),
+      },
+
+      /* ---- ce qui le fait revenir ---- */
+      engagement: {
+        streakDay: p.streakDay || 0,
+        streakDernier: p.streakLastClaimDay || null,
+        coffreOffert: this.coffreOffert(a),
+        quetes,
+        parfait: this.parfaitEtat ? (() => { try { return this.parfaitEtat(a); } catch (e) { return null; } })() : null,
+        amis: (p.amis || []).length,
+        parrain: p.parrain || null,
+        filleuls: (p.filleuls || []).length,
+        refTotal: f(p.refTotal), refDu: f(p.refDu),
+      },
+
+      /* ---- ce qu'il a joue ---- */
+      jeux: p.jeux || {},
+      stakes: this.stakeInfo(a),
+      maison: this.estMaison(a),
+    };
   }
 
   stakeInfo(addr) {

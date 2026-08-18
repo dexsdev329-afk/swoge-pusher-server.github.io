@@ -124,7 +124,10 @@ async function joueurAvecPhoto(port) {
   // ------------------------------------ L ARCHIVE, elle, doit la contenir
   let archive;
   {
-    const r = await fetch(`http://127.0.0.1:${PA}/export?key=${CLE}`);
+    /* La cle passe par l'EN-TETE : elle ne voyage plus dans une adresse, ou
+       elle finissait dans l'historique et dans les journaux de chaque
+       intermediaire. Le corps de /import, lui, est deja le fichier. */
+    const r = await fetch(`http://127.0.0.1:${PA}/export`, { headers: { 'x-admin-key': CLE } });
     eq(r.status, 200, 'l export repond');
     archive = Buffer.from(await r.arrayBuffer());
     const clair = zlib.gunzipSync(archive).toString('utf8');
@@ -155,8 +158,9 @@ async function joueurAvecPhoto(port) {
     const avant = await fetch(`http://127.0.0.1:${PB}/avatar/${j.addr}`);
     eq(avant.status, 404, 'le serveur neuf n a evidemment rien');
 
-    const r = await fetch(`http://127.0.0.1:${PB}/import?key=${CLE}&confirm=REPLACE-ALL`,
-                          { method: 'POST', body: archive });
+    const r = await fetch(`http://127.0.0.1:${PB}/import?confirm=REPLACE-ALL`,
+                          { method: 'POST', body: archive,
+                            headers: { 'x-admin-key': CLE, 'x-admin-motif': 'test de restauration' } });
     const rep = await r.json();
     eq(r.status, 200, 'la restauration passe');
     ok(rep.remplace, 'et remplace bien l etat');
@@ -190,8 +194,9 @@ async function joueurAvecPhoto(port) {
     fs.appendFileSync(chemin, JSON.stringify({ t: Date.now(), k: 'apres-restauration' }) + '\n');
     const augmente = fs.readFileSync(chemin, 'utf8');
 
-    const r = await fetch(`http://127.0.0.1:${PB}/import?key=${CLE}&confirm=REPLACE-ALL`,
-                          { method: 'POST', body: archive });
+    const r = await fetch(`http://127.0.0.1:${PB}/import?confirm=REPLACE-ALL`,
+                          { method: 'POST', body: archive,
+                            headers: { 'x-admin-key': CLE, 'x-admin-motif': 'test de restauration' } });
     const rep = await r.json();
     eq(rep.journaux.poses, 0, 'la deuxieme restauration ne repose aucun journal');
     eq(rep.journaux.gardes, 1, 'elle garde celui qui existait, intact');
@@ -207,8 +212,9 @@ async function joueurAvecPhoto(port) {
        exactement la forme d'un fichier retouche. */
     clair.avatars[menteur] = 'data:image/png;base64,' + Buffer.from('<svg onload=alert(1)>').toString('base64');
     const truque = zlib.gzipSync(Buffer.from(JSON.stringify(clair)));
-    const r = await fetch(`http://127.0.0.1:${PB}/import?key=${CLE}&confirm=REPLACE-ALL`,
-                          { method: 'POST', body: truque });
+    const r = await fetch(`http://127.0.0.1:${PB}/import?confirm=REPLACE-ALL`,
+                          { method: 'POST', body: truque,
+                            headers: { 'x-admin-key': CLE, 'x-admin-motif': 'test archive trafiquee' } });
     const rep = await r.json();
     eq(r.status, 200, 'la restauration se fait quand meme — un solde ne se perd pas pour une image');
     eq(rep.photos.refusees, 1, 'mais l image trafiquee est refusee');

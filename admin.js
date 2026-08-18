@@ -6,13 +6,21 @@
  */
 const cfg = require('./config');
 
-function page() {
+function page(csrf) {
   const V = cfg.VAULT_ADDRESS || '';
   const CHAIN_HEX = '0x' + Number(cfg.CHAIN_ID).toString(16);
+  /* Le jeton anti-rejeu voyage DANS la page. Un site tiers ne peut pas lire
+     cette page — la politique d origine le lui interdit — donc il ne peut pas
+     l obtenir, et c est ce qui rend le jeton utile. */
+  const TOK = String(csrf || '').replace(/[^a-f0-9]/gi, '');
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SWOGE Vault — Admin</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+<!-- Ethers vient de NOUS. Depuis un CDN, chaque ouverture envoyait a un tiers
+     l adresse complete de la page dans l en-tete Referer — cle comprise, a
+     l epoque ou elle y etait — et un CDN compromis executait son code sur la
+     page qui signe les transactions du proprietaire. -->
+<script src="/admin/ethers.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;font-family:'Space Mono','Courier New',monospace}
   body{background:#0B0906;color:#F7EEDA;padding:20px;max-width:760px;margin:0 auto}
@@ -49,10 +57,84 @@ function page() {
   .ptot{font-size:12px;color:#8a7f6a;margin-bottom:8px}
   .ptot b{color:#E6A537}
   .muted2{color:#8a7f6a;text-align:center;padding:16px}
+
+  /* ============ LA COQUE ============
+     Le panneau etait UN SEUL ROULEAU : quinze panneaux, quatre ecrans et demi
+     sur ordinateur, sept et demi sur telephone. Pour regler un match on
+     passait devant la restauration ; pour lire les comptes, devant le brulage.
+     Et sur 1440 px de large, le contenu en occupait 760 — 47 % perdus pendant
+     que l information manquait de place partout.
+
+     Neuf entrees, une par moment d exploitation. La vue vit dans le #hash :
+     un rafraichissement ne renvoie plus en haut de la page, et une vue se
+     partage par son adresse. */
+  body{max-width:none;padding:0;display:grid;grid-template-columns:216px 1fr;
+       min-height:100vh;align-items:start}
+  #nav{position:sticky;top:0;height:100vh;overflow-y:auto;background:#0F0C08;
+       border-right:1px solid rgba(230,165,55,.18);padding:16px 0 24px;z-index:5}
+  #nav .marque{padding:0 16px 14px;border-bottom:1px solid rgba(230,165,55,.12);margin-bottom:10px}
+  #nav .marque b{color:#E6A537;font-size:14px;display:block}
+  #nav .marque span{color:#8a7f6a;font-size:10.5px}
+  #nav button{display:flex;width:100%;align-items:center;gap:9px;background:none;border:0;
+       border-left:2px solid transparent;color:#c9bfa8;font:inherit;font-size:13px;
+       padding:9px 16px;cursor:pointer;text-align:left}
+  #nav button:hover{background:rgba(230,165,55,.06);color:#F7EEDA}
+  #nav button.on{background:rgba(230,165,55,.10);color:#E6A537;border-left-color:#E6A537}
+  #nav button .ic{width:17px;text-align:center;flex:0 0 auto}
+  #nav button .bad{margin-left:auto;background:#E2483C;color:#fff;border-radius:9px;
+       font-size:10px;padding:1px 6px;font-weight:700}
+  #nav .sep{color:#6b6152;font-size:9.5px;letter-spacing:.14em;padding:14px 16px 5px;
+       text-transform:uppercase}
+  #nav .sortir{margin-top:14px;border-top:1px solid rgba(230,165,55,.12);padding-top:12px}
+  #vue{padding:20px 22px 80px;max-width:1180px;min-width:0}
+  #barre{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  #barre h1{margin:0}
+  #sante{font-size:11px;padding:3px 9px;border-radius:99px;border:1px solid;white-space:nowrap}
+  #sante.ok{color:#6FCF97;border-color:rgba(111,207,151,.4)}
+  #sante.ko{color:#E2483C;border-color:rgba(226,72,60,.5)}
+  #ouvrenav{display:none}
+  [data-vue]{display:none}
+  [data-vue].vu{display:block}
+  .vide{color:#8a7f6a;padding:24px 0;font-size:13px}
+  /* Les cartes du haut n appartiennent qu a l apercu : elles etaient repetees
+     au-dessus de tout, y compris au-dessus de la restauration. */
+  #entete{display:none}
+  #entete.vu{display:block}
+  @media (max-width:900px){
+    body{grid-template-columns:1fr}
+    #nav{position:fixed;left:0;top:0;width:216px;transform:translateX(-100%);
+         transition:transform .2s}
+    #nav.ouvert{transform:none}
+    #ouvrenav{display:inline-block;background:rgba(230,165,55,.12);border:1px solid rgba(230,165,55,.4);
+         color:#E6A537;border-radius:8px;font:inherit;font-size:16px;padding:4px 11px;cursor:pointer}
+    #vue{padding:14px 14px 70px}
+  }
 </style></head><body>
-<h1>🐕 SWOGE Vault — Admin</h1>
+<nav id="nav">
+  <div class="marque"><b>🐕 SWOGE</b><span>panneau d'exploitation</span></div>
+  <div class="sep">tous les jours</div>
+  <button data-go="apercu" class="on"><span class="ic">◉</span>Vue générale</button>
+  <button data-go="joueurs"><span class="ic">👥</span>Joueurs</button>
+  <button data-go="jeux"><span class="ic">🎲</span>Jeux &amp; paris<span class="bad" id="badAregler" style="display:none">0</span></button>
+  <div class="sep">piloter</div>
+  <button data-go="eco"><span class="ic">📊</span>Économie</button>
+  <button data-go="collection"><span class="ic">🍎</span>Collection</button>
+  <button data-go="engagement"><span class="ic">🔥</span>Engagement</button>
+  <button data-go="liveops"><span class="ic">🎛️</span>Live Ops</button>
+  <div class="sep">rarement</div>
+  <button data-go="confiance"><span class="ic">🛡️</span>Confiance</button>
+  <button data-go="sys"><span class="ic">⚙️</span>Système</button>
+  <div class="sortir"><button id="sortir"><span class="ic">⏻</span>Se déconnecter</button></div>
+</nav>
+<main id="vue">
+<div id="barre">
+  <button id="ouvrenav" type="button" aria-label="Menu">☰</button>
+  <h1>🐕 SWOGE Vault — Admin</h1>
+  <span id="sante" class="ok">santé —</span>
+</div>
 <div class="muted">Private. Vault <code>${V || '(not set)'}</code></div>
 
+<div id="entete">
 <div class="cards">
   <div class="card"><span>In the vault</span><b id="pot">—</b></div>
   <div class="card"><span>Owed to players</span><b id="owed">—</b></div>
@@ -64,8 +146,9 @@ function page() {
   <span id="maisonL" style="display:none">🏛️ <b>Held by house accounts</b> <b id="omz">—</b> <em id="omn"></em> — excluded from what is owed; these accounts cannot withdraw. <b>Without them the surplus would be <span id="omsur">—</span></b><br></span>
   👥 Players <b id="pl">—</b> · updated <span id="upd">—</span> · <a href="#" id="refresh">refresh</a>
 </div>
+</div><!-- /#entete -->
 
-<div class="panel" id="autoCard">
+<div data-vue="sys" class="panel" id="autoCard">
   <h2>⏳ How long the vault lasts</h2>
   <div class="sub" style="margin:0 0 10px">
     The alarm above only rings once you are <b>already</b> under water &mdash; the day you
@@ -82,7 +165,7 @@ function page() {
   <div class="sub" id="auLigne" style="margin-top:10px"></div>
 </div>
 
-<div class="panel">
+<div data-vue="sys" class="panel">
   <h2>💾 Off-machine backup</h2>
   <div class="sub" style="margin:0 0 10px">
     <code>state.json</code> and its <code>.bak</code> live on the <b>same volume</b>. That protects
@@ -94,7 +177,7 @@ function page() {
     <button class="ghost" id="bkDl">⬇ Download the file</button></div>
 </div>
 
-<div class="panel" style="border-color:rgba(242,104,94,.45)">
+<div data-vue="sys" class="panel" style="border-color:rgba(242,104,94,.45)">
   <h2>♻️ Restore from a file</h2>
   <div class="sub" style="margin:0 0 10px">
     The day you need this, you are in the worst possible moment. So it
@@ -114,7 +197,7 @@ function page() {
   <div id="rsOut" class="sub" style="margin-top:10px"></div>
 </div>
 
-<div class="panel">
+<div data-vue="apercu" class="panel">
   <h2>📈 Where people stop</h2>
   <div class="sub" style="margin:0 0 10px">
     Knowing what you earn does not tell you <b>where it jams</b>. These three rates do:
@@ -129,7 +212,7 @@ function page() {
   <div id="tunTable" class="sub btwrap"></div>
 </div>
 
-<div class="panel">
+<div data-vue="eco" class="panel">
   <h2>📊 This month&rsquo;s books</h2>
   <div class="sub" style="margin:0 0 10px">
     A deposit is <b>not</b> a profit &mdash; you owe it back. What the house actually keeps is
@@ -151,7 +234,7 @@ function page() {
   </div>
 </div>
 
-<div class="panel">
+<div data-vue="joueurs" class="panel">
   <h2>🔎 Check a player&rsquo;s deposits</h2>
   <div class="sub" style="margin:0 0 10px">
     &laquo; I deposited and it never arrived &raquo; has two answers: the credit was lost,
@@ -167,7 +250,7 @@ function page() {
     line-height:1.6;white-space:pre-wrap;word-break:break-word;"></pre>
 </div>
 
-<div class="panel" style="margin-top:14px">
+<div data-vue="joueurs" class="panel" style="margin-top:14px">
   <h2>&#128176; Credit a player</h2>
   <div class="sub" style="margin:0 0 10px">
     Straight to a player&rsquo;s balance &mdash; a goodwill gesture, a prize, a mistake to
@@ -209,7 +292,7 @@ function page() {
   </style>
 </div>
 
-<div class="panel">
+<div data-vue="sys" class="panel">
   <h2>🔥 Burn the withdrawal fee</h2>
   <div class="sub" style="margin:0 0 10px">
     1% of every withdrawal stays in the vault to be burned. It is not yours to keep &mdash;
@@ -223,7 +306,7 @@ function page() {
   <div class="sub" id="burnList" style="margin-top:10px"></div>
 </div>
 
-<div class="panel">
+<div data-vue="sys" class="panel">
   <h2>🏧 Owner withdraw</h2>
   <input id="amt" type="number" inputmode="decimal" placeholder="amount in $SWOGE">
   <div class="row">
@@ -234,7 +317,7 @@ function page() {
   <div id="msg"></div>
 </div>
 
-<div class="panel" style="margin-top:14px">
+<div data-vue="jeux" class="panel" style="margin-top:14px">
   <h2>&#128225; Fixture feed</h2>
   <div class="sub" style="margin:0 0 10px">
     Where the calendar comes from. Fixtures cost <b>no credits</b> at all
@@ -259,7 +342,7 @@ function page() {
   </style>
 </div>
 
-<div class="panel" style="margin-top:14px">
+<div data-vue="jeux" class="panel" style="margin-top:14px">
   <h2>&#9203; Matches waiting for a result</h2>
   <div class="sub" style="margin:0 0 10px">
     Kick-off has passed, bets are riding on it, and nothing has been decided.
@@ -293,7 +376,7 @@ function page() {
   </style>
 </div>
 
-<div class="panel" style="margin-top:14px">
+<div data-vue="jeux" class="panel" style="margin-top:14px">
   <h2>&#127942; Sports bets</h2>
   <div class="sub" style="margin:0 0 10px">
     Chaque pari porte un <b>identifiant</b>, affiche au joueur et repris ici.
@@ -407,7 +490,7 @@ function page() {
   </div>
 </div>
 
-<div class="panel" style="margin-top:14px">
+<div data-vue="collection" class="panel" style="margin-top:14px">
   <h2>&#127822; The fruit collection</h2>
   <div class="sub" style="margin:0 0 10px">
     What is left of the edition, and who holds it. Every number here comes from the
@@ -418,7 +501,7 @@ function page() {
   <div id="btOut" style="margin-top:10px"></div>
 </div>
 
-<div class="panel" style="margin-top:14px">
+<div data-vue="joueurs" class="panel" style="margin-top:14px">
   <h2>👥 Players</h2>
   <div class="row" style="margin-bottom:10px">
     <input id="q" placeholder="Search a wallet (0x…), a name or a Telegram id" style="flex:1;min-width:220px;margin-bottom:0">
@@ -521,7 +604,7 @@ function page() {
   <div class="plst" id="pbody"><div class="muted2">loading…</div></div>
 </div>
 
-<div class="panel" style="margin-top:14px">
+<div data-vue="sys" class="panel" style="margin-top:14px">
   <h2>⚙️ Owner controls</h2>
   <div style="font-size:12px;color:#8a7f6a;margin-bottom:10px">Connect the owner wallet above to enable these.</div>
 
@@ -538,8 +621,74 @@ function page() {
   <div id="cmsg" style="margin-top:12px;font-size:13px"></div>
 </div>
 
+<!-- ================= LA FICHE JOUEUR =================
+     Le panneau n avait qu une ligne depliable dans la table. « Je n ai pas
+     recu mon gain » n avait donc pas de reponse en moins de dix minutes — le
+     message le plus frequent qu un exploitant recoit, et celui que le panneau
+     soutenait le moins. Tout ce qu il faut pour repondre tient ici. -->
+<div data-vue="joueur" class="panel" id="fichePan">
+  <h2>👤 <span id="fiNom">Joueur</span> <a href="#joueurs" style="font-size:12px;color:#8a7f6a;font-weight:400">← retour à la liste</a></h2>
+  <div id="fiCorps"><div class="muted2">chargement…</div></div>
+</div>
+
+<!-- ================= ENGAGEMENT ================= -->
+<div data-vue="engagement" class="panel">
+  <h2>🔥 Ce qui fait revenir</h2>
+  <div class="sub" style="margin:0 0 12px">Les quêtes, les séries, le coffre offert, les parrainages — et les compteurs de clics,
+    qui étaient <b>collectés depuis des jours sans que personne puisse les lire</b>.</div>
+  <div id="engCorps"><div class="muted2">chargement…</div></div>
+</div>
+
+<div data-vue="engagement" class="panel" style="margin-top:14px">
+  <h2>👆 Où les gens appuient</h2>
+  <div class="sub" style="margin:0 0 12px">Menu, barre du bas, jeux. C'est ce qui dit dans quel ordre ranger les boutons —
+    par l'usage, pas par l'intuition.</div>
+  <div id="tapsCorps"><div class="muted2">chargement…</div></div>
+</div>
+
+<!-- ================= CONFIANCE ================= -->
+<div data-vue="confiance" class="panel">
+  <h2>📜 Journal des actions admin</h2>
+  <div class="sub" style="margin:0 0 12px">
+    En <b>ajout seul</b>, jamais purgé, et <b>hors de state.json</b> — une restauration ne peut donc pas
+    effacer la ligne qui prouve qu'elle a eu lieu.
+  </div>
+  <div class="row" style="margin-bottom:10px">
+    <input id="alQ" placeholder="chercher une adresse, un motif, un geste…" style="flex:1">
+    <select id="alAction" style="max-width:190px"><option value="">tous les gestes</option></select>
+  </div>
+  <div id="alCorps"><div class="muted2">chargement…</div></div>
+</div>
+
+<!-- ================= LIVE OPS ================= -->
+<div data-vue="liveops" class="panel">
+  <h2>🎛️ Réglages à chaud</h2>
+  <div class="sub" style="margin:0 0 12px">
+    Avant, changer un prix de coffre ou une récompense imposait de modifier une variable chez l'hébergeur et de
+    <b>redémarrer — ce qui coupe toutes les parties en cours</b>. Ces clés-là se règlent sans rien couper.
+    <b>Remettre à vide</b> restaure la valeur d'origine.<br>
+    Les fondations — adresse du coffre, clé admin, chaîne, clé du signataire — ne sont pas dans cette liste et
+    ne peuvent pas l'être.
+  </div>
+  <div id="rgMsg" class="sub" style="margin:0 0 10px"></div>
+  <div id="rgCorps"><div class="muted2">chargement…</div></div>
+</div>
+
 <script>
-var KEY=new URLSearchParams(location.search).get('key')||'';
+/* ---- LA CLE A DISPARU D ICI ----
+ *
+ * 'KEY' etait lue dans l adresse et rejointe a chaque appel. Elle ne l est
+ * plus : le cookie de session fait le travail, le navigateur le joint tout
+ * seul, et aucun script — pas meme celui-ci — ne peut le lire.
+ *
+ * Il reste 'TOK', le jeton anti-rejeu. Il n ouvre rien a lui seul : sans le
+ * cookie il ne vaut rien, et sans lui le cookie ne peut rien ECRIRE. Il faut
+ * les deux, et un site tiers n a ni l un ni l autre. */
+var TOK="${TOK}";
+/* 'KEY' reste declaree et vide : une quinzaine d appels la mentionnent encore
+   en en-tete, et un en-tete vide est simplement ignore. La retirer partout
+   d un coup, c est quinze occasions d en oublier une. */
+var KEY="";
 var VAULT="${V}";
 var TOKEN="${cfg.SWOGE_TOKEN || ''}";
 var CHAIN={hex:"${CHAIN_HEX}",name:"${cfg.CHAIN_ID===4663?'Robinhood Chain':'Chain'}",rpc:"${cfg.RPC_URL}"};
@@ -558,6 +707,292 @@ var ERC20=["function approve(address s,uint256 a) returns (bool)","function allo
 var provider,signer,myAddr,surplusNum=0,burnDu=0,moisChoisi=null;
 var EXPL="${cfg.EXPLORER || ''}";
 function $(s){return document.querySelector(s);}
+
+/* ================= ECRIRE =================
+ *
+ * Un seul chemin pour tout ce qui change quelque chose. Il pose la methode, le
+ * jeton et le corps ; le reste du fichier n a plus a y penser, donc plus a
+ * l oublier. Avant, chaque geste construisait son adresse a la main — c est
+ * comme ca que '?montant=' et '?addr=' se retrouvaient dans les journaux.
+ */
+async function post(route, corps){
+  var r = await fetch(route, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-admin-token": TOK },
+    body: JSON.stringify(corps || {}),
+  });
+  var d = null;
+  try { d = await r.json(); } catch(e) { d = { error: "reponse illisible ("+r.status+")" }; }
+  if (r.status === 401) { location.href = "/admin"; throw new Error("session expiree"); }
+  if (!r.ok && !d.error) d.error = "echec ("+r.status+")";
+  return d;
+}
+async function lit(route){
+  var r = await fetch(route, { headers:{ "x-admin-key": KEY } });
+  if (r.status === 401) { location.href = "/admin"; throw new Error("session expiree"); }
+  return r.json();
+}
+
+/* ================= LA COQUE =================
+ *
+ * La vue vit dans le #hash : le rafraichissement ne renvoie plus en haut, et
+ * une vue se partage par son adresse. Les panneaux ne sont pas detruits, ils
+ * sont montres ou caches — leurs chargeurs continuent donc de tourner, et
+ * revenir sur un onglet ne le laisse pas vide une seconde.
+ */
+var VUE = "apercu";
+function vaVers(v, arg){
+  VUE = v || "apercu";
+  document.querySelectorAll("[data-vue]").forEach(function(e){
+    e.classList.toggle("vu", e.getAttribute("data-vue") === VUE);
+  });
+  /* Les cartes de solvabilite n appartiennent qu a la vue generale. Repetees
+     au-dessus de tout, elles poussaient le contenu utile vers le bas et
+     surmontaient jusqu a la restauration. */
+  $("#entete").classList.toggle("vu", VUE === "apercu");
+  document.querySelectorAll("#nav button[data-go]").forEach(function(b){
+    b.classList.toggle("on", b.getAttribute("data-go") === VUE ||
+                            (VUE === "joueur" && b.getAttribute("data-go") === "joueurs"));
+  });
+  $("#nav").classList.remove("ouvert");
+  window.scrollTo(0, 0);
+  if (VUE === "joueur" && arg) chargeFiche(arg);
+  if (VUE === "engagement") { chargeEngagement(); chargeTaps(); }
+  if (VUE === "confiance") chargeJournal();
+  if (VUE === "liveops") chargeReglages();
+}
+function duHash(){
+  var h = (location.hash || "#apercu").slice(1);
+  var i = h.indexOf("/");
+  return i < 0 ? { v: h, arg: null } : { v: h.slice(0, i), arg: h.slice(i + 1) };
+}
+window.addEventListener("hashchange", function(){ var d = duHash(); vaVers(d.v, d.arg); });
+document.querySelectorAll("#nav button[data-go]").forEach(function(b){
+  b.addEventListener("click", function(){ location.hash = b.getAttribute("data-go"); });
+});
+$("#ouvrenav").addEventListener("click", function(){ $("#nav").classList.toggle("ouvert"); });
+$("#sortir").addEventListener("click", async function(){
+  await fetch("/admin/logout", { method:"POST" });
+  location.href = "/admin";
+});
+/* ---- LA PREMIERE ROUTE ----
+ *
+ * Sans cet appel, vaVers n etait declenche QUE par un changement de hash :
+ * a l ouverture, aucun panneau ne portait la classe qui le montre et la page
+ * s affichait VIDE. Le routeur marchait, il n avait simplement jamais ete
+ * demarre. Trouve par la mesure — la page se chargeait sans une erreur. */
+(function(){ var d = duHash(); vaVers(d.v, d.arg); })();
+
+/* La pastille de sante. /health existait, repondait, et n etait affichee nulle
+   part : il fallait connaitre l adresse par coeur. */
+async function chargeSante(){
+  try {
+    var r = await fetch("/health");
+    var d = await r.json();
+    var e = $("#sante");
+    e.className = d.ok ? "ok" : "ko";
+    e.textContent = (d.ok ? "santé ok" : "santé — incident") +
+      (d.incidents && d.incidents.length ? " (" + d.incidents.length + ")" : "");
+    e.title = JSON.stringify(d).slice(0, 400);
+  } catch(e) { $("#sante").className = "ko"; $("#sante").textContent = "santé — injoignable"; }
+}
+chargeSante(); setInterval(chargeSante, 60000);
+
+/* ================= LA FICHE JOUEUR ================= */
+function ln(k,v,c){ return '<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;'+
+  'border-bottom:1px solid rgba(230,165,55,.08)"><span style="color:#8a7f6a;font-size:12px">'+k+
+  '</span><b style="font-size:12.5px;color:'+(c||'#F7EEDA')+'">'+v+'</b></div>'; }
+function bloc(t,inner){ return '<div style="background:rgba(255,255,255,.03);border:1px solid rgba(230,165,55,.12);'+
+  'border-radius:8px;padding:13px 15px"><div style="color:#E6A537;font-size:11px;letter-spacing:.12em;'+
+  'text-transform:uppercase;margin-bottom:8px">'+t+'</div>'+inner+'</div>'; }
+function dt(ms){ if(!ms) return 'inconnu'; var d=new Date(ms); return d.toISOString().slice(0,10); }
+
+async function chargeFiche(addr){
+  var c=$("#fiCorps"); c.innerHTML='<div class="muted2">chargement…</div>';
+  var f;
+  try { f = await lit("/player?addr="+encodeURIComponent(addr)); }
+  catch(e){ c.innerHTML='<div class="muted2">'+esc(String(e.message))+'</div>'; return; }
+  if(!f || f.error){ c.innerHTML='<div class="muted2">'+esc((f&&f.error)||'introuvable')+'</div>'; return; }
+  $("#fiNom").textContent=(f.name||short(f.address))+(f.maison?' 🏛️':'');
+  var a=f.argent, p=f.progression, e=f.engagement;
+  /* Le NET d abord, et en couleur : c est le seul chiffre qui reponde a
+     « d ou vient cet argent ». Fortement positif sans mise correspondante,
+     c est une entree qui ne vient pas du jeu. */
+  var netN=num(a.net);
+  var h='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px">';
+  h+=bloc('Identité',
+      ln('Adresse','<span style="font-size:10.5px">'+esc(f.address)+'</span>')+
+      ln('Inscrit le', f.creeLe? dt(f.creeLe) : '<span style="color:#8a7f6a">avant que ce soit noté</span>')+
+      ln('Dernier jour actif', f.dernierJour||'—')+
+      ln('Telegram', f.tgId? esc(String(f.tgId)) : '—')+
+      ln('Nom payé', f.nomPaye?'oui':'non'));
+  h+=bloc('Argent',
+      ln('Solde',fmt(a.balance))+ln('Staké',fmt(a.staked))+ln('Rendement en attente',fmt(a.pending))+
+      ln('Déposé',fmt(a.deposited))+ln('Retiré',fmt(a.withdrawn))+
+      ln('Joué à vie',fmt(a.wagered)+' · '+a.bets+' mises')+
+      ln('<b>Net</b> (détenu + sorti − mis)',fmt(a.net), netN>0?'#E2483C':'#6FCF97'));
+  h+=bloc('Progression',
+      ln('Niveau',String(p.niveau&&p.niveau.n!=null?p.niveau.n:(p.niveau||'—')))+
+      ln('XP totale',String(p.xp))+ln('dont gagnée',String(p.xpGagnee))+
+      ln('Collection',p.collection.a+' / '+p.collection.sur)+
+      ln('Familles complètes',String(p.familles.filter(function(x){return x.complete;}).length))+
+      ln('Rachat instantané', p.rachatOuvert&&p.rachatOuvert.ouvert?'ouvert':
+         ('verrouillé — '+fmt(String(p.rachatOuvert?p.rachatOuvert.reste:0))+' à jouer'),
+         p.rachatOuvert&&p.rachatOuvert.ouvert?'#6FCF97':'#C9784A'));
+  h+=bloc('Engagement',
+      ln('Série',String(e.streakDay)+' jour(s)')+
+      ln('Coffre du jour', e.coffreOffert&&e.coffreOffert.dispo?'à prendre':'pris ou indisponible')+
+      ln('Quêtes du jour', e.quetes.filter(function(q){return q.claimed;}).length+' / '+e.quetes.length+' réclamées')+
+      ln('Amis',String(e.amis))+ln('Filleuls',String(e.filleuls))+
+      ln('Gains de parrainage',fmt(e.refTotal)));
+  h+='</div>';
+
+  /* Les familles, en une ligne : c est ce qu on regarde quand quelqu un dit
+     « il me manque une piece ». */
+  h+='<div style="margin-top:14px">'+bloc('Collection par famille',
+      '<div style="display:flex;flex-wrap:wrap;gap:6px">'+p.familles.map(function(x){
+        return '<span style="font-size:11px;padding:3px 9px;border-radius:99px;border:1px solid '+
+          (x.complete?'#6FCF97':'rgba(255,255,255,.14)')+';color:'+(x.complete?'#6FCF97':'#c9bfa8')+'">'+
+          esc(x.nom)+' '+x.a+'/'+x.sur+'</span>';
+      }).join('')+'</div>')+'</div>';
+
+  /* LE JOURNAL DU JOUEUR. Il existait dans journal.js et rien ne l affichait :
+     c est pourtant lui qui repond a « je n ai pas recu mon gain ». */
+  var ev=(f.journal&&f.journal.evenements)||[];
+  h+='<div style="margin-top:14px">'+bloc('Son historique — '+ev.length+' ligne(s)',
+      ev.length? '<div style="max-height:340px;overflow:auto;font-size:11.5px">'+ev.map(function(x){
+        return '<div style="display:flex;gap:10px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.05)">'+
+          '<span style="color:#8a7f6a;flex:0 0 128px">'+esc(new Date(x.t||0).toISOString().slice(0,16).replace('T',' '))+'</span>'+
+          '<span style="color:#E6A537;flex:0 0 40px">'+esc(String(x.k||'?'))+'</span>'+
+          '<span style="color:#c9bfa8;flex:1;word-break:break-all">'+esc(JSON.stringify(x).slice(0,200))+'</span></div>';
+      }).join('')+'</div>'
+      : '<div class="muted2">rien dans son journal</div>')+'</div>';
+  c.innerHTML=h;
+}
+
+/* ================= ENGAGEMENT ================= */
+async function chargeEngagement(){
+  var c=$("#engCorps");
+  try {
+    var d = await lit("/players?limit=1000");
+    var l = d.players||[];
+    var actifs = l.filter(function(p){return p.dernierJour;}).length;
+    var avecSerie = l.filter(function(p){return p.streak>0;}).length;
+    var avecColl = l.filter(function(p){return p.objets>0;}).length;
+    var niv = l.map(function(p){return (p.niveau&&p.niveau.n)||0;}).sort(function(a,b){return a-b;});
+    var median = niv.length? niv[Math.floor(niv.length/2)] : 0;
+    c.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">'+
+      bloc('Joueurs', ln('Fiches',String(l.length))+ln('Vus au moins un jour',String(actifs))+
+                      ln('Avec une série en cours',String(avecSerie)))+
+      bloc('Progression', ln('Niveau médian',String(median))+
+                      ln('Ont au moins un fruit',String(avecColl))+
+                      ln('XP médiane',String(l.length? l.map(function(p){return p.xp||0;})
+                          .sort(function(a,b){return a-b;})[Math.floor(l.length/2)] : 0)))+
+      '</div>';
+  } catch(e){ c.innerHTML='<div class="muted2">'+esc(String(e.message))+'</div>'; }
+}
+
+/* ================= LES COMPTEURS DE CLICS =================
+ *
+ * Servis par /taps, calcules par tapsAdmin(), et jamais appeles par cette
+ * page : la donnee etait collectee et personne ne pouvait la lire. */
+async function chargeTaps(){
+  var c=$("#tapsCorps");
+  try {
+    var d = await lit("/taps");
+    var noms={menu:'Menu du profil',bar:'Barre du bas',jeu:'Jeux'};
+    var h='';
+    Object.keys(noms).forEach(function(f){
+      var g=d[f]; if(!g||!g.lignes||!g.lignes.length) return;
+      h+='<div style="margin-bottom:16px"><div style="color:#E6A537;font-size:11px;letter-spacing:.12em;'+
+        'text-transform:uppercase;margin-bottom:7px">'+noms[f]+' — '+g.total.toLocaleString('en-US')+' appuis</div>';
+      g.lignes.forEach(function(x){
+        h+='<div style="display:flex;align-items:center;gap:9px;padding:3px 0;font-size:12px">'+
+          '<span style="flex:0 0 150px;color:#c9bfa8">'+esc(x.cle)+'</span>'+
+          '<span style="flex:1;background:rgba(255,255,255,.06);height:9px;border-radius:99px;overflow:hidden">'+
+            '<span style="display:block;height:100%;width:'+Math.max(1,x.pct)+'%;background:#E6A537"></span></span>'+
+          '<span style="flex:0 0 92px;text-align:right;color:#8a7f6a">'+x.n.toLocaleString('en-US')+' · '+x.pct+'%</span></div>';
+      });
+      h+='</div>';
+    });
+    c.innerHTML = h || '<div class="muted2">personne n a encore appuyé sur rien — les compteurs partent de zéro</div>';
+  } catch(e){ c.innerHTML='<div class="muted2">'+esc(String(e.message))+'</div>'; }
+}
+
+/* ================= LE JOURNAL ADMIN ================= */
+var alQ='', alAct='';
+async function chargeJournal(){
+  var c=$("#alCorps");
+  try {
+    var d = await lit("/adminlog?limite=200"+(alQ?"&q="+encodeURIComponent(alQ):"")+
+                      (alAct?"&action="+encodeURIComponent(alAct):""));
+    var sel=$("#alAction");
+    if(sel.options.length<=1 && d.actions){
+      d.actions.forEach(function(a){ var o=document.createElement('option'); o.value=a; o.textContent=a; sel.appendChild(o); });
+    }
+    if(!d.lignes.length){ c.innerHTML='<div class="muted2">aucune ligne'+(alQ||alAct?' pour ce filtre':' — rien n a encore été fait')+'</div>'; return; }
+    c.innerHTML='<div style="font-size:11.5px;color:#8a7f6a;margin-bottom:8px">'+d.total+
+      ' ligne(s) sur '+d.totalBrut+' au total</div>'+
+      '<div style="overflow-x:auto"><table style="min-width:720px"><thead><tr>'+
+      '<th>quand</th><th>qui</th><th>geste</th><th>cible</th><th>avant → après</th><th>motif</th></tr></thead><tbody>'+
+      d.lignes.map(function(x){
+        return '<tr><td style="white-space:nowrap;font-size:11px">'+
+          esc(new Date(x.t).toISOString().slice(0,16).replace('T',' '))+'</td>'+
+          '<td style="font-size:11px">'+esc(x.acteur||'')+'</td>'+
+          '<td><b style="color:#E6A537">'+esc(x.action)+'</b></td>'+
+          '<td class="addr" style="word-break:break-all">'+esc(x.cible||'—')+'</td>'+
+          '<td style="font-size:11px">'+(x.avant!=null||x.apres!=null?
+            esc(String(x.avant))+' → <b>'+esc(String(x.apres))+'</b>':'—')+'</td>'+
+          '<td style="font-size:11px;color:#c9bfa8">'+esc(x.motif||'')+'</td></tr>';
+      }).join('')+'</tbody></table></div>';
+  } catch(e){ c.innerHTML='<div class="muted2">'+esc(String(e.message))+'</div>'; }
+}
+$("#alQ").addEventListener("input", function(){ alQ=this.value.trim(); chargeJournal(); });
+$("#alAction").addEventListener("change", function(){ alAct=this.value; chargeJournal(); });
+
+/* ================= LIVE OPS ================= */
+async function chargeReglages(){
+  var c=$("#rgCorps");
+  try {
+    var d = await lit("/reglages");
+    c.innerHTML='<div style="overflow-x:auto"><table style="min-width:760px"><thead><tr>'+
+      '<th>réglage</th><th>ce que ça fait</th><th style="text-align:right">en vigueur</th>'+
+      '<th style="text-align:right">valeur de départ</th><th>changer</th></tr></thead><tbody>'+
+      d.reglages.map(function(r){
+        return '<tr'+(r.surcharge?' style="background:rgba(230,165,55,.07)"':'')+'>'+
+          '<td><b style="color:'+(r.surcharge?'#E6A537':'#F7EEDA')+'">'+esc(r.cle)+'</b>'+
+          (r.surcharge?'<div style="font-size:10px;color:#C9784A">surchargé</div>':'')+'</td>'+
+          '<td style="font-size:11.5px;color:#8a7f6a">'+esc(r.quoi)+
+            (r.min!==undefined?'<div style="font-size:10px">de '+r.min+' à '+r.max+'</div>':'')+'</td>'+
+          '<td style="text-align:right"><b>'+esc(String(r.valeur))+'</b></td>'+
+          '<td style="text-align:right;color:#8a7f6a">'+esc(String(r.origine))+'</td>'+
+          '<td><input data-rg="'+esc(r.cle)+'" style="width:112px;padding:5px 7px;font-size:12px" '+
+            'placeholder="'+(r.type==='b'?'true / false':'nouvelle')+'">'+
+            (r.surcharge?' <button data-remet="'+esc(r.cle)+'" style="padding:5px 9px;font-size:11px">remettre</button>':'')+
+          '</td></tr>';
+      }).join('')+'</tbody></table></div>';
+    c.querySelectorAll('input[data-rg]').forEach(function(i){
+      i.addEventListener('keydown', function(ev){ if(ev.key==='Enter') poseReglage(i.getAttribute('data-rg'), i.value); });
+    });
+    c.querySelectorAll('button[data-remet]').forEach(function(b){
+      b.addEventListener('click', function(){ poseReglage(b.getAttribute('data-remet'), null); });
+    });
+  } catch(e){ c.innerHTML='<div class="muted2">'+esc(String(e.message))+'</div>'; }
+}
+async function poseReglage(cle, valeur){
+  /* Le motif n est pas exige pour un reglage — ce n est pas de l argent qui
+     bouge — mais il est PROPOSE, parce que dans trois semaines la question ne
+     sera pas « quelle valeur » mais « pourquoi ». */
+  var motif = prompt('Pourquoi ce changement ? (facultatif)  '+cle+(valeur===null?' → valeur d origine':' → '+valeur)) ;
+  if (motif === null) return;
+  var d = await post("/reglages", { cle: cle, valeur: valeur, motif: motif });
+  var m=$("#rgMsg");
+  if(d.error){ m.style.color='#E2483C'; m.textContent='Refusé : '+d.error; return; }
+  m.style.color='#6FCF97';
+  m.textContent=cle+' : '+d.avant+' → '+d.apres+(d.remis?' (remis à l origine)':'')+' — appliqué tout de suite, sans redémarrage.';
+  chargeReglages();
+}
+
 /* Le visage d'un joueur dans une fiche.
    Il y a TROIS cas et non un seul, et c'est pour ca qu'il ne s'affichait pas :
    une photo televersee (servie par le serveur a son adresse), une medaille
@@ -1057,11 +1492,16 @@ $("#argBody").addEventListener("click",async function(ev){
   [].forEach.call(boutons,function(x){ x.disabled=true; });
   var msg=carte.querySelector(".argmsg"); msg.textContent="settling…"; msg.className="argmsg";
   try{
-    var url = res==="__rembourse"
-      ? "/paris/rembourse?match="+encodeURIComponent(id)
-      : "/paris/regle?match="+encodeURIComponent(id)+"&resultat="+encodeURIComponent(res);
-    var r=await fetch(url,{headers:{"x-admin-key":KEY}});
-    var j=await r.json();
+    /* Le motif est EXIGE : ce geste paie des joueurs et ne s annule pas. Il
+       part au journal admin avec le resultat choisi — c est ce qu on relira le
+       jour ou quelqu un contestera. */
+    var motif = prompt("Pourquoi ce règlement ? (obligatoire — il part au journal)\\n\\n"+titre);
+    if(!motif || !motif.trim()){
+      [].forEach.call(boutons,function(x){ x.disabled=false; });
+      msg.textContent="annulé — un motif est obligatoire"; msg.className="argmsg"; return;
+    }
+    var j = await post(res==="__rembourse" ? "/paris/rembourse" : "/paris/regle",
+                       { match:id, resultat:res, motif:motif.trim() });
     if(j.error){ msg.textContent="✗ "+j.error; msg.className="argmsg argko";
                  [].forEach.call(boutons,function(x){ x.disabled=false; }); return; }
     msg.className="argmsg argok";
@@ -1146,11 +1586,13 @@ $("#crGo").onclick=async function(){
               "and this CANNOT be undone."))return;
   $("#crGo").disabled=true; crMsg("sending…",false);
   try{
-    var u="/credit?joueur="+encodeURIComponent(qui)+"&montant="+encodeURIComponent(montant)+
-          "&note="+encodeURIComponent($("#crNote").value.trim());
-    var r=await fetch(u,{headers:{"x-admin-key":KEY}});
-    var j=await r.json();
-    if(!j.ok){ crMsg("✗ "+esc(j.error||("HTTP "+r.status)),true); return; }
+    /* Le montant ne passe plus dans l adresse : il etait dans l historique du
+       navigateur et dans les journaux du serveur. Corps de requete, methode
+       POST, jeton anti-rejeu. */
+    var j = await post("/credit", { joueur: qui, montant: montant,
+                                    note: $("#crNote").value.trim(),
+                                    motif: $("#crNote").value.trim() });
+    if(!j.ok){ crMsg("✗ "+esc(j.error||"refusé"),true); return; }
     crMsg("✓ "+fmt(j.montant)+" $SWOGE → "+esc(j.nom||short(j.addr))+
           " &middot; new balance "+fmt(j.solde),false);
     $("#crMontant").value=""; $("#crNote").value="";
@@ -1222,7 +1664,7 @@ async function loadImport(){
 $("#impGo").onclick=async function(){
   var b=$("#impGo"); b.disabled=true; $("#impMsg").textContent="fetching…"; $("#impMsg").className="";
   try{
-    var r=await fetch("/paris/import?go=1",{headers:{"x-admin-key":KEY}});
+    var r={ json:async function(){ return await post("/paris/import",{go:"1"}); } };
     var j=await r.json();
     if(j.error){ $("#impMsg").textContent="✗ "+j.error; $("#impMsg").className="impbad"; }
     else { $("#impMsg").textContent="✓ "+j.rencontres+" fixture(s) in the calendar";
@@ -1386,7 +1828,7 @@ var audAdr=null;
 $("#bkGo").onclick=async function(){
   $("#bkEtat").textContent=" · sending…";
   try{
-    var r=await fetch("/backup",{headers:{"x-admin-key":KEY}});
+    var r={ json:async function(){ return await post("/backup",{}); } };
     var j=await r.json();
     if(j.ok){ msg("✅ Backup sent to your private channel ("+Math.round(j.octets/1024)+" KB, "+j.joueurs+" players)","ok");
       $("#bkEtat").innerHTML=' · <b style="color:#7CFF9B">last: '+new Date().toLocaleTimeString()+'</b>'; }
@@ -1417,11 +1859,17 @@ $("#bkDl").onclick=async function(){
 
 var rsVu=null;
 function rsLigne(t,c){ return '<div style="color:'+(c||"#8DA0C4")+'">'+t+'</div>'; }
-async function rsEnvoie(confirme){
+async function rsEnvoie(confirme, motif){
   var f=$("#rsFile").files[0];
   if(!f){ msg("Pick a backup file first","warn"); return null; }
+  /* Le corps de cette requete-ci est LE FICHIER. Le motif et le jeton passent
+     donc en en-tetes — un en-tete ne va ni dans l historique ni dans les
+     journaux d acces, ce qui est exactement ce qu on cherchait. */
   var url="/import"+(confirme?"?confirm=REPLACE-ALL":"");
-  var r=await fetch(url,{method:"POST",headers:{"x-admin-key":KEY,"content-type":"application/octet-stream"},body:f});
+  var h={ "content-type":"application/octet-stream", "x-admin-token":TOK };
+  if(motif) h["x-admin-motif"]=motif;
+  var r=await fetch(url,{method:"POST",headers:h,body:f});
+  if(r.status===401){ location.href="/admin"; return null; }
   return await r.json();
 }
 $("#rsLook").onclick=async function(){
@@ -1457,9 +1905,14 @@ $("#rsGo").onclick=async function(){
         "Today's state is kept in a dated file first, so this can be undone.";
   if(!confirm(q)) return;
   if(prompt('Type RESTORE to go ahead.')!=="RESTORE") return;
+  /* Le motif part au journal admin, qui vit HORS de state.json : c est la
+     seule ligne qui survivra a ce que ce bouton s apprete a faire. */
+  var motifRs = prompt("Pourquoi cette restauration ? (obligatoire)");
+  if(!motifRs || !motifRs.trim()){ msg("annulé — un motif est obligatoire","warn"); return; }
   $("#rsOut").innerHTML=rsLigne("restoring…");
   try{
-    var j=await rsEnvoie(true);
+    var j=await rsEnvoie(true, motifRs.trim());
+    if(!j){ return; }
     if(!j.remplace){ $("#rsOut").innerHTML=rsLigne("✕ "+(j.error||"not replaced"),"#F2685E"); return; }
     msg("♻️ Restored — "+j.joueurs.apres+" players, "+j.sessionsFermees+" sessions closed","ok");
     $("#rsOut").innerHTML=
@@ -1498,7 +1951,9 @@ $("#audFix").onclick=async function(){
   if(!audAdr) return;
   if(!confirm("Restore the missing amount to "+audAdr+"? Only what the journal proves is credited.")) return;
   try{
-    var r=await fetch("/repare?addr="+audAdr,{headers:{"x-admin-key":KEY}});
+    var motifR = prompt("Pourquoi cette réparation ? (obligatoire)\\n\\n"+audAdr);
+    if(!motifR || !motifR.trim()){ msg("annulé — un motif est obligatoire","warn"); return; }
+    var r={ json:async function(){ return await post("/repare",{ addr:audAdr, motif:motifR.trim() }); } };
     var d=await r.json();
     if(d.error) throw new Error(d.error);
     msg("✅ Restored "+fmt(String(d.rendu))+" $SWOGE","ok");
@@ -1520,7 +1975,8 @@ $("#burnGo").onclick=async function(){
     /* On ne previent le serveur QU APRES confirmation : il annonce le
        brulage au canal avec le hash, et une annonce sans transaction
        confirmee serait une promesse en l'air. */
-    var r=await fetch("/burn?amount="+encodeURIComponent(v)+"&tx="+t.hash,{headers:{"x-admin-key":KEY}});
+    var r={ json:async function(){ return await post("/burn",
+              { amount:v, tx:t.hash, motif:"brûlage des frais de retrait" }); } };
     var j=await r.json();
     if(!j.ok) throw new Error(j.error||"server refused the proof");
     msg("🔥 Burned "+v+" $SWOGE — announced on Telegram","ok");
@@ -1543,7 +1999,75 @@ $("#go").onclick=async function(){
     $("#amt").value=""; load();
   }catch(e){ msg("Withdraw failed: "+String(e.reason||e.message||e).slice(0,120),"warn"); }
 };
+</script></main></body></html>`;
+}
+
+/**
+ * LA PAGE DE CONNEXION.
+ *
+ * ---- pourquoi elle existe ----
+ *
+ * La cle arrivait dans l adresse. Elle se retrouvait donc dans l historique du
+ * navigateur, dans les journaux de l hebergeur, dans ceux de chaque
+ * intermediaire, et dans l en-tete `Referer` envoye a chaque ressource externe
+ * de la page. Un formulaire l envoie dans un CORPS, en POST : rien de tout ca
+ * ne la voit.
+ *
+ * ---- pourquoi une page et pas un 401 nu ----
+ *
+ * Une session expire au bout de douze heures. Sans cette page, la premiere
+ * chose qu on voit le lendemain matin est un ecran blanc marque « 401 » — et
+ * le reflexe est alors de remettre la cle dans l adresse, c est-a-dire de
+ * defaire exactement ce qu on vient de reparer.
+ */
+function connexion() {
+  return `<!doctype html><html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>SWOGE — connexion</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Space Mono','Courier New',monospace}
+  body{background:#0B0906;color:#F7EEDA;min-height:100vh;display:flex;align-items:center;
+       justify-content:center;padding:24px}
+  main{width:100%;max-width:400px}
+  h1{font-size:19px;color:#E6A537;margin-bottom:6px}
+  p{color:#8a7f6a;font-size:12.5px;line-height:1.65;margin-bottom:18px}
+  input{width:100%;padding:12px 13px;background:#12100B;color:#F7EEDA;font-size:14px;
+        border:1px solid rgba(230,165,55,.28);border-radius:8px;margin-bottom:10px}
+  input:focus{outline:2px solid #E6A537;outline-offset:1px}
+  button{width:100%;padding:12px;background:rgba(230,165,55,.16);color:#E6A537;font-size:14px;
+         font-weight:700;border:1px solid rgba(230,165,55,.5);border-radius:8px;cursor:pointer}
+  button:hover{background:rgba(230,165,55,.24)}
+  #m{margin-top:12px;font-size:12.5px;min-height:18px}
+  small{display:block;margin-top:20px;color:#6b6152;font-size:11px;line-height:1.6}
+</style></head><body><main>
+  <h1>🐕 SWOGE — panneau d'exploitation</h1>
+  <p>La clé part dans le corps de la requête, jamais dans l'adresse. Elle est échangée
+     contre un cookie de session que <b>aucun script ne peut lire</b>, valable douze heures.</p>
+  <form id="f" autocomplete="off">
+    <input id="k" type="password" placeholder="clé admin" autofocus autocomplete="off">
+    <button type="submit">Entrer</button>
+  </form>
+  <div id="m"></div>
+  <small>Si votre marque-page contient <code>?key=…</code>, il fonctionne encore une fois et
+     pose le cookie — puis la clé quitte la barre d'adresse. Mettez-le sur <code>/admin</code>
+     tout court.</small>
+</main>
+<script>
+document.getElementById("f").addEventListener("submit", async function(e){
+  e.preventDefault();
+  var m=document.getElementById("m");
+  m.style.color="#8a7f6a"; m.textContent="vérification…";
+  try{
+    var r=await fetch("/admin/login",{method:"POST",headers:{"content-type":"application/json"},
+                                      body:JSON.stringify({key:document.getElementById("k").value})});
+    var d=await r.json();
+    if(!d.ok){ m.style.color="#E2483C"; m.textContent=d.error||"refusé"; return; }
+    m.style.color="#6FCF97"; m.textContent="ouverture…";
+    location.href="/admin";
+  }catch(err){ m.style.color="#E2483C"; m.textContent=String(err.message); }
+});
 </script></body></html>`;
 }
 
-module.exports = { page };
+module.exports = { page, connexion };
