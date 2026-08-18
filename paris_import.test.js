@@ -30,14 +30,27 @@ process.env.ODDS_API_TOTAL = '500';
 process.env.ODDS_API_LIGUES = 'foot=soccer_epl,foot=soccer_france_ligue_one,tennis=tennis_atp_us_open';
 process.env.ODDS_API_HORIZON = '7';
 
-/* Le catalogue est ecrit a cote du module. On garde l'original et on le remet
-   a la fin : ce test ne doit rien laisser derriere lui. */
-const CAT = path.join(__dirname, 'paris_catalogue.json');
-const ORIGINAL = fs.readFileSync(CAT, 'utf8');
+/* ---- OU LE CATALOGUE S'ECRIT ----
+ *
+ * SUR LE VOLUME (`DATA_DIR`), et plus a cote du module. Le dossier de
+ * l'application est efface a chaque redeploiement : le calendrier importe y
+ * disparaissait, et avec lui la possibilite de regler les paris poses sur ses
+ * rencontres. Le fichier du depot n'est plus qu'une AMORCE, lue tant que le
+ * volume est vide — ce test la laisse donc intacte.
+ */
+const CAT = path.join(BAC, 'paris_catalogue.json');
+const AMORCE = path.join(__dirname, 'paris_catalogue.json');
+const ORIGINAL = fs.readFileSync(AMORCE, 'utf8');
 const NOTES = path.join(__dirname, 'paris_notes.json');
 const NOTES_AVANT = fs.existsSync(NOTES) ? fs.readFileSync(NOTES, 'utf8') : null;
 function remets() {
-  fs.writeFileSync(CAT, ORIGINAL);
+  /* L'amorce ne doit pas avoir bouge : si elle a bouge, c'est que l'import
+     ecrit encore dans le depot, et le bug est de retour. */
+  if (fs.readFileSync(AMORCE, 'utf8') !== ORIGINAL) {
+    console.error('\n[!] l amorce du depot a ete REECRITE par l import');
+    fs.writeFileSync(AMORCE, ORIGINAL);
+    process.exitCode = 1;
+  }
   if (NOTES_AVANT === null) { try { fs.unlinkSync(NOTES); } catch (e) {} }
   else fs.writeFileSync(NOTES, NOTES_AVANT);
 }

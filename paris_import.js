@@ -167,7 +167,11 @@ const TOTAL = Number(process.env.ODDS_API_TOTAL || 500);
 const HORIZON_JOURS = Number(process.env.ODDS_API_HORIZON || 7);
 
 const FICHIER_QUOTA = path.join(process.env.DATA_DIR || __dirname, 'odds_quota.json');
-const FICHIER_CAT = path.join(__dirname, 'paris_catalogue.json');
+/* On ECRIT sur le volume, on LIT ce qui existe. Ecrire dans le dossier de
+   l'application revenait a jeter le calendrier a chaque redeploiement : les
+   rencontres importees disparaissaient, et avec elles la possibilite de
+   REGLER les paris poses dessus. Voir le commentaire de `paris.js`. */
+const FICHIER_CAT = paris.FICHIER_VOLUME;
 
 // ------------------------------------------------------------- le compteur
 
@@ -450,7 +454,11 @@ async function importeMatchs() {
   {
     let repris = 0, vieilles = 0;
     try {
-      const avant = JSON.parse(fs.readFileSync(FICHIER_CAT, 'utf8'));
+      /* On relit le calendrier EN SERVICE, pas la cible d'ecriture : au
+         premier import qui suit la bascule sur le volume, le fichier du
+         volume n'existe pas encore et c'est l'amorce du depot qu'il faut
+         reprendre — sinon ses rencontres seraient perdues. */
+      const avant = JSON.parse(fs.readFileSync(paris.fichier(), 'utf8'));
       const limiteBasse = Date.now() - RETENTION_JOURS * 86400000;
       for (const m of avant.matchs || []) {
         if (vus.has(m.id)) continue;                 // remplacee par la version fraiche
@@ -498,6 +506,10 @@ async function importeMatchs() {
      catalogue refuse empeche le serveur de demarrer, et on prefere l'apprendre
      ici que dans les journaux d'un dimanche soir. */
   paris.valide(catalogue);
+  /* Le dossier du volume peut etre vide au premier demarrage : `state.json`
+     est ecrit par le moteur, pas par nous, et rien ne garantit qu'il soit
+     deja passe. */
+  try { fs.mkdirSync(path.dirname(FICHIER_CAT), { recursive: true }); } catch (e) {}
   fs.writeFileSync(FICHIER_CAT, JSON.stringify(catalogue, null, 1) + '\n');
   console.log(`[odds] catalogue ecrit : ${habilles.length} rencontre(s), 0 credit depense`);
   noteDernier('matchs', { ok: true, ecrit: true, rencontres: habilles.length,
@@ -516,7 +528,7 @@ async function importeMatchs() {
  * une LISTE A VERIFIER, avec l'adresse exacte a appeler pour chaque match.
  */
 async function importeScores() {
-  paris.charge(FICHIER_CAT);
+  paris.charge();
   const ouverts = new Set(paris.catalogue().matchs.map((m) => m.id));
 
   /* On n'interroge QUE les ligues qui ont une rencontre finie a rattraper.
@@ -767,7 +779,7 @@ function planifie(signale) {
     /* Le module `paris` garde le catalogue en memoire : sans cette relecture,
        le serveur continuerait de servir l'ancien jusqu'au prochain
        redemarrage, et l'import n'aurait servi a rien. */
-    paris.charge(FICHIER_CAT);
+    paris.charge();
     console.log('[odds] calendrier recharge en memoire');
   });
 
