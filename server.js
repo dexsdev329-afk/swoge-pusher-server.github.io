@@ -2100,7 +2100,7 @@ wss.on('connection', (ws) => {
       if (m.type === 'marketSell' || m.type === 'marketCancel' || m.type === 'marketBuy') {
         let r = null, err = null;
         try {
-          if (m.type === 'marketSell') r = game.marcheVend(ws.addr, m.item, m.price);
+          if (m.type === 'marketSell') r = game.marcheVend(ws.addr, m.item, m.price, m.qty);
           else if (m.type === 'marketCancel') r = game.marcheAnnule(ws.addr, m.id);
           else r = game.marcheAchete(ws.addr, m.id);
         } catch (e) { err = e.message; }

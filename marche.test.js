@@ -31,7 +31,9 @@ const C = '0x' + 'c2'.repeat(20);
 const total = (g, id) => {
   let t = 0;
   for (const [, p] of g.players) t += (p.objets || {})[id] || 0;
-  t += (g.marche || []).filter((a) => a.item === id).length;
+  /* Les annonces portent une QUANTITE : compter les lignes au lieu des
+     exemplaires laisserait passer exactement le defaut qu'on cherche. */
+  t += (g.marche || []).filter((a) => a.item === id).reduce((s, a) => s + (a.qte || 1), 0);
   return t;
 };
 
@@ -221,6 +223,64 @@ const OBJ = B.itemsDeSaison(1).find((o) => o.rarete === 'legendaire').id;
   q.objets[id] = cfg.MARCHE_ANNONCES_MAX + 5;
   for (let i = 0; i < cfg.MARCHE_ANNONCES_MAX; i++) g.marcheVend(C, id, 500);
   assert.throws(() => g.marcheVend(C, id, 500), /already have/); n++;
+}
+
+// ================== 10. LA QUANTITE
+/*
+ * Une annonce porte N exemplaires. C'est la que le compte peut se perdre le
+ * plus discretement : un decrement oublie et la vitrine vend a l'infini, un
+ * decrement de trop et l'objet s'evapore. On recompte a chaque achat.
+ */
+{
+  const g = new Game();
+  pose(g, A, OBJ, 5); pose(g, C, null);
+  eq(total(g, OBJ), 5, 'cinq exemplaires au depart');
+
+  const a = g.marcheVend(A, OBJ, 1000, 3);
+  eq(a.qte, 3, 'trois partent en vente d un coup');
+  eq(g._p(A).objets[OBJ], 2, 'deux restent en main');
+  eq(total(g, OBJ), 5, 'et le total ne bouge pas');
+  eq(g.marche.length, 1, 'UNE annonce, pas trois — sinon la vitrine se remplit de lignes identiques');
+
+  /* Trois acheteurs se servent sur la meme ligne. */
+  g.marcheAchete(C, a.id);
+  eq(g.marche[0].qte, 2, 'un achat : il en reste deux');
+  eq(total(g, OBJ), 5, 'total inchange');
+  g.marcheAchete(C, a.id);
+  eq(g.marche[0].qte, 1, 'deux achats : il en reste un');
+  g.marcheAchete(C, a.id);
+  eq(g.marche.length, 0, 'le troisieme vide l annonce, qui disparait');
+  eq(g._p(C).objets[OBJ], 3, 'l acheteur en a trois');
+  eq(total(g, OBJ), 5, 'et le total n a JAMAIS bouge');
+
+  assert.throws(() => g.marcheAchete(C, a.id), /no longer exists/); n++;
+
+  /* On ne vend pas plus qu'on n'a. */
+  assert.throws(() => g.marcheVend(A, OBJ, 1000, 9), /only own 2/); n++;
+  eq(g._p(A).objets[OBJ], 2, 'et le refus ne prend rien au passage');
+
+  /* L'annulation rend TOUT le reste, pas un exemplaire. */
+  const b2 = g.marcheVend(A, OBJ, 1000, 2);
+  g.marcheAnnule(A, b2.id);
+  eq(g._p(A).objets[OBJ], 2, 'annuler une annonce de deux en rend deux');
+  eq(total(g, OBJ), 5, 'total toujours intact');
+}
+
+// ================== 11. LA VITRINE DIT CE QUI MANQUE
+{
+  const g = new Game();
+  const autre = B.itemsDeSaison(1).find((o) => o.id !== OBJ).id;
+  const v = pose(g, A, null); v.objets[OBJ] = 1; v.objets[autre] = 1;
+  const ach = pose(g, C, null); ach.objets[OBJ] = 1;   // il a deja celui-la
+  g.marcheVend(A, OBJ, 1000, 1);
+  g.marcheVend(A, autre, 1000, 1);
+
+  const l = g.marcheListe(C, 1).annonces;
+  eq(l.length, 2, 'deux annonces');
+  eq(l.filter((x) => x.jaiDeja).length, 1, 'une porte un objet qu il a deja');
+  eq(l.filter((x) => !x.jaiDeja).length, 1, 'l autre comble un trou — c est celle-la qu il cherche');
+  eq(l.every((x) => !x.mien), true, 'et aucune n est la sienne');
+  eq(g.marcheListe(A, 1).annonces.every((x) => x.mien), true, 'le vendeur, lui, les reconnait toutes');
 }
 
 console.log(`marche.test.js : ${n} verifications OK`);

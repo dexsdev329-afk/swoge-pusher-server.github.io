@@ -6218,7 +6218,7 @@ class Game {
   /** Ce que le joueur possede VRAIMENT, hors ce qu'il a mis en vente. */
   _possede(p, itemId) { return (p.objets || {})[itemId] || 0; }
 
-  marcheVend(addr, itemId, prixStr) {
+  marcheVend(addr, itemId, prixStr, qteStr) {
     const moi = String(addr).toLowerCase();
     const p = this._p(moi);
     if (cfg.MARCHE_REQUIERT_DEPOT && !p.hasDeposited)
@@ -6226,7 +6226,15 @@ class Game {
 
     const o = boutique.item(itemId);
     if (!o) throw new Error('unknown item');
-    if (this._possede(p, o.id) < 1) throw new Error('you do not own this item');
+    /* ---- LA QUANTITE ----
+     *
+     * Une annonce porte N exemplaires du meme objet. L'alternative — N
+     * annonces d'un exemplaire — remplissait la vitrine de lignes identiques
+     * et mangeait le quota d'annonces pour rien. Ici, cinq communs font une
+     * ligne qui dit « x5 ». */
+    const qte = Math.max(1, Math.floor(Number(qteStr) || 1));
+    if (this._possede(p, o.id) < qte)
+      throw new Error(qte > 1 ? `you only own ${this._possede(p, o.id)} of these` : 'you do not own this item');
 
     const prix = Math.floor(Number(prixStr) || 0);
     if (!(prix >= cfg.MARCHE_PRIX_MIN))
@@ -6241,12 +6249,12 @@ class Game {
 
     /* SEQUESTRE ET ANNONCE D'UN SEUL TENANT : rien ne peut s'intercaler entre
        le retrait de l'inventaire et la creation de l'annonce. */
-    p.objets[o.id]--;
+    p.objets[o.id] -= qte;
     if (!p.objets[o.id]) delete p.objets[o.id];
     const a = { id: this.marcheNo++, vendeur: moi, nomVendeur: p.name || moi.slice(0, 6),
-                item: o.id, prix, t: Date.now() };
+                item: o.id, prix, qte, t: Date.now() };
     this.marche.push(a);
-    journal.ajoute(moi, { k: 'mv', item: o.id, m: String(prix) });
+    journal.ajoute(moi, { k: 'mv', item: o.id, m: String(prix), q: qte });
     return this._annonceVue(a);
   }
 
@@ -6261,8 +6269,8 @@ class Game {
     this.marche.splice(i, 1);
     const p = this._p(moi);
     p.objets = p.objets || {};
-    p.objets[a.item] = (p.objets[a.item] || 0) + 1;
-    return { annule: a.id, item: a.item };
+    p.objets[a.item] = (p.objets[a.item] || 0) + (a.qte || 1);
+    return { annule: a.id, item: a.item, qte: a.qte || 1 };
   }
 
   marcheAchete(addr, id) {
@@ -6287,7 +6295,11 @@ class Game {
 
     /* Tout d'un seul tenant : l'annonce part, l'argent passe, l'objet arrive.
        Aucune de ces trois lignes ne peut echouer une fois ici. */
-    this.marche.splice(i, 1);
+    /* L'annonce ne part que si elle se vide. Sinon elle reste, avec un
+       exemplaire de moins : c'est ce qui permet a cinq personnes d'acheter la
+       meme ligne l'une apres l'autre. */
+    if ((a.qte || 1) > 1) a.qte = (a.qte || 1) - 1;
+    else this.marche.splice(i, 1);
     p.balance = p.balance.sub(prix);
     v.balance = v.balance.add(net);
     this._bumpDay(p); p.dayNet = p.dayNet.sub(prix);
@@ -6324,8 +6336,14 @@ class Game {
   _annonceVue(a) {
     const o = boutique.item(a.item) || {};
     const r = boutique.rarete(o.rarete) || {};
-    return { id: a.id, prix: a.prix, vendeur: a.vendeur, nomVendeur: a.nomVendeur, t: a.t,
+    return { id: a.id, prix: a.prix, qte: a.qte || 1,
+             vendeur: a.vendeur, nomVendeur: a.nomVendeur, t: a.t,
              item: { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete, famille: o.famille,
+                     /* Le nom AFFICHABLE de la rarete part d'ici. La page
+                        montrait la clef interne — « Mythique », « Legendaire » —
+                        parce qu'elle n'avait que ca sous la main. Le serveur,
+                        lui, connait les deux. */
+                     rareteNom: r.nom || o.rarete, couleur: r.couleur || null,
                      saison: o.saison, plafond: r.plafond || 0,
                      emis: (this.boutiqueEmis || {})[o.id] || 0 } };
   }
@@ -6336,11 +6354,16 @@ class Game {
    */
   marcheListe(addr, saison) {
     const moi = String(addr || '').toLowerCase();
+    const inv = (this.players.get(moi) || {}).objets || {};
     const rang = {};
     boutique.RARETES.forEach((r, i) => { rang[r.cle] = i; });
     const l = (this.marche || [])
       .map((a) => this._annonceVue(a))
-      .filter((a) => !saison || a.item.saison === Number(saison));
+      .filter((a) => !saison || a.item.saison === Number(saison))
+      /* `jaiDeja` est calcule ICI et non dans la page : c'est le seul filtre
+         qui compte vraiment pour un collectionneur — on ouvre un marche pour
+         combler un trou, pas pour racheter ce qu'on a. */
+      .map((a) => Object.assign(a, { jaiDeja: !!inv[a.item.id], mien: a.vendeur === moi }));
     l.sort((x, y) => (rang[y.item.rarete] - rang[x.item.rarete]) || (x.prix - y.prix));
     return { annonces: l, miennes: l.filter((a) => a.vendeur === moi).map((a) => a.id),
              frais: cfg.MARCHE_FRAIS_BPS / 100,
