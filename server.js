@@ -558,6 +558,12 @@ function attacher(ws, rec) {
 
 const clients = new Set();                 // all sockets
 const byAddr = new Map();                  // addr -> Set(sockets)
+/* Qui est present dans le Nexus, la ou les joueurs se croisent. Une simple
+   liste de sockets — la position de chacun vit directement sur sa propre
+   socket (`ws.nexusEtat`), pas dans un objet a part a tenir synchronise. */
+const nexusClients = new Set();
+const NEXUS_DIRS = new Set(['up', 'down', 'left', 'right']);
+const NEXUS_ANIMS = new Set(['idle', 'run', 'jump']);
 
 /* ------------------------------------------------------- le debit d'entree
  *
@@ -2830,6 +2836,29 @@ wss.on('connection', (ws) => {
       if (m.type === 'equipable') {
         return send(ws, { type: 'equipable', ...game.equipablesPour(ws.addr) });
       }
+      /* ---- LE NEXUS : QUI EST LA, ET OU ----
+       *
+       * Le skin n'est JAMAIS pris a la parole du client : il vient de
+       * `skinActif`, la meme valeur que rend `skins`. Un joueur ne peut donc
+       * pas se faire passer pour un autre personnage aux yeux des autres —
+       * il n'y a tout simplement pas de champ ou l'ecrire. */
+      if (m.type === 'nexusJoin') {
+        if (!ws.addr) return;
+        ws.nexusEtat = { x: 1280, y: 1228, dir: 'down', anim: 'idle' };
+        nexusClients.add(ws);
+        return;
+      }
+      if (m.type === 'nexusMove') {
+        if (!ws.addr || !nexusClients.has(ws)) return;
+        const x = Number(m.x), y = Number(m.y);
+        ws.nexusEtat = {
+          x: Number.isFinite(x) ? Math.max(-2000, Math.min(6000, x)) : 0,
+          y: Number.isFinite(y) ? Math.max(-2000, Math.min(6000, y)) : 0,
+          dir: NEXUS_DIRS.has(m.dir) ? m.dir : 'down',
+          anim: NEXUS_ANIMS.has(m.anim) ? m.anim : 'idle',
+        };
+        return;
+      }
       /* Le classement du mois : qui a fait tourner le plus de volume. */
       if (m.type === 'leaderboard') {
         return send(ws, { type: 'leaderboard', ...game.classementMois(ws.addr, 50),
@@ -3432,6 +3461,7 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     clients.delete(ws);
+    nexusClients.delete(ws);
     if (ws.addr && byAddr.has(ws.addr)) {
       byAddr.get(ws.addr).delete(ws);
       if (!byAddr.get(ws.addr).size) {
@@ -3470,6 +3500,27 @@ const stepInterval = setInterval(() => {
 const bcInterval = setInterval(() => {
   broadcast({ type: 'state', ...table.snapshot() });
 }, Math.round(1000 / cfg.BROADCAST_HZ));
+
+/* ---- le Nexus : un instantane complet, pas des evenements a tenir a jour
+ *
+ * Chaque tick porte TOUT le monde present, aux memes clients. Un depart ne
+ * demande donc aucun message dedie : le prochain instantane ne contient
+ * simplement plus la socket fermee. C'est plus simple qu'un couple
+ * entree/sortie a garder synchronise, et l'echelle visee — quelques joueurs
+ * a la fois dans un hall — rend le cout d'un instantane complet negligeable. */
+const nexusInterval = setInterval(() => {
+  if (!nexusClients.size) return;
+  const joueurs = [];
+  for (const ws of nexusClients) {
+    if (ws.readyState !== 1 || !ws.addr || !ws.nexusEtat) continue;
+    const e = ws.nexusEtat;
+    joueurs.push({ addr: ws.addr, x: Math.round(e.x), y: Math.round(e.y),
+                    dir: e.dir, anim: e.anim, skin: game._p(ws.addr).skinActif || 'andy' });
+  }
+  const s = JSON.stringify({ type: 'nexusEtat', joueurs });
+  for (const ws of nexusClients) if (ws.readyState === 1) ws.send(s);
+}, 150);
+if (nexusInterval.unref) nexusInterval.unref();
 
 // ---- poker : minuteurs de decision + main suivante + diffusion ----
 // Une seconde suffit : le minuteur d'action est d'une minute, et l'echeance
