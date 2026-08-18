@@ -33,6 +33,7 @@ const p4 = require('./puissance4');
 const paris = require('./paris');
 const boutique = require('./boutique');
 const skins = require('./skins');
+const personnages = require('./personnages');
 /* Le bareme d'XP d'un objet, par rarete. Une rarete inconnue ne rapporte rien
    plutot que de rapporter le premier bareme venu : une faute de frappe dans
    une clef doit se voir, pas se payer. */
@@ -271,6 +272,14 @@ class Game {
         bj: p.bj || null, vm: p.volcanoMeter || 0,
         ob: p.objets || {},
         sk: p.skins || undefined, ska: p.skinActif || undefined,
+        /* Le volume par skin part en chaine wei, comme p.wagered lui-meme —
+           meme raison : un BigNumber ne traverse pas JSON.stringify tout
+           seul. */
+        pr: (p.persos && Object.keys(p.persos).length)
+          ? Object.keys(p.persos).reduce((o, id) => { const c = p.persos[id];
+              o[id] = { w: (c.w || ethers.BigNumber.from(0)).toString(),
+                        ef: c.ef || undefined, ea: c.ea || undefined }; return o; }, {})
+          : undefined,
         tg: p.tgId || null,
         wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
         /* L'XP GAGNEE part au fichier ; l'XP du volume ne part PAS, elle se
@@ -453,6 +462,11 @@ class Game {
         record: d.rec || null, meilleurJour: d.mj || null, refBienvenue: !!d.rb,
         objets: (d.ob && typeof d.ob === 'object') ? d.ob : {},
         skins: (d.sk && typeof d.sk === 'object') ? d.sk : {},
+        persos: (d.pr && typeof d.pr === 'object')
+          ? Object.keys(d.pr).reduce((o, id) => { const c = d.pr[id] || {};
+              o[id] = { w: ethers.BigNumber.from(c.w || '0'),
+                        ef: c.ef || null, ea: c.ea || null }; return o; }, {})
+          : {},
         skinActif: d.ska || null,
         bonusBloque: ethers.BigNumber.from(d.bb || '0'),
         bonusCible: d.bc2 ? ethers.BigNumber.from(d.bc2) : null,
@@ -528,6 +542,16 @@ class Game {
        tient ici et nulle part ailleurs, pour la meme raison que le reste —
        un jeu qui oublierait de passer par la ne compterait deja ni pour le
        niveau ni pour le tunnel, ce qui se voit tout de suite. */
+    /* Le skin PORTE accumule ce volume comme le sien — c'est ce qui fait
+       « progression par classe » : jouer avec Landwolf actif ne fait pas
+       monter Pepe. Rien ne se passe si aucun skin n'est porte — la mise
+       compte toujours pour le compte, elle ne compte simplement pour
+       aucune classe. */
+    if (wei && p.skinActif) {
+      p.persos = p.persos || {};
+      const c = p.persos[p.skinActif] || (p.persos[p.skinActif] = { w: BN(0), ef: null, ea: null });
+      c.w = (c.w || BN(0)).add(wei);
+    }
     if (jeu && wei) {
       this._bumpDay(p);
       if (!p.miseJour) p.miseJour = {};
@@ -3342,7 +3366,11 @@ class Game {
             /* Les skins possedes, et celui qu'on porte. Registre a part de
                `objets` : un skin ne vient d'aucun coffre et n'appartient a
                aucune saison. */
-            skins: {}, skinActif: null };
+            skins: {}, skinActif: null,
+            /* La progression PAR SKIN : id -> { w: volume mise sous ce skin,
+               ef: fruit equipe, ea: arme equipee }. Vide tant qu'aucun skin
+               n'a ete porte pendant une mise. */
+            persos: {} };
       this.players.set(addr, p);
     }
     return p;
@@ -4919,6 +4947,97 @@ class Game {
     p.skinActif = id;
     return { actif: id };
   }
+
+  /* ======================================================================
+   * LE PERSONNAGE — niveau, xp, equipement, UN SKIN A LA FOIS
+   * ======================================================================
+   *
+   * Rien ici ne touche a un vrai combat. Ces stats existent pour etre lues,
+   * pas pour changer l'issue d'une manche : voir personnages.js.
+   */
+  _persoDe(p, id) {
+    return (p.persos && p.persos[id]) || { w: BN(0), ef: null, ea: null };
+  }
+
+  /**
+   * L'etat complet d'UN skin, pret a peindre : son niveau, son XP, ses huit
+   * stats (base + equipement), et ce qui est actuellement equipe.
+   *
+   * `null` si le skin n'est pas possede — un personnage qu'on ne possede pas
+   * n'a pas de fiche a montrer, pas une fiche vide.
+   */
+  personnageEtat(addr, skinId) {
+    const p = this._p(addr);
+    if (!(p.skins || {})[skinId]) return null;
+    const base = personnages.BASE[skinId];
+    if (!base) return null;
+    const c = this._persoDe(p, skinId);
+    const volume = Number(ethers.utils.formatUnits(c.w || BN(0), cfg.DECIMALS));
+    const xp = personnages.xpDuVolume(volume);
+    const niveau = personnages.niveauDeXp(xp);
+    const xpNiveau = personnages.xpPour(niveau);
+    const xpProchain = niveau >= personnages.NIVEAU_MAX ? null : personnages.xpPour(niveau + 1);
+
+    /* Le bonus d'un objet equipe : sa rarete pese sur SA stat, celle de sa
+       famille. Un objet qui n'existe plus (retire du catalogue, ce qui
+       n'arrive jamais aujourd'hui mais ne doit pas casser demain) ne casse
+       pas la fiche, il ne donne juste plus rien. */
+    const bonusDe = (itemId) => {
+      const o = itemId ? boutique.item(itemId) : null;
+      if (!o) return null;
+      const stat = personnages.FAMILLE_STAT[o.famille];
+      if (!stat) return null;
+      const val = personnages.bonusDe(o.rarete, (r) => { const x = boutique.rarete(r); return x ? x.plafond : 0; });
+      return { item: o.id, nom: o.nom, cle: o.cle, stat, bonus: val };
+    };
+    const bFruit = bonusDe(c.ef);
+    const bArme = bonusDe(c.ea);
+
+    const stats = {};
+    personnages.STATS.forEach((s) => {
+      let v = personnages.statAuNiveau(base[s], niveau);
+      if (bFruit && bFruit.stat === s) v += bFruit.bonus;
+      if (bArme && bArme.stat === s) v += bArme.bonus;
+      stats[s] = v;
+    });
+
+    return {
+      skin: skinId, niveau, xp: Math.round(xp),
+      xpNiveau: Math.round(xpNiveau),
+      xpProchain: xpProchain === null ? null : Math.round(xpProchain),
+      volume: Math.round(volume),
+      stats, base,
+      equipFruit: bFruit, equipArme: bArme,
+    };
+  }
+
+  /**
+   * Equipe (ou retire, si `itemId` est vide) un fruit ou une arme sur un
+   * skin. `genre` vaut 'fruit' ou 'arme' — deux methodes separees auraient
+   * duplique cette meme suite de verifications quatre fois.
+   */
+  _equipe(addr, skinId, itemId, genre) {
+    const p = this._p(addr);
+    if (!(p.skins || {})[skinId]) throw new Error('you do not own this skin');
+    p.persos = p.persos || {};
+    const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null });
+    const champ = genre === 'fruit' ? 'ef' : 'ea';
+
+    if (itemId === null || itemId === undefined || itemId === '') {
+      c[champ] = null;
+      return this.personnageEtat(addr, skinId);
+    }
+    const o = boutique.item(itemId);
+    if (!o) throw new Error('unknown item');
+    const sai = boutique.saison(o.saison);
+    const attendu = genre === 'fruit' ? 'fruit' : 'weapon';
+    if (!sai || sai.sujet !== attendu) throw new Error(`this item is not a ${attendu}`);
+    if (!((p.objets || {})[o.id] > 0)) throw new Error('you do not own this item');
+    c[champ] = o.id;
+    return this.personnageEtat(addr, skinId);
+  }
+  equipeFruit(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'fruit'); }
+  equipeArme(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'arme'); }
 
   /** Le catalogue et l'inventaire du joueur, prets a peindre. */
   boutiqueEtat(addr, saison) {

@@ -104,6 +104,11 @@ pose.dayKey = '2026-08-14';
 pose.moisCle = '2026-08';
 pose.streakLastClaimDay = '2026-08-13';
 pose.adDayKey = '2026-08-14';
+/* `persos` porte un BigNumber PAR ENTREE (le volume mise sous ce skin) — la
+   meme raison que `stakes` juste au-dessus : une forme precise merite un
+   temoin de cette forme, pas un objet quelconque que le code ne saurait pas
+   relire. */
+pose.persos = { andy: { w: W(777), ef: 1001, ea: 2001 } };
 Object.assign(pose, TARDIFS);
 
 for (const k of Object.keys(pose)) neuve[k] = pose[k];

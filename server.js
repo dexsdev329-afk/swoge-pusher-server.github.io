@@ -2775,6 +2775,25 @@ wss.on('connection', (ws) => {
         persistSoon();
         return send(ws, { type: 'skins', ...game.skinsEtat(ws.addr) });
       }
+      /* ---- LE PERSONNAGE ----
+       *
+       * Un skin, sa progression et son equipement. `m.skin` designe LEQUEL —
+       * un joueur en possede jusqu'a six, chacun avec sa propre fiche. */
+      if (m.type === 'personnage') {
+        const r = game.personnageEtat(ws.addr, m.skin);
+        return send(ws, { type: 'personnage', skin: m.skin, etat: r });
+      }
+      if (m.type === 'equipeFruit' || m.type === 'equipeArme') {
+        let r = null, err = null;
+        try {
+          r = m.type === 'equipeFruit'
+            ? game.equipeFruit(ws.addr, m.skin, m.item)
+            : game.equipeArme(ws.addr, m.skin, m.item);
+        } catch (e) { err = e.message; }
+        if (!err) persistSoon();
+        return send(ws, { type: 'personnage', skin: m.skin, etat: r,
+                          error: err || undefined });
+      }
       /* Le classement du mois : qui a fait tourner le plus de volume. */
       if (m.type === 'leaderboard') {
         return send(ws, { type: 'leaderboard', ...game.classementMois(ws.addr, 50),
