@@ -32,6 +32,10 @@ const p4 = require('./puissance4');
    chemin d'argent de les servir tous les trois. */
 const paris = require('./paris');
 const boutique = require('./boutique');
+/* Le bareme d'XP d'un objet, par rarete. Une rarete inconnue ne rapporte rien
+   plutot que de rapporter le premier bareme venu : une faute de frappe dans
+   une clef doit se voir, pas se payer. */
+function xpDeRarete(cle) { return (cfg.XP_OBJET || {})[String(cle)] || 0; }
 const DUELS = { p4, mp: require('./morpion'), dm: require('./dames'),
                 mf: require('./morpion_fantome'),
                 dc: require('./dernier_chiffre') };
@@ -157,7 +161,18 @@ class Game {
       && !p.parrain && !(p.filleuls || []).length
       && !(p.stakes || []).length && z(p.stakeAccrued) && z(p.stakeClaimTotal)
       && z(p.cumulativeAuthorized) && !p.tgId
-      && z(p.refDu) && z(p.refTotal) && !(p.attente || []).length;
+      && z(p.refDu) && z(p.refTotal) && !(p.attente || []).length
+      /* ---- L'XP COMPTE COMME UNE TRACE ----
+       *
+       * Sans cette ligne, une fiche qui n'a QUE de l'XP — le joueur qui se
+       * connecte tous les jours et fait ses quetes sans jamais miser — passe
+       * pour vide : elle n'est pas ecrite au fichier, et elle est purgee de la
+       * memoire. Sa serie et sa progression disparaissent au redemarrage.
+       *
+       * C'est exactement le joueur que la separation de l'XP et du volume
+       * existe pour rendre possible, et il etait le seul que le systeme
+       * effacait. Trouve par le test de redemarrage, pas a la lecture. */
+      && !(p.xp > 0) && !(p.streakDay > 0) && !Object.keys(p.objets || {}).length;
   }
 
   /**
@@ -224,6 +239,10 @@ class Game {
         ob: p.objets || {},
         tg: p.tgId || null,
         wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
+        /* L'XP GAGNEE part au fichier ; l'XP du volume ne part PAS, elle se
+           recalcule. Persister une somme deja derivable, c'est se donner deux
+           verites a tenir d'accord. */
+        xp: p.xp || 0, xps: p.xpSources || undefined, xpf: p.xpFilleuls || undefined,
         sd: p.streakDay || 0, sl: p.streakLastClaimDay || null,
         ac: p.adCount || 0, ak: p.adDayKey || null, al: p.adLastMs || 0,
     };
@@ -408,6 +427,7 @@ class Game {
         bj: d.bj || null, volcanoMeter: d.vm || 0,
         tgId: d.tg || null,
         welcomeGranted: !!d.wg, welcomeWagered: !!d.ww, welcomeClaimed: !!d.wc,
+        xp: Number(d.xp) || 0, xpSources: d.xps || {}, xpFilleuls: d.xpf || {},
         streakDay: d.sd || 0, streakLastClaimDay: d.sl || null,
         adCount: d.ac || 0, adDayKey: d.ak || null, adLastMs: d.al || 0,
       });
@@ -1022,7 +1042,8 @@ class Game {
     const x = Math.max(1, Math.min(cfg.NIVEAU_MAX, Number(n) || 1));
     return cfg.NIVEAU_BASE * Math.pow(x, cfg.NIVEAU_PUISSANCE);
   }
-  /** Le niveau que donne un volume. */
+  /** Le niveau que donne un volume. Conserve pour la migration et les tests :
+   *  c'est la courbe D'AVANT l'XP, celle qui ne connaissait que la depense. */
   static niveauDe(volume) {
     const v = Number(volume) || 0;
     if (v < cfg.NIVEAU_BASE) return 0;
@@ -1032,6 +1053,83 @@ class Game {
        regarde. */
     const n = Math.floor(Math.pow(v / cfg.NIVEAU_BASE, 1 / cfg.NIVEAU_PUISSANCE) + 1e-9);
     return Math.max(0, Math.min(cfg.NIVEAU_MAX, n));
+  }
+
+  /* ======================================================================
+   * L'XP
+   * ======================================================================
+   *
+   * Le niveau se lit desormais sur une somme :
+   *
+   *     xp total  =  xp derive du volume mise  +  xp gagne par les gestes
+   *
+   * Le premier terme n'est pas stocke : il se RECALCULE du volume cumule, qui
+   * existait deja. Rien a migrer, rien qui puisse diverger d'un compteur
+   * parallele, et un joueur ne peut pas perdre de niveau parce qu'aucun des
+   * deux termes ne descend jamais.
+   */
+
+  /** L'XP qu'il faut pour atteindre le niveau n. */
+  static xpPour(n) {
+    const x = Math.max(1, Math.min(cfg.NIVEAU_MAX, Number(n) || 1));
+    return cfg.XP_BASE * Math.pow(x, cfg.XP_PUISSANCE);
+  }
+
+  /**
+   * Le volume mise, traduit en XP.
+   *
+   * L'exposant est le RAPPORT des deux puissances, ce qui fait que la
+   * traduction rend exactement l'ancien niveau. Ce n'est pas un reglage a
+   * gout : c'est la seule valeur qui ne retrograde ni ne promeut personne le
+   * jour de la bascule. La verifier est d'ailleurs un test a soi seul.
+   */
+  static xpDuVolume(volume) {
+    const v = Number(volume) || 0;
+    if (v <= 0) return 0;
+    const e = cfg.XP_PUISSANCE / cfg.NIVEAU_PUISSANCE;
+    return cfg.XP_BASE * Math.pow(v / cfg.NIVEAU_BASE, e) * (cfg.XP_VOLUME_BONUS || 1);
+  }
+
+  /** Le niveau que donne une XP totale. */
+  static niveauDeXp(xp) {
+    const x = Number(xp) || 0;
+    if (x < cfg.XP_BASE) return 0;
+    const n = Math.floor(Math.pow(x / cfg.XP_BASE, 1 / cfg.XP_PUISSANCE) + 1e-9);
+    return Math.max(0, Math.min(cfg.NIVEAU_MAX, n));
+  }
+
+  /** L'XP totale d'une fiche : le volume traduit, plus ce qui a ete gagne. */
+  _xpTotale(p) {
+    const v = Number(ethers.utils.formatUnits(p.wagered || BN(0), cfg.DECIMALS));
+    return Game.xpDuVolume(v) + Math.max(0, Number(p.xp) || 0);
+  }
+
+  /**
+   * LE SEUL ENDROIT QUI DONNE DE L'XP.
+   *
+   * Un point d'entree unique, et non un `p.xp +=` dispersé dans cinq
+   * methodes : c'est ce qui permet de garder le detail par source, donc de
+   * repondre plus tard a « d'ou vient la progression des joueurs » sans
+   * rejouer l'historique. Et un plafond negatif impossible : l'XP ne se
+   * reprend pas, y compris si un appelant se trompe de signe.
+   *
+   * Rend le niveau AVANT et APRES, pour que l'appelant puisse annoncer une
+   * montee sans la recalculer — et sans risquer de la calculer autrement.
+   */
+  _gagneXp(p, montant, source) {
+    const m = Math.max(0, Math.round(Number(montant) || 0));
+    if (!m) return null;
+    const avant = this.niveauDeFiche(p);
+    p.xp = (Number(p.xp) || 0) + m;
+    p.xpSources = p.xpSources || {};
+    p.xpSources[source] = (p.xpSources[source] || 0) + m;
+    const apres = this.niveauDeFiche(p);
+    return { gagne: m, source, avant, apres, monte: apres > avant };
+  }
+
+  /** Le niveau d'une fiche, acquis compris. Sert a `_gagneXp` et a `niveau`. */
+  niveauDeFiche(p) {
+    return this._niveauAcquis(p, Game.niveauDeXp(this._xpTotale(p)));
   }
 
   /**
@@ -1080,20 +1178,28 @@ class Game {
   niveau(addr) {
     const p = this._p(addr);
     const v = Number(ethers.utils.formatUnits(p.wagered || BN(0), cfg.DECIMALS));
-    const n = this._niveauAcquis(p, Game.niveauDe(v));
+    const xp = this._xpTotale(p);
+    const n = this._niveauAcquis(p, Game.niveauDeXp(xp));
     const suivant = Math.min(cfg.NIVEAU_MAX, n + 1);
-    const bas = n === 0 ? 0 : Game.volumePour(n);
-    const haut = Game.volumePour(suivant);
+    const bas = n === 0 ? 0 : Game.xpPour(n);
+    const haut = Game.xpPour(suivant);
     const max = n >= cfg.NIVEAU_MAX;
     return {
       niveau: n,
       palier: Game.PALIERS[Math.min(Math.floor(Math.max(0, n - 1) / 10), 9)],
       palierNo: Math.min(Math.floor(Math.max(0, n - 1) / 10) + 1, 10),
+      /* L'XP est ce que la page affiche desormais. Le volume reste rendu :
+         il est devenu une STATISTIQUE parmi d'autres, ce qu'il aurait toujours
+         du etre, et la page en a encore besoin ailleurs. */
+      xp: Math.round(xp),
+      xpVolume: Math.round(Game.xpDuVolume(v)),
+      xpGagne: Math.max(0, Math.round(Number(p.xp) || 0)),
+      sources: p.xpSources || {},
       volume: Number(v.toFixed(2)),
       seuil: Math.round(bas),
       prochain: max ? null : Math.round(haut),
-      restant: max ? 0 : Math.max(0, Math.round(haut - v)),
-      progression: max ? 100 : Number(Math.max(0, Math.min(100, (v - bas) / (haut - bas) * 100)).toFixed(1)),
+      restant: max ? 0 : Math.max(0, Math.round(haut - xp)),
+      progression: max ? 100 : Number(Math.max(0, Math.min(100, (xp - bas) / (haut - bas) * 100)).toFixed(1)),
       max,
     };
   }
@@ -1299,6 +1405,28 @@ class Game {
     const m = ethers.utils.formatUnits(du, cfg.DECIMALS);
     this.note('parrainage', m, String(addr).toLowerCase());
     journal.ajoute(String(addr).toLowerCase(), { k: 'rf', m, n: (p.filleuls || []).length });
+
+    /* ---- L'XP DE PARRAINAGE, ET POURQUOI PAS A L'ATTACHE ----
+     *
+     * Payer au moment ou un filleul s'attache se ferme en dix minutes : on
+     * cree dix adresses, on les lie, on encaisse dix fois. L'XP est donc due
+     * UNE FOIS PAR FILLEUL, et seulement quand ce filleul a produit du revenu
+     * — c'est-a-dire quand il a vraiment joue. Amener quelqu'un qui joue est
+     * l'acte qu'on recompense ; creer une adresse n'en est pas un.
+     *
+     * `xpFilleuls` retient lesquels ont deja paye. Sans cette marque, chaque
+     * reclamation suivante repaierait les memes.
+     */
+    p.xpFilleuls = p.xpFilleuls || {};
+    const neufs = (p.filleuls || []).filter((f) => {
+      if (p.xpFilleuls[f]) return false;
+      const q = this.players.get(String(f).toLowerCase());
+      return !!(q && Number(q.revCumul) > 0);
+    });
+    if (neufs.length) {
+      neufs.forEach((f) => { p.xpFilleuls[f] = 1; });
+      this._gagneXp(p, cfg.XP_PARRAIN * neufs.length, 'parrainage');
+    }
     return { montant: m, balance: this.balanceStr(addr) };
   }
 
@@ -2222,6 +2350,7 @@ class Game {
     const r = WEI(q.reward);
     p.balance = p.balance.add(r);
     p.dayNet = p.dayNet.add(r);
+    this._gagneXp(p, cfg.XP_QUETE, 'quete');
     return q.reward;
   }
 
@@ -2295,7 +2424,10 @@ class Game {
     p.streakDay = s.day;
     p.streakLastClaimDay = this._today();
     if (reward > 0) { const r = WEI(reward); p.balance = p.balance.add(r); this._bumpDay(p); p.dayNet = p.dayNet.add(r); }
-    return { day: s.day, reward };
+    /* REVENIR VAUT DE L'XP. C'est la source la plus importante des cinq : elle
+       est la seule qu'un joueur puisse toucher sans engager un seul jeton. */
+    const x = this._gagneXp(p, cfg.XP_CONNEXION, 'connexion');
+    return { day: s.day, reward, xp: x ? x.gagne : 0, niveauMonte: !!(x && x.monte) };
   }
 
   /** Combined welcome + streak state for the client. */
@@ -2494,6 +2626,10 @@ class Game {
             wagered: ethers.BigNumber.from(0), betCount: 0,
             tgId: null, welcomeGranted: false, welcomeWagered: false, welcomeClaimed: false,
             streakDay: 0, streakLastClaimDay: null, adCount: 0, adDayKey: null, adLastMs: 0,
+            /* L'XP GAGNEE — celle des gestes. Celle du volume se recalcule et
+               n'est donc pas ici : un compteur derivable qu'on stocke est un
+               deuxieme endroit ou la verite peut diverger. */
+            xp: 0, xpSources: {}, xpFilleuls: {},
             /* L'inventaire de la boutique : identifiant d'objet -> quantite.
                Un objet plat, pas une Map : il part au fichier tel quel. */
             objets: {} };
@@ -4065,6 +4201,9 @@ class Game {
     this.boutiqueEmis = this.boutiqueEmis || {};
     const t = boutique.tire(h, cle, this.boutiqueEmis);
     p.objets = p.objets || {};
+    /* NEUF OU DOUBLON : la question se pose AVANT de ranger l'objet, c'est le
+       seul instant ou la reponse existe encore. */
+    const neuf = !p.objets[t.item.id];
     p.objets[t.item.id] = (p.objets[t.item.id] || 0) + 1;
     /* Le compteur global monte ICI, au meme instant que l'inventaire. Les
        deux ne peuvent pas diverger : il n'y a pas de chemin entre les deux
@@ -4080,8 +4219,31 @@ class Game {
        HMAC, pas du temps. L horodatage du gagnant est donc pris ici. */
     const ligne = this._boutiqueLigne(p, t.item, Date.now());
 
+    /* ---- L'XP DE COLLECTION ----
+     *
+     * Seul un objet JAMAIS POSSEDE en donne. Payer les doublons ferait monter
+     * le plus vite celui qui ouvre le plus de coffres — c'est-a-dire celui qui
+     * depense le plus, et on serait revenu exactement au probleme que la
+     * separation de l'XP et du volume repare.
+     *
+     * La famille complete paie une deuxieme fois, et sans condition de course :
+     * les trois prix de la saison 1 recompensent les trois PREMIERS, l'XP
+     * recompense l'exploit lui-meme, pour tout le monde et a tout moment. */
+    let xpGagne = 0;
+    if (neuf) {
+      const r = xpDeRarete(t.item.rarete);
+      const g = this._gagneXp(p, r, 'collection');
+      if (g) xpGagne += g.gagne;
+      const fam = boutique.ITEMS.filter((o) => o.famille === t.item.famille);
+      if (fam.length && fam.every((o) => p.objets[o.id])) {
+        const gf = this._gagneXp(p, cfg.XP_FAMILLE, 'famille');
+        if (gf) xpGagne += gf.gagne;
+      }
+    }
+
     return { coffre: c.cle, coffreNom: c.nom, prix: c.prix,
              coffreImage: c.image || c.cle, saison: c.saison,
+             neuf, xp: xpGagne, niveau: this.niveauDeFiche(p),
              ligne,
              item: t.item, rarete: t.rarete,
              quantite: p.objets[t.item.id],

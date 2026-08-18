@@ -28,6 +28,7 @@ const bac = fs.mkdtempSync(path.join(os.tmpdir(), 'swoge-niveaux-'));
 process.env.DATA_DIR = bac;
 for (const m of ['./config', './journal', './game']) { try { delete require.cache[require.resolve(m)]; } catch (e) {} }
 const { Game } = require('./game');
+const nb = (x) => Math.round(x).toLocaleString('fr');
 const cfg = require('./config');
 const ethers = require('ethers');
 
@@ -219,7 +220,15 @@ function joueur(volume) {
   eq(n.niveau, 34, 'LE JOUEUR GARDE SON NIVEAU 34 apres le durcissement');
   ok(Game.niveauDe(34e6) < 34, 'alors que la courbe neuve le mettrait bien plus bas');
   eq(n.progression, 0, 'sa progression repart de zero vers la marche suivante');
-  ok(n.restant > 60000000, `et il lui reste ${Math.round(n.restant / 1e6)} M a miser pour le 35`);
+  /* `restant` se compte desormais en XP et non en jetons mises : le niveau a
+     change de monnaie. Ce que le test doit tenir n'a pas change — il reste
+     une vraie marche a gravir, et elle est franchissable autrement qu'en
+     misant. On verifie donc le fond, pas l'ancienne unite. */
+  ok(n.restant > 0, `et il lui reste ${nb(n.restant)} XP pour le 35`);
+  ok(n.restant < Game.xpPour(35),
+     'moins que le cout total du niveau : son volume deja mise compte pour quelque chose');
+  ok(n.xpVolume > 0 && n.xpGagne === 0,
+     'toute son XP vient du volume — il n a encore rien gagne par les gestes');
 
   /* Et il ne se reperd pas au redemarrage suivant. */
   const g2 = new Game(); g2.hydrate(g.serialize());

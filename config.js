@@ -164,6 +164,70 @@ module.exports = {
      retrograde — le contraire du but. */
   NIVEAU_PUISSANCE_AVANT: parseFloat(env('NIVEAU_PUISSANCE_AVANT', '3.5')),
 
+  /* =====================================================================
+   * L'XP — UNE MONNAIE DE PROGRESSION, SEPAREE DU VOLUME MISE
+   * =====================================================================
+   *
+   * Le niveau etait une fonction PURE du volume mise. Une seule consequence,
+   * mais elle decidait de tout : la seule facon de progresser etait de
+   * depenser plus. Un joueur qui revient tous les jours, finit ses quetes et
+   * complete une collection restait au niveau du premier jour.
+   *
+   * Sur un site ou l'on joue de l'argent reel, ce n'est pas seulement un
+   * defaut de conception : une barre de progression visible qui n'avance
+   * qu'en misant davantage est un mecanisme d'incitation a la mise. La
+   * separer de la depense est la correction, et elle passe avant l'habillage.
+   *
+   * ---- POURQUOI LE VOLUME NE DISPARAIT PAS ----
+   *
+   * Il reste UNE source, plus la seule. Le supprimer retrograderait tous les
+   * joueurs existants d'un coup — exactement ce que NIVEAU_ACQUIS existe pour
+   * empecher. Il est converti en XP par une courbe qui rend, pour un joueur
+   * qui n'aurait QUE du volume, EXACTEMENT le niveau qu'il avait avant. La
+   * bascule ne donne ni ne reprend un seul niveau ; tout ce qui s'ajoute est
+   * du gain.
+   *
+   * ---- POURQUOI LE FACTEUR DE CONVERSION SE CALCULE ----
+   *
+   * On veut  (xp/XP_BASE)^(1/XP_PUISSANCE) = (v/NIVEAU_BASE)^(1/NIVEAU_PUISSANCE)
+   * donc     xp = XP_BASE * (v/NIVEAU_BASE)^(XP_PUISSANCE/NIVEAU_PUISSANCE).
+   *
+   * Ecrit en dur, ce facteur serait juste aujourd'hui et faux au premier
+   * reglage de courbe — et il serait faux EN SILENCE, en deplacant le niveau
+   * de tout le monde. Il est donc derive des quatre autres nombres, et il
+   * reste juste quoi qu'on leur fasse.
+   *
+   * ---- OU EST LA FACILITE ----
+   *
+   * Pas dans un cadeau ponctuel, mais dans le RYTHME. Passer du niveau 20 au
+   * 21 demandait 900 000 de mise supplementaire. Il demande maintenant
+   * 4 100 XP, soit huit jours d'un joueur qui se connecte et fait ses quetes
+   * — sans miser un jeton de plus. C'est la difference qui compte : elle
+   * transforme une depense en presence.
+   *
+   * Pour offrir en plus un coup de pouce ponctuel a tout le monde, monter
+   * XP_VOLUME_BONUS au-dessus de 1 : a 1,35 chacun gagne environ 16 % de
+   * niveau du jour au lendemain. Laisse a 1 par defaut — un niveau qui saute
+   * sans raison visible vaut moins que le meme niveau gagne.
+   */
+  XP_BASE: parseFloat(env('XP_BASE', '100')),
+  XP_PUISSANCE: parseFloat(env('XP_PUISSANCE', '2')),
+  XP_VOLUME_BONUS: parseFloat(env('XP_VOLUME_BONUS', '1')),
+
+  /* Ce que rapporte chaque geste. Les valeurs sont calees sur un principe :
+     une journee de joueur assidu SANS MISER doit valoir environ 500 XP, soit
+     un niveau tous les quatre jours vers le niveau 10 et tous les huit vers
+     le niveau 20. Assez pour se voir bouger, assez lent pour que le nombre
+     garde un sens. */
+  XP_CONNEXION: parseInt(env('XP_CONNEXION', '50'), 10),      // la serie du jour
+  XP_QUETE: parseInt(env('XP_QUETE', '120'), 10),             // une quete reclamee
+  XP_PARRAIN: parseInt(env('XP_PARRAIN', '500'), 10),         // un filleul valide
+  /* Un objet de collection JAMAIS POSSEDE. Le doublon ne rapporte rien : sinon
+     le plus gros acheteur de coffres monte le plus vite, et on est revenu au
+     probleme qu'on repare. */
+  XP_OBJET: { commun: 25, rare: 60, epique: 150, legendaire: 400, mythique: 1200 },
+  XP_FAMILLE: parseInt(env('XP_FAMILLE', '2000'), 10),        // les cinq rangs d'une famille
+
   /* ---- le prix du classement ----
    *
    * Une part du REVENU du mois, partagee entre les dix premiers au volume.
