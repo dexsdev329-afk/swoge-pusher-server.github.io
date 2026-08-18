@@ -247,6 +247,7 @@ class Game {
            recalcule. Persister une somme deja derivable, c'est se donner deux
            verites a tenir d'accord. */
         xp: p.xp || 0, xps: p.xpSources || undefined, xpf: p.xpFilleuls || undefined,
+        cof: p.coffreOffertJour || null,
         sd: p.streakDay || 0, sl: p.streakLastClaimDay || null,
         ac: p.adCount || 0, ak: p.adDayKey || null, al: p.adLastMs || 0,
     };
@@ -434,6 +435,7 @@ class Game {
         tgId: d.tg || null,
         welcomeGranted: !!d.wg, welcomeWagered: !!d.ww, welcomeClaimed: !!d.wc,
         xp: Number(d.xp) || 0, xpSources: d.xps || {}, xpFilleuls: d.xpf || {},
+        coffreOffertJour: d.cof || null,
         streakDay: d.sd || 0, streakLastClaimDay: d.sl || null,
         adCount: d.ac || 0, adDayKey: d.ak || null, adLastMs: d.al || 0,
       });
@@ -2854,7 +2856,7 @@ class Game {
             /* L'XP GAGNEE — celle des gestes. Celle du volume se recalcule et
                n'est donc pas ici : un compteur derivable qu'on stocke est un
                deuxieme endroit ou la verite peut diverger. */
-            xp: 0, xpSources: {}, xpFilleuls: {},
+            xp: 0, xpSources: {}, xpFilleuls: {}, coffreOffertJour: null,
             /* L'inventaire de la boutique : identifiant d'objet -> quantite.
                Un objet plat, pas une Map : il part au fichier tel quel. */
             objets: {} };
@@ -4392,11 +4394,92 @@ class Game {
              classement: this.boutiqueClassement(addr, 10, n) };
   }
 
+  /* ======================================================================
+   * LE COFFRE DU JOUR
+   * ======================================================================
+   *
+   * Un coffre de bois offert chaque jour, sans condition et sans depot. Trois
+   * regles, et la troisieme est celle qui compte :
+   *
+   *   1. UN PAR JOUR (jour UTC), le meme pour tout le monde ;
+   *   2. IL NE S'ACCUMULE PAS. Manquer trois jours ne donne pas trois coffres.
+   *      Un stock qui s'empile transforme une raison de revenir DEMAIN en une
+   *      raison de revenir un jour — c'est-a-dire en rien ;
+   *   3. MANQUER UN JOUR NE PUNIT PAS. Celui d'hier est perdu, celui
+   *      d'aujourd'hui est la. Une serie se casse ; un cadeau quotidien, non.
+   *      Sans cette regle, le joueur qui s'absente une semaine revient devant
+   *      une porte fermee, et c'est le moment exact ou l'on perd quelqu'un.
+   *
+   * C'est le coffre de BOIS de la saison 1, jamais le dore ni le mythique :
+   * l'objet offert doit valoir quelque chose sans valoir ce que les autres
+   * paient.
+   */
+  static get COFFRE_OFFERT() { return 'bois'; }
+
+  /** L'etat du coffre du jour, pour la page et pour la pastille. */
+  coffreOffert(addr) {
+    const p = this._p(addr);
+    const jour = this._today();
+    const c = boutique.coffre(Game.COFFRE_OFFERT);
+    return {
+      dispo: p.coffreOffertJour !== jour,
+      coffre: Game.COFFRE_OFFERT,
+      nom: c ? c.nom : Game.COFFRE_OFFERT,
+      image: c ? (c.image || c.cle) : Game.COFFRE_OFFERT,
+      valeur: c ? c.prix : 0,
+      /* La derniere fois qu'il l'a pris. La page s'en sert pour dire « revenez
+         demain » plutot que d'afficher un bouton mort. */
+      prisLe: p.coffreOffertJour || null,
+    };
+  }
+
+  /**
+   * Ouvre le coffre du jour. Le MEME chemin que l'achat — meme tirage, memes
+   * plafonds, meme registre, meme annonce — sans le debit.
+   *
+   * La marque est posee AVANT le tirage. Posee apres, une erreur au milieu du
+   * tirage laisserait le coffre encore disponible alors qu'un objet est deja
+   * sorti du stock : le joueur le reprendrait, et l'edition y perdrait une
+   * piece a chaque incident.
+   */
+  ouvreCoffreOffert(addr) {
+    const p = this._p(addr);
+    const jour = this._today();
+    if (p.coffreOffertJour === jour) throw new Error('today\'s free chest is already open — come back tomorrow');
+    p.coffreOffertJour = jour;
+    return this.boutiqueAchat(addr, Game.COFFRE_OFFERT, { gratuit: true });
+  }
+
+  /**
+   * TOUT CE QUI ATTEND LE JOUEUR, en un seul nombre.
+   *
+   * C'est ce que porte la pastille du bouton profil. Elle existe parce qu'une
+   * recompense qu'il faut penser a aller chercher est une recompense que
+   * personne ne va chercher — et parce que c'est la pastille qui ramene un
+   * joueur, jamais le bouton.
+   *
+   * On ne compte QUE ce qui se reclame en un geste et se perd si on ne le fait
+   * pas. Une quete a moitie faite n'y est pas : une pastille qui s'allume pour
+   * quelque chose qu'on ne peut pas resoudre apprend a l'ignorer, et une
+   * pastille ignoree ne sert plus a rien pour de bon.
+   */
+  enAttente(addr) {
+    const p = this._p(addr);
+    const coffre = this.coffreOffert(addr).dispo;
+    const serie = !this._streakToday(p).claimedToday;
+    let quetes = 0;
+    try { quetes = this.questState(addr).filter((q) => q.done && !q.claimed).length; } catch (e) {}
+    const transferts = p.trNonLus || 0;
+    return { coffre, serie, quetes, transferts,
+             total: (coffre ? 1 : 0) + (serie ? 1 : 0) + quetes + (transferts ? 1 : 0) };
+  }
+
   /**
    * Ouvre un coffre. Debite, tire, range l'objet, et rend de quoi refaire le
    * calcul soi-meme une fois la graine du serveur revelee.
    */
-  boutiqueAchat(addr, cle) {
+  boutiqueAchat(addr, cle, options) {
+    const gratuit = !!(options && options.gratuit);
     const c = boutique.coffre(cle);
     if (!c) throw new Error('unknown chest');
     /* LA PORTE, AVANT LE DEBIT. Elle est ici et pas dans la page : la page ne
@@ -4409,10 +4492,15 @@ class Game {
     }
     const p = this._p(addr);
     const prix = WEI(c.prix);
-    if (p.balance.lt(prix)) throw new Error('not enough $SWOGE');
-
-    p.balance = p.balance.sub(prix);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(prix);
+    /* Le coffre offert emprunte TOUT le reste du chemin — meme tirage, memes
+       plafonds, meme registre, meme annonce. Seul le debit saute. Un second
+       chemin de tirage serait un second endroit ou les plafonds peuvent se
+       tromper, et personne ne le verrait avant qu'un objet sorte en trop. */
+    if (!gratuit) {
+      if (p.balance.lt(prix)) throw new Error('not enough $SWOGE');
+      p.balance = p.balance.sub(prix);
+      this._bumpDay(p); p.dayNet = p.dayNet.sub(prix);
+    }
 
     /* `:shop:` separe ce tirage de tous les autres. Sans cette marque, un
        coffre et un lancer du Coin Pusher tires au MEME numero par le meme
@@ -4435,7 +4523,9 @@ class Game {
        lignes ou une erreur puisse s'inserer. */
     this.boutiqueEmis[t.item.id] = (this.boutiqueEmis[t.item.id] || 0) + 1;
 
-    this.note('boutique', c.prix, addr);
+    /* Un coffre offert n'est pas du revenu : le compter fausserait le chiffre
+       d'affaires et, par ricochet, le prix du classement qui en est une part. */
+    if (!gratuit) this.note('boutique', c.prix, addr);
 
     /* La ligne vient-elle de se completer ? On regarde APRES avoir range
        l'objet : c'est le seul instant ou la reponse peut changer. */
@@ -4467,7 +4557,7 @@ class Game {
     }
 
     return { coffre: c.cle, coffreNom: c.nom, prix: c.prix,
-             coffreImage: c.image || c.cle, saison: c.saison,
+             coffreImage: c.image || c.cle, saison: c.saison, gratuit,
              neuf, xp: xpGagne, niveau: this.niveauDeFiche(p),
              ligne,
              item: t.item, rarete: t.rarete,

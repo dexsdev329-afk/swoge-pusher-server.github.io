@@ -480,6 +480,10 @@ function charge(ws, rec, extra) {
   return Object.assign({
     type: 'auth', address: rec, balance: game.balanceStr(rec),
     fairness: game.fairness(rec), quests: game.questState(rec),
+    /* CE QUI ATTEND LE JOUEUR part avec l'authentification, pas sur demande :
+       la pastille doit etre allumee AVANT qu'il pense a regarder, sinon elle
+       ne sert a rien — c'est elle qui le ramene, pas le bouton. */
+    attente: game.enAttente(rec), offert: game.coffreOffert(rec),
     stake: game.stakeInfo(rec), bj: game.bjState(rec), niveau: game.niveau(rec),
     casino: game.casinoState(rec), hilo: game.hiloState(rec), mines: game.minesState(rec),
     casinoPay: require('./casino').PAY,
@@ -2062,12 +2066,16 @@ wss.on('connection', (ws) => {
         try {
           const reward = game.claimQuest(ws.addr, m.id);
           persistSoon();
-          send(ws, { type: 'questClaimed', id: m.id, reward, balance: game.balanceStr(ws.addr), quests: game.questState(ws.addr) });
+          send(ws, { type: 'questClaimed', id: m.id, reward, balance: game.balanceStr(ws.addr),
+                     quests: game.questState(ws.addr), niveau: game.niveau(ws.addr),
+                     attente: game.enAttente(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
       if (m.type === 'quests') return send(ws, { type: 'quests', quests: game.questState(ws.addr) });
-      if (m.type === 'bonusState') return send(ws, { type: 'bonus', bonus: game.bonusState(ws.addr) });
+      if (m.type === 'bonusState') return send(ws, { type: 'bonus', bonus: game.bonusState(ws.addr),
+                                                    attente: game.enAttente(ws.addr),
+                                                    offert: game.coffreOffert(ws.addr) });
       if (m.type === 'claimWelcome') {
         try {
           const reward = game.claimWelcome(ws.addr);
@@ -2080,7 +2088,9 @@ wss.on('connection', (ws) => {
         try {
           const r = game.claimStreak(ws.addr);
           persistSoon();
-          send(ws, { type: 'streakClaimed', day: r.day, reward: r.reward, balance: game.balanceStr(ws.addr), bonus: game.bonusState(ws.addr) });
+          send(ws, { type: 'streakClaimed', day: r.day, reward: r.reward, xp: r.xp,
+                     balance: game.balanceStr(ws.addr), bonus: game.bonusState(ws.addr),
+                     niveau: game.niveau(ws.addr), attente: game.enAttente(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -2163,9 +2173,39 @@ wss.on('connection', (ws) => {
          `shopOpen` debite et tire. On repond TOUJOURS par un `shop` complet
          apres l'ouverture, pour que la page n'ait pas a recoller l'inventaire
          elle-meme : elle recoit l'objet gagne ET l'etat qui en decoule. */
+      /* ---- LE COFFRE DU JOUR ----
+       *
+       * Deux messages et pas un : demander l'etat ne doit jamais ouvrir. Un
+       * seul message qui ferait les deux ouvrirait le coffre a la premiere
+       * connexion du jour, sans que le joueur ait rien touche — et l'ouverture
+       * d'un coffre est precisement ce qu'on veut qu'il vienne faire. */
+      if (m.type === 'freeChest') {
+        return send(ws, { type: 'freeChest', ...game.coffreOffert(ws.addr),
+                          attente: game.enAttente(ws.addr) });
+      }
+      if (m.type === 'freeChestOpen') {
+        let gagne;
+        try {
+          gagne = game.ouvreCoffreOffert(ws.addr);
+        } catch (e) { return send(ws, { type: 'freeChest', ...game.coffreOffert(ws.addr),
+                                        attente: game.enAttente(ws.addr), error: e.message }); }
+        persistSoon();
+        notifyCoffre(ws.addr, gagne);
+        return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr, gagne.saison),
+                          balance: gagne.balance, gagne,
+                          offert: game.coffreOffert(ws.addr), attente: game.enAttente(ws.addr) });
+      }
+      if (m.type === 'pending') {
+        return send(ws, { type: 'pending', attente: game.enAttente(ws.addr),
+                          offert: game.coffreOffert(ws.addr) });
+      }
       if (m.type === 'shop') {
+        /* L'etat du coffre offert part AVEC la boutique : la carte est en tete
+           du panneau, et la demander a part ferait apparaitre le reste avant
+           elle — un panneau qui se remplit par morceaux dans le desordre. */
         return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr, m.season),
-                          balance: game.balanceStr(ws.addr) });
+                          balance: game.balanceStr(ws.addr),
+                          offert: game.coffreOffert(ws.addr), attente: game.enAttente(ws.addr) });
       }
       if (m.type === 'shopOpen') {
         let gagne;
