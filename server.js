@@ -2087,6 +2087,35 @@ wss.on('connection', (ws) => {
       /* Les touches. Aucune reponse : c'est une statistique, pas une action —
          un accuse de reception doublerait le trafic pour rien. */
       if (m.type === 'tap') { game.noteTaps(m.taps); return; }
+
+      /* ---- LE MARCHE ----
+       *
+       * Quatre messages, et chacun renvoie la VITRINE a jour plutot qu'un
+       * simple accuse : une annonce peut disparaitre entre l'affichage et le
+       * clic — quelqu'un d'autre l'a achetee — et la page doit le voir tout
+       * de suite au lieu de proposer un bouton mort. */
+      if (m.type === 'market') {
+        return send(ws, { type: 'market', ...game.marcheListe(ws.addr, m.season) });
+      }
+      if (m.type === 'marketSell' || m.type === 'marketCancel' || m.type === 'marketBuy') {
+        let r = null, err = null;
+        try {
+          if (m.type === 'marketSell') r = game.marcheVend(ws.addr, m.item, m.price);
+          else if (m.type === 'marketCancel') r = game.marcheAnnule(ws.addr, m.id);
+          else r = game.marcheAchete(ws.addr, m.id);
+        } catch (e) { err = e.message; }
+        if (!err) persistSoon();
+        /* Une ligne fermee par un ACHAT s'annonce comme une ligne fermee par
+           un coffre : c'est le meme exploit, et le canal ne doit pas laisser
+           croire que seul le hasard y mene. */
+        if (r && r.ligne) notifyCoffre(ws.addr, { ligne: r.ligne, item: boutique.item(r.item),
+                                                  rarete: (boutique.item(r.item) || {}).rarete,
+                                                  saison: (boutique.item(r.item) || {}).saison });
+        return send(ws, { type: 'market', ...game.marcheListe(ws.addr, m.season),
+                          fait: r || undefined, error: err || undefined,
+                          balance: game.balanceStr(ws.addr),
+                          ...(r && !err ? game.boutiqueEtat(ws.addr, m.season) : {}) });
+      }
       if (m.type === 'quests') return send(ws, { type: 'quests', quests: game.questState(ws.addr),
                                                 parfait: game.parfaitEtat(ws.addr),
                                                 attente: game.enAttente(ws.addr) });

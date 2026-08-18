@@ -67,6 +67,11 @@ class Game {
     /* Les compteurs de touches. En tete d'etat et non par joueur : la question
        est « quelle rangee sert », pas « que fait tel joueur ». */
     this.taps = {};
+    /* Les annonces du marche. En tete d'etat : elles n'appartiennent a
+       personne une fois posees — l'objet est sorti de l'inventaire du vendeur
+       et attend son acheteur. */
+    this.marche = [];
+    this.marcheNo = 1;
     this.boutiqueEmis = {};
     /* LES TROIS PREMIERES LIGNES. Une entree par gagnant, dans l'ordre :
        { addr, nom, famille, prix, t }. C'est cette liste qui dit combien de
@@ -273,6 +278,7 @@ class Game {
     }
     return { v: 1, serverSeed: this.serverSeed, sessionSecret: this.sessionSecret,
              taps: this.taps || {},
+             marche: this.marche || [], marcheNo: this.marcheNo || 1,
              boutiqueEmis: this.boutiqueEmis || {},
              boutiqueLignes: this.boutiqueLignes || [],
              compta: this._comptaEcrite(), tunnel: this.tunnel || {},
@@ -351,6 +357,10 @@ class Game {
        et les plafonds ne borneraient plus rien — le pire des defauts
        silencieux : la boutique continuerait de fonctionner. */
     if (st.taps && typeof st.taps === 'object') this.taps = st.taps;
+    /* Les annonces DOIVENT traverser une sauvegarde : l'objet a quitte
+       l'inventaire du vendeur. Les perdre, c'est les detruire. */
+    if (Array.isArray(st.marche)) this.marche = st.marche;
+    if (st.marcheNo) this.marcheNo = st.marcheNo;
     if (st.boutiqueEmis && typeof st.boutiqueEmis === 'object') this.boutiqueEmis = st.boutiqueEmis;
     /* Sans cette ligne, un redemarrage ROUVRIRAIT la course et repaierait
        quatre-vingt-dix millions, sans rien afficher d'anormal. */
@@ -6180,6 +6190,161 @@ class Game {
     return { montant: m, vers: dest,
              solde: ethers.utils.formatUnits(p.balance, cfg.DECIMALS),
              nomDest: q.name };
+  }
+
+  /* ======================================================================
+   * LE MARCHE
+   * ======================================================================
+   *
+   * ---- l'objet est MIS SOUS SEQUESTRE, pas marque « en vente » ----
+   *
+   * A la mise en vente, l'objet QUITTE l'inventaire du vendeur et vit dans
+   * l'annonce. Un drapeau « en vente » laisse sur place aurait demande de se
+   * souvenir de le verifier partout — a la vente, au compte de la collection,
+   * au classement, a la ligne complete — et il aurait suffi d'un endroit
+   * oublie pour vendre deux fois le meme objet.
+   *
+   * Le sequestre rend la question impossible a poser : il n'est nulle part
+   * ailleurs. En contrepartie il faut le RENDRE a l'annulation, et il doit
+   * traverser les sauvegardes — les deux sont testes.
+   *
+   * ---- il ne fabrique rien ----
+   *
+   * `boutiqueEmis` n'est jamais touche par une vente. Une piece vendue est la
+   * meme piece, chez quelqu'un d'autre. C'est la propriete qui protege
+   * l'edition, et c'est la premiere chose que le test verifie.
+   */
+
+  /** Ce que le joueur possede VRAIMENT, hors ce qu'il a mis en vente. */
+  _possede(p, itemId) { return (p.objets || {})[itemId] || 0; }
+
+  marcheVend(addr, itemId, prixStr) {
+    const moi = String(addr).toLowerCase();
+    const p = this._p(moi);
+    if (cfg.MARCHE_REQUIERT_DEPOT && !p.hasDeposited)
+      throw new Error('deposit once before selling items');
+
+    const o = boutique.item(itemId);
+    if (!o) throw new Error('unknown item');
+    if (this._possede(p, o.id) < 1) throw new Error('you do not own this item');
+
+    const prix = Math.floor(Number(prixStr) || 0);
+    if (!(prix >= cfg.MARCHE_PRIX_MIN))
+      throw new Error('minimum price is ' + cfg.MARCHE_PRIX_MIN + ' $SWOGE');
+    if (prix > cfg.MARCHE_PRIX_MAX)
+      throw new Error('maximum price is ' + cfg.MARCHE_PRIX_MAX + ' $SWOGE');
+
+    this.marche = this.marche || [];
+    const miennes = this.marche.filter((a) => a.vendeur === moi).length;
+    if (miennes >= cfg.MARCHE_ANNONCES_MAX)
+      throw new Error('you already have ' + miennes + ' items for sale');
+
+    /* SEQUESTRE ET ANNONCE D'UN SEUL TENANT : rien ne peut s'intercaler entre
+       le retrait de l'inventaire et la creation de l'annonce. */
+    p.objets[o.id]--;
+    if (!p.objets[o.id]) delete p.objets[o.id];
+    const a = { id: this.marcheNo++, vendeur: moi, nomVendeur: p.name || moi.slice(0, 6),
+                item: o.id, prix, t: Date.now() };
+    this.marche.push(a);
+    journal.ajoute(moi, { k: 'mv', item: o.id, m: String(prix) });
+    return this._annonceVue(a);
+  }
+
+  marcheAnnule(addr, id) {
+    const moi = String(addr).toLowerCase();
+    const i = (this.marche || []).findIndex((a) => a.id === Number(id));
+    if (i < 0) throw new Error('this listing no longer exists');
+    const a = this.marche[i];
+    if (a.vendeur !== moi) throw new Error('this listing is not yours');
+    /* On RETIRE d'abord, on rend ensuite : l'inverse laisserait une fenetre ou
+       l'objet est a la fois dans l'inventaire et en vente. */
+    this.marche.splice(i, 1);
+    const p = this._p(moi);
+    p.objets = p.objets || {};
+    p.objets[a.item] = (p.objets[a.item] || 0) + 1;
+    return { annule: a.id, item: a.item };
+  }
+
+  marcheAchete(addr, id) {
+    const moi = String(addr).toLowerCase();
+    const i = (this.marche || []).findIndex((x) => x.id === Number(id));
+    if (i < 0) throw new Error('this listing no longer exists');
+    const a = this.marche[i];
+    /* ACHETER SA PROPRE ANNONCE EST REFUSE. Ce n'est pas une precaution
+       theorique : c'est ainsi qu'on fabrique un faux prix de reference, en se
+       vendant a soi-meme pour cinquante millions devant tout le monde. */
+    if (a.vendeur === moi) throw new Error('you cannot buy your own listing');
+
+    const p = this._p(moi);
+    if (cfg.MARCHE_REQUIERT_DEPOT && !p.hasDeposited)
+      throw new Error('deposit once before buying items');
+    const prix = WEI(a.prix);
+    if (p.balance.lt(prix)) throw new Error('not enough $SWOGE');
+
+    const v = this._p(a.vendeur);
+    const frais = prix.mul(cfg.MARCHE_FRAIS_BPS).div(10000);
+    const net = prix.sub(frais);
+
+    /* Tout d'un seul tenant : l'annonce part, l'argent passe, l'objet arrive.
+       Aucune de ces trois lignes ne peut echouer une fois ici. */
+    this.marche.splice(i, 1);
+    p.balance = p.balance.sub(prix);
+    v.balance = v.balance.add(net);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(prix);
+    this._bumpDay(v); v.dayNet = v.dayNet.add(net);
+    p.objets = p.objets || {};
+    p.objets[a.item] = (p.objets[a.item] || 0) + 1;
+
+    const mF = Number(ethers.utils.formatUnits(frais, cfg.DECIMALS));
+    if (mF > 0) this.note('marche', mF, moi);
+    v.trNonLus = (v.trNonLus || 0) + 1;
+    journal.ajoute(moi, { k: 'ma', item: a.item, m: String(a.prix), autre: a.vendeur });
+    journal.ajoute(a.vendeur, { k: 'mvend', item: a.item,
+                                m: ethers.utils.formatUnits(net, cfg.DECIMALS), autre: moi });
+
+    /* ---- LA LIGNE PEUT SE FERMER PAR UN ACHAT ----
+     *
+     * `_boutiqueLigne` est appele ici comme il l'est apres un coffre. C'est
+     * une DECISION et non un effet de bord : la course recompense d'avoir
+     * reuni une famille, pas d'avoir eu de la chance. Celui a qui il manque
+     * un legendaire peut donc l'acheter — c'est exactement ce que le marche
+     * existe pour permettre, et le prix qu'il paiera est fixe par celui qui
+     * le detient.
+     *
+     * Ce qui ne suit PAS : l'XP. Deux comptes complices se revendraient le
+     * meme objet en boucle, et chaque aller-retour paierait sa prime de
+     * « jamais possede ». */
+    const item = boutique.item(a.item);
+    const ligne = item ? this._boutiqueLigne(p, item, Date.now()) : null;
+
+    return { item: a.item, prix: a.prix, vendeur: a.vendeur, ligne,
+             frais: mF, balance: this.balanceStr(moi) };
+  }
+
+  _annonceVue(a) {
+    const o = boutique.item(a.item) || {};
+    const r = boutique.rarete(o.rarete) || {};
+    return { id: a.id, prix: a.prix, vendeur: a.vendeur, nomVendeur: a.nomVendeur, t: a.t,
+             item: { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete, famille: o.famille,
+                     saison: o.saison, plafond: r.plafond || 0,
+                     emis: (this.boutiqueEmis || {})[o.id] || 0 } };
+  }
+
+  /**
+   * La vitrine. Triee par rarete puis par prix : c'est l'ordre dans lequel on
+   * cherche — on veut d'abord savoir s'il existe un mythique, ensuite combien.
+   */
+  marcheListe(addr, saison) {
+    const moi = String(addr || '').toLowerCase();
+    const rang = {};
+    boutique.RARETES.forEach((r, i) => { rang[r.cle] = i; });
+    const l = (this.marche || [])
+      .map((a) => this._annonceVue(a))
+      .filter((a) => !saison || a.item.saison === Number(saison));
+    l.sort((x, y) => (rang[y.item.rarete] - rang[x.item.rarete]) || (x.prix - y.prix));
+    return { annonces: l, miennes: l.filter((a) => a.vendeur === moi).map((a) => a.id),
+             frais: cfg.MARCHE_FRAIS_BPS / 100,
+             min: cfg.MARCHE_PRIX_MIN, max: cfg.MARCHE_PRIX_MAX };
   }
 
   fairness(addr) {

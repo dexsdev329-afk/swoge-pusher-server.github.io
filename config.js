@@ -1119,6 +1119,49 @@ module.exports = {
      a qui parler si l'image pose probleme, et ca decourage le jetable. */
   AVATAR_REQUIRE_DEPOSIT: env('AVATAR_REQUIRE_DEPOSIT', '1') === '1',
   TRANSFER_MIN: parseFloat(env('TRANSFER_MIN', '10000')),
+
+  /* =====================================================================
+   * LE MARCHE — vendre un objet a un autre joueur
+   * =====================================================================
+   *
+   * ---- pourquoi il existe ----
+   *
+   * L'edition est fermee : 9 600 pieces, dix mythiques de chaque dessin. Une
+   * rarete fermee sans moyen d'echanger n'est qu'un tirage — celui a qui il
+   * manque un legendaire pour finir sa famille n'a aucun recours, et celui qui
+   * en a deux n'a rien a en faire. Le marche est ce qui transforme les deux
+   * en une transaction.
+   *
+   * ---- pourquoi le prix n'est PAS fixe par nous ----
+   *
+   * On ne cote rien. Le vendeur pose son prix, l'acheteur paie ou passe.
+   * Publier un bareme reviendrait a dire ce que vaut un objet, et ce n'est ni
+   * notre role ni quelque chose que nous pourrions tenir.
+   *
+   * ---- LE MARCHE NE FABRIQUE RIEN ----
+   *
+   * Il DEPLACE. Le registre d'emission ne bouge jamais d'un marche : une piece
+   * vendue est la meme piece, chez quelqu'un d'autre. C'est la propriete la
+   * plus importante du fichier et elle est testee — un marche qui pourrait
+   * dupliquer detruirait l'edition sans que personne le voie avant longtemps.
+   *
+   * ---- ni XP, ni progression ----
+   *
+   * Acheter un objet ne rapporte AUCUNE XP. Sinon deux comptes complices se
+   * revendent le meme objet en boucle : chaque aller-retour le rend « jamais
+   * possede » et paierait sa prime. L'XP recompense le jeu ; le marche
+   * recompense l'argent. Les deux ne se melangent pas.
+   */
+  MARCHE_FRAIS_BPS: parseInt(env('MARCHE_FRAIS_BPS', '500'), 10),   // 5 % au vendeur
+  MARCHE_PRIX_MIN: parseFloat(env('MARCHE_PRIX_MIN', '100')),
+  MARCHE_PRIX_MAX: parseFloat(env('MARCHE_PRIX_MAX', '50000000')),
+  /* Combien d'annonces un joueur peut tenir en meme temps. Sans borne, on
+     peut mettre toute sa collection en vitrine et rendre la liste illisible
+     pour tous les autres. */
+  MARCHE_ANNONCES_MAX: parseInt(env('MARCHE_ANNONCES_MAX', '20'), 10),
+  /* Le marche demande un depot, comme le virement : c'est le meme geste —
+     faire passer de la valeur d'un compte a un autre — et la meme raison. */
+  MARCHE_REQUIERT_DEPOT: env('MARCHE_REQUIERT_DEPOT', '1') === '1',
   /* ---- LE PRIX D'UN NOM ----
    *
    * Un nom public est UNIQUE sur toute la plateforme : le prendre, c'est le
