@@ -61,6 +61,7 @@ function page() {
 </div>
 <div class="sub">
   <b>Owed breakdown:</b> 💵 Balances <b id="ob">—</b> · 🔒 Staked <b id="os">—</b> · 📈 Yield <b id="oy">—</b> · 🎰 Jackpot reserve <b id="oj">—</b><br>
+  <span id="maisonL" style="display:none">🏛️ <b>Held by house accounts</b> <b id="omz">—</b> <em id="omn"></em> — excluded from what is owed, and those accounts cannot withdraw.<br></span>
   👥 Players <b id="pl">—</b> · updated <span id="upd">—</span> · <a href="#" id="refresh">refresh</a>
 </div>
 
@@ -593,6 +594,15 @@ async function load(){
     /* L AUTONOMIE. Un niveau dit ou l on en est ; un rythme dit quand ca
        casse. C est le second qui laisse le temps d agir. */
     var A=d.autonomie||{};
+    /* CE QUI EST EXCLU EST ECRIT, et APRES que A existe. Pose vingt lignes
+       plus haut, ce bloc lisait A avant sa declaration : var le hisse, donc
+       il valait undefined, la condition etait fausse, et la ligne ne se
+       serait jamais affichee — sans erreur, sans rien. */
+    if(A.maisonN){
+      $("#maisonL").style.display="";
+      $("#omz").textContent=fmt(String(A.maison));
+      $("#omn").textContent="("+A.maisonN+" account"+(A.maisonN>1?"s":"")+")";
+    } else if($("#maisonL")) $("#maisonL").style.display="none";
     $("#auCout").textContent=fmt(String(A.rendementJour||0));
     $("#auRev").textContent=fmt(String(A.revenuJour||0));
     var ac=$("#auCard"), an=$("#auNote"), al=$("#auLigne");

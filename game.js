@@ -2423,6 +2423,11 @@ class Game {
     const surplus = pot ? f(pot) - du : null;
 
     return {
+      /* Ce que la maison tient elle-meme, en clair a cote du surplus. Sans
+         cette ligne le surplus monterait de neuf millions sans explication —
+         et un chiffre de solvabilite qui bouge sans raison lisible ne sert
+         plus a rien. */
+      maison: f(b.maison), maisonN: b.maisonN,
       staked, rendementJour: Number(rendementJour.toFixed(6)),
       revenuJour: Number(revenuJour.toFixed(6)),
       drainJour: Number(drainJour.toFixed(6)),
@@ -2445,14 +2450,26 @@ class Game {
    * du Boulier au prochain 10/10. Les laisser hors de ce calcul ferait afficher
    * un surplus retirable superieur d'un million au reel — et le proprietaire
    * retirerait de bonne foi l'argent d'un gagnant qui n'a pas encore joue. */
+  /** Cette adresse appartient-elle a la maison ? */
+  estMaison(addr) {
+    return (cfg.COMPTES_MAISON || []).indexOf(String(addr || '').toLowerCase()) >= 0;
+  }
+
   owedBreakdown() {
     let balances = BN(0), staked = BN(0), pending = BN(0);
-    for (const p of this.players.values()) {
+    /* CE QUE TIENNENT LES COMPTES DE LA MAISON est compte a part, jamais
+       retire en silence. Le surplus est un chiffre de solvabilite : s'il monte
+       de neuf millions, il faut pouvoir dire d'ou ils viennent. */
+    let maison = BN(0), maisonN = 0;
+    for (const [addr, p] of this.players) {
+      const tout = p.balance.add(this._stakedTotal(p))
+        .add(p.stakeAccrued).add(this._pendingAll(p));
+      if (this.estMaison(addr)) { maison = maison.add(tout); maisonN++; continue; }
       balances = balances.add(p.balance);
       staked = staked.add(this._stakedTotal(p));
       pending = pending.add(p.stakeAccrued).add(this._pendingAll(p));
     }
-    return { balances, staked, pending,
+    return { balances, staked, pending, maison, maisonN,
              jackpot: this.jackpotPot.add(this.boulierPot),
              jackpotPusher: this.jackpotPot, jackpotBoulier: this.boulierPot };
   }
@@ -5970,6 +5987,15 @@ class Game {
 
   /** Request a withdrawal of `amountStr` $SWOGE. Returns cumulativeAuthorized (wei) or throws. */
   requestWithdraw(addr, amountStr) {
+    /* ---- UN COMPTE DE LA MAISON NE RETIRE PAS ----
+     *
+     * Ses jetons ont ete sortis du « du » pour que le surplus soit juste. Les
+     * laisser sortir par ici les compterait deux fois : le proprietaire retire
+     * le surplus, le compte retire ses jetons, et le coffre est court de la
+     * meme somme. Le refus n'est pas une precaution, c'est l'autre moitie du
+     * reglage. */
+    if (this.estMaison(addr))
+      throw new Error('house accounts do not withdraw — use the owner withdrawal');
     const p = this._p(addr);
     const amount = WEI(amountStr);
     /* Le minimum baisse avec le palier : c'est un confort qui ne coute rien

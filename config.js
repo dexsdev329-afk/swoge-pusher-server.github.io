@@ -1118,6 +1118,38 @@ module.exports = {
      reserve donc a ceux qui ont depose au moins une fois : ca donne un compte
      a qui parler si l'image pose probleme, et ca decourage le jetable. */
   AVATAR_REQUIRE_DEPOSIT: env('AVATAR_REQUIRE_DEPOSIT', '1') === '1',
+  /* =====================================================================
+   * LES COMPTES DE LA MAISON
+   * =====================================================================
+   *
+   * Des adresses qui appartiennent au projet : reserve d'ecosysteme, comptes
+   * d'essai. Elles jouent comme n'importe qui — c'est meme leur raison d'etre,
+   * on ne teste pas une salle sans y jouer — mais leurs jetons ne sont PAS une
+   * dette envers un joueur : ils sont deja a la maison.
+   *
+   * ---- POURQUOI CE REGLAGE EST DANGEREUX SI ON S'ARRETE LA ----
+   *
+   * Le surplus retirable, c'est « ce que contient le coffre moins ce qu'on
+   * doit ». Sortir un compte du « doit » fait donc monter le surplus d'autant.
+   * Si ce meme compte peut ENCORE RETIRER, ses jetons sont comptes deux
+   * fois : une fois comme surplus que le proprietaire peut sortir, une fois
+   * comme creance que le compte peut sortir. Le coffre se retrouve court, et
+   * on ne s'en apercoit qu'au moment ou un vrai joueur ne peut plus retirer.
+   *
+   * C'est pourquoi le retrait est REFUSE a ces comptes. Les deux vont
+   * ensemble ; l'un sans l'autre est un trou. Un compte de la maison qui veut
+   * sortir de l'argent passe par le retrait du proprietaire, qui est fait
+   * pour ca et qui, lui, se lit dans le surplus.
+   *
+   * ---- et le panneau le DIT ----
+   *
+   * Le surplus n'est jamais gonfle en silence : l'administration affiche « X
+   * exclu, N compte(s) maison ». Un chiffre de solvabilite qui change sans
+   * qu'on sache pourquoi ne vaut rien.
+   */
+  COMPTES_MAISON: (env('COMPTES_MAISON', '') || '')
+    .split(',').map((x) => x.trim().toLowerCase()).filter((x) => /^0x[0-9a-f]{40}$/.test(x)),
+
   TRANSFER_MIN: parseFloat(env('TRANSFER_MIN', '10000')),
 
   /* =====================================================================
