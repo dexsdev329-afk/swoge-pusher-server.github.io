@@ -2116,6 +2116,22 @@ wss.on('connection', (ws) => {
                           balance: game.balanceStr(ws.addr),
                           ...(r && !err ? game.boutiqueEtat(ws.addr, m.season) : {}) });
       }
+      /* ---- LE RACHAT INSTANTANE ----
+       *
+       * Meme forme que le marche, et pour la meme raison : la reponse renvoie
+       * l'etat de la boutique, pas un simple « c'est fait ». Un rachat fait
+       * bouger trois choses a la fois — le solde, l'inventaire et le nombre
+       * d'exemplaires en circulation — et la planche doit les voir ensemble,
+       * sans quoi elle afficherait un plafond faux jusqu'au prochain clic. */
+      if (m.type === 'buyback') {
+        let r = null, err = null;
+        try { r = game.boutiqueRachat(ws.addr, m.item, m.qty); }
+        catch (e) { err = e.message; }
+        if (!err) persistSoon();
+        return send(ws, { type: 'buyback', fait: r || undefined, error: err || undefined,
+                          balance: game.balanceStr(ws.addr),
+                          ...(r && !err ? game.boutiqueEtat(ws.addr, m.season) : {}) });
+      }
       if (m.type === 'quests') return send(ws, { type: 'quests', quests: game.questState(ws.addr),
                                                 parfait: game.parfaitEtat(ws.addr),
                                                 attente: game.enAttente(ws.addr) });

@@ -719,6 +719,21 @@ function tire(hex, cle, emis) {
            epuise: epuise.length ? epuise : undefined };
 }
 
+/**
+ * LE PRIX DE RACHAT d'un objet, par rarete.
+ *
+ * poids = 1000 / plafond — le meme bareme que le classement des
+ * collectionneurs. Le commun vaut 1, le mythique vaut 100. Ecrire cinq
+ * nombres a la main les rendrait faux au premier changement de plafond, et
+ * faux EN SILENCE : le rachat continuerait de payer l'ancienne echelle.
+ */
+function prixRachat(rar, base) {
+  const r = rarete(rar);
+  if (!r || !r.plafond) return 0;
+  const b = Number(base) || 0;
+  return Math.round(b * 1000 / r.plafond / 10) * 10;
+}
+
 /** La table d'un coffre, prete a afficher : rarete, chance en %, exemples. */
 function chances(cle) {
   const c = coffre(cle);
@@ -737,7 +752,7 @@ function chances(cle) {
  * et laisser la page trier aurait donne deux endroits qui decident de la meme
  * chose — et le jour ou ils ne sont plus d'accord, c'est l'affichage qui ment.
  */
-function catalogue(emis, n) {
+function catalogue(emis, n, cfgRachatBase) {
   const s = saison(n) || SAISONS[0];
   return {
     saison: s.n, saisonNom: s.nom, sujet: s.sujet,
@@ -747,6 +762,9 @@ function catalogue(emis, n) {
     items: itemsDeSaison(s.n).map((o) => ({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
                                famille: o.famille, pouvoir: o.pouvoir,
                                plafond: rarete(o.rarete).plafond,
+                               /* Le prix de rachat vient d'ici : la page ne doit pas
+                                  refaire un calcul dont le serveur est la source. */
+                               rachat: prixRachat(o.rarete, cfgRachatBase),
                                emis: (emis && emis[o.id]) || 0 })),
     coffres: coffresDe(s.n).map((c) => ({ cle: c.cle, nom: c.nom, prix: c.prix,
                                           image: c.image || c.cle, chances: chances(c.cle) })),
@@ -756,5 +774,5 @@ function catalogue(emis, n) {
 module.exports = {
   RARETES, FAMILLES, ITEMS, COFFRES, TOTAL, PRIX_LIGNE, SAISONS,
   item, coffre, itemsDe, rarete, famille, tire, restant, chances, catalogue,
-  saison, itemsDeSaison, famillesDe, coffresDe,
+  saison, itemsDeSaison, famillesDe, coffresDe, prixRachat,
 };

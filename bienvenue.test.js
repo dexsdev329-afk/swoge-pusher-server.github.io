@@ -108,8 +108,52 @@ const sol = (g, a) => Number(g.balanceStr(a));
   }
 
   // -- porte 3 : les quetes, qui paient en jetons
-  ok(cfg.QUEST_REQUIRE_DEPOSIT,
-     'les quetes demandent un depot : le credit ne sert pas d amorce a une ferme');
+  /*
+   * ---- la porte a change de serrure, pas de role ----
+   *
+   * Les quetes ne sont plus fermees aux comptes sans depot : elles paient en
+   * XP, et l'XP ne s'echange contre rien — une ferme qui la ramasse ne ramasse
+   * rien. Ce sont les JETONS qui restent derriere le depot.
+   *
+   * Ce test ne verifie donc plus le reglage, il verifie la PROPRIETE : un
+   * compte qui n'a jamais depose ne peut pas transformer une quete en jetons.
+   * Ecrit sur le reglage, il approuvait un jour un systeme ou le reglage avait
+   * disparu et la porte avec.
+   */
+  {
+    const g = new Game();
+    g.grantWelcome(A);
+    const p = g._p(A);
+    eq(p.hasDeposited, false, 'ce compte n a jamais depose');
+    const avant = Number(g.balanceStr(A));
+    /* On se met dans le MEILLEUR cas possible pour la ferme : toutes les
+       quetes du jour terminees, d'un coup. Un test qui les laisse inachevees
+       passerait meme si la porte n'existait plus — elles ne paient pas parce
+       qu'elles ne sont pas faites, et on n'aurait rien mesure. */
+    g._queteProgres = () => 1e9;
+    const jour = g.quetesDuJour(A);
+    ok(jour.length > 0, 'il a bien des quetes du jour');
+    let paye = 0;
+    for (const q of jour) paye += Number(g.claimQuest(A, q.id) || 0);
+    eq(paye, 0, 'toutes faites, toutes reclamees : zero jeton sans depot');
+    eq(Number(g.balanceStr(A)), avant, 'et le solde n a pas bouge d un jeton');
+    ok(g._p(A).xp > 0, 'il a touche de l XP, elle — qui ne se retire pas');
+  }
+  {
+    /* Le meme joueur, apres un depot, est paye normalement : la porte filtre,
+       elle ne casse pas la mecanique. */
+    const g = new Game();
+    const p = g._p(A);
+    p.hasDeposited = true;
+    g._queteProgres = () => 1e9;
+    const avant = Number(g.balanceStr(A));
+    let paye = 0;
+    for (const q of g.quetesDuJour(A)) paye += Number(g.claimQuest(A, q.id) || 0);
+    ok(paye > 0, 'apres un depot, les memes quetes paient');
+    eq(Number(g.balanceStr(A)), avant + paye, 'et le solde suit exactement');
+  }
+  ok(cfg.QUETE_JETONS_APRES_DEPOT,
+     'le reglage qui tient cette porte est bien celui-la');
 }
 
 // ================== une ferme de comptes jetables ne gonfle pas l'etat

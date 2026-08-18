@@ -162,6 +162,25 @@ class Game {
    * FAIT quelque chose ; on garde tout ce qui a fait quelque chose, et rien
    * d'autre. Le credit d'essai ne compte pas : il est donne, pas gagne.
    */
+  /**
+   * Les familles deja completes d'un inventaire, pour les fiches d'avant le
+   * registre `xpFamilles`.
+   *
+   * Posseder une famille entiere ne peut vouloir dire qu'une chose : le bonus
+   * a deja ete verse, puisqu'il part a l'instant exact ou la derniere piece
+   * arrive. Reconstituer la marque a la lecture evite une migration du fichier
+   * ET evite le trou inverse — sans elle, il suffirait de revendre une piece
+   * et de la retirer pour encaisser une deuxieme fois les deux mille points.
+   */
+  static _famillesPossedees(objets) {
+    const m = {};
+    for (const f of boutique.FAMILLES) {
+      const l = boutique.ITEMS.filter((o) => o.famille === f.cle);
+      if (l.length && l.every((o) => (objets || {})[o.id])) m[f.cle] = 1;
+    }
+    return m;
+  }
+
   static estVide(p) {
     if (!p) return true;
     const z = (w) => !w || ethers.BigNumber.from(w).isZero();
@@ -255,6 +274,8 @@ class Game {
            recalcule. Persister une somme deja derivable, c'est se donner deux
            verites a tenir d'accord. */
         xp: p.xp || 0, xps: p.xpSources || undefined, xpf: p.xpFilleuls || undefined,
+        xo: p.xpObjets || undefined,
+        xfa: p.xpFamilles || undefined,
         cof: p.coffreOffertJour || null, jc: p.jourColl || undefined,
         cre: p.creeLe || undefined, pj: p.parfaitJour || undefined,
         sd: p.streakDay || 0, sl: p.streakLastClaimDay || null,
@@ -451,6 +472,8 @@ class Game {
         tgId: d.tg || null,
         welcomeGranted: !!d.wg, welcomeWagered: !!d.ww, welcomeClaimed: !!d.wc,
         xp: Number(d.xp) || 0, xpSources: d.xps || {}, xpFilleuls: d.xpf || {},
+        xpObjets: d.xo || {},
+        xpFamilles: d.xfa || Game._famillesPossedees(d.ob || {}),
         coffreOffertJour: d.cof || null,
         jourColl: d.jc || { coffres: 0, neufs: 0, rarete: 0 },
         creeLe: d.cre || 0, parfaitJour: d.pj || null,
@@ -3191,7 +3214,8 @@ class Game {
             /* L'XP GAGNEE — celle des gestes. Celle du volume se recalcule et
                n'est donc pas ici : un compteur derivable qu'on stocke est un
                deuxieme endroit ou la verite peut diverger. */
-            xp: 0, xpSources: {}, xpFilleuls: {}, coffreOffertJour: null,
+            xp: 0, xpSources: {}, xpFilleuls: {}, xpObjets: {}, xpFamilles: {},
+            coffreOffertJour: null,
             jourColl: { coffres: 0, neufs: 0, rarete: 0 }, creeLe: Date.now(),
             /* L'inventaire de la boutique : identifiant d'objet -> quantite.
                Un objet plat, pas une Map : il part au fichier tel quel. */
@@ -4723,7 +4747,7 @@ class Game {
        laisse un panneau vide pour un cas qui n'est pas une faute. */
     let n = Number(saison) || 1;
     if (!this.boutiqueSaisonOuverte(addr, n)) n = 1;
-    return { catalogue: boutique.catalogue(this.boutiqueEmis || {}, n),
+    return { catalogue: boutique.catalogue(this.boutiqueEmis || {}, n, cfg.RACHAT_BASE),
              inventaire: p.objets || {},
              saisons, saison: n,
              course: this.boutiqueCourse(),
@@ -4918,8 +4942,25 @@ class Game {
     const t = boutique.tire(h, cle, this.boutiqueEmis);
     p.objets = p.objets || {};
     /* NEUF OU DOUBLON : la question se pose AVANT de ranger l'objet, c'est le
-       seul instant ou la reponse existe encore. */
+       seul instant ou la reponse existe encore.
+     *
+     * ---- POURQUOI DEUX QUESTIONS ET PAS UNE ----
+     *
+     * `neuf` dit « je ne l'ai pas en main » ; `premiere` dit « je ne l'ai
+     * JAMAIS eu ». Tant que rien ne sortait de l'inventaire, les deux etaient
+     * la meme phrase. Le rachat instantane les separe : on vend l'objet, il
+     * quitte l'inventaire, et le prochain tirage le rendrait « neuf » une
+     * deuxieme fois. Payer l'XP sur `neuf` ouvrirait alors une boucle —
+     * tirer, revendre, retirer — dont le cout est un coffre et le gain une
+     * XP deja touchee.
+     *
+     * `xpObjets` est le meme registre que `xpFilleuls` : la marque de ce qui
+     * a deja paye. La condition garde `!p.objets[...]` DEVANT, et c'est ce qui
+     * evite une migration : un joueur qui possede deja l'objet echoue sur le
+     * premier terme, meme si son registre est vide parce qu'il date d'avant. */
     const neuf = !p.objets[t.item.id];
+    p.xpObjets = p.xpObjets || {};
+    const premiere = neuf && !p.xpObjets[t.item.id];
     p.objets[t.item.id] = (p.objets[t.item.id] || 0) + 1;
     /* Le compteur global monte ICI, au meme instant que l'inventaire. Les
        deux ne peuvent pas diverger : il n'y a pas de chemin entre les deux
@@ -4958,12 +4999,29 @@ class Game {
     if (rangR > (p.jourColl.rarete || 0)) p.jourColl.rarete = rangR;
 
     let xpGagne = 0;
-    if (neuf) {
+    if (premiere) {
+      p.xpObjets[t.item.id] = 1;
       const r = xpDeRarete(t.item.rarete);
       const g = this._gagneXp(p, r, 'collection');
       if (g) xpGagne += g.gagne;
+    }
+    /* ---- LA FAMILLE A SON PROPRE REGISTRE ----
+     *
+     * Elle ne peut pas se raccrocher a `premiere`. Un joueur qui a revendu une
+     * piece puis la retire completerait sa famille pour la PREMIERE fois sur
+     * un tirage qui n'est pas une premiere : le bonus ne serait jamais verse a
+     * quelqu'un qui l'a pourtant merite. On demande donc a la famille ce qu'on
+     * demande a l'objet — a-t-elle deja paye — et on le lui demande a elle.
+     *
+     * `xpFamilles` est reconstitue a la lecture du fichier pour les fiches
+     * d'avant (voir `hydrate`) : celui qui possede la famille entiere a
+     * forcement deja touche le bonus, puisqu'il se verse a l'instant ou elle
+     * se complete. */
+    if (neuf) {
       const fam = boutique.ITEMS.filter((o) => o.famille === t.item.famille);
-      if (fam.length && fam.every((o) => p.objets[o.id])) {
+      p.xpFamilles = p.xpFamilles || {};
+      if (fam.length && !p.xpFamilles[t.item.famille] && fam.every((o) => p.objets[o.id])) {
+        p.xpFamilles[t.item.famille] = 1;
         const gf = this._gagneXp(p, cfg.XP_FAMILLE, 'famille');
         if (gf) xpGagne += gf.gagne;
       }
@@ -6273,6 +6331,78 @@ class Game {
     return { montant: m, vers: dest,
              solde: ethers.utils.formatUnits(p.balance, cfg.DECIMALS),
              nomDest: q.name };
+  }
+
+  /* ======================================================================
+   * LE RACHAT IMMEDIAT
+   * ======================================================================
+   *
+   * La vitrine demande un acheteur. Celui qui veut se debarrasser d'un commun
+   * maintenant n'a pas envie d'attendre trois jours. La maison le reprend a un
+   * prix fixe, connu d'avance, et volontairement bien plus bas que ce qu'un
+   * joueur en donnerait : c'est une sortie de secours, pas le prix du marche.
+   *
+   * ---- L'OBJET RETOURNE AU STOCK, IL N'EST PAS DETRUIT ----
+   *
+   * Et ce n'est pas un choix de confort. Si le rachat detruisait, c'est le
+   * COMMUN qui partirait en premier — il est le moins bien paye, donc le plus
+   * revendu. A dix pour cent de revente, les mille exemplaires d'un commun
+   * disparaissent en dix mille tirages. Le jour ou ils sont partis, PLUS
+   * PERSONNE ne peut completer cette famille : c'est justement la piece dont
+   * tout le monde a besoin pour finir une ligne, et la course s'arreterait
+   * faute de matiere.
+   *
+   * Le plafond cesse donc de dire « dix seront tirees en tout » pour dire
+   * « dix existent a la fois ». La planche l'ecrit ainsi — voir le libelle
+   * envoye avec le catalogue. Annoncer l'un et faire l'autre serait pire que
+   * les deux.
+   *
+   * ---- ce que la maison y gagne ----
+   *
+   * Elle a vendu un coffre 4 000, elle reprend l'objet pour ~500, et elle peut
+   * le revendre. Le joueur ressort avec ce qu'il voulait — de la liquidite
+   * immediate — et l'edition ne se vide pas.
+   */
+  prixRachatDe(itemId) {
+    const o = boutique.item(itemId);
+    return o ? boutique.prixRachat(o.rarete, cfg.RACHAT_BASE) : 0;
+  }
+
+  boutiqueRachat(addr, itemId, qteStr) {
+    const p = this._p(addr);
+    const o = boutique.item(itemId);
+    if (!o) throw new Error('unknown item');
+    const qte = Math.max(1, Math.floor(Number(qteStr) || 1));
+    const ai = (p.objets || {})[o.id] || 0;
+    if (ai < qte) throw new Error(qte > 1 ? `you only own ${ai} of these` : 'you do not own this item');
+
+    const unite = this.prixRachatDe(o.id);
+    if (!(unite > 0)) throw new Error('this item cannot be sold back');
+    const total = unite * qte;
+
+    /* Tout d'un seul tenant. */
+    p.objets[o.id] -= qte;
+    if (!p.objets[o.id]) delete p.objets[o.id];
+    p.balance = p.balance.add(WEI(total));
+    this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(total));
+
+    /* ---- LE REGISTRE REDESCEND ----
+     *
+     * C'est ce qui remet l'objet en circulation. Jamais sous zero : un
+     * registre negatif ferait afficher plus d'exemplaires restants qu'il n'en
+     * existe, et le plafond ne voudrait plus rien dire. */
+    if (cfg.RACHAT_RECYCLE) {
+      this.boutiqueEmis = this.boutiqueEmis || {};
+      this.boutiqueEmis[o.id] = Math.max(0, (this.boutiqueEmis[o.id] || 0) - qte);
+    }
+
+    /* Un rachat est une DEPENSE de la maison, pas une recette. La compter
+       comme du revenu gonflerait le chiffre d'affaires et, par ricochet, le
+       prix du classement qui en est une part. */
+    this.note('rachat', -total, String(addr).toLowerCase());
+    journal.ajoute(String(addr).toLowerCase(), { k: 'rc', item: o.id, m: String(total), q: qte });
+    return { item: o.id, qte, unite, total, recycle: !!cfg.RACHAT_RECYCLE,
+             balance: this.balanceStr(addr) };
   }
 
   /* ======================================================================
