@@ -2752,6 +2752,29 @@ wss.on('connection', (ws) => {
         return send(ws, { type: 'shop', ...game.boutiqueEtat(ws.addr, gagne.saison),
                           balance: gagne.balance, gagne });
       }
+      /* ---- LES SKINS ----
+       *
+       * Rien a voir avec les saisons : pas de tirage, pas de coffre, pas de
+       * `season` dans le message. Un catalogue fixe, disponible en
+       * permanence, et un achat direct. */
+      if (m.type === 'skins') {
+        return send(ws, { type: 'skins', ...game.skinsEtat(ws.addr) });
+      }
+      if (m.type === 'skinBuy') {
+        let r = null, err = null;
+        try { r = game.acheteSkin(ws.addr, m.id); }
+        catch (e) { err = e.message; }
+        if (!err) persistSoon();
+        return send(ws, { type: 'skins', ...game.skinsEtat(ws.addr),
+                          balance: game.balanceStr(ws.addr), error: err || undefined,
+                          achete: err ? undefined : r.id });
+      }
+      if (m.type === 'skinChoisi') {
+        try { game.choisitSkin(ws.addr, m.id); }
+        catch (e) { return send(ws, { type: 'skins', ...game.skinsEtat(ws.addr), error: e.message }); }
+        persistSoon();
+        return send(ws, { type: 'skins', ...game.skinsEtat(ws.addr) });
+      }
       /* Le classement du mois : qui a fait tourner le plus de volume. */
       if (m.type === 'leaderboard') {
         return send(ws, { type: 'leaderboard', ...game.classementMois(ws.addr, 50),

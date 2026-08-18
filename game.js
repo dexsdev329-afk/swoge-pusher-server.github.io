@@ -32,6 +32,7 @@ const p4 = require('./puissance4');
    chemin d'argent de les servir tous les trois. */
 const paris = require('./paris');
 const boutique = require('./boutique');
+const skins = require('./skins');
 /* Le bareme d'XP d'un objet, par rarete. Une rarete inconnue ne rapporte rien
    plutot que de rapporter le premier bareme venu : une faute de frappe dans
    une clef doit se voir, pas se payer. */
@@ -203,7 +204,8 @@ class Game {
        * C'est exactement le joueur que la separation de l'XP et du volume
        * existe pour rendre possible, et il etait le seul que le systeme
        * effacait. Trouve par le test de redemarrage, pas a la lecture. */
-      && !(p.xp > 0) && !(p.streakDay > 0) && !Object.keys(p.objets || {}).length;
+      && !(p.xp > 0) && !(p.streakDay > 0) && !Object.keys(p.objets || {}).length
+      && !Object.keys(p.skins || {}).length;
   }
 
   /**
@@ -268,6 +270,7 @@ class Game {
         dp: (p.deposited || ethers.BigNumber.from(0)).toString(), jx: p.jeux || {},
         bj: p.bj || null, vm: p.volcanoMeter || 0,
         ob: p.objets || {},
+        sk: p.skins || undefined, ska: p.skinActif || undefined,
         tg: p.tgId || null,
         wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
         /* L'XP GAGNEE part au fichier ; l'XP du volume ne part PAS, elle se
@@ -449,6 +452,8 @@ class Game {
         attente: Array.isArray(d.att) ? d.att : [],
         record: d.rec || null, meilleurJour: d.mj || null, refBienvenue: !!d.rb,
         objets: (d.ob && typeof d.ob === 'object') ? d.ob : {},
+        skins: (d.sk && typeof d.sk === 'object') ? d.sk : {},
+        skinActif: d.ska || null,
         bonusBloque: ethers.BigNumber.from(d.bb || '0'),
         bonusCible: d.bc2 ? ethers.BigNumber.from(d.bc2) : null,
         moisCle: d.mk || null, moisMise: Number(d.mm || 0),
@@ -3333,7 +3338,11 @@ class Game {
             jourColl: { coffres: 0, neufs: 0, rarete: 0 }, creeLe: Date.now(),
             /* L'inventaire de la boutique : identifiant d'objet -> quantite.
                Un objet plat, pas une Map : il part au fichier tel quel. */
-            objets: {} };
+            objets: {},
+            /* Les skins possedes, et celui qu'on porte. Registre a part de
+               `objets` : un skin ne vient d'aucun coffre et n'appartient a
+               aucune saison. */
+            skins: {}, skinActif: null };
       this.players.set(addr, p);
     }
     return p;
@@ -4849,6 +4858,66 @@ class Game {
       edition: boutique.ITEMS.reduce((a, o) => a + boutique.rarete(o.rarete).plafond, 0),
       sortis: Object.values(emis).reduce((a, b) => a + b, 0),
     };
+  }
+
+  /* ======================================================================
+   * LES SKINS DE PERSONNAGE
+   * ======================================================================
+   *
+   * ---- rien a voir avec les saisons ----
+   *
+   * La boutique tire au hasard dans une edition fermee. Un skin, lui, s'achete
+   * DIRECTEMENT, a prix fixe, et reste disponible en permanence — il n'ouvre
+   * ni ne ferme jamais. `p.skins` est donc un registre a part, distinct de
+   * `p.objets` : mélanger les deux aurait fait apparaitre un skin dans la
+   * collection de fruits, ou compter pour l'edition d'une saison a laquelle il
+   * n'appartient pas.
+   *
+   * ---- ce qui est code, et ce qui ne l'est pas ----
+   *
+   * Acheter, et porter celui qu'on a achete. C'est tout. Pas d'emplacement
+   * pour un fruit de pouvoir, une arme, une armure ou une bague — ces
+   * emplacements n'existent nulle part ailleurs sur le site non plus, et les
+   * poser ici sans rien pour les remplir promettrait un jeu qui n'est pas
+   * construit. Le jour ou il l'est, `p.skins[id]` est deja la pour porter ces
+   * emplacements sans rien migrer.
+   */
+  skinsEtat(addr) {
+    const p = this._p(addr);
+    const possedes = p.skins || {};
+    return {
+      catalogue: skins.catalogue().map((s) => ({ ...s, possede: !!possedes[s.id] })),
+      actif: p.skinActif || null,
+    };
+  }
+
+  acheteSkin(addr, id) {
+    const p = this._p(addr);
+    const s = skins.skin(id);
+    if (!s) throw new Error('unknown skin');
+    p.skins = p.skins || {};
+    if (p.skins[id]) throw new Error('you already own this skin');
+    const prix = skins.prixDe(id);
+    const w = WEI(prix);
+    if (p.balance.lt(w)) throw new Error(`not enough $SWOGE — this skin costs ${prix.toLocaleString('en-US')}`);
+    p.balance = p.balance.sub(w);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(w);
+    p.skins[id] = true;
+    /* Le skin qu'on vient d'acheter devient celui qu'on porte : sans ce
+       geste, payer ne changerait rien a l'ecran, et l'achat semblerait n'avoir
+       servi a rien tant qu'on n'a pas trouve un second endroit pour l'activer.
+       Un second geste pourra toujours re-choisir parmi ceux deja possedes. */
+    p.skinActif = id;
+    this.note('boutique', prix, String(addr).toLowerCase());
+    journal.ajoute(String(addr).toLowerCase(), { k: 'sk', id, m: String(prix) });
+    return { id, prix, actif: p.skinActif, balance: this.balanceStr(addr) };
+  }
+
+  choisitSkin(addr, id) {
+    const p = this._p(addr);
+    if (!(p.skins || {})[id]) throw new Error('you do not own this skin');
+    p.skinActif = id;
+    return { actif: id };
   }
 
   /** Le catalogue et l'inventaire du joueur, prets a peindre. */
