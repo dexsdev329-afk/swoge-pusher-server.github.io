@@ -1454,6 +1454,37 @@ const server = http.createServer(async (req, res) => {
    * « est-ce que quelqu'un joue au Plinko ? » — et qu'un JSON brut a lire au
    * pouce ne repond a rien.
    */
+  /* ---- CE QUI EST JOUE, EN DONNEES ----
+   *
+   * `/usage` etait une page HTML separee, referencee nulle part : il fallait
+   * connaitre l'adresse par coeur. Trois surfaces d'administration existaient
+   * — /admin, /usage, /health — et une seule etait trouvable.
+   *
+   * On ne la reecrit pas : les chiffres viennent des memes `usageJours()` et
+   * `usageJour()`. On les rend en JSON, et l'onglet Jeux du panneau les peint.
+   * La page HTML reste en place pour qui l'avait en marque-page.
+   */
+  if (path === '/usage.json') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const combien = Math.max(1, Math.min(30, parseInt(q.get('jours') || '7', 10) || 7));
+    const jours = game.usageJours();
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify({
+      joursConnus: jours.length,
+      jours: jours.slice(0, combien).map((j) => {
+        const l = game.usageJour(j);
+        return { jour: j, lignes: l,
+                 total: l.reduce((t, x) => ({
+                   manches: t.manches + x.manches,
+                   mise: Number((t.mise + x.mise).toFixed(6)),
+                   rendu: Number((t.rendu + x.rendu).toFixed(6)),
+                   net: Number((t.net + x.net).toFixed(6)),
+                 }), { manches: 0, mise: 0, rendu: 0, net: 0 }) };
+      }),
+    }, null, 2));
+  }
   if (path === '/usage') {
     if (!authed) return refuse(req, res, true);
     rate(req, true);
@@ -1473,6 +1504,9 @@ const server = http.createServer(async (req, res) => {
       'th:first-child,td:first-child{text-align:left}' +
       'th{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#7E8FAC}' +
       '.n{color:#7CFF9B}.p{color:#F2685E}.v{color:#8DA0C4;font-size:12px}</style>' +
+      /* Elle n'est plus un cul-de-sac : ces memes chiffres vivent maintenant
+         dans l'onglet Jeux du panneau, avec le reste. */
+      '<p class="v"><a href="/admin#jeux" style="color:#FFC53D">&larr; ces chiffres sont dans le panneau, onglet Jeux</a></p>' +
       `<p class="v">${jours.length} jour(s) enregistre(s) · les ${combien} derniers</p>`;
     if (!jours.length) {
       h += '<p class="v">Rien encore. La mesure commence au premier tour joue apres ce deploiement — ' +

@@ -44,7 +44,15 @@ const PRIVEES = ['/admin', '/players', '/stats',
                     porte a laisser fermee avant toutes les autres. */
                  '/credit?joueur=x&montant=1',
                  '/credit/etat',
-                 '/usage'];
+                 '/usage',
+                 /* Les memes chiffres que /usage, en donnees. Une porte de
+                    plus, donc une porte de plus a fermer : c'est exactement
+                    le genre d'ajout qui laisse un trou quand on l'oublie. */
+                 '/usage.json',
+                 '/adminlog',
+                 '/reglages',
+                 '/taps',
+                 '/player?addr=0x' + 'a'.repeat(40)];
 
 function lance(port, cle) {
   const bac = fs.mkdtempSync(path.join(os.tmpdir(), 'swoge-acces-'));

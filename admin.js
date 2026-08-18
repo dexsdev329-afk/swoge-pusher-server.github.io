@@ -89,9 +89,17 @@ function page(csrf) {
   #vue{padding:20px 22px 80px;max-width:1180px;min-width:0}
   #barre{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
   #barre h1{margin:0}
-  #sante{font-size:11px;padding:3px 9px;border-radius:99px;border:1px solid;white-space:nowrap}
-  #sante.ok{color:#6FCF97;border-color:rgba(111,207,151,.4)}
-  #sante.ko{color:#E2483C;border-color:rgba(226,72,60,.5)}
+  /* Trois etats, et la couleur n'est pas le seul signal : la pastille porte
+     aussi un point plein, pour qui distingue mal le vert du rouge. */
+  #nav #sante{display:flex;align-items:center;gap:8px;width:calc(100% - 24px);margin:0 12px 8px;
+     padding:8px 11px;border-radius:9px;border:1px solid;background:rgba(255,255,255,.03);
+     font:inherit;font-size:11.5px;cursor:pointer;text-align:left}
+  #nav #sante .pt{width:7px;height:7px;border-radius:99px;flex:0 0 auto;background:currentColor}
+  #nav #sante .tx{flex:1}
+  #nav #sante.ok{color:#6FCF97;border-color:rgba(111,207,151,.35)}
+  #nav #sante.moyen{color:#C9784A;border-color:rgba(201,120,74,.45)}
+  #nav #sante.ko{color:#E2483C;border-color:rgba(226,72,60,.5);background:rgba(226,72,60,.08)}
+  #nav #sante:hover{background:rgba(255,255,255,.07)}
   #ouvrenav{display:none}
   [data-vue]{display:none}
   [data-vue].vu{display:block}
@@ -112,6 +120,12 @@ function page(csrf) {
 </style></head><body>
 <nav id="nav">
   <div class="marque"><b>🐕 SWOGE</b><span>panneau d'exploitation</span></div>
+  <!-- ---- L'ETAT DU SERVEUR, EN PERMANENCE ----
+       /health existait, repondait, et n'etait affiche nulle part : il fallait
+       connaitre l'adresse par coeur. Il devient une pastille toujours visible,
+       en TETE de la barre — pas dans un onglet qu'on ouvre quand on a deja un
+       doute. Cliquable : elle mene au detail. -->
+  <button id="sante" type="button" class="ok"><span class="pt"></span><span class="tx">santé —</span></button>
   <div class="sep">tous les jours</div>
   <button data-go="apercu" class="on"><span class="ic">◉</span>Vue générale</button>
   <button data-go="joueurs"><span class="ic">👥</span>Joueurs</button>
@@ -130,7 +144,6 @@ function page(csrf) {
 <div id="barre">
   <button id="ouvrenav" type="button" aria-label="Menu">☰</button>
   <h1>🐕 SWOGE Vault — Admin</h1>
-  <span id="sante" class="ok">santé —</span>
 </div>
 <div class="muted">Private. Vault <code>${V || '(not set)'}</code></div>
 
@@ -315,6 +328,20 @@ function page(csrf) {
     <button id="go" disabled>Withdraw →</button>
   </div>
   <div id="msg"></div>
+</div>
+
+<!-- ================= CE QUI EST JOUE =================
+     C'etait /usage : une page HTML separee, referencee nulle part, qu'il
+     fallait connaitre par coeur. Les chiffres n'ont pas change de source —
+     memes usageJours() et usageJour() — ils ont change d'endroit. -->
+<div data-vue="jeux" class="panel">
+  <h2>🎲 Ce qui est joué</h2>
+  <div class="sub" style="margin:0 0 10px">
+    Par jeu et par jour : combien de manches, combien de joueurs, ce qui est misé et ce que la maison garde.
+    Le <b>retour</b> est le RTP réellement constaté — c'est lui qu'on compare au RTP annoncé.
+  </div>
+  <div class="tri" id="usJours" style="margin:0 0 10px">Sur</div>
+  <div id="usCorps"><div class="muted2">chargement…</div></div>
 </div>
 
 <div data-vue="jeux" class="panel" style="margin-top:14px">
@@ -621,6 +648,18 @@ function page(csrf) {
   <div id="cmsg" style="margin-top:12px;font-size:13px"></div>
 </div>
 
+<!-- ================= L ETAT DU SERVEUR =================
+     Troisieme surface d administration rattachee : /health repondait deja
+     tout ce qu il y a ici, et personne ne le lisait. -->
+<div data-vue="sys" class="panel" id="santePan">
+  <h2>💓 État du serveur</h2>
+  <div class="sub" style="margin:0 0 12px">
+    La pastille de la barre latérale lit ceci toutes les minutes. <b>503</b> quand quelque chose de grave
+    se passe — c'est le code que les services de surveillance savent lire.
+  </div>
+  <div id="santeCorps"><div class="muted2">chargement…</div></div>
+</div>
+
 <!-- ================= LA FICHE JOUEUR =================
      Le panneau n avait qu une ligne depliable dans la table. « Je n ai pas
      recu mon gain » n avait donc pas de reponse en moins de dix minutes — le
@@ -760,6 +799,8 @@ function vaVers(v, arg){
   if (VUE === "engagement") { chargeEngagement(); chargeTaps(); }
   if (VUE === "confiance") chargeJournal();
   if (VUE === "liveops") chargeReglages();
+  if (VUE === "sys") peintSante();
+  if (VUE === "jeux") chargeUsage();
 }
 function duHash(){
   var h = (location.hash || "#apercu").slice(1);
@@ -785,18 +826,76 @@ $("#sortir").addEventListener("click", async function(){
 
 /* La pastille de sante. /health existait, repondait, et n etait affichee nulle
    part : il fallait connaitre l adresse par coeur. */
+var SANTE = null;
 async function chargeSante(){
+  var e = $("#sante"), t = e.querySelector(".tx");
   try {
     var r = await fetch("/health");
     var d = await r.json();
-    var e = $("#sante");
-    e.className = d.ok ? "ok" : "ko";
-    e.textContent = (d.ok ? "santé ok" : "santé — incident") +
-      (d.incidents && d.incidents.length ? " (" + d.incidents.length + ")" : "");
-    e.title = JSON.stringify(d).slice(0, 400);
-  } catch(e) { $("#sante").className = "ko"; $("#sante").textContent = "santé — injoignable"; }
+    SANTE = d;
+    /* TROIS etats, pas deux. Le serveur peut repondre « ok » tout en signalant
+       des remarques — des ecritures ratees, des exceptions comptees. Les
+       ranger avec « tout va bien » cache exactement ce qui prevenait avant la
+       panne ; les ranger avec « panne » ferait crier au loup. */
+    var n = (d.remarques || []).length;
+    e.className = !d.ok ? "ko" : (n ? "moyen" : "ok");
+    t.textContent = !d.ok ? "incident serveur"
+                  : (n ? n + " remarque" + (n > 1 ? "s" : "") : "serveur en bonne santé");
+    e.title = "Cliquer pour le détail";
+  } catch(err) {
+    SANTE = { ok:false, erreur:String(err.message) };
+    e.className = "ko"; t.textContent = "serveur injoignable";
+  }
+  if (VUE === "sys") peintSante();
+}
+function peintSante(){
+  var c = $("#santeCorps"); if (!c) return;
+  var d = SANTE;
+  if (!d) { c.innerHTML = '<div class="muted2">chargement…</div>'; return; }
+  var duree = function(s){ if (s == null) return "—";
+    if (s < 90) return Math.round(s) + " s";
+    if (s < 5400) return Math.round(s/60) + " min";
+    return (s/3600).toFixed(1) + " h"; };
+  var h = '';
+  if (d.remarques && d.remarques.length) {
+    h += '<div style="border:1px solid rgba(201,120,74,.45);background:rgba(201,120,74,.08);' +
+      'border-radius:8px;padding:12px 14px;margin-bottom:13px">' +
+      '<div style="color:#C9784A;font-size:11px;letter-spacing:.12em;text-transform:uppercase;' +
+      'margin-bottom:7px">ce qui mérite un oeil</div>' +
+      d.remarques.map(function(x){ return '<div style="font-size:12.5px;color:#F7EEDA">• '+esc(String(x))+'</div>'; }).join('') +
+      '</div>';
+  }
+  if (d.graves && d.graves.length) {
+    h += '<div style="border:1px solid rgba(226,72,60,.5);background:rgba(226,72,60,.09);' +
+      'border-radius:8px;padding:12px 14px;margin-bottom:13px">' +
+      '<div style="color:#E2483C;font-size:11px;letter-spacing:.12em;text-transform:uppercase;' +
+      'margin-bottom:7px">grave</div>' +
+      d.graves.map(function(x){ return '<div style="font-size:12.5px;color:#F7EEDA">• '+esc(String(x))+'</div>'; }).join('') +
+      '</div>';
+  }
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">' +
+    bloc('Le processus',
+      ln('En marche depuis', duree(d.depuis)) +
+      ln('Mémoire', (d.memoireMo != null ? d.memoireMo + ' Mo' : '—')) +
+      ln('Retard de boucle', (d.retardBoucleMs != null ? d.retardBoucleMs + ' ms' : '—'),
+         d.retardBoucleMs > 2000 ? '#C9784A' : '#F7EEDA')) +
+    bloc('Ce qui compte',
+      ln('Joueurs en mémoire', String(d.joueurs != null ? d.joueurs : '—')) +
+      ln('Dernière écriture', duree(d.ecritureDepuisSec),
+         d.ecritureDepuisSec > 600 ? '#E2483C' : '#F7EEDA') +
+      ln('Écritures ratées', String(d.ecrituresRatees || 0),
+         d.ecrituresRatees ? '#E2483C' : '#6FCF97')) +
+    bloc('La chaîne',
+      ln('Dernier bloc vu', duree(d.chaineDepuisSec)) +
+      ln('Incidents (10 min)', String(d.incidents10min || 0),
+         d.incidents10min ? '#C9784A' : '#6FCF97')) +
+    '</div>';
+  c.innerHTML = h;
 }
 chargeSante(); setInterval(chargeSante, 60000);
+/* La pastille MENE quelque part. Un voyant qu'on ne peut pas interroger
+   n'apprend que la moitie de ce qu'il sait. */
+$("#sante").addEventListener("click", function(){ location.hash = "sys"; });
 
 /* ================= LA FICHE JOUEUR ================= */
 function ln(k,v,c){ return '<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;'+
@@ -868,6 +967,66 @@ async function chargeFiche(addr){
       }).join('')+'</div>'
       : '<div class="muted2">rien dans son journal</div>')+'</div>';
   c.innerHTML=h;
+}
+
+/* ================= CE QUI EST JOUE ================= */
+var US_JOURS = 7, US_PRET = false;
+async function chargeUsage(){
+  var c = $("#usCorps");
+  if (!US_PRET) {
+    US_PRET = true;
+    var z = $("#usJours");
+    [1, 7, 14, 30].forEach(function(n){
+      var b = document.createElement("button");
+      b.type = "button"; b.textContent = n === 1 ? "aujourd hui" : n + " jours";
+      if (n === US_JOURS) b.className = "on";
+      b.addEventListener("click", function(){
+        US_JOURS = n;
+        [].forEach.call(z.querySelectorAll("button"), function(x){ x.classList.toggle("on", x === b); });
+        chargeUsage();
+      });
+      z.appendChild(b);
+    });
+  }
+  try {
+    var d = await lit("/usage.json?jours=" + US_JOURS);
+    if (!d.jours.length) {
+      c.innerHTML = '<div class="muted2">Rien encore. La mesure commence au premier tour joué après ' +
+        'le déploiement — elle ne peut pas raconter le passé.</div>';
+      return;
+    }
+    var h = '<div style="font-size:11.5px;color:#8a7f6a;margin-bottom:10px">' +
+      d.joursConnus + ' jour(s) enregistré(s)</div>';
+    d.jours.forEach(function(j){
+      h += '<div style="margin-bottom:18px">' +
+        '<div style="color:#E6A537;font-size:12px;margin-bottom:6px">' + esc(j.jour) + '</div>' +
+        '<div style="overflow-x:auto"><table style="min-width:600px"><thead><tr>' +
+        '<th>jeu</th><th style="text-align:right">manches</th><th style="text-align:right">joueurs</th>' +
+        '<th style="text-align:right">misé</th><th style="text-align:right">retour</th>' +
+        '<th style="text-align:right">net maison</th></tr></thead><tbody>';
+      j.lignes.forEach(function(x){
+        /* Un retour au-dessus de 100 % veut dire que le jeu a rendu plus qu il
+           n a pris ce jour-la. Sur une journee c est du bruit ; sur plusieurs,
+           c est une faille. La couleur le signale sans l affirmer. */
+        var haut = x.retour !== null && x.retour > 100;
+        h += '<tr><td><b>' + esc(x.jeu) + '</b></td>' +
+          '<td class="num" style="text-align:right">' + ent(x.manches) + '</td>' +
+          '<td class="num" style="text-align:right">' + ent(x.joueurs) + (x.auDela ? '+' : '') + '</td>' +
+          '<td class="num" style="text-align:right">' + fmt(x.mise) + '</td>' +
+          '<td class="num" style="text-align:right;color:' + (haut ? '#C9784A' : '#8a7f6a') + '">' +
+            (x.retour === null ? '—' : x.retour + ' %') + '</td>' +
+          '<td class="num" style="text-align:right;color:' + (x.net >= 0 ? '#6FCF97' : '#E2483C') + '">' +
+            fmt(x.net) + '</td></tr>';
+      });
+      h += '<tr style="border-top:1px solid rgba(230,165,55,.25)"><td><b>tout</b></td>' +
+        '<td class="num" style="text-align:right"><b>' + ent(j.total.manches) + '</b></td><td></td>' +
+        '<td class="num" style="text-align:right"><b>' + fmt(j.total.mise) + '</b></td><td></td>' +
+        '<td class="num" style="text-align:right;color:' + (j.total.net >= 0 ? '#6FCF97' : '#E2483C') +
+        '"><b>' + fmt(j.total.net) + '</b></td></tr>';
+      h += '</tbody></table></div></div>';
+    });
+    c.innerHTML = h;
+  } catch(e){ c.innerHTML = '<div class="muted2">' + esc(String(e.message)) + '</div>'; }
 }
 
 /* ================= ENGAGEMENT ================= */
@@ -1134,6 +1293,10 @@ load(); setInterval(load,10000);
 /* ---------- Players table ---------- */
 var PLAYERS=[], sortKey="wagered", sortDir=-1;
 function num(v){ var n=parseFloat(v); return isNaN(n)?0:n; }
+/* fmt abrege en k et en M — juste pour des jetons. Un NOMBRE DE MANCHES ne
+   s abrege pas : « 1.2k manches » cache la difference entre 1 200 et 1 249,
+   et c est exactement l ecart qu on regarde quand on compare deux jours. */
+function ent(v){ return Math.round(num(v)).toLocaleString('en-US'); }
 function short(ad){ return ad.slice(0,6)+"…"+ad.slice(-4); }
 function drawPlayers(){
   var q=($("#q").value||"").trim().toLowerCase();
