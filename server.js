@@ -1567,6 +1567,17 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(tg.journal(), null, 2));
   }
 
+  /* Ce que les joueurs touchent vraiment. Sert a reordonner le menu sur des
+     chiffres plutot qu'au jugement. Protegee non parce que c'est sensible —
+     il n'y a aucune adresse la-dedans — mais parce que c'est un outil
+     d'exploitation, et qu'une page publique de plus est une surface de plus. */
+  if (path === '/taps') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(game.tapsAdmin(), null, 2));
+  }
+
   /* L'etat de la boutique : ce qui reste, et qui detient quoi. */
   if (path === '/boutique/etat') {
     if (!authed) return refuse(req, res, false);
@@ -2073,6 +2084,9 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
+      /* Les touches. Aucune reponse : c'est une statistique, pas une action —
+         un accuse de reception doublerait le trafic pour rien. */
+      if (m.type === 'tap') { game.noteTaps(m.taps); return; }
       if (m.type === 'quests') return send(ws, { type: 'quests', quests: game.questState(ws.addr),
                                                 parfait: game.parfaitEtat(ws.addr),
                                                 attente: game.enAttente(ws.addr) });

@@ -64,6 +64,9 @@ class Game {
        GLOBAL, chaque inventaire ne connait que sa propre quantite et personne
        ne sait combien de Void Fruits existent. Il vit dans la tete de l'etat,
        pas dans les fiches — il n'appartient a aucun joueur. */
+    /* Les compteurs de touches. En tete d'etat et non par joueur : la question
+       est « quelle rangee sert », pas « que fait tel joueur ». */
+    this.taps = {};
     this.boutiqueEmis = {};
     /* LES TROIS PREMIERES LIGNES. Une entree par gagnant, dans l'ordre :
        { addr, nom, famille, prix, t }. C'est cette liste qui dit combien de
@@ -269,6 +272,7 @@ class Game {
                    joueurs: m.joueurs.filter(Boolean) });
     }
     return { v: 1, serverSeed: this.serverSeed, sessionSecret: this.sessionSecret,
+             taps: this.taps || {},
              boutiqueEmis: this.boutiqueEmis || {},
              boutiqueLignes: this.boutiqueLignes || [],
              compta: this._comptaEcrite(), tunnel: this.tunnel || {},
@@ -346,6 +350,7 @@ class Game {
     /* Sans cette ligne, un redemarrage remettrait tous les compteurs a zero
        et les plafonds ne borneraient plus rien — le pire des defauts
        silencieux : la boutique continuerait de fonctionner. */
+    if (st.taps && typeof st.taps === 'object') this.taps = st.taps;
     if (st.boutiqueEmis && typeof st.boutiqueEmis === 'object') this.boutiqueEmis = st.boutiqueEmis;
     /* Sans cette ligne, un redemarrage ROUVRIRAIT la course et repaierait
        quatre-vingt-dix millions, sans rien afficher d'anormal. */
@@ -4731,6 +4736,65 @@ class Game {
     return { coffre, serie, quetes, transferts, parfait,
              total: (coffre ? 1 : 0) + (serie ? 1 : 0) + quetes + (transferts ? 1 : 0) +
                     (parfait ? 1 : 0) };
+  }
+
+  /**
+   * ================== LES TOUCHES, COMPTEES ==================
+   *
+   * Ce que les joueurs touchent vraiment, bouton par bouton. Un total pour
+   * tout le monde : jamais qui a clique. La question est « quelle rangee
+   * sert », pas « que fait tel joueur ».
+   *
+   * ---- ces nombres viennent du CLIENT, donc ils se bornent ----
+   *
+   * N'importe qui peut envoyer ce message a la main et annoncer un million de
+   * touches sur la rangee de son choix. Le degat serait faible — ils ne
+   * servent qu'a reordonner un menu — mais un chiffre qu'on sait faux ne sert
+   * plus a rien du tout, et on le decouvrirait le jour ou on s'en sert.
+   *
+   * Trois bornes : la FORME de la clef, le NOMBRE de clefs par message, et le
+   * compte par clef. Aucune ne rend le chiffre exact face a quelqu'un de
+   * determine ; ensemble elles rendent le mensonge lent.
+   */
+  noteTaps(taps) {
+    if (!taps || typeof taps !== 'object') return 0;
+    this.taps = this.taps || {};
+    let pris = 0;
+    for (const cle of Object.keys(taps).slice(0, 60)) {
+      if (!/^(menu|bar|jeu):[a-z0-9_:-]{1,40}$/.test(cle)) continue;
+      const n = Math.max(0, Math.min(100, Math.floor(Number(taps[cle]) || 0)));
+      if (!n) continue;
+      this.taps[cle] = (this.taps[cle] || 0) + n;
+      pris += n;
+    }
+    return pris;
+  }
+
+  /**
+   * Les touches, triees, pour le panneau d'administration.
+   *
+   * Regroupees par FAMILLE — le tiroir, la barre du bas, les jeux — parce que
+   * comparer une rangee de menu a une tuile de jeu ne veut rien dire : elles
+   * n'ont ni la meme surface ni le meme nombre d'occasions d'etre touchees.
+   * Le seul classement qui informe est celui d'une famille contre elle-meme.
+   */
+  tapsAdmin() {
+    const t = this.taps || {};
+    const fam = { menu: [], bar: [], jeu: [] };
+    for (const cle of Object.keys(t)) {
+      const i = cle.indexOf(':');
+      const f = cle.slice(0, i), reste = cle.slice(i + 1);
+      if (!fam[f]) continue;
+      fam[f].push({ cle: reste, n: t[cle] });
+    }
+    const out = {};
+    for (const f of Object.keys(fam)) {
+      const l = fam[f].sort((a, b) => b.n - a.n);
+      const total = l.reduce((a, x) => a + x.n, 0);
+      out[f] = { total, lignes: l.map((x) => ({ cle: x.cle, n: x.n,
+                 pct: total ? +(100 * x.n / total).toFixed(1) : 0 })) };
+    }
+    return out;
   }
 
   /**
