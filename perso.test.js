@@ -237,4 +237,95 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
   ok(r.fruits.length === 1 && r.armes.length === 1, 'les deux saisons sont rendues ensemble, sans etre demandees');
 }
 
+// ================== 14. L'ARMURE VA AU SLOT ARMURE, LA BAGUE AU SLOT BAGUE
+{
+  const g = new Game();
+  const p = pose(g, A);
+  g.acheteSkin(A, 'claude');
+  const armure = B.itemsDeSaison(3)[0];
+  const bague = B.itemsDeSaison(4)[0];
+  p.objets[armure.id] = 1; p.objets[bague.id] = 1;
+
+  assert.throws(() => g.equipeArmure(A, 'claude', bague.id), /not an armor/,
+                'le slot armure refuse une bague');
+  n++;
+  assert.throws(() => g.equipeBague(A, 'claude', armure.id), /not a ring/,
+                'le slot bague refuse une armure');
+  n++;
+
+  const r1 = g.equipeArmure(A, 'claude', armure.id);
+  eq(r1.equipArmure.item, armure.id, 'la bonne piece d armure est equipee');
+  const r2 = g.equipeBague(A, 'claude', bague.id);
+  eq(r2.equipBague.item, bague.id, 'la bonne bague est equipee');
+  eq(r1.equipArmure.rarete, armure.rarete);
+  eq(r2.equipBague.rarete, bague.rarete);
+}
+
+// ================== 15. LES QUATRE EMPLACEMENTS TIENNENT ENSEMBLE, ET SEPAREMENT
+{
+  const g = new Game();
+  const p = pose(g, A);
+  g.acheteSkin(A, 'pepe');
+  const avant = g.personnageEtat(A, 'pepe').stats;
+
+  const armure = B.itemsDeSaison(3).find((o) => o.rarete === 'mythique');
+  p.objets[armure.id] = 1;
+  const stat = P.FAMILLE_STAT[armure.famille];
+  const apres = g.equipeArmure(A, 'pepe', armure.id).stats;
+
+  P.STATS.forEach((s) => {
+    if (s === stat) ok(apres[s] > avant[s], `${s} (la stat visee par l armure) a bien augmente`);
+    else eq(apres[s], avant[s], `${s} n a pas bouge — ce n est pas la stat visee`);
+  });
+
+  // et le desequipement rend le slot vide sans toucher aux trois autres
+  const bague = B.itemsDeSaison(4)[0];
+  p.objets[bague.id] = 1;
+  g.equipeBague(A, 'pepe', bague.id);
+  const r = g.equipeArmure(A, 'pepe', null);
+  eq(r.equipArmure, null, 'desequipe l armure avec null');
+  ok(r.equipBague, 'la bague, elle, reste en place');
+}
+
+// ================== 16. TOUT SURVIT AU REDEMARRAGE, LES QUATRE EMPLACEMENTS COMPRIS
+{
+  const g = new Game();
+  const p = pose(g, A);
+  g.acheteSkin(A, 'brett');
+  const fruit = B.itemsDeSaison(1)[0], arme = B.itemsDeSaison(2)[0];
+  const armure = B.itemsDeSaison(3)[0], bague = B.itemsDeSaison(4)[0];
+  [fruit, arme, armure, bague].forEach((o) => { p.objets[o.id] = 1; });
+  g.equipeFruit(A, 'brett', fruit.id);
+  g.equipeArme(A, 'brett', arme.id);
+  g.equipeArmure(A, 'brett', armure.id);
+  g.equipeBague(A, 'brett', bague.id);
+  const avant = g.personnageEtat(A, 'brett');
+
+  const g2 = new Game();
+  g2.hydrate(JSON.parse(JSON.stringify(g.serialize())));
+  const apres = g2.personnageEtat(A, 'brett');
+
+  eq(apres.equipFruit.item, fruit.id);
+  eq(apres.equipArme.item, arme.id);
+  eq(apres.equipArmure.item, armure.id, 'l armure traverse le redemarrage');
+  eq(apres.equipBague.item, bague.id, 'la bague aussi');
+  eq(JSON.stringify(apres.stats), JSON.stringify(avant.stats), 'les stats recalculees sont identiques');
+}
+
+// ================== 17. equipablesPour() COUVRE LES QUATRE SAISONS A LA FOIS
+{
+  const g = new Game();
+  const p = pose(g, A);
+  eq(g.equipablesPour(A).armures.length, 0);
+  eq(g.equipablesPour(A).bagues.length, 0);
+
+  const armure = B.itemsDeSaison(3)[0], bague = B.itemsDeSaison(4)[0];
+  p.objets[armure.id] = 3; p.objets[bague.id] = 1;
+  const r = g.equipablesPour(A);
+  eq(r.armures.length, 1, 'la piece d armure possedee apparait');
+  eq(r.bagues.length, 1, 'la bague possedee apparait');
+  eq(r.armures[0].quantite, 3);
+  eq(r.armures[0].stat, P.FAMILLE_STAT[armure.famille]);
+}
+
 console.log(`perso.test.js : ${n} verifications OK`);

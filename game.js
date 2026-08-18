@@ -278,7 +278,8 @@ class Game {
         pr: (p.persos && Object.keys(p.persos).length)
           ? Object.keys(p.persos).reduce((o, id) => { const c = p.persos[id];
               o[id] = { w: (c.w || ethers.BigNumber.from(0)).toString(),
-                        ef: c.ef || undefined, ea: c.ea || undefined }; return o; }, {})
+                        ef: c.ef || undefined, ea: c.ea || undefined,
+                        ar: c.ar || undefined, ba: c.ba || undefined }; return o; }, {})
           : undefined,
         tg: p.tgId || null,
         wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
@@ -465,7 +466,8 @@ class Game {
         persos: (d.pr && typeof d.pr === 'object')
           ? Object.keys(d.pr).reduce((o, id) => { const c = d.pr[id] || {};
               o[id] = { w: ethers.BigNumber.from(c.w || '0'),
-                        ef: c.ef || null, ea: c.ea || null }; return o; }, {})
+                        ef: c.ef || null, ea: c.ea || null,
+                        ar: c.ar || null, ba: c.ba || null }; return o; }, {})
           : {},
         skinActif: d.ska || null,
         bonusBloque: ethers.BigNumber.from(d.bb || '0'),
@@ -4956,7 +4958,7 @@ class Game {
    * pas pour changer l'issue d'une manche : voir personnages.js.
    */
   _persoDe(p, id) {
-    return (p.persos && p.persos[id]) || { w: BN(0), ef: null, ea: null };
+    return (p.persos && p.persos[id]) || { w: BN(0), ef: null, ea: null, ar: null, ba: null };
   }
 
   /**
@@ -4997,12 +4999,16 @@ class Game {
     };
     const bFruit = bonusDe(c.ef);
     const bArme = bonusDe(c.ea);
+    const bArmure = bonusDe(c.ar);
+    const bBague = bonusDe(c.ba);
 
     const stats = {};
     personnages.STATS.forEach((s) => {
       let v = personnages.statAuNiveau(base[s], niveau);
       if (bFruit && bFruit.stat === s) v += bFruit.bonus;
       if (bArme && bArme.stat === s) v += bArme.bonus;
+      if (bArmure && bArmure.stat === s) v += bArmure.bonus;
+      if (bBague && bBague.stat === s) v += bBague.bonus;
       stats[s] = v;
     });
 
@@ -5012,21 +5018,24 @@ class Game {
       xpProchain: xpProchain === null ? null : Math.round(xpProchain),
       volume: Math.round(volume),
       stats, base,
-      equipFruit: bFruit, equipArme: bArme,
+      equipFruit: bFruit, equipArme: bArme, equipArmure: bArmure, equipBague: bBague,
     };
   }
 
   /**
-   * Equipe (ou retire, si `itemId` est vide) un fruit ou une arme sur un
-   * skin. `genre` vaut 'fruit' ou 'arme' — deux methodes separees auraient
-   * duplique cette meme suite de verifications quatre fois.
+   * Equipe (ou retire, si `itemId` est vide) un fruit, une arme, une armure
+   * ou une bague sur un skin. `genre` vaut 'fruit', 'arme', 'armure' ou
+   * 'bague' — quatre methodes separees auraient duplique cette meme suite de
+   * verifications quatre fois.
    */
   _equipe(addr, skinId, itemId, genre) {
     const p = this._p(addr);
     if (!(p.skins || {})[skinId]) throw new Error('you do not own this skin');
     p.persos = p.persos || {};
-    const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null });
-    const champ = genre === 'fruit' ? 'ef' : 'ea';
+    const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null });
+    const CHAMPS = { fruit: 'ef', arme: 'ea', armure: 'ar', bague: 'ba' };
+    const SUJETS = { fruit: 'fruit', arme: 'weapon', armure: 'armor', bague: 'ring' };
+    const champ = CHAMPS[genre];
 
     if (itemId === null || itemId === undefined || itemId === '') {
       c[champ] = null;
@@ -5035,18 +5044,22 @@ class Game {
     const o = boutique.item(itemId);
     if (!o) throw new Error('unknown item');
     const sai = boutique.saison(o.saison);
-    const attendu = genre === 'fruit' ? 'fruit' : 'weapon';
-    if (!sai || sai.sujet !== attendu) throw new Error(`this item is not a ${attendu}`);
+    const attendu = SUJETS[genre];
+    const article = /^[aeiou]/.test(attendu) ? 'an' : 'a';
+    if (!sai || sai.sujet !== attendu) throw new Error(`this item is not ${article} ${attendu}`);
     if (!((p.objets || {})[o.id] > 0)) throw new Error('you do not own this item');
     c[champ] = o.id;
     return this.personnageEtat(addr, skinId);
   }
   equipeFruit(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'fruit'); }
   equipeArme(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'arme'); }
+  equipeArmure(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'armure'); }
+  equipeBague(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'bague'); }
 
   /**
-   * Ce que le joueur peut equiper : ses fruits (saison 1) et ses armes
-   * (saison 2) qu'il possede reellement, avec le bonus que chacun donnerait.
+   * Ce que le joueur peut equiper : ses fruits (saison 1), ses armes
+   * (saison 2), ses pieces d'armure (saison 3) et ses bagues (saison 4)
+   * qu'il possede reellement, avec le bonus que chacun donnerait.
    *
    * Independant de la saison actuellement parcourue dans la boutique — un
    * fruit achete pendant la saison 1 reste equipable meme si la page est
@@ -5068,6 +5081,8 @@ class Game {
     return {
       fruits: boutique.itemsDeSaison(1).filter(possede).map(ligne),
       armes: boutique.itemsDeSaison(2).filter(possede).map(ligne),
+      armures: boutique.itemsDeSaison(3).filter(possede).map(ligne),
+      bagues: boutique.itemsDeSaison(4).filter(possede).map(ligne),
     };
   }
 

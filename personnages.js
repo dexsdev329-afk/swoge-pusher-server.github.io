@@ -139,6 +139,20 @@ const FAMILLE_STAT = {
   arc: 'spd',
   marteau: 'vit',
   dagues: 'mp',
+  // saison 3 — armure : une piece, une stat, comme un fruit ou une arme
+  casque: 'wis',        // voir venir
+  plastron: 'hp',       // le coeur protege
+  epaulieres: 'vit',    // porter le poids
+  gantelets: 'att',     // frapper plus fort
+  jambieres: 'spd',     // courir plus loin
+  bouclier: 'def',      // encaisser
+  // saison 4 — bagues
+  grenat: 'vit',        // la pierre rouge, la vitalite
+  saphir: 'mp',         // la pierre bleue, l'esprit
+  emeraude: 'dex',      // la pierre verte, l'agilite
+  topaze: 'att',        // la pierre doree, la force
+  amethyste: 'wis',     // la pierre violette, la clairvoyance
+  onyx: 'def',          // la pierre noire, la garde
 };
 
 /**

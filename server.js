@@ -2783,19 +2783,27 @@ wss.on('connection', (ws) => {
         const r = game.personnageEtat(ws.addr, m.skin);
         return send(ws, { type: 'personnage', skin: m.skin, etat: r });
       }
-      if (m.type === 'equipeFruit' || m.type === 'equipeArme') {
+      /* Les quatre emplacements d'equipement partagent une seule route : le
+         type de message dit lequel, `ROUTES_EQUIPE` dit quelle methode
+         appeler. Un cinquieme emplacement (une armure de dos, disons)
+         n'ajoutera qu'une ligne ici, jamais un nouveau bloc if. */
+      const ROUTES_EQUIPE = {
+        equipeFruit: (a, s, i) => game.equipeFruit(a, s, i),
+        equipeArme: (a, s, i) => game.equipeArme(a, s, i),
+        equipeArmure: (a, s, i) => game.equipeArmure(a, s, i),
+        equipeBague: (a, s, i) => game.equipeBague(a, s, i),
+      };
+      if (ROUTES_EQUIPE[m.type]) {
         let r = null, err = null;
-        try {
-          r = m.type === 'equipeFruit'
-            ? game.equipeFruit(ws.addr, m.skin, m.item)
-            : game.equipeArme(ws.addr, m.skin, m.item);
-        } catch (e) { err = e.message; }
+        try { r = ROUTES_EQUIPE[m.type](ws.addr, m.skin, m.item); }
+        catch (e) { err = e.message; }
         if (!err) persistSoon();
         return send(ws, { type: 'personnage', skin: m.skin, etat: r,
                           error: err || undefined });
       }
-      /* La liste de ce qu'il y a a equiper — fruits et armes possedes, quelle
-         que soit la saison ouverte dans la boutique en ce moment. */
+      /* La liste de ce qu'il y a a equiper — fruits, armes, armures et
+         bagues possedes, quelle que soit la saison ouverte dans la boutique
+         en ce moment. */
       if (m.type === 'equipable') {
         return send(ws, { type: 'equipable', ...game.equipablesPour(ws.addr) });
       }

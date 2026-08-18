@@ -639,7 +639,7 @@ for (const c of B.COFFRES) {
   {
     const g = new Game();
     let s = g.boutiqueSaisons(C);
-    eq(s.length, 2, 'la page recoit les deux saisons, pas seulement celles qu on peut ouvrir');
+    eq(s.length, 4, 'la page recoit les quatre saisons, pas seulement celles qu on peut ouvrir');
     eq(s[1].ouverte, false, 'la deuxieme est annoncee fermee');
     eq(s[1].faites + '/' + s[1].sur, '0/3', 'avec le compte qui dit ce qu il manque');
 

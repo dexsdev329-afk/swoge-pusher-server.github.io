@@ -108,7 +108,7 @@ pose.adDayKey = '2026-08-14';
    meme raison que `stakes` juste au-dessus : une forme precise merite un
    temoin de cette forme, pas un objet quelconque que le code ne saurait pas
    relire. */
-pose.persos = { andy: { w: W(777), ef: 1001, ea: 2001 } };
+pose.persos = { andy: { w: W(777), ef: 1001, ea: 2001, ar: 1013, ba: 1019 } };
 Object.assign(pose, TARDIFS);
 
 for (const k of Object.keys(pose)) neuve[k] = pose[k];

@@ -83,8 +83,10 @@
  * La saison 1 n'a pas de condition : elle est le point de depart.
  */
 const SAISONS = [
-  { n: 1, cle: 'fruits', nom: 'Season 1 — Devil Fruits', sujet: 'fruit' },
-  { n: 2, cle: 'armes',  nom: 'Season 2 — Weapons',      sujet: 'weapon' },
+  { n: 1, cle: 'fruits',  nom: 'Season 1 — Devil Fruits', sujet: 'fruit'  },
+  { n: 2, cle: 'armes',   nom: 'Season 2 — Weapons',      sujet: 'weapon' },
+  { n: 3, cle: 'armures', nom: 'Season 3 — Armor',        sujet: 'armor'  },
+  { n: 4, cle: 'bagues',  nom: 'Season 4 — Rings',        sujet: 'ring'   },
 ];
 
 /* Les raretes, de la plus commune a la plus rare. L'ordre compte : il sert a
@@ -187,6 +189,29 @@ const FAMILLES = [
   { saison: 2, cle: 'arc',     nom: 'Bow',     forme: 'arc courbe',       couleur: '#FFC53D', genre: 'avatar'  },
   { saison: 2, cle: 'marteau', nom: 'Hammer',  forme: 'marteau lourd',    couleur: '#B48CFF', genre: 'trophee' },
   { saison: 2, cle: 'dagues',  nom: 'Daggers', forme: 'dagues croisees',  couleur: '#FF4655', genre: 'cadre'   },
+
+  /* ---- saison 3, l'armure ----
+   *
+   * Six pieces d'un meme harnais, pas six armures completes : on equipe UNE
+   * piece a la fois (comme un fruit ou une arme), la piece choisie disant
+   * quelle famille elle vient d'honorer. */
+  { saison: 3, cle: 'casque',     nom: 'Helm',      forme: 'casque',          couleur: '#8DA0C4', genre: 'avatar'  },
+  { saison: 3, cle: 'plastron',   nom: 'Cuirass',   forme: 'plastron',        couleur: '#FF4655', genre: 'trophee' },
+  { saison: 3, cle: 'epaulieres', nom: 'Pauldrons', forme: 'epaulieres',      couleur: '#B48CFF', genre: 'cadre'   },
+  { saison: 3, cle: 'gantelets',  nom: 'Gauntlets', forme: 'gantelets',       couleur: '#E08A3C', genre: 'trophee' },
+  { saison: 3, cle: 'jambieres',  nom: 'Greaves',   forme: 'jambieres',       couleur: '#7CFF9B', genre: 'table'   },
+  { saison: 3, cle: 'bouclier',   nom: 'Shield',    forme: 'bouclier',        couleur: '#5AC8FF', genre: 'cadre'   },
+
+  /* ---- saison 4, les bagues ----
+   *
+   * Six pierres, comme les six pouvoirs des fruits — la couleur de la gemme
+   * fait la famille, exactement comme la forme la faisait pour les fruits. */
+  { saison: 4, cle: 'grenat',    nom: 'Garnet',    forme: 'bague a gemme ronde',   couleur: '#FF4655', genre: 'trophee' },
+  { saison: 4, cle: 'saphir',    nom: 'Sapphire',  forme: 'bague a gemme goutte',  couleur: '#5AC8FF', genre: 'cadre'   },
+  { saison: 4, cle: 'emeraude',  nom: 'Emerald',   forme: 'bague a gemme hexagone',couleur: '#7CFF9B', genre: 'table'   },
+  { saison: 4, cle: 'topaze',    nom: 'Topaz',     forme: 'bague a gemme carree',  couleur: '#E08A3C', genre: 'trophee' },
+  { saison: 4, cle: 'amethyste', nom: 'Amethyst',  forme: 'bague a gemme etoile',  couleur: '#C07BFF', genre: 'avatar'  },
+  { saison: 4, cle: 'onyx',      nom: 'Onyx',      forme: 'bague a gemme octogone',couleur: '#8DA0C4', genre: 'cadre'   },
 ];
 
 /*
@@ -369,6 +394,157 @@ const ITEMS = [
     pouvoir: 'Everything that exists was shaped on it.' },
   { id: 5012, cle: 'arme_faucheuse', nom: "Reaper's Pair",  rarete: 'mythique', famille: 'dagues',
     pouvoir: 'One takes the body. One takes the rest.' },
+
+  /* ==================== SAISON 3 — L'ARMURE ====================
+   *
+   * Six pieces, cinq degres — meme grille que les deux saisons precedentes.
+   * Les identifiants continuent dans les memes blocs de rarete : 1013 a 1018
+   * pour les communes. */
+
+  // ---- communes : le metal terne, cabosse, sans lueur
+  { id: 1013, cle: 'casque_cabosse',    nom: 'Dented Helm',      rarete: 'commun', famille: 'casque',
+    pouvoir: "Someone else's dent. You never asked." },
+  { id: 1014, cle: 'plastron_rouille',  nom: 'Rusted Cuirass',   rarete: 'commun', famille: 'plastron',
+    pouvoir: 'It has stopped a blow. It does not say which.' },
+  { id: 1015, cle: 'epaulieres_fissure',nom: 'Cracked Pauldrons',rarete: 'commun', famille: 'epaulieres',
+    pouvoir: 'The crack is older than the owner.' },
+  { id: 1016, cle: 'gantelets_usure',   nom: 'Worn Gauntlets',   rarete: 'commun', famille: 'gantelets',
+    pouvoir: 'The knuckles remember more than the owner does.' },
+  { id: 1017, cle: 'jambieres_use',     nom: 'Scuffed Greaves',  rarete: 'commun', famille: 'jambieres',
+    pouvoir: 'Every scuff is a room left in a hurry.' },
+  { id: 1018, cle: 'bouclier_fissure',  nom: 'Cracked Shield',   rarete: 'commun', famille: 'bouclier',
+    pouvoir: 'It took the hit so you would not have to.' },
+
+  // ---- rares : entretenue, polie, refaite
+  { id: 2013, cle: 'casque_guet',       nom: 'Watch Helm',       rarete: 'rare', famille: 'casque',
+    pouvoir: 'You hear the room a half-second early.' },
+  { id: 2014, cle: 'plastron_trempe',   nom: 'Tempered Cuirass', rarete: 'rare', famille: 'plastron',
+    pouvoir: 'Folded a hundred times, forgiving none of them.' },
+  { id: 2015, cle: 'epaulieres_garde',  nom: 'Guard Pauldrons',  rarete: 'rare', famille: 'epaulieres',
+    pouvoir: 'Squared shoulders, borrowed confidence.' },
+  { id: 2016, cle: 'gantelets_fer',     nom: 'Iron Gauntlets',   rarete: 'rare', famille: 'gantelets',
+    pouvoir: 'A handshake here is a decision.' },
+  { id: 2017, cle: 'jambieres_agile',   nom: 'Swift Greaves',    rarete: 'rare', famille: 'jambieres',
+    pouvoir: 'You are already gone by the time the door notices.' },
+  { id: 2018, cle: 'bouclier_acier',    nom: 'Steel Shield',     rarete: 'rare', famille: 'bouclier',
+    pouvoir: 'Nothing personal gets through this first.' },
+
+  // ---- epiques : les gravures s'allument de l'interieur
+  { id: 3013, cle: 'casque_rune',       nom: 'Runed Helm',       rarete: 'epique', famille: 'casque',
+    pouvoir: 'The visor remembers faces you forgot.' },
+  { id: 3014, cle: 'plastron_rune',     nom: 'Runed Cuirass',    rarete: 'epique', famille: 'plastron',
+    pouvoir: 'The engravings tighten before the danger does.' },
+  { id: 3015, cle: 'epaulieres_rune',   nom: 'Runed Pauldrons',  rarete: 'epique', famille: 'epaulieres',
+    pouvoir: 'They square themselves before you decide to stand tall.' },
+  { id: 3016, cle: 'gantelets_rune',    nom: 'Runed Gauntlets',  rarete: 'epique', famille: 'gantelets',
+    pouvoir: 'The grip tightens on its own, sometimes.' },
+  { id: 3017, cle: 'jambieres_rune',    nom: 'Runed Greaves',    rarete: 'epique', famille: 'jambieres',
+    pouvoir: 'The ground feels slightly further away, in a good way.' },
+  { id: 3018, cle: 'bouclier_rune',     nom: 'Runed Shield',     rarete: 'epique', famille: 'bouclier',
+    pouvoir: 'It leans forward before you know you need it to.' },
+
+  // ---- legendaires : halo dore, le metal rayonne
+  { id: 4013, cle: 'casque_soleil',     nom: 'Sunhelm',          rarete: 'legendaire', famille: 'casque',
+    pouvoir: 'Look at it wrong and it looks back, brighter.' },
+  { id: 4014, cle: 'plastron_soleil',   nom: 'Sunplate',         rarete: 'legendaire', famille: 'plastron',
+    pouvoir: 'Warm to the touch, even in a cold room.' },
+  { id: 4015, cle: 'epaulieres_soleil', nom: 'Sunpauldrons',     rarete: 'legendaire', famille: 'epaulieres',
+    pouvoir: 'Light rests on them like it has nowhere better to be.' },
+  { id: 4016, cle: 'gantelets_soleil',  nom: 'Sungrip',          rarete: 'legendaire', famille: 'gantelets',
+    pouvoir: 'What it closes around, it does not easily give back.' },
+  { id: 4017, cle: 'jambieres_soleil',  nom: 'Sunstride',        rarete: 'legendaire', famille: 'jambieres',
+    pouvoir: 'Footsteps that catch the light before the sound does.' },
+  { id: 4018, cle: 'bouclier_soleil',   nom: 'Sunward',          rarete: 'legendaire', famille: 'bouclier',
+    pouvoir: 'Held up, it makes the room feel like morning.' },
+
+  // ---- mythiques : le metal se fend, la lumiere sort, l'armure flotte
+  { id: 5013, cle: 'casque_divin',      nom: 'Godhelm',          rarete: 'mythique', famille: 'casque',
+    pouvoir: 'It was worn once by someone the story forgot to name.' },
+  { id: 5014, cle: 'plastron_coeur_monde', nom: 'Worldheart',    rarete: 'mythique', famille: 'plastron',
+    pouvoir: 'Something in it still beats, slowly, on its own.' },
+  { id: 5015, cle: 'epaulieres_titan',  nom: 'Titan Pauldrons',  rarete: 'mythique', famille: 'epaulieres',
+    pouvoir: 'Once carried a weight the story left out.' },
+  { id: 5016, cle: 'gantelets_monde',   nom: 'Worldgrip',        rarete: 'mythique', famille: 'gantelets',
+    pouvoir: 'It has held something the size of an argument, and won.' },
+  { id: 5017, cle: 'jambieres_monde',   nom: 'Worldstride',      rarete: 'mythique', famille: 'jambieres',
+    pouvoir: 'One step here is a mile somewhere else.' },
+  { id: 5018, cle: 'bouclier_mur_monde',nom: 'Worldwall',        rarete: 'mythique', famille: 'bouclier',
+    pouvoir: 'Behind it, the argument was already over.' },
+
+  /* ==================== SAISON 4 — LES BAGUES ====================
+   *
+   * Six gemmes, cinq degres. Les identifiants continuent : 1019 a 1024 pour
+   * les communes. */
+
+  // ---- communes : la pierre brute, sans taille, sans lueur
+  { id: 1019, cle: 'ring_braise',   nom: 'Ember Ring',   rarete: 'commun', famille: 'grenat',
+    pouvoir: 'Still warm, from a fire nobody remembers lighting.' },
+  { id: 1020, cle: 'ring_goutte',   nom: 'Drop Ring',    rarete: 'commun', famille: 'saphir',
+    pouvoir: 'One clear thought, held a moment longer than usual.' },
+  { id: 1021, cle: 'ring_feuille',  nom: 'Leaf Ring',    rarete: 'commun', famille: 'emeraude',
+    pouvoir: 'Light on the hand, lighter on the step.' },
+  { id: 1022, cle: 'ring_ambre',    nom: 'Amber Ring',   rarete: 'commun', famille: 'topaze',
+    pouvoir: 'Something old, kept warm on purpose.' },
+  { id: 1023, cle: 'ring_violette', nom: 'Violet Ring',  rarete: 'commun', famille: 'amethyste',
+    pouvoir: 'A question you have not asked out loud yet.' },
+  { id: 1024, cle: 'ring_ardoise',  nom: 'Slate Ring',   rarete: 'commun', famille: 'onyx',
+    pouvoir: 'Plain, cold, and entirely unbothered.' },
+
+  // ---- rares : la gemme taillee, la monture polie
+  { id: 2019, cle: 'ring_grenat',   nom: 'Garnet Ring',  rarete: 'rare', famille: 'grenat',
+    pouvoir: 'A little colour returns to a tired face.' },
+  { id: 2020, cle: 'ring_saphir',   nom: 'Sapphire Ring',rarete: 'rare', famille: 'saphir',
+    pouvoir: 'The noise in the room quiets, just for you.' },
+  { id: 2021, cle: 'ring_emeraude',  nom: 'Emerald Ring', rarete: 'rare', famille: 'emeraude',
+    pouvoir: 'Something in you keeps growing back.' },
+  { id: 2022, cle: 'ring_topaze',   nom: 'Topaz Ring',   rarete: 'rare', famille: 'topaze',
+    pouvoir: 'It catches attention it never asked for.' },
+  { id: 2023, cle: 'ring_amethyste',nom: 'Amethyst Ring',rarete: 'rare', famille: 'amethyste',
+    pouvoir: 'You start finishing sentences early. You are usually right.' },
+  { id: 2024, cle: 'ring_onyx',     nom: 'Onyx Ring',    rarete: 'rare', famille: 'onyx',
+    pouvoir: 'Nothing reflects off it. Nothing gets through it either.' },
+
+  // ---- epiques : la gemme s'allume de l'interieur
+  { id: 3019, cle: 'ring_sang',     nom: 'Bloodstone Ring', rarete: 'epique', famille: 'grenat',
+    pouvoir: 'It beats along, very quietly, out of rhythm with you.' },
+  { id: 3020, cle: 'ring_maree',    nom: 'Tide Ring',       rarete: 'epique', famille: 'saphir',
+    pouvoir: 'Thoughts arrive in the order you actually needed them.' },
+  { id: 3021, cle: 'ring_bosquet',  nom: 'Grove Ring',      rarete: 'epique', famille: 'emeraude',
+    pouvoir: 'Roots you cannot see are holding you upright.' },
+  { id: 3022, cle: 'ring_feu_solaire', nom: 'Sunfire Ring', rarete: 'epique', famille: 'topaze',
+    pouvoir: 'The room brightens, and nobody notices why.' },
+  { id: 3023, cle: 'ring_etoile',   nom: 'Star Ring',       rarete: 'epique', famille: 'amethyste',
+    pouvoir: 'It points at something before you look up.' },
+  { id: 3024, cle: 'ring_fer',      nom: 'Iron Ring',       rarete: 'epique', famille: 'onyx',
+    pouvoir: 'It closes ranks before you tell it to.' },
+
+  // ---- legendaires : une aura vive, des etincelles
+  { id: 4019, cle: 'ring_phenix',   nom: 'Phoenix Ring', rarete: 'legendaire', famille: 'grenat',
+    pouvoir: 'Everything it has lost, it has gotten back.' },
+  { id: 4020, cle: 'ring_tempete',  nom: 'Storm Ring',   rarete: 'legendaire', famille: 'saphir',
+    pouvoir: 'Somewhere behind your eyes, it is always about to rain.' },
+  { id: 4021, cle: 'ring_sauvage',  nom: 'Wild Ring',    rarete: 'legendaire', famille: 'emeraude',
+    pouvoir: 'It has never once asked permission.' },
+  { id: 4022, cle: 'ring_couronne', nom: 'Crown Ring',   rarete: 'legendaire', famille: 'topaze',
+    pouvoir: 'Worn once by someone people still argue about.' },
+  { id: 4023, cle: 'ring_oracle',   nom: 'Oracle Ring',  rarete: 'legendaire', famille: 'amethyste',
+    pouvoir: 'It answers before the question is finished.' },
+  { id: 4024, cle: 'ring_vide',     nom: 'Void Ring',    rarete: 'legendaire', famille: 'onyx',
+    pouvoir: 'Whatever it takes in, it does not give back.' },
+
+  // ---- mythiques : incandescente, la bague levite
+  { id: 5019, cle: 'ring_flamme_eternelle', nom: 'Eternal Flame Ring', rarete: 'mythique', famille: 'grenat',
+    pouvoir: 'It has never once gone out. Nobody has tried very hard.' },
+  { id: 5020, cle: 'ring_abysse',   nom: 'Abyss Ring',        rarete: 'mythique', famille: 'saphir',
+    pouvoir: 'It thinks, sometimes, before you do.' },
+  { id: 5021, cle: 'ring_arbre_monde', nom: 'World Tree Ring', rarete: 'mythique', famille: 'emeraude',
+    pouvoir: 'Every root it has ever grown is still somewhere, listening.' },
+  { id: 5022, cle: 'ring_souverain',nom: 'Sovereign Ring',    rarete: 'mythique', famille: 'topaze',
+    pouvoir: 'It does not ask to be obeyed. It simply is.' },
+  { id: 5023, cle: 'ring_destinee', nom: 'Fate Ring',         rarete: 'mythique', famille: 'amethyste',
+    pouvoir: 'It already knows how this sentence ends.' },
+  { id: 5024, cle: 'ring_eclipse',  nom: 'Eclipse Ring',      rarete: 'mythique', famille: 'onyx',
+    pouvoir: 'For a moment, standing near it, nothing can quite see you.' },
 ];
 
 /* Les coffres. Le prix est en $SWOGE, la table en dix-milliemes.
@@ -459,6 +635,24 @@ const COFFRES = [
   { saison: 2, cle: 'armes_or', nom: 'Golden Armoury', prix: 40000, image: 'or',
     table: [['commun', 4500], ['rare', 3800], ['epique', 1400], ['legendaire', 280], ['mythique', 20]] },
   { saison: 2, cle: 'armes_mythe', nom: 'Mythic Armoury', prix: 400000, image: 'mythe',
+    table: [['commun', 1000], ['rare', 3400], ['epique', 3900], ['legendaire', 1500], ['mythique', 200]] },
+
+  /* ---- saison 3 : memes prix et memes tables, meme raison qu'a la saison 2 —
+     l'art des caisses d'armure n'existe pas encore, elles empruntent celui
+     des coffres a fruits en attendant. */
+  { saison: 3, cle: 'armures_bois', nom: 'Armor Crate', prix: 4000, image: 'bois',
+    table: [['commun', 7600], ['rare', 2100], ['epique', 280], ['legendaire', 19], ['mythique', 1]] },
+  { saison: 3, cle: 'armures_or', nom: 'Golden Armory', prix: 40000, image: 'or',
+    table: [['commun', 4500], ['rare', 3800], ['epique', 1400], ['legendaire', 280], ['mythique', 20]] },
+  { saison: 3, cle: 'armures_mythe', nom: 'Mythic Armory', prix: 400000, image: 'mythe',
+    table: [['commun', 1000], ['rare', 3400], ['epique', 3900], ['legendaire', 1500], ['mythique', 200]] },
+
+  /* ---- saison 4 : idem. */
+  { saison: 4, cle: 'bagues_bois', nom: 'Ring Box', prix: 4000, image: 'bois',
+    table: [['commun', 7600], ['rare', 2100], ['epique', 280], ['legendaire', 19], ['mythique', 1]] },
+  { saison: 4, cle: 'bagues_or', nom: 'Golden Jewel Box', prix: 40000, image: 'or',
+    table: [['commun', 4500], ['rare', 3800], ['epique', 1400], ['legendaire', 280], ['mythique', 20]] },
+  { saison: 4, cle: 'bagues_mythe', nom: 'Mythic Jewel Box', prix: 400000, image: 'mythe',
     table: [['commun', 1000], ['rare', 3400], ['epique', 3900], ['legendaire', 1500], ['mythique', 200]] },
 ];
 
