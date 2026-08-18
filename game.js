@@ -4748,6 +4748,10 @@ class Game {
     let n = Number(saison) || 1;
     if (!this.boutiqueSaisonOuverte(addr, n)) n = 1;
     return { catalogue: boutique.catalogue(this.boutiqueEmis || {}, n, cfg.RACHAT_BASE),
+             /* La page a besoin de la porte AVANT le clic, pas de l'erreur
+                apres : un bouton qui repond « non » a un geste qu'il proposait
+                est une faute d'interface, pas un garde-fou. */
+             rachat: this.rachatVerrou(addr),
              inventaire: p.objets || {},
              saisons, saison: n,
              course: this.boutiqueCourse(),
@@ -6368,6 +6372,40 @@ class Game {
     return o ? boutique.prixRachat(o.rarete, cfg.RACHAT_BASE) : 0;
   }
 
+  /**
+   * LA PORTE DU RACHAT, ET DE QUOI L'AFFICHER.
+   *
+   * ---- pourquoi il en faut une du tout ----
+   *
+   * Le rachat est le seul geste du site qui transforme un objet en jetons
+   * SANS acheteur en face. Le marche ne cree rien — un joueur paie, un autre
+   * encaisse. Le rachat, lui, EMET. Il faut donc que la matiere premiere ait
+   * coute quelque chose, et il y a exactement un endroit ou elle ne coute
+   * rien : le coffre offert chaque jour.
+   *
+   * ---- pourquoi le volume et pas le depot ----
+   *
+   * Un depot se retire. La porte s'ouvrirait avec de l'argent qu'on reprend
+   * ensuite, donc elle ne couterait rien a franchir — et une porte gratuite
+   * n'est pas une porte. Le volume est DEPENSE : l'avoir joue, c'est avoir
+   * laisse l'avantage de la maison sur la table.
+   *
+   * ---- pourquoi on renvoie le detail et pas un oui/non ----
+   *
+   * Un bouton grise sans explication se lit « casse ». Avec le chiffre et ce
+   * qui reste, il se lit « pas encore » — et il devient une raison de jouer au
+   * lieu d'une raison de partir. C'est la meme information, ce n'est pas le
+   * meme produit.
+   */
+  rachatVerrou(addr) {
+    const p = this._p(addr);
+    const volume = Number(ethers.utils.formatUnits(p.wagered || BN(0), cfg.DECIMALS));
+    const requis = Number(cfg.RACHAT_VOLUME_MIN) || 0;
+    return { requis, volume: Math.floor(volume),
+             reste: Math.max(0, Math.ceil(requis - volume)),
+             ouvert: volume >= requis };
+  }
+
   boutiqueRachat(addr, itemId, qteStr) {
     const p = this._p(addr);
     const o = boutique.item(itemId);
@@ -6375,6 +6413,14 @@ class Game {
     const qte = Math.max(1, Math.floor(Number(qteStr) || 1));
     const ai = (p.objets || {})[o.id] || 0;
     if (ai < qte) throw new Error(qte > 1 ? `you only own ${ai} of these` : 'you do not own this item');
+
+    /* La porte. Le message porte LE CHIFFRE QUI MANQUE : « il faut jouer plus »
+       ne dit pas quoi faire, « il te reste 34 000 » si. */
+    const v = this.rachatVerrou(addr);
+    if (!v.ouvert) {
+      throw new Error(`play ${v.reste.toLocaleString('en-US')} more volume to unlock instant sell` +
+                      ` (${v.volume.toLocaleString('en-US')} / ${v.requis.toLocaleString('en-US')})`);
+    }
 
     const unite = this.prixRachatDe(o.id);
     if (!(unite > 0)) throw new Error('this item cannot be sold back');

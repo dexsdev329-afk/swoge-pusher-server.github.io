@@ -1241,6 +1241,28 @@ module.exports = {
      et l'offre ne fait que diminuer. Les deux se defendent ; ce qui ne se
      defend pas, c'est d'annoncer l'un et de faire l'autre. */
   RACHAT_RECYCLE: env('RACHAT_RECYCLE', '1') !== '0',
+  /*
+   * ---- LE VERROU DU RACHAT : DU VOLUME JOUE, PAS UN DEPOT ----
+   *
+   * Le rachat paie des jetons contre un objet. Sans condition, il ouvre la
+   * seule vraie ferme du site — pas le marche, pas les quetes : LE COFFRE
+   * GRATUIT. Une adresse jetable le prend chaque jour et le revend. A
+   * l'esperance du coffre de bois, cela fait 764 jetons par adresse et par
+   * jour, sans qu'un jeton soit jamais entre. Mille adresses, et c'est trois
+   * quarts de million par jour d'emission pure.
+   *
+   * Pourquoi le VOLUME et pas le depot :
+   *
+   *   un depot se retire. Deposer, debloquer, retirer, recommencer sur
+   *   l'adresse suivante — la porte s'ouvre avec de l'argent qu'on recupere,
+   *   donc elle ne coute rien. Le volume, lui, EST DEPENSE : le jouer, c'est
+   *   avoir laisse l'avantage de la maison sur la table. On ne peut pas le
+   *   reprendre, et c'est exactement ce qu'on demande a une porte anti-ferme.
+   *
+   * Le credit de bienvenue ne permet pas d'y arriver : il faudrait le
+   * multiplier par cent contre un avantage maison, ce qui ne se produit pas.
+   */
+  RACHAT_VOLUME_MIN: parseFloat(env('RACHAT_VOLUME_MIN', '100000')),
   MARCHE_FRAIS_BPS: parseInt(env('MARCHE_FRAIS_BPS', '500'), 10),   // 5 % au vendeur
   MARCHE_PRIX_MIN: parseFloat(env('MARCHE_PRIX_MIN', '100')),
   MARCHE_PRIX_MAX: parseFloat(env('MARCHE_PRIX_MAX', '50000000')),

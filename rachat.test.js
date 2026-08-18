@@ -38,10 +38,14 @@ const sol = (g, a) => Number(g.balanceStr(a));
 const A = '0x' + 'a1'.repeat(20);
 const C = '0x' + 'c2'.repeat(20);
 
+/* Un joueur qui a franchi la porte du rachat : du volume DEJA JOUE. Les tests
+   de la mecanique ne sont pas les tests de la porte — celle-ci a sa propre
+   section, et elle verifie qu'on ne passe pas sans. */
 const pose = (g, addr, credit) => {
   const p = g._p(addr);
   p.balance = WEI(credit === undefined ? 10000000 : credit);
   p.hasDeposited = true;
+  p.wagered = WEI(cfg.RACHAT_VOLUME_MIN);
   p.objets = p.objets || {};
   return p;
 };
@@ -301,7 +305,125 @@ const pose = (g, addr, credit) => {
   eq(g4._p(C).xpFamilles[fam.cle], undefined, 'une famille incomplete reste a gagner');
 }
 
-// ================== 12. LA BOUCLE COMPLETE, EN VRAI
+// ================== 12. LA PORTE : IL FAUT AVOIR JOUE
+{
+  const g = new Game();
+  const p = g._p(A);
+  p.balance = WEI(1000); p.hasDeposited = true; p.objets = {};
+  const o = B.itemsDeSaison(1)[0];
+  p.objets[o.id] = 1;
+  const req = cfg.RACHAT_VOLUME_MIN;
+
+  /* A zero de volume : refuse, et le message porte le chiffre qui manque. */
+  eq(g.rachatVerrou(A).ouvert, false, 'un compte qui n a rien joue est ferme');
+  eq(g.rachatVerrou(A).reste, req, 'il lui manque tout');
+  assert.throws(() => g.boutiqueRachat(A, o.id, 1), /unlock instant sell/, 'le rachat est refuse');
+  n++;
+  eq(sol(g, A), 1000, 'et rien n a bouge sur le solde');
+  eq(p.objets[o.id], 1, 'ni sur l inventaire');
+
+  /* Juste en dessous : toujours ferme. Une porte qui s'ouvre a 99 % n'est pas
+     une porte, c'est un arrondi. */
+  p.wagered = WEI(req - 1);
+  eq(g.rachatVerrou(A).ouvert, false, 'a un jeton pres, c est encore ferme');
+  eq(g.rachatVerrou(A).reste, 1, 'et il reste exactement un jeton a jouer');
+  assert.throws(() => g.boutiqueRachat(A, o.id, 1), /unlock instant sell/, 'toujours refuse');
+  n++;
+
+  /* Pile dessus : ouvert. */
+  p.wagered = WEI(req);
+  eq(g.rachatVerrou(A).ouvert, true, 'au seuil exact, c est ouvert');
+  eq(g.rachatVerrou(A).reste, 0, 'plus rien a jouer');
+  const r = g.boutiqueRachat(A, o.id, 1);
+  ok(r.total > 0, 'et le rachat passe');
+}
+
+// ================== 13. LE DEPOT NE SUFFIT PAS
+{
+  /*
+   * C'est le coeur du choix. Un depot SE RETIRE : deposer, debloquer, retirer,
+   * recommencer sur l'adresse suivante — la porte s'ouvrirait avec de l'argent
+   * qu'on recupere, donc gratuitement. Le volume est depense, lui.
+   *
+   * Le test le dit dans les deux sens, parce que c'est la confusion qu'on
+   * cherche a rendre impossible.
+   */
+  const g = new Game();
+  const p = g._p(A);
+  p.balance = WEI(10000000); p.hasDeposited = true;
+  p.deposited = WEI(10000000);            // il a depose GROS
+  p.wagered = WEI(0);                     // et n'a rien joue
+  p.objets = {};
+  const o = B.itemsDeSaison(1)[0];
+  p.objets[o.id] = 1;
+  assert.throws(() => g.boutiqueRachat(A, o.id, 1), /unlock instant sell/,
+                'un gros depot sans une seule mise n ouvre rien');
+  n++;
+
+  /* L'inverse : rien depose, mais du volume joue. La porte s'ouvre — c'est
+     bien le volume qu'on demande, pas la fortune. */
+  const g2 = new Game();
+  const q = g2._p(C);
+  q.balance = WEI(1000); q.hasDeposited = false;
+  q.wagered = WEI(cfg.RACHAT_VOLUME_MIN);
+  q.objets = { [o.id]: 1 };
+  const r = g2.boutiqueRachat(C, o.id, 1);
+  ok(r.total > 0, 'du volume joue ouvre la porte, meme sans depot enregistre');
+}
+
+// ================== 14. LA FERME DU COFFRE GRATUIT EST FERMEE
+{
+  /*
+   * LE test. C'est la seule ferme que le rachat ouvrait, et c'est pour elle
+   * que la porte existe : une adresse jetable prend le coffre offert chaque
+   * jour et le revend. Sans porte, mille adresses emettent trois quarts de
+   * million de jetons par jour sans qu'un seul soit entre.
+   *
+   * On la joue en vrai : cent adresses neuves, chacune prend son coffre
+   * gratuit et essaie de revendre tout ce qu'elle en tire.
+   */
+  const g = new Game();
+  const N = 60;                            // sous le contingent du jour, voir plus bas
+  let emis = 0, refuses = 0, servis = 0;
+  const adr = (i) => '0x' + (i + 16).toString(16).padStart(2, '0').repeat(20);
+  for (let i = 0; i < N; i++) {
+    const a = adr(i);
+    g.grantWelcome(a);
+    const p = g._p(a);
+    const avant = sol(g, a);
+    g.ouvreCoffreOffert(a);               // gratuit, sans depot, sans volume
+    servis++;
+    for (const id of Object.keys(p.objets || {})) {
+      try { g.boutiqueRachat(a, Number(id), p.objets[id]); }
+      catch (e) { refuses++; }
+    }
+    emis += sol(g, a) - avant;
+  }
+  eq(servis, N, 'les soixante adresses ont bien recu leur coffre');
+  eq(refuses, N, 'et les soixante tentatives de revente sont refusees');
+  eq(Math.round(emis), 0, 'zero jeton emis par la ferme');
+  ok(Object.keys(g._p(adr(0)).objets).length > 0,
+     'ils ont bien recu un objet — c est la REVENTE qui est fermee, pas le cadeau');
+
+  /* ---- LE DEUXIEME FREIN, QUI EXISTAIT DEJA ----
+   *
+   * Le contingent quotidien de coffres offerts. Meme si la porte du rachat
+   * sautait un jour, la ferme buterait sur lui : elle ne peut pas servir plus
+   * de COFFRES_GRATUITS_JOUR adresses par jour. Les deux freins sont
+   * INDEPENDANTS — c'est ce qui fait qu'une erreur sur l'un ne suffit pas.
+   * Trouve en ecrivant ce test : la ferme a cent adresses butait dessus avant
+   * meme d'atteindre le rachat. */
+  let sert = 0, bute = 0;
+  for (let i = N; i < N + 60; i++) {
+    try { g.grantWelcome(adr(i)); g.ouvreCoffreOffert(adr(i)); sert++; }
+    catch (e) { bute++; }
+  }
+  eq(sert + N, cfg.COFFRES_GRATUITS_JOUR,
+     `le contingent du jour s arrete a ${cfg.COFFRES_GRATUITS_JOUR}`);
+  ok(bute > 0, 'et les suivantes butent dessus');
+}
+
+// ================== 15. LA BOUCLE COMPLETE, EN VRAI
 {
   /*
    * Le test qui vaut les onze autres : on achete des coffres pour de vrai, on
