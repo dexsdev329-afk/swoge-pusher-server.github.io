@@ -61,7 +61,7 @@ function page() {
 </div>
 <div class="sub">
   <b>Owed breakdown:</b> 💵 Balances <b id="ob">—</b> · 🔒 Staked <b id="os">—</b> · 📈 Yield <b id="oy">—</b> · 🎰 Jackpot reserve <b id="oj">—</b><br>
-  <span id="maisonL" style="display:none">🏛️ <b>Held by house accounts</b> <b id="omz">—</b> <em id="omn"></em> — excluded from what is owed, and those accounts cannot withdraw.<br></span>
+  <span id="maisonL" style="display:none">🏛️ <b>Held by house accounts</b> <b id="omz">—</b> <em id="omn"></em> — <b>counted inside what is owed</b> (these accounts can withdraw). Surplus if you treat it as yours: <b id="omsur">—</b><br></span>
   👥 Players <b id="pl">—</b> · updated <span id="upd">—</span> · <a href="#" id="refresh">refresh</a>
 </div>
 
@@ -602,8 +602,16 @@ async function load(){
       $("#maisonL").style.display="";
       $("#omz").textContent=fmt(String(A.maison));
       $("#omn").textContent="("+A.maisonN+" account"+(A.maisonN>1?"s":"")+")";
+      $("#omsur").textContent=A.surplusAvecMaison==null?"—":fmt(String(A.surplusAvecMaison));
     } else if($("#maisonL")) $("#maisonL").style.display="none";
-    $("#auCout").textContent=fmt(String(A.rendementJour||0));
+    /* LE COUT QUI COMPTE est celui qui part vraiment. Le rendement que la
+       maison se verse a elle-meme tourne en rond : l'afficher comme un cout
+       donnait une autonomie de quelques jours alors que rien ne quitte le
+       coffre. On montre le reel, et le brut entre parentheses s'ils different. */
+    var coutReel = (A.rendementJoueurs!==undefined) ? A.rendementJoueurs : A.rendementJour;
+    $("#auCout").textContent = fmt(String(coutReel||0)) +
+      ((A.rendementJour && Math.abs(A.rendementJour-coutReel) > 0.01)
+        ? "  (" + fmt(String(A.rendementJour)) + " incl. house staking)" : "");
     $("#auRev").textContent=fmt(String(A.revenuJour||0));
     var ac=$("#auCard"), an=$("#auNote"), al=$("#auLigne");
     ac.classList.remove("danger","attention");

@@ -42,11 +42,14 @@ const J = '0x' + '11'.repeat(20);
   eq(g.estMaison(null), false, 'ni rien du tout');
 }
 
-// ================== 2. RIEN N'EST INVENTE : LE COMPTE EST CONSERVE
+// ================== 2. ILS RESTENT UNE DETTE, ET C'EST LE POINT
 /*
- * La propriete qui compte. Le surplus doit monter EXACTEMENT de ce que tient
- * la maison — ni plus, ni moins. Plus, et on affiche de l'argent qui n'existe
- * pas ; moins, et le reglage ne sert a rien.
+ * Ma premiere version les sortait du « du », ce qui faisait monter le surplus
+ * d'autant. C'etait juste A UNE CONDITION : qu'ils ne puissent plus retirer.
+ * Ils le peuvent — decision du proprietaire — donc les sortir aurait annonce
+ * quatre-vingt-un millions de surplus qui peuvent partir a tout moment.
+ *
+ * Un chiffre de solvabilite se calcule au pire. Jamais au mieux.
  */
 {
   const g = new Game();
@@ -57,34 +60,22 @@ const J = '0x' + '11'.repeat(20);
   const duApres = f(g.totalOwed());
   const b = g.owedBreakdown();
 
-  eq(duApres, duAvant, 'ajouter neuf millions sur un compte maison ne change PAS ce qu on doit');
-  eq(f(b.maison), 9000000, 'et ces neuf millions sont comptes a part, en clair');
+  pres(duApres - duAvant, 9000000, 0.01,
+       'les jetons d un compte maison RESTENT une dette — il peut les retirer');
+  eq(f(b.maison), 9000000, 'et ils sont comptes a part, pour l affichage');
   eq(b.maisonN, 1, 'un seul compte concerne');
-
-  /* Le meme montant sur un joueur ordinaire, lui, EST une dette. */
-  const g2 = new Game();
-  g2._p(J).balance = WEI(1000000);
-  const d0 = f(g2.totalOwed());
-  g2._p(AUTRE).balance = WEI(9000000);
-  pres(f(g2.totalOwed()) - d0, 9000000, 0.01,
-       'la meme somme sur un compte ordinaire monte bien la dette de neuf millions');
 }
 
-// ================== 3. L'AUTRE MOITIE : IL NE RETIRE PAS
+// ================== 3. IL RETIRE COMME TOUT LE MONDE
 {
   const g = new Game();
   const p = g._p(MAISON);
   p.balance = WEI(9000000); p.hasDeposited = true;
-  assert.throws(() => g.requestWithdraw(MAISON, '50000'), /do not withdraw/); n++;
-  eq(f(p.balance), 9000000, 'et le refus ne prend rien au passage');
-
-  /* Un joueur ordinaire, lui, retire normalement : le verrou vise ce compte
-     et pas le mecanisme. */
-  const q = g._p(J);
-  q.balance = WEI(9000000); q.hasDeposited = true;
-  const avant = f(q.balance);
-  g.requestWithdraw(J, '50000');
-  pres(avant - f(q.balance), 50000, 0.01, 'un joueur ordinaire retire toujours');
+  const avant = f(p.balance);
+  g.requestWithdraw(MAISON, '50000');
+  pres(avant - f(p.balance), 50000, 0.01,
+       'un compte maison retire normalement — c est la raison pour laquelle ses ' +
+       'jetons doivent rester dans le du');
 }
 
 // ================== 4. IL JOUE COMME TOUT LE MONDE
@@ -116,25 +107,29 @@ const J = '0x' + '11'.repeat(20);
   g._p(J).balance = WEI(1000000);
   g._p(MAISON).balance = WEI(9000000);
   const a = g.autonomie(WEI(50000000));
-  eq(a.maisonN, 1, 'l administration recoit le nombre de comptes exclus');
-  eq(a.maison, 9000000, 'et le montant exclu, pour l afficher a cote du surplus');
-  ok(a.surplus > 0, `le surplus est calcule (${a.surplus})`);
+  eq(a.maisonN, 1, 'l administration recoit le nombre de comptes maison');
+  eq(a.maison, 9000000, 'et ce qu ils tiennent, pour l afficher a cote du surplus');
+  ok(a.surplus > 0, `le surplus au pire est calcule (${a.surplus})`);
+  pres(a.surplusAvecMaison - a.surplus, 9000000, 0.01,
+       'le second chiffre — surplus en considerant la maison comme acquise — ' +
+       'vaut exactement le premier plus ce qu elle tient. Deux nombres, jamais un seul qui melange');
 
   /* Sans compte maison, la ligne n'a rien a dire. */
   const g2 = new Game();
   g2._p(J).balance = WEI(1000000);
   eq(g2.autonomie(WEI(50000000)).maisonN, 0, 'sans compte maison, rien a signaler');
-  eq(g2.autonomie(WEI(50000000)).maison, 0, 'et rien d exclu');
+  eq(g2.autonomie(WEI(50000000)).maison, 0, 'et rien a compter a part');
 
-  /* LE SURPLUS MONTE EXACTEMENT DE CE QUI EST EXCLU. */
+  /* LE SURPLUS D'ALARME NE BOUGE PAS D'UN JETON. C'est la propriete qui
+     protege : quoi qu'on configure, le chiffre qui declenche l'alerte reste
+     calcule au pire. */
   const pot = WEI(50000000);
   const g3 = new Game(); g3._p(J).balance = WEI(1000000);
-  const sansMaison = g3.autonomie(pot).surplus;
+  const sansConfig = g3.autonomie(pot).surplus;
   const g4 = new Game(); g4._p(J).balance = WEI(1000000);
   g4._p(MAISON).balance = WEI(9000000);
-  pres(g4.autonomie(pot).surplus, sansMaison, 0.01,
-       'poser neuf millions sur un compte maison ne CREE pas de surplus — ' +
-       'il ne fait que ne pas en retirer');
+  pres(g4.autonomie(pot).surplus, sansConfig - 9000000, 0.01,
+       'le surplus d alarme BAISSE de neuf millions, comme pour n importe quel joueur');
 }
 
 // ================== 6. UNE CONFIGURATION SALE NE CASSE RIEN
@@ -144,9 +139,33 @@ const J = '0x' + '11'.repeat(20);
   const g = new Game();
   eq(g.estMaison(MAISON), false, 'liste vide : plus aucun compte maison');
   g._p(MAISON).balance = WEI(9000000);
-  pres(f(g.totalOwed()), 9000000, 1100000,
-       'et ses jetons redeviennent une dette — le reglage est reversible');
+  eq(g.autonomie(WEI(50000000)).maisonN, 0, 'et plus rien n est signale a part');
   cfg.COMPTES_MAISON = garde;
+}
+
+// ================== 7. LE RENDEMENT QUE LA MAISON SE VERSE N'EST PAS UN DRAIN
+/*
+ * Le staking de la maison tourne en rond : elle se paie a elle-meme. Le
+ * compter comme un cout quotidien donnait une autonomie de quelques jours
+ * alors que RIEN ne quitte le coffre.
+ */
+{
+  const g = new Game();
+  const p = g._p(MAISON);
+  p.stakes = [{ a: WEI(81390000), s: Date.now() - 86400000, u: Date.now() - 86400000 }];
+  const q = g._p(J);
+  q.stakes = [{ a: WEI(1000000), s: Date.now() - 86400000, u: Date.now() - 86400000 }];
+
+  const a = g.autonomie(WEI(200000000));
+  pres(a.maisonStaked, 81390000, 1, 'le panneau sait combien la maison a mise au staking');
+  ok(a.rendementJour > a.rendementJoueurs,
+     `le cout brut (${Math.round(a.rendementJour)}/j) depasse le cout reel (${Math.round(a.rendementJoueurs)}/j)`);
+  const attendu = 1000000 * (cfg.STAKE_APR_BPS / 10000) / 365;
+  pres(a.rendementJoueurs, attendu, 1,
+       'le cout reel ne porte que sur le staking DES JOUEURS');
+  ok(a.rendementJoueurs < a.rendementJour / 10,
+     'ici la maison porte plus de neuf dixiemes du staking : sans cette separation, ' +
+     'le panneau annoncait un drain quatre-vingts fois trop gros');
 }
 
 console.log(`maison.test.js : ${n} verifications OK`);

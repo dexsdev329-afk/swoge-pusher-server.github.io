@@ -2409,14 +2409,24 @@ class Game {
   autonomie(pot) {
     const f = (w) => Number(ethers.utils.formatUnits(w, cfg.DECIMALS));
     const staked = f(this.totalStaked());
-    /* Ce que le staking coute chaque jour, que quelqu'un joue ou non. */
+    const bMaison = this.owedBreakdown();
+    const stakedMaison = f(bMaison.maisonStaked || BN(0));
+    /* Ce que le staking coute chaque jour, que quelqu'un joue ou non.
+       LE RENDEMENT QUE LA MAISON SE VERSE A ELLE-MEME N'EST PAS UN DRAIN : il
+       sort d'une poche pour entrer dans l'autre. Le compter ferait afficher un
+       cout quotidien enorme et une autonomie de quelques jours alors que rien
+       ne quitte le coffre. On donne donc les deux — le cout brut, et celui qui
+       concerne vraiment des joueurs. */
     const rendementJour = staked * (cfg.STAKE_APR_BPS / 10000) / 365;
+    const rendementJoueurs = Math.max(0, staked - stakedMaison) * (cfg.STAKE_APR_BPS / 10000) / 365;
     /* Ce que la maison encaisse chaque jour, mesure sur le mois en cours et
        non estime : c'est le seul des deux chiffres qui puisse surprendre. */
     const c = this.comptes();
     const jours = Math.max(1, new Date().getUTCDate());
     const revenuJour = (c.revenu || 0) / jours;
-    const drainJour = rendementJour - revenuJour;
+    /* Le drain se mesure sur le rendement QUI PART VRAIMENT — celui des
+       joueurs. C'est lui qui vide le coffre ; l'autre tourne en rond. */
+    const drainJour = rendementJoueurs - revenuJour;
 
     const b = this.owedBreakdown();
     const du = f(b.balances.add(b.staked).add(b.pending).add(b.jackpot));
@@ -2427,8 +2437,17 @@ class Game {
          cette ligne le surplus monterait de neuf millions sans explication —
          et un chiffre de solvabilite qui bouge sans raison lisible ne sert
          plus a rien. */
-      maison: f(b.maison), maisonN: b.maisonN,
+      /* Ce que la maison tient elle-meme. Il est COMPRIS dans le « du » —
+         ces comptes peuvent retirer — et affiche a part pour que le
+         proprietaire lise sa vraie position sans que le chiffre de
+         solvabilite devienne faux. */
+      maison: f(b.maison), maisonN: b.maisonN, maisonStaked: stakedMaison,
+      /* Le surplus si l'on considere les comptes maison comme deja acquis.
+         C'est un CONFORT DE LECTURE, jamais le chiffre d'alarme : celui-la
+         reste `surplus`, calcule au pire. */
+      surplusAvecMaison: surplus === null ? null : Number((surplus + f(b.maison)).toFixed(6)),
       staked, rendementJour: Number(rendementJour.toFixed(6)),
+      rendementJoueurs: Number(rendementJoueurs.toFixed(6)),
       revenuJour: Number(revenuJour.toFixed(6)),
       drainJour: Number(drainJour.toFixed(6)),
       surplus: surplus === null ? null : Number(surplus.toFixed(6)),
@@ -2460,16 +2479,32 @@ class Game {
     /* CE QUE TIENNENT LES COMPTES DE LA MAISON est compte a part, jamais
        retire en silence. Le surplus est un chiffre de solvabilite : s'il monte
        de neuf millions, il faut pouvoir dire d'ou ils viennent. */
-    let maison = BN(0), maisonN = 0;
+    let maison = BN(0), maisonN = 0, maisonStaked = BN(0);
     for (const [addr, p] of this.players) {
-      const tout = p.balance.add(this._stakedTotal(p))
-        .add(p.stakeAccrued).add(this._pendingAll(p));
-      if (this.estMaison(addr)) { maison = maison.add(tout); maisonN++; continue; }
+      const st = this._stakedTotal(p);
+      const pe = p.stakeAccrued.add(this._pendingAll(p));
+      /* ---- LES COMPTES DE LA MAISON RESTENT DANS LE « DU » ----
+       *
+       * Ma premiere version les en sortait, ce qui faisait monter le surplus
+       * d'autant. C'etait juste A UNE CONDITION : que ces comptes ne puissent
+       * plus retirer. Ils le peuvent — decision du proprietaire — donc leurs
+       * jetons sont une creance comme une autre, et les sortir du « du »
+       * aurait annonce 81 millions de surplus qui peuvent partir a tout
+       * moment. Un chiffre de solvabilite se calcule au pire, jamais au mieux.
+       *
+       * Ils sont comptes A PART pour l'affichage : le proprietaire doit
+       * pouvoir lire « le coffre couvre tout, et 81 M de ce qu'il couvre sont
+       * a moi » — deux nombres, pas un seul qui melange les deux. */
+      if (this.estMaison(addr)) {
+        maison = maison.add(p.balance).add(st).add(pe);
+        maisonStaked = maisonStaked.add(st);
+        maisonN++;
+      }
       balances = balances.add(p.balance);
-      staked = staked.add(this._stakedTotal(p));
-      pending = pending.add(p.stakeAccrued).add(this._pendingAll(p));
+      staked = staked.add(st);
+      pending = pending.add(pe);
     }
-    return { balances, staked, pending, maison, maisonN,
+    return { balances, staked, pending, maison, maisonN, maisonStaked,
              jackpot: this.jackpotPot.add(this.boulierPot),
              jackpotPusher: this.jackpotPot, jackpotBoulier: this.boulierPot };
   }
@@ -5987,15 +6022,6 @@ class Game {
 
   /** Request a withdrawal of `amountStr` $SWOGE. Returns cumulativeAuthorized (wei) or throws. */
   requestWithdraw(addr, amountStr) {
-    /* ---- UN COMPTE DE LA MAISON NE RETIRE PAS ----
-     *
-     * Ses jetons ont ete sortis du « du » pour que le surplus soit juste. Les
-     * laisser sortir par ici les compterait deux fois : le proprietaire retire
-     * le surplus, le compte retire ses jetons, et le coffre est court de la
-     * meme somme. Le refus n'est pas une precaution, c'est l'autre moitie du
-     * reglage. */
-    if (this.estMaison(addr))
-      throw new Error('house accounts do not withdraw — use the owner withdrawal');
     const p = this._p(addr);
     const amount = WEI(amountStr);
     /* Le minimum baisse avec le palier : c'est un confort qui ne coute rien

@@ -1127,25 +1127,34 @@ module.exports = {
    * on ne teste pas une salle sans y jouer — mais leurs jetons ne sont PAS une
    * dette envers un joueur : ils sont deja a la maison.
    *
-   * ---- POURQUOI CE REGLAGE EST DANGEREUX SI ON S'ARRETE LA ----
+   * ---- CE QU'ILS NE FONT PAS : sortir du « du » ----
    *
-   * Le surplus retirable, c'est « ce que contient le coffre moins ce qu'on
-   * doit ». Sortir un compte du « doit » fait donc monter le surplus d'autant.
-   * Si ce meme compte peut ENCORE RETIRER, ses jetons sont comptes deux
-   * fois : une fois comme surplus que le proprietaire peut sortir, une fois
-   * comme creance que le compte peut sortir. Le coffre se retrouve court, et
-   * on ne s'en apercoit qu'au moment ou un vrai joueur ne peut plus retirer.
+   * Ma premiere version les en sortait, ce qui faisait monter le surplus
+   * retirable d'autant. C'etait juste A UNE CONDITION : que ces comptes ne
+   * puissent plus retirer. Ils le peuvent — c'est la decision du
+   * proprietaire — donc leurs jetons restent une creance comme une autre.
    *
-   * C'est pourquoi le retrait est REFUSE a ces comptes. Les deux vont
-   * ensemble ; l'un sans l'autre est un trou. Un compte de la maison qui veut
-   * sortir de l'argent passe par le retrait du proprietaire, qui est fait
-   * pour ca et qui, lui, se lit dans le surplus.
+   * Les sortir aurait annonce quatre-vingt-un millions de surplus qui peuvent
+   * partir a tout moment : le proprietaire retire le surplus, le compte
+   * retire ses jetons, et le coffre est court de la meme somme. On ne s'en
+   * apercoit qu'au moment ou un vrai joueur ne peut plus retirer.
    *
-   * ---- et le panneau le DIT ----
+   * UN CHIFFRE DE SOLVABILITE SE CALCULE AU PIRE. Jamais au mieux.
    *
-   * Le surplus n'est jamais gonfle en silence : l'administration affiche « X
-   * exclu, N compte(s) maison ». Un chiffre de solvabilite qui change sans
-   * qu'on sache pourquoi ne vaut rien.
+   * ---- ce qu'ils font : deux nombres au lieu d'un ----
+   *
+   * L'administration affiche « Held by house accounts : X », a cote du
+   * surplus, avec le total « si vous les considerez comme acquis ». Le
+   * proprietaire lit sa vraie position sans que le chiffre d'alarme devienne
+   * faux. Deux nombres, jamais un seul qui melange les deux.
+   *
+   * ---- et le rendement qu'elle se verse a elle-meme ----
+   *
+   * Un compte maison qui met au staking se paie avec l'argent de la maison :
+   * ca tourne en rond. Compte comme un cout quotidien, ce rendement faisait
+   * afficher un drain quatre-vingts fois trop gros et une autonomie de
+   * quelques jours alors que RIEN ne quitte le coffre. Le drain ne porte donc
+   * que sur le staking des joueurs.
    */
   COMPTES_MAISON: (env('COMPTES_MAISON', '') || '')
     .split(',').map((x) => x.trim().toLowerCase()).filter((x) => /^0x[0-9a-f]{40}$/.test(x)),
@@ -1184,6 +1193,54 @@ module.exports = {
    * possede » et paierait sa prime. L'XP recompense le jeu ; le marche
    * recompense l'argent. Les deux ne se melangent pas.
    */
+  /* =====================================================================
+   * LE RACHAT IMMEDIAT — la maison reprend l'objet, tout de suite
+   * =====================================================================
+   *
+   * La vitrine demande un acheteur. Celui qui veut se debarrasser d'un commun
+   * maintenant n'a pas envie d'attendre trois jours qu'on veuille bien le lui
+   * prendre. La maison le reprend donc a un prix FIXE, connu d'avance, et
+   * nettement plus bas que ce qu'un joueur en donnerait.
+   *
+   * ---- le prix est DERIVE de la rarete, pas ecrit ----
+   *
+   * poids = 1000 / plafond, le meme bareme que le classement des
+   * collectionneurs : le commun vaut 1, le mythique vaut 100. Ecrire cinq
+   * nombres a la main les rendrait faux au premier changement de plafond, et
+   * faux EN SILENCE. Ici ils suivent.
+   *
+   *   Common 500 · Rare 1 250 · Epic 3 330 · Legendary 12 500 · Mythic 50 000
+   *
+   * ---- LE SEUL DANGER, ET IL EST CHIFFRE ----
+   *
+   * Si un coffre rapportait au rachat plus qu'il ne coute, on aurait une
+   * machine a jetons : acheter, revendre, recommencer. Mesure sur les trois
+   * coffres de la saison 1 :
+   *
+   *   Wooden  4 000 -> 764 de rachat espere   19,1 %
+   *   Golden 40 000 -> 1 616                   4,0 %
+   *   Mythic 400 000 -> 4 649                  1,2 %
+   *
+   * Le test refait ce calcul a chaque execution, sur TOUS les coffres de
+   * TOUTES les saisons. Une base de 1 000 tiendrait aussi (38 % au pire), mais
+   * a ce niveau plus personne ne passerait par la vitrine : le rachat doit
+   * rester une sortie de secours, pas le prix du marche.
+   *
+   * ---- CE QUE LE RACHAT FAIT A L'EDITION ----
+   *
+   * L'objet RETOURNE AU STOCK : le registre d'emission redescend, et quelqu'un
+   * pourra le retirer d'un coffre a nouveau. Le plafond cesse donc de dire
+   * « dix seront tirees en tout » pour dire « dix existent a la fois ».
+   *
+   * Ce n'est PAS un detail de formulation : c'est la promesse affichee sous la
+   * planche. Elle doit changer avec ce reglage — voir RACHAT_RECYCLE.
+   */
+  RACHAT_BASE: parseFloat(env('RACHAT_BASE', '500')),
+  /* A 1 : l'objet rachete retourne au stock et pourra ressortir d'un coffre.
+     A 0 : il est detruit — le plafond redevient « X seront tirees en tout »,
+     et l'offre ne fait que diminuer. Les deux se defendent ; ce qui ne se
+     defend pas, c'est d'annoncer l'un et de faire l'autre. */
+  RACHAT_RECYCLE: env('RACHAT_RECYCLE', '1') !== '0',
   MARCHE_FRAIS_BPS: parseInt(env('MARCHE_FRAIS_BPS', '500'), 10),   // 5 % au vendeur
   MARCHE_PRIX_MIN: parseFloat(env('MARCHE_PRIX_MIN', '100')),
   MARCHE_PRIX_MAX: parseFloat(env('MARCHE_PRIX_MAX', '50000000')),
