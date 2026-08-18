@@ -34,6 +34,7 @@ const paris = require('./paris');
    fait rien, le calendrier reste celui du depot. */
 const parisImport = require('./paris_import');
 const boutique = require('./boutique');
+const skins = require('./skins');
 let calendrierAuto = null;          // les minuteries de l alimentation
 const journal = require('./journal');
 const adminlog = require('./adminlog');
@@ -319,10 +320,13 @@ function notifyCoffre(addr, g) {
    * sombre du site — le JPEG n'a pas de transparence, et sans fond choisi le
    * vide devient noir pur et les fruits sombres disparaissent dedans. */
   /* Le mot et l'embl\u00E8me suivent la SAISON. \u00AB MYTHIC FRUIT \u00BB sous le dessin
-     d'une hache aurait fait douter de tout le reste du message. */
+     d'une hache aurait fait douter de tout le reste du message. Une table
+     plutot qu'un test binaire : la quatrieme saison n'a pas ajoute de
+     branche, juste une ligne. */
   const sai = boutique.saison(g.saison) || boutique.SAISONS[0];
   const mot = String(sai.sujet || 'item').toUpperCase();
-  const embleme = sai.n === 1 ? '\uD83C\uDF4E' : '\u2694\uFE0F';
+  const EMBLEME_SUJET = { fruit: '\uD83C\uDF4E', weapon: '\u2694\uFE0F', armor: '\uD83D\uDEE1\uFE0F', ring: '\uD83D\uDC8D' };
+  const embleme = EMBLEME_SUJET[sai.sujet] || '\u2728';
   tg.notifyPhoto(base ? base + '/img/shop/tg/' + g.item.cle + '.jpg' : null,
     `${embleme} <b>${escHtml(rar.nom.toUpperCase())} ${mot}</b>\n` +
     `${escHtml(game._p(addr).name)} pulled <b>${escHtml(g.item.nom)}</b> ` +
@@ -332,6 +336,25 @@ function notifyCoffre(addr, g) {
     `${escHtml(fam.nom)} collection: <b>${eus}/5</b>` +
     (eus === 5 ? ' \u2705 complete' : '') +
     (base ? `\n<a href="${base}/games.html">Open a chest \u2197</a>` : ''));
+}
+
+/* ---- UN SKIN VIENT D'ETRE ACHETE ----
+ *
+ * Rien a voir avec les saisons \u2014 donc rien a voir avec `notifyCoffre` \u2014
+ * mais c'est le meme achat aux yeux du canal : de l'argent depense contre un
+ * objet, avec une image. Le dessin part depuis `img/skins/tg/`, converti a
+ * part des objets de boutique parce que les deux dossiers n'ont jamais
+ * besoin d'etre synchronises entre eux. */
+function notifySkinBuy(addr, r) {
+  const s = skins.skin(r.id);
+  if (!s) return;
+  const base = siteBase();
+  tg.notifyPhoto(base ? base + '/img/skins/tg/skin_' + s.id + '.jpg' : null,
+    `\ud83c\udfad <b>NEW SKIN</b>\n` +
+    `${escHtml(game._p(addr).name)} bought <b>${escHtml(s.nom)}</b> ` +
+    `for <b>${fmtAmt(String(r.prix))} $SWOGE</b>\n\n` +
+    `${'\u2b50'.repeat(s.puissance)}${'\u2606'.repeat(6 - s.puissance)}` +
+    (base ? `\n<a href="${base}/games.html">Open the shop \u2197</a>` : ''));
 }
 
 /* ------------------------------------------------ un pari vient d'etre pose
@@ -2764,7 +2787,7 @@ wss.on('connection', (ws) => {
         let r = null, err = null;
         try { r = game.acheteSkin(ws.addr, m.id); }
         catch (e) { err = e.message; }
-        if (!err) persistSoon();
+        if (!err) { persistSoon(); notifySkinBuy(ws.addr, r); }
         return send(ws, { type: 'skins', ...game.skinsEtat(ws.addr),
                           balance: game.balanceStr(ws.addr), error: err || undefined,
                           achete: err ? undefined : r.id });

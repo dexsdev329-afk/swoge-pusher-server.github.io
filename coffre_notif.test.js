@@ -151,6 +151,48 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
   console.log('  format     :', webp === photos.length ? 'WEBP (refuse par sendPhoto)' : 'autre');
   ok(true, `${webp} photo(s) sur ${photos.length} sont en .webp`);
 
+  // ---- 4. UN SKIN ACHETE PART AUSSI EN ANNONCE, AVEC SON IMAGE
+  //
+  // C'etait le trou : l'achat d'un skin ne passait par AUCUN chemin de
+  // notification, ni texte ni photo. Meme methode que pour les coffres —
+  // on regarde ce qui part vraiment, pas ce que le code a l'air de faire.
+  recuTg.length = 0;
+  p.balance = ethers.utils.parseUnits('1000000000', 18);
+  c.ws.send(JSON.stringify({ type: 'skinBuy', id: 'brett' }));
+  await attendre(600);
+
+  const skinPhotos = recuTg.filter((x) => x.route === 'sendPhoto');
+  ok(skinPhotos.length > 0, `l achat d un skin a declenche ${skinPhotos.length} annonce(s) photo`);
+  const skinEx = skinPhotos[skinPhotos.length - 1];
+  console.log('  photo skin :', skinEx && skinEx.photo);
+  console.log('  legende    :', String(skinEx && skinEx.caption || '').split('\n')[0]);
+  ok(/skin_brett\.jpg$/.test((skinEx && skinEx.photo) || ''), 'l image pointe sur le skin achete, en JPEG');
+  ok(/NEW SKIN/.test((skinEx && skinEx.caption) || ''), 'la legende dit que c est un skin');
+  ok(/Brett/.test((skinEx && skinEx.caption) || ''), 'et nomme le bon skin');
+
+  // ---- 5. L'EMBLEME SUIT LA SAISON, MEME POUR L'ARMURE ET LES BAGUES
+  //
+  // Season 3 et 4 sont fermees par defaut (course de la saison 1 pas
+  // terminee) : on force les trois lignes, exactement comme boutique.test.js
+  // le fait, pour ouvrir la boutique entiere le temps du test.
+  moteur.boutiqueLignes = [
+    { addr: '0x' + '11'.repeat(20), nom: 'x', famille: 'chance', rang: 1, prix: 1, t: Date.now() },
+    { addr: '0x' + '22'.repeat(20), nom: 'y', famille: 'or', rang: 2, prix: 1, t: Date.now() },
+    { addr: '0x' + '33'.repeat(20), nom: 'z', famille: 'eclair', rang: 3, prix: 1, t: Date.now() },
+  ];
+  recuTg.length = 0;
+  for (let i = 0; i < 20; i++) {
+    p.balance = ethers.utils.parseUnits('1000000000', 18);
+    c.ws.send(JSON.stringify({ type: 'shopOpen', chest: 'armures_mythe' }));
+    await attendre(60);
+  }
+  await attendre(1500);
+  const armurePhotos = recuTg.filter((x) => x.route === 'sendPhoto');
+  ok(armurePhotos.length > 0, `${armurePhotos.length} annonce(s) photo pour l armure`);
+  const armureEx = armurePhotos[0];
+  ok(/ARMOR/.test((armureEx && armureEx.caption) || ''), 'la legende annonce une armure, pas un fruit');
+  ok(/🛡️/.test((armureEx && armureEx.caption) || ''), 'et porte l embleme bouclier, pas celui des armes');
+
   c.ws.close(); faux.close();
   console.log(`coffre_notif.test.js : ${n} verifications OK`);
   process.exit(0);
