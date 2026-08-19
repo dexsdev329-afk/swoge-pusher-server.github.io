@@ -98,6 +98,48 @@ function niveauDeXp(xp) {
   return Math.max(0, Math.min(NIVEAU_MAX, n));
 }
 
+/**
+ * ==================== LA FAME ====================
+ *
+ * Deux taux, comme dans RotMG : genereux jusqu'au plafond de niveau, deux
+ * fois plus lent apres. La cassure tombe exactement sur le plafond, ce qui
+ * fait de « monter niveau 20 » un premier palier lisible, et de tout ce qui
+ * suit un long entretien.
+ *
+ * ---- ce qu'on garde de RotMG, et ce qu'on adapte ----
+ *
+ * On garde les DEUX TAUX tels quels (900 puis 2000 XP par point). On
+ * n'adapte pas le SEUIL : le leur vaut 18 050 XP, le notre 40 000 — c'est
+ * notre propre courbe de niveaux, et la recopier aurait place la cassure au
+ * milieu de nulle part. Consequence assumee : atteindre le niveau 20 rend
+ * ~44 points chez nous contre ~20 chez eux. La Fame est une monnaie neuve,
+ * sans economie existante a respecter, donc son abondance absolue importe
+ * moins que sa FORME — un palier franc, puis un ralentissement net.
+ *
+ * ---- pourquoi la Fame n'est pas STOCKEE sur le personnage ----
+ *
+ * Elle se deduit de son XP, qui se deduit lui-meme de son volume mise. La
+ * garder a cote serait un troisieme chiffre a tenir d'accord avec les deux
+ * autres — et le jour ou ils divergeraient, c'est la Fame qui aurait tort
+ * sans que rien ne le dise. Seul le TOTAL DU COMPTE est stocke, parce que
+ * lui ne se deduit de rien : il est la somme de ce que les morts
+ * successives ont verse.
+ */
+const XP_PAR_FAME = 900;          // jusqu'au plafond de niveau
+const XP_PAR_FAME_APRES = 2000;   // au-dela
+
+function fameDeXp(xp) {
+  const x = Math.max(0, Number(xp) || 0);
+  const plafond = xpPour(NIVEAU_MAX);
+  if (x <= plafond) return Math.floor(x / XP_PAR_FAME);
+  /* La partie sous le plafond est comptee ENTIEREMENT au premier taux, puis
+     le surplus au second. Repartir de zero au-dela ferait chuter la Fame au
+     moment precis ou l'on atteint le plafond — on serait puni d'avoir
+     progresse. */
+  return Math.floor(plafond / XP_PAR_FAME)
+       + Math.floor((x - plafond) / XP_PAR_FAME_APRES);
+}
+
 /*
  * ---- LA STAT AU NIVEAU N ----
  *
@@ -213,5 +255,6 @@ function bonusDe(rarete, stat) {
 module.exports = {
   STATS, BASE, FAMILLE_STAT, BONUS_RARETE, JAUGES,
   NIVEAU_MAX, NIVEAU_BASE, NIVEAU_PUISSANCE, XP_BASE, XP_PUISSANCE,
-  volumePour, xpPour, xpDuVolume, niveauDeXp, statAuNiveau, bonusDe,
+  XP_PAR_FAME, XP_PAR_FAME_APRES,
+  volumePour, xpPour, xpDuVolume, niveauDeXp, statAuNiveau, bonusDe, fameDeXp,
 };

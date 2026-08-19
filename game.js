@@ -272,6 +272,12 @@ class Game {
         bj: p.bj || null, vm: p.volcanoMeter || 0,
         ob: p.objets || {},
         sk: p.skins || undefined, ska: p.skinActif || undefined,
+        /* La Fame du COMPTE part au fichier, contrairement a celle des
+           personnages : celle-la se deduit de leur volume, celle-ci ne se
+           deduit de rien — elle est la somme de ce que les morts passees ont
+           verse, et rien au monde ne permettrait de la retrouver si on ne
+           l'ecrivait pas. */
+        fm: p.fame || undefined,
         /* Le volume par skin part en chaine wei, comme p.wagered lui-meme —
            meme raison : un BigNumber ne traverse pas JSON.stringify tout
            seul. */
@@ -470,6 +476,7 @@ class Game {
                         ar: c.ar || null, ba: c.ba || null }; return o; }, {})
           : {},
         skinActif: d.ska || null,
+        fame: Number(d.fm) || 0,
         bonusBloque: ethers.BigNumber.from(d.bb || '0'),
         bonusCible: d.bc2 ? ethers.BigNumber.from(d.bc2) : null,
         moisCle: d.mk || null, moisMise: Number(d.mm || 0),
@@ -4963,6 +4970,17 @@ class Game {
     return (p.persos && p.persos[id]) || { w: BN(0), ef: null, ea: null, ar: null, ba: null };
   }
 
+  /** Le volume mise d'un personnage, en unites lisibles. Volume -> XP -> Fame
+      est une chaine que DEUX endroits parcourent : la fiche qui l'affiche, et
+      la mort qui la verse. L'ecrire deux fois, c'est se garantir qu'un jour
+      le chiffre montre au joueur ne sera plus celui qu'on lui donne. */
+  _volumeDe(c) {
+    return Number(ethers.utils.formatUnits((c && c.w) || BN(0), cfg.DECIMALS));
+  }
+  _fameDe(c) {
+    return personnages.fameDeXp(personnages.xpDuVolume(this._volumeDe(c)));
+  }
+
   /**
    * L'etat complet d'UN skin, pret a peindre : son niveau, son XP, ses huit
    * stats (base + equipement), et ce qui est actuellement equipe.
@@ -4976,7 +4994,7 @@ class Game {
     const base = personnages.BASE[skinId];
     if (!base) return null;
     const c = this._persoDe(p, skinId);
-    const volume = Number(ethers.utils.formatUnits(c.w || BN(0), cfg.DECIMALS));
+    const volume = this._volumeDe(c);
     const xp = personnages.xpDuVolume(volume);
     const niveau = personnages.niveauDeXp(xp);
     const xpNiveau = personnages.xpPour(niveau);
@@ -5021,6 +5039,12 @@ class Game {
       volume: Math.round(volume),
       stats, base,
       equipFruit: bFruit, equipArme: bArme, equipArmure: bArmure, equipBague: bBague,
+      /* La Fame que ce personnage a accumulee — elle ne compte pour rien tant
+         qu'il vit. `fameCompte` est celle qui est deja acquise, versee par les
+         morts precedentes : les deux ensemble disent « ce que tu as » et « ce
+         que tu risques ». */
+      fame: this._fameDe(c),
+      fameCompte: p.fame || 0,
     };
   }
 
@@ -5094,7 +5118,16 @@ class Game {
     const c = p.persos[skinId];
     /* Un personnage jamais joue n'a pas de fiche : il n'a donc rien porte,
        rien a perdre, et rien a remettre a zero. */
-    if (!c) return { skin: skinId, perdus: [], niveau: 0 };
+    if (!c) return { skin: skinId, perdus: [], niveau: 0, fameGagnee: 0, fameTotale: p.fame || 0 };
+
+    /* ---- LA FAME SE TOUCHE EN MOURANT ----
+     *
+     * C'est le seul moment ou elle sort du personnage. Tant qu'il vit, elle
+     * est un score en suspens ; sa mort la verse au compte, definitivement.
+     * On la calcule AVANT de remettre le volume a zero — apres, l'XP dont
+     * elle se deduit n'existe plus, et on verserait zero. */
+    const fameGagnee = this._fameDe(c);
+    p.fame = (p.fame || 0) + fameGagnee;
 
     const CHAMPS = ['ef', 'ea', 'ar', 'ba'];
     const perdus = [];
@@ -5114,7 +5147,7 @@ class Game {
        laisserait les deux en desaccord, et le prochain calcul ressusciterait
        le niveau perdu. */
     c.w = BN(0);
-    return { skin: skinId, perdus, niveau: 0 };
+    return { skin: skinId, perdus, niveau: 0, fameGagnee, fameTotale: p.fame };
   }
 
   /**

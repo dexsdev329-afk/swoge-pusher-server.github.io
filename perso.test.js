@@ -410,4 +410,86 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
   ok(/do not own this skin/.test(err || ''), 'on ne peut pas faire mourir un skin qu on ne possede pas');
 }
 
+// ================== 19. LA FAME : ELLE NE SE TOUCHE QU'EN MOURANT
+//
+// Deux taux, cassure au plafond de niveau, et un seul moment ou elle passe
+// du personnage au compte. Le piege qu'on cherche en priorite : que la Fame
+// AFFICHEE sur la fiche ne soit pas celle qui est VERSEE a la mort — deux
+// calculs qui divergent, et le joueur recoit autre chose que ce qu'il voyait.
+{
+  const plafond = P.xpPour(P.NIVEAU_MAX);
+
+  // ---- la courbe elle-meme
+  eq(P.fameDeXp(0), 0, 'aucune XP, aucune Fame');
+  eq(P.fameDeXp(P.XP_PAR_FAME - 1), 0, 'juste sous le premier point, toujours zero');
+  eq(P.fameDeXp(P.XP_PAR_FAME), 1, 'le premier point tombe au premier palier');
+  eq(P.fameDeXp(plafond), Math.floor(plafond / P.XP_PAR_FAME),
+     'au plafond, tout a ete compte au premier taux');
+  /* LA CASSURE NE DOIT PAS FAIRE CHUTER LA FAME. Repartir de zero au-dela
+     punirait d'avoir progresse — c'est l'erreur classique d'un bareme a
+     deux taux, et elle ne se voit qu'au passage exact du seuil. */
+  ok(P.fameDeXp(plafond + 1) >= P.fameDeXp(plafond),
+     'franchir le plafond ne fait JAMAIS reculer la Fame');
+  eq(P.fameDeXp(plafond + P.XP_PAR_FAME_APRES), P.fameDeXp(plafond) + 1,
+     'au-dela, il faut le second taux pour gagner un point');
+  ok(P.XP_PAR_FAME_APRES > P.XP_PAR_FAME,
+     'et ce second taux est bien plus lent que le premier');
+  /* Monotone : plus d'XP ne doit jamais rendre moins de Fame, nulle part. */
+  let precedent = -1, monotone = true;
+  for (let x = 0; x < plafond * 3; x += 617) {
+    const f = P.fameDeXp(x);
+    if (f < precedent) monotone = false;
+    precedent = f;
+  }
+  ok(monotone, 'la Fame ne recule sur aucun palier de la courbe');
+
+  // ---- du personnage au compte
+  const g = new Game();
+  const p = pose(g, A);
+  p.skins = { pepe: true };
+  p.skinActif = 'pepe';
+  mise(g, p, P.volumePour(15));
+
+  const avant = g.personnageEtat(A, 'pepe');
+  ok(avant.fame > 0, `le personnage vivant a accumule de la Fame (${avant.fame})`);
+  eq(avant.fameCompte, 0, 'mais le compte, lui, n en a encore aucune');
+
+  const r = g.meurt(A, 'pepe');
+  eq(r.fameGagnee, avant.fame,
+     'la Fame VERSEE est exactement celle qui etait AFFICHEE sur la fiche');
+  eq(r.fameTotale, avant.fame, 'et elle atterrit au total du compte');
+  eq(p.fame, avant.fame, 'qui est bien stocke sur la fiche du joueur');
+
+  const apres = g.personnageEtat(A, 'pepe');
+  eq(apres.fame, 0, 'le personnage repart sans Fame');
+  eq(apres.fameCompte, avant.fame, 'pendant que le compte garde la sienne');
+
+  // ---- elle S'ACCUMULE : deux vies, deux versements
+  mise(g, p, P.volumePour(10));
+  const deuxieme = g.personnageEtat(A, 'pepe').fame;
+  ok(deuxieme > 0, 'la nouvelle vie regagne de la Fame');
+  const r2 = g.meurt(A, 'pepe');
+  eq(r2.fameTotale, avant.fame + deuxieme,
+     'la seconde mort AJOUTE au total, elle ne le remplace pas');
+
+  // ---- mourir sans rien n'invente pas de Fame
+  const g2 = new Game();
+  const p2 = pose(g2, A);
+  p2.skins = { pepe: true };
+  eq(g2.meurt(A, 'pepe').fameGagnee, 0, 'un personnage jamais joue ne verse rien');
+  eq(p2.fame || 0, 0, 'et le compte reste a zero');
+
+  /* ---- ELLE SURVIT AU REDEMARRAGE ----
+   *
+   * La Fame du compte ne se deduit de RIEN : c'est la somme de morts
+   * passees. Si elle ne part pas au fichier, elle s'evapore au premier
+   * redemarrage — et personne ne s'en apercevrait avant d'avoir perdu des
+   * mois de jeu. C'est le seul chiffre de ce systeme qui doit etre ecrit. */
+  const g3 = new Game();
+  g3.hydrate(JSON.parse(JSON.stringify(g.serialize())));
+  eq(g3._p(A).fame, p.fame, 'le total de Fame du compte traverse le redemarrage');
+  eq(g3.personnageEtat(A, 'pepe').fameCompte, p.fame,
+     'et la fiche le rend toujours apres relecture');
+}
+
 console.log(`perso.test.js : ${n} verifications OK`);
