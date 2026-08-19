@@ -166,95 +166,136 @@ function statAuNiveau(cap, niveau) {
  * n'est pas un hasard, c'est ce qui garantit qu'aucune stat ne reste hors de
  * portee de tout equipement possible.
  */
-const FAMILLE_STAT = {
-  // saison 1 — fruits
-  chance: 'dex',   // la chance recompense le reflexe
-  or: 'hp',        // la richesse, la vitalite
-  eclair: 'spd',   // l'eclair va vite
-  oeil: 'wis',     // voir, c'est savoir
-  garde: 'def',    // garder, c'est defendre
-  chaos: 'att',    // le chaos frappe fort
-  // saison 2 — armes
-  lame: 'dex',
-  hache: 'att',
-  lance: 'def',
-  arc: 'spd',
-  marteau: 'vit',
-  dagues: 'mp',
-  // saison 3 — armure : une piece, une stat, comme un fruit ou une arme
-  casque: 'wis',        // voir venir
-  plastron: 'hp',       // le coeur protege
-  epaulieres: 'vit',    // porter le poids
-  gantelets: 'att',     // frapper plus fort
-  jambieres: 'spd',     // courir plus loin
-  bouclier: 'def',      // encaisser
-  // saison 4 — bagues
-  grenat: 'vit',        // la pierre rouge, la vitalite
-  saphir: 'mp',         // la pierre bleue, l'esprit
-  emeraude: 'dex',      // la pierre verte, l'agilite
-  topaze: 'att',        // la pierre doree, la force
-  amethyste: 'wis',     // la pierre violette, la clairvoyance
-  onyx: 'def',          // la pierre noire, la garde
+/**
+ * ============ CE QU'UN OBJET APPORTE : PROFIL x BUDGET ============
+ *
+ * Un objet ne donne plus UNE stat mais un PROFIL — une repartition. C'est ce
+ * qui fait qu'une hache et un arc, de meme rarete, ne se jouent pas pareil :
+ * la hache met tout sur l'attaque, l'arc etale sur la dexterite, la vitesse
+ * et un peu d'attaque.
+ *
+ * ---- pourquoi un profil et pas des chiffres tapes objet par objet ----
+ *
+ * Il y a 120 objets. Les ecrire un par un, c'est 120 occasions de se tromper
+ * et aucune garantie que la rarete progresse vraiment. Ici la FAMILLE dit
+ * COMMENT depenser, la RARETE dit COMBIEN — et « legendaire > epique » est
+ * vrai par construction, pour les 120, sans avoir a le verifier a la main.
+ *
+ * ---- l'unite ----
+ *
+ * 1 point = 1 point d'attribut = 10 points de vie ou de mana. Ce rapport de
+ * dix est celui des anneaux de RotMG (realmeye.com/wiki/rings) et celui de
+ * nos propres bases : une vie se compte en centaines, un attribut en
+ * dizaines.
+ *
+ * ---- les poids ----
+ *
+ * Ils totalisent 1 par famille. Un objet mono-stat concentre tout et frappe
+ * donc plus fort sur sa stat qu'un objet a trois stats — c'est voulu : c'est
+ * le prix de la specialisation, et ca laisse un legendaire specialise battre
+ * un mythique polyvalent sur SA stat.
+ */
+const PROFIL_FAMILLE = {
+  // ---- saison 1 : les fruits (pouvoirs) ----
+  chaos:  { att: 0.70, hp: 0.30 },   // frapper fort, encaisser un peu
+  garde:  { def: 0.60, vit: 0.40 },  // tenir
+  eclair: { spd: 0.60, dex: 0.40 },  // aller vite, tirer vite
+  oeil:   { wis: 0.60, mp: 0.40 },   // voir et soutenir
+  or:     { hp: 1.00 },              // la vie, rien d'autre
+  chance: { dex: 0.60, spd: 0.40 },  // le reflexe
+
+  // ---- saison 2 : les armes ----
+  hache:   { att: 1.00 },                          // tout sur la frappe
+  marteau: { att: 0.60, vit: 0.40 },               // lourd, endurant
+  lame:    { att: 0.55, dex: 0.45 },               // equilibre
+  lance:   { def: 0.60, att: 0.40 },               // tenir a distance
+  arc:     { dex: 0.50, spd: 0.30, att: 0.20 },    // mobile, deux tirs
+  dagues:  { dex: 0.60, mp: 0.40 },                // rapide, magique
+
+  // ---- saison 3 : les armures ----
+  plastron:   { def: 0.55, hp: 0.45 },             // le tank
+  bouclier:   { def: 1.00 },                       // la defense pure
+  gantelets:  { att: 0.60, def: 0.40 },            // frapper en restant couvert
+  jambieres:  { spd: 0.50, def: 0.30, dex: 0.20 }, // l'armure legere
+  epaulieres: { vit: 0.60, hp: 0.40 },             // porter le poids
+  casque:     { wis: 0.40, mp: 0.35, def: 0.25 },  // la robe de mage
+
+  // ---- saison 4 : les bagues ----
+  // Mono-stat, toutes : c'est leur role. On choisit une bague pour combler
+  // exactement le trou de son build, pas pour arrondir trois chiffres.
+  onyx:      { def: 1.00 },
+  saphir:    { mp: 1.00 },
+  grenat:    { vit: 1.00 },
+  topaze:    { att: 1.00 },
+  amethyste: { wis: 1.00 },
+  emeraude:  { dex: 1.00 },
 };
 
 /**
- * ============ LE BONUS D'EQUIPEMENT, A L'ECHELLE DE LA STAT ============
- *
- * ---- ce qui n'allait pas ----
- *
- * Le bonus valait `1000 / plafond` : un seul chiffre par rarete, le meme
- * pour les huit stats. Ca mesurait bien la RARETE, mais ca ignorait
- * l'ECHELLE de ce qu'on augmente. Un mythique donnait +100, ce qui vaut
- * un huitieme de barre de vie (700 points) mais TRIPLE une sagesse de 50.
- * La meme piece etait donc anecdotique sur une jauge et absurde sur un
- * attribut, sans que rien ne le dise.
- *
- * ---- d'ou viennent ces chiffres ----
- *
- * De realmeye.com/wiki/rings, paliers 1 a 5 (Standard, Greater, Superior,
- * Paramount, Exalted) — c'est-a-dire cinq paliers pour nos cinq raretes.
- * RotMG resout exactement le meme probleme avec deux baremes :
- *
- *      palier :  Standard  Greater  Superior  Paramount  Exalted
- *      HP / MP :     +30      +60       +80       +100      +120
- *      attribut :     +3       +6        +7         +8        +9
- *
- * Le rapport est d'environ dix entre les deux, et il n'est pas arbitraire :
- * c'est le rapport entre les echelles: une vie se compte en centaines, un
- * attribut en dizaines. Nos propres bases sont du meme ordre (700-800 de
- * vie, 25-75 d'attribut), donc le bareme se transpose tel quel.
- *
- * ---- ce qui n'est PAS grade ici ----
- *
- * Le genre de l'objet. Une armure legendaire et une bague legendaire
- * donnent le meme +8 sur la meme stat. Dans RotMG une armure lourde pese
- * plus qu'un anneau sur la defense — mais les valeurs exactes des armures
- * ne sont pas extractibles du wiki (rendues en JavaScript), et poser un
- * facteur invente serait exactement l'erreur qu'on vient de corriger. Le
- * jour ou on veut cette nuance, elle s'ajoute ici, avec sa source.
+ * Le budget, par saison et par rarete. Les armes et surtout les armures
+ * pesent plus que les accessoires : ce sont les emplacements principaux, on
+ * en porte un de chaque, et c'est ce qui donne du poids au choix d'une
+ * armure face a une bague.
  */
-const BONUS_RARETE = {
-  commun:     { jauge: 30,  attribut: 3 },
-  rare:       { jauge: 60,  attribut: 6 },
-  epique:     { jauge: 80,  attribut: 7 },
-  legendaire: { jauge: 100, attribut: 8 },
-  mythique:   { jauge: 120, attribut: 9 },
+const BUDGET_SAISON = {
+  1: { commun: 3, rare: 6,  epique: 9,  legendaire: 12, mythique: 16 },  // fruits
+  2: { commun: 5, rare: 10, epique: 15, legendaire: 21, mythique: 28 },  // armes
+  3: { commun: 7, rare: 14, epique: 21, legendaire: 29, mythique: 38 },  // armures
+  4: { commun: 3, rare: 6,  epique: 9,  legendaire: 12, mythique: 16 },  // bagues
 };
+
+/** Les degats d'une arme, par rarete. Ils ne dependent pas de la famille :
+    la famille decide de la portee et du nombre de tirs (cote page), la
+    rarete decide de ce que chaque tir enleve. */
+const DEGATS_ARME = {
+  commun: [20, 30], rare: [30, 45], epique: [45, 65],
+  legendaire: [65, 90], mythique: [90, 120],
+};
+
 /* Les deux stats qui se comptent en centaines. Toutes les autres sont des
    attributs — ecrire la liste courte plutot que la longue evite d'oublier
    une stat ajoutee plus tard et de lui donner par defaut le bareme des
    jauges, qui serait dix fois trop fort. */
 const JAUGES = ['hp', 'mp'];
 
-function bonusDe(rarete, stat) {
-  const b = BONUS_RARETE[rarete];
-  if (!b) return 0;
-  return JAUGES.indexOf(stat) >= 0 ? b.jauge : b.attribut;
+/**
+ * Ce qu'un objet apporte, stat par stat. Rend un objet `{stat: valeur}` —
+ * jamais un seul chiffre, parce qu'un objet peut toucher trois stats.
+ */
+function bonusesDe(rarete, famille, saison) {
+  const profil = PROFIL_FAMILLE[famille];
+  const table = BUDGET_SAISON[Number(saison)];
+  if (!profil || !table) return {};
+  const budget = table[rarete];
+  if (!budget) return {};
+  const out = {};
+  for (const stat of Object.keys(profil)) {
+    const pts = Math.round(budget * profil[stat]);
+    if (pts <= 0) continue;
+    out[stat] = JAUGES.indexOf(stat) >= 0 ? pts * 10 : pts;
+  }
+  return out;
 }
 
+/** La stat PRINCIPALE d'une famille — celle qui pese le plus dans son
+    profil. Elle sert a nommer l'objet d'un mot (« +ATT ») la ou la place
+    manque. Deduite du profil, jamais listee a cote : deux tables a tenir
+    d'accord finiraient par se contredire. */
+function statPrincipale(famille) {
+  const profil = PROFIL_FAMILLE[famille];
+  if (!profil) return null;
+  return Object.keys(profil).reduce((a, b) => (profil[b] > profil[a] ? b : a));
+}
+
+const FAMILLE_STAT = Object.keys(PROFIL_FAMILLE).reduce((o, f) => {
+  o[f] = statPrincipale(f); return o;
+}, {});
+
+
 module.exports = {
-  STATS, BASE, FAMILLE_STAT, BONUS_RARETE, JAUGES,
+  STATS, BASE, FAMILLE_STAT, PROFIL_FAMILLE, BUDGET_SAISON, DEGATS_ARME, JAUGES,
   NIVEAU_MAX, NIVEAU_BASE, NIVEAU_PUISSANCE, XP_BASE, XP_PUISSANCE,
   XP_PAR_FAME, XP_PAR_FAME_APRES,
-  volumePour, xpPour, xpDuVolume, niveauDeXp, statAuNiveau, bonusDe, fameDeXp,
+  volumePour, xpPour, xpDuVolume, niveauDeXp, statAuNiveau, fameDeXp,
+  bonusesDe, statPrincipale,
 };

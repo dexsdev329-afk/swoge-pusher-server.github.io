@@ -148,7 +148,13 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
   eq(g.personnageEtat(A, 'ogswoge').equipFruit, null, 'et ca tient a la relecture');
 }
 
-// ================== 9. LE BONUS NE TOUCHE QUE SA PROPRE STAT
+// ================== 9. LE BONUS TOUCHE EXACTEMENT LES STATS DE SON PROFIL
+//
+// Un objet donne maintenant PLUSIEURS stats. La regle n'est donc plus « une
+// seule bouge » mais « exactement celles du profil bougent, et de la bonne
+// valeur ». C'est plus exigeant : ca attrape a la fois le bonus perdu (une
+// stat du profil qui n'arrive pas jusqu'aux stats finales) et le bonus qui
+// deborde (une stat touchee alors qu'elle n'est pas au profil).
 {
   const g = new Game();
   const p = pose(g, A);
@@ -157,13 +163,22 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
 
   const fruit = B.itemsDeSaison(1).find((o) => o.rarete === 'mythique');
   p.objets[fruit.id] = 1;
-  const stat = P.FAMILLE_STAT[fruit.famille];
+  const attendu = P.bonusesDe(fruit.rarete, fruit.famille, fruit.saison);
+  ok(Object.keys(attendu).length >= 1, 'le fruit a bien un profil a appliquer');
   const apres = g.equipeFruit(A, 'pepe', fruit.id).stats;
 
   P.STATS.forEach((s) => {
-    if (s === stat) ok(apres[s] > avant[s], `${s} (la stat visee) a bien augmente`);
-    else eq(apres[s], avant[s], `${s} n a pas bouge — ce n est pas la stat visee`);
+    const gain = attendu[s] || 0;
+    eq(apres[s] - avant[s], gain,
+       gain ? `${s} monte exactement de ${gain}, comme le profil l annonce`
+            : `${s} ne bouge pas — elle n est pas au profil`);
   });
+
+  /* Et l'objet ANNONCE ce qu'il applique : la fiche d'equipement doit
+     porter le meme profil que celui reellement ajoute aux stats. Sans ca on
+     pourrait afficher « +11 ATT » et en donner 6 sans que rien ne le dise. */
+  eq(JSON.stringify(g.personnageEtat(A, 'pepe').equipFruit.bonus), JSON.stringify(attendu),
+     'la case d equipement annonce exactement ce qui est applique');
 }
 
 // ================== 10. TOUT SURVIT AU REDEMARRAGE
@@ -219,7 +234,8 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
   eq(eq1.fruits[0].id, fruit.id);
   eq(eq1.fruits[0].quantite, 2, 'la quantite possedee est rendue');
   eq(eq1.fruits[0].stat, P.FAMILLE_STAT[fruit.famille], 'la stat visee vient de la meme table que le bonus reel');
-  eq(eq1.fruits[0].bonus, P.bonusDe(fruit.rarete, P.FAMILLE_STAT[fruit.famille]),
+  eq(JSON.stringify(eq1.fruits[0].bonus),
+     JSON.stringify(P.bonusesDe(fruit.rarete, fruit.famille, fruit.saison)),
      'le bonus annonce est celui qui sera vraiment applique');
 }
 
@@ -270,12 +286,18 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
 
   const armure = B.itemsDeSaison(3).find((o) => o.rarete === 'mythique');
   p.objets[armure.id] = 1;
-  const stat = P.FAMILLE_STAT[armure.famille];
+  const attenduArm = P.bonusesDe(armure.rarete, armure.famille, armure.saison);
   const apres = g.equipeArmure(A, 'pepe', armure.id).stats;
 
+  /* Meme regle que pour le fruit : exactement les stats du profil bougent,
+     exactement de la valeur annoncee. Une armure a souvent DEUX ou TROIS
+     stats — verifier « une seule a bouge » laisserait passer un bonus perdu
+     en route. */
   P.STATS.forEach((s) => {
-    if (s === stat) ok(apres[s] > avant[s], `${s} (la stat visee par l armure) a bien augmente`);
-    else eq(apres[s], avant[s], `${s} n a pas bouge — ce n est pas la stat visee`);
+    const gain = attenduArm[s] || 0;
+    eq(apres[s] - avant[s], gain,
+       gain ? `${s} monte de ${gain} grace a l armure`
+            : `${s} ne bouge pas — l armure ne la vise pas`);
   });
 
   // et le desequipement rend le slot vide sans toucher aux trois autres

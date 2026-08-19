@@ -5004,22 +5004,28 @@ class Game {
     const xpNiveau = personnages.xpPour(niveau);
     const xpProchain = niveau >= personnages.NIVEAU_MAX ? null : personnages.xpPour(niveau + 1);
 
-    /* Le bonus d'un objet equipe : sa rarete pese sur SA stat, celle de sa
-       famille. Un objet qui n'existe plus (retire du catalogue, ce qui
-       n'arrive jamais aujourd'hui mais ne doit pas casser demain) ne casse
-       pas la fiche, il ne donne juste plus rien. */
+    /* Ce qu'un objet equipe apporte : un PROFIL, plusieurs stats a la fois.
+       `bonus` est donc un objet {stat: valeur}, pas un chiffre — une hache
+       ne donne que de l'attaque, un casque en donne trois. `stat` reste la
+       stat principale, pour les endroits ou la place manque.
+       Un objet qui n'existe plus ne casse pas la fiche, il ne donne rien. */
     const bonusDe = (itemId) => {
       const o = itemId ? boutique.item(itemId) : null;
       if (!o) return null;
-      const stat = personnages.FAMILLE_STAT[o.famille];
-      if (!stat) return null;
-      const val = personnages.bonusDe(o.rarete, stat);
+      const bonus = personnages.bonusesDe(o.rarete, o.famille, o.saison);
+      if (!Object.keys(bonus).length) return null;
       /* La couleur suit ici : la page dessine la case d'equipement dans la
          MEME couleur que la carte du catalogue, sans avoir a recharger le
          catalogue juste pour ca. */
       const r = boutique.rarete(o.rarete);
-      return { item: o.id, nom: o.nom, cle: o.cle, rarete: o.rarete,
-               couleur: r ? r.couleur : '#8DA0C4', stat, bonus: val };
+      const ligne = { item: o.id, nom: o.nom, cle: o.cle, rarete: o.rarete,
+                      couleur: r ? r.couleur : '#8DA0C4',
+                      stat: personnages.FAMILLE_STAT[o.famille] || null, bonus };
+      /* Les degats ne concernent que les armes : les poser sur une bague
+         laisserait croire qu'elle frappe. */
+      const d = personnages.DEGATS_ARME[o.rarete];
+      if (o.saison === 2 && d) ligne.degats = d.slice();
+      return ligne;
     };
     const bFruit = bonusDe(c.ef);
     const bArme = bonusDe(c.ea);
@@ -5027,12 +5033,15 @@ class Game {
     const bBague = bonusDe(c.ba);
 
     const stats = {};
+    const portes = [bFruit, bArme, bArmure, bBague].filter(Boolean);
     personnages.STATS.forEach((s) => {
       let v = personnages.statAuNiveau(base[s], niveau);
-      if (bFruit && bFruit.stat === s) v += bFruit.bonus;
-      if (bArme && bArme.stat === s) v += bArme.bonus;
-      if (bArmure && bArmure.stat === s) v += bArmure.bonus;
-      if (bBague && bBague.stat === s) v += bBague.bonus;
+      /* On additionne ce que CHAQUE piece donne sur CETTE stat. Le test
+         precedent ne regardait que la stat principale : avec des profils a
+         plusieurs stats, tout le reste du bonus aurait ete perdu en
+         silence — l'objet aurait promis trois lignes et n'en aurait rendu
+         qu'une. */
+      for (const p of portes) v += (p.bonus[s] || 0);
       stats[s] = v;
     });
 
@@ -5176,11 +5185,10 @@ class Game {
     const objets = p.objets || {};
     const ligne = (o) => {
       const r = boutique.rarete(o.rarete);
-      const stat = personnages.FAMILLE_STAT[o.famille] || null;
       return { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
                couleur: r ? r.couleur : '#8DA0C4', famille: o.famille, pouvoir: o.pouvoir,
-               stat,
-               bonus: personnages.bonusDe(o.rarete, stat),
+               stat: personnages.FAMILLE_STAT[o.famille] || null,
+               bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
                quantite: objets[o.id] || 0 };
     };
     const possede = (o) => (objets[o.id] || 0) > 0;
@@ -5214,10 +5222,10 @@ class Game {
       const o = boutique.item(Number(id));
       if (!o) return null;
       const r = boutique.rarete(o.rarete);
-      const stat = personnages.FAMILLE_STAT[o.famille] || null;
       return { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
-               couleur: r ? r.couleur : '#8DA0C4', stat,
-               bonus: personnages.bonusDe(o.rarete, stat),
+               couleur: r ? r.couleur : '#8DA0C4',
+               stat: personnages.FAMILLE_STAT[o.famille] || null,
+               bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
                quantite: sac[id] };
     }).filter(Boolean);
   }
