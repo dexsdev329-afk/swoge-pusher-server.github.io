@@ -79,7 +79,10 @@ class Realm {
         id: this._nouvelId(), espece: m.espece, biome: m.biome,
         x: m.x, y: m.y, ancreX: m.x, ancreY: m.y,
         pv: t.pv, pvMax: t.pv, dir: 'down',
-        cible: null, recharge: 0, stase: 0,
+        /* DEUX recharges : le contact et le tir. Une seule ferait qu'un
+           monstre qui vient de decocher ne peut plus frapper de pres, ce qui
+           reviendrait a lui retirer une des deux attaques au hasard. */
+        cible: null, recharge: 0, rechargeT: 0, stase: 0,
         // la direction de flanerie, retiree de temps en temps
         errX: 0, errY: 0, errChrono: 0,
       };
@@ -102,6 +105,13 @@ class Realm {
       mp: Math.max(0, stats.mp | 0), mpMax: Math.max(0, stats.mp | 0),
       att: stats.att | 0, def: stats.def | 0,
       vit: stats.vit | 0, wis: stats.wis | 0,
+      /* ---- LA DEXTERITE ET LA VITESSE SERVENT ENFIN ----
+       * Elles montaient avec les niveaux, se payaient en equipement, et ne
+       * changeaient rien. On les garde ici sous leur forme UTILE : combien de
+       * fois par seconde on tire, et a quelle vitesse on court. */
+      dex: stats.dex | 0, spd: stats.spd | 0,
+      cadence: monde.cadenceDe(stats.dex | 0),
+      vitesse: monde.vitesseDe(stats.spd | 0),
       famille: (fiche && fiche.famille) || 'poing',
       degats: (fiche && fiche.degats) || monde.DEGATS_POING,
       /* Le pouvoir vient du FRUIT, pas de l'arme : `statFruit` est la stat
@@ -115,11 +125,18 @@ class Realm {
          compteur qui decide du doublement de regeneration au repos. */
       repos: 0,
       /* ---- LA PARALYSIE ----
-         `paralyse` : ce qu'il reste a subir. `paraImmun` : le temps pendant
-         lequel un nouveau tir paralysant ne fera que des degats. Les deux
-         vivent ICI et nulle part ailleurs : c'est le serveur qui refuse le
-         deplacement, pas la page qui accepte de ne pas bouger. */
-      paralyse: 0, paraImmun: 0,
+         Ils vivent ICI et nulle part ailleurs : c'est le serveur qui refuse
+         le deplacement, pas la page qui accepte de ne pas bouger. */
+      /* Les trois etats et leurs trois immunites, SEPAREES : sortir d'une
+         paralysie ne doit pas proteger d'une brulure, sinon un seul monstre
+         suffirait a rendre tous les autres inoffensifs et le joueur
+         apprendrait a se faire toucher expres. */
+      paralyse: 0, ralenti: 0, brulure: 0,
+      immun: { paralyse: 0, ralenti: 0, brulure: 0 },
+      /* Le reste de degat de brulure a verser : elle brule par SECONDE, et un
+         pas de cent millisecondes vaut 0,8 point. Sans accumulation, chaque
+         pas arrondirait a zero et la brulure ne ferait jamais rien. */
+      brulReste: 0,
       recharge: 0, xpGagnee: 0, vu: 0,
     };
     this.joueurs.set(addr, j);
@@ -157,7 +174,19 @@ class Realm {
     }
     x = Math.max(0, Math.min(monde.MONDE.w, Number(x) || 0));
     y = Math.max(0, Math.min(monde.MONDE.h, Number(y) || 0));
-    const max = monde.VITESSE_JOUEUR * Math.max(0.05, Number(dt) || 0.15) * MARGE_VITESSE;
+    /* ---- LE RALENTISSEMENT EST APPLIQUE ICI ----
+     * C'est la borne de vitesse du serveur qui le rend REEL : une page qui
+     * accepterait de bouger moins vite se corrigerait en ouvrant la console.
+     * Le facteur multiplie ce que la vitesse autorise, donc un joueur ralenti
+     * qui annonce sa vitesse normale se fait ramener en arriere, exactement
+     * comme un tricheur. */
+    const frein = j.ralenti > 0 ? monde.EFFETS.ralenti.facteur : 1;
+    /* SA vitesse, pas une constante : depuis que la statistique compte, deux
+       personnages n'ont plus le meme plafond. Le repli sur la constante sert
+       au cas — impossible en pratique — d'un joueur entre sans fiche. */
+    const vmax = j.vitesse || monde.VITESSE_JOUEUR;
+    const max = vmax * frein
+              * Math.max(0.05, Number(dt) || 0.15) * MARGE_VITESSE;
     const dx = x - j.x, dy = y - j.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     let honnete = true;
@@ -190,7 +219,13 @@ class Realm {
        changerait aussi la portee couverte et la forme de l'eventail — la
        cadence, elle, ne touche qu'a la vitesse de la main. */
     const facteur = j.rafale > 0 ? monde.POUVOIRS.rafale.facteur : 1;
-    j.recharge = 1 / (a.cadence * facteur);
+    /* ---- LA DEXTERITE MULTIPLIE LA CADENCE ----
+     * L'arme donne le rythme de base, la dexterite l'accelere, la rafale
+     * l'accelere encore. Les trois se multiplient parce qu'ils repondent a
+     * trois questions differentes : quelle arme, quel personnage, quel
+     * moment. */
+    const dext = j.cadence || 1;
+    j.recharge = 1 / (a.cadence * dext * facteur);
     j.repos = 0;
     const ang = Number(angle) || 0;
     const ecart = 0.13;
@@ -327,16 +362,7 @@ class Realm {
       if (j.recharge > 0) j.recharge -= dt;
       if (j.pouvoirRecharge > 0) j.pouvoirRecharge = Math.max(0, j.pouvoirRecharge - dt);
       if (j.rafale > 0) j.rafale = Math.max(0, j.rafale - dt);
-      /* La paralysie s'ecoule, puis l'immunite prend le relais. On pose
-         l'immunite AU MOMENT ou la paralysie tombe, pas au moment ou elle
-         commence : sinon elle courrait pendant la paralysie et ne protegerait
-         presque de rien. */
-      if (j.paralyse > 0) {
-        j.paralyse = Math.max(0, j.paralyse - dt);
-        if (j.paralyse === 0) j.paraImmun = monde.PARALYSIE.immunite;
-      } else if (j.paraImmun > 0) {
-        j.paraImmun = Math.max(0, j.paraImmun - dt);
-      }
+      this._pasEtats(j, dt, ev);
       this._regenere(j, dt, ev);
     }
     /* ---- LES PIERRES VIEILLISSENT AVANT LES MORTS DE CE PAS ----
@@ -401,6 +427,59 @@ class Realm {
     if (bouge && ev && ev.regen) ev.regen.push({ addr: j.addr, pv: j.pv, mp: j.mp });
   }
 
+  /**
+   * Les trois etats du joueur, a chaque pas. Une seule fonction pour les
+   * trois : ils obeissent a la meme regle et la dupliquer trois fois est le
+   * plus sur moyen d'en corriger un et d'oublier les deux autres.
+   *
+   * L'IMMUNITE se pose au moment ou l'etat TOMBE, jamais quand il commence :
+   * sinon elle courrait pendant l'etat lui-meme et ne protegerait presque de
+   * rien.
+   */
+  _pasEtats(j, dt, ev) {
+    for (const cle of Object.keys(monde.EFFETS)) {
+      if (j[cle] > 0) {
+        j[cle] = Math.max(0, j[cle] - dt);
+        if (j[cle] === 0) j.immun[cle] = monde.EFFETS[cle].immunite;
+      } else if (j.immun[cle] > 0) {
+        j.immun[cle] = Math.max(0, j.immun[cle] - dt);
+      }
+    }
+
+    /* ---- LA BRULURE RONGE ----
+     * Elle IGNORE la defense : c'est la seule chose du jeu qu'une armure ne
+     * bloque pas, donc la seule raison de reculer quand on est bien protege.
+     * On accumule en flottant et on ne verse que les points ENTIERS — a huit
+     * points par seconde, un pas de cent millisecondes vaut 0,8, et arrondir
+     * chaque pas donnerait zero pour toujours. */
+    if (j.brulure > 0 && j.pv > 0) {
+      j.brulReste += monde.EFFETS.brulure.parSeconde * dt;
+      const perte = Math.floor(j.brulReste);
+      if (perte > 0) {
+        j.brulReste -= perte;
+        j.pv = Math.max(0, j.pv - perte);
+        j.repos = 0;                       // bruler n'est pas se reposer
+        ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: 'brulure', quoi: 'brulure' });
+        if (j.pv <= 0) this._meurt(j, 'brulure', ev);
+      }
+    } else {
+      j.brulReste = 0;
+    }
+  }
+
+  /**
+   * Appliquer un etat. Rend `true` s'il a PRIS. Le refus n'est pas un echec :
+   * c'est l'immunite qui fait son travail, et c'est elle qui empeche trois
+   * monstres du meme genre de transformer une rencontre en execution.
+   */
+  _poseEtat(j, cle, ev) {
+    const E = monde.EFFETS[cle];
+    if (!E || j.pv <= 0) return false;
+    if (j.immun[cle] > 0 || j[cle] > 0) return false;
+    j[cle] = E.duree;
+    return true;
+  }
+
   _joueurLePlusProche(m) {
     const t = monde.MONSTRES[m.espece];
     let mieux = null, d2mini = t.vue * t.vue;
@@ -417,6 +496,7 @@ class Realm {
       if (m.pv <= 0) continue;
       const t = monde.MONSTRES[m.espece];
       if (m.recharge > 0) m.recharge -= dt;
+      if (m.stase === undefined) m.stase = 0;
 
       /* ---- LA STASE ----
        * Un monstre fige ne bouge pas, ne frappe pas, ne tire pas — et reste
@@ -436,12 +516,52 @@ class Realm {
       if (cible) {
         const dx = cible.x - m.x, dy = cible.y - m.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
-        if (t.tir) {
-          /* ---- CELUI QUI TIRE ----
-           * Il s'approche jusqu'a sa portee, puis s'arrete et decoche. Il ne
-           * colle PAS au joueur : un archer au corps a corps ne serait qu'un
-           * squelette mal dessine, et toute la difference qu'il apporte
-           * tient dans la distance qu'il garde. */
+
+        /* ---- IL DECOCHE, QU'IL SOIT DE CONTACT OU NON ----
+         * Le tir a sa PROPRE recharge : un monstre qui vient de decocher doit
+         * pouvoir frapper de pres dans la seconde, sinon lui donner une
+         * attaque a distance revenait a lui retirer l'autre au hasard.
+         * Il tire meme colle au joueur : reculer d'un pas ne doit pas suffire
+         * a annuler une attaque qu'on voit venir. */
+        /* `|| 0` et non `m.rechargeT` nu : un monstre construit sans ce champ
+           donnait `undefined <= 0` — c'est-a-dire FAUX — et ne tirait jamais,
+           en silence. Un champ manquant doit valoir « pret », pas « muet a
+           vie ». Le test l'a attrape sur un monstre pose a la main. */
+        if (m.rechargeT > 0) m.rechargeT -= dt;
+        if (t.tir && (m.rechargeT || 0) <= 0 && d <= t.tir.portee) {
+          const cad = t.tir.cadence || t.cadence;
+          m.rechargeT = 1 / cad;
+          const n = t.tir.tirs || 1;
+          const ecart = t.tir.ecart || 0;
+          const ang = Math.atan2(dy, dx);
+          for (let k = 0; k < n; k++) {
+            /* L'eventail est CENTRE sur la cible : avec un nombre impair, le
+               projectile du milieu vise juste, et c'est celui-la qu'on doit
+               esquiver en se decalant. */
+            const a = ang + (n === 1 ? 0 : (k - (n - 1) / 2) * ecart);
+            this.tirsM.push({
+              id: this._nouvelId(), espece: m.espece,
+              x: m.x, y: m.y, a,
+              v: t.tir.vitesse, reste: t.tir.portee / t.tir.vitesse,
+              /* Le tir frappe MOINS FORT que le contact : sans ca, ajouter une
+                 attaque a distance a six creatures aurait double la difficulte
+                 du monde d'un coup. */
+              att: t.tir.att === undefined ? t.att : t.tir.att,
+              sprite: t.tir.sprite,
+              /* L'effet voyage AVEC le projectile : une fleche deja en vol
+                 quand le monstre meurt garde son pouvoir. Tuer le lanceur
+                 n'annule pas un coup deja porte. */
+              effet: t.tir.effet || null,
+            });
+          }
+        }
+
+        if (t.contact === false) {
+          /* ---- CELUI QUI GARDE SES DISTANCES ----
+           * Il s'approche jusqu'a sa portee puis s'arrete. Il ne colle PAS au
+           * joueur : un archer au corps a corps ne serait qu'un squelette mal
+           * dessine, et toute la difference qu'il apporte tient dans l'ecart
+           * qu'il garde. */
           const bonne = t.tir.portee * 0.8;
           if (d > bonne) {
             m.x += (dx / d) * t.vitesse * dt;
@@ -450,19 +570,6 @@ class Realm {
             // trop pres : il recule, sans jamais tourner le dos
             m.x -= (dx / d) * t.vitesse * 0.7 * dt;
             m.y -= (dy / d) * t.vitesse * 0.7 * dt;
-          }
-          if (m.recharge <= 0 && d <= t.tir.portee) {
-            m.recharge = 1 / t.cadence;
-            this.tirsM.push({
-              id: this._nouvelId(), espece: m.espece,
-              x: m.x, y: m.y, a: Math.atan2(dy, dx),
-              v: t.tir.vitesse, reste: t.tir.portee / t.tir.vitesse,
-              att: t.att, sprite: t.tir.sprite,
-              /* L'effet voyage AVEC le projectile : une fleche deja en vol
-                 quand la meduse meurt doit garder son pouvoir, sinon tuer le
-                 lanceur annulerait un coup deja porte. */
-              paralyse: !!t.tir.paralyse,
-            });
           }
         } else {
           /* Au CONTACT on s'arrete : sans ca le monstre pousse le joueur
@@ -475,7 +582,12 @@ class Realm {
             const perte = monde.degatsSubis(t.att, cible.def);
             cible.pv = Math.max(0, cible.pv - perte);
             m.recharge = 1 / t.cadence;
-            ev.degats.push({ addr: cible.addr, perte, pv: cible.pv, par: m.espece });
+            /* `quoi` dit d'ou vient le coup. Depuis que la meme creature
+               frappe ET tire, « par: skeleton » ne suffit plus a distinguer
+               une morsure d'un os lance — ni pour la page, qui ne joue pas le
+               meme son, ni pour un test qui compte les coups au contact. */
+            ev.degats.push({ addr: cible.addr, perte, pv: cible.pv,
+                             par: m.espece, quoi: 'contact' });
             if (cible.pv <= 0) this._meurt(cible, m.espece, ev);
           }
         }
@@ -563,20 +675,21 @@ class Realm {
           if (dx * dx + dy * dy > 34 * 34) continue;
           const perte = monde.degatsSubis(t.att, j.def);
           j.pv = Math.max(0, j.pv - perte);
-          /* ---- LE TIR QUI PARALYSE ----
-           * Il fait ses degats comme les autres, et EN PLUS il cloue au sol —
-           * sauf si le joueur sort a peine d'une paralysie. Dans ce cas il ne
-           * reste que les degats : c'est ce qui empeche trois meduses de
-           * transformer une rencontre en execution.
-           * Un mort ne se fait pas paralyser : ca n'aurait aucun sens, et le
-           * compteur survivrait a la reapparition. */
-          let cloue = false;
-          if (t.paralyse && j.pv > 0 && j.paraImmun <= 0 && j.paralyse <= 0) {
-            j.paralyse = monde.PARALYSIE.duree;
-            cloue = true;
-          }
+          /* ---- LE TIR QUI POSE UN ETAT ----
+           * Il fait ses degats comme les autres, et EN PLUS il cloue, ralentit
+           * ou brule — sauf si le joueur sort a peine du meme etat. Dans ce
+           * cas il ne reste que les degats : c'est ce qui empeche trois
+           * creatures du meme genre de transformer une rencontre en
+           * execution. Un mort ne recoit aucun etat : le compteur survivrait
+           * a la reapparition. */
+          const pose = t.effet ? this._poseEtat(j, t.effet, ev) : false;
           ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: t.espece,
-                           paralyse: cloue ? monde.PARALYSIE.duree : 0 });
+                           quoi: 'tir',
+                           effet: pose ? t.effet : null,
+                           duree: pose ? monde.EFFETS[t.effet].duree : 0,
+                           /* garde pour la page, qui lisait ce nom */
+                           paralyse: (pose && t.effet === 'paralyse')
+                             ? monde.EFFETS.paralyse.duree : 0 });
           if (j.pv <= 0) this._meurt(j, t.espece, ev);
           fini = true;
           break;
@@ -610,6 +723,11 @@ class Realm {
     return {
       moi: { x: Math.round(j.x), y: Math.round(j.y), pv: j.pv, pvMax: j.pvMax,
              mp: j.mp, mpMax: j.mpMax,
+             /* Sa vitesse de deplacement, telle que le SERVEUR la calcule.
+                La page ne la deduit pas de son cote : deux formules a tenir
+                d'accord finiraient par se contredire, et le joueur se ferait
+                ramener en arriere sans comprendre pourquoi. */
+             v: Math.round(j.vitesse),
              /* Le pouvoir et son etat partent a chaque image : le bouton doit
                 pouvoir s'eteindre a la seconde ou le mana manque, pas quand
                 le joueur appuie pour rien. */
@@ -620,6 +738,8 @@ class Realm {
                 d'obeir aux touches a la seconde ou elle commence, sans
                 attendre un message a part. */
              par: Number((j.paralyse || 0).toFixed(2)),
+             ral: Number((j.ralenti || 0).toFixed(2)),
+             feu: Number((j.brulure || 0).toFixed(2)),
              xp: j.xpGagnee },
       monstres: this.monstres.filter(pres).map((m) => {
         const o = { i: m.id, e: m.espece, x: Math.round(m.x), y: Math.round(m.y),
@@ -672,7 +792,7 @@ class Realm {
       this.monstres.push({
         id: this._nouvelId(), espece: m.espece, biome: m.biome,
         x: m.x, y: m.y, ancreX: m.x, ancreY: m.y,
-        pv: t.pv, pvMax: t.pv, dir: 'down', cible: null, recharge: 0, stase: 0,
+        pv: t.pv, pvMax: t.pv, dir: 'down', cible: null, recharge: 0, rechargeT: 0, stase: 0,
         errX: 0, errY: 0, errChrono: 0,
       });
       nes++;

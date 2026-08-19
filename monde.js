@@ -74,14 +74,34 @@ function biomeEn(x, y) {
  * 40 000 XP pour le niveau 20, soit environ 200 squelettes.
  */
 const MONSTRES = {
+  /* ---- TOUT LE MONDE TIRE, ET GARDE SON CONTACT ----
+   *
+   * Les creatures de contact ne tiraient pas, celles qui tiraient ne
+   * touchaient pas. On les contournait donc toujours de la meme facon : on
+   * courait autour des unes et on fuyait les autres.
+   *
+   * Elles font maintenant les DEUX, comme dans RotMG : elles poursuivent,
+   * elles blessent en touchant, et elles decochent quand la distance le
+   * permet. Il n'y a plus d'endroit sur (ni loin ni pres), seulement des
+   * endroits qu'on choisit.
+   *
+   * Le tir frappe MOINS FORT que le contact (`tir.att` est toujours plus bas
+   * que `att`) : sans ca, ajouter une attaque a distance a six creatures
+   * aurait double la difficulte du monde d'un coup. Le tir gene, le contact
+   * punit.
+   */
   lime: {
     cle: 'lime', nom: 'Lime',
     pv: 60, att: 25, def: 0,
     vitesse: 70,          // unites/s — plus lent que le joueur (260)
     rayon: 34,            // pour les collisions et les tirs
     vue: 420,             // au-dela, il ne poursuit pas
-    contact: true,        // il blesse en touchant, il ne tire pas
+    contact: true,        // il poursuit et blesse en touchant
     cadence: 1.1,         // coups par seconde au contact
+    /* Il crache, lentement, sans aucun effet. C'est la creature sur laquelle
+       on apprend a esquiver : lui donner un etat en plus punirait la seule
+       chose qu'il est la pour enseigner. */
+    tir: { portee: 300, vitesse: 240, sprite: 'bave', att: 14, cadence: 0.5 },
     xp: 75,
     biomes: ['terre', 'neige', 'lave'],
   },
@@ -96,6 +116,12 @@ const MONSTRES = {
     pv: 420, att: 95, def: 20,
     vitesse: 88, rayon: 46, vue: 620,
     contact: true, cadence: 0.75,
+    /* La BRULURE. Elle ignore la defense — c'est la seule chose du jeu qu'une
+       armure ne bloque pas, donc la seule raison de reculer quand on est bien
+       protege. Le golem devient ainsi ce qu'il doit etre : pas un mur de
+       points de vie, une raison de ne pas rester. */
+    tir: { portee: 460, vitesse: 320, sprite: 'braise', att: 48, cadence: 0.4,
+           effet: 'brulure' },
     xp: 600,
     biomes: ['lave'],
   },
@@ -107,6 +133,12 @@ const MONSTRES = {
     pv: 260, att: 68, def: 14,
     vitesse: 96, rayon: 40, vue: 580,
     contact: true, cadence: 0.85,
+    /* Le RALENTISSEMENT, et c'est le pire de sa part : il court deja plus
+       vite que les autres. Etre ralenti devant un revenant, c'est le voir
+       arriver en sachant qu'on n'ira pas plus loin. Le contre existe et il
+       est clair — l'abattre AVANT qu'il touche, ou avoir garde son pouvoir. */
+    tir: { portee: 420, vitesse: 300, sprite: 'gel', att: 30, cadence: 0.55,
+           effet: 'ralenti' },
     xp: 300,
     biomes: ['neige', 'lave'],
   },
@@ -126,7 +158,7 @@ const MONSTRES = {
     /* Il tire de loin mais PAS de partout : sa portee est plus courte que sa
        vue, donc il avance encore avant de decocher. Sans ca il canarderait
        depuis le bord de l'ecran, sans qu'on sache d'ou. */
-    tir: { portee: 470, vitesse: 360, sprite: 'maudit' },
+    tir: { portee: 470, vitesse: 360, sprite: 'maudit', cadence: 0.55 },
     xp: 260,
     biomes: ['neige', 'lave'],
   },
@@ -163,7 +195,8 @@ const MONSTRES = {
     vitesse: 60, rayon: 42, vue: 640,
     contact: false,
     cadence: 0.4,
-    tir: { portee: 520, vitesse: 300, sprite: 'maudit', paralyse: true },
+    tir: { portee: 520, vitesse: 300, sprite: 'oeil', att: 34, cadence: 0.4,
+           effet: 'paralyse' },
     xp: 480,
     biomes: ['neige', 'lave'],
   },
@@ -175,6 +208,12 @@ const MONSTRES = {
     vue: 560,
     contact: true,
     cadence: 0.9,
+    /* Sa specialite n'est pas un etat mais une FORME : trois os en eventail.
+       On ne les esquive pas en reculant, seulement en se decalant sur le
+       cote — c'est le seul monstre qui punit la fuite en ligne droite, et ca
+       suffit a le rendre different sans lui donner d'effet. */
+    tir: { portee: 380, vitesse: 340, sprite: 'os', att: 26, cadence: 0.45,
+           tirs: 3, ecart: 0.22 },
     xp: 200,
     biomes: ['neige', 'lave'],
   },
@@ -228,9 +267,49 @@ const ARMES = {
    maigres : de quoi tuer un lime a la longue, pas de quoi jouer sans arme. */
 const DEGATS_POING = [6, 10];
 
-/* La vitesse du joueur, en unites/s. Le client la connait aussi pour se
-   deplacer ; ici elle sert a REFUSER une position impossible — sans quoi une
-   position annoncee par le navigateur permettrait de traverser la carte. */
+/*
+ * ================== CE QUE VALENT LES STATISTIQUES ==================
+ *
+ * Quatre des huit servaient deja : l'attaque multiplie les degats, la defense
+ * les soustrait, la vitalite et la sagesse remplissent les deux barres. Deux
+ * ne servaient a RIEN — la DEXTERITE et la VITESSE etaient affichees dans le
+ * panneau, montaient avec les niveaux, se payaient en equipement, et ne
+ * changeaient strictement rien. C'est corrige ici.
+ *
+ * ---- LA DEXTERITE : LA CADENCE ----
+ *
+ * Meme forme que les degats, et ce n'est pas un hasard : `0.5 + stat/50` est
+ * deja la loi de l'attaque, et deux stats qui font le meme genre de chose
+ * doivent obeir a la meme courbe, sinon personne ne peut comparer une bague
+ * d'attaque a une bague de dexterite. A 0 on tire a moitie vitesse, a 50 au
+ * rythme nominal de l'arme, a 100 au double.
+ *
+ * Le PLAFOND a 2 n'est pas cosmetique : une dague tire deja quatre fois par
+ * seconde, et chaque tir est un message reseau. Au-dela du double, on paie en
+ * trafic une difference que l'oeil ne voit plus.
+ *
+ * ---- LA VITESSE : LE DEPLACEMENT ----
+ *
+ * Elle ne peut PAS suivre la meme loi : 260 n'est pas un bareme par point,
+ * c'est deja la vitesse d'un personnage entier. On garde donc 260 pour andy
+ * (65 de vitesse) et on etale autour — de 202 pour un debutant lourd a 302
+ * pour un coureur equipe. Vingt pour cent de part et d'autre : assez pour
+ * choisir un personnage la-dessus, pas assez pour que le plus lent se fasse
+ * rattraper par un squelette (105) ni que le plus rapide sorte de l'ecran.
+ */
+const CADENCE_MAX = 2;
+function cadenceDe(dex) {
+  return Math.min(CADENCE_MAX, 0.5 + Math.max(0, Number(dex) || 0) / 50);
+}
+
+const VITESSE_BASE = 170, VITESSE_PAR_POINT = 1.4;
+function vitesseDe(spd) {
+  return VITESSE_BASE + Math.max(0, Number(spd) || 0) * VITESSE_PAR_POINT;
+}
+
+/* La vitesse de reference, celle d'un personnage sans statistique de vitesse
+   du tout. Elle sert de repli partout ou l'on ne connait pas encore le
+   joueur — et c'est elle que le client utilise avant sa premiere fiche. */
 const VITESSE_JOUEUR = 260;
 
 /*
@@ -279,25 +358,59 @@ function degatsSubis(attMonstre, defJoueur) {
 const TOMBE = { duree: 60, plafond: 80 };
 
 /*
- * ================== LA PARALYSIE ==================
+ * ================== LES TROIS ETATS ==================
  *
- * Perdre le deplacement, garder le tir. La duree est calee sur ce qu'il faut
- * pour que ce soit une VRAIE peur sans etre une condamnation : deux secondes
- * et demie, c'est le temps qu'un golem de magma met a porter deux coups.
+ * Un monstre peut retirer autre chose que des points de vie. Trois etats,
+ * trois facons de gener, et chacun appartient a une creature :
  *
- * L'IMMUNITE est la piece essentielle, et elle ne vient pas de RotMG — la-bas
- * l'enchainement de paralysies est possible et c'est une cause de mort
- * celebre. Chez nous la mort detruit l'equipement paye en vrai $SWOGE : une
- * mort sans aucune action possible n'est pas une difficulte, c'est un vol.
- * Apres chaque paralysie, un temps ou un nouveau tir paralysant ne fait que
- * des degats. Trois meduses ensemble restent donc dangereuses sans jamais
- * pouvoir clouer quelqu'un au sol indefiniment.
+ *   PARALYSE  on ne bouge plus — la Meduse
+ *   RALENTI   on bouge a moitie vitesse — le Revenant de glace
+ *   BRULURE   on perd de la vie seconde apres seconde — le Golem de magma
  *
- * L'immunite est plus longue que la paralysie : on passe donc toujours plus
- * de temps a pouvoir bouger qu'a ne pas le pouvoir, quel que soit le nombre
- * de meduses. C'est la propriete qu'on veut, et un test la verifie.
+ * ---- CE QUI LES REND JOUABLES PLUTOT QU'INJUSTES ----
+ *
+ * 1. AUCUN N'EMPECHE DE TIRER. On perd les jambes, jamais les bras. Il reste
+ *    toujours une reponse — abattre ce qui approche — au lieu de regarder
+ *    mourir. C'est la difference entre paralyser et etourdir, et on ne fera
+ *    jamais d'etourdissement.
+ *
+ * 2. CHACUN A SON IMMUNITE, ET ELLE EST PLUS LONGUE QUE L'ETAT LUI-MEME
+ *    pour les deux qui retirent le CONTROLE (paralysie, ralentissement) : on
+ *    passe donc toujours plus de temps a se gouverner qu'a le subir, quel que
+ *    soit le nombre de creatures en face. La brulure n'a pas cette contrainte
+ *    parce qu'elle ne prend le controle de rien — elle ne fait que des degats,
+ *    et des degats, c'est le metier des monstres. Ce qu'on borne pour elle,
+ *    c'est ce qu'elle coute par seconde dans le pire cas. Apres un etat, un nouveau
+ *    tir du meme genre ne fait que des degats pendant un temps. Ca ne vient
+ *    pas de RotMG — la-bas l'enchainement est possible et c'est une cause de
+ *    mort celebre. Chez nous la mort detruit l'equipement paye en vrai
+ *    $SWOGE : une mort sans aucune action possible n'est pas une difficulte,
+ *    c'est un vol.
+ *
+ * 3. LES IMMUNITES SONT SEPAREES. Sortir d'une paralysie ne protege pas d'une
+ *    brulure. Sinon un seul monstre suffirait a rendre tous les autres
+ *    inoffensifs, et le joueur apprendrait a se faire toucher expres.
+ *
+ * La brulure IGNORE la defense, et c'est voulu : c'est la seule chose du jeu
+ * qu'une armure ne bloque pas, donc la seule raison de fuir plutot que
+ * d'encaisser. Sans elle, un personnage bien defendu n'a jamais aucune raison
+ * de reculer.
  */
-const PARALYSIE = { duree: 2.5, immunite: 3.5 };
+const EFFETS = {
+  paralyse: { duree: 2.5, immunite: 3.5 },
+  /* Moitie vitesse : en dessous on ne joue plus, au-dessus ca ne se sent pas.
+     Trois secondes, le temps de traverser une clairiere en se sachant en
+     retard. */
+  ralenti:  { duree: 3.0, immunite: 3.5, facteur: 0.5 },
+  /* Huit points par seconde pendant cinq : quarante au total, soit environ
+     six pour cent d'une reserve pleine. Assez pour qu'on y pense, pas assez
+     pour tuer a soi seul — c'est ce qui vient AVEC qui tue. */
+  brulure:  { duree: 5.0, immunite: 3.0, parSeconde: 8 },
+};
+
+/* L'ancien nom, garde parce que trois fichiers le lisent. Ce n'est pas une
+   copie : c'est la meme entree de la meme table. */
+const PARALYSIE = EFFETS.paralyse;
 
 /*
  * ================== LA REGENERATION ==================
@@ -450,8 +563,9 @@ function peuplement(alea) {
 
 module.exports = {
   TUILE, CARTE, MONDE, CENTRE, ANNEAUX, MONSTRES, PEUPLEMENT, PLANCHER,
-  ARMES, DEGATS_POING, VITESSE_JOUEUR,
-  REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, TOMBE,
+  ARMES, DEGATS_POING, VITESSE_JOUEUR, CADENCE_MAX,
+  cadenceDe, vitesseDe,
+  REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   regenParSeconde, pouvoirDeStat,
 };

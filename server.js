@@ -2982,6 +2982,12 @@ wss.on('connection', (ws) => {
                              chiffre en dur cote page finirait par ne plus
                              etre celui que le serveur applique. */
                           paralysie: monde.PARALYSIE,
+                          /* La table complete des etats : la page a besoin du
+                             facteur de ralentissement pour freiner elle-meme,
+                             et des durees pour dessiner ce qui reste. Un
+                             chiffre ecrit cote page finirait par ne plus etre
+                             celui qu'on subit. */
+                          effets: monde.EFFETS,
                           moi: { x: Math.round(j.x), y: Math.round(j.y),
                                  pv: j.pv, pvMax: j.pvMax,
                                  mp: j.mp, mpMax: j.mpMax,
@@ -3801,6 +3807,12 @@ const realmInterval = setInterval(() => {
            apprend qu'elle vient de perdre le deplacement, et perdre le
            controle sans un mot se lit comme une panne. */
         send(ws, { type: 'realmCoup', perte: d.perte, pv: d.pv, par: d.par,
+                   /* `quoi` dit si c'est une morsure, un projectile ou la
+                      brulure : la page ne joue pas le meme son pour les
+                      trois, et une brulure qui grognerait comme une morsure
+                      donnerait l'impression d'etre mordu par du vide. */
+                   quoi: d.quoi || 'contact',
+                   effet: d.effet || null, duree: d.duree || 0,
                    paralyse: d.paralyse || 0 });
       }
     }

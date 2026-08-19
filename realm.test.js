@@ -78,9 +78,58 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
   for (let i = 0; i < 50; i++) if (r.tire(A, 0) === 0) refuses++;
   eq(refuses, 50, 'cinquante demandes immediates ne donnent AUCUN projectile de plus');
 
-  // apres le temps de recharge, un seul nouveau tir
-  r.pas(1 / a.cadence + 0.01);
+  /* Apres le temps de recharge REEL — celui de l'arme divise par la
+     dexterite du personnage, depuis qu'elle compte. Attendre `1/cadence`
+     comme avant reviendrait a supposer une dexterite de 50 chez tout le
+     monde. */
+  const dext = M.cadenceDe(FICHE.stats.dex || 0);
+  /* En PETITS pas : `pas()` borne chaque appel a une demi-seconde — c'est la
+     protection contre un onglet endormi — et une recharge plus longue que ca
+     ne s'ecoule donc pas en une fois. */
+  const attente = 1 / (a.cadence * dext) + 0.02;
+  for (let t = 0; t < attente; t += 0.1) r.pas(0.1);
   eq(r.tire(A, 0), a.tirs, 'une fois recharge, le tir repart');
+
+  /* ---- LA DEXTERITE FAIT TIRER PLUS VITE ----
+     Elle etait affichee, elle montait avec les niveaux, elle se payait en
+     equipement — et elle ne changeait rien. On compte les projectiles de
+     deux personnages sur la meme duree, avec la meme arme. */
+  const compte = (dex) => {
+    const rr = new Realm({ alea: alea(90) });
+    rr.monstres = [];
+    rr.rejoint(B, { ...FICHE, stats: { ...FICHE.stats, dex } });
+    let n = 0;
+    for (let i = 0; i < 60; i++) { n += rr.tire(B, 0); rr.pas(0.05); }
+    return n;
+  };
+  const lent = compte(20), vif = compte(75);
+  ok(vif > lent,
+     `75 de dexterite tire plus que 20 (${vif} projectiles contre ${lent})`);
+
+  /* ---- LA VITESSE FAIT COURIR PLUS VITE ----
+     Meme histoire. On mesure le PLAFOND que le serveur accorde, seul endroit
+     ou le serveur ait son mot a dire sur le deplacement. */
+  {
+    const plafond = (spd) => {
+      const rr = new Realm({ alea: alea(91) }); rr.monstres = [];
+      const jj = rr.rejoint(B, { ...FICHE, stats: { ...FICHE.stats, spd } });
+      const x0 = jj.x;
+      rr.bouge(B, jj.x + 1e6, jj.y, 'right', 'run', 0.1);
+      return jj.x - x0;
+    };
+    const lourd = plafond(23), coureur = plafond(94);
+    ok(coureur > lourd,
+       `94 de vitesse va plus loin que 23 (${coureur.toFixed(0)} contre ${lourd.toFixed(0)} unites)`);
+    ok(Math.abs(coureur / lourd - M.vitesseDe(94) / M.vitesseDe(23)) < 0.02,
+       'et l ecart suit exactement la table des vitesses');
+    /* Le plus lent reste NETTEMENT plus rapide que le plus rapide des
+       monstres : sinon un squelette rattraperait un personnage qui fuit, et
+       fuir cesserait d'etre une option. */
+    const plusRapide = Math.max(...Object.keys(M.MONSTRES).map((k) => M.MONSTRES[k].vitesse));
+    ok(M.vitesseDe(23) > plusRapide * 1.6,
+       `meme le plus lourd distance le plus rapide des monstres ` +
+       `(${M.vitesseDe(23).toFixed(0)} contre ${plusRapide})`);
+  }
 
   /* En une seconde de jeu, on ne peut pas depasser la cadence annoncee.
      C'est LE verrou : sans lui, un client modifie viderait la carte. */
@@ -124,22 +173,25 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
                   pv: 180, pvMax: 180, dir: 'down', cible: null, recharge: 0,
                   errX: 0, errY: 0, errChrono: 0 }];
   const pv0 = j.pv;
-  let coups = 0, mort = null;
+  let contact = 0, tirs = 0, mort = null;
   for (let i = 0; i < 400 && !mort; i++) {
     const ev = r.pas(0.1);
-    coups += ev.degats.length;
+    ev.degats.forEach((d) => { if (d.quoi === 'contact') contact++; else if (d.quoi === 'tir') tirs++; });
     if (ev.morts.length) mort = ev.morts[0];
   }
-  ok(coups > 0, 'le squelette a bien frappe');
+  ok(contact > 0, 'le squelette a bien frappe au contact');
   ok(j.pv < pv0, 'les points de vie ont baisse');
   ok(mort && mort.addr === A, 'et le joueur a fini par mourir');
   eq(j.pv, 0, 'a zero point de vie exactement');
   eq(mort.par, 'skeleton', 'l evenement dit QUI a tue');
 
-  // le nombre de coups encaisses colle a ce que monde.js annonce
-  const attendu = Math.ceil(350 / M.degatsSubis(M.MONSTRES.skeleton.att, 13));
-  ok(Math.abs(coups - attendu) <= 1,
-    'il a fallu ' + coups + ' coups, la regle en annoncait ' + attendu);
+  /* ---- IL FRAPPE ET IL TIRE ----
+     Depuis que toutes les creatures decochent, « par: skeleton » ne distingue
+     plus la morsure de l os lance. C'est `quoi` qui le fait, et sans lui ce
+     test comptait les deux ensemble en croyant compter le contact. */
+  ok(tirs > 0, 'et il a aussi decoche des os (' + tirs + ')');
+  ok(M.MONSTRES.skeleton.tir.att < M.MONSTRES.skeleton.att,
+     'son tir frappe moins fort que son contact');
 }
 
 // ================== 6. ON TUE, ET L'XP EST RENDUE — PAS APPLIQUEE
@@ -621,11 +673,11 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
   const FR = { ...FICHE, stats: { hp: 900, mp: 200, att: 28, def: 13, vit: 10, wis: 10 } };
   const t = M.MONSTRES.meduse;
   ok(!!t, 'la meduse existe');
-  ok(!t.contact && t.tir && t.tir.paralyse, 'elle paralyse a distance');
+  ok(!t.contact && t.tir && t.tir.effet === 'paralyse', 'elle paralyse a distance');
 
   const pose = (r, j) => {
     r.tirsM.push({ id: 900, espece: 'meduse', x: j.x + 10, y: j.y, a: 0,
-                   v: 1, reste: 5, att: t.att, sprite: 'maudit', paralyse: true });
+                   v: 1, reste: 5, att: t.tir.att, sprite: 'oeil', effet: 'paralyse' });
   };
 
   /* ---- LE REFUS VIENT DU SERVEUR ----
@@ -662,7 +714,7 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
     const j = r.rejoint(A, FR);
     pose(r, j);
     r.pas(0.05);
-    const pas = Math.ceil(M.PARALYSIE.duree / 0.1) + 2;
+    const pas = Math.ceil(M.EFFETS.paralyse.duree / 0.1) + 2;
     for (let i = 0; i < pas; i++) r.pas(0.1);
     eq(j.paralyse, 0, 'la paralysie finit');
     const x0 = j.x;
@@ -694,7 +746,7 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
        `sous un tir paralysant permanent, on passe moins de la moitie du temps fige (${Math.round(part * 100)} %)`);
     /* Et la propriete exacte qu'on a voulue : l'immunite est plus longue que
        la paralysie, donc on bouge toujours plus qu'on ne subit. */
-    ok(M.PARALYSIE.immunite > M.PARALYSIE.duree,
+    ok(M.EFFETS.paralyse.immunite > M.EFFETS.paralyse.duree,
        'l immunite dure plus longtemps que la paralysie elle-meme');
   }
 
@@ -732,7 +784,8 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
     ok(r.etatPour(A, 1400).moi.par > 0, 'et elle apparait des qu on est cloue');
     const d = ev.degats.filter((x) => x.paralyse > 0)[0];
     ok(d, 'le coup annonce lui-meme qu il paralyse');
-    eq(d.paralyse, M.PARALYSIE.duree, 'avec sa duree, pour que la page puisse le dire');
+    eq(d.paralyse, M.EFFETS.paralyse.duree, 'avec sa duree, pour que la page puisse le dire');
+    eq(d.effet, 'paralyse', 'et il nomme l etat pose');
   }
 
   /* ---- ELLE N EST PAS SUR LA TERRE ----
@@ -851,6 +904,247 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
     /* C est la PLUS VIEILLE qui part : la plus recente est celle qui a encore
        quelque chose a apprendre a quelqu un. */
     ok(r.tombes[r.tombes.length - 1].reste === M.TOMBE.duree, 'la derniere posee est gardee');
+  }
+}
+
+// ================== 23. TOUT LE MONDE TIRE, ET CHACUN SON ETAT
+//
+// Six creatures, six facons de gener. Ce qui se verifie ici n'est pas que le
+// code tourne — c'est que chaque monstre reste JOUABLE : on peut toujours
+// riposter, et aucun etat ne peut etre enchaine indefiniment.
+{
+  const FR = { ...FICHE, nom: 'Dodexel',
+               stats: { hp: 4000, mp: 200, att: 28, def: 13, vit: 10, wis: 10 } };
+
+  /* ---- CHAQUE ESPECE A UN TIR ---- */
+  Object.keys(M.MONSTRES).forEach((k) => {
+    const t = M.MONSTRES[k];
+    ok(t.tir && t.tir.portee > 0, `« ${t.nom} » decoche (portee ${t.tir && t.tir.portee})`);
+    ok(t.tir.sprite, `« ${t.nom} » a un dessin de projectile (${t.tir.sprite})`);
+    /* LE TIR FRAPPE MOINS FORT QUE LE CONTACT. Sans cette regle, donner une
+       attaque a distance a six creatures doublait la difficulte du monde d'un
+       coup. Les deux creatures qui ne touchent pas au contact en sont
+       exemptees : le tir EST leur seule attaque. */
+    if (t.contact !== false) {
+      const attTir = t.tir.att === undefined ? t.att : t.tir.att;
+      ok(attTir < t.att,
+         `« ${t.nom} » : son tir (${attTir}) frappe moins fort que son contact (${t.att})`);
+    }
+  });
+
+  /* Les dessins de projectiles sont TOUS DIFFERENTS d'une famille a l'autre —
+     sinon deux monstres qu'on ne distingue pas au projectile se jouent
+     pareil, et l'effet arrive sans prevenir. */
+  {
+    const vus = {};
+    Object.keys(M.MONSTRES).forEach((k) => {
+      const sp = M.MONSTRES[k].tir.sprite;
+      ok(!vus[sp] || M.MONSTRES[k].tir.effet === M.MONSTRES[vus[sp]].tir.effet,
+         `« ${sp} » n'est partage que par des creatures au meme effet`);
+      vus[sp] = k;
+    });
+  }
+
+  /* ---- IL FRAPPE ET IL TIRE, PAS L'UN OU L'AUTRE ----
+     Deux recharges separees : un monstre qui vient de decocher doit pouvoir
+     mordre dans la seconde. */
+  {
+    const r = new Realm({ alea: alea(500) });
+    const j = r.rejoint(A, FR);
+    const t = M.MONSTRES.lime;
+    r.monstres = [{ id: 1, espece: 'lime', biome: 'terre', x: j.x + 20, y: j.y,
+                    ancreX: j.x, ancreY: j.y, pv: 1e9, pvMax: 1e9, dir: 'left',
+                    cible: null, recharge: 0, rechargeT: 0, stase: 0,
+                    errX: 0, errY: 0, errChrono: 0 }];
+    let contact = 0, tirs = 0;
+    for (let i = 0; i < 200; i++) {
+      const ev = r.pas(0.1);
+      ev.degats.forEach((d) => { if (d.quoi === 'contact') contact++; else if (d.quoi === 'tir') tirs++; });
+    }
+    ok(contact > 0, `le lime mord (${contact} fois)`);
+    ok(tirs > 0, `et il crache (${tirs} fois)`);
+  }
+
+  /* ---- LE RALENTISSEMENT EST APPLIQUE PAR LE SERVEUR ----
+   * Une page qui accepterait poliment de bouger moins vite se corrigerait en
+   * ouvrant la console. On envoie donc un deplacement a la vitesse NORMALE —
+   * parfaitement honnete en temps ordinaire — et il doit etre ramene. */
+  {
+    const r = new Realm({ alea: alea(501) }); r.monstres = [];
+    const j = r.rejoint(A, FR);
+    const t = M.MONSTRES.glace;
+    eq(t.tir.effet, 'ralenti', 'le revenant de glace ralentit');
+
+    /* ---- ON MESURE LE PLAFOND, PAS UN PAS ORDINAIRE ----
+     * Le serveur BORNE ce qu'un client annonce ; il ne le deplace pas. Un pas
+     * honnete de vitesse normale passe donc sans etre touche, ralenti ou non,
+     * tant qu'il reste sous le plafond — c'est la marge de tolerance reseau
+     * (1,6) qui laisse cette place, et elle existe pour qu'un joueur honnete
+     * ne begaye pas.
+     *
+     * Ce qui doit baisser de moitie, c'est le PLAFOND. On demande donc un
+     * deplacement impossible dans les deux cas et on compare ce qui est
+     * accorde. C'est la seule mesure qui dit quelque chose du serveur. */
+    const enorme = M.VITESSE_JOUEUR * 10;
+    const x0 = j.x;
+    r.bouge(A, j.x + enorme, j.y, 'right', 'run', 0.1);
+    const plafondLibre = j.x - x0;
+
+    r.tirsM.push({ id: 901, espece: 'glace', x: j.x + 10, y: j.y, a: 0,
+                   v: 1, reste: 5, att: t.tir.att, sprite: 'gel', effet: 'ralenti' });
+    r.pas(0.05);
+    ok(j.ralenti > 0, 'le tir de glace ralentit');
+
+    const x1 = j.x;
+    r.bouge(A, j.x + enorme, j.y, 'right', 'run', 0.1);
+    const plafondFreine = j.x - x1;
+    const rapport = plafondFreine / plafondLibre;
+    ok(Math.abs(rapport - M.EFFETS.ralenti.facteur) < 0.02,
+       `le plafond du serveur tombe au facteur exact (${rapport.toFixed(2)} pour ` +
+       `${M.EFFETS.ralenti.facteur} attendu)`);
+
+    /* ON PEUT ENCORE TIRER : on perd les jambes, jamais les bras. */
+    ok(r.tire(A, 0) > 0, 'et on peut toujours tirer');
+
+    /* ELLE FINIT. */
+    for (let i = 0; i < Math.ceil(M.EFFETS.ralenti.duree / 0.1) + 2; i++) r.pas(0.1);
+    eq(j.ralenti, 0, 'le ralentissement finit');
+    const x2 = j.x;
+    r.bouge(A, j.x + enorme, j.y, 'right', 'run', 0.1);
+    ok(Math.abs((j.x - x2) - plafondLibre) < 0.5, 'et le plafond revient a son entier');
+  }
+
+  /* ---- LA BRULURE RONGE, ET IGNORE L'ARMURE ----
+   * C'est la seule chose du jeu qu'une armure ne bloque pas : la seule raison
+   * de reculer quand on est bien protege. */
+  {
+    const r = new Realm({ alea: alea(502) }); r.monstres = [];
+    const j = r.rejoint(A, { ...FR, stats: { ...FR.stats, def: 60 } });
+    const t = M.MONSTRES.lave;
+    eq(t.tir.effet, 'brulure', 'le golem de magma brule');
+
+    r.tirsM.push({ id: 902, espece: 'lave', x: j.x + 10, y: j.y, a: 0,
+                   v: 1, reste: 5, att: t.tir.att, sprite: 'braise', effet: 'brulure' });
+    r.pas(0.05);
+    ok(j.brulure > 0, 'le tir de magma met le feu');
+    const pv0 = j.pv;
+    let ticks = 0;
+    for (let i = 0; i < Math.ceil(M.EFFETS.brulure.duree / 0.1); i++) {
+      const ev = r.pas(0.1);
+      ticks += ev.degats.filter((d) => d.quoi === 'brulure').length;
+    }
+    ok(ticks > 0, `la brulure ronge (${ticks} fois)`);
+    const perdu = pv0 - j.pv;
+    /* Le total colle a ce que la table annonce, a la regeneration pres. */
+    const attendu = M.EFFETS.brulure.duree * M.EFFETS.brulure.parSeconde;
+    ok(perdu > attendu * 0.6 && perdu < attendu * 1.2,
+       `elle enleve environ ${attendu} points (${perdu} releves)`);
+    ok(perdu > 0, 'et une defense de 60 n y change rien : elle ignore l armure');
+    for (let i = 0; i < 20; i++) r.pas(0.1);
+    eq(j.brulure, 0, 'elle finit par s eteindre');
+  }
+
+  /* ---- LES IMMUNITES SONT SEPAREES ----
+   * Sortir d'une paralysie ne doit PAS proteger d'une brulure. Sinon un seul
+   * monstre suffirait a rendre tous les autres inoffensifs, et le joueur
+   * apprendrait a se faire toucher expres. */
+  {
+    const r = new Realm({ alea: alea(503) }); r.monstres = [];
+    const j = r.rejoint(A, FR);
+    r.tirsM.push({ id: 903, espece: 'meduse', x: j.x + 10, y: j.y, a: 0, v: 1,
+                   reste: 5, att: 10, sprite: 'oeil', effet: 'paralyse' });
+    r.pas(0.05);
+    ok(j.paralyse > 0, 'paralyse');
+    r.tirsM.push({ id: 904, espece: 'lave', x: j.x + 10, y: j.y, a: 0, v: 1,
+                   reste: 5, att: 10, sprite: 'braise', effet: 'brulure' });
+    r.pas(0.05);
+    ok(j.brulure > 0, 'et pourtant la brulure prend : les immunites ne se partagent pas');
+  }
+
+  /* ---- AUCUN ETAT NE S'ENCHAINE INDEFINIMENT ----
+   *
+   * Le pire cas imaginable : un tir du meme genre a CHAQUE pas, comme si dix
+   * creatures tiraient sans interruption. On mesure ce que ca donne.
+   *
+   * La regle n'est PAS la meme pour tous, et c'est deliberé. Les deux etats
+   * qui retirent le CONTROLE doivent rester minoritaires dans le temps :
+   * au-dela, le joueur ne joue plus, il regarde. La brulure ne prend le
+   * controle de rien — elle fait des degats, et des degats, c'est le metier
+   * des monstres. Ce qu'on borne pour elle, c'est son cout par seconde.
+   *
+   * (Ma premiere version passait les trois au meme tamis et le
+   * ralentissement echouait a 55 %. Il aurait ete facile de deplacer le
+   * seuil ; c'est l'immunite qui a bouge.) */
+  ['paralyse', 'ralenti'].forEach((cle) => {
+    const r = new Realm({ alea: alea(510) }); r.monstres = [];
+    const j = r.rejoint(A, FR);
+    j.pv = 1e9; j.pvMax = 1e9;
+    let subi = 0, total = 0;
+    for (let i = 0; i < 400; i++) {
+      r.tirsM.push({ id: 1000 + i, espece: 'meduse', x: j.x + 10, y: j.y, a: 0,
+                     v: 1, reste: 5, att: 1, sprite: 'oeil', effet: cle });
+      r.pas(0.1);
+      total++;
+      if (j[cle] > 0) subi++;
+    }
+    const part = subi / total;
+    ok(part < 0.5,
+       `« ${cle} » retire le controle moins de la moitie du temps sous un tir ` +
+       `permanent (${Math.round(part * 100)} %)`);
+    ok(M.EFFETS[cle].immunite > M.EFFETS[cle].duree,
+       `« ${cle} » : l immunite dure plus longtemps que l etat`);
+  });
+
+  /* La brulure, elle, se mesure en degats. */
+  {
+    const r = new Realm({ alea: alea(511) }); r.monstres = [];
+    const j = r.rejoint(A, { ...FR, stats: { ...FR.stats, hp: 1e9, vit: 0 } });
+    j.pv = 1e9; j.pvMax = 1e9;
+    const pv0 = j.pv;
+    for (let i = 0; i < 400; i++) {
+      r.tirsM.push({ id: 2000 + i, espece: 'lave', x: j.x + 10, y: j.y, a: 0,
+                     v: 1, reste: 5, att: 0, sprite: 'braise', effet: 'brulure' });
+      r.pas(0.1);
+    }
+    const parSeconde = (pv0 - j.pv) / 40;    // quarante secondes
+    ok(parSeconde < M.EFFETS.brulure.parSeconde * 0.75,
+       `sous un feu permanent, la brulure coute ${parSeconde.toFixed(1)} PV/s ` +
+       `— moins que son plein regime de ${M.EFFETS.brulure.parSeconde}`);
+    /* Et surtout : elle ne peut pas tuer un personnage a elle seule plus vite
+       qu'il ne fuit. Vingt secondes pour percer une reserve de niveau 1. */
+    ok(350 / parSeconde > 20,
+       `elle laisse au moins vingt secondes pour reagir (${Math.round(350 / parSeconde)} s)`);
+  }
+
+  /* ---- LE SQUELETTE TIRE EN EVENTAIL ----
+     Trois os d'un coup : on ne les esquive pas en reculant, seulement en se
+     decalant. C'est le seul monstre qui punit la fuite en ligne droite. */
+  {
+    const t = M.MONSTRES.skeleton;
+    eq(t.tir.tirs, 3, 'le squelette lance trois os');
+    ok(t.tir.ecart > 0, 'en eventail, pas en file');
+    const r = new Realm({ alea: alea(520) });
+    const j = r.rejoint(A, FR);
+    r.monstres = [{ id: 1, espece: 'skeleton', biome: 'neige',
+                    x: j.x + t.tir.portee * 0.6, y: j.y, ancreX: j.x, ancreY: j.y,
+                    pv: 1e9, pvMax: 1e9, dir: 'left', cible: null,
+                    recharge: 0, rechargeT: 0, stase: 0, errX: 0, errY: 0, errChrono: 0 }];
+    r.pas(0.05);
+    eq(r.tirsM.length, 3, 'les trois partent ensemble');
+    const angles = r.tirsM.map((x) => x.a);
+    ok(new Set(angles.map((a) => a.toFixed(3))).size === 3, 'et sur trois angles differents');
+  }
+
+  /* ---- L'ETAT PART AVEC LA VUE ---- */
+  {
+    const r = new Realm({ alea: alea(530) }); r.monstres = [];
+    const j = r.rejoint(A, FR);
+    const e = r.etatPour(A, 1400);
+    eq(e.moi.ral, 0, 'l etat porte le ralentissement');
+    eq(e.moi.feu, 0, 'et la brulure');
+    j.ralenti = 2; j.brulure = 3;
+    const e2 = r.etatPour(A, 1400);
+    ok(e2.moi.ral > 0 && e2.moi.feu > 0, 'les deux se voient des qu ils sont poses');
   }
 }
 
