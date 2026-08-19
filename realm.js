@@ -108,6 +108,12 @@ class Realm {
       /* Depuis combien de temps ce joueur n'a ni bouge ni tire. C'est ce
          compteur qui decide du doublement de regeneration au repos. */
       repos: 0,
+      /* ---- LA PARALYSIE ----
+         `paralyse` : ce qu'il reste a subir. `paraImmun` : le temps pendant
+         lequel un nouveau tir paralysant ne fera que des degats. Les deux
+         vivent ICI et nulle part ailleurs : c'est le serveur qui refuse le
+         deplacement, pas la page qui accepte de ne pas bouger. */
+      paralyse: 0, paraImmun: 0,
       recharge: 0, xpGagnee: 0, vu: 0,
     };
     this.joueurs.set(addr, j);
@@ -131,6 +137,18 @@ class Realm {
   bouge(addr, x, y, dir, anim, dt) {
     const j = this.joueurs.get(addr);
     if (!j) return false;
+    /* ---- PARALYSE : ON NE BOUGE PAS ----
+     * Le refus est ICI, dans le serveur, et pas seulement dans la page qui
+     * ignore les touches. La position est ANNONCEE par le client : une
+     * paralysie qui ne serait que dessinee se contournerait en ouvrant la
+     * console. On accepte encore la direction du regard — se retourner n'est
+     * pas se deplacer, et un personnage fige qui tire dans le dos de ce qu'il
+     * vise serait absurde. */
+    if (j.paralyse > 0) {
+      if (dir) j.dir = String(dir).slice(0, 6);
+      j.anim = 'idle';
+      return false;
+    }
     x = Math.max(0, Math.min(monde.MONDE.w, Number(x) || 0));
     y = Math.max(0, Math.min(monde.MONDE.h, Number(y) || 0));
     const max = monde.VITESSE_JOUEUR * Math.max(0.05, Number(dt) || 0.15) * MARGE_VITESSE;
@@ -282,6 +300,16 @@ class Realm {
       if (j.recharge > 0) j.recharge -= dt;
       if (j.pouvoirRecharge > 0) j.pouvoirRecharge = Math.max(0, j.pouvoirRecharge - dt);
       if (j.rafale > 0) j.rafale = Math.max(0, j.rafale - dt);
+      /* La paralysie s'ecoule, puis l'immunite prend le relais. On pose
+         l'immunite AU MOMENT ou la paralysie tombe, pas au moment ou elle
+         commence : sinon elle courrait pendant la paralysie et ne protegerait
+         presque de rien. */
+      if (j.paralyse > 0) {
+        j.paralyse = Math.max(0, j.paralyse - dt);
+        if (j.paralyse === 0) j.paraImmun = monde.PARALYSIE.immunite;
+      } else if (j.paraImmun > 0) {
+        j.paraImmun = Math.max(0, j.paraImmun - dt);
+      }
       this._regenere(j, dt, ev);
     }
     this._pasMonstres(dt, ev);
@@ -392,6 +420,10 @@ class Realm {
               x: m.x, y: m.y, a: Math.atan2(dy, dx),
               v: t.tir.vitesse, reste: t.tir.portee / t.tir.vitesse,
               att: t.att, sprite: t.tir.sprite,
+              /* L'effet voyage AVEC le projectile : une fleche deja en vol
+                 quand la meduse meurt doit garder son pouvoir, sinon tuer le
+                 lanceur annulerait un coup deja porte. */
+              paralyse: !!t.tir.paralyse,
             });
           }
         } else {
@@ -493,7 +525,20 @@ class Realm {
           if (dx * dx + dy * dy > 34 * 34) continue;
           const perte = monde.degatsSubis(t.att, j.def);
           j.pv = Math.max(0, j.pv - perte);
-          ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: t.espece });
+          /* ---- LE TIR QUI PARALYSE ----
+           * Il fait ses degats comme les autres, et EN PLUS il cloue au sol —
+           * sauf si le joueur sort a peine d'une paralysie. Dans ce cas il ne
+           * reste que les degats : c'est ce qui empeche trois meduses de
+           * transformer une rencontre en execution.
+           * Un mort ne se fait pas paralyser : ca n'aurait aucun sens, et le
+           * compteur survivrait a la reapparition. */
+          let cloue = false;
+          if (t.paralyse && j.pv > 0 && j.paraImmun <= 0 && j.paralyse <= 0) {
+            j.paralyse = monde.PARALYSIE.duree;
+            cloue = true;
+          }
+          ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: t.espece,
+                           paralyse: cloue ? monde.PARALYSIE.duree : 0 });
           if (j.pv <= 0) ev.morts.push({ addr: j.addr, par: t.espece });
           fini = true;
           break;
@@ -533,6 +578,10 @@ class Realm {
              po: j.pouvoir || null,
              poR: Number((j.pouvoirRecharge || 0).toFixed(2)),
              raf: Number((j.rafale || 0).toFixed(2)),
+             /* La paralysie part a chaque image : la page doit pouvoir cesser
+                d'obeir aux touches a la seconde ou elle commence, sans
+                attendre un message a part. */
+             par: Number((j.paralyse || 0).toFixed(2)),
              xp: j.xpGagnee },
       monstres: this.monstres.filter(pres).map((m) => {
         const o = { i: m.id, e: m.espece, x: Math.round(m.x), y: Math.round(m.y),

@@ -130,6 +130,43 @@ const MONSTRES = {
     xp: 260,
     biomes: ['neige', 'lave'],
   },
+  /* ---- LA MEDUSE : LE MONSTRE QUI PARALYSE ----
+   *
+   * Tous les autres enlevent de la vie. Elle enleve le DEPLACEMENT, ce qui
+   * est bien pire dans un monde ou l'on survit en bougeant : deux secondes et
+   * demie clouee au sol a portee d'un golem de magma, et c'est fini.
+   *
+   * Trois choses la rendent jouable plutot qu'injuste :
+   *
+   *   1. ON PEUT ENCORE TIRER. C'est la difference entre PARALYSER et
+   *      ETOURDIR : on perd les jambes, pas les bras. Il reste donc une
+   *      reponse — abattre ce qui approche — au lieu de regarder mourir.
+   *   2. ELLE TIRE LENTEMENT (une fois toutes les deux secondes et demie) et
+   *      elle est LENTE. On la voit venir, on peut la contourner, et c'est
+   *      elle qu'il faut viser en premier.
+   *   3. ON NE PEUT PAS ETRE RE-PARALYSE TOUT DE SUITE (voir PARALYSIE).
+   *      Sans cette regle, trois meduses ensemble donneraient une mort sans
+   *      aucune action possible, et « pas de contre-jeu » est la seule chose
+   *      qu'un monstre n'a pas le droit d'etre.
+   *
+   * Elle vaut cher en XP parce qu'elle change la facon de jouer un secteur,
+   * pas parce qu'elle a beaucoup de vie.
+   */
+  meduse: {
+    cle: 'meduse', nom: 'Medusa',
+    /* Le dessin n'existe pas encore : elle emprunte celui du revenant de
+       glace, teinte par la page. Le jour ou l'image arrive, on retire cette
+       ligne et rien d'autre ne bouge — c'est pour ca qu'elle est ici, en
+       donnee, et pas dans un `if` cote page. */
+    sprite: 'glace',
+    pv: 300, att: 40, def: 12,
+    vitesse: 60, rayon: 42, vue: 640,
+    contact: false,
+    cadence: 0.4,
+    tir: { portee: 520, vitesse: 300, sprite: 'maudit', paralyse: true },
+    xp: 480,
+    biomes: ['neige', 'lave'],
+  },
   skeleton: {
     cle: 'skeleton', nom: 'Skeleton',
     pv: 180, att: 55, def: 8,
@@ -150,8 +187,11 @@ const MONSTRES = {
    impraticable. */
 const PEUPLEMENT = {
   terre: { especes: ['lime'], nombre: 40 },
-  neige: { especes: ['lime', 'skeleton', 'glace', 'archer'], nombre: 42 },
-  lave:  { especes: ['lave', 'archer'], nombre: 18 },
+  /* La meduse n'est PAS sur la terre : l'anneau exterieur est celui ou l'on
+     apprend, et perdre le controle de son personnage avant d'avoir compris
+     qu'on peut encore tirer ferait abandonner. Elle attend la neige. */
+  neige: { especes: ['lime', 'skeleton', 'glace', 'archer', 'meduse'], nombre: 42 },
+  lave:  { especes: ['lave', 'archer', 'meduse'], nombre: 18 },
 };
 
 /*
@@ -219,6 +259,27 @@ function degatsSubis(attMonstre, defJoueur) {
   const apres = brut - Math.max(0, Number(defJoueur) || 0);
   return Math.max(Math.round(brut * PLANCHER), Math.round(apres));
 }
+
+/*
+ * ================== LA PARALYSIE ==================
+ *
+ * Perdre le deplacement, garder le tir. La duree est calee sur ce qu'il faut
+ * pour que ce soit une VRAIE peur sans etre une condamnation : deux secondes
+ * et demie, c'est le temps qu'un golem de magma met a porter deux coups.
+ *
+ * L'IMMUNITE est la piece essentielle, et elle ne vient pas de RotMG — la-bas
+ * l'enchainement de paralysies est possible et c'est une cause de mort
+ * celebre. Chez nous la mort detruit l'equipement paye en vrai $SWOGE : une
+ * mort sans aucune action possible n'est pas une difficulte, c'est un vol.
+ * Apres chaque paralysie, un temps ou un nouveau tir paralysant ne fait que
+ * des degats. Trois meduses ensemble restent donc dangereuses sans jamais
+ * pouvoir clouer quelqu'un au sol indefiniment.
+ *
+ * L'immunite est plus longue que la paralysie : on passe donc toujours plus
+ * de temps a pouvoir bouger qu'a ne pas le pouvoir, quel que soit le nombre
+ * de meduses. C'est la propriete qu'on veut, et un test la verifie.
+ */
+const PARALYSIE = { duree: 2.5, immunite: 3.5 };
 
 /*
  * ================== LA REGENERATION ==================
@@ -372,7 +433,7 @@ function peuplement(alea) {
 module.exports = {
   TUILE, CARTE, MONDE, CENTRE, ANNEAUX, MONSTRES, PEUPLEMENT, PLANCHER,
   ARMES, DEGATS_POING, VITESSE_JOUEUR,
-  REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT,
+  REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   regenParSeconde, pouvoirDeStat,
 };

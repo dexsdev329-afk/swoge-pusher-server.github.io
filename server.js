@@ -2976,6 +2976,12 @@ wss.on('connection', (ws) => {
                              des armes : le client doit pouvoir ecrire « 60 MP »
                              sur le bouton sans connaitre le chiffre par coeur. */
                           pouvoirs: monde.POUVOIRS,
+                          /* La duree de la paralysie part avec le reste : la
+                             page dessine un anneau qui se referme, et elle a
+                             besoin du total pour savoir ou il en est. Un
+                             chiffre en dur cote page finirait par ne plus
+                             etre celui que le serveur applique. */
+                          paralysie: monde.PARALYSIE,
                           moi: { x: Math.round(j.x), y: Math.round(j.y),
                                  pv: j.pv, pvMax: j.pvMax,
                                  mp: j.mp, mpMax: j.mpMax,
@@ -3781,7 +3787,11 @@ const realmInterval = setInterval(() => {
     for (const d of ev.degats) {
       const ws = [...realmClients].find((c) => c.addr === d.addr);
       if (ws && ws.readyState === 1) {
-        send(ws, { type: 'realmCoup', perte: d.perte, pv: d.pv, par: d.par });
+        /* `paralyse` part avec le coup : c'est le seul moment ou la page
+           apprend qu'elle vient de perdre le deplacement, et perdre le
+           controle sans un mot se lit comme une panne. */
+        send(ws, { type: 'realmCoup', perte: d.perte, pv: d.pv, par: d.par,
+                   paralyse: d.paralyse || 0 });
       }
     }
   }

@@ -611,4 +611,137 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
   eq(r2.etatPour(B, 1400).moi.po, null, 'sans fruit, aucun pouvoir annonce');
 }
 
+// ================== 21. LA MEDUSE : ON PERD LES JAMBES, PAS LES BRAS
+//
+// C'est le seul monstre qui retire une CAPACITE plutot que de la vie. Trois
+// choses doivent tenir, et les trois sont des questions de justice plus que
+// de code : le refus vient du SERVEUR, on peut encore tirer, et on ne peut
+// pas etre cloue au sol indefiniment.
+{
+  const FR = { ...FICHE, stats: { hp: 900, mp: 200, att: 28, def: 13, vit: 10, wis: 10 } };
+  const t = M.MONSTRES.meduse;
+  ok(!!t, 'la meduse existe');
+  ok(!t.contact && t.tir && t.tir.paralyse, 'elle paralyse a distance');
+
+  const pose = (r, j) => {
+    r.tirsM.push({ id: 900, espece: 'meduse', x: j.x + 10, y: j.y, a: 0,
+                   v: 1, reste: 5, att: t.att, sprite: 'maudit', paralyse: true });
+  };
+
+  /* ---- LE REFUS VIENT DU SERVEUR ----
+     Une paralysie qui ne serait que dessinee se contournerait en ouvrant la
+     console du navigateur. On envoie donc un deplacement PARFAITEMENT
+     honnete — un pas normal, a la bonne vitesse — et il doit etre refuse. */
+  {
+    const r = new Realm({ alea: alea(300) }); r.monstres = [];
+    const j = r.rejoint(A, FR);
+    pose(r, j);
+    r.pas(0.05);
+    ok(j.paralyse > 0, 'le tir paralysant cloue le joueur');
+
+    const x0 = j.x, y0 = j.y;
+    const accepte = r.bouge(A, j.x + 12, j.y, 'right', 'run', 0.1);
+    eq(accepte, false, 'le serveur REFUSE le deplacement');
+    eq(j.x, x0, 'et la position ne bouge pas d un pouce');
+    eq(j.y, y0, 'ni en hauteur');
+    eq(j.anim, 'idle', 'le personnage ne fait meme pas semblant de courir');
+
+    /* Se retourner n'est pas se deplacer : un personnage fige qui tire dans
+       le dos de ce qu'il vise serait absurde. */
+    r.bouge(A, j.x, j.y, 'left', 'run', 0.1);
+    eq(j.dir, 'left', 'mais il peut encore se tourner');
+
+    /* ON PEUT ENCORE TIRER. C'est toute la difference entre paralyser et
+       etourdir, et c'est la seule chose qui laisse une reponse au joueur. */
+    ok(r.tire(A, 0) > 0, 'et surtout : il peut encore TIRER');
+  }
+
+  /* ---- ELLE FINIT, ET ON REPART ---- */
+  {
+    const r = new Realm({ alea: alea(301) }); r.monstres = [];
+    const j = r.rejoint(A, FR);
+    pose(r, j);
+    r.pas(0.05);
+    const pas = Math.ceil(M.PARALYSIE.duree / 0.1) + 2;
+    for (let i = 0; i < pas; i++) r.pas(0.1);
+    eq(j.paralyse, 0, 'la paralysie finit');
+    const x0 = j.x;
+    ok(r.bouge(A, j.x + 12, j.y, 'right', 'run', 0.1), 'et on peut repartir');
+    ok(j.x > x0, 'la position avance de nouveau');
+  }
+
+  /* ---- ON NE PEUT PAS ETRE CLOUE INDEFINIMENT ----
+   *
+   * C'est LA verification qui compte. Dans un jeu ou la mort detruit
+   * l'equipement paye en vrai $SWOGE, une mort sans aucune action possible
+   * n'est pas une difficulte, c'est un vol. On simule donc le pire cas
+   * imaginable — un tir paralysant qui arrive a CHAQUE pas, comme si dix
+   * meduses tiraient sans interruption — et on mesure la part du temps
+   * passee immobile. Elle doit rester minoritaire. */
+  {
+    const r = new Realm({ alea: alea(302) }); r.monstres = [];
+    const j = r.rejoint(A, FR);
+    j.pv = 1e9; j.pvMax = 1e9;      // on mesure la paralysie, pas la survie
+    let fige = 0, total = 0;
+    for (let i = 0; i < 400; i++) {          // quarante secondes
+      pose(r, j);
+      r.pas(0.1);
+      total++;
+      if (j.paralyse > 0) fige++;
+    }
+    const part = fige / total;
+    ok(part < 0.5,
+       `sous un tir paralysant permanent, on passe moins de la moitie du temps fige (${Math.round(part * 100)} %)`);
+    /* Et la propriete exacte qu'on a voulue : l'immunite est plus longue que
+       la paralysie, donc on bouge toujours plus qu'on ne subit. */
+    ok(M.PARALYSIE.immunite > M.PARALYSIE.duree,
+       'l immunite dure plus longtemps que la paralysie elle-meme');
+  }
+
+  /* ---- UN MORT NE SE FAIT PAS PARALYSER ----
+     Le compteur survivrait a la reapparition, et le joueur reviendrait au
+     Nexus incapable de bouger sans comprendre pourquoi. */
+  {
+    const r = new Realm({ alea: alea(303) }); r.monstres = [];
+    const j = r.rejoint(A, { ...FR, stats: { ...FR.stats, hp: 10 } });
+    pose(r, j);
+    r.pas(0.05);
+    eq(j.pv, 0, 'le tir l a tue');
+    eq(j.paralyse, 0, 'et un mort ne se fait pas paralyser');
+  }
+
+  /* ---- L EFFET VOYAGE AVEC LE PROJECTILE ----
+     Une fleche deja en vol quand la meduse meurt garde son pouvoir : tuer le
+     lanceur n annule pas un coup deja porte. */
+  {
+    const r = new Realm({ alea: alea(304) });
+    const j = r.rejoint(A, FR);
+    r.monstres = [];                          // plus aucune meduse en vie
+    pose(r, j);
+    r.pas(0.05);
+    ok(j.paralyse > 0, 'la fleche en vol paralyse meme sans son lanceur');
+  }
+
+  /* ---- LA PAGE EST PREVENUE ---- */
+  {
+    const r = new Realm({ alea: alea(305) }); r.monstres = [];
+    const j = r.rejoint(A, FR);
+    eq(r.etatPour(A, 1400).moi.par, 0, 'l etat porte la paralysie, a zero au repos');
+    pose(r, j);
+    const ev = r.pas(0.05);
+    ok(r.etatPour(A, 1400).moi.par > 0, 'et elle apparait des qu on est cloue');
+    const d = ev.degats.filter((x) => x.paralyse > 0)[0];
+    ok(d, 'le coup annonce lui-meme qu il paralyse');
+    eq(d.paralyse, M.PARALYSIE.duree, 'avec sa duree, pour que la page puisse le dire');
+  }
+
+  /* ---- ELLE N EST PAS SUR LA TERRE ----
+     L anneau exterieur est celui ou l on apprend. Perdre le controle de son
+     personnage avant d avoir compris qu on peut encore tirer ferait
+     abandonner. */
+  ok(M.PEUPLEMENT.terre.especes.indexOf('meduse') < 0,
+     'la meduse ne nait pas sur la terre, l anneau des debutants');
+  ok(M.PEUPLEMENT.neige.especes.indexOf('meduse') >= 0, 'mais bien dans la neige');
+}
+
 console.log('realm.test.js : ' + n + ' verifications OK');
