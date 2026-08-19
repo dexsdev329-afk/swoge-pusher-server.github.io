@@ -286,7 +286,10 @@ class Realm {
           const arme = monde.tirageArme(j ? j.degats : monde.DEGATS_POING, this.alea);
           const perte = monde.degatsInfliges(j ? j.att : 0, arme, monde.MONSTRES[m.espece].def);
           m.pv = Math.max(0, m.pv - perte);
-          ev.touches.push({ monstre: m.id, perte, pv: m.pv, x: t.x, y: t.y });
+          /* L'adresse du TIREUR part avec le coup : c'est lui qui doit
+             l'entendre, pas les trois joueurs d'a cote. */
+          ev.touches.push({ addr: t.addr, monstre: m.id, espece: m.espece,
+                            perte, pv: m.pv, x: t.x, y: t.y });
           if (m.pv <= 0 && j) {
             const xp = monde.MONSTRES[m.espece].xp;
             j.xpGagnee += xp;

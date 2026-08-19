@@ -3721,6 +3721,17 @@ const realmInterval = setInterval(() => {
     } catch (e) { console.error('[realm mort]', e && e.message); }
   }
 
+  /* ---- LES COUPS PORTES ----
+     On les annonce au TIREUR seul : c'est son coup, et diffuser chaque
+     touche a tout le monde ferait un vacarme sans rapport avec ce que
+     chacun fait. */
+  for (const t of ev.touches) {
+    const ws = [...realmClients].find((c) => c.addr === t.addr);
+    if (ws && ws.readyState === 1) {
+      send(ws, { type: 'realmTouche', espece: t.espece, perte: t.perte, pv: t.pv });
+    }
+  }
+
   if (ev.degats.length) {
     for (const d of ev.degats) {
       const ws = [...realmClients].find((c) => c.addr === d.addr);
