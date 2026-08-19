@@ -108,7 +108,10 @@ pose.adDayKey = '2026-08-14';
    meme raison que `stakes` juste au-dessus : une forme precise merite un
    temoin de cette forme, pas un objet quelconque que le code ne saurait pas
    relire. */
-pose.persos = { andy: { w: W(777), ef: 1001, ea: 2001, ar: 1013, ba: 1019 } };
+/* `xc` = l'XP gagnee EN COMBAT sous ce personnage. Elle est persistee, a
+   la difference de l'XP du volume qui se recalcule : personne ne peut
+   rededuire apres coup combien de monstres on a tues. */
+pose.persos = { andy: { w: W(777), ef: 1001, ea: 2001, ar: 1013, ba: 1019, xc: 4200 } };
 Object.assign(pose, TARDIFS);
 
 for (const k of Object.keys(pose)) neuve[k] = pose[k];

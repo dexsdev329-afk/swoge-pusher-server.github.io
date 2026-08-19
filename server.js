@@ -565,6 +565,30 @@ const nexusClients = new Set();
 const NEXUS_DIRS = new Set(['up', 'down', 'left', 'right']);
 const NEXUS_ANIMS = new Set(['idle', 'run', 'jump']);
 
+/* ---------------------------------------------------- LE MONDE DE COMBAT
+ *
+ * UN seul monde, partage par tous. Ce n'est pas une limite technique : c'est
+ * le sens du jeu. Un monde par joueur, et on ne croise jamais personne ; le
+ * Nexus n'aurait plus rien a annoncer, et la mort n'aurait aucun temoin.
+ *
+ * Il est cree au demarrage et vit tant que le processus vit. Les monstres
+ * bougent meme quand personne ne regarde — c'est ce qui fait qu'on entre
+ * dans un endroit qui existait avant nous, et non dans un decor qui
+ * s'allume a l'ouverture de la porte.
+ *
+ * `realmClients` tient les sockets presentes dans le monde ; l'etat du
+ * joueur, lui, vit dans le Realm sous son adresse. Une socket qui tombe est
+ * retiree des deux.
+ */
+const { Realm } = require('./realm');
+const monde = require('./monde');
+const realm = new Realm({});
+const realmClients = new Set();
+/* Depuis quand un joueur n'a pas annonce sa position : c'est ce delai qui
+   sert de `dt` a la borne de vitesse. Le mesurer ici plutot que de faire
+   confiance a un `dt` envoye par le client est tout l'interet de la borne. */
+const realmDernierMouv = new Map();
+
 /* ------------------------------------------------------- le debit d'entree
  *
  * Une socket peut envoyer aussi vite que le reseau le permet, et rien ne l'en
@@ -2859,6 +2883,70 @@ wss.on('connection', (ws) => {
         };
         return;
       }
+      /* ---- LE MONDE DE COMBAT ----
+       *
+       * Trois messages, et pas un de plus : entrer, dire ou l'on est, tirer.
+       * Le client ne dit JAMAIS qu'il a touche, tue, ou perdu de la vie —
+       * c'est le serveur qui constate. Des objets payes en vrai $SWOGE
+       * disparaissent a la mort ; laisser le navigateur annoncer un resultat
+       * reviendrait a lui laisser decider s'il les garde.
+       */
+      if (m.type === 'realmJoin') {
+        if (!ws.addr) return;
+        const p = game._p(ws.addr);
+        const skin = p.skinActif;
+        /* Sans personnage, pas de monde : on n'y entre pas « en spectateur »,
+           et arriver sans stats donnerait un joueur a zero point de vie. */
+        if (!skin || !p.skins || !p.skins[skin]) {
+          return send(ws, { type: 'realmRefus', raison: 'no-character' });
+        }
+        const etat = game.personnageEtat(ws.addr, skin);
+        if (!etat) return send(ws, { type: 'realmRefus', raison: 'no-character' });
+        const arme = etat.equipArme;
+        const j = realm.rejoint(ws.addr, {
+          skin, nom: p.name || null,
+          stats: etat.stats,
+          famille: (arme && arme.famille) || 'poing',
+          degats: (arme && arme.degats) || monde.DEGATS_POING,
+        });
+        ws.realmSkin = skin;
+        realmClients.add(ws);
+        realmDernierMouv.set(ws.addr, Date.now());
+        /* La carte et les armes partent A L'ENTREE, pas dans le `hello` : un
+           joueur qui ne met jamais les pieds dans le monde n'a pas a
+           telecharger sa description. */
+        return send(ws, { type: 'realmEntre',
+                          monde: { w: monde.MONDE.w, h: monde.MONDE.h, tuile: monde.TUILE },
+                          anneaux: monde.ANNEAUX, centre: monde.CENTRE,
+                          armes: monde.ARMES, especes: monde.MONSTRES,
+                          moi: { x: Math.round(j.x), y: Math.round(j.y),
+                                 pv: j.pv, pvMax: j.pvMax, famille: j.famille } });
+      }
+      if (m.type === 'realmLeave') {
+        if (!ws.addr) return;
+        realm.quitte(ws.addr);
+        realmClients.delete(ws);
+        realmDernierMouv.delete(ws.addr);
+        return send(ws, { type: 'realmSorti' });
+      }
+      if (m.type === 'realmMove') {
+        if (!ws.addr || !realmClients.has(ws)) return;
+        const t = Date.now();
+        const avant = realmDernierMouv.get(ws.addr) || t;
+        realmDernierMouv.set(ws.addr, t);
+        realm.bouge(ws.addr, m.x, m.y,
+                    NEXUS_DIRS.has(m.dir) ? m.dir : 'down',
+                    NEXUS_ANIMS.has(m.anim) ? m.anim : 'idle',
+                    (t - avant) / 1000);
+        return;
+      }
+      if (m.type === 'realmTir') {
+        if (!ws.addr || !realmClients.has(ws)) return;
+        const a = Number(m.a);
+        if (!Number.isFinite(a)) return;
+        realm.tire(ws.addr, a);
+        return;
+      }
       /* Le classement du mois : qui a fait tourner le plus de volume. */
       if (m.type === 'leaderboard') {
         return send(ws, { type: 'leaderboard', ...game.classementMois(ws.addr, 50),
@@ -3462,6 +3550,8 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     clients.delete(ws);
     nexusClients.delete(ws);
+    if (ws.addr) { realm.quitte(ws.addr); realmDernierMouv.delete(ws.addr); }
+    realmClients.delete(ws);
     if (ws.addr && byAddr.has(ws.addr)) {
       byAddr.get(ws.addr).delete(ws);
       if (!byAddr.get(ws.addr).size) {
@@ -3527,6 +3617,90 @@ const nexusInterval = setInterval(() => {
   for (const ws of nexusClients) if (ws.readyState === 1) ws.send(s);
 }, 150);
 if (nexusInterval.unref) nexusInterval.unref();
+
+/* ---------------------------------------------- LA BOUCLE DU MONDE
+ *
+ * Dix fois par seconde : on avance les monstres et les projectiles, on
+ * applique les CONSEQUENCES, puis on envoie a chacun ce qu'il voit.
+ *
+ * `realm.pas()` ne touche a rien qui compte — il RETOURNE des evenements.
+ * C'est ici qu'on credite de l'XP et qu'on fait mourir un personnage, parce
+ * que seul ce fichier a le droit d'appeler game.js. La simulation reste ainsi
+ * testable sans solde ni fichier d'etat.
+ *
+ * La boucle tourne meme sans personne : les monstres continuent de vivre, et
+ * on entre dans un endroit qui existait avant nous.
+ */
+let realmHorloge = Date.now();
+const realmInterval = setInterval(() => {
+  const t = Date.now();
+  const dt = Math.min(0.5, (t - realmHorloge) / 1000);
+  realmHorloge = t;
+  let ev;
+  try { ev = realm.pas(dt); } catch (e) { console.error('[realm]', e && e.message); return; }
+
+  /* ---- CE QU'ON A TUE DEVIENT DE L'XP ----
+     Le client n'a rien annonce : il a demande a tirer, le serveur a constate
+     la mort du monstre. C'est toute la difference entre un jeu ou l'on peut
+     se donner des niveaux et un jeu ou l'on ne peut pas. */
+  for (const k of ev.kills) {
+    const ws = [...realmClients].find((c) => c.addr === k.addr);
+    if (!ws) continue;
+    try {
+      const r = game.gagneXpCombat(k.addr, ws.realmSkin, k.xp);
+      if (r) {
+        send(ws, { type: 'realmKill', espece: k.espece, xp: k.xp,
+                   total: r.total, niveau: r.niveau, monte: r.monte });
+        if (r.monte) persistSoon();
+      }
+    } catch (e) { console.error('[realm xp]', e && e.message); }
+  }
+
+  /* ---- ET CE QUI NOUS TUE COUTE TOUT ----
+     `meurt` detruit l'equipement porte, vide le sac, remet le personnage a
+     zero et encaisse la fame. On sort le joueur du monde APRES : le laisser
+     dedans avec zero point de vie le ferait mourir en boucle. */
+  for (const mort of ev.morts) {
+    const ws = [...realmClients].find((c) => c.addr === mort.addr);
+    realm.quitte(mort.addr);
+    realmDernierMouv.delete(mort.addr);
+    if (ws) realmClients.delete(ws);
+    try {
+      const r = game.meurt(mort.addr, ws ? ws.realmSkin : null);
+      persistSoon();
+      if (ws && ws.readyState === 1) {
+        send(ws, { type: 'realmMort', par: mort.par, ...r });
+        /* La fiche repart avec : l'equipement vient d'etre detruit et le
+           niveau remis a zero. Sans ce renvoi, le panneau continuerait
+           d'afficher des objets que le joueur ne possede plus. */
+        send(ws, { type: 'skins', ...game.skinsEtat(ws.addr) });
+      }
+    } catch (e) { console.error('[realm mort]', e && e.message); }
+  }
+
+  if (ev.degats.length) {
+    for (const d of ev.degats) {
+      const ws = [...realmClients].find((c) => c.addr === d.addr);
+      if (ws && ws.readyState === 1) {
+        send(ws, { type: 'realmCoup', perte: d.perte, pv: d.pv, par: d.par });
+      }
+    }
+  }
+
+  /* La carte se repeuple doucement, jamais sous le nez de quelqu'un. */
+  if (realmClients.size) realm.repeuple(900);
+
+  /* Chacun recoit SA vue : on ne diffuse pas un instantane commun comme le
+     Nexus le fait. Quarante monstres a dix images par seconde pour chaque
+     client, dont trente-cinq hors de son ecran, serait du trafic pur — et le
+     monde fait quatre fois la taille du hall. */
+  for (const ws of realmClients) {
+    if (ws.readyState !== 1 || !ws.addr) continue;
+    const vue = realm.etatPour(ws.addr, 1400);
+    if (vue) ws.send(JSON.stringify({ type: 'realmEtat', ...vue }));
+  }
+}, 100);
+if (realmInterval.unref) realmInterval.unref();
 
 // ---- poker : minuteurs de decision + main suivante + diffusion ----
 // Une seconde suffit : le minuteur d'action est d'une minute, et l'echeance

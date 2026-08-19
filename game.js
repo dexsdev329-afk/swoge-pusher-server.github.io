@@ -288,7 +288,11 @@ class Game {
           ? Object.keys(p.persos).reduce((o, id) => { const c = p.persos[id];
               o[id] = { w: (c.w || ethers.BigNumber.from(0)).toString(),
                         ef: c.ef || undefined, ea: c.ea || undefined,
-                        ar: c.ar || undefined, ba: c.ba || undefined }; return o; }, {})
+                        ar: c.ar || undefined, ba: c.ba || undefined,
+                        /* L'XP GAGNEE AU COMBAT part au fichier ; celle du
+                           volume ne part pas, elle se recalcule. Meme regle
+                           que pour le compte, un cran plus bas. */
+                        xc: c.xc || undefined }; return o; }, {})
           : undefined,
         tg: p.tgId || null,
         wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
@@ -476,7 +480,8 @@ class Game {
           ? Object.keys(d.pr).reduce((o, id) => { const c = d.pr[id] || {};
               o[id] = { w: ethers.BigNumber.from(c.w || '0'),
                         ef: c.ef || null, ea: c.ea || null,
-                        ar: c.ar || null, ba: c.ba || null }; return o; }, {})
+                        ar: c.ar || null, ba: c.ba || null,
+                        xc: Math.max(0, Number(c.xc) || 0) }; return o; }, {})
           : {},
         skinActif: d.ska || null,
         fame: Number(d.fm) || 0,
@@ -4971,7 +4976,7 @@ class Game {
    * pas pour changer l'issue d'une manche : voir personnages.js.
    */
   _persoDe(p, id) {
-    return (p.persos && p.persos[id]) || { w: BN(0), ef: null, ea: null, ar: null, ba: null };
+    return (p.persos && p.persos[id]) || { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0 };
   }
 
   /** Le volume mise d'un personnage, en unites lisibles. Volume -> XP -> Fame
@@ -4981,8 +4986,46 @@ class Game {
   _volumeDe(c) {
     return Number(ethers.utils.formatUnits((c && c.w) || BN(0), cfg.DECIMALS));
   }
+  /**
+   * L'XP TOTALE d'un personnage : celle que le volume mise lui donne, PLUS
+   * celle qu'il est alle chercher en tuant des monstres.
+   *
+   * Une seule fonction pour les deux termes, et tout ce qui parle d'XP passe
+   * par elle. Le niveau affiche, la fame gagnee a la mort et la barre de
+   * progression lisaient auparavant `xpDuVolume` chacun de leur cote : y
+   * ajouter le combat a trois endroits aurait suffi a en oublier un, et le
+   * joueur aurait vu son niveau monter sans que sa fame suive.
+   *
+   * Le volume ne se stocke pas — il se derive de `c.w`. Le combat, si :
+   * personne ne peut le recalculer apres coup.
+   */
+  _xpDe(c) {
+    return personnages.xpDuVolume(this._volumeDe(c)) + Math.max(0, Number(c && c.xc) || 0);
+  }
   _fameDe(c) {
-    return personnages.fameDeXp(personnages.xpDuVolume(this._volumeDe(c)));
+    return personnages.fameDeXp(this._xpDe(c));
+  }
+
+  /**
+   * LE SEUL ENDROIT QUI DONNE DE L'XP DE COMBAT.
+   *
+   * Comme `_gagneXp` pour le compte : un point d'entree unique plutot qu'un
+   * `c.xc +=` disperse. C'est appele par la boucle du monde, jamais par un
+   * message du client — le navigateur ne dit pas ce qu'il a tue, il demande
+   * seulement a tirer, et le serveur constate.
+   */
+  gagneXpCombat(addr, skinId, xp) {
+    const n = Math.max(0, Math.floor(Number(xp) || 0));
+    if (!n) return null;
+    const p = this._p(addr);
+    if (!p.skins || !p.skins[skinId]) return null;
+    p.persos = p.persos || {};
+    const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0 });
+    const avant = personnages.niveauDeXp(this._xpDe(c));
+    c.xc = Math.max(0, Number(c.xc) || 0) + n;
+    const apres = personnages.niveauDeXp(this._xpDe(c));
+    return { xp: n, total: Math.round(this._xpDe(c)), niveau: apres,
+             monte: apres > avant ? apres : 0 };
   }
 
   /**
@@ -4999,7 +5042,7 @@ class Game {
     if (!base) return null;
     const c = this._persoDe(p, skinId);
     const volume = this._volumeDe(c);
-    const xp = personnages.xpDuVolume(volume);
+    const xp = this._xpDe(c);
     const niveau = personnages.niveauDeXp(xp);
     const xpNiveau = personnages.xpPour(niveau);
     const xpProchain = niveau >= personnages.NIVEAU_MAX ? null : personnages.xpPour(niveau + 1);
@@ -5076,7 +5119,7 @@ class Game {
     const p = this._p(addr);
     if (!(p.skins || {})[skinId]) throw new Error('you do not own this skin');
     p.persos = p.persos || {};
-    const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null });
+    const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0 });
     const CHAMPS = { fruit: 'ef', arme: 'ea', armure: 'ar', bague: 'ba' };
     const SUJETS = { fruit: 'fruit', arme: 'weapon', armure: 'armor', bague: 'ring' };
     const champ = CHAMPS[genre];
@@ -5172,6 +5215,12 @@ class Game {
     p.sac = {};
 
     c.w = BN(0);
+    /* ET L'XP DE COMBAT AVEC. Le volume seul ne suffit plus depuis que tuer
+       des monstres fait monter : ne remettre que lui laisserait un personnage
+       « mort » revenir au niveau qu'il avait gagne sur le terrain. On
+       recommence a zero, comme dans le jeu d'origine — c'est la contrepartie
+       de la fame qu'on vient d'encaisser. */
+    c.xc = 0;
     return { skin: skinId, perdus, sacPerdu, niveau: 0, fameGagnee, fameTotale: p.fame };
   }
 
