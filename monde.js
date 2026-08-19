@@ -223,25 +223,39 @@ function degatsSubis(attMonstre, defJoueur) {
 /*
  * ================== LA REGENERATION ==================
  *
- * Le coefficient est celui de RotMG, pas un chiffre choisi au ressenti :
- * on regagne (VIT + 1) x 0.12 point de vie par seconde, et (SAG + 1) x 0.12
- * point de mana. Le « + 1 » compte : un personnage a 0 de vitalite se soigne
- * quand meme, tres lentement, plutot que jamais.
+ * La FORME vient de RotMG : (stat + 1) x coefficient par seconde, double au
+ * repos. Le « + 1 » compte — un personnage a 0 de vitalite se soigne quand
+ * meme, tres lentement, plutot que jamais.
  *
- * Le REPOS double le debit. C'est la seule chose qui rend la vitalite
- * lisible en jeu : tant qu'on court et qu'on tire, on se soigne au ralenti ;
- * des qu'on decroche du combat pour souffler, la barre remonte deux fois plus
- * vite. Sans ce doublement, la regeneration serait soit trop lente pour
- * qu'on la remarque en fuyant, soit assez rapide pour annuler les degats
- * recus pendant qu'on tire — c'est-a-dire pour rendre les monstres inoffensifs.
+ * Le COEFFICIENT, lui, n'est pas celui de RotMG, et c'est deliberé. J'ai
+ * commence par reprendre son 0.12 tel quel, et le test l'a refuse tout de
+ * suite : a 75 de vitalite ca donne 9.1 PV/s, alors qu'un lime — le monstre
+ * le plus faible du jeu — n'enleve que 4.4 PV/s a un personnage bien defendu,
+ * plancher de degats oblige. Autrement dit, TOUS nos personnages au niveau
+ * maximum devenaient litteralement invulnerables a l'anneau exterieur. Le
+ * chiffre de RotMG est cale sur les degats de RotMG, ou les monstres ordinaires
+ * frappent a cinquante ou cent ; le recopier sans regarder nos monstres, c'est
+ * copier la moitie d'un equilibre.
  *
- * Ordre de grandeur chez nous : 40 de vitalite donne 4.9 PV/s au combat et
- * 9.8 au repos, sur une reserve de 700. Remplir une barre vide demande donc
- * une minute et demie de calme. C'est lent, et ca doit l'etre : dans un jeu
- * ou la mort detruit l'equipement, se soigner ne doit jamais etre plus
- * rentable que ne pas se faire toucher.
+ * 0.05 est le plus grand coefficient rond qui garde le monstre le plus faible
+ * dangereux pour le personnage le mieux defendu : la limite calculee est
+ * 0.057, on descend au cran rond en dessous. Un test le verifie personnage par
+ * personnage, pas sur une moyenne.
+ *
+ * Ce que ca donne : 40 de vitalite regenere 2.1 PV/s au combat et 4.1 au
+ * repos ; 75 de vitalite, 3.8 et 7.6. Remplir une barre vide au calme demande
+ * entre une minute trois quarts et trois minutes. C'est lent, et ca doit
+ * l'etre pour deux raisons qui vont dans le meme sens : dans un jeu ou la mort
+ * detruit l'equipement, se soigner ne doit jamais etre plus rentable que ne
+ * pas se faire toucher — et nous VENDONS des potions de vie a 10 $SWOGE. Une
+ * regeneration genereuse ne rendrait pas seulement les monstres inoffensifs,
+ * elle viderait la boutique de son rayon le plus utile.
+ *
+ * Le REPOS double le debit, et c'est ce qui rend la vitalite lisible : tant
+ * qu'on court et qu'on tire on se soigne au ralenti, des qu'on decroche pour
+ * souffler la barre remonte deux fois plus vite.
  */
-const REGEN_COEF = 0.12;
+const REGEN_COEF = 0.05;
 const REGEN_REPOS = 2;
 /* Le delai avant que le repos compte. Assez court pour recompenser un
    decrochage volontaire, assez long pour qu'une pause entre deux tirs ne

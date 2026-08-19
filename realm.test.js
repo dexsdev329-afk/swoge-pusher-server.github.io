@@ -315,4 +315,300 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
   eq(e.tirsM[0].f, 'maudit', 'et les leurs portent leur propre dessin');
 }
 
+// ================== 14. LA VIE ET LE MANA QUI REMONTENT
+//
+// Le coefficient vient de monde.js (celui de RotMG). Ce qui se verifie ici,
+// c'est ce que realm.js en fait : que les points soient reellement VERSES.
+// La faute qui guette est bete et invisible — a 4.9 PV/s, un pas de 100 ms
+// vaut 0.49 PV, arrondi a zero dix fois par seconde. La formule serait juste
+// et la barre ne bougerait jamais.
+{
+  const FR = { ...FICHE, stats: { hp: 400, mp: 200, att: 28, def: 13, vit: 40, wis: 50 } };
+  const r = new Realm({ alea: alea(200) });
+  r.monstres = [];
+  const j = r.rejoint(A, FR);
+  j.pv = 100; j.mp = 0;
+
+  /* Une seconde de simulation, en pas de 100 ms comme le vrai serveur. */
+  for (let i = 0; i < 10; i++) r.pas(0.1);
+  ok(j.pv > 100, `un point de vie est bien verse en une seconde (${j.pv})`);
+  ok(j.mp > 0, `du mana aussi (${j.mp})`);
+
+  /* Le DEBIT suit la vitalite. On ne compare pas a un chiffre en dur — le
+     coefficient a le droit de changer — mais deux vitalites differentes ne
+     peuvent pas donner le meme resultat, sinon la stat ne sert a rien. */
+  const lent = new Realm({ alea: alea(201) }); lent.monstres = [];
+  const jl = lent.rejoint(B, { ...FR, stats: { ...FR.stats, vit: 0 } });
+  jl.pv = 100;
+  for (let i = 0; i < 30; i++) { lent.pas(0.1); r.pas(0.1); }
+  ok((j.pv - 100) > (jl.pv - 100) * 2,
+     `40 de vitalite soigne bien plus vite que 0 (${j.pv - 100} contre ${jl.pv - 100})`);
+}
+
+// ================== 15. LE REPOS DOUBLE, TIRER ET COURIR CASSENT LE REPOS
+//
+// C'est la seule chose qui rend la vitalite lisible en jeu. Si bouger ne
+// cassait pas le repos, la regeneration doublee s'appliquerait en plein
+// combat et annulerait les degats recus — c'est-a-dire rendrait les monstres
+// inoffensifs.
+{
+  const FR = { ...FICHE, stats: { hp: 900, mp: 200, att: 28, def: 13, vit: 40, wis: 50 } };
+
+  const calme = new Realm({ alea: alea(202) }); calme.monstres = [];
+  const jc = calme.rejoint(A, FR); jc.pv = 100;
+  for (let i = 0; i < 60; i++) calme.pas(0.1);   // six secondes sans rien faire
+
+  const actif = new Realm({ alea: alea(203) }); actif.monstres = [];
+  const ja = actif.rejoint(A, FR); ja.pv = 100;
+  for (let i = 0; i < 60; i++) {
+    /* On avance de deux unites a chaque pas : loin d'etre une triche de
+       vitesse, mais assez pour que ce ne soit plus du repos. */
+    actif.bouge(A, ja.x + 2, ja.y, 'down', 'walk', 0.1);
+    actif.pas(0.1);
+  }
+  ok((jc.pv - 100) > (ja.pv - 100) * 1.5,
+     `six secondes de calme soignent bien plus que six secondes de course ` +
+     `(${jc.pv - 100} contre ${ja.pv - 100})`);
+
+  /* Rester immobile en continuant d'ANNONCER sa position ne casse rien : le
+     client parle dix fois par seconde meme a l'arret. */
+  const immobile = new Realm({ alea: alea(204) }); immobile.monstres = [];
+  const ji = immobile.rejoint(A, FR); ji.pv = 100;
+  for (let i = 0; i < 60; i++) {
+    immobile.bouge(A, ji.x, ji.y, 'down', 'idle', 0.1);
+    immobile.pas(0.1);
+  }
+  eq(ji.pv, jc.pv, 'annoncer la meme position ne casse pas le repos');
+
+  /* Un mort ne se releve pas tout seul. */
+  const mort = new Realm({ alea: alea(205) }); mort.monstres = [];
+  const jm = mort.rejoint(A, FR); jm.pv = 0;
+  for (let i = 0; i < 60; i++) mort.pas(0.1);
+  eq(jm.pv, 0, 'un mort ne regenere pas');
+
+  /* Ni la vie ni le mana ne depassent la reserve. */
+  const plein = new Realm({ alea: alea(206) }); plein.monstres = [];
+  const jp = plein.rejoint(A, FR);
+  jp.pv = jp.pvMax - 1; jp.mp = jp.mpMax - 1;
+  for (let i = 0; i < 100; i++) plein.pas(0.1);
+  eq(jp.pv, jp.pvMax, 'la vie s arrete au plafond');
+  eq(jp.mp, jp.mpMax, 'le mana aussi');
+}
+
+// ================== 16. LE POUVOIR DU FRUIT : CE QUI LE REFUSE
+//
+// Chaque refus est RENDU, jamais silencieux : une barre d'espace qui ne
+// repond pas se lit comme un bug, pas comme un manque de mana.
+{
+  const SANS = { ...FICHE, stats: { hp: 400, mp: 200, att: 28, def: 13, vit: 10, wis: 10 } };
+  const r = new Realm({ alea: alea(210) }); r.monstres = [];
+  r.rejoint(A, SANS);
+  eq(r.pouvoir(A, null).refus, 'aucun', 'sans fruit, pas de pouvoir');
+
+  const AVEC = { ...SANS, statFruit: 'att' };   // -> foudre
+  const r2 = new Realm({ alea: alea(211) }); r2.monstres = [];
+  const j2 = r2.rejoint(A, AVEC);
+  eq(j2.pouvoir, 'foudre', 'un fruit d attaque donne la foudre');
+
+  j2.mp = 0;
+  const refus = r2.pouvoir(A, null);
+  eq(refus.refus, 'mana', 'sans mana, refus explicite');
+  ok(refus.manque === M.POUVOIRS.foudre.cout, 'et il dit combien il manque');
+
+  j2.mp = j2.mpMax;
+  const ok1 = r2.pouvoir(A, { touches: [], kills: [] });
+  ok(!ok1.refus, 'avec du mana, il part');
+  eq(j2.mp, j2.mpMax - M.POUVOIRS.foudre.cout, 'et le mana est bien preleve');
+
+  const ok2 = r2.pouvoir(A, { touches: [], kills: [] });
+  eq(ok2.refus, 'recharge', 'deux fois de suite : refuse, la recharge tient');
+
+  /* La recharge descend avec le temps, pas toute seule. */
+  for (let i = 0; i < Math.ceil(M.POUVOIRS.foudre.recharge / 0.1) + 2; i++) r2.pas(0.1);
+  ok(!r2.pouvoir(A, { touches: [], kills: [] }).refus,
+     'la recharge ecoulee, il repart');
+
+  /* Un mort ne lance rien. */
+  j2.pv = 0;
+  eq(r2.pouvoir(A, null), null, 'un mort ne lance pas de pouvoir');
+}
+
+// ================== 17. LA FOUDRE FRAPPE, ET SON XP PASSE PAR LE MEME CHEMIN
+{
+  const r = new Realm({ alea: alea(212) });
+  const j = r.rejoint(A, { ...FICHE, statFruit: 'att',
+                           stats: { hp: 400, mp: 300, att: 28, def: 13, vit: 10, wis: 10 } });
+  const t = M.MONSTRES.lime;
+  r.monstres = [{ id: 1, espece: 'lime', biome: 'terre', x: j.x + 120, y: j.y,
+                  ancreX: j.x + 120, ancreY: j.y, pv: t.pv, pvMax: t.pv,
+                  dir: 'down', cible: null, recharge: 0, stase: 0,
+                  errX: 0, errY: 0, errChrono: 0 }];
+
+  const ev = { touches: [], kills: [] };
+  const s = r.pouvoir(A, ev);
+  eq(s.cle, 'foudre', 'c est bien la foudre');
+  ok(s.perte > 0, `elle enleve quelque chose (${s.perte})`);
+  eq(ev.touches.length, 1, 'et ca passe par ev.touches, comme une fleche');
+
+  /* PLUS FORT QU'UN TIR ORDINAIRE — sinon soixante mana et six secondes de
+     recharge ne servent a rien. */
+  const ordinaire = M.degatsInfliges(28, P.DEGATS_ARME.commun[1], t.def);
+  ok(s.perte > ordinaire * 2, `elle frappe bien plus fort qu un tir (${s.perte} contre ${ordinaire})`);
+
+  /* Elle ne frappe RIEN hors de portee : un pouvoir qui touche a l autre
+     bout de la carte n aurait pas de portee du tout. */
+  const loin = new Realm({ alea: alea(213) });
+  const jl = loin.rejoint(A, { ...FICHE, statFruit: 'att',
+                               stats: { hp: 400, mp: 300, att: 28, def: 13 } });
+  loin.monstres = [{ id: 1, espece: 'lime', biome: 'terre',
+                     x: jl.x + M.POUVOIRS.foudre.portee + 200, y: jl.y,
+                     ancreX: 0, ancreY: 0, pv: t.pv, pvMax: t.pv, dir: 'down',
+                     cible: null, recharge: 0, stase: 0, errX: 0, errY: 0, errChrono: 0 }];
+  const sl = loin.pouvoir(A, { touches: [], kills: [] });
+  ok(sl.vide === true, 'hors de portee, elle part dans le vide');
+  eq(loin.monstres[0].pv, t.pv, 'et le monstre lointain n a rien');
+
+  /* Elle TUE, et l XP remonte par ev.kills — pas par un raccourci. */
+  const mortel = new Realm({ alea: alea(214) });
+  const jm = mortel.rejoint(A, { ...FICHE, statFruit: 'att',
+                                 stats: { hp: 400, mp: 300, att: 55, def: 13 } });
+  mortel.monstres = [{ id: 1, espece: 'lime', biome: 'terre', x: jm.x + 60, y: jm.y,
+                       ancreX: 0, ancreY: 0, pv: 3, pvMax: t.pv, dir: 'down',
+                       cible: null, recharge: 0, stase: 0, errX: 0, errY: 0, errChrono: 0 }];
+  const evm = { touches: [], kills: [] };
+  mortel.pouvoir(A, evm);
+  eq(evm.kills.length, 1, 'un eclair qui tue rend bien un kill');
+  eq(evm.kills[0].xp, t.xp, 'avec l XP de l espece, la meme qu une fleche');
+  eq(jm.xpGagnee, t.xp, 'et elle est portee au compte du joueur');
+}
+
+// ================== 18. LA STASE FIGE VRAIMENT
+//
+// Cinq secondes pendant lesquelles un monstre ne bouge pas, ne frappe pas et
+// ne tire pas. La faute a eviter : le laisser flaner doucement, ce qui
+// donnerait l impression que le pouvoir n a pas pris.
+{
+  const r = new Realm({ alea: alea(220) });
+  const j = r.rejoint(A, { ...FICHE, statFruit: 'def',
+                           stats: { hp: 900, mp: 300, att: 28, def: 13 } });
+  eq(r.joueurs.get(A).pouvoir, 'stase', 'un fruit de garde donne la stase');
+
+  const t = M.MONSTRES.lime;
+  r.monstres = [{ id: 1, espece: 'lime', biome: 'terre', x: j.x + 100, y: j.y,
+                  ancreX: j.x + 100, ancreY: j.y, pv: t.pv, pvMax: t.pv,
+                  dir: 'down', cible: null, recharge: 0, stase: 0,
+                  errX: 1, errY: 0, errChrono: 99 }];
+
+  const s = r.pouvoir(A, { touches: [], kills: [] });
+  eq(s.cle, 'stase', 'c est bien la stase');
+  eq(s.figes.length, 1, 'le monstre a portee est fige');
+  eq(s.duree, 5, 'pendant cinq secondes, la duree demandee');
+
+  const x0 = r.monstres[0].x, y0 = r.monstres[0].y, pv0 = j.pv;
+  for (let i = 0; i < 40; i++) r.pas(0.1);   // quatre secondes
+  eq(r.monstres[0].x, x0, 'il n a pas bouge d un pouce');
+  eq(r.monstres[0].y, y0, 'ni en hauteur');
+  eq(j.pv, pv0, 'et il n a pas frappe');
+
+  /* On le voit dans l etat, sinon quatre secondes de monstres immobiles se
+     lisent comme un serveur qui a lache. */
+  const e = r.etatPour(A, 1400);
+  ok(e.monstres[0].st > 0, 'la stase se voit dans l etat');
+
+  /* Elle FINIT. Un monstre fige pour toujours serait un monstre mort.
+     On mesure le depart depuis la position OU IL ETAIT FIGE : deux secondes
+     de plus suffisent au lime pour couvrir les cent unites qui le separent
+     du joueur et se coller au contact, ou il s'arrete de nouveau — comparer
+     deux positions apres coup ne prouverait donc rien. */
+  for (let i = 0; i < 20; i++) r.pas(0.1);
+  ok(!r.monstres[0].stase, 'la stase finit par tomber');
+  ok(Math.abs(r.monstres[0].x - x0) > 20,
+     `et le monstre repart (de ${Math.round(x0)} a ${Math.round(r.monstres[0].x)})`);
+
+  /* Un monstre fige reste une CIBLE : il encaisse les fleches. */
+  const rr = new Realm({ alea: alea(221) });
+  const jj = rr.rejoint(A, { ...FICHE, statFruit: 'def',
+                             stats: { hp: 900, mp: 300, att: 28, def: 13 } });
+  rr.monstres = [{ id: 1, espece: 'lime', biome: 'terre', x: jj.x + 100, y: jj.y,
+                   ancreX: 0, ancreY: 0, pv: t.pv, pvMax: t.pv, dir: 'down',
+                   cible: null, recharge: 0, stase: 0, errX: 0, errY: 0, errChrono: 99 }];
+  rr.pouvoir(A, { touches: [], kills: [] });
+  rr.tire(A, 0);
+  for (let i = 0; i < 10; i++) rr.pas(0.05);
+  ok(rr.monstres[0].pv < t.pv, 'un monstre fige encaisse quand meme les tirs');
+
+  /* Hors du rayon, rien n est fige. */
+  const rl = new Realm({ alea: alea(222) });
+  const jl = rl.rejoint(A, { ...FICHE, statFruit: 'def',
+                             stats: { hp: 900, mp: 300, att: 28, def: 13 } });
+  rl.monstres = [{ id: 1, espece: 'lime', biome: 'terre',
+                   x: jl.x + M.POUVOIRS.stase.rayon + 150, y: jl.y,
+                   ancreX: 0, ancreY: 0, pv: t.pv, pvMax: t.pv, dir: 'down',
+                   cible: null, recharge: 0, stase: 0, errX: 0, errY: 0, errChrono: 99 }];
+  eq(rl.pouvoir(A, { touches: [], kills: [] }).figes.length, 0,
+     'hors du rayon, rien n est fige');
+}
+
+// ================== 19. LA RAFALE ACCELERE LA CADENCE, ET SEULEMENT ELLE
+{
+  const FR = { ...FICHE, statFruit: 'dex',
+               stats: { hp: 400, mp: 300, att: 28, def: 13 } };
+  const compte = (avecRafale) => {
+    const r = new Realm({ alea: alea(230) });
+    r.monstres = [];
+    const j = r.rejoint(A, FR);
+    if (avecRafale) r.pouvoir(A, { touches: [], kills: [] });
+    let tirs = 0;
+    /* Deux secondes : on demande a tirer a chaque pas, le serveur refuse ce
+       que la cadence ne permet pas. */
+    for (let i = 0; i < 40; i++) { tirs += r.tire(A, 0); r.pas(0.05); }
+    return { tirs, j };
+  };
+  const sans = compte(false);
+  const avec = compte(true);
+  eq(sans.j.pouvoir, 'rafale', 'un fruit de dexterite donne la rafale');
+  ok(avec.tirs > sans.tirs,
+     `la rafale fait partir plus de projectiles (${avec.tirs} contre ${sans.tirs})`);
+
+  /* Elle ne change PAS le nombre de projectiles par tir : c'est la main qui
+     va plus vite, pas l arme qui se dedouble. Une lame tire 1, elle continue. */
+  const r = new Realm({ alea: alea(231) }); r.monstres = [];
+  r.rejoint(A, FR);
+  r.pouvoir(A, { touches: [], kills: [] });
+  eq(r.tire(A, 0), M.ARMES.lame.tirs, 'un tir reste un tir');
+
+  /* Elle FINIT. */
+  const rf = new Realm({ alea: alea(232) }); rf.monstres = [];
+  const jf = rf.rejoint(A, FR);
+  rf.pouvoir(A, { touches: [], kills: [] });
+  ok(jf.rafale > 0, 'la rafale est active');
+  for (let i = 0; i < Math.ceil(M.POUVOIRS.rafale.duree / 0.1) + 2; i++) rf.pas(0.1);
+  eq(jf.rafale, 0, 'et elle retombe apres sa duree');
+}
+
+// ================== 20. L'ETAT PORTE LE MANA ET L'ETAT DU POUVOIR
+//
+// Le bouton doit pouvoir s eteindre a la seconde ou le mana manque, pas
+// quand le joueur appuie pour rien.
+{
+  const r = new Realm({ alea: alea(240) }); r.monstres = [];
+  const j = r.rejoint(A, { ...FICHE, statFruit: 'wis',
+                           stats: { hp: 400, mp: 250, att: 28, def: 13, vit: 20, wis: 30 } });
+  const e = r.etatPour(A, 1400);
+  eq(e.moi.mpMax, 250, 'la reserve de mana part avec l etat');
+  eq(e.moi.mp, 250, 'et ce qu il en reste');
+  eq(e.moi.po, 'stase', 'le pouvoir aussi');
+  eq(e.moi.poR, 0, 'et sa recharge');
+
+  r.pouvoir(A, { touches: [], kills: [] });
+  const e2 = r.etatPour(A, 1400);
+  ok(e2.moi.mp < 250, 'le mana depense se voit tout de suite');
+  ok(e2.moi.poR > 0, 'la recharge aussi');
+
+  /* Sans fruit, le client doit savoir qu il n y a rien a montrer. */
+  const r2 = new Realm({ alea: alea(241) }); r2.monstres = [];
+  r2.rejoint(B, FICHE);
+  eq(r2.etatPour(B, 1400).moi.po, null, 'sans fruit, aucun pouvoir annonce');
+}
+
 console.log('realm.test.js : ' + n + ' verifications OK');

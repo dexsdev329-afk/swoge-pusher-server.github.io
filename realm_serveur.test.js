@@ -99,6 +99,59 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
   const etat = await attend(s, 'realmEtat');
   ok(Array.isArray(etat.monstres), 'on recoit les monstres autour de soi');
   ok(etat.monstres.length <= 45, 'et pas la carte entiere (' + etat.monstres.length + ')');
+  ok(etat.moi.mpMax > 0, 'la reserve de mana part avec l etat');
+  eq(entre.moi.pouvoir, null, 'sans fruit equipe, aucun pouvoir : le poing nu ne lance pas d eclair');
+  ok(entre.pouvoirs && entre.pouvoirs.foudre, 'la table des POUVOIRS vient du serveur');
+  eq(entre.pouvoirs.stase.duree, M.POUVOIRS.stase.duree, 'et c est bien la sienne');
+
+  /* Sans fruit, la barre d espace repond quand meme — un refus explicite,
+     jamais le silence : une touche qui ne repond rien se lit comme un bug. */
+  s.send(JSON.stringify({ type: 'realmPouvoir' }));
+  eq((await attend(s, 'realmPouvoir')).refus, 'aucun', 'sans fruit, le refus est dit');
+
+  // ================== 2 bis. LE FRUIT DONNE LE POUVOIR, ET LE SERVEUR LE LIT
+  {
+    /* On equipe un fruit de CHAOS (att) : il doit donner la foudre. La regle
+       vit dans monde.js, pas ici — on verifie que le circuit complet
+       (boutique -> fiche -> realm) la transporte sans la reinventer. */
+    const fr = B.ITEMS.filter((o) => o.famille === 'chaos' && o.rarete === 'mythique')[0];
+    p.objets[fr.id] = 1;
+    p.persos.andy.ef = fr.id;
+    s.send(JSON.stringify({ type: 'realmLeave' }));
+    await attend(s, 'realmSorti');
+    s.recus.length = 0;
+    s.send(JSON.stringify({ type: 'realmJoin' }));
+    const e2 = await attend(s, 'realmEntre');
+    eq(e2.moi.pouvoir, M.pouvoirDeStat(P.FAMILLE_STAT.chaos),
+       'le fruit de chaos donne bien le pouvoir que monde.js lui attribue');
+    eq(e2.moi.pouvoir, 'foudre', 'et c est la foudre');
+
+    /* Il PART, et il coute. Le mana preleve doit etre celui de la table du
+       serveur, pas un chiffre que la page aurait choisi. */
+    const avantMp = e2.moi.mp;
+    s.recus.length = 0;
+    s.send(JSON.stringify({ type: 'realmPouvoir' }));
+    const r = await attend(s, 'realmPouvoir');
+    ok(!r.refus, 'avec un fruit et du mana, il part');
+    eq(r.cle, 'foudre', 'c est bien la foudre qui part');
+    eq(r.mp, avantMp - M.POUVOIRS.foudre.cout, 'et le cout preleve est celui du serveur');
+
+    /* Deux fois de suite : la recharge tient, cote serveur. Un client qui
+       envoie cent demandes n obtient pas cent eclairs. */
+    s.recus.length = 0;
+    s.send(JSON.stringify({ type: 'realmPouvoir' }));
+    eq((await attend(s, 'realmPouvoir')).refus, 'recharge', 'la recharge est tenue par le serveur');
+
+    /* On repart sans fruit pour la suite des tests, qui comptent sur le
+       niveau et l equipement d origine. */
+    p.persos.andy.ef = null;
+    delete p.objets[fr.id];
+    s.send(JSON.stringify({ type: 'realmLeave' }));
+    await attend(s, 'realmSorti');
+    s.recus.length = 0;
+    s.send(JSON.stringify({ type: 'realmJoin' }));
+    await attend(s, 'realmEntre');
+  }
 
   // ================== 3. TUER DONNE DE L'XP
   {

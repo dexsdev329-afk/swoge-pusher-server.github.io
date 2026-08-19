@@ -18,6 +18,7 @@
 const assert = require('assert');
 const M = require('./monde');
 const P = require('./personnages');
+const B = require('./boutique');
 let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n++; };
 const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
@@ -165,6 +166,145 @@ function alea(graine) {
     ok(v >= 90 && v <= 120, 'le tirage d arme reste entre son min et son max');
   }
   eq(M.tirageArme(null, r), 0, 'une arme sans table de degats ne fait rien');
+}
+
+// ================== LA REGENERATION
+//
+// Le coefficient est celui de RotMG : (stat + 1) x 0.12 par seconde, double
+// au repos. Ce qui se verifie ici, ce sont les PROPRIETES qui doivent tenir
+// meme si le coefficient bouge un jour.
+{
+  /* Le « + 1 » compte : sans lui, un personnage a 0 de vitalite ne se
+     soignerait JAMAIS, ce qui n'est pas la meme chose que « tres lentement ». */
+  ok(M.regenParSeconde(0, false) > 0, 'a 0 de vitalite, on se soigne quand meme');
+
+  /* Elle CROIT avec la stat, sur toute la plage utile. Une regeneration qui
+     plafonnerait ferait de la vitalite une stat morte apres un certain point. */
+  let prec = -1;
+  for (let v = 0; v <= 80; v += 5) {
+    const r = M.regenParSeconde(v, false);
+    ok(r > prec, `la vitalite ${v} regenere plus que ${v - 5}`);
+    prec = r;
+  }
+
+  /* Le repos DOUBLE, exactement. */
+  for (const v of [0, 10, 40, 75]) {
+    ok(Math.abs(M.regenParSeconde(v, true) - M.regenParSeconde(v, false) * M.REGEN_REPOS) < 1e-9,
+       `le repos double le debit a ${v} de vitalite`);
+  }
+
+  /* ---- L'ORDRE DE GRANDEUR ----
+   * C'est la seule chose qui decide si le systeme est jouable. Trop rapide,
+   * les monstres deviennent inoffensifs ; trop lent, la stat ne se voit pas.
+   * On borne donc le temps qu'il faut pour remplir une barre VIDE, au repos,
+   * avec les valeurs reelles du jeu — jamais moins de vingt secondes, jamais
+   * plus de cinq minutes. */
+  const hpMax = Math.max(...Object.keys(P.BASE).map((k) => P.BASE[k].hp));
+  const vitMax = Math.max(...Object.keys(P.BASE).map((k) => P.BASE[k].vit));
+  const secondes = hpMax / M.regenParSeconde(vitMax, true);
+  ok(secondes > 20, `remplir ${hpMax} PV au repos prend plus de 20 s (${Math.round(secondes)} s)`);
+  ok(secondes < 300, `et moins de cinq minutes (${Math.round(secondes)} s)`);
+
+  /* ---- ET SURTOUT : LE MONSTRE LE PLUS FAIBLE RESTE DANGEREUX ----
+   *
+   * C'est LA verification qui a fait descendre le coefficient de 0.12 (celui
+   * de RotMG) a 0.05. Si la regeneration au combat depasse ce qu'un lime
+   * enleve, tout l'anneau exterieur devient decoratif : on traverse la terre
+   * sans jamais perdre un point.
+   *
+   * On la fait PERSONNAGE PAR PERSONNAGE, avec ses vraies statistiques au
+   * niveau maximum. Une moyenne, ou pire un croisement de la meilleure
+   * vitalite avec la meilleure defense (deux personnages differents), ne
+   * dirait rien de ce qui se passe reellement en jeu. */
+  const t = M.MONSTRES.lime;
+  Object.keys(P.BASE).forEach((k) => {
+    const b = P.BASE[k];
+    const recu = M.degatsSubis(t.att, b.def) * t.cadence;
+    const soin = M.regenParSeconde(b.vit, false);
+    ok(recu > soin,
+       `« ${k} » (def ${b.def}, vit ${b.vit}) perd encore de la vie face a un lime ` +
+       `(${recu.toFixed(1)}/s contre ${soin.toFixed(1)}/s)`);
+  });
+
+  /* Le repos, lui, a le DROIT de depasser : c'est tout l'interet de
+     decrocher. Ce qu'on verifie alors, c'est qu'il ne rende pas la fuite
+     gratuite face a un vrai monstre — un squelette doit rester plus rapide
+     que la barre qui remonte, meme au calme. */
+  const sq = M.MONSTRES.skeleton;
+  Object.keys(P.BASE).forEach((k) => {
+    const b = P.BASE[k];
+    ok(M.degatsSubis(sq.att, b.def) * sq.cadence > M.regenParSeconde(b.vit, true),
+       `« ${k} » ne peut pas encaisser un squelette en restant plante la`);
+  });
+}
+
+// ================== LES POUVOIRS DU FRUIT
+//
+// Trois pouvoirs, et celui qu'on obtient se DEDUIT de la stat que le fruit
+// favorise deja. La regle vaut mieux qu'une table ecrite a la main : un
+// septieme fruit ajoute demain recoit automatiquement le bon pouvoir.
+{
+  eq(Object.keys(M.POUVOIRS).length, 3, 'il y a trois pouvoirs');
+
+  /* CHAQUE FRUIT DU CATALOGUE EN A UN. C'est le lien entre les deux modules,
+     et c'est exactement la ou une divergence passerait inapercue : un fruit
+     dont la stat principale ne serait pas dans la table repartirait sans
+     pouvoir, en silence, et le joueur ne saurait jamais pourquoi sa barre
+     d'espace ne fait rien. */
+  const fruits = Object.keys(P.PROFIL_FAMILLE)
+    .filter((f) => (B.ITEMS.filter((x) => x.famille === f)[0] || {}).saison === 1);
+  ok(fruits.length > 0, 'le catalogue a bien des fruits');
+  fruits.forEach((f) => {
+    const p = M.pouvoirDeStat(P.FAMILLE_STAT[f]);
+    ok(p && M.POUVOIRS[p], `le fruit « ${f} » (${P.FAMILLE_STAT[f]}) donne le pouvoir « ${p} »`);
+  });
+
+  /* LES TROIS SONT ATTEIGNABLES. Un pouvoir qu'aucun fruit ne donne serait du
+     code mort qui a l'air vivant. */
+  const donnes = new Set(fruits.map((f) => M.pouvoirDeStat(P.FAMILLE_STAT[f])));
+  eq(donnes.size, 3, 'les trois pouvoirs sont tous donnes par un fruit reel');
+
+  /* Le pouvoir prolonge le fruit au lieu de le contredire. */
+  eq(M.pouvoirDeStat('att'), 'foudre', 'la force frappe fort');
+  eq(M.pouvoirDeStat('dex'), 'rafale', 'la vitesse tire vite');
+  eq(M.pouvoirDeStat('def'), 'stase', 'la garde arrete le monde');
+
+  /* Sans fruit, rien. Le poing nu ne lance pas d'eclair. */
+  eq(M.pouvoirDeStat(null), null, 'sans fruit, aucun pouvoir');
+  eq(M.pouvoirDeStat('stat_inexistante'), null, 'une stat inconnue ne donne pas de pouvoir');
+
+  /* ---- LES COUTS SONT CALES SUR LA REGENERATION ----
+   * Un pouvoir qui couterait plus que la reserve ne partirait jamais ; un
+   * pouvoir qui couterait trois fois rien se lancerait en continu et
+   * remplacerait l'arme. On borne donc la part de la reserve qu'il consomme. */
+  const mpMax = Math.max(...Object.keys(P.BASE).map((k) => P.BASE[k].mp));
+  const wisMax = Math.max(...Object.keys(P.BASE).map((k) => P.BASE[k].wis));
+  Object.keys(M.POUVOIRS).forEach((k) => {
+    const P2 = M.POUVOIRS[k];
+    ok(P2.cout < mpMax * 0.5, `« ${k} » coute moins de la moitie de la reserve (${P2.cout}/${mpMax})`);
+    ok(P2.cout > mpMax * 0.1, `« ${k} » coute quand meme quelque chose (${P2.cout}/${mpMax})`);
+    /* Le MANA doit etre la vraie limite, pas la recharge : sinon la sagesse
+       ne servirait a rien et tout le monde lancerait au meme rythme. */
+    const secondesDeMana = P2.cout / M.regenParSeconde(wisMax, false);
+    ok(secondesDeMana > P2.recharge,
+       `« ${k} » : c'est le mana qui limite (${secondesDeMana.toFixed(1)} s) et non la recharge (${P2.recharge} s)`);
+  });
+
+  /* La stase dure les cinq secondes demandees. */
+  eq(M.POUVOIRS.stase.duree, 5, 'la stase fige cinq secondes');
+
+  /* ---- UN DEBUTANT PEUT LANCER SON POUVOIR ----
+   * On entre dans le monde au NIVEAU 0, avec une reserve de mana bien plus
+   * petite qu'au niveau 20. Un pouvoir qui couterait plus que cette reserve
+   * serait annonce sur le bouton, refuse a chaque appui, et le joueur
+   * n'aurait aucun moyen de comprendre qu'il lui manque quinze niveaux. */
+  Object.keys(P.BASE).forEach((k) => {
+    const mp0 = P.statAuNiveau(P.BASE[k].mp, 0);
+    Object.keys(M.POUVOIRS).forEach((c) => {
+      ok(M.POUVOIRS[c].cout <= mp0,
+         `« ${k} » au niveau 0 (${mp0} MP) peut lancer « ${c} » (${M.POUVOIRS[c].cout} MP)`);
+    });
+  });
 }
 
 console.log('monde.test.js : ' + n + ' verifications OK');

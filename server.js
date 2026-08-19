@@ -2918,9 +2918,14 @@ wss.on('connection', (ws) => {
            un chiffre d'interface. Hors du monde, la potion serait bue pour
            rien : on la refuse plutot que de la gaspiller en silence. */
         const j = realm.joueurs.get(ws.addr);
-        let pv = null;
+        let pv = null, mp = null;
         if (j && r.quoi === 'hp') { j.pv = Math.min(j.pvMax, j.pv + r.soigne); pv = j.pv; }
-        return send(ws, { type: 'potionBue', ...r, pv,
+        /* La potion de mana rendait un chiffre d'interface et rien d'autre :
+           la reserve du COMBAT ne bougeait pas. Tant que le mana ne servait a
+           rien, ca ne se voyait pas ; maintenant qu'il paie le pouvoir du
+           fruit, une potion bue pour rien serait dix $SWOGE jetes. */
+        if (j && r.quoi === 'mp') { j.mp = Math.min(j.mpMax, j.mp + r.soigne); mp = j.mp; }
+        return send(ws, { type: 'potionBue', ...r, pv, mp,
                           potions: game.potionsPour(ws.addr) });
       }
       if (m.type === 'rangeCoffre' || m.type === 'sortCoffre') {
@@ -2951,6 +2956,11 @@ wss.on('connection', (ws) => {
           stats: etat.stats,
           famille: (arme && arme.famille) || 'poing',
           degats: (arme && arme.degats) || monde.DEGATS_POING,
+          /* Le POUVOIR vient du fruit, et le fruit est deja dans la fiche.
+             On envoie sa stat principale plutot que le pouvoir lui-meme :
+             la regle « quelle stat donne quel pouvoir » appartient a
+             monde.js, et la dupliquer ici la ferait deriver. */
+          statFruit: (etat.equipFruit && etat.equipFruit.stat) || null,
         });
         ws.realmSkin = skin;
         realmClients.add(ws);
@@ -2962,8 +2972,15 @@ wss.on('connection', (ws) => {
                           monde: { w: monde.MONDE.w, h: monde.MONDE.h, tuile: monde.TUILE },
                           anneaux: monde.ANNEAUX, centre: monde.CENTRE,
                           armes: monde.ARMES, especes: monde.MONSTRES,
+                          /* La table des pouvoirs part a l'entree, comme celle
+                             des armes : le client doit pouvoir ecrire « 60 MP »
+                             sur le bouton sans connaitre le chiffre par coeur. */
+                          pouvoirs: monde.POUVOIRS,
                           moi: { x: Math.round(j.x), y: Math.round(j.y),
-                                 pv: j.pv, pvMax: j.pvMax, famille: j.famille } });
+                                 pv: j.pv, pvMax: j.pvMax,
+                                 mp: j.mp, mpMax: j.mpMax,
+                                 pouvoir: j.pouvoir || null,
+                                 famille: j.famille } });
       }
       if (m.type === 'realmLeave') {
         if (!ws.addr) return;
@@ -2988,6 +3005,34 @@ wss.on('connection', (ws) => {
         const a = Number(m.a);
         if (!Number.isFinite(a)) return;
         realm.tire(ws.addr, a);
+        return;
+      }
+      /* La barre d'espace. Le client n'envoie RIEN d'autre que « j'appuie » :
+         quelle cible, quels degats, combien de mana, c'est ici que ca se
+         tranche — sinon la console suffirait a lancer un eclair par image.
+         La reponse part toujours, meme sur un refus : une touche qui ne
+         repond pas se lit comme un bug, pas comme un manque de mana. */
+      if (m.type === 'realmPouvoir') {
+        if (!ws.addr || !realmClients.has(ws)) return;
+        const ev = { touches: [], kills: [] };
+        const r = realm.pouvoir(ws.addr, ev);
+        if (!r) return;
+        send(ws, { type: 'realmPouvoir', ...r });
+        /* Un eclair qui tue rapporte l'XP par le meme chemin qu'une fleche :
+           `gagneXpCombat`, pas un raccourci a cote. */
+        for (const k of ev.kills) {
+          try {
+            const g = game.gagneXpCombat(k.addr, ws.realmSkin, k.xp);
+            if (g) {
+              send(ws, { type: 'realmKill', espece: k.espece, xp: k.xp,
+                         total: g.total, niveau: g.niveau, monte: g.monte });
+              if (g.monte) persistSoon();
+            }
+          } catch (e) { console.error('[realm pouvoir xp]', e && e.message); }
+        }
+        for (const t of ev.touches) {
+          send(ws, { type: 'realmTouche', espece: t.espece, perte: t.perte, pv: t.pv });
+        }
         return;
       }
       /* Le classement du mois : qui a fait tourner le plus de volume. */

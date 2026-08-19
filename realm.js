@@ -26,10 +26,10 @@
  *
  * ---- ce qui n'y est pas ----
  *
- * Aucun butin, aucune potion : rien ne tombe encore. Les monstres ne tirent
- * pas non plus — ils blessent au contact. Un squelette qui decoche des
- * fleches demanderait ses propres projectiles cote monstre, et ca vaut mieux
- * une fois que le reste tient debout.
+ * Aucun butin, aucune potion : rien ne tombe encore. Le reste y est : les
+ * monstres tirent (liste `tirsM`, a part de la notre), la vie et le mana
+ * remontent tout seuls a la vitalite et a la sagesse, et le fruit porte donne
+ * un pouvoir qui se paie en mana.
  */
 
 const monde = require('./monde');
@@ -73,7 +73,7 @@ class Realm {
         id: this._nouvelId(), espece: m.espece, biome: m.biome,
         x: m.x, y: m.y, ancreX: m.x, ancreY: m.y,
         pv: t.pv, pvMax: t.pv, dir: 'down',
-        cible: null, recharge: 0,
+        cible: null, recharge: 0, stase: 0,
         // la direction de flanerie, retiree de temps en temps
         errX: 0, errY: 0, errChrono: 0,
       };
@@ -90,9 +90,24 @@ class Realm {
       addr, skin: (fiche && fiche.skin) || null, nom: (fiche && fiche.nom) || null,
       x: bord.x, y: bord.y, dir: 'up', anim: 'idle',
       pv: Math.max(1, stats.hp | 0), pvMax: Math.max(1, stats.hp | 0),
+      /* Le mana n'est pas decoratif : c'est la seule ressource du pouvoir du
+         fruit, et elle se remplit toute seule a la sagesse. Un personnage
+         sans mana (0 de reserve) ne lance simplement rien. */
+      mp: Math.max(0, stats.mp | 0), mpMax: Math.max(0, stats.mp | 0),
       att: stats.att | 0, def: stats.def | 0,
+      vit: stats.vit | 0, wis: stats.wis | 0,
       famille: (fiche && fiche.famille) || 'poing',
       degats: (fiche && fiche.degats) || monde.DEGATS_POING,
+      /* Le pouvoir vient du FRUIT, pas de l'arme : `statFruit` est la stat
+         principale du fruit porte, envoyee par game.js. Sans fruit, pas de
+         pouvoir — le poing nu ne lance pas d'eclair. */
+      pouvoir: monde.pouvoirDeStat((fiche && fiche.statFruit) || null),
+      pouvoirRecharge: 0,
+      /* La rafale, quand elle est active : le temps qu'il lui reste. */
+      rafale: 0,
+      /* Depuis combien de temps ce joueur n'a ni bouge ni tire. C'est ce
+         compteur qui decide du doublement de regeneration au repos. */
+      repos: 0,
       recharge: 0, xpGagnee: 0, vu: 0,
     };
     this.joueurs.set(addr, j);
@@ -131,6 +146,11 @@ class Realm {
     }
     if (dir) j.dir = String(dir).slice(0, 6);
     if (anim) j.anim = String(anim).slice(0, 6);
+    /* Se DEPLACER casse le repos ; rester immobile a annoncer la meme
+       position ne le casse pas. On mesure le mouvement reel, pas le fait
+       qu'un message soit arrive : le client parle dix fois par seconde meme
+       a l'arret. */
+    if (d > 1) j.repos = 0;
     return honnete;
   }
 
@@ -141,7 +161,13 @@ class Realm {
     if (!j || j.pv <= 0) return 0;
     if (j.recharge > 0) return 0;
     const a = monde.ARMES[j.famille] || monde.ARMES.poing;
-    j.recharge = 1 / a.cadence;
+    /* La rafale ne cree pas de projectiles en plus : elle raccourcit
+       l'attente entre deux tirs. Un pouvoir qui doublerait le NOMBRE de tirs
+       changerait aussi la portee couverte et la forme de l'eventail — la
+       cadence, elle, ne touche qu'a la vitesse de la main. */
+    const facteur = j.rafale > 0 ? monde.POUVOIRS.rafale.facteur : 1;
+    j.recharge = 1 / (a.cadence * facteur);
+    j.repos = 0;
     const ang = Number(angle) || 0;
     const ecart = 0.13;
     const duree = a.portee / a.vitesse;
@@ -157,6 +183,89 @@ class Realm {
     return nes;
   }
 
+  /**
+   * Declencher le pouvoir du fruit. Rend `null` quand il ne part pas — pas
+   * de fruit, pas assez de mana, encore en recharge, ou mort — et un objet
+   * decrivant ce qui s'est passe sinon. Le refus est RENDU plutot que
+   * silencieux : le client doit pouvoir dire « pas assez de mana » au lieu
+   * de laisser croire a une touche qui ne repond pas.
+   *
+   * Les degats de la foudre passent par ev.touches et ev.kills, exactement
+   * comme un projectile : c'est le meme chemin d'XP, et un pouvoir qui tue
+   * doit rapporter ce qu'une fleche aurait rapporte, ni plus ni moins.
+   */
+  pouvoir(addr, ev) {
+    const j = this.joueurs.get(addr);
+    if (!j || j.pv <= 0) return null;
+    if (!j.pouvoir) return { refus: 'aucun' };
+    const P = monde.POUVOIRS[j.pouvoir];
+    if (!P) return { refus: 'aucun' };
+    if (j.pouvoirRecharge > 0) return { refus: 'recharge', reste: j.pouvoirRecharge };
+    if (j.mp < P.cout) return { refus: 'mana', manque: P.cout - j.mp };
+
+    j.mp -= P.cout;
+    j.pouvoirRecharge = P.recharge;
+    j.repos = 0;
+    const sortie = { cle: j.pouvoir, addr, x: j.x, y: j.y, mp: j.mp, recharge: P.recharge };
+
+    if (j.pouvoir === 'rafale') {
+      j.rafale = P.duree;
+      sortie.duree = P.duree;
+      return sortie;
+    }
+
+    if (j.pouvoir === 'stase') {
+      /* Fige TOUT ce qui est dans le rayon, y compris ce qui ne poursuit
+         personne : une stase qui ne toucherait que les monstres deja lances
+         serait inutilisable en prevention, c'est-a-dire au seul moment ou
+         l'on a le temps de la lancer. */
+      const R2 = P.rayon * P.rayon;
+      const figes = [];
+      for (const m of this.monstres) {
+        if (m.pv <= 0) continue;
+        const dx = m.x - j.x, dy = m.y - j.y;
+        if (dx * dx + dy * dy > R2) continue;
+        m.stase = P.duree;
+        figes.push(m.id);
+      }
+      sortie.rayon = P.rayon;
+      sortie.duree = P.duree;
+      sortie.figes = figes;
+      return sortie;
+    }
+
+    // foudre : le monstre le plus proche dans la portee, touche sans delai
+    let cible = null, d2mini = P.portee * P.portee;
+    for (const m of this.monstres) {
+      if (m.pv <= 0) continue;
+      const dx = m.x - j.x, dy = m.y - j.y, d2 = dx * dx + dy * dy;
+      if (d2 < d2mini) { d2mini = d2; cible = m; }
+    }
+    sortie.portee = P.portee;
+    if (!cible) { sortie.vide = true; return sortie; }
+
+    const t = monde.MONSTRES[cible.espece];
+    /* Le coup MAXIMUM de l'arme, pas un tirage : un pouvoir qui coute
+       soixante mana et douze secondes ne doit pas pouvoir tomber sur son
+       minimum. Le hasard a sa place dans les tirs ordinaires, pas ici. */
+    const base = (j.degats && j.degats[1]) || monde.DEGATS_POING[1];
+    const perte = monde.degatsInfliges(j.att, base * P.facteur, t.def);
+    cible.pv = Math.max(0, cible.pv - perte);
+    sortie.monstre = cible.id;
+    sortie.perte = perte;
+    sortie.cx = Math.round(cible.x);
+    sortie.cy = Math.round(cible.y);
+    if (ev) {
+      ev.touches.push({ addr, monstre: cible.id, espece: cible.espece,
+                        perte, pv: cible.pv, x: cible.x, y: cible.y, pouvoir: 'foudre' });
+      if (cible.pv <= 0) {
+        j.xpGagnee += t.xp;
+        ev.kills.push({ addr, espece: cible.espece, xp: t.xp, x: cible.x, y: cible.y });
+      }
+    }
+    return sortie;
+  }
+
   /* ---- LE PAS ---- */
 
   /**
@@ -166,16 +275,64 @@ class Realm {
    */
   pas(dt) {
     dt = Math.max(0, Math.min(0.5, Number(dt) || 0));
-    const ev = { degats: [], morts: [], kills: [], touches: [] };
+    const ev = { degats: [], morts: [], kills: [], touches: [], regen: [] };
     if (!dt) return ev;
 
     for (const j of this.joueurs.values()) {
       if (j.recharge > 0) j.recharge -= dt;
+      if (j.pouvoirRecharge > 0) j.pouvoirRecharge = Math.max(0, j.pouvoirRecharge - dt);
+      if (j.rafale > 0) j.rafale = Math.max(0, j.rafale - dt);
+      this._regenere(j, dt, ev);
     }
     this._pasMonstres(dt, ev);
     this._pasTirs(dt, ev);
     this._pasTirsMonstres(dt, ev);
     return ev;
+  }
+
+  /**
+   * La vie et le mana qui remontent. Le debit vient de monde.regenParSeconde
+   * (le coefficient de RotMG), double quand le joueur ne bouge ni ne tire
+   * depuis REPOS_DELAI secondes.
+   *
+   * On accumule en flottant dans `pvReste`/`mpReste` et on ne verse que les
+   * points ENTIERS. Sans ca, un pas de 100 ms a 4.9 PV/s donnerait 0.49 PV,
+   * arrondi a 0 dix fois par seconde : la barre ne bougerait jamais, et le
+   * bug serait invisible parce que la formule, elle, serait juste.
+   *
+   * Un mort ne regenere pas : ressusciter tout seul en restant au sol
+   * annulerait la seule chose qui rend ce monde serieux.
+   */
+  _regenere(j, dt, ev) {
+    if (j.pv <= 0) return;
+    j.repos = (j.repos || 0) + dt;
+    const auRepos = j.repos >= monde.REPOS_DELAI;
+
+    let bouge = false;
+    if (j.pv < j.pvMax) {
+      j.pvReste = (j.pvReste || 0) + monde.regenParSeconde(j.vit, auRepos) * dt;
+      const gain = Math.floor(j.pvReste);
+      if (gain > 0) {
+        j.pvReste -= gain;
+        j.pv = Math.min(j.pvMax, j.pv + gain);
+        bouge = true;
+      }
+    } else { j.pvReste = 0; }
+
+    if (j.mp < j.mpMax) {
+      j.mpReste = (j.mpReste || 0) + monde.regenParSeconde(j.wis, auRepos) * dt;
+      const gain = Math.floor(j.mpReste);
+      if (gain > 0) {
+        j.mpReste -= gain;
+        j.mp = Math.min(j.mpMax, j.mp + gain);
+        bouge = true;
+      }
+    } else { j.mpReste = 0; }
+
+    /* Rien n'est diffuse ici : les barres partent avec `etatPour`, dix fois
+       par seconde de toute facon. `bouge` reste lisible pour les tests, qui
+       ont besoin de savoir qu'un point a bien ete verse. */
+    if (bouge && ev && ev.regen) ev.regen.push({ addr: j.addr, pv: j.pv, mp: j.mp });
   }
 
   _joueurLePlusProche(m) {
@@ -194,6 +351,18 @@ class Realm {
       if (m.pv <= 0) continue;
       const t = monde.MONSTRES[m.espece];
       if (m.recharge > 0) m.recharge -= dt;
+
+      /* ---- LA STASE ----
+       * Un monstre fige ne bouge pas, ne frappe pas, ne tire pas — et reste
+       * une cible. On sort AVANT tout le reste, y compris avant la flanerie :
+       * un squelette qui continuerait a deriver doucement pendant sa stase
+       * donnerait l'impression que le pouvoir n'a pas pris.
+       *
+       * Sa recharge, elle, continue de descendre (ligne au-dessus) : sinon le
+       * monstre sortirait de stase avec un coup arme et frapperait a l'instant
+       * meme ou il se reveille, ce qui rendrait les cinq secondes gagnees
+       * strictement nulles. */
+      if (m.stase > 0) { m.stase = Math.max(0, m.stase - dt); continue; }
 
       const cible = this._joueurLePlusProche(m);
       m.cible = cible ? cible.addr : null;
@@ -357,10 +526,22 @@ class Realm {
     }
     return {
       moi: { x: Math.round(j.x), y: Math.round(j.y), pv: j.pv, pvMax: j.pvMax,
+             mp: j.mp, mpMax: j.mpMax,
+             /* Le pouvoir et son etat partent a chaque image : le bouton doit
+                pouvoir s'eteindre a la seconde ou le mana manque, pas quand
+                le joueur appuie pour rien. */
+             po: j.pouvoir || null,
+             poR: Number((j.pouvoirRecharge || 0).toFixed(2)),
+             raf: Number((j.rafale || 0).toFixed(2)),
              xp: j.xpGagnee },
-      monstres: this.monstres.filter(pres).map((m) => ({
-        i: m.id, e: m.espece, x: Math.round(m.x), y: Math.round(m.y),
-        d: m.dir, pv: m.pv, pvMax: m.pvMax })),
+      monstres: this.monstres.filter(pres).map((m) => {
+        const o = { i: m.id, e: m.espece, x: Math.round(m.x), y: Math.round(m.y),
+                    d: m.dir, pv: m.pv, pvMax: m.pvMax };
+        /* La stase se VOIT : sans marque a l'ecran, cinq secondes de monstres
+           immobiles se lisent comme un serveur qui a lache. */
+        if (m.stase > 0) o.st = Number(m.stase.toFixed(2));
+        return o;
+      }),
       tirs: this.tirs.filter(pres).map((t) => ({
         i: t.id, x: Math.round(t.x), y: Math.round(t.y),
         a: Number(t.a.toFixed(3)), f: t.famille, mien: t.addr === addr })),
@@ -398,7 +579,7 @@ class Realm {
       this.monstres.push({
         id: this._nouvelId(), espece: m.espece, biome: m.biome,
         x: m.x, y: m.y, ancreX: m.x, ancreY: m.y,
-        pv: t.pv, pvMax: t.pv, dir: 'down', cible: null, recharge: 0,
+        pv: t.pv, pvMax: t.pv, dir: 'down', cible: null, recharge: 0, stase: 0,
         errX: 0, errY: 0, errChrono: 0,
       });
       nes++;
