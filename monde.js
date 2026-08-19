@@ -220,6 +220,102 @@ function degatsSubis(attMonstre, defJoueur) {
   return Math.max(Math.round(brut * PLANCHER), Math.round(apres));
 }
 
+/*
+ * ================== LA REGENERATION ==================
+ *
+ * Le coefficient est celui de RotMG, pas un chiffre choisi au ressenti :
+ * on regagne (VIT + 1) x 0.12 point de vie par seconde, et (SAG + 1) x 0.12
+ * point de mana. Le « + 1 » compte : un personnage a 0 de vitalite se soigne
+ * quand meme, tres lentement, plutot que jamais.
+ *
+ * Le REPOS double le debit. C'est la seule chose qui rend la vitalite
+ * lisible en jeu : tant qu'on court et qu'on tire, on se soigne au ralenti ;
+ * des qu'on decroche du combat pour souffler, la barre remonte deux fois plus
+ * vite. Sans ce doublement, la regeneration serait soit trop lente pour
+ * qu'on la remarque en fuyant, soit assez rapide pour annuler les degats
+ * recus pendant qu'on tire — c'est-a-dire pour rendre les monstres inoffensifs.
+ *
+ * Ordre de grandeur chez nous : 40 de vitalite donne 4.9 PV/s au combat et
+ * 9.8 au repos, sur une reserve de 700. Remplir une barre vide demande donc
+ * une minute et demie de calme. C'est lent, et ca doit l'etre : dans un jeu
+ * ou la mort detruit l'equipement, se soigner ne doit jamais etre plus
+ * rentable que ne pas se faire toucher.
+ */
+const REGEN_COEF = 0.12;
+const REGEN_REPOS = 2;
+/* Le delai avant que le repos compte. Assez court pour recompenser un
+   decrochage volontaire, assez long pour qu'une pause entre deux tirs ne
+   suffise pas. */
+const REPOS_DELAI = 1.2;
+
+function regenParSeconde(stat, auRepos) {
+  const v = (Math.max(0, Number(stat) || 0) + 1) * REGEN_COEF;
+  return auRepos ? v * REGEN_REPOS : v;
+}
+
+/*
+ * ================== LES POUVOIRS DU FRUIT ==================
+ *
+ * Le mana ne servait a rien. Il sert maintenant a UNE chose : le pouvoir du
+ * fruit, declenche a la barre d'espace. Trois pouvoirs, pas six — et surtout
+ * pas un par famille invente a la main. Celui qu'on obtient se DEDUIT de ce
+ * que le fruit favorise deja (voir PROFIL_FAMILLE cote personnages) :
+ *
+ *   force ou vie   (att, hp)  -> FOUDRE : un eclair, gros degats, immediat
+ *   vitesse        (spd, dex) -> RAFALE : la cadence de l'arme multipliee
+ *   garde ou savoir(def, wis) -> STASE  : les monstres autour figent 5 s
+ *
+ * Un fruit d'attaque frappe fort, un fruit de vitesse tire vite, un fruit de
+ * defense arrete le monde : le pouvoir prolonge le fruit au lieu de le
+ * contredire. Et parce que la regle passe par la stat, ajouter un septieme
+ * fruit demain lui donne automatiquement le bon pouvoir.
+ *
+ * Les couts sont cales sur la regeneration de mana, pas tires au hasard :
+ * avec 50 de sagesse on regagne 6.1 mana/s, donc la foudre (60) revient
+ * toutes les dix secondes environ et la stase (75) toutes les douze. Le
+ * temps de recharge est la pour empecher d'en enchainer deux avec une reserve
+ * pleine, jamais pour etre la vraie limite — la vraie limite, c'est le mana.
+ */
+const POUVOIRS = {
+  foudre: {
+    nom: 'Lightning', cout: 60, recharge: 6, portee: 520,
+    /* Trois fois le coup maximum de l'arme portee. Le multiplicateur suit
+       l'arme au lieu d'etre un chiffre fixe : sinon la foudre ecraserait tout
+       au debut et ne vaudrait plus rien avec une arme mythique. */
+    facteur: 3,
+  },
+  rafale: {
+    nom: 'Rapid fire', cout: 45, recharge: 8, duree: 4,
+    /* Deux fois et demie la cadence. Au-dela, le client n'arrive plus a
+       suivre le rythme des projectiles et le gain devient invisible. */
+    facteur: 2.5,
+  },
+  stase: {
+    nom: 'Stasis', cout: 75, recharge: 12, rayon: 380,
+    /* Cinq secondes, la duree demandee. Un monstre en stase ne bouge pas, ne
+       frappe pas et ne tire pas — il reste une cible. */
+    duree: 5,
+  },
+};
+
+/* La stat dominante du fruit -> son pouvoir. */
+const POUVOIR_PAR_STAT = {
+  att: 'foudre', hp: 'foudre',
+  spd: 'rafale', dex: 'rafale',
+  def: 'stase',  wis: 'stase',
+  /* mp et vit ne sont dominants d'aucun fruit ; les lister quand meme evite
+     qu'un fruit ajoute plus tard reparte sans pouvoir en silence. */
+  mp: 'stase', vit: 'foudre',
+};
+
+/** Le pouvoir d'un porteur, a partir de la stat principale de son fruit.
+    Rend `null` sans fruit : le poing nu ne lance pas d'eclair. */
+function pouvoirDeStat(stat) {
+  if (!stat) return null;
+  const cle = POUVOIR_PAR_STAT[stat];
+  return cle && POUVOIRS[cle] ? cle : null;
+}
+
 /** Un tirage de degats d'arme entre son minimum et son maximum. `alea` est
     fourni par l'appelant pour que ce module reste testable et pur. */
 function tirageArme(degats, alea) {
@@ -262,5 +358,7 @@ function peuplement(alea) {
 module.exports = {
   TUILE, CARTE, MONDE, CENTRE, ANNEAUX, MONSTRES, PEUPLEMENT, PLANCHER,
   ARMES, DEGATS_POING, VITESSE_JOUEUR,
+  REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
+  regenParSeconde, pouvoirDeStat,
 };

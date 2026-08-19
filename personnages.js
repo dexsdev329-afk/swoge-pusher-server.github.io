@@ -204,13 +204,23 @@ const PROFIL_FAMILLE = {
   or:     { hp: 1.00 },              // la vie, rien d'autre
   chance: { dex: 0.60, spd: 0.40 },  // le reflexe
 
-  // ---- saison 2 : les armes ----
-  hache:   { att: 1.00 },                          // tout sur la frappe
-  marteau: { att: 0.60, vit: 0.40 },               // lourd, endurant
-  lame:    { att: 0.55, dex: 0.45 },               // equilibre
-  lance:   { def: 0.60, att: 0.40 },               // tenir a distance
-  arc:     { dex: 0.50, spd: 0.30, att: 0.20 },    // mobile, deux tirs
-  dagues:  { dex: 0.60, mp: 0.40 },                // rapide, magique
+  /* ---- saison 2 : les armes n'ont PAS de profil ----
+   *
+   * Elles en avaient un, et c'etait la divergence de fond avec RotMG : la-bas
+   * une arme ne donne AUCUNE statistique, jamais — ni les epees (45-90 au
+   * commun jusqu'a 250-305 au dernier tier), ni les arcs, ni les dagues. Elle
+   * donne des DEGATS, une portee et un nombre de tirs, point. Ce qui habille
+   * le personnage, ce sont l'armure, l'anneau et le sort.
+   *
+   * Chez nous une lame mythique donnait +15 ATT et +13 DEX EN PLUS de ses
+   * 90-120 de degats : elle gagnait deux fois. Le releve l'a chiffre — nos
+   * pieces portaient +76 % du plafond d'attaque contre +15 % dans le vrai
+   * jeu. L'arme repart donc avec ses seuls degats (DEGATS_ARME, plus bas) et
+   * son comportement (portee, tirs, cadence — table ARMES, cote monde).
+   *
+   * Concretement : pas d'entree ici, pas de budget en saison 2, donc
+   * `bonusesDe` rend {} pour toute arme. Ce n'est pas un oubli a reparer.
+   */
 
   // ---- saison 3 : les armures ----
   plastron:   { def: 0.55, hp: 0.45 },             // le tank
@@ -239,9 +249,15 @@ const PROFIL_FAMILLE = {
  */
 const BUDGET_SAISON = {
   1: { commun: 3, rare: 6,  epique: 9,  legendaire: 12, mythique: 16 },  // fruits
-  2: { commun: 5, rare: 10, epique: 15, legendaire: 21, mythique: 28 },  // armes
+  /* pas de 2 : les armes ne donnent que des degats — voir PROFIL_FAMILLE */
   3: { commun: 7, rare: 14, epique: 21, legendaire: 29, mythique: 38 },  // armures
-  4: { commun: 3, rare: 6,  epique: 9,  legendaire: 12, mythique: 16 },  // bagues
+  /* Les bagues suivent le bareme reel des anneaux tiered de RotMG :
+     +3, +6, +7, +8, +9, +10, +11 sur sept tiers. Nous en avons cinq, on prend
+     les crans qui gardent l'ecart lisible du commun au mythique : 3, 6, 8, 10,
+     11. Le mythique s'arrete donc a +11 — la valeur exacte du meilleur anneau
+     du vrai jeu, et non plus +16. Une bague comble un trou de build, elle ne
+     remplace pas un niveau. */
+  4: { commun: 3, rare: 6,  epique: 8,  legendaire: 10, mythique: 11 },  // bagues
 };
 
 /** Les degats d'une arme, par rarete. Ils ne dependent pas de la famille :

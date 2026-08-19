@@ -99,7 +99,12 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
   };
   const familles = Object.keys(P.PROFIL_FAMILLE);
 
-  ok(familles.length === 24, `les vingt-quatre familles ont un profil (${familles.length})`);
+  /* Dix-huit et non vingt-quatre : les six familles d'ARMES n'ont plus de
+     profil du tout. Une arme ne donne que des degats, comme dans RotMG. */
+  ok(familles.length === 18, `les dix-huit familles a stats ont un profil (${familles.length})`);
+  B.FAMILLES.filter((f) => f.saison === 2).forEach((f) => {
+    ok(!P.PROFIL_FAMILLE[f.cle], `l'arme « ${f.cle} » n'a pas de profil de stats`);
+  });
 
   familles.forEach((f) => {
     const sai = saisonDe(f);
@@ -183,12 +188,45 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
      saisons ENSEMBLE — c'est ce qui garantit qu'aucune stat n'est hors de
      portee de tout equipement possible. */
   const stats = new Set(Object.values(P.FAMILLE_STAT));
-  eq(stats.size, 8, 'les huit stats sont toutes atteignables par un fruit ou une arme');
+  eq(stats.size, 8, 'les huit stats sont toutes atteignables sans passer par une arme');
   P.STATS.forEach((s) => ok(stats.has(s), `la stat ${s} a bien une famille qui la vise`));
 
-  /* Chaque famille du catalogue reel a une entree — un fruit ou une arme sans
-     mapping ne donnerait AUCUN bonus a l equiper, silencieusement. */
-  B.FAMILLES.forEach((f) => ok(P.FAMILLE_STAT[f.cle], `la famille ${f.cle} (saison ${f.saison}) a une stat`));
+  /* Chaque famille PORTEUSE DE STATS a une entree — un fruit, une armure ou
+     une bague sans mapping ne donnerait AUCUN bonus a l'equiper,
+     silencieusement. Les armes sont hors de ce compte par construction. */
+  B.FAMILLES.filter((f) => f.saison !== 2)
+    .forEach((f) => ok(P.FAMILLE_STAT[f.cle], `la famille ${f.cle} (saison ${f.saison}) a une stat`));
+
+  /* ---- LA REGLE DES ARMES, VERROUILLEE ----
+   *
+   * Le jour ou quelqu'un remet un profil sur « lame » pour « rendre l'epee
+   * plus interessante », il refait exactement la faute qu'on vient de
+   * corriger : l'arme gagnerait deux fois, en degats ET en stats. Chaque arme
+   * du catalogue rend {} a toutes les raretes, et rend des degats. */
+  B.FAMILLES.filter((f) => f.saison === 2).forEach((f) => {
+    B.RARETES.forEach((r) => {
+      eq(Object.keys(P.bonusesDe(r.cle, f.cle, 2)).length, 0,
+         `l'arme « ${f.cle} » ${r.cle} ne donne aucune stat`);
+      ok(P.DEGATS_ARME[r.cle][1] > 0, `l'arme « ${f.cle} » ${r.cle} a bien des degats`);
+    });
+  });
+
+  /* ---- LE POIDS DE L'EQUIPEMENT FACE AU PERSONNAGE ----
+   *
+   * Le releve realmeye : un anneau tiered plafonne a +11 ATT sur un
+   * personnage qui monte a 75 — 15 % du plafond. Ce qu'un set complet peut
+   * ajouter chez nous doit rester du meme ordre, pas cinq fois plus. On
+   * mesure le pire cas : le fruit le plus offensif, l'armure la plus
+   * offensive, la bague d'attaque, et l'arme (qui ne donne plus rien). */
+  {
+    const pire = P.bonusesDe('mythique', 'chaos', 1).att
+               + P.bonusesDe('mythique', 'gantelets', 3).att
+               + P.bonusesDe('mythique', 'topaze', 4).att
+               + (P.bonusesDe('mythique', 'lame', 2).att || 0);
+    const plafond = Math.max(...Object.keys(P.BASE).map((k) => P.BASE[k].att));
+    ok(pire / plafond < 0.70,
+       `un set mythique tout-attaque ajoute ${pire} sur un plafond de ${plafond} (${Math.round(pire / plafond * 100)} %)`);
+  }
 }
 
 console.log(`personnages.test.js : ${n} verifications OK`);

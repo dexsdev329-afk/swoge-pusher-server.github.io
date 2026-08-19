@@ -5086,7 +5086,13 @@ class Game {
       const o = itemId ? boutique.item(itemId) : null;
       if (!o) return null;
       const bonus = personnages.bonusesDe(o.rarete, o.famille, o.saison);
-      if (!Object.keys(bonus).length) return null;
+      /* Une ARME rend {} depuis qu'elle ne donne plus de stats : rendre null
+         ici viderait la case d'arme de la fiche alors qu'elle porte une
+         epee. Ce qui compte pour une arme, ce sont ses degats — ils partent
+         quelques lignes plus bas. On ne renonce donc que sur un objet qui
+         n'apporte NI stat NI degats, c'est-a-dire rien du tout. */
+      const degats = o.saison === 2 ? personnages.DEGATS_ARME[o.rarete] : null;
+      if (!Object.keys(bonus).length && !degats) return null;
       /* La couleur suit ici : la page dessine la case d'equipement dans la
          MEME couleur que la carte du catalogue, sans avoir a recharger le
          catalogue juste pour ca. */
@@ -5101,8 +5107,7 @@ class Game {
                       stat: personnages.FAMILLE_STAT[o.famille] || null, bonus };
       /* Les degats ne concernent que les armes : les poser sur une bague
          laisserait croire qu'elle frappe. */
-      const d = personnages.DEGATS_ARME[o.rarete];
-      if (o.saison === 2 && d) ligne.degats = d.slice();
+      if (degats) ligne.degats = degats.slice();
       return ligne;
     };
     const bFruit = bonusDe(c.ef);
@@ -5309,11 +5314,16 @@ class Game {
     const objets = p.objets || {};
     const ligne = (o) => {
       const r = boutique.rarete(o.rarete);
-      return { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
-               couleur: r ? r.couleur : '#8DA0C4', famille: o.famille, pouvoir: o.pouvoir,
-               stat: personnages.FAMILLE_STAT[o.famille] || null,
-               bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
-               quantite: objets[o.id] || 0 };
+      const l = { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+                  couleur: r ? r.couleur : '#8DA0C4', famille: o.famille, pouvoir: o.pouvoir,
+                  stat: personnages.FAMILLE_STAT[o.famille] || null,
+                  bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
+                  quantite: objets[o.id] || 0 };
+      /* Une arme n'a plus de stats : sans ses degats, la liste de choix
+         montrerait cinq epees indistinctes. Les degats SONT sa fiche. */
+      const d = o.saison === 2 ? personnages.DEGATS_ARME[o.rarete] : null;
+      if (d) l.degats = d.slice();
+      return l;
     };
     const possede = (o) => (objets[o.id] || 0) > 0;
     return {
@@ -5415,10 +5425,14 @@ class Game {
       if (!o) continue;
       const r = boutique.rarete(o.rarete);
       for (let i = 0; i < sac[id]; i++) {
+        const d = o.saison === 2 ? personnages.DEGATS_ARME[o.rarete] : null;
         out.push({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
                    couleur: r ? r.couleur : '#8DA0C4', saison: o.saison,
                    stat: personnages.FAMILLE_STAT[o.famille] || null,
                    bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
+                   /* Meme raison que dans la liste d'equipement : une arme
+                      posee dans le sac ne se lit que par ses degats. */
+                   ...(d ? { degats: d.slice() } : {}),
                    /* `place` identifie CETTE case, pas cet objet : deux
                       exemplaires identiques doivent pouvoir se deplacer
                       separement. */
