@@ -35,6 +35,25 @@ const boutique = require('./boutique');
 const skins = require('./skins');
 const personnages = require('./personnages');
 
+/* ---- LES POTIONS ----
+ *
+ * Elles ne sont PAS des objets de coffre : pas de rarete, pas de plafond,
+ * pas de tirage. On en achete autant qu'on veut a prix fixe, et elles se
+ * consomment. Les ranger dans `p.objets` les aurait fait apparaitre dans la
+ * collection et compter dans les exemplaires emis — deux mensonges.
+ *
+ * DEUX places dediees sous le sac, une par type, quatre-vingt-dix-neuf
+ * chacune. Un empilement, contrairement au sac : une potion n'est pas un
+ * butin qu'on choisit de garder, c'est une reserve.
+ */
+const POTIONS = {
+  vie:  { cle: 'vie',  nom: 'Health Potion', prix: 10, soigne: 100, quoi: 'hp',
+          image: 'potion_rouge' },
+  mana: { cle: 'mana', nom: 'Magic Potion',  prix: 10, soigne: 100, quoi: 'mp',
+          image: 'potion_bleue' },
+};
+const POTIONS_MAX = 99;
+
 /* ---- LES PLACES DU SAC ----
  * Huit, et UN OBJET PAR PLACE. Le coffre empile parce qu'il est un stock ;
  * le sac ne doit pas, sinon il n'a pas de fond et rien de ce qu'on y met ne
@@ -288,6 +307,9 @@ class Game {
         /* Le sac part au fichier comme le coffre : ce qu'on a ramasse ne doit
            pas disparaitre parce que le serveur a redemarre. */
         sc: (p.sac && Object.keys(p.sac).length) ? p.sac : undefined,
+        /* Les potions aussi : elles sont achetees avec de l'argent reel, et
+           les perdre a un redemarrage serait un vol. */
+        po: (p.potions && Object.keys(p.potions).length) ? p.potions : undefined,
         /* Le volume par skin part en chaine wei, comme p.wagered lui-meme —
            meme raison : un BigNumber ne traverse pas JSON.stringify tout
            seul. */
@@ -493,6 +515,7 @@ class Game {
         skinActif: d.ska || null,
         fame: Number(d.fm) || 0,
         sac: (d.sc && typeof d.sc === 'object') ? d.sc : {},
+        potions: (d.po && typeof d.po === 'object') ? d.po : {},
         bonusBloque: ethers.BigNumber.from(d.bb || '0'),
         bonusCible: d.bc2 ? ethers.BigNumber.from(d.bc2) : null,
         moisCle: d.mk || null, moisMise: Number(d.mm || 0),
@@ -3387,7 +3410,7 @@ class Game {
             jourColl: { coffres: 0, neufs: 0, rarete: 0 }, creeLe: Date.now(),
             /* L'inventaire de la boutique : identifiant d'objet -> quantite.
                Un objet plat, pas une Map : il part au fichier tel quel. */
-            objets: {}, sac: {},
+            objets: {}, sac: {}, potions: {},
             /* Les skins possedes, et celui qu'on porte. Registre a part de
                `objets` : un skin ne vient d'aucun coffre et n'appartient a
                aucune saison. */
@@ -5311,6 +5334,7 @@ class Game {
        * a un endroit ou ils ne sont pas — et laissait croire qu'ils
        * risquaient de disparaitre. */
       sac: this.sacPour(addr),
+      potions: this.potionsPour(addr),
     };
   }
 
@@ -5402,6 +5426,56 @@ class Game {
       }
     }
     return out.slice(0, SAC_CASES);
+  }
+
+  /**
+   * ==================== LES POTIONS ====================
+   * Achat a prix fixe, sans tirage ni plafond. Le solde est debite ici et
+   * nulle part ailleurs — c'est la regle de tout ce fichier.
+   */
+  potionsPour(addr) {
+    const p = this._p(addr);
+    const pot = p.potions || {};
+    return Object.keys(POTIONS).map((k) => ({
+      cle: k, nom: POTIONS[k].nom, prix: POTIONS[k].prix,
+      soigne: POTIONS[k].soigne, quoi: POTIONS[k].quoi, image: POTIONS[k].image,
+      max: POTIONS_MAX, quantite: Math.max(0, pot[k] | 0),
+    }));
+  }
+
+  achetePotion(addr, cle, quantite) {
+    const t = POTIONS[cle];
+    if (!t) throw new Error('Unknown potion');
+    const n = Math.max(1, Math.min(POTIONS_MAX, Math.floor(Number(quantite) || 1)));
+    const p = this._p(addr);
+    p.potions = p.potions || {};
+    const deja = Math.max(0, p.potions[cle] | 0);
+    /* On plafonne A L'ACHAT plutot que de refuser : quelqu'un qui a
+       quatre-vingt-quinze potions et en demande dix en veut visiblement le
+       maximum, et lui rendre une erreur au lieu de quatre potions serait
+       pedant. On ne facture que ce qu'on livre. */
+    const livre = Math.min(n, POTIONS_MAX - deja);
+    if (livre <= 0) throw new Error('You already carry ' + POTIONS_MAX + ' of those');
+    const cout = WEI(t.prix * livre);
+    if (p.balance.lt(cout)) throw new Error('Not enough $SWOGE');
+    p.balance = p.balance.sub(cout);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(cout);
+    p.potions[cle] = deja + livre;
+    return { cle, livre, quantite: p.potions[cle], prix: t.prix * livre,
+             balance: this.balanceStr(addr) };
+  }
+
+  /** Boire. Rend ce qu'il faut RENDRE — la vie appartient au monde, pas a ce
+      fichier, et c'est server.js qui la pose sur le joueur en jeu. */
+  boitPotion(addr, cle) {
+    const t = POTIONS[cle];
+    if (!t) throw new Error('Unknown potion');
+    const p = this._p(addr);
+    p.potions = p.potions || {};
+    if (!(p.potions[cle] > 0)) throw new Error('You have no ' + t.nom);
+    p.potions[cle] -= 1;
+    if (!p.potions[cle]) delete p.potions[cle];
+    return { cle, quoi: t.quoi, soigne: t.soigne, reste: p.potions[cle] || 0 };
   }
 
   /** Combien d'objets le sac porte, toutes lignes confondues. */

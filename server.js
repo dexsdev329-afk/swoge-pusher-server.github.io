@@ -2895,6 +2895,34 @@ wss.on('connection', (ws) => {
        * Le seul geste qui change le RISQUE d'un objet : le sac part avec le
        * personnage s'il meurt, le coffre survit. On renvoie l'inventaire
        * complet pour que le panneau n'ait rien a deviner. */
+      /* ---- LES POTIONS ----
+       * Achat a prix fixe, et consommation. Boire SOIGNE dans le monde :
+       * c'est la seule chose que ce message change, et c'est le serveur qui
+       * la pose sur le joueur en jeu — le client ne fait que demander. */
+      if (m.type === 'potionAchat') {
+        if (!ws.addr) return;
+        let err = null, r = null;
+        try { r = game.achetePotion(ws.addr, m.cle, m.qte); persistSoon(); }
+        catch (e) { err = e.message; }
+        return send(ws, { type: 'equipable', ...game.equipablesPour(ws.addr),
+                          balance: game.balanceStr(ws.addr),
+                          achat: r || undefined, error: err || undefined });
+      }
+      if (m.type === 'potionBoit') {
+        if (!ws.addr) return;
+        let r = null;
+        try { r = game.boitPotion(ws.addr, m.cle); persistSoon(); }
+        catch (e) { return send(ws, { type: 'equipable', ...game.equipablesPour(ws.addr),
+                                      error: e.message }); }
+        /* Si on est dans le monde, la vie soignee est celle du COMBAT — pas
+           un chiffre d'interface. Hors du monde, la potion serait bue pour
+           rien : on la refuse plutot que de la gaspiller en silence. */
+        const j = realm.joueurs.get(ws.addr);
+        let pv = null;
+        if (j && r.quoi === 'hp') { j.pv = Math.min(j.pvMax, j.pv + r.soigne); pv = j.pv; }
+        return send(ws, { type: 'potionBue', ...r, pv,
+                          potions: game.potionsPour(ws.addr) });
+      }
       if (m.type === 'rangeCoffre' || m.type === 'sortCoffre') {
         if (!ws.addr) return;
         let err = null;
