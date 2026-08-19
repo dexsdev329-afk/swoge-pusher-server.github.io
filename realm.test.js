@@ -744,4 +744,114 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
   ok(M.PEUPLEMENT.neige.especes.indexOf('meduse') >= 0, 'mais bien dans la neige');
 }
 
+// ================== 22. MOURIR LAISSE UNE PIERRE
+//
+// Elle ne sert pas a decorer : c'est la seule facon dont un joueur apprend
+// qu'un endroit est dangereux AVANT d'y aller. Trois choses doivent tenir :
+// elle nait a l'endroit exact, elle SURVIT a celui qui la laisse, et elle
+// finit par s'effacer.
+{
+  const FR = { ...FICHE, nom: 'Dodexel',
+               stats: { hp: 10, mp: 100, att: 28, def: 0, vit: 10, wis: 10 } };
+  const t = M.MONSTRES.archer;
+
+  const tue = (graine) => {
+    const r = new Realm({ alea: alea(graine) });
+    r.monstres = [];
+    const j = r.rejoint(A, FR);
+    r.tirsM.push({ id: 800, espece: 'archer', x: j.x + 10, y: j.y, a: 0,
+                   v: 1, reste: 5, att: 500, sprite: 'maudit' });
+    const ev = r.pas(0.05);
+    return { r, j, ev };
+  };
+
+  {
+    const { r, j, ev } = tue(400);
+    eq(j.pv, 0, 'le joueur est mort');
+    eq(ev.morts.length, 1, 'la mort est annoncee');
+    eq(r.tombes.length, 1, 'et elle laisse UNE pierre');
+    const tb = r.tombes[0];
+    eq(tb.x, j.x, 'a l endroit exact ou il est tombe');
+    eq(tb.y, j.y, 'y compris en hauteur');
+    eq(tb.nom, 'Dodexel', 'elle porte son nom — « quelqu un est mort ici » ne vaut rien');
+    eq(tb.par, 'archer', 'et ce qui l a tue');
+    eq(tb.reste, M.TOMBE.duree, 'elle part avec sa minute entiere');
+
+    /* ---- ELLE SURVIT A CELUI QUI LA LAISSE ----
+       Le serveur sort le mort du monde juste apres : une tombe rangee dans le
+       joueur disparaitrait avec lui, ce qui est exactement le contraire de ce
+       qu on veut. */
+    r.quitte(A);
+    eq(r.joueurs.size, 0, 'le mort a quitte le monde');
+    eq(r.tombes.length, 1, 'la pierre, elle, est toujours la');
+  }
+
+  /* ---- ELLE S EFFACE ----
+     Un monde pave de pierres eternelles ne raconte plus rien. */
+  {
+    const { r } = tue(401);
+    r.quitte(A);
+    /* Juste avant l echeance, elle est encore la. */
+    const presque = Math.floor((M.TOMBE.duree - 1) / 0.5);
+    for (let i = 0; i < presque; i++) r.pas(0.5);
+    eq(r.tombes.length, 1, `elle tient encore a ${M.TOMBE.duree - 1} s`);
+    for (let i = 0; i < 6; i++) r.pas(0.5);
+    eq(r.tombes.length, 0, 'et elle a disparu apres sa minute');
+  }
+
+  /* ---- ELLE NE PERD PAS LE PAS OU ELLE EST NEE ----
+     Les pierres vieillissent AVANT les morts du pas. Dans l ordre inverse —
+     c est ce que j avais ecrit d abord, et ce test l a attrape — une tombe
+     posee a l instant partait avec 59,95 s au lieu de 60. */
+  {
+    const r = new Realm({ alea: alea(402) });
+    r.monstres = [];
+    const j = r.rejoint(A, FR);
+    r.tirsM.push({ id: 801, espece: 'archer', x: j.x + 10, y: j.y, a: 0,
+                   v: 1, reste: 5, att: 500, sprite: 'maudit' });
+    r.pas(0.4);
+    eq(r.tombes[0].reste, M.TOMBE.duree, 'la minute est entiere au pas de sa naissance');
+  }
+
+  /* ---- ON VOIT CELLES DES AUTRES ----
+     Une pierre qu on serait seul a voir ne previendrait personne. */
+  {
+    const r = new Realm({ alea: alea(403) });
+    r.monstres = [];
+    const mort = r.rejoint(A, FR);
+    const vivant = r.rejoint(B, { ...FICHE, nom: 'Temoin',
+                                  stats: { hp: 900, mp: 100, att: 28, def: 13 } });
+    vivant.x = mort.x + 60; vivant.y = mort.y;
+    r.tirsM.push({ id: 802, espece: 'archer', x: mort.x + 10, y: mort.y, a: 0,
+                   v: 1, reste: 5, att: 500, sprite: 'maudit' });
+    r.pas(0.05);
+    r.quitte(A);
+    const vue = r.etatPour(B, 1400);
+    eq(vue.tombes.length, 1, 'le temoin voit la pierre du mort');
+    eq(vue.tombes[0].nom, 'Dodexel', 'avec son nom');
+    ok(vue.tombes[0].r > 0, 'et le temps qu il lui reste');
+
+    /* Mais pas celles du bout de la carte : la vue est bornee comme le reste. */
+    r.tombes.push({ id: 999, x: mort.x + 9000, y: mort.y, nom: 'Loin',
+                    skin: null, par: 'lime', reste: 30 });
+    eq(r.etatPour(B, 1400).tombes.length, 1, 'une pierre hors de portee ne voyage pas');
+  }
+
+  /* ---- LE PLAFOND ----
+     Rien n empeche en principe cent morts dans la meme minute, et une liste
+     sans borne finit par voyager en entier vers chaque client. */
+  {
+    const r = new Realm({ alea: alea(404) });
+    r.monstres = [];
+    for (let i = 0; i < M.TOMBE.plafond + 25; i++) {
+      const j = r.rejoint('0x' + String(i).padStart(40, '0'), FR);
+      r._meurt(j, 'lime', { morts: [] });
+    }
+    eq(r.tombes.length, M.TOMBE.plafond, 'la liste est bornee');
+    /* C est la PLUS VIEILLE qui part : la plus recente est celle qui a encore
+       quelque chose a apprendre a quelqu un. */
+    ok(r.tombes[r.tombes.length - 1].reste === M.TOMBE.duree, 'la derniere posee est gardee');
+  }
+}
+
 console.log('realm.test.js : ' + n + ' verifications OK');

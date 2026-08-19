@@ -60,6 +60,12 @@ class Realm {
        melangee obligerait a demander « a qui es-tu ? » a chaque collision,
        et un tir de joueur ne touche pas un joueur. */
     this.tirsM = [];
+    /* ---- LES TOMBES ----
+     * Elles survivent a celui qui les laisse : le joueur sort du monde a sa
+     * mort, la pierre reste. C'est donc une liste a part, et pas un champ du
+     * joueur — un champ disparaitrait avec lui, ce qui est exactement le
+     * contraire de ce qu'on veut. */
+    this.tombes = [];
     this._id = 1;
     this.peuple();
   }
@@ -284,6 +290,27 @@ class Realm {
     return sortie;
   }
 
+  /**
+   * Mourir. Un SEUL endroit pose l'evenement ET la pierre : les faire a deux
+   * endroits differents finirait par donner une mort sans tombe, et le trou
+   * serait invisible — personne ne remarque une pierre qui n'apparait pas.
+   *
+   * La tombe garde le nom et le visage : c'est ce qui la rend lisible pour
+   * les autres. « Quelqu'un est mort ici » ne vaut rien ; « Dodexel est mort
+   * ici, il y a vingt secondes » fait reculer.
+   */
+  _meurt(j, par, ev) {
+    ev.morts.push({ addr: j.addr, par });
+    this.tombes.push({
+      id: this._nouvelId(), x: j.x, y: j.y,
+      nom: j.nom || null, skin: j.skin || null, par,
+      reste: monde.TOMBE.duree,
+    });
+    /* La plus vieille s'efface quand le plafond est atteint : une liste sans
+       borne finirait par voyager en entier vers chaque client. */
+    while (this.tombes.length > monde.TOMBE.plafond) this.tombes.shift();
+  }
+
   /* ---- LE PAS ---- */
 
   /**
@@ -311,6 +338,17 @@ class Realm {
         j.paraImmun = Math.max(0, j.paraImmun - dt);
       }
       this._regenere(j, dt, ev);
+    }
+    /* ---- LES PIERRES VIEILLISSENT AVANT LES MORTS DE CE PAS ----
+     * Dans l'autre ordre, une tombe posee a l'instant se voyait retirer le
+     * temps du pas ou elle venait de naitre : elle partait avec 59,95 s au
+     * lieu de 60. Trois centiemes n'ont aucune importance en jeu — mais
+     * « elle part avec sa minute entiere » est une phrase qu'on peut
+     * verifier, et un test la verifie. Une regle vraie vaut mieux qu'une
+     * regle presque vraie qu'on aura oubliee dans six mois. */
+    for (let i = this.tombes.length - 1; i >= 0; i--) {
+      this.tombes[i].reste -= dt;
+      if (this.tombes[i].reste <= 0) this.tombes.splice(i, 1);
     }
     this._pasMonstres(dt, ev);
     this._pasTirs(dt, ev);
@@ -438,7 +476,7 @@ class Realm {
             cible.pv = Math.max(0, cible.pv - perte);
             m.recharge = 1 / t.cadence;
             ev.degats.push({ addr: cible.addr, perte, pv: cible.pv, par: m.espece });
-            if (cible.pv <= 0) ev.morts.push({ addr: cible.addr, par: m.espece });
+            if (cible.pv <= 0) this._meurt(cible, m.espece, ev);
           }
         }
         m.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left')
@@ -539,7 +577,7 @@ class Realm {
           }
           ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: t.espece,
                            paralyse: cloue ? monde.PARALYSIE.duree : 0 });
-          if (j.pv <= 0) ev.morts.push({ addr: j.addr, par: t.espece });
+          if (j.pv <= 0) this._meurt(j, t.espece, ev);
           fini = true;
           break;
         }
@@ -601,6 +639,12 @@ class Realm {
         i: t.id, x: Math.round(t.x), y: Math.round(t.y),
         a: Number(t.a.toFixed(3)), f: t.sprite })),
       joueurs: autres,
+      /* Les tombes des AUTRES autant que les siennes : c'est tout leur
+         interet. Une pierre qu'on serait seul a voir ne previendrait
+         personne. */
+      tombes: this.tombes.filter(pres).map((t) => ({
+        i: t.id, x: Math.round(t.x), y: Math.round(t.y),
+        nom: t.nom, par: t.par, r: Number(t.reste.toFixed(1)) })),
     };
   }
 

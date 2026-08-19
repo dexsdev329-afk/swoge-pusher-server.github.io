@@ -261,6 +261,24 @@ function degatsSubis(attMonstre, defJoueur) {
 }
 
 /*
+ * ================== LA TOMBE ==================
+ *
+ * Mourir laisse une pierre sur place, une minute durant, avec le nom de
+ * celui qui est tombe. Ce n'est pas de la decoration : c'est la seule facon
+ * dont un joueur apprend qu'un endroit est dangereux AVANT d'y aller. Trois
+ * tombes au bord de la lave en disent plus long que n'importe quel avis.
+ *
+ * Une minute, parce que c'est ce qu'il faut pour qu'un autre joueur passe par
+ * la. Plus court et personne ne la verrait ; plus long et le monde finirait
+ * pave de pierres qui ne racontent plus rien.
+ *
+ * Le plafond n'est pas une optimisation : c'est un garde-fou. Rien n'empeche
+ * en principe cent morts dans la meme minute, et une liste sans borne finit
+ * par voyager en entier vers chaque client.
+ */
+const TOMBE = { duree: 60, plafond: 80 };
+
+/*
  * ================== LA PARALYSIE ==================
  *
  * Perdre le deplacement, garder le tir. La duree est calee sur ce qu'il faut
@@ -433,7 +451,7 @@ function peuplement(alea) {
 module.exports = {
   TUILE, CARTE, MONDE, CENTRE, ANNEAUX, MONSTRES, PEUPLEMENT, PLANCHER,
   ARMES, DEGATS_POING, VITESSE_JOUEUR,
-  REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE,
+  REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, TOMBE,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   regenParSeconde, pouvoirDeStat,
 };
