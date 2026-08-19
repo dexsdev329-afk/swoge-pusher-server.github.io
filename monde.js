@@ -363,7 +363,7 @@ const TOMBE = { duree: 60, plafond: 80 };
  * Un monstre peut retirer autre chose que des points de vie. Trois etats,
  * trois facons de gener, et chacun appartient a une creature :
  *
- *   PARALYSE  on ne bouge plus — la Meduse
+ *   PARALYSE  on ne bouge plus, deux secondes — la Meduse
  *   RALENTI   on bouge a moitie vitesse — le Revenant de glace
  *   BRULURE   on perd de la vie seconde apres seconde — le Golem de magma
  *
@@ -397,7 +397,12 @@ const TOMBE = { duree: 60, plafond: 80 };
  * de reculer.
  */
 const EFFETS = {
-  paralyse: { duree: 2.5, immunite: 3.5 },
+  /* DEUX secondes, pas plus. Elle s'attrape en se faisant TOUCHER par un
+     projectile — donc elle s'esquive, et c'est ce qui la rend acceptable —
+     mais deux secondes clouees au sol dans la lave, c'est deja deux coups de
+     golem encaisses sans pouvoir reculer. Au-dela on ne joue plus, on
+     regarde. */
+  paralyse: { duree: 2, immunite: 3.5 },
   /* Moitie vitesse : en dessous on ne joue plus, au-dessus ca ne se sent pas.
      Trois secondes, le temps de traverser une clairiere en se sachant en
      retard. */
