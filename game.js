@@ -5018,7 +5018,12 @@ class Game {
          MEME couleur que la carte du catalogue, sans avoir a recharger le
          catalogue juste pour ca. */
       const r = boutique.rarete(o.rarete);
+      /* La FAMILLE part avec la ligne : c'est elle qui decide de la portee,
+         du nombre de tirs et du dessin du projectile. La page la deduisait
+         de la cle (`arme_ebreche`), ce qui rendait « arme » au lieu de
+         « lame » — un champ qui existe deja ne se redevine pas. */
       const ligne = { item: o.id, nom: o.nom, cle: o.cle, rarete: o.rarete,
+                      famille: o.famille,
                       couleur: r ? r.couleur : '#8DA0C4',
                       stat: personnages.FAMILLE_STAT[o.famille] || null, bonus };
       /* Les degats ne concernent que les armes : les poser sur une bague
