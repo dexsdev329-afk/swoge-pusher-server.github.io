@@ -4739,38 +4739,37 @@ class Game {
   }
 
   /**
-   * ================== LA PORTE DE LA SAISON SUIVANTE ==================
+   * ================== LES QUATRE SAISONS SONT OUVERTES ==================
    *
-   * Une saison s'ouvre a tout le monde quand la precedente a rendu ses TROIS
-   * lignes completes. Les trois gagnants, eux, y entrent des leur propre ligne
-   * finie — sans attendre les deux autres.
+   * Il y avait ici une porte : la saison N n'ouvrait qu'une fois la course de
+   * la saison N-1 terminee (ses trois lignes completes), les trois gagnants y
+   * entrant en avance. Elle est levee — les quatre saisons sont ouvertes a
+   * tout le monde, tout le temps.
    *
-   * ---- pourquoi la question se pose a l'ACHAT et nulle part ailleurs ----
+   * ---- pourquoi ----
    *
-   * On pourrait cacher les coffres verrouilles dans la page et s'arreter la.
-   * Ce serait une porte peinte : la page envoie un message, et n'importe qui
-   * peut envoyer le meme message a la main. La seule porte qui ferme est celle
-   * que le serveur tient au moment ou il debite. La page, elle, sert a ne pas
-   * proposer un bouton qui refusera — c'est du confort, pas de la securite.
+   * Le personnage porte QUATRE emplacements : fruit, arme, armure, bague, un
+   * par saison. Tant que les saisons 3 et 4 restaient fermees, deux de ces
+   * quatre cases etaient inatteignables pour tout le monde sauf trois
+   * joueurs — on montrait a chacun une fiche de personnage a moitie
+   * verrouillee, et personne ne pouvait s'equiper vraiment. La porte coutait
+   * plus qu'elle ne rapportait.
    *
-   * ---- ce qui n'est PAS verifie ici ----
+   * La COURSE, elle, continue : elle donne des prix et un classement
+   * (`boutiqueLignes`, `PRIX_LIGNE`). Elle ne commande simplement plus
+   * l'acces aux saisons — c'est une competition, plus un verrou.
    *
-   * On ne demande pas au joueur d'avoir fini quoi que ce soit. La saison 2 est
-   * ouverte a un joueur qui n'a jamais achete un seul fruit, du moment que la
-   * course de la saison 1 est terminee. C'est voulu : la porte recompense les
-   * trois premiers par de l'AVANCE, pas par de l'exclusivite. Une saison
-   * reservee a ceux qui ont fini la precedente fermerait le jeu a tout nouvel
-   * arrivant, ce qui est l'inverse du but.
+   * ---- pourquoi la fonction reste ----
+   *
+   * Ses trois appelants — la lecture d'une collection, l'ouverture d'un
+   * coffre, la liste des saisons — la consultent toujours. Les garder cote
+   * SERVEUR, la ou l'on debite, est ce qui fait qu'une porte est une porte :
+   * la page ne peut que cacher un bouton, et un message se refabrique a la
+   * main. Refermer une saison un jour redevient donc une seule ligne, ici,
+   * sans avoir a retrouver les trois endroits qui debitent.
    */
   boutiqueSaisonOuverte(addr, n) {
-    const s = Number(n) || 1;
-    if (s <= 1) return true;
-    const l = this.boutiqueLignes || [];
-    /* La course finie ouvre pour tous. */
-    if (l.length >= boutique.PRIX_LIGNE.length) return true;
-    /* Sinon, seuls ceux qui ont deja une ligne a leur nom. */
-    const a = String(addr || '').toLowerCase();
-    return l.some((g) => String(g.addr || '').toLowerCase() === a);
+    return true;
   }
 
   /**
@@ -4790,10 +4789,13 @@ class Game {
       const ouverte = this.boutiqueSaisonOuverte(addr, s.n);
       return {
         n: s.n, nom: s.nom, sujet: s.sujet, ouverte,
-        /* `avance` distingue les deux facons d'etre entre : par la course
-           finie, ou par sa propre ligne avant les autres. La page en fait une
-           mention — « you are in early, rank #1 » — qui n'a de sens que la. */
-        avance: !!(ouverte && s.n > 1 && l.length < total && gagnant),
+        /* `avance` disait « tu es entre en avance, rang #1 » a un gagnant de
+           la course pendant que la saison restait fermee aux autres. Plus
+           aucune ne l'est : entrer « en avance » quelque part ou tout le
+           monde est deja entre ne veut plus rien dire, et l'afficher serait
+           une distinction inventee. Le rang, lui, reste — il dit la place
+           dans la course, qui existe toujours. */
+        avance: false,
         rang: gagnant ? gagnant.rang : null,
         faites: l.length, sur: total,
       };

@@ -558,22 +558,25 @@ for (const c of B.COFFRES) {
 }
 
 /*
- * ==================== 7. LA PORTE DE LA SAISON 2 ====================
+ * =============== 7. LES QUATRE SAISONS SONT OUVERTES ===============
  *
- * La regle : la saison 2 s'ouvre a tous quand la saison 1 a rendu ses trois
- * lignes ; les gagnants y entrent des leur propre ligne finie.
+ * La regle est maintenant sans condition : les quatre saisons sont ouvertes
+ * a tout le monde, tout le temps. Il y avait ici une porte — la saison N
+ * n'ouvrait qu'une fois la course de la N-1 finie — et cette section
+ * verifiait qu'elle tenait. Elle verifie maintenant qu'il n'en reste RIEN.
  *
- * ---- pourquoi ces controles-la et pas un seul ----
+ * ---- pourquoi c'est teste aussi serieusement qu'avant ----
  *
- * Une porte a deux facons de se tromper, et elles ne coutent pas la meme
- * chose. Trop fermee, un gagnant reste dehors : il rale, on corrige. Trop
- * ouverte, tout le monde entre avant l'heure — et une edition entamee ne se
- * referme pas. On verifie donc les deux sens a chaque etape, et on verifie
- * surtout ce qui ne doit PAS arriver.
+ * Une porte levee a moitie est pire que la porte : le catalogue laisserait
+ * voir des objets qu'un coffre refuse ensuite de rendre, et le joueur
+ * paierait pour s'entendre dire non. On verifie donc les DEUX bouts de la
+ * chaine, pour les quatre saisons — ce que la page recoit, et ce que le
+ * serveur accepte de debiter — plutot que la seule fonction de porte, qui
+ * pourrait rendre `true` pendant qu'un appelant garde son propre verrou.
  *
  * Les lignes sont posees a la main dans `boutiqueLignes` : les faire gagner
  * pour de vrai demanderait des milliers d'achats par joueur et ne testerait
- * pas la porte, mais le tirage — qui a deja sa section.
+ * pas l'acces, mais le tirage — qui a deja sa section.
  */
 {
   const C = '0x' + '22'.repeat(20);
@@ -587,85 +590,91 @@ for (const c of B.COFFRES) {
     try { g.boutiqueAchat(addr, coffre); return null; } catch (e) { return e.message; }
   };
 
-  // ---- rien de gagne : la saison 2 est fermee pour tout le monde
+  // ---- rien de gagne, personne connu : les quatre saisons repondent oui
+  //
+  // C'est le cas qui comptait le plus AVANT (tout etait ferme) et qui compte
+  // le plus MAINTENANT : un serveur qui vient de demarrer, une adresse qui
+  // n'a jamais rien achete, et pourtant les quatre saisons accessibles.
   {
     const g = new Game();
-    eq(g.boutiqueSaisonOuverte(C, 1), true, 'la saison 1 est ouverte sans condition');
-    eq(g.boutiqueSaisonOuverte(C, 2), false, 'la saison 2 est fermee tant que rien n est gagne');
-    ok(/season 2 opens/.test(achete(g, C, 'armes_bois') || ''),
-       'et le serveur REFUSE la caisse d armes, il ne se contente pas de la cacher');
-    eq(achete(g, C, 'bois'), null, 'pendant que le coffre de la saison 1 s ouvre normalement');
-    /* Le refus doit arriver AVANT le debit. Un joueur a qui l'on prend
-       quatre mille jetons pour lui rendre une erreur ne le remarque pas tout
-       de suite, et c'est le pire moment pour s'en apercevoir. */
-    const p = g._p(D); p.balance = WEI(100000);
-    try { g.boutiqueAchat(D, 'armes_bois'); } catch (e) {}
-    eq(p.balance.toString(), WEI(100000).toString(), 'et RIEN n a ete debite au passage');
-  }
-
-  // ---- une seule ligne : le gagnant entre, personne d'autre
-  {
-    const g = new Game();
-    g.boutiqueLignes = [ligne(C, 1)];
-    eq(g.boutiqueSaisonOuverte(C, 2), true, 'le premier gagnant entre des sa ligne finie');
-    eq(g.boutiqueSaisonOuverte(D, 2), false, 'les autres attendent encore');
-    eq(achete(g, C, 'armes_bois'), null, 'le gagnant ouvre bien une caisse d armes');
-    ok(!!achete(g, D, 'armes_bois'), 'et le voisin se fait refuser la meme caisse');
-    /* La casse de l'adresse ne doit pas decider de l'acces. */
-    eq(g.boutiqueSaisonOuverte(C.toUpperCase(), 2), true,
-       'l adresse en majuscules ouvre la meme porte');
-  }
-
-  // ---- deux lignes : toujours seulement les deux gagnants
-  {
-    const g = new Game();
-    g.boutiqueLignes = [ligne(C, 1), ligne(D, 2)];
-    eq(g.boutiqueSaisonOuverte(C, 2), true, 'le premier est dedans');
-    eq(g.boutiqueSaisonOuverte(D, 2), true, 'le deuxieme aussi');
-    eq(g.boutiqueSaisonOuverte(E, 2), false, 'le reste du monde attend la troisieme ligne');
-  }
-
-  // ---- trois lignes : la saison s'ouvre a tous, gagnants ou non
-  {
-    const g = new Game();
-    g.boutiqueLignes = [ligne(C, 1), ligne(D, 2), ligne(E, 3)];
     const inconnu = '0x' + '55'.repeat(20);
-    eq(g.boutiqueSaisonOuverte(inconnu, 2), true,
-       'la course finie ouvre la saison 2 a un joueur qui n a jamais rien achete');
-    eq(achete(g, inconnu, 'armes_mythe'), null, 'et il peut ouvrir tout de suite');
+    for (const s of B.SAISONS) {
+      eq(g.boutiqueSaisonOuverte(inconnu, s.n), true,
+         `la saison ${s.n} est ouverte sans aucune condition`);
+    }
+    eq(g.boutiqueLignes ? g.boutiqueLignes.length : 0, 0,
+       'et ce, alors qu aucune ligne n a ete gagnee');
   }
 
-  // ---- ce que la page recoit, et pourquoi
+  // ---- LE COFFRE DE CHAQUE SAISON S'OUVRE VRAIMENT
+  //
+  // La fonction de porte peut rendre `true` pendant qu'un appelant garde son
+  // propre verrou : c'est le debit qui tranche, pas elle. On ouvre donc un
+  // coffre de chacune des quatre saisons, pour de vrai.
   {
     const g = new Game();
-    let s = g.boutiqueSaisons(C);
-    eq(s.length, 4, 'la page recoit les quatre saisons, pas seulement celles qu on peut ouvrir');
-    eq(s[1].ouverte, false, 'la deuxieme est annoncee fermee');
-    eq(s[1].faites + '/' + s[1].sur, '0/3', 'avec le compte qui dit ce qu il manque');
-
-    g.boutiqueLignes = [ligne(C, 1)];
-    s = g.boutiqueSaisons(C);
-    eq(s[1].ouverte, true, 'le gagnant la voit ouverte');
-    eq(s[1].avance, true, 'et sait qu il y est EN AVANCE');
-    eq(s[1].rang, 1, 'avec son rang, pour le dire');
-    eq(g.boutiqueSaisons(D)[1].avance, false, 'le voisin n a aucune avance a afficher');
-
-    g.boutiqueLignes = [ligne(C, 1), ligne(D, 2), ligne(E, 3)];
-    eq(g.boutiqueSaisons(C)[1].avance, false,
-       'et l avance disparait quand la course est finie : plus personne n est en avance');
+    for (const s of B.SAISONS) {
+      const coffres = B.COFFRES.filter((c) => c.saison === s.n);
+      ok(coffres.length > 0, `la saison ${s.n} a des coffres a ouvrir`);
+      for (const c of coffres) {
+        eq(achete(g, C, c.cle), null,
+           `le coffre « ${c.cle} » de la saison ${s.n} s ouvre sans refus`);
+      }
+    }
   }
 
-  // ---- une saison fermee ne fuit pas par l'etat
+  // ---- l'objet gagne appartient bien a la saison de son coffre
+  //
+  // Ouvrir sans refus ne suffit pas : si la saison 4 rendait des fruits de la
+  // saison 1, la porte serait levee mais le contenu faux — et l emplacement
+  // « bague » du personnage resterait impossible a remplir.
   {
     const g = new Game();
-    const e = g.boutiqueEtat(C, 2);
-    eq(e.saison, 1, 'demander une saison fermee retombe sur la saison 1');
-    ok(e.catalogue.items.every((o) => o.saison === undefined || o.saison === 1),
-       'et le catalogue rendu ne contient aucun objet de la saison fermee');
-    eq(e.catalogue.items.length, 30, 'trente objets, pas soixante');
+    for (const s of B.SAISONS) {
+      const c = B.COFFRES.filter((x) => x.saison === s.n)[0];
+      g._p(D).balance = WEI(100000000);
+      const r = g.boutiqueAchat(D, c.cle);
+      eq(r.item.saison, s.n,
+         `le coffre de la saison ${s.n} rend bien un objet de la saison ${s.n}`);
+    }
+  }
+
+  // ---- ce que la page recoit : quatre saisons, quatre fois « ouverte »
+  {
+    const g = new Game();
+    const s = g.boutiqueSaisons(C);
+    eq(s.length, 4, 'la page recoit les quatre saisons');
+    ok(s.every((x) => x.ouverte === true), 'et les quatre sont annoncees ouvertes');
+    ok(s.every((x) => x.avance === false),
+       'aucune ne se dit « en avance » : entrer en avance la ou tout le monde est deja entre ne veut rien dire');
+
+    /* La COURSE, elle, continue de vivre : elle donne des prix et un rang,
+       elle ne commande simplement plus l acces. */
     g.boutiqueLignes = [ligne(C, 1)];
-    eq(g.boutiqueEtat(C, 2).saison, 2, 'le gagnant, lui, recoit bien la saison 2');
-    eq(g.boutiqueEtat(D, 2).saison, 1, 'et le voisin retombe sur la premiere');
+    const s2 = g.boutiqueSaisons(C);
+    eq(s2[1].rang, 1, 'le rang du gagnant est toujours rendu');
+    eq(s2[1].faites + '/' + s2[1].sur, '1/3', 'avec l avancement de la course');
+    ok(s2.every((x) => x.avance === false),
+       'mais gagner une ligne ne donne plus d avance : il n y a plus rien a devancer');
+    ok(g.boutiqueSaisons(D).every((x) => x.ouverte === true),
+       'et le voisin, qui n a rien gagne, voit exactement les memes saisons ouvertes');
+  }
+
+  // ---- l'etat rend la saison DEMANDEE, sans repli sur la premiere
+  //
+  // Le repli existait pour ne pas laisser un panneau vide sur une saison
+  // fermee. Plus rien n etant ferme, il ne doit plus jamais se declencher :
+  // s il revenait, la page afficherait des fruits en croyant montrer des
+  // bagues.
+  {
+    const g = new Game();
+    for (const s of B.SAISONS) {
+      const e = g.boutiqueEtat(C, s.n);
+      eq(e.saison, s.n, `demander la saison ${s.n} rend bien la saison ${s.n}`);
+      eq(e.catalogue.items.length, 30, `avec ses trente objets a elle`);
+      ok(e.catalogue.items.every((o) => o.saison === undefined || o.saison === s.n),
+         `et aucun objet d une autre saison ne s y melange`);
+    }
   }
 
   // ---- le classement compte PAR saison
