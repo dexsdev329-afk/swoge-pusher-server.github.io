@@ -3037,7 +3037,12 @@ wss.on('connection', (ws) => {
           } catch (e) { console.error('[realm pouvoir xp]', e && e.message); }
         }
         for (const t of ev.touches) {
-          send(ws, { type: 'realmTouche', espece: t.espece, perte: t.perte, pv: t.pv });
+          /* Le POINT du coup part avec : sans lui, la page sait qu'elle a touche
+         mais pas OU, et ne peut poser aucun eclat. C'est ce qui faisait que
+         le geste le plus frequent du jeu — tirer sur un monstre — ne
+         produisait rien a l'ecran, seulement un son. */
+      send(ws, { type: 'realmTouche', espece: t.espece, perte: t.perte, pv: t.pv,
+                 x: Math.round(t.x), y: Math.round(t.y) });
         }
         return;
       }
@@ -3779,7 +3784,12 @@ const realmInterval = setInterval(() => {
   for (const t of ev.touches) {
     const ws = [...realmClients].find((c) => c.addr === t.addr);
     if (ws && ws.readyState === 1) {
-      send(ws, { type: 'realmTouche', espece: t.espece, perte: t.perte, pv: t.pv });
+      /* Le POINT du coup part avec : sans lui, la page sait qu'elle a touche
+         mais pas OU, et ne peut poser aucun eclat. C'est ce qui faisait que
+         le geste le plus frequent du jeu — tirer sur un monstre — ne
+         produisait rien a l'ecran, seulement un son. */
+      send(ws, { type: 'realmTouche', espece: t.espece, perte: t.perte, pv: t.pv,
+                 x: Math.round(t.x), y: Math.round(t.y) });
     }
   }
 
