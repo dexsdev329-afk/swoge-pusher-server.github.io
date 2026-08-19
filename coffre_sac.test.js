@@ -171,4 +171,59 @@ function pose() {
   eq(g.sacRempli(A), 0, 'on peut toujours tout ranger, quel que soit le remplissage');
 }
 
+// ================== 7. CE QUI MEURT RETOURNE DANS LE POOL
+{
+  const { g, p } = pose();
+  const it = arme;
+  /* Trois exemplaires ont ete tires du plafond : un porte, deux au sac. */
+  g.boutiqueEmis = { [it.id]: 3 };
+  p.objets = { [it.id]: 1 };
+  p.sac = { [it.id]: 2 };
+  p.persos = { andy: { w: ethers.BigNumber.from(0), ef: null, ea: it.id, ar: null, ba: null, xc: 0 } };
+
+  const restantAvant = require('./boutique').restant(it.id, g.boutiqueEmis);
+  g.meurt(A, 'andy');
+  eq(g.boutiqueEmis[it.id], 0, 'les trois exemplaires sont rendus au registre');
+  const restantApres = require('./boutique').restant(it.id, g.boutiqueEmis);
+  eq(restantApres, restantAvant + 3, 'le magasin en propose trois de plus');
+
+  /* SANS CE RETOUR, chaque mort aurait mange le plafond en silence : dix
+     mythiques emis, dix morts, plus jamais un seul — alors que le panneau
+     continue d'annoncer dix. C'est ce que ce test empeche. */
+  ok(restantApres > restantAvant, 'l offre a REMONTE : la mort ne rogne pas le plafond');
+
+  // et jamais sous zero, quoi qu'il arrive
+  const { g: g2, p: p2 } = pose();
+  g2.boutiqueEmis = {};
+  p2.objets = { [it.id]: 1 };
+  p2.persos = { andy: { w: ethers.BigNumber.from(0), ef: null, ea: it.id, ar: null, ba: null, xc: 0 } };
+  g2.meurt(A, 'andy');
+  eq(g2.boutiqueEmis[it.id], 0, 'un registre deja vide ne passe jamais en negatif');
+}
+
+// ================== 8. LE BILAN DE FIN PORTE TOUT D'UN COUP
+{
+  const { g, p } = pose();
+  p.objets = { [arme.id]: 1, [fruit.id]: 1 };
+  p.sac = { [fruit.id]: 2 };
+  p.persos = { andy: { w: ethers.BigNumber.from(0), ef: null, ea: arme.id, ar: fruit.id, ba: null, xc: 9000 } };
+  p.skins = { andy: true, pepe: true };
+
+  const r = g.meurt(A, 'andy');
+  eq(r.perdus.length, 2, 'les deux pieces portees sont nommees');
+  ok(r.perdus[0].nom, 'et elles ont un nom, pas seulement un numero');
+  eq(r.sacPerdu, 2, 'le sac perdu compte les EXEMPLAIRES, pas les lignes');
+  eq(r.sacDetail.length, 1, 'avec le detail de ce qu il contenait');
+  eq(r.sacDetail[0].qte, 2, 'quantite comprise');
+  eq(r.xp, 9000, 'l XP est celle d AVANT la remise a zero');
+  ok(r.fameGagnee > 0, 'la fame gagnee est portee au bilan (' + r.fameGagnee + ')');
+  eq(r.niveau, 0, 'et le personnage repart de zero');
+
+  /* LES SKINS RESTENT. On perd son equipement et son sac, jamais ses
+     personnages : c'est ce qui permet de rejouer tout de suite. */
+  assert.deepStrictEqual(r.skins.sort(), ['andy', 'pepe'], 'les skins sont tous encore la');
+  n++;
+  eq(Object.keys(p.skins).length, 2, 'et ils le sont vraiment, pas seulement dans le bilan');
+}
+
 console.log('coffre_sac.test.js : ' + n + ' verifications OK');

@@ -5195,9 +5195,29 @@ class Game {
      * On la calcule AVANT de remettre le volume a zero — apres, l'XP dont
      * elle se deduit n'existe plus, et on verserait zero. */
     const fameGagnee = this._fameDe(c);
+    /* L'XP aussi, et pour la meme raison : le bilan de fin l'affiche, et
+       apres la remise a zero elle vaudrait zero. */
+    const xpAvant = this._xpDe(c);
     p.fame = (p.fame || 0) + fameGagnee;
 
     const CHAMPS = ['ef', 'ea', 'ar', 'ba'];
+    /* ---- CE QUI EST DETRUIT RETOURNE DANS LE POOL ----
+     *
+     * Un objet mort disparait du coffre du joueur ; s'il ne redescendait pas
+     * aussi du REGISTRE des exemplaires emis, il resterait compte comme
+     * existant pour toujours. Chaque mort aurait alors reduit l'offre en
+     * silence, et les raretes seraient devenues introuvables sans que
+     * personne puisse dire pourquoi — un plafond de dix mythiques, dix morts,
+     * plus jamais un seul, alors que le panneau continue d'annoncer dix.
+     *
+     * C'est exactement le raisonnement du rachat (`RACHAT_RECYCLE`), et pour
+     * la meme raison : ce qui sort du monde doit pouvoir y revenir. La mort
+     * est meme le cas le plus evident — l'objet a ete PERDU, pas consomme. */
+    const recycle = (id, qte) => {
+      this.boutiqueEmis = this.boutiqueEmis || {};
+      this.boutiqueEmis[id] = Math.max(0, (this.boutiqueEmis[id] || 0) - qte);
+    };
+
     const perdus = [];
     p.objets = p.objets || {};
     for (const champ of CHAMPS) {
@@ -5208,6 +5228,7 @@ class Game {
                     rarete: o ? o.rarete : null });
       if (p.objets[id] > 1) p.objets[id] -= 1;
       else delete p.objets[id];
+      recycle(id, 1);
       c[champ] = null;
     }
     /* Le niveau vient du volume mise sous ce personnage : le remettre a zero
@@ -5218,7 +5239,20 @@ class Game {
        et c'est justement le sens du sac : ce qui n'a pas ete mis a l'abri au
        coffre disparait avec le personnage. Sans ca, le sac serait un second
        coffre gratuit, et deposer ses trouvailles ne servirait a rien. */
-    const sacPerdu = Object.keys(p.sac || {}).length;
+    const sac = p.sac || {};
+    /* On compte les EXEMPLAIRES, pas les lignes : le sac a huit places et
+       chacune porte un objet, donc trois epees identiques sont trois pertes
+       et trois retours au pool. */
+    let sacPerdu = 0;
+    const sacDetail = [];
+    for (const id of Object.keys(sac)) {
+      const qte = Math.max(0, sac[id] | 0);
+      if (!qte) continue;
+      const o = boutique.item(Number(id));
+      sacPerdu += qte;
+      recycle(Number(id), qte);
+      if (o) sacDetail.push({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete, qte });
+    }
     p.sac = {};
 
     c.w = BN(0);
@@ -5228,7 +5262,13 @@ class Game {
        recommence a zero, comme dans le jeu d'origine — c'est la contrepartie
        de la fame qu'on vient d'encaisser. */
     c.xc = 0;
-    return { skin: skinId, perdus, sacPerdu, niveau: 0, fameGagnee, fameTotale: p.fame };
+    /* L'ECRAN DE FIN a besoin de tout ca d'un seul coup : ce qu'on a perdu,
+       nommement, ce qu'on avait gagne, et ce qui reste. Le renvoyer en une
+       fois evite au client d'aller le rechercher piece par piece au moment
+       precis ou il doit afficher un bilan. */
+    return { skin: skinId, perdus, sacPerdu, sacDetail, niveau: 0,
+             xp: Math.round(xpAvant), fameGagnee, fameTotale: p.fame,
+             skins: Object.keys(p.skins || {}) };
   }
 
   /**
