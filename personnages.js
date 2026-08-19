@@ -156,22 +156,62 @@ const FAMILLE_STAT = {
 };
 
 /**
- * Le bonus qu'apporte une rarete, sur la stat de sa famille.
+ * ============ LE BONUS D'EQUIPEMENT, A L'ECHELLE DE LA STAT ============
  *
- * MEME POIDS que `boutique.prixRachat` : `1000 / plafond`. Ce n'est pas une
- * coincidence — c'est la meme question, « combien cette rarete pese-t-elle
- * face aux autres ? », posee deux fois pour deux usages differents. Un objet
- * dont dix exemplaires existent au monde doit peser cent fois plus qu'un
- * objet qui en compte mille, ici comme au rachat.
+ * ---- ce qui n'allait pas ----
+ *
+ * Le bonus valait `1000 / plafond` : un seul chiffre par rarete, le meme
+ * pour les huit stats. Ca mesurait bien la RARETE, mais ca ignorait
+ * l'ECHELLE de ce qu'on augmente. Un mythique donnait +100, ce qui vaut
+ * un huitieme de barre de vie (700 points) mais TRIPLE une sagesse de 50.
+ * La meme piece etait donc anecdotique sur une jauge et absurde sur un
+ * attribut, sans que rien ne le dise.
+ *
+ * ---- d'ou viennent ces chiffres ----
+ *
+ * De realmeye.com/wiki/rings, paliers 1 a 5 (Standard, Greater, Superior,
+ * Paramount, Exalted) — c'est-a-dire cinq paliers pour nos cinq raretes.
+ * RotMG resout exactement le meme probleme avec deux baremes :
+ *
+ *      palier :  Standard  Greater  Superior  Paramount  Exalted
+ *      HP / MP :     +30      +60       +80       +100      +120
+ *      attribut :     +3       +6        +7         +8        +9
+ *
+ * Le rapport est d'environ dix entre les deux, et il n'est pas arbitraire :
+ * c'est le rapport entre les echelles: une vie se compte en centaines, un
+ * attribut en dizaines. Nos propres bases sont du meme ordre (700-800 de
+ * vie, 25-75 d'attribut), donc le bareme se transpose tel quel.
+ *
+ * ---- ce qui n'est PAS grade ici ----
+ *
+ * Le genre de l'objet. Une armure legendaire et une bague legendaire
+ * donnent le meme +8 sur la meme stat. Dans RotMG une armure lourde pese
+ * plus qu'un anneau sur la defense — mais les valeurs exactes des armures
+ * ne sont pas extractibles du wiki (rendues en JavaScript), et poser un
+ * facteur invente serait exactement l'erreur qu'on vient de corriger. Le
+ * jour ou on veut cette nuance, elle s'ajoute ici, avec sa source.
  */
-function bonusDe(rarete, plafondDe) {
-  const p = plafondDe(rarete);
-  if (!p) return 0;
-  return Math.round(1000 / p);
+const BONUS_RARETE = {
+  commun:     { jauge: 30,  attribut: 3 },
+  rare:       { jauge: 60,  attribut: 6 },
+  epique:     { jauge: 80,  attribut: 7 },
+  legendaire: { jauge: 100, attribut: 8 },
+  mythique:   { jauge: 120, attribut: 9 },
+};
+/* Les deux stats qui se comptent en centaines. Toutes les autres sont des
+   attributs — ecrire la liste courte plutot que la longue evite d'oublier
+   une stat ajoutee plus tard et de lui donner par defaut le bareme des
+   jauges, qui serait dix fois trop fort. */
+const JAUGES = ['hp', 'mp'];
+
+function bonusDe(rarete, stat) {
+  const b = BONUS_RARETE[rarete];
+  if (!b) return 0;
+  return JAUGES.indexOf(stat) >= 0 ? b.jauge : b.attribut;
 }
 
 module.exports = {
-  STATS, BASE, FAMILLE_STAT,
+  STATS, BASE, FAMILLE_STAT, BONUS_RARETE, JAUGES,
   NIVEAU_MAX, NIVEAU_BASE, NIVEAU_PUISSANCE, XP_BASE, XP_PUISSANCE,
   volumePour, xpPour, xpDuVolume, niveauDeXp, statAuNiveau, bonusDe,
 };

@@ -4991,7 +4991,7 @@ class Game {
       if (!o) return null;
       const stat = personnages.FAMILLE_STAT[o.famille];
       if (!stat) return null;
-      const val = personnages.bonusDe(o.rarete, (r) => { const x = boutique.rarete(r); return x ? x.plafond : 0; });
+      const val = personnages.bonusDe(o.rarete, stat);
       /* La couleur suit ici : la page dessine la case d'equipement dans la
          MEME couleur que la carte du catalogue, sans avoir a recharger le
          catalogue juste pour ca. */
@@ -5073,10 +5073,11 @@ class Game {
     const objets = p.objets || {};
     const ligne = (o) => {
       const r = boutique.rarete(o.rarete);
+      const stat = personnages.FAMILLE_STAT[o.famille] || null;
       return { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
                couleur: r ? r.couleur : '#8DA0C4', famille: o.famille, pouvoir: o.pouvoir,
-               stat: personnages.FAMILLE_STAT[o.famille] || null,
-               bonus: personnages.bonusDe(o.rarete, (rar) => { const x = boutique.rarete(rar); return x ? x.plafond : 0; }),
+               stat,
+               bonus: personnages.bonusDe(o.rarete, stat),
                quantite: objets[o.id] || 0 };
     };
     const possede = (o) => (objets[o.id] || 0) > 0;

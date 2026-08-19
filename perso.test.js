@@ -219,7 +219,7 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
   eq(eq1.fruits[0].id, fruit.id);
   eq(eq1.fruits[0].quantite, 2, 'la quantite possedee est rendue');
   eq(eq1.fruits[0].stat, P.FAMILLE_STAT[fruit.famille], 'la stat visee vient de la meme table que le bonus reel');
-  eq(eq1.fruits[0].bonus, P.bonusDe(fruit.rarete, (r) => { const x = B.rarete(r); return x ? x.plafond : 0; }),
+  eq(eq1.fruits[0].bonus, P.bonusDe(fruit.rarete, P.FAMILLE_STAT[fruit.famille]),
      'le bonus annonce est celui qui sera vraiment applique');
 }
 
