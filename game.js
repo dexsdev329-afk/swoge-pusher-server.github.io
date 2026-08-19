@@ -278,6 +278,9 @@ class Game {
            verse, et rien au monde ne permettrait de la retrouver si on ne
            l'ecrivait pas. */
         fm: p.fame || undefined,
+        /* Le sac part au fichier comme le coffre : ce qu'on a ramasse ne doit
+           pas disparaitre parce que le serveur a redemarre. */
+        sc: (p.sac && Object.keys(p.sac).length) ? p.sac : undefined,
         /* Le volume par skin part en chaine wei, comme p.wagered lui-meme —
            meme raison : un BigNumber ne traverse pas JSON.stringify tout
            seul. */
@@ -477,6 +480,7 @@ class Game {
           : {},
         skinActif: d.ska || null,
         fame: Number(d.fm) || 0,
+        sac: (d.sc && typeof d.sc === 'object') ? d.sc : {},
         bonusBloque: ethers.BigNumber.from(d.bb || '0'),
         bonusCible: d.bc2 ? ethers.BigNumber.from(d.bc2) : null,
         moisCle: d.mk || null, moisMise: Number(d.mm || 0),
@@ -3371,7 +3375,7 @@ class Game {
             jourColl: { coffres: 0, neufs: 0, rarete: 0 }, creeLe: Date.now(),
             /* L'inventaire de la boutique : identifiant d'objet -> quantite.
                Un objet plat, pas une Map : il part au fichier tel quel. */
-            objets: {},
+            objets: {}, sac: {},
             /* Les skins possedes, et celui qu'on porte. Registre a part de
                `objets` : un skin ne vient d'aucun coffre et n'appartient a
                aucune saison. */
@@ -5146,8 +5150,15 @@ class Game {
        EST la remise a niveau 0. Toucher au niveau sans toucher au volume
        laisserait les deux en desaccord, et le prochain calcul ressusciterait
        le niveau perdu. */
+    /* LE SAC PART AUSSI. Il contient ce qu'on transportait — butin, potions —
+       et c'est justement le sens du sac : ce qui n'a pas ete mis a l'abri au
+       coffre disparait avec le personnage. Sans ca, le sac serait un second
+       coffre gratuit, et deposer ses trouvailles ne servirait a rien. */
+    const sacPerdu = Object.keys(p.sac || {}).length;
+    p.sac = {};
+
     c.w = BN(0);
-    return { skin: skinId, perdus, niveau: 0, fameGagnee, fameTotale: p.fame };
+    return { skin: skinId, perdus, sacPerdu, niveau: 0, fameGagnee, fameTotale: p.fame };
   }
 
   /**
@@ -5178,7 +5189,37 @@ class Game {
       armes: boutique.itemsDeSaison(2).filter(possede).map(ligne),
       armures: boutique.itemsDeSaison(3).filter(possede).map(ligne),
       bagues: boutique.itemsDeSaison(4).filter(possede).map(ligne),
+      /* ---- LE SAC N'EST PAS LE COFFRE ----
+       *
+       * Le coffre (`p.objets`) contient ce qu'on a ACHETE : il est a l'abri,
+       * et c'est de la qu'on s'equipe. Le sac (`p.sac`) contient ce qu'on
+       * RAMASSE dans le monde — butin, potions — et il part avec le
+       * personnage s'il meurt.
+       *
+       * Il est vide aujourd'hui, et c'est exact : rien ne peut encore tomber,
+       * puisqu'il n'y a ni monstre ni coffre au sol. Le remplir avec les
+       * objets du coffre, comme on le faisait, montrait au joueur ses achats
+       * a un endroit ou ils ne sont pas — et laissait croire qu'ils
+       * risquaient de disparaitre. */
+      sac: this.sacPour(addr),
     };
+  }
+
+  /** Le contenu du sac, pret a peindre. Meme forme qu'une ligne equipable
+      pour que la page dessine les deux cases de la meme facon. */
+  sacPour(addr) {
+    const p = this._p(addr);
+    const sac = p.sac || {};
+    return Object.keys(sac).filter((id) => sac[id] > 0).map((id) => {
+      const o = boutique.item(Number(id));
+      if (!o) return null;
+      const r = boutique.rarete(o.rarete);
+      const stat = personnages.FAMILLE_STAT[o.famille] || null;
+      return { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+               couleur: r ? r.couleur : '#8DA0C4', stat,
+               bonus: personnages.bonusDe(o.rarete, stat),
+               quantite: sac[id] };
+    }).filter(Boolean);
   }
 
   /** Le catalogue et l'inventaire du joueur, prets a peindre. */
