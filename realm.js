@@ -56,6 +56,10 @@ class Realm {
     this.monstres = [];
     this.joueurs = new Map();     // addr -> etat
     this.tirs = [];
+    /* Les projectiles des MONSTRES, a part des notres. Une seule liste
+       melangee obligerait a demander « a qui es-tu ? » a chaque collision,
+       et un tir de joueur ne touche pas un joueur. */
+    this.tirsM = [];
     this._id = 1;
     this.peuple();
   }
@@ -170,6 +174,7 @@ class Realm {
     }
     this._pasMonstres(dt, ev);
     this._pasTirs(dt, ev);
+    this._pasTirsMonstres(dt, ev);
     return ev;
   }
 
@@ -196,18 +201,44 @@ class Realm {
       if (cible) {
         const dx = cible.x - m.x, dy = cible.y - m.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
-        /* Au CONTACT on s'arrete : sans ca le monstre pousse le joueur devant
-           lui, et une poursuite devient un remorquage. */
-        const contact = t.rayon + 26;
-        if (d > contact) {
-          m.x += (dx / d) * t.vitesse * dt;
-          m.y += (dy / d) * t.vitesse * dt;
-        } else if (m.recharge <= 0) {
-          const perte = monde.degatsSubis(t.att, cible.def);
-          cible.pv = Math.max(0, cible.pv - perte);
-          m.recharge = 1 / t.cadence;
-          ev.degats.push({ addr: cible.addr, perte, pv: cible.pv, par: m.espece });
-          if (cible.pv <= 0) ev.morts.push({ addr: cible.addr, par: m.espece });
+        if (t.tir) {
+          /* ---- CELUI QUI TIRE ----
+           * Il s'approche jusqu'a sa portee, puis s'arrete et decoche. Il ne
+           * colle PAS au joueur : un archer au corps a corps ne serait qu'un
+           * squelette mal dessine, et toute la difference qu'il apporte
+           * tient dans la distance qu'il garde. */
+          const bonne = t.tir.portee * 0.8;
+          if (d > bonne) {
+            m.x += (dx / d) * t.vitesse * dt;
+            m.y += (dy / d) * t.vitesse * dt;
+          } else if (d < t.tir.portee * 0.45) {
+            // trop pres : il recule, sans jamais tourner le dos
+            m.x -= (dx / d) * t.vitesse * 0.7 * dt;
+            m.y -= (dy / d) * t.vitesse * 0.7 * dt;
+          }
+          if (m.recharge <= 0 && d <= t.tir.portee) {
+            m.recharge = 1 / t.cadence;
+            this.tirsM.push({
+              id: this._nouvelId(), espece: m.espece,
+              x: m.x, y: m.y, a: Math.atan2(dy, dx),
+              v: t.tir.vitesse, reste: t.tir.portee / t.tir.vitesse,
+              att: t.att, sprite: t.tir.sprite,
+            });
+          }
+        } else {
+          /* Au CONTACT on s'arrete : sans ca le monstre pousse le joueur
+             devant lui, et une poursuite devient un remorquage. */
+          const contact = t.rayon + 26;
+          if (d > contact) {
+            m.x += (dx / d) * t.vitesse * dt;
+            m.y += (dy / d) * t.vitesse * dt;
+          } else if (m.recharge <= 0) {
+            const perte = monde.degatsSubis(t.att, cible.def);
+            cible.pv = Math.max(0, cible.pv - perte);
+            m.recharge = 1 / t.cadence;
+            ev.degats.push({ addr: cible.addr, perte, pv: cible.pv, par: m.espece });
+            if (cible.pv <= 0) ev.morts.push({ addr: cible.addr, par: m.espece });
+          }
         }
         m.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left')
                                             : (dy > 0 ? 'down' : 'up');
@@ -274,6 +305,32 @@ class Realm {
     }
   }
 
+  /** Les fleches des monstres, contre NOUS. Meme forme que nos projectiles,
+      collision inversee : elles cherchent les joueurs, pas les monstres. */
+  _pasTirsMonstres(dt, ev) {
+    for (let i = this.tirsM.length - 1; i >= 0; i--) {
+      const t = this.tirsM[i];
+      t.x += Math.cos(t.a) * t.v * dt;
+      t.y += Math.sin(t.a) * t.v * dt;
+      t.reste -= dt;
+      let fini = t.reste <= 0;
+      if (!fini) {
+        for (const j of this.joueurs.values()) {
+          if (j.pv <= 0) continue;
+          const dx = j.x - t.x, dy = j.y - t.y;
+          if (dx * dx + dy * dy > 34 * 34) continue;
+          const perte = monde.degatsSubis(t.att, j.def);
+          j.pv = Math.max(0, j.pv - perte);
+          ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: t.espece });
+          if (j.pv <= 0) ev.morts.push({ addr: j.addr, par: t.espece });
+          fini = true;
+          break;
+        }
+      }
+      if (fini) this.tirsM.splice(i, 1);
+    }
+  }
+
   /* ---- CE QU'ON ENVOIE ---- */
 
   /** L'etat visible autour d'un joueur. On ne diffuse pas la carte entiere :
@@ -304,6 +361,12 @@ class Realm {
       tirs: this.tirs.filter(pres).map((t) => ({
         i: t.id, x: Math.round(t.x), y: Math.round(t.y),
         a: Number(t.a.toFixed(3)), f: t.famille, mien: t.addr === addr })),
+      /* Les fleches ennemies dans une liste a part : le client doit pouvoir
+         les dessiner autrement, et surtout ne jamais croire qu'elles sont a
+         lui. */
+      tirsM: this.tirsM.filter(pres).map((t) => ({
+        i: t.id, x: Math.round(t.x), y: Math.round(t.y),
+        a: Number(t.a.toFixed(3)), f: t.sprite })),
       joueurs: autres,
     };
   }

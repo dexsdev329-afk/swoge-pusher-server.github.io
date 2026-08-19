@@ -263,4 +263,56 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
     'meme graine, meme monde — la simulation ne depend d aucun hasard cache');
 }
 
+// ================== 12. L'ARCHER TIRE, ET SES FLECHES BLESSENT
+{
+  const r = new Realm({ alea: alea(101) });
+  const j = r.rejoint(A, FICHE);
+  const t = M.MONSTRES.archer;
+  /* On le pose A PORTEE mais pas au contact : c'est la ou il doit decocher
+     au lieu de s'approcher. */
+  r.monstres = [{ id: 42, espece: 'archer', biome: 'neige',
+                  x: j.x + t.tir.portee * 0.7, y: j.y,
+                  ancreX: j.x, ancreY: j.y,
+                  pv: t.pv, pvMax: t.pv, dir: 'left', cible: null, recharge: 0,
+                  errX: 0, errY: 0, errChrono: 0 }];
+  const pv0 = j.pv;
+  let touche = null, tirsVus = 0;
+  for (let i = 0; i < 400 && !touche; i++) {
+    const ev = r.pas(0.05);
+    if (r.tirsM.length > tirsVus) tirsVus = r.tirsM.length;
+    if (ev.degats.length) touche = ev.degats[0];
+  }
+  ok(tirsVus > 0, 'l archer a decoche (' + tirsVus + ' fleches en vol au plus)');
+  ok(touche, 'et une fleche a touche');
+  eq(touche.par, 'archer', 'l evenement nomme l archer');
+  ok(j.pv < pv0, 'les points de vie ont baisse');
+  eq(touche.perte, M.degatsSubis(t.att, 13), 'la perte suit la meme regle que le contact');
+
+  /* IL GARDE SES DISTANCES. Un archer colle au joueur ne serait qu'un
+     squelette mal dessine : toute sa raison d'etre est l'ecart. */
+  const d = Math.sqrt((r.monstres[0].x - j.x) ** 2 + (r.monstres[0].y - j.y) ** 2);
+  ok(d > t.rayon + 60, 'il ne vient pas au corps a corps (a ' + Math.round(d) + ')');
+
+  /* SES FLECHES NE TOUCHENT PAS LES MONSTRES, et les notres ne touchent pas
+     les joueurs : deux listes, deux collisions. */
+  const avantM = r.monstres[0].pv;
+  for (let i = 0; i < 60; i++) r.pas(0.05);
+  eq(r.monstres[0].pv, avantM, 'ses propres fleches ne le blessent pas');
+}
+
+// ================== 13. L'ETAT PORTE LES DEUX SORTES DE PROJECTILES
+{
+  const r = new Realm({ alea: alea(103) });
+  const j = r.rejoint(A, FICHE);
+  r.monstres = [];
+  r.tire(A, 0);
+  r.tirsM.push({ id: 999, espece: 'archer', x: j.x + 40, y: j.y, a: Math.PI,
+                 v: 300, reste: 1, att: 45, sprite: 'maudit' });
+  const e = r.etatPour(A, 1400);
+  ok(e.tirs.length > 0, 'nos projectiles sont la');
+  ok(e.tirsM.length > 0, 'ceux des monstres aussi');
+  ok(e.tirs[0].mien === true, 'les notres sont marques comme notres');
+  eq(e.tirsM[0].f, 'maudit', 'et les leurs portent leur propre dessin');
+}
+
 console.log('realm.test.js : ' + n + ' verifications OK');

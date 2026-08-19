@@ -29,7 +29,11 @@
  */
 
 const TUILE = 128;                       // meme pas que le Nexus
-const CARTE = { cols: 40, rows: 40 };    // 5120 x 5120 unites de monde
+/* La carte grandit AVEC son peuplement, jamais avant : cinq especes et cent
+   monstres sur soixante tuiles de cote donnent la meme densite qu'avant sur
+   quarante. Une carte plus grande a population egale, c'est juste plus de
+   marche entre deux combats. */
+const CARTE = { cols: 60, rows: 60 };    // 7680 x 7680 unites de monde
 const MONDE = { w: CARTE.cols * TUILE, h: CARTE.rows * TUILE };
 const CENTRE = { x: MONDE.w / 2, y: MONDE.h / 2 };
 
@@ -95,6 +99,37 @@ const MONSTRES = {
     xp: 600,
     biomes: ['lave'],
   },
+  /* Le revenant de glace : l'anneau du milieu n'avait que le lime et le
+     squelette. Plus dur que le squelette, moins que le golem — c'est ce qui
+     donne une pente au lieu d'une marche. */
+  glace: {
+    cle: 'glace', nom: 'Ice Revenant',
+    pv: 260, att: 68, def: 14,
+    vitesse: 96, rayon: 40, vue: 580,
+    contact: true, cadence: 0.85,
+    xp: 300,
+    biomes: ['neige', 'lave'],
+  },
+  /* ---- LE PREMIER MONSTRE QUI TIRE ----
+   * Tous les autres blessent au CONTACT : on les contourne, on les distance,
+   * on choisit ses combats. L'archer change la donne — il faut se mettre a
+   * couvert ou fermer la distance, et c'est ce qui fait qu'une portee d'arme
+   * signifie enfin quelque chose.
+   * Peu de vie et presque pas de defense : il est dangereux de loin et
+   * fragile de pres, ce qui rend la reponse evidente. */
+  archer: {
+    cle: 'archer', nom: 'Cursed Archer',
+    pv: 140, att: 45, def: 4,
+    vitesse: 78, rayon: 36, vue: 620,
+    contact: false,
+    cadence: 0.55,
+    /* Il tire de loin mais PAS de partout : sa portee est plus courte que sa
+       vue, donc il avance encore avant de decocher. Sans ca il canarderait
+       depuis le bord de l'ecran, sans qu'on sache d'ou. */
+    tir: { portee: 470, vitesse: 360, sprite: 'maudit' },
+    xp: 260,
+    biomes: ['neige', 'lave'],
+  },
   skeleton: {
     cle: 'skeleton', nom: 'Skeleton',
     pv: 180, att: 55, def: 8,
@@ -114,9 +149,9 @@ const MONSTRES = {
    plus cher a tuer, et une foule de golems ne serait pas dure, elle serait
    impraticable. */
 const PEUPLEMENT = {
-  terre: { especes: ['lime'], nombre: 26 },
-  neige: { especes: ['lime', 'skeleton'], nombre: 22 },
-  lave:  { especes: ['lave'], nombre: 10 },
+  terre: { especes: ['lime'], nombre: 40 },
+  neige: { especes: ['lime', 'skeleton', 'glace', 'archer'], nombre: 42 },
+  lave:  { especes: ['lave', 'archer'], nombre: 18 },
 };
 
 /*
