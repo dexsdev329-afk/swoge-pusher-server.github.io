@@ -3514,8 +3514,14 @@ const nexusInterval = setInterval(() => {
   for (const ws of nexusClients) {
     if (ws.readyState !== 1 || !ws.addr || !ws.nexusEtat) continue;
     const e = ws.nexusEtat;
+    const p = game._p(ws.addr);
+    /* Le NOM part avec la position : la liste « joueurs a proximite » du
+       panneau montre des gens, pas des adresses. Il vient du serveur pour la
+       meme raison que le skin — c'est lui qui sait qui est qui, et un nom
+       envoye par le client se choisirait tout seul. */
     joueurs.push({ addr: ws.addr, x: Math.round(e.x), y: Math.round(e.y),
-                    dir: e.dir, anim: e.anim, skin: game._p(ws.addr).skinActif || 'andy' });
+                    dir: e.dir, anim: e.anim, skin: p.skinActif || 'andy',
+                    nom: p.name || null });
   }
   const s = JSON.stringify({ type: 'nexusEtat', joueurs });
   for (const ws of nexusClients) if (ws.readyState === 1) ws.send(s);

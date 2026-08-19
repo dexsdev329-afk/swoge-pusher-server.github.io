@@ -75,6 +75,7 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
   // j1 porte Brett aux yeux du serveur, quoi que son client pretende plus tard
   moteur._p(j1.addr).skinActif = 'brett';
   moteur._p(j2.addr).skinActif = 'pepe';
+  moteur._p(j1.addr).name = 'Enzo';
 
   // ---- 1. j1 et j2 entrent, j3 reste dehors ----
   j1.c.recu.length = 0; j2.c.recu.length = 0; j3.c.recu.length = 0;
@@ -107,6 +108,10 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
   eq(j1vu.dir, 'left', 'la direction diffusee est celle envoyee par j1');
   eq(j1vu.anim, 'run', 'l\'animation diffusee est celle envoyee par j1');
   eq(j1vu.skin, 'brett', 'le skin diffuse est celui du SERVEUR (Brett), pas celui glisse dans le message (OG Swoge)');
+  /* Le nom aussi vient du serveur : la liste « joueurs a proximite » du
+     panneau montre des gens, et un nom qu'on choisirait soi-meme dans le
+     message permettrait de s'afficher sous celui d'un autre. */
+  eq(j1vu.nom, 'Enzo', 'le nom diffuse est celui que le SERVEUR connait');
 
   // ---- 3. des valeurs hors-piste sont assainies, pas propagees telles quelles ----
   j2.c.recu.length = 0;
