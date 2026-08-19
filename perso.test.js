@@ -328,4 +328,86 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
   eq(r.armures[0].stat, P.FAMILLE_STAT[armure.famille]);
 }
 
+// ================== 18. LA MORT : CE QU'ON PORTAIT EST PERDU, LE COFFRE RESTE
+//
+// C'est la regle qui DETRUIT des objets payes en $SWOGE. Elle merite donc
+// d'etre tenue par les deux bouts : ce qui doit disparaitre disparait
+// vraiment, et surtout ce qui doit rester ne bouge pas d'un exemplaire.
+// Un test qui ne verifierait que la perte laisserait passer le bug le plus
+// couteux — celui qui vide le coffre en meme temps que l'equipement.
+{
+  const g = new Game();
+  const p = pose(g, A);
+  p.skins = { pepe: true, andy: true };
+
+  const fruit = B.itemsDeSaison(1)[0], arme = B.itemsDeSaison(2)[0];
+  const armure = B.itemsDeSaison(3)[0], bague = B.itemsDeSaison(4)[0];
+  const range = B.itemsDeSaison(1)[1];          // jamais porte : temoin du coffre
+
+  /* Le fruit est possede en TROIS exemplaires et un seul est porte : c'est
+     le cas qui distingue « retirer un exemplaire » de « effacer la ligne ». */
+  p.objets[fruit.id] = 3;
+  p.objets[arme.id] = 1;
+  p.objets[armure.id] = 1;
+  p.objets[bague.id] = 1;
+  p.objets[range.id] = 2;
+
+  g.equipeFruit(A, 'pepe', fruit.id);
+  g.equipeArme(A, 'pepe', arme.id);
+  g.equipeArmure(A, 'pepe', armure.id);
+  g.equipeBague(A, 'pepe', bague.id);
+  /* Le volume mise s'accumule sur le skin PORTE : il faut donc le poser
+     avant de miser, sinon la mise ne compte pour aucun personnage et le
+     test « il retombe a 0 » ne prouverait rien — il partirait deja de 0. */
+  p.skinActif = 'pepe';
+  mise(g, p, P.volumePour(12));
+  ok(g.personnageEtat(A, 'pepe').niveau > 0, 'le personnage a bien un niveau avant de mourir');
+
+  const r = g.meurt(A, 'pepe');
+
+  eq(r.perdus.length, 4, 'les quatre objets portes sont annonces perdus');
+  ok(r.perdus.every((o) => o.nom), 'et chacun est nomme, pour pouvoir le dire au joueur');
+
+  const etat = g.personnageEtat(A, 'pepe');
+  eq(etat.niveau, 0, 'le personnage repart au niveau 0');
+  eq(etat.equipFruit, null, 'l emplacement du fruit est vide');
+  eq(etat.equipArme, null, 'celui de l arme aussi');
+  eq(etat.equipArmure, null, 'celui de l armure aussi');
+  eq(etat.equipBague, null, 'celui de la bague aussi');
+
+  // ---- CE QUI RESTE : le coeur de la regle
+  eq(p.objets[fruit.id], 2, 'le fruit en triple n en perd QU UN : il en reste deux au coffre');
+  eq(p.objets[arme.id], undefined, 'l arme unique portee disparait du coffre');
+  eq(p.objets[armure.id], undefined, 'l armure unique portee aussi');
+  eq(p.objets[bague.id], undefined, 'la bague unique portee aussi');
+  eq(p.objets[range.id], 2, 'et l objet JAMAIS porte n a pas bouge d un exemplaire');
+
+  // ---- la mort d'un personnage ne touche pas les autres
+  const g2 = new Game();
+  const p2 = pose(g2, A);
+  p2.skins = { pepe: true, andy: true };
+  p2.objets[fruit.id] = 1;
+  const autre = B.itemsDeSaison(1)[2];
+  p2.objets[autre.id] = 1;
+  g2.equipeFruit(A, 'pepe', fruit.id);
+  g2.equipeFruit(A, 'andy', autre.id);
+  g2.meurt(A, 'pepe');
+  eq(g2.personnageEtat(A, 'andy').equipFruit.item, autre.id,
+     'le fruit de l AUTRE personnage est toujours equipe');
+  eq(p2.objets[autre.id], 1, 'et toujours au coffre');
+
+  // ---- mourir sans rien porter, et mourir deux fois
+  const g3 = new Game();
+  const p3 = pose(g3, A);
+  p3.skins = { pepe: true };
+  const r3 = g3.meurt(A, 'pepe');
+  eq(r3.perdus.length, 0, 'un personnage jamais joue ne perd rien');
+  const r4 = g3.meurt(A, 'pepe');
+  eq(r4.perdus.length, 0, 'et mourir une seconde fois ne perd rien non plus');
+
+  let err = null;
+  try { g3.meurt(A, 'brett'); } catch (e) { err = e.message; }
+  ok(/do not own this skin/.test(err || ''), 'on ne peut pas faire mourir un skin qu on ne possede pas');
+}
+
 console.log(`perso.test.js : ${n} verifications OK`);

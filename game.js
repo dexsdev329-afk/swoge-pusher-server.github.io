@@ -5059,6 +5059,65 @@ class Game {
   equipeBague(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'bague'); }
 
   /**
+   * ================== LA MORT, ET CE QUI SURVIT ==================
+   *
+   * La regle, celle de RotMG : ce qu'on PORTAIT est perdu, ce qui restait au
+   * COFFRE est garde. Le personnage repart de zero — niveau 0, ses quatre
+   * emplacements vides.
+   *
+   * ---- ou est le coffre, exactement ----
+   *
+   * C'est `p.objets`. Il l'a toujours ete : tout ce qu'on achete y tombe et y
+   * reste. Ce qui change aujourd'hui, c'est qu'EQUIPER devient un acte a
+   * risque — l'objet reste compte dans `p.objets`, mais il est designe par un
+   * des quatre champs du personnage, et c'est cette designation qui le rend
+   * mortel. On ne deplace donc rien entre deux listes : porter, c'est
+   * simplement etre pointe par un personnage qui peut mourir.
+   *
+   * ---- pourquoi on retire l'exemplaire et pas la ligne ----
+   *
+   * On decremente. Un joueur qui possede trois exemplaires du meme fruit et
+   * en portait un doit lui en rester deux — pas zero. La ligne ne disparait
+   * que si c'etait le dernier, et c'est le seul cas ou la case du coffre se
+   * vide vraiment.
+   *
+   * ---- ce que cette methode ne fait PAS ----
+   *
+   * Elle ne decide pas qu'on est mort. Elle applique la consequence. Le
+   * moment de la mort appartiendra a la carte de combat, qui n'existe pas
+   * encore ; l'ecrire ici en avance reviendrait a inventer des degats.
+   */
+  meurt(addr, skinId) {
+    const p = this._p(addr);
+    if (!(p.skins || {})[skinId]) throw new Error('you do not own this skin');
+    p.persos = p.persos || {};
+    const c = p.persos[skinId];
+    /* Un personnage jamais joue n'a pas de fiche : il n'a donc rien porte,
+       rien a perdre, et rien a remettre a zero. */
+    if (!c) return { skin: skinId, perdus: [], niveau: 0 };
+
+    const CHAMPS = ['ef', 'ea', 'ar', 'ba'];
+    const perdus = [];
+    p.objets = p.objets || {};
+    for (const champ of CHAMPS) {
+      const id = c[champ];
+      if (!id) continue;
+      const o = boutique.item(id);
+      perdus.push({ id, cle: o ? o.cle : null, nom: o ? o.nom : null,
+                    rarete: o ? o.rarete : null });
+      if (p.objets[id] > 1) p.objets[id] -= 1;
+      else delete p.objets[id];
+      c[champ] = null;
+    }
+    /* Le niveau vient du volume mise sous ce personnage : le remettre a zero
+       EST la remise a niveau 0. Toucher au niveau sans toucher au volume
+       laisserait les deux en desaccord, et le prochain calcul ressusciterait
+       le niveau perdu. */
+    c.w = BN(0);
+    return { skin: skinId, perdus, niveau: 0 };
+  }
+
+  /**
    * Ce que le joueur peut equiper : ses fruits (saison 1), ses armes
    * (saison 2), ses pieces d'armure (saison 3) et ses bagues (saison 4)
    * qu'il possede reellement, avec le bonus que chacun donnerait.
