@@ -134,4 +134,41 @@ function pose() {
   eq(q.objets[arme.id], 1, 'et le coffre aussi');
 }
 
+// ================== 6. UNE PLACE PAR OBJET, HUIT PLACES
+{
+  const { g, p } = pose();
+  /* Trois exemplaires du MEME objet : le coffre en fait une ligne « x3 »,
+     le sac doit en faire TROIS places. Un sac qui empile n'a pas de fond. */
+  p.sac = { [arme.id]: 3 };
+  const vu = g.sacPour(A);
+  eq(vu.length, 3, 'trois exemplaires identiques prennent trois places');
+  eq(vu[0].id, vu[2].id, 'et ce sont bien les memes objets');
+  ok(vu[0].place !== vu[2].place, 'chaque place a son propre numero');
+
+  // le compte total, toutes lignes confondues
+  p.sac = { [arme.id]: 3, [fruit.id]: 2 };
+  eq(g.sacRempli(A), 5, 'le sac compte les exemplaires, pas les lignes');
+
+  /* PLEIN, on ne sort plus rien du coffre. Sans ce refus, reprendre vingt
+     fois de suite donnerait un sac sans fond par la petite porte. */
+  p.sac = { [arme.id]: 8 };
+  p.objets = { [fruit.id]: 1 };
+  leve(() => g.sortDuCoffre(A, fruit.id), /full/i, 'sac plein : on ne reprend plus rien');
+  eq(p.objets[fruit.id], 1, 'et l objet est reste au coffre');
+
+  // une place se libere, ca repasse
+  p.sac = { [arme.id]: 7 };
+  g.sortDuCoffre(A, fruit.id);
+  eq(g.sacRempli(A), 8, 'une place libre suffit');
+  eq(p.objets[fruit.id], undefined, 'et l objet a bien quitte le coffre');
+
+  /* RANGER, en revanche, n'est JAMAIS bloque : on vide son sac, on ne le
+     remplit pas. Le coffre n'a pas de limite. */
+  for (let i = 0; i < 8; i++) {
+    const id = Object.keys(g._p(A).sac)[0];
+    g.rangeAuCoffre(A, Number(id));
+  }
+  eq(g.sacRempli(A), 0, 'on peut toujours tout ranger, quel que soit le remplissage');
+}
+
 console.log('coffre_sac.test.js : ' + n + ' verifications OK');

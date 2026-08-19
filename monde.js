@@ -81,6 +81,20 @@ const MONSTRES = {
     xp: 75,
     biomes: ['terre', 'neige', 'lave'],
   },
+  /* Le gardien du coeur. Ses chiffres sont poses pour qu'un joueur au
+     plafond y arrive et qu'un debutant n'y arrive pas :
+       niveau 20, arme mythique : 3 coups pour l'abattre, 10 pour mourir ;
+       niveau 1, arme commune  : 105 coups pour l'abattre, 5 pour mourir.
+     Ce n'est pas une punition, c'est une frontiere. La lave se voit de loin,
+     et elle dit exactement ce qu'elle vaut. */
+  lave: {
+    cle: 'lave', nom: 'Magma Golem',
+    pv: 420, att: 95, def: 20,
+    vitesse: 88, rayon: 46, vue: 620,
+    contact: true, cadence: 0.75,
+    xp: 600,
+    biomes: ['lave'],
+  },
   skeleton: {
     cle: 'skeleton', nom: 'Skeleton',
     pv: 180, att: 55, def: 8,
@@ -94,14 +108,15 @@ const MONSTRES = {
   },
 };
 
-/* Ce qui apparait dans chaque anneau, et en quelle quantite. La lave n'a pas
-   encore d'espece qui lui soit propre : elle reprend le squelette, en plus
-   dense. C'est un MANQUE assume, pas un choix — il faudra un monstre de lave
-   dessine pour que le coeur du monde ait sa propre identite. */
+/* Ce qui apparait dans chaque anneau, et en quelle quantite. La lave a
+   desormais son espece propre — elle empruntait le squelette faute de dessin.
+   Le coeur est moins peuple que le bord : ses habitants valent trois fois
+   plus cher a tuer, et une foule de golems ne serait pas dure, elle serait
+   impraticable. */
 const PEUPLEMENT = {
   terre: { especes: ['lime'], nombre: 26 },
   neige: { especes: ['lime', 'skeleton'], nombre: 22 },
-  lave:  { especes: ['skeleton'], nombre: 14 },
+  lave:  { especes: ['lave'], nombre: 10 },
 };
 
 /*

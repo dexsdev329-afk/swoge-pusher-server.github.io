@@ -34,6 +34,13 @@ const paris = require('./paris');
 const boutique = require('./boutique');
 const skins = require('./skins');
 const personnages = require('./personnages');
+
+/* ---- LES PLACES DU SAC ----
+ * Huit, et UN OBJET PAR PLACE. Le coffre empile parce qu'il est un stock ;
+ * le sac ne doit pas, sinon il n'a pas de fond et rien de ce qu'on y met ne
+ * coute quoi que ce soit. Le chiffre est ici et non dans nexus.js pour que
+ * le refus (« sac plein ») et l'affichage comptent les memes cases. */
+const SAC_CASES = 8;
 /* Le bareme d'XP d'un objet, par rarete. Une rarete inconnue ne rapporte rien
    plutot que de rapporter le premier bareme venu : une faute de frappe dans
    une clef doit se voir, pas se payer. */
@@ -5316,24 +5323,51 @@ class Game {
         throw new Error('That one is being worn — take it off first');
       }
     }
+    if (this.sacRempli(addr) >= SAC_CASES) {
+      throw new Error('Your backpack is full — ' + SAC_CASES + ' slots, one item each');
+    }
     return this._bouge(addr, 'objets', 'sac', itemId, 'item');
   }
 
-  /** Le contenu du sac, pret a peindre. Meme forme qu'une ligne equipable
-      pour que la page dessine les deux cases de la meme facon. */
+  /**
+   * Le contenu du sac, pret a peindre. UNE ENTREE PAR EXEMPLAIRE.
+   *
+   * Le coffre empile — « x3 » sur une ligne — parce qu'il est un stock. Le
+   * sac, non : il a HUIT PLACES, et chaque objet en prend une, meme si le
+   * voisin est identique. C'est ce qui fait que le sac se remplit, qu'il faut
+   * choisir, et qu'un aller-retour au coffre a un sens. Un sac qui empile
+   * n'a pas de fond, et rien de ce qu'on y met ne coute quoi que ce soit.
+   *
+   * On garde `p.sac` compact en memoire ({id: nombre}) et on DEPLIE ici :
+   * persister huit lignes identiques serait du gaspillage, et la regle des
+   * places est une regle d'usage, pas de rangement.
+   */
   sacPour(addr) {
     const p = this._p(addr);
     const sac = p.sac || {};
-    return Object.keys(sac).filter((id) => sac[id] > 0).map((id) => {
+    const out = [];
+    for (const id of Object.keys(sac)) {
       const o = boutique.item(Number(id));
-      if (!o) return null;
+      if (!o) continue;
       const r = boutique.rarete(o.rarete);
-      return { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
-               couleur: r ? r.couleur : '#8DA0C4',
-               stat: personnages.FAMILLE_STAT[o.famille] || null,
-               bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
-               quantite: sac[id] };
-    }).filter(Boolean);
+      for (let i = 0; i < sac[id]; i++) {
+        out.push({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+                   couleur: r ? r.couleur : '#8DA0C4', saison: o.saison,
+                   stat: personnages.FAMILLE_STAT[o.famille] || null,
+                   bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
+                   /* `place` identifie CETTE case, pas cet objet : deux
+                      exemplaires identiques doivent pouvoir se deplacer
+                      separement. */
+                   place: out.length });
+      }
+    }
+    return out.slice(0, SAC_CASES);
+  }
+
+  /** Combien d'objets le sac porte, toutes lignes confondues. */
+  sacRempli(addr) {
+    const sac = this._p(addr).sac || {};
+    return Object.keys(sac).reduce((n, id) => n + Math.max(0, sac[id] | 0), 0);
   }
 
   /** Le catalogue et l'inventaire du joueur, prets a peindre. */
