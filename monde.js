@@ -105,6 +105,45 @@ const PEUPLEMENT = {
 };
 
 /*
+ * ---- LES ARMES ----
+ *
+ * Portee, cadence, nombre de projectiles et vitesse, par famille. Cette table
+ * vivait dans nexus.js. Elle DEVAIT remonter ici : c'est desormais le serveur
+ * qui decide si un tir touche, et deux tables — une pour dessiner, une pour
+ * trancher — auraient fini par diverger. Une portee plus longue cote client
+ * qu'a la lecture du serveur, et le joueur voit son projectile atteindre un
+ * monstre qui ne prend rien.
+ *
+ * Le client la recoit du serveur au lieu de la porter. La teinte reste dedans
+ * bien qu'elle ne serve qu'a l'affichage : la sortir mettrait la moitie de la
+ * definition d'une arme dans un autre fichier.
+ *
+ * L'equilibre est celui de RotMG : une portee courte se paie par une cadence
+ * elevee. La hache frappe fort et loin de personne ; les dagues piquent vite
+ * et pres.
+ */
+const ARMES = {
+  lame:    { portee: 320, tirs: 1, cadence: 3.2, vitesse: 560, teinte: '#cfe8ff' },
+  hache:   { portee: 210, tirs: 1, cadence: 1.7, vitesse: 430, teinte: '#ffb06b' },
+  lance:   { portee: 420, tirs: 1, cadence: 2.2, vitesse: 640, teinte: '#d8dee9' },
+  arc:     { portee: 460, tirs: 2, cadence: 2.6, vitesse: 700, teinte: '#9dff9d' },
+  marteau: { portee: 180, tirs: 1, cadence: 1.3, vitesse: 380, teinte: '#ffd76b' },
+  dagues:  { portee: 300, tirs: 2, cadence: 4.0, vitesse: 620, teinte: '#c9a0ff' },
+  /* Sans arme : court, lent, mais on tire — un joueur qui appuie et ne voit
+     rien partir croit que la commande est cassee, pas qu'il lui manque un
+     objet. */
+  poing:   { portee: 150, tirs: 1, cadence: 1.6, vitesse: 340, teinte: '#8DA0C4' },
+};
+/* Les degats du poing nu, quand aucune arme n'est portee. Volontairement
+   maigres : de quoi tuer un lime a la longue, pas de quoi jouer sans arme. */
+const DEGATS_POING = [6, 10];
+
+/* La vitesse du joueur, en unites/s. Le client la connait aussi pour se
+   deplacer ; ici elle sert a REFUSER une position impossible — sans quoi une
+   position annoncee par le navigateur permettrait de traverser la carte. */
+const VITESSE_JOUEUR = 260;
+
+/*
  * ---- LES DEGATS ----
  *
  * La formule de RotMG, pas une invention : les degats de l'arme sont
@@ -172,5 +211,6 @@ function peuplement(alea) {
 
 module.exports = {
   TUILE, CARTE, MONDE, CENTRE, ANNEAUX, MONSTRES, PEUPLEMENT, PLANCHER,
+  ARMES, DEGATS_POING, VITESSE_JOUEUR,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
 };
