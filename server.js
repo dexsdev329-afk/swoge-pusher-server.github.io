@@ -2891,6 +2891,21 @@ wss.on('connection', (ws) => {
        * disparaissent a la mort ; laisser le navigateur annoncer un resultat
        * reviendrait a lui laisser decider s'il les garde.
        */
+      /* ---- RANGER AU COFFRE, ET REPRENDRE ----
+       * Le seul geste qui change le RISQUE d'un objet : le sac part avec le
+       * personnage s'il meurt, le coffre survit. On renvoie l'inventaire
+       * complet pour que le panneau n'ait rien a deviner. */
+      if (m.type === 'rangeCoffre' || m.type === 'sortCoffre') {
+        if (!ws.addr) return;
+        let err = null;
+        try {
+          if (m.type === 'rangeCoffre') game.rangeAuCoffre(ws.addr, m.item);
+          else game.sortDuCoffre(ws.addr, m.item);
+          persistSoon();
+        } catch (e) { err = e.message; }
+        return send(ws, { type: 'equipable', ...game.equipablesPour(ws.addr),
+                          error: err || undefined });
+      }
       if (m.type === 'realmJoin') {
         if (!ws.addr) return;
         const p = game._p(ws.addr);

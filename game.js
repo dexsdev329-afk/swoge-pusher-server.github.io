@@ -5267,6 +5267,58 @@ class Game {
     };
   }
 
+  /**
+   * ==================== RANGER, ET REPRENDRE ====================
+   *
+   * Le SAC porte ce qu'on ramasse : il part avec le personnage s'il meurt.
+   * Le COFFRE porte ce qu'on a mis a l'abri : il survit a tout. Passer de
+   * l'un a l'autre est donc le seul geste qui change le RISQUE d'un objet,
+   * et c'est pour ca qu'il ne se fait qu'a la salle du coffre.
+   *
+   * Deux regles, et elles ne sont pas symetriques :
+   *  - on range ce qu'on veut, toujours ;
+   *  - on ne REPREND pas une piece qu'on PORTE. L'equipement se lit dans le
+   *    coffre ; la sortir mettrait le personnage a porter quelque chose qui
+   *    n'y est plus, et la prochaine lecture de sa fiche le desequiperait
+   *    tout seul sans que personne comprenne pourquoi.
+   */
+  _bouge(addr, de, vers, itemId, quoi) {
+    const p = this._p(addr);
+    const id = Number(itemId);
+    const o = boutique.item(id);
+    if (!o) throw new Error('Unknown item');
+    p[de] = p[de] || {};
+    p[vers] = p[vers] || {};
+    if (!(p[de][id] > 0)) throw new Error('You do not have that ' + quoi);
+    p[de][id] -= 1;
+    if (p[de][id] <= 0) delete p[de][id];
+    p[vers][id] = (p[vers][id] || 0) + 1;
+    return { item: id, nom: o.nom };
+  }
+
+  /** Du sac vers le coffre : l'objet est desormais a l'abri de la mort. */
+  rangeAuCoffre(addr, itemId) {
+    return this._bouge(addr, 'sac', 'objets', itemId, 'item');
+  }
+
+  /** Du coffre vers le sac : l'objet repart avec nous, et se perd si on meurt. */
+  sortDuCoffre(addr, itemId) {
+    const p = this._p(addr);
+    const id = Number(itemId);
+    /* Porte sur UN personnage quelconque : on refuse. Chercher sur tous les
+       skins plutot que sur le skin actif seulement — un objet porte par un
+       personnage qu'on ne joue pas est porte quand meme. */
+    const persos = p.persos || {};
+    for (const k of Object.keys(persos)) {
+      const c = persos[k];
+      if (!c) continue;
+      if (c.ef === id || c.ea === id || c.ar === id || c.ba === id) {
+        throw new Error('That one is being worn — take it off first');
+      }
+    }
+    return this._bouge(addr, 'objets', 'sac', itemId, 'item');
+  }
+
   /** Le contenu du sac, pret a peindre. Meme forme qu'une ligne equipable
       pour que la page dessine les deux cases de la meme facon. */
   sacPour(addr) {
