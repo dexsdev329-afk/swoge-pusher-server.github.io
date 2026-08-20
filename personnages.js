@@ -330,7 +330,44 @@ const PROFIL_FAMILLE = {
  * en porte un de chaque, et c'est ce qui donne du poids au choix d'une
  * armure face a une bague.
  */
-const BUDGET_SAISON = {
+/* ====================================================================
+ * DEUX ECHELLES, PAS UNE
+ * ====================================================================
+ *
+ * Ce qu'on ACHETE et ce qu'on TROUVE partageaient la meme table. Une commune
+ * payee en $SWOGE valait donc exactement une commune ramassee sur un lime —
+ * alors que la premiere existe a mille exemplaires pour toute une saison et
+ * que la seconde tombe a l'infini.
+ *
+ * ---- l'escalier alterne ----
+ *
+ * Une piece de BOUTIQUE de rarete R se loge entre le BUTIN R+1 et le BUTIN
+ * R+2. Les deux echelles s'imbriquent donc en un seul escalier de onze
+ * marches, dont le monde tient la premiere ET la derniere :
+ *
+ *   saison 1  o3  < o6  < B8  < o9  < B11 < o12 < B14 < o16 < B18 < B20 < o21
+ *   saison 3  o7  < o14 < B18 < o21 < B25 < o29 < B34 < o38 < B42 < B47 < o50
+ *   saison 4  o3  < o6  < B7  < o8  < B9  < o10 < B11 < o12 < B13 < B15 < o16
+ *
+ * (B = boutique, o = butin. Un essai verifie que la suite croit vraiment.)
+ *
+ * ---- pourquoi la relique reste au-dessus de tout ----
+ *
+ * C'est la seule piece que l'argent n'achete pas : quatre exemplaires par
+ * saison, et seulement dans une salle gardee. Si la mythique de boutique la
+ * depassait, le monde de combat perdrait son dernier trophee — et c'est lui
+ * qui fait rester les joueurs. On vend de la puissance, pas le sommet.
+ *
+ * ---- et pourquoi le butin ne baisse pas d'un point ----
+ *
+ * Rendre la boutique meilleure en affaiblissant ce que les gens possedent
+ * deja, c'est leur reprendre quelque chose sans le dire. Le seul changement
+ * cote butin est une HAUSSE : la saison 4 montait 10, 11, 12 sur ses trois
+ * derniers crans, deux ecarts d'un point. Un joueur qui ouvrait une relique —
+ * quatre au monde — gagnait +1 sur un legendaire. Le defaut existait avant la
+ * boutique ; elle ne fait que le rendre visible.
+ */
+const BUDGET_BUTIN = {
   1: { commun: 3, rare: 6,  epique: 9,  legendaire: 12, mythique: 16, relique: 21 },  // fruits
   /* pas de 2 : les armes ne donnent que des degats — voir PROFIL_FAMILLE */
   3: { commun: 7, rare: 14, epique: 21, legendaire: 29, mythique: 38, relique: 50 },  // armures
@@ -344,24 +381,54 @@ const BUDGET_SAISON = {
      plafond des anneaux d'un cran, elle ne le renverse pas — c'est la meme
      raison qui avait fait redescendre le mythique de +16 a +11. Une bague
      comble un trou de build, meme quand elle est unique au monde. */
-  4: { commun: 3, rare: 6,  epique: 8,  legendaire: 10, mythique: 11, relique: 12 },  // bagues
+  4: { commun: 3, rare: 6,  epique: 8,  legendaire: 10, mythique: 12, relique: 16 },  // bagues
 };
+
+/* L'echelle de la BOUTIQUE. Cinq rangs, pas six : la relique ne se vend pas.
+   Chaque cran vaut la moyenne des deux crans de butin qui le suivent —
+   c'est de la que sort l'imbrication, et c'est pour ca qu'aucune des deux
+   tables n'a ete tapee au jugé. */
+const BUDGET_BOUTIQUE = {
+  1: { commun:  8, rare: 11, epique: 14, legendaire: 18, mythique: 20 },  // fruits
+  3: { commun: 18, rare: 25, epique: 34, legendaire: 42, mythique: 47 },  // armures
+  4: { commun:  7, rare:  9, epique: 11, legendaire: 13, mythique: 15 },  // bagues
+};
+
+const BUDGET = { butin: BUDGET_BUTIN, boutique: BUDGET_BOUTIQUE };
+/* L'ancien nom reste : c'est la table de reference, celle du monde. */
+const BUDGET_SAISON = BUDGET_BUTIN;
 
 /** Les degats d'une arme, par rarete. Ils ne dependent pas de la famille :
     la famille decide de la portee et du nombre de tirs (cote page), la
     rarete decide de ce que chaque tir enleve. */
-const DEGATS_ARME = {
+const DEGATS_ARME_BUTIN = {
   commun: [20, 30], rare: [30, 45], epique: [45, 65],
   legendaire: [65, 90], mythique: [90, 120],
   /* La relique prolonge l'echelle d'un cran — chacun vaut environ un tiers de
-     plus que le precedent (65/45, 90/65, 120/90, 160/120). Son MINIMUM passe
-     au-dessus du maximum mythique : le plus mauvais coup d'une relique vaut
-     mieux que le meilleur coup de ce que la boutique vend. C'est une phrase
-     qu'on peut verifier, et un test la verifie — a 120 elle n'aurait ete
-     qu'egale, ce qui ne se defend pas pour une piece qu'on ne peut pas
-     acheter. */
-  relique: [125, 160],
+     plus que le precedent. Son MINIMUM passe au-dessus du maximum de ce que
+     la boutique vend : le plus mauvais coup d'une relique vaut mieux que le
+     meilleur coup d'une mythique payee. C'est une phrase qu'on peut verifier,
+     et un test la verifie.
+     Elle est montee de 125-160 a 155-200 le jour ou la boutique a eu sa propre
+     echelle : la mythique achetee frappe jusqu'a 150, et une relique a 125 de
+     minimum serait passee DESSOUS. Ce n'est pas la relique qu'on a renforcee,
+     c'est la phrase qu'on a gardee vraie. */
+  relique: [155, 200],
 };
+
+/* Les memes crans, decales de la meme facon que les budgets : chaque borne
+   est la moyenne des deux crans de butin suivants. L'escalier des degats :
+     20,30 | 30,45 | 38,55 | 45,65 | 55,78 | 65,90 | 78,105 | 90,120
+           | 102,134 | 116,150 | 155,200
+   Onze marches, et la relique tient toujours la derniere. */
+const DEGATS_ARME_BOUTIQUE = {
+  commun: [38, 55], rare: [55, 78], epique: [78, 105],
+  legendaire: [102, 134], mythique: [116, 150],
+};
+
+const DEGATS = { butin: DEGATS_ARME_BUTIN, boutique: DEGATS_ARME_BOUTIQUE };
+/* L'ancien nom reste : c'est la table de reference, celle du monde. */
+const DEGATS_ARME = DEGATS_ARME_BUTIN;
 
 /* Les deux stats qui se comptent en centaines. Toutes les autres sont des
    attributs — ecrire la liste courte plutot que la longue evite d'oublier
@@ -373,9 +440,10 @@ const JAUGES = ['hp', 'mp'];
  * Ce qu'un objet apporte, stat par stat. Rend un objet `{stat: valeur}` —
  * jamais un seul chiffre, parce qu'un objet peut toucher trois stats.
  */
-function bonusesDe(rarete, famille, saison) {
+function bonusesDe(rarete, famille, saison, source) {
   const profil = PROFIL_FAMILLE[famille];
-  const table = BUDGET_SAISON[Number(saison)];
+  const tables = BUDGET[source || 'butin'];
+  const table = tables && tables[Number(saison)];
   if (!profil || !table) return {};
   const budget = table[rarete];
   if (!budget) return {};
@@ -386,6 +454,32 @@ function bonusesDe(rarete, famille, saison) {
     out[stat] = JAUGES.indexOf(stat) >= 0 ? pts * 10 : pts;
   }
   return out;
+}
+
+/* ---- ON NE DEMANDE PAS LA SOURCE, ON LA LIT SUR L'OBJET ----
+ *
+ * `bonusesDe` prend une source parce qu'il ne connait que des chaines. Le
+ * reste du serveur, lui, tient l'OBJET DU CATALOGUE : il porte deja le seul
+ * fait qui compte — `drop`. Passer par ces deux fonctions-la retire toute
+ * occasion de se tromper de table, et il y avait six endroits ou se tromper.
+ *
+ * Le defaut de `bonusesDe` est le BUTIN, jamais la boutique : un appel oublie
+ * quelque part donne alors une piece moins forte, pas une piece dopee. Se
+ * tromper vers le bas se voit et se repare ; se tromper vers le haut se
+ * decouvre trois semaines plus tard, quand tout le monde en a une. */
+function sourceDe(o) { return (o && o.drop) ? 'butin' : 'boutique'; }
+
+function bonusesDeObjet(o) {
+  if (!o) return {};
+  return bonusesDe(o.rarete, o.famille, o.saison, sourceDe(o));
+}
+
+/** Les degats d'une arme du catalogue, ou `null` si ce n'en est pas une. */
+function degatsDeObjet(o) {
+  if (!o || Number(o.saison) !== 2) return null;
+  const t = DEGATS[sourceDe(o)];
+  const d = t && t[o.rarete];
+  return d ? d.slice() : null;
 }
 
 /** La stat PRINCIPALE d'une famille — celle qui pese le plus dans son
@@ -404,7 +498,10 @@ const FAMILLE_STAT = Object.keys(PROFIL_FAMILLE).reduce((o, f) => {
 
 
 module.exports = {
-  STATS, BASE, FAMILLE_STAT, PROFIL_FAMILLE, BUDGET_SAISON, DEGATS_ARME, JAUGES,
+  STATS, BASE, FAMILLE_STAT, PROFIL_FAMILLE, JAUGES,
+  BUDGET_SAISON, BUDGET_BUTIN, BUDGET_BOUTIQUE, BUDGET,
+  DEGATS_ARME, DEGATS_ARME_BUTIN, DEGATS_ARME_BOUTIQUE, DEGATS,
+  sourceDe, bonusesDeObjet, degatsDeObjet,
   NIVEAU_MAX, NIVEAU_BASE, NIVEAU_PUISSANCE, XP_BASE, XP_PUISSANCE,
   XP_PAR_FAME, XP_PAR_FAME_APRES,
   volumePour, xpPour, xpDuVolume, niveauDeXp, statAuNiveau, fameDeXp,

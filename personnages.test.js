@@ -229,4 +229,111 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
   }
 }
 
+
+// ================== DEUX ECHELLES, ET UN SEUL ESCALIER
+//
+// Ce qu'on ACHETE et ce qu'on TROUVE partageaient la meme table : une commune
+// payee en $SWOGE valait exactement une commune ramassee sur un lime, alors
+// que la premiere existe a mille exemplaires pour toute une saison et que la
+// seconde tombe a l'infini.
+//
+// Ce que ce bloc protege :
+//
+// 1. LA SUITE CROIT. Les onze marches — six de butin, cinq de boutique —
+//    forment un seul escalier strictement croissant. Deux echelles qui se
+//    croisent au milieu donneraient un mythique moins bon qu'un epique, et
+//    personne ne saurait dire lequel prendre.
+// 2. LA RELIQUE RESTE AU-DESSUS DE TOUT. C'est la seule piece que l'argent
+//    n'achete pas. Si la mythique de boutique la depassait, le monde de
+//    combat perdrait son dernier trophee.
+// 3. LE BUTIN NE BAISSE PAS. Rendre la boutique meilleure en affaiblissant ce
+//    que les gens possedent deja, c'est le leur reprendre sans le dire.
+{
+  const B = require('./boutique');
+  const SAISONS = [1, 3, 4];
+  const RANGS = ['commun', 'rare', 'epique', 'legendaire', 'mythique'];
+
+  for (const sa of SAISONS) {
+    const bu = P.BUDGET_BUTIN[sa], bo = P.BUDGET_BOUTIQUE[sa];
+    /* L'escalier, dans l'ordre : chaque cran de boutique se loge entre le
+       butin qui le suit et celui d'apres. */
+    const suite = [bu.commun, bu.rare, bo.commun, bu.epique, bo.rare,
+                   bu.legendaire, bo.epique, bu.mythique, bo.legendaire,
+                   bo.mythique, bu.relique];
+    for (let i = 1; i < suite.length; i++) {
+      ok(suite[i] > suite[i - 1],
+         `saison ${sa} : la marche ${i} monte (${suite[i - 1]} -> ${suite[i]})`);
+      n -= 1;
+    }
+    n += 1;
+    ok(true, `saison ${sa} : les onze marches montent, sans un plat (${suite.join(' < ')})`);
+
+    /* La relique tient le sommet. */
+    ok(bu.relique > bo.mythique,
+       `saison ${sa} : la relique (${bu.relique}) reste au-dessus de tout ce qui s achete (${bo.mythique})`);
+    /* Et la commune de boutique est deja PUISSANTE : elle bat la rare du
+       monde. C'est une serie limitee, pas un lot de consolation. */
+    ok(bo.commun > bu.rare,
+       `saison ${sa} : la commune achetee (${bo.commun}) bat la rare trouvee (${bu.rare})`);
+    ok(bo.commun >= bu.commun * 2,
+       `saison ${sa} : et vaut au moins deux communes trouvees (${bo.commun} contre ${bu.commun})`);
+  }
+
+  /* ---- LES ARMES SUIVENT LE MEME ESCALIER ----
+   * Elles ne donnent pas de stats : leurs degats SONT leur fiche. */
+  {
+    const bu = P.DEGATS_ARME_BUTIN, bo = P.DEGATS_ARME_BOUTIQUE;
+    const suite = [bu.commun, bu.rare, bo.commun, bu.epique, bo.rare,
+                   bu.legendaire, bo.epique, bu.mythique, bo.legendaire,
+                   bo.mythique, bu.relique];
+    for (let i = 1; i < suite.length; i++) {
+      ok(suite[i][0] > suite[i - 1][0] && suite[i][1] > suite[i - 1][1],
+         `armes : la marche ${i} monte des DEUX bornes`);
+      n -= 1;
+    }
+    n += 1;
+    ok(true, 'armes : les onze marches montent, borne basse ET borne haute');
+    ok(bu.relique[0] > bo.mythique[1],
+       `l arme relique frappe au minimum (${bu.relique[0]}) plus fort que la mythique achetee au maximum (${bo.mythique[1]})`);
+    ok(bo.commun[0] > bu.rare[0],
+       `l arme commune achetee (${bo.commun}) bat la rare trouvee (${bu.rare})`);
+  }
+
+  /* ---- ET LA SOURCE SE LIT SUR L'OBJET, PAS SUR SON NOM ----
+   * Six endroits demandaient la table. Six occasions de se tromper. */
+  {
+    eq(P.sourceDe({ drop: true }), 'butin', 'une piece qui tombe vient du butin');
+    eq(P.sourceDe({}), 'boutique', 'une piece sans drapeau vient de la boutique');
+    /* Le defaut de `bonusesDe` est le BUTIN : un appel oublie donne une piece
+       moins forte, pas une piece dopee. Se tromper vers le bas se voit et se
+       repare ; se tromper vers le haut se decouvre trois semaines plus tard,
+       quand tout le monde en a une. */
+    const parDefaut = P.bonusesDe('commun', 'plastron', 3);
+    const butin = P.bonusesDe('commun', 'plastron', 3, 'butin');
+    eq(JSON.stringify(parDefaut), JSON.stringify(butin),
+       'sans source, on rend la table du MONDE — l oubli affaiblit, il ne dope pas');
+
+    /* Et CHAQUE piece du catalogue rend bien la table de sa famille. */
+    let faux = 0;
+    for (const o of B.ITEMS.concat(B.ITEMS_DROP)) {
+      const attendu = P.bonusesDe(o.rarete, o.famille, o.saison, o.drop ? 'butin' : 'boutique');
+      if (JSON.stringify(P.bonusesDeObjet(o)) !== JSON.stringify(attendu)) faux++;
+    }
+    eq(faux, 0, `les ${B.ITEMS.length + B.ITEMS_DROP.length} pieces du catalogue lisent la bonne table`);
+
+    /* Une arme du monde et une arme de boutique, meme rarete : la seconde
+       frappe plus fort. C'est la demande, verifiee sur le catalogue reel. */
+    let pires = [];
+    for (const r of RANGS) {
+      const a = B.ITEMS.find((o) => o.saison === 2 && o.rarete === r);
+      const b = B.ITEMS_DROP.find((o) => o.saison === 2 && o.rarete === r);
+      if (!a || !b) continue;
+      const da = P.degatsDeObjet(a), db = P.degatsDeObjet(b);
+      if (!(da[0] > db[0] && da[1] > db[1])) pires.push(r);
+    }
+    eq(pires.length, 0,
+       'a rarete egale, l arme achetee frappe TOUJOURS plus fort que celle qu on trouve');
+  }
+}
+
 console.log(`personnages.test.js : ${n} verifications OK`);

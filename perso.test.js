@@ -163,7 +163,10 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
 
   const fruit = B.itemsDeSaison(1).find((o) => o.rarete === 'mythique');
   p.objets[fruit.id] = 1;
-  const attendu = P.bonusesDe(fruit.rarete, fruit.famille, fruit.saison);
+  /* On demande a l'OBJET ce qu'il donne, pas a la rarete : depuis que ce
+     qu'on achete et ce qu'on trouve ont deux echelles, « mythique » ne suffit
+     plus a designer une valeur. */
+  const attendu = P.bonusesDeObjet(fruit);
   ok(Object.keys(attendu).length >= 1, 'le fruit a bien un profil a appliquer');
   const apres = g.equipeFruit(A, 'pepe', fruit.id).stats;
 
@@ -235,7 +238,7 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
   eq(eq1.fruits[0].quantite, 2, 'la quantite possedee est rendue');
   eq(eq1.fruits[0].stat, P.FAMILLE_STAT[fruit.famille], 'la stat visee vient de la meme table que le bonus reel');
   eq(JSON.stringify(eq1.fruits[0].bonus),
-     JSON.stringify(P.bonusesDe(fruit.rarete, fruit.famille, fruit.saison)),
+     JSON.stringify(P.bonusesDeObjet(fruit)),
      'le bonus annonce est celui qui sera vraiment applique');
 }
 
@@ -286,7 +289,7 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
 
   const armure = B.itemsDeSaison(3).find((o) => o.rarete === 'mythique');
   p.objets[armure.id] = 1;
-  const attenduArm = P.bonusesDe(armure.rarete, armure.famille, armure.saison);
+  const attenduArm = P.bonusesDeObjet(armure);
   const apres = g.equipeArmure(A, 'pepe', armure.id).stats;
 
   /* Meme regle que pour le fruit : exactement les stats du profil bougent,

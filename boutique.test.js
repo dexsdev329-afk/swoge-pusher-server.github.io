@@ -788,9 +788,12 @@ for (const c of B.COFFRES) {
   const P = require('./personnages');
   const rel = B.ITEMS_DROP.filter((o) => o.rarete === 'relique');
   ok(rel.length === 4, `quatre reliques (${rel.length})`);
-  ok(P.DEGATS_ARME.relique[0] > P.DEGATS_ARME.mythique[1],
-     `l arme relique frappe plus fort au MINIMUM (${P.DEGATS_ARME.relique[0]}) ` +
-     `que la mythique au maximum (${P.DEGATS_ARME.mythique[1]})`);
+  /* Contre ce que la BOUTIQUE vend, pas contre la mythique du monde : c'est
+     la comparaison qui a un sens depuis que les deux ont leur echelle. Une
+     relique qui ne battrait que le butin serait battue par un achat. */
+  ok(P.DEGATS_ARME_BUTIN.relique[0] > P.DEGATS_ARME_BOUTIQUE.mythique[1],
+     `l arme relique frappe plus fort au MINIMUM (${P.DEGATS_ARME_BUTIN.relique[0]}) ` +
+     `que la mythique ACHETEE au maximum (${P.DEGATS_ARME_BOUTIQUE.mythique[1]})`);
   const somme = (o) => Object.keys(o).reduce((t, k) => t + o[k], 0);
   [['garde', 1], ['plastron', 3], ['grenat', 4]].forEach(([fam, s]) => {
     const m = somme(P.bonusesDe('mythique', fam, s));

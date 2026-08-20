@@ -5263,13 +5263,13 @@ class Game {
     const bonusDe = (itemId) => {
       const o = itemId ? boutique.item(itemId) : null;
       if (!o) return null;
-      const bonus = personnages.bonusesDe(o.rarete, o.famille, o.saison);
+      const bonus = personnages.bonusesDeObjet(o);
       /* Une ARME rend {} depuis qu'elle ne donne plus de stats : rendre null
          ici viderait la case d'arme de la fiche alors qu'elle porte une
          epee. Ce qui compte pour une arme, ce sont ses degats — ils partent
          quelques lignes plus bas. On ne renonce donc que sur un objet qui
          n'apporte NI stat NI degats, c'est-a-dire rien du tout. */
-      const degats = o.saison === 2 ? personnages.DEGATS_ARME[o.rarete] : null;
+      const degats = personnages.degatsDeObjet(o);
       if (!Object.keys(bonus).length && !degats) return null;
       /* La couleur suit ici : la page dessine la case d'equipement dans la
          MEME couleur que la carte du catalogue, sans avoir a recharger le
@@ -5645,11 +5645,11 @@ class Game {
       const l = { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete, og: !o.drop,
                   couleur: r ? r.couleur : '#8DA0C4', famille: o.famille, pouvoir: o.pouvoir,
                   stat: personnages.FAMILLE_STAT[o.famille] || null,
-                  bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
+                  bonus: personnages.bonusesDeObjet(o),
                   quantite: objets[o.id] || 0 };
       /* Une arme n'a plus de stats : sans ses degats, la liste de choix
          montrerait cinq epees indistinctes. Les degats SONT sa fiche. */
-      const d = o.saison === 2 ? personnages.DEGATS_ARME[o.rarete] : null;
+      const d = personnages.degatsDeObjet(o);
       if (d) l.degats = d.slice();
       return l;
     };
@@ -5824,13 +5824,13 @@ class Game {
       const o = boutique.item(id);
       if (!o) continue;
       const r = boutique.rarete(o.rarete);
-      const d = o.saison === 2 ? personnages.DEGATS_ARME[o.rarete] : null;
+      const d = personnages.degatsDeObjet(o);
       out.push({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
                  couleur: r ? r.couleur : '#8DA0C4', saison: o.saison,
                  /* Numerotee, donc payee : voir `bonusDe`. */
                  og: !o.drop,
                  stat: personnages.FAMILLE_STAT[o.famille] || null,
-                 bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
+                 bonus: personnages.bonusesDeObjet(o),
                  /* Meme raison que dans la liste d'equipement : une arme
                     posee dans le sac ne se lit que par ses degats. */
                  ...(d ? { degats: d.slice() } : {}),

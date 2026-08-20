@@ -826,9 +826,22 @@ const DEGATS_POING = [6, 10];
  * d'attaque a une bague de dexterite. A 0 on tire a moitie vitesse, a 50 au
  * rythme nominal de l'arme, a 100 au double.
  *
- * Le PLAFOND a 2 n'est pas cosmetique : une dague tire deja quatre fois par
- * seconde, et chaque tir est un message reseau. Au-dela du double, on paie en
- * trafic une difference que l'oeil ne voit plus.
+ * Le PLAFOND existe pour le TRAFIC : chaque tir est un message, et une dague
+ * en tire deja quatre par seconde avant le moindre bonus.
+ *
+ * Il valait 2, et 2 se touchait AVANT le premier objet : andy a 75 de
+ * dexterite au niveau vingt, et 0,5 + 75/50 fait exactement 2. Toute la
+ * dexterite vendue en boutique — bagues d'emeraude, jambieres, fruits de
+ * chance — ne faisait donc rien du tout pour lui. Une statistique qu'on paie
+ * et qui ne change rien est pire qu'une statistique absente : elle ment.
+ *
+ * On monte donc a 2,75, ce qui couvre la dexterite maximale atteignable
+ * (111 avec trois pieces mythiques de boutique, soit un facteur 2,72). Le
+ * cout, mesure et non suppose : une dague passe de huit a onze messages par
+ * seconde, soit trente de plus par seconde pour dix joueurs. Le serveur tourne
+ * a 0,65 ms par tour de cent millisecondes.
+ *
+ * Personne ne perd rien : le plafond ne fait que monter.
  *
  * ---- LA VITESSE : LE DEPLACEMENT ----
  *
@@ -839,7 +852,7 @@ const DEGATS_POING = [6, 10];
  * choisir un personnage la-dessus, pas assez pour que le plus lent se fasse
  * rattraper par un squelette (105) ni que le plus rapide sorte de l'ecran.
  */
-const CADENCE_MAX = 2;
+const CADENCE_MAX = 2.75;
 function cadenceDe(dex) {
   return Math.min(CADENCE_MAX, 0.5 + Math.max(0, Number(dex) || 0) / 50);
 }
