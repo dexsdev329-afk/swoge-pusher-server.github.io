@@ -678,6 +678,14 @@ class Realm {
      * geste, pas de la mort du monstre : c'est la seule regle qu'on puisse
      * expliquer, et la seule qui ne punisse pas d'avoir reflechi. */
     s.reste = monde.SAC.duree;
+    /* ---- ON NE SE REPREND PAS CE QU'ON VIENT DE POSER ----
+     * Le ramassage automatique vide un sac des qu'on marche dessus. Poser une
+     * piece a ses pieds la lui redonnait donc dans le meme dixieme de seconde :
+     * jeter quelque chose devenait impossible sans courir en meme temps.
+     * On retient QUI a pose, et le ramassage automatique passe son tour tant
+     * que ce joueur-la est encore dessus. Il suffit de s'ecarter — c'est le
+     * geste qu'on fait de toute facon apres avoir jete quelque chose. */
+    s.pose = addr;
     if (ev) { ev.deposes = ev.deposes || []; ev.deposes.push({ addr, id: s.id, item }); }
     return { id: s.id, sac: s.sac, place: s.contenu.length - 1 };
   }
@@ -752,6 +760,16 @@ class Realm {
         for (const o of perdu) ev.expires.push({ item: o.item, nom: o.nom });
       }
       this.sacs.splice(i, 1);
+    }
+    /* Le poseur s'est ecarte : le sac redevient ramassable, pour lui comme
+       pour les autres. On l'oublie ICI plutot qu'a l'entree du ramassage :
+       « qui a pose » est un fait du monde, pas une question de qui regarde. */
+    for (const s of this.sacs) {
+      if (!s.pose) continue;
+      const j = this.joueurs.get(s.pose);
+      if (!j) { s.pose = null; continue; }
+      const dx = j.x - s.x, dy = j.y - s.y;
+      if (dx * dx + dy * dy > monde.SAC.rayon * monde.SAC.rayon) s.pose = null;
     }
     this._pasSalles(dt, ev);
     this._pasZones(dt, ev);

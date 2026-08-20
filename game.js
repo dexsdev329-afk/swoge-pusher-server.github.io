@@ -5787,6 +5787,33 @@ class Game {
     return cases;
   }
 
+  /**
+   * ================== DEPLACER UNE PIECE DANS SON SAC ==================
+   *
+   * Huit places, et le droit de les ranger. Ce n'est pas un confort : le sac
+   * se lit d'un coup d'oeil en combat, et « ma potion est toujours en bas a
+   * droite » vaut une demi-seconde a chaque fois qu'on la cherche.
+   *
+   * On ECHANGE les deux places plutot que d'inserer et decaler. Un decalage
+   * bouge tout ce qui suit — le joueur en deplace une et en retrouve six
+   * ailleurs. L'echange ne touche qu'a ce qu'on a designe, et il n'a pas
+   * besoin de case libre.
+   */
+  deplaceSac(addr, de, vers) {
+    const p = this._p(addr);
+    const a = Math.floor(Number(de)), b = Math.floor(Number(vers));
+    if (!Number.isFinite(a) || !Number.isFinite(b)) throw new Error('bad slot');
+    if (a < 0 || b < 0 || a >= SAC_CASES || b >= SAC_CASES) throw new Error('bad slot');
+    const cases = this._casesDuSac(p);
+    if (a === b) return { de: a, vers: b, bouge: false };
+    /* Une case VIDE peut etre la source : ca ne fait rien, et refuser
+       obligerait la page a savoir ce qu'elle tient avant de le lacher. */
+    const x = cases[a], y = cases[b];
+    cases[a] = y; cases[b] = x;
+    p.sacCases = cases;
+    return { de: a, vers: b, bouge: true };
+  }
+
   sacPour(addr) {
     const p = this._p(addr);
     const cases = this._casesDuSac(p);

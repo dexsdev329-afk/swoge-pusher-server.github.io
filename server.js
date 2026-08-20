@@ -2928,6 +2928,19 @@ wss.on('connection', (ws) => {
        * porte), le coffre et le sac. Trois reponses separees se seraient
        * croisees, et la page aurait montre un instant un sac sans la piece et
        * un personnage sans arme. */
+      /* ---- RANGER SON SAC ----
+       * Huit places, et le droit de les ranger. Le sac se lit d'un coup d'oeil
+       * en combat : « ma potion est toujours en bas a droite » vaut une
+       * demi-seconde a chaque fois qu'on la cherche. */
+      if (m.type === 'sacDeplace') {
+        if (!ws.addr) return;
+        let err = null;
+        try { game.deplaceSac(ws.addr, m.de, m.vers); }
+        catch (e) { err = e.message; }
+        if (!err) persistSoon();
+        return send(ws, { type: 'sacDeplace', error: err || undefined,
+                          sacJoueur: game.sacPour(ws.addr) });
+      }
       if (m.type === 'equipeDuSac') {
         if (!ws.addr) return;
         let r = null, err = null;
@@ -3132,65 +3145,7 @@ wss.on('connection', (ws) => {
        * exactement ce qu'on aurait interet a voler. */
       if (m.type === 'realmRamasse') {
         if (!ws.addr || !realmClients.has(ws)) return;
-        const skin = ws.realmSkin;
-        const plafondPotion = (cle) => {
-          const l = game.potionsPour(ws.addr).filter((x) => x.cle === cle)[0];
-          return l ? l.quantite < l.max : false;
-        };
-        /* On REFUSE avant de prendre : une potion d'attaque prise a son
-           plafond serait bue pour rien et la place serait videe. Refusee,
-           elle reste dans le sac, qui finit sa minute. */
-        const r = realm.ramasse(ws.addr, null, (o) => {
-          if (o.stat) return game.supRestant(ws.addr, skin, o.stat) > 0 ? true : 'plein';
-          if (o.potion) return plafondPotion(o.potion) ? true : 'plein';
-          /* Un OBJET prend une place du sac : on refuse avant de le sortir du
-             sac au sol, sinon il disparaitrait des deux cotes a la fois. */
-          if (o.item) return game.sacRempli(ws.addr) < 8 ? true : 'sac-plein';
-          return true;
-        }, m.i, m.place);
-        if (!r) return send(ws, { type: 'realmRamasse', rien: true });
-        if (r.refuse) {
-          return send(ws, { type: 'realmRamasse', refus: r.raison,
-                            sac: r.sac, stat: r.stat, potion: r.potion });
-        }
-        try {
-          if (r.stat) {
-            const b = game.boitStat(ws.addr, skin, r.stat);
-            persistSoon();
-            /* La fiche repart EN ENTIER, dans la forme que la page connait
-               deja ({skin, etat}) : la stat vient de changer, et le panneau
-               doit le montrer sans qu'on la lui recalcule. Inventer ici une
-               forme de message que personne n'ecoute aurait donne une potion
-               bue dont l'effet n'apparait qu'au prochain rechargement. */
-            send(ws, { type: 'personnage', skin, etat: game.personnageEtat(ws.addr, skin) });
-            /* `vide` dit a la page de refermer la grille : sans lui, une fiole
-               resterait dessinee sur une place qui n'existe plus, et le clic
-               suivant irait dans le vide. */
-            return send(ws, { type: 'realmRamasse', sac: r.sac, stat: r.stat, vide: r.vide, ...b });
-          }
-          if (r.potion) {
-            const b = game.donnePotion(ws.addr, r.potion);
-            persistSoon();
-            /* La pile complete voyage AVEC la reponse, comme elle le fait
-               deja sur `potionBue` : c'est le meme besoin, et un second type
-               de message pour la meme chose se serait desynchronise. */
-            return send(ws, { type: 'realmRamasse', sac: r.sac, potion: r.potion,
-                              vide: r.vide, ...b,
-                              potions: game.potionsPour(ws.addr) });
-          }
-          if (r.item) {
-            const b = game.prendDuSol(ws.addr, r.item);
-            persistSoon();
-            /* Le sac complet repart avec la reponse : la grille de gauche doit
-               montrer l'objet a la place ou il vient d'arriver, sans un
-               aller-retour de plus. */
-            return send(ws, { type: 'realmRamasse', sac: r.sac, vide: r.vide, ...b,
-                              sacJoueur: game.sacPour(ws.addr) });
-          }
-          return send(ws, { type: 'realmRamasse', sac: r.sac, vide: r.vide });
-        } catch (e) {
-          return send(ws, { type: 'realmRamasse', refus: e.message, sac: r.sac });
-        }
+        return ramassePlace(ws, m.i, m.place);
       }
       /* ---- DEPOSER ----
        * L'autre moitie de l'echange : on pose une piece du sac par terre. Elle
@@ -3984,6 +3939,123 @@ if (nexusInterval.unref) nexusInterval.unref();
  * La boucle tourne meme sans personne : les monstres continuent de vivre, et
  * on entre dans un endroit qui existait avant nous.
  */
+
+/* ==================== RAMASSER UNE PLACE ====================
+ *
+ * Un seul chemin, appele de DEUX endroits : le geste du joueur — un
+ * double-clic, un glissement, un appui — et le ramassage automatique quand il
+ * marche sur un sac. Deux copies de ce code auraient fini par diverger, et la
+ * divergence se serait vue la ou personne ne regarde : le plafond d'une potion
+ * respecte d'un cote et pas de l'autre, c'est-a-dire une potion bue pour rien.
+ *
+ * `muet` : le ramassage automatique ne renvoie rien quand il n'y a rien a
+ * prendre. Dix fois par seconde et par joueur, un « rien » serait dix messages
+ * par seconde pour dire qu'il ne se passe rien.
+ *
+ * Rend 'pris', 'refuse' ou 'rien' — c'est ce que la boucle automatique lit
+ * pour savoir s'il faut passer a la place suivante ou s'arreter.
+ */
+function ramassePlace(ws, id, place, muet) {
+  const skin = ws.realmSkin;
+  const plafondPotion = (cle) => {
+    const l = game.potionsPour(ws.addr).filter((x) => x.cle === cle)[0];
+    return l ? l.quantite < l.max : false;
+  };
+  /* On REFUSE avant de prendre : une potion d'attaque prise a son plafond
+     serait bue pour rien et la place serait videe. Refusee, elle reste dans le
+     sac, qui finit sa minute. */
+  const r = realm.ramasse(ws.addr, null, (o) => {
+    if (o.stat) return game.supRestant(ws.addr, skin, o.stat) > 0 ? true : 'plein';
+    if (o.potion) return plafondPotion(o.potion) ? true : 'plein';
+    /* Un OBJET prend une place du sac : on refuse avant de le sortir du sac au
+       sol, sinon il disparaitrait des deux cotes a la fois. */
+    if (o.item) return game.sacRempli(ws.addr) < 8 ? true : 'sac-plein';
+    return true;
+  }, id, place);
+  if (!r) { if (!muet) send(ws, { type: 'realmRamasse', rien: true }); return 'rien'; }
+  if (r.refuse) {
+    if (!muet) {
+      send(ws, { type: 'realmRamasse', refus: r.raison,
+                 sac: r.sac, stat: r.stat, potion: r.potion });
+    }
+    return 'refuse';
+  }
+  try {
+    if (r.stat) {
+      const b = game.boitStat(ws.addr, skin, r.stat);
+      persistSoon();
+      /* La fiche repart EN ENTIER, dans la forme que la page connait deja
+         ({skin, etat}) : la stat vient de changer, et le panneau doit le
+         montrer sans qu'on la lui recalcule. */
+      send(ws, { type: 'personnage', skin, etat: game.personnageEtat(ws.addr, skin) });
+      /* `vide` dit a la page de refermer la grille : sans lui, une fiole
+         resterait dessinee sur une place qui n'existe plus. */
+      send(ws, { type: 'realmRamasse', sac: r.sac, stat: r.stat, vide: r.vide, auto: !!muet, ...b });
+      return 'pris';
+    }
+    if (r.potion) {
+      const b = game.donnePotion(ws.addr, r.potion);
+      persistSoon();
+      /* La pile complete voyage AVEC la reponse, comme sur `potionBue` :
+         c'est le meme besoin, et un second type de message pour la meme chose
+         se serait desynchronise. */
+      send(ws, { type: 'realmRamasse', sac: r.sac, potion: r.potion,
+                 vide: r.vide, auto: !!muet, ...b,
+                 potions: game.potionsPour(ws.addr) });
+      return 'pris';
+    }
+    if (r.item) {
+      const b = game.prendDuSol(ws.addr, r.item);
+      persistSoon();
+      /* Le sac complet repart avec la reponse : la grille de gauche doit
+         montrer l'objet a la place ou il vient d'arriver, sans un aller-retour
+         de plus. */
+      send(ws, { type: 'realmRamasse', sac: r.sac, vide: r.vide, auto: !!muet, ...b,
+                 sacJoueur: game.sacPour(ws.addr) });
+      return 'pris';
+    }
+    send(ws, { type: 'realmRamasse', sac: r.sac, vide: r.vide, auto: !!muet });
+    return 'pris';
+  } catch (e) {
+    if (!muet) send(ws, { type: 'realmRamasse', refus: e.message, sac: r.sac });
+    return 'refuse';
+  }
+}
+
+/* ==================== ET LE RAMASSAGE AUTOMATIQUE ====================
+ *
+ * Marcher sur un sac le vide. C'est le geste qu'on faisait le plus souvent, et
+ * c'etait le plus penible : ouvrir une grille, viser une case, double-cliquer,
+ * recommencer — pendant qu'un colosse arrive.
+ *
+ * Ce qui ne rentre pas RESTE. Un sac plein, une potion au plafond : la piece
+ * ne disparait pas, elle attend la fin de sa minute, et le joueur peut faire de
+ * la place et repasser. C'est la seule regle qui compte ici — un ramassage
+ * automatique qui DETRUIT ce qu'il ne peut pas prendre serait pire que pas de
+ * ramassage du tout.
+ *
+ * On avance de place en place plutot que de toujours prendre la premiere :
+ * prendre decale la liste, donc la premiere place change toute seule ; refuser
+ * ne la decale pas, et reessayer la meme place tournerait en rond pour
+ * toujours.
+ */
+function ramassageAuto(ws) {
+  if (!ws.addr || !realmClients.has(ws)) return;
+  const sous = realm.sacSousLesPieds(ws.addr);
+  if (!sous) return;
+  /* Ce qu'on vient de poser soi-meme attend qu'on s'ecarte : sinon jeter une
+     piece la reprendrait dans le meme dixieme de seconde, et il deviendrait
+     impossible de rien laisser par terre sans courir en meme temps. */
+  if (sous.pose && sous.pose === ws.addr) return;
+  let place = 0, tours = 0;
+  while (place < monde.SAC.cases && tours < monde.SAC.cases * 2) {
+    tours++;
+    const r = ramassePlace(ws, null, place, true);
+    if (r === 'rien') return;      // plus de sac, ou plus rien dedans
+    if (r === 'refuse') place++;   // celle-la ne rentre pas : on passe a la suivante
+  }
+}
+
 let realmHorloge = Date.now();
 const realmInterval = setInterval(() => {
   const t = Date.now();
@@ -3997,6 +4069,14 @@ const realmInterval = setInterval(() => {
      videraient le plafond pour toujours, sans qu'un seul joueur n'en ait vu
      une. */
   for (const x of (ev.expires || [])) game.rendButin(x.item);
+
+  /* ---- MARCHER SUR UN SAC LE VIDE ----
+   * Apres le pas, pas avant : les sacs qui viennent de tomber sont dans la
+   * liste, et un joueur qui achevait un monstre en lui marchant dessus ramasse
+   * dans le meme souffle. */
+  for (const w of realmClients) {
+    try { ramassageAuto(w); } catch (e) { console.error('[ramassage]', e && e.message); }
+  }
 
   /* ---- CE QU'ON A TUE DEVIENT DE L'XP ----
      Le client n'a rien annonce : il a demande a tirer, le serveur a constate
