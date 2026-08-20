@@ -331,16 +331,20 @@ const PROFIL_FAMILLE = {
  * armure face a une bague.
  */
 const BUDGET_SAISON = {
-  1: { commun: 3, rare: 6,  epique: 9,  legendaire: 12, mythique: 16 },  // fruits
+  1: { commun: 3, rare: 6,  epique: 9,  legendaire: 12, mythique: 16, relique: 21 },  // fruits
   /* pas de 2 : les armes ne donnent que des degats — voir PROFIL_FAMILLE */
-  3: { commun: 7, rare: 14, epique: 21, legendaire: 29, mythique: 38 },  // armures
+  3: { commun: 7, rare: 14, epique: 21, legendaire: 29, mythique: 38, relique: 50 },  // armures
   /* Les bagues suivent le bareme reel des anneaux tiered de RotMG :
      +3, +6, +7, +8, +9, +10, +11 sur sept tiers. Nous en avons cinq, on prend
      les crans qui gardent l'ecart lisible du commun au mythique : 3, 6, 8, 10,
      11. Le mythique s'arrete donc a +11 — la valeur exacte du meilleur anneau
      du vrai jeu, et non plus +16. Une bague comble un trou de build, elle ne
      remplace pas un niveau. */
-  4: { commun: 3, rare: 6,  epique: 8,  legendaire: 10, mythique: 11 },  // bagues
+  /* La relique ne s'envole pas non plus : +12 contre +11. Elle prolonge le
+     plafond des anneaux d'un cran, elle ne le renverse pas — c'est la meme
+     raison qui avait fait redescendre le mythique de +16 a +11. Une bague
+     comble un trou de build, meme quand elle est unique au monde. */
+  4: { commun: 3, rare: 6,  epique: 8,  legendaire: 10, mythique: 11, relique: 12 },  // bagues
 };
 
 /** Les degats d'une arme, par rarete. Ils ne dependent pas de la famille :
@@ -349,6 +353,14 @@ const BUDGET_SAISON = {
 const DEGATS_ARME = {
   commun: [20, 30], rare: [30, 45], epique: [45, 65],
   legendaire: [65, 90], mythique: [90, 120],
+  /* La relique prolonge l'echelle d'un cran — chacun vaut environ un tiers de
+     plus que le precedent (65/45, 90/65, 120/90, 160/120). Son MINIMUM passe
+     au-dessus du maximum mythique : le plus mauvais coup d'une relique vaut
+     mieux que le meilleur coup de ce que la boutique vend. C'est une phrase
+     qu'on peut verifier, et un test la verifie — a 120 elle n'aurait ete
+     qu'egale, ce qui ne se defend pas pour une piece qu'on ne peut pas
+     acheter. */
+  relique: [125, 160],
 };
 
 /* Les deux stats qui se comptent en centaines. Toutes les autres sont des

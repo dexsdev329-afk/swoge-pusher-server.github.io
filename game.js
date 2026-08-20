@@ -3035,7 +3035,11 @@ class Game {
       case 'pleines': {
         const fams = {};
         for (const o of boutique.ITEMS) if (inv[o.id]) fams[o.famille] = (fams[o.famille] || 0) + 1;
-        return Object.values(fams).filter((n) => n === boutique.RARETES.length).length;
+        /* Le compte de la FAMILLE, pas celui des raretes : depuis la
+           relique, toute rarete n'existe pas dans toute famille, et
+           `RARETES.length` rendait la quete impossible partout sauf dans
+           quatre familles — en silence. */
+        return Object.keys(fams).filter((k) => fams[k] === boutique.rangsDeFamille(k)).length;
       }
       case 'serie': return p.streakLastClaimDay === this._today() ? 1 : 0;
       case 'filleul': {
@@ -4751,7 +4755,12 @@ class Game {
    * liste entiere.
    */
   boutiqueClassement(addr, limite, saison) {
-    const objets = boutique.itemsDeSaison(saison || 1);
+    /* La COLLECTION, donc ce qui se collectionne : les pieces vendues. Les
+       trouvailles ne s'achetent pas, ne s'echangent pas contre du $SWOGE et
+       n'ont pas de plafond d'edition — les compter dans « 7 sur 30 »
+       changerait le denominateur sous les yeux des joueurs sans qu'aucun
+       coffre ne permette jamais de le remplir. */
+    const objets = boutique.itemsDeSaison(saison || 1).filter((o) => !o.drop);
     const poids = {};
     for (const r of boutique.RARETES) poids[r.cle] = 1000 / r.plafond;
     const rangRarete = {};
@@ -4773,7 +4782,7 @@ class Game {
       /* Les familles COMPLETES, parce que c'est ce que la course recompense
          et que le classement doit parler de la meme chose que la course. */
       let pleines = 0;
-      for (const k of Object.keys(familles)) if (familles[k] === boutique.RARETES.length) pleines++;
+      for (const k of Object.keys(familles)) if (familles[k] === boutique.rangsDeFamille(k)) pleines++;
       /* CE QU'IL POSSEDE, en trente caracteres.
          La page dessine la rangee de fruits en allumant ceux qu'il a : il lui
          faut donc la liste, pas seulement le compte. Une chaine de 0 et de 1

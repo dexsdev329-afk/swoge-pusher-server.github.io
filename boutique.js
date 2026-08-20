@@ -103,6 +103,15 @@ const RARETES = [
   { cle: 'epique',     nom: 'Epic',      bloc: 3000, couleur: '#C07BFF', plafond:  150 },
   { cle: 'legendaire', nom: 'Legendary', bloc: 4000, couleur: '#FFC53D', plafond:   40 },
   { cle: 'mythique',   nom: 'Mythic',    bloc: 5000, couleur: '#FF4655', plafond:   10 },
+  /* ---- LA RELIQUE : LE SEUL CRAN QU'ON NE PEUT PAS ACHETER ----
+   * Aucun coffre n'en contient, aucune ligne de boutique n'en propose. Elle
+   * ne tombe que dans le sac blanc a ruban rouge, au fond du monde. C'est ce
+   * qui la separe du mythique : le mythique est cher, la relique est
+   * IMPOSSIBLE a payer.
+   * Le plafond n'est pas une decoration — il est plus bas que celui du
+   * mythique parce qu'un objet dont personne ne peut fabriquer l'offre doit
+   * rester compte comme les autres. */
+  { cle: 'relique',    nom: 'Relic',     bloc: 6000, couleur: '#FFFFFF', plafond:    4 },
 ];
 
 /*
@@ -734,13 +743,112 @@ const COFFRE = new Map(COFFRES.map((c) => [c.cle, c]));
  * Portee deux fois, l'information finirait par diverger — un objet marque
  * saison 1 dans une famille de saison 2 se tirerait dans le mauvais coffre, et
  * rien a l'ecran ne le dirait. Ici la question ne peut pas se poser. */
-for (const o of ITEMS) {
+/*
+ * ====================== LES TROUVAILLES ======================
+ *
+ * Quarante pieces qui ne passent JAMAIS par la boutique. Aucun coffre ne les
+ * contient, aucune ligne du catalogue ne les propose, et il n'existe aucun
+ * moyen de les payer : elles tombent, ou elles n'existent pas pour vous.
+ *
+ * ---- pourquoi une serie separee et pas des raretes en plus ----
+ *
+ * A puissance egale, la question « pourquoi chasser plutot qu'acheter ? » a
+ * une reponse simple : parce qu'on n'a pas de $SWOGE. Une piece trouvee vaut
+ * exactement ce que vaut une piece achetee de la meme rarete — le monde est
+ * l'autre chemin vers le meme equipement, pas un raccourci vers un meilleur.
+ * Un joueur qui ne depose jamais rien peut donc s'equiper entierement, et
+ * c'est le contraire d'un detail : c'est ce qui fait qu'il y a un jeu.
+ *
+ * La RELIQUE est la seule exception, et elle va dans l'autre sens : elle est
+ * au-dessus de tout ce que la boutique vend, et on ne peut que la trouver.
+ *
+ * ---- l'anneau decide de la rarete ----
+ *
+ *   terre commun, marais rare, neige epique, cendres legendaire, lave
+ *   mythique, et la relique au coeur.
+ *
+ * C'est la meme pente que le sol sous les pieds : on lit ce qu'on peut gagner
+ * a la couleur du terrain, sans une ligne d'interface.
+ *
+ * `drop: true` est ce qui les tient hors du commerce. Il est porte par
+ * l'objet et pas par une liste a cote : une liste s'oublie, un champ non.
+ */
+const ITEMS_DROP = [
+  // ---- l'anneau de terre : commun ----
+  { id: 6101, cle: 'arme_vagabond',      nom: "Wanderer's Blade", rarete: 'commun', famille: 'lame' },
+  { id: 6102, cle: 'fruit_germe',        nom: 'Seedling Fruit',   rarete: 'commun', famille: 'garde',
+    pouvoir: 'It has not decided what it wants to be yet.' },
+  { id: 6103, cle: 'plastron_cuir',      nom: "Traveller's Leathers", rarete: 'commun', famille: 'plastron' },
+  { id: 6104, cle: 'ring_cuivre_terni',  nom: 'Tarnished Copper Band', rarete: 'commun', famille: 'topaze' },
+  { id: 6105, cle: 'arme_ecaille',       nom: 'Chipped Shortsword', rarete: 'commun', famille: 'lame' },
+  { id: 6106, cle: 'plastron_rapiece',   nom: 'Patched Jerkin',   rarete: 'commun', famille: 'plastron' },
+  { id: 6107, cle: 'ring_mat',           nom: 'Dull Band',        rarete: 'commun', famille: 'topaze' },
+  { id: 6108, cle: 'fruit_pepin',        nom: 'Seed Charm',       rarete: 'commun', famille: 'garde',
+    pouvoir: 'Small, dry, and stubbornly alive.' },
+
+  // ---- le marais : rare ----
+  { id: 6201, cle: 'arme_ronce',         nom: 'Bramble Spear',    rarete: 'rare', famille: 'lance' },
+  { id: 6202, cle: 'fruit_bourbe',       nom: 'Mire Fruit',       rarete: 'rare', famille: 'chance',
+    pouvoir: 'Whatever was going to bite you bit something else.' },
+  { id: 6203, cle: 'plastron_mousse',    nom: 'Mosscloak Mail',   rarete: 'rare', famille: 'plastron' },
+  { id: 6204, cle: 'ring_vase',          nom: 'Silt Ring',        rarete: 'rare', famille: 'emeraude' },
+  { id: 6205, cle: 'arme_os_courbe',     nom: 'Bone Kris',        rarete: 'rare', famille: 'dagues' },
+  { id: 6206, cle: 'plastron_lichen',    nom: 'Lichen Cuirass',   rarete: 'rare', famille: 'plastron' },
+  { id: 6207, cle: 'ring_tourbe',        nom: 'Peat Ring',        rarete: 'rare', famille: 'emeraude' },
+  { id: 6208, cle: 'fruit_marecage',     nom: 'Bog Fruit',        rarete: 'rare', famille: 'chance',
+    pouvoir: 'It drips. You have stopped asking what.' },
+
+  // ---- la neige : epique ----
+  { id: 6301, cle: 'arme_givre',         nom: 'Frostbite Blade',  rarete: 'epique', famille: 'lame' },
+  { id: 6302, cle: 'fruit_gel',          nom: 'Rime Fruit',       rarete: 'epique', famille: 'oeil',
+    pouvoir: 'Cold enough to make you notice things.' },
+  { id: 6303, cle: 'plastron_bourrasque', nom: 'Snowdrift Plate', rarete: 'epique', famille: 'plastron' },
+  { id: 6304, cle: 'ring_flocon',        nom: 'Snowflake Ring',   rarete: 'epique', famille: 'saphir' },
+  { id: 6305, cle: 'arme_stalactite',    nom: 'Glacier Longsword', rarete: 'epique', famille: 'lame' },
+  { id: 6306, cle: 'plastron_fourrure',  nom: 'Furlined Plate',   rarete: 'epique', famille: 'plastron' },
+  { id: 6307, cle: 'ring_grele',         nom: 'Hail Ring',        rarete: 'epique', famille: 'saphir' },
+  { id: 6308, cle: 'fruit_cristal',      nom: 'Crystal Fruit',    rarete: 'epique', famille: 'oeil',
+    pouvoir: 'You see one second further than you did.' },
+
+  // ---- les cendres : legendaire ----
+  { id: 6401, cle: 'arme_suie',          nom: 'Sootfang Blade',   rarete: 'legendaire', famille: 'lame' },
+  { id: 6402, cle: 'fruit_cendre',       nom: 'Ashen Fruit',      rarete: 'legendaire', famille: 'chaos',
+    pouvoir: 'Something burned to make this. It remembers.' },
+  { id: 6403, cle: 'plastron_scorie',    nom: 'Slag Plate',       rarete: 'legendaire', famille: 'plastron' },
+  { id: 6404, cle: 'ring_charbon',       nom: 'Cinder Ring',      rarete: 'legendaire', famille: 'onyx' },
+  { id: 6405, cle: 'arme_hache_noire',   nom: 'Blackened Greataxe', rarete: 'legendaire', famille: 'hache' },
+  { id: 6406, cle: 'plastron_obsidienne', nom: 'Obsidian Breastplate', rarete: 'legendaire', famille: 'plastron' },
+  { id: 6407, cle: 'ring_tison',         nom: 'Smoulder Ring',    rarete: 'legendaire', famille: 'onyx' },
+  { id: 6408, cle: 'fruit_charbon',      nom: 'Charred Fruit',    rarete: 'legendaire', famille: 'eclair',
+    pouvoir: 'It cracks when you move fast. So do you.' },
+
+  // ---- la lave : mythique ----
+  { id: 6501, cle: 'arme_coulee',        nom: 'Molten Edge',      rarete: 'mythique', famille: 'lame' },
+  { id: 6502, cle: 'fruit_magma',        nom: 'Magma Fruit',      rarete: 'mythique', famille: 'or',
+    pouvoir: 'It beats. You would rather it did not.' },
+  { id: 6503, cle: 'plastron_fournaise', nom: 'Furnace Plate',    rarete: 'mythique', famille: 'plastron' },
+  { id: 6504, cle: 'ring_fonte',         nom: 'Moltencore Ring',  rarete: 'mythique', famille: 'grenat' },
+
+  // ---- le coeur : la relique, dans le sac blanc a ruban rouge ----
+  { id: 6601, cle: 'arme_aurore',        nom: 'Crimson Dawn',     rarete: 'relique', famille: 'lame' },
+  { id: 6602, cle: 'plastron_serment',   nom: 'Oathplate',        rarete: 'relique', famille: 'plastron' },
+  { id: 6603, cle: 'ring_etoile_rouge',  nom: 'The Red Star',     rarete: 'relique', famille: 'grenat' },
+  { id: 6604, cle: 'fruit_coeur',        nom: 'Relic Heart',      rarete: 'relique', famille: 'chaos',
+    pouvoir: 'Older than the shop. Older than the coin.' },
+];
+for (const o of ITEMS_DROP) o.drop = true;
+
+for (const o of ITEMS.concat(ITEMS_DROP)) {
   const f = FAMILLE.get(o.famille);
   if (!f) throw new Error('boutique : famille inconnue pour ' + o.id + ', ' + o.famille);
   o.saison = f.saison;
 }
 
-const PAR_ID = new Map(ITEMS.map((o) => [o.id, o]));
+
+/* `item(id)` doit les trouver — un objet qu'on porte, qu'on range au coffre ou
+   qu'on perd en mourant passe par la. C'est la SEULE table ou les deux series
+   se rejoignent : le tirage des coffres, lui, ne connait que ITEMS. */
+const PAR_ID = new Map(ITEMS.concat(ITEMS_DROP).map((o) => [o.id, o]));
 /* Indexe par SAISON ET rarete. La clef composee evite le piege qui aurait
    coute le plus cher : `itemsDe('mythique')` rendant les douze mythiques des
    deux saisons, donc un coffre a fruits capable de rendre une arme. */
@@ -760,8 +868,26 @@ function itemsDe(rarete, saison) { return PAR_RARETE.get(Number(saison) + ':' + 
 function rarete(cle) { return RARETE.get(String(cle)) || null; }
 function famille(cle) { return FAMILLE.get(String(cle)) || null; }
 function saison(n) { return SAISON.get(Number(n)) || null; }
-function itemsDeSaison(n) { return ITEMS.filter((o) => o.saison === Number(n)); }
+/* TOUT ce qui existe dans cette saison, trouvailles comprises : c'est de
+   cette liste que sort ce qu'un joueur peut EQUIPER, et une piece trouvee
+   qu'on ne pourrait pas porter n'aurait aucun sens. Ce qui tient les
+   trouvailles hors du commerce, c'est le filtre du catalogue, pas celui-ci. */
+function itemsDeSaison(n) { return ITEMS.concat(ITEMS_DROP).filter((o) => o.saison === Number(n)); }
 function famillesDe(n) { return FAMILLES.filter((f) => f.saison === Number(n)); }
+/* ---- COMBIEN DE PIECES FONT UNE FAMILLE COMPLETE ----
+ *
+ * On comptait `RARETES.length`. C'etait juste tant que toute rarete existait
+ * dans toute famille — l'ajout de la relique l'a rendu faux : elle n'existe
+ * que dans quatre familles, et une quete « complete une famille » est
+ * devenue impossible partout ailleurs, sans qu'aucun message ne le dise.
+ *
+ * On compte donc les pieces de la famille elle-meme. La reponse ne peut plus
+ * se desynchroniser du catalogue, quoi qu'on y ajoute — et les trouvailles
+ * n'entrent pas dans le compte, parce qu'une collection est une collection
+ * de ce qui se COLLECTIONNE : ce qu'on achete, pas ce qu'on trouve. */
+function rangsDeFamille(cle) {
+  return ITEMS.filter((o) => o.famille === String(cle)).length;
+}
 function coffresDe(n) { return COFFRES.filter((c) => c.saison === Number(n)); }
 
 // -------------------------------------------------------------- le controle
@@ -787,6 +913,13 @@ function coffresDe(n) { return COFFRES.filter((c) => c.saison === Number(n)); }
     if (!FAMILLE.has(o.famille))
       throw new Error('boutique : famille inconnue pour ' + o.id + ', ' + o.famille);
   }
+  /* ---- LA GRILLE DU COMMERCE, ET SEULEMENT ELLE ----
+     La relique n'en fait pas partie : aucun coffre ne peut la rendre, et
+     exiger une piece relique pour chacune des vingt-quatre familles
+     reclamerait vingt-quatre objets qu'on ne pourrait jamais obtenir. C'est
+     la grille de CE QUI SE VEND qu'on verifie ici, pas la liste de ce qui
+     existe. */
+  const RARETES_VENDUES = RARETES.filter((r) => r.cle !== 'relique');
   /* LA GRILLE DOIT ETRE PLEINE, SAISON PAR SAISON. Six familles, cinq
      raretes : trente cases, chacune occupee une fois exactement. C'est toute
      la promesse faite au joueur — « il te manque la Clef d'or » n'a de sens
@@ -803,7 +936,7 @@ function coffresDe(n) { return COFFRES.filter((c) => c.saison === Number(n)); }
     if (fams.length !== 6)
       throw new Error('boutique : saison ' + s.n + ' a ' + fams.length + ' familles, pas six');
     for (const f of fams) {
-      for (const r of RARETES) {
+      for (const r of RARETES_VENDUES) {
         const n = ITEMS.filter((o) => o.famille === f.cle && o.rarete === r.cle).length;
         if (n !== 1)
           throw new Error('boutique : ' + f.nom + ' en ' + r.nom + ' apparait ' + n + ' fois, pas une');
@@ -950,10 +1083,17 @@ function catalogue(emis, n, cfgRachatBase) {
   const s = saison(n) || SAISONS[0];
   return {
     saison: s.n, saisonNom: s.nom, sujet: s.sujet,
-    raretes: RARETES.map((r) => ({ cle: r.cle, nom: r.nom, couleur: r.couleur,
+    /* La relique n'apparait pas dans le catalogue : aucun coffre ne peut la
+       rendre, et annoncer une rarete qu'aucune ligne ne propose donnerait une
+       colonne vide que le joueur passerait sa vie a chercher. */
+    raretes: RARETES.filter((r) => r.cle !== 'relique')
+                    .map((r) => ({ cle: r.cle, nom: r.nom, couleur: r.couleur,
                                    plafond: r.plafond })),
     familles: famillesDe(s.n).map((f) => ({ cle: f.cle, nom: f.nom, couleur: f.couleur, genre: f.genre })),
-    items: itemsDeSaison(s.n).map((o) => ({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+    /* ---- LA BOUTIQUE NE VOIT PAS LES TROUVAILLES ----
+       Elles n'ont ni prix, ni coffre, ni ligne. Les laisser passer ici les
+       afficherait a vendre a un endroit ou rien ne peut les vendre. */
+    items: itemsDeSaison(s.n).filter((o) => !o.drop).map((o) => ({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
                                famille: o.famille, pouvoir: o.pouvoir,
                                plafond: rarete(o.rarete).plafond,
                                /* Le prix de rachat vient d'ici : la page ne doit pas
@@ -966,7 +1106,7 @@ function catalogue(emis, n, cfgRachatBase) {
 }
 
 module.exports = {
-  RARETES, FAMILLES, ITEMS, COFFRES, TOTAL, PRIX_LIGNE, SAISONS,
+  RARETES, FAMILLES, ITEMS, ITEMS_DROP, COFFRES, TOTAL, PRIX_LIGNE, SAISONS,
   item, coffre, itemsDe, rarete, famille, tire, restant, chances, catalogue,
-  saison, itemsDeSaison, famillesDe, coffresDe, prixRachat,
+  saison, itemsDeSaison, famillesDe, rangsDeFamille, coffresDe, prixRachat,
 };

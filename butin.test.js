@@ -436,4 +436,146 @@ function pose(r, espece, x, y, pv) {
   leve(() => g.prendDuSol(A, pieces[8]), 'et la neuvieme est refusee');
 }
 
+// ================== 8. L'EQUIPEMENT QUI TOMBE
+/*
+ * L'anneau decide de la rarete, et la couleur du sac dit de loin ce qu'on
+ * abandonne si l'on n'y va pas. Ce fichier-ci ne choisit pas la piece — il
+ * ne connait pas la boutique et n'a aucune raison de la connaitre.
+ */
+{
+  const a = alea(31415);
+  const releve = (espece, biome, tours) => {
+    const c = {};
+    for (let i = 0; i < tours; i++) {
+      const b = M.butinDe(espece, a, biome);
+      if (!b) continue;
+      const o = b.contenu[0];
+      const k = o.objet ? 'objet:' + o.objet + ':' + b.sac : (o.stat ? 'stat' : 'soin');
+      c[k] = (c[k] || 0) + 1;
+    }
+    return c;
+  };
+
+  /* ---- CHAQUE ANNEAU DONNE SA RARETE, ET RIEN D'AUTRE ----
+   * Un mythique qui tomberait sur la terre viderait la pente de son sens :
+   * on lirait le sol pour savoir ou l'on est, pas ce qu'on peut gagner. */
+  const attendu = { terre: 'commun', marais: 'rare', neige: 'epique',
+                    cendres: 'legendaire', lave: 'mythique' };
+  Object.keys(attendu).forEach((b) => {
+    const c = releve('lime', b, 30000);
+    const objets = Object.keys(c).filter((k) => k.indexOf('objet:') === 0);
+    /* La relique est a part : elle ne depend pas de l'anneau mais du coeur,
+       et elle a son propre essai plus bas. */
+    const raretes = new Set(objets.map((k) => k.split(':')[1]).filter((r) => r !== 'relique'));
+    ok(raretes.size === 1 && raretes.has(attendu[b]),
+       `l anneau « ${b} » ne donne que du ${attendu[b]} (${[...raretes].join(',')})`);
+  });
+
+  /* ---- LA COULEUR DU SAC EST LE PRIX ----
+   * Un sac dore qui contiendrait du commun apprendrait au joueur a ne plus
+   * traverser la carte pour un sac dore. */
+  const couleur = { commun: 'brun', rare: 'brun', epique: 'violet',
+                    legendaire: 'or', mythique: 'rouge', relique: 'blanc' };
+  Object.keys(couleur).forEach((r) => {
+    eq(M.SAC_DE_RARETE[r], couleur[r], `le ${r} tombe dans un sac ${couleur[r]}`);
+  });
+
+  /* ---- LA PENTE DES TAUX ----
+   * Au bord on s'equipe, au coeur on complete. Un mythique aussi frequent
+   * qu'un commun aurait rendu la boutique inutile en une soiree. */
+  const rangs = ['commun', 'rare', 'epique', 'legendaire', 'mythique'];
+  for (let i = 1; i < rangs.length; i++) {
+    ok(M.CHANCE_EQUIP[rangs[i]] < M.CHANCE_EQUIP[rangs[i - 1]],
+       `le ${rangs[i]} tombe moins souvent que le ${rangs[i - 1]} ` +
+       `(1/${Math.round(1 / M.CHANCE_EQUIP[rangs[i]])} contre 1/${Math.round(1 / M.CHANCE_EQUIP[rangs[i - 1]])})`);
+  }
+
+  /* ---- LA RELIQUE NE TOMBE QUE DANS LA LAVE ----
+   * Et le gardien en donne bien plus souvent que le reste : c'est ce qui fait
+   * de lui une destination plutot qu'un gros monstre. */
+  ['terre', 'marais', 'neige', 'cendres'].forEach((b) => {
+    const c = releve('lime', b, 40000);
+    ok(!Object.keys(c).some((k) => k.indexOf('objet:relique') === 0),
+       `aucune relique dans « ${b} »`);
+  });
+  {
+    const ordinaire = releve('lave', 'lave', 60000);
+    const rel = Object.keys(ordinaire).filter((k) => k.indexOf('objet:relique') === 0)
+      .reduce((t, k) => t + ordinaire[k], 0);
+    ok(rel > 0, `la relique tombe dans la lave (${rel} fois sur 60000)`);
+    const boss = releve('gardien', 'lave', 20000);
+    const relBoss = Object.keys(boss).filter((k) => k.indexOf('objet:relique') === 0)
+      .reduce((t, k) => t + boss[k], 0);
+    ok(relBoss / 20000 > (rel / 60000) * 20,
+       `le gardien en donne bien plus (${(relBoss / 200).toFixed(1)} % contre ${(rel / 600).toFixed(2)} %)`);
+  }
+
+  /* ---- LA RELIQUE PASSE AVANT TOUT LE RESTE ----
+   * Un seul tirage par mort : ce qui passe en premier obtient son vrai taux,
+   * ce qui passe apres n'a que ce qui reste. Elle est la plus rare, donc elle
+   * tire en tete — sinon son 1/1500 deviendrait 1/1800 en silence. */
+  {
+    const b = alea(2718);
+    let vues = 0;
+    const N = 300000;
+    for (let i = 0; i < N; i++) {
+      const r = M.butinDe('lave', b, 'lave');
+      if (r && r.contenu[0].objet === 'relique') vues++;
+    }
+    const taux = vues / N;
+    ok(Math.abs(taux - M.CHANCE_RELIQUE.lave) < M.CHANCE_RELIQUE.lave * 0.35,
+       `elle sort a 1/${Math.round(1 / taux)}, le taux annonce est 1/${Math.round(1 / M.CHANCE_RELIQUE.lave)}`);
+  }
+
+  /* ---- REALM TRANSFORME UNE RARETE EN PIECE, OU NE FAIT RIEN ----
+   * `monde.js` dit la rarete, la simulation ne connait pas le catalogue. Sans
+   * tireur, aucun sac ne doit naitre avec une place vide : on le ramasserait
+   * sans rien recevoir, et on croirait avoir rate son geste. */
+  {
+    /* On abat mille limes dans la terre, avec et sans tireur. La graine est la
+       meme : les deux mondes tirent exactement le meme butin. */
+    const abat = (tireur) => {
+      const r = new Realm({ alea: alea(9), tireObjet: tireur });
+      const j = r.rejoint(A, FICHE);
+      r.monstres = [];
+      const ev = { kills: [], touches: [], butins: [] };
+      for (let i = 0; i < 1500; i++) {
+        r.sacs = [];
+        r._abat({ id: 1, espece: 'lime', biome: 'terre', x: j.x, y: j.y }, j, ev);
+        if (r.sacs.length && r.sacs[0].contenu.some((o) => o.item)) return r.sacs[0];
+      }
+      return null;
+    };
+    const sans = abat(null);
+    eq(sans, null, 'sans tireur, aucune piece ne tombe — et surtout aucun sac vide');
+
+    const avec = abat((rarete) => {
+      const lot = require('./boutique').ITEMS_DROP.filter((o) => o.rarete === rarete);
+      const o = lot[0];
+      return o ? { item: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete } : null;
+    });
+    ok(avec, 'avec un tireur, la piece tombe');
+    if (avec) {
+      const piece = avec.contenu.filter((o) => o.item)[0];
+      const o = require('./boutique').item(piece.item);
+      ok(o && o.drop, `et c est une TROUVAILLE (« ${piece.nom} »), jamais une piece de boutique`);
+      eq(o.rarete, 'commun', 'de la rarete de son anneau');
+      ok(piece.cle && piece.nom, 'avec son nom et sa clef d image, portes par la piece');
+    }
+
+    /* Le sac ne nait jamais avec une place vide : on le ramasserait sans rien
+       recevoir, et le joueur croirait avoir rate son geste. */
+    const r2 = new Realm({ alea: alea(4), tireObjet: () => null });
+    const j2 = r2.rejoint(A, FICHE);
+    r2.monstres = [];
+    const ev2 = { kills: [], touches: [], butins: [] };
+    for (let i = 0; i < 3000; i++) {
+      r2._abat({ id: 1, espece: 'lime', biome: 'terre', x: j2.x, y: j2.y }, j2, ev2);
+    }
+    ok(r2.sacs.length > 0, `des sacs sont bien tombes (${r2.sacs.length})`);
+    ok(r2.sacs.every((s) => s.contenu.length > 0),
+       'et aucun n a de place vide, meme quand le tireur ne rend rien');
+  }
+}
+
 console.log('butin.test.js : ' + n + ' verifications OK');

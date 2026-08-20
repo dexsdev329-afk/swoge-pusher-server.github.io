@@ -742,6 +742,49 @@ const POTION_DE = {
      rendrait le 1/50 sans objet. */
 };
 
+/* ---- L'ANNEAU DECIDE DE CE QU'ON PEUT GAGNER ----
+ *
+ * On lit deja la difficulte au sol ; on y lit maintenant la recompense. La
+ * pente est la meme, et c'est ce qui rend le choix « j'avance ou je reste ? »
+ * lisible sans une ligne d'interface : le terrain dit a la fois ce qu'on
+ * risque et ce qu'on gagne.
+ *
+ * Ce fichier ne choisit PAS la piece — il ne connait pas la boutique et n'a
+ * aucune raison de la connaitre. Il dit la RARETE, et la couleur du sac qui
+ * va avec. Celui qui tient le catalogue tire dedans.
+ */
+const RARETE_ANNEAU = {
+  terre: 'commun', marais: 'rare', neige: 'epique',
+  cendres: 'legendaire', lave: 'mythique',
+};
+
+/* La couleur EST le prix. Un joueur qui voit un sac dore de l'autre bout de
+   la carte sait ce qu'il abandonne s'il ne va pas le chercher — et un sac
+   blanc a ruban rouge se voit d'encore plus loin. Le commun et le rare
+   partagent le brun : ils sont ordinaires, et un halo sur tout ne distingue
+   plus rien. */
+const SAC_DE_RARETE = {
+  commun: 'brun', rare: 'brun', epique: 'violet',
+  legendaire: 'or', mythique: 'rouge', relique: 'blanc',
+};
+
+/* Une piece toutes les douze morts au bord, une toutes les cent quarante au
+   coeur. Le rapport n'est pas une punition : au bord on s'equipe, au coeur on
+   complete. Un mythique aussi frequent qu'un commun aurait rendu la boutique
+   inutile en une soiree. */
+const CHANCE_EQUIP = {
+  commun: 1 / 12, rare: 1 / 18, epique: 1 / 30,
+  legendaire: 1 / 60, mythique: 1 / 140,
+};
+
+/* ---- LA RELIQUE ----
+ * Elle ne tombe QUE dans la lave, et le gardien en donne quarante fois plus
+ * souvent que le reste. C'est ce qui fait de lui une destination plutot qu'un
+ * gros monstre : on ne va pas au coeur pour ce qu'il y a par terre, on y va
+ * pour LUI. */
+const CHANCE_RELIQUE = { lave: 1 / 1500 };
+const CHANCE_RELIQUE_BOSS = 1 / 40;
+
 /* Un sur cinquante. Le chiffre vient de ce qu'il doit produire : environ une
    potion toutes les vingt minutes de chasse soutenue — assez rare pour qu'on
    s'en souvienne, assez frequent pour qu'on y croie encore.
@@ -763,8 +806,17 @@ const CHANCE_SOIN = { defaut: 1 / 6, nuee: 1 / 25 };
  * soin ensuite. Tirer les deux ferait tomber deux sacs sur la meme depouille,
  * et le sac bleu — le seul qui compte — se perdrait sous le brun.
  */
-function butinDe(espece, alea) {
+function butinDe(espece, alea, biome) {
   const r = () => (typeof alea === 'function' ? alea() : Math.random());
+  /* ---- LA RELIQUE D'ABORD, PARCE QU'ELLE EST LA PLUS RARE ----
+   * Un seul tirage par mort : ce qui passe en premier obtient son vrai taux,
+   * ce qui passe apres n'a que ce qui reste. La relique doit donc etre en
+   * tete, sinon son 1/1500 deviendrait 1/1800 sans que rien ne le dise. */
+  const cr = espece === 'gardien' && CHANCE_RELIQUE[biome] !== undefined
+    ? CHANCE_RELIQUE_BOSS
+    : (CHANCE_RELIQUE[biome] || 0);
+  if (cr && r() < cr) return { sac: SAC_DE_RARETE.relique, contenu: [{ objet: 'relique' }] };
+
   const stat = POTION_DE[espece];
   if (stat) {
     const c = CHANCE_POTION[espece] === undefined ? CHANCE_POTION.defaut : CHANCE_POTION[espece];
@@ -775,6 +827,14 @@ function butinDe(espece, alea) {
       return { sac: 'bleu', contenu: [{ stat: s }] };
     }
   }
+  /* L'equipement de l'anneau. Il vient APRES la potion de stat : celle-ci est
+     plus rare (1/50 contre 1/12 au bord), et c'est le plus rare qui doit
+     tirer en premier. */
+  const rar = RARETE_ANNEAU[biome];
+  if (rar && r() < CHANCE_EQUIP[rar]) {
+    return { sac: SAC_DE_RARETE[rar], contenu: [{ objet: rar }] };
+  }
+
   const cs = CHANCE_SOIN[espece] === undefined ? CHANCE_SOIN.defaut : CHANCE_SOIN[espece];
   if (r() < cs) return { sac: 'brun', contenu: [{ potion: r() < 0.5 ? 'vie' : 'mana' }] };
   return null;
@@ -863,6 +923,7 @@ module.exports = {
   cadenceDe, vitesseDe,
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe,
+  RARETE_ANNEAU, SAC_DE_RARETE, CHANCE_EQUIP, CHANCE_RELIQUE, CHANCE_RELIQUE_BOSS,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   choisitEspece,
   regenParSeconde, pouvoirDeStat,

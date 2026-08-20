@@ -84,10 +84,13 @@ const jetons = (p) => Number(ethers.utils.formatUnits(p.balance, 18));
      Clef d'or » n'a de sens que si elle existe. Un trou ne se verrait nulle
      part : la case resterait vide a l'ecran, exactement comme un objet qu'on
      n'a pas encore trouve. */
-  eq(B.FAMILLES.length * B.RARETES.length, B.ITEMS.length,
-     `${B.FAMILLES.length} familles x ${B.RARETES.length} raretes = ${B.ITEMS.length} objets`);
+  /* Les raretes VENDUES : la relique n'existe que dans quatre familles, et
+     elle ne se vend nulle part. La grille du commerce reste pleine, elle. */
+  const VENDUES = B.RARETES.filter((r) => r.cle !== 'relique');
+  eq(B.FAMILLES.length * VENDUES.length, B.ITEMS.length,
+     `${B.FAMILLES.length} familles x ${VENDUES.length} raretes vendues = ${B.ITEMS.length} objets`);
   for (const f of B.FAMILLES) {
-    for (const r of B.RARETES) {
+    for (const r of VENDUES) {
       const c = B.ITEMS.filter((o) => o.famille === f.cle && o.rarete === r.cle).length;
       ok(c === 1, `« ${f.nom} » existe une fois en ${r.nom}`);
       n -= 1;
@@ -100,7 +103,11 @@ const jetons = (p) => Number(ethers.utils.formatUnits(p.balance, 18));
      autre a cinq : les totaux se compensent. */
   for (const s of B.SAISONS) {
     eq(B.famillesDe(s.n).length, 6, `saison ${s.n} : six familles`);
-    eq(B.itemsDeSaison(s.n).length, 30, `saison ${s.n} : trente objets`);
+    /* La grille du COMMERCE. `itemsDeSaison` rend aussi les trouvailles
+       depuis qu'elles existent — c'est voulu, elle sert a dire ce qu'on peut
+       equiper — donc on filtre ce qu'on est en train de verifier. */
+    eq(B.itemsDeSaison(s.n).filter((o) => !o.drop).length, 30,
+       `saison ${s.n} : trente objets en vente`);
     ok(B.coffresDe(s.n).length > 0, `saison ${s.n} : au moins un coffre`);
   }
 
@@ -304,10 +311,14 @@ for (const c of B.COFFRES) {
      rien : c'est le chiffre d'UNE saison qu'on annonce aux joueurs. */
   for (const sa of B.SAISONS) {
     const fams = B.famillesDe(sa.n).length;
-    const edition = B.RARETES.reduce((a, r) => a + r.plafond * fams, 0);
+    /* L'EDITION est ce qui se vend. La relique n'en fait pas partie : elle ne
+       s'imprime pas, elle se trouve — et l'annoncer aux joueurs comme faisant
+       partie du tirage promettrait une piece qu'aucun coffre ne peut rendre. */
+    const vend = B.RARETES.filter((r) => r.cle !== 'relique');
+    const edition = vend.reduce((a, r) => a + r.plafond * fams, 0);
     console.log(`  saison ${sa.n} : ${edition} pieces, ` +
-      B.RARETES.map((r) => `${r.nom} ${r.plafond}x${fams}`).join(', '));
-    eq(edition, 9600, `l edition de la saison ${sa.n} fait 9 600 pieces`);
+      vend.map((r) => `${r.nom} ${r.plafond}x${fams}`).join(', '));
+    eq(edition, 9600, `l edition vendue de la saison ${sa.n} fait 9 600 pieces`);
   }
 
   /* `restant` compte juste, et ne descend jamais sous zero meme si le
@@ -717,6 +728,75 @@ for (const c of B.COFFRES) {
        'completer une famille d ARMES ne prend aucune des trois places de la saison 1');
     eq(g.boutiqueLignes.length, 1, 'et la liste des gagnants n a pas bouge');
   }
+}
+
+// ================== LA SERIE EN DROP
+/*
+ * Quarante pieces qui ne passent JAMAIS par la boutique. Ce qui compte n'est
+ * pas qu'elles existent : c'est qu'AUCUN chemin d'achat ne puisse y mener.
+ */
+{
+  /* Les raretes qui se VENDENT — le bloc plus haut a la sienne, hors de
+     portee d'ici. */
+  const VENDUES = B.RARETES.filter((r) => r.cle !== 'relique');
+  ok(B.ITEMS_DROP.length === 40, `quarante trouvailles (${B.ITEMS_DROP.length})`);
+  ok(B.ITEMS_DROP.every((o) => o.drop === true), 'toutes marquees `drop`');
+  ok(B.ITEMS.every((o) => !o.drop), 'et aucune piece de boutique ne l est');
+
+  /* Les identifiants ne se marchent pas dessus : un objet du coffre et une
+     trouvaille qui partageraient un numero echangeraient leurs fiches. */
+  const vus = new Set(B.ITEMS.map((o) => o.id));
+  ok(B.ITEMS_DROP.every((o) => !vus.has(o.id)), 'aucun identifiant partage avec la boutique');
+  const cles = new Set(B.ITEMS.map((o) => o.cle));
+  ok(B.ITEMS_DROP.every((o) => !cles.has(o.cle)), 'aucune clef d image partagee non plus');
+
+  /* ---- AUCUN CHEMIN D ACHAT N Y MENE ----
+   * C'est LA regle. Le tirage des coffres passe par `itemsDe`, le catalogue
+   * par `catalogue()`. Ni l'un ni l'autre ne doit jamais en voir une. */
+  for (const s of [1, 2, 3, 4]) {
+    for (const r of B.RARETES) {
+      ok(B.itemsDe(r.cle, s).every((o) => !o.drop),
+         `aucun coffre de saison ${s} ne peut rendre une trouvaille en ${r.nom}`);
+    }
+    const cat = B.catalogue({}, s);
+    ok(cat.items.every((o) => !B.item(o.id).drop),
+       `le catalogue de la saison ${s} n en affiche aucune`);
+    ok(cat.raretes.every((r) => r.cle !== 'relique'),
+       `et il n annonce pas la relique en saison ${s}`);
+  }
+
+  /* ---- MAIS ON PEUT LES PORTER ----
+   * Une piece trouvee qu'on ne pourrait pas equiper n'aurait aucun sens :
+   * c'est `itemsDeSaison` qui dit ce qu'on peut mettre. */
+  for (const s of [1, 2, 3, 4]) {
+    const l = B.itemsDeSaison(s);
+    ok(l.some((o) => o.drop), `on peut equiper une trouvaille de saison ${s}`);
+    ok(l.some((o) => !o.drop), 'et une piece achetee aussi');
+  }
+
+  /* ---- UNE FAMILLE COMPLETE RESTE ATTEIGNABLE ----
+   * On comptait `RARETES.length`. La relique n'existe que dans quatre
+   * familles : la quete « complete une famille » devenait impossible partout
+   * ailleurs, sans qu'aucun message ne le dise. */
+  for (const f of B.FAMILLES) {
+    ok(B.rangsDeFamille(f.cle) === VENDUES.length,
+       `« ${f.nom} » se complete avec ${VENDUES.length} pieces, pas ${B.RARETES.length}`);
+  }
+
+  /* ---- LA RELIQUE EST AU-DESSUS DE TOUT ----
+   * Sinon le sac blanc ne serait qu'un sac de plus. */
+  const P = require('./personnages');
+  const rel = B.ITEMS_DROP.filter((o) => o.rarete === 'relique');
+  ok(rel.length === 4, `quatre reliques (${rel.length})`);
+  ok(P.DEGATS_ARME.relique[0] > P.DEGATS_ARME.mythique[1],
+     `l arme relique frappe plus fort au MINIMUM (${P.DEGATS_ARME.relique[0]}) ` +
+     `que la mythique au maximum (${P.DEGATS_ARME.mythique[1]})`);
+  const somme = (o) => Object.keys(o).reduce((t, k) => t + o[k], 0);
+  [['garde', 1], ['plastron', 3], ['grenat', 4]].forEach(([fam, s]) => {
+    const m = somme(P.bonusesDe('mythique', fam, s));
+    const q = somme(P.bonusesDe('relique', fam, s));
+    ok(q > m, `en saison ${s} la relique donne plus que le mythique (${q} contre ${m})`);
+  });
 }
 
 console.log(`boutique.test.js : ${n} verifications OK`);

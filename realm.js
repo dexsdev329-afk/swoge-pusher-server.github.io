@@ -53,6 +53,14 @@ class Realm {
   constructor(opts) {
     opts = opts || {};
     this.alea = opts.alea || Math.random;
+    /* ---- QUI CHOISIT LA PIECE QUI TOMBE ----
+     * `monde.js` dit la RARETE — c'est une regle du monde. Quelle piece porte
+     * cette rarete appartient au catalogue, et ni le monde ni la simulation
+     * n'ont a le connaitre. Celui qui tient les deux (server.js) fournit donc
+     * le tirage.
+     * Absent, aucun equipement ne tombe : mieux vaut un monde sans butin
+     * d'equipement qu'un sac contenant un objet que personne ne peut nommer. */
+    this.tireObjet = typeof opts.tireObjet === 'function' ? opts.tireObjet : null;
     this.monstres = [];
     this.joueurs = new Map();     // addr -> etat
     this.tirs = [];
@@ -343,11 +351,20 @@ class Realm {
     }
     /* Le butin tombe meme si le tueur a disparu entre-temps : le sac
        appartient au sol, pas a celui qui a porte le coup. */
-    const b = monde.butinDe(m.espece, this.alea);
+    const b = monde.butinDe(m.espece, this.alea, m.biome);
     if (!b || !b.contenu || !b.contenu.length) return;
+    /* Une rarete devient une PIECE ici, ou l'entree disparait. Un sac qui
+       resterait avec une place vide se ramasserait sans rien donner — et le
+       joueur croirait avoir rate son geste. */
+    const contenu = [];
+    for (const o of b.contenu.slice(0, monde.SAC.cases)) {
+      if (!o.objet) { contenu.push(o); continue; }
+      const piece = this.tireObjet ? this.tireObjet(o.objet, this.alea) : null;
+      if (piece) contenu.push(piece);
+    }
+    if (!contenu.length) return;
     const sac = { id: this._nouvelId(), x: m.x, y: m.y, sac: b.sac,
-                  reste: monde.SAC.duree,
-                  contenu: b.contenu.slice(0, monde.SAC.cases) };
+                  reste: monde.SAC.duree, contenu };
     this.sacs.push(sac);
     while (this.sacs.length > monde.SAC.plafond) this.sacs.shift();
     ev.butins = ev.butins || [];
