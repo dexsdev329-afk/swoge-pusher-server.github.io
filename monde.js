@@ -40,10 +40,30 @@ const CENTRE = { x: MONDE.w / 2, y: MONDE.h / 2 };
 /* Les rayons des anneaux, en fraction de la demi-largeur. Le coeur de lave
    est petit : c'est l'endroit ou l'on va chercher les niveaux, pas celui ou
    l'on traine. */
+/*
+ * ---- CINQ ANNEAUX, DU BORD AU COEUR ----
+ *
+ * Trois ne suffisaient plus : le saut de la neige a la lave demandait de
+ * passer d'un squelette a un golem qui frappe trois fois plus fort, sans
+ * rien entre les deux. Deux anneaux s'intercalent, et chacun apporte UNE
+ * chose nouvelle plutot qu'un cran de difficulte de plus.
+ *
+ * La regle qui gouverne tout : ON LIT LE DANGER AU SOL. Chaque anneau a sa
+ * propre tuile, et un joueur doit pouvoir dire ou il est sans regarder la
+ * mini-carte. C'est pour ca qu'ajouter des anneaux exigeait d'abord des
+ * dessins de sol — un anneau qui ressemble a son voisin est un piege.
+ *
+ * Les rayons sont donnes en part du demi-cote de la carte. Ils se resserrent
+ * vers le centre : l'anneau exterieur est le plus grand parce qu'on y passe
+ * le plus de temps, et le coeur est petit parce qu'on n'y survit pas
+ * longtemps.
+ */
 const ANNEAUX = [
-  { biome: 'lave',  jusqua: 0.28 },
-  { biome: 'neige', jusqua: 0.60 },
-  { biome: 'terre', jusqua: Infinity },
+  { biome: 'lave',    jusqua: 0.20 },   // le coeur
+  { biome: 'cendres', jusqua: 0.38 },   // ce qui a brule
+  { biome: 'neige',   jusqua: 0.58 },   // le froid
+  { biome: 'marais',  jusqua: 0.78 },   // la boue
+  { biome: 'terre',   jusqua: Infinity }, // la plaine, ou l'on apprend
 ];
 
 /** Le biome sous un point du monde. */
@@ -103,7 +123,6 @@ const MONSTRES = {
        chose qu'il est la pour enseigner. */
     tir: { portee: 300, vitesse: 240, sprite: 'bave', att: 14, cadence: 0.5 },
     xp: 75,
-    biomes: ['terre', 'neige', 'lave'],
   },
   /* Le gardien du coeur. Ses chiffres sont poses pour qu'un joueur au
      plafond y arrive et qu'un debutant n'y arrive pas :
@@ -123,7 +142,6 @@ const MONSTRES = {
     tir: { portee: 460, vitesse: 320, sprite: 'braise', att: 48, cadence: 0.4,
            effet: 'brulure' },
     xp: 600,
-    biomes: ['lave'],
   },
   /* Le revenant de glace : l'anneau du milieu n'avait que le lime et le
      squelette. Plus dur que le squelette, moins que le golem — c'est ce qui
@@ -140,7 +158,6 @@ const MONSTRES = {
     tir: { portee: 420, vitesse: 300, sprite: 'gel', att: 30, cadence: 0.55,
            effet: 'ralenti' },
     xp: 300,
-    biomes: ['neige', 'lave'],
   },
   /* ---- LE PREMIER MONSTRE QUI TIRE ----
    * Tous les autres blessent au CONTACT : on les contourne, on les distance,
@@ -160,7 +177,6 @@ const MONSTRES = {
        depuis le bord de l'ecran, sans qu'on sache d'ou. */
     tir: { portee: 470, vitesse: 360, sprite: 'maudit', cadence: 0.55 },
     xp: 260,
-    biomes: ['neige', 'lave'],
   },
   /* ---- LA MEDUSE : LE MONSTRE QUI PARALYSE ----
    *
@@ -198,7 +214,6 @@ const MONSTRES = {
     tir: { portee: 520, vitesse: 300, sprite: 'oeil', att: 34, cadence: 0.4,
            effet: 'paralyse' },
     xp: 480,
-    biomes: ['neige', 'lave'],
   },
   skeleton: {
     cle: 'skeleton', nom: 'Skeleton',
@@ -215,7 +230,6 @@ const MONSTRES = {
     tir: { portee: 380, vitesse: 340, sprite: 'os', att: 26, cadence: 0.45,
            tirs: 3, ecart: 0.22 },
     xp: 200,
-    biomes: ['neige', 'lave'],
   },
 };
 
@@ -224,13 +238,29 @@ const MONSTRES = {
    Le coeur est moins peuple que le bord : ses habitants valent trois fois
    plus cher a tuer, et une foule de golems ne serait pas dure, elle serait
    impraticable. */
+/*
+ * Ce qui vit dans chaque anneau. La progression n'est pas « les memes
+ * creatures en plus nombreuses » : chaque anneau INTRODUIT quelque chose, et
+ * ce quelque chose est ce qu'il faut apprendre pour passer au suivant.
+ *
+ *   terre    on apprend a esquiver un projectile          (lime)
+ *   marais   on apprend qu'on peut se faire canarder      (+ archer)
+ *   neige    on apprend a se decaler, et a perdre le controle (+ squelette, meduse)
+ *   cendres  on apprend a fuir malgre son armure          (+ revenant)
+ *   lave     on apprend qu'on ne tient pas debout ici     (+ golem)
+ */
 const PEUPLEMENT = {
-  terre: { especes: ['lime'], nombre: 40 },
-  /* La meduse n'est PAS sur la terre : l'anneau exterieur est celui ou l'on
-     apprend, et perdre le controle de son personnage avant d'avoir compris
-     qu'on peut encore tirer ferait abandonner. Elle attend la neige. */
-  neige: { especes: ['lime', 'skeleton', 'glace', 'archer', 'meduse'], nombre: 42 },
-  lave:  { especes: ['lave', 'archer', 'meduse'], nombre: 18 },
+  terre:   { especes: ['lime'], nombre: 40 },
+  /* L'archer arrive des le marais : c'est la premiere creature qu'on ne peut
+     pas simplement contourner, et l'apprendre tot vaut mieux que l'apprendre
+     au milieu de trois autres. */
+  marais:  { especes: ['lime', 'archer'], nombre: 38 },
+  /* La meduse n'est PAS avant la neige : perdre le controle de son
+     personnage avant d'avoir compris qu'on peut encore tirer ferait
+     abandonner. */
+  neige:   { especes: ['lime', 'skeleton', 'archer', 'meduse'], nombre: 40 },
+  cendres: { especes: ['skeleton', 'glace', 'archer', 'meduse'], nombre: 30 },
+  lave:    { especes: ['lave', 'glace', 'meduse'], nombre: 18 },
 };
 
 /*
@@ -550,6 +580,22 @@ function pointDansBiome(biome, alea) {
   const d = rad * (MONDE.w / 2);
   return { x: CENTRE.x + Math.cos(ang) * d, y: CENTRE.y + Math.sin(ang) * d };
 }
+
+/* ---- OU VIT CHAQUE ESPECE, DEDUIT ET NON DECLARE ----
+ *
+ * Chaque creature portait sa propre liste de biomes, en face de PEUPLEMENT
+ * qui dit la meme chose autrement. Deux tables a tenir d'accord finissent
+ * toujours par se contredire — et c'est arrive des le premier changement
+ * d'anneaux : l'archer etait annonce dans la neige et peuple dans le marais.
+ *
+ * PEUPLEMENT est la seule verite : c'est lui qui fait naitre. Le reste s'en
+ * deduit.
+ */
+const BIOMES_ESPECE = Object.keys(PEUPLEMENT).reduce((o, b) => {
+  PEUPLEMENT[b].especes.forEach((e) => { (o[e] = o[e] || []).push(b); });
+  return o;
+}, {});
+Object.keys(MONSTRES).forEach((e) => { MONSTRES[e].biomes = BIOMES_ESPECE[e] || []; });
 
 /** La liste complete des monstres a faire naitre au demarrage du monde. */
 function peuplement(alea) {

@@ -43,8 +43,15 @@ function alea(graine) {
     const b = M.biomeEn(M.CENTRE.x + d, M.CENTRE.y);
     if (vus[vus.length - 1] !== b) vus.push(b);
   }
-  assert.deepStrictEqual(vus, ['lave', 'neige', 'terre'],
-    'du centre au bord : lave, puis neige, puis terre — et rien d autre');
+  /* L'ordre vient de la TABLE, pas d'une liste recopiee ici : ajouter un
+     anneau ne doit pas demander de venir corriger ce test, seulement de le
+     voir passer. Ce qu'on verifie, c'est qu'on traverse les anneaux dans
+     l'ordre declare et qu'aucun ne revient plus loin — une carte qui
+     repasserait par la neige apres la terre mentirait sur la difficulte. */
+  const ordre = M.ANNEAUX.map((a) => a.biome);
+  assert.deepStrictEqual(vus, ordre,
+    'du centre au bord, on traverse les anneaux dans l ordre : ' + ordre.join(', '));
+  eq(new Set(vus).size, vus.length, 'et aucun anneau ne reapparait plus loin');
   n++;
 
   // le biome ne depend que de la DISTANCE : quatre directions, meme reponse

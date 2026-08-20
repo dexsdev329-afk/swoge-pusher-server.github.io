@@ -2992,6 +2992,12 @@ wss.on('connection', (ws) => {
                                  pv: j.pv, pvMax: j.pvMax,
                                  mp: j.mp, mpMax: j.mpMax,
                                  pouvoir: j.pouvoir || null,
+                                 /* Sa vitesse des l'entree : sans elle, la page
+                                    court a 260 pendant la fraction de seconde
+                                    qui precede le premier `realmEtat`, et un
+                                    personnage lent se fait ramener en arriere
+                                    des son premier pas. */
+                                 v: Math.round(j.vitesse),
                                  famille: j.famille } });
       }
       if (m.type === 'realmLeave') {
