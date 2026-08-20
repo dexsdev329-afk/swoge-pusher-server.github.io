@@ -293,10 +293,19 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
   const r = new Realm({ alea: alea(51) });
   const j = r.rejoint(A, FICHE);
   const plein = r.monstres.length;
-  r.monstres = r.monstres.slice(0, plein - 12);      // on en tue douze
+  /* Les gardiens de SALLE ne repeuplent pas : ils se rearment sur leur propre
+     horloge, six minutes apres qu'on a vide la piece. Les couper ici aurait
+     demande a `repeuple` de les remplacer, ce qui aurait fait revenir un boss
+     dans une salle qu'on vient de nettoyer. On ne touche donc qu'au sauvage. */
+  const sauvages = r.monstres.filter((m) => !m.salle);
+  const gardiens = r.monstres.filter((m) => m.salle);
+  ok(gardiens.length > 0, `la carte porte des gardiens de salle (${gardiens.length})`);
+  r.monstres = sauvages.slice(0, sauvages.length - 12).concat(gardiens);
   const nes = r.repeuple(900);
   ok(nes > 0, 'des monstres reviennent (' + nes + ')');
   eq(r.monstres.length, plein, 'la carte retrouve son compte');
+  eq(r.monstres.filter((m) => m.salle).length, gardiens.length,
+     'et aucun gardien de salle n a ete ajoute au passage');
   const tropPres = r.monstres.filter((m) => {
     const dx = m.x - j.x, dy = m.y - j.y;
     return Math.sqrt(dx * dx + dy * dy) < 900;

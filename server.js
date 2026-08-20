@@ -3031,6 +3031,13 @@ wss.on('connection', (ws) => {
                              de suite : on marcherait dans un rocher, ou l'on
                              serait arrete par du vide. */
                           obstacles: realm.obstacles,
+                          /* Les SALLES, pour que la page pose leurs dalles.
+                             Elles ne bougent pas non plus, et le sol qu'elles
+                             remplacent est ce qui les rend visibles de loin —
+                             on sait ce qu'on approche avant d'y etre. */
+                          salles: realm.salles.map((s) => ({
+                            i: s.i, x: s.x, y: s.y, cote: s.cote,
+                            porte: s.porte, butin: s.butin })),
                           /* L'ORDRE des stats, parce que c'est celui des
                              colonnes de objets/potions_stat.webp : rouge = hp,
                              bleue = mp, epee = att, bouclier = def, ailes =

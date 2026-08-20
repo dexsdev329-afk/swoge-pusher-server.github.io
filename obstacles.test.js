@@ -217,4 +217,139 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
   ok(j.x < dehors, 'il a bien essaye de revenir');
 }
 
+// ================== 8. LES SALLES GARDEES
+/*
+ * Le monde n'avait qu'une seule raison d'avancer : les monstres y frappent
+ * plus fort. C'est une pente, pas une DESTINATION. Une salle en est une —
+ * on la voit de loin parce que son sol change, on sait ce qu'elle contient
+ * avant d'entrer, et on choisit d'y aller.
+ */
+{
+  const B = require('./boutique');
+  const tire = (rar, a) => {
+    const lot = B.ITEMS_DROP.filter((o) => o.rarete === rar);
+    const o = lot[Math.min(lot.length - 1, Math.floor((a ? a() : 0) * lot.length))];
+    return o ? { item: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete } : null;
+  };
+
+  /* ---- LA TABLE DIT LA VERITE ----
+   * Elle annonce quatre salles. Une contrainte impossible en aurait place
+   * zero sans un mot — c'est exactement ce qui est arrive la premiere fois,
+   * quand on exigeait les quatre coins dans le meme anneau : une salle de
+   * neuf tuiles a une diagonale de 1628 et l'anneau des cendres ne fait que
+   * 691 d'epaisseur. */
+  const voulu = Object.keys(M.SALLE_ANNEAUX)
+    .reduce((t, b) => t + M.SALLE_ANNEAUX[b], 0);
+  let court = 0;
+  for (let g = 1; g <= 60; g++) {
+    const s = M.salles(alea(g));
+    if (s.length < voulu) court++;
+    ok(s.length >= voulu - 1, `graine ${g} : ${s.length} salles sur ${voulu}`);
+  }
+  ok(court <= 6, `la carte porte ses ${voulu} salles presque toujours (${court} graines sur 60 en manquent une)`);
+
+  /* Deterministe comme les rochers : le serveur la construit et l'envoie. */
+  eq(JSON.stringify(M.salles(alea(9))), JSON.stringify(M.salles(alea(9))),
+     'la meme graine rend les memes salles');
+
+  {
+    const s = M.salles(alea(3));
+    /* Chacune dans SON anneau, et le butin suit l'anneau. */
+    s.forEach((q) => {
+      eq(M.biomeEn(q.x, q.y), q.biome, `la salle ${q.i} est bien dans « ${q.biome} »`);
+      eq(q.butin, M.SALLE_BUTIN[q.biome], `et elle garde du ${M.SALLE_BUTIN[q.biome]}`);
+    });
+    /* La relique se MERITE quelque part : c'est le seul endroit du jeu ou
+       elle ne soit pas un tirage au sort. */
+    ok(s.some((q) => q.butin === 'relique'),
+       'au moins une salle garde une relique');
+    /* Elles ne se touchent pas : deux salles collees n'auraient plus deux
+       portes mais un couloir. */
+    ok(s.every((q, i) => s.every((p, j) => i === j ||
+         Math.abs(q.x - p.x) >= q.cote || Math.abs(q.y - p.y) >= q.cote)),
+       'aucune n en chevauche une autre');
+
+    /* ---- UNE SEULE PORTE ----
+     * C'est ce qui fait la difference entre une salle et un enclos. Sans
+     * elle, les murs ne seraient qu'une decoration au sol. */
+    const o = M.obstacles(alea(3), s);
+    s.forEach((q) => {
+      const demi = q.cote / 2 - M.SALLE.mur;
+      const d = { nord: [0, -1], sud: [0, 1], ouest: [-1, 0], est: [1, 0] }[q.porte];
+      ok(!M.bloque(o, q.x + d[0] * demi, q.y + d[1] * demi, 22),
+         `la salle ${q.i} a sa porte au ${q.porte}, et elle est ouverte`);
+      /* Les trois autres cotes sont fermes. */
+      const autres = ['nord', 'sud', 'ouest', 'est'].filter((c) => c !== q.porte);
+      autres.forEach((c) => {
+        const dd = { nord: [0, -1], sud: [0, 1], ouest: [-1, 0], est: [1, 0] }[c];
+        ok(!!M.bloque(o, q.x + dd[0] * demi, q.y + dd[1] * demi, 22),
+           `et son cote ${c} est ferme`);
+      });
+      /* L'interieur est libre, meme pour le plus gros du monde. */
+      ok(!M.bloque(o, q.x, q.y, M.MONSTRES.gardien.rayon),
+         `l interieur de la salle ${q.i} tient un gardien`);
+    });
+
+    /* Aucun rocher dedans, ni colle contre : un rocher devant la porte en
+       ferait une salle sans entree, et personne ne pourrait dire pourquoi. */
+    const rochers = o.filter((q) => q.t < M.MUR_BASE);
+    ok(rochers.every((q) => !s.some((y) => M.dansLaSalle(y, q.x, q.y))),
+       'aucun rocher dans une salle');
+    /* Et les murs n'ont pas mange le quota de rochers. */
+    eq(rochers.length, M.OBSTACLE.nombre,
+       `les ${M.OBSTACLE.nombre} rochers sont toujours la, murs en plus`);
+  }
+
+  /* ---- VIDER LA SALLE LAISSE SON BUTIN ----
+   * Une fois. Sans le drapeau, un sac naitrait a chaque pas tant que la salle
+   * est vide — dix par seconde. */
+  {
+    const r = new Realm({ alea: alea(3), tireObjet: tire });
+    const j = r.rejoint(A, FICHE);
+    const s = r.salles.filter((q) => q.butin === 'relique')[0];
+    ok(!!s, 'une salle a relique existe');
+    const dedans = r.monstres.filter((m) => m.salle === s.i);
+    eq(dedans.length, M.SALLE.gardiens, `${M.SALLE.gardiens} gardiens dedans`);
+    ok(dedans.every((m) => m.espece === 'gardien'), 'et ce sont des gardiens');
+    ok(dedans.every((m) => !M.bloque(r.obstacles, m.x, m.y, M.MONSTRES.gardien.rayon)),
+       'aucun n est ne dans un mur');
+
+    r.sacs = [];
+    r.pas(0.1);
+    eq(r.sacs.length, 0, 'tant qu ils vivent, rien ne tombe');
+
+    dedans.forEach((m) => { m.pv = 0; });
+    r.pas(0.1);
+    eq(r.sacs.length, 1, 'les abattre laisse UN sac');
+    eq(r.sacs[0].sac, M.SAC_DE_RARETE.relique,
+       `dans un sac ${M.SAC_DE_RARETE.relique}`);
+    eq(B.item(r.sacs[0].contenu[0].item).rarete, 'relique',
+       'et il contient bien une relique');
+    ok(B.item(r.sacs[0].contenu[0].item).drop, 'qui ne se vend nulle part');
+    eq(Math.round(r.sacs[0].x), Math.round(s.x), 'pose au centre de la salle');
+
+    /* Et une seule fois. */
+    for (let i = 0; i < 30; i++) r.pas(0.1);
+    eq(r.sacs.length, 1, 'et il ne s en pose pas un a chaque pas');
+
+    /* ---- LES GARDIENS REVIENNENT, MAIS PAS SUR LE DOS DU JOUEUR ----
+     * Voir deux gardiens apparaitre autour de soi n'est pas un defi, c'est
+     * une embuscade sans cause. */
+    j.x = s.x; j.y = s.y;
+    s.rearme = 0.05;
+    r.pas(0.1);
+    eq(r.monstres.filter((m) => m.salle === s.i && m.pv > 0).length, 0,
+       'personne ne renait pendant qu on est dans la piece');
+    ok(s.rearme > 0, 'le rearmement est simplement repousse');
+
+    /* Une fois sorti, ils reviennent. */
+    j.x = s.x + s.cote * 3; j.y = s.y;
+    s.rearme = 0.05;
+    r.pas(0.1);
+    eq(r.monstres.filter((m) => m.salle === s.i && m.pv > 0).length, M.SALLE.gardiens,
+       'une fois sorti, la salle se rearme');
+    eq(s.vide, false, 'et elle redevient gardee');
+  }
+}
+
 console.log('obstacles.test.js : ' + n + ' verifications OK');

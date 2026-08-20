@@ -73,7 +73,14 @@ class Realm {
      * tels quels — la page ne peut pas les redeviner, et un desaccord se
      * verrait tout de suite : on marcherait dans un rocher, ou l'on serait
      * arrete par du vide. */
-    this.obstacles = monde.obstacles(this.alea);
+    /* Les SALLES d'abord : les rochers doivent pouvoir les eviter, l'inverse
+       n'aurait pas de sens — une salle a moitie mangee par un rocher n'a plus
+       de porte unique, et personne ne pourrait dire pourquoi elle est
+       infranchissable. */
+    this.salles = monde.salles(this.alea).map((s) => ({
+      ...s, vide: false, rearme: 0,
+    }));
+    this.obstacles = monde.obstacles(this.alea, this.salles);
     this.monstres = [];
     this.joueurs = new Map();     // addr -> etat
     this.tirs = [];
@@ -92,9 +99,83 @@ class Realm {
     this.sacs = [];
     this._id = 1;
     this.peuple();
+    for (const s of this.salles) this._armeSalle(s);
   }
 
   _nouvelId() { return this._id++; }
+
+  /**
+   * Poser les gardiens d'une salle.
+   *
+   * Ils portent `salle` : c'est ce qui les distingue des creatures sauvages.
+   * Sans cette marque, `repeuple` les compterait dans la population du monde
+   * et retirerait huit creatures a la carte pour compenser — le monde se
+   * deviderait a mesure qu'on lui ajoute des destinations.
+   *
+   * Leur ancre est le CENTRE de la salle. La regle de flanerie les y ramene
+   * des qu'ils s'en ecartent de 260, et l'interieur en fait 896 : ils ne
+   * sortent donc pas par la porte pour aller mourir dehors, ce qui aurait
+   * vide la salle sans que personne n'y soit entre.
+   */
+  _armeSalle(s) {
+    const t = monde.MONSTRES.gardien;
+    const rayon = s.cote / 2 - monde.SALLE.mur - t.rayon;
+    for (let k = 0; k < monde.SALLE.gardiens; k++) {
+      const ang = (k / monde.SALLE.gardiens) * Math.PI * 2;
+      const x = s.x + Math.cos(ang) * rayon * 0.45;
+      const y = s.y + Math.sin(ang) * rayon * 0.45;
+      this.monstres.push({
+        id: this._nouvelId(), espece: 'gardien', biome: s.biome, salle: s.i,
+        x, y, ancreX: s.x, ancreY: s.y,
+        pv: t.pv, pvMax: t.pv, dir: 'down', cible: null,
+        recharge: 0, rechargeT: 0, stase: 0, errX: 0, errY: 0, errChrono: 0,
+      });
+    }
+    s.vide = false;
+    s.rearme = 0;
+  }
+
+  /**
+   * Les salles, a chaque pas. Vider une salle laisse son butin au centre ;
+   * six minutes plus tard les gardiens reviennent.
+   *
+   * Le butin tombe UNE fois par armement. Sans le drapeau, un sac naitrait a
+   * chaque pas tant que la salle est vide — dix par seconde.
+   */
+  _pasSalles(dt, ev) {
+    for (const s of this.salles) {
+      const restants = this.monstres.some((m) => m.salle === s.i && m.pv > 0);
+      if (!s.vide && !restants) {
+        s.vide = true;
+        s.rearme = monde.SALLE.rearme;
+        const piece = this.tireObjet ? this.tireObjet(s.butin, this.alea) : null;
+        if (piece) {
+          const sac = { id: this._nouvelId(), x: s.x, y: s.y,
+                        sac: monde.SAC_DE_RARETE[s.butin] || 'or',
+                        reste: monde.SAC.duree, contenu: [piece] };
+          this.sacs.push(sac);
+          while (this.sacs.length > monde.SAC.plafond) this.sacs.shift();
+          if (ev) {
+            ev.butins = ev.butins || [];
+            ev.butins.push({ addr: null, sac: sac.sac, salle: s.i,
+                             contenu: sac.contenu.slice(), x: sac.x, y: sac.y });
+          }
+        }
+      }
+      if (s.vide && s.rearme > 0) {
+        s.rearme -= dt;
+        if (s.rearme <= 0) {
+          /* On ne les fait revenir que si personne n'est dedans : voir deux
+             gardiens apparaitre autour de soi n'est pas un defi, c'est une
+             embuscade sans cause. Ils attendront le pas suivant. */
+          const quelquUn = [...this.joueurs.values()]
+            .some((j) => j.pv > 0 && monde.dansLaSalle(s, j.x, j.y));
+          if (!quelquUn) this._armeSalle(s);
+          else s.rearme = 5;
+        }
+      }
+    }
+  }
 
   peuple() {
     /* ---- NI ICI NON PLUS ----
@@ -603,6 +684,7 @@ class Realm {
       this.sacs[i].reste -= dt;
       if (this.sacs[i].reste <= 0) this.sacs.splice(i, 1);
     }
+    this._pasSalles(dt, ev);
     this._pasMonstres(dt, ev);
     this._pasTirs(dt, ev);
     this._pasTirsMonstres(dt, ev);
@@ -1047,9 +1129,13 @@ class Realm {
     const dmin = Number(distanceMini) || 900;
     const voulu = Object.keys(monde.PEUPLEMENT)
       .reduce((s, b) => s + monde.PEUPLEMENT[b].nombre, 0);
+    /* Les gardiens de salle ne sont pas de la population sauvage : les
+       compter ici retirerait huit creatures a la carte, et le monde se
+       deviderait a mesure qu'on lui ajoute des destinations. */
+    const sauvages = () => this.monstres.filter((m) => !m.salle).length;
     let nes = 0;
     let essais = 0;
-    while (this.monstres.length < voulu && essais < 200) {
+    while (sauvages() < voulu && essais < 200) {
       essais++;
       const liste = monde.peuplement(this.alea);
       const m = liste[Math.floor(this.alea() * liste.length)];

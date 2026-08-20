@@ -114,6 +114,172 @@ const OBSTACLE = {
    effaceraient justement ce que l'obstacle apporte — savoir ou l'on est. */
 const OBSTACLE_BIOME = { terre: 0, marais: 1, neige: 2, cendres: 3, lave: 3 };
 
+/*
+ * ==================== LES SALLES GARDEES ====================
+ *
+ * Le monde n'avait qu'une seule raison d'avancer : les monstres y frappent
+ * plus fort. C'est une pente, pas une DESTINATION — rien nulle part ne disait
+ * « va la ».
+ *
+ * Une salle gardee en est une. Un carre de dalles de temple, ceint de murs,
+ * une seule porte, et des gardiens dedans. On la voit de loin — le sol change
+ * — on sait ce qu'elle contient avant d'entrer, et on choisit d'y aller ou
+ * non. Vider la salle laisse le butin au centre.
+ *
+ * ---- pourquoi les murs sont des obstacles comme les autres ----
+ *
+ * Ils entrent dans la MEME liste que les rochers. Une deuxieme sorte de mur
+ * aurait demande sa propre collision, son propre arret de projectiles, son
+ * propre tri de dessin — trois occasions d'oublier la moitie d'une regle. Ici
+ * il n'y en a qu'une : ce qui est dans la liste bloque, point. Seul le dessin
+ * change, et c'est `t` qui le dit.
+ *
+ * ---- une seule porte ----
+ *
+ * C'est ce qui fait la difference entre une salle et un enclos. Une entree
+ * unique veut dire qu'on sait par ou l'on ressortira, que les gardiens s'y
+ * massent, et qu'on ne peut pas se contenter de fuir en ligne droite. Un mur
+ * qui aurait quatre ouvertures ne serait qu'une decoration au sol.
+ */
+const SALLE = {
+  /* Neuf tuiles de cote, murs compris : l'interieur fait sept tuiles, soit
+     896 unites. Deux gardiens de trois cent quinze pixels y tiennent en se
+     deplacant ; a sept tuiles ils se seraient bouscules contre les murs, et
+     un combat de boss dans un placard n'est pas un combat. */
+  cote: 9,          // en tuiles, murs compris
+  mur: 64,          // le rayon de collision d'un bloc de mur (128 de large)
+  gardiens: 2,
+  /* Le temps avant que les gardiens reviennent. Six minutes : assez pour que
+     la salle vaille le detour une fois, trop pour qu'on en fasse une boucle
+     de recolte. */
+  rearme: 360,
+};
+/* Les dessins de mur, dans l'ordre des colonnes de tiles/mur_ruine.webp :
+   segment horizontal, segment vertical, angle, bout casse. On les decale de
+   MUR_BASE pour qu'ils ne se confondent pas avec les quatre rochers — un
+   seul champ `t` porte les deux planches, et le decalage dit laquelle. */
+const MUR_BASE = 4;
+
+/* Les salles vivent au fond : neige et cendres. Le butin qu'elles gardent n'a
+   aucun sens au bord — et une destination qu'on atteint en trois pas n'est pas
+   une destination.
+   PAS dans la lave, et ce n'est pas un choix : l'anneau du coeur s'arrete a
+   768 du centre, la clairiere du gardien errant en prend 420, et une salle de
+   neuf tuiles en demande 576 de plus. Il n'y a pas la place. Les cendres sont
+   donc l'anneau le plus profond ou une salle tienne, et c'est la que va la
+   relique. */
+const SALLE_ANNEAUX = { neige: 2, cendres: 2 };
+/* Ce qu'on trouve en la vidant. Les cendres gardent la relique : c'est le seul
+   endroit du jeu ou l'on puisse la MERITER plutot que la tirer au sort. */
+const SALLE_BUTIN = { neige: 'legendaire', cendres: 'relique' };
+
+/**
+ * Les salles du monde, et les blocs de mur qui les ceignent.
+ *
+ * Deterministe comme les rochers, et tiree AVANT eux : les rochers doivent
+ * pouvoir eviter les salles, l'inverse n'aurait pas de sens — une salle
+ * a moitie mangee par un rocher n'a plus de porte unique.
+ */
+function salles(alea) {
+  const r = () => (typeof alea === 'function' ? alea() : Math.random());
+  const out = [];
+  const cote = SALLE.cote * TUILE;
+  const demi = cote / 2;
+  for (const biome of Object.keys(SALLE_ANNEAUX)) {
+    let poses = 0, essais = 0;
+    /* Deux mille essais et pas quatre cents : l'anneau des cendres est etroit
+       (768 a 1459), les salles ne doivent ni se toucher ni mordre la
+       clairiere, et a quatre cents tirages la deuxieme ne trouvait pas sa
+       place une fois sur deux — la table annoncait deux salles et le monde en
+       portait une, sans que rien ne le dise. */
+    while (poses < SALLE_ANNEAUX[biome] && essais < 2000) {
+      essais++;
+      const p = pointDansBiome(biome, alea);
+      if (!p) continue;
+      /* Le centre exact reste degage : c'est l'arene du gardien errant, et
+         une salle posee dessus l'enfermerait dedans. */
+      const dcx = p.x - CENTRE.x, dcy = p.y - CENTRE.y;
+      if (dcx * dcx + dcy * dcy < (OBSTACLE.clairiere + demi) ** 2) continue;
+      /* Alignee sur la grille : un mur a cheval sur deux tuiles se dessine de
+         travers, et la dalle de temple ne raccorderait plus. */
+      const cx = Math.round(p.x / TUILE) * TUILE;
+      const cy = Math.round(p.y / TUILE) * TUILE;
+      if (cx - demi < TUILE || cy - demi < TUILE ||
+          cx + demi > MONDE.w - TUILE || cy + demi > MONDE.h - TUILE) continue;
+      /* ---- LE CENTRE DECIDE, PAS LES COINS ----
+       * Exiger les quatre coins dans le meme anneau ne place AUCUNE salle :
+       * une salle de neuf tuiles a une diagonale de 1628, et l'anneau des
+       * cendres ne fait que 691 d'epaisseur. La contrainte etait impossible,
+       * et le symptome muet — zero salle, aucune erreur.
+       * Elle n'a de toute facon pas de sens : la salle REMPLACE le sol
+       * qu'elle occupe par ses dalles de temple. Ce qu'il y avait dessous ne
+       * se voit plus. */
+      if (biomeEn(cx, cy) !== biome) continue;
+      /* Elles ne se touchent pas : deux salles collees n'auraient plus deux
+         portes mais un couloir. Deux tuiles de vide entre les murs suffisent —
+         a 1,6 fois leur cote, l'ecart demande etait bien plus large que « ne
+         pas se toucher », et l'anneau des cendres n'acceptait plus qu'une
+         salle sur deux. La table annoncait deux salles, le monde en portait
+         une, et rien ne le disait. */
+      const ecartSalles = cote + TUILE * 2;
+      if (out.some((s) => Math.abs(s.x - cx) < ecartSalles && Math.abs(s.y - cy) < ecartSalles)) continue;
+      out.push({ i: out.length + 1, x: cx, y: cy, cote,
+                 biome, butin: SALLE_BUTIN[biome],
+                 /* La porte, sur un cote tire au sort. Elle occupe la tuile du
+                    milieu — donc jamais un angle, qui ne serait pas une porte
+                    mais un coin manquant. */
+                 porte: ['nord', 'sud', 'ouest', 'est'][Math.min(3, Math.floor(r() * 4))] });
+      poses++;
+    }
+  }
+  return out;
+}
+
+/** Les blocs de mur d'une salle. Ils entrent dans la liste des obstacles. */
+function mursDe(s, depart) {
+  const n = SALLE.cote;
+  const demi = (n * TUILE) / 2;
+  const x0 = s.x - demi + TUILE / 2;
+  const y0 = s.y - demi + TUILE / 2;
+  const mid = (n - 1) / 2;
+  const out = [];
+  let id = depart;
+  for (let c = 0; c < n; c++) {
+    for (let l = 0; l < n; l++) {
+      const bord = (c === 0 || l === 0 || c === n - 1 || l === n - 1);
+      if (!bord) continue;
+      /* La porte : la tuile du MILIEU du cote tire. */
+      if (s.porte === 'nord' && l === 0 && c === mid) continue;
+      if (s.porte === 'sud' && l === n - 1 && c === mid) continue;
+      if (s.porte === 'ouest' && c === 0 && l === mid) continue;
+      if (s.porte === 'est' && c === n - 1 && l === mid) continue;
+      const coin = (c === 0 || c === n - 1) && (l === 0 || l === n - 1);
+      /* 0 horizontal, 1 vertical, 2 angle — le bout casse (3) sert aux deux
+         cotes de la porte, pour que l'ouverture se lise comme une ouverture
+         et non comme un trou. */
+      let piece;
+      if (coin) piece = 2;
+      else if (l === 0 || l === n - 1) piece = 0;
+      else piece = 1;
+      const versPorte =
+        (s.porte === 'nord' && l === 0 && Math.abs(c - mid) === 1) ||
+        (s.porte === 'sud' && l === n - 1 && Math.abs(c - mid) === 1) ||
+        (s.porte === 'ouest' && c === 0 && Math.abs(l - mid) === 1) ||
+        (s.porte === 'est' && c === n - 1 && Math.abs(l - mid) === 1);
+      if (versPorte) piece = 3;
+      out.push({ i: id++, x: x0 + c * TUILE, y: y0 + l * TUILE,
+                 r: SALLE.mur, t: MUR_BASE + piece, salle: s.i });
+    }
+  }
+  return out;
+}
+
+/** Le point est-il DANS cette salle (murs compris) ? */
+function dansLaSalle(s, x, y) {
+  const demi = s.cote / 2;
+  return x >= s.x - demi && x <= s.x + demi && y >= s.y - demi && y <= s.y + demi;
+}
+
 /**
  * Les blocs du monde. Deterministe : le meme `alea` rend la meme carte, et
  * c'est ce qui permet au serveur de la construire une fois et de l'envoyer
@@ -121,18 +287,34 @@ const OBSTACLE_BIOME = { terre: 0, marais: 1, neige: 2, cendres: 3, lave: 3 };
  * d'accord avec le serveur, et le desaccord se verrait tout de suite : on
  * marcherait dans un rocher, ou on serait arrete par du vide.
  */
-function obstacles(alea) {
+function obstacles(alea, listeSalles) {
   const r = () => (typeof alea === 'function' ? alea() : Math.random());
   const out = [];
+  const sal = listeSalles || [];
+  /* Les murs des salles ENTRENT dans la liste : une seule sorte de bloc, donc
+     une seule collision, un seul arret de projectile, un seul tri de dessin.
+     Deux sortes auraient donne trois occasions d'oublier la moitie d'une
+     regle. */
+  for (const s of sal) for (const m of mursDe(s, out.length + 1)) out.push(m);
+  /* Les murs ne comptent PAS dans le quota de rochers : sinon poser une salle
+     de plus retirerait vingt-quatre rochers a la carte, et le monde se
+     deviderait a mesure qu'on lui ajoute des destinations. */
+  const murs = out.length;
   const marge = OBSTACLE.rayon + 24;
   const ecart = OBSTACLE.rayon * 2.4;      // ils ne se touchent pas
   let essais = 0;
-  while (out.length < OBSTACLE.nombre && essais < OBSTACLE.nombre * 40) {
+  while (out.length - murs < OBSTACLE.nombre && essais < OBSTACLE.nombre * 40) {
     essais++;
     const x = marge + r() * (MONDE.w - 2 * marge);
     const y = marge + r() * (MONDE.h - 2 * marge);
     const dcx = x - CENTRE.x, dcy = y - CENTRE.y;
     if (dcx * dcx + dcy * dcy < OBSTACLE.clairiere * OBSTACLE.clairiere) continue;
+    /* Jamais dans une salle, ni collee a son mur : un rocher pose devant la
+       porte en ferait une salle sans entree, et personne ne pourrait dire
+       pourquoi elle est infranchissable. */
+    if (sal.some((s) => dansLaSalle(s, x, y) ||
+        (Math.abs(s.x - x) < s.cote / 2 + OBSTACLE.rayon * 2 &&
+         Math.abs(s.y - y) < s.cote / 2 + OBSTACLE.rayon * 2))) continue;
     let colle = false;
     for (const o of out) {
       const dx = o.x - x, dy = o.y - y;
@@ -1015,6 +1197,7 @@ module.exports = {
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe,
   RARETE_ANNEAU, SAC_DE_RARETE, CHANCE_EQUIP, CHANCE_RELIQUE, CHANCE_RELIQUE_BOSS,
   OBSTACLE, OBSTACLE_BIOME, obstacles, bloque,
+  SALLE, SALLE_ANNEAUX, SALLE_BUTIN, MUR_BASE, salles, mursDe, dansLaSalle,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   choisitEspece,
   regenParSeconde, pouvoirDeStat,
