@@ -97,6 +97,8 @@ class Realm {
     /* Les sacs de butin, poses au sol. Comme les tombes : le serveur les
        tient, ils vieillissent, et ils disparaissent. */
     this.sacs = [];
+    /* Les zones marquees au sol, en attente de frapper. */
+    this.zones = [];
     this._id = 1;
     this.peuple();
     for (const s of this.salles) this._armeSalle(s);
@@ -118,14 +120,14 @@ class Realm {
    * vide la salle sans que personne n'y soit entre.
    */
   _armeSalle(s) {
-    const t = monde.MONSTRES.gardien;
+    const t = monde.MONSTRES[monde.SALLE.espece];
     const rayon = s.cote / 2 - monde.SALLE.mur - t.rayon;
     for (let k = 0; k < monde.SALLE.gardiens; k++) {
       const ang = (k / monde.SALLE.gardiens) * Math.PI * 2;
       const x = s.x + Math.cos(ang) * rayon * 0.45;
       const y = s.y + Math.sin(ang) * rayon * 0.45;
       this.monstres.push({
-        id: this._nouvelId(), espece: 'gardien', biome: s.biome, salle: s.i,
+        id: this._nouvelId(), espece: monde.SALLE.espece, biome: s.biome, salle: s.i,
         x, y, ancreX: s.x, ancreY: s.y,
         pv: t.pv, pvMax: t.pv, dir: 'down', cible: null,
         recharge: 0, rechargeT: 0, stase: 0, errX: 0, errY: 0, errChrono: 0,
@@ -657,7 +659,7 @@ class Realm {
    */
   pas(dt) {
     dt = Math.max(0, Math.min(0.5, Number(dt) || 0));
-    const ev = { degats: [], morts: [], kills: [], touches: [], regen: [], butins: [], ramasses: [], expires: [] };
+    const ev = { degats: [], morts: [], kills: [], touches: [], regen: [], butins: [], ramasses: [], expires: [], marques: [], zones: [] };
     if (!dt) return ev;
 
     for (const j of this.joueurs.values()) {
@@ -699,6 +701,7 @@ class Realm {
       this.sacs.splice(i, 1);
     }
     this._pasSalles(dt, ev);
+    this._pasZones(dt, ev);
     this._pasMonstres(dt, ev);
     this._pasTirs(dt, ev);
     this._pasTirsMonstres(dt, ev);
@@ -826,6 +829,7 @@ class Realm {
          quatre occasions d'en oublier une, et l'oubli serait invisible :
          trois monstres sur quatre s'arreteraient devant les rochers. */
       const deX = m.x, deY = m.y;
+      if (t.zone && m.zoneRecharge === undefined) m.zoneRecharge = 1 / t.zone.cadence;
 
       /* ---- LA STASE ----
        * Un monstre fige ne bouge pas, ne frappe pas, ne tire pas — et reste
@@ -921,6 +925,25 @@ class Realm {
             if (cible.pv <= 0) this._meurt(cible, m.espece, ev);
           }
         }
+        /* ---- ET IL MARQUE LE SOL ----
+         * Seulement s'il VOIT quelqu'un, et pas de trop loin : une zone posee
+         * a l'autre bout de sa vue frapperait un joueur qui ne sait meme pas
+         * qu'il est vu. */
+        if (t.zone) {
+          m.zoneRecharge -= dt;
+          if (m.zoneRecharge <= 0 && d < t.zone.rayon * 3) {
+            m.zoneRecharge = 1 / t.zone.cadence;
+            this.zones.push({ id: this._nouvelId(), x: cible.x, y: cible.y,
+                              r: t.zone.rayon, att: t.zone.att,
+                              effet: t.zone.effet || null, espece: m.espece,
+                              reste: t.zone.annonce, duree: t.zone.annonce });
+            if (ev) {
+              ev.marques = ev.marques || [];
+              ev.marques.push({ x: cible.x, y: cible.y, r: t.zone.rayon,
+                                duree: t.zone.annonce, espece: m.espece });
+            }
+          }
+        }
         m.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left')
                                             : (dy > 0 ? 'down' : 'up');
       } else {
@@ -995,6 +1018,43 @@ class Realm {
        decalerait le tableau sous les pieds de l'iteration. */
     if (ev.kills.length || ev.touches.length) {
       this.monstres = this.monstres.filter((m) => m.pv > 0);
+    }
+  }
+
+  /**
+   * ---- LES ZONES MARQUEES AU SOL ----
+   *
+   * Une zone est posee la ou le joueur SE TROUVE, puis elle attend. Quand le
+   * compte a rebours finit, elle frappe tout ce qui est encore dedans.
+   *
+   * Elle est posee sur la position du joueur et pas devant lui : viser la ou
+   * il va serait un piege sans reponse, puisqu'il faudrait deviner ce que le
+   * monstre a devine. Posee sur lui, la reponse est toujours la meme et
+   * toujours disponible — bouger.
+   *
+   * Le monstre ne verifie RIEN au moment de frapper : la zone existe seule.
+   * Le tuer pendant l'annonce ne l'annule donc pas, et c'est voulu — sinon la
+   * meilleure reponse a une zone serait de tirer plus fort, ce qui est
+   * exactement ce qu'elle doit empecher.
+   */
+  _pasZones(dt, ev) {
+    for (let i = this.zones.length - 1; i >= 0; i--) {
+      const z = this.zones[i];
+      z.reste -= dt;
+      if (z.reste > 0) continue;
+      this.zones.splice(i, 1);
+      ev.zones = ev.zones || [];
+      ev.zones.push({ x: z.x, y: z.y, r: z.r, espece: z.espece });
+      for (const j of this.joueurs.values()) {
+        if (j.pv <= 0) continue;
+        const dx = j.x - z.x, dy = j.y - z.y;
+        if (dx * dx + dy * dy > z.r * z.r) continue;
+        const perte = monde.degatsSubis(z.att, j.def);
+        j.pv = Math.max(0, j.pv - perte);
+        ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: z.espece, quoi: 'zone' });
+        if (z.effet) this._poseEtat(j, z.effet, ev);
+        if (j.pv <= 0) this._meurt(j, z.espece, ev);
+      }
     }
   }
 
@@ -1133,6 +1193,13 @@ class Realm {
          visibles et qu'ils ne durent pas.
          `r` part avec eux : la page dessine la minute qui s'ecoule, et sans
          ce chiffre elle devrait la deviner — donc se tromper. */
+      /* Les zones en attente : la page dessine le cercle qui se remplit, et
+         elle a besoin du temps RESTANT pour savoir ou il en est. Sans ce
+         chiffre elle le devinerait — donc se tromperait, donc mentirait sur
+         le moment ou ca frappe. */
+      zones: this.zones.filter(pres).map((z) => ({
+        i: z.id, x: Math.round(z.x), y: Math.round(z.y), r: z.r,
+        t: Number(z.reste.toFixed(2)), d: z.duree })),
       sacs: this.sacs.filter(pres).map((s) => ({
         i: s.id, x: Math.round(s.x), y: Math.round(s.y), s: s.sac,
         /* Le CONTENU part avec le sac : la page ouvre une grille de huit

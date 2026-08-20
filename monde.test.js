@@ -354,10 +354,14 @@ function alea(graine) {
 
   /* ---- UN BOSS RESTE RARE ----
    * `poids` n'existe que pour ca. Sans lui le tirage est uniforme : six
-   * especes dans la lave, dix-huit places, donc TROIS gardiens a chaque
+   * especes dans la lave, dix-huit places, donc TROIS brasiers a chaque
    * passage — et trois boss ne sont plus un boss.
    * On compte sur mille tirages, pas sur un : un seul dirait le hasard, pas
-   * la regle. */
+   * la regle.
+   * C'etait le gardien qui tenait ce role ici ; il ne vit plus que dans les
+   * salles, et le brasier a pris sa place AVEC son poids. Le test suit le
+   * role, pas le nom : ce qu'on protege, c'est « le boss de la lave est
+   * rare », quelle que soit la creature qui l'incarne. */
   {
     const r1 = alea(4242);
     const p = M.PEUPLEMENT.lave;
@@ -366,19 +370,19 @@ function alea(graine) {
       const e = M.choisitEspece(p, r1);
       compte[e] = (compte[e] || 0) + 1;
     }
-    const part = (compte.gardien || 0) / 1000;
+    const part = (compte.brasier || 0) / 1000;
     ok(part > 0.02 && part < 0.09,
-       `le gardien sort dans ${(part * 100).toFixed(1)} % des tirages de lave (vise 5 %)`);
+       `le brasier sort dans ${(part * 100).toFixed(1)} % des tirages de lave (vise 5 %)`);
     /* Le rapport theorique vaut exactement 4 (poids 1 contre 0,25). Exiger
        « plus de 4 fois » posait le seuil PILE sur l'attendu : un tirage sur
        deux echoue alors, sans que rien ne soit casse. On demande donc ce
        qu'on veut vraiment dire — un ordre de grandeur d'ecart. */
-    ok((compte.gardien || 0) * 3 <= (compte.lave || 0),
-       `on croise bien plus de golems (${compte.lave}) que de gardiens (${compte.gardien})`);
-    /* Sur dix-huit places, cela doit faire environ UN gardien. */
+    ok((compte.brasier || 0) * 3 <= (compte.lave || 0),
+       `on croise bien plus de golems (${compte.lave}) que de brasiers (${compte.brasier})`);
+    /* Sur dix-huit places, cela doit faire environ UN brasier. */
     const attendus = part * p.nombre;
     ok(attendus >= 0.4 && attendus <= 1.6,
-       `l'anneau de lave porte ${attendus.toFixed(2)} gardien en moyenne`);
+       `l'anneau de lave porte ${attendus.toFixed(2)} brasier en moyenne`);
   }
 
   /* ---- ET A L'INVERSE, UNE NUEE EST UNE NUEE ----
@@ -414,7 +418,11 @@ function alea(graine) {
 
   /* ---- AUCUNE ESPECE N'EST INJOIGNABLE ----
    * Une creature listee dans PEUPLEMENT avec un poids de zero, ou oubliee de
-   * toutes les listes, existerait dans la table sans jamais apparaitre. */
+   * toutes les listes, existerait dans la table sans jamais apparaitre.
+   * Il existe DEUX portes vers le monde, pas une : les anneaux, et les
+   * salles gardees. Le gardien ne passe plus que par la seconde. On les
+   * compte donc toutes les deux — sinon le test dirait « injoignable »
+   * d'une creature qu'on croise a chaque relique. */
   {
     const vus = {};
     Object.keys(M.PEUPLEMENT).forEach((b) => {
@@ -422,9 +430,22 @@ function alea(graine) {
       const r4 = alea(90210);
       for (let i = 0; i < 3000; i++) vus[M.choisitEspece(p, r4)] = true;
     });
+    vus[M.SALLE.espece] = true;
     Object.keys(M.MONSTRES).forEach((k) => {
       ok(vus[k], `« ${M.MONSTRES[k].nom} » apparait vraiment quelque part`);
     });
+
+    /* ET L'INVERSE : `biomes` vide veut dire « celle-la ne naît que dans une
+       salle ». Si une AUTRE espece se retrouvait avec une liste vide — parce
+       qu'on l'a retiree d'un anneau sans lui donner de role —, elle serait
+       dans la table sans porte d'entree, et la ligne ci-dessus ne le verrait
+       pas : elle ne regarde que ce qui sort du tirage, pas ce qui aurait du
+       en sortir. */
+    const sansBiome = Object.keys(M.MONSTRES).filter((k) => M.MONSTRES[k].biomes.length === 0);
+    eq(sansBiome.length, 1,
+       `une seule espece vit hors des anneaux (${sansBiome.join(', ') || 'aucune'})`);
+    eq(sansBiome[0], M.SALLE.espece,
+       'et c est bien celle que les salles font naitre');
   }
 }
 

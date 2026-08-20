@@ -149,6 +149,10 @@ const SALLE = {
   cote: 9,          // en tuiles, murs compris
   mur: 64,          // le rayon de collision d'un bloc de mur (128 de large)
   gardiens: 2,
+  /* Qui garde. Ecrit ICI et pas en dur dans la simulation : c'est une regle
+     du monde, et un test doit pouvoir demander « quelle espece ne vit QUE
+     dans les salles ? » sans lire realm.js. */
+  espece: 'gardien',
   /* Le temps avant que les gardiens reviennent. Six minutes : assez pour que
      la salle vaille le detour une fois, trop pour qu'on en fasse une boucle
      de recolte. */
@@ -368,6 +372,50 @@ function bloque(liste, x, y, rayon) {
   }
   return null;
 }
+
+/*
+ * ==================== L'ATTAQUE DE ZONE ====================
+ *
+ * Toutes les attaques du jeu sont des projectiles : elles partent d'un point,
+ * vont tout droit, et on les esquive en n'etant pas sur leur ligne. C'est UNE
+ * question posee de six facons.
+ *
+ * Une zone en pose une autre : elle marque le SOL a l'endroit ou l'on se
+ * trouve, attend une seconde, puis frappe tout ce qui s'y trouve encore. On ne
+ * l'esquive pas en se decalant — il faut PARTIR. Contre un monstre qui vous
+ * suit, ca veut dire arreter de tirer et courir : la premiere attaque du jeu
+ * qui coute quelque chose a esquiver.
+ *
+ * ---- pourquoi le cercle rouge n'est pas une decoration ----
+ *
+ * Sans lui, une attaque qui frappe une zone entiere est injuste : rien ne
+ * l'annonce, on ne peut que la subir. Le cercle EST l'attaque — l'annonce et
+ * le coup sont la meme chose vue a deux moments. C'est pour ca qu'on ne
+ * pouvait pas la faire avant d'avoir son dessin.
+ *
+ * `annonce` est le temps entre la marque et le coup. Il n'est PAS choisi a
+ * l'oreille : la zone tombe sur les pieds du joueur, donc il part toujours du
+ * centre, donc il a exactement `rayon` unites a couvrir. Le temps qu'il lui
+ * faut est `rayon / sa vitesse`, et il faut y ajouter le temps de VOIR le
+ * cercle apparaitre.
+ *
+ *     annonce >= rayon / vitesse_du_plus_lent + ZONE_REACTION
+ *
+ * « Le plus lent » n'est pas une precaution de style : c'est un landwolf de
+ * niveau 1, a 202 unites par seconde. Avec une annonce d'une seconde et un
+ * rayon de 200, il lui restait UN CENTIEME de seconde de marge — autrement
+ * dit aucune. Le cercle etait alors une decoration : il annoncait un coup
+ * qu'on ne pouvait pas eviter, ce qui est pire que pas d'annonce du tout,
+ * parce que ca donne l'impression d'avoir mal joue.
+ *
+ * Le personnage rapide, lui, sort largement. C'est voulu : la vitesse doit
+ * servir a quelque chose. Ce que la zone coute a TOUT LE MONDE, c'est le
+ * temps de tir — on ne tire pas en courant hors d'un cercle.
+ */
+/* Le quart de seconde qu'on laisse pour voir le cercle et decider. C'est un
+   PLANCHER, pas une cible : les quatre zones du jeu ont toutes une dizaine de
+   centiemes de plus. */
+const ZONE_REACTION = 0.25;
 
 /*
  * ---- LES MONSTRES ----
@@ -591,6 +639,10 @@ const MONSTRES = {
     contact: true, cadence: 0.55,
     tir: { portee: 520, vitesse: 300, sprite: 'braise', att: 60, cadence: 0.35,
            effet: 'brulure' },
+    /* Son ONDE DE CHOC. Elle ne fait pas plus mal que son tir — elle demande
+       autre chose : arreter de tirer et sortir. C'est ce qui donne enfin une
+       raison de ne pas rester colle a lui en le mitraillant. */
+    zone: { annonce: 1.3, rayon: 190, att: 100, cadence: 0.18 },
     xp: 1300,
   },
   /* ---- LE GARDIEN : LE PREMIER BOSS ----
@@ -614,6 +666,50 @@ const MONSTRES = {
     tir: { portee: 620, vitesse: 380, sprite: 'eclat', att: 85, cadence: 0.5,
            tirs: 4, ecart: 0.50 },
     xp: 3000,
+  },
+  /* ---- LE BRASIER : LE BOSS DE LA LAVE ----
+   * Il remplace le gardien dore, qui gardait les salles ET errait dans la
+   * lave. La meme creature dans deux roles, c'est un role qui n'existe pas :
+   * on ne savait pas, en croisant un gardien, si l'on venait de trouver un
+   * tresor ou un monstre de plus.
+   *
+   * Sa NOVA est la premiere attaque du jeu qu'on esquive en partant plutot
+   * qu'en se decalant. */
+  brasier: {
+    cle: 'brasier', nom: 'Emberlord',
+    pv: 1800, att: 170, def: 40,
+    vitesse: 74, rayon: 90, vue: 780,
+    contact: true, cadence: 0.5,
+    tir: { portee: 600, vitesse: 340, sprite: 'braise', att: 90, cadence: 0.45,
+           effet: 'brulure' },
+    zone: { annonce: 1.35, rayon: 200, att: 150, cadence: 0.22, effet: 'brulure' },
+    xp: 3200,
+  },
+  /* ---- LA MACHINE : LE MORTIER DES CENDRES ----
+   * Elle tire loin et fort, et surtout elle POSE. Son obus n'a pas d'effet —
+   * elle n'en a pas besoin : cent quarante degats d'un coup suffisent a faire
+   * bouger n'importe qui. */
+  machine: {
+    cle: 'machine', nom: 'Siege Engine',
+    pv: 1400, att: 150, def: 44,
+    vitesse: 58, rayon: 84, vue: 820,
+    contact: true, cadence: 0.45,
+    tir: { portee: 660, vitesse: 400, sprite: 'tesson', att: 78, cadence: 0.4 },
+    zone: { annonce: 1.45, rayon: 220, att: 140, cadence: 0.2 },
+    xp: 2600,
+  },
+  /* ---- LA CARAPACE : CELLE QU'ON NE DISTANCE PAS ----
+   * Son coup au sol RALENTIT. C'est la combinaison qui la rend dangereuse :
+   * ralenti dans une zone qu'il faut quitter, on n'en sort pas — a moins
+   * d'avoir commence a partir avant qu'elle ne frappe. */
+  carapace: {
+    cle: 'carapace', nom: 'Deep Carapace',
+    pv: 1200, att: 130, def: 52,
+    vitesse: 66, rayon: 96, vue: 700,
+    contact: true, cadence: 0.6,
+    tir: { portee: 420, vitesse: 280, sprite: 'acide', att: 60, cadence: 0.5 },
+    zone: { annonce: 1.4, rayon: 210, att: 110, cadence: 0.24, effet: 'ralenti' },
+    xp: 2400,
   },
   skeleton: {
     cle: 'skeleton', nom: 'Skeleton',
@@ -666,14 +762,17 @@ const PEUPLEMENT = {
   /* La meduse n'est PAS avant la neige : perdre le controle de son
      personnage avant d'avoir compris qu'on peut encore tirer ferait
      abandonner. */
-  neige:   { especes: ['lime', 'skeleton', 'archer', 'meduse', 'nuee'], nombre: 40,
-             poids: { nuee: 1.5 } },
-  cendres: { especes: ['skeleton', 'glace', 'archer', 'meduse', 'oracle', 'colosse'],
-             nombre: 30, poids: { colosse: 0.4 } },
-  /* Un seul gardien pour dix-huit places : 0,25 sur un total de 5,05, soit
-     cinq pour cent. Un boss qu'on croise a chaque passage n'est plus un boss. */
-  lave:    { especes: ['lave', 'glace', 'meduse', 'oracle', 'colosse', 'gardien'],
-             nombre: 18, poids: { colosse: 0.8, gardien: 0.25 } },
+  neige:   { especes: ['lime', 'skeleton', 'archer', 'meduse', 'nuee', 'carapace'],
+             nombre: 40, poids: { nuee: 1.5, carapace: 0.18 } },
+  cendres: { especes: ['skeleton', 'glace', 'archer', 'meduse', 'oracle', 'colosse', 'machine'],
+             nombre: 30, poids: { colosse: 0.4, machine: 0.22 } },
+  /* Le GARDIEN n'erre plus ici : il ne vit que dans les salles. La meme
+     creature dans deux roles, c'est un role qui n'existe pas — on ne savait
+     pas, en croisant un gardien, si l'on venait de trouver un tresor ou un
+     monstre de plus. Le brasier prend sa place, et un seul pour dix-huit
+     places : un boss qu'on croise a chaque passage n'est plus un boss. */
+  lave:    { especes: ['lave', 'glace', 'meduse', 'oracle', 'colosse', 'brasier'],
+             nombre: 18, poids: { colosse: 0.8, brasier: 0.25 } },
 };
 
 /*
@@ -1029,9 +1128,9 @@ const POTION_DE = {
   /* Le colosse est de la meme famille que le golem : meme potion. Lui en
      donner une neuvieme aurait demande une neuvieme stat. */
   colosse: 'vit',
-  /* Le boss donne N'IMPORTE LAQUELLE. C'est ce qui en fait une destination :
-     on y va pour ce qui manque, pas pour ce qu'il a. */
-  gardien: '*',
+  /* Les BOSS donnent n'importe laquelle. C'est ce qui en fait des
+     destinations : on y va pour ce qui manque, pas pour ce qu'ils ont. */
+  gardien: '*', brasier: '*', machine: '*', carapace: '*',
   /* La nuee ne donne RIEN. Quarante-cinq points d'experience ne paient pas un
      point permanent, et une creature qu'on croise seize fois par anneau
      rendrait le 1/50 sans objet. */
@@ -1079,6 +1178,10 @@ const CHANCE_EQUIP = {
  * pour LUI. */
 const CHANCE_RELIQUE = { lave: 1 / 1500 };
 const CHANCE_RELIQUE_BOSS = 1 / 40;
+/* Quelles especes comptent comme boss pour la relique. Le brasier a pris la
+   place du gardien dans la lave ; le gardien reste dans les salles, ou son
+   butin est garanti par la salle elle-meme. */
+const BOSS = { gardien: 1, brasier: 1, machine: 1, carapace: 1 };
 
 /* Un sur cinquante. Le chiffre vient de ce qu'il doit produire : environ une
    potion toutes les vingt minutes de chasse soutenue — assez rare pour qu'on
@@ -1086,7 +1189,7 @@ const CHANCE_RELIQUE_BOSS = 1 / 40;
    Le gardien en donne UNE A COUP SUR : il sort une fois par anneau de lave et
    porte seize cents points de vie. Un boss qu'on peut abattre pour rien ne
    vaut pas le deplacement. */
-const CHANCE_POTION = { defaut: 1 / 50, gardien: 1 };
+const CHANCE_POTION = { defaut: 1 / 50, gardien: 1, brasier: 1, machine: 0.7, carapace: 0.7 };
 /* Le soin, lui, est ordinaire : c'est du consommable, pas une recompense.
    La nuee fait exception : on en croise seize par anneau, et un sac sur six
    en donnerait presque trois a chaque nettoyage. Ce n'est pas une question
@@ -1107,7 +1210,7 @@ function butinDe(espece, alea, biome) {
    * Un seul tirage par mort : ce qui passe en premier obtient son vrai taux,
    * ce qui passe apres n'a que ce qui reste. La relique doit donc etre en
    * tete, sinon son 1/1500 deviendrait 1/1800 sans que rien ne le dise. */
-  const cr = espece === 'gardien' && CHANCE_RELIQUE[biome] !== undefined
+  const cr = BOSS[espece] && CHANCE_RELIQUE[biome] !== undefined
     ? CHANCE_RELIQUE_BOSS
     : (CHANCE_RELIQUE[biome] || 0);
   if (cr && r() < cr) return { sac: SAC_DE_RARETE.relique, contenu: [{ objet: 'relique' }] };
@@ -1217,7 +1320,8 @@ module.exports = {
   ARMES, DEGATS_POING, VITESSE_JOUEUR, CADENCE_MAX,
   cadenceDe, vitesseDe,
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
-  SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe,
+  ZONE_REACTION,
+  SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe, BOSS,
   RARETE_ANNEAU, SAC_DE_RARETE, CHANCE_EQUIP, CHANCE_RELIQUE, CHANCE_RELIQUE_BOSS,
   OBSTACLE, OBSTACLE_BIOME, obstacles, bloque,
   SALLE, SALLE_ANNEAUX, SALLE_BUTIN, MUR_BASE, salles, mursDe, dansLaSalle,
