@@ -625,6 +625,16 @@ class Realm {
     s.contenu.push({ item, cle: (objet && objet.cle) || null,
                      nom: (objet && objet.nom) || null,
                      rarete: (objet && objet.rarete) || null });
+    /* ---- LE SAC REPART POUR UNE MINUTE ----
+     * Un sac tombe d'un monstre a soixante secondes a vivre. Poser SA PROPRE
+     * piece dedans sans remettre le compteur a zero, c'est la confier a un sac
+     * qui peut n'avoir que trois secondes devant lui — le temps d'hesiter, et
+     * elle a disparu. Ni dans le sac, ni par terre : detruite, sans un mot.
+     *
+     * Un joueur l'a perdue comme ca. La minute compte a partir du DERNIER
+     * geste, pas de la mort du monstre : c'est la seule regle qu'on puisse
+     * expliquer, et la seule qui ne punisse pas d'avoir reflechi. */
+    s.reste = monde.SAC.duree;
     if (ev) { ev.deposes = ev.deposes || []; ev.deposes.push({ addr, id: s.id, item }); }
     return { id: s.id, sac: s.sac, place: s.contenu.length - 1 };
   }
