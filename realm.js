@@ -1101,15 +1101,25 @@ class Realm {
         if (m.stase > 0) o.st = Number(m.stase.toFixed(2));
         return o;
       }),
+      /* ---- LA VITESSE PART AVEC LE PROJECTILE ----
+       * Sans elle, la page ne peut que POSER les projectiles la ou ils
+       * etaient au dernier etat — dix fois par seconde. Un tir a 340 unites
+       * par seconde reste alors fige six images puis saute de trente-quatre
+       * unites, et ca se lit comme du lag alors que rien ne rame.
+       * Avec l'angle et la vitesse, la page les fait AVANCER entre deux
+       * etats : un projectile va tout droit a vitesse constante, donc la
+       * prediction est exacte, pas approchee. Un nombre de plus par
+       * projectile, contre une vingtaine en vol. */
       tirs: this.tirs.filter(pres).map((t) => ({
         i: t.id, x: Math.round(t.x), y: Math.round(t.y),
-        a: Number(t.a.toFixed(3)), f: t.famille, mien: t.addr === addr })),
+        a: Number(t.a.toFixed(3)), v: Math.round(t.v), f: t.famille,
+        mien: t.addr === addr })),
       /* Les fleches ennemies dans une liste a part : le client doit pouvoir
          les dessiner autrement, et surtout ne jamais croire qu'elles sont a
          lui. */
       tirsM: this.tirsM.filter(pres).map((t) => ({
         i: t.id, x: Math.round(t.x), y: Math.round(t.y),
-        a: Number(t.a.toFixed(3)), f: t.sprite })),
+        a: Number(t.a.toFixed(3)), v: Math.round(t.v), f: t.sprite })),
       joueurs: autres,
       /* Les tombes des AUTRES autant que les siennes : c'est tout leur
          interet. Une pierre qu'on serait seul a voir ne previendrait
