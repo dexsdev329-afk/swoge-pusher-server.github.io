@@ -3022,6 +3022,15 @@ wss.on('connection', (ws) => {
                              serveur n'accorde pas — le pire des mensonges,
                              celui qui donne l'impression d'un bug. */
                           sac: monde.SAC,
+                          /* ---- LES BLOCS, UNE FOIS ----
+                             Ils ne bougent jamais : les renvoyer dix fois par
+                             seconde dans l'etat du monde serait deux cent
+                             quarante entrees rendues a l'identique, pour rien.
+                             La page ne peut pas les redeviner — elle n'a pas
+                             le meme hasard — et un desaccord se verrait tout
+                             de suite : on marcherait dans un rocher, ou l'on
+                             serait arrete par du vide. */
+                          obstacles: realm.obstacles,
                           /* L'ORDRE des stats, parce que c'est celui des
                              colonnes de objets/potions_stat.webp : rouge = hp,
                              bleue = mp, epee = att, bouclier = def, ailes =

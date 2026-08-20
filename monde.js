@@ -75,6 +75,96 @@ function biomeEn(x, y) {
 }
 
 /*
+ * ==================== CE QUI BLOQUE LE PASSAGE ====================
+ *
+ * Le monde etait un tapis : on le traversait en ligne droite, dans n'importe
+ * quelle direction, et fuir revenait toujours a courir vers l'exterieur. Une
+ * carte sans obstacle n'a qu'une seule tactique.
+ *
+ * Des blocs solides changent trois choses a la fois, et c'est pour ca qu'ils
+ * valent mieux que trois regles separees :
+ *
+ *   - ils donnent des COUVERTS. Un archer qui canarde de loin cesse d'etre
+ *     une fatalite des qu'il y a un rocher entre lui et nous.
+ *   - ils rendent la VITESSE utile autrement qu'en ligne droite : contourner
+ *     coute du temps, et le colosse ne contourne pas — il attend.
+ *   - ils font des COULOIRS, donc des embuscades, donc des endroits qu'on
+ *     apprend a ne pas prendre.
+ *
+ * Ils arretent AUSSI les projectiles, les notres comme les leurs. Un mur
+ * qu'on traverse a l'arc n'est pas un mur, c'est une decoration — et le
+ * couvert n'existerait pas.
+ *
+ * Le dessin depend de l'anneau : rocher moussu, souche morte, pilier de
+ * glace, aiguille de basalte. On lit donc l'obstacle comme on lit le sol.
+ */
+const OBSTACLE = {
+  rayon: 44,        // le pied du dessin, pas sa hauteur
+  nombre: 240,
+  /* Une CLAIRIERE au centre exact : c'est la que vit le gardien, et un boss de
+     trois cent quinze pixels coince entre deux rochers ne se combat pas, il
+     se subit.
+     420 et pas 900 : l'anneau de lave s'arrete a 768 du centre, et une
+     clairiere plus large que lui aurait laisse tout le coeur sans un seul
+     rocher — l'anneau le plus dur du jeu aurait ete le seul terrain plat. */
+  clairiere: 420,
+};
+/* L'index de colonne dans tiles/obstacles.webp. Le marais garde la souche
+   morte, la terre le rocher : deux anneaux voisins qui se ressemblent
+   effaceraient justement ce que l'obstacle apporte — savoir ou l'on est. */
+const OBSTACLE_BIOME = { terre: 0, marais: 1, neige: 2, cendres: 3, lave: 3 };
+
+/**
+ * Les blocs du monde. Deterministe : le meme `alea` rend la meme carte, et
+ * c'est ce qui permet au serveur de la construire une fois et de l'envoyer
+ * telle quelle. La page ne les invente pas — elle ne pourrait pas tomber
+ * d'accord avec le serveur, et le desaccord se verrait tout de suite : on
+ * marcherait dans un rocher, ou on serait arrete par du vide.
+ */
+function obstacles(alea) {
+  const r = () => (typeof alea === 'function' ? alea() : Math.random());
+  const out = [];
+  const marge = OBSTACLE.rayon + 24;
+  const ecart = OBSTACLE.rayon * 2.4;      // ils ne se touchent pas
+  let essais = 0;
+  while (out.length < OBSTACLE.nombre && essais < OBSTACLE.nombre * 40) {
+    essais++;
+    const x = marge + r() * (MONDE.w - 2 * marge);
+    const y = marge + r() * (MONDE.h - 2 * marge);
+    const dcx = x - CENTRE.x, dcy = y - CENTRE.y;
+    if (dcx * dcx + dcy * dcy < OBSTACLE.clairiere * OBSTACLE.clairiere) continue;
+    let colle = false;
+    for (const o of out) {
+      const dx = o.x - x, dy = o.y - y;
+      if (dx * dx + dy * dy < ecart * ecart) { colle = true; break; }
+    }
+    if (colle) continue;
+    const b = biomeEn(x, y);
+    out.push({ i: out.length + 1, x: Math.round(x), y: Math.round(y),
+               r: OBSTACLE.rayon,
+               t: OBSTACLE_BIOME[b] === undefined ? 0 : OBSTACLE_BIOME[b] });
+  }
+  return out;
+}
+
+/**
+ * L'obstacle qui occupe ce point, ou `null`.
+ *
+ * `rayon` est celui de ce qui se deplace : un colosse de rayon 78 ne passe
+ * pas ou passe une nuee de rayon 16, et c'est exactement ce qu'on veut — les
+ * couloirs ne sont pas les memes pour tout le monde.
+ */
+function bloque(liste, x, y, rayon) {
+  const rr = Math.max(0, Number(rayon) || 0);
+  for (const o of liste) {
+    const dx = o.x - x, dy = o.y - y;
+    const d = o.r + rr;
+    if (dx * dx + dy * dy < d * d) return o;
+  }
+  return null;
+}
+
+/*
  * ---- LES MONSTRES ----
  *
  * Deux especes, celles dont on a le dessin. Leurs chiffres sont cales sur ce
@@ -924,6 +1014,7 @@ module.exports = {
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe,
   RARETE_ANNEAU, SAC_DE_RARETE, CHANCE_EQUIP, CHANCE_RELIQUE, CHANCE_RELIQUE_BOSS,
+  OBSTACLE, OBSTACLE_BIOME, obstacles, bloque,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   choisitEspece,
   regenParSeconde, pouvoirDeStat,

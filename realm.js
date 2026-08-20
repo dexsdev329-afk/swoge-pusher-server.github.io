@@ -41,6 +41,12 @@ const PAS_MS = 100;
 /* Marge sur la distance qu'un joueur peut parcourir entre deux annonces. Le
    reseau hoquete ; refuser au millimetre ferait begayer un joueur honnete. */
 const MARGE_VITESSE = 1.6;
+/* Le rayon du personnage pour les BLOCS, et pour eux seuls. Il n'a rien a
+   voir avec les projectiles — un tir touche un joueur selon la portee du
+   monstre, pas selon son encombrement. Vingt-deux, soit la moitie du plus
+   petit obstacle : assez pour ne pas entrer dans la pierre, assez peu pour
+   passer entre deux rochers qui ne se touchent pas. */
+const RAYON_JOUEUR = 22;
 /* On BORNE TOUJOURS, sans exception. Ma premiere version laissait passer les
    bonds ENORMES en se disant qu'un joueur revenant d'un onglet en veille ne
    devait pas rester colle a sa derniere position — ce qui bornait les petites
@@ -61,6 +67,13 @@ class Realm {
      * Absent, aucun equipement ne tombe : mieux vaut un monde sans butin
      * d'equipement qu'un sac contenant un objet que personne ne peut nommer. */
     this.tireObjet = typeof opts.tireObjet === 'function' ? opts.tireObjet : null;
+    /* ---- LES BLOCS, POSES UNE FOIS ----
+     * Ils ne bougent jamais : les tirer a chaque pas serait du travail rendu
+     * a l'identique cent fois par seconde. Ils partent au client a l'entree,
+     * tels quels — la page ne peut pas les redeviner, et un desaccord se
+     * verrait tout de suite : on marcherait dans un rocher, ou l'on serait
+     * arrete par du vide. */
+    this.obstacles = monde.obstacles(this.alea);
     this.monstres = [];
     this.joueurs = new Map();     // addr -> etat
     this.tirs = [];
@@ -84,7 +97,29 @@ class Realm {
   _nouvelId() { return this._id++; }
 
   peuple() {
-    this.monstres = monde.peuplement(this.alea).map((m) => {
+    /* ---- NI ICI NON PLUS ----
+     * `repeuple` avait le garde, pas la population de depart : quatorze
+     * creatures sur cent soixante naissaient dans la pierre a chaque
+     * demarrage. Elles n'en seraient jamais sorties, et se seraient lues
+     * comme des monstres casses plutot que comme des monstres coinces.
+     * Deux endroits font naitre un monstre — les deux doivent regarder.
+     * Celles qu'on refuse ici, `repeuple` les remplace ailleurs. */
+    const voulu = Object.keys(monde.PEUPLEMENT)
+      .reduce((s, b) => s + monde.PEUPLEMENT[b].nombre, 0);
+    const places = [];
+    /* On RETIRE tant qu'il manque du monde, au lieu de se contenter de jeter
+       ce qui tombe mal. « La carte porte N creatures » doit etre vrai des la
+       premiere seconde, pas seulement apres le premier repeuplement — un
+       joueur qui entre juste apres le demarrage ne doit pas trouver un monde
+       aux trois quarts vide. */
+    for (let tour = 0; tour < 6 && places.length < voulu; tour++) {
+      for (const m of monde.peuplement(this.alea)) {
+        if (places.length >= voulu) break;
+        if (monde.bloque(this.obstacles, m.x, m.y, monde.MONSTRES[m.espece].rayon)) continue;
+        places.push(m);
+      }
+    }
+    this.monstres = places.map((m) => {
       const t = monde.MONSTRES[m.espece];
       return {
         id: this._nouvelId(), espece: m.espece, biome: m.biome,
@@ -159,7 +194,18 @@ class Realm {
   /** On arrive TOUJOURS par le bord, sur la terre : entrer directement au
       milieu de la lave tuerait un debutant avant son premier pas. */
   _pointDArrivee() {
-    const p = monde.pointDansBiome('terre', this.alea);
+    /* ---- ET JAMAIS DANS UN ROCHER ----
+     * Apparaitre coince dans un bloc donne un personnage qui ne peut plus
+     * bouger que dans une direction, sans que rien ne dise pourquoi. On
+     * retire jusqu'a trouver un point libre ; au bout de vingt essais on rend
+     * ce qu'on a plutot que de boucler — la terre est vaste et un echec vingt
+     * fois de suite n'arrive pas, mais une boucle sans sortie, si. */
+    let p = null;
+    for (let i = 0; i < 20; i++) {
+      p = monde.pointDansBiome('terre', this.alea);
+      if (!p) continue;
+      if (!monde.bloque(this.obstacles, p.x, p.y, RAYON_JOUEUR * 2)) return p;
+    }
     return p || { x: 40, y: 40 };
   }
 
@@ -168,6 +214,30 @@ class Realm {
    * Rend `true` si elle a ete acceptee telle quelle, `false` si on l'a
    * ramenee — l'appelant peut alors renvoyer la position corrigee.
    */
+  /**
+   * Le point le plus proche qu'on puisse VRAIMENT occuper, en partant d'ou
+   * l'on etait.
+   *
+   * Refuser le pas en bloc collerait au moindre frolement d'un rocher : on
+   * longe un obstacle en marchant en diagonale, et la composante qui passe
+   * doit passer. On essaie donc les deux axes separement — c'est ce qui fait
+   * qu'on GLISSE le long d'un mur au lieu de s'y coller.
+   */
+  _glisse(depX, depY, x, y, rayon) {
+    /* ---- ETRE DEDANS N'EST PAS UNE PRISON ----
+     * Si le point de DEPART est deja bloque, on laisse passer. Rien ne devrait
+     * s'y trouver — ni joueur ni monstre n'y naissent, et aucun des deux ne
+     * peut y entrer — mais le jour ou ca arrive, refuser le pas donnerait une
+     * creature figee pour toujours, ou pire un joueur qui ne peut plus rien
+     * faire. Une regle qui se repare toute seule vaut mieux qu'une regle qui
+     * tient un piege ferme. */
+    if (monde.bloque(this.obstacles, depX, depY, rayon)) return { x, y };
+    if (!monde.bloque(this.obstacles, x, y, rayon)) return { x, y };
+    if (!monde.bloque(this.obstacles, x, depY, rayon)) return { x, y: depY };
+    if (!monde.bloque(this.obstacles, depX, y, rayon)) return { x: depX, y };
+    return { x: depX, y: depY };
+  }
+
   bouge(addr, x, y, dir, anim, dt) {
     const j = this.joueurs.get(addr);
     if (!j) return false;
@@ -201,6 +271,7 @@ class Realm {
     const dx = x - j.x, dy = y - j.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     let honnete = true;
+    const deX = j.x, deY = j.y;
     if (d > max && d > 0) {
       // trop loin : on avance jusqu'au bord de ce qui etait possible
       j.x += (dx / d) * max; j.y += (dy / d) * max;
@@ -208,6 +279,13 @@ class Realm {
     } else {
       j.x = x; j.y = y;
     }
+    /* ---- ET LES BLOCS ----
+     * Le refus est ICI, comme la paralysie et la vitesse : une page qui
+     * accepterait de s'arreter devant un rocher se corrigerait en ouvrant la
+     * console. Le joueur a le rayon d'une creature moyenne — lui donner zero
+     * l'aurait laisse entrer dans la pierre jusqu'aux epaules. */
+    const p = this._glisse(deX, deY, j.x, j.y, RAYON_JOUEUR);
+    j.x = p.x; j.y = p.y;
     if (dir) j.dir = String(dir).slice(0, 6);
     if (anim) j.anim = String(anim).slice(0, 6);
     /* Se DEPLACER casse le repos ; rester immobile a annoncer la meme
@@ -646,6 +724,12 @@ class Realm {
       const t = monde.MONSTRES[m.espece];
       if (m.recharge > 0) m.recharge -= dt;
       if (m.stase === undefined) m.stase = 0;
+      /* D'ou il part. Les quatre facons dont un monstre se deplace — vers le
+         joueur, en reculant, en flanant, vers son ancre — se corrigent au
+         MEME endroit, tout en bas. Poser le test dans chacune aurait donne
+         quatre occasions d'en oublier une, et l'oubli serait invisible :
+         trois monstres sur quatre s'arreteraient devant les rochers. */
+      const deX = m.x, deY = m.y;
 
       /* ---- LA STASE ----
        * Un monstre fige ne bouge pas, ne frappe pas, ne tire pas — et reste
@@ -764,6 +848,14 @@ class Realm {
         m.dir = Math.abs(m.errX) > Math.abs(m.errY) ? (m.errX > 0 ? 'right' : 'left')
                                                     : (m.errY > 0 ? 'down' : 'up');
       }
+      /* ---- ILS NE TRAVERSENT PAS NON PLUS ----
+       * Un monstre qui passe a travers un rocher ferait du couvert un
+       * mensonge : on se croirait a l'abri et l'on serait mordu au travers.
+       * Il glisse comme le joueur, avec SON rayon — un colosse de 78 ne
+       * passe pas ou passe une nuee de 16, et les couloirs ne sont donc pas
+       * les memes pour tout le monde. */
+      const pos = this._glisse(deX, deY, m.x, m.y, t.rayon);
+      m.x = pos.x; m.y = pos.y;
       m.x = Math.max(0, Math.min(monde.MONDE.w, m.x));
       m.y = Math.max(0, Math.min(monde.MONDE.h, m.y));
     }
@@ -776,7 +868,12 @@ class Realm {
       t.y += Math.sin(t.a) * t.v * dt;
       t.reste -= dt;
 
-      let fini = t.reste <= 0;
+      /* ---- UN ROCHER ARRETE AUSSI LES FLECHES ----
+       * Un mur qu'on traverse a l'arc n'est pas un mur, c'est une decoration.
+       * Le couvert n'aurait alors aucun sens : on se croirait a l'abri et
+       * l'on serait canarde au travers. Le projectile est un point — lui
+       * donner une epaisseur le ferait s'arreter a cote de la pierre. */
+      let fini = t.reste <= 0 || !!monde.bloque(this.obstacles, t.x, t.y, 0);
       if (!fini) {
         const j = this.joueurs.get(t.addr);
         for (const m of this.monstres) {
@@ -813,7 +910,9 @@ class Realm {
       t.x += Math.cos(t.a) * t.v * dt;
       t.y += Math.sin(t.a) * t.v * dt;
       t.reste -= dt;
-      let fini = t.reste <= 0;
+      /* Les leurs s'arretent aussi, et c'est TOUT l'interet : sans cette
+         ligne le couvert protegerait le monstre et pas nous. */
+      let fini = t.reste <= 0 || !!monde.bloque(this.obstacles, t.x, t.y, 0);
       if (!fini) {
         for (const j of this.joueurs.values()) {
           if (j.pv <= 0) continue;
@@ -962,6 +1061,10 @@ class Realm {
       }
       if (tropPres) continue;
       const t = monde.MONSTRES[m.espece];
+      /* Ni dans un rocher : un colosse de rayon 78 ne du dans un bloc y
+         resterait pour toujours, immobile, et se lirait comme un monstre
+         casse plutot que comme un monstre coince. */
+      if (monde.bloque(this.obstacles, m.x, m.y, t.rayon)) continue;
       this.monstres.push({
         id: this._nouvelId(), espece: m.espece, biome: m.biome,
         x: m.x, y: m.y, ancreX: m.x, ancreY: m.y,
