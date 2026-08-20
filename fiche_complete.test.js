@@ -111,7 +111,12 @@ pose.adDayKey = '2026-08-14';
 /* `xc` = l'XP gagnee EN COMBAT sous ce personnage. Elle est persistee, a
    la difference de l'XP du volume qui se recalcule : personne ne peut
    rededuire apres coup combien de monstres on a tues. */
-pose.persos = { andy: { w: W(777), ef: 1001, ea: 2001, ar: 1013, ba: 1019, xc: 4200 } };
+/* `sup` porte les potions de stat BUES. Une valeur non vide, pas `{}` : un
+   objet vide traverserait la sauvegarde meme si personne ne l'ecrivait, et
+   l'essai ne prouverait rien. Trois potions d'attaque restent sous le plafond
+   d'andy (13), donc elles doivent revenir a l'identique. */
+pose.persos = { andy: { w: W(777), ef: 1001, ea: 2001, ar: 1013, ba: 1019, xc: 4200,
+                        sup: { att: 3 } } };
 Object.assign(pose, TARDIFS);
 
 for (const k of Object.keys(pose)) neuve[k] = pose[k];

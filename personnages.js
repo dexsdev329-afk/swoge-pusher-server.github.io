@@ -156,6 +156,89 @@ function statAuNiveau(cap, niveau) {
 }
 
 /* ======================================================================
+ * LES POTIONS DE STAT — LE SEUL MOYEN DE DEPASSER SON PLAFOND
+ * ======================================================================
+ *
+ * `statAuNiveau` rend le plafond d'un personnage : au niveau 20, il a tout ce
+ * que sa naissance lui permettait, et plus rien ne monte. L'equipement ajoute
+ * par-dessus, mais il se retire — c'est un pret, pas un acquis.
+ *
+ * Une potion de stat est le seul gain qui reste ATTACHE au personnage. Elle
+ * ajoute au-dessus du plafond, elle ne se retire pas... et elle disparait
+ * avec lui. C'est ce qui la rend interessante : elle transforme du temps de
+ * jeu en quelque chose qu'on a peur de perdre.
+ *
+ * ---- pourquoi vingt, et pourquoi pas le meme pas partout ----
+ *
+ * Vingt potions par stat, c'est la borne. Au-dela, un personnage n'aurait
+ * plus de forme : la difference entre les six visages tient a leurs plafonds,
+ * et un nombre illimite de potions les rendrait tous identiques a la fin.
+ *
+ * Le PAS, lui, ne peut pas etre le meme pour tout le monde. Les huit stats ne
+ * vivent pas sur la meme echelle : l'attaque tourne autour de 55, les points
+ * de vie autour de 700. Un « +1 » partout donnerait +36 % d'attaque et +2,8 %
+ * de vie pour le meme effort — la potion de vie ne vaudrait pas la peine
+ * d'etre ramassee. La vie et le mana avancent donc par cinq, ce qui fait +100
+ * au bout des vingt : exactement le bareme de RotMG, ou une potion de vie
+ * donne +5 HP et une potion d'attaque +1.
+ */
+const SUP_MAX = 20;                         // le plafond dur, potions par stat
+const SUP_PAS = { hp: 5, mp: 5 };           // les six autres avancent par 1
+
+/* ---- ET POURQUOI VINGT NE PEUT PAS ETRE LE PLAFOND DE TOUT ----
+ *
+ * Les huit stats ne vivent pas sur la meme echelle. La defense d'andy plafonne
+ * a 25 ; ses points de vie a 700. Vingt potions donnent donc +80 % de defense
+ * et +14 % de vie — mais ce chiffre-la n'est meme pas le vrai probleme.
+ *
+ * Le vrai probleme se lit dans les degats. `degatsSubis` a un PLANCHER : on
+ * encaisse toujours au moins 15 % du coup, quelle que soit l'armure. Vingt
+ * points de defense en plus poussent le joueur contre ce plancher au milieu
+ * du jeu et nulle part ailleurs. Mesure faite contre trois creatures :
+ *
+ *     lime (att 25)      +20 def : +0 %    (deja au plancher sans rien)
+ *     squelette (att 55) +20 def : +200 %  (il tombe au plancher)
+ *     gardien (att 160)  +20 def : +17 %   (l'attaque depasse l'armure)
+ *
+ * Une potion qui ne vaut rien en bas, tout au milieu et peu en haut n'est pas
+ * equilibrable : ce n'est pas une courbe, c'est un accident. Cent points de
+ * vie donnent +14 % partout, ce qui est ennuyeux mais honnete.
+ *
+ * D'ou la regle : UNE POTION NE PEUT JAMAIS DONNER PLUS D'UN QUART DE CE QUE
+ * LA NAISSANCE A DONNE. Vingt reste le plafond dur ; en dessous, chaque stat
+ * s'arrete la ou son propre plafond le lui dit. Le compte devient donc :
+ *
+ *     hp 700 -> 20 potions (+100, +14 %)   def 25 -> 6  (+6,  +24 %)
+ *     mp 300 -> 15 (+75, +25 %)            spd 65 -> 16 (+16, +25 %)
+ *     att 55 -> 13 (+13, +24 %)            dex 75 -> 18 (+18, +24 %)
+ *     vit 40 -> 10 (+10, +25 %)            wis 50 -> 12 (+12, +24 %)
+ *
+ * Toutes entre 14 et 25 %. Aucune n'est un piege, aucune n'est un raccourci.
+ */
+const SUP_PART = 0.25;
+
+/** Ce qu'une potion ajoute a cette stat. */
+function supPas(stat) { return SUP_PAS[stat] || 1; }
+
+/**
+ * Combien de potions de cette stat un personnage peut boire.
+ * `cap` est SON plafond de naissance (BASE[skin][stat]) : deux visages n'ont
+ * pas les memes, et c'est justement ce qui les distingue.
+ */
+function supMaxDe(stat, cap) {
+  const c = Math.max(0, Number(cap) || 0);
+  if (!c) return 0;
+  return Math.max(1, Math.min(SUP_MAX, Math.floor(c * SUP_PART / supPas(stat))));
+}
+
+/** Le supplement qu'apportent `n` potions de cette stat, borne comprise. */
+function supDe(stat, n, cap) {
+  const plafond = cap === undefined ? SUP_MAX : supMaxDe(stat, cap);
+  const k = Math.max(0, Math.min(plafond, Number(n) || 0));
+  return k * supPas(stat);
+}
+
+/* ======================================================================
  * L'EQUIPEMENT — CE QUE CHAQUE FAMILLE APPORTE
  * ======================================================================
  *
@@ -314,4 +397,5 @@ module.exports = {
   XP_PAR_FAME, XP_PAR_FAME_APRES,
   volumePour, xpPour, xpDuVolume, niveauDeXp, statAuNiveau, fameDeXp,
   bonusesDe, statPrincipale,
+  SUP_MAX, SUP_PAS, SUP_PART, supPas, supMaxDe, supDe,
 };

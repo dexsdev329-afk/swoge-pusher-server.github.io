@@ -66,6 +66,9 @@ class Realm {
      * joueur — un champ disparaitrait avec lui, ce qui est exactement le
      * contraire de ce qu'on veut. */
     this.tombes = [];
+    /* Les sacs de butin, poses au sol. Comme les tombes : le serveur les
+       tient, ils vieillissent, et ils disparaissent. */
+    this.sacs = [];
     this._id = 1;
     this.peuple();
   }
@@ -317,12 +320,79 @@ class Realm {
     if (ev) {
       ev.touches.push({ addr, monstre: cible.id, espece: cible.espece,
                         perte, pv: cible.pv, x: cible.x, y: cible.y, pouvoir: 'foudre' });
-      if (cible.pv <= 0) {
-        j.xpGagnee += t.xp;
-        ev.kills.push({ addr, espece: cible.espece, xp: t.xp, x: cible.x, y: cible.y });
-      }
+      if (cible.pv <= 0) this._abat(cible, j, ev);
     }
     return sortie;
+  }
+
+  /**
+   * Abattre une creature. UN SEUL endroit donne l'experience, annonce la mort
+   * ET tire le butin.
+   *
+   * Il y avait deux chemins vers la mort d'un monstre — le projectile et le
+   * pouvoir — et chacun recopiait le gain d'experience. Y ajouter le butin
+   * aurait fait deux tirages a maintenir : le jour ou l'un change, l'autre
+   * paie encore l'ancien taux, et personne ne s'en apercoit puisque les deux
+   * marchent. C'est la meme lecon que `_meurt` pour les joueurs.
+   */
+  _abat(m, j, ev) {
+    const t = monde.MONSTRES[m.espece];
+    if (j) {
+      j.xpGagnee += t.xp;
+      ev.kills.push({ addr: j.addr, espece: m.espece, xp: t.xp, x: m.x, y: m.y });
+    }
+    /* Le butin tombe meme si le tueur a disparu entre-temps : le sac
+       appartient au sol, pas a celui qui a porte le coup. */
+    const b = monde.butinDe(m.espece, this.alea);
+    if (!b) return;
+    const sac = { id: this._nouvelId(), x: m.x, y: m.y, sac: b.sac,
+                  reste: monde.SAC.duree };
+    if (b.stat) sac.stat = b.stat;
+    if (b.potion) sac.potion = b.potion;
+    this.sacs.push(sac);
+    while (this.sacs.length > monde.SAC.plafond) this.sacs.shift();
+    ev.butins = ev.butins || [];
+    ev.butins.push({ addr: j ? j.addr : null, sac: sac.sac, stat: sac.stat || null,
+                     potion: sac.potion || null, x: sac.x, y: sac.y });
+  }
+
+  /**
+   * Ramasser. Le serveur decide de la distance : sans ca, la page pourrait
+   * s'attribuer un sac depuis l'autre bout de la carte, et les sacs sont
+   * exactement ce qu'on aurait interet a voler.
+   *
+   * On rend le contenu ; c'est l'appelant (server.js) qui sait le convertir
+   * en potion ou en point de stat — realm.js ne connait pas les comptes.
+   */
+  ramasse(addr, ev, accepte) {
+    const j = this.joueurs.get(addr);
+    if (!j) return null;
+    let choisi = -1, d2mini = monde.SAC.rayon * monde.SAC.rayon;
+    for (let i = 0; i < this.sacs.length; i++) {
+      const s = this.sacs[i];
+      const dx = s.x - j.x, dy = s.y - j.y, d2 = dx * dx + dy * dy;
+      /* Le PLUS PROCHE, pas le premier de la liste : deux sacs cote a cote et
+         c'est celui de derriere qu'on ramasserait. */
+      if (d2 <= d2mini) { d2mini = d2; choisi = i; }
+    }
+    if (choisi < 0) return null;
+    const s = this.sacs[choisi];
+    /* ---- ON DEMANDE AVANT DE PRENDRE ----
+     * Une potion d'attaque ramassee a 20/20 serait consommee pour rien, et le
+     * sac aurait disparu. On laisse donc l'appelant refuser : le sac reste au
+     * sol, il finira sa minute, et le joueur peut aller chercher autre chose.
+     * `realm.js` ne sait pas ce qu'est un plafond de potion — il se contente
+     * de poser la question. */
+    if (typeof accepte === 'function') {
+      const verdict = accepte(s);
+      if (verdict !== true) {
+        return { refuse: true, raison: verdict || 'refuse',
+                 sac: s.sac, stat: s.stat || null, potion: s.potion || null };
+      }
+    }
+    this.sacs.splice(choisi, 1);
+    if (ev) { ev.ramasses = ev.ramasses || []; ev.ramasses.push({ addr, ...s }); }
+    return s;
   }
 
   /**
@@ -355,7 +425,7 @@ class Realm {
    */
   pas(dt) {
     dt = Math.max(0, Math.min(0.5, Number(dt) || 0));
-    const ev = { degats: [], morts: [], kills: [], touches: [], regen: [] };
+    const ev = { degats: [], morts: [], kills: [], touches: [], regen: [], butins: [], ramasses: [] };
     if (!dt) return ev;
 
     for (const j of this.joueurs.values()) {
@@ -375,6 +445,12 @@ class Realm {
     for (let i = this.tombes.length - 1; i >= 0; i--) {
       this.tombes[i].reste -= dt;
       if (this.tombes[i].reste <= 0) this.tombes.splice(i, 1);
+    }
+    /* Les sacs aussi, et pour la meme raison : un sac ne du pas courant doit
+       partir avec sa minute entiere, pas avec 59,95 s. */
+    for (let i = this.sacs.length - 1; i >= 0; i--) {
+      this.sacs[i].reste -= dt;
+      if (this.sacs[i].reste <= 0) this.sacs.splice(i, 1);
     }
     this._pasMonstres(dt, ev);
     this._pasTirs(dt, ev);
@@ -642,11 +718,7 @@ class Realm {
              l'entendre, pas les trois joueurs d'a cote. */
           ev.touches.push({ addr: t.addr, monstre: m.id, espece: m.espece,
                             perte, pv: m.pv, x: t.x, y: t.y });
-          if (m.pv <= 0 && j) {
-            const xp = monde.MONSTRES[m.espece].xp;
-            j.xpGagnee += xp;
-            ev.kills.push({ addr: j.addr, espece: m.espece, xp, x: m.x, y: m.y });
-          }
+          if (m.pv <= 0) this._abat(m, j, ev);
           fini = true;
           break;
         }
@@ -777,6 +849,16 @@ class Realm {
       tombes: this.tombes.filter(pres).map((t) => ({
         i: t.id, x: Math.round(t.x), y: Math.round(t.y),
         nom: t.nom, par: t.par, r: Number(t.reste.toFixed(1)) })),
+      /* Les sacs de TOUT LE MONDE, comme les tombes. Un butin que seul son
+         tueur verrait n'aurait aucune raison d'etre au sol : autant le lui
+         donner directement. Ce qui les rend interessants, c'est qu'ils sont
+         visibles et qu'ils ne durent pas.
+         `r` part avec eux : la page dessine la minute qui s'ecoule, et sans
+         ce chiffre elle devrait la deviner — donc se tromper. */
+      sacs: this.sacs.filter(pres).map((s) => ({
+        i: s.id, x: Math.round(s.x), y: Math.round(s.y), s: s.sac,
+        st: s.stat || undefined, po: s.potion || undefined,
+        r: Number(s.reste.toFixed(1)) })),
     };
   }
 

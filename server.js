@@ -2988,6 +2988,13 @@ wss.on('connection', (ws) => {
                              chiffre ecrit cote page finirait par ne plus etre
                              celui qu'on subit. */
                           effets: monde.EFFETS,
+                          /* La regle des sacs part avec le reste : la page
+                             dessine la minute qui s'ecoule et le halo de
+                             ramassage. Sans ces chiffres elle les inventerait,
+                             et elle finirait par promettre un rayon que le
+                             serveur n'accorde pas — le pire des mensonges,
+                             celui qui donne l'impression d'un bug. */
+                          sac: monde.SAC,
                           moi: { x: Math.round(j.x), y: Math.round(j.y),
                                  pv: j.pv, pvMax: j.pvMax,
                                  mp: j.mp, mpMax: j.mpMax,
@@ -3006,6 +3013,58 @@ wss.on('connection', (ws) => {
         realmClients.delete(ws);
         realmDernierMouv.delete(ws.addr);
         return send(ws, { type: 'realmSorti' });
+      }
+      /* ---- RAMASSER ----
+       * Le client dit « je ramasse », rien d'autre : ni quel sac, ni ce qu'il
+       * contient. La distance, le choix du sac et le contenu se tranchent
+       * ici. Laisser le client nommer le sac aurait suffi a s'attribuer
+       * n'importe quoi depuis l'autre bout de la carte — et les sacs sont
+       * exactement ce qu'on aurait interet a voler. */
+      if (m.type === 'realmRamasse') {
+        if (!ws.addr || !realmClients.has(ws)) return;
+        const skin = ws.realmSkin;
+        const plafondPotion = (cle) => {
+          const l = game.potionsPour(ws.addr).filter((x) => x.cle === cle)[0];
+          return l ? l.quantite < l.max : false;
+        };
+        /* On REFUSE avant de prendre : une potion d'attaque ramassee a 20/20
+           serait bue pour rien et le sac aurait disparu. Refuse, il reste au
+           sol et finit sa minute. */
+        const r = realm.ramasse(ws.addr, null, (s) => {
+          if (s.stat) return game.supRestant(ws.addr, skin, s.stat) > 0 ? true : 'plein';
+          if (s.potion) return plafondPotion(s.potion) ? true : 'plein';
+          return true;
+        });
+        if (!r) return send(ws, { type: 'realmRamasse', rien: true });
+        if (r.refuse) {
+          return send(ws, { type: 'realmRamasse', refus: r.raison,
+                            sac: r.sac, stat: r.stat, potion: r.potion });
+        }
+        try {
+          if (r.stat) {
+            const b = game.boitStat(ws.addr, skin, r.stat);
+            persistSoon();
+            /* La fiche repart EN ENTIER, dans la forme que la page connait
+               deja ({skin, etat}) : la stat vient de changer, et le panneau
+               doit le montrer sans qu'on la lui recalcule. Inventer ici une
+               forme de message que personne n'ecoute aurait donne une potion
+               bue dont l'effet n'apparait qu'au prochain rechargement. */
+            send(ws, { type: 'personnage', skin, etat: game.personnageEtat(ws.addr, skin) });
+            return send(ws, { type: 'realmRamasse', sac: r.sac, stat: r.stat, ...b });
+          }
+          if (r.potion) {
+            const b = game.donnePotion(ws.addr, r.potion);
+            persistSoon();
+            /* La pile complete voyage AVEC la reponse, comme elle le fait
+               deja sur `potionBue` : c'est le meme besoin, et un second type
+               de message pour la meme chose se serait desynchronise. */
+            return send(ws, { type: 'realmRamasse', sac: r.sac, potion: r.potion, ...b,
+                              potions: game.potionsPour(ws.addr) });
+          }
+          return send(ws, { type: 'realmRamasse', sac: r.sac });
+        } catch (e) {
+          return send(ws, { type: 'realmRamasse', refus: e.message, sac: r.sac });
+        }
       }
       if (m.type === 'realmMove') {
         if (!ws.addr || !realmClients.has(ws)) return;

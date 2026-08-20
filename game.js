@@ -321,7 +321,14 @@ class Game {
                         /* L'XP GAGNEE AU COMBAT part au fichier ; celle du
                            volume ne part pas, elle se recalcule. Meme regle
                            que pour le compte, un cran plus bas. */
-                        xc: c.xc || undefined }; return o; }, {})
+                        xc: c.xc || undefined,
+                        /* Les potions bues sont un ACQUIS : elles doivent
+                           survivre a un redemarrage du serveur exactement
+                           comme un objet du coffre. Seule la mort du
+                           personnage les efface — pas un incident
+                           d'exploitation. */
+                        su: (c.sup && Object.keys(c.sup).length) ? c.sup : undefined,
+                      }; return o; }, {})
           : undefined,
         tg: p.tgId || null,
         wg: !!p.welcomeGranted, ww: !!p.welcomeWagered, wc: !!p.welcomeClaimed,
@@ -510,7 +517,19 @@ class Game {
               o[id] = { w: ethers.BigNumber.from(c.w || '0'),
                         ef: c.ef || null, ea: c.ea || null,
                         ar: c.ar || null, ba: c.ba || null,
-                        xc: Math.max(0, Number(c.xc) || 0) }; return o; }, {})
+                        xc: Math.max(0, Number(c.xc) || 0),
+                        sup: (c.su && typeof c.su === 'object')
+                          ? personnages.STATS.reduce((s, k) => {
+                              /* On borne AU CHARGEMENT avec le plafond de ce
+                                 personnage-la : une sauvegarde ecrite quand
+                                 le plafond etait plus haut ne doit pas rendre
+                                 un compte qu'on ne pourrait plus atteindre. */
+                              const mx = personnages.supMaxDe(k,
+                                (personnages.BASE[id] || {})[k]);
+                              const v = Math.max(0, Math.min(mx, Number(c.su[k]) || 0));
+                              if (v) s[k] = v; return s; }, {})
+                          : {},
+                      }; return o; }, {})
           : {},
         skinActif: d.ska || null,
         fame: Number(d.fm) || 0,
@@ -597,7 +616,7 @@ class Game {
        aucune classe. */
     if (wei && p.skinActif) {
       p.persos = p.persos || {};
-      const c = p.persos[p.skinActif] || (p.persos[p.skinActif] = { w: BN(0), ef: null, ea: null });
+      const c = p.persos[p.skinActif] || (p.persos[p.skinActif] = { w: BN(0), ef: null, ea: null, sup: {} });
       c.w = (c.w || BN(0)).add(wei);
     }
     if (jeu && wei) {
@@ -5006,7 +5025,7 @@ class Game {
    * pas pour changer l'issue d'une manche : voir personnages.js.
    */
   _persoDe(p, id) {
-    return (p.persos && p.persos[id]) || { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0 };
+    return (p.persos && p.persos[id]) || { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0, sup: {} };
   }
 
   /** Le volume mise d'un personnage, en unites lisibles. Volume -> XP -> Fame
@@ -5050,7 +5069,7 @@ class Game {
     const p = this._p(addr);
     if (!p.skins || !p.skins[skinId]) return null;
     p.persos = p.persos || {};
-    const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0 });
+    const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0, sup: {} });
     const avant = personnages.niveauDeXp(this._xpDe(c));
     c.xc = Math.max(0, Number(c.xc) || 0) + n;
     const apres = personnages.niveauDeXp(this._xpDe(c));
@@ -5117,8 +5136,15 @@ class Game {
 
     const stats = {};
     const portes = [bFruit, bArme, bArmure, bBague].filter(Boolean);
+    /* ---- LES POTIONS BUES, ET CE QU'ELLES AJOUTENT ----
+     * Elles s'ajoutent au meme endroit que l'equipement, c'est-a-dire
+     * AU-DESSUS du plafond de niveau. La difference est qu'elles ne se
+     * retirent pas : l'equipement est un pret, la potion est un acquis — un
+     * acquis qui meurt avec le personnage. */
+    const bues = c.sup || {};
     personnages.STATS.forEach((s) => {
       let v = personnages.statAuNiveau(base[s], niveau);
+      v += personnages.supDe(s, bues[s], base[s]);
       /* On additionne ce que CHAQUE piece donne sur CETTE stat. Le test
          precedent ne regardait que la stat principale : avec des profils a
          plusieurs stats, tout le reste du bonus aurait ete perdu en
@@ -5134,6 +5160,19 @@ class Game {
       xpProchain: xpProchain === null ? null : Math.round(xpProchain),
       volume: Math.round(volume),
       stats, base,
+      /* Ce qui a ete bu part avec la fiche : sans ce compte, la page ne
+         pourrait pas ecrire « 12 / 20 », et le joueur boirait a l'aveugle
+         jusqu'a ce que la potion cesse silencieusement de faire effet. */
+      sup: personnages.STATS.reduce((o, s) => {
+        const mx = personnages.supMaxDe(s, base[s]);
+        const k = Math.max(0, Math.min(mx, (c.sup || {})[s] | 0));
+        /* Le plafond part TOUJOURS, meme a zero potion : la page doit pouvoir
+           ecrire « 0 / 6 » sur la defense et « 0 / 20 » sur la vie. Sans ca
+           elle afficherait le meme vingt partout et le joueur decouvrirait la
+           vraie borne en se faisant refuser une potion. */
+        o[s] = { potions: k, max: mx, bonus: personnages.supDe(s, k, base[s]) };
+        return o;
+      }, {}),
       equipFruit: bFruit, equipArme: bArme, equipArmure: bArmure, equipBague: bBague,
       /* La Fame que ce personnage a accumulee — elle ne compte pour rien tant
          qu'il vit. `fameCompte` est celle qui est deja acquise, versee par les
@@ -5154,7 +5193,7 @@ class Game {
     const p = this._p(addr);
     if (!(p.skins || {})[skinId]) throw new Error('you do not own this skin');
     p.persos = p.persos || {};
-    const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0 });
+    const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0, sup: {} });
     const CHAMPS = { fruit: 'ef', arme: 'ea', armure: 'ar', bague: 'ba' };
     const SUJETS = { fruit: 'fruit', arme: 'weapon', armure: 'armor', bague: 'ring' };
     const champ = CHAMPS[genre];
@@ -5267,6 +5306,19 @@ class Game {
        et c'est justement le sens du sac : ce qui n'a pas ete mis a l'abri au
        coffre disparait avec le personnage. Sans ca, le sac serait un second
        coffre gratuit, et deposer ses trouvailles ne servirait a rien. */
+    /* ---- CE QUI A ETE BU MEURT AUSSI ----
+     * C'est toute la tension de la potion de stat : elle ne se retire pas,
+     * elle ne se range pas au coffre, et il n'existe aucun moyen de la mettre
+     * a l'abri. Vingt potions d'attaque, c'est vingt sacs bleus retrouves — et
+     * une seule mort. La garder ici ferait d'un personnage mort un personnage
+     * neuf mais deja fort, ce qui viderait la mort de son sens. */
+    const supPerdu = personnages.STATS.reduce((o, s) => {
+      const k = Math.max(0, ((c.sup || {})[s] | 0));
+      if (k) o[s] = k;
+      return o;
+    }, {});
+    c.sup = {};
+
     const sac = p.sac || {};
     /* On compte les EXEMPLAIRES, pas les lignes : le sac a huit places et
        chacune porte un objet, donc trois epees identiques sont trois pertes
@@ -5295,6 +5347,11 @@ class Game {
        fois evite au client d'aller le rechercher piece par piece au moment
        precis ou il doit afficher un bilan. */
     return { skin: skinId, perdus, sacPerdu, sacDetail, niveau: 0,
+             /* Les potions bues font partie du bilan : c'est souvent la
+                perte la plus lourde, et la seule qu'aucun coffre n'aurait pu
+                eviter. Ne pas la nommer donnerait un ecran de fin qui ment
+                par omission. */
+             supPerdu,
              xp: Math.round(xpAvant), fameGagnee, fameTotale: p.fame,
              skins: Object.keys(p.skins || {}) };
   }
@@ -5477,6 +5534,77 @@ class Game {
     p.potions[cle] = deja + livre;
     return { cle, livre, quantite: p.potions[cle], prix: t.prix * livre,
              balance: this.balanceStr(addr) };
+  }
+
+  /**
+   * ==================== CE QU'ON RAMASSE DANS LE MONDE ====================
+   *
+   * Deux methodes, deux natures. Une potion de soin est du STOCK : elle entre
+   * dans la meme pile que celles qu'on achete, avec le meme plafond. Une
+   * potion de stat est un ACQUIS : elle se boit sur-le-champ et ne se range
+   * nulle part — il n'existe aucun moyen de la mettre a l'abri, et c'est ce
+   * qui fait tout son prix.
+   */
+
+  /** Combien de potions de cette stat ce personnage peut encore boire. */
+  supRestant(addr, skinId, stat) {
+    if (personnages.STATS.indexOf(stat) < 0) return 0;
+    const base = personnages.BASE[skinId];
+    if (!base) return 0;
+    const p = this._p(addr);
+    if (!(p.skins || {})[skinId]) return 0;
+    const c = this._persoDe(p, skinId);
+    const deja = Math.max(0, ((c.sup || {})[stat] | 0));
+    return Math.max(0, personnages.supMaxDe(stat, base[stat]) - deja);
+  }
+
+  /**
+   * Boire une potion de stat trouvee au sol.
+   *
+   * Elle n'est jamais stockee : entre le sac au sol et la statistique du
+   * personnage, il n'y a pas d'etape. La ranger quelque part aurait ouvert la
+   * seule chose que cette potion ne doit pas permettre — la mettre a l'abri.
+   */
+  boitStat(addr, skinId, stat) {
+    if (personnages.STATS.indexOf(stat) < 0) throw new Error('Unknown stat');
+    const p = this._p(addr);
+    if (!(p.skins || {})[skinId]) throw new Error('No such character');
+    p.persos = p.persos || {};
+    const c = p.persos[skinId]
+      || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0, sup: {} });
+    c.sup = c.sup || {};
+    const base = personnages.BASE[skinId];
+    /* Le plafond depend du PERSONNAGE, pas de la potion : la defense d'andy
+       s'arrete a six, ses points de vie a vingt. Un plafond unique aurait
+       rendu la potion de defense trois fois plus forte que toutes les autres
+       — mesure faite : +200 % de survie contre un squelette. */
+    const mx = personnages.supMaxDe(stat, base[stat]);
+    const deja = Math.max(0, c.sup[stat] | 0);
+    if (deja >= mx) throw new Error('Already at ' + mx + '/' + mx);
+    c.sup[stat] = deja + 1;
+    return { stat, potions: c.sup[stat], max: mx,
+             pas: personnages.supPas(stat),
+             bonus: personnages.supDe(stat, c.sup[stat], base[stat]) };
+  }
+
+  /**
+   * Ranger une potion de soin trouvee au sol.
+   *
+   * Elle entre dans la MEME pile que celles de la boutique : deux piles
+   * separees — l'achetee et la trouvee — auraient demande au joueur de savoir
+   * laquelle il boit, pour aucune difference. Le plafond est celui de
+   * l'achat, et pour la meme raison : c'est un plafond de PORT, pas de
+   * commerce.
+   */
+  donnePotion(addr, cle) {
+    const t = POTIONS[cle];
+    if (!t) throw new Error('Unknown potion');
+    const p = this._p(addr);
+    p.potions = p.potions || {};
+    const deja = Math.max(0, p.potions[cle] | 0);
+    if (deja >= POTIONS_MAX) throw new Error('You already carry ' + POTIONS_MAX + ' of those');
+    p.potions[cle] = deja + 1;
+    return { cle, nom: t.nom, quantite: p.potions[cle], max: POTIONS_MAX };
   }
 
   /** Boire. Rend ce qu'il faut RENDRE — la vie appartient au monde, pas a ce

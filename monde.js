@@ -677,6 +677,100 @@ const POUVOIR_PAR_STAT = {
   mp: 'stase', vit: 'foudre',
 };
 
+/*
+ * ==================== LE BUTIN ====================
+ *
+ * ---- pourquoi un sac AU SOL et pas un objet dans l'inventaire ----
+ *
+ * Un butin qui atterrit directement dans le sac ne se voit pas, ne se dispute
+ * pas, et ne demande jamais de choisir. Un sac pose par terre fait les trois :
+ * il faut ALLER le chercher, souvent au milieu de ce qui reste vivant, et il
+ * ne dure pas. C'est la seule facon de rendre une bonne trouvaille memorable
+ * au lieu d'etre une ligne qui defile.
+ *
+ * ---- une minute, puis plus jamais ----
+ *
+ * Meme duree que la tombe, et pour la meme raison : assez pour revenir apres
+ * avoir nettoye la zone, trop court pour thesauriser un coin de carte. Un sac
+ * qui reste indefiniment transformerait le monde en entrepot.
+ *
+ * ---- huit creatures, huit potions ----
+ *
+ * Chaque espece laisse tomber UNE stat, toujours la meme. C'est ce qui donne
+ * une raison d'aller chercher telle creature plutot que la plus proche : un
+ * personnage qui manque de defense sait ou aller. Un tirage au hasard parmi
+ * les huit aurait donne le meme nombre de potions et aucune decision.
+ *
+ * La liste des stats n'est pas reecrite ici : elle se lit dans
+ * POUVOIR_PAR_STAT, qui les porte deja toutes les huit. Deux listes de stats
+ * dans le meme fichier finiraient par ne plus se ressembler.
+ */
+const SAC = {
+  duree: 60,      // une minute au sol
+  /* Meme borne que les tombes : une liste sans plafond finirait par voyager
+     en entier vers chaque client, dix fois par seconde. */
+  plafond: 120,
+  rayon: 56,      // a quelle distance on le ramasse
+};
+
+/* L'ordre EST celui des colonnes de objets/sacs.webp. Le dessin et la regle
+   ne peuvent pas diverger tant qu'ils sont la meme liste. */
+const SACS = ['brun', 'bleu', 'violet', 'or', 'rouge', 'blanc'];
+
+const STATS_POTION = Object.keys(POUVOIR_PAR_STAT);
+
+const POTION_DE = {
+  lime: 'hp', skeleton: 'att', archer: 'dex', rodeur: 'spd',
+  glace: 'def', meduse: 'wis', oracle: 'mp', lave: 'vit',
+  /* Le colosse est de la meme famille que le golem : meme potion. Lui en
+     donner une neuvieme aurait demande une neuvieme stat. */
+  colosse: 'vit',
+  /* Le boss donne N'IMPORTE LAQUELLE. C'est ce qui en fait une destination :
+     on y va pour ce qui manque, pas pour ce qu'il a. */
+  gardien: '*',
+  /* La nuee ne donne RIEN. Quarante-cinq points d'experience ne paient pas un
+     point permanent, et une creature qu'on croise seize fois par anneau
+     rendrait le 1/50 sans objet. */
+};
+
+/* Un sur cinquante. Le chiffre vient de ce qu'il doit produire : environ une
+   potion toutes les vingt minutes de chasse soutenue — assez rare pour qu'on
+   s'en souvienne, assez frequent pour qu'on y croie encore.
+   Le gardien en donne UNE A COUP SUR : il sort une fois par anneau de lave et
+   porte seize cents points de vie. Un boss qu'on peut abattre pour rien ne
+   vaut pas le deplacement. */
+const CHANCE_POTION = { defaut: 1 / 50, gardien: 1 };
+/* Le soin, lui, est ordinaire : c'est du consommable, pas une recompense.
+   La nuee fait exception : on en croise seize par anneau, et un sac sur six
+   en donnerait presque trois a chaque nettoyage. Ce n'est pas une question
+   d'economie — c'est que l'ecran se couvre de bruns et qu'on ne voit plus le
+   bleu, le seul qui compte. */
+const CHANCE_SOIN = { defaut: 1 / 6, nuee: 1 / 25 };
+
+/**
+ * Ce que laisse une creature abattue, ou `null`.
+ *
+ * UN SEUL tirage par mort, dans cet ordre : la potion de stat d'abord, le
+ * soin ensuite. Tirer les deux ferait tomber deux sacs sur la meme depouille,
+ * et le sac bleu — le seul qui compte — se perdrait sous le brun.
+ */
+function butinDe(espece, alea) {
+  const r = () => (typeof alea === 'function' ? alea() : Math.random());
+  const stat = POTION_DE[espece];
+  if (stat) {
+    const c = CHANCE_POTION[espece] === undefined ? CHANCE_POTION.defaut : CHANCE_POTION[espece];
+    if (r() < c) {
+      const s = stat === '*'
+        ? STATS_POTION[Math.min(STATS_POTION.length - 1, Math.floor(r() * STATS_POTION.length))]
+        : stat;
+      return { sac: 'bleu', stat: s };
+    }
+  }
+  const cs = CHANCE_SOIN[espece] === undefined ? CHANCE_SOIN.defaut : CHANCE_SOIN[espece];
+  if (r() < cs) return { sac: 'brun', potion: r() < 0.5 ? 'vie' : 'mana' };
+  return null;
+}
+
 /** Le pouvoir d'un porteur, a partir de la stat principale de son fruit.
     Rend `null` sans fruit : le poing nu ne lance pas d'eclair. */
 function pouvoirDeStat(stat) {
@@ -759,6 +853,7 @@ module.exports = {
   ARMES, DEGATS_POING, VITESSE_JOUEUR, CADENCE_MAX,
   cadenceDe, vitesseDe,
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
+  SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   choisitEspece,
   regenParSeconde, pouvoirDeStat,
