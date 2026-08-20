@@ -254,21 +254,44 @@ function mursDe(s, depart) {
       if (s.porte === 'ouest' && c === 0 && l === mid) continue;
       if (s.porte === 'est' && c === n - 1 && l === mid) continue;
       const coin = (c === 0 || c === n - 1) && (l === 0 || l === n - 1);
-      /* 0 horizontal, 1 vertical, 2 angle — le bout casse (3) sert aux deux
-         cotes de la porte, pour que l'ouverture se lise comme une ouverture
-         et non comme un trou. */
-      let piece;
-      if (coin) piece = 2;
-      else if (l === 0 || l === n - 1) piece = 0;
-      else piece = 1;
+      /* ---- LA PIECE, ET SON QUART DE TOUR ----
+       *
+       * La planche ne porte qu'UNE orientation de chaque : un segment
+       * horizontal, un vertical, un angle, un bout casse. Poser le meme angle
+       * aux quatre coins en laisse trois a l'envers — le mur se lit alors
+       * comme un decor colle plutot que comme une piece batie.
+       *
+       * `a` est le nombre de quarts de tour dans le sens horaire. L'angle de
+       * la planche relie le HAUT et la DROITE (un coin bas-gauche) : chaque
+       * quart de tour le fait avancer d'un coin.
+       */
+      let piece, tour = 0;
+      if (coin) {
+        piece = 2;
+        const gauche = (c === 0), haut = (l === 0);
+        tour = haut ? (gauche ? 1 : 2) : (gauche ? 0 : 3);
+      } else if (l === 0 || l === n - 1) {
+        piece = 0;                       // segment horizontal, deja dans le bon sens
+      } else {
+        piece = 1;                       // segment vertical, idem
+      }
+      /* Le bout casse borde la porte : c'est ce qui fait lire l'ouverture
+         comme une ouverture et non comme un trou. Il est tourne pour que sa
+         cassure regarde la porte. */
       const versPorte =
         (s.porte === 'nord' && l === 0 && Math.abs(c - mid) === 1) ||
         (s.porte === 'sud' && l === n - 1 && Math.abs(c - mid) === 1) ||
         (s.porte === 'ouest' && c === 0 && Math.abs(l - mid) === 1) ||
         (s.porte === 'est' && c === n - 1 && Math.abs(l - mid) === 1);
-      if (versPorte) piece = 3;
+      if (versPorte) {
+        piece = 3;
+        /* La planche pose sa cassure vers le BAS. Un quart de tour la met a
+           gauche, deux en haut, trois a droite. */
+        if (s.porte === 'nord' || s.porte === 'sud') tour = (c < mid) ? 3 : 1;
+        else tour = (l < mid) ? 2 : 0;
+      }
       out.push({ i: id++, x: x0 + c * TUILE, y: y0 + l * TUILE,
-                 r: SALLE.mur, t: MUR_BASE + piece, salle: s.i });
+                 r: SALLE.mur, t: MUR_BASE + piece, a: tour, salle: s.i });
     }
   }
   return out;

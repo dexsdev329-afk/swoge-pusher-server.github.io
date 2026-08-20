@@ -300,6 +300,39 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
        `les ${M.OBSTACLE.nombre} rochers sont toujours la, murs en plus`);
   }
 
+  /* ---- CHAQUE PIECE DE MUR EST TOURNEE ----
+   * La planche ne porte qu'UNE orientation de chaque. Poser le meme angle aux
+   * quatre coins en laisse trois a l'envers, et le mur se lit alors comme un
+   * decor colle plutot que comme une piece batie. */
+  {
+    const s = M.salles(alea(3))[0];
+    const murs = M.mursDe(s, 1);
+    const n2 = M.SALLE.cote, demi2 = (n2 * M.TUILE) / 2;
+    const x0 = s.x - demi2 + M.TUILE / 2, y0 = s.y - demi2 + M.TUILE / 2;
+    const at = (c, l) => murs.filter((m) =>
+      Math.round(m.x) === Math.round(x0 + c * M.TUILE) &&
+      Math.round(m.y) === Math.round(y0 + l * M.TUILE))[0];
+
+    const coins = [[0, 0], [n2 - 1, 0], [0, n2 - 1], [n2 - 1, n2 - 1]].map(([c, l]) => at(c, l));
+    ok(coins.every(Boolean), 'les quatre coins existent');
+    ok(coins.every((m) => m.t - M.MUR_BASE === 2), 'et portent tous la piece d angle');
+    eq(new Set(coins.map((m) => m.a)).size, 4,
+       'chacun avec un quart de tour DIFFERENT : ' + coins.map((m) => m.a).join(','));
+
+    /* Les segments droits, eux, sont deja dans le bon sens : les tourner
+       serait du travail rendu a l'identique. */
+    const hautMilieu = at(Math.floor(n2 / 2) - 2, 0);
+    ok(hautMilieu && hautMilieu.t - M.MUR_BASE === 0 && !hautMilieu.a,
+       'un segment horizontal ne tourne pas');
+    const gaucheMilieu = at(0, Math.floor(n2 / 2) - 2);
+    ok(gaucheMilieu && gaucheMilieu.t - M.MUR_BASE === 1 && !gaucheMilieu.a,
+       'un segment vertical non plus');
+
+    /* Tous les quarts de tour sont des quarts de tour. */
+    ok(murs.every((m) => [0, 1, 2, 3].indexOf(m.a || 0) >= 0),
+       'aucune rotation batarde');
+  }
+
   /* ---- VIDER LA SALLE LAISSE SON BUTIN ----
    * Une fois. Sans le drapeau, un sac naitrait a chaque pas tant que la salle
    * est vide — dix par seconde. */
