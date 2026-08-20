@@ -3046,6 +3046,9 @@ wss.on('connection', (ws) => {
         const r = realm.ramasse(ws.addr, null, (o) => {
           if (o.stat) return game.supRestant(ws.addr, skin, o.stat) > 0 ? true : 'plein';
           if (o.potion) return plafondPotion(o.potion) ? true : 'plein';
+          /* Un OBJET prend une place du sac : on refuse avant de le sortir du
+             sac au sol, sinon il disparaitrait des deux cotes a la fois. */
+          if (o.item) return game.sacRempli(ws.addr) < 8 ? true : 'sac-plein';
           return true;
         }, m.i, m.place);
         if (!r) return send(ws, { type: 'realmRamasse', rien: true });
@@ -3078,10 +3081,46 @@ wss.on('connection', (ws) => {
                               vide: r.vide, ...b,
                               potions: game.potionsPour(ws.addr) });
           }
-          return send(ws, { type: 'realmRamasse', sac: r.sac });
+          if (r.item) {
+            const b = game.prendDuSol(ws.addr, r.item);
+            persistSoon();
+            /* Le sac complet repart avec la reponse : la grille de gauche doit
+               montrer l'objet a la place ou il vient d'arriver, sans un
+               aller-retour de plus. */
+            return send(ws, { type: 'realmRamasse', sac: r.sac, vide: r.vide, ...b,
+                              sacJoueur: game.sacPour(ws.addr) });
+          }
+          return send(ws, { type: 'realmRamasse', sac: r.sac, vide: r.vide });
         } catch (e) {
           return send(ws, { type: 'realmRamasse', refus: e.message, sac: r.sac });
         }
+      }
+      /* ---- DEPOSER ----
+       * L'autre moitie de l'echange : on pose une piece du sac par terre. Elle
+       * rejoint le sac sur lequel on se tient, ou en cree un brun. La place
+       * n'est pas nommee — c'est le sol qui decide ou elle tombe. */
+      if (m.type === 'realmDepose') {
+        if (!ws.addr || !realmClients.has(ws)) return;
+        let sorti = null;
+        try { sorti = game.poseAuSol(ws.addr, m.item); }
+        catch (e) { return send(ws, { type: 'realmDepose', refus: e.message }); }
+        /* La piece part au sol avec son nom et sa cle d'image : realm.js
+           n'a aucune raison de connaitre la boutique, et les retrouver a
+           chaque envoi d'etat les recalculerait dix fois par seconde et par
+           client. */
+        const r = realm.depose(ws.addr, { item: sorti.item, nom: sorti.nom,
+                                          rarete: sorti.rarete,
+                                          cle: (boutique.item(sorti.item) || {}).cle || null }, null);
+        if (!r || r.refuse) {
+          /* Le sol n'en a pas voulu : on REMET la piece dans le sac. Sans ce
+             retour, un sac au sol plein ferait disparaitre l'objet — et il
+             aurait ete pris au joueur avant qu'on sache s'il y avait la place. */
+          try { game.prendDuSol(ws.addr, m.item); } catch (e) {}
+          return send(ws, { type: 'realmDepose', refus: (r && r.raison) || 'refuse' });
+        }
+        persistSoon();
+        return send(ws, { type: 'realmDepose', ...sorti, id: r.id, sac: r.sac,
+                          sacJoueur: game.sacPour(ws.addr) });
       }
       if (m.type === 'realmMove') {
         if (!ws.addr || !realmClients.has(ws)) return;

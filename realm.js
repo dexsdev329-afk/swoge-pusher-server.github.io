@@ -415,6 +415,43 @@ class Realm {
   }
 
   /**
+   * Deposer un objet au sol.
+   *
+   * Il rejoint le sac sur lequel on se tient s'il y reste une place ; sinon un
+   * sac BRUN nait sous nos pieds avec sa minute entiere. C'est ce qui rend
+   * l'echange possible — poser son epee commune, prendre celle qu'on vient de
+   * trouver — et c'est aussi comment on donne quelque chose a quelqu'un : le
+   * sac est visible de tous, et le premier arrive le prend.
+   *
+   * Le brun n'est pas un choix esthetique : un objet depose ne doit pas
+   * ressembler a un butin rare, sinon on traverserait la carte pour une epee
+   * commune que quelqu'un a jetee.
+   */
+  depose(addr, objet, ev) {
+    const j = this.joueurs.get(addr);
+    if (!j) return null;
+    const item = Number(objet && objet.item !== undefined ? objet.item : objet);
+    if (!Number.isFinite(item)) return null;
+    let s = this.sacSousLesPieds(addr);
+    if (s && s.contenu.length >= monde.SAC.cases) return { refuse: true, raison: 'sac-plein' };
+    if (!s) {
+      s = { id: this._nouvelId(), x: j.x, y: j.y, sac: 'brun',
+            reste: monde.SAC.duree, contenu: [] };
+      this.sacs.push(s);
+      while (this.sacs.length > monde.SAC.plafond) this.sacs.shift();
+    }
+    /* Le NOM et la CLE d'image entrent avec la piece, une fois. Les retrouver
+       au moment d'envoyer l'etat les recalculerait pour chaque client, dix
+       fois par seconde — et obligerait realm.js a connaitre la boutique, ce
+       qu'il n'a aucune raison de faire. */
+    s.contenu.push({ item, cle: (objet && objet.cle) || null,
+                     nom: (objet && objet.nom) || null,
+                     rarete: (objet && objet.rarete) || null });
+    if (ev) { ev.deposes = ev.deposes || []; ev.deposes.push({ addr, id: s.id, item }); }
+    return { id: s.id, sac: s.sac, place: s.contenu.length - 1 };
+  }
+
+  /**
    * Mourir. Un SEUL endroit pose l'evenement ET la pierre : les faire a deux
    * endroits differents finirait par donner une mort sans tombe, et le trou
    * serait invisible — personne ne remarque une pierre qui n'apparait pas.
@@ -880,7 +917,9 @@ class Realm {
            places des qu'on marche dessus, et elle doit pouvoir la remplir
            sans une deuxieme demande — sinon la grille s'ouvre vide et se
            remplit un aller-retour plus tard, sous le doigt. */
-        c: s.contenu.map((o) => (o.stat ? { st: o.stat } : { po: o.potion })),
+        c: s.contenu.map((o) => (o.stat ? { st: o.stat }
+                              : o.potion ? { po: o.potion }
+                              : { it: o.item, cl: o.cle, nm: o.nom, ra: o.rarete })),
         r: Number(s.reste.toFixed(1)) })),
     };
   }

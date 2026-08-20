@@ -346,4 +346,94 @@ function pose(r, espece, x, y, pv) {
   eq(g2.personnageEtat(A, 'andy').sup.wis.potions, 6, 'avec leur compte exact');
 }
 
+// ================== 7. L'ECHANGE : ON DEPOSE AUTANT QU'ON PREND
+/*
+ * Un sac au sol n'est pas seulement une source. On y depose, ce qui rend
+ * l'echange possible — poser son epee commune, prendre celle qu'on vient de
+ * trouver — et c'est aussi comment on donne : le sac est visible de tous.
+ *
+ * Le risque de toute cette moitie tient en une phrase : UN OBJET NE DOIT
+ * JAMAIS DISPARAITRE DES DEUX COTES. Il est dans le sac du joueur, ou il est
+ * au sol, jamais entre les deux et jamais nulle part.
+ */
+{
+  const g = new Game();
+  const p = g._p(A);
+  p.balance = ethers.utils.parseUnits('999999', cfg.DECIMALS);
+  p.hasDeposited = true;
+  g.acheteSkin(A, 'andy');
+
+  const boutique = require('./boutique');
+  const unObjet = boutique.itemsDeSaison(2)[0].id;   // une arme quelconque
+  const autre = boutique.itemsDeSaison(3)[0].id;
+
+  const r = new Realm({ alea: alea(21) });
+  const j = r.rejoint(A, FICHE);
+  r.monstres = [];
+
+  /* ---- SANS SAC DESSOUS, IL EN NAIT UN BRUN ----
+   * Brun, et pas dore : un objet depose ne doit pas ressembler a un butin
+   * rare, sinon on traverserait la carte pour une epee commune que quelqu'un
+   * a jetee. */
+  p.sac = {}; p.sac[unObjet] = 1;
+  eq(g.sacRempli(A), 1, 'l objet est bien dans le sac du joueur');
+  g.poseAuSol(A, unObjet);
+  const ne = r.depose(A, unObjet, null);
+  ok(ne && !ne.refuse, 'deposer sans rien sous les pieds cree un sac');
+  eq(r.sacs.length, 1, 'un seul');
+  eq(r.sacs[0].sac, 'brun', 'et il est BRUN, pas dore');
+  eq(r.sacs[0].reste, M.SAC.duree, `avec sa minute entiere (${M.SAC.duree} s)`);
+  eq(r.sacs[0].contenu[0].item, unObjet, 'il contient bien la piece deposee');
+  eq(g.sacRempli(A), 0, 'et elle n est plus dans le sac du joueur');
+
+  /* ---- UN DEUXIEME DEPOT REJOINT LE MEME SAC ----
+   * Sinon on couvrirait le sol de sacs a un objet, et il faudrait marcher
+   * dessus un par un. */
+  p.sac[autre] = 1;
+  g.poseAuSol(A, autre);
+  r.depose(A, autre, null);
+  eq(r.sacs.length, 1, 'un deuxieme depot rejoint le sac deja la');
+  eq(r.sacs[0].contenu.length, 2, 'qui porte maintenant deux places');
+
+  /* ---- ET ON REPREND ----
+   * Le meme geste dans l'autre sens : c'est ca, l'echange. */
+  const repris = r.ramasse(A, null, () => true, r.sacs[0].id, 0);
+  eq(repris.item, unObjet, 'on reprend la piece qu on avait posee');
+  g.prendDuSol(A, repris.item);
+  eq(g.sacRempli(A), 1, 'elle revient dans le sac du joueur');
+  eq(r.sacs[0].contenu.length, 1, 'et le sac au sol n en a plus qu une');
+
+  /* ---- UN SAC AU SOL PLEIN REFUSE ----
+   * Et c'est le cas dangereux : le serveur sort la piece du sac du joueur
+   * AVANT de savoir si le sol en veut. Sans le retour, elle disparaitrait. */
+  r.sacs[0].contenu = [];
+  for (let i = 0; i < M.SAC.cases; i++) r.sacs[0].contenu.push({ potion: 'vie' });
+  const refus = r.depose(A, autre, null);
+  ok(refus && refus.refuse, `un sac au sol plein (${M.SAC.cases} places) refuse`);
+  eq(r.sacs[0].contenu.length, M.SAC.cases, 'et son contenu ne bouge pas');
+  eq(r.sacs.length, 1, 'aucun sac de secours ne nait a cote');
+
+  /* ---- LE SAC DU JOUEUR PLEIN REFUSE AUSSI ----
+   * L'objet doit rester AU SOL. Le sortir du sac au sol pour decouvrir
+   * ensuite qu'il n'a nulle part ou aller le ferait disparaitre. */
+  r.sacs = [{ id: 60, x: j.x + 10, y: j.y, sac: 'or', reste: 60,
+              contenu: [{ item: autre }] }];
+  const bloque = r.ramasse(A, null, (o) => (o.item ? 'sac-plein' : true), 60, 0);
+  ok(bloque && bloque.refuse, 'un sac de joueur plein refuse la piece');
+  eq(r.sacs[0].contenu.length, 1, 'et elle reste au sol, intacte');
+  eq(r.sacs[0].contenu[0].item, autre, 'la meme');
+
+  /* ---- LE PLAFOND DU SAC EST BIEN CELUI DU JEU ----
+   * Il vit dans game.js (SAC_CASES) et pas dans un chiffre recopie ici : le
+   * refus et l'affichage doivent compter les memes cases. */
+  p.sac = {};
+  const pieces = boutique.itemsDeSaison(2).slice(0, 9).map((o) => o.id);
+  let poses = 0;
+  for (const id of pieces) {
+    try { g.prendDuSol(A, id); poses++; } catch (e) { break; }
+  }
+  eq(poses, 8, `le sac du joueur s arrete a huit places (${poses} acceptees)`);
+  leve(() => g.prendDuSol(A, pieces[8]), 'et la neuvieme est refusee');
+}
+
 console.log('butin.test.js : ' + n + ' verifications OK');

@@ -5607,6 +5607,51 @@ class Game {
     return { cle, nom: t.nom, quantite: p.potions[cle], max: POTIONS_MAX };
   }
 
+  /**
+   * ==================== ECHANGER AVEC LE SOL ====================
+   *
+   * Le sac au sol n'est pas seulement une source : on peut y DEPOSER. C'est ce
+   * qui rend l'echange possible — poser son epee commune dans le sac, prendre
+   * celle qu'on vient de trouver, et repartir sans etre passe par le coffre.
+   *
+   * Les deux methodes ne touchent QUE `p.sac`. Ou va l'objet ensuite (dans un
+   * sac au sol qui expire dans une minute) ne regarde pas ce fichier : c'est
+   * realm.js qui tient le sol.
+   */
+
+  /** Un objet ramasse entre dans le sac, s'il y reste une place. */
+  prendDuSol(addr, itemId) {
+    const id = Number(itemId);
+    const o = boutique.item(id);
+    if (!o) throw new Error('Unknown item');
+    if (this.sacRempli(addr) >= SAC_CASES) {
+      throw new Error('Your backpack is full — ' + SAC_CASES + ' slots, one item each');
+    }
+    const p = this._p(addr);
+    p.sac = p.sac || {};
+    p.sac[id] = (p.sac[id] || 0) + 1;
+    return { item: id, nom: o.nom, rarete: o.rarete };
+  }
+
+  /**
+   * Un objet du sac s'en va au sol.
+   *
+   * On ne verifie PAS qu'il est porte : un objet porte n'est pas dans le sac,
+   * il est sur le personnage. C'est `sortDuCoffre` qui doit s'en soucier,
+   * parce que lui va chercher dans le coffre ou dorment les pieces portees.
+   */
+  poseAuSol(addr, itemId) {
+    const id = Number(itemId);
+    const o = boutique.item(id);
+    if (!o) throw new Error('Unknown item');
+    const p = this._p(addr);
+    p.sac = p.sac || {};
+    if (!(p.sac[id] > 0)) throw new Error('That one is not in your backpack');
+    p.sac[id] -= 1;
+    if (p.sac[id] <= 0) delete p.sac[id];
+    return { item: id, nom: o.nom, rarete: o.rarete };
+  }
+
   /** Boire. Rend ce qu'il faut RENDRE — la vie appartient au monde, pas a ce
       fichier, et c'est server.js qui la pose sur le joueur en jeu. */
   boitPotion(addr, cle) {
