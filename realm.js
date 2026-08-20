@@ -657,7 +657,7 @@ class Realm {
    */
   pas(dt) {
     dt = Math.max(0, Math.min(0.5, Number(dt) || 0));
-    const ev = { degats: [], morts: [], kills: [], touches: [], regen: [], butins: [], ramasses: [] };
+    const ev = { degats: [], morts: [], kills: [], touches: [], regen: [], butins: [], ramasses: [], expires: [] };
     if (!dt) return ev;
 
     for (const j of this.joueurs.values()) {
@@ -682,7 +682,21 @@ class Realm {
        partir avec sa minute entiere, pas avec 59,95 s. */
     for (let i = this.sacs.length - 1; i >= 0; i--) {
       this.sacs[i].reste -= dt;
-      if (this.sacs[i].reste <= 0) this.sacs.splice(i, 1);
+      if (this.sacs[i].reste > 0) continue;
+      /* ---- CE QUI N'A PAS ETE RAMASSE REVIENT AU POOL ----
+       * Une piece a plafond d'emission est COMPTEE des qu'elle tombe : sans
+       * ca, deux joueurs pourraient ramasser la derniere relique. Mais un sac
+       * qui finit sa minute sans que personne n'y touche aurait alors retire
+       * cette piece du monde pour toujours — et le plafond se serait vide tout
+       * seul, sans qu'un seul joueur n'ait rien recu.
+       * On annonce donc ce qui part avec le sac ; c'est l'appelant qui tient
+       * le registre, realm.js ne le connait pas. */
+      const perdu = this.sacs[i].contenu.filter((o) => o.item);
+      if (perdu.length && ev) {
+        ev.expires = ev.expires || [];
+        for (const o of perdu) ev.expires.push({ item: o.item, nom: o.nom });
+      }
+      this.sacs.splice(i, 1);
     }
     this._pasSalles(dt, ev);
     this._pasMonstres(dt, ev);

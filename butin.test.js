@@ -578,4 +578,87 @@ function pose(r, espece, x, y, pv) {
   }
 }
 
+// ================== 9. LE PLAFOND VAUT AUSSI POUR CE QUI TOMBE
+/*
+ * `RARETES` annonce quatre exemplaires de chaque relique. Ce chiffre ne
+ * voulait rien dire tant que rien ne comptait les pieces TROUVEES : la table
+ * promettait une rarete que le monde pouvait produire sans fin.
+ */
+{
+  const boutique = require('./boutique');
+  const g = new Game();
+  const rel = boutique.ITEMS_DROP.filter((o) => o.rarete === 'relique');
+  const plafond = boutique.rarete('relique').plafond;
+  const total = rel.length * plafond;
+
+  /* ---- ON INSCRIT AU MOMENT OU CA TOMBE, PAS AU RAMASSAGE ----
+   * Entre les deux il y a une minute pendant laquelle la piece existe deja au
+   * sol : deux joueurs qui courent vers le meme sac ne doivent pas pouvoir
+   * emporter la derniere relique chacun. */
+  let x = 4242;
+  const a = () => { x = (x * 1664525 + 1013904223) >>> 0; return x / 4294967296; };
+  const sorties = [];
+  for (let i = 0; i < total + 20; i++) {
+    const p = g.tireButin('relique', a);
+    if (p) sorties.push(p.item);
+  }
+  eq(sorties.length, total,
+     `le monde ne peut sortir que ${total} reliques (${rel.length} pieces x ${plafond})`);
+  eq(g.tireButin('relique', a), null, 'la suivante ne tombe pas du tout');
+  rel.forEach((o) => {
+    eq(g.boutiqueEmis[o.id], plafond, `« ${o.nom} » est sorti ${plafond} fois, pas plus`);
+  });
+
+  /* ---- ET CE QUI N'EST PAS RAMASSE REVIENT ----
+   * Sans ce retour, quatre reliques tombees dans un coin desert videraient le
+   * plafond pour toujours, alors que personne n'en a recu une. */
+  g.rendButin(rel[0].id);
+  const revenue = g.tireButin('relique', a);
+  ok(revenue && revenue.item === rel[0].id,
+     'une relique rendue au pool peut retomber');
+  eq(g.tireButin('relique', a), null, 'et une seule : le plafond tient toujours');
+
+  /* Le commun ne bloque pas pour autant : son plafond est de mille. */
+  const g2 = new Game();
+  let sortiesC = 0;
+  for (let i = 0; i < 200; i++) if (g2.tireButin('commun', a)) sortiesC++;
+  eq(sortiesC, 200, 'deux cents communs sortent sans probleme');
+
+  /* Et on ne tire JAMAIS dans la boutique : une piece vendue qui tomberait
+     par terre casserait son propre plafond, puisque rien ne l'aurait comptee
+     a l'achat. */
+  const g3 = new Game();
+  const vus = {};
+  for (let i = 0; i < 400; i++) {
+    const p = g3.tireButin('legendaire', a);
+    if (p) vus[p.item] = true;
+  }
+  ok(Object.keys(vus).length > 0, 'des legendaires tombent');
+  ok(Object.keys(vus).every((id) => boutique.item(Number(id)).drop),
+     'et ce sont TOUJOURS des trouvailles, jamais des pieces de boutique');
+
+  /* ---- LE SAC QUI EXPIRE ANNONCE CE QU'IL EMPORTE ----
+   * C'est realm.js qui le dit, et server.js qui rend au registre : la
+   * simulation ne connait pas la boutique, et le registre ne connait pas le
+   * sol. */
+  {
+    const r = new Realm({ alea: alea(77) });
+    const j = r.rejoint(A, FICHE);
+    r.monstres = [];
+    r.sacs = [{ id: 1, x: j.x, y: j.y, sac: 'blanc', reste: 0.2,
+                contenu: [{ item: rel[0].id, nom: rel[0].nom }] }];
+    const ev = r.pas(0.3);
+    eq(r.sacs.length, 0, 'le sac a fini sa minute');
+    eq(ev.expires.length, 1, 'et il annonce ce qu il emporte');
+    eq(ev.expires[0].item, rel[0].id, 'nommement');
+
+    /* Un sac qui ne contient qu'une potion n'annonce rien : il n'y a rien a
+       rendre, et une liste pleine de riens serait du bruit. */
+    r.sacs = [{ id: 2, x: j.x, y: j.y, sac: 'brun', reste: 0.2,
+                contenu: [{ potion: 'vie' }] }];
+    const ev2 = r.pas(0.3);
+    eq(ev2.expires.length, 0, 'une potion perdue ne rend rien au registre');
+  }
+}
+
 console.log('butin.test.js : ' + n + ' verifications OK');

@@ -587,29 +587,12 @@ const monde = require('./monde');
 const personnages = require('./personnages');
 /* ---- LE TIRAGE DES PIECES QUI TOMBENT ----
  * `monde.js` decide de la RARETE, `realm.js` fait tomber le sac, et ni l'un ni
- * l'autre ne connait la boutique. C'est ici — le seul endroit qui tient les
- * trois — qu'une rarete devient une piece.
+ * l'autre ne connait la boutique. C'est `game.tireButin` qui transforme une
+ * rarete en piece : le registre des exemplaires emis vit la-bas, et un plafond
+ * applique loin du registre qui le tient serait un plafond qu'on oublierait.
  *
- * On ne tire QUE dans la serie en drop : une piece de la boutique qui
- * tomberait par terre casserait les plafonds d'emission, puisque rien ne
- * l'aurait comptee au registre. Les trouvailles, elles, n'ont jamais ete
- * vendues et n'y figurent pas non plus. */
-const DROPS_PAR_RARETE = new Map();
-for (const o of boutique.ITEMS_DROP) {
-  if (!DROPS_PAR_RARETE.has(o.rarete)) DROPS_PAR_RARETE.set(o.rarete, []);
-  DROPS_PAR_RARETE.get(o.rarete).push(o);
-}
-function tireObjetDeDrop(rarete, alea) {
-  const lot = DROPS_PAR_RARETE.get(String(rarete));
-  if (!lot || !lot.length) return null;
-  const r = typeof alea === 'function' ? alea() : Math.random();
-  const o = lot[Math.min(lot.length - 1, Math.floor(r * lot.length))];
-  /* Le nom et la cle d'image partent AVEC la piece : les retrouver au moment
-     d'envoyer l'etat du monde les recalculerait pour chaque client, dix fois
-     par seconde. */
-  return { item: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete };
-}
-const realm = new Realm({ tireObjet: tireObjetDeDrop });
+ * Ce fichier ne fait donc plus que brancher les deux. */
+const realm = new Realm({ tireObjet: (r, a) => game.tireButin(r, a) });
 const realmClients = new Set();
 /* Depuis quand un joueur n'a pas annonce sa position : c'est ce delai qui
    sert de `dt` a la borne de vitesse. Le mesurer ici plutot que de faire
@@ -3904,6 +3887,12 @@ const realmInterval = setInterval(() => {
   realmHorloge = t;
   let ev;
   try { ev = realm.pas(dt); } catch (e) { console.error('[realm]', e && e.message); return; }
+
+  /* Les sacs qui ont fini leur minute sans etre ramasses rendent leur piece
+     au registre : sans ca, quatre reliques tombees dans un coin desert
+     videraient le plafond pour toujours, sans qu'un seul joueur n'en ait vu
+     une. */
+  for (const x of (ev.expires || [])) game.rendButin(x.item);
 
   /* ---- CE QU'ON A TUE DEVIENT DE L'XP ----
      Le client n'a rien annonce : il a demande a tirer, le serveur a constate

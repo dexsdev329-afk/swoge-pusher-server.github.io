@@ -5628,6 +5628,55 @@ class Game {
    * realm.js qui tient le sol.
    */
 
+  /**
+   * ==================== CE QUE LE MONDE FAIT TOMBER ====================
+   *
+   * `monde.js` decide de la RARETE, `realm.js` fait tomber le sac, et ni l'un
+   * ni l'autre ne connait la boutique. Le registre des exemplaires emis, lui,
+   * vit ici — c'est donc ici que la rarete devient une piece.
+   *
+   * ---- le plafond vaut aussi pour ce qui tombe ----
+   *
+   * `RARETES` annonce quatre exemplaires de chaque relique. Ce chiffre ne
+   * voulait rien dire tant que rien ne comptait les pieces TROUVEES : la table
+   * promettait une rarete que le monde pouvait produire sans fin.
+   *
+   * On inscrit donc au moment ou la piece TOMBE, pas au ramassage. Deux
+   * joueurs qui courent vers le meme sac ne doivent pas pouvoir emporter la
+   * derniere relique chacun — et entre les deux il y a une minute pendant
+   * laquelle la piece existe deja au sol.
+   */
+  tireButin(rarete, alea) {
+    const lot = boutique.ITEMS_DROP.filter((o) => o.rarete === String(rarete));
+    if (!lot.length) return null;
+    this.boutiqueEmis = this.boutiqueEmis || {};
+    const dispo = lot.filter((o) => boutique.restant(o.id, this.boutiqueEmis) > 0);
+    if (!dispo.length) return null;
+    const r = typeof alea === 'function' ? alea() : Math.random();
+    const o = dispo[Math.min(dispo.length - 1, Math.floor(r * dispo.length))];
+    this.boutiqueEmis[o.id] = (this.boutiqueEmis[o.id] || 0) + 1;
+    /* Le nom et la cle d'image partent AVEC la piece : les retrouver au moment
+       d'envoyer l'etat du monde les recalculerait pour chaque client, dix fois
+       par seconde. */
+    return { item: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete };
+  }
+
+  /**
+   * Une piece qui a fini sa minute au sol sans etre ramassee redescend du
+   * registre.
+   *
+   * Sans ce retour, le plafond se viderait tout seul : quatre reliques tombees
+   * dans un coin desert, et plus jamais une seule, alors que personne n'en a
+   * recu une. C'est exactement le raisonnement de la mort d'un personnage —
+   * ce qui sort du monde doit pouvoir y revenir.
+   */
+  rendButin(itemId) {
+    this.boutiqueEmis = this.boutiqueEmis || {};
+    const id = Number(itemId);
+    this.boutiqueEmis[id] = Math.max(0, (this.boutiqueEmis[id] || 0) - 1);
+    return this.boutiqueEmis[id];
+  }
+
   /** Un objet ramasse entre dans le sac, s'il y reste une place. */
   prendDuSol(addr, itemId) {
     const id = Number(itemId);
