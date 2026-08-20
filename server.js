@@ -2842,6 +2842,39 @@ wss.on('connection', (ws) => {
        *
        * Un skin, sa progression et son equipement. `m.skin` designe LEQUEL —
        * un joueur en possede jusqu'a six, chacun avec sa propre fiche. */
+      /* ---- LA FICHE DE COMBAT ----
+       * Ce que le monde a besoin de savoir d'un personnage. Ecrite ICI une
+       * fois : l'entree dans le monde et le changement d'arme la fabriquaient
+       * chacun de leur cote, et deux facons de la construire, c'est un jour
+       * ou l'une des deux oublie les degats. */
+      const ficheDeCombat = (addr, skin) => {
+        const q = game._p(addr);
+        const etat = game.personnageEtat(addr, skin);
+        if (!etat) return null;
+        const arme = etat.equipArme;
+        return {
+          skin, nom: q.name || null,
+          stats: etat.stats,
+          famille: (arme && arme.famille) || 'poing',
+          degats: (arme && arme.degats) || monde.DEGATS_POING,
+          /* Le POUVOIR vient du fruit, et le fruit est deja dans la fiche.
+             On envoie sa stat principale plutot que le pouvoir lui-meme :
+             la regle « quelle stat donne quel pouvoir » appartient a
+             monde.js, et la dupliquer ici la ferait deriver. */
+          statFruit: (etat.equipFruit && etat.equipFruit.stat) || null,
+        };
+      };
+      /* ---- ET ON SE RHABILLE SANS SORTIR ----
+       * S'equiper en plein combat ne changeait rien pour le serveur : il
+       * continuait de tirer avec l'arme d'avant, pendant que la page dessinait
+       * celle d'apres. On voyait les deux. */
+      const rhabille = (addr) => {
+        const w = [...realmClients].find((x) => x.addr === addr);
+        const skin = w && w.realmSkin;
+        if (!skin) return;
+        const f = ficheDeCombat(addr, skin);
+        if (f) realm.rehabille(addr, f);
+      };
       if (m.type === 'personnage') {
         const r = game.personnageEtat(ws.addr, m.skin);
         return send(ws, { type: 'personnage', skin: m.skin, etat: r });
@@ -2856,11 +2889,32 @@ wss.on('connection', (ws) => {
         equipeArmure: (a, s, i) => game.equipeArmure(a, s, i),
         equipeBague: (a, s, i) => game.equipeBague(a, s, i),
       };
+      /* ---- S'EQUIPER DEPUIS LE SAC, EN UN GESTE ----
+       * Un double-clic sur une piece du sac la porte et rend l'ancienne AU
+       * SAC. La page le faisait en deux messages — ranger au coffre, puis
+       * equiper — et l'ancienne restait alors au coffre, que le joueur ne
+       * voit pas depuis le monde. Il la croyait perdue.
+       * Les trois etats qui changent repartent ensemble : la fiche (ce qu'on
+       * porte), le coffre et le sac. Trois reponses separees se seraient
+       * croisees, et la page aurait montre un instant un sac sans la piece et
+       * un personnage sans arme. */
+      if (m.type === 'equipeDuSac') {
+        if (!ws.addr) return;
+        let r = null, err = null;
+        try { r = game.equipeDuSac(ws.addr, m.skin, m.item); }
+        catch (e) { err = e.message; }
+        if (!err) { persistSoon(); rhabille(ws.addr); }
+        return send(ws, { type: 'equipeDuSac', ...(r || {}), error: err || undefined,
+                          skin: m.skin,
+                          etat: err ? null : game.personnageEtat(ws.addr, m.skin),
+                          equipable: err ? null : game.equipablesPour(ws.addr),
+                          sacJoueur: game.sacPour(ws.addr) });
+      }
       if (ROUTES_EQUIPE[m.type]) {
         let r = null, err = null;
         try { r = ROUTES_EQUIPE[m.type](ws.addr, m.skin, m.item); }
         catch (e) { err = e.message; }
-        if (!err) persistSoon();
+        if (!err) { persistSoon(); rhabille(ws.addr); }
         return send(ws, { type: 'personnage', skin: m.skin, etat: r,
                           error: err || undefined });
       }
@@ -2960,18 +3014,8 @@ wss.on('connection', (ws) => {
         }
         const etat = game.personnageEtat(ws.addr, skin);
         if (!etat) return send(ws, { type: 'realmRefus', raison: 'no-character' });
-        const arme = etat.equipArme;
-        const j = realm.rejoint(ws.addr, {
-          skin, nom: p.name || null,
-          stats: etat.stats,
-          famille: (arme && arme.famille) || 'poing',
-          degats: (arme && arme.degats) || monde.DEGATS_POING,
-          /* Le POUVOIR vient du fruit, et le fruit est deja dans la fiche.
-             On envoie sa stat principale plutot que le pouvoir lui-meme :
-             la regle « quelle stat donne quel pouvoir » appartient a
-             monde.js, et la dupliquer ici la ferait deriver. */
-          statFruit: (etat.equipFruit && etat.equipFruit.stat) || null,
-        });
+        const fiche = ficheDeCombat(ws.addr, skin);
+        const j = realm.rejoint(ws.addr, fiche);
         ws.realmSkin = skin;
         realmClients.add(ws);
         realmDernierMouv.set(ws.addr, Date.now());
@@ -3160,6 +3204,28 @@ wss.on('connection', (ws) => {
         if (!ws.addr || !realmClients.has(ws)) return;
         const a = Number(m.a);
         if (!Number.isFinite(a)) return;
+        /* ---- LE TIR PART D'OU LE JOUEUR SE TROUVE ----
+         *
+         * Il partait de la derniere position ANNONCEE, et elle date d'au plus
+         * 120 ms — le rythme auquel la page envoie ses pas. A l'arret, c'est
+         * la meme position et tout se passe bien. En COURANT a 220 unites par
+         * seconde, ce sont vingt-six unites de retard, plus le reseau : le
+         * projectile naissait derriere le personnage et sur l'angle vise
+         * depuis l'avant. On visait juste et on ratait.
+         *
+         * La position voyage donc AVEC le tir, et elle passe par le meme
+         * controle que les pas : `bouge` refuse une teleportation, applique
+         * le ralentissement, la paralysie et les rochers. Ce n'est pas de la
+         * confiance accordee au client — c'est le meme filtre, sur un
+         * message de plus. */
+        if (Number.isFinite(Number(m.x)) && Number.isFinite(Number(m.y))) {
+          const t = Date.now();
+          const avant = realmDernierMouv.get(ws.addr) || t;
+          realmDernierMouv.set(ws.addr, t);
+          /* Ni direction ni animation : tirer n'est pas marcher, et ecraser
+             l'une des deux ferait patiner le personnage sur place. */
+          realm.bouge(ws.addr, Number(m.x), Number(m.y), null, null, (t - avant) / 1000);
+        }
         realm.tire(ws.addr, a);
         return;
       }

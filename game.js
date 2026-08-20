@@ -5221,6 +5221,81 @@ class Game {
     c[champ] = o.id;
     return this.personnageEtat(addr, skinId);
   }
+  /**
+   * ================== S'EQUIPER DEPUIS LE SAC, EN UN SEUL GESTE ==================
+   *
+   * Un double-clic sur une piece du sac la porte, et celle qu'on portait
+   * revient DANS LE SAC. C'est le geste qu'on fait cent fois par partie —
+   * ramasser une meilleure epee et la mettre — et il ne doit rien couter de
+   * plus qu'un aller-retour.
+   *
+   * ---- pourquoi un seul message, et pas trois ----
+   *
+   * La page le faisait en deux temps : « range au coffre », puis « equipe ».
+   * Ca marchait, mais ca laissait l'ancienne piece AU COFFRE — que le joueur
+   * ne voit pas depuis le monde de combat. Il croyait donc l'avoir perdue.
+   * Et surtout : deux messages, c'est deux moments ou la piece n'est nulle
+   * part. Un joueur y a deja laisse une arme.
+   *
+   * Tout se verifie AVANT la premiere ecriture. Ensuite, plus rien ne peut
+   * echouer : on sort du sac, on porte, on rend l'ancienne. Trois ecritures
+   * qui ne peuvent plus refuser.
+   *
+   * ---- la place ne manque jamais ----
+   *
+   * On sort une piece du sac et on en remet une : le compte ne bouge pas.
+   * C'est la seule raison pour laquelle cet echange n'a pas besoin de place
+   * libre, et c'est aussi pour ca qu'il ne peut pas se faire en deux temps —
+   * en deux temps, le sac est plein entre les deux.
+   */
+  equipeDuSac(addr, skinId, itemId) {
+    const p = this._p(addr);
+    if (!(p.skins || {})[skinId]) throw new Error('you do not own this skin');
+    const id = Number(itemId);
+    const o = boutique.item(id);
+    if (!o) throw new Error('Unknown item');
+    const sai = boutique.saison(o.saison);
+    const GENRE = { fruit: 'ef', weapon: 'ea', armor: 'ar', ring: 'ba' };
+    const champ = sai ? GENRE[sai.sujet] : null;
+    if (!champ) throw new Error('That one cannot be worn');
+    p.sac = p.sac || {};
+    if (!(p.sac[id] > 0)) throw new Error('That one is not in your backpack');
+    p.persos = p.persos || {};
+    const c = p.persos[skinId]
+      || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0, sup: {} });
+    const ancien = c[champ];
+    /* Deja porte : il n'y a rien a faire, et surtout rien a echanger contre
+       soi-meme — ce qui ferait sortir la piece du sac sans rien rendre. */
+    if (ancien === id) return { item: id, ancien: null, deja: true };
+    /* L'ancienne piece ne revient au sac que si PLUS PERSONNE ne la porte.
+       C'est la meme regle que le coffre : un objet porte par un personnage
+       qu'on ne joue pas est porte quand meme. */
+    const porteAilleurs = (q) => Object.keys(p.persos).some((k) => {
+      if (k === skinId) return false;
+      const x = p.persos[k];
+      return x && (x.ef === q || x.ea === q || x.ar === q || x.ba === q);
+    });
+
+    /* OU elle etait. La piece qu'on rend reprendra cette case-la : c'est le
+       geste que le joueur a fait, et il en suit le resultat des yeux. */
+    const cases = this._casesDuSac(p);
+    const ou = cases.indexOf(id);
+
+    // --- a partir d'ici, plus aucun refus possible
+    this._bouge(addr, 'sac', 'objets', id, 'item');
+    c[champ] = id;
+    if (ou >= 0) cases[ou] = null;
+    let rendu = null;
+    if (ancien && !porteAilleurs(ancien)) {
+      this._bouge(addr, 'objets', 'sac', ancien, 'item');
+      const place = ou >= 0 ? ou : cases.indexOf(null);
+      if (place >= 0) cases[place] = ancien;
+      rendu = ancien;
+    }
+    p.sacCases = cases;
+    return { item: id, ancien: ancien || null, rendu, place: ou, deja: false };
+  }
+
   equipeFruit(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'fruit'); }
   equipeArme(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'arme'); }
   equipeArmure(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'armure'); }
@@ -5482,30 +5557,73 @@ class Game {
    * persister huit lignes identiques serait du gaspillage, et la regle des
    * places est une regle d'usage, pas de rangement.
    */
-  sacPour(addr) {
-    const p = this._p(addr);
+  /**
+   * ================== LES CASES DU SAC ==================
+   *
+   * `p.sac` compte ce qu'on porte — {identifiant: nombre} — et ne dit pas OU.
+   * Tant qu'on ne faisait qu'ajouter et retirer, l'ordre des cles suffisait :
+   * personne ne regarde a quelle place tombe une piece ramassee.
+   *
+   * Il ne suffit plus depuis qu'on ECHANGE. Prendre l'arme de la case 2 et y
+   * remettre celle qu'on portait, c'est un geste dont le joueur suit le
+   * resultat des yeux : si sa piece reapparait ailleurs, il la croit perdue —
+   * et il vient le dire.
+   *
+   * On garde donc une liste de cases A COTE du compte. Elle n'est PAS la
+   * verite : le compte l'est. On la remet d'accord avec lui a chaque lecture,
+   * et une liste absente ou abimee ne coute rien — elle se reconstruit.
+   */
+  _casesDuSac(p) {
     const sac = p.sac || {};
-    const out = [];
-    for (const id of Object.keys(sac)) {
-      const o = boutique.item(Number(id));
-      if (!o) continue;
-      const r = boutique.rarete(o.rarete);
-      for (let i = 0; i < sac[id]; i++) {
-        const d = o.saison === 2 ? personnages.DEGATS_ARME[o.rarete] : null;
-        out.push({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
-                   couleur: r ? r.couleur : '#8DA0C4', saison: o.saison,
-                   stat: personnages.FAMILLE_STAT[o.famille] || null,
-                   bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
-                   /* Meme raison que dans la liste d'equipement : une arme
-                      posee dans le sac ne se lit que par ses degats. */
-                   ...(d ? { degats: d.slice() } : {}),
-                   /* `place` identifie CETTE case, pas cet objet : deux
-                      exemplaires identiques doivent pouvoir se deplacer
-                      separement. */
-                   place: out.length });
+    const cases = Array.isArray(p.sacCases) ? p.sacCases.slice(0, SAC_CASES) : [];
+    while (cases.length < SAC_CASES) cases.push(null);
+    /* Ce que les cases pretendent contenir, borne par ce qu'on a vraiment.
+       Une case qui montre une piece de plus que le compte se vide. */
+    const vus = {};
+    for (let i = 0; i < cases.length; i++) {
+      const id = Number(cases[i]);
+      if (!Number.isFinite(id) || !(sac[id] > 0)) { cases[i] = null; continue; }
+      if ((vus[id] || 0) >= (sac[id] | 0)) { cases[i] = null; continue; }
+      vus[id] = (vus[id] || 0) + 1;
+      cases[i] = id;
+    }
+    /* Et ce qui n'a pas encore de case en prend une — la premiere libre. */
+    for (const k of Object.keys(sac)) {
+      const id = Number(k);
+      for (let q = vus[id] || 0; q < (sac[k] | 0); q++) {
+        const libre = cases.indexOf(null);
+        if (libre < 0) break;
+        cases[libre] = id;
       }
     }
-    return out.slice(0, SAC_CASES);
+    p.sacCases = cases;
+    return cases;
+  }
+
+  sacPour(addr) {
+    const p = this._p(addr);
+    const cases = this._casesDuSac(p);
+    const out = [];
+    for (let i = 0; i < cases.length; i++) {
+      const id = cases[i];
+      if (id === null || id === undefined) continue;
+      const o = boutique.item(id);
+      if (!o) continue;
+      const r = boutique.rarete(o.rarete);
+      const d = o.saison === 2 ? personnages.DEGATS_ARME[o.rarete] : null;
+      out.push({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+                 couleur: r ? r.couleur : '#8DA0C4', saison: o.saison,
+                 stat: personnages.FAMILLE_STAT[o.famille] || null,
+                 bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
+                 /* Meme raison que dans la liste d'equipement : une arme
+                    posee dans le sac ne se lit que par ses degats. */
+                 ...(d ? { degats: d.slice() } : {}),
+                 /* `place` identifie CETTE CASE, pas cet objet : deux
+                    exemplaires identiques doivent pouvoir se deplacer
+                    separement — et une piece rendue doit retrouver la sienne. */
+                 place: i });
+    }
+    return out;
   }
 
   /**

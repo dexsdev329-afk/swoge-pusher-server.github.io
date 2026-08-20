@@ -306,8 +306,149 @@ process.on('unhandledRejection', (e) => {
     eq((p.objets || {})[A1] || 0, 1, 'elle est au COFFRE — pas perdue, juste ailleurs');
   }
 
+  // ================== 6 bis. L'ECHANGE EN UN GESTE : L'ANCIENNE REVIENT AU SAC
+  //
+  // Un double-clic sur une piece du sac la porte, et celle qu'on portait
+  // revient DANS LE SAC — pas au coffre, que le joueur ne voit pas depuis le
+  // monde de combat. C'est le geste qu'on fait cent fois par partie.
+  {
+    p.sac = {}; p.objets = {};
+    p.objets[A1] = 1; moteur._p(A).persos.andy.ea = A1;   // on porte A1
+    p.sac[A2] = 1;                                         // on vient de trouver A2
+    const r = await geste('echanger son arme en un geste', async () => {
+      s.recus.length = 0;
+      s.send(JSON.stringify({ type: 'equipeDuSac', skin: 'andy', item: A2 }));
+    });
+    const rep = s.recus.filter((x) => x.type === 'equipeDuSac').pop();
+    ok(rep && !rep.error, 'le serveur accepte' + (rep && rep.error ? ' (' + rep.error + ')' : ''));
+    eq(moteur._p(A).persos.andy.ea, A2, 'la trouvaille est portee');
+    eq((p.sac || {})[A1] || 0, 1, 'et l ANCIENNE est revenue dans le sac');
+    eq((p.sac || {})[A2] || 0, 0, 'la trouvaille, elle, a quitte le sac');
+    eq(rep && rep.rendu, A1, 'la reponse dit ce qui est revenu');
+    eq(r.apres[A1], 1, 'aucune des deux n a ete dupliquee');
+    eq(r.apres[A2], 1, 'ni l autre');
+    /* La page recoit les TROIS etats d'un coup : si l'un manquait, elle
+       montrerait un instant un sac sans la piece et un personnage sans arme. */
+    ok(rep && rep.etat && rep.etat.equipArme && rep.etat.equipArme.item === A2,
+       'la fiche repart avec, deja a jour');
+    ok(rep && Array.isArray(rep.sacJoueur), 'et le sac aussi');
+    ok(rep && rep.equipable, 'et la liste de ce qu on peut porter');
+  }
+
+  // ================== 6 bis 2. LA PIECE RENDUE REPREND LA MEME CASE
+  //
+  // « J'avais un item emplacement 2, une arme ; je l'echange contre l'arme
+  // equipee : l'arme equipee doit prendre l'emplacement 2. » C'est un geste
+  // dont on suit le resultat des yeux — si la piece reapparait ailleurs, on la
+  // croit perdue.
+  {
+    p.sac = {}; p.objets = {};
+    const autres = B.ITEMS.filter((o) => o.famille !== 'lame').slice(0, 4).map((o) => o.id);
+    autres.forEach((x) => { p.sac[x] = 1; });
+    p.sac[A2] = 1;
+    p.objets[A1] = 1; moteur._p(A).persos.andy.ea = A1;
+    /* On lit la case que le serveur lui donne, on ne la decide pas : c'est
+       celle que la page montrera. */
+    const avantSac = moteur.sacPour(A);
+    const laCase = avantSac.find((o) => o.id === A2);
+    ok(laCase, 'la trouvaille est dans le sac');
+    console.log('   elle occupe la case ' + (laCase ? laCase.place : '-'));
+
+    const r = await geste('rendre a la meme case', async () => {
+      s.recus.length = 0;
+      s.send(JSON.stringify({ type: 'equipeDuSac', skin: 'andy', item: A2 }));
+    });
+    const apresSac = moteur.sacPour(A);
+    const rendue = apresSac.find((o) => o.id === A1);
+    ok(rendue, 'l ancienne arme est bien dans le sac');
+    eq(rendue && rendue.place, laCase.place,
+       `et a la MEME case (${rendue ? rendue.place : '-'} au lieu de ${laCase.place})`);
+    /* Et les autres pieces n'ont pas bouge : un echange ne reorganise pas le
+       sac autour de lui. */
+    const bouge = autres.filter((x) => {
+      const a = avantSac.find((o) => o.id === x), b = apresSac.find((o) => o.id === x);
+      return !a || !b || a.place !== b.place;
+    });
+    eq(bouge.length, 0, 'et le reste du sac n a pas bouge d une case');
+    eq(r.apres[A1], 1, 'rien n a ete duplique');
+  }
+
+  // ================== 6 ter. LE SAC PLEIN N'EMPECHE PAS L'ECHANGE
+  //
+  // Un pour un : le compte du sac ne bouge pas. C'est la seule raison pour
+  // laquelle cet echange n'a pas besoin de place libre — et c'est aussi
+  // pourquoi il ne peut pas se faire en deux temps, ou le sac est plein entre
+  // les deux.
+  {
+    p.sac = {}; p.objets = {};
+    const bourre = B.ITEMS.filter((o) => o.famille !== 'lame').slice(0, 7).map((o) => o.id);
+    bourre.forEach((id) => { p.sac[id] = 1; });
+    p.sac[A3] = 1;                       // la huitieme place : la trouvaille
+    p.objets[A1] = 1; moteur._p(A).persos.andy.ea = A1;
+    eq(moteur.sacRempli(A), 8, 'le sac est plein (8) et l une des places est la trouvaille');
+    const r = await geste('echanger avec un sac plein', async () => {
+      s.recus.length = 0;
+      s.send(JSON.stringify({ type: 'equipeDuSac', skin: 'andy', item: A3 }));
+    });
+    const rep = s.recus.filter((x) => x.type === 'equipeDuSac').pop();
+    ok(rep && !rep.error, 'il passe quand meme' + (rep && rep.error ? ' (' + rep.error + ')' : ''));
+    eq(moteur._p(A).persos.andy.ea, A3, 'la trouvaille est portee');
+    eq((p.sac || {})[A1] || 0, 1, 'et l ancienne a pris sa place dans le sac');
+    eq(moteur.sacRempli(A), 8, 'le sac est toujours plein — un pour un');
+    eq(r.apres[A3], 1, 'rien n a ete duplique');
+  }
+
+  // ================== 6 quater. LES REFUS NE COUTENT RIEN
+  {
+    p.sac = {}; p.objets = {};
+    p.objets[A1] = 1; moteur._p(A).persos.andy.ea = A1;
+    p.sac[A2] = 1;
+    /* Une piece qu'on n'a PAS dans le sac. */
+    await geste('equiper une piece qu on n a pas', async () => {
+      s.recus.length = 0;
+      s.send(JSON.stringify({ type: 'equipeDuSac', skin: 'andy', item: A3 }));
+    });
+    let rep = s.recus.filter((x) => x.type === 'equipeDuSac').pop();
+    ok(rep && rep.error, 'le serveur refuse : ' + (rep && rep.error));
+    eq(moteur._p(A).persos.andy.ea, A1, 'et rien n a bouge');
+
+    /* Un objet qui n'est pas un equipement. */
+    const potion = B.ITEMS.find((o) => o.saison === 1);
+    p.sac[potion.id] = 1;
+    await geste('equiper au mauvais emplacement', async () => {
+      s.recus.length = 0;
+      s.send(JSON.stringify({ type: 'equipeDuSac', skin: 'andy', item: potion.id }));
+    });
+    rep = s.recus.filter((x) => x.type === 'equipeDuSac').pop();
+    /* Un fruit EST un equipement : il va dans sa case a lui, pas dans celle
+       de l'arme. C'est ce qu'on veut — viser juste n'a aucun interet. */
+    ok(rep && !rep.error, 'un fruit va dans SA case, sans qu on ait a viser');
+    eq(moteur._p(A).persos.andy.ef, potion.id, 'le fruit est porte');
+    eq(moteur._p(A).persos.andy.ea, A1, 'et l arme n a pas bouge');
+
+    /* Deux fois la meme : on ne l'echange pas contre elle-meme. */
+    p.sac = {}; p.objets = {}; p.objets[A1] = 1;
+    moteur._p(A).persos.andy.ea = A1; moteur._p(A).persos.andy.ef = null;
+    p.sac[A1] = 1;
+    const r = await geste('equiper ce qu on porte deja', async () => {
+      s.recus.length = 0;
+      s.send(JSON.stringify({ type: 'equipeDuSac', skin: 'andy', item: A1 }));
+    });
+    rep = s.recus.filter((x) => x.type === 'equipeDuSac').pop();
+    ok(rep && rep.deja, 'le serveur dit qu elle est deja portee');
+    eq((p.sac || {})[A1] || 0, 1, 'et l exemplaire du sac y reste');
+    eq(r.apres[A1], 2, 'les deux exemplaires existent toujours');
+  }
+
   // ================== 7. ON NE SORT PAS DU COFFRE CE QU'ON PORTE
   {
+    /* On pose l'etat qu'on veut eprouver plutot que d'heriter de celui du
+       bloc precedent : un essai qui depend de son voisin se met a mentir des
+       qu'on en insere un entre les deux. */
+    p.sac = {}; p.objets = {};
+    p.objets[A2] = 1;
+    moteur._p(A).persos.andy.ea = A2;
+    moteur._p(A).persos.andy.ef = null;
     await geste('sortir du coffre une piece portee', async () => {
       s.recus.length = 0;
       s.send(JSON.stringify({ type: 'sortCoffre', item: A2 }));
@@ -315,6 +456,61 @@ process.on('unhandledRejection', (e) => {
     const rep = s.recus.filter((x) => x.type === 'equipable').pop();
     ok(rep && rep.error, 'le serveur refuse, et il dit pourquoi : ' + (rep && rep.error));
     eq(moteur._p(A).persos.andy.ea, A2, 'et elle reste portee');
+  }
+
+  // ================== 7 bis. CHANGER D'ARME CHANGE CE QUE LE SERVEUR TIRE
+  //
+  // La fiche n'etait lue qu'a l'ENTREE. On pouvait donc s'equiper d'une epee
+  // trouvee en plein combat : la page se mettait a dessiner ses projectiles,
+  // et le serveur continuait de tirer avec l'ancienne. On voyait LES DEUX.
+  {
+    const arc = B.ITEMS.concat(B.ITEMS_DROP).find((o) => o.famille === 'arc');
+    ok(!!arc, 'le catalogue porte un arc, dont la gerbe ne ressemble a rien d autre');
+    p.sac = {}; p.objets = {};
+    p.objets[A1] = 1; moteur._p(A).persos.andy.ea = A1;
+    p.sac[arc.id] = 1;
+    /* On se rhabille par le chemin normal : entrer, puis echanger. */
+    s.send(JSON.stringify({ type: 'realmJoin' }));
+    await attend(s, 'realmEntre');
+    await new Promise((r) => setTimeout(r, 300));
+    const avant = j0();
+    ok(!!avant, 'on est dans le monde');
+    eq(avant.famille, 'lame', 'et on y porte une lame');
+    const pv0 = avant.pv = Math.round(avant.pvMax / 2);   // a moitie blesse
+
+    s.recus.length = 0;
+    s.send(JSON.stringify({ type: 'equipeDuSac', skin: 'andy', item: arc.id }));
+    await new Promise((r) => setTimeout(r, 400));
+    const apres = j0();
+    eq(apres.famille, 'arc', 'le serveur tire maintenant a l ARC');
+    eq(JSON.stringify(apres.degats), JSON.stringify(B.rarete(arc.rarete) ? apres.degats : null),
+       'avec les degats de la piece portee');
+    ok(apres.degats && apres.degats[0] > 0, `et ils ne sont pas nuls (${apres.degats})`);
+
+    /* ---- ET ON NE SE SOIGNE PAS EN CHANGEANT D'ARMURE ----
+     * Monter le maximum ne remplit pas la jauge. Sans cette regle, enfiler et
+     * retirer une armure a repetition serait une fontaine gratuite au milieu
+     * de la lave. */
+    /* La regeneration continue de tourner pendant qu'on change d'arme — c'est
+       normal, et quelques points en plus ne sont pas un soin. Ce qu'on refuse,
+       c'est le REMPLISSAGE : la jauge ne doit pas revenir au maximum parce
+       qu'on a enfile une armure. */
+    ok(apres.pv < apres.pvMax * 0.75,
+       `les points de vie ne se sont pas remplis (${apres.pv} sur ${apres.pvMax})`);
+    ok(apres.pv - pv0 < 20,
+       `ils n ont bouge que de ce que la regeneration donne (${apres.pv - pv0})`);
+    ok(apres.pv <= apres.pvMax, 'et ils tiennent sous le maximum');
+
+    /* Le reste de son etat non plus : changer d'arme n'annule pas une
+       paralysie et ne remet pas le pouvoir a zero. */
+    apres.paralyse = 2; apres.pouvoirRecharge = 3;
+    s.send(JSON.stringify({ type: 'equipeArme', skin: 'andy', item: null }));
+    await new Promise((r) => setTimeout(r, 300));
+    const nu = j0();
+    eq(nu.famille, 'poing', 'retirer son arme fait revenir au poing');
+    ok(nu.paralyse > 0, 'et la paralysie en cours n est pas effacee');
+    ok(nu.pouvoirRecharge > 0, 'ni la recharge du pouvoir');
+    nu.paralyse = 0; nu.pouvoirRecharge = 0;
   }
 
   // ================== 8. CENT GESTES AU HASARD, ET LE COMPTE TIENT
@@ -335,14 +531,15 @@ process.on('unhandledRejection', (e) => {
     const alea = () => { graine = (graine * 1664525 + 1013904223) >>> 0; return graine / 4294967296; };
     for (let tour = 0; tour < 100; tour++) {
       const id = pieces[Math.floor(alea() * pieces.length)];
-      const quoi = Math.floor(alea() * 5);
+      const quoi = Math.floor(alea() * 6);
       if (quoi === 0) s.send(JSON.stringify({ type: 'realmDepose', item: id }));
       else if (quoi === 1) {
         const sac = monde.sacs[0];
         if (sac) s.send(JSON.stringify({ type: 'realmRamasse', i: sac.id, place: Math.floor(alea() * sac.contenu.length) }));
       } else if (quoi === 2) s.send(JSON.stringify({ type: 'rangeCoffre', item: id }));
       else if (quoi === 3) s.send(JSON.stringify({ type: 'sortCoffre', item: id }));
-      else s.send(JSON.stringify({ type: 'equipeArme', skin: 'andy', item: alea() < 0.3 ? null : id }));
+      else if (quoi === 4) s.send(JSON.stringify({ type: 'equipeArme', skin: 'andy', item: alea() < 0.3 ? null : id }));
+      else s.send(JSON.stringify({ type: 'equipeDuSac', skin: 'andy', item: id }));
       if (tour % 10 === 9) await new Promise((r) => setTimeout(r, 60));
     }
     await new Promise((r) => setTimeout(r, 800));

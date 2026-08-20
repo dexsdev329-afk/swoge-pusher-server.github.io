@@ -272,6 +272,45 @@ class Realm {
     return j;
   }
 
+  /**
+   * ================== CHANGER D'ARME SANS SORTIR DU MONDE ==================
+   *
+   * La fiche n'etait lue qu'a l'ENTREE. On pouvait donc s'equiper d'une epee
+   * trouvee en plein combat : la page se mettait a dessiner ses projectiles,
+   * et le serveur continuait de tirer avec l'ancienne. On voyait les deux —
+   * le tir de l'arme portee ET celui de l'arme rangee — et aucun des deux
+   * n'etait tout a fait vrai.
+   *
+   * On remplace donc ce qui vient de la fiche, et RIEN d'autre : ni la
+   * position, ni les etats en cours, ni les recharges. Changer d'arme ne doit
+   * pas annuler une paralysie ni remettre le pouvoir a zero.
+   *
+   * ---- les points de vie ----
+   *
+   * Une armure change le maximum. On garde les points COURANTS et on les
+   * borne au nouveau maximum : monter le maximum ne soigne pas. Sans cette
+   * regle, enfiler et retirer une armure a repetition serait une fontaine de
+   * soin gratuite au milieu de la lave.
+   */
+  rehabille(addr, fiche) {
+    const j = this.joueurs.get(addr);
+    if (!j || !fiche) return null;
+    const stats = fiche.stats || {};
+    j.pvMax = Math.max(1, stats.hp | 0);
+    j.pv = Math.max(0, Math.min(j.pv, j.pvMax));
+    j.mpMax = Math.max(0, stats.mp | 0);
+    j.mp = Math.max(0, Math.min(j.mp, j.mpMax));
+    j.att = stats.att | 0; j.def = stats.def | 0;
+    j.vit = stats.vit | 0; j.wis = stats.wis | 0;
+    j.dex = stats.dex | 0; j.spd = stats.spd | 0;
+    j.cadence = monde.cadenceDe(stats.dex | 0);
+    j.vitesse = monde.vitesseDe(stats.spd | 0);
+    j.famille = fiche.famille || 'poing';
+    j.degats = fiche.degats || monde.DEGATS_POING;
+    j.pouvoir = monde.pouvoirDeStat(fiche.statFruit || null);
+    return j;
+  }
+
   quitte(addr) { this.joueurs.delete(addr); return true; }
 
   /** On arrive TOUJOURS par le bord, sur la terre : entrer directement au
@@ -1150,6 +1189,20 @@ class Realm {
                 d'accord finiraient par se contredire, et le joueur se ferait
                 ramener en arriere sans comprendre pourquoi. */
              v: Math.round(j.vitesse),
+             /* ---- ET SA CADENCE DE TIR, POUR LA MEME RAISON ----
+              * La page se limitait a la cadence de l'ARME, et rien d'autre.
+              * Le serveur, lui, la multiplie par la dexterite et par la
+              * rafale : il acceptait donc deux fois plus de tirs que la page
+              * n'en demandait. La dexterite ne servait a rien, et « Rapid
+              * fire » ne faisait pas tirer plus vite — il faisait juste
+              * clignoter une aura.
+              * Elle part d'ici pour qu'il n'y ait qu'un seul endroit ou la
+              * regle s'ecrit. Deux formules a tenir d'accord finissent
+              * toujours par se contredire, et celle-la se contredisait en
+              * silence : la page demandait moins que son du. */
+             c: Number((((monde.ARMES[j.famille] || monde.ARMES.poing).cadence
+                        * (j.cadence || 1)
+                        * (j.rafale > 0 ? monde.POUVOIRS.rafale.facteur : 1))).toFixed(2)),
              /* Le pouvoir et son etat partent a chaque image : le bouton doit
                 pouvoir s'eteindre a la seconde ou le mana manque, pas quand
                 le joueur appuie pour rien. */
