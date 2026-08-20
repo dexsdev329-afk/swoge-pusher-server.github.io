@@ -513,6 +513,77 @@ process.on('unhandledRejection', (e) => {
     nu.paralyse = 0; nu.pouvoirRecharge = 0;
   }
 
+  // ================== 7 ter. CENT ECHANGES DE SUITE, ET RIEN NE SE PERD
+  //
+  // « J'ai ramasse une arme, je l'ai echangee avec une autre, aucun souci.
+  //   J'ai repete ca plusieurs fois : une de mes armes a disparu. »
+  //
+  // Un echange isole se verifie a l'oeil. Une SEQUENCE, non : il faut la
+  // jouer. On ramasse, on echange, on recommence — et a chaque tour on
+  // recompte TOUT ce que le compte possede, ou que ce soit : coffre, sac, et
+  // ce que portent les six personnages. Le total ne doit jamais bouger.
+  {
+    p.sac = {}; p.objets = {};
+    const armes = B.ITEMS.concat(B.ITEMS_DROP).filter((o) => o.saison === 2).slice(0, 6);
+    ok(armes.length >= 4, `on a de quoi tourner (${armes.length} armes)`);
+    /* Trois exemplaires au sol, un porte : la situation du joueur. */
+    p.objets[armes[0].id] = 1;
+    moteur._p(A).persos.andy.ea = armes[0].id;
+    const total = () => {
+      const q = moteur._p(A);
+      const c = {};
+      for (const k of Object.keys(q.objets || {})) c[k] = (c[k] || 0) + q.objets[k];
+      for (const k of Object.keys(q.sac || {})) c[k] = (c[k] || 0) + q.sac[k];
+      return c;
+    };
+    const somme = (t) => Object.keys(t).reduce((x, k) => x + t[k], 0);
+    /* On en ramasse deux de plus par le chemin du monde : `prendDuSol`, celui
+       qu'emprunte un vrai butin. */
+    moteur.prendDuSol(A, armes[1].id);
+    moteur.prendDuSol(A, armes[2].id);
+    const t0 = total();
+    eq(somme(t0), 3, 'trois pieces en tout : une portee, deux dans le sac');
+
+    let perdues = 0, tours = 0, refus = 0;
+    for (let i = 0; i < 100; i++) {
+      const q = moteur._p(A);
+      const dedans = Object.keys(q.sac || {}).filter((k) => q.sac[k] > 0).map(Number);
+      if (!dedans.length) break;
+      /* On prend celle du milieu, puis la premiere, puis la derniere : varier
+         evite de ne jouer qu'un seul chemin cent fois. */
+      const choisie = dedans[i % dedans.length];
+      try { moteur.equipeDuSac(A, 'andy', choisie); tours++; }
+      catch (e) { refus++; }
+      const t = total();
+      if (somme(t) !== somme(t0)) { perdues++; break; }
+    }
+    console.log('   ' + tours + ' echanges joues, ' + refus + ' refus');
+    eq(perdues, 0, `cent echanges de suite et le compte tient (${tours} joues)`);
+    ok(tours >= 50, `on en a vraiment joue beaucoup (${tours})`);
+    const tf = total();
+    eq(somme(tf), somme(t0), `le total est le meme qu'au depart (${somme(tf)})`);
+    eq(JSON.stringify(tf), JSON.stringify(t0),
+       'et piece par piece, pas seulement en nombre');
+    /* Et le personnage porte toujours quelque chose : un echange qui laisserait
+       la main vide serait une perte deguisee en choix. */
+    ok(moteur._p(A).persos.andy.ea, 'il porte encore une arme a la fin');
+
+    /* ---- L'ETAT IMPOSSIBLE NE DETRUIT RIEN ----
+     * Une piece portee qui n'est pas au coffre ne devrait pas exister. Si elle
+     * existe quand meme — un vieil etat, un bug ailleurs —, l'echange ne doit
+     * pas la faire disparaitre en levant une exception APRES avoir equipe la
+     * nouvelle. */
+    p.sac = {}; p.objets = {};
+    p.sac[armes[1].id] = 1;
+    moteur._p(A).persos.andy.ea = armes[0].id;   // portee, mais PAS au coffre
+    const avant = somme(total());
+    let boum = null;
+    try { moteur.equipeDuSac(A, 'andy', armes[1].id); } catch (e) { boum = e.message; }
+    eq(boum, null, 'l echange passe quand meme' + (boum ? ' (' + boum + ')' : ''));
+    eq(moteur._p(A).persos.andy.ea, armes[1].id, 'et la nouvelle est portee');
+    eq(somme(total()), avant, 'sans rien creer ni rien detruire');
+  }
+
   // ================== 8. CENT GESTES AU HASARD, ET LE COMPTE TIENT
   //
   // Les essais ci-dessus disent chacun UN chemin. Celui-la les melange : c'est

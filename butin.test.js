@@ -661,4 +661,65 @@ function pose(r, espece, x, y, pv) {
   }
 }
 
+
+// ================== UNE SALLE GARDEE DONNE TOUJOURS QUELQUE CHOSE
+//
+// « Il y a quatre boss ou il y a des coffres proteges ; parfois j'ouvre le
+// coffre et il n'y a rien dedans. »
+//
+// C'etait vrai, et c'etait mecanique. La saison ne porte que seize reliques.
+// Les deux salles a relique en donnent une par nettoyage et se rearment
+// toutes les six minutes : le stock part en trois quarts d'heure. Ensuite,
+// tuer deux gardiens de seize cents points de vie ne donnait plus RIEN.
+{
+  const { Game } = require('./game');
+  const g = new Game();
+  const r5 = alea(31415);
+
+  /* D'abord : tant qu'il y a des reliques, on donne des reliques. */
+  const p1 = g.tireButinGaranti('relique', r5);
+  ok(p1 && p1.rarete === 'relique', 'la salle a relique donne une relique');
+  ok(!p1.repli, 'et elle ne dit pas avoir replie — elle a tenu sa promesse');
+
+  /* On vide le stock de reliques de la saison, par le chemin normal. */
+  let sorties = 1;
+  for (let i = 0; i < 200; i++) {
+    const q = g.tireButin('relique', r5);
+    if (!q) break;
+    sorties++;
+  }
+  console.log('   la saison porte ' + sorties + ' reliques en tout');
+  ok(sorties >= 4 && sorties <= 64, `un stock fini, et petit (${sorties})`);
+  eq(g.tireButin('relique', r5), null, 'apres quoi il n en reste plus une seule');
+
+  /* ---- ET C'EST LA QUE LA SALLE DEVENAIT MUETTE ---- */
+  const p2 = g.tireButinGaranti('relique', r5);
+  ok(p2, 'la salle donne QUAND MEME quelque chose');
+  ok(p2.rarete !== 'relique', `mais plus une relique (${p2.rarete})`);
+  eq(p2.repli, 'relique', 'et elle dit ce qu elle n a pas pu donner');
+  /* Elle descend d'UN cran, pas jusqu'en bas : le joueur qui a nettoye une
+     salle a relique ne repart pas avec un objet commun. */
+  const rangs = require("./boutique").RARETES.map((x) => x.cle);
+  eq(rangs[rangs.indexOf('relique') - 1], p2.rarete,
+     'exactement le cran en dessous');
+
+  /* La rarete reste RARE : on n'a pas fabrique de reliques en plus. */
+  eq(g.tireButin('relique', r5), null, 'et le stock de reliques est toujours vide');
+
+  /* Le repli descend AUTANT QUE NECESSAIRE : on vide aussi le cran d'en
+     dessous, et la salle trouve encore. */
+  for (let i = 0; i < 4000; i++) if (!g.tireButin(p2.rarete, r5)) break;
+  const p3 = g.tireButinGaranti('relique', r5);
+  ok(p3, 'deux crans plus bas, elle donne encore');
+  ok(p3.rarete !== 'relique' && p3.rarete !== p2.rarete,
+     `et c est encore un cran en dessous (${p3.rarete})`);
+  eq(p3.repli, 'relique', 'en disant toujours ce qui etait promis');
+
+  /* Un monstre ordinaire, lui, a le droit de ne rien donner : c'est meme le
+     cas normal. On ne veut pas que le repli s'applique partout, sinon la
+     moindre nuee finirait par lacher des legendaires. */
+  eq(g.tireButin('relique', r5), null,
+     'le butin ORDINAIRE, lui, rend toujours rien quand il n y a plus rien');
+}
+
 console.log('butin.test.js : ' + n + ' verifications OK');

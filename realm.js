@@ -150,7 +150,11 @@ class Realm {
       if (!s.vide && !restants) {
         s.vide = true;
         s.rearme = monde.SALLE.rearme;
-        const piece = this.tireObjet ? this.tireObjet(s.butin, this.alea) : null;
+        /* GARANTI : une salle gardee promet un tresor, et la promesse tient
+           meme quand la saison n'a plus de reliques. C'est celui qui tient le
+           catalogue qui sait descendre d'un cran — ici on dit seulement que
+           celui-la etait promis. */
+        const piece = this.tireObjet ? this.tireObjet(s.butin, this.alea, true) : null;
         if (piece) {
           const sac = { id: this._nouvelId(), x: s.x, y: s.y,
                         sac: monde.SAC_DE_RARETE[s.butin] || 'or',

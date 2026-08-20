@@ -1203,28 +1203,18 @@ class Game {
    * personnages en a six au classement : ce sont six vies separees, et six
    * facons de tout perdre.
    *
+   * ---- une fois par mois ----
+   *
+   * Le prix suit le meme calendrier que celui du casino. Deux calendriers
+   * dans un seul jeu, c'est un de trop : le joueur retiendrait l'un et
+   * raterait l'autre, et personne ne saurait dire quel jour on est.
+   *
    * ---- et l'equipement voyage avec la ligne ----
    *
    * Etre en haut doit faire de vous une cible. Une ligne qui ne montre qu'un
    * nom ne dit pas ce qu'il y a a gagner en vous tuant ; une ligne qui montre
    * l'epee mythique, si.
    */
-  static semaineCle(d) {
-    /* Semaine ISO : le jeudi de la semaine decide de l'annee. On la calcule
-       plutot que de compter les jours depuis une origine — une origine se
-       decale d'un jour tous les quatre ans, et le prix serait verse le mardi
-       une annee sur quatre. */
-    const x = new Date(d || Date.now());
-    const j = new Date(Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate()));
-    /* Lundi = 1, dimanche = 7. On avance jusqu'au jeudi de la semaine. */
-    const jour = j.getUTCDay() || 7;
-    j.setUTCDate(j.getUTCDate() + 4 - jour);
-    const an = j.getUTCFullYear();
-    const premier = new Date(Date.UTC(an, 0, 1));
-    const n = Math.ceil(((j - premier) / 86400000 + 1) / 7);
-    return an + '-S' + String(n).padStart(2, '0');
-  }
-
   /** Ce que porte un personnage, en clair, pour la ligne de classement. */
   _tenueDe(c) {
     const out = [];
@@ -1273,30 +1263,30 @@ class Game {
     /* La ligne du demandeur part TOUJOURS, meme s'il est centieme : un
        classement ou l'on ne se trouve pas ne sert a personne. */
     const miennes = arr.filter((r) => r.address === moi);
-    return { semaine: Game.semaineCle(), vivants: arr.length,
+    return { mois: Game.moisCle(), vivants: arr.length,
              top: arr.slice(0, limite || 20), moi: miennes.slice(0, 6),
              prix: cfg.PRIX_MONDE_GOLD, parts: cfg.PRIX_PARTS.slice() };
   }
 
-  /** Qui gagnerait quoi si la semaine se terminait maintenant. */
+  /** Qui gagnerait quoi si le mois se terminait maintenant. */
   prixMonde(cle) {
-    const k = cle || Game.semaineCle();
+    const k = cle || Game.moisCle();
     const parts = cfg.PRIX_PARTS;
     const somme = parts.reduce((a, b) => a + b, 0) || 100;
     const total = cfg.PRIX_MONDE_GOLD;
-    /* Une semaine PAYEE ne se reconstruit pas : les personnages ont continue
-       de vivre, et certains sont morts. On garde donc le tableau au moment du
+    /* Un mois PAYE ne se reconstruit pas : les personnages ont continue de
+       vivre, et certains sont morts. On garde donc le tableau au moment du
        versement, et c'est lui qu'on relit.
-       La question est « a-t-elle ete payee ? », pas « est-elle passee ? ».
-       Les deux se ressemblent — le versement tombe dix minutes apres la
-       bascule — et elles different justement dans le seul cas qui compte : une
-       semaine payee qu'on relit AVANT sa bascule rendrait un tableau refait
-       depuis des personnages qui ont bouge depuis, donc un autre gagnant que
-       celui qu'on a paye. */
+       La question est « a-t-il ete paye ? », pas « est-il passe ? ». Les deux
+       se ressemblent — le versement tombe dix minutes apres la bascule — et
+       elles different justement dans le seul cas qui compte : un mois paye
+       qu'on relit AVANT sa bascule rendrait un tableau refait depuis des
+       personnages qui ont bouge depuis, donc un autre gagnant que celui qu'on
+       a paye. */
     if (this.prixMondeVerses && this.prixMondeVerses[k]) return this.prixMondeVerses[k];
     const liste = this.classementMonde(null, parts.length).top;
     return {
-      semaine: k, total, verse: !!(this.prixMondeVerses && this.prixMondeVerses[k]),
+      mois: k, total, verse: !!(this.prixMondeVerses && this.prixMondeVerses[k]),
       gagnants: liste.map((r, i) => ({
         rang: i + 1, address: r.address, name: r.name, skin: r.skin, xp: r.xp,
         gold: Math.round(total * (parts[i] || 0) / somme),
@@ -1305,9 +1295,9 @@ class Game {
   }
 
   /**
-   * Verse le prix d'une semaine, EN OR. Une seule fois — un prix paye deux
-   * fois est de l'or cree, et personne ne s'en plaindrait assez vite pour
-   * qu'on le remarque.
+   * Verse le prix d'un MOIS, EN OR. Une seule fois — un prix paye deux fois
+   * est de l'or cree, et personne ne s'en plaindrait assez vite pour qu'on le
+   * remarque.
    *
    * En or, et pas en $SWOGE : le classement du mois recompense du volume
    * DEJA mise — c'est de l'argent qui est entre, redistribue. Recompenser de
@@ -1316,7 +1306,7 @@ class Game {
    * L'or, lui, ne s'echange pas contre autre chose que du rang.
    */
   verseMonde(cle) {
-    const k = cle || Game.semaineCle();
+    const k = cle || Game.moisCle();
     if (!this.prixMondeVerses) this.prixMondeVerses = {};
     if (this.prixMondeVerses[k]) throw new Error('prize already paid for ' + k);
     const p = this.prixMonde(k);
@@ -1325,14 +1315,14 @@ class Game {
       if (!(g.gold > 0)) continue;
       const q = this._p(g.address);
       q.fame = (q.fame || 0) + g.gold;
-      journal.ajoute(g.address, { k: 'rf', s: 'monde', or: g.gold, rang: g.rang, semaine: k });
+      journal.ajoute(g.address, { k: 'rf', s: 'monde', or: g.gold, rang: g.rang, mois: k });
       payes.push({ rang: g.rang, address: g.address, name: q.name, skin: g.skin,
                    xp: g.xp, gold: g.gold });
     }
-    /* On garde le tableau tel qu'il etait : la semaine prochaine, ces
-       personnages seront peut-etre morts, et « qui a gagne » ne se
-       reconstruit pas depuis des compteurs remis a zero. */
-    this.prixMondeVerses[k] = { semaine: k, total: p.total, verse: true,
+    /* On garde le tableau tel qu'il etait : le mois prochain, ces personnages
+       seront peut-etre morts, et « qui a gagne » ne se reconstruit pas depuis
+       des compteurs remis a zero. */
+    this.prixMondeVerses[k] = { mois: k, total: p.total, verse: true,
                                 t: Date.now(), gagnants: payes };
     return this.prixMondeVerses[k];
   }
@@ -5289,8 +5279,18 @@ class Game {
          du nombre de tirs et du dessin du projectile. La page la deduisait
          de la cle (`arme_ebreche`), ce qui rendait « arme » au lieu de
          « lame » — un champ qui existe deja ne se redevine pas. */
+      /* ---- « OG » : LA PIECE EST NUMEROTEE ----
+       * Les pieces de la BOUTIQUE existent en nombre fini et se paient en
+       * $SWOGE : quarante legendaires pour toute une saison, quatre reliques.
+       * Celles qui tombent dans le monde ne coutent rien.
+       * Rien ne les distinguait a l'oeil, et c'est la seule chose qu'un joueur
+       * a besoin de savoir avant de risquer une piece dans la lave. Le drapeau
+       * part d'ICI : la page ne peut pas le deviner, les deux familles
+       * partagent les memes saisons et les memes raretes — seul le catalogue
+       * sait laquelle se vend.
+       */
       const ligne = { item: o.id, nom: o.nom, cle: o.cle, rarete: o.rarete,
-                      famille: o.famille,
+                      famille: o.famille, og: !o.drop,
                       couleur: r ? r.couleur : '#8DA0C4',
                       stat: personnages.FAMILLE_STAT[o.famille] || null, bonus };
       /* Les degats ne concernent que les armes : les poser sur une bague
@@ -5441,19 +5441,46 @@ class Game {
     const cases = this._casesDuSac(p);
     const ou = cases.indexOf(id);
 
+    /* ---- ON DECIDE DU SORT DE L'ANCIENNE AVANT DE TOUCHER A QUOI QUE CE SOIT ----
+     *
+     * Trois cas, et un seul rend la piece au sac :
+     *   - personne d'autre ne la porte et elle est bien au coffre : elle rentre ;
+     *   - un AUTRE personnage la porte : elle reste au coffre, c'est la meme
+     *     regle que « on ne sort pas du coffre ce qu'on porte » ;
+     *   - elle n'est PAS au coffre : etat impossible en theorie. On ne la rend
+     *     donc pas, plutot que de laisser `_bouge` lever une exception APRES
+     *     avoir equipe la nouvelle — ce qui laisserait le personnage habille et
+     *     la piece nulle part. C'est exactement la panne qu'on nous a
+     *     rapportee : « une de mes armes a disparu ».
+     */
+    const ailleurs = ancien ? porteAilleurs(ancien) : false;
+    const auCoffre = ancien ? ((p.objets || {})[ancien] || 0) > 0 : false;
+    const rendable = !!ancien && !ailleurs && auCoffre;
+    if (ancien && !ailleurs && !auCoffre) {
+      /* On le DIT. Un etat impossible qui arrive quand meme et que personne
+         ne journalise, c'est un bug qu'on ne trouvera jamais : il ne laisse
+         qu'un joueur qui affirme avoir perdu une piece. */
+      console.warn('[equipeDuSac] piece portee absente du coffre :',
+                   addr, skinId, champ, ancien);
+    }
+
     // --- a partir d'ici, plus aucun refus possible
     this._bouge(addr, 'sac', 'objets', id, 'item');
     c[champ] = id;
     if (ou >= 0) cases[ou] = null;
     let rendu = null;
-    if (ancien && !porteAilleurs(ancien)) {
+    if (rendable) {
       this._bouge(addr, 'objets', 'sac', ancien, 'item');
       const place = ou >= 0 ? ou : cases.indexOf(null);
       if (place >= 0) cases[place] = ancien;
       rendu = ancien;
     }
     p.sacCases = cases;
-    return { item: id, ancien: ancien || null, rendu, place: ou, deja: false };
+    /* `garde` dit pourquoi elle n'est pas revenue quand elle n'est pas
+       revenue. Sans ce mot, la page ne peut que se taire, et se taire est
+       precisement ce qui fait croire a une perte. */
+    return { item: id, ancien: ancien || null, rendu, place: ou, deja: false,
+             garde: ancien && !rendu ? (ailleurs ? 'porte-ailleurs' : 'coffre') : null };
   }
 
   equipeFruit(addr, skinId, itemId) { return this._equipe(addr, skinId, itemId, 'fruit'); }
@@ -5615,7 +5642,7 @@ class Game {
     const objets = p.objets || {};
     const ligne = (o) => {
       const r = boutique.rarete(o.rarete);
-      const l = { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+      const l = { id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete, og: !o.drop,
                   couleur: r ? r.couleur : '#8DA0C4', famille: o.famille, pouvoir: o.pouvoir,
                   stat: personnages.FAMILLE_STAT[o.famille] || null,
                   bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
@@ -5773,6 +5800,8 @@ class Game {
       const d = o.saison === 2 ? personnages.DEGATS_ARME[o.rarete] : null;
       out.push({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
                  couleur: r ? r.couleur : '#8DA0C4', saison: o.saison,
+                 /* Numerotee, donc payee : voir `bonusDe`. */
+                 og: !o.drop,
                  stat: personnages.FAMILLE_STAT[o.famille] || null,
                  bonus: personnages.bonusesDe(o.rarete, o.famille, o.saison),
                  /* Meme raison que dans la liste d'equipement : une arme
@@ -5924,6 +5953,41 @@ class Game {
    * derniere relique chacun — et entre les deux il y a une minute pendant
    * laquelle la piece existe deja au sol.
    */
+  /**
+   * ================== UNE SALLE GARDEE DONNE TOUJOURS QUELQUE CHOSE ==================
+   *
+   * « Il y a quatre boss ou il y a des coffres proteges ; parfois j'ouvre le
+   * coffre et il n'y a rien dedans. »
+   *
+   * C'etait vrai, et c'etait mecanique. La saison ne porte que SEIZE reliques
+   * en tout. Les deux salles a relique en donnent une par nettoyage et se
+   * rearment toutes les six minutes : le stock part en trois quarts d'heure.
+   * Ensuite, tuer deux gardiens de seize cents points de vie ne donnait plus
+   * RIEN — pas un sac vide, pas de sac du tout.
+   *
+   * La rarete rare doit rester rare : on ne fabrique pas de reliques en plus.
+   * Mais une salle gardee promet un tresor, et cette promesse-la doit tenir.
+   * On DESCEND donc d'un cran tant qu'il reste quelque chose : une legendaire
+   * plutot qu'une relique, et ainsi de suite. Le joueur repart avec ce que la
+   * saison peut encore donner, jamais avec rien.
+   *
+   * L'ordre vient de `boutique.RARETES` et n'est pas recopie ici : une
+   * septieme rarete ajoutee un jour doit entrer dans l'echelle toute seule.
+   */
+  tireButinGaranti(rarete, alea) {
+    const rangs = boutique.RARETES.map((r) => r.cle);
+    let i = rangs.indexOf(String(rarete));
+    if (i < 0) i = rangs.length - 1;
+    for (let k = i; k >= 0; k--) {
+      const piece = this.tireButin(rangs[k], alea);
+      /* `repli` dit au monde qu'on n'a pas donne ce qui etait promis. La page
+         peut alors l'ecrire ; sans ca, un joueur qui connait la salle croirait
+         a un vol. */
+      if (piece) return k === i ? piece : { ...piece, repli: rangs[i] };
+    }
+    return null;
+  }
+
   tireButin(rarete, alea) {
     const lot = boutique.ITEMS_DROP.filter((o) => o.rarete === String(rarete));
     if (!lot.length) return null;

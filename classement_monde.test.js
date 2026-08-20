@@ -49,26 +49,19 @@ function joueur(g, i, skin, xp, nom) {
   return a;
 }
 
-// ================== 1. LA SEMAINE EST UNE VRAIE SEMAINE ISO
+// ================== 1. UN SEUL CALENDRIER POUR TOUT LE JEU
+//
+// Le prix du monde suit le MEME mois que le classement du casino. Deux
+// calendriers dans un seul jeu, c'est un de trop : le joueur retiendrait
+// l'un et raterait l'autre, et personne ne saurait dire quel jour on est.
 {
-  eq(Game.semaineCle(new Date('2026-08-20T12:00:00Z')), '2026-S34',
-     'un jeudi ordinaire tombe dans sa semaine');
-  /* Le 3 janvier 2027 est un DIMANCHE : en norme ISO il appartient encore a
-     la semaine 53 de 2026. Une origine comptee en jours se tromperait ici, et
-     le prix serait verse le mardi une annee sur quatre. */
-  eq(Game.semaineCle(new Date('2027-01-03T12:00:00Z')), '2026-S53',
-     'un dimanche de janvier appartient encore a l annee precedente');
-  eq(Game.semaineCle(new Date('2027-01-04T12:00:00Z')), '2027-S01',
-     'et le lundi suivant ouvre la nouvelle');
-  /* Sept jours d'ecart changent toujours de semaine, jamais deux fois la
-     meme : c'est ce qui fait qu'un prix par semaine est bien un prix par
-     semaine. */
-  let sauts = 0;
-  for (let j = 0; j < 60; j++) {
-    const t = Date.UTC(2026, 0, 1) + j * 7 * 86400000;
-    if (Game.semaineCle(t) !== Game.semaineCle(t - 7 * 86400000)) sauts++;
-  }
-  eq(sauts, 60, 'soixante sauts de sept jours donnent soixante semaines differentes');
+  const g = new Game();
+  eq(g.prixMonde().mois, Game.moisCle(),
+     'le prix du monde est date du mois courant');
+  eq(g.classementMonde(null, 5).mois, Game.moisCle(),
+     'et le tableau annonce le meme');
+  eq(g.prixClassement().mois, Game.moisCle(),
+     'exactement celui du classement du casino');
 }
 
 // ================== 2. ON CLASSE LES PERSONNAGES, ET ON LES TRIE
@@ -166,7 +159,7 @@ function joueur(g, i, skin, xp, nom) {
      'une piece rangee au coffre ne s affiche pas : elle ne se perd pas non plus');
 }
 
-// ================== 5. LE PRIX : VINGT MILLE PIECES D'OR, AUX DIX PREMIERS
+// ================== 5. LE PRIX : VINGT MILLE PIECES D'OR, AUX DIX PREMIERS, PAR MOIS
 {
   const g = new Game();
   for (let i = 1; i <= 14; i++) joueur(g, i, 'andy', 100000 - i * 1000, 'P' + i);
@@ -192,13 +185,13 @@ function joueur(g, i, skin, xp, nom) {
      'et dix fois le dixieme : la premiere place se dispute');
 }
 
-// ================== 6. IL SE VERSE EN OR, ET UNE SEULE FOIS
+// ================== 6. IL SE VERSE EN OR, ET UNE SEULE FOIS PAR MOIS
 {
   const g = new Game();
   const gagnants = [];
   for (let i = 1; i <= 12; i++) gagnants.push(joueur(g, i, 'andy', 100000 - i * 1000, 'P' + i));
   g._cmCache = null;
-  const sem = Game.semaineCle();
+  const sem = Game.moisCle();
   const orAvant = gagnants.map((a) => g._p(a).fame || 0);
   const soldeAvant = gagnants.map((a) => g.balanceStr(a));
 
@@ -227,7 +220,7 @@ function joueur(g, i, skin, xp, nom) {
      'et l or du premier n a pas double');
 }
 
-// ================== 7. UNE SEMAINE PASSEE SE RELIT, MEME APRES LES MORTS
+// ================== 7. UN MOIS PASSE SE RELIT, MEME APRES LES MORTS
 //
 // Les personnages continuent de vivre, et certains meurent. « Qui a gagne »
 // n'existe plus nulle part si on ne l'a pas garde au moment du versement.
@@ -236,9 +229,9 @@ function joueur(g, i, skin, xp, nom) {
   const a = joueur(g, 1, 'andy', 50000, 'Alice');
   joueur(g, 2, 'pepe', 20000, 'Bob');
   g._cmCache = null;
-  const sem = Game.semaineCle();
+  const sem = Game.moisCle();
   const r = g.verseMonde(sem);
-  eq(r.gagnants[0].name, 'Alice', 'Alice a gagne cette semaine-la');
+  eq(r.gagnants[0].name, 'Alice', 'Alice a gagne ce mois-la');
 
   /* Elle meurt, et le tableau courant l'oublie — c'est voulu. */
   g.meurt(a, 'andy');
@@ -246,19 +239,19 @@ function joueur(g, i, skin, xp, nom) {
   ok(!g.classementMonde(null, 20).top.some((x) => x.address === a),
      'le tableau COURANT ne la montre plus');
 
-  /* La semaine passee, elle, se souvient. */
+  /* Le mois passe, lui, se souvient. */
   const vieux = g.prixMonde(sem);
-  eq(vieux.gagnants[0].name, 'Alice', 'mais la semaine passee garde son nom');
+  eq(vieux.gagnants[0].name, 'Alice', 'mais le mois passe garde son nom');
   eq(vieux.gagnants[0].gold, r.gagnants[0].gold, 'et ce qu elle a touche');
   ok(vieux.verse, 'et elle se dit payee');
 
-  /* Et ca survit a un redemarrage : sans ca, un redeploiement le lundi matin
+  /* Et ca survit a un redemarrage : sans ca, un redeploiement le 1er au matin
      rendrait le prix payable une seconde fois. */
   const etat = JSON.parse(JSON.stringify(g.serialize()));
   const g2 = new Game();
   g2.hydrate(etat);
   ok(g2.prixMondeVerses && g2.prixMondeVerses[sem],
-     'apres un redemarrage, la semaine est toujours marquee payee');
+     'apres un redemarrage, le mois est toujours marque paye');
   let refus = null;
   try { g2.verseMonde(sem); } catch (e) { refus = e.message; }
   ok(refus && /already paid/.test(refus),

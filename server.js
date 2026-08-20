@@ -592,7 +592,12 @@ const personnages = require('./personnages');
  * applique loin du registre qui le tient serait un plafond qu'on oublierait.
  *
  * Ce fichier ne fait donc plus que brancher les deux. */
-const realm = new Realm({ tireObjet: (r, a) => game.tireButin(r, a) });
+/* `garanti` : le butin d'une SALLE GARDEE, qui descend d'un cran plutot que
+   de ne rien donner quand la saison n'a plus de reliques. Le butin ordinaire
+   d'un monstre, lui, a le droit d'etre vide — c'est meme le cas normal. */
+const realm = new Realm({
+  tireObjet: (r, a, garanti) => (garanti ? game.tireButinGaranti(r, a) : game.tireButin(r, a)),
+});
 const realmClients = new Set();
 /* Depuis quand un joueur n'a pas annonce sa position : c'est ce delai qui
    sert de `dt` a la borne de vitesse. Le mesurer ici plutot que de faire
@@ -2301,14 +2306,16 @@ const prixInterval = setInterval(() => {
   }
 }, 600000);
 
-/* Le prix du MONDE se verse quand la semaine a tourne. Meme forme et meme
-   raison que le prix du mois : on regarde toutes les dix minutes plutot que
-   de poser un rendez-vous au lundi minuit, qui ne survivrait pas au premier
-   redeploiement. */
+/* Le prix du MONDE se verse quand le MOIS a tourne — le meme calendrier que
+   le classement du casino. Deux calendriers dans un seul jeu, c'est un de
+   trop : le joueur retiendrait l'un et raterait l'autre. On regarde toutes
+   les dix minutes plutot que de poser un rendez-vous au 1er a minuit, qui ne
+   survivrait pas au premier redeploiement. */
 const prixMondeInterval = setInterval(() => {
   try {
     const G = require('./game').Game;
-    const passe = G.semaineCle(Date.now() - 7 * 86400000);
+    const d = new Date(); d.setMonth(d.getMonth() - 1);
+    const passe = G.moisCle(d);
     if (game.prixMondeVerses && game.prixMondeVerses[passe]) return;
     const r = game.verseMonde(passe);
     if (!r.gagnants.length) return;
