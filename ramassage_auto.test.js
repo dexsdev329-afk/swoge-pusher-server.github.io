@@ -98,6 +98,19 @@ process.on('unhandledRejection', (e) => {
     return sac;
   };
   const tourne = async (ms) => { await new Promise((r) => setTimeout(r, ms || 500)); };
+  /* ---- ON ATTEND LA CONDITION, PAS UNE DUREE ----
+   * Le ramassage tourne au rythme du monde, dix fois par seconde. Un delai
+   * fixe marche neuf fois sur dix et rate la dixieme, quand le sac est pose
+   * juste apres un tour — et un essai qui tombe au hasard vaut moins qu'un
+   * essai absent. */
+  const jusqua = async (cond, ms) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < (ms || 3000)) {
+      if (cond()) return true;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return cond();
+  };
 
   // ================== 1. UN OBJET SE RAMASSE TOUT SEUL
   {
@@ -105,7 +118,7 @@ process.on('unhandledRejection', (e) => {
     const arme = B.ITEMS_DROP.find((o) => o.saison === 2);
     const sac = poseSac([{ item: arme.id, cle: arme.cle, nom: arme.nom, rarete: arme.rarete }]);
     s.recus.length = 0;
-    await tourne(600);
+    await jusqua(() => sac.contenu.length === 0);
     eq((p.sac || {})[arme.id] || 0, 1, 'la piece est dans le sac du joueur, sans un geste');
     eq(sac.contenu.length, 0, 'et le sac au sol est vide');
     eq(monde.sacs.indexOf(sac), -1, 'il a meme disparu : un sac vide ne se rouvre pas');
@@ -120,7 +133,7 @@ process.on('unhandledRejection', (e) => {
     const avant = moteur.potionsPour(A).find((x) => x.cle === 'vie');
     poseSac([{ potion: 'vie' }, { potion: 'mana' }]);
     s.recus.length = 0;
-    await tourne(600);
+    await jusqua(() => monde.sacs.length === 0);
     const apres = moteur.potionsPour(A).find((x) => x.cle === 'vie');
     eq(apres.quantite, avant.quantite + 1, 'la fiole de vie est dans la pile');
     const mana = moteur.potionsPour(A).find((x) => x.cle === 'mana');
@@ -163,7 +176,7 @@ process.on('unhandledRejection', (e) => {
     /* On vide une place, comme un joueur qui equipe ou qui jette. */
     const premier = Object.keys(p.sac)[0];
     delete p.sac[premier]; p.sacCases = null;
-    await tourne(700);
+    await jusqua(() => ((p.sac || {})[attendue] || 0) > 0);
     eq((p.sac || {})[attendue] || 0, 1, 'elle entre au tour suivant, sans qu on repasse dessus');
   }
 
@@ -186,7 +199,7 @@ process.on('unhandledRejection', (e) => {
     ]);
     const avant = moteur.potionsPour(A).find((x) => x.cle === 'vie').quantite;
     const t0 = Date.now();
-    await tourne(700);
+    await jusqua(() => moteur.potionsPour(A).find((x) => x.cle === 'vie').quantite > avant);
     const apres = moteur.potionsPour(A).find((x) => x.cle === 'vie').quantite;
     eq(apres, avant + 1, 'la potion du FOND est prise, malgre trois refus devant elle');
     eq(monde.sacs[0].contenu.length, 3, 'et les trois qui ne rentrent pas sont restees');
@@ -231,7 +244,8 @@ process.on('unhandledRejection', (e) => {
     j.x = 3000; j.y = 3000;
     s.recus.length = 0;
     s.send(JSON.stringify({ type: 'realmDepose', item: arme.id }));
-    await tourne(800);
+    await jusqua(() => monde.sacs.length === 1);
+    await tourne(500);      // et on laisse plusieurs tours passer : il doit RESTER
     eq(monde.sacs.length, 1, 'un sac apparait sous ses pieds');
     eq(monde.sacs[0].contenu.length, 1, 'et la piece y RESTE');
     eq((p.sac || {})[arme.id] || 0, 0, 'elle n est pas revenue dans le sac du joueur');
@@ -243,8 +257,47 @@ process.on('unhandledRejection', (e) => {
     await tourne(400);
     eq(sac.pose, null, 's ecarter rend le sac a tout le monde');
     j.x = sac.x; j.y = sac.y;
-    await tourne(600);
+    await jusqua(() => ((p.sac || {})[arme.id] || 0) > 0);
     eq((p.sac || {})[arme.id] || 0, 1, 'et en repassant dessus, on la reprend');
+  }
+
+  // ================== 8. UNE FIOLE DE STAT SE RAMASSE, ELLE NE SE BOIT PLUS
+  //
+  // Elle etait bue sur place. A son plafond elle etait REFUSEE, et restait par
+  // terre jusqu'a la fin de sa minute : une potion trouvee dans la lave se
+  // perdait parce qu'on avait deja bu six defenses.
+  {
+    monde.sacs.length = 0;
+    p.sac = {}; p.sacFioles = {}; p.sacCases = null;
+    j.x = 3500; j.y = 3500;
+    const avant = moteur.personnageEtat(A, 'andy').stats.def;
+    poseSac([{ stat: 'def' }]);
+    s.recus.length = 0;
+    await jusqua(() => monde.sacs.length === 0);
+    eq(monde.sacs.length, 0, 'la fiole est ramassee en marchant dessus');
+    eq(moteur.personnageEtat(A, 'andy').stats.def, avant,
+       'et AUCUNE stat ne bouge : elle attend dans le sac');
+    const l = moteur.sacPour(A).find((x) => x.fiole === 'def');
+    ok(l, 'elle est bien dans le sac, a une place');
+    eq(moteur.sacRempli(A), 1, 'qu elle occupe');
+    const dit = s.recus.filter((x) => x.type === 'realmRamasse').pop();
+    ok(dit && dit.stat === 'def', 'la page est prevenue de ce qu on a pris');
+    ok(dit && Array.isArray(dit.fioles), 'avec la reserve complete, pour la peindre');
+
+    /* ---- ET AU PLAFOND, ELLE SE RAMASSE QUAND MEME ----
+     * C'est tout le changement : la fiole ne se perd plus parce qu'on est
+     * plein. On la garde, on la range au coffre, on la boit plus tard. */
+    const mx = require('./personnages').supMaxDe('def', require('./personnages').BASE.andy.def);
+    /* On passe par le chemin du jeu : `boitStat` cree la fiche du personnage
+       si elle n'existe pas, et c'est elle qui porte le plafond. */
+    for (let k = 0; k < mx; k++) moteur.boitStat(A, 'andy', 'def');
+    p.sac = {}; p.sacFioles = {}; p.sacCases = null;
+    poseSac([{ stat: 'def' }]);
+    await jusqua(() => monde.sacs.length === 0);
+    console.log('   plafond de defense : ' + mx + ' — la fiole est prise quand meme');
+    eq(monde.sacs.length, 0, 'au plafond, elle se ramasse quand meme');
+    ok(moteur.sacPour(A).some((x) => x.fiole === 'def'),
+       'et elle attend dans le sac au lieu de finir sa minute par terre');
   }
 
   s.close();

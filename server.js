@@ -2932,6 +2932,28 @@ wss.on('connection', (ws) => {
        * Huit places, et le droit de les ranger. Le sac se lit d'un coup d'oeil
        * en combat : « ma potion est toujours en bas a droite » vaut une
        * demi-seconde a chaque fois qu'on la cherche. */
+      /* ---- LES FIOLES DE STAT : RANGER, RESSORTIR, BOIRE ----
+       * Trois gestes sur la meme reserve. Le coffre garde, le sac risque, et
+       * boire est enfin un geste qu'on choisit au lieu d'un pas de cote. */
+      if (m.type === 'fioleRange' || m.type === 'fioleSort' || m.type === 'fioleBoit') {
+        if (!ws.addr) return;
+        let r = null, err = null;
+        try {
+          if (m.type === 'fioleRange') r = game.rangeFiole(ws.addr, m.stat);
+          else if (m.type === 'fioleSort') r = game.sortFiole(ws.addr, m.stat);
+          else r = game.boitFiole(ws.addr, m.skin || ws.realmSkin || game._p(ws.addr).skinActif, m.stat);
+        } catch (e) { err = e.message; }
+        if (!err) persistSoon();
+        const skin = m.skin || ws.realmSkin || game._p(ws.addr).skinActif;
+        return send(ws, { type: m.type, ...(r || {}), error: err || undefined,
+                          fioles: game.fiolesPour(ws.addr),
+                          sacJoueur: game.sacPour(ws.addr),
+                          /* La fiche repart quand on a BU : la stat vient de
+                             changer, et le panneau doit le montrer sans qu'on
+                             la lui recalcule. */
+                          ...(m.type === 'fioleBoit' && !err && skin
+                              ? { etat: game.personnageEtat(ws.addr, skin), skin } : {}) });
+      }
       if (m.type === 'sacDeplace') {
         if (!ws.addr) return;
         let err = null;
@@ -3964,7 +3986,12 @@ function ramassePlace(ws, id, place, muet) {
      serait bue pour rien et la place serait videe. Refusee, elle reste dans le
      sac, qui finit sa minute. */
   const r = realm.ramasse(ws.addr, null, (o) => {
-    if (o.stat) return game.supRestant(ws.addr, skin, o.stat) > 0 ? true : 'plein';
+    /* Une FIOLE DE STAT ne se boit plus en la ramassant : elle prend une place
+       du sac, comme une piece. On refusait au PLAFOND, et la fiole restait
+       alors par terre jusqu'a la fin de sa minute — une potion trouvee dans la
+       lave se perdait parce qu'on avait deja bu six defenses. Maintenant on la
+       garde, on la range au coffre, et on la boit avec le personnage suivant. */
+    if (o.stat) return game.sacRempli(ws.addr) < 8 ? true : 'sac-plein';
     if (o.potion) return plafondPotion(o.potion) ? true : 'plein';
     /* Un OBJET prend une place du sac : on refuse avant de le sortir du sac au
        sol, sinon il disparaitrait des deux cotes a la fois. */
@@ -3981,15 +4008,13 @@ function ramassePlace(ws, id, place, muet) {
   }
   try {
     if (r.stat) {
-      const b = game.boitStat(ws.addr, skin, r.stat);
+      const b = game.prendFiole(ws.addr, r.stat);
       persistSoon();
-      /* La fiche repart EN ENTIER, dans la forme que la page connait deja
-         ({skin, etat}) : la stat vient de changer, et le panneau doit le
-         montrer sans qu'on la lui recalcule. */
-      send(ws, { type: 'personnage', skin, etat: game.personnageEtat(ws.addr, skin) });
-      /* `vide` dit a la page de refermer la grille : sans lui, une fiole
-         resterait dessinee sur une place qui n'existe plus. */
-      send(ws, { type: 'realmRamasse', sac: r.sac, stat: r.stat, vide: r.vide, auto: !!muet, ...b });
+      /* Le sac complet repart : la fiole vient d'y prendre une place, et la
+         grille doit la montrer sans un aller-retour de plus. */
+      send(ws, { type: 'realmRamasse', sac: r.sac, stat: r.stat, vide: r.vide,
+                 auto: !!muet, ...b, sacJoueur: game.sacPour(ws.addr),
+                 fioles: game.fiolesPour(ws.addr) });
       return 'pris';
     }
     if (r.potion) {

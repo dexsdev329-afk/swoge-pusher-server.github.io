@@ -339,24 +339,38 @@ const PROFIL_FAMILLE = {
  * alors que la premiere existe a mille exemplaires pour toute une saison et
  * que la seconde tombe a l'infini.
  *
- * ---- l'escalier alterne ----
+ * ---- l'escalier, et qui tient quelle marche ----
  *
- * Une piece de BOUTIQUE de rarete R se loge entre le BUTIN R+1 et le BUTIN
- * R+2. Les deux echelles s'imbriquent donc en un seul escalier de onze
- * marches, dont le monde tient la premiere ET la derniere :
+ * Le monde tient les DEUX PREMIERES marches — le tutoriel — et les DEUX
+ * DERNIERES — les trophees. La boutique tient les sept du milieu :
  *
- *   saison 1  o3  < o6  < B8  < o9  < B11 < o12 < B14 < o16 < B18 < B20 < o21
- *   saison 3  o7  < o14 < B18 < o21 < B25 < o29 < B34 < o38 < B42 < B47 < o50
- *   saison 4  o3  < o6  < B7  < o8  < B9  < o10 < B11 < o12 < B13 < B15 < o16
+ *   saison 1  o3  < o6  < B8  < o9  < B11 < o12 < B14 < B18 < B20 < o22 < o26
+ *   saison 3  o7  < o14 < B18 < o21 < B25 < o29 < B34 < B42 < B47 < o50 < o58
+ *   saison 4  o3  < o6  < B7  < o8  < B9  < o10 < B11 < B13 < B15 < o17 < o20
  *
  * (B = boutique, o = butin. Un essai verifie que la suite croit vraiment.)
  *
- * ---- pourquoi la relique reste au-dessus de tout ----
+ * ---- pourquoi les deux derniers rangs du monde restent au-dessus ----
  *
- * C'est la seule piece que l'argent n'achete pas : quatre exemplaires par
- * saison, et seulement dans une salle gardee. Si la mythique de boutique la
- * depassait, le monde de combat perdrait son dernier trophee — et c'est lui
- * qui fait rester les joueurs. On vend de la puissance, pas le sommet.
+ * Parce que sinon la RARETE et la PUISSANCE marchent en sens inverse, et c'est
+ * le genre de defaut qu'on ne voit qu'en comptant. Par saison, en exemplaires
+ * qui peuvent exister en meme temps :
+ *
+ *   mythique du monde     1 identifiant x 10  =  10
+ *   legendaire achetee    6 identifiants x 40 = 240
+ *   mythique achetee      6 identifiants x 10 =  60
+ *
+ * La piece la plus rare que le monde puisse produire etait battue par une
+ * piece vingt-quatre fois plus abondante, qu'un clic suffit a obtenir. Et il en
+ * decoulait une chose pire : au-dessus de la RARE achetee, il n'existait plus
+ * aucune reponse qui se farme. Un joueur qui ne paie pas plafonnait a la
+ * deuxieme marche sur onze.
+ *
+ * Rien ne BAISSE pour autant : ce sont les deux rangs du monde qui montent.
+ * Personne ne perd un point, aucun prix en $SWOGE n'est a revoir, et ce qui
+ * s'achete continue de battre tout ce qu'un joueur rencontre vraiment — le
+ * commun, le rare, l'epique et le legendaire du monde. Ce qui reste au-dessus,
+ * ce sont dix exemplaires par saison et quatre reliques.
  *
  * ---- et pourquoi le butin ne baisse pas d'un point ----
  *
@@ -368,9 +382,9 @@ const PROFIL_FAMILLE = {
  * boutique ; elle ne fait que le rendre visible.
  */
 const BUDGET_BUTIN = {
-  1: { commun: 3, rare: 6,  epique: 9,  legendaire: 12, mythique: 16, relique: 21 },  // fruits
+  1: { commun: 3, rare: 6,  epique: 9,  legendaire: 12, mythique: 22, relique: 26 },  // fruits
   /* pas de 2 : les armes ne donnent que des degats — voir PROFIL_FAMILLE */
-  3: { commun: 7, rare: 14, epique: 21, legendaire: 29, mythique: 38, relique: 50 },  // armures
+  3: { commun: 7, rare: 14, epique: 21, legendaire: 29, mythique: 50, relique: 58 },  // armures
   /* Les bagues suivent le bareme reel des anneaux tiered de RotMG :
      +3, +6, +7, +8, +9, +10, +11 sur sept tiers. Nous en avons cinq, on prend
      les crans qui gardent l'ecart lisible du commun au mythique : 3, 6, 8, 10,
@@ -381,7 +395,7 @@ const BUDGET_BUTIN = {
      plafond des anneaux d'un cran, elle ne le renverse pas — c'est la meme
      raison qui avait fait redescendre le mythique de +16 a +11. Une bague
      comble un trou de build, meme quand elle est unique au monde. */
-  4: { commun: 3, rare: 6,  epique: 8,  legendaire: 10, mythique: 12, relique: 16 },  // bagues
+  4: { commun: 3, rare: 6,  epique: 8,  legendaire: 10, mythique: 17, relique: 20 },  // bagues
 };
 
 /* L'echelle de la BOUTIQUE. Cinq rangs, pas six : la relique ne se vend pas.
@@ -389,9 +403,11 @@ const BUDGET_BUTIN = {
    c'est de la que sort l'imbrication, et c'est pour ca qu'aucune des deux
    tables n'a ete tapee au jugé. */
 const BUDGET_BOUTIQUE = {
-  1: { commun:  8, rare: 11, epique: 14, legendaire: 18, mythique: 20 },  // fruits
-  3: { commun: 18, rare: 25, epique: 34, legendaire: 42, mythique: 47 },  // armures
-  4: { commun:  7, rare:  9, epique: 11, legendaire: 13, mythique: 15 },  // bagues
+  /* `relique: null` plutot qu'une clef absente : les deux rendent {}, mais le
+     null DIT que la decision a ete prise — la relique ne se vend pas. */
+  1: { commun:  8, rare: 11, epique: 14, legendaire: 18, mythique: 20, relique: null },  // fruits
+  3: { commun: 18, rare: 25, epique: 34, legendaire: 42, mythique: 47, relique: null },  // armures
+  4: { commun:  7, rare:  9, epique: 11, legendaire: 13, mythique: 15, relique: null },  // bagues
 };
 
 const BUDGET = { butin: BUDGET_BUTIN, boutique: BUDGET_BOUTIQUE };
@@ -403,7 +419,10 @@ const BUDGET_SAISON = BUDGET_BUTIN;
     rarete decide de ce que chaque tir enleve. */
 const DEGATS_ARME_BUTIN = {
   commun: [20, 30], rare: [30, 45], epique: [45, 65],
-  legendaire: [65, 90], mythique: [90, 120],
+  /* Les deux derniers rangs passent au-dessus de tout ce qui se vend — meme
+     raison que les budgets : dix exemplaires par saison ne peuvent pas etre
+     battus par soixante qu'un clic suffit a obtenir. */
+  legendaire: [68, 95], mythique: [120, 155],
   /* La relique prolonge l'echelle d'un cran — chacun vaut environ un tiers de
      plus que le precedent. Son MINIMUM passe au-dessus du maximum de ce que
      la boutique vend : le plus mauvais coup d'une relique vaut mieux que le
@@ -418,12 +437,12 @@ const DEGATS_ARME_BUTIN = {
 
 /* Les memes crans, decales de la meme facon que les budgets : chaque borne
    est la moyenne des deux crans de butin suivants. L'escalier des degats :
-     20,30 | 30,45 | 38,55 | 45,65 | 55,78 | 65,90 | 78,105 | 90,120
-           | 102,134 | 116,150 | 155,200
+     20,30 | 30,45 | 38,55 | 45,65 | 55,78 | 68,95 | 78,105
+           | 102,134 | 116,150 | 120,155 | 155,200
    Onze marches, et la relique tient toujours la derniere. */
 const DEGATS_ARME_BOUTIQUE = {
   commun: [38, 55], rare: [55, 78], epique: [78, 105],
-  legendaire: [102, 134], mythique: [116, 150],
+  legendaire: [102, 134], mythique: [116, 150], relique: null,
 };
 
 const DEGATS = { butin: DEGATS_ARME_BUTIN, boutique: DEGATS_ARME_BOUTIQUE };

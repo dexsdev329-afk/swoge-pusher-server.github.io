@@ -310,6 +310,21 @@ class Game {
         /* Les potions aussi : elles sont achetees avec de l'argent reel, et
            les perdre a un redemarrage serait un vol. */
         po: (p.potions && Object.keys(p.potions).length) ? p.potions : undefined,
+        /* Les fioles de stat, des deux cotes. Celles du COFFRE survivent a la
+           mort — c'est toute la raison d'etre du coffre — donc elles doivent
+           d'abord survivre a un redemarrage. Celles du SAC partent au fichier
+           pour la meme raison que le sac lui-meme : un redemarrage n'est pas
+           une mort. */
+        /* `fio`, pas `fi` : `fi` etait DEJA pris par les filleuls, et l'ecraser
+           a efface la liste de parrainage de tout le monde a la relecture.
+           Quatre essais l'ont dit tout de suite ; sans eux, personne n'aurait
+           su avant qu'un joueur ne demande ou etait passe son filleul. */
+        fio: (p.fioles && Object.keys(p.fioles).length) ? p.fioles : undefined,
+        sfio: (p.sacFioles && Object.keys(p.sacFioles).length) ? p.sacFioles : undefined,
+        /* Ou chaque chose est posee dans les huit places. Ce n'est pas la
+           verite — le compte l'est — mais la reconstruire au hasard a chaque
+           redemarrage rebattrait le sac sous les doigts du joueur. */
+        scas: (Array.isArray(p.sacCases) && p.sacCases.some(Boolean)) ? p.sacCases : undefined,
         /* Le volume par skin part en chaine wei, comme p.wagered lui-meme —
            meme raison : un BigNumber ne traverse pas JSON.stringify tout
            seul. */
@@ -517,6 +532,9 @@ class Game {
         attente: Array.isArray(d.att) ? d.att : [],
         record: d.rec || null, meilleurJour: d.mj || null, refBienvenue: !!d.rb,
         objets: (d.ob && typeof d.ob === 'object') ? d.ob : {},
+        fioles: (d.fio && typeof d.fio === 'object') ? d.fio : {},
+        sacFioles: (d.sfio && typeof d.sfio === 'object') ? d.sfio : {},
+        sacCases: Array.isArray(d.scas) ? d.scas : null,
         skins: (d.sk && typeof d.sk === 'object') ? d.sk : {},
         persos: (d.pr && typeof d.pr === 'object')
           ? Object.keys(d.pr).reduce((o, id) => { const c = d.pr[id] || {};
@@ -5605,6 +5623,17 @@ class Game {
       if (o) sacDetail.push({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete, qte });
     }
     p.sac = {};
+    /* ---- LES FIOLES DU SAC MEURENT AUSSI ----
+     * Celles du COFFRE, non : c'est exactement la difference entre les deux,
+     * et la seule raison d'aller les y ranger. Une fiole transportee est une
+     * fiole risquee — comme une piece. */
+    const fiolesPerdues = {};
+    for (const k of Object.keys(p.sacFioles || {})) {
+      const q = Math.max(0, p.sacFioles[k] | 0);
+      if (q) fiolesPerdues[k] = q;
+    }
+    p.sacFioles = {};
+    p.sacCases = null;
 
     c.w = BN(0);
     /* ET L'XP DE COMBAT AVEC. Le volume seul ne suffit plus depuis que tuer
@@ -5618,6 +5647,10 @@ class Game {
        fois evite au client d'aller le rechercher piece par piece au moment
        precis ou il doit afficher un bilan. */
     return { skin: skinId, perdus, sacPerdu, sacDetail, niveau: 0,
+             /* Ce qu'on transportait et qu'on n'avait pas range : l'ecran de
+                fin le nomme, sinon le joueur decouvre la perte trois parties
+                plus tard en cherchant ses fioles. */
+             fiolesPerdues,
              /* Les potions bues font partie du bilan : c'est souvent la
                 perte la plus lourde, et la seule qu'aucun coffre n'aurait pu
                 eviter. Ne pas la nommer donnerait un ecran de fin qui ment
@@ -5659,6 +5692,10 @@ class Game {
       armes: boutique.itemsDeSaison(2).filter(possede).map(ligne),
       armures: boutique.itemsDeSaison(3).filter(possede).map(ligne),
       bagues: boutique.itemsDeSaison(4).filter(possede).map(ligne),
+      /* Les fioles de stat mises a l'abri. Elles ne s'equipent pas — on les
+         BOIT — mais elles vivent au meme endroit et se rangent par le meme
+         geste, et le coffre est l'ecran ou l'on decide quoi emporter. */
+      fioles: this.fiolesPour(addr),
       /* ---- LE SAC N'EST PAS LE COFFRE ----
        *
        * Le coffre (`p.objets`) contient ce qu'on a ACHETE : il est a l'abri,
@@ -5762,25 +5799,35 @@ class Game {
    */
   _casesDuSac(p) {
     const sac = p.sac || {};
+    const fioles = p.sacFioles || {};
+    /* Ce que le sac contient, sous UNE seule forme : une clef par unite
+       possible. Un identifiant de boutique est un nombre, une fiole de stat
+       est « st:<stat> » — deux formes dans une meme liste, parce qu'une seule
+       liste veut dire une seule verite sur ce que contient le sac. */
+    const compte = {};
+    for (const k of Object.keys(sac)) if (sac[k] > 0) compte[Number(k)] = sac[k] | 0;
+    for (const k of Object.keys(fioles)) if (fioles[k] > 0) compte['st:' + k] = fioles[k] | 0;
+
     const cases = Array.isArray(p.sacCases) ? p.sacCases.slice(0, SAC_CASES) : [];
     while (cases.length < SAC_CASES) cases.push(null);
     /* Ce que les cases pretendent contenir, borne par ce qu'on a vraiment.
        Une case qui montre une piece de plus que le compte se vide. */
     const vus = {};
     for (let i = 0; i < cases.length; i++) {
-      const id = Number(cases[i]);
-      if (!Number.isFinite(id) || !(sac[id] > 0)) { cases[i] = null; continue; }
-      if ((vus[id] || 0) >= (sac[id] | 0)) { cases[i] = null; continue; }
-      vus[id] = (vus[id] || 0) + 1;
-      cases[i] = id;
+      const c = cases[i];
+      const cle = (typeof c === 'string' && c.slice(0, 3) === 'st:') ? c : Number(c);
+      if (!(compte[cle] > 0)) { cases[i] = null; continue; }
+      if ((vus[cle] || 0) >= compte[cle]) { cases[i] = null; continue; }
+      vus[cle] = (vus[cle] || 0) + 1;
+      cases[i] = cle;
     }
     /* Et ce qui n'a pas encore de case en prend une — la premiere libre. */
-    for (const k of Object.keys(sac)) {
-      const id = Number(k);
-      for (let q = vus[id] || 0; q < (sac[k] | 0); q++) {
+    for (const cle of Object.keys(compte)) {
+      const vraie = cle.slice(0, 3) === 'st:' ? cle : Number(cle);
+      for (let q = vus[vraie] || 0; q < compte[cle]; q++) {
         const libre = cases.indexOf(null);
         if (libre < 0) break;
-        cases[libre] = id;
+        cases[libre] = vraie;
       }
     }
     p.sacCases = cases;
@@ -5821,6 +5868,23 @@ class Game {
     for (let i = 0; i < cases.length; i++) {
       const id = cases[i];
       if (id === null || id === undefined) continue;
+      /* UNE FIOLE DE STAT. Elle n'a pas d'identifiant de boutique et n'en
+         aura pas : lui en donner un la ferait entrer dans les plafonds de
+         saison et les statistiques de rarete, ou elle n'a rien a faire. */
+      if (typeof id === 'string' && id.slice(0, 3) === 'st:') {
+        const st = id.slice(3);
+        out.push({ fiole: st, nom: 'Stat potion', cle: 'fiole_' + st,
+                   rarete: 'commun', couleur: '#EAF2FF',
+                   bonus: { [st]: personnages.supPas(st) },
+                   /* SA COLONNE sur la planche des fioles, comptee ici. La
+                      page devait sinon connaitre l'ordre des huit stats, et
+                      cet ordre n'existe que dans le monde de combat : dans le
+                      Nexus elle aurait dessine huit fois la meme fiole. */
+                   col: personnages.STATS.indexOf(st),
+                   cols: personnages.STATS.length,
+                   place: i });
+        continue;
+      }
       const o = boutique.item(id);
       if (!o) continue;
       const r = boutique.rarete(o.rarete);
@@ -6111,9 +6175,123 @@ class Game {
   }
 
   /** Combien d'objets le sac porte, toutes lignes confondues. */
+  /* ====================================================================
+   * LES FIOLES DE STAT NE SE BOIVENT PLUS EN LES RAMASSANT
+   * ====================================================================
+   *
+   * Une fiole trouvee etait bue sur place, tout de suite, sans qu'on ait rien
+   * demande. Deux consequences, et les deux sont mauvaises :
+   *
+   *   - a son plafond, elle etait REFUSEE et restait par terre jusqu'a la fin
+   *     de sa minute. Une potion trouvee dans la lave se perdait parce qu'on
+   *     avait deja bu six defenses ;
+   *   - et il n'existait aucun moyen d'en garder une pour le personnage
+   *     suivant. Elles meurent avec celui qui les boit — c'est voulu — mais
+   *     rien ne permettait de les mettre a l'abri AVANT de boire.
+   *
+   * Elles occupent donc une place du sac, comme une piece, et le coffre en
+   * garde une reserve. Boire devient un geste : un double-clic, pas un pas de
+   * cote.
+   *
+   * ---- comment une fiole tient dans un sac fait pour des identifiants ----
+   *
+   * `p.sac` compte des objets du CATALOGUE, par identifiant. Une fiole n'en
+   * est pas un et ne doit pas en devenir un : lui donner un identifiant de
+   * boutique la ferait entrer dans les plafonds de saison, les statistiques de
+   * rarete et le rachat, ou elle n'a rien a faire.
+   *
+   * Elle vit donc a cote, dans `p.sacFioles` — {stat: nombre} — et les CASES
+   * du sac portent soit un identifiant (un nombre), soit la chaine
+   * « st:<stat> ». Deux formes dans une meme liste, c'est un test de plus a
+   * chaque lecture ; une seule liste, c'est une seule verite sur ce que
+   * contient le sac, et huit places qui restent huit.
+   */
   sacRempli(addr) {
-    const sac = this._p(addr).sac || {};
-    return Object.keys(sac).reduce((n, id) => n + Math.max(0, sac[id] | 0), 0);
+    const p = this._p(addr);
+    const sac = p.sac || {};
+    const fioles = p.sacFioles || {};
+    return Object.keys(sac).reduce((n, id) => n + Math.max(0, sac[id] | 0), 0)
+         + Object.keys(fioles).reduce((n, k) => n + Math.max(0, fioles[k] | 0), 0);
+  }
+
+  /** Les fioles de stat mises a l'ABRI. Elles survivent a la mort — c'est
+      toute la raison d'etre du coffre — et ne comptent pas dans les huit
+      places du sac. */
+  fiolesPour(addr) {
+    const p = this._p(addr);
+    const coffre = p.fioles || {}, sac = p.sacFioles || {};
+    return personnages.STATS.map((s, i) => ({
+      cle: s, coffre: Math.max(0, coffre[s] | 0), sac: Math.max(0, sac[s] | 0),
+      /* Sa colonne sur la planche des fioles, et combien il y en a. La page
+         devait sinon connaitre l'ordre des huit stats, et cet ordre n'existe
+         chez elle que dans le monde de combat. */
+      col: i, cols: personnages.STATS.length,
+      pas: personnages.supPas(s),
+    })).filter((x) => x.coffre > 0 || x.sac > 0);
+  }
+
+  /** Ramasser une fiole : elle prend une place, elle ne se boit pas. */
+  prendFiole(addr, stat) {
+    if (personnages.STATS.indexOf(stat) < 0) throw new Error('Unknown stat');
+    if (this.sacRempli(addr) >= SAC_CASES) {
+      throw new Error('Your backpack is full — ' + SAC_CASES + ' slots, one item each');
+    }
+    const p = this._p(addr);
+    p.sacFioles = p.sacFioles || {};
+    p.sacFioles[stat] = (p.sacFioles[stat] || 0) + 1;
+    return { stat };
+  }
+
+  /** Du sac au COFFRE : c'est le geste qui met a l'abri. */
+  rangeFiole(addr, stat) {
+    const p = this._p(addr);
+    p.sacFioles = p.sacFioles || {};
+    if (!(p.sacFioles[stat] > 0)) throw new Error('That one is not in your backpack');
+    p.sacFioles[stat] -= 1;
+    if (p.sacFioles[stat] <= 0) delete p.sacFioles[stat];
+    p.fioles = p.fioles || {};
+    p.fioles[stat] = (p.fioles[stat] || 0) + 1;
+    p.sacCases = null;
+    return { stat, coffre: p.fioles[stat] };
+  }
+
+  /** Et du coffre au sac : elle redevient perissable. */
+  sortFiole(addr, stat) {
+    const p = this._p(addr);
+    p.fioles = p.fioles || {};
+    if (!(p.fioles[stat] > 0)) throw new Error('You have none of those');
+    if (this.sacRempli(addr) >= SAC_CASES) {
+      throw new Error('Your backpack is full — ' + SAC_CASES + ' slots, one item each');
+    }
+    p.fioles[stat] -= 1;
+    if (p.fioles[stat] <= 0) delete p.fioles[stat];
+    p.sacFioles = p.sacFioles || {};
+    p.sacFioles[stat] = (p.sacFioles[stat] || 0) + 1;
+    p.sacCases = null;
+    return { stat, coffre: p.fioles[stat] || 0 };
+  }
+
+  /**
+   * BOIRE une fiole qu'on possede. Du sac d'abord, du coffre ensuite : ce
+   * qu'on porte est ce qui peut se perdre, donc ce qu'on consomme en premier.
+   * Le plafond est verifie AVANT de retirer la fiole — sinon un refus la
+   * detruirait, et c'est precisement ce qu'on cherchait a rendre impossible.
+   */
+  boitFiole(addr, skinId, stat) {
+    const p = this._p(addr);
+    const dansLeSac = (p.sacFioles || {})[stat] > 0;
+    const auCoffre = (p.fioles || {})[stat] > 0;
+    if (!dansLeSac && !auCoffre) throw new Error('You have none of those');
+    const r = this.boitStat(addr, skinId, stat);   // leve si le plafond est atteint
+    if (dansLeSac) {
+      p.sacFioles[stat] -= 1;
+      if (p.sacFioles[stat] <= 0) delete p.sacFioles[stat];
+      p.sacCases = null;
+    } else {
+      p.fioles[stat] -= 1;
+      if (p.fioles[stat] <= 0) delete p.fioles[stat];
+    }
+    return { ...r, ou: dansLeSac ? 'sac' : 'coffre' };
   }
 
   /** Le catalogue et l'inventaire du joueur, prets a peindre. */

@@ -214,18 +214,36 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
   /* ---- LE POIDS DE L'EQUIPEMENT FACE AU PERSONNAGE ----
    *
    * Le releve realmeye : un anneau tiered plafonne a +11 ATT sur un
-   * personnage qui monte a 75 — 15 % du plafond. Ce qu'un set complet peut
-   * ajouter chez nous doit rester du meme ordre, pas cinq fois plus. On
-   * mesure le pire cas : le fruit le plus offensif, l'armure la plus
-   * offensive, la bague d'attaque, et l'arme (qui ne donne plus rien). */
+   * personnage qui monte a 75 — 15 % du plafond. Cet essai exigeait qu'un set
+   * COMPLET reste sous 70 % du plafond, et c'etait vrai tant que les deux
+   * echelles n'en faisaient qu'une.
+   *
+   * Elles n'en font plus qu'une : on a demande que ce qui se paie soit
+   * nettement plus fort que ce qui tombe, et un set entier pese maintenant
+   * plus lourd. Ce n'est pas un accident, c'est la decision — et un seuil
+   * qu'on repousse a chaque fois qu'il gene ne garde plus rien.
+   *
+   * Ce qu'on garde donc, c'est la propriete qui compte vraiment : un set
+   * complet AJOUTE au personnage, il ne le REMPLACE pas. Au-dela de cent
+   * pour cent, ce que l'on porte compterait plus que qui l'on est, et le
+   * choix du personnage cesserait d'exister. Mesure, aux deux echelles. */
   {
-    const pire = P.bonusesDe('mythique', 'chaos', 1).att
-               + P.bonusesDe('mythique', 'gantelets', 3).att
-               + P.bonusesDe('mythique', 'topaze', 4).att
-               + (P.bonusesDe('mythique', 'lame', 2).att || 0);
     const plafond = Math.max(...Object.keys(P.BASE).map((k) => P.BASE[k].att));
-    ok(pire / plafond < 0.70,
-       `un set mythique tout-attaque ajoute ${pire} sur un plafond de ${plafond} (${Math.round(pire / plafond * 100)} %)`);
+    const set = (src) => P.bonusesDe('mythique', 'chaos', 1, src).att
+                       + P.bonusesDe('mythique', 'gantelets', 3, src).att
+                       + P.bonusesDe('mythique', 'topaze', 4, src).att
+                       + (P.bonusesDe('mythique', 'lame', 2, src).att || 0);
+    const achete = set('boutique'), trouve = set('butin');
+    console.log(`   set mythique tout-attaque : achete +${achete}, trouve +${trouve}, ` +
+                `sur un plafond de ${plafond}`);
+    ok(achete / plafond < 1,
+       `un set achete ajoute moins que le personnage lui-meme (${achete} contre ${plafond})`);
+    ok(trouve / plafond < 1,
+       `un set trouve aussi (${trouve} contre ${plafond})`);
+    /* Et le set trouve reste au-dessus : dix exemplaires par saison contre
+       soixante, c'est la seule chose que l'argent n'achete pas. */
+    ok(trouve > achete,
+       `le set du MONDE pese plus lourd que celui qu on achete (${trouve} contre ${achete})`);
   }
 }
 
@@ -258,8 +276,8 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
     /* L'escalier, dans l'ordre : chaque cran de boutique se loge entre le
        butin qui le suit et celui d'apres. */
     const suite = [bu.commun, bu.rare, bo.commun, bu.epique, bo.rare,
-                   bu.legendaire, bo.epique, bu.mythique, bo.legendaire,
-                   bo.mythique, bu.relique];
+                   bu.legendaire, bo.epique, bo.legendaire, bo.mythique,
+                   bu.mythique, bu.relique];
     for (let i = 1; i < suite.length; i++) {
       ok(suite[i] > suite[i - 1],
          `saison ${sa} : la marche ${i} monte (${suite[i - 1]} -> ${suite[i]})`);
@@ -268,9 +286,16 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
     n += 1;
     ok(true, `saison ${sa} : les onze marches montent, sans un plat (${suite.join(' < ')})`);
 
-    /* La relique tient le sommet. */
+    /* ---- LES DEUX DERNIERS RANGS DU MONDE TIENNENT LE SOMMET ----
+     * Sinon la rarete et la puissance marchent en sens inverse : par saison,
+     * la mythique du monde existe a DIX exemplaires, la legendaire achetee a
+     * deux cent quarante. La plus rare etait battue par la plus abondante. */
     ok(bu.relique > bo.mythique,
        `saison ${sa} : la relique (${bu.relique}) reste au-dessus de tout ce qui s achete (${bo.mythique})`);
+    ok(bu.mythique > bo.mythique,
+       `saison ${sa} : et la mythique du MONDE aussi (${bu.mythique} contre ${bo.mythique})`);
+    ok(bo.relique === null || bo.relique === undefined,
+       `saison ${sa} : la relique ne se vend pas, et la table le DIT`);
     /* Et la commune de boutique est deja PUISSANTE : elle bat la rare du
        monde. C'est une serie limitee, pas un lot de consolation. */
     ok(bo.commun > bu.rare,
@@ -284,8 +309,8 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
   {
     const bu = P.DEGATS_ARME_BUTIN, bo = P.DEGATS_ARME_BOUTIQUE;
     const suite = [bu.commun, bu.rare, bo.commun, bu.epique, bo.rare,
-                   bu.legendaire, bo.epique, bu.mythique, bo.legendaire,
-                   bo.mythique, bu.relique];
+                   bu.legendaire, bo.epique, bo.legendaire, bo.mythique,
+                   bu.mythique, bu.relique];
     for (let i = 1; i < suite.length; i++) {
       ok(suite[i][0] > suite[i - 1][0] && suite[i][1] > suite[i - 1][1],
          `armes : la marche ${i} monte des DEUX bornes`);
@@ -295,6 +320,8 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
     ok(true, 'armes : les onze marches montent, borne basse ET borne haute');
     ok(bu.relique[0] > bo.mythique[1],
        `l arme relique frappe au minimum (${bu.relique[0]}) plus fort que la mythique achetee au maximum (${bo.mythique[1]})`);
+    ok(bu.mythique[0] > bo.mythique[0] && bu.mythique[1] > bo.mythique[1],
+       `et l arme mythique du MONDE bat celle qu on achete (${bu.mythique} contre ${bo.mythique})`);
     ok(bo.commun[0] > bu.rare[0],
        `l arme commune achetee (${bo.commun}) bat la rare trouvee (${bu.rare})`);
   }
@@ -323,8 +350,14 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
 
     /* Une arme du monde et une arme de boutique, meme rarete : la seconde
        frappe plus fort. C'est la demande, verifiee sur le catalogue reel. */
+    /* A rarete egale, l'arme achetee frappe plus fort — SAUF au dernier rang,
+       ou le monde reprend la main. C'est la regle, pas une exception qu'on
+       tolere : ce qu'un joueur rencontre vraiment (commun, rare, epique,
+       legendaire) est battu par ce qui s'achete ; les dix exemplaires
+       mythiques d'une saison, non. */
     let pires = [];
     for (const r of RANGS) {
+      if (r === 'mythique') continue;
       const a = B.ITEMS.find((o) => o.saison === 2 && o.rarete === r);
       const b = B.ITEMS_DROP.find((o) => o.saison === 2 && o.rarete === r);
       if (!a || !b) continue;
@@ -332,7 +365,15 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
       if (!(da[0] > db[0] && da[1] > db[1])) pires.push(r);
     }
     eq(pires.length, 0,
-       'a rarete egale, l arme achetee frappe TOUJOURS plus fort que celle qu on trouve');
+       'jusqu au legendaire, l arme achetee frappe TOUJOURS plus fort que celle qu on trouve');
+    /* Et l'inverse, tout en haut, sur le catalogue reel. */
+    {
+      const a = B.ITEMS.find((o) => o.saison === 2 && o.rarete === 'mythique');
+      const b = B.ITEMS_DROP.find((o) => o.saison === 2 && o.rarete === 'mythique');
+      const da = P.degatsDeObjet(a), db = P.degatsDeObjet(b);
+      ok(db[0] > da[0] && db[1] > da[1],
+         `au dernier rang c est le MONDE qui gagne (${db} contre ${da})`);
+    }
   }
 }
 
