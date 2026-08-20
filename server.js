@@ -3819,6 +3819,10 @@ const realmInterval = setInterval(() => {
                       donnerait l'impression d'etre mordu par du vide. */
                    quoi: d.quoi || 'contact',
                    effet: d.effet || null, duree: d.duree || 0,
+                   /* Le mana vole part avec le coup : la page doit pouvoir le
+                      dire au moment ou ca arrive, pas laisser la barre baisser
+                      sans explication. */
+                   mp: d.mp || 0,
                    paralyse: d.paralyse || 0 });
       }
     }

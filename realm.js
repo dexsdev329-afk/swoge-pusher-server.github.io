@@ -552,6 +552,7 @@ class Realm {
                  quand le monstre meurt garde son pouvoir. Tuer le lanceur
                  n'annule pas un coup deja porte. */
               effet: t.tir.effet || null,
+              drainMp: t.tir.drainMp || 0,
             });
           }
         }
@@ -683,8 +684,19 @@ class Realm {
            * execution. Un mort ne recoit aucun etat : le compteur survivrait
            * a la reapparition. */
           const pose = t.effet ? this._poseEtat(j, t.effet, ev) : false;
+          /* ---- LE DRAIN DE MANA ----
+           * Instantane, pas un etat : il n'y a rien a decompter et rien dont
+           * on puisse etre immunise. C'est la seule attaque qui ne prend ni la
+           * vie ni le controle mais la RESERVE — et depuis que le mana paie le
+           * pouvoir du fruit, se faire vider veut dire perdre son eclair au
+           * moment ou l'on en aurait eu besoin. */
+          let vole = 0;
+          if (t.drainMp > 0 && j.mp > 0) {
+            vole = Math.min(j.mp, t.drainMp);
+            j.mp -= vole;
+          }
           ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: t.espece,
-                           quoi: 'tir',
+                           quoi: 'tir', mp: vole || 0,
                            effet: pose ? t.effet : null,
                            duree: pose ? monde.EFFETS[t.effet].duree : 0,
                            /* garde pour la page, qui lisait ce nom */

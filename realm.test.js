@@ -122,13 +122,39 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
        `94 de vitesse va plus loin que 23 (${coureur.toFixed(0)} contre ${lourd.toFixed(0)} unites)`);
     ok(Math.abs(coureur / lourd - M.vitesseDe(94) / M.vitesseDe(23)) < 0.02,
        'et l ecart suit exactement la table des vitesses');
-    /* Le plus lent reste NETTEMENT plus rapide que le plus rapide des
-       monstres : sinon un squelette rattraperait un personnage qui fuit, et
-       fuir cesserait d'etre une option. */
+    /* ---- FUIR RESTE UNE OPTION ----
+     * Le plus lent des personnages doit distancer le plus rapide des
+     * monstres, sinon fuir cesse d'exister comme choix. La marge n'a pas
+     * besoin d'etre enorme : un rodeur du marais a 150 contre un personnage a
+     * 202, c'est une poursuite longue et tendue, et c'est exactement ce qu'on
+     * veut de lui. */
     const plusRapide = Math.max(...Object.keys(M.MONSTRES).map((k) => M.MONSTRES[k].vitesse));
-    ok(M.vitesseDe(23) > plusRapide * 1.6,
+    ok(M.vitesseDe(23) > plusRapide * 1.3,
        `meme le plus lourd distance le plus rapide des monstres ` +
        `(${M.vitesseDe(23).toFixed(0)} contre ${plusRapide})`);
+
+    /* ---- ET LE PIEGE QUI COMPTE VRAIMENT ----
+     *
+     * Ralenti de moitie, le personnage le plus lent tombe a 101 — plus lent
+     * que le rodeur. Un anneau qui contiendrait A LA FOIS une creature qui
+     * ralentit et une creature assez rapide pour rattraper un joueur ralenti
+     * donnerait une mort sans aucune sortie : on est freine, puis rattrape,
+     * puis mordu jusqu'a la fin.
+     *
+     * Ce n'est pas une question de reglage mais de PEUPLEMENT : les deux ne
+     * doivent jamais habiter le meme anneau. Le test le verifie anneau par
+     * anneau, pour que personne ne les reunisse un jour sans s'en rendre
+     * compte. */
+    const ralentie = M.vitesseDe(23) * M.EFFETS.ralenti.facteur;
+    Object.keys(M.PEUPLEMENT).forEach((b) => {
+      const especes = M.PEUPLEMENT[b].especes.map((e) => M.MONSTRES[e]);
+      const ralentit = especes.filter((t) => t.tir && t.tir.effet === 'ralenti');
+      const rattrape = especes.filter((t) => t.vitesse >= ralentie);
+      ok(!(ralentit.length && rattrape.length),
+         `« ${b} » ne reunit pas un ralentisseur et un poursuivant trop rapide ` +
+         `(${ralentit.map((t) => t.nom).join(',') || 'aucun ralentisseur'} / ` +
+         `${rattrape.map((t) => t.nom).join(',') || 'aucun trop rapide'})`);
+    });
   }
 
   /* En une seconde de jeu, on ne peut pas depasser la cadence annoncee.

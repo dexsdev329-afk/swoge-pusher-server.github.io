@@ -215,6 +215,46 @@ const MONSTRES = {
            effet: 'paralyse' },
     xp: 480,
   },
+  /* ---- LE RODEUR DU MARAIS ----
+   * Sa specialite n'est ni un etat ni une forme de tir : c'est la VITESSE.
+   * A 150 unites par seconde il est de loin le plus rapide du monde — un
+   * squelette en fait 105 — et il est le premier a poser la question « je
+   * fuis ou je me bats ? » a un joueur qui pouvait jusque-la toujours fuir.
+   *
+   * Il reste distancable : le personnage le plus lent court a 202. On perd du
+   * terrain lentement, jamais d'un coup. C'est de l'inquietude, pas une
+   * condamnation.
+   *
+   * Peu de vie et presque pas de defense, comme tout ce qui va vite. */
+  rodeur: {
+    cle: 'rodeur', nom: 'Bog Stalker',
+    pv: 150, att: 48, def: 6,
+    vitesse: 150, rayon: 36, vue: 640,
+    contact: true, cadence: 1.0,
+    tir: { portee: 300, vitesse: 300, sprite: 'bave', att: 20, cadence: 0.5 },
+    xp: 190,
+  },
+  /* ---- L'ORACLE DES CENDRES ----
+   * Il ne prend ni la vie ni le controle : il prend le MANA. C'est la seule
+   * creature qui s'attaque a ce qu'on garde en reserve, et depuis que le mana
+   * paie le pouvoir du fruit, se faire vider par un oracle veut dire perdre
+   * son eclair au moment ou l'on en aurait eu besoin.
+   *
+   * L'effet est INSTANTANE et non un etat : rien a decompter, rien a dont on
+   * puisse etre immunise. Le contre est evident et propre — l'abattre en
+   * premier, ou lancer son pouvoir avant qu'il ne touche.
+   *
+   * Il garde ses distances comme l'archer et la meduse : de pres il ne vaut
+   * rien, et c'est ce qui rend la reponse lisible. */
+  oracle: {
+    cle: 'oracle', nom: 'Ash Oracle',
+    pv: 280, att: 55, def: 16,
+    vitesse: 62, rayon: 40, vue: 660,
+    contact: false, cadence: 0.45,
+    tir: { portee: 560, vitesse: 290, sprite: 'rune', att: 38, cadence: 0.45,
+           drainMp: 40 },
+    xp: 420,
+  },
   skeleton: {
     cle: 'skeleton', nom: 'Skeleton',
     pv: 180, att: 55, def: 8,
@@ -254,13 +294,13 @@ const PEUPLEMENT = {
   /* L'archer arrive des le marais : c'est la premiere creature qu'on ne peut
      pas simplement contourner, et l'apprendre tot vaut mieux que l'apprendre
      au milieu de trois autres. */
-  marais:  { especes: ['lime', 'archer'], nombre: 38 },
+  marais:  { especes: ['lime', 'archer', 'rodeur'], nombre: 38 },
   /* La meduse n'est PAS avant la neige : perdre le controle de son
      personnage avant d'avoir compris qu'on peut encore tirer ferait
      abandonner. */
   neige:   { especes: ['lime', 'skeleton', 'archer', 'meduse'], nombre: 40 },
-  cendres: { especes: ['skeleton', 'glace', 'archer', 'meduse'], nombre: 30 },
-  lave:    { especes: ['lave', 'glace', 'meduse'], nombre: 18 },
+  cendres: { especes: ['skeleton', 'glace', 'archer', 'meduse', 'oracle'], nombre: 30 },
+  lave:    { especes: ['lave', 'glace', 'meduse', 'oracle'], nombre: 18 },
 };
 
 /*
@@ -433,10 +473,20 @@ const EFFETS = {
      golem encaisses sans pouvoir reculer. Au-dela on ne joue plus, on
      regarde. */
   paralyse: { duree: 2, immunite: 3.5 },
-  /* Moitie vitesse : en dessous on ne joue plus, au-dessus ca ne se sent pas.
-     Trois secondes, le temps de traverser une clairiere en se sachant en
-     retard. */
-  ralenti:  { duree: 3.0, immunite: 3.5, facteur: 0.5 },
+  /* ---- QUARANTE POUR CENT, ET PAS CINQUANTE ----
+   * J'avais mis la moitie. Le test de peuplement a montre ce que ca donnait :
+   * le personnage le plus lent tombait a 101, et un squelette en fait 105. Il
+   * se faisait donc RATTRAPER en etant ralenti — freine, puis rejoint, puis
+   * mordu jusqu'a la fin, sans aucune sortie. Ce n'est pas de la difficulte.
+   *
+   * A 0.6, le plus lent des personnages tombe a 121 : au-dessus de toutes les
+   * creatures sauf le rodeur du marais, qui vit seul dans un anneau ou rien
+   * ne ralentit. Le ralentissement reste tres sensible — on perd deux
+   * cinquiemes de sa vitesse — mais fuir ne cesse jamais d'exister.
+   *
+   * Trois secondes : le temps de traverser une clairiere en se sachant en
+   * retard. */
+  ralenti:  { duree: 3.0, immunite: 3.5, facteur: 0.6 },
   /* Huit points par seconde pendant cinq : quarante au total, soit environ
      six pour cent d'une reserve pleine. Assez pour qu'on y pense, pas assez
      pour tuer a soi seul — c'est ce qui vient AVEC qui tue. */
