@@ -382,6 +382,33 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
     eq(r.monstres.filter((m) => m.salle === s.i && m.pv > 0).length, M.SALLE.gardiens,
        'une fois sorti, la salle se rearme');
     eq(s.vide, false, 'et elle redevient gardee');
+
+    /* ---- ET LA PAGE SAIT LEQUEL DES DEUX ----
+     * Le coffre est ferme tant qu'un gardien vit, ouvert quand la salle
+     * tombe. C'est ce qui fait d'une salle une DESTINATION : on voit de la
+     * porte qu'il y a quelque chose a prendre, et on voit de loin qu'elle a
+     * deja ete faite. Ce seul bit suffit — la page a la position et la taille
+     * depuis l'entree, et une salle ne bouge pas. */
+    {
+      j.x = s.x; j.y = s.y;
+      const e = r.etatPour(A, 2000);
+      const vue = e.salles.find((q) => q.i === s.i);
+      ok(vue, 'la salle sous nos pieds est dans l etat');
+      eq(vue.v, 0, 'et elle se dit GARDEE : le coffre reste ferme');
+      eq(Object.keys(vue).sort().join(','), 'i,v',
+         'elle ne renvoie que son numero et son etat — le reste ne bouge pas');
+
+      r.monstres.filter((m) => m.salle === s.i).forEach((m) => { m.pv = 0; });
+      r.pas(0.1);
+      eq(r.etatPour(A, 2000).salles.find((q) => q.i === s.i).v, 1,
+         'une fois videe, elle se dit OUVERTE');
+
+      /* Et une salle a l'autre bout de la carte ne voyage pas : c'est le meme
+         filtre que pour les sacs, les tombes et les zones. */
+      j.x = 40; j.y = 40;
+      const loin = r.etatPour(A, 600).salles.filter((q) => q.i === s.i);
+      eq(loin.length, 0, 'une salle hors de portee ne voyage pas');
+    }
   }
 }
 

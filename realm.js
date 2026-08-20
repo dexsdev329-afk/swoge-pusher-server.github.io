@@ -1200,6 +1200,13 @@ class Realm {
       zones: this.zones.filter(pres).map((z) => ({
         i: z.id, x: Math.round(z.x), y: Math.round(z.y), r: z.r,
         t: Number(z.reste.toFixed(2)), d: z.duree })),
+      /* L'ETAT DES SALLES : gardee, ou videe. Rien d'autre — la page a deja
+         leur position et leur taille depuis l'entree, elles ne bougent pas.
+         Ce seul bit sert au coffre : ferme tant qu'un gardien vit, ouvert
+         quand la salle tombe. C'est ce qui fait d'une salle une DESTINATION —
+         on voit de la porte qu'il y a quelque chose a prendre, et on voit de
+         loin qu'elle a deja ete faite. */
+      salles: this.salles.filter(pres).map((s) => ({ i: s.i, v: s.vide ? 1 : 0 })),
       sacs: this.sacs.filter(pres).map((s) => ({
         i: s.id, x: Math.round(s.x), y: Math.round(s.y), s: s.sac,
         /* Le CONTENU part avec le sac : la page ouvre une grille de huit
