@@ -2301,6 +2301,29 @@ const prixInterval = setInterval(() => {
   }
 }, 600000);
 
+/* Le prix du MONDE se verse quand la semaine a tourne. Meme forme et meme
+   raison que le prix du mois : on regarde toutes les dix minutes plutot que
+   de poser un rendez-vous au lundi minuit, qui ne survivrait pas au premier
+   redeploiement. */
+const prixMondeInterval = setInterval(() => {
+  try {
+    const G = require('./game').Game;
+    const passe = G.semaineCle(Date.now() - 7 * 86400000);
+    if (game.prixMondeVerses && game.prixMondeVerses[passe]) return;
+    const r = game.verseMonde(passe);
+    if (!r.gagnants.length) return;
+    persist();
+    console.log(`[prix] monde ${passe} : ${r.total} or a ${r.gagnants.length} personnages`);
+    tg.notify(`⚔️ <b>${passe} realm leaderboard paid out</b>\n` +
+      `<b>${r.total} gold</b> shared between the top ${r.gagnants.length} living characters.\n` +
+      r.gagnants.slice(0, 3).map((g, i) =>
+        `${['🥇', '🥈', '🥉'][i]} ${g.name || g.address.slice(0, 8)} (${g.skin}) — ${g.gold} gold`).join('\n') +
+      `\n\nDie and you drop off the board. Climb again.`);
+  } catch (e) {
+    if (!/already paid/.test(e.message)) console.warn('[prix monde]', e.message);
+  }
+}, 600000);
+
 const graineInterval = setInterval(() => {
   try {
     const age = Date.now() - (game.graineDepuis || 0);
@@ -3261,6 +3284,14 @@ wss.on('connection', (ws) => {
                  x: Math.round(t.x), y: Math.round(t.y) });
         }
         return;
+      }
+      /* ---- LE CLASSEMENT DU MONDE ----
+       * Les personnages VIVANTS, a l'XP. On y monte en tuant, on en tombe en
+       * mourant — et c'est tout l'interet. */
+      if (m.type === 'leaderboardMonde') {
+        return send(ws, { type: 'leaderboardMonde',
+                          ...game.classementMonde(ws.addr, Math.min(50, Number(m.n) || 20)),
+                          prochain: game.prixMonde() });
       }
       /* Le classement du mois : qui a fait tourner le plus de volume. */
       if (m.type === 'leaderboard') {
@@ -4310,7 +4341,7 @@ server.listen(cfg.PORT, () => {
 });
 
 function shutdown() {
-  clearInterval(niveauInterval); clearInterval(prixInterval); clearInterval(backupInterval); clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
+  clearInterval(niveauInterval); clearInterval(prixInterval); clearInterval(prixMondeInterval); clearInterval(backupInterval); clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
   if (calendrierAuto) calendrierAuto.arrete();
   persistComplet(); // instantane complet : rien ne se perd au redeploiement
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce

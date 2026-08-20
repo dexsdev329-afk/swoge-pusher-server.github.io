@@ -366,6 +366,11 @@ class Game {
              boutiqueLignes: this.boutiqueLignes || [],
              compta: this._comptaEcrite(), tunnel: this.tunnel || {},
              prixVerses: this.prixVerses || {},
+             /* Les prix du monde deja verses, AVEC leur tableau. Une semaine
+                passee ne se reconstruit pas : les personnages ont continue de
+                vivre, et certains sont morts — « qui a gagne » n'existe plus
+                nulle part ailleurs. */
+             prixMondeVerses: this.prixMondeVerses || {},
              graines: this.graines || [], graineDepuis: this.graineDepuis || null,
              manchesGraine: this.manchesGraine || 0,
              /* Les paris traversent les jours : sans eux dans la sauvegarde,
@@ -460,6 +465,7 @@ class Game {
     if (Array.isArray(st.dons)) this.dons = st.dons;
     if (st.tunnel) this.tunnel = st.tunnel;
     if (st.prixVerses) this.prixVerses = st.prixVerses;
+    if (st.prixMondeVerses) this.prixMondeVerses = st.prixMondeVerses;
     if (Array.isArray(st.graines)) this.graines = st.graines;
     if (st.graineDepuis) this.graineDepuis = st.graineDepuis;
     if (st.manchesGraine) this.manchesGraine = st.manchesGraine;
@@ -1176,6 +1182,160 @@ class Game {
 
   /** Les mois dont on a une trace, du plus recent au plus ancien. */
   moisConnus() { return Object.keys(this.compta || {}).sort().reverse(); }
+
+  /* ======================================================================
+   * LE CLASSEMENT DU MONDE — CE QU'ON PERD EN MOURANT
+   * ======================================================================
+   *
+   * Le niveau plafonne a vingt, et apres ? On continuait de tuer pour du
+   * butin, et c'est tout : le monde de combat n'avait pas d'objectif propre.
+   *
+   * Celui-ci en est un, et il ne coute presque rien : l'XP s'accumule DEJA
+   * au-dela du plafond — seul le niveau affiche s'arrete. Il ne manquait que
+   * de la montrer.
+   *
+   * ---- on classe le PERSONNAGE, pas le compte ----
+   *
+   * C'est toute la tension. « Tu meurs, tu perds tout » n'est vrai que si le
+   * rang tombe avec le personnage. Et il tombe tout seul : mourir remet a
+   * zero le volume mise ET l'XP de combat, donc l'XP totale, donc la ligne
+   * disparait sans qu'on ait rien a effacer. Un joueur qui possede six
+   * personnages en a six au classement : ce sont six vies separees, et six
+   * facons de tout perdre.
+   *
+   * ---- et l'equipement voyage avec la ligne ----
+   *
+   * Etre en haut doit faire de vous une cible. Une ligne qui ne montre qu'un
+   * nom ne dit pas ce qu'il y a a gagner en vous tuant ; une ligne qui montre
+   * l'epee mythique, si.
+   */
+  static semaineCle(d) {
+    /* Semaine ISO : le jeudi de la semaine decide de l'annee. On la calcule
+       plutot que de compter les jours depuis une origine — une origine se
+       decale d'un jour tous les quatre ans, et le prix serait verse le mardi
+       une annee sur quatre. */
+    const x = new Date(d || Date.now());
+    const j = new Date(Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate()));
+    /* Lundi = 1, dimanche = 7. On avance jusqu'au jeudi de la semaine. */
+    const jour = j.getUTCDay() || 7;
+    j.setUTCDate(j.getUTCDate() + 4 - jour);
+    const an = j.getUTCFullYear();
+    const premier = new Date(Date.UTC(an, 0, 1));
+    const n = Math.ceil(((j - premier) / 86400000 + 1) / 7);
+    return an + '-S' + String(n).padStart(2, '0');
+  }
+
+  /** Ce que porte un personnage, en clair, pour la ligne de classement. */
+  _tenueDe(c) {
+    const out = [];
+    for (const champ of ['ea', 'ar', 'ba', 'ef']) {
+      const o = c && c[champ] ? boutique.item(c[champ]) : null;
+      if (!o) continue;
+      const r = boutique.rarete(o.rarete);
+      out.push({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+                 couleur: r ? r.couleur : '#8DA0C4' });
+    }
+    return out;
+  }
+
+  /**
+   * Le classement des personnages VIVANTS, a l'XP.
+   *
+   * Meme precaution que pour le classement du mois : ce calcul parcourt tous
+   * les comptes, et une seule socket suffirait a saturer un coeur en le
+   * demandant cent fois par seconde. On le fabrique au plus une fois par
+   * seconde, et tout le monde recoit le meme.
+   */
+  classementMonde(addr, limite) {
+    const moi = String(addr || '').toLowerCase();
+    const t = Date.now();
+    if (!this._cmCache || t - this._cmCache.t > 1000) {
+      const liste = [];
+      for (const [a, p] of this.players) {
+        const persos = p.persos || {};
+        for (const skin of Object.keys(persos)) {
+          const c = persos[skin];
+          if (!c) continue;
+          const xp = this._xpDe(c);
+          if (!(xp > 0)) continue;          // mort, ou jamais joue
+          liste.push({ address: a, name: p.name || null, skin,
+                       xp: Math.round(xp),
+                       niveau: personnages.niveauDeXp(xp),
+                       fame: this._fameDe(c),
+                       tenue: this._tenueDe(c) });
+        }
+      }
+      liste.sort((x, y) => y.xp - x.xp);
+      liste.forEach((r, i) => { r.rang = i + 1; });
+      this._cmCache = { t, liste };
+    }
+    const arr = this._cmCache.liste;
+    /* La ligne du demandeur part TOUJOURS, meme s'il est centieme : un
+       classement ou l'on ne se trouve pas ne sert a personne. */
+    const miennes = arr.filter((r) => r.address === moi);
+    return { semaine: Game.semaineCle(), vivants: arr.length,
+             top: arr.slice(0, limite || 20), moi: miennes.slice(0, 6),
+             prix: cfg.PRIX_MONDE_GOLD, parts: cfg.PRIX_PARTS.slice() };
+  }
+
+  /** Qui gagnerait quoi si la semaine se terminait maintenant. */
+  prixMonde(cle) {
+    const k = cle || Game.semaineCle();
+    const parts = cfg.PRIX_PARTS;
+    const somme = parts.reduce((a, b) => a + b, 0) || 100;
+    const total = cfg.PRIX_MONDE_GOLD;
+    /* Une semaine PAYEE ne se reconstruit pas : les personnages ont continue
+       de vivre, et certains sont morts. On garde donc le tableau au moment du
+       versement, et c'est lui qu'on relit.
+       La question est « a-t-elle ete payee ? », pas « est-elle passee ? ».
+       Les deux se ressemblent — le versement tombe dix minutes apres la
+       bascule — et elles different justement dans le seul cas qui compte : une
+       semaine payee qu'on relit AVANT sa bascule rendrait un tableau refait
+       depuis des personnages qui ont bouge depuis, donc un autre gagnant que
+       celui qu'on a paye. */
+    if (this.prixMondeVerses && this.prixMondeVerses[k]) return this.prixMondeVerses[k];
+    const liste = this.classementMonde(null, parts.length).top;
+    return {
+      semaine: k, total, verse: !!(this.prixMondeVerses && this.prixMondeVerses[k]),
+      gagnants: liste.map((r, i) => ({
+        rang: i + 1, address: r.address, name: r.name, skin: r.skin, xp: r.xp,
+        gold: Math.round(total * (parts[i] || 0) / somme),
+      })),
+    };
+  }
+
+  /**
+   * Verse le prix d'une semaine, EN OR. Une seule fois — un prix paye deux
+   * fois est de l'or cree, et personne ne s'en plaindrait assez vite pour
+   * qu'on le remarque.
+   *
+   * En or, et pas en $SWOGE : le classement du mois recompense du volume
+   * DEJA mise — c'est de l'argent qui est entre, redistribue. Recompenser de
+   * l'XP en jetons serait de l'argent CREE contre du temps passe, et ca se
+   * farme avec un client sans ecran, vingt-quatre heures sur vingt-quatre.
+   * L'or, lui, ne s'echange pas contre autre chose que du rang.
+   */
+  verseMonde(cle) {
+    const k = cle || Game.semaineCle();
+    if (!this.prixMondeVerses) this.prixMondeVerses = {};
+    if (this.prixMondeVerses[k]) throw new Error('prize already paid for ' + k);
+    const p = this.prixMonde(k);
+    const payes = [];
+    for (const g of p.gagnants) {
+      if (!(g.gold > 0)) continue;
+      const q = this._p(g.address);
+      q.fame = (q.fame || 0) + g.gold;
+      journal.ajoute(g.address, { k: 'rf', s: 'monde', or: g.gold, rang: g.rang, semaine: k });
+      payes.push({ rang: g.rang, address: g.address, name: q.name, skin: g.skin,
+                   xp: g.xp, gold: g.gold });
+    }
+    /* On garde le tableau tel qu'il etait : la semaine prochaine, ces
+       personnages seront peut-etre morts, et « qui a gagne » ne se
+       reconstruit pas depuis des compteurs remis a zero. */
+    this.prixMondeVerses[k] = { semaine: k, total: p.total, verse: true,
+                                t: Date.now(), gagnants: payes };
+    return this.prixMondeVerses[k];
+  }
 
   /* ======================================================================
    * LES CENT NIVEAUX

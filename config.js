@@ -242,6 +242,22 @@ module.exports = {
   PRIX_PARTS: env('PRIX_PARTS', '30,20,13,10,8,6,5,4,2.5,1.5')
     .split(',').map(function (x) { return parseFloat(x.trim()) || 0; }),
 
+  /* ---- LE PRIX DU MONDE, CHAQUE SEMAINE ----
+   *
+   * Vingt mille pieces d'or, partagees entre les dix premiers personnages
+   * VIVANTS a l'XP, selon la meme repartition que le classement du mois — un
+   * partage plat ne fait courir personne.
+   *
+   * EN OR, et pas en $SWOGE. Le prix du mois redistribue du volume DEJA mise :
+   * de l'argent qui est entre. Recompenser de l'XP en jetons serait de
+   * l'argent CREE contre du temps passe, et ca se farme avec un client sans
+   * ecran, vingt-quatre heures sur vingt-quatre — le combat etant arbitre par
+   * le serveur, les fermes n'auraient meme pas besoin de tricher. L'or ne
+   * s'echange contre rien d'autre que du rang, donc le farmer ne rapporte
+   * rien qu'a celui qui veut le rang.
+   */
+  PRIX_MONDE_GOLD: parseInt(env('PRIX_MONDE_GOLD', '20000'), 10),
+
   // ---- Daily quests ----
   // Anti-Sybil: total rewards (50) < house edge on the wagering required to
   // finish them (~300 drops → ~60 edge), AND claiming needs a real deposit.
