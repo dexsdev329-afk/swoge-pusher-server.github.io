@@ -706,6 +706,15 @@ const POUVOIR_PAR_STAT = {
  * dans le meme fichier finiraient par ne plus se ressembler.
  */
 const SAC = {
+  /* ---- HUIT PLACES, COMME LE SAC DU JOUEUR ----
+   * Un sac au sol n'est pas un objet qu'on absorbe en marchant dessus : c'est
+   * un CONTENANT qu'on ouvre. On voit ce qu'il y a, on prend ce qu'on veut, on
+   * laisse le reste. Sans ca, un sac a deux objets dont un qu'on ne peut pas
+   * porter serait impossible a vider a moitie — et le joueur perdrait la
+   * trouvaille en la trouvant.
+   * Huit, le meme nombre que son propre sac : deux grilles de tailles
+   * differentes l'une au-dessus de l'autre se lisent mal. */
+  cases: 8,
   duree: 60,      // une minute au sol
   /* Meme borne que les tombes : une liste sans plafond finirait par voyager
      en entier vers chaque client, dix fois par seconde. */
@@ -763,11 +772,11 @@ function butinDe(espece, alea) {
       const s = stat === '*'
         ? STATS_POTION[Math.min(STATS_POTION.length - 1, Math.floor(r() * STATS_POTION.length))]
         : stat;
-      return { sac: 'bleu', stat: s };
+      return { sac: 'bleu', contenu: [{ stat: s }] };
     }
   }
   const cs = CHANCE_SOIN[espece] === undefined ? CHANCE_SOIN.defaut : CHANCE_SOIN[espece];
-  if (r() < cs) return { sac: 'brun', potion: r() < 0.5 ? 'vie' : 'mana' };
+  if (r() < cs) return { sac: 'brun', contenu: [{ potion: r() < 0.5 ? 'vie' : 'mana' }] };
   return null;
 }
 

@@ -344,55 +344,74 @@ class Realm {
     /* Le butin tombe meme si le tueur a disparu entre-temps : le sac
        appartient au sol, pas a celui qui a porte le coup. */
     const b = monde.butinDe(m.espece, this.alea);
-    if (!b) return;
+    if (!b || !b.contenu || !b.contenu.length) return;
     const sac = { id: this._nouvelId(), x: m.x, y: m.y, sac: b.sac,
-                  reste: monde.SAC.duree };
-    if (b.stat) sac.stat = b.stat;
-    if (b.potion) sac.potion = b.potion;
+                  reste: monde.SAC.duree,
+                  contenu: b.contenu.slice(0, monde.SAC.cases) };
     this.sacs.push(sac);
     while (this.sacs.length > monde.SAC.plafond) this.sacs.shift();
     ev.butins = ev.butins || [];
-    ev.butins.push({ addr: j ? j.addr : null, sac: sac.sac, stat: sac.stat || null,
-                     potion: sac.potion || null, x: sac.x, y: sac.y });
+    ev.butins.push({ addr: j ? j.addr : null, sac: sac.sac,
+                     contenu: sac.contenu.slice(), x: sac.x, y: sac.y });
+  }
+
+  /** Le sac SOUS LES PIEDS d'un joueur, ou null. Le plus proche s'il y en a
+      plusieurs : deux sacs cote a cote et c'est celui de derriere qu'on
+      ouvrirait. */
+  sacSousLesPieds(addr) {
+    const j = this.joueurs.get(addr);
+    if (!j) return null;
+    let choisi = null, d2mini = monde.SAC.rayon * monde.SAC.rayon;
+    for (const s of this.sacs) {
+      const dx = s.x - j.x, dy = s.y - j.y, d2 = dx * dx + dy * dy;
+      if (d2 <= d2mini) { d2mini = d2; choisi = s; }
+    }
+    return choisi;
   }
 
   /**
-   * Ramasser. Le serveur decide de la distance : sans ca, la page pourrait
-   * s'attribuer un sac depuis l'autre bout de la carte, et les sacs sont
-   * exactement ce qu'on aurait interet a voler.
+   * Prendre UNE place d'un sac ouvert.
    *
-   * On rend le contenu ; c'est l'appelant (server.js) qui sait le convertir
+   * Le sac est un contenant, pas un objet qu'on absorbe : on prend ce qu'on
+   * veut et on laisse le reste. Le client nomme la place (`place`) et le sac
+   * (`id`) — mais c'est le serveur qui verifie qu'on est bien dessus. Sans
+   * cette verification, nommer un identifiant suffirait a vider un sac a
+   * l'autre bout de la carte, et les sacs sont exactement ce qu'on aurait
+   * interet a voler.
+   *
+   * On rend l'objet pris ; c'est l'appelant (server.js) qui sait le convertir
    * en potion ou en point de stat — realm.js ne connait pas les comptes.
    */
-  ramasse(addr, ev, accepte) {
-    const j = this.joueurs.get(addr);
-    if (!j) return null;
-    let choisi = -1, d2mini = monde.SAC.rayon * monde.SAC.rayon;
-    for (let i = 0; i < this.sacs.length; i++) {
-      const s = this.sacs[i];
-      const dx = s.x - j.x, dy = s.y - j.y, d2 = dx * dx + dy * dy;
-      /* Le PLUS PROCHE, pas le premier de la liste : deux sacs cote a cote et
-         c'est celui de derriere qu'on ramasserait. */
-      if (d2 <= d2mini) { d2mini = d2; choisi = i; }
-    }
-    if (choisi < 0) return null;
-    const s = this.sacs[choisi];
+  ramasse(addr, ev, accepte, id, place) {
+    const s = this.sacSousLesPieds(addr);
+    if (!s) return null;
+    /* Si le client a nomme un sac, ce doit etre CELUI-LA. Un sac qui a expire
+       pendant que le doigt descendait ne doit pas faire prendre son voisin. */
+    if (id !== undefined && id !== null && Number(id) !== s.id) return null;
+    const k = Math.max(0, Math.floor(Number(place) || 0));
+    const objet = s.contenu[k];
+    if (!objet) return null;
     /* ---- ON DEMANDE AVANT DE PRENDRE ----
-     * Une potion d'attaque ramassee a 20/20 serait consommee pour rien, et le
-     * sac aurait disparu. On laisse donc l'appelant refuser : le sac reste au
-     * sol, il finira sa minute, et le joueur peut aller chercher autre chose.
-     * `realm.js` ne sait pas ce qu'est un plafond de potion — il se contente
-     * de poser la question. */
+     * Une potion d'attaque prise a son plafond serait bue pour rien, et la
+     * place serait vidée. On laisse donc l'appelant refuser : l'objet reste
+     * dans le sac, qui finira sa minute. `realm.js` ne sait pas ce qu'est un
+     * plafond de potion — il se contente de poser la question. */
     if (typeof accepte === 'function') {
-      const verdict = accepte(s);
+      const verdict = accepte(objet, s);
       if (verdict !== true) {
-        return { refuse: true, raison: verdict || 'refuse',
-                 sac: s.sac, stat: s.stat || null, potion: s.potion || null };
+        return { refuse: true, raison: verdict || 'refuse', sac: s.sac,
+                 id: s.id, place: k, ...objet };
       }
     }
-    this.sacs.splice(choisi, 1);
-    if (ev) { ev.ramasses = ev.ramasses || []; ev.ramasses.push({ addr, ...s }); }
-    return s;
+    s.contenu.splice(k, 1);
+    /* Un sac vide disparait tout de suite : le laisser jusqu'a la fin de sa
+       minute donnerait un sac qu'on rouvre pour rien, encore et encore. */
+    if (!s.contenu.length) {
+      const i = this.sacs.indexOf(s);
+      if (i >= 0) this.sacs.splice(i, 1);
+    }
+    if (ev) { ev.ramasses = ev.ramasses || []; ev.ramasses.push({ addr, sac: s.sac, id: s.id, ...objet }); }
+    return { sac: s.sac, id: s.id, place: k, vide: !s.contenu.length, ...objet };
   }
 
   /**
@@ -857,7 +876,11 @@ class Realm {
          ce chiffre elle devrait la deviner — donc se tromper. */
       sacs: this.sacs.filter(pres).map((s) => ({
         i: s.id, x: Math.round(s.x), y: Math.round(s.y), s: s.sac,
-        st: s.stat || undefined, po: s.potion || undefined,
+        /* Le CONTENU part avec le sac : la page ouvre une grille de huit
+           places des qu'on marche dessus, et elle doit pouvoir la remplir
+           sans une deuxieme demande — sinon la grille s'ouvre vide et se
+           remplit un aller-retour plus tard, sous le doigt. */
+        c: s.contenu.map((o) => (o.stat ? { st: o.stat } : { po: o.potion })),
         r: Number(s.reste.toFixed(1)) })),
     };
   }

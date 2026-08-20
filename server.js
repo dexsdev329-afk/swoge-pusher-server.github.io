@@ -582,6 +582,9 @@ const NEXUS_ANIMS = new Set(['idle', 'run', 'jump']);
  */
 const { Realm } = require('./realm');
 const monde = require('./monde');
+/* L'ordre des stats part au client avec la carte : c'est celui des colonnes
+   de la planche de potions. */
+const personnages = require('./personnages');
 const realm = new Realm({});
 const realmClients = new Set();
 /* Depuis quand un joueur n'a pas annonce sa position : c'est ce delai qui
@@ -2995,6 +2998,16 @@ wss.on('connection', (ws) => {
                              serveur n'accorde pas — le pire des mensonges,
                              celui qui donne l'impression d'un bug. */
                           sac: monde.SAC,
+                          /* L'ORDRE des stats, parce que c'est celui des
+                             colonnes de objets/potions_stat.webp : rouge = hp,
+                             bleue = mp, epee = att, bouclier = def, ailes =
+                             spd, verte = dex, coeur = vit, oeil = wis. La page
+                             dessine la bonne fiole en cherchant l'index de la
+                             stat dans cette liste. L'ecrire en dur la-bas
+                             aurait fait deux ordres a garder d'accord, et le
+                             desaccord serait silencieux : une potion de
+                             defense sous l'image d'une potion de vitesse. */
+                          stats: personnages.STATS,
                           moi: { x: Math.round(j.x), y: Math.round(j.y),
                                  pv: j.pv, pvMax: j.pvMax,
                                  mp: j.mp, mpMax: j.mpMax,
@@ -3027,14 +3040,14 @@ wss.on('connection', (ws) => {
           const l = game.potionsPour(ws.addr).filter((x) => x.cle === cle)[0];
           return l ? l.quantite < l.max : false;
         };
-        /* On REFUSE avant de prendre : une potion d'attaque ramassee a 20/20
-           serait bue pour rien et le sac aurait disparu. Refuse, il reste au
-           sol et finit sa minute. */
-        const r = realm.ramasse(ws.addr, null, (s) => {
-          if (s.stat) return game.supRestant(ws.addr, skin, s.stat) > 0 ? true : 'plein';
-          if (s.potion) return plafondPotion(s.potion) ? true : 'plein';
+        /* On REFUSE avant de prendre : une potion d'attaque prise a son
+           plafond serait bue pour rien et la place serait videe. Refusee,
+           elle reste dans le sac, qui finit sa minute. */
+        const r = realm.ramasse(ws.addr, null, (o) => {
+          if (o.stat) return game.supRestant(ws.addr, skin, o.stat) > 0 ? true : 'plein';
+          if (o.potion) return plafondPotion(o.potion) ? true : 'plein';
           return true;
-        });
+        }, m.i, m.place);
         if (!r) return send(ws, { type: 'realmRamasse', rien: true });
         if (r.refuse) {
           return send(ws, { type: 'realmRamasse', refus: r.raison,
@@ -3050,7 +3063,10 @@ wss.on('connection', (ws) => {
                forme de message que personne n'ecoute aurait donne une potion
                bue dont l'effet n'apparait qu'au prochain rechargement. */
             send(ws, { type: 'personnage', skin, etat: game.personnageEtat(ws.addr, skin) });
-            return send(ws, { type: 'realmRamasse', sac: r.sac, stat: r.stat, ...b });
+            /* `vide` dit a la page de refermer la grille : sans lui, une fiole
+               resterait dessinee sur une place qui n'existe plus, et le clic
+               suivant irait dans le vide. */
+            return send(ws, { type: 'realmRamasse', sac: r.sac, stat: r.stat, vide: r.vide, ...b });
           }
           if (r.potion) {
             const b = game.donnePotion(ws.addr, r.potion);
@@ -3058,7 +3074,8 @@ wss.on('connection', (ws) => {
             /* La pile complete voyage AVEC la reponse, comme elle le fait
                deja sur `potionBue` : c'est le meme besoin, et un second type
                de message pour la meme chose se serait desynchronise. */
-            return send(ws, { type: 'realmRamasse', sac: r.sac, potion: r.potion, ...b,
+            return send(ws, { type: 'realmRamasse', sac: r.sac, potion: r.potion,
+                              vide: r.vide, ...b,
                               potions: game.potionsPour(ws.addr) });
           }
           return send(ws, { type: 'realmRamasse', sac: r.sac });

@@ -90,7 +90,7 @@ function pose(r, espece, x, y, pv) {
   /* Et il les donne toutes : c'est ce qui en fait une destination. On y va
      pour ce qui manque, pas pour ce qu'il a. */
   const vues = {};
-  for (let i = 0; i < 4000; i++) vues[M.butinDe('gardien', a).stat] = true;
+  for (let i = 0; i < 4000; i++) vues[M.butinDe('gardien', a).contenu[0].stat] = true;
   eq(Object.keys(vues).length, P.STATS.length,
      `le gardien donne les ${P.STATS.length} stats, pas une seule`);
 
@@ -98,7 +98,10 @@ function pose(r, espece, x, y, pv) {
      raison d'aller chercher telle creature plutot que la plus proche. */
   ['lime', 'skeleton', 'archer', 'rodeur', 'glace', 'meduse', 'oracle', 'lave'].forEach((e) => {
     const s = {};
-    for (let i = 0; i < 6000; i++) { const b = M.butinDe(e, a); if (b && b.stat) s[b.stat] = true; }
+    for (let i = 0; i < 6000; i++) {
+      const b = M.butinDe(e, a);
+      if (b && b.contenu[0].stat) s[b.contenu[0].stat] = true;
+    }
     eq(Object.keys(s).length, 1, `« ${M.MONSTRES[e].nom} » ne laisse qu'une seule stat (${Object.keys(s)[0]})`);
   });
   /* Et les huit stats sont couvertes par les huit creatures : une stat sans
@@ -169,27 +172,45 @@ function pose(r, espece, x, y, pv) {
 
   /* Deux sacs, un loin, un pres. */
   r.sacs = [
-    { id: 1, x: j.x + M.SAC.rayon * 3, y: j.y, sac: 'brun', potion: 'vie', reste: 60 },
-    { id: 2, x: j.x + 10, y: j.y, sac: 'bleu', stat: 'att', reste: 60 },
-    { id: 3, x: j.x + 40, y: j.y, sac: 'brun', potion: 'mana', reste: 60 },
+    { id: 1, x: j.x + M.SAC.rayon * 3, y: j.y, sac: 'brun', contenu: [{ potion: 'vie' }], reste: 60 },
+    { id: 2, x: j.x + 10, y: j.y, sac: 'bleu', contenu: [{ stat: 'att' }], reste: 60 },
+    { id: 3, x: j.x + 40, y: j.y, sac: 'brun', contenu: [{ potion: 'mana' }], reste: 60 },
   ];
-  const pris = r.ramasse(A, null, () => true);
-  eq(pris && pris.id, 2, 'on ramasse le PLUS PROCHE, pas le premier de la liste');
-  eq(r.sacs.length, 2, 'et les autres restent au sol');
+  eq(r.sacSousLesPieds(A).id, 2, 'on ouvre le PLUS PROCHE, pas le premier de la liste');
+  const pris = r.ramasse(A, null, () => true, 2, 0);
+  eq(pris && pris.stat, 'att', 'et on prend bien ce qu il contenait');
+  eq(r.sacs.length, 2, 'un sac vide disparait, les autres restent au sol');
+
+  /* ---- ON PREND UNE PLACE, PAS LE SAC ----
+   * Un sac a deux objets dont un qu'on ne peut pas porter doit pouvoir etre
+   * vide a moitie. Sans ca, le joueur perdrait la trouvaille en la trouvant. */
+  r.sacs = [{ id: 5, x: j.x + 10, y: j.y, sac: 'or', reste: 60,
+              contenu: [{ stat: 'def' }, { potion: 'vie' }] }];
+  const un = r.ramasse(A, null, () => true, 5, 1);
+  eq(un && un.potion, 'vie', 'on prend la place qu on a nommee, pas la premiere');
+  eq(r.sacs.length, 1, 'et le sac reste, puisqu il lui reste quelque chose');
+  eq(r.sacs[0].contenu.length, 1, 'avec une place de moins');
+  eq(r.sacs[0].contenu[0].stat, 'def', 'et c est bien l autre qui reste');
+  /* Un identifiant qui ne correspond pas ne prend rien : un sac expire
+     pendant que le doigt descend ne doit pas faire prendre son voisin. */
+  eq(r.ramasse(A, null, () => true, 999, 0), null, 'un sac qu on ne nomme pas juste ne rend rien');
+  eq(r.ramasse(A, null, () => true, 5, 7), null, 'une place vide non plus');
 
   /* Celui qui est hors de portee ne se ramasse pas, meme s'il est seul. */
-  r.sacs = [{ id: 9, x: j.x + M.SAC.rayon * 3, y: j.y, sac: 'brun', potion: 'vie', reste: 60 }];
-  eq(r.ramasse(A, null, () => true), null, 'un sac hors de portee ne se ramasse pas');
+  r.sacs = [{ id: 9, x: j.x + M.SAC.rayon * 3, y: j.y, sac: 'brun', contenu: [{ potion: 'vie' }], reste: 60 }];
+  eq(r.ramasse(A, null, () => true, 9, 0), null, 'un sac hors de portee ne se ramasse pas');
+  eq(r.sacSousLesPieds(A), null, 'et il ne s ouvre meme pas');
   eq(r.sacs.length, 1, 'et il reste ou il est');
 
   /* ---- UN REFUS LAISSE LE SAC AU SOL ----
    * Sans ca, une potion d'attaque ramassee a 20/20 serait bue pour rien et le
    * sac aurait disparu — le joueur perdrait la trouvaille en la trouvant. */
-  r.sacs = [{ id: 4, x: j.x + 10, y: j.y, sac: 'bleu', stat: 'att', reste: 60 }];
-  const refus = r.ramasse(A, null, () => 'plein');
+  r.sacs = [{ id: 4, x: j.x + 10, y: j.y, sac: 'bleu', contenu: [{ stat: 'att' }], reste: 60 }];
+  const refus = r.ramasse(A, null, () => 'plein', 4, 0);
   ok(refus && refus.refuse, 'un refus se dit');
   eq(refus.raison, 'plein', 'et il dit POURQUOI');
   eq(r.sacs.length, 1, 'le sac refuse reste au sol et finira sa minute');
+  eq(r.sacs[0].contenu.length, 1, 'avec son contenu intact');
 }
 
 // ================== 5. LA POTION DE STAT
