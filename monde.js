@@ -255,6 +255,71 @@ const MONSTRES = {
            drainMp: 40 },
     xp: 420,
   },
+  /* ---- LA NUEE : LA PLUS PETITE CHOSE DU MONDE ----
+   * Toutes les creatures faisaient la meme taille a l'ecran. Celle-ci est
+   * dessinee a 48 pixels contre 102 pour le lime — assez pour qu'on sache ce
+   * qui arrive avant d'avoir lu sa barre de vie, et c'est tout l'interet
+   * d'avoir enfin des tailles.
+   *
+   * Un rayon de 16 la rend aussi plus difficile a toucher que tout le reste.
+   * C'est le prix assume de la petitesse : elle meurt d'un seul coup, encore
+   * faut-il le placer.
+   *
+   * Elle ne vaut rien seule : quarante points de vie, seize de degat. Elle
+   * vaut par le NOMBRE — dans le marais elle pese deux fois ses voisines. Ce
+   * qu'elle apprend, c'est qu'on ne peut pas tout abattre avant que ca
+   * arrive : il faut choisir, ou reculer.
+   *
+   * Elle est rapide, mais moins que le rodeur : celui-la reste la creature
+   * dont on parle quand on parle de vitesse. */
+  nuee: {
+    cle: 'nuee', nom: 'Mite Swarm',
+    pv: 40, att: 16, def: 0,
+    vitesse: 140, rayon: 16, vue: 400,
+    contact: true, cadence: 1.2,
+    tir: { portee: 240, vitesse: 260, sprite: 'bave', att: 9, cadence: 0.45 },
+    xp: 45,
+  },
+  /* ---- LE COLOSSE : LE GOLEM, EN PLUS GROS ----
+   * Il ne fait rien que le golem de magma ne fasse deja : il brule, il blesse
+   * au contact, il est lent. Sa difference est sa TAILLE — rayon 78 contre 46
+   * — et ce que la taille change vraiment : on ne le contourne pas dans un
+   * passage etroit, on ne le perd pas de vue, et ses deux cent trente pixels
+   * disent de loin qu'il ne faut pas etre la.
+   *
+   * Lui inventer un etat de plus aurait ete gratuit. Ce qu'on verifie ici,
+   * c'est qu'une creature puisse etre dangereuse par son encombrement. */
+  colosse: {
+    cle: 'colosse', nom: 'Magma Colossus',
+    pv: 900, att: 140, def: 30,
+    vitesse: 52, rayon: 78, vue: 700,
+    contact: true, cadence: 0.55,
+    tir: { portee: 520, vitesse: 300, sprite: 'braise', att: 60, cadence: 0.35,
+           effet: 'brulure' },
+    xp: 1300,
+  },
+  /* ---- LE GARDIEN : LE PREMIER BOSS ----
+   * Trois cent quinze pixels, seize cents points de vie, et une gerbe de
+   * QUATRE lames en eventail large.
+   *
+   * Le squelette lance deja trois os — mais serres (ecart 0,22), qu'on esquive
+   * en se decalant sur le cote. Le gardien ouvre a 0,50 : se decaler ne suffit
+   * plus, il faut FERMER LA DISTANCE et entrer dans l'eventail la ou les
+   * lames ne se sont pas encore ecartees. Deux creatures qui tirent en gerbe
+   * et demandent le geste inverse — c'est ca, la difference, pas le nombre.
+   *
+   * Ses lames sont decoupees dans son propre dessin (tirs/eclat). Lui preter
+   * un projectile d'arme de joueur aurait fait arriver quatre-vingt-cinq
+   * degats sous l'image d'un coup qu'on tire soi-meme. */
+  gardien: {
+    cle: 'gardien', nom: 'Vault Guardian',
+    pv: 1600, att: 160, def: 38,
+    vitesse: 68, rayon: 105, vue: 760,
+    contact: true, cadence: 0.5,
+    tir: { portee: 620, vitesse: 380, sprite: 'eclat', att: 85, cadence: 0.5,
+           tirs: 4, ecart: 0.50 },
+    xp: 3000,
+  },
   skeleton: {
     cle: 'skeleton', nom: 'Skeleton',
     pv: 180, att: 55, def: 8,
@@ -289,18 +354,31 @@ const MONSTRES = {
  *   cendres  on apprend a fuir malgre son armure          (+ revenant)
  *   lave     on apprend qu'on ne tient pas debout ici     (+ golem)
  */
+/* `poids` dit la RARETE, jamais l'appartenance : sans lui un boss sortirait
+   aussi souvent qu'un lime, et l'anneau de lave en compterait quatre. Absent
+   vaut 1. C'est la MEME table qui dit qui vit ou — on n'en ouvre pas une
+   seconde, on lui ajoute une colonne. */
 const PEUPLEMENT = {
   terre:   { especes: ['lime'], nombre: 40 },
   /* L'archer arrive des le marais : c'est la premiere creature qu'on ne peut
      pas simplement contourner, et l'apprendre tot vaut mieux que l'apprendre
      au milieu de trois autres. */
-  marais:  { especes: ['lime', 'archer', 'rodeur'], nombre: 38 },
+  /* La nuee pese plus que ses voisines : c'est une nuee, elle n'existe qu'au
+     pluriel. Elle n'est PAS dans la terre — l'anneau du debut apprend a
+     esquiver un projectile, et on n'apprend pas ca sous seize creatures. */
+  marais:  { especes: ['lime', 'archer', 'rodeur', 'nuee'], nombre: 38,
+             poids: { nuee: 2.2 } },
   /* La meduse n'est PAS avant la neige : perdre le controle de son
      personnage avant d'avoir compris qu'on peut encore tirer ferait
      abandonner. */
-  neige:   { especes: ['lime', 'skeleton', 'archer', 'meduse'], nombre: 40 },
-  cendres: { especes: ['skeleton', 'glace', 'archer', 'meduse', 'oracle'], nombre: 30 },
-  lave:    { especes: ['lave', 'glace', 'meduse', 'oracle'], nombre: 18 },
+  neige:   { especes: ['lime', 'skeleton', 'archer', 'meduse', 'nuee'], nombre: 40,
+             poids: { nuee: 1.5 } },
+  cendres: { especes: ['skeleton', 'glace', 'archer', 'meduse', 'oracle', 'colosse'],
+             nombre: 30, poids: { colosse: 0.4 } },
+  /* Un seul gardien pour dix-huit places : 0,25 sur un total de 5,05, soit
+     cinq pour cent. Un boss qu'on croise a chaque passage n'est plus un boss. */
+  lave:    { especes: ['lave', 'glace', 'meduse', 'oracle', 'colosse', 'gardien'],
+             nombre: 18, poids: { colosse: 0.8, gardien: 0.25 } },
 };
 
 /*
@@ -648,13 +726,27 @@ const BIOMES_ESPECE = Object.keys(PEUPLEMENT).reduce((o, b) => {
 Object.keys(MONSTRES).forEach((e) => { MONSTRES[e].biomes = BIOMES_ESPECE[e] || []; });
 
 /** La liste complete des monstres a faire naitre au demarrage du monde. */
+/** Une espece tiree dans un biome, sa rarete respectee. */
+function choisitEspece(p, r) {
+  const poids = p.poids || {};
+  const de = (e) => (poids[e] === undefined ? 1 : poids[e]);
+  let total = 0;
+  for (const e of p.especes) total += de(e);
+  let d = r() * total;
+  for (const e of p.especes) {
+    d -= de(e);
+    if (d <= 0) return e;
+  }
+  return p.especes[p.especes.length - 1];
+}
+
 function peuplement(alea) {
   const r = () => (typeof alea === 'function' ? alea() : Math.random());
   const out = [];
   for (const biome of Object.keys(PEUPLEMENT)) {
     const p = PEUPLEMENT[biome];
     for (let i = 0; i < p.nombre; i++) {
-      const espece = p.especes[Math.min(p.especes.length - 1, Math.floor(r() * p.especes.length))];
+      const espece = choisitEspece(p, r);
       const pos = pointDansBiome(biome, alea);
       if (pos) out.push({ espece, x: pos.x, y: pos.y, biome });
     }
@@ -668,5 +760,6 @@ module.exports = {
   cadenceDe, vitesseDe,
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
+  choisitEspece,
   regenParSeconde, pouvoirDeStat,
 };

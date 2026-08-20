@@ -314,4 +314,118 @@ function alea(graine) {
   });
 }
 
+// ================== 8. LES TAILLES, ET LA RARETE
+/*
+ * Deux choses ne se voient pas dans un chiffre isole et se paient a l'ecran :
+ * une creature dessinee a la meme taille que toutes les autres, et un boss
+ * qui sort aussi souvent qu'un lime.
+ */
+{
+  /* ---- LE DESSIN DECOULE DU RAYON, ET DE RIEN D'AUTRE ----
+   * La page dessine chaque creature a `rayon x 3`. Ce n'est ecrit nulle part
+   * ailleurs, et c'est exactement le but : une table de tailles a cote
+   * finirait par ne plus dire la meme chose que les collisions, et le
+   * desaccord se verrait — on tirerait a cote de ce qu'on voit.
+   * Ce qu'on verifie ici, c'est que les rayons SEPARENT vraiment les
+   * creatures : trois tailles indistinguables ne valent pas mieux qu'une. */
+  const r = (k) => M.MONSTRES[k].rayon;
+  ok(r('nuee') * 2 < r('lime'),
+     `la nuee (${r('nuee')}) fait moins de la moitie du lime (${r('lime')})`);
+  ok(r('colosse') > r('lave') * 1.5,
+     `le colosse (${r('colosse')}) depasse de moitie le golem (${r('lave')})`);
+  ok(r('gardien') > r('colosse'),
+     `le gardien (${r('gardien')}) est la plus grosse chose du monde`);
+  /* Le rayon sert AUX COLLISIONS. Une creature aussi large qu'un anneau
+     entier serait touchable depuis l'anneau voisin. */
+  const demi = M.MONDE.w / 2;
+  Object.keys(M.MONSTRES).forEach((k) => {
+    ok(M.MONSTRES[k].rayon < demi * 0.20 * 0.5,
+       `« ${M.MONSTRES[k].nom} » tient dans le plus petit des anneaux`);
+  });
+
+  /* ---- LES DEUX GERBES DEMANDENT LE GESTE INVERSE ----
+   * Le squelette et le gardien tirent tous deux en eventail. Si leurs ecarts
+   * se ressemblaient, la deuxieme creature n'apprendrait rien : c'est
+   * l'ANGLE qui decide si l'on esquive sur le cote ou en fermant la
+   * distance. */
+  const sq = M.MONSTRES.skeleton.tir, ga = M.MONSTRES.gardien.tir;
+  ok(ga.ecart > sq.ecart * 2,
+     `l'eventail du gardien (${ga.ecart}) est plus du double de celui du squelette (${sq.ecart})`);
+
+  /* ---- UN BOSS RESTE RARE ----
+   * `poids` n'existe que pour ca. Sans lui le tirage est uniforme : six
+   * especes dans la lave, dix-huit places, donc TROIS gardiens a chaque
+   * passage — et trois boss ne sont plus un boss.
+   * On compte sur mille tirages, pas sur un : un seul dirait le hasard, pas
+   * la regle. */
+  {
+    const r1 = alea(4242);
+    const p = M.PEUPLEMENT.lave;
+    const compte = {};
+    for (let i = 0; i < 1000; i++) {
+      const e = M.choisitEspece(p, r1);
+      compte[e] = (compte[e] || 0) + 1;
+    }
+    const part = (compte.gardien || 0) / 1000;
+    ok(part > 0.02 && part < 0.09,
+       `le gardien sort dans ${(part * 100).toFixed(1)} % des tirages de lave (vise 5 %)`);
+    /* Le rapport theorique vaut exactement 4 (poids 1 contre 0,25). Exiger
+       « plus de 4 fois » posait le seuil PILE sur l'attendu : un tirage sur
+       deux echoue alors, sans que rien ne soit casse. On demande donc ce
+       qu'on veut vraiment dire — un ordre de grandeur d'ecart. */
+    ok((compte.gardien || 0) * 3 <= (compte.lave || 0),
+       `on croise bien plus de golems (${compte.lave}) que de gardiens (${compte.gardien})`);
+    /* Sur dix-huit places, cela doit faire environ UN gardien. */
+    const attendus = part * p.nombre;
+    ok(attendus >= 0.4 && attendus <= 1.6,
+       `l'anneau de lave porte ${attendus.toFixed(2)} gardien en moyenne`);
+  }
+
+  /* ---- ET A L'INVERSE, UNE NUEE EST UNE NUEE ----
+   * Elle n'a d'interet qu'au pluriel. Si elle sortait comme les autres, elle
+   * serait juste un lime rapide et fragile. */
+  {
+    const r2 = alea(777);
+    const p = M.PEUPLEMENT.marais;
+    let nuees = 0;
+    for (let i = 0; i < 1000; i++) if (M.choisitEspece(p, r2) === 'nuee') nuees++;
+    const attendues = (nuees / 1000) * p.nombre;
+    ok(attendues > 12,
+       `le marais porte ${attendues.toFixed(0)} nuees a la fois — assez pour en etre une`);
+  }
+
+  /* ---- LA REGLE DES POIDS N'EST PAS OPTIONNELLE ----
+   * Un biome sans `poids` doit continuer a tirer uniformement : ajouter la
+   * colonne ne devait rien changer la ou on ne l'a pas remplie. */
+  {
+    const r3 = alea(31337);
+    const p = M.PEUPLEMENT.cendres;
+    const compte = {};
+    for (let i = 0; i < 4000; i++) {
+      const e = M.choisitEspece(p, r3);
+      compte[e] = (compte[e] || 0) + 1;
+    }
+    ['skeleton', 'glace', 'archer', 'meduse', 'oracle'].forEach((k) => {
+      const part = compte[k] / 4000;
+      ok(part > 0.15 && part < 0.24,
+         `« ${k} », sans poids, garde sa part uniforme dans les cendres (${(part * 100).toFixed(1)} %)`);
+    });
+  }
+
+  /* ---- AUCUNE ESPECE N'EST INJOIGNABLE ----
+   * Une creature listee dans PEUPLEMENT avec un poids de zero, ou oubliee de
+   * toutes les listes, existerait dans la table sans jamais apparaitre. */
+  {
+    const vus = {};
+    Object.keys(M.PEUPLEMENT).forEach((b) => {
+      const p = M.PEUPLEMENT[b];
+      const r4 = alea(90210);
+      for (let i = 0; i < 3000; i++) vus[M.choisitEspece(p, r4)] = true;
+    });
+    Object.keys(M.MONSTRES).forEach((k) => {
+      ok(vus[k], `« ${M.MONSTRES[k].nom} » apparait vraiment quelque part`);
+    });
+  }
+}
+
 console.log('monde.test.js : ' + n + ' verifications OK');
