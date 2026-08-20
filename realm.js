@@ -667,7 +667,11 @@ class Realm {
        qu'il n'a aucune raison de faire. */
     s.contenu.push({ item, cle: (objet && objet.cle) || null,
                      nom: (objet && objet.nom) || null,
-                     rarete: (objet && objet.rarete) || null });
+                     rarete: (objet && objet.rarete) || null,
+                     bonus: (objet && objet.bonus) || null,
+                     degats: (objet && objet.degats) || null,
+                     couleur: (objet && objet.couleur) || null,
+                     og: (objet && objet.og) || false });
     /* ---- LE SAC REPART POUR UNE MINUTE ----
      * Un sac tombe d'un monstre a soixante secondes a vivre. Poser SA PROPRE
      * piece dedans sans remettre le compteur a zero, c'est la confier a un sac
@@ -1298,9 +1302,18 @@ class Realm {
            places des qu'on marche dessus, et elle doit pouvoir la remplir
            sans une deuxieme demande — sinon la grille s'ouvre vide et se
            remplit un aller-retour plus tard, sous le doigt. */
+        /* La FICHE part avec la piece : bonus, degats, couleur, et le drapeau
+           des numerotees. Sans eux, survoler une piece au sol ne montrait
+           qu'un nom — or c'est exactement la que la question se pose : « est-ce
+           qu'elle vaut mieux que celle que je porte ? ». Ils sont poses UNE
+           fois, quand la piece nait ou qu'on la depose ; les retrouver au
+           moment d'envoyer l'etat les recalculerait pour chaque client, dix
+           fois par seconde, et obligerait realm.js a connaitre la boutique. */
         c: s.contenu.map((o) => (o.stat ? { st: o.stat }
                               : o.potion ? { po: o.potion }
-                              : { it: o.item, cl: o.cle, nm: o.nom, ra: o.rarete })),
+                              : { it: o.item, cl: o.cle, nm: o.nom, ra: o.rarete,
+                                  bo: o.bonus || undefined, dg: o.degats || undefined,
+                                  co: o.couleur || undefined, og: o.og || undefined })),
         r: Number(s.reste.toFixed(1)) })),
     };
   }

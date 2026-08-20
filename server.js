@@ -3156,13 +3156,12 @@ wss.on('connection', (ws) => {
         let sorti = null;
         try { sorti = game.poseAuSol(ws.addr, m.item); }
         catch (e) { return send(ws, { type: 'realmDepose', refus: e.message }); }
-        /* La piece part au sol avec son nom et sa cle d'image : realm.js
-           n'a aucune raison de connaitre la boutique, et les retrouver a
-           chaque envoi d'etat les recalculerait dix fois par seconde et par
-           client. */
-        const r = realm.depose(ws.addr, { item: sorti.item, nom: sorti.nom,
-                                          rarete: sorti.rarete,
-                                          cle: (boutique.item(sorti.item) || {}).cle || null }, null);
+        /* La piece part au sol avec sa FICHE ENTIERE — nom, image, bonus,
+           degats, couleur : realm.js n'a aucune raison de connaitre la
+           boutique, et les retrouver a chaque envoi d'etat les recalculerait
+           dix fois par seconde et par client. `poseAuSol` la construit deja,
+           exactement comme pour une piece qui tombe d'un monstre. */
+        const r = realm.depose(ws.addr, sorti, null);
         if (!r || r.refuse) {
           /* Le sol n'en a pas voulu : on REMET la piece dans le sac. Sans ce
              retour, un sac au sol plein ferait disparaitre l'objet — et il

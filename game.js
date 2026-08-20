@@ -6015,6 +6015,18 @@ class Game {
     return null;
   }
 
+  /** Ce qu'une piece emporte avec elle quand elle tombe ou qu'on la pose. */
+  ficheAuSol(o) {
+    if (!o) return null;
+    const r = boutique.rarete(o.rarete);
+    const d = personnages.degatsDeObjet(o);
+    const b = personnages.bonusesDeObjet(o);
+    return { item: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+             couleur: r ? r.couleur : null, og: !o.drop,
+             ...(Object.keys(b).length ? { bonus: b } : {}),
+             ...(d ? { degats: d } : {}) };
+  }
+
   tireButin(rarete, alea) {
     const lot = boutique.ITEMS_DROP.filter((o) => o.rarete === String(rarete));
     if (!lot.length) return null;
@@ -6024,10 +6036,12 @@ class Game {
     const r = typeof alea === 'function' ? alea() : Math.random();
     const o = dispo[Math.min(dispo.length - 1, Math.floor(r * dispo.length))];
     this.boutiqueEmis[o.id] = (this.boutiqueEmis[o.id] || 0) + 1;
-    /* Le nom et la cle d'image partent AVEC la piece : les retrouver au moment
-       d'envoyer l'etat du monde les recalculerait pour chaque client, dix fois
-       par seconde. */
-    return { item: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete };
+    /* Le nom, la cle d'image ET LA FICHE partent AVEC la piece : les retrouver
+       au moment d'envoyer l'etat du monde les recalculerait pour chaque
+       client, dix fois par seconde. La fiche sert au survol — c'est au sol,
+       devant un sac, que la question « est-ce que ca vaut mieux que ce que je
+       porte ? » se pose. */
+    return this.ficheAuSol(o);
   }
 
   /**
@@ -6076,7 +6090,11 @@ class Game {
     if (!(p.sac[id] > 0)) throw new Error('That one is not in your backpack');
     p.sac[id] -= 1;
     if (p.sac[id] <= 0) delete p.sac[id];
-    return { item: id, nom: o.nom, rarete: o.rarete };
+    p.sacCases = null;   // la case se libere : on laisse la liste se refaire
+    /* La MEME fiche que pour une piece qui tombe d'un monstre : au sol, une
+       piece posee par un joueur et une piece lachee par un colosse doivent se
+       survoler pareil. */
+    return this.ficheAuSol(o);
   }
 
   /** Boire. Rend ce qu'il faut RENDRE — la vie appartient au monde, pas a ce
