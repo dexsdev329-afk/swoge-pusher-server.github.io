@@ -203,21 +203,43 @@ console.log('\n-- l etal des pieces reste l etal des pieces --');
   n++; console.log('  ok   ni ne s annule par celui-la');
 }
 
-// ================== 8. LE SOLDE BORNE L ACHAT
-console.log('\n-- payer ce qu on peut --');
+// ================== 8. PAS A CREDIT, ET PAS A MOITIE
+console.log('\n-- ce qu on ne peut pas payer --');
 {
   const g = neuf();
   g._p(A).potions = { vie: 10 };
   g.metPotionEnVente(A, 'vie', 10);
   const p = g._p(B);
   p.balance = WEI(25);
-  const r = g.achetePotion(B, 'vie', 10);
-  /* On ne livre que ce qui est paye. L'inverse — livrer dix et decouvrir
-     ensuite qu'il manque de quoi payer — laisserait un achat a moitie fait,
-     donc des potions creees. */
-  eq(r.livre, 2, `vingt-cinq jetons achetent deux potions (${r.livre})`);
-  eq(solde(g, B), 5, 'et il lui reste la monnaie');
-  eq(ligne(g, B, 'vie').stock, 8, 'le stock n a baisse que de ce qui est vendu');
+  /* ---- LA REGLE EXISTAIT AVANT LE MARCHE, ET ELLE TIENT ----
+   *
+   * `potions.test.js` la pose depuis le premier jour : un solde insuffisant
+   * refuse l achat EN ENTIER. Livrer « ce qu on peut payer » serait une
+   * surprise — on demande dix potions, on en recoit deux, et le compte est
+   * vide sans qu on ait rien decide.
+   *
+   * Le marche ne l a pas changee, et cet essai est la pour qu il ne la change
+   * jamais : c est exactement le genre de regle qu une nouvelle
+   * fonctionnalite emporte sans s en apercevoir. */
+  assert.throws(() => g.achetePotion(B, 'vie', 10), /Not enough/i);
+  n++; console.log('  ok   dix potions pour vingt-cinq jetons : refuse en entier');
+  eq(solde(g, B), 25, 'et rien n a ete debite');
+  eq(ligne(g, B, 'vie').stock, 10, 'ni retire du stock du vendeur');
+  /* Ce qu on peut payer passe, evidemment. */
+  const r = g.achetePotion(B, 'vie', 2);
+  eq(r.livre, 2, 'deux potions, elles, passent');
+  eq(solde(g, B), 5, 'et il reste la monnaie');
+
+  /* ---- LE STOCK QUI MANQUE N EST PAS UN CREDIT ----
+   * Demander dix potions quand il n en existe que trois n est pas acheter a
+   * credit : c est demander plus qu il n y en a. On livre les trois, comme le
+   * plafond de port livre ce qui tient. */
+  const g3 = neuf();
+  g3._p(A).potions = { vie: 3 };
+  g3.metPotionEnVente(A, 'vie', 3);
+  const r3 = g3.achetePotion(B, 'vie', 10);
+  eq(r3.desJoueurs, 3, 'les trois du joueur partent');
+  eq(r3.deLaMaison, 7, 'et la maison complete les sept autres');
 }
 
 // ================== 9. TOUT SURVIT A UNE SAUVEGARDE

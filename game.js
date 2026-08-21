@@ -6194,6 +6194,20 @@ class Game {
     const livre = Math.min(n, POTIONS_MAX - deja);
     if (livre <= 0) throw new Error('You already carry ' + POTIONS_MAX + ' of those');
 
+    /* ---- PAS A CREDIT, ET PAS A MOITIE ----
+     *
+     * Un solde insuffisant refuse l'achat EN ENTIER. Livrer « ce qu'on peut
+     * payer » serait une surprise : on demande dix potions, on en recoit
+     * trois, et le compte est vide sans qu'on ait rien decide.
+     *
+     * A ne pas confondre avec le plafond de PORT, juste au-dessus, qui lui
+     * livre partiellement — et c'est la bonne facon de le traiter : quelqu'un
+     * qui en porte quatre-vingt-quinze et en demande dix en veut visiblement
+     * le maximum. La difference tient en une phrase : ce que le SAC ne peut
+     * pas contenir n'est pas une surprise, ce que le SOLDE ne peut pas payer
+     * en est une. */
+    if (p.balance.lt(WEI(t.prix * livre))) throw new Error('Not enough $SWOGE');
+
     /* ---- LE STOCK DES JOUEURS PASSE EN PREMIER ----
      *
      * Servir la maison d'abord aurait rendu les annonces invisibles : personne
@@ -6216,20 +6230,19 @@ class Game {
      * seul, POTIONS_FOND_MAISON=0 ferme le robinet sans toucher au reste. */
     let deLaMaison = 0;
     if (reste > 0 && cfg.POTIONS_FOND_MAISON) {
-      const solde = Number(ethers.utils.formatUnits(p.balance, cfg.DECIMALS));
-      deLaMaison = Math.min(reste, t.prix > 0 ? Math.floor(solde / t.prix) : 0);
-      if (deLaMaison > 0) {
-        const cout = WEI(t.prix * deLaMaison);
-        p.balance = p.balance.sub(cout);
-        this._bumpDay(p); p.dayNet = p.dayNet.sub(cout);
-        this._potDonne(p, cle, deLaMaison);
-      }
+      deLaMaison = reste;
+      const cout = WEI(t.prix * deLaMaison);
+      p.balance = p.balance.sub(cout);
+      this._bumpDay(p); p.dayNet = p.dayNet.sub(cout);
+      this._potDonne(p, cle, deLaMaison);
     }
     const total = desJoueurs + deLaMaison;
+    /* Le stock, lui, PEUT manquer, et ce n'est pas la meme chose qu'un solde
+       insuffisant : demander dix potions quand deux existent n'est pas acheter
+       a credit, c'est demander plus qu'il n'y en a. On livre les deux, comme
+       le plafond de port livre ce qui tient. */
     if (total <= 0) {
-      throw new Error(cfg.POTIONS_FOND_MAISON || desJoueurs > 0
-        ? 'Not enough $SWOGE'
-        : 'No ' + t.nom + ' for sale right now — players stock the shop');
+      throw new Error('No ' + t.nom + ' for sale right now — players stock the shop');
     }
     return { cle, livre: total, quantite: p.potions[cle] || 0,
              prix: t.prix * total, desJoueurs, deLaMaison,
@@ -8806,8 +8819,13 @@ class Game {
       .reduce((n, a) => n + (a.qte || 0), 0);
     if (dispo <= 0) throw new Error('No ' + this._nomMarche(cle) + ' for sale right now');
     const prix = prixMarche(cle);
-    if (p.balance.lt(WEI(prix))) throw new Error('Not enough $SWOGE');
-    const pris = this._acheteAuxJoueurs(p, cle, veut);
+    /* Meme regle que pour les potions de soin : on borne par ce qui EXISTE,
+       puis on refuse en entier si le solde ne suit pas. Livrer une fiole sur
+       trois parce que le compte s'est vide en route serait la surprise que
+       `potions.test.js` interdit depuis le premier jour. */
+    const veutVraiment = Math.min(veut, dispo);
+    if (p.balance.lt(WEI(prix * veutVraiment))) throw new Error('Not enough $SWOGE');
+    const pris = this._acheteAuxJoueurs(p, cle, veutVraiment);
     if (pris <= 0) throw new Error('Not enough $SWOGE');
     this._potDonne(p, cle, pris);
     p.sacCases = null;
