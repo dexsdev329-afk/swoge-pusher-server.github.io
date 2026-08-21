@@ -54,6 +54,68 @@ const POTIONS = {
 };
 const POTIONS_MAX = 99;
 
+/*
+ * ==================== LE MARCHE DES JOUEURS ====================
+ *
+ * Jusqu'ici la boutique tirait ses potions de nulle part : elle en vendait
+ * autant qu'on en demandait, et l'argent partait entier a la maison. Le stock
+ * vient desormais des JOUEURS. On met ses potions en vente, quelqu'un les
+ * achete, et la moitie du prix revient au vendeur.
+ *
+ * ---- pourquoi le prix est FIXE ----
+ *
+ * Parce qu'un prix libre sur un objet fongible ne produit pas un marche, il
+ * produit une course vers le bas : il suffit qu'un joueur affiche une unite
+ * en dessous pour prendre toute la demande, et le prix tombe a zero en une
+ * soiree. A prix fixe il n'y a rien a sous-coter — on ne se bat que sur la
+ * QUANTITE mise en vente, ce qui est exactement le comportement recherche.
+ *
+ * ---- pourquoi une FILE et pas des annonces ----
+ *
+ * Deux potions de vie sont identiques. Laisser choisir entre elles serait un
+ * ecran a lire pour un choix qui n'existe pas. On sert donc dans l'ordre
+ * d'arrivee : le premier qui approvisionne est le premier paye. C'est la
+ * seule regle a expliquer, et elle recompense celui qui a stocke le premier.
+ *
+ * ---- pourquoi les potions QUITTENT le vendeur ----
+ *
+ * Mises en vente, elles sortent de son inventaire tout de suite. Sinon on
+ * afficherait quatre-vingt-dix-neuf potions, on les boirait, et l'acheteur
+ * paierait pour du vide. Elles reviennent entieres si l'on retire son offre —
+ * une potion bloquee pour toujours parce que personne n'achete serait une
+ * confiscation.
+ *
+ * ---- et pourquoi le vendeur n'est paye qu'a la VENTE ----
+ *
+ * Payer a la mise en vente reviendrait a ce que la maison rachete tout le
+ * stock du jeu a credit. L'argent n'existe qu'au moment ou un acheteur le
+ * verse ; c'est le meme argent qui se partage, jamais de l'argent cree.
+ */
+/* UN seul chiffre pour la part. Ecrire « 10 et 5 » puis « 5000 et 2500 »
+   invite la faute de frappe qui paie le vendeur plus que l'acheteur n'a
+   verse — et cette faute-la se lit comme une fuite de tresorerie, pas comme
+   un caractere de travers. La part du vendeur se DEDUIT du prix. */
+const REVENTE_MAISON_BPS = 5000;
+const REVENTE_PRIX = { vie: 10, mana: 10, stat: 5000 };
+/* Ce que touche le vendeur, arrondi a l'INFERIEUR : la maison ne peut jamais
+   reverser plus qu'elle n'a encaisse, quel que soit le prix qu'on ecrira ici
+   plus tard. */
+function partVendeur(prix) {
+  return Math.floor(prix * (10000 - REVENTE_MAISON_BPS) / 10000);
+}
+/* Les cles du marche. Une potion de soin est `vie` ou `mana` ; une fiole de
+   stat est `st:att`, `st:def`... — la meme convention que le sac, ou un
+   identifiant de boutique est un nombre et une fiole un texte prefixe. */
+function cleMarcheValide(cle) {
+  const k = String(cle || '');
+  if (POTIONS[k]) return k;
+  if (k.slice(0, 3) === 'st:' && personnages.STATS.indexOf(k.slice(3)) >= 0) return k;
+  return null;
+}
+function prixMarche(cle) {
+  return cle.slice(0, 3) === 'st:' ? REVENTE_PRIX.stat : REVENTE_PRIX[cle];
+}
+
 /* ---- LES PLACES DU SAC ----
  * Huit, et UN OBJET PAR PLACE. Le coffre empile parce qu'il est un stock ;
  * le sac ne doit pas, sinon il n'a pas de fond et rien de ce qu'on y met ne
@@ -6131,12 +6193,46 @@ class Game {
        pedant. On ne facture que ce qu'on livre. */
     const livre = Math.min(n, POTIONS_MAX - deja);
     if (livre <= 0) throw new Error('You already carry ' + POTIONS_MAX + ' of those');
-    const cout = WEI(t.prix * livre);
-    if (p.balance.lt(cout)) throw new Error('Not enough $SWOGE');
-    p.balance = p.balance.sub(cout);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(cout);
-    p.potions[cle] = deja + livre;
-    return { cle, livre, quantite: p.potions[cle], prix: t.prix * livre,
+
+    /* ---- LE STOCK DES JOUEURS PASSE EN PREMIER ----
+     *
+     * Servir la maison d'abord aurait rendu les annonces invisibles : personne
+     * n'aurait jamais rien vendu, puisque l'acheteur serait toujours tombe sur
+     * le fond avant la file. L'ordre EST le marche.
+     *
+     * `_acheteAuxJoueurs` a deja debite l'acheteur et paye les vendeurs pour
+     * ce qu'elle a servi ; il ne reste ici qu'a livrer et a facturer le
+     * complement. */
+    const desJoueurs = this._acheteAuxJoueurs(p, cle, livre);
+    if (desJoueurs > 0) this._potDonne(p, cle, desJoueurs);
+
+    const reste = livre - desJoueurs;
+    /* ---- ET LA MAISON DERRIERE ----
+     *
+     * Un marche vide ne doit pas devenir un jeu sans potions : ici la mort
+     * detruit un equipement paye en argent reel, et « il n'y en avait plus »
+     * serait une perte causee par la boutique. La maison reste donc au fond de
+     * la file — jamais devant. Le jour ou le stock des joueurs tiendra tout
+     * seul, POTIONS_FOND_MAISON=0 ferme le robinet sans toucher au reste. */
+    let deLaMaison = 0;
+    if (reste > 0 && cfg.POTIONS_FOND_MAISON) {
+      const solde = Number(ethers.utils.formatUnits(p.balance, cfg.DECIMALS));
+      deLaMaison = Math.min(reste, t.prix > 0 ? Math.floor(solde / t.prix) : 0);
+      if (deLaMaison > 0) {
+        const cout = WEI(t.prix * deLaMaison);
+        p.balance = p.balance.sub(cout);
+        this._bumpDay(p); p.dayNet = p.dayNet.sub(cout);
+        this._potDonne(p, cle, deLaMaison);
+      }
+    }
+    const total = desJoueurs + deLaMaison;
+    if (total <= 0) {
+      throw new Error(cfg.POTIONS_FOND_MAISON || desJoueurs > 0
+        ? 'Not enough $SWOGE'
+        : 'No ' + t.nom + ' for sale right now — players stock the shop');
+    }
+    return { cle, livre: total, quantite: p.potions[cle] || 0,
+             prix: t.prix * total, desJoueurs, deLaMaison,
              balance: this.balanceStr(addr) };
   }
 
@@ -8317,7 +8413,9 @@ class Game {
       throw new Error('maximum price is ' + cfg.MARCHE_PRIX_MAX + ' $SWOGE');
 
     this.marche = this.marche || [];
-    const miennes = this.marche.filter((a) => a.vendeur === moi).length;
+    /* Les potions ne mangent pas le quota : vendre vingt-cinq potions ne doit
+       pas empecher de mettre une epee en vitrine. Ce sont deux etals. */
+    const miennes = this.marche.filter((a) => a.vendeur === moi && !a.pot).length;
     if (miennes >= cfg.MARCHE_ANNONCES_MAX)
       throw new Error('you already have ' + miennes + ' items for sale');
 
@@ -8338,6 +8436,7 @@ class Game {
     if (i < 0) throw new Error('this listing no longer exists');
     const a = this.marche[i];
     if (a.vendeur !== moi) throw new Error('this listing is not yours');
+    if (a.pot) throw new Error('use the potion counter to take those back');
     /* On RETIRE d'abord, on rend ensuite : l'inverse laisserait une fenetre ou
        l'objet est a la fois dans l'inventaire et en vente. */
     this.marche.splice(i, 1);
@@ -8352,6 +8451,7 @@ class Game {
     const i = (this.marche || []).findIndex((x) => x.id === Number(id));
     if (i < 0) throw new Error('this listing no longer exists');
     const a = this.marche[i];
+    if (a.pot) throw new Error('potions are bought by quantity, not by listing');
     /* ACHETER SA PROPRE ANNONCE EST REFUSE. Ce n'est pas une precaution
        theorique : c'est ainsi qu'on fabrique un faux prix de reference, en se
        vendant a soi-meme pour cinquante millions devant tout le monde. */
@@ -8432,6 +8532,10 @@ class Game {
     const rang = {};
     boutique.RARETES.forEach((r, i) => { rang[r.cle] = i; });
     const l = (this.marche || [])
+      /* Les annonces de potions vivent dans la MEME liste mais n'ont pas
+         d'objet de boutique : `_annonceVue` les rendrait avec un item vide, et
+         la vitrine afficherait des lignes sans nom ni rarete. */
+      .filter((a) => !a.pot)
       .map((a) => this._annonceVue(a))
       .filter((a) => !saison || a.item.saison === Number(saison))
       /* `jaiDeja` est calcule ICI et non dans la page : c'est le seul filtre
@@ -8442,6 +8546,268 @@ class Game {
     return { annonces: l, miennes: l.filter((a) => a.vendeur === moi).map((a) => a.id),
              frais: cfg.MARCHE_FRAIS_BPS / 100,
              min: cfg.MARCHE_PRIX_MIN, max: cfg.MARCHE_PRIX_MAX };
+  }
+
+  /*
+   * ==================== LE MARCHE DES POTIONS ====================
+   *
+   * MEME marche que celui des pieces — meme liste, meme sequestre, meme
+   * chemin pour l'argent. Une annonce de potion se reconnait a son champ
+   * `pot` ; une annonce de piece a son `item`. Ouvrir une deuxieme liste
+   * aurait voulu dire ecrire une deuxieme fois « l'objet quitte l'inventaire
+   * avant que l'annonce existe », et c'est exactement la phrase qu'on ne veut
+   * ecrire qu'une fois : la rater du deuxieme cote, c'est dupliquer des
+   * potions.
+   *
+   * Trois choses les separent, et elles se lisent toutes ici :
+   *   - le prix n'est pas choisi, il est IMPOSE (voir REVENTE_PRIX) ;
+   *   - la maison prend la moitie, pas les frais du marche aux pieces ;
+   *   - on n'achete pas UNE annonce, on achete UNE QUANTITE : deux potions de
+   *     vie sont identiques, choisir entre elles serait un ecran a lire pour
+   *     un choix qui n'existe pas. On sert donc dans l'ordre d'arrivee.
+   */
+
+  /** Combien il en a SOUS LA MAIN — ce qui est en vente n'est plus a lui. */
+  _potInventaire(p, cle) {
+    if (cle.slice(0, 3) === 'st:') return Math.max(0, ((p.fioles || {})[cle.slice(3)]) | 0);
+    return Math.max(0, ((p.potions || {})[cle]) | 0);
+  }
+
+  /** Retirer de l'inventaire pour sequestrer. Rend ce qui a REELLEMENT ete pris. */
+  _potRetire(p, cle, n) {
+    const pris = Math.min(n, this._potInventaire(p, cle));
+    if (pris <= 0) return 0;
+    if (cle.slice(0, 3) === 'st:') {
+      const st = cle.slice(3);
+      p.fioles = p.fioles || {};
+      p.fioles[st] -= pris;
+      if (p.fioles[st] <= 0) delete p.fioles[st];
+    } else {
+      p.potions = p.potions || {};
+      p.potions[cle] -= pris;
+      if (p.potions[cle] <= 0) delete p.potions[cle];
+    }
+    return pris;
+  }
+
+  /**
+   * Livrer. Rend ce qui a REELLEMENT tenu.
+   *
+   * Les potions de soin ont un plafond de PORT — quatre-vingt-dix-neuf — et il
+   * s'applique aussi bien a l'achat qu'au retrait d'une annonce. C'est
+   * pourquoi cette methode rend un nombre au lieu de reussir en silence :
+   * l'appelant doit pouvoir ne facturer que ce qu'il a livre, et ne retirer de
+   * l'annonce que ce qu'il a rendu. Une fiole de stat, elle, va au COFFRE, qui
+   * n'a pas de fond.
+   */
+  _potDonne(p, cle, n) {
+    if (n <= 0) return 0;
+    if (cle.slice(0, 3) === 'st:') {
+      const st = cle.slice(3);
+      p.fioles = p.fioles || {};
+      p.fioles[st] = (p.fioles[st] || 0) + n;
+      return n;
+    }
+    p.potions = p.potions || {};
+    const deja = Math.max(0, p.potions[cle] | 0);
+    const tient = Math.min(n, POTIONS_MAX - deja);
+    if (tient <= 0) return 0;
+    p.potions[cle] = deja + tient;
+    return tient;
+  }
+
+  _nomMarche(cle) {
+    if (cle.slice(0, 3) === 'st:') return cle.slice(3).toUpperCase() + ' potion';
+    return POTIONS[cle].nom;
+  }
+
+  /** Les annonces de potions, les plus anciennes d'abord : premier arrive, premier paye. */
+  _filePotions(cle) {
+    return (this.marche || [])
+      .filter((a) => a.pot === cle && (a.qte || 0) > 0)
+      .sort((x, y) => (x.t || 0) - (y.t || 0));
+  }
+
+  /**
+   * L'etat du marche aux potions pour un joueur : ce qu'il a, ce qu'il a mis
+   * en vente, et ce que le serveur a en stock.
+   */
+  potionsMarche(addr) {
+    const moi = String(addr || '').toLowerCase();
+    const p = this._p(moi);
+    const stock = {}, mien = {};
+    for (const a of (this.marche || [])) {
+      if (!a.pot) continue;
+      stock[a.pot] = (stock[a.pot] || 0) + (a.qte || 0);
+      if (a.vendeur === moi) mien[a.pot] = (mien[a.pot] || 0) + (a.qte || 0);
+    }
+    const cles = Object.keys(POTIONS).concat(personnages.STATS.map((s) => 'st:' + s));
+    return {
+      maison: REVENTE_MAISON_BPS / 100,
+      /* Le fond de la maison ne concerne QUE les potions de soin : une fiole
+         de stat n'a jamais eu de vendeur autre qu'un joueur, et lui en
+         fabriquer un ici detruirait la seule chose qui fait son prix. */
+      fond: !!cfg.POTIONS_FOND_MAISON,
+      lignes: cles.map((k) => ({
+        cle: k, nom: this._nomMarche(k),
+        stat: k.slice(0, 3) === 'st:' ? k.slice(3) : null,
+        image: POTIONS[k] ? POTIONS[k].image : null,
+        prix: prixMarche(k), gain: partVendeur(prixMarche(k)),
+        stock: stock[k] || 0, enVente: mien[k] || 0, jai: this._potInventaire(p, k),
+        /* Le plafond de port, pour que la page grise « acheter » avant le
+           clic plutot qu'apres le refus. */
+        porte: POTIONS[k] ? POTIONS_MAX : 0,
+      })),
+    };
+  }
+
+  /**
+   * METTRE EN VENTE.
+   *
+   * Le sequestre et l'annonce sont d'un seul tenant, comme pour les pieces :
+   * rien ne peut s'intercaler entre le retrait de l'inventaire et la creation
+   * de l'annonce. Un joueur qui approvisionne DEUX fois garde sa place dans la
+   * file — sa premiere annonce grossit au lieu d'en creer une seconde. C'est
+   * volontaire : la file recompense d'avoir stocke tot, et retomber au bout
+   * parce qu'on ajoute une potion punirait exactement le comportement qu'on
+   * cherche a obtenir.
+   */
+  metPotionEnVente(addr, cleBrute, quantite) {
+    const cle = cleMarcheValide(cleBrute);
+    if (!cle) throw new Error('Unknown potion');
+    const moi = String(addr).toLowerCase();
+    const p = this._p(moi);
+    if (cfg.MARCHE_REQUIERT_DEPOT && !p.hasDeposited)
+      throw new Error('deposit once before selling');
+    const veut = Math.max(1, Math.floor(Number(quantite) || 1));
+    const jai = this._potInventaire(p, cle);
+    if (jai <= 0) throw new Error('You have no ' + this._nomMarche(cle) + ' to sell');
+    const n = Math.min(veut, jai);
+
+    this.marche = this.marche || [];
+    const pris = this._potRetire(p, cle, n);
+    if (pris <= 0) throw new Error('You have no ' + this._nomMarche(cle) + ' to sell');
+    const deja = (this.marche || []).find((a) => a.pot === cle && a.vendeur === moi);
+    if (deja) deja.qte = (deja.qte || 0) + pris;
+    else {
+      this.marche.push({ id: this.marcheNo++, vendeur: moi,
+                         nomVendeur: p.name || moi.slice(0, 6),
+                         pot: cle, prix: prixMarche(cle), qte: pris, t: Date.now() });
+    }
+    p.sacCases = null;
+    journal.ajoute(moi, { k: 'pv', pot: cle, q: pris, m: String(prixMarche(cle)) });
+    return { cle, misEnVente: pris, ...this.potionsMarche(moi) };
+  }
+
+  /**
+   * REPRENDRE CE QU'ON A MIS EN VENTE.
+   *
+   * Sans ce geste, une potion que personne n'achete serait confisquee. On ne
+   * rend que ce qui TIENT — le plafond de port existe toujours — et l'annonce
+   * ne perd que ce qui a ete rendu : autrement une reprise refusee par le
+   * plafond detruirait des potions au lieu de ne rien faire.
+   */
+  retirePotionDeLaVente(addr, cleBrute, quantite) {
+    const cle = cleMarcheValide(cleBrute);
+    if (!cle) throw new Error('Unknown potion');
+    const moi = String(addr).toLowerCase();
+    const i = (this.marche || []).findIndex((a) => a.pot === cle && a.vendeur === moi);
+    if (i < 0) throw new Error('You have none of those for sale');
+    const a = this.marche[i];
+    const veut = Math.max(1, Math.floor(Number(quantite) || 1));
+    const p = this._p(moi);
+    const rendu = this._potDonne(p, cle, Math.min(veut, a.qte || 0));
+    if (rendu <= 0) throw new Error('You already carry ' + POTIONS_MAX + ' of those');
+    a.qte = (a.qte || 0) - rendu;
+    if (a.qte <= 0) this.marche.splice(i, 1);
+    p.sacCases = null;
+    return { cle, repris: rendu, ...this.potionsMarche(moi) };
+  }
+
+  /**
+   * ACHETER AUX JOUEURS.
+   *
+   * Interne : ne touche ni au plafond de port ni au fond de la maison, et ne
+   * livre rien. Elle prend l'argent, elle paie les vendeurs, et elle rend
+   * combien d'exemplaires elle a reussi a reunir. C'est l'appelant qui livre —
+   * parce que lui seul sait quoi faire du reste.
+   *
+   * On saute SES PROPRES annonces. Se les racheter serait perdre la moitie du
+   * prix a chaque tour pour rien ; en faire une erreur bloquerait un joueur qui
+   * a mis dix potions en vente et veut en acheter d'autres.
+   */
+  _acheteAuxJoueurs(p, cle, veut) {
+    const moi = String(p.addr || '').toLowerCase();
+    const file = this._filePotions(cle).filter((a) => a.vendeur !== moi);
+    const dispo = file.reduce((n, a) => n + (a.qte || 0), 0);
+    const prix = prixMarche(cle);
+    /* On ne prend que ce que le SOLDE permet : facturer d'abord et decouvrir
+       ensuite qu'il manque de quoi payer laisserait un achat a moitie fait. */
+    const solde = Number(ethers.utils.formatUnits(p.balance, cfg.DECIMALS));
+    const payables = prix > 0 ? Math.floor(solde / prix) : 0;
+    const n = Math.min(veut, dispo, payables);
+    if (n <= 0) return 0;
+
+    const part = partVendeur(prix);
+    let reste = n;
+    for (const a of file) {
+      if (reste <= 0) break;
+      const k = Math.min(reste, a.qte || 0);
+      if (k <= 0) continue;
+      a.qte -= k;
+      reste -= k;
+      const v = this._p(a.vendeur);
+      const net = WEI(part * k);
+      v.balance = v.balance.add(net);
+      this._bumpDay(v); v.dayNet = v.dayNet.add(net);
+      v.trNonLus = (v.trNonLus || 0) + 1;
+      journal.ajoute(a.vendeur, { k: 'pvend', pot: cle, q: k,
+                                  m: String(part * k), autre: moi });
+    }
+    /* Les annonces videes partent MAINTENANT : une annonce a zero exemplaire
+       resterait dans la file et compterait comme du stock. */
+    this.marche = (this.marche || []).filter((a) => !a.pot || (a.qte || 0) > 0);
+
+    const cout = WEI(prix * n);
+    p.balance = p.balance.sub(cout);
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(cout);
+    /* La part de la maison, notee comme celle du marche aux pieces : c'est du
+       revenu de la meme nature, il se lit au meme endroit. */
+    const maison = (prix - part) * n;
+    if (maison > 0) this.note('marche', maison, moi);
+    journal.ajoute(moi, { k: 'pa', pot: cle, q: n, m: String(prix * n) });
+    return n;
+  }
+
+  /**
+   * ACHETER UNE FIOLE DE STAT.
+   *
+   * Il n'y a PAS de fond de la maison ici, et il ne faut pas qu'il y en ait :
+   * une fiole de stat est un acquis permanent, et la seule chose qui la rend
+   * chere est qu'aucune n'existe que celles qu'un joueur est alle chercher. En
+   * vendre a volonte reviendrait a vendre des statistiques.
+   */
+  acheteFioleAuMarche(addr, stat, quantite) {
+    const cle = cleMarcheValide('st:' + String(stat || ''));
+    if (!cle) throw new Error('Unknown stat');
+    const moi = String(addr).toLowerCase();
+    const p = this._p(moi);
+    if (cfg.MARCHE_REQUIERT_DEPOT && !p.hasDeposited)
+      throw new Error('deposit once before buying');
+    const veut = Math.max(1, Math.floor(Number(quantite) || 1));
+    const dispo = this._filePotions(cle)
+      .filter((a) => a.vendeur !== moi)
+      .reduce((n, a) => n + (a.qte || 0), 0);
+    if (dispo <= 0) throw new Error('No ' + this._nomMarche(cle) + ' for sale right now');
+    const prix = prixMarche(cle);
+    if (p.balance.lt(WEI(prix))) throw new Error('Not enough $SWOGE');
+    const pris = this._acheteAuxJoueurs(p, cle, veut);
+    if (pris <= 0) throw new Error('Not enough $SWOGE');
+    this._potDonne(p, cle, pris);
+    p.sacCases = null;
+    return { cle, stat: cle.slice(3), achete: pris, paye: prix * pris,
+             balance: this.balanceStr(moi), fioles: this.fiolesPour(moi),
+             ...this.potionsMarche(moi) };
   }
 
   fairness(addr) {

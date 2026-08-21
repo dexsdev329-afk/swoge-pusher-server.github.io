@@ -3260,9 +3260,58 @@ wss.on('connection', (ws) => {
         let err = null, r = null;
         try { r = game.achetePotion(ws.addr, m.cle, m.qte); persistSoon(); }
         catch (e) { err = e.message; }
+        /* L'achat a vide une partie de la file : la page doit le voir tout de
+           suite, sinon elle propose encore un stock qu'on vient de prendre. */
+        send(ws, { type: 'potionMarche', ...game.potionsMarche(ws.addr),
+                   potions: game.potionsPour(ws.addr),
+                   fioles: game.fiolesPour(ws.addr),
+                   balance: game.balanceStr(ws.addr) });
         return send(ws, { type: 'equipable', ...game.equipablesPour(ws.addr),
                           balance: game.balanceStr(ws.addr),
                           achat: r || undefined, error: err || undefined });
+      }
+      /* ---- L'ETAL DES POTIONS : METTRE EN VENTE, REPRENDRE, ACHETER ----
+       *
+       * Les trois repondent la MEME chose — l'etat complet du marche plus
+       * l'inventaire — parce que les trois le changent. Renvoyer un accuse de
+       * reception aurait oblige la page a deviner le nouvel etat, et une page
+       * qui devine finit par afficher un stock qui n'existe plus. */
+      if (m.type === 'potionMarche') {
+        if (!ws.addr) return;
+        return send(ws, { type: 'potionMarche', ...game.potionsMarche(ws.addr),
+                          potions: game.potionsPour(ws.addr),
+                          fioles: game.fiolesPour(ws.addr),
+                          balance: game.balanceStr(ws.addr) });
+      }
+      if (m.type === 'potionVend' || m.type === 'potionReprend') {
+        if (!ws.addr) return;
+        let err = null, r = null;
+        try {
+          r = m.type === 'potionVend'
+            ? game.metPotionEnVente(ws.addr, m.cle, m.qte)
+            : game.retirePotionDeLaVente(ws.addr, m.cle, m.qte);
+          persistSoon();
+        } catch (e) { err = e.message; }
+        return send(ws, { type: 'potionMarche',
+                          ...(r || game.potionsMarche(ws.addr)),
+                          potions: game.potionsPour(ws.addr),
+                          fioles: game.fiolesPour(ws.addr),
+                          balance: game.balanceStr(ws.addr),
+                          error: err || undefined });
+      }
+      /* Une fiole de stat s'achete AU MARCHE et nulle part ailleurs : il n'y a
+         pas de fond de la maison pour celles-la, et il ne doit pas y en avoir. */
+      if (m.type === 'fioleAchat') {
+        if (!ws.addr) return;
+        let err = null, r = null;
+        try { r = game.acheteFioleAuMarche(ws.addr, m.stat, m.qte); persistSoon(); }
+        catch (e) { err = e.message; }
+        return send(ws, { type: 'potionMarche',
+                          ...(r || game.potionsMarche(ws.addr)),
+                          potions: game.potionsPour(ws.addr),
+                          fioles: game.fiolesPour(ws.addr),
+                          balance: game.balanceStr(ws.addr),
+                          error: err || undefined });
       }
       if (m.type === 'potionBoit') {
         if (!ws.addr) return;
