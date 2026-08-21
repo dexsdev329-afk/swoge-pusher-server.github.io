@@ -4,10 +4,13 @@
  *
  * ---- ce qui compte, dans l'ordre ----
  *
- * 1. LE CHIFFRE EST CELUI QU'ON A ECRIT. Une chance sur cinq mille, sur
- *    N'IMPORTE QUELLE creature. `butinDe` est une chaine de tirages ou le
+ * 1. LE CHIFFRE EST CELUI QU'ON A ECRIT — et il se lit dans `monde.OEUF`,
+ *    jamais recopie ici. Un essai qui repete le nombre qu'il verifie ne
+ *    verifie rien : il continue de passer apres qu'on a change la regle, et
+ *    de tomber quand on ne l'a pas changee.
+ *    Sur N'IMPORTE QUELLE creature. `butinDe` est une chaine de tirages ou le
  *    premier servi obtient son vrai taux : un oeuf place apres la relique
- *    aurait silencieusement valu moins que 1/5000.
+ *    aurait silencieusement valu moins que son chiffre.
  * 2. LE LEGENDAIRE RESTE RARE PARMI LES RARES. C'est le seul qui soigne. A un
  *    sixieme des oeufs il serait la moitie des familiers du serveur au bout
  *    d'un mois.
@@ -44,9 +47,13 @@ console.log('\n-- une chance sur cinq mille --');
     if (o) { oeufs++; compte[o] = (compte[o] || 0) + 1; }
   }
   const un = Math.round(N / Math.max(1, oeufs));
-  /* Large fourchette : c'est un tirage, pas une horloge. Ce qu'on verifie est
-     l'ordre de grandeur — qu'un oeuf ne soit ni introuvable ni courant. */
-  ok(un > 4000 && un < 6300, `un oeuf toutes les ${un} morts (vise : 5000)`);
+  /* Le chiffre VISE vient du monde, il n'est pas recopie : le jour ou l'on
+     change le taux — et on l'a change — un essai qui portait « 5000 » en dur
+     tombait sans qu'une seule regle soit fausse. Large fourchette autour :
+     c'est un tirage, pas une horloge. */
+  const vise = Math.round(1 / monde.OEUF.chance);
+  ok(un > vise * 0.8 && un < vise * 1.25,
+     `un oeuf toutes les ${un} morts (vise : ${vise})`);
   ok(monde.OEUFS.every((e) => compte[e] > 0),
      `les six especes tombent (${monde.OEUFS.map((e) => e + ':' + (compte[e] || 0)).join(' ')})`);
   const partLeg = compte.legendaire / oeufs;
@@ -71,8 +78,8 @@ console.log('\n-- de n importe quelle creature --');
     ok(b && b.contenu[0] && b.contenu[0].oeuf,
        `${espece} peut laisser un oeuf (${b && b.contenu[0] ? JSON.stringify(b.contenu[0]) : 'rien'})`);
   }
-  /* ET IL PASSE AVANT LA RELIQUE. Si l'ordre s'inversait un jour, le 1/5000
-     deviendrait 1/6000 sans que rien ne le dise. */
+  /* ET IL PASSE AVANT LA RELIQUE. Si l'ordre s'inversait un jour, son taux
+     baisserait d'un cinquantieme sans que rien ne le dise. */
   tour = 0;
   const b = monde.butinDe('fonderie', alea, 'donjon');
   ok(b && b.contenu[0] && b.contenu[0].objet === 'relique',
@@ -91,7 +98,16 @@ console.log('\n-- au sol, puis dans le sac --');
   eq(r.oeuf, 'feu', 'et le sol sait ce que c est');
   const v = sacs.vue(liste[0]);
   eq(v.c[0].oe, 'feu', 'la page le recoit sous sa forme courte');
-  eq(v.s, 'blanc', 'dans le sac blanc, celui qu on traverse la carte pour aller chercher');
+  /* ---- SON PROPRE SAC ----
+   * Il avait le BLANC, celui des reliques. Le blanc disait « traverse la
+   * carte » sans dire pourquoi, et l on repartait avec un oeuf en croyant
+   * courir apres une relique. La couleur vient du monde, pas d ici : deux
+   * endroits qui nomment le meme sac finissent par n en nommer plus le
+   * meme. */
+  eq(v.s, monde.OEUF.sac, 'dans SON sac, qu on reconnait de loin');
+  ok(monde.OEUF.sac !== 'blanc', 'et ce n est plus celui des reliques');
+  ok(monde.SACS.includes(monde.OEUF.sac),
+     `le sac de l oeuf est declare avec les autres (${monde.SACS.join(', ')})`);
 
   const pris = sacs.prend(liste, liste[0], 0, (o) => {
     try { g.prendOeuf(A, o.oeuf); return true; } catch (e) { return e.message; }

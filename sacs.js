@@ -95,12 +95,15 @@ function depose(sacs, x, y, addr, objet, nouvelId) {
     /* Le BRUN n'est pas un choix esthetique : un objet depose ne doit pas
        ressembler a un butin rare, sinon on traverserait la carte pour une epee
        commune que quelqu'un a jetee. Le bleu est celui des fioles, partout. */
-    /* ---- ET LE BLANC POUR UN OEUF ----
+    /* ---- ET SON PROPRE SAC POUR UN OEUF ----
      * Meme raison, un cran plus haut : le brun dit « quelqu'un a jete ca », et
      * un oeuf jete au sol dans une couleur de rebut se serait fait ignorer par
-     * tout le monde. Le blanc est celui des reliques — la seule couleur pour
-     * laquelle on traverse la carte. */
-    s = { id: nouvelId(), x, y, sac: c.oeuf ? 'blanc' : c.stat ? 'bleu' : 'brun',
+     * tout le monde. Il avait le BLANC, celui des reliques ; il a maintenant
+     * le sien. Le blanc disait « traverse la carte » sans dire pourquoi, et
+     * l'on repartait avec un oeuf en croyant courir apres une relique — la
+     * deception d'une trouvaille qu'on a mal annoncee vaut moins qu'une
+     * trouvaille qu'on n'a pas faite. */
+    s = { id: nouvelId(), x, y, sac: c.oeuf ? monde.OEUF.sac : c.stat ? 'bleu' : 'brun',
           reste: monde.SAC.duree, contenu: [] };
     sacs.push(s);
     while (sacs.length > monde.SAC.plafond) sacs.shift();

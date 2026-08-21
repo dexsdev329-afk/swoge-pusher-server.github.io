@@ -2174,7 +2174,13 @@ const SAC = {
 
 /* L'ordre EST celui des colonnes de objets/sacs.webp. Le dessin et la regle
    ne peuvent pas diverger tant qu'ils sont la meme liste. */
-const SACS = ['brun', 'bleu', 'violet', 'or', 'rouge', 'blanc'];
+/* ---- LES SACS, DU PLUS COMMUN AU PLUS RARE ----
+ * Et « oeuf » a part, en dernier : ce n'est pas un cran de rarete de plus, ce
+ * n'est meme pas un objet — c'est la seule chose du jeu qui ne se porte pas,
+ * ne se vend pas et ne se perd pas. Elle merite son propre sac, et surtout
+ * son propre DESSIN : un joueur qui voit un sac blanc court deja ; il faut
+ * qu'il sache, de loin, que celui-la n'est pas une relique. */
+const SACS = ['brun', 'bleu', 'violet', 'or', 'rouge', 'blanc', 'oeuf'];
 
 const STATS_POTION = Object.keys(POUVOIR_PAR_STAT);
 
@@ -2264,8 +2270,19 @@ const SAC_DE_RARETE = {
  * couleur quand elles disent la meme : « traverse la carte pour celui-la ».
  */
 const OEUF = {
-  chance: 1 / 5000,
-  sac: 'blanc',
+  /* ---- UN SUR MILLE DEUX CENTS, ET PAS UN SUR CINQ MILLE ----
+   * Le premier chiffre etait juste sur le papier et faux dans le jeu : a
+   * quinze creatures par minute, il mettait le premier oeuf a cinq heures de
+   * farm, et le legendaire a plus de cent. Avec quelques dizaines de joueurs,
+   * cela voulait dire que Petworld, l'enclos, les niveaux et les six pouvoirs
+   * existaient pour personne. Une chose si rare que personne ne la voit
+   * n'est pas rare : elle est absente.
+   * Un sur mille deux cents met le premier oeuf a environ une heure — assez
+   * pour rester une trouvaille dont on parle, assez peu pour que le contenu
+   * batir autour serve. Le legendaire garde sa rarete par ses POIDS : quatre
+   * sur cent des oeufs, donc un sur trente mille morts. */
+  chance: 1 / 1200,
+  sac: 'oeuf',
   /* Poids, pas probabilites : on les somme et l'on tire dedans. Ecrire des
      pourcentages obligerait a verifier a la main qu'ils font cent. */
   especes: [
