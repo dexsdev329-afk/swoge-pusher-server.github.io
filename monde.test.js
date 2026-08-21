@@ -440,8 +440,15 @@ function alea(graine) {
       for (let i = 0; i < 3000; i++) vus[M.choisitEspece(p, r4)] = true;
     });
     vus[M.SALLE.espece] = true;
-    M.DONJON.especes.forEach((k) => { vus[k] = true; });
-    vus[M.DONJON.boss] = true;
+    /* TROIS portes, et la troisieme est une TABLE. On parcourt tous les
+       donjons declares plutot que le seul premier : ecrire `M.DONJON` ici
+       revenait a dire « les creatures de la Fonderie sont joignables » et a
+       declarer injoignables celles de tous les donjons suivants — ce que cet
+       essai a effectivement fait le jour ou la cave est arrivee. */
+    Object.keys(M.DONJONS).forEach((d) => {
+      M.DONJONS[d].especes.forEach((k) => { vus[k] = true; });
+      vus[M.DONJONS[d].boss] = true;
+    });
     Object.keys(M.MONSTRES).forEach((k) => {
       ok(vus[k], `« ${M.MONSTRES[k].nom} » apparait vraiment quelque part`);
     });
@@ -454,7 +461,16 @@ function alea(graine) {
        serait dans la table sans porte d'entree ; et la ligne ci-dessus ne le
        verrait pas — elle ne regarde que ce qui sort du tirage, pas ce qui
        aurait du en sortir. */
-    const roles = new Set([M.SALLE.espece, M.DONJON.boss, ...M.DONJON.especes]);
+    const roles = new Set([M.SALLE.espece]);
+    /* TOUS les donjons, pas le premier. Meme raison que dix lignes plus haut :
+       nommer `M.DONJON` revenait a declarer orphelines les creatures de tous
+       les donjons suivants — ce que cet essai a fait des l arrivee de la
+       cave, en accusant ses quatre pirates de n avoir aucune porte d entree
+       alors qu ils en ont une. */
+    Object.keys(M.DONJONS).forEach((d) => {
+      roles.add(M.DONJONS[d].boss);
+      M.DONJONS[d].especes.forEach((e) => roles.add(e));
+    });
     const sansBiome = Object.keys(M.MONSTRES).filter((k) => M.MONSTRES[k].biomes.length === 0);
     const orphelines = sansBiome.filter((k) => !roles.has(k));
     eq(orphelines.length, 0,
