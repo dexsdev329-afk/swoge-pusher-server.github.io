@@ -320,18 +320,34 @@ const DONJON_TUILE = TUILE;
    de large qui recule en frappant. */
 const DONJON_SALLES = [
   { cote: 9,  role: 'entree' },
+  { cote: 11, role: 'fosse' },
+  { cote: 11, role: 'fosse' },
   { cote: 13, role: 'fosse' },
   { cote: 15, role: 'fond' },
 ];
-/* Le couloir : trois tuiles de large, quatre de long. Trois et pas une — une
-   seule aurait fait un goulot ou le boss ne passe pas, et ou deux joueurs se
-   bousculent. Un donjon ne doit pas etre difficile a cause de sa geometrie. */
-const DONJON_COULOIR = { long: 4, large: 3 };
-/* Le coin haut-gauche du plan, en tuiles. Le donjon vit dans SA propre
-   simulation, donc ces coordonnees ne rencontrent jamais celles du monde —
-   mais elles restent dans [0, MONDE] pour que la borne de `bouge` ne les
-   coupe pas. Deux regles qui se contredisent en silence, c'est exactement ce
-   qu'on evite en restant dans le cadre. */
+/* ---- ET DES IMPASSES ----
+ * Des salles qui ne menent nulle part, accrochees a la chaine. Elles font
+ * deux choses qu'une salle de plus dans la file ne ferait pas : elles
+ * obligent a CHOISIR a chaque embranchement, et elles recompensent celui qui
+ * fouille — c'est la ou tombe le butin qu'on ne trouve pas en courant tout
+ * droit. Petites : une impasse grande comme une salle de passage ne se lirait
+ * plus comme un ecart. */
+const DONJON_IMPASSES = { combien: 3, cote: 7 };
+/* Le couloir : trois tuiles de large, trois de long. Trois de large et pas
+   une — une seule aurait fait un goulot ou le boss ne passe pas, et ou deux
+   joueurs se bousculent. Un donjon ne doit pas etre difficile a cause de sa
+   geometrie.
+   TROIS de long et non quatre : a quatre, on passait plus de temps dans les
+   couloirs que dans les salles, et un donjon qui se traverse au pas de course
+   entre deux combats se lit comme vide meme quand il ne l'est pas. */
+const DONJON_COULOIR = { long: 3, large: 3 };
+/* ---- COMBIEN DE MONDE DANS UN DONJON ----
+ * Par TUILE de sol, et non par salle : c'est la seule facon d'avoir la meme
+ * densite dans un sas de neuf tuiles de cote et dans une caverne ronde de
+ * dix-huit. Le chiffre est deux fois celui d'avant — un donjon qu'on
+ * traverse en courant n'est pas un donjon, c'est un couloir avec un boss au
+ * bout. */
+const PEUPLE_DONJON = { densite: 0.062, plafond: 14 };
 const DONJON_ORIGINE = { x: 6, y: 6 };
 
 /* La base de `t` pour un bloc de mur de donjon. Au-dela de MUR_BASE on lit le
@@ -350,35 +366,180 @@ const MARGE_CAVE = 4;
  * creatures, le boss et la porte de sortie. Les recalculer ailleurs, c'est se
  * donner deux plans a tenir d'accord.
  */
-function planDonjon() {
-  const sol = new Set();
+/* ---- UN VRAI MELANGE ----
+ * `liste.sort(() => alea() - 0.5)` a l'air d'un melange et n'en est pas un :
+ * un comparateur qui repond au hasard n'est pas un ordre, et le tri qui s'en
+ * sert rend un resultat BIAISE — sur trois elements, deux ordres sortaient
+ * quatre fois plus souvent que les quatre autres. Le donjon avait donc deux
+ * formes au lieu de vingt, et le deuxieme passage n'apprenait plus rien.
+ * Fisher-Yates, en une boucle : chaque ordre a exactement la meme chance. */
+function melange(liste, r) {
+  const out = liste.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1));
+    const t = out[i]; out[i] = out[j]; out[j] = t;
+  }
+  return out;
+}
+
+function planDonjon(alea) {
+  const r = () => (typeof alea === 'function' ? alea() : Math.random());
   const cle = (c, l) => c + ',' + l;
+  const DIRS = { droite: [1, 0], bas: [0, 1], haut: [0, -1] };
+  /* Jamais vers la GAUCHE : le donjon reviendrait sur lui-meme et l'on
+     n'aurait plus l'impression d'avancer. Trois directions suffisent a casser
+     la ligne droite — c'etait tout le probleme. */
+  const NOMS = Object.keys(DIRS);
+
+  /* Les rectangles poses, en tuiles. On verifie les chevauchements SUR EUX,
+     pas sur le sol deja creuse : relire un ensemble de cinq cents tuiles pour
+     placer chaque salle reviendrait a refaire le plan a chaque pose, et une
+     salle collee a une autre par un coin passerait quand meme. Deux marges
+     entre les bords : sans elles, le mur qui les separe n'aurait nulle part
+     ou tenir et les deux salles fusionneraient. */
+  const boites = [];
+  const chevauche = (x0, y0, x1, y1) => boites.some(
+    (b) => x0 <= b.x1 + 1 && x1 >= b.x0 - 1 && y0 <= b.y1 + 1 && y1 >= b.y0 - 1);
+
+  const sol = new Set();
   const salles = [];
-  /* La hauteur de reference : la salle la plus haute. Tout est centre dessus,
-     pour que les couloirs sortent au milieu des cotes. */
-  const hMax = Math.max(...DONJON_SALLES.map((s) => s.cote));
-  const cy = DONJON_ORIGINE.y + Math.floor(hMax / 2);
-  let c0 = DONJON_ORIGINE.x;
+  const creuse = (x0, y0, x1, y1) => {
+    for (let c = x0; c <= x1; c++) for (let l = y0; l <= y1; l++) sol.add(cle(c, l));
+  };
+
+  /* ---- LA CHAINE ----
+   * Une salle, un couloir, une salle. Le couloir part du bord de la salle
+   * precedente et arrive sur le bord de la suivante, toujours au MILIEU du
+   * cote : un couloir qui debouche dans un coin se rate en entrant. */
+  let prec = null, dernier = null;
   for (let i = 0; i < DONJON_SALLES.length; i++) {
     const s = DONJON_SALLES[i];
-    const haut = cy - Math.floor(s.cote / 2);
-    for (let c = 0; c < s.cote; c++) {
-      for (let l = 0; l < s.cote; l++) sol.add(cle(c0 + c, haut + l));
+    const demi = Math.floor(s.cote / 2);
+    if (!prec) {
+      const x0 = DONJON_ORIGINE.x, y0 = DONJON_ORIGINE.y;
+      creuse(x0, y0, x0 + s.cote - 1, y0 + s.cote - 1);
+      boites.push({ x0, y0, x1: x0 + s.cote - 1, y1: y0 + s.cote - 1 });
+      prec = { c: x0 + demi, l: y0 + demi, cote: s.cote };
+      salles.push({ role: s.role, cote: s.cote, c: prec.c, l: prec.l,
+                    x: (prec.c + 0.5) * DONJON_TUILE, y: (prec.l + 0.5) * DONJON_TUILE });
+      continue;
     }
-    salles.push({ role: s.role, cote: s.cote,
-                  c: c0 + Math.floor(s.cote / 2), l: cy,
-                  x: (c0 + Math.floor(s.cote / 2) + 0.5) * DONJON_TUILE,
-                  y: (cy + 0.5) * DONJON_TUILE });
-    c0 += s.cote;
-    if (i < DONJON_SALLES.length - 1) {
-      const demi = Math.floor(DONJON_COULOIR.large / 2);
-      for (let c = 0; c < DONJON_COULOIR.long; c++) {
-        for (let l = -demi; l <= demi; l++) sol.add(cle(c0 + c, cy + l));
-      }
-      c0 += DONJON_COULOIR.long;
+    /* On essaie les trois directions dans un ordre TIRE : sans le tirage, le
+       plan serait le meme a chaque partie, et le deuxieme passage dans la
+       Fonderie n'aurait plus rien a apprendre. */
+    const ordre = melange(NOMS, r);
+    /* Deux fois de suite la meme direction fait un couloir droit de deux
+       salles — exactement ce qu'on vient de casser. On la met en dernier
+       plutot que de l'interdire : l'interdire pourrait ne laisser aucune
+       place et faire echouer la pose. */
+    if (dernier) {
+      const i = ordre.indexOf(dernier);
+      if (i >= 0) ordre.push(ordre.splice(i, 1)[0]);
+    }
+    let pose = null;
+    for (const nom of ordre) {
+      const d = DIRS[nom];
+      const precDemi = Math.floor(prec.cote / 2);
+      /* Le centre de la nouvelle salle : on sort du bord de la precedente, on
+         traverse le couloir, puis on entre jusqu'au centre de la nouvelle. */
+      const loin = precDemi + DONJON_COULOIR.long + demi + 1;
+      const c = prec.c + d[0] * loin, l = prec.l + d[1] * loin;
+      const x0 = c - demi, y0 = l - demi, x1 = c + demi, y1 = l + demi;
+      if (chevauche(x0, y0, x1, y1)) continue;
+      pose = { nom, d, c, l, x0, y0, x1, y1 };
+      break;
+    }
+    /* Aucune place : on s'arrete la. Un donjon de quatre salles vaut mieux
+       qu'une salle posee dans une autre — et le fond suit le ROLE, pas le
+       rang, donc il reste au fond de ce qui existe. */
+    if (!pose) break;
+    creuse(pose.x0, pose.y0, pose.x1, pose.y1);
+    boites.push({ x0: pose.x0, y0: pose.y0, x1: pose.x1, y1: pose.y1 });
+    creuseCouloir(sol, prec, pose, cle);
+    prec = { c: pose.c, l: pose.l, cote: s.cote };
+    dernier = pose.nom;
+    salles.push({ role: s.role, cote: s.cote, c: pose.c, l: pose.l,
+                  x: (pose.c + 0.5) * DONJON_TUILE, y: (pose.l + 0.5) * DONJON_TUILE });
+  }
+  /* Le dernier pose porte le role du FOND, quoi qu'il arrive. Sans cette
+     ligne, un plan qui s'est arrete tot n'aurait pas de fond du tout — donc
+     pas de boss, et une expedition sans rien au bout. */
+  if (salles.length && !salles.some((q) => q.role === 'fond')) {
+    salles[salles.length - 1].role = 'fond';
+  }
+
+  /* ---- LES IMPASSES ----
+   * Accrochees aux salles du MILIEU : sur le sas, elles seraient visitees
+   * avant d'avoir rien vu ; sur le fond, on tomberait dessus apres le boss,
+   * quand il n'y a plus de raison d'explorer. */
+  const cote = DONJON_IMPASSES.cote, demiI = Math.floor(cote / 2);
+  const candidates = salles.filter((q) => q.role !== 'entree' && q.role !== 'fond');
+  for (let k = 0; k < DONJON_IMPASSES.combien && candidates.length; k++) {
+    const p = candidates[Math.floor(r() * candidates.length)];
+    const ordre = melange(NOMS.concat(['gauche']), r);
+    for (const nom of ordre) {
+      const d = nom === 'gauche' ? [-1, 0] : DIRS[nom];
+      const loin = Math.floor(p.cote / 2) + DONJON_COULOIR.long + demiI + 1;
+      const c = p.c + d[0] * loin, l = p.l + d[1] * loin;
+      const x0 = c - demiI, y0 = l - demiI, x1 = c + demiI, y1 = l + demiI;
+      if (chevauche(x0, y0, x1, y1)) continue;
+      creuse(x0, y0, x1, y1);
+      boites.push({ x0, y0, x1, y1 });
+      creuseCouloir(sol, { c: p.c, l: p.l, cote: p.cote },
+                    { c, l, d, x0, y0, x1, y1 }, cle);
+      salles.push({ role: 'impasse', cote, c, l,
+                    x: (c + 0.5) * DONJON_TUILE, y: (l + 0.5) * DONJON_TUILE });
+      break;
+    }
+  }
+
+  /* ---- ON RAMENE TOUT DANS LE POSITIF ----
+   * La chaine monte autant qu'elle descend : la moitie du plan peut donc
+   * sortir par le haut. On translate a la fin plutot que de deviner une
+   * origine au depart — deviner, c'est se retrouver un jour avec un donjon
+   * qui deborde sans que rien ne l'annonce. */
+  let cMin = Infinity, lMin = Infinity;
+  for (const k of sol) {
+    const [c, l] = k.split(',').map(Number);
+    if (c < cMin) cMin = c;
+    if (l < lMin) lMin = l;
+  }
+  const dc = DONJON_ORIGINE.x - cMin, dl = DONJON_ORIGINE.y - lMin;
+  if (dc || dl) {
+    const bouge = new Set();
+    for (const k of sol) {
+      const [c, l] = k.split(',').map(Number);
+      bouge.add(cle(c + dc, l + dl));
+    }
+    sol.clear();
+    for (const k of bouge) sol.add(k);
+    for (const q of salles) {
+      q.c += dc; q.l += dl;
+      q.x = (q.c + 0.5) * DONJON_TUILE;
+      q.y = (q.l + 0.5) * DONJON_TUILE;
     }
   }
   return { sol, salles, tuile: DONJON_TUILE };
+}
+
+/* Le couloir entre deux salles. En DEUX segments quand il faut — d'abord le
+   long de la direction, puis le report — parce qu'un couloir en diagonale
+   n'existe pas sur une grille de tuiles : il ferait un escalier ou l'on se
+   coince. Ici les salles sont alignees par construction, donc le second
+   segment est vide la plupart du temps ; on le garde parce que le jour ou
+   elles ne le seront plus, l'oubli ferait un donjon coupe en deux. */
+function creuseCouloir(sol, de, vers, cle) {
+  const demi = Math.floor(DONJON_COULOIR.large / 2);
+  const dcs = Math.sign(vers.c - de.c), dls = Math.sign(vers.l - de.l);
+  let c = de.c, l = de.l;
+  while (c !== vers.c) {
+    c += dcs;
+    for (let e = -demi; e <= demi; e++) sol.add(cle(c, l + e));
+  }
+  while (l !== vers.l) {
+    l += dls;
+    for (let e = -demi; e <= demi; e++) sol.add(cle(c + e, l));
+  }
 }
 
 /*
@@ -410,7 +571,11 @@ const CAVE = {
   /* Le fond est nettement plus grand : on doit sentir en entrant qu'on est
      arrive quelque part, et un boss entoure de sbires a besoin de place. */
   rayonBoss: 9,
-  couloir: { min: 3, max: 8, large: 2 },
+  /* Des passages plus COURTS qu'a l'origine (trois a huit). A huit tuiles, on
+     passait plus de temps dans le noir entre deux cavernes que dans les
+     cavernes elles-memes, et la grotte se lisait comme vide alors qu'elle ne
+     l'etait pas. */
+  couloir: { min: 2, max: 5, large: 2 },
   /* Combien de fois on tente de poser une salle avant d'abandonner celle-la.
      Sans borne, un plan trop serre boucle pour toujours — et un serveur qui
      ne repond plus est pire qu'un donjon avec onze salles au lieu de treize. */
@@ -594,17 +759,33 @@ function mursDonjon(plan, depart) {
 function peuplementDonjon(alea, nom, plan) {
   const r = () => (typeof alea === 'function' ? alea() : Math.random());
   const D = DONJONS[nom] || DONJON;
-  const p = plan || planDonjon();
+  /* Le plan se fabrique avec LE MEME hasard que la population. Sans cet
+     argument il repartait sur `Math.random` : deux appels avec le meme germe
+     auraient donne deux donjons differents, et le peuplement n'aurait plus
+     ete reproductible — c'est exactement ce qu'un serveur ne doit pas faire
+     d'un monde qu'il diffuse. */
+  const p = plan || planDonjon(alea);
   const out = [];
   for (const s of p.salles) {
     /* La salle d'arrivee reste VIDE. On y apparait : y poser des creatures
        reviendrait a faire commencer le combat avant que le joueur ait vu ou
        il est. */
     if (s.role === 'entree') continue;
-    /* Le nombre suit la TAILLE de la salle, il n'est plus ecrit en face de
-       chaque role : une grotte a treize salles de rayons differents, et
-       « cinq partout » aurait tasse les petites et vide les grandes. */
-    const n = s.role === 'fond' ? 9 : Math.max(2, Math.round(s.cote * 0.45));
+    /* ---- LE NOMBRE SUIT L'AIRE, PAS LE COTE ----
+     * On comptait `cote * 0.45`. Un cote fait grandir la salle au CARRE : une
+     * salle de quinze tuiles a presque trois fois l'aire d'une de neuf et
+     * recevait a peine deux fois plus de monde. Les grandes salles etaient
+     * donc vides, et c'est exactement ce qui a ete rapporte — « pas assez de
+     * monstres, et trop espace ».
+     * Une grotte compte en DISQUES : leur aire n'est pas le carre du cote,
+     * elle en fait les trois quarts. Prendre le carre pour tout le monde
+     * aurait tasse les cavernes rondes de vingt-sept pour cent de trop. */
+    const aire = s.rayon ? Math.PI * s.rayon * s.rayon : s.cote * s.cote;
+    /* Le plafond n'est pas une precaution de performance : une salle ou l'on
+       ne peut plus se deplacer entre les corps n'est plus une salle, c'est un
+       mur qui tire. */
+    const n = Math.max(2, Math.min(PEUPLE_DONJON.plafond,
+                                   Math.round(aire * PEUPLE_DONJON.densite)));
     const demi = (s.cote / 2 - 1.2) * DONJON_TUILE;
     for (let i = 0; i < n; i++) {
       const e = D.especes[Math.floor(r() * D.especes.length)] || D.especes[0];
@@ -650,7 +831,7 @@ function planDeDonjon(nom, alea) {
    * une troisieme forme, il s'ajoute a la table et a cette ligne — le reste
    * de la fonction ne bouge pas, parce que les deux generateurs rendent
    * exactement la meme chose : un sol, des salles, une taille de tuile. */
-  const plan = D.forme === 'grotte' ? planCave(alea) : planDonjon();
+  const plan = D.forme === 'grotte' ? planCave(alea) : planDonjon(alea);
   const entree = plan.salles.find((x) => x.role === 'entree') || plan.salles[0];
   return {
     nom: cle,
@@ -682,15 +863,17 @@ function planDeDonjon(nom, alea) {
     /* ---- LE SOL, TUILE PAR TUILE ----
      * Et pas « trois rectangles et deux couloirs » : la page redessinerait
      * alors la forme a partir des memes cinq nombres, et le jour ou le plan
-     * gagne une salle, l'un des deux dessins l'oublierait. Cinq cents couples
-     * d'entiers partent UNE fois, a l'entree — quatorze kilo-octets, le poids
-     * d'une petite image — et la page n'a plus rien a deviner.
+     * gagne une salle, l'un des deux dessins l'oublierait. Mille couples
+     * d'entiers partent UNE fois, a l'entree — vingt-cinq kilo-octets, le
+     * poids d'une petite image — et la page n'a plus rien a deviner. C'est
+     * justement ce qui permet a la forme de CHANGER a chaque partie sans
+     * qu'une seule ligne du navigateur ait a le savoir.
      *
-     * C'est aussi ce qui permet de laisser NOIR tout ce qui n'est pas le
+     * C'est aussi ce qui permet de remplir de ROCHE tout ce qui n'est pas le
      * donjon. Un sol de donjon etale sur toute la carte aurait donne
-     * l'impression d'un monde infini dont on aurait bati trois pieces au
-     * milieu ; le vide autour des murs est ce qui fait qu'un donjon se lit
-     * comme un interieur. */
+     * l'impression d'un monde infini dont on aurait bati quelques pieces au
+     * milieu ; la masse de pierre autour des murs est ce qui fait qu'un
+     * donjon se lit comme un interieur — et non comme le bord du jeu. */
     tuiles: [...plan.sol].map((k) => {
       const [c, l] = k.split(',').map(Number);
       return [c, l];
@@ -2409,7 +2592,7 @@ module.exports = {
   OBSTACLE, OBSTACLE_BIOME, obstacles, bloque,
   SALLE, SALLE_ANNEAUX, SALLE_BUTIN, MUR_BASE, salles, mursDe, dansLaSalle, DONJON,
   PORTAIL, PORTAIL_DE, RETOUR_DE, MUR_DONJON, DONJON_TUILE, DONJON_SALLES,
-  DONJON_COULOIR, DONJON_ORIGINE,
+  DONJON_COULOIR, DONJON_ORIGINE, DONJON_IMPASSES, PEUPLE_DONJON,
   planDonjon, planCave, CAVE, DONJONS, mursDonjon, peuplementDonjon, planDeDonjon,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   choisitEspece,

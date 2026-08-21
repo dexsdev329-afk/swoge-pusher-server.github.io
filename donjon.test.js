@@ -47,9 +47,50 @@ function donjon(graine) {
 
 // ================== 1. LA FORME TIENT DEBOUT
 {
-  const plan = M.planDonjon();
+  const plan = M.planDonjon(alea(5));
   ok(plan.sol.size > 300, `le donjon fait ${plan.sol.size} tuiles de sol`);
-  eq(plan.salles.length, M.DONJON_SALLES.length, 'trois salles, comme annonce');
+  /* ---- IL N'EST PLUS UNE LIGNE DROITE ----
+   * Trois salles en enfilade : on voyait le fond depuis la porte, et
+   * « trouver le boss » n'etait pas une question. La chaine TOURNE
+   * maintenant, et des impasses s'y accrochent — d'ou un nombre de salles qui
+   * n'est plus celui de la liste, mais la chaine PLUS ce qui a trouve place
+   * autour. */
+  ok(plan.salles.length >= M.DONJON_SALLES.length,
+     `au moins les ${M.DONJON_SALLES.length} salles de la chaine (${plan.salles.length} en tout)`);
+  ok(plan.salles.filter((s) => s.role === 'impasse').length > 0,
+     `et au moins une impasse (${plan.salles.filter((s) => s.role === 'impasse').length})`);
+  eq(plan.salles.filter((s) => s.role === 'fond').length, 1,
+     'un seul fond — c est la qu est le boss');
+  eq(plan.salles.filter((s) => s.role === 'entree').length, 1, 'et un seul sas');
+  /* ---- ET IL TOURNE VRAIMENT ----
+   * Toutes les salles sur la meme ligne, c est l enfilade qu on vient de
+   * quitter : on verrait le fond depuis la porte. */
+  const lignes = new Set(plan.salles.map((s) => s.l));
+  const colonnes = new Set(plan.salles.map((s) => s.c));
+  ok(lignes.size > 1 && colonnes.size > 1,
+     `les salles ne sont pas alignees (${lignes.size} lignes, ${colonnes.size} colonnes)`);
+  /* ---- ET LE FOND NE SE VOIT PAS DEPUIS LA PORTE ----
+   * C'est le troisieme reproche fait au donjon d'origine : « trop facile de
+   * trouver le boss ». Une enfilade le montre des l'entree. On mesure donc la
+   * chose qui compte vraiment : le chemin qu'il faut MARCHER, compare a la
+   * distance a vol d'oiseau. Un rapport de un, c'est une ligne droite. */
+  const sasP = plan.salles.find((q) => q.role === 'entree');
+  const fondP = plan.salles.find((q) => q.role === 'fond');
+  const dep = sasP.c + ',' + sasP.l;
+  const dist = new Map([[dep, 0]]);
+  const file2 = [dep];
+  for (let t = 0; t < file2.length; t++) {
+    const [c, l] = file2[t].split(',').map(Number);
+    for (const [dc, dl] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const k = (c + dc) + ',' + (l + dl);
+      if (plan.sol.has(k) && !dist.has(k)) { dist.set(k, dist.get(file2[t]) + 1); file2.push(k); }
+    }
+  }
+  const marche = dist.get(fondP.c + ',' + fondP.l);
+  const oiseau = Math.hypot(fondP.c - sasP.c, fondP.l - sasP.l);
+  ok(marche !== undefined, 'le fond est atteignable a pied');
+  ok(marche > oiseau * 1.15,
+     `et le chemin TOURNE avant d'y arriver (${marche} tuiles a pied pour ${oiseau.toFixed(0)} a vol d'oiseau)`);
 
   /* ---- IL EST D'UN SEUL TENANT ----
    * Une salle qu'un couloir manquant isolerait serait un donjon dont le fond
@@ -119,8 +160,15 @@ function donjon(graine) {
 
 // ================== 2. LA POPULATION EST ECRITE, PAS TIREE
 {
-  const a = M.peuplementDonjon(alea(3));
-  const b = M.peuplementDonjon(alea(3));
+  /* ---- UN SEUL PLAN, ET TOUT SE MESURE DESSUS ----
+   * La forme etait fixe : peupler avec un germe et mesurer les murs avec un
+   * autre revenait au meme. Depuis que la chaine tourne, ce sont deux donjons
+   * differents — et « ce monstre nait dans un mur » devenait vrai sans que
+   * rien ne soit casse. On fabrique donc LE plan une fois, et l'on peuple
+   * celui-la. */
+  const plan = M.planDonjon(alea(5));
+  const a = M.peuplementDonjon(alea(3), 'forge', plan);
+  const b = M.peuplementDonjon(alea(3), 'forge', plan);
   eq(a.length, b.length, 'le meme hasard donne le meme donjon');
   eq(JSON.stringify(a), JSON.stringify(b), 'exactement le meme');
 
@@ -143,8 +191,7 @@ function donjon(graine) {
 
   /* LE SAS EST VIDE. Arriver dans un donjon et se faire toucher avant d'avoir
      pose le pied par terre n'est pas une difficulte, c'est un piege. */
-  const plan = M.planDonjon();
-  const sas = plan.salles[0];
+  const sas = plan.salles.find((q) => q.role === 'entree');
   const demi = (sas.cote / 2) * M.DONJON_TUILE;
   const dedans = a.filter((m) => Math.abs(m.x - sas.x) < demi &&
                                  Math.abs(m.y - sas.y) < demi);
@@ -190,14 +237,23 @@ function donjon(graine) {
   ok(r.plan, 'elle porte son plan');
   eq(r.salles.length, 0, 'un donjon n\'a pas de salles gardees : c\'en est une');
   ok(r.obstacles.length > 100, `${r.obstacles.length} blocs de mur`);
-  eq(r.monstres.length, M.peuplementDonjon(alea(11)).length,
+  /* ---- LE MEME PLAN DES DEUX COTES ----
+   * On comparait a `peuplementDonjon(alea(11))`, qui se fabriquait un plan A
+   * LUI. C'etait juste tant que la forme etait fixe ; depuis que la chaine
+   * tourne au hasard, deux plans tires du meme germe ne se ressemblent que
+   * s'ils passent par le meme chemin. On demande donc LE plan complet, celui
+   * que la simulation a recu. */
+  const attendu = M.planDeDonjon('forge', alea(11));
+  eq(r.monstres.length, attendu.peuplement.length,
      'et exactement la population prevue');
+  /* Et il y a du monde : c'est la moitie du reproche fait au donjon
+     d'origine — quinze creatures pour cinq mille unites de long. */
+  ok(r.monstres.length > 30, `${r.monstres.length} creatures dedans`);
 
   /* ON ARRIVE DANS LE SAS, ET PAS AU BORD DE LA CARTE. */
   const j = r.rejoint(A, FICHE);
-  const sas = M.planDonjon().salles[0];
-  const d = Math.hypot(j.x - sas.x, j.y - sas.y);
-  ok(d < sas.cote * M.DONJON_TUILE / 2, `on arrive dans le sas (${d.toFixed(0)} u du centre)`);
+  const d = Math.hypot(j.x - attendu.entree.x, j.y - attendu.entree.y);
+  ok(d < M.DONJON_TUILE, `on arrive a l'entree prevue (${d.toFixed(0)} u)`);
   /* ET PAS DANS UN MUR. */
   eq(!!M.bloque(r.obstacles, j.x, j.y, 24), false, 'ni dans la pierre');
 
