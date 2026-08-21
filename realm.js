@@ -52,6 +52,18 @@ const MARGE_VITESSE = 1.6;
    petit obstacle : assez pour ne pas entrer dans la pierre, assez peu pour
    passer entre deux rochers qui ne se touchent pas. */
 const RAYON_JOUEUR = 22;
+/* ---- ET LA TAILLE QU'ON PRESENTE A UN TIR ----
+ *
+ * `RAYON_JOUEUR` est le rayon du CORPS : celui qui l'empeche de passer entre
+ * deux rochers. Il vaut vingt-deux, ce qui est juste pour se faufiler et faux
+ * pour se faire toucher — le personnage est dessine sur cent cinquante unites
+ * de haut et une bonne trentaine de large, et un projectile qui lui passe au
+ * travers a deux doigts du torse se lit comme un tir qui ne compte pas.
+ *
+ * Les creatures presentent trente-quatre a quarante-quatre. Trente-deux met
+ * donc le joueur un peu en dessous de la plus petite d'entre elles : plus dur
+ * a toucher qu'un monstre, ce qui est le bon sens, mais pas invisible. */
+const RAYON_CIBLE = 32;
 /* On BORNE TOUJOURS, sans exception. Ma premiere version laissait passer les
    bonds ENORMES en se disant qu'un joueur revenant d'un onglet en veille ne
    devait pas rester colle a sa derniere position — ce qui bornait les petites
@@ -72,6 +84,18 @@ class Realm {
      * Absent, aucun equipement ne tombe : mieux vaut un monde sans butin
      * d'equipement qu'un sac contenant un objet que personne ne peut nommer. */
     this.tireObjet = typeof opts.tireObjet === 'function' ? opts.tireObjet : null;
+    /* ---- ON PEUT SE TIRER DESSUS, OU NON ----
+     *
+     * Le monde vert est une zone sure : un tir de joueur n'y touche que des
+     * creatures, et c'est ecrit plus bas, la ou les deux listes de projectiles
+     * sont separees. Le monde rouge, lui, existe POUR ca.
+     *
+     * C'est une option de la simulation et pas un test dans la boucle de
+     * collision : une carte ou l'on se tire dessus est un autre monde, pas le
+     * meme monde avec un drapeau. La difference compte le jour ou l'on
+     * ajoutera une troisieme carte — il n'y aura rien a se rappeler de
+     * verifier. */
+    this.pvp = !!opts.pvp;
     /* ---- LES BLOCS, POSES UNE FOIS ----
      * Ils ne bougent jamais : les tirer a chaque pas serait du travail rendu
      * a l'identique cent fois par seconde. Ils partent au client a l'entree,
@@ -1248,6 +1272,40 @@ class Realm {
        * l'on serait canarde au travers. Le projectile est un point — lui
        * donner une epaisseur le ferait s'arreter a cote de la pierre. */
       let fini = t.reste <= 0 || !!monde.bloque(this.obstacles, t.x, t.y, 0);
+      /* ---- ET LES AUTRES JOUEURS, DANS LE MONDE ROUGE ----
+       *
+       * AVANT les creatures : sinon un lime pose entre deux joueurs servirait
+       * de bouclier vivant, et se planquer derriere un monstre serait la
+       * meilleure defense du jeu. Le tir touche ce qu'il rencontre.
+       *
+       * Le tireur ne se touche pas lui-meme — un projectile nait sur soi, et
+       * sans cette ligne on se tuerait au premier coup. Les degats se
+       * calculent avec la MEME formule que contre une creature : une regle de
+       * degats a part aurait donne deux equilibres a tenir, et celui qui ne
+       * sert que la moitie du temps derive toujours. */
+      if (!fini && this.pvp) {
+        const tireur = this.joueurs.get(t.addr);
+        for (const c of this.joueurs.values()) {
+          if (c.addr === t.addr || c.pv <= 0) continue;
+          const dx = c.x - t.x, dy = c.y - t.y;
+          if (dx * dx + dy * dy > RAYON_CIBLE * RAYON_CIBLE) continue;
+          const arme = monde.tirageArme(tireur ? tireur.degats : monde.DEGATS_POING, this.alea);
+          const perte = monde.degatsInfliges(tireur ? tireur.att : 0, arme, c.def);
+          c.pv = Math.max(0, c.pv - perte);
+          /* DEUX evenements, pour deux publics : celui qui encaisse doit voir
+             sa barre baisser, celui qui tire doit voir son coup porter. Un
+             seul des deux laisserait l'autre dans le noir. */
+          ev.degats.push({ addr: c.addr, perte, pv: c.pv,
+                           par: (tireur && tireur.nom) || 'someone', quoi: 'joueur' });
+          ev.touches.push({ addr: t.addr, joueur: c.addr, perte, pv: c.pv, x: t.x, y: t.y });
+          if (c.pv <= 0) {
+            ev.morts.push({ addr: c.addr, par: (tireur && tireur.nom) || 'someone',
+                            pvp: 1, parAddr: t.addr, x: c.x, y: c.y });
+          }
+          fini = true;
+          break;
+        }
+      }
       if (!fini) {
         const j = this.joueurs.get(t.addr);
         for (const m of this.monstres) {

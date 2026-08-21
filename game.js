@@ -6669,6 +6669,84 @@ class Game {
     return this.ficheAuSol(o);
   }
 
+  /* ====================================================================
+   * MOURIR DANS LA CARTE ROUGE : ON PERD SA SORTIE, PAS SON COMPTE
+   * ====================================================================
+   *
+   * `meurt` detruit l'equipement porte, vide le coffre du personnage et remet
+   * le niveau a zero. C'est la regle du monde vert, et elle est juste : ce qui
+   * vous tue la-bas est une creature que le jeu a posee, et vous saviez en
+   * descendant dans la lave ce que vous risquiez.
+   *
+   * Dans la carte rouge, ce qui vous tue est QUELQU'UN. Un equipement achete
+   * en $SWOGE qui change de main sur l'issue d'un affrontement entre deux
+   * joueurs n'est pas une regle de jeu, c'est une mise — et a trente-neuf
+   * joueurs, trois bons possederaient toutes les reliques en deux semaines,
+   * apres quoi plus personne n'entrerait. On ne perd donc QUE le sac : ce
+   * qu'on a ramasse pendant la sortie, qui ne coutait rien ce matin.
+   *
+   * Le personnage, lui, ne meurt pas : il rentre au Nexus, entier, avec son
+   * niveau et son equipement. La sanction est le temps perdu et le butin
+   * laisse sur place — assez pour que courir vers la sortie soit un vrai
+   * choix, pas assez pour qu'une mauvaise nuit fasse quitter le jeu.
+   */
+  videLeSac(addr, max) {
+    const p = this._p(addr);
+    const plafond = Math.max(0, Math.floor(Number(max) || 0)) || 8;
+    const rangs = boutique.RARETES.map((r) => r.cle);
+    const lot = [];
+    /* Les pieces d'equipement, une entree par EXEMPLAIRE : deux epees
+       identiques font deux objets au sol, pas un objet compte deux fois — le
+       ramassage prend place par place. */
+    for (const id of Object.keys(p.sac || {})) {
+      const o = boutique.item(Number(id));
+      if (!o) continue;
+      const n = Math.max(0, p.sac[id] | 0);
+      for (let k = 0; k < n; k++) {
+        lot.push({ id: Number(id), rang: rangs.indexOf(o.rarete), fiche: this.ficheAuSol(o) });
+      }
+    }
+    /* Les fioles de stat portees. Elles voyagent au sol sous la forme exacte
+       qu'a une fiole tombee d'un monstre — le sol n'a ainsi qu'une seule
+       facon de lire une fiole.
+       Rang -1 : elles passent APRES les pieces a rarete egale. Ce n'est pas
+       un jugement de valeur, c'est qu'on en porte des piles et qu'une pile
+       remplirait le sac au sol a elle seule. */
+    for (const st of Object.keys(p.sacFioles || {})) {
+      const n = Math.max(0, p.sacFioles[st] | 0);
+      for (let k = 0; k < n; k++) lot.push({ stat: st, rang: -1, fiche: { stat: st } });
+    }
+
+    /* ---- ON NE LACHE QUE CE QUI TIENT PAR TERRE ----
+     *
+     * Un sac au sol a huit places. Vider un inventaire de vingt fioles en
+     * ferait DISPARAITRE douze : sorties de l'inventaire, refusees par le
+     * sol, detruites sans un mot — la faute la plus chere du jeu, et la plus
+     * facile a ecrire sans s'en apercevoir.
+     *
+     * On trie donc par rarete DECROISSANTE et l'on ne sort que ce qui tient.
+     * Le reste ne quitte jamais le sac. Le vainqueur emporte ce qu'il y avait
+     * de mieux, ce qui est exactement ce qu'on veut qu'il vienne chercher. */
+    lot.sort((a2, b2) => b2.rang - a2.rang);
+    const tombe = [];
+    for (const e of lot.slice(0, plafond)) {
+      if (e.stat) {
+        p.sacFioles[e.stat] -= 1;
+        if (p.sacFioles[e.stat] <= 0) delete p.sacFioles[e.stat];
+      } else {
+        p.sac[e.id] -= 1;
+        if (p.sac[e.id] <= 0) delete p.sac[e.id];
+      }
+      tombe.push(e.fiche);
+    }
+    p.sacCases = null;
+    /* Les potions de soin ne tombent PAS. Elles se comptent par centaines, et
+       une mort en poserait quatre-vingt-dix au sol : le sac au sol serait
+       plein de consommables et le vainqueur n'aurait de place pour rien
+       d'autre. Ce qui se dispute, ce sont les pieces. */
+    return tombe;
+  }
+
   /** Boire. Rend ce qu'il faut RENDRE — la vie appartient au monde, pas a ce
       fichier, et c'est server.js qui la pose sur le joueur en jeu. */
   boitPotion(addr, cle) {

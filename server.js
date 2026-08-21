@@ -715,6 +715,11 @@ function tireAuMoins(rarete, alea, plancher, garanti) {
 
 const crimson = new Realm({
   tireObjet: (r, a, garanti) => tireAuMoins(r, a, PLANCHER_CRIMSON, garanti),
+  /* C'est POUR ca que la carte existe. Sans ce drapeau, la porte rouge menait
+     a un monde de combat un peu plus genereux ou l'on se croisait sans
+     pouvoir rien faire — et les tirs passaient au travers, ce qui se lit
+     comme une panne et non comme une regle. */
+  pvp: true,
 });
 
 /* ---- LA TABLE DES MONDES OUVERTS ----
@@ -5011,6 +5016,36 @@ function traiteEvenements(R, ev) {
      dedans avec zero point de vie le ferait mourir en boucle. */
   for (const mort of ev.morts) {
     const ws = [...realmClients].find((c) => c.addr === mort.addr);
+    /* ---- TOMBER DANS LA CARTE ROUGE N'EST PAS MOURIR ----
+     *
+     * Ce qui vous tue la-bas est QUELQU'UN. Un equipement achete en $SWOGE
+     * qui change de main sur l'issue d'un affrontement est une mise, pas une
+     * regle de jeu — et a trente-neuf joueurs, trois bons possederaient
+     * toutes les reliques en deux semaines, apres quoi la carte se viderait.
+     *
+     * On lache donc LE SAC, sur place, avant de quitter le monde : ce qu'on a
+     * ramasse pendant la sortie, qui ne coutait rien ce matin. Le vainqueur
+     * peut venir le prendre — c'est tout l'interet — et le vaincu rentre au
+     * Nexus entier, avec son niveau et son equipement.
+     *
+     * L'ORDRE COMPTE. Le sac se pose pendant que le mort est encore dans la
+     * simulation, sinon `depose` n'a plus de position a laquelle le poser. */
+    if (mort.pvp) {
+      try {
+        const tombe = game.videLeSac(mort.addr, monde.SAC.cases);
+        for (const piece of tombe) R.depose(mort.addr, piece, ev);
+      } catch (e) { console.error('[pvp sac]', e && e.message); }
+      R.quitte(mort.addr);
+      if (ws) { ws.donjon = null; ws.monde = null; }
+      realmDernierMouv.delete(mort.addr);
+      if (ws) realmClients.delete(ws);
+      persistSoon();
+      if (ws && ws.readyState === 1) {
+        send(ws, { type: 'realmMort', par: mort.par, pvp: 1, perdus: [],
+                   sacJoueur: game.sacPour(mort.addr) });
+      }
+      continue;
+    }
     R.quitte(mort.addr);
     /* Mourir dans un donjon en fait sortir : sans cette remise a zero, la
        socket resterait attachee a une simulation qu'elle a quittee, et
