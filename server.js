@@ -3245,6 +3245,30 @@ wss.on('connection', (ws) => {
                           ...(m.type === 'fioleBoit' && !err && skin
                               ? { etat: game.personnageEtat(ws.addr, skin), skin } : {}) });
       }
+      /* ---- OUVRIR UN OEUF ----
+       * Un seul geste, et il est definitif : l'oeuf disparait, le familier
+       * arrive. Le client ne nomme QUE l'espece — il ne dit ni combien, ni
+       * lequel des deux qu'il porte, parce qu'un oeuf de feu vaut un oeuf de
+       * feu et qu'il n'y a rien a choisir.
+       * La liste complete des familiers repart avec la reponse : le panneau
+       * doit montrer le nouveau venu sans un aller-retour de plus. */
+      if (m.type === 'oeufOuvre') {
+        if (!ws.addr) return;
+        let r = null, err = null;
+        try { r = game.ouvreOeuf(ws.addr, m.espece); }
+        catch (e) { err = e.message; }
+        if (!err) persistSoon();
+        return send(ws, { type: 'oeufOuvre', ...(r || {}), error: err || undefined,
+                          sacJoueur: game.sacPour(ws.addr),
+                          familiers: game.familiersDe(ws.addr) });
+      }
+      /* Les familiers d'un compte, sur demande. Le panneau de Petworld les
+         lit a l'ouverture ; les envoyer avec `auth` les enverrait a tous ceux
+         qui n'y mettront jamais les pieds. */
+      if (m.type === 'familiers') {
+        if (!ws.addr) return;
+        return send(ws, { type: 'familiers', familiers: game.familiersDe(ws.addr) });
+      }
       if (m.type === 'sacDeplace') {
         if (!ws.addr) return;
         let err = null;
