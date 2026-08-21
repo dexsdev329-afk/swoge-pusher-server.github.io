@@ -3269,6 +3269,19 @@ wss.on('connection', (ws) => {
         if (!ws.addr) return;
         return send(ws, { type: 'familiers', familiers: game.familiersDe(ws.addr) });
       }
+      /* ---- CHOISIR CELUI QUI SORT ----
+       * `rhabille` fait suivre au monde de combat, comme pour un changement
+       * d'arme : sans lui, le nouveau compagnon n'apparaitrait qu'a la
+       * prochaine entree et le choix se lirait comme n'ayant pas pris. */
+      if (m.type === 'familierSort') {
+        if (!ws.addr) return;
+        let r = null, err = null;
+        try { r = game.sortFamilier(ws.addr, m.espece === null ? null : m.espece); }
+        catch (e) { err = e.message; }
+        if (!err) { persistSoon(); rhabille(ws.addr); }
+        return send(ws, { type: 'familierSort', ...(r || {}), error: err || undefined,
+                          familiers: game.familiersDe(ws.addr) });
+      }
       if (m.type === 'sacDeplace') {
         if (!ws.addr) return;
         let err = null;
@@ -4583,6 +4596,10 @@ const nexusInterval = setInterval(() => {
        envoye par le client se choisirait tout seul. */
     joueurs.push({ addr: ws.addr, x: Math.round(e.x), y: Math.round(e.y),
                     dir: e.dir, anim: e.anim, skin: p.skinActif || 'andy',
+                    /* Le familier qui trotte derriere. Une chaine, comme dans
+                       le monde de combat : il n'est pas une entite, il suit —
+                       et c'est la page qui le fait suivre. */
+                    fam: game.familierActifDe(ws.addr),
                     nom: p.name || null });
   }
   /* ---- LES SACS VIEILLISSENT ICI ----
@@ -4672,6 +4689,11 @@ function ficheDeCombat(addr, skin) {
        stat donne quel pouvoir » appartient a monde.js, et la dupliquer ici la
        ferait deriver. */
     statFruit: (etat.equipFruit && etat.equipFruit.stat) || null,
+    /* Le familier ACTIF, et pas la liste : la simulation n'a besoin que de
+       savoir lequel trotte derriere, et envoyer les six a chaque entree
+       reviendrait a decrire une collection a des gens qui regardent un
+       chien. */
+    fam: game.familierActifDe(addr),
   };
 }
 

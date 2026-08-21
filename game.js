@@ -428,6 +428,9 @@ class Game {
            coute la liste de parrainage de tout le monde. */
         soe: (p.sacOeufs && Object.keys(p.sacOeufs).length) ? p.sacOeufs : undefined,
         fam: (p.familiers && Object.keys(p.familiers).length) ? p.familiers : undefined,
+        /* Lequel est dehors. Sans ca, le familier rentre a l'enclos a chaque
+           redemarrage du serveur et le joueur croit l'avoir perdu. */
+        fama: p.familierActif || undefined,
         /* Ou chaque chose est posee dans les huit places. Ce n'est pas la
            verite — le compte l'est — mais la reconstruire au hasard a chaque
            redemarrage rebattrait le sac sous les doigts du joueur. */
@@ -655,6 +658,7 @@ class Game {
            perdent jamais — c'est la promesse faite au joueur, et un compte
            qui redemarre doit la tenir aussi. */
         familiers: (d.fam && typeof d.fam === 'object') ? d.fam : {},
+        familierActif: d.fama || null,
         sacCases: Array.isArray(d.scas) ? d.scas : null,
         skins: (d.sk && typeof d.sk === 'object') ? d.sk : {},
         persos: (d.pr && typeof d.pr === 'object')
@@ -6770,12 +6774,50 @@ class Game {
              pouvoir: POUVOIR_FAMILIER[espece] || null };
   }
 
+  /* ---- CELUI QUI TROTTE DERRIERE ----
+   *
+   * Un seul familier sort a la fois. Les six a la queue leu leu auraient fait
+   * du hall une fourriere, et surtout : le jour ou ils se battront, six chiens
+   * par joueur multiplieraient par six tout ce qu'il y a a simuler et a
+   * diffuser. Un compagnon, c'est un.
+   *
+   * On VERIFIE qu'il est eclos avant de le rendre. Un compte qui aurait garde
+   * la cle d'un familier disparu — une espece retiree, une sauvegarde
+   * bricolee — ferait chercher a la page un dessin qui n'existe pas. */
+  familierActifDe(addr) {
+    const p = this._p(addr);
+    const a = p.familierActif || null;
+    if (!a || !p.familiers || !p.familiers[a]) return null;
+    return a;
+  }
+
+  /** Choisir lequel sort. `null` les renvoie tous a l'enclos. */
+  sortFamilier(addr, espece) {
+    const p = this._p(addr);
+    if (espece === null || espece === undefined || espece === '') {
+      p.familierActif = null;
+      return { actif: null };
+    }
+    const es = String(espece);
+    if (!monde.OEUFS.includes(es)) throw new Error('Unknown pet');
+    p.familiers = p.familiers || {};
+    if (!p.familiers[es]) throw new Error('You have not hatched that one');
+    p.familierActif = es;
+    return { actif: es };
+  }
+
   /** Tous les familiers d'un compte, pour le panneau. */
   familiersDe(addr) {
     const p = this._p(addr);
+    const actif = this.familierActifDe(addr);
     const out = [];
     for (const es of monde.OEUFS) {
-      if (p.familiers && p.familiers[es]) out.push(this.familierPour(p.familiers[es], es));
+      if (!p.familiers || !p.familiers[es]) continue;
+      const f = this.familierPour(p.familiers[es], es);
+      /* Lequel est dehors : le panneau doit pouvoir le montrer sans redemander
+         l'information dans un second message. */
+      f.actif = es === actif;
+      out.push(f);
     }
     return out;
   }

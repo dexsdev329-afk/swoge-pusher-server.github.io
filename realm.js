@@ -391,6 +391,9 @@ class Realm {
       vitesse: monde.vitesseDe(stats.spd | 0),
       famille: (fiche && fiche.famille) || 'poing',
       degats: (fiche && fiche.degats) || monde.DEGATS_POING,
+      /* Le familier vient avec la fiche : il appartient au COMPTE, et la
+         simulation ne fait que le transporter jusqu'aux autres pages. */
+      fam: (fiche && fiche.fam) || null,
       /* Le pouvoir vient du FRUIT, pas de l'arme : `statFruit` est la stat
          principale du fruit porte, envoyee par game.js. Sans fruit, pas de
          pouvoir — le poing nu ne lance pas d'eclair. */
@@ -465,6 +468,10 @@ class Realm {
     j.vitesse = monde.vitesseDe(stats.spd | 0);
     j.famille = fiche.famille || 'poing';
     j.degats = fiche.degats || monde.DEGATS_POING;
+    /* Changer de familier se voit SANS ressortir du monde : c'est le meme
+       chemin que changer d'arme, et un compagnon qui n'apparaitrait qu'a la
+       prochaine entree se lirait comme un choix qui n'a pas pris. */
+    j.fam = fiche.fam || null;
     j.pouvoir = monde.pouvoirDeStat(fiche.statFruit || null);
     return j;
   }
@@ -1443,11 +1450,22 @@ class Realm {
       if (k.addr === addr || !pres(k)) continue;
       autres.push({ a: k.addr, x: Math.round(k.x), y: Math.round(k.y),
                     dir: k.dir, anim: k.anim, skin: k.skin, nom: k.nom,
+                    /* ---- SON FAMILIER ----
+                     * Une CHAINE, pas une creature. Le familier n'est pas une
+                     * entite de la simulation : il n'a ni position, ni points
+                     * de vie, ni collision — il trotte derriere son maitre, et
+                     * c'est la page qui le fait trotter. Le simuler cote
+                     * serveur aurait double le nombre de choses a deplacer et
+                     * a diffuser pour un compagnon qui ne fait encore rien.
+                     * Le jour ou il MORD, il deviendra une entite ; ce jour-la
+                     * ce champ ne suffira plus, et c'est tres bien : on saura
+                     * exactement ou regarder. */
+                    fam: k.fam || null,
                     pv: k.pv, pvMax: k.pvMax });
     }
     return {
       moi: { x: Math.round(j.x), y: Math.round(j.y), pv: j.pv, pvMax: j.pvMax,
-             mp: j.mp, mpMax: j.mpMax,
+             mp: j.mp, mpMax: j.mpMax, fam: j.fam || null,
              /* Sa vitesse de deplacement, telle que le SERVEUR la calcule.
                 La page ne la deduit pas de son cote : deux formules a tenir
                 d'accord finiraient par se contredire, et le joueur se ferait
