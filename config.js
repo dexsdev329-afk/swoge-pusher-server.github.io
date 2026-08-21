@@ -1356,6 +1356,42 @@ module.exports = {
    *
    * Sept jours parce que c'est l'ordre de grandeur d'une serie : au-dela, ce
    * qui reste est du revenu que la maison a vraiment garde. */
+  /* ---- LA PRIME DU RECRUTEUR DE RECRUTEURS ----
+   *
+   * Le probleme : on voudrait que les gens amenent des gens QUI AMENENT DES
+   * GENS. La facon evidente est un deuxieme etage — le parrain touche un
+   * pourcentage sur les filleuls de ses filleuls. On ne le fait pas, et pour
+   * une raison qui n'est pas de gout : un etage de plus, c'est une part de
+   * revenu qui remonte a quelqu'un qui n'a amene personne DIRECTEMENT, et
+   * c'est exactement la forme qu'on ne veut pas avoir a defendre.
+   *
+   * Ici, la recompense reste sur le lien DIRECT : le parrain touche toujours
+   * un pourcentage du revenu de SON filleul, et de personne d'autre. Ce qui
+   * change, c'est le pourcentage — il monte quand ce filleul-la se met a
+   * amener du monde a son tour.
+   *
+   * Meme effet sur le comportement (« amene quelqu'un qui amene »), un seul
+   * etage a tenir, et pas un centime qui vienne d'ailleurs que du revenu
+   * qu'on encaisse vraiment.
+   *
+   * L'index est le nombre de filleuls de ce filleul QUI ONT DEJA RAPPORTE.
+   * Pas le nombre d'inscrits : sinon la prime se gagnerait en creant des
+   * comptes vides, et l'on aurait paye pour du recrutement au lieu de payer
+   * pour du revenu. C'est la meme regle que partout ailleurs dans ce
+   * systeme — ce qui compte, c'est ce que la maison a encaisse.
+   *
+   *   0 recrue : +0 · 1 : +2 · 2 : +4 · 3 : +6 · 4 : +8 · 5 et plus : +10
+   */
+  REFERRAL_RECRUTEUR_BPS: String(env('REFERRAL_RECRUTEUR_BPS', '0,200,400,600,800,1000'))
+    .split(',').map((x) => parseInt(x, 10)).filter((x) => x >= 0),
+  /* Le PLAFOND, tout compris. Vingt pour cent de palier plus dix de prime font
+   * trente : a trois pour cent d'avantage maison, c'est 0,9 % du volume mise
+   * qui repart en parrainage. Le plafond n'est pas la pour ce cas-la, il est
+   * la pour le jour ou quelqu'un montera une des deux tables sans regarder
+   * l'autre — une part qui approcherait cent pour cent ferait payer a la
+   * maison tout ce qu'elle gagne, et le systeme ne le refuserait nulle part
+   * ailleurs. */
+  REFERRAL_PART_MAX_BPS: parseInt(env('REFERRAL_PART_MAX_BPS', '3000'), 10),
   REFERRAL_HOLD_DAYS: parseFloat(env('REFERRAL_HOLD_DAYS', '7')),
   REFERRAL_PVP_BPS: parseInt(env('REFERRAL_PVP_BPS', '100'), 10), // 1 % de la mise en 1v1
   /* Ce que touche le FILLEUL en arrivant par un lien. Personne ne partage un

@@ -283,6 +283,15 @@ class Game {
         pa: p.parrain || null, fi: p.filleuls || [],
         rd: (p.refDu || BN(0)).toString(), rt: (p.refTotal || BN(0)).toString(),
         rc: p.revCumul || 0, rp: p.revPaye || 0, att: p.attente || [],
+        /* `rap` : ce filleul a deja rapporte au moins une fois. C'est ce
+           drapeau qui compte dans la prime de recruteur de SON parrain, et il
+           doit survivre a un redemarrage — sans quoi chaque relance remettrait
+           tout le monde a « aucune recrue active » et ferait redescendre les
+           taux de la moitie des parrains, sans que personne ne comprenne.
+           `rap` et pas `ra` : les clefs courtes de ce fichier se marchent
+           dessus des qu'on ne regarde pas, et l'une d'elles a deja efface la
+           liste de parrainage de tout le monde. */
+        rap: !!p.aRapporte,
         rec: p.record || null, mj: p.meilleurJour || null, rb: !!p.refBienvenue,
         bb: (p.bonusBloque || BN(0)).toString(), bc2: p.bonusCible ? p.bonusCible.toString() : null,
         mk: p.moisCle || null, mm: p.moisMise || 0,
@@ -530,6 +539,12 @@ class Game {
         refDu: ethers.BigNumber.from(d.rd || '0'), refTotal: ethers.BigNumber.from(d.rt || '0'),
         revCumul: Number(d.rc || 0), revPaye: Number(d.rp || 0),
         attente: Array.isArray(d.att) ? d.att : [],
+        /* Les fiches ecrites avant ce drapeau n'en ont pas. On le DEDUIT
+           plutot que de le mettre a faux : un filleul qui a deja une ligne
+           d'eau a forcement rapporte, et repartir a zero ferait perdre leur
+           prime a tous les parrains qui l'avaient meritee avant le
+           changement. */
+        aRapporte: d.rap === undefined ? Number(d.rp || 0) > 0 : !!d.rap,
         record: d.rec || null, meilleurJour: d.mj || null, refBienvenue: !!d.rb,
         objets: (d.ob && typeof d.ob === 'object') ? d.ob : {},
         fioles: (d.fio && typeof d.fio === 'object') ? d.fio : {},
@@ -773,8 +788,19 @@ class Game {
      * reprend tout le lendemain la maison a paye sur un revenu qu'elle n'a
      * plus. Ce qui est deja MUR, en revanche, ne se reprend jamais : le
      * parrain ne peut pas se retrouver en dette. */
+    /* ---- LE MEME TAUX POUR VERSER ET POUR REPRENDRE ----
+     * La reprise convertissait le revenu en argent avec `REFERRAL_BPS` — dix
+     * pour cent, le taux de DEPART — pendant que le versement, lui, utilisait
+     * le taux du palier, jusqu'a vingt. Un parrain SWOLE se voyait donc
+     * reprendre la moitie de ce qu'on lui avait verse quand son filleul se
+     * refaisait : le systeme lui laissait de l'argent que la maison n'avait
+     * plus. C'etait invisible — les deux chiffres sont justes chacun de leur
+     * cote — et ca ne pouvait que grandir, puisque la part monte.
+     * Un seul taux, lu une fois, sert aux deux sens. */
+    const part = this.partSurFilleul(p.parrain, p.addr || null) / 10000;
+
     if (p.revCumul < (p.revPaye || 0)) {
-      let manque = ((p.revPaye || 0) - p.revCumul) * (cfg.REFERRAL_BPS / 10000);
+      let manque = ((p.revPaye || 0) - p.revCumul) * part;
       const seaux = p.attente || [];
       while (manque > 1e-9 && seaux.length) {
         const dernier = seaux[seaux.length - 1];
@@ -784,15 +810,24 @@ class Game {
       /* La ligne d'eau redescend d'autant : ce revenu-la est a regagner. Ce
          qui a deja muri reste acquis, donc la ligne ne descend pas plus bas
          que ce qu'on a pu reprendre. */
-      const repris = ((p.revPaye || 0) - p.revCumul) * (cfg.REFERRAL_BPS / 10000) - manque;
-      p.revPaye = (p.revPaye || 0) - repris / (cfg.REFERRAL_BPS / 10000);
+      const repris = ((p.revPaye || 0) - p.revCumul) * part - manque;
+      p.revPaye = (p.revPaye || 0) - repris / part;
       return;
     }
     if (p.revCumul <= (p.revPaye || 0)) return;         // rien de neuf a verser
 
-    /* La part depend du niveau du PARRAIN : c'est lui qu'on recompense. */
-    const du = (p.revCumul - (p.revPaye || 0)) * (this.partParrainage(p.parrain) / 10000);
+    /* La part depend du PALIER du parrain — c'est lui qu'on recompense — ET de
+       ce que CE filleul a amene a son tour. Deux filleuls du meme parrain ne
+       rapportent donc pas au meme taux, et c'est tout l'interet : « amene
+       quelqu'un qui amene » se paie sans qu'un centime vienne d'ailleurs que
+       du revenu du filleul direct. */
+    const du = (p.revCumul - (p.revPaye || 0)) * part;
     p.revPaye = p.revCumul;
+    /* ---- CE FILLEUL A RAPPORTE, ET IL L'AURA TOUJOURS FAIT ----
+     * C'est ce drapeau qui compte dans la prime de recruteur de SON parrain a
+     * lui. Pose ici et nulle part ailleurs : c'est le seul endroit du fichier
+     * ou l'on sait qu'un revenu reel vient d'etre verse a quelqu'un. */
+    p.aRapporte = true;
     /* Le revenu vient de monter : c'est peut-etre le moment ou la maison a
        fini de gagner le cadeau du filleul. */
     this._libereCadeau(p);
@@ -1558,6 +1593,58 @@ class Game {
     return t[Math.min(i, t.length - 1)];
   }
 
+  /**
+   * Combien de filleuls de CE joueur ont deja rapporte quelque chose.
+   *
+   * `aRapporte` et pas `hasDeposited`, et surtout pas « inscrit » : la prime
+   * du recruteur se gagne sur du REVENU encaisse, jamais sur du recrutement.
+   * Compter les inscrits ferait payer la maison pour des comptes vides —
+   * c'est-a-dire pour du recrutement — et c'est precisement la forme qu'on ne
+   * veut pas avoir a defendre.
+   *
+   * Le drapeau ne se retire jamais. Un filleul qui se refait fait redescendre
+   * son compteur de revenu, mais il a bel et bien rapporte une fois : reprendre
+   * la prime du parrain pour ca ferait dependre son taux des series de
+   * quelqu'un qu'il ne connait pas.
+   */
+  recruesActives(addr) {
+    const p = this._p(addr);
+    let n = 0;
+    for (const f of (p.filleuls || [])) {
+      if (this._p(f).aRapporte) n++;
+    }
+    return n;
+  }
+
+  /**
+   * LA PART SUR UN FILLEUL DONNE.
+   *
+   * Deux termes, et un seul etage :
+   *   — le PALIER du parrain, ce qu'il a merite par son propre jeu ;
+   *   — la PRIME de recruteur, ce que CE filleul-la a amene a son tour.
+   *
+   * La prime est attachee au LIEN, pas au parrain : deux filleuls du meme
+   * parrain ne rapportent pas au meme taux si l'un recrute et l'autre non.
+   * C'est ce qui fait que « amene quelqu'un qui amene » se paie — sans qu'un
+   * centime vienne d'ailleurs que du revenu du filleul direct.
+   *
+   * Le plafond est le dernier mot. Il ne sert a rien aujourd'hui — vingt plus
+   * dix font trente — et c'est exactement pour ca qu'il est la : le jour ou
+   * quelqu'un montera une des deux tables sans regarder l'autre, rien d'autre
+   * dans ce fichier ne l'arreterait.
+   */
+  partSurFilleul(parrain, filleul) {
+    const base = this.partParrainage(parrain);
+    const t = cfg.REFERRAL_RECRUTEUR_BPS;
+    let prime = 0;
+    if (t && t.length && filleul) {
+      const n = this.recruesActives(filleul);
+      prime = t[Math.min(n, t.length - 1)] || 0;
+    }
+    const max = cfg.REFERRAL_PART_MAX_BPS || 10000;
+    return Math.min(max, base + prime);
+  }
+
   /** Les jeux ou l'argent va d'un joueur a l'autre, pas a la banque. */
   static get PVP() { return { p4: true, poker: true, mp: true, dm: true }; }
 
@@ -1661,12 +1748,24 @@ class Game {
     const part = this.partParrainage(a);
     const liste = (p.filleuls || []).map((f) => {
       const q = this._p(f);
+      /* ---- LE TAUX DE CE LIEN-LA, ET DE QUOI L'EXPLIQUER ----
+       * Depuis que la prime de recruteur existe, deux filleuls du meme parrain
+       * ne rapportent plus au meme taux. Afficher un seul chiffre en tete de
+       * page ferait mentir la moitie des lignes — et un joueur qui ne peut pas
+       * refaire le calcul cesse de croire le total.
+       * On envoie donc les DEUX termes, pas seulement leur somme : « 12 %,
+       * dont 2 parce qu'il a amene 1 joueur qui joue ». */
+      const recrues = this.recruesActives(f);
+      const sien = this.partSurFilleul(a, f);
       return {
         address: f, name: q.name, visage: q.visage || null, photo: !!q.photo,
         depose: !!q.hasDeposited,
+        part: sien / 100,
+        prime: Math.max(0, sien - part) / 100,
+        recrues,
         /* Ce que CE filleul a deja rapporte, et non ce qu'il a perdu : c'est
            la seule facon de rendre le calcul verifiable par le parrain. */
-        rapporte: ethers.utils.formatUnits(WEI(Math.max(0, (q.revPaye || 0) * (part / 10000)).toFixed(6)), cfg.DECIMALS),
+        rapporte: ethers.utils.formatUnits(WEI(Math.max(0, (q.revPaye || 0) * (sien / 10000)).toFixed(6)), cfg.DECIMALS),
         // ce qui, chez lui, n'a pas encore passe le delai
         attente: Number(((q.attente || []).reduce((n, x) => n + x[1], 0)).toFixed(6)),
       };
@@ -1689,6 +1788,20 @@ class Game {
       partPalier: (cfg.REFERRAL_PALIER_BPS || []).map((b, i) => ({
         palier: Game.PALIERS[i] || ('palier ' + (i + 1)), part: b / 100 })),
       partPvp: cfg.REFERRAL_PVP_BPS / 100,
+      /* ---- LA TABLE DE LA PRIME, ET SON PLAFOND ----
+       * La page ne les invente pas : elle affiche « +2 % par recrue active,
+       * jusqu'a +10 » avec les chiffres du serveur. Deux tables a tenir
+       * d'accord de part et d'autre du reseau finissent par ne plus l'etre, et
+       * ce desaccord-la se lit comme un compte faux. */
+      primePalier: (cfg.REFERRAL_RECRUTEUR_BPS || []).map((b, i) => ({
+        recrues: i, prime: b / 100 })),
+      primeMax: Math.max.apply(null, (cfg.REFERRAL_RECRUTEUR_BPS || [0])) / 100,
+      partPlafond: (cfg.REFERRAL_PART_MAX_BPS || 10000) / 100,
+      /* Combien de MES filleuls rapportent deja — ce que mon propre parrain
+         touche grace a moi. Le montrer ferme la boucle : on comprend d'un coup
+         d'oeil que recruter des recruteurs paie, parce qu'on est soi-meme le
+         recruteur de quelqu'un. */
+      mesRecrues: this.recruesActives(a),
       bienvenue: cfg.REFERRAL_WELCOME,
       parrain,
       filleuls: liste,

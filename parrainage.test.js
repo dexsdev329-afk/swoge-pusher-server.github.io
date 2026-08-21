@@ -368,3 +368,172 @@ require('./journal').draine(() => {
   fs.rmSync(bac, { recursive: true, force: true });
   console.log(`parrainage.test.js : ${n} verifications OK`);
 });
+
+// ================== LA PRIME DU RECRUTEUR DE RECRUTEURS
+//
+// Le but : que les gens amenent des gens QUI AMENENT DES GENS. La facon
+// evidente est un deuxieme etage — toucher un pourcentage sur les filleuls de
+// ses filleuls. On ne le fait pas : un etage de plus, c'est une part de revenu
+// qui remonte a quelqu'un qui n'a amene personne directement, et c'est
+// exactement la forme qu'on ne veut pas avoir a defendre.
+//
+// La recompense reste donc sur le lien DIRECT. Ce qui change, c'est le TAUX :
+// il monte quand ce filleul-la se met a amener du monde a son tour. Meme
+// effet, un seul etage, et pas un centime qui vienne d'ailleurs que du revenu
+// du filleul direct.
+{
+  const g = neuf();
+  const D = '0xdddddddddddddddddddddddddddddddddddddddd';
+  const E = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+  for (const a of [D, E]) {
+    const p = g._p(a);
+    p.balance = ethers.utils.parseUnits('100000', cfg.DECIMALS);
+    p.hasDeposited = true;
+  }
+  g.lieParrain(B, A);          // A parraine B
+  g.lieParrain(C, A);          // et C
+
+  const base = g.partParrainage(A);
+  eq(g.partSurFilleul(A, B), base, 'sans recrue, la part est celle du palier');
+
+  // ---- UN INSCRIT NE VAUT RIEN. C'est le point qui separe ce systeme d'un
+  // systeme pyramidal : la prime se gagne sur du REVENU encaisse, jamais sur
+  // du recrutement. Compter les inscrits ferait payer la maison pour des
+  // comptes vides, et il suffirait d'en creer dix.
+  g.lieParrain(D, B);
+  eq(g.partSurFilleul(A, B), base,
+     'un filleul de filleul INSCRIT ne change rien : on ne paie pas le recrutement');
+  eq(g.recruesActives(B), 0, 'il ne compte pas comme recrue active');
+
+  // ---- IL FAUT QU'IL AIT RAPPORTE
+  manche(g, D, 1000, 0);       // D perd : la maison encaisse, B touche
+  eq(g.recruesActives(B), 1, 'des qu il rapporte, il compte');
+  const t = cfg.REFERRAL_RECRUTEUR_BPS;
+  eq(g.partSurFilleul(A, B), base + t[1],
+     `et la part de A SUR B monte de ${t[1] / 100} point(s)`);
+  eq(g.partSurFilleul(A, C), base,
+     'mais pas sa part sur C : la prime est attachee au LIEN, pas au parrain');
+
+  // ---- ET ELLE NE REDESCEND PAS QUAND LA RECRUE SE REFAIT
+  // Le compteur de revenu de D redescend, mais D a bel et bien rapporte une
+  // fois. Reprendre la prime de A pour ca ferait dependre son taux des series
+  // d'un joueur qu'il ne connait pas.
+  manche(g, D, 0, 5000);
+  eq(g.recruesActives(B), 1, 'une recrue qui se refait reste une recrue');
+  eq(g.partSurFilleul(A, B), base + t[1], 'et la part de A ne bouge pas');
+
+  // ---- L ECHELLE MONTE, ET S ARRETE
+  for (let i = 0; i < t.length + 3; i++) {
+    const x = '0x' + String(i % 10).repeat(40);
+    g._p(x).balance = ethers.utils.parseUnits('100000', cfg.DECIMALS);
+    g._p(x).hasDeposited = true;
+    try { g.lieParrain(x, B); } catch (e) { continue; }
+    manche(g, x, 1000, 0);
+  }
+  const haut = g.partSurFilleul(A, B);
+  eq(haut, Math.min(cfg.REFERRAL_PART_MAX_BPS, base + t[t.length - 1]),
+     'au-dela de la table, la prime ne monte plus');
+  ok(haut <= cfg.REFERRAL_PART_MAX_BPS, `et le plafond tient (${haut} <= ${cfg.REFERRAL_PART_MAX_BPS})`);
+
+  // ---- CE QUI EST VERSE SUIT LE TAUX DU LIEN
+  const g2 = neuf();
+  g2.lieParrain(B, A);
+  manche(g2, B, 10000, 0);
+  const sansPrime = attente(g2, A);
+  const g3 = neuf();
+  const F = '0xffffffffffffffffffffffffffffffffffffffff';
+  g3._p(F).balance = ethers.utils.parseUnits('100000', cfg.DECIMALS);
+  g3._p(F).hasDeposited = true;
+  g3.lieParrain(B, A);
+  g3.lieParrain(F, B);
+  manche(g3, F, 1000, 0);      // F rapporte : B devient un recruteur
+  const avant = attente(g3, A);
+  manche(g3, B, 10000, 0);     // le MEME revenu que dans g2
+  const avecPrime = attente(g3, A) - avant;
+  ok(avecPrime > sansPrime,
+     `le meme revenu rapporte plus quand le filleul recrute (${avecPrime.toFixed(2)} contre ${sansPrime.toFixed(2)})`);
+  pres(avecPrime / sansPrime, (base + t[1]) / base,
+       'et exactement dans le rapport des deux taux', 0.02);
+}
+
+// ================== REPRENDRE AU MEME TAUX QU ON A VERSE
+//
+// La reprise convertissait le revenu en argent avec REFERRAL_BPS — dix pour
+// cent, le taux de DEPART — pendant que le versement, lui, utilisait le taux
+// du palier, jusqu'a vingt. Un parrain SWOLE se voyait donc reprendre la
+// moitie de ce qu'on lui avait verse quand son filleul se refaisait : le
+// systeme lui laissait de l'argent que la maison n'avait plus.
+//
+// Le defaut etait invisible — les deux chiffres sont justes chacun de leur
+// cote — et il ne pouvait que grandir, puisque la part monte avec le palier
+// ET, maintenant, avec la prime de recruteur.
+{
+  const g = neuf();
+  g.lieParrain(B, A);
+  /* On force une part haute chez le parrain : c'est la que l'ecart se voyait. */
+  const haut = cfg.REFERRAL_PALIER_BPS[cfg.REFERRAL_PALIER_BPS.length - 1];
+  const vrai = g.partParrainage.bind(g);
+  g.partParrainage = (a) => (String(a).toLowerCase() === A.toLowerCase() ? haut : vrai(a));
+  ok(haut > cfg.REFERRAL_BPS, `le palier du haut (${haut}) depasse le taux de depart (${cfg.REFERRAL_BPS})`);
+
+  manche(g, B, 10000, 0);                 // le filleul perd 10 000
+  const verse = attente(g, A);
+  pres(verse, 10000 * haut / 10000, 'le parrain touche a son taux a lui');
+
+  manche(g, B, 0, 10000);                 // il reprend TOUT
+  pres(attente(g, A), 0,
+       'et la reprise reprend TOUT : au taux ou l on a verse, pas au taux de depart');
+  eq(Number(g._p(B).revPaye.toFixed(6)), 0,
+     'la ligne d eau est redescendue jusqu au bout');
+  g.partParrainage = vrai;
+}
+
+// ================== ET CE QUI EST MUR NE SE REPREND JAMAIS
+{
+  const g = neuf();
+  g.lieParrain(B, A);
+  manche(g, B, 10000, 0);
+  vieillit(g, B, cfg.REFERRAL_HOLD_DAYS + 1);
+  const acquis = du(g, A);
+  ok(acquis > 0, `le parrain a ${acquis.toFixed(2)} d encaissable`);
+  manche(g, B, 0, 100000);                // le filleul explose
+  eq(du(g, A), acquis, 'ce qui etait mur reste acquis, quoi qu il arrive ensuite');
+  ok(g._p(A).refDu.gte(0), 'et personne n est en dette');
+}
+
+// ================== LA PRIME SURVIT AU REDEMARRAGE
+//
+// `aRapporte` est un drapeau, et un drapeau qu'on oublie d'ecrire sur le
+// disque disparait au premier redemarrage. Ici ca ne planterait rien : tous
+// les parrains retomberaient simplement a « aucune recrue active », leurs taux
+// redescendraient d'un coup, et personne — eux les premiers — ne saurait
+// pourquoi. C'est le genre de perte qu'on ne remarque qu'en lisant les
+// comptes du mois suivant.
+{
+  const g = neuf();
+  const F = '0xffffffffffffffffffffffffffffffffffffffff';
+  g._p(F).balance = ethers.utils.parseUnits('100000', cfg.DECIMALS);
+  g._p(F).hasDeposited = true;
+  g.lieParrain(B, A);
+  g.lieParrain(F, B);
+  manche(g, F, 2000, 0);
+  const avant = g.partSurFilleul(A, B);
+  ok(g.recruesActives(B) === 1, 'B a une recrue active');
+
+  const h = new Game();
+  h.hydrate(g.serialize());
+  eq(h.recruesActives(B), 1, 'et il l a toujours apres un aller-retour par le disque');
+  eq(h.partSurFilleul(A, B), avant, 'donc la part de A ne bouge pas au redemarrage');
+
+  // ---- ET LES FICHES D AVANT LE DRAPEAU NE PERDENT RIEN ----
+  // Elles n'ont pas la clef. On la DEDUIT de la ligne d'eau plutot que de la
+  // mettre a faux : un filleul qui a deja une ligne d'eau a forcement
+  // rapporte, et repartir a zero ferait perdre leur prime a tous les parrains
+  // qui l'avaient meritee avant le changement.
+  const vieux = JSON.parse(JSON.stringify(g.serialize()));
+  for (const [, d] of vieux.players) delete d.rap;
+  const k = new Game();
+  k.hydrate(vieux);
+  eq(k.recruesActives(B), 1,
+     'une sauvegarde ecrite avant le drapeau garde ses recrues');
+}
