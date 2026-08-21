@@ -5584,6 +5584,12 @@ class Game {
          celui qu'on offre, sinon la page montre « aucun personnage » a
          quelqu'un qui en a un. */
       actif: this.skinActifDe(p),
+      /* L'or du compte voyage AVEC le catalogue : le tiroir ne connait que le
+         solde en jetons, et n'a aucun autre moyen d'ecrire « vous avez tant
+         d'or » sous un prix affiche en or. Il l'AFFICHE seulement — le refus
+         reste ici, parce que ce chiffre-la date de la derniere reponse et que
+         l'or monte a chaque monstre tue. */
+      or: Math.floor(p.fame || 0),
     };
   }
 
@@ -5629,10 +5635,32 @@ class Game {
       }
     }
     const prix = skins.prixDe(id);
-    const w = WEI(prix);
-    if (p.balance.lt(w)) throw new Error(`not enough $SWOGE — this skin costs ${prix.toLocaleString('en-US')}`);
-    p.balance = p.balance.sub(w);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(w);
+    /* ---- DEUX MONNAIES, ET SURTOUT PAS DEUX UNITES DU MEME COMPTE ----
+     *
+     * L'or se ramasse en jouant et ne sort jamais du jeu ; le $SWOGE se
+     * depose et se retire. Un skin paye en or ne doit donc toucher NI le
+     * solde, NI le net du jour, NI le chiffre d'affaires de la boutique :
+     * ces trois-la comptent de l'argent reel, et y verser un nombre qui n'est
+     * jamais entre en caisse gonfle un chiffre sur lequel on decide ensuite
+     * pour de vrai.
+     *
+     * Le refus le DIT dans la bonne unite. « not enough $SWOGE » devant un
+     * bouton marque GOLD envoie le joueur deposer des jetons pour un achat
+     * qui n'en demande pas.
+     */
+    const monnaie = skins.monnaieDe(id);
+    if (monnaie === 'or') {
+      const or = p.fame || 0;
+      if (or < prix) {
+        throw new Error(`not enough gold — this skin costs ${prix.toLocaleString('en-US')}, you have ${Math.floor(or).toLocaleString('en-US')}`);
+      }
+      p.fame = or - prix;
+    } else {
+      const w = WEI(prix);
+      if (p.balance.lt(w)) throw new Error(`not enough $SWOGE — this skin costs ${prix.toLocaleString('en-US')}`);
+      p.balance = p.balance.sub(w);
+      this._bumpDay(p); p.dayNet = p.dayNet.sub(w);
+    }
     p.skins[id] = true;
     /* Le compteur monte APRES le debit et l'attribution, d'un seul tenant :
        rien ne peut s'intercaler entre les trois, et une exception plus haut
@@ -5646,9 +5674,15 @@ class Game {
        servi a rien tant qu'on n'a pas trouve un second endroit pour l'activer.
        Un second geste pourra toujours re-choisir parmi ceux deja possedes. */
     p.skinActif = id;
-    this.note('boutique', prix, String(addr).toLowerCase());
-    journal.ajoute(String(addr).toLowerCase(), { k: 'sk', id, m: String(prix) });
-    return { id, prix, actif: this.skinActifDe(p), balance: this.balanceStr(addr) };
+    /* `note('boutique')` est le chiffre d'affaires en jetons : un achat en or
+       n'y entre pas. Le journal, lui, garde la ligne dans les deux cas — un
+       joueur doit retrouver ce qu'il a paye — mais il porte l'unite avec, sinon
+       la page relit vingt mille et affiche « $SWOGE ». */
+    if (monnaie !== 'or') this.note('boutique', prix, String(addr).toLowerCase());
+    journal.ajoute(String(addr).toLowerCase(),
+                   { k: 'sk', id, m: String(prix), mo: monnaie === 'or' ? 'or' : undefined });
+    return { id, prix, monnaie, or: p.fame || 0,
+             actif: this.skinActifDe(p), balance: this.balanceStr(addr) };
   }
 
   choisitSkin(addr, id) {

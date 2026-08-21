@@ -418,7 +418,12 @@ function notifySkinBuy(addr, r) {
   tg.notifyPhoto(imageSkin(s.id),
     `\ud83c\udfad <b>NEW SKIN</b>\n` +
     `${escHtml(game._p(addr).name)} bought <b>${escHtml(s.nom)}</b> ` +
-    `for <b>${fmtAmt(String(r.prix))} $SWOGE</b>\n\n` +
+    /* L'unite vient de l'ACHAT, pas du canal. Un skin paye en or annonce en
+       $SWOGE raconte un depot qui n'a pas eu lieu, sur le seul canal ou tout
+       le monde lit les montants. */
+    (r.monnaie === 'or'
+      ? `for <b>${Number(r.prix).toLocaleString('en-US')} gold</b>\n\n`
+      : `for <b>${fmtAmt(String(r.prix))} $SWOGE</b>\n\n`) +
     `${'\u2b50'.repeat(s.puissance)}${'\u2606'.repeat(6 - s.puissance)}` +
     (base ? `\n<a href="${base}/games.html">Open the shop \u2197</a>` : ''));
 }

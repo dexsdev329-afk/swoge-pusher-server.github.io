@@ -120,8 +120,26 @@ const OFFERT = new Set(['andy']);
  * en jetons reels, ce desaccord-la se lit comme une edition trahie.
  */
 const EDITIONS = {
-  /* id: { exemplaires, prix } */
+  /* id: { exemplaires, prix, monnaie } */
 };
+
+/* ---- EN JETONS, OU EN OR ----
+ *
+ * Le bareme des puissances est un bareme en $SWOGE : c'est une monnaie qu'on
+ * depose, qu'on retire, et qui vaut quelque chose dehors. L'or, lui, ne
+ * s'achete pas — il se ramasse en jouant, et il ne sort jamais du jeu.
+ *
+ * Les deux ne sont donc pas deux unites du meme compte, et un skin paye en or
+ * n'est pas « moins cher » : il est paye avec autre chose. C'est exactement
+ * pour ca que la monnaie est ecrite ICI, a cote du prix ecrit a la main, et
+ * pas deduite du bareme — un prix hors bareme et une monnaie hors bareme sont
+ * la meme decision, prise une seule fois, au meme endroit.
+ *
+ * `exemplaires: 0` reste valide : un skin peut avoir un prix decide a la main
+ * sans etre limite pour autant. `editionDe` rend alors zero, comme pour
+ * n'importe quel skin sans edition, et rien n'affiche « il en reste ».
+ */
+const MONNAIE_PAR_DEFAUT = 'swoge';
 
 /* Un identifiant qui n'existe pas doit se comporter comme un identifiant
    absent, jamais comme une exception qui remonte n'importe ou. */
@@ -138,7 +156,14 @@ function prixDe(id) {
 
 /** Combien d'exemplaires existent, ou `0` pour un skin sans limite. */
 function editionDe(id) {
-  return EDITIONS[id] ? EDITIONS[id].exemplaires : 0;
+  return (EDITIONS[id] && EDITIONS[id].exemplaires) | 0;
+}
+
+/** `'swoge'` ou `'or'`. Jamais `undefined` : un appelant qui compare a
+    `'or'` doit pouvoir le faire sans avoir a se demander si le champ existe,
+    et le defaut est le meme pour les six skins du bareme. */
+function monnaieDe(id) {
+  return (EDITIONS[id] && EDITIONS[id].monnaie) || MONNAIE_PAR_DEFAUT;
 }
 
 /* Le catalogue complet, pret pour la page — le prix est CALCULE ici et
@@ -157,8 +182,14 @@ function catalogue() {
                                 l'affiche que s'il est non nul : ecrire
                                 « illimite » sur cinq lignes sur six aurait
                                 dilue la seule qui compte. */
-                             edition: editionDe(s.id) }));
+                             edition: editionDe(s.id),
+                             /* La page ne devine PAS la monnaie a partir du
+                                prix : « 20 000 » se lit pareil en or et en
+                                jetons, et se tromper d'unite sur un bouton
+                                d'achat, c'est faire payer autre chose que ce
+                                qui etait affiche. */
+                             monnaie: monnaieDe(s.id) }));
 }
 
 module.exports = { SKINS, PUISSANCE_PRIX, CADEAU_PIXEL, OFFERT, EDITIONS,
-                   skin, prixDe, editionDe, catalogue };
+                   skin, prixDe, editionDe, monnaieDe, catalogue };
