@@ -50,8 +50,20 @@ process.on('unhandledRejection', (e) => {
   let moteur = null; const _p0 = Game.prototype._p;
   Game.prototype._p = function (a) { moteur = this; return _p0.call(this, a); };
   const { Realm } = require('./realm');
-  let monde = null; const pas0 = Realm.prototype.pas;
-  Realm.prototype.pas = function (dt) { monde = this; return pas0.call(this, dt); };
+  /* ---- IL Y A PLUSIEURS MONDES OUVERTS ----
+   * Cet espion gardait « la derniere simulation qui a battu ». Il n'y en avait
+   * qu'une ; depuis la deuxieme porte du Nexus il y en a deux, et `monde`
+   * valait une fois sur deux celle ou notre joueur n'est pas. On les collecte
+   * donc toutes, et l'on designe la bonne par LE JOUEUR QU'ELLE CONTIENT —
+   * plus juste de toute facon : c'est le monde de notre joueur qui nous
+   * interesse, pas le nombre de mondes qui tournent. */
+  let monde = null; const ouverts = new Set(); const pas0 = Realm.prototype.pas;
+  Realm.prototype.pas = function (dt) {
+    if (!this.plan) ouverts.add(this);
+    return pas0.call(this, dt);
+  };
+  const mondeDe = (a) => [...ouverts].find((r) => r.joueurs.has(String(a).toLowerCase()))
+                      || [...ouverts][0] || null;
   /* ---- ON NOTE LE POINT DE NAISSANCE ----
    * Un projectile AVANCE : le lire deux cent cinquante millisecondes plus
    * tard, c'est le lire cent quarante unites plus loin, et conclure qu'il est
@@ -96,6 +108,7 @@ process.on('unhandledRejection', (e) => {
   await attend(s, 'realmEntre');
   await new Promise((r) => setTimeout(r, 400));
   const A = w.address;
+  monde = mondeDe(A);
   /* La clef exacte sous laquelle le monde nous connait : `etatPour` la
      demande telle quelle, et se tromper de casse rend `null` sans rien dire. */
   const CLE = monde.joueurs.has(A) ? A : A.toLowerCase();

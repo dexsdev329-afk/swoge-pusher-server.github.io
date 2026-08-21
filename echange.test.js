@@ -48,8 +48,20 @@ process.on('unhandledRejection', (e) => {
      passage : c'est lui qui tient les sacs poses au sol, et sans eux on ne
      peut pas COMPTER — donc pas conclure. */
   const { Realm } = require('./realm');
-  let monde = null; const pas0 = Realm.prototype.pas;
-  Realm.prototype.pas = function (dt) { monde = this; return pas0.call(this, dt); };
+  /* ---- IL Y A PLUSIEURS MONDES OUVERTS ----
+   * Cet espion gardait « la derniere simulation qui a battu ». Il n'y en avait
+   * qu'une ; depuis la deuxieme porte du Nexus il y en a deux, et `monde`
+   * valait une fois sur deux celle ou notre joueur n'est pas. On les collecte
+   * donc toutes, et l'on designe la bonne par LE JOUEUR QU'ELLE CONTIENT —
+   * plus juste de toute facon : c'est le monde de notre joueur qui nous
+   * interesse, pas le nombre de mondes qui tournent. */
+  let monde = null; const ouverts = new Set(); const pas0 = Realm.prototype.pas;
+  Realm.prototype.pas = function (dt) {
+    if (!this.plan) ouverts.add(this);
+    return pas0.call(this, dt);
+  };
+  const mondeDe = (a) => [...ouverts].find((r) => r.joueurs.has(String(a).toLowerCase()))
+                      || [...ouverts][0] || null;
   require('./server');
   const B = require('./boutique');
   await new Promise((r) => setTimeout(r, 900));
@@ -82,6 +94,7 @@ process.on('unhandledRejection', (e) => {
   s.send(JSON.stringify({ type: 'realmJoin' }));
   const entre = await attend(s, 'realmEntre');
   await new Promise((r) => setTimeout(r, 400));
+  monde = mondeDe(w.address);
   ok(!!monde, 'le monde tourne et on peut le compter');
   const A = w.address;
 

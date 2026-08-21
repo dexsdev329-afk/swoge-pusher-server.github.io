@@ -665,6 +665,77 @@ const personnages = require('./personnages');
 const realm = new Realm({
   tireObjet: (r, a, garanti) => (garanti ? game.tireButinGaranti(r, a) : game.tireButin(r, a)),
 });
+
+/* ==================== DEUX MONDES OUVERTS ====================
+ *
+ * Le Nexus a deux portes au nord. Elles menent a deux simulations distinctes,
+ * pas a deux endroits d'une meme carte : c'est le meme choix qu'ont fait les
+ * donjons, et pour la meme raison. Deux mondes aux MEMES coordonnees separes
+ * par un drapeau auraient demande de verifier ce drapeau dans les six boucles
+ * de combat, et un oubli aurait fait toucher quelqu'un d'un autre monde, en
+ * silence. Ici l'isolation est une STRUCTURE.
+ *
+ * ---- le plancher de rarete ----
+ *
+ * Le monde rouge tire dans le meme catalogue, mais rien n'en sort en dessous
+ * du legendaire. On ne lui donne donc pas une table a part — une deuxieme
+ * liste d'objets aurait fini par diverger de la premiere, et il aurait fallu
+ * penser a l'alimenter a chaque saison. On MONTE la rarete demandee par
+ * l'anneau, ce qui garde la geographie : la terre y rend du legendaire, la
+ * lave y rend toujours du mythique. Le danger de la carte s'ajoute a celui de
+ * l'anneau, il ne l'ecrase pas.
+ *
+ * Le butin GARANTI d'une salle gardee descend d'un cran quand la saison n'a
+ * plus de pieces — mais jamais sous le plancher. Sans cette borne, une salle
+ * gardee du monde rouge finirait par rendre du commun le jour ou le stock
+ * legendaire s'epuise, ce qui est exactement la promesse qu'on ne veut pas
+ * casser. Mieux vaut ne rien rendre que rendre moins que promis.
+ */
+const RANGS = boutique.RARETES.map((r) => r.cle);
+const PLANCHER_CRIMSON = 'legendaire';
+
+/** La plus haute des deux raretes. `RANGS` monte du commun a la relique. */
+function monteAu(rarete, plancher) {
+  const i = RANGS.indexOf(rarete), p = RANGS.indexOf(plancher);
+  if (i < 0) return rarete;                       // rarete inconnue : on n'invente pas
+  return i >= p ? rarete : plancher;
+}
+
+/** Tire au moins `plancher`, en descendant jusqu'a lui et pas plus bas. */
+function tireAuMoins(rarete, alea, plancher, garanti) {
+  const haut = monteAu(rarete, plancher);
+  if (!garanti) return game.tireButin(haut, alea);
+  const p = RANGS.indexOf(plancher);
+  for (let k = RANGS.indexOf(haut); k >= p; k--) {
+    const piece = game.tireButin(RANGS[k], alea);
+    if (piece) return RANGS[k] === haut ? piece : { ...piece, repli: haut };
+  }
+  return null;
+}
+
+const crimson = new Realm({
+  tireObjet: (r, a, garanti) => tireAuMoins(r, a, PLANCHER_CRIMSON, garanti),
+});
+
+/* ---- LA TABLE DES MONDES OUVERTS ----
+ * Une cle, une simulation. `realmDe` et `tousLesMondes` la lisent ; aucune des
+ * deux ne connait le nom d'un monde. Une troisieme carte est une ligne ici, et
+ * rien d'autre — c'est le meme principe que la table DONJONS de monde.js.
+ *
+ * `defaut` est la cle du monde ou l'on atterrit quand personne n'a rien dit :
+ * une socket d'avant ce deploiement, un message sans champ `monde`, un monde
+ * dont la cle a disparu. Elle ne peut pas etre absente de la table. */
+const MONDES = new Map([['ouvert', realm], ['crimson', crimson]]);
+const MONDE_DEFAUT = 'ouvert';
+/** La cle d'un monde ouvert demande, ou celle du monde par defaut. */
+function cleDeMonde(v) {
+  return MONDES.has(v) ? v : MONDE_DEFAUT;
+}
+/** Le monde ouvert d'une socket — celui d'ou elle vient, donjon mis a part. */
+function mondeOuvertDe(ws) {
+  return MONDES.get(cleDeMonde(ws && ws.monde));
+}
+
 const realmClients = new Set();
 /* Depuis quand un joueur n'a pas annonce sa position : c'est ce delai qui
    sert de `dt` a la borne de vitesse. Le mesurer ici plutot que de faire
@@ -708,9 +779,13 @@ const DONJONS_MAX = 24;
    `ws.donjon` n'existe que le temps d'un donjon, et une socket dont le donjon
    a ete detruit retombe donc naturellement dans le monde. */
 function realmDe(ws) {
-  if (!ws || !ws.donjon) return realm;
+  if (!ws || !ws.donjon) return mondeOuvertDe(ws);
   const d = donjons.get(ws.donjon);
-  return d ? d.realm : realm;
+  /* Le donjon a disparu sous les pieds : on retombe dans le monde ouvert d'ou
+     l'on venait, pas dans « le » monde ouvert. Retomber toujours dans le monde
+     vert aurait TELEPORTE hors du monde rouge quiconque etait dans un donjon
+     ouvert depuis la-bas, sans un message. */
+  return d ? d.realm : mondeOuvertDe(ws);
 }
 
 /* Tous les mondes qui tournent, le monde ouvert en tete. Une seule liste : la
@@ -718,7 +793,7 @@ function realmDe(ws) {
    un donjon oublie par l'une des trois serait un donjon ou les creatures ne
    bougent pas, ou l'on ne voit rien. */
 function tousLesMondes() {
-  const out = [realm];
+  const out = [...MONDES.values()];
   for (const d of donjons.values()) out.push(d.realm);
   return out;
 }
@@ -743,9 +818,17 @@ function tousLesMondes() {
  * `plan` le plan du donjon quand c'en est un. Ce qui differe entre un monde et
  * un donjon tient en trois lignes, en bas.
  */
-function messageEntree(R, j, plan) {
+function messageEntree(R, j, plan, carte) {
   return {
     type: 'realmEntre',
+    /* ---- QUELLE CARTE ----
+     * Le champ `monde` juste en dessous porte deja les DIMENSIONS ; celui-ci
+     * porte l'identite. Deux mondes ouverts ont exactement la meme geometrie
+     * et le meme sol : sans un nom, la page ne peut pas dire ou l'on est, et
+     * le joueur qui a franchi la porte rouge verrait une carte verte.
+     * Un donjon n'a pas de carte a lui : il appartient au monde ouvert d'ou
+     * l'on est entre, et c'est cette cle-la qu'on lui envoie. */
+    carte: carte || null,
     monde: { w: monde.MONDE.w, h: monde.MONDE.h, tuile: monde.TUILE },
     anneaux: plan ? plan.anneaux : monde.ANNEAUX,
     centre: monde.CENTRE,
@@ -3416,14 +3499,24 @@ wss.on('connection', (ws) => {
         const etat = game.personnageEtat(ws.addr, skin);
         if (!etat) return send(ws, { type: 'realmRefus', raison: 'no-character' });
         const fiche = ficheDeCombat(ws.addr, skin);
-        const j = realm.rejoint(ws.addr, fiche);
+        /* ---- PAR QUELLE PORTE ----
+         * Le client nomme SON monde, et c'est tout ce qu'il a le droit de
+         * nommer : une cle inconnue retombe sur le monde par defaut plutot que
+         * de refuser. Un client d'avant ce deploiement n'envoie rien du tout
+         * et arrive donc exactement ou il arrivait hier — c'est la seule
+         * facon de deployer ca sans mettre dehors ceux qui n'ont pas encore
+         * recharge la page. */
+        const cle = cleDeMonde(m.monde);
+        const R = MONDES.get(cle);
+        ws.monde = cle;
+        const j = R.rejoint(ws.addr, fiche);
         ws.realmSkin = skin;
         realmClients.add(ws);
         realmDernierMouv.set(ws.addr, Date.now());
         /* La carte et les armes partent A L'ENTREE, pas dans le `hello` : un
            joueur qui ne met jamais les pieds dans le monde n'a pas a
            telecharger sa description. */
-        return send(ws, messageEntree(realm, j, null));
+        return send(ws, messageEntree(R, j, null, cle));
       }
       /* ==================== FRANCHIR LA PORTE ====================
        *
@@ -3442,7 +3535,10 @@ wss.on('connection', (ws) => {
         if (!ws.addr || !realmClients.has(ws)) return;
         /* Deja dedans : on ne s'enfonce pas d'un donjon dans un autre. */
         if (ws.donjon) return send(ws, { type: 'realmPorteRefus', raison: 'deja-dedans' });
-        const porte = realm.portailSousLesPieds(ws.addr);
+        /* Dans le monde OU L'ON EST. C'etait `realm` en dur : une porte
+           ouverte dans le monde rouge n'aurait rien trouve sous les pieds, et
+           le joueur aurait vu « pas-de-portail » debout sur un portail. */
+        const porte = realmDe(ws).portailSousLesPieds(ws.addr);
         if (!porte) return send(ws, { type: 'realmPorteRefus', raison: 'pas-de-portail' });
         /* Une porte de RETOUR posee dans le monde ouvert ne mene nulle part :
            elle est deja arrivee. Sans ce refus, le bouton « ENTER » se serait
@@ -3482,6 +3578,15 @@ wss.on('connection', (ws) => {
             return send(ws, { type: 'realmPorteRefus', raison: 'server error' });
           }
           d = { id: donjonSuivant++, realm: R, nom: porte.donjon, porte: porte.id,
+                /* ---- ET DE QUELLE CARTE IL DEPEND ----
+                 * Un donjon n'est pas un lieu du jeu, c'est une porte percee
+                 * DANS un monde. Sans cette cle, ressortir ramenait toujours
+                 * dans le monde vert : on entrait dans un donjon depuis le
+                 * monde rouge et l'on en sortait ailleurs, aux memes
+                 * coordonnees, avec un sac plein de legendaires et sans avoir
+                 * eu a extraire. La porte de sortie serait devenue la
+                 * meilleure facon de tricher. */
+                carte: cleDeMonde(ws.monde),
                 /* Ou l'on ressort. Garde ICI et pas sur le portail : le portail
                    se referme au bout de ses trois minutes, et il ne doit pas
                    emporter la sortie de ceux qui sont dedans. */
@@ -3492,13 +3597,14 @@ wss.on('connection', (ws) => {
         /* La vie et le mana traversent avec le joueur. Sans ca, franchir une
            porte aurait soigne — et le meilleur usage du donjon le plus dur du
            jeu aurait ete d'entrer et de ressortir aussitot. */
-        const avant = realm.joueurs.get(ws.addr);
+        const De = realmDe(ws);
+        const avant = De.joueurs.get(ws.addr);
         const etat = avant ? { pv: avant.pv, mp: avant.mp } : {};
-        realm.quitte(ws.addr);
+        De.quitte(ws.addr);
         const j = d.realm.rejoint(ws.addr, fiche, etat);
         ws.donjon = d.id;
         realmDernierMouv.set(ws.addr, Date.now());
-        return send(ws, messageEntree(d.realm, j, d.realm.plan));
+        return send(ws, messageEntree(d.realm, j, d.realm.plan, d.carte));
       }
 
       /* ---- ET RESSORTIR ----
@@ -3520,9 +3626,16 @@ wss.on('connection', (ws) => {
                        mp: avant ? avant.mp : undefined };
         d.realm.quitte(ws.addr);
         ws.donjon = null;
-        const j = realm.rejoint(ws.addr, fiche, etat);
+        /* On ressort dans le monde D'OU LA PORTE A ETE OUVERTE. Le donjon le
+           sait depuis qu'on l'a cree ; le lire sur `ws.monde` marcherait aussi
+           aujourd'hui, mais ce serait faire confiance a un champ que la mort
+           et la deconnexion effacent — la porte, elle, ne l'oublie pas. */
+        const cle = cleDeMonde(d.carte);
+        const Vers = MONDES.get(cle);
+        ws.monde = cle;
+        const j = Vers.rejoint(ws.addr, fiche, etat);
         realmDernierMouv.set(ws.addr, Date.now());
-        return send(ws, messageEntree(realm, j, null));
+        return send(ws, messageEntree(Vers, j, null, cle));
       }
 
       /* ---- REJOINDRE UN AMI ----
@@ -3591,6 +3704,11 @@ wss.on('connection', (ws) => {
         if (!ws.addr) return;
         realmDe(ws).quitte(ws.addr);
         ws.donjon = null;
+        /* APRES le `quitte` : c'est `ws.monde` qui dit de quel monde on retire
+           le joueur. L'effacer avant l'aurait retire du monde vert alors qu'il
+           etait dans le rouge, ou il serait reste pour toujours — un fantome
+           que les autres continuent de voir bouger. */
+        ws.monde = null;
         realmClients.delete(ws);
         realmDernierMouv.delete(ws.addr);
         return send(ws, { type: 'realmSorti' });
@@ -4438,7 +4556,20 @@ const nexusInterval = setInterval(() => {
      les autres. */
   sacs.oubliePoseurs(nexusSacs, (a) => ouDansLeNexus(socketDuNexus(a)));
 
-  const s = JSON.stringify({ type: 'nexusEtat', joueurs,
+  /* ---- COMBIEN SONT DERRIERE CHAQUE PORTE ----
+   *
+   * Deux cartes, trente-neuf joueurs : le vrai risque n'est pas qu'on choisisse
+   * mal, c'est qu'on entre dans une carte vide. Une porte qui annonce « 4
+   * inside » regle ca mieux qu'un horaire — on y va parce qu'il y a quelqu'un,
+   * pas parce que c'est l'heure.
+   *
+   * On compte les joueurs PRESENTS dans la simulation, pas ceux qui sont
+   * partis en donjon depuis la-bas : le chiffre repond a « est-ce que je vais
+   * croiser quelqu'un », et quelqu'un qui est sous terre, on ne le croise
+   * pas. */
+  const portes = {};
+  for (const [cle, R] of MONDES) portes[cle] = R.joueurs.size;
+  const s = JSON.stringify({ type: 'nexusEtat', joueurs, portes,
                              sacs: nexusSacs.map(sacs.vue) });
   for (const ws of nexusClients) if (ws.readyState === 1) ws.send(s);
 }, 150);
@@ -4861,7 +4992,12 @@ function traiteEvenements(R, ev) {
     if (!p.donjon) continue;
     const nom = p.addr ? (game._p(p.addr).name || null) : null;
     for (const c of realmClients) {
-      if (c.readyState !== 1 || realmDe(c) !== realm) continue;
+      /* Dans LE MEME monde, pas « hors donjon ». La comparaison etait faite
+         avec `realm` : une porte ouverte dans le monde vert se serait annoncee
+         a ceux du monde rouge, qui auraient couru vers un endroit ou il n'y a
+         rien. Le monde d'ou vient l'evenement est `R`, et c'est le seul dont
+         les habitants peuvent l'atteindre. */
+      if (c.readyState !== 1 || realmDe(c) !== R) continue;
       send(c, { type: 'realmPortailOuvert', id: p.id, donjon: p.donjon,
                 x: p.x, y: p.y, nom, duree: monde.PORTAIL.duree,
                 mien: c.addr === p.addr });
@@ -4879,7 +5015,7 @@ function traiteEvenements(R, ev) {
     /* Mourir dans un donjon en fait sortir : sans cette remise a zero, la
        socket resterait attachee a une simulation qu'elle a quittee, et
        `realmDe` lui rendrait un monde ou elle n'existe plus. */
-    if (ws) ws.donjon = null;
+    if (ws) { ws.donjon = null; ws.monde = null; }
     realmDernierMouv.delete(mort.addr);
     if (ws) realmClients.delete(ws);
     try {

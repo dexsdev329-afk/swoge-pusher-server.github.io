@@ -58,11 +58,20 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
    * une table exportee pour un essai finit par etre modifiee par du code de
    * production « puisqu'elle est la ». */
   const { Realm } = require('./realm');
+  /* ---- IL Y A PLUSIEURS MONDES OUVERTS ----
+   * Cet essai attrapait « la » simulation sans plan : il n'y en avait qu'une.
+   * Depuis la deuxieme porte du Nexus il y en a deux, et `monde0` valait celle
+   * qui avait battu en dernier — une fois sur deux, celle ou nos joueurs ne
+   * sont pas. On les collecte donc toutes, et l'on designe la bonne par LE
+   * JOUEUR QU'ELLE CONTIENT, ce qui est de toute facon plus juste que « la
+   * seule » : c'est le monde de nos joueurs qui nous interesse, pas le nombre
+   * de mondes qui tournent. */
   let monde0 = null;
+  const ouverts = new Set();
   const vivants = new Set();
   const pas0 = Realm.prototype.pas;
   Realm.prototype.pas = function (dt) {
-    if (this.plan) vivants.add(this); else monde0 = this;
+    if (this.plan) vivants.add(this); else ouverts.add(this);
     return pas0.call(this, dt);
   };
   require('./server');
@@ -123,7 +132,11 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
   const A = wa.address.toLowerCase();
   sa.send(JSON.stringify({ type: 'realmJoin' }));
   await attend(sa, 'realmEntre');
+  monde0 = [...ouverts].find((r) => r.joueurs.has(A)) || null;
   ok(!!monde0, 'la simulation du monde ouvert tourne');
+  /* Et c'est bien le monde par DEFAUT : on a franchi la porte sans rien
+     nommer, on ne doit pas se retrouver dans la carte rouge. */
+  ok(ouverts.size >= 1, `les mondes ouverts tournent tous (${ouverts.size})`);
 
   sa.recus.length = 0;
   sa.send(JSON.stringify({ type: 'realmPorte' }));
