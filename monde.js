@@ -1108,10 +1108,10 @@ const MONSTRES = {
    * fait qu'un donjon est un endroit : on n'y croise rien qu'on croise
    * ailleurs.
    *
-   * Ils empruntent leurs dessins en attendant les leurs — meme mecanisme que
-   * la Meduse avant son serpent, et pour la meme raison : une creature sans
-   * image ne se dessine pas du tout, ce qui est pire qu'une image approchante.
-   * `sprite` retire, la page cesse d'elle-meme de les teinter.
+   * Ils ont leurs propres dessins depuis les planches de pirates : plus
+   * d'emprunt, donc plus de `sprite`. La page lit l'absence de ce champ et
+   * cesse d'elle-meme de les teinter en violet — c'est exactement pour ca que
+   * l'emprunt vivait en donnee et pas dans un `if` cote page.
    *
    * Ils sont VOLONTAIREMENT faibles. La Fonderie s'ouvre sur la creature la
    * plus dure de l'anneau le plus dur ; la cave s'ouvre bien plus tot et sert
@@ -1119,7 +1119,6 @@ const MONSTRES = {
    * seraient une lecon qu'on ne peut pas suivre.
    */
   pirate: {
-    cle: 'pirate', nom: 'Cave Pirate', sprite: 'hoodrat',
     pv: 220, att: 34, def: 6, vitesse: 74, rayon: 40, vue: 520,
     contact: true, cadence: 0.55,
     tir: { portee: 380, vitesse: 260, sprite: 'vide', att: 26, cadence: 0.7 },
@@ -1129,7 +1128,6 @@ const MONSTRES = {
      creatures qui ne se jouent pas pareil valent mieux que deux barres de vie
      differentes. */
   piratesse: {
-    cle: 'piratesse', nom: 'Cave Piratess', sprite: 'sylvain',
     pv: 180, att: 26, def: 4, vitesse: 82, rayon: 38, vue: 620,
     contact: false, cadence: 0.5,
     tir: { portee: 540, vitesse: 320, sprite: 'vide', att: 30, cadence: 0.42 },
@@ -1140,7 +1138,6 @@ const MONSTRES = {
      dessin au sol, et c'est fait pour — il l'apprend ici, sur une creature qui
      ne le tue pas. */
   lieutenant: {
-    cle: 'lieutenant', nom: 'Pirate Lieutenant', sprite: 'rodeur',
     /* 340 et non 460 : au-dessus, il tenait plus longtemps que le drone de la
        Fonderie — une machine de l'anneau de lave. Un elite de premier donjon
        qui encaisse mieux qu'une creature de fin de jeu, c'est l'echelle des
@@ -1158,7 +1155,6 @@ const MONSTRES = {
    * etre un — on doit pouvoir le battre au niveau huit avec de la place et un
    * peu de patience. */
   dreadstump: {
-    cle: 'dreadstump', nom: 'Dreadstump the Pirate King', sprite: 'carapace',
     pv: 1800, att: 78, def: 20, vitesse: 62, rayon: 72, vue: 820,
     contact: true, cadence: 0.42,
     tir: { portee: 620, vitesse: 340, sprite: 'vide', att: 58, cadence: 0.45 },
