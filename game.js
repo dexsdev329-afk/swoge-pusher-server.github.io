@@ -1377,6 +1377,25 @@ class Game {
     return { n, total };
   }
 
+  /**
+   * Sont-ils amis ? La question se pose depuis le monde de combat — pour
+   * teindre un coequipier en vert et pour l'y rejoindre — et elle ne peut pas
+   * se poser dans `realm.js`, qui ne connait aucun compte.
+   *
+   * L'amitie est MUTUELLE dans ce fichier (`accepteAmi` pousse des deux
+   * cotes), mais on verifie quand meme les deux sens : une liste reparee a la
+   * main, une restauration partielle, et l'un des deux pourrait manquer. Une
+   * teleportation qui marcherait dans un sens et pas dans l'autre se lirait
+   * comme une panne.
+   */
+  sontAmis(a, b) {
+    const x = String(a || '').toLowerCase(), y = String(b || '').toLowerCase();
+    if (!x || !y || x === y) return false;
+    const p = this.players.get(x), q = this.players.get(y);
+    if (!p || !q) return false;
+    return (p.amis || []).indexOf(y) >= 0 && (q.amis || []).indexOf(x) >= 0;
+  }
+
   _tenueDe(c) {
     const out = [];
     for (const champ of ['ea', 'ar', 'ba', 'ef']) {

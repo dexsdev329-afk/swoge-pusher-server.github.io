@@ -3474,6 +3474,53 @@ wss.on('connection', (ws) => {
         return send(ws, messageEntree(realm, j, null));
       }
 
+      /* ---- REJOINDRE UN AMI ----
+       *
+       * Trois refus, et chacun protege quelque chose de different :
+       *
+       *  - PAS D'AMITIE, PAS DE SAUT. Sans ce verrou, n'importe qui se pose a
+       *    cote de n'importe qui : on traverse la carte gratuitement, et
+       *    l'anneau de lave s'atteint au niveau trois en cliquant un nom.
+       *  - PAS LE MEME MONDE, PAS DE SAUT. On ne se teleporte pas DANS un
+       *    donjon : il s'ouvre en abattant Optimus, et y entrer par la liste
+       *    des amis rendrait cette porte decorative. Le refus est structurel —
+       *    on compare les deux simulations, pas un drapeau qu'on pourrait
+       *    oublier de poser.
+       *  - PAS DANS LE NEXUS. Il n'y a rien a traverser dans un hall, et le
+       *    joueur n'est meme pas dans une simulation de combat : la question
+       *    ne se pose pas.
+       *
+       * On arrive A COTE et non dessus : deux personnages exactement
+       * superposes ne se distinguent plus, et celui qui saute masquerait celui
+       * qu'il vient rejoindre. */
+      if (m.type === 'realmRejoint') {
+        if (!ws.addr || !realmClients.has(ws)) return;
+        const cible = String(m.addr || '').toLowerCase();
+        if (!cible || cible === ws.addr)
+          return send(ws, { type: 'realmRejointRefus', raison: 'no-one' });
+        if (!game.sontAmis(ws.addr, cible))
+          return send(ws, { type: 'realmRejointRefus', raison: 'pas-ami' });
+        const R = realmDe(ws);
+        const moi = R.joueurs.get(ws.addr);
+        const lui = R.joueurs.get(cible);
+        /* Absent de MA simulation : il est ailleurs — un autre donjon, le
+           Nexus, ou deconnecte. Une seule reponse pour les trois, parce que du
+           point de vue du joueur c'est la meme chose : il n'est pas la. */
+        if (!moi || !lui)
+          return send(ws, { type: 'realmRejointRefus', raison: 'pas-la' });
+        const a = Math.random() * Math.PI * 2;
+        const d = monde.PORTAIL.rayon;
+        let x = lui.x + Math.cos(a) * d, y = lui.y + Math.sin(a) * d;
+        /* Jamais dans un rocher : on retombe sur lui plutot que dans la
+           pierre, quitte a se superposer une seconde. */
+        if (monde.bloque(R.obstacles, x, y, 22)) { x = lui.x; y = lui.y; }
+        x = Math.max(40, Math.min((R.plan ? monde.MONDE.w : monde.MONDE.w) - 40, x));
+        y = Math.max(40, Math.min((R.plan ? monde.MONDE.h : monde.MONDE.h) - 40, y));
+        moi.x = x; moi.y = y;
+        realmDernierMouv.set(ws.addr, Date.now());
+        return send(ws, { type: 'realmRejoint', addr: cible, x: Math.round(x), y: Math.round(y),
+                          nom: lui.nom || null });
+      }
       if (m.type === 'realmLeave') {
         if (!ws.addr) return;
         realmDe(ws).quitte(ws.addr);
@@ -4534,7 +4581,21 @@ const realmInterval = setInterval(() => {
   for (const ws of realmClients) {
     if (ws.readyState !== 1 || !ws.addr) continue;
     const vue = realmDe(ws).etatPour(ws.addr, 1400);
-    if (vue) ws.send(JSON.stringify({ type: 'realmEtat', ...vue }));
+    if (!vue) continue;
+    /* ---- QUI EST UN COEQUIPIER ----
+     * Le drapeau est pose ICI et pas dans `realm.js` : la simulation ne
+     * connait aucun compte, et lui apprendre les listes d'amis pour teindre un
+     * carre en vert reviendrait a lui faire lire la table des joueurs a chaque
+     * image. Le serveur, lui, connait les deux — c'est sa place.
+     *
+     * Il est calcule PAR SPECTATEUR : « ami » n'est pas une propriete de la
+     * personne, c'est une relation. Le meme joueur est vert pour l'un et gris
+     * pour l'autre dans le meme instantane. */
+    if (vue.joueurs && vue.joueurs.length) {
+      vue.joueurs = vue.joueurs.map((o) => (game.sontAmis(ws.addr, o.a)
+        ? { ...o, ami: 1 } : o));
+    }
+    ws.send(JSON.stringify({ type: 'realmEtat', ...vue }));
   }
 }, 100);
 if (realmInterval.unref) realmInterval.unref();
