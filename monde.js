@@ -152,13 +152,59 @@ const OBSTACLE_BIOME = { terre: 0, marais: 1, neige: 2, cendres: 3, lave: 3 };
  * `boss` est celle du fond. Elle ne se compte pas dans la population : un
  * donjon a UN boss, pas un boss par tirage.
  */
-const DONJON = {
-  especes: ['drone', 'ferraille', 'bobine'],
-  boss: 'fonderie',
-  /* Ce qui l'ouvre. Ecrit ici pour la meme raison : le monde dit QUI ouvre un
-     donjon, la simulation se contente de le constater. */
-  ouvreur: 'optimus',
+/*
+ * ---- LA TABLE DES DONJONS ----
+ *
+ * Il y en avait un, et il s'appelait `DONJON`. Le deuxieme aurait pu s'ecrire
+ * en dupliquant les fonctions de plan avec un `if (nom === 'cave')` dedans —
+ * et le troisieme aurait ajoute un `else if`. Une TABLE, plutot : un donjon
+ * est une entree, avec ses creatures, son boss, ce qui l'ouvre, et la FORME
+ * de son plan. Le jour ou il y en a cinq, `planDeDonjon` ne bouge pas d'une
+ * ligne.
+ *
+ * `forme` nomme le generateur, il ne le contient pas : les plans vivent plus
+ * bas, avec les tuiles et les murs, parce que c'est de la geometrie et pas du
+ * peuplement.
+ */
+const DONJONS = {
+  forge: {
+    nom: 'The Forge',
+    forme: 'couloir',
+    especes: ['drone', 'ferraille', 'bobine'],
+    boss: 'fonderie',
+    /* Ce qui l'ouvre. Ecrit ici pour la meme raison : le monde dit QUI ouvre
+       un donjon, la simulation se contente de le constater. */
+    ouvreur: 'optimus',
+    sol: 'donjon',
+    mur: 'donjon',
+  },
+  /* ---- LA CAVE DES PIRATES ----
+   *
+   * L'autre bout de l'echelle. La Fonderie s'ouvre sur la creature la plus
+   * dure de l'anneau le plus dur et garde une relique au fond ; celle-ci
+   * s'ouvre bien plus tot et rend des pieces ordinaires. C'est ce qui en fait
+   * un premier donjon : on y entre pour APPRENDRE ce qu'est un donjon, pas
+   * pour y risquer un equipement paye en argent reel.
+   *
+   * Sa forme est son autre difference : un reseau de salles rondes de tailles
+   * variables, relies par des passages etroits — on ne voit jamais la salle
+   * suivante depuis celle ou l'on est, et il faut choisir un embranchement.
+   * La Fonderie, elle, est un couloir : trois salles en ligne, et l'on sait
+   * toujours ou l'on va. Deux formes, deux facons de se sentir dedans.
+   */
+  cave: {
+    nom: 'Pirate Cave',
+    forme: 'grotte',
+    especes: ['pirate', 'piratesse', 'lieutenant'],
+    boss: 'dreadstump',
+    ouvreur: 'carapace',
+    sol: 'cave',
+    mur: 'cave',
+  },
 };
+/* L'ancien nom pointe sur la Fonderie : tout ce qui disait `DONJON` parlait
+   d'elle, et rien de ce qui la nomme n'a besoin de savoir qu'il y en a deux. */
+const DONJON = DONJONS.forge;
 
 /*
  * ---- LE PORTAIL ----
@@ -212,7 +258,14 @@ const PORTAIL = {
 };
 
 /* Qui ouvre quoi. La valeur EST le donjon : voir le commentaire ci-dessus. */
-const PORTAIL_DE = { optimus: 'forge' };
+const PORTAIL_DE = Object.keys(DONJONS).reduce((o, k) => {
+  /* DERIVE de la table, pas recopie a cote d'elle. Deux listes a tenir
+     d'accord finissent toujours par se contredire — et celle-la se
+     contredirait en silence : une creature declaree ouvreuse mais absente
+     d'ici n'ouvrirait rien, sans qu'aucune erreur ne le dise. */
+  o[DONJONS[k].ouvreur] = k;
+  return o;
+}, {});
 
 /*
  * ---- ET QUI OUVRE LE CHEMIN DU RETOUR ----
@@ -230,7 +283,13 @@ const PORTAIL_DE = { optimus: 'forge' };
  * Ce n'est pas de la difficulte, c'est du chemin — et le chemin de retour
  * d'un donjon fini n'a rien a raconter.
  */
-const RETOUR_DE = { fonderie: 1 };
+/* DERIVE de la table, comme PORTAIL_DE : tout boss de donjon ouvre la porte
+   du retour en tombant. L'ecrire a la main aurait laisse le deuxieme donjon
+   sans sortie au fond — un joueur enferme apres avoir gagne. */
+const RETOUR_DE = Object.keys(DONJONS).reduce((o, k) => {
+  o[DONJONS[k].boss] = 1;
+  return o;
+}, {});
 
 /*
  * ---- LE PLAN DU DONJON ----
@@ -280,6 +339,8 @@ const DONJON_ORIGINE = { x: 6, y: 6 };
    blocs, une seule collision, trois planches — c'est la lecon de MUR_BASE,
    poussee d'un cran. */
 const MUR_DONJON = 8;
+/* De quoi loger le mur exterieur quand on ramene le plan dans le positif. */
+const MARGE_CAVE = 4;
 
 /**
  * Les tuiles de SOL du donjon, en coordonnees de tuile. La forme entiere tient
@@ -318,6 +379,148 @@ function planDonjon() {
     }
   }
   return { sol, salles, tuile: DONJON_TUILE };
+}
+
+/*
+ * ---- LA GROTTE : UN RESEAU DE SALLES RONDES ----
+ *
+ * La Fonderie est un couloir : trois salles carrees en ligne, et l'on sait
+ * toujours ou l'on va. La cave est l'inverse — des disques de tailles
+ * differentes, relies par des passages etroits, avec des embranchements et des
+ * culs-de-sac. On ne voit pas la salle suivante depuis celle ou l'on est.
+ *
+ * ---- pourquoi on POSE les salles avant de dessiner le sol ----
+ *
+ * Creuser au fur et a mesure obligerait a savoir, pendant qu'on creuse, ce qui
+ * a deja ete creuse — donc a relire le sol pour placer la salle suivante. On
+ * construit d'abord une LISTE de disques et de passages, on verifie les
+ * chevauchements sur des centres et des rayons (deux soustractions), et on
+ * rasterise a la fin, une seule fois.
+ *
+ * ---- pourquoi le boss est le PLUS LOIN et pas le dernier pose ----
+ *
+ * Le dernier pose peut tres bien etre une impasse collee a l'entree : le
+ * tirage ne garantit rien. « Le plus loin de l'entree » est une propriete du
+ * plan et non de l'ordre dans lequel on l'a ecrit — et c'est ce qu'on veut
+ * dire quand on dit « au fond ».
+ */
+const CAVE = {
+  salles: 13,
+  rayon: { min: 3, max: 6 },
+  /* Le fond est nettement plus grand : on doit sentir en entrant qu'on est
+     arrive quelque part, et un boss entoure de sbires a besoin de place. */
+  rayonBoss: 9,
+  couloir: { min: 3, max: 8, large: 2 },
+  /* Combien de fois on tente de poser une salle avant d'abandonner celle-la.
+     Sans borne, un plan trop serre boucle pour toujours — et un serveur qui
+     ne repond plus est pire qu'un donjon avec onze salles au lieu de treize. */
+  essais: 60,
+};
+
+function planCave(alea) {
+  const r = () => (typeof alea === 'function' ? alea() : Math.random());
+  const ent = (a, b) => a + Math.floor(r() * (b - a + 1));
+
+  const salles = [{ c: 0, l: 0, rayon: ent(CAVE.rayon.min, CAVE.rayon.max), role: 'entree' }];
+  const passages = [];
+  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+  for (let i = 1; i < CAVE.salles; i++) {
+    let pose = null;
+    for (let k = 0; k < CAVE.essais && !pose; k++) {
+      /* On tire le parent parmi TOUTES les salles : ne prendre que la
+         derniere donnerait un serpent, ne prendre que la premiere donnerait
+         une etoile. Au hasard, on obtient des branches — ce que montre la
+         carte d'origine. */
+      const p = salles[Math.floor(r() * salles.length)];
+      const d = DIRS[Math.floor(r() * DIRS.length)];
+      const rayon = ent(CAVE.rayon.min, CAVE.rayon.max);
+      const loin = p.rayon + rayon + ent(CAVE.couloir.min, CAVE.couloir.max);
+      const c = p.c + d[0] * loin, l = p.l + d[1] * loin;
+      /* Deux salles qui se touchent ne font plus deux salles. La marge de
+         deux tuiles laisse la place au mur qui les separe — sans elle, le
+         mur n'aurait nulle part ou tenir et les disques fusionneraient. */
+      const libre = salles.every((q) => Math.hypot(q.c - c, q.l - l) > q.rayon + rayon + 2);
+      if (libre) pose = { c, l, rayon, role: 'salle', de: p };
+    }
+    if (!pose) continue;
+    salles.push(pose);
+    passages.push({ a: { c: pose.de.c, l: pose.de.l }, b: { c: pose.c, l: pose.l } });
+  }
+
+  /* ---- LE FOND ----
+   * Le plus loin de l'entree, mesure sur le plan et non sur l'ordre de pose. */
+  let fond = salles[0], loinMax = -1;
+  for (const q of salles) {
+    const d = Math.hypot(q.c - salles[0].c, q.l - salles[0].l);
+    if (d > loinMax) { loinMax = d; fond = q; }
+  }
+  if (fond !== salles[0]) {
+    fond.role = 'fond';
+    /* ---- ON L'AGRANDIT AUTANT QUE LA PLACE LE PERMET ----
+     * Poser `rayonBoss` sans regarder autour rouvrait le chevauchement qu'on
+     * venait d'ecarter : la verification a eu lieu avec l'ANCIEN rayon, et la
+     * salle du fond avalait sa voisine. On reprend donc la meme mesure —
+     * garder deux tuiles entre les bords — et on s'arrete au premier
+     * obstacle. Le fond reste la plus grande salle du plan, simplement pas
+     * toujours de la meme taille, ce qui est deja vrai de toutes les autres. */
+    let place = CAVE.rayonBoss;
+    for (const q of salles) {
+      if (q === fond) continue;
+      const libre = Math.hypot(q.c - fond.c, q.l - fond.l) - q.rayon - 2;
+      if (libre < place) place = libre;
+    }
+    fond.rayon = Math.max(fond.rayon, Math.min(CAVE.rayonBoss, Math.floor(place)));
+  }
+
+  /* ---- ON RAMENE TOUT DANS LE POSITIF ----
+   * Les salles poussent dans les quatre sens depuis zero : la moitie du plan
+   * est donc en coordonnees negatives. On translate a la fin plutot que de
+   * deviner une origine au depart — deviner, c'est se retrouver un jour avec
+   * un donjon qui deborde par la gauche sans que rien ne l'annonce. */
+  let cMin = Infinity, lMin = Infinity;
+  for (const q of salles) {
+    cMin = Math.min(cMin, q.c - q.rayon);
+    lMin = Math.min(lMin, q.l - q.rayon);
+  }
+  const dc = MARGE_CAVE - cMin, dl = MARGE_CAVE - lMin;
+  for (const q of salles) { q.c += dc; q.l += dl; }
+  for (const t of passages) { t.a.c += dc; t.a.l += dl; t.b.c += dc; t.b.l += dl; }
+
+  /* ---- ET MAINTENANT ON CREUSE ---- */
+  const sol = new Set();
+  const cle = (c, l) => c + ',' + l;
+  for (const q of salles) {
+    for (let c = q.c - q.rayon; c <= q.c + q.rayon; c++) {
+      for (let l = q.l - q.rayon; l <= q.l + q.rayon; l++) {
+        /* Un DISQUE, pas un carre : c'est ce qui fait une grotte plutot qu'un
+           entrepot. Le demi-pas rend le bord moins dentele. */
+        if (Math.hypot(c - q.c, l - q.l) <= q.rayon + 0.5) sol.add(cle(c, l));
+      }
+    }
+  }
+  const demi = Math.floor(CAVE.couloir.large / 2);
+  for (const t of passages) {
+    const dcs = Math.sign(t.b.c - t.a.c), dls = Math.sign(t.b.l - t.a.l);
+    const n = Math.max(Math.abs(t.b.c - t.a.c), Math.abs(t.b.l - t.a.l));
+    for (let k = 0; k <= n; k++) {
+      const c = t.a.c + dcs * k, l = t.a.l + dls * k;
+      for (let e = -demi; e <= demi + (CAVE.couloir.large % 2 === 0 ? 0 : 0); e++) {
+        /* Le passage est perpendiculaire a sa direction : elargir dans le sens
+           de la marche l'allongerait au lieu de l'epaissir. */
+        if (dcs) sol.add(cle(c, l + e)); else sol.add(cle(c + e, l));
+      }
+    }
+  }
+
+  return {
+    sol,
+    salles: salles.map((q) => ({
+      role: q.role, cote: q.rayon * 2, rayon: q.rayon, c: q.c, l: q.l,
+      x: (q.c + 0.5) * DONJON_TUILE, y: (q.l + 0.5) * DONJON_TUILE,
+    })),
+    tuile: DONJON_TUILE,
+  };
 }
 
 /**
@@ -388,26 +591,36 @@ function mursDonjon(plan, depart) {
  * arriver dans un donjon et se faire toucher avant d'avoir pose le pied par
  * terre n'est pas une difficulte, c'est un piege.
  */
-function peuplementDonjon(alea) {
+function peuplementDonjon(alea, nom, plan) {
   const r = () => (typeof alea === 'function' ? alea() : Math.random());
-  const plan = planDonjon();
+  const D = DONJONS[nom] || DONJON;
+  const p = plan || planDonjon();
   const out = [];
-  for (const s of plan.salles) {
+  for (const s of p.salles) {
+    /* La salle d'arrivee reste VIDE. On y apparait : y poser des creatures
+       reviendrait a faire commencer le combat avant que le joueur ait vu ou
+       il est. */
     if (s.role === 'entree') continue;
-    const n = s.role === 'fosse' ? 9 : 5;
+    /* Le nombre suit la TAILLE de la salle, il n'est plus ecrit en face de
+       chaque role : une grotte a treize salles de rayons differents, et
+       « cinq partout » aurait tasse les petites et vide les grandes. */
+    const n = s.role === 'fond' ? 9 : Math.max(2, Math.round(s.cote * 0.45));
     const demi = (s.cote / 2 - 1.2) * DONJON_TUILE;
     for (let i = 0; i < n; i++) {
-      const e = DONJON.especes[Math.floor(r() * DONJON.especes.length)]
-                || DONJON.especes[0];
+      const e = D.especes[Math.floor(r() * D.especes.length)] || D.especes[0];
       out.push({ espece: e, biome: 'donjon',
                  x: s.x + (r() * 2 - 1) * demi,
                  y: s.y + (r() * 2 - 1) * demi });
     }
   }
-  const fond = plan.salles[plan.salles.length - 1];
+  /* LE FOND SE CHERCHE PAR SON ROLE, pas par sa position dans la liste. Dans
+     un couloir c'est la derniere salle ; dans une grotte c'est la plus
+     eloignee de l'entree, qui peut avoir ete posee n'importe quand. Prendre
+     `salles[length-1]` aurait mis le boss dans une impasse au hasard. */
+  const fond = p.salles.find((s) => s.role === 'fond') || p.salles[p.salles.length - 1];
   /* Le boss au FOND du fond, pas au centre : on doit le voir en entrant sans
      etre deja a portee de son cercle. */
-  out.push({ espece: DONJON.boss, biome: 'donjon', boss: 1,
+  out.push({ espece: D.boss, biome: 'donjon', boss: 1,
              x: fond.x + (fond.cote / 2 - 2) * DONJON_TUILE, y: fond.y });
   return out;
 }
@@ -430,10 +643,17 @@ function peuplementDonjon(alea) {
  * liste.
  */
 function planDeDonjon(nom, alea) {
-  const plan = planDonjon();
-  const entree = plan.salles[0];
+  const cle = DONJONS[nom] ? nom : 'forge';
+  const D = DONJONS[cle];
+  /* ---- LA FORME EST UNE DONNEE, PAS UN `if` ----
+   * `forme` nomme le generateur. Le jour ou un troisieme donjon arrive avec
+   * une troisieme forme, il s'ajoute a la table et a cette ligne — le reste
+   * de la fonction ne bouge pas, parce que les deux generateurs rendent
+   * exactement la meme chose : un sol, des salles, une taille de tuile. */
+  const plan = D.forme === 'grotte' ? planCave(alea) : planDonjon();
+  const entree = plan.salles.find((x) => x.role === 'entree') || plan.salles[0];
   return {
-    nom: String(nom || 'forge'),
+    nom: cle,
     /* On arrive dans le sas, DECALE de la porte de sortie : au centre exact on
        serait pose dessus, et le panneau proposerait de repartir a la seconde ou
        l'on arrive. */
@@ -445,7 +665,7 @@ function planDeDonjon(nom, alea) {
        jamais le fait d'y etre coince. */
     sortie: { x: entree.x, y: entree.y },
     obstacles: mursDonjon(plan, 1),
-    peuplement: peuplementDonjon(alea),
+    peuplement: peuplementDonjon(alea, cle, plan),
     /* ---- UN SEUL ANNEAU, ET SA BORNE EST FINIE ----
      * `Infinity` ne traverse pas JSON : il en ressort `null`, et `r <= null`
      * est faux pour tout rayon positif. La page serait donc tombee dans le
@@ -453,7 +673,11 @@ function planDeDonjon(nom, alea) {
      * les tuiles au bon endroit, la mauvaise texture, et rien nulle part pour
      * dire pourquoi. Quatre-vingt-dix-neuf demi-largeurs de carte : c'est
      * « partout » sans etre l'infini. */
-    anneaux: [{ biome: 'donjon', jusqua: 99 }],
+    /* Le sol de CE donjon : la Fonderie a sa pierre, la cave son bois. La
+       page lit le biome de l'anneau pour choisir sa planche — un donjon de
+       plus, c'est une texture de plus, pas un mode de dessin de plus. */
+    anneaux: [{ biome: D.sol || 'donjon', jusqua: 99 }],
+    mur: D.mur || 'donjon',
     salles: [],
     /* ---- LE SOL, TUILE PAR TUILE ----
      * Et pas « trois rectangles et deux couloirs » : la page redessinerait
@@ -876,6 +1100,71 @@ const MONSTRES = {
    * Elle vaut cher en XP parce qu'elle change la facon de jouer un secteur,
    * pas parce qu'elle a beaucoup de vie.
    */
+  /*
+   * ==================== LES PIRATES DE LA CAVE ====================
+   *
+   * Trois sbires et un roi, et ils ne vivent QUE dans la cave — aucun n'est
+   * dans `PEUPLEMENT`, donc aucun ne nait dans le monde ouvert. C'est ce qui
+   * fait qu'un donjon est un endroit : on n'y croise rien qu'on croise
+   * ailleurs.
+   *
+   * Ils empruntent leurs dessins en attendant les leurs — meme mecanisme que
+   * la Meduse avant son serpent, et pour la meme raison : une creature sans
+   * image ne se dessine pas du tout, ce qui est pire qu'une image approchante.
+   * `sprite` retire, la page cesse d'elle-meme de les teinter.
+   *
+   * Ils sont VOLONTAIREMENT faibles. La Fonderie s'ouvre sur la creature la
+   * plus dure de l'anneau le plus dur ; la cave s'ouvre bien plus tot et sert
+   * a apprendre ce qu'est un donjon. Des sbires de six cents points de vie y
+   * seraient une lecon qu'on ne peut pas suivre.
+   */
+  pirate: {
+    cle: 'pirate', nom: 'Cave Pirate', sprite: 'hoodrat',
+    pv: 220, att: 34, def: 6, vitesse: 74, rayon: 40, vue: 520,
+    contact: true, cadence: 0.55,
+    tir: { portee: 380, vitesse: 260, sprite: 'vide', att: 26, cadence: 0.7 },
+    xp: 120,
+  },
+  /* Elle tire plus vite et de plus loin, et elle encaisse moins : deux
+     creatures qui ne se jouent pas pareil valent mieux que deux barres de vie
+     differentes. */
+  piratesse: {
+    cle: 'piratesse', nom: 'Cave Piratess', sprite: 'sylvain',
+    pv: 180, att: 26, def: 4, vitesse: 82, rayon: 38, vue: 620,
+    contact: false, cadence: 0.5,
+    tir: { portee: 540, vitesse: 320, sprite: 'vide', att: 30, cadence: 0.42 },
+    xp: 130,
+  },
+  /* Le lieutenant est le seul des trois qui punisse une erreur de placement :
+     il frappe une ZONE, annoncee. C'est la premiere fois qu'un joueur voit ce
+     dessin au sol, et c'est fait pour — il l'apprend ici, sur une creature qui
+     ne le tue pas. */
+  lieutenant: {
+    cle: 'lieutenant', nom: 'Pirate Lieutenant', sprite: 'rodeur',
+    /* 340 et non 460 : au-dessus, il tenait plus longtemps que le drone de la
+       Fonderie — une machine de l'anneau de lave. Un elite de premier donjon
+       qui encaisse mieux qu'une creature de fin de jeu, c'est l'echelle des
+       difficultes qui se retourne. Il reste le plus dur des trois pirates, et
+       c'est tout ce qu'on lui demande. */
+    pv: 340, att: 42, def: 12, vitesse: 66, rayon: 46, vue: 640,
+    contact: true, cadence: 0.5,
+    tir: { portee: 460, vitesse: 280, sprite: 'vide', att: 34, cadence: 0.6 },
+    zone: { annonce: 1.3, rayon: 150, att: 52, cadence: 0.25 },
+    xp: 300,
+  },
+  /* ---- DREADSTUMP, LE ROI PIRATE ----
+   * Il tient huit fois un sbire, mais il reste douze fois plus tendre que la
+   * Fonderie : c'est un PREMIER boss. Il doit se sentir comme un mur sans en
+   * etre un — on doit pouvoir le battre au niveau huit avec de la place et un
+   * peu de patience. */
+  dreadstump: {
+    cle: 'dreadstump', nom: 'Dreadstump the Pirate King', sprite: 'carapace',
+    pv: 1800, att: 78, def: 20, vitesse: 62, rayon: 72, vue: 820,
+    contact: true, cadence: 0.42,
+    tir: { portee: 620, vitesse: 340, sprite: 'vide', att: 58, cadence: 0.45 },
+    zone: { annonce: 1.5, rayon: 200, att: 84, cadence: 0.22 },
+    xp: 2200,
+  },
   meduse: {
     cle: 'meduse', nom: 'Medusa',
     /* Elle a son propre dessin depuis le serpent : plus d'emprunt, donc plus
@@ -1654,6 +1943,14 @@ const RARETE_ANNEAU = {
      aurait suffi d'y rester pour depasser tout le reste du jeu, sans jamais
      avoir a le finir. */
   donjon: 'mythique',
+  /* ---- ET LA CAVE, DEVANT ----
+   * Elle s'ouvre sur un boss de neige et non sur celui de la lave : ses
+   * pirates rendent donc du RARE, comme le marais. Lui donner du mythique
+   * parce que « c'est un donjon » aurait fait du premier donjon le meilleur
+   * endroit du jeu, et il n'y aurait plus eu de raison d'aller plus loin. Le
+   * mot « donjon » ne vaut rien en soi ; c'est ce qu'on a du abattre pour y
+   * entrer qui fixe le prix. */
+  cave: 'rare',
 };
 
 /* La couleur EST le prix. Un joueur qui voit un sac dore de l'autre bout de
@@ -1686,7 +1983,7 @@ const CHANCE_RELIQUE_BOSS = 1 / 40;
    place du gardien dans la lave ; le gardien reste dans les salles, ou son
    butin est garanti par la salle elle-meme. */
 const BOSS = { gardien: 1, brasier: 1, machine: 1, carapace: 1, optimus: 1,
-               fonderie: 1 };
+               fonderie: 1, dreadstump: 1 };
 
 /*
  * ---- CELUI QUI OUVRE LE DONJON DOIT EXISTER ----
@@ -1795,7 +2092,14 @@ function naitDans(biome, alea) {
  * Une TABLE, pas un drapeau sur la creature : le jour ou un deuxieme donjon
  * garde un autre rang, il s'ecrit ici, et `butinDe` ne bouge pas d'une ligne.
  */
-const BUTIN_GARANTI = { fonderie: 'relique' };
+/* ---- CE QUI TOMBE A COUP SUR, AU FOND ----
+ * Une table, pas un drapeau : chaque boss de donjon nomme le rang qu'il
+ * garantit. Dreadstump rend de l'EPIQUE — un cran au-dessus de ce que ses
+ * pirates laissent, un cran sous le mythique du monde ouvert. On repart de la
+ * cave avec quelque chose de sur, sans que ce soit mieux que ce qu'on trouve
+ * en jouant normalement : c'est ce qui en fait un premier donjon plutot qu'un
+ * raccourci. */
+const BUTIN_GARANTI = { fonderie: 'relique', dreadstump: 'epique' };
 
 /* Un sur cinquante. Le chiffre vient de ce qu'il doit produire : environ une
    potion toutes les vingt minutes de chasse soutenue — assez rare pour qu'on
@@ -1950,7 +2254,7 @@ module.exports = {
   SALLE, SALLE_ANNEAUX, SALLE_BUTIN, MUR_BASE, salles, mursDe, dansLaSalle, DONJON,
   PORTAIL, PORTAIL_DE, RETOUR_DE, MUR_DONJON, DONJON_TUILE, DONJON_SALLES,
   DONJON_COULOIR, DONJON_ORIGINE,
-  planDonjon, mursDonjon, peuplementDonjon, planDeDonjon,
+  planDonjon, planCave, CAVE, DONJONS, mursDonjon, peuplementDonjon, planDeDonjon,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   choisitEspece,
   regenParSeconde, pouvoirDeStat,

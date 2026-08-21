@@ -779,6 +779,11 @@ function messageEntree(R, j, plan) {
      * reseau — et le desaccord serait MUET : le donjon se serait dessine avec
      * la pierre des salles gardees, sans que rien ne plante pour le dire. */
     murs: { base: monde.MUR_BASE, donjon: monde.MUR_DONJON },
+    /* Quelle planche de mur pour CE donjon. Le plan la porte deja ; on la
+       remonte au client plutot que de lui faire deduire la texture du nom du
+       donjon — deux tables a tenir d'accord, et la troisieme cave aurait ses
+       murs dans une seule des deux. */
+    mur: (plan && plan.mur) || undefined,
     /* ---- LES BLOCS, UNE FOIS ----
        Ils ne bougent jamais : les renvoyer dix fois par seconde dans l'etat du
        monde serait deux cent quarante entrees rendues a l'identique, pour rien.
