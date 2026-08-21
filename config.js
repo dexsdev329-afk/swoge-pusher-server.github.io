@@ -1289,16 +1289,22 @@ module.exports = {
   /* Le marche demande un depot, comme le virement : c'est le meme geste —
      faire passer de la valeur d'un compte a un autre — et la meme raison. */
   MARCHE_REQUIERT_DEPOT: env('MARCHE_REQUIERT_DEPOT', '1') === '1',
-  /* ---- LE FOND DE LA MAISON, DERRIERE LE STOCK DES JOUEURS ----
-   * Les potions de soin viennent d'abord des joueurs qui en ont mis en vente ;
-   * quand la file est vide, la boutique en vend encore au meme prix. Ce n'est
-   * pas une concession : ici la mort detruit un equipement paye en argent
-   * reel, et « il n'y en avait plus a vendre » serait une perte causee par la
-   * boutique. Le jour ou le stock des joueurs tiendra tout seul, poser 0 ferme
-   * le robinet — le marche, lui, ne change pas d'une ligne.
-   * Les fioles de STAT n'ont jamais de fond : leur prix tient entierement au
-   * fait qu'aucune n'existe hors de celles qu'un joueur est alle chercher. */
-  POTIONS_FOND_MAISON: env('POTIONS_FOND_MAISON', '1') === '1',
+  /* ---- LE FOND DE LA MAISON EST FERME ----
+   *
+   * La boutique ne fabrique plus de potions : tout ce qui s'y vend a ete
+   * trouve puis mis en vente par un joueur. File vide, rayon vide — « OUT OF
+   * STOCK », et c'est aux joueurs de le remplir.
+   *
+   * C'est un choix de jeu, et il a un prix qu'il vaut mieux connaitre :
+   * personne ne peut acheter de potion de soin tant que personne n'en vend, et
+   * ici la mort detruit un equipement paye en argent reel. Poser
+   * POTIONS_FOND_MAISON=1 rouvre le robinet sans toucher a une ligne du
+   * marche — la maison se remet alors DERRIERE la file, jamais devant.
+   *
+   * Les fioles de STAT n'ont jamais eu de fond, et n'en auront pas : leur prix
+   * tient entierement au fait qu'aucune n'existe hors de celles qu'un joueur
+   * est alle chercher. */
+  POTIONS_FOND_MAISON: env('POTIONS_FOND_MAISON', '0') === '1',
   /* ---- LE PRIX D'UN NOM ----
    *
    * Un nom public est UNIQUE sur toute la plateforme : le prendre, c'est le

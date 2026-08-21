@@ -123,14 +123,18 @@ console.log('\n-- ses propres annonces --');
   g._p(A).potions = { vie: 10 };
   g.metPotionEnVente(A, 'vie', 10);
   const av = solde(g, A);
-  const r = g.achetePotion(A, 'vie', 3);
-  /* Ce n'est pas une erreur : un joueur qui a dix potions en vente doit
-     pouvoir en acheter. Mais il ne se les rachete pas — il y perdrait la
-     moitie du prix a chaque tour, pour rien. */
-  eq(r.desJoueurs, 0, 'on saute ses propres annonces');
-  eq(r.deLaMaison, 3, 'et la maison sert, elle');
+  /* Se racheter ses propres potions serait perdre la moitie du prix a chaque
+     tour, pour rien. On saute donc ses annonces — et comme la maison ne vend
+     plus de sa poche, il ne reste rien a acheter : le refus est le bon
+     resultat, pas un accident. Ce qu il veut, c est les REPRENDRE. */
+  assert.throws(() => g.achetePotion(A, 'vie', 3), /for sale right now/i);
+  n++; console.log('  ok   on ne se rachete pas a soi-meme');
   eq(ligne(g, A, 'vie').enVente, 10, 'son annonce est intacte');
-  eq(av - solde(g, A), 30, 'il a paye plein tarif, sans rien se reverser');
+  eq(solde(g, A), av, 'et rien n a bouge sur son solde');
+  /* Un AUTRE joueur, lui, achete sans probleme. */
+  g._p(B).potions = {};
+  const r = g.achetePotion(B, 'vie', 3);
+  eq(r.desJoueurs, 3, 'un autre joueur, lui, est servi');
 }
 
 // ================== 5. REPRENDRE SON STOCK
@@ -181,10 +185,11 @@ console.log('\n-- les fioles de stat --');
   g.retirePotionDeLaVente(A, 'st:def', 1);
   assert.throws(() => g.acheteFioleAuMarche(B, 'def', 1), /for sale right now/i);
   n++; console.log('  ok   file vide : la maison n en fabrique AUCUNE');
-  /* Alors que la potion de soin, elle, a un fond — c'est ce qui evite qu on
-     meure faute de vendeur. */
-  const r = g.achetePotion(C, 'vie', 2);
-  eq(r.deLaMaison, 2, 'la potion de soin, elle, reste achetable a la boutique');
+  /* Et la potion de soin est logee a la meme enseigne depuis que le fond de
+     la maison est ferme : rien en vente, rien a acheter. Le message le dit,
+     au lieu de laisser croire a une panne. */
+  assert.throws(() => g.achetePotion(C, 'vie', 2), /players stock the shop/i);
+  n++; console.log('  ok   et la potion de soin non plus ne sort pas de nulle part');
 }
 
 // ================== 7. LES DEUX ETALS NE SE MELANGENT PAS
@@ -239,7 +244,8 @@ console.log('\n-- ce qu on ne peut pas payer --');
   g3.metPotionEnVente(A, 'vie', 3);
   const r3 = g3.achetePotion(B, 'vie', 10);
   eq(r3.desJoueurs, 3, 'les trois du joueur partent');
-  eq(r3.deLaMaison, 7, 'et la maison complete les sept autres');
+  eq(r3.deLaMaison, 0, 'et la maison n en fabrique aucune');
+  eq(r3.livre, 3, 'on livre les trois qui existaient, et on n en facture pas plus');
 }
 
 // ================== 9. TOUT SURVIT A UNE SAUVEGARDE
@@ -260,6 +266,92 @@ console.log('\n-- apres un redemarrage --');
   eq(ligne(g2, A, 'st:att').enVente, 2, 'les fioles aussi');
   g2.retirePotionDeLaVente(A, 'vie', 7);
   eq(g2._p(A).potions.vie, 7, 'et on les recupere de l autre cote');
+}
+
+// ================== 10. LES FIOLES DU SAC SE VENDENT AUSSI
+console.log('\n-- la fiole qu on a SUR SOI --');
+{
+  /* « J ai pourtant une potion de defense sur moi mais je peux pas la mettre
+     dans le stock du shop. » Le comptoir ne regardait que le COFFRE. Dire
+     « tu n en as pas » a quelqu un qui l a dans son sac est la pire reponse
+     possible : elle est fausse. */
+  const g = neuf();
+  g._p(A).sacFioles = { def: 2 };
+  g._p(A).fioles = {};
+  eq(ligne(g, A, 'st:def').jai, 2, 'le comptoir voit les fioles du SAC');
+  g.metPotionEnVente(A, 'st:def', 1);
+  eq(ligne(g, A, 'st:def').enVente, 1, 'et on peut les mettre en vente');
+  eq(g._p(A).sacFioles.def, 1, 'elle est partie du sac');
+
+  /* ---- ON PREND DU SAC D ABORD ----
+   * Meme regle que pour la boire : ce qu on porte est ce qui peut se perdre,
+   * donc ce dont on se defait en premier. Vider le coffre pendant qu une
+   * fiole risque sa peau dans le sac serait exactement le contraire. */
+  const g2 = neuf();
+  g2._p(A).sacFioles = { att: 1 };
+  g2._p(A).fioles = { att: 5 };
+  g2.metPotionEnVente(A, 'st:att', 1);
+  eq(g2._p(A).sacFioles.att, undefined, 'la fiole du sac part la premiere');
+  eq(g2._p(A).fioles.att, 5, 'et le coffre n a pas bouge');
+  /* Au-dela, on pioche dans le coffre : le compte est le total des deux. */
+  g2.metPotionEnVente(A, 'st:att', 3);
+  eq(g2._p(A).fioles.att, 2, 'ensuite seulement on entame le coffre');
+}
+
+// ================== 11. UNE PILE DE FIOLES NE MANGE QU UNE CASE
+console.log('\n-- une case pour toute la pile --');
+{
+  const g = neuf();
+  const p = g._p(A);
+  p.sacFioles = { def: 3 };
+  p.sac = {};
+  p.sacCases = null;
+  const sac = g.sacPour(A);
+  eq(sac.length, 1, `trois fioles de defense tiennent sur UNE case (${sac.length})`);
+  eq(sac[0].quantite, 3, 'et la case dit qu il y en a trois');
+  eq(g.sacRempli(A), 1, 'le sac n est rempli que d une place');
+
+  /* Deux STATS differentes restent deux cases : ce sont deux objets
+     differents, et les empiler ensemble obligerait a lire un chiffre pour
+     savoir laquelle on boit. */
+  p.sacFioles = { def: 3, att: 2 };
+  p.sacCases = null;
+  eq(g.sacPour(A).length, 2, 'deux stats differentes font deux cases');
+  eq(g.sacRempli(A), 2, 'soit deux places');
+
+  /* ---- ET LE SAC NE SE DIT PLUS PLEIN POUR RIEN ----
+   * Avant, neuf fioles mangeaient les huit places et le refus tombait alors
+   * que l ecran montrait des cases vides. */
+  p.sacFioles = { def: 9 };
+  p.sacCases = null;
+  eq(g.sacRempli(A), 1, 'neuf fioles de la meme stat : toujours une seule place');
+  ok(g.sacPour(A).length === 1, 'et une seule case a l ecran');
+  /* Le compte de `sacRempli` et celui de `_casesDuSac` doivent dire la MEME
+     chose, sinon « sac plein » tombe devant des cases vides. */
+  const cases = g._casesDuSac(p).filter((c) => c !== null).length;
+  eq(cases, g.sacRempli(A), `les deux comptes concordent (${cases})`);
+}
+
+// ================== 12. RUPTURE DE STOCK
+console.log('\n-- rupture de stock --');
+{
+  const g = neuf();
+  /* Le fond de la maison est ferme : la boutique ne fabrique plus rien. */
+  eq(cfg.POTIONS_FOND_MAISON, false, 'la maison ne vend plus de sa poche');
+  assert.throws(() => g.achetePotion(A, 'vie', 1), /No Health Potion for sale/i);
+  n++; console.log('  ok   file vide : l achat est refuse, et le message le dit');
+  eq(ligne(g, A, 'vie').stock, 0, 'le stock affiche zero');
+
+  /* Et le compteur DESCEND a mesure qu on achete. */
+  g._p(B).potions = { vie: 5 };
+  g.metPotionEnVente(B, 'vie', 5);
+  eq(ligne(g, A, 'vie').stock, 5, 'un joueur en met cinq : le stock monte a cinq');
+  g.achetePotion(A, 'vie', 2);
+  eq(ligne(g, A, 'vie').stock, 3, 'on en achete deux : il descend a trois');
+  g.achetePotion(A, 'vie', 3);
+  eq(ligne(g, A, 'vie').stock, 0, 'on prend le reste : il retombe a zero');
+  assert.throws(() => g.achetePotion(A, 'vie', 1), /for sale right now/i);
+  n++; console.log('  ok   et le rayon repasse en rupture');
 }
 
 console.log(`\nmarche_potions.test.js — ${n} verifications, 0 echec(s)`);

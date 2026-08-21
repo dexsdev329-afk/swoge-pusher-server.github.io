@@ -1331,6 +1331,52 @@ class Game {
    * l'epee mythique, si.
    */
   /** Ce que porte un personnage, en clair, pour la ligne de classement. */
+  /*
+   * ==================== CE QU'UN PERSONNAGE A DEJA ATTEINT POUR TOUJOURS ====================
+   *
+   * Pour chaque stat : `max`, ce qu'on peut atteindre en tout — niveau vingt
+   * plus toutes les potions — et `atteint`, la part PERMANENTE deja acquise.
+   *
+   * L'EQUIPEMENT N'Y EST PAS, et c'est le point : il se prete et il se perd a
+   * la mort. Une stat qui passerait pour pleine parce qu'on porte une bague
+   * redeviendrait creuse en changeant de bague, sans que rien ne l'explique.
+   *
+   * ---- pourquoi c'est ecrit ICI et une seule fois ----
+   *
+   * La fiche du joueur s'en sert pour dire ce qui manque et jaunir ce qui est
+   * plein ; le classement s'en sert pour afficher « 3/8 ». Deux calculs
+   * separes finiraient par ne plus dire la meme chose — et le joueur lirait
+   * « 2/8 » au classement devant trois chiffres jaunes sur sa propre fiche,
+   * sans aucun moyen de savoir lequel des deux ment.
+   */
+  _plafondsDe(skinId, c) {
+    const base = personnages.BASE[skinId];
+    if (!base) return null;
+    const niveau = personnages.niveauDeXp(this._xpDe(c));
+    const bues = (c && c.sup) || {};
+    const out = {};
+    for (const s of personnages.STATS) {
+      const mx = personnages.supMaxDe(s, base[s]);
+      out[s] = {
+        max: personnages.statAuNiveau(base[s], personnages.NIVEAU_MAX)
+           + personnages.supDe(s, mx, base[s]),
+        atteint: personnages.statAuNiveau(base[s], niveau)
+               + personnages.supDe(s, bues[s] | 0, base[s]),
+      };
+    }
+    return out;
+  }
+
+  /** Combien de stats sont au plafond, sur combien. C'est le « 3/8 ». */
+  _statsPleines(skinId, c) {
+    const total = personnages.STATS.length;
+    const pl = this._plafondsDe(skinId, c);
+    if (!pl) return { n: 0, total };
+    let n = 0;
+    for (const s of personnages.STATS) if (pl[s].atteint >= pl[s].max) n++;
+    return { n, total };
+  }
+
   _tenueDe(c) {
     const out = [];
     for (const champ of ['ea', 'ar', 'ba', 'ef']) {
@@ -1367,6 +1413,13 @@ class Game {
                        xp: Math.round(xp),
                        niveau: personnages.niveauDeXp(xp),
                        fame: this._fameDe(c),
+                       /* ---- COMBIEN DE STATS IL A DEJA POUSSEES AU BOUT ----
+                        * Le niveau dit combien il a joue ; ce chiffre-la dit
+                        * combien il a INVESTI. Deux personnages de niveau
+                        * vingt ne se valent pas si l'un a bu vingt fioles et
+                        * l'autre aucune, et c'est invisible sur une ligne de
+                        * classement qui ne montre que l'XP. */
+                       pleines: this._statsPleines(skin, c),
                        tenue: this._tenueDe(c) });
         }
       }
@@ -5609,16 +5662,11 @@ class Game {
        * comparer le total avec equipement ferait passer une stat pour pleine
        * des qu'on porte une bague.
        */
-      plafond: personnages.STATS.reduce((o, s) => {
-        const mx = personnages.supMaxDe(s, base[s]);
-        o[s] = {
-          max: personnages.statAuNiveau(base[s], personnages.NIVEAU_MAX)
-             + personnages.supDe(s, mx, base[s]),
-          atteint: personnages.statAuNiveau(base[s], niveau)
-                 + personnages.supDe(s, bues[s], base[s]),
-        };
-        return o;
-      }, {}),
+      plafond: this._plafondsDe(skinId, c),
+      /* Le meme « 3/8 » que le classement affiche a cote du nom. Il part d'ici
+         plutot que d'etre recompte par la page : c'est le serveur qui sait ce
+         qu'est une stat pleine. */
+      pleines: this._statsPleines(skinId, c),
       equipFruit: bFruit, equipArme: bArme, equipArmure: bArmure, equipBague: bBague,
       /* La Fame que ce personnage a accumulee — elle ne compte pour rien tant
          qu'il vit. `fameCompte` est celle qui est deja acquise, versee par les
@@ -6063,9 +6111,27 @@ class Game {
        possible. Un identifiant de boutique est un nombre, une fiole de stat
        est « st:<stat> » — deux formes dans une meme liste, parce qu'une seule
        liste veut dire une seule verite sur ce que contient le sac. */
+    /* ---- LES FIOLES S'EMPILENT, LES PIECES NON ----
+     *
+     * Une piece par case : le sac compte des PLACES, et c'est ce qui fait
+     * qu'emporter du butin coute quelque chose. Une fiole de stat, elle, n'est
+     * pas du butin qu'on choisit de garder — c'est une reserve, comme les
+     * potions de soin qui ont deja leur pile. Trois fioles de defense
+     * mangeaient trois des huit places et le sac etait plein avant d'avoir
+     * ramasse quoi que ce soit.
+     *
+     * Une case porte donc TOUTES les fioles d'une meme stat. Deux stats
+     * differentes restent deux cases : ce sont deux objets differents, et les
+     * confondre dans une pile obligerait a lire un chiffre pour savoir
+     * laquelle on boit. */
     const compte = {};
-    for (const k of Object.keys(sac)) if (sac[k] > 0) compte[Number(k)] = sac[k] | 0;
-    for (const k of Object.keys(fioles)) if (fioles[k] > 0) compte['st:' + k] = fioles[k] | 0;
+    const places = {};          // combien de CASES chaque clef demande
+    for (const k of Object.keys(sac)) {
+      if (sac[k] > 0) { compte[Number(k)] = sac[k] | 0; places[Number(k)] = sac[k] | 0; }
+    }
+    for (const k of Object.keys(fioles)) {
+      if (fioles[k] > 0) { compte['st:' + k] = fioles[k] | 0; places['st:' + k] = 1; }
+    }
 
     const cases = Array.isArray(p.sacCases) ? p.sacCases.slice(0, SAC_CASES) : [];
     while (cases.length < SAC_CASES) cases.push(null);
@@ -6076,14 +6142,17 @@ class Game {
       const c = cases[i];
       const cle = (typeof c === 'string' && c.slice(0, 3) === 'st:') ? c : Number(c);
       if (!(compte[cle] > 0)) { cases[i] = null; continue; }
-      if ((vus[cle] || 0) >= compte[cle]) { cases[i] = null; continue; }
+      /* C'est `places` et non `compte` qui borne : une pile de fioles n'a
+         droit qu'a UNE case, quelle que soit sa hauteur. Sans ca la deuxieme
+         fiole de defense reprendrait une case a elle. */
+      if ((vus[cle] || 0) >= places[cle]) { cases[i] = null; continue; }
       vus[cle] = (vus[cle] || 0) + 1;
       cases[i] = cle;
     }
     /* Et ce qui n'a pas encore de case en prend une — la premiere libre. */
     for (const cle of Object.keys(compte)) {
       const vraie = cle.slice(0, 3) === 'st:' ? cle : Number(cle);
-      for (let q = vus[vraie] || 0; q < compte[cle]; q++) {
+      for (let q = vus[vraie] || 0; q < places[cle]; q++) {
         const libre = cases.indexOf(null);
         if (libre < 0) break;
         cases[libre] = vraie;
@@ -6134,6 +6203,10 @@ class Game {
         const st = id.slice(3);
         out.push({ fiole: st, nom: 'Stat potion', cle: 'fiole_' + st,
                    rarete: 'commun', couleur: '#EAF2FF',
+                   /* La HAUTEUR de la pile. Sans elle la case en montrerait
+                      une seule et les deux autres seraient invisibles — ce qui
+                      se lit comme une perte, pas comme un empilement. */
+                   quantite: Math.max(1, (p.sacFioles || {})[st] | 0),
                    bonus: { [st]: personnages.supPas(st) },
                    /* SA COLONNE sur la planche des fioles, comptee ici. La
                       page devait sinon connaitre l'ordre des huit stats, et
@@ -6577,8 +6650,11 @@ class Game {
     const p = this._p(addr);
     const sac = p.sac || {};
     const fioles = p.sacFioles || {};
+    /* Des CASES, pas des unites : une pile de fioles n'en occupe qu'une. Ce
+       compte-la doit dire la meme chose que `_casesDuSac`, sinon le refus
+       « sac plein » tombe alors qu'il reste des cases vides a l'ecran. */
     return Object.keys(sac).reduce((n, id) => n + Math.max(0, sac[id] | 0), 0)
-         + Object.keys(fioles).reduce((n, k) => n + Math.max(0, fioles[k] | 0), 0);
+         + Object.keys(fioles).reduce((n, k) => n + (fioles[k] > 0 ? 1 : 0), 0);
   }
 
   /** Les fioles de stat mises a l'ABRI. Elles survivent a la mort — c'est
@@ -8580,21 +8656,51 @@ class Game {
    *     un choix qui n'existe pas. On sert donc dans l'ordre d'arrivee.
    */
 
-  /** Combien il en a SOUS LA MAIN — ce qui est en vente n'est plus a lui. */
+  /**
+   * Combien il en a SOUS LA MAIN — ce qui est en vente n'est plus a lui.
+   *
+   * Une fiole de stat vit a DEUX endroits : le coffre, ou elle survit a la
+   * mort, et le sac, ou elle part avec le personnage. On compte les deux. Ne
+   * regarder que le coffre laissait le comptoir vide devant un joueur qui a la
+   * fiole sur lui — et lui dire « tu n'en as pas » pendant qu'elle est dans
+   * son sac est la pire reponse possible : elle est fausse.
+   */
   _potInventaire(p, cle) {
-    if (cle.slice(0, 3) === 'st:') return Math.max(0, ((p.fioles || {})[cle.slice(3)]) | 0);
+    if (cle.slice(0, 3) === 'st:') {
+      const st = cle.slice(3);
+      return Math.max(0, ((p.fioles || {})[st]) | 0)
+           + Math.max(0, ((p.sacFioles || {})[st]) | 0);
+    }
     return Math.max(0, ((p.potions || {})[cle]) | 0);
   }
 
-  /** Retirer de l'inventaire pour sequestrer. Rend ce qui a REELLEMENT ete pris. */
+  /**
+   * Retirer de l'inventaire pour sequestrer. Rend ce qui a REELLEMENT ete pris.
+   *
+   * Pour une fiole de stat, on prend DU SAC D'ABORD. C'est la meme regle que
+   * pour la boire : ce qu'on porte est ce qui peut se perdre, donc ce dont on
+   * se defait en premier. Vider le coffre pendant qu'une fiole risque sa peau
+   * dans le sac serait exactement le contraire.
+   */
   _potRetire(p, cle, n) {
     const pris = Math.min(n, this._potInventaire(p, cle));
     if (pris <= 0) return 0;
     if (cle.slice(0, 3) === 'st:') {
       const st = cle.slice(3);
-      p.fioles = p.fioles || {};
-      p.fioles[st] -= pris;
-      if (p.fioles[st] <= 0) delete p.fioles[st];
+      let reste = pris;
+      p.sacFioles = p.sacFioles || {};
+      const duSac = Math.min(reste, Math.max(0, p.sacFioles[st] | 0));
+      if (duSac > 0) {
+        p.sacFioles[st] -= duSac;
+        if (p.sacFioles[st] <= 0) delete p.sacFioles[st];
+        reste -= duSac;
+      }
+      if (reste > 0) {
+        p.fioles = p.fioles || {};
+        p.fioles[st] -= reste;
+        if (p.fioles[st] <= 0) delete p.fioles[st];
+      }
+      p.sacCases = null;
     } else {
       p.potions = p.potions || {};
       p.potions[cle] -= pris;

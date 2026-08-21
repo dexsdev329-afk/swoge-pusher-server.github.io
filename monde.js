@@ -878,11 +878,10 @@ const MONSTRES = {
    */
   meduse: {
     cle: 'meduse', nom: 'Medusa',
-    /* Le dessin n'existe pas encore : elle emprunte celui du revenant de
-       glace, teinte par la page. Le jour ou l'image arrive, on retire cette
-       ligne et rien d'autre ne bouge — c'est pour ca qu'elle est ici, en
-       donnee, et pas dans un `if` cote page. */
-    sprite: 'glace',
+    /* Elle a son propre dessin depuis le serpent : plus d'emprunt, donc plus
+       de `sprite`. La page lit l'absence de ce champ et cesse d'elle-meme de
+       la teinter en violet — c'est exactement pour ca que l'emprunt vivait
+       ici, en donnee, et pas dans un `if` cote page. */
     pv: 300, att: 40, def: 12,
     vitesse: 60, rayon: 42, vue: 640,
     contact: false,

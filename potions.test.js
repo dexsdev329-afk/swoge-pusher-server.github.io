@@ -24,12 +24,41 @@ const leve = (f, motif, m) => { assert.throws(f, motif, m); n++; };
 const A = '0x' + 'a1'.repeat(20);
 const sol = (g) => Number(g.balanceStr(A));
 
+/* ---- LE STOCK VIENT DES JOUEURS ----
+ *
+ * La boutique ne fabrique plus de potions : tout ce qui s'y vend a ete trouve
+ * puis mis en vente par quelqu'un. Ces essais parlent de l'ACHAT, pas du
+ * marche, donc on pose un vendeur en face une fois pour toutes — sinon chacun
+ * d'eux echouerait sur « rupture de stock », ce qui ne dirait rien de ce qu'il
+ * cherche a verifier.
+ *
+ * Le vendeur est un AUTRE compte : on ne s'achete pas a soi-meme, et servir
+ * ses propres annonces serait justement le defaut que le marche refuse. */
+const V = '0x' + 'ee'.repeat(20);
 function pose(credit) {
   const g = new Game();
   const p = g._p(A);
   p.balance = ethers.utils.parseUnits(String(credit === undefined ? 100000 : credit), cfg.DECIMALS);
   p.hasDeposited = true;
+  const v = g._p(V);
+  v.hasDeposited = true;
+  v.potions = { vie: 99, mana: 99 };
+  g.metPotionEnVente(V, 'vie', 99);
+  g.metPotionEnVente(V, 'mana', 99);
   return { g, p };
+}
+
+// ================== 0. SANS VENDEUR, RUPTURE DE STOCK
+/* La consequence de tout ce qui suit, dite une fois : le rayon est vide tant
+   que personne n'approvisionne, et il le DIT au lieu de laisser croire a une
+   panne. C'est ce qui rend le vendeur ci-dessus necessaire. */
+{
+  const g = new Game();
+  const p = g._p(A);
+  p.balance = ethers.utils.parseUnits('100000', cfg.DECIMALS);
+  p.hasDeposited = true;
+  leve(() => g.achetePotion(A, 'vie', 1), /players stock the shop/i,
+       'personne ne vend : l achat est refuse, et le message dit pourquoi');
 }
 
 // ================== 1. LE CATALOGUE
