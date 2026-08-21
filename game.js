@@ -8652,6 +8652,12 @@ class Game {
         cle: k, nom: this._nomMarche(k),
         stat: k.slice(0, 3) === 'st:' ? k.slice(3) : null,
         image: POTIONS[k] ? POTIONS[k].image : null,
+        /* SA colonne sur la planche des fioles, comptee ici : l'ordre des
+           stats n'existe cote page que dans le monde de combat, et la laisser
+           le deviner dessinerait huit fois la meme fiole. */
+        col: k.slice(0, 3) === 'st:' ? personnages.STATS.indexOf(k.slice(3)) : 0,
+        cols: personnages.STATS.length,
+        pas: k.slice(0, 3) === 'st:' ? personnages.supPas(k.slice(3)) : 0,
         prix: prixMarche(k), gain: partVendeur(prixMarche(k)),
         stock: stock[k] || 0, enVente: mien[k] || 0, jai: this._potInventaire(p, k),
         /* Le plafond de port, pour que la page grise « acheter » avant le
