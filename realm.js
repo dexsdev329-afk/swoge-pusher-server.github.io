@@ -136,6 +136,11 @@ class Realm {
      * automatique, l'echange, l'expiration, le plafond — de se souvenir
      * d'ecarter celui-la. Cinq occasions d'en oublier une, et la premiere
      * oubliee aurait fait ramasser une porte. */
+    /* ---- LE COMPTE A REBOURS DU SOCLE ----
+     * Une seconde par seconde, comme les tombes et les sacs. Pas d'horodatage :
+     * ce monde n'a pas d'horloge, il a un `dt`, et un timestamp aurait ete la
+     * seule chose ici qui avance quand la simulation, elle, est arretee. */
+    this.socleAttente = {};
     this.portails = [];
     this._id = 1;
     /* ---- LA PORTE DU SAS ----
@@ -989,6 +994,11 @@ class Realm {
       const dx = j.x - s.x, dy = j.y - s.y;
       if (dx * dx + dy * dy > monde.SAC.rayon * monde.SAC.rayon) s.pose = null;
     }
+    /* Le delai avant que le boss du donjon puisse renaitre. Il ne court que
+       pendant qu'il est mort — `repeuple` le remet a plein tant qu'il vit. */
+    for (const k of Object.keys(this.socleAttente)) {
+      if (this.socleAttente[k] > 0) this.socleAttente[k] = Math.max(0, this.socleAttente[k] - dt);
+    }
     this._pasSalles(dt, ev);
     this._pasZones(dt, ev);
     this._pasMonstres(dt, ev);
@@ -1568,15 +1578,95 @@ class Realm {
     const sauvages = () => this.monstres.filter((m) => !m.salle).length;
     let nes = 0;
     let essais = 0;
+    /* ---- LE SOCLE, AVANT LE TIRAGE ORDINAIRE ----
+     *
+     * Optimus pese deux pour cent de son anneau : le tirage general en fait
+     * naitre un tous les quatre cents monstres environ, ce qui veut dire que
+     * l'abattre une fois revenait a ne plus jamais le revoir. Or c'est la
+     * seule porte de la Fonderie. On le fait donc naitre A PART, hors du
+     * tirage, des que le monde n'en a plus — apres un delai, sinon un joueur
+     * poste sur sa depouille enchainerait les donjons.
+     *
+     * Le compte a rebours se tient ICI plutot qu'a la mort de la creature :
+     * la mort a six chemins dans ce fichier — le tir, la zone, le contact, le
+     * pouvoir, la salle, le donjon — et il aurait fallu ne pas l'oublier dans
+     * les six. Ce qu'on regarde, c'est le monde : « il n'y en a plus depuis
+     * combien de temps ». Cette question-la n'a qu'un endroit ou se poser. */
+    for (const esp of Object.keys(monde.SOCLE || {})) {
+      const socle = monde.SOCLE[esp];
+      const vivants = () => this.monstres.filter((m) => m.espece === esp && !m.salle).length;
+      /* Pas les 900 unites du repeuplement ordinaire : l'anneau de lave est un
+         disque de 768 de rayon, et la regle generale y interdit donc TOUTE
+         naissance des qu'un joueur y met les pieds — c'est-a-dire des qu'on
+         chasse Optimus. `ecartDeNaissance` la ramene a ce que l'anneau offre. */
+      const ecart = monde.ecartDeNaissance(esp, dmin);
+      if (vivants() < socle && !(this.socleAttente[esp] > 0)) {
+        for (let k = 0; k < 40 && vivants() < socle; k++) {
+          const m = monde.placeUne(esp, this.alea);
+          if (!m) break;
+          const t = monde.MONSTRES[m.espece];
+          if (!t) break;
+          if (monde.bloque(this.obstacles, m.x, m.y, t.rayon)) continue;
+          let tropPres = false;
+          for (const j of this.joueurs.values()) {
+            const dx = j.x - m.x, dy = j.y - m.y;
+            if (dx * dx + dy * dy < ecart * ecart) { tropPres = true; break; }
+          }
+          if (tropPres) continue;
+          this.monstres.push(this._naissance(m));
+          nes++;
+        }
+      }
+      /* ---- LE DELAI SE REMET A PLEIN TANT QU'IL VIT ----
+       * Et « il vit » inclut « il vient de naitre a l'instant ». Remettre le
+       * compteur seulement quand il etait DEJA la laissait un trou : dans un
+       * monde ou le tirage initial ne l'avait pas donne, il naissait au
+       * premier tour sans jamais armer son delai — et le joueur qui l'abattait
+       * en voyait un autre a la seconde suivante. */
+      if (vivants() >= socle) {
+        this.socleAttente[esp] = Number(monde.SOCLE_DELAI && monde.SOCLE_DELAI[esp]) || 0;
+      }
+    }
+    /* ---- ON REBOUCHE LE TROU LA OU IL EST ----
+     *
+     * Le tirage precedent piochait une place au hasard dans la table du monde
+     * ENTIER : nettoyer la lave y faisait naitre une creature sur neuf, et les
+     * huit autres partaient garnir des anneaux deja pleins. Le compte total
+     * revenait bien a 166, mais l'anneau qu'on venait de vider restait vide —
+     * autrement dit, l'endroit ou l'on chasse est le seul qui ne se repeuple
+     * pas. C'est exactement l'inverse de ce que le repeuplement existe pour
+     * faire.
+     *
+     * On regarde donc quel anneau est le plus loin de son compte et on fait
+     * naitre LA. Les nombres viennent de `PEUPLEMENT`, qui les declare deja :
+     * rien de nouveau n'est invente ici, on cesse simplement de les ignorer. */
+    const manquant = () => {
+      const vus = {};
+      for (const m of this.monstres) if (!m.salle && m.biome) vus[m.biome] = (vus[m.biome] || 0) + 1;
+      let pire = null, ecartMax = 0;
+      for (const b of Object.keys(monde.PEUPLEMENT)) {
+        const d = monde.PEUPLEMENT[b].nombre - (vus[b] || 0);
+        if (d > ecartMax) { ecartMax = d; pire = b; }
+      }
+      return pire;
+    };
     while (sauvages() < voulu && essais < 200) {
       essais++;
-      const liste = monde.peuplement(this.alea);
-      const m = liste[Math.floor(this.alea() * liste.length)];
+      const b = manquant();
+      if (!b) break;
+      const m = monde.naitDans(b, this.alea);
       if (!m) break;
+      /* ---- LA MEME BORNE QUE POUR LE SOCLE, ET POUR LA MEME RAISON ----
+       * La lave est un disque de 768 unites de rayon : la regle des 900 y
+       * interdit TOUTE naissance des qu'un joueur s'y trouve. L'anneau le plus
+       * dur du jeu se vidait donc a mesure qu'on le nettoyait, et ne se
+       * remplissait qu'une fois qu'on l'avait quitte — c'est-a-dire quand ca
+       * ne servait plus a rien. */
+      const ecart = monde.ecartDeNaissance(m.espece, dmin);
       let tropPres = false;
       for (const j of this.joueurs.values()) {
         const dx = j.x - m.x, dy = j.y - m.y;
-        if (dx * dx + dy * dy < dmin * dmin) { tropPres = true; break; }
+        if (dx * dx + dy * dy < ecart * ecart) { tropPres = true; break; }
       }
       if (tropPres) continue;
       const t = monde.MONSTRES[m.espece];

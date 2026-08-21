@@ -1672,6 +1672,95 @@ const BOSS = { gardien: 1, brasier: 1, machine: 1, carapace: 1, optimus: 1,
                fonderie: 1 };
 
 /*
+ * ---- CELUI QUI OUVRE LE DONJON DOIT EXISTER ----
+ *
+ * Optimus pese 0,12 sur les cinq et quelques de l'anneau de lave : deux pour
+ * cent de dix-huit places, soit 0,38 Optimus vivant en moyenne. Autrement dit
+ * il n'y en a AUCUN dans le monde deux fois sur trois — et comme le
+ * repeuplement retire une creature au hasard dans la table du monde entier, en
+ * abattre un revenait a en attendre quatre cents autres avant d'en revoir un.
+ *
+ * Le probleme n'est pas qu'il soit rare. C'est qu'il est la seule porte vers
+ * la Fonderie : une rarete sur le chemin d'un donjon ne rend pas la chasse
+ * plus precieuse, elle la rend IMPOSSIBLE A PLANIFIER. « Je vais chercher
+ * Optimus » doit etre un projet qu'on peut se donner, pas un pari sur la
+ * composition du monde.
+ *
+ * On garantit donc qu'il y en a toujours un — jamais deux, son poids reste
+ * minuscule et c'est le socle qui fait tout le travail — et on met un delai
+ * entre sa mort et sa renaissance. Sans ce delai, un joueur poste sur le
+ * cadavre en enchainerait un toutes les secondes, et un donjon dont la
+ * recompense est GARANTIE deviendrait une chaine de montage.
+ */
+const SOCLE = { optimus: 1 };
+const SOCLE_DELAI = { optimus: 180 };
+
+/* Dans quel anneau vit une espece. On le LIT dans la table de peuplement au
+   lieu de l'ecrire une deuxieme fois : le jour ou Optimus demenage, il
+   demenage a un seul endroit. */
+function biomeDe(espece) {
+  for (const b of Object.keys(PEUPLEMENT)) {
+    if (PEUPLEMENT[b].especes.indexOf(espece) >= 0) return b;
+  }
+  return null;
+}
+
+/*
+ * ---- A QUELLE DISTANCE ON PEUT LE FAIRE NAITRE ----
+ *
+ * `repeuple` refuse toute naissance a moins de 900 unites d'un joueur, et la
+ * regle est bonne : 900, c'est la portee de vue d'un gros monstre, et voir une
+ * creature apparaitre a portee est une punition sans cause.
+ *
+ * Sauf qu'Optimus vit dans la lave, et que la lave est un DISQUE de 768 unites
+ * de rayon — plus petit que la regle elle-meme. Aucun point de la lave n'est a
+ * 900 unites d'un joueur qui s'y trouve : tant qu'on chasse dans la lave, le
+ * boss de la lave ne peut pas renaitre. Le joueur qui le cherche etait
+ * exactement celui qui l'empechait d'exister.
+ *
+ * On borne donc l'ecart a ce que l'anneau peut OFFRIR, calcule sur la forme de
+ * l'anneau plutot qu'ecrit a la main : le jour ou les anneaux bougent, ce
+ * chiffre bouge avec eux.
+ */
+function ecartDeNaissance(espece, defaut) {
+  const max = Number(defaut) || 900;
+  const b = biomeDe(espece);
+  const i = ANNEAUX.findIndex((a) => a.biome === b);
+  if (i < 0) return max;
+  const dedans = i === 0 ? 0 : ANNEAUX[i - 1].jusqua;
+  const dehors = Math.min(ANNEAUX[i].jusqua, 0.94);
+  /* La distance que l'anneau garantit QUEL QUE SOIT l'endroit ou se tient le
+     joueur : pour un disque, un joueur au centre et une naissance au bord ;
+     pour un anneau creux, deux points opposes de son bord interieur. */
+  const garanti = (i === 0 ? dehors : 2 * dedans) * (MONDE.w / 2);
+  /* Les quinze pour cent de marge evitent d'avoir a tomber sur LE point
+     parfait : sans eux, un seul tirage sur des milliers conviendrait. */
+  return Math.round(Math.min(max, garanti * 0.85));
+}
+
+/* Une naissance isolee, dans l'anneau de l'espece. Meme forme que ce que rend
+   `peuplement` : `repeuple` ne doit pas avoir deux sortes de creatures a
+   savoir poser. */
+function placeUne(espece, alea) {
+  const b = biomeDe(espece);
+  if (!b) return null;
+  const pos = pointDansBiome(b, alea);
+  return pos ? { espece, x: pos.x, y: pos.y, biome: b } : null;
+}
+
+/* Et l'inverse : une naissance dans un anneau DONNE, l'espece tiree selon les
+   poids de cet anneau. C'est ce qu'il faut pour reboucher un trou la ou il
+   est, plutot que n'importe ou dans le monde. */
+function naitDans(biome, alea) {
+  const p = PEUPLEMENT[biome];
+  if (!p) return null;
+  const r = () => (typeof alea === 'function' ? alea() : Math.random());
+  const pos = pointDansBiome(biome, alea);
+  if (!pos) return null;
+  return { espece: choisitEspece(p, r), x: pos.x, y: pos.y, biome };
+}
+
+/*
  * ---- CE QUI TOMBE A COUP SUR ----
  *
  * Le fond d'un donjon ne se tire pas au sort. Tout le reste du jeu est une
@@ -1837,6 +1926,7 @@ module.exports = {
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
   ZONE_REACTION,
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe, BOSS,
+  SOCLE, SOCLE_DELAI, biomeDe, placeUne, naitDans, ecartDeNaissance,
   BUTIN_GARANTI,
   RARETE_ANNEAU, SAC_DE_RARETE, CHANCE_EQUIP, CHANCE_RELIQUE, CHANCE_RELIQUE_BOSS,
   OBSTACLE, OBSTACLE_BIOME, obstacles, bloque,
