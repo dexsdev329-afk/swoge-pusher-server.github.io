@@ -5526,6 +5526,37 @@ class Game {
         o[s] = { potions: k, max: mx, bonus: personnages.supDe(s, k, base[s]) };
         return o;
       }, {}),
+      /* ---- LE PLAFOND PERMANENT DE CHAQUE STAT ----
+       *
+       * Ce qu'on peut atteindre POUR TOUJOURS : le niveau vingt, plus toutes
+       * les potions que cette stat accepte. L'equipement n'y entre pas, et ce
+       * n'est pas un oubli — il se prete, il se perd a la mort, et une piece
+       * qui pousse au-dessus du plafond ne « maxe » rien du tout. Le compter
+       * ferait dire « c'est plein » a un joueur qui perdrait tout en changeant
+       * de casque.
+       *
+       * Il part d'ICI plutot que d'etre recalcule par la page. La page a deja
+       * `base` et la table des potions : elle POURRAIT le refaire. Mais ce
+       * serait la meme formule ecrite a deux endroits, et le jour ou la courbe
+       * des niveaux change, l'un des deux dirait encore l'ancien plafond — le
+       * joueur verrait « il te manque 3 » sur une stat deja pleine, et n'aurait
+       * aucun moyen de savoir lequel des deux chiffres ment.
+       *
+       * `atteint` est la part PERMANENTE deja acquise : niveau plus potions
+       * bues, sans l'equipement. C'est elle qu'il faut comparer au plafond —
+       * comparer le total avec equipement ferait passer une stat pour pleine
+       * des qu'on porte une bague.
+       */
+      plafond: personnages.STATS.reduce((o, s) => {
+        const mx = personnages.supMaxDe(s, base[s]);
+        o[s] = {
+          max: personnages.statAuNiveau(base[s], personnages.NIVEAU_MAX)
+             + personnages.supDe(s, mx, base[s]),
+          atteint: personnages.statAuNiveau(base[s], niveau)
+                 + personnages.supDe(s, bues[s], base[s]),
+        };
+        return o;
+      }, {}),
       equipFruit: bFruit, equipArme: bArme, equipArmure: bArmure, equipBague: bBague,
       /* La Fame que ce personnage a accumulee — elle ne compte pour rien tant
          qu'il vit. `fameCompte` est celle qui est deja acquise, versee par les
