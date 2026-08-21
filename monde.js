@@ -786,12 +786,30 @@ function peuplementDonjon(alea, nom, plan) {
        mur qui tire. */
     const n = Math.max(2, Math.min(PEUPLE_DONJON.plafond,
                                    Math.round(aire * PEUPLE_DONJON.densite)));
+    /* ---- ON NAIT DANS LA FORME DE LA SALLE, PAS DANS SA BOITE ----
+     * On tirait dans un CARRE de demi-cote `rayon - 1.2`, pour toutes les
+     * salles. C'est juste pour la Fonderie, dont les salles sont carrees. La
+     * grotte, elle, est faite de DISQUES : le coin de ce carre est a 1,41 fois
+     * le rayon du centre, donc dans la roche. Une creature nee la y reste pour
+     * toujours, immobile, et se lit comme un monstre casse.
+     * Le defaut etait deja la ; il ne se voyait pas parce qu'on posait deux
+     * fois moins de monde et que les coins sont petits. Doubler la densite l'a
+     * sorti de l'ombre — c'est la meilleure chose qu'un chiffre puisse faire.
+     * La racine carree n'est pas une decoration : tirer le rayon uniformement
+     * entasse tout le monde au centre, puisque l'aire croit comme le carre du
+     * rayon. */
     const demi = (s.cote / 2 - 1.2) * DONJON_TUILE;
     for (let i = 0; i < n; i++) {
       const e = D.especes[Math.floor(r() * D.especes.length)] || D.especes[0];
-      out.push({ espece: e, biome: 'donjon',
-                 x: s.x + (r() * 2 - 1) * demi,
-                 y: s.y + (r() * 2 - 1) * demi });
+      let dx, dy;
+      if (s.rayon) {
+        const a = r() * Math.PI * 2;
+        const d = Math.sqrt(r()) * demi;
+        dx = Math.cos(a) * d; dy = Math.sin(a) * d;
+      } else {
+        dx = (r() * 2 - 1) * demi; dy = (r() * 2 - 1) * demi;
+      }
+      out.push({ espece: e, biome: 'donjon', x: s.x + dx, y: s.y + dy });
     }
   }
   /* LE FOND SE CHERCHE PAR SON ROLE, pas par sa position dans la liste. Dans

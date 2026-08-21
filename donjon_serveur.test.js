@@ -399,14 +399,24 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
   const dc = donjonsVivants().find((r) => r.joueurs.has(C));
   ok(dc && !dc.joueurs.has(A), 'et le troisieme n\'est pas avec les deux premiers');
 
-  /* LES DEUX DONJONS VIVENT AUX MEMES COORDONNEES ET NE SE VOIENT PAS. C'est
-     toute la raison d'avoir choisi deux simulations plutot qu'un etage. */
+  /* ---- CE QUI COMPTE EST L'ISOLEMENT, PAS LA COORDONNEE ----
+   * Cet essai verifiait que les deux joueurs etaient au MEME point : les deux
+   * donjons avaient le meme plan, fixe, donc la meme entree. Depuis que la
+   * forme est tiree a chaque ouverture, ils ont chacun la leur — et c'est
+   * mieux ainsi, deux groupes n'explorent plus le meme couloir.
+   * La coordonnee identique n'etait qu'un EFFET du plan fige ; la raison
+   * d'avoir deux simulations plutot qu'un etage a toujours ete qu'on ne se
+   * voit pas. C'est donc cela qu'on mesure. */
   const da = donjonsVivants().find((r) => r.joueurs.has(A));
-  eq(Math.round(da.joueurs.get(A).x), Math.round(dc.joueurs.get(C).x),
-     'ils sont a la meme place');
+  ok(da !== dc, 'les deux donjons sont bien deux simulations distinctes');
+  ok(da.plan !== dc.plan, 'et chacun a sa propre forme, tiree pour lui');
   sc.recus.length = 0;
   const vueC = await attend(sc, 'realmEtat');
-  eq(vueC.joueurs.length, 0, 'et pourtant le troisieme est seul');
+  eq(vueC.joueurs.length, 0, 'le troisieme est seul chez lui');
+  sa.recus.length = 0;
+  const vueDesDeux = await attend(sa, 'realmEtat');
+  eq(vueDesDeux.joueurs.length, 1,
+     'et les deux premiers se voient entre eux, eux seuls');
 
   // ================== 5. ON RESSORT LA OU L'ON EST ENTRE
   /* ---- MEME SI LA PORTE S'EST REFERMEE ----
