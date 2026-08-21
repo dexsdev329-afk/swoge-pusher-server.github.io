@@ -256,7 +256,7 @@ class Realm {
                « une balise s'est allumee » pose une fleche a l'ecran, et une
                fleche qui vise autre chose que la pierre envoie chercher au
                mauvais endroit. */
-            ev.balises.push({ i: s.i, ...Realm.pointDeBalise(s),
+            ev.balises.push({ i: s.i, ...this.pointDeBalise(s),
                               biome: monde.biomeEn(s.x, s.y) });
           }
         }
@@ -1794,7 +1794,7 @@ class Realm {
       /* La ou l'on ARRIVE, pas le centre de la salle : c'est ce que la pierre
          promet, et c'etait faux. Voir `pointDeBalise`. */
       balises: this.salles.map((s) => {
-        const p = Realm.pointDeBalise(s);
+        const p = this.pointDeBalise(s);
         return { i: s.i, x: Math.round(p.x), y: Math.round(p.y),
                  on: s.balise ? 1 : 0 };
       }),
@@ -1840,7 +1840,7 @@ class Realm {
     if (!j) return null;
     const s = this.salles.find((x) => x.i === Number(i));
     if (!s || !s.balise) return null;
-    const p = Realm.pointDeBalise(s);
+    const p = this.pointDeBalise(s);
     j.x = Math.max(40, Math.min(monde.MONDE.w - 40, p.x));
     j.y = Math.max(40, Math.min(monde.MONDE.h - 40, p.y));
     return { i: s.i, x: Math.round(j.x), y: Math.round(j.y) };
@@ -1848,21 +1848,72 @@ class Realm {
 
   /* ---- OU EST LA BALISE, POUR DE BON ----
    *
-   * On arrive au BORD de la salle et non au centre : au centre on se poserait
-   * sur le coffre, et sur une salle rearmee, au milieu de ses gardiens. Juste
-   * en dessous du bord bas — c'est par la qu'on entre a pied, donc c'est
-   * l'endroit dont on a deja l'image en tete.
+   * DEVANT LA PORTE. Chaque salle gardee a UNE ouverture, sur un cote tire au
+   * sort — nord, sud, est ou ouest. La balise etait posee au sud pour tout le
+   * monde : sur les trois quarts des salles, elle se retrouvait donc derriere
+   * un mur, et l'on se teleportait a un endroit d'ou il faut faire le tour.
+   * Devant la porte, elle dit exactement ce qu'elle promet : « d'ici, tu
+   * entres ».
+   *
+   * Ni au centre : on s'y poserait sur le coffre, et sur une salle rearmee, au
+   * milieu de ses gardiens.
    *
    * Ce point est ECRIT ICI et nulle part ailleurs. Il servait a la
    * teleportation ; la liste envoyee aux pages, elle, donnait le centre de la
-   * salle. La pierre se dessinait donc SOUS le coffre — invisible derriere lui,
-   * et son anneau vert au sol se lisait comme un cercle sans objet autour d'un
-   * tresor. Deux endroits qui pretendaient dire « la balise est ici » et n'en
-   * disaient pas la meme.
+   * salle. La pierre se dessinait donc SOUS le coffre — invisible derriere
+   * lui, et son anneau vert au sol se lisait comme un cercle sans objet autour
+   * d'un tresor. Deux endroits qui pretendaient dire « la balise est ici » et
+   * n'en disaient pas la meme.
    */
+  /* ---- ET ELLE NE TOMBE PAS DANS UN ROCHER ----
+   *
+   * Le point ideal est devant la porte. Le monde, lui, ne le sait pas : il
+   * pose ses rochers ou il veut, et sur trois salles sur deux cent trente-sept
+   * la pierre est justement la. On s'y teleportait DANS le decor.
+   *
+   * On s'ecarte donc, par cercles de plus en plus larges autour du point
+   * ideal. Et c'est la METHODE D'INSTANCE qui sert partout — au dessin comme a
+   * la teleportation. La lecon a deja ete payee une fois : deux endroits qui
+   * pretendent dire « la balise est ici » finissent par n'en pas dire la meme,
+   * et le joueur voit la pierre a un endroit et arrive a un autre.
+   */
+  pointDeBalise(s) {
+    const p = Realm.pointDeBalise(s);
+    if (!monde.bloque(this.obstacles, p.x, p.y, RAYON_JOUEUR)) return p;
+    for (let r = 48; r <= 320; r += 48) {
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2;
+        const x = p.x + Math.cos(a) * r, y = p.y + Math.sin(a) * r;
+        if (x < 60 || y < 60 || x > monde.MONDE.w - 60 || y > monde.MONDE.h - 60) continue;
+        /* PAS dans la salle : on la contournerait par l'interieur, au milieu
+           des gardiens, ce qui est exactement ce qu'on evite en ne posant pas
+           la balise au centre. */
+        const demi = monde.SALLE.cote * monde.TUILE / 2;
+        if (Math.abs(x - s.x) < demi && Math.abs(y - s.y) < demi) continue;
+        if (!monde.bloque(this.obstacles, x, y, RAYON_JOUEUR)) return { x, y };
+      }
+    }
+    /* Rien de libre a trois cents unites a la ronde : on rend le point ideal
+       plutot que rien. Coince dans un rocher, on en sort en marchant ; sans
+       balise, la salle n'a plus de route. */
+    return p;
+  }
+
+  /** Le point IDEAL, sans regarder le decor. Voir la methode d'instance. */
   static pointDeBalise(s) {
     const R = monde.SALLE.cote * monde.TUILE / 2;
-    return { x: s.x, y: s.y + R + 60 };
+    /* Soixante unites DEHORS : dedans on serait dans l'embrasure, et le
+       gardien le plus proche de la porte nous accueillerait au premier pas. */
+    const loin = R + 60;
+    switch (s.porte) {
+      case 'nord':  return { x: s.x, y: s.y - loin };
+      case 'ouest': return { x: s.x - loin, y: s.y };
+      case 'est':   return { x: s.x + loin, y: s.y };
+      /* `sud` et tout le reste : une salle sans porte nommee — une vieille
+         sauvegarde, un plan bricole — se comporte comme avant plutot que de
+         poser sa balise a `undefined`. */
+      default:      return { x: s.x, y: s.y + loin };
+    }
   }
 
   /** Un monstre remplace ceux qu'on a tues, pour que la carte ne se vide pas.

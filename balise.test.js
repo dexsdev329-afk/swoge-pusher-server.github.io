@@ -165,4 +165,58 @@ console.log('\n-- pas de balise en donjon --');
   eq(D.vaALaBalise(A, 0), null, 'et rien ou se rendre');
 }
 
+
+/* ================== DEVANT LA PORTE, ET NULLE PART AILLEURS ==================
+ *
+ * Chaque salle gardee a UNE ouverture, sur un cote tire au sort. La balise
+ * etait posee au sud pour tout le monde : sur les trois quarts des salles elle
+ * se retrouvait donc DERRIERE un mur, et l'on se teleportait a un endroit d'ou
+ * il faut faire le tour de la piece. Le joueur l'a vu avant l'essai — c'est ce
+ * genre de chose qu'un essai qui ne regarde qu'une salle ne peut pas voir.
+ *
+ * On les regarde donc TOUTES, sur soixante mondes.
+ */
+console.log('\n-- la balise est devant la porte de sa salle --');
+{
+  const COTES = { nord: [0, -1], sud: [0, 1], ouest: [-1, 0], est: [1, 0] };
+  let salles = 0, bonCote = 0, dansUnMur = 0, dansLaSalle = 0;
+  for (let g = 1; g <= 60; g++) {
+    let x = g * 7919;
+    const al = () => { x = (x * 16807) % 2147483647; return x / 2147483647; };
+    const R = new Realm({ alea: al });
+    for (const s of R.salles) {
+      salles++;
+      const p = R.pointDeBalise(s);
+      const d = COTES[s.porte] || COTES.sud;
+      /* Du bon COTE : la porte est au milieu d'un cote, la balise doit etre
+         dehors, en face. On tolere le decalage lateral — un rocher peut avoir
+         oblige a s'ecarter — mais jamais le mauvais cote. */
+      const okX = d[0] === 0 || Math.sign(p.x - s.x) === d[0];
+      const okY = d[1] === 0 || Math.sign(p.y - s.y) === d[1];
+      if (okX && okY) bonCote++;
+      if (M.bloque(R.obstacles, p.x, p.y, 22)) dansUnMur++;
+      const demi = M.SALLE.cote * M.TUILE / 2;
+      if (Math.abs(p.x - s.x) < demi && Math.abs(p.y - s.y) < demi) dansLaSalle++;
+    }
+  }
+  eq(bonCote, salles, `les ${salles} balises sont devant leur porte`);
+  eq(dansUnMur, 0, 'aucune ne tombe dans un rocher — on s y teleporterait dans la pierre');
+  eq(dansLaSalle, 0, 'aucune n est DANS la salle — on s y poserait sur le coffre');
+}
+
+/* ---- LE DESSIN ET LA TELEPORTATION, AU MEME ENDROIT ---- */
+console.log('\n-- ou la page la voit, on y arrive --');
+{
+  const R = new Realm({ alea: alea(21) });
+  const j = R.rejoint(A, FICHE);
+  const s = R.salles[0];
+  s.balise = true;
+  const vue = R.etatPour(A).balises.find((b) => b.i === s.i);
+  ok(!!vue, 'la page recoit la balise');
+  const arrivee = R.vaALaBalise(A, s.i);
+  ok(!!arrivee, 'et la teleportation marche');
+  eq(Math.round(vue.x), Math.round(arrivee.x), 'le meme x que la ou on arrive');
+  eq(Math.round(vue.y), Math.round(arrivee.y), 'et le meme y');
+}
+
 console.log(`\nbalise.test.js — ${n} verifications, 0 echec(s)`);
