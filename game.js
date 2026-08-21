@@ -8738,10 +8738,23 @@ class Game {
    * l'annonce que ce qu'il a rendu. Une fiole de stat, elle, va au COFFRE, qui
    * n'a pas de fond.
    */
-  _potDonne(p, cle, n) {
+  _potDonne(p, cle, n, versLeSac) {
     if (n <= 0) return 0;
     if (cle.slice(0, 3) === 'st:') {
       const st = cle.slice(3);
+      /* ---- ELLE REVIENT LA OU ON LA VOIT ----
+       * Reprendre une annonce la rendait toujours au COFFRE. Celui qui l'avait
+       * mise en vente depuis son sac ne la retrouvait donc nulle part ou il
+       * l'avait laissee : ni dans le sac, ni sur lui — il fallait deviner
+       * d'aller ouvrir le coffre. On la rend au SAC quand il reste une place,
+       * et au coffre seulement s'il n'y en a plus. Un achat, lui, va toujours
+       * au coffre : on ne vient pas d'acheter pour risquer tout de suite. */
+      if (versLeSac && this.sacRempli(p.addr) < SAC_CASES) {
+        p.sacFioles = p.sacFioles || {};
+        p.sacFioles[st] = (p.sacFioles[st] || 0) + n;
+        p.sacCases = null;
+        return n;
+      }
       p.fioles = p.fioles || {};
       p.fioles[st] = (p.fioles[st] || 0) + n;
       return n;
@@ -8784,9 +8797,23 @@ class Game {
      * Une seule definition, celle de l'acheteur : ce qui est en vente ET qui
      * n'est pas a lui. Ce qu'il a mis en vente se lit a cote, dans `enVente` —
      * c'est une autre question, et elle a deja sa reponse. */
-    const stock = {}, mien = {};
+    /* ---- DEUX CHIFFRES, PARCE QU'IL Y A DEUX QUESTIONS ----
+     *
+     * `stock` : ce que CE joueur peut acheter — donc tout sauf ses propres
+     * annonces, qu'il ne se rachete pas. C'est lui qui commande le bouton.
+     * `total` : tout ce qui est en vente, le sien compris. C'est lui qui
+     * decide si la ligne EXISTE au rayon.
+     *
+     * N'en garder qu'un cassait quelque chose a chaque fois. Avec le total
+     * seul, un vendeur unique lisait « 1 en stock » et se faisait repondre
+     * « rupture » en cliquant. Avec le stock seul, il mettait ses potions en
+     * vente et voyait un magasin VIDE — sans aucun moyen de verifier que son
+     * annonce existait. Les deux questions sont legitimes ; elles ont chacune
+     * leur chiffre. */
+    const stock = {}, mien = {}, total = {};
     for (const a of (this.marche || [])) {
       if (!a.pot) continue;
+      total[a.pot] = (total[a.pot] || 0) + (a.qte || 0);
       if (a.vendeur === moi) mien[a.pot] = (mien[a.pot] || 0) + (a.qte || 0);
       else stock[a.pot] = (stock[a.pot] || 0) + (a.qte || 0);
     }
@@ -8808,7 +8835,8 @@ class Game {
         cols: personnages.STATS.length,
         pas: k.slice(0, 3) === 'st:' ? personnages.supPas(k.slice(3)) : 0,
         prix: prixMarche(k), gain: partVendeur(prixMarche(k)),
-        stock: stock[k] || 0, enVente: mien[k] || 0, jai: this._potInventaire(p, k),
+        stock: stock[k] || 0, total: total[k] || 0,
+        enVente: mien[k] || 0, jai: this._potInventaire(p, k),
         /* Le plafond de port, pour que la page grise « acheter » avant le
            clic plutot qu'apres le refus. */
         porte: POTIONS[k] ? POTIONS_MAX : 0,
@@ -8871,7 +8899,7 @@ class Game {
     const a = this.marche[i];
     const veut = Math.max(1, Math.floor(Number(quantite) || 1));
     const p = this._p(moi);
-    const rendu = this._potDonne(p, cle, Math.min(veut, a.qte || 0));
+    const rendu = this._potDonne(p, cle, Math.min(veut, a.qte || 0), true);
     if (rendu <= 0) throw new Error('You already carry ' + POTIONS_MAX + ' of those');
     a.qte = (a.qte || 0) - rendu;
     if (a.qte <= 0) this.marche.splice(i, 1);

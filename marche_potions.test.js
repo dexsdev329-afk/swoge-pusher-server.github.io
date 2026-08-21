@@ -372,8 +372,9 @@ console.log('\n-- le rayon et la caisse disent la meme chose --');
 
   /* Le VENDEUR ne voit pas son propre stock au rayon : il ne peut pas
      l acheter. Il le voit dans « en vente », qui est l autre question. */
-  eq(ligne(g, A, 'st:def').stock, 0, 'le vendeur voit 0 en stock : il ne peut rien acheter');
-  eq(ligne(g, A, 'st:def').enVente, 2, 'mais bien ses deux en vente');
+  eq(ligne(g, A, 'st:def').stock, 0, 'le vendeur voit 0 ACHETABLE : il ne peut rien acheter');
+  eq(ligne(g, A, 'st:def').total, 2, 'mais la ligne EXISTE au rayon : total = 2');
+  eq(ligne(g, A, 'st:def').enVente, 2, 'et il voit que les deux sont a lui');
   assert.throws(() => g.acheteFioleAuMarche(A, 'def', 1), /for sale right now/i);
   n++; console.log('  ok   et la caisse dit la meme chose que le rayon');
 
@@ -391,6 +392,75 @@ console.log('\n-- le rayon et la caisse disent la meme chose --');
   eq(ligne(g, A, 'vie').stock, 4, 'et les autres voient les quatre');
   assert.throws(() => g.achetePotion(C, 'vie', 1), /for sale right now/i);
   n++; console.log('  ok   et lui non plus ne se rachete pas a lui-meme');
+}
+
+// ================== 14. SON ANNONCE SE VOIT, MEME SEUL A VENDRE
+/*
+ * « Quand je mets a vendre des potions je dois les voir moi aussi dans le
+ * shop ; la rien ne s affiche, le shop est vide. »
+ *
+ * Consequence directe de la correction precedente : « en stock » etant devenu
+ * « ce que TU peux acheter », un vendeur unique voyait zero partout — et donc
+ * un magasin vide, sans aucun moyen de verifier que son annonce existait.
+ *
+ * Deux chiffres, deux questions : `total` decide si la LIGNE existe, `stock`
+ * decide si le BOUTON marche. N'en garder qu'un cassait l'une ou l'autre.
+ */
+console.log('\n-- seul a vendre, et pourtant visible --');
+{
+  const g = neuf();
+  g._p(A).potions = { vie: 3 };
+  g.metPotionEnVente(A, 'vie', 3);
+  const l = ligne(g, A, 'vie');
+  ok(l.total > 0, `le rayon a de quoi afficher la ligne (total ${l.total})`);
+  eq(l.stock, 0, 'mais rien d achetable pour lui');
+  eq(l.enVente, 3, 'et il lit que les trois sont les siennes');
+  /* Un autre joueur, lui, voit du stock ET peut acheter. */
+  const lb = ligne(g, B, 'vie');
+  eq(lb.total, 3, 'un autre voit le meme total');
+  eq(lb.stock, 3, 'et peut tout acheter');
+  eq(lb.enVente, 0, 'sans rien avoir a lui');
+}
+
+// ================== 15. REPRENDRE LA REND LA OU ON LA VOIT
+console.log('\n-- reprendre une fiole --');
+{
+  /* « Quand je fais take back je devrais la voir apparaitre dans mes
+     equipements. » Elle revenait toujours au COFFRE : celui qui l avait mise
+     en vente depuis son sac ne la retrouvait nulle part ou il l avait
+     laissee. */
+  const g = neuf();
+  const p = g._p(A);
+  p.sacFioles = { def: 1 }; p.sac = {}; p.sacCases = null;
+  g.metPotionEnVente(A, 'st:def', 1);
+  eq(g.sacPour(A).length, 0, 'mise en vente, elle a quitte le sac');
+  g.retirePotionDeLaVente(A, 'st:def', 1);
+  eq((p.sacFioles || {}).def, 1, 'reprise, elle revient DANS LE SAC');
+  eq((p.fioles || {}).def, undefined, 'et pas au coffre, ou il faudrait deviner d aller la chercher');
+  ok(g.sacPour(A).some((o) => o.fiole === 'def'), 'elle se voit dans le sac');
+
+  /* Sac PLEIN : elle va au coffre plutot que de se perdre. Le refus serait
+     pire — l annonce resterait et la fiole avec. */
+  const g2 = neuf();
+  const q = g2._p(A);
+  q.sacFioles = { att: 1 }; q.sacCases = null;
+  g2.metPotionEnVente(A, 'st:att', 1);
+  const B0 = require('./boutique');
+  q.sac = {};
+  for (const o of B0.ITEMS.slice(0, 8)) q.sac[o.id] = 1;
+  q.sacCases = null;
+  eq(g2.sacRempli(A), 8, 'le sac est plein');
+  g2.retirePotionDeLaVente(A, 'st:att', 1);
+  eq((q.fioles || {}).att, 1, 'elle va au coffre plutot que de se perdre');
+
+  /* Un ACHAT, lui, va toujours au coffre : on ne vient pas d acheter pour
+     risquer tout de suite. */
+  const g3 = neuf();
+  g3._p(B).fioles = { wis: 1 };
+  g3.metPotionEnVente(B, 'st:wis', 1);
+  g3.acheteFioleAuMarche(A, 'wis', 1);
+  eq((g3._p(A).fioles || {}).wis, 1, 'ce qu on achete va au coffre');
+  eq((g3._p(A).sacFioles || {}).wis, undefined, 'pas dans le sac');
 }
 
 console.log(`\nmarche_potions.test.js — ${n} verifications, 0 echec(s)`);
