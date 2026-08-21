@@ -428,7 +428,14 @@ function planDeDonjon(nom, alea) {
     sortie: { x: entree.x, y: entree.y },
     obstacles: mursDonjon(plan, 1),
     peuplement: peuplementDonjon(alea),
-    anneaux: [{ biome: 'donjon', jusqua: Infinity }],
+    /* ---- UN SEUL ANNEAU, ET SA BORNE EST FINIE ----
+     * `Infinity` ne traverse pas JSON : il en ressort `null`, et `r <= null`
+     * est faux pour tout rayon positif. La page serait donc tombee dans le
+     * repli de `biomeEn` et aurait pose le sol du monde ouvert SUR le donjon —
+     * les tuiles au bon endroit, la mauvaise texture, et rien nulle part pour
+     * dire pourquoi. Quatre-vingt-dix-neuf demi-largeurs de carte : c'est
+     * « partout » sans etre l'infini. */
+    anneaux: [{ biome: 'donjon', jusqua: 99 }],
     salles: [],
     /* ---- LE SOL, TUILE PAR TUILE ----
      * Et pas « trois rectangles et deux couloirs » : la page redessinerait

@@ -491,7 +491,15 @@ function donjon(graine) {
      plus nulle part. */
   eq(p.anneaux.length, 1, 'un seul anneau');
   eq(p.anneaux[0].biome, 'donjon', 'et c\'est le donjon');
-  eq(p.anneaux[0].jusqua, Infinity, 'jusqu\'au bout');
+  /* ET SA BORNE TRAVERSE JSON. `Infinity` en ressort `null`, et `r <= null` est
+     faux pour tout rayon positif : la page serait tombee dans le repli de
+     `biomeEn` et aurait pose le sol du monde ouvert sur le donjon. On verifie
+     donc ce que la page RECEVRA, pas ce qu'on a ecrit. */
+  const traverse = JSON.parse(JSON.stringify(p.anneaux))[0];
+  ok(Number.isFinite(traverse.jusqua),
+     `sa borne survit au JSON (${traverse.jusqua})`);
+  ok(traverse.jusqua >= 1.5,
+     'et elle couvre toute la carte, du centre au coin le plus loin');
 
   /* L'ENTREE ET LA SORTIE SONT DANS LE SAS, ET PAS AU MEME ENDROIT. */
   const d = Math.hypot(p.entree.x - p.sortie.x, p.entree.y - p.sortie.y);
