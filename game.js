@@ -152,6 +152,52 @@ const POUVOIR_FAMILIER = {
    soiree de farm. */
 const XP_OEUF_DOUBLE = 500;
 
+/* ================== LE REPAS ET LES NIVEAUX ==================
+ *
+ * ---- CE QU'UN FAMILIER A LE DROIT DE MANGER ----
+ *
+ * Commun et rare, jamais au-dessus. Ce n'est pas une limite de confort : au
+ * moment ou une legendaire nourrit mieux qu'elle ne se porte, le meilleur
+ * usage d'une legendaire devient de la DETRUIRE — et l'on retire du jeu des
+ * pieces dont l'offre est plafonnee a quarante pour la saison, que d'autres
+ * joueurs cherchent encore. Les deux crans autorises sont justement les deux
+ * abondants (mille communes, quatre cents rares) : ce sont eux qui n'avaient
+ * aucun usage une fois le sac plein.
+ *
+ * ---- LE NIVEAU SE DEDUIT DE L'XP ----
+ *
+ * On ne le RANGE pas a cote. Deux chiffres censes s'accorder finissent par se
+ * contredire — une sauvegarde a moitie ecrite, un chemin qui donne l'XP sans
+ * monter le niveau — et le joueur voit alors un niveau qui ne correspond a
+ * rien. C'est la meme regle que la fame, deduite de l'XP du personnage.
+ *
+ * ---- ET IL SE PAIE EN OR ----
+ *
+ * L'or (la « fame ») ne se depensait NULLE PART : il montait, et c'etait
+ * tout. Le repas est son premier usage. Le prix suit le niveau : sans ca, la
+ * derniere marche couterait le prix de la premiere alors qu'elle demande
+ * quarante fois plus d'XP, et l'or cesserait de compter des le deuxieme soir.
+ */
+const REPAS_XP = { commun: 10, rare: 35 };
+const REPAS_OR = 40;                    // par niveau deja atteint
+const NIVEAU_MAX_FAM = 20;
+
+/** L'XP TOTALE qu'il faut avoir accumulee pour etre au niveau `n`. */
+function paliersFamilier(n) {
+  return 40 * (n - 1) * n;              // 80, 240, 480, 800 … 15200 au vingtieme
+}
+/** Le niveau que vaut une XP totale. La seule source de verite. */
+function niveauFamilier(xp) {
+  const x = Math.max(0, xp | 0);
+  let n = 1;
+  while (n < NIVEAU_MAX_FAM && x >= paliersFamilier(n + 1)) n++;
+  return n;
+}
+/** Ce que coute un repas a un familier de ce niveau-la. */
+function prixRepas(niveau) {
+  return REPAS_OR * Math.max(1, niveau | 0);
+}
+
 const SAC_CASES = 8;
 /* Le bareme d'XP d'un objet, par rarete. Une rarete inconnue ne rapporte rien
    plutot que de rapporter le premier bareme venu : une faute de frappe dans
@@ -6762,16 +6808,41 @@ class Game {
       deja.xp = (deja.xp | 0) + XP_OEUF_DOUBLE;
       return { espece: es, nouveau: false, familier: this.familierPour(deja, es) };
     }
-    p.familiers[es] = { niveau: 1, xp: 0, ne: Math.floor(Date.now() / 1000) };
+    /* Pas de `niveau` range ici : il se deduit de l'XP (voir familierPour).
+       L'ecrire aurait cree le deuxieme chiffre qu'on cherche justement a ne
+       pas avoir. */
+    p.familiers[es] = { xp: 0, ne: Math.floor(Date.now() / 1000) };
     return { espece: es, nouveau: true, familier: this.familierPour(p.familiers[es], es) };
   }
 
   /** La fiche d'un familier, telle que la page la lit. */
   familierPour(f, espece) {
     if (!f) return null;
+    const xp = Math.max(0, f.xp | 0);
+    /* Le niveau se DEDUIT — il n'est pas relu depuis la sauvegarde. Les
+       anciennes fiches en portent un ; l'ignorer les repare toutes seules
+       plutot que de trainer un chiffre qui peut mentir. */
+    const niveau = niveauFamilier(xp);
+    const prochain = niveau >= NIVEAU_MAX_FAM ? null : paliersFamilier(niveau + 1);
     return { espece, nom: NOM_FAMILIER[espece] || 'Pet',
-             niveau: Math.max(1, f.niveau | 0), xp: Math.max(0, f.xp | 0),
+             niveau, xp,
+             /* De quoi peindre une barre SANS refaire le calcul cote page :
+                les deux bornes du palier courant, et le prix du repas. Une
+                seconde formule dans le navigateur finirait par promettre un
+                niveau qui n'arrive pas. */
+             xpBas: paliersFamilier(niveau), xpHaut: prochain,
+             max: niveau >= NIVEAU_MAX_FAM,
+             prixRepas: niveau >= NIVEAU_MAX_FAM ? null : prixRepas(niveau),
              pouvoir: POUVOIR_FAMILIER[espece] || null };
+  }
+
+  /* ---- LES REGLES DU REPAS, TELLES QUE LA PAGE LES ANNONCE ----
+   * Elles partent d'ICI. Une page qui ecrirait « Common and Rare only » de
+   * son cote continuerait de le promettre le jour ou l'on ouvre l'epique, et
+   * un joueur se ferait refuser un repas sans comprendre pourquoi. */
+  static reglesFamilier() {
+    return { rarete: Object.keys(REPAS_XP), xp: { ...REPAS_XP },
+             niveauMax: NIVEAU_MAX_FAM };
   }
 
   /* ---- CELUI QUI TROTTE DERRIERE ----
@@ -6804,6 +6875,64 @@ class Game {
     if (!p.familiers[es]) throw new Error('You have not hatched that one');
     p.familierActif = es;
     return { actif: es };
+  }
+
+  /** L'or DEJA acquis — celui qu'on peut depenser. Pas celui que le
+      personnage vivant rapportera : celui-la n'est verse qu'a sa mort, et le
+      confondre avec l'autre laisserait payer avec une somme qu'on n'a pas. */
+  orDe(addr) { return this._p(addr).fame || 0; }
+
+  /* ---- LE REPAS ----
+   *
+   * On donne une piece du SAC, jamais du coffre : ce qu'on nourrit, c'est du
+   * butin qu'on rapporte, pas ce qu'on a range. Prendre au coffre aurait
+   * aussi rendu possible de vider un coffre entier sans jamais sortir du
+   * hall — l'inverse exact de ce qui doit faire marcher les gens.
+   *
+   * TOUT est verifie avant que quoi que ce soit ne bouge. Retirer la piece
+   * puis s'apercevoir que l'or manque aurait detruit un objet pour rien, et
+   * c'est le genre de perte dont un joueur ne se remet pas.
+   */
+  nourritFamilier(addr, espece, itemId) {
+    const p = this._p(addr);
+    const es = String(espece || '');
+    p.familiers = p.familiers || {};
+    const f = p.familiers[es];
+    if (!f) throw new Error('You have not hatched that one');
+
+    const fiche = this.familierPour(f, es);
+    if (fiche.max) throw new Error(fiche.nom + ' is already at max level');
+
+    const id = Number(itemId);
+    const o = boutique.item(id);
+    if (!o) throw new Error('Unknown item');
+    p.sac = p.sac || {};
+    if (!(p.sac[id] > 0)) throw new Error('That one is not in your backpack');
+
+    const gagne = REPAS_XP[o.rarete];
+    if (!(gagne > 0)) {
+      /* On DIT ce qui est accepte. « It cannot eat that » laisse le joueur
+         essayer les cinq autres crans un par un pour deviner la regle. */
+      throw new Error('Pets only eat Common and Rare gear');
+    }
+    const prix = fiche.prixRepas;
+    const or = p.fame || 0;
+    if (or < prix) throw new Error('Need ' + prix + ' gold — you have ' + Math.floor(or));
+
+    /* ---- ET MAINTENANT SEULEMENT, ON TOUCHE ---- */
+    p.sac[id] -= 1;
+    if (p.sac[id] <= 0) delete p.sac[id];
+    /* Les cases se reparent d'elles-memes au prochain `_casesDuSac` : une
+       case qui montre une piece de plus que le compte se vide. */
+    p.fame = or - prix;
+    f.xp = (f.xp | 0) + gagne;
+
+    const apres = this.familierPour(f, es);
+    return { familier: apres, gagne, prix, or: p.fame,
+             /* « Il a monte » est une question de la PAGE : elle en fait un
+                son et une couleur. La lui faire recalculer en comparant deux
+                fiches serait lui demander de connaitre la courbe. */
+             monte: apres.niveau > fiche.niveau, item: id };
   }
 
   /** Tous les familiers d'un compte, pour le panneau. */

@@ -3267,7 +3267,29 @@ wss.on('connection', (ws) => {
          qui n'y mettront jamais les pieds. */
       if (m.type === 'familiers') {
         if (!ws.addr) return;
-        return send(ws, { type: 'familiers', familiers: game.familiersDe(ws.addr) });
+        return send(ws, { type: 'familiers', familiers: game.familiersDe(ws.addr),
+                          /* Les regles du repas partent d'ici. Une page qui
+                             ecrirait « Common and Rare only » de son cote
+                             continuerait de le promettre le jour ou l'on
+                             ouvre l'epique. */
+                          reglesFam: Game.reglesFamilier(),
+                          or: Math.floor(game.orDe(ws.addr)) });
+      }
+      /* ---- ON LE NOURRIT ----
+       * Une piece du sac contre de l'XP et de l'or. On renvoie le SAC et l'OR
+       * avec la reponse : le panneau montre les trois au meme endroit, et les
+       * laisser se rafraichir chacun de leur cote aurait affiche un sac vide
+       * a cote d'un or inchange pendant une demi-seconde. */
+      if (m.type === 'familierNourrit') {
+        if (!ws.addr) return;
+        let r = null, err = null;
+        try { r = game.nourritFamilier(ws.addr, m.espece, m.item); }
+        catch (e) { err = e.message; }
+        if (!err) persistSoon();
+        return send(ws, { type: 'familierNourrit', ...(r || {}), error: err || undefined,
+                          familiers: game.familiersDe(ws.addr),
+                          sacJoueur: game.sacPour(ws.addr),
+                          or: Math.floor(game.orDe(ws.addr)) });
       }
       /* ---- CHOISIR CELUI QUI SORT ----
        * `rhabille` fait suivre au monde de combat, comme pour un changement
