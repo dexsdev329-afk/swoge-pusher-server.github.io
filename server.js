@@ -4294,20 +4294,101 @@ function ramassePlace(ws, id, place, muet) {
  * ne la decale pas, et reessayer la meme place tournerait en rond pour
  * toujours.
  */
+/* ---- CE QU'ON PREND EN PREMIER QUAND ON NE PEUT PAS TOUT PRENDRE ----
+ *
+ * On avancait de la place 0 vers la place 7, dans l'ordre ou le sac les avait
+ * rangees. C'est l'ordre du HASARD, et il coute cher au moment ou il compte :
+ * une place libre, un sac contenant trois pieces communes et une fiole de
+ * stat, et l'on emportait la piece commune parce qu'elle etait en tete de
+ * liste. La chose la plus rare du jeu — une sur cinquante morts — restait par
+ * terre et finissait sa minute.
+ *
+ * Le rang est celui de ce que ca vaut, pas de ce que ca pese :
+ *   la FIOLE DE STAT d'abord, parce qu'elle est permanente et qu'elle ne
+ *   revient pas ; l'EQUIPEMENT ensuite, du plus rare au plus commun ; le SOIN
+ *   en dernier, parce que c'est du consommable et qu'on en recroise toutes les
+ *   six morts.
+ *
+ * On ne tranche PAS a la place du joueur pour autant : la grille reste
+ * ouverte, et il prend a la main ce qu'il veut dans l'ordre qu'il veut. Ceci
+ * ne decide que du geste automatique, celui qu'on fait sans regarder.
+ */
+const RANG_BUTIN = { relique: 0, mythique: 1, legendaire: 2, epique: 3, rare: 4, commun: 5 };
+function valeurDeLaPlace(o) {
+  if (!o) return 99;
+  if (o.stat) return -1;                       // la fiole avant tout
+  if (o.item) {
+    const r = RANG_BUTIN[o.rarete];
+    return r === undefined ? 6 : r;
+  }
+  return 10;                                   // le soin, en dernier
+}
+
 function ramassageAuto(ws) {
   if (!ws.addr || !realmClients.has(ws)) return;
   const sous = realmDe(ws).sacSousLesPieds(ws.addr);
-  if (!sous) return;
+  /* Plus de sac sous les pieds : on oublie ce qu'on avait deja annonce, pour
+     que repasser dessus le redise. */
+  if (!sous) { ws.sacRefuse = null; return; }
   /* Ce qu'on vient de poser soi-meme attend qu'on s'ecarte : sinon jeter une
      piece la reprendrait dans le meme dixieme de seconde, et il deviendrait
      impossible de rien laisser par terre sans courir en meme temps. */
   if (sous.pose && sous.pose === ws.addr) return;
-  let place = 0, tours = 0;
-  while (place < monde.SAC.cases && tours < monde.SAC.cases * 2) {
+  /* L'ordre de PASSAGE, du plus precieux au reste. On travaille sur les
+     numeros de place, jamais sur une copie du contenu : prendre decale la
+     liste, et une copie se serait mise a designer autre chose des le premier
+     objet pris. */
+  let refuse = 0, refuseFiole = false, tours = 0;
+  const fait = new Set();
+  while (tours < monde.SAC.cases * 3) {
     tours++;
-    const r = ramassePlace(ws, null, place, true);
-    if (r === 'rien') return;      // plus de sac, ou plus rien dedans
-    if (r === 'refuse') place++;   // celle-la ne rentre pas : on passe a la suivante
+    const c = sous.contenu || [];
+    /* La meilleure place ENCORE LA et pas deja refusee. On relit le contenu a
+       chaque tour, pour la meme raison. */
+    let choix = -1, mieux = 1e9;
+    for (let i = 0; i < c.length; i++) {
+      if (fait.has(i)) continue;
+      const v = valeurDeLaPlace(c[i]);
+      if (v < mieux) { mieux = v; choix = i; }
+    }
+    if (choix < 0) break;                    // tout a ete tente
+    const cible = c[choix];
+    const r = ramassePlace(ws, null, choix, true);
+    if (r === 'rien') { ws.sacRefuse = null; return; }
+    if (r === 'refuse') {
+      /* Refusee : on ne la retentera pas ce tour-ci, et les places n'ont pas
+         bouge — un refus ne retire rien. */
+      fait.add(choix);
+      refuse++;
+      if (cible && cible.stat) refuseFiole = true;
+    } else {
+      /* Prise : la liste s'est decalee, et les numeros qu'on avait notes ne
+         designent plus la meme chose. On repart de zero — au plus vingt-quatre
+         tours, et le sac n'a que huit places. */
+      fait.clear();
+    }
+  }
+  /* ---- UN REFUS MUET EST PIRE QU'UN REFUS ----
+   *
+   * C'est le defaut qu'on nous a rapporte, et il n'en avait pas l'air : « je
+   * n'arrive pas a ramasser les potions de stat ». Le sac etait plein — huit
+   * places prises par de l equipement commun ramasse tout seul — et marcher
+   * sur une fiole ne faisait RIEN. Pas de refus, pas de son, pas un mot. Le
+   * geste par defaut du jeu echouait en silence sur la chose la plus rare
+   * qu'il produise.
+   *
+   * UNE fois par sac, pas une fois par image : `ramassageAuto` tourne dix fois
+   * par seconde, et dix « BAG FULL » par seconde ne se lisent plus — c'est
+   * exactement pour ca que le message avait ete retire au depart. On retient
+   * donc le sac deja annonce, et l'on oublie des qu'on s'en ecarte. */
+  if (refuse && ws.sacRefuse !== sous.id) {
+    ws.sacRefuse = sous.id;
+    send(ws, { type: 'realmRamasse', refus: 'sac-plein', auto: true,
+               sac: sous.sac,
+               /* CE QU'ON LAISSE : la page ne dit pas la meme chose pour une
+                  fiole que pour une piece commune, et c'est la fiole qui
+                  merite qu'on s'arrete. */
+               stat: refuseFiole ? 1 : 0 });
   }
 }
 

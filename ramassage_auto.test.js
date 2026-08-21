@@ -161,11 +161,48 @@ process.on('unhandledRejection', (e) => {
     eq((p.sac || {})[neuvieme.id] || 0, 0, 'elle n est pas entree dans un sac plein');
     eq(moteur.sacRempli(A), 8, 'qui n a pas debordé');
     ok(monde.sacs.indexOf(sac) >= 0, 'et le sac au sol existe encore : il finira sa minute');
-    /* ET IL SE TAIT. Un refus par tour, dix fois par seconde, remplirait la
-       socket pour dire « toujours pas » — et la page afficherait un message
-       d'erreur en boucle. */
+    /* ---- ET IL LE DIT, UNE FOIS ----
+     *
+     * Cet essai exigeait le SILENCE. C'etait la sur-correction d'un vrai
+     * defaut — un refus par tour, dix fois par seconde, remplissait la socket
+     * pour dire « toujours pas » et faisait clignoter un message d'erreur sans
+     * fin — et elle a coute plus cher que ce qu'elle reparait.
+     *
+     * Ce qu'on nous a rapporte : « je n'arrive pas a ramasser les potions de
+     * stat ». Le sac etait plein d'equipement commun ramasse tout seul, marcher
+     * sur une fiole ne faisait RIEN, et rien ne le disait. Le geste par defaut
+     * du jeu echouait en silence sur la chose la plus rare qu'il produise —
+     * une sur cinquante morts, et elle finissait sa minute par terre.
+     *
+     * La bonne borne n'est donc pas zero, c'est UN : une fois par sac, et l'on
+     * oublie quand on s'en ecarte. */
     const cris = s.recus.filter((x) => x.type === 'realmRamasse');
-    eq(cris.length, 0, `il ne dit rien tant qu il ne prend rien (${cris.length} messages)`);
+    eq(cris.length, 1, `il dit UNE fois qu il n a pas pris (${cris.length} messages)`);
+    eq(cris[0].refus, 'sac-plein', 'et il dit pourquoi');
+    ok(cris[0].auto, 'en precisant que le geste etait automatique');
+
+    /* ET IL NE LE REPETE PAS. Sept tours de plus sur le meme sac : pas un mot
+       de plus. C'est la moitie qui comptait dans l'ancien essai, et elle est
+       gardee telle quelle. */
+    s.recus.length = 0;
+    await tourne(700);
+    eq(s.recus.filter((x) => x.type === 'realmRamasse').length, 0,
+       'et il ne le repete pas tant qu on reste dessus');
+
+    /* ---- MAIS IL LE REDIT SI L'ON REVIENT ----
+     * Sinon, revenir avec de la place ne dirait rien non plus le jour ou l'on
+     * n'a toujours pas assez de place. */
+    /* `j`, la fiche deja prise plus haut : `monde.joueurs.get(A)` peut rendre
+       vide selon la casse de l'adresse, et c'est exactement pour ca que `CLE`
+       existe. */
+    const ou = { x: j.x, y: j.y };
+    j.x = Math.max(40, ou.x - M.SAC.rayon * 4);
+    await tourne(300);
+    j.x = ou.x;
+    s.recus.length = 0;
+    await jusqua(() => s.recus.some((x) => x.type === 'realmRamasse'), 2000);
+    eq(s.recus.filter((x) => x.type === 'realmRamasse').length, 1,
+       'revenir dessus le redit, une fois');
   }
 
   // ================== 4. ET DES QU ON FAIT DE LA PLACE, CA ENTRE
