@@ -34,6 +34,9 @@ const paris = require('./paris');
 const boutique = require('./boutique');
 const skins = require('./skins');
 const personnages = require('./personnages');
+/* `monde` ne requiert rien : le brancher ici ne peut pas faire de cycle. On en
+   a besoin pour dire ce qu'un fruit FAIT — voir `sortDuFruit`. */
+const monde = require('./monde');
 
 /* ---- LES POTIONS ----
  *
@@ -5611,6 +5614,10 @@ class Game {
                       famille: o.famille, og: !o.drop,
                       couleur: r ? r.couleur : '#8DA0C4',
                       stat: personnages.FAMILLE_STAT[o.famille] || null, bonus };
+      /* Le fruit PORTE est celui dont on a le plus besoin de connaitre le
+         pouvoir : c'est celui que la barre d'espace va lancer. */
+      const sort = Game.sortDuFruit(o);
+      if (sort) ligne.sort = sort;
       /* Les degats ne concernent que les armes : les poser sur une bague
          laisserait croire qu'elle frappe. */
       if (degats) ligne.degats = degats.slice();
@@ -6005,6 +6012,10 @@ class Game {
                   couleur: r ? r.couleur : '#8DA0C4', famille: o.famille, pouvoir: o.pouvoir,
                   stat: personnages.FAMILLE_STAT[o.famille] || null,
                   bonus: personnages.bonusesDeObjet(o),
+                  /* Ce que le fruit DECLENCHE. `pouvoir` juste au-dessus est
+                     la phrase d'ambiance de la boutique — jolie, et muette sur
+                     les chiffres qu'on subit en combat. */
+                  ...(Game.sortDuFruit(o) ? { sort: Game.sortDuFruit(o) } : {}),
                   quantite: objets[o.id] || 0 };
       /* Une arme n'a plus de stats : sans ses degats, la liste de choix
          montrerait cinq epees indistinctes. Les degats SONT sa fiche. */
@@ -6249,6 +6260,9 @@ class Game {
                  /* Meme raison que dans la liste d'equipement : une arme
                     posee dans le sac ne se lit que par ses degats. */
                  ...(d ? { degats: d.slice() } : {}),
+                 /* Et un fruit ne se lit que par ce qu'il DECLENCHE : ses deux
+                    lignes de bonus ne disent rien de la foudre. */
+                 ...(Game.sortDuFruit(o) ? { sort: Game.sortDuFruit(o) } : {}),
                  /* `place` identifie CETTE CASE, pas cet objet : deux
                     exemplaires identiques doivent pouvoir se deplacer
                     separement — et une piece rendue doit retrouver la sienne. */
@@ -6477,16 +6491,51 @@ class Game {
     return null;
   }
 
+  /* ---- CE QUE FAIT UN FRUIT ----
+   *
+   * Le pouvoir d'un fruit n'est ecrit nulle part SUR le fruit : il se deduit
+   * de sa stat dominante (`POUVOIR_PAR_STAT`), et ses chiffres vivent dans
+   * `POUVOIRS`. On portait donc un fruit sans savoir ce qu'il declenchait —
+   * la seule facon de l'apprendre etait d'aller le lancer dans un combat.
+   *
+   * La page pourrait le deduire elle aussi, au prix de DEUX tables recopiees
+   * du serveur. Deux copies d'une table de regles finissent toujours par
+   * diverger, et le fruit dirait alors « 3x » quand le serveur en applique
+   * deux. C'est donc le serveur qui l'ecrit, une fois, en toutes lettres.
+   *
+   * Les chiffres de la phrase sont LUS dans la table, jamais tapes : regler
+   * l'equilibre d'un pouvoir doit changer sa description dans le meme geste.
+   */
+  static sortDuFruit(o) {
+    if (!o || !o.famille) return null;
+    /* `FAMILLE_STAT` ne connait que les familles de FRUITS : une armure ou une
+       lame n'y est pas, et n'a donc pas de sort. C'est le seul discriminant
+       qu'on ait qui ne soit pas une liste a tenir a jour. */
+    const stat = personnages.FAMILLE_STAT[o.famille];
+    if (!stat) return null;
+    const cle = monde.POUVOIR_PAR_STAT[stat];
+    const P = cle ? monde.POUVOIRS[cle] : null;
+    if (!P) return null;
+    const quoi = cle === 'foudre'
+      ? `${P.facteur}× your best hit, up to ${P.portee} away`
+      : cle === 'rafale'
+        ? `${P.facteur}× fire rate for ${P.duree}s`
+        : `freezes everything within ${P.rayon} for ${P.duree}s`;
+    return { cle, nom: P.nom, cout: P.cout, recharge: P.recharge, quoi };
+  }
+
   /** Ce qu'une piece emporte avec elle quand elle tombe ou qu'on la pose. */
   ficheAuSol(o) {
     if (!o) return null;
     const r = boutique.rarete(o.rarete);
     const d = personnages.degatsDeObjet(o);
     const b = personnages.bonusesDeObjet(o);
+    const sort = Game.sortDuFruit(o);
     return { item: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
              couleur: r ? r.couleur : null, og: !o.drop,
              ...(Object.keys(b).length ? { bonus: b } : {}),
-             ...(d ? { degats: d } : {}) };
+             ...(d ? { degats: d } : {}),
+             ...(sort ? { sort } : {}) };
   }
 
   /*
