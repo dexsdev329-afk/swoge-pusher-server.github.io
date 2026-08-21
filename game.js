@@ -138,14 +138,20 @@ const NOM_FAMILIER = {
 /* Ce que chacun sait faire. La page l'AFFICHE, elle ne l'applique pas : le
    combat est au serveur, et une deuxieme table cote page finirait par
    promettre autre chose que ce qui se passe. */
-const POUVOIR_FAMILIER = {
-  normal:     { cle: 'mord',    nom: 'Bites monsters' },
-  feu:        { cle: 'brule',   nom: 'Sets enemies on fire' },
-  glace:      { cle: 'gele',    nom: 'Freezes an enemy' },
-  terre:      { cle: 'bouclier', nom: 'Shields you, blocks some hits' },
-  tenebre:    { cle: 'repousse', nom: 'Knocks enemies back' },
-  legendaire: { cle: 'soigne',  nom: 'Heals you every 5s' },
+/* Le nom, et LUI SEUL. Quelle espece fait quoi est une regle du monde, elle
+   vit dans monde.js avec les chiffres : deux tables — l'une qui nomme,
+   l'autre qui agit — auraient fini par annoncer un pouvoir et en appliquer un
+   autre. */
+const NOM_POUVOIR_FAMILIER = {
+  mord: 'Bites monsters', brule: 'Sets enemies on fire',
+  gele: 'Freezes an enemy', bouclier: 'Shields you, blocks some hits',
+  repousse: 'Knocks enemies back', soigne: 'Heals you every 5s',
 };
+function pouvoirFamilier(espece) {
+  const cle = monde.POUVOIR_PAR_ESPECE[espece];
+  if (!cle) return null;
+  return { cle, nom: NOM_POUVOIR_FAMILIER[cle] || cle };
+}
 /* Ouvrir un deuxieme oeuf de la meme espece ne donne pas un second familier :
    il nourrit celui qu'on a. Le chiffre vaut une bonne poignee de repas — un
    oeuf est la chose la plus rare du jeu, il ne doit pas valoir moins qu'une
@@ -6833,7 +6839,13 @@ class Game {
              xpBas: paliersFamilier(niveau), xpHaut: prochain,
              max: niveau >= NIVEAU_MAX_FAM,
              prixRepas: niveau >= NIVEAU_MAX_FAM ? null : prixRepas(niveau),
-             pouvoir: POUVOIR_FAMILIER[espece] || null };
+             pouvoir: pouvoirFamilier(espece),
+             /* Ce que son pouvoir vaut A CE NIVEAU-LA. Le panneau montre donc
+                ce que le prochain repas achete, au lieu d'un niveau qui monte
+                sans qu'on voie quoi que ce soit changer. La formule est au
+                monde ; la page n'en tient pas de copie. */
+             effet: monde.familierEffet(
+               (monde.POUVOIR_PAR_ESPECE || {})[espece], niveau) };
   }
 
   /* ---- LES REGLES DU REPAS, TELLES QUE LA PAGE LES ANNONCE ----
@@ -6860,6 +6872,16 @@ class Game {
     const a = p.familierActif || null;
     if (!a || !p.familiers || !p.familiers[a]) return null;
     return a;
+  }
+
+  /** Le niveau du familier SORTI, ou 1. La simulation le demande a chaque
+      entree : ce que son pouvoir vaut en depend, et le recalculer la-bas
+      aurait mis la courbe a deux endroits. */
+  niveauFamilierDe(addr) {
+    const es = this.familierActifDe(addr);
+    if (!es) return 1;
+    const p = this._p(addr);
+    return niveauFamilier((p.familiers[es] || {}).xp);
   }
 
   /** Choisir lequel sort. `null` les renvoie tous a l'enclos. */

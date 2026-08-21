@@ -217,7 +217,7 @@ class Realm {
         id: this._nouvelId(), espece: monde.SALLE.espece, biome: s.biome, salle: s.i,
         x, y, ancreX: s.x, ancreY: s.y,
         pv: t.pv, pvMax: t.pv, dir: 'down', cible: null,
-        recharge: 0, rechargeT: 0, stase: 0, errX: 0, errY: 0, errChrono: 0,
+        recharge: 0, rechargeT: 0, stase: 0, feu: 0, feuReste: 0, errX: 0, errY: 0, errChrono: 0,
       });
     }
     s.vide = false;
@@ -338,6 +338,11 @@ class Realm {
          qui vient de decocher ne peut plus frapper de pres, ce qui reviendrait
          a lui retirer une des deux attaques au hasard. */
       cible: null, recharge: 0, rechargeT: 0, stase: 0,
+      /* Ce que le familier de feu laisse : une duree, un taux et un
+         responsable. Declares ICI plutot que crees au premier coup — un champ
+         qui apparait en cours de route est un champ que la moitie du code
+         teste avec `undefined`. */
+      feu: 0, feuReste: 0, feuTaux: 0, feuPar: null,
       // la direction de flanerie, retiree de temps en temps
       errX: 0, errY: 0, errChrono: 0,
     };
@@ -394,6 +399,12 @@ class Realm {
       /* Le familier vient avec la fiche : il appartient au COMPTE, et la
          simulation ne fait que le transporter jusqu'aux autres pages. */
       fam: (fiche && fiche.fam) || null,
+      /* Son NIVEAU, parce que c'est lui qui decide de ce que son pouvoir
+         vaut. La simulation ne le calcule pas — elle le recoit avec la fiche,
+         comme les stats du personnage. */
+      famNiv: Math.max(1, (fiche && fiche.famNiv) | 0),
+      famR: 0,                 // sa recharge, en secondes
+      bouclier: 0,             // ce que la terre laisse derriere elle
       /* Le pouvoir vient du FRUIT, pas de l'arme : `statFruit` est la stat
          principale du fruit porte, envoyee par game.js. Sans fruit, pas de
          pouvoir — le poing nu ne lance pas d'eclair. */
@@ -472,6 +483,7 @@ class Realm {
        chemin que changer d'arme, et un compagnon qui n'apparaitrait qu'a la
        prochaine entree se lirait comme un choix qui n'a pas pris. */
     j.fam = fiche.fam || null;
+    j.famNiv = Math.max(1, fiche.famNiv | 0);
     j.pouvoir = monde.pouvoirDeStat(fiche.statFruit || null);
     return j;
   }
@@ -991,7 +1003,177 @@ class Realm {
     this._pasMonstres(dt, ev);
     this._pasTirs(dt, ev);
     this._pasTirsMonstres(dt, ev);
+    /* APRES les monstres : le familier reagit a ce qui vient de se passer,
+       pas a l'etat d'avant le pas. Un chien qui mordrait avant que le monstre
+       n'ait avance frapperait ou il etait. */
+    this._pasFamiliers(dt, ev);
     return ev;
+  }
+
+  /**
+   * ==================== LE FAMILIER AIDE ====================
+   *
+   * Il agit SEUL, sur une recharge. Un compagnon qu'il faut declencher est une
+   * deuxieme touche de pouvoir : on l'oublie, ou on l'appuie en boucle. Le
+   * joueur choisit LEQUEL sortir, et c'est la que se joue la decision.
+   *
+   * ---- il n'est pas une entite ----
+   *
+   * Pas de position, pas de points de vie, rien ne le vise. C'est la promesse
+   * faite au joueur : l'oeuf tombe une fois sur cinq mille et ce qu'il en sort
+   * ne se perd pas. Ses effets partent donc du MAITRE — soixante unites
+   * d'imprecision sur deux cent soixante, moins que le rayon d'un monstre.
+   *
+   * ---- et il ne se bat pas dans le monde rouge ----
+   *
+   * Sur la carte PvP, on perd son sac en mourant. Laisser un tirage a un sur
+   * cinq mille decider des duels aurait fait de la chance au butin la
+   * competence principale d'une carte ou l'on risque ses affaires — et il n'y
+   * a aucune facon de FARMER un un-sur-cinq-mille pour rattraper. Le familier
+   * y trotte, et c'est tout.
+   */
+  _pasFamiliers(dt, ev) {
+    if (this.pvp) return;
+    for (const j of this.joueurs.values()) {
+      if (j.pv <= 0 || !j.fam) { continue; }
+      /* Le bouclier s'use meme quand la recharge court : c'est une duree, pas
+         une charge, et la suspendre l'aurait rendu permanent au repos. */
+      if (j.bouclier > 0) j.bouclier = Math.max(0, j.bouclier - dt);
+      j.famR = (j.famR || 0) - dt;
+      if (j.famR > 0) continue;
+
+      const cle = monde.POUVOIR_PAR_ESPECE[j.fam];
+      const E = cle ? monde.familierEffet(cle, j.famNiv || 1) : null;
+      if (!E) { j.famR = monde.FAMILIERS.recharge; continue; }
+
+      /* ---- CE QUI SE PASSE, ET SI LA RECHARGE REPART ----
+       * Un geste dans le vide ne consomme PAS la recharge : sinon le chien
+       * mordrait l'air a l'instant ou l'on arrive sur un groupe, et
+       * attendrait cinq secondes pour le premier vrai coup. */
+      const fait = this._familierAgit(j, cle, E, ev);
+      if (fait) j.famR = E.recharge;
+      else j.famR = 0.35;                 // il regarde autour, il ne dort pas
+    }
+  }
+
+  /** Le geste lui-meme. Rend `true` s'il a servi a quelque chose. */
+  _familierAgit(j, cle, E, ev) {
+    /* ---- LE SOIN ET LE BOUCLIER NE VISENT PERSONNE ----
+     * Ils partent sur le maitre. Les mettre dans la boucle de recherche de
+     * cible les aurait rendus muets quand il n'y a pas de monstre — c'est-a-
+     * dire au moment ou l'on se soigne. */
+    if (cle === 'soigne') {
+      if (j.pv >= j.pvMax) return false;
+      const gain = Math.max(1, Math.round(j.pvMax * E.part));
+      j.pv = Math.min(j.pvMax, j.pv + gain);
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'soigne', gain, pv: j.pv,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+    if (cle === 'bouclier') {
+      /* On ne le repose pas s'il tient encore : sinon la recharge le
+         prolongerait sans fin et il ne serait plus une fenetre mais un etat. */
+      if (j.bouclier > 0) return false;
+      j.bouclier = E.duree;
+      j.bouclierPart = E.reduction;
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'bouclier', duree: E.duree,
+                    part: E.reduction, x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    if (cle === 'repousse') {
+      const R2 = E.rayon * E.rayon;
+      const pousses = [];
+      for (const m of this.monstres) {
+        if (m.pv <= 0) continue;
+        const dx = m.x - j.x, dy = m.y - j.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > R2) continue;
+        /* Pile dessus : on pousse vers le bas plutot que de diviser par zero.
+           Une direction arbitraire vaut mieux qu'un NaN qui sortirait la
+           creature de la carte pour toujours. */
+        const d = Math.sqrt(d2) || 1;
+        const nx = d2 ? dx / d : 0, ny = d2 ? dy / d : 1;
+        /* ---- ON POUSSE, ON NE TELEPORTE PAS ----
+         * Le mur arrete : sans ce test, les tenebres enverraient les monstres
+         * DANS la roche, ou ils resteraient coinces hors d'atteinte et
+         * empecheraient la salle de se vider. */
+        const vx = m.x + nx * E.force, vy = m.y + ny * E.force;
+        if (!monde.bloque(this.obstacles, vx, vy, 0)) { m.x = vx; m.y = vy; }
+        pousses.push(m.id);
+      }
+      if (!pousses.length) return false;
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'repousse', rayon: E.rayon,
+                    monstres: pousses, x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    /* ---- LES TROIS QUI VISENT ----
+     * Le plus proche dans la portee. Un tirage au hasard parmi ceux a portee
+     * aurait rendu le compagnon illisible : on ne saurait jamais pourquoi il
+     * a choisi celui-la. */
+    let cible = null, d2mini = E.portee * E.portee;
+    for (const m of this.monstres) {
+      if (m.pv <= 0) continue;
+      const dx = m.x - j.x, dy = m.y - j.y, d2 = dx * dx + dy * dy;
+      if (d2 < d2mini) { d2mini = d2; cible = m; }
+    }
+    if (!cible) return false;
+
+    if (cle === 'gele') {
+      /* Deja fige : on ne recommence pas. Prolonger a chaque recharge aurait
+         fait d'un seul monstre une statue permanente, ce qui n'est pas une
+         aide mais une suppression. */
+      if (cible.stase > 0) return false;
+      cible.stase = E.duree;
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'gele', monstre: cible.id, duree: E.duree,
+                    x: Math.round(cible.x), y: Math.round(cible.y) });
+      return true;
+    }
+
+    if (cle === 'brule') {
+      /* La brulure REMPLACE, elle ne s'ajoute pas : deux compteurs sur la meme
+         creature auraient double les degats sans que rien ne le dise. */
+      cible.feu = E.duree;
+      cible.feuPar = j.addr;
+      cible.feuTaux = E.parSeconde;
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'brule', monstre: cible.id, duree: E.duree,
+                    x: Math.round(cible.x), y: Math.round(cible.y) });
+      return true;
+    }
+
+    // mord
+    const perte = Math.max(1, Math.round(E.degats));
+    cible.pv = Math.max(0, cible.pv - perte);
+    ev.fam = ev.fam || [];
+    ev.fam.push({ addr: j.addr, quoi: 'mord', monstre: cible.id, perte, pv: cible.pv,
+                  x: Math.round(cible.x), y: Math.round(cible.y) });
+    /* Le meme evenement que nos tirs : la page peint le chiffre au meme
+       endroit, avec le meme code. Un second chemin d'affichage aurait fini par
+       montrer les degats du chien autrement que les notres. */
+    ev.touches.push({ addr: j.addr, monstre: cible.id, espece: cible.espece,
+                      perte, pv: cible.pv, x: cible.x, y: cible.y, familier: j.fam });
+    if (cible.pv <= 0) this._abat(cible, j, ev);
+    return true;
+  }
+
+  /* ---- CE QUE LE BOUCLIER LAISSE PASSER ----
+   * UN seul endroit reduit les degats. Il y a trois facons de se faire
+   * toucher — le contact, la zone, la fleche — et recopier la soustraction
+   * dans les trois aurait garanti que la quatrieme, le jour ou elle arrive,
+   * l'oublie. La brulure n'y passe pas : elle ignore la defense par regle du
+   * jeu, et un bouclier est une defense. */
+  _amorti(j, perte) {
+    if (!(j.bouclier > 0) || !(j.bouclierPart > 0)) return perte;
+    /* Au moins un point : un bouclier qui annulerait entierement les petits
+       coups ferait des secondes ou l'on ne risque rien, et l'esquive — la
+       seule competence du jeu — cesserait de compter pendant ce temps-la. */
+    return Math.max(1, Math.round(perte * (1 - j.bouclierPart)));
   }
 
   /**
@@ -1117,6 +1299,33 @@ class Realm {
       const deX = m.x, deY = m.y;
       if (t.zone && m.zoneRecharge === undefined) m.zoneRecharge = 1 / t.zone.cadence;
 
+      /* ---- LE FEU DU FAMILIER RONGE ----
+       * Avant la stase : une creature figee brule quand meme. Le contraire
+       * aurait fait de la glace un CONTRE au feu chez le meme joueur, ce que
+       * personne ne comprendrait — ce sont deux aides, pas deux camps.
+       *
+       * Meme comptabilite que la brulure du joueur : on accumule en flottant
+       * et l'on ne verse que les points ENTIERS. A cinq points par seconde, un
+       * pas de cent millisecondes vaut 0,5 — arrondir chaque pas donnerait
+       * zero pour toujours. */
+      if (m.feu > 0) {
+        m.feu = Math.max(0, m.feu - dt);
+        m.feuReste = (m.feuReste || 0) + (m.feuTaux || 0) * dt;
+        const brule = Math.floor(m.feuReste);
+        if (brule > 0) {
+          m.feuReste -= brule;
+          m.pv = Math.max(0, m.pv - brule);
+          ev.touches.push({ addr: m.feuPar || null, monstre: m.id, espece: m.espece,
+                            perte: brule, pv: m.pv, x: m.x, y: m.y, familier: 'feu' });
+          if (m.pv <= 0) {
+            /* Le maitre a pu partir entre-temps : `_abat` sait recevoir un
+               tueur absent, et le butin appartient au sol de toute facon. */
+            this._abat(m, this.joueurs.get(m.feuPar) || null, ev);
+            continue;
+          }
+        }
+      } else if (m.feuReste) { m.feuReste = 0; }
+
       /* ---- LA STASE ----
        * Un monstre fige ne bouge pas, ne frappe pas, ne tire pas — et reste
        * une cible. On sort AVANT tout le reste, y compris avant la flanerie :
@@ -1199,7 +1408,7 @@ class Realm {
             m.x += (dx / d) * t.vitesse * dt;
             m.y += (dy / d) * t.vitesse * dt;
           } else if (m.recharge <= 0) {
-            const perte = monde.degatsSubis(t.att, cible.def);
+            const perte = this._amorti(cible, monde.degatsSubis(t.att, cible.def));
             cible.pv = Math.max(0, cible.pv - perte);
             m.recharge = 1 / t.cadence;
             /* `quoi` dit d'ou vient le coup. Depuis que la meme creature
@@ -1369,7 +1578,7 @@ class Realm {
         if (j.pv <= 0) continue;
         const dx = j.x - z.x, dy = j.y - z.y;
         if (dx * dx + dy * dy > z.r * z.r) continue;
-        const perte = monde.degatsSubis(z.att, j.def);
+        const perte = this._amorti(j, monde.degatsSubis(z.att, j.def));
         j.pv = Math.max(0, j.pv - perte);
         ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: z.espece, quoi: 'zone' });
         if (z.effet) this._poseEtat(j, z.effet, ev);
@@ -1394,7 +1603,7 @@ class Realm {
           if (j.pv <= 0) continue;
           const dx = j.x - t.x, dy = j.y - t.y;
           if (dx * dx + dy * dy > 34 * 34) continue;
-          const perte = monde.degatsSubis(t.att, j.def);
+          const perte = this._amorti(j, monde.degatsSubis(t.att, j.def));
           j.pv = Math.max(0, j.pv - perte);
           /* ---- LE TIR QUI POSE UN ETAT ----
            * Il fait ses degats comme les autres, et EN PLUS il cloue, ralentit
@@ -1466,6 +1675,10 @@ class Realm {
     return {
       moi: { x: Math.round(j.x), y: Math.round(j.y), pv: j.pv, pvMax: j.pvMax,
              mp: j.mp, mpMax: j.mpMax, fam: j.fam || null,
+             /* Ce qu'il reste de bouclier. Sans ce champ, la terre serait le
+                seul des six pouvoirs dont on ne verrait jamais rien — elle
+                agit en RETIRANT des degats, et l'absence ne se dessine pas. */
+             bo: j.bouclier > 0 ? Number(j.bouclier.toFixed(2)) : 0,
              /* Sa vitesse de deplacement, telle que le SERVEUR la calcule.
                 La page ne la deduit pas de son cote : deux formules a tenir
                 d'accord finiraient par se contredire, et le joueur se ferait
@@ -1504,6 +1717,9 @@ class Realm {
         /* La stase se VOIT : sans marque a l'ecran, cinq secondes de monstres
            immobiles se lisent comme un serveur qui a lache. */
         if (m.stase > 0) o.st = Number(m.stase.toFixed(2));
+        /* Et le feu aussi : une creature qui perd des points de vie sans que
+           rien ne le montre se lit comme un bug, pas comme une brulure. */
+        if (m.feu > 0) o.fe = Number(m.feu.toFixed(2));
         return o;
       }),
       /* ---- LA VITESSE PART AVEC LE PROJECTILE ----

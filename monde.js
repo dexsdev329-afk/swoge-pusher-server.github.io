@@ -1837,6 +1837,103 @@ const POUVOIRS = {
   },
 };
 
+/*
+ * ==================== CE QUE FAIT UN FAMILIER ====================
+ *
+ * ---- il agit SEUL, et c'est tout l'interet ----
+ *
+ * Un compagnon qu'il faut declencher est une deuxieme touche de pouvoir : on
+ * l'oublie, ou on l'appuie en boucle. Celui-ci a une recharge et frappe des
+ * qu'elle est finie, sur ce qui est a portee. Le joueur ne le pilote pas — il
+ * choisit LEQUEL sortir, et c'est la que se joue la decision.
+ *
+ * ---- il ne meurt jamais, et il n'est pas une cible ----
+ *
+ * C'est la promesse faite au joueur : l'oeuf tombe une fois sur cinq mille,
+ * et ce qu'il en sort ne se perd pas. Un familier qu'un monstre peut abattre
+ * l'aurait rendue fausse le premier soir. Il n'a donc pas de points de vie,
+ * et rien ne le vise.
+ *
+ * ---- ses effets partent du MAITRE ----
+ *
+ * Le familier n'a pas de position cote serveur : il trotte derriere son
+ * maitre, a moins d'une longueur de laisse, et c'est la page qui le fait
+ * trotter. Mesurer sa portee depuis le joueur plutot que depuis lui coute
+ * soixante unites d'imprecision sur deux cent soixante — moins que le rayon
+ * d'un monstre — et evite de simuler, diffuser et synchroniser une deuxieme
+ * creature par joueur. Le jour ou l'on voudra qu'il se fasse toucher, il
+ * faudra la position ; ce jour-la ce commentaire dira ou regarder.
+ *
+ * ---- pourquoi une aide, et jamais une arme ----
+ *
+ * Les chiffres sont volontairement petits devant ceux d'une arme. Un familier
+ * qui tuerait a lui seul ferait du jeu une chose qu'on regarde, et un joueur
+ * sans oeuf serait derriere pour une raison qu'il ne controle pas : il n'y a
+ * aucune facon de FARMER un un-sur-cinq-mille. L'aide se voit, elle ne
+ * remplace pas.
+ */
+const FAMILIERS = {
+  portee: 260,           // autour du maitre, pour tout ce qui vise
+  recharge: 5,           // secondes entre deux gestes — la cadence du legendaire
+  niveauMax: 20,
+  /* Le chien ordinaire MORD. Il n'a pas d'effet, il a des degats : c'est le
+     seul des six a etre simplement utile, et c'est ce qui le rend jouable
+     quand on n'a que lui. */
+  mord:     { degats: 12, parNiveau: 3 },
+  /* Le feu BRULE. La brulure ignore la defense — c'est deja la regle du jeu
+     pour celle que l'on subit, et deux brulures aux regles differentes
+     seraient deux choses portant le meme nom. */
+  brule:    { duree: 3.5, parSeconde: 5, parNiveau: 0.5 },
+  /* La glace FIGE. Court : une stase de cinq secondes existe deja, elle coute
+     soixante-quinze de mana et douze secondes de recharge. Celle-ci est
+     gratuite et automatique, elle ne peut donc pas valoir autant. */
+  gele:     { duree: 1.4, parNiveau: 0.07 },
+  /* Les tenebres REPOUSSENT tout ce qui est trop pres. Pas de degats : c'est
+     une porte de sortie, et une porte de sortie qui tue en plus n'aurait plus
+     aucune raison d'etre choisie contre le chien qui mord. */
+  repousse: { rayon: 190, force: 120, parNiveau: 5 },
+  /* La terre PROTEGE. Une reduction, pas une immunite : un bouclier qui
+     annule ferait des secondes ou l'on ne risque rien, et l'esquive — la
+     seule competence du jeu — cesserait de compter pendant ce temps-la. */
+  bouclier: { duree: 3.0, reduction: 0.30, parNiveau: 0.010 },
+  /* Le legendaire SOIGNE, en part des points de vie MAXIMUM. Un chiffre fixe
+     aurait guéri un debutant en trois battements et un joueur de niveau vingt
+     jamais. */
+  soigne:   { part: 0.030, parNiveau: 0.0035 },
+};
+
+/* ---- QUELLE ESPECE FAIT QUOI ----
+ * Ici, avec les chiffres, et pas a cote des noms anglais : c'est une REGLE du
+ * monde. Deux tables — l'une qui nomme, l'autre qui agit — auraient fini par
+ * annoncer un pouvoir et en appliquer un autre. */
+const POUVOIR_PAR_ESPECE = {
+  normal: 'mord', feu: 'brule', glace: 'gele',
+  terre: 'bouclier', tenebre: 'repousse', legendaire: 'soigne',
+};
+
+/* ---- LES CHIFFRES D'UN FAMILIER, A SON NIVEAU ----
+ * Une seule formule, ici. Le serveur l'applique et la page l'AFFICHE — deux
+ * calculs finiraient par promettre autre chose que ce qui se passe. */
+function familierEffet(pouvoir, niveau) {
+  const b = FAMILIERS[pouvoir];
+  if (!b) return null;
+  const n = Math.max(1, Math.min(FAMILIERS.niveauMax, niveau | 0)) - 1;
+  const out = { pouvoir, portee: FAMILIERS.portee, recharge: FAMILIERS.recharge };
+  switch (pouvoir) {
+    case 'mord':     out.degats = b.degats + b.parNiveau * n; break;
+    case 'brule':    out.duree = b.duree; out.parSeconde = b.parSeconde + b.parNiveau * n; break;
+    case 'gele':     out.duree = b.duree + b.parNiveau * n; break;
+    case 'repousse': out.rayon = b.rayon; out.force = b.force + b.parNiveau * n; break;
+    case 'bouclier': out.duree = b.duree;
+                     /* Plafonnee : la formule seule atteindrait 49 % au
+                        vingtieme, et l'on retomberait sur le bouclier qui
+                        annule dont on ne veut pas. */
+                     out.reduction = Math.min(0.5, b.reduction + b.parNiveau * n); break;
+    case 'soigne':   out.part = b.part + b.parNiveau * n; break;
+  }
+  return out;
+}
+
 /* La stat dominante du fruit -> son pouvoir. */
 const POUVOIR_PAR_STAT = {
   att: 'foudre', hp: 'foudre',
@@ -2303,6 +2400,7 @@ module.exports = {
   ARMES, DEGATS_POING, VITESSE_JOUEUR, CADENCE_MAX,
   cadenceDe, vitesseDe,
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
+  FAMILIERS, familierEffet, POUVOIR_PAR_ESPECE,
   ZONE_REACTION,
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe, BOSS,
   SOCLE, SOCLE_DELAI, biomeDe, placeUne, naitDans, ecartDeNaissance,

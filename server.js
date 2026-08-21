@@ -4716,6 +4716,10 @@ function ficheDeCombat(addr, skin) {
        reviendrait a decrire une collection a des gens qui regardent un
        chien. */
     fam: game.familierActifDe(addr),
+    /* Et son NIVEAU : c'est lui qui decide de ce que son pouvoir vaut. La
+       simulation ne le calcule pas — un compte, une progression, un chiffre,
+       et il arrive avec le reste de la fiche. */
+    famNiv: game.niveauFamilierDe(addr),
   };
 }
 
@@ -5176,6 +5180,19 @@ function traiteEvenements(R, ev) {
          produisait rien a l'ecran, seulement un son. */
       send(ws, { type: 'realmTouche', espece: t.espece, perte: t.perte, pv: t.pv,
                  x: Math.round(t.x), y: Math.round(t.y) });
+    }
+  }
+
+  /* ---- CE QUE LE FAMILIER VIENT DE FAIRE ----
+   * A SON MAITRE seul, comme les coups portes : c'est son compagnon, et
+   * diffuser chaque morsure de chaque chien a trente-neuf personnes ferait un
+   * vacarme sans rapport avec ce que chacun fait. La consequence — le monstre
+   * qui perd des points de vie, celui qui gele — part de toute facon dans
+   * l'instantane, que tout le monde recoit. */
+  if (ev.fam && ev.fam.length) {
+    for (const f of ev.fam) {
+      const ws = [...realmClients].find((c) => c.addr === f.addr);
+      if (ws && ws.readyState === 1) send(ws, { type: 'realmFam', ...f, addr: undefined });
     }
   }
 
