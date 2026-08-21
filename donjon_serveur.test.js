@@ -270,8 +270,13 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
     const neuves = ANNONCES.slice(avant).filter((a) => /PORTAL/i.test(a.texte));
     eq(neuves.length, 1, 'le canal est prevenu, une seule fois');
     ok(/FORGE/i.test(neuves[0].texte), 'et il dit de quel donjon il s\'agit');
-    ok(/portail_forge\.jpg$/.test(String(neuves[0].image || '')),
+    ok(/portail_forge\.jpg\?/.test(String(neuves[0].image || '')),
        `avec l'image de la porte (${neuves[0].image})`);
+    /* ET SON NUMERO DE TIRAGE. Telegram garde les photos par URL : une adresse
+       nue fait resservir la copie qu'il a, et un dessin remplace n'apparait
+       jamais dans le canal. C'est arrive avec les armures de la saison 3. */
+    ok(/[?&]v=\d+/.test(String(neuves[0].image || '')),
+       'et le numero de tirage, sans quoi Telegram resservirait son cache');
     /* PAS DE COORDONNEES DANS LE CANAL. Une position lisible par n'importe qui
        ferait de l'annonce une carte au tresor pour quelqu'un qui n'a jamais mis
        les pieds dans le monde. Ceux qui jouent ont deja la fleche a l'ecran. */
