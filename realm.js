@@ -840,27 +840,43 @@ class Realm {
   depose(addr, objet, ev) {
     const j = this.joueurs.get(addr);
     if (!j) return null;
-    const item = Number(objet && objet.item !== undefined ? objet.item : objet);
-    if (!Number.isFinite(item)) return null;
+    /* ---- UNE FIOLE SE POSE COMME UNE PIECE ----
+     * Elle n'a pas d'identifiant de catalogue — c'est une STAT, pas un objet —
+     * et `Number('att')` vaut NaN. Le depot la refusait donc, en silence pour
+     * qui glisse et avec « Unknown item » pour qui regarde la socket : on
+     * pouvait ramasser une fiole et plus jamais s'en defaire autrement qu'en
+     * la buvant. Un sac de huit places dont une case ne se vide pas est un sac
+     * de sept places.
+     * Le sol, lui, sait deja les porter : c'est sous cette forme exacte
+     * qu'elles tombent d'un monstre. */
+    const stat = (objet && objet.stat) || null;
+    const item = stat ? null
+      : Number(objet && objet.item !== undefined ? objet.item : objet);
+    if (!stat && !Number.isFinite(item)) return null;
     let s = this.sacSousLesPieds(addr);
     if (s && s.contenu.length >= monde.SAC.cases) return { refuse: true, raison: 'sac-plein' };
     if (!s) {
-      s = { id: this._nouvelId(), x: j.x, y: j.y, sac: 'brun',
+      s = { id: this._nouvelId(), x: j.x, y: j.y, sac: stat ? 'bleu' : 'brun',
             reste: monde.SAC.duree, contenu: [] };
       this.sacs.push(s);
       while (this.sacs.length > monde.SAC.plafond) this.sacs.shift();
     }
-    /* Le NOM et la CLE d'image entrent avec la piece, une fois. Les retrouver
-       au moment d'envoyer l'etat les recalculerait pour chaque client, dix
-       fois par seconde — et obligerait realm.js a connaitre la boutique, ce
-       qu'il n'a aucune raison de faire. */
-    s.contenu.push({ item, cle: (objet && objet.cle) || null,
-                     nom: (objet && objet.nom) || null,
-                     rarete: (objet && objet.rarete) || null,
-                     bonus: (objet && objet.bonus) || null,
-                     degats: (objet && objet.degats) || null,
-                     couleur: (objet && objet.couleur) || null,
-                     og: (objet && objet.og) || false });
+    /* Une fiole ne porte QUE sa stat — c'est la forme exacte sous laquelle
+       elle tombe d'un monstre, et le sol ne connait pas d'autre facon de la
+       porter. Lui coller les champs d'une piece (cle d'image, degats, bonus)
+       aurait fait une fiole que le ramassage aurait prise pour un objet.
+       Le NOM et la CLE d'image d'une piece, eux, entrent avec elle, une fois :
+       les retrouver au moment d'envoyer l'etat les recalculerait pour chaque
+       client, dix fois par seconde — et obligerait realm.js a connaitre la
+       boutique, ce qu'il n'a aucune raison de faire. */
+    s.contenu.push(stat ? { stat }
+                        : { item, cle: (objet && objet.cle) || null,
+                            nom: (objet && objet.nom) || null,
+                            rarete: (objet && objet.rarete) || null,
+                            bonus: (objet && objet.bonus) || null,
+                            degats: (objet && objet.degats) || null,
+                            couleur: (objet && objet.couleur) || null,
+                            og: (objet && objet.og) || false });
     /* ---- LE SAC REPART POUR UNE MINUTE ----
      * Un sac tombe d'un monstre a soixante secondes a vivre. Poser SA PROPRE
      * piece dedans sans remettre le compteur a zero, c'est la confier a un sac
@@ -879,7 +895,7 @@ class Realm {
      * que ce joueur-la est encore dessus. Il suffit de s'ecarter — c'est le
      * geste qu'on fait de toute facon apres avoir jete quelque chose. */
     s.pose = addr;
-    if (ev) { ev.deposes = ev.deposes || []; ev.deposes.push({ addr, id: s.id, item }); }
+    if (ev) { ev.deposes = ev.deposes || []; ev.deposes.push({ addr, id: s.id, item, stat }); }
     return { id: s.id, sac: s.sac, place: s.contenu.length - 1 };
   }
 

@@ -3406,8 +3406,22 @@ wss.on('connection', (ws) => {
        * n'est pas nommee — c'est le sol qui decide ou elle tombe. */
       if (m.type === 'realmDepose') {
         if (!ws.addr || !realmClients.has(ws)) return;
+        /* ---- UNE FIOLE SE JETTE COMME UNE PIECE ----
+         * La page nomme une case du sac, et une fiole s'y nomme « st:att » :
+         * elle n'a pas d'identifiant de catalogue, c'est une stat. `poseAuSol`
+         * lisait donc NaN et refusait avec « Unknown item » — on pouvait
+         * ramasser une fiole et ne plus jamais s'en defaire autrement qu'en la
+         * buvant. Un sac de huit places dont une case ne se vide pas est un sac
+         * de sept places.
+         * Le prefixe est la SEULE facon de distinguer les deux, et il vient de
+         * la page qui l'a lu sur la case — pas d'une devinette sur la forme du
+         * nombre. */
+        const fiole = /^st:/.test(String(m.item)) ? String(m.item).slice(3) : null;
         let sorti = null;
-        try { sorti = game.poseAuSol(ws.addr, m.item); }
+        try {
+          sorti = fiole ? game.poseFioleAuSol(ws.addr, fiole)
+                        : game.poseAuSol(ws.addr, m.item);
+        }
         catch (e) { return send(ws, { type: 'realmDepose', refus: e.message }); }
         /* La piece part au sol avec sa FICHE ENTIERE — nom, image, bonus,
            degats, couleur : realm.js n'a aucune raison de connaitre la
@@ -3419,7 +3433,10 @@ wss.on('connection', (ws) => {
           /* Le sol n'en a pas voulu : on REMET la piece dans le sac. Sans ce
              retour, un sac au sol plein ferait disparaitre l'objet — et il
              aurait ete pris au joueur avant qu'on sache s'il y avait la place. */
-          try { game.prendDuSol(ws.addr, m.item); } catch (e) {}
+          try {
+            if (fiole) game.prendFiole(ws.addr, fiole);
+            else game.prendDuSol(ws.addr, m.item);
+          } catch (e) {}
           return send(ws, { type: 'realmDepose', refus: (r && r.raison) || 'refuse' });
         }
         persistSoon();

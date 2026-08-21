@@ -6229,6 +6229,30 @@ class Game {
   }
 
   /**
+   * Une FIOLE du sac s'en va au sol.
+   *
+   * Elle n'a pas d'identifiant de catalogue — c'est une stat, pas un objet —
+   * donc `poseAuSol` ne pouvait pas la prendre : `Number('att')` vaut NaN. On
+   * pouvait ramasser une fiole et ne plus jamais s'en defaire autrement qu'en
+   * la buvant, et un sac de huit places dont une case ne se vide pas est un
+   * sac de sept places.
+   *
+   * Le retour a la MEME forme que sous un monstre : c'est ainsi que le sol
+   * les porte, et c'est ainsi que le ramassage sait les reprendre.
+   */
+  poseFioleAuSol(addr, stat) {
+    const st = String(stat || '');
+    if (personnages.STATS.indexOf(st) < 0) throw new Error('Unknown stat');
+    const p = this._p(addr);
+    p.sacFioles = p.sacFioles || {};
+    if (!(p.sacFioles[st] > 0)) throw new Error('That one is not in your backpack');
+    p.sacFioles[st] -= 1;
+    if (p.sacFioles[st] <= 0) delete p.sacFioles[st];
+    p.sacCases = null;   // la case se libere : on laisse la liste se refaire
+    return { stat: st };
+  }
+
+  /**
    * Un objet du sac s'en va au sol.
    *
    * On ne verifie PAS qu'il est porte : un objet porte n'est pas dans le sac,
