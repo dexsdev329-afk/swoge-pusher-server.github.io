@@ -354,4 +354,43 @@ console.log('\n-- rupture de stock --');
   n++; console.log('  ok   et le rayon repasse en rupture');
 }
 
+// ================== 13. « EN STOCK » VEUT DIRE « QUE TU PEUX ACHETER »
+/*
+ * « Ya marque une potion de defense en stock mais quand je veux l acheter il
+ * me dit qu il y en a pas. »
+ *
+ * Le compte incluait SES PROPRES annonces ; l achat, lui, les saute — on ne se
+ * rachete pas a soi-meme. Un joueur seul a vendre lisait donc « 1 en stock »
+ * et se faisait repondre « rupture de stock » en cliquant. Les deux phrases
+ * etaient justes chacune de son cote, et ensemble elles decrivaient une panne.
+ */
+console.log('\n-- le rayon et la caisse disent la meme chose --');
+{
+  const g = neuf();
+  g._p(A).fioles = { def: 2 };
+  g.metPotionEnVente(A, 'st:def', 2);
+
+  /* Le VENDEUR ne voit pas son propre stock au rayon : il ne peut pas
+     l acheter. Il le voit dans « en vente », qui est l autre question. */
+  eq(ligne(g, A, 'st:def').stock, 0, 'le vendeur voit 0 en stock : il ne peut rien acheter');
+  eq(ligne(g, A, 'st:def').enVente, 2, 'mais bien ses deux en vente');
+  assert.throws(() => g.acheteFioleAuMarche(A, 'def', 1), /for sale right now/i);
+  n++; console.log('  ok   et la caisse dit la meme chose que le rayon');
+
+  /* L ACHETEUR, lui, les voit et les achete. */
+  eq(ligne(g, B, 'st:def').stock, 2, 'un autre joueur voit les deux');
+  eq(g.acheteFioleAuMarche(B, 'def', 1).achete, 1, 'et peut en acheter une');
+  eq(ligne(g, B, 'st:def').stock, 1, 'il en reste une pour lui');
+  eq(ligne(g, A, 'st:def').stock, 0, 'toujours zero pour le vendeur');
+
+  /* Meme regle pour les potions de soin : ce qui est affiche est ce qui est
+     achetable, sinon le bouton ment. */
+  g._p(C).potions = { vie: 4 };
+  g.metPotionEnVente(C, 'vie', 4);
+  eq(ligne(g, C, 'vie').stock, 0, 'le vendeur de potions de soin voit 0 aussi');
+  eq(ligne(g, A, 'vie').stock, 4, 'et les autres voient les quatre');
+  assert.throws(() => g.achetePotion(C, 'vie', 1), /for sale right now/i);
+  n++; console.log('  ok   et lui non plus ne se rachete pas a lui-meme');
+}
+
 console.log(`\nmarche_potions.test.js — ${n} verifications, 0 echec(s)`);

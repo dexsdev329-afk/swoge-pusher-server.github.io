@@ -8773,11 +8773,22 @@ class Game {
   potionsMarche(addr) {
     const moi = String(addr || '').toLowerCase();
     const p = this._p(moi);
+    /* ---- « EN STOCK » VEUT DIRE « QUE TU PEUX ACHETER » ----
+     *
+     * Le compte incluait SES PROPRES annonces. L'achat, lui, les saute — on ne
+     * se rachete pas a soi-meme, on y perdrait la moitie du prix a chaque
+     * tour. Un joueur seul a vendre lisait donc « 1 en stock » et se faisait
+     * repondre « rupture de stock » en cliquant : les deux phrases etaient
+     * justes chacune de son cote, et ensemble elles decrivaient une panne.
+     *
+     * Une seule definition, celle de l'acheteur : ce qui est en vente ET qui
+     * n'est pas a lui. Ce qu'il a mis en vente se lit a cote, dans `enVente` —
+     * c'est une autre question, et elle a deja sa reponse. */
     const stock = {}, mien = {};
     for (const a of (this.marche || [])) {
       if (!a.pot) continue;
-      stock[a.pot] = (stock[a.pot] || 0) + (a.qte || 0);
       if (a.vendeur === moi) mien[a.pot] = (mien[a.pot] || 0) + (a.qte || 0);
+      else stock[a.pot] = (stock[a.pot] || 0) + (a.qte || 0);
     }
     const cles = Object.keys(POTIONS).concat(personnages.STATS.map((s) => 'st:' + s));
     return {
