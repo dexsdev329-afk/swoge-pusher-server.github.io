@@ -208,6 +208,24 @@ class Realm {
       if (!s.vide && !restants) {
         s.vide = true;
         s.rearme = monde.SALLE.rearme;
+        /* ---- LA BALISE S'ALLUME, ET NE S'ETEINT PLUS ----
+         *
+         * Le coffre se rearme au bout de six minutes ; la balise, non. C'est
+         * ce qui les separe : le coffre est une recompense qu'on vient
+         * reprendre, la balise est une ROUTE qu'on vient d'ouvrir. Une route
+         * qui se referme derriere soi n'est pas une route.
+         *
+         * Elle appartient au MONDE et pas au joueur : celui qui abat les
+         * gardiens ouvre le raccourci pour tout le monde, y compris pour ceux
+         * qui arriveront apres. C'est la premiere chose de ce jeu qu'on soit
+         * content de voir faite par quelqu'un d'autre. */
+        if (!s.balise) {
+          s.balise = true;
+          if (ev) {
+            ev.balises = ev.balises || [];
+            ev.balises.push({ i: s.i, x: s.x, y: s.y, biome: monde.biomeEn(s.x, s.y) });
+          }
+        }
         /* GARANTI : une salle gardee promet un tresor, et la promesse tient
            meme quand la saison n'a plus de reliques. C'est celui qui tient le
            catalogue qui sait descendre d'un cran — ici on dit seulement que
@@ -1531,6 +1549,13 @@ class Realm {
          on voit de la porte qu'il y a quelque chose a prendre, et on voit de
          loin qu'elle a deja ete faite. */
       salles: this.salles.filter(pres).map((s) => ({ i: s.i, v: s.vide ? 1 : 0 })),
+      /* ---- LES BALISES PARTENT EN ENTIER, PAS SEULEMENT CELLES QU'ON VOIT ----
+       * Les salles sont filtrees par `pres` : on n'envoie que celles a
+       * l'ecran, parce qu'on les DESSINE. Une balise sert a aller AILLEURS —
+       * n'envoyer que celles qui sont deja sous les yeux reviendrait a
+       * n'offrir de voyager que vers l'endroit ou l'on se tient. */
+      balises: this.salles.map((s) => ({ i: s.i, x: Math.round(s.x), y: Math.round(s.y),
+                                         on: s.balise ? 1 : 0 })),
       /* Les portes ouvertes. Le temps restant part avec elles pour la meme
          raison que celui des sacs : la page dessine la porte qui se referme, et
          sans ce chiffre elle le devinerait — donc mentirait sur le moment ou il
@@ -1566,6 +1591,32 @@ class Realm {
                                   co: o.couleur || undefined, og: o.og || undefined })),
         r: Number(s.reste.toFixed(1)) })),
     };
+  }
+
+  /**
+   * ==================== SE RENDRE A UNE BALISE ====================
+   *
+   * Un seul refus, et il est structurel : la balise doit etre ALLUMEE. On ne
+   * verifie pas la distance — c'est tout l'interet, on vient de loin — ni la
+   * vie, ni le combat en cours : fuir vers une balise est un usage legitime,
+   * et le seul moyen d'en faire un abus serait qu'elle soit gratuite a
+   * allumer. Elle ne l'est pas : il faut avoir abattu ses gardiens.
+   *
+   * On arrive au BORD de la salle et non au centre. Au centre on se poserait
+   * sur le coffre, et sur une salle rearmee, au milieu de ses gardiens.
+   */
+  vaALaBalise(addr, i) {
+    const j = this.joueurs.get(String(addr || '').toLowerCase());
+    if (!j) return null;
+    const s = this.salles.find((x) => x.i === Number(i));
+    if (!s || !s.balise) return null;
+    const R = monde.SALLE.cote * monde.TUILE / 2;
+    /* Juste en dessous du bord bas : c'est par la qu'on entre a pied, donc
+       c'est l'endroit dont on a deja l'image en tete. */
+    const x = s.x, y = s.y + R + 60;
+    j.x = Math.max(40, Math.min(monde.MONDE.w - 40, x));
+    j.y = Math.max(40, Math.min(monde.MONDE.h - 40, y));
+    return { i: s.i, x: Math.round(j.x), y: Math.round(j.y) };
   }
 
   /** Un monstre remplace ceux qu'on a tues, pour que la carte ne se vide pas.

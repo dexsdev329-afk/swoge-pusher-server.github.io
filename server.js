@@ -3526,6 +3526,21 @@ wss.on('connection', (ws) => {
         return send(ws, { type: 'realmRejoint', addr: cible, x: Math.round(x), y: Math.round(y),
                           nom: lui.nom || null });
       }
+      /* ---- ALLER A UNE BALISE ----
+       * Le client nomme un NUMERO de salle, rien d'autre : ni ou elle est, ni
+       * si elle est allumee. Les deux se tranchent ici. Le laisser envoyer des
+       * coordonnees aurait fait de la balise une teleportation libre — et
+       * c'est exactement ce qu'un joueur aurait interet a obtenir. */
+      if (m.type === 'realmBalise') {
+        if (!ws.addr || !realmClients.has(ws)) return;
+        /* Pas dans un donjon : il n'a pas de salles gardees, et en sortir par
+           une balise contournerait la porte du retour. */
+        if (ws.donjon) return send(ws, { type: 'realmBaliseRefus', raison: 'donjon' });
+        const r = realmDe(ws).vaALaBalise(ws.addr, m.i);
+        if (!r) return send(ws, { type: 'realmBaliseRefus', raison: 'eteinte' });
+        realmDernierMouv.set(ws.addr, Date.now());
+        return send(ws, { type: 'realmBalise', ...r });
+      }
       if (m.type === 'realmLeave') {
         if (!ws.addr) return;
         realmDe(ws).quitte(ws.addr);
