@@ -124,6 +124,34 @@ function prixMarche(cle) {
  * le sac ne doit pas, sinon il n'a pas de fond et rien de ce qu'on y met ne
  * coute quoi que ce soit. Le chiffre est ici et non dans nexus.js pour que
  * le refus (« sac plein ») et l'affichage comptent les memes cases. */
+/* Le nom lisible des six especes d'oeuf. Ici et pas cote page : c'est le
+   serveur qui nomme les choses du jeu, et deux listes de noms finissent
+   toujours par se contredire. */
+const NOM_OEUF = {
+  normal: 'Plain Egg', feu: 'Ember Egg', glace: 'Frost Egg',
+  terre: 'Verdant Egg', tenebre: 'Umbral Egg', legendaire: 'Prism Egg',
+};
+const NOM_FAMILIER = {
+  normal: 'Shiba', feu: 'Ember', glace: 'Frost',
+  terre: 'Verdant', tenebre: 'Umbra', legendaire: 'Prism',
+};
+/* Ce que chacun sait faire. La page l'AFFICHE, elle ne l'applique pas : le
+   combat est au serveur, et une deuxieme table cote page finirait par
+   promettre autre chose que ce qui se passe. */
+const POUVOIR_FAMILIER = {
+  normal:     { cle: 'mord',    nom: 'Bites monsters' },
+  feu:        { cle: 'brule',   nom: 'Sets enemies on fire' },
+  glace:      { cle: 'gele',    nom: 'Freezes an enemy' },
+  terre:      { cle: 'bouclier', nom: 'Shields you, blocks some hits' },
+  tenebre:    { cle: 'repousse', nom: 'Knocks enemies back' },
+  legendaire: { cle: 'soigne',  nom: 'Heals you every 5s' },
+};
+/* Ouvrir un deuxieme oeuf de la meme espece ne donne pas un second familier :
+   il nourrit celui qu'on a. Le chiffre vaut une bonne poignee de repas — un
+   oeuf est la chose la plus rare du jeu, il ne doit pas valoir moins qu'une
+   soiree de farm. */
+const XP_OEUF_DOUBLE = 500;
+
 const SAC_CASES = 8;
 /* Le bareme d'XP d'un objet, par rarete. Une rarete inconnue ne rapporte rien
    plutot que de rapporter le premier bareme venu : une faute de frappe dans
@@ -395,6 +423,11 @@ class Game {
            su avant qu'un joueur ne demande ou etait passe son filleul. */
         fio: (p.fioles && Object.keys(p.fioles).length) ? p.fioles : undefined,
         sfio: (p.sacFioles && Object.keys(p.sacFioles).length) ? p.sacFioles : undefined,
+        /* Les oeufs du sac, et les familiers eclos. `soe` et `fam` : deux
+           clefs neuves, verifiees libres — la lecon de `fi` contre `fio` a
+           coute la liste de parrainage de tout le monde. */
+        soe: (p.sacOeufs && Object.keys(p.sacOeufs).length) ? p.sacOeufs : undefined,
+        fam: (p.familiers && Object.keys(p.familiers).length) ? p.familiers : undefined,
         /* Ou chaque chose est posee dans les huit places. Ce n'est pas la
            verite — le compte l'est — mais la reconstruire au hasard a chaque
            redemarrage rebattrait le sac sous les doigts du joueur. */
@@ -614,6 +647,14 @@ class Game {
         objets: (d.ob && typeof d.ob === 'object') ? d.ob : {},
         fioles: (d.fio && typeof d.fio === 'object') ? d.fio : {},
         sacFioles: (d.sfio && typeof d.sfio === 'object') ? d.sfio : {},
+        /* Les oeufs du sac. Il n'y a pas de « coffre a oeufs » : un oeuf
+           s'ouvre, il ne se collectionne pas. Ce qui survit a la mort, c'est
+           le FAMILIER qu'il donne, et il vit ailleurs (`familiers`). */
+        sacOeufs: (d.soe && typeof d.soe === 'object') ? d.soe : {},
+        /* Les familiers eclos, par espece. Ils ne meurent jamais et ne se
+           perdent jamais — c'est la promesse faite au joueur, et un compte
+           qui redemarre doit la tenir aussi. */
+        familiers: (d.fam && typeof d.fam === 'object') ? d.fam : {},
         sacCases: Array.isArray(d.scas) ? d.scas : null,
         skins: (d.sk && typeof d.sk === 'object') ? d.sk : {},
         persos: (d.pr && typeof d.pr === 'object')
@@ -5966,6 +6007,17 @@ class Game {
       if (q) fiolesPerdues[k] = q;
     }
     p.sacFioles = {};
+    /* ---- ET L'OEUF QU'ON N'AVAIT PAS ENCORE OUVERT ----
+     * Il etait dans le SAC : c'est du butin transporte, et le sac se perd. Le
+     * FAMILIER, lui, ne se perd jamais — mais il faut l'avoir fait eclore.
+     * C'est ce qui donne sa tension a la trouvaille : on peut rentrer tout de
+     * suite l'ouvrir, ou continuer sa sortie avec lui dans le dos. */
+    const oeufsPerdus = {};
+    for (const k of Object.keys(p.sacOeufs || {})) {
+      const q = Math.max(0, p.sacOeufs[k] | 0);
+      if (q) oeufsPerdus[k] = q;
+    }
+    p.sacOeufs = {};
     p.sacCases = null;
 
     c.w = BN(0);
@@ -5983,7 +6035,7 @@ class Game {
              /* Ce qu'on transportait et qu'on n'avait pas range : l'ecran de
                 fin le nomme, sinon le joueur decouvre la perte trois parties
                 plus tard en cherchant ses fioles. */
-             fiolesPerdues,
+             fiolesPerdues, oeufsPerdus,
              /* Les potions bues font partie du bilan : c'est souvent la
                 perte la plus lourde, et la seule qu'aucun coffre n'aurait pu
                 eviter. Ne pas la nommer donnerait un ecran de fin qui ment
@@ -6137,6 +6189,7 @@ class Game {
   _casesDuSac(p) {
     const sac = p.sac || {};
     const fioles = p.sacFioles || {};
+    const oeufs = p.sacOeufs || {};
     /* Ce que le sac contient, sous UNE seule forme : une clef par unite
        possible. Un identifiant de boutique est un nombre, une fiole de stat
        est « st:<stat> » — deux formes dans une meme liste, parce qu'une seule
@@ -6162,6 +6215,14 @@ class Game {
     for (const k of Object.keys(fioles)) {
       if (fioles[k] > 0) { compte['st:' + k] = fioles[k] | 0; places['st:' + k] = 1; }
     }
+    /* ---- LES OEUFS S'EMPILENT AUSSI ----
+     * Meme raison que les fioles : ce n'est pas du butin qu'on choisit de
+     * garder, c'est une trouvaille qu'on rapporte. Et l'on n'en porte jamais
+     * beaucoup — a une chance sur cinq mille, deux oeufs dans le meme sac
+     * sont deja une histoire. */
+    for (const k of Object.keys(oeufs)) {
+      if (oeufs[k] > 0) { compte['oe:' + k] = oeufs[k] | 0; places['oe:' + k] = 1; }
+    }
 
     const cases = Array.isArray(p.sacCases) ? p.sacCases.slice(0, SAC_CASES) : [];
     while (cases.length < SAC_CASES) cases.push(null);
@@ -6170,7 +6231,11 @@ class Game {
     const vus = {};
     for (let i = 0; i < cases.length; i++) {
       const c = cases[i];
-      const cle = (typeof c === 'string' && c.slice(0, 3) === 'st:') ? c : Number(c);
+      /* Trois formes dans une meme liste : un nombre pour une piece, « st: »
+         pour une pile de fioles, « oe: » pour un oeuf. Une seule liste veut
+         dire une seule verite sur ce que contient le sac. */
+      const cle = (typeof c === 'string' && (c.slice(0, 3) === 'st:' || c.slice(0, 3) === 'oe:'))
+        ? c : Number(c);
       if (!(compte[cle] > 0)) { cases[i] = null; continue; }
       /* C'est `places` et non `compte` qui borne : une pile de fioles n'a
          droit qu'a UNE case, quelle que soit sa hauteur. Sans ca la deuxieme
@@ -6181,7 +6246,7 @@ class Game {
     }
     /* Et ce qui n'a pas encore de case en prend une — la premiere libre. */
     for (const cle of Object.keys(compte)) {
-      const vraie = cle.slice(0, 3) === 'st:' ? cle : Number(cle);
+      const vraie = (cle.slice(0, 3) === 'st:' || cle.slice(0, 3) === 'oe:') ? cle : Number(cle);
       for (let q = vus[vraie] || 0; q < places[cle]; q++) {
         const libre = cases.indexOf(null);
         if (libre < 0) break;
@@ -6244,6 +6309,19 @@ class Game {
                       Nexus elle aurait dessine huit fois la meme fiole. */
                    col: personnages.STATS.indexOf(st),
                    cols: personnages.STATS.length,
+                   place: i });
+        continue;
+      }
+      /* UN OEUF. Meme raison que la fiole : pas d'identifiant de boutique, et
+         il n'en aura pas — il ne se vend pas, il ne s'achete pas, et il n'a
+         donc rien a faire dans les plafonds de saison. */
+      if (typeof id === 'string' && id.slice(0, 3) === 'oe:') {
+        const es = id.slice(3);
+        out.push({ oeuf: es, nom: NOM_OEUF[es] || 'Egg', cle: 'oeuf_' + es,
+                   rarete: es === 'legendaire' ? 'relique' : 'mythique',
+                   couleur: es === 'legendaire' ? '#FFFFFF' : '#FF4655',
+                   quantite: Math.max(1, (p.sacOeufs || {})[es] | 0),
+                   note: 'Hatch it at Petworld',
                    place: i });
         continue;
       }
@@ -6646,6 +6724,88 @@ class Game {
     return { stat: st };
   }
 
+  /* ====================================================================
+   * LES FAMILIERS
+   * ====================================================================
+   *
+   * Un oeuf s'ouvre UNE fois et donne un familier. Le familier ne meurt
+   * jamais : ni quand son porteur meurt dans le monde vert, ni quand il tombe
+   * dans le rouge. C'est la promesse faite au joueur, et elle tient a une
+   * seule chose — le familier ne vit pas sur le personnage, il vit sur le
+   * COMPTE. Le poser sur `p.persos[skin]` l'aurait fait disparaitre avec le
+   * personnage, et « a vie » serait devenu « jusqu'a la prochaine lave ».
+   *
+   * Un familier par espece, pas un par oeuf : ouvrir un deuxieme oeuf de feu
+   * ne donne pas un second chien de feu, il fait progresser celui qu'on a.
+   * Sinon la collection deviendrait un inventaire a gerer, et le mot
+   * « familier » ne voudrait plus rien dire.
+   */
+  ouvreOeuf(addr, espece) {
+    const es = String(espece || '');
+    if (!monde.OEUFS.includes(es)) throw new Error('Unknown egg');
+    const p = this._p(addr);
+    p.sacOeufs = p.sacOeufs || {};
+    if (!(p.sacOeufs[es] > 0)) throw new Error('You have no ' + (NOM_OEUF[es] || 'egg'));
+    p.sacOeufs[es] -= 1;
+    if (p.sacOeufs[es] <= 0) delete p.sacOeufs[es];
+    p.sacCases = null;
+    p.familiers = p.familiers || {};
+    const deja = p.familiers[es];
+    if (deja) {
+      /* Un deuxieme oeuf de la meme espece nourrit celui qu'on a. On ne rend
+         PAS un refus : refuser obligerait le joueur a jeter l'oeuf le plus
+         rare du jeu, ou a le garder pour rien dans une case de son sac. */
+      deja.xp = (deja.xp | 0) + XP_OEUF_DOUBLE;
+      return { espece: es, nouveau: false, familier: this.familierPour(deja, es) };
+    }
+    p.familiers[es] = { niveau: 1, xp: 0, ne: Math.floor(Date.now() / 1000) };
+    return { espece: es, nouveau: true, familier: this.familierPour(p.familiers[es], es) };
+  }
+
+  /** La fiche d'un familier, telle que la page la lit. */
+  familierPour(f, espece) {
+    if (!f) return null;
+    return { espece, nom: NOM_FAMILIER[espece] || 'Pet',
+             niveau: Math.max(1, f.niveau | 0), xp: Math.max(0, f.xp | 0),
+             pouvoir: POUVOIR_FAMILIER[espece] || null };
+  }
+
+  /** Tous les familiers d'un compte, pour le panneau. */
+  familiersDe(addr) {
+    const p = this._p(addr);
+    const out = [];
+    for (const es of monde.OEUFS) {
+      if (p.familiers && p.familiers[es]) out.push(this.familierPour(p.familiers[es], es));
+    }
+    return out;
+  }
+
+  /** Un oeuf du sac s'en va au sol. Meme geste que la fiole, meme forme. */
+  poseOeufAuSol(addr, espece) {
+    const es = String(espece || '');
+    if (!monde.OEUFS.includes(es)) throw new Error('Unknown egg');
+    const p = this._p(addr);
+    p.sacOeufs = p.sacOeufs || {};
+    if (!(p.sacOeufs[es] > 0)) throw new Error('That one is not in your backpack');
+    p.sacOeufs[es] -= 1;
+    if (p.sacOeufs[es] <= 0) delete p.sacOeufs[es];
+    p.sacCases = null;
+    return { oeuf: es };
+  }
+
+  /** Et du sol au sac. */
+  prendOeuf(addr, espece) {
+    const es = String(espece || '');
+    if (!monde.OEUFS.includes(es)) throw new Error('Unknown egg');
+    if (this.sacRempli(addr) >= SAC_CASES) {
+      throw new Error('Your backpack is full — ' + SAC_CASES + ' slots, one item each');
+    }
+    const p = this._p(addr);
+    p.sacOeufs = p.sacOeufs || {};
+    p.sacOeufs[es] = (p.sacOeufs[es] || 0) + 1;
+    return { oeuf: es };
+  }
+
   /**
    * Un objet du sac s'en va au sol.
    *
@@ -6716,6 +6876,13 @@ class Game {
       const n = Math.max(0, p.sacFioles[st] | 0);
       for (let k = 0; k < n; k++) lot.push({ stat: st, rang: -1, fiche: { stat: st } });
     }
+    /* L'OEUF EN TETE. Rang au-dessus de la relique : c'est la chose la plus
+       rare du jeu, et si une seule place reste au sol, c'est elle qui doit la
+       prendre. Le vainqueur vient chercher ca. */
+    for (const es of Object.keys(p.sacOeufs || {})) {
+      const n = Math.max(0, p.sacOeufs[es] | 0);
+      for (let k = 0; k < n; k++) lot.push({ oeuf: es, rang: rangs.length, fiche: { oeuf: es } });
+    }
 
     /* ---- ON NE LACHE QUE CE QUI TIENT PAR TERRE ----
      *
@@ -6730,7 +6897,10 @@ class Game {
     lot.sort((a2, b2) => b2.rang - a2.rang);
     const tombe = [];
     for (const e of lot.slice(0, plafond)) {
-      if (e.stat) {
+      if (e.oeuf) {
+        p.sacOeufs[e.oeuf] -= 1;
+        if (p.sacOeufs[e.oeuf] <= 0) delete p.sacOeufs[e.oeuf];
+      } else if (e.stat) {
         p.sacFioles[e.stat] -= 1;
         if (p.sacFioles[e.stat] <= 0) delete p.sacFioles[e.stat];
       } else {
@@ -6799,8 +6969,10 @@ class Game {
     /* Des CASES, pas des unites : une pile de fioles n'en occupe qu'une. Ce
        compte-la doit dire la meme chose que `_casesDuSac`, sinon le refus
        « sac plein » tombe alors qu'il reste des cases vides a l'ecran. */
+    const oeufs = p.sacOeufs || {};
     return Object.keys(sac).reduce((n, id) => n + Math.max(0, sac[id] | 0), 0)
-         + Object.keys(fioles).reduce((n, k) => n + (fioles[k] > 0 ? 1 : 0), 0);
+         + Object.keys(fioles).reduce((n, k) => n + (fioles[k] > 0 ? 1 : 0), 0)
+         + Object.keys(oeufs).reduce((n, k) => n + (oeufs[k] > 0 ? 1 : 0), 0);
   }
 
   /** Les fioles de stat mises a l'ABRI. Elles survivent a la mort — c'est

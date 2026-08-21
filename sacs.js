@@ -48,6 +48,13 @@ function sousLesPieds(sacs, x, y) {
 
 /** La forme sous laquelle une piece entre dans un sac. */
 function contenuDe(objet) {
+  /* ---- UN OEUF NE PORTE QUE SON ESPECE ----
+   * Meme raison que la fiole juste en dessous : c'est la forme exacte sous
+   * laquelle il tombe d'une creature, et le sol ne connait pas d'autre facon
+   * de le porter. En tete parce qu'il est le plus rare : si un jour un objet
+   * portait les deux champs, c'est l'oeuf qui doit gagner. */
+  const oeuf = (objet && objet.oeuf) || null;
+  if (oeuf) return { oeuf };
   const stat = (objet && objet.stat) || null;
   if (stat) {
     /* Une fiole ne porte QUE sa stat — c'est la forme exacte sous laquelle
@@ -88,7 +95,12 @@ function depose(sacs, x, y, addr, objet, nouvelId) {
     /* Le BRUN n'est pas un choix esthetique : un objet depose ne doit pas
        ressembler a un butin rare, sinon on traverserait la carte pour une epee
        commune que quelqu'un a jetee. Le bleu est celui des fioles, partout. */
-    s = { id: nouvelId(), x, y, sac: c.stat ? 'bleu' : 'brun',
+    /* ---- ET LE BLANC POUR UN OEUF ----
+     * Meme raison, un cran plus haut : le brun dit « quelqu'un a jete ca », et
+     * un oeuf jete au sol dans une couleur de rebut se serait fait ignorer par
+     * tout le monde. Le blanc est celui des reliques — la seule couleur pour
+     * laquelle on traverse la carte. */
+    s = { id: nouvelId(), x, y, sac: c.oeuf ? 'blanc' : c.stat ? 'bleu' : 'brun',
           reste: monde.SAC.duree, contenu: [] };
     sacs.push(s);
     while (sacs.length > monde.SAC.plafond) sacs.shift();
@@ -107,7 +119,8 @@ function depose(sacs, x, y, addr, objet, nouvelId) {
    * jeter quelque chose devenait impossible sans courir en meme temps. */
   s.pose = addr || null;
   return { id: s.id, sac: s.sac, place: s.contenu.length - 1,
-           item: c.item === undefined ? null : c.item, stat: c.stat || null };
+           item: c.item === undefined ? null : c.item, stat: c.stat || null,
+           oeuf: c.oeuf || null };
 }
 
 /**
@@ -186,7 +199,8 @@ function oubliePoseurs(sacs, ou) {
 function vue(s) {
   return {
     i: s.id, x: Math.round(s.x), y: Math.round(s.y), s: s.sac,
-    c: s.contenu.map((o) => (o.stat ? { st: o.stat }
+    c: s.contenu.map((o) => (o.oeuf ? { oe: o.oeuf }
+                          : o.stat ? { st: o.stat }
                           : o.potion ? { po: o.potion }
                           : { it: o.item, cl: o.cle, nm: o.nom, ra: o.rarete,
                               bo: o.bonus || undefined, dg: o.degats || undefined,

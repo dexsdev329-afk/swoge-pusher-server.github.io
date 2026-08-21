@@ -1959,6 +1959,60 @@ const SAC_DE_RARETE = {
   legendaire: 'or', mythique: 'rouge', relique: 'blanc',
 };
 
+/* ==================== LES OEUFS ====================
+ *
+ * Un oeuf tombe de N'IMPORTE QUELLE creature, une fois sur cinq mille. Ce
+ * n'est pas le butin d'un anneau ni la recompense d'un boss : c'est la seule
+ * chose du jeu qu'on ne peut ni viser, ni farmer, ni acheter. On la trouve.
+ *
+ * ---- LE CHIFFRE, ET CE QU'IL VEUT DIRE ----
+ *
+ * Une fois sur cinq mille. A trois cents creatures abattues dans l'heure, ca
+ * fait un oeuf toutes les dix-sept heures de jeu. C'est volontairement plus
+ * rare qu'une relique (1/1500) : une relique s'equipe et se remplace, un
+ * familier se garde a vie.
+ *
+ * ---- ET LES SIX N'ONT PAS LE MEME POIDS ----
+ *
+ * Le legendaire est le seul qui SOIGNE. S'il tombait aussi souvent que les
+ * cinq autres, il serait une issue sur six d'un tirage deja rare — donc la
+ * moitie des familiers du serveur au bout d'un mois. A quatre pour cent d'une
+ * chance sur cinq mille, il reste ce qu'il doit etre : une histoire qu'on
+ * raconte.
+ *
+ * Le sac est BLANC, celui des reliques. Deux choses peuvent partager une
+ * couleur quand elles disent la meme : « traverse la carte pour celui-la ».
+ */
+const OEUF = {
+  chance: 1 / 5000,
+  sac: 'blanc',
+  /* Poids, pas probabilites : on les somme et l'on tire dedans. Ecrire des
+     pourcentages obligerait a verifier a la main qu'ils font cent. */
+  especes: [
+    { cle: 'normal', poids: 40 },
+    { cle: 'feu', poids: 14 },
+    { cle: 'glace', poids: 14 },
+    { cle: 'terre', poids: 14 },
+    { cle: 'tenebre', poids: 14 },
+    { cle: 'legendaire', poids: 4 },
+  ],
+};
+const OEUFS = OEUF.especes.map((e) => e.cle);
+
+/** Quelle espece d'oeuf, tiree a ses poids. */
+function tireOeuf(alea) {
+  const r = typeof alea === 'function' ? alea() : Math.random();
+  const total = OEUF.especes.reduce((t, e) => t + e.poids, 0);
+  let seuil = r * total;
+  for (const e of OEUF.especes) {
+    seuil -= e.poids;
+    if (seuil < 0) return e.cle;
+  }
+  /* Un flottant qui tombe pile sur le total ne doit pas rendre `undefined` :
+     on rend le dernier, qui est celui qu'il visait. */
+  return OEUF.especes[OEUF.especes.length - 1].cle;
+}
+
 /* Une piece toutes les douze morts au bord, une toutes les cent quarante au
    coeur. Le rapport n'est pas une punition : au bord on s'equipe, au coeur on
    complete. Un mythique aussi frequent qu'un commun aurait rendu la boutique
@@ -2127,7 +2181,15 @@ function butinDe(espece, alea, biome) {
    * potion de soin parce qu'un de a mal tourne. */
   const g = BUTIN_GARANTI[espece];
   if (g) return { sac: SAC_DE_RARETE[g], contenu: [{ objet: g }] };
-  /* ---- LA RELIQUE D'ABORD, PARCE QU'ELLE EST LA PLUS RARE ----
+  /* ---- L'OEUF AVANT TOUT LE RESTE ----
+   * Un seul tirage par mort : ce qui passe en premier obtient son vrai taux,
+   * ce qui passe apres n'a que ce qui reste. L'oeuf est plus rare que la
+   * relique (1/5000 contre 1/1500) — il doit donc tirer avant elle, sinon son
+   * chiffre ne serait plus celui qu'on a ecrit.
+   * Et de N'IMPORTE QUELLE creature : c'est ce qui fait qu'un lime du bord
+   * vaut encore la peine au bout de trente heures de jeu. */
+  if (r() < OEUF.chance) return { sac: OEUF.sac, contenu: [{ oeuf: tireOeuf(r) }] };
+  /* ---- LA RELIQUE ENSUITE, PARCE QU'ELLE EST LA PLUS RARE DU RESTE ----
    * Un seul tirage par mort : ce qui passe en premier obtient son vrai taux,
    * ce qui passe apres n'a que ce qui reste. La relique doit donc etre en
    * tete, sinon son 1/1500 deviendrait 1/1800 sans que rien ne le dise. */
@@ -2244,7 +2306,7 @@ module.exports = {
   ZONE_REACTION,
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe, BOSS,
   SOCLE, SOCLE_DELAI, biomeDe, placeUne, naitDans, ecartDeNaissance,
-  BUTIN_GARANTI,
+  BUTIN_GARANTI, OEUF, OEUFS, tireOeuf,
   RARETE_ANNEAU, SAC_DE_RARETE, CHANCE_EQUIP, CHANCE_RELIQUE, CHANCE_RELIQUE_BOSS,
   OBSTACLE, OBSTACLE_BIOME, obstacles, bloque,
   SALLE, SALLE_ANNEAUX, SALLE_BUTIN, MUR_BASE, salles, mursDe, dansLaSalle, DONJON,

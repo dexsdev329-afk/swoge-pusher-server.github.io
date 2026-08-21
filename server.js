@@ -3319,12 +3319,17 @@ wss.on('connection', (ws) => {
         const ou = ouDansLeNexus(ws);
         if (!ou) return;
         const fiole = /^st:/.test(String(m.item)) ? String(m.item).slice(3) : null;
+        /* Et l'oeuf, troisieme forme de clef : « oe:<espece> ». Comme la
+           fiole, il n'a pas d'identifiant de catalogue — il ne s'achete pas et
+           ne se vend pas. */
+        const oeuf = /^oe:/.test(String(m.item)) ? String(m.item).slice(3) : null;
         let sorti = null;
         /* On SORT d'abord de l'inventaire, et seulement ensuite on pose. Un sac
            cree avant le retrait laisserait, si le retrait echoue, la piece au
            sol ET dans le sac : la seule facon de la dupliquer. */
         try {
-          sorti = fiole ? game.poseFioleAuSol(ws.addr, fiole)
+          sorti = oeuf ? game.poseOeufAuSol(ws.addr, oeuf)
+                : fiole ? game.poseFioleAuSol(ws.addr, fiole)
                         : game.poseAuSol(ws.addr, m.item);
         } catch (e) { return send(ws, { type: 'nexusDepose', refus: e.message }); }
         const r = sacs.depose(nexusSacs, ou.x, ou.y, ws.addr, sorti,
@@ -3334,7 +3339,8 @@ wss.on('connection', (ws) => {
              sans ce retour, un sac plein la ferait disparaitre, et elle aurait
              ete prise au joueur avant qu'on sache s'il y avait la place. */
           try {
-            if (fiole) game.prendFiole(ws.addr, fiole);
+            if (oeuf) game.prendOeuf(ws.addr, oeuf);
+            else if (fiole) game.prendFiole(ws.addr, fiole);
             else game.prendDuSol(ws.addr, m.item);
           } catch (e) {}
           return send(ws, { type: 'nexusDepose', refus: (r && r.raison) || 'refuse' });
@@ -3366,7 +3372,8 @@ wss.on('connection', (ws) => {
           /* ON DEMANDE AVANT DE PRENDRE : un sac plein doit laisser la piece
              dans le sac au sol, pas la detruire en la refusant. */
           try {
-            if (o.stat) game.prendFiole(ws.addr, o.stat);
+            if (o.oeuf) game.prendOeuf(ws.addr, o.oeuf);
+            else if (o.stat) game.prendFiole(ws.addr, o.stat);
             else if (o.item) game.prendDuSol(ws.addr, o.item);
             else return 'inconnu';
             return true;
@@ -3745,9 +3752,14 @@ wss.on('connection', (ws) => {
          * la page qui l'a lu sur la case — pas d'une devinette sur la forme du
          * nombre. */
         const fiole = /^st:/.test(String(m.item)) ? String(m.item).slice(3) : null;
+        /* Et l'oeuf, troisieme forme de clef : « oe:<espece> ». Comme la
+           fiole, il n'a pas d'identifiant de catalogue — il ne s'achete pas et
+           ne se vend pas. */
+        const oeuf = /^oe:/.test(String(m.item)) ? String(m.item).slice(3) : null;
         let sorti = null;
         try {
-          sorti = fiole ? game.poseFioleAuSol(ws.addr, fiole)
+          sorti = oeuf ? game.poseOeufAuSol(ws.addr, oeuf)
+                : fiole ? game.poseFioleAuSol(ws.addr, fiole)
                         : game.poseAuSol(ws.addr, m.item);
         }
         catch (e) { return send(ws, { type: 'realmDepose', refus: e.message }); }
@@ -3762,7 +3774,8 @@ wss.on('connection', (ws) => {
              retour, un sac au sol plein ferait disparaitre l'objet — et il
              aurait ete pris au joueur avant qu'on sache s'il y avait la place. */
           try {
-            if (fiole) game.prendFiole(ws.addr, fiole);
+            if (oeuf) game.prendOeuf(ws.addr, oeuf);
+            else if (fiole) game.prendFiole(ws.addr, fiole);
             else game.prendDuSol(ws.addr, m.item);
           } catch (e) {}
           return send(ws, { type: 'realmDepose', refus: (r && r.raison) || 'refuse' });
@@ -4686,6 +4699,13 @@ function ramassePlace(ws, id, place, muet) {
       if (muet && skin && game.supRestant(ws.addr, skin, o.stat) > 0) return true;
       return game.sacRempli(ws.addr) < 8 ? true : 'sac-plein';
     }
+    /* ---- UN OEUF SE RAMASSE TOUJOURS, S'IL RESTE UNE PLACE ----
+     * Il ne se boit pas, il ne s'equipe pas, il ne se vend pas : il n'y a
+     * qu'une chose a en faire, et c'est le rapporter. La seule question est
+     * donc la place — et a une chance sur cinq mille, un sac plein qui laisse
+     * un oeuf par terre est le pire moment du jeu. Il passe AVANT la potion
+     * dans ce test : c'est le plus rare qui doit decider en premier. */
+    if (o.oeuf) return game.sacRempli(ws.addr) < 8 ? true : 'sac-plein';
     if (o.potion) return plafondPotion(o.potion) ? true : 'plein';
     /* Un OBJET prend une place du sac : on refuse avant de le sortir du sac au
        sol, sinon il disparaitrait des deux cotes a la fois. */
@@ -4723,6 +4743,15 @@ function ramassePlace(ws, id, place, muet) {
       send(ws, { type: 'realmRamasse', sac: r.sac, stat: r.stat, vide: r.vide,
                  auto: !!muet, ...b, sacJoueur: game.sacPour(ws.addr),
                  fioles: game.fiolesPour(ws.addr) });
+      return 'pris';
+    }
+    if (r.oeuf) {
+      const b = game.prendOeuf(ws.addr, r.oeuf);
+      persistSoon();
+      /* Une trouvaille pareille ne passe pas dans la file des ramassages
+         ordinaires : `oeuf` sur le message, et la page l'annonce. */
+      send(ws, { type: 'realmRamasse', sac: r.sac, oeuf: r.oeuf, vide: r.vide,
+                 auto: !!muet, ...b, sacJoueur: game.sacPour(ws.addr) });
       return 'pris';
     }
     if (r.potion) {
