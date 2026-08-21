@@ -88,10 +88,17 @@ console.log('\n-- le chien mord, tout seul --');
   const t = evs.flatMap((e) => e.touches).filter((x) => x.familier);
   eq(t.length, 1, 'et il passe par le meme evenement `touches` que nos tirs');
 
-  /* La recharge tient : il ne mord pas a chaque pas. */
-  const suite = gestes(avance(R, 4), 'mord');
+  /* ---- LA RECHARGE TIENT, ET ELLE VIENT DU NIVEAU ----
+   * Elle valait cinq secondes pour tout le monde. Elle vaut maintenant
+   * SOIXANTE au premier niveau et trois au centieme — le niveau achete de la
+   * frequence. L'essai la DEMANDE au monde plutot que de l'ecrire : un
+   * chiffre en dur ici serait tombe le jour du changement sans qu'une seule
+   * regle soit fausse. */
+  const rech = monde.rechargeFamilier(1);
+  eq(Math.round(rech), 60, 'au premier niveau, il agit une fois par minute');
+  const suite = gestes(avance(R, rech - 1), 'mord');
   eq(suite.length, 0, 'il ne remord pas pendant sa recharge');
-  const apres = gestes(avance(R, 1.2), 'mord');
+  const apres = gestes(avance(R, 1.6), 'mord');
   eq(apres.length, 1, 'et il remord quand elle est finie');
 }
 
@@ -99,7 +106,10 @@ console.log('\n-- le chien mord, tout seul --');
 console.log('\n-- mordre l air ne coute rien --');
 {
   const { R, j } = scene('normal', 1);
-  /* Aucun monstre : il regarde autour, il ne dort pas. */
+  /* Aucun monstre : il regarde autour, il ne dort pas. Trois secondes, soit
+     vingt fois moins que sa recharge au premier niveau — s'il consommait la
+     recharge en mordant l'air, il ne pourrait plus rien faire pendant une
+     minute au moment precis ou l'on arrive sur un groupe. */
   avance(R, 3);
   const m = poseMonstre(R, j, 100, 0);
   const mord = gestes(avance(R, 0.6), 'mord');
@@ -133,7 +143,7 @@ console.log('\n-- la glace fige --');
   ok(m.stase > 0, `la creature est figee (${m.stase.toFixed(2)}s)`);
   /* Prolonger a chaque recharge aurait fait d un seul monstre une statue
      permanente — ce qui n est pas une aide, c est une suppression. */
-  const encore = gestes(avance(R, 6), 'gele');
+  const encore = gestes(avance(R, monde.rechargeFamilier(1) + 2), 'gele');
   ok(m.stase <= 0 || encore.length <= 1,
      'et il ne prolonge pas indefiniment le meme');
 }
@@ -181,7 +191,8 @@ console.log('\n-- le legendaire soigne --');
   /* A pleine vie, il ne fait rien — et surtout il ne consomme pas sa
      recharge, sinon on serait sans soin a l instant ou l on encaisse. */
   j.pv = j.pvMax;
-  eq(gestes(avance(R, 6), 'soigne').length, 0, 'a pleine vie il se tait');
+  eq(gestes(avance(R, monde.rechargeFamilier(1) + 2), 'soigne').length, 0,
+     'a pleine vie il se tait');
   j.pv = j.pvMax - 200;
   ok(gestes(avance(R, 0.5), 'soigne').length >= 1,
      'et il repart des qu on est blesse, sans attendre la recharge');
@@ -196,30 +207,60 @@ console.log('\n-- le niveau se voit --');
   const pv1 = m1.pv; avance(un.R, 0.3);
   const degats1 = pv1 - m1.pv;
 
-  const vingt = scene('normal', 20);
+  const vingt = scene('normal', monde.FAMILIERS.niveauMax);
   const m2 = poseMonstre(vingt.R, vingt.j, 100, 0);
   const pv2 = m2.pv; avance(vingt.R, 0.3);
   const degats20 = pv2 - m2.pv;
   ok(degats20 > degats1 * 3,
-     `au vingtieme il mord bien plus fort (${degats1} -> ${degats20})`);
+     `au centieme il mord bien plus fort (${degats1} -> ${degats20})`);
 
   /* Mais jamais au point de remplacer une arme : un coup de lame vaut entre
      quarante et soixante, et il en donne dix par seconde. */
-  const E = monde.familierEffet('mord', 20);
-  ok(E.degats / monde.FAMILIERS.recharge < 40,
-     `et il reste loin d une arme (${(E.degats / monde.FAMILIERS.recharge).toFixed(1)} par seconde contre 40+)`);
+  /* ---- MEME AU CENTIEME, IL N EST PAS UNE ARME ----
+   * C'est la ou le systeme peut deraper : la frequence est multipliee par
+   * vingt entre le premier niveau et le centieme. Un coup de lame vaut entre
+   * quarante et soixante et part plusieurs fois par seconde ; le familier doit
+   * rester loin derriere. */
+  const E = monde.familierEffet('mord', monde.FAMILIERS.niveauMax);
+  const parSec = E.degats / E.recharge;
+  ok(parSec < 40,
+     `et il reste loin d une arme, meme au maximum (${parSec.toFixed(1)} par seconde contre 40+)`);
 
   const s1 = monde.familierEffet('soigne', 1).part;
-  const s20 = monde.familierEffet('soigne', 20).part;
+  const s20 = monde.familierEffet('soigne', monde.FAMILIERS.niveauMax).part;
   ok(s20 > s1, `le soin monte aussi (${(s1 * 100).toFixed(1)}% -> ${(s20 * 100).toFixed(1)}%)`);
-  ok(monde.familierEffet('bouclier', 20).reduction <= 0.5,
-     'et le bouclier est plafonne — il ne devient jamais une immunite');
+  /* ---- ET LE BOUCLIER EST PLAFONNE PLUS BAS QU AVANT ----
+   * Il dure trois secondes. Au centieme niveau la recharge vaut aussi trois
+   * secondes : il devient PERMANENT. Une reduction de moitie qui ne s arrete
+   * jamais rendrait l esquive — seule competence du jeu — sans objet pour
+   * toujours. */
+  const bMax = monde.familierEffet('bouclier', monde.FAMILIERS.niveauMax);
+  ok(bMax.reduction <= 0.36,
+     `et le bouclier est plafonne (${(100 * bMax.reduction).toFixed(0)} %) — il ne devient jamais une immunite`);
+  ok(Math.abs(bMax.recharge - bMax.duree) < 0.5,
+     'au maximum il ne se coupe plus : c est pour ca que le plafond a baisse');
+
+  /* ---- LA CADENCE MONTE EN LIGNE DROITE ----
+   * Une fois par minute au premier niveau, vingt fois au centieme. C'est LA
+   * promesse du systeme, et c'est elle qu'un joueur ressent. */
+  eq(Math.round(monde.rechargeFamilier(1)), 60, 'niveau 1 : une fois par minute');
+  eq(Math.round(monde.rechargeFamilier(monde.FAMILIERS.niveauMax)), 3,
+     'niveau 100 : toutes les trois secondes');
+  ok(monde.rechargeFamilier(10) < 25,
+     `et le gain arrive VITE (${monde.rechargeFamilier(10).toFixed(0)}s des le dixieme niveau)`);
+  let avant = 1e9;
+  for (let k = 1; k <= monde.FAMILIERS.niveauMax; k++) {
+    const r2 = monde.rechargeFamilier(k);
+    if (r2 > avant) { ok(false, `la recharge remonte au niveau ${k}`); break; }
+    avant = r2;
+  }
+  ok(true, 'elle ne remonte jamais d un niveau au suivant');
 }
 
 /* ================== 5. PAS DANS LE MONDE ROUGE ================== */
 console.log('\n-- et il ne se bat pas dans la carte rouge --');
 {
-  const { R, j } = scene('normal', 20, { pvp: true });
+  const { R, j } = scene('normal', monde.FAMILIERS.niveauMax, { pvp: true });
   const m = poseMonstre(R, j, 100, 0);
   const pv0 = m.pv;
   const evs = avance(R, 6);
@@ -235,7 +276,7 @@ console.log('\n-- et il ne se bat pas dans la carte rouge --');
   const { R, j } = scene(null, 1);
   const m = poseMonstre(R, j, 100, 0);
   const pv0 = m.pv;
-  eq(gestes(avance(R, 6)).length, 0, 'un joueur sans familier ne declenche rien');
+  eq(gestes(avance(R, 8)).length, 0, 'un joueur sans familier ne declenche rien');
   eq(m.pv, pv0, 'et le monstre est intact');
 }
 

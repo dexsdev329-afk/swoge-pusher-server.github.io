@@ -2079,35 +2079,72 @@ const POUVOIRS = {
  */
 const FAMILIERS = {
   portee: 260,           // autour du maitre, pour tout ce qui vise
-  recharge: 5,           // secondes entre deux gestes — la cadence du legendaire
-  niveauMax: 20,
-  /* Le chien ordinaire MORD. Il n'a pas d'effet, il a des degats : c'est le
-     seul des six a etre simplement utile, et c'est ce qui le rend jouable
-     quand on n'a que lui. */
-  mord:     { degats: 12, parNiveau: 3 },
+  niveauMax: 100,
+  /* ---- LE NIVEAU ACHETE DE LA FREQUENCE, PAS DE LA PUISSANCE ----
+   *
+   * C'est le coeur du systeme, et c'est une seule phrase : le familier agit
+   * UNE fois par minute au niveau un, VINGT fois par minute au niveau cent, et
+   * la cadence monte en ligne droite entre les deux.
+   *
+   * On ecrit la CADENCE et l'on en deduit la recharge, jamais l'inverse. Une
+   * recharge qui descendrait en ligne droite de soixante a trois secondes
+   * vaudrait encore trente-deux secondes au niveau cinquante — le compagnon
+   * resterait inutile pendant la moitie du chemin, et personne ne le
+   * nourrirait assez longtemps pour decouvrir qu'il devient bon. En partant de
+   * la cadence, on gagne le plus la ou l'on part de zero : soixante secondes
+   * au premier niveau, vingt-deux au dixieme, dix au vingt-cinquieme.
+   *
+   * Ce que le niveau N'achete PAS : la puissance. Les valeurs par coup montent
+   * doucement — un peu moins de six fois entre le premier et le centieme —
+   * alors que la frequence, elle, est multipliee par vingt. Un familier de
+   * haut niveau frappe souvent, il ne frappe pas comme une arme.
+   */
+  parMinute: { debut: 1, fin: 20 },
+  /* Le chien ordinaire MORD. Il n'a pas d'effet, il a des degats : le seul des
+     six a etre simplement utile, et c'est ce qui le rend jouable quand on n'a
+     que lui. */
+  mord:     { degats: 12, parNiveau: 0.586 },
   /* Le feu BRULE. La brulure ignore la defense — c'est deja la regle du jeu
      pour celle que l'on subit, et deux brulures aux regles differentes
      seraient deux choses portant le meme nom. */
-  brule:    { duree: 3.5, parSeconde: 5, parNiveau: 0.5 },
-  /* La glace FIGE. Court : une stase de cinq secondes existe deja, elle coute
-     soixante-quinze de mana et douze secondes de recharge. Celle-ci est
-     gratuite et automatique, elle ne peut donc pas valoir autant. */
-  gele:     { duree: 1.4, parNiveau: 0.07 },
+  brule:    { duree: 3.5, parSeconde: 5, parNiveau: 0.101 },
+  /* La glace FIGE. Court : la stase du fruit dure cinq secondes, coute
+     soixante-quinze de mana et douze de recharge. Celle-ci est gratuite et
+     automatique, elle ne peut pas valoir autant. */
+  gele:     { duree: 1.4, parNiveau: 0.0141 },
   /* Les tenebres REPOUSSENT tout ce qui est trop pres. Pas de degats : c'est
      une porte de sortie, et une porte de sortie qui tue en plus n'aurait plus
      aucune raison d'etre choisie contre le chien qui mord. */
-  repousse: { rayon: 190, force: 120, parNiveau: 5 },
-  /* La terre PROTEGE. Une reduction, pas une immunite : un bouclier qui
-     annule ferait des secondes ou l'on ne risque rien, et l'esquive — la
-     seule competence du jeu — cesserait de compter pendant ce temps-la. */
-  bouclier: { duree: 3.0, reduction: 0.30, parNiveau: 0.010 },
+  repousse: { rayon: 190, force: 120, parNiveau: 1.0 },
+  /* ---- LA TERRE PROTEGE, ET SON PLAFOND A BAISSE ----
+   * Son bouclier dure trois secondes. Au niveau un, il couvre trois secondes
+   * sur soixante : autant dire rien. Au niveau cent, la recharge vaut aussi
+   * trois secondes — il devient PERMANENT. Une reduction de moitie qui ne
+   * s'arrete jamais rendrait l'esquive, seule competence du jeu, sans objet
+   * pour toujours. Le plafond descend donc a trente-cinq pour cent : tres
+   * fort, et toujours pas une immunite. */
+  bouclier: { duree: 3.0, reduction: 0.15, parNiveau: 0.00202, plafond: 0.35 },
   /* Le legendaire SOIGNE, en part des points de vie MAXIMUM. Un chiffre fixe
-     aurait guéri un debutant en trois battements et un joueur de niveau vingt
-     jamais. */
-  soigne:   { part: 0.030, parNiveau: 0.0035 },
+     aurait gueri un debutant en trois battements et un joueur de niveau vingt
+     jamais. Meme raison que le bouclier pour la pente : a trois secondes de
+     recharge, chaque point de pourcentage compte vingt fois plus qu'au
+     premier niveau. */
+  soigne:   { part: 0.030, parNiveau: 0.000152 },
 };
 
-/* ---- QUELLE ESPECE FAIT QUOI ----
+/* ---- LA RECHARGE D'UN FAMILIER, A SON NIVEAU ----
+ * Une seule formule, ici. La cadence monte en ligne droite ; la recharge est
+ * son inverse. Ecrire la recharge directement aurait demande une courbe, et
+ * une courbe ne se lit pas — celle-ci se dit en une phrase. */
+function rechargeFamilier(niveau) {
+  const M = FAMILIERS.parMinute;
+  const n = Math.max(1, Math.min(FAMILIERS.niveauMax, niveau | 0));
+  const part = (n - 1) / (FAMILIERS.niveauMax - 1);
+  const parMin = M.debut + (M.fin - M.debut) * part;
+  return 60 / parMin;
+}
+
+/* ---- QUELLE ESPECE FAIT QUOI ----/* ---- QUELLE ESPECE FAIT QUOI ----
  * Ici, avec les chiffres, et pas a cote des noms anglais : c'est une REGLE du
  * monde. Deux tables — l'une qui nomme, l'autre qui agit — auraient fini par
  * annoncer un pouvoir et en appliquer un autre. */
@@ -2123,17 +2160,21 @@ function familierEffet(pouvoir, niveau) {
   const b = FAMILIERS[pouvoir];
   if (!b) return null;
   const n = Math.max(1, Math.min(FAMILIERS.niveauMax, niveau | 0)) - 1;
-  const out = { pouvoir, portee: FAMILIERS.portee, recharge: FAMILIERS.recharge };
+  const out = { pouvoir, portee: FAMILIERS.portee,
+                recharge: Number(rechargeFamilier(niveau).toFixed(2)) };
   switch (pouvoir) {
     case 'mord':     out.degats = b.degats + b.parNiveau * n; break;
     case 'brule':    out.duree = b.duree; out.parSeconde = b.parSeconde + b.parNiveau * n; break;
     case 'gele':     out.duree = b.duree + b.parNiveau * n; break;
     case 'repousse': out.rayon = b.rayon; out.force = b.force + b.parNiveau * n; break;
     case 'bouclier': out.duree = b.duree;
-                     /* Plafonnee : la formule seule atteindrait 49 % au
-                        vingtieme, et l'on retomberait sur le bouclier qui
-                        annule dont on ne veut pas. */
-                     out.reduction = Math.min(0.5, b.reduction + b.parNiveau * n); break;
+                     /* Plafonnee. La formule seule irait au-dela, et au
+                        centieme niveau la recharge vaut la duree — le
+                        bouclier ne se coupe plus jamais. Un permanent a
+                        moitie de degats en moins rendrait l'esquive sans
+                        objet ; a trente-cinq pour cent, il reste tres fort
+                        sans etre une immunite. */
+                     out.reduction = Math.min(b.plafond, b.reduction + b.parNiveau * n); break;
     case 'soigne':   out.part = b.part + b.parNiveau * n; break;
   }
   return out;
@@ -2622,7 +2663,7 @@ module.exports = {
   ARMES, DEGATS_POING, VITESSE_JOUEUR, CADENCE_MAX,
   cadenceDe, vitesseDe,
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
-  FAMILIERS, familierEffet, POUVOIR_PAR_ESPECE,
+  FAMILIERS, familierEffet, rechargeFamilier, POUVOIR_PAR_ESPECE,
   ZONE_REACTION,
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe, BOSS,
   SOCLE, SOCLE_DELAI, biomeDe, placeUne, naitDans, ecartDeNaissance,

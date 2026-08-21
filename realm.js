@@ -252,7 +252,12 @@ class Realm {
           s.balise = true;
           if (ev) {
             ev.balises = ev.balises || [];
-            ev.balises.push({ i: s.i, x: s.x, y: s.y, biome: monde.biomeEn(s.x, s.y) });
+            /* Le meme point que la liste et que la teleportation : l'annonce
+               « une balise s'est allumee » pose une fleche a l'ecran, et une
+               fleche qui vise autre chose que la pierre envoie chercher au
+               mauvais endroit. */
+            ev.balises.push({ i: s.i, ...Realm.pointDeBalise(s),
+                              biome: monde.biomeEn(s.x, s.y) });
           }
         }
         /* GARANTI : une salle gardee promet un tresor, et la promesse tient
@@ -484,6 +489,16 @@ class Realm {
        prochaine entree se lirait comme un choix qui n'a pas pris. */
     j.fam = fiche.fam || null;
     j.famNiv = Math.max(1, fiche.famNiv | 0);
+    /* ---- ET SA RECHARGE SUIT LE NOUVEAU NIVEAU ----
+     * Elle continuait de courir sur l'ancienne. Un joueur qui nourrit son
+     * familier au milieu d'un combat le fait passer de soixante secondes a
+     * trente — et devait quand meme attendre les soixante d'avant, une fois.
+     * Le geste le plus satisfaisant du systeme (« je le nourris, il agit plus
+     * souvent ») ne se voyait donc pas au moment ou on le fait.
+     * On BORNE au lieu de remettre a zero : remettre a zero offrirait une
+     * action gratuite a chaque repas, et nourrir en boucle deviendrait une
+     * facon de tirer. */
+    j.famR = Math.min(j.famR || 0, monde.rechargeFamilier(j.famNiv));
     j.pouvoir = monde.pouvoirDeStat(fiche.statFruit || null);
     return j;
   }
@@ -1044,7 +1059,10 @@ class Realm {
 
       const cle = monde.POUVOIR_PAR_ESPECE[j.fam];
       const E = cle ? monde.familierEffet(cle, j.famNiv || 1) : null;
-      if (!E) { j.famR = monde.FAMILIERS.recharge; continue; }
+      /* Une espece sans pouvoir connu — un familier ajoute avant sa regle :
+         on lui donne quand meme une recharge, sinon la boucle le reprendrait a
+         chaque pas. Celle de SON niveau, comme tout le monde. */
+      if (!E) { j.famR = monde.rechargeFamilier(j.famNiv || 1); continue; }
 
       /* ---- CE QUI SE PASSE, ET SI LA RECHARGE REPART ----
        * Un geste dans le vide ne consomme PAS la recharge : sinon le chien
@@ -1773,8 +1791,13 @@ class Realm {
        * l'ecran, parce qu'on les DESSINE. Une balise sert a aller AILLEURS —
        * n'envoyer que celles qui sont deja sous les yeux reviendrait a
        * n'offrir de voyager que vers l'endroit ou l'on se tient. */
-      balises: this.salles.map((s) => ({ i: s.i, x: Math.round(s.x), y: Math.round(s.y),
-                                         on: s.balise ? 1 : 0 })),
+      /* La ou l'on ARRIVE, pas le centre de la salle : c'est ce que la pierre
+         promet, et c'etait faux. Voir `pointDeBalise`. */
+      balises: this.salles.map((s) => {
+        const p = Realm.pointDeBalise(s);
+        return { i: s.i, x: Math.round(p.x), y: Math.round(p.y),
+                 on: s.balise ? 1 : 0 };
+      }),
       /* Les portes ouvertes. Le temps restant part avec elles pour la meme
          raison que celui des sacs : la page dessine la porte qui se referme, et
          sans ce chiffre elle le devinerait — donc mentirait sur le moment ou il
@@ -1817,13 +1840,29 @@ class Realm {
     if (!j) return null;
     const s = this.salles.find((x) => x.i === Number(i));
     if (!s || !s.balise) return null;
-    const R = monde.SALLE.cote * monde.TUILE / 2;
-    /* Juste en dessous du bord bas : c'est par la qu'on entre a pied, donc
-       c'est l'endroit dont on a deja l'image en tete. */
-    const x = s.x, y = s.y + R + 60;
-    j.x = Math.max(40, Math.min(monde.MONDE.w - 40, x));
-    j.y = Math.max(40, Math.min(monde.MONDE.h - 40, y));
+    const p = Realm.pointDeBalise(s);
+    j.x = Math.max(40, Math.min(monde.MONDE.w - 40, p.x));
+    j.y = Math.max(40, Math.min(monde.MONDE.h - 40, p.y));
     return { i: s.i, x: Math.round(j.x), y: Math.round(j.y) };
+  }
+
+  /* ---- OU EST LA BALISE, POUR DE BON ----
+   *
+   * On arrive au BORD de la salle et non au centre : au centre on se poserait
+   * sur le coffre, et sur une salle rearmee, au milieu de ses gardiens. Juste
+   * en dessous du bord bas — c'est par la qu'on entre a pied, donc c'est
+   * l'endroit dont on a deja l'image en tete.
+   *
+   * Ce point est ECRIT ICI et nulle part ailleurs. Il servait a la
+   * teleportation ; la liste envoyee aux pages, elle, donnait le centre de la
+   * salle. La pierre se dessinait donc SOUS le coffre — invisible derriere lui,
+   * et son anneau vert au sol se lisait comme un cercle sans objet autour d'un
+   * tresor. Deux endroits qui pretendaient dire « la balise est ici » et n'en
+   * disaient pas la meme.
+   */
+  static pointDeBalise(s) {
+    const R = monde.SALLE.cote * monde.TUILE / 2;
+    return { x: s.x, y: s.y + R + 60 };
   }
 
   /** Un monstre remplace ceux qu'on a tues, pour que la carte ne se vide pas.

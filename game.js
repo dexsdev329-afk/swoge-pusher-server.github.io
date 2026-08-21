@@ -156,7 +156,12 @@ function pouvoirFamilier(espece) {
    il nourrit celui qu'on a. Le chiffre vaut une bonne poignee de repas — un
    oeuf est la chose la plus rare du jeu, il ne doit pas valoir moins qu'une
    soiree de farm. */
-const XP_OEUF_DOUBLE = 500;
+/* Un deuxieme oeuf de la meme espece nourrit celui qu'on a. Il vaut mille
+   cinq cents points — de quoi passer du premier au vingt-troisieme niveau
+   d'un coup. C'est enorme, et c'est voulu : un oeuf reste la chose la plus
+   rare qui tombe, et le doublon serait sans cela la seule trouvaille du jeu
+   qui ne serve a rien. */
+const XP_OEUF_DOUBLE = 1500;
 
 /* ================== LE REPAS ET LES NIVEAUX ==================
  *
@@ -184,13 +189,13 @@ const XP_OEUF_DOUBLE = 500;
  * derniere marche couterait le prix de la premiere alors qu'elle demande
  * quarante fois plus d'XP, et l'or cesserait de compter des le deuxieme soir.
  */
-const REPAS_XP = { commun: 10, rare: 35 };
-const REPAS_OR = 40;                    // par niveau deja atteint
-const NIVEAU_MAX_FAM = 20;
+const REPAS_XP = { commun: 25, rare: 90 };
+const REPAS_OR = 5;                     // le plancher ; le niveau ajoute un quart
+const NIVEAU_MAX_FAM = monde.FAMILIERS.niveauMax;
 
 /** L'XP TOTALE qu'il faut avoir accumulee pour etre au niveau `n`. */
 function paliersFamilier(n) {
-  return 40 * (n - 1) * n;              // 80, 240, 480, 800 … 15200 au vingtieme
+  return 3 * (n - 1) * n;               // 6, 18, 36 … 29 700 au centieme
 }
 /** Le niveau que vaut une XP totale. La seule source de verite. */
 function niveauFamilier(xp) {
@@ -199,9 +204,20 @@ function niveauFamilier(xp) {
   while (n < NIVEAU_MAX_FAM && x >= paliersFamilier(n + 1)) n++;
   return n;
 }
-/** Ce que coute un repas a un familier de ce niveau-la. */
+/* ---- ET CE QUE COUTE UN REPAS ----
+ *
+ * Le prix etait `40 x niveau`. Mesure faite : un personnage de niveau vingt
+ * qui meurt rapporte QUARANTE-QUATRE d'or. Un seul repas coutait donc une vie
+ * de personnage entiere — deja lourd pour vingt niveaux de familier, et
+ * strictement impossible pour cent.
+ *
+ * Le prix monte donc doucement et part de bas : cinq d'or au premier niveau,
+ * trente au centieme. Il reste un vrai puits — c'est le seul du jeu, l'or ne
+ * se depensait nulle part avant lui — mais il se paie avec ce que le jeu
+ * donne, et non avec ce qu'il ne donne pas.
+ */
 function prixRepas(niveau) {
-  return REPAS_OR * Math.max(1, niveau | 0);
+  return REPAS_OR + Math.floor(Math.max(1, niveau | 0) / 4);
 }
 
 const SAC_CASES = 8;
@@ -6845,7 +6861,15 @@ class Game {
                 sans qu'on voie quoi que ce soit changer. La formule est au
                 monde ; la page n'en tient pas de copie. */
              effet: monde.familierEffet(
-               (monde.POUVOIR_PAR_ESPECE || {})[espece], niveau) };
+               (monde.POUVOIR_PAR_ESPECE || {})[espece], niveau),
+             /* ---- ET CE QUE LE NIVEAU SUIVANT DONNE ----
+              * Le niveau achete de la FREQUENCE. Sans ce chiffre, le panneau
+              * montre une barre qui se remplit sans jamais dire vers quoi —
+              * et le repas devient un geste qu'on fait sans savoir pourquoi.
+              * Il vient du serveur comme le reste : une seconde formule dans
+              * la page finirait par promettre une cadence qui n'arrive pas. */
+             suivant: niveau >= NIVEAU_MAX_FAM ? null : monde.familierEffet(
+               (monde.POUVOIR_PAR_ESPECE || {})[espece], niveau + 1) };
   }
 
   /* ---- LES REGLES DU REPAS, TELLES QUE LA PAGE LES ANNONCE ----

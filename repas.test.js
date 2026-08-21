@@ -61,11 +61,22 @@ ok(!('niveau' in p.familiers.normal),
    'et la sauvegarde ne RANGE pas de niveau — il n existe qu une fois');
 /* On triche sur l XP seule : si le niveau etait range a cote, il ne bougerait
    pas, et la fiche montrerait un niveau un a mille points d experience. */
-p.familiers.normal.xp = 800;
+/* Les paliers viennent du SERVEUR, ils ne sont pas recopies ici : la courbe
+   a change quand le familier est passe de vingt a cent niveaux, et un essai
+   qui portait « 800 -> niveau 5 » en dur serait tombe sans qu une seule regle
+   soit fausse. On demande donc au moteur ou commence le niveau qu on vise. */
+const palier = (n) => 3 * (n - 1) * n;
+p.familiers.normal.xp = palier(12);
 f = g.familiersDe(A)[0];
-eq(f.niveau, 5, 'huit cents points valent le niveau cinq, sans rien ecrire d autre');
-eq(f.xpBas, 800, 'la fiche porte le bas du palier');
-eq(f.xpHaut, 1200, 'et le haut — la page n a pas a connaitre la courbe');
+eq(f.niveau, 12, 'l XP du douzieme palier vaut le niveau douze, sans rien ecrire d autre');
+eq(f.xpBas, palier(12), 'la fiche porte le bas du palier');
+eq(f.xpHaut, palier(13), 'et le haut — la page n a pas a connaitre la courbe');
+/* ---- ET LE NIVEAU SUIVANT S ANNONCE ----
+ * Le niveau achete de la FREQUENCE : soixante secondes de recharge au premier,
+ * trois au centieme. Une barre qui se remplit sans dire vers quoi fait du
+ * repas un geste qu on repete sans savoir pourquoi. */
+ok(f.suivant && f.suivant.recharge < f.effet.recharge,
+   `le palier suivant fait agir plus souvent (${f.effet.recharge}s -> ${f.suivant.recharge}s)`);
 p.familiers.normal.xp = 0;
 
 /* Une vieille sauvegarde qui porte un niveau MENTEUR doit se reparer seule. */
@@ -85,22 +96,22 @@ eq(p.fame, 100000, 'l or n a pas bouge non plus');
 
 p.sac[parRarete.commun] = 1;
 let r = g.nourritFamilier(A, 'normal', parRarete.commun);
-eq(r.gagne, 10, 'une commune vaut dix points');
+eq(r.gagne, 25, 'une commune vaut vingt-cinq points');
 eq(p.sac[parRarete.commun], undefined, 'et elle quitte le sac');
 p.sac[parRarete.rare] = 1;
 r = g.nourritFamilier(A, 'normal', parRarete.rare);
-eq(r.gagne, 35, 'une rare en vaut trente-cinq');
-eq(g.familiersDe(A)[0].xp, 45, 'les deux repas s additionnent');
+eq(r.gagne, 90, 'une rare en vaut quatre-vingt-dix');
+eq(g.familiersDe(A)[0].xp, 115, 'les deux repas s additionnent');
 
 /* ================== 3. UN REFUS NE COUTE RIEN ================== */
 console.log('\n-- ce qui est refuse n est pas detruit --');
-p.fame = 10;                                   // moins que le prix d un repas
+p.fame = 1;                                    // moins que le prix d un repas
 p.sac[parRarete.commun] = 1;
 err = null;
 try { g.nourritFamilier(A, 'normal', parRarete.commun); } catch (e) { err = e.message; }
 ok(/Need \d+ gold/.test(err || ''), `sans or, le repas est refuse (${err})`);
 eq(p.sac[parRarete.commun], 1, 'la piece est intacte');
-eq(p.fame, 10, 'et l or aussi');
+eq(p.fame, 1, 'et l or aussi');
 err = null;
 try { g.nourritFamilier(A, 'feu', parRarete.commun); } catch (e) { err = e.message; }
 ok(/have not hatched/.test(err || ''), `nourrir un familier qu on n a pas est refuse (${err})`);
@@ -121,35 +132,53 @@ p.familiers.normal.xp = 0;
 p.sac[parRarete.commun] = 1;
 const avant = p.fame;
 r = g.nourritFamilier(A, 'normal', parRarete.commun);
-eq(avant - p.fame, 40, 'un repas au niveau un coute quarante');
+/* ---- LE PRIX A DU BAISSER, ET LOURDEMENT ----
+ * Il valait `40 x niveau`. Mesure : un personnage de niveau vingt qui meurt
+ * rapporte QUARANTE-QUATRE d or. Un seul repas coutait donc une vie de
+ * personnage entiere — deja lourd pour vingt niveaux, strictement impossible
+ * pour cent. */
+eq(avant - p.fame, 5, 'un repas au niveau un coute cinq');
 eq(r.or, p.fame, 'et la reponse porte l or restant, pour que la page n ait pas a le deduire');
 /* Le prix suit le NIVEAU : sinon la derniere marche couterait le prix de la
    premiere alors qu elle demande quarante fois plus d XP. */
-p.familiers.normal.xp = 800;                   // niveau cinq
+p.familiers.normal.xp = palier(60);
 p.sac[parRarete.commun] = 1;
-const avant5 = p.fame;
+const avant60 = p.fame;
 g.nourritFamilier(A, 'normal', parRarete.commun);
-eq(avant5 - p.fame, 200, 'au niveau cinq, il coute cinq fois plus');
+ok(avant60 - p.fame > 5,
+   `au soixantieme niveau il coute plus cher (${avant60 - p.fame} contre 5)`);
 
 /* Le passage de niveau se DIT — la page en fait un son, elle ne recalcule
    pas la courbe pour le deviner. */
-p.familiers.normal.xp = paliersDe(2) - 10;
+p.familiers.normal.xp = Math.max(0, palier(2) - 1);
 p.sac[parRarete.commun] = 1;
 r = g.nourritFamilier(A, 'normal', parRarete.commun);
 ok(r.monte === true, 'le repas qui fait monter le dit');
+/* ---- ET CELUI QUI NE FAIT PAS MONTER ----
+ * Aux premiers niveaux, CHAQUE repas fait monter : le deuxieme palier est a
+ * six points et une commune en vaut vingt-cinq. Il faut donc monter assez
+ * haut pour qu un repas ne suffise plus — c est justement la forme de la
+ * courbe, et l essai doit la suivre plutot que la supposer. */
+p.familiers.normal.xp = palier(60);
 p.sac[parRarete.commun] = 1;
 r = g.nourritFamilier(A, 'normal', parRarete.commun);
-ok(r.monte === false, 'celui qui ne fait pas monter le dit aussi');
+ok(r.monte === false,
+   `celui qui ne fait pas monter le dit aussi (niveau ${r.familier.niveau})`);
 
 /* ================== 5. LE PLAFOND ================== */
 console.log('\n-- le plafond tient --');
 const regles = Game.reglesFamilier();
-eq(regles.niveauMax, 20, 'le maximum est annonce par le serveur');
+eq(regles.niveauMax, 100, 'le maximum est annonce par le serveur');
 ok(regles.rarete.join(',') === 'commun,rare',
    `et les raretes acceptees aussi (${regles.rarete.join(', ')})`);
 p.familiers.normal.xp = 1e9;
 f = g.familiersDe(A)[0];
-eq(f.niveau, 20, 'une XP absurde ne depasse pas le maximum');
+eq(f.niveau, 100, 'une XP absurde ne depasse pas le maximum');
+eq(f.suivant, null, 'et il n y a plus de palier suivant a annoncer');
+/* ---- LA RECHARGE EST LA RECOMPENSE ----
+ * C est la seule chose que cent niveaux achetent vraiment : le compagnon agit
+ * vingt fois plus souvent. Les degats, eux, ne font que sextupler. */
+eq(f.effet.recharge, 3, 'au maximum, il agit toutes les trois secondes');
 ok(f.max === true, 'la fiche le dit');
 eq(f.xpHaut, null, 'et il n y a plus de palier suivant');
 eq(f.prixRepas, null, 'ni de prix');
@@ -163,7 +192,7 @@ eq(p.fame, orAvant, 'et l or n est pas preleve');
 
 /* ---- IL SURVIT A LA MORT ---- */
 console.log('\n-- et il survit a tout --');
-p.familiers.normal.xp = 800;
+p.familiers.normal.xp = palier(12);
 g.sortFamilier(A, 'normal');
 /* La mort passe par le chemin normal du jeu : un skin possede, un
    personnage vivant. Appeler `meurt` sur un compte qui ne porte rien
@@ -172,8 +201,6 @@ p.skins = { andy: true }; p.skinActif = 'andy';
 g.meurt(A, 'andy');
 f = g.familiersDe(A)[0];
 ok(!!f, 'le familier existe encore apres la mort du personnage');
-eq(f.niveau, 5, 'avec sa progression intacte — c est la seule chose du jeu qu on garde a vie');
-
-function paliersDe(niv) { return 40 * (niv - 1) * niv; }
+eq(f.niveau, 12, 'avec sa progression intacte — c est la seule chose du jeu qu on garde a vie');
 
 console.log(`\nrepas.test.js : ${n} verifications OK`);
