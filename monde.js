@@ -141,6 +141,25 @@ const OBSTACLE_BIOME = { terre: 0, marais: 1, neige: 2, cendres: 3, lave: 3 };
  * massent, et qu'on ne peut pas se contenter de fuir en ligne droite. Un mur
  * qui aurait quatre ouvertures ne serait qu'une decoration au sol.
  */
+/*
+ * ==================== LE DONJON ====================
+ *
+ * Ce qu'Optimus ouvre en mourant. Les quatre creatures qui le peuplent ne
+ * naissent nulle part ailleurs : c'est ecrit ICI, et pas en dur dans la
+ * simulation, pour qu'un essai puisse demander « quelles especes ne vivent que
+ * dans un donjon ? » sans lire realm.js.
+ *
+ * `boss` est celle du fond. Elle ne se compte pas dans la population : un
+ * donjon a UN boss, pas un boss par tirage.
+ */
+const DONJON = {
+  especes: ['drone', 'ferraille', 'bobine'],
+  boss: 'fonderie',
+  /* Ce qui l'ouvre. Ecrit ici pour la meme raison : le monde dit QUI ouvre un
+     donjon, la simulation se contente de le constater. */
+  ouvreur: 'optimus',
+};
+
 const SALLE = {
   /* Neuf tuiles de cote, murs compris : l'interieur fait sept tuiles, soit
      896 unites. Deux gardiens de trois cent quinze pixels y tiennent en se
@@ -778,6 +797,66 @@ const MONSTRES = {
        pas choisi, il est calcule, et un essai le recalcule. */
     zone: { annonce: 1.45, rayon: 230, att: 160, cadence: 0.2 },
     xp: 5200,
+  },
+  /* ==================== LES CREATURES DU DONJON ====================
+   *
+   * Elles ne naissent dans AUCUN anneau : `biomes` reste vide, comme pour le
+   * gardien des salles. On ne les rencontre que derriere un portail, et c'est
+   * ce qui fait du portail autre chose qu'une porte de plus.
+   *
+   * Elles sont plus dures que tout ce qui erre dehors, a un cran pres : la
+   * moins forte des quatre encaisse deux fois ce qu'encaisse un squelette, et
+   * la plus forte tient tete a un colosse. Un donjon qui se nettoie avec
+   * l'equipement du marais ne serait qu'un anneau de plus.
+   */
+  drone: {
+    cle: 'drone', nom: 'Drone Sentinel',
+    pv: 380, att: 95, def: 20,
+    /* Il VOLE : cent vingt, plus vite que tout ce qui marche dehors sauf le
+       rat. On ne le distance pas, on l'abat. */
+    vitesse: 120, rayon: 40, vue: 800,
+    contact: true, cadence: 0.6,
+    tir: { portee: 620, vitesse: 400, sprite: 'plasma', att: 70, cadence: 0.55 },
+    xp: 620,
+  },
+  ferraille: {
+    cle: 'ferraille', nom: 'Scrapjaw',
+    pv: 900, att: 135, def: 34,
+    vitesse: 96, rayon: 52, vue: 720,
+    contact: true, cadence: 0.5,
+    tir: { portee: 360, vitesse: 300, sprite: 'scie', att: 80, cadence: 0.35 },
+    xp: 980,
+  },
+  /* La BOBINE paralyse. C'est la seule du donjon qui le fasse, et deux
+     secondes clouees au milieu de trois autres machines, ca se paie. */
+  bobine: {
+    cle: 'bobine', nom: 'Coil Warden',
+    pv: 620, att: 110, def: 26,
+    vitesse: 84, rayon: 46, vue: 820,
+    contact: false, cadence: 0.5,
+    /* LE MEME DESSIN QUE LA MEDUSE, et c'est voulu. Un essai refuse qu'un
+       projectile veuille dire deux choses : si la bobine tirait le plasma du
+       drone en y ajoutant la paralysie, le joueur apprendrait « le trait bleu
+       cloue » — faux une fois sur deux, et impossible a jouer.
+       On fait donc l'inverse : UN dessin pour la paralysie, dans tout le jeu.
+       Ce qu'on voit venir, on sait ce que ca fait, quelle que soit la creature
+       qui l'a lance. C'est la seule facon d'apprendre un jeu en le jouant. */
+    tir: { portee: 700, vitesse: 340, sprite: 'oeil', att: 65, cadence: 0.4,
+           effet: 'paralyse' },
+    xp: 840,
+  },
+  /* La FONDERIE tient le fond du donjon. Sa zone annonce 1,5 s pour 240
+     unites : 240/202 + 0,25 fait 1,44, on prend 1,5. Le chiffre se calcule,
+     il ne se choisit pas. */
+  fonderie: {
+    cle: 'fonderie', nom: 'Foundry Brute',
+    pv: 1500, att: 165, def: 48,
+    vitesse: 62, rayon: 74, vue: 760,
+    contact: true, cadence: 0.55,
+    tir: { portee: 520, vitesse: 320, sprite: 'braise', att: 95, cadence: 0.4,
+           effet: 'brulure' },
+    zone: { annonce: 1.5, rayon: 240, att: 150, cadence: 0.18 },
+    xp: 2400,
   },
   skeleton: {
     cle: 'skeleton', nom: 'Skeleton',
@@ -1418,7 +1497,7 @@ module.exports = {
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe, BOSS,
   RARETE_ANNEAU, SAC_DE_RARETE, CHANCE_EQUIP, CHANCE_RELIQUE, CHANCE_RELIQUE_BOSS,
   OBSTACLE, OBSTACLE_BIOME, obstacles, bloque,
-  SALLE, SALLE_ANNEAUX, SALLE_BUTIN, MUR_BASE, salles, mursDe, dansLaSalle,
+  SALLE, SALLE_ANNEAUX, SALLE_BUTIN, MUR_BASE, salles, mursDe, dansLaSalle, DONJON,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   choisitEspece,
   regenParSeconde, pouvoirDeStat,

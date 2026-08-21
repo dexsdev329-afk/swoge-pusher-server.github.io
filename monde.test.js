@@ -440,21 +440,32 @@ function alea(graine) {
       for (let i = 0; i < 3000; i++) vus[M.choisitEspece(p, r4)] = true;
     });
     vus[M.SALLE.espece] = true;
+    M.DONJON.especes.forEach((k) => { vus[k] = true; });
+    vus[M.DONJON.boss] = true;
     Object.keys(M.MONSTRES).forEach((k) => {
       ok(vus[k], `« ${M.MONSTRES[k].nom} » apparait vraiment quelque part`);
     });
 
-    /* ET L'INVERSE : `biomes` vide veut dire « celle-la ne naît que dans une
-       salle ». Si une AUTRE espece se retrouvait avec une liste vide — parce
-       qu'on l'a retiree d'un anneau sans lui donner de role —, elle serait
-       dans la table sans porte d'entree, et la ligne ci-dessus ne le verrait
-       pas : elle ne regarde que ce qui sort du tirage, pas ce qui aurait du
-       en sortir. */
+    /* ET L'INVERSE : `biomes` vide veut dire « celle-la ne naît pas dans un
+       anneau ». Il y a maintenant TROIS portes vers le monde — les anneaux,
+       les salles gardees, les donjons — et une espece sans biome doit passer
+       par l'une des deux dernieres. Si une AUTRE se retrouvait avec une liste
+       vide, parce qu'on l'a retiree d'un anneau sans lui donner de role, elle
+       serait dans la table sans porte d'entree ; et la ligne ci-dessus ne le
+       verrait pas — elle ne regarde que ce qui sort du tirage, pas ce qui
+       aurait du en sortir. */
+    const roles = new Set([M.SALLE.espece, M.DONJON.boss, ...M.DONJON.especes]);
     const sansBiome = Object.keys(M.MONSTRES).filter((k) => M.MONSTRES[k].biomes.length === 0);
-    eq(sansBiome.length, 1,
-       `une seule espece vit hors des anneaux (${sansBiome.join(', ') || 'aucune'})`);
-    eq(sansBiome[0], M.SALLE.espece,
-       'et c est bien celle que les salles font naitre');
+    const orphelines = sansBiome.filter((k) => !roles.has(k));
+    eq(orphelines.length, 0,
+       `aucune espece n est sans anneau ET sans role (${orphelines.join(', ') || 'aucune'})`);
+    /* Et l'inverse de l'inverse : une espece a qui l'on a donne un role de
+       donjon ne doit PAS errer dehors aussi. La meme creature dans deux roles,
+       c'est un role qui n'existe pas — c'est ce qui avait fait sortir le
+       gardien de la lave. */
+    const deuxRoles = [...roles].filter((k) => M.MONSTRES[k] && M.MONSTRES[k].biomes.length > 0);
+    eq(deuxRoles.length, 0,
+       `aucune espece de salle ou de donjon n erre aussi dehors (${deuxRoles.join(', ') || 'aucune'})`);
   }
 }
 
