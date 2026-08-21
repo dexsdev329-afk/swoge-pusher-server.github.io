@@ -3322,7 +3322,14 @@ wss.on('connection', (ws) => {
         /* Si on est dans le monde, la vie soignee est celle du COMBAT — pas
            un chiffre d'interface. Hors du monde, la potion serait bue pour
            rien : on la refuse plutot que de la gaspiller en silence. */
-        const j = realm.joueurs.get(ws.addr);
+        /* ---- LE MONDE OU L'ON EST, PAS « LE » MONDE ----
+         * Cette ligne lisait `realm` — le monde ouvert — au lieu du monde du
+         * joueur. Dans un donjon, elle ne trouvait donc personne : la potion
+         * etait DEBITEE de la pile, et elle ne soignait rien. Bue dans
+         * l'endroit le plus dur du jeu, au moment ou elle compte le plus.
+         * C'est exactement la panne que `realmDe` existe pour empecher, et
+         * c'etait le dernier endroit qui ne s'en servait pas. */
+        const j = realmDe(ws).joueurs.get(ws.addr);
         let pv = null, mp = null;
         if (j && r.quoi === 'hp') { j.pv = Math.min(j.pvMax, j.pv + r.soigne); pv = j.pv; }
         /* La potion de mana rendait un chiffre d'interface et rien d'autre :

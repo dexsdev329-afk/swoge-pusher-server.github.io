@@ -746,9 +746,20 @@ class Realm {
       if (!monde.bloque(this.obstacles, px, py, R * 0.5)) { x = px; y = py; break; }
     }
     const p = { id: this._nouvelId(), x, y, donjon, retour, espece: m.espece,
-                reste: monde.PORTAIL.duree };
+                /* Une porte de SORTIE ne se ferme pas : voir monde.PORTAIL. */
+                reste: retour ? monde.PORTAIL.dureeRetour : monde.PORTAIL.duree };
     this.portails.push(p);
-    while (this.portails.length > monde.PORTAIL.plafond) this.portails.shift();
+    /* ---- LE PLAFOND NE MANGE JAMAIS UNE SORTIE ----
+     * `shift()` retire la PLUS ANCIENNE, et la plus ancienne d'un donjon est
+     * la porte du sas. Vingt-quatre portes dans un donjon n'arrivera sans
+     * doute jamais — mais « sans doute jamais » est exactement la marge dans
+     * laquelle on enferme un joueur, et un joueur enferme perd un equipement
+     * paye en argent reel. On ne compte donc que ce qui peut se fermer. */
+    while (this.portails.length > monde.PORTAIL.plafond) {
+      const i = this.portails.findIndex((q) => Number.isFinite(q.reste));
+      if (i < 0) break;
+      this.portails.splice(i, 1);
+    }
     if (ev) {
       ev.portails = ev.portails || [];
       ev.portails.push({ addr: j ? j.addr : null, id: p.id, donjon, retour,

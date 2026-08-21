@@ -172,6 +172,36 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
   ok(D[0].joueurs.has(A), 'et nous sommes dedans');
   eq(monde0.joueurs.has(A), false, 'et plus dans le monde ouvert');
 
+  /* ---- ON PEUT BOIRE, DEDANS AUSSI ----
+   *
+   * « Quand je bois une potion de vie dans le dungeon ca ne fonctionne pas. »
+   *
+   * La route lisait `realm` — LE monde ouvert — au lieu du monde du joueur.
+   * Dans un donjon elle ne trouvait donc personne : la potion etait retiree de
+   * la pile et ne soignait rien. Bue dans l'endroit le plus dur du jeu, au
+   * moment ou elle compte le plus.
+   *
+   * L'essai le verifie DANS le donjon et pas au bord : c'est la difference
+   * entre « la route marche » et « la route marche la ou on s'en sert ». */
+  {
+    const D0 = donjonsVivants()[0];
+    const moi = D0.joueurs.get(A);
+    const avantPv = moi.pvMax - 300;
+    moi.pv = avantPv;
+    moteur._p(A).potions = { vie: 3 };
+    sa.recus.length = 0;
+    sa.send(JSON.stringify({ type: 'potionBoit', cle: 'vie' }));
+    const bue = await attend(sa, 'potionBue');
+    ok(bue.pv !== null && bue.pv !== undefined,
+       `le serveur repond avec la vie du COMBAT (${bue.pv})`);
+    ok(bue.pv > avantPv, `elle a monte (${avantPv} -> ${bue.pv})`);
+    eq(D0.joueurs.get(A).pv, bue.pv,
+       'et c\'est bien le joueur DU DONJON qui a ete soigne');
+    /* Et la potion a bien ete payee : soigner sans debiter serait l'autre
+       moitie du meme defaut. */
+    eq(moteur._p(A).potions.vie, 2, 'une potion en moins dans la pile');
+  }
+
   /* ON NE S'ENFONCE PAS D'UN DONJON DANS UN AUTRE. */
   sa.recus.length = 0;
   sa.send(JSON.stringify({ type: 'realmPorte' }));

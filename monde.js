@@ -187,7 +187,25 @@ const DONJON = {
  * forcerait a entrer sans reflechir, ou a ne jamais entrer du tout.
  */
 const PORTAIL = {
-  duree: 180,      // trois minutes, le temps de decider
+  /* ---- LA PORTE D'ENTREE NE DURE PAS ----
+   * Quarante secondes : on vient d'abattre la creature la plus dure de
+   * l'anneau, la porte s'ouvre derriere elle, et il faut DECIDER. Trois
+   * minutes laissaient le temps de finir son ramassage, de remonter sa vie et
+   * d'y entrer au calme — ce qui revenait a supprimer le choix.
+   * C'est court, et c'est voulu : la porte fait partie de la recompense, pas
+   * un rendez-vous qu'on prend pour plus tard. */
+  duree: 40,
+  /* ---- LA PORTE DE SORTIE, ELLE, NE SE FERME JAMAIS ----
+   * Celle qui s'ouvre sur le cadavre du boss ramene au monde. Lui donner une
+   * duree en faisait un piege : on ressort de la salle du fond, on fouille son
+   * butin, la porte disparait — et le seul chemin restant est de retraverser
+   * trois salles jusqu'a l'entree. Un donjon dont la sortie s'evapore
+   * enfermerait un joueur qui a mal juge sa vie, et sa mort lui couterait un
+   * equipement paye en argent reel. La difficulte d'un donjon est ce qu'on y
+   * rencontre ; jamais le fait d'en repartir.
+   * `Infinity` ne traverse pas JSON — `etatPour` le convertit en `null`, et la
+   * page sait lire « pas de compte a rebours ». */
+  dureeRetour: Infinity,
   rayon: 72,       // a quelle distance on se tient « dessus »
   recul: 190,      // derriere la creature, dans le sens de sa chute
   plafond: 24,

@@ -107,9 +107,29 @@ function abat(r, espece, addr, dx, dy) {
   ok(M.PORTAIL_DE[M.DONJON.ouvreur],
      `DONJON.ouvreur (${M.DONJON.ouvreur}) est bien dans la table des portails`);
 
-  /* LA PORTE DURE PLUS LONGTEMPS QU'UN SAC. Entrer se decide ; ramasser non. */
-  ok(M.PORTAIL.duree > M.SAC.duree,
-     `une porte tient ${M.PORTAIL.duree} s, un sac ${M.SAC.duree} s`);
+  /* ---- LA PORTE D'ENTREE EST COURTE, ET C'EST VOULU ----
+   *
+   * Elle a tenu trois minutes, plus longtemps qu'un sac : entrer se decide,
+   * ramasser non. Elle tient maintenant quarante secondes — assez pour
+   * traverser, pas pour finir sa fouille et revenir au calme. La porte fait
+   * partie de la recompense ; ce n'est pas un rendez-vous qu'on prend pour
+   * plus tard.
+   *
+   * CONSEQUENCE ASSUMEE : elle se ferme AVANT le sac qu'Optimus laisse en
+   * tombant. On choisit donc entre son butin et le donjon, au lieu de prendre
+   * les deux. L'essai l'ecrit noir sur blanc pour que ce soit une decision et
+   * non une derive — le jour ou l'un des deux chiffres bouge sans l'autre, il
+   * le dira. */
+  ok(M.PORTAIL.duree === 40, `la porte d'entree tient ${M.PORTAIL.duree} s`);
+  ok(M.PORTAIL.duree < M.SAC.duree,
+     `soit MOINS que le sac qu'elle accompagne (${M.PORTAIL.duree} s contre ${M.SAC.duree} s) ` +
+     `— il faut choisir entre fouiller et entrer`);
+  /* ---- LA PORTE DE SORTIE, ELLE, NE SE FERME JAMAIS ----
+   * Un donjon dont la sortie s'evapore pendant qu'on fouille le fond
+   * enfermerait un joueur qui a mal juge sa vie, et sa mort lui couterait un
+   * equipement paye en argent reel. */
+  ok(!Number.isFinite(M.PORTAIL.dureeRetour),
+     `la porte de sortie, elle, n'a pas de fin (${M.PORTAIL.dureeRetour})`);
   /* ET ELLE EST PLUS LARGE QU'UN SAC A RAMASSER : on marche DEDANS, on ne se
      penche pas dessus. */
   ok(M.PORTAIL.rayon >= M.SAC.rayon,
@@ -267,10 +287,21 @@ function abat(r, espece, addr, dx, dy) {
        joueur qui vient d'abattre le fond du donjon ne doit pas avoir a chercher
        par ou repartir. */
     ok(p.x > j.x + 300, 'et elle tombe derriere lui, comme l\'autre');
-    /* ELLE SE REFERME, ELLE AUSSI. Une porte de retour eternelle posee au fond
-       d'un donjon qu'on a vide serait un raccourci permanent vers la salle du
-       boss pour celui qui reste dedans. */
-    eq(p.reste, M.PORTAIL.duree, 'et elle a la meme duree');
+    /* ---- ELLE, ELLE NE SE REFERME PAS ----
+     *
+     * Elle a eu la meme duree que l'autre, au nom d'un raccourci permanent
+     * vers la salle du boss. L'argument ne tenait pas : cette porte-la va
+     * DEHORS. On ne revient pas par elle, on s'en va. Ce qu'elle produisait,
+     * en revanche, etait bien reel — on sortait de la salle du fond, on
+     * fouillait son butin, la porte disparaissait, et le seul chemin restant
+     * etait de retraverser trois salles jusqu'a l'entree. C'est le defaut qui
+     * a ete signale.
+     *
+     * Un donjon dont la sortie s'evapore enferme un joueur qui a mal juge sa
+     * vie, et sa mort lui coute un equipement paye en argent reel. La
+     * difficulte d'un donjon est ce qu'on y rencontre ; jamais le fait d'en
+     * repartir. */
+    ok(!Number.isFinite(p.reste), `et elle ne se referme jamais (${p.reste})`);
     /* ET L'ETAT LA DISTINGUE. Sans ce bit, la page ecrirait « ENTER » sur la
        porte de sortie — le seul bouton du donjon qui compte. */
     const e = r.etatPour(A, 1400).portails.find((q) => q.i === p.id);
@@ -333,7 +364,7 @@ function abat(r, espece, addr, dx, dy) {
 
   /* ELLE PART AVEC SA DUREE ENTIERE. Comme les tombes et les sacs : le pas ou
      elle nait ne doit pas lui en retirer. */
-  eq(p.reste, M.PORTAIL.duree, 'elle part avec ses trois minutes');
+  eq(p.reste, M.PORTAIL.duree, 'elle part avec sa duree entiere');
   /* Un demi-pas, parce que `pas` borne dt a 0.5 : un pas d'une seconde entiere
      n'existe pas dans cette simulation. */
   r.pas(0.5);
