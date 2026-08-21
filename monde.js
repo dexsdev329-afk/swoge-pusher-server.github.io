@@ -711,6 +711,74 @@ const MONSTRES = {
     zone: { annonce: 1.4, rayon: 210, att: 110, cadence: 0.24, effet: 'ralenti' },
     xp: 2400,
   },
+  /* ---- LA BANDE ----
+   * Trois creatures qui vont ensemble : elles se ressemblent, elles se
+   * jouent differemment. C'est le contraire de la meduse, qui empruntait le
+   * dessin du revenant de glace et devenait un piege — ici chacune a le sien,
+   * et chacune apprend quelque chose.
+   *
+   * Le RAT court. Il n'a pas de tir et ne fait presque pas de degats : ce qu'il
+   * enseigne, c'est qu'on ne distance pas tout. A cent quarante-cinq, il va
+   * plus vite qu'un debutant lourd (202 avec le frein d'un ralentissement) et
+   * moins vite qu'un coureur — le seul monstre du jeu contre lequel courir
+   * n'est pas toujours la reponse. */
+  hoodrat: {
+    cle: 'hoodrat', nom: 'Hoodrat',
+    pv: 130, att: 42, def: 6,
+    vitesse: 145, rayon: 26, vue: 620,
+    contact: true, cadence: 0.75,
+    /* Il tire COURT. Toutes les creatures de ce jeu tirent — c'etait la regle
+       posee le jour ou l'on a arrete de faire des monstres qui se contentent
+       de foncer. Mais trois cents unites de portee sur un monstre qui court a
+       cent quarante-cinq, ca ne fait pas un tireur : ca fait un poursuivant
+       qui ne lache pas prise pendant qu'on recule. */
+    tir: { portee: 300, vitesse: 260, sprite: 'croissant', att: 30, cadence: 0.4 },
+    xp: 95,
+  },
+  /* Le VERT tire de loin et ne s'approche pas. Il est la reponse au rat :
+     l'un force a bouger, l'autre punit de bouger sans regarder. */
+  sylvain: {
+    cle: 'sylvain', nom: 'Green Bandit',
+    pv: 210, att: 48, def: 12,
+    vitesse: 84, rayon: 30, vue: 720,
+    contact: false, cadence: 0.5,
+    tir: { portee: 580, vitesse: 310, sprite: 'epine', att: 46, cadence: 0.5 },
+    xp: 160,
+  },
+  /* L'OR encaisse. Vingt-six de defense sur une creature qu'on croise dans les
+     cendres : c'est le premier monstre ordinaire qu'une arme commune ne suffit
+     plus a abattre, et c'est ce qu'il doit apprendre. */
+  couronne: {
+    cle: 'couronne', nom: 'Gold Crown',
+    pv: 430, att: 82, def: 26,
+    vitesse: 76, rayon: 38, vue: 680,
+    contact: true, cadence: 0.6,
+    tir: { portee: 480, vitesse: 285, sprite: 'tesson', att: 55, cadence: 0.35 },
+    xp: 390,
+  },
+  /* ---- OPTIMUS ----
+   * Le plus dur du monde ouvert, et le seul qui ne laisse pas un sac : il
+   * laisse un PORTAIL. C'est ce qui en fait autre chose qu'un colosse avec
+   * plus de points de vie — on ne le tue pas pour ce qu'il porte, on le tue
+   * pour ce qu'il ouvre.
+   *
+   * Deux mille six cents points de vie et cent quatre-vingt-dix d'attaque : il
+   * ne se tue pas seul au niveau vingt, et c'est voulu. Sa zone annonce plus
+   * longtemps que les autres — 1,35 seconde — parce qu'elle est aussi plus
+   * large : la promesse reste la meme, on doit pouvoir en sortir en courant. */
+  optimus: {
+    cle: 'optimus', nom: 'Optimus',
+    pv: 2600, att: 190, def: 55,
+    vitesse: 92, rayon: 92, vue: 900,
+    contact: true, cadence: 0.45,
+    tir: { portee: 700, vitesse: 420, sprite: 'vide', att: 100, cadence: 0.5 },
+    /* 1,45 s pour 230 unites de rayon : la regle est qu'un personnage LENT —
+       202 unites par seconde — doit pouvoir en sortir avec un quart de seconde
+       de reaction. 230/202 + 0,25 fait 1,39 ; on prend 1,45. Le chiffre n'est
+       pas choisi, il est calcule, et un essai le recalcule. */
+    zone: { annonce: 1.45, rayon: 230, att: 160, cadence: 0.2 },
+    xp: 5200,
+  },
   skeleton: {
     cle: 'skeleton', nom: 'Skeleton',
     pv: 180, att: 55, def: 8,
@@ -757,22 +825,29 @@ const PEUPLEMENT = {
   /* La nuee pese plus que ses voisines : c'est une nuee, elle n'existe qu'au
      pluriel. Elle n'est PAS dans la terre — l'anneau du debut apprend a
      esquiver un projectile, et on n'apprend pas ca sous seize creatures. */
-  marais:  { especes: ['lime', 'archer', 'rodeur', 'nuee'], nombre: 38,
-             poids: { nuee: 2.2 } },
+  marais:  { especes: ['lime', 'archer', 'rodeur', 'nuee', 'hoodrat'], nombre: 38,
+             poids: { nuee: 2.2, hoodrat: 1.4 } },
   /* La meduse n'est PAS avant la neige : perdre le controle de son
      personnage avant d'avoir compris qu'on peut encore tirer ferait
      abandonner. */
-  neige:   { especes: ['lime', 'skeleton', 'archer', 'meduse', 'nuee', 'carapace'],
-             nombre: 40, poids: { nuee: 1.5, carapace: 0.18 } },
-  cendres: { especes: ['skeleton', 'glace', 'archer', 'meduse', 'oracle', 'colosse', 'machine'],
-             nombre: 30, poids: { colosse: 0.4, machine: 0.22 } },
+  neige:   { especes: ['lime', 'skeleton', 'archer', 'meduse', 'nuee', 'carapace',
+                       'hoodrat', 'sylvain'],
+             nombre: 40, poids: { nuee: 1.5, carapace: 0.18, hoodrat: 1.2 } },
+  cendres: { especes: ['skeleton', 'glace', 'archer', 'meduse', 'oracle', 'colosse',
+                       'machine', 'sylvain', 'couronne'],
+             nombre: 30, poids: { colosse: 0.4, machine: 0.22, couronne: 0.6 } },
   /* Le GARDIEN n'erre plus ici : il ne vit que dans les salles. La meme
      creature dans deux roles, c'est un role qui n'existe pas — on ne savait
      pas, en croisant un gardien, si l'on venait de trouver un tresor ou un
      monstre de plus. Le brasier prend sa place, et un seul pour dix-huit
      places : un boss qu'on croise a chaque passage n'est plus un boss. */
-  lave:    { especes: ['lave', 'glace', 'meduse', 'oracle', 'colosse', 'brasier'],
-             nombre: 18, poids: { colosse: 0.8, brasier: 0.25 } },
+  /* OPTIMUS a le poids le plus faible du jeu : 0,12 sur un total de 5,17, soit
+     deux pour cent. Sur dix-huit places, ca fait un Optimus toutes les trois
+     visites de l'anneau de lave environ. C'est ce qu'on veut d'une creature
+     qui ouvre un donjon — on le CHERCHE, on ne le croise pas. */
+  lave:    { especes: ['lave', 'glace', 'meduse', 'oracle', 'colosse', 'brasier',
+                       'couronne', 'optimus'],
+             nombre: 18, poids: { colosse: 0.8, brasier: 0.25, couronne: 0.5, optimus: 0.12 } },
 };
 
 /*
@@ -1143,7 +1218,12 @@ const POTION_DE = {
   colosse: 'vit',
   /* Les BOSS donnent n'importe laquelle. C'est ce qui en fait des
      destinations : on y va pour ce qui manque, pas pour ce qu'ils ont. */
-  gardien: '*', brasier: '*', machine: '*', carapace: '*',
+  gardien: '*', brasier: '*', machine: '*', carapace: '*', optimus: '*',
+  /* La bande donne ce que sa facon de jouer enseigne : le rat, de la vitesse ;
+     le vert, de la dexterite ; l'or, de la defense. Une potion qui n'a rien a
+     voir avec la creature qui la lache est une potion qu'on ne se rappelle pas
+     ou trouver. */
+  hoodrat: 'spd', sylvain: 'dex', couronne: 'def',
   /* La nuee ne donne RIEN. Quarante-cinq points d'experience ne paient pas un
      point permanent, et une creature qu'on croise seize fois par anneau
      rendrait le 1/50 sans objet. */
@@ -1194,7 +1274,7 @@ const CHANCE_RELIQUE_BOSS = 1 / 40;
 /* Quelles especes comptent comme boss pour la relique. Le brasier a pris la
    place du gardien dans la lave ; le gardien reste dans les salles, ou son
    butin est garanti par la salle elle-meme. */
-const BOSS = { gardien: 1, brasier: 1, machine: 1, carapace: 1 };
+const BOSS = { gardien: 1, brasier: 1, machine: 1, carapace: 1, optimus: 1 };
 
 /* Un sur cinquante. Le chiffre vient de ce qu'il doit produire : environ une
    potion toutes les vingt minutes de chasse soutenue — assez rare pour qu'on
@@ -1202,7 +1282,8 @@ const BOSS = { gardien: 1, brasier: 1, machine: 1, carapace: 1 };
    Le gardien en donne UNE A COUP SUR : il sort une fois par anneau de lave et
    porte seize cents points de vie. Un boss qu'on peut abattre pour rien ne
    vaut pas le deplacement. */
-const CHANCE_POTION = { defaut: 1 / 50, gardien: 1, brasier: 1, machine: 0.7, carapace: 0.7 };
+const CHANCE_POTION = { defaut: 1 / 50, gardien: 1, brasier: 1, machine: 0.7,
+                        carapace: 0.7, optimus: 1 };
 /* Le soin, lui, est ordinaire : c'est du consommable, pas une recompense.
    La nuee fait exception : on en croise seize par anneau, et un sac sur six
    en donnerait presque trois a chaque nettoyage. Ce n'est pas une question

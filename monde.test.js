@@ -409,10 +409,19 @@ function alea(graine) {
       const e = M.choisitEspece(p, r3);
       compte[e] = (compte[e] || 0) + 1;
     }
-    ['skeleton', 'glace', 'archer', 'meduse', 'oracle'].forEach((k) => {
+    /* La part attendue se CALCULE : une espece sans poids vaut 1 sur le total
+       des poids du biome. L'ecrire en dur — « entre 15 et 24 % » — c'etait
+       vrai avec six especes et faux des la septieme, et l'essai tombait alors
+       en annoncant un defaut qui n'existait pas. Ce qu'on veut dire, c'est
+       « toutes celles qui n'ont pas de poids ont la MEME part », et ca se dit
+       en une division. */
+    const total = p.especes.reduce((t, k) => t + ((p.poids || {})[k] || 1), 0);
+    const attendu = 1 / total;
+    p.especes.filter((k) => !(p.poids || {})[k]).forEach((k) => {
       const part = compte[k] / 4000;
-      ok(part > 0.15 && part < 0.24,
-         `« ${k} », sans poids, garde sa part uniforme dans les cendres (${(part * 100).toFixed(1)} %)`);
+      ok(Math.abs(part - attendu) < attendu * 0.22,
+         `« ${k} », sans poids, tire sa part uniforme dans les cendres ` +
+         `(${(part * 100).toFixed(1)} % pour ${(attendu * 100).toFixed(1)} % attendus)`);
     });
   }
 
