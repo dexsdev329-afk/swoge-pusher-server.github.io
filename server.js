@@ -168,11 +168,46 @@ function imageBulletin(jambes) {
  * serveur qui sert les images ignore la chaine de requete, elle ne coute donc
  * rien de plus qu'un cache vide chez Telegram.
  */
-const TIRAGE_VIGNETTES = 2;
+/* ---- TELEGRAM GARDE LES IMAGES PAR URL ----
+ *
+ * Une photo deja envoyee n'est pas retelechargee : Telegram ressert celle
+ * qu'il a en cache pour cette adresse, et il la garde longtemps. Remplacer un
+ * dessin sans changer son adresse ne change donc RIEN dans le canal — il
+ * continue d'annoncer l'ancien, parfois pendant des jours, et il n'y a aucun
+ * moyen de le lui faire oublier depuis le serveur.
+ *
+ * Ce numero est la seule facon de le dire. On le monte quand les dessins
+ * changent ; l'adresse devient neuve, Telegram va rechercher le fichier.
+ *
+ * Il servait deja aux vignettes de jeux — et il ne servait qu'a elles. Les
+ * dessins de la boutique et des personnages, eux, partaient a l'adresse nue :
+ * les armures de la saison 3 ont ete redecoupees, et le canal a continue
+ * d'afficher les anciennes. C'est ce qu'on nous a rapporte.
+ *
+ * 3 : les armes de la saison 2, les armures de la saison 3 et les quarante
+ * trouvailles ont ete redessinees depuis le 2. */
+const TIRAGE_VIGNETTES = 3;
 
 function imageJeu(jeu) {
   if (!cfg.GAME_IMAGE_BASE || !jeu) return null;
   return `${cfg.GAME_IMAGE_BASE.replace(/\/+$/, '')}/jeu-${jeu}.jpg?v=${TIRAGE_VIGNETTES}`;
+}
+
+/* Le dessin d'une piece, tel que le canal doit le voir. UN seul endroit
+   construit cette adresse : elle etait ecrite en toutes lettres a trois
+   endroits, et c'est exactement pour ca que le numero de tirage n'y etait
+   pas — on l'aurait ajoute a l'un des trois. */
+function imageBoutique(cle) {
+  const base = siteBase();
+  if (!base || !cle) return null;
+  return `${base}/img/shop/tg/${encodeURIComponent(cle)}.jpg?v=${TIRAGE_VIGNETTES}`;
+}
+
+/* Et celui d'un personnage, meme raison. */
+function imageSkin(id) {
+  const base = siteBase();
+  if (!base || !id) return null;
+  return `${base}/img/skins/tg/skin_${encodeURIComponent(id)}.jpg?v=${TIRAGE_VIGNETTES}`;
 }
 
 /* ---- LE LIEN DE LA TABLE, DANS L'ANNONCE ----
@@ -281,8 +316,7 @@ function notifyCoffre(addr, g) {
      dans toute la vie de l'edition — et la retenir parce que la cinquieme
      case etait un commun serait absurde. */
   if (g && g.ligne) {
-    const base0 = siteBase();
-    tg.notifyPhoto(base0 ? base0 + '/img/shop/tg/' + g.item.cle + '.jpg' : null,
+    tg.notifyPhoto(imageBoutique(g.item.cle),
       `\uD83C\uDFC6 <b>${g.ligne.rang === 1 ? 'FIRST' : g.ligne.rang === 2 ? 'SECOND' : 'THIRD'} COMPLETE LINE</b>\n` +
       `${escHtml(g.ligne.nom)} finished the <b>${escHtml(g.ligne.familleNom)}</b> collection — all five tiers\n\n` +
       `Prize: <b>${fmtAmt(String(g.ligne.prix))} $SWOGE</b>\n` +
@@ -327,7 +361,7 @@ function notifyCoffre(addr, g) {
   const mot = String(sai.sujet || 'item').toUpperCase();
   const EMBLEME_SUJET = { fruit: '\uD83C\uDF4E', weapon: '\u2694\uFE0F', armor: '\uD83D\uDEE1\uFE0F', ring: '\uD83D\uDC8D' };
   const embleme = EMBLEME_SUJET[sai.sujet] || '\u2728';
-  tg.notifyPhoto(base ? base + '/img/shop/tg/' + g.item.cle + '.jpg' : null,
+  tg.notifyPhoto(imageBoutique(g.item.cle),
     `${embleme} <b>${escHtml(rar.nom.toUpperCase())} ${mot}</b>\n` +
     `${escHtml(game._p(addr).name)} pulled <b>${escHtml(g.item.nom)}</b> ` +
     `from a ${escHtml(g.coffreNom)}\n\n` +
@@ -359,7 +393,9 @@ function annoncePortail(p, nom) {
   const base = siteBase();
   const ou = String(p.donjon || 'dungeon');
   const titre = ou.charAt(0).toUpperCase() + ou.slice(1);
-  tg.notifyPhoto(base ? base + '/img/shop/tg/portail_' + ou + '.jpg' : null,
+  /* Par `imageBoutique` comme le reste : la porte est un dessin du site, et
+     elle a le meme cache a contourner que les autres. */
+  tg.notifyPhoto(imageBoutique('portail_' + ou),
     `\uD83C\uDF00 <b>A PORTAL TO THE ${escHtml(titre.toUpperCase())} IS OPEN</b>\n` +
     (nom ? `${escHtml(nom)} brought down <b>Optimus</b> and tore one open\n\n`
          : `<b>Optimus</b> fell, and one tore open\n\n`) +
@@ -379,7 +415,7 @@ function notifySkinBuy(addr, r) {
   const s = skins.skin(r.id);
   if (!s) return;
   const base = siteBase();
-  tg.notifyPhoto(base ? base + '/img/skins/tg/skin_' + s.id + '.jpg' : null,
+  tg.notifyPhoto(imageSkin(s.id),
     `\ud83c\udfad <b>NEW SKIN</b>\n` +
     `${escHtml(game._p(addr).name)} bought <b>${escHtml(s.nom)}</b> ` +
     `for <b>${fmtAmt(String(r.prix))} $SWOGE</b>\n\n` +

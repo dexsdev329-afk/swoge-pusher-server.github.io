@@ -143,6 +143,24 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
   console.log('  legende    :', String(ex.caption || '').split('\n')[0]);
   ok(/^https:\/\/swoleeswoge\.dog\/img\/shop\//.test(ex.photo || ''),
      'l adresse de l image pointe bien sur le site');
+
+  /* ---- ET ELLE PORTE UN NUMERO DE TIRAGE ----
+   *
+   * Telegram garde les photos PAR URL, et longtemps. Remplacer un dessin sans
+   * changer son adresse ne change donc rien dans le canal : il continue
+   * d'annoncer l'ancien, et rien depuis le serveur ne peut le lui faire
+   * oublier. C'est arrive — les armures de la saison 3 ont ete redecoupees et
+   * le canal a continue d'afficher les precedentes pendant des jours.
+   *
+   * Le numero est la seule sortie. On ne verifie pas SA VALEUR — elle montera
+   * a chaque fois qu'un dessin change — mais sa PRESENCE, sur les trois sortes
+   * d'annonce : le jour ou quelqu'un ecrit une quatrieme adresse a la main,
+   * cet essai le dit avant le canal. */
+  const sansTirage = photos.filter((x) => !/[?&]v=\d+/.test(x.photo || ''));
+  ok(sansTirage.length === 0,
+     `toutes les adresses portent un numero de tirage (${sansTirage.length} sans)`);
+  ok(/[?&]v=\d+/.test(ex.photo || ''),
+     `celle-ci aussi : ${String(ex.photo).replace(/^.*\//, '')}`);
   ok(/FRUIT/.test(ex.caption || ''), 'la legende annonce un fruit');
   ok(/#\d+ of \d+/.test(ex.caption || ''), 'et porte le numero d emission');
 
@@ -166,7 +184,7 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
   const skinEx = skinPhotos[skinPhotos.length - 1];
   console.log('  photo skin :', skinEx && skinEx.photo);
   console.log('  legende    :', String(skinEx && skinEx.caption || '').split('\n')[0]);
-  ok(/skin_brett\.jpg$/.test((skinEx && skinEx.photo) || ''), 'l image pointe sur le skin achete, en JPEG');
+  ok(/skin_brett\.jpg\?/.test((skinEx && skinEx.photo) || ''), 'l image pointe sur le skin achete, en JPEG');
   ok(/NEW SKIN/.test((skinEx && skinEx.caption) || ''), 'la legende dit que c est un skin');
   ok(/Brett/.test((skinEx && skinEx.caption) || ''), 'et nomme le bon skin');
 
@@ -192,6 +210,13 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
   const armureEx = armurePhotos[0];
   ok(/ARMOR/.test((armureEx && armureEx.caption) || ''), 'la legende annonce une armure, pas un fruit');
   ok(/🛡️/.test((armureEx && armureEx.caption) || ''), 'et porte l embleme bouclier, pas celui des armes');
+  /* L'ARMURE AUSSI porte son numero de tirage : c'est elle qu'on a vue vieille
+     dans le canal, et c'est donc elle qu'on regarde en dernier. */
+  const armureSans = armurePhotos.filter((x) => !/[?&]v=\d+/.test(x.photo || ''));
+  ok(armureSans.length === 0,
+     `et les ${armurePhotos.length} annonces d armure portent le numero de tirage`);
+  ok(/[?&]v=\d+/.test((skinEx && skinEx.photo) || ''),
+     'le skin aussi : Telegram garde tout par URL, sans exception');
 
   c.ws.close(); faux.close();
   console.log(`coffre_notif.test.js : ${n} verifications OK`);
