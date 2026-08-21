@@ -298,11 +298,21 @@ process.on('unhandledRejection', (e) => {
     eq((p.sac || {})[arme.id] || 0, 1, 'et en repassant dessus, on la reprend');
   }
 
-  // ================== 8. UNE FIOLE DE STAT SE RAMASSE, ELLE NE SE BOIT PLUS
+  // ================== 8. EN AUTOMATIQUE, LA FIOLE SE BOIT SI ELLE PEUT
   //
-  // Elle etait bue sur place. A son plafond elle etait REFUSEE, et restait par
-  // terre jusqu'a la fin de sa minute : une potion trouvee dans la lave se
-  // perdait parce qu'on avait deja bu six defenses.
+  // Trois regles se sont succede, et la troisieme les reconcilie :
+  //
+  //   1. elle se buvait sur place, et AU PLAFOND elle etait refusee — donc
+  //      laissee par terre jusqu a la fin de sa minute. Une fiole trouvee dans
+  //      la lave se perdait parce qu on avait deja bu six defenses ;
+  //   2. elle se rangeait toujours dans le sac. Plus rien ne se perdait, mais
+  //      marcher sur une fiole buvable prenait une place du sac pour un gain
+  //      qu on avait sous la main — il fallait rouvrir le sac et taper dessus ;
+  //   3. maintenant : on la BOIT si on peut, on la RANGE si on ne peut pas.
+  //
+  // Le sac plein ne la refuse donc plus tant qu elle est buvable : bue, elle
+  // ne prend aucune place. C est ce qui evite qu une fiole reste par terre a
+  // cause de huit epees communes ramassees toutes seules.
   {
     monde.sacs.length = 0;
     p.sac = {}; p.sacFioles = {}; p.sacCases = null;
@@ -312,27 +322,45 @@ process.on('unhandledRejection', (e) => {
     s.recus.length = 0;
     await jusqua(() => monde.sacs.length === 0);
     eq(monde.sacs.length, 0, 'la fiole est ramassee en marchant dessus');
-    eq(moteur.personnageEtat(A, 'andy').stats.def, avant,
-       'et AUCUNE stat ne bouge : elle attend dans le sac');
-    const l = moteur.sacPour(A).find((x) => x.fiole === 'def');
-    ok(l, 'elle est bien dans le sac, a une place');
-    eq(moteur.sacRempli(A), 1, 'qu elle occupe');
+    const apres = moteur.personnageEtat(A, 'andy').stats.def;
+    ok(apres > avant, `et elle est BUE : la defense monte (${avant} -> ${apres})`);
+    eq(moteur.sacRempli(A), 0, 'elle ne prend aucune place dans le sac');
     const dit = s.recus.filter((x) => x.type === 'realmRamasse').pop();
     ok(dit && dit.stat === 'def', 'la page est prevenue de ce qu on a pris');
-    ok(dit && Array.isArray(dit.fioles), 'avec la reserve complete, pour la peindre');
+    ok(dit && dit.bue, 'et qu on l a bue, pas rangee');
+    ok(dit && dit.etat, 'la fiche part avec : la stat vient de changer');
 
-    /* ---- ET AU PLAFOND, ELLE SE RAMASSE QUAND MEME ----
-     * C'est tout le changement : la fiole ne se perd plus parce qu'on est
-     * plein. On la garde, on la range au coffre, on la boit plus tard. */
-    const mx = require('./personnages').supMaxDe('def', require('./personnages').BASE.andy.def);
-    /* On passe par le chemin du jeu : `boitStat` cree la fiche du personnage
-       si elle n'existe pas, et c'est elle qui porte le plafond. */
-    for (let k = 0; k < mx; k++) moteur.boitStat(A, 'andy', 'def');
+    /* ---- LE SAC PLEIN NE L EMPECHE PLUS ----
+     * Bue, elle ne demande pas de place. C etait le defaut signale a
+     * l origine : huit epees communes ramassees toutes seules, et la chose la
+     * plus rare du jeu restait par terre. */
+    const B0 = require('./boutique');
+    p.sac = {};
+    for (const o of B0.ITEMS.slice(0, 8)) p.sac[o.id] = 1;
+    p.sacCases = null;
+    eq(moteur.sacRempli(A), 8, 'le sac est plein');
+    const av2 = moteur.personnageEtat(A, 'andy').stats.spd;
+    poseSac([{ stat: 'spd' }]);
+    await jusqua(() => monde.sacs.length === 0);
+    ok(moteur.personnageEtat(A, 'andy').stats.spd > av2,
+       'sac plein, la fiole buvable est bue quand meme');
+
+    /* ---- ET AU PLAFOND, ELLE SE RANGE ----
+     * C est le seul cas ou la garder a un sens : on ne peut plus rien en
+     * tirer maintenant, mais le personnage suivant le pourra. */
+    const P0 = require('./personnages');
+    const mx = P0.supMaxDe('def', P0.BASE.andy.def);
+    for (let k = 0; k < mx; k++) {
+      try { moteur.boitStat(A, 'andy', 'def'); } catch (e) { break; }
+    }
+    eq(moteur.supRestant(A, 'andy', 'def'), 0, 'la defense est au plafond');
     p.sac = {}; p.sacFioles = {}; p.sacCases = null;
+    const av3 = moteur.personnageEtat(A, 'andy').stats.def;
     poseSac([{ stat: 'def' }]);
     await jusqua(() => monde.sacs.length === 0);
-    console.log('   plafond de defense : ' + mx + ' — la fiole est prise quand meme');
     eq(monde.sacs.length, 0, 'au plafond, elle se ramasse quand meme');
+    eq(moteur.personnageEtat(A, 'andy').stats.def, av3,
+       'aucune stat ne bouge : il n y avait plus rien a gagner');
     ok(moteur.sacPour(A).some((x) => x.fiole === 'def'),
        'et elle attend dans le sac au lieu de finir sa minute par terre');
   }

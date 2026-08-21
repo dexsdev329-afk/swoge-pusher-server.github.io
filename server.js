@@ -648,6 +648,7 @@ const NEXUS_ANIMS = new Set(['idle', 'run', 'jump']);
  */
 const { Realm } = require('./realm');
 const monde = require('./monde');
+const sacs = require('./sacs');
 /* L'ordre des stats part au client avec la carte : c'est celui des colonnes
    de la planche de potions. */
 const personnages = require('./personnages');
@@ -3102,41 +3103,11 @@ wss.on('connection', (ws) => {
        *
        * Un skin, sa progression et son equipement. `m.skin` designe LEQUEL —
        * un joueur en possede jusqu'a six, chacun avec sa propre fiche. */
-      /* ---- LA FICHE DE COMBAT ----
-       * Ce que le monde a besoin de savoir d'un personnage. Ecrite ICI une
-       * fois : l'entree dans le monde et le changement d'arme la fabriquaient
-       * chacun de leur cote, et deux facons de la construire, c'est un jour
-       * ou l'une des deux oublie les degats. */
-      const ficheDeCombat = (addr, skin) => {
-        const q = game._p(addr);
-        const etat = game.personnageEtat(addr, skin);
-        if (!etat) return null;
-        const arme = etat.equipArme;
-        return {
-          skin, nom: q.name || null,
-          stats: etat.stats,
-          famille: (arme && arme.famille) || 'poing',
-          degats: (arme && arme.degats) || monde.DEGATS_POING,
-          /* Le POUVOIR vient du fruit, et le fruit est deja dans la fiche.
-             On envoie sa stat principale plutot que le pouvoir lui-meme :
-             la regle « quelle stat donne quel pouvoir » appartient a
-             monde.js, et la dupliquer ici la ferait deriver. */
-          statFruit: (etat.equipFruit && etat.equipFruit.stat) || null,
-        };
-      };
       /* ---- ET ON SE RHABILLE SANS SORTIR ----
        * S'equiper en plein combat ne changeait rien pour le serveur : il
        * continuait de tirer avec l'arme d'avant, pendant que la page dessinait
        * celle d'apres. On voyait les deux. */
-      const rhabille = (addr) => {
-        const w = [...realmClients].find((x) => x.addr === addr);
-        const skin = w && w.realmSkin;
-        if (!skin) return;
-        const f = ficheDeCombat(addr, skin);
-        /* SA simulation : un joueur qui s'equipe au fond d'un donjon doit voir
-           son arme changer la, pas dans le monde ouvert qu'il a quitte. */
-        if (f) realmDe(w).rehabille(addr, f);
-      };
+
       if (m.type === 'personnage') {
         const r = game.personnageEtat(ws.addr, m.skin);
         return send(ws, { type: 'personnage', skin: m.skin, etat: r });
@@ -3243,6 +3214,81 @@ wss.on('connection', (ws) => {
           anim: NEXUS_ANIMS.has(m.anim) ? m.anim : 'idle',
         };
         return;
+      }
+      /* ---- JETER UNE PIECE DANS LE HALL ----
+       *
+       * Meme geste que dans le monde de combat, meme sac, meme minute, et le
+       * MEME code de sol (voir sacs.js). Ce qui change est l'endroit ou vit le
+       * sol — et donc qui verifie quoi.
+       *
+       * Le client nomme UNE case de son sac. Il ne dit ni ou poser le sac, ni
+       * lequel : la position vient de `ws.nexusEtat`, que le serveur tient
+       * lui-meme. Le laisser envoyer un point aurait permis de poser un sac a
+       * l'autre bout du hall — ou sur quelqu'un d'autre.
+       */
+      if (m.type === 'nexusDepose') {
+        if (!ws.addr || !nexusClients.has(ws)) return;
+        const ou = ouDansLeNexus(ws);
+        if (!ou) return;
+        const fiole = /^st:/.test(String(m.item)) ? String(m.item).slice(3) : null;
+        let sorti = null;
+        /* On SORT d'abord de l'inventaire, et seulement ensuite on pose. Un sac
+           cree avant le retrait laisserait, si le retrait echoue, la piece au
+           sol ET dans le sac : la seule facon de la dupliquer. */
+        try {
+          sorti = fiole ? game.poseFioleAuSol(ws.addr, fiole)
+                        : game.poseAuSol(ws.addr, m.item);
+        } catch (e) { return send(ws, { type: 'nexusDepose', refus: e.message }); }
+        const r = sacs.depose(nexusSacs, ou.x, ou.y, ws.addr, sorti,
+                              () => nexusSacNo++);
+        if (!r || r.refuse) {
+          /* Le sol n'en a pas voulu — huit places prises. On REMET la piece :
+             sans ce retour, un sac plein la ferait disparaitre, et elle aurait
+             ete prise au joueur avant qu'on sache s'il y avait la place. */
+          try {
+            if (fiole) game.prendFiole(ws.addr, fiole);
+            else game.prendDuSol(ws.addr, m.item);
+          } catch (e) {}
+          return send(ws, { type: 'nexusDepose', refus: (r && r.raison) || 'refuse' });
+        }
+        persistSoon();
+        return send(ws, { type: 'nexusDepose', ...sorti, id: r.id, sac: r.sac,
+                          sacJoueur: game.sacPour(ws.addr) });
+      }
+      /* ---- ET LE RAMASSER ----
+       *
+       * Le client nomme le sac et la place. Le serveur verifie qu'il est
+       * DESSUS, avec la position qu'il a lui-meme enregistree : nommer un
+       * identifiant suffirait sinon a vider un sac a l'autre bout du hall, et
+       * les sacs sont exactement ce qu'on aurait interet a voler.
+       */
+      if (m.type === 'nexusRamasse') {
+        if (!ws.addr || !nexusClients.has(ws)) return;
+        const ou = ouDansLeNexus(ws);
+        if (!ou) return;
+        const s0 = sacs.sousLesPieds(nexusSacs, ou.x, ou.y);
+        if (!s0) return send(ws, { type: 'nexusRamasse', refus: 'trop-loin' });
+        /* Si le client a nomme un sac, ce doit etre CELUI-LA : un sac expire
+           pendant que le doigt descendait ne doit pas faire prendre son
+           voisin. */
+        if (m.i !== undefined && m.i !== null && Number(m.i) !== s0.id) {
+          return send(ws, { type: 'nexusRamasse', refus: 'trop-loin' });
+        }
+        const r = sacs.prend(nexusSacs, s0, m.place, (o) => {
+          /* ON DEMANDE AVANT DE PRENDRE : un sac plein doit laisser la piece
+             dans le sac au sol, pas la detruire en la refusant. */
+          try {
+            if (o.stat) game.prendFiole(ws.addr, o.stat);
+            else if (o.item) game.prendDuSol(ws.addr, o.item);
+            else return 'inconnu';
+            return true;
+          } catch (e) { return e.message; }
+        });
+        if (!r) return send(ws, { type: 'nexusRamasse', refus: 'rien-la' });
+        if (r.refuse) return send(ws, { type: 'nexusRamasse', refus: r.raison });
+        persistSoon();
+        return send(ws, { type: 'nexusRamasse', ...r,
+                          sacJoueur: game.sacPour(ws.addr) });
       }
       /* ---- LE MONDE DE COMBAT ----
        *
@@ -4334,6 +4380,36 @@ const bcInterval = setInterval(() => {
  * simplement plus la socket fermee. C'est plus simple qu'un couple
  * entree/sortie a garder synchronise, et l'echelle visee — quelques joueurs
  * a la fois dans un hall — rend le cout d'un instantane complet negligeable. */
+/*
+ * ==================== LE SOL DU NEXUS ====================
+ *
+ * Le hall avait des joueurs et rien d'autre : aucun objet ne lui appartenait.
+ * On peut desormais y jeter une piece, et elle tombe dans un sac que TOUT LE
+ * MONDE peut ramasser — le meme geste, la meme minute et le meme sac que dans
+ * le monde de combat, parce que c'est le meme code (voir sacs.js).
+ *
+ * ---- pourquoi le serveur les tient ----
+ *
+ * « N'importe qui peut le prendre » est exactement la phrase qu'un client
+ * aurait interet a falsifier. Si le hall gardait ses sacs cote page, il
+ * suffirait d'envoyer « je ramasse le sac 12 » depuis l'autre bout du Nexus —
+ * ou d'en inventer un. Les sacs vivent donc ici, et la distance se verifie
+ * ici, sur la position que le serveur a lui-meme enregistree.
+ */
+const nexusSacs = [];
+let nexusSacNo = 1;
+
+/* Ou se tient un joueur du hall, d'apres CE QUE LE SERVEUR A ENREGISTRE et
+   non d'apres ce que le message pretend. C'est la seule position qui compte
+   pour une verification de distance. */
+function ouDansLeNexus(ws) {
+  return (ws && ws.nexusEtat) ? { x: ws.nexusEtat.x, y: ws.nexusEtat.y } : null;
+}
+function socketDuNexus(addr) {
+  for (const ws of nexusClients) if (ws.addr === addr) return ws;
+  return null;
+}
+
 const nexusInterval = setInterval(() => {
   if (!nexusClients.size) return;
   const joueurs = [];
@@ -4349,7 +4425,21 @@ const nexusInterval = setInterval(() => {
                     dir: e.dir, anim: e.anim, skin: p.skinActif || 'andy',
                     nom: p.name || null });
   }
-  const s = JSON.stringify({ type: 'nexusEtat', joueurs });
+  /* ---- LES SACS VIEILLISSENT ICI ----
+   * Cent cinquante millisecondes par tour, comme la diffusion : un sac du hall
+   * a exactement la meme minute qu'un sac du monde de combat, parce que c'est
+   * le meme decompte applique au meme `SAC.duree`. */
+  const perdus = sacs.vieillit(nexusSacs, 0.15);
+  /* Ce qui part avec un sac expire revient au registre des exemplaires : sans
+     ca, jeter une relique dans le hall et l'y laisser la retirerait du monde
+     pour toujours. */
+  for (const o of perdus) game.rendButin(o.item);
+  /* Le poseur s'est ecarte : son sac redevient ramassable, pour lui comme pour
+     les autres. */
+  sacs.oubliePoseurs(nexusSacs, (a) => ouDansLeNexus(socketDuNexus(a)));
+
+  const s = JSON.stringify({ type: 'nexusEtat', joueurs,
+                             sacs: nexusSacs.map(sacs.vue) });
   for (const ws of nexusClients) if (ws.readyState === 1) ws.send(s);
 }, 150);
 if (nexusInterval.unref) nexusInterval.unref();
@@ -4383,6 +4473,55 @@ if (nexusInterval.unref) nexusInterval.unref();
  * Rend 'pris', 'refuse' ou 'rien' — c'est ce que la boucle automatique lit
  * pour savoir s'il faut passer a la place suivante ou s'arreter.
  */
+/* ---- LA FICHE DE COMBAT ----
+ *
+ * Ce que le monde a besoin de savoir d'un personnage. Ecrite une fois :
+ * l'entree dans le monde et le changement d'arme la fabriquaient chacun de
+ * leur cote, et deux facons de la construire, c'est un jour ou l'une des deux
+ * oublie les degats.
+ *
+ * Elle vivait en fermeture dans le gestionnaire de messages. `rhabille` en a
+ * besoin, et `rhabille` sert maintenant aussi au ramassage automatique — qui
+ * boit les fioles, donc change les stats de combat.
+ */
+function ficheDeCombat(addr, skin) {
+  const q = game._p(addr);
+  const etat = game.personnageEtat(addr, skin);
+  if (!etat) return null;
+  const arme = etat.equipArme;
+  return {
+    skin, nom: q.name || null,
+    stats: etat.stats,
+    famille: (arme && arme.famille) || 'poing',
+    degats: (arme && arme.degats) || monde.DEGATS_POING,
+    /* Le POUVOIR vient du fruit, et le fruit est deja dans la fiche. On envoie
+       sa stat principale plutot que le pouvoir lui-meme : la regle « quelle
+       stat donne quel pouvoir » appartient a monde.js, et la dupliquer ici la
+       ferait deriver. */
+    statFruit: (etat.equipFruit && etat.equipFruit.stat) || null,
+  };
+}
+
+/* ---- ON SE RHABILLE SANS SORTIR ----
+ *
+ * Changer d'equipement — ou boire une fiole — ne changeait rien pour le
+ * serveur : il continuait de tirer avec l'arme d'avant pendant que la page
+ * dessinait celle d'apres. On voyait les deux.
+ *
+ * La fonction vivait DANS le gestionnaire de messages, en fermeture. Le
+ * ramassage automatique en a besoin lui aussi depuis qu'il boit les fioles, et
+ * une deuxieme copie aurait fini par ne plus rehabiller la meme chose.
+ */
+function rhabille(addr) {
+  const w = [...realmClients].find((x) => x.addr === addr);
+  const skin = w && w.realmSkin;
+  if (!skin) return;
+  const f = ficheDeCombat(addr, skin);
+  /* SA simulation : un joueur qui s'equipe au fond d'un donjon doit voir son
+     arme changer la, pas dans le monde ouvert qu'il a quitte. */
+  if (f) realmDe(w).rehabille(addr, f);
+}
+
 function ramassePlace(ws, id, place, muet) {
   const skin = ws.realmSkin;
   const plafondPotion = (cle) => {
@@ -4398,7 +4537,19 @@ function ramassePlace(ws, id, place, muet) {
        alors par terre jusqu'a la fin de sa minute — une potion trouvee dans la
        lave se perdait parce qu'on avait deja bu six defenses. Maintenant on la
        garde, on la range au coffre, et on la boit avec le personnage suivant. */
-    if (o.stat) return game.sacRempli(ws.addr) < 8 ? true : 'sac-plein';
+    if (o.stat) {
+      /* ---- EN AUTOMATIQUE, ON LA BOIT SI ON PEUT ----
+       * Marcher sur une fiole qu'on peut encore boire remplissait une place du
+       * sac pour un gain qu'on avait sous la main : il fallait ensuite ouvrir
+       * le sac et taper dessus. La ranger n'a de sens que si on ne PEUT PAS la
+       * boire — au plafond de cette stat — et c'est justement le cas ou elle
+       * doit etre gardee pour le personnage suivant.
+       * Bue, elle ne prend aucune place : le sac plein ne la refuse donc plus.
+       * C'est ce qui evite qu'une fiole reste par terre a cause de huit epees
+       * communes ramassees toutes seules. */
+      if (muet && skin && game.supRestant(ws.addr, skin, o.stat) > 0) return true;
+      return game.sacRempli(ws.addr) < 8 ? true : 'sac-plein';
+    }
     if (o.potion) return plafondPotion(o.potion) ? true : 'plein';
     /* Un OBJET prend une place du sac : on refuse avant de le sortir du sac au
        sol, sinon il disparaitrait des deux cotes a la fois. */
@@ -4415,6 +4566,20 @@ function ramassePlace(ws, id, place, muet) {
   }
   try {
     if (r.stat) {
+      /* Le MEME test qu'a l'acceptation, sur le meme etat : entre les deux il
+         ne s'est rien passe — c'est le meme tour de boucle. */
+      const buvable = muet && skin && game.supRestant(ws.addr, skin, r.stat) > 0;
+      if (buvable) {
+        const bu = game.boitStat(ws.addr, skin, r.stat);
+        persistSoon();
+        rhabille(ws.addr);
+        send(ws, { type: 'realmRamasse', sac: r.sac, stat: r.stat, vide: r.vide,
+                   auto: true, bue: 1, ...bu,
+                   etat: game.personnageEtat(ws.addr, skin),
+                   sacJoueur: game.sacPour(ws.addr),
+                   fioles: game.fiolesPour(ws.addr) });
+        return 'pris';
+      }
       const b = game.prendFiole(ws.addr, r.stat);
       persistSoon();
       /* Le sac complet repart : la fiole vient d'y prendre une place, et la
