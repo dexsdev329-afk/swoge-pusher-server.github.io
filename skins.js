@@ -94,14 +94,51 @@ const CADEAU_PIXEL = new Set(['andy', 'claude', 'pepe', 'landwolf', 'ogswoge', '
  */
 const OFFERT = new Set(['andy']);
 
+/* ---- LES EDITIONS LIMITEES ----
+ *
+ * Un skin ordinaire est disponible en permanence : c'est ce qui le separe des
+ * saisons de boutique.js, qui sont des editions fermees tirees au sort. Un
+ * skin d'EDITION, lui, se choisit et se paie comme les autres — mais il n'en
+ * existe qu'un nombre fixe, et quand il n'y en a plus, il n'y en a plus.
+ *
+ * ---- pourquoi le prix est ecrit ici, et pas deduit ----
+ *
+ * Le prix des autres suit la PUISSANCE : c'est la meme donnee qui decide du
+ * classement et du tarif, donc les deux ne peuvent pas diverger. Une edition
+ * limitee ne se range pas sur cette droite — ce qu'on paie, c'est la rarete,
+ * pas la force. Le laisser sur le bareme aurait voulu dire choisir ses stats
+ * pour obtenir un prix, c'est-a-dire fabriquer une puissance pour justifier
+ * un tarif.
+ *
+ * ---- pourquoi le compteur n'est PAS ici ----
+ *
+ * Ce fichier est PUR : il ne connait ni solde, ni inventaire, ni combien
+ * d'exemplaires sont partis. Il dit COMBIEN IL EN EXISTE ; game.js tient le
+ * registre de ce qui a ete emis, exactement comme il le fait deja pour les
+ * plafonds de saison. Deux endroits qui compteraient les memes exemplaires
+ * finiraient par n'en pas compter le meme nombre — et sur un produit vendu
+ * en jetons reels, ce desaccord-la se lit comme une edition trahie.
+ */
+const EDITIONS = {
+  /* id: { exemplaires, prix } */
+};
+
 /* Un identifiant qui n'existe pas doit se comporter comme un identifiant
    absent, jamais comme une exception qui remonte n'importe ou. */
 function skin(id) { return SKINS.find((s) => s.id === id) || null; }
 
 function prixDe(id) {
   if (OFFERT.has(id)) return 0;
+  /* L'edition passe AVANT le bareme : son prix est une decision, pas un
+     calcul, et le bareme n'a rien a dire sur elle. */
+  if (EDITIONS[id]) return EDITIONS[id].prix;
   const s = skin(id);
   return s ? (PUISSANCE_PRIX[s.puissance] || 0) : 0;
+}
+
+/** Combien d'exemplaires existent, ou `0` pour un skin sans limite. */
+function editionDe(id) {
+  return EDITIONS[id] ? EDITIONS[id].exemplaires : 0;
 }
 
 /* Le catalogue complet, pret pour la page — le prix est CALCULE ici et
@@ -115,7 +152,13 @@ function catalogue() {
                                 deduire « prix a zero donc gratuit » : un prix
                                 a zero peut aussi vouloir dire « prix inconnu »,
                                 et les deux ne s'affichent pas pareil. */
-                             offert: OFFERT.has(s.id) }));
+                             offert: OFFERT.has(s.id),
+                             /* Zero veut dire « sans limite ». La page ne
+                                l'affiche que s'il est non nul : ecrire
+                                « illimite » sur cinq lignes sur six aurait
+                                dilue la seule qui compte. */
+                             edition: editionDe(s.id) }));
 }
 
-module.exports = { SKINS, PUISSANCE_PRIX, CADEAU_PIXEL, OFFERT, skin, prixDe, catalogue };
+module.exports = { SKINS, PUISSANCE_PRIX, CADEAU_PIXEL, OFFERT, EDITIONS,
+                   skin, prixDe, editionDe, catalogue };

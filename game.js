@@ -261,6 +261,8 @@ class Game {
        et attend son acheteur. */
     this.marche = [];
     this.marcheNo = 1;
+    /* Combien d'exemplaires de chaque edition limitee sont partis. */
+    this.skinsEmis = {};
     this.boutiqueEmis = {};
     /* LES TROIS PREMIERES LIGNES. Une entree par gagnant, dans l'ordre :
        { addr, nom, famille, prix, t }. C'est cette liste qui dit combien de
@@ -560,6 +562,12 @@ class Game {
              taps: this.taps || {},
              marche: this.marche || [], marcheNo: this.marcheNo || 1,
              boutiqueEmis: this.boutiqueEmis || {},
+             /* Le registre des editions limitees. Il DOIT traverser les
+                sauvegardes : un redemarrage qui le remettrait a zero
+                remettrait en vente une edition deja epuisee, et personne ne
+                le verrait avant que le cinquante et unieme exemplaire ne
+                soit vendu. */
+             skinsEmis: this.skinsEmis || {},
              boutiqueLignes: this.boutiqueLignes || [],
              compta: this._comptaEcrite(), tunnel: this.tunnel || {},
              prixVerses: this.prixVerses || {},
@@ -647,6 +655,7 @@ class Game {
     if (Array.isArray(st.marche)) this.marche = st.marche;
     if (st.marcheNo) this.marcheNo = st.marcheNo;
     if (st.boutiqueEmis && typeof st.boutiqueEmis === 'object') this.boutiqueEmis = st.boutiqueEmis;
+    if (st.skinsEmis && typeof st.skinsEmis === 'object') this.skinsEmis = st.skinsEmis;
     /* Sans cette ligne, un redemarrage ROUVRIRAIT la course et repaierait
        quatre-vingt-dix millions, sans rien afficher d'anormal. */
     if (Array.isArray(st.boutiqueLignes)) this.boutiqueLignes = st.boutiqueLignes;
@@ -5563,7 +5572,14 @@ class Game {
   skinsEtat(addr) {
     const p = this._p(addr);
     return {
-      catalogue: skins.catalogue().map((s) => ({ ...s, possede: this.possedeSkin(p, s.id) })),
+      catalogue: skins.catalogue().map((s) => ({
+        ...s, possede: this.possedeSkin(p, s.id),
+        /* Ce qu'il RESTE, pas ce qui est parti : « 7 left » se lit sans
+           soustraction, « 43 sold » demande de connaitre le total. Zero sur un
+           skin sans edition ; la page ne l'affiche que s'il y a une edition. */
+        emis: (this.skinsEmis || {})[s.id] | 0,
+        reste: s.edition ? Math.max(0, s.edition - ((this.skinsEmis || {})[s.id] | 0)) : 0,
+      })),
       /* Le skin PORTE, pas le champ brut : un compte qui n'a rien choisi porte
          celui qu'on offre, sinon la page montre « aucun personnage » a
          quelqu'un qui en a un. */
@@ -5592,12 +5608,39 @@ class Game {
                actif: this.skinActifDe(p), balance: this.balanceStr(addr) };
     }
     if (this.possedeSkin(p, id)) throw new Error('you already own this skin');
+    /* ---- L'EDITION LIMITEE ----
+     *
+     * On compte les exemplaires DEJA VENDUS avant de toucher au solde. Une
+     * edition qui deborderait d'un seul exemplaire n'est plus une edition, et
+     * c'est le genre de promesse dont on ne se releve pas quand elle est
+     * payee en jetons reels.
+     *
+     * Le registre vit ICI et non dans skins.js : ce fichier-la est pur, il
+     * dit combien il en EXISTE, pas combien il en reste. Deux endroits qui
+     * compteraient les memes exemplaires finiraient par n'en pas compter le
+     * meme nombre.
+     */
+    const edition = skins.editionDe(id);
+    if (edition > 0) {
+      this.skinsEmis = this.skinsEmis || {};
+      const emis = this.skinsEmis[id] | 0;
+      if (emis >= edition) {
+        throw new Error('this edition is sold out — ' + edition + ' of ' + edition + ' claimed');
+      }
+    }
     const prix = skins.prixDe(id);
     const w = WEI(prix);
     if (p.balance.lt(w)) throw new Error(`not enough $SWOGE — this skin costs ${prix.toLocaleString('en-US')}`);
     p.balance = p.balance.sub(w);
     this._bumpDay(p); p.dayNet = p.dayNet.sub(w);
     p.skins[id] = true;
+    /* Le compteur monte APRES le debit et l'attribution, d'un seul tenant :
+       rien ne peut s'intercaler entre les trois, et une exception plus haut
+       n'aura pas consomme un exemplaire pour rien. */
+    if (edition > 0) {
+      this.skinsEmis = this.skinsEmis || {};
+      this.skinsEmis[id] = (this.skinsEmis[id] | 0) + 1;
+    }
     /* Le skin qu'on vient d'acheter devient celui qu'on porte : sans ce
        geste, payer ne changerait rien a l'ecran, et l'achat semblerait n'avoir
        servi a rien tant qu'on n'a pas trouve un second endroit pour l'activer.
