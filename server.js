@@ -3071,10 +3071,12 @@ wss.on('connection', (ws) => {
       if (m.type === 'realmJoin') {
         if (!ws.addr) return;
         const p = game._p(ws.addr);
-        const skin = p.skinActif;
-        /* Sans personnage, pas de monde : on n'y entre pas « en spectateur »,
-           et arriver sans stats donnerait un joueur a zero point de vie. */
-        if (!skin || !p.skins || !p.skins[skin]) {
+        /* Le skin PORTE, demande au moteur : un compte qui n'a jamais rien
+           choisi porte celui qu'on offre. Lire le champ brut ferait repondre
+           « no-character » a quelqu'un qui a un personnage — et un joueur a qui
+           l'on refuse l'entree ne revient pas demander pourquoi. */
+        const skin = game.skinActifDe(p);
+        if (!skin || !game.possedeSkin(p, skin)) {
           return send(ws, { type: 'realmRefus', raison: 'no-character' });
         }
         const etat = game.personnageEtat(ws.addr, skin);

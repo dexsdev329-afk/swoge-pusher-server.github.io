@@ -3616,6 +3616,42 @@ class Game {
   }
 
   /**
+   * ================== CELUI QU'ON DONNE ==================
+   *
+   * Andy appartient a tout le monde : il n'existe pas de version du jeu ou
+   * l'on regarde sans pouvoir jouer. Un visiteur qui ouvre le monde de combat
+   * et se fait repondre « no-character » ne revient pas expliquer pourquoi.
+   *
+   * ---- pourquoi c'est une QUESTION et pas une ECRITURE ----
+   *
+   * La premiere version le posait sur la fiche, dans `_p`. Ca marchait, et ca
+   * cassait autre chose : une fiche qui possede un skin n'est plus vide, donc
+   * plus elaguable, donc ECRITE SUR LE DISQUE. Chaque visiteur qui charge la
+   * page — y compris celui qui repart aussitot — serait devenu une ligne
+   * permanente du fichier de sauvegarde. Trois essais l'ont dit tout de suite,
+   * et l'un d'eux compte les fiches ecrites.
+   *
+   * On ne stocke donc rien. Posseder Andy est une reponse, pas une donnee : la
+   * fiche d'un visiteur reste vide, et il joue quand meme.
+   */
+  possedeSkin(p, id) {
+    if (!id) return false;
+    if (skins.OFFERT.has(id)) return true;
+    return !!(p && p.skins && p.skins[id]);
+  }
+
+  /**
+   * Le skin PORTE. Meme raison : posseder un personnage sans le porter, c'est
+   * se faire refuser l'entree du monde — la meme panne, vue d'un cran plus
+   * loin. Un compte qui n'a rien choisi porte donc celui qu'on offre.
+   */
+  skinActifDe(p) {
+    if (p && p.skinActif && this.possedeSkin(p, p.skinActif)) return p.skinActif;
+    for (const id of skins.OFFERT) return id;
+    return null;
+  }
+
+  /**
    * Le nom de DEPANNAGE, celui que la page envoie au moment de la connexion —
    * en pratique les six premiers caracteres de l'adresse.
    *
@@ -5158,10 +5194,12 @@ class Game {
    */
   skinsEtat(addr) {
     const p = this._p(addr);
-    const possedes = p.skins || {};
     return {
-      catalogue: skins.catalogue().map((s) => ({ ...s, possede: !!possedes[s.id] })),
-      actif: p.skinActif || null,
+      catalogue: skins.catalogue().map((s) => ({ ...s, possede: this.possedeSkin(p, s.id) })),
+      /* Le skin PORTE, pas le champ brut : un compte qui n'a rien choisi porte
+         celui qu'on offre, sinon la page montre « aucun personnage » a
+         quelqu'un qui en a un. */
+      actif: this.skinActifDe(p),
     };
   }
 
@@ -5170,7 +5208,22 @@ class Game {
     const s = skins.skin(id);
     if (!s) throw new Error('unknown skin');
     p.skins = p.skins || {};
-    if (p.skins[id]) throw new Error('you already own this skin');
+    /* ---- CELUI QU'ON DONNE SE « PREND » AUSSI ----
+     * Un joueur qui touche Andy dans la boutique ne doit pas recevoir un refus
+     * pour un personnage gratuit. On note qu'il l'a pris — c'est un geste
+     * deliberé, contrairement au simple fait de charger la page — et on le lui
+     * met sur le dos. Rien n'est debite : il ne coute rien.
+     * Ecrire ici et pas dans `_p` est TOUTE la difference : un visiteur qui
+     * passe reste une fiche vide, qui ne part pas au disque. */
+    if (skins.OFFERT.has(id)) {
+      p.skins = p.skins || {};
+      const avait = !!p.skins[id];
+      p.skins[id] = true;
+      p.skinActif = id;
+      return { id, prix: 0, offert: true, deja: avait,
+               actif: this.skinActifDe(p), balance: this.balanceStr(addr) };
+    }
+    if (this.possedeSkin(p, id)) throw new Error('you already own this skin');
     const prix = skins.prixDe(id);
     const w = WEI(prix);
     if (p.balance.lt(w)) throw new Error(`not enough $SWOGE — this skin costs ${prix.toLocaleString('en-US')}`);
@@ -5184,12 +5237,12 @@ class Game {
     p.skinActif = id;
     this.note('boutique', prix, String(addr).toLowerCase());
     journal.ajoute(String(addr).toLowerCase(), { k: 'sk', id, m: String(prix) });
-    return { id, prix, actif: p.skinActif, balance: this.balanceStr(addr) };
+    return { id, prix, actif: this.skinActifDe(p), balance: this.balanceStr(addr) };
   }
 
   choisitSkin(addr, id) {
     const p = this._p(addr);
-    if (!(p.skins || {})[id]) throw new Error('you do not own this skin');
+    if (!this.possedeSkin(p, id)) throw new Error('you do not own this skin');
     p.skinActif = id;
     return { actif: id };
   }
@@ -5244,7 +5297,7 @@ class Game {
     const n = Math.max(0, Math.floor(Number(xp) || 0));
     if (!n) return null;
     const p = this._p(addr);
-    if (!p.skins || !p.skins[skinId]) return null;
+    if (!this.possedeSkin(p, skinId)) return null;
     p.persos = p.persos || {};
     const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0, sup: {} });
     const avant = personnages.niveauDeXp(this._xpDe(c));
@@ -5263,7 +5316,7 @@ class Game {
    */
   personnageEtat(addr, skinId) {
     const p = this._p(addr);
-    if (!(p.skins || {})[skinId]) return null;
+    if (!this.possedeSkin(p, skinId)) return null;
     const base = personnages.BASE[skinId];
     if (!base) return null;
     const c = this._persoDe(p, skinId);
@@ -5378,7 +5431,7 @@ class Game {
    */
   _equipe(addr, skinId, itemId, genre) {
     const p = this._p(addr);
-    if (!(p.skins || {})[skinId]) throw new Error('you do not own this skin');
+    if (!this.possedeSkin(p, skinId)) throw new Error('you do not own this skin');
     p.persos = p.persos || {};
     const c = p.persos[skinId] || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0, sup: {} });
     const CHAMPS = { fruit: 'ef', arme: 'ea', armure: 'ar', bague: 'ba' };
@@ -5428,7 +5481,7 @@ class Game {
    */
   equipeDuSac(addr, skinId, itemId) {
     const p = this._p(addr);
-    if (!(p.skins || {})[skinId]) throw new Error('you do not own this skin');
+    if (!this.possedeSkin(p, skinId)) throw new Error('you do not own this skin');
     const id = Number(itemId);
     const o = boutique.item(id);
     if (!o) throw new Error('Unknown item');
@@ -5537,7 +5590,7 @@ class Game {
    */
   meurt(addr, skinId) {
     const p = this._p(addr);
-    if (!(p.skins || {})[skinId]) throw new Error('you do not own this skin');
+    if (!this.possedeSkin(p, skinId)) throw new Error('you do not own this skin');
     p.persos = p.persos || {};
     const c = p.persos[skinId];
     /* Un personnage jamais joue n'a pas de fiche : il n'a donc rien porte,
@@ -5959,7 +6012,7 @@ class Game {
     const base = personnages.BASE[skinId];
     if (!base) return 0;
     const p = this._p(addr);
-    if (!(p.skins || {})[skinId]) return 0;
+    if (!this.possedeSkin(p, skinId)) return 0;
     const c = this._persoDe(p, skinId);
     const deja = Math.max(0, ((c.sup || {})[stat] | 0));
     return Math.max(0, personnages.supMaxDe(stat, base[stat]) - deja);
@@ -5975,7 +6028,7 @@ class Game {
   boitStat(addr, skinId, stat) {
     if (personnages.STATS.indexOf(stat) < 0) throw new Error('Unknown stat');
     const p = this._p(addr);
-    if (!(p.skins || {})[skinId]) throw new Error('No such character');
+    if (!this.possedeSkin(p, skinId)) throw new Error('No such character');
     p.persos = p.persos || {};
     const c = p.persos[skinId]
       || (p.persos[skinId] = { w: BN(0), ef: null, ea: null, ar: null, ba: null, xc: 0, sup: {} });

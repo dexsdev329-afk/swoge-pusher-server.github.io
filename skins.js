@@ -79,11 +79,27 @@ const SKINS = SKINS_SANS_PUISSANCE
  * image cassee que personne ne comprendrait. */
 const CADEAU_PIXEL = new Set(['andy', 'claude', 'pepe', 'landwolf', 'ogswoge', 'brett']);
 
+/* ---- CELUI QU'ON DONNE ----
+ *
+ * Andy est offert. Tout le monde en a un, sans avoir rien depose ni rien
+ * gagne : il n'existe pas de version du jeu ou l'on regarde sans pouvoir
+ * jouer.
+ *
+ * C'est une decision d'ACCUEIL, pas de puissance — et c'est pour ca qu'elle
+ * est ecrite ici, nommement, au lieu d'etre deduite du barème. « Le moins
+ * fort est offert » aurait l'air plus propre et serait faux : le jour ou l'on
+ * retouche une stat dans personnages.js, le classement bouge, et c'est un
+ * AUTRE personnage qui deviendrait gratuit sans que personne l'ait decide.
+ * Andy reste Andy.
+ */
+const OFFERT = new Set(['andy']);
+
 /* Un identifiant qui n'existe pas doit se comporter comme un identifiant
    absent, jamais comme une exception qui remonte n'importe ou. */
 function skin(id) { return SKINS.find((s) => s.id === id) || null; }
 
 function prixDe(id) {
+  if (OFFERT.has(id)) return 0;
   const s = skin(id);
   return s ? (PUISSANCE_PRIX[s.puissance] || 0) : 0;
 }
@@ -94,7 +110,12 @@ function prixDe(id) {
 function catalogue() {
   return SKINS.map((s) => ({ id: s.id, nom: s.nom, puissance: s.puissance,
                              prix: prixDe(s.id), pouvoir: s.pouvoir, couleur: s.couleur,
-                             pixel: CADEAU_PIXEL.has(s.id) }));
+                             pixel: CADEAU_PIXEL.has(s.id),
+                             /* `offert` le DIT, plutot que de laisser la page
+                                deduire « prix a zero donc gratuit » : un prix
+                                a zero peut aussi vouloir dire « prix inconnu »,
+                                et les deux ne s'affichent pas pareil. */
+                             offert: OFFERT.has(s.id) }));
 }
 
-module.exports = { SKINS, PUISSANCE_PRIX, CADEAU_PIXEL, skin, prixDe, catalogue };
+module.exports = { SKINS, PUISSANCE_PRIX, CADEAU_PIXEL, OFFERT, skin, prixDe, catalogue };

@@ -67,13 +67,27 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
     return s;
   };
 
-  // ================== 1. ON N'ENTRE PAS SANS PERSONNAGE
+  // ================== 1. UN COMPTE NEUF ENTRE TOUT DE SUITE
+  //
+  // Cet essai disait l'inverse — « sans skin, le monde se refuse ». Ce n'est
+  // plus vrai, et c'est le changement : Andy est offert, tout le monde en a
+  // un. Il n'existe pas de version du jeu ou l'on regarde sans pouvoir jouer,
+  // et un visiteur a qui l'on repond « no-character » ne revient pas demander
+  // pourquoi.
+  //
+  // Le portefeuille est tire au hasard : il n'a jamais rien depose, rien
+  // achete, et sa fiche n'a jamais ete ecrite nulle part.
   {
     const w = ethers.Wallet.createRandom();
     const s = await connecte(w);
     s.send(JSON.stringify({ type: 'realmJoin' }));
-    const r = await attend(s, 'realmRefus');
-    eq(r.raison, 'no-character', 'sans skin, le monde se refuse');
+    const r = await attend(s, 'realmEntre');
+    ok(r, 'un portefeuille neuf entre dans le monde, sans avoir rien achete');
+    const q = moteur._p(w.address);
+    eq(JSON.stringify(q.skins || {}), '{}',
+       'et RIEN n a ete ecrit sur sa fiche : posseder Andy est une reponse, pas une donnee');
+    eq(moteur.fiche(w.address), null,
+       'sa fiche reste vide, donc elagable, donc absente du disque');
     s.close();
   }
 

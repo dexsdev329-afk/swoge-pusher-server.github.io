@@ -41,7 +41,22 @@ const pose = (g, addr, credit) => {
   eq(c.length, 6, 'six skins');
   eq(new Set(c.map((s) => s.id)).size, 6, 'six identifiants distincts');
   ok(c.every((s) => !('saison' in s)), 'aucun skin ne porte de saison');
-  ok(c.every((s) => s.prix > 0), 'chaque skin a un prix');
+  /* ---- CELUI QU'ON DONNE ----
+   * Andy est offert : tout le monde en a un, sans avoir rien depose. Il n'y a
+   * donc plus « un prix pour chaque skin », il y a « un prix pour chaque skin
+   * qu'on vend » — et un seul qui ne se vend pas.
+   * On verifie les DEUX cotes, sinon un jour toute la boutique passe a zero
+   * sans que rien ne le dise. */
+  const offerts = c.filter((s) => s.offert);
+  eq(offerts.length, 1, `un seul skin est offert (${offerts.map((s) => s.id).join(', ')})`);
+  eq(offerts[0].id, 'andy', 'et c est Andy — la decision est d ACCUEIL, pas de puissance');
+  eq(offerts[0].prix, 0, 'il ne coute rien');
+  ok(c.filter((s) => !s.offert).every((s) => s.prix > 0),
+     'et tous les autres ont un prix');
+  /* Le drapeau le DIT au lieu de laisser deviner « prix a zero donc
+     gratuit » : un prix a zero peut aussi vouloir dire « prix inconnu », et
+     les deux ne s'affichent pas pareil. */
+  ok(c.every((s) => typeof s.offert === 'boolean'), 'chaque fiche dit si elle est offerte');
   ok(c.every((s) => s.puissance >= 1 && s.puissance <= 6), 'puissance entre 1 et 6');
   eq(new Set(c.map((s) => s.puissance)).size, 6, 'six puissances distinctes — un classement, pas des ex-aequo');
 }
@@ -110,14 +125,49 @@ const pose = (g, addr, credit) => {
   eq(sol(g, A), avant, 'et rien n a ete debite pour le refus');
 }
 
-// ================== 7. PAS D'ARGENT, PAS DE SKIN
+// ================== 7. PAS D'ARGENT, PAS DE SKIN — SAUF CELUI QU'ON DONNE
 {
   const g = new Game();
-  const p = pose(g, A, 100);        // bien moins que le moins cher (andy, 15 000)
-  assert.throws(() => g.acheteSkin(A, 'andy'), /not enough/, 'refuse sans assez de solde');
+  const p = pose(g, A, 100);        // bien moins que le moins cher qui se vende
+  assert.throws(() => g.acheteSkin(A, 'pepe'), /not enough/, 'refuse sans assez de solde');
   n++;
   eq(sol(g, A), 100, 'le solde n a pas bouge');
-  eq(Object.keys(p.skins || {}).length, 0, 'et rien n a ete accorde');
+  ok(!(p.skins || {}).pepe, 'et rien n a ete accorde');
+
+  /* ---- MAIS ANDY, OUI ----
+   * Cent jetons ne paient rien, et pourtant on repart avec un personnage.
+   * C'est tout le changement : il n'existe pas de version du jeu ou l'on
+   * regarde sans pouvoir jouer. */
+  const r = g.acheteSkin(A, 'andy');
+  ok(r.offert, 'Andy se prend sans payer');
+  eq(r.prix, 0, 'il ne coute rien');
+  eq(sol(g, A), 100, 'et le solde n a toujours pas bouge');
+  eq(r.actif, 'andy', 'on le porte tout de suite');
+}
+
+// ================== 7 bis. ET ON L'A DEJA AVANT MEME DE LE PRENDRE
+//
+// Posseder Andy est une REPONSE, pas une donnee. La difference n'est pas
+// theorique : une fiche qui possede un skin n'est plus vide, donc plus
+// elaguable, donc ECRITE SUR LE DISQUE. Chaque visiteur qui charge la page —
+// y compris celui qui repart aussitot — serait devenu une ligne permanente du
+// fichier de sauvegarde.
+{
+  const g = new Game();
+  const p = g._p(A);
+  ok(g.possedeSkin(p, 'andy'), 'un compte neuf possede Andy');
+  ok(!g.possedeSkin(p, 'pepe'), 'et pas les autres');
+  eq(g.skinActifDe(p), 'andy', 'et il le porte, sans avoir rien choisi');
+  eq(Object.keys(p.skins || {}).length, 0,
+     'sans que RIEN ne soit ecrit sur sa fiche');
+  eq(g.fiche(A), null, 'qui reste vide, donc absente du disque');
+
+  /* Et la page le voit comme possede, pas comme a vendre. */
+  const cat = g.skinsEtat(A).catalogue;
+  const andy = cat.find((s) => s.id === 'andy');
+  ok(andy.possede, 'le catalogue le montre possede');
+  ok(andy.offert, 'et offert');
+  eq(g.skinsEtat(A).actif, 'andy', 'et porte');
 }
 
 // ================== 8. UN IDENTIFIANT INCONNU EST REFUSE, PAS ACCEPTE EN SILENCE
@@ -165,15 +215,18 @@ const pose = (g, addr, credit) => {
   const g = new Game();
   pose(g, A, 1000000);
   const avant = g.skinsEtat(A);
-  eq(avant.actif, null, 'rien de porte au debut');
-  ok(avant.catalogue.every((s) => !s.possede), 'rien de possede au debut');
+  /* Au depart on porte CELUI QU'ON DONNE, et lui seul est possede. C'etait
+     « rien de porte, rien de possede » avant qu'Andy soit offert. */
+  eq(avant.actif, 'andy', 'on porte Andy au depart');
+  eq(avant.catalogue.filter((s) => s.possede).length, 1, 'et lui seul est possede');
 
   g.acheteSkin(A, 'landwolf');
   const apres = g.skinsEtat(A);
-  eq(apres.actif, 'landwolf');
+  eq(apres.actif, 'landwolf', 'acheter en porte un autre');
   const l = apres.catalogue.find((s) => s.id === 'landwolf');
   ok(l.possede, 'landwolf marque possede');
-  eq(apres.catalogue.filter((s) => s.possede).length, 1, 'et lui seul');
+  eq(apres.catalogue.filter((s) => s.possede).length, 2,
+     'et on a maintenant les deux — l offert ne disparait pas quand on achete');
 }
 
 // ================== 13. LA DEPENSE EST COMPTEE COMME UNE RECETTE, PAS UN CADEAU
