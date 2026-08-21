@@ -1302,6 +1302,7 @@ const MONSTRES = {
    * seraient une lecon qu'on ne peut pas suivre.
    */
   pirate: {
+    cle: 'pirate', nom: 'Cutlass Pirate',
     pv: 220, att: 34, def: 6, vitesse: 74, rayon: 40, vue: 520,
     contact: true, cadence: 0.55,
     tir: { portee: 380, vitesse: 260, sprite: 'vide', att: 26, cadence: 0.7 },
@@ -1311,6 +1312,7 @@ const MONSTRES = {
      creatures qui ne se jouent pas pareil valent mieux que deux barres de vie
      differentes. */
   piratesse: {
+    cle: 'piratesse', nom: 'Powder Corsair',
     pv: 180, att: 26, def: 4, vitesse: 82, rayon: 38, vue: 620,
     contact: false, cadence: 0.5,
     tir: { portee: 540, vitesse: 320, sprite: 'vide', att: 30, cadence: 0.42 },
@@ -1321,6 +1323,7 @@ const MONSTRES = {
      dessin au sol, et c'est fait pour — il l'apprend ici, sur une creature qui
      ne le tue pas. */
   lieutenant: {
+    cle: 'lieutenant', nom: 'Cave Lieutenant',
     /* 340 et non 460 : au-dessus, il tenait plus longtemps que le drone de la
        Fonderie — une machine de l'anneau de lave. Un elite de premier donjon
        qui encaisse mieux qu'une creature de fin de jeu, c'est l'echelle des
@@ -1338,6 +1341,7 @@ const MONSTRES = {
    * etre un — on doit pouvoir le battre au niveau huit avec de la place et un
    * peu de patience. */
   dreadstump: {
+    cle: 'dreadstump', nom: 'Dreadstump',
     pv: 1800, att: 78, def: 20, vitesse: 62, rayon: 72, vue: 820,
     contact: true, cadence: 0.42,
     tir: { portee: 620, vitesse: 340, sprite: 'vide', att: 58, cadence: 0.45 },

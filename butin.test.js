@@ -58,13 +58,19 @@ function pose(r, espece, x, y, pv) {
 {
   const a = alea(20260820);
   const compte = (espece, tours) => {
-    let bleu = 0, brun = 0;
+    let bleu = 0, brun = 0, oeuf = 0;
     for (let i = 0; i < tours; i++) {
       const b = M.butinDe(espece, a);
       if (!b) continue;
+      /* L'oeuf compte a part. Il passe AVANT tout le reste de la chaine, donc
+         il prend la place du butin ordinaire une fois sur mille deux cents —
+         y compris chez une creature dont le butin est promis. Le fondre dans
+         « brun » aurait fait mentir toutes les proportions d'un millieme, ce
+         qui est petit et faux. */
+      if (b.contenu && b.contenu[0] && b.contenu[0].oeuf) { oeuf++; continue; }
       if (b.sac === 'bleu') bleu++; else brun++;
     }
-    return { bleu: bleu / tours, brun: brun / tours };
+    return { bleu: bleu / tours, brun: brun / tours, oeuf: oeuf / tours };
   };
 
   const sq = compte('skeleton', 40000);
@@ -85,12 +91,34 @@ function pose(r, espece, x, y, pv) {
    * Il sort une fois par anneau de lave et porte seize cents points de vie.
    * Un boss qu'on peut abattre pour rien ne vaut pas le deplacement. */
   const ga = compte('gardien', 2000);
-  eq(ga.bleu, 1, 'le gardien laisse TOUJOURS une potion de stat');
+  /* ---- « TOUJOURS », SAUF L'OEUF ----
+   * Le gardien promettait une potion de stat a chaque mort. Depuis que l'oeuf
+   * tombe une fois sur mille deux cents et qu'il passe en TETE de la chaine,
+   * il prend cette place-la de temps en temps.
+   * On accepte, et voici pourquoi : le joueur ne recoit jamais MOINS. Un oeuf
+   * vaut cent fois une potion de stat, et son sac est turquoise — on voit
+   * immediatement que ce n'est pas la potion attendue, donc personne ne croit
+   * a un butin manque. L'inverse — rendre les boss immunises a l'oeuf —
+   * aurait exclu justement les creatures qu'on chasse le plus, alors que
+   * « de N'IMPORTE QUELLE creature » est toute l'idee. */
+  eq(ga.bleu + ga.oeuf, 1,
+     `le gardien laisse TOUJOURS ce qu'il promet (potion ${(ga.bleu * 100).toFixed(1)} %` +
+     ` + oeuf ${(ga.oeuf * 100).toFixed(2)} %)`);
+  ok(ga.bleu > 0.99, `et c'est la potion dans la quasi-totalite des cas (${(ga.bleu * 100).toFixed(1)} %)`);
 
   /* Et il les donne toutes : c'est ce qui en fait une destination. On y va
      pour ce qui manque, pas pour ce qu'il a. */
   const vues = {};
-  for (let i = 0; i < 4000; i++) vues[M.butinDe('gardien', a).contenu[0].stat] = true;
+  for (let i = 0; i < 4000; i++) {
+    const c = M.butinDe('gardien', a).contenu[0];
+    /* L'oeuf n'a pas de stat. Sans ce saut, `undefined` entrait dans la liste
+       et le gardien avait NEUF stats — une de plus que le jeu n'en a. Le
+       symptome ne parlait pas de l'oeuf : il disait « le gardien donne les 8
+       stats, pas une seule », ce qui est exactement le contraire du
+       probleme. */
+    if (c.oeuf) continue;
+    vues[c.stat] = true;
+  }
   eq(Object.keys(vues).length, P.STATS.length,
      `le gardien donne les ${P.STATS.length} stats, pas une seule`);
 
