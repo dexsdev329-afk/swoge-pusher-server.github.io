@@ -33,6 +33,11 @@
  */
 
 const monde = require('./monde');
+/* Les regles d'un sac au sol vivent a part depuis que le Nexus en a un lui
+   aussi : deux exemplaires de « un sac vit soixante secondes » finissent par
+   ne plus dire la meme chose, et ces phrases-la gardent des pieces payees en
+   argent reel. Voir sacs.js. */
+const sacsAuSol = require('./sacs');
 
 /* Le pas de simulation vise 10 fois par seconde. Plus rapide n'ajoute rien —
    les clients recoivent 6 a 7 images par seconde de toute facon — et plus
@@ -805,12 +810,7 @@ class Realm {
   sacSousLesPieds(addr) {
     const j = this.joueurs.get(addr);
     if (!j) return null;
-    let choisi = null, d2mini = monde.SAC.rayon * monde.SAC.rayon;
-    for (const s of this.sacs) {
-      const dx = s.x - j.x, dy = s.y - j.y, d2 = dx * dx + dy * dy;
-      if (d2 <= d2mini) { d2mini = d2; choisi = s; }
-    }
-    return choisi;
+    return sacsAuSol.sousLesPieds(this.sacs, j.x, j.y);
   }
 
   /**
@@ -832,30 +832,11 @@ class Realm {
     /* Si le client a nomme un sac, ce doit etre CELUI-LA. Un sac qui a expire
        pendant que le doigt descendait ne doit pas faire prendre son voisin. */
     if (id !== undefined && id !== null && Number(id) !== s.id) return null;
-    const k = Math.max(0, Math.floor(Number(place) || 0));
-    const objet = s.contenu[k];
-    if (!objet) return null;
-    /* ---- ON DEMANDE AVANT DE PRENDRE ----
-     * Une potion d'attaque prise a son plafond serait bue pour rien, et la
-     * place serait vidée. On laisse donc l'appelant refuser : l'objet reste
-     * dans le sac, qui finira sa minute. `realm.js` ne sait pas ce qu'est un
-     * plafond de potion — il se contente de poser la question. */
-    if (typeof accepte === 'function') {
-      const verdict = accepte(objet, s);
-      if (verdict !== true) {
-        return { refuse: true, raison: verdict || 'refuse', sac: s.sac,
-                 id: s.id, place: k, ...objet };
-      }
-    }
-    s.contenu.splice(k, 1);
-    /* Un sac vide disparait tout de suite : le laisser jusqu'a la fin de sa
-       minute donnerait un sac qu'on rouvre pour rien, encore et encore. */
-    if (!s.contenu.length) {
-      const i = this.sacs.indexOf(s);
-      if (i >= 0) this.sacs.splice(i, 1);
-    }
+    const r = sacsAuSol.prend(this.sacs, s, place, accepte);
+    if (!r || r.refuse) return r;
+    const objet = r;
     if (ev) { ev.ramasses = ev.ramasses || []; ev.ramasses.push({ addr, sac: s.sac, id: s.id, ...objet }); }
-    return { sac: s.sac, id: s.id, place: k, vide: !s.contenu.length, ...objet };
+    return r;
   }
 
   /**
@@ -883,52 +864,11 @@ class Realm {
      * de sept places.
      * Le sol, lui, sait deja les porter : c'est sous cette forme exacte
      * qu'elles tombent d'un monstre. */
-    const stat = (objet && objet.stat) || null;
-    const item = stat ? null
-      : Number(objet && objet.item !== undefined ? objet.item : objet);
-    if (!stat && !Number.isFinite(item)) return null;
-    let s = this.sacSousLesPieds(addr);
-    if (s && s.contenu.length >= monde.SAC.cases) return { refuse: true, raison: 'sac-plein' };
-    if (!s) {
-      s = { id: this._nouvelId(), x: j.x, y: j.y, sac: stat ? 'bleu' : 'brun',
-            reste: monde.SAC.duree, contenu: [] };
-      this.sacs.push(s);
-      while (this.sacs.length > monde.SAC.plafond) this.sacs.shift();
-    }
-    /* Une fiole ne porte QUE sa stat — c'est la forme exacte sous laquelle
-       elle tombe d'un monstre, et le sol ne connait pas d'autre facon de la
-       porter. Lui coller les champs d'une piece (cle d'image, degats, bonus)
-       aurait fait une fiole que le ramassage aurait prise pour un objet.
-       Le NOM et la CLE d'image d'une piece, eux, entrent avec elle, une fois :
-       les retrouver au moment d'envoyer l'etat les recalculerait pour chaque
-       client, dix fois par seconde — et obligerait realm.js a connaitre la
-       boutique, ce qu'il n'a aucune raison de faire. */
-    s.contenu.push(stat ? { stat }
-                        : { item, cle: (objet && objet.cle) || null,
-                            nom: (objet && objet.nom) || null,
-                            rarete: (objet && objet.rarete) || null,
-                            bonus: (objet && objet.bonus) || null,
-                            degats: (objet && objet.degats) || null,
-                            couleur: (objet && objet.couleur) || null,
-                            og: (objet && objet.og) || false });
-    /* ---- LE SAC REPART POUR UNE MINUTE ----
-     * Un sac tombe d'un monstre a soixante secondes a vivre. Poser SA PROPRE
-     * piece dedans sans remettre le compteur a zero, c'est la confier a un sac
-     * qui peut n'avoir que trois secondes devant lui — le temps d'hesiter, et
-     * elle a disparu. Ni dans le sac, ni par terre : detruite, sans un mot.
-     *
-     * Un joueur l'a perdue comme ca. La minute compte a partir du DERNIER
-     * geste, pas de la mort du monstre : c'est la seule regle qu'on puisse
-     * expliquer, et la seule qui ne punisse pas d'avoir reflechi. */
-    s.reste = monde.SAC.duree;
-    /* ---- ON NE SE REPREND PAS CE QU'ON VIENT DE POSER ----
-     * Le ramassage automatique vide un sac des qu'on marche dessus. Poser une
-     * piece a ses pieds la lui redonnait donc dans le meme dixieme de seconde :
-     * jeter quelque chose devenait impossible sans courir en meme temps.
-     * On retient QUI a pose, et le ramassage automatique passe son tour tant
-     * que ce joueur-la est encore dessus. Il suffit de s'ecarter — c'est le
-     * geste qu'on fait de toute facon apres avoir jete quelque chose. */
-    s.pose = addr;
+    const r = sacsAuSol.depose(this.sacs, j.x, j.y, addr, objet,
+                              () => this._nouvelId());
+    if (!r || r.refuse) return r;
+    const s = this.sacs.find((x) => x.id === r.id);
+    const item = r.item, stat = r.stat;
     if (ev) { ev.deposes = ev.deposes || []; ev.deposes.push({ addr, id: s.id, item, stat }); }
     return { id: s.id, sac: s.sac, place: s.contenu.length - 1 };
   }
@@ -986,23 +926,16 @@ class Realm {
     }
     /* Les sacs aussi, et pour la meme raison : un sac ne du pas courant doit
        partir avec sa minute entiere, pas avec 59,95 s. */
-    for (let i = this.sacs.length - 1; i >= 0; i--) {
-      this.sacs[i].reste -= dt;
-      if (this.sacs[i].reste > 0) continue;
-      /* ---- CE QUI N'A PAS ETE RAMASSE REVIENT AU POOL ----
-       * Une piece a plafond d'emission est COMPTEE des qu'elle tombe : sans
-       * ca, deux joueurs pourraient ramasser la derniere relique. Mais un sac
-       * qui finit sa minute sans que personne n'y touche aurait alors retire
-       * cette piece du monde pour toujours — et le plafond se serait vide tout
-       * seul, sans qu'un seul joueur n'ait rien recu.
-       * On annonce donc ce qui part avec le sac ; c'est l'appelant qui tient
-       * le registre, realm.js ne le connait pas. */
-      const perdu = this.sacs[i].contenu.filter((o) => o.item);
-      if (perdu.length && ev) {
-        ev.expires = ev.expires || [];
-        for (const o of perdu) ev.expires.push({ item: o.item, nom: o.nom });
-      }
-      this.sacs.splice(i, 1);
+    /* ---- CE QUI N'A PAS ETE RAMASSE REVIENT AU POOL ----
+     * Une piece a plafond d'emission est COMPTEE des qu'elle tombe : sans ca,
+     * deux joueurs pourraient ramasser la derniere relique. Mais un sac qui
+     * finit sa minute sans que personne n'y touche aurait alors retire cette
+     * piece du monde pour toujours. On annonce donc ce qui part ; c'est
+     * l'appelant qui tient le registre, realm.js ne le connait pas. */
+    const perdus = sacsAuSol.vieillit(this.sacs, dt);
+    if (perdus.length && ev) {
+      ev.expires = ev.expires || [];
+      for (const o of perdus) ev.expires.push(o);
     }
     /* Les portes vieillissent comme les sacs, et pour la meme raison : une
        porte qui resterait ouverte pour toujours ferait du donjon un LIEU, pas
@@ -1016,13 +949,7 @@ class Realm {
     /* Le poseur s'est ecarte : le sac redevient ramassable, pour lui comme
        pour les autres. On l'oublie ICI plutot qu'a l'entree du ramassage :
        « qui a pose » est un fait du monde, pas une question de qui regarde. */
-    for (const s of this.sacs) {
-      if (!s.pose) continue;
-      const j = this.joueurs.get(s.pose);
-      if (!j) { s.pose = null; continue; }
-      const dx = j.x - s.x, dy = j.y - s.y;
-      if (dx * dx + dy * dy > monde.SAC.rayon * monde.SAC.rayon) s.pose = null;
-    }
+    sacsAuSol.oubliePoseurs(this.sacs, (a) => this.joueurs.get(a) || null);
     /* Le delai avant que le boss du donjon puisse renaitre. Il ne court que
        pendant qu'il est mort — `repeuple` le remet a plein tant qu'il vit. */
     for (const k of Object.keys(this.socleAttente)) {
@@ -1571,25 +1498,13 @@ class Realm {
            dessiner : `null` le dit, la ou `Infinity` serait devenu `null` en
            traversant JSON de toute facon — mais sans qu'on l'ait voulu. */
         r: Number.isFinite(p.reste) ? Number(p.reste.toFixed(1)) : null })),
-      sacs: this.sacs.filter(pres).map((s) => ({
-        i: s.id, x: Math.round(s.x), y: Math.round(s.y), s: s.sac,
-        /* Le CONTENU part avec le sac : la page ouvre une grille de huit
-           places des qu'on marche dessus, et elle doit pouvoir la remplir
-           sans une deuxieme demande — sinon la grille s'ouvre vide et se
-           remplit un aller-retour plus tard, sous le doigt. */
-        /* La FICHE part avec la piece : bonus, degats, couleur, et le drapeau
-           des numerotees. Sans eux, survoler une piece au sol ne montrait
-           qu'un nom — or c'est exactement la que la question se pose : « est-ce
-           qu'elle vaut mieux que celle que je porte ? ». Ils sont poses UNE
-           fois, quand la piece nait ou qu'on la depose ; les retrouver au
-           moment d'envoyer l'etat les recalculerait pour chaque client, dix
-           fois par seconde, et obligerait realm.js a connaitre la boutique. */
-        c: s.contenu.map((o) => (o.stat ? { st: o.stat }
-                              : o.potion ? { po: o.potion }
-                              : { it: o.item, cl: o.cle, nm: o.nom, ra: o.rarete,
-                                  bo: o.bonus || undefined, dg: o.degats || undefined,
-                                  co: o.couleur || undefined, og: o.og || undefined })),
-        r: Number(s.reste.toFixed(1)) })),
+      /* La FICHE part avec la piece — bonus, degats, couleur, drapeau des
+         numerotees — parce que c'est la, au sol, que se pose la question
+         « est-ce qu'elle vaut mieux que celle que je porte ? ». Elle est
+         posee UNE fois, quand la piece nait ou qu'on la depose. La forme est
+         ecrite dans sacs.js : le hall et le monde de combat envoient
+         exactement le meme objet, et la page n'a qu'une facon de le lire. */
+      sacs: this.sacs.filter(pres).map(sacsAuSol.vue),
     };
   }
 
