@@ -9133,6 +9133,104 @@ class Game {
     return this._annonceVue(a);
   }
 
+  /*
+   * ==================== LE MARCHE DES ANIMAUX ====================
+   *
+   * MEME liste, meme sequestre, meme chemin pour l'argent que les pieces et
+   * les potions. Une annonce d'oeuf se reconnait a son champ `oeuf`, une
+   * annonce de familier a son `fam`. Ouvrir une troisieme liste aurait voulu
+   * dire reecrire une troisieme fois « la chose quitte le vendeur AVANT que
+   * l'annonce existe » — et la rater d'un cote, c'est dupliquer ce qui tombe
+   * une fois sur mille deux cents.
+   *
+   * ---- pourquoi le prix est LIBRE ----
+   *
+   * Le comptoir a potions est a prix fixe, et pour une bonne raison : deux
+   * potions de vie sont identiques, donc un prix libre n'y produit pas un
+   * marche mais une course vers le bas. Un oeuf de tenebre n'est pas une
+   * potion, et un Prism de niveau quatre-vingts encore moins : il n'existe
+   * qu'un exemplaire de CETTE bete, avec CETTE progression. Il n'y a rien a
+   * sous-coter, donc rien a effondrer.
+   *
+   * ---- pourquoi le familier PART ----
+   *
+   * Vendre une copie serait fabriquer un familier. Celui qui achete recoit
+   * exactement celui que l'autre a nourri, avec son XP ; le vendeur ne l'a
+   * plus. C'est ce qui donne un prix a une progression — et c'est la seule
+   * forme de vente qui ne cree rien.
+   *
+   * ---- et pourquoi on ne peut pas ACHETER un familier qu'on a deja ----
+   *
+   * Un compte ne tient qu'un exemplaire par espece : `p.familiers` est indexe
+   * par elle. Deux Prism n'y rentrent pas, et l'achat ecraserait le premier.
+   * Refuser est la seule reponse qui ne detruise rien. Un OEUF, lui, s'achete
+   * meme si l'on a l'animal : il se range au coffre et se revend.
+   */
+  marcheVendOeuf(addr, espece, prixStr) {
+    const moi = String(addr).toLowerCase();
+    const p = this._p(moi);
+    if (cfg.MARCHE_REQUIERT_DEPOT && !p.hasDeposited)
+      throw new Error('deposit once before selling');
+    const es = String(espece || '');
+    if (!monde.OEUFS.includes(es)) throw new Error('unknown egg');
+    p.coffreOeufs = p.coffreOeufs || {};
+    if (!(p.coffreOeufs[es] > 0)) throw new Error('that egg is not in your vault');
+    const prix = this._prixDAnnonce(prixStr);
+    this._placeDansLaVitrine(moi);
+    /* SEQUESTRE ET ANNONCE D'UN SEUL TENANT. */
+    p.coffreOeufs[es] -= 1;
+    if (p.coffreOeufs[es] <= 0) delete p.coffreOeufs[es];
+    const a = { id: this.marcheNo++, vendeur: moi, nomVendeur: p.name || moi.slice(0, 6),
+                oeuf: es, prix, qte: 1, t: Date.now() };
+    this.marche = this.marche || [];
+    this.marche.push(a);
+    journal.ajoute(moi, { k: 'mv', oeuf: es, m: String(prix) });
+    return this._annonceVue(a);
+  }
+
+  marcheVendFamilier(addr, espece, prixStr) {
+    const moi = String(addr).toLowerCase();
+    const p = this._p(moi);
+    if (cfg.MARCHE_REQUIERT_DEPOT && !p.hasDeposited)
+      throw new Error('deposit once before selling');
+    const es = String(espece || '');
+    p.familiers = p.familiers || {};
+    const f = p.familiers[es];
+    if (!f) throw new Error('you do not have that pet');
+    const prix = this._prixDAnnonce(prixStr);
+    this._placeDansLaVitrine(moi);
+    /* Il quitte le compte, et il SORT s'il etait dehors : un compagnon qui
+       continuerait de trotter derriere un vendeur qui ne l'a plus se lirait
+       comme une vente qui n'a pas pris. */
+    const xp = Math.max(0, f.xp | 0);
+    delete p.familiers[es];
+    if (p.familierActif === es) p.familierActif = null;
+    const a = { id: this.marcheNo++, vendeur: moi, nomVendeur: p.name || moi.slice(0, 6),
+                fam: { espece: es, xp }, prix, qte: 1, t: Date.now() };
+    this.marche = this.marche || [];
+    this.marche.push(a);
+    journal.ajoute(moi, { k: 'mv', fam: es, m: String(prix) });
+    return this._annonceVue(a);
+  }
+
+  /** Le prix d'une annonce, borne comme celui d'une piece. */
+  _prixDAnnonce(prixStr) {
+    const prix = Math.floor(Number(prixStr) || 0);
+    if (!(prix >= cfg.MARCHE_PRIX_MIN))
+      throw new Error('minimum price is ' + cfg.MARCHE_PRIX_MIN + ' $SWOGE');
+    if (prix > cfg.MARCHE_PRIX_MAX)
+      throw new Error('maximum price is ' + cfg.MARCHE_PRIX_MAX + ' $SWOGE');
+    return prix;
+  }
+
+  /** Le quota d'annonces, compte comme pour les pieces. */
+  _placeDansLaVitrine(moi) {
+    this.marche = this.marche || [];
+    const miennes = this.marche.filter((a) => a.vendeur === moi && !a.pot).length;
+    if (miennes >= cfg.MARCHE_ANNONCES_MAX)
+      throw new Error('you already have ' + miennes + ' items for sale');
+  }
+
   marcheAnnule(addr, id) {
     const moi = String(addr).toLowerCase();
     const i = (this.marche || []).findIndex((a) => a.id === Number(id));
@@ -9144,6 +9242,26 @@ class Game {
        l'objet est a la fois dans l'inventaire et en vente. */
     this.marche.splice(i, 1);
     const p = this._p(moi);
+    /* ---- ET L'ANIMAL REVIENT LA D'OU IL VIENT ----
+     * L'oeuf au coffre, le familier au compte. Une annonce retiree qui ne
+     * rendrait rien serait une confiscation — et c'est justement ce que le
+     * sequestre est cense empecher. */
+    if (a.oeuf) {
+      p.coffreOeufs = p.coffreOeufs || {};
+      p.coffreOeufs[a.oeuf] = (p.coffreOeufs[a.oeuf] | 0) + 1;
+      return { annule: a.id, oeuf: a.oeuf };
+    }
+    if (a.fam) {
+      p.familiers = p.familiers || {};
+      /* Il a pu en racheter un de la meme espece pendant que l'annonce
+         courait. On garde alors le MEILLEUR des deux : rendre l'ancien
+         ecraserait celui qu'il vient de payer. */
+      const deja = p.familiers[a.fam.espece];
+      if (!deja || (deja.xp | 0) < (a.fam.xp | 0)) {
+        p.familiers[a.fam.espece] = { xp: a.fam.xp | 0, ne: Math.floor(Date.now() / 1000) };
+      }
+      return { annule: a.id, fam: a.fam.espece };
+    }
     p.objets = p.objets || {};
     p.objets[a.item] = (p.objets[a.item] || 0) + (a.qte || 1);
     return { annule: a.id, item: a.item, qte: a.qte || 1 };
@@ -9163,6 +9281,14 @@ class Game {
     const p = this._p(moi);
     if (cfg.MARCHE_REQUIERT_DEPOT && !p.hasDeposited)
       throw new Error('deposit once before buying items');
+    /* ---- ON NE TIENT QU'UN EXEMPLAIRE PAR ESPECE ----
+     * `p.familiers` est indexe par l'espece : deux Prism n'y rentrent pas, et
+     * l'achat ecraserait le premier — donc detruirait la progression que
+     * l'acheteur a payee ailleurs. Le refus est la seule reponse qui ne
+     * detruise rien, et il arrive AVANT que l'argent ne bouge. */
+    if (a.fam && (p.familiers || {})[a.fam.espece]) {
+      throw new Error('you already have that pet');
+    }
     const prix = WEI(a.prix);
     if (p.balance.lt(prix)) throw new Error('not enough $SWOGE');
 
@@ -9181,8 +9307,20 @@ class Game {
     v.balance = v.balance.add(net);
     this._bumpDay(p); p.dayNet = p.dayNet.sub(prix);
     this._bumpDay(v); v.dayNet = v.dayNet.add(net);
-    p.objets = p.objets || {};
-    p.objets[a.item] = (p.objets[a.item] || 0) + 1;
+    /* L'animal arrive chez l'acheteur. L'oeuf au coffre — il n'a pas de place
+       dans un sac qui pourrait etre plein, et un achat qui echoue faute de
+       place aurait pris l'argent. Le familier avec SON XP : c'est celui que
+       l'autre a nourri, pas un neuf. */
+    if (a.oeuf) {
+      p.coffreOeufs = p.coffreOeufs || {};
+      p.coffreOeufs[a.oeuf] = (p.coffreOeufs[a.oeuf] | 0) + 1;
+    } else if (a.fam) {
+      p.familiers = p.familiers || {};
+      p.familiers[a.fam.espece] = { xp: a.fam.xp | 0, ne: Math.floor(Date.now() / 1000) };
+    } else {
+      p.objets = p.objets || {};
+      p.objets[a.item] = (p.objets[a.item] || 0) + 1;
+    }
 
     const mF = Number(ethers.utils.formatUnits(frais, cfg.DECIMALS));
     if (mF > 0) this.note('marche', mF, moi);
@@ -9211,6 +9349,30 @@ class Game {
   }
 
   _annonceVue(a) {
+    /* ---- UNE ANNONCE D'ANIMAL N'A PAS D'OBJET DE BOUTIQUE ----
+     * `boutique.item(undefined)` rend rien, et la vitrine afficherait une
+     * ligne sans nom ni couleur. On la decrit donc a part — c'est la meme
+     * forme (`item`), remplie autrement, pour que la page n'ait qu'une facon
+     * de lire une annonce. */
+    if (a.oeuf) {
+      return { id: a.id, prix: a.prix, qte: 1,
+               vendeur: a.vendeur, nomVendeur: a.nomVendeur, t: a.t,
+               oeuf: a.oeuf,
+               item: { cle: 'oeuf_' + a.oeuf, nom: NOM_OEUF[a.oeuf] || 'Egg',
+                       rarete: a.oeuf === 'legendaire' ? 'relique' : 'mythique',
+                       rareteNom: a.oeuf === 'legendaire' ? 'Relic' : 'Mythic',
+                       couleur: a.oeuf === 'legendaire' ? '#FFFFFF' : '#FF4655',
+                       genre: 'oeuf' } };
+    }
+    if (a.fam) {
+      const f = this.familierPour({ xp: a.fam.xp }, a.fam.espece);
+      return { id: a.id, prix: a.prix, qte: 1,
+               vendeur: a.vendeur, nomVendeur: a.nomVendeur, t: a.t,
+               fam: f,
+               item: { cle: 'pet_' + a.fam.espece, nom: f.nom + ' \u00b7 Lv ' + f.niveau,
+                       rarete: 'relique', rareteNom: 'Pet', couleur: '#7CFF9B',
+                       genre: 'familier' } };
+    }
     const o = boutique.item(a.item) || {};
     const r = boutique.rarete(o.rarete) || {};
     return { id: a.id, prix: a.prix, qte: a.qte || 1,
@@ -9232,6 +9394,7 @@ class Game {
   marcheListe(addr, saison) {
     const moi = String(addr || '').toLowerCase();
     const inv = (this.players.get(moi) || {}).objets || {};
+    const mesFam = (this.players.get(moi) || {}).familiers || {};
     const rang = {};
     boutique.RARETES.forEach((r, i) => { rang[r.cle] = i; });
     const l = (this.marche || [])
@@ -9240,12 +9403,30 @@ class Game {
          la vitrine afficherait des lignes sans nom ni rarete. */
       .filter((a) => !a.pot)
       .map((a) => this._annonceVue(a))
-      .filter((a) => !saison || a.item.saison === Number(saison))
+      /* Les animaux n'ont pas de saison : filtrer dessus les ferait
+         disparaitre des que l'on choisit un onglet, c'est-a-dire presque
+         toujours. */
+      .filter((a) => !saison || a.oeuf || a.fam || a.item.saison === Number(saison))
       /* `jaiDeja` est calcule ICI et non dans la page : c'est le seul filtre
          qui compte vraiment pour un collectionneur — on ouvre un marche pour
          combler un trou, pas pour racheter ce qu'on a. */
-      .map((a) => Object.assign(a, { jaiDeja: !!inv[a.item.id], mien: a.vendeur === moi }));
-    l.sort((x, y) => (rang[y.item.rarete] - rang[x.item.rarete]) || (x.prix - y.prix));
+      /* `jaiDeja` est la question du COLLECTIONNEUR, et elle n'a pas la meme
+         reponse pour un animal : pour une piece c'est « j'en ai deja une »,
+         pour un familier c'est « je ne PEUX pas l'acheter » — un compte ne
+         tient qu'un exemplaire par espece. Pour un oeuf, c'est « je l'ai deja
+         fait eclore », donc je ne pourrai pas l'ouvrir. */
+      .map((a) => Object.assign(a, {
+        jaiDeja: a.fam ? !!(mesFam || {})[a.fam.espece]
+               : a.oeuf ? !!(mesFam || {})[a.oeuf]
+               : !!inv[a.item.id],
+        mien: a.vendeur === moi }));
+    /* Les animaux d'abord, quelle que soit leur rarete nominale : c'est ce
+       qu'on vient chercher, et les noyer entre deux epees communes reviendrait
+       a ne pas les vendre. Ensuite l'ordre habituel — le plus rare en tete,
+       puis le moins cher. */
+    const animal = (a) => (a.oeuf || a.fam) ? 1 : 0;
+    l.sort((x, y) => (animal(y) - animal(x)) ||
+                     (rang[y.item.rarete] - rang[x.item.rarete]) || (x.prix - y.prix));
     return { annonces: l, miennes: l.filter((a) => a.vendeur === moi).map((a) => a.id),
              frais: cfg.MARCHE_FRAIS_BPS / 100,
              min: cfg.MARCHE_PRIX_MIN, max: cfg.MARCHE_PRIX_MAX };

@@ -2967,7 +2967,16 @@ wss.on('connection', (ws) => {
       if (m.type === 'marketSell' || m.type === 'marketCancel' || m.type === 'marketBuy') {
         let r = null, err = null;
         try {
-          if (m.type === 'marketSell') r = game.marcheVend(ws.addr, m.item, m.price, m.qty);
+          /* ---- TROIS FACONS DE VENDRE, UN SEUL MESSAGE ----
+           * `oeuf` ou `fam` a la place de `item` : le reste du chemin est le
+           * meme — meme sequestre, meme vitrine, memes cinq pour cent. Un
+           * message par nature de bien aurait voulu dire trois fois « et
+           * n'oublie pas de renvoyer la vitrine ». */
+          if (m.type === 'marketSell') {
+            r = m.oeuf ? game.marcheVendOeuf(ws.addr, m.oeuf, m.price)
+              : m.fam ? game.marcheVendFamilier(ws.addr, m.fam, m.price)
+              : game.marcheVend(ws.addr, m.item, m.price, m.qty);
+          }
           else if (m.type === 'marketCancel') r = game.marcheAnnule(ws.addr, m.id);
           else r = game.marcheAchete(ws.addr, m.id);
         } catch (e) { err = e.message; }
@@ -2981,6 +2990,13 @@ wss.on('connection', (ws) => {
         return send(ws, { type: 'market', ...game.marcheListe(ws.addr, m.season),
                           fait: r || undefined, error: err || undefined,
                           balance: game.balanceStr(ws.addr),
+                          /* Vendre ou acheter un animal change le coffre a
+                             oeufs et l'enclos. On les renvoie AVEC la vitrine :
+                             les laisser se rafraichir chacun de leur cote
+                             montrerait un familier qu'on vient de vendre
+                             encore assis dans son enclos. */
+                          coffreOeufs: game.oeufsDuCoffre(ws.addr),
+                          familiers: game.familiersDe(ws.addr),
                           ...(r && !err ? game.boutiqueEtat(ws.addr, m.season) : {}) });
       }
       /* ---- LE RACHAT INSTANTANE ----
