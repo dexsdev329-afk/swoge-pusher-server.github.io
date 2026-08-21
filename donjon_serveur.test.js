@@ -36,9 +36,15 @@ process.env.DATA_DIR = fs.mkdtempSync('/tmp/dsrv-');
 process.env.RPC_URL = ''; process.env.ADMIN_KEY = 'k';
 process.env.GAME_IMAGE_BASE = 'https://example.invalid/media';
 
+/* Le canal est remplace par un carnet : on ne veut pas envoyer de messages,
+   on veut savoir CE QU'ON AURAIT ENVOYE. Une annonce qui part deux fois, ou
+   qui ne part pas, ne se voit d'aucune autre facon. */
+const ANNONCES = [];
 const tg = require.resolve('./telegram');
 require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
-  notify(){}, notifyPhoto(){}, sendDocument(){}, chatEstPublic(){return true;}, enabled(){return true;} } };
+  notify(t){ ANNONCES.push({ image: null, texte: String(t) }); },
+  notifyPhoto(i, t){ ANNONCES.push({ image: i || null, texte: String(t) }); },
+  sendDocument(){}, chatEstPublic(){return true;}, enabled(){return true;} } };
 
 (async () => {
   const port = await new Promise((r) => { const s = net.createServer(); s.listen(0, () => { const q = s.address().port; s.close(() => r(q)); }); });
@@ -180,6 +186,128 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
   const etatD = await attend(sa, 'realmEtat');
   ok(Array.isArray(etatD.portails), 'l\'etat porte les portes');
   ok(etatD.portails.some((q) => q.rt === 1), 'dont celle du sas');
+
+  // ================== 2 bis. TOUT LE MONDE APPREND QU'ELLE S'EST OUVERTE
+  //
+  // C'est ce qui rend le donjon TROUVABLE. Optimus vit dans la lave avec un
+  // poids de 0,12 : sans annonce, on pouvait jouer cent heures sans jamais
+  // voir une porte s'ouvrir, et trois salles, un boss et huit reliques
+  // seraient restes derriere une porte que presque personne ne verrait.
+  {
+    /* Un temoin, DANS LE MONDE OUVERT et loin de la porte. */
+    const wt = ethers.Wallet.createRandom();
+    const st = await connecte(wt);
+    const T = wt.address.toLowerCase();
+    /* Une VRAIE lame du catalogue, equipee par la vraie route : le poing porte
+       a cent cinquante, et Optimus pose assez pres pour qu'un poing l'atteigne
+       est Optimus assez pres pour tuer le temoin avant le premier
+       projectile. */
+    const pt = moteur._p(wt.address);
+    pt.skins = { andy: true }; pt.skinActif = 'andy';
+    const lame = B.ITEMS.concat(B.ITEMS_DROP)
+      .find((o) => o.famille === 'lame' && o.rarete === 'mythique');
+    pt.objets[lame.id] = (pt.objets[lame.id] || 0) + 1;
+    moteur.equipeArme(wt.address, 'andy', lame.id);
+    st.send(JSON.stringify({ type: 'realmJoin' }));
+    await attend(st, 'realmEntre');
+    /* Et un autre, DANS le donjon : lui ne doit rien recevoir. Une porte qu'on
+       ne peut pas atteindre depuis l'endroit ou l'on est n'est pas une
+       nouvelle, c'est une distraction pendant un combat. */
+    const wd = ethers.Wallet.createRandom();
+    const sd = await connecte(wd);
+    const Dd = wd.address.toLowerCase();
+    sd.send(JSON.stringify({ type: 'realmJoin' }));
+    await attend(sd, 'realmEntre');
+    poseLaPorte(Dd);
+    sd.send(JSON.stringify({ type: 'realmPorte' }));
+    await attend(sd, 'realmEntre');
+    await dort(200);
+
+    const avant = ANNONCES.length;
+    st.recus.length = 0; sd.recus.length = 0;
+    /* ---- ON L'ABAT PAR LE VRAI CHEMIN ----
+     * Appeler `_abat` a la main passerait a cote de tout ce qu'on veut
+     * mesurer : c'est la boucle de jeu qui distribue les evenements, et un
+     * evenement fabrique dans l'essai n'y entre jamais. On tire donc vraiment,
+     * et c'est le serveur qui constate la mort — la meme difference qu'entre
+     * un jeu ou l'on peut se donner des niveaux et un jeu ou l'on ne peut
+     * pas. */
+    const j = monde0.joueurs.get(T);
+    const t = M.MONSTRES.optimus;
+    const mm = { id: monde0._nouvelId(), espece: 'optimus', biome: 'lave',
+                 x: j.x + 280, y: j.y, ancreX: j.x + 280, ancreY: j.y,
+                 pv: 1, pvMax: t.pv, dir: 'down', cible: null,
+                 recharge: 0, rechargeT: 0, stase: 0, errX: 0, errY: 0, errChrono: 0 };
+    monde0.monstres.push(mm);
+    /* On compte les portes AVANT : il en traine deja du bloc precedent, et
+       « la liste n'est pas vide » aurait ete vrai des le premier tour — la
+       boucle de tir n'aurait jamais tourne, et l'essai aurait mesure le
+       silence en croyant mesurer une porte. */
+    const nAvant = monde0.portails.length;
+    for (let tour = 0; tour < 30 && monde0.portails.length === nAvant; tour++) {
+      st.send(JSON.stringify({ type: 'realmTir', a: 0,
+                               x: Math.round(j.x), y: Math.round(j.y) }));
+      await dort(120);
+    }
+    await dort(400);
+    ok(monde0.portails.length > nAvant, 'la porte s\'est ouverte pour de vrai');
+
+    const vu = await attend(st, 'realmPortailOuvert', 3000);
+    eq(vu.donjon, 'forge', 'le monde entier apprend qu\'une porte s\'est ouverte');
+    ok(Number.isFinite(vu.x) && Number.isFinite(vu.y),
+       'avec sa position, pour qu\'on puisse y aller');
+    ok(vu.duree > 0, 'et le temps qu\'il reste pour y arriver');
+    eq(sd.recus.filter((x) => x.type === 'realmPortailOuvert').length, 0,
+       'celui qui est deja dans un donjon n\'en entend pas parler');
+
+    /* CELUI QUI L'A OUVERTE EST MARQUE. Il a deja son propre message — le sien
+       dit « derriere toi », celui-la dit « les autres arrivent » — et la page
+       ne doit pas lui afficher les deux de la meme facon. */
+    const sien = st.recus.filter((x) => x.type === 'realmPortailOuvert').pop();
+    eq(sien.mien, true, 'celui qui l\'a ouverte le sait');
+
+    /* ET LE CANAL EST PREVENU, UNE FOIS. */
+    const neuves = ANNONCES.slice(avant).filter((a) => /PORTAL/i.test(a.texte));
+    eq(neuves.length, 1, 'le canal est prevenu, une seule fois');
+    ok(/FORGE/i.test(neuves[0].texte), 'et il dit de quel donjon il s\'agit');
+    ok(/portail_forge\.jpg$/.test(String(neuves[0].image || '')),
+       `avec l'image de la porte (${neuves[0].image})`);
+    /* PAS DE COORDONNEES DANS LE CANAL. Une position lisible par n'importe qui
+       ferait de l'annonce une carte au tresor pour quelqu'un qui n'a jamais mis
+       les pieds dans le monde. Ceux qui jouent ont deja la fleche a l'ecran. */
+    eq(/\b\d{3,}\s*,\s*\d{3,}\b/.test(neuves[0].texte), false,
+       'et il ne donne pas la position');
+
+    /* UNE PORTE DE RETOUR N'EST PAS UNE NOUVELLE. Elle ne mene nulle part :
+       l'annoncer enverrait tout le monde courir vers une porte qui ramene la
+       ou ils sont deja. */
+    const avant2 = ANNONCES.length;
+    st.recus.length = 0;
+    const nAvant2 = monde0.portails.length;
+    const mb = { id: monde0._nouvelId(), espece: 'fonderie', biome: 'donjon',
+                 x: j.x + 280, y: j.y, ancreX: j.x + 280, ancreY: j.y,
+                 pv: 1, pvMax: M.MONSTRES.fonderie.pv, dir: 'down', cible: null,
+                 recharge: 0, rechargeT: 0, stase: 0, errX: 0, errY: 0, errChrono: 0 };
+    monde0.monstres.push(mb);
+    for (let tour = 0; tour < 30 && monde0.portails.length === nAvant2; tour++) {
+      st.send(JSON.stringify({ type: 'realmTir', a: 0,
+                               x: Math.round(j.x), y: Math.round(j.y) }));
+      await dort(120);
+    }
+    await dort(400);
+    ok(monde0.portails.some((q) => q.retour), 'la porte de retour est bien tombee');
+    eq(ANNONCES.slice(avant2).filter((a) => /PORTAL/i.test(a.texte)).length, 0,
+       'une porte de retour n\'est annoncee nulle part');
+
+    sd.send(JSON.stringify({ type: 'realmLeave' }));
+    st.close(); sd.close();
+    await dort(300);
+    /* On ne retire QUE ce que ce bloc a pose. Vider la liste entiere
+       emporterait la porte du bloc precedent — celle par laquelle le premier
+       joueur est entre — et la suite se plaindrait de ne pas trouver de
+       donjon, tres loin d'ici, sans qu'on voie le rapport. */
+    monde0.portails = monde0.portails.filter((q) => q.id === porte.id);
+  }
 
   // ================== 3. UNE PORTE, UN DONJON
   const wb = ethers.Wallet.createRandom();

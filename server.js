@@ -338,6 +338,36 @@ function notifyCoffre(addr, g) {
     (base ? `\n<a href="${base}/games.html">Open a chest \u2197</a>` : ''));
 }
 
+/* ---- UNE PORTE DE DONJON VIENT DE S'OUVRIR ----
+ *
+ * La meme raison que la diffusion en jeu, poussee un cran plus loin : la
+ * plupart des gens ne sont pas connectes au moment ou Optimus tombe. Le canal
+ * est le seul endroit ou l'on peut leur dire « maintenant », et trois minutes
+ * suffisent largement a ouvrir un onglet.
+ *
+ * On ne dit PAS ou elle est. Ce n'est pas un oubli : une coordonnee dans le
+ * canal ferait de l'annonce une carte au tresor lisible par n'importe qui, y
+ * compris par quelqu'un qui n'a jamais mis les pieds dans le monde. Ce qu'on
+ * annonce, c'est qu'il FAUT Y ETRE — ceux qui jouent ont deja la fleche a
+ * l'ecran.
+ *
+ * L'image est la meme porte que dans le jeu, composee sur le fond sombre du
+ * site : Telegram refuse le WebP en photo, et une annonce sans image se lit
+ * comme une ligne de journal systeme.
+ */
+function annoncePortail(p, nom) {
+  const base = siteBase();
+  const ou = String(p.donjon || 'dungeon');
+  const titre = ou.charAt(0).toUpperCase() + ou.slice(1);
+  tg.notifyPhoto(base ? base + '/img/shop/tg/portail_' + ou + '.jpg' : null,
+    `\uD83C\uDF00 <b>A PORTAL TO THE ${escHtml(titre.toUpperCase())} IS OPEN</b>\n` +
+    (nom ? `${escHtml(nom)} brought down <b>Optimus</b> and tore one open\n\n`
+         : `<b>Optimus</b> fell, and one tore open\n\n`) +
+    `Anyone in the wild can walk in \u00b7 <b>${Math.round(monde.PORTAIL.duree / 60)} minutes</b> before it closes\n` +
+    `The Foundry Brute waits at the bottom. It drops a relic \u2014 always.` +
+    (base ? `\n<a href="${base}/nexus.html">Get in \u2197</a>` : ''));
+}
+
 /* ---- UN SKIN VIENT D'ETRE ACHETE ----
  *
  * Rien a voir avec les saisons \u2014 donc rien a voir avec `notifyCoffre` \u2014
@@ -4366,12 +4396,41 @@ function traiteEvenements(R, ev) {
    * Le message ne dit rien de plus que ce que l'etat porte — il dit seulement
    * QUAND, et c'est tout ce qui manquait. */
   for (const p of (ev.portails || [])) {
-    if (!p.addr) continue;
-    const ws = [...realmClients].find((c) => c.addr === p.addr);
+    const ws = p.addr ? [...realmClients].find((c) => c.addr === p.addr) : null;
     if (ws && ws.readyState === 1) {
       send(ws, { type: 'realmPortail', id: p.id, donjon: p.donjon || null,
                  retour: p.retour ? 1 : 0, espece: p.espece, x: p.x, y: p.y });
     }
+    /* ---- ET TOUT LE MONDE APPREND QU'ELLE S'EST OUVERTE ----
+     *
+     * Le probleme que ca repare n'est pas un defaut de code : c'est que le
+     * donjon etait INTROUVABLE. Optimus vit dans la lave avec un poids de
+     * 0,12 — la creature la plus rare de l'anneau le plus dur. On pouvait
+     * jouer cent heures sans jamais en croiser un, et l'on avait donc bati
+     * trois salles, un boss et huit reliques derriere une porte que presque
+     * personne ne verrait s'ouvrir.
+     *
+     * La porte dure trois minutes et N'APPARTIENT A PERSONNE : c'est ecrit
+     * dans la route qui la franchit, et c'est fait pour qu'on s'y retrouve a
+     * plusieurs. Il ne manquait que le signal. Une porte annoncee transforme
+     * un evenement solitaire en course, et rend la mecanique lisible : on
+     * comprend ce qu'est un portail en voyant les autres y courir.
+     *
+     * A TOUT LE MONDE DANS LE MONDE OUVERT, y compris celui qui l'a ouverte —
+     * il recoit alors deux messages, et c'est voulu : le sien lui dit
+     * « derriere toi », celui-la lui dit « les autres arrivent ».
+     * PAS a ceux qui sont deja dans un donjon : une porte qu'on ne peut pas
+     * atteindre depuis l'endroit ou l'on est n'est pas une nouvelle, c'est
+     * une distraction pendant un combat. */
+    if (!p.donjon) continue;
+    const nom = p.addr ? (game._p(p.addr).name || null) : null;
+    for (const c of realmClients) {
+      if (c.readyState !== 1 || realmDe(c) !== realm) continue;
+      send(c, { type: 'realmPortailOuvert', id: p.id, donjon: p.donjon,
+                x: p.x, y: p.y, nom, duree: monde.PORTAIL.duree,
+                mien: c.addr === p.addr });
+    }
+    annoncePortail(p, nom);
   }
 
   /* ---- ET CE QUI NOUS TUE COUTE TOUT ----
