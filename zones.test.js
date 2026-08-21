@@ -158,9 +158,23 @@ let MODELE = null;
   {
     const r2 = new Realm({ alea: alea(12) });
     const j2 = r2.rejoint(A, FICHE);
+    /* ---- LOIN, ET DANS LA CARTE ----
+     * Le brasier etait pose a `j2.x + vue + 200`, en dur. Ca marchait tant
+     * que le point de naissance ne bougeait pas — mais il se tire, et le jour
+     * ou le peuplement a change, le tirage a consomme d'autres nombres et le
+     * joueur est ne pres du bord droit. Le brasier se retrouvait alors HORS
+     * de la carte, ramene dedans par la borne de deplacement, donc a portee
+     * de vue : il marquait le sol, et l'essai accusait le monde d'un defaut
+     * qui etait le sien.
+     * On choisit donc le cote ou il y a la place. */
+    const loin = t.vue + 200;
+    const versDroite = j2.x + loin < M.MONDE.w - 100;
+    const bx = versDroite ? j2.x + loin : j2.x - loin;
+    ok(bx > 100 && bx < M.MONDE.w - 100,
+       `le brasier tient dans la carte, hors de vue (x ${Math.round(bx)})`);
     r2.monstres = [{ id: 1, espece: 'brasier', biome: 'lave',
-                     x: j2.x + t.vue + 200, y: j2.y,
-                     ancreX: j2.x + t.vue + 200, ancreY: j2.y, pv: t.pv, pvMax: t.pv,
+                     x: bx, y: j2.y,
+                     ancreX: bx, ancreY: j2.y, pv: t.pv, pvMax: t.pv,
                      dir: 'down', cible: null, recharge: 0, rechargeT: 0,
                      stase: 0, errX: 0, errY: 0, errChrono: 0 }];
     let m2 = 0;

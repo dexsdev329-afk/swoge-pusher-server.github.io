@@ -171,15 +171,34 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
 {
   const r = new Realm({ alea: alea(3) });
   const j = r.rejoint(A, FICHE);
-  // on plante un lime a portee de vue, mais pas au contact
+  /* ---- ON CHERCHE UNE PLACE LIBRE, ON NE LA SUPPOSE PAS ----
+   * Le lime etait plante a `j.x + 300`, en dur. Ca marchait tant que le
+   * peuplement ne bougeait pas : le meme germe donnait la meme carte et le
+   * meme point de naissance. Le jour ou l'anneau du debut est passe de
+   * quarante a cent dix creatures, le tirage a consomme plus de nombres, tout
+   * a glisse — et le lime s'est retrouve DANS un rocher, immobile. L'essai
+   * disait alors « il ne se rapproche pas », ce qui etait vrai et n'avait
+   * rien a voir avec ce qu'il verifie.
+   * On essaie donc les quatre directions et l'on garde la premiere qui soit
+   * libre pour le monstre ET pour le chemin qu'il doit parcourir. */
+  const RAY = M.MONSTRES.lime.rayon;
+  let px = null, py = null;
+  for (const [dx, dy] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+    let bon = true;
+    for (let k = 40; k <= 300; k += 20) {
+      if (M.bloque(r.obstacles, j.x + dx * k, j.y + dy * k, RAY)) { bon = false; break; }
+    }
+    if (bon) { px = j.x + dx * 300; py = j.y + dy * 300; break; }
+  }
+  ok(px !== null, 'on trouve une direction degagee autour du joueur');
   r.monstres = [{ id: 99, espece: 'lime', biome: 'terre',
-                  x: j.x + 300, y: j.y, ancreX: j.x + 300, ancreY: j.y,
+                  x: px, y: py, ancreX: px, ancreY: py,
                   pv: 60, pvMax: 60, dir: 'down', cible: null, recharge: 0,
                   errX: 0, errY: 0, errChrono: 0 }];
   const d0 = 300;
   for (let i = 0; i < 20; i++) r.pas(0.1);
   const m = r.monstres[0];
-  const d1 = Math.abs(m.x - j.x);
+  const d1 = Math.hypot(m.x - j.x, m.y - j.y);
   ok(d1 < d0, 'le monstre s est rapproche (de ' + d0 + ' a ' + Math.round(d1) + ')');
   eq(m.cible, A, 'et il a bien pris le joueur pour cible');
 

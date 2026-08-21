@@ -1710,22 +1710,52 @@ const MONSTRES = {
    aussi souvent qu'un lime, et l'anneau de lave en compterait quatre. Absent
    vaut 1. C'est la MEME table qui dit qui vit ou — on n'en ouvre pas une
    seconde, on lui ajoute une colonne. */
+/* ---- COMBIEN DE MONDE DANS CHAQUE ANNEAU ----
+ *
+ * Le nombre est ECRIT, mais il se juge a la DENSITE — et c'est la que le
+ * peuplement etait faux. Mesure faite sur la carte (`biomeEn` echantillonne en
+ * quatre cent sur quatre cent) :
+ *
+ *     anneau   | part de la carte | monstres | par part de carte
+ *     lave     |       3,1 %      |    18    |   573
+ *     cendres  |       8,2 %      |    30    |   365
+ *     neige    |      15,1 %      |    40    |   266
+ *     marais   |      21,4 %      |    38    |   178
+ *     terre    |      52,2 %      |    40    |    77   <-- sept fois moins
+ *
+ * L'anneau du DEBUT fait plus de la moitie de la carte et n'avait que quarante
+ * creatures. Un joueur qui commence traverse donc trente millions d'unites
+ * carrees en croisant une bestiole tous les huit cents. Ce n'est pas « facile
+ * », c'est vide — et un monde vide au premier contact est celui qu'on quitte.
+ *
+ * On remonte les trois anneaux exterieurs. Le gradient reste — le coeur est
+ * toujours trois fois plus dense que le bord, et c'est lui qui fait qu'on lit
+ * le danger sous ses pieds — mais il cesse d'etre un facteur sept.
+ *
+ * Le calcul : cent dix limes sur 52 % de la carte, c'est une creature toutes
+ * les cinq cents unites environ, et l'ecran en montre mille quatre cents de
+ * large. On en voit donc six ou sept a la fois au lieu de deux. C'est
+ * exactement ce qu'il faut pour que l'anneau du debut apprenne a tirer.
+ */
 const PEUPLEMENT = {
-  terre:   { especes: ['lime'], nombre: 40 },
+  /* Que des limes : soixante points de vie, lentes, sans projectile. La
+     densite peut donc monter sans que l'anneau devienne dangereux — ce qu'on
+     ajoute ici, c'est de la VIE, pas de la difficulte. */
+  terre:   { especes: ['lime'], nombre: 110 },
   /* L'archer arrive des le marais : c'est la premiere creature qu'on ne peut
      pas simplement contourner, et l'apprendre tot vaut mieux que l'apprendre
      au milieu de trois autres. */
   /* La nuee pese plus que ses voisines : c'est une nuee, elle n'existe qu'au
      pluriel. Elle n'est PAS dans la terre — l'anneau du debut apprend a
      esquiver un projectile, et on n'apprend pas ca sous seize creatures. */
-  marais:  { especes: ['lime', 'archer', 'rodeur', 'nuee', 'hoodrat'], nombre: 38,
+  marais:  { especes: ['lime', 'archer', 'rodeur', 'nuee', 'hoodrat'], nombre: 52,
              poids: { nuee: 2.2, hoodrat: 1.4 } },
   /* La meduse n'est PAS avant la neige : perdre le controle de son
      personnage avant d'avoir compris qu'on peut encore tirer ferait
      abandonner. */
   neige:   { especes: ['lime', 'skeleton', 'archer', 'meduse', 'nuee', 'carapace',
                        'hoodrat', 'sylvain'],
-             nombre: 40, poids: { nuee: 1.5, carapace: 0.18, hoodrat: 1.2 } },
+             nombre: 44, poids: { nuee: 1.5, carapace: 0.18, hoodrat: 1.2 } },
   cendres: { especes: ['skeleton', 'glace', 'archer', 'meduse', 'oracle', 'colosse',
                        'machine', 'sylvain', 'couronne'],
              nombre: 30, poids: { colosse: 0.4, machine: 0.22, couronne: 0.6 } },
