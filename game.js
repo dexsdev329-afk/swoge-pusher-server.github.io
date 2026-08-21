@@ -495,6 +495,10 @@ class Game {
            clefs neuves, verifiees libres — la lecon de `fi` contre `fio` a
            coute la liste de parrainage de tout le monde. */
         soe: (p.sacOeufs && Object.keys(p.sacOeufs).length) ? p.sacOeufs : undefined,
+        /* Les oeufs ranges au coffre. Une clef separee de `soe` : le sac se
+           perd a la mort, le coffre non, et les fondre reviendrait a devoir
+           se souvenir, a chaque endroit, de quelle moitie on parle. */
+        coe: (p.coffreOeufs && Object.keys(p.coffreOeufs).length) ? p.coffreOeufs : undefined,
         fam: (p.familiers && Object.keys(p.familiers).length) ? p.familiers : undefined,
         /* Lequel est dehors. Sans ca, le familier rentre a l'enclos a chaque
            redemarrage du serveur et le joueur croit l'avoir perdu. */
@@ -722,6 +726,7 @@ class Game {
            s'ouvre, il ne se collectionne pas. Ce qui survit a la mort, c'est
            le FAMILIER qu'il donne, et il vit ailleurs (`familiers`). */
         sacOeufs: (d.soe && typeof d.soe === 'object') ? d.soe : {},
+        coffreOeufs: (d.coe && typeof d.coe === 'object') ? d.coe : {},
         /* Les familiers eclos, par espece. Ils ne meurent jamais et ne se
            perdent jamais — c'est la promesse faite au joueur, et un compte
            qui redemarre doit la tenir aussi. */
@@ -6818,18 +6823,25 @@ class Game {
     const p = this._p(addr);
     p.sacOeufs = p.sacOeufs || {};
     if (!(p.sacOeufs[es] > 0)) throw new Error('You have no ' + (NOM_OEUF[es] || 'egg'));
+    p.familiers = p.familiers || {};
+    /* ---- ON N'ECLOT PAS DEUX FOIS LA MEME ESPECE ----
+     *
+     * Le doublon nourrissait le familier qu'on avait. C'etait la reponse a une
+     * question qui n'existe plus : « que faire d'un oeuf inutile ? ». Il n'est
+     * plus inutile — il se range au coffre, et il se VEND.
+     *
+     * Et le refus arrive AVANT que l'oeuf ne quitte le sac. C'est le seul
+     * ordre acceptable : un refus qui aurait deja consomme l'oeuf detruirait
+     * la chose la plus rare du jeu pour un geste que le joueur n'a pas voulu.
+     */
+    if (p.familiers[es]) {
+      throw new Error('You already have ' + (NOM_FAMILIER[es] || 'that pet') +
+                      ' — store the egg in your vault or sell it');
+    }
+    /* ET MAINTENANT SEULEMENT, il quitte le sac. */
     p.sacOeufs[es] -= 1;
     if (p.sacOeufs[es] <= 0) delete p.sacOeufs[es];
     p.sacCases = null;
-    p.familiers = p.familiers || {};
-    const deja = p.familiers[es];
-    if (deja) {
-      /* Un deuxieme oeuf de la meme espece nourrit celui qu'on a. On ne rend
-         PAS un refus : refuser obligerait le joueur a jeter l'oeuf le plus
-         rare du jeu, ou a le garder pour rien dans une case de son sac. */
-      deja.xp = (deja.xp | 0) + XP_OEUF_DOUBLE;
-      return { espece: es, nouveau: false, familier: this.familierPour(deja, es) };
-    }
     /* Pas de `niveau` range ici : il se deduit de l'XP (voir familierPour).
        L'ecrire aurait cree le deuxieme chiffre qu'on cherche justement a ne
        pas avoir. */
@@ -6995,6 +7007,73 @@ class Game {
       out.push(f);
     }
     return out;
+  }
+
+  /* ================== LE COFFRE A OEUFS ==================
+   *
+   * Le sac a huit places et on le perd en mourant. Un oeuf qu'on ne peut plus
+   * faire eclore — parce qu'on a deja l'animal — n'avait donc que deux
+   * sorts : occuper une place jusqu'a la prochaine mort, ou etre jete. Les
+   * deux reviennent a detruire la chose la plus rare du jeu.
+   *
+   * Il a maintenant sa reserve, au coffre, avec le reste de ce qu'on garde.
+   * Elle est SANS LIMITE de place, et c'est deliberé : le sac compte des
+   * places parce qu'emporter du butin doit couter quelque chose ; le coffre
+   * ne compte rien parce qu'y ranger ne coute rien. Ajouter un plafond ici
+   * n'aurait produit qu'une seule chose — des joueurs qui jettent des oeufs.
+   */
+  oeufsDuCoffre(addr) {
+    const p = this._p(addr);
+    const c = p.coffreOeufs || {};
+    const out = [];
+    for (const es of monde.OEUFS) {
+      if (!(c[es] > 0)) continue;
+      out.push({ espece: es, nom: NOM_OEUF[es] || 'Egg', cle: 'oeuf_' + es,
+                 quantite: c[es] | 0,
+                 /* Ce qu'on peut en faire, dit par le SERVEUR : c'est lui qui
+                    sait si l'animal est deja eclos, et la page ne doit pas
+                    avoir a le deduire d'une seconde liste. */
+                 eclos: !!(p.familiers || {})[es] });
+    }
+    return out;
+  }
+
+  /** Du sac au coffre. */
+  rangeOeuf(addr, espece) {
+    const es = String(espece || '');
+    if (!monde.OEUFS.includes(es)) throw new Error('Unknown egg');
+    const p = this._p(addr);
+    p.sacOeufs = p.sacOeufs || {};
+    if (!(p.sacOeufs[es] > 0)) throw new Error('That one is not in your backpack');
+    p.sacOeufs[es] -= 1;
+    if (p.sacOeufs[es] <= 0) delete p.sacOeufs[es];
+    p.sacCases = null;
+    p.coffreOeufs = p.coffreOeufs || {};
+    p.coffreOeufs[es] = (p.coffreOeufs[es] | 0) + 1;
+    return { espece: es, coffre: p.coffreOeufs[es] };
+  }
+
+  /** Et du coffre au sac. */
+  sortOeuf(addr, espece) {
+    const es = String(espece || '');
+    if (!monde.OEUFS.includes(es)) throw new Error('Unknown egg');
+    const p = this._p(addr);
+    p.coffreOeufs = p.coffreOeufs || {};
+    if (!(p.coffreOeufs[es] > 0)) throw new Error('That one is not in your vault');
+    /* ---- LE SAC PEUT ETRE PLEIN ----
+     * On verifie AVANT de retirer du coffre. L'ordre inverse ferait
+     * disparaitre l'oeuf entre les deux : sorti du coffre, refuse par le sac,
+     * nulle part. C'est la faute la plus chere du jeu et elle ne coute qu'une
+     * ligne a eviter. */
+    if (this.sacRempli(addr) >= monde.SAC.cases && !(p.sacOeufs || {})[es]) {
+      throw new Error('Your backpack is full');
+    }
+    p.coffreOeufs[es] -= 1;
+    if (p.coffreOeufs[es] <= 0) delete p.coffreOeufs[es];
+    p.sacOeufs = p.sacOeufs || {};
+    p.sacOeufs[es] = (p.sacOeufs[es] | 0) + 1;
+    p.sacCases = null;
+    return { espece: es, sac: p.sacOeufs[es] };
   }
 
   /** Un oeuf du sac s'en va au sol. Meme geste que la fiole, meme forme. */

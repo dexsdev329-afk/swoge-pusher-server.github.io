@@ -3260,14 +3260,33 @@ wss.on('connection', (ws) => {
         if (!err) persistSoon();
         return send(ws, { type: 'oeufOuvre', ...(r || {}), error: err || undefined,
                           sacJoueur: game.sacPour(ws.addr),
+                          coffreOeufs: game.oeufsDuCoffre(ws.addr),
                           familiers: game.familiersDe(ws.addr) });
       }
       /* Les familiers d'un compte, sur demande. Le panneau de Petworld les
          lit a l'ouverture ; les envoyer avec `auth` les enverrait a tous ceux
          qui n'y mettront jamais les pieds. */
+      /* ---- LES OEUFS RANGES AU COFFRE ----
+       * Ils voyagent avec la liste des familiers : le panneau montre les deux
+       * ensemble (« tu as celui-la, donc cet oeuf-la ne peut plus eclore »),
+       * et deux messages pour une seule question auraient laisse la page les
+       * afficher dans deux etats differents pendant une demi-seconde. */
+      if (m.type === 'oeufRange' || m.type === 'oeufSort') {
+        if (!ws.addr) return;
+        let r = null, err = null;
+        try {
+          r = m.type === 'oeufRange' ? game.rangeOeuf(ws.addr, m.espece)
+                                     : game.sortOeuf(ws.addr, m.espece);
+        } catch (e) { err = e.message; }
+        if (!err) persistSoon();
+        return send(ws, { type: m.type, ...(r || {}), error: err || undefined,
+                          sacJoueur: game.sacPour(ws.addr),
+                          coffreOeufs: game.oeufsDuCoffre(ws.addr) });
+      }
       if (m.type === 'familiers') {
         if (!ws.addr) return;
         return send(ws, { type: 'familiers', familiers: game.familiersDe(ws.addr),
+                          coffreOeufs: game.oeufsDuCoffre(ws.addr),
                           /* Les regles du repas partent d'ici. Une page qui
                              ecrirait « Common and Rare only » de son cote
                              continuerait de le promettre le jour ou l'on

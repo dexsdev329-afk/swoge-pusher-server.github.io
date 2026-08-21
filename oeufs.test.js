@@ -20,8 +20,14 @@
  * 4. LE FAMILIER NE MEURT JAMAIS. Ni avec le personnage, ni avec le compte
  *    qui redemarre. C'est la promesse faite au joueur, et elle tient a une
  *    seule chose : il vit sur le COMPTE, pas sur le personnage.
- * 5. UN DEUXIEME OEUF NE DONNE PAS UN DEUXIEME CHIEN. Il nourrit celui qu'on
- *    a — refuser obligerait a jeter la chose la plus rare du jeu.
+ * 5. UN DEUXIEME OEUF NE S'OUVRE PAS. On a deja l'animal ; il se range au
+ *    coffre, ou il se vend. Il nourrissait le familier qu'on avait — c'etait
+ *    la reponse a une question qui n'existe plus (« que faire d'un oeuf
+ *    inutile ? »), et le refus arrive AVANT que l'oeuf ne quitte le sac : un
+ *    refus qui l'aurait deja consomme detruirait la chose la plus rare du jeu.
+ * 6. LE COFFRE A OEUFS NE PERD RIEN. Le sac se perd a la mort, le coffre non,
+ *    et le passage de l'un a l'autre ne doit jamais faire disparaitre un oeuf
+ *    entre les deux.
  */
 const assert = require('assert');
 const fs = require('fs');
@@ -150,11 +156,51 @@ console.log('\n-- on ouvre l oeuf --');
   ok(!!r.familier.pouvoir, `avec son pouvoir (${r.familier.pouvoir.nom})`);
   eq(g.sacRempli(A), 0, 'et l oeuf a quitte le sac');
 
+  /* ---- ET LE DEUXIEME NE S OUVRE PAS ----
+   * Le refus doit arriver AVANT que l oeuf ne quitte le sac. C est le seul
+   * ordre acceptable : un refus qui l aurait deja consomme detruirait la chose
+   * la plus rare du jeu pour un geste que le joueur n a pas voulu. */
   g.prendOeuf(A, 'legendaire');
-  const r2 = g.ouvreOeuf(A, 'legendaire');
-  ok(!r2.nouveau, 'un DEUXIEME oeuf de la meme espece ne donne pas un second familier');
-  ok(r2.familier.xp > 0, `il nourrit celui qu on a (${r2.familier.xp} xp)`);
+  let deux = null;
+  try { g.ouvreOeuf(A, 'legendaire'); } catch (e) { deux = e.message; }
+  ok(/already have/.test(deux || ''),
+     `un DEUXIEME oeuf de la meme espece est refuse (${deux})`);
+  eq(g.sacRempli(A), 1, 'et il est TOUJOURS dans le sac — rien n a ete detruit');
   eq(g.familiersDe(A).length, 1, 'il n y a toujours qu un familier');
+
+  /* ---- IL SE RANGE AU COFFRE ---- */
+  const range = g.rangeOeuf(A, 'legendaire');
+  eq(range.coffre, 1, 'il part au coffre');
+  eq(g.sacRempli(A), 0, 'et quitte le sac');
+  const auCoffre = g.oeufsDuCoffre(A);
+  eq(auCoffre.length, 1, 'le coffre en montre un');
+  eq(auCoffre[0].espece, 'legendaire', 'de la bonne espece');
+  ok(auCoffre[0].eclos === true,
+     'et il DIT que l animal est deja eclos — la page n a pas a le deduire');
+
+  /* ---- ET IL EN RESSORT ---- */
+  const sorti = g.sortOeuf(A, 'legendaire');
+  eq(sorti.sac, 1, 'on le reprend au sac');
+  eq(g.oeufsDuCoffre(A).length, 0, 'le coffre est vide');
+  eq(g.sacRempli(A), 1, 'et le sac le porte — rien ne s est perdu en chemin');
+
+  /* ---- LE SAC PLEIN NE FAIT PAS DISPARAITRE L OEUF ----
+   * On verifie la place AVANT de retirer du coffre. L ordre inverse laisserait
+   * l oeuf nulle part : sorti du coffre, refuse par le sac. */
+  g.rangeOeuf(A, 'legendaire');
+  const q = g._p(A);
+  q.sac = {};
+  const it = require('./boutique');
+  let mis = 0;
+  for (let id = 1000; id < 6000 && mis < monde.SAC.cases; id++) {
+    if (it.item(id)) { q.sac[id] = 1; mis++; }
+  }
+  q.sacCases = null;
+  eq(g.sacRempli(A), monde.SAC.cases, 'le sac est plein');
+  let plein = null;
+  try { g.sortOeuf(A, 'legendaire'); } catch (e) { plein = e.message; }
+  ok(/full/.test(plein || ''), `sortir dans un sac plein est refuse (${plein})`);
+  eq(g.oeufsDuCoffre(A).length, 1, 'et l oeuf est TOUJOURS au coffre');
 
   let refus = null;
   try { g.ouvreOeuf(A, 'feu'); } catch (e) { refus = e.message; }
