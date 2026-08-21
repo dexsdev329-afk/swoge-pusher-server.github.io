@@ -73,6 +73,35 @@ class Realm {
      * tels quels — la page ne peut pas les redeviner, et un desaccord se
      * verrait tout de suite : on marcherait dans un rocher, ou l'on serait
      * arrete par du vide. */
+    /* ---- LE PLAN, OU LE MONDE OUVERT ----
+     * Ce constructeur codait le monde ouvert en dur : ses salles, ses rochers,
+     * sa population, son point d'arrivee au bord. Un donjon a les memes
+     * creatures, les memes tirs, la meme mort et le meme butin — mais pas la
+     * meme geometrie.
+     *
+     * Deux facons de le faire. Marquer chaque chose d'un numero d'etage et
+     * verifier ce numero partout : dans le monstre qui cherche un joueur, dans
+     * le tir qui cherche un monstre, dans la zone qui cherche des pieds, dans
+     * le pouvoir, dans la portee de `etatPour`. Six boucles, six occasions
+     * d'oublier la verification — et l'oubli serait MUET, parce que deux
+     * donjons vivent aux memes coordonnees : une fleche tiree dans l'un
+     * toucherait une creature de l'autre, posee au meme endroit, et personne
+     * ne saurait pourquoi il perd de la vie sans etre touche.
+     *
+     * L'autre facon est celle-ci : une DEUXIEME simulation. L'isolation n'est
+     * alors plus une verification qu'on peut oublier, c'est une structure — le
+     * joueur du donjon n'est pas dans `joueurs`, donc rien ne peut le viser ;
+     * la creature du donjon n'est pas dans `monstres`, donc aucun tir ne peut
+     * l'atteindre. Pas une ligne des six boucles ne change.
+     *
+     * Ce qui reste a faire tient ici : ce que le plan dit, le plan le donne ;
+     * sans plan, le monde ouvert, exactement comme avant. */
+    this.plan = opts.plan || null;
+    if (this.plan) {
+      /* Un donjon n'a pas de salles gardees : c'en est une, en plus grand. */
+      this.salles = [];
+      this.obstacles = this.plan.obstacles || [];
+    } else {
     /* Les SALLES d'abord : les rochers doivent pouvoir les eviter, l'inverse
        n'aurait pas de sens — une salle a moitie mangee par un rocher n'a plus
        de porte unique, et personne ne pourrait dire pourquoi elle est
@@ -81,6 +110,7 @@ class Realm {
       ...s, vide: false, rearme: 0,
     }));
     this.obstacles = monde.obstacles(this.alea, this.salles);
+    }
     this.monstres = [];
     this.joueurs = new Map();     // addr -> etat
     this.tirs = [];
@@ -99,7 +129,30 @@ class Realm {
     this.sacs = [];
     /* Les zones marquees au sol, en attente de frapper. */
     this.zones = [];
+    /* ---- LES PORTAILS ----
+     * Une liste a part, et pas un sac d'une sorte particuliere. Un sac se
+     * RAMASSE ; un portail se FRANCHIT. Les avoir melanges aurait demande, a
+     * chaque ligne qui touche aux sacs — le ramassage, le ramassage
+     * automatique, l'echange, l'expiration, le plafond — de se souvenir
+     * d'ecarter celui-la. Cinq occasions d'en oublier une, et la premiere
+     * oubliee aurait fait ramasser une porte. */
+    this.portails = [];
     this._id = 1;
+    /* ---- LA PORTE DU SAS ----
+     * Elle existe des le premier pas, et elle ne se referme jamais (`reste`
+     * infini : le decompte de `pas` le laisse infini). Un donjon dont la
+     * sortie se meriterait enfermerait un joueur qui a mal juge sa vie — et sa
+     * mort lui couterait un equipement paye en argent reel. La difficulte d'un
+     * donjon est ce qu'on y rencontre ; jamais le fait d'y etre coince.
+     * C'est un portail comme les autres, et pas un objet a part : le dessin, la
+     * detection sous les pieds et l'envoi dans l'etat sont deja ecrits une
+     * fois. `retour` est tout ce qui la distingue. */
+    if (this.plan && this.plan.sortie) {
+      this.portails.push({ id: this._nouvelId(),
+                           x: this.plan.sortie.x, y: this.plan.sortie.y,
+                           donjon: null, retour: true, espece: null,
+                           reste: Infinity });
+    }
     this.peuple();
     for (const s of this.salles) this._armeSalle(s);
   }
@@ -184,6 +237,15 @@ class Realm {
   }
 
   peuple() {
+    /* Dans un donjon, la population est ECRITE : trois salles, une creature par
+       place prevue, le boss au fond. On ne la tire pas au sort — un donjon dont
+       le nombre de creatures changerait a chaque ouverture ne pourrait pas etre
+       equilibre, et deux joueurs qui le racontent ne parleraient pas du meme
+       endroit. */
+    if (this.plan) {
+      this.monstres = (this.plan.peuplement || []).map((m) => this._naissance(m));
+      return;
+    }
     /* ---- NI ICI NON PLUS ----
      * `repeuple` avait le garde, pas la population de depart : quatorze
      * creatures sur cent soixante naissaient dans la pierre a chaque
@@ -206,28 +268,58 @@ class Realm {
         places.push(m);
       }
     }
-    this.monstres = places.map((m) => {
-      const t = monde.MONSTRES[m.espece];
-      return {
-        id: this._nouvelId(), espece: m.espece, biome: m.biome,
-        x: m.x, y: m.y, ancreX: m.x, ancreY: m.y,
-        pv: t.pv, pvMax: t.pv, dir: 'down',
-        /* DEUX recharges : le contact et le tir. Une seule ferait qu'un
-           monstre qui vient de decocher ne peut plus frapper de pres, ce qui
-           reviendrait a lui retirer une des deux attaques au hasard. */
-        cible: null, recharge: 0, rechargeT: 0, stase: 0,
-        // la direction de flanerie, retiree de temps en temps
-        errX: 0, errY: 0, errChrono: 0,
-      };
-    });
+    this.monstres = places.map((m) => this._naissance(m));
+  }
+
+  /* La forme d'un monstre vivant, a partir d'une place. Ecrite UNE fois : le
+     monde ouvert, le donjon et le repeuplement la construisaient chacun de leur
+     cote, et le jour ou un champ s'ajoute, deux des trois l'oublient — le
+     monstre qui en manque un se comporte alors comme s'il avait un defaut, pas
+     comme s'il lui manquait une ligne. */
+  _naissance(m) {
+    const t = monde.MONSTRES[m.espece];
+    return {
+      id: this._nouvelId(), espece: m.espece, biome: m.biome,
+      x: m.x, y: m.y, ancreX: m.x, ancreY: m.y,
+      pv: t.pv, pvMax: t.pv, dir: 'down',
+      /* DEUX recharges : le contact et le tir. Une seule ferait qu'un monstre
+         qui vient de decocher ne peut plus frapper de pres, ce qui reviendrait
+         a lui retirer une des deux attaques au hasard. */
+      cible: null, recharge: 0, rechargeT: 0, stase: 0,
+      // la direction de flanerie, retiree de temps en temps
+      errX: 0, errY: 0, errChrono: 0,
+    };
   }
 
   /* ---- LES JOUEURS ---- */
 
-  /** Entrer dans le monde. `fiche` vient de game.personnageEtat. */
-  rejoint(addr, fiche) {
+  /**
+   * Entrer dans le monde. `fiche` vient de game.personnageEtat.
+   *
+   * `arrivee` est facultatif, et il sert au PASSAGE d'une simulation a
+   * l'autre : franchir un portail n'est pas entrer dans le jeu.
+   *
+   * ---- pourquoi la vie voyage avec le joueur ----
+   *
+   * Sans elle, `rejoint` remet les points de vie au maximum — c'est ce qu'il
+   * faut quand on entre en jeu. Mais un portail est une porte : entrer a dix
+   * points de vie et ressortir plein en aurait fait un bouton de soin, et le
+   * meilleur usage d'un donjon aurait ete de ne jamais le faire — entrer,
+   * ressortir, repartir chasser gueri. La chose qu'on avait construite pour
+   * etre la plus dure du jeu serait devenue sa fontaine.
+   *
+   * Les etats (brulure, paralysie, ralentissement) ne voyagent PAS, et ce
+   * n'est pas un oubli : ils sont poses par une creature qui reste de l'autre
+   * cote, ils durent quelques secondes, et les faire traverser demanderait de
+   * les recopier un a un — donc d'en oublier un le jour ou un quatrieme
+   * s'ajoute. Franchir une porte lave ce qui bruit ; ce qui compte, la vie,
+   * traverse.
+   */
+  rejoint(addr, fiche, arrivee) {
     const stats = (fiche && fiche.stats) || {};
-    const bord = this._pointDArrivee();
+    const bord = (arrivee && Number.isFinite(arrivee.x) && Number.isFinite(arrivee.y))
+      ? { x: arrivee.x, y: arrivee.y }
+      : this._pointDArrivee();
     const j = {
       addr, skin: (fiche && fiche.skin) || null, nom: (fiche && fiche.nom) || null,
       x: bord.x, y: bord.y, dir: 'up', anim: 'idle',
@@ -272,6 +364,16 @@ class Realm {
       brulReste: 0,
       recharge: 0, xpGagnee: 0, vu: 0,
     };
+    /* La vie et le mana d'avant la porte, jamais AU-DESSUS du maximum : une
+       fiche qui a change entre les deux mondes (une piece perdue, un niveau
+       gagne) ne doit pas laisser un joueur a onze cents points sur une reserve
+       de neuf cents — la barre deborderait, et le chiffre mentirait. */
+    if (arrivee && Number.isFinite(arrivee.pv)) {
+      j.pv = Math.max(1, Math.min(j.pvMax, Math.round(arrivee.pv)));
+    }
+    if (arrivee && Number.isFinite(arrivee.mp)) {
+      j.mp = Math.max(0, Math.min(j.mpMax, Math.round(arrivee.mp)));
+    }
     this.joueurs.set(addr, j);
     return j;
   }
@@ -320,6 +422,13 @@ class Realm {
   /** On arrive TOUJOURS par le bord, sur la terre : entrer directement au
       milieu de la lave tuerait un debutant avant son premier pas. */
   _pointDArrivee() {
+    /* Un donjon a UNE entree, et c'est le plan qui la nomme. Arriver au hasard
+       dans un couloir de trois tuiles reviendrait a arriver dans un mur une
+       fois sur deux, et arriver au hasard dans la salle du fond reviendrait a
+       arriver sur le boss. */
+    if (this.plan && this.plan.entree) {
+      return { x: this.plan.entree.x, y: this.plan.entree.y };
+    }
     /* ---- ET JAMAIS DANS UN ROCHER ----
      * Apparaitre coince dans un bloc donne un personnage qui ne peut plus
      * bouger que dans une direction, sans que rien ne dise pourquoi. On
@@ -553,6 +662,12 @@ class Realm {
       j.xpGagnee += t.xp;
       ev.kills.push({ addr: j.addr, espece: m.espece, xp: t.xp, x: m.x, y: m.y });
     }
+    /* ---- LA PORTE S'OUVRE AVANT QU'ON SACHE CE QUE LE SAC CONTIENT ----
+     * Posee ici, et pas apres le butin, parce qu'elle n'en depend pas : un
+     * tirage malheureux qui rendrait le sac vide fait sortir `_abat` par le
+     * `return` d'en dessous, et le donjon d'Optimus se serait referme sur un
+     * coup de des. Ce qu'ouvre sa mort ne se tire pas au sort. */
+    this._ouvrePortail(m, j, ev);
     /* Le butin tombe meme si le tueur a disparu entre-temps : le sac
        appartient au sol, pas a celui qui a porte le coup. */
     const b = monde.butinDe(m.espece, this.alea, m.biome);
@@ -574,6 +689,80 @@ class Realm {
     ev.butins = ev.butins || [];
     ev.butins.push({ addr: j ? j.addr : null, sac: sac.sac,
                      contenu: sac.contenu.slice(), x: sac.x, y: sac.y });
+  }
+
+  /**
+   * La porte qu'une creature laisse en tombant.
+   *
+   * ---- pourquoi DERRIERE elle, et pas dessous ----
+   *
+   * Le sac tombe sur place. Si le portail y tombait aussi, ramasser le butin et
+   * entrer dans le donjon seraient le meme geste au meme endroit : on serait
+   * entre sans avoir choisi. Le decalage est ce qui rend le choix possible — on
+   * voit la porte, on finit de ramasser, puis on marche dedans ou l'on s'en va.
+   *
+   * Le sens est celui de sa CHUTE : du tueur vers elle, prolonge. C'est le seul
+   * qui se lise a l'ecran comme « derriere » — un decalage vers le nord mettrait
+   * la porte devant celui qui arrivait par le sud. Sans tueur (une creature
+   * achevee par une brulure, ou dont le joueur a quitte le monde), on prend le
+   * sens ou elle regardait.
+   *
+   * Elle glisse hors des rochers et reste dans la carte. Une porte a moitie dans
+   * un rocher se verrait mais ne se franchirait pas, et personne ne pourrait
+   * deviner pourquoi.
+   */
+  _ouvrePortail(m, j, ev) {
+    const donjon = monde.PORTAIL_DE[m.espece] || null;
+    const retour = !donjon && !!monde.RETOUR_DE[m.espece];
+    if (!donjon && !retour) return null;
+    let ux = 0, uy = 0;
+    if (j) {
+      const dx = m.x - j.x, dy = m.y - j.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 1) { ux = dx / d; uy = dy / d; }
+    }
+    /* Pas de tueur, ou un tueur exactement dessus : on prend le sens ou elle
+       regardait. C'est le seul autre « derriere » qui veuille dire quelque
+       chose a l'ecran. */
+    if (!ux && !uy) {
+      if (m.dir === 'up') uy = -1;
+      else if (m.dir === 'left') ux = -1;
+      else if (m.dir === 'right') ux = 1;
+      else uy = 1;
+    }
+    const R = monde.PORTAIL.rayon;
+    /* On recule tant qu'on peut, puis on se rapproche : mieux vaut une porte un
+       peu trop pres qu'une porte dans la pierre. Le pas final (0) la remet sur
+       la creature elle-meme, ce qui est toujours libre — elle y tenait. */
+    let x = m.x, y = m.y;
+    for (const f of [1, 0.75, 0.5, 0.25, 0]) {
+      const px = Math.max(R, Math.min(monde.MONDE.w - R, m.x + ux * monde.PORTAIL.recul * f));
+      const py = Math.max(R, Math.min(monde.MONDE.h - R, m.y + uy * monde.PORTAIL.recul * f));
+      if (!monde.bloque(this.obstacles, px, py, R * 0.5)) { x = px; y = py; break; }
+    }
+    const p = { id: this._nouvelId(), x, y, donjon, retour, espece: m.espece,
+                reste: monde.PORTAIL.duree };
+    this.portails.push(p);
+    while (this.portails.length > monde.PORTAIL.plafond) this.portails.shift();
+    if (ev) {
+      ev.portails = ev.portails || [];
+      ev.portails.push({ addr: j ? j.addr : null, id: p.id, donjon, retour,
+                         espece: m.espece, x: p.x, y: p.y });
+    }
+    return p;
+  }
+
+  /** La porte SOUS LES PIEDS d'un joueur, ou null. La plus proche s'il y en a
+      plusieurs, comme pour les sacs. */
+  portailSousLesPieds(addr) {
+    const j = this.joueurs.get(addr);
+    if (!j) return null;
+    let choisi = null, d2mini = monde.PORTAIL.rayon * monde.PORTAIL.rayon;
+    for (const p of this.portails) {
+      const dx = p.x - j.x, dy = p.y - j.y, d2 = dx * dx + dy * dy;
+      if (d2 <= d2mini) { d2mini = d2; choisi = p; }
+    }
+    return choisi;
   }
 
   /** Le sac SOUS LES PIEDS d'un joueur, ou null. Le plus proche s'il y en a
@@ -724,7 +913,7 @@ class Realm {
    */
   pas(dt) {
     dt = Math.max(0, Math.min(0.5, Number(dt) || 0));
-    const ev = { degats: [], morts: [], kills: [], touches: [], regen: [], butins: [], ramasses: [], expires: [], marques: [], zones: [] };
+    const ev = { degats: [], morts: [], kills: [], touches: [], regen: [], butins: [], ramasses: [], expires: [], marques: [], zones: [], portails: [] };
     if (!dt) return ev;
 
     for (const j of this.joueurs.values()) {
@@ -764,6 +953,15 @@ class Realm {
         for (const o of perdu) ev.expires.push({ item: o.item, nom: o.nom });
       }
       this.sacs.splice(i, 1);
+    }
+    /* Les portes vieillissent comme les sacs, et pour la meme raison : une
+       porte qui resterait ouverte pour toujours ferait du donjon un LIEU, pas
+       un evenement — on irait y attendre au lieu d'aller le chercher. Celle du
+       sas a un `reste` infini : le retrancher le laisse infini, donc elle ne se
+       referme jamais, sans un `if` de plus. */
+    for (let i = this.portails.length - 1; i >= 0; i--) {
+      this.portails[i].reste -= dt;
+      if (this.portails[i].reste <= 0) this.portails.splice(i, 1);
     }
     /* Le poseur s'est ecarte : le sac redevient ramassable, pour lui comme
        pour les autres. On l'oublie ICI plutot qu'a l'entree du ramassage :
@@ -1296,6 +1494,21 @@ class Realm {
          on voit de la porte qu'il y a quelque chose a prendre, et on voit de
          loin qu'elle a deja ete faite. */
       salles: this.salles.filter(pres).map((s) => ({ i: s.i, v: s.vide ? 1 : 0 })),
+      /* Les portes ouvertes. Le temps restant part avec elles pour la meme
+         raison que celui des sacs : la page dessine la porte qui se referme, et
+         sans ce chiffre elle le devinerait — donc mentirait sur le moment ou il
+         est trop tard pour entrer. */
+      portails: this.portails.filter(pres).map((p) => ({
+        i: p.id, x: Math.round(p.x), y: Math.round(p.y), dj: p.donjon || null,
+        /* Ce qui separe les deux portes : l'une emmene, l'autre ramene. La page
+           ecrit « ENTER » sur la premiere et « EXIT » sur la seconde, et sans ce
+           bit elle devrait deviner — donc se tromper une fois sur deux sur le
+           seul bouton qui compte. */
+        rt: p.retour ? 1 : 0,
+        /* Une porte qui ne se referme jamais n'a pas de compte a rebours a
+           dessiner : `null` le dit, la ou `Infinity` serait devenu `null` en
+           traversant JSON de toute facon — mais sans qu'on l'ait voulu. */
+        r: Number.isFinite(p.reste) ? Number(p.reste.toFixed(1)) : null })),
       sacs: this.sacs.filter(pres).map((s) => ({
         i: s.id, x: Math.round(s.x), y: Math.round(s.y), s: s.sac,
         /* Le CONTENU part avec le sac : la page ouvre une grille de huit
@@ -1322,6 +1535,14 @@ class Realm {
       On ne fait naitre que ce qui manque, et LOIN des joueurs : voir un
       squelette apparaitre a trois pas serait une punition sans cause. */
   repeuple(distanceMini) {
+    /* ---- UN DONJON NE SE REPEUPLE PAS ----
+     * C'est ce qui le separe du monde ouvert. Le monde se referme derriere soi
+     * pour qu'il y ait toujours quelque chose a chasser ; un donjon se VIDE, et
+     * c'est le fait qu'il finisse qui en fait une expedition plutot qu'un
+     * terrain. Sans ce refus, `monde.PEUPLEMENT` y ferait naitre cent soixante
+     * creatures des anneaux, dans trois salles de pierre — le donjon serait
+     * devenu le monde ouvert, en plus petit. */
+    if (this.plan) return 0;
     const dmin = Number(distanceMini) || 900;
     const voulu = Object.keys(monde.PEUPLEMENT)
       .reduce((s, b) => s + monde.PEUPLEMENT[b].nombre, 0);
@@ -1347,12 +1568,7 @@ class Realm {
          resterait pour toujours, immobile, et se lirait comme un monstre
          casse plutot que comme un monstre coince. */
       if (monde.bloque(this.obstacles, m.x, m.y, t.rayon)) continue;
-      this.monstres.push({
-        id: this._nouvelId(), espece: m.espece, biome: m.biome,
-        x: m.x, y: m.y, ancreX: m.x, ancreY: m.y,
-        pv: t.pv, pvMax: t.pv, dir: 'down', cible: null, recharge: 0, rechargeT: 0, stase: 0,
-        errX: 0, errY: 0, errChrono: 0,
-      });
+      this.monstres.push(this._naissance(m));
       nes++;
     }
     return nes;

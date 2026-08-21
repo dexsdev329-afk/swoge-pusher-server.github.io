@@ -604,6 +604,165 @@ const realmClients = new Set();
    confiance a un `dt` envoye par le client est tout l'interet de la borne. */
 const realmDernierMouv = new Map();
 
+/* ==================== LES DONJONS ====================
+ *
+ * Chaque porte FRANCHIE ouvre sa propre simulation. Pas chaque porte POSEE :
+ * dix portails au sol qui n'interessent personne ne coutent rien de plus que
+ * dix entrees dans une liste. La simulation nait au premier joueur qui entre,
+ * et elle meurt quand le dernier sort.
+ *
+ * ---- pourquoi une simulation, et pas un etage du monde ----
+ *
+ * C'est explique au long dans le constructeur de Realm. En deux lignes : les
+ * donjons vivent tous aux MEMES coordonnees, et un numero d'etage aurait du
+ * etre verifie dans les six boucles de combat. Un oubli aurait fait toucher
+ * une creature d'un autre donjon, en silence. Ici l'isolation est une
+ * structure, pas une verification.
+ *
+ * ---- ce qu'on garde ----
+ *
+ * `donjons` : id -> { id, realm, nom, porte, retour }. `retour` est l'endroit
+ * du MONDE ou l'on ressort — la ou la porte s'est ouverte. On le garde ici et
+ * pas dans le portail : le portail se referme au bout de ses trois minutes, et
+ * il ne doit pas emporter la sortie de ceux qui sont dedans.
+ */
+const donjons = new Map();
+let donjonSuivant = 1;
+/* Vingt-quatre au plus. Le processeur n'est pas la limite — un donjon coute
+   moins d'un dixieme de milliseconde par tour — mais chaque simulation
+   multiplie le nombre d'evenements a distribuer, et la distribution balaie
+   toutes les sockets. Au-dela de vingt-quatre c'est ce balayage qu'il faudrait
+   reparer d'abord ; le plafond est donc pose la, et pas plus haut, pour que la
+   panne arrive comme un refus lisible plutot que comme un serveur qui rame
+   sans raison. */
+const DONJONS_MAX = 24;
+
+/* La simulation dans laquelle vit une socket. Le monde ouvert par defaut :
+   `ws.donjon` n'existe que le temps d'un donjon, et une socket dont le donjon
+   a ete detruit retombe donc naturellement dans le monde. */
+function realmDe(ws) {
+  if (!ws || !ws.donjon) return realm;
+  const d = donjons.get(ws.donjon);
+  return d ? d.realm : realm;
+}
+
+/* Tous les mondes qui tournent, le monde ouvert en tete. Une seule liste : la
+   boucle de jeu, le repeuplement et la diffusion d'etat la parcourent toute, et
+   un donjon oublie par l'une des trois serait un donjon ou les creatures ne
+   bougent pas, ou l'on ne voit rien. */
+function tousLesMondes() {
+  const out = [realm];
+  for (const d of donjons.values()) out.push(d.realm);
+  return out;
+}
+
+/*
+ * ==================== CE QU'EST UN MONDE, DIT UNE FOIS ====================
+ *
+ * Le message d'entree decrit un monde : sa taille, ses anneaux, ses armes, ses
+ * especes, ses blocs, ses salles. Il etait ecrit en toutes lettres dans la
+ * route `realmJoin`, ce qui allait tant qu'il n'y avait qu'une facon d'entrer
+ * quelque part.
+ *
+ * Il y en a deux depuis qu'un portail existe. Le recopier aurait mis deux
+ * descriptions de monde dans le meme fichier, et le jour ou l'une gagne un
+ * champ — une nouvelle table, un nouveau chiffre a dessiner — l'autre ne
+ * l'aurait pas. Le donjon se serait mis a manquer d'une chose que le monde a,
+ * sans que rien ne le dise : la page aurait dessine du vide a un endroit ou
+ * elle dessine quelque chose ailleurs, et l'on aurait cherche le defaut dans
+ * le dessin.
+ *
+ * `R` est la simulation ou l'on entre, `j` le joueur qui vient d'y naitre,
+ * `plan` le plan du donjon quand c'en est un. Ce qui differe entre un monde et
+ * un donjon tient en trois lignes, en bas.
+ */
+function messageEntree(R, j, plan) {
+  return {
+    type: 'realmEntre',
+    monde: { w: monde.MONDE.w, h: monde.MONDE.h, tuile: monde.TUILE },
+    anneaux: plan ? plan.anneaux : monde.ANNEAUX,
+    centre: monde.CENTRE,
+    armes: monde.ARMES, especes: monde.MONSTRES,
+    /* La table des pouvoirs part a l'entree, comme celle des armes : le client
+       doit pouvoir ecrire « 60 MP » sur le bouton sans connaitre le chiffre par
+       coeur. */
+    pouvoirs: monde.POUVOIRS,
+    /* La duree de la paralysie part avec le reste : la page dessine un anneau
+       qui se referme, et elle a besoin du total pour savoir ou il en est. Un
+       chiffre en dur cote page finirait par ne plus etre celui que le serveur
+       applique. */
+    paralysie: monde.PARALYSIE,
+    /* La table complete des etats : la page a besoin du facteur de
+       ralentissement pour freiner elle-meme, et des durees pour dessiner ce qui
+       reste. Un chiffre ecrit cote page finirait par ne plus etre celui qu'on
+       subit. */
+    effets: monde.EFFETS,
+    /* La regle des sacs part avec le reste : la page dessine la minute qui
+       s'ecoule et le halo de ramassage. Sans ces chiffres elle les inventerait,
+       et elle finirait par promettre un rayon que le serveur n'accorde pas — le
+       pire des mensonges, celui qui donne l'impression d'un defaut. */
+    sac: monde.SAC,
+    /* La regle des portails, pour la meme raison : la page dessine le halo
+       d'entree et le compte a rebours de la porte. */
+    portail: monde.PORTAIL,
+    /* ---- OU COMMENCE CHAQUE PLANCHE DE MUR ----
+     * `t` designe la planche d'un bloc : en dessous de MUR_BASE c'est un
+     * rocher, au-dela le mur de ruine, au-dela encore le mur de donjon. La page
+     * portait ces bornes en dur, ce qui allait tant qu'il n'y en avait qu'une.
+     * A deux, ce sont deux nombres a tenir d'accord de part et d'autre du
+     * reseau — et le desaccord serait MUET : le donjon se serait dessine avec
+     * la pierre des salles gardees, sans que rien ne plante pour le dire. */
+    murs: { base: monde.MUR_BASE, donjon: monde.MUR_DONJON },
+    /* ---- LES BLOCS, UNE FOIS ----
+       Ils ne bougent jamais : les renvoyer dix fois par seconde dans l'etat du
+       monde serait deux cent quarante entrees rendues a l'identique, pour rien.
+       La page ne peut pas les redeviner — elle n'a pas le meme hasard — et un
+       desaccord se verrait tout de suite : on marcherait dans un rocher, ou
+       l'on serait arrete par du vide. */
+    obstacles: R.obstacles,
+    /* Les SALLES, pour que la page pose leurs dalles. Elles ne bougent pas non
+       plus, et le sol qu'elles remplacent est ce qui les rend visibles de
+       loin — on sait ce qu'on approche avant d'y etre. */
+    salles: R.salles.map((s) => ({
+      i: s.i, x: s.x, y: s.y, cote: s.cote,
+      porte: s.porte, butin: s.butin })),
+    /* L'ORDRE des stats, parce que c'est celui des colonnes de
+       objets/potions_stat.webp : rouge = hp, bleue = mp, epee = att, bouclier =
+       def, ailes = spd, verte = dex, coeur = vit, oeil = wis. La page dessine la
+       bonne fiole en cherchant l'index de la stat dans cette liste. L'ecrire en
+       dur la-bas aurait fait deux ordres a garder d'accord, et le desaccord
+       serait silencieux : une potion de defense sous l'image d'une potion de
+       vitesse. */
+    stats: personnages.STATS,
+    /* ---- ET LES TROIS LIGNES QUI FONT UN DONJON ----
+     * `donjon` porte son nom : c'est ce seul champ qui dit a la page qu'elle
+     * n'est plus dehors — autre sol, autres murs, un bouton pour sortir.
+     * `tuiles` est sa forme exacte, et `sortie` la porte de retour. */
+    donjon: plan ? plan.nom : null,
+    tuiles: plan ? plan.tuiles : null,
+    sortie: plan ? plan.sortie : null,
+    moi: { x: Math.round(j.x), y: Math.round(j.y),
+           pv: j.pv, pvMax: j.pvMax,
+           mp: j.mp, mpMax: j.mpMax,
+           pouvoir: j.pouvoir || null,
+           /* Sa vitesse des l'entree : sans elle, la page court a 260 pendant
+              la fraction de seconde qui precede le premier `realmEtat`, et un
+              personnage lent se fait ramener en arriere des son premier pas. */
+           v: Math.round(j.vitesse),
+           famille: j.famille },
+  };
+}
+
+/* Un donjon vide n'a plus de raison d'exister. On le detruit au tour SUIVANT
+   plutot qu'a l'instant ou le dernier joueur sort : `pas()` est en train de
+   parcourir la liste quand la sortie arrive, et retirer une entree d'une liste
+   qu'on parcourt est la facon la plus courante de sauter la suivante. */
+function fermeLesDonjonsVides() {
+  for (const [id, d] of donjons) {
+    if (d.realm.joueurs.size === 0) donjons.delete(id);
+  }
+}
+
 /* ------------------------------------------------------- le debit d'entree
  *
  * Une socket peut envoyer aussi vite que le reseau le permet, et rien ne l'en
@@ -2903,7 +3062,9 @@ wss.on('connection', (ws) => {
         const skin = w && w.realmSkin;
         if (!skin) return;
         const f = ficheDeCombat(addr, skin);
-        if (f) realm.rehabille(addr, f);
+        /* SA simulation : un joueur qui s'equipe au fond d'un donjon doit voir
+           son arme changer la, pas dans le monde ouvert qu'il a quitte. */
+        if (f) realmDe(w).rehabille(addr, f);
       };
       if (m.type === 'personnage') {
         const r = game.personnageEtat(ws.addr, m.skin);
@@ -3089,74 +3250,112 @@ wss.on('connection', (ws) => {
         /* La carte et les armes partent A L'ENTREE, pas dans le `hello` : un
            joueur qui ne met jamais les pieds dans le monde n'a pas a
            telecharger sa description. */
-        return send(ws, { type: 'realmEntre',
-                          monde: { w: monde.MONDE.w, h: monde.MONDE.h, tuile: monde.TUILE },
-                          anneaux: monde.ANNEAUX, centre: monde.CENTRE,
-                          armes: monde.ARMES, especes: monde.MONSTRES,
-                          /* La table des pouvoirs part a l'entree, comme celle
-                             des armes : le client doit pouvoir ecrire « 60 MP »
-                             sur le bouton sans connaitre le chiffre par coeur. */
-                          pouvoirs: monde.POUVOIRS,
-                          /* La duree de la paralysie part avec le reste : la
-                             page dessine un anneau qui se referme, et elle a
-                             besoin du total pour savoir ou il en est. Un
-                             chiffre en dur cote page finirait par ne plus
-                             etre celui que le serveur applique. */
-                          paralysie: monde.PARALYSIE,
-                          /* La table complete des etats : la page a besoin du
-                             facteur de ralentissement pour freiner elle-meme,
-                             et des durees pour dessiner ce qui reste. Un
-                             chiffre ecrit cote page finirait par ne plus etre
-                             celui qu'on subit. */
-                          effets: monde.EFFETS,
-                          /* La regle des sacs part avec le reste : la page
-                             dessine la minute qui s'ecoule et le halo de
-                             ramassage. Sans ces chiffres elle les inventerait,
-                             et elle finirait par promettre un rayon que le
-                             serveur n'accorde pas — le pire des mensonges,
-                             celui qui donne l'impression d'un bug. */
-                          sac: monde.SAC,
-                          /* ---- LES BLOCS, UNE FOIS ----
-                             Ils ne bougent jamais : les renvoyer dix fois par
-                             seconde dans l'etat du monde serait deux cent
-                             quarante entrees rendues a l'identique, pour rien.
-                             La page ne peut pas les redeviner — elle n'a pas
-                             le meme hasard — et un desaccord se verrait tout
-                             de suite : on marcherait dans un rocher, ou l'on
-                             serait arrete par du vide. */
-                          obstacles: realm.obstacles,
-                          /* Les SALLES, pour que la page pose leurs dalles.
-                             Elles ne bougent pas non plus, et le sol qu'elles
-                             remplacent est ce qui les rend visibles de loin —
-                             on sait ce qu'on approche avant d'y etre. */
-                          salles: realm.salles.map((s) => ({
-                            i: s.i, x: s.x, y: s.y, cote: s.cote,
-                            porte: s.porte, butin: s.butin })),
-                          /* L'ORDRE des stats, parce que c'est celui des
-                             colonnes de objets/potions_stat.webp : rouge = hp,
-                             bleue = mp, epee = att, bouclier = def, ailes =
-                             spd, verte = dex, coeur = vit, oeil = wis. La page
-                             dessine la bonne fiole en cherchant l'index de la
-                             stat dans cette liste. L'ecrire en dur la-bas
-                             aurait fait deux ordres a garder d'accord, et le
-                             desaccord serait silencieux : une potion de
-                             defense sous l'image d'une potion de vitesse. */
-                          stats: personnages.STATS,
-                          moi: { x: Math.round(j.x), y: Math.round(j.y),
-                                 pv: j.pv, pvMax: j.pvMax,
-                                 mp: j.mp, mpMax: j.mpMax,
-                                 pouvoir: j.pouvoir || null,
-                                 /* Sa vitesse des l'entree : sans elle, la page
-                                    court a 260 pendant la fraction de seconde
-                                    qui precede le premier `realmEtat`, et un
-                                    personnage lent se fait ramener en arriere
-                                    des son premier pas. */
-                                 v: Math.round(j.vitesse),
-                                 famille: j.famille } });
+        return send(ws, messageEntree(realm, j, null));
       }
+      /* ==================== FRANCHIR LA PORTE ====================
+       *
+       * Le client dit « j'entre », et RIEN d'autre : ni quel portail, ni ou il
+       * se trouve. Laisser nommer le portail aurait suffi a entrer dans un
+       * donjon depuis l'autre bout de la carte, et un donjon est exactement ce
+       * qu'on aurait interet a atteindre sans le meriter.
+       *
+       * On ne verifie pas non plus que c'est SON portail. Une porte appartient
+       * au sol, comme un sac : le premier arrive entre. Un portail reserve a
+       * celui qui l'a ouvert serait la seule chose du monde qui appartienne a
+       * quelqu'un, et il faudrait alors dire ce qui arrive quand ce joueur
+       * meurt, se deconnecte, ou n'entre pas.
+       */
+      if (m.type === 'realmPorte') {
+        if (!ws.addr || !realmClients.has(ws)) return;
+        /* Deja dedans : on ne s'enfonce pas d'un donjon dans un autre. */
+        if (ws.donjon) return send(ws, { type: 'realmPorteRefus', raison: 'deja-dedans' });
+        const porte = realm.portailSousLesPieds(ws.addr);
+        if (!porte) return send(ws, { type: 'realmPorteRefus', raison: 'pas-de-portail' });
+        /* Une porte de RETOUR posee dans le monde ouvert ne mene nulle part :
+           elle est deja arrivee. Sans ce refus, le bouton « ENTER » se serait
+           affiche dessus et n'aurait rien fait. */
+        if (!porte.donjon) return send(ws, { type: 'realmPorteRefus', raison: 'pas-de-portail' });
+        if (donjons.size >= DONJONS_MAX) {
+          return send(ws, { type: 'realmPorteRefus', raison: 'trop-de-donjons' });
+        }
+        const skin = ws.realmSkin;
+        const fiche = skin ? ficheDeCombat(ws.addr, skin) : null;
+        if (!fiche) return send(ws, { type: 'realmPorteRefus', raison: 'no-character' });
+
+        /* ---- UNE PORTE, UN DONJON ----
+         * Deux joueurs qui franchissent la MEME porte arrivent au meme
+         * endroit — c'est ce qui fait qu'on peut s'y donner rendez-vous. Une
+         * simulation par joueur aurait rendu le donjon solitaire sans que rien
+         * ne l'annonce : on serait entre a deux et l'on se serait retrouve
+         * seul, chacun persuade que l'autre a menti. */
+        let d = [...donjons.values()].find((x) => x.porte === porte.id);
+        if (!d) {
+          let R;
+          try {
+            R = new Realm({
+              plan: monde.planDeDonjon(porte.donjon, Math.random),
+              /* ---- LE BUTIN DU DONJON EST UN AUTRE LOT ----
+               * C'est ici, et nulle part ailleurs, que « les objets du donjon
+               * ne tombent que dans le donjon » s'ecrit. Pas un drapeau a
+               * promener de fonction en fonction : la simulation du donjon a
+               * ete CONSTRUITE avec une autre facon de tirer, et celle du monde
+               * ouvert ne la connait pas. Rien a oublier de verifier. */
+              tireObjet: (r, a, garanti) => (String(r) === 'relique'
+                ? game.tireButinDonjon(r, a)
+                : (garanti ? game.tireButinGaranti(r, a) : game.tireButin(r, a))),
+            });
+          } catch (e) {
+            console.error('[donjon]', e && e.message);
+            return send(ws, { type: 'realmPorteRefus', raison: 'server error' });
+          }
+          d = { id: donjonSuivant++, realm: R, nom: porte.donjon, porte: porte.id,
+                /* Ou l'on ressort. Garde ICI et pas sur le portail : le portail
+                   se referme au bout de ses trois minutes, et il ne doit pas
+                   emporter la sortie de ceux qui sont dedans. */
+                retour: { x: porte.x, y: porte.y } };
+          donjons.set(d.id, d);
+        }
+
+        /* La vie et le mana traversent avec le joueur. Sans ca, franchir une
+           porte aurait soigne — et le meilleur usage du donjon le plus dur du
+           jeu aurait ete d'entrer et de ressortir aussitot. */
+        const avant = realm.joueurs.get(ws.addr);
+        const etat = avant ? { pv: avant.pv, mp: avant.mp } : {};
+        realm.quitte(ws.addr);
+        const j = d.realm.rejoint(ws.addr, fiche, etat);
+        ws.donjon = d.id;
+        realmDernierMouv.set(ws.addr, Date.now());
+        return send(ws, messageEntree(d.realm, j, d.realm.plan));
+      }
+
+      /* ---- ET RESSORTIR ----
+       * Par la porte du sas, ou par la mort — mais la mort passe par
+       * `ev.morts`, qui remet `ws.donjon` a zero de son cote. Ici, c'est le
+       * retour volontaire : on rentre dans le monde LA OU la porte s'est
+       * ouverte, pas au bord de la carte. Ressortir a l'autre bout du monde
+       * aurait fait du donjon un aller simple. */
+      if (m.type === 'realmSort') {
+        if (!ws.addr || !realmClients.has(ws)) return;
+        const d = ws.donjon ? donjons.get(ws.donjon) : null;
+        if (!d) return send(ws, { type: 'realmPorteRefus', raison: 'pas-dedans' });
+        const skin = ws.realmSkin;
+        const fiche = skin ? ficheDeCombat(ws.addr, skin) : null;
+        if (!fiche) return send(ws, { type: 'realmPorteRefus', raison: 'no-character' });
+        const avant = d.realm.joueurs.get(ws.addr);
+        const etat = { x: d.retour.x, y: d.retour.y,
+                       pv: avant ? avant.pv : undefined,
+                       mp: avant ? avant.mp : undefined };
+        d.realm.quitte(ws.addr);
+        ws.donjon = null;
+        const j = realm.rejoint(ws.addr, fiche, etat);
+        realmDernierMouv.set(ws.addr, Date.now());
+        return send(ws, messageEntree(realm, j, null));
+      }
+
       if (m.type === 'realmLeave') {
         if (!ws.addr) return;
-        realm.quitte(ws.addr);
+        realmDe(ws).quitte(ws.addr);
+        ws.donjon = null;
         realmClients.delete(ws);
         realmDernierMouv.delete(ws.addr);
         return send(ws, { type: 'realmSorti' });
@@ -3185,7 +3384,7 @@ wss.on('connection', (ws) => {
            boutique, et les retrouver a chaque envoi d'etat les recalculerait
            dix fois par seconde et par client. `poseAuSol` la construit deja,
            exactement comme pour une piece qui tombe d'un monstre. */
-        const r = realm.depose(ws.addr, sorti, null);
+        const r = realmDe(ws).depose(ws.addr, sorti, null);
         if (!r || r.refuse) {
           /* Le sol n'en a pas voulu : on REMET la piece dans le sac. Sans ce
              retour, un sac au sol plein ferait disparaitre l'objet — et il
@@ -3202,7 +3401,7 @@ wss.on('connection', (ws) => {
         const t = Date.now();
         const avant = realmDernierMouv.get(ws.addr) || t;
         realmDernierMouv.set(ws.addr, t);
-        realm.bouge(ws.addr, m.x, m.y,
+        realmDe(ws).bouge(ws.addr, m.x, m.y,
                     NEXUS_DIRS.has(m.dir) ? m.dir : 'down',
                     NEXUS_ANIMS.has(m.anim) ? m.anim : 'idle',
                     (t - avant) / 1000);
@@ -3232,9 +3431,9 @@ wss.on('connection', (ws) => {
           realmDernierMouv.set(ws.addr, t);
           /* Ni direction ni animation : tirer n'est pas marcher, et ecraser
              l'une des deux ferait patiner le personnage sur place. */
-          realm.bouge(ws.addr, Number(m.x), Number(m.y), null, null, (t - avant) / 1000);
+          realmDe(ws).bouge(ws.addr, Number(m.x), Number(m.y), null, null, (t - avant) / 1000);
         }
-        realm.tire(ws.addr, a);
+        realmDe(ws).tire(ws.addr, a);
         return;
       }
       /* La barre d'espace. Le client n'envoie RIEN d'autre que « j'appuie » :
@@ -3245,7 +3444,7 @@ wss.on('connection', (ws) => {
       if (m.type === 'realmPouvoir') {
         if (!ws.addr || !realmClients.has(ws)) return;
         const ev = { touches: [], kills: [] };
-        const r = realm.pouvoir(ws.addr, ev);
+        const r = realmDe(ws).pouvoir(ws.addr, ev);
         if (!r) return;
         send(ws, { type: 'realmPouvoir', ...r });
         /* Un eclair qui tue rapporte l'XP par le meme chemin qu'une fleche :
@@ -3881,7 +4080,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     clients.delete(ws);
     nexusClients.delete(ws);
-    if (ws.addr) { realm.quitte(ws.addr); realmDernierMouv.delete(ws.addr); }
+    if (ws.addr) { realmDe(ws).quitte(ws.addr); realmDernierMouv.delete(ws.addr); }
     realmClients.delete(ws);
     if (ws.addr && byAddr.has(ws.addr)) {
       byAddr.get(ws.addr).delete(ws);
@@ -3987,7 +4186,7 @@ function ramassePlace(ws, id, place, muet) {
   /* On REFUSE avant de prendre : une potion d'attaque prise a son plafond
      serait bue pour rien et la place serait videe. Refusee, elle reste dans le
      sac, qui finit sa minute. */
-  const r = realm.ramasse(ws.addr, null, (o) => {
+  const r = realmDe(ws).ramasse(ws.addr, null, (o) => {
     /* Une FIOLE DE STAT ne se boit plus en la ramassant : elle prend une place
        du sac, comme une piece. On refusait au PLAFOND, et la fiole restait
        alors par terre jusqu'a la fin de sa minute — une potion trouvee dans la
@@ -4067,7 +4266,7 @@ function ramassePlace(ws, id, place, muet) {
  */
 function ramassageAuto(ws) {
   if (!ws.addr || !realmClients.has(ws)) return;
-  const sous = realm.sacSousLesPieds(ws.addr);
+  const sous = realmDe(ws).sacSousLesPieds(ws.addr);
   if (!sous) return;
   /* Ce qu'on vient de poser soi-meme attend qu'on s'ecarte : sinon jeter une
      piece la reprendrait dans le meme dixieme de seconde, et il deviendrait
@@ -4087,9 +4286,44 @@ const realmInterval = setInterval(() => {
   const t = Date.now();
   const dt = Math.min(0.5, (t - realmHorloge) / 1000);
   realmHorloge = t;
-  let ev;
-  try { ev = realm.pas(dt); } catch (e) { console.error('[realm]', e && e.message); return; }
+  /* ---- TOUS LES MONDES AVANCENT DU MEME PAS ----
+   * Le monde ouvert d'abord, les donjons ensuite. Un donjon oublie ici serait
+   * un donjon ou les creatures restent immobiles pendant qu'on tire dessus —
+   * la panne la plus difficile a diagnostiquer qui soit, parce que tout le
+   * reste y marcherait. */
+  const evs = [];
+  for (const R of tousLesMondes()) {
+    try { evs.push([R, R.pas(dt)]); }
+    catch (e) { console.error('[realm]', e && e.message); }
+  }
+  for (const [R, ev] of evs) {
+    try { traiteEvenements(R, ev); }
+    catch (e) { console.error('[realm ev]', e && e.message); }
+  }
 
+  /* Un donjon que le dernier joueur vient de quitter s'efface ICI, apres que
+     tous les mondes ont fini leur pas : retirer une entree de la liste qu'on
+     est en train de parcourir est la facon la plus courante de sauter la
+     suivante. */
+  fermeLesDonjonsVides();
+
+  /* Chacun recoit SA vue, depuis SON monde : on ne diffuse pas un instantane
+     commun comme le Nexus le fait. Quarante monstres a dix images par seconde
+     pour chaque client, dont trente-cinq hors de son ecran, serait du trafic
+     pur — et le monde fait quatre fois la taille du hall. */
+  for (const ws of realmClients) {
+    if (ws.readyState !== 1 || !ws.addr) continue;
+    const vue = realmDe(ws).etatPour(ws.addr, 1400);
+    if (vue) ws.send(JSON.stringify({ type: 'realmEtat', ...vue }));
+  }
+}, 100);
+if (realmInterval.unref) realmInterval.unref();
+
+/* Ce qu'un pas de simulation a produit, distribue a qui de droit. `R` est le
+   monde d'ou viennent ces evenements : sans lui, un mort dans un donjon serait
+   retire du monde ouvert — ou il n'est pas — et resterait dans le donjon avec
+   zero point de vie, a mourir en boucle. */
+function traiteEvenements(R, ev) {
   /* Les sacs qui ont fini leur minute sans etre ramasses rendent leur piece
      au registre : sans ca, quatre reliques tombees dans un coin desert
      videraient le plafond pour toujours, sans qu'un seul joueur n'en ait vu
@@ -4101,6 +4335,7 @@ const realmInterval = setInterval(() => {
    * liste, et un joueur qui achevait un monstre en lui marchant dessus ramasse
    * dans le meme souffle. */
   for (const w of realmClients) {
+    if (realmDe(w) !== R) continue;
     try { ramassageAuto(w); } catch (e) { console.error('[ramassage]', e && e.message); }
   }
 
@@ -4121,13 +4356,35 @@ const realmInterval = setInterval(() => {
     } catch (e) { console.error('[realm xp]', e && e.message); }
   }
 
+  /* ---- UNE PORTE VIENT DE S'OUVRIR ----
+   * Elle part deja avec l'etat, donc la page la DESSINERAIT sans ce message.
+   * Il sert a autre chose : une porte qui apparait a cent quatre-vingt-dix
+   * unites derriere une creature qu'on regardait mourir, au milieu des eclats
+   * et des chiffres de degats, se rate. On la manque, on s'en va, et le donjon
+   * qu'on vient de meriter se referme tout seul trois minutes plus tard sans
+   * qu'on ait su qu'il existait.
+   * Le message ne dit rien de plus que ce que l'etat porte — il dit seulement
+   * QUAND, et c'est tout ce qui manquait. */
+  for (const p of (ev.portails || [])) {
+    if (!p.addr) continue;
+    const ws = [...realmClients].find((c) => c.addr === p.addr);
+    if (ws && ws.readyState === 1) {
+      send(ws, { type: 'realmPortail', id: p.id, donjon: p.donjon || null,
+                 retour: p.retour ? 1 : 0, espece: p.espece, x: p.x, y: p.y });
+    }
+  }
+
   /* ---- ET CE QUI NOUS TUE COUTE TOUT ----
      `meurt` detruit l'equipement porte, vide le sac, remet le personnage a
      zero et encaisse la fame. On sort le joueur du monde APRES : le laisser
      dedans avec zero point de vie le ferait mourir en boucle. */
   for (const mort of ev.morts) {
     const ws = [...realmClients].find((c) => c.addr === mort.addr);
-    realm.quitte(mort.addr);
+    R.quitte(mort.addr);
+    /* Mourir dans un donjon en fait sortir : sans cette remise a zero, la
+       socket resterait attachee a une simulation qu'elle a quittee, et
+       `realmDe` lui rendrait un monde ou elle n'existe plus. */
+    if (ws) ws.donjon = null;
     realmDernierMouv.delete(mort.addr);
     if (ws) realmClients.delete(ws);
     try {
@@ -4182,20 +4439,11 @@ const realmInterval = setInterval(() => {
     }
   }
 
-  /* La carte se repeuple doucement, jamais sous le nez de quelqu'un. */
-  if (realmClients.size) realm.repeuple(900);
-
-  /* Chacun recoit SA vue : on ne diffuse pas un instantane commun comme le
-     Nexus le fait. Quarante monstres a dix images par seconde pour chaque
-     client, dont trente-cinq hors de son ecran, serait du trafic pur — et le
-     monde fait quatre fois la taille du hall. */
-  for (const ws of realmClients) {
-    if (ws.readyState !== 1 || !ws.addr) continue;
-    const vue = realm.etatPour(ws.addr, 1400);
-    if (vue) ws.send(JSON.stringify({ type: 'realmEtat', ...vue }));
-  }
-}, 100);
-if (realmInterval.unref) realmInterval.unref();
+  /* La carte se repeuple doucement, jamais sous le nez de quelqu'un. Un donjon,
+     lui, refuse tout seul : `repeuple` rend zero des qu'il a un plan. C'est ce
+     qui fait qu'on le VIDE, au lieu d'y camper. */
+  if (realmClients.size) R.repeuple(900);
+}
 
 // ---- poker : minuteurs de decision + main suivante + diffusion ----
 // Une seconde suffit : le minuteur d'action est d'une minute, et l'echeance

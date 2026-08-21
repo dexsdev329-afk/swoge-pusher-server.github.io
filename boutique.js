@@ -836,6 +836,75 @@ const ITEMS_DROP = [
   { id: 6604, cle: 'fruit_coeur',        nom: 'Relic Heart',      rarete: 'relique', famille: 'chaos',
     pouvoir: 'Older than the shop. Older than the coin.' },
 ];
+/*
+ * ==================== LES HUIT PIECES DE LA FORGE ====================
+ *
+ * Ce qu'on ne trouve QUE derriere le portail d'Optimus. Huit dessins, huit
+ * pieces, et aucun autre moyen de les obtenir : ni au coffre, ni au marche,
+ * ni sur une creature du monde ouvert.
+ *
+ * ---- POURQUOI ELLES SONT TOUTES DES RELIQUES ----
+ *
+ * C'est la declaration de design du donjon, et elle tient en une phrase : il
+ * ne rend pas les objets plus FORTS, il rend le rang le plus haut
+ * ATTEIGNABLE. Une relique se tire aujourd'hui a un sur mille cinq cents dans
+ * la lave — autant dire qu'on ne la vise pas, on la subit. Le donjon en fait
+ * une expedition : on abat Optimus, on entre, on traverse trois salles, et le
+ * fond en rend une a coup sur.
+ *
+ * Leur donner un rang a elles — plus fort que relique — aurait demande une
+ * huitieme colonne dans les deux tables de puissance de personnages.js, un
+ * huitieme sac, une huitieme couleur, et surtout aurait mis hors course tout
+ * ce que quelqu'un possede aujourd'hui. Le donjon aurait remplace le jeu au
+ * lieu de s'y ajouter.
+ *
+ * Le plafond, lui, ne bouge pas : quatre exemplaires par dessin, comme partout
+ * ailleurs. Un donjon qui rendrait la relique atteignable ET illimitee n'aurait
+ * pas ouvert un chemin, il aurait supprime le rang.
+ *
+ * ---- LA FAMILLE EST CE QU'ON VOIT, PAS CE QUE LE FICHIER S'APPELLE ----
+ *
+ * Les huit dessins sont noirs et bleus, tous : le bleu est la couleur du
+ * donjon et ne distingue donc RIEN. C'est la silhouette qui decide, et le
+ * metal sous le bleu. Le disque n'est pas un bouclier parce qu'il est rond —
+ * c'est un jeu de lames qui se lance, donc `dagues` ; l'anneau n'est pas une
+ * bague a saphir parce qu'il gresille de bleu — sa masse est noire et son
+ * centre est un trou, donc `onyx`.
+ *
+ * Aucune n'est un fruit, donc aucune ne porte de phrase `pouvoir` : elle
+ * n'aurait rien a dire qu'un fruit dit, et une phrase mise pour faire nombre
+ * est exactement ce qui rend les autres moins credibles.
+ *
+ * Les identifiants prennent la serie 6700, laissee libre par les anneaux :
+ * 6100 la terre, 6200 le marais, 6300 la neige, 6400 les cendres, 6500 la
+ * lave, 6600 le coeur. Un bloc par lieu, et le donjon est un lieu.
+ *
+ * `cle` EST le nom du fichier. La page construit l'adresse de l'image avec —
+ * `img/shop/<cle>.webp` — et une cle qui ne correspond a rien s'affiche comme
+ * un carre vide, sans une erreur nulle part.
+ */
+const ITEMS_DONJON = [
+  { id: 6701, cle: 'dj_lance',    nom: 'Arclance',        rarete: 'relique', famille: 'lance' },
+  { id: 6702, cle: 'dj_disque',   nom: 'Ripsaw',          rarete: 'relique', famille: 'dagues' },
+  { id: 6703, cle: 'dj_heaume',   nom: 'Forgehelm',       rarete: 'relique', famille: 'casque' },
+  { id: 6704, cle: 'dj_couronne', nom: "Foreman's Crown", rarete: 'relique', famille: 'casque' },
+  { id: 6705, cle: 'dj_plastron', nom: 'Coreplate',       rarete: 'relique', famille: 'plastron' },
+  { id: 6706, cle: 'dj_gantelet', nom: 'Pistongrip',      rarete: 'relique', famille: 'gantelets' },
+  { id: 6707, cle: 'dj_bouclier', nom: 'Bulkhead',        rarete: 'relique', famille: 'bouclier' },
+  { id: 6708, cle: 'dj_anneau',   nom: 'Dead Circuit',    rarete: 'relique', famille: 'onyx' },
+];
+
+/* Un seul lot pour tout ce qui se TROUVE : `item(id)`, l'equipement, la fiche
+   au sol, le registre des exemplaires et le rachat ne doivent pas avoir a
+   savoir d'ou une piece vient. Ce qui separe les deux provenances est un CHAMP
+   sur l'objet, pas une liste que quelqu'un devrait penser a consulter — meme
+   raison que `drop`.
+
+   Les deux marquages sont cote a cote pour qu'on lise d'un coup ce qu'une
+   piece de la Forge est : une trouvaille (donc hors commerce) ET du donjon
+   (donc hors du monde ouvert). L'oubli du second les ferait tomber sur des
+   limes, et le donjon n'aurait plus servi a rien. */
+for (const o of ITEMS_DONJON) { o.donjon = true; ITEMS_DROP.push(o); }
 for (const o of ITEMS_DROP) o.drop = true;
 
 for (const o of ITEMS.concat(ITEMS_DROP)) {

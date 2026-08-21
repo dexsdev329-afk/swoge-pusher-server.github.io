@@ -6144,11 +6144,32 @@ class Game {
              ...(d ? { degats: d } : {}) };
   }
 
-  tireButin(rarete, alea) {
-    const lot = boutique.ITEMS_DROP.filter((o) => o.rarete === String(rarete));
-    if (!lot.length) return null;
+  /*
+   * ---- DEUX PROVENANCES, UN SEUL CORPS ----
+   *
+   * Les huit pieces de la Forge sont des trouvailles comme les autres — meme
+   * liste, meme registre, meme plafond. Ce qui les separe est OU elles
+   * tombent, et ca ne se devine pas : si le monde ouvert pouvait les rendre, on
+   * aurait les memes reliques en abattant des limes, et franchir le portail
+   * n'aurait plus servi a rien. Le donjon serait devenu une salle gardee avec
+   * un decor different.
+   *
+   * Le partage se fait donc ici, une seule fois, sur le champ `donjon` :
+   * `tireButin` prend tout SAUF le donjon, `tireButinDonjon` ne prend que lui.
+   * Le corps est commun aux deux — pas par economie de lignes, mais parce que
+   * c'est lui qui tient le PLAFOND. Deux copies, et le jour ou l'une apprend a
+   * compter autrement, la relique du donjon sort cinq fois au lieu de quatre
+   * sans qu'aucun essai ne s'en apercoive.
+   *
+   * `tireButinGaranti` n'a rien a filtrer : il descend les rangs en appelant
+   * `tireButin`, donc il herite de l'exclusion sans la reecrire. C'est la
+   * raison pour laquelle il passe par lui au lieu de refaire le tirage.
+   */
+  _tireDuLot(lot, rarete, alea) {
+    const rang = lot.filter((o) => o.rarete === String(rarete));
+    if (!rang.length) return null;
     this.boutiqueEmis = this.boutiqueEmis || {};
-    const dispo = lot.filter((o) => boutique.restant(o.id, this.boutiqueEmis) > 0);
+    const dispo = rang.filter((o) => boutique.restant(o.id, this.boutiqueEmis) > 0);
     if (!dispo.length) return null;
     const r = typeof alea === 'function' ? alea() : Math.random();
     const o = dispo[Math.min(dispo.length - 1, Math.floor(r * dispo.length))];
@@ -6159,6 +6180,22 @@ class Game {
        devant un sac, que la question « est-ce que ca vaut mieux que ce que je
        porte ? » se pose. */
     return this.ficheAuSol(o);
+  }
+
+  /** Ce que le MONDE OUVERT fait tomber : les anneaux, jamais la Forge. */
+  tireButin(rarete, alea) {
+    return this._tireDuLot(boutique.ITEMS_DROP.filter((o) => !o.donjon), rarete, alea);
+  }
+
+  /**
+   * Ce que la FORGE fait tomber : les huit, et rien d'autre.
+   *
+   * Meme mecanique que `tireButin` a la piece pres — meme registre, meme
+   * plafond, meme fiche au sol. Un donjon qui tirerait « autrement » aurait son
+   * propre compte d'exemplaires, donc sa propre facon de le rater.
+   */
+  tireButinDonjon(rarete, alea) {
+    return this._tireDuLot(boutique.ITEMS_DROP.filter((o) => o.donjon), rarete, alea);
   }
 
   /**

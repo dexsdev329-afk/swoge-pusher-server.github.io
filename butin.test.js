@@ -587,7 +587,13 @@ function pose(r, espece, x, y, pv) {
 {
   const boutique = require('./boutique');
   const g = new Game();
-  const rel = boutique.ITEMS_DROP.filter((o) => o.rarete === 'relique');
+  /* Les reliques DU MONDE OUVERT. Celles de la Forge sont dans la meme liste —
+     meme registre, meme plafond — mais `tireButin` ne peut pas les rendre : si
+     le monde ouvert pouvait les faire tomber, on aurait les memes reliques en
+     abattant des limes et franchir le portail n'aurait servi a rien. Les
+     compter ici ferait attendre a cet essai un plafond que ce tirage-la
+     n'atteint jamais. */
+  const rel = boutique.ITEMS_DROP.filter((o) => o.rarete === 'relique' && !o.donjon);
   const plafond = boutique.rarete('relique').plafond;
   const total = rel.length * plafond;
 

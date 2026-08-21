@@ -160,6 +160,295 @@ const DONJON = {
   ouvreur: 'optimus',
 };
 
+/*
+ * ---- LE PORTAIL ----
+ *
+ * Ce qu'Optimus laisse en mourant, un peu au-dela de son sac : une porte
+ * ouverte dans le sol, qu'on franchit ou non.
+ *
+ * `PORTAIL_DE` est une TABLE, et pas un drapeau sur Optimus. Un booleen
+ * `ouvreDonjon: true` dans MONSTRES aurait dit « celui-la ouvre quelque
+ * chose » sans dire quoi ; le jour ou une deuxieme creature ouvre un
+ * deuxieme donjon, il aurait fallu un deuxieme booleen et une cascade de
+ * `if` pour les distinguer. Ici la reponse EST la valeur : le nom du donjon
+ * derriere la porte. Une creature absente de la table n'ouvre rien, ce qui
+ * est le cas de vingt et une des vingt-deux.
+ *
+ * `recul` est la distance DERRIERE la creature, dans le sens ou le tueur
+ * l'a poussee. Le sac tombe sur place ; la porte se pose plus loin. Sans ce
+ * decalage, les deux occuperaient le meme metre carre : on ramasserait le
+ * butin et l'on serait entre dans le donjon du meme pas, sans avoir eu a
+ * choisir — or le choix EST la question qu'un portail pose.
+ *
+ * `duree` est genereuse (trois minutes contre une pour un sac) parce que ce
+ * n'est pas la meme decision. Un sac se ramasse sans y penser ; entrer
+ * demande de regarder sa vie, son mana et ce qu'on porte, et souvent
+ * d'attendre quelqu'un. Une porte qui se refermerait en soixante secondes
+ * forcerait a entrer sans reflechir, ou a ne jamais entrer du tout.
+ */
+const PORTAIL = {
+  duree: 180,      // trois minutes, le temps de decider
+  rayon: 72,       // a quelle distance on se tient « dessus »
+  recul: 190,      // derriere la creature, dans le sens de sa chute
+  plafond: 24,
+};
+
+/* Qui ouvre quoi. La valeur EST le donjon : voir le commentaire ci-dessus. */
+const PORTAIL_DE = { optimus: 'forge' };
+
+/*
+ * ---- ET QUI OUVRE LE CHEMIN DU RETOUR ----
+ *
+ * Une deuxieme table, et pas une valeur speciale dans la premiere. Une porte
+ * de retour et une porte de donjon ne se ressemblent que par le dessin : la
+ * premiere ramene d'ou l'on vient, la seconde emmene quelque part. Les
+ * ecrire dans la meme table aurait demande une valeur reservee —
+ * `PORTAIL_DE = { fonderie: null }` — dont personne ne devine le sens six
+ * mois plus tard, et dont le `if` de lecture se serait mis a dire « ouvre un
+ * donjon » pour quelque chose qui n'en ouvre aucun.
+ *
+ * Le boss du fond en laisse une : sans elle, l'abattre serait suivi d'une
+ * traversee a pied des trois salles qu'on vient de vider, dans le silence.
+ * Ce n'est pas de la difficulte, c'est du chemin — et le chemin de retour
+ * d'un donjon fini n'a rien a raconter.
+ */
+const RETOUR_DE = { fonderie: 1 };
+
+/*
+ * ---- LE PLAN DU DONJON ----
+ *
+ * Trois salles en enfilade, reliees par deux couloirs. On arrive dans la
+ * premiere, on traverse la deuxieme, le boss attend dans la troisieme.
+ *
+ * ---- pourquoi une enfilade, et pas un labyrinthe ----
+ *
+ * Un donjon n'a pas besoin d'etre difficile a LIRE pour etre difficile a
+ * faire. Un labyrinthe ajoute une seule chose : le temps perdu a chercher la
+ * sortie, qui n'est pas du jeu. L'enfilade dit tout des la porte — trois
+ * salles, le fond est au fond — et laisse la difficulte a ce qui les habite.
+ * On sait toujours ou l'on va, jamais si l'on tiendra.
+ *
+ * ---- pourquoi le sol est un GRILLAGE de tuiles ----
+ *
+ * Les murs ne sont pas poses a la main : on dessine les tuiles de SOL, et
+ * tout ce qui les borde devient un mur. Poser les murs a la main aurait
+ * demande de les tenir d'accord avec le sol a chaque changement de forme —
+ * et le premier oubli aurait fait un donjon avec un trou dedans, ou un
+ * couloir bouche. Ici la forme n'a qu'une seule source : `sol`.
+ */
+const DONJON_TUILE = TUILE;
+/* Les trois salles, en tuiles, dans l'ordre ou on les traverse. `cote` est
+   l'INTERIEUR ; les murs se posent autour. Elles grandissent : la premiere
+   est un sas, la derniere doit contenir un boss de cent quarante-huit unites
+   de large qui recule en frappant. */
+const DONJON_SALLES = [
+  { cote: 9,  role: 'entree' },
+  { cote: 13, role: 'fosse' },
+  { cote: 15, role: 'fond' },
+];
+/* Le couloir : trois tuiles de large, quatre de long. Trois et pas une — une
+   seule aurait fait un goulot ou le boss ne passe pas, et ou deux joueurs se
+   bousculent. Un donjon ne doit pas etre difficile a cause de sa geometrie. */
+const DONJON_COULOIR = { long: 4, large: 3 };
+/* Le coin haut-gauche du plan, en tuiles. Le donjon vit dans SA propre
+   simulation, donc ces coordonnees ne rencontrent jamais celles du monde —
+   mais elles restent dans [0, MONDE] pour que la borne de `bouge` ne les
+   coupe pas. Deux regles qui se contredisent en silence, c'est exactement ce
+   qu'on evite en restant dans le cadre. */
+const DONJON_ORIGINE = { x: 6, y: 6 };
+
+/* La base de `t` pour un bloc de mur de donjon. Au-dela de MUR_BASE on lit le
+   mur de ruine ; au-dela de celui-ci, le mur de donjon. Une seule liste de
+   blocs, une seule collision, trois planches — c'est la lecon de MUR_BASE,
+   poussee d'un cran. */
+const MUR_DONJON = 8;
+
+/**
+ * Les tuiles de SOL du donjon, en coordonnees de tuile. La forme entiere tient
+ * dans cette fonction ; tout le reste s'en deduit.
+ *
+ * On rend aussi le centre de chaque salle : c'est la qu'on fait naitre les
+ * creatures, le boss et la porte de sortie. Les recalculer ailleurs, c'est se
+ * donner deux plans a tenir d'accord.
+ */
+function planDonjon() {
+  const sol = new Set();
+  const cle = (c, l) => c + ',' + l;
+  const salles = [];
+  /* La hauteur de reference : la salle la plus haute. Tout est centre dessus,
+     pour que les couloirs sortent au milieu des cotes. */
+  const hMax = Math.max(...DONJON_SALLES.map((s) => s.cote));
+  const cy = DONJON_ORIGINE.y + Math.floor(hMax / 2);
+  let c0 = DONJON_ORIGINE.x;
+  for (let i = 0; i < DONJON_SALLES.length; i++) {
+    const s = DONJON_SALLES[i];
+    const haut = cy - Math.floor(s.cote / 2);
+    for (let c = 0; c < s.cote; c++) {
+      for (let l = 0; l < s.cote; l++) sol.add(cle(c0 + c, haut + l));
+    }
+    salles.push({ role: s.role, cote: s.cote,
+                  c: c0 + Math.floor(s.cote / 2), l: cy,
+                  x: (c0 + Math.floor(s.cote / 2) + 0.5) * DONJON_TUILE,
+                  y: (cy + 0.5) * DONJON_TUILE });
+    c0 += s.cote;
+    if (i < DONJON_SALLES.length - 1) {
+      const demi = Math.floor(DONJON_COULOIR.large / 2);
+      for (let c = 0; c < DONJON_COULOIR.long; c++) {
+        for (let l = -demi; l <= demi; l++) sol.add(cle(c0 + c, cy + l));
+      }
+      c0 += DONJON_COULOIR.long;
+    }
+  }
+  return { sol, salles, tuile: DONJON_TUILE };
+}
+
+/**
+ * Les blocs de mur qui ceignent le sol.
+ *
+ * Toute tuile VIDE qui touche une tuile de sol — de cote ou en diagonale —
+ * devient un mur. La diagonale compte : sans elle, les angles rentrants
+ * laisseraient un trou d'une tuile par lequel on verrait le neant, et par
+ * lequel un projectile passerait en biais.
+ *
+ * La piece se choisit sur les voisins DE MUR, pas sur les voisins de sol : un
+ * mur droit a deux voisins de mur alignes, un angle en a deux
+ * perpendiculaires, un bout n'en a qu'un. C'est exactement ce que le dessin
+ * doit montrer, et c'est du calcul plutot qu'une table — une table de cent
+ * cinquante blocs se serait desaccordee du plan a la premiere retouche.
+ */
+function mursDonjon(plan, depart) {
+  const { sol } = plan;
+  const cle = (c, l) => c + ',' + l;
+  const mursSet = new Set();
+  for (const k of sol) {
+    const [c, l] = k.split(',').map(Number);
+    for (let dc = -1; dc <= 1; dc++) {
+      for (let dl = -1; dl <= 1; dl++) {
+        if (!dc && !dl) continue;
+        const v = cle(c + dc, l + dl);
+        if (!sol.has(v)) mursSet.add(v);
+      }
+    }
+  }
+  const out = [];
+  let id = depart || 1;
+  for (const k of mursSet) {
+    const [c, l] = k.split(',').map(Number);
+    const N = mursSet.has(cle(c, l - 1)), S = mursSet.has(cle(c, l + 1));
+    const O = mursSet.has(cle(c - 1, l)), E = mursSet.has(cle(c + 1, l));
+    let piece = 0, tour = 0;
+    if (N && S && !O && !E) { piece = 1; }
+    else if (O && E && !N && !S) { piece = 0; }
+    /* Un angle : deux voisins perpendiculaires. La planche relie le HAUT et la
+       DROITE ; chaque quart de tour dans le sens horaire fait avancer le
+       coin. */
+    else if (N && E && !S && !O) { piece = 2; tour = 0; }
+    else if (E && S && !N && !O) { piece = 2; tour = 1; }
+    else if (S && O && !N && !E) { piece = 2; tour = 2; }
+    else if (O && N && !E && !S) { piece = 2; tour = 3; }
+    /* Un bout : un seul voisin. La planche pose sa cassure vers le BAS. */
+    else if (N && !S && !O && !E) { piece = 3; tour = 2; }
+    else if (S && !N && !O && !E) { piece = 3; tour = 0; }
+    else if (O && !E && !N && !S) { piece = 3; tour = 3; }
+    else if (E && !O && !N && !S) { piece = 3; tour = 1; }
+    /* Trois voisins ou plus (un T, un croisement) : le segment dans le sens le
+       plus fourni. Un T n'a pas de planche a lui, et en inventer une
+       demanderait une cinquieme piece qui n'existe pas sur la feuille. */
+    else piece = (O || E) ? 0 : 1;
+    out.push({ i: id++, x: (c + 0.5) * DONJON_TUILE, y: (l + 0.5) * DONJON_TUILE,
+               r: SALLE.mur, t: MUR_DONJON + piece, a: tour, donjon: 1 });
+  }
+  return out;
+}
+
+/**
+ * Le peuplement du donjon : quelles creatures, ou.
+ *
+ * Le boss est SEUL dans sa salle. Le melanger aux autres ferait de la derniere
+ * porte un mur de creatures, et l'on mourrait sans jamais l'avoir vu. Les
+ * trois especes se repartissent entre la fosse et le fond — pas dans le sas :
+ * arriver dans un donjon et se faire toucher avant d'avoir pose le pied par
+ * terre n'est pas une difficulte, c'est un piege.
+ */
+function peuplementDonjon(alea) {
+  const r = () => (typeof alea === 'function' ? alea() : Math.random());
+  const plan = planDonjon();
+  const out = [];
+  for (const s of plan.salles) {
+    if (s.role === 'entree') continue;
+    const n = s.role === 'fosse' ? 9 : 5;
+    const demi = (s.cote / 2 - 1.2) * DONJON_TUILE;
+    for (let i = 0; i < n; i++) {
+      const e = DONJON.especes[Math.floor(r() * DONJON.especes.length)]
+                || DONJON.especes[0];
+      out.push({ espece: e, biome: 'donjon',
+                 x: s.x + (r() * 2 - 1) * demi,
+                 y: s.y + (r() * 2 - 1) * demi });
+    }
+  }
+  const fond = plan.salles[plan.salles.length - 1];
+  /* Le boss au FOND du fond, pas au centre : on doit le voir en entrant sans
+     etre deja a portee de son cercle. */
+  out.push({ espece: DONJON.boss, biome: 'donjon', boss: 1,
+             x: fond.x + (fond.cote / 2 - 2) * DONJON_TUILE, y: fond.y });
+  return out;
+}
+
+/**
+ * LE PLAN COMPLET D'UN DONJON — tout ce qu'il faut pour en batir un.
+ *
+ * C'est le seul objet que `realm.js` recoit : il ne connait ni les tuiles, ni
+ * les couloirs, ni les especes qui vivent la. Il recoit une liste de blocs,
+ * une liste de creatures, un point d'arrivee, et il fait tourner la meme
+ * simulation que pour le monde ouvert.
+ *
+ * `anneaux` merite un mot. Le client dessine son sol en demandant a quel
+ * anneau appartient un point — c'est ce qui fait qu'on lit le danger sous ses
+ * pieds. Un donjon n'a pas d'anneaux : il n'a qu'un sol, partout. Plutot que
+ * d'apprendre au client un deuxieme mode de dessin (« si tu es dans un donjon,
+ * ne demande pas »), on lui envoie une liste d'UN anneau qui couvre tout.
+ * `biomeEn` rend alors 'donjon' partout, sans une ligne de plus nulle part, et
+ * le jour ou un donjon aura deux sols il suffira d'en mettre deux dans la
+ * liste.
+ */
+function planDeDonjon(nom, alea) {
+  const plan = planDonjon();
+  const entree = plan.salles[0];
+  return {
+    nom: String(nom || 'forge'),
+    /* On arrive dans le sas, DECALE de la porte de sortie : au centre exact on
+       serait pose dessus, et le panneau proposerait de repartir a la seconde ou
+       l'on arrive. */
+    entree: { x: entree.x - TUILE * 2, y: entree.y },
+    /* La porte de retour, au centre du sas. Elle ne s'ouvre pas : elle est la
+       des le premier pas. Un donjon dont la sortie se meriterait enfermerait un
+       joueur qui a mal juge sa vie — et sa mort lui couterait un equipement
+       paye en argent reel. La difficulte d'un donjon est ce qu'on y rencontre,
+       jamais le fait d'y etre coince. */
+    sortie: { x: entree.x, y: entree.y },
+    obstacles: mursDonjon(plan, 1),
+    peuplement: peuplementDonjon(alea),
+    anneaux: [{ biome: 'donjon', jusqua: Infinity }],
+    salles: [],
+    /* ---- LE SOL, TUILE PAR TUILE ----
+     * Et pas « trois rectangles et deux couloirs » : la page redessinerait
+     * alors la forme a partir des memes cinq nombres, et le jour ou le plan
+     * gagne une salle, l'un des deux dessins l'oublierait. Cinq cents couples
+     * d'entiers partent UNE fois, a l'entree — quatorze kilo-octets, le poids
+     * d'une petite image — et la page n'a plus rien a deviner.
+     *
+     * C'est aussi ce qui permet de laisser NOIR tout ce qui n'est pas le
+     * donjon. Un sol de donjon etale sur toute la carte aurait donne
+     * l'impression d'un monde infini dont on aurait bati trois pieces au
+     * milieu ; le vide autour des murs est ce qui fait qu'un donjon se lit
+     * comme un interieur. */
+    tuiles: [...plan.sol].map((k) => {
+      const [c, l] = k.split(',').map(Number);
+      return [c, l];
+    }),
+  };
+}
+
 const SALLE = {
   /* Neuf tuiles de cote, murs compris : l'interieur fait sept tuiles, soit
      896 unites. Deux gardiens de trois cent quinze pixels y tiennent en se
@@ -848,15 +1137,26 @@ const MONSTRES = {
   /* La FONDERIE tient le fond du donjon. Sa zone annonce 1,5 s pour 240
      unites : 240/202 + 0,25 fait 1,44, on prend 1,5. Le chiffre se calcule,
      il ne se choisit pas. */
+  /* ---- IL EST DERRIERE OPTIMUS, DONC IL EST PIRE QU'OPTIMUS ----
+   * Il portait mille cinq cents points de vie, contre deux mille six cents
+   * pour la creature qui ouvre sa porte. On aurait donc traverse un boss de
+   * lave, un couloir et deux salles pleines pour trouver au fond quelque
+   * chose de plus facile que ce par quoi on etait entre — et le donjon se
+   * serait lu comme une salle de repos.
+   * Trois mille six cents : une porte ne peut pas etre plus dure que ce
+   * qu'elle garde. Le reste suit — il frappe plus fort qu'Optimus mais il est
+   * lent (62 contre 92), et c'est cette lenteur qui rend sa salle jouable : on
+   * ne le distance pas en marchant, on le distance en choisissant quand
+   * s'arreter pour tirer. */
   fonderie: {
     cle: 'fonderie', nom: 'Foundry Brute',
-    pv: 1500, att: 165, def: 48,
+    pv: 3600, att: 205, def: 62,
     vitesse: 62, rayon: 74, vue: 760,
     contact: true, cadence: 0.55,
-    tir: { portee: 520, vitesse: 320, sprite: 'braise', att: 95, cadence: 0.4,
+    tir: { portee: 520, vitesse: 320, sprite: 'braise', att: 118, cadence: 0.4,
            effet: 'brulure' },
-    zone: { annonce: 1.5, rayon: 240, att: 150, cadence: 0.18 },
-    xp: 2400,
+    zone: { annonce: 1.5, rayon: 240, att: 178, cadence: 0.18 },
+    xp: 7400,
   },
   skeleton: {
     cle: 'skeleton', nom: 'Skeleton',
@@ -1322,6 +1622,14 @@ const POTION_DE = {
 const RARETE_ANNEAU = {
   terre: 'commun', marais: 'rare', neige: 'epique',
   cendres: 'legendaire', lave: 'mythique',
+  /* Le donjon est DERRIERE la lave : on n'y entre qu'en abattant la creature
+     la plus dure de l'anneau le plus dur. Ses machines rendent donc du
+     mythique, comme la lave — pas mieux. Ce qui fait la difference est au fond
+     de la troisieme salle, et c'est BUTIN_GARANTI qui le dit.
+     Faire du donjon un anneau de plus aurait ete la facon paresseuse : il
+     aurait suffi d'y rester pour depasser tout le reste du jeu, sans jamais
+     avoir a le finir. */
+  donjon: 'mythique',
 };
 
 /* La couleur EST le prix. Un joueur qui voit un sac dore de l'autre bout de
@@ -1353,7 +1661,28 @@ const CHANCE_RELIQUE_BOSS = 1 / 40;
 /* Quelles especes comptent comme boss pour la relique. Le brasier a pris la
    place du gardien dans la lave ; le gardien reste dans les salles, ou son
    butin est garanti par la salle elle-meme. */
-const BOSS = { gardien: 1, brasier: 1, machine: 1, carapace: 1, optimus: 1 };
+const BOSS = { gardien: 1, brasier: 1, machine: 1, carapace: 1, optimus: 1,
+               fonderie: 1 };
+
+/*
+ * ---- CE QUI TOMBE A COUP SUR ----
+ *
+ * Le fond d'un donjon ne se tire pas au sort. Tout le reste du jeu est une
+ * question de chance — un sur cent quarante pour du mythique, un sur mille
+ * cinq cents pour une relique — et c'est ce qui rend la chasse tenable : on
+ * ne vise rien, on ramasse ce qui vient.
+ *
+ * Un donjon est l'inverse. On y entre EXPRES, apres avoir abattu la creature
+ * la plus dure de l'anneau le plus dur, et l'on traverse trois salles pour
+ * arriver au fond. Une expedition dont la recompense serait tiree au sort
+ * n'est pas une expedition, c'est une machine a sous avec des escaliers — et
+ * sur un site ou l'on joue deja de l'argent, la difference n'est pas une
+ * nuance de gout.
+ *
+ * Une TABLE, pas un drapeau sur la creature : le jour ou un deuxieme donjon
+ * garde un autre rang, il s'ecrit ici, et `butinDe` ne bouge pas d'une ligne.
+ */
+const BUTIN_GARANTI = { fonderie: 'relique' };
 
 /* Un sur cinquante. Le chiffre vient de ce qu'il doit produire : environ une
    potion toutes les vingt minutes de chasse soutenue — assez rare pour qu'on
@@ -1379,6 +1708,12 @@ const CHANCE_SOIN = { defaut: 1 / 6, nuee: 1 / 25 };
  */
 function butinDe(espece, alea, biome) {
   const r = () => (typeof alea === 'function' ? alea() : Math.random());
+  /* ---- CE QUI EST GARANTI NE PASSE PAS PAR LES DES ----
+   * En tete, et sans consommer un seul tirage : une creature dont le butin est
+   * promis ne doit pas pouvoir se retrouver, au bout de la chaine, avec une
+   * potion de soin parce qu'un de a mal tourne. */
+  const g = BUTIN_GARANTI[espece];
+  if (g) return { sac: SAC_DE_RARETE[g], contenu: [{ objet: g }] };
   /* ---- LA RELIQUE D'ABORD, PARCE QU'ELLE EST LA PLUS RARE ----
    * Un seul tirage par mort : ce qui passe en premier obtient son vrai taux,
    * ce qui passe apres n'a que ce qui reste. La relique doit donc etre en
@@ -1495,9 +1830,13 @@ module.exports = {
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
   ZONE_REACTION,
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe, BOSS,
+  BUTIN_GARANTI,
   RARETE_ANNEAU, SAC_DE_RARETE, CHANCE_EQUIP, CHANCE_RELIQUE, CHANCE_RELIQUE_BOSS,
   OBSTACLE, OBSTACLE_BIOME, obstacles, bloque,
   SALLE, SALLE_ANNEAUX, SALLE_BUTIN, MUR_BASE, salles, mursDe, dansLaSalle, DONJON,
+  PORTAIL, PORTAIL_DE, RETOUR_DE, MUR_DONJON, DONJON_TUILE, DONJON_SALLES,
+  DONJON_COULOIR, DONJON_ORIGINE,
+  planDonjon, mursDonjon, peuplementDonjon, planDeDonjon,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   choisitEspece,
   regenParSeconde, pouvoirDeStat,

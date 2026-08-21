@@ -732,14 +732,27 @@ for (const c of B.COFFRES) {
 
 // ================== LA SERIE EN DROP
 /*
- * Quarante pieces qui ne passent JAMAIS par la boutique. Ce qui compte n'est
- * pas qu'elles existent : c'est qu'AUCUN chemin d'achat ne puisse y mener.
+ * Les pieces qui ne passent JAMAIS par la boutique. Ce qui compte n'est pas
+ * combien elles sont : c'est qu'AUCUN chemin d'achat ne puisse y mener.
+ *
+ * Le compte etait ecrit en dur — quarante — et il a menti des que le donjon a
+ * apporte les siennes. Un essai qui code un total en chiffres se met a refuser
+ * l'ajout qu'on vient de faire au lieu de verifier la regle qui compte. On
+ * verifie donc que chaque anneau apporte SES huit, et que la Forge apporte les
+ * siennes : c'est la meme information, mais elle survit au prochain ajout.
  */
 {
   /* Les raretes qui se VENDENT — le bloc plus haut a la sienne, hors de
      portee d'ici. */
   const VENDUES = B.RARETES.filter((r) => r.cle !== 'relique');
-  ok(B.ITEMS_DROP.length === 40, `quarante trouvailles (${B.ITEMS_DROP.length})`);
+  const DONJON = B.ITEMS_DROP.filter((o) => o.donjon);
+  ok(B.ITEMS_DROP.length >= 40,
+     `au moins les quarante des anneaux (${B.ITEMS_DROP.length})`);
+  ok(DONJON.length === 8, `dont les huit de la Forge (${DONJON.length})`);
+  ok(DONJON.every((o) => o.rarete === 'relique'),
+     'toutes reliques : le donjon rend le rang le plus haut ATTEIGNABLE, pas plus haut');
+  ok(B.ITEMS_DROP.filter((o) => !o.donjon).length === 40,
+     'et les anneaux gardent leurs quarante');
   ok(B.ITEMS_DROP.every((o) => o.drop === true), 'toutes marquees `drop`');
   ok(B.ITEMS.every((o) => !o.drop), 'et aucune piece de boutique ne l est');
 
@@ -787,7 +800,14 @@ for (const c of B.COFFRES) {
    * Sinon le sac blanc ne serait qu'un sac de plus. */
   const P = require('./personnages');
   const rel = B.ITEMS_DROP.filter((o) => o.rarete === 'relique');
-  ok(rel.length === 4, `quatre reliques (${rel.length})`);
+  /* Quatre au coeur du monde, huit dans la Forge. Le compte est ecrit en deux
+     morceaux plutot qu'en un total : ce qui compte n'est pas « douze », c'est
+     que chaque LIEU garde les siennes. Un total unique se serait contente de
+     changer de chiffre le jour ou l'un des deux se vide. */
+  ok(rel.filter((o) => !o.donjon).length === 4,
+     `quatre reliques au coeur du monde (${rel.filter((o) => !o.donjon).length})`);
+  ok(rel.filter((o) => o.donjon).length === 8,
+     `et huit dans la Forge (${rel.filter((o) => o.donjon).length})`);
   /* Contre ce que la BOUTIQUE vend, pas contre la mythique du monde : c'est
      la comparaison qui a un sens depuis que les deux ont leur echelle. Une
      relique qui ne battrait que le butin serait battue par un achat. */
