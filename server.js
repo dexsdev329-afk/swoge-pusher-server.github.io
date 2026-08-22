@@ -3312,6 +3312,14 @@ wss.on('connection', (ws) => {
         if (!err) persistSoon();
         return send(ws, { type: 'oeufOuvre', ...(r || {}), error: err || undefined,
                           sacJoueur: game.sacPour(ws.addr),
+                          /* Les oeufs, les DEUX moities ensemble. Le coffre a
+                             oeufs de la salle montre le sac et le coffre cote
+                             a cote, et deux listes envoyees a deux moments
+                             differents s'afficheraient dans deux etats
+                             differents — c'est exactement ce qui s'etait
+                             passe : le coffre partait a chaque message, le sac
+                             presque jamais. */
+                          oeufs: game.oeufsDuJoueur(ws.addr),
                           coffreOeufs: game.oeufsDuCoffre(ws.addr),
                           familiers: game.familiersDe(ws.addr) });
       }
@@ -3333,12 +3341,14 @@ wss.on('connection', (ws) => {
         if (!err) persistSoon();
         return send(ws, { type: m.type, ...(r || {}), error: err || undefined,
                           sacJoueur: game.sacPour(ws.addr),
+                          oeufs: game.oeufsDuJoueur(ws.addr),
                           coffreOeufs: game.oeufsDuCoffre(ws.addr) });
       }
       if (m.type === 'familiers') {
         if (!ws.addr) return;
         return send(ws, { type: 'familiers', familiers: game.familiersDe(ws.addr),
                           coffreOeufs: game.oeufsDuCoffre(ws.addr),
+                          oeufs: game.oeufsDuJoueur(ws.addr),
                           /* ---- ET LE SAC AVEC ----
                            * Le rayon des animaux montre desormais les oeufs
                            * qui sont ENCORE dans le sac, avec le bouton qui

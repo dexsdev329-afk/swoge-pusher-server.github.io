@@ -6681,9 +6681,10 @@ class Game {
     for (const k of Object.keys(sac)) {
       if (sac[k] > 0) { compte[Number(k)] = sac[k] | 0; places[Number(k)] = sac[k] | 0; }
     }
-    for (const k of Object.keys(fioles)) {
-      if (fioles[k] > 0) { compte['st:' + k] = fioles[k] | 0; places['st:' + k] = 1; }
-    }
+    /* Les fioles de stat ne passent PLUS par la grille : elles vivent dans
+       leur reserve, envoyee a part par `fiolesPour`. Les laisser ici leur
+       aurait garde une case chacune — c'est-a-dire exactement le probleme
+       qu'on vient d'enlever. */
     /* ---- LES OEUFS S'EMPILENT AUSSI ----
      * Meme raison que les fioles : ce n'est pas du butin qu'on choisit de
      * garder, c'est une trouvaille qu'on rapporte. Et l'on n'en porte jamais
@@ -7439,19 +7440,45 @@ class Game {
    * n'aurait produit qu'une seule chose — des joueurs qui jettent des oeufs.
    */
   oeufsDuCoffre(addr) {
+    /* DERIVE, jamais recalcule. La vue du coffre et la vue complete
+       repondaient a la meme question par deux boucles differentes : le jour
+       ou l'une aurait change, l'autre aurait continue de dire l'ancienne
+       reponse, et le joueur aurait vu deux comptes pour un seul coffre. */
+    return this.oeufsDuJoueur(addr)
+      .filter((x) => x.coffre > 0)
+      .map((x) => ({ espece: x.espece, nom: x.nom, cle: x.cle,
+                     quantite: x.coffre, eclos: x.eclos }));
+  }
+
+  /**
+   * LES OEUFS D'UN COMPTE, LES DEUX MOITIES ENSEMBLE.
+   *
+   * Le sac ET le coffre, par espece, en UNE seule reponse. Deux accesseurs —
+   * l'un pour le sac, l'autre pour le coffre — auraient laisse la page les
+   * demander a deux moments differents et les afficher dans deux etats
+   * differents ; et c'est exactement ce qui s'etait passe : le coffre etait
+   * envoye a chaque message, le sac presque jamais, et le rayon des animaux
+   * dessinait des oeufs vieux de plusieurs secondes.
+   *
+   * On rend meme les especes qu'on n'a nulle part ? Non : filtrees. Une liste
+   * de six lignes dont quatre vides ne dit rien de plus qu'une liste de deux,
+   * et elle coute une place a l'ecran a chaque fois.
+   *
+   * Meme forme que `fiolesPour` — `sac` et `coffre` cote a cote — parce que
+   * c'est la meme question posee sur une autre chose, et que la page a deja
+   * appris a la lire.
+   */
+  oeufsDuJoueur(addr) {
     const p = this._p(addr);
-    const c = p.coffreOeufs || {};
-    const out = [];
-    for (const es of monde.OEUFS) {
-      if (!(c[es] > 0)) continue;
-      out.push({ espece: es, nom: NOM_OEUF[es] || 'Egg', cle: 'oeuf_' + es,
-                 quantite: c[es] | 0,
-                 /* Ce qu'on peut en faire, dit par le SERVEUR : c'est lui qui
-                    sait si l'animal est deja eclos, et la page ne doit pas
-                    avoir a le deduire d'une seconde liste. */
-                 eclos: !!(p.familiers || {})[es] });
-    }
-    return out;
+    const sac = p.sacOeufs || {}, coffre = p.coffreOeufs || {};
+    return monde.OEUFS.map((es) => ({
+      espece: es, nom: NOM_OEUF[es] || 'Egg', cle: 'oeuf_' + es,
+      sac: Math.max(0, sac[es] | 0), coffre: Math.max(0, coffre[es] | 0),
+      /* Ce qu'on peut en faire, dit par le SERVEUR : c'est lui qui sait si
+         l'animal est deja eclos, et la page ne doit pas avoir a le deduire
+         d'une seconde liste. */
+      eclos: !!(p.familiers || {})[es],
+    })).filter((x) => x.sac > 0 || x.coffre > 0);
   }
 
   /** Du sac au coffre. */
@@ -7677,13 +7704,16 @@ class Game {
   sacRempli(addr) {
     const p = this._p(addr);
     const sac = p.sac || {};
-    const fioles = p.sacFioles || {};
-    /* Des CASES, pas des unites : une pile de fioles n'en occupe qu'une. Ce
-       compte-la doit dire la meme chose que `_casesDuSac`, sinon le refus
-       « sac plein » tombe alors qu'il reste des cases vides a l'ecran. */
+    /* ---- LES FIOLES DE STAT N'Y SONT PLUS ----
+     * Elles ont leur propre reserve (monde.FIOLE_PILE), a cote du sac, comme
+     * les potions de soin. Les compter ici bornait le nombre de STATS
+     * differentes qu'on pouvait porter a ce qui restait de sac : avec quatre
+     * pieces d'equipement, on portait quatre sortes de fioles et pas une de
+     * plus.
+     * Ce compte doit dire la meme chose que `_casesDuSac`, sinon le refus
+     * « sac plein » tombe alors qu'il reste des cases vides a l'ecran. */
     const oeufs = p.sacOeufs || {};
     return Object.keys(sac).reduce((n, id) => n + Math.max(0, sac[id] | 0), 0)
-         + Object.keys(fioles).reduce((n, k) => n + (fioles[k] > 0 ? 1 : 0), 0)
          + Object.keys(oeufs).reduce((n, k) => n + (oeufs[k] > 0 ? 1 : 0), 0);
   }
 
@@ -7706,11 +7736,15 @@ class Game {
   /** Ramasser une fiole : elle prend une place, elle ne se boit pas. */
   prendFiole(addr, stat) {
     if (personnages.STATS.indexOf(stat) < 0) throw new Error('Unknown stat');
-    if (this.sacRempli(addr) >= SAC_CASES) {
-      throw new Error('Your backpack is full — ' + SAC_CASES + ' slots, one item each');
-    }
     const p = this._p(addr);
     p.sacFioles = p.sacFioles || {};
+    /* Le seul plafond est celui de SA PILE. Le refus regardait le sac entier,
+       donc une fiole de defense de plus etait refusee parce qu'une piece
+       d'armure occupait une case a l'autre bout — deux choses qui n'ont plus
+       rien a voir l'une avec l'autre. */
+    if ((p.sacFioles[stat] || 0) >= monde.FIOLE_PILE) {
+      throw new Error('You already carry ' + monde.FIOLE_PILE + ' of those');
+    }
     p.sacFioles[stat] = (p.sacFioles[stat] || 0) + 1;
     return { stat };
   }
@@ -7733,8 +7767,11 @@ class Game {
     const p = this._p(addr);
     p.fioles = p.fioles || {};
     if (!(p.fioles[stat] > 0)) throw new Error('You have none of those');
-    if (this.sacRempli(addr) >= SAC_CASES) {
-      throw new Error('Your backpack is full — ' + SAC_CASES + ' slots, one item each');
+    /* Meme plafond que le ramassage, et pour la meme raison : la reserve est
+       a elle, le sac ne la concerne plus. */
+    p.sacFioles = p.sacFioles || {};
+    if ((p.sacFioles[stat] || 0) >= monde.FIOLE_PILE) {
+      throw new Error('You already carry ' + monde.FIOLE_PILE + ' of those');
     }
     p.fioles[stat] -= 1;
     if (p.fioles[stat] <= 0) delete p.fioles[stat];

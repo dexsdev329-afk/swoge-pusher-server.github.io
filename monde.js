@@ -2496,6 +2496,34 @@ const SAC = {
  * qu'il sache, de loin, que celui-la n'est pas une relique. */
 const SACS = ['brun', 'bleu', 'violet', 'or', 'rouge', 'blanc', 'oeuf'];
 
+/* ---- LA RESERVE DE FIOLES DE STAT ----
+ *
+ * Elles ne prennent PLUS de place dans les huit cases du sac. Le commentaire
+ * de `_casesDuSac` le disait deja depuis longtemps — « une fiole de stat n'est
+ * pas du butin qu'on choisit de garder, c'est une reserve, comme les potions
+ * de soin qui ont deja leur pile » — mais le travail s'etait arrete a
+ * mi-chemin : une PILE ne coutait plus qu'une case au lieu de trois, et c'est
+ * tout. Le nombre de STATS differentes qu'on pouvait porter restait borne par
+ * ce qui restait de sac.
+ *
+ * Mesure faite avec quatre pieces d'equipement dans le sac : on ramassait
+ * vingt fioles de defense, vingt d'attaque, vingt de vitesse — puis UNE de
+ * dexterite, et plus rien. Le joueur lisait ca comme « quatre maximum », et
+ * il n'avait pas tort sur ce qu'il voyait.
+ *
+ * Elles ont donc leur reserve, a cote du sac, comme les potions de soin.
+ *
+ * ---- CE QUI NE CHANGE PAS : ELLES SE PERDENT EN MOURANT ----
+ *
+ * C'est toute la raison d'etre du coffre a fioles, et la phrase qu'il affiche
+ * (« stored here, they survive your death »). Une reserve qui survivrait
+ * viderait le coffre de son sens le jour meme.
+ *
+ * Quatre-vingt-dix-neuf par stat : assez pour qu'on n'y pense jamais, et
+ * borne quand meme — un compteur sans plafond finit par ecrire un nombre qui
+ * ne tient pas dans sa case, et par voyager en entier a chaque image. */
+const FIOLE_PILE = 99;
+
 const STATS_POTION = Object.keys(POUVOIR_PAR_STAT);
 
 const POTION_DE = {
@@ -2913,7 +2941,7 @@ module.exports = {
   TUILE, CARTE, MONDE, CENTRE, ANNEAUX, MONSTRES, PEUPLEMENT, PLANCHER,
   ARMES, DEGATS_POING, VITESSE_JOUEUR, CADENCE_MAX,
   cadenceDe, vitesseDe,
-  REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
+  REGEN_COEF, REGEN_REPOS, REPOS_DELAI, FIOLE_PILE, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
   FAMILIERS, familierEffet, rechargeFamilier, POUVOIR_PAR_ESPECE,
   POUVOIRS_PAR_ESPECE, POUVOIRS_ZONE, POUVOIRS_SOUTIEN, pouvoirsDe,
   ZONE_REACTION,
