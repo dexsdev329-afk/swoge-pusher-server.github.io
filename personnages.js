@@ -493,6 +493,24 @@ function bonusesDeObjet(o) {
   return bonusesDe(o.rarete, o.famille, o.saison, sourceDe(o));
 }
 
+/**
+ * LE BUDGET D'UN OBJET : le nombre de points que sa rarete lui accorde.
+ *
+ * Il etait deja calcule au milieu de `bonusesDe`, ou il servait a repartir
+ * les stats. Les passifs en ont besoin AUSSI — leur force suit la meme courbe
+ * de rarete, et c'est voulu : une legendaire est plus forte pour la meme
+ * raison qu'elle donne plus de points.
+ * Le sortir ici plutot que de le recalculer la-bas evite la seule facon de se
+ * tromper : deux lectures de la meme table qui finissent par ne plus choisir
+ * la meme ligne.
+ */
+function budgetDe(o) {
+  if (!o) return 0;
+  const tables = BUDGET[sourceDe(o)];
+  const table = tables && tables[Number(o.saison)];
+  return (table && table[o.rarete]) || 0;
+}
+
 /** Les degats d'une arme du catalogue, ou `null` si ce n'en est pas une. */
 function degatsDeObjet(o) {
   if (!o || Number(o.saison) !== 2) return null;
@@ -517,7 +535,7 @@ const FAMILLE_STAT = Object.keys(PROFIL_FAMILLE).reduce((o, f) => {
 
 
 module.exports = {
-  STATS, BASE, FAMILLE_STAT, PROFIL_FAMILLE, JAUGES,
+  STATS, BASE, FAMILLE_STAT, PROFIL_FAMILLE, JAUGES, budgetDe,
   BUDGET_SAISON, BUDGET_BUTIN, BUDGET_BOUTIQUE, BUDGET,
   DEGATS_ARME, DEGATS_ARME_BUTIN, DEGATS_ARME_BOUTIQUE, DEGATS,
   sourceDe, bonusesDeObjet, degatsDeObjet,

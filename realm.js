@@ -437,6 +437,13 @@ class Realm {
       /* Le pouvoir vient du FRUIT, pas de l'arme : `statFruit` est la stat
          principale du fruit porte, envoyee par game.js. Sans fruit, pas de
          pouvoir — le poing nu ne lance pas d'eclair. */
+      /* ---- LES PASSIFS PORTES ----
+       * Une carte de valeurs deja calculees, pas des objets : la simulation
+       * n'a pas a savoir ce qu'est une bague, et relire le catalogue a chaque
+       * coup porte serait lui donner un travail qui n'est pas le sien.
+       * Vide quand on ne porte rien — chaque lecture teste, plutot que de
+       * poser sept champs qui valent zero. */
+      passifs: (fiche && fiche.passifs) || {},
       pouvoir: monde.pouvoirDeStat((fiche && fiche.statFruit) || null),
       pouvoirRecharge: 0,
       /* La rafale, quand elle est active : le temps qu'il lui reste. */
@@ -538,6 +545,9 @@ class Realm {
      * facon de tirer. */
     j.famR = Math.min(j.famR || 0, monde.rechargeFamilier(j.famNiv));
     j.pouvoir = monde.pouvoirDeStat(fiche.statFruit || null);
+    /* Ils changent avec l'equipement, comme les stats : garder les anciens
+       ferait bruler une armure qu'on vient de retirer. */
+    j.passifs = fiche.passifs || {};
     return j;
   }
 
@@ -712,9 +722,14 @@ class Realm {
     const P = monde.POUVOIRS[j.pouvoir];
     if (!P) return { refus: 'aucun' };
     if (j.pouvoirRecharge > 0) return { refus: 'recharge', reste: j.pouvoirRecharge };
-    if (j.mp < P.cout) return { refus: 'mana', manque: P.cout - j.mp };
+    /* LA RESERVE allege le cout. On la calcule AVANT le refus : sinon un
+       joueur a qui il manque cinq points de mana se verrait refuser un
+       pouvoir qu'il peut payer, et chercherait longtemps pourquoi. */
+    const cout = Math.max(1, Math.round(
+      P.cout * (1 - ((j.passifs && j.passifs.reserve) || 0))));
+    if (j.mp < cout) return { refus: 'mana', manque: cout - j.mp };
 
-    j.mp -= P.cout;
+    j.mp -= cout;
     j.pouvoirRecharge = P.recharge;
     j.repos = 0;
     const sortie = { cle: j.pouvoir, addr, x: j.x, y: j.y, mp: j.mp, recharge: P.recharge };
@@ -1641,6 +1656,88 @@ class Realm {
     return Math.max(1, Math.round(perte * (1 + j.ardeurPart)));
   }
 
+  /* ======================================================================
+   * LES PASSIFS
+   * ======================================================================
+   *
+   * Sept, et chacun vit a l'endroit ou sa question se pose : trois sur le
+   * coup porte, un sur le coup subi, un sur la regeneration, un sur le cout
+   * du pouvoir, un sur les entraves.
+   *
+   * Ils lisent tous `j.passifs`, une carte de valeurs DEJA calculees par le
+   * serveur a partir de l'equipement. La simulation ne sait pas ce qu'est une
+   * bague, et c'est tres bien : elle n'a pas a relire le catalogue a chaque
+   * coup porte.
+   */
+
+  /** LA JUSTESSE : une chance que le coup compte double. */
+  _justesse(j, perte) {
+    const p = j && j.passifs && j.passifs.justesse;
+    if (!p) return perte;
+    return this.alea() < p ? perte * 2 : perte;
+  }
+
+  /**
+   * LA BRULURE : nos coups enflamment.
+   *
+   * Elle passe par les MEMES champs que la brulure du familier de feu
+   * (`m.feu`, `m.feuTaux`, `m.feuPar`) — un second compteur sur la meme
+   * creature aurait double les degats sans que rien ne le dise, et c'est
+   * exactement la faute que le familier avait deja evitee.
+   *
+   * Elle REMPLACE plutot que de prolonger, pour la meme raison : sinon taper
+   * sans arret entretiendrait un feu permanent, et la brulure cesserait
+   * d'etre un evenement.
+   */
+  _brule(j, m) {
+    const p = j && j.passifs && j.passifs.brulure;
+    if (!p || !m) return;
+    const duree = (j.passifs.brulureDuree || 6);
+    m.feu = duree;
+    m.feuPar = j.addr;
+    /* Le total est reparti sur la duree : la table dit « 145 sur six
+       secondes », pas « 145 par seconde ». */
+    m.feuTaux = p / duree;
+  }
+
+  /** LE VAMPIRISME : une part de ce qu'on inflige revient. */
+  _vampirise(j, perte) {
+    const p = j && j.passifs && j.passifs.vampire;
+    if (!p || j.pv <= 0 || j.pv >= j.pvMax) return;
+    /* Au moins un point quand la part arrondit a zero : un passif qui ne rend
+       rien sur les petits coups se lirait comme un passif casse. */
+    const gain = Math.max(1, Math.round(perte * p));
+    j.pv = Math.min(j.pvMax, j.pv + gain);
+  }
+
+  /**
+   * LES EPINES : celui qui frappe se blesse.
+   *
+   * Sur l'espece et le point du coup, pas sur une reference a la creature :
+   * un projectile en vol survit a son lanceur, et chercher un cadavre a
+   * chaque impact couterait plus que ca ne rapporte. On frappe donc ce qui
+   * est LA, au point d'impact — ce qui est aussi la lecture la plus juste :
+   * les epines blessent ce qui vous touche.
+   */
+  _epines(j, perte, espece, x, y, ev) {
+    const p = j && j.passifs && j.passifs.epines;
+    if (!p || !(perte > 0)) return;
+    const rendu = Math.max(1, Math.round(perte * p));
+    let mieux = null, d2mini = 90 * 90;
+    for (const m of this.monstres) {
+      if (m.pv <= 0) continue;
+      if (espece && m.espece !== espece) continue;
+      const dx = m.x - x, dy = m.y - y, d2 = dx * dx + dy * dy;
+      if (d2 < d2mini) { d2mini = d2; mieux = m; }
+    }
+    if (!mieux) return;
+    mieux.pv = Math.max(0, mieux.pv - rendu);
+    ev.touches.push({ addr: j.addr, monstre: mieux.id, espece: mieux.espece,
+                      perte: rendu, pv: mieux.pv, x: mieux.x, y: mieux.y,
+                      passif: 'epines' });
+    if (mieux.pv <= 0) this._abat(mieux, j, ev);
+  }
+
   _amorti(j, perte) {
     if (!(j.bouclier > 0) || !(j.bouclierPart > 0)) return perte;
     /* Au moins un point : un bouclier qui annulerait entierement les petits
@@ -1688,7 +1785,13 @@ class Realm {
     } else { j.pvReste = 0; }
 
     if (j.mp < j.mpMax) {
-      j.mpReste = (j.mpReste || 0) + monde.regenParSeconde(j.wis, auRepos) * dt;
+      /* LA LUCIDITE, ici et pas ailleurs : c'est le seul endroit ou le mana
+         remonte. Elle s'ajoute au doublement du repos plutot que de le
+         remplacer — deux questions differentes, et un joueur qui fait les deux
+         merite les deux. */
+      const lucide = 1 + ((j.passifs && j.passifs.lucide) || 0);
+      j.mpReste = (j.mpReste || 0)
+        + monde.regenParSeconde(j.wis, auRepos) * lucide * dt;
       const gain = Math.floor(j.mpReste);
       if (gain > 0) {
         j.mpReste -= gain;
@@ -1752,7 +1855,15 @@ class Realm {
     const E = monde.EFFETS[cle];
     if (!E || j.pv <= 0) return false;
     if (j.immun[cle] > 0 || j[cle] > 0) return false;
-    j[cle] = E.duree;
+    /* LE VIF raccourcit ce qui vous cloue au sol. Il ne l'annule jamais — la
+       table le plafonne a la moitie — parce que le monde a des creatures dont
+       l'entrave est la seule facon de peser, et qu'une entrave annulee n'est
+       plus une entrave.
+       Ici plutot qu'au decompte : la duree se decide UNE fois, quand l'etat
+       est pose. La retrancher a chaque pas aurait demande de savoir de combien
+       elle a deja ete raccourcie. */
+    const vif = Math.min(0.9, (j.passifs && j.passifs.vif) || 0);
+    j[cle] = E.duree * (1 - vif);
     return true;
   }
 
@@ -2128,9 +2239,16 @@ class Realm {
           const dx = m.x - t.x, dy = m.y - t.y;
           if (dx * dx + dy * dy > r * r) continue;
           const arme = monde.tirageArme(j ? j.degats : monde.DEGATS_POING, this.alea);
-          const perte = this._attise(j,
+          let perte = this._attise(j,
             monde.degatsInfliges(j ? j.att : 0, arme, monde.MONSTRES[m.espece].def));
+          /* ---- LES TROIS PASSIFS QUI VIVENT SUR LE COUP PORTE ----
+           * Ici et pas ailleurs : c'est le seul endroit ou nos degats a une
+           * creature sont decides. Les poser dans chacun des chemins qui
+           * frappent aurait donne autant d'occasions d'en oublier un. */
+          perte = this._justesse(j, perte);
+          this._brule(j, m);
           m.pv = Math.max(0, m.pv - perte);
+          this._vampirise(j, perte);
           /* L'adresse du TIREUR part avec le coup : c'est lui qui doit
              l'entendre, pas les trois joueurs d'a cote. */
           ev.touches.push({ addr: t.addr, monstre: m.id, espece: m.espece,
@@ -2204,6 +2322,10 @@ class Realm {
           if (dx * dx + dy * dy > 34 * 34) continue;
           const perte = this._amorti(j, monde.degatsSubis(t.att, j.def));
           j.pv = Math.max(0, j.pv - perte);
+          /* Les EPINES renvoient a celui qui a tire. Rien si le tireur est
+             deja mort : renvoyer a un cadavre est sans effet, et le chercher a
+             chaque projectile coute plus que ca ne rapporte. */
+          this._epines(j, perte, t.espece, t.x, t.y, ev);
           /* ---- LE TIR QUI POSE UN ETAT ----
            * Il fait ses degats comme les autres, et EN PLUS il cloue, ralentit
            * ou brule — sauf si le joueur sort a peine du meme etat. Dans ce

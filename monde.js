@@ -2896,6 +2896,122 @@ function familierEffet(pouvoir, niveau) {
   return out;
 }
 
+/*
+ * ==================== LES PASSIFS ====================
+ *
+ * ---- POURQUOI ILS EXISTENT ----
+ *
+ * Les armures et les bagues annoncaient un POUVOIR. C'etait une faute — 86
+ * fiches promettaient une Stase que le joueur ne recevait jamais, puisque le
+ * pouvoir vient du fruit et de lui seul. On l'a retiree.
+ *
+ * Restait la vraie question : une armure legendaire ne devait donc plus rien
+ * apporter d'autre que des chiffres. Un passif est la reponse — il ne se
+ * declenche pas, il EST la, et il recompense l'equipement au lieu de le
+ * doubler.
+ *
+ * ---- UNE CHOSE PAR SAISON ----
+ *
+ *   saison 1, le fruit   -> des stats ET un pouvoir (barre d'espace)
+ *   saison 2, l'arme     -> des degats
+ *   saison 3, l'armure   -> des stats ET un passif
+ *   saison 4, la bague   -> des stats ET un passif
+ *
+ * Le fruit garde le seul pouvoir actif du jeu. C'est ce qui fait qu'on en
+ * porte un, et deux touches a apprendre pour un jeu qui se joue au pouce en
+ * auraient fait une de trop.
+ *
+ * ---- LE PASSIF SE DEDUIT, IL NE SE LISTE PAS ----
+ *
+ * Sa NATURE vient de la stat dominante de la famille — exactement comme le
+ * pouvoir du fruit. Douze familles, sept stats, sept passifs : une table de
+ * douze entrees ecrite a la main aurait fini par donner deux passifs
+ * differents a deux familles qui font la meme chose.
+ *
+ * Sa FORCE vient du budget de rarete, celui-la meme qui decide des bonus de
+ * stats. Une legendaire est plus forte qu'une commune pour la meme raison
+ * qu'elle donne plus de points, et l'ecart n'a pas a etre regle deux fois.
+ *
+ * Une armure pese beaucoup plus qu'une bague (29 contre 10 au legendaire), et
+ * c'est voulu : l'armure est le gros investissement, la bague comble un trou.
+ */
+const PASSIF_PAR_STAT = {
+  /* La force ENFLAMME. C'est l'exemple qui a lance tout ca, et c'est le bon :
+     la brulure ignore l'armure — deja la regle du jeu — donc elle vaut contre
+     ce qui encaisse, la ou nos degats butent. */
+  att: 'brulure',
+  /* La garde RENVOIE. Le seul passif qui se declenche quand on SUBIT, ce qui
+     en fait le seul a recompenser le fait de tenir. */
+  def: 'epines',
+  /* La vitesse RACCOURCIT les entraves. Elle ne donne pas de vitesse en plus —
+     ce serait un bonus de stat, et l'objet en donne deja. Elle rend ce qui
+     vous cloue au sol moins long, ce qu'aucun chiffre ne fait. */
+  spd: 'vif',
+  /* La vitalite BOIT. Une part de ce qu'on inflige revient. */
+  vit: 'vampire',
+  /* La sagesse ECLAIRCIT : le mana remonte plus vite. */
+  wis: 'lucide',
+  /* Le mana ALLEGE : le pouvoir du fruit coute moins cher. Le seul passif qui
+     parle a un autre systeme, et c'est justement ce qui le rend interessant a
+     porter — il n'a de valeur que si l'on a un fruit. */
+  mp: 'reserve',
+  /* La dextérité AJUSTE : parfois le coup compte double. */
+  dex: 'justesse',
+};
+
+/* Ce que chaque passif vaut PAR POINT DE BUDGET. Un seul nombre par passif :
+   la courbe de rarete est deja celle des bonus, on ne la reecrit pas.
+   Ces sept nombres sont le SEUL reglage de tout le systeme. */
+const PASSIFS = {
+  /* Cinq points de degat par point de budget, etales sur six secondes. Une
+     armure legendaire (budget 29) brule donc pour 145 — l'ordre de grandeur
+     demande. Une bague legendaire (budget 10) pour 50. */
+  brulure:  { par: 5,      duree: 6 },
+  /* Part des degats renvoyee. A 0,6 % par point, une armure legendaire
+     renvoie 17 % — sensible quand on encaisse beaucoup, jamais une arme. */
+  epines:   { par: 0.006,  plafond: 0.35 },
+  /* Part retiree a la duree des entraves. Plafonne a la moitie : une entrave
+     annulee ne serait plus une entrave, et le monde a des monstres dont c'est
+     la seule facon de peser. */
+  vif:      { par: 0.012,  plafond: 0.5 },
+  /* Part des degats infligés rendue en vie. Petit : a 0,4 % par point, une
+     legendaire rend 11 %, ce qui compte sur la duree d'un boss sans rendre
+     les potions inutiles. */
+  vampire:  { par: 0.004,  plafond: 0.25 },
+  /* Ce qui s'AJOUTE au debit de mana, en part. Une legendaire le multiplie
+     par 1,87. La regeneration de mana est lente par construction — c'est un
+     passif qui change la facon de jouer un fruit, pas un chiffre de plus. */
+  lucide:   { par: 0.03,   plafond: 1.5 },
+  /* Part retiree au cout du pouvoir. Plafonne a la moitie : un pouvoir
+     gratuit cesserait d'etre un choix. */
+  reserve:  { par: 0.008,  plafond: 0.5 },
+  /* Chance que le coup compte DOUBLE. Plafonne a un quart : au-dela, la
+     variance devient plus forte que l'equipement, et deux joueurs identiques
+     ne feraient plus les memes degats pour une raison qu'ils ne voient pas. */
+  justesse: { par: 0.005,  plafond: 0.25 },
+};
+
+/** Le passif d'une stat dominante, ou `null`. */
+function passifDeStat(stat) { return PASSIF_PAR_STAT[stat] || null; }
+
+/**
+ * CE QUE VAUT UN PASSIF, POUR UN BUDGET DONNE.
+ *
+ * Une seule formule, ici. Le serveur l'applique et la page l'AFFICHE — deux
+ * calculs finiraient par promettre autre chose que ce qui se passe. C'est la
+ * meme regle que `familierEffet`.
+ */
+function passifEffet(cle, budget) {
+  const P = PASSIFS[cle];
+  const b = Math.max(0, Number(budget) || 0);
+  if (!P || !b) return null;
+  const brut = P.par * b;
+  const v = P.plafond === undefined ? brut : Math.min(P.plafond, brut);
+  const out = { cle, valeur: v };
+  if (P.duree) out.duree = P.duree;
+  return out;
+}
+
 /* La stat dominante du fruit -> son pouvoir. */
 const POUVOIR_PAR_STAT = {
   att: 'foudre', hp: 'foudre',
@@ -3435,7 +3551,8 @@ module.exports = {
   statsMonstre, phaseMonstre, nbPhases,
   ARMES, DEGATS_POING, VITESSE_JOUEUR, CADENCE_MAX,
   cadenceDe, vitesseDe,
-  REGEN_COEF, REGEN_REPOS, REPOS_DELAI, FIOLE_PILE, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
+  REGEN_COEF, REGEN_REPOS, REPOS_DELAI, FIOLE_PILE, POUVOIRS,
+  PASSIFS, PASSIF_PAR_STAT, passifDeStat, passifEffet, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
   FAMILIERS, familierEffet, rechargeFamilier, POUVOIR_PAR_ESPECE,
   POUVOIRS_PAR_ESPECE, POUVOIRS_ZONE, POUVOIRS_SOUTIEN, pouvoirsDe,
   ZONE_REACTION,

@@ -142,6 +142,27 @@ const NOM_FAMILIER = {
    vit dans monde.js avec les chiffres : deux tables — l'une qui nomme,
    l'autre qui agit — auraient fini par annoncer un pouvoir et en appliquer un
    autre. */
+/* ---- LES PASSIFS, NOMMES ET DITS ----
+ * Le nom et la phrase vivent ICI et pas dans monde.js : monde.js porte la
+ * REGLE — quelle stat donne quel passif, et combien il vaut — et il n'a
+ * jamais eu a savoir comment on l'ecrit en anglais.
+ * La phrase prend l'effet DEJA calcule : la recalculer ailleurs finirait par
+ * annoncer autre chose que ce que le serveur applique. */
+const NOM_PASSIF = {
+  brulure: 'Kindling', epines: 'Thornmail', vif: 'Unbound',
+  vampire: 'Sanguine', lucide: 'Clarity', reserve: 'Wellspring',
+  justesse: 'Precision',
+};
+const PHRASE_PASSIF = {
+  brulure: (e) => `your hits burn for ${Math.round(e.valeur)} over ${e.duree}s`,
+  epines:  (e) => `attackers take back ${Math.round(e.valeur * 100)}% of their hit`,
+  vif:     (e) => `stun, slow and burn last ${Math.round(e.valeur * 100)}% less`,
+  vampire: (e) => `you heal ${Math.round(e.valeur * 100)}% of the damage you deal`,
+  lucide:  (e) => `mana regenerates ${Math.round(e.valeur * 100)}% faster`,
+  reserve: (e) => `your fruit power costs ${Math.round(e.valeur * 100)}% less`,
+  justesse: (e) => `${Math.round(e.valeur * 100)}% chance to hit twice as hard`,
+};
+
 const NOM_POUVOIR_FAMILIER = {
   mord: 'Bites monsters', brule: 'Sets enemies on fire',
   gele: 'Freezes an enemy', bouclier: 'Shields you, blocks some hits',
@@ -5986,6 +6007,11 @@ class Game {
          pouvoir : c'est celui que la barre d'espace va lancer. */
       const sort = Game.sortDuFruit(o);
       if (sort) ligne.sort = sort;
+      /* Le PASSIF d'une armure ou d'une bague. Il ne se declenche pas, donc
+         rien ne le montrerait a l'usage : sa fiche est le seul endroit ou le
+         joueur peut apprendre qu'il l'a. */
+      const passif = Game.passifDe(o);
+      if (passif) ligne.passif = passif;
       /* Les degats ne concernent que les armes : les poser sur une bague
          laisserait croire qu'elle frappe. */
       if (degats) ligne.degats = degats.slice();
@@ -7088,6 +7114,43 @@ class Game {
         ? `${P.facteur}× fire rate for ${P.duree}s`
         : `freezes everything within ${P.rayon} for ${P.duree}s`;
     return { cle, nom: P.nom, cout: P.cout, recharge: P.recharge, quoi };
+  }
+
+  /**
+   * LE PASSIF D'UN OBJET, ou `null`.
+   *
+   * ---- UNE CHOSE PAR SAISON, ET C'EST LA REGLE QUI TIENT TOUT ----
+   *
+   * Le fruit donne un POUVOIR, l'arme des DEGATS, l'armure et la bague un
+   * PASSIF. Un objet qui donnerait les deux ferait de la saison 1 un cran de
+   * plus au lieu d'un choix.
+   *
+   * Le discriminant est la SAISON, comme pour `sortDuFruit`, et pour la meme
+   * raison : c'est le seul fait que l'objet porte et qui ne peut pas se
+   * mettre a signifier autre chose. Le tester sur la famille etait exactement
+   * la faute qui a mis un pouvoir sur 86 armures et bagues.
+   *
+   * ---- ET SA FORCE VIENT DU BUDGET DE RARETE ----
+   *
+   * Celui-la meme qui decide des bonus de stats. Une legendaire est plus
+   * forte qu'une commune pour la meme raison qu'elle donne plus de points, et
+   * l'ecart n'a pas a etre regle une seconde fois. La source compte aussi :
+   * une piece de butin et une piece de boutique n'ont pas le meme budget, et
+   * `sourceDe` le sait deja.
+   */
+  static passifDe(o) {
+    if (!o) return null;
+    const S = boutique.SAISONS.filter((x) => x.cle === 'armures' || x.cle === 'bagues')
+                              .map((x) => x.n);
+    if (S.indexOf(Number(o.saison)) < 0) return null;
+    const stat = personnages.FAMILLE_STAT[o.famille];
+    const cle = stat ? monde.passifDeStat(stat) : null;
+    if (!cle) return null;
+    const budget = personnages.budgetDe(o);
+    const e = monde.passifEffet(cle, budget);
+    if (!e) return null;
+    return { ...e, nom: NOM_PASSIF[cle] || cle,
+             quoi: (PHRASE_PASSIF[cle] || (() => ''))(e) };
   }
 
   /** Ce qu'une piece emporte avec elle quand elle tombe ou qu'on la pose. */

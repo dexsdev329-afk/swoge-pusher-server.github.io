@@ -4903,6 +4903,21 @@ function ficheDeCombat(addr, skin) {
        stat donne quel pouvoir » appartient a monde.js, et la dupliquer ici la
        ferait deriver. */
     statFruit: (etat.equipFruit && etat.equipFruit.stat) || null,
+    /* ---- LES PASSIFS PORTES, ADDITIONNES ----
+     * L'armure et la bague en donnent chacune un. Deux du MEME genre
+     * s'ajoutent — porter une armure et une bague qui brulent toutes les deux
+     * doit bruler plus, sinon la seconde ne sert a rien et le joueur cherche
+     * pourquoi.
+     * On envoie les VALEURS, pas les objets : la simulation n'a pas a savoir
+     * ce qu'est une bague, et lui faire relire le catalogue a chaque coup
+     * porte serait lui donner un travail qui n'est pas le sien. */
+    passifs: [etat.equipArmure, etat.equipBague].reduce((acc, e) => {
+      const p = e && e.passif;
+      if (!p) return acc;
+      acc[p.cle] = (acc[p.cle] || 0) + p.valeur;
+      if (p.duree) acc[p.cle + 'Duree'] = p.duree;
+      return acc;
+    }, {}),
     /* Le familier ACTIF, et pas la liste : la simulation n'a besoin que de
        savoir lequel trotte derriere, et envoyer les six a chaque entree
        reviendrait a decrire une collection a des gens qui regardent un
