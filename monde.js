@@ -1884,6 +1884,68 @@ const MONSTRES = {
     biomes: ['lave'],
   },
 
+  /* ---- CE QUE L'IDOLE APPELLE ----
+   *
+   * Deux creatures, et elles ne servent pas a la meme chose. Une seule espece
+   * appelee deux fois aurait fait deux vagues identiques — donc une seule
+   * chose a apprendre, jouee deux fois.
+   *
+   * Elles sont FAIBLES et NOMBREUSES. Une invocation qui frappe fort double
+   * la difficulte d'un coup et rend le boss injouable au moment ou il devient
+   * intéressant ; ce qu'on veut d'elles, c'est qu'elles occupent l'espace et
+   * forcent a bouger.
+   *
+   * Elles ne laissent AUCUN butin : sinon on laisserait l'Idole en vie pour
+   * farmer ses appels, ce qui est l'inverse exact de ce qu'un boss doit
+   * provoquer.
+   */
+  cendreux: {
+    cle: 'cendreux', nom: 'Cinder Whelp', pv: 420, att: 96, def: 18,
+    /* VITE, mais PAS au point qu'on ne puisse plus fuir.
+     *
+     * Je les avais mis a 168, avec « on ne les distance pas » ecrit a cote.
+     * C'etait contre une regle du jeu, et realm.test.js l'a refuse : le plus
+     * lent des personnages (202) doit distancer le plus rapide des monstres
+     * avec une marge d'un tiers, sinon fuir cesse d'exister comme choix. Le
+     * plafond est donc de 156.
+     *
+     * A 152, ils restent les plus rapides du jeu — devant le rodeur du marais
+     * a 150 — et la poursuite est longue et tendue. C'est mieux que ce que je
+     * voulais faire : quatre creatures qu'on ne peut PAS distancer, dans une
+     * salle fermee, ce n'est pas de la difficulte, c'est une porte fermee. */
+    vitesse: 152, rayon: 44, vue: 900, contact: true, cadence: 0.9,
+    /* ---- UN CRACHAT COURT ----
+     * Je l'avais fait purement au corps a corps. realm.test.js l'a refuse :
+     * TOUTES les especes du jeu decochent, sans exception, et je n'allais pas
+     * affaiblir une regle qui tient sur tout le bestiaire pour une creature.
+     * Il crache donc des braises, de tres pres (240) et faiblement (34) :
+     * c'est sa fournaise qui deborde quand il court, pas une attaque a
+     * distance. Il reste ce qu'il est — quelque chose qui vous fonce dessus. */
+    /* ---- ET IL BRULE, COMME TOUT CE QUI PORTE UNE BRAISE ----
+     * realm.test.js impose qu'un meme dessin de projectile veuille dire le
+     * meme danger : « braise » signifiait brulure chez quatre creatures et
+     * rien chez celles-ci. On voit une braise, on l'esquive en s'attendant a
+     * bruler, et parfois non — c'est exactement la confusion que la regle
+     * empeche. Dans ce sanctuaire, tout brule.
+     * Sans danger d'enchainement : `EFFETS.brulure` pose trois secondes
+     * d'immunite quand elle s'eteint, donc huit cendreux ne peuvent pas
+     * entretenir un feu permanent. */
+    tir: { portee: 240, vitesse: 300, sprite: 'braise', att: 28, cadence: 0.35,
+           effet: 'brulure' },
+    xp: 120,
+    biomes: [],
+  },
+  sentinelle: {
+    cle: 'sentinelle', nom: 'Mask Sentinel', pv: 300, att: 74, def: 34,
+    /* LENTE, mais elle TIRE. L'autre moitie du probleme : on ne peut pas se
+       contenter de reculer, il y a quelque chose qui vous suit a distance. */
+    vitesse: 62, rayon: 40, vue: 1000, contact: false, cadence: 0.5,
+    tir: { portee: 620, vitesse: 340, sprite: 'braise', att: 62, cadence: 0.42,
+           effet: 'brulure' },
+    xp: 140,
+    biomes: [],
+  },
+
   /* ---- L'IDOLE, AU FOND DU SANCTUAIRE ----
    *
    * Le premier boss du jeu a PHASES. Ce n'est pas un boss avec plus de points
@@ -1941,10 +2003,15 @@ const MONSTRES = {
          Reculer ne suffit plus, il faut sortir du cercle. */
       { jusqua: 0.80, vitesse: 62, cadence: 0.52,
         zone: { cadence: 0.24, att: 205, effet: 'brulure' } },
-      /* 3. L'EVENTAIL. Trois braises au lieu d'une : le tir cesse d'etre une
-         chose qu'on esquive en marchant de cote. */
+      /* 3. L'EVENTAIL, ET LE PREMIER APPEL. Trois braises au lieu d'une, et
+         l'Idole ouvre sa fournaise : des cendreux en sortent. Ils vont VITE —
+         on ne les distance pas, il faut les tuer ou les traverser, et les
+         traverser coute des points de vie. C'est la premiere fois du combat
+         ou l'on ne peut plus se contenter de tourner autour d'elle. */
       { jusqua: 0.60, vitesse: 74,
-        tir: { cadence: 0.45, tirs: 3, ecart: 0.24 } },
+        tir: { cadence: 0.45, tirs: 3, ecart: 0.24 },
+        appel: { espece: 'cendreux', combien: 3, cadence: 0.07, plafond: 6,
+                 rayon: 240 } },
       /* 4. L'ANNEAU. Quatorze projectiles tout autour — il n'y a plus de
          « cote » ou aller. On se colle a elle, ou l'on court avec le mur dans
          le dos. La cadence tombe a un anneau toutes les deux secondes et
@@ -1952,14 +2019,24 @@ const MONSTRES = {
          pleine, ce qui n'est plus un motif mais un mur. */
       { jusqua: 0.40, vitesse: 68,
         tir: { cadence: 0.4, tirs: 14, ecart: 0.4488, att: 104 },
-        zone: { cadence: 0.18 } },
+        zone: { cadence: 0.18 },
+        /* Les SENTINELLES prennent le relais : lentes, mais elles tirent. On
+           ne peut donc plus regler le probleme en reculant — il y a desormais
+           quelque chose qui vous suit a distance pendant que l'anneau tombe. */
+        appel: { espece: 'sentinelle', combien: 2, cadence: 0.06, plafond: 4,
+                 rayon: 300 } },
       /* 5. FURIE. Tout a la fois, et elle court presque aussi vite que nous.
          Le cercle RETRECIT — un cercle plus petit se sort plus vite, donc son
          annonce peut descendre sans enfreindre la regle de sortie. */
       { jusqua: 0.20, vitesse: 96, cadence: 0.7, att: 268,
         tir: { cadence: 0.55, tirs: 16, ecart: 0.3927, att: 112 },
         zone: { annonce: 1.2, rayon: 190, cadence: 0.4, att: 225,
-                effet: 'brulure' } },
+                effet: 'brulure' },
+        /* Et les deux a la fois, plus souvent. Le plafond monte a huit : au-
+           dela la salle se bouche, et un boss qu'on ne peut plus atteindre
+           n'est pas difficile, il est inatteignable. */
+        appel: { espece: 'cendreux', combien: 4, cadence: 0.11, plafond: 8,
+                 rayon: 240 } },
     ],
     biomes: [],
   },
@@ -1984,7 +2061,7 @@ const MONSTRES = {
  * Le jour ou l'on voudra une phase qui blinde, il faudra d'abord faire passer
  * ces lectures-la par ici. La garde ci-dessous le rappellera.
  */
-const CHAMPS_DE_PHASE = ['vitesse', 'cadence', 'att', 'tir', 'zone'];
+const CHAMPS_DE_PHASE = ['vitesse', 'cadence', 'att', 'tir', 'zone', 'appel'];
 
 /* ---- LES VARIANTES SONT CALCULEES UNE FOIS, AU CHARGEMENT ----
  * Fabriquer l'objet fusionne a chaque pas ferait naitre un objet par monstre
@@ -2012,7 +2089,7 @@ for (const cle of Object.keys(MONSTRES)) {
     const nv = Object.assign({}, av);
     for (const champ of CHAMPS_DE_PHASE) {
       if (ph[champ] === undefined) continue;
-      nv[champ] = (champ === 'tir' || champ === 'zone')
+      nv[champ] = (champ === 'tir' || champ === 'zone' || champ === 'appel')
         ? Object.assign({}, av[champ] || {}, ph[champ])
         : ph[champ];
     }

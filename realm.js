@@ -800,6 +800,14 @@ class Realm {
      * `return` d'en dessous, et le donjon d'Optimus se serait referme sur un
      * coup de des. Ce qu'ouvre sa mort ne se tire pas au sort. */
     this._ouvrePortail(m, j, ev);
+    /* ---- CE QUI A ETE APPELE NE LAISSE RIEN ----
+     * Sinon on laisserait le boss en vie pour farmer ses invocations : sa
+     * phase quatre en fabrique quatre toutes les neuf secondes, et un joueur
+     * patient en tirerait plus de butin qu'en le tuant. C'est l'inverse exact
+     * de ce qu'un boss doit provoquer.
+     * L'XP, elle, tombe quand meme (au-dessus) : elles se battent vraiment, et
+     * un combat qui ne fait pas monter serait un combat qu'on evite. */
+    if (m.sansButin) return;
     /* Le butin tombe meme si le tueur a disparu entre-temps : le sac
        appartient au sol, pas a celui qui a porte le coup. */
     const b = monde.butinDe(m.espece, this.alea, m.biome);
@@ -1781,6 +1789,10 @@ class Realm {
          trois monstres sur quatre s'arreteraient devant les rochers. */
       const deX = m.x, deY = m.y;
       if (t.zone && m.zoneRecharge === undefined) m.zoneRecharge = 1 / t.zone.cadence;
+      /* L'appel a sa propre recharge, comme la zone et le tir. Trois choses
+         qui partent a trois rythmes : les faire partager un compteur aurait
+         voulu dire qu'ouvrir la fournaise interdit de tirer. */
+      if (t.appel && m.appelRecharge === undefined) m.appelRecharge = 1 / t.appel.cadence;
 
       /* ---- LE FEU DU FAMILIER RONGE ----
        * Avant la stase : une creature figee brule quand meme. Le contraire
@@ -1919,6 +1931,97 @@ class Realm {
               ev.marques = ev.marques || [];
               ev.marques.push({ x: cible.x, y: cible.y, r: t.zone.rayon,
                                 duree: t.zone.annonce, espece: m.espece });
+            }
+          }
+        }
+
+        /* ======================================================================
+         * IL EN APPELLE D'AUTRES
+         * ======================================================================
+         *
+         * ---- POURQUOI UN PLAFOND, ET POURQUOI IL COMPTE LES SIENS ----
+         *
+         * Sans plafond, un boss de deux minutes qui appelle trois creatures
+         * toutes les quinze secondes en pose vingt-quatre : la salle se
+         * bouche, on ne l'atteint plus, et un boss qu'on ne peut plus toucher
+         * n'est pas difficile — il est inatteignable.
+         *
+         * Le plafond compte SES appels a lui (`invoquePar`), pas les creatures
+         * de la salle : dans un donjon a deux salles il n'y en a pas d'autres,
+         * mais le jour ou l'on donne un appel a un monstre du monde ouvert, un
+         * comptage global le rendrait muet au milieu d'une meute qu'il n'a pas
+         * faite.
+         *
+         * ---- ET ELLES NAISSENT AUTOUR DE LUI, PAS SUR LE JOUEUR ----
+         *
+         * Une creature posee sur les pieds du joueur, c'est un coup qu'on ne
+         * peut pas esquiver puisqu'il n'a pas eu lieu — elle est simplement
+         * apparue au contact. Elles sortent de la fournaise, donc du BOSS, et
+         * l'on a le temps de les voir venir.
+         *
+         * ---- ELLES NE LAISSENT RIEN ----
+         *
+         * `sansButin` voyage avec la creature : sinon on laisserait le boss en
+         * vie pour farmer ses appels, ce qui est l'inverse exact de ce qu'un
+         * boss doit provoquer.
+         */
+        if (t.appel) {
+          m.appelRecharge -= dt;
+          if (m.appelRecharge <= 0) {
+            m.appelRecharge = 1 / t.appel.cadence;
+            const A = t.appel;
+            let vivants = 0;
+            for (const q of this.monstres) {
+              if (q.pv > 0 && q.invoquePar === m.id) vivants++;
+            }
+            const place = Math.max(0, (A.plafond || 6) - vivants);
+            const combien = Math.min(A.combien || 1, place);
+            const nes = [];
+            const tt = monde.MONSTRES[A.espece];
+            for (let k = 0; tt && k < combien; k++) {
+              /* En COURONNE autour de lui, a angles reguliers plus un decalage :
+                 quatre creatures nees au meme point se chevauchent et se lisent
+                 comme une seule. */
+              const base = (k / Math.max(1, combien)) * Math.PI * 2
+                         + (m.appelTour || 0);
+              /* ---- ON REESSAIE, ON NE SAUTE PAS ----
+               * Une creature ne doit jamais naitre DANS la pierre : elle y
+               * resterait pour toujours, immobile et hors d'atteinte, et la
+               * salle ne se viderait plus. La premiere version se contentait
+               * donc de renoncer — et mesure faite sur trois cents plans, 27 %
+               * des positions tombaient dans un mur ou sur le decor. Le boss
+               * appelait un quart de moins que ce que sa table annonce, en
+               * silence.
+               * On decale l'angle et l'on rapproche : huit essais suffisent a
+               * trouver une place dans une salle de dix-neuf tuiles. */
+              let x = 0, y = 0, place = false;
+              for (let e = 0; e < 8 && !place; e++) {
+                const ang = base + e * 0.41;
+                const rr = (A.rayon || 240) * (1 - e * 0.07);
+                x = m.x + Math.cos(ang) * rr;
+                y = m.y + Math.sin(ang) * rr;
+                if (!monde.bloque(this.obstacles, x, y, tt.rayon)) place = true;
+              }
+              if (!place) continue;
+              const bebe = this._naissance({ espece: A.espece, biome: m.biome,
+                                             x, y });
+              bebe.invoquePar = m.id;
+              bebe.sansButin = 1;
+              this.monstres.push(bebe);
+              nes.push({ i: bebe.id, e: bebe.espece,
+                         x: Math.round(x), y: Math.round(y) });
+            }
+            /* Le tour suivant decale la couronne : sans ca, les vagues
+               successives tombent exactement aux memes endroits et la salle
+               prend des allures de damier. */
+            m.appelTour = ((m.appelTour || 0) + 0.7) % (Math.PI * 2);
+            if (nes.length && ev) {
+              /* La page doit pouvoir le DIRE — un boss d'ou sortent des
+                 creatures sans un mot se lit comme un serveur qui a lache. */
+              ev.appels = ev.appels || [];
+              ev.appels.push({ x: Math.round(m.x), y: Math.round(m.y),
+                               espece: A.espece, combien: nes.length,
+                               par: m.espece, nes });
             }
           }
         }

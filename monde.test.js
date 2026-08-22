@@ -449,6 +449,27 @@ function alea(graine) {
       M.DONJONS[d].especes.forEach((k) => { vus[k] = true; });
       vus[M.DONJONS[d].boss] = true;
     });
+    /* QUATRIEME porte : ce qu'un boss APPELLE. Elles n'apparaissent dans
+       aucune table de peuplement — c'est le propre d'une invocation — et cet
+       essai les aurait declarees injoignables alors qu'on en croise huit a la
+       fois au fond du Sanctuaire.
+       On lit les PHASES du monde plutot qu'une liste ecrite ici : le jour ou
+       un boss appelle une espece de plus, elle est couverte sans que personne
+       n'y pense. */
+    Object.keys(M.MONSTRES).forEach((k) => {
+      const n = M.nbPhases(k);
+      if (!n) { if (M.MONSTRES[k].appel) vus[M.MONSTRES[k].appel.espece] = true; return; }
+      const pvMax = M.MONSTRES[k].pv;
+      for (let i = 0; i < n; i++) {
+        for (let q = 1000; q >= 0; q--) {
+          const pv = pvMax * (q / 1000);
+          if (M.phaseMonstre(k, pv, pvMax) !== i) continue;
+          const t = M.statsMonstre(k, pv, pvMax);
+          if (t.appel) vus[t.appel.espece] = true;
+          break;
+        }
+      }
+    });
     Object.keys(M.MONSTRES).forEach((k) => {
       ok(vus[k], `« ${M.MONSTRES[k].nom} » apparait vraiment quelque part`);
     });
@@ -470,6 +491,25 @@ function alea(graine) {
     Object.keys(M.DONJONS).forEach((d) => {
       roles.add(M.DONJONS[d].boss);
       M.DONJONS[d].especes.forEach((e) => roles.add(e));
+    });
+    /* ETRE APPELE PAR UN BOSS EST UN ROLE. C'en est meme un tres precis : la
+       creature n'existe QUE pendant son combat, ce qui est plus qu'un anneau
+       ne promet. Sans cette porte, l'essai declarait orphelines les deux
+       especes du Sanctuaire alors qu'on en croise huit a la fois au fond.
+       On lit les phases du monde, jamais une liste recopiee ici. */
+    Object.keys(M.MONSTRES).forEach((k) => {
+      const n = M.nbPhases(k);
+      if (!n) { if (M.MONSTRES[k].appel) roles.add(M.MONSTRES[k].appel.espece); return; }
+      const pvMax = M.MONSTRES[k].pv;
+      for (let i = 0; i < n; i++) {
+        for (let q = 1000; q >= 0; q--) {
+          const pv = pvMax * (q / 1000);
+          if (M.phaseMonstre(k, pv, pvMax) !== i) continue;
+          const t = M.statsMonstre(k, pv, pvMax);
+          if (t.appel) roles.add(t.appel.espece);
+          break;
+        }
+      }
     });
     const sansBiome = Object.keys(M.MONSTRES).filter((k) => M.MONSTRES[k].biomes.length === 0);
     const orphelines = sansBiome.filter((k) => !roles.has(k));

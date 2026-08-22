@@ -5409,6 +5409,21 @@ function traiteEvenements(R, ev) {
     }
   }
 
+  /* ---- LE BOSS EN APPELLE D'AUTRES, ET ON L'ENTEND ----
+   * A tous ceux du MEME monde : ce n'est pas un coup porte a quelqu'un, c'est
+   * un evenement de la salle. Des creatures qui apparaissent sans un mot se
+   * lisent comme un serveur qui a lache — et dans une salle de boss ou l'on
+   * regarde le boss, celles qui naissent dans le dos ne se voient pas. */
+  if (ev.appels && ev.appels.length) {
+    for (const a of ev.appels) {
+      for (const c of realmClients) {
+        if (c.readyState !== 1 || realmDe(c) !== R) continue;
+        send(c, { type: 'realmAppel', x: a.x, y: a.y, espece: a.espece,
+                  combien: a.combien, par: a.par });
+      }
+    }
+  }
+
   if (ev.degats.length) {
     for (const d of ev.degats) {
       const ws = [...realmClients].find((c) => c.addr === d.addr);
