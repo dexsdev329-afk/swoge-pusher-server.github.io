@@ -448,6 +448,8 @@ class Realm {
       pouvoirRecharge: 0,
       /* La rafale, quand elle est active : le temps qu'il lui reste. */
       rafale: 0,
+      /* L'EGIDE : le temps qu'il reste avant que les coups repassent. */
+      egide: 0,
       /* ---- ET DE COMBIEN ELLE MULTIPLIE ----
        * Deux choses posent la rafale, et elles ne valent PAS la meme chose :
        * le fruit (deux et demi, quarante-cinq de mana, a la demande) et
@@ -740,6 +742,22 @@ class Realm {
          deux : il ecrase donc un elan de compagnon en cours, ce qui est le
          bon sens — on vient de payer quarante-cinq de mana pour ca. */
       j.rafalePart = P.facteur;
+      sortie.duree = P.duree;
+      return sortie;
+    }
+
+    if (j.pouvoir === 'egide') {
+      /* ---- ELLE NE PEUT PAS SE CUMULER, ET AUCUN CODE NE L'EMPECHE ----
+       * J'avais ajoute un refus explicite ici. Il etait INACCESSIBLE : la
+       * recharge est testee au-dessus et vaut trente secondes contre deux de
+       * duree, donc elle refuse toujours en premier. Du code mort dont le
+       * commentaire annonce une protection fait croire au lecteur suivant
+       * qu'elle vit la — et le jour ou l'on touche a la recharge, personne ne
+       * regarde le vrai garde-fou.
+       * La protection est la RELATION entre les deux nombres, et c'est elle
+       * que verrouille egide.test.js : recharge > duree, sinon un joueur qui
+       * appuie en rythme reste intuable pour toujours. */
+      j.egide = P.duree;
       sortie.duree = P.duree;
       return sortie;
     }
@@ -1041,6 +1059,7 @@ class Realm {
       if (j.recharge > 0) j.recharge -= dt;
       if (j.pouvoirRecharge > 0) j.pouvoirRecharge = Math.max(0, j.pouvoirRecharge - dt);
       if (j.rafale > 0) j.rafale = Math.max(0, j.rafale - dt);
+      if (j.egide > 0) j.egide = Math.max(0, j.egide - dt);
       /* Les deux etats du troisieme cran s'usent ICI, avec les autres, et pas
          dans la boucle des familiers : un joueur dont le compagnon vient de
          mourir de faim garderait sinon son ardeur pour toujours. */
@@ -1738,6 +1757,34 @@ class Realm {
     if (mieux.pv <= 0) this._abat(mieux, j, ev);
   }
 
+  /**
+   * TOUT CE QUE LE JOUEUR ENCAISSE PASSE PAR ICI.
+   *
+   * ---- POURQUOI UN ENTONNOIR, ET PAS UN TEST A QUATRE ENDROITS ----
+   *
+   * Le joueur perd de la vie a QUATRE endroits : la zone, le projectile de
+   * monstre, le tir d'un autre joueur, et la brulure. Deux seulement
+   * passaient par `_amorti` — les deux autres avaient chacun leur raison (la
+   * brulure ignore l'armure, le duel calcule comme contre une creature).
+   *
+   * Une egide posee dans `_amorti` aurait donc laisse passer la brulure ET le
+   * PvP. C'est-a-dire exactement les deux qui comptent : on serait mort
+   * PENDANT l'animation qui dit qu'on est protege, dans un duel ou l'on perd
+   * son sac, et personne n'aurait compris.
+   *
+   * Un pouvoir qui laisse passer une seule source est pire qu'aucun pouvoir.
+   *
+   * @param amorti  faut-il appliquer le bouclier du familier ? Non pour la
+   *   brulure, qui ignore l'armure — c'est deja la regle du jeu.
+   */
+  _encaisse(j, perte, amorti) {
+    if (!j || !(perte > 0)) return 0;
+    /* L'EGIDE D'ABORD, et avant tout amortissement : ce qui est annule n'a
+       pas a etre reduit, et un bouclier applique a zero rendrait un point. */
+    if (j.egide > 0) return 0;
+    return amorti === false ? perte : this._amorti(j, perte);
+  }
+
   _amorti(j, perte) {
     if (!(j.bouclier > 0) || !(j.bouclierPart > 0)) return perte;
     /* Au moins un point : un bouclier qui annulerait entierement les petits
@@ -1836,10 +1883,21 @@ class Realm {
       const perte = Math.floor(j.brulReste);
       if (perte > 0) {
         j.brulReste -= perte;
-        j.pv = Math.max(0, j.pv - perte);
-        j.repos = 0;                       // bruler n'est pas se reposer
-        ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: 'brulure', quoi: 'brulure' });
-        if (j.pv <= 0) this._meurt(j, 'brulure', ev);
+        /* `false` : la brulure IGNORE l'armure — c'est deja la regle du jeu, et
+           la seule raison de reculer quand on est bien protege. Elle ne peut
+           pas ignorer l'egide pour autant.
+           Le compteur, lui, a DEJA ete decremente : sous egide on brule dans
+           le vide, on ne met pas la brulure en pause. Sinon l'egide la
+           prolongerait de sa propre duree, et deux secondes de protection
+           coutteraient deux secondes de feu de plus. */
+        const vraie = this._encaisse(j, perte, false);
+        if (vraie > 0) {
+          j.pv = Math.max(0, j.pv - vraie);
+          j.repos = 0;                     // bruler n'est pas se reposer
+          ev.degats.push({ addr: j.addr, perte: vraie, pv: j.pv,
+                           par: 'brulure', quoi: 'brulure' });
+          if (j.pv <= 0) this._meurt(j, 'brulure', ev);
+        }
       }
     } else {
       j.brulReste = 0;
@@ -2203,7 +2261,15 @@ class Realm {
           const dx = c.x - t.x, dy = c.y - t.y;
           if (dx * dx + dy * dy > RAYON_CIBLE * RAYON_CIBLE) continue;
           const arme = monde.tirageArme(tireur ? tireur.degats : monde.DEGATS_POING, this.alea);
-          const perte = monde.degatsInfliges(tireur ? tireur.att : 0, arme, c.def);
+          /* ---- LE DUEL PASSE PAR LE MEME ENTONNOIR ----
+           * Il calculait ses degats a part, et c'etait defendable — la meme
+           * formule que contre une creature. Mais il court-circuitait aussi
+           * tout ce que le joueur porte pour se proteger, et l'egide serait
+           * restee sans effet exactement la ou elle compte le plus : dans le
+           * seul endroit du jeu ou l'on perd son sac en mourant. */
+          const perte = this._encaisse(c,
+            monde.degatsInfliges(tireur ? tireur.att : 0, arme, c.def));
+          if (!(perte > 0)) { fini = true; break; }
           c.pv = Math.max(0, c.pv - perte);
           /* DEUX evenements, pour deux publics : celui qui encaisse doit voir
              sa barre baisser, celui qui tire doit voir son coup porter. Un
@@ -2295,7 +2361,7 @@ class Realm {
         if (j.pv <= 0) continue;
         const dx = j.x - z.x, dy = j.y - z.y;
         if (dx * dx + dy * dy > z.r * z.r) continue;
-        const perte = this._amorti(j, monde.degatsSubis(z.att, j.def));
+        const perte = this._encaisse(j, monde.degatsSubis(z.att, j.def));
         j.pv = Math.max(0, j.pv - perte);
         ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: z.espece, quoi: 'zone' });
         if (z.effet) this._poseEtat(j, z.effet, ev);
@@ -2320,7 +2386,7 @@ class Realm {
           if (j.pv <= 0) continue;
           const dx = j.x - t.x, dy = j.y - t.y;
           if (dx * dx + dy * dy > 34 * 34) continue;
-          const perte = this._amorti(j, monde.degatsSubis(t.att, j.def));
+          const perte = this._encaisse(j, monde.degatsSubis(t.att, j.def));
           j.pv = Math.max(0, j.pv - perte);
           /* Les EPINES renvoient a celui qui a tire. Rien si le tireur est
              deja mort : renvoyer a un cadavre est sans effet, et le chercher a

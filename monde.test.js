@@ -247,11 +247,17 @@ function alea(graine) {
 
 // ================== LES POUVOIRS DU FRUIT
 //
-// Trois pouvoirs, et celui qu'on obtient se DEDUIT de la stat que le fruit
-// favorise deja. La regle vaut mieux qu'une table ecrite a la main : un
-// septieme fruit ajoute demain recoit automatiquement le bon pouvoir.
+// Celui qu'on obtient se DEDUIT de la stat que le fruit favorise deja. La
+// regle vaut mieux qu'une table ecrite a la main : un septieme fruit ajoute
+// demain recoit automatiquement le bon pouvoir.
 {
-  eq(Object.keys(M.POUVOIRS).length, 3, 'il y a trois pouvoirs');
+  /* ---- ON NE COMPTE PLUS, ON VERIFIE LA REGLE ----
+   * « il y a trois pouvoirs » etait ecrit ici, et l'essai est tombe le jour
+   * ou l'egide est arrivee — en accusant le monde alors que c'est LUI qui
+   * portait l'ancien chiffre. Ce qu'il doit prouver n'est pas combien il y en
+   * a : c'est que chacun est atteignable et que chaque fruit en a un. */
+  ok(Object.keys(M.POUVOIRS).length >= 3,
+     `${Object.keys(M.POUVOIRS).length} pouvoirs au catalogue`);
 
   /* CHAQUE FRUIT DU CATALOGUE EN A UN. C'est le lien entre les deux modules,
      et c'est exactement la ou une divergence passerait inapercue : un fruit
@@ -266,15 +272,25 @@ function alea(graine) {
     ok(p && M.POUVOIRS[p], `le fruit « ${f} » (${P.FAMILLE_STAT[f]}) donne le pouvoir « ${p} »`);
   });
 
-  /* LES TROIS SONT ATTEIGNABLES. Un pouvoir qu'aucun fruit ne donne serait du
+  /* TOUS SONT ATTEIGNABLES. Un pouvoir qu'aucun fruit ne donne serait du
      code mort qui a l'air vivant. */
   const donnes = new Set(fruits.map((f) => M.pouvoirDeStat(P.FAMILLE_STAT[f])));
-  eq(donnes.size, 3, 'les trois pouvoirs sont tous donnes par un fruit reel');
+  /* Chaque pouvoir DECLARE doit etre donne par un fruit reel — on compare les
+     deux ensembles plutot qu'un compte, ce qui nomme le fautif au lieu de dire
+     seulement qu'il y en a un. */
+  for (const cle of Object.keys(M.POUVOIRS)) {
+    ok(donnes.has(cle), `« ${cle} » est donne par un fruit du catalogue`);
+  }
+  eq(donnes.size, Object.keys(M.POUVOIRS).length,
+     'et aucun fruit ne donne un pouvoir qui n existe pas');
 
-  /* Le pouvoir prolonge le fruit au lieu de le contredire. */
+  /* Le pouvoir prolonge le fruit au lieu de le contredire. C'est la SEULE
+     chose qu'on verifie en nommant les deux cotes — le lien entre une stat et
+     ce qu'elle evoque est le sujet, pas une valeur a deduire. */
   eq(M.pouvoirDeStat('att'), 'foudre', 'la force frappe fort');
   eq(M.pouvoirDeStat('dex'), 'rafale', 'la vitesse tire vite');
-  eq(M.pouvoirDeStat('def'), 'stase', 'la garde arrete le monde');
+  eq(M.pouvoirDeStat('wis'), 'stase', 'le savoir arrete le monde');
+  eq(M.pouvoirDeStat('def'), 'egide', 'et la garde protege');
 
   /* Sans fruit, rien. Le poing nu ne lance pas d'eclair. */
   eq(M.pouvoirDeStat(null), null, 'sans fruit, aucun pouvoir');

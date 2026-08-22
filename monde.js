@@ -2515,6 +2515,34 @@ const POUVOIRS = {
        suivre le rythme des projectiles et le gain devient invisible. */
     facteur: 2.5,
   },
+  /*
+   * ---- L'EGIDE : DEUX SECONDES OU RIEN NE PASSE ----
+   *
+   * Le pouvoir le plus dangereux du jeu, et il faut dire pourquoi.
+   *
+   * Sur la carte PvP on perd son sac en mourant. Un joueur intuable une part
+   * du temps n'y est pas « plus fort » : il change la nature du duel, parce
+   * que celui d'en face ne peut rien faire de ses deux secondes. La question
+   * n'est donc pas la puissance, c'est la PART DU TEMPS.
+   *
+   * A huit secondes de recharge — celle de la rafale — deux secondes font
+   * vingt-cinq pour cent. A trente, elles en font moins de SEPT : on la garde
+   * pour le moment ou l'on va mourir, on ne la joue pas en rythme. C'est la
+   * difference entre une sortie de secours et une facon de jouer.
+   *
+   * Et elle coute cher en mana : cent-vingt, le plus haut du jeu. Un
+   * personnage qui la porte renonce a lancer autre chose pendant longtemps.
+   *
+   * ---- CE QU'ELLE N'ARRETE PAS ----
+   *
+   * Rien. Ni les coups, ni les zones, ni la brulure, ni les autres joueurs.
+   * Un pouvoir qui laisserait passer UNE source de degats serait pire
+   * qu'aucun : on mourrait pendant l'animation qui dit qu'on est protege, et
+   * personne ne comprendrait.
+   */
+  egide: {
+    nom: 'Aegis', cout: 120, recharge: 30, duree: 2,
+  },
   stase: {
     nom: 'Stasis', cout: 75, recharge: 12, rayon: 380,
     /* Cinq secondes, la duree demandee. Un monstre en stase ne bouge pas, ne
@@ -3016,7 +3044,14 @@ function passifEffet(cle, budget) {
 const POUVOIR_PAR_STAT = {
   att: 'foudre', hp: 'foudre',
   spd: 'rafale', dex: 'rafale',
-  def: 'stase',  wis: 'stase',
+  /* ---- LA GARDE DEVIENT L'EGIDE ----
+   * Elle donnait la stase, comme la sagesse. Deux stats pour le meme pouvoir,
+   * c'etait une place perdue : le fruit de garde et le fruit d'oeil se
+   * jouaient pareil.
+   * L'invulnerabilite est la lecture evidente de « garde », et c'est le seul
+   * endroit du jeu ou elle a un sens — un pouvoir qui rend intuable ne peut
+   * pas venir d'un fruit de vitesse ou de chance. */
+  def: 'egide',  wis: 'stase',
   /* mp et vit ne sont dominants d'aucun fruit ; les lister quand meme evite
      qu'un fruit ajoute plus tard reparte sans pouvoir en silence. */
   mp: 'stase', vit: 'foudre',

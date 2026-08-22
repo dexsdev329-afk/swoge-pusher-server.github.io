@@ -646,9 +646,18 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
 // donnerait l impression que le pouvoir n a pas pris.
 {
   const r = new Realm({ alea: alea(220) });
-  const j = r.rejoint(A, { ...FICHE, statFruit: 'def',
+  /* ---- LE FRUIT QUI DONNE LA STASE, DEMANDE AU MONDE ----
+   * C'etait « garde », ecrit en dur. La garde donne desormais l'egide — deux
+   * stats pour la stase etaient une place perdue — et cet essai est tombe en
+   * accusant le moteur alors que c'est LUI qui portait l'ancienne reponse.
+   * On cherche donc la stat qui mene a la stase, plutot que de parier sur
+   * laquelle c'est. */
+  const STAT_STASE = Object.keys(M.POUVOIR_PAR_STAT)
+    .find((k) => M.POUVOIR_PAR_STAT[k] === 'stase');
+  ok(!!STAT_STASE, `« ${STAT_STASE} » mene a la stase`);
+  const j = r.rejoint(A, { ...FICHE, statFruit: STAT_STASE,
                            stats: { hp: 900, mp: 300, att: 28, def: 13 } });
-  eq(r.joueurs.get(A).pouvoir, 'stase', 'un fruit de garde donne la stase');
+  eq(r.joueurs.get(A).pouvoir, 'stase', 'et le joueur la porte');
 
   const t = M.MONSTRES.lime;
   r.monstres = [{ id: 1, espece: 'lime', biome: 'terre', x: j.x + 100, y: j.y,
@@ -684,7 +693,7 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
 
   /* Un monstre fige reste une CIBLE : il encaisse les fleches. */
   const rr = new Realm({ alea: alea(221) });
-  const jj = rr.rejoint(A, { ...FICHE, statFruit: 'def',
+  const jj = rr.rejoint(A, { ...FICHE, statFruit: STAT_STASE,
                              stats: { hp: 900, mp: 300, att: 28, def: 13 } });
   rr.monstres = [{ id: 1, espece: 'lime', biome: 'terre', x: jj.x + 100, y: jj.y,
                    ancreX: 0, ancreY: 0, pv: t.pv, pvMax: t.pv, dir: 'down',
@@ -696,7 +705,7 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
 
   /* Hors du rayon, rien n est fige. */
   const rl = new Realm({ alea: alea(222) });
-  const jl = rl.rejoint(A, { ...FICHE, statFruit: 'def',
+  const jl = rl.rejoint(A, { ...FICHE, statFruit: STAT_STASE,
                              stats: { hp: 900, mp: 300, att: 28, def: 13 } });
   rl.monstres = [{ id: 1, espece: 'lime', biome: 'terre',
                    x: jl.x + M.POUVOIRS.stase.rayon + 150, y: jl.y,
