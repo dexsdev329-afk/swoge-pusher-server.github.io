@@ -50,6 +50,9 @@ process.on('unhandledRejection', (e) => {
   let moteur = null; const _p0 = Game.prototype._p;
   Game.prototype._p = function (a) { moteur = this; return _p0.call(this, a); };
   const { Realm } = require('./realm');
+  /* Les bornes du deplacement viennent du MODULE, jamais recopiees : c'est
+     avec elles que l'essai calcule ce qu'il a le droit d'annoncer. */
+  const R = require('./realm');
   /* ---- IL Y A PLUSIEURS MONDES OUVERTS ----
    * Cet espion gardait « la derniere simulation qui a battu ». Il n'y en avait
    * qu'une ; depuis la deuxieme porte du Nexus il y en a deux, et `monde`
@@ -122,14 +125,46 @@ process.on('unhandledRejection', (e) => {
 
   // ================== 1. LE TIR PART D'OU L'ON EST
   {
-    /* On se place au calme, loin des bords, et on vide ce qui vole. */
-    j.x = M.MONDE.w / 2; j.y = 400; j.recharge = 0;
+    /* ---- UN POINT LIBRE, DEMANDE AU MONDE ----
+     *
+     * L'essai se posait a un point FIXE d'une carte generee au hasard. Un
+     * rocher y tombe de temps en temps : `_glisse` refuse alors le pas, le
+     * joueur ne bouge pas d'un pouce, et le projectile nait la ou il est
+     * reste. L'essai accusait le point de naissance du tir alors qu'il
+     * mesurait un caillou.
+     *
+     * On cherche donc une bande libre pour le joueur ET pour l'arrivee de sa
+     * course — les deux, sinon on se coince a mi-chemin — en demandant au
+     * monde au lieu de le supposer. */
+    let poseX = M.MONDE.w / 2, poseY = 300, libre = false;
+    for (let k = 0; k < 400 && !libre; k++) {
+      poseY = 300 + (k % 60) * 60;
+      if (k && k % 60 === 0) poseX += 240;
+      if (poseX > M.MONDE.w - 400) poseX = 400;
+      libre = !M.bloque(monde.obstacles, poseX, poseY, 60)
+           && !M.bloque(monde.obstacles, poseX + 120, poseY, 60);
+    }
+    ok(libre, `on a trouve une bande libre pour courir (${Math.round(poseX)}, ${Math.round(poseY)})`);
+    j.x = poseX; j.y = poseY; j.recharge = 0;
     monde.tirs.length = 0;
     await attendreTir();
-    /* On COURT : la page annonce sa nouvelle position avec le tir. Cent
-       unites plus loin, c'est moins d'un dixieme de seconde de course — un
-       pas honnete. */
-    const versX = j.x + 100;
+    /* ---- ON LAISSE LE BUDGET DE DEPLACEMENT SE REMPLIR ----
+     *
+     * Le serveur mesure `dt` comme le temps ecoule depuis le DERNIER message
+     * de ce client, avec un plancher a 0,05 s. Envoyer le tir dans la foulee
+     * du message precedent n'autorisait donc qu'une vingtaine d'unites : la
+     * course de cent se faisait rogner, et le projectile naissait la ou le
+     * serveur avait ramene le joueur — pas la ou la page l'annoncait.
+     * L'essai accusait alors le point de naissance du tir, alors qu'il
+     * mesurait le temps ecoule depuis son propre message precedent.
+     *
+     * On attend donc que le budget soit plein, et on demande au moteur ce
+     * qu'il autorise au lieu d'ecrire cent en dur — le jour ou la borne
+     * change, l'essai suit au lieu de tomber. */
+    await new Promise((r) => setTimeout(r, R.PAS_MAX * 1000 + 120));
+    const permis = Math.floor(j.vitesse * R.PAS_MAX * R.MARGE_VITESSE) - 2;
+    ok(permis > 20, `le serveur autorise un vrai pas apres l attente (${permis})`);
+    const versX = j.x + Math.min(100, permis);
     ne = null;
     s.send(JSON.stringify({ type: 'realmTir', a: 0, x: Math.round(versX), y: Math.round(j.y) }));
     await new Promise((r) => setTimeout(r, 250));
