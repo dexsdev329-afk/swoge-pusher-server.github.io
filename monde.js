@@ -1522,7 +1522,7 @@ const MONSTRES = {
    * peu de patience. */
   dreadstump: {
     cle: 'dreadstump', nom: 'Dreadstump',
-    pv: 1800, att: 78, def: 20, vitesse: 62, rayon: 72, vue: 820,
+    pv: 7000, att: 78, def: 20, vitesse: 62, rayon: 72, vue: 820,
     contact: true, cadence: 0.42,
     tir: { portee: 620, vitesse: 340, sprite: 'vide', att: 58, cadence: 0.45 },
     zone: { annonce: 1.5, rayon: 200, att: 84, cadence: 0.22 },
@@ -1688,7 +1688,7 @@ const MONSTRES = {
    * d'avoir commence a partir avant qu'elle ne frappe. */
   carapace: {
     cle: 'carapace', nom: 'Deep Carapace',
-    pv: 1200, att: 130, def: 52,
+    pv: 3200, att: 130, def: 52,
     vitesse: 66, rayon: 96, vue: 700,
     contact: true, cadence: 0.6,
     tir: { portee: 420, vitesse: 280, sprite: 'acide', att: 60, cadence: 0.5 },
@@ -1752,7 +1752,7 @@ const MONSTRES = {
    * large : la promesse reste la meme, on doit pouvoir en sortir en courant. */
   optimus: {
     cle: 'optimus', nom: 'Optimus',
-    pv: 2600, att: 190, def: 55,
+    pv: 9000, att: 190, def: 55,
     vitesse: 92, rayon: 92, vue: 900,
     contact: true, cadence: 0.45,
     tir: { portee: 700, vitesse: 420, sprite: 'vide', att: 100, cadence: 0.5 },
@@ -1826,7 +1826,7 @@ const MONSTRES = {
    * s'arreter pour tirer. */
   fonderie: {
     cle: 'fonderie', nom: 'Foundry Brute',
-    pv: 3600, att: 205, def: 62,
+    pv: 20000, att: 205, def: 62,
     vitesse: 62, rayon: 74, vue: 760,
     contact: true, cadence: 0.55,
     tir: { portee: 520, vitesse: 320, sprite: 'braise', att: 118, cadence: 0.4,
@@ -1868,7 +1868,7 @@ const MONSTRES = {
    * l'autre.
    */
   heraut: {
-    cle: 'heraut', nom: 'Cinder Herald', pv: 3400, att: 210, def: 68,
+    cle: 'heraut', nom: 'Cinder Herald', pv: 11000, att: 210, def: 68,
     vitesse: 104, rayon: 62, vue: 940, contact: true, cadence: 0.5,
     /* Il tire VITE et loin. C'est ce qui le separe d'Optimus, qui est lourd :
        on ne le distance pas, il faut le tuer. */
@@ -2061,6 +2061,15 @@ const MONSTRES = {
  * Le jour ou l'on voudra une phase qui blinde, il faudra d'abord faire passer
  * ces lectures-la par ici. La garde ci-dessous le rappellera.
  */
+/* ---- LE TEMPS MORT ENTRE DEUX PHASES ----
+ * Deux secondes ou le boss ne peut pas etre touche. Une phase est une annonce
+ * — « ce qui vient n'est plus la meme chose » — et sans temps mort elle passe
+ * inapercue : on tape sans lever les yeux, et les cinq phases de l'Idole se
+ * jouent comme une seule barre de vie.
+ * Deux secondes cinq fois, c'est dix secondes sur cent-douze : ca RACONTE le
+ * combat sans le rallonger de facon sensible. */
+const PHASE_MUE = 2;
+
 const CHAMPS_DE_PHASE = ['vitesse', 'cadence', 'att', 'tir', 'zone', 'appel'];
 
 /* ---- LES VARIANTES SONT CALCULEES UNE FOIS, AU CHARGEMENT ----
@@ -3587,7 +3596,7 @@ function peuplement(alea) {
 
 module.exports = {
   TUILE, CARTE, MONDE, CENTRE, ANNEAUX, MONSTRES, PEUPLEMENT, PLANCHER,
-  statsMonstre, phaseMonstre, nbPhases,
+  statsMonstre, phaseMonstre, nbPhases, PHASE_MUE,
   ARMES, DEGATS_POING, VITESSE_JOUEUR, CADENCE_MAX,
   cadenceDe, vitesseDe,
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, FIOLE_PILE, POUVOIRS,

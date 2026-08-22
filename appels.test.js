@@ -229,4 +229,78 @@ console.log('\n-- l evenement part vers la page --');
      'et OU — sans le point, la page ne peut rien montrer');
 }
 
+/* ================== 7. LA MUE ENTRE DEUX PHASES ==================
+ *
+ * Deux secondes ou le boss ne peut PAS etre touche.
+ *
+ * ---- CE QUE CETTE SECTION GARDE ----
+ *
+ * Une creature perd de la vie a HUIT endroits : nos tirs, la foudre du fruit,
+ * les gestes du familier, la brulure, les epines. Poser l'invulnerabilite
+ * dans un seul d'entre eux l'aurait laissee traverser par les sept autres, et
+ * le boss serait mort pendant sa transformation.
+ *
+ * On mesure donc sur PLUSIEURS chemins, et pas seulement sur le tir — le tir
+ * est celui qu'on penserait a verifier, donc celui qui ne prouve rien.
+ */
+{
+  console.log('\n-- il est intouchable pendant qu il mue --');
+  const seuils = [];
+  for (let i = 1; i < monde.nbPhases(BOSS); i++) {
+    /* Le point de bascule, demande au moteur : ecrire « 0,8 » ici ferait
+       passer l'essai le jour ou l'on decale les phases. */
+    for (let q = 1000; q >= 0; q--) {
+      const pv = PVMAX * (q / 1000);
+      if (monde.phaseMonstre(BOSS, pv, PVMAX) === i) { seuils.push(pv); break; }
+    }
+  }
+  ok(seuils.length > 0, `${seuils.length} passages de phase a verifier`);
+
+  for (let k = 0; k < seuils.length; k++) {
+    const { R, j, boss } = scene();
+    j.x = boss.x - 200; j.y = boss.y;
+    R.pas(0.1);                       // la phase de depart est notee
+    eq(boss.invulPhase || 0, 0, `phase ${k + 1} : il ne nait pas invulnerable`);
+    boss.pv = seuils[k];
+    R.pas(0.1);                       // le seuil est franchi
+    ok(boss.invulPhase > 0,
+       `il mue en passant a la phase ${k + 2} (${boss.invulPhase.toFixed(1)}s)`);
+
+    /* ---- ON LE FRAPPE PAR TROIS CHEMINS DIFFERENTS ---- */
+    const pv0 = boss.pv;
+    for (let i = 0; i < 12; i++) {
+      R.tire('0xaaa', 0);                       // nos projectiles
+      boss.feu = 3; boss.feuTaux = 200; boss.feuPar = j.addr;  // la brulure
+      j.x = boss.x - 200; j.y = boss.y;
+      R.pas(0.1);
+    }
+    eq(boss.pv, pv0, 'ni les tirs ni la brulure ne l entament');
+    /* Et la morsure du familier non plus : c'est le chemin qu'on oublie. */
+    const av = boss.pv;
+    R._familierAgit(j, 'mord', monde.familierEffet('mord', 100), { fam: [], touches: [] });
+    eq(boss.pv, av, 'ni le familier');
+  }
+
+  /* ---- ET ELLE FINIT ---- */
+  const { R, j, boss } = scene();
+  j.x = boss.x - 200; j.y = boss.y;
+  R.pas(0.1);
+  boss.pv = seuils[0];
+  R.pas(0.1);
+  for (let t = 0; t < monde.PHASE_MUE + 0.5; t += 0.1) {
+    j.x = boss.x - 200; j.y = boss.y; R.pas(0.1);
+  }
+  eq(boss.invulPhase, 0, 'la mue se termine toute seule');
+  const pv1 = boss.pv;
+  for (let i = 0; i < 12; i++) { R.tire('0xaaa', 0); j.x = boss.x - 200; j.y = boss.y; R.pas(0.1); }
+  ok(boss.pv < pv1, `et les coups repassent (${Math.round(pv1 - boss.pv)} degats)`);
+
+  /* ---- LA PAGE L'APPREND ---- */
+  const e = R.etatPour('0xaaa');
+  const vu = (e.monstres || []).find((x) => x.e === BOSS);
+  ok(vu, 'le boss est dans l instantane');
+  ok(vu.ph > 0 && vu.phMax > 1,
+     `avec sa phase (${vu.ph}/${vu.phMax}) — sans quoi le temps mort n a pas de sens`);
+}
+
 console.log(`\nappels.test.js : ${n} verifications OK`);

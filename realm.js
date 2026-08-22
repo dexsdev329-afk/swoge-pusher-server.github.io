@@ -797,7 +797,8 @@ class Realm {
        soixante mana et douze secondes ne doit pas pouvoir tomber sur son
        minimum. Le hasard a sa place dans les tirs ordinaires, pas ici. */
     const base = (j.degats && j.degats[1]) || monde.DEGATS_POING[1];
-    const perte = this._attise(j, monde.degatsInfliges(j.att, base * P.facteur, t.def));
+    const perte = this._blesse(cible,
+      this._attise(j, monde.degatsInfliges(j.att, base * P.facteur, t.def)));
     cible.pv = Math.max(0, cible.pv - perte);
     sortie.monstre = cible.id;
     sortie.perte = perte;
@@ -1315,8 +1316,9 @@ class Realm {
     if (cle === 'meute') {
       const pres = this._autourDe(j, E.rayon);
       if (!pres.length) return false;
-      const perte = Math.max(1, Math.round(E.degats));
+      const brut = Math.max(1, Math.round(E.degats));
       for (const m of pres) {
+        const perte = this._blesse(m, brut);
         m.pv = Math.max(0, m.pv - perte);
         /* Le MEME evenement que nos tirs, marque `familier` : un seul chemin
            d'affichage pour un chiffre de degats, et la page en tire la
@@ -1393,9 +1395,10 @@ class Realm {
     if (cle === 'abysse') {
       const pres = this._autourDe(j, E.rayon);
       if (!pres.length) return false;
-      const perte = Math.max(1, Math.round(E.degats));
+      const brut = Math.max(1, Math.round(E.degats));
       let inflige = 0;
       for (const m of pres) {
+        const perte = this._blesse(m, brut);
         /* Ce qui est REELLEMENT retire, pas ce qu'on annonce : une creature a
            trois points de vie n'en rend que trois. Voler sur le montant
            annonce aurait soigne le maitre pour des degats qui n'ont pas eu
@@ -1639,7 +1642,7 @@ class Realm {
     }
 
     // mord
-    const perte = Math.max(1, Math.round(E.degats));
+    const perte = this._blesse(cible, Math.max(1, Math.round(E.degats)));
     cible.pv = Math.max(0, cible.pv - perte);
     ev.fam = ev.fam || [];
     ev.fam.push({ addr: j.addr, quoi: 'mord', monstre: cible.id, perte, pv: cible.pv,
@@ -1688,6 +1691,31 @@ class Realm {
    * bague, et c'est tres bien : elle n'a pas a relire le catalogue a chaque
    * coup porte.
    */
+
+  /**
+   * TOUT CE QU'UNE CREATURE ENCAISSE PASSE PAR ICI.
+   *
+   * Meme raison que `_encaisse` pour le joueur, et la meme faute a eviter :
+   * une creature perd de la vie a HUIT endroits — nos tirs, la foudre, les six
+   * gestes du familier, la brulure, les epines. Poser l'invulnerabilite de
+   * phase dans un seul d'entre eux l'aurait laissee traverser par les sept
+   * autres, et le boss serait mort pendant sa transformation.
+   *
+   * ---- POURQUOI UN BOSS EST INTOUCHABLE QUAND IL CHANGE DE PHASE ----
+   *
+   * Une phase est une annonce : « ce qui vient n'est plus la meme chose ».
+   * Sans un temps mort, elle passe inapercue — on tape sans lever les yeux, et
+   * les cinq phases de l'Idole se jouent comme une seule barre de vie.
+   *
+   * Le temps mort la RACONTE. Il coute aussi quelque chose au joueur : deux
+   * secondes ou l'on ne peut que reculer et regarder ce qui arrive, cinq fois
+   * dans le combat. C'est ce qui empeche de gagner en restant colle.
+   */
+  _blesse(m, perte) {
+    if (!m || !(perte > 0)) return 0;
+    if (m.invulPhase > 0) return 0;
+    return perte;
+  }
 
   /** LA JUSTESSE : une chance que le coup compte double. */
   _justesse(j, perte) {
@@ -1741,7 +1769,7 @@ class Realm {
   _epines(j, perte, espece, x, y, ev) {
     const p = j && j.passifs && j.passifs.epines;
     if (!p || !(perte > 0)) return;
-    const rendu = Math.max(1, Math.round(perte * p));
+    const brut = Math.max(1, Math.round(perte * p));
     let mieux = null, d2mini = 90 * 90;
     for (const m of this.monstres) {
       if (m.pv <= 0) continue;
@@ -1750,6 +1778,8 @@ class Realm {
       if (d2 < d2mini) { d2mini = d2; mieux = m; }
     }
     if (!mieux) return;
+    const rendu = this._blesse(mieux, brut);
+    if (!(rendu > 0)) return;
     mieux.pv = Math.max(0, mieux.pv - rendu);
     ev.touches.push({ addr: j.addr, monstre: mieux.id, espece: mieux.espece,
                       perte: rendu, pv: mieux.pv, x: mieux.x, y: mieux.y,
@@ -1949,6 +1979,23 @@ class Realm {
        * phase n'a pas le droit de toucher a `def`, `rayon` ni `vue` — voir la
        * garde de `CHAMPS_DE_PHASE` dans monde.js. */
       const t = monde.statsMonstre(m.espece, m.pv, m.pvMax);
+      /* ---- LE PASSAGE D'UNE PHASE A L'AUTRE ----
+       * On compare a la phase du pas PRECEDENT : `phaseMonstre` est pure et ne
+       * garde rien, c'est donc a la creature de se souvenir d'ou elle en
+       * etait. Sans cette memoire il faudrait deviner le franchissement d'un
+       * seuil a partir des points de vie, ce qui rate quand un seul coup en
+       * traverse deux.
+       * `undefined` au premier pas : on note la phase sans declencher, sinon
+       * tout boss naitrait invulnerable. */
+      if (monde.nbPhases(m.espece)) {
+        const ph = monde.phaseMonstre(m.espece, m.pv, m.pvMax);
+        if (m.phase === undefined) m.phase = ph;
+        else if (ph !== m.phase) {
+          m.phase = ph;
+          m.invulPhase = monde.PHASE_MUE;
+        }
+      }
+      if (m.invulPhase > 0) m.invulPhase = Math.max(0, m.invulPhase - dt);
       if (m.recharge > 0) m.recharge -= dt;
       if (m.stase === undefined) m.stase = 0;
       /* D'ou il part. Les quatre facons dont un monstre se deplace — vers le
@@ -1975,7 +2022,7 @@ class Realm {
       if (m.feu > 0) {
         m.feu = Math.max(0, m.feu - dt);
         m.feuReste = (m.feuReste || 0) + (m.feuTaux || 0) * dt;
-        const brule = Math.floor(m.feuReste);
+        const brule = this._blesse(m, Math.floor(m.feuReste));
         if (brule > 0) {
           m.feuReste -= brule;
           m.pv = Math.max(0, m.pv - brule);
@@ -2311,8 +2358,10 @@ class Realm {
            * Ici et pas ailleurs : c'est le seul endroit ou nos degats a une
            * creature sont decides. Les poser dans chacun des chemins qui
            * frappent aurait donne autant d'occasions d'en oublier un. */
-          perte = this._justesse(j, perte);
-          this._brule(j, m);
+          perte = this._blesse(m, this._justesse(j, perte));
+          /* La brulure des passifs ne se pose pas sur un boss qui mue : elle
+             ferait des degats a retardement pendant qu'il est intouchable. */
+          if (perte > 0) this._brule(j, m);
           m.pv = Math.max(0, m.pv - perte);
           this._vampirise(j, perte);
           /* L'adresse du TIREUR part avec le coup : c'est lui qui doit
@@ -2524,6 +2573,18 @@ class Realm {
          * un donjon, sa porte se serait ouverte, et sa barre serait restee
          * celle d'une lime. */
         if (monde.RETOUR_DE[m.espece]) o.boss = 1;
+        /* ---- LA MUE SE VOIT, OU ELLE SE LIT COMME UNE PANNE ----
+         * Deux secondes ou les coups ne portent pas : sans un signe a
+         * l'ecran, le joueur croit que le serveur a lache. On envoie le temps
+         * QUI RESTE et pas un drapeau — la page en fait un compte a rebours,
+         * ce qu'un booleen ne permet pas.
+         * Et la PHASE avec : c'est ce qui donne son sens au temps mort, et la
+         * banniere peut dire « 2/5 » au lieu d'un boss qui clignote. */
+        if (m.invulPhase > 0) o.mue = Number(m.invulPhase.toFixed(2));
+        if (m.phase !== undefined && monde.nbPhases(m.espece)) {
+          o.ph = m.phase + 1;
+          o.phMax = monde.nbPhases(m.espece);
+        }
         /* La stase se VOIT : sans marque a l'ecran, cinq secondes de monstres
            immobiles se lisent comme un serveur qui a lache. */
         if (m.stase > 0) o.st = Number(m.stase.toFixed(2));
