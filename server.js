@@ -4013,6 +4013,13 @@ wss.on('connection', (ws) => {
          le geste le plus frequent du jeu — tirer sur un monstre — ne
          produisait rien a l'ecran, seulement un son. */
       send(ws, { type: 'realmTouche', espece: t.espece, perte: t.perte, pv: t.pv,
+                 /* QUI a frappe. `_familierAgit` pousse la morsure du compagnon
+                    dans `ev.touches` comme nos propres tirs — c'est voulu, un
+                    seul chemin d'affichage — et il la marque `familier`. Sans
+                    ce champ sur le fil, la page ne peut pas distinguer les
+                    deux : elle peindrait le chiffre du chien de la couleur des
+                    notres, ou pire, deux fois. */
+                 familier: t.familier || undefined,
                  x: Math.round(t.x), y: Math.round(t.y) });
         }
         return;
@@ -5329,6 +5336,13 @@ function traiteEvenements(R, ev) {
          le geste le plus frequent du jeu — tirer sur un monstre — ne
          produisait rien a l'ecran, seulement un son. */
       send(ws, { type: 'realmTouche', espece: t.espece, perte: t.perte, pv: t.pv,
+                 /* QUI a frappe. `_familierAgit` pousse la morsure du compagnon
+                    dans `ev.touches` comme nos propres tirs — c'est voulu, un
+                    seul chemin d'affichage — et il la marque `familier`. Sans
+                    ce champ sur le fil, la page ne peut pas distinguer les
+                    deux : elle peindrait le chiffre du chien de la couleur des
+                    notres, ou pire, deux fois. */
+                 familier: t.familier || undefined,
                  x: Math.round(t.x), y: Math.round(t.y) });
     }
   }
