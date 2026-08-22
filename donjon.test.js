@@ -630,10 +630,23 @@ function donjon(graine) {
   const { Game: G2 } = require('./game');
   /* Les pieces marquees viennent du CATALOGUE : les nommer ici ferait passer
      l essai le jour ou l on en ajoute une. */
-  const marquees = boutique2.ITEMS_DROP.filter((o) => o.donjon && o.donjonCle);
-  const libres = boutique2.ITEMS_DROP.filter((o) => o.donjon && !o.donjonCle);
-  ok(marquees.length > 0, `${marquees.length} pieces appartiennent a un donjon precis`);
-  ok(libres.length > 0, `et ${libres.length} restent communes a tous`);
+  const marquees = boutique2.ITEMS_DROP.filter((o) => o.donjon);
+  ok(marquees.length > 0, `${marquees.length} pieces de donjon au catalogue`);
+  /* ---- PLUS AUCUNE PIECE « COMMUNE A TOUS » ----
+   * Cette section verifiait l'inverse : que les huit reliques de la Forge
+   * n'avaient PAS de cle et tombaient donc partout. C'etait volontaire au
+   * depart — la cave des pirates n'a aucune piece a elle et vivait de ce lot.
+   * Mais le jour ou le Sanctuaire est arrive, il a herite des huit par-dessus
+   * les siennes, et le joueur ramassait de l'equipement d'Optimus dans un
+   * sanctuaire de feu. Il l'a signale.
+   * La cle nomme donc maintenant PLUSIEURS donjons quand un lot est partage :
+   * le lot commun existe toujours, il est ECRIT au lieu d'etre deduit d'un
+   * champ manquant. Une absence de cle ne veut plus rien dire — la boutique
+   * refuse de charger si elle en trouve une. */
+  const sansCle = marquees.filter((o) => !o.donjonCle);
+  ok(sansCle.length === 0,
+     `et aucune ne tombe « partout » par defaut${sansCle.length ? ' — ' + sansCle.map((o) => o.cle).join(', ') : ''}`);
+  const lieuxDe = (o) => Array.isArray(o.donjonCle) ? o.donjonCle : [o.donjonCle];
 
   const tire = (ou) => {
     /* Un Game NEUF a chaque tirage : le registre des exemplaires est partage,
@@ -651,32 +664,34 @@ function donjon(graine) {
     }
     return vus;
   };
-  /* Chaque donjon marque doit voir SES pieces, et aucun autre. */
-  const lieux = [...new Set(marquees.map((o) => o.donjonCle))];
-  for (const lieu of lieux) {
+  /* CHAQUE donjon voit exactement ce qu'il nomme, et rien d'autre. On enumere
+     les donjons depuis le MONDE, pas depuis le catalogue : un donjon qu'on
+     aurait oublie de fournir doit se voir, et il se verra par son lot vide. */
+  for (const lieu of Object.keys(M.DONJONS)) {
     const chezMoi = tire(lieu);
+    const attendues = marquees.filter((o) => lieuxDe(o).indexOf(lieu) >= 0);
+    /* ---- AUCUN DONJON N'A UN LOT MAIGRE ----
+     * Le Sanctuaire n'en avait que trois a lui et empruntait les huit de la
+     * Forge pour faire nombre. Sans l'emprunt, trois pieces feraient un donjon
+     * ou l'on retrouve la meme relique une fois sur trois. */
+    ok(attendues.length >= 4,
+       `« ${lieu} » a ${attendues.length} reliques a lui — assez pour que deux passages different`);
     for (const o of marquees) {
-      if (o.donjonCle === lieu) {
-        ok(chezMoi.has(o.id), `« ${o.nom} » tombe bien dans « ${lieu} »`);
-      } else {
-        ok(!chezMoi.has(o.id), `et « ${o.nom} » n y tombe pas`);
-      }
+      const sien = lieuxDe(o).indexOf(lieu) >= 0;
+      if (sien) ok(chezMoi.has(o.id), `« ${o.nom} » tombe bien dans « ${lieu} »`);
+      else ok(!chezMoi.has(o.id), `et « ${o.nom} » n'y tombe pas`);
     }
-    /* ET LE LOT COMMUN RESTE ACCESSIBLE : le filtre ne doit pas remplacer le
-       lot, il doit s y ajouter. */
-    ok(libres.some((o) => chezMoi.has(o.id)),
-       `« ${lieu} » voit aussi les reliques communes`);
   }
-  /* Un donjon SANS piece a lui garde le lot commun entier. C est la moitie de
-     la regle qu on oublie, et son echec est muet. */
-  const sansRien = Object.keys(M.DONJONS).find((d) => !marquees.some((o) => o.donjonCle === d));
-  ok(!!sansRien, `« ${sansRien} » n a aucune piece a lui`);
-  const chezLui = tire(sansRien);
-  ok(libres.every((o) => chezLui.has(o.id)),
-     `et il voit malgre tout les ${libres.length} reliques communes`);
-  for (const o of marquees) {
-    ok(!chezLui.has(o.id), `sans voir « ${o.nom} », qui appartient a un autre`);
-  }
+  /* ---- ET LA PLAINTE DU JOUEUR, TELLE QU'IL L'A FAITE ----
+   * « on ne devrait pas retrouver les items du donjon d'Optimus dans le
+   * sanctuaire de feu ». C'est la seule ligne de cette section qu'on peut
+   * lire sans connaitre le code, et c'est celle qui dit pourquoi le reste
+   * existe. */
+  const dansSanctuaire = tire('sanctuaire');
+  const dAilleurs = marquees.filter((o) => lieuxDe(o).indexOf('sanctuaire') < 0);
+  ok(dAilleurs.length > 0, `${dAilleurs.length} reliques appartiennent a d'autres donjons`);
+  ok(dAilleurs.every((o) => !dansSanctuaire.has(o.id)),
+     'et pas une seule ne tombe dans le Sanctuaire');
   /* Et l Idole GARANTIT une relique, comme la Fonderie : un boss de deux
      minutes qu on peut abattre pour rien ne vaut pas le deplacement. */
   for (const d of Object.keys(M.DONJONS)) {

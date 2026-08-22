@@ -2283,6 +2283,56 @@ class Realm {
         }
 
         /* ======================================================================
+         * L'AVERSE DE METEORITES
+         * ======================================================================
+         *
+         * ---- POURQUOI CE N'EST PAS UNE ZONE DE PLUS ----
+         *
+         * Le cercle au sol ordinaire vise LE JOUEUR : il punit celui qui reste
+         * pres du boss. On s'en sortait donc toujours de la meme facon —
+         * s'eloigner. L'averse tombe AU HASARD dans la salle : elle punit
+         * celui qui reste immobile n'importe ou, y compris a l'autre bout. Ce
+         * sont deux questions differentes posees au meme joueur, et c'est ce
+         * qui fait qu'une salle carree cesse d'avoir un coin tranquille.
+         *
+         * ---- CE QU'ELLE REUTILISE, ET POURQUOI C'EST LA BONNE DECISION ----
+         *
+         * Une meteorite EST un cercle annonce qui frappe : exactement ce que
+         * `zones` sait deja faire, jusqu'au cercle qui se referme cote page.
+         * Lui donner sa propre liste aurait demande un deuxieme compteur, un
+         * deuxieme rendu, un deuxieme chemin de degats — et le jour ou l'on
+         * regle l'un des deux, l'autre ne suivrait pas. Elle passe donc par
+         * `zones`, et la page n'a pas une ligne a apprendre.
+         *
+         * ---- LA RACINE DU TIRAGE ----
+         *
+         * Meme raison que pour les plaques de braise : un rayon tire
+         * uniformement concentre l'aire vers le centre, et les meteorites
+         * seraient toutes tombees sur le boss.
+         */
+        if (t.pluie) {
+          if (m.pluieRecharge === undefined) m.pluieRecharge = 1 / t.pluie.cadence;
+          m.pluieRecharge -= dt;
+          if (m.pluieRecharge <= 0) {
+            m.pluieRecharge = 1 / t.pluie.cadence;
+            for (let k = 0; k < t.pluie.combien; k++) {
+              const ang = this.alea() * Math.PI * 2;
+              const dd = Math.sqrt(this.alea()) * (t.pluie.portee || 800);
+              const zx = m.x + Math.cos(ang) * dd, zy = m.y + Math.sin(ang) * dd;
+              this.zones.push({ id: this._nouvelId(), x: zx, y: zy,
+                                r: t.pluie.rayon, att: t.pluie.att,
+                                effet: t.pluie.effet || null, espece: m.espece,
+                                reste: t.pluie.annonce, duree: t.pluie.annonce });
+              if (ev) {
+                ev.marques = ev.marques || [];
+                ev.marques.push({ x: zx, y: zy, r: t.pluie.rayon,
+                                  duree: t.pluie.annonce, espece: m.espece });
+              }
+            }
+          }
+        }
+
+        /* ======================================================================
          * IL EN APPELLE D'AUTRES
          * ======================================================================
          *

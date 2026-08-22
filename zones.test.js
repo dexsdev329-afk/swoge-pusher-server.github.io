@@ -71,10 +71,30 @@ let MODELE = null;
    *
    * On enumere donc les VARIANTES. Le nombre de phases vient du moteur —
    * l'ecrire ici ferait passer l'essai le jour ou l'on en ajoute une. */
+  /* ---- CE QU'EST UN CERCLE AU SOL, RECONNU A SA FORME ----
+   *
+   * Cet essai ne lisait que `zone`. L'Idole a recu une AVERSE DE METEORITES —
+   * un deuxieme champ, `pluie`, qui pose exactement le meme objet dans la
+   * meme liste, avec le meme cercle d'annonce et le meme coup. Elle serait
+   * passee entierement a cote de la regle de sortie, alors que c'est
+   * precisement le genre d'attaque que cette regle existe pour tenir : sept
+   * cercles a la fois, en phase cinq.
+   *
+   * On ne liste donc pas les noms. Un cercle au sol, c'est un objet qui porte
+   * un RAYON et une ANNONCE — la definition est celle qui compte, et un
+   * troisieme champ ajoute demain sera verifie sans qu'on y pense. */
+  const cerclesDe = (t) => Object.keys(t)
+    .filter((c) => t[c] && typeof t[c] === 'object' && !Array.isArray(t[c])
+                   && t[c].rayon > 0 && t[c].annonce !== undefined)
+    .map((c) => ({ nom: c, z: t[c] }));
+
   const variantes = [];
   for (const k of Object.keys(M.MONSTRES)) {
     const n = M.nbPhases(k);
-    if (!n) { if (M.MONSTRES[k].zone) variantes.push({ k, ph: 0, sur: 1, t: M.MONSTRES[k] }); continue; }
+    if (!n) {
+      for (const c of cerclesDe(M.MONSTRES[k])) variantes.push({ k, ph: 0, sur: 1, t: M.MONSTRES[k], c });
+      continue;
+    }
     for (let i = 0; i < n; i++) {
       /* On demande au moteur la fiche de CETTE phase en lui donnant une vie
          qui tombe dedans. Fabriquer la fusion ici serait refaire son travail,
@@ -89,15 +109,16 @@ let MODELE = null;
       }
       ok(trouve, `on sait atteindre la phase ${i + 1} de « ${k} »`);
       const t = M.statsMonstre(k, pv, pvMax);
-      if (t.zone) variantes.push({ k, ph: i, sur: n, t });
+      for (const c of cerclesDe(t)) variantes.push({ k, ph: i, sur: n, t, c });
     }
   }
   ok(variantes.length >= AVEC_ZONE.length,
      `${variantes.length} zones a verifier, phases comprises`);
 
   for (const v of variantes) {
-    const z = v.t.zone;
-    const k = v.sur > 1 ? `${v.k} (phase ${v.ph + 1}/${v.sur})` : v.k;
+    const z = v.c.z;
+    const k = (v.sur > 1 ? `${v.k} (phase ${v.ph + 1}/${v.sur})` : v.k)
+              + (v.c.nom === 'zone' ? '' : ` [${v.c.nom}]`);
     ok(z.annonce > 0, `« ${v.t.nom} » annonce son coup (${z.annonce} s)`);
     ok(z.rayon > 0, 'et il a un rayon');
     const exige = z.rayon / vmin + M.ZONE_REACTION;

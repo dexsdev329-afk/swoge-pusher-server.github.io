@@ -925,15 +925,23 @@ const ITEMS_DONJON = [
  * est un lieu de plus.
  */
 const ITEMS_SANCTUAIRE = [
-  { id: 6801, cle: 'sanc_anneau',   nom: 'Emberbind',  rarete: 'relique', famille: 'onyx' },
-  { id: 6802, cle: 'sanc_gantelet', nom: 'Forgehand',  rarete: 'relique', famille: 'gantelets' },
-  { id: 6803, cle: 'sanc_masque',   nom: 'Cast Visage', rarete: 'relique', famille: 'epaulieres' },
+  { id: 6801, cle: 'sanc_anneau',    nom: 'Emberbind',    rarete: 'relique', famille: 'onyx' },
+  { id: 6802, cle: 'sanc_gantelet',  nom: 'Forgehand',    rarete: 'relique', famille: 'gantelets' },
+  { id: 6803, cle: 'sanc_masque',    nom: 'Cast Visage',  rarete: 'relique', famille: 'epaulieres' },
+  /* ---- CINQ DE PLUS, POUR QUE LE LOT TIENNE DEBOUT SEUL ----
+   * Il en comptait trois, et il empruntait les huit de la Forge pour faire
+   * nombre. Maintenant qu'il ne les emprunte plus (voir la garde plus bas),
+   * trois pieces feraient un donjon ou l'on retrouve la meme relique une fois
+   * sur trois. Huit, comme la Forge : c'est le nombre a partir duquel un
+   * deuxieme passage ne rend pas la meme chose. */
+  { id: 6804, cle: 'sanc_lame',      nom: 'Cinderfang',   rarete: 'relique', famille: 'lame' },
+  { id: 6805, cle: 'sanc_plastron',  nom: 'Slagplate',    rarete: 'relique', famille: 'plastron' },
+  { id: 6806, cle: 'sanc_casque',    nom: 'Ashen Crown',  rarete: 'relique', famille: 'casque' },
+  { id: 6807, cle: 'sanc_bouclier',  nom: 'Emberwall',    rarete: 'relique', famille: 'bouclier' },
+  { id: 6808, cle: 'sanc_dagues',    nom: 'Twin Cinders', rarete: 'relique', famille: 'dagues' },
 ];
 for (const o of ITEMS_SANCTUAIRE) {
   o.donjon = true;
-  /* Le donjon PRECIS. Les huit de la Forge n'en portent pas, et gardent donc
-     leur lot commun : ajouter la cle chez elles aurait vide le lot de la cave
-     des pirates, qui n'a aucune piece a elle. */
   o.donjonCle = 'sanctuaire';
   ITEMS_DROP.push(o);
 }
@@ -948,7 +956,40 @@ for (const o of ITEMS_SANCTUAIRE) {
    piece de la Forge est : une trouvaille (donc hors commerce) ET du donjon
    (donc hors du monde ouvert). L'oubli du second les ferait tomber sur des
    limes, et le donjon n'aurait plus servi a rien. */
-for (const o of ITEMS_DONJON) { o.donjon = true; ITEMS_DROP.push(o); }
+/* ---- UN OBJET DE DONJON NOMME LES DONJONS OU IL TOMBE ----
+ *
+ * Les huit de la Forge n'avaient AUCUNE cle, et le tirage lisait cette absence
+ * comme « partout ». C'etait voulu au depart — la cave des pirates n'a aucune
+ * piece a elle et vivait de ce lot commun — mais le jour ou le Sanctuaire est
+ * arrive avec ses propres reliques, il a herite des huit autres par-dessus.
+ * Le joueur l'a vu : il ramassait de l'equipement d'Optimus dans un sanctuaire
+ * de feu.
+ *
+ * La cle accepte donc PLUSIEURS donjons. Le lot commun existe toujours — il
+ * est simplement ECRIT au lieu d'etre deduit d'un champ manquant.
+ */
+for (const o of ITEMS_DONJON) { o.donjon = true; o.donjonCle = ['forge', 'cave']; ITEMS_DROP.push(o); }
+
+/** Ce donjon-la fait-il tomber cette piece ? Une seule reponse, ici, pour que
+    le tirage n'ait pas a connaitre la forme du champ. */
+function tombeDans(o, cle) {
+  if (!o.donjonCle) return false;
+  return Array.isArray(o.donjonCle) ? o.donjonCle.indexOf(cle) >= 0 : o.donjonCle === cle;
+}
+
+/* ---- ET PLUS JAMAIS DE CLE MANQUANTE ----
+ * C'est la garde qui remplace l'ancien defaut. Sans elle, ajouter une piece de
+ * donjon en oubliant sa cle la ferait retomber « partout » — c'est-a-dire
+ * exactement le bogue qu'on vient de corriger, revenu en silence. Elle refuse
+ * au CHARGEMENT : le serveur ne demarre pas plutot que de mal distribuer. */
+for (const o of ITEMS_DROP) {
+  if (!o.donjon) continue;
+  const l = Array.isArray(o.donjonCle) ? o.donjonCle : (o.donjonCle ? [o.donjonCle] : []);
+  if (!l.length) {
+    throw new Error('boutique : « ' + o.cle + ' » est marque donjon sans donjonCle — '
+                    + 'il tomberait dans TOUS les donjons');
+  }
+}
 for (const o of ITEMS_DROP) o.drop = true;
 
 for (const o of ITEMS.concat(ITEMS_DROP)) {
@@ -1222,4 +1263,5 @@ module.exports = {
   RARETES, FAMILLES, ITEMS, ITEMS_DROP, COFFRES, TOTAL, PRIX_LIGNE, SAISONS,
   item, coffre, itemsDe, rarete, famille, tire, restant, chances, catalogue,
   saison, itemsDeSaison, famillesDe, rangsDeFamille, coffresDe, prixRachat,
+  tombeDans,
 };

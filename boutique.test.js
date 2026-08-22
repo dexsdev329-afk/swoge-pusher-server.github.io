@@ -748,7 +748,26 @@ for (const c of B.COFFRES) {
   const DONJON = B.ITEMS_DROP.filter((o) => o.donjon);
   ok(B.ITEMS_DROP.length >= 40,
      `au moins les quarante des anneaux (${B.ITEMS_DROP.length})`);
-  ok(DONJON.length === 8, `dont les huit de la Forge (${DONJON.length})`);
+  /* ---- ON NE CODE PAS LE TOTAL, ON VERIFIE LA REGLE ----
+   * C'etait `DONJON.length === 8` — un chiffre en dur, exactement ce que le
+   * commentaire de ce bloc dit de ne pas faire douze lignes plus haut. Le
+   * Sanctuaire a recu ses huit reliques a lui, le total est passe a seize, et
+   * l'essai a refuse l'ajout au lieu de verifier quoi que ce soit.
+   * Ce qui compte n'est pas COMBIEN il y en a : c'est que chaque donjon en ait
+   * assez pour que deux passages ne rendent pas la meme chose, et qu'aucune ne
+   * traine sans proprietaire. */
+  const parDonjon = {};
+  for (const o of DONJON) {
+    const l = Array.isArray(o.donjonCle) ? o.donjonCle : (o.donjonCle ? [o.donjonCle] : []);
+    ok(l.length > 0, `« ${o.cle} » nomme le ou les donjons ou elle tombe`);
+    for (const c of l) (parDonjon[c] = parDonjon[c] || []).push(o.cle);
+  }
+  const lieux = Object.keys(parDonjon);
+  ok(lieux.length >= 2, `${DONJON.length} reliques de donjon, reparties sur ${lieux.length} lieux`);
+  for (const c of lieux) {
+    ok(parDonjon[c].length >= 4,
+       `« ${c} » en compte ${parDonjon[c].length} — assez pour que deux passages different`);
+  }
   ok(DONJON.every((o) => o.rarete === 'relique'),
      'toutes reliques : le donjon rend le rang le plus haut ATTEIGNABLE, pas plus haut');
   ok(B.ITEMS_DROP.filter((o) => !o.donjon).length === 40,
@@ -800,14 +819,18 @@ for (const c of B.COFFRES) {
    * Sinon le sac blanc ne serait qu'un sac de plus. */
   const P = require('./personnages');
   const rel = B.ITEMS_DROP.filter((o) => o.rarete === 'relique');
-  /* Quatre au coeur du monde, huit dans la Forge. Le compte est ecrit en deux
-     morceaux plutot qu'en un total : ce qui compte n'est pas « douze », c'est
-     que chaque LIEU garde les siennes. Un total unique se serait contente de
-     changer de chiffre le jour ou l'un des deux se vide. */
+  /* Le compte est ecrit en deux morceaux plutot qu'en un total : ce qui compte
+     n'est pas la somme, c'est que chaque LIEU garde les siennes. Un total
+     unique se serait contente de changer de chiffre le jour ou l'un des deux
+     se vide.
+     Le second morceau ne fixe plus de nombre : il y avait « huit dans la
+     Forge », le Sanctuaire en a recu huit a lui et l'essai a refuse l'ajout.
+     Un donjon de plus est une chose qu'on veut pouvoir faire ; un donjon VIDE
+     est la chose qu'on veut interdire. */
   ok(rel.filter((o) => !o.donjon).length === 4,
      `quatre reliques au coeur du monde (${rel.filter((o) => !o.donjon).length})`);
-  ok(rel.filter((o) => o.donjon).length === 8,
-     `et huit dans la Forge (${rel.filter((o) => o.donjon).length})`);
+  ok(rel.filter((o) => o.donjon).length >= 8,
+     `et ${rel.filter((o) => o.donjon).length} dans les donjons, aucune ailleurs`);
   /* Contre ce que la BOUTIQUE vend, pas contre la mythique du monde : c'est
      la comparaison qui a un sens depuis que les deux ont leur echelle. Une
      relique qui ne battrait que le butin serait battue par un achat. */

@@ -2001,7 +2001,16 @@ const MONSTRES = {
    * provoquer.
    */
   cendreux: {
-    cle: 'cendreux', nom: 'Cinder Whelp', pv: 420, att: 96, def: 18,
+    /* ---- QUATRE CENT VINGT POINTS DE VIE NE VOULAIENT RIEN DIRE ----
+     * Mesure : le meilleur personnage du jeu enleve 4272 points par seconde.
+     * Un cendreux mourait donc en UN DIXIEME DE SECONDE — moins que le temps
+     * de le voir arriver. On en appelait huit au plus, ils fondaient sur place,
+     * et la phase entiere ne demandait rien.
+     * A 2600, il tient six dixiemes de seconde contre le meilleur equipement
+     * et deux secondes contre un equipement moyen. C'est le seuil a partir
+     * duquel s'en occuper est une DECISION : pendant qu'on les abat, l'Idole
+     * tape. */
+    cle: 'cendreux', nom: 'Cinder Whelp', pv: 2600, att: 130, def: 18,
     /* VITE, mais PAS au point qu'on ne puisse plus fuir.
      *
      * Je les avais mis a 168, avec « on ne les distance pas » ecrit a cote.
@@ -2104,7 +2113,14 @@ const MONSTRES = {
    * n'occupe qu'un tiers de la barre doit durer assez pour s'apprendre.
    */
   idole: {
-    cle: 'idole', nom: 'The Cinder Idol', pv: 380000, att: 240, def: 88,
+    /* ---- ET ELLE FRAPPE ----
+     * Mesure des degats d'avant, contre soixante de defense : 112 par seconde
+     * en phase 1 si TOUT touchait. Un personnage de deux mille points de vie
+     * tenait vingt et une secondes sans bouger, dans un combat qui en dure
+     * quatre-vingt-dix — autant dire que les deux premieres phases ne
+     * demandaient rien du tout. Ce n'est pas la fin du combat qui etait trop
+     * facile, c'est le debut qui etait vide. */
+    cle: 'idole', nom: 'The Cinder Idol', pv: 380000, att: 340, def: 88,
     vitesse: 44, rayon: 104, vue: 1000, contact: true, cadence: 0.42,
     /* ---- ELLE PROJETTE CE QU'ELLE TOUCHE ----
      * Sans ca, la meilleure facon de la battre etait de se COLLER a elle : au
@@ -2116,9 +2132,9 @@ const MONSTRES = {
      * ce qui rend la salle, les invocations et les anneaux a nouveau
      * pertinents. */
     choc: 'repousse',
-    tir: { portee: 620, vitesse: 300, sprite: 'braise', att: 128, cadence: 0.3,
+    tir: { portee: 620, vitesse: 300, sprite: 'braise', att: 195, cadence: 0.3,
            effet: 'brulure' },
-    zone: { annonce: 1.6, rayon: 260, att: 190, cadence: 0.12 },
+    zone: { annonce: 1.6, rayon: 260, att: 250, cadence: 0.12 },
     xp: 16000,
     /* ---- CINQ PHASES ----
      *
@@ -2171,8 +2187,24 @@ const MONSTRES = {
            Fuir ne cesse pas d'exister pour autant : tuer les cendreux, ou ne
            pas se faire toucher par l'eventail, sont deux sorties reelles. */
         tir: { cadence: 0.45, tirs: 3, ecart: 0.24, effet: 'ralenti' },
-        appel: { espece: 'cendreux', combien: 3, cadence: 0.07, plafond: 6,
-                 rayon: 240 } },
+        /* ---- LA MEUTE, POUR DE BON ----
+         * Trois toutes les quatorze secondes, plafond huit : mesure faite, ca
+         * ne remplissait rien. Cinquante cendreux de rayon 44 occupent 5,1 %
+         * du sol de la salle — moins d'un tiers de ce que prennent deja les
+         * douze plaques de lave (17,4 %). Mon ancien commentaire pretendait
+         * qu'au-dela de huit « la salle se bouche » : je ne l'avais jamais
+         * mesure, et c'etait faux. Ce qui bouche une salle, c'est un mur de
+         * corps AUTOUR DE SOI, pas leur surface totale — et ils ne sont pas
+         * assez rapides pour former ce mur si l'on continue de bouger. */
+        appel: { espece: 'cendreux', combien: 8, cadence: 0.22, plafond: 26,
+                 rayon: 260 },
+        /* ---- ET LE CIEL TOMBE ----
+         * Le cercle au sol ordinaire vise LE JOUEUR : il punit celui qui reste
+         * pres de l'Idole. L'averse tombe AU HASARD dans la salle : elle punit
+         * celui qui reste immobile n'importe ou, y compris a l'autre bout.
+         * C'est ce qui manquait — jusqu'ici, s'eloigner reglait tout. */
+        pluie: { cadence: 0.34, combien: 3, rayon: 150, annonce: 1.35,
+                 att: 230, effet: 'brulure', portee: 900 } },
       /* 4. L'ANNEAU. Quatorze projectiles tout autour — il n'y a plus de
          « cote » ou aller. On se colle a elle, ou l'on court avec le mur dans
          le dos. La cadence tombe a un anneau toutes les deux secondes et
@@ -2193,8 +2225,12 @@ const MONSTRES = {
         /* Les SENTINELLES prennent le relais : lentes, mais elles tirent. On
            ne peut donc plus regler le probleme en reculant — il y a desormais
            quelque chose qui vous suit a distance pendant que l'anneau tombe. */
-        appel: { espece: 'sentinelle', combien: 2, cadence: 0.06, plafond: 4,
-                 rayon: 300 } },
+        appel: { espece: 'sentinelle', combien: 3, cadence: 0.1, plafond: 8,
+                 rayon: 300 },
+        /* Plus dense, et un peu plus large. L'annonce ne bouge PAS : c'est
+           elle qui rend une averse esquivable, et un essai refuse tout cercle
+           dont on ne peut pas sortir a temps. */
+        pluie: { cadence: 0.5, combien: 5, rayon: 165, att: 250 } },
       /* 5. FURIE. Tout a la fois, et elle court presque aussi vite que nous.
          Le cercle RETRECIT — un cercle plus petit se sort plus vite, donc son
          annonce peut descendre sans enfreindre la regle de sortie. */
@@ -2206,8 +2242,11 @@ const MONSTRES = {
         /* Et les deux a la fois, plus souvent. Le plafond monte a huit : au-
            dela la salle se bouche, et un boss qu'on ne peut plus atteindre
            n'est pas difficile, il est inatteignable. */
-        appel: { espece: 'cendreux', combien: 4, cadence: 0.11, plafond: 8,
-                 rayon: 240 } },
+        /* Le plafond monte a CINQUANTE. Ce n'est pas un mur : c'est la salle
+           qui cesse d'avoir un coin tranquille. */
+        appel: { espece: 'cendreux', combien: 12, cadence: 0.45, plafond: 50,
+                 rayon: 260 },
+        pluie: { cadence: 0.7, combien: 7, rayon: 165, att: 275 } },
     ],
     biomes: [],
   },
@@ -2241,7 +2280,7 @@ const MONSTRES = {
  * combat sans le rallonger de facon sensible. */
 const PHASE_MUE = 2;
 
-const CHAMPS_DE_PHASE = ['vitesse', 'cadence', 'att', 'tir', 'zone', 'appel'];
+const CHAMPS_DE_PHASE = ['vitesse', 'cadence', 'att', 'tir', 'zone', 'appel', 'pluie'];
 
 /* ---- LES VARIANTES SONT CALCULEES UNE FOIS, AU CHARGEMENT ----
  * Fabriquer l'objet fusionne a chaque pas ferait naitre un objet par monstre
@@ -2269,9 +2308,19 @@ for (const cle of Object.keys(MONSTRES)) {
     const nv = Object.assign({}, av);
     for (const champ of CHAMPS_DE_PHASE) {
       if (ph[champ] === undefined) continue;
-      nv[champ] = (champ === 'tir' || champ === 'zone' || champ === 'appel')
-        ? Object.assign({}, av[champ] || {}, ph[champ])
-        : ph[champ];
+      /* ---- ON RECONNAIT UN GROUPE A SA FORME, PAS A SON NOM ----
+       * C'etait `champ === 'tir' || champ === 'zone' || champ === 'appel'` —
+       * une liste ecrite a la main, a tenir d'accord avec CHAMPS_DE_PHASE.
+       * L'averse de meteorites est arrivee, personne n'a pense a cette
+       * ligne-ci, et sa phase quatre a REMPLACE l'averse de la phase trois au
+       * lieu de la completer : elle est repartie sans temps d'annonce, donc
+       * sans le cercle qui previent. Un cercle qui tombe sans prevenir est
+       * exactement ce que le reste du fichier interdit, et rien n'a rien dit.
+       * Une valeur qui est un objet se fusionne ; une valeur simple se
+       * remplace. La regle se lit sur la donnee, il n'y a plus de liste. */
+      const groupe = ph[champ] && typeof ph[champ] === 'object'
+                     && !Array.isArray(ph[champ]);
+      nv[champ] = groupe ? Object.assign({}, av[champ] || {}, ph[champ]) : ph[champ];
     }
     variantes.push(nv);
     seuils.push(ph.jusqua);

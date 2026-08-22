@@ -7237,8 +7237,13 @@ class Game {
    * aurait cesse de rendre quoi que ce soit de rare.
    */
   tireButinDonjon(rarete, alea, quel) {
-    const lot = boutique.ITEMS_DROP.filter((o) => o.donjon
-      && (!o.donjonCle || o.donjonCle === quel));
+    /* ---- LE DONJON NOMME SES PIECES, PAS L'INVERSE ----
+     * Le filtre lisait une cle MANQUANTE comme « tombe partout ». Les huit
+     * reliques de la Forge n'en avaient pas : elles tombaient donc aussi dans
+     * le Sanctuaire, et l'on y ramassait l'equipement d'Optimus. La question
+     * est posee une seule fois, dans la boutique, ou la forme du champ est
+     * connue — et une piece sans cle ne demarre plus le serveur. */
+    const lot = boutique.ITEMS_DROP.filter((o) => o.donjon && boutique.tombeDans(o, quel));
     return this._tireDuLot(lot, rarete, alea);
   }
 
