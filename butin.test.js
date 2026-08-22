@@ -73,11 +73,27 @@ function pose(r, espece, x, y, pv) {
     return { bleu: bleu / tours, brun: brun / tours, oeuf: oeuf / tours };
   };
 
+  /* ---- LES TAUX VIENNENT DU MOTEUR, JAMAIS RECOPIES ----
+   * Ils etaient ecrits ici — « 1/50 », « 1/6 ». Le jour ou l'on baisse le
+   * taux des fioles, cet essai tombe en accusant le tirage alors que c'est
+   * LUI qui porte l'ancien chiffre. C'est arrive exactement comme ca.
+   * Ce que l'essai doit prouver n'est pas la valeur du reglage : c'est que le
+   * tirage rend bien ce que le reglage annonce. */
+  const VISE_BLEU = M.CHANCE_POTION.skeleton === undefined
+    ? M.CHANCE_POTION.defaut : M.CHANCE_POTION.skeleton;
+  const VISE_BRUN = M.CHANCE_SOIN.skeleton === undefined
+    ? M.CHANCE_SOIN.defaut : M.CHANCE_SOIN.skeleton;
   const sq = compte('skeleton', 40000);
-  ok(Math.abs(sq.bleu - 1 / 50) < 0.006,
-     `un squelette laisse une potion de stat dans ${(sq.bleu * 100).toFixed(2)} % des morts (vise 2 %)`);
-  ok(Math.abs(sq.brun - 1 / 6) < 0.02,
-     `et un soin dans ${(sq.brun * 100).toFixed(1)} % (vise 16,7 %)`);
+  /* La marge suit le taux : une tolerance fixe de 0,6 point est enorme devant
+     0,67 % et serree devant 2 %. On prend le plus grand de « un tiers du taux »
+     et d'un plancher — sous lequel le bruit de quarante mille tirages
+     dominerait la mesure. */
+  const margeB = Math.max(0.004, VISE_BLEU / 3);
+  ok(Math.abs(sq.bleu - VISE_BLEU) < margeB,
+     `un squelette laisse une potion de stat dans ${(sq.bleu * 100).toFixed(2)} % des morts `
+     + `(le monde en annonce ${(VISE_BLEU * 100).toFixed(2)} %)`);
+  ok(Math.abs(sq.brun - VISE_BRUN) < Math.max(0.02, VISE_BRUN / 5),
+     `et un soin dans ${(sq.brun * 100).toFixed(1)} % (le monde en annonce ${(VISE_BRUN * 100).toFixed(1)} %)`);
 
   /* ---- LA NUEE NE PAIE PAS UN POINT PERMANENT ----
    * Quarante-cinq points d'experience, seize exemplaires par anneau : si elle

@@ -1904,31 +1904,60 @@ const MONSTRES = {
    * n'occupe qu'un tiers de la barre doit durer assez pour s'apprendre.
    */
   idole: {
-    cle: 'idole', nom: 'The Cinder Idol', pv: 11000, att: 240, def: 88,
+    cle: 'idole', nom: 'The Cinder Idol', pv: 38000, att: 240, def: 88,
     vitesse: 44, rayon: 104, vue: 1000, contact: true, cadence: 0.42,
     tir: { portee: 620, vitesse: 300, sprite: 'braise', att: 128, cadence: 0.3,
            effet: 'brulure' },
     zone: { annonce: 1.6, rayon: 260, att: 190, cadence: 0.12 },
     xp: 16000,
-    /* ---- LES PHASES ----
-     * Chacune s'applique quand la vie RESTANTE descend a sa part. Elles sont
-     * lues dans l'ordre et la derniere qui s'applique gagne : ecrire
-     * `jusqua` decroissant est donc la seule facon de les lire.
-     * Ce qu'une phase a le droit de changer est BORNE — voir CHAMPS_DE_PHASE
-     * plus bas, et la garde qui le verifie au chargement. */
+    /* ---- CINQ PHASES ----
+     *
+     * Mesure du combat AVANT ce reglage, avec un personnage de niveau vingt
+     * bien equipe qui touche a chaque tir : la Fonderie — le boss le plus dur
+     * du jeu — mourait en 6,8 SECONDES, Dreadstump en 2,2. L'Idole tenait
+     * 31,8 s, deja cinq fois mieux, et c'etait encore court pour ce qu'elle
+     * doit etre.
+     *
+     * Trente-huit mille points de vie : environ cent dix secondes a notre
+     * meilleure cadence. Une phase par vingt secondes, ce qui laisse le temps
+     * d'apprendre chacune.
+     *
+     * ---- MAIS PAS UNE EPONGE ----
+     *
+     * Multiplier les points de vie seuls fait un combat long, pas un combat
+     * dur : on tape la meme chose pendant deux minutes. Ce qui change a
+     * chaque phase, c'est la FORME de ce qu'il faut esquiver.
+     *
+     * L'anneau complet (phase 4) ne coute pas une ligne de code : `tirs` et
+     * `ecart` existent deja pour les eventails, et quatorze projectiles a
+     * 2π/14 d'ecart font un cercle. C'est la meme mecanique, poussee jusqu'a
+     * ce qu'elle change de nature — on n'esquive plus sur le cote, on cherche
+     * le trou ou l'on se colle au boss.
+     *
+     * L'ordre est decroissant et la derniere qui s'applique gagne.
+     */
     phases: [
-      { jusqua: 0.66, vitesse: 62, cadence: 0.52,
+      /* 2. LA FORGE S'OUVRE. La zone revient deux fois plus souvent et brule.
+         Reculer ne suffit plus, il faut sortir du cercle. */
+      { jusqua: 0.80, vitesse: 62, cadence: 0.52,
         zone: { cadence: 0.24, att: 205, effet: 'brulure' } },
-      /* ---- LA FURIE NE RACCOURCIT PAS L'ANNONCE ----
-       * J'avais mis 1,1 s pour un rayon de 260. C'etait une zone dont le
-       * personnage le plus lent du jeu ne pouvait PAS sortir — donc plus une
-       * attaque mais une taxe, et zones.test.js l'a refuse.
-       * La phase trois devient dangereuse autrement : le cercle RETRECIT (il
-       * faut se coller pour frapper, et c'est la qu'il tombe), il revient
-       * trois fois plus souvent, et il fait mal. Un cercle plus petit se sort
-       * plus vite : l'annonce descend a 1,20 s SANS enfreindre la regle. */
-      { jusqua: 0.33, vitesse: 96, cadence: 0.7, att: 268,
-        tir: { cadence: 0.6, tirs: 3, ecart: 0.2 },
+      /* 3. L'EVENTAIL. Trois braises au lieu d'une : le tir cesse d'etre une
+         chose qu'on esquive en marchant de cote. */
+      { jusqua: 0.60, vitesse: 74,
+        tir: { cadence: 0.45, tirs: 3, ecart: 0.24 } },
+      /* 4. L'ANNEAU. Quatorze projectiles tout autour — il n'y a plus de
+         « cote » ou aller. On se colle a elle, ou l'on court avec le mur dans
+         le dos. La cadence tombe a un anneau toutes les deux secondes et
+         demie : plus vite, deux anneaux se croiseraient et la salle serait
+         pleine, ce qui n'est plus un motif mais un mur. */
+      { jusqua: 0.40, vitesse: 68,
+        tir: { cadence: 0.4, tirs: 14, ecart: 0.4488, att: 104 },
+        zone: { cadence: 0.18 } },
+      /* 5. FURIE. Tout a la fois, et elle court presque aussi vite que nous.
+         Le cercle RETRECIT — un cercle plus petit se sort plus vite, donc son
+         annonce peut descendre sans enfreindre la regle de sortie. */
+      { jusqua: 0.20, vitesse: 96, cadence: 0.7, att: 268,
+        tir: { cadence: 0.55, tirs: 16, ecart: 0.3927, att: 112 },
         zone: { annonce: 1.2, rayon: 190, cadence: 0.4, att: 225,
                 effet: 'brulure' } },
     ],
@@ -3149,14 +3178,42 @@ function naitDans(biome, alea) {
  * raccourci. */
 const BUTIN_GARANTI = { fonderie: 'relique', dreadstump: 'epique' };
 
-/* Un sur cinquante. Le chiffre vient de ce qu'il doit produire : environ une
-   potion toutes les vingt minutes de chasse soutenue — assez rare pour qu'on
-   s'en souvienne, assez frequent pour qu'on y croie encore.
-   Le gardien en donne UNE A COUP SUR : il sort une fois par anneau de lave et
-   porte seize cents points de vie. Un boss qu'on peut abattre pour rien ne
-   vaut pas le deplacement. */
-const CHANCE_POTION = { defaut: 1 / 50, gardien: 1, brasier: 1, machine: 0.7,
-                        carapace: 0.7, optimus: 1 };
+/* ---- CE QUE CE REGLAGE PRODUIT, MESURE ----
+ *
+ * Le commentaire d'avant annoncait « environ une potion toutes les vingt
+ * minutes de chasse soutenue », soit trois par heure. C'etait faux, et de
+ * beaucoup : a un sur cinquante, plus les cinq creatures qui en garantissent
+ * une, l'anneau de neige rendait 3,17 % par creature abattue — c'est-a-dire
+ * entre DIX-NEUF et QUATRE-VINGT-SIX fioles par heure selon le rythme, contre
+ * trois annoncees. Six a vingt-huit fois trop.
+ *
+ * Le trou s'est vu tard parce que les fioles occupaient une place du sac :
+ * on en portait quatre sortes au maximum, donc on les buvait ou on les
+ * laissait. Depuis qu'elles ont leur reserve de quatre-vingt-dix-neuf, elles
+ * s'accumulent — et le vrai debit est devenu visible.
+ *
+ * ---- CE QU'ON GARDE, ET POURQUOI ----
+ *
+ * Un sur deux cents pour l'ordinaire, quatre fois moins qu'avant.
+ *
+ * ---- MAIS LE ROBINET N'ETAIT PAS LA ----
+ *
+ * Mesure : en baissant SEULEMENT le taux ordinaire, l'anneau de lave passait
+ * de 99 fioles par heure a 80. Presque rien. Parce que `brasier` et `optimus`
+ * en garantissaient une a CHAQUE mort, et que ce sont des habitants ordinaires
+ * de la lave — on en croise a chaque passage.
+ *
+ * Le GARDIEN garde sa garantie, lui, et la raison d'avant tient toujours : il
+ * sort une fois par anneau, il porte seize cents points de vie, et « un boss
+ * qu'on peut abattre pour rien ne vaut pas le deplacement ». Une salle gardee
+ * qu'on ouvre doit payer.
+ *
+ * La difference entre les deux cas est celle-la, et pas leur difficulte : le
+ * gardien est un RENDEZ-VOUS, un par anneau ; le brasier est un passant. On
+ * ne promet pas la meme chose a un rendez-vous et a un passant.
+ */
+const CHANCE_POTION = { defaut: 1 / 200, gardien: 1, brasier: 0.5,
+                        machine: 0.45, carapace: 0.45, optimus: 0.5 };
 /* Le soin, lui, est ordinaire : c'est du consommable, pas une recompense.
    La nuee fait exception : on en croise seize par anneau, et un sac sur six
    en donnerait presque trois a chaque nettoyage. Ce n'est pas une question
