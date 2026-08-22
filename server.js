@@ -913,6 +913,11 @@ function messageEntree(R, j, plan, carte) {
      * `tuiles` est sa forme exacte, et `sortie` la porte de retour. */
     donjon: plan ? plan.nom : null,
     tuiles: plan ? plan.tuiles : null,
+    /* Les plaques de braise partent avec la forme du donjon : la page les
+       DESSINE et le serveur les fait bruler a partir de la MEME liste. Deux
+       listes auraient fini par ne plus decrire le meme sol, et le joueur
+       aurait pris feu sur de la pierre. */
+    braises: plan ? plan.braises : null,
     sortie: plan ? plan.sortie : null,
     moi: { x: Math.round(j.x), y: Math.round(j.y),
            pv: j.pv, pvMax: j.pvMax,

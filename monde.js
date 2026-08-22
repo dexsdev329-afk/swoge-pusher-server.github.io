@@ -237,6 +237,12 @@ const DONJONS = {
     boss: 'idole',
     ouvreur: 'heraut',
     sol: 'sanctuaire',
+    /* ---- ET LE SOL BRULE ----
+     * Douze plaques dans la salle du fond. Elles ne bloquent pas : elles
+     * enlevent le droit de reculer n'importe ou. C'est ce qui manquait a une
+     * salle carree — sans elles, esquiver un anneau se fait toujours de la
+     * meme facon, et la salle n'a rien a dire. */
+    braises: 12,
     mur: 'donjon',
     /* ---- LE DECOR, NOMME PAR LE DONJON ----
      * Comme `sol` et `mur` : la page recoit le NOM de la planche, elle ne le
@@ -847,6 +853,89 @@ function mursDonjon(plan, depart) {
  * On les pose en COURONNE, entre le centre et les murs : c'est la zone ou
  * l'on tourne autour du boss, donc celle ou un obstacle sert a quelque chose.
  */
+/*
+ * ================== LES PLAQUES DE BRAISE ==================
+ *
+ * De la lave a MEME LE SOL, dans la salle du boss. Elles ne bloquent rien :
+ * on peut les traverser, et c'est tout l'interet — c'est une decision, pas un
+ * mur. Rester dessus tue ; les contourner coute du temps pendant qu'une Idole
+ * de trois cent quatre-vingt mille points de vie continue de taper.
+ *
+ * ---- POURQUOI ELLES NE SONT PAS DES ZONES ----
+ *
+ * Une zone du jeu s'annonce, frappe et disparait : c'est un COUP. Une plaque
+ * ne s'annonce pas et ne finit jamais — c'est du TERRAIN. Les faire passer
+ * pour des zones aurait demande une duree infinie, un cercle d'annonce qui ne
+ * s'annonce de rien, et une page qui dessine un coup permanent. Deux choses
+ * qui ne se ressemblent que de loin ne partagent pas leur code.
+ *
+ * ---- CE QUI EST MESURE, ET POURQUOI ----
+ *
+ * `partMax` est la seule regle qui compte : au-dela, la salle n'a plus de sol
+ * libre et il n'y a plus de bonne place, seulement des moins mauvaises. Ce
+ * n'est plus de la difficulte, c'est un couloir. Un essai le verifie sur des
+ * centaines de plans, parce que la pose est aleatoire et qu'une moyenne
+ * acceptable cache toujours un tirage qui ne l'est pas.
+ *
+ * `ecart` empeche deux plaques de fusionner : deux disques qui se touchent
+ * font un lac, et un lac n'est plus quelque chose qu'on contourne.
+ */
+const BRAISES = {
+  rayon: 165,
+  /* ---- SOIXANTE PAR SECONDE, ET ELLE IGNORE L'ARMURE ----
+   * Comme la brulure, et pour la meme raison : c'est ce qui fait qu'un
+   * personnage bien defendu a quand meme une raison de regarder ou il marche.
+   * La traverser en courant coute environ 76 points (1,27 s a 260 d'allure) ;
+   * y rester en coute 60 par seconde, plus la brulure qui part avec.
+   * S'y faire clouer deux secondes coute 120 — la table des EFFETS annonce
+   * deja « deux secondes clouees dans la lave » comme le prix de la
+   * paralysie, donc ce n'est pas un cas qu'on decouvre ici. */
+  parSeconde: 60,
+  /* Elle allume aussi : sortir de la plaque n'eteint pas ce qu'on y a pris.
+     Sans ca, longer le bord d'une plaque serait gratuit. */
+  effet: 'brulure',
+  /* Deux rayons et demi entre deux centres : de quoi passer entre elles. */
+  ecart: 2.5,
+  /* Au-dela, la salle n'a plus de sol. */
+  partMax: 0.30,
+};
+
+/**
+ * Les plaques d'une salle. Meme forme que `decorDeSalle`, et volontairement
+ * pas la meme fonction : le decor BLOQUE et se colle aux murs, la braise se
+ * traverse et doit tomber la ou l'on marche. Les fusionner aurait demande un
+ * drapeau, et un drapeau qui change le sens d'une fonction est le debut d'une
+ * fonction qui fait deux choses a moitie.
+ */
+function braisesDeSalle(s, combien, alea, occupants) {
+  const r = () => (typeof alea === 'function' ? alea() : Math.random());
+  if (!combien) return [];
+  const out = [];
+  const demi = (s.cote / 2) * DONJON_TUILE;
+  const R = BRAISES.rayon;
+  /* Jamais collees au mur : une plaque a moitie dans la pierre n'offre plus
+     de contournement du bon cote, et c'est la que le joueur recule. */
+  const rMax = Math.max(0, demi - R * 1.35);
+  for (let k = 0; k < combien; k++) {
+    let pose = null;
+    for (let essai = 0; essai < 60 && !pose; essai++) {
+      const ang = r() * Math.PI * 2;
+      /* Racine du tirage : sans elle les plaques s'entassent au centre, parce
+         qu'un rayon tire uniformement concentre l'aire vers l'interieur. */
+      const d = Math.sqrt(r()) * rMax;
+      const x = s.x + Math.cos(ang) * d, y = s.y + Math.sin(ang) * d;
+      const colle = out.some((o) => {
+        const dx = o.x - x, dy = o.y - y;
+        return dx * dx + dy * dy < (R * BRAISES.ecart) * (R * BRAISES.ecart);
+      });
+      if (!colle) pose = { x, y };
+    }
+    if (!pose) continue;
+    out.push({ x: Math.round(pose.x), y: Math.round(pose.y), r: R });
+  }
+  return out;
+}
+
 function decorDeSalle(s, sheet, combien, alea, occupants) {
   const r = () => (typeof alea === 'function' ? alea() : Math.random());
   if (!sheet || !combien) return [];
@@ -1006,6 +1095,13 @@ function planDeDonjon(nom, alea) {
      il se diffuse comme un mur, il se dessine comme un mur. Une seconde liste
      aurait demande une seconde collision et une seconde diffusion pour des
      objets qui font exactement ce que les premiers font. */
+  /* Les plaques AVANT les murs, comme le peuplement : elles n'ont rien a
+     eviter — on marche dessus — mais le decor, lui, doit pouvoir eviter les
+     creatures, et l'ordre de ce bloc est ce qui le decide. */
+  const braises = D.braises
+    ? plan.salles.filter((x) => x.role === 'fond')
+        .reduce((t, x) => t.concat(braisesDeSalle(x, D.braises, alea, peuple)), [])
+    : [];
   const murs = mursDonjon(plan, 1).concat(
     D.decor
       ? plan.salles.filter((x) => x.role === 'fond').reduce(
@@ -1026,6 +1122,11 @@ function planDeDonjon(nom, alea) {
     /* La planche d'objets remonte avec le plan, comme `mur`. */
     decor: D.decor || undefined,
     obstacles: murs,
+    /* Elles partent avec le plan, comme les tuiles : la page les DESSINE et
+       le serveur les fait bruler, a partir de la meme liste. Deux listes
+       auraient fini par ne plus decrire le meme sol, et le joueur aurait pris
+       feu sur de la pierre. */
+    braises,
     peuplement: peuple,
     /* ---- UN SEUL ANNEAU, ET SA BORNE EST FINIE ----
      * `Infinity` ne traverse pas JSON : il en ressort `null`, et `r <= null`
@@ -1970,7 +2071,6 @@ const MONSTRES = {
   braisier: {
     cle: 'braisier', nom: 'Ember Acolyte', pv: 900, att: 58, def: 40,
     vitesse: 40, rayon: 46, vue: 950, contact: false, cadence: 0.4,
-    sprite: 'sentinelle',
     /* ---- LE DESSIN DU PROJECTILE DIT L'EFFET ----
      * Je lui avais mis « maudit », qui est deja le trait de l'archer et ne
      * fait rien. realm.test.js l'a refuse, et il a raison : c'est la seule
@@ -3686,6 +3786,7 @@ function peuplement(alea) {
 }
 
 module.exports = {
+  BRAISES, braisesDeSalle,
   TUILE, CARTE, MONDE, CENTRE, ANNEAUX, MONSTRES, PEUPLEMENT, PLANCHER,
   statsMonstre, phaseMonstre, nbPhases, PHASE_MUE,
   ARMES, DEGATS_POING, VITESSE_JOUEUR, CADENCE_MAX,

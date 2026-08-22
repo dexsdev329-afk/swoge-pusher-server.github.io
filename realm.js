@@ -143,6 +143,12 @@ class Realm {
      * Ce qui reste a faire tient ici : ce que le plan dit, le plan le donne ;
      * sans plan, le monde ouvert, exactement comme avant. */
     this.plan = opts.plan || null;
+    /* ---- LES PLAQUES DE BRAISE ----
+     * Vide hors donjon, et vide pour les donjons qui n'en declarent pas. On
+     * la pose ICI, au meme rang qu'`obstacles`, plutot que de la creer au
+     * premier pas : un champ qui apparait en cours de route est un champ que
+     * la moitie du code teste avec `undefined`. */
+    this.braises = (this.plan && this.plan.braises) || [];
     if (this.plan) {
       /* Un donjon n'a pas de salles gardees : c'en est une, en plus grand. */
       this.salles = [];
@@ -488,6 +494,10 @@ class Realm {
          pas de cent millisecondes vaut 0,8 point. Sans accumulation, chaque
          pas arrondirait a zero et la brulure ne ferait jamais rien. */
       brulReste: 0,
+      /* Meme raison que `brulReste`, pour la lave au sol : `undefined + x`
+         rend NaN, et un point de vie NaN ne redescend jamais a zero — le
+         joueur serait devenu litteralement immortel, sans erreur nulle part. */
+      braiseReste: 0,
       recharge: 0, xpGagnee: 0, vu: 0,
     };
     /* La vie et le mana d'avant la porte, jamais AU-DESSUS du maximum : une
@@ -1080,6 +1090,11 @@ class Realm {
       if (j.ardeur > 0) j.ardeur = Math.max(0, j.ardeur - dt);
       if (j.racines > 0) j.racines = Math.max(0, j.racines - dt);
       this._pasEtats(j, dt, ev);
+      /* La lave AVANT la regeneration : dans l'autre ordre, un joueur pose
+         dans une plaque se soignait de ce qu'elle venait de lui prendre au
+         meme pas, et la plaque paraissait deux fois moins forte qu'elle ne
+         l'est. On soigne apres avoir brule, pas pendant. */
+      this._pasBraises(j, dt, ev);
       this._regenere(j, dt, ev);
     }
     /* ---- LES PIERRES VIEILLISSENT AVANT LES MORTS DE CE PAS ----
@@ -2007,6 +2022,51 @@ class Realm {
                        duree: E.duree });
     }
     return true;
+  }
+
+  /**
+   * LA LAVE A MEME LE SOL.
+   *
+   * Elle ne bloque pas et ne s'annonce pas : c'est du TERRAIN, pas un coup.
+   * Ce qui la rend difficile, c'est qu'elle ne prend AUCUNE decision — c'est
+   * le joueur qui decide d'y entrer, et le boss qui l'y pousse.
+   *
+   * Trois choses valent d'etre dites ici :
+   *
+   * - Elle passe par `_encaisse`, comme tout le reste. L'ecrire a la main
+   *   aurait fait de la lave la sixieme source qui traverse l'egide, et
+   *   l'egide vient tout juste d'etre bouchee sur la cinquieme.
+   * - Elle IGNORE l'armure (`amorti: false`), comme la brulure et pour la
+   *   meme raison : c'est ce qui donne a un personnage bien defendu une
+   *   raison de regarder ou il marche.
+   * - Elle accumule en flottant. A soixante points par seconde, un pas de
+   *   cent millisecondes vaut six points ; mais le serveur avance parfois par
+   *   pas plus courts, et arrondir chaque pas finirait par rendre zero pour
+   *   toujours — c'est exactement la faute que la brulure a deja faite.
+   */
+  _pasBraises(j, dt, ev) {
+    if (!this.braises.length || j.pv <= 0) return;
+    const B = monde.BRAISES;
+    let dedans = false;
+    for (const b of this.braises) {
+      const dx = j.x - b.x, dy = j.y - b.y;
+      if (dx * dx + dy * dy <= b.r * b.r) { dedans = true; break; }
+    }
+    if (!dedans) { j.braiseReste = 0; return; }
+    j.braiseReste = (j.braiseReste || 0) + B.parSeconde * dt;
+    const du = Math.floor(j.braiseReste);
+    /* On allume MEME quand le pas ne verse pas encore un point entier : la
+       brulure est ce qui fait payer le bord de la plaque, et l'attacher au
+       versement l'aurait rendue dependante de la longueur du pas. */
+    if (B.effet) this._poseEtat(j, B.effet, ev);
+    if (du <= 0) return;
+    j.braiseReste -= du;
+    const perte = this._encaisse(j, du, false);
+    if (perte <= 0) return;
+    j.pv = Math.max(0, j.pv - perte);
+    ev.degats.push({ addr: j.addr, perte, pv: j.pv, par: 'braise',
+                     quoi: 'braise' });
+    if (j.pv <= 0) this._meurt(j, 'braise', ev);
   }
 
   _joueurLePlusProche(m) {
