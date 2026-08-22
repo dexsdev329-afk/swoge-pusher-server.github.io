@@ -67,6 +67,57 @@ const FICHE = { skin: 'andy', nom: 'Dodexel', famille: 'lame',
   ok(j.x <= M.MONDE.w && j.y <= M.MONDE.h, 'ni par la droite');
 }
 
+// ================== 2 bis. SE TAIRE N'ACHETE PAS DE DISTANCE
+{
+  /* ---- LE TROU QUE CET ESSAI FERME ----
+   *
+   * Le `dt` d'un mouvement est mesure par le SERVEUR comme le temps ecoule
+   * depuis le dernier message de ce client. Il portait un plancher et aucun
+   * plafond : le budget de deplacement s'accumulait donc pendant qu'on se
+   * taisait, et un client trafique traversait la carte en une seule annonce.
+   *
+   * Les deux verifications d'au-dessus ne l'attrapaient pas : elles eprouvent
+   * le bond a `dt` normal, et leurs deux appels a `dt: 99` ne regardent que
+   * les bornes de la carte — ils EXECUTAIENT la teleportation et la
+   * declaraient bonne.
+   *
+   * Le trajet n'est pas non plus verifie : `_glisse` ne teste que le point
+   * d'arrivee, donc un bond assez long passe AU TRAVERS des rochers. Borner
+   * le pas est ce qui rend la collision fiable, pas seulement la vitesse.
+   */
+  const r = new Realm({ alea: alea(5) });
+  const j = r.rejoint(A, FICHE);
+
+  /* La borne est DEMANDEE au moteur. L'ecrire ici en dur ferait passer
+     l'essai le jour ou la constante change et ou la borne ne s'applique plus. */
+  const R = require('./realm');
+  const dep = (dt) => {
+    j.x = 3000; j.y = 3000;
+    const de = { x: j.x, y: j.y };
+    /* On vise TRES loin sur un seul axe : la distance parcourue est alors
+       exactement ce que la borne autorise, et rien d'autre ne la limite. */
+    r.bouge(A, j.x + 100000, j.y, 'right', 'run', dt);
+    return Math.sqrt((j.x - de.x) ** 2 + (j.y - de.y) ** 2);
+  };
+
+  const court = dep(R.PAS_MAX);
+  const long = dep(R.PAS_MAX * 100);
+  ok(court > 0, 'un pas plein avance (a ' + Math.round(court) + ' unites)');
+  eq(Math.round(long), Math.round(court),
+     'cent fois plus de silence n avance pas d un pouce de plus');
+
+  /* Et la borne vaut bien celle du simulateur : un joueur ne peut pas
+     reclamer plus de temps que le monde n'en rattrape en un tour. */
+  const enorme = dep(3600);
+  eq(Math.round(enorme), Math.round(court), 'une heure de silence non plus');
+
+  /* Le plancher tient toujours : le corriger ne devait pas l'emporter. Un
+     `dt` minuscule ne doit pas figer un joueur dont la page envoie vite. */
+  const minuscule = dep(0.000001);
+  ok(minuscule > 0, 'et un pas tres rapproche avance quand meme (' + Math.round(minuscule) + ')');
+  ok(minuscule < court, 'sans pour autant valoir un pas plein');
+}
+
 // ================== 3. LA CADENCE EST TENUE PAR LE SERVEUR
 {
   const r = new Realm({ alea: alea(9) });

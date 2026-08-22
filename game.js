@@ -382,7 +382,7 @@ class Game {
       && !(p.amis || []).length && !(p.demandes || []).length && !(p.envoyees || []).length
       && !p.parrain && !(p.filleuls || []).length
       && !(p.stakes || []).length && z(p.stakeAccrued) && z(p.stakeClaimTotal)
-      && z(p.cumulativeAuthorized) && !p.tgId
+      && z(p.cumulativeAuthorized) && z(p.bonDu || BN(0)) && !p.tgId
       && z(p.refDu) && z(p.refTotal) && !(p.attente || []).length
       /* ---- L'XP COMPTE COMME UNE TRACE ----
        *
@@ -433,6 +433,7 @@ class Game {
     if (!p || Game.estVide(p)) return null;
     return {
         b: p.balance.toString(), c: p.cumulativeAuthorized.toString(),
+        bd: (p.bonDu || ethers.BigNumber.from(0)).toString(),
         s: p.clientSeed, n: p.nonce, name: p.name, nc: !!p.nomChoisi,
         /* Le nom a ete PAYE. Sans ca au fichier, le joueur repaierait mille
            jetons a chaque redeploiement, et personne ne comprendrait pourquoi. */
@@ -703,6 +704,14 @@ class Game {
       this.players.set(addr, {
         balance: ethers.BigNumber.from(d.b || '0'),
         cumulativeAuthorized: ethers.BigNumber.from(d.c || '0'),
+        /* ---- LA MIGRATION SUPPOSE QUE LE PASSE EST ENCAISSE ----
+         * Les fiches ecrites avant ce champ n'en ont pas. Repartir de leur
+         * cumul entier compterait comme « en attente » tous les retraits deja
+         * presentes depuis l'ouverture, et le surplus s'effondrerait d'un coup
+         * sans qu'un seul jeton ait bouge. On part donc de zero : le seul
+         * ecart possible est un bon signe dans l'heure precedant le
+         * redemarrage, et il se rattrape au premier retour de la chaine. */
+        bonDu: ethers.BigNumber.from(d.bd || '0'),
         clientSeed: d.s || crypto.randomBytes(8).toString('hex'),
         nonce: d.n || 0, name: d.name || addr.slice(0, 6),
         /* Les etats ecrits avant cette marque n'ont pas de `nc`. Un nom qui
@@ -799,6 +808,25 @@ class Game {
       });
     }
     if (Array.isArray(st.telegramMap)) this.telegramMap = new Map(st.telegramMap.map((e) => [String(e[0]), String(e[1]).toLowerCase()]));
+
+    /* ---- ON REPARE CE QUE LES ANCIENNES REGLES ONT LAISSE PASSER ----
+     *
+     * Tant que `_equipe` ne comptait pas les exemplaires deja portes, une seule
+     * piece pouvait habiller les six personnages, et les sorties du coffre
+     * pouvaient la vendre sans la retirer du dos de personne. Ces fiches-la
+     * sont sur le disque : une garde qui ne regarde que l'avenir les laisserait
+     * en faute pour toujours.
+     *
+     * On le DIT dans le journal du demarrage. Une reparation silencieuse qui
+     * deshabille des personnages ressemble, vue du joueur, a un vol. */
+    let repares = 0, cases = 0;
+    for (const p of this.players.values()) {
+      const vides = this._reconcilieEquipement(p);
+      if (vides.length) { repares++; cases += vides.length; }
+    }
+    if (repares) {
+      console.log(`[equipement] ${cases} case(s) portee(s) sans exemplaire sur ${repares} fiche(s) : retirees`);
+    }
 
     /* Les duels interrompus par l'arret : on ne reprend pas la partie — sans
        arbitre ni joueurs connectes, une grille a moitie jouee ne veut plus
@@ -1147,6 +1175,17 @@ class Game {
          resultat du mois, et un resultat qui ignore ce qu'on donne se lit
          comme un benefice. */
       cadeaux: 0,
+      /* ---- L'ARGENT QUI N'EST PAS UNE MISE ----
+       * `note()` ecrivait deja ces quatre lignes ; `comptes()` n'en relisait
+       * aucune. Les poser ici plutot que de les laisser apparaitre au premier
+       * mouvement evite l'autre moitie du defaut : une cle absente se lit
+       * `undefined`, et une addition avec `undefined` rend `NaN` — un resultat
+       * mensuel a `NaN` ne se remarque que quand on essaie de decider avec.
+       *   • boutique et marche : la maison ENCAISSE (coffres, skins, les 5 %).
+       *   • primes : la maison PAIE le prix du classement.
+       *   • rachat : la maison PAIE aussi, et `note()` l'ecrit deja en NEGATIF
+       *     — c'est la seule des quatre dont le signe porte le sens. */
+      boutique: 0, marche: 0, primes: 0, rachat: 0,
       depots: 0, retraits: 0, brule: 0,         // bilan, PAS resultat
       manches: 0, joueurs: {},
     };
@@ -1262,7 +1301,17 @@ class Game {
     const m = this._mois();
     m[quoi] = Number(((m[quoi] || 0) + v).toFixed(6));
     if (qui) {
-      const j = m.joueurs[qui] || (m.joueurs[qui] = { mises: 0, rendus: 0, staking: 0, bonus: 0 });
+      /* Les quatre nouvelles lignes sont ici AUSSI. Sans elles, les appels qui
+         passent une adresse — `note('boutique', prix, addr)` — la passaient pour
+         rien : `j[quoi]` valait `undefined`, et le detail par joueur ne gardait
+         aucune trace de ce qu'un compte avait depense en coffres ou rapporte en
+         frais de marche. Un argument ignore en silence est pire qu'un argument
+         absent : il donne l'impression que la donnee existe quelque part. */
+      const j = m.joueurs[qui] || (m.joueurs[qui] = { mises: 0, rendus: 0, staking: 0, bonus: 0,
+                                                     boutique: 0, marche: 0, primes: 0, rachat: 0 });
+      /* Les fiches ecrites avant ces quatre cles n'en ont pas : on les ouvre a
+         la premiere ecriture plutot que de perdre le mouvement. */
+      if (j[quoi] === undefined && ['boutique', 'marche', 'primes', 'rachat'].indexOf(quoi) >= 0) j[quoi] = 0;
       if (j[quoi] !== undefined) j[quoi] = Number((j[quoi] + v).toFixed(6));
     }
   }
@@ -1276,18 +1325,52 @@ class Game {
   comptes(cle) {
     const k = cle || Game.moisCle();
     const m = (this.compta && this.compta[k]) || this._mois(k);
+    /* ---- LE REVENU DU JEU RESTE LE REVENU DU JEU ----
+     *
+     * Il ne bouge pas, et c'est deliberé : `cagnotte()` en tire le prix du
+     * classement. Y verser le chiffre d'affaires des coffres ferait grossir une
+     * cagnotte que des joueurs touchent reellement — un changement de PAIEMENT,
+     * qui ne se decide pas dans une correction de comptabilite. */
     const revenu = Number((m.mises - m.rendus).toFixed(6));
+
+    /* ---- CE QUE LE RESULTAT IGNORAIT ----
+     *
+     * `note()` ecrivait ces quatre lignes au mois depuis le debut ; `comptes()`
+     * n'en relisait aucune. Le chiffre d'affaires des coffres et des skins, les
+     * cinq pour cent du marche, le prix du classement verse et le rachat
+     * instantane paye par la maison n'apparaissaient nulle part — et `resultat`
+     * est presente juste au-dessus comme « le seul chiffre qui reponde a le
+     * casino a-t-il gagne de l'argent ce mois-ci ». Il repondait a une autre
+     * question.
+     *
+     * `rachat` est deja stocke NEGATIF par son unique appelant : on le
+     * retranche donc en changeant son signe, plutot que de le ranger dans les
+     * recettes ou il ferait baisser les couts. */
+    const boutiqueCa = Number(m.boutique || 0);
+    const marcheCa = Number(m.marche || 0);
+    const recettes = Number((boutiqueCa + marcheCa).toFixed(6));
+    const primes = Number(m.primes || 0);
+    const rachat = Number((-(m.rachat || 0)).toFixed(6));
+
     const couts = Number((m.staking + m.bonus + m.parrainage + m.jackpots +
-                          (m.cadeaux || 0)).toFixed(6));
+                          (m.cadeaux || 0) + primes + rachat).toFixed(6));
     return {
       mois: k,
       /* le revenu */
       mises: m.mises, rendus: m.rendus, revenu, manches: m.manches,
+      /* ce qu'on encaisse ailleurs qu'aux tables */
+      boutique: boutiqueCa, marche: marcheCa, recettes,
       /* ce qui est donne */
       staking: m.staking, bonus: m.bonus, parrainage: m.parrainage, jackpots: m.jackpots,
-      cadeaux: m.cadeaux || 0,
+      cadeaux: m.cadeaux || 0, primes, rachat,
       couts,
-      resultat: Number((revenu - couts).toFixed(6)),
+      resultat: Number((revenu + recettes - couts).toFixed(6)),
+      /* ---- LA TRESORERIE, STAKING MIS A PART ----
+       * `autonomie()` compare le drain a ce que le rendement du staking coute
+       * PAR AILLEURS : lui donner un chiffre qui contient deja le staking le
+       * compterait deux fois. C'est la seule raison pour laquelle cette ligne
+       * existe a cote de `resultat`. */
+      horsStaking: Number((revenu + recettes - (couts - m.staking)).toFixed(6)),
       /* le bilan — ni gain ni perte */
       depots: m.depots, retraits: m.retraits, brule: m.brule,
       /* les dix joueurs qui ont le plus rapporte ce mois-ci, et les dix qui
@@ -3087,13 +3170,22 @@ class Game {
        non estime : c'est le seul des deux chiffres qui puisse surprendre. */
     const c = this.comptes();
     const jours = Math.max(1, new Date().getUTCDate());
-    const revenuJour = (c.revenu || 0) / jours;
+    /* Ce n'est plus le seul revenu des tables : les coffres, les skins et les
+       cinq pour cent du marche entrent vraiment en caisse, et le prix du
+       classement comme le rachat en sortent vraiment. Les ignorer donnait un
+       drain surestime, donc une fin de tresorerie annoncee plus proche qu'elle
+       ne l'est — le chiffre sur lequel on decide de brider le staking.
+       Le staking est exclu de cette ligne : il est deja en face, dans
+       `rendementJoueurs`. */
+    const revenuJour = (c.horsStaking || 0) / jours;
     /* Le drain se mesure sur le rendement QUI PART VRAIMENT — celui des
        joueurs. C'est lui qui vide le coffre ; l'autre tourne en rond. */
     const drainJour = rendementJoueurs - revenuJour;
 
     const b = this.owedBreakdown();
-    const du = f(b.balances.add(b.staked).add(b.pending).add(b.jackpot));
+    /* Les bons signes et non presentes font partie du du : leurs jetons sont
+       encore dans le coffre, et ils ne sont plus dans aucun solde. */
+    const du = f(b.balances.add(b.staked).add(b.pending).add(b.jackpot).add(b.bons));
     const surplus = pot ? f(pot) - du : null;
 
     return {
@@ -3140,7 +3232,7 @@ class Game {
   }
 
   owedBreakdown() {
-    let balances = BN(0), staked = BN(0), pending = BN(0);
+    let balances = BN(0), staked = BN(0), pending = BN(0), bons = BN(0);
     /* CE QUE TIENNENT LES COMPTES DE LA MAISON est compte a part, jamais
        retire en silence. Le surplus est un chiffre de solvabilite : s'il monte
        de neuf millions, il faut pouvoir dire d'ou ils viennent. */
@@ -3180,22 +3272,31 @@ class Game {
         maison = maison.add(p.balance).add(st).add(pe);
         maisonStaked = maisonStaked.add(st);
         maisonN++;
+        bons = bons.add(p.bonDu || BN(0));
         continue;
       }
       balances = balances.add(p.balance);
       staked = staked.add(st);
       pending = pending.add(pe);
+      /* ---- ET LES BONS SIGNES QUI N'ONT PAS ENCORE ETE PRESENTES ----
+       *
+       * Ceux des comptes maison aussi : `continue` plus haut les sort du
+       * « du », mais un bon signe est une creance SUR LA CHAINE, pas sur une
+       * fiche. Ils sont donc comptes ici pour tout le monde — c'est justement
+       * la ligne qu'on ne peut pas se permettre d'oublier. */
+      bons = bons.add(p.bonDu || BN(0));
     }
-    return { balances, staked, pending, maison, maisonN, maisonStaked,
+    return { balances, staked, pending, bons, maison, maisonN, maisonStaked,
              jackpot: this.jackpotPot.add(this.boulierPot),
              jackpotPusher: this.jackpotPot, jackpotBoulier: this.boulierPot };
   }
 
   /** Everything the vault OWES players right now (wei): balances + staked +
-   * pending yield + the jackpot pot. Owner surplus = vaultPot − this. */
+   * pending yield + the jackpot pot + the signed vouchers not yet presented.
+   * Owner surplus = vaultPot − this. */
   totalOwed() {
     const b = this.owedBreakdown();
-    return b.balances.add(b.staked).add(b.pending).add(b.jackpot);
+    return b.balances.add(b.staked).add(b.pending).add(b.jackpot).add(b.bons);
   }
 
   /** Une ligne par joueur pour le tableau de bord proprietaire (/players). */
@@ -3954,6 +4055,12 @@ class Game {
     if (p && !p.addr) p.addr = addr;
     if (!p) {
       p = { addr, balance: ethers.BigNumber.from(0), cumulativeAuthorized: ethers.BigNumber.from(0),
+            /* Ce qui a ete AUTORISE et qu'on n'a pas encore vu partir de la
+               chaine. Le bon est cumulatif : tant qu'il n'est pas presente, les
+               jetons sont toujours dans le coffre, mais ils ne sont plus dans
+               le solde du joueur — donc plus dans le « du », donc comptes dans
+               le surplus du proprietaire. Il pouvait les retirer de bonne foi. */
+            bonDu: ethers.BigNumber.from(0),
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
             nomChoisi: false,
             deposited: BN(0), jeux: {}, visage: null, amis: [], demandes: [], envoyees: [],
@@ -5904,6 +6011,134 @@ class Game {
    * 'bague' — quatre methodes separees auraient duplique cette meme suite de
    * verifications quatre fois.
    */
+  /* ======================================================================
+   * PORTER N'EST PAS POSSEDER — ET LE REGISTRE DOIT SUIVRE
+   * ======================================================================
+   *
+   * `p.objets` est le STOCK. Les quatre champs d'un personnage ne sont que des
+   * DESIGNATIONS : porter, c'est etre pointe par quelqu'un qui peut mourir
+   * (voir `meurt`). Rien ne relie les deux tout seul, et c'est ce qui manquait.
+   *
+   * Sans lien, un exemplaire unique habillait les six personnages a la fois, et
+   * les trois sorties du coffre qui RAPPORTENT DE L'ARGENT — la vente au
+   * marche, le rachat instantane — le laissaient partir sans le retirer du dos
+   * de personne. Le joueur encaissait et gardait la piece ; sur le rachat,
+   * c'est la maison qui payait.
+   */
+
+  /** Combien d'exemplaires de `id` sont sur le dos de quelqu'un, tous
+      personnages confondus. On compte les CASES occupees, pas les personnages :
+      une regle qui suppose qu'un meme objet ne peut pas tenir deux cases se
+      trompera le jour ou une famille en tiendra deux. */
+  _portes(p, id) {
+    const persos = (p && p.persos) || {};
+    let n = 0;
+    for (const k of Object.keys(persos)) {
+      const c = persos[k];
+      if (!c) continue;
+      if (c.ef === id) n++;
+      if (c.ea === id) n++;
+      if (c.ar === id) n++;
+      if (c.ba === id) n++;
+    }
+    return n;
+  }
+
+  /** Ce qu'on possede MOINS ce qui est deja porte : les exemplaires dont on
+      peut reellement disposer. C'est ce chiffre-la, et jamais `p.objets`, que
+      doit regarder tout ce qui fait SORTIR une piece du coffre. */
+  _libres(p, id) {
+    return Math.max(0, ((p.objets || {})[id] || 0) - this._portes(p, id));
+  }
+
+  /** Le refus commun aux sorties du coffre, ou `null` si la piece peut partir.
+      Un seul texte pour une seule regle : trois formulations differentes
+      obligeraient le joueur a comprendre trois fois qu'il doit d'abord la
+      retirer. */
+  _refusPorte(p, id, qte) {
+    /* ---- CE REFUS-CI NE PARLE QUE DE CE QUI EST PORTE ----
+     * Un joueur qui ne possede RIEN a zero exemplaire libre, mais son probleme
+     * n'est pas qu'il porte quelque chose : c'est qu'il n'a rien. Lui repondre
+     * « retire-la d'abord » l'enverrait chercher une piece qui n'existe pas.
+     * Le refus de possession appartient a l'appelant, qui a le sien. */
+    if (!this._portes(p, id)) return null;
+    const libres = this._libres(p, id);
+    if (libres >= qte) return null;
+    const total = (p.objets || {})[id] || 0;
+    return libres === 0
+      ? 'That one is being worn — take it off first'
+      : `only ${libres} of your ${total} are free — the others are being worn`;
+  }
+
+  /**
+   * REMET D'ACCORD CE QUI EST PORTE ET CE QUI EST POSSEDE.
+   *
+   * Les gardes ci-dessus empechent d'arriver dans cet etat a partir de
+   * maintenant. Elles ne defont pas les fiches DEJA ECRITES sur le disque : une
+   * garde qui ne regarde que l'avenir laisserait un compte deja en faute le
+   * rester pour toujours, avec six personnages habilles par un exemplaire.
+   *
+   * ---- QUI GARDE LA PIECE ----
+   *
+   * LE PERSONNAGE QU'ON PORTE, d'abord. Ce sont des exemplaires identiques, et
+   * n'importe quel choix serait defendable — sauf celui qui deshabille le
+   * personnage que le joueur a sous les yeux. Se voir retirer son arme sur la
+   * fiche ouverte se lit comme un vol ; la meme piece retiree d'un personnage
+   * qu'on ne joue pas se lit comme un rangement.
+   *
+   * Les autres suivent dans l'ordre alphabetique : un ordre stable rend deux
+   * chargements de la meme sauvegarde identiques, ce qu'un parcours au hasard
+   * ne ferait pas.
+   */
+  _reconcilieEquipement(p) {
+    const persos = (p && p.persos) || {};
+    const objets = (p && p.objets) || {};
+    const CHAMPS = ['ef', 'ea', 'ar', 'ba'];
+    const vus = {};
+    const vides = [];
+    const actif = p && p.skinActif;
+    const ordre = Object.keys(persos).sort();
+    if (actif && ordre.indexOf(actif) > 0) {
+      ordre.splice(ordre.indexOf(actif), 1);
+      ordre.unshift(actif);
+    }
+    for (const k of ordre) {
+      const c = persos[k];
+      if (!c) continue;
+      for (const champ of CHAMPS) {
+        const id = c[champ];
+        if (!id) continue;
+        vus[id] = (vus[id] || 0) + 1;
+        if (vus[id] > (objets[id] || 0)) {
+          c[champ] = null;
+          vides.push({ skin: k, champ, item: id });
+        }
+      }
+    }
+    return vides;
+  }
+
+  /**
+   * UN EXEMPLAIRE QUI SORT DU JEU REDESCEND DU REGISTRE DES EMIS.
+   *
+   * Sans ca il resterait compte comme existant pour toujours, et l'offre se
+   * reduirait en silence : le panneau continuerait d'annoncer « il en reste
+   * mille » sur des pieces qui n'existent plus, jusqu'a ce que le butin cesse
+   * de tomber pour tout le monde.
+   *
+   * La regle vivait ecrite en quatre exemplaires — la mort, le rachat, le sac
+   * au sol, et pas le repas. C'est exactement comme ca qu'elle a fini par
+   * manquer a l'un d'eux : un seul endroit, maintenant.
+   */
+  _recycle(itemId, qte) {
+    this.boutiqueEmis = this.boutiqueEmis || {};
+    const id = Number(itemId);
+    const n = Math.max(0, Math.floor(Number(qte) || 0));
+    if (!n) return this.boutiqueEmis[id] || 0;
+    this.boutiqueEmis[id] = Math.max(0, (this.boutiqueEmis[id] || 0) - n);
+    return this.boutiqueEmis[id];
+  }
+
   _equipe(addr, skinId, itemId, genre) {
     const p = this._p(addr);
     if (!this.possedeSkin(p, skinId)) throw new Error('you do not own this skin');
@@ -5923,7 +6158,22 @@ class Game {
     const attendu = SUJETS[genre];
     const article = /^[aeiou]/.test(attendu) ? 'an' : 'a';
     if (!sai || sai.sujet !== attendu) throw new Error(`this item is not ${article} ${attendu}`);
-    if (!((p.objets || {})[o.id] > 0)) throw new Error('you do not own this item');
+    /* ---- UN EXEMPLAIRE, UN PORTEUR ----
+     *
+     * « J'en possede au moins un » ne suffisait pas : la meme piece unique
+     * pouvait habiller les six personnages, chacun avec ses degats et ses
+     * bonus. La rarete annoncee — dix mythiques pour toute une saison — ne
+     * voulait alors plus rien dire, et la mort n'en detruisait qu'une copie
+     * sur six.
+     *
+     * Remettre CETTE case sur la piece qu'elle porte deja n'est pas un
+     * deuxieme port : sans cette exception, re-cliquer sur l'objet qu'on a
+     * sur le dos serait refuse comme un doublon de soi-meme. */
+    if (c[champ] !== o.id && this._libres(p, o.id) < 1) {
+      throw new Error(((p.objets || {})[o.id] > 0)
+        ? 'all your copies of this one are already worn — take one off first'
+        : 'you do not own this item');
+    }
     c[champ] = o.id;
     return this.personnageEtat(addr, skinId);
   }
@@ -6097,10 +6347,7 @@ class Game {
      * C'est exactement le raisonnement du rachat (`RACHAT_RECYCLE`), et pour
      * la meme raison : ce qui sort du monde doit pouvoir y revenir. La mort
      * est meme le cas le plus evident — l'objet a ete PERDU, pas consomme. */
-    const recycle = (id, qte) => {
-      this.boutiqueEmis = this.boutiqueEmis || {};
-      this.boutiqueEmis[id] = Math.max(0, (this.boutiqueEmis[id] || 0) - qte);
-    };
+    const recycle = (id, qte) => this._recycle(id, qte);
 
     const perdus = [];
     p.objets = p.objets || {};
@@ -6115,6 +6362,12 @@ class Game {
       recycle(id, 1);
       c[champ] = null;
     }
+    /* ---- ET LES AUTRES PERSONNAGES QUI PORTAIENT LE MEME EXEMPLAIRE ----
+     * La mort DETRUIT une piece du stock. Si un autre personnage la portait —
+     * possible sur toutes les fiches ecrites avant que `_equipe` ne l'empeche —
+     * il continuerait de l'afficher, et de frapper avec, sur un exemplaire qui
+     * n'existe plus. On les deshabille ici, au moment ou le stock baisse. */
+    const desequipes = this._reconcilieEquipement(p);
     /* Le niveau vient du volume mise sous ce personnage : le remettre a zero
        EST la remise a niveau 0. Toucher au niveau sans toucher au volume
        laisserait les deux en desaccord, et le prochain calcul ressusciterait
@@ -6185,7 +6438,7 @@ class Game {
        nommement, ce qu'on avait gagne, et ce qui reste. Le renvoyer en une
        fois evite au client d'aller le rechercher piece par piece au moment
        precis ou il doit afficher un bilan. */
-    return { skin: skinId, perdus, sacPerdu, sacDetail, niveau: 0,
+    return { skin: skinId, perdus, sacPerdu, sacDetail, desequipes, niveau: 0,
              /* Ce qu'on transportait et qu'on n'avait pas range : l'ecran de
                 fin le nomme, sinon le joueur decouvre la perte trois parties
                 plus tard en cherchant ses fioles. */
@@ -6294,17 +6547,13 @@ class Game {
   sortDuCoffre(addr, itemId) {
     const p = this._p(addr);
     const id = Number(itemId);
-    /* Porte sur UN personnage quelconque : on refuse. Chercher sur tous les
-       skins plutot que sur le skin actif seulement — un objet porte par un
-       personnage qu'on ne joue pas est porte quand meme. */
-    const persos = p.persos || {};
-    for (const k of Object.keys(persos)) {
-      const c = persos[k];
-      if (!c) continue;
-      if (c.ef === id || c.ea === id || c.ar === id || c.ba === id) {
-        throw new Error('That one is being worn — take it off first');
-      }
-    }
+    /* Porte sur UN personnage quelconque : on refuse — un objet porte par un
+       personnage qu'on ne joue pas est porte quand meme.
+       On compte maintenant les EXEMPLAIRES au lieu de chercher une occurrence :
+       celui qui en possede trois et en porte un doit pouvoir sortir les deux
+       autres. L'ancienne version refusait les trois. */
+    const refus = this._refusPorte(p, id, 1);
+    if (refus) throw new Error(refus);
     if (this.sacRempli(addr) >= SAC_CASES) {
       throw new Error('Your backpack is full — ' + SAC_CASES + ' slots, one item each');
     }
@@ -6834,10 +7083,7 @@ class Game {
    * ce qui sort du monde doit pouvoir y revenir.
    */
   rendButin(itemId) {
-    this.boutiqueEmis = this.boutiqueEmis || {};
-    const id = Number(itemId);
-    this.boutiqueEmis[id] = Math.max(0, (this.boutiqueEmis[id] || 0) - 1);
-    return this.boutiqueEmis[id];
+    return this._recycle(itemId, 1);
   }
 
   /** Un objet ramasse entre dans le sac, s'il y reste une place. */
@@ -7057,6 +7303,17 @@ class Game {
     /* ---- ET MAINTENANT SEULEMENT, ON TOUCHE ---- */
     p.sac[id] -= 1;
     if (p.sac[id] <= 0) delete p.sac[id];
+    /* ---- LA PIECE MANGEE REDESCEND DU REGISTRE ----
+     *
+     * Elle est DETRUITE, exactement comme celle qu'on perd en mourant. Sans ce
+     * retour, elle restait comptee comme existante pour toujours : un familier
+     * mene au niveau 100 mange plus de mille pieces communes, et la table de
+     * butin du monde n'en contient que huit mille. Sept familiers suffisaient
+     * a fermer le robinet des communes pour TOUT LE MONDE — `tireButin` rend
+     * `null` une fois le lot sature — pendant que le panneau continuait
+     * d'annoncer « il en reste mille » sur des pieces mangees depuis
+     * longtemps. */
+    this._recycle(id, 1);
     /* Les cases se reparent d'elles-memes au prochain `_casesDuSac` : une
        case qui montre une piece de plus que le compte se vide. */
     p.fame = or - prix;
@@ -8791,6 +9048,31 @@ class Game {
     };
   }
 
+  /**
+   * ================== LE CADEAU DE PARRAINAGE NE SORT PAS SANS ETRE JOUE ==================
+   *
+   * `p.bonusBloque` est la part du solde qui vient du cadeau de bienvenue et
+   * qui n'a pas encore ete misee. Le verrou etait ecrit dans `requestWithdraw`
+   * ET NULLE PART AILLEURS — alors que le retrait n'est pas la seule porte de
+   * sortie. Un virement vers un second portefeuille passait, et le cadeau
+   * ressortait de la, sans une seule mise et sans frais. Le marche joueur
+   * faisait la meme chose, au prix de cinq pour cent.
+   *
+   * Le commentaire qui pose le cadeau dit que ce verrou est « le seul qui coute
+   * quelque chose a qui vient seulement le ramasser ». Il ne coutait rien.
+   *
+   * Le message dit COMBIEN il reste a miser : « bloque » sans chiffre fait
+   * revenir le joueur toutes les cinq minutes.
+   */
+  _gardeCadeau(p, montant) {
+    const bloque = (p && p.bonusBloque) || BN(0);
+    if (!bloque.gt(0)) return null;
+    if (!montant.gt(p.balance.sub(bloque))) return null;
+    const reste = (p.bonusCible || BN(0)).sub(p.wagered || BN(0));
+    return 'play ' + ethers.utils.formatUnits(reste.gt(0) ? reste : BN(0), cfg.DECIMALS) +
+           ' $SWOGE more to unlock your referral gift';
+  }
+
   /** Request a withdrawal of `amountStr` $SWOGE. Returns cumulativeAuthorized (wei) or throws. */
   requestWithdraw(addr, amountStr) {
     /* ---- L'AUTRE MOITIE DE `COMPTES_MAISON` ----
@@ -8813,15 +9095,8 @@ class Game {
     const mini = this.minRetraitDe(addr);
     if (amount.lt(WEI(String(mini)))) throw new Error('below minimum withdraw (' + mini + ' $SWOGE)');
     if (amount.gt(p.balance)) throw new Error('amount exceeds balance');
-    /* Le cadeau de parrainage ne sort pas tant qu'il n'a pas ete joue. Le
-       message dit COMBIEN il reste a miser : « bloque » sans chiffre ferait
-       revenir le joueur toutes les cinq minutes. */
-    const bloque = p.bonusBloque || BN(0);
-    if (bloque.gt(0) && amount.gt(p.balance.sub(bloque))) {
-      const reste = (p.bonusCible || BN(0)).sub(p.wagered || BN(0));
-      throw new Error('play ' + ethers.utils.formatUnits(reste.gt(0) ? reste : BN(0), cfg.DECIMALS) +
-                      ' $SWOGE more to unlock your referral gift');
-    }
+    const refusCadeau = this._gardeCadeau(p, amount);
+    if (refusCadeau) throw new Error(refusCadeau);
     /* Le frais se prend sur le brut, et le joueur n'est autorise a tirer que
        le NET : la difference reste dans le coffre, donc dans le surplus du
        proprietaire. Rien n'est cree, rien n'est detruit ici — c'est un
@@ -8830,6 +9105,12 @@ class Game {
     const net = amount.sub(frais);
     p.balance = p.balance.sub(amount);
     p.cumulativeAuthorized = p.cumulativeAuthorized.add(net);
+    /* ---- CE QUI SORT DU SOLDE N'EST PAS ENCORE SORTI DU COFFRE ----
+     * Entre l'autorisation et la presentation du bon, les jetons sont toujours
+     * la. Sans cette ligne, `owedBreakdown` voyait le solde baisser et rien le
+     * remplacer : le surplus montait d'autant, et « Fill safe surplus »
+     * proposait de retirer de l'argent deja promis par un bon signe. */
+    p.bonDu = (p.bonDu || BN(0)).add(net);
     this.fraisCumules = (this.fraisCumules || BN(0)).add(frais);
     this.note('retraits', ethers.utils.formatUnits(net, cfg.DECIMALS));
     this.note('brule', ethers.utils.formatUnits(frais, cfg.DECIMALS));
@@ -8842,6 +9123,45 @@ class Game {
                            to: String(addr).toLowerCase(),
                            cum: ethers.utils.formatUnits(p.cumulativeAuthorized, cfg.DECIMALS) });
     return p.cumulativeAuthorized;
+  }
+
+  /**
+   * ================== LE BON QU'ON N'A PAS ENCAISSE ==================
+   *
+   * Le bon est CUMULATIF : le contrat paie l'ecart entre le cumul signe et ce
+   * que le joueur a deja tire. Le resigner ne peut donc RIEN payer de plus, et
+   * c'est exactement ce qui rend cette porte sans danger — elle ne cree aucune
+   * autorisation, elle redonne celle qui existe deja.
+   *
+   * Sans elle, un joueur qui refuse dans son portefeuille, dont la transaction
+   * echoue, ou qui ferme l'onglet, se retrouvait avec un solde a zero, un bon
+   * perime dans l'heure et aucun moyen d'en redemander un : `requestWithdraw`
+   * exige `montant <= solde`, et son solde venait d'etre vide. Son argent
+   * n'etait pas perdu — le cumul le portait toujours — mais il ne pouvait le
+   * reprendre qu'en redeposant assez pour redeclencher un retrait. C'est la
+   * reclamation la plus chere qui soit, et la plus difficile a croire.
+   */
+  bonEnAttente(addr) {
+    const p = this._p(addr);
+    return { cumulative: p.cumulativeAuthorized, du: p.bonDu || BN(0) };
+  }
+
+  /**
+   * Ce que LA CHAINE dit avoir deja paye a ce joueur, d'ou l'on deduit ce qui
+   * reste du. Le serveur ne voit pas les transactions : il ne peut que
+   * demander, et il ne demande qu'aux moments ou il parle deja de retrait.
+   *
+   * On ne l'appelle JAMAIS sans contrat en face (`chain.suitLesRetraits`) : un
+   * zero rendu par absence de coffre remettrait tout le cumul en attente, et
+   * le surplus du proprietaire s'effondrerait sans qu'un jeton ait bouge.
+   */
+  noteRetireOnChain(addr, retireWei) {
+    const p = this._p(addr);
+    const tire = (retireWei && retireWei._isBigNumber)
+      ? retireWei : BN(String(retireWei || '0'));
+    const reste = p.cumulativeAuthorized.sub(tire);
+    p.bonDu = reste.gt(0) ? reste : BN(0);
+    return p.bonDu;
   }
 
   // ------------------------------------------------------------- les amis
@@ -9010,6 +9330,10 @@ class Game {
     if (montant.lte(0)) throw new Error('enter an amount');
     if (montant.lt(WEI(String(cfg.TRANSFER_MIN)))) throw new Error('minimum transfer is ' + cfg.TRANSFER_MIN + ' $SWOGE');
     if (montant.gt(p.balance)) throw new Error('amount exceeds your balance');
+    /* La MEME regle qu'au retrait : sans elle, le cadeau sortait par ici, vers
+       un deuxieme portefeuille, sans frais et sans une seule mise. */
+    const refusCadeau = this._gardeCadeau(p, montant);
+    if (refusCadeau) throw new Error(refusCadeau);
 
     const q = this._p(dest);
     // debit et credit d'un seul tenant : rien ne peut s'intercaler
@@ -9104,6 +9428,14 @@ class Game {
     const qte = Math.max(1, Math.floor(Number(qteStr) || 1));
     const ai = (p.objets || {})[o.id] || 0;
     if (ai < qte) throw new Error(qte > 1 ? `you only own ${ai} of these` : 'you do not own this item');
+    /* ---- ET SURTOUT PAS ICI ----
+     * Le rachat est la seule sortie ou c'est LA MAISON qui paie. Vendre une
+     * piece qu'on garde sur le dos y revenait a se faire crediter sans rien
+     * rendre — et le registre redescendant juste apres, la boutique pouvait
+     * reemettre l'exemplaire pendant que le fantome habillait toujours six
+     * personnages. */
+    const refusRachat = this._refusPorte(p, o.id, qte);
+    if (refusRachat) throw new Error(refusRachat);
 
     /* La porte. Le message porte LE CHIFFRE QUI MANQUE : « il faut jouer plus »
        ne dit pas quoi faire, « il te reste 34 000 » si. */
@@ -9128,10 +9460,7 @@ class Game {
      * C'est ce qui remet l'objet en circulation. Jamais sous zero : un
      * registre negatif ferait afficher plus d'exemplaires restants qu'il n'en
      * existe, et le plafond ne voudrait plus rien dire. */
-    if (cfg.RACHAT_RECYCLE) {
-      this.boutiqueEmis = this.boutiqueEmis || {};
-      this.boutiqueEmis[o.id] = Math.max(0, (this.boutiqueEmis[o.id] || 0) - qte);
-    }
+    if (cfg.RACHAT_RECYCLE) this._recycle(o.id, qte);
 
     /* Un rachat est une DEPENSE de la maison, pas une recette. La compter
        comme du revenu gonflerait le chiffre d'affaires et, par ricochet, le
@@ -9185,6 +9514,13 @@ class Game {
     const qte = Math.max(1, Math.floor(Number(qteStr) || 1));
     if (this._possede(p, o.id) < qte)
       throw new Error(qte > 1 ? `you only own ${this._possede(p, o.id)} of these` : 'you do not own this item');
+    /* ---- CE QU'ON PORTE N'EST PAS A VENDRE ----
+     * Le sequestre retire la piece du coffre, jamais du dos du personnage : le
+     * vendeur encaissait des $SWOGE reels et gardait l'arme, qui continuait de
+     * frapper. La meme regle qu'au coffre, au meme endroit dans l'ordre — juste
+     * apres la possession, avant que le moindre chiffre bouge. */
+    const refusVente = this._refusPorte(p, o.id, qte);
+    if (refusVente) throw new Error(refusVente);
 
     const prix = Math.floor(Number(prixStr) || 0);
     if (!(prix >= cfg.MARCHE_PRIX_MIN))
@@ -9368,6 +9704,11 @@ class Game {
     }
     const prix = WEI(a.prix);
     if (p.balance.lt(prix)) throw new Error('not enough $SWOGE');
+    /* Et ici aussi : acheter a un complice est un virement deguise. Il coute
+       cinq pour cent au lieu de rien, ce qui rend la fuite moins rentable —
+       pas moins reelle. */
+    const refusCadeauM = this._gardeCadeau(p, prix);
+    if (refusCadeauM) throw new Error(refusCadeauM);
 
     const v = this._p(a.vendeur);
     const frais = prix.mul(cfg.MARCHE_FRAIS_BPS).div(10000);

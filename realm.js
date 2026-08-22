@@ -46,6 +46,23 @@ const PAS_MS = 100;
 /* Marge sur la distance qu'un joueur peut parcourir entre deux annonces. Le
    reseau hoquete ; refuser au millimetre ferait begayer un joueur honnete. */
 const MARGE_VITESSE = 1.6;
+/* ---- ET LA DUREE MAXIMALE QU'UNE SEULE ANNONCE PEUT RECLAMER ----
+ *
+ * Le `dt` d'un mouvement est mesure par le serveur comme le temps ecoule
+ * depuis le DERNIER message de ce client. Un plancher l'empechait de valoir
+ * zero ; rien ne l'empechait de valoir soixante. Le budget de deplacement
+ * s'accumulait donc pendant qu'on se taisait : dix secondes de silence
+ * achetaient plus de trois mille unites en une annonce, la moitie d'une carte,
+ * et `_glisse` ne testant que le point d'arrivee, le trajet ne rencontrait ni
+ * rocher, ni mur, ni lave. On atteignait l'anneau le plus riche sans traverser
+ * ceux du dessous.
+ *
+ * Une demi-seconde est la meme borne que celle de `pas()`, qui la porte depuis
+ * toujours sous le nom de « protection contre un onglet endormi » : le
+ * simulateur ne rattrape jamais plus d'un demi-tour de retard, un joueur ne
+ * peut donc pas en reclamer davantage. Un onglet en veille au retour perd un
+ * peu de terrain — il en perdait deja cote monstres. */
+const PAS_MAX = 0.5;
 /* Le rayon du personnage pour les BLOCS, et pour eux seuls. Il n'a rien a
    voir avec les projectiles — un tir touche un joueur selon la portee du
    monstre, pas selon son encombrement. Vingt-deux, soit la moitie du plus
@@ -587,8 +604,11 @@ class Realm {
        personnages n'ont plus le meme plafond. Le repli sur la constante sert
        au cas — impossible en pratique — d'un joueur entre sans fiche. */
     const vmax = j.vitesse || monde.VITESSE_JOUEUR;
-    const max = vmax * frein
-              * Math.max(0.05, Number(dt) || 0.15) * MARGE_VITESSE;
+    /* Un plancher ET un plafond. Le plancher evite qu'un flot de messages
+       serres n'autorise plus rien ; le plafond evite que le silence n'autorise
+       tout. Il en manquait un des deux. */
+    const ecoule = Math.max(0.05, Math.min(PAS_MAX, Number(dt) || 0.15));
+    const max = vmax * frein * ecoule * MARGE_VITESSE;
     const dx = x - j.x, dy = y - j.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     let honnete = true;
@@ -960,7 +980,7 @@ class Realm {
    * personnage, et lui seul doit toucher aux soldes.
    */
   pas(dt) {
-    dt = Math.max(0, Math.min(0.5, Number(dt) || 0));
+    dt = Math.max(0, Math.min(PAS_MAX, Number(dt) || 0));
     const ev = { degats: [], morts: [], kills: [], touches: [], regen: [], butins: [], ramasses: [], expires: [], marques: [], zones: [], portails: [] };
     if (!dt) return ev;
 
@@ -2040,4 +2060,4 @@ class Realm {
   }
 }
 
-module.exports = { Realm, PAS_MS, MARGE_VITESSE };
+module.exports = { Realm, PAS_MS, MARGE_VITESSE, PAS_MAX };

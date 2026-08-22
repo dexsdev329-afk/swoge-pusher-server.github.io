@@ -4086,10 +4086,46 @@ wss.on('connection', (ws) => {
 
       if (m.type === 'withdraw') {
         try {
+          /* ---- ON SE MET A JOUR AVANT DE DEBITER ----
+           * `bonDu` est ce qu'on a autorise et qu'on n'a pas vu partir. Le
+           * serveur ne voit pas les transactions : le seul moment ou il peut
+           * rattraper son retard est celui ou il parle deja de retrait. Sans
+           * cette question, un joueur qui retire tous les mois verrait sa
+           * creance s'empiler indefiniment dans le « du ». */
+          if (chain.suitLesRetraits()) {
+            try { game.noteRetireOnChain(ws.addr, await chain.withdrawnOnChain(ws.addr)); }
+            catch (e) { /* la chaine est muette : on garde ce qu'on croyait */ }
+          }
           const cumulative = game.requestWithdraw(ws.addr, m.amount);
           persistSoon(); // record the deducted balance + cumulative right away
           const voucher = await chain.signVoucher(ws.addr, cumulative);
           send(ws, { type: 'voucher', voucher, vault: cfg.VAULT_ADDRESS, balance: game.balanceStr(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      /* ---- REDEMANDER LE BON QU'ON N'A PAS ENCAISSE ----
+       *
+       * Refuser dans son portefeuille, une transaction qui echoue, un onglet
+       * ferme : le solde est deja parti, le bon expire au bout d'une heure, et
+       * `withdraw` ne peut plus rien signer puisqu'il exige un solde. Le joueur
+       * n'avait aucun recours qu'un nouveau depot.
+       *
+       * Cette route ne DEBITE RIEN. Elle resigne le cumul deja autorise — et
+       * comme le contrat ne paie que l'ecart avec ce qui a deja ete tire, un
+       * bon resigne ne peut pas payer un jeton de plus. */
+      if (m.type === 'withdrawVoucher') {
+        try {
+          if (chain.suitLesRetraits()) {
+            try { game.noteRetireOnChain(ws.addr, await chain.withdrawnOnChain(ws.addr)); }
+            catch (e) { /* muette : on repond avec ce qu'on croyait */ }
+          }
+          const b = game.bonEnAttente(ws.addr);
+          if (b.cumulative.lte(0)) throw new Error('you have no withdrawal to claim');
+          if (b.du.lte(0)) throw new Error('your last withdrawal has already been claimed on-chain');
+          const voucher = await chain.signVoucher(ws.addr, b.cumulative);
+          send(ws, { type: 'voucher', voucher, vault: cfg.VAULT_ADDRESS,
+                     enAttente: ethers.utils.formatUnits(b.du, cfg.DECIMALS),
+                     balance: game.balanceStr(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }

@@ -14,6 +14,12 @@
  * 4. L OR SE DEPENSE VRAIMENT, et le prix suit le niveau.
  * 5. LE PLAFOND TIENT. Un familier au maximum ne mange plus — sinon on paie
  *    pour rien, indefiniment.
+ * 6. LA PIECE MANGEE REDESCEND DU REGISTRE DES EMIS. Elle est DETRUITE,
+ *    exactement comme celle qu on perd en mourant. Sans ce retour elle reste
+ *    comptee comme existante pour toujours : un familier mene au niveau cent
+ *    mange plus de mille communes, la table de butin du monde n en tient que
+ *    huit mille, et le robinet se ferme pour TOUT LE MONDE pendant que le
+ *    panneau continue d annoncer « il en reste mille ».
  */
 'use strict';
 const assert = require('assert');
@@ -202,5 +208,60 @@ g.meurt(A, 'andy');
 f = g.familiersDe(A)[0];
 ok(!!f, 'le familier existe encore apres la mort du personnage');
 eq(f.niveau, 12, 'avec sa progression intacte — c est la seule chose du jeu qu on garde a vie');
+
+/* ================== 6. CE QUI EST MANGE REVIENT AU POOL ================== */
+console.log('\n-- la piece mangee redescend du registre --');
+{
+  const g6 = new Game();
+  const B6 = '0x' + '6'.repeat(40);
+  const q = g6._p(B6);
+  q.sacOeufs = { normal: 1 }; q.sacCases = null;
+  g6.ouvreOeuf(B6, 'normal');
+  q.fame = 100000;
+
+  /* On fait TOMBER la piece du monde plutot que de la poser dans le sac : le
+     registre ne monte qu'au tirage, et un essai qui remplirait le sac a la
+     main verifierait une soustraction sans addition. */
+  const butin = g6.tireButin('commun');
+  ok(!!butin, `une piece commune tombe du monde (${butin && butin.nom})`);
+  const id = butin.item;
+  eq((g6.boutiqueEmis || {})[id] | 0, 1, 'le registre compte un exemplaire de plus');
+  const resteApresTirage = boutique.restant(id, g6.boutiqueEmis || {});
+
+  g6.prendDuSol(B6, id);
+  eq((q.sac || {})[id], 1, 'elle est dans le sac');
+  /* Ramasser ne CREE rien : le registre ne doit pas monter une seconde fois. */
+  eq((g6.boutiqueEmis || {})[id] | 0, 1, 'et le ramassage ne la compte pas deux fois');
+
+  const avantXp = g6.familiersDe(B6)[0].xp;
+  g6.nourritFamilier(B6, 'normal', id);
+  ok(g6.familiersDe(B6)[0].xp > avantXp, 'le familier a bien mange');
+  eq((q.sac || {})[id], undefined, 'la piece a quitte le sac');
+  eq((g6.boutiqueEmis || {})[id] | 0, 0,
+     'et le registre est redescendu — elle est detruite, pas rangee quelque part');
+  ok(boutique.restant(id, g6.boutiqueEmis || {}) > resteApresTirage,
+     'le panneau annonce donc un exemplaire de plus qu apres le tirage');
+}
+
+console.log('\n-- et un repas refuse ne recycle rien --');
+{
+  /* UN REFUS NE COUTE RIEN vaut aussi pour le registre : le detruire au
+     passage rendrait le refus plus cher que l acceptation. */
+  const g7 = new Game();
+  const C7 = '0x' + '7'.repeat(40);
+  const q = g7._p(C7);
+  q.sacOeufs = { normal: 1 }; q.sacCases = null;
+  g7.ouvreOeuf(C7, 'normal');
+  q.fame = 0;                                   // pas un sou : le repas sera refuse
+
+  const butin = g7.tireButin('commun');
+  const id = butin.item;
+  g7.prendDuSol(C7, id);
+  let err = null;
+  try { g7.nourritFamilier(C7, 'normal', id); } catch (e) { err = e.message; }
+  ok(/gold/.test(err || ''), `sans or, le repas est refuse (${err})`);
+  eq((q.sac || {})[id], 1, 'la piece est toujours dans le sac');
+  eq((g7.boutiqueEmis || {})[id] | 0, 1, 'et le registre la compte toujours comme existante');
+}
 
 console.log(`\nrepas.test.js : ${n} verifications OK`);

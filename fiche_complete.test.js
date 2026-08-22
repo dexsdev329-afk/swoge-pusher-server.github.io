@@ -117,6 +117,15 @@ pose.adDayKey = '2026-08-14';
    d'andy (13), donc elles doivent revenir a l'identique. */
 pose.persos = { andy: { w: W(777), ef: 1001, ea: 2001, ar: 1013, ba: 1019, xc: 4200,
                         sup: { att: 3 } } };
+/* ---- LE COFFRE DOIT RENDRE `persos` POSSIBLE ----
+ * Porter, c'est etre POINTE par un personnage ; le stock, lui, est `objets`.
+ * Depuis que les deux sont relies, une fiche qui equipe quatre pieces sans en
+ * posseder une seule est un etat impossible, et le chargement le repare en
+ * deshabillant le personnage. Le temoin generique — un `{temoin: N}` quelconque
+ * — faisait donc revenir la fiche vide, et l'essai accusait la sauvegarde d'un
+ * defaut qui n'etait pas le sien. Le temoin de `objets` est desormais le coffre
+ * qui correspond, ce qui le rend RECONNAISSABLE et possible a la fois. */
+pose.objets = { 1001: 1, 2001: 1, 1013: 1, 1019: 1 };
 Object.assign(pose, TARDIFS);
 
 for (const k of Object.keys(pose)) neuve[k] = pose[k];

@@ -78,6 +78,13 @@ class Chain {
     return { cumulative: cumulativeWei.toString(), deadline, v, r, s };
   }
 
+  /** Y a-t-il vraiment un coffre a interroger ? Sans cette question, un
+      `withdrawnOnChain` qui rend zero faute de contrat se lit comme « ce
+      joueur n'a jamais rien tire » — et un appelant qui en deduit ce qui reste
+      du compterait tout son cumul comme encore en attente. Zero par absence et
+      zero par mesure ne veulent pas dire la meme chose. */
+  suitLesRetraits() { return !!this.vault; }
+
   /** How much has this player already pulled on-chain (so vouchers stay cumulative-correct). */
   async withdrawnOnChain(player) {
     if (!this.vault) return ethers.BigNumber.from(0);
