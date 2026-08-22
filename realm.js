@@ -613,14 +613,40 @@ class Realm {
    * qu'on GLISSE le long d'un mur au lieu de s'y coller.
    */
   _glisse(depX, depY, x, y, rayon) {
-    /* ---- ETRE DEDANS N'EST PAS UNE PRISON ----
-     * Si le point de DEPART est deja bloque, on laisse passer. Rien ne devrait
-     * s'y trouver — ni joueur ni monstre n'y naissent, et aucun des deux ne
-     * peut y entrer — mais le jour ou ca arrive, refuser le pas donnerait une
-     * creature figee pour toujours, ou pire un joueur qui ne peut plus rien
-     * faire. Une regle qui se repare toute seule vaut mieux qu'une regle qui
-     * tient un piege ferme. */
-    if (monde.bloque(this.obstacles, depX, depY, rayon)) return { x, y };
+    /* ---- ETRE DEDANS N'EST PAS UNE PRISON, MAIS CE N'EST PAS UN COULOIR ----
+     * Si le point de DEPART est deja bloque, on laissait passer N'IMPORTE
+     * quel pas. Rien ne devrait s'y trouver — ni joueur ni monstre n'y
+     * naissent, et aucun des deux ne peut y entrer — mais le jour ou ca
+     * arrive, cette porte de sortie devenait une porte d'entree : une fois
+     * dedans, on CIRCULAIT dans la pierre, mesure a trente-quatre unites sous
+     * la surface d'un rocher. La garantie « on ne traverse pas la pierre » ne
+     * valait alors que pour l'approche.
+     * L'intention reste : refuser le pas donnerait une creature figee pour
+     * toujours, ou pire un joueur qui ne peut plus rien faire, et une regle
+     * qui se repare toute seule vaut mieux qu'un piege ferme. Ce qu'on retire,
+     * c'est que « se reparer » veuille dire « circuler ». On n'accepte donc
+     * que ce qui EN SORT : la destination libre, ou a defaut un pas qui
+     * s'ecarte STRICTEMENT du centre de l'obstacle ou l'on se tient. Il
+     * existe toujours une direction de sortie — s'eloigner tout droit
+     * augmente toujours la distance au centre — mais un pas qui reste dedans
+     * sans s'ecarter ne mene nulle part, et c'etait celui-la qui servait a se
+     * promener.
+     * `monde.bloque` rend l'OBSTACLE et non un booleen : son centre est deja
+     * la, et c'est le sien qu'on mesure — pas le plus proche, pas le premier
+     * de la liste, celui dans lequel on se tient. */
+    const dedans = monde.bloque(this.obstacles, depX, depY, rayon);
+    if (dedans) {
+      if (!monde.bloque(this.obstacles, x, y, rayon)) return { x, y };
+      /* Les carres, jamais les racines : la page tient la MEME regle, et une
+         racine de plus de chaque cote du reseau serait un arrondi de plus a
+         tenir d'accord. Un desaccord se paierait en rappels a l'ordre du
+         serveur plusieurs fois par seconde, ce qui se lit comme une panne de
+         reseau et pas comme un rocher. */
+      const ax = depX - dedans.x, ay = depY - dedans.y;
+      const bx = x - dedans.x, by = y - dedans.y;
+      if (bx * bx + by * by > ax * ax + ay * ay) return { x, y };
+      return { x: depX, y: depY };
+    }
     if (!monde.bloque(this.obstacles, x, y, rayon)) return { x, y };
     if (!monde.bloque(this.obstacles, x, depY, rayon)) return { x, y: depY };
     if (!monde.bloque(this.obstacles, depX, y, rayon)) return { x: depX, y };
