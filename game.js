@@ -9762,8 +9762,37 @@ class Game {
     const item = boutique.item(a.item);
     const ligne = item ? this._boutiqueLigne(p, item, Date.now()) : null;
 
+    /* ---- CE QUE LE VENDEUR DOIT APPRENDRE ----
+     *
+     * C'est le seul comptoir du jeu ou deux joueurs echangent des $SWOGE
+     * reels contre un bien, et c'etait le seul sans aucun signal : le vendeur
+     * ne recevait qu'un compteur d'envois non lus, sa page continuait
+     * d'afficher l'ancien solde et son annonce comme si elle courait toujours.
+     * Un joueur qui ne voit pas sa vente aboutir conclut que le marche ne
+     * marche pas — et le marche est justement ce qui donne une valeur aux
+     * oeufs, aux familiers et aux legendaires.
+     *
+     * La description passe par `_annonceVue`, la MEME que la vitrine : la page
+     * sait deja la dessiner, et une seconde forme d'annonce serait une seconde
+     * facon de se tromper. Avec `qte: 1`, parce qu'on decrit CE QUI VIENT DE
+     * PARTIR, pas ce qui reste en ligne. */
+    const vente = {
+      id: a.id,
+      vendeur: a.vendeur,
+      acheteur: moi,
+      nomAcheteur: p.name || moi.slice(0, 6),
+      prix: a.prix,
+      frais: mF,
+      net: Number(ethers.utils.formatUnits(net, cfg.DECIMALS)),
+      /* Ce qu'il reste EN LIGNE apres ce depart : zero veut dire que l'annonce
+         est fermee. Le vendeur doit pouvoir lire « il t'en reste trois » sans
+         aller rouvrir la vitrine. */
+      reste: this.marche.indexOf(a) >= 0 ? (a.qte || 1) : 0,
+      annonce: this._annonceVue({ ...a, qte: 1 }),
+    };
+
     return { item: a.item, prix: a.prix, vendeur: a.vendeur, ligne,
-             frais: mF, balance: this.balanceStr(moi) };
+             frais: mF, vente, balance: this.balanceStr(moi) };
   }
 
   _annonceVue(a) {

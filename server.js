@@ -2992,6 +2992,37 @@ wss.on('connection', (ws) => {
         if (r && r.ligne) notifyCoffre(ws.addr, { ligne: r.ligne, item: boutique.item(r.item),
                                                   rarete: (boutique.item(r.item) || {}).rarete,
                                                   saison: (boutique.item(r.item) || {}).saison });
+        /* ---- ET ON PREVIENT LE VENDEUR ----
+         *
+         * La reponse ci-dessous part vers `ws`, c'est-a-dire l'ACHETEUR, et
+         * vers lui seul. Le vendeur, lui, ne recevait rien : ni son solde, ni
+         * un mot, ni la fermeture de son annonce. Le hall du Puissance 4, les
+         * duels, la reserve de staking et le bandeau des gains sont tous
+         * diffuses ; la seule table ou l'on echange de l'argent reel, non.
+         *
+         * On lui POUSSE la vente et son nouveau solde. On ne lui pousse pas la
+         * vitrine : elle depend de la saison qu'IL regarde, et lui envoyer
+         * celle de l'acheteur lui changerait d'onglet sous les doigts. Sa page
+         * la redemande elle-meme si elle est ouverte. */
+        if (!err && r && r.vente) {
+          toAddr(r.vente.vendeur, { type: 'marketSold', vente: r.vente,
+                                    balance: game.balanceStr(r.vente.vendeur) });
+        }
+        /* ---- ET TOUT LE MONDE APPREND QUE LA LIGNE EST PARTIE ----
+         *
+         * Le commentaire au-dessus des quatre messages promet qu'« une annonce
+         * peut disparaitre entre l'affichage et le clic — quelqu'un d'autre l'a
+         * achetee — et la page doit le voir tout de suite au lieu de proposer
+         * un bouton mort ». Le seul retour reellement implemente etait l'erreur
+         * « this listing no longer exists », c'est-a-dire APRES le clic sur le
+         * bouton mort.
+         *
+         * Un entier et un identifiant : c'est assez pour retirer la ligne, et
+         * assez peu pour le diffuser a chaque vente sans y penser. Diffuser la
+         * vitrine entiere aurait coute cent fois plus pour la meme chose. */
+        if (!err && r && r.vente) {
+          broadcast({ type: 'marketGone', id: r.vente.id, reste: r.vente.reste });
+        }
         return send(ws, { type: 'market', ...game.marcheListe(ws.addr, m.season),
                           fait: r || undefined, error: err || undefined,
                           balance: game.balanceStr(ws.addr),
