@@ -2093,11 +2093,25 @@ const POUVOIRS = {
  *
  * Le familier n'a pas de position cote serveur : il trotte derriere son
  * maitre, a moins d'une longueur de laisse, et c'est la page qui le fait
- * trotter. Mesurer sa portee depuis le joueur plutot que depuis lui coute
- * soixante unites d'imprecision sur deux cent soixante — moins que le rayon
- * d'un monstre — et evite de simuler, diffuser et synchroniser une deuxieme
- * creature par joueur. Le jour ou l'on voudra qu'il se fasse toucher, il
- * faudra la position ; ce jour-la ce commentaire dira ou regarder.
+ * trotter. Mesurer sa portee depuis le joueur plutot que depuis lui evite de
+ * simuler, diffuser et synchroniser une deuxieme creature par joueur.
+ *
+ * ---- CE QUE CETTE APPROXIMATION COUTE, EN CHIFFRES A JOUR ----
+ *
+ * Le compagnon a grossi (82 -> 100 a l'ecran) et s'est ecarte : il s'assoit
+ * desormais a 96 unites de son maitre au lieu de 70. L'imprecision passe
+ * donc de 70 a 96 sur une portee de 260, soit environ 37 % au lieu de 27 %.
+ *
+ * Ce commentaire disait « moins que le rayon d'un monstre ». Ce n'est plus
+ * vrai, et ca ne l'etait deja qu'a moitie : le rayon MEDIAN d'un monstre est
+ * de 42, le plus gros monte a 105. A 70 comme a 96, on est au-dessus de la
+ * plupart. La bonne facon de le dire est celle-ci : le compagnon se dessine
+ * a cote de vous, ses pouvoirs partent de VOUS, et l'ecart entre les deux
+ * vaut a peu pres un pas de personnage. C'est visible si on le cherche, et
+ * ca n'a jamais decide d'un combat.
+ *
+ * Le jour ou l'on voudra qu'il se fasse toucher, il faudra la position ; ce
+ * jour-la ce commentaire dira ou regarder.
  *
  * ---- pourquoi une aide, et jamais une arme ----
  *
