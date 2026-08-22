@@ -2210,6 +2210,20 @@ class Realm {
       monstres: this.monstres.filter(pres).map((m) => {
         const o = { i: m.id, e: m.espece, x: Math.round(m.x), y: Math.round(m.y),
                     d: m.dir, pv: m.pv, pvMax: m.pvMax };
+        /* ---- LE BOSS SE DIT ----
+         *
+         * Un joueur nous l'a rapporte tel quel : « on ne voit rien dans aucun
+         * donjon ». C'etait exact — la creature du fond recevait la meme
+         * barre de cinq pixels qu'une lime, et cette barre ne s'affiche meme
+         * qu'une fois blessee. On traversait trois salles pour arriver devant
+         * quelque chose que rien ne distinguait d'un monstre de plus.
+         *
+         * Le drapeau est DERIVE de `RETOUR_DE`, la table qui dit deja quel
+         * boss ouvre la porte du retour. Une seconde liste de « ceux qui sont
+         * des boss » aurait fini par ne plus etre la meme : on aurait ajoute
+         * un donjon, sa porte se serait ouverte, et sa barre serait restee
+         * celle d'une lime. */
+        if (monde.RETOUR_DE[m.espece]) o.boss = 1;
         /* La stase se VOIT : sans marque a l'ecran, cinq secondes de monstres
            immobiles se lisent comme un serveur qui a lache. */
         if (m.stase > 0) o.st = Number(m.stase.toFixed(2));
