@@ -2160,7 +2160,66 @@ const FAMILIERS = {
      recharge, chaque point de pourcentage compte vingt fois plus qu'au
      premier niveau. */
   soigne:   { part: 0.030, parNiveau: 0.000152 },
+
+  /* ======================================================================
+   * LES POUVOIRS DE ZONE — le second cran
+   * ======================================================================
+   *
+   * Le premier pouvoir vise UNE creature (ou le maitre). Celui-ci frappe tout
+   * ce qui est autour. Il s'ouvre au niveau vingt-cinq : c'est la ou la
+   * recharge tombe a dix secondes, donc la ou le compagnon devient jouable —
+   * et donc la ou il merite quelque chose de neuf.
+   *
+   * ---- CE QUE LE SECOND CRAN N'EST PAS ----
+   *
+   * Ce n'est PAS le premier en trois fois plus fort. La cadence ne bouge pas :
+   * le compagnon agit toujours une fois par recharge. Ce qui change est qu'il
+   * CHOISIT — la zone quand il y a du monde, la cible unique sinon. Chaque
+   * creature touchee prend environ la MOITIE de ce qu'elle aurait pris toute
+   * seule ; c'est a partir de trois qu'il vaut mieux frapper large.
+   *
+   * ---- UN SEUL RAYON POUR LES SIX ----
+   *
+   * Six rayons a regler seraient six reglages a tenir d'accord, et le joueur
+   * apprendrait six distances au lieu d'une. Deux cents unites : moins que la
+   * portee de ce qui vise (260), assez pour couvrir un groupe qui vous entoure.
+   */
+  zoneRayon: 200,
+  /* A partir de combien de creatures la zone vaut mieux que la cible unique.
+     Trois, parce que chaque cible prend la moitie : a deux c'est egal, a
+     trois la zone passe devant. Le chiffre EST la regle d'equilibre — le
+     changer change ce que le compagnon decide, pas seulement ce qu'il tape. */
+  zoneMini: 3,
+
+  /* Le chien AMEUTE : il mord tout ce qui est autour. Moitie moins par
+     creature que sa morsure, et le compte est vite fait. */
+  meute:    { degats: 7, parNiveau: 0.323 },
+  /* Le feu EMBRASE. Plus court et moins fort que sa brulure — mais sur tout
+     le monde, et les brulures ne se soignent pas. */
+  brasier:  { duree: 2.2, parSeconde: 3, parNiveau: 0.061 },
+  /* La glace GRELE. Figer un groupe est le plus fort de tous les effets de
+     zone : c'est aussi le plus court, moitie moins que sa stase a une cible. */
+  gresil:   { duree: 0.8, parNiveau: 0.0081 },
+  /* La terre SECOUE : elle repousse tout, et le bref arret qui suit donne le
+     temps de partir. Moins de force que la repoussee des tenebres, plus
+     d'utilite — un monstre pousse et fige est un monstre qu'on distance. */
+  secousse: { force: 90, parNiveau: 0.7, stase: 0.5, stasePar: 0.0051 },
+  /* Les tenebres DEVORENT : des degats a tout ce qui est autour, et une part
+     rendue au maitre. C'est ce qui leur donne une identite propre face au
+     chien — le chien frappe, l'ombre se nourrit. Sans ce vol, les deux
+     pouvoirs de zone auraient ete le meme, en violet. */
+  abysse:   { degats: 6, parNiveau: 0.28, vol: 0.25 },
+  /* Le legendaire RAYONNE : il soigne le maitre ET les joueurs autour. C'est
+     la seule chose du jeu qui aide quelqu'un d'autre, et sur une relique qui
+     tombe une fois sur trente mille, c'est un argument qu'aucun chiffre ne
+     remplace. Moins par personne que son soin — il en touche plusieurs. */
+  aura:     { part: 0.022, parNiveau: 0.000112 },
 };
+
+/* Ce qui frappe LARGE. La liste est ici plutot que devinee d'un nom : un
+   pouvoir ajoute demain sans entrer dans cette liste serait traite comme une
+   cible unique, en silence. */
+const POUVOIRS_ZONE = new Set(['meute', 'brasier', 'gresil', 'secousse', 'abysse', 'aura']);
 
 /* ---- LA RECHARGE D'UN FAMILIER, A SON NIVEAU ----
  * Une seule formule, ici. La cadence monte en ligne droite ; la recharge est
@@ -2178,10 +2237,41 @@ function rechargeFamilier(niveau) {
  * Ici, avec les chiffres, et pas a cote des noms anglais : c'est une REGLE du
  * monde. Deux tables — l'une qui nomme, l'autre qui agit — auraient fini par
  * annoncer un pouvoir et en appliquer un autre. */
-const POUVOIR_PAR_ESPECE = {
-  normal: 'mord', feu: 'brule', glace: 'gele',
-  terre: 'bouclier', tenebre: 'repousse', legendaire: 'soigne',
+const POUVOIRS_PAR_ESPECE = {
+  normal:     [{ cle: 'mord',     niveau: 1 }, { cle: 'meute',    niveau: 25 }],
+  feu:        [{ cle: 'brule',    niveau: 1 }, { cle: 'brasier',  niveau: 25 }],
+  glace:      [{ cle: 'gele',     niveau: 1 }, { cle: 'gresil',   niveau: 25 }],
+  terre:      [{ cle: 'bouclier', niveau: 1 }, { cle: 'secousse', niveau: 25 }],
+  tenebre:    [{ cle: 'repousse', niveau: 1 }, { cle: 'abysse',   niveau: 25 }],
+  legendaire: [{ cle: 'soigne',   niveau: 1 }, { cle: 'aura',     niveau: 25 }],
 };
+
+/* Le premier pouvoir de chaque espece, derive et jamais recopie. Tout ce qui
+   ne connait qu'un pouvoir par espece lit celui-la — et le jour ou l'ordre de
+   la table change, il suit au lieu de mentir. */
+const POUVOIR_PAR_ESPECE = Object.keys(POUVOIRS_PAR_ESPECE).reduce((o, e) => {
+  o[e] = POUVOIRS_PAR_ESPECE[e][0].cle; return o;
+}, {});
+
+/**
+ * Ce qu'un familier de CE niveau sait faire, du premier cran au dernier
+ * ouvert. Une seule fonction : le serveur choisit dedans, la page l'affiche,
+ * et les deux voient exactement la meme chose. Deux facons de repondre a « que
+ * sait-il faire » auraient fini par afficher un pouvoir qu'il n'a pas.
+ *
+ * On rend AUSSI ceux qui sont encore fermes, avec leur niveau : c'est ce qui
+ * donne envie de nourrir. Un pouvoir qu'on ne voit pas ne se merite pas.
+ */
+function pouvoirsDe(espece, niveau) {
+  const liste = POUVOIRS_PAR_ESPECE[espece];
+  if (!liste) return [];
+  const n = Math.max(1, niveau | 0);
+  return liste.map((p) => ({
+    cle: p.cle, niveau: p.niveau, ouvert: n >= p.niveau,
+    zone: POUVOIRS_ZONE.has(p.cle),
+    effet: familierEffet(p.cle, n),
+  }));
+}
 
 /* ---- LES CHIFFRES D'UN FAMILIER, A SON NIVEAU ----
  * Une seule formule, ici. Le serveur l'applique et la page l'AFFICHE — deux
@@ -2206,7 +2296,20 @@ function familierEffet(pouvoir, niveau) {
                         sans etre une immunite. */
                      out.reduction = Math.min(b.plafond, b.reduction + b.parNiveau * n); break;
     case 'soigne':   out.part = b.part + b.parNiveau * n; break;
+    /* ---- LES SIX DE ZONE ----
+     * Ils portent tous `rayon`, et c'est le MEME : la page l'affiche, le
+     * serveur le cherche avec, et le joueur n'a qu'une distance a apprendre.
+     * Il vient de `zoneRayon` et pas de la fiche du pouvoir — six copies du
+     * meme nombre finiraient par n'etre plus le meme. */
+    case 'meute':    out.degats = b.degats + b.parNiveau * n; break;
+    case 'brasier':  out.duree = b.duree; out.parSeconde = b.parSeconde + b.parNiveau * n; break;
+    case 'gresil':   out.duree = b.duree + b.parNiveau * n; break;
+    case 'secousse': out.force = b.force + b.parNiveau * n;
+                     out.stase = b.stase + b.stasePar * n; break;
+    case 'abysse':   out.degats = b.degats + b.parNiveau * n; out.vol = b.vol; break;
+    case 'aura':     out.part = b.part + b.parNiveau * n; break;
   }
+  if (POUVOIRS_ZONE.has(pouvoir)) out.rayon = FAMILIERS.zoneRayon;
   return out;
 }
 
@@ -2694,6 +2797,7 @@ module.exports = {
   cadenceDe, vitesseDe,
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
   FAMILIERS, familierEffet, rechargeFamilier, POUVOIR_PAR_ESPECE,
+  POUVOIRS_PAR_ESPECE, POUVOIRS_ZONE, pouvoirsDe,
   ZONE_REACTION,
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe, BOSS,
   SOCLE, SOCLE_DELAI, biomeDe, placeUne, naitDans, ecartDeNaissance,

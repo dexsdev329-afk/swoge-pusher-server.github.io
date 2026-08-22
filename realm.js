@@ -1081,21 +1081,84 @@ class Realm {
       j.famR = (j.famR || 0) - dt;
       if (j.famR > 0) continue;
 
-      const cle = monde.POUVOIR_PAR_ESPECE[j.fam];
-      const E = cle ? monde.familierEffet(cle, j.famNiv || 1) : null;
+      const niveau = j.famNiv || 1;
+      const ouverts = monde.pouvoirsDe(j.fam, niveau).filter((p) => p.ouvert && p.effet);
       /* Une espece sans pouvoir connu — un familier ajoute avant sa regle :
          on lui donne quand meme une recharge, sinon la boucle le reprendrait a
          chaque pas. Celle de SON niveau, comme tout le monde. */
-      if (!E) { j.famR = monde.rechargeFamilier(j.famNiv || 1); continue; }
+      if (!ouverts.length) { j.famR = monde.rechargeFamilier(niveau); continue; }
 
-      /* ---- CE QUI SE PASSE, ET SI LA RECHARGE REPART ----
+      /* ---- IL CHOISIT, IL NE CUMULE PAS ----
+       *
+       * Un compagnon de haut niveau connait deux gestes ; il n'en fait qu'UN
+       * par recharge. Les enchainer aurait multiplie sa force par deux au
+       * moment ou l'on ouvre son second cran, alors que la promesse du systeme
+       * est que le niveau achete de la FREQUENCE, pas de la puissance.
+       *
+       * L'ordre vient de la situation. On essaie dans cet ordre, et le premier
+       * qui SERT gagne : le second cran d'un legendaire ne soigne personne si
+       * tout le monde est plein, et il vaut mieux qu'il retombe sur son soin
+       * que de perdre son tour.
+       *
+       * ---- CE QUI SE PASSE, ET SI LA RECHARGE REPART ----
        * Un geste dans le vide ne consomme PAS la recharge : sinon le chien
        * mordrait l'air a l'instant ou l'on arrive sur un groupe, et
        * attendrait cinq secondes pour le premier vrai coup. */
-      const fait = this._familierAgit(j, cle, E, ev);
-      if (fait) j.famR = E.recharge;
-      else j.famR = 0.35;                 // il regarde autour, il ne dort pas
+      let fait = false;
+      for (const p of this._ordreFamilier(j, ouverts)) {
+        if (this._familierAgit(j, p.cle, p.effet, ev)) {
+          fait = true; j.famR = p.effet.recharge; break;
+        }
+      }
+      if (!fait) j.famR = 0.35;           // il regarde autour, il ne dort pas
     }
+  }
+
+  /**
+   * DANS QUEL ORDRE IL ESSAIE SES GESTES.
+   *
+   * Une seule question decide : y a-t-il assez de monde autour pour que
+   * frapper large vaille mieux que frapper fort ? Chaque creature touchee par
+   * une zone prend environ la moitie de ce qu'elle aurait pris seule ; a
+   * partir de `zoneMini` — trois — la zone passe devant.
+   *
+   * On COMPTE, on ne devine pas. « Il y a du monde » se mesure dans le rayon
+   * de la zone et nulle part ailleurs : compter dans la portee du pouvoir a
+   * cible unique (260) aurait fait choisir la zone pour des creatures qu'elle
+   * n'atteint pas (200).
+   *
+   * Et l'on rend TOUJOURS les deux, dans un ordre : le premier qui sert gagne.
+   * Ne rendre que le prefere ferait perdre son tour au compagnon chaque fois
+   * que ce prefere ne s'applique pas.
+   */
+  _ordreFamilier(j, ouverts) {
+    const zones = ouverts.filter((p) => p.zone);
+    const seuls = ouverts.filter((p) => !p.zone);
+    if (!zones.length || !seuls.length) return zones.concat(seuls);
+    const r = zones[0].effet.rayon || monde.FAMILIERS.zoneRayon;
+    const R2 = r * r;
+    let combien = 0;
+    for (const m of this.monstres) {
+      if (m.pv <= 0) continue;
+      const dx = m.x - j.x, dy = m.y - j.y;
+      if (dx * dx + dy * dy <= R2) combien++;
+    }
+    return combien >= monde.FAMILIERS.zoneMini
+      ? zones.concat(seuls) : seuls.concat(zones);
+  }
+
+  /** Les creatures vivantes dans un rayon autour du maitre. Une seule facon de
+      poser la question : six pouvoirs de zone la posent, et six boucles
+      recopiees auraient fini par ne pas compter la meme chose. */
+  _autourDe(j, rayon) {
+    const R2 = rayon * rayon;
+    const out = [];
+    for (const m of this.monstres) {
+      if (m.pv <= 0) continue;
+      const dx = m.x - j.x, dy = m.y - j.y;
+      if (dx * dx + dy * dy <= R2) out.push(m);
+    }
+    return out;
   }
 
   /** Le geste lui-meme. Rend `true` s'il a servi a quelque chose. */
@@ -1122,6 +1185,157 @@ class Realm {
       ev.fam = ev.fam || [];
       ev.fam.push({ addr: j.addr, quoi: 'bouclier', duree: E.duree,
                     part: E.reduction, x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    /* ======================================================================
+     * LES SIX DE ZONE
+     * ======================================================================
+     *
+     * Tous centres sur le MAITRE, tous dans le meme rayon, tous rendant
+     * `false` s'ils n'ont servi a personne — c'est ce `false` qui laisse le
+     * compagnon retomber sur son premier geste au lieu de perdre son tour.
+     *
+     * Le point envoye a la page est celui du maitre, pas celui d'une cible :
+     * une zone se dessine autour de soi, et un anneau pose sur une creature au
+     * hasard aurait fait croire qu'elle visait.
+     */
+    if (cle === 'meute') {
+      const pres = this._autourDe(j, E.rayon);
+      if (!pres.length) return false;
+      const perte = Math.max(1, Math.round(E.degats));
+      for (const m of pres) {
+        m.pv = Math.max(0, m.pv - perte);
+        /* Le MEME evenement que nos tirs, marque `familier` : un seul chemin
+           d'affichage pour un chiffre de degats, et la page en tire la
+           couleur. */
+        ev.touches.push({ addr: j.addr, monstre: m.id, espece: m.espece,
+                          perte, pv: m.pv, x: m.x, y: m.y, familier: j.fam });
+        if (m.pv <= 0) this._abat(m, j, ev);
+      }
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'meute', rayon: E.rayon,
+                    touches: pres.length,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    if (cle === 'brasier') {
+      const pres = this._autourDe(j, E.rayon);
+      if (!pres.length) return false;
+      for (const m of pres) {
+        /* La brulure REMPLACE, comme celle a une cible : deux compteurs sur la
+           meme creature auraient double les degats sans que rien ne le dise. */
+        m.feu = E.duree;
+        m.feuPar = j.addr;
+        m.feuTaux = E.parSeconde;
+      }
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'brasier', rayon: E.rayon,
+                    duree: E.duree, touches: pres.length,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    if (cle === 'gresil') {
+      /* On ne compte que celles qui ne sont PAS deja figees. Sans ca, un
+         groupe fige une fois se reprolongerait a chaque recharge et la glace
+         serait une suppression, pas une aide — c'est la meme regle que pour
+         `gele`, appliquee au groupe. */
+      const pres = this._autourDe(j, E.rayon).filter((m) => !(m.stase > 0));
+      if (!pres.length) return false;
+      for (const m of pres) m.stase = E.duree;
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'gresil', rayon: E.rayon,
+                    duree: E.duree, touches: pres.length,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    if (cle === 'secousse') {
+      const pres = this._autourDe(j, E.rayon);
+      if (!pres.length) return false;
+      const pousses = [];
+      for (const m of pres) {
+        const dx = m.x - j.x, dy = m.y - j.y;
+        const d2 = dx * dx + dy * dy;
+        const d = Math.sqrt(d2) || 1;
+        const nx = d2 ? dx / d : 0, ny = d2 ? dy / d : 1;
+        /* ON POUSSE, ON NE TELEPORTE PAS : le mur arrete. Sans ce test on
+           enverrait les creatures DANS la roche, ou elles resteraient coincees
+           hors d'atteinte et empecheraient la salle de se vider. */
+        const vx = m.x + nx * E.force, vy = m.y + ny * E.force;
+        if (!monde.bloque(this.obstacles, vx, vy, 0)) { m.x = vx; m.y = vy; }
+        /* Le bref arret qui suit : c'est lui qui transforme une poussee en
+           distance gagnee. Il ne se prolonge pas sur ce qui est deja fige. */
+        if (!(m.stase > 0)) m.stase = E.stase;
+        pousses.push(m.id);
+      }
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'secousse', rayon: E.rayon,
+                    monstres: pousses, duree: E.stase,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    if (cle === 'abysse') {
+      const pres = this._autourDe(j, E.rayon);
+      if (!pres.length) return false;
+      const perte = Math.max(1, Math.round(E.degats));
+      let inflige = 0;
+      for (const m of pres) {
+        /* Ce qui est REELLEMENT retire, pas ce qu'on annonce : une creature a
+           trois points de vie n'en rend que trois. Voler sur le montant
+           annonce aurait soigne le maitre pour des degats qui n'ont pas eu
+           lieu. */
+        const vrai = Math.min(m.pv, perte);
+        m.pv = Math.max(0, m.pv - perte);
+        inflige += vrai;
+        ev.touches.push({ addr: j.addr, monstre: m.id, espece: m.espece,
+                          perte, pv: m.pv, x: m.x, y: m.y, familier: j.fam });
+        if (m.pv <= 0) this._abat(m, j, ev);
+      }
+      /* ---- ET L'OMBRE SE NOURRIT ----
+       * C'est ce qui la distingue du chien : le chien frappe, l'ombre prend.
+       * Sans ce vol, les deux pouvoirs de zone auraient ete le meme, en
+       * violet. Jamais au-dela du maximum — un soin qui deborde ne se voit
+       * pas et fausse la barre. */
+      const gain = Math.min(j.pvMax - j.pv, Math.round(inflige * E.vol));
+      if (gain > 0) j.pv += gain;
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'abysse', rayon: E.rayon,
+                    touches: pres.length, gain, pv: j.pv,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    if (cle === 'aura') {
+      /* ---- LA SEULE CHOSE DU JEU QUI AIDE QUELQU'UN D'AUTRE ----
+       * Le maitre ET les joueurs autour. C'est l'argument de la relique, et
+       * c'est pour ca qu'elle vaut ce qu'elle vaut : aucun chiffre ne remplace
+       * « mon compagnon soigne les autres ».
+       * On ne soigne QUE ce qui est blesse : rendre `true` sur un groupe au
+       * complet consommerait la recharge pour rien. */
+      const R2 = E.rayon * E.rayon;
+      const soignes = [];
+      for (const q of this.joueurs.values()) {
+        if (q.pv <= 0 || q.pv >= q.pvMax) continue;
+        const dx = q.x - j.x, dy = q.y - j.y;
+        if (q !== j && dx * dx + dy * dy > R2) continue;
+        const gain = Math.max(1, Math.round(q.pvMax * E.part));
+        q.pv = Math.min(q.pvMax, q.pv + gain);
+        soignes.push({ addr: q.addr, gain, pv: q.pv });
+      }
+      if (!soignes.length) return false;
+      ev.fam = ev.fam || [];
+      /* Un evenement pour le maitre — c'est lui qui verra l'anneau — et la
+         liste des soignes avec : chacun doit voir SA barre remonter, et
+         server.js sait a qui parler. */
+      ev.fam.push({ addr: j.addr, quoi: 'aura', rayon: E.rayon,
+                    soignes,
+                    gain: (soignes.find((s) => s.addr === j.addr) || {}).gain || 0,
+                    pv: j.pv,
+                    x: Math.round(j.x), y: Math.round(j.y) });
       return true;
     }
 

@@ -5356,7 +5356,15 @@ function traiteEvenements(R, ev) {
   if (ev.fam && ev.fam.length) {
     for (const f of ev.fam) {
       const ws = [...realmClients].find((c) => c.addr === f.addr);
-      if (ws && ws.readyState === 1) send(ws, { type: 'realmFam', ...f, addr: undefined });
+      if (ws && ws.readyState === 1) {
+        /* `zone` est DERIVE du monde, pas recopie dans la page. La page doit
+           savoir qu'un geste frappe large — elle ne fait alors pas bondir le
+           compagnon vers une cible, puisqu'il n'y en a pas — et une seconde
+           liste de pouvoirs de zone cote navigateur aurait fini par ne plus
+           etre la meme que celle du serveur. */
+        send(ws, { type: 'realmFam', ...f, addr: undefined,
+                   zone: monde.POUVOIRS_ZONE.has(f.quoi) ? 1 : undefined });
+      }
     }
   }
 

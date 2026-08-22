@@ -145,7 +145,17 @@ const NOM_FAMILIER = {
 const NOM_POUVOIR_FAMILIER = {
   mord: 'Bites monsters', brule: 'Sets enemies on fire',
   gele: 'Freezes an enemy', bouclier: 'Shields you, blocks some hits',
-  repousse: 'Knocks enemies back', soigne: 'Heals you every 5s',
+  repousse: 'Knocks enemies back', soigne: 'Heals you',
+  /* ---- LE SECOND CRAN ----
+   * Chaque phrase dit ce qui change par rapport au premier : c'est ce que le
+   * joueur veut savoir avant de nourrir, et « frappe en zone » tout seul ne
+   * le dit pas. */
+  meute:    'Bites everything around you',
+  brasier:  'Sets everything around you on fire',
+  gresil:   'Freezes everything around you, briefly',
+  secousse: 'Knocks back and stuns everything around you',
+  abysse:   'Damages everything around you and heals you for part of it',
+  aura:     'Heals you and nearby players',
 };
 function pouvoirFamilier(espece) {
   const cle = monde.POUVOIR_PAR_ESPECE[espece];
@@ -7204,7 +7214,20 @@ class Game {
               * Il vient du serveur comme le reste : une seconde formule dans
               * la page finirait par promettre une cadence qui n'arrive pas. */
              suivant: niveau >= NIVEAU_MAX_FAM ? null : monde.familierEffet(
-               (monde.POUVOIR_PAR_ESPECE || {})[espece], niveau + 1) };
+               (monde.POUVOIR_PAR_ESPECE || {})[espece], niveau + 1),
+             /* ---- SES DEUX GESTES, OUVERTS OU NON ----
+              *
+              * Le panneau montre AUSSI ce qui est encore ferme, avec le
+              * niveau qui l'ouvre. C'est le seul endroit ou le joueur peut
+              * apprendre qu'il y a autre chose a aller chercher : un pouvoir
+              * qu'on ne voit pas ne se merite pas, et la courbe de nourriture
+              * demande une raison d'y croire.
+              *
+              * La liste vient du MONDE, phrase comprise : deux tables — l'une
+              * qui nomme, l'autre qui agit — auraient fini par annoncer un
+              * pouvoir et en appliquer un autre. */
+             pouvoirs: (monde.pouvoirsDe ? monde.pouvoirsDe(espece, niveau) : [])
+               .map((p) => ({ ...p, nom: NOM_POUVOIR_FAMILIER[p.cle] || p.cle })) };
   }
 
   /* ---- LES REGLES DU REPAS, TELLES QUE LA PAGE LES ANNONCE ----
