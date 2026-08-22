@@ -3339,6 +3339,17 @@ wss.on('connection', (ws) => {
         if (!ws.addr) return;
         return send(ws, { type: 'familiers', familiers: game.familiersDe(ws.addr),
                           coffreOeufs: game.oeufsDuCoffre(ws.addr),
+                          /* ---- ET LE SAC AVEC ----
+                           * Le rayon des animaux montre desormais les oeufs
+                           * qui sont ENCORE dans le sac, avec le bouton qui
+                           * les range. Sans le sac dans cette reponse, la page
+                           * les dessinait depuis un etat vieux de plusieurs
+                           * messages : un oeuf ramasse a l'instant n'y
+                           * figurait pas, et le joueur ne trouvait rien a
+                           * ranger. Le coffre et le sac sont les deux moities
+                           * d'une meme question — on les envoie ensemble,
+                           * comme `oeufRange` le fait deja. */
+                          sacJoueur: game.sacPour(ws.addr),
                           /* Les regles du repas partent d'ici. Une page qui
                              ecrirait « Common and Rare only » de son cote
                              continuerait de le promettre le jour ou l'on
