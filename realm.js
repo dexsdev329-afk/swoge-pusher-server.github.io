@@ -960,8 +960,12 @@ class Realm {
    * les autres. « Quelqu'un est mort ici » ne vaut rien ; « Dodexel est mort
    * ici, il y a vingt secondes » fait reculer.
    */
-  _meurt(j, par, ev) {
-    ev.morts.push({ addr: j.addr, par });
+  _meurt(j, par, ev, aussi) {
+    /* `aussi` porte ce qui ne concerne QUE certaines morts — la marque PvP,
+       l'adresse du tueur, l'endroit ou le sac tombera. Les passer ici plutot
+       que de pousser l'evenement a la main est tout l'interet : la mort PvP le
+       faisait, et c'est exactement pour ca qu'elle ne posait aucune pierre. */
+    ev.morts.push(Object.assign({ addr: j.addr, par }, aussi || {}));
     this.tombes.push({
       id: this._nouvelId(), x: j.x, y: j.y,
       nom: j.nom || null, skin: j.skin || null, par,
@@ -1553,8 +1557,20 @@ class Realm {
                            par: (tireur && tireur.nom) || 'someone', quoi: 'joueur' });
           ev.touches.push({ addr: t.addr, joueur: c.addr, perte, pv: c.pv, x: t.x, y: t.y });
           if (c.pv <= 0) {
-            ev.morts.push({ addr: c.addr, par: (tireur && tireur.nom) || 'someone',
-                            pvp: 1, parAddr: t.addr, x: c.x, y: c.y });
+            /* ---- PAR `_meurt`, COMME TOUTES LES AUTRES ----
+             *
+             * Cette mort-la poussait son evenement A LA MAIN, et sautait donc
+             * la pierre : on tombait dans la carte rouge sans laisser la
+             * moindre trace, alors que la meme mort contre une creature en
+             * pose une. Le commentaire de `_meurt` le disait deja — « un SEUL
+             * endroit pose l'evenement ET la pierre : les faire a deux
+             * endroits differents finirait par donner une mort sans tombe, et
+             * le trou serait invisible ». Il l'etait.
+             *
+             * La pierre est le seul signal « on meurt ici » de la carte rouge :
+             * c'est ce qui fait reculer, et ce qui attire. */
+            this._meurt(c, (tireur && tireur.nom) || 'someone', ev,
+                        { pvp: 1, parAddr: t.addr, x: c.x, y: c.y });
           }
           fini = true;
           break;

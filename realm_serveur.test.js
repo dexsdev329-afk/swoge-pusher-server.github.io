@@ -172,37 +172,85 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
     // on plante un lime juste devant, cote serveur
     const R = require('./realm');
     // le monde vit dans server.js ; on passe par l etat visible pour viser
+    /* ---- ON MESURE UN ECART, PAS UN ETAT ----
+     *
+     * Cette section verifiait « on part du niveau 0 ». C'etait vrai par
+     * accident : une section precedente tue deja, et le personnage arrive ici
+     * avec de l'XP de combat. Tant qu'elle restait sous le premier palier le
+     * niveau valait zero ; le jour ou la chasse d'avant rapportait un peu
+     * plus, l'essai tombait sur un chiffre qui ne dit rien de ce qu'il teste.
+     *
+     * Ce que la section CLAIME est « tuer donne de l'XP ». On note donc ce
+     * qu'on a avant, et on verifiera l'ecart apres — ce qui est plus fort que
+     * l'ancien controle, et ne depend d'aucun etat de depart. */
     const avant = moteur.personnageEtat(w.address, 'andy');
-    eq(avant.niveau, 0, 'on part du niveau 0');
+    const c0 = (moteur._p(w.address).persos || {}).andy;
+    const xcAvant = (c0 && c0.xc) | 0;
 
-    /* On tire vers le monstre le plus proche, en boucle, jusqu au premier
-       kill. C est exactement ce que fera le client : demander a tirer. */
-    let kill = null;
-    for (let i = 0; i < 400 && !kill; i++) {
+    /* ---- POURQUOI CETTE BOUCLE RATAIT UNE FOIS SUR SEPT ----
+     *
+     * Elle s'arretait d'avancer a 250 unites et tirait de la. Le POING porte a
+     * 150 : elle passait donc son temps a tirer hors de portee, et ne tuait
+     * que si une creature venait d'elle-meme. Elle disait aussi « le monstre le
+     * plus proche » en prenant `monstres[0]`, qui est le premier de la liste et
+     * pas le plus proche — souvent derriere un rocher, ou l'on se coince en
+     * essayant d'aller.
+     *
+     * La portee vient maintenant du MOTEUR, la cible est vraiment la plus
+     * proche, et un pas qui n'avance pas se traduit par un pas de cote : sans
+     * ca, on insiste contre la meme pierre pendant quatre cents tours pendant
+     * que les creatures nous mangent. */
+    const fiche = moteur.personnageEtat(w.address, 'andy');
+    const famille = (fiche.equipArme && fiche.equipArme.famille) || 'poing';
+    const PORTEE = M.ARMES[famille].portee;
+    let kill = null, mort = null, dernier = null;
+    for (let i = 0; i < 400 && !kill && !mort; i++) {
       const e = s.recus.filter((x) => x.type === 'realmEtat').pop();
       if (e && e.monstres.length) {
-        const c = e.monstres[0];
+        let c = e.monstres[0], best = Infinity;
+        for (const m of e.monstres) {
+          const q = (m.x - e.moi.x) ** 2 + (m.y - e.moi.y) ** 2;
+          if (q < best) { best = q; c = m; }
+        }
+        const d = Math.sqrt(best);
         const a = Math.atan2(c.y - e.moi.y, c.x - e.moi.x);
-        // on se rapproche pour rester dans la portee
-        const d = Math.sqrt((c.x - e.moi.x) ** 2 + (c.y - e.moi.y) ** 2);
-        if (d > 250) {
+        /* On vise un peu DANS la portee, pas juste au bord : la creature
+           bouge, et rester pile a la limite fait manquer un coup sur deux. */
+        if (d > PORTEE * 0.7) {
+          const coince = dernier
+            && Math.abs(dernier.x - e.moi.x) + Math.abs(dernier.y - e.moi.y) < 1;
+          const ang = coince ? a + Math.PI / 2 : a;
           s.send(JSON.stringify({ type: 'realmMove',
-            x: e.moi.x + Math.cos(a) * 24, y: e.moi.y + Math.sin(a) * 24,
+            x: e.moi.x + Math.cos(ang) * 24, y: e.moi.y + Math.sin(ang) * 24,
             dir: 'right', anim: 'run' }));
+          dernier = { x: e.moi.x, y: e.moi.y };
+        } else {
+          dernier = null;
         }
         s.send(JSON.stringify({ type: 'realmTir', a }));
       }
       await new Promise((r) => setTimeout(r, 40));
       kill = s.recus.filter((x) => x.type === 'realmKill').pop();
+      mort = s.recus.filter((x) => x.type === 'realmMort').pop();
     }
+    /* On DIT si c'est nous qui sommes tombes. « on a fini par tuer quelque
+       chose » sur un personnage mort en chemin envoie chercher le defaut dans
+       le compte d'XP. */
+    ok(!mort, 'on est encore vivant apres la chasse');
     ok(kill, 'on a fini par tuer quelque chose');
     ok(kill.xp > 0, 'et ca rapporte de l XP (' + kill.xp + ')');
     eq(kill.xp, M.MONSTRES[kill.espece].xp, 'exactement celle du catalogue');
 
     const apres = moteur.personnageEtat(w.address, 'andy');
-    ok(apres.xp >= kill.xp, 'la fiche du personnage porte cette XP (' + Math.round(apres.xp) + ')');
+    ok(apres.xp >= avant.xp + kill.xp,
+       'la fiche du personnage a GAGNE cette XP (' + Math.round(avant.xp) + ' -> ' + Math.round(apres.xp) + ')');
     const c = moteur._p(w.address).persos.andy;
-    ok(c.xc >= kill.xp, 'et elle est bien rangee sous le personnage, pas sous le compte');
+    /* L'ecart exact, pas un minorant : `>= kill.xp` passait meme si l'XP
+       venait d'ailleurs. La boucle a pu tuer plusieurs creatures avant que
+       l'essai ne relise, donc on borne des deux cotes plutot que d'exiger
+       l'egalite avec le dernier kill. */
+    ok(c.xc >= xcAvant + kill.xp,
+       'et elle est bien rangee sous le personnage, pas sous le compte (' + xcAvant + ' -> ' + c.xc + ')');
   }
 
   // ================== 4. LE NIVEAU MONTE AVEC L'XP DE COMBAT

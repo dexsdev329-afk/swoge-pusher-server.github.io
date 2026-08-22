@@ -184,4 +184,37 @@ console.log('\n-- et l equipement, lui, ne bouge pas --');
   eq(p.persos.andy.xp, 4000, 'le niveau ne bouge pas non plus');
 }
 
+console.log('\n-- et une chute laisse une pierre, comme toutes les autres --');
+{
+  /* ---- POURQUOI CETTE PIERRE COMPTE ----
+   *
+   * Elle est le seul signal « on meurt ici » de la carte rouge : c'est ce qui
+   * fait reculer, et ce qui attire. La mort PvP poussait son evenement A LA
+   * MAIN au lieu de passer par `_meurt`, et sautait donc la pierre — alors que
+   * la meme mort contre une creature en pose une. Le commentaire de `_meurt`
+   * decrivait exactement ce trou avant qu'il n'existe.
+   */
+  const { R, A, B, jb } = duel({ pvp: true });
+  R.monstres = [];
+  eq(R.tombes.length, 0, 'la carte part sans aucune pierre');
+  jb.pv = 1;
+  const evs = tire(R, A);
+  const mort = evs.flatMap((e) => e.morts).find((m) => m.addr === B);
+  ok(!!mort, 'Bob tombe');
+  eq(R.tombes.length, 1, 'et sa chute pose une pierre');
+
+  /* La pierre est POSEE OU IL EST TOMBE : ailleurs, elle ne dirait rien. On
+     demande sa position au moteur plutot que de la recopier — le corps a pu
+     glisser d'un rocher entre le tir et la mort. */
+  const t = R.tombes[0];
+  eq(Math.round(t.x), Math.round(mort.x), 'a l endroit exact de la chute (x)');
+  eq(Math.round(t.y), Math.round(mort.y), 'et en y');
+  eq(t.par, mort.par, 'et elle porte le nom de celui qui l a eu');
+
+  /* Les champs qui n existaient QUE sur la mort PvP doivent survivre au
+     passage par `_meurt` : c est la moitie du changement qui ne se voit pas. */
+  eq(mort.pvp, 1, 'la marque PvP traverse');
+  eq(mort.parAddr, A, 'l adresse du tueur aussi');
+}
+
 console.log(`\npvp.test.js : ${n} verifications OK`);

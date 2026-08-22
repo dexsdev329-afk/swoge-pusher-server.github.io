@@ -3619,6 +3619,36 @@ wss.on('connection', (ws) => {
          * recharge la page. */
         const cle = cleDeMonde(m.monde);
         const R = MONDES.get(cle);
+        /* ---- ON N'EST QUE DANS UN SEUL MONDE A LA FOIS ----
+         *
+         * `realmPorte` et `realmSort` retirent le joueur du monde qu'ils
+         * quittent. `realmJoin`, non — et rien n'empeche deux sockets du meme
+         * compte (`byAddr` en accepte plusieurs, deliberement). Deux onglets
+         * donnaient donc DEUX corps, l'un dans le monde vert et l'autre dans
+         * le rouge, qui ramassaient dans le meme sac et versaient leur XP dans
+         * le meme personnage : un butin double pour un seul joueur.
+         *
+         * Pire : le corps oublie pouvait mourir pendant qu'on jouait l'autre,
+         * et `game.meurt` detruisait alors l'equipement de quelqu'un qui ne
+         * regardait pas.
+         *
+         * On retire de TOUS les mondes, donjons compris — le corps oublie peut
+         * etre n'importe ou — et on previent l'autre onglet. Sans ce message,
+         * il continuerait d'afficher un monde ou il n'a plus de corps, fige sur
+         * son dernier instantane, sans qu'un mot lui dise pourquoi. */
+        for (const autre of realmClients) {
+          if (autre === ws || autre.addr !== ws.addr) continue;
+          autre.donjon = null; autre.monde = null;
+          realmClients.delete(autre);
+          if (autre.readyState === 1) send(autre, { type: 'realmSorti', raison: 'autre-onglet' });
+        }
+        for (const M of tousLesMondes()) M.quitte(ws.addr);
+        /* ET LE DONJON DE CETTE SOCKET-CI. Sans cette remise a zero, un joueur
+           qui entre depuis un donjon voyait `ws.monde` changer pendant que
+           `realmDe(ws)` continuait de rendre le donjon : son corps naissait
+           dans le monde ouvert et tous ses messages partaient dans l'autre
+           simulation. */
+        ws.donjon = null;
         ws.monde = cle;
         const j = R.rejoint(ws.addr, fiche);
         ws.realmSkin = skin;
