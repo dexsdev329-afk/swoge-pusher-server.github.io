@@ -2206,6 +2206,32 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify(game.enveloppeCredit(Date.now())));
   }
+  /* ================== LA SEANCE DU CINEMA ==================
+   *
+   * Le proprietaire pose lui-meme le titre, l'affiche et les deux versions
+   * depuis son tableau de bord. Ce fichier ne connait aucune adresse : il
+   * transporte ce qu'on lui donne, et `poseCinema` decide de ce qui est
+   * acceptable — seulement http et https, parce que ces chaines finissent
+   * dans un `iframe.src` sur la page de chaque joueur.
+   *
+   * Elle part ensuite a TOUT LE MONDE, tout de suite : sans ca, la seance
+   * n'apparaitrait qu'a ceux qui rechargent, et le proprietaire croirait
+   * l'avoir ratee. */
+  if (path === '/admin/cinema') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const d = await donPost(req);
+    const nonV = gardeEcriture(req, session, 'cinema', '');
+    if (nonV) return refusEcriture(res, nonV);
+    const c = game.poseCinema(d);
+    adminlog.ajoute({ acteur, action: 'cinema', cible: (c && c.titre) || '(aucune)',
+                      motif: '', ip: qui(req) });
+    persist();
+    broadcast({ type: 'cinema', cinema: c });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, cinema: c }));
+  }
+
   if (path === '/credit') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
@@ -2768,6 +2794,10 @@ wss.on('connection', (ws) => {
     vault: cfg.VAULT_ADDRESS || null, token: cfg.SWOGE_TOKEN, chainId: cfg.CHAIN_ID,
     jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE),
     joueurs: compte(),
+    /* La seance du cinema part avec le bonjour et non avec l'entree dans le
+       monde : la salle est dans le HALL, et l'on peut y entrer sans jamais
+       aller se battre. */
+    cinema: game.cinema || null,
     // les tables qui attendent, pour que la pastille soit juste avant meme
     // que le joueur se connecte
     duels: game.duelLobby(null), duelsEnCours: game.duelsEnCours(null),

@@ -681,7 +681,49 @@ class Game {
              brule: (this.brule || BN(0)).toString(), brulages: this.brulages || [],
              lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx),
              usage: this.usage || {},
+             /* La seance du cinema : titre, affiche et versions. Elle est dans
+                l'etat et non dans un fichier a part parce qu'elle tient en
+                quatre chaines et qu'elle doit survivre a un redeploiement —
+                une salle qui redevient vide a chaque mise en ligne n'est pas
+                une salle qu'on prend la peine de remplir. */
+             cinema: this.cinema || null,
              duels, telegramMap: Array.from(this.telegramMap) };
+  }
+
+  /**
+   * LA SEANCE DU CINEMA, POSEE PAR LE PANNEAU D'ADMINISTRATION.
+   *
+   * ---- POURQUOI LA VALIDATION EST ICI ET PAS DANS LA PAGE ----
+   *
+   * Ces adresses finissent dans un `iframe.src` SUR LA PAGE DE CHAQUE JOUEUR.
+   * Une chaine `javascript:` posee la s'executerait dans le contexte du site,
+   * avec la session de celui qui regarde : ce n'est pas une faute de gout,
+   * c'est une porte ouverte. Le champ vient du panneau d'administration, donc
+   * de quelqu'un de confiance — mais « de confiance » n'est pas « incapable de
+   * coller la mauvaise chose », et le jour ou la cle d'admin fuit, c'est cette
+   * ligne-ci qui decide si le site sert du code a ses joueurs.
+   *
+   * On n'accepte donc que http et https, et rien d'autre. La page, elle, ne
+   * revalide pas : une regle a deux endroits finit par ne plus dire la meme
+   * chose, et c'est celle du serveur qui compte puisque c'est elle qu'on ne
+   * peut pas contourner.
+   */
+  poseCinema(x) {
+    const url = (v) => {
+      const t = String(v || '').trim().slice(0, 500);
+      if (!t) return '';
+      if (!/^https?:\/\//i.test(t)) return '';
+      return t;
+    };
+    const titre = String((x && x.titre) || '').trim().slice(0, 80);
+    const affiche = url(x && x.affiche);
+    const vf = url(x && x.vf), vo = url(x && x.vo);
+    /* Vide partout : on RETIRE la seance plutot que d'en garder une a moitie.
+       Un ecran qui annonce un titre sans rien derriere est pire qu'un ecran
+       eteint — le joueur traverse la salle pour rien. */
+    if (!titre || (!vf && !vo)) { this.cinema = null; return this.cinema; }
+    this.cinema = { titre, affiche, vf, vo };
+    return this.cinema;
   }
 
   /** L'etat COMPLET, tete et fiches. L'export, l'import et l'instantane de
@@ -753,6 +795,7 @@ class Game {
        redemarrage reviendrait a retirer la preuve apres l'avoir donnee. */
     if (st.compta) this.compta = st.compta;
     if (st.usage) this.usage = st.usage;
+    if (st.cinema) this.cinema = st.cinema;
     if (Array.isArray(st.paris)) this.paris = st.paris;
     if (st.parisRegles) this.parisRegles = st.parisRegles;
     if (st.parisSeq) this.parisSeq = st.parisSeq;
