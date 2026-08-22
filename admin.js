@@ -345,24 +345,6 @@ function page(csrf) {
 </div>
 
 <div data-vue="jeux" class="panel" style="margin-top:14px">
-  <h2>&#127916; Cinema &mdash; SWOGE FLIX</h2>
-  <div class="sub" style="margin:0 0 10px">
-    What plays on the screen in the Nexus cinema. Leave the title empty to take
-    the show down &mdash; the screen goes back to announcing there is nothing on.
-    <br><b>Only http:// and https:// addresses are accepted.</b> These end up in
-    an iframe on every player's page; anything else is refused by the server.
-  </div>
-  <input id="cineTitre" placeholder="Title shown on the screen and in the room">
-  <input id="cineAff" placeholder="Poster image URL (portrait) — optional">
-  <input id="cineVf" placeholder="VF player URL">
-  <input id="cineVo" placeholder="VO player URL">
-  <div class="row" style="margin-top:4px">
-    <button class="ghost" id="cineGo">Save the show</button>
-    <span id="cineMsg" style="font-size:12px"></span>
-  </div>
-</div>
-
-<div class="panel" style="margin-top:14px">
   <h2>&#128225; Fixture feed</h2>
   <div class="sub" style="margin:0 0 10px">
     Where the calendar comes from. Fixtures cost <b>no credits</b> at all
@@ -729,6 +711,28 @@ function page(csrf) {
   </div>
   <div id="rgMsg" class="sub" style="margin:0 0 10px"></div>
   <div id="rgCorps"><div class="muted2">chargement…</div></div>
+</div>
+
+<!-- Ce panneau etait range dans « Jeux & paris ». Une seance de cinema n'est
+     ni un jeu ni un pari : personne n'allait la chercher la, et de fait elle
+     est restee introuvable. Elle appartient a Live Ops, avec les autres
+     reglages qui partent aux joueurs a chaud sans redemarrage. -->
+<div data-vue="liveops" class="panel" style="margin-top:14px">
+  <h2>&#127916; Cinema &mdash; SWOGE FLIX</h2>
+  <div class="sub" style="margin:0 0 10px">
+    What plays on the screen in the Nexus cinema. Leave the title empty to take
+    the show down &mdash; the screen goes back to announcing there is nothing on.
+    <br><b>Only http:// and https:// addresses are accepted.</b> These end up in
+    an iframe on every player's page; anything else is refused by the server.
+  </div>
+  <input id="cineTitre" placeholder="Title shown on the screen and in the room">
+  <input id="cineAff" placeholder="Poster image URL (portrait) — optional">
+  <input id="cineVf" placeholder="VF player URL">
+  <input id="cineVo" placeholder="VO player URL">
+  <div class="row" style="margin-top:4px">
+    <button class="ghost" id="cineGo">Save the show</button>
+    <span id="cineMsg" style="font-size:12px"></span>
+  </div>
 </div>
 
 <script>
