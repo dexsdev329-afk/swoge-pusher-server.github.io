@@ -3756,9 +3756,6 @@ wss.on('connection', (ws) => {
            elle est deja arrivee. Sans ce refus, le bouton « ENTER » se serait
            affiche dessus et n'aurait rien fait. */
         if (!porte.donjon) return send(ws, { type: 'realmPorteRefus', raison: 'pas-de-portail' });
-        if (donjons.size >= DONJONS_MAX) {
-          return send(ws, { type: 'realmPorteRefus', raison: 'trop-de-donjons' });
-        }
         const skin = ws.realmSkin;
         const fiche = skin ? ficheDeCombat(ws.addr, skin) : null;
         if (!fiche) return send(ws, { type: 'realmPorteRefus', raison: 'no-character' });
@@ -3770,6 +3767,19 @@ wss.on('connection', (ws) => {
          * ne l'annonce : on serait entre a deux et l'on se serait retrouve
          * seul, chacun persuade que l'autre a menti. */
         let d = [...donjons.values()].find((x) => x.porte === porte.id);
+        /* ---- LE PLAFOND NE COMPTE QUE POUR EN OUVRIR UN NOUVEAU ----
+         * Il etait verifie AVANT cette recherche. Consequence : quand les
+         * vingt-quatre places etaient prises, on ne pouvait plus REJOINDRE un
+         * ami deja dedans — alors qu'entrer dans un donjon qui existe deja ne
+         * cree strictement rien. Le refus disait « trop de donjons » a
+         * quelqu'un qui n'en demandait aucun, et il tombait precisement au
+         * moment ou le serveur est plein, c'est-a-dire quand il y a le plus de
+         * monde avec qui jouer.
+         * Le plafond protege le NOMBRE DE SIMULATIONS. Il n'a donc rien a
+         * dire tant qu'on n'en demande pas une de plus. */
+        if (!d && donjons.size >= DONJONS_MAX) {
+          return send(ws, { type: 'realmPorteRefus', raison: 'trop-de-donjons' });
+        }
         if (!d) {
           let R;
           try {
