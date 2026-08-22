@@ -2214,12 +2214,101 @@ const FAMILIERS = {
      tombe une fois sur trente mille, c'est un argument qu'aucun chiffre ne
      remplace. Moins par personne que son soin — il en touche plusieurs. */
   aura:     { part: 0.022, parNiveau: 0.000112 },
+
+  /* ======================================================================
+   * LES POUVOIRS DE SOUTIEN — le troisieme cran, au niveau soixante
+   * ======================================================================
+   *
+   * ---- CE QU'ILS FONT, ET POURQUOI C'EST UNE FAMILLE A PART ----
+   *
+   * Les deux premiers crans agissent sur ce qui est EN FACE : une creature,
+   * puis toutes celles qui entourent. Le troisieme ne vise rien du tout — il
+   * se pose sur le MAITRE. C'est ce qui lui donne une identite qu'un
+   * troisieme pouvoir de degats n'aurait pas eue : ajouter « pareil, en plus
+   * fort » aurait fait du niveau soixante un simple multiplicateur, et le
+   * systeme promet depuis le debut que le niveau achete de la FREQUENCE.
+   *
+   * Soixante, parce que c'est la moitie du chemin en RECHARGE et pas en
+   * niveaux : la cadence vaut alors douze coups par minute contre vingt au
+   * centieme. Un joueur qui a nourri son compagnon jusque-la a deja depasse
+   * ce que la plupart verront.
+   *
+   * ---- LEUR PROPRE DELAI, ET C'EST LA REGLE QUI LES TIENT ----
+   *
+   * Sans lui, le compagnon serait devenu une aura permanente : au centieme
+   * niveau sa recharge vaut trois secondes, donc un soutien de quatre
+   * secondes se reposerait avant meme d'etre tombe et il ne frapperait plus
+   * JAMAIS. C'est exactement le piege qui avait force le plafond du bouclier.
+   *
+   * On ne le resout pas en raccourcissant le soutien — ca l'aurait rendu
+   * invisible — mais en lui donnant un delai a lui, compte depuis le moment
+   * ou il part, et independant de la recharge du compagnon. Dix-huit
+   * secondes pour environ quatre a cinq secondes d'effet : un quart du temps
+   * en soutien, trois quarts a taper. Le compagnon prepare, puis se bat.
+   *
+   * ---- ET IL FAUT QUELQUE CHOSE A COMBATTRE ----
+   *
+   * Un soutien ne part QUE s'il y a une creature vivante dans le rayon de
+   * zone. Sinon le compagnon aurait grille son delai en traversant une
+   * clairiere vide, et l'aide serait arrivee juste avant de ne plus servir.
+   */
+  soutienDelai: 18,
+
+  /* ---- LES SIX, ET CE QUE CHACUN REUTILISE ----
+   * Quatre d'entre eux se branchent sur des etats qui EXISTENT deja (la
+   * rafale, les immunites, le mana, le bouclier). C'etait voulu : un etat
+   * neuf par pouvoir aurait fait six choses a diffuser, a dessiner et a
+   * remettre a zero a la mort. Deux seulement sont neufs, parce que rien ne
+   * faisait ce qu'ils font.
+   */
+
+  /* Le chien PRESSE : la cadence de tir de son maitre monte. Il reprend la
+     rafale du fruit, mais PAS son facteur — celui du fruit vaut deux et
+     demi, se paie quarante-cinq de mana et se declenche a la demande. Un
+     coup de pouce gratuit et automatique ne peut pas valoir autant.
+     Une fois et demie au soixantieme, une fois huit dixiemes au centieme. */
+  elan:     { duree: 4.0, facteur: 1.057, parNiveau: 0.0075 },
+  /* Le feu ATTISE : les coups du MAITRE portent plus fort. Ceux du compagnon
+     non — sans cette limite, l'ardeur aurait multiplie la meute et le brasier
+     en meme temps que l'arme, et trois sources qui se multiplient entre elles
+     ne se reglent plus. Trente pour cent au soixantieme, cinquante au
+     centieme. */
+  ardeur:   { duree: 4.0, part: 0.005, parNiveau: 0.005 },
+  /* La glace PROTEGE : elle EFFACE la paralysie, le ralentissement et la
+     brulure en cours, et immunise contre les trois. C'est le seul des six a
+     enlever quelque chose plutot qu'a ajouter, et c'est ce qui en fait une
+     sortie de secours — la seule du jeu contre une paralysie deja posee.
+     Quatre secondes au soixantieme, six au centieme. */
+  givre:    { duree: 1.05, parNiveau: 0.05 },
+  /* La terre ENRACINE : la regeneration de vie accelere. Elle ne touche pas
+     le mana — c'est le travail de l'emprise, et un pouvoir qui rendrait les
+     deux aurait rendu l'autre inutile. Cinq fois le debit au soixantieme,
+     sept fois et demie au centieme, en plein combat comme au repos. */
+  racines:  { duree: 5.0, part: 0.3125, parNiveau: 0.0625 },
+  /* Les tenebres DRAINENT : du mana rendu, en part de la reserve MAXIMUM.
+     Un chiffre fixe aurait rempli un debutant d'un coup et n'aurait rien
+     valu a un savant. C'est le seul soutien immediat des six : il n'a pas de
+     duree parce qu'il n'a pas d'etat — il verse, et c'est fini. Un cinquieme
+     de la reserve au soixantieme, un tiers au centieme. */
+  emprise:  { part: 0.00825, parNiveau: 0.00325 },
+  /* Le legendaire BENIT : un bouclier ET l'immunite a la brulure. Il reprend
+     le bouclier de la terre, plus fort et sans son plafond — ce plafond
+     existait parce que le bouclier de la terre revient a CHAQUE recharge et
+     finissait permanent ; celui-ci attend dix-huit secondes entre deux, il ne
+     peut pas couvrir plus d'un quart du temps. Trente pour cent au
+     soixantieme, quarante-cinq au centieme. */
+  benediction: { duree: 5.0, reduction: 0.079, parNiveau: 0.00375 },
 };
 
 /* Ce qui frappe LARGE. La liste est ici plutot que devinee d'un nom : un
    pouvoir ajoute demain sans entrer dans cette liste serait traite comme une
    cible unique, en silence. */
 const POUVOIRS_ZONE = new Set(['meute', 'brasier', 'gresil', 'secousse', 'abysse', 'aura']);
+
+/* Ce qui se pose sur le MAITRE. Meme raison que la liste au-dessus : un
+   pouvoir ajoute demain sans entrer ici serait traite comme une attaque a
+   cible unique, chercherait un monstre a viser et ne partirait jamais. */
+const POUVOIRS_SOUTIEN = new Set(['elan', 'ardeur', 'givre', 'racines', 'emprise', 'benediction']);
 
 /* ---- LA RECHARGE D'UN FAMILIER, A SON NIVEAU ----
  * Une seule formule, ici. La cadence monte en ligne droite ; la recharge est
@@ -2238,12 +2327,12 @@ function rechargeFamilier(niveau) {
  * monde. Deux tables — l'une qui nomme, l'autre qui agit — auraient fini par
  * annoncer un pouvoir et en appliquer un autre. */
 const POUVOIRS_PAR_ESPECE = {
-  normal:     [{ cle: 'mord',     niveau: 1 }, { cle: 'meute',    niveau: 25 }],
-  feu:        [{ cle: 'brule',    niveau: 1 }, { cle: 'brasier',  niveau: 25 }],
-  glace:      [{ cle: 'gele',     niveau: 1 }, { cle: 'gresil',   niveau: 25 }],
-  terre:      [{ cle: 'bouclier', niveau: 1 }, { cle: 'secousse', niveau: 25 }],
-  tenebre:    [{ cle: 'repousse', niveau: 1 }, { cle: 'abysse',   niveau: 25 }],
-  legendaire: [{ cle: 'soigne',   niveau: 1 }, { cle: 'aura',     niveau: 25 }],
+  normal:     [{ cle: 'mord',     niveau: 1 }, { cle: 'meute',    niveau: 25 }, { cle: 'elan',        niveau: 60 }],
+  feu:        [{ cle: 'brule',    niveau: 1 }, { cle: 'brasier',  niveau: 25 }, { cle: 'ardeur',      niveau: 60 }],
+  glace:      [{ cle: 'gele',     niveau: 1 }, { cle: 'gresil',   niveau: 25 }, { cle: 'givre',       niveau: 60 }],
+  terre:      [{ cle: 'bouclier', niveau: 1 }, { cle: 'secousse', niveau: 25 }, { cle: 'racines',     niveau: 60 }],
+  tenebre:    [{ cle: 'repousse', niveau: 1 }, { cle: 'abysse',   niveau: 25 }, { cle: 'emprise',     niveau: 60 }],
+  legendaire: [{ cle: 'soigne',   niveau: 1 }, { cle: 'aura',     niveau: 25 }, { cle: 'benediction', niveau: 60 }],
 };
 
 /* Le premier pouvoir de chaque espece, derive et jamais recopie. Tout ce qui
@@ -2269,6 +2358,7 @@ function pouvoirsDe(espece, niveau) {
   return liste.map((p) => ({
     cle: p.cle, niveau: p.niveau, ouvert: n >= p.niveau,
     zone: POUVOIRS_ZONE.has(p.cle),
+    soutien: POUVOIRS_SOUTIEN.has(p.cle),
     effet: familierEffet(p.cle, n),
   }));
 }
@@ -2308,8 +2398,36 @@ function familierEffet(pouvoir, niveau) {
                      out.stase = b.stase + b.stasePar * n; break;
     case 'abysse':   out.degats = b.degats + b.parNiveau * n; out.vol = b.vol; break;
     case 'aura':     out.part = b.part + b.parNiveau * n; break;
+    /* ---- LES SIX DE SOUTIEN ----
+     * Ils portent tous `rayon` et `delai` comme les zones portent `rayon` :
+     * le rayon parce qu'un soutien ne part que s'il y a quelque chose a
+     * combattre dedans, le delai parce que c'est LUI qui tient l'equilibre
+     * du troisieme cran — la page doit pouvoir l'annoncer, sinon le joueur
+     * croit son compagnon casse quand le soutien ne repart pas.
+     * Leur duree ne monte PAS avec le niveau, sauf quand elle est leur seul
+     * chiffre : c'est la meme regle qu'aux deux premiers crans — le niveau
+     * achete ce que le pouvoir a d'unique, et rien d'autre. */
+    case 'elan':     out.duree = b.duree;
+                     out.facteur = b.facteur + b.parNiveau * n; break;
+    case 'ardeur':   out.duree = b.duree;
+                     out.part = b.part + b.parNiveau * n; break;
+    case 'givre':    out.duree = b.duree + b.parNiveau * n; break;
+    case 'racines':  out.duree = b.duree;
+                     out.part = b.part + b.parNiveau * n; break;
+    case 'emprise':  out.part = b.part + b.parNiveau * n; break;
+    case 'benediction': out.duree = b.duree;
+                     /* Sans plafond, a l'inverse du bouclier de la terre. Ce
+                        plafond existait parce que ce bouclier-la revient a
+                        chaque recharge et finissait permanent au centieme
+                        niveau ; celui-ci attend `soutienDelai` entre deux, il
+                        ne peut pas couvrir plus d'un quart du temps. */
+                     out.reduction = b.reduction + b.parNiveau * n; break;
   }
   if (POUVOIRS_ZONE.has(pouvoir)) out.rayon = FAMILIERS.zoneRayon;
+  if (POUVOIRS_SOUTIEN.has(pouvoir)) {
+    out.rayon = FAMILIERS.zoneRayon;
+    out.delai = FAMILIERS.soutienDelai;
+  }
   return out;
 }
 
@@ -2797,7 +2915,7 @@ module.exports = {
   cadenceDe, vitesseDe,
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
   FAMILIERS, familierEffet, rechargeFamilier, POUVOIR_PAR_ESPECE,
-  POUVOIRS_PAR_ESPECE, POUVOIRS_ZONE, pouvoirsDe,
+  POUVOIRS_PAR_ESPECE, POUVOIRS_ZONE, POUVOIRS_SOUTIEN, pouvoirsDe,
   ZONE_REACTION,
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe, BOSS,
   SOCLE, SOCLE_DELAI, biomeDe, placeUne, naitDans, ecartDeNaissance,

@@ -426,6 +426,13 @@ class Realm {
          comme les stats du personnage. */
       famNiv: Math.max(1, (fiche && fiche.famNiv) | 0),
       famR: 0,                 // sa recharge, en secondes
+      /* ---- LE DELAI PROPRE AU SOUTIEN ----
+       * Le troisieme cran du compagnon (niveau 60) ne suit PAS la recharge
+       * du compagnon : il a le sien, beaucoup plus long. Sans ce compteur a
+       * part, un compagnon de niveau cent aurait repose son soutien avant
+       * meme qu'il ne tombe — quatre secondes d'effet, trois de recharge —
+       * et il n'aurait plus jamais rien frappe. */
+      famSoutienR: 0,
       bouclier: 0,             // ce que la terre laisse derriere elle
       /* Le pouvoir vient du FRUIT, pas de l'arme : `statFruit` est la stat
          principale du fruit porte, envoyee par game.js. Sans fruit, pas de
@@ -434,6 +441,20 @@ class Realm {
       pouvoirRecharge: 0,
       /* La rafale, quand elle est active : le temps qu'il lui reste. */
       rafale: 0,
+      /* ---- ET DE COMBIEN ELLE MULTIPLIE ----
+       * Deux choses posent la rafale, et elles ne valent PAS la meme chose :
+       * le fruit (deux et demi, quarante-cinq de mana, a la demande) et
+       * l'elan du compagnon (une fois et demie, gratuit, automatique). Lire
+       * le facteur dans la table du fruit aurait donne au compagnon la
+       * cadence du pouvoir paye. Il voyage donc AVEC la duree. */
+      rafalePart: 0,
+      /* ---- LES DEUX ETATS NEUFS DU TROISIEME CRAN ----
+       * Les quatre autres soutiens se branchent sur ce qui existe deja (la
+       * rafale ci-dessus, les immunites, le mana, le bouclier). Ces deux-la
+       * n'avaient rien ou se brancher : rien dans le jeu ne multipliait les
+       * degats infliges, ni la vitesse de regeneration. */
+      ardeur: 0, ardeurPart: 0,
+      racines: 0, racinesPart: 0,
       /* Depuis combien de temps ce joueur n'a ni bouge ni tire. C'est ce
          compteur qui decide du doublement de regeneration au repos. */
       repos: 0,
@@ -648,7 +669,8 @@ class Realm {
        l'attente entre deux tirs. Un pouvoir qui doublerait le NOMBRE de tirs
        changerait aussi la portee couverte et la forme de l'eventail — la
        cadence, elle, ne touche qu'a la vitesse de la main. */
-    const facteur = j.rafale > 0 ? monde.POUVOIRS.rafale.facteur : 1;
+    const facteur = j.rafale > 0
+      ? (j.rafalePart || monde.POUVOIRS.rafale.facteur) : 1;
     /* ---- LA DEXTERITE MULTIPLIE LA CADENCE ----
      * L'arme donne le rythme de base, la dexterite l'accelere, la rafale
      * l'accelere encore. Les trois se multiplient parce qu'ils repondent a
@@ -699,6 +721,10 @@ class Realm {
 
     if (j.pouvoir === 'rafale') {
       j.rafale = P.duree;
+      /* Le facteur part avec la duree. Celui du fruit est le plus fort des
+         deux : il ecrase donc un elan de compagnon en cours, ce qui est le
+         bon sens — on vient de payer quarante-cinq de mana pour ca. */
+      j.rafalePart = P.facteur;
       sortie.duree = P.duree;
       return sortie;
     }
@@ -738,7 +764,7 @@ class Realm {
        soixante mana et douze secondes ne doit pas pouvoir tomber sur son
        minimum. Le hasard a sa place dans les tirs ordinaires, pas ici. */
     const base = (j.degats && j.degats[1]) || monde.DEGATS_POING[1];
-    const perte = monde.degatsInfliges(j.att, base * P.facteur, t.def);
+    const perte = this._attise(j, monde.degatsInfliges(j.att, base * P.facteur, t.def));
     cible.pv = Math.max(0, cible.pv - perte);
     sortie.monstre = cible.id;
     sortie.perte = perte;
@@ -992,6 +1018,11 @@ class Realm {
       if (j.recharge > 0) j.recharge -= dt;
       if (j.pouvoirRecharge > 0) j.pouvoirRecharge = Math.max(0, j.pouvoirRecharge - dt);
       if (j.rafale > 0) j.rafale = Math.max(0, j.rafale - dt);
+      /* Les deux etats du troisieme cran s'usent ICI, avec les autres, et pas
+         dans la boucle des familiers : un joueur dont le compagnon vient de
+         mourir de faim garderait sinon son ardeur pour toujours. */
+      if (j.ardeur > 0) j.ardeur = Math.max(0, j.ardeur - dt);
+      if (j.racines > 0) j.racines = Math.max(0, j.racines - dt);
       this._pasEtats(j, dt, ev);
       this._regenere(j, dt, ev);
     }
@@ -1078,6 +1109,10 @@ class Realm {
       /* Le bouclier s'use meme quand la recharge court : c'est une duree, pas
          une charge, et la suspendre l'aurait rendu permanent au repos. */
       if (j.bouclier > 0) j.bouclier = Math.max(0, j.bouclier - dt);
+      /* Le delai du soutien court TOUJOURS, meme pendant la recharge du
+         compagnon : c'est un temps de repos entre deux aides, pas une file
+         d'attente derriere les attaques. */
+      if (j.famSoutienR > 0) j.famSoutienR = Math.max(0, j.famSoutienR - dt);
       j.famR = (j.famR || 0) - dt;
       if (j.famR > 0) continue;
 
@@ -1107,7 +1142,18 @@ class Realm {
       let fait = false;
       for (const p of this._ordreFamilier(j, ouverts)) {
         if (this._familierAgit(j, p.cle, p.effet, ev)) {
-          fait = true; j.famR = p.effet.recharge; break;
+          fait = true; j.famR = p.effet.recharge;
+          /* ---- LE SOUTIEN PAIE SON PROPRE DELAI ----
+           * Et il ne le paie QUE s'il a servi : le `false` rendu par un
+           * soutien inutile (mana deja plein, bouclier deja pose) laisse le
+           * compagnon retomber sur ses autres gestes SANS avoir brule ses
+           * dix-huit secondes. Poser le delai avant de savoir s'il sert
+           * aurait rendu le troisieme cran silencieux pendant des combats
+           * entiers, sans que rien ne le dise. */
+          if (p.soutien) {
+            j.famSoutienR = p.effet.delai || monde.FAMILIERS.soutienDelai;
+          }
+          break;
         }
       }
       if (!fait) j.famR = 0.35;           // il regarde autour, il ne dort pas
@@ -1132,9 +1178,33 @@ class Realm {
    * que ce prefere ne s'applique pas.
    */
   _ordreFamilier(j, ouverts) {
+    /* ---- LE SOUTIEN PASSE DEVANT, QUAND IL A LE DROIT ----
+     *
+     * Deux conditions, et elles sont dans cet ordre parce que la premiere est
+     * gratuite : son delai propre doit etre tombe, et il doit y avoir quelque
+     * chose a combattre dans le rayon.
+     *
+     * La seconde condition existe parce qu'un soutien lance dans une
+     * clairiere vide aurait grille dix-huit secondes de delai pour arriver au
+     * combat SANS. C'est exactement le contraire de ce qu'on veut d'un
+     * pouvoir de preparation : il doit etre la au premier coup, pas avoir
+     * expire pendant le trajet.
+     *
+     * Et il passe DEVANT parce que c'est une preparation : le compagnon pose
+     * son aide, puis passe le reste du combat a frapper. Le mettre en dernier
+     * l'aurait rendu injouable — il n'aurait servi qu'au moment ou il n'y a
+     * plus rien a taper. */
+    let soutiens = ouverts.filter((p) => p.soutien);
+    if (soutiens.length && (j.famSoutienR > 0 || !this._autourDe(
+          j, (soutiens[0].effet.rayon || monde.FAMILIERS.zoneRayon)).length)) {
+      soutiens = [];
+    }
+
     const zones = ouverts.filter((p) => p.zone);
-    const seuls = ouverts.filter((p) => !p.zone);
-    if (!zones.length || !seuls.length) return zones.concat(seuls);
+    const seuls = ouverts.filter((p) => !p.zone && !p.soutien);
+    if (!zones.length || !seuls.length) {
+      return soutiens.concat(zones, seuls);
+    }
     const r = zones[0].effet.rayon || monde.FAMILIERS.zoneRayon;
     const R2 = r * r;
     let combien = 0;
@@ -1144,7 +1214,7 @@ class Realm {
       if (dx * dx + dy * dy <= R2) combien++;
     }
     return combien >= monde.FAMILIERS.zoneMini
-      ? zones.concat(seuls) : seuls.concat(zones);
+      ? soutiens.concat(zones, seuls) : soutiens.concat(seuls, zones);
   }
 
   /** Les creatures vivantes dans un rayon autour du maitre. Une seule facon de
@@ -1339,6 +1409,129 @@ class Realm {
       return true;
     }
 
+    /* ======================================================================
+     * LES SIX DE SOUTIEN — le troisieme cran
+     * ======================================================================
+     *
+     * Aucun ne vise. Ils se posent sur le MAITRE, et c'est ce qui les separe
+     * des deux premiers crans : un troisieme pouvoir de degats aurait fait du
+     * niveau soixante un multiplicateur, alors que tout le systeme promet que
+     * le niveau achete de la FREQUENCE.
+     *
+     * Tous rendent `false` quand leur effet TIENT DEJA. C'est ce refus qui
+     * les empeche de se reposer sur eux-memes indefiniment, et qui laisse le
+     * compagnon retomber sur ses gestes offensifs sans perdre son tour ni
+     * bruler son delai.
+     */
+    if (cle === 'elan') {
+      /* Deja presse : on ne repose pas. Et si c'est le fruit qui presse, son
+         facteur est plus fort — le remplacer par celui du compagnon aurait
+         RALENTI un joueur qui vient de payer quarante-cinq de mana. */
+      if (j.rafale > 0) return false;
+      j.rafale = E.duree;
+      j.rafalePart = E.facteur;
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'elan', duree: E.duree,
+                    facteur: E.facteur, rayon: E.rayon,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    if (cle === 'ardeur') {
+      if (j.ardeur > 0) return false;
+      j.ardeur = E.duree;
+      j.ardeurPart = E.part;
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'ardeur', duree: E.duree,
+                    part: E.part, rayon: E.rayon,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    if (cle === 'givre') {
+      /* ---- LA SEULE SORTIE DU JEU CONTRE UNE PARALYSIE DEJA POSEE ----
+       * Les trois etats sont EFFACES, puis immunises. Effacer sans immuniser
+       * n'aurait servi a rien : le monstre qui vient de paralyser recommence
+       * a la seconde suivante. Immuniser sans effacer aurait laisse le joueur
+       * cloue au sol en le protegeant de ce qui ne l'atteint plus.
+       *
+       * On pose l'immunite a `Math.max` : un joueur qui sort d'une paralysie
+       * porte deja trois secondes et demie, et les remplacer par les quatre
+       * du givre est un gain, mais les remplacer par une valeur PLUS COURTE
+       * en aurait ete un retrait — un pouvoir de protection ne retire pas de
+       * la protection. */
+      let sert = false;
+      for (const c of Object.keys(monde.EFFETS)) {
+        if (j[c] > 0) { j[c] = 0; sert = true; }
+        if (!(j.immun[c] >= E.duree)) { j.immun[c] = E.duree; sert = true; }
+      }
+      /* Le reste de degat de brulure part avec elle : le garder aurait verse
+         un point de plus au premier pas suivant, apres l'annonce de
+         l'immunite. */
+      j.brulReste = 0;
+      if (!sert) return false;
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'givre', duree: E.duree,
+                    rayon: E.rayon, pv: j.pv,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    if (cle === 'racines') {
+      if (j.racines > 0) return false;
+      /* En pleine vie, la regeneration n'a rien a rendre : on refuse comme le
+         soin refuse, et le compagnon garde son delai pour le moment ou ca
+         comptera. */
+      if (j.pv >= j.pvMax) return false;
+      j.racines = E.duree;
+      j.racinesPart = E.part;
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'racines', duree: E.duree,
+                    part: E.part, rayon: E.rayon, pv: j.pv,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    if (cle === 'emprise') {
+      /* Le seul soutien IMMEDIAT des six : il verse, et c'est fini. Il n'a
+         donc pas d'etat a tester — sa seule question est s'il reste de la
+         place. Une reserve de zero (un personnage sans mana) repond non, et
+         c'est le bon refus : verser un point dans une reserve inexistante
+         aurait consomme le delai pour rien. */
+      if (j.mp >= j.mpMax) return false;
+      const gain = Math.max(1, Math.round(j.mpMax * E.part));
+      j.mp = Math.min(j.mpMax, j.mp + gain);
+      /* Le reste flottant repart de zero : le garder aurait ajoute un point
+         au premier pas suivant, comme si la regeneration avait travaille. */
+      j.mpReste = 0;
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'emprise', gain, mp: j.mp,
+                    rayon: E.rayon,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
+    if (cle === 'benediction') {
+      /* Meme refus que le bouclier de la terre : on ne le repose pas s'il
+         tient encore, sinon il cesserait d'etre une fenetre pour devenir un
+         etat. */
+      if (j.bouclier > 0) return false;
+      j.bouclier = E.duree;
+      j.bouclierPart = E.reduction;
+      /* ---- ET LA BRULURE EN COURS S'ETEINT ----
+       * Annoncer l'immunite a la brulure en laissant le joueur bruler aurait
+       * ete un mensonge visible : la barre continue de descendre pendant que
+       * l'anneau dit qu'elle est protegee. */
+      j.brulure = 0;
+      j.brulReste = 0;
+      j.immun.brulure = Math.max(j.immun.brulure || 0, E.duree);
+      ev.fam = ev.fam || [];
+      ev.fam.push({ addr: j.addr, quoi: 'benediction', duree: E.duree,
+                    part: E.reduction, rayon: E.rayon, pv: j.pv,
+                    x: Math.round(j.x), y: Math.round(j.y) });
+      return true;
+    }
+
     if (cle === 'repousse') {
       const R2 = E.rayon * E.rayon;
       const pousses = [];
@@ -1424,6 +1617,22 @@ class Realm {
    * dans les trois aurait garanti que la quatrieme, le jour ou elle arrive,
    * l'oublie. La brulure n'y passe pas : elle ignore la defense par regle du
    * jeu, et un bouclier est une defense. */
+  /**
+   * L'ARDEUR : ce que le maitre inflige, multiplie.
+   *
+   * Elle ne touche QUE les coups du joueur — arme et foudre. Les gestes du
+   * compagnon en sont exclus : sans cette limite, l'ardeur aurait multiplie
+   * la meute et le brasier en meme temps que l'arme, et trois sources qui se
+   * multiplient entre elles ne se reglent plus.
+   *
+   * Au moins un point, comme partout ailleurs : un arrondi ne doit jamais
+   * transformer un coup qui portait en un coup qui ne porte pas.
+   */
+  _attise(j, perte) {
+    if (!j || !(j.ardeur > 0) || !(j.ardeurPart > 0)) return perte;
+    return Math.max(1, Math.round(perte * (1 + j.ardeurPart)));
+  }
+
   _amorti(j, perte) {
     if (!(j.bouclier > 0) || !(j.bouclierPart > 0)) return perte;
     /* Au moins un point : un bouclier qui annulerait entierement les petits
@@ -1450,9 +1659,18 @@ class Realm {
     j.repos = (j.repos || 0) + dt;
     const auRepos = j.repos >= monde.REPOS_DELAI;
 
+    /* ---- LES RACINES ACCELERENT LA VIE, ET RIEN D'AUTRE ----
+     * Pas le mana : c'est le travail de l'emprise, et un pouvoir qui rendrait
+     * les deux aurait rendu l'autre inutile. Le facteur se MULTIPLIE au
+     * doublement du repos plutot que de le remplacer — les deux repondent a
+     * deux questions differentes (est-ce que je souffle, est-ce que mon
+     * compagnon m'aide) et un joueur qui fait les deux merite les deux. */
+    const racines = (j.racines > 0 && j.racinesPart > 0) ? 1 + j.racinesPart : 1;
+
     let bouge = false;
     if (j.pv < j.pvMax) {
-      j.pvReste = (j.pvReste || 0) + monde.regenParSeconde(j.vit, auRepos) * dt;
+      j.pvReste = (j.pvReste || 0)
+        + monde.regenParSeconde(j.vit, auRepos) * racines * dt;
       const gain = Math.floor(j.pvReste);
       if (gain > 0) {
         j.pvReste -= gain;
@@ -1798,7 +2016,8 @@ class Realm {
           const dx = m.x - t.x, dy = m.y - t.y;
           if (dx * dx + dy * dy > r * r) continue;
           const arme = monde.tirageArme(j ? j.degats : monde.DEGATS_POING, this.alea);
-          const perte = monde.degatsInfliges(j ? j.att : 0, arme, monde.MONSTRES[m.espece].def);
+          const perte = this._attise(j,
+            monde.degatsInfliges(j ? j.att : 0, arme, monde.MONSTRES[m.espece].def));
           m.pv = Math.max(0, m.pv - perte);
           /* L'adresse du TIREUR part avec le coup : c'est lui qui doit
              l'entendre, pas les trois joueurs d'a cote. */
@@ -1965,13 +2184,22 @@ class Realm {
               * silence : la page demandait moins que son du. */
              c: Number((((monde.ARMES[j.famille] || monde.ARMES.poing).cadence
                         * (j.cadence || 1)
-                        * (j.rafale > 0 ? monde.POUVOIRS.rafale.facteur : 1))).toFixed(2)),
+                        * (j.rafale > 0
+                           ? (j.rafalePart || monde.POUVOIRS.rafale.facteur)
+                           : 1))).toFixed(2)),
              /* Le pouvoir et son etat partent a chaque image : le bouton doit
                 pouvoir s'eteindre a la seconde ou le mana manque, pas quand
                 le joueur appuie pour rien. */
              po: j.pouvoir || null,
              poR: Number((j.pouvoirRecharge || 0).toFixed(2)),
              raf: Number((j.rafale || 0).toFixed(2)),
+             /* Les deux etats du troisieme cran partent a chaque image, pour
+                la meme raison que le bouclier : ils agissent en changeant un
+                CHIFFRE, et un chiffre qui change ne se dessine pas tout seul.
+                Sans eux, un joueur qui recharge sa page en pleine ardeur
+                verrait l'effet disparaitre alors qu'il court encore. */
+             ard: Number((j.ardeur || 0).toFixed(2)),
+             rac: Number((j.racines || 0).toFixed(2)),
              /* La paralysie part a chaque image : la page doit pouvoir cesser
                 d'obeir aux touches a la seconde ou elle commence, sans
                 attendre un message a part. */

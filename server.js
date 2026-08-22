@@ -5363,7 +5363,13 @@ function traiteEvenements(R, ev) {
            liste de pouvoirs de zone cote navigateur aurait fini par ne plus
            etre la meme que celle du serveur. */
         send(ws, { type: 'realmFam', ...f, addr: undefined,
-                   zone: monde.POUVOIRS_ZONE.has(f.quoi) ? 1 : undefined });
+                   zone: monde.POUVOIRS_ZONE.has(f.quoi) ? 1 : undefined,
+                   /* `soutien` est derive de la meme facon, et pour la meme
+                      raison. La page en a besoin pour une decision qu'elle ne
+                      peut pas prendre autrement : un soutien se peint SUR le
+                      joueur et suit ses pas pendant toute sa duree, alors
+                      qu'une zone se pose au sol et y reste. */
+                   soutien: monde.POUVOIRS_SOUTIEN.has(f.quoi) ? 1 : undefined });
       }
     }
   }

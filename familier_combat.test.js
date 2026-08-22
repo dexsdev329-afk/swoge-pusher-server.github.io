@@ -47,6 +47,19 @@ function scene(fam, niv, opts) {
   R.monstres.length = 0;
   R.tirsM.length = 0;
   R.zones.length = 0;
+  /* ---- LE TROISIEME CRAN EST MIS DE COTE, ICI ----
+   *
+   * A partir du soixantieme niveau le compagnon connait un pouvoir de
+   * SOUTIEN, et ce soutien passe DEVANT tout le reste : il prepare, puis il
+   * frappe. Plusieurs scenes de ce fichier tournent au centieme niveau pour
+   * avoir une recharge courte — elles mesureraient donc le soutien au lieu
+   * de ce qu'elles annoncent mesurer.
+   *
+   * On le met sur son delai des le depart. Ce n'est pas un contournement :
+   * c'est l'etat NORMAL d'un compagnon qui vient de preparer son maitre, et
+   * c'est dans cet etat qu'il passe les trois quarts d'un combat. Le
+   * soutien lui-meme a son fichier : familier_soutien.test.js. */
+  j.famSoutienR = monde.FAMILIERS.soutienDelai;
   return { R, A, j };
 }
 function poseMonstre(R, j, dx, dy) {

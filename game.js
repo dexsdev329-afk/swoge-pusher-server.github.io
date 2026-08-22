@@ -156,6 +156,16 @@ const NOM_POUVOIR_FAMILIER = {
   secousse: 'Knocks back and stuns everything around you',
   abysse:   'Damages everything around you and heals you for part of it',
   aura:     'Heals you and nearby players',
+  /* ---- LE TROISIEME CRAN ----
+   * Aucune de ces phrases ne parle des monstres : c'est exactement ce qui
+   * distingue ce cran des deux autres, et le joueur doit le lire avant de
+   * decider s'il vaut la peine d'aller jusqu'au soixantieme niveau. */
+  elan:        'Makes you shoot faster for a few seconds',
+  ardeur:      'Makes your own hits stronger for a few seconds',
+  givre:       'Clears stun, slow and burn, then keeps them off you',
+  racines:     'Speeds up your health regeneration for a few seconds',
+  emprise:     'Restores part of your mana',
+  benediction: 'Shields you and keeps burning off, for a few seconds',
 };
 function pouvoirFamilier(espece) {
   const cle = monde.POUVOIR_PAR_ESPECE[espece];
@@ -175,15 +185,50 @@ const XP_OEUF_DOUBLE = 1500;
 
 /* ================== LE REPAS ET LES NIVEAUX ==================
  *
- * ---- CE QU'UN FAMILIER A LE DROIT DE MANGER ----
+ * ---- CE QU'UN FAMILIER A LE DROIT DE MANGER : TOUT ----
  *
- * Commun et rare, jamais au-dessus. Ce n'est pas une limite de confort : au
- * moment ou une legendaire nourrit mieux qu'elle ne se porte, le meilleur
- * usage d'une legendaire devient de la DETRUIRE — et l'on retire du jeu des
- * pieces dont l'offre est plafonnee a quarante pour la saison, que d'autres
- * joueurs cherchent encore. Les deux crans autorises sont justement les deux
- * abondants (mille communes, quatre cents rares) : ce sont eux qui n'avaient
- * aucun usage une fois le sac plein.
+ * Il n'y a plus de cran interdit. Avant, seuls le commun et le rare
+ * passaient, et la raison ecrite ici etait bonne : au moment ou une
+ * legendaire nourrit mieux qu'elle ne se porte, le meilleur usage d'une
+ * legendaire devient de la DETRUIRE, et l'on retire du jeu des pieces dont
+ * l'offre est plafonnee a quarante pour la saison.
+ *
+ * ---- CE QUI REMPLACE L'INTERDICTION ----
+ *
+ * Le bareme, et rien d'autre :
+ *
+ *     commun 25   rare 90   epique 150   legendaire 500   mythique 1500
+ *
+ * Au-dessus du rare, il monte MOINS vite que la rarete. Une legendaire vaut
+ * vingt communes a manger alors qu'il en existe vingt-cinq fois moins ; une
+ * mythique en vaut soixante alors qu'il en existe cent fois moins. L'echange
+ * est donc perdant a chaque cran, et il l'est de plus en plus haut on monte.
+ *
+ * Le vrai garde-fou est plus fort encore, et c'est un simple compte : il faut
+ * 29 700 d'XP pour mener un familier au centieme niveau.
+ *
+ *     epique      198 pieces … il en existera 150
+ *     legendaire   60 pieces … il en existera  40
+ *     mythique     20 pieces … il en existera  10
+ *
+ * Brûler l'EDITION ENTIERE d'un cran, jusqu'a la derniere piece du serveur,
+ * ne suffirait pas a monter UN seul compagnon. La regle ne peut donc pas etre
+ * exploitee, quel que soit le nombre de joueurs qui s'y mettent.
+ *
+ * Le rare est la seule exception, et elle est voulue : il rapporte plus que
+ * sa rarete (trois fois et demie une commune pour deux fois et demie moins
+ * d'exemplaires). C'etait deja le cas avant, et c'etait le but — la commune
+ * et la rare sont les deux crans qui n'avaient aucun usage une fois le sac
+ * plein.
+ *
+ * C'est une meilleure regle que l'interdiction, parce qu'elle n'a pas besoin
+ * d'etre appliquee : personne ne fera l'echange, et celui qui le fait sait ce
+ * qu'il fait. Une interdiction protegeait le joueur de lui-meme ; un mauvais
+ * taux de change le laisse libre en rendant l'erreur evidente.
+ *
+ * Le risque qui reste, et il est reel : un joueur peut detruire une piece
+ * rare a laquelle il tenait, en trois clics, sans retour possible. C'est le
+ * meme geste que le recyclage, et il est irreversible comme lui.
  *
  * ---- LE NIVEAU SE DEDUIT DE L'XP ----
  *
@@ -199,7 +244,18 @@ const XP_OEUF_DOUBLE = 1500;
  * derniere marche couterait le prix de la premiere alors qu'elle demande
  * quarante fois plus d'XP, et l'or cesserait de compter des le deuxieme soir.
  */
-const REPAS_XP = { commun: 25, rare: 90 };
+/* ---- LE BAREME, UN CRAN PAR RARETE ----
+ * Ecrit a la main : c'est un reglage, pas une formule. Mais la COUVERTURE,
+ * elle, se verifie — une rarete ajoutee demain sans valeur ici aurait rendu
+ * ses pieces immangeables en silence, et le joueur se serait fait refuser un
+ * repas sans qu'aucune regle affichee ne le dise. */
+const REPAS_XP = { commun: 25, rare: 90, epique: 150, legendaire: 500,
+                   mythique: 1500, relique: 3000 };
+for (const R of boutique.RARETES) {
+  if (!(REPAS_XP[R.cle] > 0)) {
+    throw new Error('REPAS_XP : rarete sans valeur de repas : ' + R.cle);
+  }
+}
 const REPAS_OR = 5;                     // le plancher ; le niveau ajoute un quart
 const NIVEAU_MAX_FAM = monde.FAMILIERS.niveauMax;
 
@@ -7313,11 +7369,14 @@ class Game {
     p.sac = p.sac || {};
     if (!(p.sac[id] > 0)) throw new Error('That one is not in your backpack');
 
+    /* Toutes les raretes nourrissent — la garde de couverture au chargement
+       le garantit. Ce qui reste ici ne peut donc arriver que si l'objet porte
+       une rarete inconnue de la table des raretes : une faute de frappe dans
+       un catalogue, pas un refus de regle. On le DIT comme tel plutot que de
+       laisser croire au joueur qu'il a mal choisi. */
     const gagne = REPAS_XP[o.rarete];
     if (!(gagne > 0)) {
-      /* On DIT ce qui est accepte. « It cannot eat that » laisse le joueur
-         essayer les cinq autres crans un par un pour deviner la regle. */
-      throw new Error('Pets only eat Common and Rare gear');
+      throw new Error('Unknown rarity on that item: ' + o.rarete);
     }
     const prix = fiche.prixRepas;
     const or = p.fame || 0;

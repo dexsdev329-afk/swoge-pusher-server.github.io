@@ -90,27 +90,93 @@ p.familiers.normal.niveau = 17;
 f = g.familiersDe(A)[0];
 eq(f.niveau, 1, 'un niveau herite d une ancienne sauvegarde est ignore');
 
-/* ================== 2. CE QU IL MANGE ================== */
-console.log('\n-- commun et rare, jamais au-dessus --');
+/* ================== 2. CE QU IL MANGE : TOUT ================== */
+console.log('\n-- toutes les raretes nourrissent --');
 p.fame = 100000;
-p.sac = {}; p.sac[parRarete.legendaire] = 1;
-let err = null;
-try { g.nourritFamilier(A, 'normal', parRarete.legendaire); } catch (e) { err = e.message; }
-ok(/Common and Rare/.test(err || ''), `la legendaire est refusee (${err})`);
-eq(p.sac[parRarete.legendaire], 1, 'et elle est TOUJOURS dans le sac');
-eq(p.fame, 100000, 'l or n a pas bouge non plus');
+p.sac = {};
+const bareme = Game.reglesFamilier();
 
-p.sac[parRarete.commun] = 1;
-let r = g.nourritFamilier(A, 'normal', parRarete.commun);
-eq(r.gagne, 25, 'une commune vaut vingt-cinq points');
-eq(p.sac[parRarete.commun], undefined, 'et elle quitte le sac');
-p.sac[parRarete.rare] = 1;
-r = g.nourritFamilier(A, 'normal', parRarete.rare);
-eq(r.gagne, 90, 'une rare en vaut quatre-vingt-dix');
-eq(g.familiersDe(A)[0].xp, 115, 'les deux repas s additionnent');
+/* ---- AUCUN CRAN N EST REFUSE ----
+ * L interdiction du legendaire et au-dessus est tombee. On le verifie sur
+ * CHAQUE rarete que la boutique connait, et pas sur une liste recopiee ici :
+ * une rarete ajoutee demain sans valeur de repas doit faire echouer ce test,
+ * pas passer inapercue. */
+{
+  const avant = g.familiersDe(A)[0].xp;
+  let cumul = 0;
+  for (const R of boutique.RARETES) {
+    const id = parRarete[R.cle];
+    if (!id) continue;                 // la relique n a pas d objet au catalogue
+    p.sac[id] = 1;
+    const r = g.nourritFamilier(A, 'normal', id);
+    ok(r.gagne > 0, `le cran « ${R.cle} » nourrit (${r.gagne} points)`);
+    eq(r.gagne, bareme.xp[R.cle], 'et il vaut ce que la page annonce');
+    eq(p.sac[id], undefined, 'la piece quitte le sac');
+    cumul += r.gagne;
+  }
+  eq(g.familiersDe(A)[0].xp, avant + cumul, 'tous les repas s additionnent');
+}
+
+/* ---- AU-DESSUS DU RARE, LE BAREME MONTE MOINS VITE QUE LA RARETE ----
+ * C est ce qui remplace l interdiction, et c est le taux de change qui la
+ * remplace, pas une regle a appliquer : personne n echange vingt communes
+ * contre une legendaire.
+ *
+ * On mesure contre les PLAFONDS de la boutique, jamais contre un chiffre
+ * recopie ici : le jour ou un plafond bouge, ce test doit se reveiller.
+ *
+ * Le RARE est exclu, et volontairement : il rapporte PLUS que sa rarete, et
+ * c est le but depuis toujours — commune et rare sont les deux crans qui
+ * n avaient aucun usage une fois le sac plein. */
+{
+  const par = (cle) => boutique.RARETES.find((R) => R.cle === cle);
+  const base = par('commun').plafond;
+  for (const R of boutique.RARETES) {
+    if (R.cle === 'commun' || R.cle === 'rare') continue;
+    const rapportXp = bareme.xp[R.cle] / bareme.xp.commun;
+    const rapportRarete = base / R.plafond;
+    ok(rapportXp < rapportRarete,
+       `« ${R.cle} » : ${rapportXp.toFixed(0)}x l XP d une commune pour `
+       + `${rapportRarete.toFixed(0)}x moins d exemplaires — l echange est perdant`);
+  }
+}
+
+/* ---- ET BRULER L EDITION ENTIERE NE SUFFIT PAS ----
+ * Le garde-fou qui ne depend d aucun joueur : au-dessus du rare, il faudrait
+ * plus de pieces que le serveur n en contiendra JAMAIS pour mener UN seul
+ * compagnon au centieme niveau. Le jour ou ce test tombe, detruire des pieces
+ * rares est devenu une strategie de progression — et l offre plafonnee du jeu
+ * a cesse de vouloir dire quelque chose. */
+{
+  const bout = palier(bareme.niveauMax);
+  for (const R of boutique.RARETES) {
+    if (R.cle === 'commun' || R.cle === 'rare') continue;
+    const combien = Math.ceil(bout / bareme.xp[R.cle]);
+    ok(combien > R.plafond,
+       `« ${R.cle} » : il en faudrait ${combien} pour un centieme niveau, `
+       + `il n en existera que ${R.plafond}`);
+  }
+}
+
+/* ---- ET UNE RARETE INCONNUE RESTE UNE FAUTE, PAS UN REFUS DE REGLE ----
+ * Le message ne doit pas laisser croire au joueur qu il a mal choisi : c est
+ * un catalogue casse, et ca se dit. */
+{
+  const vrai = boutique.item(parRarete.commun);
+  const rarete = vrai.rarete;
+  vrai.rarete = 'poussiere';
+  p.sac[parRarete.commun] = 1;
+  let err = null;
+  try { g.nourritFamilier(A, 'normal', parRarete.commun); } catch (e) { err = e.message; }
+  vrai.rarete = rarete;
+  ok(/Unknown rarity/.test(err || ''), `une rarete inconnue se dit (${err})`);
+  eq(p.sac[parRarete.commun], 1, 'et la piece est TOUJOURS dans le sac');
+}
+p.sac = {};
 
 /* ================== 3. UN REFUS NE COUTE RIEN ================== */
 console.log('\n-- ce qui est refuse n est pas detruit --');
+let err = null, r = null;
 p.fame = 1;                                    // moins que le prix d un repas
 p.sac[parRarete.commun] = 1;
 err = null;
@@ -175,8 +241,14 @@ ok(r.monte === false,
 console.log('\n-- le plafond tient --');
 const regles = Game.reglesFamilier();
 eq(regles.niveauMax, 100, 'le maximum est annonce par le serveur');
-ok(regles.rarete.join(',') === 'commun,rare',
-   `et les raretes acceptees aussi (${regles.rarete.join(', ')})`);
+/* La liste annoncee doit couvrir TOUTES les raretes de la boutique. C est la
+   meme garde qu au chargement de game.js, vue depuis la page : une rarete
+   ajoutee sans valeur de repas ferait refuser un objet sans qu aucune regle
+   affichee ne l explique. */
+for (const R of boutique.RARETES) {
+  ok(regles.rarete.includes(R.cle) && regles.xp[R.cle] > 0,
+     `« ${R.cle} » figure dans les regles annoncees (${regles.xp[R.cle]} points)`);
+}
 p.familiers.normal.xp = 1e9;
 f = g.familiersDe(A)[0];
 eq(f.niveau, 100, 'une XP absurde ne depasse pas le maximum');

@@ -47,6 +47,19 @@ function scene(fam, niv) {
   R.rejoint(A, fiche(fam, niv));
   const j = R.joueurs.get(A);
   R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+  /* ---- LE TROISIEME CRAN EST MIS DE COTE, ICI ----
+   *
+   * A partir du soixantieme niveau le compagnon connait un pouvoir de
+   * SOUTIEN, et ce soutien passe DEVANT tout le reste : il prepare, puis il
+   * frappe. Plusieurs scenes de ce fichier tournent au centieme niveau pour
+   * avoir une recharge courte — elles mesureraient donc le soutien au lieu
+   * de ce qu'elles annoncent mesurer.
+   *
+   * On le met sur son delai des le depart. Ce n'est pas un contournement :
+   * c'est l'etat NORMAL d'un compagnon qui vient de preparer son maitre, et
+   * c'est dans cet etat qu'il passe les trois quarts d'un combat. Le
+   * soutien lui-meme a son fichier : familier_soutien.test.js. */
+  j.famSoutienR = monde.FAMILIERS.soutienDelai;
   return { R, A, j };
 }
 function poseMonstre(R, j, dx, dy, pv) {
@@ -204,6 +217,9 @@ console.log('\n-- la relique soigne les autres --');
   R.rejoint('0xbbb', fiche(null, 1, 'Bob'));
   R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
   const a = R.joueurs.get('0xaaa'), b = R.joueurs.get('0xbbb');
+  /* Meme mise de cote qu'en haut : au centieme niveau, la benediction du
+     legendaire passerait devant son aura et ce bloc mesurerait le soutien. */
+  a.famSoutienR = monde.FAMILIERS.soutienDelai;
   b.x = a.x + 60; b.y = a.y;
   a.pv = 100; b.pv = 100;
   for (let i = 0; i < MINI; i++) poseMonstre(R, a, 40 + i * 10, 0);
@@ -221,6 +237,9 @@ console.log('\n-- mais pas ceux qui sont loin --');
   R.rejoint('0xbbb', fiche(null, 1, 'Bob'));
   R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
   const a = R.joueurs.get('0xaaa'), b = R.joueurs.get('0xbbb');
+  /* Meme mise de cote qu'en haut : au centieme niveau, la benediction du
+     legendaire passerait devant son aura et ce bloc mesurerait le soutien. */
+  a.famSoutienR = monde.FAMILIERS.soutienDelai;
   b.x = a.x + RAYON + 100; b.y = a.y;
   a.pv = 100; b.pv = 100;
   for (let i = 0; i < MINI; i++) poseMonstre(R, a, 40 + i * 10, 0);
