@@ -4103,6 +4103,19 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
+      /* Y a-t-il un bon qui attend ? Cette route NE SIGNE RIEN et n'ouvre aucun
+         portefeuille : elle sert au panneau de retrait a savoir s'il doit
+         montrer le bouton. Le demander en signant aurait ouvert le
+         portefeuille du joueur a chaque ouverture du panneau. */
+      if (m.type === 'withdrawPending') {
+        if (chain.suitLesRetraits()) {
+          try { game.noteRetireOnChain(ws.addr, await chain.withdrawnOnChain(ws.addr)); }
+          catch (e) { /* muette : on repond avec ce qu'on croyait */ }
+        }
+        const b = game.bonEnAttente(ws.addr);
+        return send(ws, { type: 'bonAttente',
+                          montant: ethers.utils.formatUnits(b.du, cfg.DECIMALS) });
+      }
       /* ---- REDEMANDER LE BON QU'ON N'A PAS ENCAISSE ----
        *
        * Refuser dans son portefeuille, une transaction qui echoue, un onglet
