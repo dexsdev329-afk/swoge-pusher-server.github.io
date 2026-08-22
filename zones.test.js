@@ -57,9 +57,48 @@ let MODELE = null;
   }
   ok(vmin > 0, `le personnage le plus lent du jeu est ${lent}, a ${vmin.toFixed(0)} u/s`);
 
-  for (const k of AVEC_ZONE) {
-    const z = M.MONSTRES[k].zone;
-    ok(z.annonce > 0, `« ${M.MONSTRES[k].nom} » annonce son coup (${z.annonce} s)`);
+  /* ---- CHAQUE PHASE, PAS SEULEMENT LA FICHE DE BASE ----
+   *
+   * Un boss a phases change sa zone en cours de combat. La regle de sortie
+   * s'appliquait a sa fiche de DEPART et a rien d'autre : sa phase trois
+   * pouvait donc annoncer son cercle en une seconde pour un rayon de deux
+   * cent soixante, et personne ne l'aurait vu — la garantie « on peut
+   * toujours en sortir » aurait eu son trou exactement la ou le combat est le
+   * plus dur.
+   *
+   * C'est arrive : la premiere version de l'Idole annoncait sa zone en 1,1 s
+   * sous un tiers de vie, pour un cercle dont il faut 1,54 s pour sortir.
+   *
+   * On enumere donc les VARIANTES. Le nombre de phases vient du moteur —
+   * l'ecrire ici ferait passer l'essai le jour ou l'on en ajoute une. */
+  const variantes = [];
+  for (const k of Object.keys(M.MONSTRES)) {
+    const n = M.nbPhases(k);
+    if (!n) { if (M.MONSTRES[k].zone) variantes.push({ k, ph: 0, sur: 1, t: M.MONSTRES[k] }); continue; }
+    for (let i = 0; i < n; i++) {
+      /* On demande au moteur la fiche de CETTE phase en lui donnant une vie
+         qui tombe dedans. Fabriquer la fusion ici serait refaire son travail,
+         donc pouvoir se tromper differemment de lui. */
+      const pvMax = M.MONSTRES[k].pv;
+      /* Juste sous le seuil de la phase visee : `phaseMonstre` le confirme,
+         on ne suppose pas ou tombe le decoupage. */
+      let pv = pvMax, trouve = false;
+      for (let q = 1000; q >= 0; q--) {
+        pv = pvMax * (q / 1000);
+        if (M.phaseMonstre(k, pv, pvMax) === i) { trouve = true; break; }
+      }
+      ok(trouve, `on sait atteindre la phase ${i + 1} de « ${k} »`);
+      const t = M.statsMonstre(k, pv, pvMax);
+      if (t.zone) variantes.push({ k, ph: i, sur: n, t });
+    }
+  }
+  ok(variantes.length >= AVEC_ZONE.length,
+     `${variantes.length} zones a verifier, phases comprises`);
+
+  for (const v of variantes) {
+    const z = v.t.zone;
+    const k = v.sur > 1 ? `${v.k} (phase ${v.ph + 1}/${v.sur})` : v.k;
+    ok(z.annonce > 0, `« ${v.t.nom} » annonce son coup (${z.annonce} s)`);
     ok(z.rayon > 0, 'et il a un rayon');
     const exige = z.rayon / vmin + M.ZONE_REACTION;
     ok(z.annonce >= exige,

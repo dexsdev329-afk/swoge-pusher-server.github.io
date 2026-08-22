@@ -219,4 +219,46 @@ eq(texte(revenue.record), texte(pose.record), 'le record');
      'un depot sans une seule manche jouee est ecrit lui aussi — c est de l argent du');
 }
 
+/* ================== LE POUVOIR N EST QUE SUR LES FRUITS ==================
+ *
+ * Un joueur l a signale : des armures et des bagues annonçaient un pouvoir.
+ * Mesure faite au moment du signalement : 45 armures et 41 bagues, soit 86
+ * fiches — et le joueur ne le recevait JAMAIS. Le pouvoir reel vient de
+ * `etat.equipFruit`, l emplacement fruit et lui seul. On vendait « Rusted
+ * Cuirass · Stasis · 75 MP » a quelqu un qui n aurait jamais de Stasis.
+ *
+ * La cause etait un discriminant faux : `FAMILLE_STAT[o.famille]`, avec le
+ * commentaire « elle ne connait que les familles de FRUITS ». Elle contient
+ * aussi `plastron`, `casque`, `onyx`, `saphir` — les armures et les bagues
+ * ont elles aussi une stat dominante.
+ *
+ * Cet essai ne verifie pas le correctif, il verifie la REGLE : quoi qu on
+ * change dans le catalogue, une seule saison donne un pouvoir actif.
+ */
+{
+  const boutique2 = require('./boutique');
+  const S = boutique2.SAISONS.find((x) => x.cle === 'fruits');
+  ok(!!S, `la saison des fruits existe (n°${S && S.n})`);
+  const compte = {};
+  const tous = boutique2.ITEMS.concat(boutique2.ITEMS_DROP || []);
+  for (const o of tous) {
+    if (Game.sortDuFruit(o)) compte[o.saison] = (compte[o.saison] || 0) + 1;
+  }
+  ok((compte[S.n] || 0) > 0,
+     `les fruits portent bien un pouvoir (${compte[S.n] || 0} objets)`);
+  for (const sa of boutique2.SAISONS) {
+    if (sa.n === S.n) continue;
+    eq(compte[sa.n] || 0, 0,
+       `« ${sa.cle} » n en porte AUCUN — ce serait une promesse que le jeu ne tient pas`);
+  }
+  /* Et la promesse est tenue DANS L AUTRE SENS : ce qui porte un pouvoir doit
+     pouvoir le donner. Le seul chemin est l emplacement fruit. */
+  const unFruit = tous.find((o) => o.saison === S.n && Game.sortDuFruit(o));
+  const P2 = require('./personnages');
+  const bonus = P2.bonusesDeObjet(unFruit);
+  ok(unFruit && P2.FAMILLE_STAT[unFruit.famille],
+     `« ${unFruit.nom} » a une stat dominante, donc un pouvoir deductible`);
+  ok(!!bonus, 'et des bonus, comme tout objet porte');
+}
+
 console.log(`fiche_complete.test.js : ${n} verifications OK (${champs.length} champs couverts)`);

@@ -1762,7 +1762,16 @@ class Realm {
   _pasMonstres(dt, ev) {
     for (const m of this.monstres) {
       if (m.pv <= 0) continue;
-      const t = monde.MONSTRES[m.espece];
+      /* ---- SES STATS A SA VIE RESTANTE ----
+       * Un boss a PHASES ne se bat pas de la meme facon a cent pour cent et a
+       * vingt : `statsMonstre` rend la fiche de sa phase courante. Les
+       * creatures sans phase rendent la leur, telle quelle et sans copie.
+       *
+       * C'est la SEULE lecture qui passe par la : la detection des coups et
+       * la collision lisent encore la fiche de base, et c'est pour ca qu'une
+       * phase n'a pas le droit de toucher a `def`, `rayon` ni `vue` — voir la
+       * garde de `CHAMPS_DE_PHASE` dans monde.js. */
+      const t = monde.statsMonstre(m.espece, m.pv, m.pvMax);
       if (m.recharge > 0) m.recharge -= dt;
       if (m.stase === undefined) m.stase = 0;
       /* D'ou il part. Les quatre facons dont un monstre se deplace — vers le

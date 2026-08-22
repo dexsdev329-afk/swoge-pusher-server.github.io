@@ -7055,10 +7055,28 @@ class Game {
    * l'equilibre d'un pouvoir doit changer sa description dans le meme geste.
    */
   static sortDuFruit(o) {
-    if (!o || !o.famille) return null;
-    /* `FAMILLE_STAT` ne connait que les familles de FRUITS : une armure ou une
-       lame n'y est pas, et n'a donc pas de sort. C'est le seul discriminant
-       qu'on ait qui ne soit pas une liste a tenir a jour. */
+    if (!o) return null;
+    /* ---- SEULE LA SAISON DES FRUITS DONNE UN POUVOIR ----
+     *
+     * Le test etait `FAMILLE_STAT[o.famille]`, avec ce commentaire : « elle ne
+     * connait que les familles de FRUITS : une armure ou une lame n'y est
+     * pas ». C'ETAIT FAUX. `FAMILLE_STAT` contient aussi `plastron`,
+     * `casque`, `epaulieres`, `onyx`, `saphir`… — les familles d'armures et
+     * de bagues, parce qu'elles ont elles aussi une stat dominante.
+     *
+     * Consequence mesuree : 45 armures et 41 bagues annoncaient un pouvoir,
+     * soit 86 fiches. Et le joueur ne le recevait JAMAIS — le pouvoir reel
+     * vient de `etat.equipFruit`, l'emplacement fruit et lui seul (voir
+     * `statFruit` dans server.js). On vendait « Rusted Cuirass · Stasis ·
+     * 75 MP » a quelqu'un qui n'aurait jamais de Stasis.
+     *
+     * Le discriminant est desormais la SAISON. Elle est portee par l'objet,
+     * elle vient du catalogue, et elle ne peut pas se mettre a signifier
+     * autre chose : la saison 1 EST celle des fruits.
+     */
+    const S = boutique.SAISONS.find((x) => x.cle === 'fruits');
+    if (!S || o.saison !== S.n) return null;
+    if (!o.famille) return null;
     const stat = personnages.FAMILLE_STAT[o.famille];
     if (!stat) return null;
     const cle = monde.POUVOIR_PAR_STAT[stat];

@@ -201,6 +201,44 @@ const DONJONS = {
     sol: 'cave',
     mur: 'cave',
   },
+  /* ---- LE SANCTUAIRE DE CENDRE ----
+   *
+   * DEUX SALLES, et c'est tout le propos. Les deux autres donjons sont des
+   * traversees : on avance de salle en salle, on se vide, on arrive au boss
+   * entame. Celui-ci n'a rien a traverser — un sas, une porte, et l'Idole.
+   *
+   * Ce que ca change : on arrive ENTIER. Le combat ne peut donc pas etre
+   * gagne par le stock de potions accumule en chemin, et il devient permis de
+   * le rendre reellement dur. Les phases sont la pour ca ; elles n'auraient
+   * pas de sens apres trois salles de nettoyage, ou personne n'arrive avec sa
+   * barre pleine.
+   *
+   * Le sas est grand (11) : c'est de la que l'on repart, et c'est aussi la
+   * qu'on recule quand la phase trois commence. Un sas etroit aurait fait de
+   * la fuite un couloir a sens unique.
+   *
+   * La salle du fond est la plus grande du jeu (19 contre 15) : l'Idole fait
+   * deux cent huit unites de large, ses cercles en font deux cent soixante,
+   * et il faut pouvoir en sortir SANS toucher le mur — sinon la regle
+   * « on peut toujours sortir d'une zone » serait vraie sur le papier et
+   * fausse dans la piece. */
+  sanctuaire: {
+    nom: 'Cinder Sanctum',
+    forme: 'couloir',
+    salles: [
+      { cote: 11, role: 'entree' },
+      { cote: 19, role: 'fond' },
+    ],
+    /* Aucune espece d'accompagnement : les seules creatures du sanctuaire
+       sont celles que l'Idole appelle. Un donjon de deux salles rempli de
+       monstres ordinaires serait un couloir avec un boss au bout — ce que les
+       deux autres font deja, et mieux. */
+    especes: [],
+    boss: 'idole',
+    ouvreur: 'heraut',
+    sol: 'sanctuaire',
+    mur: 'donjon',
+  },
 };
 /* L'ancien nom pointe sur la Fonderie : tout ce qui disait `DONJON` parlait
    d'elle, et rien de ce qui la nomme n'a besoin de savoir qu'il y en a deux. */
@@ -382,7 +420,14 @@ function melange(liste, r) {
   return out;
 }
 
-function planDonjon(alea) {
+/**
+ * @param file  la file des salles, en tuiles. Elle vient du DONJON et non
+ *   d'une constante : le Sanctuaire n'en a que deux — un sas et la salle du
+ *   fond — et un donjon qui imposerait cinq salles a tous n'aurait plus qu'une
+ *   forme, pas une table.
+ */
+function planDonjon(alea, file) {
+  const FILE = (file && file.length) ? file : DONJON_SALLES;
   const r = () => (typeof alea === 'function' ? alea() : Math.random());
   const cle = (c, l) => c + ',' + l;
   const DIRS = { droite: [1, 0], bas: [0, 1], haut: [0, -1] };
@@ -412,8 +457,8 @@ function planDonjon(alea) {
    * precedente et arrive sur le bord de la suivante, toujours au MILIEU du
    * cote : un couloir qui debouche dans un coin se rate en entrant. */
   let prec = null, dernier = null;
-  for (let i = 0; i < DONJON_SALLES.length; i++) {
-    const s = DONJON_SALLES[i];
+  for (let i = 0; i < FILE.length; i++) {
+    const s = FILE[i];
     const demi = Math.floor(s.cote / 2);
     if (!prec) {
       const x0 = DONJON_ORIGINE.x, y0 = DONJON_ORIGINE.y;
@@ -771,6 +816,13 @@ function peuplementDonjon(alea, nom, plan) {
        reviendrait a faire commencer le combat avant que le joueur ait vu ou
        il est. */
     if (s.role === 'entree') continue;
+    /* ---- UN DONJON PEUT N'AVOIR AUCUNE ESPECE D'ACCOMPAGNEMENT ----
+     * Le Sanctuaire en est un : ses seules creatures sont celles que l'Idole
+     * appelle. Sans ce garde, le tirage indexait une liste VIDE et rendait
+     * quatorze creatures d'espece `undefined` — que `_naissance` aurait
+     * ensuite cherchees dans la table des monstres. Une liste vide veut dire
+     * « personne », pas « n'importe qui ». */
+    if (!D.especes || !D.especes.length) continue;
     /* ---- LE NOMBRE SUIT L'AIRE, PAS LE COTE ----
      * On comptait `cote * 0.45`. Un cote fait grandir la salle au CARRE : une
      * salle de quinze tuiles a presque trois fois l'aire d'une de neuf et
@@ -849,7 +901,7 @@ function planDeDonjon(nom, alea) {
    * une troisieme forme, il s'ajoute a la table et a cette ligne — le reste
    * de la fonction ne bouge pas, parce que les deux generateurs rendent
    * exactement la meme chose : un sol, des salles, une taille de tuile. */
-  const plan = D.forme === 'grotte' ? planCave(alea) : planDonjon(alea);
+  const plan = D.forme === 'grotte' ? planCave(alea) : planDonjon(alea, D.salles);
   const entree = plan.salles.find((x) => x.role === 'entree') || plan.salles[0];
   return {
     nom: cle,
@@ -1688,7 +1740,181 @@ const MONSTRES = {
            tirs: 3, ecart: 0.22 },
     xp: 200,
   },
+
+  /* ======================================================================
+   * LE SANCTUAIRE DE CENDRE — le heraut et l'idole
+   * ======================================================================
+   *
+   * ---- LE HERAUT, DANS LE MONDE ----
+   *
+   * Il ouvre le sanctuaire en tombant, comme Optimus ouvre la Fonderie. Il
+   * est plus dur que lui, et c'est voulu : la Fonderie etait jusqu'ici le
+   * bout du jeu, et un second bout au meme prix aurait rendu le premier sans
+   * objet. Il vit dans la LAVE, l'anneau ou l'on ne traine pas.
+   *
+   * Son poids est le plus faible de la table, sous celui d'Optimus : on le
+   * CHERCHE, on ne le croise pas. Deux ouvreurs de donjon dans le meme anneau
+   * a la meme frequence auraient fait de l'un le lot de consolation de
+   * l'autre.
+   */
+  heraut: {
+    cle: 'heraut', nom: 'Cinder Herald', pv: 3400, att: 210, def: 68,
+    vitesse: 104, rayon: 62, vue: 940, contact: true, cadence: 0.5,
+    /* Il tire VITE et loin. C'est ce qui le separe d'Optimus, qui est lourd :
+       on ne le distance pas, il faut le tuer. */
+    tir: { portee: 760, vitesse: 460, sprite: 'braise', att: 112, cadence: 0.62,
+           effet: 'brulure' },
+    /* L'annonce n'est pas un reglage : c'est `rayon / vitesse du plus lent +
+       ZONE_REACTION`, la regle que zones.test.js fait respecter. A 250 unites
+       il faut au moins 1,49 s pour que le personnage le plus lent du jeu
+       puisse sortir du cercle. Une zone dont on ne peut pas sortir n'est pas
+       une attaque, c'est une taxe. */
+    zone: { annonce: 1.55, rayon: 250, att: 168, cadence: 0.22 },
+    xp: 6400,
+    biomes: ['lave'],
+  },
+
+  /* ---- L'IDOLE, AU FOND DU SANCTUAIRE ----
+   *
+   * Le premier boss du jeu a PHASES. Ce n'est pas un boss avec plus de points
+   * de vie : c'est trois combats de suite contre la meme chose, et il faut
+   * changer de facon de jouer a chaque fois.
+   *
+   *   1. LOURDE (100 % -> 66 %). Lente, elle frappe fort au contact et lance
+   *      des braises espacees. On apprend son rythme. On peut la distancer.
+   *   2. LA FORGE S'OUVRE (66 % -> 33 %). Sa fournaise dorsale s'ouvre : la
+   *      zone revient deux fois plus souvent et brule. Reculer ne suffit plus,
+   *      il faut sortir du cercle.
+   *   3. FURIE (sous 33 %). Elle court presque aussi vite qu'un joueur, tire
+   *      en rafale et enchaine les zones. C'est la phase ou l'on meurt — et
+   *      c'est pour ca qu'elle arrive quand elle est presque morte : on a
+   *      quelque chose a perdre.
+   *
+   * Ses points de vie sont le triple de ceux de la Fonderie. Une phase qui
+   * n'occupe qu'un tiers de la barre doit durer assez pour s'apprendre.
+   */
+  idole: {
+    cle: 'idole', nom: 'The Cinder Idol', pv: 11000, att: 240, def: 88,
+    vitesse: 44, rayon: 104, vue: 1000, contact: true, cadence: 0.42,
+    tir: { portee: 620, vitesse: 300, sprite: 'braise', att: 128, cadence: 0.3,
+           effet: 'brulure' },
+    zone: { annonce: 1.6, rayon: 260, att: 190, cadence: 0.12 },
+    xp: 16000,
+    /* ---- LES PHASES ----
+     * Chacune s'applique quand la vie RESTANTE descend a sa part. Elles sont
+     * lues dans l'ordre et la derniere qui s'applique gagne : ecrire
+     * `jusqua` decroissant est donc la seule facon de les lire.
+     * Ce qu'une phase a le droit de changer est BORNE — voir CHAMPS_DE_PHASE
+     * plus bas, et la garde qui le verifie au chargement. */
+    phases: [
+      { jusqua: 0.66, vitesse: 62, cadence: 0.52,
+        zone: { cadence: 0.24, att: 205, effet: 'brulure' } },
+      /* ---- LA FURIE NE RACCOURCIT PAS L'ANNONCE ----
+       * J'avais mis 1,1 s pour un rayon de 260. C'etait une zone dont le
+       * personnage le plus lent du jeu ne pouvait PAS sortir — donc plus une
+       * attaque mais une taxe, et zones.test.js l'a refuse.
+       * La phase trois devient dangereuse autrement : le cercle RETRECIT (il
+       * faut se coller pour frapper, et c'est la qu'il tombe), il revient
+       * trois fois plus souvent, et il fait mal. Un cercle plus petit se sort
+       * plus vite : l'annonce descend a 1,20 s SANS enfreindre la regle. */
+      { jusqua: 0.33, vitesse: 96, cadence: 0.7, att: 268,
+        tir: { cadence: 0.6, tirs: 3, ecart: 0.2 },
+        zone: { annonce: 1.2, rayon: 190, cadence: 0.4, att: 225,
+                effet: 'brulure' } },
+    ],
+    biomes: [],
+  },
 };
+
+/*
+ * ==================== LES PHASES D'UN BOSS ====================
+ *
+ * ---- CE QU'UNE PHASE A LE DROIT DE CHANGER ----
+ *
+ * Le COMPORTEMENT, et rien d'autre : sa vitesse, sa cadence, sa force au
+ * contact, son tir, sa zone. Ces cinq champs-la sont lus dans la boucle des
+ * monstres, et NULLE PART ailleurs.
+ *
+ * Sa defense, son rayon et sa vue ne sont PAS modifiables, et ce n'est pas
+ * un oubli : ils sont lus a d'autres endroits — la detection des coups lit
+ * `MONSTRES[espece].def`, la collision lit `.rayon` — qui ne savent rien des
+ * phases. Une phase qui les changerait s'appliquerait a moitie : le monstre
+ * bougerait comme la phase trois et encaisserait comme la phase un, et le
+ * joueur verrait ses degats changer sans raison visible.
+ *
+ * Le jour ou l'on voudra une phase qui blinde, il faudra d'abord faire passer
+ * ces lectures-la par ici. La garde ci-dessous le rappellera.
+ */
+const CHAMPS_DE_PHASE = ['vitesse', 'cadence', 'att', 'tir', 'zone'];
+
+/* ---- LES VARIANTES SONT CALCULEES UNE FOIS, AU CHARGEMENT ----
+ * Fabriquer l'objet fusionne a chaque pas ferait naitre un objet par monstre
+ * et par image — soit des centaines par seconde, que le ramasse-miettes
+ * paierait au pire moment, pendant un combat. Les phases sont statiques : on
+ * les prepare une fois et l'on ne fait plus que choisir un indice. */
+const PHASES_PRETES = {};
+for (const cle of Object.keys(MONSTRES)) {
+  const base = MONSTRES[cle];
+  if (!base.phases || !base.phases.length) continue;
+  const variantes = [base];
+  const seuils = [1];
+  for (const ph of base.phases) {
+    for (const champ of Object.keys(ph)) {
+      if (champ === 'jusqua') continue;
+      if (CHAMPS_DE_PHASE.indexOf(champ) < 0) {
+        throw new Error('phase de « ' + cle + ' » : le champ « ' + champ +
+                        ' » n est pas modifiable par une phase (voir CHAMPS_DE_PHASE)');
+      }
+    }
+    /* On fusionne sur la variante PRECEDENTE, pas sur la base : une phase
+       dit ce qui change PAR RAPPORT a celle d'avant, sinon il faudrait
+       recopier dans la phase trois tout ce que la phase deux avait pose. */
+    const av = variantes[variantes.length - 1];
+    const nv = Object.assign({}, av);
+    for (const champ of CHAMPS_DE_PHASE) {
+      if (ph[champ] === undefined) continue;
+      nv[champ] = (champ === 'tir' || champ === 'zone')
+        ? Object.assign({}, av[champ] || {}, ph[champ])
+        : ph[champ];
+    }
+    variantes.push(nv);
+    seuils.push(ph.jusqua);
+  }
+  PHASES_PRETES[cle] = { variantes, seuils };
+}
+
+/**
+ * LES STATS D'UN MONSTRE, A SA VIE RESTANTE.
+ *
+ * Une seule fonction, et c'est elle que la simulation lit. Les monstres sans
+ * phase rendent leur fiche telle quelle — sans copie, sans detour.
+ */
+function statsMonstre(espece, pv, pvMax) {
+  const base = MONSTRES[espece];
+  const p = PHASES_PRETES[espece];
+  if (!base || !p || !(pvMax > 0)) return base;
+  return p.variantes[phaseMonstre(espece, pv, pvMax)];
+}
+
+/**
+ * DANS QUELLE PHASE il se trouve : 0 pour la premiere. Rendue a part parce
+ * que la PAGE en a besoin — « phase 2/3 » sous la barre du boss — et qu'elle
+ * n'a rien a faire des stats.
+ */
+function phaseMonstre(espece, pv, pvMax) {
+  const p = PHASES_PRETES[espece];
+  if (!p || !(pvMax > 0)) return 0;
+  const part = Math.max(0, Math.min(1, pv / pvMax));
+  let k = 0;
+  for (let i = 1; i < p.seuils.length; i++) if (part <= p.seuils[i]) k = i;
+  return k;
+}
+
+/** Combien de phases a cette espece. Zero quand elle n'en a pas. */
+function nbPhases(espece) {
+  const p = PHASES_PRETES[espece];
+  return p ? p.variantes.length : 0;
+}
 
 /* Ce qui apparait dans chaque anneau, et en quelle quantite. La lave a
    desormais son espece propre — elle empruntait le squelette faute de dessin.
@@ -1768,9 +1994,18 @@ const PEUPLEMENT = {
      deux pour cent. Sur dix-huit places, ca fait un Optimus toutes les trois
      visites de l'anneau de lave environ. C'est ce qu'on veut d'une creature
      qui ouvre un donjon — on le CHERCHE, on ne le croise pas. */
+  /* ---- DEUX OUVREURS DE DONJON DANS LE MEME ANNEAU ----
+   * Le heraut porte le poids le PLUS FAIBLE de toute la table, sous celui
+   * d'Optimus : 0,07 sur un total de 5,24, soit 1,3 %. Sur dix-huit places,
+   * c'est environ un heraut toutes les quatre visites de la lave.
+   * Il est plus rare qu'Optimus parce que ce qu'il ouvre est plus dur. Deux
+   * ouvreurs a la meme frequence auraient fait de l'un le lot de consolation
+   * de l'autre — on va chercher celui qui mene au meilleur donjon, et l'autre
+   * ne serait plus qu'un obstacle sur le chemin. */
   lave:    { especes: ['lave', 'glace', 'meduse', 'oracle', 'colosse', 'brasier',
-                       'couronne', 'optimus'],
-             nombre: 18, poids: { colosse: 0.8, brasier: 0.25, couronne: 0.5, optimus: 0.12 } },
+                       'couronne', 'optimus', 'heraut'],
+             nombre: 18, poids: { colosse: 0.8, brasier: 0.25, couronne: 0.5,
+                                  optimus: 0.12, heraut: 0.07 } },
 };
 
 /*
@@ -2953,6 +3188,7 @@ function peuplement(alea) {
 
 module.exports = {
   TUILE, CARTE, MONDE, CENTRE, ANNEAUX, MONSTRES, PEUPLEMENT, PLANCHER,
+  statsMonstre, phaseMonstre, nbPhases,
   ARMES, DEGATS_POING, VITESSE_JOUEUR, CADENCE_MAX,
   cadenceDe, vitesseDe,
   REGEN_COEF, REGEN_REPOS, REPOS_DELAI, FIOLE_PILE, POUVOIRS, POUVOIR_PAR_STAT, PARALYSIE, EFFETS, TOMBE,
