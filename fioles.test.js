@@ -155,6 +155,72 @@ const compte = (g, stat) => {
   eq(compte(g, 'def').coffre, 1, 'et la mettre a l abri');
 }
 
+// ================== 4bis. TOUT RANGER, D UN GESTE
+//
+// C est le geste qu on fait CHAQUE FOIS qu on rentre, parce que ce qu on
+// porte meurt avec le personnage. Huit stats, huit clics : un geste qu on
+// repete a chaque retour et qui coute huit clics est un geste qu on finit par
+// ne plus faire — et c est une reserve entiere perdue a la mort suivante.
+{
+  const { g } = neuf();
+  /* Des quantites DIFFERENTES par stat, et une stat laissee a zero : un
+     « tout ranger » qui marcherait sur des piles egales peut encore se
+     tromper de compteur, et une stat absente est le cas ou l on ecrit un
+     zero dans le coffre au lieu de ne rien faire. */
+  const mises = {};
+  P.STATS.forEach((st, i) => {
+    if (i === 2) return;                 // celle-la, on n en porte aucune
+    mises[st] = i + 1;
+    for (let k = 0; k < mises[st]; k++) g.prendFiole(A, st);
+  });
+  /* Une deja au coffre : le rangement doit AJOUTER a ce qui y est, pas
+     l ecraser. C est la faute qui ne se voit qu une fois la reserve perdue. */
+  g.prendFiole(A, P.STATS[0]);
+  g.rangeFiole(A, P.STATS[0]);
+  const dejaLa = compte(g, P.STATS[0]).coffre;
+  eq(dejaLa, 1, 'une fiole dort deja au coffre');
+
+  const porte = P.STATS.reduce((n, st) => n + compte(g, st).sac, 0);
+  const r = g.rangeToutesLesFioles(A);
+  eq(r.total, porte, `tout part d un coup (${r.total})`);
+  eq(P.STATS.reduce((n, st) => n + compte(g, st).sac, 0), 0, 'le sac ne porte plus rien');
+  /* Chaque pile arrive ENTIERE, et celle qui etait deja la s est vu ajouter
+     la sienne. */
+  for (const st of P.STATS) {
+    const attendu = (mises[st] || 0) + (st === P.STATS[0] ? dejaLa : 0);
+    eq(compte(g, st).coffre, attendu, `« ${st} » : ${attendu} au coffre`);
+  }
+  /* La stat qu on ne portait pas ne doit pas avoir ete NOMMEE. */
+  ok(!(P.STATS[2] in r.range), `« ${P.STATS[2] } » n est pas nommee — on n en portait aucune`);
+
+  /* ---- ET UNE PILE A ZERO N EST PAS UNE PILE ----
+   * Une sauvegarde peut porter une clef restee a zero — `rangeFiole` en
+   * laissait une derriere lui avant d etre corrige, et rien n empeche une
+   * ancienne partie d en garder. Sans garde, « tout ranger » l aurait nommee
+   * dans son bilan et ecrit un zero dans le coffre : la page aurait annonce
+   * une stat rangee que le joueur n avait pas, et la sauvegarde se serait
+   * remplie de rien a chaque retour.
+   * On la pose A LA MAIN parce qu aucun chemin normal ne la produit — c est
+   * exactement pourquoi le cas passe inapercu. */
+  g._p(A).sacFioles[P.STATS[3]] = 0;
+  const zero = g.rangeToutesLesFioles(A);
+  eq(zero.total, 0, 'une pile a zero ne fait rien bouger');
+  ok(!(P.STATS[3] in zero.range),
+     `« ${P.STATS[3]} » n est pas nommee non plus — une pile vide n est pas une pile`);
+  eq(compte(g, P.STATS[3]).coffre, mises[P.STATS[3]] || 0,
+     'et le coffre n a pas gagne de ligne fantome');
+
+  /* A vide, il ne se passe rien, et il le DIT. Un panneau qui se repeint a
+     l identique apres un clic se lit comme une panne. */
+  const vide = g.rangeToutesLesFioles(A);
+  eq(vide.total, 0, 'a vide, rien ne bouge');
+  eq(Object.keys(vide.range).length, 0, 'et rien n est nomme');
+  /* Et ce qui vient d etre range SURVIT — c est la seule raison de le faire. */
+  g.meurt(A, 'andy');
+  eq(P.STATS.reduce((n, st) => n + compte(g, st).coffre, 0), porte + dejaLa,
+     'tout ce qui a ete range survit a la mort');
+}
+
 // ================== 5. LE BUTIN ET LA RESERVE NE SE DISPUTENT RIEN
 //
 // C'est la propriete neuve, et celle qui se casse le plus silencieusement :

@@ -3278,11 +3278,17 @@ wss.on('connection', (ws) => {
       /* ---- LES FIOLES DE STAT : RANGER, RESSORTIR, BOIRE ----
        * Trois gestes sur la meme reserve. Le coffre garde, le sac risque, et
        * boire est enfin un geste qu'on choisit au lieu d'un pas de cote. */
-      if (m.type === 'fioleRange' || m.type === 'fioleSort' || m.type === 'fioleBoit') {
+      /* `fioleRangeTout` passe par la MEME reponse que les trois autres : elle
+         renvoie deja la reserve entiere et le sac, c'est-a-dire tout ce que la
+         page doit reafficher. Un message a part aurait demande de tenir deux
+         formes de reponse d'accord pour un seul panneau. */
+      if (m.type === 'fioleRange' || m.type === 'fioleSort' || m.type === 'fioleBoit'
+          || m.type === 'fioleRangeTout') {
         if (!ws.addr) return;
         let r = null, err = null;
         try {
           if (m.type === 'fioleRange') r = game.rangeFiole(ws.addr, m.stat);
+          else if (m.type === 'fioleRangeTout') r = game.rangeToutesLesFioles(ws.addr);
           else if (m.type === 'fioleSort') r = game.sortFiole(ws.addr, m.stat);
           else r = game.boitFiole(ws.addr, m.skin || ws.realmSkin || game._p(ws.addr).skinActif, m.stat);
         } catch (e) { err = e.message; }

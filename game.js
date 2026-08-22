@@ -7762,6 +7762,45 @@ class Game {
     return { stat, coffre: p.fioles[stat] };
   }
 
+  /**
+   * TOUT RANGER, D'UN GESTE.
+   *
+   * Ranger huit stats une par une demandait huit clics et huit allers-retours
+   * avec le serveur — et c'est le geste qu'on fait CHAQUE FOIS qu'on rentre,
+   * parce que ce qu'on porte meurt avec le personnage. Un geste qu'on repete
+   * a chaque retour et qui coute huit clics, c'est un geste qu'on finit par
+   * ne plus faire, et une reserve entiere perdue a la mort suivante.
+   *
+   * UNE SEULE reponse, et pas huit messages : huit `fioleRange` a la suite,
+   * c'est huit repeintures du panneau, et un echec au quatrieme laisserait la
+   * moitie du travail fait sans que rien ne le dise.
+   *
+   * Le PLAFOND du coffre n'existe pas — c'est le sac qui est borne, pas lui.
+   * Rien ne peut donc etre refuse a mi-chemin, et l'on n'a pas besoin de tout
+   * verifier avant de bouger quoi que ce soit.
+   *
+   * On rend CE QUI A BOUGE, pas seulement « c'est fait » : la page doit
+   * pouvoir dire « 12 rangees » plutot qu'un silence qui ressemble a une
+   * panne quand il n'y avait rien a ranger.
+   */
+  rangeToutesLesFioles(addr) {
+    const p = this._p(addr);
+    p.sacFioles = p.sacFioles || {};
+    p.fioles = p.fioles || {};
+    const bouge = {};
+    let total = 0;
+    for (const stat of Object.keys(p.sacFioles)) {
+      const q = Math.max(0, p.sacFioles[stat] | 0);
+      if (!q) continue;
+      p.fioles[stat] = (p.fioles[stat] || 0) + q;
+      bouge[stat] = q;
+      total += q;
+      delete p.sacFioles[stat];
+    }
+    p.sacCases = null;
+    return { range: bouge, total };
+  }
+
   /** Et du coffre au sac : elle redevient perissable. */
   sortFiole(addr, stat) {
     const p = this._p(addr);
