@@ -51,6 +51,13 @@ const PRIVEES = ['/admin', '/players', '/stats',
                  '/usage.json',
                  '/adminlog',
                  '/reglages',
+                 /* La galerie du cinema. Ce qu'elle contient n'est pas secret —
+                    les joueurs la recoivent — mais ce qu'on y ECRIT part dans
+                    un `iframe.src` sur l'ecran de chacun. Une porte laissee
+                    ouverte ici ne fuit pas des donnees : elle laisse un inconnu
+                    choisir ce que le site affiche a ses joueurs. */
+                 '/admin/cinema',
+                 '/admin/cinema/retire',
                  '/taps',
                  '/player?addr=0x' + 'a'.repeat(40)];
 
@@ -177,7 +184,12 @@ const code = async (port, chemin, entetes, suivre) => (await fetch(
     for (const porte of ['/credit?joueur=x&montant=999999',
                          '/repare?addr=0x' + 'a'.repeat(40),
                          '/burn?amount=1&tx=0x' + 'b'.repeat(64),
-                         '/avatar-remove?addr=0x' + 'a'.repeat(40)]) {
+                         '/avatar-remove?addr=0x' + 'a'.repeat(40),
+                         /* Retirer une seance ECRIT : la garde d'ecriture le
+                            refuse en GET comme les autres, sans quoi un simple
+                            lien suffirait a vider la galerie depuis n'importe
+                            quelle page ou le proprietaire clique. */
+                         '/admin/cinema/retire']) {
       const r = await fetch('http://127.0.0.1:8792' + porte, { headers: { 'x-admin-key': CLE } });
       eq(r.status, 405, `${porte.split('?')[0]} en GET, meme avec la cle : refuse`);
     }

@@ -809,6 +809,50 @@ function tousLesMondes() {
 }
 
 /*
+ * ==================== A QUI PART CE QUI SE PASSE ICI ====================
+ *
+ * Deux entonnoirs, et deux seulement.
+ *
+ * `versLeMonde` : a tous ceux qui vivent dans la simulation `R`. Le test
+ * `realmDe(c) === R` etait recopie a chaque endroit qui en avait besoin —
+ * l'ouverture d'un portail, l'appel du boss — et chaque copie etait une
+ * occasion d'ecrire `realm` en dur a la place de `R`. Ce defaut-la est deja
+ * arrive : une porte ouverte dans le monde rouge s'annoncait a ceux du monde
+ * vert, qui couraient vers un endroit ou il n'y a rien.
+ *
+ * `versLePublicDe` : a ceux qui voient DEJA bouger cette socket, et a elle.
+ * C'est la seule definition de « public » qu'on puisse tenir, parce qu'elle
+ * n'en est pas une nouvelle : elle est deduite de la diffusion des positions,
+ * qui existe deja. Une liste de destinataires calculee autrement finirait par
+ * ne plus dire la meme chose que les deplacements — et le jour ou elle
+ * diverge, on entend quelqu'un qu'on ne voit pas, ou l'inverse.
+ *
+ * Une socket qui n'est ni dans un monde ni dans le hall n'a pas de public :
+ * personne ne la voit bouger, donc personne ne l'entend. Il n'y a rien a
+ * decider la, c'est la meme regle appliquee a un cas vide.
+ */
+function versLeMonde(R, obj) {
+  /* `obj` peut etre une FONCTION du destinataire. Un seul message des portails
+     depend de qui le lit — `mien` — et sans cette forme il aurait fallu soit
+     une deuxieme boucle a cote, soit envoyer le meme objet a tous et laisser
+     chacun deviner si la porte est la sienne. La premiere rouvre la porte au
+     defaut qu'on vient de fermer ; la seconde ment au joueur qui l'a ouverte. */
+  const parLecteur = typeof obj === 'function';
+  const fige = parLecteur ? null : JSON.stringify(obj);
+  for (const c of realmClients) {
+    if (c.readyState !== 1 || realmDe(c) !== R) continue;
+    c.send(parLecteur ? JSON.stringify(obj(c)) : fige);
+  }
+}
+function versLePublicDe(ws, obj) {
+  if (realmClients.has(ws)) return versLeMonde(realmDe(ws), obj);
+  if (nexusClients.has(ws)) {
+    const s = JSON.stringify(obj);
+    for (const c of nexusClients) if (c.readyState === 1) c.send(s);
+  }
+}
+
+/*
  * ==================== CE QU'EST UN MONDE, DIT UNE FOIS ====================
  *
  * Le message d'entree decrit un monde : sa taille, ses anneaux, ses armes, ses
@@ -2206,30 +2250,79 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify(game.enveloppeCredit(Date.now())));
   }
-  /* ================== LA SEANCE DU CINEMA ==================
+  /* ================== LA GALERIE DU CINEMA ==================
    *
    * Le proprietaire pose lui-meme le titre, l'affiche et les deux versions
    * depuis son tableau de bord. Ce fichier ne connait aucune adresse : il
-   * transporte ce qu'on lui donne, et `poseCinema` decide de ce qui est
+   * transporte ce qu'on lui donne, et `ajouteCinema` decide de ce qui est
    * acceptable — seulement http et https, parce que ces chaines finissent
    * dans un `iframe.src` sur la page de chaque joueur.
    *
-   * Elle part ensuite a TOUT LE MONDE, tout de suite : sans ca, la seance
-   * n'apparaitrait qu'a ceux qui rechargent, et le proprietaire croirait
-   * l'avoir ratee. */
+   * La galerie part ensuite a TOUT LE MONDE, tout de suite : sans ca, une
+   * seance n'apparaitrait qu'a ceux qui rechargent, et le proprietaire
+   * croirait l'avoir ratee.
+   *
+   * TROIS GESTES, UNE SEULE REPONSE. Lire, ajouter et retirer rendent tous la
+   * LISTE RETENUE — jamais ce qui a ete envoye. C'est ce qui fait qu'une
+   * adresse refusee ne reste pas affichee dans la case en ayant l'air
+   * enregistree : le panneau ne peint que ce que le serveur a garde.
+   *
+   * La lecture est un GET sur la meme adresse, comme `/reglages` : un panneau
+   * qui ne sait pas ce qui est deja a l'affiche ne peut pas montrer une
+   * galerie, et une deuxieme adresse pour la meme chose est une adresse de
+   * plus a garder authentifiee.
+   */
   if (path === '/admin/cinema') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    if (req.method !== 'POST') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, cinemas: game.cinemas || [],
+                                      max: cfg.CINEMA_MAX }));
+    }
+    const d = await donPost(req);
+    const nonV = gardeEcriture(req, session, 'cinema', '');
+    if (nonV) return refusEcriture(res, nonV);
+    /* La galerie pleine LEVE, et ce refus-la merite d'etre lu : « refusee »
+       sur une adresse valable aurait envoye le proprietaire la recopier toute
+       la soiree. */
+    let c = null;
+    try { c = game.ajouteCinema(d); }
+    catch (e) { return refusEcriture(res, e.message); }
+    adminlog.ajoute({ acteur, action: 'cinema', cible: (c && c.titre) || '(refusee)',
+                      motif: '', ip: qui(req) });
+    persist();
+    broadcast({ type: 'cinema', cinemas: game.cinemas });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, ajoutee: c, cinemas: game.cinemas,
+                                    max: cfg.CINEMA_MAX }));
+  }
+  /* Retirer une seance : meme authentification, meme garde d'ecriture, meme
+     journal, meme sauvegarde et meme diffusion que l'ajout. Une adresse a part
+     plutot qu'un champ « retire » dans l'ajout : deux gestes qui ne font pas
+     la meme chose se lisent mieux au journal admin sous deux noms, et le jour
+     ou l'on cherche « qui a retire la seance de samedi », c'est cette ligne-la
+     qu'on cherche. */
+  if (path === '/admin/cinema/retire') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
     const d = await donPost(req);
     const nonV = gardeEcriture(req, session, 'cinema', '');
     if (nonV) return refusEcriture(res, nonV);
-    const c = game.poseCinema(d);
-    adminlog.ajoute({ acteur, action: 'cinema', cible: (c && c.titre) || '(aucune)',
+    /* Le titre est lu AVANT le retrait : apres, il n'existe plus, et le
+       journal admin n'aurait garde qu'un numero de rang que personne ne peut
+       relire six mois plus tard. */
+    const avant = (game.cinemas || [])[Number(d && d.i)];
+    const fait = game.retireCinema(d && d.i);
+    if (!fait) return refusEcriture(res, 'no show at that place');
+    adminlog.ajoute({ acteur, action: 'cinema-retire',
+                      cible: (avant && avant.titre) || '(inconnue)',
                       motif: '', ip: qui(req) });
     persist();
-    broadcast({ type: 'cinema', cinema: c });
+    broadcast({ type: 'cinema', cinemas: game.cinemas });
     res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, cinema: c }));
+    return res.end(JSON.stringify({ ok: true, cinemas: game.cinemas,
+                                    max: cfg.CINEMA_MAX }));
   }
 
   if (path === '/credit') {
@@ -2794,10 +2887,13 @@ wss.on('connection', (ws) => {
     vault: cfg.VAULT_ADDRESS || null, token: cfg.SWOGE_TOKEN, chainId: cfg.CHAIN_ID,
     jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE),
     joueurs: compte(),
-    /* La seance du cinema part avec le bonjour et non avec l'entree dans le
+    /* La galerie du cinema part avec le bonjour et non avec l'entree dans le
        monde : la salle est dans le HALL, et l'on peut y entrer sans jamais
-       aller se battre. */
-    cinema: game.cinema || null,
+       aller se battre.
+       Le champ est au PLURIEL et c'est le seul : garder aussi l'ancien
+       `cinema` au singulier aurait mis deux verites sur le meme fil, et le
+       jour ou elles divergent c'est la plus vieille qu'une page lit. */
+    cinemas: game.cinemas || [],
     // les tables qui attendent, pour que la pastille soit juste avant meme
     // que le joueur se connecte
     duels: game.duelLobby(null), duelsEnCours: game.duelsEnCours(null),
@@ -3479,6 +3575,32 @@ wss.on('connection', (ws) => {
          en ce moment. */
       if (m.type === 'equipable') {
         return send(ws, { type: 'equipable', ...game.equipablesPour(ws.addr) });
+      }
+      /* ==================== CE QUE LE JOUEUR DIT ====================
+       *
+       * Le contrat tient en deux lignes : la page envoie `{type:'dit',texte}`,
+       * le serveur rediffuse `{type:'dit',id,texte}` — `id` etant l'adresse,
+       * exactement l'identifiant sous lequel ce joueur apparait deja dans les
+       * instantanes de position. Le meme identifiant que ses deplacements,
+       * parce que la page doit poser la bulle sur un corps qu'elle dessine
+       * deja : un identifiant a elle aurait oblige a tenir une table de
+       * correspondance, et une table de correspondance se desynchronise.
+       *
+       * TOUT SE DECIDE DANS `game.dit` : le nettoyage et le debit. Ici on ne
+       * fait que porter. Un refus ne repond RIEN — ni erreur, ni fermeture :
+       * repondre a chaque message de trop ferait du flood un moyen de faire
+       * emettre le serveur, ce qui est exactement ce qu'on lui refuse.
+       *
+       * Le public est celui de ses DEPLACEMENTS, `versLePublicDe` : dans un
+       * donjon, ce donjon ; dans un monde ouvert ou dans le hall, ceux qui le
+       * voient bouger. Il se recoit lui-meme — sans quoi il croirait que rien
+       * n'est parti et recommencerait, ce que la limite de debit punirait.
+       */
+      if (m.type === 'dit') {
+        if (!ws.addr) return;
+        const texte = game.dit(ws.addr, m.texte, Date.now());
+        if (!texte) return;
+        return versLePublicDe(ws, { type: 'dit', id: ws.addr, texte });
       }
       /* ---- LE NEXUS : QUI EST LA, ET OU ----
        *
@@ -5352,17 +5474,15 @@ function traiteEvenements(R, ev) {
      * une distraction pendant un combat. */
     if (!p.donjon) continue;
     const nom = p.addr ? (game._p(p.addr).name || null) : null;
-    for (const c of realmClients) {
-      /* Dans LE MEME monde, pas « hors donjon ». La comparaison etait faite
-         avec `realm` : une porte ouverte dans le monde vert se serait annoncee
-         a ceux du monde rouge, qui auraient couru vers un endroit ou il n'y a
-         rien. Le monde d'ou vient l'evenement est `R`, et c'est le seul dont
-         les habitants peuvent l'atteindre. */
-      if (c.readyState !== 1 || realmDe(c) !== R) continue;
-      send(c, { type: 'realmPortailOuvert', id: p.id, donjon: p.donjon,
-                x: p.x, y: p.y, nom, duree: monde.PORTAIL.duree,
-                mien: c.addr === p.addr });
-    }
+    /* Dans LE MEME monde, pas « hors donjon » : `versLeMonde` porte cette
+       regle une fois pour toutes. La comparaison etait faite ici, a la main,
+       avec `realm` — et une porte ouverte dans le monde vert s'annoncait alors
+       a ceux du monde rouge, qui couraient vers un endroit ou il n'y a rien.
+       `mien` depend du lecteur : c'est pour ce message-la que l'entonnoir
+       accepte une fonction. */
+    versLeMonde(R, (c) => ({ type: 'realmPortailOuvert', id: p.id, donjon: p.donjon,
+                             x: p.x, y: p.y, nom, duree: monde.PORTAIL.duree,
+                             mien: c.addr === p.addr }));
     annoncePortail(p, nom);
   }
 
@@ -5479,11 +5599,8 @@ function traiteEvenements(R, ev) {
    * regarde le boss, celles qui naissent dans le dos ne se voient pas. */
   if (ev.appels && ev.appels.length) {
     for (const a of ev.appels) {
-      for (const c of realmClients) {
-        if (c.readyState !== 1 || realmDe(c) !== R) continue;
-        send(c, { type: 'realmAppel', x: a.x, y: a.y, espece: a.espece,
-                  combien: a.combien, par: a.par });
-      }
+      versLeMonde(R, { type: 'realmAppel', x: a.x, y: a.y, espece: a.espece,
+                       combien: a.combien, par: a.par });
     }
   }
 

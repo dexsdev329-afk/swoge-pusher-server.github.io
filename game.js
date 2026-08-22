@@ -348,6 +348,17 @@ class Game {
        et attend son acheteur. */
     this.marche = [];
     this.marcheNo = 1;
+    /* LA GALERIE DU CINEMA. Une LISTE, jamais nulle : un champ qui vaut
+       tantot `null`, tantot un objet, tantot un tableau oblige chaque lecteur
+       a redemander de quelle forme il est aujourd'hui, et le premier qui
+       oublie envoie `null.length` a la page. Vide veut dire « rien a
+       l'affiche », et c'est un etat comme un autre. */
+    this.cinemas = [];
+    /* QUAND CHAQUE JOUEUR A PARLE. Ici et pas dans sa fiche : ces horodatages
+       ne valent que pour les quinze prochaines secondes, et les ecrire dans
+       l'etat sauvegarde ferait grossir chaque sauvegarde d'une ligne par
+       bavard, pour une information deja perimee quand on la relit. */
+    this._dits = new Map();
     /* Combien d'exemplaires de chaque edition limitee sont partis. */
     this.skinsEmis = {};
     this.boutiqueEmis = {};
@@ -681,17 +692,22 @@ class Game {
              brule: (this.brule || BN(0)).toString(), brulages: this.brulages || [],
              lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx),
              usage: this.usage || {},
-             /* La seance du cinema : titre, affiche et versions. Elle est dans
-                l'etat et non dans un fichier a part parce qu'elle tient en
-                quatre chaines et qu'elle doit survivre a un redeploiement —
-                une salle qui redevient vide a chaque mise en ligne n'est pas
-                une salle qu'on prend la peine de remplir. */
-             cinema: this.cinema || null,
+             /* LA GALERIE DU CINEMA. Elle est dans l'etat et non dans un
+                fichier a part parce qu'elle tient en quelques chaines et
+                qu'elle doit survivre a un redeploiement — une salle qui
+                redevient vide a chaque mise en ligne n'est pas une salle
+                qu'on prend la peine de remplir.
+                On n'ecrit QUE `cinemas`. Ecrire aussi l'ancien `cinema` pour
+                les vieilles versions donnerait deux champs a tenir d'accord,
+                et le jour ou ils divergent c'est le plus ancien qu'on relit.
+                La compatibilite se joue a la LECTURE, dans `hydrate`, ou elle
+                ne coute qu'une conversion. */
+             cinemas: this.cinemas || [],
              duels, telegramMap: Array.from(this.telegramMap) };
   }
 
   /**
-   * LA SEANCE DU CINEMA, POSEE PAR LE PANNEAU D'ADMINISTRATION.
+   * UNE SEANCE DE CINEMA, LUE DEPUIS LE PANNEAU D'ADMINISTRATION.
    *
    * ---- POURQUOI LA VALIDATION EST ICI ET PAS DANS LA PAGE ----
    *
@@ -707,8 +723,13 @@ class Game {
    * revalide pas : une regle a deux endroits finit par ne plus dire la meme
    * chose, et c'est celle du serveur qui compte puisque c'est elle qu'on ne
    * peut pas contourner.
+   *
+   * Cette methode ne pose RIEN : elle rend la seance propre, ou `null`. Un
+   * seul endroit nettoie, et `ajouteCinema` decide quoi en faire — sans quoi
+   * le jour ou une deuxieme porte d'entree apparait (un import, une reprise de
+   * sauvegarde), elle validerait a sa facon.
    */
-  poseCinema(x) {
+  static seanceCinema(x) {
     const url = (v) => {
       const t = String(v || '').trim().slice(0, 500);
       if (!t) return '';
@@ -718,12 +739,155 @@ class Game {
     const titre = String((x && x.titre) || '').trim().slice(0, 80);
     const affiche = url(x && x.affiche);
     const vf = url(x && x.vf), vo = url(x && x.vo);
-    /* Vide partout : on RETIRE la seance plutot que d'en garder une a moitie.
-       Un ecran qui annonce un titre sans rien derriere est pire qu'un ecran
-       eteint — le joueur traverse la salle pour rien. */
-    if (!titre || (!vf && !vo)) { this.cinema = null; return this.cinema; }
-    this.cinema = { titre, affiche, vf, vo };
-    return this.cinema;
+    /* Une moitie de seance n'entre pas dans la galerie. Un ecran qui annonce
+       un titre sans rien derriere est pire qu'un ecran eteint — le joueur
+       traverse la salle pour rien. */
+    if (!titre || (!vf && !vo)) return null;
+    return { titre, affiche, vf, vo };
+  }
+
+  /**
+   * AJOUTER UNE SEANCE A LA GALERIE.
+   *
+   * Rend la seance retenue, ou `null` si elle a ete refusee — c'est ce `null`
+   * que le panneau affiche pour dire « rien n'a ete enregistre », et c'est
+   * pour ca qu'il relit toujours ce que le serveur a RETENU au lieu de croire
+   * ce qu'il a envoye.
+   *
+   * Le plafond, lui, LEVE. C'est une autre reponse a une autre question : une
+   * seance refusee est mal ecrite, une galerie pleine est bien ecrite mais n'a
+   * plus de place. Les confondre aurait fait lire « adresse refusee » a
+   * quelqu'un dont l'adresse etait bonne, et il aurait passe la soiree a la
+   * recopier.
+   */
+  ajouteCinema(x) {
+    if (!Array.isArray(this.cinemas)) this.cinemas = [];
+    const c = Game.seanceCinema(x);
+    if (!c) return null;
+    if (this.cinemas.length >= cfg.CINEMA_MAX)
+      throw new Error(`the gallery is full (${cfg.CINEMA_MAX} shows) - remove one first`);
+    this.cinemas.push(c);
+    return c;
+  }
+
+  /**
+   * RETIRER LA SEANCE D'UN RANG DONNE.
+   *
+   * Par RANG et non par titre : deux seances peuvent porter le meme titre —
+   * une version courte et une version longue, deux episodes — et retirer
+   * « par titre » en aurait alors efface deux d'un coup, dont une que
+   * personne n'avait demande a retirer.
+   *
+   * Le rang vient de la liste que le panneau vient de relire du serveur, et le
+   * panneau la relit apres chaque operation : il ne peut donc pas designer une
+   * place qui n'existe plus. Un rang hors bornes ne retire rien et le dit par
+   * `false`, plutot que de retirer la derniere par politesse.
+   */
+  retireCinema(i) {
+    if (!Array.isArray(this.cinemas)) this.cinemas = [];
+    const k = Number(i);
+    if (!Number.isInteger(k) || k < 0 || k >= this.cinemas.length) return false;
+    this.cinemas.splice(k, 1);
+    return true;
+  }
+
+  /**
+   * LA PAROLE D'UN JOUEUR, AU-DESSUS DE SA TETE.
+   *
+   * Rend le texte NETTOYE, pret a partir sur le fil, ou `null` — et `null`
+   * veut dire « on ne diffuse rien ». Le refus est muet : ni erreur, ni
+   * deconnexion. Repondre « trop vite » a chaque message de trop rendrait le
+   * flood rentable, puisqu'il suffirait alors d'inonder pour faire emettre le
+   * serveur ; et deconnecter punirait d'un plantage apparent celui dont la
+   * page a simplement un doigt lourd.
+   *
+   * ---- POURQUOI LE NETTOYAGE EST ICI, ET NULLE PART AILLEURS ----
+   *
+   * Ce texte est ecrit par un joueur et s'affiche sur l'ecran de TOUS les
+   * autres. C'est la seule entree du jeu qui ait ces deux proprietes a la
+   * fois, et c'est la definition meme d'une entree hostile. La page qui
+   * l'envoie ne compte pas : on la remplace en ouvrant une console. La page
+   * qui l'AFFICHE ne compte pas non plus, parce qu'elle est ailleurs, dans un
+   * autre depot, et qu'une regle repartie sur deux depots finit par ne plus
+   * dire la meme chose. Ce qui sort d'ici est ce que trente-neuf ecrans
+   * recevront ; il n'y a pas de deuxieme chance en aval.
+   */
+  dit(addr, texte, now) {
+    const t = now || Date.now();
+    const propre = Game.textePropre(texte);
+    /* Vide apres nettoyage : rien a montrer. On refuse AVANT de compter, sinon
+       une page qui envoie des blancs consommerait le droit de parole de son
+       joueur sans qu'aucune bulle n'apparaisse jamais. */
+    if (!propre) return null;
+    if (!addr) return null;
+    if (!this._dits) this._dits = new Map();
+
+    /* ---- L'ESPACEMENT ET LA RAFALE, MEME MECANIQUE QU'AUX TABLES ----
+     * `duelDire` espace (`PHRASE_PAUSE_MS`) puis plafonne (`PHRASE_MAX`). On
+     * fait pareil, a une difference pres : le plafond des tables vaut pour
+     * toute une partie, qui finit ; ici rien ne finit, donc le plafond
+     * GLISSE sur une fenetre. Un plafond fixe aurait rendu muet a vie le
+     * premier joueur bavard. */
+    const fenetre = this._dits.get(addr) || [];
+    const recents = fenetre.filter((t0) => t - t0 < cfg.DIT_FENETRE_MS);
+    if (recents.length && t - recents[recents.length - 1] < cfg.DIT_PAUSE_MS) return null;
+    if (recents.length >= cfg.DIT_RAFALE) return null;
+    recents.push(t);
+    this._dits.set(addr, recents);
+    /* La table ne garde que les bavards des quinze dernieres secondes. Sans ce
+       balayage elle retiendrait une entree par joueur ayant jamais parle, pour
+       toujours — une fuite lente, invisible, qui ne se voit qu'au bout de
+       plusieurs mois de service. */
+    if (this._dits.size > 512) {
+      for (const [a, v] of this._dits)
+        if (!v.length || t - v[v.length - 1] >= cfg.DIT_FENETRE_MS) this._dits.delete(a);
+    }
+    return propre;
+  }
+
+  /**
+   * CE QU'IL RESTE D'UN TEXTE ECRIT PAR UN JOUEUR.
+   *
+   * Chaque coupe repond a un probleme precis, et aucune n'est cosmetique :
+   *
+   *  - LES CARACTERES DE COMMANDE ET LES SAUTS DE LIGNE. La bulle se dessine
+   *    sur UNE ligne : un retour chariot la fait deborder du cadre, et les
+   *    caracteres de commande traversent tout ce qui ne les attend pas —
+   *    journaux, consoles, terminaux.
+   *  - LES INVISIBLES ET LES RENVERSEURS DE SENS. U+202E retourne l'ordre
+   *    d'affichage de tout ce qui suit : une seule de ces marques suffit a
+   *    faire lire a l'envers le nom du joueur d'a cote, et elle ne se voit
+   *    pas dans le champ de saisie de celui qui la colle.
+   *  - LES DEMI-PAIRES. Un emoji coupe en deux au moment de la troncature
+   *    laisse un demi-caractere que la page d'en face n'a aucun moyen
+   *    d'afficher. On compte donc en POINTS DE CODE, jamais en unites.
+   *  - LES CHEVRONS. Ce texte part sur l'ecran de tout le monde, et la page
+   *    qui le dessine vit dans un AUTRE depot : le jour ou elle le pose dans
+   *    un `innerHTML` plutot que dans un `textContent`, une balise suffirait.
+   *    Le cout est « <3 » qui devient « 3 » ; le prix de l'oubli inverse
+   *    est du code execute chez chaque joueur. Ce n'est pas un arbitrage
+   *    serre.
+   *  - LES BLANCS EN RAFALE. Deux cents espaces sont un texte non vide qui
+   *    n'affiche rien : sans cette reduction, une bulle vide s'ouvrirait
+   *    au-dessus de la tete d'un joueur toutes les deux secondes.
+   *
+   * La longueur se compte APRES tout le reste : compter avant aurait laisse
+   * passer cent vingt caracteres invisibles, c'est-a-dire une bulle vide qui a
+   * l'air pleine aux yeux du serveur.
+   */
+  static textePropre(v) {
+    let t = String(v == null ? '' : v);
+    /* Commandes, sauts de ligne, et les deux separateurs de ligne Unicode que
+       personne ne pense a couper parce qu'ils ne ressemblent pas a un \n. */
+    t = t.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ');
+    /* Invisibles, marques de direction, renverseurs de sens. */
+    t = t.replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u206a-\u206f\ufeff]/g, '');
+    /* Les demi-paires arrivees telles quelles dans le message. */
+    t = t.replace(/[\ud800-\udbff](?![\udc00-\udfff])/g, '');
+    t = t.replace(/(^|[^\ud800-\udbff])([\udc00-\udfff])/g, '$1');
+    t = t.replace(/[<>]/g, '');
+    t = t.replace(/\s+/g, ' ').trim();
+    return Array.from(t).slice(0, cfg.DIT_MAX).join('').trim();
   }
 
   /** L'etat COMPLET, tete et fiches. L'export, l'import et l'instantane de
@@ -795,7 +959,20 @@ class Game {
        redemarrage reviendrait a retirer la preuve apres l'avoir donnee. */
     if (st.compta) this.compta = st.compta;
     if (st.usage) this.usage = st.usage;
-    if (st.cinema) this.cinema = st.cinema;
+    /* ---- LA GALERIE RELIT LES DEUX FORMES ----
+     *
+     * L'etat deja en production contient `cinema`, UN objet, pose du temps ou
+     * il n'y avait qu'une seance. Ne relire que `cinemas` aurait efface au
+     * premier redemarrage la seule seance que le proprietaire ait jamais
+     * enregistree — sans erreur, sans trace, et personne ne l'aurait vu avant
+     * d'avoir traverse le hall.
+     *
+     * L'ancienne forme devient donc une liste d'un element. On ne la
+     * revalide pas : elle est deja passee par le filtre le jour ou elle a ete
+     * posee, et la refuser ici ferait perdre a la relecture ce que
+     * l'enregistrement avait accepte. */
+    if (Array.isArray(st.cinemas)) this.cinemas = st.cinemas.filter((c) => c && c.titre);
+    else if (st.cinema && st.cinema.titre) this.cinemas = [st.cinema];
     if (Array.isArray(st.paris)) this.paris = st.paris;
     if (st.parisRegles) this.parisRegles = st.parisRegles;
     if (st.parisSeq) this.parisSeq = st.parisSeq;

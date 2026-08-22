@@ -507,6 +507,40 @@ module.exports = {
   PHRASE_PAUSE_MS: parseInt(env('PHRASE_PAUSE_MS', '3000'), 10),
   PHRASE_MAX: parseInt(env('PHRASE_MAX', '15'), 10),
 
+  /* ---- LA PAROLE DES JOUEURS, DANS LE MONDE ----
+   *
+   * Ici le joueur ECRIT. Ce n'est plus un identifiant choisi dans une liste
+   * fermee comme aux tables de duel : c'est une chaine libre qui va s'afficher
+   * au-dessus de sa tete SUR L'ECRAN DE TOUT LE MONDE. Les trois nombres qui
+   * suivent sont donc la seule chose entre un clavier et trente-neuf ecrans.
+   *
+   * DIT_MAX : une bulle se dessine sur UNE ligne, au-dessus d'un personnage
+   * qui mesure quelques dizaines de pixels. Au-dela de cent vingt signes elle
+   * couvre la moitie de la carte, et couvrir la carte des autres est un geste
+   * hostile qui ne demande aucun outil.
+   *
+   * DIT_PAUSE_MS : deux secondes entre deux phrases. La bulle vit trente
+   * secondes ; sans espacement, quinze bulles se remplaceraient avant que la
+   * premiere ait fini d'etre lue, et personne ne lirait rien.
+   *
+   * DIT_RAFALE / DIT_FENETRE_MS : l'espacement seul laisse parler sans fin,
+   * une phrase toutes les deux secondes, indefiniment. Le plafond glissant
+   * borne la RAFALE — cinq phrases par quinze secondes — ce qui laisse une
+   * conversation normale passer et arrete le robot qui recite.
+   */
+  DIT_MAX: parseInt(env('DIT_MAX', '120'), 10),
+  DIT_PAUSE_MS: parseInt(env('DIT_PAUSE_MS', '2000'), 10),
+  DIT_RAFALE: parseInt(env('DIT_RAFALE', '5'), 10),
+  DIT_FENETRE_MS: parseInt(env('DIT_FENETRE_MS', '15000'), 10),
+
+  /* ---- COMBIEN DE SEANCES A L'AFFICHE ----
+   * La galerie du cinema part dans le `hello` de CHAQUE connexion et dans
+   * chaque diffusion : une liste sans plafond serait un message qui grossit a
+   * chaque enregistrement, paye par tous les joueurs a chaque ouverture de
+   * page. Douze tiennent dans une galerie qu'on parcourt du regard ; au-dela
+   * on ne choisit plus, on cherche. */
+  CINEMA_MAX: parseInt(env('CINEMA_MAX', '12'), 10),
+
   /* ---- La surveillance ----
    * MONITEUR_URL : l'adresse a laquelle le serveur fait signe qu'il est
    * vivant. C'est le SILENCE qui alerte — la seule facon d'etre prevenu quand

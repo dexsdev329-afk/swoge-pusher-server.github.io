@@ -720,17 +720,23 @@ function page(csrf) {
 <div data-vue="liveops" class="panel" style="margin-top:14px">
   <h2>&#127916; Cinema &mdash; SWOGE FLIX</h2>
   <div class="sub" style="margin:0 0 10px">
-    What plays on the screen in the Nexus cinema. Leave the title empty to take
-    the show down &mdash; the screen goes back to announcing there is nothing on.
+    The gallery of shows on the screen in the Nexus cinema. Add as many as you
+    like up to the cap; remove one and it is gone from every player's screen at
+    once, without a restart.
     <br><b>Only http:// and https:// addresses are accepted.</b> These end up in
     an iframe on every player's page; anything else is refused by the server.
   </div>
+  <!-- La galerie DEJA ENREGISTREE, relue du serveur apres chaque geste. Sans
+       elle, le proprietaire ne pouvait ni savoir ce qui est a l'affiche, ni
+       retirer quoi que ce soit : il ecrivait dans le vide. -->
+  <div id="cineListe"><div class="muted2">chargement…</div></div>
+  <div class="sub" style="margin:14px 0 6px"><b>Add a show</b></div>
   <input id="cineTitre" placeholder="Title shown on the screen and in the room">
   <input id="cineAff" placeholder="Poster image URL (portrait) — optional">
   <input id="cineVf" placeholder="VF player URL">
   <input id="cineVo" placeholder="VO player URL">
   <div class="row" style="margin-top:4px">
-    <button class="ghost" id="cineGo">Save the show</button>
+    <button class="ghost" id="cineGo">Add to the gallery</button>
     <span id="cineMsg" style="font-size:12px"></span>
   </div>
 </div>
@@ -820,7 +826,7 @@ function vaVers(v, arg){
   if (VUE === "joueur" && arg) chargeFiche(arg);
   if (VUE === "engagement") { chargeEngagement(); chargeTaps(); }
   if (VUE === "confiance") chargeJournal();
-  if (VUE === "liveops") chargeReglages();
+  if (VUE === "liveops") { chargeReglages(); chargeCinemas(); }
   if (VUE === "sys") peintSante();
   if (VUE === "jeux") chargeUsage();
 }
@@ -1846,24 +1852,72 @@ async function loadImport(){
     impRend(await r.json());
   }catch(e){ $("#impBody").innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
 }
-/* ================= LA SEANCE DU CINEMA =================
+/* ================= LA GALERIE DU CINEMA =================
  *
- * Quatre champs, un bouton. Le serveur decide de ce qu'il accepte — cette page
- * ne revalide RIEN : deux regles pour la meme chose finissent par ne plus dire
- * la meme chose, et c'est celle du serveur qui compte puisqu'elle est la seule
- * qu'on ne puisse pas contourner en ouvrant la console.
+ * Quatre champs, un bouton, et la liste de ce qui est deja a l'affiche. Le
+ * serveur decide de ce qu'il accepte — cette page ne revalide RIEN : deux
+ * regles pour la meme chose finissent par ne plus dire la meme chose, et c'est
+ * celle du serveur qui compte puisqu'elle est la seule qu'on ne puisse pas
+ * contourner en ouvrant la console.
  *
- * On relit ce que le serveur a RETENU et on le repose dans les champs. Sans ca,
- * une adresse refusee resterait affichee dans la case : le proprietaire
- * croirait l'avoir enregistree, traverserait le hall, et trouverait un ecran
- * eteint sans savoir pourquoi.
+ * TOUT CE QUI S'AFFICHE ICI VIENT DE CE QUE LE SERVEUR A RETENU, jamais de ce
+ * qu'on vient de lui envoyer. Sans cette regle, une adresse refusee resterait
+ * affichee dans la case : le proprietaire croirait l'avoir enregistree,
+ * traverserait le hall, et trouverait un ecran eteint sans savoir pourquoi.
+ * C'est aussi pour ca que le rang de retrait vient de cette liste-la — il
+ * designe une place que le serveur connait, pas une place qu'on a devinee.
  */
-function cineRemplit(c){
-  $("#cineTitre").value = (c && c.titre) || "";
-  $("#cineAff").value   = (c && c.affiche) || "";
-  $("#cineVf").value    = (c && c.vf) || "";
-  $("#cineVo").value    = (c && c.vo) || "";
+function cineRend(j){
+  var v = (j && j.cinemas) || [];
+  var max = (j && j.max) || 0;
+  if(!v.length){
+    $("#cineListe").innerHTML='<div class="muted2">nothing on — the screen announces there is no show</div>';
+    return;
+  }
+  var h='<div class="sub" style="margin:0 0 6px">'+v.length+(max?(" / "+max):"")+' show(s) on the screen</div>';
+  for(var i=0;i<v.length;i++){
+    var c=v[i]||{};
+    /* L'apercu de l'affiche est un LIEN, pas une image : une image chargee ici
+       ferait partir le tableau de bord chercher une adresse que le
+       proprietaire vient de coller, et une adresse collee par erreur saurait
+       alors qui consulte le panneau. On montre ou elle mene, on ne va pas.
+       Le texte du lien est l'ADRESSE, raccourcie : « poster » aurait montre
+       douze fois le meme mot, et l'on veut justement reconnaitre laquelle est
+       laquelle sans avoir a cliquer. */
+    var court = String(c.affiche||"").replace(/^https?:\/\//,"");
+    if(court.length>34) court = court.slice(0,16)+"…"+court.slice(-14);
+    var aff = c.affiche
+      ? '<a href="'+esc(c.affiche)+'" target="_blank" rel="noopener noreferrer" title="'+esc(c.affiche)+'">'+esc(court)+'</a>'
+      : '<span class="muted2">no poster</span>';
+    var ver = [c.vf?"VF":null, c.vo?"VO":null].filter(Boolean).join(" + ") || "—";
+    h += '<div class="row" style="align-items:center;gap:8px;margin:0 0 6px">'
+      +  '<b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.titre)+'</b>'
+      +  '<span class="muted2" style="font-size:12px">'+ver+'</span>'
+      +  '<span style="font-size:12px">'+aff+'</span>'
+      +  '<button class="ghost" data-cine-retire="'+i+'">remove</button>'
+      +  '</div>';
+  }
+  $("#cineListe").innerHTML=h;
 }
+async function chargeCinemas(){
+  try{ cineRend(await lit("/admin/cinema")); }
+  catch(e){ $("#cineListe").innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
+}
+/* Le retrait passe par la liste elle-meme : les boutons naissent avec elle, et
+   leur accrocher un gestionnaire un par un a chaque repeinte en oublierait un
+   le jour ou la repeinte devient partielle. */
+$("#cineListe").addEventListener("click", async function(ev){
+  var b = ev.target.closest ? ev.target.closest("[data-cine-retire]") : null;
+  if(!b) return;
+  b.disabled=true;
+  $("#cineMsg").textContent="removing…"; $("#cineMsg").className="";
+  try{
+    var j=await post("/admin/cinema/retire",{ i: Number(b.getAttribute("data-cine-retire")) });
+    if(j.error){ $("#cineMsg").textContent="✗ "+j.error; $("#cineMsg").className="impbad"; }
+    else { $("#cineMsg").textContent="✓ removed — gone from every screen"; $("#cineMsg").className="impok"; }
+    cineRend(j.cinemas?j:await lit("/admin/cinema"));
+  }catch(e){ $("#cineMsg").textContent="✗ "+e.message; $("#cineMsg").className="impbad"; }
+});
 $("#cineGo").onclick=async function(){
   var b=$("#cineGo"); b.disabled=true;
   $("#cineMsg").textContent="saving…"; $("#cineMsg").className="";
@@ -1872,21 +1926,25 @@ $("#cineGo").onclick=async function(){
                                        affiche:$("#cineAff").value,
                                        vf:$("#cineVf").value, vo:$("#cineVo").value });
     if(j.error){ $("#cineMsg").textContent="✗ "+j.error; $("#cineMsg").className="impbad"; }
-    else if(!j.cinema){
-      cineRemplit(null);
-      $("#cineMsg").textContent="✓ show taken down — the screen announces nothing is on";
-      $("#cineMsg").className="impok";
+    else if(!j.ajoutee){
+      $("#cineMsg").textContent="✗ refused — a title and at least one http(s) player URL are required";
+      $("#cineMsg").className="impbad";
     } else {
-      cineRemplit(j.cinema);
+      /* Les champs se vident SEULEMENT quand le serveur a garde la seance :
+         vider avant la reponse aurait fait perdre une adresse longue a
+         retrouver au premier refus. */
+      $("#cineTitre").value=""; $("#cineAff").value="";
+      $("#cineVf").value=""; $("#cineVo").value="";
       var manque=[];
-      if(!j.cinema.affiche) manque.push("poster");
-      if(!j.cinema.vf) manque.push("VF");
-      if(!j.cinema.vo) manque.push("VO");
+      if(!j.ajoutee.affiche) manque.push("poster");
+      if(!j.ajoutee.vf) manque.push("VF");
+      if(!j.ajoutee.vo) manque.push("VO");
       $("#cineMsg").textContent = manque.length
-        ? "✓ saved — refused or empty: "+manque.join(", ")
-        : "✓ saved — the screen is live for everyone";
+        ? "✓ added — refused or empty: "+manque.join(", ")
+        : "✓ added — live on every screen";
       $("#cineMsg").className = manque.length ? "impwarn" : "impok";
     }
+    cineRend(j.cinemas?j:await lit("/admin/cinema"));
   }catch(e){ $("#cineMsg").textContent="✗ "+e.message; $("#cineMsg").className="impbad"; }
   b.disabled=false;
 };

@@ -95,8 +95,12 @@ console.log('-- la section cinema est reellement atteignable --');
 {
   /* Les identifiants ne sont pas recopies ici : on prend ceux que le bouton
      d'enregistrement LIT vraiment, en relisant son propre code. Renommer un
-     champ dans le HTML sans le renommer dans l'envoi fait tomber cet essai. */
-  const i = SCRIPT.indexOf('"/admin/cinema"');
+     champ dans le HTML sans le renommer dans l'envoi fait tomber cet essai.
+
+     On vise l'ENVOI (`post`), pas la premiere mention de l'adresse : depuis que
+     le panneau relit la galerie, il la LIT aussi (`lit`), et une recherche sur
+     l'adresse seule serait tombee sur la relecture — qui ne lit aucun champ. */
+  const i = SCRIPT.indexOf('post("/admin/cinema"');
   ok(i > 0, "la page connait la route d'enregistrement de la seance");
   const envoi = SCRIPT.slice(i, i + 500);
   const champs = uniq(/\$\("#(\w+)"\)/g, envoi);
@@ -133,15 +137,52 @@ console.log('-- la page envoie exactement ce que le serveur lit --');
   const sonde = new Proxy({}, {
     get(t, k) { if (typeof k === 'string') lus.add(k); return 'https://exemple.test/x'; },
   });
-  new Game({}).poseCinema(sonde);
+  new Game({}).ajouteCinema(sonde);
 
-  const i = SCRIPT.indexOf('"/admin/cinema"');
+  const i = SCRIPT.indexOf('post("/admin/cinema"');
   const envoi = SCRIPT.slice(i, i + 500);
   const envoyes = uniq(/(\w+)\s*:\s*\$\("#\w+"\)\.value/g, envoi);
 
   ok(lus.size >= 4, `le serveur lit ${lus.size} champs`);
   for (const c of lus) ok(envoyes.has(c), `la page envoie « ${c} », que le serveur lit`);
   for (const c of envoyes) ok(lus.has(c), `le serveur lit « ${c} », que la page envoie`);
+}
+
+console.log('-- la galerie du cinema se voit et se defait --');
+{
+  /* ---- POURQUOI CE BLOC EXISTE ----
+   * Le panneau ne savait qu'ECRIRE. On pouvait enregistrer douze seances sans
+   * jamais voir la premiere, et il n'existait aucun geste pour en retirer une :
+   * la galerie n'aurait fait que grossir jusqu'au plafond, apres quoi le
+   * panneau aurait refuse tout ajout sans que personne puisse rien liberer.
+   *
+   * Rien n'est recopie ici non plus : le rang de retrait vient de la liste
+   * peinte, et les deux adresses sont relues dans le script de la page. */
+  /* Ce que la page peint doit porter le nom que le serveur RETIENT : on
+     demande au moteur de quoi il tient une liste, et l'on verifie que le
+     panneau parle bien de ce champ-la. */
+  const g = new Game({});
+  g.ajouteCinema({ titre: 'T', vo: 'https://exemple.test/vo' });
+  ok(Array.isArray(g.cinemas), 'le moteur tient une LISTE de seances');
+  ok(/cinemas/.test(SCRIPT), 'et le panneau lit ce meme nom de champ');
+
+  ok(SCRIPT.indexOf('lit("/admin/cinema")') > 0,
+     'la page RELIT la galerie retenue par le serveur');
+  ok(SCRIPT.indexOf('post("/admin/cinema/retire"') > 0,
+     'et connait la route qui retire une seance');
+  /* Le retrait ne peut pas viser une place inventee : le numero envoye est lu
+     sur le bouton que la liste vient de peindre. */
+  ok(/data-cine-retire/.test(PAGE), 'le rang a retirer vient du bouton de la liste');
+  /* Et la liste vit dans le MEME onglet que les champs : une galerie rangee
+     ailleurs que sa saisie serait deux moities d'un meme reglage. */
+  const panneauDe = (id) => {
+    const j = PAGE.indexOf('id="' + id + '"');
+    if (j < 0) return null;
+    const k = PAGE.slice(0, j).lastIndexOf('<div data-vue=');
+    return k < 0 ? null : (PAGE.slice(k).match(/data-vue="([a-z]+)"/) || [])[1];
+  };
+  eq(panneauDe('cineListe'), panneauDe('cineGo'),
+     'la galerie et les champs sont dans le meme panneau');
 }
 
 console.log(`\n${n} verifications, 0 echec.`);
