@@ -70,10 +70,14 @@ console.log('\n-- dans la carte rouge, le tir porte --');
 
 console.log('\n-- dans la carte verte, il ne porte pas --');
 {
-  const { R, A, B, jb } = duel({});
-  const pvAvant = jb.pv;
+  const { R, A, B } = duel({});
   const evs = tire(R, A);
-  eq(jb.pv, pvAvant, 'Bob ne perd rien');
+  /* MEME RAISON QUE PLUS BAS : comparer les points de vie de Bob mesurerait
+     les creatures de la carte, pas le tir d'Alice. La question est de savoir
+     si un JOUEUR peut lui faire mal dans la zone sure ; `quoi: 'joueur'` est
+     la seule marque qui reponde. */
+  ok(!evs.some((e) => e.degats.some((d) => d.addr === B && d.quoi === 'joueur')),
+     'Bob ne prend aucun degat de joueur');
   ok(!evs.some((e) => e.touches.some((t) => t.joueur === B)),
      'et aucun coup n est annonce : la zone sure reste sure');
 }
@@ -83,14 +87,40 @@ console.log('\n-- on ne se tire pas dessus soi-meme --');
   const { R, A, ja } = duel({ pvp: true });
   /* Bob ecarte : il ne doit pas encaisser le tir a la place d'Alice. */
   R.joueurs.get('0xbbb').x = ja.x + 4000;
-  const pvAvant = ja.pv;
-  tire(R, A);
-  eq(ja.pv, pvAvant, 'Alice ne se blesse pas avec son propre projectile');
+  const evs = tire(R, A);
+  /* ---- ON REGARDE LA SOURCE, PAS LE TOTAL DE VIE ----
+   *
+   * La version d'avant comparait les points de vie d'Alice avant et apres.
+   * C'etait mesurer du BRUIT : la carte est peuplee, elle est generee au
+   * hasard (aucune graine n'est passee a `Realm`), et une creature qui la
+   * mord pendant les trois tours de simulation faisait tomber l'essai une
+   * fois sur quatre — sur un message qui accusait son propre projectile.
+   *
+   * Ce qu'on veut savoir tient en une phrase : est-ce que le tir d'Alice
+   * porte un degat AU NOM D'ALICE ? `quoi: 'joueur'` est la marque que seul
+   * un projectile de joueur pose (realm.js), donc la question se pose
+   * exactement, sans rien devoir a ce que font les monstres a cote. */
+  const parUnJoueur = evs.some((e) =>
+    e.degats.some((d) => d.addr === A && d.quoi === 'joueur'));
+  ok(!parUnJoueur, 'Alice ne se blesse pas avec son propre projectile');
+  ok(!evs.some((e) => e.touches.some((t) => t.joueur === A)),
+     'et aucun coup de joueur n est annonce sur elle');
 }
 
 console.log('\n-- tomber, c est perdre son sac --');
 {
   const { R, A, B, jb } = duel({ pvp: true });
+  /* ---- ON VIDE LA CARTE DE SES CREATURES ----
+   *
+   * Bob est pose a UN point de vie : n'importe quelle morsure le tue avant le
+   * projectile d'Alice, et sa chute n'est alors pas marquee PvP. L'essai
+   * accusait le marquage alors qu'il mesurait qui avait frappe le premier —
+   * une fois sur quatre, sur une carte peuplee au hasard.
+   *
+   * Vider suffit : une naissance est deja interdite a moins de
+   * `ecartDeNaissance` du joueur, donc aucune creature ne peut reapparaitre
+   * sur lui pendant les trois tours qui suivent. */
+  R.monstres = [];
   jb.pv = 1;
   const evs = tire(R, A);
   const mort = evs.flatMap((e) => e.morts).find((m) => m.addr === B);
