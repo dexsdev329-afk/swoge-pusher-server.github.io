@@ -1946,6 +1946,44 @@ const MONSTRES = {
     biomes: [],
   },
 
+  /* ---- LE BRAISIER ----
+   *
+   * Celui qui CLOUE. La paralysie ne pouvait pas venir de l'Idole elle-meme :
+   * elle tire des anneaux complets a partir de la phase quatre, et deux
+   * secondes clouees au milieu d'un anneau, c'est une mort sans aucune action
+   * possible — la table des EFFETS dit en toutes lettres que ce n'est pas de
+   * la difficulte. Elle vient donc d'une creature SEPAREE, qu'on peut voir
+   * arriver, contourner, et surtout TUER.
+   *
+   * Il ne marche presque pas (40) et sa fleche va lentement (200, contre 340
+   * pour la sentinelle) : elle s'esquive a l'oeil, elle ne se subit pas. Tout
+   * le danger est dans ce qui SUIT la paralysie — les cendreux qui arrivent a
+   * 152 pendant qu'on ne peut plus reculer.
+   *
+   * Neuf cents points de vie, soit deux fois la sentinelle : il faut CHOISIR
+   * de s'en occuper, et pendant ce temps l'Idole tape. C'est le choix qui
+   * fait la phase, pas le monstre.
+   *
+   * `sprite` emprunte la sentinelle en attendant son propre dessin. Une
+   * creature sans image ne se dessine pas du tout — invisible et qui paralyse
+   * serait la pire chose du jeu. */
+  braisier: {
+    cle: 'braisier', nom: 'Ember Acolyte', pv: 900, att: 58, def: 40,
+    vitesse: 40, rayon: 46, vue: 950, contact: false, cadence: 0.4,
+    sprite: 'sentinelle',
+    /* ---- LE DESSIN DU PROJECTILE DIT L'EFFET ----
+     * Je lui avais mis « maudit », qui est deja le trait de l'archer et ne
+     * fait rien. realm.test.js l'a refuse, et il a raison : c'est la seule
+     * chose qui apprend au joueur ce qui arrive AVANT que ca arrive. Les deux
+     * creatures qui clouent — la meduse et la bobine — tirent « oeil ». Le
+     * braisier tire donc « oeil » : on sait ce que c'est la premiere fois
+     * qu'on le voit, parce qu'on l'a deja vu ailleurs. */
+    tir: { portee: 700, vitesse: 200, sprite: 'oeil', att: 70, cadence: 0.26,
+           effet: 'paralyse' },
+    xp: 260,
+    biomes: [],
+  },
+
   /* ---- L'IDOLE, AU FOND DU SANCTUAIRE ----
    *
    * Le premier boss du jeu a PHASES. Ce n'est pas un boss avec plus de points
@@ -1966,8 +2004,18 @@ const MONSTRES = {
    * n'occupe qu'un tiers de la barre doit durer assez pour s'apprendre.
    */
   idole: {
-    cle: 'idole', nom: 'The Cinder Idol', pv: 38000, att: 240, def: 88,
+    cle: 'idole', nom: 'The Cinder Idol', pv: 380000, att: 240, def: 88,
     vitesse: 44, rayon: 104, vue: 1000, contact: true, cadence: 0.42,
+    /* ---- ELLE PROJETTE CE QU'ELLE TOUCHE ----
+     * Sans ca, la meilleure facon de la battre etait de se COLLER a elle : au
+     * corps a corps on ne traverse aucune braise, l'anneau part par-dessus la
+     * tete, et le cercle au sol se sort en deux pas puisqu'on est deja au
+     * centre. Toute la mise en scene des cinq phases se contournait en
+     * restant dans ses jambes.
+     * Le choc n'enleve pas un point de vie. Il enleve la POSITION — et c'est
+     * ce qui rend la salle, les invocations et les anneaux a nouveau
+     * pertinents. */
+    choc: 'repousse',
     tir: { portee: 620, vitesse: 300, sprite: 'braise', att: 128, cadence: 0.3,
            effet: 'brulure' },
     zone: { annonce: 1.6, rayon: 260, att: 190, cadence: 0.12 },
@@ -2002,14 +2050,27 @@ const MONSTRES = {
       /* 2. LA FORGE S'OUVRE. La zone revient deux fois plus souvent et brule.
          Reculer ne suffit plus, il faut sortir du cercle. */
       { jusqua: 0.80, vitesse: 62, cadence: 0.52,
-        zone: { cadence: 0.24, att: 205, effet: 'brulure' } },
+        zone: { cadence: 0.24, att: 205, effet: 'brulure' },
+        /* Et le PREMIER braisier, un seul, deux au plus. C'est ici qu'on
+           apprend ce que fait sa fleche lente, pendant qu'il n'y a encore
+           rien d'autre a esquiver — apprendre la paralysie au milieu d'un
+           anneau complet, ce serait l'apprendre en mourant. */
+        appel: { espece: 'braisier', combien: 1, cadence: 0.045, plafond: 2,
+                 rayon: 340 } },
       /* 3. L'EVENTAIL, ET LE PREMIER APPEL. Trois braises au lieu d'une, et
          l'Idole ouvre sa fournaise : des cendreux en sortent. Ils vont VITE —
          on ne les distance pas, il faut les tuer ou les traverser, et les
          traverser coute des points de vie. C'est la premiere fois du combat
          ou l'on ne peut plus se contenter de tourner autour d'elle. */
       { jusqua: 0.60, vitesse: 74,
-        tir: { cadence: 0.45, tirs: 3, ecart: 0.24 },
+        /* L'eventail RALENTIT, et c'est la que la phase se joue. Prise seule,
+           une braise qui freine de deux cinquiemes n'est presque rien. Ce qui
+           la rend terrible, c'est ce qui arrive AVEC : le cendreux court a
+           152, le personnage le plus lent tombe a 121 en etant ralenti — il
+           se fait donc RATTRAPER, pour la premiere fois du jeu.
+           Fuir ne cesse pas d'exister pour autant : tuer les cendreux, ou ne
+           pas se faire toucher par l'eventail, sont deux sorties reelles. */
+        tir: { cadence: 0.45, tirs: 3, ecart: 0.24, effet: 'ralenti' },
         appel: { espece: 'cendreux', combien: 3, cadence: 0.07, plafond: 6,
                  rayon: 240 } },
       /* 4. L'ANNEAU. Quatorze projectiles tout autour — il n'y a plus de
@@ -2018,7 +2079,16 @@ const MONSTRES = {
          demie : plus vite, deux anneaux se croiseraient et la salle serait
          pleine, ce qui n'est plus un motif mais un mur. */
       { jusqua: 0.40, vitesse: 68,
-        tir: { cadence: 0.4, tirs: 14, ecart: 0.4488, att: 104 },
+        /* ---- ET LA BRULURE REVIENT, EXPLICITEMENT ----
+         * Les phases se CUMULENT : celle-ci part de ce que la phase trois a
+         * deja pose, pas de la fiche de base. Le `ralenti` de l'eventail
+         * debordait donc ici, sur un anneau COMPLET — ralenti dans un cercle
+         * ferme, on n'atteint plus le trou, et c'est la mort sans aucune
+         * action possible que la table des EFFETS interdit en toutes lettres.
+         * Le ralentissement appartient a l'eventail, ou l'on peut se decaler.
+         * Il s'arrete ici, et il faut l'ecrire pour qu'il s'arrete. */
+        tir: { cadence: 0.4, tirs: 14, ecart: 0.4488, att: 104,
+               effet: 'brulure' },
         zone: { cadence: 0.18 },
         /* Les SENTINELLES prennent le relais : lentes, mais elles tirent. On
            ne peut donc plus regler le probleme en reculant — il y a desormais
@@ -2029,7 +2099,8 @@ const MONSTRES = {
          Le cercle RETRECIT — un cercle plus petit se sort plus vite, donc son
          annonce peut descendre sans enfreindre la regle de sortie. */
       { jusqua: 0.20, vitesse: 96, cadence: 0.7, att: 268,
-        tir: { cadence: 0.55, tirs: 16, ecart: 0.3927, att: 112 },
+        tir: { cadence: 0.55, tirs: 16, ecart: 0.3927, att: 112,
+               effet: 'brulure' },
         zone: { annonce: 1.2, rayon: 190, cadence: 0.4, att: 225,
                 effet: 'brulure' },
         /* Et les deux a la fois, plus souvent. Le plafond monte a huit : au-
@@ -2434,6 +2505,26 @@ const EFFETS = {
      six pour cent d'une reserve pleine. Assez pour qu'on y pense, pas assez
      pour tuer a soi seul — c'est ce qui vient AVEC qui tue. */
   brulure:  { duree: 5.0, immunite: 3.0, parSeconde: 8 },
+  /* ---- LE CHOC : ON EST PROJETE EN ARRIERE ----
+   *
+   * Il ne fait pas de degats et ne dure pas : c'est un DEPLACEMENT, plus une
+   * fraction de seconde ou l'on ne commande plus rien. Ce qu'il enleve, c'est
+   * la POSITION — et dans ce jeu la position est tout : la portee d'une lame
+   * fait 320, celle d'un marteau 180. Etre jete a trois cents unites d'un
+   * boss qu'on frappait au corps a corps coute plusieurs secondes de degats,
+   * sans qu'on ait perdu un seul point de vie.
+   *
+   * `duree` est le VOL, pas un etat : 0,4 s pendant lesquelles le serveur
+   * refuse les deplacements, exactement comme pour la paralysie. Sans ce
+   * refus, la page annoncerait sa position d'avant au message suivant et le
+   * serveur l'y ramenerait doucement — la projection se serait defaite toute
+   * seule, et un client modifie s'en serait affranchi en une ligne.
+   *
+   * Une immunite de 1,4 s alors que le vol dure 0,4 : sinon un boss au
+   * contact, qui frappe deux fois par seconde, projetterait sans arret et le
+   * joueur ne reprendrait jamais la main. Repousse une fois puis laisse
+   * revenir — c'est ce qui en fait un rythme et pas une prison. */
+  repousse: { duree: 0.4, immunite: 1.4, force: 300 },
 };
 
 /* L'ancien nom, garde parce que trois fichiers le lisent. Ce n'est pas une

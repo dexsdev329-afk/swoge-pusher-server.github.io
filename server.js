@@ -5465,6 +5465,22 @@ function traiteEvenements(R, ev) {
     }
   }
 
+  /* ---- LA PROJECTION ----
+   * Un message A PART, et pas un champ de plus sur le coup. Le choc est un
+   * DEPLACEMENT decide par le serveur ; la page doit s'y ranger meme quand il
+   * ne s'accompagne d'aucun degat — ce qui arrivera le jour ou une zone
+   * repoussera sans blesser, ou ou l'egide annulera les degats sans annuler
+   * la bourrade. L'accrocher au coup l'aurait fait taire ces jours-la, sans
+   * rien dire. */
+  if (ev.pousse && ev.pousse.length) {
+    for (const p of ev.pousse) {
+      const ws = [...realmClients].find((c) => c.addr === p.addr);
+      if (ws && ws.readyState === 1) {
+        send(ws, { type: 'realmPousse', x: p.x, y: p.y, duree: p.duree });
+      }
+    }
+  }
+
   /* La carte se repeuple doucement, jamais sous le nez de quelqu'un. Un donjon,
      lui, refuse tout seul : `repeuple` rend zero des qu'il a un plan. C'est ce
      qui fait qu'on le VIDE, au lieu d'y camper. */

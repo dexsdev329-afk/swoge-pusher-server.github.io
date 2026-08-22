@@ -9,16 +9,21 @@
  * qui dit qu'on est protege, dans un duel ou l'on perd son sac, et personne
  * ne comprendrait.
  *
- * Le joueur perd de la vie a QUATRE endroits — la zone, le projectile de
- * monstre, le tir d'un autre joueur, et la brulure. Deux seulement passaient
- * par le filtre existant : la brulure ignore l'armure par regle, et le duel
- * calcule comme contre une creature. Une egide posee dans `_amorti` aurait
- * donc laisse passer exactement les deux qui comptent.
+ * Le joueur perd de la vie a CINQ endroits — la zone, le projectile de
+ * monstre, le COUP AU CONTACT, le tir d'un autre joueur, et la brulure. Deux
+ * seulement passaient par le filtre existant : la brulure ignore l'armure par
+ * regle, et le duel calcule comme contre une creature. Une egide posee dans
+ * `_amorti` aurait donc laisse passer exactement les deux qui comptent.
+ *
+ * Ce fichier en a longtemps enumere QUATRE et oublie le contact — la source la
+ * plus courante du jeu. Il passait au vert pendant que le pouvoir laissait
+ * mourir sous l'animation qui annonce l'invulnerabilite. Une liste incomplete
+ * dans un essai d'exhaustivite est pire qu'une absence d'essai : elle rassure.
  *
  * ---- ce que ce fichier protege, dans l'ordre ----
  *
- * 1. LES QUATRE SOURCES SONT ARRETEES. Enumerees depuis le monde quand c'est
- *    possible, pour qu'une cinquieme ajoutee demain se voie.
+ * 1. LES CINQ SOURCES SONT ARRETEES. Enumerees depuis le monde quand c'est
+ *    possible, pour qu'une sixieme ajoutee demain se voie.
  * 2. ELLE NE SE CUMULE PAS. Sinon un joueur qui appuie en rythme reste
  *    intuable pour toujours, et la recharge ne sert plus a rien.
  * 3. ELLE NE MET RIEN EN PAUSE. Sous egide on brule dans le vide ; sinon deux
@@ -108,6 +113,29 @@ const sources = {
                    espece: 'lime', reste: 0.05, duree: 1.5 });
     const pv0 = j.pv;
     avance(R, 0.5);
+    return pv0 - j.pv;
+  },
+  /* ---- LE CINQUIEME, CELUI QUI MANQUAIT ----
+   * Cette liste en comptait QUATRE, comme le commentaire de l'entonnoir. Le
+   * coup au CONTACT — la source la plus courante du jeu, celle du golem qui
+   * vous colle — appelait `_amorti` directement et passait donc a travers
+   * l'egide. L'essai etait vert, le pouvoir etait perce, et le mot « quatre »
+   * ecrit en haut du fichier etait la seule trace de l'oubli.
+   * On ne construit pas la creature a la main : on prend la premiere du monde
+   * qui frappe au contact, pour que ce cas suive le jeu s'il change. */
+  'le coup au contact': (avec) => {
+    const R = new Realm({}); R.rejoint('0xaaa', fiche('def'));
+    const j = R.joueurs.get('0xaaa');
+    R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+    const espece = Object.keys(monde.MONSTRES)
+      .find((c) => monde.MONSTRES[c].contact && !monde.MONSTRES[c].choc);
+    const t = monde.MONSTRES[espece];
+    const m = R._naissance({ espece, biome: 'terre', x: j.x + t.rayon + 10, y: j.y });
+    m.recharge = 0;
+    R.monstres.push(m);
+    if (avec) j.egide = E.duree;
+    const pv0 = j.pv;
+    avance(R, 0.4);
     return pv0 - j.pv;
   },
   'le projectile de monstre': (avec) => {

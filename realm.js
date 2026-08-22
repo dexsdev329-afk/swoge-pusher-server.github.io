@@ -474,8 +474,16 @@ class Realm {
          paralysie ne doit pas proteger d'une brulure, sinon un seul monstre
          suffirait a rendre tous les autres inoffensifs et le joueur
          apprendrait a se faire toucher expres. */
-      paralyse: 0, ralenti: 0, brulure: 0,
-      immun: { paralyse: 0, ralenti: 0, brulure: 0 },
+      /* ---- LA LISTE VIENT DE LA TABLE, ELLE N'EST PLUS RECOPIEE ----
+         Les trois noms etaient ecrits ici a la main, et `_pasEtats` les lit
+         deja avec `Object.keys(monde.EFFETS)`. Ajouter un quatrieme effet
+         sans penser a cette ligne-ci lui aurait donne `undefined` au lieu de
+         zero : `undefined > 0` est faux, donc l'etat n'aurait jamais tenu, et
+         `undefined - dt` rend NaN, qui n'est jamais superieur a zero non plus
+         — l'effet n'aurait tout simplement rien fait, sans une erreur nulle
+         part. C'est arrive au moment d'ajouter le choc. */
+      ...Object.fromEntries(Object.keys(monde.EFFETS).map((c) => [c, 0])),
+      immun: Object.fromEntries(Object.keys(monde.EFFETS).map((c) => [c, 0])),
       /* Le reste de degat de brulure a verser : elle brule par SECONDE, et un
          pas de cent millisecondes vaut 0,8 point. Sans accumulation, chaque
          pas arrondirait a zero et la brulure ne ferait jamais rien. */
@@ -619,7 +627,12 @@ class Realm {
      * console. On accepte encore la direction du regard — se retourner n'est
      * pas se deplacer, et un personnage fige qui tire dans le dos de ce qu'il
      * vise serait absurde. */
-    if (j.paralyse > 0) {
+    /* Le CHOC refuse au meme titre : pendant les quatre dixiemes de seconde du
+       vol, la position appartient au serveur. Sans ce refus la page annoncerait
+       sa position d'avant au message suivant, le serveur l'y ramenerait a la
+       vitesse de la marche, et la projection se serait defaite toute seule en
+       moins d'une seconde — y compris pour un client honnete. */
+    if (j.paralyse > 0 || j.repousse > 0) {
       if (dir) j.dir = String(dir).slice(0, 6);
       j.anim = 'idle';
       return false;
@@ -1792,10 +1805,17 @@ class Realm {
    *
    * ---- POURQUOI UN ENTONNOIR, ET PAS UN TEST A QUATRE ENDROITS ----
    *
-   * Le joueur perd de la vie a QUATRE endroits : la zone, le projectile de
-   * monstre, le tir d'un autre joueur, et la brulure. Deux seulement
-   * passaient par `_amorti` — les deux autres avaient chacun leur raison (la
-   * brulure ignore l'armure, le duel calcule comme contre une creature).
+   * Le joueur perd de la vie a CINQ endroits : la zone, le projectile de
+   * monstre, le COUP AU CONTACT, le tir d'un autre joueur, et la brulure.
+   * Deux seulement passaient par `_amorti` — les autres avaient chacun leur
+   * raison (la brulure ignore l'armure, le duel calcule comme contre une
+   * creature).
+   *
+   * Ce commentaire en annoncait QUATRE et oubliait le contact, qui appelait
+   * `_amorti` directement. L'egide ne bloquait donc pas les coups au corps a
+   * corps — le cas le plus courant du jeu — pendant que la page dessinait
+   * l'invulnerabilite. Un entonnoir dont la liste est fausse est un entonnoir
+   * perce : la liste fait partie du code.
    *
    * Une egide posee dans `_amorti` aurait donc laisse passer la brulure ET le
    * PvP. C'est-a-dire exactement les deux qui comptent : on serait mort
@@ -1939,7 +1959,12 @@ class Realm {
    * c'est l'immunite qui fait son travail, et c'est elle qui empeche trois
    * monstres du meme genre de transformer une rencontre en execution.
    */
-  _poseEtat(j, cle, ev) {
+  /**
+   * @param sx,sy  d'ou vient le coup. Ne sert qu'au CHOC, qui est le seul
+   *   effet dont le resultat depend d'une direction : les autres n'ont pas
+   *   d'orientation, et leur passer une source ne leur apprendrait rien.
+   */
+  _poseEtat(j, cle, ev, sx, sy) {
     const E = monde.EFFETS[cle];
     if (!E || j.pv <= 0) return false;
     if (j.immun[cle] > 0 || j[cle] > 0) return false;
@@ -1952,6 +1977,35 @@ class Realm {
        elle a deja ete raccourcie. */
     const vif = Math.min(0.9, (j.passifs && j.passifs.vif) || 0);
     j[cle] = E.duree * (1 - vif);
+    /* ---- LE CHOC DEPLACE, LES AUTRES NON ----
+     * C'est le seul effet qui fait quelque chose AU MOMENT ou on le pose :
+     * les trois autres se contentent d'exister et sont lus ailleurs. Le
+     * deplacement est fait ICI, dans le serveur, parce que la position est
+     * annoncee par le client — une projection qui ne serait que dessinee se
+     * defairait en ouvrant la console.
+     *
+     * `_glisse` compte : sans lui la projection traversait la pierre, et le
+     * joueur se retrouvait dans un mur d'ou plus rien ne le sortait. C'est le
+     * meme glissement que celui de la marche ordinaire, pas un deuxieme. */
+    if (cle === 'repousse' && Number.isFinite(sx) && Number.isFinite(sy)) {
+      const dx = j.x - sx, dy = j.y - sy;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      /* Pile dessus : aucune direction ne se deduit d'une distance nulle. On
+         projette alors vers le bas plutot que de rendre NaN et d'envoyer le
+         joueur hors de la carte pour toujours. */
+      const ux = d > 0.001 ? dx / d : 0, uy = d > 0.001 ? dy / d : 1;
+      const cible = this._glisse(j.x, j.y, j.x + ux * E.force, j.y + uy * E.force,
+                                 RAYON_JOUEUR);
+      j.x = Math.max(0, Math.min(monde.MONDE.w, cible.x));
+      j.y = Math.max(0, Math.min(monde.MONDE.h, cible.y));
+      /* La page doit SUIVRE : elle dessine sa propre position et continuerait
+         a annoncer l'ancienne, que le serveur ramenerait ensuite a la vitesse
+         de la marche. Sans cette annonce, la projection se voit comme un
+         elastique et pas comme un coup. */
+      ev.pousse = ev.pousse || [];
+      ev.pousse.push({ addr: j.addr, x: Math.round(j.x), y: Math.round(j.y),
+                       duree: E.duree });
+    }
     return true;
   }
 
@@ -2119,15 +2173,32 @@ class Realm {
             m.x += (dx / d) * t.vitesse * dt;
             m.y += (dy / d) * t.vitesse * dt;
           } else if (m.recharge <= 0) {
-            const perte = this._amorti(cible, monde.degatsSubis(t.att, cible.def));
+            /* ---- LE CINQUIEME CHEMIN ----
+             * Celui-ci appelait `_amorti` directement, alors que l'entonnoir
+             * s'appelle `_encaisse`. Son propre commentaire annonce QUATRE
+             * endroits — la zone, le projectile, le duel et la brulure — et
+             * oublie le contact, qui est le cinquieme. L'egide ne bloquait
+             * donc PAS les coups au corps a corps : deux secondes d'un
+             * pouvoir qui annonce l'invulnerabilite, pendant lesquelles un
+             * golem vous tuait quand meme. C'est exactement la faute que le
+             * commentaire de `_encaisse` decrit et dit vouloir eviter. */
+            const perte = this._encaisse(cible, monde.degatsSubis(t.att, cible.def));
             cible.pv = Math.max(0, cible.pv - perte);
             m.recharge = 1 / t.cadence;
+            /* ---- ET IL PROJETTE, S'IL EST FAIT POUR ----
+             * Depuis la creature et pas depuis un angle garde quelque part :
+             * la direction du choc, c'est la ligne qui les separe A CET
+             * INSTANT, et rien d'autre n'a besoin de s'en souvenir. */
+            const choque = t.choc
+              ? this._poseEtat(cible, t.choc, ev, m.x, m.y) : false;
             /* `quoi` dit d'ou vient le coup. Depuis que la meme creature
                frappe ET tire, « par: skeleton » ne suffit plus a distinguer
                une morsure d'un os lance — ni pour la page, qui ne joue pas le
                meme son, ni pour un test qui compte les coups au contact. */
             ev.degats.push({ addr: cible.addr, perte, pv: cible.pv,
-                             par: m.espece, quoi: 'contact' });
+                             par: m.espece, quoi: 'contact',
+                             effet: choque ? t.choc : null,
+                             duree: choque ? monde.EFFETS[t.choc].duree : 0 });
             if (cible.pv <= 0) this._meurt(cible, m.espece, ev);
           }
         }
