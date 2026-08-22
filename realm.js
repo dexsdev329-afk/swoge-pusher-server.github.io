@@ -2319,9 +2319,15 @@ class Realm {
               const ang = this.alea() * Math.PI * 2;
               const dd = Math.sqrt(this.alea()) * (t.pluie.portee || 800);
               const zx = m.x + Math.cos(ang) * dd, zy = m.y + Math.sin(ang) * dd;
+              /* `meteore` ne change RIEN a ce que la zone fait : c'est un
+                 mot pour la page, qui doit dessiner une pierre qui tombe
+                 par-dessus le cercle au lieu du seul cercle. Le mettre sur la
+                 zone plutot que de le deduire de l'espece evite d'avoir a
+                 savoir, cote page, quelles creatures ont une averse. */
               this.zones.push({ id: this._nouvelId(), x: zx, y: zy,
                                 r: t.pluie.rayon, att: t.pluie.att,
                                 effet: t.pluie.effet || null, espece: m.espece,
+                                meteore: 1,
                                 reste: t.pluie.annonce, duree: t.pluie.annonce });
               if (ev) {
                 ev.marques = ev.marques || [];
@@ -2812,7 +2818,11 @@ class Realm {
          le moment ou ca frappe. */
       zones: this.zones.filter(pres).map((z) => ({
         i: z.id, x: Math.round(z.x), y: Math.round(z.y), r: z.r,
-        t: Number(z.reste.toFixed(2)), d: z.duree })),
+        t: Number(z.reste.toFixed(2)), d: z.duree,
+        /* Absent quand ce n'en est pas une : ce message part dix fois par
+           seconde a chaque joueur, et un « m: 0 » sur chaque cercle du monde
+           serait des octets payes toute la partie pour dire non. */
+        ...(z.meteore ? { m: 1 } : {}) })),
       /* L'ETAT DES SALLES : gardee, ou videe. Rien d'autre — la page a deja
          leur position et leur taille depuis l'entree, elles ne bougent pas.
          Ce seul bit sert au coffre : ferme tant qu'un gardien vit, ouvert
