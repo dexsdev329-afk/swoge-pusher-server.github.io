@@ -735,7 +735,33 @@ const crimson = new Realm({
  * `defaut` est la cle du monde ou l'on atterrit quand personne n'a rien dit :
  * une socket d'avant ce deploiement, un message sans champ `monde`, un monde
  * dont la cle a disparu. Elle ne peut pas etre absente de la table. */
-const MONDES = new Map([['ouvert', realm], ['crimson', crimson]]);
+/* ==================== LA TROISIEME PORTE ====================
+ *
+ * SWOGE +18. Elle mene a une carte qui n'a encore AUCUNE regle a elle : meme
+ * butin que le monde ouvert, pas de PvP. C'est voulu, et ce n'est pas de la
+ * paresse — la carte se construira au fur et a mesure, et lui inventer une
+ * identite maintenant reviendrait a decider a la place de celui qui la
+ * construit.
+ *
+ * Ce qui existe deja, en revanche, et qui est le vrai travail : c'est une
+ * SIMULATION A PART. Deux mondes aux memes coordonnees separes par un
+ * drapeau auraient demande de verifier ce drapeau dans les six boucles de
+ * combat, et un oubli aurait fait toucher quelqu'un d'un autre monde, en
+ * silence. Ses monstres, ses joueurs, ses sacs et ses portes de donjon sont
+ * les siens des la premiere ligne.
+ *
+ * LA PORTE NE GARDE RIEN POUR L'INSTANT, et c'est tenable tant que la carte
+ * est un chantier vide : il n'y a rien derriere dont il faille tenir un
+ * mineur ecarte. Le jour ou du contenu adulte y arrive, cette ligne-ci n'est
+ * plus suffisante — l'age doit alors etre une propriete du COMPTE, verifiee
+ * ici, pas une case cochee dans la page. Un controle qui vit dans le
+ * navigateur n'est pas un controle : il se retire avec la console.
+ */
+const plus18 = new Realm({
+  tireObjet: (r, a, garanti) => (garanti ? game.tireButinGaranti(r, a) : game.tireButin(r, a)),
+});
+
+const MONDES = new Map([['ouvert', realm], ['crimson', crimson], ['plus18', plus18]]);
 const MONDE_DEFAUT = 'ouvert';
 /** La cle d'un monde ouvert demande, ou celle du monde par defaut. */
 function cleDeMonde(v) {
