@@ -7217,8 +7217,29 @@ class Game {
    * plafond, meme fiche au sol. Un donjon qui tirerait « autrement » aurait son
    * propre compte d'exemplaires, donc sa propre facon de le rater.
    */
-  tireButinDonjon(rarete, alea) {
-    return this._tireDuLot(boutique.ITEMS_DROP.filter((o) => o.donjon), rarete, alea);
+  /**
+   * @param quel  le donjon ou l'on se trouve, ou rien.
+   *
+   * ---- UNE PIECE PEUT APPARTENIR A UN DONJON PRECIS ----
+   *
+   * Les huit reliques de la Forge n'appartiennent a aucun : elles tombent dans
+   * n'importe quel donjon, et c'est tres bien — ce sont des reliques de
+   * donjon, sans plus de precision.
+   *
+   * Celles du Sanctuaire portent `donjonCle`. L'Idole a trente-huit mille
+   * points de vie, cinq phases et deux especes d'invocations ; laisser son
+   * anneau tomber chez les pirates aurait retire au combat la seule chose
+   * qu'il donne et que rien d'autre ne donne.
+   *
+   * Le filtre est ecrit dans ce sens-la — « les sans-cle, PLUS celles d'ici »
+   * — et pas « celles d'ici seulement ». La cave des pirates n'a aucune piece
+   * a elle : la regle stricte lui aurait vide son lot en silence, et son boss
+   * aurait cesse de rendre quoi que ce soit de rare.
+   */
+  tireButinDonjon(rarete, alea, quel) {
+    const lot = boutique.ITEMS_DROP.filter((o) => o.donjon
+      && (!o.donjonCle || o.donjonCle === quel));
+    return this._tireDuLot(lot, rarete, alea);
   }
 
   /**

@@ -3369,7 +3369,11 @@ function naitDans(biome, alea) {
  * cave avec quelque chose de sur, sans que ce soit mieux que ce qu'on trouve
  * en jouant normalement : c'est ce qui en fait un premier donjon plutot qu'un
  * raccourci. */
-const BUTIN_GARANTI = { fonderie: 'relique', dreadstump: 'epique' };
+/* L'Idole rend une RELIQUE, comme la Fonderie. Pas mieux : il n'y a rien
+   au-dessus, et inventer un rang pour elle aurait fait de la relique le
+   nouveau legendaire. Ce qui la separe de la Fonderie n'est donc pas le RANG
+   mais le LOT — ses trois pieces ne tombent que chez elle. */
+const BUTIN_GARANTI = { fonderie: 'relique', dreadstump: 'epique', idole: 'relique' };
 
 /* ---- CE QUE CE REGLAGE PRODUIT, MESURE ----
  *

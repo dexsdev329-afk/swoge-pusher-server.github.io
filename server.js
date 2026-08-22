@@ -3777,7 +3777,10 @@ wss.on('connection', (ws) => {
                * ete CONSTRUITE avec une autre facon de tirer, et celle du monde
                * ouvert ne la connait pas. Rien a oublier de verifier. */
               tireObjet: (r, a, garanti) => (String(r) === 'relique'
-                ? game.tireButinDonjon(r, a)
+                /* LE DONJON OU L'ON EST, passe au tirage : certaines pieces
+                   n'appartiennent qu'a un lieu, et c'est ici — le seul endroit
+                   qui sache lequel — qu'on peut le lui dire. */
+                ? game.tireButinDonjon(r, a, porte.donjon)
                 : (garanti ? game.tireButinGaranti(r, a) : game.tireButin(r, a))),
             });
           } catch (e) {

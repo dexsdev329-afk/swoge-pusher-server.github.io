@@ -894,6 +894,50 @@ const ITEMS_DONJON = [
   { id: 6708, cle: 'dj_anneau',   nom: 'Dead Circuit',    rarete: 'relique', famille: 'onyx' },
 ];
 
+/*
+ * ---- LE SANCTUAIRE DE CENDRE ----
+ *
+ * Trois pieces, et elles ne tombent QUE la. C'est la difference avec les huit
+ * de la Forge, qui partagent un lot commun a tous les donjons : on peut
+ * ramasser un Coreplate dans la cave des pirates, et c'est tres bien — ce
+ * sont des reliques de donjon, sans plus de precision.
+ *
+ * Celles-ci sont l'Idole. Elle porte trente-huit mille points de vie, cinq
+ * phases et deux especes d'invocations ; laisser son anneau tomber chez les
+ * pirates aurait retire au combat la seule chose qu'il donne et que rien
+ * d'autre ne donne. `donjonCle` le dit, et `tireButinDonjon` le respecte.
+ *
+ * ---- TROIS FAMILLES, DONC TROIS PASSIFS DIFFERENTS ----
+ *
+ * C'est ce qui en fait un lot plutot que trois exemplaires. La famille decide
+ * du passif (voir PASSIF_PAR_STAT) : on choisit donc la famille pour ce que
+ * la piece DOIT faire, et le dessin suit — l'anneau a des griffes qui
+ * serrent, le gantelet a une grille de fournaise, le masque saigne.
+ *
+ *   onyx       -> def -> Thornmail  celui qui frappe se blesse
+ *   gantelets  -> att -> Kindling   tes coups enflamment
+ *   epaulieres -> vit -> Sanguine   une part de ce que tu infliges revient
+ *
+ * Offensive, defense, soutien : les trois ensemble couvrent un personnage, et
+ * chacune seule vaut d'etre portee.
+ *
+ * Serie 6800, laissee libre : 6600 le coeur, 6700 la Forge, et le Sanctuaire
+ * est un lieu de plus.
+ */
+const ITEMS_SANCTUAIRE = [
+  { id: 6801, cle: 'sanc_anneau',   nom: 'Emberbind',  rarete: 'relique', famille: 'onyx' },
+  { id: 6802, cle: 'sanc_gantelet', nom: 'Forgehand',  rarete: 'relique', famille: 'gantelets' },
+  { id: 6803, cle: 'sanc_masque',   nom: 'Cast Visage', rarete: 'relique', famille: 'epaulieres' },
+];
+for (const o of ITEMS_SANCTUAIRE) {
+  o.donjon = true;
+  /* Le donjon PRECIS. Les huit de la Forge n'en portent pas, et gardent donc
+     leur lot commun : ajouter la cle chez elles aurait vide le lot de la cave
+     des pirates, qui n'a aucune piece a elle. */
+  o.donjonCle = 'sanctuaire';
+  ITEMS_DROP.push(o);
+}
+
 /* Un seul lot pour tout ce qui se TROUVE : `item(id)`, l'equipement, la fiche
    au sol, le registre des exemplaires et le rachat ne doivent pas avoir a
    savoir d'ou une piece vient. Ce qui separe les deux provenances est un CHAMP

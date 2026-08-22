@@ -456,16 +456,24 @@ function donjon(graine) {
      'et pas dans la pierre');
 }
 
-// ================== 11. LES HUIT PIECES NE TOMBENT QUE LA
+// ================== 11. LES PIECES DE DONJON NE TOMBENT QUE LA
 {
   const boutique = require('./boutique');
   const { Game } = require('./game');
   const g = new Game({});
   const dj = boutique.ITEMS_DROP.filter((o) => o.donjon);
-  eq(dj.length, 8, 'huit pieces de donjon au catalogue');
+  /* ---- LE COMPTE VIENT DU CATALOGUE ----
+   * « huit » etait ecrit ici, et l'essai tombait des qu'on ajoutait une piece
+   * — en accusant le catalogue alors que c'est LUI qui portait l'ancien
+   * chiffre. Ce qu'il doit prouver n'est pas combien il y en a : c'est que
+   * chacune est complete et qu'aucune n'en double une autre. */
+  ok(dj.length >= 8, `${dj.length} pieces de donjon au catalogue`);
   for (const o of dj) {
     ok(boutique.item(o.id), `« ${o.nom} » se retrouve par son identifiant`);
-    ok(/^dj_/.test(o.cle), `et sa cle nomme son dessin (${o.cle})`);
+    /* La cle EST le nom du fichier : une cle vide s'affiche comme un carre
+       blanc, sans une erreur nulle part. Le PREFIXE, lui, dit d'ou vient la
+       piece — et il y a desormais plus d'un donjon. */
+    ok(o.cle && /^[a-z0-9_]+$/.test(o.cle), `et sa cle nomme son dessin (${o.cle})`);
     ok(boutique.famille(o.famille), `et sa famille existe (${o.famille})`);
     eq(o.rarete, 'relique', 'et c\'est une relique');
     eq(o.drop, true, 'elle ne s\'achete pas');
@@ -473,9 +481,9 @@ function donjon(graine) {
   /* DES NOMS UNIQUES, ET DES IDENTIFIANTS UNIQUES. Deux pieces du meme nom se
      lisent comme un doublon d'affichage ; deux du meme identifiant se
      remplacent silencieusement dans `PAR_ID`. */
-  eq(new Set(dj.map((o) => o.id)).size, 8, 'huit identifiants distincts');
-  eq(new Set(dj.map((o) => o.nom)).size, 8, 'huit noms distincts');
-  eq(new Set(dj.map((o) => o.cle)).size, 8, 'huit dessins distincts');
+  eq(new Set(dj.map((o) => o.id)).size, dj.length, 'autant d identifiants distincts');
+  eq(new Set(dj.map((o) => o.nom)).size, dj.length, 'autant de noms distincts');
+  eq(new Set(dj.map((o) => o.cle)).size, dj.length, 'autant de dessins distincts');
 
   /* LE MONDE OUVERT NE PEUT PAS LES RENDRE. Si c'etait le cas, on aurait ces
      reliques en abattant des limes et franchir le portail n'aurait servi a
@@ -500,7 +508,12 @@ function donjon(graine) {
   for (let i = 0; i < 800; i++) {
     g.boutiqueEmis = {};
     const o = g.tireButinGaranti('relique', Math.random);
-    if (o && /^dj_/.test(String(o.cle))) f2++;
+    /* « appartient au donjon » se lit sur l'objet DU CATALOGUE, retrouve par
+       son identifiant. Deux pieges evites d'un coup : le prefixe `dj_` ne vaut
+       plus pour tous les donjons — le Sanctuaire nomme les siennes `sanc_*` —
+       et le tirage rend une VUE de l'objet (item, cle, nom, bonus), pas
+       l'objet lui-meme, donc `o.donjon` y est toujours indefini. */
+    if (o && (boutique.item(o.item) || {}).donjon) f2++;
   }
   eq(f2, 0, 'ni le coffre d\'une salle gardee');
 
@@ -511,21 +524,35 @@ function donjon(graine) {
     const o = g.tireButinDonjon('relique', Math.random);
     if (!o) continue;
     prises++;
-    if (!/^dj_/.test(String(o.cle))) etrangeres++;
+    if (!(boutique.item(o.item) || {}).donjon) etrangeres++;
   }
   eq(etrangeres, 0, `sur ${prises} tirages du donjon, que des pieces de donjon`);
 
   /* LE PLAFOND TIENT, ET C'EST LE MEME REGISTRE. Un donjon qui compterait ses
-     exemplaires a part aurait sa propre facon de le rater. */
+     exemplaires a part aurait sa propre facon de le rater.
+     ---- ON TIRE DEPUIS TOUS LES DONJONS ----
+     Certaines pieces n'appartiennent qu'a un lieu : tirer depuis un seul
+     n'aurait jamais pu epuiser le lot entier, et l'essai aurait accuse le
+     plafond de ce que le FILTRE faisait. */
   g.boutiqueEmis = {};
   const plafond = boutique.rarete('relique').plafond;
+  const lieux = Object.keys(M.DONJONS);
   let sorti = 0;
-  for (let i = 0; i < dj.length * plafond + 20; i++) {
-    if (g.tireButinDonjon('relique', Math.random)) sorti++;
+  for (let i = 0; i < dj.length * plafond + 40; i++) {
+    /* On fait le tour des donjons : chacun voit le lot commun plus le sien. */
+    let pris = null;
+    for (const lieu of lieux) {
+      pris = g.tireButinDonjon('relique', Math.random, lieu);
+      if (pris) break;
+    }
+    if (pris) sorti++; else break;
   }
   eq(sorti, dj.length * plafond,
      `${dj.length} pieces x ${plafond} exemplaires, et pas une de plus`);
-  eq(g.tireButinDonjon('relique', Math.random), null, 'la suivante ne tombe pas');
+  for (const lieu of lieux) {
+    eq(g.tireButinDonjon('relique', Math.random, lieu), null,
+       `la suivante ne tombe plus, meme dans « ${lieu} »`);
+  }
   /* ET LE MONDE OUVERT N'EST PAS ASSECHE POUR AUTANT : les deux lots ont leurs
      propres exemplaires, meme registre mais pas memes lignes. */
   ok(g.tireButin('relique', Math.random), 'le coeur du monde en a toujours');
@@ -578,6 +605,85 @@ function donjon(graine) {
   eq(JSON.stringify(M.planDeDonjon('forge', alea(9)).peuplement),
      JSON.stringify(M.planDeDonjon('forge', alea(9)).peuplement),
      'deux fois le meme tirage, deux fois le meme donjon');
+}
+
+
+/* ============ LE LOT D'UN DONJON PRECIS ============
+ *
+ * Les huit reliques de la Forge n'appartiennent a aucun donjon : elles
+ * tombent dans n'importe lequel, et c'est voulu — ce sont des reliques de
+ * donjon, sans plus de precision.
+ *
+ * Celles du Sanctuaire portent `donjonCle`. L Idole a trente-huit mille
+ * points de vie, cinq phases et deux especes d invocations ; laisser son
+ * anneau tomber chez les pirates aurait retire au combat la seule chose qu il
+ * donne et que rien d autre ne donne.
+ *
+ * Le piege que cette section garde : ecrire le filtre dans l autre sens —
+ * « celles d ici SEULEMENT » — aurait vide le lot de la cave des pirates, qui
+ * n a aucune piece a elle, et son boss aurait cesse de rendre quoi que ce soit
+ * de rare. En silence.
+ */
+{
+  console.log('\n-- ce qui n appartient qu a un donjon --');
+  const boutique2 = require('./boutique');
+  const { Game: G2 } = require('./game');
+  /* Les pieces marquees viennent du CATALOGUE : les nommer ici ferait passer
+     l essai le jour ou l on en ajoute une. */
+  const marquees = boutique2.ITEMS_DROP.filter((o) => o.donjon && o.donjonCle);
+  const libres = boutique2.ITEMS_DROP.filter((o) => o.donjon && !o.donjonCle);
+  ok(marquees.length > 0, `${marquees.length} pieces appartiennent a un donjon precis`);
+  ok(libres.length > 0, `et ${libres.length} restent communes a tous`);
+
+  const tire = (ou) => {
+    /* Un Game NEUF a chaque tirage : le registre des exemplaires est partage,
+       et un lot deja epuise par la mesure precedente rendrait `null` partout —
+       l essai conclurait « cette piece ne tombe pas ici » alors qu il n en
+       reste simplement plus. */
+    const g2 = new G2({});
+    const vus = new Set();
+    for (let i = 0; i < 4000; i++) {
+      const o = g2.tireButinDonjon('relique', Math.random, ou);
+      /* `item`, pas `id` : le tirage rend une VUE de l objet et non l objet
+         du catalogue. Le meme piege que trente lignes plus haut — un `Set`
+         d undefined ne dit rien, et l essai accusait le filtre. */
+      if (o) vus.add(o.item);
+    }
+    return vus;
+  };
+  /* Chaque donjon marque doit voir SES pieces, et aucun autre. */
+  const lieux = [...new Set(marquees.map((o) => o.donjonCle))];
+  for (const lieu of lieux) {
+    const chezMoi = tire(lieu);
+    for (const o of marquees) {
+      if (o.donjonCle === lieu) {
+        ok(chezMoi.has(o.id), `« ${o.nom} » tombe bien dans « ${lieu} »`);
+      } else {
+        ok(!chezMoi.has(o.id), `et « ${o.nom} » n y tombe pas`);
+      }
+    }
+    /* ET LE LOT COMMUN RESTE ACCESSIBLE : le filtre ne doit pas remplacer le
+       lot, il doit s y ajouter. */
+    ok(libres.some((o) => chezMoi.has(o.id)),
+       `« ${lieu} » voit aussi les reliques communes`);
+  }
+  /* Un donjon SANS piece a lui garde le lot commun entier. C est la moitie de
+     la regle qu on oublie, et son echec est muet. */
+  const sansRien = Object.keys(M.DONJONS).find((d) => !marquees.some((o) => o.donjonCle === d));
+  ok(!!sansRien, `« ${sansRien} » n a aucune piece a lui`);
+  const chezLui = tire(sansRien);
+  ok(libres.every((o) => chezLui.has(o.id)),
+     `et il voit malgre tout les ${libres.length} reliques communes`);
+  for (const o of marquees) {
+    ok(!chezLui.has(o.id), `sans voir « ${o.nom} », qui appartient a un autre`);
+  }
+  /* Et l Idole GARANTIT une relique, comme la Fonderie : un boss de deux
+     minutes qu on peut abattre pour rien ne vaut pas le deplacement. */
+  for (const d of Object.keys(M.DONJONS)) {
+    const boss = M.DONJONS[d].boss;
+    ok(!!M.BUTIN_GARANTI[boss],
+       `le boss de « ${d} » (${boss}) garantit du ${M.BUTIN_GARANTI[boss]}`);
+  }
 }
 
 console.log(`donjon.test.js — ${n} verifications, 0 echec`);
