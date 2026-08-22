@@ -872,12 +872,20 @@ function messageEntree(R, j, plan, carte) {
      * A deux, ce sont deux nombres a tenir d'accord de part et d'autre du
      * reseau — et le desaccord serait MUET : le donjon se serait dessine avec
      * la pierre des salles gardees, sans que rien ne plante pour le dire. */
-    murs: { base: monde.MUR_BASE, donjon: monde.MUR_DONJON },
+    murs: { base: monde.MUR_BASE, donjon: monde.MUR_DONJON,
+            /* La quatrieme bande : au-dela, `t` designe un OBJET de decor et
+               plus un mur. Meme raison que les deux autres bornes — deux
+               nombres tenus d'accord de part et d'autre du reseau finissent
+               par ne plus l'etre, et le desaccord serait muet. */
+            decor: monde.MUR_DECOR },
     /* Quelle planche de mur pour CE donjon. Le plan la porte deja ; on la
        remonte au client plutot que de lui faire deduire la texture du nom du
        donjon — deux tables a tenir d'accord, et la troisieme cave aurait ses
        murs dans une seule des deux. */
     mur: (plan && plan.mur) || undefined,
+    /* Et quelle planche d'OBJETS. Comme `sol` et `mur` : la page recoit le
+       nom, elle ne le deduit pas de celui du donjon. */
+    decor: (plan && plan.decor) || undefined,
     /* ---- LES BLOCS, UNE FOIS ----
        Ils ne bougent jamais : les renvoyer dix fois par seconde dans l'etat du
        monde serait deux cent quarante entrees rendues a l'identique, pour rien.

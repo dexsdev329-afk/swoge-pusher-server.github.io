@@ -238,6 +238,14 @@ const DONJONS = {
     ouvreur: 'heraut',
     sol: 'sanctuaire',
     mur: 'donjon',
+    /* ---- LE DECOR, NOMME PAR LE DONJON ----
+     * Comme `sol` et `mur` : la page recoit le NOM de la planche, elle ne le
+     * deduit pas de celui du donjon. Deux tables a tenir d'accord, et le
+     * quatrieme donjon aurait son decor dans une seule des deux. */
+    decor: 'sanctuaire',
+    /* Huit objets dans une salle de dix-neuf tuiles : assez pour qu'elle ait
+       une forme, assez peu pour qu'on puisse encore tourner autour du boss. */
+    decorCombien: 8,
   },
 };
 /* L'ancien nom pointe sur la Fonderie : tout ce qui disait `DONJON` parlait
@@ -393,6 +401,24 @@ const DONJON_ORIGINE = { x: 6, y: 6 };
    blocs, une seule collision, trois planches — c'est la lecon de MUR_BASE,
    poussee d'un cran. */
 const MUR_DONJON = 8;
+/* ---- ET AU-DELA, LE DECOR ----
+ *
+ * `t` designe une planche : sous MUR_BASE un rocher, au-dela un mur de
+ * ruine, au-dela un mur de donjon, au-dela encore un OBJET de decor.
+ *
+ * Le decor passe par le meme chemin que les murs, et ce n'est pas une
+ * economie de lignes : un brasier renverse et une enclume ARRETENT. En faire
+ * une seconde liste « qui ne bloque pas » aurait donne un decor qu'on
+ * traverse — donc un decor qu'on ne regarde plus — et il aurait fallu une
+ * seconde diffusion, une seconde collision, un second dessin.
+ *
+ * On peut donc se cacher derriere l'obelisque pendant que le cercle tombe.
+ * C'est ce qui fait la difference entre une salle decoree et une salle qui a
+ * une forme.
+ *
+ * Douze : assez loin de MUR_DONJON (8) pour laisser quatre planches de mur de
+ * donjon, ce que la Fonderie et la Cave utilisent deja. */
+const MUR_DECOR = 12;
 /* De quoi loger le mur exterieur quand on ramene le plan dans le positif. */
 const MARGE_CAVE = 4;
 
@@ -801,6 +827,72 @@ function mursDonjon(plan, depart) {
  * arriver dans un donjon et se faire toucher avant d'avoir pose le pied par
  * terre n'est pas une difficulte, c'est un piege.
  */
+/**
+ * LE DECOR D'UNE SALLE, POSE ET NON DESSINE.
+ *
+ * Les objets sont des OBSTACLES : ils bloquent, on se cache derriere, et ils
+ * passent par la diffusion et la collision qui existent deja.
+ *
+ * ---- ILS NE SE POSENT PAS N'IMPORTE OU ----
+ *
+ * Deux regles, et chacune evite une salle injouable :
+ *
+ *   - jamais au CENTRE. C'est la que le boss nait, et une enclume sous ses
+ *     pieds l'aurait coince dans la pierre a la seconde ou il essaie de
+ *     bouger ;
+ *   - jamais colles au mur ni les uns aux autres. Deux objets qui se touchent
+ *     font un bouchon dans lequel on se prend en reculant — et l'on recule
+ *     beaucoup, dans cette salle.
+ *
+ * On les pose en COURONNE, entre le centre et les murs : c'est la zone ou
+ * l'on tourne autour du boss, donc celle ou un obstacle sert a quelque chose.
+ */
+function decorDeSalle(s, sheet, combien, alea, occupants) {
+  const r = () => (typeof alea === 'function' ? alea() : Math.random());
+  if (!sheet || !combien) return [];
+  const out = [];
+  const demi = (s.cote / 2) * DONJON_TUILE;
+  /* Entre 45 % et 75 % du demi-cote : au-dela on colle au mur, en deca on
+     se retrouve au milieu de la piste ou l'on tourne. */
+  const rMin = demi * 0.45, rMax = demi * 0.75;
+  const RAYON = 58;
+  for (let k = 0; k < combien; k++) {
+    let pose = null;
+    for (let essai = 0; essai < 40 && !pose; essai++) {
+      const ang = r() * Math.PI * 2;
+      const d = rMin + r() * (rMax - rMin);
+      const x = s.x + Math.cos(ang) * d, y = s.y + Math.sin(ang) * d;
+      /* Trois rayons d'ecart entre deux objets : deux enclumes cote a cote
+         font un mur qu'on ne lit pas comme un mur. */
+      const colle = out.some((o) => {
+        const dx = o.x - x, dy = o.y - y;
+        return dx * dx + dy * dy < (RAYON * 3) * (RAYON * 3);
+      });
+      /* ---- ET JAMAIS SUR UNE CREATURE DEJA POSEE ----
+       * Le boss ne nait PAS au centre de la salle — il nait au point le plus
+       * loin de l'entree. Ma premiere version ecartait le decor du centre, ce
+       * qui ne le protegeait de rien : mesure faite sur deux cents plans, un
+       * objet tombait a soixante-cinq unites du boss, qui en fait cent quatre
+       * de rayon. Il serait ne coince dans la pierre, immobile, et un donjon
+       * dont le boss ne bouge pas n'est pas un donjon.
+       * On ecarte donc de ce qui est REELLEMENT pose, avec son propre rayon. */
+      const dessus = (occupants || []).some((q) => {
+        const rq = (MONSTRES[q.espece] && MONSTRES[q.espece].rayon) || 0;
+        const dx = q.x - x, dy = q.y - y;
+        return dx * dx + dy * dy < (rq + RAYON * 1.6) * (rq + RAYON * 1.6);
+      });
+      if (!colle && !dessus) pose = { x, y };
+    }
+    if (!pose) continue;
+    out.push({ x: Math.round(pose.x), y: Math.round(pose.y), r: RAYON,
+               /* La COLONNE de la planche, tiree au sort : quatre objets pour
+                  huit places, un decor ou l'on reconnait le meme brasier huit
+                  fois n'est plus un decor. */
+               t: MUR_DECOR + Math.floor(r() * 4), a: 0, donjon: 1, decor: 1 });
+  }
+  return out;
+}
+
 function peuplementDonjon(alea, nom, plan) {
   const r = () => (typeof alea === 'function' ? alea() : Math.random());
   const D = DONJONS[nom] || DONJON;
@@ -903,6 +995,22 @@ function planDeDonjon(nom, alea) {
    * exactement la meme chose : un sol, des salles, une taille de tuile. */
   const plan = D.forme === 'grotte' ? planCave(alea) : planDonjon(alea, D.salles);
   const entree = plan.salles.find((x) => x.role === 'entree') || plan.salles[0];
+  /* ---- LE PEUPLEMENT D'ABORD, LE DECOR ENSUITE ----
+   * Le decor doit s'ecarter de ce qui est REELLEMENT pose — le boss ne nait
+   * pas au centre de la salle mais au point le plus loin de l'entree, et une
+   * enclume posee dessus l'aurait fait naitre dans la pierre. L'ordre inverse
+   * aurait demande de deviner ou il tombe, c'est-a-dire de refaire le travail
+   * de `peuplementDonjon` et de pouvoir se tromper differemment de lui. */
+  const peuple = peuplementDonjon(alea, cle, plan);
+  /* Les murs ET le decor dans la MEME liste : le decor bloque comme un mur,
+     il se diffuse comme un mur, il se dessine comme un mur. Une seconde liste
+     aurait demande une seconde collision et une seconde diffusion pour des
+     objets qui font exactement ce que les premiers font. */
+  const murs = mursDonjon(plan, 1).concat(
+    D.decor
+      ? plan.salles.filter((x) => x.role === 'fond').reduce(
+          (t, x) => t.concat(decorDeSalle(x, D.decor, D.decorCombien || 6, alea, peuple)), [])
+      : []);
   return {
     nom: cle,
     /* On arrive dans le sas, DECALE de la porte de sortie : au centre exact on
@@ -915,8 +1023,10 @@ function planDeDonjon(nom, alea) {
        paye en argent reel. La difficulte d'un donjon est ce qu'on y rencontre,
        jamais le fait d'y etre coince. */
     sortie: { x: entree.x, y: entree.y },
-    obstacles: mursDonjon(plan, 1),
-    peuplement: peuplementDonjon(alea, cle, plan),
+    /* La planche d'objets remonte avec le plan, comme `mur`. */
+    decor: D.decor || undefined,
+    obstacles: murs,
+    peuplement: peuple,
     /* ---- UN SEUL ANNEAU, ET SA BORNE EST FINIE ----
      * `Infinity` ne traverse pas JSON : il en ressort `null`, et `r <= null`
      * est faux pour tout rayon positif. La page serait donc tombee dans le
@@ -3201,7 +3311,7 @@ module.exports = {
   RARETE_ANNEAU, SAC_DE_RARETE, CHANCE_EQUIP, CHANCE_RELIQUE, CHANCE_RELIQUE_BOSS,
   OBSTACLE, OBSTACLE_BIOME, obstacles, bloque,
   SALLE, SALLE_ANNEAUX, SALLE_BUTIN, MUR_BASE, salles, mursDe, dansLaSalle, DONJON,
-  PORTAIL, PORTAIL_DE, RETOUR_DE, MUR_DONJON, DONJON_TUILE, DONJON_SALLES,
+  PORTAIL, PORTAIL_DE, RETOUR_DE, MUR_DONJON, MUR_DECOR, DONJON_TUILE, DONJON_SALLES,
   DONJON_COULOIR, DONJON_ORIGINE, DONJON_IMPASSES, PEUPLE_DONJON,
   planDonjon, planCave, CAVE, DONJONS, mursDonjon, peuplementDonjon, planDeDonjon,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
