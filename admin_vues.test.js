@@ -58,6 +58,32 @@ const VUES = uniq(/data-vue="([a-z]+)"/g, PAGE);
    l'inscrit pas en dur : on constate que le routage la connait. */
 const ROUTEES = uniq(/VUE === "([a-z]+)"/g, SCRIPT);
 
+console.log('-- le script de la page se compile --');
+{
+  /* ---- CE QUI A MANQUE LE PLUS LONGTEMPS ----
+   * Aucun essai ne compilait le script de cette page. `node --check admin.js`
+   * passait — et passera toujours — parce que la page est un GABARIT DE
+   * CHAINE : pour node, ces mille cinq cents lignes sont du texte, pas du
+   * code. Une barre echappee dans le gabarit a suffi pour que la regex
+   * arrive au navigateur sans etre fermee, et TOUT le panneau est mort :
+   * plus un chiffre, plus un bouton, plus un retrait. Rien ne l'a dit. Les
+   * essais d'ici relisaient le HTML avec des expressions regulieres, ce qui
+   * ne demande jamais au texte s'il est du JavaScript valide.
+   * `new Function` le demande : il COMPILE sans executer. */
+  const blocs = [...PAGE.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  ok(blocs.length >= 2, `la page porte ${blocs.length} blocs de script`);
+  /* Un seuil, sinon « tout compile » serait vrai d'une page sans code : le
+     jour ou le decoupage ci-dessus ne trouve plus rien, l'essai doit tomber
+     et non feliciter le vide. */
+  const lignes = blocs.reduce((n, b) => n + b.split('\n').length, 0);
+  ok(lignes > 800, `et ${lignes} lignes de code au total`);
+  blocs.forEach((b, i) => {
+    let faute = null;
+    try { new Function(b); } catch (e) { faute = e.message; }
+    ok(faute === null, `le bloc ${i + 1} se compile${faute ? ' — ' + faute : ''}`);
+  });
+}
+
 console.log('-- le menu et les panneaux se repondent --');
 ok(ONGLETS.size >= 5, `le menu a des onglets (${ONGLETS.size})`);
 ok(VUES.size >= ONGLETS.size, `et chaque onglet a de quoi remplir (${VUES.size} vues)`);

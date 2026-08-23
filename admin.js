@@ -1884,7 +1884,21 @@ function cineRend(j){
        Le texte du lien est l'ADRESSE, raccourcie : « poster » aurait montre
        douze fois le meme mot, et l'on veut justement reconnaitre laquelle est
        laquelle sans avoir a cliquer. */
-    var court = String(c.affiche||"").replace(/^https?:\/\//,"");
+    /* ---- PAS UNE SEULE BARRE ECHAPPEE DANS CE FICHIER ----
+     * Cette page entiere est construite dans un GABARIT DE CHAINE. A
+     * l'interieur, \/ ne veut pas dire « barre echappee », il vaut « barre » :
+     * les antislashs sont manges par le gabarit avant meme que le navigateur
+     * voie le texte. Le motif ecrit ici sous la forme /^https?: barre barre /
+     * partait donc au navigateur avec deux barres nues a la fin, qui ouvrent
+     * un commentaire. La regex n'etait jamais fermee, et ce n'est pas le
+     * cinema qui tombait : les MILLE CINQ CENTS LIGNES du script du panneau
+     * ne se compilaient plus. Tout etait mort — les chiffres, les boutons, le
+     * retrait, la connexion du portefeuille.
+     * On coupe donc au premier separateur, sans echappement, sans regex et
+     * sans piege a retomber dedans. */
+    var court = String(c.affiche||"");
+    var sep = court.indexOf("://");
+    if (sep > 0 && sep < 8) court = court.slice(sep + 3);
     if(court.length>34) court = court.slice(0,16)+"…"+court.slice(-14);
     var aff = c.affiche
       ? '<a href="'+esc(c.affiche)+'" target="_blank" rel="noopener noreferrer" title="'+esc(c.affiche)+'">'+esc(court)+'</a>'
