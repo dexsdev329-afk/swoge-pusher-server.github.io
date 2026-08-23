@@ -1347,6 +1347,7 @@ const VILLE = {
      * de s'aligner maison par maison. */
     { planche: 'cabaret_maison', tuiles: 5 },
     { planche: 'vitrines_maison', tuiles: 5 },
+    { planche: 'sexshop_maison', tuiles: 5 },
     { planche: 'club_maison', tuiles: 5 },
     { planche: 'coffeeshop_maison', tuiles: 5 },
     { planche: 'chambres_maison', tuiles: 5 },
