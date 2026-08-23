@@ -1338,8 +1338,18 @@ const VILLE = {
      * une liste de planches, c'est un classement : ce qu'on veut voir en
      * arrivant se met en tete. */
     { planche: 'tour_maison', tuiles: 4, salle: 'tour' },
-    { planche: 'club_maison', tuiles: 5 },
+    /* ---- LE QUARTIER, ET NON DES BATIMENTS ISOLES ----
+     * Ces trois planches ne sont pas des maisons : chacune est une RANGEE de
+     * quatre maisons de canal, et c'est ce qui les rend posables. Une maison
+     * hollandaise seule est etroite et haute — a deux tuiles de large elle
+     * ferait cinq tuiles et demie de haut, plus que la tour. En rangee, le
+     * rapport tombe a celui du club, et le quartier se lit d'un coup au lieu
+     * de s'aligner maison par maison. */
+    { planche: 'cabaret_maison', tuiles: 5 },
     { planche: 'vitrines_maison', tuiles: 5 },
+    { planche: 'club_maison', tuiles: 5 },
+    { planche: 'coffeeshop_maison', tuiles: 5 },
+    { planche: 'chambres_maison', tuiles: 5 },
     { planche: 'jeux_maison', tuiles: 5 },
     { planche: 'bar_maison', tuiles: 4 },
     { planche: 'cine18_maison', tuiles: 4 },
