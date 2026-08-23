@@ -2350,6 +2350,42 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify({ ok: true, cinemas: game.cinemas,
                                     max: cfg.CINEMA_MAX }));
   }
+  /* Modifier une seance en place. Meme authentification, meme garde
+     d'ecriture, meme journal, meme sauvegarde, meme diffusion — et surtout
+     MEME VALIDATION que l'ajout, puisque `modifieCinema` passe par la meme
+     fonction de nettoyage. Une modification qui aurait son propre chemin de
+     controle serait une porte derobee : il aurait suffi de poser une seance
+     valable, puis de la modifier, pour glisser n'importe quelle adresse dans
+     l'iframe de chaque joueur.
+
+     Une adresse a part plutot qu'un champ dans l'ajout : au journal admin,
+     « qui a change le lien de samedi » et « qui a ajoute samedi » sont deux
+     questions differentes, et deux noms d'action les separent. Le titre
+     d'AVANT part au journal a cote du nouveau — sans lui, la ligne dirait
+     qu'on a pose un titre sans dire lequel il remplace. */
+  if (path === '/admin/cinema/modifie') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const d = await donPost(req);
+    const nonV = gardeEcriture(req, session, 'cinema', '');
+    if (nonV) return refusEcriture(res, nonV);
+    const avant = (game.cinemas || [])[Number(d && d.i)];
+    if (!avant) return refusEcriture(res, 'no show at that place');
+    const c = game.modifieCinema(d && d.i, d);
+    /* `null` ici ne veut pas dire « rang introuvable » — on vient de verifier
+       le rang. Il veut dire que ce qu'on a envoye ne fait pas une seance :
+       pas de titre, ou aucune version valable. On le DIT, sinon le
+       proprietaire voit son formulaire se vider et croit avoir enregistre. */
+    if (!c) return refusEcriture(res, 'a show needs a title and at least one http(s) link');
+    adminlog.ajoute({ acteur, action: 'cinema-modifie',
+                      cible: c.titre + (avant.titre === c.titre ? '' : ' (etait ' + avant.titre + ')'),
+                      motif: '', ip: qui(req) });
+    persist();
+    broadcast({ type: 'cinema', cinemas: game.cinemas });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, modifiee: c, cinemas: game.cinemas,
+                                    max: cfg.CINEMA_MAX }));
+  }
 
   if (path === '/credit') {
     if (!authed) return refuse(req, res, false);

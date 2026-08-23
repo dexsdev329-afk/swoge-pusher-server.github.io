@@ -73,6 +73,56 @@ console.log('\n-- plusieurs seances tiennent ensemble --');
   eq(g.cinemas[2].titre, 'TROISIEME', 'et la derniere est en dernier');
 }
 
+console.log('\n-- on en MODIFIE une, par la meme porte que l\'ajout --');
+{
+  const g2 = new Game({});
+  g2.ajouteCinema({ titre: 'ALPHA', affiche: 'https://x.test/a.jpg',
+                    vf: 'https://x.test/a-vf', vo: 'https://x.test/a-vo' });
+  g2.ajouteCinema({ titre: 'BETA', affiche: 'https://x.test/b.jpg',
+                    vf: 'https://x.test/b-vf', vo: '' });
+
+  const c = g2.modifieCinema(1, { titre: 'BETA CORRIGE', affiche: 'https://x.test/b2.jpg',
+                                  vf: 'https://x.test/b2-vf', vo: 'https://x.test/b2-vo' });
+  ok(!!c, 'la seance du rang demande est remplacee');
+  eq(g2.cinemas[1].titre, 'BETA CORRIGE', 'le nouveau titre est en place');
+  eq(g2.cinemas[1].vo, 'https://x.test/b2-vo', 'et la version qui manquait est arrivee');
+  /* Le voisin, sinon « ca marche » voudrait dire « ca a ecrit quelque part ». */
+  eq(g2.cinemas[0].titre, 'ALPHA', 'la seance voisine n\'a pas bouge');
+  eq(g2.cinemas[0].vf, 'https://x.test/a-vf', 'ses adresses non plus');
+  eq(g2.cinemas.length, 2, 'et remplacer ne fait pas grandir la galerie');
+
+  /* ---- LA MODIFICATION NE DOIT PAS ETRE UNE PORTE DEROBEE ----
+   * Sans ce bloc, il aurait suffi de poser une seance valable puis de la
+   * MODIFIER pour glisser n'importe quelle adresse dans l'iframe de chaque
+   * joueur. On rejoue donc ici les memes refus que l'ajout : une regle de
+   * securite qui a deux chemins n'en a aucun. */
+  const hostiles = ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'java\u0009script:alert(1)',
+                    'data:text/html,<script>x</script>', 'vbscript:msgbox', 'file:///etc/passwd',
+                    '//ailleurs.test/p', '/relatif', 'ailleurs.test/p'];
+  for (const mauvais of hostiles) {
+    const avant = JSON.stringify(g2.cinemas[1]);
+    g2.modifieCinema(1, { titre: 'PIRATE', affiche: mauvais, vf: mauvais, vo: mauvais });
+    eq(JSON.stringify(g2.cinemas[1]), avant,
+       `« ${mauvais.slice(0, 26)} » est refusee et ne change rien`);
+  }
+
+  /* Les bornes. Un rang hors liste ne doit RIEN toucher — surtout pas la
+     derniere par politesse — et une seance vide ne doit pas effacer a moitie
+     celle qui etait la. */
+  const intact = JSON.stringify(g2.cinemas);
+  eq(g2.modifieCinema(9, { titre: 'X', vf: 'https://x.test/v' }), null, 'un rang hors bornes ne modifie rien');
+  eq(g2.modifieCinema(-1, { titre: 'X', vf: 'https://x.test/v' }), null, 'un rang negatif non plus');
+  eq(g2.modifieCinema(0, { titre: '', vf: 'https://x.test/v' }), null, 'une seance sans titre est refusee');
+  eq(g2.modifieCinema(0, { titre: 'T', vf: 'javascript:x', vo: '' }), null,
+     'une seance sans aucune version valable aussi');
+  eq(JSON.stringify(g2.cinemas), intact, 'et apres ces quatre refus la galerie est intacte');
+
+  const g3 = new Game({});
+  g3.hydrate(JSON.parse(JSON.stringify(g2.serializeTete())));
+  eq(g3.cinemas.map((x) => x.titre).join(','), 'ALPHA,BETA CORRIGE',
+     'la correction survit a la sauvegarde et a la reprise');
+}
+
 console.log('\n-- on en retire une, et une seule --');
 {
   ok(g.retireCinema(1), 'le rang du milieu se retire');

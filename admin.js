@@ -737,6 +737,7 @@ function page(csrf) {
   <input id="cineVo" placeholder="VO player URL">
   <div class="row" style="margin-top:4px">
     <button class="ghost" id="cineGo">Add to the gallery</button>
+    <button class="ghost" id="cineAnnule" hidden>Cancel edit</button>
     <span id="cineMsg" style="font-size:12px"></span>
   </div>
 </div>
@@ -1908,6 +1909,7 @@ function cineRend(j){
       +  '<b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(c.titre)+'</b>'
       +  '<span class="muted2" style="font-size:12px">'+ver+'</span>'
       +  '<span style="font-size:12px">'+aff+'</span>'
+      +  '<button class="ghost" data-cine-edit="'+i+'">edit</button>'
       +  '<button class="ghost" data-cine-retire="'+i+'">remove</button>'
       +  '</div>';
   }
@@ -1917,10 +1919,57 @@ async function chargeCinemas(){
   try{ cineRend(await lit("/admin/cinema")); }
   catch(e){ $("#cineListe").innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
 }
+/* ---- MODIFIER : UN SEUL ETAT, ET IL DIT TOUT ----
+ * cineEdite vaut le rang qu'on est en train de corriger, ou rien du tout.
+ * Le libelle du bouton, l'adresse ou part l'enregistrement et la presence du
+ * bouton d'abandon en DECOULENT tous les trois. Un booleen « en edition » a
+ * cote du rang aurait pu dire oui avec un rang vide, et l'enregistrement
+ * serait alors parti modifier la seance zero. */
+var cineEdite = null;      // le rang en cours de correction
+var cineAvant = "";        // le titre qu'il portait quand on a clique
+function cineModeEdition(i, c){
+  cineEdite = i; cineAvant = (c && c.titre) || "";
+  $("#cineTitre").value = (c && c.titre) || "";
+  $("#cineAff").value   = (c && c.affiche) || "";
+  $("#cineVf").value    = (c && c.vf) || "";
+  $("#cineVo").value    = (c && c.vo) || "";
+  $("#cineGo").textContent = "Save changes";
+  $("#cineAnnule").hidden = false;
+  $("#cineMsg").textContent = "editing « " + ((c && c.titre) || "") + " » — save to replace it";
+  $("#cineMsg").className = "impwarn";
+  $("#cineTitre").focus();
+}
+function cineModeAjout(){
+  cineEdite = null; cineAvant = "";
+  $("#cineTitre").value=""; $("#cineAff").value="";
+  $("#cineVf").value=""; $("#cineVo").value="";
+  $("#cineGo").textContent = "Add to the gallery";
+  $("#cineAnnule").hidden = true;
+}
+$("#cineAnnule").onclick=function(){
+  cineModeAjout();
+  $("#cineMsg").textContent="edit cancelled — nothing changed"; $("#cineMsg").className="";
+};
+
 /* Le retrait passe par la liste elle-meme : les boutons naissent avec elle, et
    leur accrocher un gestionnaire un par un a chaque repeinte en oublierait un
    le jour ou la repeinte devient partielle. */
 $("#cineListe").addEventListener("click", async function(ev){
+  var e = ev.target.closest ? ev.target.closest("[data-cine-edit]") : null;
+  if(e){
+    var k = Number(e.getAttribute("data-cine-edit"));
+    /* On recharge la liste AVANT de remplir les champs : la page peut etre
+       ouverte depuis une heure, et corriger une seance sur des valeurs
+       perimees ecraserait ce qu'un autre onglet vient d'ecrire. */
+    try{
+      var l = await lit("/admin/cinema"); cineRend(l);
+      var c = (l.cinemas||[])[k];
+      if(!c){ $("#cineMsg").textContent="✗ that show is gone — the list was refreshed";
+              $("#cineMsg").className="impbad"; cineModeAjout(); return; }
+      cineModeEdition(k, c);
+    }catch(x){ $("#cineMsg").textContent="✗ "+x.message; $("#cineMsg").className="impbad"; }
+    return;
+  }
   var b = ev.target.closest ? ev.target.closest("[data-cine-retire]") : null;
   if(!b) return;
   b.disabled=true;
@@ -1936,10 +1985,26 @@ $("#cineGo").onclick=async function(){
   var b=$("#cineGo"); b.disabled=true;
   $("#cineMsg").textContent="saving…"; $("#cineMsg").className="";
   try{
-    var j=await post("/admin/cinema",{ titre:$("#cineTitre").value,
-                                       affiche:$("#cineAff").value,
-                                       vf:$("#cineVf").value, vo:$("#cineVo").value });
+    var corps={ titre:$("#cineTitre").value, affiche:$("#cineAff").value,
+                vf:$("#cineVf").value, vo:$("#cineVo").value };
+    var enEdition = (cineEdite !== null);
+    if(enEdition){ corps.i = cineEdite; corps.avant = cineAvant; }
+    var j=await post(enEdition ? "/admin/cinema/modifie" : "/admin/cinema", corps);
     if(j.error){ $("#cineMsg").textContent="✗ "+j.error; $("#cineMsg").className="impbad"; }
+    else if(enEdition){
+      /* On ne quitte le mode edition que si le serveur a REELLEMENT remplace.
+         Sortir avant, c'est laisser croire que c'est enregistre et renvoyer le
+         proprietaire vers un formulaire vide. */
+      cineModeAjout();
+      var mq=[];
+      if(!j.modifiee.affiche) mq.push("poster");
+      if(!j.modifiee.vf) mq.push("VF");
+      if(!j.modifiee.vo) mq.push("VO");
+      $("#cineMsg").textContent = mq.length
+        ? "✓ replaced — refused or empty: "+mq.join(", ")
+        : "✓ replaced — live on every screen";
+      $("#cineMsg").className = mq.length ? "impwarn" : "impok";
+    }
     else if(!j.ajoutee){
       $("#cineMsg").textContent="✗ refused — a title and at least one http(s) player URL are required";
       $("#cineMsg").className="impbad";
@@ -1947,8 +2012,7 @@ $("#cineGo").onclick=async function(){
       /* Les champs se vident SEULEMENT quand le serveur a garde la seance :
          vider avant la reponse aurait fait perdre une adresse longue a
          retrouver au premier refus. */
-      $("#cineTitre").value=""; $("#cineAff").value="";
-      $("#cineVf").value=""; $("#cineVo").value="";
+      cineModeAjout();
       var manque=[];
       if(!j.ajoutee.affiche) manque.push("poster");
       if(!j.ajoutee.vf) manque.push("VF");

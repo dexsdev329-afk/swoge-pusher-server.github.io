@@ -123,12 +123,15 @@ console.log('-- la section cinema est reellement atteignable --');
      d'enregistrement LIT vraiment, en relisant son propre code. Renommer un
      champ dans le HTML sans le renommer dans l'envoi fait tomber cet essai.
 
-     On vise l'ENVOI (`post`), pas la premiere mention de l'adresse : depuis que
-     le panneau relit la galerie, il la LIT aussi (`lit`), et une recherche sur
-     l'adresse seule serait tombee sur la relecture — qui ne lit aucun champ. */
-  const i = SCRIPT.indexOf('post("/admin/cinema"');
-  ok(i > 0, "la page connait la route d'enregistrement de la seance");
-  const envoi = SCRIPT.slice(i, i + 500);
+     On s'accroche au GESTIONNAIRE DU BOUTON, et non a une adresse ecrite en
+     clair. Deux ancres ont deja lache : l'adresse seule tombait sur la
+     RELECTURE de la galerie, qui ne lit aucun champ ; puis l'appel litteral
+     a disparu le jour ou le bouton a du choisir entre ajouter et modifier.
+     Le bouton, lui, est ce dont cet essai parle vraiment — il ne changera de
+     nom que si l'on change de bouton. */
+  const i = SCRIPT.indexOf('$("#cineGo").onclick');
+  ok(i > 0, "la page a un bouton d'enregistrement de la seance");
+  const envoi = SCRIPT.slice(i, i + 900);
   const champs = uniq(/\$\("#(\w+)"\)/g, envoi);
   ok(champs.size >= 4, `le bouton lit ${champs.size} champs`);
 
@@ -165,8 +168,8 @@ console.log('-- la page envoie exactement ce que le serveur lit --');
   });
   new Game({}).ajouteCinema(sonde);
 
-  const i = SCRIPT.indexOf('post("/admin/cinema"');
-  const envoi = SCRIPT.slice(i, i + 500);
+  const i = SCRIPT.indexOf('$("#cineGo").onclick');
+  const envoi = SCRIPT.slice(i, i + 900);
   const envoyes = uniq(/(\w+)\s*:\s*\$\("#\w+"\)\.value/g, envoi);
 
   ok(lus.size >= 4, `le serveur lit ${lus.size} champs`);

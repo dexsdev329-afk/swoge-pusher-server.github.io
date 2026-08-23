@@ -792,6 +792,39 @@ class Game {
   }
 
   /**
+   * REMPLACER LA SEANCE D'UN RANG DONNE.
+   *
+   * Jusqu'ici le panneau ne savait que RETIRER : corriger une faute de frappe
+   * dans un titre, ou remplacer un lien mort, demandait de supprimer la
+   * seance puis de la ressaisir en entier — quatre champs recopies pour en
+   * changer un, et la seance qui disparait de la salle entre les deux.
+   *
+   * ELLE PASSE PAR LA MEME PORTE QUE L'AJOUT. `Game.seanceCinema` est le seul
+   * endroit qui nettoie et valide, et la modification l'appelle comme
+   * `ajouteCinema` : sans cela, l'edition serait une deuxieme entree dans la
+   * galerie, celle-la sans controle d'adresse — et il aurait suffi de poser
+   * une seance valable puis de la MODIFIER pour glisser n'importe quoi dans
+   * l'iframe de chaque joueur. Une regle de securite qui a deux chemins n'en
+   * a aucun.
+   *
+   * Par RANG, pour la meme raison que le retrait : deux seances peuvent
+   * porter le meme titre, et « modifier par titre » en aurait change deux.
+   *
+   * Pas de plafond a verifier : remplacer ne fait pas grandir la galerie.
+   * Rend la seance retenue, ou `null` — et `null` ne touche a rien, plutot
+   * que de laisser une entree a moitie effacee derriere lui.
+   */
+  modifieCinema(i, x) {
+    if (!Array.isArray(this.cinemas)) this.cinemas = [];
+    const k = Number(i);
+    if (!Number.isInteger(k) || k < 0 || k >= this.cinemas.length) return null;
+    const c = Game.seanceCinema(x);
+    if (!c) return null;
+    this.cinemas[k] = c;
+    return c;
+  }
+
+  /**
    * LA PAROLE D'UN JOUEUR, AU-DESSUS DE SA TETE.
    *
    * Rend le texte NETTOYE, pret a partir sur le fil, ou `null` — et `null`
