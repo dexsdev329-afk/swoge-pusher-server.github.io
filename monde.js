@@ -1057,6 +1057,50 @@ function peuplementDonjon(alea, nom, plan) {
   return out;
 }
 
+/*
+ * ---- UN SEUL ANNEAU, ET SA BORNE EST FINIE ----
+ *
+ * `Infinity` ne traverse pas JSON : il en ressort `null`, et `r <= null` est
+ * faux pour tout rayon positif. La page tombe alors dans le repli de
+ * `biomeEn` et pose le sol du monde ouvert SUR le donjon — les tuiles au bon
+ * endroit, la mauvaise texture, et rien nulle part pour dire pourquoi.
+ * Quatre-vingt-dix-neuf demi-largeurs de carte : c'est « partout » sans etre
+ * l'infini.
+ *
+ * La regle vit ICI et non dans chaque generateur de plan. Elle etait ecrite
+ * une fois, dans `planDeDonjon` ; la ville l'aurait recopiee, et le jour ou
+ * l'une des deux copies passe a `Infinity` pour « faire propre », c'est un
+ * seul des deux endroits qui se met a dessiner de l'herbe.
+ */
+const PLAN_PARTOUT = 99;
+function anneauUnique(biome) {
+  return [{ biome, jusqua: PLAN_PARTOUT }];
+}
+
+/*
+ * ---- LE SOL, TUILE PAR TUILE ----
+ *
+ * Et pas « trois rectangles et deux couloirs » : la page redessinerait alors
+ * la forme a partir des memes cinq nombres, et le jour ou le plan gagne une
+ * salle, l'un des deux dessins l'oublierait. Mille couples d'entiers partent
+ * UNE fois, a l'entree — vingt-cinq kilo-octets, le poids d'une petite image
+ * — et la page n'a plus rien a deviner. C'est justement ce qui permet a la
+ * forme de CHANGER a chaque partie sans qu'une seule ligne du navigateur ait
+ * a le savoir.
+ *
+ * C'est aussi ce qui permet de remplir de ROCHE tout ce qui n'est pas le
+ * plan. Un sol de donjon etale sur toute la carte aurait donne l'impression
+ * d'un monde infini dont on aurait bati quelques pieces au milieu ; la masse
+ * de pierre autour des murs est ce qui fait qu'un donjon se lit comme un
+ * interieur — et une ville comme une ville, et non comme le bord du jeu.
+ */
+function tuilesDuSol(sol) {
+  return [...sol].map((k) => {
+    const [c, l] = k.split(',').map(Number);
+    return [c, l];
+  });
+}
+
 /**
  * LE PLAN COMPLET D'UN DONJON — tout ce qu'il faut pour en batir un.
  *
@@ -1128,37 +1172,315 @@ function planDeDonjon(nom, alea) {
        feu sur de la pierre. */
     braises,
     peuplement: peuple,
-    /* ---- UN SEUL ANNEAU, ET SA BORNE EST FINIE ----
-     * `Infinity` ne traverse pas JSON : il en ressort `null`, et `r <= null`
-     * est faux pour tout rayon positif. La page serait donc tombee dans le
-     * repli de `biomeEn` et aurait pose le sol du monde ouvert SUR le donjon —
-     * les tuiles au bon endroit, la mauvaise texture, et rien nulle part pour
-     * dire pourquoi. Quatre-vingt-dix-neuf demi-largeurs de carte : c'est
-     * « partout » sans etre l'infini. */
     /* Le sol de CE donjon : la Fonderie a sa pierre, la cave son bois. La
        page lit le biome de l'anneau pour choisir sa planche — un donjon de
-       plus, c'est une texture de plus, pas un mode de dessin de plus. */
-    anneaux: [{ biome: D.sol || 'donjon', jusqua: 99 }],
+       plus, c'est une texture de plus, pas un mode de dessin de plus.
+       La borne, elle, est celle de `anneauUnique` : voir la-haut pourquoi
+       elle est finie. */
+    anneaux: anneauUnique(D.sol || 'donjon'),
     mur: D.mur || 'donjon',
     salles: [],
-    /* ---- LE SOL, TUILE PAR TUILE ----
-     * Et pas « trois rectangles et deux couloirs » : la page redessinerait
-     * alors la forme a partir des memes cinq nombres, et le jour ou le plan
-     * gagne une salle, l'un des deux dessins l'oublierait. Mille couples
-     * d'entiers partent UNE fois, a l'entree — vingt-cinq kilo-octets, le
-     * poids d'une petite image — et la page n'a plus rien a deviner. C'est
-     * justement ce qui permet a la forme de CHANGER a chaque partie sans
-     * qu'une seule ligne du navigateur ait a le savoir.
-     *
-     * C'est aussi ce qui permet de remplir de ROCHE tout ce qui n'est pas le
-     * donjon. Un sol de donjon etale sur toute la carte aurait donne
-     * l'impression d'un monde infini dont on aurait bati quelques pieces au
-     * milieu ; la masse de pierre autour des murs est ce qui fait qu'un
-     * donjon se lit comme un interieur — et non comme le bord du jeu. */
-    tuiles: [...plan.sol].map((k) => {
-      const [c, l] = k.split(',').map(Number);
-      return [c, l];
-    }),
+    /* La forme exacte, tuile par tuile — voir `tuilesDuSol`. */
+    tuiles: tuilesDuSol(plan.sol),
+  };
+}
+
+/*
+ * ==================== LA VILLE ====================
+ *
+ * SWOGE +18 n'avait pas de geographie a elle. La porte du Nexus ouvrait bien
+ * une simulation A PART — ses joueurs, ses sacs, ses tirs — mais posee sur le
+ * terrain du MONDE OUVERT : les memes rochers tires au sort, les memes cent
+ * soixante creatures. On y entrait « dans un monde avec du combat », ce qui
+ * n'est ni ce que la porte annonce, ni ce qu'on veut y construire.
+ *
+ * Une ville est donc un PLAN, comme un donjon : le meme objet, les memes
+ * champs, la meme route jusqu'a la page, et pas une ligne de `realm.js` qui
+ * change. Ce qui l'en distingue tient en quatre choses, et chacune repond a
+ * quelque chose de precis :
+ *
+ *   - AUCUNE CREATURE. `peuplement` vide. `Realm.peuple` lit le plan et ne
+ *     tire rien ; `Realm.repeuple` refuse deja de faire naitre quoi que ce
+ *     soit des qu'il y a un plan. Ce n'est donc pas « moins de monstres »,
+ *     c'est aucun, ni au demarrage ni jamais — une ville n'est pas une zone
+ *     de combat, et c'est exactement la plainte a laquelle ce fichier repond.
+ *   - AUCUNE BRAISE. Rien au sol qui punisse celui qui marche.
+ *   - AUCUNE SORTIE. Un donjon a une porte de retour parce qu'on y est ENTRE
+ *     depuis un monde ouvert ; la ville EST un monde ouvert, on la quitte
+ *     comme on quitte la plaine. Lui poser une porte de retour aurait mis au
+ *     milieu de la rue un portail marque EXIT qui ne mene nulle part —
+ *     `realmSort` refuse a qui n'est pas dans un donjon, et le refus serait
+ *     arrive sans que rien ne l'explique.
+ *   - ELLE NE SE RETIRE PAS AU SORT. Voir `hasardSeme` plus bas.
+ *
+ * ---- POURQUOI DES ILOTS, ET PAS DES BATIMENTS POSES ----
+ *
+ * Le sol d'un plan est une LISTE DE TUILES, et tout ce qui la borde devient
+ * un bloc (`mursDonjon`). On dessine donc les RUES, et les pates de maisons
+ * sont ce qui reste : ils bloquent le pas, ils bloquent les tirs, ils se
+ * dessinent, et il n'y a qu'UNE liste a tenir. Poser les batiments a la main
+ * a cote du sol aurait demande de tenir les deux d'accord a chaque retouche —
+ * et le premier oubli aurait fait une facade qu'on traverse, ou une rue
+ * bouchee par rien. C'est la lecon deja payee par les murs de donjon.
+ *
+ * ---- POURQUOI ON DECOUPE, AU LIEU DE POSER UNE GRILLE ----
+ *
+ * Une grille reguliere se lit comme un damier : toutes les rues pareilles,
+ * tous les pates pareils, et l'on ne se repere nulle part. On coupe donc le
+ * carre en deux, encore et encore, chaque coupe laissant une rue derriere
+ * elle. Les pates sortent de tailles differentes sans qu'on en tire une
+ * seule au sort.
+ *
+ * Et surtout : LA VILLE EST PARCOURABLE PAR CONSTRUCTION. Chaque coupe
+ * traverse son rectangle de bord a bord, et le bord d'un rectangle est soit
+ * le boulevard qui ceint la ville, soit une coupe plus ancienne. Toute rue
+ * touche donc une rue qui touche le boulevard : c'est la propriete de
+ * l'arbre, pas un heureux hasard du tirage. L'essai la verifie quand meme,
+ * par un parcours reel sur la grille — une propriete qu'on ne mesure pas est
+ * une propriete qu'on CROIT avoir, et un pate enclos serait un decor, pas une
+ * ville.
+ */
+
+/*
+ * ---- UN HASARD QU'ON PEUT REJOUER ----
+ *
+ * `Math.random` ne se seme pas. Un donjon s'en accommode : il se retire a
+ * chaque ouverture, et c'est tout l'interet — le deuxieme passage doit
+ * apprendre quelque chose. Une ville, non. C'est un LIEU. Des rues qui
+ * changent a chaque redemarrage du serveur, ce n'est plus un lieu : on ne
+ * peut ni s'y donner rendez-vous, ni y revenir, ni un jour ouvrir une porte
+ * a une adresse qu'on retrouverait.
+ *
+ * Quatre lignes de generateur seme, et la meme ville sort de tous les
+ * demarrages. Le germe est une DONNEE (`VILLE.germe`) : le jour ou l'on veut
+ * une autre ville, on change un nombre — on ne reecrit pas le generateur.
+ */
+function hasardSeme(germe) {
+  let a = germe >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const VILLE = {
+  /* Le cote de la ville, en tuiles. Quarante-cinq tuiles font 5 760 unites :
+     vingt-deux secondes de marche d'un bout a l'autre. Plus petit, on en
+     fait le tour avant d'avoir eu envie d'y entrer ; plus grand, les rues se
+     vident faute d'avoir de quoi les remplir. */
+  cote: 45,
+  /* Le coin haut-gauche, en tuiles. La ville tient a l'INTERIEUR de la carte
+     du monde ouvert : les bornes du serveur et le cadrage de la page comptent
+     en unites de monde, et une ville qui deborderait aurait des rues ou l'on
+     ne peut ni marcher ni voir. Huit tuiles de marge suffisent au bloc de
+     bordure et a la masse de roche qui l'entoure. */
+  origine: { x: 8, y: 8 },
+  /* La largeur d'une rue, en tuiles. TROIS et non une : a une tuile on se
+     coince des qu'on est deux, et un tir parti de biais ne passe plus. C'est
+     le chiffre du couloir de donjon, et pour la meme raison — une ville ne
+     doit pas etre difficile a cause de sa geometrie. */
+  rue: 3,
+  /* Le plus petit pate qu'on accepte, en tuiles. En deca, il n'y a plus la
+     place d'une facade — et une ville faite de pates trop etroits n'est plus
+     une ville, c'est un labyrinthe. Il vaut aussi de plancher aux planches :
+     aucune facade ne peut etre plus large que lui, sinon elle deborderait sur
+     la rue d'a cote et l'on marcherait dans un dessin. L'essai le verifie sur
+     la table, pour que l'ajout d'une cinquieme planche ne puisse pas le
+     rompre en silence. */
+  ilotMin: 6,
+  /* Le germe. Voir `hasardSeme` : une ville ne bouge pas. */
+  germe: 0x5B0BE18,
+  /* Le sol, nomme et non deduit. La page fait `ground_<biome>.webp` — un sol
+     de plus, c'est une image de plus, pas un mode de dessin de plus. */
+  sol: 'ville',
+  /* ---- ET LA PIERRE DES BLOCS ----
+   * La page ne connait aujourd'hui que deux planches de mur, et le nom la
+   * designe. On nomme donc celle qui EXISTE plutot que d'en inventer une : un
+   * nom sans fichier derriere ne dessine rien, et un pate invisible qui
+   * arrete se lit comme une panne. Le jour ou une pierre de ville est
+   * dessinee, c'est cette ligne-ci qui la nomme. */
+  mur: 'donjon',
+  /* ---- CE QU'ON POSE SUR LE BORD D'UN PATE ----
+   *
+   * Une planche, une largeur en TUILES, et le nombre d'images quand elle
+   * bouge. Rien d'autre. La HAUTEUR n'est pas ici : elle se mesure dans le
+   * fichier, cote page. L'ecrire des deux cotes aurait fait deux nombres a
+   * tenir d'accord avec une image — et une image etiree ne leve aucune
+   * erreur, elle a seulement l'air moins bien. Ce depot a deja paye cette
+   * lecon trois fois dans la table des LIEUX du hall.
+   *
+   * La table est ce qui fait la ville : une planche de plus, c'est une ligne
+   * ici et un fichier dans le dossier des tuiles. Rien dans `planVille`, rien
+   * dans la page.
+   */
+  FACADES: [
+    { planche: 'tour_maison', tuiles: 4 },
+    { planche: 'vitrines_maison', tuiles: 5 },
+    { planche: 'manege', tuiles: 2, cadres: 4 },
+    { planche: 'murson', tuiles: 2, cadres: 4 },
+  ],
+};
+
+/**
+ * LA GEOMETRIE DE LA VILLE : ses rues, ses pates, son point d'arrivee.
+ *
+ * Meme contrat que `planDonjon` et `planCave` : on rend un ensemble de tuiles
+ * de SOL et de quoi s'y reperer. Tout le reste — les blocs, les tuiles a
+ * envoyer, l'anneau — s'en deduit, et s'en deduit par les memes fonctions.
+ */
+function planVille(alea) {
+  const r = () => (typeof alea === 'function' ? alea() : Math.random());
+  const cle = (c, l) => c + ',' + l;
+  const O = VILLE.origine, N = VILLE.cote, W = VILLE.rue;
+  const sol = new Set();
+  const pave = (x0, y0, x1, y1) => {
+    for (let c = x0; c <= x1; c++) for (let l = y0; l <= y1; l++) sol.add(cle(c, l));
+  };
+
+  const x0 = O.x, y0 = O.y, x1 = O.x + N - 1, y1 = O.y + N - 1;
+  /* ---- LE BOULEVARD DE CEINTURE ----
+   * Il fait deux choses qu'aucune coupe ne ferait. Il donne a la ville un
+   * bord ou l'on marche — sans lui, les pates du pourtour toucheraient
+   * directement la roche et la ville n'aurait pas de facade exterieure. Et il
+   * est la RACINE a laquelle toutes les coupes viennent se raccrocher : c'est
+   * lui qui rend le parcours entier connexe. */
+  pave(x0, y0, x1, y0 + W - 1);
+  pave(x0, y1 - W + 1, x1, y1);
+  pave(x0, y0, x0 + W - 1, y1);
+  pave(x1 - W + 1, y0, x1, y1);
+
+  const ilots = [];
+  const coupe = (a) => {
+    const w = a.x1 - a.x0 + 1, h = a.y1 - a.y0 + 1;
+    /* On ne coupe que s'il reste de quoi faire DEUX pates entiers de part et
+       d'autre de la rue. Sans cette mesure, la coupe rendrait une bande d'une
+       tuile de large : un pate qu'on ne peut ni batir ni lire, et qui ne
+       ferait qu'epaissir la rue voisine. */
+    const large = w >= 2 * VILLE.ilotMin + W;
+    const haut = h >= 2 * VILLE.ilotMin + W;
+    if (!large && !haut) { ilots.push(a); return; }
+    /* On coupe le cote le PLUS LONG. Couper toujours le meme rendrait des
+       pates en lanieres, et une laniere n'a pas de facade a montrer. Quand les
+       deux cotes se valent, le tirage tranche — sinon la ville aurait un axe
+       privilegie, et un axe se voit. */
+    const vertical = large && (!haut || w > h || (w === h && r() < 0.5));
+    const d0 = vertical ? a.x0 : a.y0, d1 = vertical ? a.x1 : a.y1;
+    const bas = d0 + VILLE.ilotMin, sommet = d1 - VILLE.ilotMin - W + 1;
+    const c = bas + Math.floor(r() * (sommet - bas + 1));
+    if (vertical) {
+      pave(c, a.y0, c + W - 1, a.y1);
+      coupe({ x0: a.x0, y0: a.y0, x1: c - 1, y1: a.y1 });
+      coupe({ x0: c + W, y0: a.y0, x1: a.x1, y1: a.y1 });
+    } else {
+      pave(a.x0, c, a.x1, c + W - 1);
+      coupe({ x0: a.x0, y0: a.y0, x1: a.x1, y1: c - 1 });
+      coupe({ x0: a.x0, y0: c + W, x1: a.x1, y1: a.y1 });
+    }
+  };
+  coupe({ x0: x0 + W, y0: y0 + W, x1: x1 - W, y1: y1 - W });
+
+  /* ---- UNE FACADE PAR PATE, ET TOUTES TOURNEES VERS LE SUD ----
+   *
+   * Une planche de batiment occupe l'espace AU-DESSUS de son point d'ancrage :
+   * c'est ce qui lui permet de se trier par les pieds avec ceux qui passent
+   * devant. Posee sur le bord NORD d'un pate, elle recouvrirait la rue du nord
+   * et quiconque y marche — le hall a deja paye ca avec l'enclos de la ferme,
+   * dessine par-dessus la terre ou l'on croyait pouvoir entrer.
+   *
+   * Le TYPE tourne dans la table au lieu d'etre tire. Quatre planches tirees
+   * au sort sur dix-huit pates en laissent une absente une fois sur dix, et
+   * une ville a laquelle il manque sa tour ne se raconte pas. Le point de
+   * DEPART, lui, est tire : sinon la meme planche serait toujours au meme
+   * coin de la carte.
+   */
+  const depart = Math.floor(r() * VILLE.FACADES.length);
+  const facades = ilots.map((a, i) => {
+    const f = VILLE.FACADES[(depart + i) % VILLE.FACADES.length];
+    return { planche: f.planche, tuiles: f.tuiles, cadres: f.cadres || 0,
+             c: a.x0 + Math.floor((a.x1 - a.x0) / 2), l: a.y1 };
+  });
+
+  /* ---- OU L'ON ARRIVE ----
+   * Au milieu du boulevard sud, tourne vers la ville. Sur la rue et jamais
+   * dans un mur : c'est le boulevard, donc du sol par construction — l'essai
+   * le verifie quand meme, parce qu'une entree posee dans la pierre ferait
+   * naitre le joueur coince, et qu'il n'y a rien de pire a debugger a
+   * distance. */
+  const entree = { c: O.x + Math.floor(N / 2), l: y1 - Math.floor(W / 2) };
+
+  return { sol, ilots, facades, entree, tuile: DONJON_TUILE };
+}
+
+/**
+ * LE PLAN COMPLET DE LA VILLE.
+ *
+ * Meme forme que celui d'un donjon, au champ pres : c'est ce qui permet a
+ * `Realm`, a `messageEntree` et a la page de ne rien apprendre de nouveau.
+ *
+ * `alea` est FACULTATIF, et son defaut n'est pas `Math.random` — c'est le
+ * germe de la ville. Un plan de donjon sans hasard explicite repart sur
+ * `Math.random` et c'est juste ; ici, ce serait l'inverse du but. Les essais
+ * passent leur propre tirage pour balayer des centaines de villes ; le
+ * serveur n'en passe aucun et obtient toujours la meme.
+ */
+function planDeVille(alea) {
+  const plan = planVille(alea || hasardSeme(VILLE.germe));
+  const murs = mursDonjon(plan, 1);
+
+  /* ---- LA FACADE REMPLACE LE BLOC, ELLE NE S'AJOUTE PAS A LUI ----
+   *
+   * Le bord d'un pate porte DEJA un bloc : `mursDonjon` en pose un sur chaque
+   * tuile vide qui touche une rue. Ajouter la facade a cote aurait mis deux
+   * obstacles sur la meme tuile — deux collisions a resoudre et deux dessins
+   * superposes pour une seule pierre. On enrichit donc celui qui est la.
+   *
+   * Il GARDE son `t` de mur, et ce n'est pas un oubli : une page qui ne
+   * connait pas encore `bat` — un navigateur qui tient une vieille version en
+   * cache — dessine alors un bloc de pierre a cet endroit. Degrade, jamais
+   * troue. Un champ inconnu qui laisse un vide serait la pire des livraisons :
+   * le batiment arreterait le pas sans rien montrer.
+   */
+  const parTuile = new Map();
+  for (const m of murs) {
+    parTuile.set(Math.floor(m.x / DONJON_TUILE) + ',' + Math.floor(m.y / DONJON_TUILE), m);
+  }
+  for (const f of plan.facades) {
+    const m = parTuile.get(f.c + ',' + f.l);
+    /* Aucun bloc sous la facade : on ne la pose pas. Une facade posee dans le
+       vide serait un batiment qu'on TRAVERSE — et rien ne le dirait, puisque
+       le dessin, lui, serait la. L'essai exige que chaque facade ait trouve
+       son bloc, pour que ce `continue` ne devienne jamais silencieux. */
+    if (!m) continue;
+    m.bat = f.planche;
+    /* La largeur en unites de monde, parce que c'est ce que la page pose. La
+       hauteur, elle, se mesure dans la planche : voir la table des FACADES. */
+    m.larg = f.tuiles * DONJON_TUILE;
+    if (f.cadres) m.cadres = f.cadres;
+  }
+
+  return {
+    nom: 'ville',
+    entree: { x: (plan.entree.c + 0.5) * DONJON_TUILE,
+              y: (plan.entree.l + 0.5) * DONJON_TUILE },
+    /* PAS DE PORTE DE RETOUR, et le champ existe quand meme. `realm.js` ne
+       pose son portail EXIT que si le plan en nomme une, et `messageEntree`
+       lit ce meme champ pour decider si l'on est « au fond de » quelque
+       chose. Le laisser absent aurait marche aussi ; le poser a `null` dit
+       que la question a ete tranchee, et garde au plan la meme forme qu'a
+       celui d'un donjon — ce que l'essai compare. */
+    sortie: null,
+    obstacles: murs,
+    /* Vide, et pas absent : un champ qui apparait en cours de route est un
+       champ que la moitie du code teste avec `undefined`. */
+    braises: [],
+    /* VIDE. C'est la ligne pour laquelle ce fichier existe. */
+    peuplement: [],
+    anneaux: anneauUnique(VILLE.sol),
+    mur: VILLE.mur,
+    salles: [],
+    tuiles: tuilesDuSol(plan.sol),
   };
 }
 
@@ -3854,6 +4176,7 @@ module.exports = {
   PORTAIL, PORTAIL_DE, RETOUR_DE, MUR_DONJON, MUR_DECOR, DONJON_TUILE, DONJON_SALLES,
   DONJON_COULOIR, DONJON_ORIGINE, DONJON_IMPASSES, PEUPLE_DONJON,
   planDonjon, planCave, CAVE, DONJONS, mursDonjon, peuplementDonjon, planDeDonjon,
+  VILLE, planVille, planDeVille, hasardSeme, anneauUnique, tuilesDuSol, PLAN_PARTOUT,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   choisitEspece,
   regenParSeconde, pouvoirDeStat,

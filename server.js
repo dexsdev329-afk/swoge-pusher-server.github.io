@@ -737,13 +737,32 @@ const crimson = new Realm({
  * dont la cle a disparu. Elle ne peut pas etre absente de la table. */
 /* ==================== LA TROISIEME PORTE ====================
  *
- * SWOGE +18. Elle mene a une carte qui n'a encore AUCUNE regle a elle : meme
- * butin que le monde ouvert, pas de PvP. C'est voulu, et ce n'est pas de la
- * paresse — la carte se construira au fur et a mesure, et lui inventer une
- * identite maintenant reviendrait a decider a la place de celui qui la
- * construit.
+ * SWOGE +18. Meme butin que le monde ouvert, pas de PvP — sur ces deux
+ * points-la, rien n'a change.
  *
- * Ce qui existe deja, en revanche, et qui est le vrai travail : c'est une
+ * ---- ET MAINTENANT ELLE A UN SOL A ELLE ----
+ *
+ * Elle n'en avait pas. La porte ouvrait bien une simulation A PART, mais
+ * posee sur la GEOGRAPHIE du monde ouvert : les rochers tires au sort, les
+ * cent soixante creatures des anneaux, la lave au centre. Le proprietaire y
+ * entrait et se retrouvait « dans un monde avec du combat », avec les memes
+ * monstres et les memes rochers qu'il venait de quitter. La porte promettait
+ * un ailleurs et rendait le meme endroit.
+ *
+ * `plan` est tout ce qu'il fallait : `Realm` sait deja qu'un monde qui en a un
+ * prend SES blocs, SA population et SON point d'arrivee, et qu'il ne se
+ * repeuple jamais. Ce que la ville met dedans — des rues, des pates de
+ * maisons, aucune creature — est ecrit dans `monde.js`, avec le reste de la
+ * geographie.
+ *
+ * ---- UN PLAN NE FAIT PAS UN DONJON ----
+ *
+ * Un donjon est une simulation TEMPORAIRE, ouverte par une porte, rangee dans
+ * la table `donjons`, et qu'on quitte par la porte du sas. La ville est un
+ * monde ouvert permanent qui se trouve avoir une forme. Les deux ont un plan ;
+ * ce n'est pas ce qui les separe, et rien ici ne doit faire comme si.
+ *
+ * Ce qui existait deja, et qui reste le vrai travail : c'est une
  * SIMULATION A PART. Deux mondes aux memes coordonnees separes par un
  * drapeau auraient demande de verifier ce drapeau dans les six boucles de
  * combat, et un oubli aurait fait toucher quelqu'un d'un autre monde, en
@@ -759,6 +778,11 @@ const crimson = new Realm({
  */
 const plus18 = new Realm({
   tireObjet: (r, a, garanti) => (garanti ? game.tireButinGaranti(r, a) : game.tireButin(r, a)),
+  /* SANS TIRAGE. `planDeVille` n'attend pas `Math.random` en repli : il repart
+     sur le germe de la ville. C'est voulu — une ville est un LIEU, et un lieu
+     dont les rues changeraient a chaque redemarrage du serveur ne serait pas
+     un lieu. Voir `hasardSeme` dans monde.js. */
+  plan: monde.planDeVille(),
 });
 
 const MONDES = new Map([['ouvert', realm], ['crimson', crimson], ['plus18', plus18]]);
@@ -979,9 +1003,20 @@ function messageEntree(R, j, plan, carte) {
     stats: personnages.STATS,
     /* ---- ET LES TROIS LIGNES QUI FONT UN DONJON ----
      * `donjon` porte son nom : c'est ce seul champ qui dit a la page qu'elle
-     * n'est plus dehors — autre sol, autres murs, un bouton pour sortir.
-     * `tuiles` est sa forme exacte, et `sortie` la porte de retour. */
-    donjon: plan ? plan.nom : null,
+     * est DEDANS — la ligne d'accueil parle alors de la porte par laquelle on
+     * repartira, et les planches de zone passent a celles du donjon.
+     * `tuiles` est sa forme exacte, et `sortie` la porte de retour.
+     *
+     * ---- AVOIR UN PLAN NE SUFFIT PLUS ----
+     * Ce champ valait `plan.nom` des qu'un plan existait, ce qui etait juste
+     * tant que seuls les donjons en avaient un. La ville en a un aussi, et
+     * c'est un monde ouvert : elle aurait annonce « you are deep in the
+     * ville », avec une phrase qui promet une porte de retour qui n'existe
+     * pas. Ce qui fait un donjon, c'est justement cette porte — on y est
+     * ENTRE depuis un monde, on en RESSORT par le sas. C'est donc `sortie`
+     * qui tranche, et pas la simple presence d'une forme. Une seule source :
+     * le plan qui nomme une porte est celui d'un dedans. */
+    donjon: (plan && plan.sortie) ? plan.nom : null,
     tuiles: plan ? plan.tuiles : null,
     /* Les plaques de braise partent avec la forme du donjon : la page les
        DESSINE et le serveur les fait bruler a partir de la MEME liste. Deux
@@ -4005,8 +4040,15 @@ wss.on('connection', (ws) => {
         realmDernierMouv.set(ws.addr, Date.now());
         /* La carte et les armes partent A L'ENTREE, pas dans le `hello` : un
            joueur qui ne met jamais les pieds dans le monde n'a pas a
-           telecharger sa description. */
-        return send(ws, messageEntree(R, j, null, cle));
+           telecharger sa description.
+           ---- ET LE PLAN DU MONDE, S'IL EN A UN ----
+           C'etait `null` en dur, parce qu'un monde ouvert n'avait jamais de
+           forme a lui : seuls les donjons en avaient une. La ville de +18 en a
+           une, et le `null` la lui aurait cachee — la page aurait recu ses
+           blocs sans ses tuiles, donc les pates de maisons poses sur le sol du
+           monde ouvert, sans bord et sans rue. On demande donc son plan au
+           monde ou l'on entre, comme on le fait deja pour un donjon. */
+        return send(ws, messageEntree(R, j, R.plan, cle));
       }
       /* ==================== FRANCHIR LA PORTE ====================
        *
@@ -4138,7 +4180,11 @@ wss.on('connection', (ws) => {
         ws.monde = cle;
         const j = Vers.rejoint(ws.addr, fiche, etat);
         realmDernierMouv.set(ws.addr, Date.now());
-        return send(ws, messageEntree(Vers, j, null, cle));
+        /* Le plan du monde OU L'ON RESSORT, et pas `null` : on peut avoir
+           ouvert une porte de donjon depuis la ville, et en ressortir sans sa
+           forme aurait rendu une ville sans rues — les memes blocs, mais poses
+           sur la plaine. */
+        return send(ws, messageEntree(Vers, j, Vers.plan, cle));
       }
 
       /* ---- REJOINDRE UN AMI ----
@@ -4181,8 +4227,15 @@ wss.on('connection', (ws) => {
         /* Jamais dans un rocher : on retombe sur lui plutot que dans la
            pierre, quitte a se superposer une seconde. */
         if (monde.bloque(R.obstacles, x, y, 22)) { x = lui.x; y = lui.y; }
-        x = Math.max(40, Math.min((R.plan ? monde.MONDE.w : monde.MONDE.w) - 40, x));
-        y = Math.max(40, Math.min((R.plan ? monde.MONDE.h : monde.MONDE.h) - 40, y));
+        /* Dans la carte, quel que soit l'endroit. La distinction « avec plan /
+           sans plan » etait ecrite ici avec DEUX BRANCHES IDENTIQUES : elle ne
+           distinguait donc rien, et elle laissait croire qu'une regle
+           particuliere existait pour les donjons. Un plan tient de toute facon
+           a l'interieur de la carte — c'est ce qui permet a la page de le
+           cadrer — et ce qui borne vraiment le saut, c'est le bloc juste
+           au-dessus : on ne se pose pas dans la pierre. */
+        x = Math.max(40, Math.min(monde.MONDE.w - 40, x));
+        y = Math.max(40, Math.min(monde.MONDE.h - 40, y));
         moi.x = x; moi.y = y;
         realmDernierMouv.set(ws.addr, Date.now());
         return send(ws, { type: 'realmRejoint', addr: cible, x: Math.round(x), y: Math.round(y),

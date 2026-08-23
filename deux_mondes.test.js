@@ -45,21 +45,30 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
   const { Game } = require('./game');
   let moteur = null; const _p0 = Game.prototype._p;
   Game.prototype._p = function (a) { moteur = this; return _p0.call(this, a); };
-  /* Les simulations SANS plan sont les mondes ouverts. On les attrape par ce
-     biais plutot que d'exporter la table des mondes pour l'essai : une table
-     exportee pour un essai finit par etre modifiee par du code de production
-     « puisqu'elle est la ». */
+  /* ---- MONDE OUVERT OU DONJON : C'EST UNE QUESTION DE MOMENT ----
+   * C'etait « avec plan / sans plan ». La ville de SWOGE +18 est un monde
+   * ouvert qui a un plan : ce critere l'aurait rangee parmi les donjons, et
+   * l'essai n'aurait rien signale — il aurait juste compte une carte de moins
+   * et un donjon de trop. Les mondes ouverts sont ceux qui BATTENT DEJA a la
+   * fin du demarrage, avant qu'un seul client soit connecte ; un donjon nait
+   * de la porte franchie, donc plus tard. On les attrape par ce biais plutot
+   * que d'exporter la table des mondes pour l'essai : une table exportee pour
+   * un essai finit par etre modifiee par du code de production « puisqu'elle
+   * est la ». */
   const { Realm } = require('./realm');
   const ouverts = new Set(), vivants = new Set();
+  let demarrageFini = false;
   const pas0 = Realm.prototype.pas;
   Realm.prototype.pas = function (dt) {
-    (this.plan ? vivants : ouverts).add(this);
+    if (!demarrageFini) ouverts.add(this);
+    else if (!ouverts.has(this)) vivants.add(this);
     return pas0.call(this, dt);
   };
   require('./server');
   const M = require('./monde');
   const B = require('./boutique');
   await new Promise((r) => setTimeout(r, 900));
+  demarrageFini = true;
 
   const ouvre = () => new Promise((res, rej) => {
     const s = new WebSocket('ws://127.0.0.1:' + port);
