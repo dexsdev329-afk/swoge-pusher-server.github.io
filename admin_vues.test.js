@@ -22,11 +22,21 @@
  *
  * ---- CE QUE CE FICHIER NE FAIT PAS ----
  *
- * Il ne contient la liste ni des onglets, ni des panneaux, ni des champs du
- * cinema. Tout est relu dans la page rendue et dans `game.js`. Une liste
- * recopiee ici serait une deuxieme verite : elle resterait verte le jour ou
- * quelqu'un renomme un onglet, et c'est exactement le jour ou il faut qu'elle
- * tombe.
+ * Il ne contient la liste ni des onglets, ni des panneaux, ni des champs, ni
+ * des salles a ecran. Tout est relu dans la page rendue, dans `game.js` et
+ * dans la table de `config.js`. Une liste recopiee ici serait une deuxieme
+ * verite : elle resterait verte le jour ou quelqu'un renomme un onglet ou une
+ * salle, et c'est exactement le jour ou il faut qu'elle tombe.
+ *
+ * ---- ET DEPUIS QU'IL Y A TROIS SALLES A ECRAN ----
+ *
+ * Les sections du cinema, de la salle manga et de la salle series sont
+ * ENGENDREES par une boucle sur la table. Le defaut qu'on surveille ici n'est
+ * donc plus « la section est introuvable » mais « la section a ete recopiee » :
+ * trois copies, c'est trois verites, et la correction suivante ira dans celle
+ * qu'on a sous les yeux. On verifie donc qu'il y a une section PAR ENTREE DE
+ * LA TABLE, que leurs identifiants sont uniques, et que le script ne nomme
+ * aucune salle en clair.
  */
 const assert = require('assert');
 const fs = require('fs');
@@ -34,6 +44,11 @@ process.env.DATA_DIR = fs.mkdtempSync('/tmp/advues-');
 process.env.RPC_URL = ''; process.env.ADMIN_KEY = 'k';
 const admin = require('./admin');
 const { Game } = require('./game');
+/* La table des salles vient de la SOURCE, jamais recopiee ici : un « manga »
+   ecrit dans cet essai resterait vert le jour ou la table change de nom, et
+   c'est exactement le jour ou il faut qu'il tombe. */
+const cfg = require('./config');
+const SALLES = cfg.SALLES_ECRAN;
 
 let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n++; console.log('  ok   ' + m); };
@@ -117,67 +132,141 @@ console.log('-- aucun panneau ne flotte hors des onglets --');
      (orphelins.length ? ` : ${orphelins.join(', ')}` : ''));
 }
 
-console.log('-- la section cinema est reellement atteignable --');
+ok(SALLES.length >= 2, `la table declare ${SALLES.length} salles a ecran`);
+
+/* On remonte d'un identifiant vers la vue du panneau qui le contient. */
+const panneauDe = (id) => {
+  const j = PAGE.indexOf('id="' + id + '"');
+  if (j < 0) return null;
+  const k = PAGE.slice(0, j).lastIndexOf('<div data-vue=');
+  return k < 0 ? null : (PAGE.slice(k).match(/data-vue="([a-z]+)"/) || [])[1];
+};
+
+console.log('-- IL Y A UNE SECTION PAR SALLE, ET ELLES SONT ENGENDREES --');
 {
-  /* Les identifiants ne sont pas recopies ici : on prend ceux que le bouton
-     d'enregistrement LIT vraiment, en relisant son propre code. Renommer un
-     champ dans le HTML sans le renommer dans l'envoi fait tomber cet essai.
-
-     On s'accroche au GESTIONNAIRE DU BOUTON, et non a une adresse ecrite en
-     clair. Deux ancres ont deja lache : l'adresse seule tombait sur la
-     RELECTURE de la galerie, qui ne lit aucun champ ; puis l'appel litteral
-     a disparu le jour ou le bouton a du choisir entre ajouter et modifier.
-     Le bouton, lui, est ce dont cet essai parle vraiment — il ne changera de
-     nom que si l'on change de bouton. */
-  const i = SCRIPT.indexOf('$("#cineGo").onclick');
-  ok(i > 0, "la page a un bouton d'enregistrement de la seance");
-  const envoi = SCRIPT.slice(i, i + 900);
-  const champs = uniq(/\$\("#(\w+)"\)/g, envoi);
-  ok(champs.size >= 4, `le bouton lit ${champs.size} champs`);
-
-  /* Le panneau qui contient ces champs : on remonte du champ vers la balise
-     ouvrante la plus proche au-dessus de lui. */
-  const panneauDe = (id) => {
-    const j = PAGE.indexOf('id="' + id + '"');
-    if (j < 0) return null;
-    const avant = PAGE.slice(0, j);
-    const k = avant.lastIndexOf('<div data-vue=');
-    return k < 0 ? null : (PAGE.slice(k).match(/data-vue="([a-z]+)"/) || [])[1];
-  };
-  for (const c of champs) {
-    const v = panneauDe(c);
-    ok(v !== null, `le champ « ${c} » existe dans la page (vue ${v})`);
-    ok(ONGLETS.has(v), `et un onglet du menu l'ouvre (${v})`);
+  /* ---- CE QUE CE BLOC EMPECHE ----
+   * Recopier la section une fois par salle. Le jour ou l'on corrige un
+   * libelle, un identifiant ou un geste, la correction va dans celle qu'on a
+   * sous les yeux et la salle oubliee garde le vieux defaut. On ne verifie
+   * donc pas « il y a trois sections » : on verifie qu'il y en a UNE PAR
+   * ENTREE DE LA TABLE, quelle que soit la table. Ajouter une quatrieme salle
+   * doit faire apparaitre une quatrieme section sans toucher a admin.js. */
+  for (const S of SALLES) {
+    ok(PAGE.indexOf('id="cine_' + S.cle + '_liste"') > 0,
+       `« ${S.nom} » a sa galerie dans la page`);
+    /* Le NOM LISIBLE vient de la table, pas d'un titre ecrit a la main : deux
+       verites qui divergent au premier renommage, et c'est la page qu'on lit. */
+    ok(PAGE.indexOf(S.nom) > 0, `et son nom lisible y est affiche (« ${S.nom} »)`);
   }
+  /* Et pas une de plus : une section restee d'une salle retiree de la table
+     ecrirait dans une salle que le serveur refuse, sans que rien ne le dise
+     avant le clic. */
+  const vues = new Set();
+  const re = /id="cine_([a-z0-9_]+)_liste"/g;
+  let m;
+  while ((m = re.exec(PAGE))) vues.add(m[1]);
+  eq([...vues].sort().join(','), SALLES.map((s) => s.cle).sort().join(','),
+     'et la page ne montre QUE les salles de la table');
+}
 
-  /* La seance se pousse aux joueurs a chaud, sans redemarrage : elle vit donc
-     la ou vivent les autres reglages a chaud. On ne nomme pas l'onglet, on
-     lit celui du panneau des reglages — le jour ou il demenage, la seance
-     doit demenager avec lui. */
-  eq(panneauDe('cineGo'), panneauDe('rgCorps'),
-     'la seance est rangee avec les autres reglages a chaud');
+console.log('-- chaque section est complete, et rangee au bon endroit --');
+{
+  /* Ce que la section actuelle sait faire doit exister DANS CHAQUE SALLE : la
+     liste des seances, un bouton par ligne, les champs pour ajouter, le bouton
+     d'abandon. Une salle a qui il manquerait le retrait ne ferait que grossir
+     jusqu'au plafond, apres quoi le panneau refuserait tout sans que personne
+     puisse rien liberer. */
+  const MORCEAUX = ['liste', 'titre', 'aff', 'vf', 'vo', 'go', 'annule', 'msg'];
+  for (const S of SALLES) {
+    for (const quoi of MORCEAUX)
+      ok(PAGE.indexOf('id="cine_' + S.cle + '_' + quoi + '"') > 0,
+         `« ${S.cle} » a son element « ${quoi} »`);
+    /* Les trois sections restent dans l'onglet des reglages a chaud : une
+       seance se pousse aux joueurs sans redemarrage, elle vit donc la ou
+       vivent les autres reglages a chaud. On ne nomme pas l'onglet, on lit
+       celui du panneau des reglages — le jour ou il demenage, les salles
+       demenagent avec lui. */
+    eq(panneauDe('cine_' + S.cle + '_go'), panneauDe('rgCorps'),
+       `« ${S.cle} » est rangee avec les autres reglages a chaud`);
+    eq(panneauDe('cine_' + S.cle + '_liste'), panneauDe('cine_' + S.cle + '_go'),
+       `et sa galerie est dans le meme panneau que ses champs`);
+    ok(ONGLETS.has(panneauDe('cine_' + S.cle + '_go')),
+       `qu'un onglet du menu ouvre (${panneauDe('cine_' + S.cle + '_go')})`);
+  }
+}
+
+console.log('-- les identifiants sont UNIQUES, salle par salle --');
+{
+  /* ---- LE DEFAUT QU'ON EVITE ----
+   * Trois sections partageant un meme id="cineTitre" : le navigateur ne rend
+   * que le premier, et l'on aurait ecrit dans la salle manga en voyant le
+   * cinema se remplir. Rien n'aurait leve. */
+  const tous = [];
+  const re = /id="([a-zA-Z0-9_]+)"/g;
+  let m;
+  while ((m = re.exec(PAGE))) tous.push(m[1]);
+  const doubles = tous.filter((x, i) => tous.indexOf(x) !== i);
+  ok(tous.length > 40, `la page porte ${tous.length} identifiants`);
+  eq(doubles.length, 0,
+     'aucun identifiant en double dans la page' +
+     (doubles.length ? ` : ${[...new Set(doubles)].join(', ')}` : ''));
+}
+
+console.log('-- le script ne parle d\'aucune salle en dur --');
+{
+  /* ---- CE QUE CE BLOC PROUVE ----
+   * Que la troisieme section n'est pas une copie de la premiere. Si le script
+   * nommait les salles, il faudrait le rouvrir pour en ajouter une — et c'est
+   * precisement ce qu'on refuse. Il recoit la table du serveur et boucle
+   * dessus.
+   * On ne cherche pas les cles une par une : une salle nommee « series » se
+   * confondrait avec le mot anglais. On cherche les IDENTIFIANTS ecrits en
+   * clair, qui eux ne peuvent venir que d'une section recopiee. */
+  for (const S of SALLES)
+    ok(SCRIPT.indexOf('#cine_' + S.cle + '_') < 0,
+       `le script ne designe aucun element de « ${S.cle} » en clair`);
+  /* Et il recoit bien la table : sans elle, la boucle n'aurait rien a
+     parcourir et les sections resteraient muettes. */
+  const i = SCRIPT.indexOf('var SALLES =');
+  ok(i > 0, 'le script recoit la table des salles du serveur');
+  const decl = SCRIPT.slice(i, SCRIPT.indexOf(';', i) + 1);
+  let table = null;
+  try { table = new Function(decl + ' return SALLES;')(); } catch (e) { table = null; }
+  ok(Array.isArray(table), 'et elle se relit comme une liste');
+  eq(table.map((s) => s.cle).join(','), SALLES.map((s) => s.cle).join(','),
+     'exactement la table de la configuration, dans le meme ordre');
+  for (const S of SALLES)
+    eq((table.find((x) => x.cle === S.cle) || {}).nom, S.nom,
+       `avec le nom lisible de « ${S.cle} », que la page n'a donc pas a ecrire`);
 }
 
 console.log('-- la page envoie exactement ce que le serveur lit --');
 {
-  /* On ne recopie pas les quatre noms : on demande au serveur lesquels il
-     regarde, en lui passant une sonde qui note chaque lecture. */
+  /* On ne recopie pas les quatre noms de champs : on demande au serveur
+     lesquels il regarde, en lui passant une sonde qui note chaque lecture. La
+     salle, elle, n'est pas un champ du formulaire — c'est le premier argument
+     du moteur, parce qu'elle ne vient pas de ce que quelqu'un a tape mais de
+     la section dans laquelle on ecrit. */
   const lus = new Set();
   const sonde = new Proxy({}, {
     get(t, k) { if (typeof k === 'string') lus.add(k); return 'https://exemple.test/x'; },
   });
-  new Game({}).ajouteCinema(sonde);
+  new Game({}).ajouteCinema(SALLES[0].cle, sonde);
 
-  const i = SCRIPT.indexOf('$("#cineGo").onclick');
-  const envoi = SCRIPT.slice(i, i + 900);
-  const envoyes = uniq(/(\w+)\s*:\s*\$\("#\w+"\)\.value/g, envoi);
+  const i = SCRIPT.indexOf('$(cineId(cle,"go")).onclick');
+  ok(i > 0, "la page a un bouton d'enregistrement de la seance");
+  const envoi = SCRIPT.slice(i, i + 1100);
+  const envoyes = uniq(/(\w+)\s*:\s*\$\(cineId\(cle,"\w+"\)\)\.value/g, envoi);
 
   ok(lus.size >= 4, `le serveur lit ${lus.size} champs`);
   for (const c of lus) ok(envoyes.has(c), `la page envoie « ${c} », que le serveur lit`);
   for (const c of envoyes) ok(lus.has(c), `le serveur lit « ${c} », que la page envoie`);
+  /* Et elle dit DE QUELLE SALLE il s'agit, sinon le serveur refuse : une
+     salle absente est aussi inconnue qu'une salle mal ecrite. */
+  ok(/salle\s*:\s*cle/.test(envoi), 'et elle joint la salle a chaque enregistrement');
 }
 
-console.log('-- la galerie du cinema se voit et se defait --');
+console.log('-- les galeries se voient et se defont --');
 {
   /* ---- POURQUOI CE BLOC EXISTE ----
    * Le panneau ne savait qu'ECRIRE. On pouvait enregistrer douze seances sans
@@ -186,32 +275,27 @@ console.log('-- la galerie du cinema se voit et se defait --');
    * panneau aurait refuse tout ajout sans que personne puisse rien liberer.
    *
    * Rien n'est recopie ici non plus : le rang de retrait vient de la liste
-   * peinte, et les deux adresses sont relues dans le script de la page. */
-  /* Ce que la page peint doit porter le nom que le serveur RETIENT : on
-     demande au moteur de quoi il tient une liste, et l'on verifie que le
-     panneau parle bien de ce champ-la. */
+   * peinte, et le nom du champ vient de ce que le SERVEUR retient. */
   const g = new Game({});
-  g.ajouteCinema({ titre: 'T', vo: 'https://exemple.test/vo' });
-  ok(Array.isArray(g.cinemas), 'le moteur tient une LISTE de seances');
-  ok(/cinemas/.test(SCRIPT), 'et le panneau lit ce meme nom de champ');
+  g.ajouteCinema(SALLES[0].cle, { titre: 'T', vo: 'https://exemple.test/vo' });
+  ok(Array.isArray(g.galerieCinema(SALLES[0].cle)),
+     'le moteur tient une LISTE de seances par salle');
+  ok(SCRIPT.indexOf('j.seances') > 0,
+     'et le panneau peint ce que la route rend pour CETTE salle');
 
-  ok(SCRIPT.indexOf('lit("/admin/cinema")') > 0,
-     'la page RELIT la galerie retenue par le serveur');
+  ok(SCRIPT.indexOf('lit(cineRoute(cle))') > 0,
+     'la page RELIT la galerie retenue par le serveur, salle par salle');
   ok(SCRIPT.indexOf('post("/admin/cinema/retire"') > 0,
      'et connait la route qui retire une seance');
+  ok(SCRIPT.indexOf('post(enEdition ? "/admin/cinema/modifie" : "/admin/cinema"') > 0,
+     'et celle qui en modifie une');
   /* Le retrait ne peut pas viser une place inventee : le numero envoye est lu
      sur le bouton que la liste vient de peindre. */
   ok(/data-cine-retire/.test(PAGE), 'le rang a retirer vient du bouton de la liste');
-  /* Et la liste vit dans le MEME onglet que les champs : une galerie rangee
-     ailleurs que sa saisie serait deux moities d'un meme reglage. */
-  const panneauDe = (id) => {
-    const j = PAGE.indexOf('id="' + id + '"');
-    if (j < 0) return null;
-    const k = PAGE.slice(0, j).lastIndexOf('<div data-vue=');
-    return k < 0 ? null : (PAGE.slice(k).match(/data-vue="([a-z]+)"/) || [])[1];
-  };
-  eq(panneauDe('cineListe'), panneauDe('cineGo'),
-     'la galerie et les champs sont dans le meme panneau');
+  ok(/data-cine-edit/.test(PAGE), 'le rang a corriger aussi');
+  /* Le bouton d'abandon d'edition : sans lui, commencer une correction par
+     erreur laisse le formulaire coince en mode remplacement. */
+  ok(SCRIPT.indexOf('cineModeAjout(cle)') > 0, 'et l\'abandon d\'edition revient a l\'ajout');
 }
 
 console.log(`\n${n} verifications, 0 echec.`);

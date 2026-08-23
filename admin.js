@@ -6,6 +6,16 @@
  */
 const cfg = require('./config');
 
+/* Un echappeur COTE SERVEUR. La page en a un, mais il vit dans le script du
+   navigateur : il n'existe pas au moment ou l'on fabrique le HTML. Les noms de
+   salles viennent de la configuration, donc de l'operateur — le risque est
+   mince, mais « mince » n'est pas une raison de coller une chaine dans du HTML
+   sans l'echapper. */
+function ech(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 function page(csrf) {
   const V = cfg.VAULT_ADDRESS || '';
   const CHAIN_HEX = '0x' + Number(cfg.CHAIN_ID).toString(16);
@@ -713,14 +723,29 @@ function page(csrf) {
   <div id="rgCorps"><div class="muted2">chargement…</div></div>
 </div>
 
-<!-- Ce panneau etait range dans « Jeux & paris ». Une seance de cinema n'est
+<!-- ================= LES SALLES A ECRAN =================
+     Ce panneau etait range dans « Jeux & paris ». Une seance de cinema n'est
      ni un jeu ni un pari : personne n'allait la chercher la, et de fait elle
      est restee introuvable. Elle appartient a Live Ops, avec les autres
-     reglages qui partent aux joueurs a chaud sans redemarrage. -->
+     reglages qui partent aux joueurs a chaud sans redemarrage.
+
+     IL Y EN A MAINTENANT UNE PAR SALLE, ET ELLES SONT ENGENDREES.
+     Recopier cette section une fois par salle aurait pose trois verites : le
+     jour ou l'on corrige un libelle, un identifiant ou un geste, on le corrige
+     dans celle qu'on a sous les yeux et l'on oublie les autres — et c'est
+     toujours la salle oubliee qui garde le vieux defaut. La boucle ci-dessous
+     lit la table des salles : ajouter une quatrieme salle est une ligne dans la
+     table, et ce fichier n'a rien a en savoir.
+
+     LES IDENTIFIANTS SONT DERIVES DE LA CLE. Trois sections partageant un
+     meme id="cineTitre" auraient donne trois champs du meme nom : le navigateur
+     ne garde que le premier, et l'on aurait ecrit dans la salle manga en
+     voyant le cinema se remplir. -->
+${cfg.SALLES_ECRAN.map((S) => `
 <div data-vue="liveops" class="panel" style="margin-top:14px">
-  <h2>&#127916; Cinema &mdash; SWOGE FLIX</h2>
+  <h2>&#127916; ${ech(S.nom)}</h2>
   <div class="sub" style="margin:0 0 10px">
-    The gallery of shows on the screen in the Nexus cinema. Add as many as you
+    The gallery of shows on the screen in this room. Add as many as you
     like up to the cap; remove one and it is gone from every player's screen at
     once, without a restart.
     <br><b>Only http:// and https:// addresses are accepted.</b> These end up in
@@ -729,18 +754,18 @@ function page(csrf) {
   <!-- La galerie DEJA ENREGISTREE, relue du serveur apres chaque geste. Sans
        elle, le proprietaire ne pouvait ni savoir ce qui est a l'affiche, ni
        retirer quoi que ce soit : il ecrivait dans le vide. -->
-  <div id="cineListe"><div class="muted2">chargement…</div></div>
+  <div id="cine_${S.cle}_liste"><div class="muted2">chargement…</div></div>
   <div class="sub" style="margin:14px 0 6px"><b>Add a show</b></div>
-  <input id="cineTitre" placeholder="Title shown on the screen and in the room">
-  <input id="cineAff" placeholder="Poster image URL (portrait) — optional">
-  <input id="cineVf" placeholder="VF player URL">
-  <input id="cineVo" placeholder="VO player URL">
+  <input id="cine_${S.cle}_titre" placeholder="Title shown on the screen and in the room">
+  <input id="cine_${S.cle}_aff" placeholder="Poster image URL (portrait) — optional">
+  <input id="cine_${S.cle}_vf" placeholder="VF player URL">
+  <input id="cine_${S.cle}_vo" placeholder="VO player URL">
   <div class="row" style="margin-top:4px">
-    <button class="ghost" id="cineGo">Add to the gallery</button>
-    <button class="ghost" id="cineAnnule" hidden>Cancel edit</button>
-    <span id="cineMsg" style="font-size:12px"></span>
+    <button class="ghost" id="cine_${S.cle}_go">Add to the gallery</button>
+    <button class="ghost" id="cine_${S.cle}_annule" hidden>Cancel edit</button>
+    <span id="cine_${S.cle}_msg" style="font-size:12px"></span>
   </div>
-</div>
+</div>`).join('')}
 
 <script>
 /* ---- LA CLE A DISPARU D ICI ----
@@ -1853,13 +1878,13 @@ async function loadImport(){
     impRend(await r.json());
   }catch(e){ $("#impBody").innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
 }
-/* ================= LA GALERIE DU CINEMA =================
+/* ================= LES GALERIES DES SALLES A ECRAN =================
  *
- * Quatre champs, un bouton, et la liste de ce qui est deja a l'affiche. Le
- * serveur decide de ce qu'il accepte — cette page ne revalide RIEN : deux
- * regles pour la meme chose finissent par ne plus dire la meme chose, et c'est
- * celle du serveur qui compte puisqu'elle est la seule qu'on ne puisse pas
- * contourner en ouvrant la console.
+ * Quatre champs, un bouton, et la liste de ce qui est deja a l'affiche —
+ * UNE FOIS PAR SALLE. Le serveur decide de ce qu'il accepte ; cette page ne
+ * revalide RIEN : deux regles pour la meme chose finissent par ne plus dire la
+ * meme chose, et c'est celle du serveur qui compte puisqu'elle est la seule
+ * qu'on ne puisse pas contourner en ouvrant la console.
  *
  * TOUT CE QUI S'AFFICHE ICI VIENT DE CE QUE LE SERVEUR A RETENU, jamais de ce
  * qu'on vient de lui envoyer. Sans cette regle, une adresse refusee resterait
@@ -1867,12 +1892,34 @@ async function loadImport(){
  * traverserait le hall, et trouverait un ecran eteint sans savoir pourquoi.
  * C'est aussi pour ca que le rang de retrait vient de cette liste-la — il
  * designe une place que le serveur connait, pas une place qu'on a devinee.
+ *
+ * ---- POURQUOI TOUT EST PARAMETRE PAR LA CLE DE SALLE ----
+ *
+ * Il y a trois sections et il n'y a qu'un jeu de fonctions. Recopier ce bloc
+ * une fois par salle aurait pose trois verites : la correction suivante irait
+ * dans celle qu'on a sous les yeux, et la salle oubliee garderait le defaut.
+ * La liste des salles vient de la table du serveur, pas d'ici : une quatrieme
+ * salle apparait sans qu'on touche a ce fichier.
  */
-function cineRend(j){
-  var v = (j && j.cinemas) || [];
+var SALLES = ${JSON.stringify(cfg.SALLES_ECRAN)};
+/* Les identifiants sont DERIVES de la cle. Trois sections partageant un meme
+   identifiant auraient donne trois champs du meme nom, et l'on aurait ecrit
+   dans la salle manga en voyant le cinema se remplir. */
+function cineId(cle, quoi){ return "#cine_"+cle+"_"+quoi; }
+function cineDit(cle, texte, classe){
+  var e=$(cineId(cle,"msg")); if(!e) return;
+  e.textContent=texte; e.className=classe||"";
+}
+function cineRend(cle, j){
+  /* Le serveur rend un champ « seances » : la galerie DE CETTE SALLE, celle qu'il a
+     retenue. Un champ commun a toutes les salles aurait laisse une section
+     peindre la galerie d'une autre sans que rien ne leve. */
+  var v = (j && j.seances) || [];
   var max = (j && j.max) || 0;
+  var cible = $(cineId(cle,"liste"));
+  if(!cible) return;
   if(!v.length){
-    $("#cineListe").innerHTML='<div class="muted2">nothing on — the screen announces there is no show</div>';
+    cible.innerHTML='<div class="muted2">nothing on — the screen announces there is no show</div>';
     return;
   }
   var h='<div class="sub" style="margin:0 0 6px">'+v.length+(max?(" / "+max):"")+' show(s) on the screen</div>';
@@ -1887,14 +1934,14 @@ function cineRend(j){
        laquelle sans avoir a cliquer. */
     /* ---- PAS UNE SEULE BARRE ECHAPPEE DANS CE FICHIER ----
      * Cette page entiere est construite dans un GABARIT DE CHAINE. A
-     * l'interieur, \/ ne veut pas dire « barre echappee », il vaut « barre » :
-     * les antislashs sont manges par le gabarit avant meme que le navigateur
-     * voie le texte. Le motif ecrit ici sous la forme /^https?: barre barre /
-     * partait donc au navigateur avec deux barres nues a la fin, qui ouvrent
-     * un commentaire. La regex n'etait jamais fermee, et ce n'est pas le
-     * cinema qui tombait : les MILLE CINQ CENTS LIGNES du script du panneau
-     * ne se compilaient plus. Tout etait mort — les chiffres, les boutons, le
-     * retrait, la connexion du portefeuille.
+     * l'interieur, une barre echappee ne veut pas dire « barre echappee »,
+     * elle vaut « barre » : les antislashs sont manges par le gabarit avant
+     * meme que le navigateur voie le texte. Le motif ecrit ici sous la forme
+     * /^https?: barre barre / partait donc au navigateur avec deux barres nues
+     * a la fin, qui ouvrent un commentaire. La regex n'etait jamais fermee, et
+     * ce n'est pas le cinema qui tombait : les MILLE CINQ CENTS LIGNES du
+     * script du panneau ne se compilaient plus. Tout etait mort — les
+     * chiffres, les boutons, le retrait, la connexion du portefeuille.
      * On coupe donc au premier separateur, sans echappement, sans regex et
      * sans piege a retomber dedans. */
     var court = String(c.affiche||"");
@@ -1913,119 +1960,132 @@ function cineRend(j){
       +  '<button class="ghost" data-cine-retire="'+i+'">remove</button>'
       +  '</div>';
   }
-  $("#cineListe").innerHTML=h;
+  cible.innerHTML=h;
+}
+/* La salle voyage dans l'adresse, jamais par defaut : le serveur refuse une
+   salle absente comme une salle inconnue, et c'est ce qu'on veut — une seance
+   qui atterrirait dans le cinema parce que la cle manquait serait pire qu'un
+   refus. */
+function cineRoute(cle){ return "/admin/cinema?salle="+encodeURIComponent(cle); }
+async function chargeSalle(cle){
+  try{ cineRend(cle, await lit(cineRoute(cle))); }
+  catch(e){ var t=$(cineId(cle,"liste")); if(t) t.innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
 }
 async function chargeCinemas(){
-  try{ cineRend(await lit("/admin/cinema")); }
-  catch(e){ $("#cineListe").innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
+  for(var i=0;i<SALLES.length;i++) await chargeSalle(SALLES[i].cle);
 }
-/* ---- MODIFIER : UN SEUL ETAT, ET IL DIT TOUT ----
- * cineEdite vaut le rang qu'on est en train de corriger, ou rien du tout.
+/* ---- MODIFIER : UN SEUL ETAT PAR SALLE, ET IL DIT TOUT ----
+ * cineEdite[cle] vaut le rang qu'on est en train de corriger, ou rien du tout.
  * Le libelle du bouton, l'adresse ou part l'enregistrement et la presence du
  * bouton d'abandon en DECOULENT tous les trois. Un booleen « en edition » a
  * cote du rang aurait pu dire oui avec un rang vide, et l'enregistrement
- * serait alors parti modifier la seance zero. */
-var cineEdite = null;      // le rang en cours de correction
-var cineAvant = "";        // le titre qu'il portait quand on a clique
-function cineModeEdition(i, c){
-  cineEdite = i; cineAvant = (c && c.titre) || "";
-  $("#cineTitre").value = (c && c.titre) || "";
-  $("#cineAff").value   = (c && c.affiche) || "";
-  $("#cineVf").value    = (c && c.vf) || "";
-  $("#cineVo").value    = (c && c.vo) || "";
-  $("#cineGo").textContent = "Save changes";
-  $("#cineAnnule").hidden = false;
-  $("#cineMsg").textContent = "editing « " + ((c && c.titre) || "") + " » — save to replace it";
-  $("#cineMsg").className = "impwarn";
-  $("#cineTitre").focus();
+ * serait alors parti modifier la seance zero.
+ * UN ETAT PAR SALLE et non un seul pour tout le panneau : commencer une
+ * correction dans le cinema puis en commencer une dans la salle manga aurait
+ * fait partir la deuxieme sur le rang de la premiere. */
+var cineEdite = {};      // cle de salle -> rang en cours de correction
+var cineAvant = {};      // cle de salle -> titre qu'il portait au clic
+function cineModeEdition(cle, i, c){
+  cineEdite[cle] = i; cineAvant[cle] = (c && c.titre) || "";
+  $(cineId(cle,"titre")).value = (c && c.titre) || "";
+  $(cineId(cle,"aff")).value   = (c && c.affiche) || "";
+  $(cineId(cle,"vf")).value    = (c && c.vf) || "";
+  $(cineId(cle,"vo")).value    = (c && c.vo) || "";
+  $(cineId(cle,"go")).textContent = "Save changes";
+  $(cineId(cle,"annule")).hidden = false;
+  cineDit(cle, "editing « " + ((c && c.titre) || "") + " » — save to replace it", "impwarn");
+  $(cineId(cle,"titre")).focus();
 }
-function cineModeAjout(){
-  cineEdite = null; cineAvant = "";
-  $("#cineTitre").value=""; $("#cineAff").value="";
-  $("#cineVf").value=""; $("#cineVo").value="";
-  $("#cineGo").textContent = "Add to the gallery";
-  $("#cineAnnule").hidden = true;
+function cineModeAjout(cle){
+  cineEdite[cle] = null; cineAvant[cle] = "";
+  $(cineId(cle,"titre")).value=""; $(cineId(cle,"aff")).value="";
+  $(cineId(cle,"vf")).value=""; $(cineId(cle,"vo")).value="";
+  $(cineId(cle,"go")).textContent = "Add to the gallery";
+  $(cineId(cle,"annule")).hidden = true;
 }
-$("#cineAnnule").onclick=function(){
-  cineModeAjout();
-  $("#cineMsg").textContent="edit cancelled — nothing changed"; $("#cineMsg").className="";
-};
-
-/* Le retrait passe par la liste elle-meme : les boutons naissent avec elle, et
-   leur accrocher un gestionnaire un par un a chaque repeinte en oublierait un
-   le jour ou la repeinte devient partielle. */
-$("#cineListe").addEventListener("click", async function(ev){
-  var e = ev.target.closest ? ev.target.closest("[data-cine-edit]") : null;
-  if(e){
-    var k = Number(e.getAttribute("data-cine-edit"));
-    /* On recharge la liste AVANT de remplir les champs : la page peut etre
-       ouverte depuis une heure, et corriger une seance sur des valeurs
-       perimees ecraserait ce qu'un autre onglet vient d'ecrire. */
+function cineBranche(cle){
+  $(cineId(cle,"annule")).onclick=function(){
+    cineModeAjout(cle);
+    cineDit(cle, "edit cancelled — nothing changed", "");
+  };
+  /* Le retrait passe par la liste elle-meme : les boutons naissent avec elle,
+     et leur accrocher un gestionnaire un par un a chaque repeinte en
+     oublierait un le jour ou la repeinte devient partielle. */
+  $(cineId(cle,"liste")).addEventListener("click", async function(ev){
+    var e = ev.target.closest ? ev.target.closest("[data-cine-edit]") : null;
+    if(e){
+      var k = Number(e.getAttribute("data-cine-edit"));
+      /* On recharge la liste AVANT de remplir les champs : la page peut etre
+         ouverte depuis une heure, et corriger une seance sur des valeurs
+         perimees ecraserait ce qu'un autre onglet vient d'ecrire. */
+      try{
+        var l = await lit(cineRoute(cle)); cineRend(cle, l);
+        var c = (l.seances||[])[k];
+        if(!c){ cineDit(cle, "✗ that show is gone — the list was refreshed", "impbad");
+                cineModeAjout(cle); return; }
+        cineModeEdition(cle, k, c);
+      }catch(x){ cineDit(cle, "✗ "+x.message, "impbad"); }
+      return;
+    }
+    var b = ev.target.closest ? ev.target.closest("[data-cine-retire]") : null;
+    if(!b) return;
+    b.disabled=true;
+    cineDit(cle, "removing…", "");
     try{
-      var l = await lit("/admin/cinema"); cineRend(l);
-      var c = (l.cinemas||[])[k];
-      if(!c){ $("#cineMsg").textContent="✗ that show is gone — the list was refreshed";
-              $("#cineMsg").className="impbad"; cineModeAjout(); return; }
-      cineModeEdition(k, c);
-    }catch(x){ $("#cineMsg").textContent="✗ "+x.message; $("#cineMsg").className="impbad"; }
-    return;
-  }
-  var b = ev.target.closest ? ev.target.closest("[data-cine-retire]") : null;
-  if(!b) return;
-  b.disabled=true;
-  $("#cineMsg").textContent="removing…"; $("#cineMsg").className="";
-  try{
-    var j=await post("/admin/cinema/retire",{ i: Number(b.getAttribute("data-cine-retire")) });
-    if(j.error){ $("#cineMsg").textContent="✗ "+j.error; $("#cineMsg").className="impbad"; }
-    else { $("#cineMsg").textContent="✓ removed — gone from every screen"; $("#cineMsg").className="impok"; }
-    cineRend(j.cinemas?j:await lit("/admin/cinema"));
-  }catch(e){ $("#cineMsg").textContent="✗ "+e.message; $("#cineMsg").className="impbad"; }
-});
-$("#cineGo").onclick=async function(){
-  var b=$("#cineGo"); b.disabled=true;
-  $("#cineMsg").textContent="saving…"; $("#cineMsg").className="";
-  try{
-    var corps={ titre:$("#cineTitre").value, affiche:$("#cineAff").value,
-                vf:$("#cineVf").value, vo:$("#cineVo").value };
-    var enEdition = (cineEdite !== null);
-    if(enEdition){ corps.i = cineEdite; corps.avant = cineAvant; }
-    var j=await post(enEdition ? "/admin/cinema/modifie" : "/admin/cinema", corps);
-    if(j.error){ $("#cineMsg").textContent="✗ "+j.error; $("#cineMsg").className="impbad"; }
-    else if(enEdition){
-      /* On ne quitte le mode edition que si le serveur a REELLEMENT remplace.
-         Sortir avant, c'est laisser croire que c'est enregistre et renvoyer le
-         proprietaire vers un formulaire vide. */
-      cineModeAjout();
-      var mq=[];
-      if(!j.modifiee.affiche) mq.push("poster");
-      if(!j.modifiee.vf) mq.push("VF");
-      if(!j.modifiee.vo) mq.push("VO");
-      $("#cineMsg").textContent = mq.length
-        ? "✓ replaced — refused or empty: "+mq.join(", ")
-        : "✓ replaced — live on every screen";
-      $("#cineMsg").className = mq.length ? "impwarn" : "impok";
-    }
-    else if(!j.ajoutee){
-      $("#cineMsg").textContent="✗ refused — a title and at least one http(s) player URL are required";
-      $("#cineMsg").className="impbad";
-    } else {
-      /* Les champs se vident SEULEMENT quand le serveur a garde la seance :
-         vider avant la reponse aurait fait perdre une adresse longue a
-         retrouver au premier refus. */
-      cineModeAjout();
-      var manque=[];
-      if(!j.ajoutee.affiche) manque.push("poster");
-      if(!j.ajoutee.vf) manque.push("VF");
-      if(!j.ajoutee.vo) manque.push("VO");
-      $("#cineMsg").textContent = manque.length
-        ? "✓ added — refused or empty: "+manque.join(", ")
-        : "✓ added — live on every screen";
-      $("#cineMsg").className = manque.length ? "impwarn" : "impok";
-    }
-    cineRend(j.cinemas?j:await lit("/admin/cinema"));
-  }catch(e){ $("#cineMsg").textContent="✗ "+e.message; $("#cineMsg").className="impbad"; }
-  b.disabled=false;
-};
+      var j=await post("/admin/cinema/retire",{ salle: cle, i: Number(b.getAttribute("data-cine-retire")) });
+      if(j.error){ cineDit(cle, "✗ "+j.error, "impbad"); }
+      else { cineDit(cle, "✓ removed — gone from every screen", "impok"); }
+      cineRend(cle, j.seances?j:await lit(cineRoute(cle)));
+    }catch(e2){ cineDit(cle, "✗ "+e2.message, "impbad"); }
+  });
+  $(cineId(cle,"go")).onclick=async function(){
+    var b=$(cineId(cle,"go")); b.disabled=true;
+    cineDit(cle, "saving…", "");
+    try{
+      var corps={ salle: cle,
+                  titre:$(cineId(cle,"titre")).value, affiche:$(cineId(cle,"aff")).value,
+                  vf:$(cineId(cle,"vf")).value, vo:$(cineId(cle,"vo")).value };
+      var enEdition = (cineEdite[cle] !== null && cineEdite[cle] !== undefined);
+      if(enEdition){ corps.i = cineEdite[cle]; corps.avant = cineAvant[cle]; }
+      var j=await post(enEdition ? "/admin/cinema/modifie" : "/admin/cinema", corps);
+      if(j.error){ cineDit(cle, "✗ "+j.error, "impbad"); }
+      else if(enEdition){
+        /* On ne quitte le mode edition que si le serveur a REELLEMENT remplace.
+           Sortir avant, c'est laisser croire que c'est enregistre et renvoyer le
+           proprietaire vers un formulaire vide. */
+        cineModeAjout(cle);
+        var mq=[];
+        if(!j.modifiee.affiche) mq.push("poster");
+        if(!j.modifiee.vf) mq.push("VF");
+        if(!j.modifiee.vo) mq.push("VO");
+        cineDit(cle, mq.length ? "✓ replaced — refused or empty: "+mq.join(", ")
+                               : "✓ replaced — live on every screen",
+                     mq.length ? "impwarn" : "impok");
+      }
+      else if(!j.ajoutee){
+        cineDit(cle, "✗ refused — a title and at least one http(s) player URL are required", "impbad");
+      } else {
+        /* Les champs se vident SEULEMENT quand le serveur a garde la seance :
+           vider avant la reponse aurait fait perdre une adresse longue a
+           retrouver au premier refus. */
+        cineModeAjout(cle);
+        var manque=[];
+        if(!j.ajoutee.affiche) manque.push("poster");
+        if(!j.ajoutee.vf) manque.push("VF");
+        if(!j.ajoutee.vo) manque.push("VO");
+        cineDit(cle, manque.length ? "✓ added — refused or empty: "+manque.join(", ")
+                                   : "✓ added — live on every screen",
+                     manque.length ? "impwarn" : "impok");
+      }
+      cineRend(cle, j.seances?j:await lit(cineRoute(cle)));
+    }catch(e3){ cineDit(cle, "✗ "+e3.message, "impbad"); }
+    b.disabled=false;
+  };
+}
+/* Les trois sections sont branchees par une boucle sur la table, jamais une a
+   une : un branchement recopie par salle serait un branchement a oublier le
+   jour ou une salle s'ajoute, et la section apparaitrait sans repondre. */
+for(var cineI=0; cineI<SALLES.length; cineI++) cineBranche(SALLES[cineI].cle);
 
 $("#impGo").onclick=async function(){
   var b=$("#impGo"); b.disabled=true; $("#impMsg").textContent="fetching…"; $("#impMsg").className="";

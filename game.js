@@ -348,12 +348,16 @@ class Game {
        et attend son acheteur. */
     this.marche = [];
     this.marcheNo = 1;
-    /* LA GALERIE DU CINEMA. Une LISTE, jamais nulle : un champ qui vaut
-       tantot `null`, tantot un objet, tantot un tableau oblige chaque lecteur
-       a redemander de quelle forme il est aujourd'hui, et le premier qui
-       oublie envoie `null.length` a la page. Vide veut dire « rien a
-       l'affiche », et c'est un etat comme un autre. */
-    this.cinemas = [];
+    /* LES GALERIES DES SALLES A ECRAN. UNE GALERIE PAR SALLE, rangee par la
+       cle de la table `cfg.SALLES_ECRAN` : { cinema: [...], manga: [...] }.
+       Chaque galerie est une LISTE, jamais nulle — un champ qui vaut tantot
+       `null`, tantot un objet, tantot un tableau oblige chaque lecteur a
+       redemander de quelle forme il est aujourd'hui, et le premier qui oublie
+       envoie `null.length` a la page. Vide veut dire « rien a l'affiche »,
+       et c'est un etat comme un autre.
+       Les cles ne sont pas ecrites ici : elles DECOULENT de la table, sans
+       quoi ajouter une salle demanderait de penser aussi a ce constructeur. */
+    this.cinemas = Game.galeriesVides();
     /* QUAND CHAQUE JOUEUR A PARLE. Ici et pas dans sa fiche : ces horodatages
        ne valent que pour les quinze prochaines secondes, et les ecrire dans
        l'etat sauvegarde ferait grossir chaque sauvegarde d'une ligne par
@@ -692,17 +696,18 @@ class Game {
              brule: (this.brule || BN(0)).toString(), brulages: this.brulages || [],
              lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx),
              usage: this.usage || {},
-             /* LA GALERIE DU CINEMA. Elle est dans l'etat et non dans un
-                fichier a part parce qu'elle tient en quelques chaines et
-                qu'elle doit survivre a un redeploiement — une salle qui
-                redevient vide a chaque mise en ligne n'est pas une salle
-                qu'on prend la peine de remplir.
-                On n'ecrit QUE `cinemas`. Ecrire aussi l'ancien `cinema` pour
-                les vieilles versions donnerait deux champs a tenir d'accord,
-                et le jour ou ils divergent c'est le plus ancien qu'on relit.
-                La compatibilite se joue a la LECTURE, dans `hydrate`, ou elle
-                ne coute qu'une conversion. */
-             cinemas: this.cinemas || [],
+             /* LES GALERIES DES SALLES A ECRAN. Elles sont dans l'etat et
+                non dans un fichier a part parce qu'elles tiennent en quelques
+                chaines et qu'elles doivent survivre a un redeploiement — une
+                salle qui redevient vide a chaque mise en ligne n'est pas une
+                salle qu'on prend la peine de remplir.
+                On n'ecrit QU'UN champ, et il porte les trois salles. Ecrire
+                en plus les anciennes formes pour les vieilles versions
+                donnerait plusieurs champs a tenir d'accord, et le jour ou ils
+                divergent c'est le plus ancien qu'on relit. La compatibilite se
+                joue a la LECTURE, dans `hydrate`, ou elle ne coute qu'une
+                conversion. */
+             cinemas: this.galeriesToutes(),
              duels, telegramMap: Array.from(this.telegramMap) };
   }
 
@@ -747,7 +752,126 @@ class Game {
   }
 
   /**
-   * AJOUTER UNE SEANCE A LA GALERIE.
+   * LA SALLE, VALIDEE CONTRE LA TABLE.
+   *
+   * ---- POURQUOI UNE CLE INCONNUE EST REFUSEE, ET NON RABATTUE ----
+   *
+   * Le reflexe serait de retomber sur le cinema quand la cle ne dit rien. Ce
+   * serait le pire des deux mondes : une seance manga atterrirait dans le
+   * cinema parce que la cle a ete mal ecrite, elle partirait sur l'ecran de
+   * tous les joueurs, et PERSONNE ne comprendrait pourquoi — ni celui qui l'a
+   * posee, qui a vu son geste accepte, ni celui qui la regarde. Un refus est
+   * lisible ; une salle par defaut ne l'est pas.
+   *
+   * La table est la seule source : `SALLES_ECRAN` decide, ici comme partout
+   * ailleurs. Rend la cle retenue, ou `null`.
+   */
+  static salleEcran(cle) {
+    /* EXACTEMENT la cle de la table, sans rogner ni rabaisser la casse. Une
+       normalisation serait une deuxieme regle : « CINEMA » passerait ici mais
+       pas dans l'identifiant du panneau ni dans la cle d'etat, et l'on
+       chercherait longtemps pourquoi la seance est acceptee et invisible. La
+       cle ne vient pas d'un humain qui la tape, elle vient de la section du
+       panneau ou l'on ecrit ; elle est donc toujours exacte, et ce qui ne
+       l'est pas merite un refus. */
+    const k = String(cle == null ? '' : cle);
+    const s = (cfg.SALLES_ECRAN || []).find((x) => x && x.cle === k);
+    return s ? s.cle : null;
+  }
+
+  /** Une galerie vide par salle de la table. Les cles DECOULENT de la table. */
+  static galeriesVides() {
+    const g = {};
+    for (const s of (cfg.SALLES_ECRAN || [])) g[s.cle] = [];
+    return g;
+  }
+
+  /**
+   * LA GALERIE D'UNE SALLE, prete a etre modifiee.
+   *
+   * Elle LEVE sur une cle inconnue plutot que de rendre une liste vide : une
+   * liste vide se laisserait remplir, et la seance serait perdue dans un coin
+   * de l'etat que rien ne diffuse ni ne sauvegarde. On ne repete pas la cle
+   * telle qu'elle est arrivee dans le message — elle vient du dehors, et un
+   * message d'erreur est un endroit ou l'on recopie sans y penser.
+   */
+  galerieCinema(salle) {
+    const k = Game.salleEcran(salle);
+    if (!k) {
+      const vu = String(salle == null ? '' : salle).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 20);
+      throw new Error(`unknown screen room "${vu}"`);
+    }
+    /* Un etat relu d'une vieille sauvegarde peut encore porter une LISTE ici.
+       On la remet en forme plutot que d'y pousser : `[].manga` ne leve pas,
+       il pose un champ sur un tableau, que la sauvegarde ne garde pas. */
+    if (!this.cinemas || typeof this.cinemas !== 'object' || Array.isArray(this.cinemas))
+      this.cinemas = Game.galeriesVides();
+    if (!Array.isArray(this.cinemas[k])) this.cinemas[k] = [];
+    return this.cinemas[k];
+  }
+
+  /**
+   * TOUTES LES GALERIES, dans la forme exacte que la table decrit.
+   *
+   * C'est ce qui part dans la sauvegarde et sur le fil. On ne rend pas
+   * `this.cinemas` tel quel : une salle retiree de la table y trainerait
+   * encore, et une salle ajoutee y manquerait — la page recevrait alors une
+   * salle sans galerie et l'ecran afficherait `undefined.length`.
+   */
+  galeriesToutes() {
+    const g = {};
+    for (const s of (cfg.SALLES_ECRAN || [])) {
+      const v = this.cinemas && this.cinemas[s.cle];
+      g[s.cle] = Array.isArray(v) ? v : [];
+    }
+    return g;
+  }
+
+  /**
+   * LES SALLES TELLES QU'ELLES PARTENT SUR LE FIL.
+   *
+   * ---- POURQUOI UNE LISTE, ET PAS UN OBJET RANGE PAR CLE ----
+   *
+   * La page range les rangees du catalogue avec la salle ou le joueur se tient
+   * en tete, puis « les autres dans l'ordre ou le serveur les annonce ». Cet
+   * ordre est donc un CONTRAT, et l'ordre des cles d'un objet n'en est pas un :
+   * il depend de la facon dont un moteur enumere, il se perd a la traversee
+   * d'un cache, d'un proxy ou d'une relecture. Une liste porte son ordre
+   * elle-meme, et c'est celui de la table.
+   *
+   * ---- POURQUOI LE NOM LISIBLE EST DEDANS ----
+   *
+   * Sans lui, la page ecrirait « Movies » de son cote pendant que la table dit
+   * « Cinema - SWOGE FLIX ». Deux verites qui divergent au premier renommage,
+   * et c'est la page qu'on croit, puisque c'est elle qu'on lit. La page doit
+   * pouvoir repondre « quelles salles existent, comment les nommer, dans quel
+   * ordre » sans une seule chaine ecrite chez elle.
+   *
+   * Chaque entree : { cle, nom, seances }.
+   */
+  sallesFil() {
+    return (cfg.SALLES_ECRAN || []).map((s) => {
+      const v = this.cinemas && this.cinemas[s.cle];
+      return { cle: s.cle, nom: s.nom, seances: Array.isArray(v) ? v : [] };
+    });
+  }
+
+  /**
+   * LA GALERIE DU CINEMA SEULE — l'accommodation datee du fil.
+   *
+   * Posee le 2026-08-23, appelee a disparaitre. La page en service ne lit que
+   * l'ancien champ `cinemas` : la retirer du fil aujourd'hui viderait le
+   * cinema pour tout le monde entre les deux deploiements. Elle s'en va le
+   * jour ou la page lit `salles`, et pas avant.
+   */
+  galerieHeritee() {
+    const k = Game.salleEcran('cinema') || ((cfg.SALLES_ECRAN || [])[0] || {}).cle;
+    const v = k && this.cinemas ? this.cinemas[k] : null;
+    return Array.isArray(v) ? v : [];
+  }
+
+  /**
+   * AJOUTER UNE SEANCE A LA GALERIE D'UNE SALLE.
    *
    * Rend la seance retenue, ou `null` si elle a ete refusee — c'est ce `null`
    * que le panneau affiche pour dire « rien n'a ete enregistre », et c'est
@@ -759,53 +883,65 @@ class Game {
    * plus de place. Les confondre aurait fait lire « adresse refusee » a
    * quelqu'un dont l'adresse etait bonne, et il aurait passe la soiree a la
    * recopier.
+   *
+   * LE PLAFOND EST PAR SALLE. Un plafond commun aurait laisse une salle bien
+   * remplie fermer la porte aux deux autres, et le proprietaire aurait lu
+   * « la galerie est pleine » devant une galerie vide.
+   *
+   * La salle est le PREMIER argument et non un champ du formulaire : elle ne
+   * vient pas de ce que quelqu'un a tape, elle vient de la section du panneau
+   * dans laquelle on ecrit. Un champ de plus dans le corps du message aurait
+   * laisse un appelant la deplacer sans le vouloir.
    */
-  ajouteCinema(x) {
-    if (!Array.isArray(this.cinemas)) this.cinemas = [];
+  ajouteCinema(salle, x) {
+    const g = this.galerieCinema(salle);
     const c = Game.seanceCinema(x);
     if (!c) return null;
-    if (this.cinemas.length >= cfg.CINEMA_MAX)
+    if (g.length >= cfg.CINEMA_MAX)
       throw new Error(`the gallery is full (${cfg.CINEMA_MAX} shows) - remove one first`);
-    this.cinemas.push(c);
+    g.push(c);
     return c;
   }
 
   /**
-   * RETIRER LA SEANCE D'UN RANG DONNE.
+   * RETIRER LA SEANCE D'UN RANG DONNE, DANS UNE SALLE DONNEE.
    *
    * Par RANG et non par titre : deux seances peuvent porter le meme titre —
    * une version courte et une version longue, deux episodes — et retirer
    * « par titre » en aurait alors efface deux d'un coup, dont une que
    * personne n'avait demande a retirer.
    *
-   * Le rang vient de la liste que le panneau vient de relire du serveur, et le
-   * panneau la relit apres chaque operation : il ne peut donc pas designer une
-   * place qui n'existe plus. Un rang hors bornes ne retire rien et le dit par
-   * `false`, plutot que de retirer la derniere par politesse.
+   * Le rang vient de la liste que le panneau vient de relire du serveur POUR
+   * CETTE SALLE, et le panneau la relit apres chaque operation : il ne peut
+   * donc pas designer une place qui n'existe plus. Un rang hors bornes ne
+   * retire rien et le dit par `false`, plutot que de retirer la derniere par
+   * politesse.
    */
-  retireCinema(i) {
-    if (!Array.isArray(this.cinemas)) this.cinemas = [];
+  retireCinema(salle, i) {
+    const g = this.galerieCinema(salle);
     const k = Number(i);
-    if (!Number.isInteger(k) || k < 0 || k >= this.cinemas.length) return false;
-    this.cinemas.splice(k, 1);
+    if (!Number.isInteger(k) || k < 0 || k >= g.length) return false;
+    g.splice(k, 1);
     return true;
   }
 
   /**
-   * REMPLACER LA SEANCE D'UN RANG DONNE.
+   * REMPLACER LA SEANCE D'UN RANG DONNE, DANS UNE SALLE DONNEE.
    *
    * Jusqu'ici le panneau ne savait que RETIRER : corriger une faute de frappe
    * dans un titre, ou remplacer un lien mort, demandait de supprimer la
    * seance puis de la ressaisir en entier — quatre champs recopies pour en
    * changer un, et la seance qui disparait de la salle entre les deux.
    *
-   * ELLE PASSE PAR LA MEME PORTE QUE L'AJOUT. `Game.seanceCinema` est le seul
-   * endroit qui nettoie et valide, et la modification l'appelle comme
-   * `ajouteCinema` : sans cela, l'edition serait une deuxieme entree dans la
-   * galerie, celle-la sans controle d'adresse — et il aurait suffi de poser
-   * une seance valable puis de la MODIFIER pour glisser n'importe quoi dans
-   * l'iframe de chaque joueur. Une regle de securite qui a deux chemins n'en
-   * a aucun.
+   * ELLE PASSE PAR LA MEME PORTE QUE L'AJOUT, ET POUR LES TROIS SALLES.
+   * `Game.seanceCinema` est le seul endroit qui nettoie et valide, et la
+   * modification l'appelle comme `ajouteCinema` : sans cela, l'edition serait
+   * une deuxieme entree dans la galerie, celle-la sans controle d'adresse — et
+   * il aurait suffi de poser une seance valable puis de la MODIFIER pour
+   * glisser n'importe quoi dans l'iframe de chaque joueur. De meme, une salle
+   * qui aurait son propre chemin de controle serait une porte derobee : il
+   * suffirait de poser la seance dans la salle la moins surveillee. Une regle
+   * de securite qui a plusieurs chemins n'en a aucun.
    *
    * Par RANG, pour la meme raison que le retrait : deux seances peuvent
    * porter le meme titre, et « modifier par titre » en aurait change deux.
@@ -814,13 +950,13 @@ class Game {
    * Rend la seance retenue, ou `null` — et `null` ne touche a rien, plutot
    * que de laisser une entree a moitie effacee derriere lui.
    */
-  modifieCinema(i, x) {
-    if (!Array.isArray(this.cinemas)) this.cinemas = [];
+  modifieCinema(salle, i, x) {
+    const g = this.galerieCinema(salle);
     const k = Number(i);
-    if (!Number.isInteger(k) || k < 0 || k >= this.cinemas.length) return null;
+    if (!Number.isInteger(k) || k < 0 || k >= g.length) return null;
     const c = Game.seanceCinema(x);
     if (!c) return null;
-    this.cinemas[k] = c;
+    g[k] = c;
     return c;
   }
 
@@ -992,20 +1128,47 @@ class Game {
        redemarrage reviendrait a retirer la preuve apres l'avoir donnee. */
     if (st.compta) this.compta = st.compta;
     if (st.usage) this.usage = st.usage;
-    /* ---- LA GALERIE RELIT LES DEUX FORMES ----
+    /* ================== LA RELECTURE ACCEPTE TROIS FORMES ==================
      *
-     * L'etat deja en production contient `cinema`, UN objet, pose du temps ou
-     * il n'y avait qu'une seance. Ne relire que `cinemas` aurait efface au
-     * premier redemarrage la seule seance que le proprietaire ait jamais
-     * enregistree — sans erreur, sans trace, et personne ne l'aurait vu avant
-     * d'avoir traverse le hall.
+     * C'est le bloc qui compte le plus de tout ce chantier. Le proprietaire a
+     * des seances ENREGISTREES EN PRODUCTION. Une relecture qui ne connaitrait
+     * que la forme du jour les effacerait au premier redemarrage — sans
+     * erreur, sans trace, et personne ne le verrait avant d'avoir traverse le
+     * hall pour trouver un ecran eteint.
      *
-     * L'ancienne forme devient donc une liste d'un element. On ne la
-     * revalide pas : elle est deja passee par le filtre le jour ou elle a ete
-     * posee, et la refuser ici ferait perdre a la relecture ce que
-     * l'enregistrement avait accepte. */
-    if (Array.isArray(st.cinemas)) this.cinemas = st.cinemas.filter((c) => c && c.titre);
-    else if (st.cinema && st.cinema.titre) this.cinemas = [st.cinema];
+     *  1. LA FORME DU JOUR : un objet range par cle de salle,
+     *     { cinema: [...], manga: [...] }.
+     *
+     *  2. ACCOMMODATION DATEE 2026-08-23 — `cinemas`, UNE LISTE. C'est la
+     *     forme du temps ou il n'y avait qu'une salle. Elle devient la galerie
+     *     du CINEMA : ces seances ont ete posees pour le cinema, elles n'ont
+     *     jamais eu d'autre salle. Elle s'en va quand plus aucune sauvegarde
+     *     en service ne la porte.
+     *
+     *  3. ACCOMMODATION DATEE 2026-08-23 — `cinema`, UN OBJET UNIQUE. La toute
+     *     premiere forme, du temps ou l'on ne pouvait annoncer qu'une chose a
+     *     la fois. Elle devient une galerie D'UN ELEMENT dans le cinema.
+     *
+     * On ne revalide pas ce qui remonte : ces seances sont deja passees par le
+     * filtre le jour ou elles ont ete posees, et les refuser ici ferait perdre
+     * a la relecture ce que l'enregistrement avait accepte.
+     *
+     * Une salle absente de la table est LAISSEE DE COTE : la table est la
+     * seule verite, et garder la galerie d'une salle qui n'existe plus la
+     * ferait partir sur le fil vers des pages qui n'en savent rien. */
+    if (!this.cinemas || typeof this.cinemas !== 'object' || Array.isArray(this.cinemas))
+      this.cinemas = Game.galeriesVides();
+    const HERITEE = Game.salleEcran('cinema') || ((cfg.SALLES_ECRAN || [])[0] || {}).cle;
+    if (st.cinemas && !Array.isArray(st.cinemas) && typeof st.cinemas === 'object') {
+      for (const sa of (cfg.SALLES_ECRAN || [])) {
+        const v = st.cinemas[sa.cle];
+        if (Array.isArray(v)) this.cinemas[sa.cle] = v.filter((c) => c && c.titre);
+      }
+    } else if (Array.isArray(st.cinemas)) {
+      if (HERITEE) this.cinemas[HERITEE] = st.cinemas.filter((c) => c && c.titre);
+    } else if (st.cinema && st.cinema.titre) {
+      if (HERITEE) this.cinemas[HERITEE] = [st.cinema];
+    }
     if (Array.isArray(st.paris)) this.paris = st.paris;
     if (st.parisRegles) this.parisRegles = st.parisRegles;
     if (st.parisSeq) this.parisSeq = st.parisSeq;

@@ -5,6 +5,69 @@
 // line break into Railway is a classic footgun, so we scrub it here.
 var env = function (name, def) { var v = process.env[name]; return (v === undefined ? def : String(v).trim()); };
 
+/* ================== LA TABLE DES SALLES A ECRAN ==================
+ *
+ * Le Nexus a trois salles qui projettent : le cinema, la salle manga et la
+ * salle series. Chacune tient sa propre galerie de seances, et c'est
+ * exactement la meme mecanique a chaque fois — meme nettoyage d'adresse, meme
+ * plafond, meme journal, meme panneau.
+ *
+ * ---- LE DEFAUT QU'ON EVITE ----
+ *
+ * Recopier cette mecanique une fois par salle aurait pose trois verites. Le
+ * jour ou l'on durcit le filtre des adresses, on le durcit dans la salle qu'on
+ * a sous les yeux et l'on oublie les deux autres : il suffit alors de poser la
+ * seance dans la salle la moins surveillee. Une regle de securite qui a
+ * plusieurs chemins n'en a aucun.
+ *
+ * Cette table est donc la SEULE declaration. L'etat, les routes, le fil et les
+ * panneaux du tableau de bord en DECOULENT. Ajouter une quatrieme salle est
+ * une ligne ici, et rien d'autre — ni dans server.js, ni dans admin.js.
+ *
+ * ---- POURQUOI LA CLE EST BORNEE ----
+ *
+ * Elle sert d'identifiant HTML dans le panneau et de cle d'etat dans la
+ * sauvegarde. Une cle portant un guillemet casserait la page, une cle portant
+ * un point casserait la relecture, et aucune des deux ne se verrait avant que
+ * le proprietaire ouvre l'onglet.
+ *
+ * ---- POURQUOI LE NOM PERD QUATRE CARACTERES ----
+ *
+ * Le tableau de bord entier est construit dans un GABARIT DE CHAINE, et la
+ * table y descend telle quelle. Un accent grave ferme le gabarit ; un
+ * antislash est mange avant que le navigateur voie le texte ; un chevron
+ * refermerait le bloc de script depuis l'interieur d'une chaine. Chacun a de
+ * quoi tuer les mille cinq cents lignes du panneau d'un seul caractere, sans
+ * que rien ne le dise — c'est deja arrive deux fois.
+ */
+var SALLES_DEFAUT = 'cinema:Cinema - SWOGE FLIX|manga:Salle manga|series:Salle series';
+function lisSalles(brut) {
+  var v = String(brut || '').split('|').map(function (bloc) {
+    var i = bloc.indexOf(':');
+    if (i < 0) return null;
+    var cle = bloc.slice(0, i).trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+    var nom = bloc.slice(i + 1).trim().replace(/[`\\<>]/g, '').slice(0, 60);
+    if (!cle || !nom) return null;
+    return { cle: cle, nom: nom };
+  });
+  /* Une cle en double donnerait DEUX panneaux ecrivant dans la meme galerie :
+     celui du bas semblerait effacer le travail de celui du haut, et le
+     proprietaire chercherait la panne dans le serveur. On garde le premier. */
+  return v.filter(function (s, i) {
+    if (!s) return false;
+    for (var j = 0; j < i; j++) if (v[j] && v[j].cle === s.cle) return false;
+    return true;
+  });
+}
+function sallesEcran(brut) {
+  var v = lisSalles(brut);
+  /* Une variable d'environnement mal ecrite ferait DISPARAITRE toutes les
+     salles — le hall garderait ses ecrans et le panneau n'aurait plus rien
+     pour les remplir. On retombe donc sur la table d'origine plutot que sur
+     rien du tout. */
+  return v.length ? v : lisSalles(SALLES_DEFAUT);
+}
+
 module.exports = {
   PORT: parseInt(env('PORT', '8080'), 10),
 
@@ -533,13 +596,25 @@ module.exports = {
   DIT_RAFALE: parseInt(env('DIT_RAFALE', '5'), 10),
   DIT_FENETRE_MS: parseInt(env('DIT_FENETRE_MS', '15000'), 10),
 
-  /* ---- COMBIEN DE SEANCES A L'AFFICHE ----
-   * La galerie du cinema part dans le `hello` de CHAQUE connexion et dans
-   * chaque diffusion : une liste sans plafond serait un message qui grossit a
-   * chaque enregistrement, paye par tous les joueurs a chaque ouverture de
-   * page. Douze tiennent dans une galerie qu'on parcourt du regard ; au-dela
-   * on ne choisit plus, on cherche. */
+  /* ---- COMBIEN DE SEANCES A L'AFFICHE, PAR SALLE ----
+   * Les galeries partent dans le `hello` de CHAQUE connexion et dans chaque
+   * diffusion : une liste sans plafond serait un message qui grossit a chaque
+   * enregistrement, paye par tous les joueurs a chaque ouverture de page.
+   * Douze tiennent dans une galerie qu'on parcourt du regard ; au-dela on ne
+   * choisit plus, on cherche.
+   * IL S'APPLIQUE PAR SALLE et non au total : un plafond commun aurait laisse
+   * une salle bien remplie fermer la porte aux autres, et le proprietaire
+   * aurait lu « la galerie est pleine » devant une galerie vide. */
   CINEMA_MAX: parseInt(env('CINEMA_MAX', '12'), 10),
+
+  /* ---- LES SALLES A ECRAN ----
+   * La table est lue et commentee tout en haut de ce fichier. Elle est ICI,
+   * a cote du plafond, parce que le plafond s'applique PAR SALLE : douze
+   * seances dans le cinema, douze dans la salle manga, douze dans la salle
+   * series. Un plafond commun aurait laisse une salle bien remplie fermer la
+   * porte aux deux autres, ce que personne n'aurait compris en la voyant
+   * vide. */
+  SALLES_ECRAN: sallesEcran(env('SALLES_ECRAN', SALLES_DEFAUT)),
 
   /* ---- La surveillance ----
    * MONITEUR_URL : l'adresse a laquelle le serveur fait signe qu'il est

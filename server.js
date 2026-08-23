@@ -1080,6 +1080,32 @@ function entSienne(ws, id) {
 function toAddr(addr, obj) { const set = byAddr.get(addr); if (set) for (const ws of set) send(ws, obj); }
 function broadcast(obj) { const s = JSON.stringify(obj); for (const ws of clients) if (ws.readyState === 1) ws.send(s); }
 
+/* ================== LE CONTRAT DE FIL DES SALLES A ECRAN ==================
+ *
+ * UN SEUL ENDROIT construit ce qui part aux pages, et le `hello` s'en sert
+ * aussi. Deux constructions — une pour l'arrivee, une pour la diffusion —
+ * auraient fini par ne plus dire la meme chose, et le symptome aurait ete
+ * « la salle est juste quand je recharge, fausse quand je ne recharge pas ».
+ *
+ * `salles` est une LISTE, pas un objet range par cle : la page met la salle ou
+ * le joueur se tient en tete, puis « les autres dans l'ordre ou le serveur les
+ * annonce ». Cet ordre fait partie du contrat, et l'ordre des cles d'un objet
+ * n'en est pas un. Chaque entree porte sa cle, son NOM LISIBLE et ses seances,
+ * pour que la page n'ait aucune chaine ecrite chez elle.
+ *
+ * ---- ACCOMMODATION DATEE 2026-08-23 : `cinemas` ----
+ *
+ * La page EN SERVICE ne lit que `cinemas`, la galerie du cinema, et une autre
+ * main est en train de la refaire. Retirer ce champ aujourd'hui viderait le
+ * cinema pour tout le monde entre les deux deploiements — sans erreur, et sans
+ * que rien ne le dise. Il part donc en double le temps que la page rattrape,
+ * et il s'en va le jour ou elle lit `salles`.
+ */
+function filSalles() {
+  return { salles: game.sallesFil(), cinemas: game.galerieHeritee() };
+}
+function diffuseSalles() { broadcast(Object.assign({ type: 'cinema' }, filSalles())); }
+
 /**
  * Un encaissement au Crash part a tout le monde — c'est ce qui fait le sel du
  * jeu : on voit les autres sortir pendant qu'on tient. Le SOLDE, lui, ne
@@ -2276,7 +2302,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify(game.enveloppeCredit(Date.now())));
   }
-  /* ================== LA GALERIE DU CINEMA ==================
+  /* ================== LES GALERIES DES SALLES A ECRAN ==================
    *
    * Le proprietaire pose lui-meme le titre, l'affiche et les deux versions
    * depuis son tableau de bord. Ce fichier ne connait aucune adresse : il
@@ -2284,43 +2310,73 @@ const server = http.createServer(async (req, res) => {
    * acceptable — seulement http et https, parce que ces chaines finissent
    * dans un `iframe.src` sur la page de chaque joueur.
    *
+   * ---- TROIS SALLES, LES MEMES TROIS ADRESSES ----
+   *
+   * Le cinema, la salle manga et la salle series passent par CES routes-ci, et
+   * la salle est un champ. Trois jeux d'adresses — un par salle — auraient
+   * pose trois chemins de controle : le jour ou l'on durcit l'un, on oublie
+   * les deux autres, et il suffit de poser la seance dans la salle la moins
+   * surveillee. Ici il n'y a qu'un chemin, et la salle n'est qu'une cle
+   * VALIDEE CONTRE LA TABLE. Une cle inconnue est refusee et jamais rabattue
+   * sur le cinema : une seance manga qui atterrirait dans le cinema parce que
+   * la cle etait mal ecrite serait pire qu'un refus, personne ne comprendrait
+   * pourquoi. Ajouter une quatrieme salle ne touche donc pas ce fichier.
+   *
    * La galerie part ensuite a TOUT LE MONDE, tout de suite : sans ca, une
    * seance n'apparaitrait qu'a ceux qui rechargent, et le proprietaire
    * croirait l'avoir ratee.
    *
-   * TROIS GESTES, UNE SEULE REPONSE. Lire, ajouter et retirer rendent tous la
-   * LISTE RETENUE — jamais ce qui a ete envoye. C'est ce qui fait qu'une
-   * adresse refusee ne reste pas affichee dans la case en ayant l'air
-   * enregistree : le panneau ne peint que ce que le serveur a garde.
+   * TROIS GESTES, UNE SEULE REPONSE. Lire, ajouter, modifier et retirer
+   * rendent tous la LISTE RETENUE POUR CETTE SALLE — jamais ce qui a ete
+   * envoye. C'est ce qui fait qu'une adresse refusee ne reste pas affichee
+   * dans la case en ayant l'air enregistree : le panneau ne peint que ce que
+   * le serveur a garde.
    *
    * La lecture est un GET sur la meme adresse, comme `/reglages` : un panneau
    * qui ne sait pas ce qui est deja a l'affiche ne peut pas montrer une
    * galerie, et une deuxieme adresse pour la meme chose est une adresse de
    * plus a garder authentifiee.
    */
+  /* La salle arrive dans le corps en POST et dans l'adresse en GET. AUCUNE
+     valeur par defaut : une salle absente est aussi inconnue qu'une salle mal
+     ecrite, et les deux se refusent de la meme facon. Rend la cle retenue ou
+     `null`. */
+  const salleDe = (d) => Game.salleEcran(
+    (d && d.salle) || new URLSearchParams(req.url.split('?')[1] || '').get('salle'));
+  const salleRefusee = (res) => refusEcriture(res, 'unknown screen room - see SALLES_ECRAN');
   if (path === '/admin/cinema') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
     if (req.method !== 'POST') {
+      const k = salleDe(null);
+      if (!k) return salleRefusee(res);
       res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ ok: true, cinemas: game.cinemas || [],
+      return res.end(JSON.stringify({ ok: true, salle: k,
+                                      seances: game.galerieCinema(k),
                                       max: cfg.CINEMA_MAX }));
     }
     const d = await donPost(req);
     const nonV = gardeEcriture(req, session, 'cinema', '');
     if (nonV) return refusEcriture(res, nonV);
+    const k = salleDe(d);
+    if (!k) return salleRefusee(res);
     /* La galerie pleine LEVE, et ce refus-la merite d'etre lu : « refusee »
        sur une adresse valable aurait envoye le proprietaire la recopier toute
        la soiree. */
     let c = null;
-    try { c = game.ajouteCinema(d); }
+    try { c = game.ajouteCinema(k, d); }
     catch (e) { return refusEcriture(res, e.message); }
-    adminlog.ajoute({ acteur, action: 'cinema', cible: (c && c.titre) || '(refusee)',
+    /* LA SALLE EST DANS LA TRACE. Avec une seule galerie, « qui a retire la
+       seance de samedi » se repondait par le titre. Avec trois, le titre ne
+       suffit plus : deux salles peuvent annoncer le meme film, et la ligne ne
+       dirait pas laquelle a bouge. */
+    adminlog.ajoute({ acteur, action: 'cinema', cible: k + ' : ' + ((c && c.titre) || '(refusee)'),
                       motif: '', ip: qui(req) });
     persist();
-    broadcast({ type: 'cinema', cinemas: game.cinemas });
+    diffuseSalles();
     res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, ajoutee: c, cinemas: game.cinemas,
+    return res.end(JSON.stringify({ ok: true, salle: k, ajoutee: c,
+                                    seances: game.galerieCinema(k),
                                     max: cfg.CINEMA_MAX }));
   }
   /* Retirer une seance : meme authentification, meme garde d'ecriture, meme
@@ -2335,28 +2391,31 @@ const server = http.createServer(async (req, res) => {
     const d = await donPost(req);
     const nonV = gardeEcriture(req, session, 'cinema', '');
     if (nonV) return refusEcriture(res, nonV);
+    const k = salleDe(d);
+    if (!k) return salleRefusee(res);
     /* Le titre est lu AVANT le retrait : apres, il n'existe plus, et le
        journal admin n'aurait garde qu'un numero de rang que personne ne peut
        relire six mois plus tard. */
-    const avant = (game.cinemas || [])[Number(d && d.i)];
-    const fait = game.retireCinema(d && d.i);
+    const avant = game.galerieCinema(k)[Number(d && d.i)];
+    const fait = game.retireCinema(k, d && d.i);
     if (!fait) return refusEcriture(res, 'no show at that place');
     adminlog.ajoute({ acteur, action: 'cinema-retire',
-                      cible: (avant && avant.titre) || '(inconnue)',
+                      cible: k + ' : ' + ((avant && avant.titre) || '(inconnue)'),
                       motif: '', ip: qui(req) });
     persist();
-    broadcast({ type: 'cinema', cinemas: game.cinemas });
+    diffuseSalles();
     res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, cinemas: game.cinemas,
+    return res.end(JSON.stringify({ ok: true, salle: k,
+                                    seances: game.galerieCinema(k),
                                     max: cfg.CINEMA_MAX }));
   }
   /* Modifier une seance en place. Meme authentification, meme garde
      d'ecriture, meme journal, meme sauvegarde, meme diffusion — et surtout
      MEME VALIDATION que l'ajout, puisque `modifieCinema` passe par la meme
-     fonction de nettoyage. Une modification qui aurait son propre chemin de
-     controle serait une porte derobee : il aurait suffi de poser une seance
-     valable, puis de la modifier, pour glisser n'importe quelle adresse dans
-     l'iframe de chaque joueur.
+     fonction de nettoyage, pour les trois salles. Une modification qui aurait
+     son propre chemin de controle serait une porte derobee : il aurait suffi
+     de poser une seance valable, puis de la modifier, pour glisser n'importe
+     quelle adresse dans l'iframe de chaque joueur.
 
      Une adresse a part plutot qu'un champ dans l'ajout : au journal admin,
      « qui a change le lien de samedi » et « qui a ajoute samedi » sont deux
@@ -2369,21 +2428,24 @@ const server = http.createServer(async (req, res) => {
     const d = await donPost(req);
     const nonV = gardeEcriture(req, session, 'cinema', '');
     if (nonV) return refusEcriture(res, nonV);
-    const avant = (game.cinemas || [])[Number(d && d.i)];
+    const k = salleDe(d);
+    if (!k) return salleRefusee(res);
+    const avant = game.galerieCinema(k)[Number(d && d.i)];
     if (!avant) return refusEcriture(res, 'no show at that place');
-    const c = game.modifieCinema(d && d.i, d);
+    const c = game.modifieCinema(k, d && d.i, d);
     /* `null` ici ne veut pas dire « rang introuvable » — on vient de verifier
        le rang. Il veut dire que ce qu'on a envoye ne fait pas une seance :
        pas de titre, ou aucune version valable. On le DIT, sinon le
        proprietaire voit son formulaire se vider et croit avoir enregistre. */
     if (!c) return refusEcriture(res, 'a show needs a title and at least one http(s) link');
     adminlog.ajoute({ acteur, action: 'cinema-modifie',
-                      cible: c.titre + (avant.titre === c.titre ? '' : ' (etait ' + avant.titre + ')'),
+                      cible: k + ' : ' + c.titre + (avant.titre === c.titre ? '' : ' (etait ' + avant.titre + ')'),
                       motif: '', ip: qui(req) });
     persist();
-    broadcast({ type: 'cinema', cinemas: game.cinemas });
+    diffuseSalles();
     res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, modifiee: c, cinemas: game.cinemas,
+    return res.end(JSON.stringify({ ok: true, salle: k, modifiee: c,
+                                    seances: game.galerieCinema(k),
                                     max: cfg.CINEMA_MAX }));
   }
 
@@ -2949,13 +3011,15 @@ wss.on('connection', (ws) => {
     vault: cfg.VAULT_ADDRESS || null, token: cfg.SWOGE_TOKEN, chainId: cfg.CHAIN_ID,
     jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE),
     joueurs: compte(),
-    /* La galerie du cinema part avec le bonjour et non avec l'entree dans le
-       monde : la salle est dans le HALL, et l'on peut y entrer sans jamais
+    /* Les salles a ecran partent avec le bonjour et non avec l'entree dans le
+       monde : elles sont dans le HALL, et l'on peut y entrer sans jamais
        aller se battre.
-       Le champ est au PLURIEL et c'est le seul : garder aussi l'ancien
-       `cinema` au singulier aurait mis deux verites sur le meme fil, et le
-       jour ou elles divergent c'est la plus vieille qu'une page lit. */
-    cinemas: game.cinemas || [],
+       Le contenu vient de `filSalles`, le meme constructeur que la diffusion :
+       une page qui arrive et une page deja ouverte doivent voir la meme
+       chose, sinon la salle est juste quand on recharge et fausse quand on ne
+       recharge pas. `cinemas` y est encore, en accommodation datee — voir
+       `filSalles`. */
+    ...filSalles(),
     // les tables qui attendent, pour que la pastille soit juste avant meme
     // que le joueur se connecte
     duels: game.duelLobby(null), duelsEnCours: game.duelsEnCours(null),
