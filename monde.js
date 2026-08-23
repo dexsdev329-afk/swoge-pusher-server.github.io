@@ -1316,11 +1316,34 @@ const VILLE = {
    * dans la page.
    */
   FACADES: [
-    { planche: 'tour_maison', tuiles: 4 },
+    /* ---- UNE FACADE PEUT OUVRIR SUR UNE SALLE ----
+     *
+     * `salle` est la cle de la piece dans laquelle on entre en poussant la
+     * porte de CE batiment. C'est une donnee de la facade et non un cas
+     * particulier ecrit ailleurs : le jour ou les vitrines ouvrent sur leur
+     * boutique, elles posent leur cle sur leur ligne et rien d'autre ne
+     * bouge. Un `if (planche === 'tour_maison')` cache dans le generateur
+     * aurait demande un deuxieme `if` a la deuxieme porte, et c'est toujours
+     * le deuxieme qu'on oublie.
+     *
+     * Sans `salle`, le batiment reste ce qu'il etait : un obstacle qu'on
+     * contourne. C'est le defaut, et il est muet a dessein — une facade qui
+     * ouvrirait sur une salle inexistante serait pire qu'une facade fermee.
+     */
+    { planche: 'tour_maison', tuiles: 4, salle: 'tour' },
     { planche: 'vitrines_maison', tuiles: 5 },
     { planche: 'manege', tuiles: 2, cadres: 4 },
     { planche: 'murson', tuiles: 2, cadres: 4 },
   ],
+  /* ---- LA PROFONDEUR D'UNE PORTE ----
+   * En part de tuile, mesuree depuis le pied du batiment. La porte est un
+   * POINT devant la face sud ; son rayon vaut la moitie de la tuile, ce qui
+   * la rend large comme la rue est profonde — on ne peut pas la rater en
+   * passant devant, et l'on ne la declenche pas depuis le trottoir d'en
+   * face. Un rayon ecrit en dur cote page aurait fait deux chiffres a tenir
+   * d'accord de part et d'autre du reseau, et le desaccord serait muet : une
+   * porte qui s'annonce a un endroit ou rien ne s'ouvre. */
+  porteRayon: 0.5,
 };
 
 /**
@@ -1399,6 +1422,11 @@ function planVille(alea) {
   const facades = ilots.map((a, i) => {
     const f = VILLE.FACADES[(depart + i) % VILLE.FACADES.length];
     return { planche: f.planche, tuiles: f.tuiles, cadres: f.cadres || 0,
+             /* La salle sur laquelle ce batiment ouvre, s'il ouvre. Recopiee
+                depuis la table et jamais decidee ici : c'est la table qui dit
+                quels batiments ont une porte, et ce generateur n'a pas a le
+                savoir. */
+             salle: f.salle || null,
              c: a.x0 + Math.floor((a.x1 - a.x0) / 2), l: a.y1 };
   });
 
@@ -1446,6 +1474,21 @@ function planDeVille(alea) {
   for (const m of murs) {
     parTuile.set(Math.floor(m.x / DONJON_TUILE) + ',' + Math.floor(m.y / DONJON_TUILE), m);
   }
+  /* ---- LES PORTES SE DERIVENT DES BATIMENTS ----
+   *
+   * Une porte n'est jamais ecrite : c'est un point calcule depuis le bloc qui
+   * porte la facade, et il part AVEC le plan. Une coordonnee recopiee a cote
+   * aurait fait une deuxieme verite — le jour ou le semis deplace la tour, la
+   * porte serait restee dans la rue d'a cote, et personne n'aurait su
+   * pourquoi.
+   *
+   * Elle est devant la face SUD, parce que c'est la seule face qui donne sur
+   * une rue : `planVille` pose toutes ses facades sur le bord sud d'un pate,
+   * et l'essai de la ville verifie deja qu'on peut se tenir sur la tuile juste
+   * en dessous de chacune. La porte est le CENTRE de cette tuile-la — donc du
+   * sol par construction, jamais de la pierre.
+   */
+  const portes = [];
   for (const f of plan.facades) {
     const m = parTuile.get(f.c + ',' + f.l);
     /* Aucun bloc sous la facade : on ne la pose pas. Une facade posee dans le
@@ -1454,6 +1497,16 @@ function planDeVille(alea) {
        son bloc, pour que ce `continue` ne devienne jamais silencieux. */
     if (!m) continue;
     m.bat = f.planche;
+    /* La porte suit le bloc qu'on vient de trouver, et pas le tirage : s'il
+       n'y a pas de bloc, il n'y a pas de batiment, donc rien a ouvrir. Ecrite
+       avant le `continue` ci-dessus, une facade sans bloc aurait laisse une
+       porte flottante au milieu de la rue. */
+    if (f.salle) {
+      portes.push({ salle: f.salle,
+                    x: (f.c + 0.5) * DONJON_TUILE,
+                    y: (f.l + 1 + 0.5) * DONJON_TUILE,
+                    r: Math.round(VILLE.porteRayon * DONJON_TUILE) });
+    }
     /* La largeur en unites de monde, parce que c'est ce que la page pose. La
        hauteur, elle, se mesure dans la planche : voir la table des FACADES. */
     m.larg = f.tuiles * DONJON_TUILE;
@@ -1471,6 +1524,17 @@ function planDeVille(alea) {
        que la question a ete tranchee, et garde au plan la meme forme qu'a
        celui d'un donjon — ce que l'essai compare. */
     sortie: null,
+    /* ---- ET LES PORTES QUI S'OUVRENT SUR UNE SALLE ----
+     * Elles ne sont pas des portails : un portail EMMENE dans une autre
+     * simulation et le serveur en garde la clef ; ces portes-la ouvrent une
+     * piece que la PAGE dessine, sans que la simulation change. Les melanger
+     * aurait demande, a chaque ligne qui touche aux portails — le compte a
+     * rebours, le plafond, le bouton ENTER, la verification a l'entree — de se
+     * souvenir d'ecarter celles-ci.
+     * Vide et pas absent quand aucun batiment n'ouvre : un champ qui apparait
+     * en cours de route est un champ que la moitie du code teste avec
+     * `undefined`. */
+    portes,
     obstacles: murs,
     /* Vide, et pas absent : un champ qui apparait en cours de route est un
        champ que la moitie du code teste avec `undefined`. */

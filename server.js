@@ -1023,6 +1023,16 @@ function messageEntree(R, j, plan, carte) {
        listes auraient fini par ne plus decrire le meme sol, et le joueur
        aurait pris feu sur de la pierre. */
     braises: plan ? plan.braises : null,
+    /* ---- LES PORTES QUI OUVRENT SUR UNE SALLE ----
+     * Elles arrivent AVEC le plan, une fois, comme les blocs : une porte ne
+     * bouge pas, et la renvoyer dix fois par seconde dans l'etat du monde
+     * serait des octets payes toute la partie pour dire la meme chose.
+     * La page ne peut pas les redeviner — elle n'a ni le semis ni la table
+     * des facades — et si elle essayait, le desaccord serait muet : un
+     * batiment qu'on pousse et qui ne s'ouvre pas.
+     * `null` quand le plan n'en nomme aucune, comme `tuiles` et `braises`
+     * juste au-dessus : un donjon n'a pas de vitrine. */
+    portes: (plan && plan.portes) || null,
     sortie: plan ? plan.sortie : null,
     moi: { x: Math.round(j.x), y: Math.round(j.y),
            pv: j.pv, pvMax: j.pvMax,

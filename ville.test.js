@@ -135,9 +135,78 @@ for (const f of V.FACADES) {
 ok(facades.every((o) => o.r > 0 && o.t !== undefined),
    'chaque facade a garde le rayon et la planche de pierre du bloc qu\'elle remplace');
 
+/* ================== 2 bis. LES PORTES ==================
+ *
+ * Une porte n'est pas ecrite : elle se DERIVE du batiment. Ce qu'on exige ici
+ * n'est donc pas « il y a des portes », c'est « chaque porte est devant la
+ * face sud du batiment que la TABLE declare ouvrant, et nulle part ailleurs ».
+ * Aucune coordonnee n'est ecrite dans cet essai : tout se recalcule depuis le
+ * bloc rendu. Un essai qui coderait en dur la position de la tour serait la
+ * deuxieme verite que ce travail existe justement pour eviter.
+ */
+console.log('\n-- les portes se derivent des batiments --');
+/* Les rues, en tuiles. Declarees ICI parce que les portes s'y tiennent, et
+   relues plus bas par le parcours : une seule conversion pour tout le
+   fichier, sinon deux grilles decalees d'un demi-pas « prouveraient »
+   n'importe quoi. */
+const rues = new Set(plan.tuiles.map(([c, l]) => c + ',' + l));
+const ouvrantes = V.FACADES.filter((f) => f.salle);
+ok(ouvrantes.length > 0,
+   `${ouvrantes.length} planche(s) de la table ouvrent sur une salle : `
+   + ouvrantes.map((f) => f.planche + ' -> ' + f.salle).join(', '));
+ok(Array.isArray(plan.portes), 'le plan porte une liste de portes');
+/* LE PLANCHER : sans lui, toutes les boucles qui suivent ne feraient aucun
+   tour et « toutes les portes sont bonnes » voudrait dire « je n'en ai vu
+   aucune ». */
+const batsOuvrants = facades.filter((o) => ouvrantes.some((f) => f.planche === o.bat));
+ok(batsOuvrants.length > 0,
+   `${batsOuvrants.length} batiment(s) ouvrant(s) poses dans la ville`);
+eq(plan.portes.length, batsOuvrants.length,
+   'il y a exactement une porte par batiment ouvrant — ni une de plus, ni une de moins');
+
+let malPlacees = [], horsRue = [], mauvaiseCle = [];
+for (const o of batsOuvrants) {
+  const [c, l] = tuileDe(o.x, o.y).split(',').map(Number);
+  /* Ce qu'on ATTEND, recalcule depuis le bloc : le centre de la tuile de rue
+     juste au SUD. La formule est celle du generateur, mais appliquee a des
+     coordonnees rendues — si le generateur cesse de deriver et se met a
+     recopier un nombre, cette egalite tombe. */
+  const ax = (c + 0.5) * T, ay = (l + 1 + 0.5) * T;
+  const p = plan.portes.find((q) => Math.abs(q.x - ax) < 1 && Math.abs(q.y - ay) < 1);
+  if (!p) { malPlacees.push(`${o.bat} en ${c},${l}`); continue; }
+  const attendue = V.FACADES.find((f) => f.planche === o.bat).salle;
+  if (p.salle !== attendue) mauvaiseCle.push(`${o.bat} annonce « ${p.salle} » au lieu de « ${attendue} »`);
+  if (!rues.has(tuileDe(p.x, p.y))) horsRue.push(`${o.bat} en ${c},${l}`);
+}
+eq(malPlacees.length, 0,
+   `chaque porte est devant la face SUD de son batiment`
+   + (malPlacees.length ? ` — egarees : ${malPlacees.join(' / ')}` : ''));
+eq(mauvaiseCle.length, 0,
+   `et chacune nomme la salle que la TABLE lui donne`
+   + (mauvaiseCle.length ? ` — ${mauvaiseCle.join(' / ')}` : ''));
+eq(horsRue.length, 0,
+   `et se tient sur une tuile de RUE, jamais dans la pierre`
+   + (horsRue.length ? ` — ${horsRue.join(' / ')}` : ''));
+/* LE CONTRASTE. Sans lui, « une porte par batiment ouvrant » serait vrai
+   aussi d'un generateur qui en poserait une devant CHAQUE facade — et l'on
+   entrerait dans la tour par le manege. */
+const fermees = facades.filter((o) => !ouvrantes.some((f) => f.planche === o.bat));
+ok(fermees.length > 0, `${fermees.length} facades ne declarent aucune salle`);
+const fautives = fermees.filter((o) => {
+  const [c, l] = tuileDe(o.x, o.y).split(',').map(Number);
+  return plan.portes.some((q) => Math.abs(q.x - (c + 0.5) * T) < 1
+                              && Math.abs(q.y - (l + 1 + 0.5) * T) < 1);
+});
+eq(fautives.length, 0, 'et aucune d\'elles n\'a de porte devant elle');
+/* On peut ATTEINDRE la porte : elle est sur une rue, et cette rue est reliee
+   au point d'arrivee. Une porte qu'on voit sans pouvoir y aller serait pire
+   qu'un batiment ferme. Le parcours est fait plus bas, sur la meme grille —
+   on garde donc les portes de cote et l'on verifie apres. */
+ok(plan.portes.every((q) => q.r > 0),
+   `chaque porte dit son rayon (${plan.portes[0] && plan.portes[0].r}) — la page ne l'invente pas`);
+
 /* ================== 3. LA GRILLE ================== */
 console.log('\n-- on marche dans les rues, jamais dans les pates --');
-const rues = new Set(plan.tuiles.map(([c, l]) => c + ',' + l));
 const entree = tuileDe(plan.entree.x, plan.entree.y);
 ok(rues.has(entree), `le point d'arrivee (${entree}) est une tuile de RUE`);
 ok(!plan.obstacles.some((o) => tuileDe(o.x, o.y) === entree),
@@ -158,6 +227,15 @@ while (file.length) {
 }
 eq(vu.size, rues.size,
    `le parcours atteint TOUTES les rues (${vu.size} sur ${rues.size})`);
+
+/* ---- ET CHAQUE PORTE EST ATTEIGNABLE ----
+ * Le parcours ci-dessus est parti du point d'arrivee sans jamais quitter les
+ * rues. Une porte qu'il n'atteint pas est une porte derriere un pate enclos :
+ * on la verrait sur la carte et l'on ne pourrait jamais la pousser. */
+const portesLoin = plan.portes.filter((q) => !vu.has(tuileDe(q.x, q.y)));
+eq(portesLoin.length, 0,
+   `on peut marcher jusqu'aux ${plan.portes.length} portes depuis le point d'arrivee`
+   + (portesLoin.length ? ` — coupees : ${portesLoin.length}` : ''));
 
 /* ---- ET DEVANT CHAQUE BATIMENT ----
  * Une facade est posee sur le bord SUD de son pate : la tuile juste en
@@ -314,6 +392,19 @@ ok(batsRecus.length >= V.FACADES.length,
    `${batsRecus.length} facades arrivent avec les blocs, nommees par le serveur`);
 ok(batsRecus.every((o) => o.larg > 0),
    'chacune dit sa largeur en unites de monde — la page en deduit la hauteur');
+/* ---- ET LES PORTES ARRIVENT AVEC ----
+ * Une porte derivee que le serveur garderait pour lui ne servirait a rien :
+ * la page ne peut pas la recalculer, elle n'a ni le semis ni la table des
+ * facades. On regarde donc le MESSAGE, pas la structure. */
+ok(Array.isArray(ville.entre.portes) && ville.entre.portes.length === plan.portes.length,
+   `les ${(ville.entre.portes || []).length} portes de la ville partent avec l'entree`);
+ok((ville.entre.portes || []).every((q) => q.salle && q.r > 0
+     && Number.isFinite(q.x) && Number.isFinite(q.y)),
+   'chacune nomme sa salle, son point et son rayon');
+/* LE CONTRASTE : la plaine n'a pas de batiment, donc pas de porte. Sans lui,
+   « la ville envoie des portes » ne dirait pas que c'est SON plan qui les
+   porte — un champ pose sur tous les mondes aurait passe aussi. */
+eq(plaine.entre.portes, null, 'la plaine, elle, n\'en annonce aucune');
 
 /* ---- ET AUCUNE CREATURE N'Y VIT ----
  * On regarde l'instantane que le serveur envoie, pas la structure : c'est ce
