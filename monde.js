@@ -1296,12 +1296,15 @@ const VILLE = {
      de plus, c'est une image de plus, pas un mode de dessin de plus. */
   sol: 'ville',
   /* ---- ET LA PIERRE DES BLOCS ----
-   * La page ne connait aujourd'hui que deux planches de mur, et le nom la
-   * designe. On nomme donc celle qui EXISTE plutot que d'en inventer une : un
-   * nom sans fichier derriere ne dessine rien, et un pate invisible qui
-   * arrete se lit comme une panne. Le jour ou une pierre de ville est
-   * dessinee, c'est cette ligne-ci qui la nomme. */
-  mur: 'donjon',
+   * La ville a emprunte la pierre de donjon le temps qu'une pierre de ville
+   * soit dessinee. C'etait la seule chose qui faisait encore donjon a
+   * l'ecran. `mur_ville.webp` existe maintenant — quatre toits vus de dessus,
+   * au format des trois autres murs — et cette ligne-ci le nomme, comme le
+   * commentaire qu'elle remplace l'avait annonce.
+   * On nomme toujours ce qui EXISTE : un nom sans fichier derriere ne dessine
+   * rien, et un pate invisible qui arrete se lit comme une panne. L'essai
+   * d'accord entre les deux depots le verifie desormais a chaque fois. */
+  mur: 'ville',
   /* ---- CE QU'ON POSE SUR LE BORD D'UN PATE ----
    *
    * Une planche, une largeur en TUILES, et le nombre d'images quand elle
@@ -1330,8 +1333,16 @@ const VILLE = {
      * contourne. C'est le defaut, et il est muet a dessein — une facade qui
      * ouvrirait sur une salle inexistante serait pire qu'une facade fermee.
      */
+    /* ---- L'ORDRE DE CETTE TABLE EST L'ORDRE DE PLACEMENT ----
+     * Le premier prend le pate le plus proche du centre. Ce n'est donc pas
+     * une liste de planches, c'est un classement : ce qu'on veut voir en
+     * arrivant se met en tete. */
     { planche: 'tour_maison', tuiles: 4, salle: 'tour' },
+    { planche: 'club_maison', tuiles: 5 },
     { planche: 'vitrines_maison', tuiles: 5 },
+    { planche: 'jeux_maison', tuiles: 5 },
+    { planche: 'bar_maison', tuiles: 4 },
+    { planche: 'cine18_maison', tuiles: 4 },
     { planche: 'manege', tuiles: 2, cadres: 4 },
     { planche: 'murson', tuiles: 2, cadres: 4 },
   ],
@@ -1412,23 +1423,46 @@ function planVille(alea) {
    * et quiconque y marche — le hall a deja paye ca avec l'enclos de la ferme,
    * dessine par-dessus la terre ou l'on croyait pouvoir entrer.
    *
-   * Le TYPE tourne dans la table au lieu d'etre tire. Quatre planches tirees
-   * au sort sur dix-huit pates en laissent une absente une fois sur dix, et
-   * une ville a laquelle il manque sa tour ne se raconte pas. Le point de
-   * DEPART, lui, est tire : sinon la meme planche serait toujours au meme
-   * coin de la carte.
+   * ---- UN EXEMPLAIRE DE CHAQUE, ET GROUPES AU CENTRE ----
+   *
+   * Le type TOURNAIT dans la table : quatre planches sur quatorze pates, donc
+   * chacune revenait trois ou quatre fois. Il y avait TROIS SWOGE TOWER dans
+   * la ville, quatre maneges et quatre rangees de vitrines. Un point de repere
+   * qui existe en trois exemplaires n'est plus un point de repere — et depuis
+   * que la tour s'ouvre, c'etaient trois portes vers la meme piece.
+   *
+   * Chaque planche est donc posee UNE FOIS, sur le pate LIBRE LE PLUS PROCHE
+   * DU CENTRE qui soit assez large pour elle. Le regroupement n'est pas une
+   * regle de plus : il tombe du tri. On arrive par le sud, on remonte, et les
+   * lieux notables sont devant — les pates du pourtour restent nus, ce qui
+   * donne a la ville un centre et des bords au lieu d'une grille uniforme.
+   *
+   * Une planche qui ne trouve aucun pate assez large n'est PAS posee ailleurs
+   * de force : elle manque, et l'essai le dit. La poser sur un pate trop
+   * etroit la ferait deborder sur la rue, et l'on marcherait dans un dessin.
    */
-  const depart = Math.floor(r() * VILLE.FACADES.length);
-  const facades = ilots.map((a, i) => {
-    const f = VILLE.FACADES[(depart + i) % VILLE.FACADES.length];
-    return { planche: f.planche, tuiles: f.tuiles, cadres: f.cadres || 0,
-             /* La salle sur laquelle ce batiment ouvre, s'il ouvre. Recopiee
-                depuis la table et jamais decidee ici : c'est la table qui dit
-                quels batiments ont une porte, et ce generateur n'a pas a le
-                savoir. */
-             salle: f.salle || null,
-             c: a.x0 + Math.floor((a.x1 - a.x0) / 2), l: a.y1 };
-  });
+  const cx = O.x + N / 2, cy = O.y + N / 2;
+  /* On classe les pates par distance au centre, une fois. Le carre de la
+     distance suffit et evite une racine par pate : on ne compare que des
+     rangs, jamais des longueurs. */
+  const parProximite = ilots.map((a) => {
+    const mx = (a.x0 + a.x1) / 2 - cx, my = (a.y0 + a.y1) / 2 - cy;
+    return { a, d: mx * mx + my * my, pris: false };
+  }).sort((u, v) => u.d - v.d);
+
+  const facades = [];
+  for (const f of VILLE.FACADES) {
+    const o = parProximite.find((q) => !q.pris && (q.a.x1 - q.a.x0) >= f.tuiles);
+    if (!o) continue;
+    o.pris = true;
+    facades.push({ planche: f.planche, tuiles: f.tuiles, cadres: f.cadres || 0,
+                   /* La salle sur laquelle ce batiment ouvre, s'il ouvre.
+                      Recopiee depuis la table et jamais decidee ici : c'est la
+                      table qui dit quels batiments ont une porte, et ce
+                      generateur n'a pas a le savoir. */
+                   salle: f.salle || null,
+                   c: o.a.x0 + Math.floor((o.a.x1 - o.a.x0) / 2), l: o.a.y1 });
+  }
 
   /* ---- OU L'ON ARRIVE ----
    * Au milieu du boulevard sud, tourne vers la ville. Sur la rue et jamais

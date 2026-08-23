@@ -273,6 +273,46 @@ eq(traversees.length, 0,
    + (traversees.length ? ` — traversees : ${traversees.join(' / ')}` : ''));
 
 /* ================== 4. LA VILLE NE BOUGE PAS ================== */
+console.log('\n-- un exemplaire de chaque, et groupes au centre --');
+{
+  /* ---- CE QUE CET ESSAI GARDAIT SANS LE SAVOIR ----
+   * Le type de facade TOURNAIT dans la table : quatre planches sur quatorze
+   * pates, donc trois SWOGE TOWER, quatre maneges, quatre rangees de
+   * vitrines. Et cet essai passait — vert avant la correction comme apres,
+   * parce qu'il enumerait la table sans jamais compter les poses. Un point de
+   * repere en trois exemplaires n'est plus un point de repere, et depuis que
+   * la tour s'ouvre, c'etaient trois portes vers la meme piece. */
+  const p = monde.planDeVille();
+  const poses = p.obstacles.filter((o) => o.bat);
+  const combien = {};
+  for (const o of poses) combien[o.bat] = (combien[o.bat] || 0) + 1;
+  const doublons = Object.keys(combien).filter((k) => combien[k] > 1);
+  eq(doublons.length, 0,
+     'aucun batiment n\'est pose deux fois' +
+     (doublons.length ? ' — ' + doublons.map((k) => k + ' x' + combien[k]).join(', ') : ''));
+
+  /* Le nombre de poses ne se recopie pas : il se deduit de la table, bornee
+     par le nombre de pates assez larges. Une neuvieme planche ajoutee demain
+     doit etre exigee sans qu'on y pense. */
+  const attendu = Math.min(monde.VILLE.FACADES.length, p.ilots ? p.ilots.length : poses.length);
+  ok(poses.length === monde.VILLE.FACADES.length || poses.length === attendu,
+     `${poses.length} batiments poses pour ${monde.VILLE.FACADES.length} planches declarees`);
+
+  /* ---- GROUPES : LE TRI EST LA REGLE, PAS UNE INTENTION ----
+   * On ne verifie pas « c'est joli ». On verifie ce que la regle promet : un
+   * batiment est plus pres du centre que le pate moyen. Sans ce controle, le
+   * jour ou quelqu'un remet un placement au hasard, la ville se disperserait
+   * en silence — elle aurait toujours un exemplaire de chaque. */
+  const cote = monde.VILLE.cote, O = monde.VILLE.origine, T = monde.DONJON_TUILE;
+  const cx = (O.x + cote / 2) * T, cy = (O.y + cote / 2) * T;
+  const loin = (o) => Math.hypot(o.x - cx, o.y - cy);
+  const moyenneBatis = poses.reduce((t, o) => t + loin(o), 0) / poses.length;
+  const tousLesBlocs = p.obstacles.filter((o) => !o.bat);
+  const moyenneBlocs = tousLesBlocs.reduce((t, o) => t + loin(o), 0) / tousLesBlocs.length;
+  ok(moyenneBatis < moyenneBlocs,
+     `les batiments sont plus pres du centre que la pierre (${Math.round(moyenneBatis)} contre ${Math.round(moyenneBlocs)})`);
+}
+
 console.log('\n-- un lieu ne change pas de rues --');
 const bis = monde.planDeVille();
 eq(JSON.stringify(bis.tuiles), JSON.stringify(plan.tuiles),
