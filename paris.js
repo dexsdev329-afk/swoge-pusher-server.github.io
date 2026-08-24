@@ -201,6 +201,45 @@ function ouverts(now) {
   return catalogue().matchs.filter((m) => m.debut > t);
 }
 
+/* ================== LE SCORE, ET CE QU'ON EN DEDUIT ==================
+ *
+ * ---- POURQUOI LE SCORE ET NON LE RESULTAT ----
+ *
+ * Le reglement recevait « 1 », « N » ou « 2 ». C'etait suffisant tant qu'un
+ * match ne portait qu'un seul pari possible — celui-la meme. Des qu'on veut
+ * proposer « les deux equipes marquent » ou « plus de deux buts et demi », le
+ * resultat ne suffit plus : un 1-0 et un 3-2 donnent tous deux « 1 » et ne
+ * paient pas les memes gens.
+ *
+ * Le score, lui, decide de TOUT. Le resultat s'en deduit, jamais l'inverse —
+ * c'est la seule facon d'avoir un unique endroit ou l'on dit ce qui s'est
+ * passé sur le terrain. Deux champs independants finiraient par se
+ * contredire, et le jour ou ils se contrediraient l'un des deux paierait les
+ * mauvaises personnes.
+ *
+ * ---- ET LA DONNEE EST DEJA LA ----
+ *
+ * Le fournisseur de scores rend le score exact depuis le premier jour :
+ * `paris_import.js` le lit, l'affiche — « Arsenal 2-1 Chelsea » — puis
+ * n'en garde que la lettre. On arrete de le jeter.
+ */
+
+/** Un score « 2-1 » en `{a, b}`, ou `null` si ce n'en est pas un. */
+function scoreLu(x) {
+  const m = /^\s*(\d{1,3})\s*-\s*(\d{1,3})\s*$/.exec(String(x == null ? '' : x));
+  if (!m) return null;
+  const a = Number(m[1]), b = Number(m[2]);
+  /* Trois chiffres suffisent au cricket et debordent partout ailleurs. Un
+     score a quatre chiffres est une faute de frappe, pas un match. */
+  if (!isFinite(a) || !isFinite(b)) return null;
+  return { a, b };
+}
+
+/** Le 1-N-2 d'un score. C'est une DEDUCTION, jamais une donnee a part. */
+function resultatDuScore(s) {
+  return s.a > s.b ? '1' : s.b > s.a ? '2' : 'N';
+}
+
 /** Ce qu'une mise rapporterait, mise comprise. */
 function rapport(cote, mise) {
   return Math.floor(Number(cote) * Number(mise) * 1e6) / 1e6;
@@ -220,5 +259,6 @@ function vue(m, now) {
 module.exports = {
   ISSUES, ISSUES_PAR_SPORT, SPORTS_EQUIPE, issues, COTE_MIN, COTE_MAX, MARGE_MIN,
   charge, catalogue, match, ouverts, rapport, vue, marge, valide,
+  scoreLu, resultatDuScore,
   FICHIER_DEPOT, FICHIER_VOLUME, fichier,
 };

@@ -405,6 +405,21 @@ function page(csrf) {
     .arg button small{ font-weight:600; opacity:.8; font-size:10.5px; }
     .arg .rmb{ background:rgba(255,255,255,.08); color:#EAF2FF;
       border:1px solid rgba(255,255,255,.18); }
+    /* ---- LA RANGEE DU SCORE ----
+       Detachee de celle des lettres par un filet : ce sont deux facons de
+       trancher la meme rencontre, et les melanger dans une seule rangee
+       ferait cliquer « 1 » en croyant valider le score qu on vient de taper.
+       Elle est EN DESSOUS et non au-dessus parce qu on lit de haut en bas :
+       les lettres sont le repli, le score la voie normale — mais c est le
+       libelle du bouton qui le dit, pas la position. */
+    .arg .argsc{ margin-top:8px; padding-top:8px;
+      border-top:1px solid rgba(255,154,61,.22); align-items:center; }
+    .arg .argscore{ width:88px; padding:9px 10px; border-radius:9px;
+      background:rgba(0,0,0,.28); border:1px solid rgba(255,255,255,.2);
+      color:#EAF2FF; font:700 15px/1 ui-monospace,monospace; text-align:center;
+      letter-spacing:1px; }
+    .arg .argsb{ background:rgba(124,255,155,.14); color:#7CFF9B;
+      border:1px solid rgba(124,255,155,.4); }
     /* Hors calendrier : l'avertissement doit se voir AVANT les boutons, pas
        se deviner apres coup. */
     .arg.hors{ background:rgba(242,104,94,.09); border-color:rgba(242,104,94,.45); }
@@ -1689,7 +1704,24 @@ async function loadAregler(){
             return '<button data-res="'+esc(i)+'">'+esc(argNom(m,i))+
                    '<small>pays '+fmt(m.expo[i]||0)+'</small></button>'; }).join('')+
           '<button class="rmb" data-res="__rembourse">Refund all<small>returns '+fmt(m.mise)+'</small></button>'+
-        '</div><div class="argmsg" style="margin-top:7px;font-size:12px"></div></div>';
+        '</div>'+
+        /* ---- ET LE SCORE, QUI EST LA VOIE A PREFERER ----
+           Les lettres disent QUI a gagne ; le score dit TOUT ce qui s est
+           passe. Le serveur en deduit le 1-N-2 lui-meme et le garde, et c est
+           lui — et lui seul — qui rendra reglables « les deux equipes
+           marquent » et les autres marches. Une rencontre reglee a la lettre
+           ne le sera jamais, meme retroactivement : on ne deduit pas un score
+           d un « 1 ».
+           Les lettres RESTENT : quand la rencontre a quitte le calendrier et
+           qu on n a plus que le souvenir du resultat, il vaut mieux payer le
+           gagnant que d attendre un score qu on ne retrouvera pas. */
+        '<div class="row argsc">'+
+          '<input class="argscore" type="text" inputmode="numeric" placeholder="2-1" '+
+            'maxlength="7" aria-label="final score, home-away">'+
+          '<button class="argsb" data-res="__score">Settle on score'+
+            '<small>preferred &mdash; unlocks the other markets</small></button>'+
+        '</div>'+
+        '<div class="argmsg" style="margin-top:7px;font-size:12px"></div></div>';
     }).join("");
   }catch(e){ $("#argBody").innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
 }
@@ -1697,7 +1729,22 @@ $("#argBody").addEventListener("click",async function(ev){
   var b=ev.target.closest("button"); if(!b) return;
   var carte=b.closest(".arg"), id=carte.getAttribute("data-id"), res=b.getAttribute("data-res");
   var titre=carte.querySelector("h4").textContent;
-  var quoi = res==="__rembourse" ? "REFUND every bet on" : ("settle "+titre+" as "+b.childNodes[0].textContent+" —");
+  /* ---- LE SCORE PASSE PAR LE MEME BOUTON QUE LES LETTRES ----
+     Un second chemin de reglement, avec sa propre confirmation et son propre
+     motif, aurait fini par ne plus demander les memes garanties que
+     celui-ci — et c est le geste qui paie des joueurs sans retour possible. */
+  if(res==="__score"){
+    var ch=carte.querySelector(".argscore"), sc=(ch.value||"").trim().replace(/\s+/g,"");
+    if(!/^\d{1,3}-\d{1,3}$/.test(sc)){
+      var m0=carte.querySelector(".argmsg");
+      m0.textContent="✗ a score looks like 2-1"; m0.className="argmsg argko";
+      ch.focus(); return;
+    }
+    res=sc;
+  }
+  var quoi = res==="__rembourse" ? "REFUND every bet on"
+           : /^\d/.test(res) ? ("settle "+titre+" on the score "+res+" —")
+           : ("settle "+titre+" as "+b.childNodes[0].textContent+" —");
   /* Une confirmation qui NOMME la rencontre et le resultat. « Etes-vous
      sur ? » ne protege de rien : on clique oui sans lire. */
   /* Le saut de ligne doit sortir ECHAPPE : ce script vit dans un littéral de
@@ -1717,14 +1764,19 @@ $("#argBody").addEventListener("click",async function(ev){
       [].forEach.call(boutons,function(x){ x.disabled=false; });
       msg.textContent="annulé — un motif est obligatoire"; msg.className="argmsg"; return;
     }
+    /* Un SEUL champ descend, jamais les deux : un score et une lettre cote a
+       cote se contrediraient un jour, et rien ne dirait lequel croire pendant
+       que l un des deux paie les mauvaises personnes. */
     var j = await post(res==="__rembourse" ? "/paris/rembourse" : "/paris/regle",
-                       { match:id, resultat:res, motif:motif.trim() });
+                       /^\d/.test(res) ? { match:id, score:res, motif:motif.trim() }
+                                       : { match:id, resultat:res, motif:motif.trim() });
     if(j.error){ msg.textContent="✗ "+j.error; msg.className="argmsg argko";
                  [].forEach.call(boutons,function(x){ x.disabled=false; }); return; }
     msg.className="argmsg argok";
     msg.textContent = res==="__rembourse"
       ? ("✓ refunded "+fmt(j.rendu||0)+" $SWOGE to "+(j.paris||0)+" bet(s)")
-      : ("✓ "+(j.gagnants||0)+" paid, "+(j.perdus||0)+" lost, "+fmt(j.paye||0)+" $SWOGE out");
+      : ("✓ "+(j.score?j.score+" ("+j.resultat+") — ":"")+(j.gagnants||0)+" paid, "+
+         (j.perdus||0)+" lost, "+fmt(j.paye||0)+" $SWOGE out");
     setTimeout(function(){ loadAregler(); loadBets(false); },1400);
   }catch(e){ msg.textContent="✗ "+e.message; msg.className="argmsg argko";
              [].forEach.call(boutons,function(x){ x.disabled=false; }); }

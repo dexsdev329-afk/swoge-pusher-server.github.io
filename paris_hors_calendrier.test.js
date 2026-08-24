@@ -152,8 +152,9 @@ function volume(matchs) {
   g._p(A).balance = W(100000);
   g.parie(A, M, '1', 1000, AVANT);
   volume(DEPOT.matchs.filter((m) => m.id !== M));
-  jete(() => g.regleMatch(M, 'X'), /result must be one of/,
-    'et une issue qui n existe pas, aussi');
+  jete(() => g.regleMatch(M, 'X'), /must be a score like 2-1, or one of/,
+    'et une issue qui n existe pas, aussi — le message nomme desormais les DEUX'
+    + ' formes acceptees, le score en premier');
 }
 
 // ============================================ 5. LE REMBOURSEMENT N A JAMAIS

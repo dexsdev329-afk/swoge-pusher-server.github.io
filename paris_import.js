@@ -581,8 +581,14 @@ async function importeScores() {
   console.log('\n[odds] a REGLER — verifiez le score avant d appeler :');
   for (const f of finis) {
     console.log(`  ${f.domicile} ${f.score} ${f.exterieur}  →  resultat=${f.resultat}`);
+    /* ---- ON ENVOIE LE SCORE, PLUS LA LETTRE ----
+     * Il etait lu, affiche sur la ligne du dessus, puis jete. Le serveur en
+     * deduit le 1-N-2 lui-meme, et le GARDE : c'est lui qui rend reglables
+     * « les deux equipes marquent » et les autres marches. Une rencontre
+     * reglee a la lettre ne le sera jamais, meme plus tard — on ne deduit pas
+     * un score d'un « 1 ». */
     console.log(`    curl -H "x-admin-key: $ADMIN_KEY" ` +
-                `"$URL/paris/regle?match=${f.id}&resultat=${f.resultat}"`);
+                `"$URL/paris/regle?match=${f.id}&score=${f.score}"`);
   }
   return finis;
 }

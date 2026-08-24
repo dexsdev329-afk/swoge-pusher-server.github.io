@@ -2764,8 +2764,14 @@ const server = http.createServer(async (req, res) => {
     const nonV = gardeEcriture(req, session, geste, q.motif);
     if (nonV) return refusEcriture(res, nonV);
     try {
+      /* ---- LE SCORE D'ABORD, LA LETTRE ENSUITE ----
+       * Un seul argument descend dans `regleMatch` : deux champs pour dire la
+       * meme chose finiraient par se contredire, et rien ne dirait lequel
+       * croire pendant que l'un des deux paie les mauvaises personnes.
+       * `resultat=` reste accepte — les sports sans score comptable en ont
+       * besoin, et les habitudes de la ligne de commande aussi. */
       const r = path === '/paris/regle'
-        ? game.regleMatch(q.match, q.resultat)
+        ? game.regleMatch(q.match, q.score || q.resultat)
         : game.rembourseMatch(q.match);
       persist();
       if (path === '/paris/regle') notifyBetsSettled(r);
@@ -2773,7 +2779,8 @@ const server = http.createServer(async (req, res) => {
          qui puisse etre fausse dans ce geste, et la seule qu'on voudra relire
          quand un joueur contestera. */
       adminlog.ajoute({ acteur, action: geste, cible: String(q.match || ''),
-                        avant: geste === 'pariRegle' ? String(q.resultat) : null,
+                        avant: geste === 'pariRegle'
+                          ? String(q.score || q.resultat) : null,
                         apres: `${r.payes || 0} paye(s), ${r.total || 0} $SWOGE`,
                         motif: q.motif, ip: qui(req) });
       console.log('[paris]', JSON.stringify(r));

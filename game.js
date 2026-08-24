@@ -3741,7 +3741,27 @@ class Game {
    * a la main, et c'est assume — un service de resultats automatique qui se
    * trompe paie les mauvaises personnes sans que personne ne le sache.
    */
-  regleMatch(matchId, resultat) {
+  /**
+   * REGLER UNE RENCONTRE — PAR SON SCORE.
+   *
+   * ---- CE QUE `quoi` ACCEPTE ----
+   * Un SCORE, « 2-1 », et c'est la forme a preferer. Ou une lettre, « 1 »,
+   * « N », « 2 » — ce que le sport n'a pas de score comptable accepte, et ce
+   * que les habitudes de la ligne de commande envoient encore.
+   *
+   * ---- UN SEUL ARGUMENT, ET LE RESULTAT SE DEDUIT ----
+   * On aurait pu prendre les deux, le score ET le resultat. Ils se seraient
+   * contredits un jour — un doigt qui glisse, « 2-1 » avec « N » — et rien
+   * n'aurait dit lequel croire, pendant que l'un des deux payait les mauvaises
+   * personnes. Le score decide de tout ; le resultat en est une lecture.
+   *
+   * ---- ET C'EST CE QUI REND LES AUTRES PARIS POSSIBLES ----
+   * « Les deux equipes marquent » ne se lit pas dans un « 1 » : un 1-0 et un
+   * 3-2 donnent la meme lettre et ne paient pas les memes gens. Sans le score
+   * enregistre, aucun marche autre que le 1-N-2 n'est reglable — ni
+   * aujourd'hui, ni retroactivement.
+   */
+  regleMatch(matchId, quoi) {
     /* ---- UNE RENCONTRE ABSENTE DU CALENDRIER RESTE REGLABLE ----
      *
      * Refuser net (« unknown match ») protegeait d'une faute de frappe, mais
@@ -3758,15 +3778,29 @@ class Game {
     const issues = m ? m.issues
       : (this._parisDe(matchId).some((p) => !p.regle) ? paris.ISSUES : null);
     if (!issues) throw new Error('unknown match');
-    if (issues.indexOf(String(resultat)) < 0)
-      throw new Error('result must be one of ' + issues.join(', '));
+    const score = paris.scoreLu(quoi);
+    const resultat = score ? paris.resultatDuScore(score) : String(quoi);
+    /* ---- UN NUL SUR UN SPORT QUI N'EN A PAS ----
+     * Le tennis, la NBA, la NFL et le cricket se cotent en deux issues : un
+     * score a egalite ne peut pas venir de la rencontre, il vient de la
+     * saisie. Le laisser passer paierait tout le monde perdant en silence. */
+    if (score && issues.indexOf(resultat) < 0)
+      throw new Error(`a level score (${score.a}-${score.b}) is impossible here — ` +
+                      'this sport settles on ' + issues.join(', '));
+    if (issues.indexOf(resultat) < 0)
+      throw new Error('result must be a score like 2-1, or one of ' + issues.join(', '));
     if (!this.parisRegles) this.parisRegles = {};
     if (this.parisRegles[matchId]) throw new Error('already settled');
 
     /* On enregistre le resultat AVANT de regarder les paris : un combine ne
        peut etre juge que quand toutes ses jambes ont un resultat, et c'est
-       cette table qui le dit. */
-    this.parisRegles[matchId] = { t: Date.now(), resultat: String(resultat) };
+       cette table qui le dit.
+       Le SCORE part avec lui, quand on l'a. C'est lui qui rendra reglables les
+       marches autres que le 1-N-2 — et une rencontre reglee sans score ne le
+       sera jamais, meme plus tard : on ne peut pas deduire un score d'une
+       lettre. */
+    this.parisRegles[matchId] = { t: Date.now(), resultat,
+                                  score: score ? `${score.a}-${score.b}` : null };
 
     let paye = 0, gagnants = 0, mise = 0, perdus = 0, attente = 0;
     let top = null;
@@ -3792,13 +3826,15 @@ class Game {
         top = { addr: p.addr, mise: p.mise, rendu, cote: p.cote,
                 jambes: (p.jambes || []).length || 1 };
       journal.ajoute(p.addr, { k: 'pa', s: 'regle', m: String(p.mise), match: matchId,
-                               cote: p.cote, resultat: String(resultat), rendu: String(rendu) });
+                               cote: p.cote, resultat,
+                               score: score ? `${score.a}-${score.b}` : undefined,
+                               rendu: String(rendu) });
       this._manche(this._p(p.addr), 'paris', p.mise, rendu);
     }
     const r = this.parisRegles[matchId];
     r.gagnants = gagnants; r.paye = paye; r.perdus = perdus; r.attente = attente;
-    return { match: matchId, resultat: String(resultat), gagnants, perdus,
-             enAttente: attente, paye, mise, net: mise - paye, top };
+    return { match: matchId, resultat, score: score ? `${score.a}-${score.b}` : null,
+             gagnants, perdus, enAttente: attente, paye, mise, net: mise - paye, top };
   }
 
   /**

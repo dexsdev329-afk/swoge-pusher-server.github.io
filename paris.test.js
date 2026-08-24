@@ -127,6 +127,92 @@ function jeu(credit) {
   } finally { m.cotes['1'] = vraie; }
 }
 
+// ============================ ON REGLE PAR LE SCORE, ET LE RESULTAT S EN DEDUIT
+/*
+ * ---- POURQUOI CE CHANGEMENT ----
+ * Le reglement recevait « 1 », « N » ou « 2 ». C etait assez tant qu un match
+ * ne portait qu un seul pari possible — celui-la meme. Des qu on veut proposer
+ * « les deux equipes marquent » ou « plus de deux buts et demi », la lettre ne
+ * suffit plus : un 1-0 et un 3-2 donnent tous deux « 1 » et ne paient pas les
+ * memes gens.
+ *
+ * ---- ET LA DONNEE ETAIT DEJA LA ----
+ * Le fournisseur rend le score exact depuis le premier jour : l import le lit,
+ * l affiche — « Bolton 2-1 Preston » — puis n en gardait que la lettre.
+ *
+ * ---- UN SEUL ARGUMENT ----
+ * Pas de score ET de resultat cote a cote : ils se contrediraient un jour, et
+ * rien ne dirait lequel croire pendant que l un des deux paie les mauvaises
+ * personnes.
+ */
+{
+  const g = jeu();
+  const p = g.parie(A, M, '1', 1000, AVANT);
+  const avant = sol(g, A);
+  const r = g.regleMatch(M, '2-1');
+  eq(r.resultat, '1', 'un score « 2-1 » se lit comme une victoire a domicile');
+  eq(r.score, '2-1', 'et le score PART avec le reglement, il n est plus jete');
+  eq(r.gagnants, 1, 'le parieur du 1 est paye');
+  eq(Math.round(sol(g, A) - avant), Math.round(p.rapport), 'du bon montant');
+  eq(g.parisRegles[M].score, '2-1',
+     'le score est GARDE dans la table : c est lui qui rendra reglables les'
+     + ' marches autres que le 1-N-2, y compris retroactivement');
+}
+/* Les trois lectures, et le nul qui n en est une que la ou il existe. */
+{
+  const g = jeu();
+  g.parie(A, M, 'N', 1000, AVANT);
+  const avant = sol(g, A);
+  eq(g.regleMatch(M, '1-1').resultat, 'N', 'un score a egalite donne le nul');
+  ok(sol(g, A) > avant, 'et le parieur du nul est paye');
+}
+{
+  const g = jeu();
+  g.parie(A, M, '2', 1000, AVANT);
+  eq(g.regleMatch(M, '0-3').resultat, '2', 'et l exterieur l emporte quand il marque plus');
+}
+/* ---- LE MEME PARI, LES DEUX FORMES, LE MEME PAIEMENT ----
+ * C est la verification qui compte : si les deux chemins ne payaient pas
+ * pareil, le score aurait introduit un second reglement a cote de l ancien. */
+{
+  const parLettre = jeu(), parScore = jeu();
+  parLettre.parie(A, M, '1', 1000, AVANT);
+  parScore.parie(A, M, '1', 1000, AVANT);
+  const a1 = sol(parLettre, A), a2 = sol(parScore, A);
+  const r1 = parLettre.regleMatch(M, '1');
+  const r2 = parScore.regleMatch(M, '4-0');
+  eq(r1.paye, r2.paye, 'la lettre et le score paient exactement la meme somme');
+  eq(sol(parLettre, A) - a1, sol(parScore, A) - a2, 'et le solde bouge pareil');
+  eq(r1.score, null,
+     'mais la lettre ne laisse AUCUN score — et une rencontre reglee sans score'
+     + ' ne le sera jamais : on ne deduit pas un score d une lettre');
+}
+/* ---- UN NUL LA OU IL N EXISTE PAS ----
+ * Le tennis se cote en deux issues. Un score a egalite ne peut pas venir du
+ * court, il vient de la saisie — et le laisser passer ferait perdre tout le
+ * monde en silence, ce qui est la pire facon de se tromper. */
+{
+  /* Nomme ici plutot que plus bas : les deux essais du tennis sont separes de
+     deux cents lignes, et une constante lue avant sa declaration ne leve pas
+     une erreur d'orthographe mais une erreur d'ORDRE, qui se cherche mal. */
+  const TEN = 'atp-20260815-djo-tir';               // Djokovic 1.25 / Tirante 3.80
+  const g = jeu();
+  g.parie(A, TEN, '1', 1000, AVANT);
+  jete(() => g.regleMatch(TEN, '2-2'), /level score .* is impossible here/,
+    'un score a egalite est refuse la ou le nul n existe pas');
+  ok(!g.parisRegles[TEN], 'et rien n est grave : la rencontre reste a regler');
+  eq(g.regleMatch(TEN, '2-0').resultat, '1', 'un vrai score, lui, passe');
+}
+/* Ce qui ne ressemble a rien reste refuse — le score n a pas elargi la porte. */
+{
+  const g = jeu();
+  g.parie(A, M, '1', 1000, AVANT);
+  jete(() => g.regleMatch(M, '2:1'), /must be a score like 2-1/,
+    'deux points ne font pas un score');
+  jete(() => g.regleMatch(M, 'X'), /must be a score like 2-1/, 'ni une lettre inventee');
+  jete(() => g.regleMatch(M, '-1-2'), /must be a score like 2-1/, 'ni un score negatif');
+}
+
 // ================================ LE PLAFOND D ENGAGEMENT
 /* Il ne compte pas les mises : il compte ce qu il faudra SORTIR si la pire
    issue tombe. C est la seule mesure qui dit la verite. */
