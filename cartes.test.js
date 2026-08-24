@@ -346,6 +346,14 @@ console.log('\n-- l emprise d un element --');
   ok(avec(1).n === undefined, 'une case d une seule case n a rien a declarer');
   ok(avec(99).n === undefined,
      `au-dela de ${cfg.CARTE_EMPRISE_MAX} elle est ignoree : un envoi truque bloquerait la carte entiere`);
+  /* ---- ET LA VRAIE BORNE EST LE COTE ----
+   * Un element plus grand que la carte qui le porte ne veut rien dire. La
+   * carte d'essai fait seize de cote : vingt passe le plafond ecrit, pas
+   * celui-la. */
+  ok(avec(20).n === undefined,
+     'un element plus grand que la carte est refuse, meme sous le plafond');
+  ok(v(carte('a', [{ c: 1, l: 1, o: 'iso_vault', n: 20 }], 32)).cases[0].n === 20,
+     'et le meme passe sur une carte assez grande pour lui');
   ok(avec(-3).n === undefined, 'et une emprise negative aussi');
   /* Une emprise sur une case qui ne porte QUE du sol ne veut rien dire : c'est
      l'objet qui occupe de la place, pas le sol. */

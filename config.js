@@ -686,10 +686,14 @@ module.exports = {
    * ce qu'elle BLOQUE quand on marchera dedans. Le nombre est ecrit dans la
    * carte au moment ou l'on pose, et non deduit ici — le serveur ne connait
    * pas le catalogue, et lui en donner une copie serait la premiere chose a
-   * se perimer. Huit est la meme borne que l'essai du catalogue impose aux
-   * parcelles ; au-dela, un envoi ferait bloquer un tiers de la carte avec un
-   * seul element. */
-  CARTE_EMPRISE_MAX: parseInt(env('CARTE_EMPRISE_MAX', '8'), 10),
+   * se perimer.
+   *
+   * Trente-deux, et borne EN PLUS par le cote de la carte : un element ne peut
+   * pas etre plus grand que ce qui le contient, et cette borne-la se DEDUIT au
+   * lieu d'etre choisie. Huit au depart, ce qui suffisait aux parcelles
+   * livrees — mais le proprietaire a voulu agrandir au-dela pour faire un
+   * FOND, et rien ne le justifiait. Ce qui protege vraiment, c'est le cote. */
+  CARTE_EMPRISE_MAX: parseInt(env('CARTE_EMPRISE_MAX', '32'), 10),
 
   /* ---- LES SALLES A ECRAN ----
    * La table est lue et commentee tout en haut de ce fichier. Elle est ICI,
