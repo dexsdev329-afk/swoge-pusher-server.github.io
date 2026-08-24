@@ -1235,6 +1235,16 @@ class Game {
        * interpole. */
       const mir = Math.round(Number(b.m));
       if (Number.isInteger(mir) && mir > 0 && mir < 4) e.m = mir;
+      /* ---- LE VERROU ----
+       * Il n'a AUCUN effet sur le monde : un element verrouille se dessine et
+       * bloque exactement comme les autres. Il ne parle qu'a l'editeur, pour
+       * qu'un decor de fond ne parte pas sous la main quand on travaille ce
+       * qui est pose dessus.
+       * Il est garde quand meme cote serveur : sans cela, il faudrait tout
+       * reverrouiller a chaque ouverture, et le reglage ne servirait a rien.
+       * Un seul etat, donc UN, et jamais autre chose : `v: 7` ne veut rien
+       * dire et ouvrirait la porte a un champ qui prend un sens plus tard. */
+      if (b.v === 1 || b.v === true) e.v = 1;
       return e;
     };
     const par = new Map();

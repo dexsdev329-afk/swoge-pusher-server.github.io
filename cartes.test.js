@@ -508,6 +508,19 @@ console.log('\n-- le miroir, le seul autre axe qu une image plate possede --');
   ok(avecM(4).m === undefined, 'et il n y a pas de troisieme axe a retourner');
   ok(avecM(-1).m === undefined, 'ni de miroir negatif');
   ok(avecM('gauche').m === undefined, 'ni de miroir qui ne soit pas un nombre');
+
+  /* ---- LE VERROU, QUI NE PARLE QU A L EDITEUR ----
+   * Il n'a aucun effet dans le monde : un element verrouille se dessine et
+   * bloque comme les autres. Il est garde quand meme, sans quoi il faudrait
+   * tout reverrouiller a chaque ouverture et le reglage ne servirait a rien. */
+  const avecV = (v2) => v({ nom: 'a', cote: 16, cases: [],
+                            objets: [{ c: 1, l: 1, k: 'mur_ville', v: v2 }] }).objets[0];
+  eq(avecV(1).v, 1, 'un element verrouille le reste');
+  eq(avecV(true).v, 1, "et le vrai s ecrit comme un, pour n avoir qu une forme a relire");
+  ok(avecV(0).v === undefined, 'ouvert ne s ecrit pas : c est le cas de presque tous');
+  ok(avecV(7).v === undefined,
+     "et sept ne veut rien dire : un seul etat, sans quoi le champ prendrait un"
+     + " sens de plus le jour ou quelqu un l ecrira");
   const g = new Game();
   const k = g.enregistreCarte(A, null, { nom: 'Miroirs', cote: 16, cases: [],
                                          objets: [{ c: 2, l: 2, k: 'iso_hotel', m: 1, n: 3.5 }] });
