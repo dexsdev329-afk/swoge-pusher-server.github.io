@@ -1660,7 +1660,14 @@ function planDeCarte(k) {
   let id = 1;
   for (const q of poses) {
     if (!q.k) continue;
-    const n = Math.max(1, Number(q.n) || 1);
+    /* ---- L'EMPRISE VIENT AU CENTIEME DE CASE ----
+     * Elle etait arrondie a UNE case au minimum : une demi-case aurait alors
+     * bloque quatre fois la surface de ce qu'on voit. On ne redit PAS ici la
+     * borne basse — elle est appliquee la ou la carte entre, dans
+     * `carteValide`, et la reecrire ici ferait deux endroits a tenir
+     * d'accord. On se contente de refuser ce qui n'est pas un nombre positif,
+     * qui ne viendrait que d'une donnee abimee. */
+    const n = Number(q.n) > 0 ? Number(q.n) : 1;
     /* ---- LE RAYON SUIT L'EMPRISE, ET LE PIED RESTE AU PIED ----
      * La page dessine une planche nommee POSEE sur `y + r` : c'est la regle
      * des facades de la ville, et elle vaut ici sans une ligne de plus. Le
@@ -1688,9 +1695,9 @@ function planDeCarte(k) {
     if (dx * dx + dy * dy < r * r) continue;
     obstacles.push({ i: id++, x: cx, y: cy,
                      r, bat: q.k, larg: n * T,
-                     /* L'angle part avec le bloc : la page le dessine, elle ne
-                        le devine pas. */
-                     g: q.g || 0,
+                     /* L'angle et le miroir partent avec le bloc : la page les
+                        dessine, elle ne les devine pas. */
+                     g: q.g || 0, m: q.m || 0,
                      /* Le `t` de repli : une page qui ne saurait pas dessiner
                         une planche nommee posera de la pierre a cet endroit.
                         Degrade, jamais troue — la meme precaution que les

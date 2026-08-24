@@ -365,6 +365,31 @@ console.log('\n-- l emprise d un element --');
   ok(v(carte('a', [{ c: 1, l: 1, o: 'iso_vault', n: 60 }], 32)).objets[0].n === 60,
      'et une carte plus grande porte de plus grands fonds');
   ok(avec(-3).n === undefined, 'et une emprise negative aussi');
+
+  /* ---- ELLE SE COMPTE AU CENTIEME DE CASE ----
+   * Elle etait un nombre ENTIER : d'une case a deux, du simple au double, et
+   * rien entre les deux. Sur une parcelle de quatre, le cran suivant en
+   * ajoutait vingt-cinq pour cent d'un coup. Le proprietaire a demande plus de
+   * finesse, et c'est exactement la meme demande que pour l'angle.
+   * AUCUNE MIGRATION : le champ n'a pas change de sens, il a gagne deux
+   * decimales. Les quatre verifications ci-dessus, ecrites pour des entiers,
+   * passent telles quelles — c'est la preuve qu'une carte deja enregistree n'y
+   * perd rien. */
+  eq(avec(4.5).n, 4.5, 'une emprise de quatre cases et demie est gardee');
+  eq(avec(0.5).n, 0.5, 'et une demi-case aussi : c est une taille, pas une erreur');
+  eq(avec(2.333).n, 2.33, 'au centieme, et pas au-dela : trois decimales sont un octet'
+                          + ' de plus par objet pour un pixel de monde');
+  eq(avec(2.335).n, 2.34, 'et l arrondi va au plus proche');
+  ok(avec(cfg.CARTE_EMPRISE_MIN).n === cfg.CARTE_EMPRISE_MIN,
+     `le quart de case passe : c est le plancher (${cfg.CARTE_EMPRISE_MIN})`);
+  ok(avec(0.1).n === undefined,
+     'en dessous, non : un element qu on ne peut plus ni viser ni reprendre est'
+     + ' pose sur la carte pour toujours');
+  /* UNE case reste la valeur par defaut et ne s ecrit pas — mais « plus d une »
+     ne peut plus etre la regle : une demi-case doit s ecrire, sans quoi elle
+     redeviendrait une case entiere au prochain chargement. */
+  ok(avec(1).n === undefined, 'une case pile ne s ecrit toujours pas : c est le defaut');
+  ok(avec(0.99).n === 0.99, 'mais tout ce qui n est pas une case s ecrit, meme en dessous');
   /* Une emprise sur une case qui ne porte QUE du sol ne veut rien dire : c'est
      l'objet qui occupe de la place, pas le sol. */
   ok(v(carte('a', [{ c: 1, l: 1, s: 'grass', n: 4 }], 16)).cases[0].n === undefined,
@@ -468,7 +493,33 @@ console.log('\n-- plusieurs objets au meme endroit, chacun sur sa couche --');
   eq(g.vitrineCartes(A)[0].cases, 3, 'la fiche compte ce qui est POSE, sols et objets');
 }
 
-/* ================== 10. LES QUARTS DE TOUR DEJA ENREGISTRES ================== */
+/* ================== 10. LE MIROIR ================== */
+console.log('\n-- le miroir, le seul autre axe qu une image plate possede --');
+{
+  const v = Game.carteValide;
+  const avecM = (m) => v({ nom: 'a', cote: 16, cases: [],
+                           objets: [{ c: 1, l: 1, k: 'mur_ville', m }] }).objets[0];
+  /* Une planche n'a pas de troisieme dimension : la tourner autour de sa
+     verticale, c'est la RETOURNER. Un bit pour chaque sens. */
+  eq(avecM(1).m, 1, 'gauche-droite');
+  eq(avecM(2).m, 2, 'haut-bas');
+  eq(avecM(3).m, 3, 'et les deux, qui font un demi-tour');
+  ok(avecM(0).m === undefined, 'droit ne s ecrit pas : c est le cas de presque tous');
+  ok(avecM(4).m === undefined, 'et il n y a pas de troisieme axe a retourner');
+  ok(avecM(-1).m === undefined, 'ni de miroir negatif');
+  ok(avecM('gauche').m === undefined, 'ni de miroir qui ne soit pas un nombre');
+  const g = new Game();
+  const k = g.enregistreCarte(A, null, { nom: 'Miroirs', cote: 16, cases: [],
+                                         objets: [{ c: 2, l: 2, k: 'iso_hotel', m: 1, n: 3.5 }] });
+  eq(k.objets[0].m, 1, 'le miroir traverse l enregistrement');
+  eq(k.objets[0].n, 3.5, 'et l emprise fractionnaire avec lui');
+  const g2 = new Game();
+  g2.hydrate(JSON.parse(JSON.stringify(g.serialize())));
+  eq(g2.carte(k.id).objets[0].m, 1, 'et la sauvegarde');
+  eq(g2.carte(k.id).objets[0].n, 3.5, 'les deux');
+}
+
+/* ================== 11. LES QUARTS DE TOUR DEJA ENREGISTRES ================== */
 console.log('\n-- une carte enregistree avant les degres --');
 {
   const g = new Game();

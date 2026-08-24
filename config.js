@@ -722,6 +722,19 @@ module.exports = {
    * dans la pierre. C'est la que ca se corrige, pas ici. */
   CARTE_EMPRISE_MAX: parseInt(env('CARTE_EMPRISE_MAX', '64'), 10),
 
+  /* ---- ET LE PLANCHER, PARCE QU'UNE EMPRISE N'EST PLUS UN NOMBRE ENTIER ----
+   * Elle se comptait en cases pleines : d'une case on passait a deux, soit du
+   * simple au double. Sur une parcelle de quatre cases, le cran suivant en
+   * ajoutait vingt-cinq pour cent d'un coup, et il n'y avait rien entre les
+   * deux. Elle se compte donc au CENTIEME de case — un peu plus d'un pixel de
+   * monde, ce qui est plus fin que ce que l'oeil distingue a l'ecran.
+   *
+   * Un quart de case au minimum : trente-deux unites de monde, soit un tonneau
+   * vu de loin. En dessous, l'element est un point que l'on ne peut plus ni
+   * viser ni reprendre — et l'on aurait pose sur sa carte quelque chose qu'on
+   * ne peut plus retirer autrement qu'en le cherchant dans la liste. */
+  CARTE_EMPRISE_MIN: Number(env('CARTE_EMPRISE_MIN', '0.25')),
+
   /* ---- LES SALLES A ECRAN ----
    * La table est lue et commentee tout en haut de ce fichier. Elle est ICI,
    * a cote du plafond, parce que le plafond s'applique PAR SALLE : douze

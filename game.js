@@ -1184,12 +1184,23 @@ class Game {
      * est de bloquer sa PROPRE carte.
      * Bornee par le DOUBLE du cote : un fond doit pouvoir couvrir la carte et
      * deborder — sinon on voit ses bords — mais rien au-dela n'a de sens.
-     * Quatre valeurs de rotation et pas un angle libre : les planches sont des
-     * images de pixels. Les valeurs par defaut ne s'ecrivent pas. */
+     * Les valeurs par defaut ne s'ecrivent pas. */
     const empMax = Math.min(cfg.CARTE_EMPRISE_MAX, cote * 2);
+    const empMin = Math.max(0.01, Number(cfg.CARTE_EMPRISE_MIN) || 0.25);
     const garnis = (e, b) => {
-      const emp = Math.round(Number(b.n));
-      if (Number.isInteger(emp) && emp > 1 && emp <= empMax) e.n = emp;
+      /* ---- L'EMPRISE SE COMPTE AU CENTIEME DE CASE ----
+       * Elle etait un nombre ENTIER de cases : d'une case a deux, du simple
+       * au double, et rien entre les deux. Le proprietaire a demande plus de
+       * finesse — c'est exactement la meme demande que pour l'angle, et elle
+       * se regle de la meme facon.
+       * PAS DE MIGRATION : un entier reste un entier valide, les cartes deja
+       * enregistrees et les pages qui n'ont pas recharge n'y perdent rien. Le
+       * champ n'a pas change de sens, il a gagne deux decimales.
+       * Ecrit des qu'il vaut autre chose qu'UNE case — et non « plus d'une » :
+       * une demi-case est desormais une taille, et ne pas l'ecrire la
+       * ramenerait a une case entiere au prochain chargement. */
+      const emp = Math.round(Number(b.n) * 100) / 100;
+      if (Number.isFinite(emp) && emp >= empMin && emp <= empMax && emp !== 1) e.n = emp;
       /* ---- L'ANGLE EST EN DEGRES ----
        * C'etaient des quarts de tour, parce qu'une planche de pixels tournee
        * de dix-sept degres est floue. C'est toujours vrai, et le proprietaire
@@ -1213,6 +1224,17 @@ class Game {
       if (Number.isInteger(px) && px !== 0 && Math.abs(px) <= 100) e.dx = px;
       const py = Math.round(Number(b.dy));
       if (Number.isInteger(py) && py !== 0 && Math.abs(py) <= 100) e.dy = py;
+      /* ---- LE MIROIR : LE SEUL AUTRE AXE QU'UNE IMAGE PLATE POSSEDE ----
+       * Une planche n'a pas de troisieme dimension : la faire tourner autour
+       * de sa verticale ou de son horizontale, c'est la RETOURNER. Un bit
+       * pour chaque — un pour la gauche-droite, deux pour le haut-bas — et
+       * les deux ensemble font un demi-tour, ce qui est coherent et se
+       * verifie.
+       * Et c'est le seul retournement qui ne FLOUTE RIEN : un miroir echange
+       * des pixels, il n'en invente aucun, la ou un angle libre les
+       * interpole. */
+      const mir = Math.round(Number(b.m));
+      if (Number.isInteger(mir) && mir > 0 && mir < 4) e.m = mir;
       return e;
     };
     const par = new Map();
@@ -1333,7 +1355,7 @@ class Game {
       if (q.s) sols.push({ c: q.c, l: q.l, s: q.s });
       if (q.o) {
         const o = { c: q.c, l: q.l, k: q.o, z: 0 };
-        if (q.n > 1) o.n = q.n;
+        if (q.n && q.n !== 1) o.n = q.n;
         /* Le quart de tour de l'ancien format devient un angle. */
         if (q.a) o.g = q.a * 90;
         objets.push(o);

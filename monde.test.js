@@ -590,6 +590,34 @@ function alea(graine) {
      'une emprise plus grande bloque plus large');
   eq(large.obstacles[0].larg, 4 * M.DONJON_TUILE,
      'et la largeur dessinee vaut son emprise en tuiles');
+  /* ---- L EMPRISE FRACTIONNAIRE ARRIVE JUSQU AU BLOC ----
+   * Elle etait arrondie a UNE case au minimum : une demi-case aurait alors
+   * bloque quatre fois la surface de ce qu on voit, et l on se serait cogne
+   * dans du vide tout autour. */
+  const demi = M.planDeCarte(carte([], { c: 14, l: 14 }, null,
+    [{ c: 2, l: 2, k: 'iso_hotel', n: 0.5, z: 0 }]));
+  eq(demi.obstacles[0].larg, 0.5 * M.DONJON_TUILE,
+     'une demi-case se dessine sur une demi-tuile, et non sur une entiere');
+  const troisQuarts = M.planDeCarte(carte([], { c: 14, l: 14 }, null,
+    [{ c: 2, l: 2, k: 'iso_hotel', n: 2.75, z: 0 }]));
+  eq(troisQuarts.obstacles[0].larg, 2.75 * M.DONJON_TUILE,
+     'et deux cases trois quarts, sur deux tuiles trois quarts');
+  ok(troisQuarts.obstacles[0].r > large.obstacles[0].r * 0.6
+     && troisQuarts.obstacles[0].r < large.obstacles[0].r,
+     `le rayon suit, entre les deux : ${troisQuarts.obstacles[0].r} pour`
+     + ` ${etroit.obstacles[0].r} et ${large.obstacles[0].r}`);
+
+  /* ---- ET LE MIROIR PART AVEC LE BLOC ----
+   * La page le dessine, elle ne le devine pas : un miroir laisse au serveur
+   * et jamais transmis retournerait l element dans l editeur et pas dans le
+   * monde, ce qui est la pire facon de se tromper — les deux dessins se
+   * contrediraient sans que rien ne plante. */
+  const retourne = M.planDeCarte(carte([], { c: 14, l: 14 }, null,
+    [{ c: 2, l: 2, k: 'iso_hotel', m: 3, g: 47, z: 0 }]));
+  eq(retourne.obstacles[0].m, 3, 'le miroir voyage jusqu au bloc');
+  eq(retourne.obstacles[0].g, 47, 'et l angle avec lui');
+  eq(large.obstacles[0].m, 0, 'un element droit porte zero, et non rien du tout :'
+                              + ' une page qui lit un champ absent dessinerait au hasard');
 
   /* ---- LA COUCHE DEVIENT UN ORDRE, UNE FOIS POUR TOUTES ----
    * Un plan n'a pas de couches : il a une liste de blocs que la page dessine
