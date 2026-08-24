@@ -58,6 +58,110 @@ const SPORTS_EQUIPE = ['foot', 'nba', 'nfl', 'cricket'];
 const ISSUES = ISSUES_PAR_SPORT.foot;
 function issues(sport) { return ISSUES_PAR_SPORT[sport] || ISSUES; }
 
+/* ================== LES MARCHES ==================
+ *
+ * ---- CE QU'UN MARCHE EST ----
+ *
+ * Une question posee sur une rencontre, et la liste FERMEE de ses reponses.
+ * « Qui gagne » en est une ; « les deux equipes marquent-elles » en est une
+ * autre, posee sur le meme match et payee a d'autres gens.
+ *
+ * ---- POURQUOI UNE TABLE, ET UNE SEULE ----
+ *
+ * Chaque marche doit dire trois choses qui ne peuvent pas se contredire :
+ * quelles reponses il accepte, comment il se REGLE a partir du score, et
+ * combien de fois ses reponses couvrent l'espace des resultats. Eparpillees —
+ * la liste ici, le reglement dans `game.js`, la marge ailleurs — elles
+ * finiraient par ne plus parler du meme marche, et c'est celle qu'on oublie
+ * qui paie les mauvaises personnes.
+ *
+ * ---- LA COUVERTURE, ET POURQUOI ELLE N'EST PAS TOUJOURS UN ----
+ *
+ * La marge se mesure par « somme des 1/cote, moins un ». Ce « moins un »
+ * suppose que les reponses PARTAGENT l'espace : exactement une tombe. C'est
+ * vrai du 1-N-2, du oui-non, du plus-moins.
+ *
+ * C'est FAUX de la double chance : « 1X », « 12 » et « X2 » se recouvrent —
+ * chacun des trois resultats appartient a deux d'entre elles. La somme des
+ * vraies probabilites vaut donc DEUX, pas un. Mesurer sa marge avec « moins
+ * un » l'annoncerait a 105 % : le validateur accepterait n'importe quoi, y
+ * compris un lot ou la maison perd a coup sur. Chaque marche porte donc sa
+ * couverture, et la formule s'en sert.
+ *
+ * ---- LES LIGNES SONT DEMI-ENTIERES, ET C'EST DELIBERE ----
+ *
+ * Deux buts et demi, un but et demi de handicap : un total ne peut jamais
+ * tomber dessus. Une ligne entiere — « plus de 2 buts » avec un match a 2 —
+ * demanderait de REMBOURSER ce pari-la et lui seul, alors que le
+ * remboursement ne sait aujourd'hui annuler qu'une rencontre entiere. Une
+ * demi-ligne supprime le cas au lieu de le gerer.
+ */
+
+/* Les scores exacts proposes. Au-dela de trois buts par equipe on tombe sous
+   le pour-cent, et seize cases plus un « autre » tiennent deja mal a l'ecran.
+   « autre » est ce qui rend le marche complet : sans lui, un 4-0 ne paierait
+   personne ET ne perdrait personne, ce qui n'est pas un pari. */
+const SCORES = [];
+for (let a = 0; a <= 3; a++) for (let b = 0; b <= 3; b++) SCORES.push(a + '-' + b);
+SCORES.push('autre');
+
+const MARCHES = {
+  '1n2': {
+    nom: 'Match result', court: '1N2', couverture: 1, sports: null,
+    issues: (sport) => issues(sport),
+    gagne: (i, a, b) => i === resultatDuScore({ a, b }),
+  },
+  /* La double chance n'a de sens que la ou il y a TROIS issues : sur un sport
+     qui n'en a que deux, « 12 » couvre tout et se paierait a coup sur. */
+  dc: {
+    nom: 'Double chance', court: 'DC', couverture: 2, sports: ['foot'],
+    issues: () => ['1X', '12', 'X2'],
+    gagne: (i, a, b) => {
+      const r = resultatDuScore({ a, b });
+      return i === '1X' ? (r === '1' || r === 'N')
+           : i === '12' ? (r === '1' || r === '2')
+                        : (r === 'N' || r === '2');
+    },
+  },
+  btts: {
+    nom: 'Both teams to score', court: 'BTTS', couverture: 1, sports: ['foot'],
+    issues: () => ['oui', 'non'],
+    gagne: (i, a, b) => ((a > 0 && b > 0) === (i === 'oui')),
+  },
+  ou25: {
+    nom: 'Total goals', court: 'O/U 2.5', couverture: 1, sports: ['foot'], ligne: 2.5,
+    issues: () => ['plus', 'moins'],
+    gagne: (i, a, b) => ((a + b > 2.5) === (i === 'plus')),
+  },
+  score: {
+    nom: 'Correct score', court: 'Score', couverture: 1, sports: ['foot'],
+    issues: () => SCORES.slice(),
+    gagne: (i, a, b) => {
+      const s = a + '-' + b;
+      return i === 'autre' ? SCORES.indexOf(s) < 0 : i === s;
+    },
+  },
+  /* Le handicap porte TOUJOURS sur l'equipe a domicile, moins un but et demi.
+     Une ligne qui suivrait le favori demanderait de dire de quel cote elle
+     penche, en plus de sa valeur : deux champs a tenir d'accord pour une
+     question qui a une reponse fixe. Quand le domicile est l'outsider, la
+     cote le dit toute seule. */
+  hand: {
+    nom: 'Handicap', court: 'H -1.5', couverture: 1, sports: ['foot'], ligne: 1.5,
+    issues: () => ['1', '2'],
+    gagne: (i, a, b) => (i === '1' ? (a - b) >= 2 : (a - b) <= 1),
+  },
+};
+const MARCHE_BASE = '1n2';
+
+/** Les marches proposables sur ce sport. Le 1-N-2 vient toujours en tete. */
+function marchesDuSport(sport) {
+  return Object.keys(MARCHES).filter((k) => {
+    const M = MARCHES[k];
+    return !M.sports || M.sports.indexOf(String(sport)) >= 0;
+  });
+}
+
 /* Bornes de bon sens sur une cote. En dessous de 1,01 le pari ne rapporte
    rien et ressemble a une erreur ; au-dessus de 100 une mise au plafond
    engage la maison pour dix millions sur une faute de frappe. */
@@ -74,11 +178,26 @@ function nombre(x, quoi, id) {
   return v;
 }
 
-/** La marge du bookmaker sur un match, en fraction (0,099 = 9,9 %). */
-function marge(cotes, sport) {
+/**
+ * LA MARGE D'UN LOT DE COTES, en fraction (0,099 = 9,9 %).
+ *
+ * `couverture` est le nombre de fois que les reponses couvrent l'espace des
+ * resultats : un pour un marche ou exactement une reponse tombe, deux pour la
+ * double chance dont les reponses se recouvrent. Le prendre pour un
+ * systematiquement annoncerait la double chance a 105 % de marge et laisserait
+ * passer un lot ou la maison perd a coup sur.
+ */
+function margeDe(cotes, iss, couverture) {
   let s = 0;
-  for (const i of issues(sport)) s += 1 / cotes[i];
-  return s - 1;
+  for (const i of iss) s += 1 / cotes[i];
+  return s - (Number(couverture) || 1);
+}
+
+/** La marge du 1-N-2 d'un sport. Un raccourci sur `margeDe`, pas un second
+ *  calcul : deux formules de marge finiraient par ne plus rendre le meme
+ *  chiffre, et c'est celle qu'on ne relit pas qui laisse passer le mauvais lot. */
+function marge(cotes, sport) {
+  return margeDe(cotes, issues(sport), 1);
 }
 
 function valide(brut) {
@@ -104,17 +223,47 @@ function valide(brut) {
     const debut = Date.parse(m.debut);
     if (!isFinite(debut)) throw new Error(`paris : date de debut illisible sur « ${id} »`);
 
-    const cotes = {};
-    for (const i of issues(m.sport)) {
-      const c = nombre(m.cotes && m.cotes[i], `cote « ${i} »`, id);
-      if (c < COTE_MIN || c > COTE_MAX)
-        throw new Error(`paris : cote « ${i} » hors bornes sur « ${id} » (${c})`);
-      cotes[i] = c;
+    /* ---- LES MARCHES ----
+     * Un match en portait UN, ecrit a plat sous `cotes`. Il en porte
+     * plusieurs, et le 1-N-2 n'est que le premier d'entre eux.
+     * L'ANCIENNE FORME EST RELUE : un catalogue qui porte `cotes` a plat
+     * decrit son 1-N-2, et rien d'autre. Aucune migration a lancer, aucun
+     * fichier a reecrire — le jour ou l'import ecrira des marches, ils seront
+     * lus tels quels.
+     * Une seule forme VIT ensuite : `cotes` a plat ne survit pas a la lecture.
+     * Deux endroits ou lire la cote du « 1 », c'est un endroit de trop. */
+    const brutMarches = (m.marches && typeof m.marches === 'object')
+      ? m.marches
+      : { [MARCHE_BASE]: { cotes: m.cotes } };
+    const marches = {};
+    for (const cle of Object.keys(brutMarches)) {
+      const M = MARCHES[cle];
+      if (!M) throw new Error(`paris : marche inconnu « ${cle} » sur « ${id} »`);
+      if (M.sports && M.sports.indexOf(m.sport) < 0)
+        throw new Error(`paris : le marche « ${cle} » n existe pas en ${m.sport} (« ${id} »)`);
+      const iss = M.issues(m.sport);
+      const brut = brutMarches[cle] || {};
+      const src = brut.cotes || brut;
+      const cotes = {};
+      for (const i of iss) {
+        const c = nombre(src && src[i], `cote « ${cle}.${i} »`, id);
+        if (c < COTE_MIN || c > COTE_MAX)
+          throw new Error(`paris : cote « ${cle}.${i} » hors bornes sur « ${id} » (${c})`);
+        cotes[i] = c;
+      }
+      const mgm = margeDe(cotes, iss, M.couverture);
+      if (mgm < MARGE_MIN)
+        throw new Error(`paris : marge trop faible sur « ${id} » marche « ${cle} » ` +
+                        `(${(mgm * 100).toFixed(2)} %) — une cote a probablement ete ` +
+                        'recopiee de travers');
+      marches[cle] = { cotes, marge: mgm, issues: iss, couverture: M.couverture };
     }
-    const mg = marge(cotes, m.sport);
-    if (mg < MARGE_MIN)
-      throw new Error(`paris : marge trop faible sur « ${id} » (${(mg * 100).toFixed(2)} %) — ` +
-                      'une cote a probablement ete recopiee de travers');
+    /* Le 1-N-2 est OBLIGATOIRE. C'est le seul marche que tout sport porte, et
+       c'est celui dont le reglement deduit tous les autres : un match sans lui
+       serait affichable et impossible a trancher. */
+    if (!marches[MARCHE_BASE])
+      throw new Error(`paris : « ${id} » n a pas de marche « ${MARCHE_BASE} »`);
+    const mg = marches[MARCHE_BASE].marge;
 
     return {
       id, sport: String(m.sport),
@@ -127,7 +276,7 @@ function valide(brut) {
          chinoises a l'ecran plutot qu'un drapeau. */
       paysDomicile: /^[A-Z]{2}$/.test(m.paysDomicile || '') ? m.paysDomicile : null,
       paysExterieur: /^[A-Z]{2}$/.test(m.paysExterieur || '') ? m.paysExterieur : null,
-      debut, cotes, marge: mg, issues: issues(m.sport),
+      debut, marches, marge: mg, issues: issues(m.sport),
       /* D'ou vient la rencontre, quand elle a ete importee plutot qu'ecrite a
          la main. `paris_import.js --scores` s'en sert pour retrouver le match
          chez le fournisseur, et surtout pour n'interroger QUE les ligues qui
@@ -245,20 +394,50 @@ function rapport(cote, mise) {
   return Math.floor(Number(cote) * Number(mise) * 1e6) / 1e6;
 }
 
+/**
+ * LA COTE D'UNE REPONSE, ou `null` si le match ne porte pas ce marche.
+ *
+ * Passer par ici plutot que de fouiller `m.marches[c].cotes[i]` a chaque
+ * endroit : le jour ou la structure bouge, elle ne bouge qu'ici.
+ */
+function coteDe(m, cle, issue) {
+  const M = m && m.marches && m.marches[cle || MARCHE_BASE];
+  const c = M && M.cotes[issue];
+  return isFinite(c) ? c : null;
+}
+
+/**
+ * CETTE REPONSE GAGNE-T-ELLE SUR CE SCORE ?
+ *
+ * Le seul juge, et il ne connait que le score. C'est ce qui garantit que deux
+ * marches ne peuvent pas se contredire sur la meme rencontre : ils lisent le
+ * meme couple de nombres.
+ */
+function gagne(cle, issue, score) {
+  const M = MARCHES[cle || MARCHE_BASE];
+  if (!M || !score) return false;
+  return !!M.gagne(String(issue), Number(score.a), Number(score.b));
+}
+
 /** La vue publique d'un match, pour la page. */
 function vue(m, now) {
   return {
     id: m.id, sport: m.sport, competition: m.competition, pays: m.pays,
     domicile: m.domicile, exterieur: m.exterieur,
     paysDomicile: m.paysDomicile, paysExterieur: m.paysExterieur,
-    debut: m.debut, cotes: m.cotes, issues: m.issues,
+    debut: m.debut, issues: m.issues,
+    /* Les marches partent EN ENTIER : la page en affiche autant qu'elle en
+       sait dessiner, et celle qui n'en connait qu'un ignore le reste sans
+       rien casser. */
+    marches: m.marches,
     ouvert: m.debut > (now || Date.now()),
   };
 }
 
 module.exports = {
   ISSUES, ISSUES_PAR_SPORT, SPORTS_EQUIPE, issues, COTE_MIN, COTE_MAX, MARGE_MIN,
-  charge, catalogue, match, ouverts, rapport, vue, marge, valide,
+  charge, catalogue, match, ouverts, rapport, vue, marge, margeDe, valide,
   scoreLu, resultatDuScore,
+  MARCHES, MARCHE_BASE, SCORES, marchesDuSport, coteDe, gagne,
   FICHIER_DEPOT, FICHIER_VOLUME, fichier,
 };

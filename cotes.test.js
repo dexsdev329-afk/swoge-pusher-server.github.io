@@ -203,39 +203,53 @@ cotes.chargeNotes(TMP);
                   debut: new Date(Date.now() + 86400000).toISOString() };
   const a = cotes.habille(futur);
   ok(a.cotesGenerees, 'la premiere cote est fabriquee');
+  /* ---- LES COTES VIVENT DANS LEUR MARCHE ----
+   * Un match en portait UN, ecrit a plat sous `cotes`. Il en porte six, et le
+   * 1-N-2 n'est que le premier. Ce qu'on ECRIT ne porte que des marches ; ce
+   * qu'on RELIT accepte encore l'ancienne forme, sans quoi les catalogues
+   * deja sur le volume seraient a jeter. D'ou ce lecteur, qui lit les deux. */
+  const lotDe = (m) => (m.marches && m.marches[paris.MARCHE_BASE].cotes) || m.cotes;
+  ok(!a.cotes, "et le fichier ecrit ne porte PLUS de cotes a plat : deux endroits"
+     + " ou lire la cote du « 1 », c est un endroit de trop");
 
   cotes.poseNote('foot', 'GROS', 1950);        // le favori se revele
   const b = cotes.habille(a);
-  ok(b.cotes['1'] < a.cotes['1'] - 0.2,
-     `la cote se refait quand la force change (${a.cotes['1']} → ${b.cotes['1']})`);
+  ok(lotDe(b)['1'] < lotDe(a)['1'] - 0.2,
+     `la cote se refait quand la force change (${lotDe(a)['1']} → ${lotDe(b)['1']})`);
 
   /* Une rencontre COMMENCEE ne bouge plus : les paris y sont poses a la cote
      affichee, la changer apres coup changerait ce qui a ete accepte. */
   const commence = Object.assign({}, b, { debut: new Date(Date.now() - 3600000).toISOString() });
   cotes.poseNote('foot', 'GROS', 1300);
-  eq(cotes.habille(commence).cotes['1'], b.cotes['1'],
+  eq(lotDe(cotes.habille(commence))['1'], lotDe(b)['1'],
      'une rencontre commencee garde ses cotes, quoi qu il arrive aux forces');
 
   /* Et une cote RELEVEE A LA MAIN reste intouchable, elle. */
   const main = { id: 'refait-2', sport: 'foot', domicile: 'GROS', exterieur: 'PETIT',
                  debut: new Date(Date.now() + 86400000).toISOString(),
                  cotes: { 1: 1.9, N: 3.5, 2: 4.2 } };
-  eq(cotes.habille(main).cotes['1'], 1.9, 'une cote relevee a la main ne se refait jamais');
+  eq(lotDe(cotes.habille(main))['1'], 1.9, 'une cote relevee a la main ne se refait jamais');
 }
 
 // ---- une cote deja presente n'est JAMAIS remplacee
 {
   const m = { id: 'x-1', sport: 'foot', domicile: 'A', exterieur: 'B',
               debut: '2030-01-01T12:00:00Z', cotes: { 1: 1.9, N: 3.5, 2: 4.2 } };
+  const lot2 = (x) => (x.marches && x.marches[paris.MARCHE_BASE].cotes) || x.cotes;
   const h = cotes.habille(m);
-  eq(h.cotes['1'], 1.9, 'une cote relevee a la main survit');
+  eq(lot2(h)['1'], 1.9, 'une cote relevee a la main survit');
   ok(!h.cotesGenerees, 'et elle n est pas marquee comme fabriquee');
 
   const nu = { id: 'x-2', sport: 'foot', domicile: 'A', exterieur: 'B',
                debut: '2030-01-01T12:00:00Z' };
   const g = cotes.habille(nu);
   ok(g.cotesGenerees, 'une cote absente est fabriquee, et le dit');
-  ok(g.cotes['1'] > 1 && g.cotes.N > 1 && g.cotes['2'] > 1, 'et les trois sont la');
+  ok(lot2(g)['1'] > 1 && lot2(g).N > 1 && lot2(g)['2'] > 1, 'et les trois sont la');
+  /* ---- ET LES CINQ AUTRES MARCHES AVEC ----
+   * Ils ne coutent pas un credit d'API de plus : ils descendent du MEME couple
+   * de moyennes de buts que le 1-N-2, ajuste pour le reproduire. */
+  eq(Object.keys(g.marches).sort().join(','), '1n2,btts,dc,hand,ou25,score',
+     'une rencontre de football fabriquee porte les six marches');
 
   /* Une cote PARTIELLE est un piege : deux issues sur trois relevees, la
      troisieme oubliee. Elle doit etre completee, pas laissee telle quelle —
@@ -243,7 +257,8 @@ cotes.chargeNotes(TMP);
   const bancal = { id: 'x-3', sport: 'foot', domicile: 'A', exterieur: 'B',
                    debut: '2030-01-01T12:00:00Z', cotes: { 1: 1.9, N: 3.5 } };
   const r = cotes.habille(bancal);
-  ok(isFinite(Number(r.cotes['2'])), 'une cote partielle est refaite en entier');
+  ok(isFinite(Number(lot2(r)['2'])), 'une cote partielle est refaite en entier');
+  ok(!r.cotes, 'et elle repart en marches, sans laisser trainer l ancienne forme');
 }
 
 // ---- un catalogue entier passe le validateur du serveur

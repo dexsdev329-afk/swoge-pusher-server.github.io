@@ -3348,7 +3348,7 @@ class Game {
          qui quitte le catalogue emporte avec lui de quoi afficher ET de quoi
          regler le pari — le gagnant devient impayable. Quelques octets par
          pari contre de l'argent bloque : le choix n'en est pas un. */
-      return { match: m.id, choix, cote: m.cotes[choix],
+      return { match: m.id, choix, cote: paris.coteDe(m, paris.MARCHE_BASE, choix),
                domicile: m.domicile, exterieur: m.exterieur, debut: m.debut,
                sport: m.sport, competition: m.competition, issues: m.issues.slice() };
     });
@@ -3591,7 +3591,9 @@ class Game {
       sortie.push({
         id, sport: m.sport, competition: m.competition,
         domicile: m.domicile, exterieur: m.exterieur, debut: m.debut,
-        issues: m.issues.slice(), cotes: Object.assign({}, m.cotes),
+        issues: m.issues.slice(),
+        cotes: Object.assign({}, (m.marches && m.marches[paris.MARCHE_BASE]
+                                  || { cotes: {} }).cotes),
         paris: lignes.length, joueurs: joueurs.size, mise: Math.round(mise),
         expo: Object.fromEntries(m.issues.map((i) => [i, Math.round(expo[i] || 0)])),
         /* Depuis combien de temps elle attend. Une rencontre qui attend depuis

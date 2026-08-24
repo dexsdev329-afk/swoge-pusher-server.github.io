@@ -220,9 +220,17 @@ function probabilites(sport, domicile, exterieur) {
    de la borne du validateur que la marge devient fragile. */
 const COTE_PLANCHER = 1.03;
 
-/** L'exposant qui donne exactement la marge voulue. */
-function exposant(p, iss, marge) {
-  const cible = 1 + marge;
+/**
+ * L'exposant qui donne exactement la marge voulue.
+ *
+ * `couverture` est le nombre de fois que les reponses couvrent l'espace des
+ * resultats — un partout, sauf la double chance dont les trois reponses se
+ * recouvrent deux a deux. A `k = 1` la somme des probabilites vaut exactement
+ * cette couverture ; c'est de la qu'on part, et c'est pour ca qu'elle doit
+ * entrer dans la cible plutot que d'y etre supposee valoir un.
+ */
+function exposant(p, iss, marge, couverture) {
+  const cible = (Number(couverture) || 1) + marge;
   const somme = (k) => iss.reduce((t, i) => t + Math.pow(p[i], k), 0);
   let bas = 0.01, haut = 1;
   /* A k = 1 la somme vaut 1, donc toujours en dessous de la cible : c'est le
@@ -314,7 +322,14 @@ function cotesDe(sport, domicile, exterieur, margeVoulue) {
 function habille(m, margeVoulue, now) {
   if (!m || !m.sport) throw new Error('cotes : match sans sport');
   const iss = paris.issues(m.sport);
-  const deja = m.cotes && iss.every((i) => isFinite(Number(m.cotes[i])));
+  /* ---- « DEJA COTE » SE LIT DANS LES DEUX FORMES ----
+   * Ce qu'on ECRIT porte des marches ; ce qu'on RELIT peut encore porter des
+   * cotes a plat — les catalogues deja sur le volume ne se reecrivent pas
+   * tout seuls. Ne regarder que l'une des deux ferait refabriquer, a chaque
+   * passage, des cotes relevees a la main. */
+  const lot = (m.marches && m.marches[paris.MARCHE_BASE]
+               && m.marches[paris.MARCHE_BASE].cotes) || m.cotes;
+  const deja = lot && iss.every((i) => isFinite(Number(lot[i])));
   /* Une cote FABRIQUEE se refait tant que la rencontre n'a pas commence.
      C'est ce qui permet aux cotes de s'ameliorer : les forces Elo changent —
      un etalonnage, un resultat — et sans ce refus de se figer, tout le
@@ -328,12 +343,21 @@ function habille(m, margeVoulue, now) {
   const t = Number(now) || Date.now();
   const commence = isFinite(Date.parse(m.debut)) && Date.parse(m.debut) <= t;
   if (deja && (!m.cotesGenerees || commence)) return m;
-  return Object.assign({}, m, {
-    cotes: cotesDe(m.sport, m.domicile, m.exterieur, margeVoulue),
+  const marches = marchesDe(m.sport, m.domicile, m.exterieur, margeVoulue);
+  const sortie = Object.assign({}, m, {
+    /* ---- TOUS LES MARCHES, ET PLUS DE COTES A PLAT ----
+     * `cotes` disparait de ce qu'on ECRIT : le 1-N-2 vit dans `marches`
+     * comme les cinq autres. La lecture, elle, accepte encore l'ancienne
+     * forme — les catalogues deja sur le volume ne se reecrivent pas — mais
+     * un fichier ne doit pas porter les deux, sans quoi il y aurait deux
+     * endroits ou lire la cote du « 1 » et un jour pour les voir differer. */
+    marches,
     /* Une cote fabriquee se dit. Le jour ou un pari se conteste, on veut
        savoir d'ou venait le chiffre. */
     cotesGenerees: true,
   });
+  delete sortie.cotes;
+  return sortie;
 }
 
 /** Completer un catalogue entier, puis le VALIDER comme le fera le serveur. */
@@ -345,8 +369,208 @@ function habilleCatalogue(brut, margeVoulue) {
   return sortie;
 }
 
+/* ================== LE MODELE DE BUTS ==================
+ *
+ * ---- POURQUOI IL FAUT UN MODELE, ET PAS SEULEMENT DES PROBABILITES ----
+ *
+ * L'Elo repond a une seule question : qui gagne. « Les deux equipes
+ * marquent-elles », « y aura-t-il plus de deux buts et demi », « quel score
+ * exact » sont des questions sur les BUTS, et un 1-0 et un 3-2 donnent la meme
+ * reponse a l'Elo en donnant des reponses opposees a celles-la.
+ *
+ * ---- LE MODELE ----
+ *
+ * Chaque equipe marque selon une loi de Poisson, de moyenne `lh` et `la`. Le
+ * couple de nombres qu'elles marquent suit donc le produit des deux lois, et
+ * TOUS les marches se lisent dans cette grille : « les deux marquent » est la
+ * somme des cases ou les deux indices sont non nuls, « plus de 2,5 » la somme
+ * de celles dont les indices totalisent trois ou plus, le score exact une case.
+ * Un seul modele, six marches — ils ne peuvent pas se contredire.
+ *
+ * ---- ET SES DEUX MOYENNES SE DEDUISENT DE L'ELO ----
+ *
+ * On ne les invente pas : on cherche le couple qui REPRODUIT les probabilites
+ * 1-N-2 deja calculees. Deux inconnues, deux cibles — le total de buts et la
+ * part de l'equipe a domicile — et chacune est monotone dans la cible qui lui
+ * revient, donc deux dichotomies imbriquees suffisent et convergent toujours.
+ *
+ * Le nouveau marche est ainsi ACCROCHE a l'ancien : impossible d'afficher un
+ * « plus de 2,5 » qui contredise le « 1 » affiche a cote, puisque les deux
+ * sortent du meme couple de nombres.
+ *
+ * ---- CE QUE LE MODELE IGNORE ----
+ *
+ * Deux lois de Poisson independantes sous-estiment les tres petits scores :
+ * dans la vraie vie, 0-0 et 1-1 arrivent un peu plus souvent que le produit ne
+ * le dit. La correction usuelle — Dixon-Coles — n'est pas appliquee ici : elle
+ * demande un parametre de plus, estime sur des milliers de matchs qu'on n'a
+ * pas. L'ajustement du TOTAL sur la probabilite de nul la compense en partie,
+ * et la marge — plus haute que celle d'un bookmaker, deliberement — absorbe le
+ * reste. C'est le meme aveu que pour l'Elo : le modele ne sait pas tout, et
+ * c'est la marge qui paie son ignorance.
+ */
+
+/* Douze buts par equipe. La queue au-dela pese moins d'un millionieme meme
+   pour une moyenne de quatre, et il faut bien s'arreter : une grille infinie
+   ne se somme pas. */
+const BUTS_MAX = 12;
+
+function poisson(lam, k) {
+  let p = Math.exp(-lam);
+  for (let i = 1; i <= k; i++) p = p * lam / i;
+  return p;
+}
+
+/** La grille des scores : `g[i][j]` = probabilite de i buts a j. */
+function grilleDesScores(lh, la) {
+  const ph = [], pa = [];
+  for (let i = 0; i <= BUTS_MAX; i++) { ph.push(poisson(lh, i)); pa.push(poisson(la, i)); }
+  const g = [];
+  for (let i = 0; i <= BUTS_MAX; i++) {
+    const r = [];
+    for (let j = 0; j <= BUTS_MAX; j++) r.push(ph[i] * pa[j]);
+    g.push(r);
+  }
+  return g;
+}
+
+/** Les trois issues, lues dans la grille. */
+function issuesDeLaGrille(g) {
+  let un = 0, nul = 0, deux = 0;
+  for (let i = 0; i <= BUTS_MAX; i++)
+    for (let j = 0; j <= BUTS_MAX; j++) {
+      if (i > j) un += g[i][j]; else if (i < j) deux += g[i][j]; else nul += g[i][j];
+    }
+  return { 1: un, N: nul, 2: deux };
+}
+
+/**
+ * LES DEUX MOYENNES DE BUTS QUI REPRODUISENT CES PROBABILITES.
+ *
+ * Dichotomie imbriquee : le TOTAL au-dehors — plus il monte, moins le nul est
+ * probable — et la PART du domicile au-dedans — plus elle monte, plus le
+ * rapport entre les deux victoires penche de son cote. Chacune est strictement
+ * monotone dans sa cible, donc chacune converge, et la boucle interieure
+ * retablit exactement le rapport a chaque essai de l'exterieure.
+ */
+function ajusteButs(p1, pN, p2) {
+  const rapportVoulu = p1 / Math.max(1e-9, p1 + p2);
+  const partPour = (total) => {
+    let bas = 0.05, haut = 0.95;
+    for (let t = 0; t < 40; t++) {
+      const x = (bas + haut) / 2;
+      const q = issuesDeLaGrille(grilleDesScores(total * x, total * (1 - x)));
+      if (q[1] / Math.max(1e-9, q[1] + q[2]) < rapportVoulu) bas = x; else haut = x;
+    }
+    return (bas + haut) / 2;
+  };
+  /* Entre un but et demi et six : en dessous le football n'existe pas, au-dessus
+     non plus. Les bornes ne sont pas un reglage, elles empechent la dichotomie
+     de partir chercher une solution absurde quand la cible est inatteignable —
+     un nul a 45 %, par exemple, qu'aucun couple de Poisson ne produit. */
+  let bas = 1.5, haut = 6.0;
+  for (let t = 0; t < 40; t++) {
+    const T = (bas + haut) / 2;
+    const q = issuesDeLaGrille(grilleDesScores(T * partPour(T), T * (1 - partPour(T))));
+    if (q.N > pN) bas = T; else haut = T;      // plus de buts, moins de nuls
+  }
+  const T = (bas + haut) / 2, x = partPour(T);
+  return { lh: T * x, la: T * (1 - x), total: T };
+}
+
+/**
+ * LES PROBABILITES DE CHAQUE MARCHE, toutes lues dans la meme grille.
+ *
+ * C'est ce qui garantit qu'ils ne peuvent pas se contredire : « les deux
+ * marquent » et « plus de 2,5 buts » ne sont pas deux estimations separees,
+ * ce sont deux facons de sommer les memes cases.
+ */
+function probasDesMarches(lh, la) {
+  const g = grilleDesScores(lh, la);
+  const iss = issuesDeLaGrille(g);
+  let btts = 0, plus = 0, hand1 = 0;
+  const exact = {};
+  for (const s of paris.SCORES) exact[s] = 0;
+  for (let i = 0; i <= BUTS_MAX; i++)
+    for (let j = 0; j <= BUTS_MAX; j++) {
+      const q = g[i][j];
+      if (i > 0 && j > 0) btts += q;
+      if (i + j > 2.5) plus += q;
+      if (i - j >= 2) hand1 += q;
+      const cle = i + '-' + j;
+      if (exact[cle] !== undefined) exact[cle] += q; else exact.autre += q;
+    }
+  return {
+    '1n2': iss,
+    dc: { '1X': iss[1] + iss.N, 12: iss[1] + iss[2], X2: iss.N + iss[2] },
+    btts: { oui: btts, non: 1 - btts },
+    ou25: { plus, moins: 1 - plus },
+    score: exact,
+    hand: { 1: hand1, 2: 1 - hand1 },
+  };
+}
+
+/**
+ * HABILLER UN LOT DE PROBABILITES EN COTES.
+ *
+ * La meme methode par puissance que le 1-N-2, et le meme controle apres
+ * arrondi : c'est la marge REELLE, celle qui sera relue dans le catalogue, qui
+ * doit tenir — pas celle qu'on croyait appliquer.
+ * Rend `null` quand le marche ne tient pas : une reponse a 99 % ne se cote pas
+ * sans descendre sous la borne du validateur. On l'ECARTE plutot que de
+ * proposer un pari a 1,01 sur lequel la maison ne gagne rien.
+ */
+function habilleUnMarche(p, iss, couverture, margeVoulue) {
+  let m = Math.max(MARGE_PLANCHER, Number(margeVoulue) || MARGE_DEFAUT);
+  for (let essai = 0; essai < 60; essai++) {
+    const k = exposant(p, iss, m, couverture);
+    const c = {};
+    let plusCourte = Infinity;
+    for (const i of iss) {
+      const v = Math.min(paris.COTE_MAX, Math.max(paris.COTE_MIN, 1 / Math.pow(p[i], k)));
+      c[i] = Math.round(v * 100) / 100;
+      plusCourte = Math.min(plusCourte, c[i]);
+    }
+    const reelle = paris.margeDe(c, iss, couverture);
+    if (reelle >= paris.MARGE_MIN && plusCourte >= COTE_PLANCHER) return { cotes: c, marge: reelle };
+    if (plusCourte < COTE_PLANCHER) return null;   // aucune marge ne sauvera ca
+    m += 0.005;
+  }
+  return null;
+}
+
+/**
+ * TOUS LES MARCHES D'UNE RENCONTRE, cotes.
+ *
+ * Le 1-N-2 reste celui que `tarife` produit — on ne le refait pas depuis la
+ * grille : il est deja calcule, deja eprouve, et le recalculer autrement le
+ * ferait diverger de lui-meme au troisieme chiffre. Les autres en descendent.
+ */
+function marchesDe(sport, domicile, exterieur, margeVoulue) {
+  const base = cotesDe(sport, domicile, exterieur, margeVoulue);
+  const sortie = { [paris.MARCHE_BASE]: { cotes: base } };
+  const dispo = paris.marchesDuSport(sport).filter((k) => k !== paris.MARCHE_BASE);
+  if (!dispo.length) return sortie;
+  const p = probabilites(sport, domicile, exterieur);
+  if (!isFinite(p.N)) return sortie;             // deux issues : pas de buts a modeliser
+  const { lh, la } = ajusteButs(p[1], p.N, p[2]);
+  const tout = probasDesMarches(lh, la);
+  for (const k of dispo) {
+    const M = paris.MARCHES[k];
+    const iss = M.issues(sport);
+    const lot = habilleUnMarche(tout[k], iss, M.couverture, margeVoulue);
+    /* Un marche qui ne tient pas est ECARTE, pas force. La rencontre garde les
+       autres — refuser tout le match parce qu'un handicap sort des bornes
+       priverait de pari une affiche parfaitement cotable. */
+    if (lot) sortie[k] = { cotes: lot.cotes };
+  }
+  return sortie;
+}
+
 module.exports = {
   NOTE_DEFAUT, TERRAIN, NUL_MAX, NUL_PENTE, MARGE_DEFAUT, MARGE_PLANCHER, COTE_PLANCHER, exposant, tarife, cotable,
   chargeNotes, notes, cle, note, poseNote, sauveNotes, apprend,
   probabilites, cotesDe, habille, habilleCatalogue,
+  BUTS_MAX, poisson, grilleDesScores, issuesDeLaGrille, ajusteButs,
+  probasDesMarches, habilleUnMarche, marchesDe,
 };

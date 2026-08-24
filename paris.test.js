@@ -119,12 +119,149 @@ function jeu(credit) {
   const g = jeu();
   g.parie(A, M, '1', 1000, AVANT);
   const m = paris.match(M);
-  const vraie = m.cotes['1'];
-  m.cotes['1'] = 1.10;                       // quelqu un « corrige » le catalogue
+  /* Les cotes vivent DANS leur marche depuis qu'un match en porte plusieurs :
+     le 1-N-2 n'est que le premier d'entre eux. */
+  const lot = m.marches[paris.MARCHE_BASE].cotes;
+  const vraie = lot['1'];
+  lot['1'] = 1.10;                           // quelqu un « corrige » le catalogue
   try {
     const r = g.regleMatch(M, '1');
     eq(r.paye, 2120, 'le pari est paye a la cote ACCEPTEE (2,12), pas a la nouvelle');
-  } finally { m.cotes['1'] = vraie; }
+  } finally { lot['1'] = vraie; }
+}
+
+// ================================ LES SIX MARCHES
+/*
+ * ---- CE QUI ETAIT DEMANDE ----
+ * « Les deux equipes marquent, double chance, plus/moins de 2,5 buts, score
+ * exact, handicap. »
+ *
+ * ---- CE QU UN MARCHE DOIT DIRE, ET POURQUOI EN UN SEUL ENDROIT ----
+ * Quelles reponses il accepte, comment il se REGLE a partir du score, et
+ * combien de fois ses reponses couvrent l espace des resultats. Eparpillees,
+ * elles finiraient par ne plus parler du meme marche — et c est celle qu on
+ * oublie qui paie les mauvaises personnes.
+ */
+{
+  eq(paris.marchesDuSport('foot').join(','), '1n2,dc,btts,ou25,score,hand',
+     'le football porte les six marches');
+  eq(paris.marchesDuSport('tennis').join(','), '1n2',
+     'le tennis n en porte qu un : une double chance sur deux issues couvrirait'
+     + ' tout et se paierait a coup sur');
+  eq(paris.marchesDuSport('nba').join(','), '1n2', 'la NBA non plus');
+}
+/* ---- CHAQUE MARCHE SE REGLE DEPUIS LE SCORE, ET RIEN D AUTRE ----
+ * C est ce qui garantit que deux marches ne peuvent pas se contredire sur la
+ * meme rencontre : ils lisent le meme couple de nombres. */
+{
+  const g2 = (c, i, s) => paris.gagne(c, i, paris.scoreLu(s));
+  ok(g2('1n2', '1', '2-1') && !g2('1n2', '1', '1-2'), '1-N-2 : le domicile l emporte');
+  ok(g2('1n2', 'N', '1-1'), 'et le nul se lit dans l egalite');
+
+  ok(g2('btts', 'oui', '2-1'), 'les deux equipes marquent sur un 2-1');
+  ok(g2('btts', 'non', '2-0'), 'et non sur un 2-0');
+  ok(g2('btts', 'non', '0-0'), 'ni sur un 0-0');
+  ok(!g2('btts', 'oui', '3-0'), "trois buts d un cote ne suffisent pas : c est l AUTRE"
+     + ' qui doit marquer aussi');
+
+  ok(g2('dc', '1X', '1-0') && g2('dc', '1X', '1-1') && !g2('dc', '1X', '0-1'),
+     'double chance 1X : la victoire a domicile ou le nul');
+  ok(g2('dc', '12', '1-0') && g2('dc', '12', '0-1') && !g2('dc', '12', '1-1'),
+     'double chance 12 : l un ou l autre, mais pas le nul');
+  ok(g2('dc', 'X2', '1-1') && g2('dc', 'X2', '0-1') && !g2('dc', 'X2', '1-0'),
+     'double chance X2 : le nul ou l exterieur');
+
+  ok(g2('ou25', 'plus', '2-1') && !g2('ou25', 'plus', '1-1'),
+     'plus de deux buts et demi : trois buts oui, deux non');
+  ok(g2('ou25', 'moins', '2-0') && g2('ou25', 'moins', '0-0'),
+     'et le moins prend tout ce qui est en dessous');
+
+  ok(g2('score', '2-1', '2-1') && !g2('score', '2-1', '1-2'),
+     'le score exact ne pardonne pas le sens');
+  ok(g2('score', 'autre', '5-0') && !g2('score', 'autre', '2-1'),
+     "« autre » ramasse ce que la grille ne nomme pas — sans lui, un 5-0 ne"
+     + ' paierait personne ET ne perdrait personne, ce qui n est pas un pari');
+
+  ok(g2('hand', '1', '2-0') && !g2('hand', '1', '2-1'),
+     'handicap moins un but et demi : il faut gagner de DEUX');
+  ok(g2('hand', '2', '2-1') && g2('hand', '2', '0-0') && g2('hand', '2', '1-3'),
+     'et l autre reponse prend tout le reste');
+}
+/* ---- LA DEMI-LIGNE SUPPRIME LE REMBOURSEMENT AU LIEU DE LE GERER ----
+ * Une ligne ENTIERE — « plus de 2 buts » sur un match a 2 — demanderait
+ * d annuler ce pari-la et lui seul, alors que le remboursement ne sait
+ * aujourd hui annuler qu une rencontre entiere. Sur toute la grille des
+ * scores plausibles, exactement une reponse tombe, jamais zero ni deux. */
+{
+  for (const [cle, iss] of [['ou25', ['plus', 'moins']], ['hand', ['1', '2']],
+                            ['btts', ['oui', 'non']], ['1n2', ['1', 'N', '2']]]) {
+    let toujoursUne = true;
+    for (let a2 = 0; a2 <= 6; a2++) for (let b2 = 0; b2 <= 6; b2++) {
+      const n2 = iss.filter((i) => paris.gagne(cle, i, { a: a2, b: b2 })).length;
+      if (n2 !== 1) toujoursUne = false;
+    }
+    ok(toujoursUne, `« ${cle} » : sur les quarante-neuf scores de zero a six,`
+       + ' exactement une reponse tombe — jamais zero, jamais deux');
+  }
+  /* La double chance, elle, en fait tomber DEUX sur trois. Ce n est pas un
+     defaut, c est sa definition — et c est pourquoi sa marge se mesure
+     autrement. */
+  let deuxPartout = true;
+  for (let a2 = 0; a2 <= 6; a2++) for (let b2 = 0; b2 <= 6; b2++) {
+    const n2 = ['1X', '12', 'X2'].filter((i) => paris.gagne('dc', i, { a: a2, b: b2 })).length;
+    if (n2 !== 2) deuxPartout = false;
+  }
+  ok(deuxPartout, 'la double chance en fait tomber DEUX sur trois, toujours :'
+     + ' c est sa definition, et c est pourquoi sa couverture vaut deux');
+}
+/* ---- ET LA MARGE SE MESURE AVEC LA COUVERTURE ----
+ * La prendre pour un annoncerait la double chance a 105 % et laisserait passer
+ * un lot ou la maison perd a coup sur. On le PROUVE en fabriquant un lot juste
+ * — marge nulle — et en verifiant que les deux lectures ne disent pas la meme
+ * chose. */
+{
+  const juste = { '1X': 1 / 0.6, 12: 1 / 0.75, X2: 1 / 0.65 };   // somme des probas = 2
+  const bonne = paris.margeDe(juste, ['1X', '12', 'X2'], 2);
+  const fausse = paris.margeDe(juste, ['1X', '12', 'X2'], 1);
+  ok(Math.abs(bonne) < 1e-9,
+     `un lot juste a une marge nulle quand on compte la couverture (${bonne.toFixed(6)})`);
+  ok(fausse > 0.9,
+     `et l annoncerait a ${(fausse * 100).toFixed(0)} % si on la prenait pour un —`
+     + ' le validateur laisserait alors passer n importe quoi');
+}
+/* ---- LE CATALOGUE REFUSE CE QU IL NE SAIT PAS REGLER ---- */
+{
+  const base = JSON.parse(JSON.stringify(
+    { sports: [{ cle: 'foot', nom: 'Football', actif: true }],
+      matchs: [{ id: 'essai-marches', sport: 'foot', domicile: 'A', exterieur: 'B',
+                 debut: '2030-01-01T12:00:00Z',
+                 marches: { '1n2': { cotes: { 1: 2.4, N: 3.4, 2: 3.0 } },
+                            btts: { cotes: { oui: 1.8, non: 1.9 } } } }] }));
+  const v = paris.valide(base);
+  eq(Object.keys(v.matchs[0].marches).sort().join(','), '1n2,btts',
+     'un match peut porter plusieurs marches');
+  eq(paris.coteDe(v.matchs[0], 'btts', 'oui'), 1.8, 'et chacun garde ses cotes');
+
+  const casse2 = (f, re, quoi) => {
+    const c = JSON.parse(JSON.stringify(base)); f(c);
+    jete(() => paris.valide(c), re, quoi);
+  };
+  casse2((c) => { delete c.matchs[0].marches['1n2']; }, /n a pas de marche/,
+     'un match sans 1-N-2 est refuse : c est le seul que tout sport porte, et'
+     + ' celui dont le reglement deduit les autres');
+  casse2((c) => { c.matchs[0].marches.zzz = { cotes: { a: 2 } }; }, /marche inconnu/,
+     'un marche que personne ne sait regler est refuse');
+  casse2((c) => { c.matchs[0].sport = 'tennis';
+                  c.sports.push({ cle: 'tennis', nom: 'Tennis', actif: true });
+                  /* Une vraie marge sur le 1-N-2 : sans elle c est LUI qui
+                     tomberait en premier, et l'essai croirait avoir prouve le
+                     refus du marche alors qu'il n'aurait prouve que le sien. */
+                  c.matchs[0].marches['1n2'] = { cotes: { 1: 1.8, 2: 2.0 } }; },
+     /n existe pas en tennis/, 'ni un marche que le sport ne porte pas');
+  casse2((c) => { delete c.matchs[0].marches.btts.cotes.non; }, /cote « btts.non »/,
+     'une reponse sans cote est refusee, et le message NOMME laquelle');
+  casse2((c) => { c.matchs[0].marches.btts.cotes.oui = 8; }, /marge trop faible/,
+     'et un lot sans marge aussi, marche par marche');
 }
 
 // ============================ ON REGLE PAR LE SCORE, ET LE RESULTAT S EN DEDUIT
@@ -391,7 +528,7 @@ const T3 = 'atp-20260815-fer-duc';   // Fery 1.53 / Duckworth 2.24
   const grosses = [{ match: T1, choix: '2' }, { match: T2, choix: '2' },
                    { match: T3, choix: '2' }, { match: 'atp-20260815-hal-dem', choix: '1' }];
   let cote = 1;
-  for (const j of grosses) cote *= paris.match(j.match).cotes[j.choix];
+  for (const j of grosses) cote *= paris.coteDe(paris.match(j.match), paris.MARCHE_BASE, j.choix);
   ok(cote > 50, `quatre outsiders font une cote de ${cote.toFixed(1)}`);
   jete(() => g.parieCombine(A, grosses, cfg.PARI_MAX, AVANT), /the cap is/,
        'au plafond de mise, ce combine depasse le gain maximum et il est refuse');

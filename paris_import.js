@@ -402,7 +402,14 @@ async function importeMatchs() {
                     domicile: h.domicile, exterieur: h.exterieur,
                     paysDomicile: h.paysDomicile || null, paysExterieur: h.paysExterieur || null,
                     debut: h.debut,
-                    cotes: h.cotes, cotesGenerees: !!h.cotesGenerees, source: h.source });
+                    /* ---- LES MARCHES, ET NON PLUS LES COTES A PLAT ----
+                       Six questions par rencontre au lieu d'une, toutes
+                       descendues du MEME couple de moyennes de buts. `habille`
+                       rend l'une ou l'autre forme selon ce qu'il a recu : une
+                       cote relevee a la main reste ou elle est, on ne la
+                       reecrit pas pour le plaisir de la ranger. */
+                    marches: h.marches, cotes: h.marches ? undefined : h.cotes,
+                    cotesGenerees: !!h.cotesGenerees, source: h.source });
   }
   if (ecartes.length) {
     /* On NOMME ce qui a ete jete. Un import qui rogne en silence se lit comme
