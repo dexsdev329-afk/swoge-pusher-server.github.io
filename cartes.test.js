@@ -83,6 +83,42 @@ console.log('-- ce qui entre, et ce qui est refuse --');
   eq(double.cases.find((k) => k.c === 3).s, 'dirt', 'et c est la derniere qui gagne');
 }
 
+/* ================== 1 bis. LES PLAFONDS PASSENT PAR LE TUYAU ================== */
+console.log('\n-- une carte pleine tient-elle dans une trame --');
+{
+  /* ---- LE CHIFFRE VIENT DU SERVEUR, PAS D'ICI ----
+   * `maxPayload` est une protection globale posee bien avant ces cartes, et
+   * qui agit AVANT toute validation : une trame plus grosse est refusee par la
+   * socket, pas par le reglement. Des plafonds plus larges qu'elle seraient un
+   * mensonge — la carte serait acceptee par les regles et rejetee par le
+   * tuyau, et personne ne comprendrait pourquoi son travail ne s'enregistre
+   * pas.
+   * Le lien entre les deux est trop facile a rompre pour ne vivre que dans un
+   * commentaire : on relit donc la valeur dans `server.js`. La recopier ici
+   * aurait fait deux nombres a tenir d'accord, et c'est toujours le second
+   * qu'on oublie. */
+  const fs = require('fs');
+  const src = fs.readFileSync(require('path').join(__dirname, 'server.js'), 'utf8');
+  const mp = /maxPayload:\s*(\d+)\s*\*\s*(\d+)/.exec(src);
+  ok(!!mp, 'la trame maximale se lit dans server.js');
+  const MAX = Number(mp[1]) * Number(mp[2]);
+
+  /* La pire carte que le reglement accepte : le cote au plafond, toutes les
+     cases remplies, et chacune portant un sol ET un objet aux noms les plus
+     longs qu'une cle autorise. */
+  const long = 'x'.repeat(24);   // la borne du reglement, pas une cle realiste
+  const pire = [];
+  for (let c = 0; c < cfg.CARTE_COTE; c++) {
+    for (let l = 0; l < cfg.CARTE_COTE; l++) pire.push({ c, l, s: long, o: long });
+  }
+  ok(pire.length <= cfg.CARTE_CASES,
+     `une carte pleine (${pire.length} cases) tient sous le plafond d envoi (${cfg.CARTE_CASES})`);
+  const poids = JSON.stringify({ type: 'carteEnregistre', id: 999999,
+                                 carte: { nom: long, cote: cfg.CARTE_COTE, cases: pire } }).length;
+  ok(poids < MAX,
+     `et le message entier pese ${Math.round(poids / 1024)} ko, sous la trame de ${Math.round(MAX / 1024)} ko`);
+}
+
 /* ================== 2. LA PROPRIETE ================== */
 console.log('\n-- qui peut ecrire --');
 {

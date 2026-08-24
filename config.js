@@ -623,12 +623,36 @@ module.exports = {
    *   CARTES_PAR_COMPTE  combien de cartes un compte peut garder. Sans lui,
    *                un seul compte remplit le disque en boucle.
    *
-   * Les chiffres sont poses pour qu'une carte tienne largement dans ce qu'on
-   * echange deja : trente-deux mille cases a une dizaine d'octets font trois
-   * cent vingt kilo-octets au pire, et une carte pleine de cette taille est
-   * deja un gros travail. */
-  CARTE_COTE: parseInt(env('CARTE_COTE', '96'), 10),
-  CARTE_CASES: parseInt(env('CARTE_CASES', '32000'), 10),
+   * ---- ET LES CHIFFRES SONT DICTES PAR LA TRAME, PAS CHOISIS ----
+   *
+   * La socket refuse toute trame de plus de 256 kilo-octets — c'est une
+   * protection globale, posee bien avant ces cartes, et qui agit AVANT toute
+   * validation. Des plafonds plus larges qu'elle seraient un mensonge : la
+   * carte serait acceptee par le reglement et rejetee par le tuyau, sans que
+   * personne ne comprenne pourquoi son travail ne s'enregistre pas.
+   * ---- ET IL FAUT COMPTER LE PIRE QUE LE REGLEMENT AUTORISE ----
+   *
+   * Premiere tentative : cote 64, cinq mille cases, calcules sur des cles
+   * REALISTES (« grass », « boxe »), soit 186 ko. L'essai a refuse — parce que
+   * le reglement, lui, autorise des cles de vingt-quatre caracteres, et la
+   * pire carte permise pesait 375 ko. Un plafond doit tenir pour ce qu'il
+   * PERMET, pas pour ce qu'on imagine qu'on enverra.
+   * Le calcul refait sur le pire cas, avec vingt pour cent de marge :
+   *   cle 20 -> 70 octets par case -> cote 54
+   *   cle 24 -> 78 octets par case -> cote 51
+   *   cle 32 -> 94 octets par case -> cote 47
+   * La plus longue cle REELLE du catalogue fait vingt (`pet_shiba_legendaire`),
+   * d'ou vingt-quatre : de la marge pour les noms a venir, sans plus.
+   * Un carre de 48 fait 2304 cases, soit plus de TROIS FOIS la surface du
+   * Nexus, qui en compte 644. Le jour ou l'on voudra plus grand, ce ne sera pas
+   * en relevant ce chiffre : il faudra un format compact — des indices dans une
+   * palette au lieu de noms repetes — et ce changement-la se fait exprès, pas
+   * en le decouvrant.
+   * Le plafond de cases est au-dessus de 48x48 : il borne l'ENVELOPPE recue,
+   * avant qu'on ecarte les doublons, et rien n'empeche un envoi de repeter la
+   * meme case. */
+  CARTE_COTE: parseInt(env('CARTE_COTE', '48'), 10),
+  CARTE_CASES: parseInt(env('CARTE_CASES', '2600'), 10),
   CARTES_PAR_COMPTE: parseInt(env('CARTES_PAR_COMPTE', '24'), 10),
   /* Le nom que le joueur donne a sa carte. Compte en points de code, comme
      tout ce qui vient d'un clavier ici. */

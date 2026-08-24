@@ -1097,7 +1097,12 @@ class Game {
   static cleElement(v) {
     const t = String(v == null ? '' : v).trim();
     if (!t) return null;
-    return /^[a-z0-9_]{1,32}$/.test(t) ? t : null;
+    /* VINGT-QUATRE, et ce n'est pas un chiffre rond pris au hasard : la plus
+       longue cle du catalogue fait vingt (`pet_shiba_legendaire`), et c'est la
+       longueur de cle qui decide de ce qu'une carte pleine PESE — voir le
+       calcul dans config.js. Chaque caractere autorise ici retire des cases a
+       la carte la plus grande qu'on puisse envoyer. */
+    return /^[a-z0-9_]{1,24}$/.test(t) ? t : null;
   }
 
   static carteValide(x) {
