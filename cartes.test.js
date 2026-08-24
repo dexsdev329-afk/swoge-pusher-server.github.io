@@ -310,4 +310,54 @@ console.log('\n-- la galerie ne grossit pas sans fin --');
      'meme la plus ancienne des siennes, sous cent cartes plus recentes');
 }
 
+/* ================== 8. OU L ON ARRIVE, ET CE QUI BLOQUE ================== */
+console.log('\n-- le point de depart --');
+{
+  const v = Game.carteValide;
+  eq(v(carte('a', case1)).depart, null,
+     'une carte sans depart est valide : elle n est simplement pas encore jouable');
+  const d = v(Object.assign(carte('a', case1, 16), { depart: { c: 3, l: 4 } })).depart;
+  eq(d.c + ',' + d.l, '3,4', 'un depart pose est garde');
+  eq(v(Object.assign(carte('a', case1, 16), { depart: { c: 30, l: 2 } })).depart, null,
+     'un depart hors de la carte est refuse, pas rogne : le rogner le mettrait'
+     + ' ailleurs que la ou on l a pose, et sans le dire');
+  eq(v(Object.assign(carte('a', case1, 16), { depart: { c: -1, l: 0 } })).depart, null,
+     'ni avant le bord');
+  eq(v(Object.assign(carte('a', case1, 16), { depart: 'la-bas' })).depart, null,
+     'ni ce qui n est pas un point');
+
+  const g = new Game();
+  const k = g.enregistreCarte(A, null, Object.assign(carte('Jouable', case1, 16),
+                                                     { depart: { c: 1, l: 2 } }));
+  eq(k.depart.c, 1, 'la carte creee garde son depart');
+  eq(g.vitrineCartes(A)[0].jouable, true, 'et la galerie dit qu on peut y aller');
+  const sans = g.enregistreCarte(A, null, carte('Pas jouable', case1, 16));
+  eq(g.vitrineCartes(A).find((q) => q.id === sans.id).jouable, false, 'et qu on ne peut pas, sinon');
+  /* La vitrine ne porte PAS le point lui-meme : ce qu'on veut y lire est
+     « peut-on y aller », pas « ou ». */
+  eq(g.vitrineCartes(A)[0].depart, undefined, 'sans dire ou il est');
+}
+
+console.log('\n-- l emprise d un element --');
+{
+  const v = Game.carteValide;
+  const avec = (n2) => v(carte('a', [{ c: 1, l: 1, o: 'iso_vault', n: n2 }], 16)).cases[0];
+  eq(avec(4).n, 4, 'une emprise de quatre cases est gardee');
+  ok(avec(1).n === undefined, 'une case d une seule case n a rien a declarer');
+  ok(avec(99).n === undefined,
+     `au-dela de ${cfg.CARTE_EMPRISE_MAX} elle est ignoree : un envoi truque bloquerait la carte entiere`);
+  ok(avec(-3).n === undefined, 'et une emprise negative aussi');
+  /* Une emprise sur une case qui ne porte QUE du sol ne veut rien dire : c'est
+     l'objet qui occupe de la place, pas le sol. */
+  ok(v(carte('a', [{ c: 1, l: 1, s: 'grass', n: 4 }], 16)).cases[0].n === undefined,
+     'et un sol n a pas d emprise : c est l objet qui occupe la place');
+
+  const g = new Game();
+  const k = g.enregistreCarte(A, null, carte('Parcelles', [{ c: 2, l: 2, o: 'iso_hotel', n: 5 }], 16));
+  eq(k.cases[0].n, 5, 'l emprise traverse l enregistrement');
+  const g2 = new Game();
+  g2.hydrate(JSON.parse(JSON.stringify(g.serialize())));
+  eq(g2.carte(k.id).cases[0].n, 5, 'et la sauvegarde');
+}
+
 console.log(`\ncartes.test.js : ${n} verifications OK`);

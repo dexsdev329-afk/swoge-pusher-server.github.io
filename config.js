@@ -681,6 +681,15 @@ module.exports = {
    * propre galerie ne doit jamais dependre de l'activite des autres, sans
    * quoi le jour ou le jeu marche, on ne retrouve plus son travail. */
   CARTES_VITRINE: parseInt(env('CARTES_VITRINE', '60'), 10),
+  /* ---- L'EMPRISE D'UN ELEMENT, EN CASES ----
+   * Une parcelle isometrique occupe plusieurs cases : c'est ce qui decide de
+   * ce qu'elle BLOQUE quand on marchera dedans. Le nombre est ecrit dans la
+   * carte au moment ou l'on pose, et non deduit ici — le serveur ne connait
+   * pas le catalogue, et lui en donner une copie serait la premiere chose a
+   * se perimer. Huit est la meme borne que l'essai du catalogue impose aux
+   * parcelles ; au-dela, un envoi ferait bloquer un tiers de la carte avec un
+   * seul element. */
+  CARTE_EMPRISE_MAX: parseInt(env('CARTE_EMPRISE_MAX', '8'), 10),
 
   /* ---- LES SALLES A ECRAN ----
    * La table est lue et commentee tout en haut de ce fichier. Elle est ICI,

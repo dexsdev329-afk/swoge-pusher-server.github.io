@@ -3834,9 +3834,10 @@ wss.on('connection', (ws) => {
       if (m.type === 'carteLit') {
         if (!ws.addr) return;
         const k = game.carte(m.id);
-        if (!k) return send(ws, { type: 'carte', error: 'carte inconnue' });
+        if (!k) return send(ws, { type: 'carte', error: 'carte inconnue', code: 'inconnue' });
         return send(ws, { type: 'carte', carte: {
           id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat', cases: k.cases,
+          depart: k.depart || null,
           modifie: k.modifie, mienne: k.addr === ws.addr,
           auteur: (game.players.get(k.addr) && game.players.get(k.addr).name) || null,
         } });
@@ -3844,7 +3845,9 @@ wss.on('connection', (ws) => {
       if (m.type === 'carteEnregistre') {
         if (!ws.addr) return;
         const r = game.enregistreCarte(ws.addr, m.id, m.carte);
-        if (typeof r === 'string') return send(ws, { type: 'carte', error: r });
+        if (typeof r === 'string') {
+          return send(ws, { type: 'carte', error: r, code: Game.codeDuRefus(r) });
+        }
         persistSoon();
         /* On rend l'IDENTITE et non le contenu : la page a deja le dessin, elle
            vient de l'envoyer. Le seul chose qu'elle ne connaisse pas est le
@@ -3856,7 +3859,9 @@ wss.on('connection', (ws) => {
       if (m.type === 'carteSupprime') {
         if (!ws.addr) return;
         const r = game.supprimeCarte(ws.addr, m.id);
-        if (typeof r === 'string') return send(ws, { type: 'carte', error: r });
+        if (typeof r === 'string') {
+          return send(ws, { type: 'carte', error: r, code: Game.codeDuRefus(r) });
+        }
         persistSoon();
         return send(ws, { type: 'carte', supprime: r.id, liste: game.vitrineCartes(ws.addr) });
       }

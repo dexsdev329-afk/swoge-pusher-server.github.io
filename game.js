@@ -1188,9 +1188,33 @@ class Game {
       const e = { c, l };
       if (sol) e.s = sol;
       if (obj) e.o = obj;
+      /* ---- L'EMPRISE, ECRITE PAR CELUI QUI POSE ----
+       * Une parcelle isometrique couvre plusieurs cases. Le serveur ne peut
+       * pas le deduire : la largeur des planches vit dans le catalogue de
+       * l'autre depot. Il la RECOIT donc, bornee, de la page qui a decide ou
+       * dessiner — et c'est la meme page qui la redessinera, donc le dessin et
+       * la collision ne peuvent pas se contredire.
+       * Le pire qu'un envoi truque puisse faire est de bloquer sa PROPRE
+       * carte : l'emprise ne sert a rien d'autre. */
+      const emp = Math.round(Number(b.n));
+      if (obj && Number.isInteger(emp) && emp > 1 && emp <= cfg.CARTE_EMPRISE_MAX) e.n = emp;
       par.set(c + ',' + l, e);
     }
-    const carte = { nom, cote, mode, cases: [...par.values()] };
+    /* ---- OU L'ON ARRIVE QUAND ON Y ENTRE ----
+     * Un point, pas un element : ce n'est pas quelque chose qu'on dessine,
+     * c'est une propriete de la carte. Range dans une case, il aurait fallu
+     * lui inventer une cle reservee — et le jour ou un element du catalogue
+     * porte le meme nom, l'un des deux disparait.
+     * Absent tant qu'il n'est pas pose : une carte sans depart n'est pas
+     * invalide, elle n'est simplement pas encore jouable, et le dire est le
+     * travail de la page, pas un refus ici. */
+    let depart = null;
+    if (x && x.depart) {
+      const dc = Math.round(Number(x.depart.c)), dl = Math.round(Number(x.depart.l));
+      if (Number.isInteger(dc) && Number.isInteger(dl)
+          && dc >= 0 && dl >= 0 && dc < cote && dl < cote) depart = { c: dc, l: dl };
+    }
+    const carte = { nom, cote, mode, depart, cases: [...par.values()] };
     /* Absente et refusee ne se distinguent pas ici : dans les deux cas la
        carte n'en porte pas, et la fiche retombe sur son texte. Refuser la
        carte ENTIERE pour une vignette trop lourde ferait perdre le dessin
@@ -1198,6 +1222,27 @@ class Game {
     const vg = Game.vignetteValide(x && x.vignette);
     if (vg) carte.vignette = vg;
     return carte;
+  }
+
+  /* ---- UN REFUS SE DIT DANS LA LANGUE DE CELUI QUI LE LIT ----
+   *
+   * Les raisons sont ecrites en francais, comme tout ce depot. La page, elle,
+   * parle trois langues depuis que les drapeaux existent — et un joueur
+   * espagnol lisant « cette carte n est pas la votre » n'apprend rien.
+   *
+   * Le serveur ne traduit pas : traduire demanderait de tenir trois listes
+   * ici ET trois dans la page, et la quatrieme langue en demanderait six. Il
+   * envoie un CODE stable a cote du texte. La page traduit ce qu'elle
+   * connait et retombe sur le texte pour le reste — degrade, jamais muet.
+   */
+  static codeDuRefus(raison) {
+    const T = {
+      'carte invalide': 'invalide',
+      'carte inconnue': 'inconnue',
+      'plafond de cartes atteint': 'plafond',
+      'cette carte n est pas la votre': 'pasLaVotre',
+    };
+    return T[raison] || null;
   }
 
   /** Les cartes d'un compte. Toujours une liste, jamais `null`. */
@@ -1221,7 +1266,7 @@ class Game {
       if (!c) return 'carte invalide';
       if (this.mesCartes(addr).length >= cfg.CARTES_PAR_COMPTE) return 'plafond de cartes atteint';
       const k = { id: this.cartesNo++, addr, nom: c.nom, cote: c.cote, mode: c.mode,
-                  cases: c.cases, vignette: c.vignette || null,
+                  cases: c.cases, depart: c.depart, vignette: c.vignette || null,
                   cree: Date.now(), modifie: Date.now() };
       this.cartes.push(k);
       return k;
@@ -1244,7 +1289,7 @@ class Game {
      * pleine de tuiles plates, qui ne se dessinerait plus comme elle a ete
      * faite. On garde donc ce que la carte a toujours eu ; `plat` pour celles
      * ecrites avant que ce champ n'existe. */
-    k.nom = c.nom; k.cases = c.cases; k.modifie = Date.now();
+    k.nom = c.nom; k.cases = c.cases; k.depart = c.depart; k.modifie = Date.now();
     /* L'ANCIENNE image reste si le nouvel envoi n'en porte pas. Un client qui
        ne sait pas en fabriquer — ou dont l'image depasse le plafond — ne doit
        pas EFFACER celle qui etait la : la fiche perdrait son dessin a un
@@ -1277,6 +1322,9 @@ class Game {
     return miennes.concat(autres).map((k) => ({
       id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat', cases: k.cases.length,
       vignette: k.vignette || null,
+      /* Le point de depart ne voyage pas entier dans la vitrine : ce qu'on
+         veut y lire est « peut-on y aller », pas « ou ». */
+      jouable: !!k.depart,
       modifie: k.modifie, mienne: k.addr === addr,
       auteur: (this.players.get(k.addr) && this.players.get(k.addr).name) || null,
     })).sort((a, b) => b.modifie - a.modifie);
