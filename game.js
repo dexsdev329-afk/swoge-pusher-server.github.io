@@ -348,6 +348,16 @@ class Game {
        et attend son acheteur. */
     this.marche = [];
     this.marcheNo = 1;
+    /* LES CARTES DESSINEES PAR LES JOUEURS. En tete d'etat comme les annonces
+       du marche, et pour la meme raison : elles n'appartiennent a la fiche de
+       personne — chacune porte l'adresse de son auteur, ce qui n'est pas
+       pareil. Une carte rangee dans une fiche serait invisible a la galerie
+       sans parcourir tous les comptes.
+       `cartesNo` ne redemarre jamais a zero : deux cartes qui partageraient un
+       numero se remplaceraient l'une l'autre, et c'est le travail de quelqu'un
+       qui disparait. Il est donc sauvegarde avec le reste. */
+    this.cartes = [];
+    this.cartesNo = 1;
     /* LES GALERIES DES SALLES A ECRAN. UNE GALERIE PAR SALLE, rangee par la
        cle de la table `cfg.SALLES_ECRAN` : { cinema: [...], manga: [...] }.
        Chaque galerie est une LISTE, jamais nulle — un champ qui vaut tantot
@@ -708,6 +718,10 @@ class Game {
                 joue a la LECTURE, dans `hydrate`, ou elle ne coute qu'une
                 conversion. */
              cinemas: this.galeriesToutes(),
+             /* Les cartes DOIVENT traverser une sauvegarde : c'est le travail
+                de quelqu'un, et un redeploiement qui l'efface ne laisse aucune
+                trace. On garde aussi le compteur — voir le constructeur. */
+             cartes: this.cartes || [], cartesNo: this.cartesNo || 1,
              duels, telegramMap: Array.from(this.telegramMap) };
   }
 
@@ -1044,6 +1058,131 @@ class Game {
    * passer cent vingt caracteres invisibles, c'est-a-dire une bulle vide qui a
    * l'air pleine aux yeux du serveur.
    */
+  /* ================== LES CARTES DESSINEES PAR LES JOUEURS ==================
+   *
+   * ---- LA PROPRIETE VIT ICI, ET NULLE PART AILLEURS ----
+   *
+   * « Tout le monde peut visiter, personne d'autre ne peut modifier. » La
+   * seconde moitie de cette phrase est une regle de SERVEUR. Griser un bouton
+   * dans la page ne garde rien : il se degrise dans une console en dix
+   * secondes, et le message part quand meme. C'est la meme raison qui met le
+   * score du blackjack ici et pas dans le navigateur.
+   * Chaque carte porte donc l'adresse de son auteur, et toute ecriture la
+   * compare a celle qui demande. Un refus, jamais un rabattement silencieux.
+   *
+   * ---- UN SEUL ENTONNOIR ----
+   *
+   * `Game.carteValide` est le seul endroit ou une carte devient acceptable.
+   * Creer, enregistrer, renommer : les trois passent par lui. Deux chemins de
+   * validation finissent toujours par ne plus verifier la meme chose, et c'est
+   * celui qu'on a oublie qui recoit les envois interessants — la galerie des
+   * seances a deja paye cette lecon.
+   *
+   * ---- LE FORMAT, ET CE QU'IL PREVOIT ----
+   *
+   * Une case vaut { c, l, s, o } : colonne, ligne, cle de sol, cle d'objet.
+   * Des noms d'une lettre parce qu'il y en a jusqu'a trente-deux mille dans un
+   * envoi, et que « colonne » repete trente-deux mille fois pese plus que la
+   * carte.
+   * Les cles ne sont PAS verifiees contre une liste d'elements. C'est
+   * volontaire : le catalogue vit dans l'autre depot, il change a chaque
+   * planche livree, et un serveur qui en tiendrait une copie refuserait un
+   * jour une carte parfaitement valide parce que sa liste a lui n'a pas suivi.
+   * On verifie donc la FORME — des minuscules, des chiffres, un souligne, au
+   * plus trente-deux — et la page ne dessine que ce qu'elle connait. Une carte
+   * qui nomme une planche disparue perd un dessin ; elle ne casse rien.
+   * Le jour ou la 2,5D arrive, une case gagnera une hauteur sans qu'aucune
+   * carte deja enregistree n'ait a etre convertie.
+   */
+  static cleElement(v) {
+    const t = String(v == null ? '' : v).trim();
+    if (!t) return null;
+    return /^[a-z0-9_]{1,32}$/.test(t) ? t : null;
+  }
+
+  static carteValide(x) {
+    const nom = Game.textePropre(x && x.nom).slice(0, cfg.CARTE_NOM_MAX);
+    if (!nom) return null;
+    const cote = Math.round(Number((x && x.cote) || 0));
+    if (!Number.isInteger(cote) || cote < 4 || cote > cfg.CARTE_COTE) return null;
+    const brut = Array.isArray(x && x.cases) ? x.cases : null;
+    if (!brut) return null;
+    if (brut.length > cfg.CARTE_CASES) return null;
+    /* ---- UNE CASE PAR COORDONNEE, LA DERNIERE GAGNE ----
+     * Rien n'empeche un envoi de porter deux fois la meme case. Les garder
+     * toutes ferait grossir la carte sans rien changer a ce qu'on voit, et
+     * deux dessins superposes sur une case sont une facon simple de depasser
+     * le plafond en le respectant. */
+    const par = new Map();
+    for (const b of brut) {
+      if (!b || typeof b !== 'object') continue;
+      const c = Math.round(Number(b.c)), l = Math.round(Number(b.l));
+      if (!Number.isInteger(c) || !Number.isInteger(l)) continue;
+      if (c < 0 || l < 0 || c >= cote || l >= cote) continue;
+      const sol = Game.cleElement(b.s), obj = Game.cleElement(b.o);
+      /* Une case qui ne porte NI sol NI objet ne dit rien : la garder
+         reviendrait a transmettre du vide au prix d'une case. */
+      if (!sol && !obj) continue;
+      const e = { c, l };
+      if (sol) e.s = sol;
+      if (obj) e.o = obj;
+      par.set(c + ',' + l, e);
+    }
+    return { nom, cote, cases: [...par.values()] };
+  }
+
+  /** Les cartes d'un compte. Toujours une liste, jamais `null`. */
+  mesCartes(addr) {
+    return this.cartes.filter((k) => k.addr === addr);
+  }
+  /** Une carte par son numero, quel qu'en soit l'auteur : tout le monde visite. */
+  carte(id) {
+    const k = Number(id);
+    return this.cartes.find((q) => q.id === k) || null;
+  }
+  /**
+   * ENREGISTRE. Cree si `id` est absent, remplace sinon.
+   * Rend la carte, ou une chaine qui DIT pourquoi c'est refuse — un `null`
+   * unique aurait laisse la page annoncer « erreur » sans savoir laquelle,
+   * et le joueur perd son dessin sans comprendre.
+   */
+  enregistreCarte(addr, id, x) {
+    const c = Game.carteValide(x);
+    if (!c) return 'carte invalide';
+    if (id === undefined || id === null || id === '') {
+      if (this.mesCartes(addr).length >= cfg.CARTES_PAR_COMPTE) return 'plafond de cartes atteint';
+      const k = { id: this.cartesNo++, addr, nom: c.nom, cote: c.cote, cases: c.cases,
+                  cree: Date.now(), modifie: Date.now() };
+      this.cartes.push(k);
+      return k;
+    }
+    const k = this.carte(id);
+    if (!k) return 'carte inconnue';
+    /* LA LIGNE QUI PORTE TOUTE LA REGLE. */
+    if (k.addr !== addr) return 'cette carte n est pas la votre';
+    k.nom = c.nom; k.cote = c.cote; k.cases = c.cases; k.modifie = Date.now();
+    return k;
+  }
+  supprimeCarte(addr, id) {
+    const k = this.carte(id);
+    if (!k) return 'carte inconnue';
+    if (k.addr !== addr) return 'cette carte n est pas la votre';
+    this.cartes = this.cartes.filter((q) => q !== k);
+    return k;
+  }
+  /**
+   * LA VITRINE. Ce que tout le monde voit : de quoi choisir une carte a
+   * visiter, sans son contenu — une galerie qui enverrait trente-deux mille
+   * cases par carte serait injouable des la dixieme.
+   */
+  vitrineCartes(addr) {
+    return this.cartes.map((k) => ({
+      id: k.id, nom: k.nom, cote: k.cote, cases: k.cases.length,
+      modifie: k.modifie, mienne: k.addr === addr,
+      auteur: (this.players.get(k.addr) && this.players.get(k.addr).name) || null,
+    })).sort((a, b) => b.modifie - a.modifie);
+  }
+
   static textePropre(v) {
     let t = String(v == null ? '' : v);
     /* Commandes, sauts de ligne, et les deux separateurs de ligne Unicode que
@@ -1117,6 +1256,15 @@ class Game {
        l'inventaire du vendeur. Les perdre, c'est les detruire. */
     if (Array.isArray(st.marche)) this.marche = st.marche;
     if (st.marcheNo) this.marcheNo = st.marcheNo;
+    /* ---- LES CARTES, ET LE COMPTEUR RECALCULE SI BESOIN ----
+     * Le compteur est relu, mais on ne LUI FAIT PAS CONFIANCE seul : une
+     * sauvegarde ecrite avant qu'il existe n'en porte pas, et repartir a un
+     * donnerait a la prochaine carte le numero d'une carte deja la — qui
+     * serait alors ecrasee au premier enregistrement. On le remonte donc
+     * au-dessus du plus grand numero present, toujours. */
+    if (Array.isArray(st.cartes)) this.cartes = st.cartes;
+    this.cartesNo = Math.max(Number(st.cartesNo) || 1,
+                             ...this.cartes.map((k) => (Number(k.id) || 0) + 1), 1);
     if (st.boutiqueEmis && typeof st.boutiqueEmis === 'object') this.boutiqueEmis = st.boutiqueEmis;
     if (st.skinsEmis && typeof st.skinsEmis === 'object') this.skinsEmis = st.skinsEmis;
     /* Sans cette ligne, un redemarrage ROUVRIRAIT la course et repaierait

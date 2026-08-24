@@ -607,6 +607,33 @@ module.exports = {
    * aurait lu « la galerie est pleine » devant une galerie vide. */
   CINEMA_MAX: parseInt(env('CINEMA_MAX', '12'), 10),
 
+  /* ---- LES CARTES DESSINEES PAR LES JOUEURS ----
+   *
+   * Ce sont des ecrits d'inconnus gardes sur notre disque : les plafonds ne
+   * sont donc pas du confort, ils sont ce qui empeche une personne d'emporter
+   * le serveur avec un seul envoi. Trois bornes, chacune contre une facon
+   * differente de deborder :
+   *
+   *   CARTE_COTE   la carte est un carre d'au plus tant de cases de cote. Il
+   *                borne ce qu'on DESSINE, et donc ce qu'on transmet.
+   *   CARTE_CASES  le nombre de cases REELLEMENT posees. Le cote seul ne
+   *                suffit pas : une grille de 128 sur 128 fait seize mille
+   *                trois cent quatre-vingt-quatre cases, et rien n'oblige a
+   *                les remplir. C'est ce compte-la qui decide du poids.
+   *   CARTES_PAR_COMPTE  combien de cartes un compte peut garder. Sans lui,
+   *                un seul compte remplit le disque en boucle.
+   *
+   * Les chiffres sont poses pour qu'une carte tienne largement dans ce qu'on
+   * echange deja : trente-deux mille cases a une dizaine d'octets font trois
+   * cent vingt kilo-octets au pire, et une carte pleine de cette taille est
+   * deja un gros travail. */
+  CARTE_COTE: parseInt(env('CARTE_COTE', '96'), 10),
+  CARTE_CASES: parseInt(env('CARTE_CASES', '32000'), 10),
+  CARTES_PAR_COMPTE: parseInt(env('CARTES_PAR_COMPTE', '24'), 10),
+  /* Le nom que le joueur donne a sa carte. Compte en points de code, comme
+     tout ce qui vient d'un clavier ici. */
+  CARTE_NOM_MAX: parseInt(env('CARTE_NOM_MAX', '48'), 10),
+
   /* ---- LES SALLES A ECRAN ----
    * La table est lue et commentee tout en haut de ce fichier. Elle est ICI,
    * a cote du plafond, parce que le plafond s'applique PAR SALLE : douze
