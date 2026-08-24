@@ -1018,6 +1018,11 @@ function messageEntree(R, j, plan, carte) {
      * le plan qui nomme une porte est celui d'un dedans. */
     donjon: (plan && plan.sortie) ? plan.nom : null,
     tuiles: plan ? plan.tuiles : null,
+    /* ---- ET LA PALETTE DE LEURS SOLS ----
+     * Une tuile de carte de joueur porte un troisieme nombre : l'INDICE de son
+     * sol dans cette liste. Absente pour tout le reste — un donjon a un seul
+     * sol, et la page retombe alors sur l'anneau, comme avant. */
+    sols: (plan && plan.sols) || null,
     /* Les plaques de braise partent avec la forme du donjon : la page les
        DESSINE et le serveur les fait bruler a partir de la MEME liste. Deux
        listes auraient fini par ne plus decrire le meme sol, et le joueur
@@ -4146,6 +4151,80 @@ wss.on('connection', (ws) => {
            monde ou l'on entre, comme on le fait deja pour un donjon. */
         return send(ws, messageEntree(R, j, R.plan, cle));
       }
+      /* ==================== ALLER MARCHER DANS UNE CARTE ====================
+       *
+       * Une carte de joueur devient un plan, et un plan devient une
+       * simulation : c'est la meme route que celle d'un donjon, au generateur
+       * pres. Elle est donc rangee dans la MEME table — la boucle de jeu, la
+       * diffusion d'etat et la fermeture des simulations vides la parcourent
+       * toute, et une carte oubliee par l'une des trois serait une carte ou
+       * l'on marche sans que personne ne le sache.
+       *
+       * UNE SIMULATION PAR CARTE, partagee : deux personnes qui visitent la
+       * meme carte s'y voient. Une par visiteur aurait fait un endroit
+       * solitaire sans que rien ne l'annonce.
+       *
+       * La carte est LUE au moment ou la simulation nait. Celui qui la modifie
+       * pendant qu'on la visite ne change donc rien sous les pieds de
+       * personne ; sa retouche vaudra pour la prochaine visite, la simulation
+       * disparaissant des que le dernier visiteur sort.
+       */
+      if (m.type === 'carteJoue') {
+        if (!ws.addr) return;
+        const k = game.carte(m.id);
+        if (!k) return send(ws, { type: 'carte', error: 'carte inconnue', code: 'inconnue' });
+        /* Sans point de depart, on ne saurait pas ou poser le visiteur — et le
+           deviner l'aurait pose dans un mur une fois sur deux. */
+        if (!k.depart) {
+          return send(ws, { type: 'carte', error: 'carte sans depart', code: 'sansDepart' });
+        }
+        const p = game._p(ws.addr);
+        const skin = game.skinActifDe(p);
+        if (!skin || !game.possedeSkin(p, skin)) {
+          return send(ws, { type: 'realmRefus', raison: 'no-character' });
+        }
+        const fiche = ficheDeCombat(ws.addr, skin);
+        if (!fiche) return send(ws, { type: 'realmRefus', raison: 'no-character' });
+        const porte = 'carte:' + k.id;
+        let d = [...donjons.values()].find((x) => x.porte === porte);
+        if (!d && donjons.size >= DONJONS_MAX) {
+          return send(ws, { type: 'realmPorteRefus', raison: 'trop-de-donjons' });
+        }
+        if (!d) {
+          let R;
+          try {
+            /* AUCUN tirage d'objet : une carte n'a pas de creatures, donc rien
+               ne tombe. Le jour ou elle en aura, ce sera cette ligne-ci qui
+               dira ce qu'on a le droit d'y ramasser. */
+            R = new Realm({ plan: monde.planDeCarte(k) });
+          } catch (e) {
+            console.error('[carte]', e && e.message);
+            return send(ws, { type: 'realmPorteRefus', raison: 'server error' });
+          }
+          d = { id: donjonSuivant++, realm: R, nom: k.nom, porte,
+                carte: cleDeMonde(ws.monde), retour: null };
+          donjons.set(d.id, d);
+        }
+        /* ---- ON N'EST QUE DANS UNE SEULE SIMULATION A LA FOIS ----
+         * Meme precaution que `realmJoin`, et pour la meme raison : deux
+         * onglets du meme compte donnaient deux corps qui ramassaient dans le
+         * meme sac, et celui qu'on ne regarde pas peut mourir. */
+        for (const autre of realmClients) {
+          if (autre === ws || autre.addr !== ws.addr) continue;
+          autre.donjon = null; autre.monde = null;
+          realmClients.delete(autre);
+          if (autre.readyState === 1) send(autre, { type: 'realmSorti', raison: 'autre-onglet' });
+        }
+        for (const M of tousLesMondes()) M.quitte(ws.addr);
+        ws.monde = null;
+        ws.donjon = d.id;
+        ws.realmSkin = skin;
+        realmClients.add(ws);
+        const j = d.realm.rejoint(ws.addr, fiche);
+        realmDernierMouv.set(ws.addr, Date.now());
+        return send(ws, messageEntree(d.realm, j, d.realm.plan, porte));
+      }
+
       /* ==================== FRANCHIR LA PORTE ====================
        *
        * Le client dit « j'entre », et RIEN d'autre : ni quel portail, ni ou il

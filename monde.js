@@ -1593,6 +1593,100 @@ function planDeVille(alea) {
   };
 }
 
+/*
+ * ==================== UNE CARTE DE JOUEUR ====================
+ *
+ * ---- ELLE DEVIENT UN PLAN, COMME LE RESTE ----
+ *
+ * Un donjon est un plan. La ville est un plan. Une carte dessinee par
+ * quelqu'un en devient un aussi, et `realm.js` ne change pas d'une ligne : il
+ * recoit un sol, des blocs, un point d'arrivee, et il fait tourner la meme
+ * simulation. C'est tout l'interet d'avoir un seul format — le jour ou la
+ * carte gagne une porte ou une braise, elle passe par le meme chemin que les
+ * deux autres.
+ *
+ * ---- ET ELLE N'A AUCUNE CREATURE ----
+ *
+ * `peuplement` est VIDE, et ce n'est pas une simplification : c'est une
+ * regle. Des creatures dans une carte que n'importe qui dessine, ce sont des
+ * creatures que n'importe qui PLACE — et le butin qui va avec. On batit alors
+ * une piece de vingt bosses, on la visite en boucle, et l'economie du jeu se
+ * decide dans l'editeur. Le jour ou les cartes se peupleront, il faudra
+ * d'abord dire ce que la mort y coute et ce qu'on a le droit d'y ramasser ;
+ * tant que cette regle n'existe pas, une carte est un endroit ou l'on MARCHE.
+ *
+ * Les creatures posees dans l'editeur restent donc dessinees, et elles
+ * bloquent, comme une statue. Elles ne poursuivent personne.
+ *
+ * ---- PAS DE PORTE DE RETOUR NON PLUS ----
+ *
+ * `sortie` reste nulle, et c'est ce qui fait qu'on en sort par la touche du
+ * Nexus au lieu du sas. Une porte de sortie est ce qui distingue un DEDANS —
+ * on y est entre depuis un monde, on y ressort au meme endroit. Une carte ne
+ * s'ouvre pas dans le monde : elle s'ouvre depuis un panneau, et l'on revient
+ * la ou l'on etait, c'est-a-dire dans le hall.
+ */
+function planDeCarte(k) {
+  const T = DONJON_TUILE;
+  const cases = (k && k.cases) || [];
+  /* ---- LES SOLS VOYAGENT EN PALETTE ----
+   * Une tuile portait deux nombres ; elle en porte trois, le dernier etant un
+   * INDICE dans une courte liste de noms. Repeter « ground_cave » deux mille
+   * trois cents fois aurait pese plus que la carte elle-meme, et c'est
+   * exactement le genre de chose qui fait qu'un plan ne passe plus dans une
+   * trame le jour ou quelqu'un remplit sa carte. */
+  const sols = [], parSol = new Map();
+  const tuiles = [];
+  for (const q of cases) {
+    if (!q.s) continue;
+    let i = parSol.get(q.s);
+    if (i === undefined) { i = sols.length; sols.push(q.s); parSol.set(q.s, i); }
+    tuiles.push([q.c, q.l, i]);
+  }
+  const obstacles = [];
+  let id = 1;
+  for (const q of cases) {
+    if (!q.o) continue;
+    const n = Math.max(1, Number(q.n) || 1);
+    /* ---- LE RAYON SUIT L'EMPRISE, ET LE PIED RESTE AU PIED ----
+     * La page dessine une planche nommee POSEE sur `y + r` : c'est la regle
+     * des facades de la ville, et elle vaut ici sans une ligne de plus. Le
+     * centre du bloc se deduit donc du bas de sa case, pour que ce qu'on
+     * traverse soit ce qu'on voit.
+     * Quatre-vingts pour cent du demi-cote : un cercle inscrit exactement dans
+     * l'emprise bloquerait les coins de la case voisine, ou l'on doit pouvoir
+     * longer un mur. */
+    const r = Math.max(24, Math.round(n * T / 2 * 0.8));
+    obstacles.push({ i: id++, x: (q.c + 0.5) * T, y: (q.l + 1) * T - r,
+                     r, bat: q.o, larg: n * T,
+                     /* Le `t` de repli : une page qui ne saurait pas dessiner
+                        une planche nommee posera de la pierre a cet endroit.
+                        Degrade, jamais troue — la meme precaution que les
+                        facades de la ville. */
+                     t: MUR_DONJON, a: q.a || 0, carte: 1 });
+  }
+  /* Le depart, ou le centre de la carte s'il manque : une carte sans depart
+     ne devrait pas arriver jusqu'ici — la page ne propose pas de la visiter —
+     mais un plan qui naitrait sans point d'arrivee ferait naitre le joueur en
+     zero, dans le coin, hors du sol. */
+  const cote = (k && k.cote) || 16;
+  const d = (k && k.depart) || { c: Math.floor(cote / 2), l: Math.floor(cote / 2) };
+  return {
+    nom: (k && k.nom) || 'carte',
+    entree: { x: (d.c + 0.5) * T, y: (d.l + 0.5) * T },
+    sortie: null,
+    obstacles,
+    braises: [],
+    peuplement: [],
+    anneaux: anneauUnique('donjon'),
+    mur: 'donjon',
+    salles: [],
+    tuiles,
+    /* La palette qui donne son sens au troisieme nombre de chaque tuile. */
+    sols,
+  };
+}
+
 const SALLE = {
   /* Neuf tuiles de cote, murs compris : l'interieur fait sept tuiles, soit
      896 unites. Deux gardiens de trois cent quinze pixels y tiennent en se
@@ -4285,7 +4379,8 @@ module.exports = {
   PORTAIL, PORTAIL_DE, RETOUR_DE, MUR_DONJON, MUR_DECOR, DONJON_TUILE, DONJON_SALLES,
   DONJON_COULOIR, DONJON_ORIGINE, DONJON_IMPASSES, PEUPLE_DONJON,
   planDonjon, planCave, CAVE, DONJONS, mursDonjon, peuplementDonjon, planDeDonjon,
-  VILLE, planVille, planDeVille, hasardSeme, anneauUnique, tuilesDuSol, PLAN_PARTOUT,
+  VILLE, planVille, planDeVille, planDeCarte, hasardSeme, anneauUnique, tuilesDuSol,
+  PLAN_PARTOUT,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
   choisitEspece,
   regenParSeconde, pouvoirDeStat,
