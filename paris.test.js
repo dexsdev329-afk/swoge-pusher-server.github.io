@@ -264,6 +264,24 @@ function jeu(credit) {
      'et un lot sans marge aussi, marche par marche');
 }
 
+// ============ CE QUI PART VERS LA PAGE GARDE LE 1-N-2 A PLAT
+/* ---- UNE PAGE DEJA SERVIE NE SE MET PAS A JOUR ----
+ * Elle lit `m.cotes[c]`. Elle est dans le navigateur de quelqu un, elle ne
+ * change pas parce qu on a deploye — et sans ce champ elle affiche « NaN » sur
+ * chaque bouton. C est ARRIVE : le champ a ete retire du message, et la grille
+ * de cotes est devenue illisible en production le temps d un deploiement.
+ * Ce n est pas une seconde source : il est recopie a UN endroit depuis le
+ * marche de base, et le catalogue n en porte plus qu une. */
+{
+  const v = paris.vue(paris.match(M));
+  const base = paris.match(M).marches[paris.MARCHE_BASE].cotes;
+  for (const i of ['1', 'N', '2'])
+    eq(v.cotes[i], base[i], `la vue porte encore la cote « ${i} » a plat`);
+  ok(v.marches && v.marches[paris.MARCHE_BASE], 'et les marches a cote');
+  eq(paris.match(M).cotes, undefined,
+     'mais le CATALOGUE, lui, n en porte plus qu une : l echo ne vit que sur le fil');
+}
+
 // ============================ ON REGLE PAR LE SCORE, ET LE RESULTAT S EN DEDUIT
 /*
  * ---- POURQUOI CE CHANGEMENT ----

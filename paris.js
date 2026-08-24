@@ -430,6 +430,15 @@ function vue(m, now) {
        sait dessiner, et celle qui n'en connait qu'un ignore le reste sans
        rien casser. */
     marches: m.marches,
+    /* ---- ET L'ECHO DU 1-N-2 A PLAT, POUR LES PAGES DEJA SERVIES ----
+     * Une page ouverte avant que les marches existent lit `m.cotes[c]`. Elle
+     * est dans le navigateur de quelqu'un, elle ne se met pas a jour parce
+     * qu'on a deploye, et sans ce champ elle affiche « NaN » sur chaque
+     * bouton. C'est arrive : le champ a ete retire, et la grille de cotes est
+     * devenue illisible en production le temps d'un deploiement.
+     * Ce n'est PAS une seconde source : il est recopie ici, a un seul endroit,
+     * depuis le marche de base. Le catalogue, lui, n'en porte plus qu'une. */
+    cotes: (m.marches && m.marches[MARCHE_BASE] && m.marches[MARCHE_BASE].cotes) || {},
     ouvert: m.debut > (now || Date.now()),
   };
 }
