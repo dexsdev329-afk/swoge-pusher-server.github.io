@@ -3272,20 +3272,48 @@ class Game {
   }
 
   /**
-   * Ce que la maison devrait payer sur ce match si TOUTE issue tombait — on
-   * prend la pire, celle qui coute le plus. C'est le seul chiffre qui compte
-   * pour savoir si l'on peut accepter un pari de plus.
+   * CE QUE LA MAISON DEVRAIT PAYER AU PIRE SUR CE MATCH.
+   *
+   * ---- IL SE COMPTAIT PAR REPONSE, IL SE COMPTE PAR SCORE ----
+   *
+   * Tant qu'un match ne portait qu'une question, deux reponses ne pouvaient
+   * pas tomber ensemble : prendre la plus chere suffisait. Des qu'il en porte
+   * six, un 2-1 fait gagner EN MEME TEMPS le « 1 », le « 1X », le « 12 », le
+   * « oui » des deux equipes, le « plus » de 2,5 et le score exact. Compter
+   * reponse par reponse aurait donc annonce le sixieme du vrai engagement, et
+   * le plafond n'aurait plus rien plafonne — sur le geste, justement, qui
+   * engage la maison sans retour.
+   *
+   * On balaie donc les scores, et pour chacun on somme ce que TOUT ce qui est
+   * pose paierait s'il tombait.
+   *
+   * ---- POURQUOI HUIT BUTS SUFFISENT ----
+   *
+   * Au-dela de trois ou quatre buts par equipe, l'ensemble des reponses
+   * gagnantes ne depend plus que du signe de l'ecart, du fait qu'il vaille au
+   * moins deux, du total au-dessus de 2,5, du fait que les deux aient marque,
+   * et de « autre » au score exact. Toutes ces conditions sont deja
+   * rencontrees quelque part dans la grille de zero a huit : un 12-0 paie
+   * exactement les memes paris qu'un 8-0. La grille n'est donc pas un
+   * echantillon, c'est un ENVELOPPE — et un essai le verifie en la comparant
+   * a une grille de zero a trente.
    */
   engagementMatch(matchId) {
-    const par = {};
+    const lignes = [];
     for (const p of this._parisDe(matchId)) {
       if (p.regle) continue;
       const j = this._jambeSur(p, matchId);
-      if (!j) continue;
-      par[j.choix] = (par[j.choix] || 0) + p.rapport;
+      if (j) lignes.push({ marche: j.marche, choix: j.choix, rapport: p.rapport });
     }
+    if (!lignes.length) return 0;
     let pire = 0;
-    for (const k of Object.keys(par)) pire = Math.max(pire, par[k]);
+    for (let a = 0; a <= Game.ENGAGEMENT_BUTS; a++) {
+      for (let b = 0; b <= Game.ENGAGEMENT_BUTS; b++) {
+        let total = 0;
+        for (const l of lignes) if (paris.gagne(l.marche, l.choix, { a, b })) total += l.rapport;
+        if (total > pire) pire = total;
+      }
+    }
     return pire;
   }
 
@@ -3323,6 +3351,15 @@ class Game {
     return this.parieCombine(addr, [{ match: matchId, choix: choixRaw }], miseRaw, now);
   }
 
+  /**
+   * Un simple sur UN MARCHE donne. `parie` reste le raccourci du 1-N-2 : il a
+   * des appelants partout, et lui ajouter un argument au milieu aurait fait
+   * passer la mise pour un marche dans celui qu'on aurait oublie.
+   */
+  parieSur(addr, matchId, marche, choixRaw, miseRaw, now) {
+    return this.parieCombine(addr, [{ match: matchId, marche, choix: choixRaw }], miseRaw, now);
+  }
+
   parieCombine(addr, selectionsRaw, miseRaw, now) {
     const t = now || Date.now();
     const sel = Array.isArray(selectionsRaw) ? selectionsRaw : [];
@@ -3339,16 +3376,28 @@ class Game {
          deguise en combine pour contourner le plafond de gain. */
       if (vus.has(m.id)) throw new Error('only one selection per match');
       vus.add(m.id);
+      /* ---- LA JAMBE PORTE SON MARCHE ----
+       * Sans lui, « 1 » serait ambigu des la deuxieme question posee sur la
+       * rencontre : le « 1 » du resultat et le « 1 » du handicap ne se reglent
+       * pas sur les memes scores. Absent, c'est le 1-N-2 — les paris deja
+       * poses n'ont pas de marche ecrit et ce sont tous des 1-N-2. */
+      const marche = String((x && x.marche) || paris.MARCHE_BASE);
+      const M = paris.MARCHES[marche];
+      if (!M) throw new Error('unknown market ' + marche);
+      const lot = m.marches && m.marches[marche];
+      if (!lot)
+        throw new Error('no ' + M.nom + ' on ' + m.domicile + ' v ' + m.exterieur);
       const choix = String(x.choix);
-      if (m.issues.indexOf(choix) < 0)
-        throw new Error('pick ' + m.issues.join(', ') + ' on ' + m.domicile + ' v ' + m.exterieur);
+      if (lot.issues.indexOf(choix) < 0)
+        throw new Error('pick ' + lot.issues.join(', ') + ' on ' + M.nom + ' — ' +
+                        m.domicile + ' v ' + m.exterieur);
       /* LA JAMBE GARDE SA RENCONTRE. Les noms, le coup d'envoi et les issues
          sont recopies ici, une fois, au moment de la vente. Ils ne changeront
          plus : c'est le ticket, pas le calendrier. Sans cette copie, un match
          qui quitte le catalogue emporte avec lui de quoi afficher ET de quoi
          regler le pari — le gagnant devient impayable. Quelques octets par
          pari contre de l'argent bloque : le choix n'en est pas un. */
-      return { match: m.id, choix, cote: paris.coteDe(m, paris.MARCHE_BASE, choix),
+      return { match: m.id, marche, choix, cote: paris.coteDe(m, marche, choix),
                domicile: m.domicile, exterieur: m.exterieur, debut: m.debut,
                sport: m.sport, competition: m.competition, issues: m.issues.slice() };
     });
@@ -3371,17 +3420,27 @@ class Game {
     /* Le plafond, match par match. Le gain ENTIER pese sur CHAQUE match
        touche : c'est majorant, et un garde-fou doit majorer. */
     for (const j of jambes) {
-      const cumul = {};
+      /* Le meme balayage par SCORE que `engagementMatch`, celui-ci en y
+         ajoutant la jambe qu'on est en train de vendre. Deux facons de compter
+         l'engagement auraient fini par ne plus rendre le meme chiffre, et
+         c'est celle qu'on n'ecrit pas dans le message d'erreur qui laisserait
+         passer le pari de trop. */
+      const lignes = [{ marche: j.marche, choix: j.choix, rapport }];
       for (const q of (this.paris || [])) {
         if (q.regle) continue;
         for (const b of (q.jambes || [])) {
           if (b.match !== j.match) continue;
-          cumul[b.choix] = (cumul[b.choix] || 0) + q.rapport;
+          lignes.push({ marche: b.marche, choix: b.choix, rapport: q.rapport });
         }
       }
-      cumul[j.choix] = (cumul[j.choix] || 0) + rapport;
       let pire = 0;
-      for (const k of Object.keys(cumul)) pire = Math.max(pire, cumul[k]);
+      for (let a = 0; a <= Game.ENGAGEMENT_BUTS; a++) {
+        for (let b2 = 0; b2 <= Game.ENGAGEMENT_BUTS; b2++) {
+          let total = 0;
+          for (const l of lignes) if (paris.gagne(l.marche, l.choix, { a, b: b2 })) total += l.rapport;
+          if (total > pire) pire = total;
+        }
+      }
       if (pire > cfg.PARI_ENGAGEMENT_MAX) {
         const m = paris.match(j.match);
         throw new Error(m.domicile + ' v ' + m.exterieur + ' is full — ' +
@@ -3793,6 +3852,23 @@ class Game {
       throw new Error('result must be a score like 2-1, or one of ' + issues.join(', '));
     if (!this.parisRegles) this.parisRegles = {};
     if (this.parisRegles[matchId]) throw new Error('already settled');
+    /* ---- UNE LETTRE NE SAIT PAS TRANCHER LES AUTRES MARCHES ----
+     * « 1 » ne dit pas si les deux equipes ont marque : un 1-0 et un 3-2
+     * donnent la meme lettre. Regler a la lettre une rencontre portant un pari
+     * « les deux equipes marquent » ferait PERDRE tout le monde en silence —
+     * la jambe ne trouverait aucun score, ne gagnerait pas, et le pari serait
+     * clos. On refuse, en disant quoi faire : donner le score. */
+    if (!score) {
+      const bloquants = new Set();
+      for (const p of this._parisDe(matchId)) {
+        if (p.regle) continue;
+        const j = this._jambeSur(p, matchId);
+        if (j && (j.marche || paris.MARCHE_BASE) !== paris.MARCHE_BASE) bloquants.add(j.marche);
+      }
+      if (bloquants.size)
+        throw new Error('this fixture carries bets on ' + [...bloquants].join(', ') +
+          ' — settle it with the final score (like 2-1), not a result letter');
+    }
 
     /* On enregistre le resultat AVANT de regarder les paris : un combine ne
        peut etre juge que quand toutes ses jambes ont un resultat, et c'est
@@ -3847,13 +3923,29 @@ class Game {
    *           un combine tombe entierement des la premiere erreur ;
    *   null  : il reste des matchs a jouer.
    */
+  /**
+   * UNE JAMBE A-T-ELLE GAGNE ?
+   *
+   * Le SCORE tranche quand on l'a — c'est le seul juge qui sache lire les six
+   * marches. La lettre ne sait trancher que le 1-N-2, et c'est ce qui rend le
+   * garde de `regleMatch` necessaire : une rencontre portant un pari « les
+   * deux equipes marquent » ne peut PAS etre reglee a la lettre.
+   */
+  static _jambeGagne(jambe, regle) {
+    const marche = jambe.marche || paris.MARCHE_BASE;
+    if (regle.score) {
+      const s = paris.scoreLu(regle.score);
+      if (s) return paris.gagne(marche, jambe.choix, s);
+    }
+    return marche === paris.MARCHE_BASE && regle.resultat === jambe.choix;
+  }
   _jugePari(pari) {
     const l = pari.jambes || [{ match: pari.match, choix: pari.choix }];
     let complet = true;
     for (const j of l) {
       const r = (this.parisRegles || {})[j.match];
       if (!r || r.rembourse) { complet = false; continue; }
-      if (r.resultat !== j.choix) return false;      // une seule fausse suffit
+      if (!Game._jambeGagne(j, r)) return false;     // une seule fausse suffit
     }
     return complet ? true : null;
   }
@@ -11375,5 +11467,11 @@ class Game {
     return { serverSeedHash: this.serverSeedHash, clientSeed: p.clientSeed, nonce: p.nonce };
   }
 }
+
+/* ---- LA GRILLE DE SCORES SUR LAQUELLE ON MESURE L'ENGAGEMENT ----
+ * Voir `engagementMatch` : ce n'est pas un echantillon, c'est une enveloppe.
+ * Au-dela de quatre buts par equipe, l'ensemble des reponses gagnantes ne
+ * change plus — un 12-0 paie exactement les memes paris qu'un 8-0. */
+Game.ENGAGEMENT_BUTS = 8;
 
 module.exports = { Game, COST, MINW };

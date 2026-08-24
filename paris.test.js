@@ -350,6 +350,161 @@ function jeu(credit) {
   jete(() => g.regleMatch(M, '-1-2'), /must be a score like 2-1/, 'ni un score negatif');
 }
 
+// ================================ PARIER SUR LES SIX MARCHES
+/*
+ * Le calendrier du depot ne porte que des 1-N-2 : il a ete ecrit avant que les
+ * marches existent. On en fabrique donc un, avec les six, et on le rend au
+ * module — c'est la seule facon d'essayer ce qui n'est pas encore en
+ * production sans attendre le prochain import.
+ */
+const fs2 = require('fs');
+const os2 = require('os');
+const path2 = require('path');
+const cotes2 = require('./cotes');
+const MM = 'six-marches-20260815';
+{
+  const brut = {
+    sports: [{ cle: 'foot', nom: 'Football', actif: true }],
+    matchs: [{
+      id: MM, sport: 'foot', competition: 'Essai', pays: 'England',
+      domicile: 'Alpha', exterieur: 'Beta', debut: '2026-08-15T15:00:00Z',
+      marches: cotes2.marchesDe('foot', 'Alpha', 'Beta'),
+    }, {
+      /* Une rencontre qui ne porte QUE le 1-N-2, comme tout le calendrier
+         d aujourd hui : c est elle qui prouve qu on refuse un marche absent
+         plutot que de le fabriquer a la volee au moment de la mise. */
+      id: 'un-seul-marche-20260815', sport: 'foot', competition: 'Essai',
+      pays: 'England', domicile: 'Gamma', exterieur: 'Delta',
+      debut: '2026-08-15T15:00:00Z',
+      marches: { '1n2': { cotes: { 1: 2.4, N: 3.4, 2: 3.0 } } },
+    }],
+  };
+  const f = path2.join(fs2.mkdtempSync(path2.join(os2.tmpdir(), 'paris-marches-')), 'cat.json');
+  fs2.writeFileSync(f, JSON.stringify(brut));
+  paris.charge(f);
+  const m = paris.match(MM);
+  eq(Object.keys(m.marches).sort().join(','), '1n2,btts,dc,hand,ou25,score',
+     'le calendrier d essai porte bien les six marches');
+}
+/* ---- ON PARIE, ET LE SCORE PAIE ---- */
+{
+  const g = jeu();
+  const p = g.parieSur(A, MM, 'btts', 'oui', 1000, AVANT);
+  eq(p.jambes[0].marche, 'btts', 'la jambe porte son marche');
+  eq(p.cote, paris.coteDe(paris.match(MM), 'btts', 'oui'),
+     'et la cote vient de CE marche, pas du 1-N-2');
+  const avant = sol(g, A);
+  g.regleMatch(MM, '2-1');
+  eq(Math.round(sol(g, A) - avant), Math.round(p.rapport),
+     'un 2-1 fait marquer les deux equipes : le pari est paye');
+}
+{
+  const g = jeu();
+  g.parieSur(A, MM, 'btts', 'oui', 1000, AVANT);
+  const avant = sol(g, A);
+  g.regleMatch(MM, '2-0');
+  eq(sol(g, A), avant, 'un 2-0 ne les fait pas marquer toutes les deux : rien n est rendu');
+}
+/* Les cinq autres, chacun sur le score qui les fait gagner puis sur celui qui
+   les fait perdre. Une table plutot que cinq blocs : ce sont cinq fois la meme
+   verification, et cinq copies auraient fini par ne plus verifier la meme
+   chose. */
+{
+  const cas = [
+    ['dc', '1X', '1-1', '0-2'], ['dc', '12', '2-0', '1-1'], ['dc', 'X2', '0-1', '3-1'],
+    ['ou25', 'plus', '2-1', '1-1'], ['ou25', 'moins', '1-0', '2-2'],
+    ['score', '2-1', '2-1', '2-2'], ['score', 'autre', '5-1', '1-1'],
+    ['hand', '1', '3-1', '2-1'], ['hand', '2', '2-1', '4-0'],
+    ['1n2', '1', '1-0', '0-1'],
+  ];
+  for (const [marche, choix, gagnant, perdant] of cas) {
+    const g1 = jeu(), g0 = jeu();
+    const p1 = g1.parieSur(A, MM, marche, choix, 1000, AVANT);
+    g0.parieSur(A, MM, marche, choix, 1000, AVANT);
+    const a1 = sol(g1, A), a0 = sol(g0, A);
+    g1.regleMatch(MM, gagnant);
+    g0.regleMatch(MM, perdant);
+    ok(Math.round(sol(g1, A) - a1) === Math.round(p1.rapport) && sol(g0, A) === a0,
+       `« ${marche} ${choix} » gagne sur ${gagnant} et perd sur ${perdant}`);
+  }
+}
+/* ---- CE QUI EST REFUSE ---- */
+{
+  const g = jeu();
+  jete(() => g.parieSur(A, MM, 'zzz', 'oui', 1000, AVANT), /unknown market/,
+    'un marche qui n existe pas');
+  jete(() => g.parieSur(A, MM, 'btts', 'peut-etre', 1000, AVANT), /pick oui, non/,
+    'une reponse qui n appartient pas au marche — et le message NOMME celles qui vont');
+  jete(() => g.parieSur(A, 'un-seul-marche-20260815', 'btts', 'oui', 1000, AVANT),
+    /no Both teams to score/,
+    'et un marche que la rencontre ne porte pas — on le REFUSE plutot que de le'
+    + ' fabriquer a la volee : une cote calculee au moment de la mise ne serait'
+    + ' pas celle qu on a affichee');
+}
+/* ---- L ENGAGEMENT SE COMPTE PAR SCORE, PAS PAR REPONSE ----
+ * C est LA verification de ce commit. Un 2-1 fait gagner en meme temps le
+ * « 1 », le « 1X », le « 12 », le « oui », le « plus » et le score exact.
+ * Compte reponse par reponse, l engagement aurait annonce le sixieme du vrai —
+ * et le plafond n aurait plus rien plafonne. */
+{
+  const g = jeu(100000000);
+  const surDeuxUn = [['1n2', '1'], ['dc', '1X'], ['dc', '12'], ['btts', 'oui'],
+                     ['ou25', 'plus'], ['score', '2-1']];
+  let somme = 0, plusCher = 0;
+  for (const [marche, choix] of surDeuxUn) {
+    const p = g.parieSur(A, MM, marche, choix, 200, AVANT);
+    somme += p.rapport;
+    plusCher = Math.max(plusCher, p.rapport);
+  }
+  const eng = g.engagementMatch(MM);
+  ok(Math.abs(eng - somme) < 1,
+     `six paris qui gagnent TOUS sur un 2-1 engagent leur somme : ${Math.round(eng)}`);
+  ok(eng > plusCher * 1.5,
+     `et non le plus cher d entre eux, qui n en vaut que ${Math.round(plusCher)} —`
+     + ` compter par reponse aurait annonce ${Math.round(plusCher)} au lieu de`
+     + ` ${Math.round(eng)}`);
+  /* ---- LA GRILLE EST UNE ENVELOPPE, PAS UN ECHANTILLON ----
+   * Au-dela de quatre buts par equipe, l ensemble des reponses gagnantes ne
+   * change plus : un 12-0 paie exactement les memes paris qu un 8-0. On le
+   * PROUVE en refaisant le calcul sur une grille de zero a trente. */
+  const lignes = [];
+  for (const p of g.paris) {
+    for (const j of p.jambes) lignes.push({ marche: j.marche, choix: j.choix, rapport: p.rapport });
+  }
+  let large = 0;
+  for (let a2 = 0; a2 <= 30; a2++) for (let b2 = 0; b2 <= 30; b2++) {
+    let t2 = 0;
+    for (const l of lignes) if (paris.gagne(l.marche, l.choix, { a: a2, b: b2 })) t2 += l.rapport;
+    if (t2 > large) large = t2;
+  }
+  ok(Math.abs(large - eng) < 1,
+     `une grille de zero a trente ne trouve pas pire que celle de zero a huit :`
+     + ` ${Math.round(large)} contre ${Math.round(eng)}`);
+}
+/* ---- ET LA LETTRE NE PEUT PLUS TRANCHER CE QU ELLE NE SAIT PAS LIRE ----
+ * « 1 » ne dit pas si les deux equipes ont marque : un 1-0 et un 3-2 donnent
+ * la meme lettre. Regler a la lettre une rencontre portant un pari « les deux
+ * equipes marquent » ferait PERDRE tout le monde en silence. */
+{
+  const g = jeu();
+  g.parieSur(A, MM, 'btts', 'oui', 1000, AVANT);
+  jete(() => g.regleMatch(MM, '1'), /settle it with the final score/,
+    'la lettre est refusee des qu un pari demande le score');
+  ok(!g.parisRegles[MM], 'et rien n est grave : la rencontre reste a regler');
+  eq(g.regleMatch(MM, '2-1').gagnants, 1, 'le score, lui, la tranche');
+}
+{
+  /* Une rencontre qui ne porte QUE des 1-N-2 se regle encore a la lettre :
+     c est ce qui permet de payer un gagnant quand la rencontre a quitte le
+     calendrier et qu il ne reste que le souvenir du resultat. */
+  const g = jeu();
+  g.parieSur(A, MM, '1n2', '1', 1000, AVANT);
+  eq(g.regleMatch(MM, '1').gagnants, 1,
+     'une rencontre sans autre marche se tranche encore a la lettre');
+}
+/* On rend le calendrier du depot a ceux qui suivent. */
+paris.charge();
+
 // ================================ LE PLAFOND D ENGAGEMENT
 /* Il ne compte pas les mises : il compte ce qu il faudra SORTIR si la pire
    issue tombe. C est la seule mesure qui dit la verite. */
