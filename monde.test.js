@@ -543,12 +543,13 @@ function alea(graine) {
 
 /* ================== UNE CARTE DE JOUEUR DEVIENT UN PLAN ================== */
 {
-  const carte = (cases, dep, cote) => ({ id: 1, nom: 'Essai', cote: cote || 16,
-                                         depart: dep || { c: 8, l: 8 }, cases });
-  const p = M.planDeCarte(carte([
-    { c: 1, l: 1, s: 'grass' }, { c: 2, l: 1, s: 'grass' }, { c: 3, l: 1, s: 'cave' },
-    { c: 1, l: 5, o: 'boxe' },
-  ]));
+  /* Les objets vivent dans leur propre liste depuis les couches. */
+  const carte = (cases, dep, cote, objets) => ({ id: 1, nom: 'Essai', cote: cote || 16,
+                                                 depart: dep || { c: 8, l: 8 },
+                                                 cases, objets: objets || [] });
+  const p = M.planDeCarte(carte(
+    [{ c: 1, l: 1, s: 'grass' }, { c: 2, l: 1, s: 'grass' }, { c: 3, l: 1, s: 'cave' }],
+    null, null, [{ c: 1, l: 5, k: 'boxe', z: 0 }]));
   /* ---- LES SOLS VOYAGENT EN PALETTE ----
    * Le troisieme nombre d'une tuile est un INDICE, pas un nom : repeter
    * « ground_cave » deux mille trois cents fois pese plus que la carte. */
@@ -572,19 +573,40 @@ function alea(graine) {
   /* ---- UN BLOC NE PEUT PAS AVALER LE POINT D'ARRIVEE ----
    * Depuis qu'un element peut couvrir la carte entiere, un fond pose sur le
    * depart y ferait NAITRE le visiteur dans la pierre. */
-  const gros = M.planDeCarte(carte([{ c: 8, l: 9, o: 'iso_hotel', n: 20 }], { c: 8, l: 8 }));
+  const gros = M.planDeCarte(carte([], { c: 8, l: 8 }, null,
+    [{ c: 8, l: 9, k: 'iso_hotel', n: 20, z: 0 }]));
   eq(gros.obstacles.length, 0,
      'un decor assez grand pour recouvrir le depart cesse de bloquer');
-  const petit = M.planDeCarte(carte([{ c: 8, l: 9, o: 'iso_hotel', n: 2 }], { c: 1, l: 1 }));
+  const petit = M.planDeCarte(carte([], { c: 1, l: 1 }, null,
+    [{ c: 8, l: 9, k: 'iso_hotel', n: 2, z: 0 }]));
   eq(petit.obstacles.length, 1, 'un decor qui ne le touche pas bloque comme avant');
   /* Et le rayon suit l'emprise : c'est ce qui fait que ce qu'on traverse est
      ce qu'on voit. */
-  const large = M.planDeCarte(carte([{ c: 2, l: 2, o: 'iso_hotel', n: 4 }], { c: 14, l: 14 }));
-  const etroit = M.planDeCarte(carte([{ c: 2, l: 2, o: 'iso_hotel', n: 2 }], { c: 14, l: 14 }));
+  const large = M.planDeCarte(carte([], { c: 14, l: 14 }, null,
+    [{ c: 2, l: 2, k: 'iso_hotel', n: 4, z: 0 }]));
+  const etroit = M.planDeCarte(carte([], { c: 14, l: 14 }, null,
+    [{ c: 2, l: 2, k: 'iso_hotel', n: 2, z: 0 }]));
   ok(large.obstacles[0].r > etroit.obstacles[0].r,
      'une emprise plus grande bloque plus large');
   eq(large.obstacles[0].larg, 4 * M.DONJON_TUILE,
      'et la largeur dessinee vaut son emprise en tuiles');
+
+  /* ---- LA COUCHE DEVIENT UN ORDRE, UNE FOIS POUR TOUTES ----
+   * Un plan n'a pas de couches : il a une liste de blocs que la page dessine
+   * dans l'ordre recu. Sans ce tri, un toit passerait sous sa maison. */
+  const empile = M.planDeCarte(carte([], { c: 1, l: 1 }, null, [
+    { c: 8, l: 8, k: 'toit', z: 3 },
+    { c: 8, l: 9, k: 'maison', z: 1 },
+    { c: 2, l: 9, k: 'chemin', z: 0 },
+  ]));
+  eq(empile.obstacles.map((o) => o.bat).join(','), 'chemin,maison,toit',
+     'les blocs sortent dans l ordre des couches, quelle que soit la pose');
+  const memeCouche = M.planDeCarte(carte([], { c: 1, l: 1 }, null, [
+    { c: 5, l: 9, k: 'devant', z: 2 },
+    { c: 5, l: 3, k: 'derriere', z: 2 },
+  ]));
+  eq(memeCouche.obstacles.map((o) => o.bat).join(','), 'derriere,devant',
+     'et sur une meme couche, du fond vers l avant');
 }
 
 console.log('monde.test.js : ' + n + ' verifications OK');

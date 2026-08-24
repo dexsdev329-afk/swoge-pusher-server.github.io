@@ -1175,7 +1175,27 @@ class Game {
      * toutes ferait grossir la carte sans rien changer a ce qu'on voit, et
      * deux dessins superposes sur une case sont une facon simple de depasser
      * le plafond en le respectant. */
+    /* ---- L'EMPRISE ET LE QUART DE TOUR, ECRITS PAR CELUI QUI POSE ----
+     * Une parcelle isometrique couvre plusieurs cases. Le serveur ne peut pas
+     * le deduire : la largeur des planches vit dans le catalogue de l'autre
+     * depot. Il la RECOIT donc, bornee, de la page qui a decide ou dessiner —
+     * et c'est la meme page qui la redessinera, donc le dessin et la collision
+     * ne peuvent pas se contredire. Le pire qu'un envoi truque puisse faire
+     * est de bloquer sa PROPRE carte.
+     * Bornee par le DOUBLE du cote : un fond doit pouvoir couvrir la carte et
+     * deborder — sinon on voit ses bords — mais rien au-dela n'a de sens.
+     * Quatre valeurs de rotation et pas un angle libre : les planches sont des
+     * images de pixels. Les valeurs par defaut ne s'ecrivent pas. */
+    const empMax = Math.min(cfg.CARTE_EMPRISE_MAX, cote * 2);
+    const garnis = (e, b) => {
+      const emp = Math.round(Number(b.n));
+      if (Number.isInteger(emp) && emp > 1 && emp <= empMax) e.n = emp;
+      const tour = Math.round(Number(b.a));
+      if (Number.isInteger(tour) && tour > 0 && tour < 4) e.a = tour;
+      return e;
+    };
     const par = new Map();
+    const objets = [];
     for (const b of brut) {
       if (!b || typeof b !== 'object') continue;
       const c = Math.round(Number(b.c)), l = Math.round(Number(b.l));
@@ -1185,33 +1205,35 @@ class Game {
       /* Une case qui ne porte NI sol NI objet ne dit rien : la garder
          reviendrait a transmettre du vide au prix d'une case. */
       if (!sol && !obj) continue;
-      const e = { c, l };
-      if (sol) e.s = sol;
-      if (obj) e.o = obj;
-      /* ---- L'EMPRISE, ECRITE PAR CELUI QUI POSE ----
-       * Une parcelle isometrique couvre plusieurs cases. Le serveur ne peut
-       * pas le deduire : la largeur des planches vit dans le catalogue de
-       * l'autre depot. Il la RECOIT donc, bornee, de la page qui a decide ou
-       * dessiner — et c'est la meme page qui la redessinera, donc le dessin et
-       * la collision ne peuvent pas se contredire.
-       * Le pire qu'un envoi truque puisse faire est de bloquer sa PROPRE
-       * carte : l'emprise ne sert a rien d'autre. */
-      const emp = Math.round(Number(b.n));
-      /* Bornee par le DOUBLE du cote AUSSI : un fond doit pouvoir couvrir la
-         carte et deborder — sinon on voit ses bords — mais rien au-dela n'a
-         de sens, et cette borne-la se deduit au lieu d'etre choisie. */
-      const empMax = Math.min(cfg.CARTE_EMPRISE_MAX, cote * 2);
-      if (obj && Number.isInteger(emp) && emp > 1 && emp <= empMax) e.n = emp;
-      /* ---- ET LE QUART DE TOUR ----
-       * Quatre valeurs, pas un angle libre : les planches sont des images de
-       * pixels, et une rotation de dix-sept degres les rend floues quel que
-       * soit le soin qu'on y met. Zero ne s'ecrit pas — c'est le cas de la
-       * quasi-totalite des cases, et l'ecrire couterait un octet fois deux
-       * mille trois cents. */
-      const tour = Math.round(Number(b.a));
-      if (obj && Number.isInteger(tour) && tour > 0 && tour < 4) e.a = tour;
-      par.set(c + ',' + l, e);
+      if (sol) par.set(c + ',' + l, { c, l, s: sol });
+      /* ---- L'ANCIEN FORMAT ENTRE PAR LA MEME PORTE ----
+       * Une case portait son objet. Les cartes deja enregistrees, et les pages
+       * qui n'ont pas encore recharge, l'envoient toujours ainsi : on le
+       * transforme en objet de couche zero au lieu de le jeter. Une migration
+       * qui refuserait l'ancien format mettrait dehors tous ceux qui n'ont pas
+       * recharge, et ce sont precisement ceux qui ne savent pas pourquoi. */
+      if (obj) objets.push(garnis({ c, l, k: obj, z: 0 }, b));
     }
+    /* ---- ET LES OBJETS, QUI SONT UNE LISTE ----
+     * Plusieurs au meme endroit, chacun sur sa couche : c'est ce qui permet de
+     * poser une maison sur un chemin sur un sol, et de dire lequel passe
+     * devant. */
+    const bruts = Array.isArray(x && x.objets) ? x.objets : [];
+    if (bruts.length > cfg.CARTE_OBJETS) return null;
+    for (const b of bruts) {
+      if (!b || typeof b !== 'object') continue;
+      const c = Math.round(Number(b.c)), l = Math.round(Number(b.l));
+      if (!Number.isInteger(c) || !Number.isInteger(l)) continue;
+      if (c < 0 || l < 0 || c >= cote || l >= cote) continue;
+      const k2 = Game.cleElement(b.k);
+      if (!k2) continue;
+      const z = Math.round(Number(b.z));
+      const couche = (Number.isInteger(z) && z >= 0 && z < cfg.CARTE_COUCHES) ? z : 0;
+      objets.push(garnis({ c, l, k: k2, z: couche }, b));
+    }
+    /* Le plafond vaut pour le TOTAL, ancien format compris : sinon on le
+       doublerait en envoyant la moitie par chaque porte. */
+    if (objets.length > cfg.CARTE_OBJETS) objets.length = cfg.CARTE_OBJETS;
     /* ---- OU L'ON ARRIVE QUAND ON Y ENTRE ----
      * Un point, pas un element : ce n'est pas quelque chose qu'on dessine,
      * c'est une propriete de la carte. Range dans une case, il aurait fallu
@@ -1226,7 +1248,7 @@ class Game {
       if (Number.isInteger(dc) && Number.isInteger(dl)
           && dc >= 0 && dl >= 0 && dc < cote && dl < cote) depart = { c: dc, l: dl };
     }
-    const carte = { nom, cote, mode, depart, cases: [...par.values()] };
+    const carte = { nom, cote, mode, depart, cases: [...par.values()], objets };
     /* Absente et refusee ne se distinguent pas ici : dans les deux cas la
        carte n'en porte pas, et la fiche retombe sur son texte. Refuser la
        carte ENTIERE pour une vignette trop lourde ferait perdre le dessin
@@ -1257,6 +1279,39 @@ class Game {
     return T[raison] || null;
   }
 
+  /**
+   * UNE CARTE DE L'ANCIEN FORMAT, RAMENEE AU NOUVEAU.
+   *
+   * Les objets vivaient DANS la case, un par case. Ils vivent maintenant dans
+   * une liste, ce qui permet d'en poser plusieurs au meme endroit et de dire
+   * lequel passe devant. Les cartes deja enregistrees, elles, portent encore
+   * l'ancien format.
+   *
+   * On les convertit A LA LECTURE de la sauvegarde, une fois, plutot que de
+   * laisser les deux formats se cotoyer : deux formats vivants, c'est deux
+   * chemins a tenir d'accord dans le dessin, dans la collision, dans le
+   * plafond — et c'est celui qu'on oublie qui perd le travail de quelqu'un.
+   * Ecrit ici et pas dans `carteValide` parce que ce n'est pas une validation :
+   * rien n'est refuse, tout est traduit.
+   */
+  static carteMigree(k) {
+    if (!k || !Array.isArray(k.cases)) return k;
+    if (Array.isArray(k.objets)) return k;
+    const sols = [], objets = [];
+    for (const q of k.cases) {
+      if (!q) continue;
+      if (q.s) sols.push({ c: q.c, l: q.l, s: q.s });
+      if (q.o) {
+        const o = { c: q.c, l: q.l, k: q.o, z: 0 };
+        if (q.n > 1) o.n = q.n;
+        if (q.a) o.a = q.a;
+        objets.push(o);
+      }
+    }
+    k.cases = sols; k.objets = objets;
+    return k;
+  }
+
   /** Les cartes d'un compte. Toujours une liste, jamais `null`. */
   mesCartes(addr) {
     return this.cartes.filter((k) => k.addr === addr);
@@ -1278,7 +1333,8 @@ class Game {
       if (!c) return 'carte invalide';
       if (this.mesCartes(addr).length >= cfg.CARTES_PAR_COMPTE) return 'plafond de cartes atteint';
       const k = { id: this.cartesNo++, addr, nom: c.nom, cote: c.cote, mode: c.mode,
-                  cases: c.cases, depart: c.depart, vignette: c.vignette || null,
+                  cases: c.cases, objets: c.objets, depart: c.depart,
+                  vignette: c.vignette || null,
                   cree: Date.now(), modifie: Date.now() };
       this.cartes.push(k);
       return k;
@@ -1301,7 +1357,8 @@ class Game {
      * pleine de tuiles plates, qui ne se dessinerait plus comme elle a ete
      * faite. On garde donc ce que la carte a toujours eu ; `plat` pour celles
      * ecrites avant que ce champ n'existe. */
-    k.nom = c.nom; k.cases = c.cases; k.depart = c.depart; k.modifie = Date.now();
+    k.nom = c.nom; k.cases = c.cases; k.objets = c.objets;
+    k.depart = c.depart; k.modifie = Date.now();
     /* L'ANCIENNE image reste si le nouvel envoi n'en porte pas. Un client qui
        ne sait pas en fabriquer — ou dont l'image depasse le plafond — ne doit
        pas EFFACER celle qui etait la : la fiche perdrait son dessin a un
@@ -1332,7 +1389,10 @@ class Game {
       .sort((a, b) => b.modifie - a.modifie)
       .slice(0, Math.max(0, cfg.CARTES_VITRINE - miennes.length));
     return miennes.concat(autres).map((k) => ({
-      id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat', cases: k.cases.length,
+      id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat',
+      /* Ce qu'on a POSE, sols et objets confondus : c'est le travail que la
+         fiche annonce, pas un detail de format. */
+      cases: k.cases.length + ((k.objets && k.objets.length) || 0),
       vignette: k.vignette || null,
       /* Le point de depart ne voyage pas entier dans la vitrine : ce qu'on
          veut y lire est « peut-on y aller », pas « ou ». */
@@ -1421,7 +1481,7 @@ class Game {
      * donnerait a la prochaine carte le numero d'une carte deja la — qui
      * serait alors ecrasee au premier enregistrement. On le remonte donc
      * au-dessus du plus grand numero present, toujours. */
-    if (Array.isArray(st.cartes)) this.cartes = st.cartes;
+    if (Array.isArray(st.cartes)) this.cartes = st.cartes.map(Game.carteMigree);
     this.cartesNo = Math.max(Number(st.cartesNo) || 1,
                              ...this.cartes.map((k) => (Number(k.id) || 0) + 1), 1);
     if (st.boutiqueEmis && typeof st.boutiqueEmis === 'object') this.boutiqueEmis = st.boutiqueEmis;

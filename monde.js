@@ -1648,10 +1648,18 @@ function planDeCarte(k) {
   const cote = (k && k.cote) || 16;
   const dep = (k && k.depart) || { c: Math.floor(cote / 2), l: Math.floor(cote / 2) };
   const entree = { x: (dep.c + 0.5) * T, y: (dep.l + 0.5) * T };
+  /* ---- LES OBJETS VIENNENT DE LEUR LISTE, DANS L'ORDRE DES COUCHES ----
+   * Un plan n'a pas de couches : il a une liste de blocs, et la page les
+   * dessine dans l'ordre recu. C'est donc ICI que la couche devient un ordre,
+   * une fois pour toutes — la couche d'abord, la ligne ensuite. Sans la
+   * ligne, deux batiments de la meme couche se recouvriraient selon l'ordre
+   * ou on les a poses ; sans la couche, un toit passerait sous sa maison. */
+  const poses = ((k && k.objets) || []).slice().sort(
+    (a, b) => (a.z || 0) - (b.z || 0) || a.l - b.l || a.c - b.c);
   const obstacles = [];
   let id = 1;
-  for (const q of cases) {
-    if (!q.o) continue;
+  for (const q of poses) {
+    if (!q.k) continue;
     const n = Math.max(1, Number(q.n) || 1);
     /* ---- LE RAYON SUIT L'EMPRISE, ET LE PIED RESTE AU PIED ----
      * La page dessine une planche nommee POSEE sur `y + r` : c'est la regle
@@ -1675,7 +1683,7 @@ function planDeCarte(k) {
     const dx = cx - entree.x, dy = cy - entree.y;
     if (dx * dx + dy * dy < r * r) continue;
     obstacles.push({ i: id++, x: cx, y: cy,
-                     r, bat: q.o, larg: n * T,
+                     r, bat: q.k, larg: n * T,
                      /* Le `t` de repli : une page qui ne saurait pas dessiner
                         une planche nommee posera de la pierre a cet endroit.
                         Degrade, jamais troue — la meme precaution que les

@@ -2420,7 +2420,8 @@ const server = http.createServer(async (req, res) => {
     /* On ajoute l'AUTEUR, que la vitrine des joueurs ne porte pas : le panneau
        est le seul endroit ou savoir qui a dessine quoi a un sens. */
     return res.end(JSON.stringify({ ok: true, cartes: game.cartes.map((k) => ({
-      id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat', cases: k.cases.length,
+      id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat',
+      cases: k.cases.length + ((k.objets && k.objets.length) || 0),
       addr: k.addr, nomAuteur: (game.players.get(k.addr) && game.players.get(k.addr).name) || null,
       cree: k.cree, modifie: k.modifie,
     })).sort((a, b) => b.modifie - a.modifie) }));
@@ -3842,7 +3843,7 @@ wss.on('connection', (ws) => {
         if (!k) return send(ws, { type: 'carte', error: 'carte inconnue', code: 'inconnue' });
         return send(ws, { type: 'carte', carte: {
           id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat', cases: k.cases,
-          depart: k.depart || null,
+          objets: k.objets || [], depart: k.depart || null,
           modifie: k.modifie, mienne: k.addr === ws.addr,
           auteur: (game.players.get(k.addr) && game.players.get(k.addr).name) || null,
         } });

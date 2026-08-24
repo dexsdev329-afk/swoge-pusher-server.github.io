@@ -71,7 +71,13 @@ console.log('-- ce qui entre, et ce qui est refuse --');
     { c: 2, l: 0, s: 'grass' }, { c: 3, l: 0, o: 'obj boxe' },
     { c: 4, l: 0, o: 'boxe' },
   ]));
-  eq(cles.cases.length, 2, 'seules les cles bien formees survivent (chemin, majuscule et espace ecartes)');
+  /* Les sols et les objets vivent dans deux listes depuis que les couches
+     existent : on compte les deux, c'est le nombre de cles qui ont survecu
+     qui est en cause, pas l'endroit ou elles atterrissent. */
+  eq(cles.cases.length + cles.objets.length, 2,
+     'seules les cles bien formees survivent (chemin, majuscule et espace ecartes)');
+  eq(cles.cases[0].s, 'grass', 'le sol bien forme');
+  eq(cles.objets[0].k, 'boxe', "et l'objet bien forme");
 
   const vide = v(carte('essai', [{ c: 0, l: 0 }, { c: 1, l: 1, s: 'grass' }]));
   eq(vide.cases.length, 1, 'une case sans sol ni objet ne compte pas : elle ne dit rien');
@@ -341,7 +347,9 @@ console.log('\n-- le point de depart --');
 console.log('\n-- l emprise d un element --');
 {
   const v = Game.carteValide;
-  const avec = (n2) => v(carte('a', [{ c: 1, l: 1, o: 'iso_vault', n: n2 }], 16)).cases[0];
+  /* L'objet vit dans sa propre liste depuis les couches : c'est la qu'on va
+     le lire. La case, elle, ne porte plus que son sol. */
+  const avec = (n2) => v(carte('a', [{ c: 1, l: 1, o: 'iso_vault', n: n2 }], 16)).objets[0];
   eq(avec(4).n, 4, 'une emprise de quatre cases est gardee');
   ok(avec(1).n === undefined, 'une case d une seule case n a rien a declarer');
   ok(avec(99).n === undefined,
@@ -354,26 +362,28 @@ console.log('\n-- l emprise d un element --');
      'un element peut couvrir la carte de seize et deborder : un fond doit sortir du cadre');
   ok(avec(33).n === undefined,
      'au-dela du double du cote, non : un fond deborde, il ne s etend pas sans fin');
-  ok(v(carte('a', [{ c: 1, l: 1, o: 'iso_vault', n: 60 }], 32)).cases[0].n === 60,
+  ok(v(carte('a', [{ c: 1, l: 1, o: 'iso_vault', n: 60 }], 32)).objets[0].n === 60,
      'et une carte plus grande porte de plus grands fonds');
   ok(avec(-3).n === undefined, 'et une emprise negative aussi');
   /* Une emprise sur une case qui ne porte QUE du sol ne veut rien dire : c'est
      l'objet qui occupe de la place, pas le sol. */
   ok(v(carte('a', [{ c: 1, l: 1, s: 'grass', n: 4 }], 16)).cases[0].n === undefined,
      'et un sol n a pas d emprise : c est l objet qui occupe la place');
+  ok(!v(carte('a', [{ c: 1, l: 1, s: 'grass', n: 4 }], 16)).objets.length,
+     'un sol seul ne cree aucun objet');
 
   const g = new Game();
   const k = g.enregistreCarte(A, null, carte('Parcelles', [{ c: 2, l: 2, o: 'iso_hotel', n: 5 }], 16));
-  eq(k.cases[0].n, 5, 'l emprise traverse l enregistrement');
+  eq(k.objets[0].n, 5, 'l emprise traverse l enregistrement');
   const g2 = new Game();
   g2.hydrate(JSON.parse(JSON.stringify(g.serialize())));
-  eq(g2.carte(k.id).cases[0].n, 5, 'et la sauvegarde');
+  eq(g2.carte(k.id).objets[0].n, 5, 'et la sauvegarde');
 }
 
 console.log('\n-- le quart de tour --');
 {
   const v = Game.carteValide;
-  const avecA = (a) => v(carte('a', [{ c: 1, l: 1, o: 'mur_ville', a }], 16)).cases[0];
+  const avecA = (a) => v(carte('a', [{ c: 1, l: 1, o: 'mur_ville', a }], 16)).objets[0];
   eq(avecA(1).a, 1, 'un quart de tour est garde');
   eq(avecA(3).a, 3, 'trois aussi');
   ok(avecA(0).a === undefined,
@@ -384,6 +394,55 @@ console.log('\n-- le quart de tour --');
   ok(avecA('nord').a === undefined, 'ni ce qui n est pas un nombre');
   ok(v(carte('a', [{ c: 1, l: 1, s: 'grass', a: 2 }], 16)).cases[0].a === undefined,
      'et un sol ne tourne pas : il se raboute a ses voisins, un sol tourne ferait une couture');
+}
+
+/* ================== 9. LES COUCHES ================== */
+console.log('\n-- plusieurs objets au meme endroit, chacun sur sa couche --');
+{
+  const v = Game.carteValide;
+  const c = v({ nom: 'x', cote: 16, cases: [{ c: 1, l: 1, s: 'grass' }],
+                objets: [{ c: 5, l: 5, k: 'maison', z: 2 },
+                         { c: 5, l: 5, k: 'chemin', z: 1 },
+                         { c: 5, l: 5, k: 'toit', z: 7 }] });
+  eq(c.objets.length, 3, 'trois objets tiennent sur la MEME case');
+  eq(c.cases.length, 1, 'et le sol reste un par case');
+  eq(c.objets.map((q) => q.z).join(','), '2,1,7', 'chacun garde sa couche');
+  eq(v({ nom: 'x', cote: 16, cases: [], objets: [{ c: 1, l: 1, k: 'a', z: 99 }] }).objets[0].z, 0,
+     'une couche hors bornes retombe sur la premiere au lieu de passer telle quelle');
+  eq(v({ nom: 'x', cote: 16, cases: [], objets: [{ c: 1, l: 1, k: 'a' }] }).objets[0].z, 0,
+     'et sans couche declaree, la premiere');
+  ok(!v({ nom: 'x', cote: 16, cases: [],
+          objets: new Array(cfg.CARTE_OBJETS + 1).fill({ c: 1, l: 1, k: 'a' }) }),
+     `un envoi de plus de ${cfg.CARTE_OBJETS} objets est refuse d'emblee`);
+
+  /* ---- L'ANCIEN FORMAT ENTRE PAR LA MEME PORTE ----
+   * Une page qui n'a pas recharge envoie encore son objet DANS la case. Le
+   * refuser mettrait dehors precisement ceux qui ne savent pas pourquoi. */
+  const vieux = v({ nom: 'x', cote: 16,
+                    cases: [{ c: 3, l: 4, s: 'grass', o: 'boxe', n: 3, a: 2 }] });
+  eq(vieux.objets.length, 1, "l'objet d'une case devient un objet de la liste");
+  eq(vieux.objets[0].k, 'boxe', 'avec sa cle');
+  eq(vieux.objets[0].z, 0, 'sur la premiere couche');
+  eq(vieux.objets[0].n, 3, 'son emprise');
+  eq(vieux.objets[0].a, 2, 'et son quart de tour');
+  eq(vieux.cases.length, 1, 'et la case garde son sol');
+  ok(vieux.cases[0].o === undefined, "sans garder l'objet en double");
+
+  /* ---- ET LES CARTES DEJA ENREGISTREES SE CONVERTISSENT A LA LECTURE ----
+   * Deux formats vivants, c'est deux chemins a tenir d'accord dans le dessin,
+   * la collision et le plafond — et c'est celui qu'on oublie qui perd le
+   * travail de quelqu'un. */
+  const g = new Game();
+  g.hydrate({ cartes: [{ id: 7, addr: A, nom: 'ancienne', cote: 16, cases: [
+    { c: 1, l: 1, s: 'grass' }, { c: 2, l: 2, s: 'cave', o: 'boxe', n: 3, a: 1 }] }],
+    cartesNo: 8 });
+  const k7 = g.carte(7);
+  eq(k7.objets.length, 1, 'une carte de la sauvegarde ressort avec sa liste d objets');
+  eq(k7.objets[0].k, 'boxe', 'qui porte la cle de l ancien champ');
+  eq(k7.objets[0].n, 3, 'et son emprise');
+  eq(k7.cases.length, 2, 'ses deux sols sont intacts');
+  ok(k7.cases.every((q) => q.o === undefined), "et plus rien ne traine dans l'ancien champ");
+  eq(g.vitrineCartes(A)[0].cases, 3, 'la fiche compte ce qui est POSE, sols et objets');
 }
 
 console.log(`\ncartes.test.js : ${n} verifications OK`);

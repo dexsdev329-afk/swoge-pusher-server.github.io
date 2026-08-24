@@ -672,6 +672,26 @@ module.exports = {
    * compact, sans quoi la carte serait acceptee par le reglement et rejetee
    * par le tuyau. */
   CARTE_VIGNETTE_MAX: parseInt(env('CARTE_VIGNETTE_MAX', '24000'), 10),
+
+  /* ---- LES OBJETS SONT UNE LISTE, PAS UN CHAMP DE CASE ----
+   *
+   * Une case portait UN objet. C'etait assez pour poser une maison sur un
+   * sol, et pas pour en poser deux au meme endroit — ni pour dire lequel
+   * passe devant l'autre. Les objets sont donc une liste a part, chacun avec
+   * sa case, son emprise, son quart de tour et sa COUCHE.
+   *
+   * Mille huit cents, et le chiffre se calcule. La trame refuse plus de deux
+   * cent cinquante-six kilo-octets ; l'image en prend vingt-quatre, les sols
+   * d'une carte pleine cent huit (2304 fois quarante-sept octets), il reste
+   * environ cent vingt-trois kilo-octets, et un objet en pese soixante-six au
+   * pire de ce que le reglement permet. Le jour ou l'on voudra plus, ce n'est
+   * pas ce chiffre qu'il faudra relever seul : c'est le format qu'il faudra
+   * rendre compact. */
+  CARTE_OBJETS: parseInt(env('CARTE_OBJETS', '1800'), 10),
+  /* Combien de couches. Huit : assez pour un sol, un chemin, un batiment, un
+     toit et de quoi respirer entre les deux, et assez peu pour qu'on les
+     choisisse d'un coup d'oeil au lieu de les chercher. */
+  CARTE_COUCHES: parseInt(env('CARTE_COUCHES', '8'), 10),
   /* ---- COMBIEN DE CARTES LA GALERIE MONTRE ----
    * Elle les montrait TOUTES, celles de tout le monde. C'etait sans
    * consequence tant qu'il y en avait trois ; a cent comptes de vingt-quatre
