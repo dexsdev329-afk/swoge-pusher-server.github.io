@@ -384,14 +384,37 @@ console.log('\n-- le quart de tour --');
 {
   const v = Game.carteValide;
   const avecA = (a) => v(carte('a', [{ c: 1, l: 1, o: 'mur_ville', a }], 16)).objets[0];
-  eq(avecA(1).a, 1, 'un quart de tour est garde');
-  eq(avecA(3).a, 3, 'trois aussi');
-  ok(avecA(0).a === undefined,
-     'zero ne s ecrit pas : c est le cas de presque toutes les cases, et l ecrire'
-     + ' couterait un octet fois deux mille trois cents');
-  ok(avecA(4).a === undefined, 'quatre est un tour complet, donc rien');
-  ok(avecA(-1).a === undefined, 'ni un tour negatif');
-  ok(avecA('nord').a === undefined, 'ni ce qui n est pas un nombre');
+  /* ---- L'ANGLE EST EN DEGRES, ET LES QUARTS DE TOUR Y ENTRENT ----
+   * Les planches sont des images de pixels : tourner de dix-sept degres les
+   * rend floues, et c'est toujours vrai. C'est le dessin de celui qui pose, et
+   * le flou est une chose qu'il voit — on lui laisse les trois cent soixante
+   * positions. L'ancien champ vaut quatre-vingt-dix degres par unite. */
+  eq(avecA(1).g, 90, 'un quart de tour vaut quatre-vingt-dix degres');
+  eq(avecA(3).g, 270, 'trois quarts, deux cent soixante-dix');
+  ok(avecA(0).g === undefined,
+     'zero ne s ecrit pas : c est le cas de presque tous les objets, et l ecrire'
+     + ' couterait un octet fois mille huit cents');
+  ok(avecA(4).g === undefined, 'quatre est un tour complet, donc rien');
+  ok(avecA(-1).g === undefined, 'ni un tour negatif');
+  ok(avecA('nord').g === undefined, 'ni ce qui n est pas un nombre');
+  const avecG = (g) => v({ nom: 'a', cote: 16, cases: [],
+                           objets: [{ c: 1, l: 1, k: 'mur_ville', g }] }).objets[0];
+  eq(avecG(47).g, 47, 'un angle libre est garde tel quel');
+  eq(avecG(359).g, 359, 'jusqu au dernier degre');
+  ok(avecG(360).g === undefined, 'un tour complet ne s ecrit pas : c est zero');
+  ok(avecG(400).g === undefined, 'ni au-dela');
+
+  /* ---- ET LE DECALAGE FIN, EN CENTIEMES DE CASE ----
+   * Il permet de COMPOSER : coller un toit sur un mur, decaler une passerelle
+   * d'un demi-pas. Une case de part et d'autre suffit — au-dela on deplace
+   * l'element, on ne le decale plus. */
+  const avecD = (dx, dy) => v({ nom: 'a', cote: 16, cases: [],
+                                objets: [{ c: 1, l: 1, k: 'a', dx, dy }] }).objets[0];
+  eq(avecD(-30, 12).dx, -30, 'un decalage negatif est garde');
+  eq(avecD(-30, 12).dy, 12, 'et le positif aussi');
+  ok(avecD(0, 0).dx === undefined, 'zero ne s ecrit pas');
+  ok(avecD(101, 0).dx === undefined, 'au-dela d une case, non');
+  ok(avecD(-101, 0).dx === undefined, 'ni dans l autre sens');
   ok(v(carte('a', [{ c: 1, l: 1, s: 'grass', a: 2 }], 16)).cases[0].a === undefined,
      'et un sol ne tourne pas : il se raboute a ses voisins, un sol tourne ferait une couture');
 }
@@ -424,7 +447,7 @@ console.log('\n-- plusieurs objets au meme endroit, chacun sur sa couche --');
   eq(vieux.objets[0].k, 'boxe', 'avec sa cle');
   eq(vieux.objets[0].z, 0, 'sur la premiere couche');
   eq(vieux.objets[0].n, 3, 'son emprise');
-  eq(vieux.objets[0].a, 2, 'et son quart de tour');
+  eq(vieux.objets[0].g, 180, 'et son quart de tour, devenu un angle');
   eq(vieux.cases.length, 1, 'et la case garde son sol');
   ok(vieux.cases[0].o === undefined, "sans garder l'objet en double");
 
@@ -443,6 +466,21 @@ console.log('\n-- plusieurs objets au meme endroit, chacun sur sa couche --');
   eq(k7.cases.length, 2, 'ses deux sols sont intacts');
   ok(k7.cases.every((q) => q.o === undefined), "et plus rien ne traine dans l'ancien champ");
   eq(g.vitrineCartes(A)[0].cases, 3, 'la fiche compte ce qui est POSE, sols et objets');
+}
+
+/* ================== 10. LES QUARTS DE TOUR DEJA ENREGISTRES ================== */
+console.log('\n-- une carte enregistree avant les degres --');
+{
+  const g = new Game();
+  g.hydrate({ cartes: [{ id: 9, addr: A, nom: 'avant', cote: 16, cases: [],
+                         objets: [{ c: 1, l: 1, k: 'x', z: 0, a: 2 },
+                                  { c: 2, l: 2, k: 'y', z: 0, a: 0 }] }], cartesNo: 10 });
+  const k9 = g.carte(9);
+  eq(k9.objets[0].g, 180, 'son quart de tour devient un angle');
+  ok(k9.objets[0].a === undefined,
+     "et l'ancien champ disparait : deux champs d'angle vivants, c'est deux endroits"
+     + " ou lire l'orientation, et celui qu'on oublie dessine de travers");
+  ok(k9.objets[1].g === undefined, 'un objet droit reste droit, sans champ');
 }
 
 console.log(`\ncartes.test.js : ${n} verifications OK`);

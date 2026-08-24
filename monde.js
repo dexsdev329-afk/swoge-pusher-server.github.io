@@ -1670,7 +1670,11 @@ function planDeCarte(k) {
      * l'emprise bloquerait les coins de la case voisine, ou l'on doit pouvoir
      * longer un mur. */
     const r = Math.max(24, Math.round(n * T / 2 * 0.8));
-    const cx = (q.c + 0.5) * T, cy = (q.l + 1) * T - r;
+    /* Le decalage fin, en centiemes de case : c'est ce qui permet de coller un
+       toit sur un mur. Il deplace le BLOC aussi bien que le dessin — sans
+       quoi l'on traverserait ce qu'on voit. */
+    const ox = ((Number(q.dx) || 0) / 100) * T, oy = ((Number(q.dy) || 0) / 100) * T;
+    const cx = (q.c + 0.5) * T + ox, cy = (q.l + 1) * T - r + oy;
     /* ---- UN BLOC NE PEUT PAS AVALER LE POINT D'ARRIVEE ----
      * Depuis qu'un element peut couvrir la carte entiere, un fond pose sur le
      * depart y ferait NAITRE le visiteur dans la pierre — coince, sans rien
@@ -1684,11 +1688,14 @@ function planDeCarte(k) {
     if (dx * dx + dy * dy < r * r) continue;
     obstacles.push({ i: id++, x: cx, y: cy,
                      r, bat: q.k, larg: n * T,
+                     /* L'angle part avec le bloc : la page le dessine, elle ne
+                        le devine pas. */
+                     g: q.g || 0,
                      /* Le `t` de repli : une page qui ne saurait pas dessiner
                         une planche nommee posera de la pierre a cet endroit.
                         Degrade, jamais troue — la meme precaution que les
                         facades de la ville. */
-                     t: MUR_DONJON, a: q.a || 0, carte: 1 });
+                     t: MUR_DONJON, carte: 1 });
   }
   return {
     nom: (k && k.nom) || 'carte',

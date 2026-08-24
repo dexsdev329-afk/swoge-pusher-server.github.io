@@ -1190,8 +1190,29 @@ class Game {
     const garnis = (e, b) => {
       const emp = Math.round(Number(b.n));
       if (Number.isInteger(emp) && emp > 1 && emp <= empMax) e.n = emp;
-      const tour = Math.round(Number(b.a));
-      if (Number.isInteger(tour) && tour > 0 && tour < 4) e.a = tour;
+      /* ---- L'ANGLE EST EN DEGRES ----
+       * C'etaient des quarts de tour, parce qu'une planche de pixels tournee
+       * de dix-sept degres est floue. C'est toujours vrai, et le proprietaire
+       * a quand meme voulu regler finement : c'est son dessin, et le flou est
+       * une chose qu'il voit. On garde donc trois cent soixante positions.
+       * `a`, l'ancien champ, entre par la meme porte et vaut quatre-vingt-dix
+       * degres par unite — les cartes deja enregistrees et les pages qui n'ont
+       * pas recharge n'y perdent rien. */
+      const deg = Math.round(Number(b.g));
+      if (Number.isInteger(deg) && deg > 0 && deg < 360) e.g = deg;
+      else {
+        const tour = Math.round(Number(b.a));
+        if (Number.isInteger(tour) && tour > 0 && tour < 4) e.g = tour * 90;
+      }
+      /* ---- ET LE DECALAGE, EN CENTIEMES DE CASE ----
+       * Un element se pose sur une case. Pour COMPOSER — coller un toit sur
+       * un mur, decaler une passerelle d'un demi-pas — il faut pouvoir sortir
+       * de la grille sans en changer. Une case de part et d'autre suffit :
+       * au-dela, on deplace l'element, on ne le decale plus. */
+      const px = Math.round(Number(b.dx));
+      if (Number.isInteger(px) && px !== 0 && Math.abs(px) <= 100) e.dx = px;
+      const py = Math.round(Number(b.dy));
+      if (Number.isInteger(py) && py !== 0 && Math.abs(py) <= 100) e.dy = py;
       return e;
     };
     const par = new Map();
@@ -1296,7 +1317,16 @@ class Game {
    */
   static carteMigree(k) {
     if (!k || !Array.isArray(k.cases)) return k;
-    if (Array.isArray(k.objets)) return k;
+    if (Array.isArray(k.objets)) {
+      /* Les quarts de tour d'une carte enregistree AVANT les degres. Une
+         seule passe, et `a` disparait : deux champs d'angle vivants, ce sont
+         deux endroits ou lire l'orientation, et c'est celui qu'on oublie qui
+         dessine de travers. */
+      for (const o of k.objets) {
+        if (o && o.a !== undefined) { if (o.a) o.g = o.a * 90; delete o.a; }
+      }
+      return k;
+    }
     const sols = [], objets = [];
     for (const q of k.cases) {
       if (!q) continue;
@@ -1304,7 +1334,8 @@ class Game {
       if (q.o) {
         const o = { c: q.c, l: q.l, k: q.o, z: 0 };
         if (q.n > 1) o.n = q.n;
-        if (q.a) o.a = q.a;
+        /* Le quart de tour de l'ancien format devient un angle. */
+        if (q.a) o.g = q.a * 90;
         objets.push(o);
       }
     }
