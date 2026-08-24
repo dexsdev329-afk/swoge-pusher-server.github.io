@@ -1643,6 +1643,11 @@ function planDeCarte(k) {
     if (i === undefined) { i = sols.length; sols.push(q.s); parSol.set(q.s, i); }
     tuiles.push([q.c, q.l, i]);
   }
+  /* Le depart, ou le centre de la carte s'il manque : voir plus bas pourquoi
+     il se calcule AVANT les blocs. */
+  const cote = (k && k.cote) || 16;
+  const dep = (k && k.depart) || { c: Math.floor(cote / 2), l: Math.floor(cote / 2) };
+  const entree = { x: (dep.c + 0.5) * T, y: (dep.l + 0.5) * T };
   const obstacles = [];
   let id = 1;
   for (const q of cases) {
@@ -1657,7 +1662,19 @@ function planDeCarte(k) {
      * l'emprise bloquerait les coins de la case voisine, ou l'on doit pouvoir
      * longer un mur. */
     const r = Math.max(24, Math.round(n * T / 2 * 0.8));
-    obstacles.push({ i: id++, x: (q.c + 0.5) * T, y: (q.l + 1) * T - r,
+    const cx = (q.c + 0.5) * T, cy = (q.l + 1) * T - r;
+    /* ---- UN BLOC NE PEUT PAS AVALER LE POINT D'ARRIVEE ----
+     * Depuis qu'un element peut couvrir la carte entiere, un fond pose sur le
+     * depart y ferait NAITRE le visiteur dans la pierre — coince, sans rien
+     * pour dire pourquoi, dans la carte de quelqu'un d'autre. Un decor assez
+     * grand pour recouvrir l'endroit ou l'on arrive cesse donc de bloquer :
+     * il reste DESSINE, et l'on marche dessus.
+     * C'est le meme principe que la porte de sortie d'un donjon : la
+     * difficulte d'un endroit est ce qu'on y rencontre, jamais le fait d'y
+     * etre coince. */
+    const dx = cx - entree.x, dy = cy - entree.y;
+    if (dx * dx + dy * dy < r * r) continue;
+    obstacles.push({ i: id++, x: cx, y: cy,
                      r, bat: q.o, larg: n * T,
                      /* Le `t` de repli : une page qui ne saurait pas dessiner
                         une planche nommee posera de la pierre a cet endroit.
@@ -1665,15 +1682,13 @@ function planDeCarte(k) {
                         facades de la ville. */
                      t: MUR_DONJON, a: q.a || 0, carte: 1 });
   }
-  /* Le depart, ou le centre de la carte s'il manque : une carte sans depart
-     ne devrait pas arriver jusqu'ici — la page ne propose pas de la visiter —
-     mais un plan qui naitrait sans point d'arrivee ferait naitre le joueur en
-     zero, dans le coin, hors du sol. */
-  const cote = (k && k.cote) || 16;
-  const d = (k && k.depart) || { c: Math.floor(cote / 2), l: Math.floor(cote / 2) };
   return {
     nom: (k && k.nom) || 'carte',
-    entree: { x: (d.c + 0.5) * T, y: (d.l + 0.5) * T },
+    /* Le depart, ou le centre de la carte s'il manque : une carte sans depart
+       ne devrait pas arriver jusqu'ici — la page ne propose pas de la visiter
+       — mais un plan qui naitrait sans point d'arrivee ferait naitre le joueur
+       en zero, dans le coin, hors du sol. */
+    entree,
     sortie: null,
     obstacles,
     braises: [],

@@ -1197,10 +1197,10 @@ class Game {
        * Le pire qu'un envoi truque puisse faire est de bloquer sa PROPRE
        * carte : l'emprise ne sert a rien d'autre. */
       const emp = Math.round(Number(b.n));
-      /* Bornee par le cote AUSSI : un element plus grand que la carte qui le
-         porte ne veut rien dire, et cette borne-la se deduit au lieu d'etre
-         choisie. */
-      const empMax = Math.min(cfg.CARTE_EMPRISE_MAX, cote);
+      /* Bornee par le DOUBLE du cote AUSSI : un fond doit pouvoir couvrir la
+         carte et deborder — sinon on voit ses bords — mais rien au-dela n'a
+         de sens, et cette borne-la se deduit au lieu d'etre choisie. */
+      const empMax = Math.min(cfg.CARTE_EMPRISE_MAX, cote * 2);
       if (obj && Number.isInteger(emp) && emp > 1 && emp <= empMax) e.n = emp;
       /* ---- ET LE QUART DE TOUR ----
        * Quatre valeurs, pas un angle libre : les planches sont des images de

@@ -541,4 +541,50 @@ function alea(graine) {
   }
 }
 
+/* ================== UNE CARTE DE JOUEUR DEVIENT UN PLAN ================== */
+{
+  const carte = (cases, dep, cote) => ({ id: 1, nom: 'Essai', cote: cote || 16,
+                                         depart: dep || { c: 8, l: 8 }, cases });
+  const p = M.planDeCarte(carte([
+    { c: 1, l: 1, s: 'grass' }, { c: 2, l: 1, s: 'grass' }, { c: 3, l: 1, s: 'cave' },
+    { c: 1, l: 5, o: 'boxe' },
+  ]));
+  /* ---- LES SOLS VOYAGENT EN PALETTE ----
+   * Le troisieme nombre d'une tuile est un INDICE, pas un nom : repeter
+   * « ground_cave » deux mille trois cents fois pese plus que la carte. */
+  eq(p.sols.length, 2, 'deux sols distincts font une palette de deux');
+  eq(p.tuiles.length, 3, 'et trois cases de sol font trois tuiles');
+  eq(p.tuiles[0][2], 0, 'la premiere tuile pointe le premier sol');
+  eq(p.tuiles[2][2], 1, 'et la troisieme le second');
+  eq(p.sols[p.tuiles[2][2]], 'cave', 'ce qui redonne bien son nom');
+  /* Un objet devient un bloc qui PORTE SON NOM : la page sait dessiner une
+     planche nommee, elle n'a pas a deviner un indice. */
+  eq(p.obstacles.length, 1, 'un objet pose fait un bloc');
+  eq(p.obstacles[0].bat, 'boxe', 'qui porte son nom');
+  ok(p.obstacles[0].r > 0, 'et un rayon qui bloque');
+  /* ---- AUCUNE CREATURE, ET C'EST UNE REGLE ----
+   * Des creatures placees par n'importe qui, c'est le butin place par
+   * n'importe qui. */
+  eq(p.peuplement.length, 0, 'et aucune creature : une carte est un endroit ou l on marche');
+  eq(p.sortie, null, 'pas de porte de retour : on sort par la touche du Nexus');
+  eq(p.entree.x, 8.5 * M.DONJON_TUILE, 'on arrive au centre de la case du depart');
+
+  /* ---- UN BLOC NE PEUT PAS AVALER LE POINT D'ARRIVEE ----
+   * Depuis qu'un element peut couvrir la carte entiere, un fond pose sur le
+   * depart y ferait NAITRE le visiteur dans la pierre. */
+  const gros = M.planDeCarte(carte([{ c: 8, l: 9, o: 'iso_hotel', n: 20 }], { c: 8, l: 8 }));
+  eq(gros.obstacles.length, 0,
+     'un decor assez grand pour recouvrir le depart cesse de bloquer');
+  const petit = M.planDeCarte(carte([{ c: 8, l: 9, o: 'iso_hotel', n: 2 }], { c: 1, l: 1 }));
+  eq(petit.obstacles.length, 1, 'un decor qui ne le touche pas bloque comme avant');
+  /* Et le rayon suit l'emprise : c'est ce qui fait que ce qu'on traverse est
+     ce qu'on voit. */
+  const large = M.planDeCarte(carte([{ c: 2, l: 2, o: 'iso_hotel', n: 4 }], { c: 14, l: 14 }));
+  const etroit = M.planDeCarte(carte([{ c: 2, l: 2, o: 'iso_hotel', n: 2 }], { c: 14, l: 14 }));
+  ok(large.obstacles[0].r > etroit.obstacles[0].r,
+     'une emprise plus grande bloque plus large');
+  eq(large.obstacles[0].larg, 4 * M.DONJON_TUILE,
+     'et la largeur dessinee vaut son emprise en tuiles');
+}
+
 console.log('monde.test.js : ' + n + ' verifications OK');

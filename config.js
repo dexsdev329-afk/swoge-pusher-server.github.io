@@ -688,12 +688,19 @@ module.exports = {
    * pas le catalogue, et lui en donner une copie serait la premiere chose a
    * se perimer.
    *
-   * Trente-deux, et borne EN PLUS par le cote de la carte : un element ne peut
-   * pas etre plus grand que ce qui le contient, et cette borne-la se DEDUIT au
-   * lieu d'etre choisie. Huit au depart, ce qui suffisait aux parcelles
-   * livrees — mais le proprietaire a voulu agrandir au-dela pour faire un
-   * FOND, et rien ne le justifiait. Ce qui protege vraiment, c'est le cote. */
-  CARTE_EMPRISE_MAX: parseInt(env('CARTE_EMPRISE_MAX', '32'), 10),
+   * Soixante-quatre, et borne EN PLUS par le DOUBLE du cote de la carte.
+   *
+   * Huit au depart, puis trente-deux, et le proprietaire a de nouveau touche
+   * le plafond. A chaque fois le chiffre etait choisi et non deduit, donc a
+   * chaque fois il etait arbitraire. Le double du cote, lui, dit quelque
+   * chose : un element peut couvrir la carte entiere ET DEBORDER — c'est ce
+   * qu'on veut d'un fond, qui doit sortir du cadre pour ne pas montrer ses
+   * bords — sans pouvoir s'etendre indefiniment.
+   *
+   * Et le vrai danger n'etait pas la taille. Voir `planDeCarte` : un bloc
+   * assez gros pour couvrir le point d'arrivee y ferait NAITRE le visiteur
+   * dans la pierre. C'est la que ca se corrige, pas ici. */
+  CARTE_EMPRISE_MAX: parseInt(env('CARTE_EMPRISE_MAX', '64'), 10),
 
   /* ---- LES SALLES A ECRAN ----
    * La table est lue et commentee tout en haut de ce fichier. Elle est ICI,
