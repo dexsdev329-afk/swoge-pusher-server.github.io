@@ -657,6 +657,30 @@ module.exports = {
   /* Le nom que le joueur donne a sa carte. Compte en points de code, comme
      tout ce qui vient d'un clavier ici. */
   CARTE_NOM_MAX: parseInt(env('CARTE_NOM_MAX', '48'), 10),
+  /* ---- L'IMAGE QUI VOYAGE AVEC LA CARTE ----
+   * La galerie ne montrait que du texte. La page dessine donc sa carte en
+   * cent vingt-huit pixels et joint l'image a l'enregistrement.
+   *
+   * Vingt-quatre kilo-octets, et ce chiffre se prend sur le MEME budget que
+   * les cases, pas a cote : la pire carte que le reglement permet pese deja
+   * cent quatre-vingt-deux kilo-octets (2600 cases de soixante-dix octets),
+   * et la trame en refuse plus de deux cent cinquante-six. Il reste donc
+   * environ soixante-dix kilo-octets ; on en prend vingt-quatre, ce qui laisse
+   * de la marge pour le nom, le mode et l'enveloppe.
+   * Le jour ou l'on voudra une image plus grande, ce n'est pas ce chiffre
+   * qu'il faudra relever seul — c'est le format des cases qu'il faudra rendre
+   * compact, sans quoi la carte serait acceptee par le reglement et rejetee
+   * par le tuyau. */
+  CARTE_VIGNETTE_MAX: parseInt(env('CARTE_VIGNETTE_MAX', '24000'), 10),
+  /* ---- COMBIEN DE CARTES LA GALERIE MONTRE ----
+   * Elle les montrait TOUTES, celles de tout le monde. C'etait sans
+   * consequence tant qu'il y en avait trois ; a cent comptes de vingt-quatre
+   * cartes, cela fait deux mille quatre cents fiches dans un seul message —
+   * et depuis que chaque fiche porte son image, c'est aussi douze megaoctets.
+   * On envoie donc les plus RECENTES, plus toutes celles du demandeur : sa
+   * propre galerie ne doit jamais dependre de l'activite des autres, sans
+   * quoi le jour ou le jeu marche, on ne retrouve plus son travail. */
+  CARTES_VITRINE: parseInt(env('CARTES_VITRINE', '60'), 10),
 
   /* ---- LES SALLES A ECRAN ----
    * La table est lue et commentee tout en haut de ce fichier. Elle est ICI,

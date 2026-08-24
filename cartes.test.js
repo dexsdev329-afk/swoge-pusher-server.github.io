@@ -252,4 +252,62 @@ console.log('\n-- deux facons de dessiner, et le choix ne se reprend pas --');
   eq(g2.carte(k.id).mode, 'iso', 'le mode traverse la sauvegarde');
 }
 
+/* ================== 7. L IMAGE, ET LA GALERIE QUI NE DEBORDE PAS ================== */
+console.log('\n-- l image jointe, et ce qui est refuse --');
+{
+  const v = Game.vignetteValide;
+  const bonne = 'data:image/webp;base64,' + 'A'.repeat(200);
+  eq(v(bonne), bonne, 'une image webp en base64 est gardee');
+  ok(v('data:image/png;base64,' + 'A'.repeat(40)), 'le png aussi — tous les navigateurs n encodent pas le webp');
+  ok(!v('data:image/svg+xml;base64,' + 'A'.repeat(40)),
+     'le SVG est refuse : c est du document, pas de l image, et il peut porter du script');
+  ok(!v('data:image/webp;base64,<script>'), 'ce qui n est pas de la base64 est refuse');
+  ok(!v('https://ailleurs.example/x.webp'), 'une adresse distante est refusee');
+  ok(!v('data:image/webp;base64,' + 'A'.repeat(cfg.CARTE_VIGNETTE_MAX)),
+     'et au-dela du plafond, refusee — sans quoi la vignette devient un disque a nous');
+  ok(!v(undefined), 'absente vaut refusee : la fiche retombe sur son texte');
+
+  const g = new Game();
+  const k = g.enregistreCarte(A, null, Object.assign(carte('Vue', case1), { vignette: bonne }));
+  eq(k.vignette, bonne, 'la carte garde son image');
+  eq(g.vitrineCartes(A)[0].vignette, bonne, 'et la galerie la montre');
+  /* ---- CE QUE CE CAS PROTEGE ----
+   * Un navigateur qui ne sait pas fabriquer d'image, ou dont l'image depasse
+   * le plafond, ne doit pas EFFACER celle qui etait la : la fiche perdrait
+   * son dessin a un enregistrement sans rapport. */
+  const r = g.enregistreCarte(A, k.id, carte('Vue', case1));
+  eq(r.vignette, bonne, 'un enregistrement sans image garde celle d avant');
+  const autre = 'data:image/webp;base64,' + 'B'.repeat(120);
+  eq(g.enregistreCarte(A, k.id, Object.assign(carte('Vue', case1), { vignette: autre })).vignette,
+     autre, 'et une nouvelle image remplace l ancienne');
+}
+
+console.log('\n-- la galerie ne grossit pas sans fin --');
+{
+  const g = new Game();
+  /* Bien plus que le plafond, et par d'AUTRES comptes que celui qui regarde. */
+  for (let i = 0; i < cfg.CARTES_VITRINE + 30; i++) {
+    const w = '0x' + String(i).padStart(2, '0').repeat(20);
+    g.enregistreCarte(w, null, carte('C' + i, case1));
+  }
+  const mien1 = g.enregistreCarte(A, null, carte('La mienne', case1));
+  ok(g.cartes.length > cfg.CARTES_VITRINE, `${g.cartes.length} cartes existent`);
+  const vue = g.vitrineCartes(A);
+  ok(vue.length <= cfg.CARTES_VITRINE,
+     `la galerie en montre ${vue.length}, pas plus de ${cfg.CARTES_VITRINE}`);
+  ok(vue.some((q) => q.id === mien1.id),
+     'et la sienne y est, quel que soit le nombre de cartes des autres');
+  /* Le cas qui compte vraiment : une carte a soi, ANCIENNE, noyee sous les
+     nouveautes des autres. C'est celle qu'on vient chercher. */
+  const g2 = new Game();
+  const vieille = g2.enregistreCarte(A, null, carte('Ma vieille carte', case1));
+  vieille.modifie = 1;
+  for (let i = 0; i < cfg.CARTES_VITRINE + 10; i++) {
+    const w = '0x' + String(i).padStart(2, '0').repeat(20);
+    g2.enregistreCarte(w, null, carte('N' + i, case1));
+  }
+  ok(g2.vitrineCartes(A).some((q) => q.id === vieille.id),
+     'meme la plus ancienne des siennes, sous cent cartes plus recentes');
+}
+
 console.log(`\ncartes.test.js : ${n} verifications OK`);

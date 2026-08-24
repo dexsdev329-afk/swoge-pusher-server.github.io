@@ -1125,6 +1125,32 @@ class Game {
    */
   static get CARTE_MODES() { return ['plat', 'iso']; }
 
+  /* ---- L'IMAGE JOINTE A LA CARTE ----
+   *
+   * Une adresse `data:` ecrite par un inconnu et posee telle quelle dans un
+   * `src` : c'est le genre de champ ou l'on se fait avoir. Deux regles, et
+   * chacune contre quelque chose de precis.
+   *
+   * LE TYPE EST BLANC-LISTE. `image/webp` et `image/png`, rien d'autre — et
+   * surtout PAS `image/svg+xml`, qui est du document, pas de l'image : un SVG
+   * pose dans un `src` peut porter du script. On ne se contente donc pas
+   * d'interdire le SVG, on n'autorise que deux formats connus, pour que le
+   * troisieme format a la mode ne passe pas par defaut.
+   *
+   * LA TAILLE EST BORNEE. Sans plafond, l'image devient le moyen de garder ce
+   * qu'on veut sur notre disque, sous couvert de vignette.
+   *
+   * On ne DECODE pas : le serveur ne sait pas lire une image et n'a pas a
+   * apprendre. Une base64 valide qui n'est pas une image ne se dessinera pas
+   * chez celui qui la regarde, et c'est tout ce qu'elle fera.
+   */
+  static vignetteValide(v) {
+    if (v === undefined || v === null) return null;
+    const t = String(v);
+    if (t.length > cfg.CARTE_VIGNETTE_MAX) return null;
+    return /^data:image\/(webp|png);base64,[A-Za-z0-9+/]+={0,2}$/.test(t) ? t : null;
+  }
+
   static carteValide(x, impose) {
     const nom = Game.textePropre(x && x.nom).slice(0, cfg.CARTE_NOM_MAX);
     if (!nom) return null;
@@ -1164,7 +1190,14 @@ class Game {
       if (obj) e.o = obj;
       par.set(c + ',' + l, e);
     }
-    return { nom, cote, mode, cases: [...par.values()] };
+    const carte = { nom, cote, mode, cases: [...par.values()] };
+    /* Absente et refusee ne se distinguent pas ici : dans les deux cas la
+       carte n'en porte pas, et la fiche retombe sur son texte. Refuser la
+       carte ENTIERE pour une vignette trop lourde ferait perdre le dessin
+       pour une image de deux centimetres. */
+    const vg = Game.vignetteValide(x && x.vignette);
+    if (vg) carte.vignette = vg;
+    return carte;
   }
 
   /** Les cartes d'un compte. Toujours une liste, jamais `null`. */
@@ -1188,7 +1221,8 @@ class Game {
       if (!c) return 'carte invalide';
       if (this.mesCartes(addr).length >= cfg.CARTES_PAR_COMPTE) return 'plafond de cartes atteint';
       const k = { id: this.cartesNo++, addr, nom: c.nom, cote: c.cote, mode: c.mode,
-                  cases: c.cases, cree: Date.now(), modifie: Date.now() };
+                  cases: c.cases, vignette: c.vignette || null,
+                  cree: Date.now(), modifie: Date.now() };
       this.cartes.push(k);
       return k;
     }
@@ -1211,6 +1245,11 @@ class Game {
      * faite. On garde donc ce que la carte a toujours eu ; `plat` pour celles
      * ecrites avant que ce champ n'existe. */
     k.nom = c.nom; k.cases = c.cases; k.modifie = Date.now();
+    /* L'ANCIENNE image reste si le nouvel envoi n'en porte pas. Un client qui
+       ne sait pas en fabriquer — ou dont l'image depasse le plafond — ne doit
+       pas EFFACER celle qui etait la : la fiche perdrait son dessin a un
+       enregistrement sans rapport. */
+    if (c.vignette) k.vignette = c.vignette;
     if (!k.mode) k.mode = 'plat';
     return k;
   }
@@ -1227,8 +1266,17 @@ class Game {
    * cases par carte serait injouable des la dixieme.
    */
   vitrineCartes(addr) {
-    return this.cartes.map((k) => ({
+    /* Les siennes d'abord, puis les plus recentes des autres jusqu'au
+       plafond. Trier tout le monde ensemble et couper aurait fait disparaitre
+       les cartes de celui qui n'a pas dessine depuis longtemps — les siennes,
+       justement, celles qu'il vient chercher. */
+    const miennes = this.cartes.filter((k) => k.addr === addr);
+    const autres = this.cartes.filter((k) => k.addr !== addr)
+      .sort((a, b) => b.modifie - a.modifie)
+      .slice(0, Math.max(0, cfg.CARTES_VITRINE - miennes.length));
+    return miennes.concat(autres).map((k) => ({
       id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat', cases: k.cases.length,
+      vignette: k.vignette || null,
       modifie: k.modifie, mienne: k.addr === addr,
       auteur: (this.players.get(k.addr) && this.players.get(k.addr).name) || null,
     })).sort((a, b) => b.modifie - a.modifie);
