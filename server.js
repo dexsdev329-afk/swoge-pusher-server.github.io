@@ -3779,6 +3779,56 @@ wss.on('connection', (ws) => {
        * `skinActif`, la meme valeur que rend `skins`. Un joueur ne peut donc
        * pas se faire passer pour un autre personnage aux yeux des autres —
        * il n'y a tout simplement pas de champ ou l'ecrire. */
+      /* ================== LES CARTES DES JOUEURS ==================
+       *
+       * Quatre routes, et une seule idee : `ws.addr` DECIDE. C'est l'adresse
+       * authentifiee de la socket, pas une adresse que le message porterait —
+       * un message peut dire ce qu'il veut, une socket a du passer par la
+       * porte. Toute la regle « personne d'autre ne peut modifier » tient a
+       * cette distinction, et elle est deja faite dans `game.js` : ici on ne
+       * fait que lui donner la bonne adresse.
+       *
+       * Elles REPONDENT toujours, meme pour refuser, et le refus porte sa
+       * raison. Une route muette laisse la page deviner : elle affiche « ... »
+       * pour toujours, ou pire, elle croit que c'est enregistre.
+       */
+      if (m.type === 'carteListe') {
+        if (!ws.addr) return;
+        return send(ws, { type: 'cartes', liste: game.vitrineCartes(ws.addr) });
+      }
+      /* LIRE EST OUVERT A TOUS : c'est tout l'interet d'une galerie. On envoie
+         donc la carte entiere, avec `mienne` pour que la page sache si elle
+         doit proposer d'editer — sans que ce drapeau ne garde quoi que ce
+         soit, puisque le refus vit dans `enregistreCarte`. */
+      if (m.type === 'carteLit') {
+        if (!ws.addr) return;
+        const k = game.carte(m.id);
+        if (!k) return send(ws, { type: 'carte', error: 'carte inconnue' });
+        return send(ws, { type: 'carte', carte: {
+          id: k.id, nom: k.nom, cote: k.cote, cases: k.cases,
+          modifie: k.modifie, mienne: k.addr === ws.addr,
+          auteur: (game.players.get(k.addr) && game.players.get(k.addr).name) || null,
+        } });
+      }
+      if (m.type === 'carteEnregistre') {
+        if (!ws.addr) return;
+        const r = game.enregistreCarte(ws.addr, m.id, m.carte);
+        if (typeof r === 'string') return send(ws, { type: 'carte', error: r });
+        persistSoon();
+        /* On rend l'IDENTITE et non le contenu : la page a deja le dessin, elle
+           vient de l'envoyer. Le seul chose qu'elle ne connaisse pas est le
+           numero d'une carte qui vient de naitre — sans lui, le second
+           enregistrement en creerait une deuxieme. */
+        return send(ws, { type: 'carte', enregistre: { id: r.id, nom: r.nom, modifie: r.modifie },
+                          liste: game.vitrineCartes(ws.addr) });
+      }
+      if (m.type === 'carteSupprime') {
+        if (!ws.addr) return;
+        const r = game.supprimeCarte(ws.addr, m.id);
+        if (typeof r === 'string') return send(ws, { type: 'carte', error: r });
+        persistSoon();
+        return send(ws, { type: 'carte', supprime: r.id, liste: game.vitrineCartes(ws.addr) });
+      }
       if (m.type === 'nexusJoin') {
         if (!ws.addr) return;
         ws.nexusEtat = { x: 1280, y: 1228, dir: 'down', anim: 'idle' };
