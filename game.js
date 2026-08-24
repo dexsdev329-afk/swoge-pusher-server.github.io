@@ -1105,11 +1105,42 @@ class Game {
     return /^[a-z0-9_]{1,24}$/.test(t) ? t : null;
   }
 
-  static carteValide(x) {
+  /* ---- LES DEUX FACONS DE DESSINER UNE CARTE ----
+   *
+   * `plat` : une grille de tuiles vue de dessus, ce que l'editeur fait depuis
+   * le premier jour. `iso` : des PARCELLES vues de trois quarts, posees sur un
+   * fond, chacune portant son propre terrain.
+   *
+   * Le serveur garde ce choix et ne fait rien d'autre avec. Il ne verifie PAS
+   * qu'une carte `iso` ne contient que des parcelles : cela demanderait de
+   * connaitre le catalogue, qui vit dans l'autre depot et change a chaque
+   * planche livree — le meme raisonnement que pour les cles d'elements, juste
+   * au-dessus. Le serveur garde l'INTEGRITE, la page garde la coherence.
+   *
+   * Deux valeurs et pas un booleen : le jour ou une troisieme facon arrive,
+   * elle s'ajoute a cette liste, et les cartes deja enregistrees ne bougent
+   * pas. `plat` par defaut, parce que c'est ce que sont toutes les cartes
+   * ecrites avant ce champ — un defaut qui les convertirait serait une
+   * migration silencieuse.
+   */
+  static get CARTE_MODES() { return ['plat', 'iso']; }
+
+  static carteValide(x, impose) {
     const nom = Game.textePropre(x && x.nom).slice(0, cfg.CARTE_NOM_MAX);
     if (!nom) return null;
-    const cote = Math.round(Number((x && x.cote) || 0));
+    /* ---- CE QUE LA CARTE IMPOSE A SON PROPRE ENREGISTREMENT ----
+     * A la creation, le cote et le mode viennent de l'envoi. A la mise a
+     * jour, ils viennent de la CARTE DEJA ENREGISTREE, et ce n'est pas un
+     * detail de politesse : les cases sont bornees par le cote, et valider
+     * un envoi de quarante-huit pour une carte de seize aurait accepte des
+     * cases hors de la carte — jetees au passage suivant, sans que rien ne
+     * l'ait dit. Le champ qui borne et le champ qui est borne doivent etre
+     * le meme. */
+    const cote = impose && impose.cote ? Math.round(Number(impose.cote))
+                                       : Math.round(Number((x && x.cote) || 0));
     if (!Number.isInteger(cote) || cote < 4 || cote > cfg.CARTE_COTE) return null;
+    const voulu = String((impose && impose.mode) || (x && x.mode) || 'plat');
+    const mode = Game.CARTE_MODES.indexOf(voulu) >= 0 ? voulu : 'plat';
     const brut = Array.isArray(x && x.cases) ? x.cases : null;
     if (!brut) return null;
     if (brut.length > cfg.CARTE_CASES) return null;
@@ -1133,7 +1164,7 @@ class Game {
       if (obj) e.o = obj;
       par.set(c + ',' + l, e);
     }
-    return { nom, cote, cases: [...par.values()] };
+    return { nom, cote, mode, cases: [...par.values()] };
   }
 
   /** Les cartes d'un compte. Toujours une liste, jamais `null`. */
@@ -1152,20 +1183,35 @@ class Game {
    * et le joueur perd son dessin sans comprendre.
    */
   enregistreCarte(addr, id, x) {
-    const c = Game.carteValide(x);
-    if (!c) return 'carte invalide';
     if (id === undefined || id === null || id === '') {
+      const c = Game.carteValide(x);
+      if (!c) return 'carte invalide';
       if (this.mesCartes(addr).length >= cfg.CARTES_PAR_COMPTE) return 'plafond de cartes atteint';
-      const k = { id: this.cartesNo++, addr, nom: c.nom, cote: c.cote, cases: c.cases,
-                  cree: Date.now(), modifie: Date.now() };
+      const k = { id: this.cartesNo++, addr, nom: c.nom, cote: c.cote, mode: c.mode,
+                  cases: c.cases, cree: Date.now(), modifie: Date.now() };
       this.cartes.push(k);
       return k;
     }
+    /* ---- LA CARTE D'ABORD, LA VALIDATION ENSUITE ----
+     * L'ordre inverse validait l'envoi contre le cote QU'IL DECLARE, puis
+     * gardait celui de la carte : une carte de seize recevait alors des cases
+     * bornees a quarante-huit. */
     const k = this.carte(id);
     if (!k) return 'carte inconnue';
     /* LA LIGNE QUI PORTE TOUTE LA REGLE. */
     if (k.addr !== addr) return 'cette carte n est pas la votre';
-    k.nom = c.nom; k.cote = c.cote; k.cases = c.cases; k.modifie = Date.now();
+    const c = Game.carteValide(x, { cote: k.cote, mode: k.mode || 'plat' });
+    if (!c) return 'carte invalide';
+    /* ---- LE MODE ET LE COTE NE CHANGENT PAS APRES COUP ----
+     * Ils se choisissent a la creation. Les laisser changer a
+     * l'enregistrement permettrait de retrecir une carte sous ses propres
+     * cases — elles seraient toutes hors bornes et jetees au passage suivant,
+     * sans que rien ne l'ait dit — et de declarer « isometrique » une carte
+     * pleine de tuiles plates, qui ne se dessinerait plus comme elle a ete
+     * faite. On garde donc ce que la carte a toujours eu ; `plat` pour celles
+     * ecrites avant que ce champ n'existe. */
+    k.nom = c.nom; k.cases = c.cases; k.modifie = Date.now();
+    if (!k.mode) k.mode = 'plat';
     return k;
   }
   supprimeCarte(addr, id) {
@@ -1182,7 +1228,7 @@ class Game {
    */
   vitrineCartes(addr) {
     return this.cartes.map((k) => ({
-      id: k.id, nom: k.nom, cote: k.cote, cases: k.cases.length,
+      id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat', cases: k.cases.length,
       modifie: k.modifie, mienne: k.addr === addr,
       auteur: (this.players.get(k.addr) && this.players.get(k.addr).name) || null,
     })).sort((a, b) => b.modifie - a.modifie);

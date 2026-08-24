@@ -213,4 +213,43 @@ console.log('\n-- ce qui survit a un redemarrage --');
   eq(g3.cartes.length, 3, 'les trois coexistent');
 }
 
+/* ================== 6. LE MODE, CHOISI UNE FOIS ================== */
+console.log('\n-- deux facons de dessiner, et le choix ne se reprend pas --');
+{
+  const v = Game.carteValide;
+  eq(v(carte('a', case1)).mode, 'plat',
+     'sans mode declare, une carte est plate — comme toutes celles ecrites avant ce champ');
+  eq(v(Object.assign(carte('a', case1), { mode: 'iso' })).mode, 'iso',
+     'le mode isometrique est garde');
+  eq(v(Object.assign(carte('a', case1), { mode: 'dragon' })).mode, 'plat',
+     'un mode inconnu retombe sur plat au lieu de passer tel quel');
+
+  const g = new Game();
+  const k = g.enregistreCarte(A, null, Object.assign(carte('Iso', case1, 16), { mode: 'iso' }));
+  eq(k.mode, 'iso', 'la carte creee garde son mode');
+  eq(g.vitrineCartes(A)[0].mode, 'iso', 'et la vitrine le montre, pour que la page sache la dessiner');
+
+  /* ---- CE QUE CE BLOC EMPECHE VRAIMENT ----
+   * Le mode decide de ce qui est dessine et le cote borne les cases. Les
+   * laisser changer a l'enregistrement permettrait de retrecir une carte sous
+   * ses propres cases, ou de declarer « isometrique » une carte pleine de
+   * tuiles plates. */
+  const r = g.enregistreCarte(A, k.id,
+    Object.assign(carte('Iso', case1, 48), { mode: 'plat' }));
+  eq(r.mode, 'iso', 'un enregistrement ne peut pas changer le mode apres coup');
+  eq(r.cote, 16, 'ni le cote');
+
+  /* Et les cases sont bornees par le cote DE LA CARTE, pas par celui qu'on
+     declare : une case en (30,30) envoyee avec « cote 48 » sur une carte de
+     seize serait hors de la carte, invisible, et jetee au passage suivant. */
+  const r2 = g.enregistreCarte(A, k.id,
+    Object.assign(carte('Iso', [{ c: 1, l: 1, s: 'grass' }, { c: 30, l: 30, s: 'grass' }], 48),
+                  { mode: 'iso' }));
+  eq(r2.cases.length, 1, 'et une case hors de la carte est refusee, meme annoncee avec un grand cote');
+
+  const g2 = new Game();
+  g2.hydrate(JSON.parse(JSON.stringify(g.serialize())));
+  eq(g2.carte(k.id).mode, 'iso', 'le mode traverse la sauvegarde');
+}
+
 console.log(`\ncartes.test.js : ${n} verifications OK`);

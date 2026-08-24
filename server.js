@@ -2415,7 +2415,7 @@ const server = http.createServer(async (req, res) => {
     /* On ajoute l'AUTEUR, que la vitrine des joueurs ne porte pas : le panneau
        est le seul endroit ou savoir qui a dessine quoi a un sens. */
     return res.end(JSON.stringify({ ok: true, cartes: game.cartes.map((k) => ({
-      id: k.id, nom: k.nom, cote: k.cote, cases: k.cases.length,
+      id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat', cases: k.cases.length,
       addr: k.addr, nomAuteur: (game.players.get(k.addr) && game.players.get(k.addr).name) || null,
       cree: k.cree, modifie: k.modifie,
     })).sort((a, b) => b.modifie - a.modifie) }));
@@ -3836,7 +3836,7 @@ wss.on('connection', (ws) => {
         const k = game.carte(m.id);
         if (!k) return send(ws, { type: 'carte', error: 'carte inconnue' });
         return send(ws, { type: 'carte', carte: {
-          id: k.id, nom: k.nom, cote: k.cote, cases: k.cases,
+          id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat', cases: k.cases,
           modifie: k.modifie, mienne: k.addr === ws.addr,
           auteur: (game.players.get(k.addr) && game.players.get(k.addr).name) || null,
         } });
