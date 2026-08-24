@@ -1198,6 +1198,14 @@ class Game {
        * carte : l'emprise ne sert a rien d'autre. */
       const emp = Math.round(Number(b.n));
       if (obj && Number.isInteger(emp) && emp > 1 && emp <= cfg.CARTE_EMPRISE_MAX) e.n = emp;
+      /* ---- ET LE QUART DE TOUR ----
+       * Quatre valeurs, pas un angle libre : les planches sont des images de
+       * pixels, et une rotation de dix-sept degres les rend floues quel que
+       * soit le soin qu'on y met. Zero ne s'ecrit pas — c'est le cas de la
+       * quasi-totalite des cases, et l'ecrire couterait un octet fois deux
+       * mille trois cents. */
+      const tour = Math.round(Number(b.a));
+      if (obj && Number.isInteger(tour) && tour > 0 && tour < 4) e.a = tour;
       par.set(c + ',' + l, e);
     }
     /* ---- OU L'ON ARRIVE QUAND ON Y ENTRE ----

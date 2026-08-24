@@ -360,4 +360,20 @@ console.log('\n-- l emprise d un element --');
   eq(g2.carte(k.id).cases[0].n, 5, 'et la sauvegarde');
 }
 
+console.log('\n-- le quart de tour --');
+{
+  const v = Game.carteValide;
+  const avecA = (a) => v(carte('a', [{ c: 1, l: 1, o: 'mur_ville', a }], 16)).cases[0];
+  eq(avecA(1).a, 1, 'un quart de tour est garde');
+  eq(avecA(3).a, 3, 'trois aussi');
+  ok(avecA(0).a === undefined,
+     'zero ne s ecrit pas : c est le cas de presque toutes les cases, et l ecrire'
+     + ' couterait un octet fois deux mille trois cents');
+  ok(avecA(4).a === undefined, 'quatre est un tour complet, donc rien');
+  ok(avecA(-1).a === undefined, 'ni un tour negatif');
+  ok(avecA('nord').a === undefined, 'ni ce qui n est pas un nombre');
+  ok(v(carte('a', [{ c: 1, l: 1, s: 'grass', a: 2 }], 16)).cases[0].a === undefined,
+     'et un sol ne tourne pas : il se raboute a ses voisins, un sol tourne ferait une couture');
+}
+
 console.log(`\ncartes.test.js : ${n} verifications OK`);
