@@ -33,6 +33,7 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m + ` [${a} vs ${b}]`); n++; 
 const SECRET = 'secret-de-test-des-cartes';
 process.env.DATA_DIR = fs.mkdtempSync('/tmp/cartes-srv-');
 process.env.RPC_URL = '';
+process.env.ADMIN_KEY = 'cle-admin-cartes';
 process.env.SESSION_SECRET = SECRET;
 process.env.PORT = String(9800 + (process.pid % 150));
 const tg = require.resolve('./telegram');
@@ -151,6 +152,29 @@ const carteDe = (nom) => ({ nom, cote: 12, cases: [
   sa.send(JSON.stringify({ type: 'carteEnregistre', carte: { nom: 'Trop', cote: 12, cases: trop } }));
   const refus = await attend(sa, 'carte');
   ok(refus && typeof refus.error === 'string', 'un envoi au-dela du plafond est refuse : ' + (refus && refus.error));
+
+  /* ---- ET LE PROPRIETAIRE LES VOIT TOUTES ----
+   * C'est ainsi qu'une belle carte cesse d'etre le jouet de son auteur pour
+   * devenir un lieu du jeu. En LECTURE SEULE : « personne d'autre ne peut
+   * modifier » ne souffre pas d'exception, pas meme celle-la. */
+  console.log('\n-- le panneau du proprietaire --');
+  const BASE = 'http://127.0.0.1:' + process.env.PORT;
+  const entetes = { 'x-admin-key': 'cle-admin-cartes' };
+  const liste = await (await fetch(BASE + '/admin/cartes', { headers: entetes })).json();
+  ok(liste.ok && Array.isArray(liste.cartes), 'le panneau liste les cartes');
+  const mienne = liste.cartes.find((k) => k.id === ID);
+  ok(!!mienne, 'la carte de A y est');
+  eq(String(mienne.addr).toLowerCase(), A.toLowerCase(), 'avec son AUTEUR, que la vitrine des joueurs ne porte pas');
+  ok(typeof mienne.cases === 'number', 'et son compte de cases, pas son contenu');
+
+  const une = await (await fetch(BASE + '/admin/cartes?id=' + ID, { headers: entetes })).json();
+  ok(une.ok && Array.isArray(une.carte.cases), 'et la carte entiere quand on la demande par son numero');
+
+  const ecrit = await fetch(BASE + '/admin/cartes', { method: 'POST', headers: entetes, body: '{}' });
+  ok(ecrit.status >= 400, `ecrire y est refuse (${ecrit.status}) — la route est en lecture seule`);
+
+  const sansCle = await fetch(BASE + '/admin/cartes');
+  ok(sansCle.status >= 400, `et sans la cle, rien (${sansCle.status})`);
 
   for (const s of [sa, sb, muet]) { try { s.close(); } catch (e) {} }
   console.log(`\ncartes_serveur.test.js : ${n} verifications OK`);

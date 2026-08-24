@@ -2389,6 +2389,37 @@ const server = http.createServer(async (req, res) => {
   const salleDe = (d) => Game.salleEcran(
     (d && d.salle) || new URLSearchParams(req.url.split('?')[1] || '').get('salle'));
   const salleRefusee = (res) => refusEcriture(res, 'unknown screen room - see SALLES_ECRAN');
+  /* ---- LES CARTES DES JOUEURS, VUES DU PANNEAU ----
+   *
+   * Le proprietaire doit pouvoir les regarder : c'est ainsi qu'une belle carte
+   * cesse d'etre le jouet de son auteur pour devenir un lieu du jeu. La route
+   * est en LECTURE SEULE, et ce n'est pas une timidite — « personne d'autre ne
+   * peut modifier » ne souffre pas d'exception, pas meme celle-la. Le jour ou
+   * l'on voudra en promouvoir une, ce sera en la COPIANT vers un plan, ce qui
+   * laisse l'original a son auteur.
+   *
+   * Sans `id`, la liste : de quoi parcourir. Avec, la carte entiere, son
+   * dessin compris. Le contenu ne part jamais dans la liste — vingt-trois
+   * cents cases par carte rendraient un panneau de cent cartes injouable. */
+  if (path === '/admin/cartes') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    if (req.method !== 'GET') return refusEcriture(res, 'read only');
+    const id = new URLSearchParams(req.url.split('?')[1] || '').get('id');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (id) {
+      const k = game.carte(id);
+      if (!k) return res.end(JSON.stringify({ ok: false, error: 'carte inconnue' }));
+      return res.end(JSON.stringify({ ok: true, carte: k }));
+    }
+    /* On ajoute l'AUTEUR, que la vitrine des joueurs ne porte pas : le panneau
+       est le seul endroit ou savoir qui a dessine quoi a un sens. */
+    return res.end(JSON.stringify({ ok: true, cartes: game.cartes.map((k) => ({
+      id: k.id, nom: k.nom, cote: k.cote, cases: k.cases.length,
+      addr: k.addr, nomAuteur: (game.players.get(k.addr) && game.players.get(k.addr).name) || null,
+      cree: k.cree, modifie: k.modifie,
+    })).sort((a, b) => b.modifie - a.modifie) }));
+  }
   if (path === '/admin/cinema') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
