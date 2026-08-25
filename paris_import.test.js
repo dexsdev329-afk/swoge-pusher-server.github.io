@@ -322,6 +322,43 @@ const cotes = require('./cotes');
     await imp.importeMatchs();                 // on remet le catalogue d aplomb
   }
 
+  // ==== 1 bis. UNE LIGUE DONT LE SPORT N EST PAS DECLARE EST ECARTEE
+  /*
+   * `ODDS_API_LIGUES` est une variable d environnement : c est la porte la plus
+   * large de ce module, et la seule que quelqu un ouvre pour elargir le
+   * calendrier. Une ligne « hockey=icehockey_nhl » passait sans un mot, et la
+   * faute ressortait bien plus loin — a la validation du catalogue, sur un
+   * message qui parlait d un identifiant de match et non de la ligne qu on
+   * venait d ecrire.
+   *
+   * Et avant ce garde, `issues()` rendait CELLES DU FOOTBALL a tout sport
+   * inconnu : trois issues pour un sport qui n en a peut-etre que deux, avec
+   * un nul cote au hasard. Rien ne cassait, rien ne le disait.
+   */
+  {
+    const frais = process.env.ODDS_API_LIGUES;
+    process.env.ODDS_API_LIGUES =
+      'foot=soccer_epl,hockey=icehockey_nhl,tennis=tennis_atp_us_open';
+    delete require.cache[require.resolve('./paris_import')];
+    const dit = [];
+    const vraiErr = console.error;
+    console.error = (...a2) => dit.push(a2.join(' '));
+    const imp2 = require('./paris_import');
+    console.error = vraiErr;
+
+    const gardees = imp2.LIGUES.map((l) => l.sport + '=' + l.clef);
+    eq(gardees.join(','), 'foot=soccer_epl,tennis=tennis_atp_us_open',
+       'la ligue au sport inconnu est ecartee, les autres passent — un import'
+       + ' qui refuserait TOUT priverait le calendrier pour une ligne de trop');
+    ok(dit.some((m2) => /hockey/.test(m2) && /SPORTS dans paris\.js/.test(m2)),
+       'et on le DIT, en nommant le sport et le fichier ou le declarer : '
+       + (dit[0] || 'rien').slice(0, 90));
+
+    process.env.ODDS_API_LIGUES = frais;
+    delete require.cache[require.resolve('./paris_import')];
+    require('./paris_import');
+  }
+
   // ==== 2. les scores : seulement les ligues qui ont quelque chose a rattraper
   {
     appels.length = 0;

@@ -59,16 +59,15 @@ const NOTE_DEFAUT = 1500;
    europeens. En NBA il est plus fort — le deplacement coute, les rotations
    sont courtes. Au tennis il n'existe pas : le « domicile » n'est qu'une
    convention d'affichage, les deux joueurs sont sur le meme court. */
-const TERRAIN = {
-  foot: 65, nba: 100, tennis: 0,
-  /* NFL : l'avantage du terrain vaut environ 2 points sur un ecart type de
-     score de 13, soit une cinquantaine de points Elo. Il a nettement baisse
-     depuis vingt ans, on ne le surestime pas. */
-  nfl: 55,
-  /* Cricket en format limite : l'avantage est reel — conditions locales,
-     rosee, public — mais plus faible qu'au football. */
-  cricket: 40,
-};
+/* ---- L'AVANTAGE DU TERRAIN VIENT DU REGISTRE DES SPORTS ----
+ * Il vivait ici, dans sa propre table, a cote de la liste des issues qui
+ * vivait dans `paris.js` et du nom d'affichage qui vivait dans l'import.
+ * Ajouter un sport demandait donc de penser a trois fichiers — et l'oubli le
+ * plus probable etait justement celui-ci : sans avantage du terrain, il vaut
+ * ZERO, le favori a domicile est sous-cote a chaque match, et rien ne casse.
+ * Chaque valeur est commentee la-bas, avec le reste du sport. */
+const TERRAIN = {};
+for (const c of Object.keys(paris.SPORTS)) TERRAIN[c] = paris.SPORTS[c].terrain;
 
 /* Le nul, au football.
  *

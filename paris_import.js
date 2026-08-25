@@ -85,7 +85,24 @@ const LIGUES = (process.env.ODDS_API_LIGUES || [
 ].join(',')).split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
   const [sport, clef] = x.split('=');
   return { sport: (sport || '').trim(), clef: (clef || '').trim() };
-}).filter((x) => x.sport && x.clef);
+}).filter((x) => x.sport && x.clef).filter((x) => {
+  /* ---- UN SPORT NON DECLARE EST REFUSE ICI, ET NULLE PART PLUS LOIN ----
+   * `ODDS_API_LIGUES` est une variable d'environnement : c'est la porte la
+   * plus large du module, et la seule que quelqu'un ouvre pour elargir le
+   * calendrier. Une ligne « hockey=icehockey_nhl » passait sans un mot, et la
+   * faute ressortait bien plus tard — a la validation du catalogue, sur un
+   * message qui parlait d'un identifiant de match et non de la ligne qu'on
+   * venait d'ecrire.
+   * On refuse donc au plus pres de la cause, en disant quoi faire. La ligue
+   * est ECARTEE, pas fatale : les autres continuent d'alimenter le
+   * calendrier, ce qui vaut mieux qu'un import qui refuse tout. */
+  if (paris.sportConnu(x.sport)) return true;
+  console.error(`[odds] LIGUE IGNOREE « ${x.sport}=${x.clef} » : le sport `
+    + `« ${x.sport} » n'est pas declare. Ajoutez-le a SPORTS dans paris.js — `
+    + `ses issues, son nom et son avantage du terrain tiennent en une ligne. `
+    + `Connus : ${Object.keys(paris.SPORTS).join(', ')}`);
+  return false;
+});
 
 /*
  * ---- LES DRAPEAUX ----
@@ -497,14 +514,17 @@ async function importeMatchs() {
   }
 
   habilles.sort((a, b) => Date.parse(a.debut) - Date.parse(b.debut));
-  const NOMS = { foot: 'Football', tennis: 'Tennis', nba: 'NBA',
-                 nfl: 'NFL', cricket: 'Cricket' };
+  /* Les noms viennent du registre : ils y sont declares avec les issues et
+     l'avantage du terrain, en une ligne par sport. Recopies ici, ils
+     manquaient au premier sport ajoute et la page affichait « undefined ». */
+  const NOMS = {};
+  for (const c of Object.keys(paris.SPORTS)) NOMS[c] = paris.SPORTS[c].nom;
   const retenus = new Set(habilles.map((m) => m.sport));
   /* Tous les sports connus figurent au catalogue, meme sans rencontre : la
      page les montre alors grises avec « soon », ce qui annonce ce qui arrive
      au lieu de le faire apparaitre un matin sans prevenir. */
   const catalogue = {
-    sports: ['foot', 'tennis', 'nba', 'nfl', 'cricket']
+    sports: Object.keys(paris.SPORTS)
       .map((c) => ({ cle: c, nom: NOMS[c], actif: retenus.has(c) })),
     matchs: habilles,
   };

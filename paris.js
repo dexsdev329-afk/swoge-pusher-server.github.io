@@ -35,28 +35,77 @@ const path = require('path');
    Le tennis n'a pas de match nul — proposer un « N » a 0 % serait offrir un
    pari qui ne peut jamais passer, et le validateur de marge s'en etranglerait
    a juste titre. */
-const ISSUES_PAR_SPORT = {
-  foot: ['1', 'N', '2'],
-  tennis: ['1', '2'],
-  nba: ['1', '2'],
+/* ================== LE REGISTRE DES SPORTS ==================
+ *
+ * ---- POURQUOI UN SEUL ENDROIT ----
+ *
+ * Un sport se declarait a QUATRE : ses issues ici, « equipe ou joueur » ici
+ * aussi, son nom d'affichage dans `paris_import.js`, et son avantage du
+ * terrain dans `cotes.js`. Elargir le calendrier — ce qui est le geste le
+ * plus courant de tout ce module — demandait donc de penser a quatre fichiers,
+ * et l'oubli le plus probable est le plus cher : sans avantage du terrain, il
+ * vaut zero et le favori a domicile est sous-cote a chaque match.
+ *
+ * Tout tient desormais ici. Ajouter un sport, c'est ajouter UNE ligne.
+ *
+ * ---- LE PIEGE QUE CE REGISTRE REND VISIBLE ----
+ *
+ * `issues` n'est pas un detail de presentation : c'est la question « ce sport
+ * peut-il finir a egalite ». Se tromper ne casse rien et paie le mauvais camp.
+ * Le cricket en est l'exemple : en format limite il se decide toujours, mais
+ * le format TEST finit a egalite une fois sur trois. Il n'est pas suivi POUR
+ * CETTE RAISON, et la ligne le dit a l'endroit ou quelqu'un ira l'ajouter.
+ */
+const SPORTS = {
+  foot: { nom: 'Football', issues: ['1', 'N', '2'], equipes: true, terrain: 65 },
+  tennis: { nom: 'Tennis', issues: ['1', '2'], equipes: false, terrain: 0 },
+  nba: { nom: 'NBA', issues: ['1', '2'], equipes: true, terrain: 100 },
   /* Le football americain peut finir a egalite, mais c'est assez rare pour
      que tous les livres cotent en deux issues. On fait pareil : proposer un
      « nul » a 0,3 % serait un pari que personne ne prend et que le
-     validateur de marge refuserait a juste titre. */
-  nfl: ['1', '2'],
+     validateur de marge refuserait a juste titre.
+     Terrain : environ deux points sur un ecart type de score de treize, soit
+     une cinquantaine de points Elo. Il a nettement baisse depuis vingt ans,
+     on ne le surestime pas. */
+  nfl: { nom: 'NFL', issues: ['1', '2'], equipes: true, terrain: 55 },
   /* Le cricket EN FORMAT LIMITE — Hundred, T20, ODI — se decide toujours.
      Le format TEST, lui, se termine reellement par un nul une fois sur
      trois : il n'est deliberement pas suivi, faute d'une troisieme issue
      ici. Ajouter `cricket_test_match` au calendrier sans ajouter le nul
-     paierait le mauvais camp une fois sur trois. */
-  cricket: ['1', '2'],
+     paierait le mauvais camp une fois sur trois.
+     Terrain : l'avantage est reel — conditions locales, rosee, public — mais
+     plus faible qu'au football. */
+  cricket: { nom: 'Cricket', issues: ['1', '2'], equipes: true, terrain: 40 },
 };
+/* Les trois vues d'avant, deduites du registre. Elles restent exportees : une
+   dizaine d'appelants les lisent, et les renommer toutes n'apprendrait rien a
+   personne. Ce sont des LECTURES, pas des copies — elles se refont d'elles-
+   memes le jour ou une ligne s'ajoute au-dessus. */
+const ISSUES_PAR_SPORT = {};
+for (const c of Object.keys(SPORTS)) ISSUES_PAR_SPORT[c] = SPORTS[c].issues;
 /* Les sports ou les deux cotes sont des EQUIPES. La distinction n'est pas
    cosmetique : « Player 1 » a la place de « Home » sur un match de NFL fait
    douter de ce sur quoi on parie, et c'est au moment de miser. */
-const SPORTS_EQUIPE = ['foot', 'nba', 'nfl', 'cricket'];
-const ISSUES = ISSUES_PAR_SPORT.foot;
-function issues(sport) { return ISSUES_PAR_SPORT[sport] || ISSUES; }
+const SPORTS_EQUIPE = Object.keys(SPORTS).filter((c) => SPORTS[c].equipes);
+const ISSUES = SPORTS.foot.issues;
+/** Ce sport est-il declare ? La seule question a poser avant d'en accepter un. */
+function sportConnu(sport) { return Object.prototype.hasOwnProperty.call(SPORTS, sport); }
+/**
+ * Les issues d'un sport.
+ *
+ * ---- LE REPLI SILENCIEUX A ETE RETIRE ----
+ * Cette fonction rendait CELLES DU FOOTBALL pour tout sport inconnu. Ajouter
+ * `hockey=icehockey_nhl` au calendrier donnait donc trois issues a un sport
+ * qui n'en a pas trois, avec un nul cote au hasard — et rien ne le disait.
+ * Un sport inconnu leve desormais, en nommant ce qu'il faut faire.
+ */
+function issues(sport) {
+  if (!sportConnu(sport))
+    throw new Error(`paris : sport inconnu « ${sport} » — declarez-le dans SPORTS ` +
+                    `(paris.js), ou retirez-le du calendrier. Connus : ` +
+                    Object.keys(SPORTS).join(', '));
+  return SPORTS[sport].issues;
+}
 
 /* ================== LES MARCHES ==================
  *
@@ -444,7 +493,8 @@ function vue(m, now) {
 }
 
 module.exports = {
-  ISSUES, ISSUES_PAR_SPORT, SPORTS_EQUIPE, issues, COTE_MIN, COTE_MAX, MARGE_MIN,
+  ISSUES, ISSUES_PAR_SPORT, SPORTS_EQUIPE, SPORTS, sportConnu, issues,
+  COTE_MIN, COTE_MAX, MARGE_MIN,
   charge, catalogue, match, ouverts, rapport, vue, marge, margeDe, valide,
   scoreLu, resultatDuScore,
   MARCHES, MARCHE_BASE, SCORES, marchesDuSport, coteDe, gagne,

@@ -835,9 +835,58 @@ const T3 = 'atp-20260815-fer-duc';   // Fery 1.53 / Duckworth 2.24
   for (const s of ['foot', 'nba', 'nfl', 'cricket'])
     ok(paris.SPORTS_EQUIPE.indexOf(s) >= 0, s + ' oppose des equipes');
   eq(paris.SPORTS_EQUIPE.indexOf('tennis'), -1, 'seul le tennis oppose deux personnes');
-  /* Un sport inconnu retombe sur le 1-N-2 plutot que de jeter : un catalogue
-     qui refuse de se charger arrete le serveur. */
-  eq(paris.issues('petanque').length, 3, 'un sport inconnu retombe sur trois issues');
+
+  /* ---- UN SPORT INCONNU LEVE, ET NE RETOMBE PLUS SUR LE FOOTBALL ----
+   *
+   * CET ESSAI DISAIT L INVERSE, et son argument etait serieux : « un catalogue
+   * qui refuse de se charger arrete le serveur ». Il est ecarte pour deux
+   * raisons, et la seconde repond a la premiere.
+   *
+   * UN. Le repli donnait TROIS issues a un sport qui n en a peut-etre que
+   * deux, avec un nul cote au hasard. Rien ne cassait, rien ne le disait, et
+   * le mauvais camp etait paye. Entre un serveur qui refuse de demarrer — ce
+   * qui se voit dans la minute — et un nul fantome qui paie de travers
+   * pendant des semaines, il n y a pas de choix.
+   *
+   * DEUX. Le cas n arrive plus par le chemin normal. `ODDS_API_LIGUES` ecarte
+   * desormais toute ligue dont le sport n est pas declare, AVANT que la
+   * moindre rencontre n entre au catalogue — verifie dans
+   * `paris_import.test.js`. Pour atteindre cette exception, il faudrait avoir
+   * ecrit un sport a la main dans le fichier ; et alors, s arreter est
+   * exactement ce qu on veut.
+   */
+  jete(() => paris.issues('petanque'), /sport inconnu/,
+       'un sport non declare leve, au lieu de recevoir les issues du football');
+  ok(/declarez-le dans SPORTS/.test((() => {
+       try { paris.issues('petanque'); return ''; } catch (e) { return e.message; }
+     })()),
+     'et le message dit QUOI FAIRE, pas seulement ce qui ne va pas');
+  ok(paris.sportConnu('foot') && !paris.sportConnu('petanque'),
+     '`sportConnu` repond a la seule question a poser avant d accepter un sport');
+
+  /* ---- ET AJOUTER UN SPORT TIENT EN UNE LIGNE ----
+   *
+   * C est l objet du registre. Un sport se declarait a QUATRE endroits : ses
+   * issues et « equipe ou joueur » ici, son nom d affichage dans l import, son
+   * avantage du terrain dans `cotes.js`. L oubli le plus probable etait le
+   * plus cher : sans avantage du terrain il vaut ZERO, et le favori a
+   * domicile est sous-cote a chaque match, en silence.
+   *
+   * On verifie donc que les trois vues d avant sont bien des LECTURES du
+   * registre, et non des copies qui se perimeraient.
+   */
+  for (const c of Object.keys(paris.SPORTS)) {
+    const S = paris.SPORTS[c];
+    ok(S.nom && Array.isArray(S.issues) && typeof S.terrain === 'number',
+       `« ${c} » declare tout ce qu il faut en une ligne : ${S.nom},`
+       + ` ${S.issues.join('/')}, terrain ${S.terrain}`);
+    eq(paris.ISSUES_PAR_SPORT[c], S.issues,
+       `et ISSUES_PAR_SPORT.${c} est la MEME reference, pas une copie`);
+    eq(paris.SPORTS_EQUIPE.indexOf(c) >= 0, !!S.equipes,
+       `et SPORTS_EQUIPE suit son drapeau`);
+  }
+  eq(require('./cotes').TERRAIN.foot, paris.SPORTS.foot.terrain,
+     'l avantage du terrain que lit le modele de cotes vient du registre');
 }
 
 console.log(`paris.test.js : ${n} verifications OK`);
