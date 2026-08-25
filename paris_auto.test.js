@@ -71,13 +71,52 @@ const solde = async (c) => {
   return Number(b && b.balance);
 };
 
-(async () => {
+/* ---- LE CALENDRIER DE CET ESSAI EST LE SIEN ----
+ *
+ * Il s'IGNORAIT quand l'amorce du depot ne portait plus de rencontre a venir —
+ * c'est-a-dire dès le lendemain de la derniere date ecrite dedans, donc a peu
+ * pres toujours. Un essai qui s'ignore n'est pas un essai vert, c'est un essai
+ * absent : celui-ci n'a pas tourne pendant que le reglement automatique
+ * passait la LETTRE au lieu du score, et le defaut a vecu.
+ *
+ * Il ecrit donc ses propres rencontres sur le volume, datees de demain. Deux
+ * au moins, dont une de football portant les six marches : c'est elle qui
+ * verifie que le reglement automatique sait trancher autre chose qu'un 1-N-2.
+ */
+function calendrierDEssai() {
+  const fs = require('fs');
+  const cotes = require('./cotes');
+  const DEMAIN = new Date(Date.now() + 86400000).toISOString();
+  const brut = {
+    sports: [{ cle: 'foot', nom: 'Football', actif: true }],
+    matchs: [
+      { id: 'auto-petit', sport: 'foot', competition: 'Essai', pays: 'X',
+        domicile: 'Petit-A', exterieur: 'Petit-B', debut: DEMAIN,
+        cotes: { 1: 2.10, N: 3.30, 2: 3.40 } },
+      { id: 'auto-gros', sport: 'foot', competition: 'Essai', pays: 'X',
+        domicile: 'Gros-A', exterieur: 'Gros-B', debut: DEMAIN,
+        cotes: { 1: 2.10, N: 3.30, 2: 3.40 } },
+      /* Sa propre rencontre pour le cas du marche : les deux autres sont
+         REGLEES par les sections qui precedent, et une rencontre reglee ne se
+         regle pas deux fois — le pari serait reste ouvert sans que rien ne le
+         dise, et l essai aurait accuse la mauvaise cause. */
+      { id: 'auto-marche', sport: 'foot', competition: 'Essai', pays: 'X',
+        domicile: 'Marche-A', exterieur: 'Marche-B', debut: DEMAIN,
+        cotes: { 1: 2.10, N: 3.30, 2: 3.40 } },
+    ],
+  };
+  const habille = cotes.habilleCatalogue(brut);
+  fs.writeFileSync(paris.FICHIER_VOLUME, JSON.stringify(habille, null, 1) + '\n');
   paris.charge();
+}
+
+(async () => {
+  calendrierDEssai();
   const ouv = paris.ouverts(Date.now());
-  if (ouv.length < 2) {
-    console.log('paris_auto.test.js : IGNORE — moins de 2 matchs ouverts au calendrier');
-    process.exit(0);
-  }
+  ok(ouv.length >= 2,
+     `l essai ecrit son propre calendrier : ${ouv.length} rencontre(s) a venir`);
+  ok(Object.keys(ouv[0].marches).length === 6,
+     `et la premiere porte ses six marches : ${Object.keys(ouv[0].marches).join(', ')}`);
 
   /* Le rappel est pose dans le callback de `listen` : il n'existe pas encore
      au chargement du module. */
@@ -141,6 +180,51 @@ const solde = async (c) => {
     eq(await solde(a), avant2, 'une seconde passe ne repaie pas');
   }
 
+  // ---- 2 bis. LE SCORE ARRIVE JUSQU AU MOTEUR, ET PAS SEULEMENT LA LETTRE
+  /*
+   * ---- LE DEFAUT QUE CET ESSAI AURAIT DU ATTRAPER ----
+   *
+   * Le rappel passait `f.resultat` — la lettre — alors que `f.score` etait la
+   * depuis toujours, et que la ligne de journal juste en dessous l AFFICHAIT.
+   *
+   * Deux consequences. Le score n etait jamais garde, donc irrecuperable. Et
+   * depuis que les rencontres portent six marches, `regleMatch` REFUSE la
+   * lettre des qu un pari demande le score : tout match de football portant
+   * un « les deux equipes marquent » tombait en reglement manuel, en silence,
+   * dans la liste des rates.
+   *
+   * Rien ne le voyait, parce que cet essai s ignorait faute de calendrier.
+   */
+  {
+    const cible = paris.match('auto-marche');
+    const b = await joueur();
+    /* Par `selections`, comme la page : le champ `match`/`choix` a plat est la
+       forme d'AVANT les marches, et elle pose toujours sur le 1-N-2. */
+    b.ws.send(JSON.stringify({ type: 'parie', mise: 500,
+      selections: [{ match: cible.id, marche: 'btts', choix: 'oui' }] }));
+    await dors(350);
+    const err2 = b.recu.filter((m2) => m2.type === 'error');
+    ok(!err2.length,
+       'un pari « les deux equipes marquent » est accepte : '
+       + err2.map((e) => e.error).join(' | '));
+
+    const m = paris.match(cible.id);
+    const vraiDebut = m.debut;
+    m.debut = Date.now() - 6 * 3600000;
+    const avantB = await solde(b);
+    /* 2-1 : les deux equipes ont marque, le pari est gagnant. La LETTRE de ce
+       score est « 1 » — et « 1 » ne dit rien de « les deux marquent ». */
+    regle([fini(cible, '1', '2-1')]);
+    await dors(450);
+    m.debut = vraiDebut;
+    const apresB = await solde(b);
+    ok(apresB > avantB,
+       `le reglement automatique paie le pari « les deux marquent » (${avantB} → ${apresB})`
+       + ' — avec la lettre seule, il aurait ete refuse et laisse en attente');
+    const G = require('./server').game || null;
+    void G;
+  }
+
   // ---- 3. LE VERROU QUI COMPTE : au-dessus du plafond, on ne paie pas
   {
     const m = paris.match(gros.id);
@@ -155,11 +239,18 @@ const solde = async (c) => {
 
     /* Et elle reste reglable a la main — le verrou met en attente, il ne
        condamne pas la rencontre. */
-    const rep = await fetch(`http://127.0.0.1:${process.env.PORT}/paris/regle?match=` +
-      `${encodeURIComponent(gros.id)}&resultat=${encodeURIComponent(gros.issues[0])}`,
-      { headers: { 'x-admin-key': process.env.ADMIN_KEY } });
+    /* En POST, et avec un SCORE. L'appel etait ecrit en GET avec `resultat=` :
+       la route repond « this endpoint needs POST » et l'essai le voyait comme
+       un echec — sauf qu'il ne tournait jamais, faute de calendrier. Deux
+       fautes qui se cachaient l'une l'autre. */
+    const rep = await fetch(`http://127.0.0.1:${process.env.PORT}/paris/regle`, {
+      method: 'POST',
+      headers: { 'x-admin-key': process.env.ADMIN_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ match: gros.id, score: '2-1', motif: 'essai automatique' }),
+    });
     const j = await rep.json();
     ok(!j.error, 'et elle se regle toujours a la main : ' + JSON.stringify(j).slice(0, 90));
+    eq(j.score, '2-1', 'la route garde le score qu on lui donne');
     await dors(300);
     ok(await solde(a) > avant3, 'le paiement a la main arrive bien');
   }

@@ -6223,7 +6223,17 @@ server.listen(cfg.PORT, () => {
     const faits = [], rates = [];
     for (const f of auto) {
       try {
-        const r = game.regleMatch(f.id, f.resultat);
+        /* ---- LE SCORE, PAS LA LETTRE ----
+         * `f.score` — « 2-1 » — est fourni par l'import depuis toujours, et
+         * la ligne de journal juste en dessous l'affiche. On passait quand
+         * meme `f.resultat`, ce qui le jetait.
+         * Deux consequences, et la seconde arrete tout : le score n'etait
+         * jamais garde, donc irrecuperable ; et depuis que les rencontres
+         * portent six marches, `regleMatch` REFUSE la lettre des qu'un pari
+         * demande le score — « les deux equipes marquent » ne se lit pas dans
+         * un « 1 ». Tout match de football portant un tel pari tombait donc
+         * en reglement manuel, en silence, dans la liste des rates. */
+        const r = game.regleMatch(f.id, f.score || f.resultat);
         faits.push({ f, r });
         notifyBetsSettled(r);
         console.log('[paris] auto', JSON.stringify({ match: f.id, score: f.score, ...r }));
