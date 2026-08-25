@@ -2625,6 +2625,26 @@ const server = http.createServer(async (req, res) => {
    * jour. Soixante secondes de cache suffisent a ce qu'une affluence sur la
    * page d'accueil ne se transforme pas en affluence ici.
    */
+  /* ==================== LES CHIFFRES DE LA VITRINE ====================
+   *
+   * Publique, et pour la meme raison que le calendrier : la page d'accueil ne
+   * peut pas ouvrir de socket — celle-ci exige un compte signe — et l'on ne
+   * demande pas a quelqu'un de se connecter pour lire une affiche.
+   *
+   * Elle remplace des chiffres de MAQUETTE, ecrits en dur dans la page :
+   * « 128K+ joueurs », « $24.8M+ joues ». Un site qui annonce un volume
+   * invente le fait verifier.
+   *
+   * Ce qu'elle ne rend PAS : rien par joueur, aucune adresse. Des totaux, et
+   * le detail reste derriere la porte du panneau.
+   */
+  if (path === '/vitrine.json') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*',
+                         'cache-control': 'public, max-age=60' });
+    return res.end(JSON.stringify(game.vitrineChiffres()));
+  }
+
   if (path === '/paris/calendrier') {
     const t = Date.now();
     const l = paris.ouverts(t).map((m) => paris.vue(m, t));

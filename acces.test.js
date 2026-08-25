@@ -112,6 +112,32 @@ const code = async (port, chemin, entetes, suivre) => (await fetch(
        deviner, la porte n'existe simplement pas. */
     eq(await code(8791, '/stats?key=nimporte'), 503, 'et aucune cle inventee ne l ouvre');
     eq(await code(8791, '/health'), 200, 'la sonde de sante, elle, reste publique');
+    /* ---- ET LES CHIFFRES DE LA VITRINE ----
+     * Ils remplacent des nombres de MAQUETTE ecrits en dur dans la page. Ce
+     * sont des TOTAUX : aucune adresse, rien par joueur. La verification qui
+     * compte est celle-la — une porte ouverte qui laisse filtrer un detail par
+     * compte est pire qu une porte fermee. */
+    {
+      eq(await code(8791, '/vitrine.json'), 200,
+         'les chiffres de la vitrine sont publics : la page d accueil ne peut pas'
+         + ' ouvrir de socket, et l on ne se connecte pas pour lire une affiche');
+      const r = await fetch('http://127.0.0.1:8791/vitrine.json');
+      eq(r.headers.get('access-control-allow-origin'), '*',
+         'et lisibles depuis le site, qui est sur un autre domaine');
+      const j = await r.json();
+      const cles = Object.keys(j).sort().join(',');
+      eq(cles, 'joueurs,manches,rendus,volume',
+         'quatre totaux, et rien de plus');
+      ok(!/0x[0-9a-fA-F]{6}/.test(JSON.stringify(j)),
+         'aucune adresse ne part avec : ce sont des sommes, le detail reste'
+         + ' derriere la porte du panneau');
+      for (const k of Object.keys(j)) {
+        ok(typeof j[k] === 'number' && isFinite(j[k]) && j[k] >= 0,
+           `« ${k} » est un nombre utilisable (${j[k]}) — une page qui afficherait`
+           + ' « NaN » a la place d un volume vaut moins qu une page sans chiffre');
+      }
+    }
+
     /* ---- ET LE CALENDRIER AUSSI ----
      * Il ne rend rien que la page de paris ne montre deja au premier venu :
      * des rencontres, des heures, des cotes. Ce qu'il ne rend PAS est ce qui

@@ -2097,6 +2097,45 @@ class Game {
    * l'erreur qui fait couler les casinos — on se croit riche de l'argent des
    * joueurs.
    * ====================================================================== */
+  /**
+   * LES QUATRE CHIFFRES DE LA VITRINE, ET RIEN D'AUTRE.
+   *
+   * ---- POURQUOI ILS SORTENT D'ICI ----
+   *
+   * Les pages d'accueil affichaient « 128K+ joueurs », « $24.8M+ joues »,
+   * « 1,284+ parties ». Des chiffres de MAQUETTE, ecrits en dur, et le
+   * fichier le disait. Un site qui annonce un volume invente le fait
+   * verifier — c'est la premiere chose qu'on cherche a recouper.
+   *
+   * ---- CE QU'ON REND, ET COMMENT ILS SONT VRAIS ----
+   *
+   * Les comptes : la taille de la table des joueurs. Le volume, les manches
+   * et ce qui a ete rendu : la somme de tous les mois de comptabilite, celle
+   * que `note()` remplit a chaque manche par le seul point de passage qui
+   * existe. Un jeu qui oublierait de l'appeler ne compterait deja pas dans le
+   * bilan mensuel — donc pas davantage ici.
+   *
+   * Rien par joueur, aucune adresse : ce sont des totaux, et le detail reste
+   * derriere la porte du panneau.
+   */
+  vitrineChiffres() {
+    let volume = 0, rendus = 0, manches = 0;
+    for (const k of Object.keys(this.compta || {})) {
+      const m = this.compta[k] || {};
+      volume += Number(m.mises) || 0;
+      rendus += Number(m.rendus) || 0;
+      manches += Number(m.manches) || 0;
+    }
+    return {
+      /* Les comptes qui existent. Un compte vide est elague ailleurs, donc ce
+         nombre ne gonfle pas d'adresses qui ont juste ouvert la page. */
+      joueurs: this.players ? this.players.size : 0,
+      volume: Number(volume.toFixed(2)),
+      manches,
+      rendus: Number(rendus.toFixed(2)),
+    };
+  }
+
   _mois(cle) {
     if (!this.compta) this.compta = {};
     const k = cle || Game.moisCle();
