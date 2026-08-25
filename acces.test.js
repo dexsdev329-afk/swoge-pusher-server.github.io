@@ -112,6 +112,38 @@ const code = async (port, chemin, entetes, suivre) => (await fetch(
        deviner, la porte n'existe simplement pas. */
     eq(await code(8791, '/stats?key=nimporte'), 503, 'et aucune cle inventee ne l ouvre');
     eq(await code(8791, '/health'), 200, 'la sonde de sante, elle, reste publique');
+    /* ---- ET LE CALENDRIER AUSSI ----
+     * Il ne rend rien que la page de paris ne montre deja au premier venu :
+     * des rencontres, des heures, des cotes. Ce qu'il ne rend PAS est ce qui
+     * regarde la maison — l'engagement pris et la place qui reste. Cette
+     * verification-la est la seule qui compte ici : une porte ouverte qui
+     * laisse filtrer un chiffre d'exposition est pire qu'une porte fermee. */
+    {
+      eq(await code(8791, '/paris/calendrier'), 200,
+         'le calendrier est public : on ne demande pas un compte pour lire une affiche');
+      const r = await fetch('http://127.0.0.1:8791/paris/calendrier');
+      eq(r.headers.get('access-control-allow-origin'), '*',
+         'et il porte le droit de le lire depuis le site, qui est sur un autre domaine');
+      ok(/max-age=\d+/.test(r.headers.get('cache-control') || ''),
+         'garde une minute : une affluence sur la page d accueil ne doit pas se'
+         + ' transformer en affluence ici');
+      const j = await r.json();
+      ok(Array.isArray(j.matchs), 'il rend une liste de rencontres');
+      const brut = JSON.stringify(j);
+      ok(brut.indexOf('engagement') < 0 && brut.indexOf('"place"') < 0,
+         'et AUCUN chiffre de la maison ne part avec : ni l engagement pris, ni la'
+         + ' place qui reste');
+      /* TOUTES, et non la premiere : une boucle qui s'arrete au premier tour
+         ne verifie rien du tout le jour ou la deuxieme est fautive. Et le
+         compte est DIT — la liste peut etre legitimement vide, hors saison ou
+         entre deux imports, et un essai qui passe sur une liste vide sans le
+         signaler laisse croire qu'il a regarde quelque chose. */
+      const joues = j.matchs.filter((m) => m.debut <= j.t);
+      eq(joues.length, 0,
+         `aucune des ${j.matchs.length} rencontre(s) rendues n est deja jouee`
+         + ' — une affiche qui montre des matchs finis se verifie en un clic'
+         + (joues.length ? ' : ' + joues.map((m) => m.id).join(', ') : ''));
+    }
     ok(/ADMIN_KEY absente/.test(s.traces()),
        'le serveur le dit au demarrage plutot que de le laisser decouvrir');
     arrete(s);

@@ -2597,6 +2597,49 @@ const server = http.createServer(async (req, res) => {
      porte sur l'identifiant du pari, celui du match, l'adresse et le nom. */
   /* Ce qui ATTEND un resultat. C'est la seule liste du panneau qui demande une
      action : tant qu'elle n'est pas vide, des joueurs attendent d'etre payes. */
+  /* ==================== LE CALENDRIER, EN LECTURE ET SANS COMPTE ====================
+   *
+   * ---- POURQUOI UNE ROUTE, ALORS QUE LA SOCKET LE PORTE DEJA ----
+   *
+   * La page d'accueil montrait quatre rencontres ECRITES A LA MAIN, cotes
+   * comprises. Elles ont ete jouees le 15 aout : la page annoncait donc des
+   * matchs finis, a des prix qui n'existent plus, et le premier clic menait
+   * ailleurs. C'est la seule sorte de mensonge qu'un visiteur verifie en un
+   * geste, et il le verifie toujours.
+   *
+   * Elle ne peut pas ouvrir de socket pour autant : la socket exige un compte
+   * signe, et l'on ne demande pas a quelqu'un de se connecter pour LIRE une
+   * affiche. D'ou cette route.
+   *
+   * ---- PUBLIQUE, ET ELLE DOIT L'ETRE ----
+   *
+   * Elle ne rend rien que la page de paris ne montre deja au premier venu :
+   * des rencontres, des heures, des cotes. Ce qu'elle ne rend PAS est ce qui
+   * regarde la maison — l'engagement pris sur chaque issue et la place qui
+   * reste. `parisOuverts` les ajoute pour le joueur connecte ; on passe donc
+   * par `paris.vue`, qui ne les a jamais portes.
+   *
+   * ---- ET ELLE SE GARDE UNE MINUTE ----
+   *
+   * Un calendrier change quand l'import tourne, c'est-a-dire une fois par
+   * jour. Soixante secondes de cache suffisent a ce qu'une affluence sur la
+   * page d'accueil ne se transforme pas en affluence ici.
+   */
+  if (path === '/paris/calendrier') {
+    const t = Date.now();
+    const l = paris.ouverts(t).map((m) => paris.vue(m, t));
+    /* ---- ET LES SPORTS, AVEC LEURS NOMS ----
+     * Une rencontre porte la CLE de son sport — « foot » — parce que c'est
+     * elle qui sert a tout le reste du serveur. Le nom lisible vit dans le
+     * catalogue, et sans lui la page affichait « FOOT · TEST LEAGUE » sur son
+     * affiche. Le recopier dans la page ferait un second endroit ou nommer
+     * les sports, et le jour ou l'un s'ajoute il n'y serait pas. */
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*',
+                         'cache-control': 'public, max-age=60' });
+    return res.end(JSON.stringify({ t, sports: paris.catalogue().sports, matchs: l }));
+  }
+
   /* L'etat de l'alimentation, et de quoi la relancer a la main.
      « Pourquoi n'y a-t-il pas plus de matchs ? » avait trois reponses
      possibles — pas de cle, cle invalide, ligues hors saison — qui ne se
