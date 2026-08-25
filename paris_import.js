@@ -664,7 +664,19 @@ async function importeScores(aRegler) {
  */
 
 /* Au-dessus de cette exposition, la rencontre attend une main humaine. */
-const AUTO_PLAFOND = Number(process.env.PARIS_AUTO_PLAFOND || 200000);
+/* ---- LE PLAFOND DU REGLEMENT AUTOMATIQUE ----
+ * Au-dessus, la rencontre attend une main humaine. Porte a cinq millions sur
+ * demande du proprietaire.
+ *
+ * IL FAUT DIRE CE QUE CELA CHANGE VRAIMENT. L'engagement d'une rencontre est
+ * lui-meme borne a `PARI_ENGAGEMENT_MAX` — deux millions — au moment ou le
+ * pari est accepte. Un plafond de cinq millions ne peut donc JAMAIS etre
+ * atteint : le filet qui retenait les grosses affiches pour verification ne
+ * se declenchera plus, et tout se reglera seul.
+ * C'est le reglage demande, et il est coherent avec lui-meme ; il n'est
+ * simplement plus un filet. Le remettre en service demanderait un chiffre
+ * SOUS deux millions. */
+const AUTO_PLAFOND = Number(process.env.PARIS_AUTO_PLAFOND || 5000000);
 /* Depuis combien de temps la rencontre doit etre finie. */
 const AUTO_DELAI_MIN = Number(process.env.PARIS_AUTO_DELAI_MIN || 90);
 /* Le coupe-circuit. `0` remet tout a la main, sans redeployer. */

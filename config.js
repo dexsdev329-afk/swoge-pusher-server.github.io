@@ -1337,7 +1337,25 @@ module.exports = {
    * samedi soir.
    */
   PARI_MIN: parseInt(env('PARI_MIN', '100'), 10),
-  PARI_MAX: parseInt(env('PARI_MAX', '100000'), 10),
+  /* ---- LA MISE MAXIMALE, ET CE QU'ELLE HEURTE ----
+   * Elle monte a un million sur demande du proprietaire. Deux bornes plus
+   * hautes qu'elle continuent de s'appliquer, et il faut savoir lesquelles
+   * mordent, parce qu'aucune des deux ne se voit dans ce chiffre-ci :
+   *
+   *   • GAIN_MAX, cinq millions. Une mise au plafond ne peut donc pas etre
+   *     posee au-dessus de la cote 5,00 — le bulletin serait refuse pour
+   *     depassement de gain. Le gros parieur est de fait limite aux favoris.
+   *
+   *   • ENGAGEMENT_MAX, deux millions PAR RENCONTRE. Une seule mise au
+   *     plafond a 2,00 remplit donc la rencontre entiere : la suivante, sur
+   *     un score qui gagnerait en meme temps, sera refusee. Une affiche se
+   *     ferme desormais en UN pari.
+   *
+   * Ces deux bornes n'ont pas ete relevees, parce qu'elles ne mesurent pas la
+   * meme chose : la mise est ce qu'un joueur risque, l'engagement est ce que
+   * la MAISON doit sortir. Multiplier la premiere par dix ne multiplie pas la
+   * capacite de payer de la seconde. */
+  PARI_MAX: parseInt(env('PARI_MAX', '1000000'), 10),
   PARI_ENGAGEMENT_MAX: parseFloat(env('PARI_ENGAGEMENT_MAX', '2000000')),
 
   /* ---- LE COMBINE ----

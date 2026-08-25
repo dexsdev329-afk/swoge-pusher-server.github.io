@@ -527,15 +527,48 @@ paris.charge();
 /* Il ne compte pas les mises : il compte ce qu il faudra SORTIR si la pire
    issue tombe. C est la seule mesure qui dit la verite. */
 {
-  const g = jeu(100000000);
+  const g = jeu(1000000000);
   const plafond = cfg.PARI_ENGAGEMENT_MAX;
+
+  /* ---- CE QUI BORNE VRAIMENT UNE GROSSE MISE ----
+   *
+   * Ce n'est PAS `PARI_MAX`. Une mise engage la maison a hauteur de
+   * mise x cote, et c'est cet engagement-la qui est plafonne, par RENCONTRE.
+   * La plus grosse mise reellement posable sur une affiche vide vaut donc
+   * `ENGAGEMENT_MAX / cote` — et elle passe SOUS `PARI_MAX` des que la cote
+   * depasse le rapport entre les deux.
+   *
+   * L'essai posait `PARI_MAX` en dur et comptait les acceptations. Il a
+   * commence a rendre « 0 paris acceptes » le jour ou la mise maximale est
+   * passee a un million : a 3,17, un seul pari au plafond engage 3,17
+   * millions, soit plus que les deux millions de la rencontre. Ce n'etait pas
+   * une panne, c'etait la borne qui parlait — et l'essai ne savait pas
+   * l'entendre.
+   */
+  /* Par `coteDe`, et non `m.cotes[...]` : le 1-N-2 vit dans `marches` depuis
+     que la rencontre en porte six, et `cotes` a plat n'existe plus sur l'objet
+     valide — seulement sur le fil, pour les pages deja servies. */
+  const cote = paris.coteDe(paris.match(M), '1n2', '2');
+  const posable = Math.floor(plafond / cote);
+  ok(posable < cfg.PARI_MAX,
+     `a la cote ${cote}, l engagement borne la mise a ${posable} bien avant le`
+     + ` plafond de mise (${cfg.PARI_MAX}) — c'est LUI qui mord`);
+  /* Et la consequence, dite en clair : au plafond de mise, sur une rencontre
+     VIDE, le pari est refuse d'emblee. Le joueur ne se cogne pas au plafond
+     de mise mais a celui de l'engagement, et le message doit donc parler de
+     la rencontre — « full » — et non de la mise. */
+  jete(() => g.parie(A, M, '2', cfg.PARI_MAX, AVANT), /is full/,
+       `une mise au plafond (${cfg.PARI_MAX}) a la cote ${cote} est refusee sur une`
+       + ' affiche VIDE : c est l engagement qui parle, pas la mise');
+
   let pose = 0;
-  /* On empile sur la meme issue jusqu a saturer. */
+  /* On empile sur la meme issue jusqu a saturer, en posant ce qui PASSE. */
+  const pas = Math.floor(posable / 3);
   for (let i = 0; i < 200; i++) {
-    try { g.parie(A, M, '2', cfg.PARI_MAX, AVANT); pose++; }
+    try { g.parie(A, M, '2', pas, AVANT); pose++; }
     catch (e) { ok(/full/.test(e.message), 'passe le plafond, on refuse en le disant : ' + e.message); break; }
   }
-  ok(pose > 0, `${pose} paris au plafond de mise ont ete acceptes`);
+  ok(pose > 0, `${pose} paris de ${pas} ont ete acceptes avant saturation`);
   ok(g.engagementMatch(M) <= plafond,
      `l engagement reste sous la borne (${g.engagementMatch(M)} <= ${plafond})`);
   /* Et l autre issue reste ouverte : le plafond est PAR ISSUE au pire, pas
