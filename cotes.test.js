@@ -229,6 +229,83 @@ cotes.chargeNotes(TMP);
                  debut: new Date(Date.now() + 86400000).toISOString(),
                  cotes: { 1: 1.9, N: 3.5, 2: 4.2 } };
   eq(lotDe(cotes.habille(main))['1'], 1.9, 'une cote relevee a la main ne se refait jamais');
+
+  /* ---- MAIS ELLE NE PRIVE PAS LA RENCONTRE DES CINQ AUTRES MARCHES ----
+   *
+   * C'ETAIT LE DEFAUT. `if (deja && !cotesGenerees) return m` protegeait bien
+   * le 1-N-2 releve — et rendait l'objet AVANT de construire les cinq autres.
+   * Or l'import RELEVE ses cotes chez le fournisseur : `cotesGenerees` est
+   * faux sur tout le calendrier reel, et les cinq nouveaux marches ne
+   * seraient apparus sur RIEN. Mesure a l'epoque sur une rencontre cotee
+   * 1,30 / 5,50 / 9,00 : « marches : AUCUN ».
+   */
+  const hMain = cotes.habille(main);
+  /* Teste AVANT de lire les cles : sans cette ligne, le defaut se manifeste par
+     un « Cannot convert undefined to object » a la ligne suivante — vrai, mais
+     muet sur ce qui manque. */
+  ok(!!hMain.marches,
+     'une rencontre au 1-N-2 releve recoit bien des marches, et ne revient pas nue');
+  eq(Object.keys(hMain.marches || {}).sort().join(','),
+     paris.marchesDuSport('foot').slice().sort().join(','),
+     'une rencontre au 1-N-2 releve porte quand meme les six marches');
+  eq(hMain.cotesGenerees, false,
+     'et son drapeau reste faux : la cote est recopiee, pas inventee — le'
+     + ' marquer « fabrique » ferait croire le contraire le jour d une reclamation');
+
+  /* ---- ET LES CINQ DESCENDENT DES COTES AFFICHEES, PAS DE L'ELO ----
+   *
+   * C'est la seconde moitie du meme defaut, et la plus chere. Sur une
+   * rencontre dont le 1-N-2 vient d'un bookmaker, des marches calcules sur
+   * notre Elo expriment un AUTRE avis que celui affiche juste a cote — et
+   * l'ecart entre deux prix du meme evenement sur la meme page est exactement
+   * l'arbitrage qu'on offre a qui sait compter.
+   *
+   * On le mesure sur des equipes que l'Elo NE CONNAIT PAS : il les croit
+   * egales, la cote dit qu'elles ne le sont pas du tout. Si les marches
+   * suivaient l'Elo, le handicap serait le meme des deux cotes.
+   */
+  const inconnues = { id: 'incoherent', sport: 'foot',
+                      domicile: 'Inconnue-A', exterieur: 'Inconnue-B',
+                      debut: new Date(Date.now() + 86400000).toISOString(),
+                      cotes: { 1: 1.30, N: 5.50, 2: 9.00 } };
+  const hi = cotes.habille(inconnues);
+  const pi = cotes.probasImplicites(lotDe(hi), ['1', 'N', '2'], 1);
+  const pe = cotes.probabilites('foot', 'Inconnue-A', 'Inconnue-B');
+  ok(Math.abs(pi['1'] - pe['1']) > 0.2,
+     `les cotes affichees et l Elo sont TRES loin l un de l autre :`
+     + ` ${(pi['1'] * 100).toFixed(1)} % contre ${(pe['1'] * 100).toFixed(1)} %`
+     + ' — sans cet ecart, l essai qui suit ne verifierait rien');
+  const lam = cotes.ajusteButs(pi['1'], pi.N, pi['2']);
+  const rendu = cotes.issuesDeLaGrille(cotes.grilleDesScores(lam.lh, lam.la));
+  ok(Math.abs(rendu['1'] - pi['1']) < 0.01,
+     `et le modele de buts reproduit les COTES : ${(pi['1'] * 100).toFixed(1)} %`
+     + ` demande, ${(rendu['1'] * 100).toFixed(1)} % rendu`);
+  /* Le handicap le dit tout seul : un favori a 75 % le passe souvent, un
+     favori a 45 % non. Deux cotes tres differentes, donc, et c'est ce qu'on
+     verifie plutot que le detail du calcul. */
+  const hEgal = cotes.habille({ id: 'egal', sport: 'foot',
+                                domicile: 'Inconnue-A', exterieur: 'Inconnue-B',
+                                debut: new Date(Date.now() + 86400000).toISOString() });
+  ok(hi.marches.hand.cotes['1'] < hEgal.marches.hand.cotes['1'] - 0.5,
+     `le handicap suit la cote et non l Elo : ${hi.marches.hand.cotes['1']} sur la`
+     + ` rencontre relevee, ${hEgal.marches.hand.cotes['1']} sur la meme affiche`
+     + ' cotee par notre modele');
+
+  /* ---- L ALLER-RETOUR EST EXACT ----
+   * `probasImplicites` est l'inverse de la methode par puissance qui pose les
+   * cotes. Une simple normalisation des inverses, elle, est biaisee : elle
+   * repartit la marge a proportion egale alors qu'elle pese plus sur les
+   * outsiders, et rendrait le favori trop probable. */
+  const p0 = cotes.probabilites('foot', 'GROS', 'PETIT');
+  const lot0 = cotes.habilleUnMarche(p0, ['1', 'N', '2'], 1, 0.10);
+  const re = cotes.probasImplicites(lot0.cotes, ['1', 'N', '2'], 1);
+  for (const k of ['1', 'N', '2']) {
+    ok(Math.abs(re[k] - p0[k]) < 0.002,
+       `aller-retour sur « ${k} » : ${(p0[k] * 100).toFixed(2)} % → ${lot0.cotes[k]}`
+       + ` → ${(re[k] * 100).toFixed(2)} %`);
+  }
+  const sre = ['1', 'N', '2'].reduce((t, k) => t + re[k], 0);
+  ok(Math.abs(sre - 1) < 1e-6, `et elles somment a un (${sre.toFixed(9)}), marge retiree`);
 }
 
 // ---- une cote deja presente n'est JAMAIS remplacee
