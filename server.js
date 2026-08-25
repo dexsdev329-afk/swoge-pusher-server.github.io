@@ -6274,7 +6274,15 @@ server.listen(cfg.PORT, () => {
               (l.length > 14 ? `\n• … et ${l.length - 14} autre(s)` : '') + pied);
   };
   global.__swogeReglementAuto = reglementAuto;
-  calendrierAuto = parisImport.planifie(reglementAuto);
+  /* ---- ON NE PAIE PLUS DE SCORE POUR CE QUI NE PORTE AUCUN PARI ----
+   * Un score ne sert qu'a regler. `engagementMatch` rend ce que la maison
+   * devrait SORTIR sur cette rencontre si la pire issue tombait, en ne
+   * comptant que les paris NON REGLES : zero veut donc dire « rien n'attend
+   * ici », qu'il n'y ait jamais eu de pari ou qu'ils soient tous tranches.
+   * C'est exactement la question que l'import a besoin de poser, et le
+   * module ne connait pas le moteur — d'ou ce rappel. */
+  calendrierAuto = parisImport.planifie(reglementAuto,
+                                        (id) => game.engagementMatch(id) > 0);
 });
 
 function shutdown() {

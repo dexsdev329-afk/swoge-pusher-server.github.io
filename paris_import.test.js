@@ -348,6 +348,38 @@ const cotes = require('./cotes');
     eq(appels[0].cout, 2, 'a 2 credits — daysFrom est necessaire pour voir les finies');
     eq(finis.length, 1, 'une rencontre a regler est remontee');
     eq(finis[0].resultat, '1', 'Chelsea 2 – 1 Everton donne le resultat « 1 »');
+
+    /* ---- ET SEULEMENT LA OU DE L ARGENT ATTEND ----
+     *
+     * Un score ne sert QU A regler des paris — les forces Elo se recalent par
+     * `--calibre`, qui est un autre appel. Une rencontre finie sur laquelle
+     * personne n a mise n a donc rien a nous apprendre, et on la payait deux
+     * credits par jour, pendant trois jours, par ligue.
+     *
+     * Le meme calcul vaut pour une rencontre DEJA REGLEE : la releve tourne
+     * chaque jour et repassait dessus jusqu a ce qu elle sorte de la fenetre.
+     * Depuis que le reglement automatique fonctionne, elles sont tranchees des
+     * la premiere passe — les deux suivantes ne servaient plus a rien.
+     */
+    appels.length = 0;
+    const vide = await imp.importeScores(() => false);
+    eq(appels.length, 0,
+       'aucun pari en attente : AUCUN appel, donc zero credit la ou l on en'
+       + ' depensait deux par jour et par ligue');
+    eq(vide.length, 0, 'et rien ne remonte, evidemment');
+
+    appels.length = 0;
+    const cible = await imp.importeScores((id) => id === 'epl-fini-chevet');
+    eq(appels.length, 1, 'un pari en attente sur UNE rencontre rouvre la depense');
+    eq(cible.length, 1, 'et la rencontre remonte a regler');
+
+    /* SANS RAPPEL, ON DEMANDE POUR TOUT. Le module ne connait pas le moteur :
+       en l absence de reponse, mieux vaut depenser un credit de trop que
+       laisser un gagnant impaye. */
+    appels.length = 0;
+    await imp.importeScores();
+    eq(appels.length, 1,
+       'sans rappel, on garde l ancien comportement : on demande pour tout');
     eq(finis[0].id, 'epl-fini-chevet', 'avec l identifiant du catalogue, pas celui du fournisseur');
   }
 

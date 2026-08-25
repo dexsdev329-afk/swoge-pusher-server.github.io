@@ -534,7 +534,7 @@ async function importeMatchs() {
  * les mauvaises personnes sans que personne ne le sache. Ce qu'on rend ici est
  * une LISTE A VERIFIER, avec l'adresse exacte a appeler pour chaque match.
  */
-async function importeScores() {
+async function importeScores(aRegler) {
   paris.charge();
   const ouverts = new Set(paris.catalogue().matchs.map((m) => m.id));
 
@@ -547,12 +547,39 @@ async function importeScores() {
   const t = Date.now();
   const FENETRE = 3 * 86400000;
   const parLigue = new Map();
+  /* ---- ET SEULEMENT CELLES OU DE L'ARGENT ATTEND ----
+   *
+   * Un score ne sert QU'A regler des paris. Les forces Elo, elles, se recalent
+   * par `--calibre`, qui est un autre appel. Une rencontre finie sur laquelle
+   * personne n'a mise n'a donc rien a nous apprendre — et on la payait deux
+   * credits par jour pendant trois jours, par ligue.
+   *
+   * Le meme calcul vaut pour une rencontre DEJA REGLEE : la releve tourne
+   * chaque jour et repassait sur les memes rencontres jusqu'a ce qu'elles
+   * sortent de la fenetre. Depuis que le reglement automatique fonctionne,
+   * elles sont tranchees des la premiere passe, et les deux suivantes ne
+   * servaient plus a rien.
+   *
+   * `aRegler` vient du serveur, qui seul connait les paris — ce module ne
+   * connait pas le moteur, et c'est voulu. Sans rappel, on garde l'ancien
+   * comportement : demander pour tout. Mieux vaut depenser un credit de trop
+   * que laisser un gagnant impaye.
+   */
+  const filtre = typeof aRegler === 'function' ? aRegler : null;
+  let sansEnjeu = 0;
   for (const m of paris.catalogue().matchs) {
     const l = m.source && m.source.ligue;
     if (!l) continue;
     if (m.debut > t) continue;                  // pas encore joue
     if (t - m.debut > FENETRE) continue;        // trop vieux pour cet endpoint
+    if (filtre && !filtre(m.id)) { sansEnjeu++; continue; }
     if (!parLigue.has(l)) parLigue.set(l, m.sport);
+  }
+  if (sansEnjeu) {
+    /* On le DIT. Une economie silencieuse se lit comme une panne le jour ou
+       une rencontre ne remonte pas, et l'on cherche du cote du reseau. */
+    console.log(`[odds] ${sansEnjeu} rencontre(s) finie(s) sans pari en attente —`
+                + ' pas de score demande pour elles');
   }
   if (!parLigue.size) {
     const total = paris.catalogue().matchs.length;
@@ -779,7 +806,7 @@ function montreQuota() {
  * Telegram : sans ca, elle serait ecrite dans un journal que personne ne lit,
  * et les paris resteraient ouverts.
  */
-function planifie(signale) {
+function planifie(signale, aRegler) {
   if (!CLE) {
     console.log('[odds] ODDS_API_KEY absente : le calendrier reste celui du depot');
     return null;
@@ -797,7 +824,7 @@ function planifie(signale) {
   });
 
   const releve = () => sur('scores', async () => {
-    const finis = await importeScores();
+    const finis = await importeScores(aRegler);
     if (finis.length && typeof signale === 'function') signale(finis);
   });
 
