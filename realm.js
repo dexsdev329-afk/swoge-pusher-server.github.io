@@ -653,6 +653,44 @@ class Realm {
     return { x: depX, y: depY };
   }
 
+  /**
+   * ==================== UN PAS LONG SE TESTE EN CHEMIN ====================
+   *
+   * `_glisse` ne regarde que le point d'ARRIVEE. Pour la marche c'est assez :
+   * `PAS_MAX` borne une annonce a un demi-pas, et l'on n'enjambe rien de cette
+   * taille. Pour une PROJECTION, non — et c'est le defaut signale : « le boss
+   * le plus dur m'a pousse a travers les murs du donjon, et j'etais bloque ».
+   *
+   * La force de la poussee monte avec le niveau : `120 + 1 par niveau`, donc
+   * plus de deux cents unites en un seul bond chez les derniers boss. Le plus
+   * petit obstacle en fait quarante-quatre. Le trajet passait donc PAR-DESSUS
+   * la pierre, et le joueur atterrissait de l'autre cote d'un mur — dehors, la
+   * ou aucun obstacle ne le contient, donc sans meme la sortie de secours du
+   * cas « dedans » : la marche du retour, elle, se cognait au mur. Bloque,
+   * avec un boss vivant de l'autre cote.
+   *
+   * On avance donc par pas courts, chacun teste comme un pas de marche. Le pas
+   * vaut le rayon : plus court qu'un rayon, aucun deplacement ne peut traverser
+   * un obstacle sans que son arrivee soit dedans. Et l'on s'ARRETE au premier
+   * pas refuse — une projection qui longerait le mur jusqu'a trouver un trou
+   * ne serait plus une projection mais un contournement.
+   */
+  _glisseLong(depX, depY, x, y, rayon) {
+    const dx = x - depX, dy = y - depY;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    const pas = Math.max(4, rayon);
+    if (d <= pas) return this._glisse(depX, depY, x, y, rayon);
+    const n = Math.ceil(d / pas);
+    let cx = depX, cy = depY;
+    for (let i = 1; i <= n; i++) {
+      const nx = depX + (dx * i) / n, ny = depY + (dy * i) / n;
+      const p = this._glisse(cx, cy, nx, ny, rayon);
+      if (p.x === cx && p.y === cy) break;   // refuse : on s'arrete la
+      cx = p.x; cy = p.y;
+    }
+    return { x: cx, y: cy };
+  }
+
   bouge(addr, x, y, dir, anim, dt) {
     const j = this.joueurs.get(addr);
     if (!j) return false;
@@ -2025,9 +2063,12 @@ class Realm {
      * annoncee par le client — une projection qui ne serait que dessinee se
      * defairait en ouvrant la console.
      *
-     * `_glisse` compte : sans lui la projection traversait la pierre, et le
-     * joueur se retrouvait dans un mur d'ou plus rien ne le sortait. C'est le
-     * meme glissement que celui de la marche ordinaire, pas un deuxieme. */
+     * `_glisseLong` compte : sans lui la projection traversait la pierre, et le
+     * joueur se retrouvait dans un mur — ou pire, de l'autre cote — d'ou plus
+     * rien ne le sortait. C'est le meme glissement que celui de la marche
+     * ordinaire, pas un deuxieme ; il est seulement parcouru par pas courts,
+     * parce qu'un bond de deux cents unites enjambe un mur que la marche ne
+     * peut pas enjamber. */
     if (cle === 'repousse' && Number.isFinite(sx) && Number.isFinite(sy)) {
       const dx = j.x - sx, dy = j.y - sy;
       const d = Math.sqrt(dx * dx + dy * dy);
@@ -2035,8 +2076,8 @@ class Realm {
          projette alors vers le bas plutot que de rendre NaN et d'envoyer le
          joueur hors de la carte pour toujours. */
       const ux = d > 0.001 ? dx / d : 0, uy = d > 0.001 ? dy / d : 1;
-      const cible = this._glisse(j.x, j.y, j.x + ux * E.force, j.y + uy * E.force,
-                                 RAYON_JOUEUR);
+      const cible = this._glisseLong(j.x, j.y, j.x + ux * E.force, j.y + uy * E.force,
+                                     RAYON_JOUEUR);
       j.x = Math.max(0, Math.min(monde.MONDE.w, cible.x));
       j.y = Math.max(0, Math.min(monde.MONDE.h, cible.y));
       /* La page doit SUIVRE : elle dessine sa propre position et continuerait

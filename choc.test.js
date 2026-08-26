@@ -65,8 +65,18 @@ function scene() {
   const j = R.joueurs.get('0xaaa');
   const F = monde.EFFETS.repousse.force;
   for (let essai = 0; essai < 400; essai++) {
-    const p = R._glisse(j.x, j.y, j.x + F, j.y, 26);
-    if (Math.hypot(p.x - j.x, p.y - j.y) > F - 1) return { R, j };
+    /* ---- DE LA PLACE POUR DEUX VOLS, ET LE TRAJET LIBRE ----
+     * On ne demandait la place que d'UNE projection, et on la mesurait avec
+     * `_glisse`, qui ne teste que le point d'arrivee. Deux faiblesses, et
+     * l'essai en dessous enchaine pourtant DEUX vols : le second partait de
+     * trois cents unites plus loin, sur un terrain dont personne n'avait rien
+     * verifie. Il tombait donc au hasard de la carte tiree — mesure : un
+     * echec sur huit executions, AVANT meme que la projection ne suive son
+     * chemin. Un essai qui echoue une fois sur huit ne dit plus rien.
+     * On demande la place des deux, et on la mesure comme le jeu la mesure
+     * desormais : par le trajet. */
+    const p = R._glisseLong(j.x, j.y, j.x + 2 * F, j.y, 26);
+    if (Math.hypot(p.x - j.x, p.y - j.y) > 2 * F - 1) return { R, j };
     /* On avance en diagonale plutot qu'en ligne : longer une paroi de
        plusieurs tuiles en n'avancant que sur un axe peut ne jamais en sortir. */
     j.x = 200 + ((j.x + 137) % (monde.MONDE.w - 400));
@@ -274,6 +284,72 @@ console.log('\n-- le braisier : celui qui cloue --');
   ok(!!B.sprite || fs.existsSync('/home/user/SWOGE.github.io/img/nexus/monstres/braisier.webp'),
      `il a un dessin (emprunte a « ${B.sprite} » en attendant le sien)`);
   ok(!!monde.MONSTRES[B.sprite] || !B.sprite, 'et l espece dont il emprunte le dessin existe');
+}
+
+console.log('\n-- et la projection ne traverse pas les murs --');
+{
+  /* ---- LE DEFAUT SIGNALE, ET IL N'AVAIT AUCUN ESSAI ----
+   *
+   * « Le boss le plus dur m'a pousse a travers les murs du donjon, et j'etais
+   * bloque pour le battre. »
+   *
+   * La projection etait bien glissee le long des blocs — mais par son seul
+   * point d'ARRIVEE. Or elle vaut trois cents unites d'un coup, et le plus
+   * petit obstacle en fait quarante-quatre : le trajet enjambait la pierre et
+   * deposait le joueur de l'autre cote. La, plus rien ne le ramene — il n'est
+   * DANS aucun obstacle, donc la sortie de secours du cas « dedans » ne joue
+   * pas, et la marche du retour se cogne au mur.
+   *
+   * L'essai ne mesure pas une distance : il verifie que le SEGMENT parcouru
+   * ne traverse aucun bloc. C'est la seule formulation qui dise « on n'a pas
+   * traverse » sans dependre de la carte tiree au sort. */
+  const R = new Realm({});
+  R.rejoint('0xbbb', fiche());
+  const j = R.joueurs.get('0xbbb');
+  const F = monde.EFFETS.repousse.force;
+  const RJ = 22;
+
+  /* Un obstacle qu'une projection peut ENJAMBER : plus etroit que la poussee.
+     S'il n'y en a aucun, le defaut ne peut pas se produire et l'essai le dit
+     plutot que de faire semblant. */
+  const franchissable = R.obstacles.filter((b) => 2 * (b.r + RJ) < F - 20);
+  ok(franchissable.length > 0,
+     `${franchissable.length} obstacle(s) assez etroits pour etre enjambes par une poussee de ${F}`);
+
+  let traverses = 0, essayes = 0;
+  for (const b of franchissable.slice(0, 40)) {
+    /* On se place juste devant, du cote ouest, et l'on pousse plein est :
+       tout droit dans le bloc. */
+    const dep = { x: b.x - b.r - RJ - 4, y: b.y };
+    if (monde.bloque(R.obstacles, dep.x, dep.y, RJ)) continue;   // deja coince : rien a prouver
+    essayes++;
+    const arr = R._glisseLong(dep.x, dep.y, dep.x + F, dep.y, RJ);
+    /* Le segment parcouru, echantillonne plus fin que le plus petit bloc. */
+    const dx = arr.x - dep.x, dy = arr.y - dep.y;
+    const d = Math.hypot(dx, dy);
+    const pas = Math.max(1, Math.floor(d / 4));
+    for (let i = 0; i <= pas; i++) {
+      const t = i / Math.max(1, pas);
+      if (monde.bloque(R.obstacles, dep.x + dx * t, dep.y + dy * t, RJ)) { traverses++; break; }
+    }
+  }
+  ok(essayes > 0, `${essayes} obstacle(s) reellement mis a l'epreuve`);
+  eq(traverses, 0, 'aucune projection ne traverse un bloc');
+
+  /* ---- ET LA PREUVE QUE C'ETAIT BIEN LA LE DEFAUT ----
+   * Le meme geste teste par son seul point d'arrivee, comme avant : il DOIT
+   * traverser. Sans cette moitie-la, l'essai passerait encore le jour ou
+   * quelqu'un remettrait `_glisse` a la place de `_glisseLong`, et ne
+   * protegerait donc rien. */
+  let traversesAvant = 0;
+  for (const b of franchissable.slice(0, 40)) {
+    const dep = { x: b.x - b.r - RJ - 4, y: b.y };
+    if (monde.bloque(R.obstacles, dep.x, dep.y, RJ)) continue;
+    const arr = R._glisse(dep.x, dep.y, dep.x + F, dep.y, RJ);
+    if (monde.bloque(R.obstacles, (dep.x + arr.x) / 2, (dep.y + arr.y) / 2, RJ)) traversesAvant++;
+  }
+  ok(traversesAvant > 0,
+     `et le test par le seul point d'arrivee en traverse ${traversesAvant} — c'etait bien le defaut`);
 }
 
 console.log(`\nchoc.test.js : ${n} verifications OK`);
