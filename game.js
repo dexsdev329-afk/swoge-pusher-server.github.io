@@ -7802,27 +7802,17 @@ class Game {
     for (let i = 0; i < cases.length; i++) {
       const id = cases[i];
       if (id === null || id === undefined) continue;
-      /* UNE FIOLE DE STAT. Elle n'a pas d'identifiant de boutique et n'en
-         aura pas : lui en donner un la ferait entrer dans les plafonds de
-         saison et les statistiques de rarete, ou elle n'a rien a faire. */
-      if (typeof id === 'string' && id.slice(0, 3) === 'st:') {
-        const st = id.slice(3);
-        out.push({ fiole: st, nom: 'Stat potion', cle: 'fiole_' + st,
-                   rarete: 'commun', couleur: '#EAF2FF',
-                   /* La HAUTEUR de la pile. Sans elle la case en montrerait
-                      une seule et les deux autres seraient invisibles — ce qui
-                      se lit comme une perte, pas comme un empilement. */
-                   quantite: Math.max(1, (p.sacFioles || {})[st] | 0),
-                   bonus: { [st]: personnages.supPas(st) },
-                   /* SA COLONNE sur la planche des fioles, comptee ici. La
-                      page devait sinon connaitre l'ordre des huit stats, et
-                      cet ordre n'existe que dans le monde de combat : dans le
-                      Nexus elle aurait dessine huit fois la meme fiole. */
-                   col: personnages.STATS.indexOf(st),
-                   cols: personnages.STATS.length,
-                   place: i });
-        continue;
-      }
+      /* ---- PLUS DE FIOLE ICI ----
+       * Il y avait a cet endroit une branche « st: » qui fabriquait une case
+       * de fiole. Elle ne pouvait plus rien produire : depuis que les fioles
+       * vivent dans leur propre reserve, `_casesDuSac` ne fait plus entrer
+       * aucune clef « st: » dans la grille, et `fioles.test.js` verifie
+       * justement qu'aucune fiole ne figure dans ce que rend `sacPour`.
+       *
+       * Du code mort qui a l'air vivant n'est pas neutre : trois assertions de
+       * ce depot interrogeaient encore `sacPour` pour trouver une fiole, et
+       * cherchaient donc dans une fenetre qui ne peut plus rien montrer. La
+       * reserve se lit avec `fiolesPour`. */
       /* UN OEUF. Meme raison que la fiole : pas d'identifiant de boutique, et
          il n'en aura pas — il ne se vend pas, il ne s'achete pas, et il n'a
          donc rien a faire dans les plafonds de saison. */
@@ -11249,13 +11239,34 @@ class Game {
        * Reprendre une annonce la rendait toujours au COFFRE. Celui qui l'avait
        * mise en vente depuis son sac ne la retrouvait donc nulle part ou il
        * l'avait laissee : ni dans le sac, ni sur lui — il fallait deviner
-       * d'aller ouvrir le coffre. On la rend au SAC quand il reste une place,
-       * et au coffre seulement s'il n'y en a plus. Un achat, lui, va toujours
-       * au coffre : on ne vient pas d'acheter pour risquer tout de suite. */
-      if (versLeSac && this.sacRempli(p.addr) < SAC_CASES) {
+       * d'aller ouvrir le coffre. On la rend au SAC quand sa pile a de la
+       * place, et au coffre seulement quand elle est pleine. Un achat, lui, va
+       * toujours au coffre : on ne vient pas d'acheter pour risquer tout de
+       * suite.
+       *
+       * ---- ET CE N'EST PLUS LE SAC DE BUTIN QUI DECIDE ----
+       * Cette condition lisait `sacRempli() < SAC_CASES`, ecrite du temps ou
+       * une fiole occupait une des huit places. Elles ont quitte la grille
+       * depuis, pour leur propre reserve — mais la condition est restee. Elle
+       * envoyait donc au coffre la fiole d'un joueur dont le sac etait plein
+       * d'ARMURE, alors que sa reserve de fioles etait vide : exactement le
+       * « il faut deviner d'aller ouvrir le coffre » que ces lignes venaient
+       * de corriger, ressuscite par un plafond qui n'a plus rien a voir.
+       * Le seul plafond qui compte pour une fiole est celui de SA PILE —
+       * `monde.FIOLE_PILE`, le meme que `prendFiole` fait respecter. */
+      if (versLeSac) {
         p.sacFioles = p.sacFioles || {};
-        p.sacFioles[st] = (p.sacFioles[st] || 0) + n;
-        p.sacCases = null;
+        const deja = Math.max(0, p.sacFioles[st] | 0);
+        /* Ce qui tient dans la pile y va ; le reste passe au coffre plutot que
+           de se perdre ou de faire echouer la reprise entiere. */
+        const tient = Math.max(0, Math.min(n, monde.FIOLE_PILE - deja));
+        if (tient > 0) {
+          p.sacFioles[st] = deja + tient;
+          p.sacCases = null;
+        }
+        if (tient >= n) return n;
+        p.fioles = p.fioles || {};
+        p.fioles[st] = (p.fioles[st] || 0) + (n - tient);
         return n;
       }
       p.fioles = p.fioles || {};

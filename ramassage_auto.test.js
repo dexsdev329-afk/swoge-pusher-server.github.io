@@ -374,7 +374,11 @@ process.on('unhandledRejection', (e) => {
     eq(monde.sacs.length, 0, 'au plafond, elle se ramasse quand meme');
     eq(moteur.personnageEtat(A, 'andy').stats.def, av3,
        'aucune stat ne bouge : il n y avait plus rien a gagner');
-    ok(moteur.sacPour(A).some((x) => x.fiole === 'def'),
+    /* On lit la RESERVE, pas la grille du butin : les fioles ont quitte les huit
+     places pour leur propre pile, et `sacPour` ne les rend plus. L essai
+     interrogeait encore l ancienne fenetre et voyait donc un sac vide alors
+     que la fiole y etait bien. */
+  ok((moteur.fiolesPour(A).find((x) => x.cle === 'def') || {}).sac >= 1,
        'et elle attend dans le sac au lieu de finir sa minute par terre');
   }
 

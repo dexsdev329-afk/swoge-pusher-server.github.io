@@ -4097,9 +4097,27 @@ const CHANCE_RELIQUE = { lave: 1 / 1500 };
 const CHANCE_RELIQUE_BOSS = 1 / 40;
 /* Quelles especes comptent comme boss pour la relique. Le brasier a pris la
    place du gardien dans la lave ; le gardien reste dans les salles, ou son
-   butin est garanti par la salle elle-meme. */
+   butin est garanti par la salle elle-meme.
+
+   ---- LE HERAUT ET L'IDOLE MANQUAIENT ----
+
+   Le Sanctuaire de Cendre est arrive avec son ouvreur et son boss, mais aucun
+   des deux n'a ete inscrit ici. Pour l'idole c'etait sans effet — son butin
+   est garanti par `BUTIN_GARANTI`, et son donjon n'a pas de taux de relique de
+   biome. Pour le HERAUT, non : il vit dans la lave, exactement comme Optimus,
+   et la lave est le seul biome ou `CHANCE_RELIQUE` existe. Il rendait donc une
+   relique au taux ordinaire de l'anneau, un sur mille cinq cents, la ou un
+   boss en rend un sur quarante — trente-sept fois moins souvent, sur la
+   creature la plus rare du jeu (1,3 % du peuplement, « un heraut toutes les
+   quatre visites de la lave »). La chasse la plus longue du jeu payait comme
+   un lime.
+
+   `cave.test.js` et `portail.test.js` le disaient tous les deux depuis le
+   debut — « celle qui ouvre une porte est un boss », « le boss du donjon
+   compte comme un boss ». Les deux essais etaient rouges, et ils avaient
+   raison. */
 const BOSS = { gardien: 1, brasier: 1, machine: 1, carapace: 1, optimus: 1,
-               fonderie: 1, dreadstump: 1 };
+               fonderie: 1, dreadstump: 1, heraut: 1, idole: 1 };
 
 /*
  * ---- CELUI QUI OUVRE LE DONJON DOIT EXISTER ----

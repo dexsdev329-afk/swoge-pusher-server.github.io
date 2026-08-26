@@ -29,6 +29,7 @@ const cfg = require('./config');
 const ethers = require('./node_modules/ethers');
 const { Game } = require('./game');
 const P = require('./personnages');
+const monde = require('./monde');
 const WEI = (x) => ethers.utils.parseUnits(String(x), cfg.DECIMALS);
 
 let n = 0;
@@ -298,38 +299,60 @@ console.log('\n-- la fiole qu on a SUR SOI --');
   eq(g2._p(A).fioles.att, 2, 'ensuite seulement on entame le coffre');
 }
 
-// ================== 11. UNE PILE DE FIOLES NE MANGE QU UNE CASE
-console.log('\n-- une case pour toute la pile --');
+// ================== 11. UNE FIOLE NE MANGE AUCUNE CASE DU SAC
+//
+// ---- CETTE SECTION MESURAIT UN ETAT INTERMEDIAIRE, ET EST RESTEE DESSUS ----
+//
+// Elle exigeait « trois fioles de defense tiennent sur UNE case ». C'etait le
+// contrat du jour ou elle a ete ecrite : les fioles s'empilaient au lieu de
+// prendre une case chacune. Le travail a ete FINI depuis — elles ont quitte la
+// grille du butin pour leur propre reserve (`fiolesPour`), avec leur propre
+// plafond de pile — et le contrat est devenu meilleur : zero case, pas une.
+//
+// L'essai, lui, n'a pas suivi. Il est reste rouge, a demander un empilement
+// qui n'a plus lieu d'etre, et une suite rouge ne protege plus rien : c'est
+// derriere ces quatre essais en echec qu'un panneau entier du bench a pu
+// partir sans que personne ne le voie.
+//
+// `fioles.test.js` est le proprietaire de cette regle et la mesure en
+// profondeur (le plafond de la pile, le sac plein de butin, le passage par le
+// redemarrage). Ce qu'on garde ICI est ce qui touche a l'etal : une fiole mise
+// en vente sort bien de la reserve, et la reserve n'emprunte rien au butin.
+console.log('\n-- aucune case pour la reserve --');
 {
   const g = neuf();
   const p = g._p(A);
   p.sacFioles = { def: 3 };
   p.sac = {};
   p.sacCases = null;
-  const sac = g.sacPour(A);
-  eq(sac.length, 1, `trois fioles de defense tiennent sur UNE case (${sac.length})`);
-  eq(sac[0].quantite, 3, 'et la case dit qu il y en a trois');
-  eq(g.sacRempli(A), 1, 'le sac n est rempli que d une place');
+  eq(g.sacPour(A).length, 0, 'trois fioles de defense ne posent AUCUNE case dans le sac');
+  eq(g.sacRempli(A), 0, 'et le sac n est rempli d aucune place');
+  eq((g.fiolesPour(A).find((x) => x.cle === 'def') || {}).sac, 3,
+     'elles sont dans la reserve, qui en compte bien trois');
 
-  /* Deux STATS differentes restent deux cases : ce sont deux objets
-     differents, et les empiler ensemble obligerait a lire un chiffre pour
-     savoir laquelle on boit. */
+  /* Deux stats differentes ne coutent pas davantage : ce sont deux piles de la
+     reserve, et la reserve n'a rien a voir avec les huit places. */
   p.sacFioles = { def: 3, att: 2 };
   p.sacCases = null;
-  eq(g.sacPour(A).length, 2, 'deux stats differentes font deux cases');
-  eq(g.sacRempli(A), 2, 'soit deux places');
+  eq(g.sacRempli(A), 0, 'deux stats differentes ne coutent toujours aucune place');
+  eq(g.fiolesPour(A).length, 2, 'et la reserve porte bien les deux piles');
 
   /* ---- ET LE SAC NE SE DIT PLUS PLEIN POUR RIEN ----
    * Avant, neuf fioles mangeaient les huit places et le refus tombait alors
    * que l ecran montrait des cases vides. */
   p.sacFioles = { def: 9 };
   p.sacCases = null;
-  eq(g.sacRempli(A), 1, 'neuf fioles de la meme stat : toujours une seule place');
-  ok(g.sacPour(A).length === 1, 'et une seule case a l ecran');
+  eq(g.sacRempli(A), 0, 'neuf fioles de la meme stat : toujours aucune place prise');
   /* Le compte de `sacRempli` et celui de `_casesDuSac` doivent dire la MEME
      chose, sinon « sac plein » tombe devant des cases vides. */
   const cases = g._casesDuSac(p).filter((c) => c !== null).length;
   eq(cases, g.sacRempli(A), `les deux comptes concordent (${cases})`);
+
+  /* Et l'etal sert bien la reserve : ce qu'on met en vente en sort. */
+  g.metPotionEnVente(A, 'st:def', 4);
+  eq((g.fiolesPour(A).find((x) => x.cle === 'def') || {}).sac, 5,
+     'mettre quatre fioles en vente les retire de la reserve (9 -> 5)');
+  eq(g.sacRempli(A), 0, 'sans jamais toucher aux places du butin');
 }
 
 // ================== 12. RUPTURE DE STOCK
@@ -433,14 +456,24 @@ console.log('\n-- reprendre une fiole --');
   const p = g._p(A);
   p.sacFioles = { def: 1 }; p.sac = {}; p.sacCases = null;
   g.metPotionEnVente(A, 'st:def', 1);
-  eq(g.sacPour(A).length, 0, 'mise en vente, elle a quitte le sac');
+  /* On regarde la RESERVE et non la grille du butin : c'est la que les fioles
+     vivent depuis qu'elles ont quitte les huit places. Interroger `sacPour`
+     ici rendait zero quoi qu'il arrive — une assertion qui passe sans rien
+     mesurer, ce qui est pire que rouge. */
+  const auSac = (jeu) => (jeu.fiolesPour(A).find((x) => x.cle === 'def') || {}).sac || 0;
+  eq(auSac(g), 0, 'mise en vente, elle a quitte le sac');
   g.retirePotionDeLaVente(A, 'st:def', 1);
   eq((p.sacFioles || {}).def, 1, 'reprise, elle revient DANS LE SAC');
   eq((p.fioles || {}).def, undefined, 'et pas au coffre, ou il faudrait deviner d aller la chercher');
-  ok(g.sacPour(A).some((o) => o.fiole === 'def'), 'elle se voit dans le sac');
+  eq(auSac(g), 1, 'et elle se voit dans le sac, cote reserve');
 
-  /* Sac PLEIN : elle va au coffre plutot que de se perdre. Le refus serait
-     pire — l annonce resterait et la fiole avec. */
+  /* ---- UN SAC PLEIN D ARMURE N A PLUS SON MOT A DIRE ----
+   * Cette section exigeait le contraire : sac de butin plein, la fiole partait
+   * au coffre. C etait juste du temps ou une fiole mangeait une des huit
+   * places. Elles ont leur propre reserve depuis, et garder ce refus faisait
+   * revivre le bug meme que la reprise venait de corriger — celui qui reprend
+   * son annonce ne la retrouve pas la ou il l a laissee, parce qu il porte une
+   * armure a l autre bout du sac. */
   const g2 = neuf();
   const q = g2._p(A);
   q.sacFioles = { att: 1 }; q.sacCases = null;
@@ -449,9 +482,22 @@ console.log('\n-- reprendre une fiole --');
   q.sac = {};
   for (const o of B0.ITEMS.slice(0, 8)) q.sac[o.id] = 1;
   q.sacCases = null;
-  eq(g2.sacRempli(A), 8, 'le sac est plein');
+  eq(g2.sacRempli(A), 8, 'le sac de butin est plein');
   g2.retirePotionDeLaVente(A, 'st:att', 1);
-  eq((q.fioles || {}).att, 1, 'elle va au coffre plutot que de se perdre');
+  eq((q.sacFioles || {}).att, 1, 'la fiole revient quand meme DANS LE SAC');
+  eq((q.fioles || {}).att, undefined, 'et pas au coffre : le butin ne la concerne pas');
+
+  /* ---- CE QUI DECIDE VRAIMENT : SA PROPRE PILE ----
+   * Pleine, la reprise ne peut pas s y ajouter, et le coffre la recueille
+   * plutot que de la perdre ou de faire echouer la reprise entiere. */
+  const g4 = neuf();
+  const r = g4._p(A);
+  r.sacFioles = { att: 1 }; r.sacCases = null;
+  g4.metPotionEnVente(A, 'st:att', 1);
+  r.sacFioles = { att: monde.FIOLE_PILE };
+  g4.retirePotionDeLaVente(A, 'st:att', 1);
+  eq((r.sacFioles || {}).att, monde.FIOLE_PILE, 'pile pleine, le sac n en prend pas une de plus');
+  eq((r.fioles || {}).att, 1, 'et c est le coffre qui la recueille');
 
   /* Un ACHAT, lui, va toujours au coffre : on ne vient pas d acheter pour
      risquer tout de suite. */
