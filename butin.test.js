@@ -313,9 +313,16 @@ function pose(r, espece, x, y, pv) {
    * contre un squelette, +0 % contre un lime, +17 % contre le gardien.
    * On verifie donc que le gain de defense reste du meme ordre que celui de
    * la vie, contre TOUTES les creatures — pas seulement en moyenne. */
-  {
+  /* ---- A DEUX NIVEAUX, ET C'EST NEUF ----
+   * Ce bloc ne mesurait qu'au NIVEAU MAXIMUM, du temps ou le maximum ETAIT le
+   * palier. Depuis que le plafond monte a cent, le maximum n'est plus le cas
+   * le plus dur : au palier la defense vaut encore sa valeur de naissance, et
+   * quelques points de potion y font basculer tout un anneau contre le
+   * plancher de degats. Ne garder que le niveau cent aurait donc AFFAIBLI ce
+   * garde-fou en silence — on mesure aux DEUX bouts. */
+  [['le palier', P.NIVEAU_PALIER], ['le niveau maximum', P.NIVEAU_MAX]].forEach(([ou, niv]) => {
     const cap = {};
-    P.STATS.forEach((s) => { cap[s] = P.statAuNiveau(P.BASE.andy[s], P.NIVEAU_MAX); });
+    P.STATS.forEach((s) => { cap[s] = P.statAuNiveau(P.BASE.andy[s], niv); });
     const survie = (hp, def, att) => hp / Math.max(1, M.degatsSubis(att, def));
     const gainHp = P.supDe('hp', P.supMaxDe('hp', P.BASE.andy.hp), P.BASE.andy.hp);
     const gainDef = P.supDe('def', P.supMaxDe('def', P.BASE.andy.def), P.BASE.andy.def);
@@ -333,7 +340,7 @@ function pose(r, espece, x, y, pv) {
          passait a +200 % : une seule serie de potions rendait tout un anneau
          inoffensif, et le reste du jeu sans interet. */
       ok(parDef < 1 && parHp < 1,
-         `contre « ${M.MONSTRES[e].nom} » (att ${att}) : defense +${(parDef * 100).toFixed(0)} %, ` +
+         `a ${ou}, contre « ${M.MONSTRES[e].nom} » (att ${att}) : defense +${(parDef * 100).toFixed(0)} %, ` +
          `vie +${(parHp * 100).toFixed(0)} % — aucune ne double la survie`);
       if (!plusDur || att > plusDur.att) plusDur = { att, nom: M.MONSTRES[e].nom, parHp, parDef };
     });
@@ -342,9 +349,10 @@ function pose(r, espece, x, y, pv) {
      * vie : elle y vaut moins. Une armure qui gagnerait partout aurait fait
      * des sept autres potions du decor. */
     ok(plusDur.parDef < plusDur.parHp,
-       `contre « ${plusDur.nom} », le plus dur du monde, la vie (+${(plusDur.parHp * 100).toFixed(0)} %) ` +
-       `bat l armure (+${(plusDur.parDef * 100).toFixed(0)} %) : on choisit vraiment`);
-  }
+       `a ${ou}, contre « ${plusDur.nom} », le plus dur du monde, la vie ` +
+       `(+${(plusDur.parHp * 100).toFixed(0)} %) bat l armure ` +
+       `(+${(plusDur.parDef * 100).toFixed(0)} %) : on choisit vraiment`);
+  });
 
   /* ---- ET ELLE MEURT AVEC LE PERSONNAGE ----
    * Il n'existe aucun moyen de la mettre a l'abri : ni coffre, ni sac. C'est

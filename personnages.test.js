@@ -9,8 +9,11 @@
  * 2. LA COURBE NIVEAU<->XP EST RECIPROQUE : le volume qui donne le niveau n
  *    donne aussi l'XP qui redonne le niveau n. Deux chemins vers la meme
  *    reponse ne doivent jamais diverger.
- * 3. STAT AU NIVEAU 1 < STAT AU NIVEAU 20 = LE PLAFOND EXACT. Le plafond
- *    annonce doit se voir, pas s'approcher.
+ * 3. STAT AU NIVEAU 1 < STAT AU PALIER = LE PLAFOND DE NAISSANCE EXACT, puis
+ *    une seconde pente jusqu'au niveau cent. Le plafond annonce doit se voir,
+ *    pas s'approcher — et le PALIER n'a pas bouge quand le plafond de niveau
+ *    est passe de vingt a cent : c'est toute la promesse faite au joueur qui
+ *    avait deja un personnage niveau vingt.
  * 4. LE BONUS D'EQUIPEMENT SUIT LE MEME POIDS QUE LE RACHAT — 1000/plafond —
  *    et FAMILLE_STAT couvre les huit stats sans repetition inutile a
  *    l'interieur d'une meme saison.
@@ -69,12 +72,29 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
 }
 
 // ================== 3. LA STAT AU NIVEAU SUIT LE PLAFOND EXACTEMENT
+//
+// Deux points fixes, pas un seul : le plafond de NAISSANCE au PALIER, et son
+// prolongement au niveau MAX. Ce test disait « le plafond est atteint au
+// niveau max » du temps ou les deux ne faisaient qu'un ; les separer est la
+// seule facon de verifier que monter le plafond de vingt a cent n'a RIEN
+// retire au personnage niveau vingt qui existait avant.
 {
   [40, 75, 800].forEach((cap) => {
-    eq(P.statAuNiveau(cap, P.NIVEAU_MAX), cap, `plafond ${cap} : atteint EXACTEMENT au niveau max`);
+    eq(P.statAuNiveau(cap, P.NIVEAU_PALIER), cap,
+       `plafond ${cap} : la naissance est donnee EXACTEMENT au palier`);
+    eq(P.statAuNiveau(cap, P.NIVEAU_MAX), Math.round(cap * (1 + P.GAIN_HAUT)),
+       `plafond ${cap} : et le niveau max en donne (1 + ${P.GAIN_HAUT}) fois autant`);
     eq(P.statAuNiveau(cap, 1), Math.round(cap * 0.5), `plafond ${cap} : la moitie au niveau 1`);
     ok(P.statAuNiveau(cap, 10) > P.statAuNiveau(cap, 1), 'ca monte entre le niveau 1 et 10');
     ok(P.statAuNiveau(cap, P.NIVEAU_MAX) > P.statAuNiveau(cap, 10), 'et encore entre 10 et le max');
+    /* La pente du haut ne doit pas etre un mur : chaque niveau au-dessus du
+       palier apporte quelque chose, sinon quatre-vingts niveaux ne servent a
+       rien. Sur une petite stat (40) l'arrondi peut coller deux niveaux
+       voisins, d'ou la mesure sur DIX niveaux et non un. */
+    for (let niv = P.NIVEAU_PALIER + 10; niv <= P.NIVEAU_MAX; niv += 10) {
+      ok(P.statAuNiveau(cap, niv) > P.statAuNiveau(cap, niv - 10),
+         `plafond ${cap} : le niveau ${niv} vaut plus que le ${niv - 10}`);
+    }
   });
   /* Monotone partout, pas seulement aux trois points verifies au-dessus. */
   [40, 75, 800].forEach((cap) => {

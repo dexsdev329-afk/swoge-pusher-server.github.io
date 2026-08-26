@@ -58,29 +58,85 @@ const BASE = {
  *
  * L'XP de compte mesure une VIE ENTIERE sur le site (niveau 100, des
  * milliards de volume). Celle-ci mesure UNE CLASSE, et doit se sentir comme
- * RotMG : niveau max a 20, atteignable en quelques jours de jeu actif avec
- * ce skin porte — pas en quelques mois.
+ * RotMG : un PALIER a 20, atteignable en quelques jours de jeu actif avec ce
+ * skin porte — pas en quelques mois. Le plafond, lui, est monte a 100 depuis
+ * (note juste en dessous), mais c'est un prolongement : le palier est reste ce
+ * qu'il etait, et c'est encore lui qui donne son rythme aux debuts.
  *
  * Meme forme mathematique que l'XP de compte (game.js), reprise ici pour la
  * meme raison qu'elle existe la-bas : deriver l'XP du volume EXACTEMENT comme
  * on derive le niveau du volume, avec l'exposant qui relie les deux courbes,
  * pour que les deux methodes de calcul ne puissent jamais se contredire.
  */
-const NIVEAU_MAX = 20;
+/* ---- LE PLAFOND MONTE A CENT, ET LE CHEMIN DES VINGT PREMIERS NE BOUGE PAS
+ *
+ * DEMANDE : « on peut monter notre personnage jusqu'au level 100 et avoir de
+ * meilleures stats, comme ca dans SWOGE World ».
+ *
+ * Deux pieges, mesures avant d'ecrire :
+ *
+ * 1. MONTER LE PLAFOND AFFAIBLIT TOUT LE MONDE. `statAuNiveau` interpole
+ *    « niveau max = cent pour cent de la naissance ». Passer le max de vingt a
+ *    cent aurait ramene un personnage niveau vingt de sept cents points de vie
+ *    a quatre cent dix-sept — soixante pour cent. Un joueur se serait fait
+ *    voler la moitie de son personnage pendant son sommeil.
+ * 2. LA COURBE DE VINGT NE VA PAS JUSQU'A CENT. En cube, le niveau cent
+ *    demanderait deux cent cinquante MILLIONS de volume mise, contre deux
+ *    millions pour le vingtieme. Cent vingt-cinq fois plus : injouable, et
+ *    quatre-vingts niveaux qui ne veulent rien dire.
+ *
+ * D'ou la forme retenue : VINGT RESTE LE PALIER. Tout ce qui menait au
+ * vingtieme niveau est inchange, au chiffre pres — meme courbe, meme XP, meme
+ * volume, memes stats. Au-dela commence une seconde pente, plus douce, qui
+ * mene a cent : c'est un PROLONGEMENT, pas un remplacement.
+ *
+ * Et la Fame ne bouge pas non plus : sa cassure reste calee sur le PALIER et
+ * non sur le nouveau plafond. Elle a ete choisie pour faire du vingtieme
+ * niveau « un premier palier lisible, puis un long entretien » — la deplacer a
+ * cent aurait double la Fame facile de tout le jeu sans que personne ne l'ait
+ * demande.
+ */
+const NIVEAU_MAX = 100;
+const NIVEAU_PALIER = 20;      // le premier palier : la naissance a tout donne ici
 const NIVEAU_BASE = 250;       // volume (sur ce skin) pour le niveau 1
 const NIVEAU_PUISSANCE = 3;    // niveau 20 = 250 * 20^3 = 2 000 000 de volume
 const XP_BASE = 100;
 const XP_PUISSANCE = 2;        // niveau 20 = 100 * 20^2 = 40 000 xp
 
-/** Le volume (sur ce skin) qu'il faut pour atteindre le niveau n. */
+/* ---- CE QUE COUTE LE DERNIER NIVEAU ----
+ * Ecrit comme une INTENTION — « quatre fois le palier » — et non comme un
+ * exposant. L'exposant s'en deduit juste en dessous : le jour ou l'on veut un
+ * niveau cent plus cher ou moins cher, on change ce nombre-la, celui qu'on
+ * sait lire, et le reste suit. */
+const VOLUME_CENT = 4 * NIVEAU_BASE * Math.pow(NIVEAU_PALIER, NIVEAU_PUISSANCE);   // 8 000 000
+
+const XP_PALIER = XP_BASE * Math.pow(NIVEAU_PALIER, XP_PUISSANCE);                 // 40 000
+/* L'XP du dernier niveau, DERIVEE du volume vise par la meme relation que
+   partout ailleurs (`xpDuVolume`) : les deux courbes ne peuvent pas diverger. */
+const XP_CENT = XP_BASE * Math.pow(VOLUME_CENT / NIVEAU_BASE, XP_PUISSANCE / NIVEAU_PUISSANCE);
+/* La pente du haut, deduite des deux bouts. On ne l'ecrit pas a la main :
+   un exposant recopie serait un troisieme chiffre a tenir d'accord. */
+const XP_PUISSANCE_HAUT =
+  Math.log(XP_CENT / XP_PALIER) / Math.log(NIVEAU_MAX / NIVEAU_PALIER);
+
+/** Le volume (sur ce skin) qu'il faut pour atteindre le niveau n.
+ *  DERIVE de l'XP, par la relation inverse de `xpDuVolume` : sous le palier
+ *  cela rend exactement `250 * n^3`, comme avant, au chiffre pres. */
 function volumePour(n) {
-  const x = Math.max(1, Math.min(NIVEAU_MAX, Number(n) || 1));
-  return NIVEAU_BASE * Math.pow(x, NIVEAU_PUISSANCE);
+  return Math.round(NIVEAU_BASE *
+    Math.pow(xpPour(n) / XP_BASE, NIVEAU_PUISSANCE / XP_PUISSANCE));
 }
 /** L'XP dediee qu'il faut pour atteindre le niveau n. */
 function xpPour(n) {
   const x = Math.max(1, Math.min(NIVEAU_MAX, Number(n) || 1));
-  return XP_BASE * Math.pow(x, XP_PUISSANCE);
+  if (x <= NIVEAU_PALIER) return XP_BASE * Math.pow(x, XP_PUISSANCE);
+  /* ARRONDI, et ce n'est pas cosmetique : la courbe doit etre RECIPROQUE —
+     traduire le niveau en volume puis le volume en xp doit retomber sur le
+     meme nombre. Sous le palier c'est gratuit, `100 * n^2` etant entier ; au
+     dessus la pente rend des decimales, et l'aller-retour ne retombait plus
+     juste. L'essai `personnages.test.js` le verifie a chacun des cent
+     niveaux, et c'est lui qui l'a dit. */
+  return Math.round(XP_PALIER * Math.pow(x / NIVEAU_PALIER, XP_PUISSANCE_HAUT));
 }
 /** Le volume (sur ce skin), traduit en XP dediee. Meme derivation que
  *  Game.xpDuVolume, sur cette courbe-ci. */
@@ -94,7 +150,30 @@ function xpDuVolume(volume) {
 function niveauDeXp(xp) {
   const x = Number(xp) || 0;
   if (x < XP_BASE) return 0;
-  const n = Math.floor(Math.pow(x / XP_BASE, 1 / XP_PUISSANCE) + 1e-9);
+  /* Deux pentes, donc deux inverses. Le meme `1e-9` des deux cotes : sans lui
+     une XP posee EXACTEMENT sur un palier rend le niveau d'en dessous, par le
+     dernier bit de la division. */
+  if (x <= XP_PALIER) {
+    const n = Math.floor(Math.pow(x / XP_BASE, 1 / XP_PUISSANCE) + 1e-9);
+    return Math.max(0, Math.min(NIVEAU_MAX, n));
+  }
+  let n = Math.floor(
+    NIVEAU_PALIER * Math.pow(x / XP_PALIER, 1 / XP_PUISSANCE_HAUT) + 1e-9);
+  /* ---- ET LA TABLE FAIT FOI, LUE AVEC LE MEME ARRONDI QU'ELLE ----
+   * `xpPour` arrondit au-dessus du palier ; la forme fermee, elle, ne connait
+   * pas cet arrondi et retombait un cran trop bas sur la moitie des niveaux du
+   * haut. On la recale donc sur la table plutot que d'ajuster une epsilon au
+   * juge — deux comparaisons au plus, et le resultat est JUSTE par
+   * construction.
+   *
+   * La comparaison se fait sur l'XP ARRONDIE, parce que la table l'est aussi :
+   * une XP derivee d'un volume (`xpDuVolume`) tombe a un cheveu SOUS son
+   * palier — 39 999.999… pour 40 000 — et la comparer brute rendait le niveau
+   * d'en dessous. Arrondir des deux cotes, c'est comparer deux choses de meme
+   * nature ; la tolerance ainsi accordee vaut moins d'un point d'XP. */
+  const t = Math.round(x);
+  while (n < NIVEAU_MAX && t >= xpPour(n + 1)) n++;
+  while (n > NIVEAU_PALIER && t < xpPour(n)) n--;
   return Math.max(0, Math.min(NIVEAU_MAX, n));
 }
 
@@ -130,7 +209,9 @@ const XP_PAR_FAME_APRES = 2000;   // au-dela
 
 function fameDeXp(xp) {
   const x = Math.max(0, Number(xp) || 0);
-  const plafond = xpPour(NIVEAU_MAX);
+  /* Le PALIER, pas le plafond : voir la note en tete de fichier. Deplacer la
+     cassure a cent aurait double la Fame facile de tout le jeu. */
+  const plafond = xpPour(NIVEAU_PALIER);
   if (x <= plafond) return Math.floor(x / XP_PAR_FAME);
   /* La partie sous le plafond est comptee ENTIEREMENT au premier taux, puis
      le surplus au second. Repartir de zero au-dela ferait chuter la Fame au
@@ -149,10 +230,21 @@ function fameDeXp(xp) {
  * qui soit honnete : elle part de quelque chose et arrive exactement au
  * plafond annonce, sans pretendre a une precision qu'on n'a pas.
  */
+/* Ce que les quatre-vingts niveaux du haut ajoutent AU-DESSUS de la naissance,
+   au bout. Un pour un : au niveau cent, le personnage vaut le double de ce que
+   sa naissance lui permettait. */
+const GAIN_HAUT = 1.0;
 function statAuNiveau(cap, niveau) {
   const n = Math.max(1, Math.min(NIVEAU_MAX, Number(niveau) || 1));
   const plancher = cap * 0.5;
-  return Math.round(plancher + (cap - plancher) * (n - 1) / (NIVEAU_MAX - 1));
+  /* Jusqu'au palier : EXACTEMENT la courbe d'avant. Au vingtieme niveau on a
+     cent pour cent de sa naissance, comme toujours — personne ne perd rien. */
+  if (n <= NIVEAU_PALIER) {
+    return Math.round(plancher + (cap - plancher) * (n - 1) / (NIVEAU_PALIER - 1));
+  }
+  /* Au-dela, on ajoute par-dessus le plafond de naissance. */
+  return Math.round(cap + cap * GAIN_HAUT *
+    (n - NIVEAU_PALIER) / (NIVEAU_MAX - NIVEAU_PALIER));
 }
 
 /* ======================================================================
@@ -168,21 +260,43 @@ function statAuNiveau(cap, niveau) {
  * avec lui. C'est ce qui la rend interessante : elle transforme du temps de
  * jeu en quelque chose qu'on a peur de perdre.
  *
- * ---- pourquoi vingt, et pourquoi pas le meme pas partout ----
+ * ---- pourquoi une borne, et pourquoi pas le meme pas partout ----
  *
- * Vingt potions par stat, c'est la borne. Au-dela, un personnage n'aurait
- * plus de forme : la difference entre les six visages tient a leurs plafonds,
- * et un nombre illimite de potions les rendrait tous identiques a la fin.
+ * Il y a une borne au nombre de potions — quarante aujourd'hui, vingt a
+ * l'origine. Sans elle, un personnage n'aurait plus de forme : la difference
+ * entre les six visages tient a leurs plafonds, et un nombre illimite de
+ * potions les rendrait tous identiques a la fin.
  *
  * Le PAS, lui, ne peut pas etre le meme pour tout le monde. Les huit stats ne
  * vivent pas sur la meme echelle : l'attaque tourne autour de 55, les points
  * de vie autour de 700. Un « +1 » partout donnerait +36 % d'attaque et +2,8 %
  * de vie pour le meme effort — la potion de vie ne vaudrait pas la peine
- * d'etre ramassee. La vie et le mana avancent donc par cinq, ce qui fait +100
- * au bout des vingt : exactement le bareme de RotMG, ou une potion de vie
- * donne +5 HP et une potion d'attaque +1.
+ * d'etre ramassee. La vie et le mana avancent donc par cinq — le bareme de
+ * RotMG, ou une potion de vie donne +5 HP et une potion d'attaque +1 — ce qui
+ * faisait +100 au bout des vingt, et fait +200 au bout des quarante.
  */
-const SUP_MAX = 20;                         // le plafond dur, potions par stat
+/* ---- ON EN BOIT DEUX FOIS PLUS, MAIS PAS DEUX FOIS PLUS FORT ----
+ * DEMANDE : « on peut boire plus de potions de stats pour etre plus fort ».
+ *
+ * Le plafond DUR passe de vingt a quarante : c'est lui qui bridait la vie, et
+ * elle seule. Une serie complete de potions de vie donne desormais +200 au
+ * lieu de +100 — deux fois plus, litteralement.
+ *
+ * La PART de la naissance, elle, monte d'un quart a trois dixiemes et PAS a
+ * une moitie, et ce n'est pas de la prudence : c'est une mesure. A la moitie,
+ * une seule serie de potions de defense DOUBLAIT la survie contre six
+ * creatures de milieu de jeu — Medusa, Cave Lieutenant, Hoodrat, Cursed
+ * Archer, Bog Stalker, Green Bandit — jusqu'a +183 %. C'est exactement
+ * l'accident que la note ci-dessous decrit et que `butin.test.js` interdit :
+ * la defense se SOUSTRAIT des degats, donc quelques points de plus font
+ * basculer tout un anneau du jeu contre le plancher de degats, d'un coup.
+ * Trois dixiemes est le plus haut chiffre qui tienne encore la regle (pire
+ * cas mesure : +88 % au palier, +64 % au niveau cent).
+ *
+ * Ce qui NE change pas, c'est la regle : une potion reste bornee par ce que la
+ * naissance a donne. C'est elle qui garde aux six visages des formes
+ * differentes, et c'etait la raison d'etre de `SUP_PART` — pas son chiffre. */
+const SUP_MAX = 40;                         // le plafond dur, potions par stat
 const SUP_PAS = { hp: 5, mp: 5 };           // les six autres avancent par 1
 
 /* ---- ET POURQUOI VINGT NE PEUT PAS ETRE LE PLAFOND DE TOUT ----
@@ -204,18 +318,21 @@ const SUP_PAS = { hp: 5, mp: 5 };           // les six autres avancent par 1
  * equilibrable : ce n'est pas une courbe, c'est un accident. Cent points de
  * vie donnent +14 % partout, ce qui est ennuyeux mais honnete.
  *
- * D'ou la regle : UNE POTION NE PEUT JAMAIS DONNER PLUS D'UN QUART DE CE QUE
- * LA NAISSANCE A DONNE. Vingt reste le plafond dur ; en dessous, chaque stat
- * s'arrete la ou son propre plafond le lui dit. Le compte devient donc :
+ * D'ou la regle : UNE POTION NE PEUT JAMAIS DONNER PLUS D'UNE PART FIXE DE CE
+ * QUE LA NAISSANCE A DONNE. Quarante est le plafond dur ; en dessous, chaque
+ * stat s'arrete la ou son propre plafond le lui dit. Le compte devient donc,
+ * pour andy :
  *
- *     hp 700 -> 20 potions (+100, +14 %)   def 25 -> 6  (+6,  +24 %)
- *     mp 300 -> 15 (+75, +25 %)            spd 65 -> 16 (+16, +25 %)
- *     att 55 -> 13 (+13, +24 %)            dex 75 -> 18 (+18, +24 %)
- *     vit 40 -> 10 (+10, +25 %)            wis 50 -> 12 (+12, +24 %)
+ *     hp 700 -> 40 potions (+200, +29 %)   def 25 -> 7  (+7,  +28 %)
+ *     mp 300 -> 18 (+90, +30 %)            spd 65 -> 19 (+19, +29 %)
+ *     att 55 -> 16 (+16, +29 %)            dex 75 -> 22 (+22, +29 %)
+ *     vit 40 -> 12 (+12, +30 %)            wis 50 -> 15 (+15, +30 %)
  *
- * Toutes entre 14 et 25 %. Aucune n'est un piege, aucune n'est un raccourci.
+ * Toutes entre 28 et 30 % : la vie a cesse d'etre la mauvaise affaire qu'elle
+ * etait a +14 %, et c'est le plafond dur releve qui l'a permis. Aucune n'est
+ * un piege, aucune n'est un raccourci.
  */
-const SUP_PART = 0.25;
+const SUP_PART = 0.3;
 
 /** Ce qu'une potion ajoute a cette stat. */
 function supPas(stat) { return SUP_PAS[stat] || 1; }
@@ -539,7 +656,8 @@ module.exports = {
   BUDGET_SAISON, BUDGET_BUTIN, BUDGET_BOUTIQUE, BUDGET,
   DEGATS_ARME, DEGATS_ARME_BUTIN, DEGATS_ARME_BOUTIQUE, DEGATS,
   sourceDe, bonusesDeObjet, degatsDeObjet,
-  NIVEAU_MAX, NIVEAU_BASE, NIVEAU_PUISSANCE, XP_BASE, XP_PUISSANCE,
+  NIVEAU_MAX, NIVEAU_PALIER, NIVEAU_BASE, NIVEAU_PUISSANCE, XP_BASE, XP_PUISSANCE,
+  GAIN_HAUT,
   XP_PAR_FAME, XP_PAR_FAME_APRES,
   volumePour, xpPour, xpDuVolume, niveauDeXp, statAuNiveau, fameDeXp,
   bonusesDe, statPrincipale,

@@ -442,7 +442,12 @@ const mise = (g, p, montant, jeu) => g._markWager(p, WEI(montant), jeu || 'plink
 // AFFICHEE sur la fiche ne soit pas celle qui est VERSEE a la mort — deux
 // calculs qui divergent, et le joueur recoit autre chose que ce qu'il voyait.
 {
-  const plafond = P.xpPour(P.NIVEAU_MAX);
+  /* LE PALIER, PAS LE PLAFOND DE NIVEAU. La cassure de la Fame a toujours ete
+     posee sur « le premier palier lisible » — le vingtieme niveau. Elle y est
+     restee quand le plafond de niveau est monte a cent : la deplacer aurait
+     double la Fame facile de tout le jeu sans que personne ne l'ait demande.
+     Ce test lisait `NIVEAU_MAX` du temps ou les deux etaient le meme nombre. */
+  const plafond = P.xpPour(P.NIVEAU_PALIER);
 
   // ---- la courbe elle-meme
   eq(P.fameDeXp(0), 0, 'aucune XP, aucune Fame');

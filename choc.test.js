@@ -178,9 +178,20 @@ console.log('\n-- il ne projette pas deux fois de suite --');
   }
   eq(pousses, 0, 'aucune deuxieme projection tant que l immunite court');
   /* Et elle finit : sinon on aurait rendu le boss inoffensif d'un cote en le
-     corrigeant de l'autre. */
-  for (let s = 0; s < E.immunite; s += 0.1) { R.pas(0.1); m.x = j.x - (t.rayon + 20); m.y = j.y; m.recharge = 0; }
-  ok(Math.abs(j.x - x1) > 1, 'mais l immunite passe, et on est projete a nouveau');
+     corrigeant de l'autre.
+     On lit l'EVENEMENT, pas le deplacement. Depuis que la projection glisse le
+     long des murs au lieu de les traverser, une seconde poussee lancee dos a
+     un rocher est parfaitement legitime ET ne bouge presque personne : mesurer
+     les pixels rendait cet essai instable une fois sur huit, sur un decor
+     tire au hasard. Ce qu'on veut savoir, c'est que le boss REFRAPPE. */
+  let deux = 0, dep = 0;
+  for (let s = 0; s < E.immunite; s += 0.1) {
+    const ev = R.pas(0.1);
+    if (ev.pousse && ev.pousse.length) deux += ev.pousse.length;
+    m.x = j.x - (t.rayon + 20); m.y = j.y; m.recharge = 0;
+  }
+  dep = Math.abs(j.x - x1);
+  ok(deux > 0, `mais l immunite passe, et on est projete a nouveau (${deux} fois, ${Math.round(dep)} px)`);
 }
 
 console.log('\n-- les cas ou l on casse quelque chose --');
