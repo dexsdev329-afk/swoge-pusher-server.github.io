@@ -4315,8 +4315,27 @@ const BOSS = { gardien: 1, brasier: 1, machine: 1, carapace: 1, optimus: 1,
  * cadavre en enchainerait un toutes les secondes, et un donjon dont la
  * recompense est GARANTIE deviendrait une chaine de montage.
  */
-const SOCLE = { optimus: 1 };
-const SOCLE_DELAI = { optimus: 180 };
+/* ---- LE VEILLEUR AUSSI, ET POUR LA RAISON ECRITE JUSTE AU-DESSUS ----
+ *
+ * Mesure faite sur deux cents mondes tires au hasard : Optimus est la dans
+ * cent pour cent d'entre eux — c'est le socle qui le fait — et le veilleur
+ * dans DOUZE. Autrement dit l'Arene etait inatteignable neuf fois sur dix, et
+ * « je vais chercher le veilleur » n'etait pas un projet mais un pari sur la
+ * composition du monde. C'est mot pour mot ce que le paragraphe ci-dessus
+ * refuse pour la Fonderie ; il n'y a aucune raison de l'accepter ici.
+ *
+ * SON DELAI EST PLUS LONG que celui d'Optimus — trois cents secondes contre
+ * cent quatre-vingts. Le donjon qu'il ouvre rend une relique GARANTIE et son
+ * champion tient pres de trois minutes : laisser le meme delai aurait fait de
+ * l'Arene la boucle la plus rentable du jeu, et de la Fonderie une etape qu'on
+ * saute.
+ *
+ * LE HERAUT, LUI, N'Y EST PAS — mesure : quatorze pour cent, exactement le
+ * meme defaut. Mais le Sanctuaire est du contenu EN PLACE : lui ouvrir la
+ * porte change la rarete d'une relique deja distribuee, et ca se decide, ca ne
+ * se corrige pas au passage. */
+const SOCLE = { optimus: 1, veilleur: 1 };
+const SOCLE_DELAI = { optimus: 180, veilleur: 300 };
 
 /* Dans quel anneau vit une espece. On le LIT dans la table de peuplement au
    lieu de l'ecrire une deuxieme fois : le jour ou Optimus demenage, il
