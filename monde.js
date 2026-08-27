@@ -322,6 +322,19 @@ const DONJONS = {
        `mur: 'arena'` inconnu ne leverait RIEN — il dessinerait silencieusement
        la pierre de donjon. Autant l'ecrire, plutot que de le subir. */
     mur: 'donjon',
+    /* ---- SES CERCLES ET SA FOUDRE SONT A ELLE ----
+     * Les planches de zone du jeu vont par PAIRE — celle du monde ouvert et
+     * celle des donjons — et l'arene tombait dans la seconde. Elle heritait
+     * donc des cercles de braise de la Fonderie et du Sanctuaire : un anneau
+     * ORANGE au sol sous un boss de foudre, et la pierre en flammes du
+     * Sanctuaire qui tombe du ciel quand il fait pleuvoir.
+     * `effets` nomme la famille. C'est un champ et pas une deuxieme table
+     * cote page pour la meme raison que `mur` et `decor` juste au-dessus :
+     * deux tables a tenir d'accord finissent par ne plus l'etre, et le jour
+     * ou un quatrieme donjon arrive, il aurait ses murs dans une seule des
+     * deux. La page recoit le nom et charge `annonce_<nom>`, `onde_<nom>` et
+     * `chute_<nom>` — elle ne le deduit jamais de la cle du donjon. */
+    effets: 'arene',
     decor: 'arena',
     /* Six et non huit : la salle a perdu un tiers de son aire, et le decor
        doit perdre autant. Huit objets dans quinze tuiles auraient encombre
@@ -1254,6 +1267,10 @@ function planDeDonjon(nom, alea) {
     sortie: { x: entree.x, y: entree.y },
     /* La planche d'objets remonte avec le plan, comme `mur`. */
     decor: D.decor || undefined,
+    /* Et la famille d'effets, pour la meme raison : la page recoit le nom des
+       planches de zone, elle ne le devine pas. Absente, elle retombe sur la
+       paire de donjon — ce que font la Fonderie, la cave et le Sanctuaire. */
+    effets: D.effets || undefined,
     obstacles: murs,
     /* Elles partent avec le plan, comme les tuiles : la page les DESSINE et
        le serveur les fait bruler, a partir de la meme liste. Deux listes
@@ -2922,7 +2939,12 @@ const MONSTRES = {
   veilleur: {
     cle: 'veilleur', nom: 'Storm Herald', pv: 12000, att: 215, def: 70,
     vitesse: 108, rayon: 64, vue: 950, contact: true, cadence: 0.5,
-    sprite: 'orage',
+    /* Il a sa planche a lui depuis qu'elle existe. Il empruntait celle du
+       champion, faute de mieux : deux creatures au meme dessin dans la meme
+       salle, dont l'une a soixante fois moins de vie que l'autre, et le
+       joueur ne pouvait pas savoir laquelle il attaquait avant de voir la
+       barre. Le champ `sprite` est retire, pas mis a `veilleur` — sans lui,
+       la planche porte deja le nom de l'espece. */
     /* Il tire de la foudre, pas de la braise : c'est ce qui le distingue du
        heraut au premier regard, avant meme d'avoir lu son nom.
        SANS EFFET sur le tir, et ce n'est pas un oubli. `realm.test.js` exige
@@ -2974,7 +2996,16 @@ const MONSTRES = {
   orage: {
     cle: 'orage', nom: 'The Stormbound Warden', pv: 700000, att: 400, def: 100,
     vitesse: 48, rayon: 108, vue: 1000, contact: true, cadence: 0.42,
-    tir: { portee: 660, vitesse: 320, sprite: 'plasma', att: 205, cadence: 0.3 },
+    /* ---- SA FOUDRE N'EST PAS CELLE DE SES DRONES ----
+     * Il tirait du `plasma`, exactement comme les drones qu'il appelle. Or
+     * c'est ce que la phase 1 est censee APPRENDRE au joueur : « distinguer
+     * ce qui vient du boss de ce qui vient d'un drone ». Avec le meme dessin,
+     * il n'y avait rien a distinguer — l'intention etait ecrite dans le
+     * commentaire des phases et nulle part dans le jeu.
+     * `foudre` n'appartient qu'a lui. La regle que `realm.test.js` mesure —
+     * un dessin de projectile n'est partage que par des creatures au MEME
+     * effet — tient toujours : son tir ne pose rien, comme avant. */
+    tir: { portee: 660, vitesse: 320, sprite: 'foudre', att: 205, cadence: 0.3 },
     /* rayon 270 : l'annonce doit valoir au moins 270/202.2 + 0.25 = 1.585 s.
        On pose 1.65 — la marge, pas le minimum, parce que c'est le plus grand
        cercle du jeu et qu'on en sort de plus loin. */

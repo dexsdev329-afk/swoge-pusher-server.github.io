@@ -980,6 +980,11 @@ function messageEntree(R, j, plan, carte) {
     /* Et quelle planche d'OBJETS. Comme `sol` et `mur` : la page recoit le
        nom, elle ne le deduit pas de celui du donjon. */
     decor: (plan && plan.decor) || undefined,
+    /* Et quelle FAMILLE D'EFFETS : les cercles au sol, l'onde qui reste apres
+       le coup, et ce qui tombe du ciel quand un boss fait pleuvoir. Meme
+       regle que les trois champs au-dessus — le nom voyage, il ne se devine
+       pas. Absent, la page garde la paire de donjon. */
+    effets: (plan && plan.effets) || undefined,
     /* ---- LES BLOCS, UNE FOIS ----
        Ils ne bougent jamais : les renvoyer dix fois par seconde dans l'etat du
        monde serait deux cent quarante entrees rendues a l'identique, pour rien.
