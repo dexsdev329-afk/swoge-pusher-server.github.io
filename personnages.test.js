@@ -76,14 +76,23 @@ const eq = (a, b, m) => { assert.strictEqual(a, b, m); n++; };
 // Deux points fixes, pas un seul : le plafond de NAISSANCE au PALIER, et son
 // prolongement au niveau MAX. Ce test disait « le plafond est atteint au
 // niveau max » du temps ou les deux ne faisaient qu'un ; les separer est la
-// seule facon de verifier que monter le plafond de vingt a cent n'a RIEN
-// retire au personnage niveau vingt qui existait avant.
+// seule facon de verifier que bouger le plafond ne retire RIEN au personnage
+// niveau vingt qui existait avant.
+//
+// ---- ET IL VAUT DANS LES DEUX SENS ----
+// Le plafond est redescendu sur le palier. Le second point fixe ne disparait
+// pas pour autant : il vaut ce que la regle dit qu'il vaut, `GAIN_HAUT` fois
+// la PART du chemin parcouru au-dessus du palier — laquelle est nulle quand
+// les deux se rejoignent. Ecrit ainsi, cet essai reste vrai que le plafond
+// soit a vingt ou a cent, et c'est tout l'interet : il ne faudra pas le
+// reecrire le jour ou l'on rouvrira le haut.
 {
+  const part = P.NIVEAU_MAX > P.NIVEAU_PALIER ? 1 : 0;
   [40, 75, 800].forEach((cap) => {
     eq(P.statAuNiveau(cap, P.NIVEAU_PALIER), cap,
        `plafond ${cap} : la naissance est donnee EXACTEMENT au palier`);
-    eq(P.statAuNiveau(cap, P.NIVEAU_MAX), Math.round(cap * (1 + P.GAIN_HAUT)),
-       `plafond ${cap} : et le niveau max en donne (1 + ${P.GAIN_HAUT}) fois autant`);
+    eq(P.statAuNiveau(cap, P.NIVEAU_MAX), Math.round(cap * (1 + P.GAIN_HAUT * part)),
+       `plafond ${cap} : et le niveau max en donne (1 + ${P.GAIN_HAUT} x ${part}) fois autant`);
     eq(P.statAuNiveau(cap, 1), Math.round(cap * 0.5), `plafond ${cap} : la moitie au niveau 1`);
     ok(P.statAuNiveau(cap, 10) > P.statAuNiveau(cap, 1), 'ca monte entre le niveau 1 et 10');
     ok(P.statAuNiveau(cap, P.NIVEAU_MAX) > P.statAuNiveau(cap, 10), 'et encore entre 10 et le max');

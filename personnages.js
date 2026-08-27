@@ -96,8 +96,37 @@ const BASE = {
  * cent aurait double la Fame facile de tout le jeu sans que personne ne l'ait
  * demande.
  */
-const NIVEAU_MAX = 100;
+/* ---- LE PLAFOND REDESCEND A VINGT ----
+ *
+ * Il etait passe a cent. Demande apres l'avoir joue : « remets le niveau max
+ * a 20, ils sont beaucoup trop forts nos personnages ». C'est vrai, et c'est
+ * mesurable — a cent, `statAuNiveau` rendait le DOUBLE de ce que la naissance
+ * accorde (`GAIN_HAUT` vaut un pour un). Un personnage de cent valait donc
+ * deux personnages de vingt, et tout le bestiaire avait ete regle contre le
+ * second.
+ *
+ * ON NE DEFAIT PAS LE PALIER, ON RAMENE LE PLAFOND DESSUS. `NIVEAU_PALIER`
+ * reste vingt et toute la machinerie de la seconde pente reste ecrite : le
+ * jour ou l'on veut rouvrir le haut, il n'y a qu'un nombre a changer, ici.
+ * Ce qui menait au vingtieme niveau n'a jamais bouge — meme volume, meme XP,
+ * memes stats — donc redescendre ne coute rien a personne : on revient
+ * exactement a la courbe d'avant.
+ *
+ * ---- CE QUE DEVIENNENT LES PERSONNAGES DEJA MONTES ----
+ * Leur XP est intacte : le niveau se DEDUIT de l'XP (`niveauDeXp`), il n'est
+ * stocke nulle part. Un personnage de niveau cent redevient donc niveau vingt
+ * avec toute son XP, et le surplus continue de se convertir en Fame comme
+ * avant — la cassure de la Fame est calee sur le PALIER, qui ne bouge pas.
+ * Rien n'est perdu, seule la force redescend, ce qui est la demande. */
+const NIVEAU_MAX = 20;
 const NIVEAU_PALIER = 20;      // le premier palier : la naissance a tout donne ici
+/* ---- Y A-T-IL UNE PENTE AU-DESSUS DU PALIER ? ----
+ * Quand le plafond REJOINT le palier, elle n'a plus d'etendue : `log(1)` vaut
+ * zero, et les deux formules du haut rendraient l'infini puis `NaN`. Elles ne
+ * sont plus jamais lues — tout se borne sous le palier — mais un `Infinity`
+ * qui traine dans un module finit toujours par sortir quelque part. On le
+ * nomme donc une fois, et les trois endroits qui s'en servent le demandent. */
+const PENTE_HAUTE = NIVEAU_MAX > NIVEAU_PALIER;
 const NIVEAU_BASE = 250;       // volume (sur ce skin) pour le niveau 1
 const NIVEAU_PUISSANCE = 3;    // niveau 20 = 250 * 20^3 = 2 000 000 de volume
 const XP_BASE = 100;
@@ -116,8 +145,9 @@ const XP_PALIER = XP_BASE * Math.pow(NIVEAU_PALIER, XP_PUISSANCE);              
 const XP_CENT = XP_BASE * Math.pow(VOLUME_CENT / NIVEAU_BASE, XP_PUISSANCE / NIVEAU_PUISSANCE);
 /* La pente du haut, deduite des deux bouts. On ne l'ecrit pas a la main :
    un exposant recopie serait un troisieme chiffre a tenir d'accord. */
-const XP_PUISSANCE_HAUT =
-  Math.log(XP_CENT / XP_PALIER) / Math.log(NIVEAU_MAX / NIVEAU_PALIER);
+const XP_PUISSANCE_HAUT = PENTE_HAUTE
+  ? Math.log(XP_CENT / XP_PALIER) / Math.log(NIVEAU_MAX / NIVEAU_PALIER)
+  : XP_PUISSANCE;
 
 /** Le volume (sur ce skin) qu'il faut pour atteindre le niveau n.
  *  DERIVE de l'XP, par la relation inverse de `xpDuVolume` : sous le palier
@@ -153,7 +183,7 @@ function niveauDeXp(xp) {
   /* Deux pentes, donc deux inverses. Le meme `1e-9` des deux cotes : sans lui
      une XP posee EXACTEMENT sur un palier rend le niveau d'en dessous, par le
      dernier bit de la division. */
-  if (x <= XP_PALIER) {
+  if (x <= XP_PALIER || !PENTE_HAUTE) {
     const n = Math.floor(Math.pow(x / XP_BASE, 1 / XP_PUISSANCE) + 1e-9);
     return Math.max(0, Math.min(NIVEAU_MAX, n));
   }
@@ -239,7 +269,7 @@ function statAuNiveau(cap, niveau) {
   const plancher = cap * 0.5;
   /* Jusqu'au palier : EXACTEMENT la courbe d'avant. Au vingtieme niveau on a
      cent pour cent de sa naissance, comme toujours — personne ne perd rien. */
-  if (n <= NIVEAU_PALIER) {
+  if (n <= NIVEAU_PALIER || !PENTE_HAUTE) {
     return Math.round(plancher + (cap - plancher) * (n - 1) / (NIVEAU_PALIER - 1));
   }
   /* Au-dela, on ajoute par-dessus le plafond de naissance. */
