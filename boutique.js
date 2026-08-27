@@ -946,6 +946,43 @@ for (const o of ITEMS_SANCTUAIRE) {
   ITEMS_DROP.push(o);
 }
 
+/* ======================================================================
+ * LE LOT DE L'ARENE — LA MANCHE 1
+ * ======================================================================
+ *
+ * QUATRE pieces, et non huit comme la Forge et le Sanctuaire. Ce n'est pas
+ * une economie : c'est la premiere manche d'une serie. Huit maintenant, et il
+ * ne resterait rien a donner a la deuxieme sans repeter une famille.
+ *
+ * Elles sont des RELIQUES, comme les deux autres lots. Le rang ne monte pas
+ * parce qu'il n'y a rien au-dessus et qu'inventer un septieme rang pour une
+ * premiere manche depenserait toute la marge d'un coup — et parce qu'une
+ * septieme rarete fait JETER ce module au chargement tant qu'elle n'est pas
+ * exclue des quatre copies du filtre des raretes vendues. Ce qui separe ce lot
+ * du Sanctuaire est donc la PIECE, pas le rang : quatre familles qu'il ne
+ * donne pas sous cette forme.
+ *
+ * L'ARME EST DES DAGUES, et c'est le seul endroit ou la manche 1 est vraiment
+ * plus forte : a degats egaux, la famille decide du debit. Les dagues tirent
+ * deux fois a cadence 4,0 — le meilleur rapport du catalogue. Twin Cinders le
+ * fait deja ; Stormfang le fait aussi, et c'est voulu : deux chemins vers la
+ * meme arme de tete valent mieux qu'un seul donjon qui la detient.
+ */
+const ITEMS_ARENA = [
+  { id: 6901, cle: 'arn_dagues',   nom: 'Stormfang',   rarete: 'relique', famille: 'dagues' },
+  { id: 6902, cle: 'arn_casque',   nom: 'Stormcrown',  rarete: 'relique', famille: 'casque' },
+  { id: 6903, cle: 'arn_plastron', nom: 'Riftplate',   rarete: 'relique', famille: 'plastron' },
+  { id: 6904, cle: 'arn_anneau',   nom: 'Thunderbind', rarete: 'relique', famille: 'onyx' },
+];
+for (const o of ITEMS_ARENA) {
+  o.donjon = true;
+  /* Sans `donjonCle`, la garde de chargement REFUSE la piece : elle tomberait
+     dans TOUS les donjons. C'est ecrit ici et pas ailleurs pour la meme raison
+     que pour les deux autres lots — le marquage vit a cote de la liste. */
+  o.donjonCle = 'arena';
+  ITEMS_DROP.push(o);
+}
+
 /* Un seul lot pour tout ce qui se TROUVE : `item(id)`, l'equipement, la fiche
    au sol, le registre des exemplaires et le rachat ne doivent pas avoir a
    savoir d'ou une piece vient. Ce qui separe les deux provenances est un CHAMP

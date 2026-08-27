@@ -215,18 +215,28 @@ console.log('\n-- les cas ou l on casse quelque chose --');
   ok(j.x <= monde.MONDE.w && j.x >= 0, `projete contre le bord, on reste sur la carte (x = ${Math.round(j.x)})`);
 }
 
-/* ================== L'IDOLE ================== */
-console.log('\n-- l idole, telle que le monde la declare --');
+/* ================== LES DEUX BOSS DE FIN ==================
+ *
+ * ---- CE BLOC DISAIT « L'IDOLE EST LA FIN DU JEU ». ELLE NE L'EST PLUS ----
+ *
+ * Il l'affirmait par un rapport : « plus de cinq fois les points de vie du
+ * deuxieme ». Ce chiffre avait ete choisi quand le deuxieme etait la Fonderie,
+ * a vingt mille — un boss de milieu de jeu. Le champion de l'Arene en a sept
+ * cent mille : exiger cinq fois cela de l'Idole n'aurait pas protege
+ * l'invariant, ca lui aurait demande de grossir pour rester premiere.
+ *
+ * L'invariant qu'on voulait vraiment est double, et il est ecrit tel quel
+ * ci-dessous : il existe des boss DE FIN nettement au-dessus du reste du
+ * bestiaire, et l'ORDRE entre eux est celui qu'on a decide. On ne l'a pas
+ * efface pour laisser passer un boss plus gros — on l'a dit correctement. */
+console.log('\n-- les boss de fin, tels que le monde les declare --');
 const I = monde.MONSTRES.idole;
+const ORAGE = monde.MONSTRES.orage;
 {
-  const autres = Object.keys(monde.MONSTRES).filter((c) => c !== 'idole')
-    .map((c) => monde.MONSTRES[c].pv);
-  ok(I.pv > Math.max(...autres) * 5,
-     `elle a ${I.pv} points de vie, plus de cinq fois le deuxieme (${Math.max(...autres)})`);
-  /* Le temps de mise a mort, calcule avec les formules DU JEU et l'arme la
-     plus forte que le catalogue permette. Recopier un chiffre ici, c'est
-     exactement ce qui a laisse le commentaire annoncer cent dix secondes
-     pendant qu'elle en tenait huit. */
+  /* Ce qui met le meilleur equipement possible face a un boss donne. Les
+     formules viennent DU JEU : recopier un chiffre ici, c'est exactement ce
+     qui a laisse un commentaire annoncer cent dix secondes pendant qu'elle en
+     tenait huit. */
   let best = null;
   for (const a of Object.values(monde.ARMES)) {
     for (const plage of Object.values(P.DEGATS_ARME)) {
@@ -235,10 +245,38 @@ const I = monde.MONSTRES.idole;
       if (!best || dps > best.dps) best = { moy: (plage[0] + plage[1]) / 2, tirs: a.tirs, cad: a.cadence, dps };
     }
   }
-  const parTir = monde.degatsInfliges(75, best.moy, I.def);
-  const dps = parTir * best.tirs * best.cad * monde.cadenceDe(75);
-  const s = I.pv / dps;
-  ok(s > 60, `le meilleur personnage possible met ${s.toFixed(0)} s a la tuer, en touchant chaque tir`);
+  const secondes = (m) => {
+    const parTir = monde.degatsInfliges(75, best.moy, m.def);
+    return m.pv / (parTir * best.tirs * best.cad * monde.cadenceDe(75));
+  };
+
+  /* 1. LES DEUX SONT D'UN AUTRE ORDRE QUE LE RESTE. C'est l'invariant
+     d'origine, garde intact : le troisieme du jeu reste cinq fois derriere le
+     plus petit des deux. Sans lui, un monstre d'anneau pourrait grossir
+     jusqu'a rejoindre un boss de donjon sans que personne ne le voie. */
+  const FIN = ['idole', 'orage'];
+  const autres = Object.keys(monde.MONSTRES).filter((c) => FIN.indexOf(c) < 0)
+    .map((c) => monde.MONSTRES[c].pv);
+  const plusPetitDesDeux = Math.min(I.pv, ORAGE.pv);
+  ok(plusPetitDesDeux > Math.max(...autres) * 5,
+     `les deux boss de fin (${I.pv}, ${ORAGE.pv}) restent cinq fois au-dessus du troisieme (${Math.max(...autres)})`);
+
+  /* 2. ET L'ORDRE ENTRE EUX EST CELUI QU'ON A VOULU. L'Arene vient APRES le
+     Sanctuaire — pas seulement par ses points de vie, ce qui ne dirait rien
+     si sa defense etait plus basse, mais par le TEMPS qu'elle tient face au
+     meilleur equipement du jeu. C'est la seule mesure qui compte pour un
+     joueur : combien de temps le combat dure. */
+  const sI = secondes(I), sO = secondes(ORAGE);
+  ok(sO > sI,
+     `le champion de l Arene tient plus longtemps que l Idole (${sO.toFixed(0)} s contre ${sI.toFixed(0)} s)`);
+
+  /* 3. ET AUCUN DES DEUX NE TOMBE EN UNE MINUTE. Le plancher d'origine, garde
+     et applique aux deux : c'est lui qui attrape une arme neuve trop forte,
+     puisqu'il recalcule la meilleure du catalogue a chaque execution. */
+  for (const [nom, m] of [['l Idole', I], ['le champion de l Arene', ORAGE]]) {
+    const s = secondes(m);
+    ok(s > 60, `${nom} : le meilleur personnage possible met ${s.toFixed(0)} s a la tuer, en touchant chaque tir`);
+  }
 }
 
 console.log('\n-- ses phases --');

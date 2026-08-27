@@ -253,6 +253,66 @@ const DONJONS = {
        une forme, assez peu pour qu'on puisse encore tourner autour du boss. */
     decorCombien: 8,
   },
+
+  /* ======================================================================
+   * L'ARENE — LA MANCHE 1
+   * ======================================================================
+   *
+   * ---- POURQUOI ELLE EST DANS CETTE TABLE, ET PAS AILLEURS ----
+   *
+   * Il existait deux facons de l'instancier : cette table, ou le chemin des
+   * cartes de joueur (`carteJoue`, server.js), qui cree un Realm sans passer
+   * par ici. Le second est plus libre — et c'est exactement ce qui le
+   * disqualifie pour un premier jet : la BARRE DE VIE du boss et la PORTE DE
+   * RETOUR sont toutes deux derivees de `RETOUR_DE`, lui-meme derive du champ
+   * `boss` d'une entree de cette table. Hors d'elle, un boss n'a ni banniere
+   * ni sortie, et il faut recabler les deux a la main. On prend donc la table,
+   * et on paie le prix annonce : l'arene compte comme un donjon pour les
+   * quatre essais qui enumerent `Object.keys(DONJONS)`.
+   *
+   * ---- ET ELLE EST AJOUTEE EN QUEUE ----
+   * `parole.test.js` lit `Object.keys(M.DONJONS)[0]` pour choisir le donjon
+   * qu'il eprouve. L'inserer en tete aurait change son sujet en silence.
+   *
+   * ---- CE QU'ELLE N'EST PAS ENCORE ----
+   * Une arene A MANCHES, au sens ou une vague succederait a une autre dans la
+   * meme salle. Rien de tel n'existe dans ce jeu : les salles d'un donjon sont
+   * GEOGRAPHIQUES et toute leur population nait d'un coup a l'ouverture
+   * (realm.js). La manche 1 est donc une SALLE, avec son champion au fond. Les
+   * manches suivantes seront d'autres salles, ou un vrai systeme de vagues
+   * quand il existera — et cette entree n'aura pas a etre reecrite pour ca.
+   */
+  arena: {
+    /* La cle est du TEXTE VU PAR LE JOUEUR : le panneau d'entree ecrit
+       « The <cle> — enter? » (nexus.js). D'ou `arena` et non `arene` : la
+       phrase est anglaise, et le sanctuaire montre deja ce que donne un mot
+       francais au milieu — « The sanctuaire — enter? ». */
+    nom: 'The Storm Arena',
+    forme: 'couloir',
+    /* Deux salles, comme le sanctuaire : un sas ou l'on comprend qu'on est
+       arrive, puis l'arene elle-meme. Dix-neuf tuiles au fond, la meme taille
+       que la salle de l'Idole — le champion fait deux cent dix unites de large
+       et ses cercles deux cent soixante-dix, il faut pouvoir en sortir sans
+       toucher le mur. */
+    salles: [
+      { cote: 11, role: 'entree' },
+      { cote: 19, role: 'fond' },
+    ],
+    /* Aucune espece d'accompagnement, pour la meme raison qu'au sanctuaire :
+       une arene est un DUEL. Ce qui accompagne le champion, c'est ce qu'il
+       appelle lui-meme, pas une population posee autour de lui. */
+    especes: [],
+    boss: 'orage',
+    ouvreur: 'veilleur',
+    sol: 'arena',
+    /* `mur` reste sur la planche de donjon : la table des murs cote page est
+       codee en dur et ne connait que cave, ville et donjon (nexus.js). Un
+       `mur: 'arena'` inconnu ne leverait RIEN — il dessinerait silencieusement
+       la pierre de donjon. Autant l'ecrire, plutot que de le subir. */
+    mur: 'donjon',
+    decor: 'arena',
+    decorCombien: 8,
+  },
 };
 /* L'ancien nom pointe sur la Fonderie : tout ce qui disait `DONJON` parlait
    d'elle, et rien de ce qui la nomme n'a besoin de savoir qu'il y en a deux. */
@@ -2812,6 +2872,107 @@ const MONSTRES = {
     ],
     biomes: [],
   },
+
+  /* ======================================================================
+   * L'ARENE DE L'ORAGE — le veilleur, puis le champion
+   * ======================================================================
+   *
+   * ---- LE VEILLEUR, DANS LE MONDE OUVERT ----
+   *
+   * Il ouvre l'arene en tombant, comme le heraut ouvre le sanctuaire. Il vit
+   * dans la LAVE avec les deux autres ouvreurs, et son poids est le plus
+   * faible des trois : ce qu'il ouvre est plus dur que ce qu'ils ouvrent.
+   *
+   * `sprite` EMPRUNTE LA PLANCHE DU CHAMPION, faute de dessin a lui. Le champ
+   * existe pour ca — `atlasMonstre` lit `t.sprite || espece` cote page, et le
+   * serveur envoie la table d'especes entiere, donc il arrive bien. Une
+   * creature sans planche ne se dessine pas DU TOUT : invisible et qui ouvre
+   * un donjon serait pire que deux creatures qui se ressemblent. A remplacer
+   * des que le veilleur a son propre atlas.
+   */
+  veilleur: {
+    cle: 'veilleur', nom: 'Storm Herald', pv: 12000, att: 215, def: 70,
+    vitesse: 108, rayon: 64, vue: 950, contact: true, cadence: 0.5,
+    sprite: 'orage',
+    /* Il tire de la foudre, pas de la braise : c'est ce qui le distingue du
+       heraut au premier regard, avant meme d'avoir lu son nom.
+       SANS EFFET sur le tir, et ce n'est pas un oubli. `realm.test.js` exige
+       qu'un dessin de projectile ne soit partage que par des creatures au MEME
+       effet — c'est ce qui apprend au joueur ce qui arrive avant que ca
+       arrive. « plasma » appartient deja au drone, qui ne pose rien ; y
+       attacher un ralentissement ferait mentir le dessin une fois sur deux.
+       Le ralentissement est donc AU SOL, ou aucun dessin ne le promet. */
+    tir: { portee: 780, vitesse: 470, sprite: 'plasma', att: 116, cadence: 0.6 },
+    /* L'annonce n'est pas un reglage : `zones.test.js` exige
+       `annonce >= rayon/202.2 + 0.25`. A 255 unites il faut au moins 1,51 s
+       pour que le personnage le plus lent puisse sortir du cercle. */
+    zone: { annonce: 1.6, rayon: 255, att: 172, cadence: 0.22, effet: 'ralenti' },
+    xp: 7200, biomes: [],
+  },
+
+  /* ---- LE CHAMPION, ET POURQUOI IL DEPLACE LE SOMMET DU JEU ----
+   *
+   * DEMANDE : « les boss doivent etre plus forts que le boss actuel le plus
+   * fort du jeu ». Le plus fort etait l'Idole, et `choc.test.js` le DISAIT en
+   * toutes lettres — deux assertions faisaient d'elle la fin du jeu. Le
+   * sommet bouge donc ici, et l'essai a ete reecrit pour nommer le nouveau,
+   * pas efface pour le laisser passer.
+   *
+   * LES CHIFFRES SONT MESURES, avec les formules du jeu :
+   *
+   *   sept cent mille points de vie et cent de defense : au meilleur
+   *   equipement que le catalogue permette, il tombe en 172 secondes contre
+   *   89 pour l'Idole — deux fois plus long, sans etre une corvee.
+   *
+   *   quatre cents d'attaque : contre un Brett niveau cent entierement
+   *   potionne (1700 pv, 115 de defense), chaque coup enleve 285 points, soit
+   *   SIX coups avant la mort. L'Idole, a 340, en laissait 7,6. Il frappe donc
+   *   plus fort sans transformer le combat en course a l'esquive parfaite.
+   *
+   * ---- IL RALENTIT, IL NE PROJETTE PAS ----
+   * L'Idole projette (`choc: 'repousse'`). Lui donner la meme chose aurait
+   * fait deux boss avec le meme verbe. Il RALENTIT — et un ralentissement
+   * pres d'un cercle qui va tomber est un danger d'une autre nature qu'une
+   * projection : l'un enleve la position, l'autre enleve le temps.
+   *
+   * Le ralentissement vit sur les CERCLES AU SOL, pas sur les tirs. Un dessin
+   * de projectile ne peut porter qu'un seul effet dans tout le jeu
+   * (`realm.test.js`), et « plasma » est deja celui du drone, qui ne pose
+   * rien. Le sol n'a pas ce probleme : il n'annonce rien par son dessin, il
+   * annonce par son cercle. Et c'est mieux ainsi — on est ralenti PARCE QU'ON
+   * est reste dans la zone, ce qui est une consequence, pas un tirage.
+   */
+  orage: {
+    cle: 'orage', nom: 'The Stormbound Warden', pv: 700000, att: 400, def: 100,
+    vitesse: 48, rayon: 108, vue: 1000, contact: true, cadence: 0.42,
+    tir: { portee: 660, vitesse: 320, sprite: 'plasma', att: 205, cadence: 0.3 },
+    /* rayon 270 : l'annonce doit valoir au moins 270/202.2 + 0.25 = 1.585 s.
+       On pose 1.65 — la marge, pas le minimum, parce que c'est le plus grand
+       cercle du jeu et qu'on en sort de plus loin. */
+    zone: { annonce: 1.65, rayon: 270, att: 262, cadence: 0.12, effet: 'ralenti' },
+    xp: 26000,
+    /* TROIS PHASES, et pas cinq comme l'Idole. Une phase ne peut changer que
+       sept champs (`CHAMPS_DE_PHASE`) et chacune doit repasser la regle
+       d'annonce ; en poser cinq pour un premier boss, c'est cinq occasions de
+       se tromper pour un seul boss de plus. Les manches suivantes en auront
+       davantage — c'est justement la marge qu'on garde. */
+    phases: [
+      /* A soixante pour cent : il accelere et tire plus vite. Rien de neuf a
+         apprendre, tout ce qu'on sait deja devient plus serre. */
+      { jusqua: 0.60, vitesse: 62, cadence: 0.52,
+        tir: { cadence: 0.42, att: 228 },
+        zone: { annonce: 1.62, rayon: 270, att: 285, cadence: 0.16, effet: 'ralenti' } },
+      /* A vingt-cinq pour cent : il appelle. Les sentinelles sont la creature
+         a distance la plus lisible du jeu — on sait ce qu'elles font avant
+         qu'elles le fassent, et c'est ce qu'on veut d'un renfort de fin. */
+      { jusqua: 0.25, vitesse: 62, cadence: 0.58,
+        tir: { cadence: 0.36, tirs: 3, ecart: 0.22, att: 228 },
+        zone: { annonce: 1.6, rayon: 270, att: 305, cadence: 0.2, effet: 'ralenti' },
+        appel: { espece: 'sentinelle', combien: 4, cadence: 0.3, plafond: 14,
+                 rayon: 270 } },
+    ],
+    biomes: [],
+  },
 };
 
 /*
@@ -3009,10 +3170,16 @@ const PEUPLEMENT = {
    * ouvreurs a la meme frequence auraient fait de l'un le lot de consolation
    * de l'autre — on va chercher celui qui mene au meilleur donjon, et l'autre
    * ne serait plus qu'un obstacle sur le chemin. */
+  /* ---- TROIS OUVREURS DANS LE MEME ANNEAU ----
+   * Le veilleur porte le poids le plus faible de la table, sous celui du
+   * heraut : 0,05 sur un total de 5,29, soit 0,9 %. Sur dix-huit places, c'est
+   * environ un veilleur toutes les six visites de la lave. Il est le plus rare
+   * des trois parce que ce qu'il ouvre est le plus dur — la meme regle qui
+   * avait deja place le heraut sous Optimus. */
   lave:    { especes: ['lave', 'glace', 'meduse', 'oracle', 'colosse', 'brasier',
-                       'couronne', 'optimus', 'heraut'],
+                       'couronne', 'optimus', 'heraut', 'veilleur'],
              nombre: 18, poids: { colosse: 0.8, brasier: 0.25, couronne: 0.5,
-                                  optimus: 0.12, heraut: 0.07 } },
+                                  optimus: 0.12, heraut: 0.07, veilleur: 0.05 } },
 };
 
 /*
@@ -4117,7 +4284,15 @@ const CHANCE_RELIQUE_BOSS = 1 / 40;
    compte comme un boss ». Les deux essais etaient rouges, et ils avaient
    raison. */
 const BOSS = { gardien: 1, brasier: 1, machine: 1, carapace: 1, optimus: 1,
-               fonderie: 1, dreadstump: 1, heraut: 1, idole: 1 };
+               fonderie: 1, dreadstump: 1, heraut: 1, idole: 1,
+               /* L'arene : le veilleur vit dans la lave, donc son taux de
+                  relique DEPEND de cette ligne — exactement le piege qui avait
+                  fait payer le heraut comme un lime. L'orage n'en a pas besoin
+                  (son butin est garanti, et son donjon n'a pas de taux de
+                  biome) mais il y figure : les essais exigent que le boss d'un
+                  donjon compte comme un boss, et laisser l'un sans l'autre
+                  serait la meme etourderie a moitie. */
+               veilleur: 1, orage: 1 };
 
 /*
  * ---- CELUI QUI OUVRE LE DONJON DOIT EXISTER ----
@@ -4237,7 +4412,14 @@ function naitDans(biome, alea) {
    au-dessus, et inventer un rang pour elle aurait fait de la relique le
    nouveau legendaire. Ce qui la separe de la Fonderie n'est donc pas le RANG
    mais le LOT — ses trois pieces ne tombent que chez elle. */
-const BUTIN_GARANTI = { fonderie: 'relique', dreadstump: 'epique', idole: 'relique' };
+/* L'orage rend une RELIQUE, comme la Fonderie et l'Idole. Pas mieux : il n'y a
+   rien au-dessus, et inventer un septieme rang pour la manche 1 depenserait
+   d'un coup toute la marge des manches suivantes — sans compter que
+   `boutique.js` JETTE au chargement tant qu'une septieme rarete n'est pas
+   exclue des quatre copies du filtre des raretes vendues. Ce qui separe son
+   lot de celui du Sanctuaire n'est donc pas le RANG mais les PIECES. */
+const BUTIN_GARANTI = { fonderie: 'relique', dreadstump: 'epique', idole: 'relique',
+                        orage: 'relique' };
 
 /* ---- CE QUE CE REGLAGE PRODUIT, MESURE ----
  *

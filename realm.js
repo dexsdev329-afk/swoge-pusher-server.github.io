@@ -341,10 +341,24 @@ class Realm {
        premiere seconde, pas seulement apres le premier repeuplement — un
        joueur qui entre juste apres le demarrage ne doit pas trouver un monde
        aux trois quarts vide. */
+    /* ---- ET LE PREMIER PEUPLEMENT NE DOUBLE PAS UN SOCLE NON PLUS ----
+     * Meme raison qu'au repeuplement : le socle promet « toujours un, jamais
+     * deux », mais il ne fait qu'AJOUTER ce qui manque. Ici, six tours de
+     * tirage pouvaient poser deux Optimus avant qu'il ait son mot a dire — et
+     * c'est bien de la que venait le monde a deux ouvreurs, pas du
+     * repeuplement. Le compteur est tenu sur `places`, la liste en cours, et
+     * non sur `this.monstres` qui n'existe pas encore. */
+    const socles = monde.SOCLE || {};
+    const poses = {};
+    for (const m of places) if (socles[m.espece]) poses[m.espece] = (poses[m.espece] || 0) + 1;
     for (let tour = 0; tour < 6 && places.length < voulu; tour++) {
       for (const m of monde.peuplement(this.alea)) {
         if (places.length >= voulu) break;
         if (monde.bloque(this.obstacles, m.x, m.y, monde.MONSTRES[m.espece].rayon)) continue;
+        if (socles[m.espece]) {
+          if ((poses[m.espece] || 0) >= socles[m.espece]) continue;
+          poses[m.espece] = (poses[m.espece] || 0) + 1;
+        }
         places.push(m);
       }
     }
@@ -3132,6 +3146,24 @@ class Realm {
        * dur du jeu se vidait donc a mesure qu'on le nettoyait, et ne se
        * remplissait qu'une fois qu'on l'avait quitte — c'est-a-dire quand ca
        * ne servait plus a rien. */
+      /* ---- LE TIRAGE ORDINAIRE NE DOUBLE PAS UN SOCLE ----
+       *
+       * Le socle dit « il y en a toujours UN », et son commentaire dit
+       * « jamais deux » — mais rien ne l'empechait : le socle ne fait
+       * qu'AJOUTER quand il en manque, il n'interdit pas au tirage general
+       * d'en produire un second par-dessus. Le monde pouvait donc naitre avec
+       * deux Optimus, et `optimus.test.js` ne l'attrapait que par chance de
+       * graine — ajouter une espece a l'anneau de lave a decale le tirage et
+       * la graine 6 s'est mise a en rendre deux.
+       *
+       * Deux ouvreurs vivants, ce n'est pas cosmetique : le donjon qu'ils
+       * ouvrent est garanti en relique, et deux portes ouvrables en meme temps
+       * doublent un rythme qui a ete regle avec `SOCLE_DELAI`. */
+      const plafondSocle = (monde.SOCLE || {})[m.espece];
+      if (plafondSocle) {
+        const deja = this.monstres.filter((x) => x.espece === m.espece && !x.salle).length;
+        if (deja >= plafondSocle) continue;
+      }
       const ecart = monde.ecartDeNaissance(m.espece, dmin);
       let tropPres = false;
       for (const j of this.joueurs.values()) {
