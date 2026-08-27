@@ -290,14 +290,26 @@ const DONJONS = {
     nom: 'The Storm Arena',
     forme: 'couloir',
     /* Deux salles, comme le sanctuaire : un sas ou l'on comprend qu'on est
-       arrive, puis l'arene elle-meme. Dix-neuf tuiles au fond, la meme taille
-       que la salle de l'Idole — le champion fait deux cent dix unites de large
-       et ses cercles deux cent soixante-dix, il faut pouvoir en sortir sans
-       toucher le mur. */
+       arrive, puis l'arene elle-meme.
+       ---- POURQUOI QUINZE, ET PLUS DIX-NEUF ----
+       Dix-neuf tuiles, c'etait la salle de l'Idole recopiee — et l'Idole est
+       posee au FOND de la sienne, qu'on traverse en la voyant grandir. Le
+       champion, lui, se tient au CENTRE (`bossAu`), et une salle de dix-neuf
+       tuiles autour d'un point central fait 1 216 unites jusqu'au mur : cinq
+       secondes de course pour sortir d'un cercle qui en demande deux cent
+       soixante-dix. On courait donc dans du vide entre deux echanges, ce qui
+       a ete rapporte comme « la map est trop grande ».
+       Quinze tuiles font 960 unites du centre au mur. Le calcul qui borne par
+       le bas est le meme qu'avant : rayon du champion 108, cercles au sol 270
+       — il faut pouvoir en sortir sans toucher la pierre, donc au moins
+       270 + 108 = 378 unites de degagement. On en garde 960, soit deux fois
+       et demie ce qu'il faut : la place de tourner, pas celle de fuir. */
     salles: [
-      { cote: 11, role: 'entree' },
-      { cote: 19, role: 'fond' },
+      { cote: 9, role: 'entree' },
+      { cote: 15, role: 'fond' },
     ],
+    /* Voir `peuplementDonjon` : le champion attend au milieu, pas au fond. */
+    bossAu: 'centre',
     /* Aucune espece d'accompagnement, pour la meme raison qu'au sanctuaire :
        une arene est un DUEL. Ce qui accompagne le champion, c'est ce qu'il
        appelle lui-meme, pas une population posee autour de lui. */
@@ -311,7 +323,10 @@ const DONJONS = {
        la pierre de donjon. Autant l'ecrire, plutot que de le subir. */
     mur: 'donjon',
     decor: 'arena',
-    decorCombien: 8,
+    /* Six et non huit : la salle a perdu un tiers de son aire, et le decor
+       doit perdre autant. Huit objets dans quinze tuiles auraient encombre
+       les diagonales — or c'est par la qu'on sort des cercles. */
+    decorCombien: 6,
   },
 };
 /* L'ancien nom pointe sur la Fonderie : tout ce qui disait `DONJON` parlait
@@ -1111,9 +1126,23 @@ function peuplementDonjon(alea, nom, plan) {
      `salles[length-1]` aurait mis le boss dans une impasse au hasard. */
   const fond = p.salles.find((s) => s.role === 'fond') || p.salles[p.salles.length - 1];
   /* Le boss au FOND du fond, pas au centre : on doit le voir en entrant sans
-     etre deja a portee de son cercle. */
+     etre deja a portee de son cercle.
+     ---- SAUF DANS UNE ARENE ----
+     Une arene n'est pas une salle qu'on FOUILLE, c'est une salle ou l'on
+     ENTRE pour se battre : son champion doit etre en face, a egale distance
+     de tous les murs, du premier pas jusqu'au dernier. Colle au fond, il
+     laissait les deux tiers de la salle derriere lui — on faisait la moitie
+     du chemin dans le vide avant que le combat commence, puis on se battait
+     dos a un mur qu'on n'avait pas choisi. C'est ce qui a ete rapporte :
+     « la salle est trop grande, le boss devrait etre au centre ».
+     Le champ est une DONNEE et non un `if` sur la cle du donjon : le jour ou
+     la manche 2 arrive, elle ecrit `bossAu: 'centre'` comme celle-ci, et
+     cette fonction ne bouge pas. La Fonderie et le Sanctuaire, eux, gardent
+     leur boss au fond — on les traverse, on ne s'y presente pas. */
   out.push({ espece: D.boss, biome: 'donjon', boss: 1,
-             x: fond.x + (fond.cote / 2 - 2) * DONJON_TUILE, y: fond.y });
+             x: D.bossAu === 'centre' ? fond.x
+                                      : fond.x + (fond.cote / 2 - 2) * DONJON_TUILE,
+             y: fond.y });
   return out;
 }
 
@@ -2951,24 +2980,86 @@ const MONSTRES = {
        cercle du jeu et qu'on en sort de plus loin. */
     zone: { annonce: 1.65, rayon: 270, att: 262, cadence: 0.12, effet: 'ralenti' },
     xp: 26000,
-    /* TROIS PHASES, et pas cinq comme l'Idole. Une phase ne peut changer que
-       sept champs (`CHAMPS_DE_PHASE`) et chacune doit repasser la regle
-       d'annonce ; en poser cinq pour un premier boss, c'est cinq occasions de
-       se tromper pour un seul boss de plus. Les manches suivantes en auront
-       davantage — c'est justement la marge qu'on garde. */
+    /* ---- CINQ PHASES, ET CHACUNE APPORTE UN VERBE ----
+     *
+     * Il en avait trois, et deux d'entre elles ne faisaient qu'accelerer ce
+     * qu'on savait deja. Un boss de fin doit APPRENDRE quelque chose a chaque
+     * seuil, sinon les quatre-vingts pour cent du milieu sont du remplissage.
+     *
+     * Les phases se CUMULENT en cascade : ce qu'une phase ne redeclare pas,
+     * elle le garde de la precedente. Un seul `appel` est donc actif a la
+     * fois — celui de la derniere phase franchie remplace le precedent, il ne
+     * s'y ajoute pas.
+     *
+     * ---- LES PLAFONDS SONT CEUX DE LA SALLE, PAS DU BOSS ----
+     * Sept drones, quatre bobines, deux cendreux. Ces nombres ont ete
+     * descendus en meme temps que l'arene retrecissait (quinze tuiles au lieu
+     * de dix-neuf) : ils avaient ete poses pour une salle d'un tiers plus
+     * large. Un plafond se lit en DENSITE, pas en quantite — dix creatures
+     * dans une salle ou l'on doit sortir d'un cercle de 270 unites, ce n'est
+     * plus un combat, c'est un mur qui tire. Le jour ou la salle rechange de
+     * taille, ces trois nombres rechangent avec elle.
+     *
+     * LES TROIS INVOQUES SONT CHOISIS POUR LEUR VERBE, pas pour leur decor :
+     *   drone     il tire du PLASMA, exactement comme lui — le seul autre du
+     *             bestiaire. La salle se remplit de ses propres traits, et le
+     *             joueur doit apprendre a distinguer ce qui vient du boss de
+     *             ce qui vient d'un drone.
+     *   bobine    elle PARALYSE. C'est le seul moment du combat ou l'on peut
+     *             etre cloue, et il arrive quand les cercles tombent deja
+     *             vite.
+     *   cendreux  il BRULE, et il court a 152 — plus vite que n'importe quel
+     *             personnage. C'est le seul invoque qu'on ne peut pas semer :
+     *             a la fin, ignorer les renforts cesse d'etre une option.
+     *
+     * ---- ET POURQUOI PAS `glace`, QUI RALENTIT ----
+     * C'etait le choix evident — deux sources du meme ralentissement a la
+     * fin — et il est INTERDIT : `glace` erre deja dehors, dans un anneau du
+     * monde ouvert. Le jeu tient une regle que `monde.test.js` mesure : une
+     * espece a un role OU un anneau, jamais les deux. La meme creature
+     * croisee en plaine et vomie par le boss de fin, ce n'est plus un role,
+     * c'est un decor. Le jour ou l'on veut vraiment un second ralentissement
+     * ici, il faudra une espece a elle — pas en emprunter une au dehors.
+     */
     phases: [
-      /* A soixante pour cent : il accelere et tire plus vite. Rien de neuf a
-         apprendre, tout ce qu'on sait deja devient plus serre. */
-      { jusqua: 0.60, vitesse: 62, cadence: 0.52,
+      /* 75 % — LES RENFORTS ARRIVENT. Rien d'autre ne change : la premiere
+         chose que le combat apprend, c'est qu'on ne sera plus seul avec lui. */
+      { jusqua: 0.75,
+        appel: { espece: 'drone', combien: 3, cadence: 0.18, plafond: 7,
+                 rayon: 270 } },
+      /* 50 % — IL SE PRESSE, ET CE QU'IL APPELLE CLOUE. La cadence monte et
+         l'invoque change de verbe : on passe de « esquiver plus » a « ne plus
+         pouvoir esquiver ». */
+      { jusqua: 0.50, vitesse: 62, cadence: 0.52,
         tir: { cadence: 0.42, att: 228 },
-        zone: { annonce: 1.62, rayon: 270, att: 285, cadence: 0.16, effet: 'ralenti' } },
-      /* A vingt-cinq pour cent : il appelle. Les sentinelles sont la creature
-         a distance la plus lisible du jeu — on sait ce qu'elles font avant
-         qu'elles le fassent, et c'est ce qu'on veut d'un renfort de fin. */
-      { jusqua: 0.25, vitesse: 62, cadence: 0.58,
+        zone: { annonce: 1.62, rayon: 270, att: 285, cadence: 0.16, effet: 'ralenti' },
+        appel: { espece: 'bobine', combien: 2, cadence: 0.12, plafond: 4,
+                 rayon: 270 } },
+      /* 30 % — L'ORAGE TOMBE PARTOUT. La pluie est le pouvoir qui change la
+         salle et non le duel : jusqu'ici un seul cercle a la fois, maintenant
+         cinq, et le coin tranquille cesse d'exister.
+         `annonce` 1.30 : la regle exige au moins rayon/202.2 + 0.25 = 1.04 s
+         pour un rayon de 160, et interdit de depasser 1.64. */
+      { jusqua: 0.30, vitesse: 62, cadence: 0.56,
         tir: { cadence: 0.36, tirs: 3, ecart: 0.22, att: 228 },
         zone: { annonce: 1.6, rayon: 270, att: 305, cadence: 0.2, effet: 'ralenti' },
-        appel: { espece: 'sentinelle', combien: 4, cadence: 0.3, plafond: 14,
+        pluie: { cadence: 0.4, combien: 5, rayon: 160, annonce: 1.30, att: 240,
+                 effet: 'ralenti', portee: 900 } },
+      /* 15 % — TOUT EN MEME TEMPS. La pluie tombe, les traits partent par
+         trois, et ce qu'il appelle court plus vite que le joueur. C'est le
+         seul endroit du combat ou l'on doit choisir entre tuer ce qui brule
+         et esquiver ce qui tombe — et ou aucun des deux ne peut etre remis a
+         plus tard.
+         `annonce` 1.59 et non 1.58 : la regle demande au moins
+         270/202.2 + 0.25 = 1.586 s, et 1.58 tombait juste dessous. Le cercle
+         le plus meurtrier du jeu reste donc annonce assez longtemps pour
+         qu'on en sorte a pied — la difficulte est ce qu'il faut faire, jamais
+         le fait de ne pas avoir eu le temps de le voir. */
+      { jusqua: 0.15, vitesse: 74, cadence: 0.62, att: 440,
+        tir: { cadence: 0.3, tirs: 3, ecart: 0.2, att: 248 },
+        zone: { annonce: 1.59, rayon: 270, att: 325, cadence: 0.24, effet: 'ralenti' },
+        pluie: { cadence: 0.6, combien: 7, rayon: 160, att: 262 },
+        appel: { espece: 'cendreux', combien: 2, cadence: 0.3, plafond: 6,
                  rayon: 270 } },
     ],
     biomes: [],
