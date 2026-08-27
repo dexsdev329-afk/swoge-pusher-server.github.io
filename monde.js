@@ -2749,6 +2749,52 @@ const MONSTRES = {
    * `sprite` emprunte la sentinelle en attendant son propre dessin. Une
    * creature sans image ne se dessine pas du tout — invisible et qui paralyse
    * serait la pire chose du jeu. */
+  /* ---- LE SORCIER : CELUI QUI PUNIT LA FUITE ----
+   *
+   * Rapporte sur l'arene : « le boss ne fait pas assez de degats, il n'est
+   * pas assez rapide, et les monstres qu'il fait apparaitre on les connait
+   * deja ». Les trois griefs ont la MEME cause, et ce n'est pas un reglage.
+   *
+   * MESURE. Un personnage de niveau cent court a 335. Le champion courait a
+   * 48, ses invoques a 84, 120 et 152. RIEN dans cette salle ne pouvait le
+   * rattraper — ses quatre cents points d'attaque au contact etaient donc un
+   * chiffre decoratif, jamais applique une seule fois. Pire : ses projectiles
+   * volaient a 320, c'est-a-dire MOINS VITE QUE LE JOUEUR. On marchait a
+   * reculons et on ne pouvait litteralement pas etre touche.
+   *
+   * ET LA VITESSE N'EST PAS LE LEVIER. Le jeu tient une regle que
+   * `realm.test.js` mesure sur tout le bestiaire : le personnage le plus lent
+   * (202) doit distancer le monstre le plus rapide avec un tiers de marge —
+   * donc rien ne depasse 155. Fuir doit rester un CHOIX. On ne repare donc
+   * pas ce combat en le rendant increvable a la course.
+   *
+   * CE SORCIER EST LA REPONSE. Sa vitesse ne compte pas : sa PORTEE compte.
+   * Il vise a huit cent quatre-vingts unites et ses runes volent a six cent
+   * dix. Reculer ne le distance plus — il faut s'en occuper, et s'en occuper
+   * c'est cesser de tirer sur le champion. C'est ca, la difficulte : un choix
+   * qui coute, pas un chiffre plus gros.
+   *
+   * IL NE FRAPPE PAS AU CONTACT (`contact: false`), et c'est ce qui rend
+   * honnete d'en poser quatorze : on le traverse. Un mur de corps qui bloque
+   * le pas dans une salle fermee n'est pas un defi, c'est une porte fermee.
+   *
+   * ET IL EST SOUS 121. Le cercle du champion RALENTIT, et un personnage
+   * ralenti tombe a 121. Une creature plus rapide que ca, dans la meme salle
+   * qu'un ralentisseur, donne une mort sans sortie : on est freine, puis
+   * rattrape, puis mordu jusqu'a la fin. `realm.test.js` interdit deja cette
+   * reunion anneau par anneau ; elle ne teste pas les donjons, mais la raison
+   * qui l'a fait ecrire vaut ici mot pour mot.
+   *
+   * SON TRAIT EST « rune », SANS EFFET — comme l'oracle, qui la tire deja.
+   * La regle du dessin unique par effet est respectee a la lettre : on voit
+   * une rune, on sait que ca fait mal et que ca ne pose rien. */
+  sorcier: {
+    cle: 'sorcier', nom: 'Voidcaller', pv: 5200, att: 96, def: 45,
+    vitesse: 118, rayon: 46, vue: 1150, contact: false, cadence: 0.5,
+    tir: { portee: 880, vitesse: 610, sprite: 'rune', att: 210, cadence: 0.8 },
+    xp: 1800, biomes: [],
+  },
+
   braisier: {
     cle: 'braisier', nom: 'Ember Acolyte', pv: 900, att: 58, def: 40,
     vitesse: 40, rayon: 46, vue: 950, contact: false, cadence: 0.4,
@@ -2998,8 +3044,15 @@ const MONSTRES = {
    * est reste dans la zone, ce qui est une consequence, pas un tirage.
    */
   orage: {
-    cle: 'orage', nom: 'The Stormbound Warden', pv: 700000, att: 400, def: 100,
-    vitesse: 48, rayon: 108, vue: 1000, contact: true, cadence: 0.42,
+    cle: 'orage', nom: 'The Stormbound Warden', pv: 1000000, att: 520, def: 100,
+    /* ---- QUARANTE-HUIT NE VOULAIT RIEN DIRE ----
+     * Un personnage de niveau cent court a 335. A 48, le champion etait sept
+     * fois plus lent : on reculait, il ne rattrapait jamais, et ses quatre
+     * cents points d'attaque au contact n'ont jamais servi une seule fois.
+     * A 96, et jusqu'a 150 en derniere phase, il reste distancable — la regle
+     * du jeu l'exige, rien ne depasse 155 — mais il COUTE quelque chose : on
+     * ne recule plus gratuitement, on recule au lieu de tirer. */
+    vitesse: 96, rayon: 108, vue: 1000, contact: true, cadence: 0.5,
     /* ---- SA FOUDRE N'EST PAS CELLE DE SES DRONES ----
      * Il tirait du `plasma`, exactement comme les drones qu'il appelle. Or
      * c'est ce que la phase 1 est censee APPRENDRE au joueur : « distinguer
@@ -3009,11 +3062,17 @@ const MONSTRES = {
      * `foudre` n'appartient qu'a lui. La regle que `realm.test.js` mesure —
      * un dessin de projectile n'est partage que par des creatures au MEME
      * effet — tient toujours : son tir ne pose rien, comme avant. */
-    tir: { portee: 660, vitesse: 320, sprite: 'foudre', att: 205, cadence: 0.3 },
+    /* ---- ET SES TRAITS ALLAIENT MOINS VITE QUE LE JOUEUR ----
+     * 320 contre 335. C'est le defaut le plus couteux des trois : on marchait
+     * a reculons et la foudre ne rattrapait PAS. Un boss dont les projectiles
+     * ne peuvent pas toucher une cible qui s'eloigne n'a pas d'attaque a
+     * distance, il a une animation. A 600, ils portent — et c'est la, plus que
+     * dans aucun chiffre d'attaque, que le combat a change. */
+    tir: { portee: 820, vitesse: 600, sprite: 'foudre', att: 300, cadence: 0.45 },
     /* rayon 270 : l'annonce doit valoir au moins 270/202.2 + 0.25 = 1.585 s.
        On pose 1.65 — la marge, pas le minimum, parce que c'est le plus grand
        cercle du jeu et qu'on en sort de plus loin. */
-    zone: { annonce: 1.65, rayon: 270, att: 262, cadence: 0.12, effet: 'ralenti' },
+    zone: { annonce: 1.65, rayon: 270, att: 340, cadence: 0.14, effet: 'ralenti' },
     xp: 26000,
     /* ---- CINQ PHASES, ET CHACUNE APPORTE UN VERBE ----
      *
@@ -3024,77 +3083,77 @@ const MONSTRES = {
      * Les phases se CUMULENT en cascade : ce qu'une phase ne redeclare pas,
      * elle le garde de la precedente. Un seul `appel` est donc actif a la
      * fois — celui de la derniere phase franchie remplace le precedent, il ne
-     * s'y ajoute pas.
+     * s'y ajoute pas. C'est pourquoi le sorcier revient a la fin : ce n'est
+     * pas une quatrieme vague qui s'ajoute, c'est celle qui reste.
      *
-     * ---- LES PLAFONDS SONT CEUX DE LA SALLE, PAS DU BOSS ----
-     * Sept drones, quatre bobines, deux cendreux. Ces nombres ont ete
-     * descendus en meme temps que l'arene retrecissait (quinze tuiles au lieu
-     * de dix-neuf) : ils avaient ete poses pour une salle d'un tiers plus
-     * large. Un plafond se lit en DENSITE, pas en quantite — dix creatures
-     * dans une salle ou l'on doit sortir d'un cercle de 270 unites, ce n'est
-     * plus un combat, c'est un mur qui tire. Le jour ou la salle rechange de
-     * taille, ces trois nombres rechangent avec elle.
+     * ---- CE QU'IL APPELLE, ET POURQUOI CE SONT CEUX-LA ----
      *
-     * LES TROIS INVOQUES SONT CHOISIS POUR LEUR VERBE, pas pour leur decor :
-     *   drone     il tire du PLASMA, exactement comme lui — le seul autre du
-     *             bestiaire. La salle se remplit de ses propres traits, et le
-     *             joueur doit apprendre a distinguer ce qui vient du boss de
-     *             ce qui vient d'un drone.
-     *   bobine    elle PARALYSE. C'est le seul moment du combat ou l'on peut
-     *             etre cloue, et il arrive quand les cercles tombent deja
-     *             vite.
-     *   cendreux  il BRULE, et il court a 152 — plus vite que n'importe quel
-     *             personnage. C'est le seul invoque qu'on ne peut pas semer :
-     *             a la fin, ignorer les renforts cesse d'etre une option.
+     *   sorcier   NOUVEAU, et c'est lui qui repare le combat. Il vise a 880
+     *             et ses runes volent a 610 : reculer ne le distance plus. Il
+     *             ouvre le combat — la premiere chose qu'on rencontre est une
+     *             chose qu'on n'a jamais vue — et il le ferme, a quatorze.
+     *   bobine    elle PARALYSE. Le seul moment ou l'on peut etre cloue, et il
+     *             arrive quand les cercles tombent deja vite.
      *
-     * ---- ET POURQUOI PAS `glace`, QUI RALENTIT ----
-     * C'etait le choix evident — deux sources du meme ralentissement a la
-     * fin — et il est INTERDIT : `glace` erre deja dehors, dans un anneau du
-     * monde ouvert. Le jeu tient une regle que `monde.test.js` mesure : une
-     * espece a un role OU un anneau, jamais les deux. La meme creature
-     * croisee en plaine et vomie par le boss de fin, ce n'est plus un role,
-     * c'est un decor. Le jour ou l'on veut vraiment un second ralentissement
-     * ici, il faudra une espece a elle — pas en emprunter une au dehors.
+     * ---- ET PLUS DE `cendreux` ICI ----
+     * Il court a 152. Le cercle du champion RALENTIT, et un personnage ralenti
+     * tombe a 121 : le poser dans cette salle, c'etait promettre une mort sans
+     * sortie — freine, rattrape, brule jusqu'a la fin. `realm.test.js`
+     * interdit deja cette reunion dans les anneaux du monde ouvert ; il ne
+     * regarde pas les donjons, mais la raison qui l'a fait ecrire ne s'arrete
+     * pas a la porte. Le Sanctuaire garde ses cendreux — l'Idole ne ralentit
+     * personne.
+     *
+     * ---- LES PLAFONDS ----
+     * Huit sorciers, sept bobines, quatorze sorciers a la fin. C'est trois
+     * fois ce qu'il y avait, et c'est tenable pour une seule raison : le
+     * sorcier ne frappe PAS au contact, on le traverse. Quatorze corps qui
+     * bloqueraient le pas dans une salle de quinze tuiles ne seraient pas un
+     * defi, ce serait une porte fermee.
      */
     phases: [
-      /* 75 % — LES RENFORTS ARRIVENT. Rien d'autre ne change : la premiere
-         chose que le combat apprend, c'est qu'on ne sera plus seul avec lui. */
-      { jusqua: 0.75,
-        appel: { espece: 'drone', combien: 3, cadence: 0.18, plafond: 7,
+      /* 75 % — QUELQUE CHOSE QU'ON NE CONNAIT PAS. Trois sorciers, et la
+         cadence qui monte. C'est le seul seuil dont le verbe est une
+         DECOUVERTE : jusqu'ici l'arene n'avait montre que son champion. */
+      { jusqua: 0.75, vitesse: 112, cadence: 0.56,
+        tir: { cadence: 0.5, att: 320 },
+        zone: { annonce: 1.64, rayon: 270, att: 365, cadence: 0.16, effet: 'ralenti' },
+        appel: { espece: 'sorcier', combien: 3, cadence: 0.2, plafond: 8,
                  rayon: 270 } },
-      /* 50 % — IL SE PRESSE, ET CE QU'IL APPELLE CLOUE. La cadence monte et
-         l'invoque change de verbe : on passe de « esquiver plus » a « ne plus
-         pouvoir esquiver ». */
-      { jusqua: 0.50, vitesse: 62, cadence: 0.52,
-        tir: { cadence: 0.42, att: 228 },
-        zone: { annonce: 1.62, rayon: 270, att: 285, cadence: 0.16, effet: 'ralenti' },
-        appel: { espece: 'bobine', combien: 2, cadence: 0.12, plafond: 4,
+      /* 50 % — LA GERBE, ET CE QUI CLOUE. Un trait devient trois, ecartes : on
+         ne s'ecarte plus d'un seul cote. Et ce qu'il appelle paralyse — on
+         passe de « esquiver plus » a « ne plus pouvoir esquiver ». */
+      { jusqua: 0.50, vitesse: 128, cadence: 0.62,
+        tir: { cadence: 0.55, tirs: 3, ecart: 0.24, att: 340 },
+        zone: { annonce: 1.62, rayon: 270, att: 395, cadence: 0.2, effet: 'ralenti' },
+        appel: { espece: 'bobine', combien: 4, cadence: 0.16, plafond: 7,
                  rayon: 270 } },
       /* 30 % — L'ORAGE TOMBE PARTOUT. La pluie est le pouvoir qui change la
-         salle et non le duel : jusqu'ici un seul cercle a la fois, maintenant
-         cinq, et le coin tranquille cesse d'exister.
+         SALLE et non le duel : jusqu'ici un seul cercle a la fois, maintenant
+         neuf, et le coin tranquille cesse d'exister.
          `annonce` 1.30 : la regle exige au moins rayon/202.2 + 0.25 = 1.04 s
          pour un rayon de 160, et interdit de depasser 1.64. */
-      { jusqua: 0.30, vitesse: 62, cadence: 0.56,
-        tir: { cadence: 0.36, tirs: 3, ecart: 0.22, att: 228 },
-        zone: { annonce: 1.6, rayon: 270, att: 305, cadence: 0.2, effet: 'ralenti' },
-        pluie: { cadence: 0.4, combien: 5, rayon: 160, annonce: 1.30, att: 240,
-                 effet: 'ralenti', portee: 900 } },
-      /* 15 % — TOUT EN MEME TEMPS. La pluie tombe, les traits partent par
-         trois, et ce qu'il appelle court plus vite que le joueur. C'est le
-         seul endroit du combat ou l'on doit choisir entre tuer ce qui brule
-         et esquiver ce qui tombe — et ou aucun des deux ne peut etre remis a
-         plus tard.
+      { jusqua: 0.30, vitesse: 140, cadence: 0.7,
+        tir: { cadence: 0.6, tirs: 3, ecart: 0.22, att: 360 },
+        zone: { annonce: 1.6, rayon: 270, att: 425, cadence: 0.26, effet: 'ralenti' },
+        pluie: { cadence: 0.5, combien: 9, rayon: 160, annonce: 1.30, att: 300,
+                 effet: 'ralenti', portee: 900 },
+        appel: { espece: 'sorcier', combien: 4, cadence: 0.28, plafond: 10,
+                 rayon: 270 } },
+      /* 15 % — TOUT EN MEME TEMPS. Douze cercles tombent, les traits partent
+         par CINQ, et quatorze sorciers tiennent la salle a distance. Il n'y a
+         plus d'endroit ou se poser, et plus aucun angle d'ou tirer
+         tranquillement : c'est la salle entiere qui devient le combat.
          `annonce` 1.59 et non 1.58 : la regle demande au moins
          270/202.2 + 0.25 = 1.586 s, et 1.58 tombait juste dessous. Le cercle
-         le plus meurtrier du jeu reste donc annonce assez longtemps pour
-         qu'on en sorte a pied — la difficulte est ce qu'il faut faire, jamais
-         le fait de ne pas avoir eu le temps de le voir. */
-      { jusqua: 0.15, vitesse: 74, cadence: 0.62, att: 440,
-        tir: { cadence: 0.3, tirs: 3, ecart: 0.2, att: 248 },
-        zone: { annonce: 1.59, rayon: 270, att: 325, cadence: 0.24, effet: 'ralenti' },
-        pluie: { cadence: 0.6, combien: 7, rayon: 160, att: 262 },
-        appel: { espece: 'cendreux', combien: 2, cadence: 0.3, plafond: 6,
+         le plus meurtrier du jeu reste donc annonce assez longtemps pour qu'on
+         en sorte a pied — la difficulte est ce qu'il faut faire, jamais le
+         fait de ne pas avoir eu le temps de le voir. */
+      { jusqua: 0.15, vitesse: 150, cadence: 0.8, att: 620,
+        tir: { cadence: 0.7, tirs: 5, ecart: 0.2, att: 390 },
+        zone: { annonce: 1.59, rayon: 270, att: 460, cadence: 0.32, effet: 'ralenti' },
+        pluie: { cadence: 0.75, combien: 12, rayon: 160, att: 330 },
+        appel: { espece: 'sorcier', combien: 6, cadence: 0.34, plafond: 14,
                  rayon: 270 } },
     ],
     biomes: [],
