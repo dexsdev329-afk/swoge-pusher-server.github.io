@@ -3920,6 +3920,31 @@ wss.on('connection', (ws) => {
         if (!ws.addr) return;
         return send(ws, { type: 'cartes', liste: game.vitrineCartes(ws.addr) });
       }
+      /* ---- PARTIR D'UN MONDE QUI EXISTE ----
+       *
+       * Demande : « qu'on voie les mondes deja existants, et qu'en faisant un
+       * nouveau projet on puisse choisir une carte qui existe ». Le serveur en
+       * rend une COPIE au format de l'editeur — un cote, des cases de sol, des
+       * objets poses. Rien de ce qui sort d'ici ne revient dans le jeu tout
+       * seul : c'est un point de depart, pas un lien.
+       *
+       * La route ne SIGNE rien, ne DEBITE rien et ne garde rien. Elle est
+       * ouverte a tout joueur identifie, comme la galerie : proposer une
+       * amelioration suppose de pouvoir regarder ce qu'on ameliore.
+       *
+       * `modeleDeMonde` rend `null` pour tout ce qui n'a pas de plan fixe — les
+       * donjons se retirent au sort a chaque ouverture, il n'y a donc rien a
+       * copier. On repond alors par un refus NOMME plutot que par une carte
+       * vide : une grille blanche laisserait croire que le monde est vide. */
+      if (m.type === 'carteModele') {
+        if (!ws.addr) return;
+        const modele = monde.modeleDeMonde(String(m.monde || ''));
+        if (!modele) {
+          return send(ws, { type: 'carteModele', error: 'this place has no fixed map to copy',
+                            code: 'sansPlan' });
+        }
+        return send(ws, { type: 'carteModele', carte: modele });
+      }
       /* LIRE EST OUVERT A TOUS : c'est tout l'interet d'une galerie. On envoie
          donc la carte entiere, avec `mienne` pour que la page sache si elle
          doit proposer d'editer — sans que ce drapeau ne garde quoi que ce

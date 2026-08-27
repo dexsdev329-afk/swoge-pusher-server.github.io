@@ -4800,6 +4800,79 @@ function peuplement(alea) {
   return out;
 }
 
+/*
+ * ============ UN MONDE EXISTANT, RENDU MODIFIABLE ============
+ *
+ * ---- CE QUE C'EST, ET CE QUE CE N'EST PAS ----
+ *
+ * L'editeur de cartes sait ouvrir une carte de JOUEUR : un cote, des cases de
+ * sol, des objets poses. Cette fonction rend un monde du jeu SOUS CETTE FORME,
+ * pour qu'on puisse partir de lui au lieu d'une grille vide. Un joueur ouvre
+ * la ville, deplace ce qui le gene, enregistre — et sa proposition se regarde
+ * comme n'importe quelle carte.
+ *
+ * Elle ne rend PAS le monde lui-meme : elle en rend une COPIE editable. Rien
+ * de ce qui sort d'ici ne revient dans le jeu tout seul, et c'est voulu.
+ *
+ * ---- POURQUOI LA VILLE, ET PAS LES DONJONS ----
+ *
+ * Un donjon n'a pas de plan a copier. `planDeDonjon` le retire au sort a
+ * CHAQUE ouverture — c'est ecrit plus haut comme une intention, pas comme un
+ * detail : « le deuxieme passage doit apprendre quelque chose ». Il n'existe
+ * donc aucun « la Fonderie » a ouvrir dans un editeur ; ce qui existe, ce sont
+ * ses REGLAGES, et ceux-la se modifient dans la table `DONJONS`, pas sur une
+ * grille.
+ *
+ * La ville, elle, est le cas exactement inverse, et pour une raison qui a ete
+ * ecrite quand elle a ete faite : elle NE SE RETIRE PAS AU SORT. Son germe est
+ * une donnee, la meme ville sort de tous les demarrages. On peut donc la
+ * copier et parler de la meme chose que le joueur d'a cote.
+ *
+ * ---- LES BORNES SONT CELLES DE L'EDITEUR, PAS LES MIENNES ----
+ *
+ * Il refuse au-dela de 2 600 cases de sol et 1 800 objets, et son cote va
+ * jusqu'a 48. Mesure sur la ville : 1 086 tuiles, 594 obstacles, 45 de cote.
+ * Elle passe, et de loin. On verifie quand meme — le jour ou la ville grandit,
+ * il vaut mieux un refus clair ici qu'une carte tronquee la-bas.
+ */
+const MODELE_CASES_MAX = 2600;
+const MODELE_OBJETS_MAX = 1800;
+const MODELE_COTE_MAX = 48;
+
+function modeleDeMonde(nom) {
+  if (String(nom) !== 'ville') return null;
+  const plan = planDeVille();
+  const t = plan.tuiles || [];
+  if (!t.length) return null;
+  /* ---- ON RAMENE AU COIN ----
+   * Les tuiles d'un monde vivent aux coordonnees de la CARTE — la ville
+   * commence a la huitieme colonne. L'editeur, lui, compte depuis zero : sans
+   * ce decalage, la moitie de la ville tomberait hors de sa grille. */
+  const c0 = Math.min(...t.map((q) => q[0]));
+  const l0 = Math.min(...t.map((q) => q[1]));
+  const cote = Math.max(...t.map((q) => q[0] - c0), ...t.map((q) => q[1] - l0)) + 1;
+  if (cote > MODELE_COTE_MAX) return null;
+
+  const sol = (plan.anneaux && plan.anneaux[0] && plan.anneaux[0].biome) || VILLE.sol;
+  const cases = t.map((q) => ({ c: q[0] - c0, l: q[1] - l0, s: sol }));
+
+  /* Les blocs sont en unites de MONDE, pas en cases : le centre d'une tuile
+     est a (case + 0,5) fois la tuile. On refait donc le chemin inverse, et
+     l'arrondi n'est pas une precaution — un demi-pixel de derive poserait le
+     mur sur la case d'a cote. */
+  const objets = (plan.obstacles || []).map((o) => ({
+    c: Math.round(o.x / TUILE - 0.5) - c0,
+    l: Math.round(o.y / TUILE - 0.5) - l0,
+    /* Une facade porte le nom de son batiment ; un bloc nu porte celui de la
+       planche de mur du lieu. Les deux se retrouvent au catalogue par la meme
+       recherche, cote page. */
+    k: o.bat || plan.mur,
+  })).filter((o) => o.c >= 0 && o.l >= 0 && o.c < cote && o.l < cote);
+
+  if (cases.length > MODELE_CASES_MAX || objets.length > MODELE_OBJETS_MAX) return null;
+  return { nom: 'The +18 city', cote, mode: 'plat', cases, objets };
+}
+
 module.exports = {
   BRAISES, braisesDeSalle,
   TUILE, CARTE, MONDE, CENTRE, ANNEAUX, MONSTRES, PEUPLEMENT, PLANCHER,
@@ -4820,6 +4893,7 @@ module.exports = {
   PORTAIL, PORTAIL_DE, RETOUR_DE, MUR_DONJON, MUR_DECOR, DONJON_TUILE, DONJON_SALLES,
   DONJON_COULOIR, DONJON_ORIGINE, DONJON_IMPASSES, PEUPLE_DONJON,
   planDonjon, planCave, CAVE, DONJONS, mursDonjon, peuplementDonjon, planDeDonjon,
+  modeleDeMonde,
   VILLE, planVille, planDeVille, planDeCarte, hasardSeme, anneauUnique, tuilesDuSol,
   PLAN_PARTOUT,
   biomeEn, degatsInfliges, degatsSubis, tirageArme, pointDansBiome, peuplement,
