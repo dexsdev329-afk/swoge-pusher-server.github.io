@@ -628,9 +628,34 @@ function budgetDe(o) {
   return (table && table[o.rarete]) || 0;
 }
 
-/** Les degats d'une arme du catalogue, ou `null` si ce n'en est pas une. */
+/** Les degats d'une arme du catalogue, ou `null` si ce n'en est pas une.
+ *
+ * ---- POURQUOI UNE ARME PEUT ECRIRE LES SIENS ----
+ *
+ * La rarete decidait TOUT : les quatre reliques du jeu frappaient exactement
+ * pareil, 155-200, qu'elles tombent d'Optimus, de l'Idole ou du champion de
+ * l'arene. Or ces trois-la ne sont pas au meme prix. L'Idole a 380 000 points
+ * de vie ; le champion en a 700 000, presque le double, plus cinq phases et
+ * trois vagues d'invoques. Rendre la meme arme au bout des deux, c'est dire
+ * au joueur que le combat le plus dur du jeu ne valait pas le detour — et
+ * c'est ce qui a ete rapporte : « l'arme bleue du boss de la manche 1 doit
+ * avoir plus de degats ».
+ *
+ * ---- ET POURQUOI PAS UNE SIXIEME RARETE ----
+ *
+ * Parce qu'une rarete n'est pas qu'un chiffre de degats : c'est une couleur,
+ * un plafond d'exemplaires, un bloc d'identifiants, une ligne dans chaque
+ * fiche et chaque panneau. En ajouter une pour une seule arme aurait touche
+ * une dizaine d'endroits pour un besoin qui n'en concerne qu'un.
+ *
+ * L'echappatoire est donc EXPLICITE et BORNEE : un objet peut porter son
+ * propre `degats`, et `boutique.js` refuse au chargement tout ce qui n'est
+ * pas un donjon ou qui passerait SOUS le bareme de sa rarete. Un oubli ne
+ * peut donc pas produire une arme secretement faible — seulement une arme
+ * dont on a ecrit la force en toutes lettres, a cote de son nom. */
 function degatsDeObjet(o) {
   if (!o || Number(o.saison) !== 2) return null;
+  if (Array.isArray(o.degats) && o.degats.length === 2) return o.degats.slice();
   const t = DEGATS[sourceDe(o)];
   const d = t && t[o.rarete];
   return d ? d.slice() : null;

@@ -1,4 +1,10 @@
 'use strict';
+/* Le bareme des degats vit chez les personnages, et la garde de chargement
+   plus bas le LIT plutot que d'en recopier une deuxieme copie ici : deux
+   tables a tenir d'accord finissent toujours par se contredire. L'arete ne
+   va que dans ce sens — `personnages.js` ne connait pas la boutique — donc
+   pas de cycle. */
+const personnages = require('./personnages');
 /*
  * LA BOUTIQUE — coffres, raretes, objets.
  *
@@ -969,7 +975,18 @@ for (const o of ITEMS_SANCTUAIRE) {
  * meme arme de tete valent mieux qu'un seul donjon qui la detient.
  */
 const ITEMS_ARENA = [
-  { id: 6901, cle: 'arn_dagues',   nom: 'Stormfang',   rarete: 'relique', famille: 'dagues' },
+  /* ---- LA SEULE ARME DU JEU QUI ECRIT SES PROPRES DEGATS ----
+   * 200-258 la ou la rarete en donne 155-200 : un cran de plus sur le meme
+   * escalier, celui qui monte d'un tiers a chaque rang. Ce n'est pas une
+   * faveur, c'est le prix affiche du combat — le champion a 700 000 points de
+   * vie contre les 380 000 de l'Idole, cinq phases contre trois, et trois
+   * vagues d'invoques. Sans ce cran, l'arme du combat le plus dur du jeu
+   * frappait exactement comme celle du precedent, et le detour ne valait
+   * rien. Voir `degatsDeObjet` pour pourquoi c'est un champ et pas une
+   * sixieme rarete, et la garde plus bas pour ce qu'il n'a pas le droit de
+   * faire. */
+  { id: 6901, cle: 'arn_dagues',   nom: 'Stormfang',   rarete: 'relique', famille: 'dagues',
+    degats: [200, 258] },
   { id: 6902, cle: 'arn_casque',   nom: 'Stormcrown',  rarete: 'relique', famille: 'casque' },
   { id: 6903, cle: 'arn_plastron', nom: 'Riftplate',   rarete: 'relique', famille: 'plastron' },
   { id: 6904, cle: 'arn_anneau',   nom: 'Thunderbind', rarete: 'relique', famille: 'onyx' },
@@ -1028,6 +1045,41 @@ for (const o of ITEMS_DROP) {
   }
 }
 for (const o of ITEMS_DROP) o.drop = true;
+
+/* ---- ET UNE ARME QUI ECRIT SES DEGATS NE PEUT PAS S'ECRIRE PLUS FAIBLE ----
+ *
+ * Le champ `degats` court-circuite le bareme de la rarete (`degatsDeObjet`).
+ * Deux facons de s'en servir mal, et le chargement refuse les deux :
+ *
+ *   - LE POSER SUR UNE PIECE DE BOUTIQUE. Une arme qui s'achete doit valoir
+ *     ce que sa rarete annonce, sinon le prix ne veut plus rien dire. Seul ce
+ *     qui se GAGNE au fond d'un donjon a le droit de sortir du bareme.
+ *   - LE POSER SOUS LE BAREME. Une faute de frappe qui rendrait une relique
+ *     plus faible qu'une relique ordinaire ne se verrait jamais : on
+ *     l'attribuerait a la malchance pendant des semaines. Se tromper vers le
+ *     bas doit donc etre IMPOSSIBLE, pas seulement improbable — c'est la meme
+ *     regle que `sourceDe`, prise par l'autre bout.
+ *
+ * Le serveur ne demarre pas plutot que de distribuer une arme dont la fiche
+ * ment. */
+for (const o of ITEMS.concat(ITEMS_DROP)) {
+  if (o.degats === undefined) continue;
+  if (!Array.isArray(o.degats) || o.degats.length !== 2
+      || !(o.degats[0] > 0) || !(o.degats[1] >= o.degats[0])) {
+    throw new Error('boutique : « ' + o.cle + ' » porte un `degats` mal forme — '
+                    + 'il faut [min, max], deux nombres croissants');
+  }
+  if (!o.donjon) {
+    throw new Error('boutique : « ' + o.cle + ' » ecrit ses degats sans etre '
+                    + 'une piece de donjon — seul ce qui se gagne sort du bareme');
+  }
+  const bareme = personnages.DEGATS.butin[o.rarete];
+  if (bareme && (o.degats[0] < bareme[0] || o.degats[1] < bareme[1])) {
+    throw new Error('boutique : « ' + o.cle + ' » s\'ecrit PLUS FAIBLE que sa '
+                    + 'rarete (' + o.degats + ' contre ' + bareme + ') — '
+                    + 'une arme ne se nerfe pas en silence');
+  }
+}
 
 for (const o of ITEMS.concat(ITEMS_DROP)) {
   const f = FAMILLE.get(o.famille);
