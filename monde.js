@@ -4835,11 +4835,105 @@ function peuplement(alea) {
  * Elle passe, et de loin. On verifie quand meme — le jour ou la ville grandit,
  * il vaut mieux un refus clair ici qu'une carte tronquee la-bas.
  */
-const MODELE_CASES_MAX = 2600;
+const MODELE_CASES_MAX = 3700;
 const MODELE_OBJETS_MAX = 1800;
-const MODELE_COTE_MAX = 48;
+const MODELE_COTE_MAX = 60;
 
-function modeleDeMonde(nom) {
+/* ---- LE NOM DU SOL, ET CELUI DU FICHIER ----
+ * La page nomme ses textures d'apres le biome, a trois exceptions pres :
+ * `terre` se dessine avec `ground_dirt`, `neige` avec `ground_snow`, `lave`
+ * avec `ground_lava`. Le catalogue de l'editeur porte la CLE du fichier, pas
+ * celle du biome. Les trois memes lignes vivent donc des deux cotes, et c'est
+ * la seule facon de ne pas rendre une carte dont un cinquieme du sol serait
+ * bleu. Le reste suit la convention : le nom du biome EST la cle. */
+const SOL_DE_BIOME = { terre: 'dirt', neige: 'snow', lave: 'lava' };
+function solDeBiome(b) { return SOL_DE_BIOME[b] || b; }
+
+/* Les quatre colonnes de `obstacles.webp`, chacune decoupee en son propre
+   element : c'est `OBSTACLE_BIOME` qui dit laquelle porte quel anneau, et un
+   rocher pose dans l'editeur doit etre celui qu'on voit sur place. */
+const ROCHER_DE = ['rocher_terre', 'souche_marais', 'rocher_neige', 'rocher_cendres'];
+
+/*
+ * ---- LE NEXUS, TEL QU'ON Y MARCHE EN CE MOMENT ----
+ *
+ * Le monde ouvert n'a pas plus de plan fixe qu'un donjon : ses salles et ses
+ * rochers sont tires au sort au demarrage du serveur. Mais contrairement a un
+ * donjon, il n'est pas retire a chaque visite — c'est UN endroit, celui ou
+ * tout le monde se trouve, et il vit tant que le serveur vit.
+ *
+ * On ne le regenere donc pas : on copie CELUI QUI TOURNE. Le serveur passe
+ * les salles et les rochers de sa simulation, et ce qui sort est la carte que
+ * le joueur avait sous les pieds une seconde plus tot. Un tirage neuf aurait
+ * rendu « un Nexus », pas « le Nexus » — et la difference est exactement ce
+ * qu'on demande quand on veut proposer de le changer.
+ *
+ * Le sol, lui, se calcule : il n'est stocke nulle part. C'est la distance au
+ * centre qui le decide, anneau par anneau, et `biomeEn` est la meme fonction
+ * qui le decide pour le jeu.
+ */
+function modeleDuNexus(salles, obstacles) {
+  const cote = CARTE.cols;
+  if (!(cote > 0) || cote > MODELE_COTE_MAX) return null;
+  /* ---- SANS LA SIMULATION, ON NE REND RIEN ----
+   * Le sol se CALCULE — il suffirait de la distance au centre — mais une carte
+   * avec ses anneaux et sans une salle ni un rocher n'est pas le Nexus : c'est
+   * un dessin de ses couleurs. Rendre ca sur un appel mal cable aurait donne
+   * une copie plausible et fausse, ce qui est pire qu'un refus. */
+  if (!Array.isArray(salles) || !Array.isArray(obstacles)) return null;
+  const listeS = salles;
+  const listeO = obstacles;
+
+  /* Le sol de chaque case, par son centre : un coin de tuile tombe parfois de
+     l'autre cote d'un anneau, et la bande se mettrait a onduler d'une case. */
+  const cases = [];
+  for (let c = 0; c < cote; c++) {
+    for (let l = 0; l < cote; l++) {
+      cases.push({ c, l, s: solDeBiome(biomeEn((c + 0.5) * TUILE, (l + 0.5) * TUILE)) });
+    }
+  }
+  /* Les dalles de temple des salles gardees : elles se voient de loin, et
+     c'est a ca qu'on les reconnait avant d'y entrer. On repeint donc le
+     CARRE de la salle, murs compris — le mur se pose par-dessus. */
+  const dansCase = new Map();
+  cases.forEach((q) => dansCase.set(q.c + ',' + q.l, q));
+  const n = SALLE.cote;
+  for (const s of listeS) {
+    const c0 = Math.round((s.x - (n * TUILE) / 2) / TUILE);
+    const l0 = Math.round((s.y - (n * TUILE) / 2) / TUILE);
+    for (let c = c0; c < c0 + n; c++) {
+      for (let l = l0; l < l0 + n; l++) {
+        const q = dansCase.get(c + ',' + l);
+        if (q) q.s = 'temple';
+      }
+    }
+  }
+
+  const objets = [];
+  /* Les murs des salles : la meme fonction que le jeu, donc la meme porte au
+     meme endroit. Reconstruire le carre ici aurait fini par oublier une
+     ouverture, et une salle sans porte n'est plus une salle. */
+  for (const s of listeS) {
+    for (const m of mursDe(s, 1)) {
+      objets.push({ c: Math.round(m.x / TUILE - 0.5), l: Math.round(m.y / TUILE - 0.5),
+                    k: 'ruine' });
+    }
+  }
+  for (const o of listeO) {
+    const k = ROCHER_DE[Math.max(0, Math.min(ROCHER_DE.length - 1, Number(o.t) || 0))];
+    objets.push({ c: Math.round(o.x / TUILE - 0.5), l: Math.round(o.y / TUILE - 0.5), k });
+  }
+  const dedans = (q) => q.c >= 0 && q.l >= 0 && q.c < cote && q.l < cote;
+  const nets = objets.filter(dedans);
+  if (cases.length > MODELE_CASES_MAX || nets.length > MODELE_OBJETS_MAX) return null;
+  return { nom: 'The Nexus', cote, mode: 'plat', cases, objets: nets };
+}
+
+function modeleDeMonde(nom, vivant) {
+  if (String(nom) === 'nexus') {
+    const v = vivant || {};
+    return modeleDuNexus(v.salles, v.obstacles);
+  }
   if (String(nom) !== 'ville') return null;
   const plan = planDeVille();
   const t = plan.tuiles || [];
@@ -4893,6 +4987,7 @@ module.exports = {
   PORTAIL, PORTAIL_DE, RETOUR_DE, MUR_DONJON, MUR_DECOR, DONJON_TUILE, DONJON_SALLES,
   DONJON_COULOIR, DONJON_ORIGINE, DONJON_IMPASSES, PEUPLE_DONJON,
   planDonjon, planCave, CAVE, DONJONS, mursDonjon, peuplementDonjon, planDeDonjon,
+  modeleDuNexus, solDeBiome, ROCHER_DE,
   modeleDeMonde,
   VILLE, planVille, planDeVille, planDeCarte, hasardSeme, anneauUnique, tuilesDuSol,
   PLAN_PARTOUT,

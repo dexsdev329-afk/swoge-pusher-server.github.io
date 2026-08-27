@@ -113,16 +113,44 @@ console.log('\n-- une carte pleine tient-elle dans une trame --');
      cases remplies, et chacune portant un sol ET un objet aux noms les plus
      longs qu'une cle autorise. */
   const long = 'x'.repeat(24);   // la borne du reglement, pas une cle realiste
+
+  /* ---- DEUX FORMATS, DEUX PIRES CAS ----
+   * Les cases entrent nommees ou en indices, et le reglement leur donne deux
+   * plafonds differents PARCE QUE leur poids n'a rien a voir. Les deux doivent
+   * tenir dans la trame : celui qu'on ne mesure pas est celui qui laissera un
+   * jour passer une carte que le tuyau jette sans un mot. */
+
+  /* 1. L'ANCIEN FORMAT. Autant de cases NOMMEES que son plafond autorise,
+     chacune portant un sol ET un objet aux noms les plus longs permis. */
   const pire = [];
-  for (let c = 0; c < cfg.CARTE_COTE; c++) {
-    for (let l = 0; l < cfg.CARTE_COTE; l++) pire.push({ c, l, s: long, o: long });
+  for (let i = 0; i < cfg.CARTE_CASES_NOMMEES; i++) {
+    pire.push({ c: i % cfg.CARTE_COTE, l: (i / cfg.CARTE_COTE) | 0, s: long, o: long });
   }
-  ok(pire.length <= cfg.CARTE_CASES,
-     `une carte pleine (${pire.length} cases) tient sous le plafond d envoi (${cfg.CARTE_CASES})`);
   const poids = JSON.stringify({ type: 'carteEnregistre', id: 999999,
                                  carte: { nom: long, cote: cfg.CARTE_COTE, cases: pire } }).length;
   ok(poids < MAX,
-     `et le message entier pese ${Math.round(poids / 1024)} ko, sous la trame de ${Math.round(MAX / 1024)} ko`);
+     `nommee : ${pire.length} cases, ${Math.round(poids / 1024)} ko, sous la trame de ${Math.round(MAX / 1024)} ko`);
+
+  /* 2. LE FORMAT COMPACT. Son plafond a lui, la palette pleine, et l'indice
+     le plus long que la palette permette. */
+  const palette = [];
+  for (let i = 0; i < 256; i++) palette.push(long);
+  const cpires = [];
+  for (let i = 0; i < cfg.CARTE_CASES; i++) {
+    cpires.push([i % cfg.CARTE_COTE, (i / cfg.CARTE_COTE) | 0, 255, 255]);
+  }
+  const cpoids = JSON.stringify({ type: 'carteEnregistre', id: 999999,
+                                  carte: { nom: long, cote: cfg.CARTE_COTE,
+                                           pal: palette, cases: cpires } }).length;
+  ok(cpoids < MAX,
+     `compacte : ${cpires.length} cases, ${Math.round(cpoids / 1024)} ko, sous la meme trame`);
+
+  /* 3. ET UNE CARTE PLEINE AU COTE MAXIMUM RENTRE — c'est tout l'objet du
+     format compact : le Nexus fait soixante de cote, et on ne peut pas
+     proposer de le changer sans pouvoir l'ouvrir. */
+  ok(cfg.CARTE_COTE * cfg.CARTE_COTE <= cfg.CARTE_CASES,
+     `une carte PLEINE de ${cfg.CARTE_COTE} de cote (${cfg.CARTE_COTE * cfg.CARTE_COTE} cases)`
+     + ` tient sous le plafond compact (${cfg.CARTE_CASES})`);
 }
 
 /* ================== 2. LA PROPRIETE ================== */
@@ -545,6 +573,67 @@ console.log('\n-- une carte enregistree avant les degres --');
      "et l'ancien champ disparait : deux champs d'angle vivants, c'est deux endroits"
      + " ou lire l'orientation, et celui qu'on oublie dessine de travers");
   ok(k9.objets[1].g === undefined, 'un objet droit reste droit, sans champ');
+}
+
+/* ================== LE FORMAT COMPACT, ET LE NEXUS ================== */
+console.log('\n-- les cases en indices plutot qu en noms --');
+{
+  const M = require('./monde');
+  const salles = M.salles(Math.random);
+  const obstacles = M.obstacles(Math.random, salles);
+  const nx = M.modeleDeMonde('nexus', { salles, obstacles });
+  ok(!!nx, 'le Nexus se copie');
+  eq(nx.cote, 60, 'il fait soixante de cote');
+  eq(nx.cases.length, 3600, 'et son sol est complet');
+  ok(nx.objets.length > 100 && nx.objets.length <= cfg.CARTE_OBJETS,
+     `avec ses rochers et les murs de ses salles (${nx.objets.length} objets)`);
+  /* Les cles doivent EXISTER : une carte dont un cinquieme du sol serait bleu
+     ne se remarque qu a l ecran, et seulement si quelqu un regarde. */
+  const sols = [...new Set(nx.cases.map((q) => q.s))].sort();
+  eq(sols.join(','), 'cendres,dirt,lava,marais,snow,temple',
+     `les cinq anneaux et les dalles des salles : ${sols.join(', ')}`);
+  const ks = [...new Set(nx.objets.map((q) => q.k))].sort();
+  eq(ks.join(','), 'rocher_cendres,rocher_neige,rocher_terre,ruine,souche_marais',
+     `et les objets sont ceux du monde : ${ks.join(', ')}`);
+  ok(!M.modeleDeMonde('nexus', {}), 'sans simulation vivante, pas de copie');
+
+  const gros = { nom: 'Nexus', cote: nx.cote, mode: 'plat',
+                 cases: nx.cases, objets: nx.objets };
+  const nomme = JSON.stringify({ type: 'carte', carte: gros }).length;
+  const petit = JSON.stringify({ type: 'carte', carte: Game.carteCompacte(gros) }).length;
+  ok(petit * 2 < nomme,
+     `compacte, elle pese ${Math.round(petit / 1024)} ko au lieu de ${Math.round(nomme / 1024)} ko`);
+
+  /* Le va-et-vient ne perd rien : c est la seule question qui compte. */
+  const relu = Game.carteValide(Game.carteCompacte(gros), { cote: nx.cote, mode: 'plat' });
+  ok(!!relu, 'la carte compacte se relit');
+  eq(relu.cases.length, nx.cases.length, 'avec toutes ses cases');
+  const avant = nx.cases.map((q) => q.c + ',' + q.l + ':' + q.s).sort().join('|');
+  const apres = relu.cases.map((q) => q.c + ',' + q.l + ':' + q.s).sort().join('|');
+  ok(avant === apres, 'et chacune porte exactement le meme sol qu avant');
+  eq(relu.objets.length, nx.objets.length, 'et tous ses objets');
+
+  /* L ancien format n est pas mis dehors : une page qui n a pas recharge
+     envoie des noms, et doit continuer d enregistrer — dans SES bornes. */
+  ok(!!Game.carteValide({ nom: 'ancienne', cote: 16,
+                          cases: [{ c: 0, l: 0, s: 'grass' }] }),
+     'une carte nommee passe toujours');
+  const tropNommees = [];
+  for (let i = 0; i <= cfg.CARTE_CASES_NOMMEES; i++) {
+    tropNommees.push({ c: i % 60, l: (i / 60) | 0, s: 'grass' });
+  }
+  ok(!Game.carteValide({ nom: 'trop', cote: 60, cases: tropNommees }),
+     `mais ${tropNommees.length} cases NOMMEES sont refusees (plafond ${cfg.CARTE_CASES_NOMMEES}) :`
+     + ' elles ne tiendraient pas dans la trame');
+  const memeChose = [];
+  for (let i = 0; i <= cfg.CARTE_CASES_NOMMEES; i++) memeChose.push([i % 60, (i / 60) | 0, 0]);
+  ok(!!Game.carteValide({ nom: 'compacte', cote: 60, pal: ['grass'], cases: memeChose }),
+     'et les MEMES cases en indices passent, parce qu elles pesent quatre fois moins');
+
+  const bancal = Game.carteValide({ nom: 'bancal', cote: 16, pal: ['grass'],
+                                    cases: [[0, 0, 0], [1, 0, 99]] },
+                                  { cote: 16, mode: 'plat' });
+  eq(bancal.cases.length, 1, 'un indice hors palette est ecarte, pas fatal');
 }
 
 console.log(`\ncartes.test.js : ${n} verifications OK`);

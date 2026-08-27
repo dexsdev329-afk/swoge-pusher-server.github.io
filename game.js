@@ -1125,6 +1125,55 @@ class Game {
    */
   static get CARTE_MODES() { return ['plat', 'iso']; }
 
+  /* ---- COMBIEN DE NOMS DISTINCTS UNE CARTE PEUT PORTER ----
+   * Le catalogue en compte cent quarante-quatre en tout, familles confondues.
+   * Deux cent cinquante-six laisse la place a tout ce qui existe et a tout ce
+   * qui vient, et garde l'indice sur trois caracteres au plus — c'est de la
+   * que vient l'economie. Une palette plus longue est TRONQUEE plutot que
+   * refusee : les cases qui pointaient au-dela perdent leur nom et se font
+   * ecarter comme n'importe quelle case vide, sans emporter la carte. */
+  static get CARTE_PALETTE_MAX() { return 256; }
+
+  /*
+   * LA CARTE, EN INDICES PLUTOT QU'EN NOMS.
+   *
+   * `{"c":59,"l":59,"s":"cendres"}` fait 28 octets, et jusqu'a 78 si les cles
+   * vont au bout de ce que le reglement autorise. `[59,59,4]` en fait onze.
+   * Sur trois mille six cents cases — le Nexus — c'est la difference entre
+   * deux cent quatre-vingt-un kilo-octets et soixante-cinq, c'est-a-dire entre
+   * une carte que la socket jette et une carte qui passe quatre fois.
+   *
+   * Les OBJETS ne sont pas compactes : ils sont vingt fois moins nombreux et
+   * portent chacun jusqu'a huit champs facultatifs. Les compacter aurait
+   * demande une position pour chaque champ, donc un format a faire evoluer a
+   * chaque champ nouveau — pour economiser un vingtieme du poids.
+   *
+   * On ne compacte QUE si l'on y gagne : sous quelques dizaines de cases, la
+   * palette coute plus que les noms qu'elle remplace.
+   */
+  static carteCompacte(carte) {
+    if (!carte || !Array.isArray(carte.cases)) return carte;
+    if (carte.cases.length < 40) return carte;
+    const pal = [];
+    const rang = new Map();
+    const idx = (k) => {
+      if (!k) return -1;
+      if (rang.has(k)) return rang.get(k);
+      if (pal.length >= Game.CARTE_PALETTE_MAX) return -1;
+      rang.set(k, pal.length); pal.push(k);
+      return pal.length - 1;
+    };
+    const cases = [];
+    for (const q of carte.cases) {
+      const is = idx(q.s), io = idx(q.o);
+      /* Une case dont le nom n'a pas trouve de place dans la palette repart
+         NOMMEE : la tronquer silencieusement ferait un trou dans le sol. */
+      if ((q.s && is < 0) || (q.o && io < 0)) { cases.push(q); continue; }
+      cases.push(io >= 0 ? [q.c, q.l, is, io] : [q.c, q.l, is]);
+    }
+    return Object.assign({}, carte, { pal, cases });
+  }
+
   /* ---- L'IMAGE JOINTE A LA CARTE ----
    *
    * Une adresse `data:` ecrite par un inconnu et posee telle quelle dans un
@@ -1167,9 +1216,42 @@ class Game {
     if (!Number.isInteger(cote) || cote < 4 || cote > cfg.CARTE_COTE) return null;
     const voulu = String((impose && impose.mode) || (x && x.mode) || 'plat');
     const mode = Game.CARTE_MODES.indexOf(voulu) >= 0 ? voulu : 'plat';
+    /* ---- LES CASES ARRIVENT NOMMEES, OU EN INDICES ----
+     *
+     * Une case nommee pese jusqu'a 78 octets ; la meme en indices en pese 18.
+     * Une carte de soixante de cote ne tient dans la trame que sous la seconde
+     * forme, et c'est ce qui a ouvert le Nexus a l'editeur.
+     *
+     * Les deux formes entrent par la MEME porte : on developpe la compacte
+     * ici, en tete, et pas une ligne de la validation ne sait laquelle est
+     * arrivee. L'alternative — deux chemins de validation — aurait fini par
+     * n'appliquer les memes regles qu'a l'un des deux, et c'est toujours celui
+     * qu'on regarde le moins qui laisse passer.
+     *
+     * L'ancienne forme n'est PAS retiree, et ne le sera pas : une page qui n'a
+     * pas recharge l'envoie toujours, et refuser ses cartes mettrait dehors
+     * exactement ceux qui ne sauraient pas pourquoi. Elle garde son propre
+     * plafond, plus bas — voir `CARTE_CASES_NOMMEES` : ce qu'un format permet
+     * doit tenir dans le tuyau, sinon le refus arrive sans un mot. */
+    const pal = Array.isArray(x && x.pal) ? x.pal.slice(0, Game.CARTE_PALETTE_MAX) : null;
     const brut = Array.isArray(x && x.cases) ? x.cases : null;
     if (!brut) return null;
     if (brut.length > cfg.CARTE_CASES) return null;
+    /* Le plafond de l'ancienne forme se mesure sur les cases NOMMEES qu'elle
+       contient, et non sur la longueur de l'envoi : une carte compacte qui
+       porterait quelques cases nommees n'est pas une carte nommee. */
+    if (!pal && brut.length > cfg.CARTE_CASES_NOMMEES) return null;
+    const nomme = (b) => {
+      if (!Array.isArray(b)) return b;
+      if (!pal) return null;
+      /* `[c, l, iSol]` ou `[c, l, iSol, iObjet]`. Un indice hors palette rend
+         `undefined`, que `cleElement` refuse comme le reste : une case sans
+         sol ni objet est ecartee plus bas, elle ne casse rien. */
+      const e = { c: b[0], l: b[1] };
+      if (b[2] != null && b[2] >= 0) e.s = pal[b[2]];
+      if (b[3] != null && b[3] >= 0) e.o = pal[b[3]];
+      return e;
+    };
     /* ---- UNE CASE PAR COORDONNEE, LA DERNIERE GAGNE ----
      * Rien n'empeche un envoi de porter deux fois la meme case. Les garder
      * toutes ferait grossir la carte sans rien changer a ce qu'on voit, et
@@ -1249,7 +1331,8 @@ class Game {
     };
     const par = new Map();
     const objets = [];
-    for (const b of brut) {
+    for (const brute of brut) {
+      const b = nomme(brute);
       if (!b || typeof b !== 'object') continue;
       const c = Math.round(Number(b.c)), l = Math.round(Number(b.l));
       if (!Number.isInteger(c) || !Number.isInteger(l)) continue;

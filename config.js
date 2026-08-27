@@ -651,8 +651,29 @@ module.exports = {
    * Le plafond de cases est au-dessus de 48x48 : il borne l'ENVELOPPE recue,
    * avant qu'on ecarte les doublons, et rien n'empeche un envoi de repeter la
    * meme case. */
-  CARTE_COTE: parseInt(env('CARTE_COTE', '48'), 10),
-  CARTE_CASES: parseInt(env('CARTE_CASES', '2600'), 10),
+  /* ---- ET LE FORMAT COMPACT A OUVERT LE PASSAGE ----
+   *
+   * Le paragraphe ci-dessus finissait par « le jour ou l'on voudra plus grand,
+   * il faudra un format compact — des indices dans une palette au lieu de noms
+   * repetes — et ce changement-la se fait expres ». Ce jour est arrive : le
+   * Nexus fait soixante cases de cote, et on ne peut pas proposer de le
+   * changer sans pouvoir l'ouvrir.
+   *
+   * Une case nommee pese jusqu'a 78 octets (« {"c":59,"l":59,"s":"…24…",
+   * "o":"…24…"} »). La meme case en indices — `[59,59,17,4]` — en pese 18.
+   * Soixante de cote font 3600 cases : 281 ko en noms, 65 ko en indices. La
+   * premiere ne passe pas la trame, la seconde passe quatre fois.
+   *
+   * D'ou DEUX plafonds, et non un seul releve :
+   *   CARTE_CASES          ce que le format compact autorise.
+   *   CARTE_CASES_NOMMEES  ce que l'ancien format autorise, inchange.
+   * Sans le second, le reglement accepterait une carte de 3700 cases nommees
+   * que le tuyau jetterait sans un mot — exactement la panne contre laquelle
+   * tout ce paragraphe met en garde. Les deux tiennent dans la trame, chacun
+   * pour ce qu'il permet, et l'essai le verifie pour les deux. */
+  CARTE_COTE: parseInt(env('CARTE_COTE', '60'), 10),
+  CARTE_CASES: parseInt(env('CARTE_CASES', '3700'), 10),
+  CARTE_CASES_NOMMEES: parseInt(env('CARTE_CASES_NOMMEES', '2600'), 10),
   CARTES_PAR_COMPTE: parseInt(env('CARTES_PAR_COMPTE', '24'), 10),
   /* Le nom que le joueur donne a sa carte. Compte en points de code, comme
      tout ce qui vient d'un clavier ici. */

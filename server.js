@@ -3916,6 +3916,19 @@ wss.on('connection', (ws) => {
        * raison. Une route muette laisse la page deviner : elle affiche « ... »
        * pour toujours, ou pire, elle croit que c'est enregistre.
        */
+      /* ---- ON NE COMPACTE QUE POUR QUI L'A DEMANDE ----
+       *
+       * `pal: 1` dans la demande veut dire « je sais lire une palette ». Une
+       * page qui n'a pas recharge ne le dit pas, et recoit les noms comme
+       * avant : sans ce drapeau, le jour du deploiement, toutes les pages
+       * encore ouvertes auraient affiche des cartes vides — un sol fait
+       * d'indices qu'elles ne savent pas traduire.
+       * C'est le meme raisonnement que pour la LECTURE des cartes anciennes,
+       * dans l'autre sens : un format nouveau ne se met jamais en travers de
+       * celui qui n'a rien demande. */
+      const compacteSiVoulu = (q, carte) => (q && q.pal === 1
+        ? Game.carteCompacte(carte) : carte);
+
       if (m.type === 'carteListe') {
         if (!ws.addr) return;
         return send(ws, { type: 'cartes', liste: game.vitrineCartes(ws.addr) });
@@ -3936,14 +3949,22 @@ wss.on('connection', (ws) => {
        * donjons se retirent au sort a chaque ouverture, il n'y a donc rien a
        * copier. On repond alors par un refus NOMME plutot que par une carte
        * vide : une grille blanche laisserait croire que le monde est vide. */
+      /* ---- ET LE NEXUS, C'EST CELUI QUI TOURNE ----
+       * Le monde ouvert tire ses salles et ses rochers au demarrage, comme un
+       * donjon — mais contrairement a un donjon, il ne se retire pas a chaque
+       * visite : c'est UN endroit, celui ou tout le monde se trouve. On copie
+       * donc la simulation VIVANTE, et pas un tirage neuf. « Un Nexus » et
+       * « le Nexus » sont deux choses differentes, et la seconde est celle
+       * qu'on veut pouvoir proposer de changer. */
       if (m.type === 'carteModele') {
         if (!ws.addr) return;
-        const modele = monde.modeleDeMonde(String(m.monde || ''));
+        const modele = monde.modeleDeMonde(String(m.monde || ''),
+                                           { salles: realm.salles, obstacles: realm.obstacles });
         if (!modele) {
           return send(ws, { type: 'carteModele', error: 'this place has no fixed map to copy',
                             code: 'sansPlan' });
         }
-        return send(ws, { type: 'carteModele', carte: modele });
+        return send(ws, { type: 'carteModele', carte: compacteSiVoulu(m, modele) });
       }
       /* LIRE EST OUVERT A TOUS : c'est tout l'interet d'une galerie. On envoie
          donc la carte entiere, avec `mienne` pour que la page sache si elle
@@ -3953,12 +3974,12 @@ wss.on('connection', (ws) => {
         if (!ws.addr) return;
         const k = game.carte(m.id);
         if (!k) return send(ws, { type: 'carte', error: 'carte inconnue', code: 'inconnue' });
-        return send(ws, { type: 'carte', carte: {
+        return send(ws, { type: 'carte', carte: compacteSiVoulu(m, {
           id: k.id, nom: k.nom, cote: k.cote, mode: k.mode || 'plat', cases: k.cases,
           objets: k.objets || [], depart: k.depart || null,
           modifie: k.modifie, mienne: k.addr === ws.addr,
           auteur: (game.players.get(k.addr) && game.players.get(k.addr).name) || null,
-        } });
+        }) });
       }
       if (m.type === 'carteEnregistre') {
         if (!ws.addr) return;
