@@ -4296,6 +4296,93 @@ wss.on('connection', (ws) => {
         return send(ws, messageEntree(d.realm, j, d.realm.plan, porte));
       }
 
+      /* ==================== L'ARENE, DEPUIS LE NEXUS ====================
+       *
+       * DEMANDE : « mettre le portail du donjon a cote du portail PvP rouge,
+       * pour qu'on puisse y rentrer depuis le nexus et le refaire en boucle ».
+       *
+       * ---- POURQUOI CE N'EST PAS UN `realmJoin` ----
+       *
+       * Les portes du nexus menent a des MONDES OUVERTS — trois simulations
+       * permanentes que tout le monde partage (`MONDES`). Y brancher l'Arene
+       * en aurait fait une salle unique pour tous les joueurs, avec UN champion
+       * que le premier arrive tue et que les autres trouvent mort. « Le refaire
+       * en boucle » demande l'inverse : une salle par joueur, neuve a chaque
+       * fois.
+       *
+       * On passe donc par la Map des donjons, avec une porte nommee
+       * `arena:<adresse>` — exactement le patron de `carteJoue`, qui cree deja
+       * une simulation instanciee sans passer par la table des donjons.
+       *
+       * ---- ET CE N'EST PAS UNE IMPRIMANTE A RELIQUES ----
+       *
+       * Verifie avant d'ecrire : `_tireDuLot` filtre sur les exemplaires
+       * RESTANTS et rend `null` quand le plafond est atteint. Les quatre
+       * reliques de l'Arene existent a quatre exemplaires chacune — seize au
+       * total, jamais plus, quel que soit le nombre de passages. La boucle est
+       * donc une course a seize pieces, pas une source infinie, et le plafond
+       * la ferme tout seul sans qu'on ait a poser un delai par-dessus.
+       */
+      if (m.type === 'arenePorte') {
+        if (!ws.addr) return;
+        const p = game._p(ws.addr);
+        const skin = game.skinActifDe(p);
+        if (!skin || !game.possedeSkin(p, skin)) {
+          return send(ws, { type: 'realmRefus', raison: 'no-character' });
+        }
+        const fiche = ficheDeCombat(ws.addr, skin);
+        if (!fiche) return send(ws, { type: 'realmRefus', raison: 'no-character' });
+        /* UNE SALLE PAR JOUEUR : la porte porte son adresse. Deux joueurs qui
+           entrent en meme temps ont chacun leur champion ; un joueur qui
+           ressort et revient retrouve la SIENNE tant qu'elle vit, ce qui evite
+           de regenerer un plan a chaque aller-retour. */
+        const porte = 'arena:' + String(ws.addr).toLowerCase();
+        let d = [...donjons.values()].find((x) => x.porte === porte);
+        if (!d && donjons.size >= DONJONS_MAX) {
+          return send(ws, { type: 'realmPorteRefus', raison: 'trop-de-donjons' });
+        }
+        if (!d) {
+          let R;
+          try {
+            R = new Realm({
+              plan: monde.planDeDonjon('arena', Math.random),
+              /* Le meme aiguillage que la porte du monde ouvert : une relique
+                 vient du lot de l'Arene, le reste du tirage ordinaire. Ecrit
+                 deux fois parce que les deux entrees construisent leur Realm
+                 separement — le jour ou il y en aura une troisieme, ce sera le
+                 moment de le sortir dans une fonction. */
+              tireObjet: (r, a, garanti) => (String(r) === 'relique'
+                ? game.tireButinDonjon(r, a, 'arena')
+                : (garanti ? game.tireButinGaranti(r, a) : game.tireButin(r, a))),
+            });
+          } catch (e) {
+            console.error('[arene]', e && e.message);
+            return send(ws, { type: 'realmPorteRefus', raison: 'server error' });
+          }
+          /* `retour: null` — on vient du nexus, pas d'un monde ouvert. C'est ce
+             qui fait que `realmSort` rend au nexus au lieu de chercher des
+             coordonnees qui n'existent pas. */
+          d = { id: donjonSuivant++, realm: R, nom: 'arena', porte,
+                carte: null, retour: null };
+          donjons.set(d.id, d);
+        }
+        /* Meme precaution que partout ailleurs : un seul corps par compte. */
+        for (const autre of realmClients) {
+          if (autre === ws || autre.addr !== ws.addr) continue;
+          autre.donjon = null; autre.monde = null;
+          realmClients.delete(autre);
+          if (autre.readyState === 1) send(autre, { type: 'realmSorti', raison: 'autre-onglet' });
+        }
+        for (const M of tousLesMondes()) M.quitte(ws.addr);
+        ws.monde = null;
+        ws.donjon = d.id;
+        ws.realmSkin = skin;
+        realmClients.add(ws);
+        const j = d.realm.rejoint(ws.addr, fiche);
+        realmDernierMouv.set(ws.addr, Date.now());
+        return send(ws, messageEntree(d.realm, j, d.realm.plan, porte));
+      }
+
       /* ==================== FRANCHIR LA PORTE ====================
        *
        * Le client dit « j'entre », et RIEN d'autre : ni quel portail, ni ou il
@@ -4412,6 +4499,25 @@ wss.on('connection', (ws) => {
         const fiche = skin ? ficheDeCombat(ws.addr, skin) : null;
         if (!fiche) return send(ws, { type: 'realmPorteRefus', raison: 'no-character' });
         const avant = d.realm.joueurs.get(ws.addr);
+        /* ---- UNE SIMULATION SANS MONDE D'ORIGINE REND AU NEXUS ----
+         *
+         * `d.retour` porte les coordonnees de la porte par laquelle on est
+         * entre. Deux entrees n'en ont pas : l'Arene ouverte depuis le nexus,
+         * et les cartes de joueur (`carteJoue`, qui pose `retour: null` depuis
+         * toujours). La ligne d'en dessous lisait `d.retour.x` sans regarder :
+         * pour une carte, sortir LEVAIT — un plantage latent que personne
+         * n'avait rencontre parce que le bouton EXIT y est cache.
+         *
+         * Quand il n'y a pas de monde d'ou l'on vient, il n'y en a pas non
+         * plus ou retourner : on quitte la simulation et le client revient au
+         * nexus, exactement comme `realmLeave`. */
+        if (!d.retour) {
+          d.realm.quitte(ws.addr);
+          ws.donjon = null; ws.monde = null;
+          realmClients.delete(ws);
+          realmDernierMouv.delete(ws.addr);
+          return send(ws, { type: 'realmSorti' });
+        }
         const etat = { x: d.retour.x, y: d.retour.y,
                        pv: avant ? avant.pv : undefined,
                        mp: avant ? avant.mp : undefined };
