@@ -258,4 +258,55 @@ function joueur(g, i, skin, xp, nom) {
      'et un redeploiement ne la fait pas payer deux fois : ' + refus);
 }
 
+// ================== LA VITRINE MONTRE LE VRAI CLASSEMENT
+//
+// La page d'accueil portait trois lignes ecrites a la main : « SwogeKing »,
+// « DogeLord », « FlonDoge », avec des rangs — LEGEND, ALPHA, GAMMA — qui
+// n'existent nulle part dans le jeu. La Fame est un NOMBRE ; ces titres
+// etaient une invention, et une XP inventee au-dessus.
+//
+// Ce que la vitrine rend doit donc sortir du MEME calcul que le panneau, et
+// ne rien porter de plus que ce qu'un visiteur peut voir sans etre connecte.
+{
+  const g = new Game();
+  eq(g.vitrineChiffres().classement.length, 0,
+     'sans personne qui joue, la vitrine ne montre aucun classement');
+
+  /* ---- ON REPART D'UN JEU NEUF ----
+   * `classementMonde` garde son resultat une seconde — c'est son cache, et il
+   * a raison de l'avoir : la vitrine est publique et le panneau se redemande
+   * toutes les cinq secondes. Mais peupler le meme jeu dans la meme seconde
+   * relirait la liste vide qu'on vient de mesurer, et l'essai accuserait le
+   * cache d'un defaut qui n'existe pas. */
+  const h = new Game();
+  joueur(h, 71, 'shiba', 40000, 'Alice');
+  joueur(h, 72, 'shiba', 9000, 'Bob');
+  joueur(h, 73, 'shiba', 2000, null);
+  /* Le raccourci `joueur()` baptise tout le monde ; celui-la doit rester
+     anonyme, c'est le cas qu'on mesure. */
+  h._p(adr(73)).name = null;
+  joueur(h, 74, 'shiba', 500, 'Dora');
+  /* Le quatrieme ne doit PAS sortir : la carte en montre trois. */
+  const v = h.vitrineChiffres().classement;
+  eq(v.length, 3, 'la vitrine en montre trois, pas un de plus');
+  eq(v[0].nom, 'Alice', 'et dans l ordre du panneau');
+  eq(v[1].nom, 'Bob', 'deuxieme');
+
+  const panneau = h.classementMonde(null, 3).top;
+  eq(v[0].xp, panneau[0].xp, 'l XP est celle du panneau, pas une autre');
+  eq(v[0].niveau, panneau[0].niveau, 'le niveau aussi');
+  eq(v[0].fame, panneau[0].fame, 'la Fame aussi');
+
+  /* Un joueur sans nom garde la meme convention que le panneau : le debut de
+     son adresse. Deux endroits qui nomment les gens autrement, ce sont deux
+     personnes differentes pour qui les lit. */
+  eq(v[2].nom, adr(73).slice(0, 10),
+     'sans nom, c est le debut de l adresse, comme dans le jeu');
+
+  /* Et RIEN d'autre ne sort : une vitrine publique n'est pas un profil. */
+  const champs = Object.keys(v[0]).sort().join(',');
+  eq(champs, 'fame,niveau,nom,xp',
+     'et il ne sort que ces quatre champs : ' + champs);
+}
+
 console.log('classement_monde.test.js : ' + n + ' verifications OK');

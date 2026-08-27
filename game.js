@@ -2133,7 +2133,37 @@ class Game {
       volume: Number(volume.toFixed(2)),
       manches,
       rendus: Number(rendus.toFixed(2)),
+      /* ---- ET LE HAUT DU CLASSEMENT, POUR DE VRAI ----
+       * La page d'accueil montrait trois lignes ecrites a la main —
+       * « SwogeKing / LEGEND / 984,200 XP » — trois joueurs qui n'existent
+       * pas, avec une XP qui n'a jamais ete gagnee et un rang (« LEGEND »,
+       * « ALPHA », « GAMMA ») qui ne correspond a rien dans le jeu : la Fame
+       * est un NOMBRE ici, pas un titre. C'est la meme faute que les chiffres
+       * de la maquette, au meme endroit, et elle se repare de la meme facon —
+       * en la lisant sur le serveur.
+       * Trois lignes : c'est ce que la carte montre. En demander plus serait
+       * envoyer a chaque visiteur un classement que personne ne regarde. */
+      classement: this.vitrineClassement(3),
     };
+  }
+
+  /**
+   * LE HAUT DU CLASSEMENT DU MONDE, EN LECTURE PUBLIQUE.
+   *
+   * Le meme calcul que le panneau du jeu — `classementMonde`, son cache d'une
+   * seconde compris — reduit a ce qu'une vitrine peut montrer. Rien de plus
+   * n'en sort : ni adresse complete, ni tenue, ni ce qu'on possede. Le nom
+   * s'efface derriere le debut de l'adresse quand il n'y en a pas, exactement
+   * comme dans le panneau : deux endroits qui nomment les gens autrement, ce
+   * sont deux personnes differentes pour qui les lit.
+   */
+  vitrineClassement(n) {
+    const combien = Math.max(1, Math.min(10, Math.floor(Number(n) || 3)));
+    const top = (this.classementMonde(null, combien) || {}).top || [];
+    return top.map((r) => ({
+      nom: r.name || String(r.address || '').slice(0, 10),
+      xp: r.xp, niveau: r.niveau, fame: r.fame,
+    }));
   }
 
   _mois(cle) {
