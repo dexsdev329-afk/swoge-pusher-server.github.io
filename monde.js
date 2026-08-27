@@ -328,13 +328,16 @@ const DONJONS = {
      * donc des cercles de braise de la Fonderie et du Sanctuaire : un anneau
      * ORANGE au sol sous un boss de foudre, et la pierre en flammes du
      * Sanctuaire qui tombe du ciel quand il fait pleuvoir.
-     * `effets` nomme la famille. C'est un champ et pas une deuxieme table
+     * `planchesFx` nomme la famille. C'est un champ et pas une deuxieme table
      * cote page pour la meme raison que `mur` et `decor` juste au-dessus :
      * deux tables a tenir d'accord finissent par ne plus l'etre, et le jour
      * ou un quatrieme donjon arrive, il aurait ses murs dans une seule des
      * deux. La page recoit le nom et charge `annonce_<nom>`, `onde_<nom>` et
-     * `chute_<nom>` — elle ne le deduit jamais de la cle du donjon. */
-    effets: 'arene',
+     * `chute_<nom>` — elle ne le deduit jamais de la cle du donjon.
+     * Il ne s'appelle PAS `effets` : ce mot designe deja la table des etats
+     * (paralysie, ralentissement, brulure) que l'accueil du realm envoie, et
+     * les deux se sont ecrases l'un l'autre. Voir server.js. */
+    planchesFx: 'arene',
     decor: 'arena',
     /* Six et non huit : la salle a perdu un tiers de son aire, et le decor
        doit perdre autant. Huit objets dans quinze tuiles auraient encombre
@@ -1267,10 +1270,11 @@ function planDeDonjon(nom, alea) {
     sortie: { x: entree.x, y: entree.y },
     /* La planche d'objets remonte avec le plan, comme `mur`. */
     decor: D.decor || undefined,
-    /* Et la famille d'effets, pour la meme raison : la page recoit le nom des
-       planches de zone, elle ne le devine pas. Absente, elle retombe sur la
-       paire de donjon — ce que font la Fonderie, la cave et le Sanctuaire. */
-    effets: D.effets || undefined,
+    /* Et les planches d'effets, pour la meme raison : la page recoit le nom
+       des planches de zone, elle ne le devine pas. Absentes, elle retombe sur
+       la paire de donjon — ce que font la Fonderie, la cave et le
+       Sanctuaire. */
+    planchesFx: D.planchesFx || undefined,
     obstacles: murs,
     /* Elles partent avec le plan, comme les tuiles : la page les DESSINE et
        le serveur les fait bruler, a partir de la meme liste. Deux listes
