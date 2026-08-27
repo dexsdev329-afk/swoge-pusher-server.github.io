@@ -33,8 +33,8 @@
  * fichier sous lui, c'est se faire ecraser au prochain enregistrement.
  *
  *   1. arreter le serveur
- *   2. node ressuscite.js            (a blanc : ne touche a rien, dit tout)
- *   3. node ressuscite.js --ecris    (ecrit, apres une sauvegarde datee)
+ *   2. node ressuscite.js 0x… brett            (a blanc : ne touche a rien)
+ *   3. node ressuscite.js 0x… brett --ecris    (ecrit, apres copie datee)
  *   4. redemarrer
  */
 const fs = require('fs');
@@ -47,8 +47,14 @@ const personnages = require('./personnages');
  * A REMPLIR A LA MAIN, depuis ce que le joueur a montre. Rien n'est devine :
  * un outil qui devine ce qu'un joueur portait est un outil qui invente des
  * objets. */
-const ADRESSE = '';          // 0x… du joueur, OBLIGATOIRE
-const SKIN    = 'brett';          // le personnage mort : andy, claude, pepe, landwolf, ogswoge, brett
+/* L'ADRESSE ET LE SKIN VIENNENT DE LA LIGNE DE COMMANDE, pas du fichier :
+ *   node ressuscite.js 0x… brett
+ * Une adresse de joueur ecrite en dur finirait dans un depot public, liee a un
+ * pseudo par le message de commit. Elle est deja publique sur la chaine, mais
+ * l'y RATTACHER est un renseignement de plus, gratuitement donne. Et en
+ * argument, l'outil ressert au prochain incident sans qu'on le modifie. */
+const ADRESSE = (process.argv[2] || '').trim();
+const SKIN    = (process.argv[3] || '').trim();
 
 /* L'equipement PORTE, par emplacement. Les identifiants viennent de
    boutique.js ; on les cherche par NOM pour que la liste reste lisible. */
@@ -69,8 +75,10 @@ const TOUS = [].concat(boutique.ITEMS || [], boutique.ITEMS_DROP || []);
 const parNom = (n) => TOUS.find((o) => o.nom === n) || null;
 
 function main() {
-  if (!ADRESSE || !SKIN) {
-    console.error('Renseigne ADRESSE et SKIN en tete du fichier.'); process.exit(2);
+  if (!/^0x[0-9a-fA-F]{40}$/.test(ADRESSE) || !SKIN) {
+    console.error('usage : node ressuscite.js <0xadresse> <skin> [--ecris]');
+    console.error('  skins : ' + Object.keys(personnages.BASE).join(', '));
+    process.exit(2);
   }
   const FICHIER = path.join(cfg.DATA_DIR, 'state.json');
   if (!fs.existsSync(FICHIER)) { console.error('state.json introuvable dans ' + cfg.DATA_DIR); process.exit(2); }
