@@ -33,6 +33,119 @@ const paris = require('./paris');
    que si ODDS_API_KEY est posee — sans elle il le dit au demarrage et ne
    fait rien, le calendrier reste celui du depot. */
 const parisImport = require('./paris_import');
+const espn = require('./scores_espn');
+
+/* ---- IL VIT AU MODULE, PAS DANS LA REQUETE ----
+ * Il etait declare dans le gestionnaire HTTP, c'est-a-dire RECONSTRUIT a
+ * chaque visite : la releve remplissait un objet que la reponse suivante ne
+ * voyait jamais. Rien ne cassait — la page recevait simplement un tableau
+ * vide, indefiniment, pendant que le serveur interrogeait ESPN a chaque
+ * requete. Un cache qui ne survit pas a l'appel qui le remplit n'est pas un
+ * cache, c'est une fuite. */
+/* ==================== LE DIRECT, EN CACHE ====================
+ *
+ * Les tableaux d'ESPN sont gratuits et sans quota, mais ils sont sur le
+ * RESEAU : une route publique qui les attendrait ferait payer a chaque
+ * visiteur la latence d'un tiers, et tomberait avec lui. On sert donc
+ * TOUJOURS ce qu'on a en memoire, et on rafraichit a cote.
+ *
+ * Quarante-cinq secondes : un score bouge moins souvent que ca, et la route
+ * est de toute facon mise en cache soixante secondes par les navigateurs.
+ * Demander plus vite ne montrerait rien de plus.
+ *
+ * `enVol` empeche dix visiteurs simultanes de lancer dix releves.
+ */
+const directCache = { t: 0, par: new Map(), reprises: {}, tReprises: 0, enVol: false };
+const DIRECT_AGE = 45000;
+const REPRISE_AGE = 6 * 3600000;      // la date d'une saison ne bouge pas de l'heure
+
+/* Le direct se POSE sur une liste de rencontres, ou qu'elle parte : la route
+   publique et la socket servent la meme chose, et deux decorations separees
+   auraient fini par ne plus montrer la meme page a deux joueurs. */
+function avecDirect(l, t) {
+  const vus = directCache.par;
+  for (const m of l) {
+    const s = vus.get(m.id);
+    if (s && s.score) m.direct = { score: s.score, etat: s.etat, detail: s.detail };
+  }
+  directFrais(t || Date.now());
+  return l;
+}
+
+/*
+ * ---- CE QUI SE JOUE MAINTENANT, ET QU'ON NE PEUT PLUS PARIER ----
+ *
+ * Le tableau des paris ferme au coup d'envoi : `paris.ouverts` ne rend que ce
+ * qui est encore acceptable, et c'est une regle qu'on ne touche pas — accepter
+ * un pari sur un match commence, c'est accepter celui de quelqu'un qui regarde
+ * le score.
+ *
+ * Mais une rencontre en cours a precisement disparu du tableau AU MOMENT ou
+ * son score devient interessant. Un direct pose sur les rencontres ouvertes ne
+ * pouvait donc jamais rien montrer : il decorait des matchs qui n'ont pas
+ * commence.
+ *
+ * D'ou une SECONDE liste, a part. Elle ne porte aucune cote et n'ouvre aucun
+ * bouton : c'est un tableau d'affichage, pas un marche. La regle de fermeture
+ * reste exactement ou elle etait.
+ */
+function enDirect(t) {
+  const vus = directCache.par;
+  if (!vus.size) return [];
+  const out = [];
+  for (const m of paris.catalogue().matchs) {
+    if (m.debut > t || t - m.debut > 4 * 3600000) continue;
+    const s = vus.get(m.id);
+    if (!s || !s.score) continue;
+    out.push({ id: m.id, sport: m.sport, competition: m.competition,
+               domicile: m.domicile, exterieur: m.exterieur, debut: m.debut,
+               score: s.score, etat: s.etat, detail: s.detail, fini: !!s.fini });
+  }
+  out.sort((a, b) => a.debut - b.debut);
+  return out;
+}
+
+function directFrais(t) {
+  if (directCache.enVol) return;
+  const vieux = t - directCache.t > DIRECT_AGE;
+  const vieillesReprises = t - directCache.tReprises > REPRISE_AGE;
+  if (!vieux && !vieillesReprises) return;
+  directCache.enVol = true;
+  (async () => {
+    if (vieux) {
+      /* Ce qui se joue MAINTENANT, ou vient de finir : quatre heures en
+         arriere couvrent la plus longue rencontre du catalogue, un quart
+         d'heure en avant attrape celles qui commencent pendant qu'on regarde. */
+      const encours = paris.catalogue().matchs.filter(
+        (m) => m.debut <= t + 900000 && t - m.debut <= 4 * 3600000);
+      directCache.par = encours.length ? await espn.releve(encours, { maintenant: t })
+                                       : new Map();
+      directCache.t = t;
+    }
+    if (vieillesReprises) {
+      /* Pour chaque sport SANS rencontre ouverte, la date de son retour. On ne
+         la demande que pour ceux-la : un sport qui joue n'a pas a s'excuser. */
+      const ouverts = new Set(paris.ouverts(t).map((m) => m.sport));
+      const parSport = new Map();
+      for (const [ligue, chemin] of Object.entries(espn.CHEMINS)) {
+        void chemin;
+        const sport = (parisImport.LIGUES.find((x) => x.clef === ligue) || {}).sport;
+        if (!sport || ouverts.has(sport)) continue;
+        if (!parSport.has(sport)) parSport.set(sport, []);
+        parSport.get(sport).push(ligue);
+      }
+      const out = {};
+      for (const [sport, ligues] of parSport) {
+        const quand = await espn.reprise(ligues, { maintenant: t });
+        if (quand) out[sport] = quand;
+      }
+      directCache.reprises = out;
+      directCache.tReprises = t;
+    }
+  })().catch((e) => console.log('[espn] releve : ' + (e && e.message)))
+      .then(() => { directCache.enVol = false; });
+}
+
 const boutique = require('./boutique');
 const skins = require('./skins');
 let calendrierAuto = null;          // les minuteries de l alimentation
@@ -2665,6 +2778,13 @@ const server = http.createServer(async (req, res) => {
   if (path === '/paris/calendrier') {
     const t = Date.now();
     const l = paris.ouverts(t).map((m) => paris.vue(m, t));
+    /* ---- LE DIRECT, ET LA DATE DE RETOUR ----
+     * Deux choses que la page ne peut pas deviner, et qui viennent de la meme
+     * source gratuite. On les POSE sur la reponse plutot que d'ouvrir une
+     * seconde route : la page fait deja cet appel, et un aller-retour de plus
+     * pour deux champs serait une latence de plus a chaque ouverture.
+     * Rien ici n'attend le reseau — voir `directFrais`. */
+    avecDirect(l, t);
     /* ---- ET LES SPORTS, AVEC LEURS NOMS ----
      * Une rencontre porte la CLE de son sport — « foot » — parce que c'est
      * elle qui sert a tout le reste du serveur. Le nom lisible vit dans le
@@ -2674,7 +2794,9 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*',
                          'cache-control': 'public, max-age=60' });
-    return res.end(JSON.stringify({ t, sports: paris.catalogue().sports, matchs: l }));
+    return res.end(JSON.stringify({ t, sports: paris.catalogue().sports, matchs: l,
+                                    directs: enDirect(t),
+                                    reprises: directCache.reprises }));
   }
 
   /* L'etat de l'alimentation, et de quoi la relancer a la main.
@@ -3290,7 +3412,13 @@ wss.on('connection', (ws) => {
       if (m.type === 'parisListe') {
         return send(ws, { type: 'parisListe',
                           sports: require('./paris').catalogue().sports,
-                          matchs: game.parisOuverts(Date.now()),
+                          matchs: avecDirect(game.parisOuverts(Date.now())),
+                          /* Ce qui se joue MAINTENANT : ferme aux paris, mais
+                             c'est justement l'instant ou le score compte. */
+                          directs: enDirect(Date.now()),
+                          /* Quand un sport sans rencontre revient. Un onglet
+                             vide sans un mot se lit comme un site casse. */
+                          reprises: directCache.reprises,
                           min: cfg.PARI_MIN, max: cfg.PARI_MAX,
                           jambesMax: cfg.PARI_JAMBES_MAX, gainMax: cfg.PARI_GAIN_MAX,
                           mesParis: ws.addr ? game.mesParis(ws.addr, 40) : [] });
@@ -5365,7 +5493,7 @@ wss.on('connection', (ws) => {
           persistSoon();
           notifyBetPlaced(ws.addr, pari);
           send(ws, { type: 'pariPose', pari, balance: game.balanceStr(ws.addr),
-                     matchs: game.parisOuverts(Date.now()),
+                     matchs: avecDirect(game.parisOuverts(Date.now())),
                      mesParis: game.mesParis(ws.addr, 40) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;

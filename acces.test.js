@@ -126,12 +126,27 @@ const code = async (port, chemin, entetes, suivre) => (await fetch(
          'et lisibles depuis le site, qui est sur un autre domaine');
       const j = await r.json();
       const cles = Object.keys(j).sort().join(',');
-      eq(cles, 'joueurs,manches,rendus,volume',
-         'quatre totaux, et rien de plus');
+      eq(cles, 'classement,joueurs,manches,rendus,volume',
+         'quatre totaux, plus le haut du classement — et rien de plus');
+      /* ---- ET LE CLASSEMENT NE FAIT PAS FUIR UN PROFIL ----
+       * Il est arrive apres cette liste, pour remplacer trois joueurs inventes
+       * sur la page d accueil. Le controle qui compte n a pas change : une
+       * porte ouverte qui laisse filtrer un detail par compte est pire qu une
+       * porte fermee. On verifie donc ce que chaque ligne porte, pas seulement
+       * qu elle existe — ni adresse, ni solde, ni ce qu on possede. */
+      ok(Array.isArray(j.classement), 'le classement est une liste');
+      for (const ligne of j.classement) {
+        eq(Object.keys(ligne).sort().join(','), 'fame,niveau,nom,xp',
+           'une ligne ne porte qu un nom, une XP, un niveau et une Fame');
+      }
       ok(!/0x[0-9a-fA-F]{6}/.test(JSON.stringify(j)),
          'aucune adresse ne part avec : ce sont des sommes, le detail reste'
          + ' derriere la porte du panneau');
       for (const k of Object.keys(j)) {
+        /* Le classement est une LISTE — verifiee juste au-dessus, ligne par
+           ligne. La regle qui suit vaut pour les quatre totaux : ce sont eux
+           que la page ecrit tels quels dans son bandeau. */
+        if (k === 'classement') continue;
         ok(typeof j[k] === 'number' && isFinite(j[k]) && j[k] >= 0,
            `« ${k} » est un nombre utilisable (${j[k]}) — une page qui afficherait`
            + ' « NaN » a la place d un volume vaut moins qu une page sans chiffre');

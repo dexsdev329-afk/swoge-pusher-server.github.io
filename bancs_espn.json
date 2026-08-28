@@ -1,0 +1,590 @@
+{
+ "ger": {
+  "events": [
+   {
+    "date": "2026-08-28T18:30Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Fri, August 28th at 2:30 PM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Bayern Munich"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "VfB Stuttgart"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-29T13:30Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Sat, August 29th at 9:30 AM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "1. FC Union Berlin"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Eintracht Frankfurt"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-29T13:30Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Sat, August 29th at 9:30 AM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "FC Cologne"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "TSG Hoffenheim"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-29T13:30Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Sat, August 29th at 9:30 AM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Mainz"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "SC Paderborn 07"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-29T13:30Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Sat, August 29th at 9:30 AM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "RB Leipzig"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Borussia Mönchengladbach"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-29T13:30Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Sat, August 29th at 9:30 AM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "SV ELVERSBERG"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Bayer Leverkusen"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "ita": {
+  "events": [
+   {
+    "date": "2026-08-28T18:45Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Fri, August 28th at 2:45 PM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "AC Milan"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Venezia"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-29T16:30Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Sat, August 29th at 12:30 PM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Fiorentina"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Frosinone"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-29T16:30Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Sat, August 29th at 12:30 PM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Monza"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Udinese"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-29T16:30Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Sat, August 29th at 12:30 PM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Sassuolo"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Torino"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-29T18:45Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Sat, August 29th at 2:45 PM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Juventus"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Parma"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-30T16:30Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Sun, August 30th at 12:30 PM EDT",
+      "shortDetail": "Scheduled"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Napoli"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Como"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "nfl": {
+  "events": [
+   {
+    "date": "2026-08-27T23:00Z",
+    "status": {
+     "type": {
+      "id": "2",
+      "name": "STATUS_IN_PROGRESS",
+      "state": "in",
+      "completed": false,
+      "description": "In Progress",
+      "detail": "12:30 - 3rd Quarter",
+      "shortDetail": "12:30 - 3rd"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Buffalo Bills"
+        },
+        "score": "10"
+       },
+       {
+        "team": {
+         "displayName": "Pittsburgh Steelers"
+        },
+        "score": "14"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-28T00:00Z",
+    "status": {
+     "type": {
+      "id": "2",
+      "name": "STATUS_IN_PROGRESS",
+      "state": "in",
+      "completed": false,
+      "description": "In Progress",
+      "detail": "1:54 - 1st Quarter",
+      "shortDetail": "1:54 - 1st"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Cleveland Browns"
+        },
+        "score": "14"
+       },
+       {
+        "team": {
+         "displayName": "New England Patriots"
+        },
+        "score": "7"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-28T00:00Z",
+    "status": {
+     "type": {
+      "id": "2",
+      "name": "STATUS_IN_PROGRESS",
+      "state": "in",
+      "completed": false,
+      "description": "In Progress",
+      "detail": "15:00 - 2nd Quarter",
+      "shortDetail": "15:00 - 2nd"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Las Vegas Raiders"
+        },
+        "score": "6"
+       },
+       {
+        "team": {
+         "displayName": "San Francisco 49ers"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-28T02:00Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Thu, August 27th at 10:00 PM EDT",
+      "shortDetail": "8/27 - 10:00 PM EDT"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Los Angeles Chargers"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Los Angeles Rams"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-28T22:00Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Fri, August 28th at 6:00 PM EDT",
+      "shortDetail": "8/28 - 6:00 PM EDT"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Baltimore Ravens"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Washington Commanders"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "date": "2026-08-28T23:00Z",
+    "status": {
+     "type": {
+      "id": "1",
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "description": "Scheduled",
+      "detail": "Fri, August 28th at 7:00 PM EDT",
+      "shortDetail": "8/28 - 7:00 PM EDT"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "team": {
+         "displayName": "Miami Dolphins"
+        },
+        "score": "0"
+       },
+       {
+        "team": {
+         "displayName": "Atlanta Falcons"
+        },
+        "score": "0"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

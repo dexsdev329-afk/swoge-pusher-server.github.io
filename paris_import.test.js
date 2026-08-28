@@ -89,6 +89,17 @@ const SCORES = {
 
 global.fetch = async (url) => {
   const u = new URL(String(url));
+  /* ---- ESPN N'EST PAS THE ODDS API ----
+   * Le reglement consulte d'abord les tableaux publics d'ESPN, qui sont
+   * gratuits. Ce banc-la compte les CREDITS, donc les appels payants : laisser
+   * les appels gratuits entrer dans le compteur ferait echouer « une seule
+   * ligue interrogee » sur une depense qui n'a pas eu lieu.
+   * On leur repond un tableau vide : ce fichier mesure le budget de The Odds
+   * API, et la couverture d'ESPN a son propre essai. */
+  if (/espn\.com$/.test(u.hostname)) {
+    return { ok: true, status: 200, headers: { get: () => null },
+             json: async () => ({ events: [] }) };
+  }
   const m = u.pathname.match(/\/sports\/([^/]+)\/(\w+)/);
   const ligue = m && m[1], quoi = m && m[2];
   let cout = 0;
@@ -519,6 +530,29 @@ const cotes = require('./cotes');
     const lot = [fini, { id: 'inconnu-x', domicile: 'C', exterieur: 'D', score: '0-0', resultat: 'N' }];
     r = imp.trieReglements(lot, sansExpo, T + 5 * 3600000);
     eq(r.auto.length + r.mains.length, lot.length, 'aucune rencontre ne se perd dans le tri');
+  }
+
+  // ================== LA NFL ARRIVE A LA SEMAINE 1, PAS EN PRESAISON
+  //
+  // En aout, seize matchs de presaison se jouent — mesure faite — et The Odds
+  // API les range sous une clef separee. L'ajouter tiendrait en une ligne, et
+  // c'est justement pourquoi ce refus doit etre ECRIT : sans lui, la prochaine
+  // personne qui voit un onglet NFL vide en aout ajoutera la ligne, avec les
+  // meilleures intentions.
+  //
+  // Les titulaires jouent un quart-temps en presaison. Nos cotes sortent d'un
+  // Elo bati sur des equipes COMPLETES : elles n'y veulent rien dire. Ouvrir un
+  // marche dont on sait que le prix est faux, c'est offrir de l'argent a qui le
+  // remarque.
+  {
+    /* La liste PAR DEFAUT, et non celle du banc : cet essai pose
+       `ODDS_API_LIGUES` en tete de fichier, ce qui masquerait justement la
+       decision qu'on vient verifier. */
+    const dedans = imp.LIGUES_DEFAUT.map((x) => x.split('=')[1]);
+    ok(dedans.indexOf('americanfootball_nfl') >= 0, 'la NFL est suivie');
+    const pre = dedans.filter((k) => /preseason/i.test(k));
+    eq(pre.length, 0,
+       'et AUCUNE presaison n est suivie' + (pre.length ? ' — ' + pre.join(', ') : ''));
   }
 
   console.log(`paris_import.test.js : ${n} verifications OK`);

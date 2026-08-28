@@ -55,6 +55,7 @@
 const fs = require('fs');
 const path = require('path');
 const cotes = require('./cotes');
+const espn = require('./scores_espn');
 const paris = require('./paris');
 
 const BASE = 'https://api.the-odds-api.com/v4';
@@ -64,7 +65,13 @@ const CLE = process.env.ODDS_API_KEY || '';
    celles de The Odds API ; `GET /v4/sports` les liste toutes, gratuitement.
    On les met dans une variable d'environnement pour pouvoir en ajouter une
    sans redeployer le code. */
-const LIGUES = (process.env.ODDS_API_LIGUES || [
+/* ---- LA LISTE PAR DEFAUT, NOMMEE ----
+ * Elle etait ecrite dans l'expression qui lit la variable d'environnement,
+ * donc invisible des qu'on pose la variable — y compris pour un essai, qui la
+ * pose toujours. Les decisions qui vivent ICI (la presaison qu'on n'ouvre pas,
+ * le format Test du cricket qu'on ecarte) n'etaient donc verifiables nulle
+ * part. On la nomme, et on l'expose. */
+const LIGUES_DEFAUT = [
   'foot=soccer_epl',
   'foot=soccer_france_ligue_one',
   'foot=soccer_spain_la_liga',
@@ -74,6 +81,15 @@ const LIGUES = (process.env.ODDS_API_LIGUES || [
   'tennis=tennis_atp_us_open',
   'tennis=tennis_wta_us_open',
   'nba=basketball_nba',
+  /* ---- LA NFL, ET PAS SA PRESAISON ----
+   * `americanfootball_nfl` ne porte QUE la saison reguliere. C'est un choix,
+   * pas un oubli : en aout, seize matchs de presaison se jouent — mesure faite
+   * — et The Odds API les range sous une clef separee qu'on pourrait ajouter
+   * en une ligne.
+   * On ne l'ajoute pas. Les titulaires y jouent un quart-temps, et nos cotes
+   * sortent d'un Elo bati sur des equipes COMPLETES : elles n'y veulent rien
+   * dire. Ouvrir un marche dont on sait que le prix est faux, c'est offrir de
+   * l'argent a qui le remarque. La NFL arrive donc a la semaine 1. */
   'nfl=americanfootball_nfl',
   /* Cricket : uniquement les formats LIMITES, qui se decident toujours. Le
      format Test finit reellement par un nul une fois sur trois et n'a pas
@@ -82,7 +98,10 @@ const LIGUES = (process.env.ODDS_API_LIGUES || [
   'cricket=cricket_international_t20',
   'cricket=cricket_t20_blast',
   'cricket=cricket_odi',
-].join(',')).split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
+];
+
+const LIGUES = (process.env.ODDS_API_LIGUES || LIGUES_DEFAUT.join(','))
+  .split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
   const [sport, clef] = x.split('=');
   return { sport: (sport || '').trim(), clef: (clef || '').trim() };
 }).filter((x) => x.sport && x.clef).filter((x) => {
@@ -558,6 +577,37 @@ async function importeScores(aRegler) {
   paris.charge();
   const ouverts = new Set(paris.catalogue().matchs.map((m) => m.id));
 
+  /* ---- ESPN D'ABORD, ET GRATUITEMENT ----
+   *
+   * Ses tableaux de scores repondent sans cle et sans quota. Tout ce qu'il
+   * sait trancher ne coute donc rien, et ne descend pas plus bas. Mesure sur
+   * le calendrier reel : quarante-six rencontres de football sur quarante-
+   * huit, plus la NFL et la NBA. Les deux qui restaient etaient des matchs de
+   * COUPE ranges sous une ligue par The Odds API — ils sont absents du tableau
+   * de cette ligue, et ils repartent donc payer leurs deux credits, ce qui est
+   * exactement ce qu'on veut.
+   *
+   * Le tennis n'est pas couvert : le tableau d'ESPN ne rend que des tournois,
+   * sans les rencontres. Il reste sur The Odds API — deux credits pour UN
+   * sport au lieu de cinq.
+   *
+   * Une panne d'ESPN ne casse rien : `finies` rend une liste vide et tout
+   * repasse par le chemin d'avant. C'est le meme raisonnement que partout
+   * ailleurs ici — une source gratuite qui s'ajoute ne doit jamais pouvoir
+   * empecher celle qui marchait. */
+  const tGratuit = Date.now();
+  const FEN_ESPN = 3 * 86400000;
+  const candidats = paris.catalogue().matchs.filter((m) =>
+    m.debut <= tGratuit && tGratuit - m.debut <= FEN_ESPN
+    && (typeof aRegler !== 'function' || aRegler(m.id)));
+  let gratuites = [];
+  try { gratuites = await espn.finies(candidats); }
+  catch (e) { console.log('[espn] injoignable : ' + (e.message || e)); }
+  const dejaVues = new Set(gratuites.map((f) => f.id));
+  if (gratuites.length) {
+    console.log(`[espn] ${gratuites.length} rencontre(s) reglee(s) sans depenser un credit`);
+  }
+
   /* On n'interroge QUE les ligues qui ont une rencontre finie a rattraper.
      Demander les scores des neuf ligues chaque jour couterait 18 credits —
      846 d'ici la fin, pour un forfait de 500. La plupart des jours, deux
@@ -593,6 +643,11 @@ async function importeScores(aRegler) {
     if (m.debut > t) continue;                  // pas encore joue
     if (t - m.debut > FENETRE) continue;        // trop vieux pour cet endpoint
     if (filtre && !filtre(m.id)) { sansEnjeu++; continue; }
+    /* Deja tranchee par ESPN : sa ligue n'a plus rien a nous apprendre par
+       cette rencontre-la. Si une AUTRE rencontre de la meme ligue attend, la
+       ligue reste dans la liste — c'est pour ca que le test porte sur la
+       rencontre et non sur la ligue. */
+    if (dejaVues.has(m.id)) continue;
     if (!parLigue.has(l)) parLigue.set(l, m.sport);
   }
   if (sansEnjeu) {
@@ -606,11 +661,14 @@ async function importeScores(aRegler) {
     console.log(total
       ? `[odds] aucune rencontre finie dans les 3 derniers jours sur ${total} au calendrier — 0 credit depense`
       : '[odds] catalogue vide — lancez d abord --matchs');
-    return [];
+    /* Et l'on rend quand meme ce qu'ESPN a trouve : sortir ici les aurait
+       jetees, et c'est le cas le PLUS frequent — le jour ou tout se regle
+       gratuitement, il ne reste plus une seule ligue a interroger. */
+    return gratuites.filter((f) => ouverts.has(f.id));
   }
   console.log(`[odds] ${parLigue.size} ligue(s) a interroger → ${parLigue.size * 2} credit(s)`);
 
-  const finis = [];
+  const finis = gratuites.filter((f) => ouverts.has(f.id));
   for (const [clef] of parLigue) {
     let sc;
     try { sc = await appel(`/sports/${clef}/scores`, { daysFrom: 1 }, 2, 'scores ' + clef); }
@@ -626,6 +684,7 @@ async function importeScores(aRegler) {
       const cible = paris.catalogue().matchs.find((m) =>
         m.source && m.source.evenement === ev.id);
       if (!cible || !ouverts.has(cible.id)) continue;
+      if (dejaVues.has(cible.id)) continue;      // ESPN l'a deja tranchee
       finis.push({ id: cible.id, sport: cible.sport, domicile: ev.home_team,
                    exterieur: ev.away_team, score: `${a}-${b}`, resultat });
     }
@@ -910,7 +969,7 @@ if (require.main === module) {
          .catch((e) => { console.error(String(e.message || e)); process.exit(1); });
 }
 
-module.exports = { LIGUES, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie,
+module.exports = { LIGUES, LIGUES_DEFAUT, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie,
                    etatImport, noteDernier,
                    trieReglements, AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
