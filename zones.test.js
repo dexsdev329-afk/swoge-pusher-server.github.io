@@ -464,4 +464,46 @@ function poseZone(r, espece, x, y) {
   ok(j.brulure <= reste, 'un second cercle ne rallonge pas la brulure en cours');
 }
 
+// ================== LE CERCLE DU BOSS DE L'ARENE CLOUE, MAIS TARD
+//
+// Demande d'un joueur : « si tu restes dans le cercle, ca t'etourdit cinq
+// secondes ». L'idee est bonne, le chiffre non — et les deux moities de la
+// reponse se verrouillent ici, parce que ce sont exactement les deux qu'on
+// aura envie de « corriger » plus tard sans se souvenir pourquoi.
+{
+  const o = M.MONSTRES.orage;
+  const zones = [o.zone].concat((o.phases || []).map((p) => p.zone).filter(Boolean));
+  eq(zones.length, 5, 'le boss a cinq cercles, un par phase');
+
+  /* LES DEUX PREMIERES RALENTISSENT. Un combat qui commence a son maximum de
+     durete n'a nulle part ou monter. */
+  eq(zones[0].effet, 'ralenti', 'phase 1 : le cercle ralentit');
+  eq(zones[1].effet, 'ralenti', 'phase 2 : encore');
+  /* LES TROIS DERNIERES CLOUENT. La troisieme est celle ou les bobines
+     sortent : la paralysie arrive avec l'escorte, pas avant. */
+  eq(zones[2].effet, 'paralyse', 'phase 3 : il cloue — et c est la que les sbires arrivent');
+  eq(zones[3].effet, 'paralyse', 'phase 4 : idem');
+  eq(zones[4].effet, 'paralyse', 'phase 5 : idem');
+  const appel3 = (o.phases[1] || {}).appel;
+  ok(!!appel3, `et la phase qui cloue appelle bien du renfort (${appel3 && appel3.espece})`);
+
+  /* DEUX SECONDES, PAS CINQ. Ecrit une fois, dans la table des effets, et
+     verifie ici parce que c'est ce boss qui rend le chiffre dangereux : il
+     frappe a 460 et appelle jusqu'a quatorze creatures. */
+  eq(M.EFFETS.paralyse.duree, 2,
+     'la paralysie dure deux secondes — au-dela on ne joue plus, on regarde');
+  ok(M.EFFETS.paralyse.immunite > M.EFFETS.paralyse.duree,
+     `et l immunite (${M.EFFETS.paralyse.immunite} s) est plus longue qu elle :`
+     + ' sans ca, un cercle qui retombe toutes les 0,14 s clouerait jusqu a la mort');
+
+  /* ET IL S'EVITE. Une paralysie qu'on ne peut pas voir venir est un impot,
+     pas une difficulte — c'est la regle de tout ce fichier, appliquee au
+     seul cercle du jeu qui prive de ses jambes. */
+  zones.forEach((z, i) => {
+    ok(z.annonce >= z.rayon / 202.2 + 0.25,
+       `phase ${i + 1} : le cercle s annonce assez tot pour qu on en sorte`
+       + ` (${z.annonce} s pour ${z.rayon})`);
+  });
+}
+
 console.log('zones.test.js : ' + n + ' verifications OK');

@@ -3072,6 +3072,30 @@ const MONSTRES = {
     /* rayon 270 : l'annonce doit valoir au moins 270/202.2 + 0.25 = 1.585 s.
        On pose 1.65 — la marge, pas le minimum, parce que c'est le plus grand
        cercle du jeu et qu'on en sort de plus loin. */
+    /* ---- LE CERCLE RALENTIT, PUIS IL CLOUE ----
+     *
+     * Demande d'un joueur, mot pour mot : « le coup ou il frappe le sol et un
+     * cercle apparait — si tu restes dedans, ca t'etourdit cinq secondes. Ca
+     * forcerait a bouger ; paralyse pendant que les sbires attaquent, tu peux
+     * mourir. » Il a raison sur le fond, et il se trompe sur le chiffre.
+     *
+     * CINQ SECONDES, NON. La paralysie de ce jeu dure DEUX secondes, et la
+     * raison est ecrite ou elle est definie : au-dela on ne joue plus, on
+     * regarde. Ce boss frappe a 460 et appelle jusqu'a quatorze Voidcallers :
+     * cinq secondes clouees au milieu de ca ne sont pas un combat difficile,
+     * c'est un compte a rebours qu'on subit sans y toucher.
+     *
+     * ET PAS DES LA PREMIERE PHASE. Le cercle retombe toutes les 0,14 s. Une
+     * paralysie des l'ouverture ferait un combat dur d'emblee puis plat ; posee
+     * a partir de la TROISIEME phase — celle ou les bobines sortent — elle
+     * arrive au moment exact que le joueur decrit, et le combat MONTE au lieu
+     * de commencer haut.
+     *
+     * Ce qui rend l'echange honnete tient en deux choses qui existaient deja :
+     * le cercle s'ANNONCE une seconde et demie avant de tomber, donc il
+     * s'evite ; et une paralysie ouvre 3,5 s d'immunite, donc le cercle ne peut
+     * pas enchainer et clouer quelqu'un jusqu'a sa mort. Sans cette immunite,
+     * l'idee serait exactement le piege sans sortie qu'on refuse ailleurs. */
     zone: { annonce: 1.65, rayon: 270, att: 340, cadence: 0.14, effet: 'ralenti' },
     xp: 26000,
     /* ---- CINQ PHASES, ET CHACUNE APPORTE UN VERBE ----
@@ -3125,7 +3149,7 @@ const MONSTRES = {
          passe de « esquiver plus » a « ne plus pouvoir esquiver ». */
       { jusqua: 0.50, vitesse: 128, cadence: 0.62,
         tir: { cadence: 0.55, tirs: 3, ecart: 0.24, att: 340 },
-        zone: { annonce: 1.62, rayon: 270, att: 395, cadence: 0.2, effet: 'ralenti' },
+        zone: { annonce: 1.62, rayon: 270, att: 395, cadence: 0.2, effet: 'paralyse' },
         appel: { espece: 'bobine', combien: 4, cadence: 0.16, plafond: 7,
                  rayon: 270 } },
       /* 30 % — L'ORAGE TOMBE PARTOUT. La pluie est le pouvoir qui change la
@@ -3135,7 +3159,7 @@ const MONSTRES = {
          pour un rayon de 160, et interdit de depasser 1.64. */
       { jusqua: 0.30, vitesse: 140, cadence: 0.7,
         tir: { cadence: 0.6, tirs: 3, ecart: 0.22, att: 360 },
-        zone: { annonce: 1.6, rayon: 270, att: 425, cadence: 0.26, effet: 'ralenti' },
+        zone: { annonce: 1.6, rayon: 270, att: 425, cadence: 0.26, effet: 'paralyse' },
         pluie: { cadence: 0.5, combien: 9, rayon: 160, annonce: 1.30, att: 300,
                  effet: 'ralenti', portee: 900 },
         appel: { espece: 'sorcier', combien: 4, cadence: 0.28, plafond: 10,
@@ -3151,7 +3175,7 @@ const MONSTRES = {
          fait de ne pas avoir eu le temps de le voir. */
       { jusqua: 0.15, vitesse: 150, cadence: 0.8, att: 620,
         tir: { cadence: 0.7, tirs: 5, ecart: 0.2, att: 390 },
-        zone: { annonce: 1.59, rayon: 270, att: 460, cadence: 0.32, effet: 'ralenti' },
+        zone: { annonce: 1.59, rayon: 270, att: 460, cadence: 0.32, effet: 'paralyse' },
         pluie: { cadence: 0.75, combien: 12, rayon: 160, att: 330 },
         appel: { espece: 'sorcier', combien: 6, cadence: 0.34, plafond: 14,
                  rayon: 270 } },
