@@ -575,8 +575,20 @@ function alea(graine) {
    * depart y ferait NAITRE le visiteur dans la pierre. */
   const gros = M.planDeCarte(carte([], { c: 8, l: 8 }, null,
     [{ c: 8, l: 9, k: 'iso_hotel', n: 20, z: 0 }]));
-  eq(gros.obstacles.length, 0,
-     'un decor assez grand pour recouvrir le depart cesse de bloquer');
+  /* ---- « CESSE DE BLOQUER » N'EST PAS « DISPARAIT » ----
+   * Cet essai comptait les blocs et attendait ZERO. C'est ce compte-la qui a
+   * laisse passer le defaut : le decor sortait de la liste que la page
+   * DESSINE, et une carte dont le fond couvre le depart s'ouvrait sur son sol
+   * nu. Signale en jouant le Nexus en 2,5D — « on voit les batiments mais pas
+   * la maps ». On mesure donc ce qui etait promis, et non ce qui etait fait :
+   * il reste, il ne bloque plus. */
+  eq(gros.obstacles.length, 1,
+     'un decor assez grand pour recouvrir le depart RESTE dans le plan');
+  eq(gros.obstacles[0].r, 0, 'mais son rayon est nul : il cesse de bloquer');
+  ok(!M.bloque(gros.obstacles, gros.entree.x, gros.entree.y, 24),
+     'et l on nait dessus sans y etre pris');
+  eq(gros.obstacles[0].larg, 20 * M.DONJON_TUILE,
+     'il garde sa largeur : c est ce que la page dessine');
   const petit = M.planDeCarte(carte([], { c: 1, l: 1 }, null,
     [{ c: 8, l: 9, k: 'iso_hotel', n: 2, z: 0 }]));
   eq(petit.obstacles.length, 1, 'un decor qui ne le touche pas bloque comme avant');

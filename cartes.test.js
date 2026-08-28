@@ -636,4 +636,41 @@ console.log('\n-- les cases en indices plutot qu en noms --');
   eq(bancal.cases.length, 1, 'un indice hors palette est ecarte, pas fatal');
 }
 
+/* ================== LE FOND D'UNE CARTE SE DESSINE ================== */
+console.log('\n-- ce qui couvre le depart cesse de bloquer, et RESTE ==================');
+{
+  const M = require('./monde');
+  /* ---- CE QUI S'EST PASSE ----
+   * « la maps 2,5D affiche casiment que de l'eau, on voit les batiments mais
+   * pas la maps ». L'ile de la carte est son FOND : quarante-sept cases de
+   * large, elle couvre forcement le point d'arrivee. Le plan la retirait
+   * alors de la liste — `continue` — alors que le commentaire d'a cote
+   * promettait « il reste DESSINE, et l'on marche dessus ».
+   * Rien ne le signalait : l'editeur dessine depuis la CARTE, le monde depuis
+   * le PLAN. Les deux ne montraient pas la meme chose, et seul le second
+   * comptait pour qui joue.
+   */
+  const carte = { nom: 'fond', cote: 48, mode: 'iso', depart: { c: 25, l: 30 },
+                  cases: [{ c: 0, l: 0, s: 'eau' }],
+                  objets: [{ c: 24, l: 37, k: 'iso_jardin', n: 47, z: 0 },
+                           { c: 8, l: 18, k: 'iso_cinema', n: 7, z: 1 }] };
+  const plan = M.planDeCarte(carte);
+  const fond = plan.obstacles.find((o) => o.bat === 'iso_jardin');
+  const maison = plan.obstacles.find((o) => o.bat === 'iso_cinema');
+  ok(!!fond, 'le fond est DANS le plan — sans quoi la carte s ouvre sur son sol nu');
+  eq(fond && fond.r, 0, 'avec un rayon nul : il se traverse');
+  eq(fond && fond.larg, 47 * 128, 'et sa vraie largeur, pour que la page le dessine en grand');
+  ok(!!maison && maison.r > 0, `le batiment, lui, bloque toujours (r=${maison && maison.r})`);
+
+  /* On arrive DESSUS, et l'on n'y est pas coince. */
+  const T = 128;
+  ok(!M.bloque(plan.obstacles, (25.5) * T, (30.5) * T, 24),
+     'on nait sur le fond sans etre pris dedans');
+  /* Et le pied du fond est au bas de sa case : la page dessine sur `y + r`,
+     donc un rayon annule sans rattrapage remonterait le dessin d une
+     demi-case au moment ou il devient traversable. */
+  eq(fond && fond.y, (37 + 1) * T,
+     'son pied reste au bas de sa case, comme quand il bloquait');
+}
+
 console.log(`\ncartes.test.js : ${n} verifications OK`);

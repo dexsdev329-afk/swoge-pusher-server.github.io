@@ -1802,9 +1802,26 @@ function planDeCarte(k) {
      * difficulte d'un endroit est ce qu'on y rencontre, jamais le fait d'y
      * etre coince. */
     const dx = cx - entree.x, dy = cy - entree.y;
-    if (dx * dx + dy * dy < r * r) continue;
-    obstacles.push({ i: id++, x: cx, y: cy,
-                     r, bat: q.k, larg: n * T,
+    /* ---- IL CESSE DE BLOQUER, IL NE DISPARAIT PAS ----
+     * Le commentaire ci-dessus disait « il reste DESSINE, et l'on marche
+     * dessus ». Le code, lui, faisait `continue` : l'objet sortait de la liste
+     * que la page dessine, donc il ne restait rien du tout.
+     *
+     * Ca ne se voit pas dans l'editeur — il dessine depuis la carte, pas
+     * depuis le plan — et ca se voit tout de suite en JOUANT : une carte dont
+     * le fond couvre le depart s'ouvrait sur son SOL NU. Rapporte tel quel
+     * pour le Nexus en 2,5D : « la maps affiche casiment que de l'eau, on voit
+     * les batiments mais pas la maps ». L'ile etait le fond, elle couvrait le
+     * point d'arrivee, elle n'a jamais ete envoyee — et le sol dessous est de
+     * l'eau.
+     *
+     * Un rayon nul ne bloque rien : `bloque` l'ecarte. Et le pied redescend au
+     * bas de sa case, parce que la page dessine sur `y + r` — sans ce
+     * rattrapage, l'objet remonterait de son rayon en cessant de bloquer, et
+     * le fond se decalerait d'une demi-case en devenant traversable. */
+    const couvre = dx * dx + dy * dy < r * r;
+    obstacles.push({ i: id++, x: cx, y: couvre ? (q.l + 1) * T + oy : cy,
+                     r: couvre ? 0 : r, bat: q.k, larg: n * T,
                      /* L'angle et le miroir partent avec le bloc : la page les
                         dessine, elle ne les devine pas. */
                      g: q.g || 0, m: q.m || 0,
@@ -2059,6 +2076,13 @@ function obstacles(alea, listeSalles) {
 function bloque(liste, x, y, rayon) {
   const rr = Math.max(0, Number(rayon) || 0);
   for (const o of liste) {
+    /* ---- UN RAYON NUL NE BLOQUE RIEN ----
+     * C'est ainsi qu'un DECOR se distingue d'un obstacle : le fond d'une carte
+     * de joueur, assez grand pour couvrir le point d'arrivee, se dessine et se
+     * traverse. Sans cette ligne, `o.r + rayon` vaudrait le rayon du marcheur
+     * et le decor bloquerait quand meme, sur un cercle plus petit — c'est-a-
+     * dire par surprise, au milieu de rien. */
+    if (!(o.r > 0)) continue;
     const dx = o.x - x, dy = o.y - y;
     const d = o.r + rr;
     if (dx * dx + dy * dy < d * d) return o;
