@@ -4987,10 +4987,32 @@ const NEXUS25_SOL = 'eau';
 const NEXUS25_COTE = 48;
 const NEXUS25_DEPART = { c: 25, l: 30 };
 const NEXUS25 = [
-  /* Le terrain, et ce qu'il avait deja pose. Les deux parcelles de sa carte
-     qui ne dessinent rien — leurs images n'ont jamais existe dans le depot —
-     ne sont pas reprises : une cle sans planche est un objet invisible, et le
-     recopier n'aurait fait que transmettre le trou. */
+  /* ---- ON REPREND LE LIEU, ON N'EN INVENTE PAS UN ----
+   *
+   * Premiere version : les vingt et une parcelles isometriques posees, chacune
+   * une fois, arrangees pour remplir l'ile. C'etait joli et c'etait faux. Onze
+   * d'entre elles — l'hotel, le casino, la villa, le penthouse, la piscine, le
+   * ponton, le jetski, les deux beach clubs, l'ile, la nature — ne
+   * correspondent a RIEN dans le jeu : ce sont des planches pour des endroits
+   * qui n'existent pas. Les semer sur une carte appelee « le Nexus » aurait
+   * annonce des lieux qu'on ne peut pas visiter, ce qui est la meme faute que
+   * les trois joueurs inventes de la page d'accueil, avec des images.
+   *
+   * Ce qui reste est ce qui EXISTE, et se retrouve dans le catalogue du jeu
+   * sous un autre nom :
+   *   jardin -> le terrain          fontaine -> `fontaine`
+   *   cinema -> `cinema_maison`     arcade   -> `arcade_maison`
+   *   stand  -> `market_stall`      vault    -> `vault_door`
+   *   petworld -> `petworld_sign`   les deux portails -> `portal_*`
+   *
+   * Et leurs positions ne sont pas les miennes : ce sont celles qu'un joueur a
+   * choisies en refaisant le Nexus a la main — la fontaine au centre, le
+   * cinema et l'arcade a l'ouest, le coffre et PetWorld a l'est, les deux
+   * portails au nord, comme les deux portes du nord du vrai monde. Il n'y
+   * avait rien a arranger : il avait deja fait le lieu.
+   *
+   * Les dix autres parcelles restent dans la palette. Le jour ou le jeu aura
+   * une plage, elle aura sa place ici — pas avant. */
   { k: 'iso_jardin', c: 24, l: 37, n: 47, z: 0 },
   { k: 'iso_cinema', c: 8, l: 18, n: 7, z: 1 },
   { k: 'iso_arcade', c: 9, l: 26, n: 5, z: 1 },
@@ -5000,22 +5022,8 @@ const NEXUS25 = [
   { k: 'iso_portail_violet', c: 30, l: 12, n: 6, z: 1 },
   { k: 'iso_vault', c: 38, l: 25, n: 5, z: 1 },
   { k: 'iso_petworld', c: 39, l: 30, n: 8, z: 1 },
-  /* Le quartier ville, sur le plateau nord-est. */
-  { k: 'iso_casino', c: 36, l: 19, n: 6, z: 1 },
-  { k: 'iso_hotel', c: 41, l: 16, n: 6, z: 1 },
-  { k: 'iso_penthouse', c: 45, l: 20, n: 5, z: 1 },
-  { k: 'iso_petvault', c: 45, l: 24, n: 4, z: 1 },
-  /* L'ouest, sous l'arcade. */
-  { k: 'iso_villa', c: 8, l: 30, n: 6, z: 1 },
-  { k: 'iso_nature', c: 15, l: 30, n: 5, z: 1 },
-  /* La rive sud, d'un bout a l'autre. */
-  { k: 'iso_piscine', c: 20, l: 32, n: 6, z: 1 },
-  { k: 'iso_beachclub', c: 24, l: 35, n: 6, z: 1 },
-  { k: 'iso_beachclub2', c: 30, l: 34, n: 6, z: 1 },
-  { k: 'iso_pier', c: 34, l: 34, n: 6, z: 1 },
-  { k: 'iso_jetski', c: 40, l: 34, n: 4, z: 1 },
-  { k: 'iso_ile', c: 44, l: 32, n: 4, z: 1 },
 ];
+
 
 function modeleDuNexusIso() {
   const cote = NEXUS25_COTE;
