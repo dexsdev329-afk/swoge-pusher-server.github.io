@@ -555,5 +555,39 @@ const cotes = require('./cotes');
        'et AUCUNE presaison n est suivie' + (pre.length ? ' — ' + pre.join(', ') : ''));
   }
 
+  // ================== ON DEMANDE LA MEME FENETRE QU ON FILTRE
+  //
+  // Des paris tennis attendaient depuis TROIS CENTS HEURES dans le panneau. La
+  // cause n'etait pas le tennis : on demandait `daysFrom=1` — les rencontres
+  // finies depuis la veille — alors que la boucle du dessus retient tout ce qui
+  // a moins de TROIS jours. Une rencontre de deux jours etait donc mise dans la
+  // liste, payee deux credits, et absente de la reponse. Elle glissait ensuite
+  // hors des trois jours, ou plus rien ne la regardait : elle restait a regler
+  // pour toujours.
+  //
+  // Le cout ne change pas — `daysFrom` vaut deux credits quelle que soit sa
+  // valeur. On demandait moins pour le meme prix.
+  {
+    /* On lit la SOURCE, pas les appels du banc : le compteur d'appels est
+       remis a zero entre les sections, et ce qu'on verifie ici est un accord
+       entre deux constantes, pas un passage. */
+    const src = fs.readFileSync(path.join(__dirname, 'paris_import.js'), 'utf8');
+    /* La valeur REELLEMENT envoyee, pas la premiere du fichier : les
+       commentaires en parlent aussi, et un essai qui lit un commentaire ne
+       verifie rien. */
+    const m = /appel\(`\/sports\/\$\{clef\}\/scores`, \{ daysFrom: (\d+) \}/.exec(src);
+    ok(!!m, 'la fenetre demandee se lit dans le code');
+    const fen = /const FENETRE = (\d+) \* 86400000/.exec(src);
+    ok(!!fen, 'et la fenetre filtree aussi');
+    eq(Number(m[1]), Number(fen[1]),
+       'les deux sont la MEME : ce qu on filtre est ce qu on demande');
+    /* Et la source gratuite, elle, n'a pas de fenetre d'API : on ne lui impose
+       pas celle de l'autre, sinon l'arriere reste bloque. */
+    const esp = /const FEN_ESPN = (\d+) \* 86400000/.exec(src);
+    ok(!!esp && Number(esp[1]) > Number(fen[1]),
+       `ESPN remonte plus loin (${esp ? esp[1] : '?'} jours contre ${fen[1]})`
+       + ' — c est ce qui rattrape ce qui a rate son creneau');
+  }
+
   console.log(`paris_import.test.js : ${n} verifications OK`);
 })().catch((e) => { console.error(e); process.exit(1); });

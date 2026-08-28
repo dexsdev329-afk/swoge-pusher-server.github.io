@@ -213,6 +213,121 @@ async function releve(matchs, opts) {
   return out;
 }
 
+/*
+ * ==================== LE TENNIS ====================
+ *
+ * Le tableau de scores d'ESPN ne rend que des TOURNOIS pour le tennis, sans
+ * les rencontres — c'est ecrit en tete de ce fichier, et c'etait exact. Son
+ * API INTERNE, elle, les porte : un tournoi y arrive avec ses trois cent
+ * vingt-trois rencontres, chacune avec ses deux joueurs NOMMES et un
+ * `winner` — donc le resultat, sans une requete de plus.
+ *
+ * Pourquoi ca compte plus que le reste : le tennis est notre plus gros sport,
+ * quatre-vingt-treize rencontres contre quarante-huit au football. Et surtout,
+ * cette source-la n'a PAS de fenetre. `/scores` de The Odds API ne remonte pas
+ * au-dela de trois jours : une rencontre ratee pendant ces trois jours ne se
+ * reglait plus JAMAIS toute seule. Ici on demande une date, et une date de la
+ * semaine derniere se demande aussi bien qu'aujourd'hui.
+ *
+ * ---- LE COUT EN REQUETES ----
+ *
+ * Un index par tour et par journee, puis un appel par tournoi — les tournois
+ * se repetent d'un jour a l'autre, on ne les reprend pas. Mesure sur le
+ * calendrier reel : sept requetes pour huit cent vingt-quatre rencontres.
+ * C'est gratuit, mais ce n'est pas une raison pour etre grossier.
+ *
+ * ---- LES NOMS ----
+ *
+ * Mesure sur les cent quatre-vingt-six joueurs du calendrier : cent
+ * soixante-dix-sept tombent juste, soit 95 %. Les neuf autres sont des ordres
+ * de nom inverses ou des suffixes (« Shuai Zhang » contre « Zhang Shuai »,
+ * « Martin Damm Jr. »). Ils ne sont PAS rattrapes par ressemblance, pour la
+ * meme raison qu'au football : un joueur qui ressemble a un autre est un
+ * adversaire, pas la meme personne. Ils repartent vers The Odds API, puis vers
+ * le reglement a la main.
+ */
+const CORE = 'http://sports.core.api.espn.com/v2/sports/tennis/leagues';
+
+/* Le tour, lu sur la ligue de The Odds API : `tennis_atp_us_open` -> `atp`. */
+function tourDe(ligue) {
+  const m = /^tennis_(atp|wta)_/.exec(String(ligue || ''));
+  return m ? m[1] : null;
+}
+
+async function json(u, prendre) {
+  const f = prendre || fetch;
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const minuterie = ctl ? setTimeout(() => ctl.abort(), 8000) : null;
+  try {
+    const rep = await f(u, ctl ? { signal: ctl.signal } : undefined);
+    if (!rep || !rep.ok) return null;
+    return await rep.json();
+  } catch (e) { return null; }
+  finally { if (minuterie) clearTimeout(minuterie); }
+}
+
+/*
+ * Les rencontres de tennis d'un lot, appariees et tranchees.
+ *
+ * On ne rend QUE ce qui est fini et sans ambiguite. Une rencontre en cours n'a
+ * pas de `winner` : elle sort d'ici sans resultat, ce qui est exact.
+ */
+async function releveTennis(matchs, opts) {
+  const o = opts || {};
+  const out = new Map();
+  const parTourJour = new Map();
+  for (const m of matchs || []) {
+    const tour = tourDe(m && m.source && m.source.ligue);
+    if (!tour || !isFinite(m.debut)) continue;
+    const k = tour + '|' + jour(m.debut);
+    if (!parTourJour.has(k)) parTourJour.set(k, []);
+    parTourJour.get(k).push(m);
+  }
+  if (!parTourJour.size) return out;
+
+  /* Les tournois, une seule fois chacun : le meme tournoi couvre quinze jours
+     et reviendrait a chaque journee demandee. */
+  const tournois = new Map();
+  for (const [k] of parTourJour) {
+    const [tour, j] = k.split('|');
+    const idx = await json(`${CORE}/${tour}/events?dates=${j}&limit=25`, o.prendre);
+    for (const it of (idx && idx.items) || []) {
+      const ref = it && it.$ref;
+      if (!ref || tournois.has(ref)) continue;
+      tournois.set(ref, await json(ref, o.prendre));
+    }
+  }
+
+  const rencontres = [];
+  for (const ev of tournois.values()) {
+    for (const c of (ev && ev.competitions) || []) {
+      const j2 = (c.competitors || []).filter((x) => x && x.name);
+      if (j2.length !== 2) continue;
+      rencontres.push({ quand: Date.parse(c.date) || 0, a: j2[0], b: j2[1] });
+    }
+  }
+
+  for (const m of matchs || []) {
+    if (!tourDe(m && m.source && m.source.ligue)) continue;
+    for (const r of rencontres) {
+      if (Math.abs(r.quand - m.debut) > 36 * 3600000) continue;
+      let dom, ext;
+      if (meme(m.domicile, r.a.name) && meme(m.exterieur, r.b.name)) { dom = r.a; ext = r.b; }
+      else if (meme(m.domicile, r.b.name) && meme(m.exterieur, r.a.name)) { dom = r.b; ext = r.a; }
+      else continue;
+      /* `winner` est un booleen SUR CHAQUE camp. Tant que la rencontre n'est
+         pas finie, aucun des deux ne le porte — et l'on ne tranche pas. */
+      const fini = dom.winner === true || ext.winner === true;
+      out.set(m.id, { fini, etat: fini ? 'post' : 'in',
+                      detail: fini ? 'Final' : '',
+                      dom: m.domicile, ext: m.exterieur,
+                      resultat: fini ? (dom.winner === true ? '1' : '2') : null });
+      break;
+    }
+  }
+  return out;
+}
+
 /** Les rencontres FINIES, au format que `reglementAuto` attend deja. */
 async function finies(matchs, opts) {
   const vus = await releve(matchs, opts);
@@ -222,6 +337,17 @@ async function finies(matchs, opts) {
     if (!s || !s.fini || !s.score) continue;
     out.push({ id: m.id, sport: m.sport, domicile: m.domicile, exterieur: m.exterieur,
                score: s.score, resultat: s.resultat, source: 'espn' });
+  }
+  /* ---- ET LE TENNIS, QUI N'A PAS DE SCORE MAIS UN VAINQUEUR ----
+   * Ses marches n'ont que deux issues — pas de « les deux marquent », pas de
+   * total de buts — donc la LETTRE suffit a tout regler, et c'est heureux :
+   * un score de tennis se compte en sets et ne se lit pas comme « 2-1 ». */
+  const parTennis = await releveTennis(matchs, opts);
+  for (const m of matchs || []) {
+    const s = parTennis.get(m.id);
+    if (!s || !s.fini || !s.resultat) continue;
+    out.push({ id: m.id, sport: m.sport, domicile: m.domicile, exterieur: m.exterieur,
+               resultat: s.resultat, source: 'espn' });
   }
   return out;
 }
@@ -255,4 +381,5 @@ async function reprise(ligues, opts) {
   return tot;
 }
 
-module.exports = { CHEMINS, ALIAS, normalise, meme, lis, tableau, releve, finies, reprise };
+module.exports = { CHEMINS, ALIAS, normalise, meme, lis, tableau, releve, finies, reprise,
+                   releveTennis, tourDe };

@@ -28,7 +28,9 @@
  * Il reste donc deux depenses, et deux seulement :
  *
  *   • les SCORES, pour regler les paris. 2 credits par sport et par passage
- *     avec `daysFrom=1`, qui rattrape les rencontres finies depuis la veille.
+ *     avec `daysFrom=3`, le maximum de cet endpoint — et la MEME fenetre que
+ *     celle qu'on filtre. En demander moins pour le meme prix laissait des
+ *     paris en attente indefiniment.
  *   • l'ETALONNAGE, facultatif. Une fois par semaine, on releve les vraies
  *     cotes d'un sport (1 credit) et on s'en sert pour recaler les forces Elo.
  *     Sans ca, le modele ne se corrige jamais.
@@ -596,7 +598,15 @@ async function importeScores(aRegler) {
    * ailleurs ici — une source gratuite qui s'ajoute ne doit jamais pouvoir
    * empecher celle qui marchait. */
   const tGratuit = Date.now();
-  const FEN_ESPN = 3 * 86400000;
+  /* ---- LA SOURCE GRATUITE N'A PAS DE FENETRE, DONC ON NE LUI EN IMPOSE PAS ----
+   * `/scores` de The Odds API s'arrete a trois jours — c'est son endpoint qui
+   * le decide. ESPN, lui, se demande PAR DATE : la semaine derniere se demande
+   * aussi bien qu'aujourd'hui. Lui appliquer la borne de l'autre aurait laisse
+   * bloque tout ce qui a rate son creneau, c'est-a-dire exactement l'arriere
+   * qu'on essaie de rattraper.
+   * Trente jours : de quoi reprendre un mois de retard, et pas de quoi
+   * parcourir un catalogue entier a chaque passage. */
+  const FEN_ESPN = 30 * 86400000;
   const candidats = paris.catalogue().matchs.filter((m) =>
     m.debut <= tGratuit && tGratuit - m.debut <= FEN_ESPN
     && (typeof aRegler !== 'function' || aRegler(m.id)));
@@ -671,7 +681,18 @@ async function importeScores(aRegler) {
   const finis = gratuites.filter((f) => ouverts.has(f.id));
   for (const [clef] of parLigue) {
     let sc;
-    try { sc = await appel(`/sports/${clef}/scores`, { daysFrom: 1 }, 2, 'scores ' + clef); }
+    /* ---- TROIS JOURS DEMANDES, TROIS JOURS FILTRES ----
+     * On demandait `daysFrom: 1` — les rencontres finies depuis la veille —
+     * alors que la boucle du dessus retient tout ce qui a moins de TROIS
+     * jours. Une rencontre de deux jours etait donc mise dans la liste des
+     * ligues a interroger, payee deux credits, et absente de la reponse.
+     * Elle glissait ensuite hors des trois jours, ou plus rien ne la
+     * regardait : elle restait « a regler » POUR TOUJOURS. C'est ce qu'on
+     * voyait dans le panneau — des paris tennis en attente depuis trois cents
+     * heures.
+     * Le cout ne change pas : `daysFrom` vaut deux credits, quelle que soit sa
+     * valeur. On demandait moins pour le meme prix. */
+    try { sc = await appel(`/sports/${clef}/scores`, { daysFrom: 3 }, 2, 'scores ' + clef); }
     catch (e) { console.log('[odds] ' + e.message); continue; }
     for (const ev of sc || []) {
       if (!ev.completed || !Array.isArray(ev.scores)) continue;

@@ -1,0 +1,68 @@
+{
+ "index": {
+  "count": 1,
+  "items": [
+   {
+    "$ref": "http://sports.core.api.espn.com/v2/sports/tennis/leagues/atp/events/363-2026"
+   }
+  ]
+ },
+ "tournoi": {
+  "name": "Winston-Salem Open",
+  "date": "2026-08-22T04:00Z",
+  "competitions": [
+   {
+    "date": "2026-08-22T15:00Z",
+    "competitors": [
+     {
+      "name": "Pierre-Hugues Herbert",
+      "winner": true
+     },
+     {
+      "name": "Kenta Miyoshi",
+      "winner": false
+     }
+    ]
+   },
+   {
+    "date": "2026-08-22T15:00Z",
+    "competitors": [
+     {
+      "name": "Felix Balshaw",
+      "winner": true
+     },
+     {
+      "name": "Luca Pow",
+      "winner": false
+     }
+    ]
+   },
+   {
+    "date": "2026-08-22T15:00Z",
+    "competitors": [
+     {
+      "name": "Hugo Grenier",
+      "winner": true
+     },
+     {
+      "name": "Neil Oberleitner",
+      "winner": false
+     }
+    ]
+   },
+   {
+    "date": "2026-08-28T00:20Z",
+    "competitors": [
+     {
+      "name": "Arthur Fery",
+      "winner": null
+     },
+     {
+      "name": "Aleksandar Kovacevic",
+      "winner": null
+     }
+    ]
+   }
+  ]
+ }
+}

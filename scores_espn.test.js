@@ -121,7 +121,43 @@ console.log('\n-- qui recoit quel score --');
     const ita = BANCS.ita.events.map(e.lis).filter(Boolean);
     ok(ita.length >= 3, `la Serie A aussi (${ita.length})`);
 
-    // ================== 6. UNE SOURCE QUI TOMBE NE CASSE RIEN
+    // ================== 6. LE TENNIS : UN VAINQUEUR, PAS UN SCORE
+    console.log('\n-- le tennis, par l API interne --');
+    /* Le tableau public d'ESPN ne rend que des tournois pour le tennis. Son API
+     * INTERNE porte les rencontres, chacune avec ses deux joueurs nommes et un
+     * `winner`. C'est ce qui debloque notre plus gros sport — et surtout, cette
+     * source-la se demande PAR DATE : elle n'a pas la fenetre de trois jours qui
+     * laissait des paris en attente indefiniment. */
+    const TEN = JSON.parse(fs.readFileSync(path.join(__dirname, 'bancs_espn_tennis.json'), 'utf8'));
+    const prendreTennis = async (u) => ({ ok: true, json: async () =>
+      (/\/events\?/.test(String(u)) ? TEN.index : TEN.tournoi) });
+    const joueur = (id, dom, ext, quand) => ({
+      id, sport: 'tennis', domicile: dom, exterieur: ext, debut: Date.parse(quand),
+      source: { ligue: 'tennis_atp_us_open' } });
+    const lot = [
+      joueur('t1', 'Pierre-Hugues Herbert', 'Kenta Miyoshi', '2026-08-22T15:00Z'),
+      joueur('t2', 'Luca Pow', 'Felix Balshaw', '2026-08-22T15:00Z'),   // range a l envers
+      joueur('t3', 'Arthur Fery', 'Aleksandar Kovacevic', '2026-08-28T00:20Z'), // en cours
+      joueur('t4', 'Zhang Shuai', 'Kenta Miyoshi', '2026-08-22T15:00Z'), // nom inconnu ici
+    ];
+    const vt = await e.releveTennis(lot, { prendre: prendreTennis });
+    eq(vt.get('t1') && vt.get('t1').resultat, '1',
+       'le joueur a domicile a gagne : resultat 1');
+    eq(vt.get('t2') && vt.get('t2').resultat, '2',
+       'et range a l envers, le resultat suit NOS noms, pas l ordre du tableau');
+    ok(vt.get('t3') && !vt.get('t3').fini,
+       'une rencontre sans vainqueur n est pas finie — on ne tranche pas');
+    ok(!vt.has('t4'),
+       'un joueur qu on ne reconnait pas ne se rapproche de personne');
+    const payables = await e.finies(lot, { prendre: prendreTennis });
+    eq(payables.length, 2, 'deux rencontres seulement sont reglables');
+    ok(payables.every((x) => x.resultat && !x.score),
+       'et elles portent une LETTRE, pas un score : un tennis se compte en sets');
+
+    eq(e.tourDe('tennis_wta_us_open'), 'wta', 'le tour se lit sur la ligue');
+    eq(e.tourDe('soccer_epl'), null, 'et le football n en a pas');
+
+    // ================== 7. UNE SOURCE QUI TOMBE NE CASSE RIEN
     console.log('\n-- ESPN injoignable --');
     const mort = async () => { throw new Error('reseau coupe'); };
     const vide = await e.releve(m, { prendre: mort });
@@ -129,7 +165,7 @@ console.log('\n-- qui recoit quel score --');
     const refus = await e.releve(m, { prendre: async () => ({ ok: false, status: 503 }) });
     eq(refus.size, 0, 'un 503 aussi — et aucun des deux ne jette');
 
-    // ================== 7. UNE LIGUE QU'ON NE SUIT PAS
+    // ================== 8. UNE LIGUE QU'ON NE SUIT PAS
     const inconnue = await e.releve([{ id: 'y', sport: 'tennis', domicile: 'A', exterieur: 'B',
                                        debut: T, source: { ligue: 'tennis_atp_us_open' } }],
                                     { prendre: prendre({ events: [] }) });
