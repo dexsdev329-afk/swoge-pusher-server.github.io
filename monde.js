@@ -4953,7 +4953,84 @@ function modeleDuNexus(salles, obstacles) {
   return { nom: 'The Nexus', cote, mode: 'plat', cases, objets: nets };
 }
 
+/*
+ * ---- LE NEXUS EN 2,5D, SUR LE TERRAIN QU'UN JOUEUR A CHOISI ----
+ *
+ * Un joueur — Dodewl — a commence a refaire le Nexus en parcelles
+ * isometriques : une ile de quarante-sept cases pour terrain, la fontaine au
+ * centre, le cinema et l'arcade a l'ouest, le coffre et PetWorld a l'est, les
+ * deux portails au nord. Neuf parcelles posees, douze qui restaient dans la
+ * palette, et le tout impossible a finir a la main sans replacer ce qu'il
+ * avait deja fait.
+ *
+ * Cette base part de SON terrain et de SES placements, et pose les douze
+ * autres autour. Les vingt et une parcelles du jeu y sont donc, chacune une
+ * fois : le quartier ville sur le plateau nord-est qui etait vide, la rive de
+ * loisirs sur toute la bande sud qui l'etait aussi, et de quoi fermer
+ * l'ouest. Rien de ce qu'il avait pose n'a bouge d'une case.
+ *
+ * ---- ET LE SOL, QU'IL N'AVAIT PAS ----
+ *
+ * Sa carte ne portait AUCUNE case de sol : les onze elements etaient tous des
+ * objets, et l'ile elle-meme en etait un. La note de l'editeur le dit —
+ * « sans sol, une carte 2,5D est un VIDE avec des batiments posses dessus ».
+ * On pose donc de l'eau sous toute la grille : elle ne se voit pas sous l'ile,
+ * et elle donne une rive au lieu d'un bord de vide.
+ *
+ * ---- ET UN POINT DE DEPART ----
+ *
+ * Sans lui, la fiche ne propose meme pas « Play ». Il est pose au sud de la
+ * fontaine, sur le chemin : `planDeCarte` fait deja cesser de bloquer un objet
+ * assez grand pour recouvrir l'arrivee, donc l'ile ne l'enferme pas.
+ */
+const NEXUS25_SOL = 'eau';
+const NEXUS25_COTE = 48;
+const NEXUS25_DEPART = { c: 25, l: 30 };
+const NEXUS25 = [
+  /* Le terrain, et ce qu'il avait deja pose. Les deux parcelles de sa carte
+     qui ne dessinent rien — leurs images n'ont jamais existe dans le depot —
+     ne sont pas reprises : une cle sans planche est un objet invisible, et le
+     recopier n'aurait fait que transmettre le trou. */
+  { k: 'iso_jardin', c: 24, l: 37, n: 47, z: 0 },
+  { k: 'iso_cinema', c: 8, l: 18, n: 7, z: 1 },
+  { k: 'iso_arcade', c: 9, l: 26, n: 5, z: 1 },
+  { k: 'iso_stand', c: 13, l: 24, n: 5, z: 1 },
+  { k: 'iso_fontaine', c: 25, l: 23, n: 11, z: 1 },
+  { k: 'iso_portail_rouge', c: 20, l: 11, n: 5, z: 1 },
+  { k: 'iso_portail_violet', c: 30, l: 12, n: 6, z: 1 },
+  { k: 'iso_vault', c: 38, l: 25, n: 5, z: 1 },
+  { k: 'iso_petworld', c: 39, l: 30, n: 8, z: 1 },
+  /* Le quartier ville, sur le plateau nord-est. */
+  { k: 'iso_casino', c: 36, l: 19, n: 6, z: 1 },
+  { k: 'iso_hotel', c: 41, l: 16, n: 6, z: 1 },
+  { k: 'iso_penthouse', c: 45, l: 20, n: 5, z: 1 },
+  { k: 'iso_petvault', c: 45, l: 24, n: 4, z: 1 },
+  /* L'ouest, sous l'arcade. */
+  { k: 'iso_villa', c: 8, l: 30, n: 6, z: 1 },
+  { k: 'iso_nature', c: 15, l: 30, n: 5, z: 1 },
+  /* La rive sud, d'un bout a l'autre. */
+  { k: 'iso_piscine', c: 20, l: 32, n: 6, z: 1 },
+  { k: 'iso_beachclub', c: 24, l: 35, n: 6, z: 1 },
+  { k: 'iso_beachclub2', c: 30, l: 34, n: 6, z: 1 },
+  { k: 'iso_pier', c: 34, l: 34, n: 6, z: 1 },
+  { k: 'iso_jetski', c: 40, l: 34, n: 4, z: 1 },
+  { k: 'iso_ile', c: 44, l: 32, n: 4, z: 1 },
+];
+
+function modeleDuNexusIso() {
+  const cote = NEXUS25_COTE;
+  const cases = [];
+  for (let c = 0; c < cote; c++) {
+    for (let l = 0; l < cote; l++) cases.push({ c, l, s: NEXUS25_SOL });
+  }
+  const objets = NEXUS25.map((o) => ({ c: o.c, l: o.l, k: o.k, n: o.n, z: o.z }));
+  if (cases.length > MODELE_CASES_MAX || objets.length > MODELE_OBJETS_MAX) return null;
+  return { nom: 'The Nexus (2.5D)', cote, mode: 'iso', cases, objets,
+           depart: { c: NEXUS25_DEPART.c, l: NEXUS25_DEPART.l } };
+}
+
 function modeleDeMonde(nom, vivant) {
+  if (String(nom) === 'nexus25') return modeleDuNexusIso();
   if (String(nom) === 'nexus') {
     const v = vivant || {};
     return modeleDuNexus(v.salles, v.obstacles);
@@ -5011,7 +5088,7 @@ module.exports = {
   PORTAIL, PORTAIL_DE, RETOUR_DE, MUR_DONJON, MUR_DECOR, DONJON_TUILE, DONJON_SALLES,
   DONJON_COULOIR, DONJON_ORIGINE, DONJON_IMPASSES, PEUPLE_DONJON,
   planDonjon, planCave, CAVE, DONJONS, mursDonjon, peuplementDonjon, planDeDonjon,
-  modeleDuNexus, solDeBiome, ROCHER_DE,
+  modeleDuNexus, modeleDuNexusIso, NEXUS25, solDeBiome, ROCHER_DE,
   modeleDeMonde,
   VILLE, planVille, planDeVille, planDeCarte, hasardSeme, anneauUnique, tuilesDuSol,
   PLAN_PARTOUT,
