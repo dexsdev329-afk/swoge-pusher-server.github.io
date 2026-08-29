@@ -23,6 +23,7 @@ const casino = require('./casino');
 const hilo = require('./hilo');
 const mines = require('./mines');
 const plinko = require('./plinko');
+const bonanza = require('./bonanza');
 const boulier = require('./boulier');
 const { Salle: BoulierSalle } = require('./boulier_salle');
 const crash = require('./crash');
@@ -6330,6 +6331,58 @@ class Game {
     return { mise: r.mise, rangees: r.rangees, risque: r.risque,
              chemin: r.chemin, case: r.case, multi: r.multi,
              payout: r.payout, net: r.net, table: r.table };
+  }
+
+  // ---------------------------------------------------------------- bonanza
+  /*
+   * SWOGE BONANZA — grille 6x5, gains « pay anywhere », cascades.
+   *
+   * Un coup unique, comme le Plinko : tout le tour est calcule ici, cascades
+   * et tours gratuits compris, et rendu d'un bloc. Rien ne reste en suspens
+   * entre deux messages, donc rien qu'un joueur puisse abandonner en cours de
+   * route pour garder sa mise — c'est ce qui rend inutile toute gestion de
+   * partie interrompue.
+   *
+   * La page ne DECIDE de rien : elle recoit la suite des grilles et rejoue
+   * l'animation. Un joueur qui ouvre la console voit le resultat plus tot,
+   * il ne le change pas.
+   */
+  bonanzaBareme() {
+    return {
+      colonnes: bonanza.COLONNES, rangees: bonanza.RANGEES,
+      symboles: bonanza.SYMBOLES, scatter: bonanza.SCATTER,
+      minAmas: bonanza.MIN_AMAS, bareme: bonanza.BAREME,
+      baremeScatter: bonanza.BAREME_SCATTER,
+      scattersPourTours: bonanza.SCATTERS_POUR_TOURS,
+      toursGratuits: bonanza.TOURS_GRATUITS,
+      gainMax: bonanza.GAIN_MAX,
+      min: cfg.CASINO_MIN_BET, max: cfg.CASINO_MAX_BET,
+    };
+  }
+
+  bonanzaSpin(addr, miseRaw) {
+    const p = this._p(addr);
+    const mise = Math.floor(Number(miseRaw));
+    if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
+    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+
+    p.balance = p.balance.sub(WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise));
+    this._markWager(p, WEI(mise), 'bonanza');
+
+    p.nonce++;
+    const r = bonanza.joue({
+      serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':bonanza',
+      nonce: p.nonce, mise,
+    });
+    if (r.payout > 0) {
+      p.balance = p.balance.add(WEI(r.payout));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      if (r.net > 0) p.winsToday++;
+    }
+    this._manche(p, 'bonanza', r.mise, r.payout);
+    return r;
   }
 
   // ---------------------------------------------------------------- boulier

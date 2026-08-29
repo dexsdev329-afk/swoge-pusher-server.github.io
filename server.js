@@ -233,7 +233,7 @@ const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo'
                     plinko: 'Plinko', bj: 'Blackjack', smash: 'Smash', spin: 'SWOGE Spin',
                     boulier: 'Boulier',
                     crash: 'Crash', p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers',
-                    paris: 'SWOGE Bet' };
+                    paris: 'SWOGE Bet', bonanza: 'SWOGE Bonanza' };
 /* L'image du jeu accompagne l'annonce. Ce sont les MEMES vignettes que sur la
    page des jeux, extraites une fois dans media/ : une annonce illustree se
    remarque dans un canal, et celle qui montre la table dont on parle se
@@ -341,6 +341,7 @@ const PAGE_JEU = {
   plinko: 'plinko.html', bj: 'swoge_blackjack.html', smash: 'swoge_smash.html',
   spin: 'swoge_spin.html', boulier: 'boulier.html', crash: 'crash.html',
   p4: 'connect4.html', mp: 'morpion.html', dm: 'dames.html',
+  bonanza: 'swoge_bonanza.html',
   pusher: 'swoge_pusher_live.html', paris: 'swogebet.html',
 };
 function siteBase() {
@@ -715,6 +716,7 @@ function charge(ws, rec, extra) {
     hiloEdgeBps: cfg.HILO_EDGE_BPS,
     minesEdgeBps: cfg.MINES_EDGE_BPS, minesDefaut: cfg.MINES_DEFAUT,
     minesChoix: cfg.MINES_CHOIX, minesBareme: game.minesBareme(),
+    bonanzaBareme: game.bonanzaBareme(),
     plinkoBaremes: game.plinkoBaremes(), plinkoRangees: cfg.PLINKO_RANGEES,
     plinkoRisque: cfg.PLINKO_RISQUE, plinkoEdgeBps: cfg.PLINKO_EDGE_BPS,
     /* Le bareme du boulier et la cagnotte partent avec l'etat : la page ne
@@ -5254,6 +5256,21 @@ wss.on('connection', (ws) => {
           notifyTableWin(ws.addr, 'plinko', { net: r.net, staked: r.mise, payout: r.payout,
                                               note: `${r.multi.toFixed(2)}× on ${r.rangees} rows, ${r.risque} risk` });
           send(ws, { type: 'plinko', drop: r, balance: game.balanceStr(ws.addr),
+                     fairness: game.fairness(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+
+      // ---- bonanza ----
+      if (m.type === 'bonanzaSpin') {
+        try {
+          const r = game.bonanzaSpin(ws.addr, m.bet);
+          persistSoon();
+          notifyTableWin(ws.addr, 'bonanza', { net: r.net, staked: r.mise, payout: r.payout,
+                                               note: r.toursGratuits
+                                                 ? `${r.multi.toFixed(2)}x with ${r.toursGratuits} free spins`
+                                                 : `${r.multi.toFixed(2)}x` });
+          send(ws, { type: 'bonanza', tour: r, balance: game.balanceStr(ws.addr),
                      fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
