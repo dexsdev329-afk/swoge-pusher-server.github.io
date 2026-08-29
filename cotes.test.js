@@ -94,7 +94,19 @@ cotes.chargeNotes(TMP);
      championnat : il est la pour prouver que l'extreme est REFUSE proprement,
      pas pour etre representatif. La coupure tombe la ou la cote la plus courte
      passerait sous le plancher. */
-  ok(cotes_ >= 150, `${cotes_} rencontres cotees, ${ecartes} ecartees`);
+  /* ---- CE SEUIL A BAISSE, ET VOICI CE QUI L'A REMPLACE ----
+   * Il valait 150 avant le plancher de marge par issue. Ce plancher
+   * raccourcit la cote du favori — c'est tout son objet — donc les affiches
+   * les plus desequilibrees passent sous le plancher d'affichage plus tot :
+   * la coupure est descendue de 700 a 640 points d'ecart.
+   *
+   * Un nombre sur un balayage SYNTHETIQUE est de toute facon une mauvaise
+   * garantie : il bouge des qu'on touche a la pose de marge, et il ne dit
+   * rien de ce qui compte. Ce qui compte, c'est de ne perdre aucune affiche
+   * REELLE, et c'est verifie plus bas sur les 26 406 paires du fichier de
+   * forces — zero perdue. Ce seuil-ci ne garde qu'un role : prouver que le
+   * balayage cote encore largement plus qu'il n'ecarte pres du centre. */
+  ok(cotes_ >= 120, `${cotes_} rencontres cotees, ${ecartes} ecartees`);
   ok(ecartes > 10, 'et le balayage contient bien des cas injouables, sinon il ne prouve rien');
   ok(pire >= paris.MARGE_MIN, `la pire marge du balayage vaut ${(pire * 100).toFixed(2)} %`);
   ok(pire >= 0.03, 'et elle garde une reserve confortable au-dessus du plancher');
@@ -156,12 +168,22 @@ cotes.chargeNotes(TMP);
   ok(c['N'] > 3, `le nul entre deux equipes tres inegales est peu probable, donc cher (${c['N']})`);
 }
 
-// ---- la marge demandee est celle qui est prise
+// ---- la marge demandee est un PLANCHER, plus une cible
+/* Elle etait une cible : on demandait 5 %, on relisait 5 %. Le plancher de
+   marge par issue a change ca, et c'est voulu. Il raccourcit toute cote qui
+   laisserait moins de 6 % de marge sur SON issue, donc il peut relever la
+   marge du livre au-dessus de ce qu'on avait demande. Trois equipes egales a
+   1500 partagent 33 % chacune, l'exposant leur donne des cotes presque
+   justes, et le rabot mord : 5 % demandes, 6,1 % pris.
+   Ce qu'il faut verifier n'est donc plus l'egalite mais l'ENCADREMENT — on
+   ne prend jamais MOINS que demande, et jamais tellement plus que la cote
+   afficherait autre chose que ce qu'on croit vendre. */
 {
   cotes.poseNote('foot', 'X', 1500); cotes.poseNote('foot', 'Y', 1500);
   for (const m of [0.05, 0.08, 0.10, 0.15, 0.25]) {
     const mg = paris.marge(cotes.cotesDe('foot', 'X', 'Y', m), 'foot');
-    pres(mg, m, 0.01, `marge demandee ${m} → marge prise`);
+    ok(mg >= m - 0.01, `marge demandee ${m} → jamais moins (${(100 * mg).toFixed(2)} %)`);
+    ok(mg <= m + 0.05, `marge demandee ${m} → et pas beaucoup plus (${(100 * mg).toFixed(2)} %)`);
   }
   /* Une marge trop basse est REMONTEE, jamais acceptee : le validateur refuse
      sous 2 %, et un catalogue refuse empeche le serveur de demarrer. */

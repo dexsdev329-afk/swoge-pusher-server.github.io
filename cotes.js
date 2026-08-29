@@ -90,6 +90,109 @@ const MARGE_DEFAUT = 0.10;
    serveur de demarrer. On garde un cran de securite au-dessus du plancher. */
 const MARGE_PLANCHER = 0.04;
 
+/* ==================== LE PLANCHER DE MARGE PAR ISSUE ====================
+ *
+ * LA MARGE DU LIVRE N'EST PAS LA MARGE D'UN PARI. La methode de l'exposant
+ * — `c = 1 / p^k` — repartit la marge « naturellement sur les outsiders,
+ * exactement comme dans un vrai livre ». C'est vrai, et c'est justement le
+ * probleme ici : elle laisse le FAVORI presque au prix juste, et le favori
+ * est la selection que tout le monde prend.
+ *
+ * Mesure sur nos propres cotes, avant ce plancher — de combien de points de
+ * probabilite le modele peut-il se tromper sur le favori avant que le pari
+ * devienne gagnant pour le parieur :
+ *
+ *     PSG v Angers        cote 1,14   modele 85,2 %   bascule a 87,7 %   +2,6 pt
+ *     Real Madrid v Malaga cote 1,10  modele 88,7 %   bascule a 90,9 %   +2,2 pt
+ *     Arsenal v Bolton    cote 1,09   modele 89,5 %   bascule a 91,7 %   +2,2 pt
+ *
+ * Deux points et demi. Or ce modele est un Elo : il ignore les blessures, la
+ * forme, un gardien suspendu, et le fait qu'une equipe comme celles-la joue
+ * a domicile contre le dix-septieme. Se tromper de deux points sur un tel
+ * match n'est pas un accident rare, c'est l'ordinaire — et l'erreur va
+ * toujours dans le meme sens, parce que ces equipes-la gagnent plus souvent
+ * que ce qu'un Elo generaliste leur accorde.
+ *
+ * Le livre affichait 10 % de marge et n'en portait que 2,6 la ou tout
+ * l'argent se pose. C'est ca, « se mettre dans la sauce » : pas une cote
+ * fausse, une marge posee au mauvais endroit.
+ *
+ * ON RABOTE DONC CHAQUE ISSUE SEPAREMENT. Aucune cote ne peut impliquer
+ * moins que `p x (1 + MARGE_ISSUE_MIN)`. Raccourcir une cote ne peut
+ * qu'AUGMENTER la marge du livre, donc ce rabot ne peut jamais faire tomber
+ * un marche sous le plancher du validateur — il ne cree pas de nouveau cas
+ * a gerer. */
+const MARGE_ISSUE_MIN = 0.06;
+
+/* ---- ET IL MORD PLUS FORT SUR LES ISSUES RARES ----
+ * Une marge de 6 % protege d'une erreur de 6 % sur la probabilite. Or
+ * l'erreur du modele n'est pas la meme partout : sur un favori a 85 % il se
+ * trompe de deux ou trois points, soit 3 % en relatif ; sur un 0-1 a 0,9 %
+ * il peut se tromper d'un tiers de la valeur sans que rien ne le signale,
+ * parce qu'une case rare ne pese presque rien dans l'ajustement qui a produit
+ * la grille.
+ *
+ * Mesure de ce que ca coutait : sur deux affiches, le 0-1 sortait a la cote
+ * PLAFOND de 100 et rendait 113 % au parieur des que la correction de
+ * Dixon-Coles s'annulait. La cote maximale n'est pas une protection — c'est
+ * une borne d'affichage, et elle tombait du mauvais cote.
+ *
+ * Le plancher monte donc quand la probabilite descend : 6 % au-dessus d'une
+ * chance sur dix, 50 % en dessous d'une chance sur cinquante, en pente entre
+ * les deux. Ce n'est pas de la gourmandise, c'est le prix de l'ignorance —
+ * la meme raison qui fait que la marge generale est deja plus haute ici que
+ * chez un bookmaker qui, lui, sait. */
+const MARGE_ISSUE_QUEUE = 0.50;
+const P_HAUTE = 0.10;          // au-dessus, le plancher ordinaire suffit
+const P_BASSE = 0.02;          // en dessous, le plancher de queue s'applique
+
+function plancherDe(pi) {
+  if (!(pi > 0)) return MARGE_ISSUE_MIN;
+  if (pi >= P_HAUTE) return MARGE_ISSUE_MIN;
+  if (pi <= P_BASSE) return MARGE_ISSUE_QUEUE;
+  const u = (P_HAUTE - pi) / (P_HAUTE - P_BASSE);
+  return MARGE_ISSUE_MIN + u * (MARGE_ISSUE_QUEUE - MARGE_ISSUE_MIN);
+}
+
+/* Le rabot. Il ne touche que ce qui depasse : une cote deja assez chere pour
+   la maison ressort inchangee.
+ *
+ * `gradue` n'est vrai que pour le score exact — la seule liste ou une issue
+ * peut etre une case RARE d'une grille, mal estimee parce qu'elle ne pese
+ * presque rien dans l'ajustement qui a produit cette grille. L'outsider d'un
+ * match de NBA a 5 % n'est pas dans ce cas : il sort directement de l'Elo,
+ * qui l'estime aussi bien que le favori.
+ *
+ * ---- ET LE PLANCHER NE PEUT PAS TOUJOURS ETRE TENU ----
+ * A 94,7 % — un ecart banal en NBA — exiger 6 % de marge demanderait une
+ * probabilite implicite de 100,4 %. Ca n'existe pas : la marge maximale
+ * atteignable sur un favori a p vaut 1/p - 1, soit 5,6 % ici. La premiere
+ * version ne le voyait pas, tombait sous la cote minimale, et le match
+ * entier etait ECARTE — quatre affiches de NBA a 340-400 points d'ecart
+ * perdues pour avoir voulu trop les proteger.
+ *
+ * On prend donc ce que le prix PERMET : le plancher quand il est
+ * atteignable, la cote la plus courte affichable quand il ne l'est pas.
+ * Un marche a 2,5 % de marge vaut mieux qu'un marche absent, et de toute
+ * facon un favori a 95 % ne trouve pas beaucoup de preneurs. */
+function raboteIssues(c, p, iss, marge, gradue) {
+  const out = {};
+  for (const i of iss) {
+    const pi = Number(p[i]);
+    let v = c[i];
+    if (isFinite(pi) && pi > 0) {
+      const e = (marge === undefined) ? (gradue ? plancherDe(pi) : MARGE_ISSUE_MIN) : marge;
+      let plafond = 1 / (pi * (1 + e));
+      /* on ne descend pas sous ce qui s'affiche : sinon on n'a plus de
+         marche du tout, ce qui n'est pas une protection */
+      if (plafond < COTE_PLANCHER) plafond = COTE_PLANCHER;
+      if (v > plafond) v = Math.round(plafond * 100) / 100;
+    }
+    out[i] = Math.max(paris.COTE_MIN, v);
+  }
+  return out;
+}
+
 const FICHIER_NOTES = path.join(__dirname, 'paris_notes.json');
 
 // ------------------------------------------------------------- les forces
@@ -271,7 +374,18 @@ function tarife(sport, domicile, exterieur, margeVoulue) {
        celle qu'on croyait appliquer : arrondir au centieme la deplace. */
     const reelle = paris.marge(c, sport);
     if (reelle >= Math.max(paris.MARGE_MIN, MARGE_PLANCHER * 0.75)) {
-      return { cotes: c, marge: reelle, plusCourte };
+      /* ---- LE RABOT PASSE APRES, ET C'EST TOUT L'ORDRE QUI COMPTE ----
+         Pose AVANT la mesure, il fournissait de la marge a bon compte sur
+         deux ou trois issues, la boucle s'arretait des le premier essai avec
+         `m` encore a sa valeur de depart, et TOUTES les autres cotes
+         restaient longues. Mesure de cette version ratee : 24 scores exacts
+         devenus perdants pour la maison, le pire a 125 %. Le rabot n'est pas
+         une source de marge, c'est un garde-fou : l'exposant fait son travail
+         d'abord, le rabot ne coupe que ce qui depasse encore. */
+      const fin = raboteIssues(c, p, iss);
+      let courte = Infinity;
+      for (const i of iss) courte = Math.min(courte, fin[i]);
+      return { cotes: fin, marge: paris.marge(fin, sport), plusCourte: courte };
     }
     m += 0.005;
   }
@@ -429,16 +543,43 @@ function habilleCatalogue(brut, margeVoulue) {
  * « plus de 2,5 » qui contredise le « 1 » affiche a cote, puisque les deux
  * sortent du meme couple de nombres.
  *
- * ---- CE QUE LE MODELE IGNORE ----
+ * ---- LA CORRECTION DE DIXON-COLES, ET POURQUOI ELLE EST LA MAINTENANT ----
  *
  * Deux lois de Poisson independantes sous-estiment les tres petits scores :
- * dans la vraie vie, 0-0 et 1-1 arrivent un peu plus souvent que le produit ne
- * le dit. La correction usuelle — Dixon-Coles — n'est pas appliquee ici : elle
- * demande un parametre de plus, estime sur des milliers de matchs qu'on n'a
- * pas. L'ajustement du TOTAL sur la probabilite de nul la compense en partie,
- * et la marge — plus haute que celle d'un bookmaker, deliberement — absorbe le
- * reste. C'est le meme aveu que pour l'Elo : le modele ne sait pas tout, et
- * c'est la marge qui paie son ignorance.
+ * dans la vraie vie, 0-0 et 1-1 arrivent plus souvent que le produit ne le
+ * dit. Ce fichier a longtemps porte l'aveu que la correction usuelle —
+ * Dixon-Coles — n'etait pas appliquee « parce qu'elle demande un parametre
+ * estime sur des milliers de matchs qu'on n'a pas ».
+ *
+ * C'ETAIT UN RAISONNEMENT FAUX, ET IL COUTAIT DE L'ARGENT. Ne pas appliquer
+ * la correction n'est pas s'abstenir de choisir un parametre : c'est en
+ * choisir un, `rho = 0`, et c'est le seul dont on sache avec certitude qu'il
+ * est faux. La mesure, faite sur nos propres cotes :
+ *
+ *     PSG v Angers      0-0 offert a 40,80   retour du parieur  109,8 %
+ *     Barcelona v Alaves 0-0 offert a 45,63  retour du parieur  114,4 %
+ *     Bayern v Augsburg  0-0 offert a 47,36  retour du parieur  115,3 %
+ *
+ * Autrement dit : sur toute affiche a gros favori, le 0-0 etait un pari que
+ * la maison PERD a la longue, et de dix a quinze pour cent. Plus le favori
+ * etait ecrasant, plus la fuite etait large — parce que le produit de deux
+ * Poisson tres desequilibrees ecrase le 0-0 encore plus que d'habitude.
+ *
+ * On applique donc `rho = -0,13`, la valeur publiee par Dixon et Coles et
+ * retrouvee depuis sur d'autres championnats et d'autres epoques. Elle n'est
+ * pas estimee sur NOS matchs — on n'en a pas — mais une valeur de la
+ * litterature vaut mieux qu'une valeur dont on sait qu'elle est fausse.
+ *
+ * La correction ne touche QUE quatre cases : 0-0 et 1-1 montent, 0-1 et 1-0
+ * baissent, et on renormalise. Elle est posee dans la grille elle-meme, donc
+ * les six marches en heritent ensemble et ne peuvent toujours pas se
+ * contredire — c'est la propriete a laquelle il ne faut pas toucher.
+ *
+ * ---- CE QUE LE MODELE IGNORE ENCORE ----
+ *
+ * Un Elo ignore les blessures, la forme, un gardien suspendu. La marge est la
+ * pour absorber cette ignorance. Mais elle ne l'absorbait pas la ou il
+ * fallait : voir `MARGE_ISSUE_MIN` plus bas.
  */
 
 /* Douze buts par equipe. La queue au-dela pese moins d'un millionieme meme
@@ -452,15 +593,69 @@ function poisson(lam, k) {
   return p;
 }
 
+/* Le parametre de Dixon-Coles. Negatif : il REMONTE 0-0 et 1-1 et abaisse
+   0-1 et 1-0. La valeur publiee tourne autour de -0,13 selon le championnat
+   et l'epoque ; on prend celle-la. */
+const RHO = -0.13;
+
+/* ---- ON NE PARIE PAS SUR LA VALEUR DE RHO ----
+ * Prendre -0,13 corrige le 0-0, qui etait la grosse fuite. Mais si la verite
+ * etait rho = 0, la correction rendrait le 0-1 et le 1-0 trop longs a leur
+ * tour : mesure, 113 % de retour au parieur sur un 0-1 offert a la cote
+ * plafond. Choisir une valeur, c'est se tromper d'un cote ou de l'autre.
+ *
+ * On ne choisit donc pas pour le GARDE-FOU. Le marche reste construit sur
+ * -0,13 — il faut bien une grille, et c'est la meilleure estimation — mais
+ * aucune cote ne depasse ce que le rho le plus defavorable de la plage
+ * autoriserait. Le prix est prudent contre toute la plage, pas juste contre
+ * un pari sur son milieu. */
+const RHO_PLAGE = [0, -0.08, -0.13, -0.18];
+
+/** Pour chaque score, la probabilite la PLUS FORTE sur toute la plage de rho.
+ *  C'est la borne contre laquelle le rabot travaille : si aucun rho plausible
+ *  ne rend ce score plus probable que ca, aucun ne rend la cote perdante. */
+function scoresPrudents(lh, la) {
+  const out = {};
+  for (const s of paris.SCORES) out[s] = 0;
+  for (const r of RHO_PLAGE) {
+    const g = grilleDesScores(lh, la, r);
+    const e = {};
+    for (const s of paris.SCORES) e[s] = 0;
+    for (let i = 0; i <= BUTS_MAX; i++)
+      for (let j = 0; j <= BUTS_MAX; j++) {
+        const cle = i + '-' + j;
+        if (e[cle] !== undefined) e[cle] += g[i][j]; else e.autre += g[i][j];
+      }
+    for (const s of paris.SCORES) if (e[s] > out[s]) out[s] = e[s];
+  }
+  return out;
+}
+
 /** La grille des scores : `g[i][j]` = probabilite de i buts a j. */
-function grilleDesScores(lh, la) {
+function grilleDesScores(lh, la, rho) {
+  const r = (rho === undefined) ? RHO : Number(rho) || 0;
   const ph = [], pa = [];
   for (let i = 0; i <= BUTS_MAX; i++) { ph.push(poisson(lh, i)); pa.push(poisson(la, i)); }
   const g = [];
   for (let i = 0; i <= BUTS_MAX; i++) {
-    const r = [];
-    for (let j = 0; j <= BUTS_MAX; j++) r.push(ph[i] * pa[j]);
-    g.push(r);
+    const t = [];
+    for (let j = 0; j <= BUTS_MAX; j++) t.push(ph[i] * pa[j]);
+    g.push(t);
+  }
+  if (r) {
+    /* Les quatre cases de Dixon-Coles. Le facteur est BORNE a rester
+       positif : au-dela de lh = 1/|rho|, soit 7,7 buts attendus, la formule
+       rendrait une probabilite negative. `ajusteButs` ne monte jamais si
+       haut (son plafond est 6 buts au total), mais une borne qui ne sert
+       jamais coute moins cher qu'une probabilite negative qui sort une fois. */
+    const bornee = (x) => Math.max(0.05, x);
+    g[0][0] *= bornee(1 - lh * la * r);
+    g[0][1] *= bornee(1 + lh * r);
+    g[1][0] *= bornee(1 + la * r);
+    g[1][1] *= bornee(1 - r);
+    let s = 0;
+    for (let i = 0; i <= BUTS_MAX; i++) for (let j = 0; j <= BUTS_MAX; j++) s += g[i][j];
+    if (s > 0) for (let i = 0; i <= BUTS_MAX; i++) for (let j = 0; j <= BUTS_MAX; j++) g[i][j] /= s;
   }
   return g;
 }
@@ -551,7 +746,11 @@ function probasDesMarches(lh, la) {
  * sans descendre sous la borne du validateur. On l'ECARTE plutot que de
  * proposer un pari a 1,01 sur lequel la maison ne gagne rien.
  */
-function habilleUnMarche(p, iss, couverture, margeVoulue) {
+/* `pPrudent` — quand il est fourni — ne sert QU'au rabot : le marche reste
+   construit sur `p`, donc il continue de dire la meme chose que les cinq
+   autres, mais aucune cote ne depasse ce que la version la plus pessimiste du
+   modele autoriserait. Voir `scoresPrudents`. */
+function habilleUnMarche(p, iss, couverture, margeVoulue, pPrudent) {
   let m = Math.max(MARGE_PLANCHER, Number(margeVoulue) || MARGE_DEFAUT);
   for (let essai = 0; essai < 60; essai++) {
     const k = exposant(p, iss, m, couverture);
@@ -563,7 +762,17 @@ function habilleUnMarche(p, iss, couverture, margeVoulue) {
       plusCourte = Math.min(plusCourte, c[i]);
     }
     const reelle = paris.margeDe(c, iss, couverture);
-    if (reelle >= paris.MARGE_MIN && plusCourte >= COTE_PLANCHER) return { cotes: c, marge: reelle };
+    if (reelle >= paris.MARGE_MIN && plusCourte >= COTE_PLANCHER) {
+      /* Le rabot APRES l'acceptation — voir `tarife` pour ce que coute
+         l'ordre inverse. Il ne fait que raccourcir, donc la marge du lot ne
+         peut que monter : le marche reste valide. Mais raccourcir peut faire
+         passer la plus courte sous le plancher, et ca, il faut le revoir. */
+      const fin = raboteIssues(c, pPrudent || p, iss, undefined, !!pPrudent);
+      let courte = Infinity;
+      for (const i of iss) courte = Math.min(courte, fin[i]);
+      if (courte < COTE_PLANCHER) return null;
+      return { cotes: fin, marge: paris.margeDe(fin, iss, couverture) };
+    }
     if (plusCourte < COTE_PLANCHER) return null;   // aucune marge ne sauvera ca
     m += 0.005;
   }
@@ -631,14 +840,33 @@ function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase) {
    * Faute de pouvoir remonter aux probabilites — un lot sans marge, ce qui ne
    * devrait pas passer le validateur — on retombe sur l'Elo plutot que de ne
    * rien proposer. */
-  const p = probasImplicites(base, iss1, 1) || probabilites(sport, domicile, exterieur);
+  /* ---- ON N'INVERSE QUE CE QUI VIENT DE DEHORS ----
+   * Cette ligne inversait TOUJOURS les cotes affichees pour retrouver des
+   * probabilites — y compris quand c'est nous qui venions de les fabriquer.
+   * Un aller-retour sur nos propres chiffres, alors qu'on a l'original sous
+   * la main.
+   *
+   * Tant que la pose de marge etait un pur exposant, l'aller-retour etait
+   * exact et ca ne se voyait pas. Le rabot par issue l'a casse : il
+   * raccourcit certaines cotes et pas d'autres, donc l'inversion ne rend plus
+   * les probabilites de depart. Le modele de buts partait alors d'un 1-N-2
+   * legerement faux, `ajusteButs` convergeait ailleurs, et le score exact
+   * sortait a 65,87 la ou il valait 46,58 — soit un prix que la maison PERD.
+   * Un garde-fou pose sur un marche avait deregle les cinq autres.
+   *
+   * On garde donc l'original quand il est a nous, et on n'inverse que le lot
+   * releve chez un bookmaker, pour qui on n'a rien d'autre. */
+  const p = (cotesBase && base === cotesBase)
+    ? (probasImplicites(base, iss1, 1) || probabilites(sport, domicile, exterieur))
+    : probabilites(sport, domicile, exterieur);
   if (!isFinite(p.N)) return sortie;             // deux issues : pas de buts a modeliser
   const { lh, la } = ajusteButs(p[1], p.N, p[2]);
   const tout = probasDesMarches(lh, la);
   for (const k of dispo) {
     const M = paris.MARCHES[k];
     const iss = M.issues(sport);
-    const lot = habilleUnMarche(tout[k], iss, M.couverture, margeVoulue);
+    const lot = habilleUnMarche(tout[k], iss, M.couverture, margeVoulue,
+                                k === 'score' ? scoresPrudents(lh, la) : null);
     /* Un marche qui ne tient pas est ECARTE, pas force. La rencontre garde les
        autres — refuser tout le match parce qu'un handicap sort des bornes
        priverait de pari une affiche parfaitement cotable. */
@@ -648,9 +876,10 @@ function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase) {
 }
 
 module.exports = {
-  NOTE_DEFAUT, TERRAIN, NUL_MAX, NUL_PENTE, MARGE_DEFAUT, MARGE_PLANCHER, COTE_PLANCHER, exposant, tarife, cotable,
+  NOTE_DEFAUT, TERRAIN, NUL_MAX, NUL_PENTE, MARGE_DEFAUT, MARGE_PLANCHER, COTE_PLANCHER,
+  MARGE_ISSUE_MIN, MARGE_ISSUE_QUEUE, plancherDe, raboteIssues, exposant, tarife, cotable,
   chargeNotes, notes, cle, note, poseNote, sauveNotes, apprend,
   probabilites, cotesDe, habille, habilleCatalogue,
-  BUTS_MAX, poisson, grilleDesScores, issuesDeLaGrille, ajusteButs,
+  BUTS_MAX, RHO, RHO_PLAGE, scoresPrudents, poisson, grilleDesScores, issuesDeLaGrille, ajusteButs,
   probasDesMarches, habilleUnMarche, marchesDe, probasImplicites,
 };
