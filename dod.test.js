@@ -1,6 +1,6 @@
 'use strict';
 /*
- * LE MOTEUR DE DEAD OR DOGE TIENT-IL SES COMPTES ?
+ * LE MOTEUR DE DEAD SWOGE TIENT-IL SES COMPTES ?
  *
  * Un moteur de machine a sous se juge sur trois choses, et une seule se voit
  * en jouant : qu'il rende le meme tour pour les memes entrees, qu'il paie ce

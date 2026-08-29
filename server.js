@@ -234,7 +234,7 @@ const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo'
                     boulier: 'Boulier',
                     crash: 'Crash', p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers',
                     paris: 'SWOGE Bet', bonanza: 'SWOGE Bonanza',
-                    dod: 'DEAD OR DOGE' };
+                    dod: 'DEAD SWOGE' };
 /* L'image du jeu accompagne l'annonce. Ce sont les MEMES vignettes que sur la
    page des jeux, extraites une fois dans media/ : une annonce illustree se
    remarque dans un canal, et celle qui montre la table dont on parle se

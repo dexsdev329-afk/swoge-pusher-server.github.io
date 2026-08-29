@@ -1,6 +1,6 @@
 'use strict';
 /*
- * SWOGE : DEAD OR DOGE — le moteur.
+ * SWOGE : DEAD SWOGE — le moteur.
  *
  * Cinq rouleaux, trois rangees, 243 facons de gagner, un Wild qui s'etire et
  * deux etages de tours gratuits. Meme charpente que `bonanza.js` : un flux
