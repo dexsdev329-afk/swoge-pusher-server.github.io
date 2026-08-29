@@ -29,10 +29,29 @@
  *
  * ---- LE TAUX DE RETOUR ----
  *
- * Il n'est pas choisi, il est MESURE. Sur 4,8 millions de tours simules :
+ * Il n'est pas choisi, il est MESURE. Sur 1,2 million de tours simules :
  *
- *     RTP           95,00 %
- *     intervalle a 95 %   94,09 % a 95,91 %
+ *     RTP           94,65 %
+ *     intervalle a 95 %   93,14 % a 96,16 %
+ *     bonus ouvert  1 tour sur 201
+ *
+ * ---- ET IL A FALLU LE REGLER DEUX FOIS ----
+ *
+ * La premiere mesure — 95,00 % sur 4,8 millions de tours — valait pour une
+ * regle FAUSSE : les scatters ne comptaient qu'au premier jet. Corrigee (ils
+ * comptent pendant toute la cascade, comme dans le jeu d'origine), le bonus
+ * s'ouvrait un tour sur 87 au lieu de 219 et le RTP montait a 152 % : la
+ * maison perdait cinquante-deux pour cent a chaque tour.
+ *
+ * Le poids de la sucette est le levier, et il est BRUTAL — de 22 a 8, le
+ * bonus passe de 1 tour sur 87 a 1 sur 3 750. Mesure du reglage retenu, 17
+ * et 0,13, contre les voisins sur 200 000 tours chacun :
+ *
+ *     chance de bombe 0,130   RTP  94,89 %   1 tour sur 200
+ *     chance de bombe 0,145   RTP  97,42 %   1 tour sur 200
+ *     chance de bombe 0,160   RTP 101,69 %   1 tour sur 200
+ *
+ * Le jeu revient donc exactement ou il avait ete concu, avec la bonne regle.
  *
  * L'intervalle n'est pas de la coquetterie. Ce jeu a une variance enorme — les
  * bombes des tours gratuits vont jusqu'a x100 et s'additionnent — au point
@@ -83,7 +102,7 @@ const POIDS = {
   banane:        195, raisin:        170, pasteque:      150,
   prune:         120, pomme:         105, bonbon_bleu:    82,
   bonbon_vert:    62, bonbon_violet:  40, coeur:          14,
-  sucette:        22,
+  sucette:        17,
 };
 function poidsTotal(){ return TOUS.reduce((s, k) => s + POIDS[k], 0); }
 
@@ -95,7 +114,7 @@ const BOMBES = [2,2,2,3,3,3,4,4,5,5,6,8,10,12,15,20,25,50,100];
  * 11,7 % quand ils doivent porter l'essentiel du retour. C'est l'addition qui
  * fait le mode — trois bombes a 5, 10 et 25 donnent x40 sur le tour. */
 const BOMBES_ESSAIS = 6;         // occasions de bombe par tour gratuit
-let CHANCE_BOMBE = 0.16;         // reglee par mesure — voir la note de RTP plus bas
+let CHANCE_BOMBE = 0.13;         // reglee par mesure — voir la note de RTP plus bas
 
 const GAIN_MAX = 21100;          // plafond, en multiples de la mise
 
@@ -182,7 +201,17 @@ function unTour(octet, gratuit) {
 
   for (;;) {
     const g = gainsDe(grille);
-    if (tours === 0) scattersVus = g.scatters;   // les scatters ne comptent qu'au premier jet
+    /* ---- LES SCATTERS COMPTENT PENDANT TOUTE LA CASCADE ----
+     * Ils ne comptaient qu'au PREMIER jet. C'est faux : dans le jeu d'origine,
+     * quatre sucettes qui arrivent une par une au fil des cascades ouvrent le
+     * bonus tout autant que quatre tombees d'un coup — et c'est meme la facon
+     * la plus frequente de le declencher.
+     *
+     * Le maximum, et non la somme : une sucette ne fait jamais partie d'un
+     * amas gagnant (`gainsDe` ne parcourt que `SYMBOLES`), donc elle n'est
+     * jamais retiree par une cascade. Elle RESTE sur la grille. Les additionner
+     * d'une etape a l'autre compterait dix fois la meme sucette. */
+    if (g.scatters > scattersVus) scattersVus = g.scatters;
     if (!g.amas.length) { etapes.push({ grille, amas: [], multi: 0 }); break; }
     multiTotal += g.multi;
     etapes.push({ grille, amas: g.amas, multi: g.multi });
