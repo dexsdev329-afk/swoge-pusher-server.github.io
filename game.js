@@ -6402,6 +6402,11 @@ class Game {
       gainMax: dod.GAIN_MAX,
       crans: dod.CRANS, cransOrdre: dod.CRANS_ORDRE,
       min: cfg.CASINO_MIN_BET, max: cfg.CASINO_MAX_BET,
+      /* Le retour au joueur part AVEC le bareme, comme tout le reste : la
+         page ne doit pas en garder de copie, sinon elle annoncera l'ancien
+         le jour ou le moteur sera reregle. */
+      rtp: dod.RTP, rtpIc: dod.RTP_IC, rtpN: dod.RTP_TOURS,
+      bonusUnSur: dod.BONUS_UN_SUR,
     };
   }
 

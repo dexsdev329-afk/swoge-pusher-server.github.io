@@ -145,6 +145,38 @@ const TAILLES_WILD = [
 const TAILLES_TOTAL = TAILLES_WILD.reduce((s, t) => s + t.poids, 0);
 
 /* Les deux etages de tours gratuits. */
+/* ---- LE RETOUR AU JOUEUR, MESURE SUR CE MOTEUR ----
+ *
+ * Affiche au joueur sur l'ecran d'information de la page. Il est MESURE
+ * ici, pas recopie du jeu qui a inspire celui-ci — leur 96,51 % vaut pour
+ * leurs poids, pas pour les notres.
+ *
+ * Il a fallu s'y reprendre. Une mesure isolee ne vaut rien sur ce jeu :
+ * l'ecart-type ENTRE GRAINES est de 1,34 point, et sur 40 mesures le plus
+ * bas donne 93,60 % quand le plus haut donne 99,20 %. Presque tout le
+ * retour tient dans une serie de tours gratuits rare et grosse, donc une
+ * seule graine dit surtout laquelle elle a tiree. Trois graines annoncaient
+ * 94,83 %, dix en annoncaient 96,57 % : le desaccord etait celui du bruit,
+ * pas du moteur.
+ *
+ * On POOLE donc, et l'intervalle vient de la dispersion entre graines —
+ * c'est elle qui porte la queue lourde, pas la variance interne d'une
+ * mesure.
+ *
+ *     40 mesures independantes de 400 000 tours = 16 millions de tours
+ *     moyenne  96,35 %      mediane 96,36 %      (les deux a 0,01 point)
+ *     intervalle 95 % : 95,94 % .. 96,77 %,  soit +-0,41 point
+ *
+ * La frequence, elle, est un simple oui/non : loi binomiale, intervalle
+ * calcule, convergence rapide. Sur 4 millions de tours : un bonus tous les
+ * 143 tours (141 a 144), dont un `deader` tous les 3 172.
+ *
+ * A REMESURER a chaque changement de poids, de bareme ou de tailles de
+ * Wild — `mesure()` est la, et `dod_regles.test.js` verifie que le chiffre
+ * publie n'a pas derive du moteur.
+ */
+const RTP = 96.35, RTP_IC = 0.41, RTP_TOURS = 16000000, BONUS_UN_SUR = 143;
+
 const SCATTERS_POUR_TOURS = 3;
 const TOURS = { [DEAD]: 12, [DEADER]: 18 };
 
@@ -565,6 +597,7 @@ function mesureAchat(cran, n = 100000, graine = 'achat') {
 }
 
 module.exports = {
+  RTP, RTP_IC, RTP_TOURS, BONUS_UN_SUR,
   ROULEAUX, RANGEES, CASES, BAS, HAUTS, PAYANTS, WILD, DEAD, DEADER, TOUS,
   ROULEAUX_WILD, BAREME, POIDS, TAILLES_WILD, SCATTERS_POUR_TOURS, TOURS,
   GAIN_MAX, CRANS, CRANS_ORDRE,
