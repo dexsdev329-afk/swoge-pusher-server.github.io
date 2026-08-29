@@ -24,6 +24,7 @@ const hilo = require('./hilo');
 const mines = require('./mines');
 const plinko = require('./plinko');
 const bonanza = require('./bonanza');
+const dod = require('./dod');
 const boulier = require('./boulier');
 const { Salle: BoulierSalle } = require('./boulier_salle');
 const crash = require('./crash');
@@ -6382,6 +6383,89 @@ class Game {
       if (r.net > 0) p.winsToday++;
     }
     this._manche(p, 'bonanza', r.mise, r.payout);
+    return r;
+  }
+
+  // ---------------------------------------------------------------- dead or doge
+  /* Le bareme part a la connexion, comme celui de Bonanza : la page dessine
+     les gains et les prix d'achat depuis CE qui paie, jamais depuis une copie
+     ecrite a cote. Deux tables finissent toujours par diverger, et c'est
+     celle de la page qu'on ne pense pas a remesurer. */
+  dodBareme() {
+    return {
+      rouleaux: dod.ROULEAUX, rangees: dod.RANGEES,
+      bas: dod.BAS, hauts: dod.HAUTS, wild: dod.WILD,
+      dead: dod.DEAD, deader: dod.DEADER,
+      rouleauxWild: dod.ROULEAUX_WILD,
+      bareme: dod.BAREME, taillesWild: dod.TAILLES_WILD,
+      scattersPourTours: dod.SCATTERS_POUR_TOURS, tours: dod.TOURS,
+      gainMax: dod.GAIN_MAX,
+      crans: dod.CRANS, cransOrdre: dod.CRANS_ORDRE,
+      min: cfg.CASINO_MIN_BET, max: cfg.CASINO_MAX_BET,
+    };
+  }
+
+  dodSpin(addr, miseRaw) {
+    const p = this._p(addr);
+    const mise = Math.floor(Number(miseRaw));
+    if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
+    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+
+    p.balance = p.balance.sub(WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise));
+    this._markWager(p, WEI(mise), 'dod');
+
+    p.nonce++;
+    const r = dod.joue({
+      serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':dod',
+      nonce: p.nonce, mise,
+    });
+    if (r.payout > 0) {
+      p.balance = p.balance.add(WEI(r.payout));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      if (r.net > 0) p.winsToday++;
+    }
+    this._manche(p, 'dod', r.mise, r.payout);
+    return r;
+  }
+
+  /* ---- L'ACHAT, EN QUATRE CRANS ----
+   * LE PLAFOND PORTE SUR LE COUT, PAS SUR LA MISE — meme raison que pour
+   * Bonanza : le cran `deader` coute 108 fois la mise, donc une mise de 1 000
+   * engage 108 000. Un plafond de table qui ne regarderait que la mise
+   * nominale ne voudrait plus rien dire.
+   */
+  dodAchat(addr, miseRaw, cranRaw) {
+    const p = this._p(addr);
+    const cran = String(cranRaw || '');
+    const c = dod.CRANS[cran];
+    if (!c) throw new Error('unknown buy tier');
+    const mise = Math.floor(Number(miseRaw));
+    if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
+    const cout = Math.floor(mise * c.prix);
+    if (cout > cfg.CASINO_MAX_BET) {
+      throw new Error('buy costs ' + cout + ' $SWOGE — max is ' + cfg.CASINO_MAX_BET);
+    }
+    if (p.balance.lt(WEI(cout))) throw new Error('not enough $SWOGE');
+
+    p.balance = p.balance.sub(WEI(cout));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(cout));
+    this._markWager(p, WEI(cout), 'dod');
+
+    p.nonce++;
+    const r = dod.achete({
+      serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':dod',
+      nonce: p.nonce, mise, cran,
+    });
+    if (r.payout > 0) {
+      p.balance = p.balance.add(WEI(r.payout));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      if (r.net > 0) p.winsToday++;
+    }
+    /* La manche est enregistree sur le COUT, pas sur la mise : c'est ce que le
+       joueur a reellement risque. */
+    this._manche(p, 'dod', r.cout, r.payout);
     return r;
   }
 
