@@ -225,11 +225,24 @@ function unTour(octet, gratuit) {
      multiplient que s'il y a quelque chose a multiplier. */
   const bombes = [];
   if (gratuit) {
+    /* ---- LA PLACE DE CHAQUE BOMBE EST TIREE ICI, PAS DANS LA PAGE ----
+     * Elle ne change RIEN au gain : les multiplicateurs s'additionnent ou
+     * qu'ils tombent. Mais si la page choisissait elle-meme ou les poser,
+     * deux joueurs qui rejouent la meme graine verraient deux tours
+     * differents — et le « tout est verifiable en rejouant les trois
+     * entrees » cesserait d'etre vrai. Ca ne coute qu'un octet de plus. */
+    const prises = new Set();
     for (let i = 0; i < BOMBES_ESSAIS; i++) {
-      if (entier(octet, 10000) < CHANCE_BOMBE * 10000) bombes.push(BOMBES[entier(octet, BOMBES.length)]);
+      if (entier(octet, 10000) < CHANCE_BOMBE * 10000) {
+        let c = entier(octet, CASES);
+        let garde = 0;
+        while (prises.has(c) && garde++ < 30) c = entier(octet, CASES);
+        prises.add(c);
+        bombes.push({ multi: BOMBES[entier(octet, BOMBES.length)], case: c });
+      }
     }
   }
-  const somme = bombes.reduce((a, b) => a + b, 0);
+  const somme = bombes.reduce((a, b) => a + b.multi, 0);
   if (somme > 0 && multiTotal > 0) multiTotal *= somme;
   return { etapes, multi: multiTotal, scatters: scattersVus, bombes, bombe: somme };
 }
