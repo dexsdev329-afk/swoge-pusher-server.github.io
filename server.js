@@ -298,8 +298,21 @@ function imageBulletin(jambes) {
  * d'afficher les anciennes. C'est ce qu'on nous a rapporte.
  *
  * 3 : les armes de la saison 2, les armures de la saison 3 et les quarante
- * trouvailles ont ete redessinees depuis le 2. */
-const TIRAGE_VIGNETTES = 3;
+ * trouvailles ont ete redessinees depuis le 2.
+ *
+ * 4 : SWOGE BONANZA. Son annonce partait SANS PHOTO — le canal montrait le
+ * texte et rien d'autre. La vignette existe pourtant et repond : verifie a
+ * l'instant, `media/jeu-bonanza.jpg?v=3` rend 200 et 66 467 octets de JPEG.
+ *
+ * Ce que ca veut dire : Telegram a demande cette adresse AVANT que le
+ * fichier existe, a recu un 404, et il a garde le refus. Il ne redemande
+ * pas. C'est exactement le piege que ce numero existe pour ouvrir — il
+ * n'avait ete pense que pour un dessin REMPLACE, jamais pour un dessin
+ * ARRIVE EN RETARD, alors que le symptome et le remede sont les memes.
+ *
+ * Le monter rend l'adresse neuve pour TOUTES les vignettes : Telegram va
+ * toutes les rechercher une fois, ce qui ne coute rien. */
+const TIRAGE_VIGNETTES = 4;
 
 function imageJeu(jeu) {
   if (!cfg.GAME_IMAGE_BASE || !jeu) return null;
