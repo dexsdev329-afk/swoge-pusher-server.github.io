@@ -345,11 +345,15 @@ function joue({ serverSeed, clientSeed, nonce, mise }) {
  * sien. Les prix d'un jeu ne se recopient pas : ils se mesurent sur le
  * moteur qui paie.
  */
+/* `quoi` est LU PAR LE JOUEUR, sur l'ecran d'information de la page — ce
+   n'est pas un commentaire. Il est donc en anglais comme le reste de ce que
+   le joueur voit ; ces quatre phrases se lisaient en francais au milieu
+   d'une page anglaise. */
 const CRANS = {
-  wild:    { prix: 1.6,   quoi: 'un Wild garanti sur un rouleau du milieu' },
-  scatter: { prix: 12.5,  quoi: 'deux scatters de plus dans le tirage' },
-  dead:    { prix: 36,    quoi: 'Dead Spins directement' },
-  deader:  { prix: 108,   quoi: 'Deader Spins directement' },
+  wild:    { prix: 1.6,   quoi: 'a guaranteed Wild on one of the middle reels' },
+  scatter: { prix: 12.5,  quoi: 'two extra scatters in the draw' },
+  dead:    { prix: 36,    quoi: 'straight into Dead Spins' },
+  deader:  { prix: 108,   quoi: 'straight into Deader Spins' },
 };
 /* L'ordre d'affichage, du moins cher au plus cher. La page le lit ici
    plutot que de le redecider — deux listes finissent par diverger. */
