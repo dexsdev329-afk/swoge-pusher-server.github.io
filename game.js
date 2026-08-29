@@ -6355,7 +6355,7 @@ class Game {
       baremeScatter: bonanza.BAREME_SCATTER,
       scattersPourTours: bonanza.SCATTERS_POUR_TOURS,
       toursGratuits: bonanza.TOURS_GRATUITS,
-      gainMax: bonanza.GAIN_MAX,
+      gainMax: bonanza.GAIN_MAX, prixBonus: bonanza.PRIX_BONUS,
       min: cfg.CASINO_MIN_BET, max: cfg.CASINO_MAX_BET,
     };
   }
@@ -6382,6 +6382,49 @@ class Game {
       if (r.net > 0) p.winsToday++;
     }
     this._manche(p, 'bonanza', r.mise, r.payout);
+    return r;
+  }
+
+  /* ---- L'ACHAT DU BONUS ----
+   * On paie `PRIX_BONUS` fois la mise et on entre directement dans les dix
+   * tours gratuits. Le prix est MESURE, pas choisi : voir la note en tete de
+   * `bonanza.js`. A 73x, l'achat rend 94,73 % contre 94,65 % pour le jeu
+   * normal — mesure sur 250 000 achats.
+   *
+   * LE PLAFOND PORTE SUR LE COUT, PAS SUR LA MISE. Une mise de 10 000
+   * couterait 730 000 : le plafond de table ne voudrait plus rien dire s'il
+   * ne s'appliquait qu'a la mise nominale. On refuse donc l'achat dont le
+   * COUT depasse le maximum de la table, comme pour n'importe quel autre
+   * engagement.
+   */
+  bonanzaAchat(addr, miseRaw) {
+    const p = this._p(addr);
+    const mise = Math.floor(Number(miseRaw));
+    const cout = mise * bonanza.PRIX_BONUS;
+    if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
+    if (cout > cfg.CASINO_MAX_BET) {
+      throw new Error('buying the bonus costs ' + bonanza.PRIX_BONUS + '× the bet — max bet for a buy is '
+                      + Math.floor(cfg.CASINO_MAX_BET / bonanza.PRIX_BONUS) + ' $SWOGE');
+    }
+    if (p.balance.lt(WEI(cout))) throw new Error('not enough $SWOGE');
+
+    p.balance = p.balance.sub(WEI(cout));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(cout));
+    this._markWager(p, WEI(cout), 'bonanza');
+
+    p.nonce++;
+    const r = bonanza.achete({
+      serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':bonanza',
+      nonce: p.nonce, mise,
+    });
+    if (r.payout > 0) {
+      p.balance = p.balance.add(WEI(r.payout));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      if (r.net > 0) p.winsToday++;
+    }
+    /* La manche est enregistree sur le COUT, pas sur la mise nominale :
+       c'est ce que le joueur a reellement engage. */
+    this._manche(p, 'bonanza', r.cout, r.payout);
     return r;
   }
 

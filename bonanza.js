@@ -234,6 +234,68 @@ function unTour(octet, gratuit) {
   return { etapes, multi: multiTotal, scatters: scattersVus, bombes, bombe: somme };
 }
 
+/* ---------------------------------------------------- L'ACHAT DU BONUS
+ *
+ * On paie un prix fixe en multiples de la mise et on entre DIRECTEMENT dans
+ * les tours gratuits, sans jet de base.
+ *
+ * LE PRIX N'EST PAS CHOISI, IL EST CALCULE. Un tour gratuit rend en moyenne
+ * un certain multiple ; le prix doit etre ce multiple divise par le taux de
+ * retour vise, sinon l'achat paie mieux — ou moins bien — que le jeu normal.
+ * Un achat mal tarife, c'est une fuite a chaque clic, et elle ne se voit pas
+ * dans les comptes avant des milliers de tours.
+ *
+ * `mesureAchat()` plus bas refait la mesure. PRIX_BONUS y est accroche : si
+ * le barème ou les bombes changent, il faut relancer et remettre le chiffre.
+ */
+/* MESURE sur 200 000 achats simules : une serie de dix tours gratuits rend
+ * en moyenne 69,34x la mise (IC 95 % ±0,40), le plus gros vu a 2 691x. Pour
+ * que l'achat rende AUTANT que le jeu normal — 94,65 % — il doit couter
+ * 69,34 / 0,9465 = 73,3x. Retenu : 73.
+ *
+ * A 100x, le premier chiffre venu, l'achat n'aurait rendu que 69 % : trente
+ * points de moins que le jeu normal, sur le bouton le plus cher de la page.
+ * Un joueur qui compte s'en apercevrait, et il aurait raison. */
+let PRIX_BONUS = 73;             // en multiples de la mise — MESURE, voir ci-dessus
+
+/** La serie de tours gratuits seule, sans jet de base. */
+function serieGratuite(octet) {
+  const gratuits = [];
+  let multi = 0;
+  for (let i = 0; i < TOURS_GRATUITS; i++) {
+    const t = unTour(octet, true);
+    gratuits.push(t);
+    multi += t.multi;
+  }
+  if (multi > GAIN_MAX) multi = GAIN_MAX;
+  return { gratuits, multi };
+}
+
+function achete({ serverSeed, clientSeed, nonce, mise }) {
+  const octet = fluxDe(serverSeed, clientSeed, nonce);
+  const r = serieGratuite(octet);
+  const cout = mise * PRIX_BONUS;
+  const payout = Math.floor(mise * r.multi);
+  return {
+    mise, cout, multi: r.multi, payout, net: payout - cout,
+    scatters: SCATTERS_POUR_TOURS, toursGratuits: r.gratuits.length,
+    base: { etapes: [], multi: 0 }, gratuits: r.gratuits, achat: true,
+  };
+}
+
+/** Ce que rend un achat, en moyenne, et donc ce qu'il doit couter. */
+function mesureAchat(n = 200000, graine = 'achat') {
+  let somme = 0, sc = 0, max = 0;
+  for (let i = 0; i < n; i++) {
+    const r = achete({ serverSeed: graine, clientSeed: 'c', nonce: i, mise: 100 });
+    somme += r.multi; sc += r.multi * r.multi;
+    if (r.multi > max) max = r.multi;
+  }
+  const moy = somme / n;
+  const ec = Math.sqrt(Math.max(0, sc / n - moy * moy));
+  return { tours: n, moyenne: moy, ic: 1.96 * ec / Math.sqrt(n), max };
+}
+
 /**
  * Le tour que le serveur appelle.
  * Rend le detail complet : la page rejoue l'animation a partir de ca, elle ne
@@ -299,6 +361,6 @@ module.exports = {
   _regle,
   SYMBOLES, SCATTER, TOUS, COLONNES, RANGEES, CASES, MIN_AMAS,
   BAREME, BAREME_SCATTER, SCATTERS_POUR_TOURS, TOURS_GRATUITS,
-  POIDS, BOMBES, GAIN_MAX,
+  POIDS, BOMBES, GAIN_MAX, PRIX_BONUS, achete, mesureAchat,
   joue, simule, gainsDe, grilleNeuve, fluxDe,
 };

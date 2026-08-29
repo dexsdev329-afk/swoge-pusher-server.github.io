@@ -5289,6 +5289,19 @@ wss.on('connection', (ws) => {
         return;
       }
 
+      // ---- bonanza : l'achat du bonus ----
+      if (m.type === 'bonanzaAchat') {
+        try {
+          const r = game.bonanzaAchat(ws.addr, m.bet);
+          persistSoon();
+          notifyTableWin(ws.addr, 'bonanza', { net: r.net, staked: r.cout, payout: r.payout,
+                                               note: `bonus bought · ${r.multi.toFixed(2)}×` });
+          send(ws, { type: 'bonanza', tour: r, balance: game.balanceStr(ws.addr),
+                     fairness: game.fairness(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+
       // ---- crash ----
       if (m.type === 'crashBet') {
         try {
