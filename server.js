@@ -5268,8 +5268,8 @@ wss.on('connection', (ws) => {
           persistSoon();
           notifyTableWin(ws.addr, 'bonanza', { net: r.net, staked: r.mise, payout: r.payout,
                                                note: r.toursGratuits
-                                                 ? `${r.multi.toFixed(2)}x with ${r.toursGratuits} free spins`
-                                                 : `${r.multi.toFixed(2)}x` });
+                                                 ? `${r.multi.toFixed(2)}× with ${r.toursGratuits} free spins`
+                                                 : `${r.multi.toFixed(2)}×` });
           send(ws, { type: 'bonanza', tour: r, balance: game.balanceStr(ws.addr),
                      fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
