@@ -2134,6 +2134,22 @@ const server = http.createServer(async (req, res) => {
                          'access-control-allow-origin': '*' });
     return res.end(img.corps);
   }
+  /* Le nom d'un joueur. Public pour la meme raison que son image : il
+     s'affiche deja a la table et dans les classements, le cacher derriere
+     une cle n'apporterait rien. Sert au portefeuille, qui ne parle qu'a la
+     chaine et n'a donc aucune session pour le demander autrement.
+     `nomPublic` lit la carte SANS creer de fiche — voir sa note. */
+  if (path.startsWith('/nom/')) {
+    const a = path.slice('/nom/'.length).toLowerCase();
+    const n = game.nomPublic(a);
+    if (!n) { res.writeHead(400); return res.end('bad address'); }
+    const corps = JSON.stringify(n);
+    res.writeHead(200, { 'content-type': 'application/json',
+                         'content-length': Buffer.byteLength(corps),
+                         'cache-control': 'public, max-age=300',
+                         'access-control-allow-origin': '*' });
+    return res.end(corps);
+  }
   /* Retirer l'image d'un joueur — reserve a l'administration : c'est la seule
      reponse possible si quelqu'un met devant les autres joueurs une image qui
      n'a rien a y faire. */
@@ -6641,6 +6657,25 @@ server.listen(cfg.PORT, () => {
   console.log(`  telegram=${tg.enabled() ? 'ON (chat ' + cfg.TG_CHAT_ID + ')' : 'OFF (set TG_BOT_TOKEN + TG_CHAT_ID)'}`);
   tg.notify('🟢 <b>SWOGE server online</b> — notifications actives'); // startup ping = quick check that TG works
   sante.demarre({ jeu: game, tg });
+
+  /* ---- LES ACHATS DE $SWOGEBET PASSENT DANS LE CANAL ----
+   *
+   * Le bot n'annoncait que ce qui se passe DANS le casino — gains, brulages,
+   * mises en jeu. Rien du marche. Le veilleur lit la piscine v3 et annonce
+   * chaque achat, avec son image.
+   *
+   * Il demarre a la POINTE de la chaine : sinon ce premier lancement
+   * deverserait tout l'historique d'un coup. Et il se tait tant qu'il n'a pas
+   * lu l'ordre des jetons de la piscine — une annonce qui confond achat et
+   * vente serait pire que pas d'annonce. Il est pose sur `global` pour qu'un
+   * essai puisse le jouer sans attendre une minuterie. */
+  try {
+    const { VeilleurAchats } = require('./swogebet_achats');
+    global.veilleurSwogebet = new VeilleurAchats({ provider: chain.provider, tg }).demarre();
+    console.log('[swogebet] veille des achats demarree');
+  } catch (e) {
+    console.warn('[swogebet] veille non demarree :', e.message);
+  }
 
   /* ---- le calendrier des paris s'alimente tout seul ----
    *

@@ -3137,6 +3137,30 @@ class Game {
     return p.nomChoisi && p.name ? p.name : String(addr).toLowerCase().slice(2, 10);
   }
 
+  /**
+   * Le nom PUBLIC d'un joueur, pour les pages qui n'ont pas de session —
+   * le portefeuille, par exemple, qui ne parle qu'a la chaine.
+   *
+   * ---- IL NE PASSE PAS PAR `_p` ----
+   *
+   * `_p` CREE la fiche si elle n'existe pas, et la marque sale, donc a
+   * ecrire sur disque. Branche sur une route publique, il laisserait
+   * n'importe qui faire grossir la table des joueurs et declencher des
+   * ecritures en boucle, une adresse inventee a la fois. On lit donc la
+   * carte directement, sans rien creer.
+   *
+   * Meme regle d'affichage que le code de parrainage : le nom choisi s'il
+   * y en a un, sinon huit caracteres de l'adresse. Ces noms sont deja
+   * publics — ils s'affichent a la table et dans les classements.
+   */
+  nomPublic(addr) {
+    const a = String(addr || '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(a)) return null;
+    const p = this.players.get(a);
+    const choisi = !!(p && p.nomChoisi && p.name);
+    return { nom: choisi ? p.name : a.slice(2, 10), choisi };
+  }
+
   /** L'adresse derriere un code d'invitation, ou null. */
   resoutCode(code) {
     const c = String(code || '').trim();

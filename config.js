@@ -942,6 +942,17 @@ module.exports = {
   NOTIFY_DEPOSIT_MIN: parseFloat(env('NOTIFY_DEPOSIT_MIN', '0')),  // notify deposits ≥ this
   DEPOSIT_IMAGE: env('DEPOSIT_IMAGE', 'https://i.ibb.co/jkCkzPpM/Chat-GPT-Image-5-ao-t-2026-15-41-22.png'), // image shown on deposit notifs ('' = none)
   STAKE_IMAGE: env('STAKE_IMAGE', 'https://i.ibb.co/4gKk59sQ/Chat-GPT-Image-5-ao-t-2026-15-53-47.png'),     // image shown on stake notifs ('' = none)
+  /* ---- L'ANNONCE DES ACHATS DE $SWOGEBET ----
+     L'image voyage avec l'annonce ; sans elle `notifyPhoto` retombe sur le
+     texte, donc une URL cassee ne fait pas taire l'annonce, elle la rend
+     seulement muette en image.
+     `SWOGEBET_BUY_MIN` est en jetons entiers : au-dessus de zero, les
+     achats plus petits ne sont pas annonces. Zero par defaut — la piscine
+     voit une vingtaine d'echanges par deux jours, il n'y a rien a filtrer
+     tant que ca ne devient pas bruyant. */
+  SWOGEBET_BUY_IMAGE: env('SWOGEBET_BUY_IMAGE', 'https://swoleeswoge.dog/media/achat-swogebet.jpg'),
+  SWOGEBET_BUY_MIN: env('SWOGEBET_BUY_MIN', '0'),
+  SWOGEBET_POLL_MS: Number(env('SWOGEBET_POLL_MS', '45000')),
   NOTIFY_WIN_MIN: parseInt(env('NOTIFY_WIN_MIN', '500'), 10),      // notify single-coin wins ≥ this
   /* Ou vivent les vignettes des jeux, pour les annonces de gain. Telegram va
      CHERCHER l'image lui-meme : l'adresse doit donc etre publique, et c'est
