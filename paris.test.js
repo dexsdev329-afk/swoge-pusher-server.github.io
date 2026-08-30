@@ -381,6 +381,11 @@ const path2 = require('path');
 const cotes2 = require('./cotes');
 const MM = 'six-marches-20260815';
 {
+  /* Une equipe sans force fait desormais REFUSER la cote — la reparation du
+     soir ou « AS Monaco » ne tombait sur aucune clef et sortait a 5,04 contre
+     2,2 partout ailleurs. Deux equipes d'essai doivent donc etre declarees. */
+  cotes2.poseNote('foot', 'Alpha', 1600);
+  cotes2.poseNote('foot', 'Beta', 1500);
   const brut = {
     sports: [{ cle: 'foot', nom: 'Football', actif: true }],
     matchs: [{

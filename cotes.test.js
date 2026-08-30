@@ -286,6 +286,15 @@ cotes.chargeNotes(TMP);
    * egales, la cote dit qu'elles ne le sont pas du tout. Si les marches
    * suivaient l'Elo, le handicap serait le meme des deux cotes.
    */
+  /* ---- ELLES SONT « INCONNUES » DU MODELE, PAS DU FICHIER ----
+   * Depuis qu'une equipe sans force fait REFUSER la cote — c'est la reparation
+   * du soir ou Monaco est sorti a 5 contre 2,2 partout ailleurs — il faut les
+   * declarer. On les pose EGALES : c'est exactement ce que le bloc veut,
+   * un Elo qui croit l'affiche equilibree pendant que la cote relevee dit le
+   * contraire. Ce qu'on mesurait ici n'a pas change ; ce qui a change, c'est
+   * qu'une force par defaut ne s'obtient plus par accident. */
+  cotes.poseNote('foot', 'Inconnue-A', 1500);
+  cotes.poseNote('foot', 'Inconnue-B', 1500);
   const inconnues = { id: 'incoherent', sport: 'foot',
                       domicile: 'Inconnue-A', exterieur: 'Inconnue-B',
                       debut: new Date(Date.now() + 86400000).toISOString(),
@@ -374,6 +383,10 @@ cotes.chargeNotes(TMP);
       domicile: equipes[i], exterieur: equipes[i + 1],
       debut: new Date(Date.now() + (i + 1) * 86400000).toISOString() });
   }
+  /* Les deux joueurs se declarent, pour la meme raison que les equipes de
+     foot juste au-dessus : sans force, on refuse de coter. */
+  cotes.poseNote('tennis', 'Alcaraz', 2100);
+  cotes.poseNote('tennis', 'Sinner', 2080);
   brut.matchs.push({ id: 'gen-tennis-1', sport: 'tennis', competition: 'ATP',
     domicile: 'Alcaraz', exterieur: 'Sinner',
     debut: new Date(Date.now() + 86400000).toISOString() });

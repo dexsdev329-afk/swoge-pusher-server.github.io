@@ -222,10 +222,131 @@ function cle(sport, equipe) {
     .replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-/** La force d'une equipe. Inconnue vaut 1500. */
+/* ==================== RETROUVER UNE EQUIPE ====================
+ *
+ * ---- CE QUE CETTE PARTIE A COUTE ----
+ *
+ * Un soir, tous les bookmakers donnaient Monaco a 2,2 et Marseille a 3. Nous
+ * affichions Monaco a 5. Des joueurs ont mise dessus.
+ *
+ * Le modele n'y etait pour rien : sur les vraies forces — Monaco 1820,
+ * Marseille 1810 — il rend 2,02 / 3,68 / 3,00, ce qui colle au marche. Le
+ * fournisseur, lui, ecrit « AS Monaco ». La clef cherchee etait donc
+ * `foot:as monaco`, elle n'existait pas, et `note()` rendait 1500 SANS RIEN
+ * DIRE. Monaco valait soudain trois cent dix points de moins que la verite,
+ * et la cote suivait : 5,04. Reproduit a l'identique.
+ *
+ * Un defaut silencieux est le pire de tous ici : il ne casse rien, il ne
+ * leve rien, il fabrique un chiffre confiant et faux, et ce chiffre est de
+ * l'argent.
+ *
+ * ---- LA REGLE, EN QUATRE TEMPS ----
+ *
+ *  1. la clef exacte ;
+ *  2. un ALIAS declare a la main dans `paris_notes.json` — c'est la seule
+ *     facon honnete de relier « Olympique de Marseille » a « marseille » :
+ *     aucune regle mecanique ne peut deviner ca sans casser autre chose ;
+ *  3. la forme REDUITE — le nom sans ses abreviations de club (as, fc, sc…) —
+ *     si elle designe une equipe et une seule ;
+ *  4. sinon : INCONNUE. Et une equipe inconnue ne se cote pas.
+ *
+ * ---- POURQUOI ON NE RABOTE QUE LES ABREVIATIONS ----
+ *
+ * Mesure sur les 163 equipes de foot du fichier : raboter « real » et
+ * « atletico » fait tomber `real madrid` et `atletico madrid` sur le meme
+ * nom. Deux clubs de la meme ville, l'un a 1900 et l'autre a 1800 — les
+ * confondre serait exactement le defaut qu'on repare, en pire, parce qu'il
+ * paraitrait juste. Ces mots-la font partie du nom ; `fc` et `as` non.
+ *
+ * Le meme releve a montre cinq DOUBLONS — `augsburg` et `fc augsburg`,
+ * `barcelona` et `fc barcelona`… — deux forces pour un seul club, qui
+ * divergent a chaque resultat. La regle 3 les resout sans rien effacer : la
+ * forme reduite est elle-meme une clef, donc c'est celle-la qu'on prend.
+ */
+
+/* Les abreviations de club, et rien d'autre. Une seule regle a retenir : si
+   le mot pourrait distinguer deux clubs de la meme ville, il n'est pas ici. */
+const AFFIXES = new Set([
+  'ac', 'afc', 'as', 'bk', 'bsc', 'cd', 'cf', 'fc', 'fsv', 'if', 'rc', 'rcd',
+  'sc', 'sd', 'sk', 'ss', 'ssc', 'sv', 'tsg', 'ud', 'us', 'vfb', 'vfl',
+]);
+
+/** Le nom reduit : la clef normalisee, moins ses abreviations de club. */
+function reduit(sport, equipe) {
+  const k = cle(sport, equipe);
+  const i = k.indexOf(':');
+  const mots = k.slice(i + 1).split(' ').filter((m) => m && !AFFIXES.has(m));
+  /* Un nom qui ne serait QUE des abreviations n'est pas un nom : on rend la
+     forme d'origine plutot qu'une chaine vide, qui tomberait sur n'importe
+     quoi. */
+  return k.slice(0, i + 1) + (mots.length ? mots.join(' ') : k.slice(i + 1));
+}
+
+/* L'index des formes reduites, construit une fois par lot de notes. Les clefs
+   de service — celles qui commencent par un souligne, comme `_alias` — n'en
+   font pas partie : ce ne sont pas des equipes. */
+let INDEX_REDUIT = null, INDEX_POUR = null;
+function indexReduit() {
+  const n = notes();
+  if (INDEX_REDUIT && INDEX_POUR === n) return INDEX_REDUIT;
+  const idx = Object.create(null);
+  for (const k of Object.keys(n)) {
+    if (k.charAt(0) === '_') continue;
+    const i = k.indexOf(':');
+    if (i < 0) continue;
+    const r = reduit(k.slice(0, i), k.slice(i + 1));
+    (idx[r] || (idx[r] = [])).push(k);
+  }
+  INDEX_REDUIT = idx; INDEX_POUR = n;
+  return idx;
+}
+
+/**
+ * La force d'une equipe, ET si on la CONNAIT.
+ *
+ * `connue` est la seule information qui compte au moment de coter : une force
+ * par defaut n'est pas une force faible, c'est une absence d'avis, et un
+ * modele sans avis ne doit pas en exprimer un.
+ */
+function noteDe(sport, equipe) {
+  const n = notes();
+  const k = cle(sport, equipe);
+  if (isFinite(Number(n[k]))) return { note: Number(n[k]), connue: true, via: 'clef' };
+
+  const alias = n._alias && n._alias[k];
+  if (alias && isFinite(Number(n[alias])))
+    return { note: Number(n[alias]), connue: true, via: 'alias' };
+
+  const r = reduit(sport, equipe);
+  if (isFinite(Number(n[r]))) return { note: Number(n[r]), connue: true, via: 'reduit' };
+
+  const cands = indexReduit()[r] || [];
+  /* UNE SEULE. Deux candidats veut dire qu'on ne sait pas laquelle des deux
+     equipes on regarde — et deviner, ici, coute de l'argent. */
+  if (cands.length === 1 && isFinite(Number(n[cands[0]])))
+    return { note: Number(n[cands[0]]), connue: true, via: 'reduit' };
+
+  return { note: NOTE_DEFAUT, connue: false,
+           via: cands.length > 1 ? 'ambigu' : 'inconnue', candidats: cands };
+}
+
+/** La force d'une equipe. Inconnue vaut 1500 — voir `noteDe` pour le savoir. */
 function note(sport, equipe) {
-  const v = Number(notes()[cle(sport, equipe)]);
-  return isFinite(v) ? v : NOTE_DEFAUT;
+  return noteDe(sport, equipe).note;
+}
+
+/**
+ * Les deux equipes sont-elles connues ? Rend `null` si oui, et sinon la
+ * raison, en clair, prete a etre lue dans un journal d'import.
+ */
+function pourquoiPasCotable(sport, domicile, exterieur) {
+  const a = noteDe(sport, domicile), b = noteDe(sport, exterieur);
+  const manque = [];
+  if (!a.connue) manque.push(`${domicile} (${a.via}${a.candidats && a.candidats.length ? ' : ' + a.candidats.join(', ') : ''})`);
+  if (!b.connue) manque.push(`${exterieur} (${b.via}${b.candidats && b.candidats.length ? ' : ' + b.candidats.join(', ') : ''})`);
+  if (!manque.length) return null;
+  return `force inconnue pour ${manque.join(' et ')} — sans force, une cote`
+       + ' fabriquee serait un chiffre invente';
 }
 
 /** Poser une force a la main. N'ecrit rien sur le disque — voir `sauveNotes`. */
@@ -416,6 +537,13 @@ function cotable(sport, domicile, exterieur, margeVoulue) {
 }
 
 function cotesDe(sport, domicile, exterieur, margeVoulue) {
+  /* ---- ON NE COTE PAS CE QU'ON NE CONNAIT PAS ----
+   * C'est la porte par laquelle « AS Monaco » est sorti a 5,04 alors que le
+   * marche entier le donnait a 2,2 : le nom ne tombait sur aucune force, la
+   * valeur par defaut prenait sa place, et plus rien ne distinguait « equipe
+   * moyenne » de « equipe qu'on ne sait pas lire ». */
+  const refus = pourquoiPasCotable(sport, domicile, exterieur);
+  if (refus) throw new Error(`cotes : ${domicile} v ${exterieur} — ${refus}`);
   const t = tarife(sport, domicile, exterieur, margeVoulue);
   if (!t || t.plusCourte < COTE_PLANCHER) {
     const q = cotable(sport, domicile, exterieur, margeVoulue);
@@ -469,6 +597,15 @@ function habille(m, margeVoulue, now) {
    * rencontre cotee 1,30 / 5,50 / 9,00 : « marches : AUCUN ».
    * On garde donc le lot releve tel quel, et l'on batit les autres DESSUS. */
   const garde = deja && !m.cotesGenerees;
+  /* ---- ET SURTOUT PAS QUAND ON S'APPRETE A LA FABRIQUER ----
+   * Une cote RELEVEE chez un fournisseur reste valable meme si l'on ne sait
+   * rien des deux equipes : c'est quelqu'un d'autre qui l'a etablie, et les
+   * marches derives se calent alors sur elle. Ce qu'on refuse, c'est
+   * d'INVENTER un 1-N-2 a partir d'une force qu'on n'a pas. */
+  if (!garde) {
+    const refus = pourquoiPasCotable(m.sport, m.domicile, m.exterieur);
+    if (refus) throw new Error(`cotes : ${m.domicile} v ${m.exterieur} — ${refus}`);
+  }
   const marches = marchesDe(m.sport, m.domicile, m.exterieur, margeVoulue,
                             garde ? lot : null);
   /* ---- ET SEULEMENT ALORS, ON GARDE CE QUI ETAIT DEJA ECRIT ----
@@ -503,6 +640,23 @@ function habille(m, margeVoulue, now) {
   });
   delete sortie.cotes;
   return sortie;
+}
+
+/**
+ * Les rencontres d'un catalogue dont une equipe n'a pas de force.
+ *
+ * Sert a l'audit : c'est la liste des noms a ajouter dans `paris_notes.json`,
+ * ou a relier par un alias. Une rencontre DEJA cotee a la main y figure aussi
+ * — sa cote est bonne, mais ses marches derives, eux, sortent du modele.
+ */
+function sansForce(cat) {
+  const out = [];
+  for (const m of (cat && cat.matchs) || []) {
+    const r = pourquoiPasCotable(m.sport, m.domicile, m.exterieur);
+    if (r) out.push({ id: m.id, sport: m.sport, domicile: m.domicile,
+                      exterieur: m.exterieur, raison: r });
+  }
+  return out;
 }
 
 /** Completer un catalogue entier, puis le VALIDER comme le fera le serveur. */
@@ -876,6 +1030,7 @@ function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase) {
 }
 
 module.exports = {
+  noteDe, reduit, pourquoiPasCotable, sansForce,
   NOTE_DEFAUT, TERRAIN, NUL_MAX, NUL_PENTE, MARGE_DEFAUT, MARGE_PLANCHER, COTE_PLANCHER,
   MARGE_ISSUE_MIN, MARGE_ISSUE_QUEUE, plancherDe, raboteIssues, exposant, tarife, cotable,
   chargeNotes, notes, cle, note, poseNote, sauveNotes, apprend,
