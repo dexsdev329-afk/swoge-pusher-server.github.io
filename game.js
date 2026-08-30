@@ -6401,6 +6401,13 @@ class Game {
       bareme: dod.BAREME, taillesWild: dod.TAILLES_WILD,
       scattersPourTours: dod.SCATTERS_POUR_TOURS, tours: dod.TOURS,
       gainMax: dod.GAIN_MAX,
+      /* Les trois mecaniques du mode gratuit partent AVEC le bareme. La page
+         ecrivait ses regles a la main : elle annoncait encore des
+         multiplicateurs qui se multiplient et un bonus qu'on ne peut pas
+         relancer, deux jours apres que le moteur eut cesse de faire l'un et
+         l'autre. Une regle recopiee finit toujours par mentir. */
+      croissance: dod.CROISSANCE, plafondRouleau: dod.PLAFOND_ROULEAU,
+      deuxScattersWild: dod.DEUX_SCATTERS_WILD, surclasseTours: dod.SURCLASSE_TOURS,
       crans: dod.CRANS, cransOrdre: dod.CRANS_ORDRE,
       min: cfg.CASINO_MIN_BET, max: cfg.CASINO_MAX_BET,
       /* Le retour au joueur part AVEC le bareme, comme tout le reste : la
@@ -6408,6 +6415,7 @@ class Game {
          le jour ou le moteur sera reregle. */
       rtp: dod.RTP, rtpIc: dod.RTP_IC, rtpN: dod.RTP_TOURS,
       bonusUnSur: dod.BONUS_UN_SUR,
+      gainVu: dod.GAIN_VU, gainVuTours: dod.GAIN_VU_TOURS,
     };
   }
 

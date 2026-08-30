@@ -42,104 +42,158 @@ const page = fs.existsSync(PAGE)
 
 console.log('-- ce que le moteur fait vraiment --');
 
-/* 1. LE PRODUIT, PAS LA SOMME.
- * On cherche un tour ou DEUX rouleaux tiennent un multiplicateur, et on
- * compare le multiplicateur du tour a leur produit et a leur somme. */
+/* 1. LA SOMME, PLUS LE PRODUIT.
+ *
+ * C'etait un PRODUIT jusqu'en aout. Il l'a cesse le jour ou les
+ * multiplicateurs se sont mis a grandir : produit ET croissance donnaient
+ * 10 877 % de retour, et le plafond de gain mordait sur un tour sur 262.
+ * Cet essai-la a echoue en premier, et c'est ce qu'on lui demande. */
 {
   let vu = null;
   for (let i = 1; i < 400000 && !vu; i++) {
-    const t = dod.unTourPourEssai
-      ? dod.unTourPourEssai(i)
-      : dod.joue({ serverSeed: 'r', clientSeed: 'c', nonce: i, mise: 100 }).base;
+    const t = dod.joue({ serverSeed: 'r', clientSeed: 'c', nonce: i, mise: 100 }).base;
     const tenus = (t.multis || []).filter((m) => m > 0);
-    if (tenus.length >= 2 && new Set(tenus).size >= 1) vu = { t, tenus };
+    if (tenus.length >= 2) vu = { t, tenus };
   }
   if (!vu) { ok(false, 'un tour avec deux rouleaux multiplicateurs (aucun trouve)'); }
   else {
     const prod = vu.tenus.reduce((a, b) => a * b, 1);
     const somme = vu.tenus.reduce((a, b) => a + b, 0);
-    ok(vu.t.multi === prod,
-       'plusieurs Wilds se MULTIPLIENT : ' + vu.tenus.join(' × ') + ' = ' + vu.t.multi
-       + (prod !== somme ? ' (leur somme ferait ' + somme + ')' : ''));
-    if (page) ok(/multipliers are MULTIPLIED together, not added/.test(page),
+    ok(vu.t.multi === somme,
+       'plusieurs Wilds s AJOUTENT : ' + vu.tenus.join(' + ') + ' = ' + vu.t.multi
+       + (prod !== somme ? ' (leur produit ferait ' + prod + ')' : ''));
+    if (page) ok(/multipliers are ADDED together/.test(page),
       'et l ecran d information le dit bien');
+    if (page) ok(!/MULTIPLIED together, not added/.test(page),
+      'et l ancienne phrase — « MULTIPLIED together, not added » — a bien disparu :'
+      + ' une regle qui n est plus vraie et qui reste affichee est pire qu absente');
   }
 }
 
-/* 2. LES MULTIPLICATEURS COLLENT, ET S'AJOUTENT SUR LE MEME ROULEAU. */
+/* 2. CE QUI COLLE GRANDIT TOUT SEUL, JUSQU A UN PLAFOND.
+ *
+ * C'est la mecanique centrale du mode gratuit, et la seule que le joueur
+ * doit avoir comprise avant son premier bonus. Trois choses a prouver :
+ * ca colle, ca DOUBLE (triple en Deader) sans qu aucun Wild ne retombe, et
+ * ca ne depasse jamais le plafond du rouleau. */
 {
-  /* La VRAIE preuve du collant : un rouleau qui garde son multiplicateur sur
-     un tour ou AUCUN Wild n'y est tombe. Un ×1 suivi d'un ×1 ne prouve rien
-     — c'etait la premiere version de cet essai, et elle passait sans rien
-     verifier. */
-  let vu = null, grandit = null;
-  for (let i = 1; i < 200000 && !(vu && grandit); i++) {
+  let colle = null, double = null, triple = null, tropHaut = null, descend = null;
+  for (let i = 1; i < 300000 && !(colle && double && triple); i++) {
     const r = dod.joue({ serverSeed: 'r', clientSeed: 'c', nonce: i, mise: 100 });
     if (!r.gratuits) continue;
-    const tours = r.gratuits.tours;
-    for (let k = 1; k < tours.length; k++) {
-      const sansWild = new Set((tours[k].wilds || []).map((w) => w.rouleau));
-      for (let rr = 0; rr < tours[k].multis.length; rr++) {
-        const av = tours[k - 1].multis[rr], ap = tours[k].multis[rr];
-        if (!vu && av > 0 && ap === av && !sansWild.has(rr))
-          vu = { avant: av, apres: ap, rr, k };
-        if (!grandit && av > 0 && ap > av) grandit = { avant: av, apres: ap, rr, k };
+    const t = r.gratuits.tours;
+    for (let k = 1; k < t.length; k++) {
+      const neufs = new Set((t[k].wilds || []).map((w) => w.rouleau));
+      const mode = t[k].mode;
+      const f = dod.CROISSANCE[mode], pl = dod.PLAFOND_ROULEAU[mode];
+      for (let rr = 0; rr < t[k].multis.length; rr++) {
+        const av = t[k - 1].multis[rr], ap = t[k].multis[rr];
+        if (av > 0 && ap > pl) tropHaut = { rr, ap, pl, mode };
+        if (av > 0 && ap < av) descend = { rr, av, ap, k };
+        if (av > 0 && !neufs.has(rr)) {
+          const attendu = Math.min(av * f, pl);
+          if (ap !== attendu) { colle = colle || { casse: true, rr, av, ap, attendu, mode, k }; }
+          else {
+            if (!colle) colle = { rr, av, ap, mode, k };
+            if (!double && mode === dod.DEAD && ap === av * 2) double = { rr, av, ap, k };
+            if (!triple && mode === dod.DEADER && ap === av * 3) triple = { rr, av, ap, k };
+          }
+        }
       }
     }
   }
-  ok(!!vu, 'un multiplicateur RESTE sur son rouleau un tour ou AUCUN Wild n y tombe'
-     + (vu ? ' (rouleau ' + (vu.rr + 1) + ' garde ×' + vu.avant + ' au tour ' + (vu.k + 1) + ')' : ''));
-  ok(!!grandit, 'et un nouveau Wild sur un rouleau deja tenu S AJOUTE'
-     + (grandit ? ' (rouleau ' + (grandit.rr + 1) + ' : ×' + grandit.avant
-                  + ' devient ×' + grandit.apres + ')' : ''));
-  /* Et il ne redescend jamais : c'est ce que « stays » promet. */
-  let descend = null;
-  for (let i = 1; i < 200000 && !descend; i++) {
-    const r = dod.joue({ serverSeed: 's', clientSeed: 'c', nonce: i, mise: 100 });
-    if (!r.gratuits) continue;
-    const t = r.gratuits.tours;
-    for (let k = 1; k < t.length && !descend; k++)
-      for (let rr = 0; rr < t[k].multis.length; rr++)
-        if (t[k - 1].multis[rr] > 0 && t[k].multis[rr] < t[k - 1].multis[rr])
-          descend = { k, rr, avant: t[k - 1].multis[rr], apres: t[k].multis[rr] };
-  }
-  ok(!descend, 'et il ne redescend jamais pendant la serie'
-     + (descend ? ' — rouleau ' + (descend.rr + 1) + ' passe de ×' + descend.avant
-                  + ' a ×' + descend.apres + ' au tour ' + descend.k : ''));
-  if (page) ok(/STAYS on its reel until the round ends/.test(page)
-            && /ADDS to it/.test(page),
-    'et l ecran d information le dit bien');
+  ok(colle && !colle.casse,
+     colle && !colle.casse
+       ? 'un rouleau tenu grandit SANS qu aucun Wild n y retombe : ×' + colle.av
+         + ' devient ×' + colle.ap + ' au tour ' + (colle.k + 1) + ' (' + colle.mode + ')'
+       : 'un rouleau tenu n a pas grandi comme annonce'
+         + (colle ? ' : ×' + colle.av + ' donne ×' + colle.ap + ' au lieu de ×' + colle.attendu : ''));
+  ok(!!double, 'en Dead Spins il DOUBLE'
+     + (double ? ' (×' + double.av + ' → ×' + double.ap + ')' : ' — aucun cas trouve'));
+  ok(!!triple, 'en Deader Spins il TRIPLE'
+     + (triple ? ' (×' + triple.av + ' → ×' + triple.ap + ')' : ' — aucun cas trouve'));
+  ok(!tropHaut, 'et il ne depasse jamais le plafond du rouleau'
+     + (tropHaut ? ' — ×' + tropHaut.ap + ' en ' + tropHaut.mode
+                   + ' ou le plafond est ×' + tropHaut.pl : ''));
+  ok(!descend, 'ni ne redescend pendant la serie'
+     + (descend ? ' — ×' + descend.av + ' devient ×' + descend.ap : ''));
+  if (page) ok(new RegExp('at every free spin, every reel that holds a multiplier').test(page),
+    'et l ecran d information l annonce');
 }
 
-/* 3. PAS DE REDECLENCHEMENT. */
+/* 3. LES DEUX SCATTERS SEULS DEVIENNENT DES WILDS.
+ *
+ * Le quasi-manque le plus frequent du jeu. On cherche un tour ou EXACTEMENT
+ * deux scatters sont tombes, et on verifie qu il n en reste aucun sur la
+ * grille et que deux Wilds ont pris leur place. */
 {
-  let tours = 0, series = 0, avecScatters = 0;
-  for (let i = 1; i < 200000 && series < 400; i++) {
+  let vu = null, resteScatter = null;
+  for (let i = 1; i < 200000 && !vu; i++) {
+    const t = dod.joue({ serverSeed: 'q', clientSeed: 'c', nonce: i, mise: 100 }).base;
+    const n = (t.scatters[dod.DEAD] || 0) + (t.scatters[dod.DEADER] || 0);
+    if (n !== dod.DEUX_SCATTERS_WILD) continue;
+    const surGrille = t.grille.filter((c) => c === dod.DEAD || c === dod.DEADER).length;
+    if (surGrille) { resteScatter = { i, surGrille }; break; }
+    if ((t.convertis || []).length === dod.DEUX_SCATTERS_WILD
+        && t.convertis.every((k) => t.grille[k] === dod.WILD)) vu = { i, t };
+  }
+  ok(!resteScatter, 'aucun scatter ne reste sur la grille quand il y en avait exactement '
+     + dod.DEUX_SCATTERS_WILD + (resteScatter ? ' — il en reste ' + resteScatter.surGrille : ''));
+  ok(!!vu, dod.DEUX_SCATTERS_WILD + ' scatters seuls deviennent bien '
+     + dod.DEUX_SCATTERS_WILD + ' Wilds, la ou ils sont'
+     + (vu ? ' (cases ' + vu.t.convertis.join(' et ') + ')' : ' — aucun cas trouve'));
+  if (page) ok(/they TURN INTO WILDS where they stand/.test(page),
+    'et l ecran d information le dit');
+}
+
+/* 3 bis. LE BONUS NE SE REDECLENCHE PAS — MAIS IL SE SURCLASSE.
+ *
+ * La regle a change : les scatters ne relancent toujours rien, mais un
+ * `deader` sur le DERNIER rouleau fait passer le reste d une serie Dead en
+ * Deader et ajoute deux tours. Une serie ne peut donc avoir que deux
+ * longueurs, et aucune autre. */
+{
+  const attendues = {};
+  attendues[dod.DEAD] = [dod.TOURS[dod.DEAD], dod.TOURS[dod.DEAD] + dod.SURCLASSE_TOURS];
+  attendues[dod.DEADER] = [dod.TOURS[dod.DEADER]];
+  let series = 0, surclassees = 0, mauvaise = null, sansDeader = 0;
+  for (let i = 1; i < 300000 && series < 600; i++) {
     const r = dod.joue({ serverSeed: 'r', clientSeed: 'c', nonce: i, mise: 100 });
     if (!r.gratuits) continue;
     series++;
-    tours += r.gratuits.tours.length;
-    /* Des scatters TOMBENT pendant la serie — c'est ce qui rend la promesse
-       verifiable : s'ils ne tombaient jamais, « pas de redeclenchement »
-       serait vrai sans rien prouver. */
-    if (r.gratuits.tours.some((t) => (t.scatters[dod.DEAD] || 0) >= dod.SCATTERS_POUR_TOURS
-                                  || (t.scatters[dod.DEADER] || 0) >= dod.SCATTERS_POUR_TOURS))
-      avecScatters++;
-    const attendu = dod.TOURS[r.mode];
-    if (r.gratuits.tours.length !== attendu) {
-      ok(false, 'une serie ' + r.mode + ' donne ' + r.gratuits.tours.length
-         + ' tours au lieu de ' + attendu + ' : le bonus s est redeclenche');
-      series = 1e9;
-    }
+    const L = r.gratuits.tours.length;
+    if (attendues[r.mode].indexOf(L) < 0) { mauvaise = { mode: r.mode, L }; break; }
+    if (r.gratuits.surclasse) {
+      surclassees++;
+      /* Le surclassement doit avoir une CAUSE visible : un `deader` sur le
+         dernier rouleau du tour qui le porte. */
+      const t = r.gratuits.tours.find((x) => x.surclasse);
+      if (t && !t.deaderDernier) sansDeader++;
+      if (L !== dod.TOURS[dod.DEAD] + dod.SURCLASSE_TOURS) { mauvaise = { mode: r.mode, L }; break; }
+    } else if (r.mode === dod.DEAD && L !== dod.TOURS[dod.DEAD]) { mauvaise = { mode: r.mode, L }; break; }
   }
-  if (series < 1e9) {
-    ok(true, series + ' series jouees, toutes de la longueur annoncee : le bonus'
-       + ' ne se redeclenche pas — et ' + avecScatters + ' d entre elles ont pourtant'
-       + ' vu tomber assez de scatters pour le faire');
-    ok(avecScatters > 0,
-       'la promesse est verifiable : des scatters tombent bien pendant les series');
+  ok(!mauvaise, series + ' series jouees, toutes de la longueur annoncee'
+     + (mauvaise ? ' — sauf une serie ' + mauvaise.mode + ' de ' + mauvaise.L + ' tours' : ''));
+  ok(surclassees > 0, surclassees + ' d entre elles ont ete surclassees en Deader :'
+     + ' la seconde chance existe vraiment et se mesure');
+  ok(sansDeader === 0,
+     'et chaque surclassement a sa cause sur la grille — un `deader` sur le dernier rouleau'
+     + (sansDeader ? ' : ' + sansDeader + ' sans' : ''));
+  /* Un surclassement ne se produit qu une fois : sinon une serie pourrait
+     s allonger sans fin, et le plafond de gain deviendrait le seul frein. */
+  let deuxFois = 0;
+  for (let i = 1; i < 200000; i++) {
+    const r = dod.joue({ serverSeed: 'u', clientSeed: 'c', nonce: i, mise: 100 });
+    if (!r.gratuits) continue;
+    if (r.gratuits.tours.filter((t) => t.surclasse).length > 1) deuxFois++;
   }
-  if (page) ok(/cannot be retriggered/.test(page), 'et l ecran d information le dit bien');
+  ok(deuxFois === 0, 'et jamais deux fois dans la meme serie'
+     + (deuxFois ? ' — ' + deuxFois + ' series en portent deux' : ''));
+  if (page) ok(/Nothing else retriggers the bonus/.test(page)
+            && /turns the rest of the round into Deader Spins/.test(page),
+    'et l ecran d information dit les deux : ce qui surclasse, et que rien d autre ne relance');
+  if (page) ok(!/the bonus cannot be retriggered/.test(page),
+    'l ancienne phrase absolue a disparu : elle niait le surclassement');
 }
 
 /* 4. LES SCATTERS ET LE WILD NE PAIENT PAS SEULS. */

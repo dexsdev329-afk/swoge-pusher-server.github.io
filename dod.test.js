@@ -38,21 +38,42 @@ const C = dod.joue({ serverSeed: 's', clientSeed: 'c', nonce: 8, mise: 100 });
 ok(JSON.stringify(A) !== JSON.stringify(C), 'un nonce different donne un autre tour');
 
 console.log('\n-- le plateau est bien forme --');
-let wildHorsMilieu = 0, grillesVues = 0, tailles = {};
+/* ---- DEUX SORTES DE WILD, ET IL FAUT LES DISTINGUER ----
+ *
+ * Le Wild TIRE s'etire : il prend sa colonne entiere, ou il n'est pas la.
+ * Le Wild VENU d'un scatter — deux scatters seuls se changent en Wilds —
+ * n'occupe que sa case, et il peut tomber sur le premier ou le dernier
+ * rouleau ou le Wild tire n'existe pas.
+ *
+ * Cet essai ne le savait pas et exigeait des colonnes pleines partout : il
+ * a echoue des la premiere grille convertie. Il compte donc maintenant les
+ * cases CONVERTIES a part, et verifie chaque regle la ou elle s'applique. */
+let wildHorsMilieu = 0, grillesVues = 0, tailles = {}, converties = 0;
 for (let i = 0; i < 3000; i++) {
   const t = dod.unTour(dod.fluxDe('s', 'c', i), null);
   grillesVues++;
   assert.strictEqual(t.grille.length, dod.CASES, 'la grille fait 5 x 3');
+  const venus = new Set(t.convertis || []);
+  converties += venus.size;
   for (let r = 0; r < dod.ROULEAUX; r++) {
-    let wilds = 0;
-    for (let y = 0; y < dod.RANGEES; y++) if (t.grille[y * dod.ROULEAUX + r] === dod.WILD) wilds++;
-    if (wilds && dod.ROULEAUX_WILD.indexOf(r) < 0) wildHorsMilieu++;
-    /* LE WILD S'ETIRE OU IL N'EST PAS LA : jamais entre les deux. */
-    ok_silencieux(wilds === 0 || wilds === dod.RANGEES);
+    let wilds = 0, venusIci = 0;
+    for (let y = 0; y < dod.RANGEES; y++) {
+      const k = y * dod.ROULEAUX + r;
+      if (t.grille[k] === dod.WILD) { wilds++; if (venus.has(k)) venusIci++; }
+    }
+    /* Hors des rouleaux du milieu, seuls des Wilds VENUS d'un scatter sont
+       admis — un Wild tire y serait un defaut. */
+    if (wilds > venusIci && dod.ROULEAUX_WILD.indexOf(r) < 0) wildHorsMilieu++;
+    /* LE WILD TIRE S'ETIRE OU IL N'EST PAS LA : jamais entre les deux.
+       On retire d'abord les cases venues d'un scatter. */
+    const tires = wilds - venusIci;
+    ok_silencieux(tires === 0 || tires === dod.RANGEES);
   }
   for (const w of t.wilds) tailles[w.multi] = (tailles[w.multi] || 0) + 1;
 }
-function ok_silencieux(c) { if (!c) { console.log('  RATE un Wild ne remplit pas sa colonne'); process.exit(1); } }
+function ok_silencieux(c) { if (!c) { console.log('  RATE un Wild TIRE ne remplit pas sa colonne'); process.exit(1); } }
+ok(converties > 0, converties + ' cases sont venues d un scatter sur ces trois mille grilles :'
+   + ' la regle des deux scatters se mesure vraiment ici');
 ok(grillesVues === 3000, 'trois mille grilles tirees et toutes de la bonne taille');
 ok(wildHorsMilieu === 0, 'aucun Wild hors des trois rouleaux du milieu');
 ok(Object.keys(tailles).length === 3, 'les trois multiplicateurs de Wild apparaissent : x'

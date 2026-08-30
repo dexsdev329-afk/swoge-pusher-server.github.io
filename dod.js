@@ -96,14 +96,19 @@ function wildPossible(r){ return ROULEAUX_WILD.indexOf(r) >= 0; }
  * plusieurs symboles. Le premier bareme ecrit ici etait celui d'un jeu a
  * lignes — mesure, il rendait 237 % sur le seul jeu de base. Divise par
  * trois et demi. */
+/* ---- REBAISSE DE SEPT POUR CENT ----
+ * Les trois mecaniques posees en aout (le multiplicateur qui grandit, les
+ * deux scatters qui se changent en Wilds, le surclassement) rendaient le
+ * jeu beaucoup trop riche. Le bareme porte une part de la correction ;
+ * le reste vient des poids. Mesure a chaque changement. */
 const BAREME = {
-  j:        { 3: 0.03, 4: 0.09, 5: 0.30 },
-  q:        { 3: 0.03, 4: 0.09, 5: 0.30 },
-  k:        { 3: 0.04, 4: 0.12, 5: 0.45 },
-  a:        { 3: 0.04, 4: 0.12, 5: 0.45 },
-  lanterne: { 3: 0.07, 4: 0.24, 5: 0.75 },
-  pelle:    { 3: 0.12, 4: 0.35, 5: 1.20 },
-  crane:    { 3: 0.18, 4: 0.60, 5: 2.40 },
+  j:        { 3: 0.03, 4: 0.08, 5: 0.28 },
+  q:        { 3: 0.03, 4: 0.08, 5: 0.28 },
+  k:        { 3: 0.04, 4: 0.11, 5: 0.42 },
+  a:        { 3: 0.04, 4: 0.11, 5: 0.42 },
+  lanterne: { 3: 0.06, 4: 0.22, 5: 0.70 },
+  pelle:    { 3: 0.11, 4: 0.33, 5: 1.10 },
+  crane:    { 3: 0.17, 4: 0.55, 5: 2.20 },
 };
 
 /* Les poids du tirage, PAR ROULEAU : le premier et le dernier n'ont pas de
@@ -125,9 +130,17 @@ function poidsDe(r) {
    * D'ou le centieme ici : un cran de ce curseur vaut encore 0,4 point de
    * retour, et c'est le plus fin qu'on puisse se permettre sans que la mesure
    * ne distingue plus rien. */
-  p[WILD]   = wildPossible(r) ? 395 : 0;
-  p[DEAD]   = 290;
-  p[DEADER] = 100;
+  /* Baisse de 395 a 230 avec les trois mecaniques : le Wild ne se contente
+     plus de multiplier son tour, il tient un rouleau dont le multiplicateur
+     GRANDIT tout seul ensuite. A 395 le jeu rendait 360 %. */
+  /* ---- UN CRAN DE CE CURSEUR VAUT UN DEMI-POINT DE RETOUR ----
+     Mesure sur 4,8 millions de tours a chaque cran : 205 -> 86,4 %,
+     215 -> 91,4 %, 225 -> 96,1 %, 230 -> 99,1 %. C'est le reglage le plus
+     sensible du jeu, et il l'est devenu davantage : le Wild ne multiplie
+     plus seulement son tour, il ouvre un rouleau qui grandit ensuite. */
+  p[WILD]   = wildPossible(r) ? 225 : 0;
+  p[DEAD]   = 280;
+  p[DEADER] = 95;
   return p;
 }
 const POIDS = [];
@@ -175,16 +188,102 @@ const TAILLES_TOTAL = TAILLES_WILD.reduce((s, t) => s + t.poids, 0);
  * Wild — `mesure()` est la, et `dod_regles.test.js` verifie que le chiffre
  * publie n'a pas derive du moteur.
  */
-const RTP = 96.35, RTP_IC = 0.41, RTP_TOURS = 16000000, BONUS_UN_SUR = 143;
+/* ---- REMESURE APRES LES TROIS MECANIQUES ----
+ *
+ * Elles ont change le jeu en profondeur : le retour est passe a 360 % avant
+ * reglage, et la dispersion ENTRE GRAINES de 1,30 a 1,78 point — un
+ * multiplicateur qui grandit met encore plus de retour dans la queue. Il a
+ * donc fallu mesurer plus longtemps qu'avant pour un intervalle comparable :
+ *
+ *     120 mesures independantes de 500 000 tours = 60 millions de tours
+ *     moyenne  96,24 %      mediane 96,07 %      min..max 91,54 .. 101,54
+ *     ecart-type entre graines 1,78 point
+ *     intervalle 95 % : 95,92 .. 96,56,  soit +-0,32 point
+ *
+ * Le chiffre publie est CELUI-LA, pas 96,35 % force a coups de poids : on
+ * publie ce qu'on mesure. L'ancien 96,35 tombe d'ailleurs dans l'intervalle.
+ *
+ * Un bonus tous les 146 tours. Le plafond de gain n'a ete touche AUCUNE fois
+ * sur 60 millions de tours, et le plus gros gain vu vaut 7 108 fois la mise. */
+const RTP = 96.24, RTP_IC = 0.32, RTP_TOURS = 60000000, BONUS_UN_SUR = 146;
 
 const SCATTERS_POUR_TOURS = 3;
 const TOURS = { [DEAD]: 12, [DEADER]: 18 };
+
+/* ================== LES TROIS MECANIQUES DU MODE GRATUIT ==================
+ *
+ * ---- 1. CE QUI COLLE GRANDIT TOUT SEUL ----
+ *
+ * Avant, un rouleau tenu gardait son multiplicateur et ne bougeait que si un
+ * nouveau Wild y retombait : la serie etait PLATE, et le douzieme tour ne
+ * valait pas plus que le deuxieme. Maintenant chaque rouleau tenu DOUBLE a
+ * chaque tour, et TRIPLE en Deader. Un x2 pris tot devient x16 avant la fin.
+ *
+ * ---- POURQUOI LA SOMME, ET PLUS LE PRODUIT ----
+ *
+ * Le total du tour etait le PRODUIT des rouleaux tenus. C'etait tenable tant
+ * que les multiplicateurs restaient petits et fixes. Avec une croissance, le
+ * produit explose : mesure, il rendait 10 877 %, et le plafond de gain
+ * mordait sur UN TOUR SUR 262 — un plafond qui mord aussi souvent n'est plus
+ * un plafond, c'est le gain. Le produit est donc remplace par la SOMME, qui
+ * est aussi ce que fait le jeu qui a inspire celui-ci. Il fallait choisir :
+ * un multiplicateur qui grandit ou un total qui multiplie, pas les deux.
+ *
+ * ---- LE PLAFOND PAR ROULEAU ----
+ *
+ * Sans lui, doubler douze fois donne x2048 sur un seul rouleau. Il fixe aussi
+ * la duree de la montee : x16 se prend en quatre doublements, x32 en cinq
+ * triplements — la sensation dure la moitie de la serie, puis le rouleau est
+ * « plein ». C'est le meilleur reglage trouve : x8 rendait la serie plate
+ * trop tot, x64 remettait le plafond de gain en jeu.
+ */
+const CROISSANCE = { [DEAD]: 2, [DEADER]: 3 };
+const PLAFOND_ROULEAU = { [DEAD]: 16, [DEADER]: 32 };
+
+/* ---- 2. DEUX SCATTERS SEULS SE CHANGENT EN WILDS ----
+ *
+ * Deux scatters ne donnent rien : c'est le quasi-manque le plus frustrant du
+ * jeu, et il tombe souvent. Ils deviennent donc des Wilds a leur place — pas
+ * des colonnes entieres, juste leurs deux cases, et sans multiplicateur. Le
+ * tour paie au lieu de ne rien donner.
+ *
+ * Ils peuvent tomber sur le premier et le dernier rouleau, ou le Wild ordinaire
+ * n'existe pas. C'est voulu : c'est ce qui rend la consolation visible.
+ */
+const DEUX_SCATTERS_WILD = 2;
+
+/* ---- 3. UN `deader` SUR LE DERNIER ROULEAU SURCLASSE LA SERIE ----
+ *
+ * Pendant les Dead Spins, un `deader` sur le cinquieme rouleau fait passer le
+ * reste de la serie en Deader — croissance x3, plafond x32 — et ajoute deux
+ * tours. Une seconde chance A L'INTERIEUR du bonus, la ou il n'y en avait
+ * aucune.
+ *
+ * Seul le `deader` surclasse, pas n'importe quel scatter : mesure, un scatter
+ * quelconque sur ce rouleau tombe sur trois series sur quatre, et le mode
+ * Dead n'aurait plus jamais fini en Dead.
+ *
+ * Une seule fois par serie, et jamais depuis Deader : il n'y a rien au-dessus.
+ */
+const SURCLASSE_TOURS = 2;
 
 /* Le plafond, en multiples de la mise. Il existe pour la meme raison que
    celui de Bonanza : un mode gratuit dont les multiplicateurs se cumulent n'a
    pas de maximum naturel, et une maison doit savoir ce qu'elle peut devoir.
    Mesure : il ne mord que sur un tour sur plusieurs centaines de milliers. */
 const GAIN_MAX = 25000;
+
+/* ---- CE QUE LE PLAFOND N'EST PAS ----
+ *
+ * Ce n'est pas un gain a esperer. Sur les 60 millions de tours de la mesure
+ * du retour, il n'a ete touche AUCUNE fois, et le plus gros gain vu vaut
+ * 7 108 fois la mise. Ecrire « gain maximum 25 000x » sans ce chiffre-la,
+ * c'est laisser lire une promesse la ou il n'y a qu'une borne de
+ * responsabilite.
+ *
+ * Les deux partent donc ensemble vers la page. A REMESURER avec le retour :
+ * ce maximum est une observation, pas une propriete du moteur. */
+const GAIN_VU = 7108, GAIN_VU_TOURS = 60000000;
 
 /* ================== L'ALEA VERIFIABLE ==================
  * Identique a Bonanza, au Plinko et au Crash de la maison : un flux d'octets
@@ -227,7 +326,8 @@ function tireTailleWild(octet) {
  * chaque rouleau. En jeu de base il est vide et le Wild ne vaut que pour son
  * tour.
  */
-function unTour(octet, collants) {
+function unTour(octet, collants, opt) {
+  opt = opt || {};
   const grille = new Array(CASES);
   /* Le multiplicateur de chaque rouleau. On part de ce qui colle deja. */
   const multis = new Array(ROULEAUX).fill(0);
@@ -249,17 +349,80 @@ function unTour(octet, collants) {
     for (let y = 0; y < RANGEES; y++) grille[y * ROULEAUX + r] = col[y];
   }
 
-  /* Le multiplicateur du tour est le PRODUIT des rouleaux tenus. Une somme
-     aurait rendu le troisieme Wild presque sans effet ; le produit est ce qui
-     fait qu'un mode gratuit peut s'emballer, et c'est pour ca qu'il existe un
-     plafond plus bas. */
-  let multi = 1;
-  for (let r = 0; r < ROULEAUX; r++) if (multis[r] > 0) multi *= multis[r];
+  /* ---- CE QUE LES CRANS D'ACHAT FORCENT SE POSE ICI ----
+   *
+   * Et pas apres coup. Les deux crans bon marche etaient servis par un
+   * `unTourForce` qui refaisait, a cote, le calcul du multiplicateur et des
+   * gains — une deuxieme copie de la meme arithmetique. Elle a survecu au
+   * passage du produit a la somme et continuait de MULTIPLIER : le cran
+   * `wild` etait paye sur un calcul que le jeu n'utilise plus.
+   *
+   * Et il y a pire : les scatters ajoutes l'etaient APRES la conversion des
+   * deux scatters en Wilds. Un tour qui en avait deux les voyait changes en
+   * Wilds, puis en recevait deux — deux au total, donc jamais de mode. Le
+   * cran vendait exactement ce qu'il promettait d'eviter.
+   *
+   * Tout se pose donc AVANT la conversion et avant le compte, dans le seul
+   * chemin qui existe. */
+  if (opt.wildGaranti) {
+    if (!wilds.length) {
+      const r = ROULEAUX_WILD[entier(octet, ROULEAUX_WILD.length)];
+      const ta = tireTailleWild(octet);
+      for (let y = 0; y < RANGEES; y++) grille[y * ROULEAUX + r] = WILD;
+      multis[r] += ta.multi;
+      wilds.push({ rouleau: r, taille: ta.taille, multi: ta.multi, cumul: multis[r], garanti: true });
+    }
+  }
+  if (opt.ajouteScatters > 0) {
+    /* Sur des rouleaux DIFFERENTS de ceux qui en portent deja : deux scatters
+       dans la meme colonne se verraient mal et n'ajouteraient rien de plus
+       au compte qu'un seul bien place. */
+    const pris = new Set();
+    for (let r = 0; r < ROULEAUX; r++)
+      for (let y = 0; y < RANGEES; y++) {
+        const c = grille[y * ROULEAUX + r];
+        if (c === DEAD || c === DEADER) pris.add(r);
+      }
+    let poses = 0, garde = 0;
+    while (poses < opt.ajouteScatters && garde++ < 60) {
+      const r = entier(octet, ROULEAUX);
+      if (pris.has(r)) continue;
+      pris.add(r); poses++;
+      grille[entier(octet, RANGEES) * ROULEAUX + r] = DEAD;
+    }
+  }
+
+  /* ---- LES SCATTERS SE COMPTENT AVANT LA CONVERSION ----
+     Sinon deux scatters changes en Wilds disparaitraient du compte, et le
+     `deader` qui surclasse la serie serait efface juste avant d'etre lu. */
+  const scat = compteScatters(grille);
+  const total = scat[DEAD] + scat[DEADER];
+  /* Releve AVANT la conversion : c'est lui qui surclasse une serie Dead, et
+     un `deader` change en Wild deux lignes plus bas ne serait plus lisible. */
+  let deaderDernier = false;
+  for (let y = 0; y < RANGEES; y++) {
+    if (grille[y * ROULEAUX + (ROULEAUX - 1)] === DEADER) deaderDernier = true;
+  }
+
+  /* MECANIQUE 2 : deux scatters seuls deviennent des Wilds, la ou ils sont. */
+  let convertis = null;
+  if (total === DEUX_SCATTERS_WILD) {
+    convertis = [];
+    for (let i = 0; i < CASES; i++) {
+      if (grille[i] === DEAD || grille[i] === DEADER) { convertis.push(i); grille[i] = WILD; }
+    }
+  }
+
+  /* ---- LE TOTAL DU TOUR EST LA SOMME DES ROULEAUX TENUS ----
+     Il etait le produit. Voir CROISSANCE plus haut : un multiplicateur qui
+     grandit et un total qui multiplie ne tiennent pas ensemble. */
+  let multi = 0, tenus = 0;
+  for (let r = 0; r < ROULEAUX; r++) if (multis[r] > 0) { multi += multis[r]; tenus++; }
+  if (!tenus) multi = 1;
 
   const gains = gainsDe(grille);
-  const scat = compteScatters(grille);
   return {
-    grille, wilds, multis, multi,
+    grille, wilds, multis, multi, convertis, deaderDernier,
     lignes: gains.lignes,
     gain: gains.total * multi,
     scatters: scat,
@@ -307,17 +470,61 @@ function compteScatters(grille) {
 /* ================== LES TOURS GRATUITS ==================
  * Les Wilds collent, leurs multiplicateurs s'ajoutent sur leur rouleau, et le
  * total du tour reste le produit. Un rouleau pris ne se relache plus. */
-function serieGratuite(octet, nb) {
+function serieGratuite(octet, nb, mode) {
+  mode = mode || DEAD;
   const collants = new Array(ROULEAUX).fill(0);
   const tours = [];
   let total = 0;
-  for (let i = 0; i < nb; i++) {
+  let reste = nb, surclasse = false;
+
+  for (let i = 0; reste > 0; i++, reste--) {
+    /* MECANIQUE 1 : ce qui colle grandit AVANT le tirage, a partir du
+       deuxieme tour — le Wild paie d'abord son propre multiplicateur. */
+    if (i > 0) {
+      const f = CROISSANCE[mode], pl = PLAFOND_ROULEAU[mode];
+      for (let r = 0; r < ROULEAUX; r++) if (collants[r] > 0) {
+        collants[r] = Math.min(collants[r] * f, pl);
+      }
+    }
+
     const t = unTour(octet, collants);
-    for (let r = 0; r < ROULEAUX; r++) if (t.multis[r] > 0) collants[r] = t.multis[r];
+    /* Un nouveau Wild ajoute son multiplicateur au rouleau, sans jamais le
+       porter au-dela du plafond : le plafond est celui du ROULEAU, pas
+       seulement celui de la croissance. */
+    for (let r = 0; r < ROULEAUX; r++) {
+      if (t.multis[r] > 0) {
+        const v = Math.min(t.multis[r], PLAFOND_ROULEAU[mode]);
+        t.multis[r] = v; collants[r] = v;
+        /* `cumul` voyage jusqu'a la page : le laisser au-dessus du plafond
+           ferait annoncer un multiplicateur que le rouleau ne porte pas. */
+        for (const w of t.wilds) if (w.rouleau === r) w.cumul = v;
+      }
+    }
+    /* Le total du tour se refait apres le plafonnement, sinon il annoncerait
+       un multiplicateur que le rouleau ne porte pas. */
+    let m = 0, tenus = 0;
+    for (let r = 0; r < ROULEAUX; r++) if (t.multis[r] > 0) { m += t.multis[r]; tenus++; }
+    t.multi = tenus ? m : 1;
+    t.gain = gainsDe(t.grille).total * t.multi;
+
+    t.mode = mode;
+    t.numero = i + 1;
     tours.push(t);
     total += t.gain;
+
+    /* MECANIQUE 3 : un `deader` sur le dernier rouleau surclasse la serie.
+       On le cherche dans le compte pris AVANT la conversion des deux
+       scatters, et sur le rouleau seulement. */
+    if (!surclasse && mode === DEAD && t.deaderDernier) {
+      {
+        surclasse = true;
+        mode = DEADER;
+        reste += SURCLASSE_TOURS;
+        t.surclasse = true;
+      }
+    }
   }
-  return { tours, total };
+  return { tours, total, surclasse, nb: tours.length };
 }
 
 /* ================== LE TOUR COMPLET ================== */
@@ -335,7 +542,7 @@ function joue({ serverSeed, clientSeed, nonce, mise }) {
 
   let gratuits = null;
   if (mode) {
-    gratuits = serieGratuite(octet, TOURS[mode]);
+    gratuits = serieGratuite(octet, TOURS[mode], mode);
     multi += gratuits.total;
   }
   if (multi > GAIN_MAX) multi = GAIN_MAX;
@@ -344,6 +551,8 @@ function joue({ serverSeed, clientSeed, nonce, mise }) {
   return {
     mise, multi, payout, net: payout - mise,
     mode, scatters: base.scatters,
+    modeFinal: gratuits && gratuits.surclasse ? DEADER : mode,
+    surclasse: gratuits ? gratuits.surclasse : false,
     toursGratuits: gratuits ? gratuits.tours.length : 0,
     base, gratuits,
   };
@@ -362,23 +571,33 @@ function joue({ serverSeed, clientSeed, nonce, mise }) {
  * achats. Le prix le divise par le retour du jeu ordinaire, pour que l'achat
  * porte la MEME marge qu'un tour normal — ni piege, ni cadeau.
  *
- * ---- LES PRIX ONT ETE REFAITS ----
+ * ---- LES PRIX ONT ETE REFAITS DEUX FOIS ----
  *
- * Ils avaient ete calibres sur une base ESTIMEE a ~95,4 %. La vraie base,
- * mesuree depuis sur 16 millions de tours, est de 96,35 % : les quatre
- * crans etaient donc tous trop chers, et le moins cher — celui que tout le
- * monde essaie en premier — punissait le joueur de CINQ POINTS.
+ * La premiere fois, ils avaient ete calibres sur une base ESTIMEE a ~95,4 %
+ * quand la vraie valait 96,35 % : les quatre crans etaient trop chers, et le
+ * moins cher — celui que tout le monde essaie en premier — punissait le
+ * joueur de CINQ POINTS.
  *
- *     cran      rendu   ancien prix   ancien retour      nouveau   retour
- *     wild      1,458      1,6x          91,13 %          1,51x    96,56 %
- *     scatter  11,738     12,5x          93,90 %          12,2x    96,21 %
- *     dead     34,370       36x          95,47 %          35,7x    96,27 %
- *     deader  103,571      108x          95,90 %         107,5x    96,34 %
+ * La seconde fois, c'est l'inverse, et c'est plus grave. Les trois
+ * mecaniques du mode gratuit ont multiplie par pres de deux ce que chaque
+ * cran rapporte, et les prix, eux, n'avaient pas bouge :
  *
- * Les quatre tiennent maintenant dans 0,35 point autour de la base. Le jeu
- * qui a inspire celui-ci annonce 94,04 % a 94,20 % pour une base a 94,09 %,
- * soit 0,16 point — c'est la bonne echelle de reference : un cran d'achat
- * ne doit etre ni un piege ni un cadeau, juste une autre facon de miser.
+ *     cran      rendu    ancien prix   ANCIEN RETOUR      nouveau   retour
+ *     wild      1,645       1,51x        108,94 %          1,71x    96,20 %
+ *     scatter  21,352       12,2x        175,02 %          22,2x    96,18 %
+ *     dead     60,782       35,7x        170,26 %          63,2x    96,17 %
+ *     deader  191,210      107,5x        177,87 %         198,7x    96,23 %
+ *
+ * Trois crans sur quatre rendaient plus de 170 % : la maison payait 70 %
+ * de la mise a chaque achat, sans que rien ne le signale. C'est la
+ * demonstration la plus nette de la regle : un prix juste hier devient faux
+ * des que le moteur bouge, et il faut REMESURER, pas relire.
+ *
+ * Les quatre tiennent maintenant dans 0,06 point les uns des autres et a
+ * 0,07 point de la base. Le jeu qui a inspire celui-ci annonce 94,04 % a
+ * 94,20 % pour une base a 94,09 %, soit 0,16 point — c'est la bonne echelle
+ * de reference : un cran d'achat ne doit etre ni un piege ni un cadeau,
+ * juste une autre facon de miser.
  *
  * `rendu` est mesure en POOLANT 40 series de 100 000 achats. Une mesure
  * isolee ne suffit pas : le rendu d'un cran porte la meme queue lourde que
@@ -401,10 +620,10 @@ function joue({ serverSeed, clientSeed, nonce, mise }) {
    le joueur voit ; ces quatre phrases se lisaient en francais au milieu
    d'une page anglaise. */
 const CRANS = {
-  wild:    { prix: 1.51,  quoi: 'a guaranteed Wild on one of the middle reels' },
-  scatter: { prix: 12.2,  quoi: 'two extra scatters in the draw' },
-  dead:    { prix: 35.7,  quoi: 'straight into Dead Spins' },
-  deader:  { prix: 107.5, quoi: 'straight into Deader Spins' },
+  wild:    { prix: 1.71,  quoi: 'a guaranteed Wild on one of the middle reels' },
+  scatter: { prix: 22.2,  quoi: 'two extra scatters in the draw' },
+  dead:    { prix: 63.2,  quoi: 'straight into Dead Spins' },
+  deader:  { prix: 198.7, quoi: 'straight into Deader Spins' },
 };
 /* L'ordre d'affichage, du moins cher au plus cher. La page le lit ici
    plutot que de le redecider — deux listes finissent par diverger. */
@@ -417,11 +636,13 @@ function achete({ serverSeed, clientSeed, nonce, mise, cran }) {
   const cout = Math.floor(mise * c.prix);
 
   if (cran === 'dead' || cran === 'deader') {
-    const g = serieGratuite(octet, TOURS[cran === 'dead' ? DEAD : DEADER]);
+    const m = cran === 'dead' ? DEAD : DEADER;
+    const g = serieGratuite(octet, TOURS[m], m);
     let multi = Math.min(g.total, GAIN_MAX);
     const payout = Math.floor(mise * multi);
     return { mise, cran, cout, multi, payout, net: payout - cout,
-             mode: cran, toursGratuits: g.tours.length, gratuits: g };
+             mode: cran, modeFinal: g.surclasse ? DEADER : m, surclasse: g.surclasse,
+             toursGratuits: g.tours.length, gratuits: g };
   }
 
   /* Les deux crans bon marche ne donnent pas de mode : ils forcent UNE chose
@@ -435,11 +656,13 @@ function achete({ serverSeed, clientSeed, nonce, mise, cran }) {
   if (t.scatters[DEADER] >= SCATTERS_POUR_TOURS) mode = DEADER;
   else if (t.scatters[DEAD] >= SCATTERS_POUR_TOURS) mode = DEAD;
   let gratuits = null;
-  if (mode) { gratuits = serieGratuite(octet, TOURS[mode]); multi += gratuits.total; }
+  if (mode) { gratuits = serieGratuite(octet, TOURS[mode], mode); multi += gratuits.total; }
   if (multi > GAIN_MAX) multi = GAIN_MAX;
   const payout = Math.floor(mise * multi);
   return { mise, cran, cout, multi, payout, net: payout - cout,
            mode, scatters: t.scatters,
+           modeFinal: gratuits && gratuits.surclasse ? DEADER : mode,
+           surclasse: gratuits ? gratuits.surclasse : false,
            toursGratuits: gratuits ? gratuits.tours.length : 0, base: t, gratuits };
 }
 
@@ -447,62 +670,13 @@ function achete({ serverSeed, clientSeed, nonce, mise, cran }) {
  *  puis on pose ce qui est achete — sans quoi il faudrait deux tirages
  *  differents selon le cran, et deux tirages sont deux occasions de diverger
  *  du tour ordinaire. */
+/* Garde son nom : la page et les essais l'appellent. Il ne fait plus que
+   traduire « ce cran force ceci » en options du tour — il n'y a plus qu'un
+   seul endroit ou un tour se calcule. */
 function unTourForce(octet, quoi) {
-  const t = unTour(octet, null);
-  if (quoi === DEAD) {
-    /* ---- IL EN FAUT DEUX, PAS UN ----
-     * Premiere version : on garantissait UN scatter. Mesure : le cran rendait
-     * 0,78x quand un tour ordinaire en rend 0,95. Il rendait le tour PIRE.
-     *
-     * Deux raisons, et les deux etaient dans le code. Un scatter pose ECRASE
-     * le symbole qui etait la, donc il peut casser un chemin gagnant. Et il
-     * n'ouvre rien tout seul : il en faut trois. On vendait donc un tour
-     * abime contre la promesse d'un tiers de bonus.
-     *
-     * A deux garantis, il n'en manque plus qu'un — et la, le cran vaut
-     * vraiment quelque chose. On pose sur des rouleaux DIFFERENTS : deux
-     * scatters sur la meme colonne se verraient mal et ne changeraient pas
-     * le compte. */
-    /* ---- ET ON EN AJOUTE DEUX, ON NE MONTE PAS JUSQU'A DEUX ----
-     * La version d'avant remplissait JUSQU'A deux scatters. Comme il en faut
-     * trois pour ouvrir, elle garantissait mathematiquement de ne jamais
-     * declencher : le cran rendait 0,60x contre 0,95x pour un tour ordinaire.
-     * On paie pour un tour PIRE que gratuit.
-     *
-     * On en AJOUTE deux, sur des rouleaux qui n'en portent pas. Le tour garde
-     * les siens : celui qui en avait deja un se retrouve a trois, et le mode
-     * s'ouvre. C'est ca qu'on vend. */
-    const AJOUT = 2;
-    const pris = new Set();
-    for (let r = 0; r < ROULEAUX; r++)
-      for (let y = 0; y < RANGEES; y++)
-        if (t.grille[y * ROULEAUX + r] === DEAD) pris.add(r);
-    let poses = 0, garde = 0;
-    while (poses < AJOUT && garde++ < 60) {
-      const r = entier(octet, ROULEAUX);
-      if (pris.has(r)) continue;
-      pris.add(r); poses++;
-      t.grille[entier(octet, RANGEES) * ROULEAUX + r] = DEAD;
-    }
-    t.scatters = compteScatters(t.grille);
-    const g = gainsDe(t.grille); t.lignes = g.lignes; t.gain = g.total * t.multi;
-    return t;
-  }
-  /* Un Wild garanti : s'il n'y en a pas, on en pose un sur un rouleau du
-     milieu tire au sort, avec sa taille tiree comme les autres. */
-  if (!t.wilds.length) {
-    const r = ROULEAUX_WILD[entier(octet, ROULEAUX_WILD.length)];
-    const ta = tireTailleWild(octet);
-    for (let y = 0; y < RANGEES; y++) t.grille[y * ROULEAUX + r] = WILD;
-    t.multis[r] = ta.multi;
-    t.wilds.push({ rouleau: r, taille: ta.taille, multi: ta.multi, cumul: ta.multi });
-    let m = 1;
-    for (let k = 0; k < ROULEAUX; k++) if (t.multis[k] > 0) m *= t.multis[k];
-    t.multi = m;
-    t.scatters = compteScatters(t.grille);
-    const g = gainsDe(t.grille); t.lignes = g.lignes; t.gain = g.total * m;
-  }
-  return t;
+  return quoi === DEAD
+    ? unTour(octet, null, { ajouteScatters: 2 })
+    : unTour(octet, null, { wildGaranti: true });
 }
 
 /* ================== LA MESURE ==================
@@ -560,7 +734,7 @@ function mesure(n = 200000, graine = 'mesure') {
   const serie = (mode, m) => {
     let s = 0, c = 0;
     for (let i = 0; i < m; i++) {
-      const g = serieGratuite(fluxDe(graine + ':' + mode, 'c', i), TOURS[mode]);
+      const g = serieGratuite(fluxDe(graine + ':' + mode, 'c', i), TOURS[mode], mode);
       s += g.total; c += g.total * g.total;
     }
     const moy = s / m;
@@ -616,9 +790,10 @@ function mesureAchat(cran, n = 100000, graine = 'achat') {
 }
 
 module.exports = {
-  RTP, RTP_IC, RTP_TOURS, BONUS_UN_SUR,
+  RTP, RTP_IC, RTP_TOURS, BONUS_UN_SUR, GAIN_VU, GAIN_VU_TOURS,
   ROULEAUX, RANGEES, CASES, BAS, HAUTS, PAYANTS, WILD, DEAD, DEADER, TOUS,
   ROULEAUX_WILD, BAREME, POIDS, TAILLES_WILD, SCATTERS_POUR_TOURS, TOURS,
+  CROISSANCE, PLAFOND_ROULEAU, DEUX_SCATTERS_WILD, SURCLASSE_TOURS,
   GAIN_MAX, CRANS, CRANS_ORDRE,
   fluxDe, entier, tireSymbole, unTour, gainsDe, compteScatters,
   serieGratuite, joue, achete, unTourForce, mesure, simuleBrut, mesureAchat,
