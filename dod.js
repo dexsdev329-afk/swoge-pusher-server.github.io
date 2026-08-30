@@ -362,11 +362,30 @@ function joue({ serverSeed, clientSeed, nonce, mise }) {
  * achats. Le prix le divise par le retour du jeu ordinaire, pour que l'achat
  * porte la MEME marge qu'un tour normal — ni piege, ni cadeau.
  *
- *     cran      rendu     prix    retour de l'achat
- *     wild      1,47x     1,6x       91,6 %
- *     scatter  11,68x    12,5x       93,4 %
- *     dead     34,05x      36x       94,6 %
- *     deader  102,84x     108x       95,2 %
+ * ---- LES PRIX ONT ETE REFAITS ----
+ *
+ * Ils avaient ete calibres sur une base ESTIMEE a ~95,4 %. La vraie base,
+ * mesuree depuis sur 16 millions de tours, est de 96,35 % : les quatre
+ * crans etaient donc tous trop chers, et le moins cher — celui que tout le
+ * monde essaie en premier — punissait le joueur de CINQ POINTS.
+ *
+ *     cran      rendu   ancien prix   ancien retour      nouveau   retour
+ *     wild      1,458      1,6x          91,13 %          1,51x    96,56 %
+ *     scatter  11,738     12,5x          93,90 %          12,2x    96,21 %
+ *     dead     34,370       36x          95,47 %          35,7x    96,27 %
+ *     deader  103,571      108x          95,90 %         107,5x    96,34 %
+ *
+ * Les quatre tiennent maintenant dans 0,35 point autour de la base. Le jeu
+ * qui a inspire celui-ci annonce 94,04 % a 94,20 % pour une base a 94,09 %,
+ * soit 0,16 point — c'est la bonne echelle de reference : un cran d'achat
+ * ne doit etre ni un piege ni un cadeau, juste une autre facon de miser.
+ *
+ * `rendu` est mesure en POOLANT 40 series de 100 000 achats. Une mesure
+ * isolee ne suffit pas : le rendu d'un cran porte la meme queue lourde que
+ * le jeu lui-meme.
+ *
+ * A REFAIRE a chaque fois que la base bouge — un prix juste hier devient
+ * faux quand le moteur est reregle, et rien ne le signale.
  *
  * L'ORDRE N'EST PAS CELUI DU JEU QUI A INSPIRE CELUI-CI. Chez lui le
  * « scatter boost » est le cran le moins cher et le « wild drop » vient
@@ -382,10 +401,10 @@ function joue({ serverSeed, clientSeed, nonce, mise }) {
    le joueur voit ; ces quatre phrases se lisaient en francais au milieu
    d'une page anglaise. */
 const CRANS = {
-  wild:    { prix: 1.6,   quoi: 'a guaranteed Wild on one of the middle reels' },
-  scatter: { prix: 12.5,  quoi: 'two extra scatters in the draw' },
-  dead:    { prix: 36,    quoi: 'straight into Dead Spins' },
-  deader:  { prix: 108,   quoi: 'straight into Deader Spins' },
+  wild:    { prix: 1.51,  quoi: 'a guaranteed Wild on one of the middle reels' },
+  scatter: { prix: 12.2,  quoi: 'two extra scatters in the draw' },
+  dead:    { prix: 35.7,  quoi: 'straight into Dead Spins' },
+  deader:  { prix: 107.5, quoi: 'straight into Deader Spins' },
 };
 /* L'ordre d'affichage, du moins cher au plus cher. La page le lit ici
    plutot que de le redecider — deux listes finissent par diverger. */

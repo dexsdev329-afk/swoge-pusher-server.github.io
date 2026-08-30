@@ -177,5 +177,43 @@ console.log('\n-- le retour publie --');
      + ' rien sur un jeu a cette variance');
 }
 
+/* 6. UN CRAN D'ACHAT N'EST NI UN PIEGE NI UN CADEAU.
+ *
+ * Les prix avaient ete calibres sur une base ESTIMEE a ~95,4 %. La vraie
+ * base est 96,35 % : les quatre crans etaient trop chers, et le moins cher
+ * — celui que tout le monde essaie en premier — rendait 91,13 %, soit CINQ
+ * POINTS de moins que de simplement jouer. Rien ne le signalait.
+ *
+ * Le jeu qui a inspire celui-ci tient ses quatre crans dans 0,16 point de
+ * sa base. C'est la bonne echelle : on exige ici moins d'un point.
+ *
+ * Le rendu se POOLE, comme le retour : celui d'un cran porte la meme queue
+ * lourde que le jeu. Une mesure isolee ferait echouer cet essai au hasard.
+ */
+console.log('\n-- les crans d achat --');
+{
+  const G = 16, N = 60000;
+  const ecarts = [];
+  for (const c of dod.CRANS_ORDRE) {
+    const r = [];
+    for (let i = 0; i < G; i++) r.push(dod.mesureAchat(c, N, 'w' + i).rendu);
+    const moy = r.reduce((a, b) => a + b, 0) / G;
+    const ec = Math.sqrt(r.reduce((a, b) => a + (b - moy) * (b - moy), 0) / (G - 1));
+    const em = 1.96 * ec / Math.sqrt(G);
+    const retour = 100 * moy / dod.CRANS[c].prix;
+    const ic = 100 * em / dod.CRANS[c].prix;
+    const ecart = retour - dod.RTP;
+    ecarts.push(Math.abs(ecart));
+    ok(Math.abs(ecart) < 1.0 + ic,
+       'le cran « ' + c + ' » a ' + dod.CRANS[c].prix + '× rend '
+       + retour.toFixed(2) + ' % ±' + ic.toFixed(2) + ', soit '
+       + (ecart >= 0 ? '+' : '') + ecart.toFixed(2) + ' point(s) de la base');
+  }
+  ok(Math.max(...ecarts) < 1.5,
+     'et le pire des quatre reste sous un point et demi ('
+     + Math.max(...ecarts).toFixed(2) + ') : acheter le bonus doit etre une'
+     + ' AUTRE FACON DE MISER, pas une punition');
+}
+
 console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
 process.exit(rates ? 1 : 0);
