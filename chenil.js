@@ -76,15 +76,15 @@ const LIGNES = [
  * $SWOGE entier des la mise minimale.
  */
 const BAREME = {
-  dix:      { 3: 0.47, 4: 0.93, 5: 1.40 },
-  j:        { 3: 0.47, 4: 0.93, 5: 1.63 },
-  q:        { 3: 0.47, 4: 1.16, 5: 1.63 },
-  k:        { 3: 0.70, 4: 1.16, 5: 1.63 },
-  a:        { 3: 0.70, 4: 1.16, 5: 1.86 },
-  beagle:   { 3: 1.16, 4: 2.33, 5: 3.49 },
-  etoile:   { 3: 1.40, 4: 2.56, 5: 3.95 },
-  noeud:    { 3: 1.40, 4: 2.79, 5: 4.19 },
-  collier:  { 3: 1.86, 4: 3.72, 5: 5.58 },
+  dix:      { 3: 0.47, 4: 0.92, 5: 1.39 },
+  j:        { 3: 0.47, 4: 0.92, 5: 1.61 },
+  q:        { 3: 0.47, 4: 1.15, 5: 1.61 },
+  k:        { 3: 0.69, 4: 1.15, 5: 1.61 },
+  a:        { 3: 0.69, 4: 1.15, 5: 1.84 },
+  beagle:   { 3: 1.15, 4: 2.31, 5: 3.46 },
+  etoile:   { 3: 1.39, 4: 2.54, 5: 3.91 },
+  noeud:    { 3: 1.39, 4: 2.76, 5: 4.15 },
+  collier:  { 3: 1.84, 4: 3.68, 5: 5.53 },
 };
 
 /* Ce que paient TROIS Bonus, ou qu'ils soient. Ils ouvrent aussi le tour. */
@@ -120,6 +120,35 @@ const CASES_TIRAGE = 9;
 const TIRAGE_TOURS = [{ n: 1, poids: 5 }, { n: 2, poids: 3 }];
 
 const GAIN_MAX = 5000;
+
+/* ---- LE RETOUR AU JOUEUR, MESURE SUR CE MOTEUR ----
+ *
+ * Meme methode que sur DEAD SWOGE, et pour la meme raison : une mesure
+ * isolee ne vaut rien quand une part du retour tient dans un evenement
+ * rare. L'ecart-type ENTRE GRAINES est de 1,30 point ici, et sur 40
+ * mesures la plus basse donne 94,43 % quand la plus haute donne 100,38 %.
+ * On POOLE, et l'intervalle vient de la dispersion entre graines.
+ *
+ *     30 mesures independantes de 300 000 tours = 9 millions de tours
+ *     moyenne 96,35 %   mediane 96,56 %   intervalle 95 % : ±0,39 point
+ *
+ * C'est le MEME retour que DEAD SWOGE (96,35 %), volontairement : deux
+ * tables de la meme maison qui annoncent des retours differents demandent
+ * une explication que rien ne justifie ici.
+ *
+ * La repartition, elle, est tres differente et c'est le point du jeu :
+ *
+ *     jeu de base   64,0 %   soit 66 % du retour
+ *     bonus         32,4 %   soit 34 %
+ *     frequence     1 sur 255,  12,4 tours gratuits en moyenne
+ *
+ * DEAD SWOGE met 26 % de son retour dans un bonus qui tombe une fois sur
+ * 143 ; celui-ci en met 34 % dans un bonus une fois sur 255. L'un se joue
+ * en attendant le bonus, l'autre paie en chemin.
+ *
+ * A REMESURER a chaque changement de poids, de bareme ou de tirage.
+ */
+const RTP = 96.35, RTP_IC = 0.39, RTP_TOURS = 9000000, BONUS_UN_SUR = 255;
 
 /* ================== LE HASARD, VERIFIABLE ================== */
 /*
@@ -376,6 +405,7 @@ function mesure(n = 200000, graine = 'mesure') {
 }
 
 module.exports = {
+  RTP, RTP_IC, RTP_TOURS, BONUS_UN_SUR,
   ROULEAUX, RANGEES, CASES, BAS, HAUTS, PAYANTS, WILD, BONUS, TOUS,
   ROULEAUX_WILD, ROULEAUX_BONUS, LIGNES, BAREME, BONUS_PAIE, BONUS_POUR_TOURS,
   MULTIS_WILD, CASES_TIRAGE, TIRAGE_TOURS, GAIN_MAX,

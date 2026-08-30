@@ -25,6 +25,7 @@ const mines = require('./mines');
 const plinko = require('./plinko');
 const bonanza = require('./bonanza');
 const dod = require('./dod');
+const chenil = require('./chenil');
 const boulier = require('./boulier');
 const { Salle: BoulierSalle } = require('./boulier_salle');
 const crash = require('./crash');
@@ -6408,6 +6409,53 @@ class Game {
       rtp: dod.RTP, rtpIc: dod.RTP_IC, rtpN: dod.RTP_TOURS,
       bonusUnSur: dod.BONUS_UN_SUR,
     };
+  }
+
+  /* ==================== SWOGE LE CHENIL ====================
+   * Meme forme que DEAD SWOGE : le bareme part avec l'etat, la page n'en
+   * garde aucune copie, et le tour est DECIDE ICI avant que le moindre
+   * rouleau bouge cote joueur.
+   */
+  chenilBareme() {
+    return {
+      rouleaux: chenil.ROULEAUX, rangees: chenil.RANGEES,
+      bas: chenil.BAS, hauts: chenil.HAUTS,
+      wild: chenil.WILD, bonus: chenil.BONUS,
+      rouleauxWild: chenil.ROULEAUX_WILD, rouleauxBonus: chenil.ROULEAUX_BONUS,
+      lignes: chenil.LIGNES, bareme: chenil.BAREME,
+      multisWild: chenil.MULTIS_WILD,
+      bonusPourTours: chenil.BONUS_POUR_TOURS, bonusPaie: chenil.BONUS_PAIE,
+      casesTirage: chenil.CASES_TIRAGE, tirageTours: chenil.TIRAGE_TOURS,
+      gainMax: chenil.GAIN_MAX,
+      min: cfg.CASINO_MIN_BET, max: cfg.CASINO_MAX_BET,
+      rtp: chenil.RTP, rtpIc: chenil.RTP_IC, rtpN: chenil.RTP_TOURS,
+      bonusUnSur: chenil.BONUS_UN_SUR,
+    };
+  }
+
+  chenilSpin(addr, miseRaw) {
+    const p = this._p(addr);
+    const mise = Math.floor(Number(miseRaw));
+    if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
+    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+
+    p.balance = p.balance.sub(WEI(mise));
+    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise));
+    this._markWager(p, WEI(mise), 'chenil');
+
+    p.nonce++;
+    const r = chenil.joue({
+      serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':chenil',
+      nonce: p.nonce, mise,
+    });
+    if (r.payout > 0) {
+      p.balance = p.balance.add(WEI(r.payout));
+      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      if (r.net > 0) p.winsToday++;
+    }
+    this._manche(p, 'chenil', r.mise, r.payout);
+    return r;
   }
 
   dodSpin(addr, miseRaw) {
