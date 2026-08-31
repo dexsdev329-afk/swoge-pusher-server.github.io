@@ -71,15 +71,42 @@ for (const c of Object.keys(paris.SPORTS)) TERRAIN[c] = paris.SPORTS[c].terrain;
 
 /* Le nul, au football.
  *
- * `NUL_MAX` est sa probabilite quand les deux equipes se valent exactement ;
- * 28 % est ce qu'on observe dans les grands championnats. `NUL_PENTE` dit a
- * quelle vitesse il s'efface : a 400 points d'ecart — un ecart enorme — il
- * tombe autour de 12 %. La forme exponentielle est choisie parce qu'elle ne
- * peut jamais rendre une valeur negative, ce qu'une droite ferait au-dela
- * d'un certain ecart, en silence.
+ * `NUL_MAX` est sa probabilite quand les deux equipes se valent exactement.
+ * `NUL_PENTE` dit a quelle vitesse il s'efface avec l'ecart de force. La
+ * forme exponentielle est choisie parce qu'elle ne peut jamais rendre une
+ * valeur negative, ce qu'une droite ferait au-dela d'un certain ecart, en
+ * silence.
+ *
+ * ---- CES DEUX NOMBRES DECIDENT DU NOMBRE DE BUTS, ET ON NE LE VOYAIT PAS ----
+ *
+ * Ils valaient 0,28 et 0,0021, choisis pour le nul seul. Mais le nul n'est
+ * pas seul : `ajusteButs` cherche le nombre de buts qui le REPRODUIT, et un
+ * nul trop bas ne se reproduit qu'en ajoutant des buts. Releve avec ces
+ * valeurs-la, sur un match equilibre : nul 24 % — deux points sous la
+ * realite — et 3,48 buts attendus, alors qu'un match de championnat en
+ * produit 2,7. Sur un gros favori, 4,6 buts. Le modele n'ecrivait plus un
+ * match de football.
+ *
+ * Et TOUT ce qui descend de la grille suivait : « plus de 2,5 buts » offert a
+ * 1,12 quand il vaut 1,9, un 2-0 a 12,86 la ou le marche affiche 7,5. La
+ * maison ne perdait pas en moyenne — elle affichait des prix faux, et un
+ * parieur qui compare prend exactement le cote qui paie.
+ *
+ * Recalibres sur deux points observes plutot que sur un seul :
+ *
+ *     ecart      nul     total de buts
+ *     equilibre  28 %    2,74
+ *     255        22 %    3,13
+ *     423        18 %    2,94
+ *     565        14 %    2,74
+ *
+ * Le nul reste dans ce qu'on observe (25-28 % a l'equilibre, 14-17 % sur un
+ * gros favori) ET le total de buts tombe dans la fourchette d'un vrai match.
+ * Deux contraintes valent mieux qu'une : une courbe qui satisfait le nul seul
+ * peut etre absurde partout ailleurs, et elle l'etait.
  */
-const NUL_MAX = 0.28;
-const NUL_PENTE = 0.0021;
+const NUL_MAX = 0.31;
+const NUL_PENTE = 0.00135;
 
 /* La marge par defaut. Un bookmaker tourne entre 5 et 12 % selon le marche.
    On se place volontairement au-dessus : ces cotes sortent d'un modele qui
@@ -854,7 +881,44 @@ function ajusteButs(p1, pN, p2) {
     const q = issuesDeLaGrille(grilleDesScores(T * partPour(T), T * (1 - partPour(T))));
     if (q.N > pN) bas = T; else haut = T;      // plus de buts, moins de nuls
   }
-  const T = (bas + haut) / 2, x = partPour(T);
+  let T = (bas + haut) / 2;
+  /* ==================== LE TOTAL NE PEUT PAS ETRE N'IMPORTE QUOI ====================
+   *
+   * « Tous les bookmakers proposaient Barcelone a 1,1, nous 1,5 » et « les
+   * cotes du score exact beaucoup trop hautes. » Les deux avaient la meme
+   * cause, et elle est ici.
+   *
+   * Cette dichotomie cherche le nombre de buts qui reproduit NOTRE nul. Quand
+   * ce nul est un peu trop bas — et il l'est, la courbe decroit trop vite —
+   * le seul moyen de le reproduire est d'ajouter des buts. Releve avant
+   * correction, sur six affiches :
+   *
+   *     Getafe - Alaves          3,74 buts attendus   « plus de 2,5 » a 72 %
+   *     Malaga - Bolton          3,97                                  76 %
+   *     Arsenal - Ajax           4,69                                  85 %
+   *     Barcelone - Alaves       4,62                                  84 %
+   *
+   * Un match de football en produit 2,7 en moyenne, et 4,0 sur les affiches
+   * les plus desequilibrees. A 4,6, le modele n'ecrit plus un match : il
+   * ecrit un handball. Et TOUT ce qui descend de la grille suit — « plus de
+   * 2,5 » offert a 1,12 quand il vaut 1,9, un « moins de 2,5 » a 4,34 qui
+   * rapporte, et un 2-0 a 12,86 la ou le marche affiche 7,5. La maison ne
+   * perdait pas en moyenne : elle affichait des prix faux, et un parieur qui
+   * compare prend exactement le cote qui paie.
+   *
+   * On borne donc le total a ce qu'un match produit vraiment, en gardant le
+   * RAPPORT trouve — c'est-a-dire en gardant qui est favori, et de combien.
+   * Ce que l'on perd : la grille ne reproduit plus exactement notre nul. Ce
+   * que l'on gagne : elle decrit un match qui existe. Entre un modele qui
+   * colle a un chiffre et un modele qui decrit la realite, c'est la realite
+   * qui paie les factures.
+   *
+   * Les bornes ne sont pas choisies au doigt : 1,9 et 3,6 encadrent ce qu'on
+   * observe en championnat, moyenne 2,7. */
+  const TOTAL_PLANCHER = 1.9, TOTAL_PLAFOND = 3.6;
+  if (T > TOTAL_PLAFOND) T = TOTAL_PLAFOND;
+  else if (T < TOTAL_PLANCHER) T = TOTAL_PLANCHER;
+  const x = partPour(T);
   return { lh: T * x, la: T * (1 - x), total: T };
 }
 
