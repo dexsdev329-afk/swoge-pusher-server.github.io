@@ -59,6 +59,7 @@ const PNG = Buffer.from(PNG64, 'base64');
 function lance(port, bac) {
   const env = Object.assign({}, process.env, {
     PORT: String(port), DATA_DIR: bac, ADMIN_KEY: CLE, RPC_URL: '', DEV_FAUCET: '1',
+    AI_COLONIE: '0',
   });
   const p = spawn(process.execPath, ['server.js'], { cwd: __dirname, env, stdio: ['ignore', 'pipe', 'pipe'] });
   nes.push({ p });

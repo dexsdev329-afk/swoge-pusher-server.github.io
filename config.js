@@ -74,6 +74,16 @@ module.exports = {
   // Where the persistent game state (balances etc.) is written. On Railway,
   // mount a VOLUME at this path so it survives redeploys/restarts.
   DATA_DIR: env('DATA_DIR', './data'),
+
+  /* ---- LA COLONIE D'AGENTS TOURNE-T-ELLE ? ----
+   * Par defaut OUI : c'est ce qu'on veut en production, et un interrupteur
+   * par defaut ferme finit toujours par etre oublie — la colonie ne
+   * tournerait pas, et rien ne le dirait.
+   * Les essais qui allument un vrai serveur le posent a '0'. Sans ca, chaque
+   * essai declenchait un tour complet : une quinzaine d'appels reseau vers
+   * des services gratuits qui coupent, multiplies par le nombre d'essais.
+   * Un essai qui depend d'Internet n'est pas un essai, c'est un tirage. */
+  AI_COLONIE: env('AI_COLONIE', '1'),
   SAVE_MS: parseInt(env('SAVE_MS', '10000'), 10),
 
   // Password for the private /admin dashboard + /stats (?key=…). Empty = open

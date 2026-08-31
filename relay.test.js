@@ -40,6 +40,7 @@ function lance(env2) {
   const bac = fs.mkdtempSync(path.join(os.tmpdir(), 'swoge-relay-'));
   const env = Object.assign({}, process.env, {
     PORT: String(PORT), DATA_DIR: bac, ADMIN_KEY: CLE_ADMIN, RPC_URL: '',
+    AI_COLONIE: '0',
     /* On detourne Relay vers une adresse morte : aucun appel sortant ne part
        d'un test, et le chemin heureux n'est de toute facon pas ce qu'on
        verifie ici. */

@@ -34,6 +34,7 @@ const paris = require('./paris');
    fait rien, le calendrier reste celui du depot. */
 const parisImport = require('./paris_import');
 const espn = require('./scores_espn');
+const aiColonie = require('./ai_colonie');
 
 /* ---- IL VIT AU MODULE, PAS DANS LA REQUETE ----
  * Il etait declare dans le gestionnaire HTTP, c'est-a-dire RECONSTRUIT a
@@ -1901,6 +1902,33 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(e.ok ? 200 : 503, { 'content-type': 'application/json; charset=utf-8',
                                       'cache-control': 'no-store' });
     return res.end(JSON.stringify(e, null, 2));
+  }
+  /* ========================= LA COLONIE D'AGENTS =========================
+   *
+   * « Faut que ça soit live tout le temps, ça tourne 24/24 même quand on est
+   * pas sur la page, tout le monde voit la même chose. »
+   *
+   * Les trois demandes n'en font qu'une, et cette route est ce qui la tient.
+   * Le moteur tourne dans ce processus (voir `ai_colonie.js`), il ecrit son
+   * etat sur le disque, et il le SERT ici. La page n'est plus qu'une vue :
+   * deux visiteurs lisent le meme fichier, donc voient la meme colonie, y
+   * compris celui qui ouvre la page pour la premiere fois au milieu de la
+   * nuit — alors que la version navigateur donnait a chacun SA tresorerie
+   * dans SON stockage local, et s'arretait avec l'onglet.
+   *
+   * Publique et sans cle : elle ne rend que du papier. La colonie n'a aucun
+   * chemin vers `state.json` — un defaut chez elle doit pouvoir couter zero
+   * centime a qui que ce soit, et la seule facon d'en etre sur est qu'elle ne
+   * puisse pas atteindre la caisse.
+   *
+   * `no-store` : la vue porte l'heure de la derniere lecture et la tresorerie
+   * du moment. Un cache de soixante secondes montrerait a l'un ce que l'autre
+   * a deja vu changer — c'est-a-dire, exactement, deux colonies differentes. */
+  if (path === '/ai/colonie') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*',
+                         'cache-control': 'no-store' });
+    return res.end(JSON.stringify(aiColonie.vue()));
   }
   /* ======================= ARRIVER D'UNE AUTRE CHAINE =======================
    *
@@ -6657,6 +6685,30 @@ server.listen(cfg.PORT, () => {
   console.log(`  telegram=${tg.enabled() ? 'ON (chat ' + cfg.TG_CHAT_ID + ')' : 'OFF (set TG_BOT_TOKEN + TG_CHAT_ID)'}`);
   tg.notify('🟢 <b>SWOGE server online</b> — notifications actives'); // startup ping = quick check that TG works
   sante.demarre({ jeu: game, tg });
+
+  /* ---- LA COLONIE TOURNE, QUE QUELQU'UN REGARDE OU NON ----
+   * Elle se relit sur le disque et reprend ou elle en etait : les positions
+   * ouvertes avant la coupure se reglent au prix du moment, et le temps
+   * ecoule pendant l'arret est du temps reel. Rien de ce qu'elle fait ne
+   * touche l'argent des joueurs — sa tresorerie est du papier. */
+  if (cfg.AI_COLONIE !== '1') {
+    /* Eteinte, on le DIT. Une colonie absente en silence ressemble a une
+       colonie qui n'a rien trouve. */
+    /* On relit quand meme le disque : sans ca, la route aurait servi un etat
+       NEUF — une tresorerie a son point de depart et zero trade, ce qui se
+       lit comme « la colonie n'a rien fait » alors qu'elle est simplement
+       eteinte. Relue, elle sert le dernier etat connu, date. */
+    aiColonie.charge();
+    console.log('[ai] colonie ETEINTE (AI_COLONIE=' + cfg.AI_COLONIE
+      + ') — /ai/colonie sert le dernier etat relu sur disque, sans le faire avancer');
+  } else {
+    try {
+      aiColonie.demarre();
+      console.log('[ai] colonie demarree — vue publique sur /ai/colonie');
+    } catch (e) {
+      console.warn('[ai] colonie non demarree :', e.message);
+    }
+  }
 
   /* ---- LES ACHATS DE $SWOGEBET PASSENT DANS LE CANAL ----
    *
