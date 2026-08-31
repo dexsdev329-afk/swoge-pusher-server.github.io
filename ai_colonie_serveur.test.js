@@ -54,10 +54,15 @@ let MONDE = null, appels = null;
 function jeton(i, o) {
   o = o || {};
   const suf = String(i).padStart(2, '0');
+  /* ---- DE VRAIES ADRESSES ----
+   * Les precedentes portaient « t0ken » et « p001 », qui ne sont pas de
+   * l'hexadecimal. Le moteur valide le format des adresses que lui rendent les
+   * flux — c'est ce qui le protege d'une reponse abimee — et il les jetait donc
+   * toutes. Le banc mesurait alors une absence qu'il avait lui-meme fabriquee. */
   return {
-    addr: '0xt0ken' + suf + '0000000000000000000000000000000' + suf.slice(-1),
+    addr: '0x' + suf.repeat(20),
     sym: 'TOK' + i,
-    pool: '0xp001' + suf + '0000000000000000000000000000000' + suf.slice(-1),
+    pool: '0x' + ('b0' + suf).repeat(10),
     prix: o.prix === undefined ? 1 : o.prix,
     liq: o.liq === undefined ? 50000 : o.liq,
     mc: o.mc === undefined ? 300000 : o.mc,
@@ -70,22 +75,34 @@ function jeton(i, o) {
     buys: o.buys === undefined ? 120 : o.buys,
     sells: o.sells === undefined ? 60 : o.sells,
     buyers: o.buyers === undefined ? 80 : o.buyers,
+    /* ---- LE LAVAGE ----
+     * Un seul portefeuille qui achete et revend a lui-meme. Les compteurs
+     * agreges y voient un marche vivant ; les trades y voient une personne. */
+    lavage: !!o.lavage,
+    tradeurs: o.tradeurs === undefined ? 12 : o.tradeurs,
+    tradesN: o.tradesN === undefined ? 24 : o.tradesN,
   };
 }
 
-function mondeNeuf(jetons) {
-  return {
+/* Le flux des pools ne sert pas forcement TOUS les jetons du monde : c'est
+   comme ca qu'on montre qu'un autre flux en ramene que lui seul connait. */
+let poolsPageFiltre = null;
+
+function mondeNeuf(jetons, extra) {
+  return Object.assign({
     jetons,
     prixDe: (a) => { const t = jetons.find((x) => x.addr === a); return t ? t.prix : 0; },
     coupe: false,
     bloc: 5000000,
-  };
+    profils: [], boosts: [], goplusCasse: false,
+  }, extra || {});
 }
 
 function poolsPage(page) {
   /* Le vrai flux rend vingt pools par page ; on met tout sur la premiere et
      on laisse les suivantes vides, ce qu'il fait aussi en fin de flux. */
-  const liste = page === 1 ? MONDE.jetons : [];
+  let liste = page === 1 ? MONDE.jetons : [];
+  if (poolsPageFiltre) liste = liste.filter((t) => poolsPageFiltre.indexOf(t.addr) >= 0);
   return {
     data: liste.map((t) => ({
       id: 'pool_' + t.sym,
@@ -132,6 +149,22 @@ function goplusDe(t) {
     lp_holders: [{ address: ZERO, percent: '1', is_locked: 1, tag: 'burn' }] } } };
 }
 
+/* ---- LES TRADES, UN PAR UN ----
+ * C'est la source qui distingue des PERSONNES de des transactions. Un jeton
+ * `lavage` fait tout son volume avec un seul portefeuille : les compteurs
+ * agreges y voient un marche vivant, les trades y voient une mise en scene. */
+function tradesDe(t) {
+  const out = [];
+  const n = t.tradesN === undefined ? 24 : t.tradesN;
+  for (let i = 0; i < n; i++) {
+    const qui = t.lavage ? '0xwash' : '0xw' + (i % (t.tradeurs || 12));
+    out.push({ attributes: { kind: i % 3 === 2 ? 'sell' : 'buy',
+                             volume_in_usd: String(t.lavage && i % 2 ? 400 : 60),
+                             tx_from_address: qui } });
+  }
+  return out;
+}
+
 function logsDe(t) {
   /* Une emission depuis l'adresse nulle vers N porteurs. C'est exactement ce
      que la chaine contient quelques minutes apres la naissance d'un jeton, et
@@ -167,8 +200,24 @@ global.fetch = async function (url, opts) {
     const page = parseInt((url.match(/page=(\d+)/) || [])[1] || '1', 10);
     return rep(poolsPage(page));
   }
+  if (/token-profiles/.test(url)) {
+    appels.profils++;
+    return rep((MONDE.profils || []).map((a) => ({ chainId: 'robinhood', tokenAddress: a })));
+  }
+  if (/token-boosts/.test(url)) {
+    appels.boosts++;
+    return rep((MONDE.boosts || []).map((a) => ({ chainId: 'robinhood', tokenAddress: a })));
+  }
+  if (/\/trades/.test(url)) {
+    appels.trades++;
+    const pool = (url.match(/pools\/([^/]+)\/trades/) || [])[1];
+    const t = MONDE.jetons.find((x) => x.pool === pool);
+    if (!t) return rep({ data: [] });
+    return rep({ data: tradesDe(t) });
+  }
   if (/gopluslabs/.test(url)) {
     appels.goplus++;
+    if (MONDE.goplusCasse) return rep({ error: 'indisponible' }, 503);
     const a = (url.split('contract_addresses=')[1] || '').toLowerCase();
     const t = MONDE.jetons.find((x) => x.addr === a);
     return rep(t ? goplusDe(t) : { result: {} });
@@ -184,8 +233,18 @@ global.fetch = async function (url, opts) {
     const a = (url.split('/tokens/')[1] || '').toLowerCase();
     const t = MONDE.jetons.find((x) => x.addr === a);
     if (!t) return rep({ pairs: [] });
-    return rep({ pairs: [{ chainId: 'robinhood', priceUsd: String(t.prix),
-      liquidity: { usd: t.liq }, info: { socials: [{ type: 'twitter' }], websites: [{}] } }] });
+    /* La vraie reponse porte le pool, l'age, la capitalisation et les
+       compteurs — c'est ce qui permet de reconstruire un jeton a partir de sa
+       seule adresse, donc de suivre les deux flux qui n'en rendent qu'une. */
+    return rep({ pairs: [{
+      chainId: 'robinhood', pairAddress: t.pool, priceUsd: String(t.prix),
+      baseToken: { address: t.addr, symbol: t.sym, name: t.sym + ' coin' },
+      liquidity: { usd: t.liq }, fdv: t.mc,
+      pairCreatedAt: Date.now() - t.minutes * 60000,
+      txns: { h1: { buys: t.buys, sells: t.sells } },
+      volume: { m5: 2000, h1: 20000, h6: 60000, h24: 90000 },
+      priceChange: { m5: 8, h1: 20, h6: 35 },
+      info: { socials: [{ type: 'twitter' }], websites: [{}] } }] });
   }
   if (/rpc\.mainnet\.chain\.robinhood/.test(url)) {
     appels.rpc++;
@@ -203,9 +262,9 @@ global.fetch = async function (url, opts) {
 
 const C = require('./ai_colonie.js');
 
-function remise(jetons) {
-  MONDE = mondeNeuf(jetons);
-  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0 };
+function remise(jetons, extra) {
+  MONDE = mondeNeuf(jetons, extra);
+  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0, trades: 0, profils: 0, boosts: 0 };
   for (const k of Object.keys(C._cache)) for (const j of Object.keys(C._cache[k])) delete C._cache[k][j];
   for (const k of Object.keys(C._prix)) delete C._prix[k];
   C._pose(C.etatNeuf());
@@ -421,7 +480,9 @@ async function reglement() {
   await C.tour();
   const E = C._etat();
   const avant = E.positions.length;
-  ok(avant > 0, avant + ' position(s) ouverte(s) a $1,00');
+  const mises = E.positions.reduce((a, p) => a + p.mise, 0);
+  const attendu = C.DEPART + mises * 0.5;
+  ok(avant > 0, avant + ' position(s) ouverte(s) a $1,00, pour $' + mises.toFixed(2) + ' engages');
 
   /* ---- LE TEMPS PASSE PAR PETITS PAS, COMME SUR LE SERVEUR ----
    * Un tour toutes les deux minutes et demie : une position est RELUE des
@@ -454,14 +515,15 @@ async function reglement() {
   console.log('   ' + JSON.stringify({ tresor: v.tresor, trades: v.trades, gains: v.gains }));
   ok(v.trades === avant, 'toutes les positions dues se ferment (' + v.trades + ')');
 
-  /* +50 % sur une mise de $50, c est +$25 par position. Le chiffre doit
-     tomber juste : c est la preuve que le rendement vient du prix relu et
-     non d une estimation. */
-  const attendu = C.DEPART + avant * C.MISE * 0.5;
+  /* +50 % sur chaque mise. La mise n'est plus une constante — c'est le
+     Banquier qui la pose, et elle depend de la caisse du moment. On additionne
+     donc les mises REELLEMENT engagees : le chiffre doit tomber juste, et
+     c'est la preuve que le rendement vient du prix relu et non d'une
+     estimation. */
   console.log('   tresorerie : ' + v.tresor.toFixed(2) + ' · attendu ' + attendu.toFixed(2));
   ok(Math.abs(v.tresor - attendu) < 0.01,
-     'la tresorerie suit exactement le prix rendu : +50 % sur $' + C.MISE + ' × ' + avant
-     + ' = $' + (avant * C.MISE * 0.5).toFixed(2));
+     'la tresorerie suit exactement le prix rendu : +50 % sur $' + mises.toFixed(2)
+     + ' engages = +$' + (mises * 0.5).toFixed(2));
   ok(v.gains === avant, 'et les gagnantes sont comptees comme telles');
 
   const m = C._etat().memoire;
@@ -569,6 +631,481 @@ async function pasDEmpilement() {
   ok(new Set(adr).size === adr.length, 'un jeton ne peut porter qu une position a la fois');
 }
 
+
+/* ==========================================================================
+ * 12. LA SURVEILLANCE : ON NE REPAIE PAS DEUX FOIS LE MEME JETON
+ *
+ * « Je vois qu'il scanne souvent le même. S'il a déjà scanné, ça sert à rien
+ *   de l'analyser en boucle. Peut-être le mettre dans une case surveillance
+ *   s'il a un potentiel. »
+ *
+ * C'etait exact, et ca coutait le budget entier : les memes jetons repassaient
+ * l'analyse complete a chaque tour — trois appels reseau chacun — pendant que
+ * des jetons jamais vus attendaient. Ce qui se mesure ici n'est pas que la
+ * colonie « se souvient » : c'est qu'elle DEPENSE MOINS au second tour.
+ * ======================================================================== */
+async function surveillance() {
+  console.log('\n-- on ne repaie pas deux fois le meme jeton --');
+  remise(sains());
+  await C.tour();
+  const t1 = { goplus: appels.goplus, chaine: appels.rpc, trades: appels.trades };
+  const vus1 = C.vue().candidats.length;
+  console.log('   1er tour : ' + vus1 + ' jetons examines · ' + JSON.stringify(t1));
+
+  /* Deuxieme tour, meme monde : rien n'a bouge, rien ne merite d'etre repaye. */
+  const av = Object.assign({}, appels);
+  await C.tour();
+  const t2 = { goplus: appels.goplus - av.goplus, chaine: appels.rpc - av.rpc,
+               trades: appels.trades - av.trades };
+  const v = C.vue();
+  console.log('   2e tour  : ' + v.candidats.length + ' jetons examines · ' + JSON.stringify(t2));
+  /* Sept jetons, un budget d'appels qui en couvre six : le second tour ne
+     paie QUE le septieme — jamais les six deja juges. C'est exactement le
+     defaut signale, et il se mesure en appels. */
+  const dejaJuges = vus1;
+  ok(t2.goplus <= 1 && t2.trades <= 1,
+     'au second tour, le budget ne repaie pas les ' + dejaJuges + ' jetons deja juges : '
+     + t2.goplus + ' appel(s) de securite au lieu de ' + t1.goplus);
+  ok(v.candidats.length < vus1,
+     'et il examine ' + v.candidats.length + ' jeton(s) au lieu de ' + vus1
+     + ' — ceux que le budget du premier tour n avait pas atteints');
+  ok(!v.candidats.some((c) => c.sym === 'TOK0'),
+     'le premier jeton du tour precedent n est pas repasse a l analyse');
+  ok(v.evites.length > 0,
+     v.evites.length + ' jeton(s) ecartes sans un appel, et la raison est ecrite (« '
+     + (v.evites[0] || {}).pourquoi + ' »)');
+  ok((v.compteurs.reexamensEvites || 0) > 0,
+     'le compteur des reexamens evites monte (' + v.compteurs.reexamensEvites + ')');
+
+  /* ---- MAIS UN SIGNAL GRATUIT QUI BOUGE LE RAMENE ----
+   * La liquidite vient du flux des pools, qu'on lit de toute facon : le
+   * re-examen ne coute rien a DECIDER. */
+  MONDE.jetons[0].liq = MONDE.jetons[0].liq * 2;
+  const d = C.doitExaminer({ addr: MONDE.jetons[0].addr, liq: MONDE.jetons[0].liq,
+                             prix: MONDE.jetons[0].prix });
+  console.log('   liquidite doublee → ' + JSON.stringify(d));
+  ok(d.oui && /liquidite/.test(d.pourquoi),
+     'un jeton dont la liquidite a double revient a l examen (« ' + d.pourquoi + ' »)');
+
+  /* ---- ET UN CONTRAT PIEGE NE REVIENT JAMAIS ----
+   * Le refus portait sur le CONTRAT, pas sur un etat : rien ne changera. */
+  remise([jeton(0, { goplus: 'honeypot' }), jeton(1)]);
+  await C.tour();
+  const banni = C._etat().connus[MONDE.jetons[0].addr];
+  console.log('   honeypot : ' + JSON.stringify({ permanent: banni && banni.permanent, verdict: banni && banni.verdict }));
+  ok(!!banni && banni.permanent === true, 'un honeypot est BANNI, pas mis en surveillance');
+  const dd = C.doitExaminer({ addr: MONDE.jetons[0].addr, liq: 1e9, prix: 1e9 });
+  ok(!dd.oui, 'et meme avec une liquidite mille fois plus grande, il ne revient pas (« ' + dd.pourquoi + ' »)');
+
+  /* Alors qu un refus sur un ETAT laisse la porte ouverte. */
+  const faible = C._etat().connus[MONDE.jetons[1].addr];
+  ok(!faible || !faible.permanent,
+     'un refus qui porte sur un etat — et non sur le contrat — ne bannit pas');
+}
+
+/* ==========================================================================
+ * 13. TROIS FLUX, ET PAS LA MEME POPULATION
+ * ======================================================================== */
+async function troisFlux() {
+  console.log('\n-- plusieurs sources de jetons --');
+  const p = jeton(7, { minutes: 5 }), b = jeton(8, { minutes: 6 });
+  remise([jeton(0), jeton(1), p, b], { profils: [p.addr], boosts: [b.addr] });
+  /* Le monde connait les quatre jetons, mais le flux des pools n'en sert que
+     deux : les deux autres n'ont QUE leur propre flux pour arriver. Sans ce
+     filtre, l'essai ne mesurerait rien — les pools les auraient amenes seuls. */
+  poolsPageFiltre = MONDE.jetons.slice(0, 2).map((x) => x.addr);
+  await C.tour();
+  poolsPageFiltre = null;
+  const v = C.vue();
+  const syms = v.candidats.map((x) => x.sym);
+  const orig = {};
+  for (const c of v.candidats) orig[c.origine] = (orig[c.origine] || 0) + 1;
+  console.log('   examines : ' + JSON.stringify(syms) + ' · origines : ' + JSON.stringify(orig));
+  ok(appels.profils >= 1 && appels.boosts >= 1, 'les deux flux DexScreener sont lus');
+  ok(syms.indexOf('TOK7') >= 0, 'un jeton que SEUL le flux des profils connait arrive quand meme');
+  ok(syms.indexOf('TOK8') >= 0, 'et un jeton que seul le flux des pousses connait aussi');
+  ok(Object.keys(orig).length >= 2,
+     'les jetons portent l origine qui les a trouves : ' + JSON.stringify(orig));
+
+  /* L origine est un TRAIT : la colonie apprendra lequel des trois flux paie. */
+  const tr = C.traitsDe({ origine: 'profils', minutes: 5, liq: 9000, prix: 1, tx: {}, vol: {} });
+  ok(/profils/.test(tr.scout.origine),
+     'et c est un trait du Scout, donc une chose qu il APPREND : « ' + tr.scout.origine + ' »');
+}
+
+/* ==========================================================================
+ * 14. LES LECTURES PARESSEUSES, ET L ORDRE QUI EN DECOULE
+ *
+ * « Ils peuvent changer l'ordre s'ils pensent que les services seraient mieux
+ *   dans un autre ordre. »
+ *
+ * Ce n'est un pouvoir que si l'ordre change quelque chose. Il change ceci :
+ * on ne paie les donnees d'un garde que si le jeton arrive jusqu'a lui, donc
+ * un refus precoce fait economiser tous les appels d'apres. L'essai le mesure
+ * en appels, pas en intentions.
+ * ======================================================================== */
+async function paresse() {
+  console.log('\n-- un refus precoce fait economiser les appels d apres --');
+  remise([jeton(0, { goplus: 'honeypot' })]);
+  await C.tour();
+  const c = C.vue().candidats[0];
+  console.log('   ' + JSON.stringify({ refus: c.refus, par: c.quiRefuse, appels: c.appels,
+    goplus: appels.goplus, rpc: appels.rpc, trades: appels.trades, ohlcv: appels.ohlcv }));
+  ok(appels.goplus === 1, 'le premier garde a bien paye son appel');
+  ok(appels.trades === 0 && appels.ohlcv === 0,
+     'mais les services des gardes SUIVANTS ne sont jamais appeles : le jeton est deja refuse');
+  ok(c.appels === 1, 'un seul appel pour ce jeton, au lieu de quatre (' + c.appels + ')');
+
+  console.log('\n-- et la colonie reordonne sur ce qu elle a mesure --');
+  C._pose(C.etatNeuf());
+  const E = C._etat();
+  /* Des relevés : le Whale refuse la moitie de ce qu il voit, le Warden un
+     jeton sur vingt. A cout egal, le Whale doit passer devant. */
+  E.compteurs = { wardenVu: 100, wardenBloque: 5, whaleVu: 100, whaleBloque: 50,
+                  whisperVu: 100, whisperBloque: 20 };
+  const avant = C.gardesEnOrdre().map((a) => a.key).join(' → ');
+  const bouge = C.revoitOrdre(true);
+  const apres = C.gardesEnOrdre().map((a) => a.key).join(' → ');
+  console.log('   avant : ' + avant + '\n   apres : ' + apres);
+  ok(bouge === true, 'l ordre a change');
+  ok(apres.indexOf('whale') < apres.indexOf('warden'),
+     'le garde qui refuse le plus pour le meme prix passe devant (' + apres + ')');
+  ok(apres.indexOf('oracle') === apres.length - 6,
+     'et l Oracle reste dernier : sa note se sert de ce que les autres ont fait lire');
+  const j = E.journalStructure[0];
+  console.log('   journal : ' + (j && j.txt));
+  ok(!!j && j.quoi === 'ordre' && /whale/.test(j.txt),
+     'le changement est ecrit, avec les chiffres qui l ont decide');
+  ok(!!j.chiffres && j.chiffres.some((x) => /%/.test(String(x.refus))),
+     'et ces chiffres sont les taux de refus mesures, pas une justification apres coup');
+
+  /* ---- ON NE REORDONNE PAS SUR DU BRUIT ---- */
+  C._pose(C.etatNeuf());
+  C._etat().compteurs = { wardenVu: 3, wardenBloque: 3, whaleVu: 2, whaleBloque: 0, whisperVu: 2, whisperBloque: 0 };
+  ok(C.revoitOrdre(true) === false,
+     'sur trois jetons vus, rien ne bouge : reordonner sur du bruit, c est du bruit');
+
+  /* ---- ET UN GARDE PLACE EN DERNIER NE VOIT PRESQUE RIEN ----
+   * Releve sur deux tours reels : Warden et Whale avaient vu vingt jetons,
+   * le Whisper — dernier — en avait vu DEUX. Exiger le meme echantillon de
+   * tout le monde revenait a lui demander ses preuves sur une place qu'on ne
+   * lui donnera jamais : l'ordre etait gele pour toujours, et rien ne le
+   * disait. On promeut ce qui est mesure, on ne retrograde pas sur une
+   * absence de mesure. */
+  console.log('\n-- un garde qui n a rien vu ne gele pas l ordre --');
+  C._pose(C.etatNeuf());
+  const D = C._etat();
+  D.compteurs = { wardenVu: 60, wardenBloque: 1, whaleVu: 60, whaleBloque: 40, whisperVu: 2, whisperBloque: 0 };
+  const bouge2 = C.revoitOrdre(true);
+  const ordre2 = C.gardesEnOrdre().map((a) => a.key).join(' → ');
+  console.log('   whisper n a vu que 2 jetons → ' + ordre2);
+  ok(bouge2 === true, 'l ordre bouge quand meme');
+  ok(ordre2.indexOf('whale') < ordre2.indexOf('warden'),
+     'les deux gardes mesures sont classes sur leur releve (' + ordre2 + ')');
+  ok(ordre2.indexOf('whisper') > ordre2.indexOf('warden'),
+     'et celui qui n a rien vu reste derriere, sans bloquer les autres');
+}
+
+/* ==========================================================================
+ * 15. LE BANQUIER
+ * ======================================================================== */
+async function banquier() {
+  console.log('\n-- la mise s adapte a la caisse --');
+  C._pose(C.etatNeuf());
+  const E = C._etat();
+  const m1 = C.miseDe(70);
+  E.tresor = 300;
+  const m2 = C.miseDe(70);
+  E.tresor = 4000;
+  const m3 = C.miseDe(70);
+  console.log('   caisse 1000 → $' + m1.mise + ' · caisse 300 → $' + m2.mise + ' · caisse 4000 → $' + m3.mise);
+  ok(m2.mise < m1.mise && m3.mise > m1.mise,
+     'elle monte et descend AVEC la caisse — une mise fixe sur une caisse qui fond est une part qui grossit');
+  ok(m1.mise / 1000 <= C.MISE_PART_MAX + 1e-9,
+     'et jamais plus de ' + (C.MISE_PART_MAX * 100) + ' % de la caisse sur un seul jeton');
+
+  console.log('\n-- les bornes ne s apprennent pas --');
+  /* ---- LE CAS QUI COMPTE ----
+   * Kelly est la seule methode qui puisse reclamer une grosse part, et il la
+   * reclame quand le releve est bon : neuf gagnantes sur dix, et des gains
+   * trois fois plus gros que les pertes. La formule sort 87 %, on en prend le
+   * quart — 22 % — et la borne doit ramener a 8 %. C'est precisement le
+   * moment ou un systeme qui apprend se ruine, et le seul moyen de ne pas s'y
+   * ruiner est que la borne ne soit pas negociable. */
+  C._pose(C.etatNeuf());
+  const K = C._etat();
+  K.tresor = 1000;
+  K.banque.memoire.__global = { n: 40, gagnantes: 36, sommeGains: 36 * 30, sommePertes: 4 * 10 };
+  K.banque.memoire['kelly|autour du depart'] = { n: 40, s: 40 * 25, s2: 0 };
+  const st = C.statsRendement();
+  const brut = (st.p * st.b - (1 - st.p)) / st.b / 4;
+  const fou = C.miseDe(100);
+  console.log('   Kelly au quart reclame ' + (brut * 100).toFixed(0) + ' % → mise $' + fou.mise
+    + ' (' + fou.raison + ')');
+  ok(brut > C.MISE_PART_MAX,
+     'Kelly reclame ' + (brut * 100).toFixed(0) + ' %, bien au-dessus de la borne de '
+     + (C.MISE_PART_MAX * 100) + ' %');
+  ok(fou.methode === 'kelly', 'et c est bien Kelly qui a ete retenu, sur son releve');
+  ok(Math.abs(fou.mise - 1000 * C.MISE_PART_MAX) < 0.01,
+     'la mise est ramenee a la borne : $' + fou.mise + ' et pas $' + Math.round(brut * 1000));
+  ok(/borne/.test(fou.raison), 'et la raison le DIT : « ' + fou.raison + ' »');
+
+  console.log('\n-- l exposition totale est bornee, elle aussi --');
+  C._pose(C.etatNeuf());
+  const F = C._etat();
+  F.positions = [{ adr: '0x1', mise: 290 }];
+  const serre = C.miseDe(70);
+  console.log('   $290 deja engages sur 1000 → ' + JSON.stringify({ mise: serre.mise, raison: serre.raison }));
+  ok(serre.mise === 0 || (290 + serre.mise) <= 1000 * C.EXPO_PART_MAX + 1e-9,
+     'la somme engagee ne depasse pas ' + (C.EXPO_PART_MAX * 100) + ' % de la caisse');
+  ok(/exposition|plus de place/.test(serre.raison), 'et la raison le nomme : « ' + serre.raison + ' »');
+
+  console.log('\n-- sous le plancher, il arrete d ouvrir --');
+  F.positions = [];
+  F.tresor = 60;
+  const stop = C.miseDe(90);
+  console.log('   caisse $60 → ' + JSON.stringify(stop));
+  ok(stop.mise === 0 && stop.arret === true,
+     'a $60 il n ouvre plus rien : « ' + stop.raison + ' »');
+  ok(/plancher/.test(stop.raison), 'et il dit que c est le plancher, pas une panne');
+
+  console.log('\n-- il apprend quelle methode a paye, en POURCENTAGE --');
+  C._pose(C.etatNeuf());
+  const G = C._etat();
+  /* Deux methodes, memes conditions. « part » gagne largement. */
+  for (let i = 0; i < 10; i++) {
+    G.tresor = 1000;
+    C.banquierApprend({ methode: 'part', regime: 'autour du depart' }, 12);
+    C.banquierApprend({ methode: 'fixe', regime: 'autour du depart' }, -6);
+  }
+  const ch = C.methodeApprise();
+  console.log('   ' + JSON.stringify(ch));
+  ok(ch.methode === 'part' && ch.appris === true,
+     'il retient la methode dont le releve est le meilleur dans ce regime (' + ch.methode + ')');
+  ok(ch.n >= 5, 'et seulement au-dela de quelques observations (' + ch.n + ')');
+
+  /* Le regime compte : une methode bonne au-dessus du depart n est pas
+     forcement celle qui ramene d un creux. */
+  G.tresor = 700; G.banque.pic = 1000;
+  console.log('   caisse 700 apres un pic a 1000 → regime « ' + C.regime() + ' »');
+  ok(C.regime() === 'en creux', 'un creux de 30 % est un regime a part');
+  ok(C.methodeApprise().appris === false,
+     'et dans ce regime-la il n a encore rien appris : il ne recopie pas le releve d un autre regime');
+
+  console.log('\n-- Kelly ne calcule pas sans releve --');
+  C._pose(C.etatNeuf());
+  ok(C.statsRendement() === null, 'sans historique, il n y a pas de taux de reussite a donner a Kelly');
+  const k = C.miseDe(70);
+  C._etat().banque.methode = 'kelly';
+  const k2 = C.miseDe(70);
+  ok(k2.mise > 0, 'il ne fabrique pas de probabilites : il retombe sur la part de base ($' + k2.mise + ')');
+}
+
+/* ==========================================================================
+ * 16. LE VETO QUE SEULS LES TRADES PERMETTENT
+ * ======================================================================== */
+async function lavage() {
+  console.log('\n-- un seul portefeuille qui fait tout le volume --');
+  remise([jeton(0, { lavage: true, tradeurs: 1 }), jeton(1)]);
+  await C.tour();
+  const v = C.vue();
+  const c = v.candidats.find((x) => x.sym === 'TOK0');
+  console.log('   ' + JSON.stringify({ acheteurs: c && c.acheteurs, part: c && c.partDuPlusGros,
+                                       refus: c && c.refus, par: c && c.quiRefuse }));
+  ok(!!c && c.tradesVus, 'les trades ont ete lus un par un');
+  ok(!!c && c.partDuPlusGros >= 85,
+     'un seul portefeuille porte ' + (c && c.partDuPlusGros) + ' % du volume');
+  ok(!!c && /portefeuille fait/.test(String(c.refus)),
+     'le Whisper refuse, et il nomme ce qu il a vu : « ' + (c && c.refus) + ' »');
+  ok(!v.positions.some((p) => p.sym === 'TOK0'), 'aucune position ne s ouvre dessus');
+  /* Et l autre, dont le volume est reparti, passe le meme controle. */
+  const sain = v.candidats.find((x) => x.sym === 'TOK1');
+  ok(!!sain && !/portefeuille/.test(String(sain.refus)),
+     'alors qu un jeton dont le volume est reparti passe ce controle-la');
+}
+
+/* ==========================================================================
+ * 17. ILS SE MULTIPLIENT — QUAND ILS ONT UNE RAISON, ET PAS AUTREMENT
+ *
+ * « S'ils ont besoin de plus d'agents ils peuvent s'auto-développer, se
+ *   multiplier, ou plus de maisons. »
+ *
+ * La raison ne peut pas etre « ca fait joli ». Elle est mesuree : une case
+ * tres observee mais tres dispersee ne predit rien — il n'y a pas une
+ * population dedans, il y en a deux, et la coupe passe au milieu.
+ * ======================================================================== */
+async function multiplication() {
+  console.log('\n-- un agent engendre un specialiste --');
+  C._pose(C.etatNeuf());
+  const E = C._etat();
+  ok(C.engendre() === null, 'sans releve, personne ne nait : il n y a aucune raison');
+
+  /* Une case du Whale : vingt observations, resultats partout. */
+  for (let i = 0; i < 20; i++) C.apprendAgent('whale', { top: 'top 15-30%' }, i % 2 ? 45 : -40);
+  const c = E.memoire.whale.top['top 15-30%'];
+  console.log('   case « top 15-30% » : ' + c.n + ' obs, moyenne '
+    + (c.s / c.n).toFixed(1) + ' %, ecart type ' + C.ecartType(c).toFixed(1));
+  ok(C.ecartType(c) > C.ECART_TYPE_BRUIT,
+     'sa moyenne est proche de zero mais son ecart type est enorme : elle ne predit rien');
+
+  const petit = C.engendre();
+  console.log('   ne : ' + (petit && petit.nom) + ' · traits ' + JSON.stringify(petit && petit.traits));
+  ok(!!petit, 'un specialiste nait');
+  ok(petit.role === 'specialiste' && petit.parent === 'whale',
+     'il est rattache a l agent dont la case etait floue (' + petit.parent + ')');
+  ok(Array.isArray(petit.traits[0]) && petit.traits[0][0] === 'top',
+     'et son trait est un CROISEMENT de la case floue avec un second trait : ' + JSON.stringify(petit.traits[0]));
+  /* Le point qui compte : il ne doit pas couter un appel de plus. */
+  const parent = E.roster.find((a) => a.key === 'whale');
+  console.log('   cout du parent ' + C.coutDe(parent, null) + ' · cout du petit ' + C.coutDe(petit, null));
+  ok(C.coutDe(petit, null) <= C.coutDe(parent, null),
+     'il ne coute AUCUN appel de plus : il recoupe des donnees deja payees');
+  ok(!!E.journalStructure.find((x) => x.quoi === 'naissance'),
+     'sa naissance est ecrite, avec le chiffre qui l a decidee');
+
+  /* ---- ET IL EST DANS LE ROSTER, DONC IL APPREND ---- */
+  const t = { addr: '0xz', minutes: 5, liq: 9000, prix: 1, mc: 1e5, tx: {}, vol: {},
+              chaine: { vu: true, montantsLus: true, porteurs: 40, top: 20, brule: 0 } };
+  const tr = C.traitsDe(t);
+  console.log('   ses cases sur un jeton : ' + JSON.stringify(tr[petit.key]));
+  ok(!!tr[petit.key] && Object.keys(tr[petit.key]).length === 1,
+     'il lit sa propre case sur chaque jeton');
+  ok(/×/.test(Object.values(tr[petit.key])[0]),
+     'et cette case est bien un croisement : « ' + Object.values(tr[petit.key])[0] + ' »');
+  ok(C.vue().roster.some((a) => a.key === petit.key),
+     'la vue le publie : la page dessinera une maison de plus, sans qu aucun nombre soit ecrit en dur');
+
+  console.log('\n-- mais un petit qui ne coupe pas mieux est retire --');
+  /* On lui donne des cases aussi dispersees que celles de son parent. */
+  for (let i = 0; i < 16; i++)
+    C.apprendAgent(petit.key, { [Object.keys(tr[petit.key])[0]]: 'flou' }, i % 2 ? 60 : -55);
+  const parti = C.elague();
+  console.log('   retire : ' + (parti && parti.nom));
+  ok(!!parti && parti.key === petit.key, 'il est retire');
+  ok(!C._etat().roster.some((a) => a.key === petit.key), 'et il ne figure plus au roster');
+  ok(!C._etat().memoire[petit.key], 'sa memoire part avec lui : elle ne pese plus sur les notes');
+  const jr = C._etat().journalStructure.find((x) => x.quoi === 'retrait');
+  ok(!!jr && /ecart type/.test(jr.txt), 'le retrait est ecrit, avec la comparaison : « ' + (jr && jr.txt) + ' »');
+
+  console.log('\n-- et la colonie ne peut pas exploser --');
+  C._pose(C.etatNeuf());
+  const F = C._etat();
+  for (let i = 0; i < 40; i++) C.apprendAgent('whale', { top: 'top 15-30%' }, i % 2 ? 45 : -40);
+  let nes = 0;
+  for (let i = 0; i < 20; i++) if (C.engendre()) nes++;
+  console.log('   naissances tentees 20 · obtenues ' + nes
+    + ' · specialistes au roster ' + F.roster.filter((a) => a.role === 'specialiste').length);
+  ok(F.roster.filter((a) => a.role === 'specialiste').length <= C.ENFANTS_MAX,
+     'jamais plus de ' + C.ENFANTS_MAX + ' specialistes : « ils se multiplient » ne veut pas dire trois cents agents');
+}
+
+/* ==========================================================================
+ * 18. LES SERVICES, ET CEUX QUI NE MARCHENT PAS
+ * ======================================================================== */
+async function services() {
+  console.log('\n-- chaque service porte son releve --');
+  remise(sains());
+  await C.tour();
+  const v = C.vue();
+  const parCle = {};
+  for (const s of v.services) parCle[s.cle] = s;
+  console.log('   ' + v.services.filter((s) => s.essais)
+    .map((s) => s.cle + ' ' + s.reussites + '/' + s.essais).join(' · '));
+  ok(v.services.length === Object.keys(C.SERVICES).length,
+     'les ' + v.services.length + ' services sont publies, avec ce que chacun apporte');
+  ok(parCle.pools.reussites > 0 && parCle.chaine.reussites > 0,
+     'et leur releve est celui des vrais appels, pas une declaration');
+  ok(v.services.every((s) => s.quoi && s.quoi.length > 5),
+     'chacun dit ce qu il apporte, en francais : un nom d API ne renseigne personne');
+
+  console.log('\n-- une source qui tombe est nommee, pas passee sous silence --');
+  const av = C._etat().services.goplus.reussites;
+  MONDE.goplusCasse = true;
+  remise(sains());
+  MONDE.goplusCasse = true;
+  await C.tour();
+  const s = C.vue().services.find((x) => x.cle === 'goplus');
+  console.log('   goplus : ' + JSON.stringify({ essais: s.essais, reussites: s.reussites, echec: s.dernierEchec }));
+  ok(s.essais > s.reussites, 'ses echecs sont comptes');
+  ok(!!s.dernierEchec, 'et le dernier est garde en clair : « ' + s.dernierEchec + ' »');
+
+  console.log('\n-- et celles qui ne marcheront jamais ici sont nommees aussi --');
+  const hs = C.vue().horsService;
+  console.log('   ' + Object.keys(hs).join(', '));
+  ok(!!hs.gmgn && /Cloudflare/.test(hs.gmgn),
+     'GMGN est nomme avec la raison MESUREE : « ' + hs.gmgn.slice(0, 70) + '… »');
+  ok(/y compris sur ethereum/.test(hs.gmgn),
+     'et la raison distingue « protection anti-robot » de « ne connait pas la chaine 4663 »');
+  ok(Object.keys(hs).length >= 3,
+     'les trois services essayes sans succes restent ecrits, pour qu on ne les re-essaie pas dans six mois');
+}
+
+
+/* ==========================================================================
+ * 19. UNE POSITION DONT LE JETON A QUITTE LE FLUX
+ *
+ * Les flux ne servent que du NEUF. Une position tenue quarante minutes voit
+ * son jeton en sortir avant d'etre reglee — et il n'y avait alors plus aucun
+ * prix pour elle. Elle restait ouverte pour toujours, affichant « prix non
+ * relu », et gardait une des six places. Six positions coincees, et la colonie
+ * cesse d'acheter : aucune erreur nulle part, un ecran parfaitement normal, et
+ * plus rien qui se passe. C'est le genre de panne qu'on ne voit qu'en comptant
+ * les jours.
+ * ======================================================================== */
+async function jetonSorti() {
+  console.log('\n-- le jeton d une position ouverte sort du flux --');
+  remise(sains());
+  await C.tour();
+  const E = C._etat();
+  const n = E.positions.length;
+  ok(n > 0, n + ' position(s) ouverte(s)');
+
+  /* Le temps passe, et les jetons de ces positions ne sont plus des jetons
+     neufs : plus aucun flux ne les sert. Ils existent toujours — DexScreener
+     repond encore a leur adresse — mais plus personne ne les propose. */
+  for (const p of E.positions) p.t0 = Date.now() - 3 * 3600e3;
+  const anciens = E.positions.map((p) => p.adr);
+  const restants = MONDE.jetons.filter((t) => anciens.indexOf(t.addr) < 0);
+  MONDE.jetons = MONDE.jetons.map((t) => anciens.indexOf(t.addr) >= 0
+    ? Object.assign({}, t, { minutes: 5000, prix: t.prix * 1.5 })   /* trop vieux pour les flux */
+    : t);
+  for (const k of Object.keys(C._cache.dex)) delete C._cache.dex[k];
+  for (const k of Object.keys(C._cache.chaine)) delete C._cache.chaine[k];
+
+  await C.tour();
+  const v = C.vue();
+  console.log('   positions restantes : ' + v.positions.length + ' · trades ' + v.trades
+    + ' · prix de secours ' + (v.compteurs.prixDeSecours || 0));
+  ok((v.compteurs.prixDeSecours || 0) > 0,
+     'leur prix est alle etre cherche a l adresse, une par une (' + v.compteurs.prixDeSecours + ')');
+  ok(v.trades > 0, 'et elles se reglent (' + v.trades + ') au lieu de rester coincees pour toujours');
+  ok(v.tresor > C.DEPART,
+     'au prix REEL relu a l adresse, pas extrapole depuis l ancien : $' + v.tresor.toFixed(2));
+
+  /* Et le secours est PLAFONNE : il ne doit pas manger le budget d'appels du
+     tour au point qu'on n'examine plus aucun jeton neuf. */
+  console.log('\n-- mais ce secours est plafonne --');
+  /* `remise` remet l'etat a neuf : poser les positions AVANT reviendrait a les
+     effacer, et l'essai mesurerait zero en se felicitant d'etre sous la borne.
+     On remet le monde d'abord, on peuple ensuite. */
+  remise(sains());
+  const F = C._etat();
+  for (let i = 0; i < 6; i++) F.positions.push({
+    sym: 'ORPHELIN' + i, adr: '0x' + String(i).repeat(40), pool: '0xpp' + i,
+    prix0: 1, t0: Date.now() - 3 * 3600e3, mise: 30, traits: {}, tenueMin: 20, traj: [] });
+  ok(F.positions.length === 6, 'six positions dont AUCUN jeton n est dans les flux');
+  await C.tour();
+  const utilises = C._etat().compteurs.prixDeSecours || 0;
+  console.log('   six positions orphelines → ' + utilises + ' prix de secours demandes');
+  ok(utilises > 0, 'le secours est bien declenche (' + utilises + ')');
+  ok(utilises <= 4,
+     'mais au plus quatre par tour : le reste attendra le tour suivant, plutot que de manger '
+     + 'le budget d appels des jetons neufs');
+  ok(C.vue().candidats.length > 0,
+     'et des jetons neufs sont examines quand meme dans le meme tour ('
+     + C.vue().candidats.length + ')');
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -582,6 +1119,14 @@ async function pasDEmpilement() {
   await survie();
   await partage();
   await pasDEmpilement();
+  await surveillance();
+  await troisFlux();
+  await paresse();
+  await banquier();
+  await lavage();
+  await multiplication();
+  await services();
+  await jetonSorti();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
