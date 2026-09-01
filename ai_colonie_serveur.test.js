@@ -2071,6 +2071,83 @@ async function prendreUnGain() {
   ok(H.suites.length === 0, 'mais on ne la poursuit pas indefiniment : au bout de quelques heures, on lache');
 }
 
+
+/* ==========================================================================
+ * 36. QUEL NOEUD REFUSE, ET POURQUOI
+ *
+ * Releve en production : « Les noeuds de la chaine refusent 36 % des lectures —
+ * 247 refus sur 683 appels », avec une cle dRPC deja posee, et pour tout
+ * remede : « si les refus persistent malgre elle, c'est le forfait qui est
+ * atteint ».
+ *
+ * C'etait une DEDUCTION, pas une mesure. L'alerte additionnait trois noeuds
+ * dont les refus n'ont ni la meme cause ni le meme remede, puis devinait. Et
+ * elle devinait mal dans le cas le plus important : quand le noeud a cle echoue
+ * a chaque fois, chaque lecture le paie puis retombe sur les publics, le total
+ * affiche un tiers de refus — exactement ce qu'on verrait avec un forfait
+ * atteint — alors que la cle ne fonctionne pas du tout et qu'on envoie
+ * chercher au mauvais endroit.
+ * ======================================================================== */
+async function quelNoeud() {
+  /* `remise` remet le monde a neuf — et efface les variables d'environnement.
+     La cle se pose donc APRES, sinon chaque scenario mesure le cas « aucune
+     cle » en croyant en mesurer un autre. */
+  const pose = (serv, cle) => {
+    remise(sains());
+    C._etat().services = serv;
+    if (cle) process.env.DRPC_API_KEY = cle; else delete process.env.DRPC_API_KEY;
+  };
+
+  console.log('\n-- la cle est refusee a chaque fois --');
+  pose({ chaineCle: { essais: 247, reussites: 0, dernierEchec: 'Your token is invalid or expired' },
+         chaine: { essais: 436, reussites: 436 } }, 'dkey-essai');
+  let a = C.alertes().find((x) => /noeuds de la chaine/.test(x.quoi));
+  console.log('   ' + a.quoi);
+  console.log('   ' + a.pourquoi.slice(0, 130));
+  ok(/36 %/.test(a.quoi), 'le total est le meme qu avant (36 %)');
+  ok(/le noeud a cle \(dRPC\) : 247\/247 refus/.test(a.pourquoi),
+     'mais le detail dit OU : ' + (a.pourquoi.match(/le noeud a cle[^·]*/) || [''])[0].trim());
+  ok(/le noeud officiel : 0\/436/.test(a.pourquoi),
+     'et que l officiel, lui, ne refuse rien — ce que le total cachait entierement');
+  ok(/ECHOUE A CHAQUE FOIS/.test(a.quoiFaire) && /pas un forfait/.test(a.quoiFaire),
+     'le remede dit que ce n est PAS un forfait : « ' + a.quoiFaire.slice(0, 90) + '… »');
+  ok(/Your token is invalid or expired/.test(a.quoiFaire),
+     'en citant la raison que le service a donnee, plutot qu une hypothese');
+  ok(/reseau « robinhood »/.test(a.quoiFaire),
+     'et en nommant ce qu il faut verifier : la cle peut exister sans couvrir cette chaine');
+
+  console.log('\n-- la cle marche, mais le forfait est atteint --');
+  pose({ chaineCle: { essais: 400, reussites: 120, dernierEchec: 'sature' },
+         chaine: { essais: 283, reussites: 280, dernierEchec: 'sature' } }, 'dkey-essai');
+  a = C.alertes().find((x) => /noeuds de la chaine/.test(x.quoi));
+  console.log('   ' + a.quoiFaire.slice(0, 110));
+  ok(/La cle fonctionne \(120 lectures reussies\)/.test(a.quoiFaire),
+     'on dit qu elle fonctionne, avec le compte');
+  ok(/c\'est bien le forfait/.test(a.quoiFaire),
+     'et LA, le forfait est bien le diagnostic — mais parce qu on l a mesure');
+
+  console.log('\n-- la cle marche : plus d alerte du tout --');
+  pose({ chaineCle: { essais: 600, reussites: 590 },
+         chaine: { essais: 83, reussites: 40, dernierEchec: 'sature' } }, 'dkey-essai');
+  a = C.alertes().find((x) => /noeuds de la chaine/.test(x.quoi));
+  console.log('   ' + (a ? a.quoi : 'aucune alerte'));
+  ok(!a,
+     'des refus sur les noeuds de SECOURS ne declenchent rien : c est leur role, et ils ne coutent '
+     + 'aucune lecture perdue tant que la cle repond');
+
+  console.log('\n-- une cle posee mais jamais appelee --');
+  pose({ chaine: { essais: 500, reussites: 300, dernierEchec: 'sature' } }, 'dkey-essai');
+  a = C.alertes().find((x) => /noeuds de la chaine/.test(x.quoi));
+  console.log('   ' + a.quoiFaire.slice(0, 110));
+  ok(/n\'a pas encore ete appele/.test(a.quoiFaire) && /redeploye/.test(a.quoiFaire),
+     'on nomme la cause la plus frequente : une variable posee apres le dernier deploiement');
+
+  console.log('\n-- et sans cle du tout, on dit laquelle poser --');
+  pose({ chaine: { essais: 500, reussites: 300, dernierEchec: 'sature' } }, null);
+  a = C.alertes().find((x) => /noeuds de la chaine/.test(x.quoi));
+  ok(/DRPC_API_KEY/.test(a.quoiFaire), 'la variable est nommee : « ' + a.quoiFaire.slice(0, 80) + '… »');
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -2108,6 +2185,7 @@ async function prendreUnGain() {
   await appelsInutiles();
   await bandesDage();
   await prendreUnGain();
+  await quelNoeud();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

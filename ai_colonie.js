@@ -2278,30 +2278,69 @@ function alertes() {
   const s = (k) => E.services[k] || { essais: 0, reussites: 0 };
   const dis = (gravite, quoi, pourquoi, quoiFaire) => out.push({ gravite, quoi, pourquoi, quoiFaire });
 
-  const n1 = s('chaine'), n2 = s('chaine2'), n3 = s('chaineCle');
-  const echecs = (n1.essais - n1.reussites) + (n2.essais - n2.reussites)
-               + (n3.essais - n3.reussites);
-  const total = n1.essais + n2.essais + n3.essais;
-  if (total > 30 && echecs / total > 0.25)
-    dis('haute', 'Les noeuds de la chaine refusent ' + Math.round(echecs / total * 100) + ' % des lectures',
-      echecs + ' refus sur ' + total + ' appels. Chaque refus rend « inconnu » un jeton qu\'on aurait '
-      + 'pu juger, et l\'inconnu ne rapporte jamais de points : le jeton est ecarte pour une raison '
-      + 'qui n\'a rien a voir avec lui.',
-      (process.env.DRPC_API_KEY
-        ? 'Une cle dRPC est deja posee. Si les refus persistent malgre elle, c\'est le forfait qui '
-          + 'est atteint, pas l\'absence de cle.'
-        : 'Un acces RPC dedie a la chaine 4663 leverait la limite : dRPC la sert, et sa cle se pose '
-          + 'dans DRPC_API_KEY. Les deux noeuds publics utilises ici sont gratuits et se font couper.'));
+  /* ==========================================================================
+   * QUEL NOEUD REFUSE, ET POURQUOI
+   *
+   * Cette alerte additionnait les echecs des trois noeuds et devinait ensuite
+   * la cause — « si les refus persistent malgre la cle, c'est le forfait ». Or
+   * un refus sur le noeud A et un refus sur le noeud B n'ont ni la meme cause
+   * ni le meme remede, et un total de 36 % ne dit rien de ce qu'il faut faire.
+   *
+   * Un cas en particulier se cachait derriere ce total : quand le noeud a cle
+   * echoue A CHAQUE FOIS, chaque lecture le paie puis retombe sur les noeuds
+   * publics. Le total affiche alors un tiers de refus — exactement ce qu'on
+   * verrait avec un forfait atteint — alors que la cle ne fonctionne pas du
+   * tout, et que le message envoie chercher au mauvais endroit.
+   *
+   * On regarde donc chaque noeud separement, et on reprend la raison que le
+   * service a donnee. « Your token is invalid or expired » et un refus pour
+   * saturation ne se soignent pas pareil.
+   * ======================================================================== */
+  const noeudsVus = [
+    { cle: 'chaineCle', nom: 'le noeud a cle (dRPC)', s: s('chaineCle') },
+    { cle: 'chaine', nom: 'le noeud officiel', s: s('chaine') },
+    { cle: 'chaine2', nom: 'le noeud dRPC public', s: s('chaine2') },
+  ].filter((x) => x.s.essais > 0);
+  const echecs = noeudsVus.reduce((a, x) => a + (x.s.essais - x.s.reussites), 0);
+  const total = noeudsVus.reduce((a, x) => a + x.s.essais, 0);
+  if (total > 30 && echecs / total > 0.25) {
+    const detail = noeudsVus.map((x) => {
+      const e = x.s.essais - x.s.reussites;
+      return x.nom + ' : ' + e + '/' + x.s.essais + ' refus'
+        + (e ? ' (' + Math.round(e / x.s.essais * 100) + ' %, dernier : ' + (x.s.dernierEchec || '?') + ')' : '');
+    }).join(' · ');
 
-  const g = s('goplus');
-  const muets = E.compteurs.goplusMuet || 0, vus = E.compteurs.scoutVu || E.compteurs.wardenVu || 0;
-  if (vus > 40 && muets / vus > 0.6)
-    dis('moyenne', 'GoPlus ne sait rien de ' + Math.round(muets / vus * 100) + ' % des jetons examines',
-      'A deux minutes, un contrat n\'est pas encore indexe : ' + muets + ' jetons sur ' + vus
-      + ' n\'ont aucune donnee de securite. Le controle du contrat ne peut alors rien affirmer, '
-      + 'et il ne l\'affirme pas.',
-      'Une seconde source de securite qui indexe plus vite. Aucune gratuite trouvee pour la chaine '
-      + '4663 a ce jour — honeypot.is ne la connait pas, Blockscout est derriere Cloudflare.');
+    const kc = s('chaineCle');
+    let remede;
+    if (process.env.DRPC_API_KEY && kc.essais > 5 && kc.reussites === 0) {
+      /* Le cas qui se cachait derriere le total. */
+      remede = 'LE NOEUD A CLE ECHOUE A CHAQUE FOIS (' + kc.essais + ' appels, 0 reussite, dernier '
+        + 'refus : « ' + (kc.dernierEchec || '?') + ' »). Ce n\'est donc pas un forfait atteint : la '
+        + 'cle n\'est pas acceptee du tout. Verifier sur drpc.org que la cle existe encore et que '
+        + 'le reseau « robinhood » fait partie de ceux qu\'elle couvre — chaque lecture la paie '
+        + 'pour rien avant de retomber sur les noeuds publics, qui saturent.';
+    } else if (process.env.DRPC_API_KEY && kc.reussites > 0 && kc.essais - kc.reussites > kc.reussites) {
+      remede = 'La cle fonctionne (' + kc.reussites + ' lectures reussies) mais refuse plus souvent '
+        + 'qu\'elle n\'accepte : la, c\'est bien le forfait qui est atteint. Le releve par noeud est '
+        + 'dans le panneau « Ce qui est lu ».';
+    } else if (process.env.DRPC_API_KEY && kc.reussites > 0) {
+      remede = 'La cle fonctionne (' + kc.reussites + '/' + kc.essais + '). Les refus comptes ici '
+        + 'viennent surtout des noeuds publics, qui ne servent que de secours — c\'est leur role, '
+        + 'et ca ne coute aucune lecture perdue tant que la cle repond.';
+    } else if (process.env.DRPC_API_KEY) {
+      remede = 'Une cle dRPC est posee mais le noeud a cle n\'a pas encore ete appele. Si ca dure, '
+        + 'c\'est que le serveur n\'a pas ete redeploye depuis : une variable posee apres le '
+        + 'dernier deploiement n\'est pas vue par le processus en cours.';
+    } else {
+      remede = 'Un acces RPC dedie a la chaine 4663 leverait la limite : dRPC la sert, et sa cle se '
+        + 'pose dans DRPC_API_KEY. Les deux noeuds publics utilises ici sont gratuits et partages.';
+    }
+    dis('haute', 'Les noeuds de la chaine refusent ' + Math.round(echecs / total * 100) + ' % des lectures',
+      echecs + ' refus sur ' + total + ' appels — mais pas au meme endroit. ' + detail
+      + '. Chaque refus rend « inconnu » un jeton qu\'on aurait pu juger, et l\'inconnu ne rapporte '
+      + 'jamais de points : le jeton est ecarte pour une raison qui n\'a rien a voir avec lui.',
+      remede);
+  }
 
   const gk = s('goplusCle');
   if (goplusIdentifie() && gk.essais > 0 && gk.reussites === 0)
