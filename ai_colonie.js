@@ -59,7 +59,92 @@ const cfg = require('./config');
 const FICHIER = path.join(cfg.DATA_DIR, 'ai_colonie.json');
 const TMP = FICHIER + '.tmp';
 /* ---------------------------------------------------------------- reglages */
-const GT = 'https://api.geckoterminal.com/api/v2/networks/robinhood';
+/* ==========================================================================
+ * GECKOTERMINAL : LIBRE, OU AVEC UNE CLE COINGECKO
+ *
+ * Les memes donnees, par trois portes differentes.
+ *
+ *   LIBRE      api.geckoterminal.com — sans cle, ~30 appels par minute PARTAGES
+ *              entre tout le monde. C'est ce qu'on utilise par defaut, et ca
+ *              marche : c'est ce qui a servi jusqu'ici.
+ *   DEMO       api.coingecko.com/api/v3/onchain — entete `x-cg-demo-api-key`.
+ *   PRO        pro-api.coingecko.com/api/v3/onchain — entete `x-cg-pro-api-key`.
+ *
+ * Une cle CoinGecko ne s'utilise PAS sur api.geckoterminal.com : ce domaine ne
+ * la lit pas. Il faut passer par les points d'entree `/onchain` de CoinGecko —
+ * c'est le meme service et la meme forme de reponse, donc rien d'autre ne
+ * change dans ce fichier.
+ *
+ * ---- POURQUOI ON SONDE AU LIEU DE DEMANDER ----
+ *
+ * Une cle Demo et une cle Pro ne se distinguent pas a l'oeil, et se tromper de
+ * porte donne un 401 qu'on lirait comme « la cle est mauvaise ». On essaie donc
+ * les deux, UNE fois, et on retient celle qui a repondu. Le resultat est ecrit
+ * dans le journal du serveur : sans ca, une cle Pro posee dans un compte Demo
+ * ferait echouer chaque lecture sans que personne comprenne pourquoi.
+ *
+ * ---- ET LA CLE EST UN BONUS, JAMAIS UNE DEPENDANCE ----
+ *
+ * Si elle est refusee, epuisee, ou si le quota tombe en pleine journee, on
+ * retombe sur l'acces libre — c'est-a-dire sur le comportement d'avant. Une
+ * amelioration qui, en tombant, casse ce qui marchait avant n'est pas une
+ * amelioration.
+ * ======================================================================== */
+const GT_LIBRE = 'https://api.geckoterminal.com/api/v2/networks/robinhood';
+const CG_DEMO = 'https://api.coingecko.com/api/v3/onchain/networks/robinhood';
+const CG_PRO = 'https://pro-api.coingecko.com/api/v3/onchain/networks/robinhood';
+const GT = GT_LIBRE;   /* le defaut, et le repli */
+
+let cgPorte = null;    /* null = pas encore sonde ; 'demo' | 'pro' | 'libre' */
+function cleCoingecko() { return (process.env.COINGECKO_API_KEY || '').trim(); }
+
+async function sondeCoingecko() {
+  const cle = cleCoingecko();
+  if (!cle) { cgPorte = 'libre'; return cgPorte; }
+  for (const [porte, base, entete] of [['demo', CG_DEMO, 'x-cg-demo-api-key'],
+                                       ['pro', CG_PRO, 'x-cg-pro-api-key']]) {
+    try {
+      const r = await fetch(base + '/new_pools?page=1',
+        { headers: Object.assign({}, ENTETES, { [entete]: cle }), signal: AbortSignal.timeout(12000) });
+      /* ---- UN 429 N'EST PAS UN REFUS ----
+       * Il veut dire que la cle est BONNE et qu'on va trop vite. La traiter
+       * comme un refus ferait declarer « cle invalide » a une cle parfaitement
+       * valide, et on la changerait pour rien. On retient donc la porte : les
+       * lectures y passeront, et celles qui se font refuser retomberont une par
+       * une sur l'acces libre, ce qui est le comportement voulu. */
+      if (r.ok || r.status === 429) {
+        cgPorte = porte;
+        console.log('[ai] cle CoinGecko acceptee en ' + porte.toUpperCase()
+          + (r.status === 429 ? ' (mais deja au quota a la premiere lecture)' : '')
+          + ' — les lectures GeckoTerminal passent par ' + base);
+        return cgPorte;
+      }
+    } catch (e) { /* on essaie l'autre porte */ }
+  }
+  cgPorte = 'libre';
+  console.warn('[ai] COINGECKO_API_KEY posee mais refusee en Demo comme en Pro — on continue sur '
+    + 'l\'acces libre. Verifiez la cle sur coingecko.com/en/developers/dashboard.');
+  return cgPorte;
+}
+
+/* Une lecture GeckoTerminal, par la meilleure porte disponible, avec repli. */
+async function jsonGT(chemin) {
+  if (cgPorte === null) await sondeCoingecko();
+  const cle = cleCoingecko();
+  if (cle && cgPorte !== 'libre') {
+    const base = cgPorte === 'pro' ? CG_PRO : CG_DEMO;
+    const entete = cgPorte === 'pro' ? 'x-cg-pro-api-key' : 'x-cg-demo-api-key';
+    try {
+      return await json(base + chemin, { headers: Object.assign({}, ENTETES, { [entete]: cle }) });
+    } catch (e) {
+      /* Quota atteint ou cle revoquee en pleine journee : on ne perd pas la
+         lecture pour autant. On le NOTE, et on repasse par l'acces libre. */
+      noteService('coingecko', false, String(e.message || e).slice(0, 40));
+      return json(GT_LIBRE + chemin, { headers: ENTETES });
+    }
+  }
+  return json(GT_LIBRE + chemin, { headers: ENTETES });
+}
 const ENTETES = { Accept: 'application/json;version=20230302' };
 /* ---- DEUX NOEUDS, PARCE QU'UN SEUL COUPE ----
  * Le noeud officiel refuse apres quelques lectures a la file : quatre sur six,
@@ -137,11 +222,17 @@ const SERVICES = {
   profils: { nom: 'DexScreener · profils recents', cout: 0, quoi: 'des jetons neufs dont quelqu\'un a rempli la fiche' },
   boosts:  { nom: 'DexScreener · jetons pousses', cout: 0, quoi: 'des jetons dont quelqu\'un a paye la mise en avant' },
   chaine:  { nom: 'Chaine 4663 · noeud officiel', cout: 1, quoi: 'qui detient quoi, en soldant les transferts' },
-  chaine2: { nom: 'Chaine 4663 · noeud dRPC', cout: 1, quoi: 'le meme, en secours quand l\'officiel sature (10 000 blocs max)' },
+  chaine2: { nom: 'Chaine 4663 · noeud dRPC public', cout: 1, quoi: 'le meme, en secours quand l\'officiel sature (10 000 blocs max)' },
+  chaineCle: { nom: 'Chaine 4663 · noeud dRPC a nous', cout: 1,
+               quoi: 'le meme, mais sur un debit qui nous appartient au lieu d\'etre partage' },
   goplus:  { nom: 'GoPlus · securite du contrat', cout: 1, quoi: 'honeypot, taxes, pouvoirs du proprietaire' },
   trades:  { nom: 'GeckoTerminal · les trades un par un', cout: 1, quoi: 'quels portefeuilles achetent, et pour combien' },
   dex:     { nom: 'DexScreener · second avis', cout: 1, quoi: 'un deuxieme prix, les autres pools, les reseaux sociaux' },
   ohlcv:   { nom: 'GeckoTerminal · chandelles', cout: 1, quoi: 'la volatilite reellement observee' },
+  goplusCle: { nom: 'GoPlus · jeton d\'acces', cout: 0,
+               quoi: 'la cle et le secret echanges contre un jeton, pour une limite de debit plus haute' },
+  coingecko: { nom: 'CoinGecko · cle GeckoTerminal', cout: 0,
+               quoi: 'les memes lectures, mais par une porte a nous plutot que par la file commune' },
   conseil: { nom: 'Anthropic · Claude Haiku', cout: 1,
              quoi: 'un avis sur les cas limites, borne a 8 points et jamais sur un veto' },
 };
@@ -489,6 +580,24 @@ async function json(url, opts) {
  * espace nos propres appels — plus efficace que de reprendre apres coup — avec
  * UNE reprise. Deux reprises sur un noeud qui refuse, c'est se faire couper
  * plus longtemps. Un echec reste un echec : il rend « inconnu ». */
+/* ---- ET LE NOEUD DE LA CLE, QUAND IL Y EN A UNE ----
+ * Il passe DEVANT les deux publics : c'est un debit qui nous appartient, alors
+ * que les autres sont partages avec la terre entiere. Sa plage de journaux est
+ * MESUREE, pas supposee : on part optimiste, et au premier refus de plage le
+ * noeud retient la limite que le service annonce. Ecrire un chiffre a la main
+ * ici, ce serait le croire sur parole — et se tromper en silence le jour ou il
+ * change. */
+function noeuds() {
+  const l = [];
+  const dk = (process.env.DRPC_API_KEY || '').trim();
+  if (dk) {
+    if (!noeuds._cle) noeuds._cle = { url: 'https://lb.drpc.org/ogrpc?network=robinhood&dkey=' + dk,
+                                      cle: 'chaineCle', plageLogs: BLOCS_PLAFOND, dernier: 0 };
+    l.push(noeuds._cle);
+  }
+  return l.concat(NOEUDS);
+}
+
 const NOEUDS = [
   { url: RPC_RH, cle: 'chaine', plageLogs: BLOCS_PLAFOND, dernier: 0 },
   { url: RPC_SECOURS, cle: 'chaine2', plageLogs: 10000, dernier: 0 },
@@ -515,9 +624,16 @@ async function unNoeud(n, methode, params) {
   const coupe = r.status === 429 || (j && j.error && (j.error.code === 429
     || /too many|rate/i.test(String(j.error.message || ''))));
   if (coupe) { const e = new Error('coupe'); e.coupe = true; throw e; }
+  /* ---- LE CORPS DIT POURQUOI, LE CODE NE DIT QUE « NON » ----
+   * On testait `!r.ok` en premier, et on jetait donc « ranges over 5000 blocks
+   * are not supported » pour ne garder que « rpc 400 ». La raison etait dans la
+   * reponse, et on la perdait — si bien que la limite de plage annoncee par le
+   * service ne pouvait jamais etre retenue, et qu'on lui renvoyait la meme
+   * demande refusee a chaque tour. Le message d'abord, le code en dernier
+   * recours. */
+  if (j && j.error) throw new Error(String(j.error.message || 'rpc').slice(0, 80));
   if (!r.ok) throw new Error('rpc ' + r.status);
   if (!j) throw new Error('rpc illisible');
-  if (j.error) throw new Error(String(j.error.message || 'rpc').slice(0, 60));
   return j.result;
 }
 /* On essaie les noeuds capables, dans l'ordre. Un refus pour saturation passe
@@ -525,7 +641,7 @@ async function unNoeud(n, methode, params) {
    quelque chose. Un echec de tous reste un echec : il rend « inconnu ». */
 async function rpc(methode, params) {
   const plage = plageDe(methode, params);
-  const capables = NOEUDS.filter((n) => plage <= n.plageLogs);
+  const capables = noeuds().filter((n) => plage <= n.plageLogs);
   if (!capables.length) throw new Error('aucun noeud ne sert une plage de ' + plage + ' blocs');
   let derniere = null;
   for (let tour = 0; tour < 2; tour++) {
@@ -537,7 +653,27 @@ async function rpc(methode, params) {
       } catch (e) {
         derniere = e;
         noteService(n.cle, false, e.coupe ? 'sature' : e.message);
-        if (!e.coupe) break;          /* une vraie erreur ne se resout pas en reessayant */
+        /* Le service annonce sa limite de plage : on la RETIENT, au lieu de lui
+           renvoyer la meme demande a chaque tour. */
+        const m = /over (\d+) blocks/.exec(String(e.message || ''));
+        if (m) {
+          const max = parseInt(m[1], 10);
+          if (max > 0 && max < n.plageLogs) {
+            n.plageLogs = max;
+            console.log('[ai] ' + n.cle + ' : plage de journaux limitee a ' + max
+              + ' blocs — retenu, on ne le redemandera plus');
+          }
+        }
+        /* ---- ET ON PASSE AU NOEUD SUIVANT, QUELLE QUE SOIT L'ERREUR ----
+         * Ici on s'arretait des qu'un noeud rendait autre chose qu'une
+         * saturation. L'intention etait bonne — insister sur un noeud qui
+         * repond « non » ne sert a rien — mais la consequence ne l'etait pas :
+         * une cle perimee sur le noeud de tete rendait un 403, et la boucle
+         * s'arretait la, SANS jamais essayer les deux noeuds publics qui
+         * marchaient parfaitement. Une cle expiree valait donc moins que pas de
+         * cle du tout, et rien ne l'aurait montre : les lectures rendaient
+         * « inconnu », comme lors d'une saturation ordinaire.
+         * L'erreur d'un noeud ne dit rien des autres. On continue. */
       }
     }
     if (tour === 0) await dors(1800);
@@ -560,7 +696,7 @@ async function lisPools() {
   const pools = new Map(), toks = new Map();
   for (const page of [1, 2, 3]) {
     let d = null;
-    try { d = await json(GT + '/new_pools?include=base_token&page=' + page, { headers: ENTETES });
+    try { d = await jsonGT('/new_pools?include=base_token&page=' + page);
           noteService('pools', true); }
     catch (e) { noteService('pools', false, e.message); continue; }
     for (const inc of (d.included || [])) if (inc.type === 'token') toks.set(inc.id, inc.attributes);
@@ -593,6 +729,68 @@ async function lisPools() {
   return [...pools.values()];
 }
 
+/* ==========================================================================
+ * GOPLUS : LA CLE ET LE SECRET
+ *
+ * « J'ai la GoPlus API mais il y a marqué App Key et App Secret, je sais pas
+ *   laquelle copier-coller. »
+ *
+ * Les deux. Ce ne sont pas deux facons d'entrer, c'est une seule serrure a deux
+ * pieces : la cle s'envoie en clair, le secret ne sort JAMAIS de la machine. On
+ * les combine en une signature — sha1(cle + heure + secret) — qu'on echange
+ * contre un jeton d'acces valable une heure. C'est ce jeton, et lui seul, qui
+ * voyage ensuite sur chaque lecture.
+ *
+ * L'heure entre dans la signature pour qu'une signature interceptee ne serve
+ * pas indefiniment. C'est aussi pourquoi une horloge serveur trop decalee fait
+ * echouer l'authentification, et c'est la premiere chose a regarder si ca
+ * refuse.
+ *
+ * ---- ET SANS CLE, TOUT MARCHE DEJA ----
+ *
+ * La lecture qu'on utilise repond sans authentification : c'est ce qui a servi
+ * jusqu'ici. La cle ne debloque rien de nouveau, elle releve la limite de
+ * debit. Donc au moindre probleme — jeton refuse, secret absent, horloge
+ * decalee — on lit sans, et la colonie ne s'en apercoit pas.
+ * ======================================================================== */
+const GOPLUS_JETON_MS = 50 * 60e3;   /* le jeton vaut une heure ; on le renouvelle avant */
+let goplusJeton = { valeur: null, jusqua: 0, essaye: false };
+
+function goplusIdentifie() {
+  return !!(process.env.GOPLUS_APP_KEY || '').trim() && !!(process.env.GOPLUS_APP_SECRET || '').trim();
+}
+
+async function goplusEntetes() {
+  if (!goplusIdentifie()) return {};
+  if (goplusJeton.valeur && Date.now() < goplusJeton.jusqua)
+    return { Authorization: goplusJeton.valeur };
+  const cle = process.env.GOPLUS_APP_KEY.trim();
+  const secret = process.env.GOPLUS_APP_SECRET.trim();
+  const t = Math.floor(Date.now() / 1000);
+  try {
+    const sign = require('crypto').createHash('sha1').update(cle + t + secret).digest('hex');
+    const r = await fetch('https://api.gopluslabs.io/api/v1/token', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ app_key: cle, time: t, sign }),
+      signal: AbortSignal.timeout(12000),
+    });
+    const j = await r.json().catch(() => null);
+    const jeton = j && j.result && j.result.access_token;
+    if (!r.ok || !jeton) throw new Error('code ' + ((j && j.code) || r.status));
+    goplusJeton = { valeur: jeton, jusqua: Date.now() + GOPLUS_JETON_MS, essaye: true };
+    noteService('goplusCle', true);
+    if (!goplusJeton.dit) { goplusJeton.dit = true; console.log('[ai] GoPlus : jeton obtenu, les lectures sont authentifiees'); }
+    return { Authorization: jeton };
+  } catch (e) {
+    /* On le NOTE et on lit sans. Une horloge decalee de plus de quelques
+       minutes suffit a faire echouer la signature : c'est la premiere chose a
+       verifier si ca refuse. */
+    noteService('goplusCle', false, String(e.message || e).slice(0, 50));
+    goplusJeton = { valeur: null, jusqua: Date.now() + 5 * 60e3, essaye: true, dit: goplusJeton.dit };
+    return {};
+  }
+}
+
 /* ---- « IL A REPONDU » N'EST PAS « IL SAIT » ----
  * Sur un jeton de sept minutes, GoPlus rend SEPT champs : deux taxes vides,
  * une adresse, rien d'autre. Les lire comme « pas de honeypot, aucune
@@ -604,7 +802,8 @@ async function lisGoplus(t) {
   if (c !== null) { t.g = c; return; }
   let info = {};
   try {
-    const j = await json('https://api.gopluslabs.io/api/v1/token_security/4663?contract_addresses=' + t.addr);
+    const j = await json('https://api.gopluslabs.io/api/v1/token_security/4663?contract_addresses=' + t.addr,
+                         { headers: await goplusEntetes() });
     info = (j.result || {})[t.addr] || {};
     noteService('goplus', true);
   } catch (e) { info = {}; noteService('goplus', false, e.message); }
@@ -637,7 +836,7 @@ async function lisGoplus(t) {
 async function lisOhlcv(pool) {
   const c = frais(CACHE.ohlcv, pool, TTL_OHLCV); if (c !== null) return c;
   try {
-    const j = await json(GT + '/pools/' + pool + '/ohlcv/minute?aggregate=15&limit=24', { headers: ENTETES });
+    const j = await jsonGT('/pools/' + pool + '/ohlcv/minute?aggregate=15&limit=24');
     const l = ((j.data || {}).attributes || {}).ohlcv_list || [];
     noteService('ohlcv', true);
     if (l.length < 4) return garde(CACHE.ohlcv, pool, { vola: null });
@@ -882,8 +1081,7 @@ async function jetonDepuisDex(addr, origine) {
 async function lisTrades(pool) {
   const c = frais(CACHE.trades, pool, TTL_TRADES); if (c !== null) return c;
   try {
-    const j = await json(GT + '/pools/' + pool + '/trades?trade_volume_in_usd_greater_than=0',
-                         { headers: ENTETES });
+    const j = await jsonGT('/pools/' + pool + '/trades?trade_volume_in_usd_greater_than=0');
     const l = (j.data || []).map((x) => x.attributes || {});
     noteService('trades', true);
     if (!l.length) return garde(CACHE.trades, pool, { vu: true, n: 0, acheteurs: 0, vendeurs: 0,
@@ -1953,16 +2151,20 @@ function alertes() {
   const s = (k) => E.services[k] || { essais: 0, reussites: 0 };
   const dis = (gravite, quoi, pourquoi, quoiFaire) => out.push({ gravite, quoi, pourquoi, quoiFaire });
 
-  const n1 = s('chaine'), n2 = s('chaine2');
-  const echecs = (n1.essais - n1.reussites) + (n2.essais - n2.reussites);
-  const total = n1.essais + n2.essais;
+  const n1 = s('chaine'), n2 = s('chaine2'), n3 = s('chaineCle');
+  const echecs = (n1.essais - n1.reussites) + (n2.essais - n2.reussites)
+               + (n3.essais - n3.reussites);
+  const total = n1.essais + n2.essais + n3.essais;
   if (total > 30 && echecs / total > 0.25)
     dis('haute', 'Les noeuds de la chaine refusent ' + Math.round(echecs / total * 100) + ' % des lectures',
       echecs + ' refus sur ' + total + ' appels. Chaque refus rend « inconnu » un jeton qu\'on aurait '
       + 'pu juger, et l\'inconnu ne rapporte jamais de points : le jeton est ecarte pour une raison '
       + 'qui n\'a rien a voir avec lui.',
-      'Un acces RPC dedie a la chaine 4663 (une cle chez un fournisseur qui la sert) leverait la '
-      + 'limite. Les deux noeuds publics utilises ici sont gratuits et se font couper.');
+      (process.env.DRPC_API_KEY
+        ? 'Une cle dRPC est deja posee. Si les refus persistent malgre elle, c\'est le forfait qui '
+          + 'est atteint, pas l\'absence de cle.'
+        : 'Un acces RPC dedie a la chaine 4663 leverait la limite : dRPC la sert, et sa cle se pose '
+          + 'dans DRPC_API_KEY. Les deux noeuds publics utilises ici sont gratuits et se font couper.'));
 
   const g = s('goplus');
   const muets = E.compteurs.goplusMuet || 0, vus = E.compteurs.scoutVu || E.compteurs.wardenVu || 0;
@@ -1973,6 +2175,30 @@ function alertes() {
       + 'et il ne l\'affirme pas.',
       'Une seconde source de securite qui indexe plus vite. Aucune gratuite trouvee pour la chaine '
       + '4663 a ce jour — honeypot.is ne la connait pas, Blockscout est derriere Cloudflare.');
+
+  const gk = s('goplusCle');
+  if (goplusIdentifie() && gk.essais > 0 && gk.reussites === 0)
+    dis('haute', 'La cle GoPlus est posee mais le jeton est refuse',
+      'La signature n\'a pas ete acceptee (' + (gk.dernierEchec || 'raison inconnue') + '). Les '
+      + 'lectures de securite continuent SANS authentification — c\'est-a-dire comme avant la cle, '
+      + 'donc rien n\'est casse, mais la limite de debit reste celle de tout le monde.',
+      'Verifier que GOPLUS_APP_KEY et GOPLUS_APP_SECRET sont bien les deux moities de la meme '
+      + 'paire, et que l\'horloge du serveur est a l\'heure : le temps entre dans la signature, '
+      + 'et quelques minutes de decalage suffisent a la faire refuser.');
+  if (process.env.GOPLUS_APP_KEY && !process.env.GOPLUS_APP_SECRET)
+    dis('haute', 'GOPLUS_APP_KEY est posee sans GOPLUS_APP_SECRET',
+      'Ce ne sont pas deux facons d\'entrer : c\'est une serrure a deux pieces. La cle seule ne '
+      + 'signe rien, et les lectures continuent sans authentification.',
+      'Poser aussi GOPLUS_APP_SECRET, depuis le meme ecran de GoPlus.');
+
+  if (cleCoingecko() && cgPorte === 'libre')
+    dis('haute', 'La cle CoinGecko est posee mais refusee',
+      'Elle a ete essayee en Demo (api.coingecko.com) et en Pro '
+      + '(pro-api.coingecko.com) : les deux l\'ont refusee. Les lectures continuent par l\'acces '
+      + 'libre — c\'est-a-dire exactement comme avant la cle, donc rien n\'est casse, mais elle '
+      + 'ne sert a rien.',
+      'Verifier la cle sur coingecko.com/en/developers/dashboard, puis redeployer. Une variable '
+      + 'posee apres le dernier deploiement n\'est pas vue par le processus en cours.');
 
   if (!process.env.ANTHROPIC_API_KEY)
     dis('moyenne', 'Le Conseiller est eteint : aucune cle Anthropic',
@@ -2483,6 +2709,11 @@ function vue() {
                dernierEchec: s.dernierEchec };
     }),
     horsService: HORS_SERVICE,
+    coingecko: { cle: !!cleCoingecko(), porte: cgPorte || 'pas encore sonde' },
+    rpcCle: { pose: !!(process.env.DRPC_API_KEY || '').trim(),
+              plage: noeuds._cle ? noeuds._cle.plageLogs : null },
+    goplus: { identifie: goplusIdentifie(), jeton: !!goplusJeton.valeur,
+              moitie: !!process.env.GOPLUS_APP_KEY !== !!process.env.GOPLUS_APP_SECRET },
     conseiller: { actif: conseillerActif(), modele: CONSEIL_MODELE,
                   poids: CONSEIL_POIDS, parTour: CONSEIL_MAX_PAR_TOUR,
                   rendus: E.compteurs.conseilRendu || 0 },
@@ -2533,6 +2764,9 @@ module.exports = {
   revoitStrategie, seuilCourant, noteResultat, alertes, remiseAZero, nObs,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   lisTrades, lisFluxDex, jetonDepuisDex, rassemble,
+  sondeCoingecko, jsonGT, cleCoingecko, goplusEntetes, goplusIdentifie, noeuds,
+  _jeton: () => goplusJeton, _posejeton: (j) => { goplusJeton = j; },
+  _porte: () => cgPorte, _poseporte: (p) => { cgPorte = p; },
   FICHIER, SEUIL, AGE_MAX_MIN, MISE, DEPART, METHODES, SERVICES, HORS_SERVICE,
   MISE_MIN, MISE_PART_MAX, EXPO_PART_MAX, PLANCHER, ENFANTS_MAX,
   ECART_TYPE_BRUIT, VARIANCE_MIN_OBS, ROSTER_DEPART, REORDONNABLES,

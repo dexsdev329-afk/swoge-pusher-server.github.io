@@ -102,6 +102,8 @@ function mondeNeuf(jetons, extra) {
     coupe: false,
     bloc: 5000000,
     profils: [], boosts: [], goplusCasse: false, rpcSature: false, claude: null, claudeCasse: false,
+    cgCle: null, cgPorte: null, cgQuota: false,
+    gpCle: null, gpSecret: null, drpcRefuse: false, drpcPlage: 0,
   }, extra || {});
 }
 
@@ -172,6 +174,12 @@ function tradesDe(t) {
   return out;
 }
 
+function ohlcvFaux() {
+  const l = [];
+  for (let i = 0; i < 24; i++) l.push([Date.now() / 1000 - i * 900, 1, 1, 1, 1 + (i % 3) * 0.03]);
+  return { data: { attributes: { ohlcv_list: l } } };
+}
+
 function logsDe(t) {
   /* Une emission depuis l'adresse nulle vers N porteurs. C'est exactement ce
      que la chaine contient quelques minutes apres la naissance d'un jeton, et
@@ -213,11 +221,38 @@ function logsDe(t) {
   return out;
 }
 
+/* Tout ce qui part sur le reseau, garde : c'est la seule facon de VERIFIER
+   qu'un secret ne fuit pas, plutot que de l'esperer. */
+let envoyes = [];
 global.fetch = async function (url, opts) {
   url = String(url);
+  envoyes.push({ url, body: (opts || {}).body, headers: (opts || {}).headers });
   const rep = (o, st) => ({ ok: st === undefined || st < 400, status: st || 200, json: async () => o });
   if (MONDE.coupe) throw new Error('Failed to fetch');
 
+  if (/coingecko\.com/.test(url)) {
+    const pro = /pro-api/.test(url);
+    const cle = (opts.headers || {})[pro ? 'x-cg-pro-api-key' : 'x-cg-demo-api-key'];
+    (pro ? appels.cgPro : appels.cgDemo);
+    if (pro) appels.cgPro++; else appels.cgDemo++;
+    /* Le monde accepte la cle sur UNE seule des deux portes : c'est le cas
+       reel, et c'est ce qui oblige a sonder plutot qu'a demander. */
+    if (cle !== MONDE.cgCle || MONDE.cgPorte !== (pro ? 'pro' : 'demo'))
+      return rep({ status: { error_message: 'API Key Missing' } }, 401);
+    if (MONDE.cgQuota) return rep({ status: { error_message: 'quota' } }, 429);
+    if (/new_pools/.test(url)) {
+      const page = parseInt((url.match(/page=(\d+)/) || [])[1] || '1', 10);
+      return rep(poolsPage(page));
+    }
+    if (/ohlcv/.test(url)) { appels.ohlcv++; return rep(ohlcvFaux()); }
+    if (/\/trades/.test(url)) {
+      appels.trades++;
+      const pool = (url.match(/pools\/([^/]+)\/trades/) || [])[1];
+      const t = MONDE.jetons.find((x) => x.pool === pool);
+      return rep({ data: t ? tradesDe(t) : [] });
+    }
+    return rep({ data: [] });
+  }
   if (/new_pools/.test(url)) {
     appels.pools++;
     const page = parseInt((url.match(/page=(\d+)/) || [])[1] || '1', 10);
@@ -245,19 +280,27 @@ global.fetch = async function (url, opts) {
     if (!t) return rep({ data: [] });
     return rep({ data: tradesDe(t) });
   }
+  if (/api\.gopluslabs\.io\/api\/v1\/token$/.test(url)) {
+    appels.goplusJeton++;
+    const b = JSON.parse(opts.body || '{}');
+    /* La vraie signature : sha1(cle + heure + secret). Le banc la RECALCULE au
+       lieu de croire celle qui arrive — sinon il validerait n'importe quoi, et
+       une signature fausse passerait l'essai. */
+    const attendu = require('crypto').createHash('sha1')
+      .update(MONDE.gpCle + b.time + MONDE.gpSecret).digest('hex');
+    if (!MONDE.gpCle || b.app_key !== MONDE.gpCle || b.sign !== attendu)
+      return rep({ code: 4011, message: null, result: null });
+    return rep({ code: 1, result: { access_token: 'jeton-goplus-valide', expires_in: 3600 } });
+  }
   if (/gopluslabs/.test(url)) {
     appels.goplus++;
+    if ((opts.headers || {}).Authorization === 'jeton-goplus-valide') appels.goplusAuth++;
     if (MONDE.goplusCasse) return rep({ error: 'indisponible' }, 503);
     const a = (url.split('contract_addresses=')[1] || '').toLowerCase();
     const t = MONDE.jetons.find((x) => x.addr === a);
     return rep(t ? goplusDe(t) : { result: {} });
   }
-  if (/ohlcv/.test(url)) {
-    appels.ohlcv++;
-    const l = [];
-    for (let i = 0; i < 24; i++) l.push([Date.now() / 1000 - i * 900, 1, 1, 1, 1 + (i % 3) * 0.03]);
-    return rep({ data: { attributes: { ohlcv_list: l } } });
-  }
+  if (/ohlcv/.test(url)) { appels.ohlcv++; return rep(ohlcvFaux()); }
   if (/dexscreener/.test(url)) {
     appels.dex++;
     const a = (url.split('/tokens/')[1] || '').toLowerCase();
@@ -275,6 +318,23 @@ global.fetch = async function (url, opts) {
       volume: { m5: 2000, h1: 20000, h6: 60000, h24: 90000 },
       priceChange: { m5: 8, h1: 20, h6: 35 },
       info: { socials: [{ type: 'twitter' }], websites: [{}] } }] });
+  }
+  if (/lb\.drpc\.org/.test(url)) {
+    appels.rpcCle++;
+    if (!/dkey=/.test(url) || MONDE.drpcRefuse)
+      return rep({ error: { message: 'Your token is invalid or expired', code: 4 } }, 403);
+    const b = JSON.parse(opts.body);
+    if (b.method === 'eth_blockNumber') return rep({ result: hex(MONDE.bloc) });
+    if (b.method === 'eth_getLogs') {
+      const f = b.params[0];
+      const plage = parseInt(f.toBlock, 16) - parseInt(f.fromBlock, 16);
+      if (MONDE.drpcPlage && plage > MONDE.drpcPlage)
+        return rep({ error: { message: 'ranges over ' + MONDE.drpcPlage + ' blocks are not supported' } }, 400);
+      const a = String(f.address || '').toLowerCase();
+      const t = MONDE.jetons.find((x) => x.addr === a);
+      return rep({ result: t ? logsDe(t) : [] });
+    }
+    return rep({ result: null });
   }
   if (/rpc\.mainnet\.chain\.robinhood|drpc\.org/.test(url)) {
     const secours = /drpc\.org/.test(url);
@@ -305,10 +365,18 @@ const C = require('./ai_colonie.js');
 
 function remise(jetons, extra) {
   MONDE = mondeNeuf(jetons, extra);
-  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0, rpc2: 0, trades: 0, profils: 0, boosts: 0, claude: 0 };
+  envoyes = [];
+  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0, rpc2: 0, trades: 0, profils: 0, boosts: 0, claude: 0, cgDemo: 0, cgPro: 0, goplusJeton: 0, goplusAuth: 0, rpcCle: 0 };
   for (const k of Object.keys(C._cache)) for (const j of Object.keys(C._cache[k])) delete C._cache[k][j];
   for (const k of Object.keys(C._prix)) delete C._prix[k];
   C._pose(C.etatNeuf());
+  C._poseporte(null);            /* la porte CoinGecko est resondee a chaque scenario */
+  C._posejeton({ valeur: null, jusqua: 0, essaye: false });
+  delete process.env.COINGECKO_API_KEY;
+  delete process.env.GOPLUS_APP_KEY; delete process.env.GOPLUS_APP_SECRET;
+  delete process.env.DRPC_API_KEY;
+  delete C.noeuds._cle;
+  for (const n of C.noeuds()) n.plageLogs = n.cle === 'chaine2' ? 10000 : 200000;
   try { fs.unlinkSync(C.FICHIER); } catch (e) {}
 }
 
@@ -1568,6 +1636,207 @@ async function remiseAZero() {
      'alors qu un etat a jour est relu tel quel — on ne jette pas a chaque correction');
 }
 
+
+/* ==========================================================================
+ * 29. LA CLE COINGECKO
+ *
+ * Les memes donnees, par une porte a nous plutot que par la file commune. Ce
+ * qui compte ici n'est pas qu'elle marche — c'est qu'elle ne casse rien quand
+ * elle ne marche pas. Une amelioration qui, en tombant, casse ce qui marchait
+ * avant n'est pas une amelioration.
+ * ======================================================================== */
+async function coingecko() {
+  console.log('\n-- sans cle, on lit par l acces libre --');
+  remise(sains());
+  await C.tour();
+  let v = C.vue();
+  console.log('   porte : ' + v.coingecko.porte + ' · appels libres ' + appels.pools
+    + ' · demo ' + appels.cgDemo + ' · pro ' + appels.cgPro);
+  ok(v.coingecko.cle === false && v.coingecko.porte === 'libre', 'aucune cle, aucune porte a sonder');
+  ok(appels.cgDemo === 0 && appels.cgPro === 0, 'et rien n est envoye a CoinGecko');
+  ok(appels.pools === 3, 'les lectures passent par l acces libre, comme avant (' + appels.pools + ')');
+  ok(!v.alertes.some((a) => /CoinGecko/.test(a.quoi)), 'et aucune alerte : il n y a rien a signaler');
+
+  console.log('\n-- une cle Demo est reconnue comme telle --');
+  remise(sains(), { cgCle: 'cg-demo-123', cgPorte: 'demo' });
+  process.env.COINGECKO_API_KEY = 'cg-demo-123';
+  await C.tour();
+  v = C.vue();
+  console.log('   porte : ' + v.coingecko.porte + ' · demo ' + appels.cgDemo
+    + ' · pro ' + appels.cgPro + ' · libre ' + appels.pools);
+  ok(v.coingecko.porte === 'demo', 'la porte Demo est retenue');
+  ok(appels.cgDemo > 1, 'et les lectures y passent (' + appels.cgDemo + ')');
+  ok(appels.pools === 0, 'plus aucune ne passe par la file commune');
+  ok(v.candidats.length > 0, 'et les jetons sont lus normalement : la forme des reponses est la meme');
+
+  console.log('\n-- une cle Pro aussi, sans qu on ait a le dire --');
+  remise(sains(), { cgCle: 'cg-pro-456', cgPorte: 'pro' });
+  process.env.COINGECKO_API_KEY = 'cg-pro-456';
+  await C.tour();
+  v = C.vue();
+  console.log('   porte : ' + v.coingecko.porte + ' · demo ' + appels.cgDemo + ' · pro ' + appels.cgPro);
+  ok(v.coingecko.porte === 'pro', 'la porte Pro est retenue');
+  ok(appels.cgDemo >= 1, 'apres avoir essaye la Demo d abord — les deux cles ne se distinguent pas a l oeil');
+  ok(appels.cgPro > 1, 'et les lectures passent par la Pro (' + appels.cgPro + ')');
+
+  console.log('\n-- une cle refusee ne casse rien, et elle est signalee --');
+  remise(sains(), { cgCle: 'la-bonne', cgPorte: 'demo' });
+  process.env.COINGECKO_API_KEY = 'la-mauvaise';
+  await C.tour();
+  v = C.vue();
+  console.log('   porte : ' + v.coingecko.porte + ' · libre ' + appels.pools
+    + ' · jetons examines ' + v.candidats.length);
+  ok(v.coingecko.porte === 'libre', 'on retombe sur l acces libre');
+  ok(v.candidats.length > 0,
+     'et la colonie continue exactement comme avant la cle : ' + v.candidats.length + ' jetons lus');
+  const a = v.alertes.find((x) => /CoinGecko/.test(x.quoi));
+  ok(!!a && a.gravite === 'haute',
+     'une alerte le dit, au lieu de laisser une cle inutile en place : « ' + (a && a.quoi) + ' »');
+  ok(!!a && /coingecko\.com\/en\/developers/.test(a.quoiFaire),
+     'avec ou aller la verifier');
+
+  console.log('\n-- et un quota atteint en pleine journee ne perd pas la lecture --');
+  /* La cle est BONNE : elle a ete reconnue au demarrage. Le quota tombe
+     ensuite, en pleine journee — c'est le cas courant, et c'est celui qui doit
+     etre absorbe sans rien perdre. */
+  remise(sains(), { cgCle: 'cg-demo-123', cgPorte: 'demo' });
+  process.env.COINGECKO_API_KEY = 'cg-demo-123';
+  ok((await C.sondeCoingecko()) === 'demo', 'la cle est reconnue au demarrage');
+  MONDE.cgQuota = true;
+  await C.tour();
+  v = C.vue();
+  const s = v.services.find((x) => x.cle === 'coingecko');
+  console.log('   libre ' + appels.pools + ' · jetons ' + v.candidats.length
+    + ' · service coingecko ' + JSON.stringify({ essais: s.essais, echec: s.dernierEchec }));
+  ok(appels.pools > 0, 'les lectures repassent par l acces libre au premier refus');
+  ok(v.candidats.length > 0, 'et le tour se fait quand meme (' + v.candidats.length + ' jetons)');
+  ok(s.essais > s.reussites && !!s.dernierEchec,
+     'le refus est compte et nomme : « ' + s.dernierEchec + ' »');
+  delete process.env.COINGECKO_API_KEY;
+}
+
+
+/* ==========================================================================
+ * 30. LA CLE GOPLUS : DEUX PIECES D'UNE MEME SERRURE
+ *
+ * « Il y a marqué App Key et App Secret, je sais pas laquelle copier-coller. »
+ *
+ * Les deux. La cle s'envoie en clair, le secret ne sort jamais de la machine :
+ * on les combine en une signature — sha1(cle + heure + secret) — qu'on echange
+ * contre un jeton valable une heure. Ce qui compte dans cet essai, c'est que le
+ * secret n'apparaisse NULLE PART dans ce qui part sur le reseau, et que la
+ * colonie continue de lire quand la paire est mauvaise.
+ * ======================================================================== */
+async function goplusCle() {
+  console.log('\n-- sans cle, les lectures de securite marchent deja --');
+  remise(sains());
+  await C.tour();
+  let v = C.vue();
+  ok(v.goplus.identifie === false, 'aucune identification');
+  ok(appels.goplusJeton === 0, 'aucun jeton n est demande');
+  ok(appels.goplus > 0 && v.candidats.some((c) => c.goplusSait !== undefined),
+     'et la securite des contrats est lue quand meme — c est ce qui a servi jusqu ici');
+
+  console.log('\n-- la paire complete obtient un jeton --');
+  remise(sains(), { gpCle: 'app-key-123', gpSecret: 'app-secret-456' });
+  process.env.GOPLUS_APP_KEY = 'app-key-123';
+  process.env.GOPLUS_APP_SECRET = 'app-secret-456';
+  await C.tour();
+  v = C.vue();
+  console.log('   jetons demandes ' + appels.goplusJeton + ' · lectures authentifiees '
+    + appels.goplusAuth + '/' + appels.goplus);
+  ok(appels.goplusJeton === 1,
+     'le jeton est demande UNE fois et garde : il vaut une heure, le redemander a chaque lecture '
+     + 'serait doubler le nombre d appels pour rien');
+  ok(appels.goplusAuth === appels.goplus,
+     'et toutes les lectures le portent (' + appels.goplusAuth + '/' + appels.goplus + ')');
+  ok(v.goplus.jeton === true, 'la vue le confirme');
+
+  console.log('\n-- et le secret ne part jamais sur le reseau --');
+  const fuite = envoyes.filter((e) => /app-secret-456/.test(e.url + ' ' + (e.body || '')
+    + ' ' + JSON.stringify(e.headers || {})));
+  console.log('   ' + envoyes.length + ' requetes examinees, ' + fuite.length + ' portant le secret');
+  ok(fuite.length === 0,
+     'aucune des ' + envoyes.length + ' requetes ne contient le secret : il ne sert qu a signer, '
+     + 'sur cette machine');
+  const avecCle = envoyes.filter((e) => /app-key-123/.test((e.body || '')));
+  ok(avecCle.length === 1, 'seule la demande de jeton porte la cle, et une seule fois');
+
+  console.log('\n-- une mauvaise paire ne casse rien, et elle est signalee --');
+  remise(sains(), { gpCle: 'la-bonne', gpSecret: 'le-bon-secret' });
+  process.env.GOPLUS_APP_KEY = 'la-bonne';
+  process.env.GOPLUS_APP_SECRET = 'PAS-le-bon-secret';
+  await C.tour();
+  v = C.vue();
+  console.log('   jeton : ' + v.goplus.jeton + ' · lectures ' + appels.goplus
+    + ' dont authentifiees ' + appels.goplusAuth);
+  ok(v.goplus.jeton === false, 'aucun jeton n est obtenu');
+  ok(appels.goplus > 0 && appels.goplusAuth === 0,
+     'les lectures continuent SANS authentification : comme avant la cle, donc rien n est casse');
+  ok(v.candidats.length > 0, 'et le tour se fait normalement (' + v.candidats.length + ' jetons)');
+  const a = v.alertes.find((x) => /GoPlus/.test(x.quoi));
+  ok(!!a && /horloge/.test(a.quoiFaire),
+     'une alerte le dit, et nomme la cause la plus frequente : « ' + (a && a.quoiFaire.slice(0, 80)) + '… »');
+
+  console.log('\n-- et une moitie de paire est dite pour ce qu elle est --');
+  remise(sains());
+  process.env.GOPLUS_APP_KEY = 'toute-seule';
+  const b = C.alertes().find((x) => /sans GOPLUS_APP_SECRET/.test(x.quoi));
+  ok(!!b, 'la cle sans son secret est signalee : « ' + (b && b.quoi) + ' »');
+  ok(/serrure a deux pieces/.test(b.pourquoi),
+     'en expliquant que ce ne sont pas deux facons d entrer');
+  delete process.env.GOPLUS_APP_KEY; delete process.env.GOPLUS_APP_SECRET;
+}
+
+/* ==========================================================================
+ * 31. LA CLE dRPC
+ * ======================================================================== */
+async function drpcCle() {
+  console.log('\n-- avec une cle, le noeud a nous passe devant --');
+  remise(sains());
+  process.env.DRPC_API_KEY = 'dkey-abc';
+  const ordre = C.noeuds().map((n) => n.cle);
+  console.log('   ' + ordre.join(' → '));
+  ok(ordre[0] === 'chaineCle',
+     'il est essaye en premier : c est un debit qui nous appartient, les autres sont partages '
+     + 'avec la terre entiere');
+  await C.tour();
+  let v = C.vue();
+  console.log('   appels : cle ' + appels.rpcCle + ' · officiel ' + appels.rpc
+    + ' · public ' + appels.rpc2);
+  ok(appels.rpcCle > 0, 'les lectures y passent (' + appels.rpcCle + ')');
+  ok(appels.rpc === 0, 'et plus par le noeud officiel, qui refusait quatre lectures sur six');
+  ok(v.candidats.filter((c) => c.chaineVue).length > 0, 'les blocs sont lus normalement');
+  ok(v.rpcCle.pose === true, 'la vue confirme que la cle est en place');
+
+  console.log('\n-- sa limite de plage est MESUREE, pas supposee --');
+  remise(sains(), { drpcPlage: 5000 });
+  process.env.DRPC_API_KEY = 'dkey-abc';
+  ok(C.noeuds()[0].plageLogs === 200000, 'on part optimiste (200 000 blocs)');
+  await C.tour();
+  const apres = C.noeuds()[0].plageLogs;
+  console.log('   plage retenue apres le premier refus : ' + apres);
+  ok(apres === 5000,
+     'au premier refus, le noeud retient la limite que le service ANNONCE (' + apres + ') — '
+     + 'ecrire un chiffre a la main ici, ce serait le croire sur parole et se tromper en silence '
+     + 'le jour ou il change');
+  ok(C.vue().rpcCle.plage === 5000, 'et la vue la publie');
+
+  console.log('\n-- une cle refusee ne prive pas la colonie de la chaine --');
+  remise(sains(), { drpcRefuse: true });
+  process.env.DRPC_API_KEY = 'dkey-perimee';
+  await C.tour();
+  v = C.vue();
+  console.log('   cle ' + appels.rpcCle + ' · officiel ' + appels.rpc
+    + ' · jetons lus ' + v.candidats.filter((c) => c.chaineVue).length);
+  ok(appels.rpcCle > 0 && appels.rpc > 0,
+     'apres le refus, la lecture repart sur le noeud officiel');
+  ok(v.candidats.filter((c) => c.chaineVue).length > 0,
+     'et les blocs sont lus quand meme : une cle perimee ne doit pas valoir moins que pas de cle');
+  delete process.env.DRPC_API_KEY;
+  delete C.noeuds._cle;
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -1598,6 +1867,9 @@ async function remiseAZero() {
   await strategie();
   await conseiller();
   await remiseAZero();
+  await coingecko();
+  await goplusCle();
+  await drpcCle();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
