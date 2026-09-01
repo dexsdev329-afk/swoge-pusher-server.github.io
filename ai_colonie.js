@@ -818,25 +818,51 @@ async function lisGoplus(t) {
   }
   const lp = (info.lp_holders || []).reduce((s, h) =>
     s + ((Number(h.is_locked) === 1 || /lock|burn|null/i.test(h.tag || '')) ? nn(h.percent) * 100 : 0), 0);
+  /* ---- GOPLUS SE CONTREDIT, ET C'EST LUI QUI NOUS LE DIT ----
+   * Releve sur des jetons de deux minutes : il rend huit champs, dont
+   * `is_in_dex: "0"` — alors qu'on vient de le TROUVER dans un pool. Cette
+   * reponse-la est demontrablement fausse, ce qui apprend quelque chose sur
+   * toutes les autres : ses zeros ne sont pas des observations, ce sont des
+   * valeurs par defaut d'une fiche pas encore remplie.
+   * Le probleme n'etait pas theorique. `is_open_source: "0"` etait lu comme
+   * « code non verifie » et coutait huit points — appliques a un contrat que
+   * GoPlus n'avait tout simplement pas encore regarde. On le penalisait pour
+   * notre propre ignorance.
+   * Quand il se contredit sur un fait qu'on connait, on considere qu'il ne
+   * sait rien : c'est ce qu'il vient de prouver. */
+  const seContredit = info.is_in_dex === '0' && !!t.pool;
+  if (seContredit) compte('goplusSeContredit');
   t.g = garde(CACHE.goplus, t.addr, {
-    have: info.is_honeypot !== undefined || info.holder_count !== undefined || info.is_open_source !== undefined,
+    have: !seContredit && (info.is_honeypot !== undefined || info.holder_count !== undefined
+                           || info.is_open_source !== undefined),
+    seContredit,
     honeypot: su(info.is_honeypot), cannotBuy: su(info.cannot_buy), pausable: su(info.transfer_pausable),
     ownerBal: su(info.owner_change_balance), selfd: su(info.selfdestruct),
     perslip: su(info.personal_slippage_modifiable), hpSame: su(info.honeypot_with_same_creator),
     slipMod: su(info.slippage_modifiable), cooldown: su(info.trading_cooldown), proxy: su(info.is_proxy),
     mintable: su(info.is_mintable),
-    taxeSue: info.buy_tax !== undefined && info.buy_tax !== '',
+    taxeSue: !seContredit && info.buy_tax !== undefined && info.buy_tax !== '',
     buyTax: Math.round(nn(info.buy_tax) * 100), sellTax: Math.round(nn(info.sell_tax) * 100),
-    detSue: info.holder_count !== undefined, holders: parseInt(info.holder_count) || 0,
-    topSu: hs.length > 0, top: Math.round(top * 10) / 10, lp: Math.round(lp),
-    codeSu: info.is_open_source !== undefined, unverified: info.is_open_source === '0',
+    detSue: !seContredit && info.holder_count !== undefined, holders: parseInt(info.holder_count) || 0,
+    topSu: !seContredit && hs.length > 0, top: Math.round(top * 10) / 10, lp: Math.round(lp),
+    codeSu: !seContredit && info.is_open_source !== undefined,
+    unverified: !seContredit && info.is_open_source === '0',
   });
 }
 
 async function lisOhlcv(pool) {
   const c = frais(CACHE.ohlcv, pool, TTL_OHLCV); if (c !== null) return c;
   try {
-    const j = await jsonGT('/pools/' + pool + '/ohlcv/minute?aggregate=15&limit=24');
+    /* ---- DES BOUGIES D'UNE MINUTE, PAS D'UN QUART D'HEURE ----
+     * Avec `aggregate=15`, il faut une heure de vie pour obtenir les quatre
+     * bougies dont une volatilite a besoin. Nos jetons en ont deux ou trois.
+     * Releve : 0 sur 12 utilisables. On payait donc un appel par jeton pour un
+     * trait qui ne pouvait JAMAIS etre calcule — et « vola ? » ressemblait a
+     * un service en panne alors que c'etait notre demande qui etait absurde.
+     * A la minute, le meme jeton devient mesurable des qu'il a quelques
+     * minutes, et la fenetre de trente minutes decrit d'ailleurs mieux ce qui
+     * nous interesse : la volatilite MAINTENANT. */
+    const j = await jsonGT('/pools/' + pool + '/ohlcv/minute?aggregate=1&limit=30');
     const l = ((j.data || {}).attributes || {}).ohlcv_list || [];
     noteService('ohlcv', true);
     if (l.length < 4) return garde(CACHE.ohlcv, pool, { vola: null });
@@ -2426,9 +2452,43 @@ function prixFrais(adr) {
  * C'est ce qui donne un sens a l'ordre des gardes : un refus precoce fait
  * economiser tous les appels d'apres, et ces appels-la sont exactement ce qui
  * limite le nombre de jetons qu'on arrive a examiner. */
+/* ---- UN APPEL QUI NE PEUT PAS REPONDRE NE SE PAIE PAS ----
+ * Mesure sur douze jetons de une a deux minutes :
+ *   - les chandelles : 0 sur 12 exploitables (il faut quelques minutes de vie) ;
+ *   - DexScreener : connait le jeton 1 fois sur 12 (il n'a pas encore indexe) ;
+ *   - les trades : assez nombreux pour conclure 2 fois sur 12.
+ * Chacun de ces appels etait paye, echouait a rendre quoi que ce soit
+ * d'utilisable, et le trait sortait « inconnu ». Le budget d'appels d'un tour
+ * partait donc pour l'essentiel dans des questions dont on pouvait savoir a
+ * l'avance qu'elles n'avaient pas de reponse.
+ * On garde la question pour plus tard, et on le DIT — « pas encore lisible a
+ * cet age » n'est pas « le service est en panne ». */
+function peutRepondre(b, t) {
+  const m = t.minutes === null || t.minutes === undefined ? 999 : t.minutes;
+  if (b === 'ohlcv' && m < 6)
+    return 'pas encore de bougies : ' + Math.round(m) + ' min de vie';
+  if (b === 'dex' && m < 10)
+    return 'DexScreener n\'a pas encore indexe a ' + Math.round(m) + ' min';
+  if (b === 'trades') {
+    const h = (t.tx || {}).h1 || {};
+    const n = (h.buys || 0) + (h.sells || 0);
+    if (n < 5) return 'seulement ' + n + ' transaction(s) sur l\'heure : rien a lire';
+  }
+  return null;
+}
+
 async function assure(t, besoins) {
   for (const b of besoins) {
     if (t.lu[b]) continue;
+    const trop = peutRepondre(b, t);
+    if (trop) {
+      /* On marque comme « vu » pour ne pas y revenir dans le meme tour, et on
+         retient la raison : le trait vaudra « inconnu », ce qui est vrai. */
+      t.lu[b] = true;
+      (t.saute || (t.saute = {}))[b] = trop;
+      compte('appelsEconomises');
+      continue;
+    }
     t.lu[b] = true;
     if (b === 'goplus') { await lisGoplus(t); t.appels++; }
     else if (b === 'chaine') { t.chaine = await lisChaine(t.addr, t.minutes, t.pool); t.appels++; }
@@ -2611,6 +2671,8 @@ async function tour() {
       personne: !!(x.t.chaine && x.t.chaine.personne),
       transferts: x.t.chaine && x.t.chaine.vu ? x.t.chaine.transferts : null,
       goplusSait: !!(x.t.g && x.t.g.have),
+      goplusSeContredit: !!(x.t.g && x.t.g.seContredit),
+      saute: x.t.saute || null,
       acheteurs: x.t.trades && x.t.trades.vu ? x.t.trades.acheteurs : null,
       partDuPlusGros: x.t.trades && x.t.trades.vu ? x.t.trades.partDuPlusGros : null,
       tradesVus: !!(x.t.trades && x.t.trades.vu),
@@ -2764,7 +2826,7 @@ module.exports = {
   revoitStrategie, seuilCourant, noteResultat, alertes, remiseAZero, nObs,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   lisTrades, lisFluxDex, jetonDepuisDex, rassemble,
-  sondeCoingecko, jsonGT, cleCoingecko, goplusEntetes, goplusIdentifie, noeuds,
+  sondeCoingecko, jsonGT, cleCoingecko, goplusEntetes, goplusIdentifie, noeuds, peutRepondre,
   _jeton: () => goplusJeton, _posejeton: (j) => { goplusJeton = j; },
   _porte: () => cgPorte, _poseporte: (p) => { cgPorte = p; },
   FICHIER, SEUIL, AGE_MAX_MIN, MISE, DEPART, METHODES, SERVICES, HORS_SERVICE,

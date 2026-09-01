@@ -143,12 +143,22 @@ function goplusDe(t) {
       creator_address: '0xabc', creator_balance: '0', creator_percent: '0',
       lp_total_supply: '0', token_name: t.sym, token_symbol: t.sym, total_supply: '1000000' } } };
   }
+  /* ---- LA VRAIE REPONSE SUR UN JETON DE DEUX MINUTES ----
+   * Relevee sur la chaine : huit champs, dont `is_in_dex: "0"` — alors qu'on
+   * vient de trouver le jeton dans un pool. Ce champ-la est demontrablement
+   * faux, ce qui apprend quelque chose sur tous les autres. */
+  if (t.goplus === 'pasIndexe') {
+    return { code: 1, result: { [t.addr]: {
+      buy_tax: '', sell_tax: '', cannot_buy: '0', is_in_dex: '0', is_open_source: '0',
+      owner_address: '', token_name: t.sym, token_symbol: t.sym } } };
+  }
   if (t.goplus === 'honeypot') {
     return { code: 1, result: { [t.addr]: {
-      is_honeypot: '1', buy_tax: '0', sell_tax: '0.99', is_open_source: '0',
+      is_in_dex: '1', is_honeypot: '1', buy_tax: '0', sell_tax: '0.99', is_open_source: '0',
       holder_count: '4', is_proxy: '0', is_mintable: '1' } } };
   }
   return { code: 1, result: { [t.addr]: {
+    is_in_dex: '1',
     is_honeypot: '0', cannot_buy: '0', transfer_pausable: '0', owner_change_balance: '0',
     selfdestruct: '0', personal_slippage_modifiable: '0', honeypot_with_same_creator: '0',
     slippage_modifiable: '0', trading_cooldown: '0', is_proxy: '0', is_mintable: '0',
@@ -1837,6 +1847,107 @@ async function drpcCle() {
   delete C.noeuds._cle;
 }
 
+
+/* ==========================================================================
+ * 32. GOPLUS SE CONTREDIT, ET C'EST LUI QUI NOUS LE DIT
+ *
+ * Releve sur la vraie chaine, sur des jetons de deux minutes : huit champs, et
+ * parmi eux `is_in_dex: "0"` — alors qu'on vient de TROUVER le jeton dans un
+ * pool. Cette reponse est demontrablement fausse, ce qui apprend quelque chose
+ * sur toutes les autres : ses zeros ne sont pas des observations, ce sont les
+ * valeurs par defaut d'une fiche pas encore remplie.
+ *
+ * Le probleme n'etait pas theorique. `is_open_source: "0"` etait lu comme
+ * « code non verifie » et coutait huit points — appliques a un contrat que
+ * GoPlus n'avait simplement pas encore regarde. On penalisait un jeton pour
+ * NOTRE ignorance, sur toute la population qu'on vient chercher.
+ * ======================================================================== */
+async function goplusSeContredit() {
+  console.log('\n-- il dit « pas dans un dex » d un jeton trouve dans un pool --');
+  remise([jeton(0, { goplus: 'pasIndexe' }), jeton(1)]);
+  await C.tour();
+  const v = C.vue();
+  const c = v.candidats.find((x) => x.sym === 'TOK0');
+  console.log('   ' + JSON.stringify({ seContredit: c && c.goplusSeContredit, sait: c && c.goplusSait }));
+  ok(!!c && c.goplusSeContredit === true, 'la contradiction est reperee');
+  ok(!!c && c.goplusSait === false,
+     'et on considere qu il ne sait rien — c est ce qu il vient de prouver');
+
+  /* Le chiffre qui compte : la note ne doit plus porter la penalite. */
+  const base = { addr: '0xa', sym: 'A', liq: 9000, prix: 1, mc: 3e5, minutes: 2, ch_m5: 8,
+    tx: { h1: { buys: 20, sells: 8, buyers: 12 } }, vol: { h1: 9000, h6: 9000 },
+    chaine: { vu: true, montantsLus: true, porteurs: 40, top: 3, brule: 0 } };
+  const cru = Object.assign({}, base, { g: { have: true, seContredit: false, taxeSue: false,
+    codeSu: true, unverified: true, detSue: false, topSu: false, buyTax: 0, sellTax: 0, top: 0, lp: 0 } });
+  const lucide = Object.assign({}, base, { g: { have: false, seContredit: true, taxeSue: false,
+    codeSu: false, unverified: false, detSue: false, topSu: false, buyTax: 0, sellTax: 0, top: 0, lp: 0 } });
+  const a = C.scoreBase(cru), b = C.scoreBase(lucide);
+  console.log('   note en le croyant sur parole : ' + a.toFixed(0) + ' · en notant sa contradiction : ' + b.toFixed(0));
+  ok(b > a, 'le jeton ne perd plus les points d un controle qui n a jamais eu lieu (+'
+     + (b - a).toFixed(0) + ')');
+  ok((v.compteurs.goplusSeContredit || 0) > 0, 'et le cas est compte, pour qu on sache s il est rare ou general');
+
+  /* Mais un GoPlus qui SAIT garde toute son autorite : on ne jette pas le
+     service, on jette ce qu'il n'a pas mesure. */
+  const d = v.candidats.find((x) => x.sym === 'TOK1');
+  ok(!!d && d.goplusSait === true && !d.goplusSeContredit,
+     'un jeton dont la fiche est remplie reste lu normalement');
+}
+
+/* ==========================================================================
+ * 33. UN APPEL QUI NE PEUT PAS REPONDRE NE SE PAIE PAS
+ *
+ * Mesure sur douze jetons de une a deux minutes : les chandelles rendent 0
+ * volatilite exploitable sur 12, DexScreener connait le jeton 1 fois sur 12,
+ * et les trades sont assez nombreux pour conclure 2 fois sur 12. Ces appels
+ * etaient payes, echouaient a rendre quoi que ce soit, et le trait sortait
+ * « inconnu ». Le budget d'un tour partait donc pour l'essentiel dans des
+ * questions dont on pouvait savoir a l'avance qu'elles n'avaient pas de
+ * reponse.
+ * ======================================================================== */
+async function appelsInutiles() {
+  console.log('\n-- ce qu on ne demande pas, et pourquoi --');
+  const cas = [
+    ['2 min, 3 transactions', { minutes: 2, tx: { h1: { buys: 2, sells: 1 } } }, ['ohlcv', 'dex', 'trades']],
+    ['8 min, 40 transactions', { minutes: 8, tx: { h1: { buys: 30, sells: 10 } } }, ['dex']],
+    ['40 min, actif', { minutes: 40, tx: { h1: { buys: 60, sells: 20 } } }, []],
+  ];
+  for (const [nom, t, sautes] of cas) {
+    const vus = ['ohlcv', 'dex', 'trades'].filter((b) => C.peutRepondre(b, t));
+    console.log('   ' + nom.padEnd(24) + ' → saute : ' + (vus.join(', ') || 'rien'));
+    ok(JSON.stringify(vus) === JSON.stringify(sautes),
+       nom + ' : on saute ' + (sautes.join(', ') || 'rien') + ' et rien d autre');
+  }
+  ok(/bougies/.test(String(C.peutRepondre('ohlcv', { minutes: 2, tx: {} }))),
+     'et la raison est ecrite : « ' + C.peutRepondre('ohlcv', { minutes: 2, tx: {} }) + ' »');
+
+  console.log('\n-- et ca se voit sur un tour entier --');
+  remise([0, 1, 2, 3, 4, 5].map((i) => jeton(i, { minutes: 2, buys: 2, sells: 1, buyers: 2 })));
+  await C.tour();
+  let v = C.vue();
+  const jeunes = { ohlcv: appels.ohlcv, dex: appels.dex, trades: appels.trades, rpc: appels.rpc };
+  console.log('   six jetons de 2 min, calmes : ' + JSON.stringify(jeunes)
+    + ' · economises ' + (v.compteurs.appelsEconomises || 0));
+  ok(jeunes.ohlcv === 0 && jeunes.trades === 0,
+     'aucun appel de chandelles ni de trades : a deux minutes, ils ne peuvent rien rendre');
+  ok((v.compteurs.appelsEconomises || 0) >= 6,
+     (v.compteurs.appelsEconomises || 0) + ' appels economises, et le compteur le dit');
+  ok(v.candidats.length > 0 && v.candidats.every((c) => c.chaineVue),
+     'alors que la chaine, elle, est lue pour tous : c est la seule qui sait quelque chose a cet age');
+  const sautes = v.candidats.filter((c) => c.saute);
+  ok(sautes.length > 0 && /bougies|indexe|transaction/.test(JSON.stringify(sautes[0].saute)),
+     'et la vue porte la raison, pour que « inconnu » ne ressemble pas a une panne : '
+     + JSON.stringify(sautes[0].saute).slice(0, 80));
+
+  console.log('\n-- un jeton plus age, lui, est lu en entier --');
+  remise([0, 1].map((i) => jeton(i, { minutes: 45, buys: 60, sells: 20, buyers: 40 })));
+  await C.tour();
+  v = C.vue();
+  console.log('   ' + JSON.stringify({ ohlcv: appels.ohlcv, dex: appels.dex, trades: appels.trades }));
+  ok(appels.ohlcv > 0 && appels.trades > 0 && appels.dex > 0,
+     'a quarante-cinq minutes, les trois services ont quelque chose a dire, et on le leur demande');
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -1870,6 +1981,8 @@ async function drpcCle() {
   await coingecko();
   await goplusCle();
   await drpcCle();
+  await goplusSeContredit();
+  await appelsInutiles();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
