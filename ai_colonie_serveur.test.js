@@ -2182,7 +2182,9 @@ async function livreDOmbre() {
     C.noteOmbre({ addr: '0x' + i, sym: 'R' + i, prix: 1 },
                 { traits: tr, score: 20 }, 'un porteur tient 90% du circulant', 'whale');
   ok(E.ombres.length === 10, 'dix jetons refuses pour concentration sont suivis');
-  for (const o of E.ombres) o.echeance = Date.now() - 1000;
+  /* C'est l'AGE qui decide desormais, pas une echeance posee : on les vieillit
+     jusqu'a l'echeance de reference, celle qui nourrit la memoire des agents. */
+  for (const o of E.ombres) o.t = Date.now() - C.HORIZON_REF * 60000;
   const m = {};
   E.ombres.forEach((o, i) => { m[o.adr] = { prix: i === 0 ? 1.5 : (i < 6 ? 0.4 : 1.02) }; });
   const n = C.regleLesOmbres(m);
@@ -2210,7 +2212,7 @@ async function livreDOmbre() {
   const F = C._etat();
   C.noteOmbre({ addr: '0xz', sym: 'Z', prix: 1 },
               { traits: { whale: { top: 'top <5%' } }, score: 80 }, null, null);
-  F.ombres[0].echeance = Date.now() - 1000;
+  F.ombres[0].t = Date.now() - C.HORIZON_REF * 60000;
   C.regleLesOmbres({ '0xz': { prix: 1.4 } });
   console.log('   agents ayant appris : ' + JSON.stringify(Object.keys(F.memoire)));
   ok(!!F.memoire.whale, 'les analystes apprennent');
@@ -2223,7 +2225,7 @@ async function livreDOmbre() {
   remise(sains());
   const G = C._etat();
   C.noteOmbre({ addr: '0xy', sym: 'Y', prix: 1 }, { traits: { whale: { top: 'top <5%' } }, score: 80 }, null, null);
-  G.ombres[0].echeance = Date.now() - 1000;
+  G.ombres[0].t = Date.now() - C.HORIZON_REF * 60000;
   C.regleLesOmbres({});
   ok(G.ombres.length === 1, 'sans prix relu, elle ATTEND au lieu d etre jugee au hasard');
   ok(!G.memoire.whale, 'et rien n est appris');
@@ -2231,6 +2233,156 @@ async function livreDOmbre() {
   ok(!G.memoire.whale && G.ombres.length === 0,
      'un prix aberrant la solde sans rien apprendre : les memes bornes que pour une position');
   ok((C.vue().compteurs.ombreAberrante || 0) === 1, 'et le cas est compte');
+}
+
+
+/* ==========================================================================
+ * 38. QUAND CE GENRE DE JETON PAIE
+ *
+ * « L'essentiel, c'est qu'il récolte une masse de données pour comprendre
+ *   comment trader correctement et faire de l'argent. »
+ *
+ * Tout etait juge a UN horizon — vingt minutes — et l'observation etait jetee.
+ * On ne pouvait donc jamais repondre a la seule question qui decide du
+ * resultat : QUAND vendre. Un jeton a +40 % a la vingtieme minute peut avoir
+ * fait +120 % a la huitieme, ou etre en route vers +300 % a la deuxieme heure.
+ * Ces trois cas donnaient exactement la meme ligne dans la memoire.
+ * ======================================================================== */
+async function profilsDansLeTemps() {
+  console.log('\n-- une courbe par trait, pas un seul chiffre --');
+  remise(sains());
+  const rapide = { scout: { liq: 'liq 5-25k', age: 'ne de <10 min' }, whale: { top: 'top 5-15%' },
+                   whisper: { press: 'achats massifs' } };
+  const lente = { scout: { liq: 'liq>100k', age: '2-6 h' }, whale: { top: 'top <5%' },
+                  whisper: { press: 'equilibre' } };
+  for (let i = 0; i < 10; i++) {
+    C.noteProfil(rapide, 5, 60); C.noteProfil(rapide, 15, 25);
+    C.noteProfil(rapide, 30, -5); C.noteProfil(rapide, 60, -20);
+    C.noteProfil(lente, 5, 4); C.noteProfil(lente, 15, 12);
+    C.noteProfil(lente, 30, 26); C.noteProfil(lente, 60, 55);
+  }
+  const cr = C.courbeDe('liq', 'liq 5-25k'), cl = C.courbeDe('liq', 'liq>100k');
+  console.log('   liq 5-25k : ' + cr.map((p) => p.h + 'min ' + p.moyenne + '%').join(' · '));
+  console.log('   liq>100k  : ' + cl.map((p) => p.h + 'min ' + p.moyenne + '%').join(' · '));
+  ok(cr.length === 4 && cl.length === 4, 'chaque valeur de trait porte sa courbe, echeance par echeance');
+  ok(cr[0].moyenne > cr[3].moyenne && cl[0].moyenne < cl[3].moyenne,
+     'et les deux populations se distinguent : l une culmine tot, l autre monte longtemps — '
+     + 'ce qu un chiffre unique a vingt minutes ne pouvait pas montrer');
+
+  console.log('\n-- d ou sort une duree de tenue PAR JETON --');
+  const a = C.horizonPour(rapide), b = C.horizonPour(lente);
+  console.log('   celui qui culmine tot → ' + (a && a.min) + ' min · celui qui monte → ' + (b && b.min) + ' min');
+  ok(!!a && a.min === 5, 'le jeton dont les traits culminent tot est tenu 5 min');
+  ok(!!b && b.min === 60, 'celui dont les traits montent longtemps est tenu 60 min');
+  ok(a.min !== b.min,
+     'deux jetons, deux durees — au lieu d une constante unique pour tout le monde');
+
+  console.log('\n-- mais pas sur trois observations --');
+  remise(sains());
+  C.noteProfil(rapide, 5, 60);
+  ok(C.courbeDe('liq', 'liq 5-25k') === null,
+     'en dessous de ' + C.PROFIL_MIN_OBS + ' observations, il n y a pas de courbe : une moyenne sur '
+     + 'deux jetons n est pas une courbe, c est deux jetons');
+  ok(C.horizonPour(rapide) === null, 'et aucune duree n en est tiree');
+
+  console.log('\n-- et la position dit d ou vient sa duree --');
+  remise(sains());
+  for (let i = 0; i < 12; i++) {
+    C.noteProfil(lente, 5, 4); C.noteProfil(lente, 15, 12);
+    C.noteProfil(lente, 30, 26); C.noteProfil(lente, 60, 55);
+  }
+  const E = C._etat();
+  C.ouvre({ addr: '0xp1', sym: 'P1', pool: '0xpp', prix: 1, mc: 3e5, minutes: 5, liq: 9000,
+            an: { score: 80, traits: lente } });
+  const p = E.positions[0];
+  console.log('   ' + p.tenueMin + ' min · « ' + p.tenueRaison + ' »');
+  ok(p.tenueMin === 60, 'elle est tenue 60 min, comme ses traits le suggerent');
+  ok(/courbes de ses traits culminent/.test(p.tenueRaison),
+     'et la raison est ecrite, pas deduite : « ' + p.tenueRaison + ' »');
+}
+
+/* ==========================================================================
+ * 39. UNE MESURE PRISE AU MAUVAIS MOMENT N'EST PAS UNE MESURE
+ *
+ * Les prix arrivent quand le jeton repasse dans un flux, pas a la seconde
+ * voulue. Sans borne, un jeton relu pour la premiere fois a quarante minutes
+ * remplirait d'un coup les echeances de 5, 15 et 30 avec son rendement a
+ * quarante — et les trois courbes seraient fausses sans que rien ne le
+ * signale. C'est exactement le genre de chiffre qui a l'air d'une donnee.
+ * ======================================================================== */
+async function jalonsHonnetes() {
+  console.log('\n-- une echeance ratee reste vide --');
+  ok(C.jalonValable(5, 6) === true, 'a 6 min, l echeance de 5 est valable');
+  ok(C.jalonValable(5, 12) === false, 'a 12 min, elle ne l est plus');
+  ok(C.jalonValable(60, 80) === true, 'a 80 min, celle de 60 l est encore (la tolerance suit l echelle)');
+  ok(C.jalonValable(60, 140) === false, 'a 140, non');
+  ok(C.jalonValable(30, 10) === false, 'et une echeance pas encore atteinte n est jamais remplie');
+
+  console.log('\n-- sur une ombre relue trop tard --');
+  remise(sains());
+  const E = C._etat();
+  const tr = { scout: { liq: 'liq 5-25k' } };
+  C.noteOmbre({ addr: '0xt', sym: 'TARD', prix: 1 }, { traits: tr, score: 70 }, null, null);
+  E.ombres[0].t = Date.now() - 45 * 60000;          /* premiere relecture a 45 min */
+  C.regleLesOmbres({ '0xt': { prix: 1.4 } });
+  ok(E.ombres.length === 1, 'l ombre est gardee : une echeance plus lointaine reste atteignable');
+  const jal = E.ombres[0].jalons;
+  console.log('   echeances remplies : ' + JSON.stringify(Object.keys(jal)));
+  ok(!jal[5] && !jal[15],
+     'les echeances de 5 et 15 min restent VIDES : on ne les remplit pas avec un prix de 45 min');
+  ok(jal[30] !== undefined,
+     'seule celle de 30 est remplie, parce que 45 min tombe dans sa tolerance');
+  ok(!C.courbeDe('liq', 'liq 5-25k') || !((C._etat().profils.liq['liq 5-25k'] || {})[5]),
+     'et rien n est ecrit dans la courbe des 5 min');
+
+  console.log('\n-- une ombre nourrit les agents UNE fois, pas cinq --');
+  remise(sains());
+  const F = C._etat();
+  C.noteOmbre({ addr: '0xu', sym: 'U', prix: 1 }, { traits: { whale: { top: 'top <5%' } }, score: 70 }, null, null);
+  for (const h of C.HORIZONS) {
+    F.ombres[0].t = Date.now() - h * 60000;
+    C.regleLesOmbres({ '0xu': { prix: 1.2 } });
+  }
+  const m = F.memoire.whale.top['top <5%'];
+  console.log('   jalons poses : ' + (F.compteurs.jalons || 0) + ' · memoire du Whale : n=' + m.n);
+  ok((F.compteurs.jalons || 0) === C.HORIZONS.length, 'les cinq echeances sont relevees');
+  ok(m.n === 1,
+     'mais la memoire de l agent ne compte qu UNE observation : sinon le meme jeton compterait cinq '
+     + 'fois et les cases gonfleraient sans qu on ait vu cinq jetons');
+}
+
+/* ==========================================================================
+ * 40. QUEL TRAIT PORTE DE L'INFORMATION
+ *
+ * Vingt-cinq traits sont releves sur chaque jeton, et rien ne disait lesquels
+ * servaient. Un trait dont toutes les valeurs rendent la meme chose n'apprend
+ * rien — et il DILUE les autres, puisque son ajustement s'ajoute au leur.
+ * ======================================================================== */
+async function traitsQuiSeparent() {
+  console.log('\n-- ce qui separe, et ce qui est du bruit --');
+  remise(sains());
+  /* `liq` separe nettement ; `vola` rend la meme chose partout. */
+  for (let i = 0; i < 10; i++) {
+    C.noteProfil({ a: { liq: 'liq<1k' } }, C.HORIZON_REF, -30 + (i % 3));
+    C.noteProfil({ a: { liq: 'liq>100k' } }, C.HORIZON_REF, 20 + (i % 3));
+    C.noteProfil({ a: { vola: 'calme' } }, C.HORIZON_REF, 2 + (i % 7) * 8);
+    C.noteProfil({ a: { vola: 'vola >12%' } }, C.HORIZON_REF, 3 + (i % 7) * 8);
+  }
+  const l = C.classementDesTraits();
+  console.log('   ' + l.map((t) => t.trait + ' ' + t.separation).join(' · '));
+  const liq = l.find((t) => t.trait === 'liq'), vo = l.find((t) => t.trait === 'vola');
+  ok(!!liq && !!vo, 'les deux traits sont classes');
+  ok(liq.separation > vo.separation * 3,
+     'la liquidite separe bien plus que la volatilite (' + liq.separation + ' contre ' + vo.separation + ')');
+  ok(l[0].trait === 'liq', 'et le classement met en tete celui qui porte l information');
+  console.log('   liq : ' + liq.meilleure.quoi + ' ' + liq.meilleure.moyenne + '% vs '
+    + liq.pire.quoi + ' ' + liq.pire.moyenne + '%');
+  ok(liq.ecartValeurs > 45,
+     'avec l ecart entre ses valeurs extremes (' + liq.ecartValeurs + ' points)');
+  ok(vo.ecartValeurs < 5,
+     'alors que celles de la volatilite rendent la meme chose (' + vo.ecartValeurs + ' points) : '
+     + 'ce trait ne separe rien, et il dilue les autres');
+  ok(C.vue().traits.length >= 2, 'et la vue publie le classement');
 }
 
 (async () => {
@@ -2272,6 +2424,9 @@ async function livreDOmbre() {
   await prendreUnGain();
   await quelNoeud();
   await livreDOmbre();
+  await profilsDansLeTemps();
+  await jalonsHonnetes();
+  await traitsQuiSeparent();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

@@ -463,7 +463,7 @@ function etatNeuf() {
     ouvertures: 0, maj: 0, dernierTour: 0, candidats: [], derniereErreur: null,
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
     seuil: SEUIL, derniers: [], depuisAjustement: 0, suites: [], sortieEssais: 0,
-    ombres: [], audit: {},
+    ombres: [], audit: {}, profils: {},
     /* la structure, qui est une donnee et non du code */
     roster: rosterNeuf(), ordreRevu: 0, journalStructure: [],
     /* ce qu'on a deja juge, pour ne pas le rejuger en boucle */
@@ -2053,8 +2053,12 @@ function regleLesSuites(marche) {
  * ombre, et leur en donner melangerait ce qu'on a fait avec ce qu'on aurait pu
  * faire.
  * ======================================================================== */
-const OMBRES_MAX = 500;
-const OMBRE_OUBLI_MS = 6 * 3600e3;
+/* Le dernier horizon est a deux heures : il faut donc garder une ombre assez
+   longtemps pour l'atteindre, et il y en a plus a la fois. Vingt jetons par
+   tour, un tour toutes les deux minutes et demie, deux heures de suivi : mille
+   deux cents suffit largement, et le fichier reste petit. */
+const OMBRES_MAX = 1200;
+const OMBRE_OUBLI_MS = 3 * 3600e3;
 const OMBRE_TENUE_MIN = 20;     /* la meme echeance qu'une position, pour comparer ce qui l'est */
 
 function noteOmbre(t, an, refus, quiRefuse) {
@@ -2067,6 +2071,7 @@ function noteOmbre(t, an, refus, quiRefuse) {
     echeance: now + OMBRE_TENUE_MIN * 60000,
     traits: an.traits, score: an.score,
     refus: refus || null, quiRefuse: quiRefuse || null,
+    jalons: {},           /* ce qu'il valait a chaque echeance atteinte */
   });
   if (E.ombres.length > OMBRES_MAX) E.ombres = E.ombres.slice(-OMBRES_MAX);
 }
@@ -2081,26 +2086,51 @@ function noteAudit(cle, r) {
   if (r <= -30) a.effondres++;
 }
 
+/* ---- UNE MESURE PRISE AU MAUVAIS MOMENT N'EST PAS UNE MESURE ----
+ * Les prix arrivent quand le jeton repasse dans un flux, pas a la seconde
+ * voulue. Sans cette borne, un jeton relu pour la premiere fois a quarante
+ * minutes remplirait d'un coup les echeances de 5, 15 et 30 minutes avec son
+ * rendement a quarante — et les trois courbes seraient fausses, sans que rien
+ * ne le signale. Une echeance ratee reste vide. */
+function jalonValable(h, age) { return age >= h && age <= h + Math.max(5, h * 0.5); }
+
 function regleLesOmbres(marche) {
   if (!Array.isArray(E.ombres) || !E.ombres.length) return 0;
   const now = Date.now();
   let n = 0;
+  const dernier = HORIZONS[HORIZONS.length - 1];
   E.ombres = E.ombres.filter((o) => {
     if (now - o.t > OMBRE_OUBLI_MS) return false;
-    if (now < o.echeance) return true;
+    const age = (now - o.t) / 60000;
+    if (!o.jalons) o.jalons = {};
     const brut = marche[o.adr];
     const x = (typeof brut === 'number') ? { prix: brut } : brut;
-    if (!x || !(x.prix > 0)) return true;          /* pas de prix relu : on attend, on n'invente pas */
-    const r = (x.prix - o.prix0) / o.prix0 * 100;
-    /* Les memes bornes que pour une position : un rapport aberrant ne decrit
-       rien, et une lecon tiree d'un chiffre faux se propage a tous les jetons
-       qui partagent le trait. */
-    if (!isFinite(r) || r > REND_MAX || r < REND_MIN) { compte('ombreAberrante'); return false; }
-    for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
-    noteAudit(o.refus ? (o.quiRefuse || 'refus') + ' · ' + String(o.refus).slice(0, 40) : 'achete ou retenu', r);
-    compte('ombresJugees');
-    n++;
-    return false;
+    if (x && x.prix > 0) {
+      const r = (x.prix - o.prix0) / o.prix0 * 100;
+      /* Les memes bornes que pour une position : un rapport aberrant ne decrit
+         rien, et une lecon tiree d'un chiffre faux se propage a tous les
+         jetons qui partagent le trait. */
+      if (!isFinite(r) || r > REND_MAX || r < REND_MIN) { compte('ombreAberrante'); return false; }
+      for (const h of HORIZONS) {
+        if (o.jalons[h] !== undefined) continue;
+        if (!jalonValable(h, age)) continue;
+        o.jalons[h] = Math.round(r * 10) / 10;
+        noteProfil(o.traits, h, r);
+        compte('jalons');
+        /* L'echeance de reference est la seule qui nourrisse la memoire des
+           agents et l'audit des vetos : sinon le meme jeton compterait cinq
+           fois, et les cases gonfleraient sans qu'on ait vu cinq jetons. */
+        if (h === HORIZON_REF) {
+          for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
+          noteAudit(o.refus ? (o.quiRefuse || 'refus') + ' · ' + String(o.refus).slice(0, 40)
+                            : 'achete ou retenu', r);
+          compte('ombresJugees');
+          n++;
+        }
+      }
+    }
+    /* On la garde tant qu'une echeance reste atteignable. */
+    return age <= dernier + Math.max(5, dernier * 0.5);
   });
   return n;
 }
@@ -2118,6 +2148,143 @@ function auditDesRefus() {
   }
   out.sort((x, y) => y.partMontes - x.partMontes);
   return out.slice(0, 10);
+}
+
+
+/* ==========================================================================
+ * LE PROFIL DANS LE TEMPS : QUAND CE GENRE DE JETON PAIE
+ *
+ * « L'essentiel, c'est qu'il récolte une masse de données pour comprendre
+ *   comment trader correctement et faire de l'argent. »
+ *
+ * Tout etait juge a UN horizon : vingt minutes, et l'observation etait jetee.
+ * On ne pouvait donc jamais repondre a la seule question qui decide du
+ * resultat — QUAND vendre. Un jeton a +40 % a la vingtieme minute peut avoir
+ * fait +120 % a la huitieme, ou etre en route vers +300 % a la deuxieme heure.
+ * Ces trois cas donnaient exactement la meme ligne dans la memoire.
+ *
+ * Chaque jeton suivi est maintenant releve a CINQ echeances. Le cout est nul :
+ * ces prix sont deja lus a chaque tour, on se contentait de les ignorer.
+ *
+ * ---- CE QUE CA REND POSSIBLE ----
+ *
+ * Une courbe par TRAIT. Non plus « les jetons a forte liquidite rendent +3 % »,
+ * mais « ils font +12 % a cinq minutes, +8 % a quinze, et rendent tout a une
+ * heure » — ce qui ne se lit pas du tout pareil, et ne se trade pas pareil.
+ *
+ * De la sort une duree de tenue par jeton, tiree de ses propres traits, au
+ * lieu d'une constante unique pour tout le monde. C'est la premiere fois que
+ * « comment trader correctement » devient une question a laquelle la colonie
+ * peut repondre par une mesure.
+ * ======================================================================== */
+const HORIZONS = [5, 15, 30, 60, 120];        /* en minutes */
+const HORIZON_REF = 30;                       /* celui qui nourrit la memoire des agents */
+const PROFIL_MIN_OBS = 6;                     /* en dessous, une courbe n'est pas une courbe */
+
+function profilCase(trait, valeur, h) {
+  if (!E.profils || typeof E.profils !== 'object') E.profils = {};
+  const t = E.profils[trait] || (E.profils[trait] = {});
+  const v = t[valeur] || (t[valeur] = {});
+  return v[h] || (v[h] = { n: 0, s: 0, s2: 0 });
+}
+function noteProfil(traits, h, r) {
+  for (const agent in traits) {
+    for (const trait in traits[agent]) {
+      const c = profilCase(trait, traits[agent][trait], h);
+      c.n++; c.s += r; c.s2 += r * r;
+    }
+  }
+}
+
+/* ---- LA COURBE D'UN TRAIT ----
+ * Ce que rend, en moyenne, un jeton portant cette caracteristique, a chaque
+ * echeance. Les cases trop peu observees sont ecartees : une moyenne sur deux
+ * jetons n'est pas une courbe, c'est deux jetons. */
+function courbeDe(trait, valeur) {
+  const v = ((E.profils || {})[trait] || {})[valeur];
+  if (!v) return null;
+  const pts = [];
+  for (const h of HORIZONS) {
+    const c = v[h];
+    if (!c || c.n < PROFIL_MIN_OBS) continue;
+    pts.push({ h, n: c.n, moyenne: Math.round(c.s / c.n * 10) / 10, ecart: Math.round(ecartType(c) || 0) });
+  }
+  return pts.length ? pts : null;
+}
+
+/* ---- LA DUREE QUE CE JETON-LA MERITE ----
+ * Chaque trait vote pour l'echeance ou IL rend le plus, pondere par ce qu'on
+ * en sait. Sans assez d'observations, on ne repond pas : c'est la tenue
+ * apprise par le Closer qui reprend la main, comme avant. */
+function horizonPour(traits) {
+  const votes = {};
+  let poids = 0;
+  for (const agent in (traits || {})) {
+    for (const trait in traits[agent]) {
+      const c = courbeDe(trait, traits[agent][trait]);
+      if (!c) continue;
+      let best = null;
+      for (const p of c) if (!best || p.moyenne > best.moyenne) best = p;
+      if (!best || best.moyenne <= 0) continue;   /* rien a gagner : ce trait ne vote pas */
+      const w = confiance(best.n);
+      votes[best.h] = (votes[best.h] || 0) + w;
+      poids += w;
+    }
+  }
+  if (poids < 1) return null;
+  let gagnant = null;
+  for (const h in votes) if (!gagnant || votes[h] > votes[gagnant]) gagnant = h;
+  return { min: parseInt(gagnant, 10), poids: Math.round(poids * 10) / 10,
+           votes: Object.keys(votes).map((h) => ({ h: parseInt(h, 10), poids: Math.round(votes[h] * 10) / 10 })) };
+}
+
+/* ==========================================================================
+ * QUEL TRAIT PORTE DE L'INFORMATION
+ *
+ * Vingt-cinq traits sont releves sur chaque jeton, et jusqu'ici rien ne disait
+ * lesquels servaient. Un trait dont toutes les valeurs rendent la meme chose
+ * n'apprend rien — il dilue meme les autres, puisque son ajustement s'ajoute
+ * au leur.
+ *
+ * Ce qu'on mesure : l'ECART entre ses valeurs, rapporte au bruit interne de
+ * chacune. Si « liq<1k » rend -30 % et « liq>100k » +20 %, avec des ecarts
+ * types de 15, le trait separe pour de bon. Si toutes ses valeurs rendent
+ * +2 % a 40 pres, il ne separe rien.
+ * ======================================================================== */
+function informationDe(trait) {
+  const v = (E.profils || {})[trait];
+  if (!v) return null;
+  const vals = [];
+  for (const val in v) {
+    const c = v[val][HORIZON_REF];
+    if (!c || c.n < PROFIL_MIN_OBS) continue;
+    vals.push({ val, n: c.n, moy: c.s / c.n, sd: ecartType(c) || 0 });
+  }
+  if (vals.length < 2) return null;
+  const tot = vals.reduce((a, x) => a + x.n, 0);
+  const moyG = vals.reduce((a, x) => a + x.moy * x.n, 0) / tot;
+  /* L'ecart entre les valeurs, pondere par leurs effectifs. */
+  const entre = Math.sqrt(vals.reduce((a, x) => a + x.n * (x.moy - moyG) * (x.moy - moyG), 0) / tot);
+  /* Et le bruit a l'interieur de chacune. */
+  const dedans = Math.sqrt(vals.reduce((a, x) => a + x.n * x.sd * x.sd, 0) / tot) || 1;
+  const meilleure = vals.slice().sort((a, b) => b.moy - a.moy)[0];
+  const pire = vals.slice().sort((a, b) => a.moy - b.moy)[0];
+  return {
+    trait, obs: tot, valeurs: vals.length,
+    separation: Math.round(entre / dedans * 100) / 100,
+    ecartValeurs: Math.round((meilleure.moy - pire.moy) * 10) / 10,
+    meilleure: { quoi: meilleure.val, moyenne: Math.round(meilleure.moy * 10) / 10, n: meilleure.n },
+    pire: { quoi: pire.val, moyenne: Math.round(pire.moy * 10) / 10, n: pire.n },
+  };
+}
+function classementDesTraits() {
+  const out = [];
+  for (const trait in (E.profils || {})) {
+    const i = informationDe(trait);
+    if (i) out.push(i);
+  }
+  out.sort((a, b) => b.separation - a.separation);
+  return out;
 }
 
 /* --------------------------------------------------------- les positions */
@@ -2157,11 +2324,20 @@ function ouvre(t) {
     return false;
   }
   E.banque.arret = null;
-  const tenue = tenueApprise();
+  /* ---- LA DUREE VIENT DU JETON, PAS D'UNE CONSTANTE ----
+   * Les courbes par trait disent quand ce GENRE de jeton rend le plus. Quand
+   * elles ont assez d'observations, elles decident ; sinon la tenue apprise
+   * par le Closer reprend la main, comme avant. */
+  const horizon = horizonPour(t.an && t.an.traits);
+  const tenue = horizon ? { min: horizon.min, appris: true, parProfil: true, poids: horizon.poids }
+                        : tenueApprise();
   E.positions.push({
     sym: t.sym, adr: t.addr, pool: t.pool, prix0: t.prix, t0: Date.now(),
     mise: b.mise, methode: b.methode, regime: b.regime, raisonMise: b.raison,
     liq0: t.liq || 0, tenueBase: tenue.min,
+    tenueRaison: tenue.parProfil
+      ? 'les courbes de ses traits culminent a ' + tenue.min + ' min (poids ' + tenue.poids + ')'
+      : (tenue.appris ? 'duree apprise par le Closer' : 'duree par defaut'),
     mcAchat: Math.round(t.mc || 0), liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null,
     traits: t.an.traits, score: t.an.score, mc: t.mc, minutes: Math.round(t.minutes || 0),
     origine: t.origine || 'pools', tenueMin: tenue.min, traj: [],
@@ -3047,6 +3223,7 @@ function vue() {
       const r = (x > 0) ? (x - p.prix0) / p.prix0 * 100 : null;
       return { sym: p.sym, adr: p.adr, pool: p.pool, minutes: p.minutes, score: p.score,
                mcAchat: p.mcAchat === undefined ? (p.mc || null) : p.mcAchat,
+               tenueRaison: p.tenueRaison || null,
                liens: p.liens || null, prolonge: p.prolonge || 0,
                ouverteDepuis: Date.now() - p.t0, tenueMin: p.tenueMin,
                mise: p.mise, methode: p.methode, regime: p.regime, raisonMise: p.raisonMise,
@@ -3061,6 +3238,9 @@ function vue() {
     suites: (E.suites || []).map((s) => ({ sym: s.sym, rSortie: s.rSortie, echeance: s.echeance })),
     ombres: { enAttente: (E.ombres || []).length, jugees: E.compteurs.ombresJugees || 0 },
     audit: auditDesRefus(),
+    traits: classementDesTraits().slice(0, 12),
+    horizons: HORIZONS, horizonRef: HORIZON_REF,
+    jalons: E.compteurs.jalons || 0,
     surveillance: surveilles(),
     connus: Object.keys(E.connus).length,
     bannis: Object.keys(E.connus).filter((k) => E.connus[k].permanent).length,
@@ -3159,6 +3339,8 @@ module.exports = {
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN,
+  noteProfil, courbeDe, horizonPour, informationDe, classementDesTraits,
+  HORIZONS, HORIZON_REF, PROFIL_MIN_OBS, jalonValable,
   lisTrades, lisFluxDex, jetonDepuisDex, rassemble,
   sondeCoingecko, jsonGT, cleCoingecko, goplusEntetes, goplusIdentifie, noeuds, peutRepondre,
   _jeton: () => goplusJeton, _posejeton: (j) => { goplusJeton = j; },
