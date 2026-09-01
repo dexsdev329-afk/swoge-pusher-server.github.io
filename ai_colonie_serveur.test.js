@@ -2148,6 +2148,91 @@ async function quelNoeud() {
   ok(/DRPC_API_KEY/.test(a.quoiFaire), 'la variable est nommee : « ' + a.quoiFaire.slice(0, 80) + '… »');
 }
 
+
+/* ==========================================================================
+ * 37. APPRENDRE DE CE QU'ON N'A PAS ACHETE
+ *
+ * « Fais-lui trader plus de jetons, qu'il en analyse plus, pour s'améliorer
+ *   plus vite. »
+ *
+ * L'intuition est juste, mais le frein n'etait pas le nombre de positions : il
+ * etait dans ce que les agents avaient le droit de voir. Ils n'apprenaient QUE
+ * des jetons achetes — c'est-a-dire de ceux qui avaient passe tous les vetos et
+ * depasse le seuil. La memoire ne contenait donc que des cas selectionnes par
+ * les regles qu'on voulait justement evaluer : un biais de selection dans sa
+ * forme la plus pure. Le Warden ne pouvait pas savoir si les contrats qu'il
+ * bloquait s'effondraient vraiment, puisqu'il ne voyait jamais la suite.
+ * ======================================================================== */
+async function livreDOmbre() {
+  console.log('\n-- chaque jeton analyse laisse une ombre --');
+  remise(sains());
+  await C.tour();
+  let v = C.vue();
+  console.log('   examines ' + v.candidats.length + ' · positions ' + v.positions.length
+    + ' · ombres en attente ' + v.ombres.enAttente);
+  ok(v.ombres.enAttente >= v.candidats.length - v.positions.length,
+     'tous les jetons examines laissent une ombre, pas seulement les achetes ('
+     + v.ombres.enAttente + ' pour ' + v.candidats.length + ' examines)');
+
+  console.log('\n-- et a l echeance, TOUS les analystes en apprennent --');
+  remise(sains());
+  const E = C._etat();
+  const tr = { whale: { top: 'top >50%' }, scout: { age: 'ne de <10 min' } };
+  for (let i = 0; i < 10; i++)
+    C.noteOmbre({ addr: '0x' + i, sym: 'R' + i, prix: 1 },
+                { traits: tr, score: 20 }, 'un porteur tient 90% du circulant', 'whale');
+  ok(E.ombres.length === 10, 'dix jetons refuses pour concentration sont suivis');
+  for (const o of E.ombres) o.echeance = Date.now() - 1000;
+  const m = {};
+  E.ombres.forEach((o, i) => { m[o.adr] = { prix: i === 0 ? 1.5 : (i < 6 ? 0.4 : 1.02) }; });
+  const n = C.regleLesOmbres(m);
+  console.log('   ' + n + ' ombres jugees · memoire whale : ' + JSON.stringify(E.memoire.whale));
+  ok(n === 10, 'les dix sont jugees sur des prix relus');
+  ok(!!E.memoire.whale && E.memoire.whale.top['top >50%'].n === 10,
+     'et le Whale apprend enfin ce que fait un jeton qu il a REFUSE — ce qu il ne pouvait pas '
+     + 'savoir tant qu il n apprenait que des achetes');
+  ok(E.memoire.whale.top['top >50%'].s < 0,
+     'ici, ces jetons perdent en moyenne : son veto est confirme par la mesure');
+
+  console.log('\n-- ce qui donne un AUDIT des vetos --');
+  const a = C.auditDesRefus()[0];
+  console.log('   ' + JSON.stringify(a));
+  ok(!!a && a.n === 10, 'chaque raison de refus porte son compte');
+  ok(a.effondres === 5 && a.montes === 1,
+     'et ce que les jetons ecartes ont VRAIMENT fait : ' + a.effondres + ' effondres, '
+     + a.montes + ' monte');
+  ok(a.moyenne < 0,
+     'un veto qui ecarte surtout des perdants est une protection (' + a.moyenne + ' % en moyenne)');
+  ok(C.vue().audit.length > 0, 'et la vue le publie : un veto qui ecarterait des gagnants doit se voir');
+
+  console.log('\n-- mais les agents de DECISION restent en dehors --');
+  remise(sains());
+  const F = C._etat();
+  C.noteOmbre({ addr: '0xz', sym: 'Z', prix: 1 },
+              { traits: { whale: { top: 'top <5%' } }, score: 80 }, null, null);
+  F.ombres[0].echeance = Date.now() - 1000;
+  C.regleLesOmbres({ '0xz': { prix: 1.4 } });
+  console.log('   agents ayant appris : ' + JSON.stringify(Object.keys(F.memoire)));
+  ok(!!F.memoire.whale, 'les analystes apprennent');
+  ok(!F.memoire.banquier && !F.memoire.closer && !F.memoire.sentinelle && !F.memoire.promoteur,
+     'le Banquier, le Closer, la Sentinelle et le Promoteur non : une position qu on n a pas prise '
+     + 'n a ni mise, ni duree tenue, ni gain pris — leur en donner melangerait ce qu on a fait avec '
+     + 'ce qu on aurait pu faire');
+
+  console.log('\n-- et une ombre qu on ne peut pas juger n invente rien --');
+  remise(sains());
+  const G = C._etat();
+  C.noteOmbre({ addr: '0xy', sym: 'Y', prix: 1 }, { traits: { whale: { top: 'top <5%' } }, score: 80 }, null, null);
+  G.ombres[0].echeance = Date.now() - 1000;
+  C.regleLesOmbres({});
+  ok(G.ombres.length === 1, 'sans prix relu, elle ATTEND au lieu d etre jugee au hasard');
+  ok(!G.memoire.whale, 'et rien n est appris');
+  C.regleLesOmbres({ '0xy': { prix: 1e9 } });     /* un rapport aberrant */
+  ok(!G.memoire.whale && G.ombres.length === 0,
+     'un prix aberrant la solde sans rien apprendre : les memes bornes que pour une position');
+  ok((C.vue().compteurs.ombreAberrante || 0) === 1, 'et le cas est compte');
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -2186,6 +2271,7 @@ async function quelNoeud() {
   await bandesDage();
   await prendreUnGain();
   await quelNoeud();
+  await livreDOmbre();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

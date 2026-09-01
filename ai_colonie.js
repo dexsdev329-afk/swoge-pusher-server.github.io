@@ -167,7 +167,14 @@ const MISE = 50;                /* ce qu'une position engage */
 const TENUE_DEFAUT_MIN = 20;    /* et ce que le Closer tient, avant d'apprendre */
 const AGE_MAX_MIN = 360;        /* au-dela, ce n'est plus un jeton neuf */
 const SEUIL = 55;               /* la note qu'il faut atteindre pour entrer */
-const POSITIONS_MAX = 6;        /* jamais plus a la fois : au-dela on ne mesure plus rien */
+/* ---- COMBIEN DE POSITIONS A LA FOIS ----
+ * Six, c'etait une prudence de trop : la vraie borne est celle du Banquier —
+ * trente pour cent de la caisse engages au total — et a trois pour cent la
+ * mise, elle en autorise dix. Six faisait donc taire le Banquier sans le dire,
+ * et deux constantes qui se limitent l'une l'autre en silence finissent
+ * toujours par cacher laquelle des deux decide vraiment.
+ * On les accorde : dix ici, et le Banquier reste le seul juge du montant. */
+const POSITIONS_MAX = 10;
 const CADENCE_MS = 150000;      /* un tour toutes les deux minutes et demie */
 
 /* Le temps de bloc, MESURE sur la chaine : 0,101 s. Un chiffre commente est un
@@ -456,6 +463,7 @@ function etatNeuf() {
     ouvertures: 0, maj: 0, dernierTour: 0, candidats: [], derniereErreur: null,
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
     seuil: SEUIL, derniers: [], depuisAjustement: 0, suites: [], sortieEssais: 0,
+    ombres: [], audit: {},
     /* la structure, qui est une donnee et non du code */
     roster: rosterNeuf(), ordreRevu: 0, journalStructure: [],
     /* ce qu'on a deja juge, pour ne pas le rejuger en boucle */
@@ -1997,6 +2005,121 @@ function regleLesSuites(marche) {
   return appris;
 }
 
+
+/* ==========================================================================
+ * LE LIVRE D'OMBRE : APPRENDRE DE CE QU'ON N'A PAS ACHETE
+ *
+ * « Fais-lui trader plus de jetons, qu'il en analyse plus, pour s'améliorer
+ *   plus vite. »
+ *
+ * L'intuition est juste, mais le frein n'etait pas le nombre de positions.
+ * Il etait dans ce que les agents avaient le droit de voir.
+ *
+ * ---- LE DEFAUT, ET IL EST STATISTIQUE ----
+ *
+ * Ils n'apprenaient QUE des jetons achetes. Or un jeton n'est achete que s'il
+ * a passe tous les vetos et depasse le seuil : la memoire ne contenait donc
+ * que des cas selectionnes par les regles qu'on voulait justement evaluer.
+ * C'est un biais de selection dans sa forme la plus pure — le Warden ne
+ * pouvait pas savoir si les contrats qu'il bloquait s'effondraient vraiment,
+ * puisqu'il ne voyait jamais la suite. Six positions par heure, et aucune
+ * information sur les quatre-vingt-quatorze autres jetons examines.
+ *
+ * ---- CE QU'ON CHANGE ----
+ *
+ * Chaque jeton ANALYSE laisse une ombre : son prix, ses traits, sa note, et la
+ * raison de son refus s'il y en a une. A l'echeance, on relit son prix — le
+ * flux des pools le donne gratuitement — et tous les agents d'analyse
+ * apprennent de ce qu'il a fait. Achete ou non.
+ *
+ * C'est legitime parce qu'ils apprennent un POURCENTAGE, pas des dollars : le
+ * rendement d'un jeton est le meme qu'on ait mise dessus ou pas. Rien n'est
+ * simule, rien n'est suppose ; c'est un prix relu, comme les autres.
+ *
+ * Le gain est d'un ordre de grandeur : dix a vingt observations par tour au
+ * lieu de zero a une, et sur la population ENTIERE au lieu de sa partie deja
+ * approuvee.
+ *
+ * ---- ET LES VETOS SE FONT AUDITER ----
+ *
+ * C'est la consequence la plus utile. On saura si les jetons refuses pour
+ * « un porteur tient 90 % » se sont vraiment effondres, et combien de ceux
+ * qu'on a ecartes sont montes. Un veto qui ecarte surtout des gagnants n'est
+ * pas une protection, c'est un cout — et jusqu'ici rien n'aurait pu le dire.
+ *
+ * Les agents qui apprennent de leurs propres DECISIONS — Banquier, Closer,
+ * Sentinelle, Promoteur — restent en dehors : une position qu'on n'a pas prise
+ * n'a ni mise, ni duree tenue, ni gain pris. Ils n'ont rien a apprendre d'une
+ * ombre, et leur en donner melangerait ce qu'on a fait avec ce qu'on aurait pu
+ * faire.
+ * ======================================================================== */
+const OMBRES_MAX = 500;
+const OMBRE_OUBLI_MS = 6 * 3600e3;
+const OMBRE_TENUE_MIN = 20;     /* la meme echeance qu'une position, pour comparer ce qui l'est */
+
+function noteOmbre(t, an, refus, quiRefuse) {
+  if (!Array.isArray(E.ombres)) E.ombres = [];
+  if (!(t.prix > 0) || !an) return;
+  if (E.ombres.some((o) => o.adr === t.addr)) return;   /* une seule ombre a la fois par jeton */
+  const now = Date.now();
+  E.ombres.push({
+    adr: t.addr, sym: t.sym, prix0: t.prix, t: now,
+    echeance: now + OMBRE_TENUE_MIN * 60000,
+    traits: an.traits, score: an.score,
+    refus: refus || null, quiRefuse: quiRefuse || null,
+  });
+  if (E.ombres.length > OMBRES_MAX) E.ombres = E.ombres.slice(-OMBRES_MAX);
+}
+
+/* L'audit des vetos : par raison de refus, ce que les jetons ecartes ont fait.
+   Un veto qui ecarte surtout des gagnants n'est pas une protection. */
+function noteAudit(cle, r) {
+  if (!E.audit || typeof E.audit !== 'object') E.audit = {};
+  const a = E.audit[cle] || (E.audit[cle] = { n: 0, s: 0, montes: 0, effondres: 0 });
+  a.n++; a.s += r;
+  if (r >= 20) a.montes++;
+  if (r <= -30) a.effondres++;
+}
+
+function regleLesOmbres(marche) {
+  if (!Array.isArray(E.ombres) || !E.ombres.length) return 0;
+  const now = Date.now();
+  let n = 0;
+  E.ombres = E.ombres.filter((o) => {
+    if (now - o.t > OMBRE_OUBLI_MS) return false;
+    if (now < o.echeance) return true;
+    const brut = marche[o.adr];
+    const x = (typeof brut === 'number') ? { prix: brut } : brut;
+    if (!x || !(x.prix > 0)) return true;          /* pas de prix relu : on attend, on n'invente pas */
+    const r = (x.prix - o.prix0) / o.prix0 * 100;
+    /* Les memes bornes que pour une position : un rapport aberrant ne decrit
+       rien, et une lecon tiree d'un chiffre faux se propage a tous les jetons
+       qui partagent le trait. */
+    if (!isFinite(r) || r > REND_MAX || r < REND_MIN) { compte('ombreAberrante'); return false; }
+    for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
+    noteAudit(o.refus ? (o.quiRefuse || 'refus') + ' · ' + String(o.refus).slice(0, 40) : 'achete ou retenu', r);
+    compte('ombresJugees');
+    n++;
+    return false;
+  });
+  return n;
+}
+
+/* Ce que la page montre de l'audit : par raison, combien ont ete ecartes et ce
+   qu'ils ont fait. Trie par ce qui coute le plus cher a se tromper. */
+function auditDesRefus() {
+  const out = [];
+  for (const cle in (E.audit || {})) {
+    const a = E.audit[cle];
+    if (a.n < 3) continue;
+    out.push({ cle, n: a.n, moyenne: Math.round(a.s / a.n * 10) / 10,
+               montes: a.montes, effondres: a.effondres,
+               partMontes: Math.round(a.montes / a.n * 100) });
+  }
+  out.sort((x, y) => y.partMontes - x.partMontes);
+  return out.slice(0, 10);
+}
+
 /* --------------------------------------------------------- les positions */
 const TENUES = [5, 10, 20, 40, 80, 160];
 function trancheTenue(min) {
@@ -2768,6 +2891,7 @@ async function tour() {
 
     /* On revient voir ce qu'on a vendu tot : c'est la que la lecon se forme. */
     regleLesSuites(prix);
+    regleLesOmbres(prix);
     const fermees = regle(prix);
 
     /* ---- CE QU'ON NE REPAIE PAS ----
@@ -2778,7 +2902,11 @@ async function tour() {
     for (const t of liste) {
       const d = doitExaminer(t);
       if (d.oui) aVoir.push(t); else ecartes.push({ sym: t.sym, pourquoi: d.pourquoi });
-      if (aVoir.length >= 10) break;
+      /* Vingt au lieu de dix : depuis que les appels qui ne peuvent pas
+         repondre ne sont plus payes, un jeton jeune et calme coute UN appel au
+         lieu de quatre. Le meme budget en couvre donc deux fois plus — et
+         chacun laisse une ombre dont tout le monde apprend. */
+      if (aVoir.length >= 20) break;
     }
     compte('reexamensEvites', ecartes.length);
 
@@ -2831,6 +2959,9 @@ async function tour() {
         t.an = an;
       }
       noteConnu(t, refus, an.score);
+      /* Achete ou refuse, il laisse une ombre : c'est de la que viendra le
+         gros de l'apprentissage, et l'audit des vetos avec. */
+      noteOmbre(t, an, refus, quiRefuse);
       examines.push({ t, refus, quiRefuse, an });
       if (!refus && ouvre(t)) ouvertes++;
       await dors(200);
@@ -2928,6 +3059,8 @@ function vue() {
     evites: E.evites || [],
     bandes: E.bandes || [],
     suites: (E.suites || []).map((s) => ({ sym: s.sym, rSortie: s.rSortie, echeance: s.echeance })),
+    ombres: { enAttente: (E.ombres || []).length, jugees: E.compteurs.ombresJugees || 0 },
+    audit: auditDesRefus(),
     surveillance: surveilles(),
     connus: Object.keys(E.connus).length,
     bannis: Object.keys(E.connus).filter((k) => E.connus[k].permanent).length,
@@ -3025,6 +3158,7 @@ module.exports = {
   revoitStrategie, seuilCourant, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
+  noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN,
   lisTrades, lisFluxDex, jetonDepuisDex, rassemble,
   sondeCoingecko, jsonGT, cleCoingecko, goplusEntetes, goplusIdentifie, noeuds, peutRepondre,
   _jeton: () => goplusJeton, _posejeton: (j) => { goplusJeton = j; },
