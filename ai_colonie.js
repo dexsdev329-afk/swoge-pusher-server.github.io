@@ -61,7 +61,18 @@ const TMP = FICHIER + '.tmp';
 /* ---------------------------------------------------------------- reglages */
 const GT = 'https://api.geckoterminal.com/api/v2/networks/robinhood';
 const ENTETES = { Accept: 'application/json;version=20230302' };
+/* ---- DEUX NOEUDS, PARCE QU'UN SEUL COUPE ----
+ * Le noeud officiel refuse apres quelques lectures a la file : quatre sur six,
+ * mesure. Un second noeud public a ete cherche et trouve — dRPC sert bien la
+ * chaine 4663, sans cle. Il a une limite a lui : dix mille blocs par
+ * `eth_getLogs`, soit dix-sept minutes de cette chaine. Nos jetons ont une a
+ * six minutes, donc il couvre le cas courant ; au-dela il n'est simplement pas
+ * candidat, et on le dit plutot que de lui envoyer une demande qu'il refusera.
+ *
+ * L'espacement est tenu PAR NOEUD : c'est ce qui double reellement le debit,
+ * et non le fait d'avoir une adresse de plus dans une liste. */
 const RPC_RH = 'https://rpc.mainnet.chain.robinhood.com';
+const RPC_SECOURS = 'https://robinhood.drpc.org';
 const SUJET_TRANSFERT = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const ZERO = '0x0000000000000000000000000000000000000000';
 const MORT = '0x000000000000000000000000000000000000dead';
@@ -125,11 +136,14 @@ const SERVICES = {
   pools:   { nom: 'GeckoTerminal · nouveaux pools', cout: 0, quoi: 'age, liquidite, capitalisation, achats et ventes' },
   profils: { nom: 'DexScreener · profils recents', cout: 0, quoi: 'des jetons neufs dont quelqu\'un a rempli la fiche' },
   boosts:  { nom: 'DexScreener · jetons pousses', cout: 0, quoi: 'des jetons dont quelqu\'un a paye la mise en avant' },
-  chaine:  { nom: 'Chaine 4663 · les blocs eux-memes', cout: 1, quoi: 'qui detient quoi, en soldant les transferts' },
+  chaine:  { nom: 'Chaine 4663 · noeud officiel', cout: 1, quoi: 'qui detient quoi, en soldant les transferts' },
+  chaine2: { nom: 'Chaine 4663 · noeud dRPC', cout: 1, quoi: 'le meme, en secours quand l\'officiel sature (10 000 blocs max)' },
   goplus:  { nom: 'GoPlus · securite du contrat', cout: 1, quoi: 'honeypot, taxes, pouvoirs du proprietaire' },
   trades:  { nom: 'GeckoTerminal · les trades un par un', cout: 1, quoi: 'quels portefeuilles achetent, et pour combien' },
   dex:     { nom: 'DexScreener · second avis', cout: 1, quoi: 'un deuxieme prix, les autres pools, les reseaux sociaux' },
   ohlcv:   { nom: 'GeckoTerminal · chandelles', cout: 1, quoi: 'la volatilite reellement observee' },
+  conseil: { nom: 'Anthropic · Claude Haiku', cout: 1,
+             quoi: 'un avis sur les cas limites, borne a 8 points et jamais sur un veto' },
 };
 
 /* ---- CE QUI A ETE ESSAYE ET QUI NE MARCHE PAS ----
@@ -190,6 +204,11 @@ const TRAITS = {
    * lequel a paye est une lecon que la colonie ne pouvait pas apprendre tant
    * qu'elle n'avait qu'une seule source. */
   origine: { besoin: null, f: (t) => 'trouve par ' + (t.origine || 'pools') },
+  /* Ce que le Conseiller a repondu devient une case comme une autre. C'est ce
+     qui fait qu'il REPOND de ses avis : si « favorable » finit mal, la case le
+     dit, et son influence se reduit d'elle-meme. */
+  avis:    { besoin: null, f: (t) => t.conseil ? 'conseiller ' + t.conseil.avis
+                                               : 'conseiller non consulte' },
 
   /* --- un appel a GoPlus --- */
   taxe:   { besoin: 'goplus', f: (t) => { const g = t.g || {};
@@ -277,7 +296,7 @@ function besoinsDuTrait(spec) {
  * ======================================================================== */
 const ROSTER_DEPART = [
   { key: 'scout', nom: 'Scout', emoji: '🛰️', couleur: '#3d7bd6', role: 'source', ordre: 0,
-    mission: 'Ratisse trois flux pour trouver les jetons qui viennent de naitre',
+    mission: 'Ratisse trois flux, et ecarte tout de suite ce qui est deja vide',
     traits: ['age', 'liq', 'origine'] },
   { key: 'warden', nom: 'Warden', emoji: '🛡️', couleur: '#9b6cf0', role: 'garde', ordre: 1,
     mission: 'Controle le contrat : honeypot, taxes, pouvoirs du proprietaire',
@@ -291,10 +310,19 @@ const ROSTER_DEPART = [
   { key: 'oracle', nom: 'Oracle', emoji: '🔮', couleur: '#f2b21e', role: 'note', ordre: 4,
     mission: 'Note, apprend de chaque position fermee, et tranche',
     traits: ['mc', 'elan', 'vola', 'accord', 'social', 'pools'] },
-  { key: 'banquier', nom: 'Banquier', emoji: '🏦', couleur: '#5ad1a0', role: 'banque', ordre: 5,
+  { key: 'conseiller', nom: 'Conseiller', emoji: '🧠', couleur: '#b98cff', role: 'conseil', ordre: 5,
+    mission: 'Donne un avis sur les cas limites, et repond de ses avis comme les autres',
+    traits: ['avis'] },
+  { key: 'sentinelle', nom: 'Sentinelle', emoji: '🔭', couleur: '#c9a227', role: 'veille', ordre: 6,
+    mission: 'Surveille chaque position ouverte et coupe quand le sol se derobe',
+    traits: ['derive', 'liq'] },
+  { key: 'promoteur', nom: 'Promoteur', emoji: '⏳', couleur: '#7fb3ff', role: 'prolonge', ordre: 7,
+    mission: 'Decide de prolonger une position qui monte, et apprend de SA decision',
+    traits: ['gain', 'note', 'fois'] },
+  { key: 'banquier', nom: 'Banquier', emoji: '🏦', couleur: '#5ad1a0', role: 'banque', ordre: 8,
     mission: 'Choisit la mise selon la caisse du moment, et apprend quelle methode paie',
     traits: ['methode', 'regime'] },
-  { key: 'closer', nom: 'Closer', emoji: '💰', couleur: '#e83e8c', role: 'execution', ordre: 6,
+  { key: 'closer', nom: 'Closer', emoji: '💰', couleur: '#e83e8c', role: 'execution', ordre: 9,
     mission: 'Ouvre au prix reel, tient la duree qu\'il a apprise, ferme au prix reel',
     traits: ['tenue'] },
 ];
@@ -307,12 +335,36 @@ const REORDONNABLES = ['warden', 'whale', 'whisper'];
 
 /* ------------------------------------------------------------------- l'etat */
 function rosterNeuf() { return JSON.parse(JSON.stringify(ROSTER_DEPART)); }
+/* ---- POURQUOI LA VERSION PASSE A 3 ----
+ * « Remets aussi toutes les données à zéro, il y a eu un bug, on a un solde à
+ *   500 millions de dollars. »
+ *
+ * Ce solde vient d'une division : le rendement se calcule en
+ * (prix - prix0) / prix0, et un jeton a tres faible decimale relu depuis une
+ * autre source donnait un rapport a plusieurs millions pour cent. Trente
+ * dollars de mise devenaient des centaines de millions de papier. C'est
+ * corrige — au-dela de bornes plausibles, plus rien n'est comptabilise — mais
+ * la tresorerie enregistree, elle, reste fausse, et TOUT ce qui en descend
+ * l'est aussi : la courbe, le meilleur multiple, le releve du Banquier, le
+ * regime de caisse, et donc les mises a venir.
+ *
+ * Un etat faux ne se repare pas a la main : on ne sait pas quelles positions
+ * ont ete empoisonnees ni de combien. Il se jette. Le numero de version sert
+ * exactement a ca : au premier demarrage du code corrige, l'ancien etat est
+ * mis de cote et la colonie repart proprement — sans que personne ait a
+ * toucher au serveur.
+ *
+ * Ce qui est perdu est perdu : des semaines de memoire d'agents. C'est le prix
+ * d'une tresorerie a laquelle on peut se fier, et l'inverse ne vaut rien. */
+const VERSION_ETAT = 3;
+
 function etatNeuf() {
   return {
-    v: 2, tresor: DEPART, trades: 0, gains: 0, meilleur: 0, meilleurSym: '',
+    v: VERSION_ETAT, tresor: DEPART, trades: 0, gains: 0, meilleur: 0, meilleurSym: '',
     courbe: [DEPART], flux: [], positions: [], memoire: {}, compteurs: {},
     ouvertures: 0, maj: 0, dernierTour: 0, candidats: [], derniereErreur: null,
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
+    seuil: SEUIL, derniers: [], depuisAjustement: 0,
     /* la structure, qui est une donnee et non du code */
     roster: rosterNeuf(), ordreRevu: 0, journalStructure: [],
     /* ce qu'on a deja juge, pour ne pas le rejuger en boucle */
@@ -329,8 +381,25 @@ function charge() {
   let brut = null;
   try { brut = JSON.parse(fs.readFileSync(FICHIER, 'utf8')); } catch (e) { brut = null; }
   if (!brut || typeof brut !== 'object') return;
-  /* Une forme plus ancienne se COMPLETE, elle ne se jette pas : jeter, ce
-     serait effacer des semaines d'apprentissage a chaque correction. */
+  /* ---- UNE FORME PLUS ANCIENNE SE COMPLETE ; UN ETAT FAUX SE JETTE ----
+   * Les deux ne sont pas la meme chose. Un champ qui manque parce que le code
+   * a evolue se remplit — jeter la-dessus effacerait des semaines
+   * d'apprentissage a chaque correction. Mais un etat dont les CHIFFRES sont
+   * faux ne peut pas etre complete : il n'y a rien a garder dedans. */
+  if ((brut.v || 1) < VERSION_ETAT) {
+    try {
+      fs.writeFileSync(FICHIER + '.v' + (brut.v || 1) + '.abandonne', JSON.stringify(brut));
+    } catch (e) { /* on garde une copie si on peut, ca ne doit pas bloquer le depart */ }
+    console.warn('[ai] etat en version ' + (brut.v || 1) + ' (tresorerie enregistree : '
+      + Math.round(brut.tresor || 0) + ') — mis de cote, la colonie repart de $' + DEPART);
+    E = etatNeuf();
+    E.journalStructure = [{ t: Date.now(), quoi: 'remise', chiffres: null,
+      txt: 'Tout est reparti de zero : la tresorerie enregistree ($'
+         + Math.round(brut.tresor || 0) + ') venait d\'un prix relu aberrant, pas d\'un marche. '
+         + 'Un chiffre faux ne se repare pas — et tout ce qui en descendait etait faux avec lui.' }];
+    sauve();
+    return;
+  }
   const n = etatNeuf();
   for (const k of Object.keys(n)) if (!(k in brut)) brut[k] = n[k];
   if (!Array.isArray(brut.courbe) || !brut.courbe.length) brut.courbe = [DEPART];
@@ -420,12 +489,24 @@ async function json(url, opts) {
  * espace nos propres appels — plus efficace que de reprendre apres coup — avec
  * UNE reprise. Deux reprises sur un noeud qui refuse, c'est se faire couper
  * plus longtemps. Un echec reste un echec : il rend « inconnu ». */
-let rpcDernier = 0;
-async function rpc(methode, params, reprise) {
-  const depuis = Date.now() - rpcDernier;
+const NOEUDS = [
+  { url: RPC_RH, cle: 'chaine', plageLogs: BLOCS_PLAFOND, dernier: 0 },
+  { url: RPC_SECOURS, cle: 'chaine2', plageLogs: 10000, dernier: 0 },
+];
+/* La plage demandee par un `eth_getLogs`, pour savoir quel noeud peut la
+   servir. Une demande qu'on sait refusee n'est pas envoyee. */
+function plageDe(methode, params) {
+  if (methode !== 'eth_getLogs') return 0;
+  const f = params && params[0];
+  if (!f || !f.fromBlock || !f.toBlock) return 0;
+  const a = parseInt(f.fromBlock, 16), b = parseInt(f.toBlock, 16);
+  return (isFinite(a) && isFinite(b)) ? Math.max(0, b - a) : 0;
+}
+async function unNoeud(n, methode, params) {
+  const depuis = Date.now() - n.dernier;
   if (depuis < 900) await dors(900 - depuis);
-  rpcDernier = Date.now();
-  const r = await fetch(RPC_RH, {
+  n.dernier = Date.now();
+  const r = await fetch(n.url, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: methode, params: params || [] }),
   });
@@ -433,11 +514,35 @@ async function rpc(methode, params, reprise) {
   try { j = await r.json(); } catch (e) { j = null; }
   const coupe = r.status === 429 || (j && j.error && (j.error.code === 429
     || /too many|rate/i.test(String(j.error.message || ''))));
-  if (coupe && !reprise) { await dors(2500); return rpc(methode, params, true); }
+  if (coupe) { const e = new Error('coupe'); e.coupe = true; throw e; }
   if (!r.ok) throw new Error('rpc ' + r.status);
   if (!j) throw new Error('rpc illisible');
-  if (j.error) throw new Error(j.error.message || 'rpc');
+  if (j.error) throw new Error(String(j.error.message || 'rpc').slice(0, 60));
   return j.result;
+}
+/* On essaie les noeuds capables, dans l'ordre. Un refus pour saturation passe
+   au suivant — c'est la seule facon d'avoir un second noeud qui serve a
+   quelque chose. Un echec de tous reste un echec : il rend « inconnu ». */
+async function rpc(methode, params) {
+  const plage = plageDe(methode, params);
+  const capables = NOEUDS.filter((n) => plage <= n.plageLogs);
+  if (!capables.length) throw new Error('aucun noeud ne sert une plage de ' + plage + ' blocs');
+  let derniere = null;
+  for (let tour = 0; tour < 2; tour++) {
+    for (const n of capables) {
+      try {
+        const r = await unNoeud(n, methode, params);
+        noteService(n.cle, true);
+        return r;
+      } catch (e) {
+        derniere = e;
+        noteService(n.cle, false, e.coupe ? 'sature' : e.message);
+        if (!e.coupe) break;          /* une vraie erreur ne se resout pas en reessayant */
+      }
+    }
+    if (tour === 0) await dors(1800);
+  }
+  throw derniere || new Error('rpc');
 }
 let blocCache = { n: 0, t: 0 };
 async function blocCourant() {
@@ -568,6 +673,14 @@ async function lisDex(addr) {
     return garde(CACHE.dex, addr, {
       vu: true, prix: nn(q.priceUsd), pools: p.length,
       socials: (i.socials || []).length + (i.websites || []).length,
+      /* Les liens eux-memes, pas seulement leur nombre : « affiche les reseaux
+         s'il y en a ». Bornes, et on ne garde que http(s) — une reponse de
+         service ne doit pas pouvoir poser un `javascript:` dans la page. */
+      liens: []
+        .concat((i.socials || []).map((x) => ({ type: String(x.type || 'lien').slice(0, 12),
+                                                url: String(x.url || '') })))
+        .concat((i.websites || []).map((x) => ({ type: 'site', url: String(x.url || '') })))
+        .filter((x) => /^https?:\/\//i.test(x.url)).slice(0, 5),
       pool: q.pairAddress || null, sym: bt.symbol || '', nom: bt.name || '',
       liq: nn(q.liquidity && q.liquidity.usd), mc: nn(q.fdv) || nn(q.marketCap),
       cree: q.pairCreatedAt || null,
@@ -588,14 +701,35 @@ async function lisChaine(addr, minutes, pool) {
   const c = frais(CACHE.chaine, addr, TTL_CHAINE); if (c !== null) return c;
   try {
     const bloc = await blocCourant();
-    const voulu = (minutes > 0 && minutes < 300)
-      ? Math.ceil(minutes * 60 / BLOC_SECONDES) + 6000 : BLOCS_HEURE;
-    const large = Math.min(BLOCS_PLAFOND, voulu);
-    const logs = await rpc('eth_getLogs', [{
-      address: addr, topics: [SUJET_TRANSFERT],
-      fromBlock: '0x' + Math.max(0, bloc - large).toString(16), toBlock: '0x' + bloc.toString(16) }]);
-    const solde = {}, recus = {};
+    /* ---- LA PLAGE DEMANDEE, ET CELLE QUI SUFFIT ----
+     * `besoin` couvre exactement la vie du jeton ; la marge est une securite,
+     * parce que la date de creation du pool peut retarder sur le deploiement
+     * du contrat. Mais la marge n'est pas gratuite : elle poussait un jeton de
+     * douze minutes au-dela des dix mille blocs du noeud de secours, qui
+     * n'etait alors plus candidat — et quand l'officiel saturait, on ne lisait
+     * plus rien du tout.
+     * On essaie donc la plage avec marge, puis, si elle echoue, la plage qui
+     * couvre TOUT DE MEME la vie entiere du jeton. Ce n'est pas une lecture
+     * partielle : dix mille blocs valent dix-sept minutes de cette chaine, et
+     * si le jeton est plus jeune que ca, tout y est. Une lecture amputee, elle,
+     * donnerait de faux comptes de porteurs — pire que « inconnu ». */
+    const besoin = (minutes > 0 && minutes < 300)
+      ? Math.ceil(minutes * 60 / BLOC_SECONDES) : BLOCS_HEURE;
+    const plages = [Math.min(BLOCS_PLAFOND, besoin + 6000)];
+    if (besoin < 9000 && plages[0] > 10000) plages.push(10000);
+    let logs = null, derniere = null;
+    for (const large of plages) {
+      try {
+        logs = await rpc('eth_getLogs', [{
+          address: addr, topics: [SUJET_TRANSFERT],
+          fromBlock: '0x' + Math.max(0, bloc - large).toString(16), toBlock: '0x' + bloc.toString(16) }]);
+        break;
+      } catch (e) { derniere = e; }
+    }
+    if (logs === null) throw derniere || new Error('logs illisibles');
+    const solde = {}, recus = {}, contreparties = {}, envoyeurs = {}, receveurs = {};
     let brules = 0, total = 0, lus = 0;
+    const lie = (a, b) => { (contreparties[a] || (contreparties[a] = new Set())).add(b); };
     const adr = (t) => ('0x' + String(t || '').slice(26)).toLowerCase();
     for (const l of (logs || [])) {
       const de = adr(l.topics[1]), vers = adr(l.topics[2]);
@@ -610,17 +744,48 @@ async function lisChaine(addr, minutes, pool) {
       solde[de] = (solde[de] || 0) - v;
       solde[vers] = (solde[vers] || 0) + v;
       recus[vers] = 1;
+      lie(de, vers); lie(vers, de);
+      envoyeurs[de] = 1; receveurs[vers] = 1;
       if (de === ZERO) total += v;
       if (vers === ZERO || vers === MORT) brules += v;
     }
+    /* ---- « REGARDE HOLDERSCAN, COMPRENDS CE QU'EST UN CONTRAT, UNE ADRESSE
+     *      BURN, QUE TU ANALYSES MIEUX » ----
+     *
+     * Trois familles d'adresses apparaissent dans les transferts et ne sont
+     * PAS des porteurs. Les compter fausse la concentration dans les deux
+     * sens : soit on rejette un jeton sain parce qu'une piscine « tient 80 % »,
+     * soit on accepte un jeton captif parce que le vrai gros porteur est noye.
+     *
+     *   1. Les adresses de destruction. Pas seulement 0x0 et 0xdead : les
+     *      contrats brulent aussi vers 0x…0001 et quelques autres petites
+     *      valeurs. Ce qui part la n'existe plus.
+     *   2. LE CONTRAT DU JETON LUI-MEME. Ce qui lui est renvoye est
+     *      generalement bloque — taxes accumulees, part reservee. Ce n'est
+     *      detenu par personne.
+     *   3. Les PISCINES et les routeurs. Un jeton a souvent plusieurs pools :
+     *      on n'en connait qu'un a ce stade, et les autres se comptaient comme
+     *      d'enormes porteurs. On ne les devine pas — on les RECONNAIT a leur
+     *      forme : une piscine echange avec presque tout le monde, alors qu'un
+     *      porteur echange avec une ou deux contreparties. Une adresse qui a
+     *      traite avec au moins 40 % des participants, et qui a la fois recu et
+     *      envoye, fait le marche ; elle ne le detient pas.
+     */
     const p = String(pool || '').toLowerCase();
-    let circ = 0, mx = 0, np = 0;
+    const brulures = new Set([ZERO, MORT, String(addr).toLowerCase(), p]);
+    for (let i = 1; i <= 9; i++) brulures.add('0x' + String(i).padStart(40, '0'));
+    const participants = Object.keys(contreparties).length;
+    const seuilPiscine = Math.max(4, Math.ceil(participants * 0.4));
+    const infrastructure = [];
+    let circ = 0, mx = 0, np = 0, gros = null;
     for (const a in solde) {
-      if (a === ZERO || a === MORT || a === p) continue;   /* le pool fait le marche, il ne detient pas */
+      if (brulures.has(a)) continue;
       const v = solde[a];
       if (v <= 0) continue;
+      const cp = contreparties[a] ? contreparties[a].size : 0;
+      if (cp >= seuilPiscine && envoyeurs[a] && receveurs[a]) { infrastructure.push(a); continue; }
       circ += v; np++;
-      if (v > mx) mx = v;
+      if (v > mx) { mx = v; gros = a; }
     }
     /* ---- « PERSONNE NE DETIENT » N'EST PAS « JE NE SAIS PAS » ----
      * Releve sur deux jetons reels de deux minutes : soixante et un transferts,
@@ -631,16 +796,19 @@ async function lisChaine(addr, minutes, pool) {
      * garde » devrait fermer la porte. On separe donc les deux : `montantsLus`
      * dit si on a su lire, `personne` dit ce qu'on a lu. */
     const su = lus > 0;
-    noteService('chaine', true);
     return garde(CACHE.chaine, addr, {
       vu: true, montantsLus: su,
       transferts: (logs || []).length, recepteurs: Object.keys(recus).length,
       porteurs: su ? np : null,
       personne: su && np === 0 && (logs || []).length > 0,
       top: (su && circ > 0) ? Math.round(mx / circ * 1000) / 10 : null,
+      plusGros: gros,
+      /* Ce qu'on a ecarte, et pourquoi : sans ca, « 12 porteurs » est un
+         chiffre qu'on ne peut pas contester. */
+      infra: infrastructure.length, participants,
       brule: (su && total > 0) ? Math.round(brules / total * 1000) / 10 : null,
     });
-  } catch (e) { noteService('chaine', false, e.message); return garde(CACHE.chaine, addr, { vu: false }); }
+  } catch (e) { return garde(CACHE.chaine, addr, { vu: false }); }
 }
 
 
@@ -822,8 +990,15 @@ function leconsDe(agent, max) {
  * qu'ils apprennent tous, chacun sur ce dont il repond. */
 function traitsDe(t) {
   const out = {};
+  const APART = ['banque', 'execution', 'veille', 'prolonge'];
   for (const a of E.roster) {
-    if (a.role === 'banque' || a.role === 'execution') continue;   /* ils apprennent autre chose */
+    /* ---- CEUX QUI APPRENNENT DE LEUR PROPRE TRAVAIL ----
+     * Le Banquier apprend d'une mise, le Closer d'une duree, la Sentinelle de
+     * ses alertes, le Promoteur de ses prolongations. Aucun des quatre
+     * n'apprend des traits du jeton — et c'est justement la demande : « chaque
+     * agent doit apprendre et ameliorer son propre travail, pas attendre le
+     * resultat final des trades ». */
+    if (APART.indexOf(a.role) >= 0) continue;
     const c = {};
     for (const spec of a.traits) c[nomTrait(spec)] = litTrait(spec, t);
     out[a.key] = c;
@@ -833,8 +1008,9 @@ function traitsDe(t) {
 /* Les agents qui apprennent d'une position fermee : tous ceux qui portent des
    traits de jeton. Le Banquier et le Closer apprennent, eux aussi, mais sur
    leurs propres cases — la mise et la duree. */
+const ROLES_A_PART = ['banque', 'execution', 'veille', 'prolonge'];
 function apprenants() {
-  return E.roster.filter((a) => a.role !== 'banque' && a.role !== 'execution').map((a) => a.key);
+  return E.roster.filter((a) => ROLES_A_PART.indexOf(a.role) < 0).map((a) => a.key);
 }
 
 /* ==========================================================================
@@ -1105,7 +1281,33 @@ function vetoWhisper(t) {
     return 'des achats sans acheteur identifiable';
   return null;
 }
-const VETOS = { warden: vetoWarden, whale: vetoWhale, whisper: vetoWhisper };
+/* ---- « INVESTIS PAS DANS DES RUG PULL DEJA RUG. LA CHART EST A 2K MC, Y'A UN
+ *      GROS VOLUME DESSUS, C'EST PAS DU TOUT NORMAL. » ----
+ *
+ * C'est exact, et le detail compte : un gros volume sur une capitalisation de
+ * deux mille dollars n'est pas un marche actif, c'est ce qui reste APRES. Les
+ * sorties se bousculent sur ce qui n'a plus de fond, et la note ne le voyait
+ * pas — elle comptait meme le volume comme un signe de vie.
+ *
+ * Trois formes, toutes lisibles dans le flux des pools, donc GRATUITES : elles
+ * ecartent le jeton avant qu'un seul appel ne soit paye pour lui.
+ */
+function vetoScout(t) {
+  const v = t.vol || {}, mc = t.mc || 0, liq = t.liq || 0;
+  if (t.ch_h1 <= -60) return 'deja tombe de ' + Math.round(-t.ch_h1) + '% en une heure';
+  if (t.ch_h6 <= -80) return 'deja tombe de ' + Math.round(-t.ch_h6) + '% en six heures';
+  /* Le cas signale : deux mille de capitalisation, un gros volume dessus. */
+  if (mc > 0 && mc < 20000 && v.h1 > mc * 2)
+    return 'volume de $' + Math.round(v.h1) + ' sur une capitalisation de $' + Math.round(mc)
+         + ' : ce n\'est plus un marche, c\'est une sortie';
+  /* Et une piscine qui ne represente presque plus rien de la capitalisation :
+     il n'y a plus de quoi sortir, quel que soit le prix affiche. */
+  if (mc > 50000 && liq > 0 && liq < mc * 0.01)
+    return 'piscine de $' + Math.round(liq) + ' pour une capitalisation de $' + Math.round(mc)
+         + ' : rien a vendre dedans';
+  return null;
+}
+const VETOS = { scout: vetoScout, warden: vetoWarden, whale: vetoWhale, whisper: vetoWhisper };
 
 /* Ce dont un agent a besoin pour parler : l'union des besoins de ses traits et
    celui de son veto. C'est ce nombre qui donne son COUT, et le cout est la
@@ -1127,10 +1329,15 @@ function coutDe(agent, dejaLu) {
 /* Les gardes dans l'ordre courant : ceux qui peuvent refuser, puis l'Oracle,
    qui juge sur ce que les autres ont fait lire. */
 function gardesEnOrdre() {
+  /* Le Scout d'abord, toujours : son controle ne coute aucun appel, il ne peut
+     donc jamais etre rentable de le mettre ailleurs qu'en tete. Ensuite les
+     gardes dans l'ordre qu'ils se sont donne, puis l'Oracle qui juge sur ce que
+     les autres ont fait lire. */
+  const s = E.roster.filter((a) => a.role === 'source');
   const g = E.roster.filter((a) => a.role === 'garde').slice()
     .sort((a, b) => (a.ordre || 0) - (b.ordre || 0));
   const o = E.roster.filter((a) => a.role === 'note');
-  return g.concat(o);
+  return s.concat(g, o);
 }
 
 /* ---- L'ANALYSE COMPLETE ----
@@ -1156,10 +1363,16 @@ function analyse(t) {
     adj += parts[k];
   }
   adj = Math.max(-30, Math.min(30, adj));
-  const score = Math.max(0, Math.min(100, Math.round(base + adj)));
-  return { sec, conc, traits: tr, parts, base: Math.round(base), adj: Math.round(adj), score,
+  /* L'avis du Conseiller passe par la meme porte etroite que le reste : borne
+     ici, jamais la-bas, et incapable de lever un veto — `sec` et `conc` sont
+     evalues avant lui et ne le regardent pas. */
+  const avis = (t.conseil && isFinite(t.conseil.points))
+    ? Math.max(-CONSEIL_POIDS, Math.min(CONSEIL_POIDS, t.conseil.points)) : 0;
+  const score = Math.max(0, Math.min(100, Math.round(base + adj + avis)));
+  return { sec, conc, traits: tr, parts, base: Math.round(base), adj: Math.round(adj),
+           avis: avis, conseil: t.conseil || null, score,
            /* Sans prix relu, on ne sait pas a quoi on achete : on n'achete pas. */
-           achete: !sec && !conc && score >= SEUIL && t.prix > 0 };
+           achete: !sec && !conc && score >= seuilCourant() && t.prix > 0 };
 }
 
 /* ==========================================================================
@@ -1378,6 +1591,101 @@ function surveilles() {
   return out.slice(0, 12);
 }
 
+
+/* ==========================================================================
+ * LA SENTINELLE ET LE PROMOTEUR
+ *
+ * « Un agent en plus qui décide si on prolonge ou pas le trade, et un qui
+ *   surveille chaque trade. C'est aussi pour ça que chaque agent doit être
+ *   indépendant et apprendre et améliorer son propre travail, pas attendre le
+ *   résultat final des trades. »
+ *
+ * Le defaut vise est reel : jusqu'ici, TOUT le monde apprenait de la meme
+ * chose — le rendement final d'une position — et personne ne repondait de ce
+ * qu'il faisait lui. Une position ouverte etait ensuite abandonnee a une
+ * minuterie : vingt minutes, quoi qu'il arrive entre-temps.
+ *
+ *   LA SENTINELLE regarde les positions OUVERTES, a chaque tour. Elle coupe
+ *   quand le sol se derobe — le prix qui s'effondre, la piscine qui se vide —
+ *   sans attendre la fin du compte a rebours. Ses regles de coupe sont dans le
+ *   code : c'est une securite, pas une preference. Ce qu'elle APPREND, c'est
+ *   ce que valait chaque signal : « quand j'ai vu la piscine perdre la moitie,
+ *   la position a fini a -40 % en moyenne, sur onze fois ». Elle repond de ses
+ *   propres alertes, pas du resultat global.
+ *
+ *   LE PROMOTEUR intervient au moment ou une position arrive a terme. Si elle
+ *   monte, il peut la PROLONGER d'une duree de plus. Et il apprend sur ce qui
+ *   est vraiment son travail : la DIFFERENCE entre ce que la position valait
+ *   au moment de sa decision et ce qu'elle a fini par rendre. Prolonger un
+ *   gagnant qui redescend est une faute, meme si la position finit positive —
+ *   et c'est exactement ce qu'un apprentissage sur le resultat final ne
+ *   pourrait pas voir.
+ * ======================================================================== */
+const CHUTE_COUPE = -35;        /* le prix a perdu plus d'un tiers depuis l'entree */
+const LIQ_COUPE = 0.5;          /* ou la piscine a perdu la moitie de son fond */
+const PROLONGE_MAX = 3;         /* on ne prolonge pas indefiniment */
+
+function casSentinelle(p, x) {
+  const cas = {};
+  const r = (x.prix - p.prix0) / p.prix0 * 100;
+  cas.derive = tranche(r, [-35, -10, 10, 40],
+    ['effondre', 'en baisse', 'a plat', 'en hausse', 'envole']);
+  cas.liq = (p.liq0 > 0 && x.liq > 0)
+    ? tranche(x.liq / p.liq0, [0.5, 0.9, 1.5], ['piscine divisee par 2', 'piscine en baisse',
+                                                'piscine stable', 'piscine qui grossit'])
+    : 'piscine ?';
+  return cas;
+}
+/* La coupe est une SECURITE : elle est dans le code, elle ne s'apprend pas et
+   ne se desserre pas. Un systeme qui peut apprendre a ne plus couper sur un
+   effondrement l'apprendra un jour, et ce jour-la il perdra tout. */
+function dangerSentinelle(p, x) {
+  const r = (x.prix - p.prix0) / p.prix0 * 100;
+  if (r <= CHUTE_COUPE) return 'chute de ' + Math.round(-r) + '% depuis l\'entree';
+  if (p.liq0 > 0 && x.liq > 0 && x.liq < p.liq0 * LIQ_COUPE)
+    return 'la piscine est passee de $' + Math.round(p.liq0) + ' a $' + Math.round(x.liq);
+  return null;
+}
+
+/* Le Promoteur : prolonger, ou laisser fermer. Il ne prolonge que ce qui monte
+   — prolonger une perdante est de l'esperance, pas une decision — et il
+   consulte ce qu'il a appris de ses propres prolongations. */
+function casPromoteur(p, r) {
+  return {
+    gain: tranche(r, [0, 10, 30, 80], ['en perte', 'a peine positive', '+10-30%', '+30-80%', '+80% et plus']),
+    note: tranche(p.score || 0, [60, 70, 85], ['note 55-60', 'note 60-70', 'note 70-85', 'note 85+']),
+    fois: (p.prolonge || 0) + 'e prolongation',
+  };
+}
+function nObs(agent) {
+  const m = E.memoire[agent] || {};
+  let n = 0;
+  for (const t in m) for (const v in m[t]) n = Math.max(n, m[t][v].n);
+  return n;
+}
+const PROMOTEUR_ESSAIS = 6;   /* de quoi se faire une idee, pas de quoi immobiliser la caisse */
+
+function veutProlonger(p, r) {
+  if (r <= 2) return null;                              /* elle ne monte pas : on ferme */
+  if ((p.prolonge || 0) >= PROLONGE_MAX) return null;   /* et pas indefiniment */
+  const cas = casPromoteur(p, r);
+  const gain = ajustementAgent('promoteur', cas);
+  if (gain > 0.5) return cas;      /* son releve dit de garder */
+  if (gain < -0.5) return null;    /* son releve dit de fermer */
+
+  /* ---- SANS RELEVE, IL N'AFFIRME RIEN — MAIS IL DOIT BIEN APPRENDRE ----
+   * Prolonger toutes les hausses « pour voir » immobilisait la caisse entiere :
+   * six positions sur six gardees, plus rien qui se ferme, donc plus personne
+   * qui apprend quoi que ce soit — l'inverse exact du but. Ne jamais prolonger
+   * sans releve est aussi une impasse : il n'aurait jamais de releve.
+   * Il essaie donc une fois sur trois, et seulement sur les fortes hausses,
+   * jusqu'a s'etre fait une idee. Ensuite c'est son releve qui parle. */
+  if (nObs('promoteur') >= PROMOTEUR_ESSAIS) return null;
+  if (r < 25) return null;
+  E.promoteurEssais = (E.promoteurEssais || 0) + 1;
+  return (E.promoteurEssais % 3 === 0) ? cas : null;
+}
+
 /* --------------------------------------------------------- les positions */
 const TENUES = [5, 10, 20, 40, 80, 160];
 function trancheTenue(min) {
@@ -1419,6 +1727,8 @@ function ouvre(t) {
   E.positions.push({
     sym: t.sym, adr: t.addr, pool: t.pool, prix0: t.prix, t0: Date.now(),
     mise: b.mise, methode: b.methode, regime: b.regime, raisonMise: b.raison,
+    liq0: t.liq || 0, tenueBase: tenue.min,
+    mcAchat: Math.round(t.mc || 0), liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null,
     traits: t.an.traits, score: t.an.score, mc: t.mc, minutes: Math.round(t.minutes || 0),
     origine: t.origine || 'pools', tenueMin: tenue.min, traj: [],
   });
@@ -1430,8 +1740,32 @@ function ouvre(t) {
   return true;
 }
 
-function ferme(p, prix, quand) {
-  const r = (prix - p.prix0) / p.prix0 * 100;
+/* ---- CE QU'UN PRIX ABERRANT A FAIT ----
+ * « Il y a un bug, il a surement achete un honeypot, le solde est a 256
+ *   millions. »
+ * Ce n'etait pas un achat : c'etait une DIVISION. Le rendement se calcule en
+ * (prix - prix0) / prix0. Quand un jeton minuscule voit son prix relu par une
+ * autre source, avec d'autres decimales ou depuis un pool vide, le rapport
+ * part a un million pour cent — et la mise de trente dollars devenait trois
+ * cents millions de dollars de papier. Rien de tout ca n'est arrive sur un
+ * marche : aucun pool de quatre mille dollars ne paie ca.
+ *
+ * Au-dela de ces bornes, on ne comptabilise RIEN. On ne borne pas le gain non
+ * plus — borner, ce serait choisir un chiffre et le presenter comme un
+ * resultat. On rend la mise, on ferme, et on ECRIT que le prix etait
+ * inexploitable. Un resultat qu'on ne peut pas reproduire ne vaut rien, et il
+ * empoisonne en plus tout ce que les agents apprennent de cette position. */
+const REND_MAX = 900;    /* +900 % : un vrai dix-fois, ca existe */
+const REND_MIN = -99;    /* -99 % : en dessous, c'est un pool vide, pas un cours */
+
+function ferme(p, prix, quand, comment) {
+  let r = (prix - p.prix0) / p.prix0 * 100;
+  let aberrant = null;
+  if (!isFinite(r) || r > REND_MAX || r < REND_MIN) {
+    aberrant = (isFinite(r) ? (r > 0 ? '+' : '') + Math.round(r) + '%' : 'non calculable')
+             + ' entre ' + p.prix0 + ' et ' + prix;
+    r = 0;   /* la mise est rendue : on ne gagne ni ne perd sur une lecture qu'on rejette */
+  }
   const pnl = p.mise * r / 100;
   E.tresor += pnl;
   E.trades++;
@@ -1444,11 +1778,19 @@ function ferme(p, prix, quand) {
    * trait. Les specialistes nes hier apprennent au meme titre que les agents
    * du depart — c'est la liste du roster qui decide, pas une liste ecrite en
    * dur quelque part. */
-  for (const k of apprenants()) if (p.traits && p.traits[k]) apprendAgent(k, p.traits[k], r);
+  /* Et personne n'apprend d'une lecture rejetee : une lecon tiree d'un chiffre
+     faux se propage a tous les jetons qui partagent le trait. */
+  if (!aberrant) for (const k of apprenants()) if (p.traits && p.traits[k]) apprendAgent(k, p.traits[k], r);
   /* Le Closer apprend une DUREE — depuis la trajectoire reelle de la position,
      c'est-a-dire les prix qu'on a vraiment releves pendant qu'elle etait
      ouverte. */
   const vus = {};
+  if (aberrant) { E.flux.unshift({ sym: p.sym, pool: p.pool, tag: 'cut',
+      txt: 'prix inexploitable (' + aberrant + ') · mise rendue, rien compte',
+      cls: 'n', t: quand, tenue: quand - p.t0 });
+    compte('prixAberrant');
+    E.courbe.push(Math.round(E.tresor * 100) / 100);
+    return; }
   for (const pt of (p.traj || [])) {
     const cle = trancheTenue(pt.dt / 60000);
     if (vus[cle]) continue;
@@ -1460,34 +1802,398 @@ function ferme(p, prix, quand) {
   /* Et le Banquier apprend sa methode, en POURCENTAGE : compter en dollars
      ferait toujours gagner celle qui mise le plus, quel que soit son merite. */
   banquierApprend(p, r);
+  noteResultat(r);
 
+  /* ---- LA SENTINELLE APPREND DE SES ALERTES ----
+   * Pas du resultat global : de ce que valait CHAQUE etat qu'elle a vu. « Quand
+   * j'ai vu la piscine divisee par deux, la position a fini a -40 %, onze
+   * fois. » C'est ce qui justifie la coupe, ou la condamne. */
+  if (p.vuPar) apprendAgent('sentinelle', p.vuPar, r);
+  /* ---- ET LE PROMOTEUR DE SES PROLONGATIONS ----
+   * Sur la DIFFERENCE entre ce que la position valait quand il a decide de la
+   * garder et ce qu'elle a fini par rendre. Prolonger un gagnant qui redescend
+   * est une faute, meme si la position finit positive — et c'est exactement ce
+   * qu'un apprentissage sur le resultat final ne verrait jamais. */
+  if (p.casProlonge && p.rDecision !== undefined)
+    apprendAgent('promoteur', p.casProlonge, r - p.rDecision);
+
+  const par = comment && comment.par;
+  const suffixe = par === 'sentinelle' ? '  ·  coupe : ' + comment.raison
+                : (p.prolonge ? '  ·  prolongee ' + p.prolonge + '×' : '');
   E.flux.unshift({ sym: p.sym, pool: p.pool, tag: pnl >= 0 ? 'buy' : 'cut',
-    txt: (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '  ·  ' + (r >= 0 ? '+' : '') + r.toFixed(1) + '%',
-    cls: pnl >= 0 ? 'up' : 'dn', t: quand, tenue: quand - p.t0 });
+    txt: (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '  ·  ' + (r >= 0 ? '+' : '') + r.toFixed(1) + '%'
+       + suffixe,
+    cls: pnl >= 0 ? 'up' : 'dn', t: quand, tenue: quand - p.t0, par: par || 'closer' });
+  if (par === 'sentinelle') compte('sentinelleCoupe');
   E.courbe.push(Math.round(E.tresor * 100) / 100);
 }
 
-function regle(prix) {
+/* `marche` porte un prix et, quand on l'a, la liquidite. Un nombre nu est
+   accepte : c'est la forme d'avant la Sentinelle, et un etat relu d'hier ne
+   doit pas cesser de se regler parce que le format a change. */
+function regle(marche) {
   const now = Date.now();
   let n = 0;
   E.positions = E.positions.filter((p) => {
-    const x = prix[p.adr];
-    if (!(x > 0)) return true;                    /* pas de prix : on attend */
+    const brut = marche[p.adr];
+    if (brut === undefined || brut === null) return true;
+    const x = (typeof brut === 'number') ? { prix: brut, liq: 0 } : brut;
+    if (!(x.prix > 0)) return true;               /* pas de prix : on attend */
     const dt = now - p.t0;
-    const r = (x - p.prix0) / p.prix0 * 100;
+    const r = (x.prix - p.prix0) / p.prix0 * 100;
     if (!p.traj) p.traj = [];
     if (p.traj.length < 40) p.traj.push({ dt, r: Math.round(r * 100) / 100 });
+
+    /* ---- LA SENTINELLE, A CHAQUE PASSAGE ----
+     * Elle note ce qu'elle voit — c'est de la qu'elle apprendra — et elle coupe
+     * sans attendre le compte a rebours si le sol se derobe. */
+    p.vuPar = casSentinelle(p, x);
+    const danger = dangerSentinelle(p, x);
+    if (danger) { ferme(p, x.prix, now, { par: 'sentinelle', raison: danger }); n++; return false; }
+
     if (dt < (p.tenueMin || TENUE_DEFAUT_MIN) * 60000) return true;
-    ferme(p, x, now);
+
+    /* ---- LE PROMOTEUR, AU MOMENT OU CA DEVAIT FERMER ---- */
+    const cas = veutProlonger(p, r);
+    if (cas) {
+      p.prolonge = (p.prolonge || 0) + 1;
+      p.casProlonge = cas;
+      if (p.rDecision === undefined) p.rDecision = r;
+      p.tenueMin = (p.tenueMin || TENUE_DEFAUT_MIN) + (p.tenueBase || TENUE_DEFAUT_MIN);
+      compte('promoteurProlonge');
+      E.flux.unshift({ sym: p.sym, pool: p.pool, tag: 'open',
+        txt: 'PROLONGEE · ' + (r >= 0 ? '+' : '') + r.toFixed(1) + '% · ' + p.prolonge + 'e fois',
+        cls: 'n', t: now, par: 'promoteur' });
+      return true;
+    }
+    ferme(p, x.prix, now, { par: 'closer' });
     n++;
     return false;
   });
   return n;
 }
 
+
+/* ==========================================================================
+ * LA COLONIE CHANGE DE STRATEGIE QUAND LA SIENNE NE PAIE PAS
+ *
+ * « S'ils voient qu'il y a trop de positions ouvertes ou trop de trades
+ *   acceptés et que c'est pas bénéfique, ils peuvent changer leur stratégie.
+ *   Ils sont maîtres du monde pour réussir à faire de l'argent. »
+ *
+ * Le seuil d'entree etait une constante : cinquante-cinq, pour toujours. Une
+ * colonie qui accepte trop et perd n'avait aucun moyen de devenir plus
+ * difficile — elle pouvait seulement continuer, en apprenant trait par trait,
+ * ce qui est beaucoup trop lent quand le probleme est le seuil lui-meme.
+ *
+ * Il se deplace donc, sur ce qui a ete mesure, et jamais sur une impression :
+ * il faut une douzaine de positions fermees depuis le dernier ajustement. Les
+ * bornes existent parce qu'un seuil qui derive sans fin finit soit par tout
+ * accepter, soit par ne plus jamais rien acheter — et dans les deux cas on
+ * n'apprend plus rien.
+ * ======================================================================== */
+const SEUIL_MIN = 45, SEUIL_MAX = 85;
+const FENETRE = 20;             /* les vingt dernieres positions fermees */
+const AVANT_AJUSTEMENT = 12;    /* jamais moins, sinon on regle sur du bruit */
+
+function seuilCourant() {
+  const s = E.seuil;
+  return (typeof s === 'number' && s >= SEUIL_MIN && s <= SEUIL_MAX) ? s : SEUIL;
+}
+function noteResultat(r) {
+  if (!Array.isArray(E.derniers)) E.derniers = [];
+  E.derniers.push(Math.round(r * 10) / 10);
+  if (E.derniers.length > 60) E.derniers = E.derniers.slice(-60);
+  E.depuisAjustement = (E.depuisAjustement || 0) + 1;
+}
+function revoitStrategie() {
+  if ((E.depuisAjustement || 0) < AVANT_AJUSTEMENT) return false;
+  const l = (E.derniers || []).slice(-FENETRE);
+  if (l.length < AVANT_AJUSTEMENT) return false;
+  const moy = l.reduce((a, b) => a + b, 0) / l.length;
+  const gagnantes = l.filter((x) => x > 0).length;
+  const taux = gagnantes / l.length;
+  const avant = seuilCourant();
+  let apres = avant, pourquoi = null;
+
+  if (moy < -1 || taux < 0.35) {
+    /* On accepte trop, et ca ne paie pas : on devient plus difficile. */
+    apres = Math.min(SEUIL_MAX, avant + 5);
+    pourquoi = 'les ' + l.length + ' dernieres positions rendent ' + moy.toFixed(1)
+             + ' % en moyenne (' + Math.round(taux * 100) + ' % de gagnantes) : on se fait plus difficile';
+  } else if (moy > 3 && taux > 0.55 && E.positions.length < POSITIONS_MAX) {
+    /* Ca paie, et on n'a meme pas de quoi remplir les places : on s'ouvre un
+       peu. Sans cette moitie-la, le seuil ne pourrait que monter, et la colonie
+       finirait par ne plus jamais rien acheter. */
+    apres = Math.max(SEUIL_MIN, avant - 3);
+    pourquoi = 'les ' + l.length + ' dernieres rendent +' + moy.toFixed(1)
+             + ' % (' + Math.round(taux * 100) + ' % de gagnantes) et il reste des places : on s\'ouvre';
+  }
+  E.depuisAjustement = 0;
+  if (apres === avant || !pourquoi) return false;
+  E.seuil = apres;
+  journal('strategie', 'Seuil d\'entree ' + avant + ' → ' + apres + '. ' + pourquoi,
+    [{ fenetre: l.length, moyenne: moy.toFixed(1) + '%', gagnantes: Math.round(taux * 100) + '%',
+       positions: E.positions.length }]);
+  return true;
+}
+
+/* ==========================================================================
+ * CE DONT LA COLONIE A BESOIN, EN TOUTES LETTRES
+ *
+ * « Doit aussi être intelligent et me donner des alertes s'ils ont besoin de
+ *   choses supplémentaires pour être plus performants. »
+ *
+ * Chaque alerte est calculee sur un RELEVE, jamais sur une impression, et
+ * porte le chiffre qui la justifie. Une demande sans son chiffre est une
+ * demande qu'on ne peut pas refuser intelligemment.
+ * ======================================================================== */
+function alertes() {
+  const out = [];
+  const s = (k) => E.services[k] || { essais: 0, reussites: 0 };
+  const dis = (gravite, quoi, pourquoi, quoiFaire) => out.push({ gravite, quoi, pourquoi, quoiFaire });
+
+  const n1 = s('chaine'), n2 = s('chaine2');
+  const echecs = (n1.essais - n1.reussites) + (n2.essais - n2.reussites);
+  const total = n1.essais + n2.essais;
+  if (total > 30 && echecs / total > 0.25)
+    dis('haute', 'Les noeuds de la chaine refusent ' + Math.round(echecs / total * 100) + ' % des lectures',
+      echecs + ' refus sur ' + total + ' appels. Chaque refus rend « inconnu » un jeton qu\'on aurait '
+      + 'pu juger, et l\'inconnu ne rapporte jamais de points : le jeton est ecarte pour une raison '
+      + 'qui n\'a rien a voir avec lui.',
+      'Un acces RPC dedie a la chaine 4663 (une cle chez un fournisseur qui la sert) leverait la '
+      + 'limite. Les deux noeuds publics utilises ici sont gratuits et se font couper.');
+
+  const g = s('goplus');
+  const muets = E.compteurs.goplusMuet || 0, vus = E.compteurs.scoutVu || E.compteurs.wardenVu || 0;
+  if (vus > 40 && muets / vus > 0.6)
+    dis('moyenne', 'GoPlus ne sait rien de ' + Math.round(muets / vus * 100) + ' % des jetons examines',
+      'A deux minutes, un contrat n\'est pas encore indexe : ' + muets + ' jetons sur ' + vus
+      + ' n\'ont aucune donnee de securite. Le controle du contrat ne peut alors rien affirmer, '
+      + 'et il ne l\'affirme pas.',
+      'Une seconde source de securite qui indexe plus vite. Aucune gratuite trouvee pour la chaine '
+      + '4663 a ce jour — honeypot.is ne la connait pas, Blockscout est derriere Cloudflare.');
+
+  if (!process.env.ANTHROPIC_API_KEY)
+    dis('moyenne', 'Le Conseiller est eteint : aucune cle Anthropic',
+      'Les agents jugent sur des regles et sur ce qu\'ils ont mesure. Un avis de modele sur les '
+      + 'cas limites — ceux qui tombent a quelques points du seuil — n\'est pas disponible.',
+      'Poser ANTHROPIC_API_KEY dans les variables Railway. Une seule cle suffit : le Conseiller '
+      + 'n\'est appele que sur les cas limites, quelques fois par tour.');
+
+  const budget = E.compteurs.budgetAtteint || 0;
+  if (budget > 5)
+    dis('basse', 'Le budget d\'appels a ete atteint ' + budget + ' fois',
+      'Des jetons neufs ont attendu le tour suivant faute d\'appels disponibles dans le tour.',
+      'C\'est la meme cause que la premiere alerte : plus de debit sur la chaine, et le budget suit.');
+
+  const ab = E.compteurs.prixAberrant || 0;
+  if (ab > 0)
+    dis('haute', ab + ' position(s) fermees sur un prix inexploitable',
+      'Le prix relu impliquait un mouvement impossible pour la piscine concernee. Rien n\'a ete '
+      + 'comptabilise et personne n\'en a rien appris — mais la position, elle, est perdue de vue.',
+      'C\'est le signe de jetons a tres faible decimale ou de piscines videes. Rien a fournir : '
+      + 'c\'est note ici pour qu\'on sache que ca arrive, et combien de fois.');
+
+  return out;
+}
+
+
+/* ==========================================================================
+ * LE CONSEILLER
+ *
+ * « Je peux rajouter l'API Claude pour avoir un cerveau amélioré de décision
+ *   et réorganisation. Utilise le modèle Haiku, et avec l'API tous les agents
+ *   peuvent l'utiliser pour s'améliorer. »
+ *
+ * ---- CE QU'IL FAIT, ET CE QU'IL NE PEUT PAS FAIRE ----
+ *
+ * Il donne un AVIS sur les cas limites : les jetons qui tombent a quelques
+ * points du seuil, ceux ou la note ne tranche pas. C'est la que son apport est
+ * reel — sur un honeypot ou sur une note de 12, il n'y a rien a arbitrer.
+ *
+ * Son avis vaut au plus huit points de note, dans un sens ou dans l'autre. Il
+ * ne peut PAS lever un veto : un contrat piege reste refuse quoi qu'il en
+ * pense. Il ne peut PAS toucher a une mise : les bornes du Banquier ne sont
+ * negociables par personne. C'est la meme frontiere que pour les autres agents,
+ * et elle vaut d'autant plus pour celui-la qu'on ne peut pas relire son
+ * raisonnement ligne a ligne.
+ *
+ * ---- ET IL REPOND DE SES AVIS ----
+ *
+ * Son verdict devient une case de memoire comme celles des autres : « le
+ * conseiller etait favorable » vaut ce que les positions ouvertes la-dessus ont
+ * rendu. S'il se trompe, son influence se reduit toute seule, par le meme
+ * mecanisme qui degonfle une case dispersee. On ne lui fait pas confiance parce
+ * qu'il est un modele ; on lui fait confiance dans la mesure ou son releve le
+ * merite.
+ *
+ * ---- CE QU'IL RECOIT ----
+ *
+ * Uniquement des chiffres DEJA LUS, et l'indication explicite de ce qui n'a pas
+ * pu l'etre. Il n'a aucun moyen d'aller chercher quoi que ce soit, et on ne lui
+ * demande jamais d'estimer une valeur manquante : un « inconnu » comble par un
+ * modele est exactement le genre de chiffre qui a l'air d'une donnee.
+ *
+ * Sans cle, il est simplement eteint, et la page le DIT.
+ * ======================================================================== */
+const CONSEIL_MODELE = 'claude-haiku-4-5-20251001';
+const CONSEIL_MAX_PAR_TOUR = 3;
+const CONSEIL_MARGE = 12;        /* on ne le consulte que dans cette bande autour du seuil */
+const CONSEIL_POIDS = 8;         /* et son avis pese au plus huit points */
+
+function conseillerActif() { return !!process.env.ANTHROPIC_API_KEY; }
+
+const CONSEIL_SYSTEME =
+  'Tu conseilles une colonie d\'agents qui evalue des jetons TRES JEUNES (quelques minutes) '
++ 'sur la chaine Robinhood 4663. Sa tresorerie est du papier : rien n\'est signe.\n\n'
++ 'On te donne UNIQUEMENT des mesures deja lues. Quand un champ vaut "inconnu", cela veut dire '
++ 'que le service n\'a pas repondu : ne devine JAMAIS sa valeur, et n\'en tire aucune conclusion '
++ 'favorable. Un inconnu n\'est pas un bon signe.\n\n'
++ 'Le risque dominant a cet age est le rug pull : une piscine videe, une concentration extreme, '
++ 'du volume fabrique par un seul portefeuille, un jeton deja tombe.\n\n'
++ 'Reponds UNIQUEMENT par un objet JSON, sans texte autour :\n'
++ '{"avis":"favorable"|"reserve"|"defavorable","points":<entier de -8 a 8>,"pourquoi":"<20 mots max>"}\n'
++ 'Sois severe : la colonie voit des centaines de jetons et n\'en garde que quelques-uns. '
++ 'En cas de doute, "reserve" avec 0 point.';
+
+function fiche(t) {
+  const c = t.chaine || {}, g = t.g || {}, x = t.trades || {}, d = t.dex || {}, h = (t.tx || {}).h1 || {};
+  const ou = (v, s) => (v === null || v === undefined) ? 'inconnu' : (s ? s(v) : v);
+  return {
+    symbole: t.sym, age_minutes: Math.round(t.minutes || 0),
+    trouve_par: t.origine || 'pools',
+    liquidite_usd: Math.round(t.liq || 0),
+    capitalisation_usd: Math.round(t.mc || 0),
+    variation_5min_pct: t.ch_m5, variation_1h_pct: t.ch_h1,
+    achats_1h: h.buys || 0, ventes_1h: h.sells || 0, acheteurs_1h: h.buyers || 0,
+    porteurs_lus_dans_les_blocs: c.vu ? ou(c.porteurs) : 'inconnu',
+    part_du_plus_gros_porteur_pct: c.vu ? ou(c.top) : 'inconnu',
+    part_brulee_pct: c.vu ? ou(c.brule) : 'inconnu',
+    adresses_ecartees_comme_piscine: c.vu ? (c.infra || 0) : 'inconnu',
+    securite_du_contrat: g.have ? {
+      taxe_achat_pct: g.taxeSue ? g.buyTax : 'inconnu',
+      taxe_vente_pct: g.taxeSue ? g.sellTax : 'inconnu',
+      code_verifie: g.codeSu ? !g.unverified : 'inconnu',
+      emission_possible: g.mintable, contrat_proxy: g.proxy,
+    } : 'inconnu — le contrat est trop jeune pour etre indexe',
+    trades_lus: x.vu ? {
+      nombre: x.n, acheteurs_distincts: x.acheteurs,
+      part_du_plus_gros_portefeuille_pct: x.partDuPlusGros, ticket_moyen_usd: x.moyen,
+    } : 'inconnu',
+    reseaux_sociaux: d.vu ? d.socials : 'inconnu',
+    nombre_de_pools: d.vu ? d.pools : 'inconnu',
+    note_de_la_colonie: t.an ? t.an.score : null,
+    seuil_pour_acheter: seuilCourant(),
+  };
+}
+
+async function conseille(t) {
+  if (!conseillerActif()) return null;
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: CONSEIL_MODELE, max_tokens: 200, system: CONSEIL_SYSTEME,
+        messages: [{ role: 'user', content: JSON.stringify(fiche(t)) }],
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      throw new Error(r.status + (r.status === 401 ? ' cle refusee'
+        : r.status === 429 ? ' quota' : ' ' + txt.slice(0, 40)));
+    }
+    const j = await r.json();
+    const brut = ((j.content || []).find((b) => b.type === 'text') || {}).text || '';
+    const m = brut.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('reponse illisible');
+    const a = JSON.parse(m[0]);
+    const avis = ['favorable', 'reserve', 'defavorable'].indexOf(a.avis) >= 0 ? a.avis : 'reserve';
+    /* Son chiffre est BORNE ici, pas la-bas. Ce qui vient d'un modele passe par
+       la meme porte etroite que le reste : il conseille, il ne decide pas. */
+    let pts = parseInt(a.points, 10);
+    if (!isFinite(pts)) pts = 0;
+    pts = Math.max(-CONSEIL_POIDS, Math.min(CONSEIL_POIDS, pts));
+    noteService('conseil', true);
+    return { avis, points: pts, pourquoi: String(a.pourquoi || '').slice(0, 90) };
+  } catch (e) {
+    noteService('conseil', false, String(e.message || e).slice(0, 60));
+    return null;
+  }
+}
+
+/* ---- LE REGARD SUR LA COLONIE ELLE-MEME ----
+ * Ce qu'il en dit est ECRIT, et rien de plus : aucune suggestion de structure
+ * n'est appliquee toute seule. Reordonner les gardes ou faire naitre un agent
+ * se justifie par une mesure qu'on peut refaire ; une proposition de modele ne
+ * se refait pas, et on ne peut pas la relire ligne a ligne. Elle a sa place
+ * dans le journal, sous les yeux de quelqu'un — pas dans les commandes. */
+async function regardeLaColonie() {
+  if (!conseillerActif()) return null;
+  const l = (E.derniers || []).slice(-20);
+  const etat = {
+    tresorerie: Math.round(E.tresor), depart: DEPART, positions_fermees: E.trades,
+    gagnantes: E.gains, seuil_actuel: seuilCourant(),
+    vingt_derniers_rendements_pct: l,
+    gardes: E.roster.filter((a) => a.role === 'garde').map((a) => ({
+      agent: a.key, vus: E.compteurs[a.key + 'Vu'] || 0,
+      refuses: E.compteurs[a.key + 'Bloque'] || 0, appels_necessaires: coutDe(a, null),
+    })),
+    methode_de_mise: methodeApprise(),
+    jetons_examines: E.compteurs.scoutVu || 0,
+    reexamens_evites: E.compteurs.reexamensEvites || 0,
+  };
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY,
+                 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: CONSEIL_MODELE, max_tokens: 260,
+        system: 'Tu observes une colonie d\'agents qui evalue des jetons tres jeunes. Sa tresorerie '
+              + 'est du papier. On te donne son releve. Dis en UNE phrase (30 mots max) ce qui te '
+              + 'parait le plus discutable dans sa facon de faire, en citant un chiffre du releve. '
+              + 'Pas de conseil general, pas de politesse. Si tout semble coherent, dis-le.',
+        messages: [{ role: 'user', content: JSON.stringify(etat) }],
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!r.ok) throw new Error(String(r.status));
+    const j = await r.json();
+    const txt = (((j.content || []).find((b) => b.type === 'text') || {}).text || '').trim();
+    if (!txt) return null;
+    noteService('conseil', true);
+    journal('regard', txt.slice(0, 240), null);
+    return txt;
+  } catch (e) { noteService('conseil', false, String(e.message || e).slice(0, 60)); return null; }
+}
+
 /* ------------------------------------------------------------------ le tour */
 let enCours = false;
+/* ---- UN PRIX SANS DATE MENT ----
+ * « Nos positions ouvertes ne bougent pas : +0.0 % · +$0.00 »
+ * Elles bougeaient. C'est le chiffre affiche qui ne bougeait pas, et il ne
+ * disait pas pourquoi. Une position ouverte ecrivait son prix d'entree ici, et
+ * quand son jeton sortait des flux — ce qui arrive toujours, ils ne servent que
+ * du neuf — plus rien ne le remplacait. L'ecran affichait donc l'ecart entre le
+ * prix d'entree et le prix d'entree : exactement zero, presente comme une
+ * cotation du moment.
+ * Un prix porte desormais sa date. Passe ce delai il n'est plus une cotation,
+ * c'est un souvenir, et la page doit ecrire « prix non relu » — ce qui est
+ * vrai — plutot que « +0,0 % », qui est faux. */
+const AGE_PRIX_MAX = 12 * 60e3;
 const dernierPrix = {};
+function posePrix(adr, p) { if (p > 0) dernierPrix[adr] = { p, t: Date.now() }; }
+function prixFrais(adr) {
+  const x = dernierPrix[adr];
+  return (x && Date.now() - x.t <= AGE_PRIX_MAX) ? x.p : null;
+}
 
 /* ---- LES LECTURES PARESSEUSES ----
  * On ne paie un service que si un agent qui doit encore parler en a besoin.
@@ -1554,7 +2260,7 @@ async function tour() {
     /* Les prix d'abord : une position due se ferme au prix qu'on vient de
        lire, pas au suivant. */
     const prix = {};
-    for (const t of liste) { prix[t.addr] = t.prix; dernierPrix[t.addr] = t.prix; }
+    for (const t of liste) { prix[t.addr] = { prix: t.prix, liq: t.liq }; posePrix(t.addr, t.prix); }
 
     /* ---- UNE POSITION DONT LE JETON A QUITTE LE FLUX ----
      * Les flux ne servent que du NEUF. Une position tenue quarante minutes voit
@@ -1569,10 +2275,20 @@ async function tour() {
      * l'ancien, ce qui serait fabriquer le resultat qu'on mesure. */
     let secours = 0;
     for (const p of E.positions) {
-      if (prix[p.adr] > 0 || secours >= 4) continue;
+      /* ---- LE GARDE-FOU QUI AVAIT CESSE DE GARDER ----
+       * Cette ligne testait `prix[p.adr] > 0` quand la carte portait des
+       * nombres. Elle porte maintenant des objets, et `{...} > 0` vaut
+       * toujours faux : le secours ne se declenchait donc plus « quand il
+       * manque un prix », il ECRASAIT les prix fraichement lus par une valeur
+       * en cache. Quatre positions — le plafond, exactement — se reglaient a
+       * +0,0 % sur un prix vieux de dix minutes, et rien ne le signalait :
+       * elles fermaient, la tresorerie ne bougeait pas, tout avait l'air
+       * normal. On teste le prix, pas la boite qui le contient. */
+      const deja = prix[p.adr];
+      if ((deja && deja.prix > 0) || secours >= 4) continue;
       secours++;
       const d = await lisDex(p.adr);
-      if (d.vu && d.prix > 0) { prix[p.adr] = d.prix; dernierPrix[p.adr] = d.prix; }
+      if (d.vu && d.prix > 0) { prix[p.adr] = { prix: d.prix, liq: d.liq || 0 }; posePrix(p.adr, d.prix); }
       await dors(250);
     }
     if (secours) compte('prixDeSecours', secours);
@@ -1596,10 +2312,9 @@ async function tour() {
      * tout de suite : les services des gardes suivants ne sont pas appeles. */
     const gardes = gardesEnOrdre();
     const examines = [];
-    let ouvertes = 0, appelsTotal = 0;
+    let ouvertes = 0, appelsTotal = 0, conseils = 0;
     for (const t of aVoir) {
-      if (appelsTotal >= 26) break;         /* le budget d'appels du tour, tenu */
-      compte('scout');
+      if (appelsTotal >= 26) { compte('budgetAtteint'); break; }   /* le budget du tour, tenu */
       t.lu = { pools: true }; t.appels = 0;
       if (t.dex) t.lu.dex = true;           /* les flux DexScreener l'ont deja paye */
       let refus = null, quiRefuse = null;
@@ -1613,11 +2328,24 @@ async function tour() {
         compte(a.key + 'Ok');
       }
       appelsTotal += t.appels;
+      compte('scoutVu');
+      if (t.lu.goplus && !(t.g && t.g.have)) compte('goplusMuet');
 
       let an = null;
       if (!refus) {
         an = analyse(t);
         t.an = an;
+        /* ---- ON NE LE CONSULTE QUE LA OU IL SERT ----
+         * Sur un honeypot ou sur une note de douze, il n'y a rien a arbitrer :
+         * l'appel serait paye pour confirmer une evidence. La bande autour du
+         * seuil est exactement l'endroit ou la note ne tranche pas. */
+        const sl = seuilCourant();
+        if (conseillerActif() && conseils < CONSEIL_MAX_PAR_TOUR
+            && an.score >= sl - CONSEIL_MARGE && an.score <= sl + CONSEIL_MARGE) {
+          conseils++;
+          t.conseil = await conseille(t);
+          if (t.conseil) { an = analyse(t); t.an = an; compte('conseilRendu'); }
+        }
         if (!an.achete) { refus = 'note trop basse'; quiRefuse = 'oracle'; compte('oracleBloque'); }
       } else {
         /* Refuse avant la note : on la calcule quand meme pour la
@@ -1636,6 +2364,8 @@ async function tour() {
     /* ---- ET LA COLONIE SE REORGANISE ----
      * Apres avoir mesure, pas avant. */
     revoitOrdre(false);
+    revoitStrategie();
+    if (conseillerActif() && (E.tours % 20) === 0) await regardeLaColonie();
     engendre();
     elague();
 
@@ -1645,10 +2375,13 @@ async function tour() {
       ch_m5: x.t.ch_m5, origine: x.t.origine || 'pools', appels: x.t.appels,
       score: x.an ? x.an.score : null, base: x.an ? x.an.base : null, adj: x.an ? x.an.adj : null,
       refus: x.refus, quiRefuse: x.quiRefuse,
+      avis: x.an ? x.an.avis : 0, conseil: x.an ? x.an.conseil : null,
       porteurs: x.t.chaine && x.t.chaine.vu ? x.t.chaine.porteurs : null,
       top: x.t.chaine && x.t.chaine.vu ? x.t.chaine.top : null,
       chaineVue: !!(x.t.chaine && x.t.chaine.vu),
       montantsLus: !!(x.t.chaine && x.t.chaine.montantsLus),
+      infra: x.t.chaine && x.t.chaine.vu ? (x.t.chaine.infra || 0) : null,
+      participants: x.t.chaine && x.t.chaine.vu ? (x.t.chaine.participants || 0) : null,
       personne: !!(x.t.chaine && x.t.chaine.personne),
       transferts: x.t.chaine && x.t.chaine.vu ? x.t.chaine.transferts : null,
       goplusSait: !!(x.t.g && x.t.g.have),
@@ -1679,12 +2412,7 @@ async function tour() {
    phrase que personne ne peut verifier. */
 function vue() {
   const agents = {};
-  for (const a of E.roster) {
-    const m = E.memoire[a.key] || {};
-    let n = 0;
-    for (const t in m) for (const v in m[t]) n = Math.max(n, m[t][v].n);
-    agents[a.key] = { obs: n, lecons: leconsDe(a.key, 3) };
-  }
+  for (const a of E.roster) agents[a.key] = { obs: nObs(a.key), lecons: leconsDe(a.key, 3) };
   const b = methodeApprise();
   const engage = E.positions.reduce((s, p) => s + (p.mise || 0), 0);
   return {
@@ -1699,14 +2427,17 @@ function vue() {
     courbe: E.courbe.slice(-120),
     flux: E.flux.slice(0, 12),
     positions: E.positions.map((p) => {
-      const x = dernierPrix[p.adr];
+      const x = prixFrais(p.adr);
       const r = (x > 0) ? (x - p.prix0) / p.prix0 * 100 : null;
       return { sym: p.sym, adr: p.adr, pool: p.pool, minutes: p.minutes, score: p.score,
+               mcAchat: p.mcAchat === undefined ? (p.mc || null) : p.mcAchat,
+               liens: p.liens || null, prolonge: p.prolonge || 0,
                ouverteDepuis: Date.now() - p.t0, tenueMin: p.tenueMin,
                mise: p.mise, methode: p.methode, regime: p.regime, raisonMise: p.raisonMise,
                origine: p.origine || 'pools',
                latent: r === null ? null : Math.round(r * 10) / 10,
-               gainLatent: r === null ? null : Math.round(p.mise * r) / 100 };
+               gainLatent: r === null ? null : Math.round(p.mise * r) / 100,
+               prixVu: dernierPrix[p.adr] ? dernierPrix[p.adr].t : 0 };
     }),
     candidats: E.candidats,
     evites: E.evites || [],
@@ -1752,8 +2483,31 @@ function vue() {
                dernierEchec: s.dernierEchec };
     }),
     horsService: HORS_SERVICE,
-    seuil: SEUIL, ageMax: AGE_MAX_MIN,
+    conseiller: { actif: conseillerActif(), modele: CONSEIL_MODELE,
+                  poids: CONSEIL_POIDS, parTour: CONSEIL_MAX_PAR_TOUR,
+                  rendus: E.compteurs.conseilRendu || 0 },
+    seuil: seuilCourant(), seuilDepart: SEUIL, ageMax: AGE_MAX_MIN,
+    derniers: (E.derniers || []).slice(-20),
+    alertes: alertes(),
   };
+}
+
+/* Une remise a zero volontaire, pour le jour ou il en faudra une autre. Elle
+   garde une copie de ce qu'elle jette : effacer sans copie est irreversible, et
+   une remise a zero se demande rarement deux fois de suite par hasard. */
+function remiseAZero(pourquoi) {
+  try {
+    fs.writeFileSync(FICHIER + '.' + Date.now() + '.abandonne', JSON.stringify(E));
+  } catch (e) { /* pas de copie possible : on continue quand meme */ }
+  const avant = E.tresor;
+  E = etatNeuf();
+  E.journalStructure = [{ t: Date.now(), quoi: 'remise', chiffres: null,
+    txt: 'Remise a zero demandee' + (pourquoi ? ' : ' + String(pourquoi).slice(0, 120) : '')
+       + '. Tresorerie avant : $' + Math.round(avant) + '.' }];
+  for (const k of Object.keys(dernierPrix)) delete dernierPrix[k];
+  for (const c of Object.keys(CACHE)) for (const k of Object.keys(CACHE[c])) delete CACHE[c][k];
+  sauve();
+  return true;
 }
 
 let minuteur = null;
@@ -1776,9 +2530,12 @@ module.exports = {
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,
+  revoitStrategie, seuilCourant, noteResultat, alertes, remiseAZero, nObs,
+  casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   lisTrades, lisFluxDex, jetonDepuisDex, rassemble,
   FICHIER, SEUIL, AGE_MAX_MIN, MISE, DEPART, METHODES, SERVICES, HORS_SERVICE,
   MISE_MIN, MISE_PART_MAX, EXPO_PART_MAX, PLANCHER, ENFANTS_MAX,
   ECART_TYPE_BRUIT, VARIANCE_MIN_OBS, ROSTER_DEPART, REORDONNABLES,
-  _etat: () => E, _pose: (x) => { E = x; }, _cache: CACHE, _prix: dernierPrix,
+  VERSION_ETAT, SEUIL_MIN, SEUIL_MAX, REND_MAX, REND_MIN, CHUTE_COUPE, AGE_PRIX_MAX,
+  _etat: () => E, _pose: (x) => { E = x; }, _cache: CACHE, _prix: dernierPrix, _rpc: rpc,
 };

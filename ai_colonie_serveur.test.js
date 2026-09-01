@@ -79,6 +79,13 @@ function jeton(i, o) {
      * Un seul portefeuille qui achete et revend a lui-meme. Les compteurs
      * agreges y voient un marche vivant ; les trades y voient une personne. */
     lavage: !!o.lavage,
+    ch_h1: o.ch_h1 === undefined ? 20 : o.ch_h1,
+    ch_h6: o.ch_h6 === undefined ? 35 : o.ch_h6,
+    volH1: o.volH1 === undefined ? 20000 : o.volH1,
+    /* Une SECONDE piscine : elle echange avec tout le monde, exactement comme
+       la premiere. C'est a cette forme-la qu'on doit la reconnaitre, puisqu'on
+       ne connait son adresse par aucun service. */
+    secondePiscine: !!o.secondePiscine,
     tradeurs: o.tradeurs === undefined ? 12 : o.tradeurs,
     tradesN: o.tradesN === undefined ? 24 : o.tradesN,
   };
@@ -94,7 +101,7 @@ function mondeNeuf(jetons, extra) {
     prixDe: (a) => { const t = jetons.find((x) => x.addr === a); return t ? t.prix : 0; },
     coupe: false,
     bloc: 5000000,
-    profils: [], boosts: [], goplusCasse: false,
+    profils: [], boosts: [], goplusCasse: false, rpcSature: false, claude: null, claudeCasse: false,
   }, extra || {});
 }
 
@@ -113,8 +120,8 @@ function poolsPage(page) {
         reserve_in_usd: String(t.liq),
         pool_created_at: new Date(Date.now() - t.minutes * 60000).toISOString(),
         transactions: { h1: { buys: t.buys, sells: t.sells, buyers: t.buyers, sellers: 30 } },
-        volume_usd: { m5: 2000, h1: 20000, h6: 60000, h24: 90000 },
-        price_change_percentage: { m5: '8', h1: '20', h6: '35' },
+        volume_usd: { m5: 2000, h1: t.volH1, h6: 60000, h24: 90000 },
+        price_change_percentage: { m5: '8', h1: String(t.ch_h1), h6: String(t.ch_h6) },
       },
       relationships: { base_token: { data: { id: 'tok_' + t.sym } } },
     })),
@@ -173,15 +180,31 @@ function logsDe(t) {
   const out = [];
   const cibles = t.unSeulPorteur ? 1 : t.porteurs;
   const part = t.unSeulPorteur ? 1000000 : 1000;
-  const ligne = (de, vers) => {
+  const ligne = (de, vers, mult) => {
+    const v = part * (mult || 1);
     const topics = [SUJET, pad(de), pad(vers)];
-    let data = hex(part);
-    if (t.indexe) { topics.push(hex(part)); data = '0x'; }  /* montant INDEXE */
+    let data = hex(v);
+    if (t.indexe) { topics.push(hex(v)); data = '0x'; }  /* montant INDEXE */
     return { topics, data };
   };
+  const piscine2 = '0x' + 'e'.repeat(40);
   for (let i = 0; i < cibles; i++) {
     const a = '0x' + String(i).padStart(40, 'a');
-    out.push(ligne(ZERO, a));
+    /* Avec une seconde piscine, chacun recoit assez pour lui en donner et en
+       GARDER (4 recus, 2 donnes, 1 rendu = 3 gardes). Sinon tout le monde finit
+       a zero net, personne n'est porteur, et l'essai ne mesure plus l'exclusion
+       de la piscine : il mesure un monde vide. La piscine, elle, accumule une
+       part par porteur — donc quarante, ce qui ferait d'elle « le gros
+       porteur » si on ne la reconnaissait pas a sa forme. */
+    out.push(ligne(ZERO, a, t.secondePiscine ? 4 : 1));
+    /* Elle recoit de chacun et renvoie a chacun : c'est ce qui la distingue
+       d'un porteur, qui n'echange qu'avec une ou deux contreparties. */
+    if (t.secondePiscine) {
+      /* Deux entrees pour une sortie : elle finit avec un solde POSITIF, comme
+         une vraie piscine. A solde nul, elle ne serait de toute facon pas
+         comptee comme porteuse, et l'essai ne mesurerait rien. */
+      out.push(ligne(a, piscine2)); out.push(ligne(a, piscine2)); out.push(ligne(piscine2, a));
+    }
     /* Releve sur la vraie chaine : soixante et un transferts, trente adresses,
        toutes a zero net, et la piscine tenant l'emission entiere. Chacun entre
        et ressort aussitot. */
@@ -199,6 +222,13 @@ global.fetch = async function (url, opts) {
     appels.pools++;
     const page = parseInt((url.match(/page=(\d+)/) || [])[1] || '1', 10);
     return rep(poolsPage(page));
+  }
+  if (/api\.anthropic\.com/.test(url)) {
+    appels.claude++;
+    if (MONDE.claudeCasse) return rep({ error: { message: 'surcharge' } }, 529);
+    const c = MONDE.claude;
+    const texte = (typeof c === 'string') ? c : JSON.stringify(c || { avis: 'reserve', points: 0 });
+    return rep({ content: [{ type: 'text', text: texte }] });
   }
   if (/token-profiles/.test(url)) {
     appels.profils++;
@@ -246,8 +276,19 @@ global.fetch = async function (url, opts) {
       priceChange: { m5: 8, h1: 20, h6: 35 },
       info: { socials: [{ type: 'twitter' }], websites: [{}] } }] });
   }
-  if (/rpc\.mainnet\.chain\.robinhood/.test(url)) {
-    appels.rpc++;
+  if (/rpc\.mainnet\.chain\.robinhood|drpc\.org/.test(url)) {
+    const secours = /drpc\.org/.test(url);
+    if (secours) appels.rpc2++; else appels.rpc++;
+    /* Le noeud officiel peut saturer : c'est le cas mesure — quatre refus sur
+       six lectures a la file. Le second doit alors prendre le relais. */
+    if (!secours && MONDE.rpcSature) return rep({ error: { code: 429, message: 'Too Many Requests' } }, 429);
+    const b0 = JSON.parse(opts.body);
+    if (secours && b0.method === 'eth_getLogs') {
+      const f = b0.params[0];
+      const plage = parseInt(f.toBlock, 16) - parseInt(f.fromBlock, 16);
+      /* Sa vraie limite, relevee sur le service : dix mille blocs. */
+      if (plage > 10000) return rep({ error: { message: 'ranges over 10000 blocks are not supported' } }, 400);
+    }
     const b = JSON.parse(opts.body);
     if (b.method === 'eth_blockNumber') return rep({ result: hex(MONDE.bloc) });
     if (b.method === 'eth_getLogs') {
@@ -264,7 +305,7 @@ const C = require('./ai_colonie.js');
 
 function remise(jetons, extra) {
   MONDE = mondeNeuf(jetons, extra);
-  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0, trades: 0, profils: 0, boosts: 0 };
+  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0, rpc2: 0, trades: 0, profils: 0, boosts: 0, claude: 0 };
   for (const k of Object.keys(C._cache)) for (const j of Object.keys(C._cache[k])) delete C._cache[k][j];
   for (const k of Object.keys(C._prix)) delete C._prix[k];
   C._pose(C.etatNeuf());
@@ -481,7 +522,14 @@ async function reglement() {
   const E = C._etat();
   const avant = E.positions.length;
   const mises = E.positions.reduce((a, p) => a + p.mise, 0);
-  const attendu = C.DEPART + mises * 0.5;
+  /* ---- ON MARQUE LES POSITIONS D'AVANT ----
+   * Les reconnaitre a leur adresse ne marche pas : le tour ferme une position
+   * puis en ROUVRE une sur le meme jeton, qui a toujours une bonne note. Par
+   * adresse, les six sont donc « toujours la », et l'essai mesurait zero
+   * fermeture en presence de quatre. Une marque posee avant les distingue. */
+  E.positions.forEach((p, i) => { p.__avant = i; });
+  const ouvertesAvant = E.positions.map((p, i) => ({ marque: i, mise: p.mise }));
+  const attendu = C.DEPART + mises * 0.5;   /* si tout fermait ; le Promoteur en garde */
   ok(avant > 0, avant + ' position(s) ouverte(s) a $1,00, pour $' + mises.toFixed(2) + ' engages');
 
   /* ---- LE TEMPS PASSE PAR PETITS PAS, COMME SUR LE SERVEUR ----
@@ -513,18 +561,41 @@ async function reglement() {
   await C.tour();
   const v = C.vue();
   console.log('   ' + JSON.stringify({ tresor: v.tresor, trades: v.trades, gains: v.gains }));
-  ok(v.trades === avant, 'toutes les positions dues se ferment (' + v.trades + ')');
+
+  /* ---- LE PROMOTEUR EST DANS LE CHEMIN, MAINTENANT ----
+   * A +50 %, il en garde une partie pour une duree de plus — c'est son travail.
+   * L'essai ne peut donc plus exiger que TOUT ferme : il exige que ce qui a
+   * ferme l'ait fait au bon prix, et que ce qui reste ait ete PROLONGE pour une
+   * raison ecrite, et non simplement oublie. */
+  const prolongees = C._etat().positions.filter((p) => p.prolonge > 0);
+  console.log('   fermees ' + v.trades + ' · prolongees ' + prolongees.length
+    + ' · restantes ' + v.positions.length);
+  ok(v.trades + prolongees.length === avant,
+     'chaque position due est soit fermee, soit prolongee — aucune n est laissee en plan ('
+     + v.trades + ' + ' + prolongees.length + ' = ' + avant + ')');
+  ok(prolongees.length > 0 && prolongees.every((p) => p.casProlonge),
+     'et une prolongation porte le cas sur lequel le Promoteur apprendra');
 
   /* +50 % sur chaque mise. La mise n'est plus une constante — c'est le
      Banquier qui la pose, et elle depend de la caisse du moment. On additionne
      donc les mises REELLEMENT engagees : le chiffre doit tomber juste, et
      c'est la preuve que le rendement vient du prix relu et non d'une
      estimation. */
-  console.log('   tresorerie : ' + v.tresor.toFixed(2) + ' · attendu ' + attendu.toFixed(2));
-  ok(Math.abs(v.tresor - attendu) < 0.01,
-     'la tresorerie suit exactement le prix rendu : +50 % sur $' + mises.toFixed(2)
-     + ' engages = +$' + (mises * 0.5).toFixed(2));
-  ok(v.gains === avant, 'et les gagnantes sont comptees comme telles');
+  /* Les mises des positions D'AVANT qui ne sont plus la. Retrancher simplement
+     ce qui reste ouvert donnerait un chiffre faux : le tour a aussi OUVERT de
+     nouvelles positions sur les places liberees. */
+  const encore = new Set(C._etat().positions.filter((p) => p.__avant !== undefined)
+                                            .map((p) => p.__avant));
+  const misesFermees = ouvertesAvant.filter((p) => !encore.has(p.marque))
+                                    .reduce((a, p) => a + p.mise, 0);
+  const attenduReel = C.DEPART + misesFermees * 0.5;
+  console.log('   tresorerie : ' + v.tresor.toFixed(2) + ' · attendu ' + attenduReel.toFixed(2)
+    + ' (sur $' + misesFermees.toFixed(2) + ' reellement fermes)');
+  ok(Math.abs(v.tresor - attenduReel) < 0.01,
+     'la tresorerie suit exactement le prix rendu : +50 % sur les $' + misesFermees.toFixed(2)
+     + ' fermes = +$' + (misesFermees * 0.5).toFixed(2));
+  ok(v.gains === v.trades, 'et toutes les fermees sont comptees gagnantes');
+  ok(v.tresor > C.DEPART, 'la tresorerie a bien monte, pas juste « pas bouge » ($' + v.tresor.toFixed(2) + ')');
 
   const m = C._etat().memoire;
   const appris = ['scout', 'warden', 'whale', 'whisper', 'oracle', 'closer'].filter((a) => m[a] && Object.keys(m[a]).length);
@@ -1106,6 +1177,397 @@ async function jetonSorti() {
      + C.vue().candidats.length + ')');
 }
 
+
+/* ==========================================================================
+ * 20. DEUX NOEUDS, PARCE QU'UN SEUL COUPE
+ *
+ * Mesure sur le noeud officiel : quatre refus « Too Many Requests » sur six
+ * lectures a la file. C'est la contrainte qui limitait le nombre de jetons
+ * lisibles par tour — et un refus rendait « inconnu », c'est-a-dire un jeton
+ * ecarte pour une raison qui n'a rien a voir avec lui.
+ *
+ * Un second noeud public a ete cherche et trouve, sans cle. Il a sa propre
+ * limite — dix mille blocs par lecture de journaux, soit dix-sept minutes de
+ * cette chaine — donc il n'est pas candidat pour tout, et on ne lui envoie
+ * pas une demande qu'on sait refusee.
+ * ======================================================================== */
+async function deuxNoeuds() {
+  console.log('\n-- le noeud officiel sature --');
+  remise(sains(), { rpcSature: true });
+  await C.tour();
+  const v = C.vue();
+  console.log('   appels : officiel ' + appels.rpc + ' · secours ' + appels.rpc2);
+  const lus = v.candidats.filter((c) => c.chaineVue).length;
+  console.log('   jetons dont la chaine a quand meme ete lue : ' + lus + '/' + v.candidats.length);
+  ok(appels.rpc2 > 0, 'le second noeud prend le relais (' + appels.rpc2 + ' appels)');
+  ok(lus > 0, 'et les blocs sont lus quand meme : ' + lus + ' jetons, au lieu de zero');
+  ok(v.candidats.some((c) => c.porteurs !== null),
+     'avec de vrais comptes de porteurs, pas des « inconnu » dus a la saturation');
+
+  const s1 = v.services.find((x) => x.cle === 'chaine');
+  const s2 = v.services.find((x) => x.cle === 'chaine2');
+  console.log('   releve : officiel ' + s1.reussites + '/' + s1.essais
+    + ' (' + s1.dernierEchec + ') · secours ' + s2.reussites + '/' + s2.essais);
+  ok(s1.essais > s1.reussites && /sature/.test(String(s1.dernierEchec)),
+     'la saturation de l officiel est comptee et NOMMEE, pas confondue avec une panne');
+  ok(s2.reussites > 0, 'et le secours porte son propre releve : les deux sont des services distincts');
+
+  console.log('\n-- mais on ne lui envoie pas ce qu il refusera --');
+  /* Sa limite est connue : au-dela, il n'est pas candidat. Envoyer quand meme
+     ferait un aller-retour pour rien, et surtout ferait passer un refus de
+     format pour une saturation — donc une reprise qui echouera toujours. */
+  remise(sains(), { rpcSature: true });
+  let erreur = null;
+  try {
+    await C.tour();   /* les jetons sont jeunes : la plage tient dans la limite */
+  } catch (e) { erreur = e; }
+  ok(!erreur, 'un jeton de quelques minutes tient dans les dix mille blocs');
+  const avant = appels.rpc2;
+  /* Une plage volontairement enorme : aucun noeud ne peut, et ca doit se dire
+     plutot que de partir en boucle de reprises. */
+  let dit = null;
+  try {
+    await C._rpc('eth_getLogs', [{ address: '0xa', topics: [],
+      fromBlock: '0x0', toBlock: '0x' + (500000).toString(16) }]);
+  } catch (e) { dit = e.message; }
+  console.log('   plage de 500 000 blocs → « ' + dit + ' »');
+  ok(!!dit && /aucun noeud/.test(dit),
+     'une plage que personne ne sert est refusee AVANT l appel, et la raison le dit');
+  ok(appels.rpc2 === avant, 'et aucun appel inutile n a ete envoye au second noeud');
+}
+
+
+/* ==========================================================================
+ * 21. UN PRIX SANS DATE MENT
+ *
+ * « Nos positions ouvertes ne bougent pas : +0.0 % · +$0.00 »
+ *
+ * Elles bougeaient. C'est le chiffre affiche qui ne bougeait pas. Une position
+ * ecrivait son prix d'entree dans le cache des prix, et quand son jeton sortait
+ * des flux — ce qui arrive toujours, ils ne servent que du neuf — plus rien ne
+ * le remplacait. L'ecran affichait donc l'ecart entre le prix d'entree et le
+ * prix d'entree : exactement zero, presente comme une cotation du moment.
+ * C'est la pire forme du defaut que ce fichier traque : pas une absence, une
+ * VALEUR, et une valeur rassurante.
+ * ======================================================================== */
+async function prixDate() {
+  console.log('\n-- un prix garde sa date, sinon il ment --');
+  remise(sains());
+  await C.tour();
+  const p = C.vue().positions[0];
+  ok(p.latent !== null, 'juste apres la lecture, la position porte un ecart (' + p.latent + ' %)');
+  ok(p.prixVu > 0, 'et la date du prix qui a servi a le calculer');
+
+  /* On fait vieillir le prix sans en lire d'autre : c'est exactement ce qui se
+     passe quand le jeton sort des flux. */
+  const adr = C._etat().positions[0].adr;
+  C._prix[adr].t = Date.now() - 40 * 60e3;
+  const p2 = C.vue().positions[0];
+  console.log('   prix vieux de 40 min → latent ' + JSON.stringify(p2.latent));
+  ok(p2.latent === null,
+     'un prix de quarante minutes ne fait plus une cotation : la vue rend « inconnu », pas « +0,0 % »');
+  ok(C.prixFrais(adr) === null, 'et le moteur le dit aussi, au meme endroit');
+
+  /* Un prix relu redonne un ecart. */
+  C.posePrix(adr, C._etat().positions[0].prix0 * 1.2);
+  ok(C.vue().positions[0].latent === 20,
+     'et des qu un prix est relu, l ecart revient, juste (' + C.vue().positions[0].latent + ' %)');
+}
+
+/* ==========================================================================
+ * 22. LE SOLDE A 500 MILLIONS
+ *
+ * « Il y a un bug, il a surement achete un honeypot, le solde est a 256
+ *   millions. » — puis 500.
+ *
+ * Ce n'etait pas un achat, c'etait une DIVISION. Le rendement se calcule en
+ * (prix - prix0) / prix0 : un jeton a tres faible decimale relu depuis une
+ * autre source donne un rapport a plusieurs millions pour cent, et trente
+ * dollars de mise deviennent des centaines de millions de papier. Aucun pool de
+ * quatre mille dollars ne paie ca — le chiffre ne decrit rien.
+ * ======================================================================== */
+async function prixAberrant() {
+  console.log('\n-- un prix inexploitable n est pas un gain --');
+  remise(sains());
+  const E = C._etat();
+  E.positions.push({ sym: 'MINUSCULE', adr: '0xzz', pool: '0xpz', prix0: 1e-12,
+    t0: Date.now() - 3600e3, mise: 30, traits: { whale: { top: 'top <5%' } },
+    tenueMin: 20, tenueBase: 20, traj: [], liq0: 4000, score: 70 });
+  const avantTresor = E.tresor;
+  C.regle({ '0xzz': { prix: 0.001, liq: 4000 } });    /* un rapport a cent milliards pour cent */
+  const v = C.vue();
+  console.log('   tresorerie : ' + v.tresor + ' · flux : ' + (v.flux[0] || {}).txt);
+  ok(v.tresor === avantTresor,
+     'la tresorerie ne bouge pas d un centime : $' + v.tresor + ' — pas 500 millions');
+  ok(v.trades === 1, 'la position est bien fermee (elle ne reste pas coincee)');
+  ok(/inexploitable/.test((v.flux[0] || {}).txt),
+     'et le fil DIT pourquoi rien n a ete compte : « ' + (v.flux[0] || {}).txt + ' »');
+  ok((v.compteurs.prixAberrant || 0) === 1, 'le cas est compte, pour qu on sache que ca arrive');
+  ok(!C._etat().memoire.whale,
+     'et PERSONNE n en apprend rien : une lecon tiree d un chiffre faux se propage a tous les '
+     + 'jetons qui partagent le trait');
+
+  /* Un vrai dix-fois, lui, doit passer : la borne separe l invraisemblable du
+     rare, pas le rare du courant. */
+  remise(sains());
+  const F = C._etat();
+  F.positions.push({ sym: 'VRAI10X', adr: '0xy', pool: '0xpy', prix0: 1, t0: Date.now() - 3600e3,
+    mise: 30, traits: {}, tenueMin: 20, tenueBase: 20, traj: [], liq0: 4000, score: 70 });
+  C.regle({ '0xy': { prix: 6, liq: 4000 } });
+  console.log('   un vrai +500 % → tresorerie ' + C.vue().tresor);
+  ok(C.vue().tresor === C.DEPART + 30 * 5, 'un +500 % reel est comptabilise ($' + C.vue().tresor + ')');
+
+  /* Et l alerte le signale. */
+  remise(sains());
+  C._etat().compteurs.prixAberrant = 3;
+  const a = C.alertes().find((x) => /inexploitable/.test(x.quoi));
+  ok(!!a && a.gravite === 'haute', 'et une alerte le remonte : « ' + (a && a.quoi) + ' »');
+}
+
+/* ==========================================================================
+ * 23. « INVESTIS PAS DANS DES RUG PULL DEJA RUG »
+ * ======================================================================== */
+async function dejaRug() {
+  console.log('\n-- un jeton deja vide n est meme pas examine --');
+  remise([
+    jeton(0, { mc: 2000, liq: 3000 }),          /* le cas signale : 2K de capitalisation... */
+    jeton(1, { ch_h1: -70 }),
+    jeton(2),
+  ]);
+  MONDE.jetons[0].volH1 = 9000;                  /* ...et un gros volume dessus */
+  await C.tour();
+  const v = C.vue();
+  const par = {};
+  for (const c of v.candidats) par[c.sym] = { refus: c.refus, qui: c.quiRefuse, appels: c.appels };
+  console.log('   ' + JSON.stringify(par));
+  ok(/sortie/.test(String((par.TOK0 || {}).refus)),
+     'deux mille de capitalisation avec un gros volume dessus : « ' + (par.TOK0 || {}).refus + ' »');
+  ok(/tombe de 70%/.test(String((par.TOK1 || {}).refus)),
+     'un jeton deja tombe de 70 % en une heure est ecarte : « ' + (par.TOK1 || {}).refus + ' »');
+  ok((par.TOK0 || {}).qui === 'scout' && (par.TOK1 || {}).qui === 'scout',
+     'c est le Scout qui les ecarte — son controle ne coute aucun appel');
+  ok((par.TOK0 || {}).appels === 0 && (par.TOK1 || {}).appels === 0,
+     'et ils sont donc ecartes pour ZERO appel : le budget va aux jetons qui meritent un regard');
+  ok(!v.positions.some((p) => p.sym === 'TOK0' || p.sym === 'TOK1'),
+     'aucune position ne s ouvre dessus');
+  ok(v.candidats.some((c) => c.sym === 'TOK2' && !c.refus), 'et le jeton sain passe');
+}
+
+/* ==========================================================================
+ * 24. CE QUI N'EST PAS UN PORTEUR
+ *
+ * « Regarde holderscan aussi, pour comprendre ce qu'est un contrat, une adresse
+ *   burn, que tu analyses mieux. »
+ * ======================================================================== */
+async function pasDesPorteurs() {
+  console.log('\n-- une piscine, un contrat et une adresse de destruction ne detiennent pas --');
+  remise([jeton(0, { porteurs: 40, secondePiscine: true }), jeton(1)]);
+  await C.tour();
+  const c = C.vue().candidats.find((x) => x.sym === 'TOK0');
+  console.log('   ' + JSON.stringify({ porteurs: c && c.porteurs, top: c && c.top,
+                                       ecartes: c && c.infra, participants: c && c.participants }));
+  ok(!!c && c.infra >= 1,
+     (c && c.infra) + ' adresse(s) ecartee(s) : elles echangent avec presque tout le monde, '
+     + 'c est la forme d une piscine, pas celle d un porteur');
+  ok(!!c && c.porteurs === 40,
+     'les quarante vrais porteurs sont comptes, et eux seuls (' + (c && c.porteurs) + ')');
+  ok(!!c && c.top !== null && c.top < 10,
+     'la concentration reste juste : sans cette exclusion, la seconde piscine aurait paru tenir '
+     + 'l essentiel du jeton (' + (c && c.top) + ' %)');
+}
+
+/* ==========================================================================
+ * 25. LA SENTINELLE ET LE PROMOTEUR
+ *
+ * « Un agent en plus qui décide si on prolonge ou pas le trade, et un qui
+ *   surveille chaque trade. Chaque agent doit apprendre et améliorer son propre
+ *   travail, pas attendre le résultat final des trades. »
+ * ======================================================================== */
+async function veilleEtProlongation() {
+  console.log('\n-- la Sentinelle coupe sans attendre le compte a rebours --');
+  remise(sains());
+  const E = C._etat();
+  E.positions.push({ sym: 'CHUTE', adr: '0xc1', pool: '0xpc', prix0: 1, t0: Date.now() - 60e3,
+    mise: 30, traits: {}, tenueMin: 20, tenueBase: 20, traj: [], liq0: 50000, score: 70 });
+  E.positions.push({ sym: 'VIDANGE', adr: '0xc2', pool: '0xpd', prix0: 1, t0: Date.now() - 60e3,
+    mise: 30, traits: {}, tenueMin: 20, tenueBase: 20, traj: [], liq0: 50000, score: 70 });
+  C.regle({ '0xc1': { prix: 0.55, liq: 50000 },       /* -45 % : le sol se derobe */
+            '0xc2': { prix: 1.02, liq: 9000 } });     /* le prix tient, la piscine se vide */
+  const v = C.vue();
+  const coupes = v.flux.filter((f) => /coupe/.test(f.txt));
+  console.log('   ' + JSON.stringify(coupes.map((f) => f.txt)));
+  ok(coupes.length === 2, 'les deux positions sont coupees AVANT la fin de leur tenue de 20 min');
+  ok(coupes.some((f) => /chute de 45%/.test(f.txt)),
+     'l une pour la chute : « ' + (coupes.find((f) => /chute/.test(f.txt)) || {}).txt + ' »');
+  ok(coupes.some((f) => /piscine est passee/.test(f.txt)),
+     'l autre pour la piscine qui se vide, alors que son PRIX allait bien : « '
+     + (coupes.find((f) => /piscine/.test(f.txt)) || {}).txt + ' »');
+  ok((v.compteurs.sentinelleCoupe || 0) === 2, 'ses coupes sont comptees a son nom');
+
+  /* ---- ET ELLE APPREND DE SES ALERTES, PAS DU RESULTAT GLOBAL ---- */
+  const m = C._etat().memoire.sentinelle || {};
+  console.log('   ce qu elle retient : ' + JSON.stringify(m));
+  ok(!!m.derive && !!m.liq,
+     'elle retient ce qu elle a VU — l etat du prix et celui de la piscine — et non le rendement '
+     + 'd une position dont elle ne repond pas');
+  ok(m.liq['piscine divisee par 2'] && m.liq['piscine divisee par 2'].n === 1,
+     'chaque signal porte son compte : « quand j ai vu la piscine divisee par deux, voila ce que '
+     + 'ca a donne »');
+
+  console.log('\n-- le Promoteur prolonge, et apprend de SA decision --');
+  remise(sains());
+  const F = C._etat();
+  ok(C.veutProlonger({ prolonge: 0, score: 70 }, -5) === null, 'il ne prolonge jamais une perdante');
+  ok(C.veutProlonger({ prolonge: 3, score: 70 }, 60) === null,
+     'ni indefiniment : trois prolongations au plus');
+  /* Sans releve il essaie une fois sur trois : assez pour apprendre, pas assez
+     pour immobiliser la caisse — prolonger tout revenait a ne plus rien fermer,
+     donc a ce que plus personne n apprenne rien. */
+  let pris = 0;
+  for (let i = 0; i < 9; i++) if (C.veutProlonger({ prolonge: 0, score: 70 }, 40)) pris++;
+  console.log('   sur neuf fortes hausses, il en garde ' + pris);
+  ok(pris === 3, 'une sur trois, sans releve (' + pris + '/9)');
+
+  /* Avec un releve defavorable, il arrete. */
+  const cas = C.casPromoteur({ prolonge: 0, score: 70 }, 40);
+  for (let i = 0; i < 12; i++) C.apprendAgent('promoteur', cas, -25);
+  ok(C.veutProlonger({ prolonge: 0, score: 70 }, 40) === null,
+     'et quand son propre releve dit que prolonger coute -25 %, il cesse');
+  const l = C.vue().agents.promoteur.lecons;
+  console.log('   sa lecon : ' + JSON.stringify(l[0]));
+  ok(l.length > 0 && l[0].n === 12,
+     'sa lecon porte sur la DIFFERENCE qu il a faite, avec son nombre d observations');
+}
+
+/* ==========================================================================
+ * 26. CHANGER DE STRATEGIE QUAND LA SIENNE NE PAIE PAS
+ * ======================================================================== */
+async function strategie() {
+  console.log('\n-- trop de trades acceptes, et ca ne paie pas --');
+  remise(sains());
+  ok(C.seuilCourant() === C.SEUIL, 'le seuil part de ' + C.SEUIL);
+  ok(C.revoitStrategie() === false, 'et rien ne bouge sans positions fermees');
+  for (let i = 0; i < 14; i++) C.noteResultat(-7);
+  ok(C.revoitStrategie() === true, 'apres quatorze positions perdantes, il bouge');
+  console.log('   seuil : ' + C.SEUIL + ' → ' + C.seuilCourant());
+  ok(C.seuilCourant() > C.SEUIL, 'la colonie se fait plus difficile (' + C.seuilCourant() + ')');
+  const j = C._etat().journalStructure.find((x) => x.quoi === 'strategie');
+  ok(!!j && /-7\.0 % en moyenne/.test(j.txt),
+     'et le changement porte la mesure qui l a decide : « ' + (j && j.txt) + ' »');
+  ok(C.vue().seuil === C.seuilCourant(),
+     'la vue publie le seuil COURANT, pas celui du depart : sinon la page annoncerait une regle '
+     + 'que la colonie n applique plus');
+
+  console.log('\n-- et elle se rouvre quand ca paie --');
+  for (let i = 0; i < 14; i++) C.noteResultat(9);
+  const av = C.seuilCourant();
+  C.revoitStrategie();
+  console.log('   seuil : ' + av + ' → ' + C.seuilCourant());
+  ok(C.seuilCourant() < av,
+     'sans quoi le seuil ne pourrait que monter, et la colonie finirait par ne plus rien acheter');
+
+  console.log('\n-- mais il ne part pas a la derive --');
+  for (let k = 0; k < 40; k++) { for (let i = 0; i < 14; i++) C.noteResultat(-30); C.revoitStrategie(); }
+  console.log('   apres quarante ajustements perdants : ' + C.seuilCourant());
+  ok(C.seuilCourant() <= C.SEUIL_MAX, 'il est borne en haut (' + C.seuilCourant() + ')');
+  for (let k = 0; k < 40; k++) { for (let i = 0; i < 14; i++) C.noteResultat(20); C.revoitStrategie(); }
+  ok(C.seuilCourant() >= C.SEUIL_MIN, 'et en bas (' + C.seuilCourant() + ')');
+}
+
+/* ==========================================================================
+ * 27. LE CONSEILLER
+ * ======================================================================== */
+async function conseiller() {
+  console.log('\n-- sans cle, il est eteint, et c est dit --');
+  delete process.env.ANTHROPIC_API_KEY;
+  remise(sains());
+  await C.tour();
+  let v = C.vue();
+  ok(v.conseiller.actif === false, 'il est eteint');
+  ok(appels.claude === 0, 'aucun appel n est tente');
+  ok(v.alertes.some((a) => /Conseiller est eteint/.test(a.quoi)),
+     'et une alerte dit ce qu il faudrait pour l allumer : « '
+     + (v.alertes.find((a) => /Conseiller/.test(a.quoi)) || {}).quoiFaire + ' »');
+  ok(v.candidats.every((c) => !c.conseil), 'aucun jeton ne porte d avis');
+
+  console.log('\n-- avec une cle, il n est consulte que sur les cas limites --');
+  process.env.ANTHROPIC_API_KEY = 'cle-d-essai';
+  /* ---- ENCORE FAUT-IL AVOIR DES CAS LIMITES ----
+   * Les jetons du banc sain notent au-dessus de quatre-vingt-dix : ils ne sont
+   * pas limites, ils sont evidents, et le Conseiller n'a rien a y arbitrer.
+   * Il faut donc des jetons mediocres — peu de liquidite, peu de porteurs, un
+   * GoPlus muet — c'est-a-dire exactement la population sur laquelle une note
+   * ne tranche pas. */
+  remise([0, 1, 2, 3].map((i) => jeton(i, { liq: 3000, porteurs: 10, goplus: 'muet',
+    buys: 6, sells: 5, buyers: 4, tradeurs: 4 })));
+  MONDE.claude = { avis: 'favorable', points: 6, pourquoi: 'liquidite correcte et volume reparti' };
+  await C.tour();
+  v = C.vue();
+  console.log('   appels a Claude : ' + appels.claude + ' · avis rendus : ' + v.conseiller.rendus);
+  ok(appels.claude > 0, 'il est appele (' + appels.claude + ')');
+  ok(appels.claude <= 3, 'au plus trois fois par tour : son cout est borne, comme le reste');
+  const avec = v.candidats.filter((c) => c.conseil);
+  ok(avec.length > 0, avec.length + ' jeton(s) portent son avis');
+  ok(avec.every((c) => Math.abs(c.avis) <= 8),
+     'et son avis pese au plus huit points, quoi qu il reponde');
+
+  console.log('\n-- il ne peut pas lever un veto --');
+  remise([jeton(0, { goplus: 'honeypot' })]);
+  MONDE.claude = { avis: 'favorable', points: 8, pourquoi: 'tout va bien' };
+  await C.tour();
+  v = C.vue();
+  console.log('   ' + JSON.stringify({ refus: v.candidats[0].refus, conseil: v.candidats[0].conseil }));
+  ok(/honeypot/.test(String(v.candidats[0].refus)),
+     'le contrat piege reste refuse, quoi qu il en dise');
+  ok(v.positions.length === 0, 'et aucune position ne s ouvre');
+
+  console.log('\n-- et une reponse abimee ne devient pas une donnee --');
+  remise([0, 1, 2, 3].map((i) => jeton(i, { liq: 3000, porteurs: 10, goplus: 'muet',
+    buys: 6, sells: 5, buyers: 4, tradeurs: 4 })));
+  MONDE.claude = 'PAS DU JSON DU TOUT';
+  await C.tour();
+  v = C.vue();
+  const s = v.services.find((x) => x.cle === 'conseil');
+  console.log('   service conseil : ' + JSON.stringify({ essais: s.essais, reussites: s.reussites,
+    echec: s.dernierEchec }));
+  ok(s.essais > s.reussites, 'l echec est compte');
+  ok(/illisible/.test(String(s.dernierEchec)), 'et nomme : « ' + s.dernierEchec + ' »');
+  ok(v.candidats.every((c) => !c.conseil), 'aucun avis n est retenu de ce qu on n a pas su lire');
+  delete process.env.ANTHROPIC_API_KEY;
+}
+
+/* ==========================================================================
+ * 28. UN ETAT FAUX SE JETTE
+ * ======================================================================== */
+async function remiseAZero() {
+  console.log('\n-- l etat empoisonne par le bug est mis de cote --');
+  remise(sains());
+  /* Un etat tel qu'il etait : une tresorerie a cinq cents millions. */
+  const vieux = Object.assign(C.etatNeuf(), { v: 2, tresor: 512000000, trades: 40, gains: 38,
+    courbe: [1000, 512000000], meilleur: 17000000 });
+  fs.writeFileSync(C.FICHIER, JSON.stringify(vieux));
+  C._pose(C.etatNeuf());
+  C.charge();
+  const v = C.vue();
+  console.log('   tresorerie apres relecture : $' + v.tresor + ' · trades ' + v.trades);
+  ok(v.tresor === C.DEPART, 'la colonie repart de $' + C.DEPART + ', pas de $512 000 000');
+  ok(v.trades === 0 && v.ouvertures === 0, 'et tout ce qui en descendait repart aussi');
+  const j = (v.journalStructure || [])[0];
+  ok(!!j && j.quoi === 'remise' && /512000000/.test(j.txt),
+     'la remise a zero est ECRITE, avec le chiffre qu on a jete : « ' + (j && j.txt.slice(0, 90)) + '… »');
+  const copies = fs.readdirSync(DOSSIER).filter((f) => /abandonne/.test(f));
+  ok(copies.length > 0, 'et une copie de l ancien etat est gardee : ' + copies[0]);
+
+  /* Un etat a la bonne version, lui, se complete comme avant. */
+  const bon = Object.assign(C.etatNeuf(), { tresor: 1234, trades: 7 });
+  delete bon.surveillance;
+  fs.writeFileSync(C.FICHIER, JSON.stringify(bon));
+  C._pose(C.etatNeuf());
+  C.charge();
+  ok(C.vue().tresor === 1234 && C.vue().trades === 7,
+     'alors qu un etat a jour est relu tel quel — on ne jette pas a chaque correction');
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -1127,6 +1589,15 @@ async function jetonSorti() {
   await multiplication();
   await services();
   await jetonSorti();
+  await deuxNoeuds();
+  await prixDate();
+  await prixAberrant();
+  await dejaRug();
+  await pasDesPorteurs();
+  await veilleEtProlongation();
+  await strategie();
+  await conseiller();
+  await remiseAZero();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
