@@ -307,6 +307,11 @@ const TRAITS = {
      dit, et son influence se reduit d'elle-meme. */
   avis:    { besoin: null, f: (t) => t.conseil ? 'conseiller ' + t.conseil.avis
                                                : 'conseiller non consulte' },
+  /* Ce que l'epreuve de vente a rendu. « Non testable » est une case a part
+     entiere : elle vaut ce qu'elle vaut, et la colonie l'apprendra. */
+  cobaye:  { besoin: null, f: (t) => !t.epreuve ? 'sortie non testee'
+              : !t.epreuve.teste ? 'sortie non testable'
+              : t.epreuve.passe ? 'sortie simulee OK' : 'sortie bloquee' },
 
   /* --- un appel a GoPlus --- */
   taxe:   { besoin: 'goplus', f: (t) => { const g = t.g || {};
@@ -411,6 +416,9 @@ const ROSTER_DEPART = [
   { key: 'conseiller', nom: 'Conseiller', emoji: '🧠', couleur: '#b98cff', role: 'conseil', ordre: 5,
     mission: 'Donne un avis sur les cas limites, et repond de ses avis comme les autres',
     traits: ['avis'] },
+  { key: 'cobaye', nom: 'Cobaye', emoji: '🧫', couleur: '#ff8f5a', role: 'epreuve', ordre: 5.5,
+    mission: 'Juste avant l\'achat : simule la vente sur la chaine, sans signer ni depenser',
+    traits: ['cobaye'] },
   { key: 'sentinelle', nom: 'Sentinelle', emoji: '🔭', couleur: '#c9a227', role: 'veille', ordre: 6,
     mission: 'Surveille chaque position ouverte et coupe quand le sol se derobe',
     traits: ['derive', 'liq'] },
@@ -1011,6 +1019,7 @@ async function lisChaine(addr, minutes, pool) {
     const seuilPiscine = Math.max(4, Math.ceil(participants * 0.4));
     const infrastructure = [];
     let circ = 0, mx = 0, np = 0, gros = null;
+    const detenteurs = [];
     for (const a in solde) {
       if (brulures.has(a)) continue;
       const v = solde[a];
@@ -1018,8 +1027,14 @@ async function lisChaine(addr, minutes, pool) {
       const cp = contreparties[a] ? contreparties[a].size : 0;
       if (cp >= seuilPiscine && envoyeurs[a] && receveurs[a]) { infrastructure.push(a); continue; }
       circ += v; np++;
+      detenteurs.push({ a, v });
       if (v > mx) { mx = v; gros = a; }
     }
+    /* De vraies adresses qui detiennent vraiment : ce sont elles qui serviront
+       de cobayes a l'epreuve de vente. On evite le plus gros — souvent le
+       deployeur, parfois le seul a qui le contrat laisse tout faire. */
+    detenteurs.sort((x, y) => y.v - x.v);
+    const cobayes = detenteurs.slice(1, 4).map((x) => x.a);
     /* ---- « PERSONNE NE DETIENT » N'EST PAS « JE NE SAIS PAS » ----
      * Releve sur deux jetons reels de deux minutes : soixante et un transferts,
      * trente adresses, et TOUTES a zero net — la piscine tenait la totalite de
@@ -1035,7 +1050,7 @@ async function lisChaine(addr, minutes, pool) {
       porteurs: su ? np : null,
       personne: su && np === 0 && (logs || []).length > 0,
       top: (su && circ > 0) ? Math.round(mx / circ * 1000) / 10 : null,
-      plusGros: gros,
+      plusGros: gros, cobayes,
       /* Ce qu'on a ecarte, et pourquoi : sans ca, « 12 porteurs » est un
          chiffre qu'on ne peut pas contester. */
       infra: infrastructure.length, participants,
@@ -1590,6 +1605,9 @@ function vetoOracle(t) {
 }
 const VETOS = { scout: vetoScout, warden: vetoWarden, whale: vetoWhale, whisper: vetoWhisper,
                 oracle: vetoOracle };
+/* Le Cobaye n'est pas dans cette table : son epreuve demande un appel reseau,
+   donc elle ne peut pas etre evaluee dans la boucle synchrone des vetos. Elle
+   est jouee dans le tour, juste avant l'ouverture. */
 
 /* Ce dont un agent a besoin pour parler : l'union des besoins de ses traits et
    celui de son veto. C'est ce nombre qui donne son COUT, et le cout est la
@@ -1619,7 +1637,12 @@ function gardesEnOrdre() {
   const g = E.roster.filter((a) => a.role === 'garde').slice()
     .sort((a, b) => (a.ordre || 0) - (b.ordre || 0));
   const o = E.roster.filter((a) => a.role === 'note');
-  return s.concat(g, o);
+  /* L'epreuve de vente vient en DERNIER, toujours : elle coute des appels et ne
+     sert que sur un jeton qu'on s'apprete a acheter. « Avant le gros achat »,
+     donc apres tous les autres controles — la mettre plus tot reviendrait a la
+     payer pour des jetons que le Whale allait refuser de toute facon. */
+  const e = E.roster.filter((a) => a.role === 'epreuve');
+  return s.concat(g, o, e);
 }
 
 /* ---- L'ANALYSE COMPLETE ----
@@ -2337,6 +2360,103 @@ function classementDesTraits() {
   }
   out.sort((a, b) => b.separation - a.separation);
   return out;
+}
+
+/* ==========================================================================
+ * L'EPREUVE DE VENTE — LE COBAYE
+ *
+ * « Il faudrait un bot dans le village avant le gros achat. Il va acheter, il
+ *   teste avec un centime un achat et une vente, pour pas se faire
+ *   honeypot. »
+ *
+ * L'idee est la bonne, et c'est exactement ce que font les vrais robots. Mais
+ * la colonie ne signe RIEN : un agent qui pretendrait depenser un centime
+ * serait la fabrication que tout ce fichier refuse. Un centime qu'on n'a pas
+ * depense ne prouve rien.
+ *
+ * On fait donc la meme chose, en mieux : on SIMULE la vente sur la chaine.
+ * `eth_call` execute le contrat exactement comme une vraie transaction —
+ * memes regles, meme etat, meme instant — mais sans rien signer, sans rien
+ * payer, et sans rien laisser derriere. Verifie sur la chaine 4663 : le noeud
+ * l'accepte et rend la reponse du contrat.
+ *
+ * ---- CE QU'ON SIMULE, PRECISEMENT ----
+ *
+ * Le premier geste d'une vente : envoyer le jeton vers la piscine. C'est la
+ * que la plupart des pieges se referment — un honeypot laisse acheter, puis
+ * refuse ce transfert-la, et le detenteur decouvre qu'il ne peut plus sortir.
+ *
+ * On le tente depuis de VRAIS detenteurs, lus dans les blocs. Le plus gros est
+ * ecarte : c'est souvent le deployeur, et c'est souvent le seul a qui le
+ * contrat laisse tout faire. Trois cobayes plutot qu'un, parce qu'un piege
+ * peut viser une adresse en particulier.
+ *
+ * ---- ET CE QUE CETTE EPREUVE NE PROUVE PAS ----
+ *
+ * Elle simule le transfert, pas l'echange complet. Un contrat peut laisser
+ * passer le transfert et faire echouer le swap plus loin — une taxe de vente
+ * qui ramene la sortie a zero, un controle qui ne se declenche qu'a travers le
+ * routeur. « Passe » veut donc dire « le chemin le plus courant n'est pas
+ * bloque », pas « on pourra vendre ». C'est ecrit tel quel a l'ecran : une
+ * epreuve de securite qu'on croit plus forte qu'elle n'est vaut moins que pas
+ * d'epreuve du tout.
+ *
+ * ---- ELLE PASSE EN DERNIER ----
+ *
+ * Elle coute un a trois appels et ne sert que sur un jeton qu'on s'apprete a
+ * acheter. « Avant le gros achat », donc : apres tous les autres controles.
+ * ======================================================================== */
+const SEL_TRANSFER = '0xa9059cbb';   /* transfer(address,uint256) */
+/* Le vocabulaire d'une revocation, tel que les noeuds le rendent. Court
+   expres : ce qui n'est pas la-dedans n'est pas compte contre le jeton. */
+const EVM_REFUSE = /execution reverted|revert|invalid opcode|out of gas|stack underflow|always failing/i;
+
+async function simuleVente(t) {
+  const ch = t.chaine || {};
+  const cob = (ch.cobayes || []).slice(0, 3);
+  if (!ch.vu || !cob.length || !t.pool)
+    return { teste: false, raison: 'aucun detenteur connu a qui faire tenter la sortie' };
+  const data = SEL_TRANSFER + String(t.pool).slice(2).toLowerCase().padStart(64, '0')
+             + (1).toString(16).padStart(64, '0');
+  let refus = 0, vus = 0, dernier = null;
+  for (const qui of cob) {
+    let r = null;
+    try { r = await rpc('eth_call', [{ from: qui, to: t.addr, data }, 'latest']); }
+    catch (e) {
+      /* ---- DEUX ERREURS QUI N'ONT RIEN A VOIR ----
+       * Une revocation EST la reponse du contrat : il a refuse, et c'est
+       * exactement ce qu'on cherchait a savoir. Une panne du noeud ne dit
+       * rien du tout.
+       *
+       * On listait d'abord les pannes et on comptait tout le reste comme un
+       * refus. C'etait le mauvais sens : la liste des pannes possibles est
+       * ouverte — delai depasse, quota, passerelle — et chacune de celles
+       * qu'on n'avait pas prevues condamnait un jeton innocent, en le
+       * PRESENTANT comme une trouvaille de securite. On reconnait donc
+       * maintenant ce qui est reconnaissable : une revocation de la machine
+       * virtuelle a un vocabulaire fixe. Tout le reste est une panne, donc
+       * une absence de reponse, donc rien. */
+      const m = String(e.message || '');
+      if (!EVM_REFUSE.test(m)) { dernier = m; continue; }
+      vus++; refus++; dernier = m.slice(0, 60);
+      continue;
+    }
+    vus++;
+    /* Un `transfer` qui rend `false` refuse sans se plaindre. */
+    if (/^0x0*$/.test(String(r || ''))) { refus++; dernier = 'le transfert rend false'; }
+    await dors(150);
+  }
+  if (!vus) return { teste: false, raison: 'le noeud n\'a pas repondu (' + (dernier || '?') + ')' };
+  return { teste: true, essais: vus, refus, passe: refus < vus,
+           raison: refus < vus ? null : (dernier || 'tous les transferts vers la piscine sont refuses') };
+}
+
+function vetoCobaye(t) {
+  const e = t.epreuve;
+  if (!e || !e.teste) return null;        /* non testable n'est pas coupable */
+  if (e.passe) return null;
+  return 'la sortie est bloquee : ' + e.refus + '/' + e.essais
+       + ' detenteurs ne peuvent pas envoyer le jeton vers la piscine';
 }
 
 /* --------------------------------------------------------- les positions */
@@ -3152,6 +3272,15 @@ async function tour() {
       let refus = null, quiRefuse = null;
 
       for (const a of gardes) {
+        /* ---- L'EPREUVE N'EST PAS UN VETO SYNCHRONE ----
+         * Le Cobaye figure dans l'ordre — c'est la que la page doit le
+         * dessiner, et c'est la qu'il travaille — mais son epreuve demande un
+         * appel reseau et se joue plus bas, une fois la note rendue. Le
+         * laisser traverser cette boucle lui aurait compte un « vu » et un
+         * « ok » pour CHAQUE jeton arrive jusqu'ici, y compris ceux dont la
+         * sortie n'a jamais ete testee — et la colonie se reorganise sur ces
+         * chiffres-la. */
+        if (a.role === 'epreuve') continue;
         await assure(t, besoinsDe(a));
         compte(a.key + 'Vu');
         const veto = VETOS[a.key];
@@ -3179,6 +3308,21 @@ async function tour() {
           if (t.conseil) { an = analyse(t); t.an = an; compte('conseilRendu'); }
         }
         if (!an.achete) { refus = 'note trop basse'; quiRefuse = 'oracle'; compte('oracleBloque'); }
+        else {
+          /* ---- L'EPREUVE DE VENTE, JUSTE AVANT L'ACHAT ----
+           * Le jeton a tout passe : c'est maintenant, et seulement maintenant,
+           * que la simulation vaut ses appels. */
+          compte('cobayeVu');
+          t.epreuve = await simuleVente(t);
+          t.appels += (t.epreuve.essais || 0);
+          const bloque = vetoCobaye(t);
+          if (bloque) { refus = bloque; quiRefuse = 'cobaye'; compte('cobayeBloque'); }
+          else if (t.epreuve.teste) compte('cobayeOk');
+          else compte('cobayeIncertain');
+          /* On recalcule : le resultat de l'epreuve est un trait, et il doit
+             entrer dans ce que les agents retiendront de ce jeton. */
+          an = analyse(t); t.an = an;
+        }
       } else {
         /* Refuse avant la note : on la calcule quand meme pour la
            surveillance, sur ce qu'on a lu — elle dira si ca valait la peine
@@ -3224,6 +3368,7 @@ async function tour() {
       dexVu: !!(x.t.dex && x.t.dex.vu),
       liens: (x.t.dex && x.t.dex.vu) ? (x.t.dex.liens || []) : null,
       saute: x.t.saute || null,
+      epreuve: x.t.epreuve || null,
       acheteurs: x.t.trades && x.t.trades.vu ? x.t.trades.acheteurs : null,
       partDuPlusGros: x.t.trades && x.t.trades.vu ? x.t.trades.partDuPlusGros : null,
       tradesVus: !!(x.t.trades && x.t.trades.vu),
@@ -3396,7 +3541,7 @@ module.exports = {
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN,
   noteProfil, courbeDe, horizonPour, informationDe, classementDesTraits,
-  vetoOracle, sociauxExiges, SOCIAUX_DEFAUT,
+  vetoOracle, sociauxExiges, SOCIAUX_DEFAUT, simuleVente, vetoCobaye,
   HORIZONS, HORIZON_REF, PROFIL_MIN_OBS, jalonValable,
   lisTrades, lisFluxDex, jetonDepuisDex, rassemble,
   sondeCoingecko, jsonGT, cleCoingecko, goplusEntetes, goplusIdentifie, noeuds, peutRepondre,

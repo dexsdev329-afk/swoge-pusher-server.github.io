@@ -88,6 +88,17 @@ function jeton(i, o) {
     secondePiscine: !!o.secondePiscine,
     tradeurs: o.tradeurs === undefined ? 12 : o.tradeurs,
     tradesN: o.tradesN === undefined ? 24 : o.tradesN,
+    /* ---- LE PIEGE QUI NE SE VOIT QUE QUAND ON ESSAIE DE SORTIR ----
+     * GoPlus le dit propre, la chaine le dit bien reparti, les compteurs
+     * disent qu'on achete : rien ne le distingue d'un bon jeton AVANT
+     * l'achat. Seul le contrat sait, et il ne le dit qu'a qui le lui
+     * demande. */
+    piege: !!o.piege,                 /* le transfert rend false */
+    piegeQuiCasse: !!o.piegeQuiCasse, /* le transfert part en erreur */
+    deployeur: o.deployeur || null,   /* lui, il peut toujours sortir */
+    callMuet: !!o.callMuet,           /* le noeud ne repond pas a l'appel */
+    /* La presence du projet : la vraie reponse DexScreener porte les URL. */
+    sansTelegram: !!o.sansTelegram,
   };
 }
 
@@ -231,6 +242,36 @@ function logsDe(t) {
   return out;
 }
 
+/* ---- LE CONTRAT REPOND, LUI AUSSI ----
+ * L'epreuve de vente n'invente rien : elle DEMANDE au contrat, par eth_call,
+ * ce qu'il ferait si un porteur envoyait un jeton vers la piscine. Le monde
+ * faux doit donc savoir repondre a cette question, sinon l'epreuve ne mesure
+ * que le silence du faux.
+ *
+ * Trois contrats possibles, et ce sont les trois qui existent vraiment :
+ *  - `piege` : le transfert rend `false` pour tout le monde sauf le deployeur.
+ *    C'est la forme la plus courante — rien ne casse, la vente echoue.
+ *  - `piegeQuiCasse` : le transfert part en erreur. Plus visible, aussi reel.
+ *  - le reste : il rend `true`, comme un jeton normal.
+ * `callMuet` coupe la reponse : le noeud ne repond pas, et l'epreuve doit
+ * alors dire « non testable » plutot que « coupable ». */
+const VRAI = '0x' + '0'.repeat(63) + '1';
+const FAUX = '0x' + '0'.repeat(64);
+function ethCall(p) {
+  appels.call++;
+  const to = String(p.to || '').toLowerCase();
+  const t = MONDE.jetons.find((x) => x.addr === to);
+  if (!t) return { result: VRAI };
+  if (t.callMuet) return { error: { message: 'execution timeout' } };
+  /* Le deployeur, lui, peut toujours sortir : c'est ce qui rend le piege
+     invisible tant qu'on ne demande pas a QUELQU'UN D'AUTRE. */
+  const de = String(p.from || '').toLowerCase();
+  if (t.piege && de === String(t.deployeur || '').toLowerCase()) return { result: VRAI };
+  if (t.piegeQuiCasse) return { error: { message: 'execution reverted: TRADING_DISABLED' } };
+  if (t.piege) return { result: FAUX };
+  return { result: VRAI };
+}
+
 /* Tout ce qui part sur le reseau, garde : c'est la seule facon de VERIFIER
    qu'un secret ne fuit pas, plutot que de l'esperer. */
 let envoyes = [];
@@ -327,7 +368,18 @@ global.fetch = async function (url, opts) {
       txns: { h1: { buys: t.buys, sells: t.sells } },
       volume: { m5: 2000, h1: 20000, h6: 60000, h24: 90000 },
       priceChange: { m5: 8, h1: 20, h6: 35 },
-      info: { socials: [{ type: 'twitter' }], websites: [{}] } }] });
+      /* ---- LA PRESENCE DU PROJET, AVEC SES ADRESSES ----
+       * La vraie reponse porte des URL, pas des etiquettes nues. Tant que le
+       * faux n'en mettait pas, la regle « site + twitter + telegram » ecartait
+       * TOUS les jetons du banc et la suite se mesurait elle-meme au lieu de
+       * mesurer le moteur. `sansTelegram` sert a l'inverse : eprouver la regle
+       * sur un jeton a qui il manque vraiment quelque chose. */
+      info: t.sansTelegram
+        ? { socials: [{ type: 'twitter', url: 'https://x.com/' + t.sym }],
+            websites: [{ url: 'https://' + t.sym + '.example' }] }
+        : { socials: [{ type: 'twitter', url: 'https://x.com/' + t.sym },
+                      { type: 'telegram', url: 'https://t.me/' + t.sym }],
+            websites: [{ url: 'https://' + t.sym + '.example' }] } }] });
   }
   if (/lb\.drpc\.org/.test(url)) {
     appels.rpcCle++;
@@ -344,6 +396,7 @@ global.fetch = async function (url, opts) {
       const t = MONDE.jetons.find((x) => x.addr === a);
       return rep({ result: t ? logsDe(t) : [] });
     }
+    if (b.method === 'eth_call') return rep(ethCall(b.params[0]));
     return rep({ result: null });
   }
   if (/rpc\.mainnet\.chain\.robinhood|drpc\.org/.test(url)) {
@@ -366,6 +419,7 @@ global.fetch = async function (url, opts) {
       const t = MONDE.jetons.find((x) => x.addr === a);
       return rep({ result: t ? logsDe(t) : [] });
     }
+    if (b.method === 'eth_call') return rep(ethCall(b.params[0]));
     return rep({ result: null });
   }
   throw new Error('service non prevu : ' + url);
@@ -376,7 +430,7 @@ const C = require('./ai_colonie.js');
 function remise(jetons, extra) {
   MONDE = mondeNeuf(jetons, extra);
   envoyes = [];
-  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0, rpc2: 0, trades: 0, profils: 0, boosts: 0, claude: 0, cgDemo: 0, cgPro: 0, goplusJeton: 0, goplusAuth: 0, rpcCle: 0 };
+  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0, rpc2: 0, trades: 0, profils: 0, boosts: 0, claude: 0, cgDemo: 0, cgPro: 0, goplusJeton: 0, goplusAuth: 0, rpcCle: 0, call: 0 };
   for (const k of Object.keys(C._cache)) for (const j of Object.keys(C._cache[k])) delete C._cache[k][j];
   for (const k of Object.keys(C._prix)) delete C._prix[k];
   C._pose(C.etatNeuf());
@@ -919,8 +973,18 @@ async function paresse() {
   ok(bouge === true, 'l ordre a change');
   ok(apres.indexOf('whale') < apres.indexOf('warden'),
      'le garde qui refuse le plus pour le meme prix passe devant (' + apres + ')');
-  ok(apres.indexOf('oracle') === apres.length - 6,
-     'et l Oracle reste dernier : sa note se sert de ce que les autres ont fait lire');
+  /* ---- DEUX PLACES QUI NE SE NEGOCIENT PAS ----
+   * L'Oracle apres tous les gardes : sa note se sert de ce que les autres ont
+   * fait lire. Le Cobaye apres l'Oracle : son epreuve coute des appels et ne
+   * sert que sur un jeton qu'on s'apprete a acheter. Le reste de l'ordre, lui,
+   * appartient aux agents. */
+  const cles = C.gardesEnOrdre().map((a) => a.key);
+  ok(cles.indexOf('oracle') > Math.max(cles.indexOf('warden'), cles.indexOf('whale'),
+                                       cles.indexOf('whisper')),
+     'et l Oracle reste apres tous les gardes : sa note se sert de ce que les autres ont fait lire');
+  ok(cles[cles.length - 1] === 'cobaye',
+     'et le Cobaye tout a la fin : « avant le gros achat » veut dire apres tous les autres '
+     + 'controles, sinon on paie son epreuve pour des jetons que le Whale allait refuser');
   const j = E.journalStructure[0];
   console.log('   journal : ' + (j && j.txt));
   ok(!!j && j.quoi === 'ordre' && /whale/.test(j.txt),
@@ -2385,6 +2449,178 @@ async function traitsQuiSeparent() {
   ok(C.vue().traits.length >= 2, 'et la vue publie le classement');
 }
 
+/* ==========================================================================
+ * 41. L'EPREUVE DE VENTE, AVANT LE GROS ACHAT
+ *
+ * « Faudrait un bot dans le village avant le gros achat : il teste avec un
+ *   centime un achat et une vente pour pas se faire honeypot. »
+ *
+ * La colonie ne signe rien — un agent qui pretendrait depenser un centime
+ * serait exactement la fabrication que tout le reste refuse. Mais on peut
+ * POSER LA QUESTION au contrat sans depenser ni signer : `eth_call` execute le
+ * transfert dans le vide et rend ce qu'il aurait rendu.
+ *
+ * Ce qui est mesure ici :
+ *  - un piege qui laisse tout passer sauf la sortie est ATTRAPE, alors que
+ *    GoPlus le dit propre et que la chaine le dit bien reparti ;
+ *  - un noeud muet ne rend pas le jeton coupable — « pas testable » et
+ *    « bloque » sont deux verdicts differents ;
+ *  - l'epreuve n'est jouee que sur ce qui allait etre achete, sinon elle
+ *    coute des appels pour des jetons deja refuses.
+ * ======================================================================== */
+async function epreuveDeVente() {
+  console.log('\n-- l epreuve de vente --');
+
+  /* ---- LE CONTRAT REPOND NON ---- */
+  remise([jeton(0, { piege: true }), jeton(1)]);
+  const bon = { addr: MONDE.jetons[1].addr, pool: MONDE.jetons[1].pool,
+                chaine: { vu: true, cobayes: ['0x' + '1'.repeat(40), '0x' + '2'.repeat(40)] } };
+  const mauvais = { addr: MONDE.jetons[0].addr, pool: MONDE.jetons[0].pool,
+                    chaine: { vu: true, cobayes: ['0x' + '1'.repeat(40), '0x' + '2'.repeat(40)] } };
+  const eb = await C.simuleVente(bon);
+  const em = await C.simuleVente(mauvais);
+  console.log('   sain : ' + JSON.stringify(eb));
+  console.log('   piege : ' + JSON.stringify(em));
+  ok(eb.teste && eb.passe, 'sur un jeton sain, les deux cobayes peuvent envoyer vers la piscine');
+  ok(em.teste && !em.passe && em.refus === em.essais,
+     'sur le piege, AUCUN ne le peut (' + em.refus + '/' + em.essais + ')');
+  ok(!C.vetoCobaye({ epreuve: eb }) && !!C.vetoCobaye({ epreuve: em }),
+     'et c est le veto du Cobaye qui le dit : « ' + C.vetoCobaye({ epreuve: em }) + ' »');
+
+  /* ---- UN CONTRAT QUI CASSE PLUTOT QUE DE RENDRE FALSE ----
+   * Les deux formes existent ; les deux doivent etre lues comme un refus. */
+  remise([jeton(0, { piegeQuiCasse: true })]);
+  const casse = await C.simuleVente({ addr: MONDE.jetons[0].addr, pool: MONDE.jetons[0].pool,
+    chaine: { vu: true, cobayes: ['0x' + '1'.repeat(40)] } });
+  console.log('   qui casse : ' + JSON.stringify(casse));
+  ok(casse.teste && !casse.passe,
+     'une revocation est une REPONSE du contrat, donc un refus, pas une panne');
+
+  /* ---- LE NOEUD MUET N'ACCUSE PERSONNE ----
+   * C'est la distinction qui compte, et elle se joue sur le VOCABULAIRE de
+   * l'erreur : « execution reverted » vient de la machine virtuelle, donc du
+   * contrat ; « execution timeout » vient du noeud, et ne dit rien du jeton.
+   * On listait d'abord les pannes connues en comptant tout le reste comme un
+   * refus — et chaque panne non prevue condamnait alors un jeton innocent en
+   * le presentant comme une trouvaille de securite. Si « pas de reponse »
+   * valait « piege », une panne de noeud ecarterait tous les jetons du monde
+   * et on croirait la colonie prudente alors qu'elle serait aveugle. */
+  remise([jeton(0, { callMuet: true })]);
+  const muet = await C.simuleVente({ addr: MONDE.jetons[0].addr, pool: MONDE.jetons[0].pool,
+    chaine: { vu: true, cobayes: ['0x' + '1'.repeat(40)] } });
+  console.log('   noeud muet : ' + JSON.stringify(muet));
+  ok(muet.teste === false, 'un noeud qui ne repond pas ne donne PAS de verdict');
+  ok(!C.vetoCobaye({ epreuve: muet }),
+     'et « pas testable » ne bloque rien : on ne condamne pas sur une absence de reponse');
+  ok(/repondu|detenteur/.test(muet.raison || ''), 'la raison est ecrite : « ' + muet.raison + ' »');
+
+  /* ---- SANS DETENTEUR CONNU, IL N'Y A PERSONNE A QUI DEMANDER ---- */
+  const vide = await C.simuleVente({ addr: '0xa', pool: '0xb', chaine: { vu: false } });
+  ok(vide.teste === false, 'sans lecture de chaine, l epreuve ne peut pas etre jouee');
+
+  /* ---- ET DANS UN TOUR COMPLET ----
+   * Le piege passe GoPlus (« propre »), passe la chaine (130 porteurs),
+   * passe les compteurs. Il n'est arrete QUE par l'epreuve. */
+  remise([jeton(0, { piege: true }), jeton(1), jeton(2)]);
+  await C.tour();
+  const v = C.vue();
+  const cand = v.candidats.find((x) => x.addr === MONDE.jetons[0].addr);
+  console.log('   ' + JSON.stringify({ sym: cand && cand.sym, refus: cand && cand.refus,
+    qui: cand && cand.quiRefuse, epreuve: cand && cand.epreuve }));
+  ok(!!cand, 'le piege a bien ete examine');
+  ok(cand.quiRefuse === 'cobaye',
+     'et c est le Cobaye qui l arrete, apres que tous les autres l aient laisse passer');
+  ok(!C._etat().positions.some((p) => p.addr === MONDE.jetons[0].addr),
+     'aucune position n est ouverte dessus');
+  ok(C._etat().positions.length > 0, 'alors que les jetons sains, eux, sont achetes');
+  const cpt = C._etat().compteurs;
+  console.log('   compteurs : ' + JSON.stringify({ vu: cpt.cobayeVu, ok: cpt.cobayeOk,
+    bloque: cpt.cobayeBloque, incertain: cpt.cobayeIncertain }));
+  ok(cpt.cobayeBloque >= 1, 'le blocage est compte');
+  ok((cpt.cobayeVu || 0) <= v.candidats.length,
+     'et l epreuve n est jouee que sur ce qui allait etre achete (' + cpt.cobayeVu
+     + ' epreuves pour ' + v.candidats.length + ' jetons examines) : la payer sur tout le flux '
+     + 'reviendrait a acheter des appels pour des jetons deja refuses');
+
+  /* ---- CE QU'ELLE NE PROUVE PAS, ECRIT DANS LE CODE ----
+   * Une epreuve qu'on croit plus forte qu'elle n'est vaut moins que pas
+   * d'epreuve : elle simule le transfert, pas l'echange complet. */
+  const src = require('fs').readFileSync(__dirname + '/ai_colonie.js', 'utf8');
+  ok(/ne prouve pas/i.test(src) && /pas « on pourra vendre »/.test(src),
+     'et la limite de l epreuve est ecrite la ou elle est lue');
+}
+
+/* ==========================================================================
+ * 42. LA PRESENCE DU PROJET
+ *
+ * « Faudrait acheter que des cryptos avec site web, telegram et twitter, et
+ *   DexScreener a jour. »
+ *
+ * Une regle de gout ne se code pas comme une verite : elle est nommee, elle
+ * est reglable, et « pas encore vu » ne doit jamais etre confondu avec
+ * « absent » — sinon on reproche a un jeton de deux minutes notre propre
+ * calendrier d'indexation.
+ * ======================================================================== */
+async function presenceDuProjet() {
+  console.log('\n-- site, twitter, telegram --');
+  console.log('   exiges : ' + JSON.stringify(C.sociauxExiges()));
+  ok(C.sociauxExiges().join(',') === 'site,twitter,telegram',
+     'les trois sont exiges par defaut');
+
+  const complet = { dex: { vu: true, liens: [
+    { type: 'site', url: 'https://a.example' }, { type: 'twitter', url: 'https://x.com/a' },
+    { type: 'telegram', url: 'https://t.me/a' }] } };
+  ok(C.vetoOracle(complet) === null, 'un projet avec les trois passe');
+
+  const sansTg = { dex: { vu: true, liens: [
+    { type: 'site', url: 'https://a.example' }, { type: 'twitter', url: 'https://x.com/a' }] } };
+  console.log('   sans telegram : ' + C.vetoOracle(sansTg));
+  ok(/telegram/.test(C.vetoOracle(sansTg) || ''),
+     'et il manque est NOMME, pas juste « refuse » : « ' + C.vetoOracle(sansTg) + ' »');
+
+  /* ---- « PAS ENCORE VU » N'EST PAS « ABSENT » ----
+   * DexScreener ne connait qu'un jeton sur douze a deux minutes. Les deux cas
+   * doivent porter des mots differents, parce qu'ils appellent des suites
+   * differentes : l'un revient en surveillance, l'autre est ecarte. */
+  const pasVu = { dex: { vu: false }, saute: { dex: true }, minutes: 2 };
+  const absent = { dex: { vu: false }, minutes: 40 };
+  console.log('   pas lu : ' + C.vetoOracle(pasVu) + ' | lu et absent : ' + C.vetoOracle(absent));
+  ok(/pas encore verifiable/.test(C.vetoOracle(pasVu) || ''),
+     'quand on ne l a pas encore regarde, on le dit comme ca');
+  ok(/absent de DexScreener/.test(C.vetoOracle(absent) || ''),
+     'quand on a regarde et qu il n y est pas, c est autre chose — et ce n est pas le meme mot');
+
+  /* ---- LA REGLE EST REGLABLE ----
+   * C'est une exigence de gout, pas une verite mesuree : elle doit pouvoir
+   * etre relachee sans toucher au code. */
+  const avant = process.env.SOCIAUX_EXIGES;
+  process.env.SOCIAUX_EXIGES = '';
+  ok(C.vetoOracle(sansTg) === null && C.vetoOracle(absent) === null,
+     'a vide, la regle ne refuse plus rien');
+  process.env.SOCIAUX_EXIGES = 'site';
+  ok(C.vetoOracle(sansTg) === null && /site/.test(C.vetoOracle({ dex: { vu: true, liens: [] } }) || ''),
+     'et on peut n en exiger qu un');
+  if (avant === undefined) delete process.env.SOCIAUX_EXIGES; else process.env.SOCIAUX_EXIGES = avant;
+
+  /* ---- ET DANS UN TOUR COMPLET ---- */
+  remise([jeton(0, { sansTelegram: true }), jeton(1, { sansTelegram: true })]);
+  await C.tour();
+  const v = C.vue();
+  console.log('   ' + JSON.stringify(v.candidats.map((x) => x.sym + ' : ' + x.refus)));
+  ok(C._etat().positions.length === 0,
+     'un flux entier de jetons sans Telegram n ouvre aucune position');
+  ok(v.candidats.every((x) => x.quiRefuse === 'oracle' && /telegram/.test(x.refus || '')),
+     'et chacun porte la raison exacte, donc l audit dira demain ce que cette regle a coute');
+  ok(v.sociauxExiges && v.sociauxExiges.length === 3,
+     'la vue publie la regle en vigueur : une exigence qu on ne voit pas ne peut pas etre discutee');
+
+  remise([jeton(0), jeton(1)]);
+  await C.tour();
+  ok(C._etat().positions.length > 0,
+     'et les memes jetons, avec leurs trois reseaux, sont achetes : la regle refuse ce qui manque, '
+     + 'pas tout');
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -2427,6 +2663,8 @@ async function traitsQuiSeparent() {
   await profilsDansLeTemps();
   await jalonsHonnetes();
   await traitsQuiSeparent();
+  await epreuveDeVente();
+  await presenceDuProjet();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
