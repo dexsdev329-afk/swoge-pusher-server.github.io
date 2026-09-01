@@ -1539,7 +1539,57 @@ function vetoScout(t) {
          + ' : rien a vendre dedans';
   return null;
 }
-const VETOS = { scout: vetoScout, warden: vetoWarden, whale: vetoWhale, whisper: vetoWhisper };
+/* ==========================================================================
+ * LA PRESENCE DU PROJET
+ *
+ * « Il faudrait acheter que des cryptos avec site web, Telegram et Twitter, et
+ *   DexScreener a jour. »
+ *
+ * C'est une regle severe, et elle l'est plus qu'elle n'en a l'air : releve sur
+ * huit jetons pris dans le flux des PROFILS de DexScreener — donc parmi les
+ * plus susceptibles d'avoir une presence — AUCUN ne portait les trois. La
+ * plupart n'ont que Twitter, les sites sont rares, Telegram encore plus.
+ *
+ * Elle est donc appliquee telle que demandee, mais reglable sans toucher au
+ * code (SOCIAUX_EXIGES), et surtout MESUREE : les jetons refuses ici sont
+ * suivis comme les autres, et l'audit dira dans la journee ce que cette regle
+ * a coute ou epargne. C'est la seule facon de trancher une question pareille.
+ *
+ * ---- ET « PAS ENCORE VU » N'EST PAS « ABSENT » ----
+ *
+ * DexScreener ne connait qu'un jeton sur douze a deux minutes : il n'a pas
+ * encore indexe. Refuser ces jetons pour « aucun reseau » serait leur reprocher
+ * notre propre calendrier. On les ecarte pour ce qui est vrai — « pas encore
+ * verifiable » — et ils repassent en surveillance, donc ils reviendront quand
+ * DexScreener les connaitra.
+ * ======================================================================== */
+const SOCIAUX_DEFAUT = 'site,twitter,telegram';
+function sociauxExiges() {
+  const v = (process.env.SOCIAUX_EXIGES === undefined ? SOCIAUX_DEFAUT : process.env.SOCIAUX_EXIGES);
+  return String(v).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+}
+function vetoOracle(t) {
+  const exiges = sociauxExiges();
+  if (!exiges.length) return null;                 /* la regle est desactivee */
+  const d = t.dex;
+  if (!d || !d.vu) {
+    /* On distingue « on n'a pas regarde » de « il n'y est pas » : le premier
+       est une absence de notre part, et elle se corrige en revenant plus tard. */
+    const sautee = t.saute && t.saute.dex;
+    return sautee ? 'pas encore verifiable sur DexScreener (' + Math.round(t.minutes || 0) + ' min)'
+                  : 'absent de DexScreener';
+  }
+  const a = new Set();
+  for (const l of (d.liens || [])) {
+    const ty = String(l.type || '').toLowerCase();
+    a.add(ty === 'website' ? 'site' : ty);
+  }
+  const manque = exiges.filter((x) => !a.has(x));
+  if (manque.length) return 'il manque : ' + manque.join(', ');
+  return null;
+}
+const VETOS = { scout: vetoScout, warden: vetoWarden, whale: vetoWhale, whisper: vetoWhisper,
+                oracle: vetoOracle };
 
 /* Ce dont un agent a besoin pour parler : l'union des besoins de ses traits et
    celui de son veto. C'est ce nombre qui donne son COUT, et le cout est la
@@ -1587,6 +1637,8 @@ function analyse(t) {
     if (a.key === 'warden') sec = r; else conc = r;
     break;
   }
+  /* L'Oracle est le dernier de la file : son veto n'est evalue ci-dessus que
+     si personne n'a parle avant, ce qui est bien l'ordre voulu. */
   const base = scoreBase(t);
   const parts = {};
   let adj = 0;
@@ -2339,6 +2391,7 @@ function ouvre(t) {
       ? 'les courbes de ses traits culminent a ' + tenue.min + ' min (poids ' + tenue.poids + ')'
       : (tenue.appris ? 'duree apprise par le Closer' : 'duree par defaut'),
     mcAchat: Math.round(t.mc || 0), liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null,
+    dexVu: !!(t.dex && t.dex.vu),
     traits: t.an.traits, score: t.an.score, mc: t.mc, minutes: Math.round(t.minutes || 0),
     origine: t.origine || 'pools', tenueMin: tenue.min, traj: [],
   });
@@ -3168,6 +3221,8 @@ async function tour() {
       transferts: x.t.chaine && x.t.chaine.vu ? x.t.chaine.transferts : null,
       goplusSait: !!(x.t.g && x.t.g.have),
       goplusSeContredit: !!(x.t.g && x.t.g.seContredit),
+      dexVu: !!(x.t.dex && x.t.dex.vu),
+      liens: (x.t.dex && x.t.dex.vu) ? (x.t.dex.liens || []) : null,
       saute: x.t.saute || null,
       acheteurs: x.t.trades && x.t.trades.vu ? x.t.trades.acheteurs : null,
       partDuPlusGros: x.t.trades && x.t.trades.vu ? x.t.trades.partDuPlusGros : null,
@@ -3224,7 +3279,7 @@ function vue() {
       return { sym: p.sym, adr: p.adr, pool: p.pool, minutes: p.minutes, score: p.score,
                mcAchat: p.mcAchat === undefined ? (p.mc || null) : p.mcAchat,
                tenueRaison: p.tenueRaison || null,
-               liens: p.liens || null, prolonge: p.prolonge || 0,
+               liens: p.liens || null, prolonge: p.prolonge || 0, dexVu: !!p.dexVu,
                ouverteDepuis: Date.now() - p.t0, tenueMin: p.tenueMin,
                mise: p.mise, methode: p.methode, regime: p.regime, raisonMise: p.raisonMise,
                origine: p.origine || 'pools',
@@ -3292,6 +3347,7 @@ function vue() {
                   poids: CONSEIL_POIDS, parTour: CONSEIL_MAX_PAR_TOUR,
                   rendus: E.compteurs.conseilRendu || 0 },
     seuil: seuilCourant(), seuilDepart: SEUIL, ageMax: AGE_MAX_MIN,
+    sociauxExiges: sociauxExiges(),
     derniers: (E.derniers || []).slice(-20),
     alertes: alertes(),
   };
@@ -3340,6 +3396,7 @@ module.exports = {
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN,
   noteProfil, courbeDe, horizonPour, informationDe, classementDesTraits,
+  vetoOracle, sociauxExiges, SOCIAUX_DEFAUT,
   HORIZONS, HORIZON_REF, PROFIL_MIN_OBS, jalonValable,
   lisTrades, lisFluxDex, jetonDepuisDex, rassemble,
   sondeCoingecko, jsonGT, cleCoingecko, goplusEntetes, goplusIdentifie, noeuds, peutRepondre,

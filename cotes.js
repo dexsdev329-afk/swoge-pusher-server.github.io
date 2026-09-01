@@ -1083,7 +1083,13 @@ function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase) {
   for (const k of dispo) {
     const M = paris.MARCHES[k];
     const iss = M.issues(sport);
-    const lot = habilleUnMarche(tout[k], iss, M.couverture, margeVoulue,
+    /* ---- CHAQUE MARCHE PORTE SA PROPRE MARGE ----
+     * Elle etait unique pour tous. Or l'incertitude du modele ne l'est pas :
+     * trois issues sur un 1-N-2, dix-sept sur un score exact tire d'une grille
+     * de Poisson et d'un rho estime. Prendre la meme marge sur les deux revient
+     * a vendre au meme prix ce qu'on sait et ce qu'on suppose. */
+    const lot = habilleUnMarche(tout[k], iss, M.couverture,
+                                margeVoulue * (M.margeX || 1),
                                 k === 'score' ? scoresPrudents(lh, la) : null);
     /* Un marche qui ne tient pas est ECARTE, pas force. La rencontre garde les
        autres — refuser tout le match parce qu'un handicap sort des bornes

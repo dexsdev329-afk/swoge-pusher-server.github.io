@@ -32,6 +32,7 @@
  * ==========================================================================*/
 const assert = require('assert');
 const c = require('./cotes.js');
+const paris = require('./paris.js');
 
 let n = 0, rates = 0;
 const ok = (v, m) => { n++; if (v) console.log('  ok   ' + m); else { rates++; console.log('  RATE ' + m); } };
@@ -158,6 +159,55 @@ console.log('\n-- ce qui ne doit jamais revenir --');
   ok(pire.r > 0.4 && pire.r <= 1.0,
      'aucun score nomme ne rend plus de 100 % au parieur, meme sous le rho le plus '
      + 'defavorable (' + (pire.r * 100).toFixed(0) + ' % sur ' + pire.s + ')');
+}
+
+console.log('\n-- et aucun LOT de scores ne rend plus qu il ne coute --');
+{
+  /* ---- LE GARDE QUI MANQUAIT ----
+   * L'essai ci-dessus verifie qu'aucun score PRIS SEUL ne rend plus de 100 %.
+   * Ce n'est pas ainsi qu'on attaque un marche a dix-sept issues. Le rapport
+   * recu : « je prends 0-0, 1-0, 0-1, 1-1, 2-0, 2-1, 0-2, 1-2, je mets un
+   * million sur ces combinaisons, et ca passe quasiment tout le temps ».
+   * C'est exactement la bonne facon de s'y prendre, et rien ne la mesurait :
+   * couvrir un lot de scores probables coute plus cher mais gagne bien plus
+   * souvent, et le retour d'un LOT peut depasser 100 % alors qu'aucun de ses
+   * membres ne le fait.
+   *
+   * Le score exact porte desormais trois fois la marge de base — c'est ce que
+   * prend un vrai livre sur ce marche, et pour la meme raison : dix-sept
+   * issues tirees d'une grille de Poisson et d'un rho estime, donc une
+   * incertitude bien plus grande que sur trois issues. On verifie ici que la
+   * borne tient sur TOUS les sous-ensembles, pas seulement sur les singletons. */
+  const LOT_SIGNALE = ['0-0', '1-0', '0-1', '1-1', '2-0', '2-1', '0-2', '1-2'];
+  let pire = { r: 0 };
+  for (const d of ECARTS) {
+    const p = duel(d);
+    const l = c.ajusteButs(p[1], p.N, p[2]);
+    const pr = c.probasDesMarches(l.lh, l.la);
+    const prudent = c.scoresPrudents(l.lh, l.la);
+    const m = c.habilleUnMarche(pr.score, Object.keys(pr.score), 1,
+                                c.MARGE_DEFAUT * (paris.MARCHES.score.margeX || 1), prudent);
+    const cotes = m && (m.cotes || m);
+    if (!cotes) continue;
+    /* Le lot signale, puis les K scores les plus probables pour tout K. */
+    const tri = Object.keys(cotes).sort((a, b) => (prudent[b] || 0) - (prudent[a] || 0));
+    const lots = [LOT_SIGNALE];
+    for (let k = 1; k <= tri.length; k++) lots.push(tri.slice(0, k));
+    for (const lot of lots) {
+      let esp = 0;
+      for (const s of lot) esp += (prudent[s] || 0) * (cotes[s] || 0);
+      const r = esp / lot.length;                 /* mise egale sur chaque issue du lot */
+      if (r > pire.r) pire = { r, taille: lot.length, d };
+    }
+  }
+  console.log('   pire lot : ' + pire.taille + ' scores a l ecart ' + pire.d
+    + ' → ' + (pire.r * 100).toFixed(1) + '% de retour');
+  ok(pire.r < 1,
+     'aucun lot de scores, quelle que soit sa taille, ne rend plus qu il ne coute ('
+     + (pire.r * 100).toFixed(1) + '% au pire)');
+  ok(pire.r < 0.95,
+     'et la marge de la maison tient sur le pire d entre eux : ' + (100 - pire.r * 100).toFixed(1)
+     + ' points, la ou un livre ordinaire en garde dix');
 }
 
 console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

@@ -837,17 +837,39 @@ async function calibre(ligueDemandee) {
     } catch (e) { console.log('[odds] ' + e.message); continue; }
 
     for (const ev of evs || []) {
-      const bk = (ev.bookmakers || [])[0];
-      const mk = bk && (bk.markets || []).find((x) => x.key === 'h2h');
-      if (!mk || !Array.isArray(mk.outcomes)) continue;
-      const cDom = mk.outcomes.find((o) => o.name === ev.home_team);
-      const cExt = mk.outcomes.find((o) => o.name === ev.away_team);
+      /* ---- LA MEDIANE DES BOOKMAKERS, PAS LE PREMIER ----
+       * On lisait `bookmakers[0]` — celui que l'API renvoie en tete, sans
+       * raison particuliere. Un seul cotant large, une cote saisie de travers,
+       * un livre qui n'a pas encore ouvert : et c'etait lui qui deplacait nos
+       * forces, sur un match ou vingt autres maisons etaient d'accord entre
+       * elles. Une force fausse ne se voit nulle part — elle ressort plus tard
+       * en une cote de travers sur une affiche, et on cherche le defaut
+       * ailleurs.
+       * La mediane resiste a un aberrant, la moyenne non : il suffit d'un
+       * livre a 3,00 sur un favori a 1,40 pour tirer la moyenne. */
+      const prix = (nom) => {
+        const l = [];
+        for (const b of (ev.bookmakers || [])) {
+          const m = (b.markets || []).find((x) => x.key === 'h2h');
+          const o = m && Array.isArray(m.outcomes) && m.outcomes.find((y) => y.name === nom);
+          if (o && Number(o.price) > 1) l.push(Number(o.price));
+        }
+        if (!l.length) return null;
+        l.sort((a, b) => a - b);
+        const i = Math.floor(l.length / 2);
+        return { prix: l.length % 2 ? l[i] : (l[i - 1] + l[i]) / 2, livres: l.length };
+      };
+      const cDom = prix(ev.home_team);
+      const cExt = prix(ev.away_team);
       if (!cDom || !cExt) continue;
-      const nul = mk.outcomes.find((o) => o.name === 'Draw');
+      const nul = prix('Draw');
+      /* Un seul livre n'est pas une mediane : on l'accepte faute de mieux, mais
+         il ne pese qu'un quart de ce que pesent plusieurs livres d'accord. */
+      const confiance = Math.min(1, (cDom.livres + cExt.livres) / 6);
 
       /* On enleve la marge : les inverses des cotes somment a 1 + marge, on
          ramene la somme a 1. */
-      const inv = [1 / cDom.price, 1 / cExt.price].concat(nul ? [1 / nul.price] : []);
+      const inv = [1 / cDom.prix, 1 / cExt.prix].concat(nul ? [1 / nul.prix] : []);
       const somme = inv.reduce((a, b) => a + b, 0);
       const pDom = inv[0] / somme, pExt = inv[1] / somme;
       /* La force relative se lit sur le rapport victoire/victoire, nul mis de
@@ -856,7 +878,10 @@ async function calibre(ligueDemandee) {
       if (!(e > 0.001 && e < 0.999)) continue;
       const ecartVu = -400 * Math.log10(1 / e - 1) - (cotes.TERRAIN[l.sport] || 0);
       const ecartNotre = cotes.note(l.sport, ev.home_team) - cotes.note(l.sport, ev.away_team);
-      const delta = (ecartVu - ecartNotre) * 0.25;      // un quart du chemin
+      /* Un quart du chemin, module par le nombre de livres d'accord : une
+         mediane sur six maisons vaut mieux qu'un prix isole, et le pas doit
+         le dire. */
+      const delta = (ecartVu - ecartNotre) * 0.25 * confiance;
       cotes.poseNote(l.sport, ev.home_team, cotes.note(l.sport, ev.home_team) + delta / 2);
       cotes.poseNote(l.sport, ev.away_team, cotes.note(l.sport, ev.away_team) - delta / 2);
       bouges++;

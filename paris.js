@@ -182,7 +182,28 @@ const MARCHES = {
     issues: () => ['plus', 'moins'],
     gagne: (i, a, b) => ((a + b > 2.5) === (i === 'plus')),
   },
+  /* ---- LE SCORE EXACT PORTE SA PROPRE MARGE, ET ELLE EST TRIPLE ----
+   * « Je prends 0-0, 1-0, 0-1, 1-1, 2-0, 2-1, 0-2, 1-2, je mets 1M de SWOGE
+   *   sur ces combinaisons, je prends un enorme multiple alors que ca passe
+   *   quasiment tout le temps. »
+   *
+   * Le releve donne raison a l'intuition : ces huit scores sortent 57 a 69 %
+   * du temps selon l'affiche, et la maison ne gardait que la marge ordinaire —
+   * la meme que sur un 1-N-2, ou il n'y a que trois issues et ou le modele est
+   * bien plus sur de lui.
+   *
+   * Or le score exact est le marche le plus difficile a prixer qui soit : dix-
+   * sept issues, une grille de Poisson, un rho de Dixon-Coles estime. Chaque
+   * approximation s'y accumule. C'est pour cette raison exacte qu'un vrai
+   * bookmaker y prend vingt a trente-cinq pour cent quand il en prend cinq a
+   * huit sur le resultat — pas par gourmandise, mais parce que sa propre
+   * incertitude est plus grande, et que le parieur choisit toujours le cote ou
+   * il s'est trompe.
+   *
+   * Trois fois la marge de base, et l'essai verifie qu'aucun sous-ensemble des
+   * scores les plus probables ne rend plus qu'il ne coute. */
   score: {
+    margeX: 3,
     nom: 'Correct score', court: 'Score', couverture: 1, sports: ['foot'],
     issues: () => SCORES.slice(),
     gagne: (i, a, b) => {
@@ -196,6 +217,7 @@ const MARCHES = {
      question qui a une reponse fixe. Quand le domicile est l'outsider, la
      cote le dit toute seule. */
   hand: {
+    margeX: 1.5,
     nom: 'Handicap', court: 'H -1.5', couverture: 1, sports: ['foot'], ligne: 1.5,
     issues: () => ['1', '2'],
     gagne: (i, a, b) => (i === '1' ? (a - b) >= 2 : (a - b) <= 1),
