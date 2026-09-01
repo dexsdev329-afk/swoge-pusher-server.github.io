@@ -455,7 +455,7 @@ function etatNeuf() {
     courbe: [DEPART], flux: [], positions: [], memoire: {}, compteurs: {},
     ouvertures: 0, maj: 0, dernierTour: 0, candidats: [], derniereErreur: null,
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
-    seuil: SEUIL, derniers: [], depuisAjustement: 0,
+    seuil: SEUIL, derniers: [], depuisAjustement: 0, suites: [], sortieEssais: 0,
     /* la structure, qui est une donnee et non du code */
     roster: rosterNeuf(), ordreRevu: 0, journalStructure: [],
     /* ce qu'on a deja juge, pour ne pas le rejuger en boucle */
@@ -1910,6 +1910,93 @@ function veutProlonger(p, r) {
   return (E.promoteurEssais % 3 === 0) ? cas : null;
 }
 
+
+/* ==========================================================================
+ * PRENDRE UN GAIN — ET SAVOIR SI ON A EU RAISON
+ *
+ * Personne ne prenait de gain. Le Closer tenait sa duree, le Promoteur la
+ * prolongeait, la Sentinelle ne coupait que sur un desastre. Une position qui
+ * faisait +80 % au bout de six minutes attendait sagement la vingtieme, et ce
+ * qu'elle rendait alors n'avait plus grand-chose a voir.
+ *
+ * ---- LE PROBLEME, C'EST D'APPRENDRE ----
+ *
+ * Vendre a +40 % et enregistrer « j'ai eu +40 % » n'apprend rien : c'est
+ * circulaire. La question est « qu'aurais-je eu en gardant ? », et une fois la
+ * position fermee on ne le sait plus.
+ *
+ * Sauf qu'on continue de lire le marche. On note donc la sortie et on REVIENT
+ * voir, au moment ou la position se serait fermee. La lecon est la difference
+ * entre ce qu'on a pris et ce qu'on aurait eu — mesuree sur des prix reels,
+ * pas sur une simulation. Positive, la Sentinelle a bien fait ; negative, elle
+ * a vendu trop tot, et elle le saura.
+ *
+ * C'est plus lent qu'une regle ecrite a la main. C'est la seule facon d'avoir
+ * une regle qui vienne de ce qui s'est reellement passe.
+ * ======================================================================== */
+const GAIN_EXPLORE = 20;      /* en dessous, il n'y a rien a arbitrer */
+const SUITES_MAX = 60;
+const SUITE_OUBLI_MS = 4 * 3600e3;
+
+function casSortie(r) {
+  return { sortie: tranche(r, [35, 60, 120],
+    ['gain pris a +20-35%', 'gain pris a +35-60%', 'gain pris a +60-120%', 'gain pris a +120%']) };
+}
+
+/* Faut-il prendre le gain maintenant ? Son propre releve decide ; sans releve
+   il essaie une fois sur trois, comme le Promoteur — assez pour apprendre, pas
+   assez pour vendre tout ce qui monte. */
+function veutPrendre(p, r) {
+  if (r < GAIN_EXPLORE) return null;
+  const cas = casSortie(r);
+  const avis = ajustementAgent('sentinelle', cas);
+  if (avis > 0.5) return cas;
+  if (avis < -0.5) return null;
+  if (nObs('sentinelle') >= 8 && memLit('sentinelle', 'sortie', cas.sortie)) return null;
+  E.sortieEssais = (E.sortieEssais || 0) + 1;
+  return (E.sortieEssais % 3 === 0) ? cas : null;
+}
+
+/* On note ce qu'on vient de prendre, et QUAND il faudra revenir voir. */
+function noteSuite(p, prix, r, cas, quand) {
+  if (!Array.isArray(E.suites)) E.suites = [];
+  E.suites.push({
+    adr: p.adr, sym: p.sym, prix0: p.prix0, rSortie: Math.round(r * 100) / 100,
+    cas, t: quand,
+    /* Le moment ou la position se serait fermee si on n'avait rien fait. */
+    echeance: p.t0 + (p.tenueMin || TENUE_DEFAUT_MIN) * 60000,
+  });
+  if (E.suites.length > SUITES_MAX) E.suites = E.suites.slice(-SUITES_MAX);
+}
+
+/* Et on revient voir. C'est ici que la lecon se forme. */
+function regleLesSuites(marche) {
+  if (!Array.isArray(E.suites) || !E.suites.length) return 0;
+  const now = Date.now();
+  let appris = 0;
+  E.suites = E.suites.filter((s) => {
+    if (now - s.t > SUITE_OUBLI_MS) return false;     /* on ne poursuit pas indefiniment */
+    if (now < s.echeance) return true;                /* pas encore l'heure */
+    const brut = marche[s.adr];
+    const x = (typeof brut === 'number') ? { prix: brut } : brut;
+    if (!x || !(x.prix > 0)) return true;             /* pas de prix relu : on attend */
+    const rTenu = (x.prix - s.prix0) / s.prix0 * 100;
+    if (!isFinite(rTenu) || rTenu > REND_MAX || rTenu < REND_MIN) return false;
+    /* La valeur de la decision : ce qu'on a pris moins ce qu'on aurait eu. */
+    const gain = s.rSortie - rTenu;
+    apprendAgent('sentinelle', s.cas, gain);
+    compte('sortiesJugees');
+    E.flux.unshift({ sym: s.sym, tag: gain >= 0 ? 'buy' : 'cut',
+      txt: 'vendu a ' + (s.rSortie >= 0 ? '+' : '') + s.rSortie.toFixed(1) + '%, ca valait '
+         + (rTenu >= 0 ? '+' : '') + rTenu.toFixed(1) + '% a l\'echeance · '
+         + (gain >= 0 ? 'bien vendu' : 'vendu trop tot') + ' de ' + Math.abs(gain).toFixed(1) + ' pts',
+      cls: gain >= 0 ? 'up' : 'dn', t: now, par: 'sentinelle' });
+    appris++;
+    return false;
+  });
+  return appris;
+}
+
 /* --------------------------------------------------------- les positions */
 const TENUES = [5, 10, 20, 40, 80, 160];
 function trancheTenue(min) {
@@ -2074,6 +2161,20 @@ function regle(marche) {
     p.vuPar = casSentinelle(p, x);
     const danger = dangerSentinelle(p, x);
     if (danger) { ferme(p, x.prix, now, { par: 'sentinelle', raison: danger }); n++; return false; }
+
+    /* ---- ET ELLE PEUT AUSSI PRENDRE UN GAIN ----
+     * Sans attendre la fin du compte a rebours. Ce qu'elle prend est note, et
+     * on reviendra voir a l'echeance ce que garder aurait donne : c'est de
+     * cette difference-la qu'elle apprend, pas du gain lui-meme. */
+    const casG = veutPrendre(p, r);
+    if (casG) {
+      noteSuite(p, x.prix, r, casG, now);
+      ferme(p, x.prix, now, { par: 'sentinelle',
+        raison: 'gain pris a +' + r.toFixed(1) + '%, avant l\'echeance' });
+      compte('gainPris');
+      n++;
+      return false;
+    }
 
     if (dt < (p.tenueMin || TENUE_DEFAUT_MIN) * 60000) return true;
 
@@ -2426,6 +2527,54 @@ async function regardeLaColonie() {
   } catch (e) { noteService('conseil', false, String(e.message || e).slice(0, 60)); return null; }
 }
 
+/* ==========================================================================
+ * OU LA COLONIE REGARDE
+ *
+ * Elle triait par « le plus jeune d'abord » et prenait les dix premiers. Sur
+ * cette chaine, ca voulait dire dix jetons de une a deux minutes — et c'est
+ * precisement l'age ou elle est le plus aveugle : mesure sur douze d'entre eux,
+ * DexScreener n'en connait qu'un, les chandelles n'en mesurent aucun, les
+ * trades sont trop rares pour conclure sur dix. Elle depensait donc tout son
+ * budget la ou il y a le moins a lire.
+ *
+ * ---- ET ON NE CHOISIT PAS L'AGE A SA PLACE ----
+ *
+ * « Entrer plus tot » et « entrer mieux renseigne » sont un arbitrage reel : a
+ * deux minutes le mouvement est devant, a trente il est peut-etre fait. Trancher
+ * ici reviendrait a inscrire une opinion dans le code, alors que toute la
+ * machine est construite pour qu'elle apprenne les siennes.
+ *
+ * On repartit donc le regard sur quatre bandes d'age, en alternant. L'age est
+ * DEJA un trait du Scout : des qu'il voit des positions se fermer dans chaque
+ * bande, il apprend laquelle paie — et il l'apprend de ses propres resultats,
+ * pas de ce que j'aurais suppose. Ce qu'il ne pouvait pas faire tant qu'il ne
+ * regardait qu'une seule bande.
+ * ======================================================================== */
+const BANDES = [
+  { max: 5, nom: '0-5 min' },
+  { max: 20, nom: '5-20 min' },
+  { max: 60, nom: '20-60 min' },
+  { max: AGE_MAX_MIN, nom: '1-6 h' },
+];
+function parBandes(l) {
+  const paniers = BANDES.map(() => []);
+  for (const t of l) {
+    let i = BANDES.findIndex((b) => t.minutes < b.max);
+    if (i < 0) i = BANDES.length - 1;
+    paniers[i].push(t);
+  }
+  for (const p of paniers) p.sort((a, b) => a.minutes - b.minutes);
+  /* En alternant : chaque bande a sa chance a chaque tour, plutot qu'une seule
+     qui prend tout parce qu'elle arrive en tete du tri. */
+  const out = [];
+  for (let k = 0; out.length < l.length; k++) {
+    let pris = false;
+    for (const p of paniers) if (p[k]) { out.push(p[k]); pris = true; }
+    if (!pris) break;
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ le tour */
 let enCours = false;
 /* ---- UN PRIX SANS DATE MENT ----
@@ -2537,10 +2686,9 @@ async function tour() {
     /* ---- RIEN DE VIEUX N'ENTRE ----
      * Le but est d'analyser du NEUF. Un seul jeton etabli dans le pipeline
      * suffit a fausser ce que les agents apprennent. */
-    const liste = (await rassemble())
+    const liste = parBandes((await rassemble())
       .filter((t) => t.liq >= 500 && t.prix > 0)
-      .filter((t) => t.minutes !== null && t.minutes <= AGE_MAX_MIN)
-      .sort((a, b) => a.minutes - b.minutes);
+      .filter((t) => t.minutes !== null && t.minutes <= AGE_MAX_MIN));
     if (!liste.length) throw new Error('aucun jeton neuf assez liquide');
 
     /* Les prix d'abord : une position due se ferme au prix qu'on vient de
@@ -2579,6 +2727,8 @@ async function tour() {
     }
     if (secours) compte('prixDeSecours', secours);
 
+    /* On revient voir ce qu'on a vendu tot : c'est la que la lecon se forme. */
+    regleLesSuites(prix);
     const fermees = regle(prix);
 
     /* ---- CE QU'ON NE REPAIE PAS ----
@@ -2678,6 +2828,14 @@ async function tour() {
       tradesVus: !!(x.t.trades && x.t.trades.vu),
     }));
     E.evites = ecartes.slice(0, 10);
+    E.bandes = BANDES.map((b, i) => ({
+      nom: b.nom,
+      vus: examines.filter((x) => {
+        let k = BANDES.findIndex((z) => x.t.minutes < z.max);
+        if (k < 0) k = BANDES.length - 1;
+        return k === i;
+      }).length,
+    }));
     E.maj = Date.now();
     E.dernierTour = Date.now();
     E.derniereErreur = null;
@@ -2729,6 +2887,8 @@ function vue() {
     }),
     candidats: E.candidats,
     evites: E.evites || [],
+    bandes: E.bandes || [],
+    suites: (E.suites || []).map((s) => ({ sym: s.sym, rSortie: s.rSortie, echeance: s.echeance })),
     surveillance: surveilles(),
     connus: Object.keys(E.connus).length,
     bannis: Object.keys(E.connus).filter((k) => E.connus[k].permanent).length,
@@ -2823,8 +2983,9 @@ module.exports = {
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,
-  revoitStrategie, seuilCourant, noteResultat, alertes, remiseAZero, nObs,
+  revoitStrategie, seuilCourant, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
+  veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   lisTrades, lisFluxDex, jetonDepuisDex, rassemble,
   sondeCoingecko, jsonGT, cleCoingecko, goplusEntetes, goplusIdentifie, noeuds, peutRepondre,
   _jeton: () => goplusJeton, _posejeton: (j) => { goplusJeton = j; },

@@ -1948,6 +1948,129 @@ async function appelsInutiles() {
      'a quarante-cinq minutes, les trois services ont quelque chose a dire, et on le leur demande');
 }
 
+
+/* ==========================================================================
+ * 34. OU LA COLONIE REGARDE
+ *
+ * Elle triait par « le plus jeune d'abord » et prenait les dix premiers : sur
+ * cette chaine, dix jetons de une a deux minutes — l'age ou elle est le plus
+ * aveugle. Elle depensait tout son budget la ou il y a le moins a lire, et
+ * l'age etant l'un de ses propres traits, elle ne pouvait meme pas apprendre
+ * que c'etait une mauvaise idee : elle n'observait jamais les autres bandes.
+ * ======================================================================== */
+async function bandesDage() {
+  console.log('\n-- le regard se repartit sur les ages --');
+  const l = [];
+  for (const m of [1, 1, 2, 2, 3, 3, 4, 8, 12, 25, 40, 90, 200]) l.push({ sym: 'T' + m, minutes: m });
+  const avant = l.slice().sort((a, b) => a.minutes - b.minutes).slice(0, 8).map((t) => t.minutes);
+  const apres = C.parBandes(l).slice(0, 8).map((t) => t.minutes);
+  console.log('   avant : ' + avant.join(', ') + ' min');
+  console.log('   apres : ' + apres.join(', ') + ' min');
+  ok(Math.max(...avant) <= 8, 'l ancien tri ne voyait que les plus jeunes (jusqu a ' + Math.max(...avant) + ' min)');
+  ok(Math.max(...apres) > 60,
+     'le nouveau atteint toutes les bandes des les premiers examines (jusqu a ' + Math.max(...apres) + ' min)');
+  const bandes = new Set(C.parBandes(l).slice(0, 8).map((t) => {
+    let i = C.BANDES.findIndex((b) => t.minutes < b.max);
+    return i < 0 ? C.BANDES.length - 1 : i;
+  }));
+  ok(bandes.size === C.BANDES.length,
+     'les ' + C.BANDES.length + ' bandes sont representees, donc l age peut enfin s apprendre');
+  ok(C.parBandes(l).length === l.length, 'et aucun jeton n est perdu au passage');
+
+  /* Sur un vrai tour, la vue doit MONTRER la repartition : sinon « elle
+     regarde partout » est une phrase invérifiable. */
+  remise([jeton(0, { minutes: 2 }), jeton(1, { minutes: 3 }), jeton(2, { minutes: 12 }),
+          jeton(3, { minutes: 40 }), jeton(4, { minutes: 120 })]);
+  await C.tour();
+  const v = C.vue();
+  console.log('   ' + JSON.stringify(v.bandes));
+  ok(v.bandes.filter((b) => b.vus > 0).length >= 3,
+     'un tour reel touche au moins trois bandes (' + v.bandes.map((b) => b.nom + ':' + b.vus).join(' ') + ')');
+}
+
+/* ==========================================================================
+ * 35. PRENDRE UN GAIN, ET SAVOIR SI ON A EU RAISON
+ *
+ * Personne ne prenait de gain : le Closer tenait sa duree, le Promoteur la
+ * prolongeait, la Sentinelle ne coupait que sur un desastre. Une position a
+ * +80 % au bout de six minutes attendait la vingtieme.
+ *
+ * Le vrai probleme n'est pas de vendre — c'est d'APPRENDRE. Vendre a +40 % et
+ * noter « j'ai eu +40 % » est circulaire : la question est ce qu'on aurait eu
+ * en gardant, et une fois la position fermee on ne le sait plus. On revient
+ * donc voir a l'echeance, sur des prix reels.
+ * ======================================================================== */
+async function prendreUnGain() {
+  console.log('\n-- la Sentinelle prend un gain avant l echeance --');
+  remise(sains());
+  const E = C._etat();
+  const p = { sym: 'MONTE', adr: '0xg1', pool: '0xpg', prix0: 1, t0: Date.now() - 6 * 60000,
+    mise: 30, traits: {}, tenueMin: 20, tenueBase: 20, traj: [], liq0: 9000, score: 70 };
+  E.positions = [p];
+  ok(C.veutPrendre(p, 8) === null, 'en dessous de +' + C.GAIN_EXPLORE + ' %, il n y a rien a arbitrer');
+  E.sortieEssais = 2;      /* la prochaine est celle qu il explore */
+  const n = C.regle({ '0xg1': { prix: 1.4, liq: 9000 } });
+  const v1 = C.vue();
+  console.log('   ' + (v1.flux[0] || {}).txt);
+  ok(n === 1 && E.positions.length === 0, 'la position est fermee a six minutes, pas a vingt');
+  ok(/gain pris/.test((v1.flux[0] || {}).txt), 'et le fil dit que c est un gain pris, pas une coupe');
+  ok((v1.compteurs.gainPris || 0) === 1, 'le geste est compte a son nom');
+  ok(v1.suites.length === 1 && v1.suites[0].echeance > Date.now(),
+     'et une SUITE est notee : on reviendra voir a l echeance ce que garder aurait donne');
+
+  console.log('\n-- et on revient voir, sur des prix reels --');
+  E.suites[0].echeance = Date.now() - 1000;
+  C.regleLesSuites({ '0xg1': { prix: 1.1, liq: 9000 } });   /* a l echeance, ca ne valait que +10 % */
+  let v = C.vue();
+  console.log('   ' + (v.flux[0] || {}).txt);
+  ok(/ca valait \+10\.0%/.test((v.flux[0] || {}).txt),
+     'la lecon compare ce qu on a pris a ce qu on aurait eu');
+  const m = C._etat().memoire.sentinelle.sortie['gain pris a +35-60%'];
+  console.log('   lecon : ' + JSON.stringify(m));
+  ok(!!m && Math.abs(m.s / m.n - 30) < 0.01,
+     'et ce qu elle retient est la DIFFERENCE (+30 pts), pas le gain lui-meme — noter « j ai eu '
+     + '+40 % » serait circulaire et n apprendrait rien');
+  ok(C._etat().suites.length === 0, 'la suite est soldee, elle ne sera pas jugee deux fois');
+
+  console.log('\n-- vendre trop tot se paie, dans le releve --');
+  remise(sains());
+  const F = C._etat();
+  C.noteSuite({ adr: '0xg2', sym: 'ENVOLE', prix0: 1, t0: Date.now() - 6 * 60000, tenueMin: 20 },
+              1.3, 30, C.casSortie(30), Date.now());
+  F.suites[0].echeance = Date.now() - 1000;
+  C.regleLesSuites({ '0xg2': { prix: 2.5, liq: 9000 } });   /* ca a continue de monter */
+  const m2 = F.memoire.sentinelle.sortie['gain pris a +20-35%'];
+  console.log('   ' + (C.vue().flux[0] || {}).txt);
+  ok(m2.s < 0, 'la lecon est NEGATIVE (' + m2.s.toFixed(0) + ') : elle a vendu trop tot, et elle le saura');
+  ok(/trop tot/.test((C.vue().flux[0] || {}).txt), 'et le fil le dit en toutes lettres');
+
+  console.log('\n-- son releve finit par decider a sa place --');
+  remise(sains());
+  const G = C._etat();
+  const cas = C.casSortie(45);
+  for (let i = 0; i < 12; i++) C.apprendAgent('sentinelle', cas, -25);
+  const q = { adr: '0xg3', prix0: 1, t0: Date.now() - 6 * 60000, tenueMin: 20 };
+  ok(C.veutPrendre(q, 45) === null,
+     'quand son propre releve dit que vendre a cette hauteur coute 25 points, elle ne vend plus');
+  for (let i = 0; i < 24; i++) C.apprendAgent('sentinelle', cas, 25);
+  ok(!!C.veutPrendre(q, 45),
+     'et quand il dit le contraire, elle vend — sans qu aucune regle n ait ete ecrite a la main');
+
+  console.log('\n-- une suite qu on ne peut pas juger n invente rien --');
+  remise(sains());
+  const H = C._etat();
+  C.noteSuite({ adr: '0xg4', sym: 'DISPARU', prix0: 1, t0: Date.now(), tenueMin: 20 },
+              1.3, 30, C.casSortie(30), Date.now());
+  H.suites[0].echeance = Date.now() - 1000;
+  C.regleLesSuites({});                       /* aucun prix relu */
+  ok(H.suites.length === 1, 'sans prix a l echeance, la suite ATTEND au lieu d etre jugee au hasard');
+  ok(!H.memoire.sentinelle || !H.memoire.sentinelle.sortie,
+     'et rien n est appris : une lecon tiree d un prix qu on n a pas lu serait pire qu aucune lecon');
+  H.suites[0].t = Date.now() - 5 * 3600e3;
+  C.regleLesSuites({});
+  ok(H.suites.length === 0, 'mais on ne la poursuit pas indefiniment : au bout de quelques heures, on lache');
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -1983,6 +2106,8 @@ async function appelsInutiles() {
   await drpcCle();
   await goplusSeContredit();
   await appelsInutiles();
+  await bandesDage();
+  await prendreUnGain();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
