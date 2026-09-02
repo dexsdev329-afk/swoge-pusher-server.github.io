@@ -482,6 +482,8 @@ function etatNeuf() {
     connus: {},
     /* le releve de chaque service */
     services: {},
+    /* pourquoi elle n'achete pas : les refus par famille, sur une fenetre */
+    refusFamilles: {}, refusVus: 0, toursSansAchat: 0,
     /* le banquier */
     banque: { methode: 'part', memoire: {}, serie: 0, pic: DEPART, arret: null },
   };
@@ -1641,7 +1643,31 @@ function planchers() {
     liq: nEnv('LIQ_ACHAT_MIN', 10000),
     mc: nEnv('MC_ACHAT_MIN', 15000),
     mcMax: nEnv('MC_ACHAT_MAX', 100000),
-    ageMin: nEnv('AGE_ACHAT_MIN', 120),
+    /* ---- QUINZE MINUTES, ET POURQUOI PAS DEUX HEURES ----
+     *
+     * Deux heures etaient posees pour eviter les rug pulls. La colonie a
+     * mesure le contraire pendant trente-deux heures, sur ses propres ombres :
+     * les jetons ecartes pour « trop jeune » ont rendu +65 % et +124 % de
+     * moyenne a l'echeance, cinq et trois montes, ZERO effondre sur neuf.
+     *
+     * Et la regle avait casse la protection qu'elle devait renforcer. A deux
+     * heures, lire les transferts d'un jeton demande ~71 000 blocs : seul le
+     * noeud officiel les sert, il sature, et le Cobaye n'a donc jamais pu
+     * simuler la sortie — 33 « non testable » sur 34. L'epreuve qui detecte
+     * vraiment un honeypot ne tournait plus.
+     *
+     * Quinze minutes plutot que vingt, et ce n'est pas un arrondi : a 0,101 s
+     * par bloc, quinze minutes font 8 900 blocs. C'est SOUS les dix mille du
+     * noeud de secours, qui redevient donc capable de compter les porteurs
+     * quand l'officiel sature. A vingt minutes il en faudrait 11 900, et le
+     * secours redeviendrait inutile.
+     *
+     * Ce que ce chiffre ne pretend pas : qu'un jeton de quinze minutes ne
+     * ruggera pas. Il ruggera parfois. Mais la colonie vend en cinq a vingt
+     * minutes, avec des paliers a +15/+40/+80 % — elle n'est pas la a la
+     * troisieme heure — et c'est le Cobaye, redevenu operationnel, qui porte
+     * la protection contre le piege. */
+    ageMin: nEnv('AGE_ACHAT_MIN', 15),
     pumpM5: nEnv('PUMP_MAX_M5', 100),
     pumpH1: nEnv('PUMP_MAX_H1', 200),
     dumpM5: nEnv('DUMP_MAX_M5', 40),
@@ -3210,6 +3236,70 @@ function alertes() {
       'C\'est le signe de jetons a tres faible decimale ou de piscines videes. Rien a fournir : '
       + 'c\'est note ici pour qu\'on sache que ca arrive, et combien de fois.');
 
+  /* ==========================================================================
+   * ELLE DIT ELLE-MEME POURQUOI ELLE N'ACHETE PAS
+   *
+   * « Regarde pourquoi le bot ne trade pas. »
+   *
+   * Il a fallu relever l'etat a la main et compter les refus un par un pour
+   * repondre. La colonie avait les chiffres : elle ne savait pas les dire.
+   *
+   * Ce qui est nomme, c'est LA regle qui bloque — pas « rien ne passe ». Trois
+   * filtres qui refusent chacun un tiers ne se corrigent pas comme un seul qui
+   * refuse tout, et l'ecart entre les deux est toute la difference entre
+   * « change ce reglage » et « change de strategie ».
+   *
+   * Chaque famille porte le REGLAGE qui la gouverne : une alerte qui dit ce
+   * qui bloque sans dire quoi toucher fait chercher dans le code.
+   * ======================================================================== */
+  const REGLAGES = [
+    [/sous le plancher d'achat/, 'LIQ_ACHAT_MIN / MC_ACHAT_MIN'],
+    [/au-dessus du plafond/, 'MC_ACHAT_MAX'],
+    [/trop jeune/, 'AGE_ACHAT_MIN'],
+    [/on paierait le sommet/, 'PUMP_MAX_M#/PUMP_MAX_H#'],
+    [/deja tombe/, 'DUMP_MAX_M#/DUMP_MAX_H#'],
+    [/il manque :/, 'SOCIAUX_EXIGES'],
+    [/note trop basse/, 'le seuil, que la colonie deplace elle-meme'],
+    [/pas encore verifiable/, 'SOCIAUX_EXIGES (la regle attend DexScreener)'],
+    /* Les regles qui n'ont PAS de variable : le dire aussi. Une famille sans
+       reglage laisserait chercher une variable qui n'existe pas — c'est pire
+       que de ne rien indiquer. */
+    [/ce n'est plus un marche/, 'aucune variable : regle du Scout, dans le code'],
+    [/rien a vendre dedans/, 'aucune variable : regle du Scout, dans le code'],
+    [/porteur tient/, 'aucune variable : regle du Whale, dans le code'],
+    [/aucune ne le garde/, 'aucune variable : regle du Whale, dans le code'],
+    [/honeypot|taxe|proprietaire|auto-destruction/, 'aucune variable : securite du contrat'],
+    [/la sortie est bloquee/, 'aucune variable : l\'epreuve du Cobaye'],
+  ];
+  const reglageDe = (k) => {
+    const r = REGLAGES.find((x) => x[0].test(k));
+    return r ? r[1] : 'aucune variable : regle ecrite dans le code';
+  };
+  const sansAchat = E.toursSansAchat || 0;
+  const vus = E.refusVus || 0;
+  /* Douze refus, pas trente : en dessous les parts sont du bruit — « 50 % »
+     sur deux jetons ne designe rien — mais au-dessus la regle dominante se
+     lit deja, et attendre trente laisserait la colonie muette pendant une
+     heure alors qu'elle sait deja quoi dire. */
+  if (sansAchat >= 20 && vus >= 12) {
+    const fam = Object.keys(E.refusFamilles || {})
+      .map((k) => ({ k, n: E.refusFamilles[k] }))
+      .sort((a, b) => b.n - a.n).slice(0, 3);
+    const dit = fam.map((f) => '« ' + f.k + ' » : ' + Math.round(f.n / vus * 100)
+      + ' % des refus (reglage : ' + reglageDe(f.k) + ')');
+    const heures = Math.round(sansAchat * (CADENCE_MS / 3600000) * 10) / 10;
+    dis('haute', 'Aucun achat depuis ' + sansAchat + ' tours (' + heures + ' h)',
+      'Ce n\'est pas une panne : chaque jeton est bien lu et bien juge, et chacun est refuse par '
+      + 'une regle. Sur les ' + vus + ' derniers examines, voici ce qui les arrete — '
+      + dit.join(' · ') + '.',
+      'Les regles se cumulent : un jeton doit passer TOUTES les bornes en meme temps, et sur '
+      + 'cette chaine il en reste alors tres peu. Si un seul reglage represente la moitie des '
+      + 'refus, c\'est celui-la qu\'il faut bouger — les autres ne changeraient presque rien. '
+      + 'Et le panneau « ce que deviennent les refuses » dit, pour chaque regle, ce que les '
+      + 'jetons ecartes ont fait ensuite : c\'est la seule facon de savoir si elle protege ou '
+      + 'si elle coute.');
+  }
+
   const perdues = E.compteurs.abandonneeSansPrix || 0;
   if (perdues > 0)
     dis(perdues > 3 ? 'haute' : 'moyenne',
@@ -3814,6 +3904,41 @@ async function tour() {
       partDuPlusGros: x.t.trades && x.t.trades.vu ? x.t.trades.partDuPlusGros : null,
       tradesVus: !!(x.t.trades && x.t.trades.vu),
     }));
+    /* ---- POURQUOI ELLE N'ACHETE PAS ----
+     *
+     * « Regarde pourquoi le bot ne trade pas. »
+     *
+     * Il fallait relever l'etat a la main et compter les refus un par un pour
+     * repondre. C'est exactement ce que la colonie devrait savoir dire d'elle-
+     * meme : elle a les chiffres, et une machine qui s'arrete sans dire
+     * laquelle de ses regles l'arrete est une machine qu'on croit cassee.
+     *
+     * On compte donc les refus par FAMILLE — la phrase sans ses nombres, pour
+     * que « piscine de $4548 » et « piscine de $6202 » comptent ensemble — sur
+     * une fenetre glissante. Quand rien ne s'ouvre pendant longtemps, l'alerte
+     * nomme les trois regles qui bloquent le plus, avec leur part et le
+     * reglage qui les gouverne.
+     *
+     * Ce qui compte ici, c'est de nommer LA regle, pas de dire « rien ne
+     * passe » : trois filtres qui refusent chacun un tiers ne se corrigent pas
+     * comme un seul qui refuse tout. */
+    for (const x of examines) {
+      if (!x.refus) continue;
+      const fam = String(x.refus).replace(/[\d.,]+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 70);
+      E.refusFamilles[fam] = (E.refusFamilles[fam] || 0) + 1;
+    }
+    E.refusVus = (E.refusVus || 0) + examines.length;
+    /* La fenetre : au-dela on oublie, sinon l'alerte parlerait d'un reglage
+       change il y a deux jours. */
+    if (E.refusVus > 400) {
+      for (const k in E.refusFamilles) {
+        E.refusFamilles[k] = Math.floor(E.refusFamilles[k] / 2);
+        if (!E.refusFamilles[k]) delete E.refusFamilles[k];
+      }
+      E.refusVus = Math.floor(E.refusVus / 2);
+    }
+    E.toursSansAchat = ouvertes ? 0 : (E.toursSansAchat || 0) + 1;
+
     E.evites = ecartes.slice(0, 10);
     E.bandes = BANDES.map((b, i) => ({
       nom: b.nom,

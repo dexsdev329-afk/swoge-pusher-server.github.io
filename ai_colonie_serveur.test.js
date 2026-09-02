@@ -53,7 +53,11 @@ let MONDE = null, appels = null;
 
 function jeton(i, o) {
   o = o || {};
-  const suf = String(i).padStart(2, '0');
+  /* En HEXADECIMAL, et sur deux caracteres : `String(143)` donne « 143 », et
+     « 143 » repete vingt fois fait soixante caracteres — pas une adresse. Le
+     moteur la rejetait, et un banc qui sert plus de cent jetons mesurait alors
+     son propre defaut de fabrication. */
+  const suf = (i % 256).toString(16).padStart(2, '0');
   /* ---- DE VRAIES ADRESSES ----
    * Les precedentes portaient « t0ken » et « p001 », qui ne sont pas de
    * l'hexadecimal. Le moteur valide le format des adresses que lui rendent les
@@ -73,7 +77,11 @@ function jeton(i, o) {
      * les bornes pour l'essai : un banc qui tourne avec d'autres regles que la
      * production ne mesure plus la production. */
     mc: o.mc === undefined ? 60000 : o.mc,
-    minutes: o.minutes === undefined ? 180 : o.minutes,
+    /* Quarante minutes : dans la fenetre d'achat (l'age minimum est passe de
+       deux heures a quinze minutes), et SOUS les dix mille blocs du noeud de
+       secours — ce qui remet le relais entre les deux noeuds a portee du banc,
+       la ou trois heures le mettaient hors d'atteinte. */
+    minutes: o.minutes === undefined ? 40 : o.minutes,
     porteurs: o.porteurs === undefined ? 130 : o.porteurs,
     indexe: !!o.indexe,          /* le montant est dans topics[3], pas dans data */
     goplus: o.goplus === undefined ? 'propre' : o.goplus,   /* propre | muet | honeypot */
@@ -2954,6 +2962,82 @@ async function surveillanceRamene() {
      'un jeton qu on est alle rechercher expres est examine, pas ecarte pour « deja juge »');
 }
 
+/* ==========================================================================
+ * 46. ELLE DIT ELLE-MEME POURQUOI ELLE N'ACHETE PAS
+ *
+ * « Regarde pourquoi le bot ne trade pas. »
+ *
+ * Il a fallu relever l'etat sur le serveur et compter les refus un par un pour
+ * repondre — alors que la colonie avait les chiffres. Ce qui est mesure ici :
+ * quand rien ne s'ouvre pendant longtemps, elle NOMME la regle qui bloque le
+ * plus, avec sa part et le reglage qui la gouverne. Pas « rien ne passe » :
+ * trois filtres qui refusent chacun un tiers ne se corrigent pas comme un seul
+ * qui refuse tout.
+ * ======================================================================== */
+async function pourquoiPasDAchat() {
+  console.log('\n-- elle dit ce qui l empeche d acheter --');
+  /* Un flux entier de jetons trop petits : ils passent tout le reste et
+     tombent tous sur le meme plancher. */
+  /* Des jetons DIFFERENTS a chaque tour : la colonie ne rejuge pas ce qu'elle
+     a deja juge quand rien n'a bouge — c'est voulu, ca economise les appels —
+     et un banc qui reservirait les six memes ne compterait donc que six refus
+     pour vingt-quatre tours. En production le flux est neuf a chaque fois.
+
+     On change le MONDE, pas l'etat : `remise` remet la colonie a neuf, et
+     l'appeler dans la boucle effacerait a chaque tour les compteurs qu'on
+     cherche justement a mesurer. */
+  remise([0, 1, 2, 3, 4, 5].map((i) => jeton(i, { mc: 4000, liq: 4000, volH1: 2000 })));
+  const F = C._etat();
+  for (let k = 0; k < 24; k++) {
+    MONDE.jetons = [0, 1, 2, 3, 4, 5].map((i) => jeton(k * 6 + i, { mc: 4000, liq: 4000, volH1: 2000 }));
+    MONDE.prixDe = (a) => { const t = MONDE.jetons.find((x) => x.addr === a); return t ? t.prix : 0; };
+    for (const c of Object.keys(C._cache)) for (const j of Object.keys(C._cache[c])) delete C._cache[c][j];
+    F.tours = k;
+    await C.tour();
+  }
+  const v = C.vue();
+  console.log('   sans achat depuis ' + F.toursSansAchat + ' tours · '
+    + (F.refusVus || 0) + ' refus vus');
+  ok((F.toursSansAchat || 0) >= 20,
+     'les tours sans achat sont comptes (' + F.toursSansAchat + ')');
+  ok(Object.keys(F.refusFamilles || {}).length > 0,
+     'et les refus sont ranges par FAMILLE : « piscine de $4548 » et « piscine de $6202 » sont '
+     + 'la meme regle, et les compter separement les rendrait invisibles');
+  const cles = Object.keys(F.refusFamilles);
+  ok(cles.some((k) => /#/.test(k)),
+     'les nombres sont remplaces par un caractere, c est ce qui les regroupe (« ' + cles[0] + ' »)');
+
+  const a = v.alertes.find((x) => /Aucun achat depuis/.test(x.quoi));
+  console.log('   ' + (a ? a.quoi : 'AUCUNE ALERTE'));
+  ok(!!a, 'une alerte le dit');
+  console.log('   ' + (a ? a.pourquoi.slice(0, 190) : ''));
+  ok(!!a && /plancher d'achat/.test(a.pourquoi),
+     'elle NOMME la regle qui bloque le plus, pas « rien ne passe »');
+  /* Un volume faible : sinon c'est la regle du lavage qui tranche la premiere
+     — « volume de $20000 sur une capitalisation de $4000 » — et l'essai
+     mesurerait un autre refus que celui qu'il annonce. */
+  ok(!!a && /%/.test(a.pourquoi), 'avec sa part des refus : une regle qui en fait 5 % ne se '
+    + 'corrige pas comme une qui en fait 80 %');
+  ok(!!a && /MC_ACHAT_MIN|LIQ_ACHAT_MIN/.test(a.pourquoi),
+     'et le REGLAGE a toucher : une alerte qui dit ce qui bloque sans dire quoi bouger fait '
+     + 'chercher dans le code');
+  ok(!!a && /panneau/.test(a.quoiFaire) && /protege/.test(a.quoiFaire),
+     'elle renvoie a l audit, qui seul dit si la regle protege ou si elle coute');
+
+  /* ---- ET ELLE SE TAIT DES QUE CA REPART ----
+   * Une alerte qui reste allumee apres la correction apprend a ne plus la
+   * lire, et c'est alors la suivante qu'on ne lit plus. */
+  remise(sains());
+  await C.tour();
+  const v2 = C.vue();
+  console.log('   apres un achat : ' + C._etat().toursSansAchat + ' tour(s) sans achat');
+  ok(C._etat().positions.length > 0, 'des positions se rouvrent sur un flux normal');
+  ok((C._etat().toursSansAchat || 0) === 0, 'le compteur repart de zero');
+  ok(!v2.alertes.some((x) => /Aucun achat depuis/.test(x.quoi)),
+     'et l alerte s eteint : une alerte qui reste allumee apres la correction apprend a ne plus '
+     + 'la lire');
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -3001,6 +3085,7 @@ async function surveillanceRamene() {
   await planchersEtSortie();
   await methodeInconnue();
   await surveillanceRamene();
+  await pourquoiPasDAchat();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
