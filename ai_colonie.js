@@ -209,6 +209,10 @@ const SURV_MIN_MS = 40 * 60e3;  /* au plus tot, quarante minutes apres le dernie
 const SURV_LIQ = 1.25;          /* ou si la liquidite a pris 25 % */
 const SURV_PRIX = 1.10;         /* ou si le prix a pris 10 % */
 const SURV_MAX = 300;           /* on ne garde pas la memoire de la terre entiere */
+/* Reconnaitre le refus « trop jeune » ailleurs sans relire la phrase : elle
+   changera. Pose ici, avec les autres constantes, parce que l'oubli des vieux
+   connus s'en sert et qu'il vit tout en haut du fichier. */
+const REFUS_AGE = /^trop jeune/;
 
 const ECHANTILLON_ORDRE = 25;   /* en dessous, un taux de refus est du bruit */
 const REPOS_ORDRE_TOURS = 8;    /* et on ne rechange pas d'avis toutes les deux minutes */
@@ -558,6 +562,20 @@ function oublieLesVieuxConnus() {
   if (cles.length <= SURV_MAX) return;
   cles.sort((a, b) => (E.connus[b].dernier || 0) - (E.connus[a].dernier || 0));
   const gardes = new Set(cles.slice(0, SURV_MAX));
+  /* ---- CEUX QU'ON ATTEND EXPRES NE SE PERDENT PAS ----
+   * La colonie voit une vingtaine de jetons par tour, toutes les deux minutes
+   * et demie : quatre cents a l'heure. Un jeton mis de cote a deux minutes
+   * pour etre rejuge a deux heures serait donc oublie bien avant d'y arriver,
+   * et la regle d'age n'aurait jamais ramene personne — elle aurait
+   * simplement arrete d'acheter. On garde donc ceux qui attendent leur age,
+   * tant qu'ils sont dans la fenetre ou ils peuvent revenir. */
+  const now = Date.now();
+  for (const k of cles) {
+    const c = E.connus[k];
+    if (!c.verdict || !REFUS_AGE.test(c.verdict)) continue;
+    const age = now - (c.ne || now);
+    if (age <= AGE_MAX_MIN * 60000) gardes.add(k);
+  }
   for (const k of cles) if (!gardes.has(k) && !E.connus[k].permanent) delete E.connus[k];
   /* et si les bannis a eux seuls debordent, on lache les plus vieux aussi */
   const reste = Object.keys(E.connus);
@@ -1598,11 +1616,32 @@ function nEnv(nom, defaut) {
   const v = parseFloat(process.env[nom]);
   return isFinite(v) && v >= 0 ? v : defaut;
 }
+/* ---- ET L'AGE MINIMUM ----
+ *
+ * « Le pool doit etre age de plusieurs heures pour eviter les rug pull. »
+ *
+ * C'est le renversement complet de ce que faisait la colonie : elle ne
+ * regardait QUE les deux premieres minutes. Un jeton de deux minutes n'a rien
+ * prouve — ni que sa piscine tient, ni que le deployeur ne l'a pas videe, ni
+ * que quelqu'un d'autre que lui l'a achete. A deux heures, ces trois questions
+ * ont une reponse, et elle est lisible.
+ *
+ * Ce que ca coute est reel et il faut le dire : le flux des nouveaux pools ne
+ * porte qu'une dizaine de MINUTES d'historique sur six pages. Un jeton de deux
+ * heures n'y est plus. Il ne peut donc arriver que par la case surveillance,
+ * qui le redemande a son adresse — c'est elle qui rend cette regle jouable,
+ * et sans elle la colonie n'achetait plus rien du tout.
+ *
+ * Un refus « trop jeune » n'est donc pas un refus comme les autres : il ne
+ * dit rien du jeton, il dit l'heure. Il donne droit a une reprise quelle que
+ * soit la note, sans quoi on ecarterait a deux minutes ce qu'on voulait juger
+ * a deux heures. */
 function planchers() {
   return {
     liq: nEnv('LIQ_ACHAT_MIN', 10000),
-    mc: nEnv('MC_ACHAT_MIN', 10000),
-    mcMax: nEnv('MC_ACHAT_MAX', 5000000),
+    mc: nEnv('MC_ACHAT_MIN', 15000),
+    mcMax: nEnv('MC_ACHAT_MAX', 100000),
+    ageMin: nEnv('AGE_ACHAT_MIN', 120),
     pumpM5: nEnv('PUMP_MAX_M5', 100),
     pumpH1: nEnv('PUMP_MAX_H1', 200),
     dumpM5: nEnv('DUMP_MAX_M5', 40),
@@ -1651,9 +1690,20 @@ function vetoScout(t) {
     return 'capitalisation de $' + Math.round(mc) + ' : sous le plancher d\'achat ($'
          + Math.round(P.mc) + ')';
   if (P.mcMax > 0 && mc > P.mcMax)
-    return 'capitalisation de $' + Math.round(mc) + ' : ce n\'est plus un jeton neuf';
+    return 'capitalisation de $' + Math.round(mc) + ' : au-dessus du plafond d\'achat ($'
+         + Math.round(P.mcMax) + '), le gros du multiple est deja fait';
+  /* ---- L'AGE, EN DERNIER ----
+   * Parce que c'est le seul refus qui se PERIME : les autres portent sur ce
+   * qu'est le jeton, celui-la sur l'heure qu'il est. Le mettre en dernier
+   * garantit qu'un jeton ecarte pour son age l'aurait ete de toute facon si
+   * quelque chose d'autre clochait — et donc que la reprise ne ramene pas un
+   * jeton deja condamne. */
+  if (P.ageMin > 0 && t.minutes !== null && t.minutes !== undefined && t.minutes < P.ageMin)
+    return 'trop jeune (' + Math.round(t.minutes) + ' min) : on attend '
+         + Math.round(P.ageMin / 60 * 10) / 10 + ' h pour voir si la piscine tient';
   return null;
 }
+
 /* ==========================================================================
  * LA PRESENCE DU PROJET
  *
@@ -3094,6 +3144,20 @@ function alertes() {
       remede = 'Un acces RPC dedie a la chaine 4663 leverait la limite : dRPC la sert, et sa cle se '
         + 'pose dans DRPC_API_KEY. Les deux noeuds publics utilises ici sont gratuits et partages.';
     }
+    /* ---- ET LE SECOURS NE RATTRAPE PLUS RIEN ----
+     * Depuis l'age minimum d'achat, un jeton qu'on examine a deux heures ou
+     * plus demande une centaine de milliers de blocs. Le noeud de secours
+     * plafonne a dix mille : il n'est meme plus candidat pour compter les
+     * porteurs. Le dire change ce qu'il faut faire — ce n'est plus « le
+     * secours prendra le relais », c'est « il n'y a plus de secours ». */
+    const P0 = planchers();
+    if (P0.ageMin > 17)
+      remede += ' A noter : avec un age minimum d\'achat de '
+        + Math.round(P0.ageMin / 60 * 10) / 10 + ' h, une lecture de blocs demande environ '
+        + Math.round(P0.ageMin * 60 / BLOC_SECONDES / 1000) + ' 000 blocs. Le noeud de secours '
+        + 'plafonne a 10 000 : il ne peut plus servir AUCUN comptage de porteurs, seulement le '
+        + 'numero de bloc et l\'epreuve du Cobaye. Le noeud officiel est donc le seul a pouvoir '
+        + 'compter les porteurs, et quand il sature ils passent tous en « inconnu ».';
     dis('haute', 'Les noeuds de la chaine refusent ' + Math.round(echecs / total * 100) + ' % des lectures',
       echecs + ' refus sur ' + total + ' appels — mais pas au meme endroit. ' + detail
       + '. Chaque refus rend « inconnu » un jeton qu\'on aurait pu juger, et l\'inconnu ne rapporte '
@@ -3503,9 +3567,15 @@ async function reprises(dejaVu) {
     const c = E.connus[addr];
     if (c.permanent || dejaVu.has(addr)) continue;
     if (!c.verdict) continue;                       /* jamais refuse : rien a reprendre */
-    if (!(c.meilleure >= SEUIL - 20)) continue;     /* il avait frole le seuil */
+    /* Un refus « trop jeune » ne dit rien du jeton : il dit l'heure. Exiger en
+       plus une note serait juger sur ce qu'on a lu a deux minutes, c'est-a-dire
+       presque rien — et la regle d'age n'aurait alors ecarte que du silence. */
+    const pourLAge = REFUS_AGE.test(c.verdict);
+    if (!pourLAge && !(c.meilleure >= SEUIL - 20)) continue;
     const age = now - (c.ne || now);
-    if (age < REPRISE_APRES_MIN * 60000) continue;
+    /* Celui qu'on attend pour son age revient quand il l'a, pas avant. */
+    const attendu = pourLAge ? Math.max(REPRISE_APRES_MIN, planchers().ageMin) : REPRISE_APRES_MIN;
+    if (age < attendu * 60000) continue;
     if (age > AGE_MAX_MIN * 60000) continue;        /* passe six heures, ce n'est plus du neuf */
     if (now - (c.repris || 0) < REPRISE_ESPACE_MIN * 60000) continue;
     cand.push({ addr, c });

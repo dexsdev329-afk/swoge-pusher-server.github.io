@@ -65,8 +65,15 @@ function jeton(i, o) {
     pool: '0x' + ('b0' + suf).repeat(10),
     prix: o.prix === undefined ? 1 : o.prix,
     liq: o.liq === undefined ? 50000 : o.liq,
-    mc: o.mc === undefined ? 300000 : o.mc,
-    minutes: o.minutes === undefined ? 12 : o.minutes,
+    /* ---- LE BANC JOUE CONTRE LES REGLES QU'ON LIVRE ----
+     * Le jeton par defaut valait 300 000 $ de capitalisation et douze minutes
+     * d'age. Les deux tombent maintenant hors des bornes d'achat — plafond a
+     * 100 000 $, age minimum de deux heures — et tout le banc se serait mis a
+     * mesurer des refus. On le remonte DANS la fenetre plutot que de desactiver
+     * les bornes pour l'essai : un banc qui tourne avec d'autres regles que la
+     * production ne mesure plus la production. */
+    mc: o.mc === undefined ? 60000 : o.mc,
+    minutes: o.minutes === undefined ? 180 : o.minutes,
     porteurs: o.porteurs === undefined ? 130 : o.porteurs,
     indexe: !!o.indexe,          /* le montant est dans topics[3], pas dans data */
     goplus: o.goplus === undefined ? 'propre' : o.goplus,   /* propre | muet | honeypot */
@@ -569,7 +576,7 @@ async function montantIndexe() {
  * ======================================================================== */
 function inconnu() {
   console.log('\n-- « il a repondu » n est pas « il sait » --');
-  const base = { addr: '0xa', sym: 'A', liq: 50000, prix: 1, mc: 3e5, minutes: 9, ch_m5: 8,
+  const base = { addr: '0xa', sym: 'A', liq: 50000, prix: 1, mc: 6e4, minutes: 180, ch_m5: 8,
     tx: { h1: { buys: 120, sells: 60, buyers: 80, sellers: 30 } },
     chaine: { vu: true, porteurs: 130, top: 2.1, brule: 0 } };
   const propre = Object.assign({}, base, { g: {
@@ -1360,17 +1367,43 @@ async function jetonSorti() {
  * pas une demande qu'on sait refusee.
  * ======================================================================== */
 async function deuxNoeuds() {
+  /* ==================================================================
+   * CE QUE L'AGE MINIMUM D'ACHAT A CHANGE ICI
+   *
+   * Le noeud de secours plafonne a dix mille blocs, soit dix-sept minutes de
+   * cette chaine. Il couvrait donc la vie ENTIERE d'un jeton de douze minutes,
+   * et c'est ce relais que cet essai mesurait.
+   *
+   * Depuis qu'on n'achete plus rien avant deux heures, ce cas n'existe plus :
+   * un jeton qu'on daigne examiner demande cent mille blocs, et le secours
+   * n'est meme pas candidat. Il ne sert donc plus AUCUNE lecture de blocs —
+   * seulement les methodes sans plage : le numero de bloc, et l'appel du
+   * Cobaye. C'est une consequence reelle de la regle d'age, pas un defaut, et
+   * elle vaut d'etre ecrite : le noeud officiel est devenu le seul a pouvoir
+   * compter les porteurs.
+   *
+   * Ce qui doit rester vrai quand il sature : on rend « inconnu », jamais un
+   * compte ampute. Un faux compte se propage — le Whale y lit une
+   * concentration, l'agent l'apprend, et la lecon est fausse pour tous les
+   * jetons qui partagent le trait.
+   * ================================================================== */
   console.log('\n-- le noeud officiel sature --');
-  remise(sains(), { rpcSature: true });
+  remise([0, 1, 2, 3, 4, 5].map((i) => jeton(i, { minutes: 180 })), { rpcSature: true });
   await C.tour();
   const v = C.vue();
   console.log('   appels : officiel ' + appels.rpc + ' · secours ' + appels.rpc2);
   const lus = v.candidats.filter((c) => c.chaineVue).length;
   console.log('   jetons dont la chaine a quand meme ete lue : ' + lus + '/' + v.candidats.length);
-  ok(appels.rpc2 > 0, 'le second noeud prend le relais (' + appels.rpc2 + ' appels)');
-  ok(lus > 0, 'et les blocs sont lus quand meme : ' + lus + ' jetons, au lieu de zero');
-  ok(v.candidats.some((c) => c.porteurs !== null),
-     'avec de vrais comptes de porteurs, pas des « inconnu » dus a la saturation');
+  ok(appels.rpc2 > 0,
+     'le second noeud prend le relais sur ce qu il PEUT servir — le numero de bloc n a pas de '
+     + 'plage (' + appels.rpc2 + ' appels)');
+  ok(lus === 0,
+     'mais aucune chaine n est lue : sa limite de dix mille blocs ne couvre pas la vie d un '
+     + 'jeton de trois heures, et on ne lit pas les derniers blocs en faisant comme si c etait '
+     + 'tout');
+  ok(v.candidats.length > 0 && v.candidats.every((c) => c.porteurs === null),
+     'les porteurs restent « inconnu » plutot que faux : un compte ampute se propage a tous les '
+     + 'jetons qui partagent le trait, et il ne se rattrape jamais');
 
   const s1 = v.services.find((x) => x.cle === 'chaine');
   const s2 = v.services.find((x) => x.cle === 'chaine2');
@@ -1379,6 +1412,17 @@ async function deuxNoeuds() {
   ok(s1.essais > s1.reussites && /sature/.test(String(s1.dernierEchec)),
      'la saturation de l officiel est comptee et NOMMEE, pas confondue avec une panne');
   ok(s2.reussites > 0, 'et le secours porte son propre releve : les deux sont des services distincts');
+
+  /* Et quand il repond, tout se lit normalement : la saturation etait bien la
+     cause, pas la regle d'age. */
+  remise([0, 1].map((i) => jeton(i, { minutes: 180 })));
+  await C.tour();
+  const vv = C.vue();
+  console.log('   officiel disponible : '
+    + vv.candidats.filter((c) => c.chaineVue).length + '/' + vv.candidats.length + ' lus');
+  ok(vv.candidats.length > 0 && vv.candidats.every((c) => c.chaineVue && c.porteurs !== null),
+     'des que le noeud officiel repond, les porteurs sont comptes pour tous : c est bien la '
+     + 'saturation qui bloquait, pas l age');
 
   console.log('\n-- mais on ne lui envoie pas ce qu il refusera --');
   /* Sa limite est connue : au-dela, il n'est pas candidat. Envoyer quand meme
@@ -1974,7 +2018,7 @@ async function goplusSeContredit() {
      'et on considere qu il ne sait rien — c est ce qu il vient de prouver');
 
   /* Le chiffre qui compte : la note ne doit plus porter la penalite. */
-  const base = { addr: '0xa', sym: 'A', liq: 9000, prix: 1, mc: 3e5, minutes: 2, ch_m5: 8,
+  const base = { addr: '0xa', sym: 'A', liq: 9000, prix: 1, mc: 6e4, minutes: 180, ch_m5: 8,
     tx: { h1: { buys: 20, sells: 8, buyers: 12 } }, vol: { h1: 9000, h6: 9000 },
     chaine: { vu: true, montantsLus: true, porteurs: 40, top: 3, brule: 0 } };
   const cru = Object.assign({}, base, { g: { have: true, seContredit: false, taxeSue: false,
@@ -2021,31 +2065,38 @@ async function appelsInutiles() {
   ok(/bougies/.test(String(C.peutRepondre('ohlcv', { minutes: 2, tx: {} }))),
      'et la raison est ecrite : « ' + C.peutRepondre('ohlcv', { minutes: 2, tx: {} }) + ' »');
 
+  /* ---- ET A DEUX MINUTES, ON NE PAIE PLUS RIEN DU TOUT ----
+   * L'economie mesuree ici etait « on ne demande pas les chandelles a un jeton
+   * qui n'en a pas ». Depuis l'age minimum d'achat elle va plus loin : le
+   * Scout ecarte le jeton AVANT le premier appel, parce qu'on ne l'achetera
+   * pas a cet age-la de toute facon. Zero appel vaut mieux que trois appels
+   * bien choisis, et c'est ce qu'il faut mesurer maintenant. */
   console.log('\n-- et ca se voit sur un tour entier --');
   remise([0, 1, 2, 3, 4, 5].map((i) => jeton(i, { minutes: 2, buys: 2, sells: 1, buyers: 2 })));
   await C.tour();
   let v = C.vue();
   const jeunes = { ohlcv: appels.ohlcv, dex: appels.dex, trades: appels.trades, rpc: appels.rpc };
   console.log('   six jetons de 2 min, calmes : ' + JSON.stringify(jeunes)
-    + ' · economises ' + (v.compteurs.appelsEconomises || 0));
+    + ' · refus : ' + JSON.stringify((v.candidats[0] || {}).refus));
   ok(jeunes.ohlcv === 0 && jeunes.trades === 0,
      'aucun appel de chandelles ni de trades : a deux minutes, ils ne peuvent rien rendre');
-  ok((v.compteurs.appelsEconomises || 0) >= 6,
-     (v.compteurs.appelsEconomises || 0) + ' appels economises, et le compteur le dit');
-  ok(v.candidats.length > 0 && v.candidats.every((c) => c.chaineVue),
-     'alors que la chaine, elle, est lue pour tous : c est la seule qui sait quelque chose a cet age');
-  const sautes = v.candidats.filter((c) => c.saute);
-  ok(sautes.length > 0 && /bougies|indexe|transaction/.test(JSON.stringify(sautes[0].saute)),
-     'et la vue porte la raison, pour que « inconnu » ne ressemble pas a une panne : '
-     + JSON.stringify(sautes[0].saute).slice(0, 80));
+  ok(jeunes.rpc === 0,
+     'ni meme un appel a la chaine : le Scout tranche sur l age, et son controle ne coute rien');
+  ok(v.candidats.length > 0 && v.candidats.every((c) => /trop jeune/.test(c.refus || '')),
+     'ils sont tous ecartes pour leur age, et le refus le DIT : « '
+     + ((v.candidats[0] || {}).refus || '') + ' »');
+  ok(v.candidats.every((c) => c.appels === 0),
+     'zero appel paye pour les six : on ne paie pas pour juger ce qu on n achetera pas');
 
-  console.log('\n-- un jeton plus age, lui, est lu en entier --');
-  remise([0, 1].map((i) => jeton(i, { minutes: 45, buys: 60, sells: 20, buyers: 40 })));
+  /* La regle qui dit ce qu'un service peut rendre, elle, n'a pas bouge : elle
+     sert toujours sur les jetons qu'on garde. */
+  console.log('\n-- un jeton en age d etre achete, lui, est lu en entier --');
+  remise([0, 1].map((i) => jeton(i, { minutes: 180, buys: 60, sells: 20, buyers: 40 })));
   await C.tour();
   v = C.vue();
   console.log('   ' + JSON.stringify({ ohlcv: appels.ohlcv, dex: appels.dex, trades: appels.trades }));
   ok(appels.ohlcv > 0 && appels.trades > 0 && appels.dex > 0,
-     'a quarante-cinq minutes, les trois services ont quelque chose a dire, et on le leur demande');
+     'a trois heures, les trois services ont quelque chose a dire, et on le leur demande');
 }
 
 
