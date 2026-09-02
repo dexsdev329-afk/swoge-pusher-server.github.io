@@ -2919,6 +2919,139 @@ async function methodeInconnue() {
 }
 
 /* ==========================================================================
+ * 47. UN NOEUD QUI N'A JAMAIS RIEN SERVI SORT DE LA ROTATION
+ *
+ * Retenir methode par methode ne suffisait pas. Releve sur la colonie : les
+ * deux noeuds dRPC, 1 153 appels a eux deux, ZERO reussite, aucune methode.
+ * Le public refusait `eth_blockNumber`, celui a cle `eth_call` — donc la cle
+ * n'y etait pour rien, dRPC ne sert simplement pas la chaine 4663.
+ *
+ * Chaque methode neuve se payait alors une fois par noeud mort, et cher :
+ * `unNoeud` espace ses appels de 900 ms, donc chaque lecture attendait pres de
+ * deux secondes de refus certains avant d'atteindre le seul noeud qui repond.
+ * D'ou « le budget d'appels a ete atteint 261 fois ».
+ *
+ * Ce qui se verifie ici : il sort de la rotation, il n'y est pas enferme pour
+ * toujours, et l'alerte cesse de faire passer une histoire gelee pour une
+ * urgence en cours.
+ * ======================================================================== */
+async function noeudQuiNeSertRien() {
+  console.log('\n-- un noeud qui n a jamais rien servi sort de la rotation --');
+  /* ---- LE REFUS QUI NE NOMME AUCUNE METHODE ----
+   * C'est LA le trou que `sansMethode` ne bouche pas, et le premier essai
+   * ecrit ici s'est trompe de cas : « the method X does not exist » NOMME sa
+   * methode, donc une seule tentative suffit a l'apprendre et le compteur ne
+   * monte jamais a vingt-cinq. Ce que le jugement au niveau du NOEUD attrape,
+   * c'est l'autre moitie : une cle expiree, un 403, un service qui repond
+   * « non » sans rien dire. La, il n'y a rien a retenir — et le noeud etait
+   * donc rappele a CHAQUE lecture, pour toujours. Avec les 900 ms
+   * d'espacement de `unNoeud`, c'est une seconde par lecture perdue sur un
+   * service dont on sait deja qu'il ne repondra pas. */
+  remise(sains(), { drpcRefuse: true });
+  process.env.DRPC_API_KEY = 'cle-drpc';
+  C.noeuds().forEach((n) => { delete n.sansMethode; });
+
+  /* On l'appelle assez pour que « zero reussite » soit un fait, pas un hasard. */
+  for (let i = 0; i < 30; i++) { try { await C._rpc('eth_blockNumber'); } catch (e) {} }
+  const s = C._etat().services.chaineCle;
+  console.log('   ' + JSON.stringify({ essais: s.essais, reussites: s.reussites }));
+  ok(s.essais >= 25 && s.reussites === 0,
+     'le releve dit ce qui s est passe : ' + s.essais + ' essais, ' + s.reussites + ' reussite');
+  ok(!(C.noeuds()[0].sansMethode || {}).eth_blockNumber,
+     'et ce refus-la ne nomme aucune methode : il n y avait rien a retenir, donc rien ne '
+     + 'l empechait d etre rappele indefiniment');
+
+  appels.rpcCle = 0;
+  for (let i = 0; i < 12; i++) { try { await C._rpc('eth_blockNumber'); } catch (e) {} }
+  console.log('   apres mise de cote : ' + appels.rpcCle + ' appel(s) au noeud mort');
+  ok(appels.rpcCle === 0,
+     'il n est plus appele DU TOUT (' + appels.rpcCle + ') — c est la seconde par lecture '
+     + 'qu on ne paie plus, et le budget d appels qui cesse d etre mange pour rien');
+
+  /* ---- MAIS IL N Y EST PAS ENFERME ----
+   * Un service peut revenir. Le condamner sans retour echangerait une panne
+   * contre une autre, et personne ne s en apercevrait. */
+  C._etat().services.chaineCle.resonde = Date.now() - 2 * 60 * 60 * 1000;
+  MONDE.drpcRefuse = false;
+  appels.rpcCle = 0;
+  const r = await C._rpc('eth_blockNumber');
+  ok(!!r, 'une heure plus tard il est recontrole, et un service revenu est retrouve');
+  ok(C._etat().services.chaineCle.reussites > 0,
+     'sa reussite est notee, donc il rentre dans la rotation sans qu on touche a rien');
+
+  /* ---- ET L ALERTE NE PREND PLUS UNE HISTOIRE GELEE POUR UNE URGENCE ---- */
+  remise(sains(), { drpcRefuse: true });
+  process.env.DRPC_API_KEY = 'cle-drpc';
+  C.noeuds().forEach((n) => { delete n.sansMethode; });
+  for (let i = 0; i < 30; i++) { try { await C._rpc('eth_blockNumber'); } catch (e) {} }
+  await C.tour();
+  const al = (C.vue().alertes || []).find((x) => /refusent/.test(x.quoi));
+  console.log('   ' + (al ? al.quoi + ' | ' + String(al.pourquoi).slice(0, 130) : 'aucune alerte'));
+  if (al) {
+    ok(/hors rotation, plus appele/.test(al.pourquoi),
+       'l alerte separe ce qui est encore appele de ce qui ne l est plus');
+    ok(/figes/.test(al.pourquoi),
+       'et elle DIT que les chiffres du noeud ecarte sont figes, pas des refus qui continuent');
+    ok(!/Verifier sur drpc\.org/.test(al.quoiFaire) || /pas la cle/.test(al.quoiFaire),
+       'et elle n envoie plus renouveler une cle que le noeud PUBLIC prouve innocente');
+  } else {
+    ok(true, 'aucun refus a signaler — les lectures aboutissent');
+  }
+  delete process.env.DRPC_API_KEY;
+}
+
+/* ==========================================================================
+ * 48. L'AUDIT JUGE UNE REGLE, PAS UN JETON
+ *
+ * Mesure sur la colonie : la regle qui arrete 63 % des jetons — le plancher de
+ * liquidite — n'apparaissait PAS UNE FOIS dans le panneau « ce que deviennent
+ * les refuses ». Et l'alerte envoyait justement le lire pour decider s'il
+ * fallait la bouger.
+ *
+ * La cause : la cle de l'audit contenait les chiffres DU JETON (« piscine de
+ * $4 231 : sous le plancher... »), donc chaque jeton fabriquait sa propre
+ * case, a un seul element, et le panneau ecarte tout ce qui a moins de trois
+ * observations. La seule regle qu'on avait besoin de juger etait la seule
+ * qu'on ne pouvait structurellement pas voir.
+ * ======================================================================== */
+async function auditParRegle() {
+  console.log('\n-- l audit juge une regle, pas un jeton --');
+  remise(sains());
+  const F = C._etat();
+  const refus = (n) => 'piscine de $' + n + ' : sous le plancher d\'achat ($10,000)';
+  const jeu = [['4,231', 40], ['6,780', -50], ['3,004', 25]];
+
+  /* Trois jetons refuses par LA MEME regle, avec trois piscines differentes :
+     c'est exactement ce que produit le plancher de liquidite. */
+  F.audit = {};
+  for (const [n, r] of jeu) C._noteAudit('scout · ' + C._familleRefus(refus(n)), r);
+  const vu = C._auditDesRefus();
+  const ligne = vu.find((x) => /plancher/.test(x.cle));
+  console.log('   ' + JSON.stringify(vu.map((x) => x.cle + ' n=' + x.n)));
+  ok(!!ligne, 'la regle du plancher apparait enfin dans le panneau');
+  ok(ligne && ligne.n === 3,
+     'et les trois jetons sont dans LA MEME case (' + (ligne ? ligne.n : 0) + ') : c est la regle '
+     + 'qu on juge, pas la taille de chaque piscine');
+  ok(ligne && !/[0-9]/.test(ligne.cle.replace(/#/g, '')),
+     'plus un seul chiffre de jeton dans son nom : « ' + (ligne ? ligne.cle : '') + ' »');
+
+  /* Sans le regroupement, les memes trois refus restaient invisibles. */
+  F.audit = {};
+  for (const [n, r] of jeu) C._noteAudit('scout · ' + refus(n).slice(0, 40), r);
+  ok(C._auditDesRefus().every((x) => !/plancher/.test(x.cle)),
+     'c est bien ce qui manquait : sans regroupement, aucune de ces trois lignes n est montree');
+
+  /* ---- ET CE QUI EST DEJA MESURE N EST PAS JETE ----
+   * Changer la forme d'une cle ne doit pas effacer des semaines
+   * d'observations : on refond, on n'efface pas. */
+  C._regroupeAudit();
+  const apres = C._auditDesRefus().find((x) => /plancher/.test(x.cle));
+  ok(apres && apres.n === 3,
+     'les anciennes cases sont REFONDUES dans la nouvelle, pas jetees ('
+     + (apres ? apres.n : 0) + ' observations gardees)');
+}
+
+/* ==========================================================================
  * 45. LA SURVEILLANCE RAMENE
  *
  * La case existait ; rien ne l'ouvrait. Un jeton refuse a deux minutes pour
@@ -3084,6 +3217,8 @@ async function pourquoiPasDAchat() {
   await presenceDuProjet();
   await planchersEtSortie();
   await methodeInconnue();
+  await noeudQuiNeSertRien();
+  await auditParRegle();
   await surveillanceRamene();
   await pourquoiPasDAchat();
   C.arrete();

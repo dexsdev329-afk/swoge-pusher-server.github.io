@@ -538,6 +538,34 @@ function charge() {
   }
   brut.roster = brut.roster.filter((a) => a && a.key && Array.isArray(a.traits));
   E = brut;
+  regroupeAudit();
+}
+
+/* ---- LES ANCIENNES CASES SE REGROUPENT, ELLES NE SE JETTENT PAS ----
+ * La cle de l'audit change de forme : elle nomme desormais la REGLE et non le
+ * jeton. Repartir de zero effacerait des semaines d'observations pour un
+ * changement de nom — et repartirait justement sur la question qu'on essaie
+ * enfin de pouvoir poser. On refond donc les anciennes cases dans les
+ * nouvelles, en additionnant. C'est sans risque : ce sont les memes jetons,
+ * comptes une seule fois, sous un nom qui les rassemble. */
+function regroupeAudit() {
+  if (!E.audit || typeof E.audit !== 'object') return;
+  const neuf = {};
+  let refondues = 0;
+  for (const cle in E.audit) {
+    const a = E.audit[cle];
+    if (!a || typeof a.n !== 'number') continue;
+    const i = cle.indexOf(' · ');
+    const k = i < 0 ? cle : cle.slice(0, i + 3) + familleRefus(cle.slice(i + 3));
+    if (k !== cle) refondues++;
+    const d = neuf[k] || (neuf[k] = { n: 0, s: 0, montes: 0, effondres: 0 });
+    d.n += a.n; d.s += a.s; d.montes += a.montes || 0; d.effondres += a.effondres || 0;
+  }
+  if (refondues) {
+    console.log('[ai] audit : ' + refondues + ' case(s) regroupee(s) par regle plutot que par jeton — '
+      + Object.keys(E.audit).length + ' → ' + Object.keys(neuf).length);
+    E.audit = neuf;
+  }
 }
 
 /* Ecriture atomique : fichier temporaire, puis rename. Une coupure au milieu
@@ -700,9 +728,55 @@ const NOEUDS = [
  *
  * On retient donc cette phrase-la comme on retenait deja la limite de plage :
  * elle vient du service, elle porte le NOM de la methode, et elle ne changera
- * pas d'ici la prochaine lecture. Le noeud reste dans la liste pour tout le
- * reste — `eth_call` et `eth_blockNumber` marchent tres bien chez lui. */
+ * pas d'ici la prochaine lecture.
+ *
+ * ---- ET LA SUITE : « IL GARDE LE RESTE » ETAIT FAUX ----
+ *
+ * Cette note disait que le noeud restait dans la liste pour tout le reste,
+ * « `eth_call` et `eth_blockNumber` marchent tres bien chez lui ». Releve
+ * suivant, sur la colonie : le noeud public refuse `eth_blockNumber`, le noeud
+ * a cle refuse `eth_call`, et surtout — 1 153 appels a eux deux, ZERO reussite,
+ * jamais, aucune methode. dRPC ne sert pas la chaine 4663. La cle n'y est pour
+ * rien : la version publique echoue pareil.
+ *
+ * Apprendre methode par methode ne suffit alors pas. Chaque methode neuve se
+ * paie une fois par noeud mort, et elle se paie cher : `unNoeud` espace ses
+ * appels de 900 ms, donc chaque lecture attendait pres de deux secondes de
+ * refus certains avant d'atteindre le seul noeud qui repond. C'est ce qui
+ * faisait manquer le budget d'appels 261 fois par jour.
+ *
+ * On juge donc aussi le NOEUD, pas seulement ses methodes : beaucoup d'essais,
+ * pas une reussite, il sort de la rotation. Avec un retour possible — un
+ * service qui revient doit pouvoir etre retrouve — d'ou une tentative de
+ * controle toutes les heures. Condamner sans appel un service qui peut
+ * reapparaitre serait echanger une panne contre une autre. */
 const SANS_METHODE = /the method ([\w_]+) (?:does not exist|is not available|not found)/i;
+
+/* Assez d'essais pour que « zero reussite » ne soit pas un coup de malchance :
+   trois refus d'affilee arrivent, vingt-cinq sans une seule reussite, non. */
+const NOEUD_MORT_ESSAIS = 25;
+/* Et on retente quand meme, une fois par heure, pour lui laisser un retour. */
+const NOEUD_RESONDE_MS = 60 * 60 * 1000;
+
+/* Un noeud qui n'a jamais rien servi. La reponse est lue dans le releve, qui
+   est persiste : la lecon survit donc au redemarrage, comme `sansMethode`. */
+function noeudMort(n) {
+  const s = E.services[n.cle];
+  if (!s || s.reussites > 0 || s.essais < NOEUD_MORT_ESSAIS) return false;
+  /* ---- ON N'ECARTE JAMAIS LE DERNIER QUI POURRAIT MARCHER ----
+   * Sans cette condition, une panne passagere du noeud officiel au demarrage
+   * — vingt-cinq lectures ratees d'affilee, ca arrive — le mettrait de cote
+   * pour une heure, et la colonie se rabattrait sur deux noeuds qui ne
+   * repondent pas davantage. On aurait echange une panne d'une minute contre
+   * une heure d'aveuglement, en croyant faire une optimisation.
+   * Ecarter n'a de sens que si l'on sait qu'autre chose fonctionne. */
+  const unAutreMarche = Object.keys(E.services).some((k) => k !== n.cle
+    && /^chaine/.test(k) && E.services[k] && E.services[k].reussites > 0);
+  if (!unAutreMarche) return false;
+  /* L'heure de controle : on le laisse repasser une fois, seul, pour voir. */
+  if (Date.now() - (s.resonde || 0) > NOEUD_RESONDE_MS) return false;
+  return true;
+}
 
 /* La plage demandee par un `eth_getLogs`, pour savoir quel noeud peut la
    servir. Une demande qu'on sait refusee n'est pas envoyee. */
@@ -743,14 +817,25 @@ async function unNoeud(n, methode, params) {
    quelque chose. Un echec de tous reste un echec : il rend « inconnu ». */
 async function rpc(methode, params) {
   const plage = plageDe(methode, params);
-  const capables = noeuds().filter((n) => plage <= n.plageLogs
+  const utiles = noeuds().filter((n) => plage <= n.plageLogs
     && !(n.sansMethode && n.sansMethode[methode]));
+  /* Les morts sortent de la rotation — mais s'ils sont les seuls a pouvoir
+     servir cette methode, on essaie quand meme : une lecture tentee et ratee
+     vaut mieux qu'une lecture jamais tentee, et c'est la seule facon de voir
+     qu'un service est revenu. */
+  const vivants = utiles.filter((n) => !noeudMort(n));
+  const capables = vivants.length ? vivants : utiles;
   if (!capables.length) throw new Error('aucun noeud ne sert ' + methode
     + (plage ? ' sur une plage de ' + plage + ' blocs' : ''));
   let derniere = null;
   for (let tour = 0; tour < 2; tour++) {
     for (const n of capables) {
       try {
+        /* On note l'heure AVANT l'appel : sinon un noeud mort retente a chaque
+           lecture tant qu'il echoue, et l'heure de controle ne servirait a
+           rien. Une tentative par heure, qu'elle reussisse ou non. */
+        const s0 = E.services[n.cle];
+        if (s0 && s0.reussites === 0 && s0.essais >= NOEUD_MORT_ESSAIS) s0.resonde = Date.now();
         const r = await unNoeud(n, methode, params);
         noteService(n.cle, true);
         return r;
@@ -2381,6 +2466,25 @@ function noteOmbre(t, an, refus, quiRefuse) {
 
 /* L'audit des vetos : par raison de refus, ce que les jetons ecartes ont fait.
    Un veto qui ecarte surtout des gagnants n'est pas une protection. */
+/* ---- UNE REGLE, PAS UN JETON ----
+ *
+ * La cle de l'audit etait « qui refuse · les quarante premiers caracteres du
+ * refus ». Or un refus porte les chiffres DU JETON : « piscine de $4 231 :
+ * sous le plancher d'achat ($10 000) ». Chaque jeton fabriquait donc sa propre
+ * case, a un seul element, et `auditDesRefus` ecarte tout ce qui a moins de
+ * trois observations. Resultat mesure sur la colonie : la regle qui arrete
+ * 63 % des jetons — le plancher de liquidite — n'apparaissait PAS UNE FOIS
+ * dans le panneau « ce que deviennent les refuses », alors que l'alerte
+ * envoyait precisement le lire pour decider s'il fallait la bouger.
+ *
+ * La regle qu'on veut juger est celle qui reste quand on retire les chiffres.
+ * C'est la meme normalisation que les familles de refus de l'alerte, et c'est
+ * maintenant la MEME fonction : deux copies auraient fini par diverger, et
+ * l'alerte aurait alors nomme une famille introuvable dans le panneau. */
+function familleRefus(r) {
+  return String(r).replace(/[\d.,]+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 70);
+}
+
 function noteAudit(cle, r) {
   if (!E.audit || typeof E.audit !== 'object') E.audit = {};
   const a = E.audit[cle] || (E.audit[cle] = { n: 0, s: 0, montes: 0, effondres: 0 });
@@ -2425,7 +2529,7 @@ function regleLesOmbres(marche) {
            fois, et les cases gonfleraient sans qu'on ait vu cinq jetons. */
         if (h === HORIZON_REF) {
           for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
-          noteAudit(o.refus ? (o.quiRefuse || 'refus') + ' · ' + String(o.refus).slice(0, 40)
+          noteAudit(o.refus ? (o.quiRefuse || 'refus') + ' · ' + familleRefus(o.refus)
                             : 'achete ou retenu', r);
           compte('ombresJugees');
           n++;
@@ -3179,14 +3283,36 @@ function alertes() {
     { cle: 'chaine', nom: 'le noeud officiel', s: s('chaine') },
     { cle: 'chaine2', nom: 'le noeud dRPC public', s: s('chaine2') },
   ].filter((x) => x.s.essais > 0);
-  const echecs = noeudsVus.reduce((a, x) => a + (x.s.essais - x.s.reussites), 0);
-  const total = noeudsVus.reduce((a, x) => a + x.s.essais, 0);
+
+  /* ---- CE QUI EST ENCORE APPELE, ET CE QUI NE L'EST PLUS ----
+   *
+   * Un noeud sorti de la rotation garde ses chiffres tels quels : plus
+   * personne ne l'appelle, donc plus rien ne s'ajoute et sa proportion reste
+   * figee a 100 % pour toujours. L'alerte annoncait ainsi « les noeuds
+   * refusent 81 % des lectures » alors que 77 % de ce total etait l'histoire
+   * gelee de deux services deja mis de cote — et que les lectures reellement
+   * tentees passaient a 83 %.
+   *
+   * Un chiffre exact peut mentir sur ce qu'il faut faire. On separe donc, et
+   * le pourcentage annonce est celui des noeuds encore en service : c'est le
+   * seul qui reponde a « est-ce que mes lectures aboutissent en ce moment ». */
+  const enService = noeudsVus.filter((x) => !noeudMort({ cle: x.cle }));
+  const misDeCote = noeudsVus.filter((x) => noeudMort({ cle: x.cle }));
+  const compte = enService.length ? enService : noeudsVus;
+  const echecs = compte.reduce((a, x) => a + (x.s.essais - x.s.reussites), 0);
+  const total = compte.reduce((a, x) => a + x.s.essais, 0);
   if (total > 30 && echecs / total > 0.25) {
-    const detail = noeudsVus.map((x) => {
+    const ligne = (x) => {
       const e = x.s.essais - x.s.reussites;
       return x.nom + ' : ' + e + '/' + x.s.essais + ' refus'
         + (e ? ' (' + Math.round(e / x.s.essais * 100) + ' %, dernier : ' + (x.s.dernierEchec || '?') + ')' : '');
-    }).join(' · ');
+    };
+    let detail = compte.map(ligne).join(' · ');
+    if (misDeCote.length) {
+      detail += ' — hors rotation, plus appele : ' + misDeCote.map(ligne).join(' · ')
+        + ' (chiffres figes : ces refus datent d\'avant sa mise de cote, ils ne se '
+        + 'reproduisent plus, et un controle par heure verifie s\'il revient)';
+    }
 
     const kc = s('chaineCle');
     let remede;
@@ -3198,17 +3324,31 @@ function alertes() {
        * methode. Une alerte qui ne dit pas ce qui est deja regle fait refaire
        * le travail — ou pire, fait changer une cle qui n'y est pour rien. */
       const mus = Object.keys((noeuds()[0] && noeuds()[0].sansMethode) || {});
+      const pub = s('chaine2');
+      /* ---- LA CLE OU LE SERVICE ? LE NOEUD PUBLIC TRANCHE ----
+       * On envoyait verifier la cle sur drpc.org. Mais dRPC a AUSSI un noeud
+       * public, sans cle, dans cette meme liste : s'il echoue autant, ce n'est
+       * pas la cle, c'est que dRPC ne sert pas cette chaine. Le releve
+       * repondait deja a la question, il suffisait de la lui poser. Envoyer
+       * quelqu'un renouveler une cle innocente coute une soiree et ne repare
+       * rien. */
+      const memeSansCle = pub.essais >= NOEUD_MORT_ESSAIS && pub.reussites === 0;
       remede = 'LE NOEUD A CLE ECHOUE A CHAQUE FOIS (' + kc.essais + ' appels, 0 reussite, dernier '
-        + 'refus : « ' + (kc.dernierEchec || '?') + ' »). Ce n\'est donc pas un forfait atteint : la '
-        + 'cle n\'est pas acceptee du tout. Verifier sur drpc.org que la cle existe encore et que '
-        + 'le reseau « robinhood » fait partie de ceux qu\'elle couvre.'
+        + 'refus : « ' + (kc.dernierEchec || '?') + ' »). Ce n\'est donc pas un forfait atteint.'
+        + (memeSansCle
+            ? ' Et LE NOEUD PUBLIC dRPC echoue exactement pareil (' + pub.essais + ' appels, 0 '
+              + 'reussite, « ' + (pub.dernierEchec || '?') + ' ») — celui-la n\'utilise aucune cle. '
+              + 'Ce n\'est donc pas la cle : dRPC ne sert pas la chaine 4663, avec ou sans. '
+              + 'Renouveler la cle ne changerait rien. Ce qu\'il faut, c\'est un AUTRE fournisseur '
+              + 'RPC pour cette chaine — ou rien, et alors le noeud officiel reste seul, ce qui est '
+              + 'exactement ce qui fait manquer le budget d\'appels.'
+            : ' La cle n\'est pas acceptee du tout. Verifier sur drpc.org que la cle existe encore '
+              + 'et que le reseau « robinhood » fait partie de ceux qu\'elle couvre.')
         + (mus.length
             ? ' Ce qui est deja fait, sans rien toucher : la colonie a retenu qu\'il ne sert pas '
-              + mus.join(', ') + ', et ne les lui demande plus — ces methodes-la ne lui coutent '
-              + 'donc plus rien. Les chiffres ci-dessus sont ceux des derniers appels, pas de '
-              + 'toute l\'histoire du noeud.'
-            : ' Chaque lecture la paie pour rien avant de retomber sur les noeuds publics, qui '
-              + 'saturent.');
+              + mus.join(', ') + ', et ne le compte plus dans la rotation — il ne coute donc plus '
+              + 'de temps a chaque lecture. Un controle par heure verifie s\'il revient.'
+            : '');
     } else if (process.env.DRPC_API_KEY && kc.reussites > 0 && kc.essais - kc.reussites > kc.reussites) {
       remede = 'La cle fonctionne (' + kc.reussites + ' lectures reussies) mais refuse plus souvent '
         + 'qu\'elle n\'accepte : la, c\'est bien le forfait qui est atteint. Le releve par noeud est '
@@ -3979,7 +4119,7 @@ async function tour() {
      * comme un seul qui refuse tout. */
     for (const x of examines) {
       if (!x.refus) continue;
-      const fam = String(x.refus).replace(/[\d.,]+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 70);
+      const fam = familleRefus(x.refus);
       E.refusFamilles[fam] = (E.refusFamilles[fam] || 0) + 1;
     }
     E.refusVus = (E.refusVus || 0) + examines.length;
@@ -4167,6 +4307,8 @@ function arrete() { if (minuteur) { clearInterval(minuteur); minuteur = null; } 
 
 module.exports = {
   demarre, arrete, vue, tour, charge, sauve, reprendSansMethode,
+  _noteAudit: noteAudit, _auditDesRefus: auditDesRefus,
+  _familleRefus: familleRefus, _regroupeAudit: regroupeAudit, _noeudMort: noeudMort,
   /* exposes pour l'essai : ce sont eux qui portent les regles */
   scoreBase, analyse, traitsDe, tenueApprise, leconsDe, apprendAgent, ajustementAgent, ecartType,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
