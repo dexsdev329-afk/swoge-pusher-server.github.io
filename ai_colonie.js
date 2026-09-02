@@ -591,11 +591,58 @@ function oublieLesVieuxConnus() {
  * Essais et reponses, par service. C'est ce qui permet de DIRE qu'une source
  * ne repond plus, au lieu de la voir echouer en silence et de croire que la
  * chaine est vide. */
+/* ---- UN RELEVE QUI N'OUBLIE JAMAIS DECRIT UN PASSE, PAS UN PRESENT ----
+ *
+ * Ces compteurs vivent dans l'etat, donc ils survivent aux redemarrages, donc
+ * ils totalisent TOUTE la vie du service. C'est ce qu'on veut d'un journal, et
+ * c'est exactement ce qu'il ne faut pas pour une alerte : le noeud a cle
+ * affichait « 11 696 refus sur 11 696 appels, 100 % » et envoyait verifier une
+ * cle sur drpc.org, alors que le code avait deja retenu les methodes qu'il ne
+ * sert pas et ne l'appelait plus. L'alerte decrivait un incident termine avec
+ * les mots d'un incident en cours.
+ *
+ * On glisse donc la fenetre, comme pour les familles de refus : au-dela de
+ * SERVICE_FENETRE essais, on divise tout par deux. Les proportions sont
+ * conservees — un service qui refuse toujours reste a 100 % — mais un service
+ * qui s'est remis remonte en quelques centaines d'appels au lieu de trainer sa
+ * mauvaise reputation pour toujours. Le nombre affiche cesse d'etre un total
+ * historique, et devient ce qu'il pretendait deja etre : ce qui se passe en ce
+ * moment. */
+const SERVICE_FENETRE = 600;
+
 function noteService(nom, ok, detail) {
   const s = E.services[nom] || (E.services[nom] = { essais: 0, reussites: 0, dernier: 0, dernierEchec: null });
   s.essais++;
   if (ok) { s.reussites++; s.dernier = Date.now(); s.dernierEchec = null; }
   else s.dernierEchec = String(detail || 'echec').slice(0, 80);
+  if (s.essais > SERVICE_FENETRE) {
+    s.essais = Math.round(s.essais / 2);
+    s.reussites = Math.min(s.essais, Math.round(s.reussites / 2));
+  }
+}
+
+/* ---- ET CE QU'UN NOEUD A REFUSE DE SERVIR SE RETIENT D'UNE VIE A L'AUTRE ----
+ * `sansMethode` ne vivait qu'en memoire. A chaque redeploiement la colonie
+ * reapprenait les memes trois refus, en les payant : quelques lectures rendues
+ * « inconnu » a chaque demarrage pour une reponse qui ne change pas. On le
+ * range dans le releve du service, qui est deja persiste. */
+function poseSansMethode(n, methode) {
+  if (!n.sansMethode) n.sansMethode = {};
+  if (n.sansMethode[methode]) return false;
+  n.sansMethode[methode] = true;
+  const s = E.services[n.cle] || (E.services[n.cle] = { essais: 0, reussites: 0, dernier: 0, dernierEchec: null });
+  if (!s.sansMethode) s.sansMethode = {};
+  s.sansMethode[methode] = true;
+  return true;
+}
+/* Au demarrage, on remet dans chaque noeud ce que le releve avait retenu. */
+function reprendSansMethode() {
+  for (const n of noeuds()) {
+    const s = E.services[n.cle];
+    if (!s || !s.sansMethode) continue;
+    if (!n.sansMethode) n.sansMethode = {};
+    for (const m of Object.keys(s.sansMethode)) n.sansMethode[m] = true;
+  }
 }
 
 /* ------------------------------------------------------------- les lectures */
@@ -715,13 +762,9 @@ async function rpc(methode, params) {
         /* Le noeud nomme la methode qu'il ne sert pas : on ne la lui
            redemandera plus. Le reste de ses methodes, si. */
         const sm = SANS_METHODE.exec(String(e.message || ''));
-        if (sm) {
-          if (!n.sansMethode) n.sansMethode = {};
-          if (!n.sansMethode[sm[1]]) {
-            n.sansMethode[sm[1]] = true;
-            console.log('[ai] ' + n.cle + ' : ne sert pas ' + sm[1]
-              + ' — retenu, on ne le lui redemandera plus (il garde le reste)');
-          }
+        if (sm && poseSansMethode(n, sm[1])) {
+          console.log('[ai] ' + n.cle + ' : ne sert pas ' + sm[1]
+            + ' — retenu, on ne le lui redemandera plus (il garde le reste)');
         }
         const m = /over (\d+) blocks/.exec(String(e.message || ''));
         if (m) {
@@ -3149,11 +3192,23 @@ function alertes() {
     let remede;
     if (process.env.DRPC_API_KEY && kc.essais > 5 && kc.reussites === 0) {
       /* Le cas qui se cachait derriere le total. */
+      /* ---- ET CE QUE LE CODE A DEJA FAIT SE DIT ----
+       * Sans cette phrase, l'alerte envoyait verifier une cle sur drpc.org
+       * pour un noeud que la colonie avait deja mis de cote, methode par
+       * methode. Une alerte qui ne dit pas ce qui est deja regle fait refaire
+       * le travail — ou pire, fait changer une cle qui n'y est pour rien. */
+      const mus = Object.keys((noeuds()[0] && noeuds()[0].sansMethode) || {});
       remede = 'LE NOEUD A CLE ECHOUE A CHAQUE FOIS (' + kc.essais + ' appels, 0 reussite, dernier '
         + 'refus : « ' + (kc.dernierEchec || '?') + ' »). Ce n\'est donc pas un forfait atteint : la '
         + 'cle n\'est pas acceptee du tout. Verifier sur drpc.org que la cle existe encore et que '
-        + 'le reseau « robinhood » fait partie de ceux qu\'elle couvre — chaque lecture la paie '
-        + 'pour rien avant de retomber sur les noeuds publics, qui saturent.';
+        + 'le reseau « robinhood » fait partie de ceux qu\'elle couvre.'
+        + (mus.length
+            ? ' Ce qui est deja fait, sans rien toucher : la colonie a retenu qu\'il ne sert pas '
+              + mus.join(', ') + ', et ne les lui demande plus — ces methodes-la ne lui coutent '
+              + 'donc plus rien. Les chiffres ci-dessus sont ceux des derniers appels, pas de '
+              + 'toute l\'histoire du noeud.'
+            : ' Chaque lecture la paie pour rien avant de retomber sur les noeuds publics, qui '
+              + 'saturent.');
     } else if (process.env.DRPC_API_KEY && kc.reussites > 0 && kc.essais - kc.reussites > kc.reussites) {
       remede = 'La cle fonctionne (' + kc.reussites + ' lectures reussies) mais refuse plus souvent '
         + 'qu\'elle n\'accepte : la, c\'est bien le forfait qui est atteint. Le releve par noeud est '
@@ -4097,6 +4152,9 @@ function remiseAZero(pourquoi) {
 let minuteur = null;
 function demarre() {
   charge();
+  /* Ce que les noeuds ont deja refuse de servir : on le remet en place AVANT
+     le premier tour, sinon le tour du demarrage repaie les memes refus. */
+  reprendSansMethode();
   if (minuteur) return;
   /* Un premier tour tout de suite, puis la cadence. Au demarrage du serveur,
      les positions en cours se reglent au prix du moment — le temps ecoule est
@@ -4108,7 +4166,7 @@ function demarre() {
 function arrete() { if (minuteur) { clearInterval(minuteur); minuteur = null; } }
 
 module.exports = {
-  demarre, arrete, vue, tour, charge, sauve,
+  demarre, arrete, vue, tour, charge, sauve, reprendSansMethode,
   /* exposes pour l'essai : ce sont eux qui portent les regles */
   scoreBase, analyse, traitsDe, tenueApprise, leconsDe, apprendAgent, ajustementAgent, ecartType,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
