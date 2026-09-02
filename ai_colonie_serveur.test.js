@@ -79,6 +79,7 @@ function jeton(i, o) {
      * Un seul portefeuille qui achete et revend a lui-meme. Les compteurs
      * agreges y voient un marche vivant ; les trades y voient une personne. */
     lavage: !!o.lavage,
+    ch_m5: o.ch_m5 === undefined ? 8 : o.ch_m5,
     ch_h1: o.ch_h1 === undefined ? 20 : o.ch_h1,
     ch_h6: o.ch_h6 === undefined ? 35 : o.ch_h6,
     volH1: o.volH1 === undefined ? 20000 : o.volH1,
@@ -114,7 +115,7 @@ function mondeNeuf(jetons, extra) {
     bloc: 5000000,
     profils: [], boosts: [], goplusCasse: false, rpcSature: false, claude: null, claudeCasse: false,
     cgCle: null, cgPorte: null, cgQuota: false,
-    gpCle: null, gpSecret: null, drpcRefuse: false, drpcPlage: 0,
+    gpCle: null, gpSecret: null, drpcRefuse: false, drpcPlage: 0, drpcSansLogs: false,
   }, extra || {});
 }
 
@@ -134,7 +135,7 @@ function poolsPage(page) {
         pool_created_at: new Date(Date.now() - t.minutes * 60000).toISOString(),
         transactions: { h1: { buys: t.buys, sells: t.sells, buyers: t.buyers, sellers: 30 } },
         volume_usd: { m5: 2000, h1: t.volH1, h6: 60000, h24: 90000 },
-        price_change_percentage: { m5: '8', h1: String(t.ch_h1), h6: String(t.ch_h6) },
+        price_change_percentage: { m5: String(t.ch_m5), h1: String(t.ch_h1), h6: String(t.ch_h6) },
       },
       relationships: { base_token: { data: { id: 'tok_' + t.sym } } },
     })),
@@ -367,7 +368,7 @@ global.fetch = async function (url, opts) {
       pairCreatedAt: Date.now() - t.minutes * 60000,
       txns: { h1: { buys: t.buys, sells: t.sells } },
       volume: { m5: 2000, h1: 20000, h6: 60000, h24: 90000 },
-      priceChange: { m5: 8, h1: 20, h6: 35 },
+      priceChange: { m5: t.ch_m5, h1: t.ch_h1, h6: t.ch_h6 },
       /* ---- LA PRESENCE DU PROJET, AVEC SES ADRESSES ----
        * La vraie reponse porte des URL, pas des etiquettes nues. Tant que le
        * faux n'en mettait pas, la regle « site + twitter + telegram » ecartait
@@ -388,6 +389,13 @@ global.fetch = async function (url, opts) {
     const b = JSON.parse(opts.body);
     if (b.method === 'eth_blockNumber') return rep({ result: hex(MONDE.bloc) });
     if (b.method === 'eth_getLogs') {
+      /* ---- CE QUE CE NOEUD-LA A VRAIMENT REPONDU ----
+       * Douze mille quatre cent deux fois, mot pour mot. Ce n'est ni une
+       * saturation ni un forfait : le reseau `robinhood` n'expose pas cette
+       * methode chez dRPC. Le reste de ses methodes, si. */
+      appels.rpcCleLogs++;
+      if (MONDE.drpcSansLogs)
+        return rep({ error: { message: 'the method eth_getLogs does not exist/is not available' } }, 200);
       const f = b.params[0];
       const plage = parseInt(f.toBlock, 16) - parseInt(f.fromBlock, 16);
       if (MONDE.drpcPlage && plage > MONDE.drpcPlage)
@@ -430,7 +438,7 @@ const C = require('./ai_colonie.js');
 function remise(jetons, extra) {
   MONDE = mondeNeuf(jetons, extra);
   envoyes = [];
-  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0, rpc2: 0, trades: 0, profils: 0, boosts: 0, claude: 0, cgDemo: 0, cgPro: 0, goplusJeton: 0, goplusAuth: 0, rpcCle: 0, call: 0 };
+  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0, rpc2: 0, trades: 0, profils: 0, boosts: 0, claude: 0, cgDemo: 0, cgPro: 0, goplusJeton: 0, goplusAuth: 0, rpcCle: 0, rpcCleLogs: 0, call: 0 };
   for (const k of Object.keys(C._cache)) for (const j of Object.keys(C._cache[k])) delete C._cache[k][j];
   for (const k of Object.keys(C._prix)) delete C._prix[k];
   C._pose(C.etatNeuf());
@@ -720,12 +728,26 @@ async function reglement() {
                                             .map((p) => p.__avant));
   const misesFermees = ouvertesAvant.filter((p) => !encore.has(p.marque))
                                     .reduce((a, p) => a + p.mise, 0);
-  const attenduReel = C.DEPART + misesFermees * 0.5;
+  /* ---- ET L'ECHELLE DE SORTIE ENCAISSE AVANT LA FERMETURE ----
+   * A +50 %, deux paliers sont franchis : 35 % de la mise vendus a +15 % et
+   * 35 % a +40 % — au prix du moment, donc +50 % dans les deux cas puisqu'il
+   * n'y a eu qu'une seule relecture. Une position PROLONGEE a donc deja
+   * rapporte 70 % de son gain, et exiger que la tresorerie ne bouge que sur
+   * les positions fermees reviendrait a exiger l'ancien comportement.
+   * Ce qui doit rester exact, c'est que chaque dollar vienne d'un prix relu :
+   * on additionne donc ce qui a ferme ET ce que chaque position ouverte a
+   * deja encaisse, et le total doit tomber au centime. */
+  const encaisse = C._etat().positions.reduce((a, p) => a + (p.encaisse || 0), 0);
+  const attenduReel = C.DEPART + misesFermees * 0.5 + encaisse;
   console.log('   tresorerie : ' + v.tresor.toFixed(2) + ' · attendu ' + attenduReel.toFixed(2)
-    + ' (sur $' + misesFermees.toFixed(2) + ' reellement fermes)');
+    + ' (sur $' + misesFermees.toFixed(2) + ' fermes + $' + encaisse.toFixed(2)
+    + ' encaisses en route)');
   ok(Math.abs(v.tresor - attenduReel) < 0.01,
-     'la tresorerie suit exactement le prix rendu : +50 % sur les $' + misesFermees.toFixed(2)
-     + ' fermes = +$' + (misesFermees * 0.5).toFixed(2));
+     'la tresorerie suit exactement les prix relus : +50 % sur les $' + misesFermees.toFixed(2)
+     + ' fermes, plus les $' + encaisse.toFixed(2) + ' deja pris par les paliers');
+  ok(encaisse > 0,
+     'et les paliers ont bien encaisse en route, sans attendre la fermeture ($'
+     + encaisse.toFixed(2) + ') : c est tout l interet de sortir par morceaux');
   ok(v.gains === v.trades, 'et toutes les fermees sont comptees gagnantes');
   ok(v.tresor > C.DEPART, 'la tresorerie a bien monte, pas juste « pas bouge » ($' + v.tresor.toFixed(2) + ')');
 
@@ -1305,7 +1327,11 @@ async function jetonSorti() {
   const F = C._etat();
   for (let i = 0; i < 6; i++) F.positions.push({
     sym: 'ORPHELIN' + i, adr: '0x' + String(i).repeat(40), pool: '0xpp' + i,
-    prix0: 1, t0: Date.now() - 3 * 3600e3, mise: 30, traits: {}, tenueMin: 20, traj: [] });
+    /* `prixLu` frais : ces positions-la sont vieilles mais SUIVIES — c'est le
+       secours qui les cote. Sans ce champ, la passe d'abandon les emporterait
+       en tete de tour et l'essai ne mesurerait plus le plafond du secours. */
+    prix0: 1, t0: Date.now() - 3 * 3600e3, prixLu: Date.now(),
+    mise: 30, traits: {}, tenueMin: 20, traj: [] });
   ok(F.positions.length === 6, 'six positions dont AUCUN jeton n est dans les flux');
   await C.tour();
   const utilises = C._etat().compteurs.prixDeSecours || 0;
@@ -1640,8 +1666,13 @@ async function conseiller() {
    * Il faut donc des jetons mediocres — peu de liquidite, peu de porteurs, un
    * GoPlus muet — c'est-a-dire exactement la population sur laquelle une note
    * ne tranche pas. */
-  remise([0, 1, 2, 3].map((i) => jeton(i, { liq: 3000, porteurs: 10, goplus: 'muet',
-    buys: 6, sells: 5, buyers: 4, tradeurs: 4 })));
+  /* Mediocre, mais AU-DESSUS du plancher d'achat : une piscine de 3 000 $ est
+     desormais ecartee par le Scout, donc le jeton n'atteindrait jamais
+     l'Oracle et le Conseiller n'aurait rien a arbitrer. La mediocrite vient
+     donc d'ou elle doit venir — peu de porteurs, un GoPlus muet, des
+     compteurs faibles — et pas d'une piscine que la colonie refuse. */
+  remise([0, 1, 2, 3].map((i) => jeton(i, { liq: 14000, mc: 60000, porteurs: 10,
+    goplus: 'muet', buys: 6, sells: 5, buyers: 4, tradeurs: 4 })));
   MONDE.claude = { avis: 'favorable', points: 6, pourquoi: 'liquidite correcte et volume reparti' };
   await C.tour();
   v = C.vue();
@@ -1664,8 +1695,13 @@ async function conseiller() {
   ok(v.positions.length === 0, 'et aucune position ne s ouvre');
 
   console.log('\n-- et une reponse abimee ne devient pas une donnee --');
-  remise([0, 1, 2, 3].map((i) => jeton(i, { liq: 3000, porteurs: 10, goplus: 'muet',
-    buys: 6, sells: 5, buyers: 4, tradeurs: 4 })));
+  /* Mediocre, mais AU-DESSUS du plancher d'achat : une piscine de 3 000 $ est
+     desormais ecartee par le Scout, donc le jeton n'atteindrait jamais
+     l'Oracle et le Conseiller n'aurait rien a arbitrer. La mediocrite vient
+     donc d'ou elle doit venir — peu de porteurs, un GoPlus muet, des
+     compteurs faibles — et pas d'une piscine que la colonie refuse. */
+  remise([0, 1, 2, 3].map((i) => jeton(i, { liq: 14000, mc: 60000, porteurs: 10,
+    goplus: 'muet', buys: 6, sells: 5, buyers: 4, tradeurs: 4 })));
   MONDE.claude = 'PAS DU JSON DU TOUT';
   await C.tour();
   v = C.vue();
@@ -2621,6 +2657,252 @@ async function presenceDuProjet() {
      + 'pas tout');
 }
 
+/* ==========================================================================
+ * 43. CE QU'ON ACHETE, ET COMMENT ON EN SORT
+ *
+ * « J'ai l'impression qu'il y a un souci sur les trades. Regarde comment
+ *   fonctionnait ce bot pour les call, il fonctionnait bien. »
+ *
+ * Le releve de la colonie apres treize heures disait la meme chose que lui,
+ * chiffres a l'appui : « achete ou retenu » rendait -38,9 % en moyenne, zero
+ * monte, trois effondres — pendant que « note trop basse » rendait +93 %. Dix
+ * positions ouvertes, toutes a prix jamais relu, capitalisations d'achat entre
+ * 5 759 $ et 15 738 $.
+ *
+ * Le robot cite regle ca par deux choses, et ce sont elles qui sont reprises :
+ * des PLANCHERS a l'entree (piscine, capitalisation, et des bornes de hausse
+ * pour ne pas payer le sommet d'une bougie) et une SORTIE PAR MORCEAUX avec un
+ * arret suiveur, au lieu du tout ou rien.
+ * ======================================================================== */
+async function planchersEtSortie() {
+  console.log('\n-- les planchers d entree --');
+  const P = C.planchers();
+  console.log('   ' + JSON.stringify(P));
+  ok(P.liq > 0 && P.mc > 0, 'une piscine et une capitalisation minimales sont posees');
+
+  /* Une piscine sous le plancher : on n'achete pas ce qu'on ne pourra ni
+     suivre ni vendre. */
+  /* Petit ET calme : un gros volume sur une capitalisation minuscule declenche
+     l'autre regle — « ce n'est plus un marche, c'est une sortie » — et l'essai
+     mesurerait celle-la au lieu du plancher. */
+  remise([jeton(0, { liq: 4000, mc: 4200, volH1: 900 }), jeton(1)]);
+  await C.tour();
+  let v = C.vue();
+  let c0 = v.candidats.find((x) => x.sym === 'TOK0');
+  console.log('   petite piscine : ' + JSON.stringify({ refus: c0 && c0.refus, qui: c0 && c0.quiRefuse }));
+  ok(!!c0 && /plancher d'achat/.test(c0.refus || ''),
+     'une piscine de 4 000 $ est ecartee, et le refus DIT le plancher : « ' + (c0 || {}).refus + ' »');
+  ok(!C._etat().positions.some((p) => p.sym === 'TOK0'), 'aucune position ne s ouvre dessus');
+
+  /* ---- ON N'ACHETE PAS LE SOMMET ----
+   * C'est le refus le moins intuitif et le plus utile : le chiffre ne dit rien
+   * du jeton, il dit OU L'ON ENTRE. */
+  remise([jeton(0, { ch_m5: 240 }), jeton(1, { ch_h1: 400 }), jeton(2)]);
+  await C.tour();
+  v = C.vue();
+  const pump5 = v.candidats.find((x) => x.sym === 'TOK0');
+  const pump1 = v.candidats.find((x) => x.sym === 'TOK1');
+  console.log('   deja monte : ' + JSON.stringify([pump5 && pump5.refus, pump1 && pump1.refus]));
+  ok(!!pump5 && /cinq minutes/.test(pump5.refus || '') && /sommet/.test(pump5.refus || ''),
+     'un +240 % en cinq minutes est refuse : « ' + (pump5 || {}).refus + ' »');
+  ok(!!pump1 && /une heure/.test(pump1.refus || '') && /sommet/.test(pump1.refus || ''),
+     'un +400 % en une heure aussi : « ' + (pump1 || {}).refus + ' »');
+  ok(v.candidats.some((x) => x.sym === 'TOK2' && !x.refus),
+     'et le jeton qui monte normalement passe : la borne ecarte l exces, pas la hausse');
+
+  /* ---- LA REGLE QUI EXPLIQUE PASSE DEVANT CELLE QUI COMPTE ----
+   * Les deux ecartent le meme jeton. Une seule apprend quelque chose a qui la
+   * lit, et c est celle-la qu on veut dans l audit. */
+  remise([jeton(0, { mc: 2000, liq: 2000, volH1: 40000 })]);
+  await C.tour();
+  c0 = C.vue().candidats[0];
+  console.log('   volume sur rien : « ' + (c0 || {}).refus + ' »');
+  ok(!!c0 && /ce n'est plus un marche/.test(c0.refus || ''),
+     'le jeton a 2 000 $ avec un gros volume garde SA raison — « une sortie » — plutot que le '
+     + 'plancher, qui dirait seulement « trop petit »');
+
+  console.log('\n-- sortir par morceaux --');
+  const E2 = C.echelle();
+  console.log('   ' + JSON.stringify(E2));
+  ok(E2.p1 < E2.p2 && E2.p2 < E2.p3, 'les trois paliers montent');
+  ok(E2.v1 + E2.v2 + E2.v3 < 100,
+     'et ils ne vendent pas tout : ' + (100 - E2.v1 - E2.v2 - E2.v3) + ' % restent pour la suite');
+
+  /* Une position qui monte, palier par palier. Rien n'est simule ici : on
+     joue l'echelle a la main sur des rendements donnes, et on regarde la
+     tresorerie et le reste. */
+  remise(sains());
+  const F = C._etat();
+  F.tresor = 1000;
+  const p = { sym: 'X', pool: '0xp', mise: 100, prix0: 1, t0: Date.now() };
+  ok(C.joueEchelle(p, 5, Date.now()) === false && p.reste === 1,
+     'a +5 %, aucun palier : on ne vend pas pour rien');
+  C.joueEchelle(p, E2.p1 + 1, Date.now());
+  console.log('   apres le 1er palier : reste ' + p.reste + ' · tresorerie ' + F.tresor.toFixed(2));
+  ok(Math.abs(p.reste - (1 - E2.v1 / 100)) < 1e-9,
+     'au premier palier, ' + E2.v1 + ' % sont vendus et le reste continue (' + p.reste + ')');
+  ok(F.tresor > 1000, 'et la tresorerie a encaisse SANS que la position soit fermee ($'
+     + F.tresor.toFixed(2) + ')');
+  const apres1 = F.tresor;
+  C.joueEchelle(p, E2.p1 + 2, Date.now());
+  ok(F.tresor === apres1 && Math.abs(p.reste - (1 - E2.v1 / 100)) < 1e-9,
+     'un palier deja franchi ne se rejoue pas : sinon on vendrait la meme part a chaque tour');
+  const fini = C.joueEchelle(p, E2.p3 + 1, Date.now());
+  console.log('   apres tous les paliers : reste ' + p.reste.toFixed(3));
+  ok(fini === false && p.reste > 0.001,
+     'meme apres le dernier palier il reste une part : c est elle qui paie les rares gros coups');
+
+  /* ---- L'ARRET SUIVEUR ----
+   * Il ne dit pas quand vendre, il dit quand ARRETER DE TENIR. */
+  console.log('\n-- l arret suiveur --');
+  const q = { sym: 'Y', mise: 100, prix0: 1, t0: Date.now() };
+  ok(C.arretSuiveur(q, 4) === null, 'sous le seuil d armement, il ne fait rien');
+  ok(C.arretSuiveur(q, E2.suivDepart + 5) === null, 'une position qui MONTE n est jamais coupee');
+  const bas = C.arretSuiveur(q, E2.suivDepart + 5 - E2.suivEcart - 1);
+  console.log('   ' + bas);
+  ok(!!bas && /plus haut/.test(bas),
+     'mais une fois armee, la redescente sous le plus haut ferme — et la raison porte le chiffre : « '
+     + bas + ' »');
+  const q2 = { sym: 'Z', mise: 100, prix0: 1, t0: Date.now() };
+  C.arretSuiveur(q2, E2.suivSerreA + 10);
+  ok(!!C.arretSuiveur(q2, E2.suivSerreA + 10 - E2.suivSerre - 1),
+     'et plus haut on est monte, plus l arret se resserre : ' + E2.suivSerre
+     + ' points au lieu de ' + E2.suivEcart + ', parce qu une grosse redescente coute plus cher');
+
+  /* ---- ET RIEN DE TOUT CA SUR UN PRIX QU'ON REFUSE ----
+   * C'est le defaut qui a fait passer la tresorerie a vingt-sept milliards :
+   * l'echelle encaissait avant que `ferme` rejette la lecture. */
+  console.log('\n-- un prix impossible ne fait vendre aucun palier --');
+  remise([jeton(0, { prix: 1e-12 })]);
+  await C.tour();
+  const avant = C._etat().tresor;
+  for (const t of MONDE.jetons) t.prix = 0.001;      /* +99 999 999 900 % */
+  for (const k of Object.keys(C._cache.dex)) delete C._cache.dex[k];
+  await C.tour();
+  const apres = C._etat().tresor;
+  console.log('   tresorerie : ' + avant.toFixed(2) + ' → ' + apres.toFixed(2));
+  ok(Math.abs(apres - avant) < 1000,
+     'la tresorerie ne part pas en milliards : le meme garde-fou couvre les paliers et la '
+     + 'fermeture ($' + apres.toFixed(2) + ')');
+
+  /* ---- LA POSITION QU'ON NE SAIT PAS SUIVRE ----
+   * Dix positions ouvertes treize heures sans un seul prix relu : elles ne
+   * pouvaient plus se fermer, et elles tenaient toutes les places. */
+  console.log('\n-- une position qu on ne sait pas suivre est abandonnee --');
+  remise(sains());
+  await C.tour();
+  const G = C._etat();
+  ok(G.positions.length > 0, 'des positions sont ouvertes (' + G.positions.length + ')');
+  const n0 = G.positions.length;
+  const p0 = G.positions[0];
+  const delai = C.abandonDelai(p0);
+  console.log('   delai d abandon : ' + Math.round(delai / 60000) + ' min');
+  ok(delai >= 60 * 60000, 'le delai vaut au moins une heure : en dessous on abandonnerait des '
+    + 'jetons que DexScreener n a simplement pas encore indexes');
+  /* On recule leur derniere lecture au-dela du delai, et le monde se tait
+     COMPLETEMENT : c'est le cas ou la passe doit encore agir, puisqu'elle ne
+     depend d'aucun prix — le tour s'arrete alors sur « aucun jeton neuf assez
+     liquide », et les positions perdues de vue le resteraient un tour de plus
+     a chaque fois. */
+  for (const x of G.positions) { x.prixLu = Date.now() - delai - 60000; x.t0 = x.prixLu; }
+  MONDE.jetons = [];
+  poolsPageFiltre = null;
+  try { await C.tour(); } catch (e) { /* plus rien a lire : c'est le cas mesure */ }
+  console.log('   positions : ' + n0 + ' → ' + C._etat().positions.length
+    + ' · tresorerie ' + C._etat().tresor.toFixed(2));
+  ok(C._etat().positions.length < n0,
+     'celles dont le prix n a jamais pu etre relu sont abandonnees, au lieu de tenir la place '
+     + 'pour toujours (' + n0 + ' → ' + C._etat().positions.length + ')');
+  ok((C._etat().compteurs.abandonneeSansPrix || 0) > 0, 'et c est compte');
+  ok(C.vue().alertes.some((a) => /abandonnees faute de prix/.test(a.quoi)),
+     'une alerte le remonte, avec ce qu il faudrait faire');
+  const fluxAband = C._etat().flux.find((f) => /jamais relu/.test(f.txt || ''));
+  ok(!!fluxAband && /rien compte/.test(fluxAband.txt),
+     'le fil dit que RIEN n a ete comptabilise : on n invente pas un zero pour cloturer '
+     + 'proprement — ce zero entrerait dans la memoire des agents comme une observation');
+}
+
+/* ==========================================================================
+ * 44. UN NOEUD QUI DIT « JE NE SERS PAS CETTE METHODE » EST CRU
+ *
+ * Releve sur la colonie : les deux noeuds dRPC ont rendu « the method
+ * eth_getLogs does not exist/is not available » a chacun de leurs 12 402
+ * appels. Zero reussite. Et on les rappelait a chaque lecture — deux echecs
+ * certains payes avant d'atteindre le seul noeud qui repond, lequel saturait
+ * alors sous toute la charge.
+ * ======================================================================== */
+async function methodeInconnue() {
+  console.log('\n-- un noeud qui ne sert pas une methode n est plus rappele dessus --');
+  remise(sains(), { drpcSansLogs: true });
+  process.env.DRPC_API_KEY = 'cle-drpc';
+  C.noeuds().forEach((n) => { delete n.sansMethode; });
+  await C.tour();
+  const a1 = appels.rpcCleLogs;
+  console.log('   1er tour : ' + a1 + ' eth_getLogs au noeud a cle');
+  ok(a1 > 0, 'il est essaye une premiere fois : on ne devine pas, on demande');
+  const n = C.noeuds().find((x) => x.cle === 'chaineCle');
+  ok(!!n && n.sansMethode && n.sansMethode.eth_getLogs,
+     'sa reponse est RETENUE, telle qu il l a ecrite');
+  /* On compte les `eth_getLogs` A LUI, pas tous ses appels : il garde
+     `eth_blockNumber` et `eth_call`, et les compter ferait echouer l'essai sur
+     un comportement qu'on veut justement conserver. */
+  appels.rpcCleLogs = 0;
+  for (const k of Object.keys(C._cache.chaine)) delete C._cache.chaine[k];
+  await C.tour();
+  console.log('   2e tour : ' + appels.rpcCleLogs + ' eth_getLogs au noeud a cle');
+  ok(appels.rpcCleLogs === 0,
+     'et il n est plus rappele pour cette methode-la (' + appels.rpcCleLogs + ') : c est autant '
+     + 'd echecs certains qu on ne paie plus avant d atteindre le noeud qui repond');
+  /* Mais il garde le reste : ce n est pas un bannissement. */
+  const bloc = await C._rpc('eth_blockNumber');
+  ok(!!bloc, 'il sert toujours les autres methodes : on retient une methode, pas un noeud');
+  delete process.env.DRPC_API_KEY;
+}
+
+/* ==========================================================================
+ * 45. LA SURVEILLANCE RAMENE
+ *
+ * La case existait ; rien ne l'ouvrait. Un jeton refuse a deux minutes pour
+ * « pas encore verifiable sur DexScreener » ne revenait jamais, parce que le
+ * seul chemin vers le pipeline etait le flux des nouveaux pools, ou il ne
+ * figure plus cinq minutes plus tard.
+ * ======================================================================== */
+async function surveillanceRamene() {
+  console.log('\n-- ce qu on a mis de cote revient quand il a l age d etre juge --');
+  remise(sains());
+  const F = C._etat();
+  /* Un jeton connu, refuse sur un ETAT, qui avait frole le seuil, et qui a
+     maintenant l'age d'etre indexe. */
+  const a = MONDE.jetons[0].addr;
+  F.connus[a] = { sym: 'TOK0', vu: 1, ne: Date.now() - 30 * 60000,
+                  dernier: Date.now() - 25 * 60000,
+                  verdict: 'pas encore verifiable sur DexScreener (2 min)', meilleure: 60 };
+  const repris = await C.reprises(new Map());
+  console.log('   repris : ' + JSON.stringify(repris.map((t) => t.sym + '/' + t.origine)));
+  ok(repris.length === 1 && repris[0].origine === 'surveillance',
+     'il est redemande a son adresse, et il porte l origine qui le dit');
+  ok(F.connus[a].repris > 0, 'et la date est notee : on ne le redemande pas a chaque tour');
+  const encore = await C.reprises(new Map());
+  ok(encore.length === 0, 'juste apres, il n est pas redemande — l appel serait paye pour rien');
+
+  /* Ce qui a ete banni ne revient jamais, et ce qui n a jamais frole le seuil
+     non plus : le budget est petit, il va a ceux qui etaient pres de passer. */
+  F.connus[a].repris = 0;
+  F.connus[a].permanent = true;
+  ok((await C.reprises(new Map())).length === 0, 'un jeton banni ne revient pas : son refus '
+    + 'portait sur le CONTRAT, et un contrat ne change pas');
+  F.connus[a].permanent = false;
+  F.connus[a].meilleure = 5;
+  ok((await C.reprises(new Map())).length === 0,
+     'et un jeton qui n a jamais approche le seuil non plus');
+
+  /* ---- ET IL PASSE LE CONTROLE DES RE-EXAMENS ----
+   * L ecarter la pour « rien n a bouge » reviendrait a payer l appel qui le
+   * ramene puis a jeter ce qu il rapporte. */
+  ok(C.doitExaminer({ addr: a, origine: 'surveillance', minutes: 30, liq: 1, prix: 1 }).oui,
+     'un jeton qu on est alle rechercher expres est examine, pas ecarte pour « deja juge »');
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -2665,6 +2947,9 @@ async function presenceDuProjet() {
   await traitsQuiSeparent();
   await epreuveDeVente();
   await presenceDuProjet();
+  await planchersEtSortie();
+  await methodeInconnue();
+  await surveillanceRamene();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

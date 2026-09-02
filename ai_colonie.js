@@ -618,6 +618,25 @@ const NOEUDS = [
   { url: RPC_RH, cle: 'chaine', plageLogs: BLOCS_PLAFOND, dernier: 0 },
   { url: RPC_SECOURS, cle: 'chaine2', plageLogs: 10000, dernier: 0 },
 ];
+/* ---- UN NOEUD QUI DIT « JE NE SERS PAS CETTE METHODE » EST CRU ----
+ *
+ * Releve sur la colonie apres treize heures : les deux noeuds dRPC ont rendu
+ * « the method eth_getLogs does not exist/is not available » a CHACUN de leurs
+ * 12 402 appels. Zero reussite, jamais. Ce n'est pas une saturation, ce n'est
+ * pas un forfait : le reseau `robinhood` n'expose pas cette methode chez eux.
+ *
+ * Et on les rappelait a chaque lecture. Chaque somme de transferts payait donc
+ * deux echecs certains avant d'arriver au seul noeud qui repond — lequel
+ * saturait alors sous la charge entiere (1 801 refus sur 11 548), ce qui a
+ * fait rater le budget d'appels 232 fois et laisse le Cobaye « non testable »
+ * 27 fois sur 28, faute de detenteurs lus.
+ *
+ * On retient donc cette phrase-la comme on retenait deja la limite de plage :
+ * elle vient du service, elle porte le NOM de la methode, et elle ne changera
+ * pas d'ici la prochaine lecture. Le noeud reste dans la liste pour tout le
+ * reste — `eth_call` et `eth_blockNumber` marchent tres bien chez lui. */
+const SANS_METHODE = /the method ([\w_]+) (?:does not exist|is not available|not found)/i;
+
 /* La plage demandee par un `eth_getLogs`, pour savoir quel noeud peut la
    servir. Une demande qu'on sait refusee n'est pas envoyee. */
 function plageDe(methode, params) {
@@ -657,8 +676,10 @@ async function unNoeud(n, methode, params) {
    quelque chose. Un echec de tous reste un echec : il rend « inconnu ». */
 async function rpc(methode, params) {
   const plage = plageDe(methode, params);
-  const capables = noeuds().filter((n) => plage <= n.plageLogs);
-  if (!capables.length) throw new Error('aucun noeud ne sert une plage de ' + plage + ' blocs');
+  const capables = noeuds().filter((n) => plage <= n.plageLogs
+    && !(n.sansMethode && n.sansMethode[methode]));
+  if (!capables.length) throw new Error('aucun noeud ne sert ' + methode
+    + (plage ? ' sur une plage de ' + plage + ' blocs' : ''));
   let derniere = null;
   for (let tour = 0; tour < 2; tour++) {
     for (const n of capables) {
@@ -671,6 +692,17 @@ async function rpc(methode, params) {
         noteService(n.cle, false, e.coupe ? 'sature' : e.message);
         /* Le service annonce sa limite de plage : on la RETIENT, au lieu de lui
            renvoyer la meme demande a chaque tour. */
+        /* Le noeud nomme la methode qu'il ne sert pas : on ne la lui
+           redemandera plus. Le reste de ses methodes, si. */
+        const sm = SANS_METHODE.exec(String(e.message || ''));
+        if (sm) {
+          if (!n.sansMethode) n.sansMethode = {};
+          if (!n.sansMethode[sm[1]]) {
+            n.sansMethode[sm[1]] = true;
+            console.log('[ai] ' + n.cle + ' : ne sert pas ' + sm[1]
+              + ' — retenu, on ne le lui redemandera plus (il garde le reste)');
+          }
+        }
         const m = /over (\d+) blocks/.exec(String(e.message || ''));
         if (m) {
           const max = parseInt(m[1], 10);
@@ -1539,10 +1571,66 @@ function vetoWhisper(t) {
  * Trois formes, toutes lisibles dans le flux des pools, donc GRATUITES : elles
  * ecartent le jeton avant qu'un seul appel ne soit paye pour lui.
  */
+/* ==========================================================================
+ * LES PLANCHERS, ET POURQUOI CEUX-LA
+ *
+ * Repris d'un robot qui tourne et dont le reglage est publie : capitalisation
+ * minimale, piscine minimale, rapport piscine/capitalisation, et surtout des
+ * BORNES DE HAUSSE — il refuse ce qui a deja fait +100 % en cinq minutes ou
+ * +200 % en une heure. C'est le contraire d'un filtre a rendement : c'est un
+ * refus d'acheter le sommet d'une bougie, et c'est exactement ce que l'audit
+ * de notre propre colonie reprochait a ses achats (« achete ou retenu » :
+ * -38,9 % de moyenne, zero monte, trois effondres).
+ *
+ * Ses chiffres a lui valent pour Solana et Base. Ici la chaine est plus petite,
+ * et on ne recopie pas un plancher sans regarder ce qu'il laisse passer :
+ * releve sur soixante pools neufs de la chaine 4663, la piscine mediane vaut
+ * 4 132 $. Le plancher de ce robot — 20 000 $ — n'en garderait que sept sur
+ * soixante ; a 10 000 $ il en reste douze, soit environ quatre candidats par
+ * tour, de quoi continuer a trader. C'est ce chiffre-la qui est pose, et il se
+ * regle sans toucher au code.
+ *
+ * Ce qui est refuse ici continue d'etre SUIVI comme tout le reste : l'ombre
+ * est ecrite avant le refus, donc l'audit dira dans la journee si ces
+ * planchers ont protege ou coute — ce qu'aucune conviction ne peut dire.
+ * ======================================================================== */
+function nEnv(nom, defaut) {
+  const v = parseFloat(process.env[nom]);
+  return isFinite(v) && v >= 0 ? v : defaut;
+}
+function planchers() {
+  return {
+    liq: nEnv('LIQ_ACHAT_MIN', 10000),
+    mc: nEnv('MC_ACHAT_MIN', 10000),
+    mcMax: nEnv('MC_ACHAT_MAX', 5000000),
+    pumpM5: nEnv('PUMP_MAX_M5', 100),
+    pumpH1: nEnv('PUMP_MAX_H1', 200),
+    dumpM5: nEnv('DUMP_MAX_M5', 40),
+    dumpH1: nEnv('DUMP_MAX_H1', 50),
+  };
+}
+
 function vetoScout(t) {
   const v = t.vol || {}, mc = t.mc || 0, liq = t.liq || 0;
-  if (t.ch_h1 <= -60) return 'deja tombe de ' + Math.round(-t.ch_h1) + '% en une heure';
+  const P = planchers();
+  /* ---- LA CHUTE ---- */
+  if (P.dumpH1 > 0 && t.ch_h1 <= -P.dumpH1)
+    return 'deja tombe de ' + Math.round(-t.ch_h1) + '% en une heure';
+  if (P.dumpM5 > 0 && t.ch_m5 <= -P.dumpM5)
+    return 'deja tombe de ' + Math.round(-t.ch_m5) + '% en cinq minutes';
   if (t.ch_h6 <= -80) return 'deja tombe de ' + Math.round(-t.ch_h6) + '% en six heures';
+  /* ---- ET LA HAUSSE, QUI COUTE AUTANT ----
+   * Entrer apres un +300 % de cinq minutes, c'est payer le sommet a quelqu'un
+   * qui sort. Le chiffre ne dit rien du jeton ; il dit ou l'on entre. */
+  if (P.pumpM5 > 0 && t.ch_m5 >= P.pumpM5)
+    return 'deja +' + Math.round(t.ch_m5) + '% en cinq minutes : on paierait le sommet';
+  if (P.pumpH1 > 0 && t.ch_h1 >= P.pumpH1)
+    return 'deja +' + Math.round(t.ch_h1) + '% en une heure : on paierait le sommet';
+  /* ---- LES REGLES QUI DISENT QUELQUE CHOSE DE PRECIS PASSENT D'ABORD ----
+   * Un plancher explique seulement « trop petit ». « Ce n'est plus un marche,
+   * c'est une sortie » explique CE QUI SE PASSE, et c'est cette phrase-la
+   * qu'on veut lire dans l'audit et a l'ecran. Les deux ecartent le meme
+   * jeton ; seule la premiere apprend quelque chose a qui la lit. */
   /* Le cas signale : deux mille de capitalisation, un gros volume dessus. */
   if (mc > 0 && mc < 20000 && v.h1 > mc * 2)
     return 'volume de $' + Math.round(v.h1) + ' sur une capitalisation de $' + Math.round(mc)
@@ -1552,6 +1640,18 @@ function vetoScout(t) {
   if (mc > 50000 && liq > 0 && liq < mc * 0.01)
     return 'piscine de $' + Math.round(liq) + ' pour une capitalisation de $' + Math.round(mc)
          + ' : rien a vendre dedans';
+  /* ---- ET ENFIN CE QU'ON NE POURRA NI SUIVRE NI VENDRE ----
+   * Les positions restees ouvertes treize heures sans un seul prix relu
+   * avaient toutes une capitalisation d'achat entre 5 759 $ et 15 738 $ ; les
+   * deux que l'on savait coter valaient 60 877 $ et 234 892 $. */
+  if (P.liq > 0 && liq > 0 && liq < P.liq)
+    return 'piscine de $' + Math.round(liq) + ' : sous le plancher d\'achat ($'
+         + Math.round(P.liq) + ')';
+  if (P.mc > 0 && mc > 0 && mc < P.mc)
+    return 'capitalisation de $' + Math.round(mc) + ' : sous le plancher d\'achat ($'
+         + Math.round(P.mc) + ')';
+  if (P.mcMax > 0 && mc > P.mcMax)
+    return 'capitalisation de $' + Math.round(mc) + ' : ce n\'est plus un jeton neuf';
   return null;
 }
 /* ==========================================================================
@@ -1876,6 +1976,15 @@ function doitExaminer(t) {
   if (!c) return { oui: true, pourquoi: 'jamais vu' };
   if (c.permanent) return { oui: false, pourquoi: 'banni : ' + c.verdict };
   const depuis = Date.now() - (c.dernier || 0);
+  /* ---- CELUI QU'ON EST ALLE RECHERCHER EXPRES ----
+   * `reprises` ne ramene un jeton que s'il avait frole le seuil, qu'il a
+   * maintenant l'age d'etre indexe, et qu'on ne l'a pas redemande depuis vingt
+   * minutes. L'ecarter ici pour « rien n'a bouge » reviendrait a payer l'appel
+   * qui le ramene puis a jeter ce qu'il rapporte — et ce qui a bouge, c'est
+   * justement ce que DexScreener sait de lui, qu'on ne peut pas comparer a
+   * l'ancien puisqu'il n'y en avait pas. */
+  if (t.origine === 'surveillance')
+    return { oui: true, pourquoi: 'repris en surveillance a ' + Math.round((t.minutes || 0)) + ' min' };
   if (depuis >= SURV_MIN_MS) return { oui: true, pourquoi: 'revu apres ' + Math.round(depuis / 60000) + ' min' };
   if (c.liq > 0 && t.liq >= c.liq * SURV_LIQ)
     return { oui: true, pourquoi: 'liquidite +' + Math.round((t.liq / c.liq - 1) * 100) + '%' };
@@ -2505,6 +2614,11 @@ function ouvre(t) {
                         : tenueApprise();
   E.positions.push({
     sym: t.sym, adr: t.addr, pool: t.pool, prix0: t.prix, t0: Date.now(),
+    /* Le delai d'abandon compte depuis la DERNIERE fois qu'on a su lire un
+       prix, pas depuis l'ouverture : une position tenue trois heures et cotee
+       a chaque tour n'a rien d'une position perdue de vue. A l'ouverture on
+       vient justement d'en lire un — c'est `prix0`. */
+    prixLu: Date.now(),
     mise: b.mise, methode: b.methode, regime: b.regime, raisonMise: b.raison,
     liq0: t.liq || 0, tenueBase: tenue.min,
     tenueRaison: tenue.parProfil
@@ -2541,6 +2655,94 @@ function ouvre(t) {
 const REND_MAX = 900;    /* +900 % : un vrai dix-fois, ca existe */
 const REND_MIN = -99;    /* -99 % : en dessous, c'est un pool vide, pas un cours */
 
+/* ==========================================================================
+ * SORTIR PAR MORCEAUX, ET LAISSER COURIR LE RESTE
+ *
+ * « Regarde comment fonctionnait ce bot pour les call, il fonctionnait bien. »
+ *
+ * Ce que ce robot fait et que nous ne faisions pas : il ne sort pas d'un bloc.
+ * Il vend un tiers a +15 %, un tiers a +40 %, un cinquieme a +80 %, et garde
+ * une part pour le cas ou ca continue. En dessous, un ARRET SUIVEUR : une fois
+ * la position montee de 10 %, il ferme des qu'elle redescend de 20 points sous
+ * son plus haut — et de 10 points seulement une fois passe +40 %, parce que
+ * plus haut on monte, plus la redescente coute.
+ *
+ * Notre sortie etait tout ou rien : la Sentinelle prenait le gain entier ou
+ * ne prenait rien. Sur des jetons dont un sur dix fait le resultat du mois,
+ * c'est le pire des deux mondes — on coupe le seul qui payait, ou on rend
+ * tout ce qu'il avait donne.
+ *
+ * Ce qui est comptabilise reste vrai : une vente partielle n'est pas un trade
+ * ferme. Elle encaisse sa part, et le rendement dont les agents apprennent a
+ * la fin est la MOYENNE PONDEREE de ce qui a ete realise — pas le dernier
+ * prix, qui ne porte plus que le reliquat.
+ *
+ * Un arret de perte n'est PAS repris : le releve de ce robot le donne a 0 %
+ * de reussite dans ses propres donnees, et il le laisse eteint par defaut.
+ * La coupe de la Sentinelle, elle, reste — elle ne porte pas sur un prix mais
+ * sur l'etat de la piscine.
+ * ======================================================================== */
+function echelle() {
+  return {
+    actif: process.env.SORTIE_ECHELLE !== '0',
+    p1: nEnv('DCA1_PCT', 15), v1: nEnv('DCA1_VEND', 35),
+    p2: nEnv('DCA2_PCT', 40), v2: nEnv('DCA2_VEND', 35),
+    p3: nEnv('DCA3_PCT', 80), v3: nEnv('DCA3_VEND', 20),
+    suivDepart: nEnv('SUIV_DEPART', 10),
+    suivEcart: nEnv('SUIV_ECART', 20),
+    suivSerre: nEnv('SUIV_SERRE', 10),
+    suivSerreA: nEnv('SUIV_SERRE_A', 40),
+  };
+}
+
+/* Une tranche vendue : elle encaisse sa part et laisse le reste courir. */
+function vendUneTranche(p, r, part, quand, pourquoi) {
+  const f = Math.min(part, p.reste === undefined ? 1 : p.reste);
+  if (!(f > 0.001)) return false;
+  const pnl = p.mise * f * r / 100;
+  E.tresor += pnl;
+  p.reste = (p.reste === undefined ? 1 : p.reste) - f;
+  p.rRealise = (p.rRealise || 0) + f * r;
+  p.encaisse = (p.encaisse || 0) + pnl;
+  E.flux.unshift({ sym: p.sym, pool: p.pool, tag: pnl >= 0 ? 'buy' : 'cut',
+    txt: Math.round(f * 100) + '% vendu a ' + (r >= 0 ? '+' : '') + r.toFixed(1) + '%'
+       + '  ·  ' + (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '  ·  ' + pourquoi,
+    cls: pnl >= 0 ? 'up' : 'dn', t: quand, par: 'sentinelle' });
+  compte('tranchesVendues');
+  E.courbe.push(Math.round(E.tresor * 100) / 100);
+  return true;
+}
+
+/* Les paliers atteints ce tour-ci, dans l'ordre. Rend `true` s'il ne reste
+   plus rien a tenir. */
+function joueEchelle(p, r, quand) {
+  const E2 = echelle();
+  if (!E2.actif) return false;
+  if (p.reste === undefined) p.reste = 1;
+  if (!p.paliers) p.paliers = {};
+  const niveaux = [{ k: '1', a: E2.p1, v: E2.v1 }, { k: '2', a: E2.p2, v: E2.v2 },
+                   { k: '3', a: E2.p3, v: E2.v3 }];
+  for (const n of niveaux) {
+    if (p.paliers[n.k] || !(n.a > 0) || r < n.a) continue;
+    p.paliers[n.k] = true;
+    vendUneTranche(p, r, n.v / 100, quand, 'palier +' + n.a + '%');
+  }
+  return p.reste <= 0.001;
+}
+
+/* L'arret suiveur : il ne dit pas quand vendre, il dit quand ARRETER DE
+   TENIR. C'est la difference entre rendre un gain et le garder. */
+function arretSuiveur(p, r) {
+  const E2 = echelle();
+  if (!E2.actif) return null;
+  if (p.hautR === undefined || r > p.hautR) p.hautR = r;
+  if (!(p.hautR >= E2.suivDepart)) return null;      /* pas encore arme */
+  const ecart = p.hautR >= E2.suivSerreA ? E2.suivSerre : E2.suivEcart;
+  if (r > p.hautR - ecart) return null;
+  return 'arret suiveur : retombe de ' + (p.hautR - r).toFixed(1)
+       + ' points sous son plus haut (+' + p.hautR.toFixed(1) + '%)';
+}
+
 function ferme(p, prix, quand, comment) {
   let r = (prix - p.prix0) / p.prix0 * 100;
   let aberrant = null;
@@ -2549,10 +2751,18 @@ function ferme(p, prix, quand, comment) {
              + ' entre ' + p.prix0 + ' et ' + prix;
     r = 0;   /* la mise est rendue : on ne gagne ni ne perd sur une lecture qu'on rejette */
   }
-  const pnl = p.mise * r / 100;
+  /* ---- CE QUI RESTE, ET CE QUI A DEJA ETE PRIS ----
+   * Le dernier prix ne vaut plus que pour le reliquat. Le rendement dont tout
+   * le monde apprend est la moyenne ponderee des tranches realisees : sans
+   * cela, une position sortie a +80 % puis fermee a +5 % enseignerait +5 %. */
+  const reste = p.reste === undefined ? 1 : p.reste;
+  const pnl = p.mise * reste * r / 100;
   E.tresor += pnl;
   E.trades++;
-  if (pnl > 0) E.gains++;
+  const rTotal = aberrant ? 0 : (p.rRealise || 0) + reste * r;
+  const gainTotal = (p.encaisse || 0) + pnl;
+  if (gainTotal > 0) E.gains++;
+  if (!aberrant) r = rTotal;
   const mult = 1 + r / 100;
   if (mult > E.meilleur) { E.meilleur = mult; E.meilleurSym = p.sym; }
   /* ---- ET C'EST ICI QUE TOUS APPRENNENT ----
@@ -2601,12 +2811,15 @@ function ferme(p, prix, quand, comment) {
     apprendAgent('promoteur', p.casProlonge, r - p.rDecision);
 
   const par = comment && comment.par;
-  const suffixe = par === 'sentinelle' ? '  ·  coupe : ' + comment.raison
-                : (p.prolonge ? '  ·  prolongee ' + p.prolonge + '×' : '');
-  E.flux.unshift({ sym: p.sym, pool: p.pool, tag: pnl >= 0 ? 'buy' : 'cut',
-    txt: (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2) + '  ·  ' + (r >= 0 ? '+' : '') + r.toFixed(1) + '%'
-       + suffixe,
-    cls: pnl >= 0 ? 'up' : 'dn', t: quand, tenue: quand - p.t0, par: par || 'closer' });
+  const suffixe = (par === 'sentinelle' ? '  ·  coupe : ' + comment.raison
+                : (p.prolonge ? '  ·  prolongee ' + p.prolonge + '×' : ''))
+    /* Ce qui avait deja ete pris en route : sans ca, une position sortie par
+       morceaux affiche le seul reliquat et se lit comme une petite affaire. */
+    + (reste < 0.999 ? '  ·  ' + Math.round((1 - reste) * 100) + '% deja vendu en route' : '');
+  E.flux.unshift({ sym: p.sym, pool: p.pool, tag: gainTotal >= 0 ? 'buy' : 'cut',
+    txt: (gainTotal >= 0 ? '+' : '') + '$' + gainTotal.toFixed(2) + '  ·  '
+       + (r >= 0 ? '+' : '') + r.toFixed(1) + '%' + suffixe,
+    cls: gainTotal >= 0 ? 'up' : 'dn', t: quand, tenue: quand - p.t0, par: par || 'closer' });
   if (par === 'sentinelle') compte('sentinelleCoupe');
   E.courbe.push(Math.round(E.tresor * 100) / 100);
 }
@@ -2614,14 +2827,60 @@ function ferme(p, prix, quand, comment) {
 /* `marche` porte un prix et, quand on l'a, la liquidite. Un nombre nu est
    accepte : c'est la forme d'avant la Sentinelle, et un etat relu d'hier ne
    doit pas cesser de se regler parce que le format a change. */
+/* ---- UNE POSITION QU'ON NE SAIT PAS SUIVRE N'EST PAS UNE POSITION ----
+ *
+ * Releve sur la colonie apres treize heures : DIX positions ouvertes, toutes
+ * a « prix non lu », huit d'entre elles depuis treize heures avec un prix
+ * jamais relu une seule fois. Elles ne pouvaient plus se fermer — `regle` rend
+ * `true` faute de prix, donc elles attendaient un prix qui n'arriverait
+ * jamais. Elles tenaient dix places sur dix, immobilisaient la mise du
+ * Banquier, et n'apprenaient rien a personne.
+ *
+ * Passe ce delai, on les ABANDONNE : la mise est rendue, rien n'est
+ * comptabilise, et personne n'apprend — exactement comme pour un prix
+ * inexploitable. Inventer un resultat a zero pour cloturer proprement serait
+ * pire : ce zero entrerait dans la memoire des agents comme une observation,
+ * alors qu'on n'a rien observe du tout.
+ *
+ * Le delai suit l'intention du trade — quatre fois la duree qu'on comptait
+ * tenir — avec un plancher d'une heure, parce qu'en dessous on abandonnerait
+ * des jetons que DexScreener n'a simplement pas encore indexes. */
+const ABANDON_PLANCHER_MIN = 60;
+function abandonDelai(p) {
+  return Math.max(ABANDON_PLANCHER_MIN, (p.tenueMin || TENUE_DEFAUT_MIN) * 4) * 60000;
+}
+
+/* ---- ET CETTE PASSE-LA NE DEPEND D'AUCUN PRIX ----
+ * C'est tout son objet : elle traite les positions dont on n'a JAMAIS pu en
+ * lire un. La mettre dans `regle`, qui boucle sur les prix du tour, la rendait
+ * muette exactement dans le cas ou elle sert — un tour sans flux (« aucun
+ * jeton neuf assez liquide ») s'arrete avant, et les positions perdues de vue
+ * l'auraient ete un tour de plus a chaque fois. */
+function abandonneLesPerdues() {
+  const now = Date.now();
+  let n = 0;
+  E.positions = E.positions.filter((p) => {
+    if (now - (p.prixLu || p.t0) <= abandonDelai(p)) return true;
+    E.flux.unshift({ sym: p.sym, pool: p.pool, tag: 'cut',
+      txt: 'prix jamais relu en ' + Math.round((now - p.t0) / 60000)
+         + ' min · mise rendue, rien compte',
+      cls: 'n', t: now, tenue: now - p.t0, par: 'closer' });
+    compte('abandonneeSansPrix');
+    n++;
+    return false;
+  });
+  return n;
+}
+
 function regle(marche) {
   const now = Date.now();
   let n = 0;
   E.positions = E.positions.filter((p) => {
     const brut = marche[p.adr];
-    if (brut === undefined || brut === null) return true;
-    const x = (typeof brut === 'number') ? { prix: brut, liq: 0 } : brut;
-    if (!(x.prix > 0)) return true;               /* pas de prix : on attend */
+    const x0 = (typeof brut === 'number') ? { prix: brut, liq: 0 } : brut;
+    if (!x0 || !(x0.prix > 0)) return true;      /* pas de prix : on attend */
+    const x = x0;
+    p.prixLu = now;
     const dt = now - p.t0;
     const r = (x.prix - p.prix0) / p.prix0 * 100;
     if (!p.traj) p.traj = [];
@@ -2633,6 +2892,34 @@ function regle(marche) {
     p.vuPar = casSentinelle(p, x);
     const danger = dangerSentinelle(p, x);
     if (danger) { ferme(p, x.prix, now, { par: 'sentinelle', raison: danger }); n++; return false; }
+
+    /* ---- L'ECHELLE DE SORTIE, PUIS L'ARRET SUIVEUR ----
+     * D'abord les paliers : ils encaissent une part et laissent le reste
+     * courir. Ensuite l'arret suiveur, qui ferme ce qui reste quand le plus
+     * haut est rendu. L'ordre compte : un palier atteint puis rendu dans le
+     * meme tour doit avoir encaisse sa part avant qu'on ferme.
+     *
+     * ---- MAIS JAMAIS SUR UN PRIX QU'ON REFUSE ----
+     * `ferme` rejette deja les lectures impossibles et rend la mise sans rien
+     * compter. L'echelle, elle, encaissait AVANT d'y arriver : un prix a
+     * +99 999 999 900 % lui faisait vendre 35 % de la mise a ce taux-la, et la
+     * tresorerie passait a vingt-sept milliards. Le meme garde-fou doit donc
+     * s'appliquer ici, et il doit etre le MEME — un seuil recopie finirait par
+     * diverger de celui de `ferme`. */
+    if (!isFinite(r) || r > REND_MAX || r < REND_MIN) {
+      ferme(p, x.prix, now, { par: 'closer' });
+      n++; return false;
+    }
+    if (joueEchelle(p, r, now)) {
+      ferme(p, x.prix, now, { par: 'sentinelle', raison: 'dernier palier atteint' });
+      n++; return false;
+    }
+    const suiv = arretSuiveur(p, r);
+    if (suiv) {
+      ferme(p, x.prix, now, { par: 'sentinelle', raison: suiv });
+      compte('arretSuiveur');
+      n++; return false;
+    }
 
     /* ---- ET ELLE PEUT AUSSI PRENDRE UN GAIN ----
      * Sans attendre la fin du compte a rebours. Ce qu'elle prend est note, et
@@ -2858,6 +3145,17 @@ function alertes() {
       + 'comptabilise et personne n\'en a rien appris — mais la position, elle, est perdue de vue.',
       'C\'est le signe de jetons a tres faible decimale ou de piscines videes. Rien a fournir : '
       + 'c\'est note ici pour qu\'on sache que ca arrive, et combien de fois.');
+
+  const perdues = E.compteurs.abandonneeSansPrix || 0;
+  if (perdues > 0)
+    dis(perdues > 3 ? 'haute' : 'moyenne',
+      perdues + ' position(s) abandonnees faute de prix',
+      'Leur prix n\'a jamais pu etre relu, pas une fois, jusqu\'a l\'expiration du delai. La mise '
+      + 'a ete rendue et personne n\'a rien appris — on n\'invente pas un resultat a zero pour '
+      + 'cloturer proprement, ce zero entrerait dans la memoire des agents comme une observation '
+      + 'alors qu\'on n\'a rien observe.',
+      'C\'est presque toujours un jeton trop petit pour etre indexe : le vrai remede est en amont, '
+      + 'dans le plancher de liquidite qui decide ce qu\'on achete.');
 
   return out;
 }
@@ -3166,6 +3464,67 @@ async function assure(t, besoins) {
  * Ils ne ramenent pas la meme population, et c'est le but. Un jeton trouve par
  * deux flux garde le premier qui l'a vu : `origine` est un trait que la
  * colonie apprend, il ne doit pas changer selon l'ordre de lecture. */
+/* ==========================================================================
+ * LA SURVEILLANCE RAMENE, ELLE NE SE CONTENTE PLUS DE REGARDER
+ *
+ * La case existait ; rien ne l'ouvrait. Un jeton refuse a deux minutes pour
+ * « pas encore verifiable sur DexScreener » y entrait, s'y affichait — et ne
+ * revenait JAMAIS, parce que le seul chemin vers le pipeline etait le flux des
+ * nouveaux pools, ou il ne figure plus cinq minutes plus tard. La colonie
+ * lisait donc toujours la meme tranche : releve sur elle apres treize heures,
+ * « 0-5 min : 19 jetons · 5-20 min : 0 · 20-60 min : 1 · 1-6 h : 0 ».
+ *
+ * Or c'est precisement la tranche ou ses propres regles sont impossibles a
+ * satisfaire. A deux minutes DexScreener n'a rien indexe, donc la regle des
+ * reseaux refuse tout ; les blocs ne montrent qu'un porteur, donc le Whale
+ * refuse tout. Sur le tour releve : vingt candidats, vingt refus. Et le seul
+ * jeton mur du lot — 31 minutes, 599 000 $ de capitalisation, 70 000 $ de
+ * piscine — arrivait par un autre flux.
+ *
+ * Ce que dit l'audit de la meme colonie, dans le meme temps : « achete ou
+ * retenu » rend -38,9 % en moyenne, tandis que « note trop basse » rend
+ * +93 % et « pas encore verifiable sur DexScreener » +51 % et +77 %. Les
+ * echantillons sont petits, mais le signe est le meme dans les trois cases :
+ * on achete le mauvais tiers et on ecarte le bon.
+ *
+ * On rouvre donc la case. Un jeton qui avait FROLE le seuil et qui a ete
+ * refuse sur un ETAT est redemande a son adresse une fois qu'il a eu le temps
+ * d'exister — c'est un appel a DexScreener, celui-la meme qui manquait la
+ * premiere fois. Il revient alors avec son age, sa piscine et ses reseaux, et
+ * repasse devant les memes gardes, qui cette fois ont de quoi juger.
+ * ======================================================================== */
+const REPRISE_APRES_MIN = 12;    /* laisser a l'indexation le temps d'exister */
+const REPRISE_ESPACE_MIN = 20;   /* et ne pas le redemander a chaque tour */
+const REPRISE_PAR_TOUR = 5;
+
+async function reprises(dejaVu) {
+  const now = Date.now(), cand = [];
+  for (const addr in E.connus) {
+    const c = E.connus[addr];
+    if (c.permanent || dejaVu.has(addr)) continue;
+    if (!c.verdict) continue;                       /* jamais refuse : rien a reprendre */
+    if (!(c.meilleure >= SEUIL - 20)) continue;     /* il avait frole le seuil */
+    const age = now - (c.ne || now);
+    if (age < REPRISE_APRES_MIN * 60000) continue;
+    if (age > AGE_MAX_MIN * 60000) continue;        /* passe six heures, ce n'est plus du neuf */
+    if (now - (c.repris || 0) < REPRISE_ESPACE_MIN * 60000) continue;
+    cand.push({ addr, c });
+  }
+  /* Les meilleures notes d'abord : le budget est petit, il va a ceux qui
+     etaient le plus pres de passer. */
+  cand.sort((a, b) => (b.c.meilleure || 0) - (a.c.meilleure || 0));
+  const out = [];
+  for (const x of cand.slice(0, REPRISE_PAR_TOUR)) {
+    x.c.repris = now;
+    const t = await jetonDepuisDex(x.addr, 'surveillance');
+    if (t && t.prix > 0) out.push(t);
+    else compte('repriseMuette');
+    await dors(250);
+  }
+  if (out.length) compte('reprises', out.length);
+  return out;
+}
+
 async function rassemble() {
   const parAdresse = new Map();
   for (const t of await lisPools()) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
@@ -3185,6 +3544,9 @@ async function rassemble() {
     }
     await dors(400);
   }
+  /* Et ceux qu'on avait mis de cote, maintenant qu'ils ont eu le temps
+     d'exister. C'est la seule source qui serve autre chose que du tout neuf. */
+  for (const t of await reprises(parAdresse)) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
   return [...parAdresse.values()];
 }
 
@@ -3194,6 +3556,9 @@ async function tour() {
   try {
     E.tours = (E.tours || 0) + 1;
     E.toursDepuisOrdre = (E.toursDepuisOrdre || 0) + 1;
+    /* Avant tout le reste, et sans lire quoi que ce soit : les positions dont
+       le prix n'a jamais pu etre relu liberent leur place. */
+    abandonneLesPerdues();
     /* ---- RIEN DE VIEUX N'ENTRE ----
      * Le but est d'analyser du NEUF. Un seul jeton etabli dans le pipeline
      * suffit a fausser ce que les agents apprennent. */
@@ -3233,7 +3598,13 @@ async function tour() {
       if ((deja && deja.prix > 0) || secours >= 4) continue;
       secours++;
       const d = await lisDex(p.adr);
-      if (d.vu && d.prix > 0) { prix[p.adr] = { prix: d.prix, liq: d.liq || 0 }; posePrix(p.adr, d.prix); }
+      if (d.vu && d.prix > 0) {
+        prix[p.adr] = { prix: d.prix, liq: d.liq || 0 }; posePrix(p.adr, d.prix);
+        /* Le secours compte comme une lecture : c'en est une. Sans ca, une
+           position que SEUL le secours sait coter serait abandonnee alors
+           qu'on la suit tres bien. */
+        p.prixLu = Date.now();
+      }
       await dors(250);
     }
     if (secours) compte('prixDeSecours', secours);
@@ -3429,7 +3800,15 @@ function vue() {
                mise: p.mise, methode: p.methode, regime: p.regime, raisonMise: p.raisonMise,
                origine: p.origine || 'pools',
                latent: r === null ? null : Math.round(r * 10) / 10,
-               gainLatent: r === null ? null : Math.round(p.mise * r) / 100,
+               /* Le latent ne porte plus que sur ce qui reste tenu : afficher
+                  la mise entiere apres deux paliers vendus serait annoncer un
+                  risque qu'on ne court plus. */
+               gainLatent: r === null ? null
+                 : Math.round(p.mise * (p.reste === undefined ? 1 : p.reste) * r) / 100,
+               reste: p.reste === undefined ? 1 : Math.round(p.reste * 100) / 100,
+               encaisse: Math.round((p.encaisse || 0) * 100) / 100,
+               paliers: p.paliers ? Object.keys(p.paliers).length : 0,
+               hautR: p.hautR === undefined ? null : Math.round(p.hautR * 10) / 10,
                prixVu: dernierPrix[p.adr] ? dernierPrix[p.adr].t : 0 };
     }),
     candidats: E.candidats,
@@ -3493,6 +3872,10 @@ function vue() {
                   rendus: E.compteurs.conseilRendu || 0 },
     seuil: seuilCourant(), seuilDepart: SEUIL, ageMax: AGE_MAX_MIN,
     sociauxExiges: sociauxExiges(),
+    /* Les reglages qui decident ce qu'on achete et comment on en sort. Une
+       borne qu'on ne voit pas ne peut pas etre discutee. */
+    planchers: planchers(),
+    echelle: echelle(),
     derniers: (E.derniers || []).slice(-20),
     alertes: alertes(),
   };
@@ -3542,6 +3925,8 @@ module.exports = {
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN,
   noteProfil, courbeDe, horizonPour, informationDe, classementDesTraits,
   vetoOracle, sociauxExiges, SOCIAUX_DEFAUT, simuleVente, vetoCobaye,
+  planchers, echelle, joueEchelle, arretSuiveur, vendUneTranche, reprises,
+  abandonDelai, abandonneLesPerdues,
   HORIZONS, HORIZON_REF, PROFIL_MIN_OBS, jalonValable,
   lisTrades, lisFluxDex, jetonDepuisDex, rassemble,
   sondeCoingecko, jsonGT, cleCoingecko, goplusEntetes, goplusIdentifie, noeuds, peutRepondre,
