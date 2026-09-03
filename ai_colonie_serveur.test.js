@@ -2172,7 +2172,7 @@ async function prendreUnGain() {
   const v1 = C.vue();
   console.log('   ' + (v1.flux[0] || {}).txt);
   ok(n === 1 && E.positions.length === 0, 'la position est fermee a six minutes, pas a vingt');
-  ok(/gain pris/.test((v1.flux[0] || {}).txt), 'et le fil dit que c est un gain pris, pas une coupe');
+  ok(/gain taken/.test((v1.flux[0] || {}).txt), 'et le fil dit que c est un gain pris, pas une coupe');
   ok((v1.compteurs.gainPris || 0) === 1, 'le geste est compte a son nom');
   ok(v1.suites.length === 1 && v1.suites[0].echeance > Date.now(),
      'et une SUITE est notee : on reviendra voir a l echeance ce que garder aurait donne');
@@ -3130,9 +3130,9 @@ async function lesSignaux() {
 
   const t = C._texteSignal(a);
   console.log('   « ' + String(t).split('\n').join(' | ').slice(0, 150) + ' »');
-  ok(/papier/i.test(t),
+  ok(/paper/i.test(t),
      'le message DIT que la colonie joue du papier — dans le message, pas dans un coin de page');
-  ok(/pas un conseil/i.test(t),
+  ok(/not advice/i.test(t),
      'et qu il ne s agit pas d un conseil : des gens le liront avec de l argent reel');
   ok(t.indexOf(a.adr) >= 0, 'et il porte l adresse, copiable telle quelle');
 
@@ -3152,7 +3152,7 @@ async function lesSignaux() {
     const tv = C._texteSignal(ventes[0]);
     console.log('   « ' + String(tv).split('\n').join(' | ').slice(0, 130) + ' »');
     ok(/%/.test(tv), 'qui porte le rendement de l operation');
-    ok(/papier/i.test(tv) && /pas un conseil/i.test(tv),
+    ok(/paper/i.test(tv) && /not advice/i.test(tv),
        'et la meme mise en garde : elle ne vaut pas que pour les achats');
   }
 
