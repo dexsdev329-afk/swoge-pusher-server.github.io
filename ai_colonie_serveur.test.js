@@ -641,6 +641,47 @@ async function apprendreDesMorts() {
   } catch (e) { refuse = true; }
   ok(refuse && appels.rpc2 === 0,
      'dix mille et un ne lui sont meme pas demandes : c est ce bloc de trop qui a coute 377 refus sur 377');
+
+  console.log('\n-- une fermeture sans resultat laisse quand meme un signal de vente --');
+  remise(sains());
+  await C.tour();
+  E = C._etat();
+  ok(E.positions.length >= 2, E.positions.length + ' positions ouvertes');
+  const perdue = E.positions[0], folle = E.positions[1];
+  perdue.prixLu = Date.now() - 24 * 3600e3; perdue.t0 = perdue.prixLu;
+  const avantSig = E.signaux.length;
+  C.abandonneLesPerdues();
+  const sAb = E.signaux.find((s) => s.k === 'vente' && s.adr === perdue.adr);
+  ok(!!sAb && sAb.r === null && /never re-read/.test(sAb.comment || ''),
+     'une position abandonnee faute de prix envoie une vente a rendement NUL — « bought » ne reste plus orphelin : « '
+     + (sAb || {}).comment + ' »');
+  C._ferme(folle, folle.prix0 * 1e9, Date.now(), { par: 'closer' });
+  const sFou = E.signaux.find((s) => s.k === 'vente' && s.adr === folle.adr);
+  ok(!!sFou && sFou.r === null && /unusable/.test(sFou.comment || ''),
+     'et un prix inexploitable aussi : « ' + (sFou || {}).comment + ' »');
+  ok(E.signaux.length === avantSig + 2, 'deux fermetures, deux signaux');
+  const txt = C._texteSignal(sAb);
+  ok(/no result/.test(txt) && !/NaN|null/.test(txt),
+     'le message Telegram dit « no result », pas NaN : « ' + txt.split('\n')[1] + ' »');
+
+  console.log('\n-- on ne rachete pas ce qu on vient de vendre --');
+  remise(sains());
+  await C.tour();
+  E = C._etat();
+  const vendue = E.positions[0];
+  C._ferme(vendue, vendue.prix0 * 1.2, Date.now(), { par: 'closer' });
+  ok(!!E.connus[vendue.adr] && E.connus[vendue.adr].vendu > 0, 'la vente est datee dans la memoire des connus');
+  const t2 = MONDE.jetons.find((j) => j.addr === vendue.adr);
+  const rejet = C.vetoScout({ addr: t2.addr, minutes: 40, liq: 50000, mc: 60000, prix: 1,
+                              ch_m5: 8, ch_h1: 20, ch_h6: 35, vol: { h1: 20000 } });
+  ok(/cooling down/.test(rejet || ''),
+     'le Scout refuse le rachat pendant ' + C.REACHAT_REPOS_MIN + ' min : « ' + rejet + ' » — QGRID avait ete rachete trois minutes apres sa vente');
+  ok(C._familleRefus(rejet) === 'sold recently: cooling down before buying it again',
+     'et le refus a sa famille dans l audit : on saura si ce repos coute ou protege');
+  E.connus[vendue.adr].vendu = Date.now() - (C.REACHAT_REPOS_MIN + 1) * 60000;
+  const libre = C.vetoScout({ addr: t2.addr, minutes: 40, liq: 50000, mc: 60000, prix: 1,
+                              ch_m5: 8, ch_h1: 20, ch_h6: 35, vol: { h1: 20000 } });
+  ok(!/cooling down/.test(libre || ''), 'le repos passe, le jeton redevient achetable');
 }
 
 /* ==========================================================================

@@ -2602,6 +2602,14 @@ function planchers() {
 function vetoScout(t) {
   const v = t.vol || {}, mc = t.mc || 0, liq = t.liq || 0;
   const P = planchers();
+  /* ---- LE REPOS APRES UNE VENTE ---- voir `noteVendu`. */
+  const cv = E.connus[t.addr];
+  if (cv && cv.vendu && REACHAT_REPOS_MIN > 0) {
+    const depuis = (Date.now() - cv.vendu) / 60000;
+    if (depuis >= 0 && depuis < REACHAT_REPOS_MIN)
+      return 'sold ' + Math.round(depuis) + ' min ago: cooling down for '
+           + Math.round(REACHAT_REPOS_MIN) + ' min before buying it again';
+  }
   /* ---- LA CHUTE ---- */
   if (P.dumpH1 > 0 && t.ch_h1 <= -P.dumpH1)
     return 'already down ' + Math.round(-t.ch_h1) + '% in an hour';
@@ -3448,6 +3456,7 @@ function noteOmbre(t, an, refus, quiRefuse) {
  * apparaitre telle qu'elle, pas se faire absorber par la voisine. */
 const FAMILLES = [
   [/too young|trop jeune/, 'too young: set aside until it has the age'],
+  [/cooling down/, 'sold recently: cooling down before buying it again'],
   [/paying the top|on paierait le sommet|paierait l/, 'already up too far: we would be paying the top'],
   [/already down|deja tombe|deja \-/, 'already down before we even look'],
   [/above the buy ceiling|au-dessus du plafond/, 'cap above the buy ceiling'],
@@ -4006,7 +4015,7 @@ function texteSignal(s) {
       + 'The colony trades paper. This is not advice.' + vers;
   }
   return '\ud83d\udd34 SWOGE AI \u00b7 SELL (paper)\n'
-    + '$' + echHtml(s.sym) + ' \u00b7 ' + d(s.r) + '\n'
+    + '$' + echHtml(s.sym) + ' \u00b7 ' + (isFinite(s.r) && s.r !== null ? d(s.r) : 'no result') + '\n'
     + (s.comment ? echHtml(s.comment) + '\n' : '')
     + echHtml(s.adr) + '\n'
     + 'The colony trades paper. This is not advice.' + vers;
@@ -4163,6 +4172,18 @@ function ferme(p, prix, quand, comment) {
       cls: 'n', t: quand, tenue: quand - p.t0 });
     compte('prixAberrant');
     E.courbe.push(Math.round(E.tresor * 100) / 100);
+    /* ---- UNE FERMETURE SANS RESULTAT EST QUAND MEME UNE FERMETURE ----
+     * « Dans le wallet il y a pas mal de signaux dont on ne sait pas quand
+     *   ils ont ete fermes : "bought 13 hours" et rien d'autre. »
+     * Ici comme dans `abandonneLesPerdues`, la position se fermait SANS signal
+     * de vente : le portefeuille gardait un « bought » orphelin pour toujours,
+     * et rien ne disait que la colonie avait rendu la mise. Le signal part
+     * donc, avec un rendement NUL — pas zero, nul : « pas de resultat » est la
+     * verite, et zero serait un chiffre invente. */
+    signal({ k: 'vente', sym: p.sym, adr: p.adr, pool: p.pool, prix: prix, r: null, gain: 0,
+             logo: p.logo || null,
+             comment: 'Closed without a result: unusable re-read price (' + aberrant + '), stake returned' });
+    noteVendu(p.adr, quand);
     return; }
   for (const pt of (p.traj || [])) {
     const cle = trancheTenue(pt.dt / 60000);
@@ -4208,7 +4229,32 @@ function ferme(p, prix, quand, comment) {
            r: r, gain: gainTotal, logo: p.logo || null,
            comment: par === 'sentinelle' ? 'Cut: ' + comment.raison
                   : (p.prolonge ? 'Extended ' + p.prolonge + '×' : 'Duration reached') });
+  noteVendu(p.adr, quand);
   E.courbe.push(Math.round(E.tresor * 100) / 100);
+}
+
+/* ---- ON NE RACHETE PAS CE QU'ON VIENT DE VENDRE, PAS TOUT DE SUITE ----
+ *
+ * Releve sur le fil des signaux du serveur, en une heure : QGRID achete,
+ * vendu a +19,8 % a l'echeance, RACHETE trois minutes plus tard, vendu a
+ * -20,7 %, rachete encore. Trois entrees sur le meme jeton en soixante
+ * minutes, et le gain du premier tour rendu au second.
+ *
+ * Rien ne l'empechait : « une seule position par jeton » ne vaut que tant
+ * qu'elle est ouverte, et un jeton qu'on vient de vendre a exactement la
+ * tete de ce qu'on achete — il a bouge, il est liquide, il est connu. Mais il
+ * a aussi l'age ou le Closer vient de decider de sortir, et le racheter remet
+ * le compte a rebours a zero sans rajeunir le jeton.
+ *
+ * Le repos est un refus du Scout, donc GRATUIT et donc AUDITE : le jeton
+ * laisse une ombre comme les autres, et le panneau des refuses dira dans la
+ * journee si ce repos coute ou protege. Reglable par l'environnement, a zero
+ * il disparait. */
+const REACHAT_REPOS_MIN = nEnv('REACHAT_REPOS_MIN', 60);
+function noteVendu(adr, quand) {
+  if (!adr) return;
+  const c = E.connus[adr] || (E.connus[adr] = { sym: '', vu: 0, ne: quand || Date.now() });
+  c.vendu = quand || Date.now();
 }
 
 /* `marche` porte un prix et, quand on l'a, la liquidite. Un nombre nu est
@@ -4254,6 +4300,13 @@ function abandonneLesPerdues() {
       cls: 'n', t: now, tenue: now - p.t0, par: 'closer' });
     compte('abandonneeSansPrix');
     noteSuivi(1);
+    /* Le portefeuille doit savoir que c'est fini : voir la note dans `ferme`
+       sur les fermetures sans resultat. */
+    signal({ k: 'vente', sym: p.sym, adr: p.adr, pool: p.pool, prix: null, r: null, gain: 0,
+             logo: p.logo || null,
+             comment: 'Closed without a result: price never re-read in '
+                    + Math.round((now - p.t0) / 60000) + ' min, stake returned' });
+    noteVendu(p.adr, now);
     n++;
     return false;
   });
@@ -5850,6 +5903,7 @@ module.exports = {
   scoreBase, analyse, traitsDe, tenueApprise, leconsDe, apprendAgent, ajustementAgent, ecartType,
   apprendBase, baseCourante, BASE_MIN_OBS, centreLesNotes,
   secoursOmbres, OMBRES_SECOURS_PAR_TOUR, noteSuivi, SUIVIS_FENETRE, cibleDeVente,
+  noteVendu, REACHAT_REPOS_MIN,
   caseNonLue, CASES_NON_LUES, TRAITS, MEMOIRE_DEMIVIE_J, SURV_MAX, fane,
   enMots, MOTS,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
