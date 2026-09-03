@@ -428,6 +428,36 @@ function page(csrf) {
   </style>
 </div>
 
+<!-- ---- LE COFFRE DES PARIS ----
+     « Une surveillance du vault SWOGEBET : qu'on sache combien il y a de
+     paris en cours, qui, combien, et combien il y a dans le vault en tout. »
+     Sa comptabilite est en $SWOGEBET et ne se melange pas aux cartes $SWOGE
+     du haut de page : ce qu'il contient, ce qu'il doit, ce que les paris en
+     cours peuvent encore lui couter. -->
+<div data-vue="jeux" class="panel" style="margin-top:14px" id="bvPan">
+  <h2>&#9917; $SWOGEBET bet vault</h2>
+  <div class="sub" style="margin:0 0 10px">
+    Bets are played in <b>$SWOGEBET</b>, from their own vault
+    <code id="bvAdr">(not set)</code>. <b>Owed</b> is every bettor's balance plus the
+    signed vouchers not yet cashed. <b>Open bets</b> have already left those balances:
+    what they can still cost is their <b>returns</b> if every one of them wins.
+  </div>
+  <div class="cards">
+    <div class="card"><span>In the bet vault</span><b id="bvPot">&mdash;</b></div>
+    <div class="card"><span>Owed to bettors</span><b id="bvOwed">&mdash;</b><em id="bvOwedD"></em></div>
+    <div class="card"><span>Open bets</span><b id="bvOuv">&mdash;</b><em id="bvOuvD"></em></div>
+    <div class="card hl" id="bvSurCard"><span>Safe surplus</span><b id="bvSur">&mdash;</b><em id="bvAlerte"></em></div>
+  </div>
+  <div class="sub" id="bvNote" style="margin:0 0 10px"></div>
+  <div class="btwrap">
+  <table id="bvtbl"><thead><tr>
+    <th>Bet</th><th>Who</th><th>Match</th><th style="text-align:right">Stake</th>
+    <th style="text-align:right">Odds</th><th style="text-align:right">Would pay</th>
+  </tr></thead>
+  <tbody id="bvBody"><tr><td colspan="6" class="muted2">loading&hellip;</td></tr></tbody></table>
+  </div>
+</div>
+
 <div data-vue="jeux" class="panel" style="margin-top:14px">
   <h2>&#127942; Sports bets</h2>
   <div class="sub" style="margin:0 0 10px">
@@ -451,16 +481,16 @@ function page(csrf) {
   </div>
   <div class="ptot" id="btot">&mdash;</div>
   <style>
-    #btbl{ width:100%; border-collapse:collapse; font-size:12px; }
-    #btbl th,#btbl td{ padding:7px 8px; text-align:left; border-bottom:1px solid var(--line);
+    #btbl,#bvtbl{ width:100%; border-collapse:collapse; font-size:12px; }
+    #btbl th,#btbl td,#bvtbl th,#bvtbl td{ padding:7px 8px; text-align:left; border-bottom:1px solid var(--line);
       vertical-align:top; }
-    #btbl th{ color:#8DA0C4; font-weight:700; font-size:11px; text-transform:uppercase;
+    #btbl th,#bvtbl th{ color:#8DA0C4; font-weight:700; font-size:11px; text-transform:uppercase;
       letter-spacing:.6px; }
-    #btbl td.n{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    #btbl td.n,#bvtbl td.n{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
     /* L'identifiant se COPIE : c'est ce qu'on recolle dans un message au
        joueur, ou dans la commande de reglement. */
-    #btbl code.bid{ cursor:pointer; font-size:11.5px; color:#FFD97A; }
-    #btbl code.bid:hover{ text-decoration:underline; }
+    #btbl code.bid,#bvtbl code.bid{ cursor:pointer; font-size:11.5px; color:#FFD97A; }
+    #btbl code.bid:hover,#bvtbl code.bid:hover{ text-decoration:underline; }
     .bj{ display:block; color:#B9C8E4; font-size:11.5px; line-height:1.5;
       padding-left:8px; border-left:2px solid rgba(255,197,61,.35); margin-top:3px;
       overflow-wrap:anywhere; }
@@ -483,7 +513,7 @@ function page(csrf) {
        debordement-la qui declenche le defilement. Sans ca la page entiere
        partait de 369 px a droite sur un ecran de 390. */
     .btwrap{ max-width:100%; min-width:0; overflow-x:auto; -webkit-overflow-scrolling:touch; }
-    #btbl{ min-width:720px; }
+    #btbl{ min-width:720px; } #bvtbl{ min-width:640px; }
     /* Le tunnel porte neuf colonnes : meme traitement. */
     #tunTable table{ min-width:640px; }
     .surtel{ display:none; }
@@ -1233,6 +1263,62 @@ function visageDe(p){
   return '<div class="pcav">'+esc(p.visage||"👤")+'</div>';
 }
 function fmt(v){var n=parseFloat(v||"0");if(isNaN(n))return "—";return n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":n.toFixed(2);}
+/* La monnaie d'un ticket, ecrite a cote de chaque montant : un ticket
+   d'avant le coffre des paris est en $SWOGE, tous les autres en $SWOGEBET.
+   Un tableau qui ne le dirait pas ferait lire les deux comme une seule somme. */
+function symTicket(p){ return (p&&p.jeton)==='swoge' ? '$SWOGE' : '$SWOGEBET'; }
+
+/* ============ LE COFFRE DES PARIS ============
+ * Trois chiffres et une liste. Le coffre contient ; il doit (soldes des paris
+ * + bons non presentes) ; les paris en cours peuvent encore couter. Si le
+ * contenu ne couvre pas ce qui est du, c'est rouge — et si, en plus, il ne
+ * couvrirait pas tous les paris en cours gagnants, c'est orange : ce n'est
+ * pas encore un trou, mais un seul soir de resultats peut en faire un. */
+function peintBetVault(v){
+  var c=$("#bvSurCard"), a=$("#bvAlerte"), note=$("#bvNote"), body=$("#bvBody");
+  if(!c) return;
+  c.classList.remove("danger","attention");
+  if(!v){ a.textContent=""; note.textContent="The server did not report the bet vault."; return; }
+  $("#bvAdr").textContent = v.vault || "(not set — BET_VAULT_ADDRESS is missing)";
+  var pot = v.pot==null ? null : (parseFloat(v.pot)||0);
+  var du = parseFloat(v.owed||"0")||0, engage = parseFloat(v.engageBet||"0")||0;
+  $("#bvPot").textContent = pot==null ? "unknown" : fmt(pot)+" $SWOGEBET";
+  $("#bvOwed").textContent = fmt(du)+" $SWOGEBET";
+  $("#bvOwedD").textContent = fmt(v.owedBalances)+" on "+(v.joueurs||0)+" balance"+((v.joueurs||0)===1?"":"s")+
+    (parseFloat(v.owedBons||"0")>0 ? " · "+fmt(v.owedBons)+" in vouchers not yet cashed" : "");
+  var e = v.enCours||{}, pj = (e.parJeton||{}), pb = pj.swogebet||{}, ps = pj.swoge||{};
+  $("#bvOuv").textContent = (e.n||0)+" bet"+((e.n||0)===1?"":"s");
+  $("#bvOuvD").textContent = (e.n||0)
+    ? (e.joueurs||0)+" bettor"+((e.joueurs||0)===1?"":"s")+" · staked "+fmt(pb.mise)+" $SWOGEBET · would pay "+fmt(pb.engage)+" $SWOGEBET"
+      +((ps.n||0) ? " · plus "+ps.n+" older ticket"+(ps.n===1?"":"s")+" in $SWOGE ("+fmt(ps.engage)+" if all win)" : "")
+    : "nothing riding right now";
+  $("#bvSur").textContent = pot==null ? "unknown" : fmt(v.surplus)+" $SWOGEBET";
+  if(pot==null){ a.textContent = v.vault ? "the chain did not answer" : "no vault address on the server"; }
+  else if(pot<du){ c.classList.add("danger");
+    a.textContent="⚠️ THE BET VAULT DOES NOT COVER WHAT IT OWES — short by "+fmt(String(du-pot))+" $SWOGEBET"; }
+  else if(pot<du+engage){ c.classList.add("attention");
+    a.textContent="covers balances, but NOT every open bet winning: short by "+fmt(String(du+engage-pot))+" $SWOGEBET in the worst case — fund the bankroll"; }
+  else a.textContent = engage>0 ? "covers balances and every open bet, even if they all win" : "";
+  note.innerHTML = (e.n||0)
+    ? "Open bets, biggest possible payout first"+((e.liste||[]).length<(e.n||0) ? " (top "+(e.liste||[]).length+" of "+e.n+")" : "")+
+      " &mdash; the full, searchable list is just below."
+    : "";
+  var L = e.liste||[];
+  if(!L.length){ body.innerHTML='<tr><td colspan="6" class="muted2">no open bet</td></tr>'; return; }
+  body.innerHTML = L.map(function(p){
+    var qui = p.nom ? esc(p.nom)+' <span class="bmut">'+short(p.addr)+'</span>' : '<span class="bmut">'+short(p.addr)+'</span>';
+    var quand = p.debut ? new Date(p.debut) : null;
+    var enCours = quand && quand.getTime() <= Date.now();
+    return '<tr>'+
+      '<td><code class="bid" title="click to copy">'+esc(p.id)+'</code><br><span class="bmut">'+new Date(p.t).toLocaleString('en-GB')+'</span></td>'+
+      '<td>'+qui+'</td>'+
+      '<td>'+esc(p.affiche||"")+(p.jambes>1 ? ' <span class="bmut">+'+(p.jambes-1)+' more ('+p.jambes+'-fold)</span>' : '')+
+        (quand ? '<br><span class="bmut">'+(enCours ? 'kicked off ' : 'kick-off ')+quand.toLocaleString('en-GB')+'</span>' : '')+'</td>'+
+      '<td class="n">'+fmt(p.mise)+' <span class="bmut">'+symTicket(p)+'</span></td>'+
+      '<td class="n">'+Number(p.cote||1).toFixed(2)+'</td>'+
+      '<td class="n"><b>'+fmt(p.rapport)+'</b> <span class="bmut">'+symTicket(p)+'</span></td></tr>';
+  }).join("");
+}
 function msg(t,c){$("#msg").textContent=t;$("#msg").className=c||"";}
 
 async function load(){
@@ -1242,6 +1328,7 @@ async function load(){
     var d=await r.json();
     $("#pot").textContent=fmt(d.vaultPot); $("#owed").textContent=fmt(d.owedToPlayers);
     $("#surplus").textContent=fmt(d.ownerSurplus); surplusNum=parseFloat(d.ownerSurplus||"0")||0;
+    try{ peintBetVault(d.betVault); }catch(e){ console.warn('bet vault:', e); }
     /* L ALARME. Le surplus etait un nombre parmi d autres : il fallait
        l ouvrir et le lire pour savoir que le coffre ne couvre plus ce qu on
        doit. Le jour ou ca arrive, on l apprend par un joueur furieux. */
@@ -1604,9 +1691,9 @@ function drawBets(){
         '<span class="surtel">'+betat(p.etat)+'</span></td>'+
       '<td data-l="player">'+qui+'</td>'+
       '<td><b>'+titre+'</b>'+p.jambes.map(bJambe).join('')+'</td>'+
-      '<td class="n" data-l="stake">'+fmt(p.mise)+'</td>'+
+      '<td class="n" data-l="stake">'+fmt(p.mise)+' <span class="bmut">'+symTicket(p)+'</span></td>'+
       '<td class="n" data-l="odds">'+Number(p.cote||1).toFixed(2)+'</td>'+
-      '<td class="n" data-l="returns">'+fmt(p.rapport)+'</td>'+
+      '<td class="n" data-l="returns">'+fmt(p.rapport)+' <span class="bmut">'+symTicket(p)+'</span></td>'+
       '<td class="vide">'+betat(p.etat)+'</td></tr>';
   }).join("");
 }
@@ -1625,7 +1712,8 @@ async function loadBets(ajoute){
     $("#btot").innerHTML = BETS.length+' shown of '+(d.total||0)+
       ' &middot; staked <b>'+fmt(s.mise)+'</b>'+
       ' &middot; <b>'+(s.ouverts||0)+'</b> still open, exposure <b>'+fmt(s.engage)+'</b>'+
-      ' &middot; paid out <b>'+fmt(s.paye)+'</b> $SWOGE';
+      ' &middot; paid out <b>'+fmt(s.paye)+'</b>'+
+      ' <span class="bmut">(each ticket in its own currency: $SWOGEBET, older tickets $SWOGE)</span>';
     $("#bmore").style.display = BENCORE ? "" : "none";
     drawBets();
   }catch(e){ $("#bbody").innerHTML='<tr><td colspan="7" class="muted2">'+esc(e.message)+'</td></tr>'; }
@@ -1646,10 +1734,10 @@ $("#bbody").addEventListener("click",function(e){
   setTimeout(function(){ c.textContent=avant; },900);
 });
 $("#bcsv").onclick=function(){
-  var lignes=[["bet id","placed","wallet","name","selections","stake","odds","returns","state"].join(",")];
+  var lignes=[["bet id","placed","wallet","name","selections","stake","odds","returns","currency","state"].join(",")];
   BETS.forEach(function(p){
     var sel=p.jambes.map(function(j){ return j.domicile+" v "+j.exterieur+" ["+j.choix+"] @"+j.cote; }).join(" + ");
-    lignes.push([p.id,new Date(p.t).toISOString(),p.addr,p.nom||"",sel,p.mise,p.cote,p.rapport,p.etat]
+    lignes.push([p.id,new Date(p.t).toISOString(),p.addr,p.nom||"",sel,p.mise,p.cote,p.rapport,symTicket(p),p.etat]
       .map(function(x){ return '"'+String(x==null?"":x).replace(/"/g,'""')+'"'; }).join(","));
   });
   var blob=new Blob([lignes.join(String.fromCharCode(10))],{type:"text/csv"});

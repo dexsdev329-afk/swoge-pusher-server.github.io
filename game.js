@@ -3743,6 +3743,7 @@ class Game {
           id: p.id, addr: p.addr,
           nom: (this.players.get(p.addr) || {}).name || null,
           t: p.t, mise: p.mise, cote: p.cote, rapport: p.rapport,
+          jeton: Game.jetonDuTicket(p),
           regle: !!p.regle, gagne: p.regle ? p.gagne : null,
           /* L'etat en un mot, calcule ici : trois pages differentes le
              deduisaient chacune a sa facon, et une seule s'y prenait bien. */
@@ -4091,6 +4092,7 @@ class Game {
                                   score: score ? `${score.a}-${score.b}` : null };
 
     let paye = 0, gagnants = 0, mise = 0, perdus = 0, attente = 0;
+    let payeBet = 0, payeSwoge = 0;
     let top = null;
     for (const p of this._parisDe(matchId)) {
       if (p.regle) continue;
@@ -4106,6 +4108,9 @@ class Game {
         this._crediteTicket(q, p, WEI(rendu));
         this._bumpDay(q); q.winsToday++;
         paye += rendu; gagnants++;
+        /* Le total par MONNAIE : l'annonce du canal dit ce qui a ete verse,
+           et « 100 000 $SWOGE » pour un ticket en $SWOGEBET serait faux. */
+        if (Game.jetonDuTicket(p) === 'swogebet') payeBet += rendu; else payeSwoge += rendu;
       } else perdus++;
       /* LE PLUS GROS GAGNANT DE CE REGLEMENT. On le retient au passage plutot
          que de rendre la liste entiere : un match populaire peut regler des
@@ -4114,6 +4119,7 @@ class Game {
          le poids de son affluence. */
       if (rendu > 0 && (!top || rendu > top.rendu))
         top = { addr: p.addr, mise: p.mise, rendu, cote: p.cote,
+                jeton: Game.jetonDuTicket(p),
                 jambes: (p.jambes || []).length || 1 };
       journal.ajoute(p.addr, { k: 'pa', s: 'regle', m: String(p.mise), match: matchId,
                                cote: p.cote, resultat,
@@ -4124,7 +4130,8 @@ class Game {
     const r = this.parisRegles[matchId];
     r.gagnants = gagnants; r.paye = paye; r.perdus = perdus; r.attente = attente;
     return { match: matchId, resultat, score: score ? `${score.a}-${score.b}` : null,
-             gagnants, perdus, enAttente: attente, paye, mise, net: mise - paye, top };
+             gagnants, perdus, enAttente: attente, paye, payeBet, payeSwoge,
+             mise, net: mise - paye, top };
   }
 
   /**
@@ -4574,6 +4581,61 @@ class Game {
     return { balances, staked, pending, bons, maison, maisonN, maisonStaked,
              jackpot: this.jackpotPot.add(this.boulierPot),
              jackpotPusher: this.jackpotPot, jackpotBoulier: this.boulierPot };
+  }
+
+  /* ---- LE COFFRE DES PARIS, VU DE L'EXPLOITANT ----
+   *
+   * « Une surveillance du vault SWOGEBET : qu'on sache combien il y a de
+   *   paris en cours, qui, combien, et combien il y a dans le vault en tout. »
+   *
+   * Le coffre des paris a sa propre comptabilite, en $SWOGEBET, et elle ne se
+   * melange pas a celle du $SWOGE : un surplus calcule en additionnant les
+   * deux ne voudrait rien dire. Ce que le coffre DOIT, c'est ce qui est sur
+   * les fiches (`betBalance`) plus les bons signes que la chaine n'a pas
+   * encore payes (`betBonDu`). Les mises des paris en cours n'y sont PAS :
+   * elles ont deja quitte les fiches ; ce qu'elles peuvent COUTER, c'est le
+   * rapport, et c'est `parisEnCours` qui le dit. */
+  betOwedBreakdown() {
+    let balances = BN(0), bons = BN(0), joueurs = 0;
+    for (const p of this.players.values()) {
+      const b = p.betBalance || BN(0);
+      if (b.gt(0)) joueurs++;
+      balances = balances.add(b);
+      bons = bons.add(p.betBonDu || BN(0));
+    }
+    return { balances, bons, total: balances.add(bons), joueurs };
+  }
+
+  /** Les paris qui attendent encore un resultat : combien, qui, pour combien,
+   *  et ce qu'ils coutent au pire — par monnaie, puisqu'un ticket d'avant le
+   *  coffre des paris se paie encore en $SWOGE. */
+  parisEnCours(limite) {
+    const ouverts = (this.paris || []).filter((p) => !p.regle);
+    const par = { swogebet: { n: 0, mise: 0, engage: 0 }, swoge: { n: 0, mise: 0, engage: 0 } };
+    const qui = new Set();
+    for (const p of ouverts) {
+      const c = par[Game.jetonDuTicket(p)];
+      c.n++; c.mise += p.mise; c.engage += p.rapport;
+      qui.add(p.addr);
+    }
+    const arrondi = (c) => ({ n: c.n, mise: Math.round(c.mise), engage: Math.round(c.engage) });
+    const liste = ouverts.slice().sort((x, y) => y.rapport - x.rapport)
+      .slice(0, Math.max(1, Number(limite) || 40))
+      .map((p) => {
+        const j0 = this._infosMatch(p.match);
+        return {
+          id: p.id, addr: p.addr, nom: (this.players.get(p.addr) || {}).name || null,
+          t: p.t, mise: p.mise, cote: p.cote, rapport: p.rapport,
+          jeton: Game.jetonDuTicket(p), jambes: (p.jambes || []).length || 1,
+          affiche: j0 ? `${j0.domicile} – ${j0.exterieur}` : p.match,
+          debut: j0 ? j0.debut : null,
+        };
+      });
+    return { n: ouverts.length, joueurs: qui.size,
+             mise: Math.round(par.swogebet.mise + par.swoge.mise),
+             engage: Math.round(par.swogebet.engage + par.swoge.engage),
+             parJeton: { swogebet: arrondi(par.swogebet), swoge: arrondi(par.swoge) },
+             liste };
   }
 
   /** Everything the vault OWES players right now (wei): balances + staked +

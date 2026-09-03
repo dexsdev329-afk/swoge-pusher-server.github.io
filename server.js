@@ -640,13 +640,33 @@ function notifyBetPlaced(addr, pari) {
 
   const titre = n > 1 ? `${n}-fold accumulator` : 'Single bet';
   const benefice = Math.max(0, Math.round(pari.rapport - pari.mise));
+  /* La monnaie du TICKET. Les paris se jouent en $SWOGEBET ; ecrire
+     « 100,000 $SWOGE » pour une mise de 100 000 $SWOGEBET, c'est annoncer
+     mille fois trop d'argent. */
+  const sym = symboleTicket(pari);
   tg.notifyPhoto(imageBulletin(jambes),
     `🎟️ <b>SWOGE BET</b> · ${titre}\n` +
     `<b>${escHtml(game._p(addr).name)}</b> just placed a bet\n\n` +
     lignes.join('\n') + '\n\n' +
     `Total odds <b>${Number(pari.cote).toFixed(2)}</b>\n` +
-    `Stake <b>${fmtExact(pari.mise)} $SWOGE</b>\n` +
-    `Returns <b>${fmtExact(pari.rapport)} $SWOGE</b> <i>(+${fmtExact(benefice)})</i>`);
+    `Stake <b>${fmtExact(pari.mise)} ${sym}</b>\n` +
+    `Returns <b>${fmtExact(pari.rapport)} ${sym}</b> <i>(+${fmtExact(benefice)})</i>`);
+}
+
+/** Ce que porte un ticket : $SWOGEBET depuis le coffre des paris, $SWOGE pour
+    un ticket d'avant. Le canal ecrit la monnaie du ticket, pas une constante. */
+function symboleTicket(pari) {
+  return Game.jetonDuTicket(pari) === 'swogebet' ? '$SWOGEBET' : '$SWOGE';
+}
+
+/** « 12,000 $SWOGEBET », ou « 12,000 $SWOGEBET and 500 $SWOGE » quand un
+    reglement mele des tickets des deux epoques ; sans les deux, l'un des deux
+    totaux serait faux. */
+function payeParMonnaie(r) {
+  const bet = Number(r.payeBet) || 0, swoge = Number(r.payeSwoge) || 0;
+  if (bet > 0 && swoge > 0) return `${fmtExact(bet)} $SWOGEBET and ${fmtExact(swoge)} $SWOGE`;
+  if (swoge > 0 && !(bet > 0)) return `${fmtExact(swoge)} $SWOGE`;
+  return `${fmtExact(bet > 0 ? bet : r.paye)} $SWOGEBET`;
 }
 
 /* ------------------------------------------------- un match vient de tomber
@@ -674,10 +694,10 @@ function notifyBetsSettled(r) {
   let txt = `${ic} <b>SWOGE BET</b> · full time\n` +
             `<b>${affiche}</b> — ${escHtml(issue)}\n\n` +
             `${r.gagnants} winning bet${r.gagnants > 1 ? 's' : ''} · ` +
-            `<b>${fmtExact(r.paye)} $SWOGE</b> paid out`;
+            `<b>${payeParMonnaie(r)}</b> paid out`;
   if (r.top) {
     const t = r.top;
-    txt += `\nBiggest: <b>${escHtml(game._p(t.addr).name)}</b> +${fmtExact(t.rendu - t.mise)} $SWOGE` +
+    txt += `\nBiggest: <b>${escHtml(game._p(t.addr).name)}</b> +${fmtExact(t.rendu - t.mise)} ${symboleTicket(t)}` +
            ` · ${t.jambes > 1 ? t.jambes + '-fold' : 'single'} @ ${Number(t.cote).toFixed(2)}`;
   }
   /* Le reglement porte sur UN match : son sport est connu sans ambiguite. */
@@ -3104,6 +3124,28 @@ const server = http.createServer(async (req, res) => {
       tunnel: game.tunnelJours(14),
       moisConnus: game.moisConnus(),
       players: game.players.size, vault: cfg.VAULT_ADDRESS || null,
+      /* ---- LE COFFRE DES PARIS, A PART ----
+         En $SWOGEBET, avec sa propre solvabilite : ce qu'il contient, ce
+         qu'il doit (soldes des paris + bons non presentes), les paris en
+         cours et ce qu'ils peuvent couter. Rien de tout ca n'entre dans les
+         chiffres $SWOGE ci-dessus. */
+      betVault: await (async () => {
+        const bd2 = game.betOwedBreakdown();
+        const pot2 = chainBet.suitLesRetraits() ? await chainBet.vaultPot() : null;
+        const enCours = game.parisEnCours(40);
+        const surplus2 = pot2 && pot2.gt(bd2.total) ? pot2.sub(bd2.total) : ethers.BigNumber.from(0);
+        return {
+          vault: cfg.BET_VAULT_ADDRESS || null, token: cfg.SWOGEBET_TOKEN,
+          pot: fmt(pot2), owed: fmt(bd2.total), owedBalances: fmt(bd2.balances),
+          owedBons: fmt(bd2.bons), joueurs: bd2.joueurs,
+          surplus: fmt(pot2 ? surplus2 : null),
+          /* Le pire cas des paris en cours en $SWOGEBET : si tout gagne, le
+             coffre doit encore ca en plus de ce qu'il doit deja. */
+          engageBet: enCours.parJeton.swogebet.engage,
+          couvreTout: pot2 ? pot2.gte(bd2.total.add(ethers.utils.parseUnits(String(enCours.parJeton.swogebet.engage), cfg.DECIMALS))) : null,
+          enCours,
+        };
+      })(),
     }, null, 2));
   }
   res.writeHead(200, { 'content-type': 'application/json' });

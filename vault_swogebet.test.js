@@ -147,6 +147,55 @@ console.log('\n-- les champs survivent a une sauvegarde relue --');
   ok(!!seul.fiche(A), 'une fiche qui ne porte QUE du $SWOGEBET n est pas jetee comme vide');
 }
 
+console.log('\n-- ce que le panneau et le canal disent du coffre des paris --');
+{
+  /* « Le bot Telegram ne doit plus marquer 100K SWOGE : mettez 100k de
+     SWOGEBET. » Et pour le panneau : « qu'on sache combien il y a de paris en
+     cours, qui, combien, et combien il y a dans le vault en tout ». */
+  const B = '0x' + 'b2'.repeat(20);
+  const g = new Game();
+  g.creditBetDeposit({ player: A, amount: W(5000), tx: '0xt9' });
+  g.creditBetDeposit({ player: B, amount: W(300), tx: '0xt10' });
+  g._p(A).name = 'Alice';
+  const neuf = g.parie(A, M, '1', 1000, AVANT);
+  const petit = g.parie(B, M, '2', 100, AVANT);
+  /* Un ticket d'hier, en $SWOGE, sur le meme match. */
+  const st = JSON.parse(JSON.stringify(g.serialize()));
+  const vieux = g.parie(A, M, '1', 200, AVANT);
+  const st2 = JSON.parse(JSON.stringify(g.serialize()));
+  delete st2.paris.find((x) => x.id === vieux.id).jeton;
+  const h = new Game(); h.hydrate(st2);
+  h.requestBetWithdraw(B, '100');
+  const d = h.betOwedBreakdown();
+  eq(d.balances.toString(), W(3800 + 100).toString(), 'le du du coffre des paris = les soldes des paris (3 800 + 100)');
+  eq(d.bons.toString(), h._p(B).betBonDu.toString(), 'plus le bon signe que la chaine n a pas encore paye');
+  eq(d.joueurs, 2, 'sur deux fiches');
+  const ec = h.parisEnCours(10);
+  eq(ec.n, 3, 'trois paris en cours');
+  eq(ec.joueurs, 2, 'poses par deux joueurs');
+  eq(ec.parJeton.swogebet.n, 2, 'deux en $SWOGEBET');
+  eq(ec.parJeton.swogebet.mise, 1100, 'pour 1 100 $SWOGEBET de mises');
+  eq(ec.parJeton.swogebet.engage, Math.round(neuf.rapport + petit.rapport), 'et ce qu ils rendraient tous gagnants (' + ec.parJeton.swogebet.engage + ')');
+  eq(ec.parJeton.swoge.n, 1, 'un ticket d hier en $SWOGE, compte a part');
+  eq(ec.liste[0].jeton, 'swogebet', 'la liste porte la monnaie de chaque ticket');
+  eq(ec.liste[0].nom, 'Alice', 'et QUI l a pose');
+  ok(ec.liste[0].rapport >= ec.liste[1].rapport, 'le plus gros rapport en premier');
+  ok(/Bolton|–/.test(ec.liste[0].affiche) || ec.liste[0].affiche.length > 0, 'avec l affiche de la rencontre (' + ec.liste[0].affiche + ')');
+  const tp = h.tousParis({ etat: 'ouvert' });
+  ok(tp.paris.every((p) => p.jeton === 'swogebet' || p.jeton === 'swoge'), 'la liste du panneau porte aussi la monnaie');
+  eq(tp.paris.filter((p) => p.jeton === 'swoge').length, 1, 'et retrouve le ticket en $SWOGE');
+  /* Le reglement compte par monnaie : c est ce que le canal annonce. */
+  const r = h.regleMatch(M, '1');
+  ok(Math.abs(r.payeBet - neuf.rapport) < 1e-6, 'verse en $SWOGEBET : le rapport du ticket neuf (' + r.payeBet + ')');
+  ok(Math.abs(r.payeSwoge - vieux.rapport) < 1e-6, 'verse en $SWOGE : celui du ticket d hier (' + r.payeSwoge + ')');
+  ok(Math.abs(r.paye - r.payeBet - r.payeSwoge) < 1e-6, 'et les deux font le total');
+  eq(r.top.jeton, 'swogebet', 'le plus gros gagnant sait dans quelle monnaie il est paye');
+  const h2 = new Game(); h2.hydrate(st);
+  const r2 = h2.regleMatch(M, '1');
+  eq(r2.payeSwoge, 0, 'sans ticket d hier, rien n est verse en $SWOGE');
+  ok(r2.payeBet > 0, 'tout l est en $SWOGEBET');
+}
+
 console.log('\n-- la colle de chaine signe dans le bon domaine --');
 (async () => {
   const swoge = new Chain();
