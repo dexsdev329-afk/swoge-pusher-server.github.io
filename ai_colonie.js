@@ -579,7 +579,7 @@ function etatNeuf() {
     /* le releve de chaque service */
     services: {},
     /* pourquoi elle n'achete pas : les refus par famille, sur une fenetre */
-    refusFamilles: {}, refusVus: 0, toursSansAchat: 0,
+    refusFamilles: {}, refusVus: 0, toursSansAchat: 0, desserreDernier: 0,
     /* le banquier */
     banque: { methode: 'part', memoire: {}, serie: 0, pic: DEPART, arret: null },
   };
@@ -1950,8 +1950,48 @@ function planchers() {
      * ECRITES ICI : un agent ne peut pas les baisser lui-meme. Un systeme qui
      * peut apprendre a baisser sa propre garde l'apprend toujours, une fois
      * exactement. C'est un humain qui bouge ce chiffre, sur une mesure. */
-    liq: nEnv('LIQ_ACHAT_MIN', 5000),
-    mc: nEnv('MC_ACHAT_MIN', 8000),
+    /* ---- ET IL BAISSE ENCORE, PARCE QUE LA MESURE LE REDIT ----
+     *
+     * « Il ne trade quasiment jamais depuis hier. »
+     *
+     * Sur le dernier tour du serveur, les VINGT candidats ont ete arretes par
+     * le Scout — pas un seul n'a atteint l'Oracle. Et les piscines qu'il
+     * refusait etaient celles-ci :
+     *
+     *   519 · 1 586 · 3 332 · 3 977 · 4 053 · 4 112 · 4 265 · 4 384 · 4 710
+     *
+     * C'est le marche entier de cette chaine. Un plancher a 5 000 ne trie pas
+     * dedans : il l'efface. Et l'audit, deuxieme fois de suite, dit la meme
+     * chose que la premiere — « piscine sous le plancher » : 11 suivis, 4
+     * montes de +20 % ou plus, ZERO effondre, +21,6 % de moyenne. Un refus
+     * qui n'a jamais evite un seul effondrement n'est pas une protection.
+     *
+     * ---- ALORS POURQUOI GARDER UN PLANCHER ----
+     *
+     * Parce qu'il y a une vraie raison, et ce n'est pas « petit = dangereux ».
+     * C'est le GLISSEMENT : entrer 42 $ dans une piscine de 519 $, c'est
+     * bouger le prix de 8 % en achetant, et le rebouger en sortant. La perte
+     * est mecanique, elle n'a rien a voir avec le jeton.
+     *
+     * Le plancher suit donc la MISE au lieu d'etre un chiffre choisi a la
+     * main : vingt-cinq fois la plus grosse mise que le Banquier puisse poser.
+     * A 1 366 $ de caisse et 8 % au maximum par jeton, ca fait 109 $ de mise
+     * et 2 731 $ de plancher — ce qui laisse passer tout ce qui est au-dessus
+     * de 3 000 et ecarte les 519 et les 1 586, exactement les deux ou le
+     * glissement mange le trade. Et quand la caisse grandit, le plancher monte
+     * tout seul : une regle qui se regle elle-meme sur la seule chose qui
+     * change vraiment.
+     *
+     * Le plancher fixe reste, en dessous, comme garde-fou pour une caisse
+     * minuscule ; les deux sont reglables par l'environnement. Un agent ne
+     * peut toujours pas les bouger : c'est un humain, sur une mesure. */
+    liq: Math.max(nEnv('LIQ_ACHAT_MIN', 1200),
+                  (E.tresor || 0) * MISE_PART_MAX * nEnv('LIQ_PAR_MISE', 25)),
+    /* Meme releve pour la capitalisation : « sous le plancher d'achat »,
+       4 suivis, 2 montes, ZERO effondre, +66,9 % de moyenne. Elle descend a
+       4 000 — sous la capitalisation, la piscine ne represente plus rien du
+       jeton, et c'est ce cas-la que la regle suivante attrape, nommement. */
+    mc: nEnv('MC_ACHAT_MIN', 4000),
     mcMax: nEnv('MC_ACHAT_MAX', 100000),
     /* ---- QUINZE MINUTES, ET POURQUOI PAS DEUX HEURES ----
      *
@@ -3579,25 +3619,93 @@ function noteResultat(r) {
   if (E.derniers.length > 60) E.derniers = E.derniers.slice(-60);
   E.depuisAjustement = (E.depuisAjustement || 0) + 1;
 }
+/* ==========================================================================
+ * LE SEUIL MONTAIT ET NE POUVAIT PLUS REDESCENDRE
+ *
+ * « Il ne trade quasiment jamais depuis hier. »
+ *
+ * Le releve du serveur, au moment de la plainte :
+ *
+ *   seuil d'entree 70 (depart : 55) · 0 position ouverte sur 10 places
+ *   vingt dernieres fermees : moyenne +88,5 % · 8 gagnantes sur 20
+ *
+ * Une strategie qui rend +88,5 % de moyenne s'etait interdit d'acheter. Trois
+ * defauts se combinaient, et chacun seul aurait suffi.
+ *
+ * ---- 1. ON JUGEAIT LE COMPTE DES GAGNANTES, PAS L'ARGENT ----
+ *
+ * On DURCISSAIT si « moyenne < -1 % OU moins de 35 % de gagnantes », et on
+ * n'ouvrait que si « moyenne > +3 % ET plus de 55 % de gagnantes ». Or cette
+ * colonie coupe vite ses pertes et laisse courir de rares tres gros gains :
+ * +656 %, +495 %, +309 % au milieu de beaucoup de petites pertes. C'est la
+ * forme MEME de la strategie, pas un defaut — et le taux de gagnantes la
+ * declare mauvaise en permanence. On juge donc sur la moyenne, qui est
+ * l'argent. Le taux reste ecrit dans le message : il informe, il ne decide
+ * plus.
+ *
+ * ---- 2. LES DEUX MOITIES N'ETAIENT PAS SYMETRIQUES ----
+ *
+ * Monter demandait UNE condition sur deux ; descendre en demandait DEUX sur
+ * deux. Un seuil construit comme ca monte plus souvent qu'il ne descend, quoi
+ * qu'il arrive. A +88,5 % de moyenne et 40 % de gagnantes, la colonie ne
+ * pouvait ni durcir ni s'ouvrir : elle restait a 70, definitivement.
+ *
+ * ---- 3. ET LA REVUE NE TOURNAIT MEME PLUS ----
+ *
+ * Elle demande douze positions fermees DEPUIS le dernier reglage. Sans achat,
+ * pas de fermeture ; sans fermeture, pas de revue ; sans revue, le seuil ne
+ * bouge pas. Le verrou se refermait sur lui-meme, et aucune des deux
+ * corrections ci-dessus n'aurait pu s'appliquer.
+ *
+ * D'ou le desserrage, qui passe AVANT la porte des douze fermetures : quand
+ * la colonie n'a rien achete depuis longtemps et qu'il lui reste des places,
+ * le seuil baisse d'un cran. Il ne peut pas s'emballer — il s'arrete a
+ * SEUIL_MIN, et le compteur ne repart qu'apres un nouveau silence aussi long.
+ * Une colonie qui ne remplit aucune de ses dix places n'est pas selective,
+ * elle est a l'arret ; et a l'arret elle ne recolte aucune mesure, donc elle
+ * ne peut plus jamais rien apprendre qui la debloque.
+ * ======================================================================== */
+const SANS_ACHAT_DESSERRE = 40;   /* ~1 h 40 de silence, a 2,4 min par tour */
+
 function revoitStrategie() {
+  const avant = seuilCourant();
+
+  /* ---- LE VERROU, D'ABORD ---- */
+  const sansAchat = E.toursSansAchat || 0;
+  const depuisDesserre = sansAchat - (E.desserreDernier || 0);
+  if (sansAchat >= SANS_ACHAT_DESSERRE && depuisDesserre >= SANS_ACHAT_DESSERRE
+      && E.positions.length < POSITIONS_MAX && avant > SEUIL_MIN) {
+    /* Zero position ouverte est un signal plus fort que « il reste des
+       places » : la colonie n'est pas en train de completer un portefeuille,
+       elle est totalement a l'arret. Le cran est plus large. */
+    const cran = E.positions.length === 0 ? 5 : 3;
+    const apres = Math.max(SEUIL_MIN, avant - cran);
+    E.desserreDernier = sansAchat;
+    E.seuil = apres;
+    journal('strategie', 'Seuil d\'entree ' + avant + ' → ' + apres + '. Rien achete depuis '
+      + sansAchat + ' tours avec ' + (POSITIONS_MAX - E.positions.length) + ' places libres : '
+      + 'a l\'arret, la colonie ne recolte aucune mesure, donc rien ne peut la debloquer.',
+      [{ toursSansAchat: sansAchat, places: POSITIONS_MAX - E.positions.length }]);
+    return true;
+  }
+
   if ((E.depuisAjustement || 0) < AVANT_AJUSTEMENT) return false;
   const l = (E.derniers || []).slice(-FENETRE);
   if (l.length < AVANT_AJUSTEMENT) return false;
   const moy = l.reduce((a, b) => a + b, 0) / l.length;
   const gagnantes = l.filter((x) => x > 0).length;
   const taux = gagnantes / l.length;
-  const avant = seuilCourant();
   let apres = avant, pourquoi = null;
 
-  if (moy < -1 || taux < 0.35) {
-    /* On accepte trop, et ca ne paie pas : on devient plus difficile. */
+  /* Une seule mesure decide, dans les deux sens : ce que les positions ont
+     RAPPORTE. Les deux bornes sont volontairement ecartees (-1 % et +3 %) pour
+     laisser une zone morte au milieu — sans elle, le seuil oscillerait sur du
+     bruit a chaque fermeture. */
+  if (moy < -1) {
     apres = Math.min(SEUIL_MAX, avant + 5);
     pourquoi = 'les ' + l.length + ' dernieres positions rendent ' + moy.toFixed(1)
              + ' % en moyenne (' + Math.round(taux * 100) + ' % de gagnantes) : on se fait plus difficile';
-  } else if (moy > 3 && taux > 0.55 && E.positions.length < POSITIONS_MAX) {
-    /* Ca paie, et on n'a meme pas de quoi remplir les places : on s'ouvre un
-       peu. Sans cette moitie-la, le seuil ne pourrait que monter, et la colonie
-       finirait par ne plus jamais rien acheter. */
+  } else if (moy > 3 && E.positions.length < POSITIONS_MAX) {
     apres = Math.max(SEUIL_MIN, avant - 3);
     pourquoi = 'les ' + l.length + ' dernieres rendent +' + moy.toFixed(1)
              + ' % (' + Math.round(taux * 100) + ' % de gagnantes) et il reste des places : on s\'ouvre';
@@ -4808,7 +4916,7 @@ module.exports = {
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN,
   noteProfil, courbeDe, horizonPour, informationDe, classementDesTraits,
-  vetoOracle, sociauxExiges, SOCIAUX_DEFAUT, simuleVente, vetoCobaye,
+  vetoOracle, vetoScout, sociauxExiges, SOCIAUX_DEFAUT, simuleVente, vetoCobaye,
   planchers, echelle, joueEchelle, arretSuiveur, vendUneTranche, reprises,
   abandonDelai, abandonneLesPerdues,
   HORIZONS, HORIZON_REF, PROFIL_MIN_OBS, jalonValable,
@@ -4820,5 +4928,6 @@ module.exports = {
   MISE_MIN, MISE_PART_MAX, EXPO_PART_MAX, PLANCHER, ENFANTS_MAX,
   ECART_TYPE_BRUIT, VARIANCE_MIN_OBS, ROSTER_DEPART, REORDONNABLES,
   VERSION_ETAT, SEUIL_MIN, SEUIL_MAX, REND_MAX, REND_MIN, CHUTE_COUPE, AGE_PRIX_MAX,
+  SANS_ACHAT_DESSERRE,
   _etat: () => E, _pose: (x) => { E = x; }, _cache: CACHE, _prix: dernierPrix, _rpc: rpc,
 };

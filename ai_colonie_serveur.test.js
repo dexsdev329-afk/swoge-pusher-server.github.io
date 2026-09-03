@@ -2783,8 +2783,13 @@ async function planchersEtSortie() {
      suivre ni vendre. */
   /* Petit ET calme : un gros volume sur une capitalisation minuscule declenche
      l'autre regle — « ce n'est plus un marche, c'est une sortie » — et l'essai
-     mesurerait celle-la au lieu du plancher. */
-  remise([jeton(0, { liq: 4000, mc: 4200, volH1: 900 }), jeton(1)]);
+     mesurerait celle-la au lieu du plancher.
+     Le chiffre a change avec le plancher lui-meme : il suit desormais la mise
+     (25 fois la plus grosse que le Banquier puisse poser), soit 2 000 $ a la
+     caisse de depart. 4 000 $ passait donc, et c'est correct — c'est 900 qui
+     est maintenant sous le plancher. Le seuil qu'on eprouve est celui du code,
+     pas un nombre recopie dans l'essai. */
+  remise([jeton(0, { liq: 900, mc: 4200, volH1: 400 }), jeton(1)]);
   await C.tour();
   let v = C.vue();
   let c0 = v.candidats.find((x) => x.sym === 'TOK0');
@@ -3598,6 +3603,186 @@ async function seReorganiseVraiment() {
   E.journalStructure = [];
 }
 
+/* ==========================================================================
+ * 53. LE SEUIL MONTAIT ET NE POUVAIT PLUS REDESCENDRE
+ *
+ * « Il ne trade quasiment jamais depuis hier. »
+ *
+ * Le releve du serveur au moment de la plainte, et il se lit tout seul :
+ *
+ *   seuil d'entree 70 (depart : 55) · 0 position ouverte sur 10 places
+ *   vingt dernieres fermees : moyenne +88,5 % · 8 gagnantes sur 20
+ *   dernier tour : les VINGT candidats arretes par le Scout, aucun n'atteint
+ *   l'Oracle · piscines refusees : 519, 1 586, 3 332, 3 977, 4 053, 4 112,
+ *   4 265, 4 384, 4 710 — c'est le marche entier de cette chaine
+ *
+ * Une strategie a +88,5 % de moyenne s'etait interdit d'acheter. Trois
+ * defauts se combinaient, et chacun seul aurait suffi ; l'essai les prend un
+ * par un, avec les VRAIS chiffres du serveur, parce qu'un essai construit sur
+ * des nombres choisis pour lui donner raison ne prouve rien.
+ * ======================================================================== */
+async function neTradePlus() {
+  const E = C._etat();
+  const remetSeuil = (v) => { E.seuil = v; E.depuisAjustement = 0; E.desserreDernier = 0;
+                              E.toursSansAchat = 0; E.positions = []; };
+
+  /* Les vingt derniers rendements reels du serveur. */
+  const REELS = [656.3, 24.9, 495, 0, 0, 220, 309.5, -57.1, 0, 101.2,
+                 96.3, 0, 0, 0, 59.6, -11.7, -24.4, -24.5, -54.9, -19.6];
+  const moy = REELS.reduce((a, b) => a + b, 0) / REELS.length;
+  const taux = REELS.filter((x) => x > 0).length / REELS.length;
+
+  console.log('\n-- une strategie a +' + moy.toFixed(1) + ' % ne doit pas se fermer --');
+  console.log('   ' + REELS.length + ' fermees · moyenne +' + moy.toFixed(1) + ' % · '
+    + Math.round(taux * 100) + ' % de gagnantes');
+  remetSeuil(70);
+  E.derniers = REELS.slice();
+  E.depuisAjustement = 20;
+  ok(C.revoitStrategie() === true,
+     'la revue tranche au lieu de rester muette : a +88,5 % de moyenne et 40 % de gagnantes, '
+     + 'l ancienne regle ne pouvait NI durcir (elle exigeait la moyenne negative OU moins de 35 % '
+     + 'de gagnantes) NI ouvrir (elle exigeait plus de 55 % de gagnantes) — le seuil restait a 70 '
+     + 'pour toujours');
+  console.log('   seuil : 70 → ' + C.seuilCourant());
+  ok(C.seuilCourant() < 70,
+     'et elle OUVRE (' + C.seuilCourant() + ') : c est l argent qui decide, pas le compte des '
+     + 'gagnantes — cette colonie coupe vite ses pertes et laisse courir de rares tres gros gains, '
+     + 'donc son taux de gagnantes la declarerait mauvaise en permanence');
+
+  console.log('\n-- mais elle durcit toujours quand l argent, lui, est perdu --');
+  remetSeuil(60);
+  E.derniers = [-12, -8, -20, 3, -15, -9, -30, 2, -11, -18, -7, -22, -5, -14];
+  E.depuisAjustement = 14;
+  C.revoitStrategie();
+  console.log('   seuil : 60 → ' + C.seuilCourant());
+  ok(C.seuilCourant() > 60,
+     'quatorze fermees a perte font bien monter le seuil (' + C.seuilCourant() + ') : on a retire '
+     + 'le taux de gagnantes du jugement, pas le jugement');
+
+  console.log('\n-- le verrou : sans achat, la revue ne tournait meme pas --');
+  /* La revue exige douze fermetures DEPUIS le dernier reglage. Sans achat,
+     pas de fermeture ; sans fermeture, pas de revue ; sans revue, le seuil ne
+     bouge pas. Aucune des deux corrections ci-dessus n'aurait pu s'appliquer. */
+  remetSeuil(70);
+  E.derniers = REELS.slice();
+  E.depuisAjustement = 0;      /* rien ferme depuis le dernier reglage */
+  E.toursSansAchat = 5;
+  ok(C.revoitStrategie() === false && C.seuilCourant() === 70,
+     'apres cinq tours calmes, rien ne bouge — c est normal, cinq tours ne prouvent rien');
+  E.toursSansAchat = C.SANS_ACHAT_DESSERRE;
+  ok(C.revoitStrategie() === true,
+     'mais apres ' + C.SANS_ACHAT_DESSERRE + ' tours sans un seul achat, le seuil est desserre '
+     + 'SANS attendre douze fermetures : a l arret, la colonie ne recolte aucune mesure, donc rien '
+     + 'ne peut plus la debloquer');
+  console.log('   seuil : 70 → ' + C.seuilCourant() + ' (0 position ouverte)');
+  ok(C.seuilCourant() === 65,
+     'et le cran est plus large quand AUCUNE position n est ouverte (' + C.seuilCourant()
+     + ') : zero ouverte n est pas « il reste des places », c est l arret complet');
+
+  console.log('\n-- il ne s emballe pas pour autant --');
+  ok(C.revoitStrategie() === false,
+     'le tour suivant ne desserre pas une seconde fois : il faut un nouveau silence aussi long');
+  let tours = C.SANS_ACHAT_DESSERRE, garde = 0;
+  while (C.seuilCourant() > C.SEUIL_MIN && garde++ < 200) {
+    tours += C.SANS_ACHAT_DESSERRE; E.toursSansAchat = tours; C.revoitStrategie();
+  }
+  console.log('   apres ' + tours + ' tours de silence : seuil ' + C.seuilCourant());
+  ok(C.seuilCourant() === C.SEUIL_MIN,
+     'et il s arrete net au plancher (' + C.seuilCourant() + ') : le desserrage debloque, il '
+     + 'n abolit pas la selection');
+  /* Un achat remet le compteur a zero, donc le desserrage s'arrete de lui-meme
+     des que la colonie recommence a travailler. */
+  E.positions = [{ addr: '0x1' }];
+  E.toursSansAchat = 0; E.desserreDernier = 0; E.seuil = 70; E.depuisAjustement = 0;
+  ok(C.revoitStrategie() === false,
+     'et des qu elle rachete, le compteur repart de zero : le desserrage ne tourne que pendant le '
+     + 'silence');
+
+  console.log('\n-- le plancher de piscine suit la MISE, pas un chiffre choisi a la main --');
+  E.positions = [];
+  /* Les vraies piscines refusees au dernier tour du serveur. */
+  const PISCINES = [519, 1586, 3332, 3977, 4053, 4112, 4265, 4384, 4710];
+  E.tresor = 1366;             /* la caisse reelle au moment de la plainte */
+  const P = C.planchers();
+  const passe = PISCINES.filter((x) => x >= P.liq);
+  console.log('   caisse $1366 → plancher $' + Math.round(P.liq) + ' · passent : '
+    + JSON.stringify(passe));
+  ok(passe.length >= 6,
+     Math.round(P.liq) + ' $ de plancher laisse passer ' + passe.length + ' des ' + PISCINES.length
+     + ' piscines refusees ce jour-la : a 5 000 il n en passait AUCUNE, et ces neuf-la sont le '
+     + 'marche entier de la chaine');
+  ok(!passe.includes(519) && !passe.includes(1586),
+     'mais les deux plus petites restent dehors : 42 $ dans une piscine de 519 $ bougent le prix '
+     + 'de 8 % a l entree et le rebougent a la sortie — la perte est mecanique, elle ne dit rien '
+     + 'du jeton');
+
+  E.tresor = 8000;
+  const P2 = C.planchers();
+  console.log('   caisse $8000 → plancher $' + Math.round(P2.liq));
+  ok(P2.liq > P.liq,
+     'et le plancher MONTE avec la caisse (' + Math.round(P.liq) + ' → ' + Math.round(P2.liq)
+     + ') : plus la mise est grosse, plus il faut de profondeur pour entrer sans deplacer le prix. '
+     + 'C est un chiffre qui se regle tout seul sur la seule chose qui change vraiment');
+  E.tresor = 50;
+  console.log('   caisse $50 → plancher $' + Math.round(C.planchers().liq));
+  ok(C.planchers().liq >= 1000,
+     'et un garde-fou fixe tient le plancher quand la caisse est minuscule ('
+     + Math.round(C.planchers().liq) + ') : sinon une caisse a zero autoriserait n importe quelle '
+     + 'flaque');
+
+  console.log('\n-- le tour reel du serveur, rejoue --');
+  /* Les VINGT candidats du dernier tour, avec le chiffre qui les avait fait
+     refuser. C'est la mesure qui compte : pas « le plancher a baisse », mais
+     « combien de jetons atteignent enfin les autres agents ». */
+  E.tresor = 1366;
+  const TOUR = [
+    { sym: 'POKEBALL', mc: 4265, liq: 9000 },
+    { sym: 'CLAUDIUS', mc: 50000, liq: 9000, ch_m5: 310 },
+    { sym: 'VSF', mc: 50000, liq: 9000, ch_h1: 225 },
+    { sym: 'LEGS', mc: 50000, liq: 4112 },
+    { sym: 'JERRY', mc: 50000, liq: 9000, ch_m5: 277 },
+    { sym: 'ANI', mc: 50000, liq: 9000, ch_h6: -95 },
+    { sym: 'OLLIE', mc: 50000, liq: 4384 },
+    { sym: 'NEEGY', mc: 50000, liq: 4117 },
+    { sym: 'FORM4', mc: 50000, liq: 9000, ch_h6: -90 },
+    { sym: 'OLLIE2', mc: 50000, liq: 1586 },
+    { sym: 'DIVI', mc: 50000, liq: 3977 },
+    { sym: 'ORDIHOOD', mc: 499600, liq: 9000 },
+    { sym: 'BITCHES', mc: 50000, liq: 519 },
+    { sym: 'MOO', mc: 50000, liq: 4710 },
+    { sym: 'DISCORD', mc: 6253, liq: 9000 },
+    { sym: 'ROBINHOOD', mc: 50000, liq: 3332 },
+    { sym: 'COLLECT', mc: 4077, liq: 9000, vol: { h1: 15095 } },
+    { sym: 'NSTOCKS', mc: 142687, liq: 9000 },
+    { sym: 'CUTEDOG', mc: 50000, liq: 4053 },
+    { sym: '$LUCK', mc: 5762, liq: 9000 },
+  ];
+  const vus = TOUR.map((t) => ({ sym: t.sym,
+    refus: C.vetoScout(Object.assign({ minutes: 40, ch_m5: 0, ch_h1: 0, ch_h6: 0,
+                                       vol: { h1: 0, h6: 0 }, tx: {} }, t)) }));
+  const passent = vus.filter((x) => !x.refus);
+  console.log('   ' + passent.length + '/20 passent le Scout · ecartes : '
+    + JSON.stringify(vus.filter((x) => x.refus).map((x) => x.sym)));
+  ok(passent.length >= 8,
+     passent.length + ' des 20 candidats du tour reel atteignent enfin les agents suivants. Ce '
+     + 'jour-la il y en avait ZERO : les vingt etaient arretes par le Scout, et l Oracle, le '
+     + 'Whale et le Cobaye n ont rien eu a juger de la journee');
+  const ecartes = vus.filter((x) => x.refus).map((x) => x.refus);
+  ok(ecartes.every((r) => /sommet|tombe|sortie|plafond|plancher/.test(r)),
+     'et tout ce qui reste ecarte l est par une regle que l audit soutient — pas par un plancher '
+     + 'qui n a jamais evite un seul effondrement');
+
+  console.log('\n-- et ce qui protege vraiment n a pas bouge --');
+  /* « deja +x % en cinq minutes » : n=40, 14 montes mais 20 EFFONDRES. C est
+     la seule regle de l audit qui evite plus qu elle ne coute. */
+  const R = C.planchers();
+  ok(R.pumpM5 > 0 && R.pumpH1 > 0 && R.dumpM5 > 0 && R.dumpH1 > 0,
+     'les bornes de hausse et de chute restent en place : « deja +x % en cinq minutes » a suivi '
+     + '40 jetons — 14 montes, mais 20 EFFONDRES. Celle-la evite plus qu elle ne coute, et on n y '
+     + 'touche pas');
+  E.tresor = C.DEPART; E.derniers = []; remetSeuil(C.SEUIL);
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -3652,6 +3837,7 @@ async function seReorganiseVraiment() {
   await pourquoiPasDAchat();
   await memoirePlusGrande();
   await seReorganiseVraiment();
+  await neTradePlus();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
