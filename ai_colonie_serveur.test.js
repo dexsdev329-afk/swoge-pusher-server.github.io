@@ -3135,6 +3135,28 @@ async function lesSignaux() {
   ok(/not advice/i.test(t),
      'et qu il ne s agit pas d un conseil : des gens le liront avec de l argent reel');
   ok(t.indexOf(a.adr) >= 0, 'et il porte l adresse, copiable telle quelle');
+  /* ---- ET IL MENE QUELQUE PART ----
+   * « Pareil pour les signaux dans le Telegram. » Le message portait une
+   * adresse de contrat et rien d'autre : pour voir la courbe il fallait la
+   * copier, ouvrir DexScreener, coller. Le lien porte le SYMBOLE, pas
+   * « ici » — on doit savoir ou l'on va avant de toucher, surtout depuis un
+   * telephone. */
+  ok(/<a href="https:\/\/dexscreener\.com\//.test(t) && t.indexOf('$' + a.sym) > 0,
+     'le message mene a DexScreener, sur le jeton concerne');
+
+  /* ---- CE QUI VIENT D'UN JETON NE PART PAS TEL QUEL EN HTML ----
+   * Le message est envoye en `parse_mode: HTML`, et le symbole vient de
+   * metadonnees que n'importe qui peut ecrire. « A<B » suffisait a faire
+   * refuser le message entier par Telegram — signal perdu, sans une ligne
+   * pour le dire — et un nom bien choisi pouvait y poser sa propre balise.
+   * Depuis qu'il y a un vrai lien dedans, c'est le lien qu'il remplacerait. */
+  const piege = C._texteSignal({ k: 'achat', sym: '<a href="http://x">X</a>', score: 90,
+                                 mise: 10, mc: 0, adr: a.adr, pool: a.pool });
+  console.log('   nom piege : ' + piege.split('\n')[1]);
+  ok(!/<a href="http:\/\/x">/.test(piege),
+     'un symbole qui porte une balise ne pose PAS sa balise dans le message');
+  ok((piege.match(/<a href=/g) || []).length === 1,
+     'il reste exactement un lien, celui qu on a ecrit');
 
   /* ---- LA VUE LE PORTE, BORNE ---- */
   const v = C.vue();
@@ -4103,6 +4125,105 @@ function motsQuiCommandent() {
      'tandis qu un refus qui porte sur un ETAT ne bannit jamais : il change, et le jeton revient');
 }
 
+/* ==========================================================================
+ * UNE REGLE, UNE LIGNE — ET UN SEUIL QUI NE MONTE PAS A L'AVEUGLE
+ * ======================================================================== */
+function uneRegleUneLigne() {
+  console.log('\n-- la meme regle, ecrite dans deux langues, ne fait qu une ligne --');
+  /* ---- CE QU'ON A VU DANS LE PANNEAU ----
+   * Releve sur la colonie apres le passage a l'anglais. La regle d'age tenait
+   * TROIS lignes et la regle de hausse DEUX, parce que la phrase avait change
+   * de formulation puis de langue et que la cle etait la phrase. Quarante-
+   * quatre jetons repartis en trois lignes se lisent comme trois regles
+   * tiedes ; c'est une seule regle massive. Ce panneau sert a decider si une
+   * regle protege ou si elle coute — une decision prise la-dessus serait
+   * prise sur le mauvais chiffre. */
+  const E = C._etat();
+  E.audit = {
+    'scout · trop jeune (# min) : on attend # h pour': { n: 21, s: 949, montes: 13, effondres: 5 },
+    'scout · trop jeune (# min) : on attend # h pour voir si la piscine tient':
+      { n: 19, s: 2394, montes: 8, effondres: 7 },
+    'scout · trop jeune (# min) : on le reprend a # min# quand on saura si la pisci':
+      { n: 4, s: 603, montes: 2, effondres: 1 },
+    'scout · deja +#% en une heure : on paierait l': { n: 5, s: 623, montes: 3, effondres: 1 },
+    'scout · already +#% in an hour: we would be paying the top': { n: 4, s: 193, montes: 2, effondres: 0 },
+    'oracle · note trop basse': { n: 9, s: 838, montes: 4, effondres: 1 },
+    'oracle · score too low': { n: 3, s: 60, montes: 1, effondres: 0 },
+  };
+  const avant = Object.keys(E.audit).length;
+  C._regroupeAudit();
+  const apres = C._auditDesRefus();
+  console.log('   ' + avant + ' lignes → ' + Object.keys(E.audit).length);
+  for (const x of apres) console.log('   ' + x.partMontes + '% · n=' + x.n + ' · ' + x.cle);
+  const age = apres.find((x) => /too young/.test(x.cle));
+  ok(!!age && age.n === 44,
+     'les trois ecritures de la regle d age n en font qu une, et elle porte TOUTES ses '
+     + 'observations (' + (age ? age.n : 0) + ' au lieu de 21, 19 et 4 separement)');
+  ok(!!age && age.montes === 23,
+     'les montees sont additionnees, pas choisies : c est ce chiffre qui juge la regle');
+  const haut = apres.find((x) => /paying the top/.test(x.cle));
+  ok(!!haut && haut.n === 9,
+     'le francais et l anglais de la meme regle se rejoignent (' + (haut ? haut.n : 0) + ')');
+  ok(apres.filter((x) => /score too low/.test(x.cle)).length === 1,
+     'et « note trop basse » et « score too low » ne sont plus deux regles');
+  /* ---- MAIS UNE REGLE INCONNUE N'EST PAS ABSORBEE PAR SA VOISINE ----
+   * Regrouper trop serait pire que pas assez : une regle neuve doit
+   * apparaitre telle qu'elle, sinon elle se cache derriere une ancienne. */
+  E.audit = { 'scout · une regle de demain avec 42 dedans': { n: 6, s: 60, montes: 1, effondres: 0 } };
+  C._regroupeAudit();
+  const inconnue = C._auditDesRefus()[0];
+  console.log('   inconnue : ' + (inconnue && inconnue.cle));
+  ok(!!inconnue && /une regle de demain avec # dedans/.test(inconnue.cle),
+     'une regle qu aucun motif ne connait garde SON texte, nombres remplaces');
+
+  /* ---- ET LA VIRGULE N'EST PLUS UN CHIFFRE ----
+   * « ($#)# most of the multiple » : la virgule etait avalee avec les nombres,
+   * et la ligne devenait illisible la ou elle doit se lire d un coup d oeil. */
+  ok(!/#\s*most of/.test(C._familleRefus('$4231 cap: above the buy ceiling ($100000), most of '
+     + 'the multiple is already done')),
+     'et la ponctuation entre deux mots n est plus prise pour un nombre');
+  E.audit = {};
+}
+
+function seuilPasALAveugle() {
+  console.log('\n-- le seuil ne monte pas pendant qu on est aveugle --');
+  /* ---- CE QUI EST ARRIVE ----
+   * 85 % des lectures de chaine refusees, GoPlus muet 3 393 fois sur 3 516 —
+   * et le seuil monte de 55 a 65 en deux crans parce que les positions
+   * rendaient mal. Elles rendaient mal EN PARTIE pour cette raison : quand
+   * les porteurs et le contrat reviennent « inconnu », la note tombe sans que
+   * le jeton y soit pour rien. Durcir la-dessus grave la cecite. */
+  const E = C._etat();
+  C._pose(C.etatNeuf());
+  const F = C._etat();
+  F.derniers = new Array(20).fill(-5);
+  F.seuil = 55; F.toursSansAchat = 0; F.depuisAjustement = 99;
+  F.services = { chaine: { essais: 395, reussites: 179 },
+                 chaineCle: { essais: 375, reussites: 0 },
+                 chaine2: { essais: 421, reussites: 0 } };
+  console.log('   refus de chaine : ' + Math.round(C.partRefus() * 100) + '%');
+  ok(C.partRefus() > 0.5, 'la part de refus est mesuree sur les noeuds EN SERVICE, pas devinee');
+  const bouge = C.revoitStrategie();
+  console.log('   seuil : 55 → ' + C.seuilCourant() + ' · ' + (F.journalStructure[0] || {}).txt);
+  ok(bouge === false && C.seuilCourant() === 55,
+     'des rendements a -5 % ne durcissent PAS le seuil quand la chaine refuse 85 % des lectures');
+  ok(/chain reads are being refused/.test((F.journalStructure[0] || {}).txt || ''),
+     'et la raison est ECRITE : sans elle, quelqu un irait corriger le seuil au lieu de la lecture');
+  /* ---- ET ON NE DESSERRE PAS POUR AUTANT ----
+   * Ce serait acheter plus en y voyant moins. */
+  ok(C.seuilCourant() === 55, 'le seuil ne descend pas non plus : on n achete pas plus en y voyant moins');
+
+  /* ---- MAIS DES QUE LA LECTURE REVIENT, LA REGLE REPREND ---- */
+  F.services = { chaine: { essais: 395, reussites: 380 } };
+  F.depuisAjustement = 99;
+  C.revoitStrategie();
+  console.log('   lectures revenues → seuil ' + C.seuilCourant());
+  ok(C.seuilCourant() === 60,
+     'quand les lectures aboutissent a nouveau, le durcissement reprend : ce n est pas une '
+     + 'exemption, c est une suspension');
+  C._pose(E);
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -4160,6 +4281,8 @@ function motsQuiCommandent() {
   await neTradePlus();
   await parleAnglais();
   motsQuiCommandent();
+  uneRegleUneLigne();
+  seuilPasALAveugle();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

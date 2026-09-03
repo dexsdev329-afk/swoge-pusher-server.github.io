@@ -3082,8 +3082,59 @@ function noteOmbre(t, an, refus, quiRefuse) {
  * C'est la meme normalisation que les familles de refus de l'alerte, et c'est
  * maintenant la MEME fonction : deux copies auraient fini par diverger, et
  * l'alerte aurait alors nomme une famille introuvable dans le panneau. */
+/* ---- UNE REGLE, UNE LIGNE — QUELLE QUE SOIT LA LANGUE OU ELLE A ETE ECRITE ----
+ *
+ * Releve sur la colonie, dans le panneau des refuses :
+ *
+ *   62 %  scout · trop jeune (# min) : on attend # h pour        21 jetons
+ *   50 %  scout · trop jeune (# min) : on le reprend a # min#…    4 jetons
+ *   42 %  scout · trop jeune (# min) : on attend # h pour voir…  19 jetons
+ *   60 %  scout · deja +#% en une heure : on paierait l           5 jetons
+ *   50 %  scout · already +#% in an hour: we would be paying…     4 jetons
+ *
+ * Trois lignes pour LA MEME regle d'age, deux pour la meme regle de hausse.
+ * Ce n'est pas la colonie qui a change d'avis : c'est la phrase qui a change,
+ * d'abord de formulation, puis de langue. La cle etant le texte, chaque
+ * reecriture a ouvert une case neuve et coupe les observations en deux.
+ *
+ * Et l'effet n'est pas cosmetique. Ce panneau existe pour dire si une regle
+ * protege ou si elle coute ; quarante-quatre jetons repartis sur trois lignes
+ * se lisent comme trois regles tiedes, quand c'est une seule regle massive.
+ * Une decision prise la-dessus serait prise sur le mauvais chiffre.
+ *
+ * On ne garde donc plus la phrase comme identite : on garde LA REGLE. Le motif
+ * reconnait les deux langues et toutes les formulations qu'on a ecrites — et
+ * le libelle rendu est celui d'aujourd'hui, en anglais. Ce qui n'est reconnu
+ * par aucun motif garde son texte, nombres remplaces : une regle nouvelle doit
+ * apparaitre telle qu'elle, pas se faire absorber par la voisine. */
+const FAMILLES = [
+  [/too young|trop jeune/, 'too young: set aside until it has the age'],
+  [/paying the top|on paierait le sommet|paierait l/, 'already up too far: we would be paying the top'],
+  [/already down|deja tombe|deja \-/, 'already down before we even look'],
+  [/above the buy ceiling|au-dessus du plafond/, 'cap above the buy ceiling'],
+  [/pool: below the buy floor|piscine de \$# sous le plancher|sous le plancher d'achat/,
+   'pool below the buy floor'],
+  [/cap: below the buy floor|capitalisation .* sous le plancher/, 'cap below the buy floor'],
+  [/nothing to sell into|piscine de \$# pour une capitalisation|rien a vendre dedans/,
+   'pool too thin for the cap: nothing to sell into'],
+  [/not a market any more|ce n'est plus un marche/, 'volume on nothing: that is an exit, not a market'],
+  [/no public presence|aucune presence publique/, 'no public presence at all'],
+  [/not indexed by DexScreener|pas encore verifiable/, 'not indexed by DexScreener yet'],
+  [/absent from DexScreener|absent de DexScreener/, 'absent from DexScreener'],
+  [/^missing:|^il manque/, 'missing socials'],
+  [/score too low|note trop basse/, 'score too low'],
+  [/exit is blocked|la sortie est bloquee/, 'the exit is blocked'],
+  [/holder holds|porteur tient/, 'one holder holds too much'],
+  [/nobody holds|aucune ne le garde/, 'nobody holds it'],
+  [/single wallet makes|portefeuille fait/, 'one wallet makes most of the volume'],
+  [/honeypot/, 'honeypot'],
+  [/sell tax|buy tax|taxe vente|taxe achat/, 'tax too high'],
+];
 function familleRefus(r) {
-  return String(r).replace(/[\d.,]+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 70);
+  const t = String(r);
+  const f = FAMILLES.find((x) => x[0].test(t));
+  if (f) return f[1];
+  return t.replace(/\d[\d.,]*/g, '#').replace(/\s+/g, ' ').trim().slice(0, 70);
 }
 
 function noteAudit(cle, r) {
@@ -3499,13 +3550,47 @@ function signal(s) {
   s.t = Date.now();
   E.signaux.unshift(s);
   if (E.signaux.length > SIGNAUX_MAX) E.signaux = E.signaux.slice(0, SIGNAUX_MAX);
-  /* Telegram, sans jamais attendre ni jeter. */
+  /* ---- TELEGRAM : LA MEME PASTILLE QUE DANS LE PORTEFEUILLE ----
+   * Avec le logo quand on l'a, en texte quand on ne l'a pas — et `notifyPhoto`
+   * retombe TOUT SEUL sur le texte si Telegram refuse l'image. C'est ce qui
+   * permet de tenter la photo sans risquer le signal : une image morte ne doit
+   * jamais faire disparaitre l'annonce qu'elle accompagnait.
+   * Sans jamais attendre ni jeter : le canal n'est pas une dependance de la
+   * colonie, et un jeton achete pendant que Telegram est en panne reste
+   * achete. */
   try {
-    if (tg && tg.enabled && tg.enabled() && tg.notify) {
-      const p = tg.notify(texteSignal(s));
+    if (tg && tg.enabled && tg.enabled()) {
+      const txt = texteSignal(s);
+      const p = (s.logo && tg.notifyPhoto) ? tg.notifyPhoto(s.logo, txt)
+              : (tg.notify ? tg.notify(txt) : null);
       if (p && p.catch) p.catch(() => {});
     }
   } catch (e) { /* le canal n'est pas une dependance de la colonie */ }
+}
+
+/* ---- OU MENE LE SIGNAL ----
+ * La page d'une PAIRE n'existe que si on connait son pool ; sans lui, un
+ * « token not found » au bout d'un lien qu'on a propose soi-meme est pire
+ * qu'une absence de lien. La recherche par contrat, elle, existe toujours.
+ * On prend donc la paire quand on l'a, la recherche sinon. */
+function lienDex(s) {
+  if (s.pool && /^[0-9a-zA-Z]{20,60}$/.test(String(s.pool)))
+    return 'https://dexscreener.com/robinhood/' + encodeURIComponent(s.pool);
+  if (/^0x[0-9a-fA-F]{40}$/.test(String(s.adr || '')))
+    return 'https://dexscreener.com/search?q=' + encodeURIComponent(s.adr);
+  return null;
+}
+
+/* ---- CE QUI VIENT D'UN JETON NE PART PAS TEL QUEL EN HTML ----
+ * Le message est envoye en `parse_mode: HTML`, et son symbole comme son
+ * commentaire viennent de metadonnees que n'importe qui peut ecrire. Un jeton
+ * nomme « A<B » suffisait a faire refuser le message entier par Telegram —
+ * signal perdu, sans une ligne pour le dire — et un nom bien choisi pouvait y
+ * poser sa propre balise. Depuis qu'on y met un vrai lien, c'est le lien
+ * qu'il pourrait remplacer. */
+function echHtml(v) {
+  return String(v === null || v === undefined ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /* Le texte est ecrit ICI et pas dans la page : le meme mot doit partir dans
@@ -3513,19 +3598,24 @@ function signal(s) {
    deux phrases differentes du meme evenement. */
 function texteSignal(s) {
   const d = (x) => (x > 0 ? '+' : '') + (Math.round(x * 10) / 10) + '%';
+  const url = lienDex(s);
+  /* Le lien porte le symbole du jeton, pas « ici » : on doit savoir ou l'on
+     va avant de toucher, surtout depuis un telephone. */
+  const vers = url ? '\n<a href="' + echHtml(url) + '">$' + echHtml(s.sym)
+                   + ' on DexScreener \u2197</a>' : '';
   if (s.k === 'achat') {
-    return '🟢 SWOGE AI · BUY (paper)\n'
-      + '$' + s.sym + '\n'
-      + 'Score ' + s.score + '/100 · stake $' + Number(s.mise).toFixed(2) + '\n'
+    return '\ud83d\udfe2 SWOGE AI \u00b7 BUY (paper)\n'
+      + '$' + echHtml(s.sym) + '\n'
+      + 'Score ' + echHtml(s.score) + '/100 \u00b7 stake $' + Number(s.mise).toFixed(2) + '\n'
       + (s.mc ? 'Market cap $' + Math.round(s.mc).toLocaleString('en-US') + '\n' : '')
-      + s.adr + '\n'
-      + 'The colony trades paper. This is not advice.';
+      + echHtml(s.adr) + '\n'
+      + 'The colony trades paper. This is not advice.' + vers;
   }
-  return '🔴 SWOGE AI · SELL (paper)\n'
-    + '$' + s.sym + ' · ' + d(s.r) + '\n'
-    + (s.comment ? s.comment + '\n' : '')
-    + s.adr + '\n'
-    + 'The colony trades paper. This is not advice.';
+  return '\ud83d\udd34 SWOGE AI \u00b7 SELL (paper)\n'
+    + '$' + echHtml(s.sym) + ' \u00b7 ' + d(s.r) + '\n'
+    + (s.comment ? echHtml(s.comment) + '\n' : '')
+    + echHtml(s.adr) + '\n'
+    + 'The colony trades paper. This is not advice.' + vers;
 }
 
 /* ---- CE QU'UN PRIX ABERRANT A FAIT ----
@@ -3936,6 +4026,22 @@ function noteResultat(r) {
  * ======================================================================== */
 const SANS_ACHAT_DESSERRE = 40;   /* ~1 h 40 de silence, a 2,4 min par tour */
 
+/* ---- EST-CE QU'ON LIT, EN CE MOMENT ? ----
+ * La part des lectures de chaine qui echouent, sur les noeuds encore en
+ * service. C'est le meme calcul que celui de l'alerte — il est ici pour que
+ * la STRATEGIE puisse le consulter, et pas seulement l'ecran. */
+function partRefus() {
+  const l = Object.keys(E.services || {})
+    .filter((k) => /^chaine/.test(k) && !noeudMort({ cle: k }))
+    .map((k) => E.services[k]);
+  const total = l.reduce((a, x) => a + (x.essais || 0), 0);
+  if (total < 30) return 0;                       /* trop peu pour conclure */
+  const echecs = l.reduce((a, x) => a + ((x.essais || 0) - (x.reussites || 0)), 0);
+  return echecs / total;
+}
+/* Au-dessus, une note basse ne dit plus grand-chose du jeton. */
+const REFUS_AVEUGLE = nEnv('REFUS_AVEUGLE_PART', 0.5);
+
 function revoitStrategie() {
   const avant = seuilCourant();
 
@@ -3971,6 +4077,33 @@ function revoitStrategie() {
      laisser une zone morte au milieu — sans elle, le seuil oscillerait sur du
      bruit a chaque fermeture. */
   if (moy < -1) {
+    /* ---- ON NE MONTE PAS LA BARRE PENDANT QU'ON EST AVEUGLE ----
+     * Releve sur la colonie : 85 % des lectures de chaine refusees, GoPlus
+     * muet 3 393 fois sur 3 516 — et le seuil monte de 55 a 65 en deux crans,
+     * parce que les positions rendaient mal.
+     *
+     * Elles rendaient mal EN PARTIE pour cette raison-la. Quand les porteurs,
+     * la concentration et le contrat reviennent « inconnu », la note tombe
+     * sans que le jeton y soit pour quelque chose ; on achete alors les
+     * mauvais, et on ferme en perte. Durcir la-dessus, c'est prendre le
+     * symptome de sa propre cecite pour un jugement sur le marche — et le
+     * graver : plus rien ne passe, donc plus rien ne se ferme, donc la fenetre
+     * ne se renouvelle plus et le seuil reste haut.
+     *
+     * On ne desserre pas pour autant : ce serait acheter plus en y voyant
+     * moins. On ne fait rien, et on le DIT, ce qui est la seule facon que
+     * quelqu'un aille reparer la lecture plutot que le seuil. */
+    const aveugle = partRefus();
+    if (aveugle >= REFUS_AVEUGLE) {
+      E.depuisAjustement = 0;
+      journal('strategie', 'Entry threshold left at ' + avant + '. The last ' + l.length
+        + ' positions return ' + moy.toFixed(1) + '% on average, which would normally tighten it '
+        + '— but ' + Math.round(aveugle * 100) + '% of chain reads are being refused right now. '
+        + 'Those returns are partly the mark of what we could not read, not of the tokens: '
+        + 'hardening on them would make the blindness permanent.',
+        [{ moyenne: moy.toFixed(1) + '%', refusChaine: Math.round(aveugle * 100) + '%' }]);
+      return false;
+    }
     apres = Math.min(SEUIL_MAX, avant + 5);
     pourquoi = 'the last ' + l.length + ' positions return ' + moy.toFixed(1)
              + '% on average (' + Math.round(taux * 100) + '% winners): tightening up';
@@ -5218,7 +5351,7 @@ module.exports = {
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,
-  revoitStrategie, seuilCourant, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
+  revoitStrategie, seuilCourant, partRefus, REFUS_AVEUGLE, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN,

@@ -83,7 +83,14 @@ function notifyPhoto(photo, caption) {
       const j = await res.json().catch(() => ({}));
       note('sendPhoto', !!j.ok, j.error_code, j.description, photo);
       if (!j.ok) { console.warn(`[tg] photo refused: ${j.error_code} ${j.description} — falling back to text`); notify(caption); }
-    } catch (e) { console.warn('[tg] photo failed:', e.message); note('sendPhoto', false, 'reseau', e.message, photo); }
+    } catch (e) {
+      /* Le reseau a lache : on retombe sur le texte, comme pour un refus.
+         Sans ca, une image injoignable emportait le signal avec elle — et
+         c'est justement quand le reseau va mal qu'on veut lire l'annonce. */
+      console.warn('[tg] photo failed:', e.message, '— falling back to text');
+      note('sendPhoto', false, 'reseau', e.message, photo);
+      notify(caption);
+    }
     await new Promise((r) => setTimeout(r, 400));
   }).catch(() => {});
 }
