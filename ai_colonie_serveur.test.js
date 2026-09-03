@@ -470,6 +470,180 @@ function remise(jetons, extra) {
 const sains = () => [0, 1, 2, 3, 4, 5, 6].map((i) => jeton(i));
 
 /* ==========================================================================
+ * 0. CE QUE SOIXANTE ET UNE HEURES DE DONNEES ONT MONTRE
+ *
+ * Releve sur le serveur, 1 478 tours : le Cobaye bloquait 251 des 299 jetons
+ * arrives jusqu'a lui, parce qu'il poussait un identifiant Uniswap V4 de
+ * trente-deux octets dans un mot `address` ; les agents retenaient un fond de
+ * +25 % dans chaque case, parce qu'on ne jugeait que les jetons qui
+ * survivaient assez pour repasser dans un flux ; la borne d'age ne bougeait
+ * plus, parce que la part d'abandons cumulait toute la vie de la colonie ; et
+ * le noeud de secours refusait 377 lectures sur 377, a un bloc pres.
+ * Quatre mesures, quatre corrections, et chacune est eprouvee ici.
+ * ======================================================================== */
+async function apprendreDesMorts() {
+  console.log('\n-- le Cobaye vise une ADRESSE, jamais un identifiant --');
+  remise([jeton(0, { piege: true }), jeton(1)]);
+  const idV4 = '0x9abd26d9d6d6a7ca1cf36f062889935ced522abe107913ecb5405a1f6fe60519';
+  const teneur = '0x' + 'aa'.repeat(20);
+  const cob = ['0x' + '1'.repeat(40), '0x' + '2'.repeat(40)];
+  ok(C.cibleDeVente({ pool: MONDE.jetons[1].pool }).via === 'pool',
+     'une piscine qui est une adresse reste la cible, comme avant');
+  const c2 = C.cibleDeVente({ pool: idV4, chaine: { infraAdresses: [teneur] } });
+  ok(c2 && c2.adr === teneur && c2.via === 'market maker',
+     'un identifiant V4 (66 caracteres) n est PAS une adresse : la cible devient celle qui fait '
+     + 'le marche dans les transferts');
+  ok(C.cibleDeVente({ pool: idV4, chaine: { plusGros: '0x' + 'cc'.repeat(20) } }).via === 'largest holder',
+     'et sans teneur de marche, le plus gros porteur — la reponse dit laquelle des trois on a jouee');
+  ok(C.cibleDeVente({ pool: idV4, chaine: {} }) === null, 'sans aucune cible, on ne devine pas');
+
+  envoyes = [];
+  const sain = await C.simuleVente({ addr: MONDE.jetons[1].addr, pool: idV4,
+    chaine: { vu: true, cobayes: cob, infraAdresses: [teneur] } });
+  console.log('   sain, pool V4 : ' + JSON.stringify(sain));
+  ok(sain.teste && sain.passe && sain.via === 'market maker',
+     'un jeton sain sur un pool V4 PASSE l epreuve — c etait 84 % de faux pieges sur le serveur');
+  const appelsCall = envoyes.filter((e) => /rpc\.mainnet/.test(e.url) && /eth_call/.test(String(e.body || '')));
+  const data = appelsCall.length ? JSON.parse(appelsCall[appelsCall.length - 1].body).params[0].data : '';
+  ok(data.slice(10, 74) === '0'.repeat(24) + teneur.slice(2),
+     'et le mot `address` envoye au contrat porte bien vingt octets zero-etendus, pas trente-deux');
+  const piege = await C.simuleVente({ addr: MONDE.jetons[0].addr, pool: idV4,
+    chaine: { vu: true, cobayes: cob, infraAdresses: [teneur] } });
+  ok(piege.teste && !piege.passe && /market maker/.test(C.vetoCobaye({ epreuve: piege }) || ''),
+     'alors qu un vrai piege sur un pool V4 est toujours attrape : « ' + C.vetoCobaye({ epreuve: piege }) + ' »');
+  const sans = await C.simuleVente({ addr: MONDE.jetons[1].addr, pool: idV4, chaine: { vu: true, cobayes: cob } });
+  ok(sans.teste === false && !C.vetoCobaye({ epreuve: sans }) && /Uniswap V4/.test(sans.raison),
+     'un pool V4 sans teneur connu n est PAS testable, et « pas testable » ne bloque rien : « ' + sans.raison + ' »');
+  remise(sains());
+  await C.tour();
+  const ch = C._cache.chaine[MONDE.jetons[0].addr];
+  ok(!!ch && Array.isArray(ch.v.infraAdresses),
+     'la lecture de chaine rend desormais les adresses d infrastructure, pas seulement leur nombre');
+
+  console.log('\n-- une case ne vaut que par rapport au fond --');
+  C._pose(C.etatNeuf());
+  let E = C._etat();
+  E.memoire = {};
+  for (let i = 0; i < 60; i++) { C.apprendAgent('whale', { top: 'top 5-15%' }, 20); C.apprendBase(20); }
+  ok(Math.abs(C.baseCourante() - 20) < 1e-9, 'le fond est la moyenne de tout ce qu on a observe (' + C.baseCourante() + ')');
+  const brut = C.ajustementAgent('whale', { top: 'top 5-15%' });
+  const centre = C.ajustementAgent('whale', { top: 'top 5-15%' }, C.baseCourante());
+  console.log('   sans fond : ' + brut.toFixed(3) + ' · avec le fond : ' + centre.toFixed(3));
+  ok(brut > 0, 'sans fond, une case a +20 monte la note — c est l ancien calcul, et les anciens essais');
+  ok(Math.abs(centre) < 1e-9,
+     'avec le fond, la MEME case pese zero : rendre ce que rend tout le monde n apprend rien sur le jeton');
+  for (let i = 0; i < 60; i++) C.apprendAgent('whale', { det: '100-500' }, 45);
+  for (let i = 0; i < 60; i++) C.apprendAgent('whale', { brule: '>90% brule' }, -5);
+  ok(C.ajustementAgent('whale', { det: '100-500' }, C.baseCourante()) > 0
+     && C.ajustementAgent('whale', { brule: '>90% brule' }, C.baseCourante()) < 0,
+     'au-dessus du fond la note monte, en dessous elle baisse — meme quand « en dessous » est encore positif');
+  E.base = { n: 5, s: 100, s2: 2000, maj: Date.now() };
+  ok(C.baseCourante() === 0, 'sous ' + C.BASE_MIN_OBS + ' observations, le fond n est pas soustrait : on ne centre pas sur du bruit');
+
+  /* `analyse` s en sert : un jeton dont TOUTES les cases rendent le fond a un
+     ajustement nul, et un ajustement positif des que le fond disparait. */
+  E.memoire = {}; E.base = null;
+  const t = { addr: '0x' + '11'.repeat(20), sym: 'X', pool: '0x' + '22'.repeat(20), prix: 1, liq: 20000,
+              mc: 50000, minutes: 20, tx: { h1: { buys: 30, sells: 10, buyers: 20 } },
+              vol: { m5: 1000, h1: 5000, h6: 8000 }, ch_m5: 5, ch_h1: 10, ch_h6: 20, origine: 'pools', lu: {} };
+  const tr = C.traitsDe(t);
+  for (const a in tr) for (const k in tr[a]) for (let i = 0; i < 30; i++) C.apprendAgent(a, { [k]: tr[a][k] }, 25);
+  const sansFond = C.analyse(t).adj;
+  for (let i = 0; i < 30; i++) C.apprendBase(25);
+  const avecFond = C.analyse(t).adj;
+  console.log('   ajustement du meme jeton : sans fond ' + sansFond + ' · avec fond ' + avecFond);
+  ok(sansFond > 0 && avecFond === 0,
+     'c est ce +25 pour tout le monde — releve sur vingt candidats de suite — qui disparait de la note');
+
+  console.log('\n-- et le seuil appris sur des notes gonflees repart du depart, une fois --');
+  C._pose(C.etatNeuf());
+  E = C._etat();
+  E.seuil = 70; delete E.adjCentre; E.base = null;
+  for (let i = 0; i < 40; i++) C.apprendAgent('scout', { liq: 'liq 1-5k' }, 30);
+  C.centreLesNotes();
+  ok(E.seuil === C.SEUIL && E.adjCentre === true,
+     'un etat d avant le fond : seuil 70 → ' + E.seuil + ', et la marque est posee');
+  ok(E.base && Math.abs(E.base.s / E.base.n - 30) < 1e-6 && E.base.n >= C.BASE_MIN_OBS,
+     'le fond est amorce depuis la memoire existante (' + (E.base.s / E.base.n).toFixed(1) + ' %), pas attendu');
+  ok(/centred/.test((E.journalStructure[0] || {}).txt || ''), 'et le journal dit pourquoi');
+  E.seuil = 70;
+  C.centreLesNotes();
+  ok(E.seuil === 70, 'une seconde fois, il ne touche plus a rien : c est une migration, pas une regle');
+  const ancien = Object.assign(C.etatNeuf(), { seuil: 70 });
+  delete ancien.adjCentre;
+  fs.writeFileSync(C.FICHIER, JSON.stringify(ancien));
+  C.charge();
+  ok(C._etat().seuil === C.SEUIL, 'relu depuis le disque, un etat sans la marque est centre au chargement');
+  fs.writeFileSync(C.FICHIER, JSON.stringify(Object.assign(C.etatNeuf(), { seuil: 70 })));
+  C.charge();
+  ok(C._etat().seuil === 70, 'et un etat qui porte deja la marque garde son seuil');
+
+  console.log('\n-- les ombres qui ne repassent plus dans les flux sont relues --');
+  remise([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => jeton(i)));
+  E = C._etat();
+  const now = Date.now();
+  const ombre = (adr, minutes) => ({ adr, sym: 'S', prix0: 0.5, t: now - minutes * 60000,
+    echeance: now, traits: {}, score: 50, refus: null, quiRefuse: null, jalons: {} });
+  const inconnu = '0x' + 'ee'.repeat(20);
+  E.ombres = [ombre(MONDE.jetons[0].addr, 32), ombre(MONDE.jetons[1].addr, 8),
+              ombre(MONDE.jetons[2].addr, 32), ombre(inconnu, 32)];
+  const marche = { [MONDE.jetons[2].addr]: { prix: 1 } };
+  appels.dex = 0;
+  const relues = await C.secoursOmbres(marche);
+  console.log('   relues ' + relues + ' · appels DexScreener ' + appels.dex + ' · muettes ' + (E.compteurs.ombreMuette || 0));
+  ok(relues === 1 && marche[MONDE.jetons[0].addr] && marche[MONDE.jetons[0].addr].prix === 1,
+     'l ombre a echeance que les flux ne cotent plus recoit son prix, lu a l adresse');
+  ok(!marche[MONDE.jetons[1].addr], 'une ombre de huit minutes n est pas relue : elle est encore dans le flux');
+  ok(appels.dex === 2, 'celle que le marche cotait deja ne coute rien (' + appels.dex + ' appels pour deux relectures)');
+  ok((E.compteurs.ombreMuette || 0) === 1,
+     'et un jeton que DexScreener ne connait pas reste NON JUGE, compte comme tel — rien n est fabrique');
+  const avantBase = (E.base && E.base.n) || 0;
+  C.regleLesOmbres(marche);
+  /* Deux ombres ont un prix a l echeance : la relue, et celle que le marche
+     cotait deja. Toutes deux a +100 % — et le fond en compte deux, pas cinq
+     traits fois deux : une fois par jeton. */
+  ok(E.base && E.base.n === avantBase + 2 && Math.abs(E.base.s - 200) < 1e-9,
+     'jugees a +100 %, les deux entrent dans le fond, une fois chacune : c est de la que le fond apprend');
+  E.ombres = MONDE.jetons.map((j) => ombre(j.addr, 32));
+  appels.dex = 0;
+  const n6 = await C.secoursOmbres({});
+  ok(n6 === C.OMBRES_SECOURS_PAR_TOUR && appels.dex === C.OMBRES_SECOURS_PAR_TOUR,
+     'dix ombres dues, ' + n6 + ' relues : le budget par tour est tenu');
+
+  console.log('\n-- la part d abandons se mesure sur les quarante dernieres --');
+  C._pose(C.etatNeuf());
+  E = C._etat();
+  E.ouvertures = 87; E.compteurs.abandonneeSansPrix = 10; E.compteurs.prixAberrant = 3;
+  ok(Math.abs(C.partAbandons() - 13 / 87) < 1e-9,
+     'sans fenetre, le cumul fait foi (' + (C.partAbandons() * 100).toFixed(1) + ' %) — un etat relu d hier garde sa mesure');
+  for (let i = 0; i < 30; i++) C.noteSuivi(0);
+  ok(C.partAbandons() === 0,
+     'trente positions suivies jusqu au bout : la part dit 0 %, pas 14,9 % — le passe repare ne pese plus');
+  for (let i = 0; i < 45; i++) C.noteSuivi(1);
+  ok(E.suivis.length === C.SUIVIS_FENETRE && C.partAbandons() === 1, 'et la fenetre ne grossit pas au-dela de ' + C.SUIVIS_FENETRE);
+
+  console.log('\n-- dix mille blocs, les deux bouts compris --');
+  remise(sains(), { rpcSature: true });
+  const bloc = MONDE.bloc;
+  let servi = false;
+  try {
+    await C._rpc('eth_getLogs', [{ address: MONDE.jetons[0].addr, topics: [],
+      fromBlock: hex(bloc - 9999), toBlock: hex(bloc) }]);
+    servi = true;
+  } catch (e) { console.log('   ' + e.message); }
+  ok(servi && appels.rpc2 > 0,
+     'exactement dix mille blocs, du premier au dernier compris, passent par le noeud de secours (' + appels.rpc2 + ' appel)');
+  appels.rpc2 = 0;
+  let refuse = false;
+  try {
+    await C._rpc('eth_getLogs', [{ address: MONDE.jetons[0].addr, topics: [],
+      fromBlock: hex(bloc - 10000), toBlock: hex(bloc) }]);
+  } catch (e) { refuse = true; }
+  ok(refuse && appels.rpc2 === 0,
+     'dix mille et un ne lui sont meme pas demandes : c est ce bloc de trop qui a coute 377 refus sur 377');
+}
+
+/* ==========================================================================
  * 1. LA CAISSE DES JOUEURS N'EST PAS ATTEIGNABLE
  * ======================================================================== */
 async function isolement() {
@@ -4380,6 +4554,7 @@ function bornesQuiSeReglent() {
 
 (async () => {
   await isolement();
+  await apprendreDesMorts();
   await horsLigne();
   await sources();
   await montantIndexe();

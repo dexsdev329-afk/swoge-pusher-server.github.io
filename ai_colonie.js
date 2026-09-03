@@ -579,6 +579,11 @@ function etatNeuf() {
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
     seuil: SEUIL, derniers: [], depuisAjustement: 0, suites: [], sortieEssais: 0,
     ombres: [], audit: {}, profils: {},
+    /* le fond de rendement que toute case se compare a (voir `apprendBase`),
+       et la marque que le seuil a ete pose pour des notes centrees */
+    base: null, adjCentre: true,
+    /* les quarante dernieres positions reglees : suivie (0) ou perdue (1) */
+    suivis: [],
     /* ce que la colonie vient de faire, pour Telegram et le portefeuille */
     signaux: [],
     /* la structure, qui est une donnee et non du code */
@@ -620,7 +625,12 @@ function charge() {
     return;
   }
   const n = etatNeuf();
+  /* Releve AVANT que les champs manquants soient completes : un etat d'avant
+     le fond n'a pas cette marque, et c'est son absence qui declenche la mise
+     au centre. La completer d'abord l'aurait posee a « deja fait ». */
+  const dejaCentre = brut.adjCentre === true;
   for (const k of Object.keys(n)) if (!(k in brut)) brut[k] = n[k];
+  brut.adjCentre = dejaCentre;
   if (!Array.isArray(brut.courbe) || !brut.courbe.length) brut.courbe = [DEPART];
   if (!Array.isArray(brut.flux)) brut.flux = [];
   if (!Array.isArray(brut.positions)) brut.positions = [];
@@ -661,6 +671,46 @@ function charge() {
   brut.roster = brut.roster.filter((a) => a && a.key && Array.isArray(a.traits));
   E = brut;
   regroupeAudit();
+  centreLesNotes();
+}
+
+/* ---- UN ETAT D'AVANT LE FOND REPART AVEC LE SEUIL DU DEPART ----
+ *
+ * Le seuil en vigueur — 65 sur le serveur, apres etre monte a 70 — a ete
+ * appris sur des notes gonflees d'un fond de +25 (voir `apprendBase`). Une
+ * fois le fond soustrait, les memes jetons notent 25 points de moins, et un
+ * seuil a 65 ne laisserait plus rien passer pendant des heures : le
+ * desserrage par silence mettrait sept heures a le ramener a 45. Autant de
+ * temps sans mesure, donc sans apprentissage.
+ *
+ * On remet donc le seuil a sa valeur de depart, UNE FOIS, et on le dit dans
+ * le journal. Rien d'autre n'est touche : la memoire des cases reste — c'est
+ * la soustraction qui la rend lisible, pas un effacement — et le fond est
+ * amorce depuis elle, pour que la premiere note centree ne repose pas sur
+ * vingt observations a venir mais sur les six cents deja faites. Amorce avec
+ * une confiance modeste : c'est une estimation, et elle le sait. */
+function centreLesNotes() {
+  if (E.adjCentre) return;
+  E.adjCentre = true;
+  let n = 0, s = 0;
+  for (const k of apprenants()) {
+    const m = E.memoire[k] || {};
+    for (const t in m) for (const v in m[t]) { const c = m[t][v]; if (c && c.n > 0) { n += c.n; s += c.s; } }
+  }
+  if (n >= BASE_MIN_OBS && (!E.base || !(E.base.n > 0))) {
+    const moy = s / n, poids = 60;
+    E.base = { n: poids, s: moy * poids, s2: moy * moy * poids, maj: Date.now() };
+  }
+  const avant = seuilCourant();
+  if (avant !== SEUIL) {
+    E.seuil = SEUIL;
+    E.depuisAjustement = 0;
+    journal('strategie', 'Entry threshold ' + avant + ' → ' + SEUIL + '. Scores are now centred: '
+      + 'the learned adjustment used to add the same ~+25 to every token, and this threshold was '
+      + 'learned against those inflated scores. Reset once, to the starting value'
+      + (E.base ? ' (background return seeded at ' + (E.base.s / E.base.n).toFixed(1) + '%)' : '') + '.',
+      [{ seuilAvant: avant, seuilApres: SEUIL, fond: E.base ? Math.round(E.base.s / E.base.n * 10) / 10 : null }]);
+  }
 }
 
 /* ---- LES ANCIENNES CASES SE REGROUPENT, ELLES NE SE JETTENT PAS ----
@@ -936,12 +986,24 @@ function noeudMort(n) {
 
 /* La plage demandee par un `eth_getLogs`, pour savoir quel noeud peut la
    servir. Une demande qu'on sait refusee n'est pas envoyee. */
+/* ---- ELLE SE COMPTE COMME LE NOEUD LA COMPTE ----
+ *
+ * Releve sur la colonie apres soixante et une heures : le noeud a cle, 377
+ * appels, 377 refus, tous avec la meme phrase — « ranges over 10000 blocks are
+ * not supported on free plan ». Sa plage etait pourtant bien retenue a 10 000,
+ * et la demande de secours de `lisChaine` faisait exactement 10 000.
+ *
+ * Exactement 10 000 blocs d'ECART — `toBlock - fromBlock`. Or de 100 a 110 il
+ * y a onze blocs, pas dix : le noeud compte les deux bouts, et il refusait
+ * donc chaque demande a un bloc pres. Un seul bloc de trop, 377 fois, et le
+ * noeud de secours n'a jamais servi une seule lecture. La borne etait bonne,
+ * c'est la regle qui la mesurait qui ne comptait pas comme lui. */
 function plageDe(methode, params) {
   if (methode !== 'eth_getLogs') return 0;
   const f = params && params[0];
   if (!f || !f.fromBlock || !f.toBlock) return 0;
   const a = parseInt(f.fromBlock, 16), b = parseInt(f.toBlock, 16);
-  return (isFinite(a) && isFinite(b)) ? Math.max(0, b - a) : 0;
+  return (isFinite(a) && isFinite(b)) ? Math.max(0, b - a + 1) : 0;
 }
 async function unNoeud(n, methode, params) {
   const depuis = Date.now() - n.dernier;
@@ -1303,9 +1365,13 @@ async function lisChaine(addr, minutes, pool) {
     let logs = null, derniere = null;
     for (const large of plages) {
       try {
+        /* `large` blocs, LES DEUX BOUTS COMPRIS : c'est ainsi que le noeud
+           compte, et c'est ainsi que `plageDe` compte desormais. Voir la note
+           au-dessus de `plageDe` : un bloc de trop a suffi a rendre le noeud
+           de secours inutile 377 fois sur 377. */
         logs = await rpc('eth_getLogs', [{
           address: addr, topics: [SUJET_TRANSFERT],
-          fromBlock: '0x' + Math.max(0, bloc - large).toString(16), toBlock: '0x' + bloc.toString(16) }]);
+          fromBlock: '0x' + Math.max(0, bloc - large + 1).toString(16), toBlock: '0x' + bloc.toString(16) }]);
         break;
       } catch (e) { derniere = e; }
     }
@@ -1343,7 +1409,7 @@ async function lisChaine(addr, minutes, pool) {
       try {
         const large = await rpc('eth_getLogs', [{
           address: addr, topics: [SUJET_TRANSFERT],
-          fromBlock: '0x' + Math.max(0, bloc - BLOCS_PLAFOND).toString(16),
+          fromBlock: '0x' + Math.max(0, bloc - BLOCS_PLAFOND + 1).toString(16),
           toBlock: '0x' + bloc.toString(16) }]);
         if (large && large.length) {
           compte('fenetreElargie');
@@ -1437,6 +1503,10 @@ async function lisChaine(addr, minutes, pool) {
       /* Ce qu'on a ecarte, et pourquoi : sans ca, « 12 porteurs » est un
          chiffre qu'on ne peut pas contester. */
       infra: infrastructure.length, participants,
+      /* Et QUI fait le marche, pas seulement combien : quand la piscine n'a
+         pas d'adresse — un identifiant Uniswap V4 —, c'est vers l'une de ces
+         adresses-la que le Cobaye essaiera la sortie. Voir `cibleDeVente`. */
+      infraAdresses: infrastructure.slice(0, 3),
       brule: (su && total > 0) ? Math.round(brules / total * 1000) / 10 : null,
     });
   } catch (e) { return garde(CACHE.chaine, addr, { vu: false }); }
@@ -1771,8 +1841,52 @@ function ecartType(c) {
   return va > 0 ? Math.sqrt(va) : 0;
 }
 
-function ajustementAgent(agent, cases) {
+/* ==========================================================================
+ * UNE CASE NE VAUT QUE PAR RAPPORT AUX AUTRES
+ *
+ * Releve sur la colonie apres soixante et une heures, sur les vingt candidats
+ * du dernier tour : note de base de -7 a 44, et l'ajustement appris de +21 a
+ * +28 — POUR TOUS. Vingt jetons differents, le meme +25. Un ajustement qui
+ * vaut la meme chose pour tout le monde ne distingue plus rien : il decale
+ * l'echelle, et c'est tout. Le seuil d'entree l'a suivi jusqu'a 70, s'est
+ * bloque la (voir « le seuil montait et ne pouvait plus redescendre »), et la
+ * colonie a passe des heures sans acheter — sur un chiffre qui ne parlait pas
+ * des jetons.
+ *
+ * La raison est simple : chaque case retenait sa moyenne BRUTE. Or le flux
+ * entier rend, a l'echeance de reference, une moyenne tres positive — quelques
+ * dix-fois au milieu de beaucoup de petites pertes. Toutes les cases heritent
+ * donc de ce +25 de fond, et « liq 1-5k rend +38 » ne dit pas que cette case
+ * est bonne : elle est a peine au-dessus du lot. La seule chose qu'une case
+ * sache dire, c'est en quoi elle differe du reste.
+ *
+ * On soustrait donc le fond — la moyenne de TOUT ce qu'on a observe, tenue
+ * dans `E.base` et fanee comme les cases. Une case qui rend le fond pese zero ;
+ * au-dessus elle monte la note, en dessous elle la baisse. Le fond n'est
+ * soustrait que quand il est mesure sur assez d'observations : en dessous, on
+ * ne soustrait rien, comme avant.
+ *
+ * Il ne s'applique qu'aux agents qui NOTENT un jeton (voir `analyse`). La
+ * Sentinelle et le Promoteur apprennent des DIFFERENCES — ce qu'a rendu une
+ * sortie contre ce que garder aurait donne — et un fond de rendement n'a rien
+ * a faire dans une difference.
+ * ======================================================================== */
+const BASE_MIN_OBS = 20;
+function apprendBase(r) {
+  if (!E.base || typeof E.base !== 'object') E.base = { n: 0, s: 0, s2: 0, maj: Date.now() };
+  const c = fane(E.base);
+  const x = Math.max(-95, Math.min(300, r));
+  c.n++; c.s += x; c.s2 += x * x;
+}
+function baseCourante() {
+  const c = E.base ? fane(E.base) : null;
+  if (!c || !(c.n >= BASE_MIN_OBS)) return 0;
+  return c.s / c.n;
+}
+
+function ajustementAgent(agent, cases, base) {
   if (!cases) return 0;
+  const fond = (typeof base === 'number' && isFinite(base)) ? base : 0;
   let somme = 0, vus = 0;
   /* La case non lue la MIEUX OBSERVEE de cet agent, et elle seule. Voir la
      table des cases non lues, plus haut : les trois traits d'un agent sortent
@@ -1787,7 +1901,7 @@ function ajustementAgent(agent, cases) {
      * de la laisser tirer la note. */
     const sd = ecartType(c);
     const fiable = sd === null ? 1 : Math.max(0.25, Math.min(1, ECART_TYPE_BRUIT / Math.max(1, sd)));
-    const part = confiance(c.n) * fiable * Math.max(-30, Math.min(30, c.s / c.n));
+    const part = confiance(c.n) * fiable * Math.max(-30, Math.min(30, c.s / c.n - fond));
     if (caseNonLue(cases[k])) {
       /* Bornee a zero PAR LE HAUT : ne rien savoir peut inquieter, ne peut
          jamais rassurer. C'est la regle du haut du fichier, tenue ici. */
@@ -2241,7 +2355,36 @@ function borne(k) {
 }
 /* Le desserrage se paie en positions qu'on ne sait plus suivre : c'est la
    SEULE contrepartie mesuree, et c'est elle qui rend la boucle honnete. */
+/* ---- ELLE SE MESURE SUR CE QUI VIENT DE SE PASSER, PAS SUR TOUTE LA VIE ----
+ *
+ * Releve sur la colonie apres soixante et une heures : 13 positions perdues de
+ * vue sur 87 ouvertes, soit 14,9 % — entre le « sain » (8 %) et le « trop »
+ * (20 %). La borne d'age n'a donc pas bouge une seule fois en trois jours,
+ * alors que l'audit de sa regle disait la meme chose a chaque tour : « trop
+ * jeune », 79 suivis, 44 % de montes, +58 % de moyenne. La regle la plus
+ * chere de la colonie etait jugee coupable par l'audit et couverte par une
+ * part d'abandons qui ne pouvait plus changer.
+ *
+ * Parce que cette part etait cumulee DEPUIS LE DEBUT. Dix des treize abandons
+ * datent d'avant le Veilleur et le prix de secours — le trou qu'ils ont bouche.
+ * Depuis, presque plus rien ne se perd, et la part s'en apercoit a la vitesse
+ * de 1/87 par position : il faudrait des semaines pour redescendre sous 8 %
+ * sans un seul nouvel abandon. Une mesure qui decrit un passe repare n'est pas
+ * une mesure du present.
+ *
+ * On garde donc les quarante dernieres positions reglees — suivie jusqu'au
+ * bout, ou perdue de vue — et c'est sur elles qu'on juge, des qu'il y en a
+ * douze. En dessous, le cumul d'avant fait foi, comme avant : un etat relu
+ * d'hier n'a pas encore de fenetre, et ne doit pas se retrouver sans mesure. */
+const SUIVIS_FENETRE = 40;
+function noteSuivi(perdue) {
+  if (!Array.isArray(E.suivis)) E.suivis = [];
+  E.suivis.push(perdue ? 1 : 0);
+  if (E.suivis.length > SUIVIS_FENETRE) E.suivis = E.suivis.slice(-SUIVIS_FENETRE);
+}
 function partAbandons() {
+  const s = Array.isArray(E.suivis) ? E.suivis : [];
+  if (s.length >= 12) return s.reduce((a, b) => a + b, 0) / s.length;
   const ouv = E.ouvertures || 0;
   if (ouv < 12) return null;                    /* trop peu pour conclure */
   return ((E.compteurs.abandonneeSansPrix || 0) + (E.compteurs.prixAberrant || 0)) / ouv;
@@ -2658,8 +2801,11 @@ function analyse(t) {
   const base = scoreBase(t);
   const parts = {};
   let adj = 0;
+  /* Le fond est soustrait ICI, pour les agents qui notent : voir la note
+     au-dessus de `apprendBase`. */
+  const fond = baseCourante();
   for (const k of apprenants()) {
-    parts[k] = Math.round(ajustementAgent(k, tr[k]) * 10) / 10;
+    parts[k] = Math.round(ajustementAgent(k, tr[k], fond) * 10) / 10;
     adj += parts[k];
   }
   adj = Math.max(-30, Math.min(30, adj));
@@ -3374,6 +3520,7 @@ function regleLesOmbres(marche) {
            fois, et les cases gonfleraient sans qu'on ait vu cinq jetons. */
         if (h === HORIZON_REF) {
           for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
+          apprendBase(r);
           noteAudit(o.refus ? (o.quiRefuse || 'refus') + ' · ' + familleRefus(o.refus)
                             : 'achete ou retenu', r);
           compte('ombresJugees');
@@ -3591,12 +3738,62 @@ const SEL_TRANSFER = '0xa9059cbb';   /* transfer(address,uint256) */
    la ou l'on decide si un noeud est tombe. */
 const EVM_REFUSE = /execution reverted|revert|invalid opcode|out of gas|stack underflow|always failing/i;
 
+/* ---- A QUI ON ESSAIE D'ENVOYER, ET POURQUOI CE N'ETAIT PAS LA PISCINE ----
+ *
+ * Releve sur la colonie apres soixante et une heures : 299 epreuves jouees,
+ * 251 « la sortie est bloquee », 7 passees. Quatre-vingt-quatre pour cent des
+ * jetons qui avaient passe TOUS les autres gardes etaient des pieges — sur
+ * une chaine ou l'audit de ces memes refuses rend -3 % de moyenne, cinq
+ * montes, six effondres : le comportement d'un jeton ordinaire, pas d'un
+ * honeypot, dont le prix ne fait que monter puisque personne ne peut vendre.
+ *
+ * La cause est dans la forme de `t.pool`. Sur cette chaine, quarante pour
+ * cent des piscines sont des pools Uniswap V4, et un pool V4 n'a pas
+ * d'adresse : les flux rendent son IDENTIFIANT, trente-deux octets —
+ * `0x9abd26d9…6fe60519`, soixante-six caracteres. On le poussait dans le mot
+ * `address` du `transfer`, ou il ne tient pas ; le decodeur du contrat refuse
+ * un mot dont les douze octets hauts ne sont pas nuls — « execution reverted »
+ * — et cette revocation-la etait lue comme la reponse d'un piege. Trois
+ * porteurs, trois refus, a chaque fois, pour tout jeton V4 : le veto n'a
+ * jamais rien dit du jeton, il disait la longueur d'une chaine de caracteres.
+ *
+ * Et les 7 « passees » : les pools a adresse. Les 41 « incertaines » : le
+ * noeud n'avait pas repondu — et c'est donc SUR CELLES-LA, au hasard des
+ * pannes, que la colonie a achete. Elle ne choisissait plus ses achats.
+ *
+ * ---- LA CIBLE, DANS L'ORDRE ----
+ *
+ *   1. la piscine, quand c'est une adresse — l'epreuve d'origine, inchangee ;
+ *   2. sinon, l'adresse qui FAIT le marche dans les transferts qu'on vient de
+ *      lire (voir `lisChaine` : elle echange avec presque tout le monde, dans
+ *      les deux sens). Sur un pool V4, c'est le PoolManager, c'est-a-dire
+ *      exactement l'endroit ou une vente enverrait le jeton ;
+ *   3. sinon, le plus gros porteur : un piege qui gele tous les transferts est
+ *      encore attrape, un piege qui ne bloque que la piscine ne l'est pas, et
+ *      la reponse porte `via` pour qu'on sache laquelle des trois on a jouee.
+ *
+ * Ce que ca ne fait pas : deviner. Sans aucune cible, l'epreuve n'est pas
+ * jouee, et « pas testable » ne bloque rien — comme avant. */
+const ADRESSE = /^0x[0-9a-f]{40}$/i;
+function cibleDeVente(t) {
+  const pool = String(t.pool || '');
+  if (ADRESSE.test(pool)) return { adr: pool, via: 'pool' };
+  const ch = t.chaine || {};
+  const infra = (ch.infraAdresses || []).filter((a) => ADRESSE.test(a));
+  if (infra.length) return { adr: infra[0], via: 'market maker' };
+  if (ADRESSE.test(ch.plusGros || '')) return { adr: ch.plusGros, via: 'largest holder' };
+  return null;
+}
+
 async function simuleVente(t) {
   const ch = t.chaine || {};
   const cob = (ch.cobayes || []).slice(0, 3);
   if (!ch.vu || !cob.length || !t.pool)
     return { teste: false, raison: 'no known holder to try the exit with' };
-  const data = SEL_TRANSFER + String(t.pool).slice(2).toLowerCase().padStart(64, '0')
+  const cible = cibleDeVente(t);
+  if (!cible)
+    return { teste: false, raison: 'the pool is a Uniswap V4 id, not an address, and no market maker was seen in the transfers' };
+  const data = SEL_TRANSFER + cible.adr.slice(2).toLowerCase().padStart(64, '0')
              + (1).toString(16).padStart(64, '0');
   let refus = 0, vus = 0, dernier = null;
   for (const qui of cob) {
@@ -3626,9 +3823,10 @@ async function simuleVente(t) {
     if (/^0x0*$/.test(String(r || ''))) { refus++; dernier = 'le transfert rend false'; }
     await dors(150);
   }
-  if (!vus) return { teste: false, raison: 'the node did not answer (' + (dernier || '?') + ')' };
-  return { teste: true, essais: vus, refus, passe: refus < vus,
-           raison: refus < vus ? null : (dernier || 'every transfer to the pool is refused') };
+  if (!vus) return { teste: false, via: cible.via,
+                     raison: 'the node did not answer (' + (dernier || '?') + ')' };
+  return { teste: true, essais: vus, refus, passe: refus < vus, via: cible.via,
+           raison: refus < vus ? null : (dernier || 'every transfer to the ' + cible.via + ' is refused') };
 }
 
 function vetoCobaye(t) {
@@ -3636,7 +3834,7 @@ function vetoCobaye(t) {
   if (!e || !e.teste) return null;        /* non testable n'est pas coupable */
   if (e.passe) return null;
   return 'the exit is blocked: ' + e.refus + '/' + e.essais
-       + ' holders cannot send the token to the pool';
+       + ' holders cannot send the token to the ' + (e.via || 'pool');
 }
 
 /* --------------------------------------------------------- les positions */
@@ -3951,6 +4149,11 @@ function ferme(p, prix, quand, comment) {
   /* Et personne n'apprend d'une lecture rejetee : une lecon tiree d'un chiffre
      faux se propage a tous les jetons qui partagent le trait. */
   if (!aberrant) for (const k of apprenants()) if (p.traits && p.traits[k]) apprendAgent(k, p.traits[k], r);
+  /* Le fond apprend une fois par jeton, pas une fois par agent. */
+  if (!aberrant) apprendBase(r);
+  /* Ce qu'est devenue cette position, pour la part d'abandons : suivie
+     jusqu'au bout, ou perdue de vue. Voir `partAbandons`. */
+  noteSuivi(aberrant ? 1 : 0);
   /* Le Closer apprend une DUREE — depuis la trajectoire reelle de la position,
      c'est-a-dire les prix qu'on a vraiment releves pendant qu'elle etait
      ouverte. */
@@ -4050,6 +4253,7 @@ function abandonneLesPerdues() {
          + ' min · stake returned, nothing counted',
       cls: 'n', t: now, tenue: now - p.t0, par: 'closer' });
     compte('abandonneeSansPrix');
+    noteSuivi(1);
     n++;
     return false;
   });
@@ -5039,6 +5243,84 @@ async function reprises(dejaVu) {
   return out;
 }
 
+/* ==========================================================================
+ * ON N'APPREND PAS QUE DES SURVIVANTS
+ *
+ * « Tu as recolte beaucoup de donnees a present. »
+ *
+ * Beaucoup, oui — et presque toutes du meme cote. Releve sur la colonie apres
+ * soixante et une heures : 598 ombres jugees, 1 099 en attente ; et ce que
+ * les agents en ont retenu : « trouve par pools » +49,8 %, « ne de <10 min »
+ * +48 %, « achats massifs » +56 %, « pool 1-5k » +38 %. Pendant le meme
+ * temps, les positions REELLES : 21 gagnantes sur 77, et les vingt dernieres
+ * a -3 % de mediane. Les ombres disaient que tout monte ; la caisse disait le
+ * contraire. L'une des deux mesures etait fausse, et c'etait celle dont tout
+ * le monde apprenait.
+ *
+ * Voici pourquoi. Une ombre n'est jugee que si le jeton REPASSE dans un flux
+ * avec un prix a l'echeance — trente minutes, plus ou moins quinze. Or le flux
+ * des nouveaux pools fait soixante pools, soit dix a vingt minutes de cette
+ * chaine : a trente minutes, un jeton n'y est plus. Il n'y revient que par
+ * les profils, les pousses, ou la surveillance — c'est-a-dire s'il vit encore
+ * et si quelqu'un s'en occupe. Un jeton vide a la vingtieme minute ne repasse
+ * nulle part : il n'est jamais juge, et sa chute n'entre dans aucune case.
+ * On ne mesurait que ceux qui avaient tenu. C'est le biais du survivant, mot
+ * pour mot, et il contaminait tout ce qui en decoule : le fond de +25 dans
+ * chaque case (voir `apprendBase`), les courbes par trait qui votaient pour
+ * tenir longtemps — puisque seuls les survivants avaient un prix a 60 et 120
+ * minutes —, et l'audit des refus, ou les regles dont les refuses sont relus
+ * par la surveillance paraissaient proteger, quand elles etaient seulement
+ * mieux mesurees.
+ *
+ * ---- CE QU'ON FAIT ----
+ *
+ * A chaque tour, les ombres dont une echeance est OUVERTE et que les flux ne
+ * cotent pas sont relues a leur adresse — la meme lecture que le prix de
+ * secours des positions. Six par tour au plus, l'echeance de reference
+ * d'abord, puis celles qui vont expirer. Le cache est vide avant : un prix
+ * d'il y a dix minutes n'est pas le prix a l'echeance. Un jeton que
+ * DexScreener ne connait pas reste non juge, et il est compte comme tel — on
+ * ne fabrique toujours pas de resultat ; on va simplement chercher ceux qui
+ * existent au lieu d'attendre qu'ils passent.
+ *
+ * Seules les echeances a partir de la reference sont relues : a cinq et
+ * quinze minutes, le jeton est encore dans le flux, et le relire serait payer
+ * un appel pour un prix qu'on a.
+ * ======================================================================== */
+const OMBRES_SECOURS_PAR_TOUR = 6;
+async function secoursOmbres(marche) {
+  if (!Array.isArray(E.ombres) || !E.ombres.length) return 0;
+  const now = Date.now();
+  const dues = [];
+  for (const o of E.ombres) {
+    const deja = marche[o.adr];
+    if (deja && deja.prix > 0) continue;
+    const age = (now - o.t) / 60000;
+    for (const h of HORIZONS) {
+      if (h < HORIZON_REF) continue;
+      if (o.jalons && o.jalons[h] !== undefined) continue;
+      if (!jalonValable(h, age)) continue;
+      dues.push({ o, ref: h === HORIZON_REF ? 0 : 1, reste: h + Math.max(5, h * 0.5) - age });
+      break;
+    }
+  }
+  if (!dues.length) return 0;
+  dues.sort((a, b) => a.ref - b.ref || a.reste - b.reste);
+  let n = 0;
+  for (const d of dues.slice(0, OMBRES_SECOURS_PAR_TOUR)) {
+    delete CACHE.dex[d.o.adr];
+    const x = await lisDex(d.o.adr);
+    if (x && x.vu && x.prix > 0) {
+      marche[d.o.adr] = { prix: x.prix, liq: x.liq || 0 };
+      posePrix(d.o.adr, x.prix);
+      n++;
+    } else compte('ombreMuette');
+    await dors(250);
+  }
+  if (n) compte('ombresDeSecours', n);
+  return n;
+}
+
 async function rassemble() {
   const parAdresse = new Map();
   for (const t of await lisPools()) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
@@ -5122,6 +5404,9 @@ async function tour() {
       await dors(250);
     }
     if (secours) compte('prixDeSecours', secours);
+    /* Et les ombres arrivees a echeance que les flux ne cotent plus : sans
+       ca, on n'apprend que des survivants. Voir `secoursOmbres`. */
+    await secoursOmbres(prix);
 
     /* On revient voir ce qu'on a vendu tot : c'est la que la lecon se forme. */
     regleLesSuites(prix);
@@ -5382,7 +5667,14 @@ function vue() {
     evites: E.evites || [],
     bandes: E.bandes || [],
     suites: (E.suites || []).map((s) => ({ sym: s.sym, rSortie: s.rSortie, echeance: s.echeance })),
-    ombres: { enAttente: (E.ombres || []).length, jugees: E.compteurs.ombresJugees || 0 },
+    ombres: { enAttente: (E.ombres || []).length, jugees: E.compteurs.ombresJugees || 0,
+              relues: E.compteurs.ombresDeSecours || 0, muettes: E.compteurs.ombreMuette || 0 },
+    /* Le fond que toute case se compare a : sans lui a l'ecran, un
+       ajustement de zero se lirait comme « rien appris ». */
+    base: E.base && E.base.n > 0
+      ? { n: Math.round(E.base.n * 10) / 10, moyenne: Math.round(E.base.s / E.base.n * 10) / 10,
+          actif: baseCourante() !== 0 }
+      : null,
     audit: auditDesRefus(),
     traits: classementDesTraits().slice(0, 12),
     horizons: HORIZONS, horizonRef: HORIZON_REF,
@@ -5556,6 +5848,8 @@ module.exports = {
   _journal: journal, _journalPublie: journalPublie, _memeRegard: memeRegard,
   /* exposes pour l'essai : ce sont eux qui portent les regles */
   scoreBase, analyse, traitsDe, tenueApprise, leconsDe, apprendAgent, ajustementAgent, ecartType,
+  apprendBase, baseCourante, BASE_MIN_OBS, centreLesNotes,
+  secoursOmbres, OMBRES_SECOURS_PAR_TOUR, noteSuivi, SUIVIS_FENETRE, cibleDeVente,
   caseNonLue, CASES_NON_LUES, TRAITS, MEMOIRE_DEMIVIE_J, SURV_MAX, fane,
   enMots, MOTS,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
