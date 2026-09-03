@@ -65,10 +65,11 @@ async function joueur() {
   return c;
 }
 const solde = async (c) => {
-  c.ws.send('{"type":"balance"}');
+  /* Le solde des PARIS : un pari se joue et se paie en $SWOGEBET. */
+  c.ws.send('{"type":"betBalance"}');
   await dors(200);
-  const b = dernier(c.recu, 'balance') || dernier(c.recu, 'auth');
-  return Number(b && b.balance);
+  const b = dernier(c.recu, 'betBalance') || dernier(c.recu, 'auth');
+  return Number(b && b.betBalance);
 };
 
 /* ---- LE CALENDRIER DE CET ESSAI EST LE SIEN ----

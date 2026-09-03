@@ -158,6 +158,11 @@ const avatars = require('./avatars');
 const table = new Table();
 const game = new Game();
 const chain = new Chain();
+/* Le coffre des paris : meme colle, autre jeton, autre domaine de signature.
+   Sans BET_VAULT_ADDRESS il existe quand meme — `suitLesRetraits()` rend
+   faux, les depots ne sont pas suivis, et `hello` porte `betVault: null`. */
+const chainBet = new Chain({ vault: cfg.BET_VAULT_ADDRESS, token: cfg.SWOGEBET_TOKEN,
+                             domainName: 'SwogeBetVault' });
 
 // ---- restore persisted balances (survives Railway redeploys via a volume) ----
 /* Si l'etat existe mais n'est pas lisible, store.load() JETTE plutot que de
@@ -711,6 +716,7 @@ console.log(relay.actif()
 function charge(ws, rec, extra) {
   return Object.assign({
     type: 'auth', address: rec, balance: game.balanceStr(rec),
+    betBalance: game.betBalanceStr(rec),
     fairness: game.fairness(rec), quests: game.questState(rec),
     /* CE QUI ATTEND LE JOUEUR part avec l'authentification, pas sur demande :
        la pastille doit etre allumee AVANT qu'il pense a regarder, sinon elle
@@ -3364,6 +3370,10 @@ wss.on('connection', (ws) => {
     serverSeedHash: game.serverSeedHash,
     dropCost: cfg.DROP_COST, minWithdraw: cfg.MIN_WITHDRAW,
     vault: cfg.VAULT_ADDRESS || null, token: cfg.SWOGE_TOKEN, chainId: cfg.CHAIN_ID,
+    /* Le coffre des paris, en $SWOGEBET : la page des paris depose et retire
+       la, et nulle part ailleurs. `null` tant qu'il n'est pas deploye. */
+    betVault: cfg.BET_VAULT_ADDRESS || null, betToken: cfg.SWOGEBET_TOKEN,
+    betMinWithdraw: cfg.BET_MIN_WITHDRAW,
     jackpot: game.jackpotStr(), leaderboard: game.leaderboard(cfg.LEADERBOARD_SIZE),
     joueurs: compte(),
     /* Les salles a ecran partent avec le bonjour et non avec l'entree dans le
@@ -3569,7 +3579,11 @@ wss.on('connection', (ws) => {
       if (m.type === 'devCredit') {
         if (!FAUCET_OK) return send(ws, { type: 'error', error: 'disabled' });
         game.creditDeposit({ player: ws.addr, amount: require('ethers').ethers.utils.parseUnits('1000', cfg.DECIMALS), tx: 'dev:' + Date.now() + Math.random() });
-        return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
+        /* Les deux soldes : un pari se joue en $SWOGEBET, et un robinet qui ne
+           servirait que du $SWOGE laisserait la page des paris sans rien a
+           essayer. Meme garde (FAUCET_OK), meme montant. */
+        game.creditBetDeposit({ player: ws.addr, amount: require('ethers').ethers.utils.parseUnits('1000', cfg.DECIMALS), tx: 'devb:' + Date.now() + Math.random() });
+        return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr), betBalance: game.betBalanceStr(ws.addr) });
       }
       if (m.type === 'setClientSeed') { game.setClientSeed(ws.addr, m.seed); return send(ws, { type: 'fairness', fairness: game.fairness(ws.addr) }); }
       if (m.type === 'claimQuest') {
@@ -3736,6 +3750,49 @@ wss.on('connection', (ws) => {
       }
       if (m.type === 'stakeInfo') return send(ws, { type: 'stakeInfo', ...game.stakeInfo(ws.addr), balance: game.balanceStr(ws.addr) });
       if (m.type === 'balance') return send(ws, { type: 'balance', balance: game.balanceStr(ws.addr) });
+      /* ---- LE SOLDE DES PARIS, ET SES RETRAITS ----
+       * Les jumeaux de `balance`, `withdraw`, `withdrawPending` et
+       * `withdrawVoucher`, sur le coffre $SWOGEBET. Meme forme de reponse
+       * (`voucher` porte le coffre a appeler), pour que la page n'ait qu'un
+       * seul chemin d'encaissement. */
+      if (m.type === 'betBalance') return send(ws, { type: 'betBalance', betBalance: game.betBalanceStr(ws.addr) });
+      if (m.type === 'betWithdraw') {
+        try {
+          if (!chainBet.suitLesRetraits()) throw new Error('the $SWOGEBET vault is not deployed yet');
+          try { game.noteBetRetireOnChain(ws.addr, await chainBet.withdrawnOnChain(ws.addr)); }
+          catch (e) { /* la chaine est muette : on garde ce qu'on croyait */ }
+          const cumulative = game.requestBetWithdraw(ws.addr, m.amount);
+          persistSoon();
+          const voucher = await chainBet.signVoucher(ws.addr, cumulative);
+          send(ws, { type: 'voucher', voucher, vault: cfg.BET_VAULT_ADDRESS, coffre: 'bet',
+                     betBalance: game.betBalanceStr(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'betWithdrawPending') {
+        if (chainBet.suitLesRetraits()) {
+          try { game.noteBetRetireOnChain(ws.addr, await chainBet.withdrawnOnChain(ws.addr)); }
+          catch (e) { /* muette : on repond avec ce qu'on croyait */ }
+        }
+        const b = game.bonBetEnAttente(ws.addr);
+        return send(ws, { type: 'bonAttente', coffre: 'bet',
+                          montant: ethers.utils.formatUnits(b.du, cfg.DECIMALS) });
+      }
+      if (m.type === 'betWithdrawVoucher') {
+        try {
+          if (!chainBet.suitLesRetraits()) throw new Error('the $SWOGEBET vault is not deployed yet');
+          try { game.noteBetRetireOnChain(ws.addr, await chainBet.withdrawnOnChain(ws.addr)); }
+          catch (e) { /* muette : on repond avec ce qu'on croyait */ }
+          const b = game.bonBetEnAttente(ws.addr);
+          if (b.cumulative.lte(0)) throw new Error('you have no withdrawal to claim');
+          if (b.du.lte(0)) throw new Error('your last withdrawal has already been claimed on-chain');
+          const voucher = await chainBet.signVoucher(ws.addr, b.cumulative);
+          send(ws, { type: 'voucher', voucher, vault: cfg.BET_VAULT_ADDRESS, coffre: 'bet',
+                     enAttente: ethers.utils.formatUnits(b.du, cfg.DECIMALS),
+                     betBalance: game.betBalanceStr(ws.addr) });
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
       /* L'historique du joueur. On rend une PAGE, pas tout : un joueur de la
          premiere heure a des dizaines de milliers de manches, et les lui
          envoyer d'un bloc bloquerait sa page comme le serveur. Le curseur est
@@ -5626,6 +5683,7 @@ wss.on('connection', (ws) => {
           persistSoon();
           notifyBetPlaced(ws.addr, pari);
           send(ws, { type: 'pariPose', pari, balance: game.balanceStr(ws.addr),
+                     betBalance: game.betBalanceStr(ws.addr),
                      matchs: avecDirect(game.parisOuverts(Date.now())),
                      mesParis: game.mesParis(ws.addr, 40) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -6677,6 +6735,27 @@ const saveInterval = setInterval(persist, cfg.SAVE_MS);
       }
     }, (nextBlock) => { game.lastBlock = nextBlock; sante.noteBloc(); });
   } catch (e) { console.warn('deposit watch init failed:', e.message); }
+  /* ---- ET LE COFFRE DES PARIS, AVEC SON PROPRE REPERE DE BLOC ----
+   * Le meme guet, sur SwogeBetVault. Son repere est a part : les deux coffres
+   * ne sont pas nes au meme bloc, et partager le repere ferait manquer au
+   * second tous les depots anterieurs au premier passage du premier. */
+  try {
+    if (chainBet.vault) {
+      const tipBet = await chainBet.provider.getBlockNumber();
+      const fromBet = game.betLastBlock || cfg.BET_SCAN_FROM_BLOCK || tipBet;
+      chainBet.watchDeposits(fromBet, (d) => {
+        if (game.creditBetDeposit(d)) {
+          persist();
+          console.log(`[deposit bet] ${d.player} +${d.amount.toString()} (${d.tx})`);
+          toAddr(d.player, { type: 'betDeposit', betBalance: game.betBalanceStr(d.player) });
+          const amt = ethers.utils.formatUnits(d.amount, cfg.DECIMALS);
+          if (d.block >= tipBet && parseFloat(amt) >= cfg.NOTIFY_DEPOSIT_MIN) {
+            tg.notify(`🎯 <b>New bet deposit</b>\n${short(d.player)} deposited <b>${fmtAmt(amt)} $SWOGEBET</b>\n<a href="${cfg.EXPLORER}/tx/${d.tx}">view tx ↗</a>`);
+          }
+        }
+      }, (nextBlock) => { game.betLastBlock = nextBlock; });
+    }
+  } catch (e) { console.warn('bet deposit watch init failed:', e.message); }
 })();
 
 server.listen(cfg.PORT, () => {

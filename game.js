@@ -387,6 +387,7 @@ class Game {
     this.telegramMap = new Map(); // telegramId (string) -> addr, so the Adsgram reward postback can find the account
     this.seenTx = new Set();  // dedupe deposits
     this.lastBlock = 0;       // deposit-scan watermark (persisted so a restart resumes)
+    this.betLastBlock = 0;    // the same, for the $SWOGEBET vault of the bets
     this._stakeRateBps = BN(cfg.STAKE_APR_BPS);
     // progressive jackpot (all wei)
     this.jackpotPot = WEI(cfg.JACKPOT_SEED);
@@ -498,6 +499,9 @@ class Game {
       && !p.parrain && !(p.filleuls || []).length
       && !(p.stakes || []).length && z(p.stakeAccrued) && z(p.stakeClaimTotal)
       && z(p.cumulativeAuthorized) && z(p.bonDu || BN(0)) && !p.tgId
+      /* Le solde des paris compte comme une trace, au meme titre que le $SWOGE. */
+      && z(p.betBalance || BN(0)) && z(p.betCumulativeAuthorized || BN(0))
+      && z(p.betBonDu || BN(0)) && z(p.betDeposited || BN(0))
       && z(p.refDu) && z(p.refTotal) && !(p.attente || []).length
       /* ---- L'XP COMPTE COMME UNE TRACE ----
        *
@@ -549,6 +553,9 @@ class Game {
     return {
         b: p.balance.toString(), c: p.cumulativeAuthorized.toString(),
         bd: (p.bonDu || ethers.BigNumber.from(0)).toString(),
+        /* le solde des paris et ses deux compteurs de retrait */
+        pb: (p.betBalance || BN(0)).toString(), pc: (p.betCumulativeAuthorized || BN(0)).toString(),
+        pbd: (p.betBonDu || BN(0)).toString(), pdp: (p.betDeposited || BN(0)).toString(),
         s: p.clientSeed, n: p.nonce, name: p.name, nc: !!p.nomChoisi,
         /* Le nom a ete PAYE. Sans ca au fichier, le joueur repaierait mille
            jetons a chaque redeploiement, et personne ne comprendrait pourquoi. */
@@ -708,6 +715,7 @@ class Game {
              fraisCumules: (this.fraisCumules || BN(0)).toString(),
              brule: (this.brule || BN(0)).toString(), brulages: this.brulages || [],
              lastBlock: this.lastBlock, seenTx: Array.from(this.seenTx),
+             betLastBlock: this.betLastBlock || 0,
              usage: this.usage || {},
              /* LES GALERIES DES SALLES A ECRAN. Elles sont dans l'etat et
                 non dans un fichier a part parce qu'elles tiennent en quelques
@@ -1715,6 +1723,7 @@ class Game {
     if (st.crashGraine && !cfg.CRASH_GRAINE) { this.crashGraine = st.crashGraine; this._crashTable(); }
     if (st.crash) this.crash.charge(st.crash);
     if (st.lastBlock) this.lastBlock = st.lastBlock;
+    if (st.betLastBlock) this.betLastBlock = st.betLastBlock;
     if (Array.isArray(st.seenTx)) this.seenTx = new Set(st.seenTx);
     if (st.fraisCumules) this.fraisCumules = ethers.BigNumber.from(st.fraisCumules);
     if (st.brule) this.brule = ethers.BigNumber.from(st.brule);
@@ -1731,6 +1740,13 @@ class Game {
          * ecart possible est un bon signe dans l'heure precedant le
          * redemarrage, et il se rattrape au premier retour de la chaine. */
         bonDu: ethers.BigNumber.from(d.bd || '0'),
+        /* `pb`/`pc`/`pbd`/`pdp` : les cles `bb`/`bc` etaient deja prises par le
+           cadeau de bienvenue, et une cle en double dans la fiche, c'est la
+           derniere qui gagne — le solde des paris s'ecrivait a zero. */
+        betBalance: ethers.BigNumber.from(d.pb || '0'),
+        betCumulativeAuthorized: ethers.BigNumber.from(d.pc || '0'),
+        betBonDu: ethers.BigNumber.from(d.pbd || '0'),
+        betDeposited: ethers.BigNumber.from(d.pdp || '0'),
         clientSeed: d.s || crypto.randomBytes(8).toString('hex'),
         nonce: d.n || 0, name: d.name || addr.slice(0, 6),
         /* Les etats ecrits avant cette marque n'ont pas de `nc`. Un nom qui
@@ -3582,11 +3598,12 @@ class Game {
     });
 
     const mise = Math.floor(Number(miseRaw));
-    if (!(mise >= cfg.PARI_MIN)) throw new Error('minimum bet is ' + cfg.PARI_MIN + ' $SWOGE');
-    if (mise > cfg.PARI_MAX) throw new Error('maximum bet is ' + cfg.PARI_MAX + ' $SWOGE');
+    if (!(mise >= cfg.PARI_MIN)) throw new Error('minimum bet is ' + cfg.PARI_MIN + ' $SWOGEBET');
+    if (mise > cfg.PARI_MAX) throw new Error('maximum bet is ' + cfg.PARI_MAX + ' $SWOGEBET');
 
     const p = this._p(addr);
-    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+    /* Le solde des PARIS, pas le $SWOGE : voir la note au debit, plus bas. */
+    if ((p.betBalance || BN(0)).lt(WEI(mise))) throw new Error('not enough $SWOGEBET — deposit some in the bet vault');
 
     let cote = 1;
     for (const j of jambes) cote *= j.cote;
@@ -3594,7 +3611,7 @@ class Game {
     const rapport = paris.rapport(cote, mise);
     if (rapport > cfg.PARI_GAIN_MAX)
       throw new Error('this bet could return ' + Math.floor(rapport) +
-        ' $SWOGE — the cap is ' + cfg.PARI_GAIN_MAX + '. Lower the stake or drop a leg.');
+        ' $SWOGEBET — the cap is ' + cfg.PARI_GAIN_MAX + '. Lower the stake or drop a leg.');
 
     /* Le plafond, match par match. Le gain ENTIER pese sur CHAQUE match
        touche : c'est majorant, et un garde-fou doit majorer. */
@@ -3624,12 +3641,19 @@ class Game {
         const m = paris.match(j.match);
         throw new Error(m.domicile + ' v ' + m.exterieur + ' is full — ' +
           Math.max(0, Math.floor(cfg.PARI_ENGAGEMENT_MAX - this.engagementMatch(j.match))) +
-          ' $SWOGE of exposure left');
+          ' $SWOGEBET of exposure left');
       }
     }
 
-    p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++;
+    /* ---- LA MISE PART DU SOLDE DES PARIS, EN $SWOGEBET ----
+     * « Qu'on puisse jouer aux paris qu'avec du SWOGEBET. » Le solde $SWOGE
+     * n'est plus touche par un pari : ce qui se mise ici est entre par
+     * SwogeBetVault, et ce qui se gagne y retourne (`regleMatch`,
+     * `rembourseMatch`). Le compteur de mises du jour et les missions
+     * continuent de compter le pari comme une activite — c'est ce qu'ils
+     * mesurent — mais le montant, lui, n'est pas du $SWOGE. */
+    p.betBalance = (p.betBalance || BN(0)).sub(WEI(mise));
+    this._bumpDay(p); p.dropsToday++;
     this._markWager(p, WEI(mise), 'paris');
 
     if (!this.paris) this.paris = [];
@@ -3637,6 +3661,13 @@ class Game {
       id: 'b' + (++this.parisSeq) + '-' + Math.floor(t / 1000).toString(36),
       addr: String(addr).toLowerCase(),
       jambes, cote, mise, rapport, t,
+      /* ---- LA MONNAIE DU TICKET ----
+         « Des gens ont mise en $SWOGE hier : toutes les mises en $SWOGE
+         devront etre payees en $SWOGE. » Un ticket porte donc la monnaie
+         dans laquelle sa mise est partie, et c'est elle qui recoit le gain ou
+         le remboursement. Un ticket d'avant ce champ n'en a pas : il a ete
+         paye en $SWOGE, il sera regle en $SWOGE. */
+      jeton: 'swogebet',
       regle: false, gagne: null,
       /* Les champs d'un simple restent remplis : les paris deja poses et les
          pages en service les lisent. */
@@ -4070,8 +4101,10 @@ class Game {
       const rendu = v ? p.rapport : 0;
       if (rendu > 0) {
         const q = this._p(p.addr);
-        q.balance = q.balance.add(WEI(rendu));
-        this._bumpDay(q); q.dayNet = q.dayNet.add(WEI(rendu)); q.winsToday++;
+        /* Le gain revient la ou la mise est partie : au solde des paris pour
+           un ticket en $SWOGEBET, au solde $SWOGE pour un ticket d'avant. */
+        this._crediteTicket(q, p, WEI(rendu));
+        this._bumpDay(q); q.winsToday++;
         paye += rendu; gagnants++;
       } else perdus++;
       /* LE PLUS GROS GAGNANT DE CE REGLEMENT. On le retient au passage plutot
@@ -4144,14 +4177,24 @@ class Game {
     for (const p of liste) {
       p.regle = true; p.gagne = null;
       const q = this._p(p.addr);
-      q.balance = q.balance.add(WEI(p.mise));
-      this._bumpDay(q); q.dayNet = q.dayNet.add(WEI(p.mise));
+      this._crediteTicket(q, p, WEI(p.mise));
+      this._bumpDay(q);
       rendu += p.mise;
       journal.ajoute(p.addr, { k: 'pa', s: 'rembourse', m: String(p.mise), match: matchId });
     }
     this.parisRegles[matchId] = { t: Date.now(), resultat: null, rembourse: true,
                                   paris: liste.length, rendu };
     return { match: matchId, paris: liste.length, rendu };
+  }
+
+  /** La monnaie d'un ticket : 'swogebet' depuis le coffre des paris, 'swoge'
+      pour tout ticket pose avant lui (le champ n'existait pas). */
+  static jetonDuTicket(pari) { return pari && pari.jeton === 'swogebet' ? 'swogebet' : 'swoge'; }
+
+  /** Verser a un joueur ce qu'un ticket lui doit, dans la monnaie du ticket. */
+  _crediteTicket(q, pari, wei) {
+    if (Game.jetonDuTicket(pari) === 'swogebet') q.betBalance = (q.betBalance || BN(0)).add(wei);
+    else { q.balance = q.balance.add(wei); q.dayNet = q.dayNet.add(wei); }
   }
 
   /** Ce que la maison doit encore sur l'ensemble des paris non regles. */
@@ -5303,6 +5346,12 @@ class Game {
                le solde du joueur — donc plus dans le « du », donc comptes dans
                le surplus du proprietaire. Il pouvait les retirer de bonne foi. */
             bonDu: ethers.BigNumber.from(0),
+            /* ---- LE SOLDE DES PARIS, EN $SWOGEBET ----
+               Un second solde, avec son propre cumul de retrait et son propre
+               « du » : ce qui entre par SwogeBetVault ne se melange jamais au
+               $SWOGE, et un bon signe pour un coffre ne vaut rien chez
+               l'autre. Voir `creditBetDeposit` et `requestBetWithdraw`. */
+            betBalance: BN(0), betCumulativeAuthorized: BN(0), betBonDu: BN(0), betDeposited: BN(0),
             clientSeed: crypto.randomBytes(8).toString('hex'), nonce: 0, name: addr.slice(0, 6),
             nomChoisi: false,
             deposited: BN(0), jeux: {}, visage: null, amis: [], demandes: [], envoyees: [],
@@ -10810,6 +10859,75 @@ class Game {
     const reste = p.cumulativeAuthorized.sub(tire);
     p.bonDu = reste.gt(0) ? reste : BN(0);
     return p.bonDu;
+  }
+
+  /* ==================== LE SOLDE DES PARIS, EN $SWOGEBET ====================
+   *
+   * « Il faudrait faire le contrat vault SWOGEBET pour qu'on puisse jouer aux
+   *   paris qu'avec du SWOGEBET. »
+   *
+   * Un second coffre (SwogeBetVault, meme modele que le coffre $SWOGE) et un
+   * second solde par joueur. Les quatre gestes ci-dessous sont les jumeaux de
+   * `creditDeposit`, `requestWithdraw`, `bonEnAttente` et `noteRetireOnChain`,
+   * sur les champs `bet*` de la fiche — et sur EUX SEULS. Rien ici ne touche
+   * le $SWOGE : un pari ne peut ni se financer avec, ni y verser un gain.
+   *
+   * Ce qui est volontairement plus simple que le $SWOGE :
+   *   - pas de cadeau de bienvenue, donc pas de verrou de mise a atteindre ;
+   *   - pas de palier : le minimum de retrait est celui du coffre, en clair ;
+   *   - le frais de retrait est le meme taux (WITHDRAW_FEE_BPS) : ce qui est
+   *     retenu reste dans le coffre des paris, et se compte a part.
+   * ======================================================================== */
+  betBalanceStr(addr) { return ethers.utils.formatUnits(this._p(addr).betBalance || BN(0), cfg.DECIMALS); }
+
+  creditBetDeposit({ player, amount, tx }) {
+    if (this.seenTx.has(tx)) return false;
+    this.seenTx.add(tx);
+    const p = this._p(player);
+    p.betBalance = (p.betBalance || BN(0)).add(amount);
+    p.betDeposited = (p.betDeposited || BN(0)).add(amount);
+    this.note('depotsBet', ethers.utils.formatUnits(amount, cfg.DECIMALS));
+    journal.ajouteSync(player, { k: 'depb', m: ethers.utils.formatUnits(amount, cfg.DECIMALS),
+                                 tx, from: String(player).toLowerCase() });
+    return true;
+  }
+
+  /** Autorise un retrait de `amountStr` $SWOGEBET. Rend le cumul (wei) ou leve. */
+  requestBetWithdraw(addr, amountStr) {
+    if (this.estMaison(addr))
+      throw new Error('house accounts do not withdraw — use the owner withdrawal.');
+    const p = this._p(addr);
+    const amount = WEI(amountStr);
+    const mini = WEI(String(cfg.BET_MIN_WITHDRAW));
+    if (amount.lt(mini)) throw new Error('below minimum withdraw (' + cfg.BET_MIN_WITHDRAW + ' $SWOGEBET)');
+    if (amount.gt(p.betBalance || BN(0))) throw new Error('amount exceeds your $SWOGEBET balance');
+    const frais = this.fraisRetrait(addr, amount);
+    const net = amount.sub(frais);
+    p.betBalance = p.betBalance.sub(amount);
+    p.betCumulativeAuthorized = (p.betCumulativeAuthorized || BN(0)).add(net);
+    p.betBonDu = (p.betBonDu || BN(0)).add(net);
+    this.betFraisCumules = (this.betFraisCumules || BN(0)).add(frais);
+    this.note('retraitsBet', ethers.utils.formatUnits(net, cfg.DECIMALS));
+    journal.ajoute(addr, { k: 'wdb', m: ethers.utils.formatUnits(net, cfg.DECIMALS),
+                           brut: amountStr,
+                           frais: ethers.utils.formatUnits(frais, cfg.DECIMALS),
+                           to: String(addr).toLowerCase(),
+                           cum: ethers.utils.formatUnits(p.betCumulativeAuthorized, cfg.DECIMALS) });
+    return p.betCumulativeAuthorized;
+  }
+
+  bonBetEnAttente(addr) {
+    const p = this._p(addr);
+    return { cumulative: p.betCumulativeAuthorized || BN(0), du: p.betBonDu || BN(0) };
+  }
+
+  noteBetRetireOnChain(addr, retireWei) {
+    const p = this._p(addr);
+    const tire = (retireWei && retireWei._isBigNumber)
+      ? retireWei : BN(String(retireWei || '0'));
+    const reste = (p.betCumulativeAuthorized || BN(0)).sub(tire);
+    p.betBonDu = reste.gt(0) ? reste : BN(0);
+    return p.betBonDu;
   }
 
   // ------------------------------------------------------------- les amis

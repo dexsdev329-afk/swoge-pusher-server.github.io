@@ -15,19 +15,30 @@ const VAULT_ABI = [
   'function minWithdraw() view returns (uint256)',
 ];
 
+/* ---- UN COFFRE PAR JETON, LA MEME COLLE POUR LES DEUX ----
+ * Sans argument, c'est le coffre $SWOGE, comme depuis le premier jour. Avec
+ * `{ vault, token, domainName }`, c'est un autre coffre du meme modele — celui
+ * des paris, en $SWOGEBET (SwogeBetVault). Le nom du domaine EIP-712 entre
+ * dans la signature : un bon signe pour l'un ne vaut rien chez l'autre, et
+ * c'est le contrat qui le verifie, pas nous. */
 class Chain {
-  constructor() {
-    this.provider = new ethers.providers.StaticJsonRpcProvider(cfg.RPC_URL, cfg.CHAIN_ID);
+  constructor(opts) {
+    const o = opts || {};
+    const vaultAddr = o.vault !== undefined ? o.vault : cfg.VAULT_ADDRESS;
+    const tokenAddr = o.token !== undefined ? o.token : cfg.SWOGE_TOKEN;
+    this.nom = o.domainName || 'SwogePusherVault';
+    this.provider = o.provider || new ethers.providers.StaticJsonRpcProvider(cfg.RPC_URL, cfg.CHAIN_ID);
     this.signer = cfg.SIGNER_PRIVATE_KEY ? new ethers.Wallet(cfg.SIGNER_PRIVATE_KEY) : null;
-    this.vault = cfg.VAULT_ADDRESS
-      ? new ethers.Contract(cfg.VAULT_ADDRESS, VAULT_ABI, this.provider)
+    this.vaultAddress = vaultAddr || '';
+    this.vault = vaultAddr
+      ? new ethers.Contract(vaultAddr, VAULT_ABI, this.provider)
       : null;
-    this.token = cfg.SWOGE_TOKEN
-      ? new ethers.Contract(cfg.SWOGE_TOKEN, ['function totalSupply() view returns (uint256)'], this.provider)
+    this.token = tokenAddr
+      ? new ethers.Contract(tokenAddr, ['function totalSupply() view returns (uint256)'], this.provider)
       : null;
     this.domain = {
-      name: 'SwogePusherVault', version: '1',
-      chainId: cfg.CHAIN_ID, verifyingContract: cfg.VAULT_ADDRESS,
+      name: this.nom, version: '1',
+      chainId: cfg.CHAIN_ID, verifyingContract: vaultAddr,
     };
     this.types = { Withdraw: [
       { name: 'player', type: 'address' },
@@ -44,7 +55,7 @@ class Chain {
    * persist the watermark (resume here after a restart, no missed/double credits).
    */
   async watchDeposits(fromBlock, onDeposit, onBlock) {
-    if (!this.vault) { console.warn('[chain] no VAULT_ADDRESS set — deposit watch disabled'); return; }
+    if (!this.vault) { console.warn('[chain] no vault address set for ' + this.nom + ' — deposit watch disabled'); return; }
     let last = fromBlock;
     const tick = async () => {
       try {

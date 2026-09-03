@@ -35,14 +35,15 @@ const jete = (f, re, m) => { assert.throws(f, re, m); n++; };
 
 const A = '0x' + 'a1'.repeat(20), B = '0x' + 'b2'.repeat(20);
 const W = (v) => ethers.utils.parseUnits(String(v), cfg.DECIMALS);
-const sol = (g, a) => Number(g.balanceStr(a));
+/* Le solde des PARIS : un pari se joue en $SWOGEBET, jamais en $SWOGE. */
+const sol = (g, a) => Number(g.betBalanceStr(a));
 const AVANT = Date.parse('2026-08-15T09:00:00Z');   // avant tous les coups d'envoi
 const APRES = Date.parse('2026-08-15T20:00:00Z');   // apres tous
 const M = 'efl-20260815-bol-pre';                    // Bolton-Preston, 2.12 / 3.22 / 3.17
 
 function jeu(credit) {
   const g = new Game();
-  for (const a of [A, B]) g._p(a).balance = W(credit || 1000000);
+  for (const a of [A, B]) { g._p(a).balance = W(credit || 1000000); g._p(a).betBalance = W(credit || 1000000); }
   return g;
 }
 

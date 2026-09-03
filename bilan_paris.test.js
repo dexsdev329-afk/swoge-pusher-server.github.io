@@ -49,7 +49,7 @@ ok(M.length === 4, 'quatre matchs de foot au catalogue pour ce test');
 
 function jeu() {
   const g = new Game();
-  for (const a of [A, B]) g._p(a).balance = W(1000000);
+  for (const a of [A, B]) { g._p(a).balance = W(1000000); g._p(a).betBalance = W(1000000); }
   return g;
 }
 

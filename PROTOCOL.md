@@ -19,6 +19,11 @@ All messages are JSON. Connect to the server's WebSocket URL.
 - `need_deposit` — tried to drop with too little balance: `{ type, balance }`
 - `voucher` — withdrawal authorized:
   `{ type, vault, balance, voucher:{ cumulative, deadline, v, r, s } }`
+  For the bet vault the same message carries `coffre:"bet"`, `betBalance`, and
+  `vault` is the SwogeBetVault address: call `withdraw` on THAT contract.
+- `betBalance` — `{ type, betBalance }` — your $SWOGEBET balance (sports bets only)
+- `betDeposit` — a $SWOGEBET deposit was credited: `{ type, betBalance }`
+- `pariPose` — a bet was placed: `{ type, pari, balance, betBalance, matchs, mesParis }`
 - `fairness` — `{ type, fairness:{serverSeedHash, clientSeed, nonce} }`
 - `error` — `{ type, error }`
 
@@ -31,6 +36,19 @@ All messages are JSON. Connect to the server's WebSocket URL.
 - `balance` — `{ type }` (ask for your balance)
 - `setClientSeed` — `{ type, seed }` (provably-fair client seed)
 - `withdraw` — `{ type, amount }` (amount in whole $SWOGE, ≥ minWithdraw)
+- `betBalance` — `{ type }` (ask for your $SWOGEBET balance)
+- `betWithdraw` — `{ type, amount }` (whole $SWOGEBET, ≥ `betMinWithdraw` from `hello`)
+- `betWithdrawPending` / `betWithdrawVoucher` — the bet-vault twins of
+  `withdrawPending` / `withdrawVoucher`
+
+## Sports bets are played in $SWOGEBET only
+
+`hello` also carries `betVault`, `betToken` and `betMinWithdraw`. The betting
+page deposits and withdraws on `betVault` (SwogeBetVault, same ABI and the
+same EIP-712 voucher shape as SwogePusherVault, domain name `SwogeBetVault`).
+`parie` debits the $SWOGEBET balance and winnings return to it; the $SWOGE
+balance is never touched by a bet. While `betVault` is `null` the vault is not
+deployed yet and bets cannot be funded.
 
 ## Deposit → play → cash-out flow
 

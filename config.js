@@ -95,6 +95,16 @@ module.exports = {
   CHAIN_ID: parseInt(env('CHAIN_ID', '4663'), 10),
   SWOGE_TOKEN: env('SWOGE_TOKEN', '0x8a166Fb41Cd659a0a43396272FF73973Ce29F817'),
   VAULT_ADDRESS: env('VAULT_ADDRESS', ''), // set after deploying SwogePusherVault
+  /* ---- LE COFFRE DES PARIS, EN $SWOGEBET ----
+   * « Qu'on puisse jouer aux paris qu'avec du SWOGEBET. »
+   * Un second coffre, du meme modele que celui du $SWOGE (contrats/
+   * SwogeBetVault.sol dans le depot du site), et un second solde par joueur.
+   * Tant que BET_VAULT_ADDRESS est vide, les paris ne peuvent pas etre
+   * approvisionnes — et le serveur le dit dans `hello` (betVault: null). */
+  BET_VAULT_ADDRESS: env('BET_VAULT_ADDRESS', ''),
+  SWOGEBET_TOKEN: env('SWOGEBET_TOKEN', '0xc0aed547862fba5d7d9fbf3cb14204cd756c8bea'),
+  BET_MIN_WITHDRAW: env('BET_MIN_WITHDRAW', '50'),        // doit valoir le minWithdraw du coffre
+  BET_SCAN_FROM_BLOCK: parseInt(env('BET_SCAN_FROM_BLOCK', '0'), 10) || 0,
   // One-time recovery: on the FIRST run (no saved state), scan Deposit events
   // from this block instead of the chain tip, so deposits made before
   // persistence existed are re-credited. Set it once to the Vault's deploy

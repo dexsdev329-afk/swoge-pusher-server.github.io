@@ -44,7 +44,7 @@ const jete = (f, re, m) => { assert.throws(f, re, m); n++; };
 
 const A = '0x' + 'a1'.repeat(20);
 const W = (v) => ethers.utils.parseUnits(String(v), cfg.DECIMALS);
-const sol = (g, a) => Number(g.balanceStr(a));
+const sol = (g, a) => Number(g.betBalanceStr(a));
 const AVANT = Date.parse('2026-08-15T09:00:00Z');   // avant les coups d'envoi
 const APRES = Date.parse('2026-08-15T20:00:00Z');   // apres
 const M = 'efl-20260815-bol-pre';                   // un match de foot, 1-N-2
@@ -79,7 +79,7 @@ function volume(matchs) {
    calendrier du jour. */
 {
   const g = new Game();
-  g._p(A).balance = W(100000);
+  g._p(A).balance = W(100000); g._p(A).betBalance = W(100000);
   const pari = g.parie(A, M, 'N', 1000, AVANT);
   eq(pari.jambes[0].domicile, CIBLE.domicile, 'la jambe garde le nom de l equipe a domicile');
   eq(pari.jambes[0].exterieur, CIBLE.exterieur, 'et celui de l exterieur');
@@ -117,7 +117,7 @@ function volume(matchs) {
 {
   volume(DEPOT.matchs);
   const g = new Game();
-  g._p(A).balance = W(100000);
+  g._p(A).balance = W(100000); g._p(A).betBalance = W(100000);
   const pari = g.parie(A, M, 'N', 1000, AVANT);
   /* On retire la fiche de la jambe : c'est exactement l'etat sauvegarde des
      paris poses avant ce correctif. */
@@ -149,7 +149,7 @@ function volume(matchs) {
   const g = new Game();
   jete(() => g.regleMatch('rien-du-tout-20260817', '1'), /unknown match/,
     'un identifiant sans pari est refuse');
-  g._p(A).balance = W(100000);
+  g._p(A).balance = W(100000); g._p(A).betBalance = W(100000);
   g.parie(A, M, '1', 1000, AVANT);
   volume(DEPOT.matchs.filter((m) => m.id !== M));
   jete(() => g.regleMatch(M, 'X'), /must be a score like 2-1, or one of/,
@@ -161,7 +161,7 @@ function volume(matchs) {
 //                                                 DEPENDU DU CALENDRIER
 {
   const g = new Game();
-  g._p(A).balance = W(100000);
+  g._p(A).balance = W(100000); g._p(A).betBalance = W(100000);
   volume(DEPOT.matchs);
   const pari = g.parie(A, M, '2', 1000, AVANT);
   volume(DEPOT.matchs.filter((m) => m.id !== M));
