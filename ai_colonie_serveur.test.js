@@ -2657,10 +2657,26 @@ async function epreuveDeVente() {
  * calendrier d'indexation.
  * ======================================================================== */
 async function presenceDuProjet() {
-  console.log('\n-- site, twitter, telegram --');
+  console.log('\n-- la presence publique --');
   console.log('   exiges : ' + JSON.stringify(C.sociauxExiges()));
-  ok(C.sociauxExiges().join(',') === 'site,twitter,telegram',
-     'les trois sont exiges par defaut');
+  /* ---- POURQUOI LA REGLE A ETE RELACHEE ----
+   * DEMANDE : « verifie si c est important d avoir telegram website et
+   * twitter, peut-etre on est trop severe, peut-etre on loupe des
+   * opportunites ».
+   *
+   * L'audit des refus repondait, et il ne disait pas ce qu'on croyait. Sur la
+   * famille « il manque : site, telegram », n = 13 jetons ecartes, rendement
+   * moyen +28,6 % a l'echeance de reference, 6 montes, 2 effondres. Autrement
+   * dit : la regle a coute plus qu'elle n'a evite.
+   *
+   * Ce qu'elle evitait vraiment, c'est le jeton SANS AUCUNE trace publique —
+   * pas celui a qui il manque un des trois. La regle garde donc son travail
+   * et perd sa severite : une presence quelconque suffit, zero ne suffit pas.
+   * Les trois restent exigibles, par `SOCIAUX_EXIGES` — c'est la meme regle,
+   * reglee autrement, et l'essai le verifie plus bas. */
+  ok(C.sociauxExiges().join(',') === 'un',
+     'par defaut, UNE presence publique suffit — l audit disait que le reste coutait plus '
+     + 'qu il n evitait (n=13, +28,6 % de moyenne, 6 montes)');
 
   const complet = { dex: { vu: true, liens: [
     { type: 'site', url: 'https://a.example' }, { type: 'twitter', url: 'https://x.com/a' },
@@ -2670,8 +2686,19 @@ async function presenceDuProjet() {
   const sansTg = { dex: { vu: true, liens: [
     { type: 'site', url: 'https://a.example' }, { type: 'twitter', url: 'https://x.com/a' }] } };
   console.log('   sans telegram : ' + C.vetoOracle(sansTg));
-  ok(/telegram/.test(C.vetoOracle(sansTg) || ''),
-     'et il manque est NOMME, pas juste « refuse » : « ' + C.vetoOracle(sansTg) + ' »');
+  ok(C.vetoOracle(sansTg) === null,
+     'et un projet a qui il manque UN des trois passe aussi : c est exactement ce que la regle '
+     + 'refusait, et ce que l audit a chiffre a +28,6 %');
+
+  /* ---- MAIS ZERO NE PASSE PAS ----
+   * C'est la seule chose que la regle prouvait vraiment. La relacher ne veut
+   * pas dire l'effacer : un jeton sans site, sans X et sans Telegram n'a
+   * personne derriere a qui le reprocher. */
+  const rien = { dex: { vu: true, liens: [] } };
+  console.log('   aucune presence : ' + C.vetoOracle(rien));
+  ok(/aucune presence publique/.test(C.vetoOracle(rien) || ''),
+     'un jeton sans site, sans X et sans Telegram est toujours refuse — et le refus le DIT : « '
+     + C.vetoOracle(rien) + ' »');
 
   /* ---- « PAS ENCORE VU » N'EST PAS « ABSENT » ----
    * DexScreener ne connait qu'un jeton sur douze a deux minutes. Les deux cas
@@ -2695,25 +2722,38 @@ async function presenceDuProjet() {
   process.env.SOCIAUX_EXIGES = 'site';
   ok(C.vetoOracle(sansTg) === null && /site/.test(C.vetoOracle({ dex: { vu: true, liens: [] } }) || ''),
      'et on peut n en exiger qu un');
+  /* ---- LA SEVERITE D'AVANT EST TOUJOURS DISPONIBLE ----
+   * Relacher un defaut n'est pas retirer une capacite. Si l'audit de demain
+   * dit l'inverse de celui d'hier, une variable d'environnement suffit a
+   * remettre les trois — sans toucher au code, et sans redeploiement. */
+  process.env.SOCIAUX_EXIGES = 'site,twitter,telegram';
+  console.log('   en mode severe, sans telegram : ' + C.vetoOracle(sansTg));
+  ok(/telegram/.test(C.vetoOracle(sansTg) || ''),
+     'et en mode severe, ce qui manque est NOMME, pas juste « refuse » : « '
+     + C.vetoOracle(sansTg) + ' »');
   if (avant === undefined) delete process.env.SOCIAUX_EXIGES; else process.env.SOCIAUX_EXIGES = avant;
 
-  /* ---- ET DANS UN TOUR COMPLET ---- */
+  /* ---- ET DANS UN TOUR COMPLET ----
+   * C'est ici que la relache se voit : le meme flux qui n'ouvrait RIEN
+   * ouvre maintenant. Sans ce tour, on aurait prouve la regle et pas son
+   * effet — et l'effet est toute la demande. */
   remise([jeton(0, { sansTelegram: true }), jeton(1, { sansTelegram: true })]);
   await C.tour();
   const v = C.vue();
   console.log('   ' + JSON.stringify(v.candidats.map((x) => x.sym + ' : ' + x.refus)));
-  ok(C._etat().positions.length === 0,
-     'un flux entier de jetons sans Telegram n ouvre aucune position');
-  ok(v.candidats.every((x) => x.quiRefuse === 'oracle' && /telegram/.test(x.refus || '')),
-     'et chacun porte la raison exacte, donc l audit dira demain ce que cette regle a coute');
-  ok(v.sociauxExiges && v.sociauxExiges.length === 3,
+  ok(C._etat().positions.length > 0,
+     'un flux de jetons sans Telegram — mais avec site et X — ouvre maintenant des positions : '
+     + 'c est exactement l opportunite que la regle faisait manquer');
+  ok(v.candidats.every((x) => !/telegram/.test(x.refus || '')),
+     'et plus aucun refus ne cite Telegram');
+  ok(v.sociauxExiges && v.sociauxExiges.length === 1 && v.sociauxExiges[0] === 'un',
      'la vue publie la regle en vigueur : une exigence qu on ne voit pas ne peut pas etre discutee');
 
   remise([jeton(0), jeton(1)]);
   await C.tour();
   ok(C._etat().positions.length > 0,
-     'et les memes jetons, avec leurs trois reseaux, sont achetes : la regle refuse ce qui manque, '
-     + 'pas tout');
+     'et les jetons avec leurs trois reseaux passent toujours : la regle s est relachee, elle '
+     + 'n a pas change de sens');
 }
 
 /* ==========================================================================
@@ -3313,6 +3353,251 @@ async function pourquoiPasDAchat() {
      + 'la lire');
 }
 
+/* ==========================================================================
+ * 51. UNE MEMOIRE PLUS GRANDE, ET QUI NE COMPTE PLUS L'INCONNU POUR UNE LECON
+ *
+ * « Fais-les devenir beaucoup plus intelligents, avec une memoire plus
+ *   grande. »
+ *
+ * En ouvrant la memoire reelle du serveur avant d'y toucher, la premiere
+ * lecon du Warden n'en etait pas une :
+ *
+ *     « code inconnu »  n=488  moyenne +20,0  ecart 91,8
+ *     « pouvoirs ? »    n=488  moyenne +20,0  ecart 91,8
+ *
+ * Les memes chiffres, parce que ses trois traits sortent du meme appel a
+ * GoPlus — silencieux 3 114 fois sur 3 237. Un seul fait, « on n'a pas pu
+ * lire », compte trois fois. Et il RAPPORTAIT des points, alors que la regle
+ * en tete du fichier dit depuis le debut que l'inconnu n'en rapporte jamais.
+ *
+ * Trois choses sont donc verifiees ici, et chacune est une facon differente
+ * pour la colonie d'etre moins bete :
+ *
+ *   1. Trois « inconnu » ne pesent pas plus qu'un seul.
+ *   2. L'inconnu ne peut plus AJOUTER a une note, meme s'il a bien rendu.
+ *   3. La table des cases non lues correspond vraiment a la table des traits
+ *      — un mot change la-haut la rendrait muette en silence, et c'est
+ *      exactement la panne que ce fichier passe son temps a eviter.
+ * ======================================================================== */
+async function memoirePlusGrande() {
+  console.log('\n-- ce que la memoire retient, et sur combien de jetons --');
+  console.log('   SURV_MAX = ' + C.SURV_MAX + ' · demi-vie = ' + C.MEMOIRE_DEMIVIE_J + ' j');
+  ok(C.SURV_MAX >= 1000,
+     'la colonie se rappelle bien plus de jetons qu avant (' + C.SURV_MAX + ') : a trois cents, '
+     + 'elle en voyait quatre cents a l heure et rejugeait de zero ce qu elle savait depuis '
+     + 'quarante minutes');
+  ok(C.MEMOIRE_DEMIVIE_J > 0,
+     'et chaque case s estompe (demi-vie ' + C.MEMOIRE_DEMIVIE_J + ' j) : garder plus longtemps '
+     + 'sans estomper rendrait un agent PLUS bete, le marche d il y a un mois pesant autant '
+     + 'qu hier');
+
+  console.log('\n-- la table des cases non lues colle a la table des traits --');
+  /* Un jeton sur lequel RIEN n'a ete lu : pas d'age, pas de GoPlus, pas de
+     chaine, pas de trades, pas de DexScreener, pas de chandelles. */
+  const rien = { minutes: null, vola: null, ecart: null, g: {}, chaine: {}, trades: {},
+                 dex: {}, tx: {}, vol: {}, liq: 0, mc: 0 };
+  const produites = new Set();
+  for (const k in C.TRAITS) { try { produites.add(C.TRAITS[k].f(rien)); } catch (e) {} }
+  produites.add(C.TRAITS.cobaye.f({ epreuve: { teste: false } }));
+  const orphelines = [...C.CASES_NON_LUES].filter((v) => !produites.has(v));
+  console.log('   ' + C.CASES_NON_LUES.size + ' cases listees · orphelines : '
+    + JSON.stringify(orphelines));
+  ok(orphelines.length === 0,
+     'chaque case de la liste est vraiment produite par un trait — sinon un mot renomme la-haut '
+     + 'rendrait la regle muette sans que rien n echoue' + (orphelines.length ? ' : '
+     + JSON.stringify(orphelines) : ''));
+  /* Et l'inverse : ce qu'un jeton illisible produit ne doit pas contenir de
+     case oubliee. Les traits gratuits, eux, disent quand meme quelque chose
+     (une liquidite a zero EST une mesure), donc on ne verifie que ceux dont
+     la lecture a echoue. */
+  const echouees = ['taxe', 'code', 'pouv', 'top', 'det', 'brule', 'flux', 'achUniq',
+                    'taille', 'pools', 'social', 'vola', 'age'];
+  const manquantes = echouees.filter((k) => !C.caseNonLue(C.TRAITS[k].f(rien)));
+  ok(manquantes.length === 0,
+     'et tout trait dont la lecture a echoue tombe bien dans la liste'
+     + (manquantes.length ? ' — oublies : ' + JSON.stringify(manquantes) : ''));
+  ok(!C.caseNonLue('top 5-15%') && !C.caseNonLue('aucune taxe') && !C.caseNonLue('aucun reseau'),
+     'une vraie mesure n y tombe pas : « aucun reseau » est un fait sur le jeton, pas un echec '
+     + 'de lecture');
+  ok(!C.caseNonLue('age ? × mc <50k') && C.caseNonLue('age ? × pools ?'),
+     'et une case croisee n est non lue que si TOUTES ses parts le sont : sinon on jetterait '
+     + 'la mesure qui restait dedans');
+
+  console.log('\n-- trois « inconnu » ne font qu un seul fait --');
+  const E = C._etat();
+  E.memoire = {};
+  /* Le Whale : concentration, porteurs et brule viennent tous de la MEME
+     lecture de chaine. Quand elle echoue, les trois disent « inconnu »
+     ensemble — et ils ont bien rendu, parce que c est la moyenne generale du
+     flux, pas une qualite des jetons illisibles. */
+  for (let i = 0; i < 60; i++) {
+    C.apprendAgent('whale', { top: 'concentration inconnue', det: 'porteurs inconnus',
+                              brule: 'brule inconnu' }, 20);
+  }
+  const trois = C.ajustementAgent('whale', { top: 'concentration inconnue',
+    det: 'porteurs inconnus', brule: 'brule inconnu' });
+  const une = C.ajustementAgent('whale', { top: 'concentration inconnue' });
+  console.log('   trois inconnus : ' + trois.toFixed(3) + ' · un seul : ' + une.toFixed(3));
+  ok(Math.abs(trois - une) < 1e-9,
+     'trois cases « inconnu » du meme agent pesent exactement autant qu une seule ('
+     + trois.toFixed(3) + ' contre ' + une.toFixed(3) + ') : c est un seul appel rate, pas trois '
+     + 'observations');
+  ok(trois <= 0,
+     'et elles ne RAPPORTENT rien, malgre une moyenne de +20 % sur soixante observations ('
+     + trois.toFixed(3) + ') — la regle du haut du fichier, enfin tenue par le code');
+
+  console.log('\n-- alors qu une vraie mesure, elle, rapporte --');
+  E.memoire = {};
+  for (let i = 0; i < 60; i++) {
+    C.apprendAgent('whale', { top: 'top 5-15%', det: '100-500', brule: '>90% brule' }, 20);
+  }
+  const lu = C.ajustementAgent('whale', { top: 'top 5-15%', det: '100-500', brule: '>90% brule' });
+  console.log('   trois mesures lues : ' + lu.toFixed(3));
+  ok(lu > 0,
+     'trois traits LUS, avec exactement la meme moyenne, montent bien la note (+' + lu.toFixed(2)
+     + ') : ce n est pas un plafond general qui rabote tout, c est l inconnu qui ne compte plus');
+
+  console.log('\n-- et un inconnu qui a mal fini pese toujours, dans le bon sens --');
+  E.memoire = {};
+  for (let i = 0; i < 60; i++) C.apprendAgent('whale', { top: 'concentration inconnue' }, -30);
+  const mauvais = C.ajustementAgent('whale', { top: 'concentration inconnue' });
+  console.log('   inconnu qui rend -30 % : ' + mauvais.toFixed(3));
+  ok(mauvais < 0,
+     'ne rien savoir peut inquieter (' + mauvais.toFixed(2) + ') — c est seulement rassurer '
+     + 'qui lui est interdit');
+
+  console.log('\n-- la lecon reste affichee, mais elle est nommee --');
+  E.memoire = {};
+  for (let i = 0; i < 60; i++) C.apprendAgent('whale', { top: 'concentration inconnue' }, 20);
+  const lec = C.leconsDe('whale', 3);
+  console.log('   ' + JSON.stringify(lec));
+  ok(lec.length === 1 && lec[0].nonLue === true,
+     'elle est toujours la — « ce que valent les jetons qu on n a pas pu lire » est une vraie '
+     + 'mesure — mais elle porte le mot qui dit qu elle juge NOS lectures, pas le jeton');
+
+  console.log('\n-- une observation vieille pese moins qu une fraiche --');
+  E.memoire = {};
+  C.apprendAgent('whale', { top: 'top 5-15%' }, 40);
+  const c = E.memoire.whale.top['top 5-15%'];
+  ok(c.n === 1, 'deux apprentissages dans la meme seconde ne rabotent pas le compte (n=' + c.n
+     + ') : un compte entier vaut mieux qu un compte juste a l epsilon pres');
+  /* On recule la date de derniere mise a jour d exactement une demi-vie : le
+     poids doit tomber a moitie, ni plus ni moins. */
+  c.maj = Date.now() - C.MEMOIRE_DEMIVIE_J * 86400000;
+  const apres = C.fane(c);
+  console.log('   apres une demi-vie : n = ' + apres.n.toFixed(3) + ' · total = '
+    + apres.s.toFixed(1));
+  ok(Math.abs(apres.n - 0.5) < 1e-6 && Math.abs(apres.s - 20) < 1e-6,
+     'apres une demi-vie exacte, l observation compte pour moitie (n=' + apres.n.toFixed(3)
+     + ', total ' + apres.s.toFixed(1) + ')');
+  ok(Math.abs(apres.s / apres.n - 40) < 1e-6,
+     'et la MOYENNE ne bouge pas (' + (apres.s / apres.n).toFixed(1) + ' %) : c est la confiance '
+     + 'qui s estompe, pas la lecon — une vieille lecon n est pas une lecon fausse');
+  E.memoire = {};
+}
+
+/* ==========================================================================
+ * 52. CE QU'ELLE FAIT NE DOIT PAS ETRE CHASSE PAR CE QU'ELLE EN DIT
+ *
+ * « Verifie qu'elle se reorganise reellement et qu'elle met des choses
+ *   concretes en place. »
+ *
+ * En ouvrant le journal du serveur, la reponse etait oui ET non. Elle avait
+ * agi : un specialiste (scout-agemc) etait ne le 2 septembre a 3 h 57, et
+ * l'ordre des gardes avait ete revu. Mais on ne pouvait pas le voir : les
+ * huit lignes publiees etaient huit observations du Conseiller, sur six
+ * heures, disant la meme chose reformulee huit fois —
+ *
+ *     « Taux de gain de 29,9 % (20/67) avec volatilite extreme… »
+ *     « Taux de victoire de 29,9 % (20/67) sur positions fermees… »
+ *     « Taux de win de 29,9 % (20/67) avec volatilite extreme… »
+ *
+ * Le journal disait donc l'exact contraire de la verite : une colonie qui
+ * commente et n'agit pas, alors qu'elle avait agi. Une reponse fausse a la
+ * question posee, produite par un affichage et non par le moteur.
+ *
+ * L'essai reprend les VRAIS textes du serveur : c'est la seule facon de
+ * verifier que la borne tient sur ce qui s'est reellement produit, et pas sur
+ * huit phrases fabriquees pour lui donner raison.
+ * ======================================================================== */
+async function seReorganiseVraiment() {
+  console.log('\n-- les actes ne sont pas chasses par les observations --');
+  const E = C._etat();
+  E.journalStructure = [];
+
+  /* Les vrais textes, dans l'ordre ou ils sont arrives. */
+  const REGARDS = [
+    'Taux de win de 29,9% (20/67) avec volatilite extreme (-53,7% a +656,3%) et seuil d\'entree a 70.',
+    'Taux de reussite de 29,9% (20/67) avec volatilite extreme suggere des criteres contradictoires.',
+    'Taux de gain reel de 29.9% (20/67) alors que seuil affiche a 70% : ecart majeur.',
+    'Taux de gain de 29,9% (20/67) avec volatilite extreme et whale rejetant 65% des jetons.',
+    'Taux de victoire de 29,8% (20/67) incompatible avec rendements extremes (+656%, +495%).',
+    'Taux de victoire de 29,9% (20/67) sur positions fermees avec volatilite extreme.',
+    'Taux de gain de 29.9% (20/67) avec volatilite extreme : profil de risque incompatible.',
+    'Whale refuse 5826 sur 9025 jetons vus (64,5%), alors que warden en refuse 0 sur 3215.',
+  ];
+  /* La colonie AGIT d'abord, puis le Conseiller parle huit fois. C'est
+     exactement l'ordre du serveur, et c'est ce qui faisait disparaitre
+     l'acte. */
+  C._journal('naissance', 'Scout-agemc nait : « age ? × mc <50k » est vue 41 fois, ecart type 108.');
+  C._journal('ordre', 'Nouvel ordre des gardes : whale, warden, whisper (avant : warden, whale, whisper).');
+  for (const t of REGARDS) C._journal('regard', t);
+
+  const brut = E.journalStructure;
+  console.log('   journal complet : ' + brut.length + ' lignes · dont regards : '
+    + brut.filter((x) => x.quoi === 'regard').length);
+  ok(brut.filter((x) => x.quoi === 'regard').length === 8,
+     'le modele reformule a chaque fois, donc les huit lignes sont bien gardees en entier — '
+     + 'aucune n est jetee sur une ressemblance devinee');
+
+  const vu = C._journalPublie(8, 3);
+  const quoi = vu.map((x) => x.quoi);
+  console.log('   publie : ' + JSON.stringify(quoi));
+  ok(vu.length === 5,
+     'la vue publie cinq lignes plutot que huit (' + vu.length + ') : cinq qui disent cinq choses '
+     + 'valent mieux que huit qui en disent deux');
+  ok(quoi.filter((x) => x === 'regard').length <= 3,
+     'mais trois d observation au plus : une seule voix ne prend pas tout le journal ('
+     + quoi.filter((x) => x === 'regard').length + ')');
+  ok(quoi.indexOf('naissance') >= 0 && quoi.indexOf('ordre') >= 0,
+     'et la naissance du specialiste ET la revue de l ordre sont VISIBLES : c est precisement '
+     + 'ce que la question demandait de verifier, et c est ce que l ecran cachait');
+  for (let i = 1; i < vu.length; i++) {
+    if (vu[i].t > vu[i - 1].t) { ok(false, 'le journal publie n est plus dans l ordre'); break; }
+  }
+  ok(true, 'le journal publie reste du plus recent au plus ancien');
+
+  /* ---- MAIS SANS ACTE, LA BORNE N'A RIEN A PROTEGER ----
+   * Une colonie qui vient de demarrer n'a que les observations du Conseiller.
+   * Les rogner la ne montrerait rien de plus, seulement moins. */
+  E.journalStructure = [];
+  for (const t of REGARDS) C._journal('regard', t);
+  const seul = C._journalPublie(8, 3);
+  console.log('   sans aucun acte : ' + seul.length + ' lignes');
+  ok(seul.length === 8,
+     'tant qu il n y a aucun acte, les huit observations sont publiees ('
+     + seul.length + ') : la borne protege les actes, elle ne censure pas le Conseiller');
+
+  /* ---- ET QUAND LE MODELE SE REPETE VRAIMENT ---- */
+  console.log('\n-- une phrase reposee telle quelle ne prend pas deux lignes --');
+  E.journalStructure = [];
+  C._journal('regard', 'Taux de gain de 29,9% (20/67) avec volatilite extreme.');
+  C._journal('regard', 'Taux de gain de 31,2% (21/70) avec volatilite extreme.');
+  console.log('   ' + JSON.stringify(E.journalStructure.map((x) => ({ txt: x.txt.slice(0, 34),
+    fois: x.fois }))));
+  ok(E.journalStructure.length === 1,
+     'la meme phrase avec d autres chiffres ne prend pas une seconde ligne : ce sont les chiffres '
+     + 'qui bougent, pas le propos');
+  ok(E.journalStructure[0].fois === 2,
+     'elle porte le compte (' + E.journalStructure[0].fois + ' fois) — « vu deux fois » dit '
+     + 'quelque chose qu une occurrence seule ne disait pas');
+  ok(/31,2/.test(E.journalStructure[0].txt),
+     'et ce sont les DERNIERS chiffres qui sont montres, pas les premiers : la ligne doit rester '
+     + 'vraie, pas seulement unique');
+
+  E.journalStructure = [];
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -3365,6 +3650,8 @@ async function pourquoiPasDAchat() {
   await lesSignaux();
   await surveillanceRamene();
   await pourquoiPasDAchat();
+  await memoirePlusGrande();
+  await seReorganiseVraiment();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

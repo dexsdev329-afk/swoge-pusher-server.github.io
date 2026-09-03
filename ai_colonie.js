@@ -208,7 +208,16 @@ const PLANCHER = 100;           /* sous ce niveau, la colonie s'arrete d'ouvrir 
 const SURV_MIN_MS = 40 * 60e3;  /* au plus tot, quarante minutes apres le dernier examen */
 const SURV_LIQ = 1.25;          /* ou si la liquidite a pris 25 % */
 const SURV_PRIX = 1.10;         /* ou si le prix a pris 10 % */
-const SURV_MAX = 300;           /* on ne garde pas la memoire de la terre entiere */
+/* ---- COMBIEN DE JETONS LA COLONIE SE RAPPELLE ----
+ * DEMANDE : « une memoire plus grande ». Trois cents, c'etait quarante-cinq
+ * minutes de flux : la colonie voit environ quatre cents jetons a l'heure. Un
+ * jeton juge il y a une heure etait donc deja oublie, et rejuge de zero —
+ * elle repayait des appels pour reapprendre ce qu'elle savait, et ne pouvait
+ * rien comparer d'un jour a l'autre.
+ * Le cout est de la memoire vive et du disque, pas des appels : une entree
+ * pese quelques dizaines d'octets, et deux mille tiennent largement. Reglable,
+ * parce que le volume du flux, lui, n'est pas une constante. */
+const SURV_MAX = nEnv('SURV_MAX', 2000);
 /* Reconnaitre le refus « trop jeune » ailleurs sans relire la phrase : elle
    changera. Pose ici, avec les autres constantes, parce que l'oubli des vieux
    connus s'en sert et qu'il vit tout en haut du fichier. */
@@ -368,6 +377,71 @@ const TRAITS = {
   vola:   { besoin: 'ohlcv', f: (t) => t.vola === null || t.vola === undefined ? 'vola ?'
               : tranche(t.vola, [2, 5, 12], ['calme', 'vola 2-5%', 'vola 5-12%', 'vola >12%']) },
 };
+
+/* ==========================================================================
+ * LES CASES QUI NE DISENT RIEN DU JETON
+ *
+ * DEMANDE : « fais-les devenir beaucoup plus intelligents, avec une memoire
+ * plus grande ».
+ *
+ * En regardant la memoire reelle avant d'y toucher, la premiere lecon des
+ * agents n'etait pas une lecon. Le Warden, en tete :
+ *
+ *     « code inconnu »  n=488  moyenne +20,0  ecart 91,8
+ *     « pouvoirs ? »    n=488  moyenne +20,0  ecart 91,8
+ *
+ * Deux lignes, les memes chiffres a la decimale pres. Et c'est normal : ses
+ * trois traits — taxe, code, pouvoirs — sortent tous du MEME appel a GoPlus.
+ * Quand GoPlus se tait, et il s'est tu 3 114 fois sur 3 237, les trois
+ * repondent « inconnu » ensemble. Meme chose pour le Whale : concentration,
+ * porteurs et brule viennent tous de la meme lecture de chaine.
+ *
+ * Deux fautes en decoulaient, et elles tiraient dans le meme sens :
+ *
+ *   1. UN SEUL fait — « on n'a pas pu lire » — etait compte TROIS fois dans
+ *      la note. Trois cases tres observees, donc tres confiantes, qui ne sont
+ *      qu'une seule et meme observation.
+ *
+ *   2. Elles RAPPORTAIENT des points. Leur moyenne est positive parce que
+ *      c'est la moyenne generale de tout ce que la colonie regarde — pas une
+ *      qualite du jeton. Un jeton illisible recoltait ainsi jusqu'a la moitie
+ *      de la marge d'ajustement pour la seule raison qu'on n'avait rien pu
+ *      lire sur lui.
+ *
+ * Or la regle est ecrite en tete de ce fichier depuis le debut : « INCONNU —
+ * et l'inconnu ne rapporte jamais de points a un jeton. » Le code ne la
+ * tenait pas. Il la tient maintenant : les cases non lues d'un agent sont
+ * repliees en UNE (la mieux observee), et sa part est bornee a zero par le
+ * haut. Elle peut retirer des points ; elle ne peut plus en donner.
+ *
+ * On continue de les APPRENDRE. « Ce que valent les jetons sur lesquels on ne
+ * savait rien » reste une chose vraie et lisible, et elle est affichee. C'est
+ * de la NOTE qu'elle sort, pas de la memoire.
+ *
+ * La liste est ecrite en toutes lettres plutot que devinee par un motif : ces
+ * mots sont ceux qu'un humain lit a l'ecran, ils changeront, et un motif qui
+ * cesse de correspondre echouerait en silence — exactement le genre de panne
+ * que ce fichier evite. L'essai les recoupe avec la table des traits.
+ * ======================================================================== */
+const CASES_NON_LUES = new Set([
+  'age ?',                 /* le flux n'a pas donne l'age du pool */
+  'taxe inconnue', 'code inconnu', 'pouvoirs ?',        /* GoPlus s'est tu */
+  'concentration inconnue', 'porteurs inconnus', 'brule inconnu',  /* la chaine n'a pas repondu */
+  'flux inconnu', 'acheteurs ?', 'tailles ?',           /* les trades n'ont pas ete lus */
+  'pools ?', 'reseaux ?',                               /* DexScreener n'a pas repondu */
+  'vola ?',                                             /* pas assez de chandelles */
+  'conseiller non consulte',                            /* le budget d'appels etait epuise */
+  'sortie non testee', 'sortie non testable',           /* l'epreuve n'a pas pu etre jouee */
+]);
+/* Une case croisee (« age ? × mc <50k ») n'est non lue que si TOUTES ses
+   parts le sont : s'il reste une mesure vraie dedans, la case dit encore
+   quelque chose du jeton, et la replier serait perdre cette mesure. */
+function caseNonLue(v) {
+  if (typeof v !== 'string' || !v) return false;
+  const parts = v.split(' × ');
+  for (const p of parts) if (!CASES_NON_LUES.has(p.trim())) return false;
+  return true;
+}
 
 /* ---- UN TRAIT CROISE ----
  * C'est avec ca qu'un specialiste fait mieux que son parent. Quand « top
@@ -1374,14 +1448,50 @@ async function lisTrades(pool) {
  * type — et c'est lui qui declenche la naissance d'un specialiste : une case
  * tres observee mais tres dispersee est une case coupee au mauvais endroit.
  * ======================================================================== */
-function memLit(a, t, v) { const m = E.memoire; return (m[a] && m[a][t] && m[a][t][v]) || null; }
+/* ---- UNE MEMOIRE PLUS GRANDE DOIT AUSSI ETRE PLUS RECENTE ----
+ *
+ * DEMANDE : « une memoire plus grande ». Garder plus longtemps, seul, rend un
+ * agent PLUS bete, pas moins : un marche de la semaine derniere pese alors
+ * autant qu'hier, et sur ces jetons-la une semaine est une ere. La memoire
+ * grandit donc dans les deux sens a la fois — on retient beaucoup plus de
+ * cases (voir SURV_MAX), et chaque case s'estompe.
+ *
+ * L'estompage est une demi-vie : au bout de MEMOIRE_DEMIVIE_J jours, une
+ * observation compte pour moitie. Rien n'est efface — c'est le POIDS qui
+ * baisse, donc le compte, donc la confiance. Une lecon vieille de deux mois
+ * ne disparait pas de l'ecran ; elle cesse simplement de decider seule.
+ *
+ * Applique paresseusement, a la lecture comme a l'ecriture, et jamais quand
+ * l'ecart est infime (moins d'un millieme) : sinon deux apprentissages a la
+ * suite dans la meme seconde feraient d'un compte de dix un 9,999999, et un
+ * compte entier vaut mieux qu'un compte juste a l'epsilon pres.
+ *
+ * Zero desactive : `MEMOIRE_DEMIVIE_J=0` rend la memoire d'avant, entiere et
+ * sans oubli. C'est un reglage, pas une conviction. */
+const MEMOIRE_DEMIVIE_J = nEnv('MEMOIRE_DEMIVIE_J', 21);
+function fane(c) {
+  if (!c || !(MEMOIRE_DEMIVIE_J > 0)) return c;
+  const now = Date.now();
+  if (!c.maj) { c.maj = now; return c; }
+  const j = (now - c.maj) / 86400000;
+  if (!(j > 0)) return c;
+  const f = Math.pow(0.5, j / MEMOIRE_DEMIVIE_J);
+  if (!(f < 0.999)) return c;   /* rien de mesurable : on ne touche pas au compte */
+  c.n *= f; c.s *= f; c.s2 *= f; c.maj = now;
+  return c;
+}
+function memLit(a, t, v) {
+  const m = E.memoire;
+  const c = (m[a] && m[a][t] && m[a][t][v]) || null;
+  return c ? fane(c) : null;
+}
 function memCase(a, t, v) {
   const m = E.memoire;
   if (!m[a]) m[a] = {};
   if (!m[a][t]) m[a][t] = {};
-  if (!m[a][t][v]) m[a][t][v] = { n: 0, s: 0, s2: 0 };
+  if (!m[a][t][v]) m[a][t][v] = { n: 0, s: 0, s2: 0, maj: Date.now() };
   if (m[a][t][v].s2 === undefined) m[a][t][v].s2 = 0;   /* une case d'avant la variance */
-  return m[a][t][v];
+  return fane(m[a][t][v]);
 }
 const CONFIANCE_K = 6;
 const confiance = (n) => n / (n + CONFIANCE_K);
@@ -1398,6 +1508,10 @@ function ecartType(c) {
 function ajustementAgent(agent, cases) {
   if (!cases) return 0;
   let somme = 0, vus = 0;
+  /* La case non lue la MIEUX OBSERVEE de cet agent, et elle seule. Voir la
+     table des cases non lues, plus haut : les trois traits d'un agent sortent
+     souvent d'un seul appel, donc trois « inconnu » ne sont qu'un seul fait. */
+  let creux = null, creuxN = 0;
   for (const k in cases) {
     const c = memLit(agent, k, cases[k]);
     if (!c || !c.n) continue;
@@ -1407,9 +1521,17 @@ function ajustementAgent(agent, cases) {
      * de la laisser tirer la note. */
     const sd = ecartType(c);
     const fiable = sd === null ? 1 : Math.max(0.25, Math.min(1, ECART_TYPE_BRUIT / Math.max(1, sd)));
-    somme += confiance(c.n) * fiable * Math.max(-30, Math.min(30, c.s / c.n));
+    const part = confiance(c.n) * fiable * Math.max(-30, Math.min(30, c.s / c.n));
+    if (caseNonLue(cases[k])) {
+      /* Bornee a zero PAR LE HAUT : ne rien savoir peut inquieter, ne peut
+         jamais rassurer. C'est la regle du haut du fichier, tenue ici. */
+      if (c.n > creuxN) { creuxN = c.n; creux = Math.min(0, part); }
+      continue;
+    }
+    somme += part;
     vus++;
   }
+  if (creux !== null) { somme += creux; vus++; }
   if (!vus) return 0;
   return Math.max(-12, Math.min(12, somme * 0.45));
 }
@@ -1421,12 +1543,17 @@ function apprendAgent(agent, cases, rendement) {
 function leconsDe(agent, max) {
   const m = E.memoire[agent] || {}, out = [];
   for (const t in m) for (const v in m[t]) {
-    const c = m[t][v];
+    const c = fane(m[t][v]);
     if (c.n < 2) continue;
     const moy = c.s / c.n;
     const sd = ecartType(c);
-    out.push({ quoi: v, n: c.n, moyenne: Math.round(moy * 10) / 10,
+    /* `nonLue` est PUBLIE, pas cache. Ces lignes-la restent affichables — « ce
+       que valent les jetons qu'on n'a pas pu lire » est une vraie mesure — mais
+       lues sans le mot, elles se lisent comme un jugement sur le jeton, alors
+       qu'elles jugent nos propres lectures. Le mot est la difference. */
+    out.push({ quoi: v, n: Math.round(c.n * 10) / 10, moyenne: Math.round(moy * 10) / 10,
                ecart: sd === null ? null : Math.round(sd * 10) / 10,
+               nonLue: caseNonLue(v) || undefined,
                poids: confiance(c.n) * Math.abs(moy) });
   }
   out.sort((a, b) => b.poids - a.poids);
@@ -1937,7 +2064,25 @@ function vetoScout(t) {
  * verifiable » — et ils repassent en surveillance, donc ils reviendront quand
  * DexScreener les connaitra.
  * ======================================================================== */
-const SOCIAUX_DEFAUT = 'site,twitter,telegram';
+/* ---- TROIS RESEAUX EXIGES, C'ETAIT TROP ----
+ *
+ * « Verifie si c'est important d'avoir Telegram, site et Twitter — peut-etre
+ *   qu'on est trop severe la-dessus et qu'on loupe des opportunites. »
+ *
+ * Mesure, une fois l'audit regroupe par regle : « il manque : site, telegram »
+ * — n=13, +28,6 % de moyenne, 6 montes, 2 effondres. On ecartait des jetons
+ * qui, en majorite, montaient.
+ *
+ * Un jeton de quinze minutes n'a souvent qu'un compte X : le site arrive plus
+ * tard, le Telegram aussi. Exiger les trois AU MOMENT DE L'ACHAT ne mesure pas
+ * le serieux du projet, ca mesure son age — et l'age, une autre regle s'en
+ * occupe deja.
+ *
+ * On garde UNE exigence : une presence publique, n'importe laquelle. Un jeton
+ * qui n'a ni site, ni X, ni Telegram n'a personne derriere — la, l'absence dit
+ * quelque chose. La liste reste reglable par SOCIAUX_EXIGES, et vide desactive
+ * la regle. */
+const SOCIAUX_DEFAUT = 'un';
 function sociauxExiges() {
   const v = (process.env.SOCIAUX_EXIGES === undefined ? SOCIAUX_DEFAUT : process.env.SOCIAUX_EXIGES);
   return String(v).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
@@ -1957,6 +2102,13 @@ function vetoOracle(t) {
   for (const l of (d.liens || [])) {
     const ty = String(l.type || '').toLowerCase();
     a.add(ty === 'website' ? 'site' : ty);
+  }
+  /* `un` : n'importe quelle presence publique suffit. C'est le reglage par
+     defaut, et il se lit comme ce qu'il est — pas une liste de trois noms
+     dont on aurait retire deux au hasard. */
+  if (exiges.length === 1 && exiges[0] === 'un') {
+    if (a.size > 0) return null;
+    return 'aucune presence publique : ni site, ni X, ni Telegram';
   }
   const manque = exiges.filter((x) => !a.has(x));
   if (manque.length) return 'il manque : ' + manque.join(', ');
@@ -2049,7 +2201,97 @@ function analyse(t) {
  * la mesure qui l'a decide — sinon « les agents s'auto-developpent » n'est
  * qu'une phrase, et personne ne peut verifier qu'il s'est passe quelque chose.
  * ======================================================================== */
+/* ---- CE QUE LA COLONIE FAIT, ET CE QU'ELLE EN DIT ----
+ *
+ * DEMANDE : « verifie qu'elle se reorganise reellement et met des choses
+ * concretes en place ».
+ *
+ * En ouvrant le journal du serveur, la reponse etait a la fois oui et non.
+ * Oui : un specialiste etait ne (scout-agemc, le 2 septembre a 3 h 57) et
+ * l'ordre des gardes avait ete revu. Non : on ne pouvait pas le VOIR. Les
+ * huit lignes publiees etaient huit `regard` du Conseiller, sur six heures,
+ * disant huit fois la meme chose :
+ *
+ *     « Taux de gain de 29,9 % (20/67) avec volatilite extreme… »
+ *     « Taux de victoire de 29,9 % (20/67) sur positions fermees… »
+ *     « Taux de win de 29,9 % (20/67) avec volatilite extreme… »
+ *
+ * Un modele repose la meme phrase toutes les cinquante minutes, et elle
+ * chassait les actes. Le journal disait donc l'exact contraire de la verite :
+ * une colonie qui commente et n'agit pas, alors qu'elle avait agi.
+ *
+ * Deux regles ici, et aucune ne touche a ce que la colonie FAIT :
+ *
+ *   1. Un `regard` qui repete le precedent ne prend pas une ligne de plus. On
+ *      compare la phrase debarrassee de ses chiffres — c'est ce qui change
+ *      d'une fois sur l'autre, pas le propos. La ligne existante est datee a
+ *      nouveau et porte un compte. Elle reste donc VRAIE et devient plus
+ *      informative : « vu 8 fois » dit quelque chose qu'une seule occurrence
+ *      ne disait pas.
+ *
+ *   2. Les ACTES ne sont jamais chasses par les observations. La vue publie
+ *      les huit dernieres lignes comme avant, mais complete avec les derniers
+ *      actes s'ils n'y sont pas. Un agent qui nait est un fait de structure ;
+ *      une phrase d'un modele est un avis. */
+const JOURNAL_ACTES = ['ordre', 'naissance', 'retrait', 'strategie', 'remise'];
+/* ---- UNE VOIX NE PREND PAS TOUT LE JOURNAL ----
+ *
+ * La deduplication ci-dessus attrape une phrase reposee telle quelle. Elle
+ * n'attrape PAS ce que le serveur faisait vraiment : le modele reformule a
+ * chaque fois — « taux de gain », « taux de victoire », « taux de win »,
+ * « taux de reussite » — pour dire exactement la meme chose. Recoupees, les
+ * huit lignes reelles ne se ressemblent pas assez pour etre fusionnees sans
+ * inventer un seuil de ressemblance, et un seuil regle sur huit exemples est
+ * un seuil regle sur rien.
+ *
+ * On ne mesure donc pas la ressemblance : on borne la PLACE. Le Conseiller a
+ * droit a `regardMax` lignes, quoi qu'il dise ; le reste va aux actes de la
+ * colonie. C'est vrai sans rien deviner, et ca tient meme le jour ou le
+ * modele trouvera huit facons vraiment differentes de dire la meme chose.
+ *
+ * Les lignes gardees restent les plus RECENTES de chaque sorte : on ne choisit
+ * pas quoi montrer, seulement combien. */
+function journalPublie(n, regardMax) {
+  const j = E.journalStructure || [];
+  /* ---- LA BORNE NE S'APPLIQUE QUE S'IL Y A DES ACTES A PROTEGER ----
+   * Premier essai : on bornait toujours, puis on completait avec les
+   * observations mises de cote pour ne pas rendre un journal a moitie vide.
+   * Ce complement DEFAISAIT la borne — huit observations et deux actes
+   * rendaient six observations, la borne disant trois. L'essai l'a dit tout
+   * de suite, et c'est bien ce qu'on lui demandait.
+   *
+   * La borne existe pour empecher une voix d'ECRASER les actes. Sans acte,
+   * elle n'a rien a proteger : une colonie qui vient de demarrer n'a que les
+   * observations du Conseiller, et les rogner ne montrerait rien de plus,
+   * seulement moins. On borne donc quand il y a un acte, et pas avant —
+   * quitte a publier moins de `n` lignes, ce qui est le bon resultat : cinq
+   * lignes qui disent cinq choses valent mieux que huit qui en disent deux. */
+  const actes = j.filter((e) => JOURNAL_ACTES.indexOf(e.quoi) >= 0).length;
+  const max = actes === 0 ? Infinity : (regardMax === undefined ? 3 : regardMax);
+  const out = [];
+  let regards = 0;
+  for (const e of j) {
+    if (out.length >= n) break;
+    if (e.quoi === 'regard') { if (regards >= max) continue; regards++; }
+    out.push(e);
+  }
+  out.sort((a, b) => (b.t || 0) - (a.t || 0));
+  return out;
+}
+function memeRegard(a, b) {
+  if (!a || !b) return false;
+  const nu = (x) => String(x).toLowerCase().replace(/[\d.,%()]+/g, '#')
+                     .replace(/[^a-z# ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return nu(a) === nu(b);
+}
 function journal(quoi, txt, chiffres) {
+  if (quoi === 'regard') {
+    const p = E.journalStructure.find((x) => x.quoi === 'regard');
+    if (p && memeRegard(p.txt, txt)) {
+      p.t = Date.now(); p.txt = txt; p.fois = (p.fois || 1) + 1;
+      return;
+    }
+  }
   E.journalStructure.unshift({ t: Date.now(), quoi, txt, chiffres: chiffres || null });
 }
 
@@ -3600,6 +3842,59 @@ function alertes() {
      sur deux jetons ne designe rien — mais au-dessus la regle dominante se
      lit deja, et attendre trente laisserait la colonie muette pendant une
      heure alors qu'elle sait deja quoi dire. */
+  /* ==========================================================================
+   * LE CONTROLE DE CONTRAT QUI NE TOURNE PLUS
+   *
+   * Le Warden est l'agent qui lit le contrat : honeypot, taxes, pouvoirs du
+   * proprietaire. Il commence par `if (!g.have) return null` — s'il n'a rien
+   * lu, il se tait, et c'est la bonne decision : faire dire « rien a
+   * signaler » a un silence serait inventer une garantie.
+   *
+   * Mais releve sur la colonie : 0 refus sur 3 218 jetons, parce que GoPlus
+   * n'a rien rendu 3 095 fois. Un agent qui ne refuse jamais RESSEMBLE a un
+   * agent permissif ; celui-ci est simplement aveugle, et la difference est
+   * toute la difference. L'alerte precedente l'a d'ailleurs lu comme « criteres
+   * incoherents entre agents » — le diagnostic etait faux parce que le chiffre
+   * ne disait pas ce qui manquait.
+   *
+   * Le Cobaye devait couvrir ce trou en simulant l'achat et la vente. Il le
+   * fait quand il peut : 38 blocages sur 76. Mais 37 fois il n'a pas pu
+   * conclure, et un resultat incertain N'ARRETE PAS l'achat — condamner sur
+   * une lecture ratee serait pire. Consequence : des jetons sont achetes avec
+   * AUCUN controle de contrat qui ait reellement tourne.
+   *
+   * On ne change pas la regle : bloquer sur l'incertain arreterait presque
+   * tout, et inventer une garantie serait pire que de ne rien dire. On rend
+   * le trou VISIBLE, parce qu'un risque qu'on ne voit pas ne se decide pas.
+   * ======================================================================== */
+  {
+    const C0 = E.compteurs || {};
+    const muets = C0.goplusMuet || 0;
+    const inc = C0.cobayeIncertain || 0;
+    const cobVu = C0.cobayeVu || 0;
+    const wardenVu = C0.wardenVu || 0;
+    const wardenRefus = wardenVu - (C0.wardenOk || 0);
+    if (wardenVu > 200 && wardenRefus === 0 && muets > wardenVu / 2) {
+      dis('haute', 'Le controle de contrat ne tourne pas',
+        'Le Warden n\'a refuse AUCUN jeton sur ' + wardenVu + ' vus — non pas parce qu\'ils sont '
+        + 'sains, mais parce que GoPlus n\'a rien rendu ' + muets + ' fois. Il lit le contrat : '
+        + 'honeypot, taxes, pouvoirs du proprietaire. Il se tait quand il n\'a rien lu, et c\'est '
+        + 'juste — mais un agent qui ne refuse jamais ressemble a un agent permissif, alors qu\'il '
+        + 'est aveugle.'
+        + (cobVu ? ' Le Cobaye couvre ce trou quand il peut : ' + (C0.cobayeBloque || 0)
+                 + ' blocages sur ' + cobVu + ' epreuves. Mais ' + inc + ' fois il n\'a pas pu '
+                 + 'conclure, et un resultat incertain n\'arrete pas l\'achat — condamner sur une '
+                 + 'lecture ratee serait pire. Ces jetons-la ont donc ete achetes sans qu\'aucun '
+                 + 'controle de contrat ait reellement tourne.' : ''),
+        'GoPlus n\'indexe pas les jetons de quelques minutes : c\'est structurel, pas une panne. '
+        + 'Deux leviers reels : poser GOPLUS_APP_KEY / GOPLUS_APP_SECRET, qui donnent un debit et '
+        + 'une couverture superieurs a l\'acces libre ; et rendre l\'epreuve du Cobaye plus souvent '
+        + 'concluante, ce qui demande des lectures de chaine qui aboutissent — c\'est la meme '
+        + 'saturation que la premiere alerte. Bloquer sur l\'incertain arreterait presque tous les '
+        + 'achats, et n\'ajouterait aucune securite : on ne saurait toujours rien du contrat.');
+    }
+  }
+
   if (sansAchat >= 20 && vus >= 12) {
     const fam = Object.keys(E.refusFamilles || {})
       .map((k) => ({ k, n: E.refusFamilles[k] }))
@@ -4358,7 +4653,10 @@ function vue() {
       vus: E.compteurs[a.key + 'Vu'] || 0, bloques: E.compteurs[a.key + 'Bloque'] || 0,
     })),
     ordreRevu: E.ordreRevu || 0,
-    journalStructure: (E.journalStructure || []).slice(0, 8),
+    /* Huit lignes, dont trois d'observation au plus : sans cette borne, une
+       colonie qui a engendre un agent et revu son ordre affichait huit
+       reformulations d'un modele et rien de ce qu'elle avait fait. */
+    journalStructure: journalPublie(8, 3),
     agents,
     /* ---- LE BANQUIER ---- */
     banque: {
@@ -4498,8 +4796,10 @@ module.exports = {
   _poseTg: (x) => { tg = x; },
   _noteAudit: noteAudit, _auditDesRefus: auditDesRefus,
   _familleRefus: familleRefus, _regroupeAudit: regroupeAudit, _noeudMort: noeudMort,
+  _journal: journal, _journalPublie: journalPublie, _memeRegard: memeRegard,
   /* exposes pour l'essai : ce sont eux qui portent les regles */
   scoreBase, analyse, traitsDe, tenueApprise, leconsDe, apprendAgent, ajustementAgent, ecartType,
+  caseNonLue, CASES_NON_LUES, TRAITS, MEMOIRE_DEMIVIE_J, SURV_MAX, fane,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,
