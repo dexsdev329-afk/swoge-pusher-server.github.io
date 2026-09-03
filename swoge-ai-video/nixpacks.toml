@@ -1,0 +1,5 @@
+# ffmpeg et ffprobe ne sont pas dans l'image de base : sans eux, rien du
+# pipeline ne tourne — ni la lecture des dimensions, ni l'extraction des
+# frames, ni le remontage.
+[phases.setup]
+aptPkgs = ["ffmpeg"]

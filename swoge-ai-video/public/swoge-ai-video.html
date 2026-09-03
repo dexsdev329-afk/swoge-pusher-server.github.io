@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Swoge AI Video</title>
+<style>
+/* Fond sombre, pas de degrade, pas d'emoji. Ce qui doit ressortir est le
+   travail en cours, pas la decoration. */
+:root{
+  --fond:#0B0C0E; --carte:#141619; --bord:#24272C; --bord-vif:#3A4048;
+  --texte:#E7E9EC; --doux:#8A9099; --accent:#4C8DF6; --ok:#3FB27F; --mal:#E0605A;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--fond);color:var(--texte);
+  font:400 14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+header{border-bottom:1px solid var(--bord);padding:20px 22px}
+header h1{margin:0;font:600 17px/1.2 inherit;letter-spacing:.2px}
+header p{margin:6px 0 0;color:var(--doux);font-size:12.5px}
+main{max-width:920px;margin:0 auto;padding:22px}
+section{background:var(--carte);border:1px solid var(--bord);border-radius:10px;
+  padding:16px;margin-bottom:14px}
+h2{margin:0 0 12px;font:600 12px/1 inherit;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--doux)}
+.zone{border:1px dashed var(--bord-vif);border-radius:9px;padding:26px 16px;
+  text-align:center;cursor:pointer;transition:border-color .12s,background .12s}
+.zone:hover,.zone.sur{border-color:var(--accent);background:#171A1F}
+.zone b{display:block;font-weight:600;margin-bottom:4px}
+.zone span{color:var(--doux);font-size:12.5px}
+.zone.plein{border-style:solid;border-color:var(--ok)}
+.reglages{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+label{display:block;font-size:11px;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--doux);margin-bottom:6px}
+select,input[type=text]{width:100%;padding:9px 10px;border-radius:7px;
+  border:1px solid var(--bord-vif);background:#0F1114;color:var(--texte);font:inherit}
+select:focus,input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+button{padding:11px 16px;border-radius:8px;border:1px solid var(--bord-vif);
+  background:#1B1E23;color:var(--texte);font:600 13px/1 inherit;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{opacity:.45;cursor:default}
+button.vif{background:var(--accent);border-color:var(--accent);color:#06080B}
+.chiffres{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.ch{background:#0F1114;border:1px solid var(--bord);border-radius:8px;padding:11px 12px}
+.ch b{display:block;font:600 18px/1.1 inherit;font-variant-numeric:tabular-nums}
+.ch span{display:block;margin-top:4px;font-size:10.5px;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--doux)}
+.barre{height:6px;border-radius:99px;background:#0F1114;border:1px solid var(--bord);
+  overflow:hidden;margin:12px 0 8px}
+.barre i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.vignettes{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:7px;
+  margin-top:12px}
+.vignettes img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;
+  border:1px solid var(--bord)}
+.note{color:var(--doux);font-size:12.5px;margin:10px 0 0}
+.note.mal{color:var(--mal)}
+.note.ok{color:var(--ok)}
+video{width:100%;border-radius:9px;border:1px solid var(--bord);background:#000;margin-top:4px}
+.rang{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}
+ul.refs{list-style:none;margin:10px 0 0;padding:0;display:flex;gap:7px;flex-wrap:wrap}
+ul.refs img{width:52px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--bord)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <h1>Swoge AI Video</h1>
+  <p>Animation to photorealistic live-action, one grid at a time.</p>
+</header>
+
+<main>
+  <section>
+    <h2>Source video</h2>
+    <div class="zone" id="zVideo">
+      <b>Drop a video here</b>
+      <span>or click to choose &middot; up to 2 minutes</span>
+    </div>
+    <input type="file" id="fVideo" accept="video/*" hidden>
+    <p class="note" id="nVideo"></p>
+  </section>
+
+  <section>
+    <h2>Character references</h2>
+    <div class="zone" id="zRefs">
+      <b>Drop reference images</b>
+      <span>optional &middot; the faces the model must keep across every cell</span>
+    </div>
+    <input type="file" id="fRefs" accept="image/*" multiple hidden>
+    <ul class="refs" id="lRefs"></ul>
+  </section>
+
+  <section>
+    <h2>Settings</h2>
+    <div class="reglages">
+      <div>
+        <label for="sN">Grid size</label>
+        <select id="sN">
+          <option value="2">2 × 2 — 4 frames per call</option>
+          <option value="3">3 × 3 — 9 frames per call</option>
+          <option value="4" selected>4 × 4 — 16 frames per call</option>
+        </select>
+      </div>
+      <div>
+        <label for="sRes">Output resolution</label>
+        <select id="sRes">
+          <option value="1K">1K</option>
+          <option value="2K" selected>2K</option>
+          <option value="4K">4K</option>
+        </select>
+      </div>
+      <div>
+        <label for="sStyle">Extra style direction</label>
+        <input type="text" id="sStyle" placeholder="e.g. cold night lighting, 35mm">
+      </div>
+    </div>
+
+    <div class="chiffres" style="margin-top:14px">
+      <div class="ch"><b id="cFrames">&mdash;</b><span>Frames</span></div>
+      <div class="ch"><b id="cGrilles">&mdash;</b><span>Grids</span></div>
+      <div class="ch"><b id="cCout">&mdash;</b><span>Estimated cost</span></div>
+    </div>
+    <p class="note" id="nEstim">Choose a video to see the number of calls and what it will cost.</p>
+    <div class="rang">
+      <button class="vif" id="bGo" disabled>Start</button>
+    </div>
+  </section>
+
+  <section id="secJob" hidden>
+    <h2>Progress</h2>
+    <div class="chiffres">
+      <div class="ch"><b id="jFaites">0</b><span>Grids done</span></div>
+      <div class="ch"><b id="jTotal">0</b><span>Grids total</span></div>
+      <div class="ch"><b id="jCout">$0.00</b><span>Actual cost</span></div>
+      <div class="ch"><b id="jEtat">&mdash;</b><span>State</span></div>
+    </div>
+    <div class="barre"><i id="jBarre"></i></div>
+    <p class="note" id="jNote"></p>
+    <div class="vignettes" id="jVignettes"></div>
+    <div class="rang">
+      <button id="bResume" hidden>Resume missing grids</button>
+    </div>
+  </section>
+
+  <section id="secFin" hidden>
+    <h2>Result</h2>
+    <video id="vFin" controls playsinline></video>
+    <div class="rang"><a id="aDl" download="swoge-ai-video.mp4"><button class="vif">Download</button></a></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+var VIDEO = null, REFS = [], JOB = null, TIMER = null, VUES = {};
+var $ = function(i){ return document.getElementById(i); };
+
+/* Deux zones, le meme comportement : cliquer ou deposer. */
+function zone(z, input, multi, apres){
+  z.addEventListener('click', function(){ input.click(); });
+  ['dragenter','dragover'].forEach(function(e){
+    z.addEventListener(e, function(ev){ ev.preventDefault(); z.classList.add('sur'); });
+  });
+  ['dragleave','drop'].forEach(function(e){
+    z.addEventListener(e, function(ev){ ev.preventDefault(); z.classList.remove('sur'); });
+  });
+  z.addEventListener('drop', function(ev){
+    var f = [].slice.call(ev.dataTransfer.files || []);
+    if(f.length) apres(multi ? f : [f[0]]);
+  });
+  input.addEventListener('change', function(){
+    var f = [].slice.call(input.files || []);
+    if(f.length) apres(multi ? f : [f[0]]);
+  });
+}
+
+zone($('zVideo'), $('fVideo'), false, function(f){
+  VIDEO = f[0];
+  $('zVideo').classList.add('plein');
+  $('zVideo').querySelector('b').textContent = VIDEO.name;
+  $('zVideo').querySelector('span').textContent =
+    (VIDEO.size / 1048576).toFixed(1) + ' MB';
+  estime();
+});
+
+zone($('zRefs'), $('fRefs'), true, function(f){
+  REFS = REFS.concat(f).slice(0, 10);
+  $('zRefs').classList.toggle('plein', REFS.length > 0);
+  $('lRefs').innerHTML = '';
+  REFS.forEach(function(r){
+    var img = document.createElement('img');
+    img.src = URL.createObjectURL(r);
+    img.alt = r.name;
+    $('lRefs').appendChild(img);
+  });
+});
+
+['sN','sRes'].forEach(function(id){ $(id).addEventListener('change', estime); });
+
+/* ---- LE COUT EST ANNONCE AVANT, PAS APRES ----
+ * On sonde la video sur le serveur : c'est lui qui a ffprobe, et deviner un
+ * nombre de frames dans le navigateur donnerait un chiffre qu'on ne pourrait
+ * pas tenir. Rien n'est lance ici. */
+var enEstim = 0;
+async function estime(){
+  if(!VIDEO) return;
+  var mien = ++enEstim;
+  $('nEstim').className = 'note';
+  $('nEstim').textContent = 'Reading the video…';
+  $('bGo').disabled = true;
+  var fd = new FormData();
+  fd.append('video', VIDEO);
+  fd.append('n', $('sN').value);
+  fd.append('resolution', $('sRes').value);
+  try{
+    var r = await fetch('/api/estimation', { method:'POST', body: fd });
+    var j = await r.json();
+    if(mien !== enEstim) return;
+    if(j.erreur) throw new Error(j.erreur);
+    $('cFrames').textContent = j.frames.toLocaleString('en-US');
+    $('cGrilles').textContent = j.grilles.toLocaleString('en-US');
+    $('cCout').textContent = '$' + j.cout.toFixed(2);
+    if(j.tropLongue){
+      $('nEstim').className = 'note mal';
+      $('nEstim').textContent = 'This video is ' + Math.round(j.duree) + ' s long. Version 1 stops '
+        + 'at ' + j.dureeMax + ' s — past that the number of calls, and the cost, cannot be '
+        + 'announced honestly before starting.';
+      $('bGo').disabled = true;
+      return;
+    }
+    $('nEstim').textContent = Math.round(j.duree) + ' s at ' + j.fps.toFixed(2) + ' fps · '
+      + j.largeur + '×' + j.hauteur + ' · one API call per grid.';
+    $('bGo').disabled = false;
+  }catch(e){
+    if(mien !== enEstim) return;
+    $('nEstim').className = 'note mal';
+    $('nEstim').textContent = String(e.message || e);
+    $('bGo').disabled = true;
+  }
+}
+
+$('bGo').addEventListener('click', async function(){
+  if(!VIDEO) return;
+  this.disabled = true;
+  var fd = new FormData();
+  fd.append('video', VIDEO);
+  REFS.forEach(function(r){ fd.append('refs', r); });
+  fd.append('n', $('sN').value);
+  fd.append('resolution', $('sRes').value);
+  fd.append('style', $('sStyle').value);
+  try{
+    var r = await fetch('/api/jobs', { method:'POST', body: fd });
+    var j = await r.json();
+    if(j.erreur) throw new Error(j.erreur);
+    JOB = j.jobId;
+    VUES = {};
+    $('jVignettes').innerHTML = '';
+    $('secJob').hidden = false;
+    $('secFin').hidden = true;
+    suit();
+  }catch(e){
+    $('nEstim').className = 'note mal';
+    $('nEstim').textContent = String(e.message || e);
+    this.disabled = false;
+  }
+});
+
+/* Sondage toutes les deux secondes. Une requete longue serait coupee par
+   l'hebergeur bien avant la fin du travail. */
+function suit(){
+  clearInterval(TIMER);
+  TIMER = setInterval(majJob, 2000);
+  majJob();
+}
+
+async function majJob(){
+  if(!JOB) return;
+  try{
+    var r = await fetch('/api/jobs/' + JOB, { cache:'no-store' });
+    var j = await r.json();
+    if(j.erreur) return;
+    $('jFaites').textContent = j.faites;
+    $('jTotal').textContent = j.grilles || '—';
+    $('jCout').textContent = '$' + (j.cout || 0).toFixed(2);
+    $('jEtat').textContent = j.etape || j.statut;
+    var pc = j.grilles ? Math.round(j.faites / j.grilles * 100) : 0;
+    $('jBarre').style.width = pc + '%';
+
+    for(var g = 0; g < j.faites; g++){
+      if(VUES[g]) continue;
+      VUES[g] = 1;
+      var img = document.createElement('img');
+      img.src = '/api/jobs/' + JOB + '/grille/' + g;
+      img.alt = 'Grid ' + (g + 1);
+      img.loading = 'lazy';
+      $('jVignettes').appendChild(img);
+    }
+
+    if(j.erreur){
+      $('jNote').className = 'note mal';
+      $('jNote').textContent = j.erreur;
+      $('bResume').hidden = false;
+      clearInterval(TIMER);
+      return;
+    }
+    $('jNote').className = 'note';
+    $('jNote').textContent = j.statut === 'fini'
+      ? 'Done. Every grid was paid for once.'
+      : 'Grids already styled are kept on disk — a restart never pays for them twice.';
+
+    if(j.pret){
+      clearInterval(TIMER);
+      $('bResume').hidden = true;
+      $('secFin').hidden = false;
+      $('vFin').src = '/api/jobs/' + JOB + '/result';
+      $('aDl').href = '/api/jobs/' + JOB + '/result';
+      $('bGo').disabled = false;
+    }
+  }catch(e){ /* un sondage rate n'efface pas ce qui est deja affiche */ }
+}
+
+$('bResume').addEventListener('click', async function(){
+  if(!JOB) return;
+  this.hidden = true;
+  await fetch('/api/jobs/' + JOB + '/resume', { method:'POST' });
+  suit();
+});
+</script>
+</body>
+</html>
