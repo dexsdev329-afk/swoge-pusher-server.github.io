@@ -797,6 +797,23 @@ function reprendSansMethode() {
 
 /* ------------------------------------------------------------- les lectures */
 const nn = (v) => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
+/* ---- LE LOGO D'UN JETON, OU RIEN ----
+ * Les deux flux qu'on lit deja en portent un ; on ne paie donc aucun appel de
+ * plus pour l'avoir. Ce qui est ecarte ici compte autant que ce qui passe :
+ *   - GeckoTerminal rend « missing.png » quand il n'en a pas. C'est une
+ *     chaine, pas une absence : sans ce filtre le portefeuille afficherait
+ *     une image cassee et croirait montrer le jeton ;
+ *   - tout ce qui n'est pas http(s) est refuse. Cette adresse part telle
+ *     quelle dans un `src` : un `javascript:` venu d'une reponse de service
+ *     n'a rien a faire dans la page.
+ * Quand il n'y a pas de logo, on rend `null` — et l'ecran montre le monogramme
+ * plutot qu'un carre vide qui se lirait comme une image qui n'a pas charge. */
+const urlImage = (u) => {
+  const x = String(u || '').trim();
+  if (!/^https?:\/\//i.test(x)) return null;
+  if (/missing\.png$/i.test(x)) return null;
+  return x.slice(0, 300);
+};
 const CACHE = { goplus: {}, ohlcv: {}, dex: {}, chaine: {}, trades: {}, poolDe: {} };
 const frais = (c, k, ttl) => { const x = c[k]; return (x && Date.now() - x.t < ttl) ? x.v : null; };
 const garde = (c, k, v) => { c[k] = { t: Date.now(), v }; return v; };
@@ -1026,7 +1043,7 @@ async function lisPools() {
       const addr = String(t.address).toLowerCase();
       const c = {
         addr, sym: (t.symbol || '?').toUpperCase().slice(0, 12), nom: (t.name || '').slice(0, 28),
-        pool: a.address, origine: 'pools',
+        pool: a.address, origine: 'pools', logo: urlImage(t.image_url),
         prix: nn(a.base_token_price_usd),
         mc: nn(a.market_cap_usd) || nn(a.fdv_usd),
         liq: nn(a.reserve_in_usd),
@@ -1225,6 +1242,7 @@ async function lisDex(addr) {
         .concat((i.websites || []).map((x) => ({ type: 'site', url: String(x.url || '') })))
         .filter((x) => /^https?:\/\//i.test(x.url)).slice(0, 5),
       pool: q.pairAddress || null, sym: bt.symbol || '', nom: bt.name || '',
+      logo: urlImage(i.imageUrl),
       liq: nn(q.liquidity && q.liquidity.usd), mc: nn(q.fdv) || nn(q.marketCap),
       cree: q.pairCreatedAt || null,
       tx: q.txns || {}, vol: { m5: nn((q.volume || {}).m5), h1: nn((q.volume || {}).h1),
@@ -1409,7 +1427,7 @@ async function jetonDepuisDex(addr, origine) {
   if (!d.vu || !(d.prix > 0) || !d.pool) return null;
   return {
     addr, sym: (d.sym || '?').toUpperCase().slice(0, 12), nom: (d.nom || '').slice(0, 28),
-    pool: d.pool, origine,
+    pool: d.pool, origine, logo: d.logo || null,
     prix: d.prix, mc: d.mc || 0, liq: d.liq || 0,
     minutes: d.cree ? (Date.now() - d.cree) / 60000 : null,
     cree: d.cree ? new Date(d.cree).toISOString() : null,
@@ -3432,6 +3450,10 @@ function ouvre(t) {
       : (tenue.appris ? 'duration learned by the Closer' : 'default duration'),
     mcAchat: Math.round(t.mc || 0), liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null,
     dexVu: !!(t.dex && t.dex.vu),
+    /* Le logo est GARDE avec la position, pas relu a l'affichage : elle vit
+       des heures apres la lecture qui l'a donne, et le flux des pools ne sert
+       que du neuf — le jeton en sort bien avant qu'elle se ferme. */
+    logo: t.logo || (t.dex && t.dex.logo) || null,
     traits: t.an.traits, score: t.an.score, mc: t.mc, minutes: Math.round(t.minutes || 0),
     origine: t.origine || 'pools', tenueMin: tenue.min, traj: [],
   });
@@ -3442,6 +3464,7 @@ function ouvre(t) {
                    txt: 'OPENED · $' + b.mise.toFixed(2) + ' · ' + b.methode, cls: 'n', t: Date.now() });
   signal({ k: 'achat', sym: t.sym, adr: t.addr, pool: t.pool, prix: t.prix,
            score: t.an.score, mise: b.mise, mc: t.mc || 0,
+           logo: t.logo || (t.dex && t.dex.logo) || null,
            liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null });
   return true;
 }
@@ -3693,7 +3716,7 @@ function ferme(p, prix, quand, comment) {
      celui du dernier morceau : quelqu'un qui a suivi l'achat veut savoir ce
      que l'operation a donne, pas ce que valait le reliquat. */
   signal({ k: 'vente', sym: p.sym, adr: p.adr, pool: p.pool, prix: prix,
-           r: r, gain: gainTotal,
+           r: r, gain: gainTotal, logo: p.logo || null,
            comment: par === 'sentinelle' ? 'Cut: ' + comment.raison
                   : (p.prolonge ? 'Extended ' + p.prolonge + '×' : 'Duration reached') });
   E.courbe.push(Math.round(E.tresor * 100) / 100);
@@ -4997,6 +5020,7 @@ function vue() {
                mcAchat: p.mcAchat === undefined ? (p.mc || null) : p.mcAchat,
                tenueRaison: p.tenueRaison || null,
                liens: p.liens || null, prolonge: p.prolonge || 0, dexVu: !!p.dexVu,
+               logo: p.logo || null,
                ouverteDepuis: Date.now() - p.t0, tenueMin: p.tenueMin,
                mise: p.mise, methode: p.methode, regime: enMots(p.regime), raisonMise: p.raisonMise,
                origine: p.origine || 'pools',
