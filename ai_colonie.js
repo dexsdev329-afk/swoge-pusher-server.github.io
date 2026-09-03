@@ -221,7 +221,16 @@ const SURV_MAX = nEnv('SURV_MAX', 2000);
 /* Reconnaitre le refus « trop jeune » ailleurs sans relire la phrase : elle
    changera. Pose ici, avec les autres constantes, parce que l'oubli des vieux
    connus s'en sert et qu'il vit tout en haut du fichier. */
-const REFUS_AGE = /^trop jeune/;
+/* ---- LE REPORT POUR AGE, DANS LES DEUX VOCABULAIRES ----
+ * Ce motif ne decore rien : c'est lui qui distingue un jeton MIS DE COTE
+ * d'un jeton refuse. Il decide de trois choses — la reprise par l'age, la
+ * part des refus que l'alerte annonce, et le fait qu'un jeune ne compte pas
+ * comme un blocage. Ecrit en francais seul, il a cesse de reconnaitre ses
+ * propres refus le jour ou le veto est passe a l'anglais : les jeunes
+ * n'etaient plus repris, et l'alerte les comptait comme des refus fermes.
+ * Les deux formes restent donc reconnues — un etat relu d'avant la bascule
+ * porte encore l'ancienne. */
+const REFUS_AGE = /^(?:too young|trop jeune)/;
 
 const ECHANTILLON_ORDRE = 25;   /* en dessous, un taux de refus est du bruit */
 const REPOS_ORDRE_TOURS = 8;    /* et on ne rechange pas d'avis toutes les deux minutes */
@@ -2720,7 +2729,19 @@ function elague() {
  *   jeton de dix minutes. Il est repris quand un signal GRATUIT a bouge — le
  *   flux des pools, qu'on lit de toute facon — ou apres un long moment.
  * ======================================================================== */
-const REFUS_DEFINITIFS = /honeypot|achat impossible|proprietaire reecrit|auto-destruction|taxe par portefeuille|createur deja|suspendables|taxe vente|taxe achat/;
+/* Les deux vocabulaires, et ce n'est pas un detail de forme : ce motif seul
+   separe le BANNI du surveille. Ecrit en francais apres le passage du Warden
+   a l'anglais, il ne reconnaissait plus que « honeypot » — le seul mot commun
+   aux deux langues. Un contrat qu'on ne peut pas acheter, un auto-destruct,
+   une taxe de vente de 42 % : tous repartaient en surveillance, donc relus
+   indefiniment, et repayes a chaque reprise. Un etat relu d'avant la bascule
+   porte encore les anciennes phrases, elles restent donc reconnues. */
+const REFUS_DEFINITIFS = new RegExp([
+  'honeypot', 'cannot buy', 'rewrite balances', 'self-destruct', 'per-wallet tax',
+  'creator already made', 'transfers can be paused', 'sell tax', 'buy tax',
+  'achat impossible', 'proprietaire reecrit', 'auto-destruction', 'taxe par portefeuille',
+  'createur deja', 'suspendables', 'taxe vente', 'taxe achat',
+].join('|'));
 
 function noteConnu(t, verdict, note) {
   const c = E.connus[t.addr] || (E.connus[t.addr] = { sym: t.sym, vu: 0, ne: Date.now() });
@@ -5178,7 +5199,9 @@ module.exports = {
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN,
   noteProfil, courbeDe, horizonPour, informationDe, classementDesTraits,
-  vetoOracle, vetoScout, sociauxExiges, SOCIAUX_DEFAUT, simuleVente, vetoCobaye,
+  vetoOracle, vetoScout, vetoWarden, vetoWhale, vetoWhisper, VETOS,
+  REFUS_AGE, REFUS_DEFINITIFS,
+  sociauxExiges, SOCIAUX_DEFAUT, simuleVente, vetoCobaye,
   planchers, echelle, joueEchelle, arretSuiveur, vendUneTranche, reprises,
   abandonDelai, abandonneLesPerdues,
   HORIZONS, HORIZON_REF, PROFIL_MIN_OBS, jalonValable,

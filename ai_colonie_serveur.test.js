@@ -2456,7 +2456,7 @@ async function profilsDansLeTemps() {
   const p = E.positions[0];
   console.log('   ' + p.tenueMin + ' min · « ' + p.tenueRaison + ' »');
   ok(p.tenueMin === 60, 'elle est tenue 60 min, comme ses traits le suggerent');
-  ok(/courbes de ses traits culminent/.test(p.tenueRaison),
+  ok(/trait curves peak/.test(p.tenueRaison),
      'et la raison est ecrite, pas deduite : « ' + p.tenueRaison + ' »');
 }
 
@@ -2794,7 +2794,7 @@ async function planchersEtSortie() {
   let v = C.vue();
   let c0 = v.candidats.find((x) => x.sym === 'TOK0');
   console.log('   petite piscine : ' + JSON.stringify({ refus: c0 && c0.refus, qui: c0 && c0.quiRefuse }));
-  ok(!!c0 && /plancher d'achat/.test(c0.refus || ''),
+  ok(!!c0 && /below the buy floor/.test(c0.refus || ''),
      'une piscine de 4 000 $ est ecartee, et le refus DIT le plancher : « ' + (c0 || {}).refus + ' »');
   ok(!C._etat().positions.some((p) => p.sym === 'TOK0'), 'aucune position ne s ouvre dessus');
 
@@ -2807,9 +2807,9 @@ async function planchersEtSortie() {
   const pump5 = v.candidats.find((x) => x.sym === 'TOK0');
   const pump1 = v.candidats.find((x) => x.sym === 'TOK1');
   console.log('   deja monte : ' + JSON.stringify([pump5 && pump5.refus, pump1 && pump1.refus]));
-  ok(!!pump5 && /cinq minutes/.test(pump5.refus || '') && /sommet/.test(pump5.refus || ''),
+  ok(!!pump5 && /five minutes/.test(pump5.refus || '') && /paying the top/.test(pump5.refus || ''),
      'un +240 % en cinq minutes est refuse : « ' + (pump5 || {}).refus + ' »');
-  ok(!!pump1 && /une heure/.test(pump1.refus || '') && /sommet/.test(pump1.refus || ''),
+  ok(!!pump1 && /an hour/.test(pump1.refus || '') && /paying the top/.test(pump1.refus || ''),
      'un +400 % en une heure aussi : « ' + (pump1 || {}).refus + ' »');
   ok(v.candidats.some((x) => x.sym === 'TOK2' && !x.refus),
      'et le jeton qui monte normalement passe : la borne ecarte l exces, pas la hausse');
@@ -2864,7 +2864,7 @@ async function planchersEtSortie() {
   ok(C.arretSuiveur(q, E2.suivDepart + 5) === null, 'une position qui MONTE n est jamais coupee');
   const bas = C.arretSuiveur(q, E2.suivDepart + 5 - E2.suivEcart - 1);
   console.log('   ' + bas);
-  ok(!!bas && /plus haut/.test(bas),
+  ok(!!bas && /below its peak/.test(bas),
      'mais une fois armee, la redescente sous le plus haut ferme — et la raison porte le chiffre : « '
      + bas + ' »');
   const q2 = { sym: 'Z', mise: 100, prix0: 1, t0: Date.now() };
@@ -2920,8 +2920,8 @@ async function planchersEtSortie() {
   ok((C._etat().compteurs.abandonneeSansPrix || 0) > 0, 'et c est compte');
   ok(C.vue().alertes.some((a) => /abandoned for want of a price/.test(a.quoi)),
      'une alerte le remonte, avec ce qu il faudrait faire');
-  const fluxAband = C._etat().flux.find((f) => /jamais relu/.test(f.txt || ''));
-  ok(!!fluxAband && /rien compte/.test(fluxAband.txt),
+  const fluxAband = C._etat().flux.find((f) => /never re-read/.test(f.txt || ''));
+  ok(!!fluxAband && /nothing counted/.test(fluxAband.txt),
      'le fil dit que RIEN n a ete comptabilise : on n invente pas un zero pour cloturer '
      + 'proprement — ce zero entrerait dans la memoire des agents comme une observation');
 }
@@ -3071,7 +3071,7 @@ async function auditParRegle() {
   F.audit = {};
   for (const [n, r] of jeu) C._noteAudit('scout · ' + C._familleRefus(refus(n)), r);
   const vu = C._auditDesRefus();
-  const ligne = vu.find((x) => /plancher/.test(x.cle));
+  const ligne = vu.find((x) => /buy floor/.test(x.cle));
   console.log('   ' + JSON.stringify(vu.map((x) => x.cle + ' n=' + x.n)));
   ok(!!ligne, 'la regle du plancher apparait enfin dans le panneau');
   ok(ligne && ligne.n === 3,
@@ -3083,14 +3083,14 @@ async function auditParRegle() {
   /* Sans le regroupement, les memes trois refus restaient invisibles. */
   F.audit = {};
   for (const [n, r] of jeu) C._noteAudit('scout · ' + refus(n).slice(0, 40), r);
-  ok(C._auditDesRefus().every((x) => !/plancher/.test(x.cle)),
+  ok(C._auditDesRefus().every((x) => !/buy floor/.test(x.cle)),
      'c est bien ce qui manquait : sans regroupement, aucune de ces trois lignes n est montree');
 
   /* ---- ET CE QUI EST DEJA MESURE N EST PAS JETE ----
    * Changer la forme d'une cle ne doit pas effacer des semaines
    * d'observations : on refond, on n'efface pas. */
   C._regroupeAudit();
-  const apres = C._auditDesRefus().find((x) => /plancher/.test(x.cle));
+  const apres = C._auditDesRefus().find((x) => /buy floor/.test(x.cle));
   ok(apres && apres.n === 3,
      'les anciennes cases sont REFONDUES dans la nouvelle, pas jetees ('
      + (apres ? apres.n : 0) + ' observations gardees)');
@@ -3346,7 +3346,7 @@ async function pourquoiPasDAchat() {
   console.log('   ' + (a ? a.quoi : 'AUCUNE ALERTE'));
   ok(!!a, 'une alerte le dit');
   console.log('   ' + (a ? a.pourquoi.slice(0, 190) : ''));
-  ok(!!a && /plancher d'achat/.test(a.pourquoi),
+  ok(!!a && /below the buy floor/.test(a.pourquoi),
      'elle NOMME la regle qui bloque le plus, pas « rien ne passe »');
   /* Un volume faible : sinon c'est la regle du lavage qui tranche la premiere
      — « volume de $20000 sur une capitalisation de $4000 » — et l'essai
@@ -3356,7 +3356,7 @@ async function pourquoiPasDAchat() {
   ok(!!a && /MC_ACHAT_MIN|LIQ_ACHAT_MIN/.test(a.pourquoi),
      'et le REGLAGE a toucher : une alerte qui dit ce qui bloque sans dire quoi bouger fait '
      + 'chercher dans le code');
-  ok(!!a && /panneau/.test(a.quoiFaire) && /protege/.test(a.quoiFaire),
+  ok(!!a && /panel/.test(a.quoiFaire) && /protects/.test(a.quoiFaire),
      'elle renvoie a l audit, qui seul dit si la regle protege ou si elle coute');
 
   /* ---- ET ELLE SE TAIT DES QUE CA REPART ----
@@ -3783,7 +3783,7 @@ async function neTradePlus() {
      + 'jour-la il y en avait ZERO : les vingt etaient arretes par le Scout, et l Oracle, le '
      + 'Whale et le Cobaye n ont rien eu a juger de la journee');
   const ecartes = vus.filter((x) => x.refus).map((x) => x.refus);
-  ok(ecartes.every((r) => /sommet|tombe|sortie|plafond|plancher/.test(r)),
+  ok(ecartes.every((r) => /paying the top|already down|that is an exit|buy ceiling|buy floor/.test(r)),
      'et tout ce qui reste ecarte l est par une regle que l audit soutient — pas par un plancher '
      + 'qui n a jamais evite un seul effondrement');
 
@@ -3805,18 +3805,18 @@ async function neTradePlus() {
     r: C.vetoScout(Object.assign({ minutes: 40, ch_m5: 0, ch_h1: 0, ch_h6: 0,
                                    vol: { h1: 0, h6: 0 }, tx: {}, liq: 9e4, mc: 9e4 }, t)) }));
   const ouverts = juges.filter((x) => !x.r);
-  const remis = juges.filter((x) => x.r && /reprend/.test(x.r));
-  const fermes = juges.filter((x) => x.r && !/reprend/.test(x.r));
+  const remis = juges.filter((x) => x.r && /picked up again/.test(x.r));
+  const fermes = juges.filter((x) => x.r && !/picked up again/.test(x.r));
   console.log('   ' + ouverts.length + ' passent · ' + remis.length + ' reportes · '
     + fermes.length + ' ecartes');
   ok(ouverts.length >= 5,
      ouverts.length + ' des 20 passent le Scout, la ou ZERO passait : les six capitalisations '
      + 'refusees ce jour-la allaient de 3 274 a 3 964 pour un plancher a 4 000 — il coupait a '
      + 'trente-six dollars pres, sur une chaine ou elles se serrent toutes la');
-  ok(fermes.every((x) => /sommet|tombe|plancher d'achat/.test(x.r)),
+  ok(fermes.every((x) => /paying the top|already down|below the buy floor/.test(x.r)),
      'et tout ce qui reste ecarte l est par la hausse, la chute ou la profondeur de piscine — '
      + 'jamais par une borne que l audit dit couteuse');
-  ok(remis.length > 0 && remis.every((x) => /on le reprend a 15 min/.test(x.r)),
+  ok(remis.length > 0 && remis.every((x) => /picked up again at 15 min/.test(x.r)),
      'les jeunes sont REPORTES, pas refuses, et la phrase le dit dans la bonne unite (' 
      + (remis[0] || {}).r + ') — elle divisait toujours par 60 et affichait « on attend 0.3 h »');
 
@@ -4033,6 +4033,76 @@ async function parleAnglais() {
   E.memoire = {};
 }
 
+/* ==========================================================================
+ * LES MOTS QUI COMMANDENT
+ *
+ * Deux expressions regulieres, dans tout le fichier, ne decrivent pas : elles
+ * DECIDENT. `REFUS_AGE` separe un jeton mis de cote d'un jeton refuse — donc
+ * s'il revient, et si l'alerte le compte comme un blocage. `REFUS_DEFINITIFS`
+ * separe le banni du surveille — donc si on le repaie a chaque tour, ou plus
+ * jamais.
+ *
+ * Les deux etaient ecrites en francais. Le jour ou les vetos sont passes a
+ * l'anglais, elles ont cesse de reconnaitre les phrases de leur propre code,
+ * en silence : les jeunes n'etaient plus repris, et « cannet buy »,
+ * « self-destruct », « sell tax 42% » repartaient en surveillance au lieu
+ * d'etre bannis. Rien n'a leve d'erreur. Aucun essai ne les regardait.
+ *
+ * Celui-ci prend les phrases telles que le code les PRODUIT — jamais
+ * recopiees ici — et verifie ou chacune tombe. Une traduction future qui
+ * oublie un de ces deux motifs echoue ici, avant d'atteindre la colonie.
+ * ======================================================================== */
+function motsQuiCommandent() {
+  console.log('\n-- les deux motifs qui decident, sur les phrases du code --');
+  const socle = { minutes: 40, ch_m5: 0, ch_h1: 0, ch_h6: 0, vol: { h1: 0, h6: 0 }, tx: {},
+                  liq: 9e4, mc: 9e4 };
+
+  /* ---- LE REPORT POUR AGE ---- */
+  const jeune = C.vetoScout(Object.assign({}, socle, { minutes: 1 }));
+  console.log('   jeune : « ' + jeune + ' »');
+  ok(!!jeune && C.REFUS_AGE.test(jeune),
+     'le refus pour age est reconnu comme un REPORT par le motif qui en decide : « ' + jeune + ' »');
+  const petit = C.vetoScout(Object.assign({}, socle, { liq: 100, mc: 100 }));
+  ok(!!petit && !C.REFUS_AGE.test(petit),
+     'et un refus qui n en est pas un ne l est pas : « ' + petit + ' »');
+
+  /* ---- LE BANNISSEMENT ----
+   * Chaque pouvoir du contrat que le Warden sait refuser, un par un. C'est le
+   * seul endroit ou la liste est ecrite : ici on la LIT, en jouant chaque cas. */
+  const cas = [
+    ['honeypot', { honeypot: true }],
+    ['achat impossible', { cannotBuy: true }],
+    ['soldes reecrits', { ownerBal: true }],
+    ['auto-destruction', { selfd: true }],
+    ['taxe par portefeuille', { perslip: true }],
+    ['createur recidiviste', { hpSame: true }],
+    ['transferts suspendables', { pausable: true }],
+    ['taxe de vente', { taxeSue: true, sellTax: 42, buyTax: 0 }],
+    ['taxe d achat', { taxeSue: true, buyTax: 40, sellTax: 0 }],
+  ];
+  let tousBannis = true;
+  const vus = [];
+  for (const [quoi, g] of cas) {
+    const r = C.vetoWarden({ g: Object.assign({ have: true }, g) });
+    vus.push(quoi + ' → ' + r);
+    if (!r || !C.REFUS_DEFINITIFS.test(r)) tousBannis = false;
+  }
+  console.log('   ' + vus.join(' · '));
+  ok(tousBannis,
+     'chacun des ' + cas.length + ' pouvoirs que le Warden refuse mene a un BANNISSEMENT : un '
+     + 'contrat piege ne doit pas revenir en surveillance, ou on le repaie a chaque tour');
+
+  /* ---- ET CE QUI CHANGE NE BANNIT PAS ----
+   * Une note trop basse, une concentration du moment : ce sont des ETATS, et
+   * ils changent en une heure sur un jeton de dix minutes. */
+  const etats = [C.vetoWhale({ chaine: { vu: true, top: 88 } }),
+                 'score too low',
+                 C.vetoScout(Object.assign({}, socle, { minutes: 1 }))];
+  console.log('   etats : ' + JSON.stringify(etats));
+  ok(etats.every((r) => !!r && !C.REFUS_DEFINITIFS.test(r)),
+     'tandis qu un refus qui porte sur un ETAT ne bannit jamais : il change, et le jeton revient');
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -4089,6 +4159,7 @@ async function parleAnglais() {
   await seReorganiseVraiment();
   await neTradePlus();
   await parleAnglais();
+  motsQuiCommandent();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
