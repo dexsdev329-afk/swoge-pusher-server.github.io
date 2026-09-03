@@ -610,6 +610,36 @@ async function apprendreDesMorts() {
   ok(n6 === C.OMBRES_SECOURS_PAR_TOUR && appels.dex === C.OMBRES_SECOURS_PAR_TOUR,
      'dix ombres dues, ' + n6 + ' relues : le budget par tour est tenu');
 
+  /* ---- UNE OMBRE VUE PUIS DISPARUE EST JUGEE EFFONDREE ----
+   * Les lecons disaient « ne de <10 min, piscine $1-5k : +30 % » pendant que
+   * la colonie enchainait des -60, -80, -92 % en dix minutes. Les jetons qui
+   * s effondraient ne recevaient jamais de note : la piscine videe ne repasse
+   * dans aucun flux, et « non jugee » voulait dire « absente des lecons ». Il
+   * ne restait que les survivantes. */
+  console.log('\n-- une ombre vue puis disparue est jugee effondree --');
+  E = C._etat();
+  const vue = Object.assign(ombre(inconnu, 32), { dexVu: true });
+  const jamais = ombre('0x' + 'ef'.repeat(20), 32);
+  E.ombres = [vue, jamais];
+  const baseAvantD = (E.base && E.base.n) || 0;
+  await C.secoursOmbres({});
+  ok(vue.muets === 1 && vue.jalons[C.HORIZON_REF] === undefined,
+     'un premier silence ne juge rien : DexScreener peut avoir rate un appel');
+  C.regleLesOmbres({});
+  ok(vue.jalons[C.HORIZON_REF] === undefined, 'et le reglement n en tire rien non plus apres un seul');
+  await C.secoursOmbres({});
+  ok(vue.muets === C.OMBRE_SILENCES, 'deux silences de suite sont comptes sur l ombre elle-meme');
+  const nj = C.regleLesOmbres({});
+  ok(nj === 1 && vue.jalons[C.HORIZON_REF] === C.OMBRE_DISPARUE && vue.disparue === true,
+     'l ombre que DexScreener CONNAISSAIT et qui ne repond plus est jugee effondree (' + C.OMBRE_DISPARUE + ' %)');
+  ok(jamais.jalons[C.HORIZON_REF] === undefined,
+     'celle qu il n a jamais indexee reste non jugee : son silence ne dit rien d elle');
+  ok(E.base && E.base.n === baseAvantD + 1,
+     'et le fond a appris cet effondrement, une fois — c est le biais de survie qui tombe');
+  ok((E.compteurs.ombreDisparue || 0) === 1, 'comptee comme disparue, a part des muettes');
+  const njBis = C.regleLesOmbres({});
+  ok(njBis === 0 && E.base.n === baseAvantD + 1, 'et une seule fois : le tour suivant ne la rejuge pas');
+
   console.log('\n-- la part d abandons se mesure sur les quarante dernieres --');
   C._pose(C.etatNeuf());
   E = C._etat();
@@ -3468,6 +3498,28 @@ async function leVeilleur() {
   ok(G.positions.length === ouvAvant, 'il n en a ouvert aucune');
   ok(JSON.stringify(G.memoire || {}) === apprisAvant,
      'et il n a rien appris a personne : regarder n est pas juger');
+
+  /* ---- SAUF LE FREIN : LA COUPE DE SECURITE N ATTEND PAS LE TOUR ----
+   * Entre deux tours, deux minutes et demie ; sur cette chaine une piscine se
+   * vide en une. Les positions fermaient a -54, -72, -92 % parce que la
+   * premiere lecture apres la chute etait celle du tour suivant. La coupe de
+   * la Sentinelle n est pas une decision apprise : c est un garde-fou, et le
+   * Veilleur est le seul a lire assez souvent pour le tirer a temps. */
+  const p2 = G.positions[0];
+  const j2 = MONDE.jetons.find((x) => x.addr === p2.adr);
+  if (j2) j2.prix = p2.prix0 * 0.4;
+  for (const k of Object.keys(C._cache.dex)) delete C._cache.dex[k];
+  const trAvant2 = G.trades, sigAvant = (G.signaux || []).length;
+  await C.veille();
+  const H = C._etat();
+  ok(H.positions.length === ouvAvant - 1,
+     'a -60 % entre deux tours, le Veilleur COUPE : il ne laisse pas la position au tour suivant');
+  ok(H.trades === trAvant2 + 1, 'la position est fermee et comptee comme un trade');
+  const sig = (H.signaux || [])[0];
+  ok(sig && sig.k === 'vente' && sig.adr === p2.adr && /since entry/.test(sig.comment || '') && /watch/.test(sig.comment || ''),
+     'le signal de vente dit la coupe ET qui l a tiree : « ' + (sig && sig.comment) + ' »');
+  ok((H.signaux || []).length === sigAvant + 1 && (H.compteurs.veilleCoupe || 0) === 1,
+     'un seul signal, et la coupe du Veilleur est comptee a part');
 
   /* ---- SANS POSITION, IL NE COUTE RIEN ---- */
   G.positions = [];

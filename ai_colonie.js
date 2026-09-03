@@ -3407,6 +3407,10 @@ function noteOmbre(t, an, refus, quiRefuse) {
     echeance: now + OMBRE_TENUE_MIN * 60000,
     traits: an.traits, score: an.score,
     refus: refus || null, quiRefuse: quiRefuse || null,
+    /* DexScreener le connaissait-il a l'entree ? C'est ce qui permet, plus
+       tard, de distinguer « jamais indexe » de « disparu » (voir
+       `regleLesOmbres`). */
+    dexVu: !!(t.dex && t.dex.vu),
     jalons: {},           /* ce qu'il valait a chaque echeance atteinte */
   });
   if (E.ombres.length > OMBRES_MAX) E.ombres = E.ombres.slice(-OMBRES_MAX);
@@ -3501,6 +3505,25 @@ function noteAudit(cle, r) {
  * ne le signale. Une echeance ratee reste vide. */
 function jalonValable(h, age) { return age >= h && age <= h + Math.max(5, h * 0.5); }
 
+/* ---- UNE OMBRE QUI DISPARAIT N'EST PAS UNE OMBRE SANS RESULTAT ----
+ *
+ * Les lecons disaient que les jetons nes depuis moins de dix minutes, dans
+ * une piscine de mille a cinq mille dollars, etaient les meilleurs (+24, +32
+ * de moyenne). Et la colonie enchainait les entrees qui perdaient 50 a 90 %
+ * en dix minutes. Les deux etaient vrais en meme temps, parce qu'une ombre
+ * dont le jeton s'effondrait ne recevait JAMAIS de note : la piscine videe
+ * ne repasse dans aucun flux, la relecture ne rend rien, et « non jugee »
+ * voulait dire « absente des lecons ». Ne restaient que les survivantes — et
+ * les survivantes des jetons de dix minutes sont des fusees. Un biais de
+ * survie, au sens propre.
+ *
+ * Un jeton que DexScreener CONNAISSAIT a l'entree et qui, passe l'echeance de
+ * reference, ne repond plus a deux relectures de suite, est note comme
+ * effondre. Un jeton que DexScreener n'a jamais indexe reste non juge : son
+ * silence ne dit rien de lui. */
+const OMBRE_DISPARUE = -95;         /* ce que vaut un jeton dont la piscine s'est evaporee */
+const OMBRE_SILENCES = 2;           /* deux relectures muettes de suite, pas une */
+
 function regleLesOmbres(marche) {
   if (!Array.isArray(E.ombres) || !E.ombres.length) return 0;
   const now = Date.now();
@@ -3511,7 +3534,24 @@ function regleLesOmbres(marche) {
     const age = (now - o.t) / 60000;
     if (!o.jalons) o.jalons = {};
     const brut = marche[o.adr];
-    const x = (typeof brut === 'number') ? { prix: brut } : brut;
+    let x = (typeof brut === 'number') ? { prix: brut } : brut;
+    if (!(x && x.prix > 0) && o.dexVu && (o.muets || 0) >= OMBRE_SILENCES
+        && age >= HORIZON_REF && o.jalons[HORIZON_REF] === undefined) {
+      /* Jugee au prix d'une piscine vide, a l'echeance de reference, et
+         seulement a celle-la : les autres n'ont pas ete mesurees. */
+      const r = OMBRE_DISPARUE;
+      o.jalons[HORIZON_REF] = r;
+      o.disparue = true;
+      noteProfil(o.traits, HORIZON_REF, r);
+      compte('jalons');
+      for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
+      apprendBase(r);
+      noteAudit(o.refus ? (o.quiRefuse || 'refus') + ' · ' + familleRefus(o.refus)
+                        : 'achete ou retenu', r);
+      compte('ombresJugees'); compte('ombreDisparue');
+      n++;
+      return age <= dernier + Math.max(5, dernier * 0.5);
+    }
     if (x && x.prix > 0) {
       const r = (x.prix - o.prix0) / o.prix0 * 100;
       /* Les memes bornes que pour une position : un rapport aberrant ne decrit
@@ -5366,8 +5406,14 @@ async function secoursOmbres(marche) {
     if (x && x.vu && x.prix > 0) {
       marche[d.o.adr] = { prix: x.prix, liq: x.liq || 0 };
       posePrix(d.o.adr, x.prix);
+      d.o.muets = 0;
       n++;
-    } else compte('ombreMuette');
+    } else {
+      compte('ombreMuette');
+      /* Un silence de plus, sur CETTE ombre : c'est `regleLesOmbres` qui en
+         tire quelque chose, et seulement si le jeton avait ete vu. */
+      d.o.muets = (d.o.muets || 0) + 1;
+    }
     await dors(250);
   }
   if (n) compte('ombresDeSecours', n);
@@ -5721,7 +5767,8 @@ function vue() {
     bandes: E.bandes || [],
     suites: (E.suites || []).map((s) => ({ sym: s.sym, rSortie: s.rSortie, echeance: s.echeance })),
     ombres: { enAttente: (E.ombres || []).length, jugees: E.compteurs.ombresJugees || 0,
-              relues: E.compteurs.ombresDeSecours || 0, muettes: E.compteurs.ombreMuette || 0 },
+              relues: E.compteurs.ombresDeSecours || 0, muettes: E.compteurs.ombreMuette || 0,
+              disparues: E.compteurs.ombreDisparue || 0 },
     /* Le fond que toute case se compare a : sans lui a l'ecran, un
        ajustement de zero se lirait comme « rien appris ». */
     base: E.base && E.base.n > 0
@@ -5848,7 +5895,7 @@ const VEILLE_MS = nEnv('VEILLE_MS', 45000);
 async function veille() {
   const ouvertes = (E.positions || []).filter((p) => p && p.adr);
   if (!ouvertes.length) return 0;
-  let n = 0;
+  let n = 0, coupes = 0;
   for (const p of ouvertes) {
     try {
       const d = await lisDex(p.adr);
@@ -5862,10 +5909,26 @@ async function veille() {
       if (d.mc > 0) p.mcVeille = d.mc;
       p.veilleT = Date.now();
       n++;
+      /* ---- LA SEULE DECISION QU'IL PRENNE : LA COUPE DE SECURITE ----
+       * Le Veilleur ne juge rien et ne vend pas sur ce qu'il apprend — mais
+       * la coupe de la Sentinelle n'est pas une decision apprise, c'est un
+       * garde-fou ecrit dans le code. Entre deux tours, deux minutes et demie
+       * passent ; sur cette chaine, une piscine se vide en une. Les positions
+       * fermaient a -54, -62, -72, -82, -92 % parce que la premiere lecture
+       * apres la chute etait celle du tour suivant. Le Veilleur, lui, lit
+       * toutes les quarante-cinq secondes : c'est a lui de tirer le frein. */
+      const danger = dangerSentinelle(p, { prix: d.prix, liq: d.liq || 0 });
+      if (danger) {
+        p.vuPar = casSentinelle(p, { prix: d.prix, liq: d.liq || 0 });
+        ferme(p, d.prix, Date.now(), { par: 'sentinelle', raison: danger + ' — caught by the 45 s watch' });
+        E.positions = (E.positions || []).filter((q) => q !== p);
+        compte('veilleCoupe');
+        coupes++;
+      }
     } catch (e) { /* une lecture ratee ne change rien : l'ancienne valeur tient */ }
     await dors(120);
   }
-  if (n) { compte('veilles'); sauve(); }
+  if (n || coupes) { compte('veilles'); sauve(); }
   return n;
 }
 let veilleur = null;
@@ -5913,7 +5976,7 @@ module.exports = {
   revoitLesBornes, borne, BORNES, partAbandons, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
-  noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN,
+  noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN, OMBRE_DISPARUE, OMBRE_SILENCES,
   noteProfil, courbeDe, horizonPour, informationDe, classementDesTraits,
   vetoOracle, vetoScout, vetoWarden, vetoWhale, vetoWhisper, VETOS,
   REFUS_AGE, REFUS_DEFINITIFS,
