@@ -890,6 +890,23 @@ const NOEUDS = [
  * controle toutes les heures. Condamner sans appel un service qui peut
  * reapparaitre serait echanger une panne contre une autre. */
 const SANS_METHODE = /the method ([\w_]+) (?:does not exist|is not available|not found)/i;
+/* ---- UNE REVOCATION EST UNE REPONSE, PAS UNE PANNE ----
+ * Le Cobaye demande au contrat ce qu'il ferait d'un envoi vers la piscine. Un
+ * honeypot repond « execution reverted » — et c'est EXACTEMENT le
+ * renseignement qu'on etait venu chercher. Le noeud, lui, a parfaitement
+ * fonctionne : il a transmis la question et rapporte la reponse.
+ *
+ * Elle etait comptee comme un echec de lecture. Consequences mesurees sur la
+ * colonie : le noeud officiel affichait 204 lectures reussies sur 462, avec
+ * « execution reverted » comme dernier echec — donc chaque piege correctement
+ * DETECTE degradait le taux de reussite de la chaine, et l'alerte annoncait
+ * « 85 % des lectures refusees » en comptant des succes parmi elles. Le
+ * chiffre servait ensuite a decider s'il fallait un autre fournisseur RPC :
+ * il envoyait donc chercher une panne la ou le systeme faisait son travail.
+ *
+ * On note le noeud comme ayant repondu, et on releve quand meme l'erreur pour
+ * que l'appelant y lise le refus du contrat. */
+const EVM_REPONSE = /execution reverted|invalid opcode|out of gas|stack underflow|always failing/i;
 
 /* Assez d'essais pour que « zero reussite » ne soit pas un coup de malchance :
    trois refus d'affilee arrivent, vingt-cinq sans une seule reussite, non. */
@@ -980,6 +997,11 @@ async function rpc(methode, params) {
         return r;
       } catch (e) {
         derniere = e;
+        /* Le contrat a repondu non : le noeud a fait son travail. On le note
+           comme tel, et on releve quand meme pour que l'appelant lise le
+           refus. Sans ca, un piege detecte se lisait comme un noeud en
+           panne. */
+        if (EVM_REPONSE.test(String(e.message || ''))) { noteService(n.cle, true); throw e; }
         noteService(n.cle, false, e.coupe ? 'sature' : e.message);
         /* Le service annonce sa limite de plage : on la RETIENT, au lieu de lui
            renvoyer la meme demande a chaque tour. */
@@ -3393,6 +3415,9 @@ function classementDesTraits() {
 const SEL_TRANSFER = '0xa9059cbb';   /* transfer(address,uint256) */
 /* Le vocabulaire d'une revocation, tel que les noeuds le rendent. Court
    expres : ce qui n'est pas la-dedans n'est pas compte contre le jeton. */
+/* Le meme vocabulaire que celui qui distingue une reponse d'une panne, plus
+   « revert » nu : ici on LIT la reponse, on n'a pas a etre aussi prudent que
+   la ou l'on decide si un noeud est tombe. */
 const EVM_REFUSE = /execution reverted|revert|invalid opcode|out of gas|stack underflow|always failing/i;
 
 async function simuleVente(t) {

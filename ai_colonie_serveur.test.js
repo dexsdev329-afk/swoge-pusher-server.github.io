@@ -4185,6 +4185,49 @@ function uneRegleUneLigne() {
   E.audit = {};
 }
 
+function revocationNestPasUnePanne() {
+  console.log('\n-- une revocation est une reponse, pas une panne --');
+  /* ---- CE QUE LE RELEVE DISAIT ----
+   * Noeud officiel : 204 lectures reussies sur 462, dernier echec
+   * « execution reverted ». Or c'est la reponse du Cobaye : le contrat REFUSE
+   * l'envoi vers la piscine, donc c'est un piege, donc l'epreuve a marche.
+   * Chaque honeypot correctement detecte degradait le taux de reussite de la
+   * chaine — et l'alerte annoncait « 85 % des lectures refusees » en comptant
+   * des succes dedans. Ce chiffre sert a decider s'il faut un autre
+   * fournisseur RPC : il envoyait chercher une panne la ou le systeme
+   * travaillait. Depuis peu il decide aussi si le seuil a le droit de monter,
+   * ce qui en fait un chiffre a ne pas laisser mentir. */
+  const E = C._etat();
+  C._pose(C.etatNeuf());
+  const F = C._etat();
+  const vrai = global.fetch;
+  global.fetch = async () => ({ ok: true,
+    json: async () => ({ error: { message: 'execution reverted' } }) });
+  let lu = null;
+  return C._rpc('eth_call', [{ from: '0x1', to: '0x2', data: '0x' }, 'latest'])
+    .catch((e) => { lu = e.message; })
+    .then(async () => {
+      const s = F.services.chaine || {};
+      console.log('   contrat : « ' + lu +' » · releve du noeud ' + s.reussites + '/' + s.essais);
+      ok(/reverted/.test(lu || ''),
+         'l appelant lit toujours le refus du contrat : c est le renseignement qu on cherchait');
+      ok(s.reussites === s.essais && s.essais > 0,
+         'mais le noeud n est PAS compte en echec : il a transmis la question et rapporte la '
+         + 'reponse (' + s.reussites + '/' + s.essais + ')');
+      /* ---- ET UNE VRAIE PANNE COMPTE TOUJOURS ----
+       * Sinon on aurait echange un chiffre trop noir contre un chiffre trop
+       * rose, ce qui est pire : personne n irait plus voir. */
+      global.fetch = async () => { throw new Error('socket hang up'); };
+      await C._rpc('eth_blockNumber', []).catch(() => {});
+      const t = F.services.chaine || {};
+      console.log('   apres une panne reseau : ' + t.reussites + '/' + t.essais);
+      ok(t.essais > t.reussites,
+         'une panne reseau, elle, compte contre le noeud : c est la difference qu on mesure');
+      global.fetch = vrai;
+      C._pose(E);
+    });
+}
+
 function seuilPasALAveugle() {
   console.log('\n-- le seuil ne monte pas pendant qu on est aveugle --');
   /* ---- CE QUI EST ARRIVE ----
@@ -4282,6 +4325,7 @@ function seuilPasALAveugle() {
   await parleAnglais();
   motsQuiCommandent();
   uneRegleUneLigne();
+  await revocationNestPasUnePanne();
   seuilPasALAveugle();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
