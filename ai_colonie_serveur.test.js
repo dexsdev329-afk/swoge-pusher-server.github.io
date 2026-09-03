@@ -4275,6 +4275,109 @@ function seuilPasALAveugle() {
   C._pose(E);
 }
 
+/* ==========================================================================
+ * LES DEUX BORNES QUE LA COLONIE A LE DROIT DE BOUGER
+ *
+ * C'est le seul endroit du fichier ou un agent touche a une regle. Ce qui est
+ * mesure ici n'est donc pas « est-ce que ca bouge » — c'est « est-ce que ca
+ * s'arrete ». Une boucle qui desserre en lisant l'audit et rien d'autre
+ * descend jusqu'a n'avoir plus de regle, et elle le fait exactement une fois.
+ * ======================================================================== */
+function bornesQuiSeReglent() {
+  const E = C._etat();
+  const pose = (o) => {
+    C._pose(C.etatNeuf());
+    const F = C._etat();
+    F.ouvertures = o.ouvertures === undefined ? 40 : o.ouvertures;
+    F.compteurs.abandonneeSansPrix = o.abandons || 0;
+    F.depuisBornes = 999;                    /* le repos est purge */
+    F.audit = o.audit || {};
+    return F;
+  };
+  /* Une regle que l'audit condamne : beaucoup d'observations, beaucoup de
+     montees. C'est le cas ou le desserrage est justifie. */
+  const COUTE = { 'scout · too young: set aside until it has the age':
+                  { n: 44, s: 3946, montes: 23, effondres: 5 } };
+  /* Et la meme, quand elle protege : presque rien ne monte. */
+  const PROTEGE = { 'scout · too young: set aside until it has the age':
+                    { n: 44, s: -900, montes: 4, effondres: 26 } };
+
+  console.log('\n-- la colonie desserre quand les DEUX mesures sont d accord --');
+  let F = pose({ audit: COUTE, abandons: 1 });        /* 1/40 = 2,5 % : sain */
+  const av = C.borne('ageMin');
+  ok(C.revoitLesBornes() === true, 'elle bouge');
+  console.log('   ' + av + ' → ' + C.borne('ageMin') + ' min · ' + (F.journalStructure[0] || {}).txt);
+  ok(C.borne('ageMin') < av,
+     'l age minimum descend quand l audit dit que la regle coute ET que les positions '
+     + 'ouvertes se suivent jusqu au bout (' + av + ' → ' + C.borne('ageMin') + ')');
+  ok(/costs more than it protects/.test((F.journalStructure[0] || {}).txt || ''),
+     'et le journal porte la mesure qui l a decidee, pas « ajuste »');
+  ok(/Bounded to \[4, 90\]/.test((F.journalStructure[0] || {}).txt || ''),
+     'avec les butees ecrites dans le code, a cote : une borne montree sans son plafond se lit '
+     + 'comme une borne sans plafond');
+
+  console.log('\n-- mais l audit seul ne suffit JAMAIS --');
+  F = pose({ audit: COUTE, abandons: 14 });           /* 14/40 = 35 % : trop */
+  const av2 = C.borne('ageMin');
+  C.revoitLesBornes();
+  console.log('   ' + av2 + ' → ' + C.borne('ageMin') + ' min · ' + (F.journalStructure[0] || {}).txt);
+  ok(C.borne('ageMin') > av2,
+     'le meme audit, avec 35 % de positions jamais relues, RESSERRE au lieu de desserrer : '
+     + 'c est le prix du desserrage, et il se mesure sur toutes les positions');
+  ok(/could never be re-read/.test((F.journalStructure[0] || {}).txt || ''),
+     'et la raison le dit');
+
+  console.log('\n-- et une regle qui protege se resserre toute seule --');
+  F = pose({ audit: PROTEGE, abandons: 1 });
+  const av3 = C.borne('ageMin');
+  C.revoitLesBornes();
+  console.log('   ' + av3 + ' → ' + C.borne('ageMin') + ' min');
+  ok(C.borne('ageMin') > av3,
+     'quatre montees sur quarante-quatre : la regle merite sa place, et elle en gagne. Sans ce '
+     + 'sens-la, ce ne serait pas un reglage, ce serait une descente');
+
+  console.log('\n-- ca ne descend pas jusqu a zero --');
+  /* On laisse tourner cent fois avec le cas le plus permissif possible. */
+  F = pose({ audit: COUTE, abandons: 0 });
+  for (let i = 0; i < 100; i++) { F.depuisBornes = 999; C.revoitLesBornes(); }
+  console.log('   apres 100 revisions : age ' + C.borne('ageMin') + ' min · piscine '
+    + C.borne('liqParMise') + '× la mise');
+  ok(C.borne('ageMin') === C.BORNES.ageMin.min,
+     'l age s arrete NET sur la butee ecrite dans le code (' + C.borne('ageMin') + ' min), '
+     + 'pas une minute en dessous');
+  ok(C.borne('liqParMise') >= C.BORNES.liqParMise.min,
+     'et la profondeur de piscine aussi (' + C.borne('liqParMise') + '×)');
+
+  console.log('\n-- un etat relu ne contourne pas les butees --');
+  F.bornes = { ageMin: 0, liqParMise: 1 };
+  console.log('   etat truque a 0 → ' + C.borne('ageMin') + ' min');
+  ok(C.borne('ageMin') === C.BORNES.ageMin.min && C.borne('liqParMise') === C.BORNES.liqParMise.min,
+     'un fichier ecrit par une version plus permissive — ou bricole — est ramene dans les '
+     + 'butees a la lecture, pas seulement a l ecriture');
+
+  console.log('\n-- et le repos empeche de rejuger le meme effet --');
+  F = pose({ audit: COUTE, abandons: 0 });
+  F.depuisBornes = 0;
+  const av4 = C.borne('ageMin');
+  ok(C.revoitLesBornes() === false && C.borne('ageMin') === av4,
+     'deux mouvements ne peuvent pas se suivre : on bouge, puis on REGARDE ce que ca fait');
+
+  console.log('\n-- et tout ceci se coupe d un mot --');
+  process.env.BORNES_APPRISES = '0';
+  F = pose({ audit: COUTE, abandons: 0 });
+  ok(C.revoitLesBornes() === false,
+     'BORNES_APPRISES=0 rend la colonie muette sur ses propres bornes, sans toucher au reste');
+  delete process.env.BORNES_APPRISES;
+
+  /* ---- ET CE QUI NE BOUGE PAS ----
+   * La liste est courte et elle doit le rester : c'est elle qui separe un
+   * reglage de metier d'une garde qu'on abaisse. */
+  ok(Object.keys(C.BORNES).length === 2 && C.BORNES.ageMin && C.BORNES.liqParMise,
+     'DEUX bornes, et deux seulement : les controles de securite et les bornes de mise ne sont '
+     + 'pas dans cette table, donc aucun agent ne peut les atteindre');
+  C._pose(E);
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -4335,6 +4438,7 @@ function seuilPasALAveugle() {
   uneRegleUneLigne();
   await revocationNestPasUnePanne();
   seuilPasALAveugle();
+  bornesQuiSeReglent();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

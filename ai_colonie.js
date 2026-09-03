@@ -1310,6 +1310,47 @@ async function lisChaine(addr, minutes, pool) {
       } catch (e) { derniere = e; }
     }
     if (logs === null) throw derniere || new Error('logs illisibles');
+    /* ---- ZERO TRANSFERT N'EST PAS « PERSONNE NE LE GARDE » ----
+     *
+     * `minutes` est l'age de la PISCINE, pas du jeton : c'est
+     * `pool_created_at` que rendent les flux. Un contrat peut vivre des heures
+     * avant qu'on lui ouvre un marche — et la fenetre, taillee sur la piscine,
+     * tombe alors entierement APRES ses transferts.
+     *
+     * Mesure faite a la main sur trois candidats du tour en cours :
+     *
+     *   CATALYSTANCH  « 3 min »   fenetre 7 783 blocs :   0 transferts
+     *                             fenetre 200 000     :   4 transferts
+     *   MAGATARD      « 3 min »   fenetre 7 783 blocs :   0 transferts
+     *                             fenetre 200 000     :  91 transferts
+     *   POOU          « 82 min »  fenetre 54 713      : 340 transferts
+     *                             fenetre 200 000     : 737 transferts
+     *
+     * Le compte rendu, lui, restait honnete : sans montant lu, `porteurs` et
+     * `top` sortent `null`, et `personne` exige d'avoir vu au moins un
+     * transfert. Rien n'est donc INVENTE — mais tout revient « inconnu », et
+     * l'inconnu coute des points a chaque fois. Un jeton parfaitement lisible
+     * etait note comme un jeton illisible, systematiquement, parce qu'on avait
+     * regarde au mauvais endroit. C'est la moitie de la phrase que l'alerte
+     * repete depuis des jours : « chaque refus rend inconnu un jeton qu'on
+     * aurait pu juger » — sauf qu'ici le noeud n'avait rien refuse.
+     *
+     * On relit donc large avant de conclure. Le cout est borne — une lecture
+     * de plus, seulement quand la premiere n'a RIEN rendu — et le noeud sert
+     * cette plage sans broncher : la requete porte l'adresse du jeton, donc
+     * elle rend quelques dizaines de lignes, pas des milliers. */
+    if (!logs.length && plages[0] < BLOCS_PLAFOND) {
+      try {
+        const large = await rpc('eth_getLogs', [{
+          address: addr, topics: [SUJET_TRANSFERT],
+          fromBlock: '0x' + Math.max(0, bloc - BLOCS_PLAFOND).toString(16),
+          toBlock: '0x' + bloc.toString(16) }]);
+        if (large && large.length) {
+          compte('fenetreElargie');
+          logs = large;
+        }
+      } catch (e) { /* la fenetre etroite reste ce qu'on a ; elle est vide, et on le dira */ }
+    }
     const solde = {}, recus = {}, contreparties = {}, envoyeurs = {}, receveurs = {};
     let brules = 0, total = 0, lus = 0;
     const lie = (a, b) => { (contreparties[a] || (contreparties[a] = new Set())).add(b); };
@@ -2146,6 +2187,131 @@ function nEnv(nom, defaut) {
  * dit rien du jeton, il dit l'heure. Il donne droit a une reprise quelle que
  * soit la note, sans quoi on ecarterait a deux minutes ce qu'on voulait juger
  * a deux heures. */
+/* ==========================================================================
+ * LES DEUX BORNES QUE LA COLONIE A LE DROIT DE BOUGER
+ *
+ * « Veux-tu que la colonie puisse bouger ces deux bornes elle-meme, avec un
+ *   plafond et un journal ? — Oui. »
+ *
+ * C'est un changement de nature, et il merite qu'on ecrive pourquoi il tient.
+ *
+ * ---- POURQUOI CELLES-LA, ET AUCUNE AUTRE ----
+ *
+ * L'age minimum et la profondeur de piscine ne protegent de RIEN en
+ * eux-memes. Ils protegent de deux choses mesurables et rien d'autre : un
+ * jeton trop jeune n'a pas encore de prix qu'on sache relire, et une piscine
+ * trop mince mange le trade en glissement. Ce sont des reglages de METIER.
+ *
+ * Les controles de securite — honeypot, taxes, pouvoirs du proprietaire,
+ * concentration — et les bornes de mise ne bougent pas et ne bougeront pas.
+ * Un systeme qui peut apprendre a lever sa propre garde l'apprend toujours, et
+ * exactement une fois.
+ *
+ * ---- POURQUOI CA NE DERIVE PAS VERS ZERO ----
+ *
+ * Parce que la boucle lit DEUX mesures opposees, pas une.
+ *
+ * L'audit dit ce que le refus a COUTE : ce que la regle a ecarte est-il monte
+ * ? Une boucle qui n'ecouterait que lui desserrerait jusqu'a n'avoir plus de
+ * regle du tout — c'est exactement le piege annonce.
+ *
+ * Le compteur d'abandons dit ce que le desserrage a COUTE : combien de
+ * positions n'ont jamais pu etre relues jusqu'a l'echeance. C'est la mesure
+ * directe du « trop jeune, trop petit », et c'est elle qui reserre. Les deux
+ * tirent en sens inverse, et les butees tiennent le tout.
+ *
+ * ---- ET LE RESERRAGE EST AUSSI AUTOMATIQUE QUE LE DESSERRAGE ----
+ *
+ * Sans ca, ce ne serait pas un reglage, ce serait une descente.
+ * ======================================================================== */
+const BORNES = {
+  /* min et max sont ECRITS ICI. L'apprentissage se deplace dedans, jamais au
+     dela — et `pas` est petit expres : on veut une pente, pas un saut. */
+  ageMin:     { env: 'AGE_ACHAT_MIN', defaut: 15, min: 4, max: 90, pas: 2 },
+  liqParMise: { env: 'LIQ_PAR_MISE',  defaut: 25, min: 8, max: 60, pas: 3 },
+};
+/* La valeur en vigueur : ce que la colonie a appris, ou l'environnement tant
+   qu'elle n'a rien appris. Toujours ramenee entre les butees — un etat relu
+   d'une version plus permissive ne peut pas les contourner. */
+function borne(k) {
+  const b = BORNES[k];
+  const appris = (E.bornes || {})[k];
+  const v = (typeof appris === 'number' && isFinite(appris)) ? appris : nEnv(b.env, b.defaut);
+  return Math.min(b.max, Math.max(b.min, v));
+}
+/* Le desserrage se paie en positions qu'on ne sait plus suivre : c'est la
+   SEULE contrepartie mesuree, et c'est elle qui rend la boucle honnete. */
+function partAbandons() {
+  const ouv = E.ouvertures || 0;
+  if (ouv < 12) return null;                    /* trop peu pour conclure */
+  return ((E.compteurs.abandonneeSansPrix || 0) + (E.compteurs.prixAberrant || 0)) / ouv;
+}
+const ABANDON_TROP = nEnv('ABANDON_TROP_PART', 0.20);   /* au-dessus, on reserre */
+const ABANDON_SAIN = nEnv('ABANDON_SAIN_PART', 0.08);   /* en dessous, on peut desserrer */
+const AUDIT_MIN_OBS = 12;        /* en dessous, une part de montees est du bruit */
+const AUDIT_COUTE = 40;          /* % de montees au-dessus duquel la regle coute */
+const AUDIT_PROTEGE = 15;        /* et en dessous duquel elle protege vraiment */
+const BORNES_REPOS = 24;         /* tours entre deux mouvements : on regarde l'effet */
+
+/* La ligne d'audit d'une regle, par son libelle de famille. */
+function auditDe(motif) {
+  return auditDesRefus().find((x) => motif.test(x.cle)) || null;
+}
+
+function revoitLesBornes() {
+  if (!nEnv('BORNES_APPRISES', 1)) return false;
+  if (!E.bornes) E.bornes = {};
+  E.depuisBornes = (E.depuisBornes || 0) + 1;
+  if (E.depuisBornes < BORNES_REPOS) return false;
+
+  const ab = partAbandons();
+  const cas = [
+    { k: 'ageMin', motif: /too young/,
+      quoi: 'minimum buy age', unite: ' min' },
+    { k: 'liqParMise', motif: /pool below the buy floor|nothing to sell into/,
+      quoi: 'pool depth required per stake', unite: '× the stake' },
+  ];
+  for (const c of cas) {
+    const b = BORNES[c.k], avant = borne(c.k);
+    const l = auditDe(c.motif);
+    let apres = avant, pourquoi = null;
+
+    /* ---- ON RESERRE D'ABORD ----
+     * Le cout du desserrage se lit sur TOUTES les positions, pas seulement
+     * sur celles de cette regle : on le regarde donc avant tout le reste, et
+     * il l'emporte. */
+    if (ab !== null && ab > ABANDON_TROP && avant < b.max) {
+      apres = Math.min(b.max, avant + b.pas);
+      pourquoi = Math.round(ab * 100) + '% of opened positions could never be re-read to their '
+        + 'deadline. That is what buying too young and too thin costs, and it is measured on '
+        + 'every position, not just the ones this rule touches';
+    } else if (l && l.n >= AUDIT_MIN_OBS && l.partMontes <= AUDIT_PROTEGE && avant < b.max) {
+      apres = Math.min(b.max, avant + b.pas);
+      pourquoi = 'only ' + l.partMontes + '% of the ' + l.n + ' tokens it set aside went up: '
+        + 'this rule protects, and it can afford to protect more';
+    /* ---- ET ON NE DESSERRE QUE SI LES DEUX SONT D'ACCORD ----
+     * L'audit doit dire que la regle coute, ET les abandons doivent etre bas.
+     * Un seul des deux ne suffit pas : c'est ce « et » qui empeche la
+     * descente. */
+    } else if (l && l.n >= AUDIT_MIN_OBS && l.partMontes >= AUDIT_COUTE
+               && ab !== null && ab < ABANDON_SAIN && avant > b.min) {
+      apres = Math.max(b.min, avant - b.pas);
+      pourquoi = l.partMontes + '% of the ' + l.n + ' tokens it set aside went up (average '
+        + l.moyenne + '%), and only ' + Math.round(ab * 100) + '% of opened positions were lost '
+        + 'for want of a price: it costs more than it protects';
+    }
+    if (apres === avant || !pourquoi) continue;
+    E.bornes[c.k] = apres;
+    E.depuisBornes = 0;
+    journal('bornes', c.quoi + ' ' + avant + c.unite + ' → ' + apres + c.unite + '. ' + pourquoi
+      + '. Bounded to [' + b.min + ', ' + b.max + '] in the code, which no measurement moves.',
+      [{ regle: l ? l.cle : c.k, montes: l ? l.partMontes + '%' : null, n: l ? l.n : null,
+         abandons: ab === null ? null : Math.round(ab * 100) + '%' }]);
+    return true;
+  }
+  return false;
+}
+
 function planchers() {
   return {
     /* ---- LE PLANCHER BAISSE, ET C'EST LA MESURE QUI LE DIT ----
@@ -2211,8 +2377,13 @@ function planchers() {
      * Le plancher fixe reste, en dessous, comme garde-fou pour une caisse
      * minuscule ; les deux sont reglables par l'environnement. Un agent ne
      * peut toujours pas les bouger : c'est un humain, sur une mesure. */
+    /* ---- ET DESORMAIS LA COLONIE PEUT BOUGER CE CRAN-LA ELLE-MEME ----
+     * `borne()` rend ce que `revoitLesBornes` a appris, ou la valeur de
+     * l'environnement tant qu'elle n'a rien appris. Les butees, elles, sont
+     * ecrites en dur juste au-dessus de cette fonction : aucun apprentissage
+     * ne les franchit. */
     liq: Math.max(nEnv('LIQ_ACHAT_MIN', 1200),
-                  (E.tresor || 0) * MISE_PART_MAX * nEnv('LIQ_PAR_MISE', 25)),
+                  (E.tresor || 0) * MISE_PART_MAX * borne('liqParMise')),
     /* ---- ET LA CAPITALISATION CESSE DE FAIRE LE TRAVAIL DE LA PISCINE ----
      *
      * « SWOGE AI est toujours bloque. »
@@ -2277,7 +2448,7 @@ function planchers() {
      * minutes, avec des paliers a +15/+40/+80 % — elle n'est pas la a la
      * troisieme heure — et c'est le Cobaye, redevenu operationnel, qui porte
      * la protection contre le piege. */
-    ageMin: nEnv('AGE_ACHAT_MIN', 15),
+    ageMin: borne('ageMin'),
     pumpM5: nEnv('PUMP_MAX_M5', 100),
     pumpH1: nEnv('PUMP_MAX_H1', 200),
     dumpM5: nEnv('DUMP_MAX_M5', 40),
@@ -5058,6 +5229,12 @@ async function tour() {
      * Apres avoir mesure, pas avant. */
     revoitOrdre(false);
     revoitStrategie();
+    /* Apres la strategie, pas avant : le seuil et les bornes repondent a deux
+       questions differentes — « quelle note exiger » et « quels jetons meritent
+       d'etre notes » — et les bouger dans le meme tour ferait deux causes pour
+       un seul effet. `revoitLesBornes` a son propre repos de 24 tours, ce qui
+       les separe dans le temps. */
+    revoitLesBornes();
     if (conseillerActif() && (E.tours % 20) === 0) await regardeLaColonie();
     engendre();
     elague();
@@ -5256,6 +5433,14 @@ function vue() {
                essais: s.essais, reussites: s.reussites, dernier: s.dernier,
                dernierEchec: s.dernierEchec };
     }),
+    /* ---- CE QUE LA COLONIE S'EST REGLE A ELLE-MEME ----
+       Avec les butees ecrites dans le code, a cote : une borne apprise qu'on
+       montre sans son plafond se lit comme une borne sans plafond. */
+    bornes: Object.keys(BORNES).map((k) => ({
+      cle: k, valeur: borne(k), min: BORNES[k].min, max: BORNES[k].max,
+      appris: typeof (E.bornes || {})[k] === 'number',
+    })),
+    abandons: partAbandons(),
     horsService: HORS_SERVICE,
     coingecko: { cle: !!cleCoingecko(), porte: cgPorte || 'not probed yet' },
     rpcCle: { pose: !!(process.env.DRPC_API_KEY || '').trim(),
@@ -5376,7 +5561,8 @@ module.exports = {
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,
-  revoitStrategie, seuilCourant, partRefus, REFUS_AVEUGLE, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
+  revoitStrategie, seuilCourant, partRefus, REFUS_AVEUGLE,
+  revoitLesBornes, borne, BORNES, partAbandons, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN,
