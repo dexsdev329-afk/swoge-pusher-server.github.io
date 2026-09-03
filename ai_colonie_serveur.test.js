@@ -3052,6 +3052,148 @@ async function auditParRegle() {
 }
 
 /* ==========================================================================
+ * 50. LES SIGNAUX : UN JOURNAL, PAS UN CONSEIL
+ *
+ * « Les signaux du bot d'achat et vente doivent s'afficher dans le Telegram et
+ *   dans le wallet. »
+ *
+ * Deux choses a tenir. La premiere est mecanique : un achat et une vente
+ * laissent chacun une trace, avec l'adresse — sans elle le portefeuille ne
+ * peut rien proposer d'acheter.
+ *
+ * La seconde est une question de mots, et elle compte davantage. La colonie
+ * joue du PAPIER : elle n'engage rien et ne peut donc pas se tromper a la
+ * place de quelqu'un. Un fil intitule « signaux » que des gens suivent avec
+ * de l'argent reel doit dire ce qu'il est, dans le message lui-meme, et pas
+ * seulement dans un coin de la page.
+ * ======================================================================== */
+async function lesSignaux() {
+  console.log('\n-- les signaux disent ce qu ils sont --');
+  remise(sains());
+  await C.tour();
+  const F = C._etat();
+  const achats = (F.signaux || []).filter((x) => x.k === 'achat');
+  console.log('   ' + (F.signaux || []).length + ' signal(aux), dont ' + achats.length + ' achat(s)');
+  ok(achats.length > 0, 'une ouverture laisse un signal d achat');
+
+  const a = achats[0];
+  ok(/^0x[0-9a-fA-F]{40}$/.test(a.adr || ''),
+     'il porte l ADRESSE du jeton : sans elle le portefeuille n a rien a proposer');
+  ok(a.sym && a.score > 0 && a.mise > 0,
+     'avec le symbole, la note et la mise (' + a.sym + ' · ' + a.score + ' · $' + a.mise + ')');
+  ok(a.t > 0, 'et son heure');
+
+  const t = C._texteSignal(a);
+  console.log('   « ' + String(t).split('\n').join(' | ').slice(0, 150) + ' »');
+  ok(/papier/i.test(t),
+     'le message DIT que la colonie joue du papier — dans le message, pas dans un coin de page');
+  ok(/pas un conseil/i.test(t),
+     'et qu il ne s agit pas d un conseil : des gens le liront avec de l argent reel');
+  ok(t.indexOf(a.adr) >= 0, 'et il porte l adresse, copiable telle quelle');
+
+  /* ---- LA VUE LE PORTE, BORNE ---- */
+  const v = C.vue();
+  ok(Array.isArray(v.signaux) && v.signaux.length > 0,
+     'la vue expose le fil, pour le portefeuille (' + (v.signaux || []).length + ')');
+  ok(v.signaux.length <= 40,
+     'et il est borne : envoyer tout l historique a chaque lecture serait payer ce que personne ne deroule');
+
+  /* ---- UNE VENTE AUSSI, AVEC LE RENDEMENT DE L OPERATION ENTIERE ---- */
+  const p = F.positions[0];
+  if (p) {
+    C._ferme(p, p.prix0 * 1.4, Date.now(), { par: 'closer' });
+    const ventes = (C._etat().signaux || []).filter((x) => x.k === 'vente');
+    ok(ventes.length > 0, 'une fermeture laisse un signal de vente');
+    const tv = C._texteSignal(ventes[0]);
+    console.log('   « ' + String(tv).split('\n').join(' | ').slice(0, 130) + ' »');
+    ok(/%/.test(tv), 'qui porte le rendement de l operation');
+    ok(/papier/i.test(tv) && /pas un conseil/i.test(tv),
+       'et la meme mise en garde : elle ne vaut pas que pour les achats');
+  }
+
+  /* ---- ET LE CANAL N EST PAS UNE DEPENDANCE ----
+   * Un envoi qui echoue ne doit pas interrompre un tour. Laisser une
+   * messagerie decider si la colonie trade serait un couplage absurde. */
+  const F2 = C._etat();
+  const avant = (F2.signaux || []).length;
+  C._poseTg({ enabled: () => true, notify: () => { throw new Error('canal mort'); } });
+  let jete = null;
+  try {
+    C._signal({ k: 'achat', sym: 'TEST', adr: '0x' + '11'.repeat(20), score: 80, mise: 1, mc: 1000 });
+  } catch (e) { jete = e; }
+  C._poseTg(null);
+  ok(jete === null, 'un canal Telegram en panne ne jette rien');
+  ok((C._etat().signaux || []).length === avant + 1,
+     'et le signal est quand meme garde : le fil du portefeuille ne depend pas de Telegram');
+}
+
+/* ==========================================================================
+ * 49. LE VEILLEUR REGARDE, ET NE DECIDE RIEN
+ *
+ * « Il faudrait que les positions ouvertes soient surveillees par un autre
+ *   agent, un nouveau, qui regarde le prix regulierement sur DexScreener pour
+ *   voir a combien de profit on est — c'est long de voir la position bouger,
+ *   ce qui interesse les gens c'est le market cap et combien on est. »
+ *
+ * Ce qui se verifie ici tient en deux moities, et la seconde compte autant
+ * que la premiere :
+ *
+ *   — il RAFRAICHIT : prix et capitalisation du moment, sans attendre le tour ;
+ *   — il ne DECIDE rien : pas une position ouverte, pas une fermee, pas une
+ *     lecon apprise, pas un centime de tresorerie bouge. C'est ce qui permet
+ *     de le faire tourner vite. Un agent rapide qui peut vendre est une
+ *     machine a vendre vite.
+ * ======================================================================== */
+async function leVeilleur() {
+  console.log('\n-- le Veilleur regarde souvent, et ne decide rien --');
+  remise(sains());
+  await C.tour();
+  const F = C._etat();
+  if (!F.positions.length) { ok(false, 'il faut une position ouverte pour ce scenario'); return; }
+
+  const p = F.positions[0];
+  const avantMc = p.mcVeille;
+  /* On bouge le marche SANS jouer de tour : seul le Veilleur peut le voir. */
+  const j = MONDE.jetons.find((x) => x.addr === p.adr);
+  if (j) { j.prix = j.prix * 1.5; j.mc = (j.mc || 60000) * 1.5; }
+  for (const k of Object.keys(C._cache.dex)) delete C._cache.dex[k];
+
+  const tresorAvant = F.bal, trAvant = F.trades, ouvAvant = F.positions.length;
+  const apprisAvant = JSON.stringify(F.memoire || {});
+
+  const n = await C.veille();
+  console.log('   positions relues : ' + n);
+  ok(n > 0, 'il relit les positions ouvertes (' + n + ')');
+
+  const q = C._etat().positions[0];
+  console.log('   ' + JSON.stringify({ mc: q.mcVeille, prix: q.prixVeille, t: !!q.veilleT }));
+  ok(q.prixVeille > 0, 'il a un prix frais, sans qu un tour soit passe');
+  ok(q.mcVeille > 0 && q.mcVeille !== avantMc,
+     'et la capitalisation DU MOMENT, qui a bouge (' + q.mcVeille + ')');
+  ok(q.veilleT > 0, 'avec l heure de la lecture : un chiffre sans son heure ne dit pas s il est vrai');
+
+  /* ---- ET LA VUE LA PORTE, A COTE DE CELLE DE L ACHAT ---- */
+  const vp = C.vue().positions[0];
+  ok(vp.mcMaintenant > 0, 'la vue expose la capitalisation du moment (' + vp.mcMaintenant + ')');
+  ok(vp.mcAchat !== undefined && vp.mcAchat !== null,
+     'et garde celle de l ACHAT a cote : c est leur ecart qui dit quelque chose');
+  ok(vp.latent !== null, 'le pourcentage latent suit le prix frais (' + vp.latent + ' %)');
+
+  /* ---- CE QU IL N A PAS LE DROIT DE FAIRE ---- */
+  const G = C._etat();
+  ok(G.bal === tresorAvant, 'il n a pas touche a la tresorerie');
+  ok(G.trades === trAvant, 'il n a ferme aucune position');
+  ok(G.positions.length === ouvAvant, 'il n en a ouvert aucune');
+  ok(JSON.stringify(G.memoire || {}) === apprisAvant,
+     'et il n a rien appris a personne : regarder n est pas juger');
+
+  /* ---- SANS POSITION, IL NE COUTE RIEN ---- */
+  G.positions = [];
+  const rien = await C.veille();
+  ok(rien === 0, 'sans position ouverte il ne lit rien du tout (' + rien + ')');
+}
+
+/* ==========================================================================
  * 45. LA SURVEILLANCE RAMENE
  *
  * La case existait ; rien ne l'ouvrait. Un jeton refuse a deux minutes pour
@@ -3219,6 +3361,8 @@ async function pourquoiPasDAchat() {
   await methodeInconnue();
   await noeudQuiNeSertRien();
   await auditParRegle();
+  await leVeilleur();
+  await lesSignaux();
   await surveillanceRamene();
   await pourquoiPasDAchat();
   C.arrete();

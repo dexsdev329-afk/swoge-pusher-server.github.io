@@ -435,6 +435,26 @@ const ROSTER_DEPART = [
   { key: 'closer', nom: 'Closer', emoji: '💰', couleur: '#e83e8c', role: 'execution', ordre: 9,
     mission: 'Ouvre au prix reel, tient la duree qu\'il a apprise, ferme au prix reel',
     traits: ['tenue'] },
+  /* ---- LE VEILLEUR ----
+   * « Il faudrait que les positions ouvertes soient surveillees par un autre
+   *   agent, un nouveau, qui regarde le prix regulierement sur DexScreener
+   *   pour voir a combien de profit on est — c'est long de voir la position
+   *   bouger, ce qui interesse les gens c'est le market cap et combien on
+   *   est. »
+   *
+   * La Sentinelle regarde deja les positions, mais pour DECIDER : elle coupe
+   * quand le sol se derobe, et elle le fait au rythme du tour, toutes les
+   * deux minutes et demie, entre deux lectures de jetons neufs. Ce n'est pas
+   * la meme chose que REGARDER : un chiffre qui ne bouge qu'une fois par deux
+   * minutes et demie donne une position immobile a l'ecran.
+   *
+   * Le Veilleur ne decide rien. Il relit le prix ET la capitalisation des
+   * positions ouvertes, souvent, et rien d'autre. Il ne peut pas vendre, il
+   * ne peut pas ouvrir : separer celui qui regarde de celui qui coupe est ce
+   * qui permet de le faire tourner vite sans lui donner de pouvoir. */
+  { key: 'veilleur', nom: 'Veilleur', emoji: '👁️', couleur: '#4bb3fd', role: 'suivi', ordre: 10,
+    mission: 'Relit le prix et la capitalisation des positions ouvertes, souvent, et ne decide rien',
+    traits: [] },
 ];
 /* Les gardes reordonnables. Le Scout est forcement premier — il n'y a rien a
    juger avant d'avoir trouve. L'Oracle est forcement dernier parmi ceux qui
@@ -476,6 +496,8 @@ function etatNeuf() {
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
     seuil: SEUIL, derniers: [], depuisAjustement: 0, suites: [], sortieEssais: 0,
     ombres: [], audit: {}, profils: {},
+    /* ce que la colonie vient de faire, pour Telegram et le portefeuille */
+    signaux: [],
     /* la structure, qui est une donnee et non du code */
     roster: rosterNeuf(), ordreRevu: 0, journalStructure: [],
     /* ce qu'on a deja juge, pour ne pas le rejuger en boucle */
@@ -1435,7 +1457,12 @@ function traitsDe(t) {
 /* Les agents qui apprennent d'une position fermee : tous ceux qui portent des
    traits de jeton. Le Banquier et le Closer apprennent, eux aussi, mais sur
    leurs propres cases — la mise et la duree. */
-const ROLES_A_PART = ['banque', 'execution', 'veille', 'prolonge'];
+/* Ceux qui n'apprennent pas d'un rendement. Le Veilleur en fait partie par
+   construction : il regarde et ne decide rien, donc il n'y a aucune decision
+   dont il puisse tirer une lecon. L'y laisser l'aurait inscrit parmi les
+   apprenants — sans effet, ses traits etant vides, mais en le presentant a
+   l'ecran comme un agent qui apprend alors qu'il ne le fera jamais. */
+const ROLES_A_PART = ['banque', 'execution', 'veille', 'prolonge', 'suivi'];
 function apprenants() {
   return E.roster.filter((a) => ROLES_A_PART.indexOf(a.role) < 0).map((a) => a.key);
 }
@@ -1768,8 +1795,36 @@ function nEnv(nom, defaut) {
  * a deux heures. */
 function planchers() {
   return {
-    liq: nEnv('LIQ_ACHAT_MIN', 10000),
-    mc: nEnv('MC_ACHAT_MIN', 15000),
+    /* ---- LE PLANCHER BAISSE, ET C'EST LA MESURE QUI LE DIT ----
+     *
+     * Il arretait 58 % de tous les refus — plus de la moitie a lui seul,
+     * contre 7 % pour le suivant. Et jusqu'ici on ne pouvait pas savoir s'il
+     * protegeait : l'audit rangeait chaque refus sous une cle qui contenait
+     * la taille de SA piscine, donc chaque jeton faisait une case a un seul
+     * element, et le panneau ecarte tout ce qui a moins de trois. La seule
+     * regle qu'il fallait juger etait la seule invisible.
+     *
+     * Regroupe par regle, le releve est tombe :
+     *
+     *   « piscine sous le plancher »   n=9   +26,5 % de moyenne   0 effondre
+     *   « piscine pour une capi... »   n=16  +82,4 % de moyenne   1 effondre
+     *
+     * Zero effondre sur neuf. Ce plancher n'ecarte pas des pieges, il ecarte
+     * des gains. A comparer avec la borne de hausse, qui elle merite sa
+     * place — « deja +x % en cinq minutes » : n=40, 14 montes mais 20
+     * EFFONDRES. Celle-la protege vraiment, et on n'y touche pas.
+     *
+     * D'ou 5 000 et 8 000. Ce ne sont pas des chiffres ronds choisis au
+     * hasard : le flux des nouveaux pools de cette chaine sert des piscines
+     * de 4 000 a 6 000 $, et un plancher a 10 000 les eliminait toutes avant
+     * meme de les juger. La colonie lisait, jugeait bien, et refusait tout.
+     *
+     * Ces bornes restent reglables par l'environnement, et elles restent
+     * ECRITES ICI : un agent ne peut pas les baisser lui-meme. Un systeme qui
+     * peut apprendre a baisser sa propre garde l'apprend toujours, une fois
+     * exactement. C'est un humain qui bouge ce chiffre, sur une mesure. */
+    liq: nEnv('LIQ_ACHAT_MIN', 5000),
+    mc: nEnv('MC_ACHAT_MIN', 8000),
     mcMax: nEnv('MC_ACHAT_MAX', 100000),
     /* ---- QUINZE MINUTES, ET POURQUOI PAS DEUX HEURES ----
      *
@@ -2857,7 +2912,69 @@ function ouvre(t) {
   compte('banquier');
   E.flux.unshift({ sym: t.sym, pool: t.pool, tag: 'open',
                    txt: 'OUVERT · $' + b.mise.toFixed(2) + ' · ' + b.methode, cls: 'n', t: Date.now() });
+  signal({ k: 'achat', sym: t.sym, adr: t.addr, pool: t.pool, prix: t.prix,
+           score: t.an.score, mise: b.mise, mc: t.mc || 0,
+           liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null });
   return true;
+}
+
+/* ==========================================================================
+ * LES SIGNAUX : CE QUE LA COLONIE VIENT DE FAIRE, DIT AILLEURS
+ *
+ * « Les signaux du bot d'achat et vente doivent s'afficher dans le Telegram
+ *   et dans le wallet. On voit les cryptos que la colonie a tradees mais on
+ *   n'est pas oblige d'acheter — on voit les signaux et on peut acheter en
+ *   direct facilement. »
+ *
+ * Deux precautions, et elles disent ce que ce fil EST :
+ *
+ *   — c'est un JOURNAL, pas un conseil. La colonie joue du papier : elle
+ *     n'engage pas d'argent et ne peut donc pas se tromper a la place de
+ *     quelqu'un. Le mot « signal » laisse croire l'inverse, alors chaque
+ *     entree porte ce qu'elle est : ce que la colonie a fait, quand, a quel
+ *     prix, avec sa note. Ce que le lecteur en fait le regarde.
+ *
+ *   — un envoi Telegram qui echoue ne doit RIEN casser. Il est enveloppe et
+ *     oublie : la colonie continue de trader si le canal tombe. L'inverse —
+ *     un tour interrompu parce qu'un message n'est pas parti — serait laisser
+ *     une messagerie decider de la strategie.
+ * ======================================================================== */
+const SIGNAUX_MAX = 120;
+let tg = null;
+try { tg = require('./telegram.js'); } catch (e) { tg = null; }
+
+function signal(s) {
+  if (!Array.isArray(E.signaux)) E.signaux = [];
+  s.t = Date.now();
+  E.signaux.unshift(s);
+  if (E.signaux.length > SIGNAUX_MAX) E.signaux = E.signaux.slice(0, SIGNAUX_MAX);
+  /* Telegram, sans jamais attendre ni jeter. */
+  try {
+    if (tg && tg.enabled && tg.enabled() && tg.notify) {
+      const p = tg.notify(texteSignal(s));
+      if (p && p.catch) p.catch(() => {});
+    }
+  } catch (e) { /* le canal n'est pas une dependance de la colonie */ }
+}
+
+/* Le texte est ecrit ICI et pas dans la page : le meme mot doit partir dans
+   Telegram et s'afficher dans le portefeuille, sinon deux lecteurs comparent
+   deux phrases differentes du meme evenement. */
+function texteSignal(s) {
+  const d = (x) => (x > 0 ? '+' : '') + (Math.round(x * 10) / 10) + '%';
+  if (s.k === 'achat') {
+    return '🟢 SWOGE AI · ACHAT (papier)\n'
+      + '$' + s.sym + '\n'
+      + 'Note ' + s.score + '/100 · mise $' + Number(s.mise).toFixed(2) + '\n'
+      + (s.mc ? 'Capitalisation $' + Math.round(s.mc).toLocaleString('en-US') + '\n' : '')
+      + s.adr + '\n'
+      + 'La colonie joue du papier. Ceci n\'est pas un conseil.';
+  }
+  return '🔴 SWOGE AI · VENTE (papier)\n'
+    + '$' + s.sym + ' · ' + d(s.r) + '\n'
+    + (s.comment ? s.comment + '\n' : '')
+    + s.adr + '\n'
+    + 'La colonie joue du papier. Ceci n\'est pas un conseil.';
 }
 
 /* ---- CE QU'UN PRIX ABERRANT A FAIT ----
@@ -3044,6 +3161,13 @@ function ferme(p, prix, quand, comment) {
        + (r >= 0 ? '+' : '') + r.toFixed(1) + '%' + suffixe,
     cls: gainTotal >= 0 ? 'up' : 'dn', t: quand, tenue: quand - p.t0, par: par || 'closer' });
   if (par === 'sentinelle') compte('sentinelleCoupe');
+  /* Le signal de vente porte le rendement REEL de la position entiere, pas
+     celui du dernier morceau : quelqu'un qui a suivi l'achat veut savoir ce
+     que l'operation a donne, pas ce que valait le reliquat. */
+  signal({ k: 'vente', sym: p.sym, adr: p.adr, pool: p.pool, prix: prix,
+           r: r, gain: gainTotal,
+           comment: par === 'sentinelle' ? 'Coupe : ' + comment.raison
+                  : (p.prolonge ? 'Prolongee ' + p.prolonge + '×' : 'Duree atteinte') });
   E.courbe.push(Math.round(E.tresor * 100) / 100);
 }
 
@@ -4172,7 +4296,11 @@ function vue() {
     t: Date.now(),
     depuis: E.depuis, tours: E.tours || 0,
     maj: E.maj, dernierTour: E.dernierTour, erreur: E.derniereErreur,
-    cadence: CADENCE_MS,
+    cadence: CADENCE_MS, veilleMs: VEILLE_MS,
+    /* Le fil des signaux, borne : le portefeuille n'en montre qu'une
+       poignee, et l'envoyer en entier a chaque lecture serait payer un
+       historique que personne ne deroule. */
+    signaux: (E.signaux || []).slice(0, 40),
     tresor: Math.round(E.tresor * 100) / 100, depart: DEPART,
     trades: E.trades, gains: E.gains,
     meilleur: Math.round(E.meilleur * 100) / 100, meilleurSym: E.meilleurSym,
@@ -4199,6 +4327,13 @@ function vue() {
                encaisse: Math.round((p.encaisse || 0) * 100) / 100,
                paliers: p.paliers ? Object.keys(p.paliers).length : 0,
                hautR: p.hautR === undefined ? null : Math.round(p.hautR * 10) / 10,
+               /* ---- CE QUE LE VEILLEUR A LU ----
+                * La capitalisation du MOMENT, a cote de celle de l'achat : ce
+                * sont les deux qu'on veut voir ensemble, et c'est leur ecart
+                * qui dit quelque chose. Et l'heure de la lecture, parce qu'un
+                * chiffre sans son heure ne dit pas s'il est encore vrai. */
+               mcMaintenant: p.mcVeille === undefined ? null : Math.round(p.mcVeille),
+               veilleT: p.veilleT || 0,
                prixVu: dernierPrix[p.adr] ? dernierPrix[p.adr].t : 0 };
     }),
     candidats: E.candidats,
@@ -4290,6 +4425,51 @@ function remiseAZero(pourquoi) {
 }
 
 let minuteur = null;
+/* ==========================================================================
+ * LE VEILLEUR : REGARDER SOUVENT, NE RIEN DECIDER
+ *
+ * Il relit les positions ouvertes sur DexScreener a sa propre cadence, plus
+ * rapide que le tour. Trois precautions, et chacune a sa raison :
+ *
+ *   — il ne touche a RIEN d'autre que `prixVeille`, `mcVeille` et l'heure.
+ *     Ni ouverture, ni vente, ni apprentissage. Le jour ou un bug le fait
+ *     tourner deux fois trop vite, le pire qu'il puisse faire est de lire.
+ *
+ *   — il ecrit dans `dernierPrix`, la meme reserve que le tour : la
+ *     Sentinelle et l'echelle de sortie profitent donc d'un prix plus frais
+ *     sans qu'on ait touche a leur code.
+ *
+ *   — il passe par `lisDex`, qui a son propre cache : demander plus souvent
+ *     que le cache ne rendrait pas un chiffre plus frais, seulement des
+ *     appels perdus. Sa cadence est donc calee SUR ce cache, pas dessous.
+ * ======================================================================== */
+const VEILLE_MS = nEnv('VEILLE_MS', 45000);
+
+async function veille() {
+  const ouvertes = (E.positions || []).filter((p) => p && p.adr);
+  if (!ouvertes.length) return 0;
+  let n = 0;
+  for (const p of ouvertes) {
+    try {
+      const d = await lisDex(p.adr);
+      if (!d || !d.vu || !(d.prix > 0)) continue;
+      /* La reserve commune : ce que le reste de la colonie lit deja. */
+      dernierPrix[p.adr] = { p: d.prix, t: Date.now() };
+      p.prixVeille = d.prix;
+      /* La capitalisation du MOMENT. Celle de l'achat reste a cote, sous
+         `mcAchat` : c'est la comparaison des deux qui dit quelque chose, et
+         ecraser l'une par l'autre effacerait le point de depart. */
+      if (d.mc > 0) p.mcVeille = d.mc;
+      p.veilleT = Date.now();
+      n++;
+    } catch (e) { /* une lecture ratee ne change rien : l'ancienne valeur tient */ }
+    await dors(120);
+  }
+  if (n) { compte('veilles'); sauve(); }
+  return n;
+}
+let veilleur = null;
+
 function demarre() {
   charge();
   /* Ce que les noeuds ont deja refuse de servir : on le remet en place AVANT
@@ -4302,11 +4482,20 @@ function demarre() {
   tour();
   minuteur = setInterval(tour, CADENCE_MS);
   if (minuteur.unref) minuteur.unref();
+  /* Le Veilleur tourne a part. Le mettre dans le tour l'aurait cale sur la
+     cadence du tour, ce qui est exactement le probleme qu'il repare. */
+  veilleur = setInterval(() => { veille().catch(() => {}); }, VEILLE_MS);
+  if (veilleur.unref) veilleur.unref();
 }
-function arrete() { if (minuteur) { clearInterval(minuteur); minuteur = null; } }
+function arrete() {
+  if (minuteur) { clearInterval(minuteur); minuteur = null; }
+  if (veilleur) { clearInterval(veilleur); veilleur = null; }
+}
 
 module.exports = {
-  demarre, arrete, vue, tour, charge, sauve, reprendSansMethode,
+  demarre, arrete, vue, tour, charge, sauve, reprendSansMethode, veille,
+  _signal: signal, _texteSignal: texteSignal, _ferme: ferme,
+  _poseTg: (x) => { tg = x; },
   _noteAudit: noteAudit, _auditDesRefus: auditDesRefus,
   _familleRefus: familleRefus, _regroupeAudit: regroupeAudit, _noeudMort: noeudMort,
   /* exposes pour l'essai : ce sont eux qui portent les regles */
