@@ -238,23 +238,23 @@ const ENFANTS_MAX = 6;          /* la colonie peut grandir, pas exploser */
  * `cout: 0` veut dire « on l'a deja, il vient du flux des pools ».
  * ======================================================================== */
 const SERVICES = {
-  pools:   { nom: 'GeckoTerminal · nouveaux pools', cout: 0, quoi: 'age, liquidite, capitalisation, achats et ventes' },
-  profils: { nom: 'DexScreener · profils recents', cout: 0, quoi: 'des jetons neufs dont quelqu\'un a rempli la fiche' },
-  boosts:  { nom: 'DexScreener · jetons pousses', cout: 0, quoi: 'des jetons dont quelqu\'un a paye la mise en avant' },
-  chaine:  { nom: 'Chaine 4663 · noeud officiel', cout: 1, quoi: 'qui detient quoi, en soldant les transferts' },
-  chaine2: { nom: 'Chaine 4663 · noeud dRPC public', cout: 1, quoi: 'le meme, en secours quand l\'officiel sature (10 000 blocs max)' },
-  chaineCle: { nom: 'Chaine 4663 · noeud dRPC a nous', cout: 1,
-               quoi: 'le meme, mais sur un debit qui nous appartient au lieu d\'etre partage' },
-  goplus:  { nom: 'GoPlus · securite du contrat', cout: 1, quoi: 'honeypot, taxes, pouvoirs du proprietaire' },
-  trades:  { nom: 'GeckoTerminal · les trades un par un', cout: 1, quoi: 'quels portefeuilles achetent, et pour combien' },
-  dex:     { nom: 'DexScreener · second avis', cout: 1, quoi: 'un deuxieme prix, les autres pools, les reseaux sociaux' },
-  ohlcv:   { nom: 'GeckoTerminal · chandelles', cout: 1, quoi: 'la volatilite reellement observee' },
-  goplusCle: { nom: 'GoPlus · jeton d\'acces', cout: 0,
-               quoi: 'la cle et le secret echanges contre un jeton, pour une limite de debit plus haute' },
-  coingecko: { nom: 'CoinGecko · cle GeckoTerminal', cout: 0,
-               quoi: 'les memes lectures, mais par une porte a nous plutot que par la file commune' },
+  pools:   { nom: 'GeckoTerminal · new pools', cout: 0, quoi: 'age, liquidity, cap, buys and sells' },
+  profils: { nom: 'DexScreener · recent profiles', cout: 0, quoi: 'new tokens whose profile someone filled in' },
+  boosts:  { nom: 'DexScreener · boosted tokens', cout: 0, quoi: 'tokens someone paid to promote' },
+  chaine:  { nom: 'Chain 4663 · official node', cout: 1, quoi: 'who holds what, by adding up transfers' },
+  chaine2: { nom: 'Chain 4663 · public dRPC node', cout: 1, quoi: 'the same, as backup when the official one saturates (10,000 blocks max)' },
+  chaineCle: { nom: 'Chain 4663 · our own dRPC node', cout: 1,
+               quoi: 'the same, but on throughput that belongs to us instead of being shared' },
+  goplus:  { nom: 'GoPlus · contract safety', cout: 1, quoi: 'honeypot, taxes, owner powers' },
+  trades:  { nom: 'GeckoTerminal · trades one by one', cout: 1, quoi: 'which wallets are buying, and for how much' },
+  dex:     { nom: 'DexScreener · second opinion', cout: 1, quoi: 'a second price, the other pools, the socials' },
+  ohlcv:   { nom: 'GeckoTerminal · candles', cout: 1, quoi: 'the volatility actually observed' },
+  goplusCle: { nom: 'GoPlus · access token', cout: 0,
+               quoi: 'key and secret exchanged for a token, for a higher rate limit' },
+  coingecko: { nom: 'CoinGecko · GeckoTerminal key', cout: 0,
+               quoi: 'the same reads, but through our own door instead of the shared queue' },
   conseil: { nom: 'Anthropic · Claude Haiku', cout: 1,
-             quoi: 'un avis sur les cas limites, borne a 8 points et jamais sur un veto' },
+             quoi: 'a view on borderline cases, capped at 8 points and never on a veto' },
 };
 
 /* ---- CE QUI A ETE ESSAYE ET QUI NE MARCHE PAS ----
@@ -263,10 +263,10 @@ const SERVICES = {
  * la. Elles restent ici pour qu'on ne les re-essaie pas tous les six mois en
  * croyant avoir trouve une idee neuve. */
 const HORS_SERVICE = {
-  gmgn: 'GMGN — 403 Cloudflare, y compris sur ethereum : c\'est une protection anti-robot, '
-      + 'pas une absence de la chaine 4663. Il faudrait un navigateur, donc non depuis le serveur.',
-  blockscout: 'Blockscout robinhood — challenge Cloudflare sur l\'API comme sur les pages.',
-  honeypotis: 'honeypot.is — ne connait pas la chaine 4663 (aucune simulation possible).',
+  gmgn: 'GMGN — 403 Cloudflare, on ethereum too: that is anti-bot protection, not an absence '
+      + 'of chain 4663. It would take a browser, so not from the server.',
+  blockscout: 'Blockscout robinhood — Cloudflare challenge on the API as on the pages.',
+  honeypotis: 'honeypot.is — does not know chain 4663 (no simulation possible).',
 };
 
 /* ==========================================================================
@@ -477,37 +477,37 @@ function besoinsDuTrait(spec) {
  * ======================================================================== */
 const ROSTER_DEPART = [
   { key: 'scout', nom: 'Scout', emoji: '🛰️', couleur: '#3d7bd6', role: 'source', ordre: 0,
-    mission: 'Ratisse trois flux, et ecarte tout de suite ce qui est deja vide',
+    mission: 'Sweeps three feeds, and drops what is already empty on sight',
     traits: ['age', 'liq', 'origine'] },
   { key: 'warden', nom: 'Warden', emoji: '🛡️', couleur: '#9b6cf0', role: 'garde', ordre: 1,
-    mission: 'Controle le contrat : honeypot, taxes, pouvoirs du proprietaire',
+    mission: 'Checks the contract: honeypot, taxes, owner powers',
     traits: ['taxe', 'code', 'pouv'] },
   { key: 'whale', nom: 'Whale-Watch', emoji: '🐋', couleur: '#e8552d', role: 'garde', ordre: 2,
-    mission: 'Solde les transferts dans les blocs : qui detient, et combien',
+    mission: 'Adds up transfers in the blocks: who holds, and how much',
     traits: ['top', 'det', 'brule'] },
   { key: 'whisper', nom: 'Whisper', emoji: '📡', couleur: '#1fb7a8', role: 'garde', ordre: 3,
-    mission: 'Lit les trades un par un : qui achete vraiment, et pour combien',
+    mission: 'Reads trades one by one: who is really buying, and for how much',
     traits: ['press', 'uniq', 'accel', 'flux', 'achUniq', 'taille'] },
   { key: 'oracle', nom: 'Oracle', emoji: '🔮', couleur: '#f2b21e', role: 'note', ordre: 4,
-    mission: 'Note, apprend de chaque position fermee, et tranche',
+    mission: 'Scores, learns from every closed position, and decides',
     traits: ['mc', 'elan', 'vola', 'accord', 'social', 'pools'] },
-  { key: 'conseiller', nom: 'Conseiller', emoji: '🧠', couleur: '#b98cff', role: 'conseil', ordre: 5,
-    mission: 'Donne un avis sur les cas limites, et repond de ses avis comme les autres',
+  { key: 'conseiller', nom: 'Advisor', emoji: '🧠', couleur: '#b98cff', role: 'conseil', ordre: 5,
+    mission: 'Gives a view on borderline cases, and answers for it like the rest',
     traits: ['avis'] },
-  { key: 'cobaye', nom: 'Cobaye', emoji: '🧫', couleur: '#ff8f5a', role: 'epreuve', ordre: 5.5,
-    mission: 'Juste avant l\'achat : simule la vente sur la chaine, sans signer ni depenser',
+  { key: 'cobaye', nom: 'Test Subject', emoji: '🧫', couleur: '#ff8f5a', role: 'epreuve', ordre: 5.5,
+    mission: 'Just before buying: simulates the sale on chain, signing and spending nothing',
     traits: ['cobaye'] },
-  { key: 'sentinelle', nom: 'Sentinelle', emoji: '🔭', couleur: '#c9a227', role: 'veille', ordre: 6,
-    mission: 'Surveille chaque position ouverte et coupe quand le sol se derobe',
+  { key: 'sentinelle', nom: 'Sentinel', emoji: '🔭', couleur: '#c9a227', role: 'veille', ordre: 6,
+    mission: 'Watches every open position and cuts when the floor gives way',
     traits: ['derive', 'liq'] },
-  { key: 'promoteur', nom: 'Promoteur', emoji: '⏳', couleur: '#7fb3ff', role: 'prolonge', ordre: 7,
-    mission: 'Decide de prolonger une position qui monte, et apprend de SA decision',
+  { key: 'promoteur', nom: 'Extender', emoji: '⏳', couleur: '#7fb3ff', role: 'prolonge', ordre: 7,
+    mission: 'Decides whether to let a rising position run, and learns from ITS choice',
     traits: ['gain', 'note', 'fois'] },
-  { key: 'banquier', nom: 'Banquier', emoji: '🏦', couleur: '#5ad1a0', role: 'banque', ordre: 8,
-    mission: 'Choisit la mise selon la caisse du moment, et apprend quelle methode paie',
+  { key: 'banquier', nom: 'Banker', emoji: '🏦', couleur: '#5ad1a0', role: 'banque', ordre: 8,
+    mission: 'Sizes the stake from the current treasury, and learns which method pays',
     traits: ['methode', 'regime'] },
   { key: 'closer', nom: 'Closer', emoji: '💰', couleur: '#e83e8c', role: 'execution', ordre: 9,
-    mission: 'Ouvre au prix reel, tient la duree qu\'il a apprise, ferme au prix reel',
+    mission: 'Opens at the real price, holds the duration it learned, closes at the real price',
     traits: ['tenue'] },
   /* ---- LE VEILLEUR ----
    * « Il faudrait que les positions ouvertes soient surveillees par un autre
@@ -526,8 +526,8 @@ const ROSTER_DEPART = [
    * positions ouvertes, souvent, et rien d'autre. Il ne peut pas vendre, il
    * ne peut pas ouvrir : separer celui qui regarde de celui qui coupe est ce
    * qui permet de le faire tourner vite sans lui donner de pouvoir. */
-  { key: 'veilleur', nom: 'Veilleur', emoji: '👁️', couleur: '#4bb3fd', role: 'suivi', ordre: 10,
-    mission: 'Relit le prix et la capitalisation des positions ouvertes, souvent, et ne decide rien',
+  { key: 'veilleur', nom: 'Watcher', emoji: '👁️', couleur: '#4bb3fd', role: 'suivi', ordre: 10,
+    mission: 'Re-reads price and cap on open positions, often, and decides nothing',
     traits: [] },
 ];
 /* Les gardes reordonnables. Le Scout est forcement premier — il n'y a rien a
@@ -603,9 +603,10 @@ function charge() {
       + Math.round(brut.tresor || 0) + ') — mis de cote, la colonie repart de $' + DEPART);
     E = etatNeuf();
     E.journalStructure = [{ t: Date.now(), quoi: 'remise', chiffres: null,
-      txt: 'Tout est reparti de zero : la tresorerie enregistree ($'
-         + Math.round(brut.tresor || 0) + ') venait d\'un prix relu aberrant, pas d\'un marche. '
-         + 'Un chiffre faux ne se repare pas — et tout ce qui en descendait etait faux avec lui.' }];
+      txt: 'Everything restarted from zero: the recorded treasury ($'
+         + Math.round(brut.tresor || 0) + ') came from a nonsensical re-read price, not from a '
+         + 'market. A wrong figure cannot be repaired — and everything derived from it was wrong '
+         + 'with it.' }];
     sauve();
     return;
   }
@@ -630,7 +631,23 @@ function charge() {
    * contrat. */
   if (!Array.isArray(brut.roster) || !brut.roster.length) brut.roster = rosterNeuf();
   for (const base of ROSTER_DEPART) {
-    if (!brut.roster.some((a) => a && a.key === base.key)) brut.roster.push(JSON.parse(JSON.stringify(base)));
+    const vif = brut.roster.find((a) => a && a.key === base.key);
+    if (!vif) { brut.roster.push(JSON.parse(JSON.stringify(base))); continue; }
+    /* ---- CE QUI S'AFFICHE VIENT DU CODE, CE QUI S'APPREND VIENT DE L'ETAT ----
+     * Le roster est ecrit dans le fichier d'etat de la colonie. Un agent deja
+     * present y gardait son nom et sa mission d'il y a des semaines : reecrire
+     * ces phrases dans le code ne changeait rien a l'ecran, parce que le
+     * fichier relu les ecrasait a chaque demarrage. C'est exactement ce qui est arrive en
+     * passant l'interface a l'anglais — les missions traduites ne sont jamais
+     * sorties du fichier source.
+     * Les quatre champs ci-dessous ne sont QUE de l'affichage : ils sont donc
+     * repris du code a chaque lecture. Tout le reste — `ordre`, `traits`,
+     * `vus`, `bloques` — est ce que la colonie a mesure, et n'est pas touche :
+     * l'ordre des gardes et le decoupage des traits sont appris, pas ecrits. */
+    vif.nom = base.nom;
+    vif.emoji = base.emoji;
+    vif.couleur = base.couleur;
+    vif.mission = base.mission;
   }
   brut.roster = brut.roster.filter((a) => a && a.key && Array.isArray(a.traits));
   E = brut;
@@ -921,8 +938,8 @@ async function rpc(methode, params) {
      qu'un service est revenu. */
   const vivants = utiles.filter((n) => !noeudMort(n));
   const capables = vivants.length ? vivants : utiles;
-  if (!capables.length) throw new Error('aucun noeud ne sert ' + methode
-    + (plage ? ' sur une plage de ' + plage + ' blocs' : ''));
+  if (!capables.length) throw new Error('no node serves ' + methode
+    + (plage ? ' over a range of ' + plage + ' blocks' : ''));
   let derniere = null;
   for (let tour = 0; tour < 2; tour++) {
     for (const n of capables) {
@@ -1480,6 +1497,165 @@ function fane(c) {
   c.n *= f; c.s *= f; c.s2 *= f; c.maj = now;
   return c;
 }
+/* ==========================================================================
+ * LES MOTS QUI SORTENT VERS L'ECRAN
+ *
+ * « Beaucoup d'anglophones vont regarder, il y a beaucoup trop de mots
+ *   anglais et francais melanges. »
+ *
+ * La page est en anglais par defaut. Tout ce que ce fichier envoyait etait en
+ * francais : les cases apprises, les refus, les missions. Un visiteur
+ * anglophone voyait donc de l'anglais autour de donnees francaises — pire
+ * que l'une ou l'autre langue seule.
+ *
+ * ---- POURQUOI ON NE RENOMME PAS LES CASES ----
+ *
+ * Un libelle de case EST une cle de memoire. `memCase(agent, trait, libelle)`
+ * range des semaines d'apprentissage sous « liq 1-5k », « code inconnu »,
+ * « concentration inconnue ». Renommer a la source rendrait chaque case
+ * orpheline : la colonie paraitrait n'avoir jamais rien appris, et pas une
+ * erreur n'apparaitrait a l'ecran pour le dire.
+ *
+ * On traduit donc A LA SORTIE, et seulement la. C'est sans perte parce qu'une
+ * case est une ENUMERATION FIXE — pas une phrase avec des chiffres dedans.
+ * Traduire « liq 1-5k » ne reecrit rien ; retraduire « trop jeune (2 min) :
+ * on le reprend a 15 min » en reecrirait une, et une phrase reecrite n'est
+ * plus ce que la colonie a dit. Ces phrases-la sont donc rendues en anglais A
+ * LA SOURCE, la ou elles sont formees.
+ *
+ * ---- ET LA TABLE EST VERIFIEE, PAS SUPPOSEE ----
+ *
+ * Les 93 libelles ont ete recoltes en faisant passer des jetons couvrant
+ * toutes les branches de la table des traits, pas recopies a la main. L'essai
+ * refait cette recolte et exige que chacun ait sa traduction : un libelle
+ * ajoute demain sans sa ligne ici fera echouer l'essai, pas l'ecran.
+ * ======================================================================== */
+const MOTS = {
+  /* age */
+  'age ?': 'age ?', 'ne de <10 min': 'born <10 min ago', '10-30 min': '10-30 min',
+  '30 min-2 h': '30 min-2 h', '2-6 h': '2-6 h',
+  /* liquidite */
+  'liq<1k': 'pool <$1k', 'liq 1-5k': 'pool $1-5k', 'liq 5-25k': 'pool $5-25k',
+  'liq 25-100k': 'pool $25-100k', 'liq>100k': 'pool >$100k',
+  /* capitalisation */
+  'mc <50k': 'cap <$50k', 'mc 50-500k': 'cap $50-500k', 'mc 0,5-5M': 'cap $0.5-5M',
+  'mc >5M': 'cap >$5M',
+  /* elan */
+  '5m <-5%': '5m <-5%', '5m -5-0%': '5m -5-0%', '5m 0-5%': '5m 0-5%',
+  '5m 5-20%': '5m 5-20%', '5m >20%': '5m >20%',
+  /* pression acheteuse */
+  'vendeurs devant': 'sellers ahead', 'equilibre': 'balanced',
+  'acheteurs devant': 'buyers ahead', 'achats massifs': 'heavy buying',
+  /* traders uniques */
+  '<20 traders/h': '<20 traders/h', '20-100/h': '20-100/h', '100-500/h': '100-500/h',
+  '>500/h': '>500/h',
+  /* acceleration */
+  'ca retombe': 'fading', 'stable': 'steady', 'ca accelere': 'accelerating',
+  'explosion': 'exploding',
+  /* origine */
+  'trouve par pools': 'found via pools', 'trouve par profils': 'found via profiles',
+  'trouve par recherche': 'found via search',
+  /* conseiller */
+  /* Les trois valeurs que le Conseiller peut rendre sont bornees dans le code
+     (`['favorable','reserve','defavorable']`) — pas devinees ici. « prudent »
+     n'existe pas : c'est ce que j'avais suppose, et c'est la donnee du serveur
+     qui a dit « reserve ». Il reste dans la table au cas ou une ancienne case
+     le porte encore. */
+  'conseiller favorable': 'advisor: favourable', 'conseiller reserve': 'advisor: cautious',
+  'conseiller prudent': 'advisor: cautious', 'conseiller defavorable': 'advisor: against',
+  'conseiller non consulte': 'advisor not asked',
+  /* epreuve de vente */
+  'sortie non testee': 'exit not tested', 'sortie non testable': 'exit not testable',
+  'sortie simulee OK': 'exit simulated OK', 'sortie bloquee': 'exit blocked',
+  /* taxes */
+  'taxe inconnue': 'tax unknown', 'aucune taxe': 'no tax', 'taxe <=10%': 'tax <=10%',
+  'taxe >10%': 'tax >10%',
+  /* code du contrat */
+  'code inconnu': 'code unknown', 'code non verifie': 'code unverified',
+  'code verifie': 'code verified',
+  /* pouvoirs du proprietaire */
+  'pouvoirs ?': 'owner powers ?', 'mint + proxy': 'mint + proxy',
+  'emission possible': 'can mint', 'contrat proxy': 'proxy contract',
+  'aucun pouvoir': 'no owner powers',
+  /* concentration */
+  'personne ne garde': 'nobody holds', 'concentration inconnue': 'concentration unknown',
+  'top <5%': 'top <5%', 'top 5-15%': 'top 5-15%', 'top 15-30%': 'top 15-30%',
+  'top 30-50%': 'top 30-50%', 'top >50%': 'top >50%',
+  /* porteurs */
+  '<10 porteurs': '<10 holders', '10-30': '10-30 holders', '30-100': '30-100 holders',
+  '100-500': '100-500 holders', '>500 porteurs': '>500 holders',
+  '<100 det': '<100 holders', '100-1k det': '100-1k holders', '1k-10k det': '1k-10k holders',
+  '>10k det': '>10k holders', 'porteurs inconnus': 'holders unknown',
+  /* part brulee */
+  'rien brule': 'nothing burned', '<50% brule': '<50% burned',
+  '50-90% brule': '50-90% burned', '>90% brule': '>90% burned',
+  'brule inconnu': 'burn unknown',
+  /* flux de trades */
+  'flux inconnu': 'trades unknown', 'trop peu de trades': 'too few trades',
+  'volume reparti': 'volume spread', 'un gros portefeuille': 'one large wallet',
+  'un portefeuille domine': 'one wallet dominates', 'un seul fait tout': 'one wallet does it all',
+  /* acheteurs uniques */
+  'acheteurs ?': 'buyers ?', '<3 acheteurs': '<3 buyers', '3-8 acheteurs': '3-8 buyers',
+  '8-20 acheteurs': '8-20 buyers', '>20 acheteurs': '>20 buyers',
+  /* taille des tickets */
+  'tailles ?': 'ticket size ?', 'tickets <$20': 'tickets <$20',
+  'tickets $20-100': 'tickets $20-100', 'tickets $100-500': 'tickets $100-500',
+  'tickets >$500': 'tickets >$500',
+  /* pools */
+  'pools ?': 'pools ?', '1 pool': '1 pool', '2-3 pools': '2-3 pools', '>=4 pools': '>=4 pools',
+  /* accord entre sources */
+  'une seule source': 'single source', 'prix concordants': 'prices agree',
+  'ecart <2%': 'gap <2%', 'ecart 2-6%': 'gap 2-6%', 'ecart >6%': 'gap >6%',
+  /* reseaux */
+  'reseaux ?': 'socials ?', 'aucun reseau': 'no socials', '1-2 reseaux': '1-2 socials',
+  '3+ reseaux': '3+ socials',
+  /* volatilite */
+  'vola ?': 'volatility ?', 'calme': 'calm', 'vola 2-5%': 'volatility 2-5%',
+  'vola 5-12%': 'volatility 5-12%', 'vola >12%': 'volatility >12%',
+
+  /* ---- ET CEUX QUI APPRENNENT DE LEUR PROPRE TRAVAIL ----
+   * La Sentinelle, le Promoteur, le Banquier et le Closer n'ont pas de traits
+   * de jeton : leurs cases viennent de `casSentinelle`, `casPromoteur`,
+   * `casSortie`, du regime de caisse et de la duree de tenue. Elles sont donc
+   * ABSENTES de la table des traits — et la recolte qui parcourt cette table
+   * ne pouvait pas les voir. Elles s'affichent pourtant sur la meme page, et
+   * ce sont des cles de memoire comme les autres. */
+  /* la Sentinelle : ou en est le prix, et ou en est la piscine */
+  'effondre': 'collapsed', 'en baisse': 'falling', 'a plat': 'flat',
+  'en hausse': 'rising', 'envole': 'flying',
+  'piscine ?': 'pool ?', 'piscine divisee par 2': 'pool halved',
+  'piscine en baisse': 'pool shrinking', 'piscine stable': 'pool steady',
+  'piscine qui grossit': 'pool growing',
+  /* le Promoteur : le gain courant, et la note d'entree */
+  'en perte': 'in loss', 'a peine positive': 'barely positive',
+  '+10-30%': '+10-30%', '+30-80%': '+30-80%', '+80% et plus': '+80% and up',
+  'note 55-60': 'score 55-60', 'note 60-70': 'score 60-70',
+  'note 70-85': 'score 70-85', 'note 85+': 'score 85+',
+  /* la Sentinelle, encore : a quel palier le gain a ete pris */
+  'gain pris a +20-35%': 'gain taken at +20-35%', 'gain pris a +35-60%': 'gain taken at +35-60%',
+  'gain pris a +60-120%': 'gain taken at +60-120%', 'gain pris a +120%': 'gain taken at +120%',
+  /* le Banquier : le regime de caisse */
+  'autour du depart': 'around the start', 'au-dessus': 'above it',
+  'sous le depart': 'below the start', 'en creux': 'in a trough',
+};
+
+/* Une case croisee (« ne de <10 min × mc <50k ») se traduit part par part :
+   c'est le specialiste qui les fabrique, et sa cle garde le meme separateur. */
+function enMots(v) {
+  if (typeof v !== 'string' || !v) return v;
+  if (MOTS[v] !== undefined) return MOTS[v];
+  /* ---- LES CASES QUI PORTENT UN NOMBRE ----
+   * « 0e prolongation », « 2e prolongation » : le nombre fait partie de la
+   * cle, donc il ne peut pas y avoir une ligne par valeur dans la table. Un
+   * motif, et il rend le meme nombre — on ne traduit que les mots autour. */
+  const pro = /^(\d+)e prolongation$/.exec(v);
+  if (pro) return pro[1] === '0' ? 'never extended' : 'extended ' + pro[1] + 'x';
+  if (v.indexOf(' \u00d7 ') >= 0)
+    return v.split(' \u00d7 ').map((x) => (MOTS[x.trim()] !== undefined ? MOTS[x.trim()] : x.trim()))
+            .join(' \u00d7 ');
+  return v;
+}
+
 function memLit(a, t, v) {
   const m = E.memoire;
   const c = (m[a] && m[a][t] && m[a][t][v]) || null;
@@ -1551,7 +1727,8 @@ function leconsDe(agent, max) {
        que valent les jetons qu'on n'a pas pu lire » est une vraie mesure — mais
        lues sans le mot, elles se lisent comme un jugement sur le jeton, alors
        qu'elles jugent nos propres lectures. Le mot est la difference. */
-    out.push({ quoi: v, n: Math.round(c.n * 10) / 10, moyenne: Math.round(moy * 10) / 10,
+    /* Traduit ICI, a la sortie, jamais dans la cle : voir la table des mots. */
+    out.push({ quoi: enMots(v), n: Math.round(c.n * 10) / 10, moyenne: Math.round(moy * 10) / 10,
                ecart: sd === null ? null : Math.round(sd * 10) / 10,
                nonLue: caseNonLue(v) || undefined,
                poids: confiance(c.n) * Math.abs(moy) });
@@ -1718,26 +1895,26 @@ function miseDe(score) {
   const raisons = [];
 
   if (E.tresor < PLANCHER) return { mise: 0, methode: ch.methode, regime: ch.regime,
-    raison: 'caisse sous le plancher de $' + PLANCHER + ' : on arrete d\'ouvrir', arret: true };
+    raison: 'treasury below the $' + PLANCHER + ' floor: we stop opening', arret: true };
 
   let part = partDeLaMethode(ch.methode, score);
-  if (ch.methode === 'kelly' && !statsRendement()) raisons.push('Kelly sans releve suffisant : part de base');
+  if (ch.methode === 'kelly' && !statsRendement()) raisons.push('Kelly without enough record: base fraction');
 
   let mise = E.tresor * part;
   const plafondUn = E.tresor * MISE_PART_MAX;
-  if (mise > plafondUn) { mise = plafondUn; raisons.push('borne a ' + (MISE_PART_MAX * 100) + ' % de la caisse'); }
+  if (mise > plafondUn) { mise = plafondUn; raisons.push('capped at ' + (MISE_PART_MAX * 100) + '% of the treasury'); }
   const restant = E.tresor * EXPO_PART_MAX - engage;
-  if (mise > restant) { mise = restant; raisons.push('exposition totale bornee a ' + (EXPO_PART_MAX * 100) + ' %'); }
+  if (mise > restant) { mise = restant; raisons.push('total exposure capped at ' + (EXPO_PART_MAX * 100) + '%'); }
   if (mise < MISE_MIN) {
     if (restant < MISE_MIN) return { mise: 0, methode: ch.methode, regime: ch.regime,
-      raison: 'deja ' + Math.round(engage) + '$ engages : plus de place sous la borne d\'exposition' };
-    mise = MISE_MIN; raisons.push('remontee au minimum de $' + MISE_MIN);
+      raison: 'already $' + Math.round(engage) + ' committed: no room left under the exposure cap' };
+    mise = MISE_MIN; raisons.push('raised to the $' + MISE_MIN + ' minimum');
   }
-  if (mise > E.tresor) { mise = E.tresor; raisons.push('bornee a la caisse'); }
+  if (mise > E.tresor) { mise = E.tresor; raisons.push('capped at the treasury'); }
   mise = Math.round(mise * 100) / 100;
   return { mise, methode: ch.methode, appris: ch.appris, regime: ch.regime,
            part: Math.round(part * 10000) / 100,
-           raison: raisons.length ? raisons.join(' · ') : 'methode ' + ch.methode + ' en regime « ' + ch.regime + ' »' };
+           raison: raisons.length ? raisons.join(' · ') : ch.methode + ' method, « ' + enMots(ch.regime) + ' » regime' };
 }
 
 /* ---- CE QUE LE BANQUIER RETIENT D'UNE POSITION FERMEE ----
@@ -1831,21 +2008,21 @@ function vetoWarden(t) {
   const g = t.g || {};
   if (!g.have) return null;   /* il n'a rien dit : on ne lui fait pas dire « rien a signaler » */
   if (g.honeypot) return 'honeypot';
-  if (g.cannotBuy) return 'achat impossible';
-  if (g.ownerBal) return 'le proprietaire reecrit les soldes';
-  if (g.selfd) return 'auto-destruction';
-  if (g.perslip) return 'taxe par portefeuille';
-  if (g.hpSame) return 'createur deja honeypot';
-  if (g.pausable) return 'transferts suspendables';
-  if (g.taxeSue && g.sellTax > 10) return 'taxe vente ' + g.sellTax + '%';
-  if (g.taxeSue && g.buyTax > 15) return 'taxe achat ' + g.buyTax + '%';
+  if (g.cannotBuy) return 'cannot buy';
+  if (g.ownerBal) return 'the owner can rewrite balances';
+  if (g.selfd) return 'self-destruct';
+  if (g.perslip) return 'per-wallet tax';
+  if (g.hpSame) return 'creator already made a honeypot';
+  if (g.pausable) return 'transfers can be paused';
+  if (g.taxeSue && g.sellTax > 10) return 'sell tax ' + g.sellTax + '%';
+  if (g.taxeSue && g.buyTax > 15) return 'buy tax ' + g.buyTax + '%';
   return null;
 }
 function vetoWhale(t) {
   const ch = t.chaine || {}, g = t.g || {};
-  if (ch.personne) return ch.recepteurs + ' adresses ont touche le jeton, aucune ne le garde';
+  if (ch.personne) return ch.recepteurs + ' addresses touched the token, none of them holds it';
   const top = (ch.vu && ch.top !== null && ch.top !== undefined) ? ch.top : (g.topSu ? g.top : null);
-  if (top !== null && top >= 50) return 'un porteur tient ' + top.toFixed(0) + '% du circulant';
+  if (top !== null && top >= 50) return 'one holder holds ' + top.toFixed(0) + '% of the float';
   return null;
 }
 /* ---- LE VETO QUE SEULS LES TRADES PERMETTENT ----
@@ -1857,9 +2034,9 @@ function vetoWhisper(t) {
   const x = t.trades || {};
   if (!x.vu || x.n < 5) return null;   /* trop peu pour conclure : on ne conclut pas */
   if (x.partDuPlusGros >= 85 && x.portefeuilles <= 2)
-    return 'un seul portefeuille fait ' + x.partDuPlusGros.toFixed(0) + '% du volume';
+    return 'a single wallet makes ' + x.partDuPlusGros.toFixed(0) + '% of the volume';
   if (x.acheteurs === 0 && x.achats > 0)
-    return 'des achats sans acheteur identifiable';
+    return 'buys with no identifiable buyer';
   return null;
 }
 /* ---- « INVESTIS PAS DANS DES RUG PULL DEJA RUG. LA CHART EST A 2K MC, Y'A UN
@@ -2064,17 +2241,17 @@ function vetoScout(t) {
   const P = planchers();
   /* ---- LA CHUTE ---- */
   if (P.dumpH1 > 0 && t.ch_h1 <= -P.dumpH1)
-    return 'deja tombe de ' + Math.round(-t.ch_h1) + '% en une heure';
+    return 'already down ' + Math.round(-t.ch_h1) + '% in an hour';
   if (P.dumpM5 > 0 && t.ch_m5 <= -P.dumpM5)
-    return 'deja tombe de ' + Math.round(-t.ch_m5) + '% en cinq minutes';
-  if (t.ch_h6 <= -80) return 'deja tombe de ' + Math.round(-t.ch_h6) + '% en six heures';
+    return 'already down ' + Math.round(-t.ch_m5) + '% in five minutes';
+  if (t.ch_h6 <= -80) return 'already down ' + Math.round(-t.ch_h6) + '% in six hours';
   /* ---- ET LA HAUSSE, QUI COUTE AUTANT ----
    * Entrer apres un +300 % de cinq minutes, c'est payer le sommet a quelqu'un
    * qui sort. Le chiffre ne dit rien du jeton ; il dit ou l'on entre. */
   if (P.pumpM5 > 0 && t.ch_m5 >= P.pumpM5)
-    return 'deja +' + Math.round(t.ch_m5) + '% en cinq minutes : on paierait le sommet';
+    return 'already +' + Math.round(t.ch_m5) + '% in five minutes: we would be paying the top';
   if (P.pumpH1 > 0 && t.ch_h1 >= P.pumpH1)
-    return 'deja +' + Math.round(t.ch_h1) + '% en une heure : on paierait le sommet';
+    return 'already +' + Math.round(t.ch_h1) + '% in an hour: we would be paying the top';
   /* ---- LES REGLES QUI DISENT QUELQUE CHOSE DE PRECIS PASSENT D'ABORD ----
    * Un plancher explique seulement « trop petit ». « Ce n'est plus un marche,
    * c'est une sortie » explique CE QUI SE PASSE, et c'est cette phrase-la
@@ -2082,26 +2259,26 @@ function vetoScout(t) {
    * jeton ; seule la premiere apprend quelque chose a qui la lit. */
   /* Le cas signale : deux mille de capitalisation, un gros volume dessus. */
   if (mc > 0 && mc < 20000 && v.h1 > mc * 2)
-    return 'volume de $' + Math.round(v.h1) + ' sur une capitalisation de $' + Math.round(mc)
-         + ' : ce n\'est plus un marche, c\'est une sortie';
+    return '$' + Math.round(v.h1) + ' of volume on a $' + Math.round(mc)
+         + ' cap: that is not a market any more, that is an exit';
   /* Et une piscine qui ne represente presque plus rien de la capitalisation :
      il n'y a plus de quoi sortir, quel que soit le prix affiche. */
   if (mc > 50000 && liq > 0 && liq < mc * 0.01)
-    return 'piscine de $' + Math.round(liq) + ' pour une capitalisation de $' + Math.round(mc)
-         + ' : rien a vendre dedans';
+    return '$' + Math.round(liq) + ' pool for a $' + Math.round(mc)
+         + ' cap: nothing to sell into';
   /* ---- ET ENFIN CE QU'ON NE POURRA NI SUIVRE NI VENDRE ----
    * Les positions restees ouvertes treize heures sans un seul prix relu
    * avaient toutes une capitalisation d'achat entre 5 759 $ et 15 738 $ ; les
    * deux que l'on savait coter valaient 60 877 $ et 234 892 $. */
   if (P.liq > 0 && liq > 0 && liq < P.liq)
-    return 'piscine de $' + Math.round(liq) + ' : sous le plancher d\'achat ($'
+    return '$' + Math.round(liq) + ' pool: below the buy floor ($'
          + Math.round(P.liq) + ')';
   if (P.mc > 0 && mc > 0 && mc < P.mc)
-    return 'capitalisation de $' + Math.round(mc) + ' : sous le plancher d\'achat ($'
+    return '$' + Math.round(mc) + ' cap: below the buy floor ($'
          + Math.round(P.mc) + ')';
   if (P.mcMax > 0 && mc > P.mcMax)
-    return 'capitalisation de $' + Math.round(mc) + ' : au-dessus du plafond d\'achat ($'
-         + Math.round(P.mcMax) + '), le gros du multiple est deja fait';
+    return '$' + Math.round(mc) + ' cap: above the buy ceiling ($'
+         + Math.round(P.mcMax) + '), most of the multiple is already done';
   /* ---- L'AGE, EN DERNIER ----
    * Parce que c'est le seul refus qui se PERIME : les autres portent sur ce
    * qu'est le jeton, celui-la sur l'heure qu'il est. Le mettre en dernier
@@ -2118,10 +2295,10 @@ function vetoScout(t) {
      * Et le mot compte : ce n'est pas un refus, c'est un REPORT. Le jeton
      * revient quand il a l'age (voir la reprise par l'age, plus bas). Le dire
      * ici evite de lire l'alerte comme une perte de flux. */
-    return 'trop jeune (' + Math.round(t.minutes) + ' min) : on le reprend a '
+    return 'too young (' + Math.round(t.minutes) + ' min): picked up again at '
          + (P.ageMin < 60 ? Math.round(P.ageMin) + ' min'
                           : Math.round(P.ageMin / 60 * 10) / 10 + ' h')
-         + ', quand on saura si la piscine tient';
+         + ', once we know whether the pool holds';
   return null;
 }
 
@@ -2180,8 +2357,8 @@ function vetoOracle(t) {
     /* On distingue « on n'a pas regarde » de « il n'y est pas » : le premier
        est une absence de notre part, et elle se corrige en revenant plus tard. */
     const sautee = t.saute && t.saute.dex;
-    return sautee ? 'pas encore verifiable sur DexScreener (' + Math.round(t.minutes || 0) + ' min)'
-                  : 'absent de DexScreener';
+    return sautee ? 'not indexed by DexScreener yet (' + Math.round(t.minutes || 0) + ' min)'
+                  : 'absent from DexScreener';
   }
   const a = new Set();
   for (const l of (d.liens || [])) {
@@ -2193,10 +2370,10 @@ function vetoOracle(t) {
      dont on aurait retire deux au hasard. */
   if (exiges.length === 1 && exiges[0] === 'un') {
     if (a.size > 0) return null;
-    return 'aucune presence publique : ni site, ni X, ni Telegram';
+    return 'no public presence at all: no site, no X, no Telegram';
   }
   const manque = exiges.filter((x) => !a.has(x));
-  if (manque.length) return 'il manque : ' + manque.join(', ');
+  if (manque.length) return 'missing: ' + manque.join(', ');
   return null;
 }
 const VETOS = { scout: vetoScout, warden: vetoWarden, whale: vetoWhale, whisper: vetoWhisper,
@@ -2420,7 +2597,7 @@ function revoitOrdre(force) {
   E.ordreRevu = Date.now();
   E.toursDepuisOrdre = 0;
   if (avant === apres) return false;
-  journal('ordre', 'Nouvel ordre des gardes : ' + apres + ' (avant : ' + avant + ')',
+  journal('ordre', 'New guard order: ' + apres + ' (was: ' + avant + ')',
     suite.map((m) => ({ agent: m.a.key, refus: Math.round(m.taux * 100) + '%', appels: m.cout,
                         vus: m.vu })));
   return true;
@@ -2481,13 +2658,16 @@ function engendre() {
     couleur: flou.parent.couleur, role: 'specialiste',
     ordre: 90 + enfants.length, parent: flou.parent.key, ne: Date.now(),
     caseSource: { trait: flou.trait, sd: Math.round(flou.sd * 10) / 10 },
-    mission: 'Recoupe « ' + flou.valeur +' » par ' + compagnon
-           + ' : la coupe du ' + flou.parent.nom.split('-')[0] + ' y est trop dispersee',
+    /* Le libelle de la case passe par la table des mots : c'est la meme case
+       que celle de la memoire, montree, donc traduite comme les autres. */
+    mission: 'Splits « ' + enMots(flou.valeur) + ' » by ' + compagnon
+           + ' — the ' + flou.parent.nom.split('-')[0] + '\'s own cut is too scattered there',
     traits: [croise],
   };
   E.roster.push(petit);
-  journal('naissance', petit.nom + ' nait : « ' + flou.valeur + ' » est vue ' + flou.n
-    + ' fois avec un ecart type de ' + Math.round(flou.sd) + ' points — cette case ne predit rien',
+  journal('naissance', petit.nom + ' is born: « ' + enMots(flou.valeur) + ' » was seen ' + flou.n
+    + ' times with a standard deviation of ' + Math.round(flou.sd)
+    + ' points — that cell predicts nothing',
     [{ parent: flou.parent.key, trait: flou.trait, obs: flou.n, ecartType: Math.round(flou.sd) }]);
   return petit;
 }
@@ -2514,8 +2694,8 @@ function elague() {
     if (sien <= pere * 0.85) continue;           /* il fait mieux : il reste */
     E.roster = E.roster.filter((a) => a.key !== petit.key);
     delete E.memoire[petit.key];
-    journal('retrait', petit.nom + ' est retire : ecart type ' + Math.round(sien)
-      + ' contre ' + Math.round(pere) + ' pour la case de son parent — il ne coupe pas mieux',
+    journal('retrait', petit.nom + ' is retired: standard deviation ' + Math.round(sien)
+      + ' against ' + Math.round(pere) + ' for its parent\'s cell — it does not cut better',
       [{ agent: petit.key, ecartType: Math.round(sien), parent: Math.round(pere), obs: n }]);
     return petit;
   }
@@ -2559,8 +2739,8 @@ function noteConnu(t, verdict, note) {
    ne coute un appel : c'est tout l'interet. */
 function doitExaminer(t) {
   const c = E.connus[t.addr];
-  if (!c) return { oui: true, pourquoi: 'jamais vu' };
-  if (c.permanent) return { oui: false, pourquoi: 'banni : ' + c.verdict };
+  if (!c) return { oui: true, pourquoi: 'never seen' };
+  if (c.permanent) return { oui: false, pourquoi: 'banned: ' + c.verdict };
   const depuis = Date.now() - (c.dernier || 0);
   /* ---- CELUI QU'ON EST ALLE RECHERCHER EXPRES ----
    * `reprises` ne ramene un jeton que s'il avait frole le seuil, qu'il a
@@ -2570,13 +2750,13 @@ function doitExaminer(t) {
    * justement ce que DexScreener sait de lui, qu'on ne peut pas comparer a
    * l'ancien puisqu'il n'y en avait pas. */
   if (t.origine === 'surveillance')
-    return { oui: true, pourquoi: 'repris en surveillance a ' + Math.round((t.minutes || 0)) + ' min' };
-  if (depuis >= SURV_MIN_MS) return { oui: true, pourquoi: 'revu apres ' + Math.round(depuis / 60000) + ' min' };
+    return { oui: true, pourquoi: 'picked up again at ' + Math.round((t.minutes || 0)) + ' min' };
+  if (depuis >= SURV_MIN_MS) return { oui: true, pourquoi: 'looked at again after ' + Math.round(depuis / 60000) + ' min' };
   if (c.liq > 0 && t.liq >= c.liq * SURV_LIQ)
-    return { oui: true, pourquoi: 'liquidite +' + Math.round((t.liq / c.liq - 1) * 100) + '%' };
+    return { oui: true, pourquoi: 'liquidity +' + Math.round((t.liq / c.liq - 1) * 100) + '%' };
   if (c.prix > 0 && t.prix >= c.prix * SURV_PRIX)
-    return { oui: true, pourquoi: 'prix +' + Math.round((t.prix / c.prix - 1) * 100) + '%' };
-  return { oui: false, pourquoi: 'deja juge il y a ' + Math.round(depuis / 60000) + ' min, rien n\'a bouge' };
+    return { oui: true, pourquoi: 'price +' + Math.round((t.prix / c.prix - 1) * 100) + '%' };
+  return { oui: false, pourquoi: 'already judged ' + Math.round(depuis / 60000) + ' min ago, nothing moved' };
 }
 /* Ce que la page montre sous « surveillance » : ceux qu'on garde a l'oeil
    parce qu'ils ont frole le seuil, et non ceux qu'on a bannis. */
@@ -2643,9 +2823,9 @@ function casSentinelle(p, x) {
    effondrement l'apprendra un jour, et ce jour-la il perdra tout. */
 function dangerSentinelle(p, x) {
   const r = (x.prix - p.prix0) / p.prix0 * 100;
-  if (r <= CHUTE_COUPE) return 'chute de ' + Math.round(-r) + '% depuis l\'entree';
+  if (r <= CHUTE_COUPE) return 'down ' + Math.round(-r) + '% since entry';
   if (p.liq0 > 0 && x.liq > 0 && x.liq < p.liq0 * LIQ_COUPE)
-    return 'la piscine est passee de $' + Math.round(p.liq0) + ' a $' + Math.round(x.liq);
+    return 'the pool went from $' + Math.round(p.liq0) + ' to $' + Math.round(x.liq);
   return null;
 }
 
@@ -2765,9 +2945,9 @@ function regleLesSuites(marche) {
     apprendAgent('sentinelle', s.cas, gain);
     compte('sortiesJugees');
     E.flux.unshift({ sym: s.sym, tag: gain >= 0 ? 'buy' : 'cut',
-      txt: 'vendu a ' + (s.rSortie >= 0 ? '+' : '') + s.rSortie.toFixed(1) + '%, ca valait '
-         + (rTenu >= 0 ? '+' : '') + rTenu.toFixed(1) + '% a l\'echeance · '
-         + (gain >= 0 ? 'bien vendu' : 'vendu trop tot') + ' de ' + Math.abs(gain).toFixed(1) + ' pts',
+      txt: 'sold at ' + (s.rSortie >= 0 ? '+' : '') + s.rSortie.toFixed(1) + '%, it was worth '
+         + (rTenu >= 0 ? '+' : '') + rTenu.toFixed(1) + '% at the deadline · '
+         + (gain >= 0 ? 'sold well' : 'sold too early') + ' by ' + Math.abs(gain).toFixed(1) + ' pts',
       cls: gain >= 0 ? 'up' : 'dn', t: now, par: 'sentinelle' });
     appris++;
     return false;
@@ -3129,7 +3309,7 @@ async function simuleVente(t) {
   const ch = t.chaine || {};
   const cob = (ch.cobayes || []).slice(0, 3);
   if (!ch.vu || !cob.length || !t.pool)
-    return { teste: false, raison: 'aucun detenteur connu a qui faire tenter la sortie' };
+    return { teste: false, raison: 'no known holder to try the exit with' };
   const data = SEL_TRANSFER + String(t.pool).slice(2).toLowerCase().padStart(64, '0')
              + (1).toString(16).padStart(64, '0');
   let refus = 0, vus = 0, dernier = null;
@@ -3160,17 +3340,17 @@ async function simuleVente(t) {
     if (/^0x0*$/.test(String(r || ''))) { refus++; dernier = 'le transfert rend false'; }
     await dors(150);
   }
-  if (!vus) return { teste: false, raison: 'le noeud n\'a pas repondu (' + (dernier || '?') + ')' };
+  if (!vus) return { teste: false, raison: 'the node did not answer (' + (dernier || '?') + ')' };
   return { teste: true, essais: vus, refus, passe: refus < vus,
-           raison: refus < vus ? null : (dernier || 'tous les transferts vers la piscine sont refuses') };
+           raison: refus < vus ? null : (dernier || 'every transfer to the pool is refused') };
 }
 
 function vetoCobaye(t) {
   const e = t.epreuve;
   if (!e || !e.teste) return null;        /* non testable n'est pas coupable */
   if (e.passe) return null;
-  return 'la sortie est bloquee : ' + e.refus + '/' + e.essais
-       + ' detenteurs ne peuvent pas envoyer le jeton vers la piscine';
+  return 'the exit is blocked: ' + e.refus + '/' + e.essais
+       + ' holders cannot send the token to the pool';
 }
 
 /* --------------------------------------------------------- les positions */
@@ -3227,8 +3407,8 @@ function ouvre(t) {
     mise: b.mise, methode: b.methode, regime: b.regime, raisonMise: b.raison,
     liq0: t.liq || 0, tenueBase: tenue.min,
     tenueRaison: tenue.parProfil
-      ? 'les courbes de ses traits culminent a ' + tenue.min + ' min (poids ' + tenue.poids + ')'
-      : (tenue.appris ? 'duree apprise par le Closer' : 'duree par defaut'),
+      ? 'its trait curves peak at ' + tenue.min + ' min (weight ' + tenue.poids + ')'
+      : (tenue.appris ? 'duration learned by the Closer' : 'default duration'),
     mcAchat: Math.round(t.mc || 0), liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null,
     dexVu: !!(t.dex && t.dex.vu),
     traits: t.an.traits, score: t.an.score, mc: t.mc, minutes: Math.round(t.minutes || 0),
@@ -3238,7 +3418,7 @@ function ouvre(t) {
   compte('closer');
   compte('banquier');
   E.flux.unshift({ sym: t.sym, pool: t.pool, tag: 'open',
-                   txt: 'OUVERT · $' + b.mise.toFixed(2) + ' · ' + b.methode, cls: 'n', t: Date.now() });
+                   txt: 'OPENED · $' + b.mise.toFixed(2) + ' · ' + b.methode, cls: 'n', t: Date.now() });
   signal({ k: 'achat', sym: t.sym, adr: t.addr, pool: t.pool, prix: t.prix,
            score: t.an.score, mise: b.mise, mc: t.mc || 0,
            liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null });
@@ -3290,18 +3470,18 @@ function signal(s) {
 function texteSignal(s) {
   const d = (x) => (x > 0 ? '+' : '') + (Math.round(x * 10) / 10) + '%';
   if (s.k === 'achat') {
-    return '🟢 SWOGE AI · ACHAT (papier)\n'
+    return '🟢 SWOGE AI · BUY (paper)\n'
       + '$' + s.sym + '\n'
-      + 'Note ' + s.score + '/100 · mise $' + Number(s.mise).toFixed(2) + '\n'
-      + (s.mc ? 'Capitalisation $' + Math.round(s.mc).toLocaleString('en-US') + '\n' : '')
+      + 'Score ' + s.score + '/100 · stake $' + Number(s.mise).toFixed(2) + '\n'
+      + (s.mc ? 'Market cap $' + Math.round(s.mc).toLocaleString('en-US') + '\n' : '')
       + s.adr + '\n'
-      + 'La colonie joue du papier. Ceci n\'est pas un conseil.';
+      + 'The colony trades paper. This is not advice.';
   }
-  return '🔴 SWOGE AI · VENTE (papier)\n'
+  return '🔴 SWOGE AI · SELL (paper)\n'
     + '$' + s.sym + ' · ' + d(s.r) + '\n'
     + (s.comment ? s.comment + '\n' : '')
     + s.adr + '\n'
-    + 'La colonie joue du papier. Ceci n\'est pas un conseil.';
+    + 'The colony trades paper. This is not advice.';
 }
 
 /* ---- CE QU'UN PRIX ABERRANT A FAIT ----
@@ -3406,8 +3586,8 @@ function arretSuiveur(p, r) {
   if (!(p.hautR >= E2.suivDepart)) return null;      /* pas encore arme */
   const ecart = p.hautR >= E2.suivSerreA ? E2.suivSerre : E2.suivEcart;
   if (r > p.hautR - ecart) return null;
-  return 'arret suiveur : retombe de ' + (p.hautR - r).toFixed(1)
-       + ' points sous son plus haut (+' + p.hautR.toFixed(1) + '%)';
+  return 'trailing stop: fallen ' + (p.hautR - r).toFixed(1)
+       + ' points below its peak (+' + p.hautR.toFixed(1) + '%)';
 }
 
 function ferme(p, prix, quand, comment) {
@@ -3446,7 +3626,7 @@ function ferme(p, prix, quand, comment) {
      ouverte. */
   const vus = {};
   if (aberrant) { E.flux.unshift({ sym: p.sym, pool: p.pool, tag: 'cut',
-      txt: 'prix inexploitable (' + aberrant + ') · mise rendue, rien compte',
+      txt: 'unusable price (' + aberrant + ') · stake returned, nothing counted',
       cls: 'n', t: quand, tenue: quand - p.t0 });
     compte('prixAberrant');
     E.courbe.push(Math.round(E.tresor * 100) / 100);
@@ -3478,11 +3658,11 @@ function ferme(p, prix, quand, comment) {
     apprendAgent('promoteur', p.casProlonge, r - p.rDecision);
 
   const par = comment && comment.par;
-  const suffixe = (par === 'sentinelle' ? '  ·  coupe : ' + comment.raison
-                : (p.prolonge ? '  ·  prolongee ' + p.prolonge + '×' : ''))
+  const suffixe = (par === 'sentinelle' ? '  ·  cut: ' + comment.raison
+                : (p.prolonge ? '  ·  extended ' + p.prolonge + '×' : ''))
     /* Ce qui avait deja ete pris en route : sans ca, une position sortie par
        morceaux affiche le seul reliquat et se lit comme une petite affaire. */
-    + (reste < 0.999 ? '  ·  ' + Math.round((1 - reste) * 100) + '% deja vendu en route' : '');
+    + (reste < 0.999 ? '  ·  ' + Math.round((1 - reste) * 100) + '% already sold on the way' : '');
   E.flux.unshift({ sym: p.sym, pool: p.pool, tag: gainTotal >= 0 ? 'buy' : 'cut',
     txt: (gainTotal >= 0 ? '+' : '') + '$' + gainTotal.toFixed(2) + '  ·  '
        + (r >= 0 ? '+' : '') + r.toFixed(1) + '%' + suffixe,
@@ -3493,8 +3673,8 @@ function ferme(p, prix, quand, comment) {
      que l'operation a donne, pas ce que valait le reliquat. */
   signal({ k: 'vente', sym: p.sym, adr: p.adr, pool: p.pool, prix: prix,
            r: r, gain: gainTotal,
-           comment: par === 'sentinelle' ? 'Coupe : ' + comment.raison
-                  : (p.prolonge ? 'Prolongee ' + p.prolonge + '×' : 'Duree atteinte') });
+           comment: par === 'sentinelle' ? 'Cut: ' + comment.raison
+                  : (p.prolonge ? 'Extended ' + p.prolonge + '×' : 'Duration reached') });
   E.courbe.push(Math.round(E.tresor * 100) / 100);
 }
 
@@ -3536,8 +3716,8 @@ function abandonneLesPerdues() {
   E.positions = E.positions.filter((p) => {
     if (now - (p.prixLu || p.t0) <= abandonDelai(p)) return true;
     E.flux.unshift({ sym: p.sym, pool: p.pool, tag: 'cut',
-      txt: 'prix jamais relu en ' + Math.round((now - p.t0) / 60000)
-         + ' min · mise rendue, rien compte',
+      txt: 'price never re-read in ' + Math.round((now - p.t0) / 60000)
+         + ' min · stake returned, nothing counted',
       cls: 'n', t: now, tenue: now - p.t0, par: 'closer' });
     compte('abandonneeSansPrix');
     n++;
@@ -3585,7 +3765,7 @@ function regle(marche) {
       n++; return false;
     }
     if (joueEchelle(p, r, now)) {
-      ferme(p, x.prix, now, { par: 'sentinelle', raison: 'dernier palier atteint' });
+      ferme(p, x.prix, now, { par: 'sentinelle', raison: 'last rung reached' });
       n++; return false;
     }
     const suiv = arretSuiveur(p, r);
@@ -3603,7 +3783,7 @@ function regle(marche) {
     if (casG) {
       noteSuite(p, x.prix, r, casG, now);
       ferme(p, x.prix, now, { par: 'sentinelle',
-        raison: 'gain pris a +' + r.toFixed(1) + '%, avant l\'echeance' });
+        raison: 'gain taken at +' + r.toFixed(1) + '%, before the deadline' });
       compte('gainPris');
       n++;
       return false;
@@ -3620,7 +3800,7 @@ function regle(marche) {
       p.tenueMin = (p.tenueMin || TENUE_DEFAUT_MIN) + (p.tenueBase || TENUE_DEFAUT_MIN);
       compte('promoteurProlonge');
       E.flux.unshift({ sym: p.sym, pool: p.pool, tag: 'open',
-        txt: 'PROLONGEE · ' + (r >= 0 ? '+' : '') + r.toFixed(1) + '% · ' + p.prolonge + 'e fois',
+        txt: 'EXTENDED · ' + (r >= 0 ? '+' : '') + r.toFixed(1) + '% · ' + p.prolonge + 'x',
         cls: 'n', t: now, par: 'promoteur' });
       return true;
     }
@@ -3727,9 +3907,9 @@ function revoitStrategie() {
     const apres = Math.max(SEUIL_MIN, avant - cran);
     E.desserreDernier = sansAchat;
     E.seuil = apres;
-    journal('strategie', 'Seuil d\'entree ' + avant + ' → ' + apres + '. Rien achete depuis '
-      + sansAchat + ' tours avec ' + (POSITIONS_MAX - E.positions.length) + ' places libres : '
-      + 'a l\'arret, la colonie ne recolte aucune mesure, donc rien ne peut la debloquer.',
+    journal('strategie', 'Entry threshold ' + avant + ' → ' + apres + '. Nothing bought for '
+      + sansAchat + ' turns with ' + (POSITIONS_MAX - E.positions.length) + ' slots free: '
+      + 'stopped, the colony gathers no measurement, so nothing can unblock it.',
       [{ toursSansAchat: sansAchat, places: POSITIONS_MAX - E.positions.length }]);
     return true;
   }
@@ -3748,17 +3928,17 @@ function revoitStrategie() {
      bruit a chaque fermeture. */
   if (moy < -1) {
     apres = Math.min(SEUIL_MAX, avant + 5);
-    pourquoi = 'les ' + l.length + ' dernieres positions rendent ' + moy.toFixed(1)
-             + ' % en moyenne (' + Math.round(taux * 100) + ' % de gagnantes) : on se fait plus difficile';
+    pourquoi = 'the last ' + l.length + ' positions return ' + moy.toFixed(1)
+             + '% on average (' + Math.round(taux * 100) + '% winners): tightening up';
   } else if (moy > 3 && E.positions.length < POSITIONS_MAX) {
     apres = Math.max(SEUIL_MIN, avant - 3);
-    pourquoi = 'les ' + l.length + ' dernieres rendent +' + moy.toFixed(1)
-             + ' % (' + Math.round(taux * 100) + ' % de gagnantes) et il reste des places : on s\'ouvre';
+    pourquoi = 'the last ' + l.length + ' return +' + moy.toFixed(1)
+             + '% (' + Math.round(taux * 100) + '% winners) and slots are free: opening up';
   }
   E.depuisAjustement = 0;
   if (apres === avant || !pourquoi) return false;
   E.seuil = apres;
-  journal('strategie', 'Seuil d\'entree ' + avant + ' → ' + apres + '. ' + pourquoi,
+  journal('strategie', 'Entry threshold ' + avant + ' → ' + apres + '. ' + pourquoi,
     [{ fenetre: l.length, moyenne: moy.toFixed(1) + '%', gagnantes: Math.round(taux * 100) + '%',
        positions: E.positions.length }]);
   return true;
@@ -3798,9 +3978,9 @@ function alertes() {
    * saturation ne se soignent pas pareil.
    * ======================================================================== */
   const noeudsVus = [
-    { cle: 'chaineCle', nom: 'le noeud a cle (dRPC)', s: s('chaineCle') },
-    { cle: 'chaine', nom: 'le noeud officiel', s: s('chaine') },
-    { cle: 'chaine2', nom: 'le noeud dRPC public', s: s('chaine2') },
+    { cle: 'chaineCle', nom: 'the keyed node (dRPC)', s: s('chaineCle') },
+    { cle: 'chaine', nom: 'the official node', s: s('chaine') },
+    { cle: 'chaine2', nom: 'the public dRPC node', s: s('chaine2') },
   ].filter((x) => x.s.essais > 0);
 
   /* ---- CE QUI EST ENCORE APPELE, ET CE QUI NE L'EST PLUS ----
@@ -3823,14 +4003,14 @@ function alertes() {
   if (total > 30 && echecs / total > 0.25) {
     const ligne = (x) => {
       const e = x.s.essais - x.s.reussites;
-      return x.nom + ' : ' + e + '/' + x.s.essais + ' refus'
-        + (e ? ' (' + Math.round(e / x.s.essais * 100) + ' %, dernier : ' + (x.s.dernierEchec || '?') + ')' : '');
+      return x.nom + ': ' + e + '/' + x.s.essais + ' refused'
+        + (e ? ' (' + Math.round(e / x.s.essais * 100) + '%, last: ' + (x.s.dernierEchec || '?') + ')' : '');
     };
     let detail = compte.map(ligne).join(' · ');
     if (misDeCote.length) {
-      detail += ' — hors rotation, plus appele : ' + misDeCote.map(ligne).join(' · ')
-        + ' (chiffres figes : ces refus datent d\'avant sa mise de cote, ils ne se '
-        + 'reproduisent plus, et un controle par heure verifie s\'il revient)';
+      detail += ' — out of rotation, no longer called: ' + misDeCote.map(ligne).join(' · ')
+        + ' (frozen figures: these refusals date from before it was set aside, they no longer '
+        + 'happen, and an hourly check watches for it coming back)';
     }
 
     const kc = s('chaineCle');
@@ -3852,37 +4032,37 @@ function alertes() {
        * quelqu'un renouveler une cle innocente coute une soiree et ne repare
        * rien. */
       const memeSansCle = pub.essais >= NOEUD_MORT_ESSAIS && pub.reussites === 0;
-      remede = 'LE NOEUD A CLE ECHOUE A CHAQUE FOIS (' + kc.essais + ' appels, 0 reussite, dernier '
-        + 'refus : « ' + (kc.dernierEchec || '?') + ' »). Ce n\'est donc pas un forfait atteint.'
+      remede = 'THE KEYED NODE FAILS EVERY SINGLE TIME (' + kc.essais + ' calls, 0 successes, '
+        + 'last refusal: « ' + (kc.dernierEchec || '?') + ' »). So this is not a quota being hit.'
         + (memeSansCle
-            ? ' Et LE NOEUD PUBLIC dRPC echoue exactement pareil (' + pub.essais + ' appels, 0 '
-              + 'reussite, « ' + (pub.dernierEchec || '?') + ' ») — celui-la n\'utilise aucune cle. '
-              + 'Ce n\'est donc pas la cle : dRPC ne sert pas la chaine 4663, avec ou sans. '
-              + 'Renouveler la cle ne changerait rien. Ce qu\'il faut, c\'est un AUTRE fournisseur '
-              + 'RPC pour cette chaine — ou rien, et alors le noeud officiel reste seul, ce qui est '
-              + 'exactement ce qui fait manquer le budget d\'appels.'
-            : ' La cle n\'est pas acceptee du tout. Verifier sur drpc.org que la cle existe encore '
-              + 'et que le reseau « robinhood » fait partie de ceux qu\'elle couvre.')
+            ? ' And the PUBLIC dRPC node fails in exactly the same way (' + pub.essais + ' calls, '
+              + '0 successes, « ' + (pub.dernierEchec || '?') + ' ») — and that one uses no key at '
+              + 'all. So it is not the key: dRPC does not serve chain 4663, with or without one. '
+              + 'Renewing the key would change nothing. What is needed is ANOTHER RPC provider for '
+              + 'this chain — or none, and then the official node stands alone, which is exactly '
+              + 'what makes the call budget run out.'
+            : ' The key is not accepted at all. Check on drpc.org that the key still exists and '
+              + 'that the « robinhood » network is among those it covers.')
         + (mus.length
-            ? ' Ce qui est deja fait, sans rien toucher : la colonie a retenu qu\'il ne sert pas '
-              + mus.join(', ') + ', et ne le compte plus dans la rotation — il ne coute donc plus '
-              + 'de temps a chaque lecture. Un controle par heure verifie s\'il revient.'
+            ? ' What is already handled, with nothing to touch: the colony has learned it does '
+              + 'not serve ' + mus.join(', ') + ', and no longer counts it in the rotation — so it '
+              + 'costs no time on each read. An hourly check watches for it coming back.'
             : '');
     } else if (process.env.DRPC_API_KEY && kc.reussites > 0 && kc.essais - kc.reussites > kc.reussites) {
-      remede = 'La cle fonctionne (' + kc.reussites + ' lectures reussies) mais refuse plus souvent '
-        + 'qu\'elle n\'accepte : la, c\'est bien le forfait qui est atteint. Le releve par noeud est '
-        + 'dans le panneau « Ce qui est lu ».';
+      remede = 'The key works (' + kc.reussites + ' successful reads) but refuses more often than '
+        + 'it accepts: there, the quota really is being hit. The per-node readout is in the "What '
+        + 'is being read" panel.';
     } else if (process.env.DRPC_API_KEY && kc.reussites > 0) {
-      remede = 'La cle fonctionne (' + kc.reussites + '/' + kc.essais + '). Les refus comptes ici '
-        + 'viennent surtout des noeuds publics, qui ne servent que de secours — c\'est leur role, '
-        + 'et ca ne coute aucune lecture perdue tant que la cle repond.';
+      remede = 'The key works (' + kc.reussites + '/' + kc.essais + '). The refusals counted here '
+        + 'come mostly from the public nodes, which only act as backup — that is their job, and it '
+        + 'costs no lost read as long as the key answers.';
     } else if (process.env.DRPC_API_KEY) {
-      remede = 'Une cle dRPC est posee mais le noeud a cle n\'a pas encore ete appele. Si ca dure, '
-        + 'c\'est que le serveur n\'a pas ete redeploye depuis : une variable posee apres le '
-        + 'dernier deploiement n\'est pas vue par le processus en cours.';
+      remede = 'A dRPC key is set but the keyed node has not been called yet. If that persists, '
+        + 'the server has not been redeployed since: a variable set after the last deployment is '
+        + 'not seen by the running process.';
     } else {
-      remede = 'Un acces RPC dedie a la chaine 4663 leverait la limite : dRPC la sert, et sa cle se '
-        + 'pose dans DRPC_API_KEY. Les deux noeuds publics utilises ici sont gratuits et partages.';
+      remede = 'A dedicated RPC for chain 4663 would lift the limit: dRPC serves it, and its key '
+        + 'goes in DRPC_API_KEY. The two public nodes used here are free and shared.';
     }
     /* ---- ET LE SECOURS NE RATTRAPE PLUS RIEN ----
      * Depuis l'age minimum d'achat, un jeton qu'on examine a deux heures ou
@@ -3892,63 +4072,62 @@ function alertes() {
      * secours prendra le relais », c'est « il n'y a plus de secours ». */
     const P0 = planchers();
     if (P0.ageMin > 17)
-      remede += ' A noter : avec un age minimum d\'achat de '
-        + Math.round(P0.ageMin / 60 * 10) / 10 + ' h, une lecture de blocs demande environ '
-        + Math.round(P0.ageMin * 60 / BLOC_SECONDES / 1000) + ' 000 blocs. Le noeud de secours '
-        + 'plafonne a 10 000 : il ne peut plus servir AUCUN comptage de porteurs, seulement le '
-        + 'numero de bloc et l\'epreuve du Cobaye. Le noeud officiel est donc le seul a pouvoir '
-        + 'compter les porteurs, et quand il sature ils passent tous en « inconnu ».';
-    dis('haute', 'Les noeuds de la chaine refusent ' + Math.round(echecs / total * 100) + ' % des lectures',
-      echecs + ' refus sur ' + total + ' appels — mais pas au meme endroit. ' + detail
-      + '. Chaque refus rend « inconnu » un jeton qu\'on aurait pu juger, et l\'inconnu ne rapporte '
-      + 'jamais de points : le jeton est ecarte pour une raison qui n\'a rien a voir avec lui.',
+      remede += ' Worth noting: with a minimum buy age of '
+        + Math.round(P0.ageMin / 60 * 10) / 10 + ' h, one block read needs about '
+        + Math.round(P0.ageMin * 60 / BLOC_SECONDES / 1000) + ',000 blocks. The backup node caps '
+        + 'at 10,000: it can no longer serve ANY holder count, only the block number and the '
+        + 'Cobaye\'s trial. The official node is therefore the only one able to count holders, and '
+        + 'when it saturates they all turn to "unknown".';
+    dis('haute', 'The chain nodes are refusing ' + Math.round(echecs / total * 100) + '% of reads',
+      echecs + ' refusals out of ' + total + ' calls — but not in the same place. ' + detail
+      + '. Every refusal turns a token we could have judged into an "unknown", and an unknown '
+      + 'never earns points: the token is set aside for a reason that has nothing to do with it.',
       remede);
   }
 
   const gk = s('goplusCle');
   if (goplusIdentifie() && gk.essais > 0 && gk.reussites === 0)
-    dis('haute', 'La cle GoPlus est posee mais le jeton est refuse',
-      'La signature n\'a pas ete acceptee (' + (gk.dernierEchec || 'raison inconnue') + '). Les '
-      + 'lectures de securite continuent SANS authentification — c\'est-a-dire comme avant la cle, '
-      + 'donc rien n\'est casse, mais la limite de debit reste celle de tout le monde.',
-      'Verifier que GOPLUS_APP_KEY et GOPLUS_APP_SECRET sont bien les deux moities de la meme '
-      + 'paire, et que l\'horloge du serveur est a l\'heure : le temps entre dans la signature, '
-      + 'et quelques minutes de decalage suffisent a la faire refuser.');
+    dis('haute', 'The GoPlus key is set but the token is refused',
+      'The signature was not accepted (' + (gk.dernierEchec || 'reason unknown') + '). Safety '
+      + 'reads continue WITHOUT authentication — that is, exactly as before the key, so nothing '
+      + 'is broken, but the rate limit stays everyone else\'s.',
+      'Check that GOPLUS_APP_KEY and GOPLUS_APP_SECRET really are the two halves of the same '
+      + 'pair, and that the server clock is right: time goes into the signature, and a few '
+      + 'minutes of drift are enough to have it refused.');
   if (process.env.GOPLUS_APP_KEY && !process.env.GOPLUS_APP_SECRET)
-    dis('haute', 'GOPLUS_APP_KEY est posee sans GOPLUS_APP_SECRET',
-      'Ce ne sont pas deux facons d\'entrer : c\'est une serrure a deux pieces. La cle seule ne '
-      + 'signe rien, et les lectures continuent sans authentification.',
-      'Poser aussi GOPLUS_APP_SECRET, depuis le meme ecran de GoPlus.');
+    dis('haute', 'GOPLUS_APP_KEY is set without GOPLUS_APP_SECRET',
+      'These are not two ways in: it is a two-piece lock. The key alone signs nothing, and reads '
+      + 'continue unauthenticated.',
+      'Set GOPLUS_APP_SECRET as well, from the same GoPlus screen.');
 
   if (cleCoingecko() && cgPorte === 'libre')
-    dis('haute', 'La cle CoinGecko est posee mais refusee',
-      'Elle a ete essayee en Demo (api.coingecko.com) et en Pro '
-      + '(pro-api.coingecko.com) : les deux l\'ont refusee. Les lectures continuent par l\'acces '
-      + 'libre — c\'est-a-dire exactement comme avant la cle, donc rien n\'est casse, mais elle '
-      + 'ne sert a rien.',
-      'Verifier la cle sur coingecko.com/en/developers/dashboard, puis redeployer. Une variable '
-      + 'posee apres le dernier deploiement n\'est pas vue par le processus en cours.');
+    dis('haute', 'The CoinGecko key is set but refused',
+      'It was tried on Demo (api.coingecko.com) and on Pro (pro-api.coingecko.com): both refused '
+      + 'it. Reads continue over free access — that is, exactly as before the key, so nothing is '
+      + 'broken, but the key is doing nothing.',
+      'Check the key at coingecko.com/en/developers/dashboard, then redeploy. A variable set '
+      + 'after the last deployment is not seen by the running process.');
 
   if (!process.env.ANTHROPIC_API_KEY)
-    dis('moyenne', 'Le Conseiller est eteint : aucune cle Anthropic',
-      'Les agents jugent sur des regles et sur ce qu\'ils ont mesure. Un avis de modele sur les '
-      + 'cas limites — ceux qui tombent a quelques points du seuil — n\'est pas disponible.',
-      'Poser ANTHROPIC_API_KEY dans les variables Railway. Une seule cle suffit : le Conseiller '
-      + 'n\'est appele que sur les cas limites, quelques fois par tour.');
+    dis('moyenne', 'The Advisor is off: no Anthropic key',
+      'The agents judge on rules and on what they have measured. A model\'s view on borderline '
+      + 'cases — the ones landing a few points from the threshold — is not available.',
+      'Set ANTHROPIC_API_KEY in the Railway variables. One key is enough: the Advisor is only '
+      + 'called on borderline cases, a few times per turn.');
 
   const budget = E.compteurs.budgetAtteint || 0;
   if (budget > 5)
-    dis('basse', 'Le budget d\'appels a ete atteint ' + budget + ' fois',
-      'Des jetons neufs ont attendu le tour suivant faute d\'appels disponibles dans le tour.',
-      'C\'est la meme cause que la premiere alerte : plus de debit sur la chaine, et le budget suit.');
+    dis('basse', 'The call budget was reached ' + budget + ' times',
+      'New tokens waited for the next turn for want of calls left in this one.',
+      'Same cause as the first alert: more throughput on the chain, and the budget follows.');
 
   const ab = E.compteurs.prixAberrant || 0;
   if (ab > 0)
-    dis('haute', ab + ' position(s) fermees sur un prix inexploitable',
-      'Le prix relu impliquait un mouvement impossible pour la piscine concernee. Rien n\'a ete '
-      + 'comptabilise et personne n\'en a rien appris — mais la position, elle, est perdue de vue.',
-      'C\'est le signe de jetons a tres faible decimale ou de piscines videes. Rien a fournir : '
-      + 'c\'est note ici pour qu\'on sache que ca arrive, et combien de fois.');
+    dis('haute', ab + ' position(s) closed on an unusable price',
+      'The re-read price implied a move impossible for that pool. Nothing was counted and nobody '
+      + 'learned anything from it — but the position itself is lost from view.',
+      'This is the mark of very low-decimal tokens or of drained pools. Nothing to supply: it is '
+      + 'noted here so that we know it happens, and how often.');
 
   /* ==========================================================================
    * ELLE DIT ELLE-MEME POURQUOI ELLE N'ACHETE PAS
@@ -3967,27 +4146,35 @@ function alertes() {
    * qui bloque sans dire quoi toucher fait chercher dans le code.
    * ======================================================================== */
   const REGLAGES = [
-    [/sous le plancher d'achat/, 'LIQ_ACHAT_MIN / MC_ACHAT_MIN'],
-    [/au-dessus du plafond/, 'MC_ACHAT_MAX'],
-    [/trop jeune/, 'AGE_ACHAT_MIN'],
-    [/on paierait le sommet/, 'PUMP_MAX_M#/PUMP_MAX_H#'],
-    [/deja tombe/, 'DUMP_MAX_M#/DUMP_MAX_H#'],
-    [/il manque :/, 'SOCIAUX_EXIGES'],
-    [/note trop basse/, 'le seuil, que la colonie deplace elle-meme'],
-    [/pas encore verifiable/, 'SOCIAUX_EXIGES (la regle attend DexScreener)'],
+    /* ---- LES MOTIFS SUIVENT LES PHRASES ----
+     * Ces expressions reconnaissent le TEXTE du refus pour nommer le reglage
+     * qui le gouverne. Les phrases sont passees a l'anglais ; un motif reste
+     * en francais ne casse rien de visible — il rend juste « aucune variable »
+     * pour une regle qui en a une, et l'alerte envoie alors chercher dans le
+     * code un chiffre qui est dans l'environnement. Les deux formes sont
+     * gardees : l'audit contient encore des cles ecrites avant la bascule. */
+    [/below the buy floor|sous le plancher d'achat/, 'LIQ_ACHAT_MIN / MC_ACHAT_MIN'],
+    [/above the buy ceiling|au-dessus du plafond/, 'MC_ACHAT_MAX'],
+    [/too young|trop jeune/, 'AGE_ACHAT_MIN'],
+    [/paying the top|on paierait le sommet/, 'PUMP_MAX_M#/PUMP_MAX_H#'],
+    [/already down|deja tombe/, 'DUMP_MAX_M#/DUMP_MAX_H#'],
+    [/^missing:|il manque :/, 'SOCIAUX_EXIGES'],
+    [/no public presence/, 'SOCIAUX_EXIGES'],
+    [/score too low|note trop basse/, 'the entry threshold, which the colony moves itself'],
+    [/not indexed by DexScreener|pas encore verifiable/, 'SOCIAUX_EXIGES (the rule waits for DexScreener)'],
     /* Les regles qui n'ont PAS de variable : le dire aussi. Une famille sans
        reglage laisserait chercher une variable qui n'existe pas — c'est pire
        que de ne rien indiquer. */
-    [/ce n'est plus un marche/, 'aucune variable : regle du Scout, dans le code'],
-    [/rien a vendre dedans/, 'aucune variable : regle du Scout, dans le code'],
-    [/porteur tient/, 'aucune variable : regle du Whale, dans le code'],
-    [/aucune ne le garde/, 'aucune variable : regle du Whale, dans le code'],
-    [/honeypot|taxe|proprietaire|auto-destruction/, 'aucune variable : securite du contrat'],
-    [/la sortie est bloquee/, 'aucune variable : l\'epreuve du Cobaye'],
+    [/not a market any more|ce n'est plus un marche/, 'no variable: Scout rule, in the code'],
+    [/nothing to sell into|rien a vendre dedans/, 'no variable: Scout rule, in the code'],
+    [/holder holds|porteur tient/, 'no variable: Whale rule, in the code'],
+    [/nobody holds|aucune ne le garde/, 'no variable: Whale rule, in the code'],
+    [/honeypot|tax|proprietaire|taxe|self-destruct|auto-destruction/, 'no variable: contract safety'],
+    [/exit is blocked|la sortie est bloquee/, 'no variable: the Cobaye\'s trial'],
   ];
   const reglageDe = (k) => {
     const r = REGLAGES.find((x) => x[0].test(k));
-    return r ? r[1] : 'aucune variable : regle ecrite dans le code';
+    return r ? r[1] : 'no variable: rule written in the code';
   };
   const sansAchat = E.toursSansAchat || 0;
   const vus = E.refusVus || 0;
@@ -4028,23 +4215,23 @@ function alertes() {
     const wardenVu = C0.wardenVu || 0;
     const wardenRefus = wardenVu - (C0.wardenOk || 0);
     if (wardenVu > 200 && wardenRefus === 0 && muets > wardenVu / 2) {
-      dis('haute', 'Le controle de contrat ne tourne pas',
-        'Le Warden n\'a refuse AUCUN jeton sur ' + wardenVu + ' vus — non pas parce qu\'ils sont '
-        + 'sains, mais parce que GoPlus n\'a rien rendu ' + muets + ' fois. Il lit le contrat : '
-        + 'honeypot, taxes, pouvoirs du proprietaire. Il se tait quand il n\'a rien lu, et c\'est '
-        + 'juste — mais un agent qui ne refuse jamais ressemble a un agent permissif, alors qu\'il '
-        + 'est aveugle.'
-        + (cobVu ? ' Le Cobaye couvre ce trou quand il peut : ' + (C0.cobayeBloque || 0)
-                 + ' blocages sur ' + cobVu + ' epreuves. Mais ' + inc + ' fois il n\'a pas pu '
-                 + 'conclure, et un resultat incertain n\'arrete pas l\'achat — condamner sur une '
-                 + 'lecture ratee serait pire. Ces jetons-la ont donc ete achetes sans qu\'aucun '
-                 + 'controle de contrat ait reellement tourne.' : ''),
-        'GoPlus n\'indexe pas les jetons de quelques minutes : c\'est structurel, pas une panne. '
-        + 'Deux leviers reels : poser GOPLUS_APP_KEY / GOPLUS_APP_SECRET, qui donnent un debit et '
-        + 'une couverture superieurs a l\'acces libre ; et rendre l\'epreuve du Cobaye plus souvent '
-        + 'concluante, ce qui demande des lectures de chaine qui aboutissent — c\'est la meme '
-        + 'saturation que la premiere alerte. Bloquer sur l\'incertain arreterait presque tous les '
-        + 'achats, et n\'ajouterait aucune securite : on ne saurait toujours rien du contrat.');
+      dis('haute', 'The contract check is not running',
+        'The Warden has refused NO token out of ' + wardenVu + ' seen — not because they are '
+        + 'clean, but because GoPlus returned nothing ' + muets + ' times. It reads the contract: '
+        + 'honeypot, taxes, owner powers. It stays quiet when it has read nothing, and that is '
+        + 'right — but an agent that never refuses looks like a permissive agent, when it is '
+        + 'actually blind.'
+        + (cobVu ? ' The Cobaye covers that hole when it can: ' + (C0.cobayeBloque || 0)
+                 + ' blocks out of ' + cobVu + ' trials. But ' + inc + ' times it could not '
+                 + 'conclude, and an uncertain result does not stop a buy — condemning on a failed '
+                 + 'read would be worse. Those tokens were therefore bought without any contract '
+                 + 'check having actually run.' : ''),
+        'GoPlus does not index tokens a few minutes old: that is structural, not a fault. Two '
+        + 'real levers: set GOPLUS_APP_KEY / GOPLUS_APP_SECRET, which give better throughput and '
+        + 'coverage than free access; and make the Cobaye\'s trial conclude more often, which '
+        + 'needs chain reads that succeed — the same saturation as the first alert. Blocking on '
+        + 'uncertainty would stop nearly every buy and add no safety at all: we would still know '
+        + 'nothing about the contract.');
     }
   }
 
@@ -4066,32 +4253,31 @@ function alertes() {
     const fam = tous.filter((f) => !estReport(f.k)).sort((a, b) => b.n - a.n).slice(0, 3);
     const fermes = Math.max(1, vus - reports);
     const dit = fam.map((f) => '« ' + f.k + ' » : ' + Math.round(f.n / fermes * 100)
-      + ' % des refus (reglage : ' + reglageDe(f.k) + ')');
+      + '% of refusals (setting: ' + reglageDe(f.k) + ')');
     const heures = Math.round(sansAchat * (CADENCE_MS / 3600000) * 10) / 10;
-    dis('haute', 'Aucun achat depuis ' + sansAchat + ' tours (' + heures + ' h)',
-      'Ce n\'est pas une panne : chaque jeton est bien lu et bien juge.'
-      + (reports ? ' Sur les ' + vus + ' derniers examines, ' + reports + ' sont seulement MIS DE '
-        + 'COTE le temps d\'avoir l\'age voulu — ils reviennent, ils ne sont pas perdus.' : '')
-      + (dit.length ? ' Ce qui les arrete VRAIMENT, sur les ' + fermes + ' autres — '
+    dis('haute', 'Nothing bought for ' + sansAchat + ' turns (' + heures + ' h)',
+      'This is not a fault: every token is read properly and judged properly.'
+      + (reports ? ' Of the last ' + vus + ' examined, ' + reports + ' are only SET ASIDE until '
+        + 'they reach the required age — they come back, they are not lost.' : '')
+      + (dit.length ? ' What REALLY stops them, on the other ' + fermes + ' — '
         + dit.join(' · ') + '.' : ''),
-      'Les regles se cumulent : un jeton doit passer TOUTES les bornes en meme temps, et sur '
-      + 'cette chaine il en reste alors tres peu. Si un seul reglage represente la moitie des '
-      + 'refus, c\'est celui-la qu\'il faut bouger — les autres ne changeraient presque rien. '
-      + 'Et le panneau « ce que deviennent les refuses » dit, pour chaque regle, ce que les '
-      + 'jetons ecartes ont fait ensuite : c\'est la seule facon de savoir si elle protege ou '
-      + 'si elle coute.');
+      'The rules stack: a token has to clear EVERY bound at once, and on this chain very few then '
+      + 'remain. If a single setting accounts for half the refusals, that is the one to move — the '
+      + 'others would change almost nothing. And the "what becomes of the rejected" panel says, '
+      + 'for each rule, what the tokens it set aside went on to do: that is the only way to know '
+      + 'whether it protects or whether it costs.');
   }
 
   const perdues = E.compteurs.abandonneeSansPrix || 0;
   if (perdues > 0)
     dis(perdues > 3 ? 'haute' : 'moyenne',
-      perdues + ' position(s) abandonnees faute de prix',
-      'Leur prix n\'a jamais pu etre relu, pas une fois, jusqu\'a l\'expiration du delai. La mise '
-      + 'a ete rendue et personne n\'a rien appris — on n\'invente pas un resultat a zero pour '
-      + 'cloturer proprement, ce zero entrerait dans la memoire des agents comme une observation '
-      + 'alors qu\'on n\'a rien observe.',
-      'C\'est presque toujours un jeton trop petit pour etre indexe : le vrai remede est en amont, '
-      + 'dans le plancher de liquidite qui decide ce qu\'on achete.');
+      perdues + ' position(s) abandoned for want of a price',
+      'Their price could never be re-read, not once, until the deadline expired. The stake was '
+      + 'given back and nobody learned anything — we do not invent a zero result to close things '
+      + 'tidily; that zero would enter the agents\' memory as an observation when nothing was '
+      + 'observed.',
+      'It is almost always a token too small to be indexed: the real remedy is upstream, in the '
+      + 'liquidity floor that decides what gets bought.');
 
   return out;
 }
@@ -4142,47 +4328,54 @@ const CONSEIL_POIDS = 8;         /* et son avis pese au plus huit points */
 
 function conseillerActif() { return !!process.env.ANTHROPIC_API_KEY; }
 
+/* La consigne est en anglais parce que le « pourquoi » qu'elle rend est
+   AFFICHE tel quel sur une page anglaise. Traduire sa reponse apres coup la
+   reecrirait, et une phrase reecrite n'est plus celle qu'il a ecrite. Les
+   trois valeurs d'avis, elles, restent telles quelles : ce sont des cles. */
 const CONSEIL_SYSTEME =
-  'Tu conseilles une colonie d\'agents qui evalue des jetons TRES JEUNES (quelques minutes) '
-+ 'sur la chaine Robinhood 4663. Sa tresorerie est du papier : rien n\'est signe.\n\n'
-+ 'On te donne UNIQUEMENT des mesures deja lues. Quand un champ vaut "inconnu", cela veut dire '
-+ 'que le service n\'a pas repondu : ne devine JAMAIS sa valeur, et n\'en tire aucune conclusion '
-+ 'favorable. Un inconnu n\'est pas un bon signe.\n\n'
-+ 'Le risque dominant a cet age est le rug pull : une piscine videe, une concentration extreme, '
-+ 'du volume fabrique par un seul portefeuille, un jeton deja tombe.\n\n'
-+ 'Reponds UNIQUEMENT par un objet JSON, sans texte autour :\n'
-+ '{"avis":"favorable"|"reserve"|"defavorable","points":<entier de -8 a 8>,"pourquoi":"<20 mots max>"}\n'
-+ 'Sois severe : la colonie voit des centaines de jetons et n\'en garde que quelques-uns. '
-+ 'En cas de doute, "reserve" avec 0 point.';
+  'You advise a colony of agents that scores VERY YOUNG tokens (a few minutes old) on Robinhood '
++ 'chain 4663. Its treasury is paper: nothing is signed.\n\n'
++ 'You are given ONLY measurements already read. When a field reads "unknown", it means the '
++ 'service did not answer: NEVER guess its value, and draw no favourable conclusion from it. '
++ 'An unknown is not a good sign.\n\n'
++ 'The dominant risk at this age is the rug pull: a drained pool, extreme concentration, volume '
++ 'manufactured by a single wallet, a token already down.\n\n'
++ 'Answer ONLY with a JSON object, no text around it:\n'
++ '{"avis":"favorable"|"reserve"|"defavorable","points":<integer from -8 to 8>,"pourquoi":"<20 words max, in English>"}\n'
++ 'Be strict: the colony sees hundreds of tokens and keeps only a few. When in doubt, "reserve" '
++ 'with 0 points.';
 
 function fiche(t) {
   const c = t.chaine || {}, g = t.g || {}, x = t.trades || {}, d = t.dex || {}, h = (t.tx || {}).h1 || {};
-  const ou = (v, s) => (v === null || v === undefined) ? 'inconnu' : (s ? s(v) : v);
+  /* Les noms de champs partent tels quels dans le message : ils sont donc
+     ecrits dans la langue du prompt, sinon le modele lit une fiche francaise
+     sous une consigne anglaise et doit deviner la correspondance. */
+  const ou = (v, s) => (v === null || v === undefined) ? 'unknown' : (s ? s(v) : v);
   return {
-    symbole: t.sym, age_minutes: Math.round(t.minutes || 0),
-    trouve_par: t.origine || 'pools',
-    liquidite_usd: Math.round(t.liq || 0),
-    capitalisation_usd: Math.round(t.mc || 0),
-    variation_5min_pct: t.ch_m5, variation_1h_pct: t.ch_h1,
-    achats_1h: h.buys || 0, ventes_1h: h.sells || 0, acheteurs_1h: h.buyers || 0,
-    porteurs_lus_dans_les_blocs: c.vu ? ou(c.porteurs) : 'inconnu',
-    part_du_plus_gros_porteur_pct: c.vu ? ou(c.top) : 'inconnu',
-    part_brulee_pct: c.vu ? ou(c.brule) : 'inconnu',
-    adresses_ecartees_comme_piscine: c.vu ? (c.infra || 0) : 'inconnu',
-    securite_du_contrat: g.have ? {
-      taxe_achat_pct: g.taxeSue ? g.buyTax : 'inconnu',
-      taxe_vente_pct: g.taxeSue ? g.sellTax : 'inconnu',
-      code_verifie: g.codeSu ? !g.unverified : 'inconnu',
-      emission_possible: g.mintable, contrat_proxy: g.proxy,
-    } : 'inconnu — le contrat est trop jeune pour etre indexe',
-    trades_lus: x.vu ? {
-      nombre: x.n, acheteurs_distincts: x.acheteurs,
-      part_du_plus_gros_portefeuille_pct: x.partDuPlusGros, ticket_moyen_usd: x.moyen,
-    } : 'inconnu',
-    reseaux_sociaux: d.vu ? d.socials : 'inconnu',
-    nombre_de_pools: d.vu ? d.pools : 'inconnu',
-    note_de_la_colonie: t.an ? t.an.score : null,
-    seuil_pour_acheter: seuilCourant(),
+    symbol: t.sym, age_minutes: Math.round(t.minutes || 0),
+    found_via: t.origine || 'pools',
+    liquidity_usd: Math.round(t.liq || 0),
+    market_cap_usd: Math.round(t.mc || 0),
+    change_5min_pct: t.ch_m5, change_1h_pct: t.ch_h1,
+    buys_1h: h.buys || 0, sells_1h: h.sells || 0, buyers_1h: h.buyers || 0,
+    holders_read_in_blocks: c.vu ? ou(c.porteurs) : 'unknown',
+    largest_holder_share_pct: c.vu ? ou(c.top) : 'unknown',
+    burned_share_pct: c.vu ? ou(c.brule) : 'unknown',
+    addresses_skipped_as_pool: c.vu ? (c.infra || 0) : 'unknown',
+    contract_safety: g.have ? {
+      buy_tax_pct: g.taxeSue ? g.buyTax : 'unknown',
+      sell_tax_pct: g.taxeSue ? g.sellTax : 'unknown',
+      code_verified: g.codeSu ? !g.unverified : 'unknown',
+      can_mint: g.mintable, proxy_contract: g.proxy,
+    } : 'unknown — the contract is too young to be indexed',
+    trades_read: x.vu ? {
+      count: x.n, distinct_buyers: x.acheteurs,
+      largest_wallet_share_pct: x.partDuPlusGros, average_ticket_usd: x.moyen,
+    } : 'unknown',
+    socials: d.vu ? d.socials : 'unknown',
+    pool_count: d.vu ? d.pools : 'unknown',
+    colony_score: t.an ? t.an.score : null,
+    score_needed_to_buy: seuilCourant(),
   };
 }
 
@@ -4254,10 +4447,16 @@ async function regardeLaColonie() {
                  'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: CONSEIL_MODELE, max_tokens: 260,
-        system: 'Tu observes une colonie d\'agents qui evalue des jetons tres jeunes. Sa tresorerie '
-              + 'est du papier. On te donne son releve. Dis en UNE phrase (30 mots max) ce qui te '
-              + 'parait le plus discutable dans sa facon de faire, en citant un chiffre du releve. '
-              + 'Pas de conseil general, pas de politesse. Si tout semble coherent, dis-le.',
+        /* ---- ET LE REGARD REPOND EN ANGLAIS ----
+         * Ce texte est affiche tel quel sur une page anglaise. Le modele
+         * repond dans la langue de la consigne : la consigne passe donc a
+         * l'anglais, plutot que de traduire sa reponse apres coup — une
+         * phrase retraduite n'est plus celle qu'il a ecrite. */
+        system: 'You are watching a colony of agents that scores very young tokens. Its treasury '
+              + 'is paper. You are given its readout. In ONE sentence (30 words max), say what '
+              + 'looks most questionable in how it operates, quoting a figure from the readout. '
+              + 'No general advice, no pleasantries. If everything looks coherent, say so. '
+              + 'Answer in English.',
         messages: [{ role: 'user', content: JSON.stringify(etat) }],
       }),
       signal: AbortSignal.timeout(12000),
@@ -4360,13 +4559,13 @@ function prixFrais(adr) {
 function peutRepondre(b, t) {
   const m = t.minutes === null || t.minutes === undefined ? 999 : t.minutes;
   if (b === 'ohlcv' && m < 6)
-    return 'pas encore de bougies : ' + Math.round(m) + ' min de vie';
+    return 'no candles yet: ' + Math.round(m) + ' min old';
   if (b === 'dex' && m < 10)
-    return 'DexScreener n\'a pas encore indexe a ' + Math.round(m) + ' min';
+    return 'DexScreener has not indexed it yet at ' + Math.round(m) + ' min';
   if (b === 'trades') {
     const h = (t.tx || {}).h1 || {};
     const n = (h.buys || 0) + (h.sells || 0);
-    if (n < 5) return 'seulement ' + n + ' transaction(s) sur l\'heure : rien a lire';
+    if (n < 5) return 'only ' + n + ' trade(s) in the hour: nothing to read';
   }
   return null;
 }
@@ -4507,7 +4706,7 @@ async function tour() {
     const liste = parBandes((await rassemble())
       .filter((t) => t.liq >= 500 && t.prix > 0)
       .filter((t) => t.minutes !== null && t.minutes <= AGE_MAX_MIN));
-    if (!liste.length) throw new Error('aucun jeton neuf assez liquide');
+    if (!liste.length) throw new Error('no new token liquid enough');
 
     /* Les prix d'abord : une position due se ferme au prix qu'on vient de
        lire, pas au suivant. */
@@ -4620,7 +4819,7 @@ async function tour() {
           t.conseil = await conseille(t);
           if (t.conseil) { an = analyse(t); t.an = an; compte('conseilRendu'); }
         }
-        if (!an.achete) { refus = 'note trop basse'; quiRefuse = 'oracle'; compte('oracleBloque'); }
+        if (!an.achete) { refus = 'score too low'; quiRefuse = 'oracle'; compte('oracleBloque'); }
         else {
           /* ---- L'EPREUVE DE VENTE, JUSTE AVANT L'ACHAT ----
            * Le jeton a tout passe : c'est maintenant, et seulement maintenant,
@@ -4778,7 +4977,7 @@ function vue() {
                tenueRaison: p.tenueRaison || null,
                liens: p.liens || null, prolonge: p.prolonge || 0, dexVu: !!p.dexVu,
                ouverteDepuis: Date.now() - p.t0, tenueMin: p.tenueMin,
-               mise: p.mise, methode: p.methode, regime: p.regime, raisonMise: p.raisonMise,
+               mise: p.mise, methode: p.methode, regime: enMots(p.regime), raisonMise: p.raisonMise,
                origine: p.origine || 'pools',
                latent: r === null ? null : Math.round(r * 10) / 10,
                /* Le latent ne porte plus que sur ce qui reste tenu : afficher
@@ -4828,7 +5027,9 @@ function vue() {
     agents,
     /* ---- LE BANQUIER ---- */
     banque: {
-      methode: b.methode, appris: !!b.appris, regime: b.regime,
+      /* Le regime est une case de memoire, comme celles des agents : il sort
+         par la table des mots et reste ecrit en francais dans l'etat. */
+      methode: b.methode, appris: !!b.appris, regime: enMots(b.regime),
       serie: E.banque.serie || 0, pic: Math.round((E.banque.pic || DEPART) * 100) / 100,
       engage: Math.round(engage * 100) / 100,
       partMax: MISE_PART_MAX, expoMax: EXPO_PART_MAX, plancher: PLANCHER, miseMin: MISE_MIN,
@@ -4839,7 +5040,7 @@ function vue() {
         for (const cle in E.banque.memoire) {
           if (cle.indexOf(m + '|') !== 0) continue;
           const c = E.banque.memoire[cle];
-          l.push({ regime: cle.split('|')[1], n: c.n, moyenne: Math.round(c.s / c.n * 10) / 10 });
+          l.push({ regime: enMots(cle.split('|')[1]), n: c.n, moyenne: Math.round(c.s / c.n * 10) / 10 });
         }
         return { methode: m, par: l };
       }).filter((x) => x.par.length),
@@ -4853,7 +5054,7 @@ function vue() {
                dernierEchec: s.dernierEchec };
     }),
     horsService: HORS_SERVICE,
-    coingecko: { cle: !!cleCoingecko(), porte: cgPorte || 'pas encore sonde' },
+    coingecko: { cle: !!cleCoingecko(), porte: cgPorte || 'not probed yet' },
     rpcCle: { pose: !!(process.env.DRPC_API_KEY || '').trim(),
               plage: noeuds._cle ? noeuds._cle.plageLogs : null },
     goplus: { identifie: goplusIdentifie(), jeton: !!goplusJeton.valeur,
@@ -4882,7 +5083,7 @@ function remiseAZero(pourquoi) {
   const avant = E.tresor;
   E = etatNeuf();
   E.journalStructure = [{ t: Date.now(), quoi: 'remise', chiffres: null,
-    txt: 'Remise a zero demandee' + (pourquoi ? ' : ' + String(pourquoi).slice(0, 120) : '')
+    txt: 'Reset requested' + (pourquoi ? ': ' + String(pourquoi).slice(0, 120) : '')
        + '. Tresorerie avant : $' + Math.round(avant) + '.' }];
   for (const k of Object.keys(dernierPrix)) delete dernierPrix[k];
   for (const c of Object.keys(CACHE)) for (const k of Object.keys(CACHE[c])) delete CACHE[c][k];
@@ -4968,6 +5169,7 @@ module.exports = {
   /* exposes pour l'essai : ce sont eux qui portent les regles */
   scoreBase, analyse, traitsDe, tenueApprise, leconsDe, apprendAgent, ajustementAgent, ecartType,
   caseNonLue, CASES_NON_LUES, TRAITS, MEMOIRE_DEMIVIE_J, SURV_MAX, fane,
+  enMots, MOTS,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,

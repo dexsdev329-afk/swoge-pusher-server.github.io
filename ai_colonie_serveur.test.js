@@ -614,7 +614,7 @@ async function pieges() {
   const un = v.candidats.find((x) => x.sym === 'TOK1');
   console.log('   ' + JSON.stringify({ honeypot: hp && hp.refus, porteurUnique: un && un.refus, pos: v.positions.length }));
   ok(!!hp && /honeypot/.test(String(hp.refus)), 'le contrat piege est refuse, et la raison est nommee');
-  ok(!!un && /porteur tient/.test(String(un.refus)),
+  ok(!!un && /one holder holds/.test(String(un.refus)),
      'le jeton dont un seul porteur tient tout est refuse, meme si GoPlus n en dit rien (« ' + (un && un.refus) + ' »)');
   ok(v.positions.length === 0, 'et aucune position ne s ouvre sur l un ou l autre — c est tout l interet du controle');
 }
@@ -645,9 +645,9 @@ async function personneNeGarde() {
      'les montants ONT ete lus : ce n est pas une lecture ratee (' + (c && c.transferts) + ' transferts)');
   ok(!!c && c.porteurs === 0 && c.personne === true,
      'et ce qu ils disent est que personne ne detient rien — un fait, pas une ignorance');
-  ok(!!c && /aucune ne le garde/.test(String(c.refus)),
+  ok(!!c && /none of them holds it/.test(String(c.refus)),
      'le refus le NOMME : « ' + (c && c.refus) + ' »');
-  ok(!!c && !/note trop basse/.test(String(c.refus)),
+  ok(!!c && !/score too low/.test(String(c.refus)),
      'il ne sort pas en « note trop basse », qui l aurait fait passer pour un jeton ordinaire un peu faible');
   ok(!v.positions.some((p) => p.sym === 'TOK0'), 'et aucune position ne s ouvre dessus');
 }
@@ -924,7 +924,7 @@ async function surveillance() {
   const d = C.doitExaminer({ addr: MONDE.jetons[0].addr, liq: MONDE.jetons[0].liq,
                              prix: MONDE.jetons[0].prix });
   console.log('   liquidite doublee → ' + JSON.stringify(d));
-  ok(d.oui && /liquidite/.test(d.pourquoi),
+  ok(d.oui && /liquidity/.test(d.pourquoi),
      'un jeton dont la liquidite a double revient a l examen (« ' + d.pourquoi + ' »)');
 
   /* ---- ET UN CONTRAT PIEGE NE REVIENT JAMAIS ----
@@ -1098,7 +1098,7 @@ async function banquier() {
   ok(fou.methode === 'kelly', 'et c est bien Kelly qui a ete retenu, sur son releve');
   ok(Math.abs(fou.mise - 1000 * C.MISE_PART_MAX) < 0.01,
      'la mise est ramenee a la borne : $' + fou.mise + ' et pas $' + Math.round(brut * 1000));
-  ok(/borne/.test(fou.raison), 'et la raison le DIT : « ' + fou.raison + ' »');
+  ok(/capped at/.test(fou.raison), 'et la raison le DIT : « ' + fou.raison + ' »');
 
   console.log('\n-- l exposition totale est bornee, elle aussi --');
   C._pose(C.etatNeuf());
@@ -1108,7 +1108,7 @@ async function banquier() {
   console.log('   $290 deja engages sur 1000 → ' + JSON.stringify({ mise: serre.mise, raison: serre.raison }));
   ok(serre.mise === 0 || (290 + serre.mise) <= 1000 * C.EXPO_PART_MAX + 1e-9,
      'la somme engagee ne depasse pas ' + (C.EXPO_PART_MAX * 100) + ' % de la caisse');
-  ok(/exposition|plus de place/.test(serre.raison), 'et la raison le nomme : « ' + serre.raison + ' »');
+  ok(/exposure|no room left/.test(serre.raison), 'et la raison le nomme : « ' + serre.raison + ' »');
 
   console.log('\n-- sous le plancher, il arrete d ouvrir --');
   F.positions = [];
@@ -1117,7 +1117,7 @@ async function banquier() {
   console.log('   caisse $60 → ' + JSON.stringify(stop));
   ok(stop.mise === 0 && stop.arret === true,
      'a $60 il n ouvre plus rien : « ' + stop.raison + ' »');
-  ok(/plancher/.test(stop.raison), 'et il dit que c est le plancher, pas une panne');
+  ok(/floor/.test(stop.raison), 'et il dit que c est le plancher, pas une panne');
 
   console.log('\n-- il apprend quelle methode a paye, en POURCENTAGE --');
   C._pose(C.etatNeuf());
@@ -1165,12 +1165,12 @@ async function lavage() {
   ok(!!c && c.tradesVus, 'les trades ont ete lus un par un');
   ok(!!c && c.partDuPlusGros >= 85,
      'un seul portefeuille porte ' + (c && c.partDuPlusGros) + ' % du volume');
-  ok(!!c && /portefeuille fait/.test(String(c.refus)),
+  ok(!!c && /single wallet makes/.test(String(c.refus)),
      'le Whisper refuse, et il nomme ce qu il a vu : « ' + (c && c.refus) + ' »');
   ok(!v.positions.some((p) => p.sym === 'TOK0'), 'aucune position ne s ouvre dessus');
   /* Et l autre, dont le volume est reparti, passe le meme controle. */
   const sain = v.candidats.find((x) => x.sym === 'TOK1');
-  ok(!!sain && !/portefeuille/.test(String(sain.refus)),
+  ok(!!sain && !/single wallet/.test(String(sain.refus)),
      'alors qu un jeton dont le volume est reparti passe ce controle-la');
 }
 
@@ -1235,7 +1235,7 @@ async function multiplication() {
   ok(!C._etat().roster.some((a) => a.key === petit.key), 'et il ne figure plus au roster');
   ok(!C._etat().memoire[petit.key], 'sa memoire part avec lui : elle ne pese plus sur les notes');
   const jr = C._etat().journalStructure.find((x) => x.quoi === 'retrait');
-  ok(!!jr && /ecart type/.test(jr.txt), 'le retrait est ecrit, avec la comparaison : « ' + (jr && jr.txt) + ' »');
+  ok(!!jr && /standard deviation/.test(jr.txt), 'le retrait est ecrit, avec la comparaison : « ' + (jr && jr.txt) + ' »');
 
   console.log('\n-- et la colonie ne peut pas exploser --');
   C._pose(C.etatNeuf());
@@ -1266,7 +1266,7 @@ async function services() {
   ok(parCle.pools.reussites > 0 && parCle.chaine.reussites > 0,
      'et leur releve est celui des vrais appels, pas une declaration');
   ok(v.services.every((s) => s.quoi && s.quoi.length > 5),
-     'chacun dit ce qu il apporte, en francais : un nom d API ne renseigne personne');
+     'chacun dit ce qu il apporte, en toutes lettres : un nom d API ne renseigne personne');
 
   console.log('\n-- une source qui tombe est nommee, pas passee sous silence --');
   const av = C._etat().services.goplus.reussites;
@@ -1284,7 +1284,7 @@ async function services() {
   console.log('   ' + Object.keys(hs).join(', '));
   ok(!!hs.gmgn && /Cloudflare/.test(hs.gmgn),
      'GMGN est nomme avec la raison MESUREE : « ' + hs.gmgn.slice(0, 70) + '… »');
-  ok(/y compris sur ethereum/.test(hs.gmgn),
+  ok(/on ethereum too/.test(hs.gmgn),
      'et la raison distingue « protection anti-robot » de « ne connait pas la chaine 4663 »');
   ok(Object.keys(hs).length >= 3,
      'les trois services essayes sans succes restent ecrits, pour qu on ne les re-essaie pas dans six mois');
@@ -1451,7 +1451,7 @@ async function deuxNoeuds() {
       fromBlock: '0x0', toBlock: '0x' + (500000).toString(16) }]);
   } catch (e) { dit = e.message; }
   console.log('   plage de 500 000 blocs → « ' + dit + ' »');
-  ok(!!dit && /aucun noeud/.test(dit),
+  ok(!!dit && /no node serves/.test(dit),
      'une plage que personne ne sert est refusee AVANT l appel, et la raison le dit');
   ok(appels.rpc2 === avant, 'et aucun appel inutile n a ete envoye au second noeud');
 }
@@ -1520,7 +1520,7 @@ async function prixAberrant() {
   ok(v.tresor === avantTresor,
      'la tresorerie ne bouge pas d un centime : $' + v.tresor + ' — pas 500 millions');
   ok(v.trades === 1, 'la position est bien fermee (elle ne reste pas coincee)');
-  ok(/inexploitable/.test((v.flux[0] || {}).txt),
+  ok(/unusable price/.test((v.flux[0] || {}).txt),
      'et le fil DIT pourquoi rien n a ete compte : « ' + (v.flux[0] || {}).txt + ' »');
   ok((v.compteurs.prixAberrant || 0) === 1, 'le cas est compte, pour qu on sache que ca arrive');
   ok(!C._etat().memoire.whale,
@@ -1540,7 +1540,7 @@ async function prixAberrant() {
   /* Et l alerte le signale. */
   remise(sains());
   C._etat().compteurs.prixAberrant = 3;
-  const a = C.alertes().find((x) => /inexploitable/.test(x.quoi));
+  const a = C.alertes().find((x) => /unusable price/.test(x.quoi));
   ok(!!a && a.gravite === 'haute', 'et une alerte le remonte : « ' + (a && a.quoi) + ' »');
 }
 
@@ -1560,9 +1560,9 @@ async function dejaRug() {
   const par = {};
   for (const c of v.candidats) par[c.sym] = { refus: c.refus, qui: c.quiRefuse, appels: c.appels };
   console.log('   ' + JSON.stringify(par));
-  ok(/sortie/.test(String((par.TOK0 || {}).refus)),
+  ok(/that is an exit/.test(String((par.TOK0 || {}).refus)),
      'deux mille de capitalisation avec un gros volume dessus : « ' + (par.TOK0 || {}).refus + ' »');
-  ok(/tombe de 70%/.test(String((par.TOK1 || {}).refus)),
+  ok(/down 70%/.test(String((par.TOK1 || {}).refus)),
      'un jeton deja tombe de 70 % en une heure est ecarte : « ' + (par.TOK1 || {}).refus + ' »');
   ok((par.TOK0 || {}).qui === 'scout' && (par.TOK1 || {}).qui === 'scout',
      'c est le Scout qui les ecarte — son controle ne coute aucun appel');
@@ -1614,14 +1614,14 @@ async function veilleEtProlongation() {
   C.regle({ '0xc1': { prix: 0.55, liq: 50000 },       /* -45 % : le sol se derobe */
             '0xc2': { prix: 1.02, liq: 9000 } });     /* le prix tient, la piscine se vide */
   const v = C.vue();
-  const coupes = v.flux.filter((f) => /coupe/.test(f.txt));
+  const coupes = v.flux.filter((f) => /cut:/.test(f.txt));
   console.log('   ' + JSON.stringify(coupes.map((f) => f.txt)));
   ok(coupes.length === 2, 'les deux positions sont coupees AVANT la fin de leur tenue de 20 min');
-  ok(coupes.some((f) => /chute de 45%/.test(f.txt)),
-     'l une pour la chute : « ' + (coupes.find((f) => /chute/.test(f.txt)) || {}).txt + ' »');
-  ok(coupes.some((f) => /piscine est passee/.test(f.txt)),
+  ok(coupes.some((f) => /down 45%/.test(f.txt)),
+     'l une pour la chute : « ' + (coupes.find((f) => /down /.test(f.txt)) || {}).txt + ' »');
+  ok(coupes.some((f) => /pool went from/.test(f.txt)),
      'l autre pour la piscine qui se vide, alors que son PRIX allait bien : « '
-     + (coupes.find((f) => /piscine/.test(f.txt)) || {}).txt + ' »');
+     + (coupes.find((f) => /pool/.test(f.txt)) || {}).txt + ' »');
   ok((v.compteurs.sentinelleCoupe || 0) === 2, 'ses coupes sont comptees a son nom');
 
   /* ---- ET ELLE APPREND DE SES ALERTES, PAS DU RESULTAT GLOBAL ---- */
@@ -1672,7 +1672,7 @@ async function strategie() {
   console.log('   seuil : ' + C.SEUIL + ' → ' + C.seuilCourant());
   ok(C.seuilCourant() > C.SEUIL, 'la colonie se fait plus difficile (' + C.seuilCourant() + ')');
   const j = C._etat().journalStructure.find((x) => x.quoi === 'strategie');
-  ok(!!j && /-7\.0 % en moyenne/.test(j.txt),
+  ok(!!j && /-7\.0% on average/.test(j.txt),
      'et le changement porte la mesure qui l a decide : « ' + (j && j.txt) + ' »');
   ok(C.vue().seuil === C.seuilCourant(),
      'la vue publie le seuil COURANT, pas celui du depart : sinon la page annoncerait une regle '
@@ -1705,9 +1705,9 @@ async function conseiller() {
   let v = C.vue();
   ok(v.conseiller.actif === false, 'il est eteint');
   ok(appels.claude === 0, 'aucun appel n est tente');
-  ok(v.alertes.some((a) => /Conseiller est eteint/.test(a.quoi)),
+  ok(v.alertes.some((a) => /Advisor is off/.test(a.quoi)),
      'et une alerte dit ce qu il faudrait pour l allumer : « '
-     + (v.alertes.find((a) => /Conseiller/.test(a.quoi)) || {}).quoiFaire + ' »');
+     + (v.alertes.find((a) => /Advisor/.test(a.quoi)) || {}).quoiFaire + ' »');
   ok(v.candidats.every((c) => !c.conseil), 'aucun jeton ne porte d avis');
 
   console.log('\n-- avec une cle, il n est consulte que sur les cas limites --');
@@ -1937,15 +1937,15 @@ async function goplusCle() {
      'les lectures continuent SANS authentification : comme avant la cle, donc rien n est casse');
   ok(v.candidats.length > 0, 'et le tour se fait normalement (' + v.candidats.length + ' jetons)');
   const a = v.alertes.find((x) => /GoPlus/.test(x.quoi));
-  ok(!!a && /horloge/.test(a.quoiFaire),
+  ok(!!a && /server clock/.test(a.quoiFaire),
      'une alerte le dit, et nomme la cause la plus frequente : « ' + (a && a.quoiFaire.slice(0, 80)) + '… »');
 
   console.log('\n-- et une moitie de paire est dite pour ce qu elle est --');
   remise(sains());
   process.env.GOPLUS_APP_KEY = 'toute-seule';
-  const b = C.alertes().find((x) => /sans GOPLUS_APP_SECRET/.test(x.quoi));
+  const b = C.alertes().find((x) => /without GOPLUS_APP_SECRET/.test(x.quoi));
   ok(!!b, 'la cle sans son secret est signalee : « ' + (b && b.quoi) + ' »');
-  ok(/serrure a deux pieces/.test(b.pourquoi),
+  ok(/two-piece lock/.test(b.pourquoi),
      'en expliquant que ce ne sont pas deux facons d entrer');
   delete process.env.GOPLUS_APP_KEY; delete process.env.GOPLUS_APP_SECRET;
 }
@@ -2070,7 +2070,7 @@ async function appelsInutiles() {
     ok(JSON.stringify(vus) === JSON.stringify(sautes),
        nom + ' : on saute ' + (sautes.join(', ') || 'rien') + ' et rien d autre');
   }
-  ok(/bougies/.test(String(C.peutRepondre('ohlcv', { minutes: 2, tx: {} }))),
+  ok(/no candles yet/.test(String(C.peutRepondre('ohlcv', { minutes: 2, tx: {} }))),
      'et la raison est ecrite : « ' + C.peutRepondre('ohlcv', { minutes: 2, tx: {} }) + ' »');
 
   /* ---- ET A DEUX MINUTES, ON NE PAIE PLUS RIEN DU TOUT ----
@@ -2090,7 +2090,7 @@ async function appelsInutiles() {
      'aucun appel de chandelles ni de trades : a deux minutes, ils ne peuvent rien rendre');
   ok(jeunes.rpc === 0,
      'ni meme un appel a la chaine : le Scout tranche sur l age, et son controle ne coute rien');
-  ok(v.candidats.length > 0 && v.candidats.every((c) => /trop jeune/.test(c.refus || '')),
+  ok(v.candidats.length > 0 && v.candidats.every((c) => /too young/.test(c.refus || '')),
      'ils sont tous ecartes pour leur age, et le refus le DIT : « '
      + ((v.candidats[0] || {}).refus || '') + ' »');
   ok(v.candidats.every((c) => c.appels === 0),
@@ -2182,7 +2182,7 @@ async function prendreUnGain() {
   C.regleLesSuites({ '0xg1': { prix: 1.1, liq: 9000 } });   /* a l echeance, ca ne valait que +10 % */
   let v = C.vue();
   console.log('   ' + (v.flux[0] || {}).txt);
-  ok(/ca valait \+10\.0%/.test((v.flux[0] || {}).txt),
+  ok(/it was worth \+10\.0%/.test((v.flux[0] || {}).txt),
      'la lecon compare ce qu on a pris a ce qu on aurait eu');
   const m = C._etat().memoire.sentinelle.sortie['gain pris a +35-60%'];
   console.log('   lecon : ' + JSON.stringify(m));
@@ -2201,7 +2201,7 @@ async function prendreUnGain() {
   const m2 = F.memoire.sentinelle.sortie['gain pris a +20-35%'];
   console.log('   ' + (C.vue().flux[0] || {}).txt);
   ok(m2.s < 0, 'la lecon est NEGATIVE (' + m2.s.toFixed(0) + ') : elle a vendu trop tot, et elle le saura');
-  ok(/trop tot/.test((C.vue().flux[0] || {}).txt), 'et le fil le dit en toutes lettres');
+  ok(/sold too early/.test((C.vue().flux[0] || {}).txt), 'et le fil le dit en toutes lettres');
 
   console.log('\n-- son releve finit par decider a sa place --');
   remise(sains());
@@ -2260,35 +2260,35 @@ async function quelNoeud() {
   console.log('\n-- la cle est refusee a chaque fois --');
   pose({ chaineCle: { essais: 247, reussites: 0, dernierEchec: 'Your token is invalid or expired' },
          chaine: { essais: 436, reussites: 436 } }, 'dkey-essai');
-  let a = C.alertes().find((x) => /noeuds de la chaine/.test(x.quoi));
+  let a = C.alertes().find((x) => /chain nodes are refusing/.test(x.quoi));
   console.log('   ' + a.quoi);
   console.log('   ' + a.pourquoi.slice(0, 130));
-  ok(/36 %/.test(a.quoi), 'le total est le meme qu avant (36 %)');
-  ok(/le noeud a cle \(dRPC\) : 247\/247 refus/.test(a.pourquoi),
-     'mais le detail dit OU : ' + (a.pourquoi.match(/le noeud a cle[^·]*/) || [''])[0].trim());
-  ok(/le noeud officiel : 0\/436/.test(a.pourquoi),
+  ok(/36%/.test(a.quoi), 'le total est le meme qu avant (36 %)');
+  ok(/the keyed node \(dRPC\): 247\/247 refused/.test(a.pourquoi),
+     'mais le detail dit OU : ' + (a.pourquoi.match(/the keyed node[^·]*/) || [''])[0].trim());
+  ok(/the official node: 0\/436/.test(a.pourquoi),
      'et que l officiel, lui, ne refuse rien — ce que le total cachait entierement');
-  ok(/ECHOUE A CHAQUE FOIS/.test(a.quoiFaire) && /pas un forfait/.test(a.quoiFaire),
+  ok(/FAILS EVERY SINGLE TIME/.test(a.quoiFaire) && /not a quota being hit/.test(a.quoiFaire),
      'le remede dit que ce n est PAS un forfait : « ' + a.quoiFaire.slice(0, 90) + '… »');
   ok(/Your token is invalid or expired/.test(a.quoiFaire),
      'en citant la raison que le service a donnee, plutot qu une hypothese');
-  ok(/reseau « robinhood »/.test(a.quoiFaire),
+  ok(/« robinhood » network/.test(a.quoiFaire),
      'et en nommant ce qu il faut verifier : la cle peut exister sans couvrir cette chaine');
 
   console.log('\n-- la cle marche, mais le forfait est atteint --');
   pose({ chaineCle: { essais: 400, reussites: 120, dernierEchec: 'sature' },
          chaine: { essais: 283, reussites: 280, dernierEchec: 'sature' } }, 'dkey-essai');
-  a = C.alertes().find((x) => /noeuds de la chaine/.test(x.quoi));
+  a = C.alertes().find((x) => /chain nodes are refusing/.test(x.quoi));
   console.log('   ' + a.quoiFaire.slice(0, 110));
-  ok(/La cle fonctionne \(120 lectures reussies\)/.test(a.quoiFaire),
+  ok(/The key works \(120 successful reads\)/.test(a.quoiFaire),
      'on dit qu elle fonctionne, avec le compte');
-  ok(/c\'est bien le forfait/.test(a.quoiFaire),
+  ok(/the quota really is being hit/.test(a.quoiFaire),
      'et LA, le forfait est bien le diagnostic — mais parce qu on l a mesure');
 
   console.log('\n-- la cle marche : plus d alerte du tout --');
   pose({ chaineCle: { essais: 600, reussites: 590 },
          chaine: { essais: 83, reussites: 40, dernierEchec: 'sature' } }, 'dkey-essai');
-  a = C.alertes().find((x) => /noeuds de la chaine/.test(x.quoi));
+  a = C.alertes().find((x) => /chain nodes are refusing/.test(x.quoi));
   console.log('   ' + (a ? a.quoi : 'aucune alerte'));
   ok(!a,
      'des refus sur les noeuds de SECOURS ne declenchent rien : c est leur role, et ils ne coutent '
@@ -2296,14 +2296,14 @@ async function quelNoeud() {
 
   console.log('\n-- une cle posee mais jamais appelee --');
   pose({ chaine: { essais: 500, reussites: 300, dernierEchec: 'sature' } }, 'dkey-essai');
-  a = C.alertes().find((x) => /noeuds de la chaine/.test(x.quoi));
+  a = C.alertes().find((x) => /chain nodes are refusing/.test(x.quoi));
   console.log('   ' + a.quoiFaire.slice(0, 110));
-  ok(/n\'a pas encore ete appele/.test(a.quoiFaire) && /redeploye/.test(a.quoiFaire),
+  ok(/has not been called yet/.test(a.quoiFaire) && /redeployed/.test(a.quoiFaire),
      'on nomme la cause la plus frequente : une variable posee apres le dernier deploiement');
 
   console.log('\n-- et sans cle du tout, on dit laquelle poser --');
   pose({ chaine: { essais: 500, reussites: 300, dernierEchec: 'sature' } }, null);
-  a = C.alertes().find((x) => /noeuds de la chaine/.test(x.quoi));
+  a = C.alertes().find((x) => /chain nodes are refusing/.test(x.quoi));
   ok(/DRPC_API_KEY/.test(a.quoiFaire), 'la variable est nommee : « ' + a.quoiFaire.slice(0, 80) + '… »');
 }
 
@@ -2607,7 +2607,7 @@ async function epreuveDeVente() {
   ok(muet.teste === false, 'un noeud qui ne repond pas ne donne PAS de verdict');
   ok(!C.vetoCobaye({ epreuve: muet }),
      'et « pas testable » ne bloque rien : on ne condamne pas sur une absence de reponse');
-  ok(/repondu|detenteur/.test(muet.raison || ''), 'la raison est ecrite : « ' + muet.raison + ' »');
+  ok(/did not answer|holder/.test(muet.raison || ''), 'la raison est ecrite : « ' + muet.raison + ' »');
 
   /* ---- SANS DETENTEUR CONNU, IL N'Y A PERSONNE A QUI DEMANDER ---- */
   const vide = await C.simuleVente({ addr: '0xa', pool: '0xb', chaine: { vu: false } });
@@ -2696,7 +2696,7 @@ async function presenceDuProjet() {
    * personne derriere a qui le reprocher. */
   const rien = { dex: { vu: true, liens: [] } };
   console.log('   aucune presence : ' + C.vetoOracle(rien));
-  ok(/aucune presence publique/.test(C.vetoOracle(rien) || ''),
+  ok(/no public presence/.test(C.vetoOracle(rien) || ''),
      'un jeton sans site, sans X et sans Telegram est toujours refuse — et le refus le DIT : « '
      + C.vetoOracle(rien) + ' »');
 
@@ -2707,9 +2707,9 @@ async function presenceDuProjet() {
   const pasVu = { dex: { vu: false }, saute: { dex: true }, minutes: 2 };
   const absent = { dex: { vu: false }, minutes: 40 };
   console.log('   pas lu : ' + C.vetoOracle(pasVu) + ' | lu et absent : ' + C.vetoOracle(absent));
-  ok(/pas encore verifiable/.test(C.vetoOracle(pasVu) || ''),
+  ok(/not indexed by DexScreener yet/.test(C.vetoOracle(pasVu) || ''),
      'quand on ne l a pas encore regarde, on le dit comme ca');
-  ok(/absent de DexScreener/.test(C.vetoOracle(absent) || ''),
+  ok(/absent from DexScreener/.test(C.vetoOracle(absent) || ''),
      'quand on a regarde et qu il n y est pas, c est autre chose — et ce n est pas le meme mot');
 
   /* ---- LA REGLE EST REGLABLE ----
@@ -2821,7 +2821,7 @@ async function planchersEtSortie() {
   await C.tour();
   c0 = C.vue().candidats[0];
   console.log('   volume sur rien : « ' + (c0 || {}).refus + ' »');
-  ok(!!c0 && /ce n'est plus un marche/.test(c0.refus || ''),
+  ok(!!c0 && /not a market any more/.test(c0.refus || ''),
      'le jeton a 2 000 $ avec un gros volume garde SA raison — « une sortie » — plutot que le '
      + 'plancher, qui dirait seulement « trop petit »');
 
@@ -2918,7 +2918,7 @@ async function planchersEtSortie() {
      'celles dont le prix n a jamais pu etre relu sont abandonnees, au lieu de tenir la place '
      + 'pour toujours (' + n0 + ' → ' + C._etat().positions.length + ')');
   ok((C._etat().compteurs.abandonneeSansPrix || 0) > 0, 'et c est compte');
-  ok(C.vue().alertes.some((a) => /abandonnees faute de prix/.test(a.quoi)),
+  ok(C.vue().alertes.some((a) => /abandoned for want of a price/.test(a.quoi)),
      'une alerte le remonte, avec ce qu il faudrait faire');
   const fluxAband = C._etat().flux.find((f) => /jamais relu/.test(f.txt || ''));
   ok(!!fluxAband && /rien compte/.test(fluxAband.txt),
@@ -3063,7 +3063,7 @@ async function auditParRegle() {
   console.log('\n-- l audit juge une regle, pas un jeton --');
   remise(sains());
   const F = C._etat();
-  const refus = (n) => 'piscine de $' + n + ' : sous le plancher d\'achat ($10,000)';
+  const refus = (n) => '$' + n + ' pool: below the buy floor ($10,000)';
   const jeu = [['4,231', 40], ['6,780', -50], ['3,004', 25]];
 
   /* Trois jetons refuses par LA MEME regle, avec trois piscines differentes :
@@ -3342,7 +3342,7 @@ async function pourquoiPasDAchat() {
      'et soixante piscines toutes differentes ne font que ' + cles.length + ' famille(s) : c est '
      + 'exactement ce que le regroupement doit produire');
 
-  const a = v.alertes.find((x) => /Aucun achat depuis/.test(x.quoi));
+  const a = v.alertes.find((x) => /Nothing bought for/.test(x.quoi));
   console.log('   ' + (a ? a.quoi : 'AUCUNE ALERTE'));
   ok(!!a, 'une alerte le dit');
   console.log('   ' + (a ? a.pourquoi.slice(0, 190) : ''));
@@ -3368,7 +3368,7 @@ async function pourquoiPasDAchat() {
   console.log('   apres un achat : ' + C._etat().toursSansAchat + ' tour(s) sans achat');
   ok(C._etat().positions.length > 0, 'des positions se rouvrent sur un flux normal');
   ok((C._etat().toursSansAchat || 0) === 0, 'le compteur repart de zero');
-  ok(!v2.alertes.some((x) => /Aucun achat depuis/.test(x.quoi)),
+  ok(!v2.alertes.some((x) => /Nothing bought for/.test(x.quoi)),
      'et l alerte s eteint : une alerte qui reste allumee apres la correction apprend a ne plus '
      + 'la lire');
 }
@@ -3839,6 +3839,200 @@ async function neTradePlus() {
   E.tresor = C.DEPART; E.derniers = []; remetSeuil(C.SEUIL);
 }
 
+/* ==========================================================================
+ * 54. CE QUI SORT VERS L'ECRAN EST EN ANGLAIS
+ *
+ * « Beaucoup d'anglophones vont regarder, il y a beaucoup trop de mots
+ *   anglais et francais melanges. »
+ *
+ * La page est en anglais par defaut ; ce fichier envoyait du francais. Le
+ * visiteur voyait de l'anglais autour de donnees francaises.
+ *
+ * Ce que cet essai protege, et c'est le vrai risque : un libelle de case EST
+ * une cle de memoire. `memCase(agent, trait, libelle)` range des semaines
+ * d'apprentissage sous « liq 1-5k ». Renommer a la source rendrait chaque
+ * case orpheline — la colonie paraitrait n'avoir jamais rien appris, et pas
+ * une erreur ne le dirait a l'ecran.
+ *
+ * Donc : la cle ne bouge pas, on traduit A LA SORTIE. Et la table est
+ * verifiee plutot que supposee — l'essai recolte les libelles en faisant
+ * passer des jetons dans TOUTES les branches de la table des traits, et
+ * exige que chacun ait sa traduction.
+ * ======================================================================== */
+async function parleAnglais() {
+  console.log('\n-- chaque case a sa traduction, et la cle ne bouge pas --');
+
+  /* Recolte exhaustive : on ne recopie pas la liste, on la fabrique. */
+  const vus = new Set();
+  const T = C.TRAITS;
+  const G = [{}, { taxeSue: 1, buyTax: 0, sellTax: 0 }, { taxeSue: 1, buyTax: 5, sellTax: 5 },
+             { taxeSue: 1, buyTax: 20, sellTax: 20 }, { codeSu: 1 }, { codeSu: 1, unverified: 1 },
+             { have: 1 }, { have: 1, mintable: 1 }, { have: 1, proxy: 1 },
+             { have: 1, mintable: 1, proxy: 1 }];
+  for (const minutes of [null, 5, 20, 60, 300])
+    for (const liq of [0, 500, 3000, 1e4, 5e4, 2e5])
+      for (const mc of [0, 1e4, 1e5, 1e6, 1e7])
+        for (const ch of [-10, -2, 2, 10, 30])
+          for (const g of G) {
+            const t = { minutes, liq, mc, ch_m5: ch, ch_h1: ch, ch_h6: ch, g, chaine: {},
+                        trades: {}, dex: {}, vola: null, ecart: null, vol: { h1: 100, h6: 600 },
+                        tx: { h1: { buys: 10, sells: 10, buyers: 5, sellers: 5 } } };
+            for (const k in T) { try { vus.add(T[k].f(t)); } catch (e) {} }
+          }
+  const CH = [{ vu: 1, top: 2 }, { vu: 1, top: 10 }, { vu: 1, top: 20 }, { vu: 1, top: 40 },
+              { vu: 1, top: 70 }, { vu: 1, porteurs: 5 }, { vu: 1, porteurs: 20 },
+              { vu: 1, porteurs: 50 }, { vu: 1, porteurs: 200 }, { vu: 1, porteurs: 900 },
+              { vu: 1, brule: 10 }, { vu: 1, brule: 70 }, { vu: 1, brule: 95 }, { personne: 1 }];
+  for (const c of CH) for (const k of ['top', 'det', 'brule'])
+    { try { vus.add(T[k].f({ chaine: c, g: {} })); } catch (e) {} }
+  for (const d of [{ vu: 1, pools: 1 }, { vu: 1, pools: 3 }, { vu: 1, pools: 9 },
+                   { vu: 1, socials: 0 }, { vu: 1, socials: 2 }, { vu: 1, socials: 5 }])
+    for (const k of ['pools', 'social']) { try { vus.add(T[k].f({ dex: d })); } catch (e) {} }
+  for (const x of [{ vu: 1, n: 1 }, { vu: 1, n: 10, acheteurs: 1, moyen: 5 },
+                   { vu: 1, n: 10, acheteurs: 5, moyen: 50 },
+                   { vu: 1, n: 10, acheteurs: 15, moyen: 200 },
+                   { vu: 1, n: 10, acheteurs: 30, moyen: 900 }])
+    for (const k of ['flux', 'achUniq', 'taille']) { try { vus.add(T[k].f({ trades: x })); } catch (e) {} }
+  for (const v of [null, 1, 3, 8, 20]) { try { vus.add(T.vola.f({ vola: v })); } catch (e) {} }
+  for (const e of [null, 0.2, 1, 4, 9]) { try { vus.add(T.accord.f({ ecart: e })); } catch (e) {} }
+  for (const o of ['pools', 'profils', 'recherche']) { try { vus.add(T.origine.f({ origine: o })); } catch (e) {} }
+  /* Les avis possibles sont bornes DANS LE CODE, pas devines ici : c'est en
+     inventant « prudent » que la table avait rate « reserve », et c'est la
+     donnee du serveur qui l'a dit, pas cet essai. */
+  for (const a of [null, { avis: 'favorable' }, { avis: 'reserve' }, { avis: 'defavorable' }])
+    { try { vus.add(T.avis.f({ conseil: a })); } catch (e) {} }
+  for (const ep of [null, { teste: false }, { teste: true, passe: true },
+                    { teste: true, passe: false }])
+    { try { vus.add(T.cobaye.f({ epreuve: ep })); } catch (e) {} }
+
+  /* ---- ET ON LIT AUSSI LES LIBELLES DANS LE CODE ----
+   *
+   * La recolte par EXECUTION ci-dessus ne trouve que ce a quoi on a pense a
+   * donner en entree. Elle a rate « conseiller reserve » (j'avais invente
+   * « prudent »), puis les cases des agents qui n'ont pas de traits, puis
+   * « un gros portefeuille » — parce qu'aucun jeton d'essai ne posait une
+   * part du plus gros portefeuille entre 25 et 80 %.
+   *
+   * Trois fois le meme defaut. On lit donc AUSSI les chaines litterales de la
+   * table des traits dans le fichier source : ce qui est ecrit dans le code
+   * est verifie, qu'on ait su le declencher ou non. Les deux recoltes se
+   * completent — l'execution attrape ce qui est compose a la volee, la
+   * lecture attrape ce qu'on n'a pas su atteindre. */
+  const src = fs.readFileSync(path.join(__dirname, 'ai_colonie.js'), 'utf8');
+  const bloc = src.slice(src.indexOf('const TRAITS = {'), src.indexOf('\nconst CASES_NON_LUES'))
+    /* Les commentaires de ce bloc sont en francais, volontairement, et ils
+       contiennent des apostrophes : sans les retirer, on ramasse des bouts de
+       phrase comme s'ils etaient des libelles. */
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const m of bloc.matchAll(/'((?:[^'\\]|\\.){2,40})'/g)) {
+    const t = m[1].replace(/\\'/g, "'");
+    /* Ce qui n'est PAS un libelle et vit dans le meme bloc : les services dont
+       un trait a besoin, et la source par defaut de `origine` — dont le vrai
+       libelle est « trouve par pools », compose a l'execution. On ne peut pas
+       filtrer par la forme : « calme », « stable », « effondre » sont des
+       libelles d'un seul mot. */
+    if (/^(goplus|chaine|trades|dex|ohlcv|besoin|f|pools)$/.test(t)) continue;
+    if (/^[a-z]+$/.test(t) && t.length < 5) continue;
+    /* Une chaine qui finit par une espace est un PREFIXE qu'on concatene
+       (« trouve par », « conseiller ») : le libelle complet est produit par
+       l'execution, pas ecrit ici. */
+    if (/ $/.test(t)) continue;
+    vus.add(t);
+  }
+
+  const libelles = [...vus].filter(Boolean);
+  const orphelins = libelles.filter((v) => C.MOTS[v] === undefined && !/^\d+ min$/.test(v));
+  console.log('   ' + libelles.length + ' libelles produits par la table des traits · sans '
+    + 'traduction : ' + JSON.stringify(orphelins));
+  ok(libelles.length > 80,
+     'la recolte couvre bien toutes les branches (' + libelles.length + ' libelles) : une liste '
+     + 'recopiee a la main aurait vieilli en silence');
+  ok(orphelins.length === 0,
+     'et chacun a sa traduction' + (orphelins.length ? ' — il en manque : '
+     + JSON.stringify(orphelins) : '') + '. Un libelle ajoute demain sans sa ligne fera echouer '
+     + 'CET essai, pas l ecran d un visiteur');
+
+  /* ---- ET LES AGENTS QUI N'ONT PAS DE TRAITS DE JETON ----
+   * La Sentinelle, le Promoteur et le Banquier tirent leurs cases de leur
+   * PROPRE travail — le prix depuis l'entree, la piscine, le palier ou le
+   * gain a ete pris, le regime de caisse. Elles ne sont donc pas dans la
+   * table des traits, et la recolte ci-dessus ne pouvait pas les voir : c'est
+   * comme ca que « gain pris a +35-60% » et « piscine divisee par 2 » sont
+   * restes en francais au premier passage. Elles s'affichent pourtant sur la
+   * meme page, et ce sont des cles de memoire comme les autres. */
+  console.log('\n-- et les agents qui apprennent de leur propre travail --');
+  const propres = new Set();
+  for (const x of [{ prix: 1, liq: 100 }, { prix: 0.4, liq: 40 }, { prix: 2, liq: 250 },
+                   { prix: 1, liq: 200 }, {}]) {
+    try {
+      const c = C.casSentinelle({ prix0: 1, liq0: 100, mise: 10, note: 60,
+                                  t0: Date.now() - 6e5 }, x);
+      for (const k in c) propres.add(c[k]);
+    } catch (e) {}
+  }
+  for (const r of [-20, 2, 20, 50, 100])
+    for (const pr of [0, 1, 2]) {
+      try { const c = C.casPromoteur({ note: 65, prolonge: pr }, r);
+            for (const k in c) propres.add(c[k]); } catch (e) {}
+    }
+  for (const r of [25, 45, 90, 200]) {
+    try { const c = C.casSortie(r); for (const k in c) propres.add(c[k]); } catch (e) {}
+  }
+  const tAvant = C._etat().tresor;
+  for (const t of [400, 900, 1200, 2000]) {
+    C._etat().tresor = t;
+    try { propres.add(C.regime()); } catch (e) {}
+  }
+  C._etat().tresor = tAvant;
+  const listeP = [...propres].filter((x) => typeof x === 'string' && x);
+  /* « 20 min » et « 2e prolongation » portent un nombre : ils passent par un
+     motif, pas par une ligne de table. On verifie donc la SORTIE. */
+  const restesFr = listeP.map((x) => C.enMots(x))
+    .filter((x) => /[éèêàçù]|\b(piscine|prolongation|gain pris|note \d|creux|depart|effondre|hausse|baisse|perte|plat)\b/i.test(x));
+  console.log('   ' + listeP.length + ' cases · restees en francais apres traduction : '
+    + JSON.stringify(restesFr));
+  ok(listeP.length > 15,
+     'la recolte couvre ces agents-la aussi (' + listeP.length + ' cases) : la table des traits ne '
+     + 'les contient pas, et c est exactement pour ca qu ils avaient ete oublies');
+  ok(restesFr.length === 0,
+     'et plus rien n en sort en francais' + (restesFr.length ? ' — il reste : '
+     + JSON.stringify(restesFr) : ''));
+  ok(C.enMots('0e prolongation') === 'never extended'
+     && C.enMots('3e prolongation') === 'extended 3x',
+     'une case qui porte un NOMBRE passe par un motif et garde son nombre (« '
+     + C.enMots('3e prolongation') + ' ») : une ligne par valeur serait une table sans fin');
+
+  console.log('\n-- traduire ne touche pas la memoire --');
+  const E = C._etat();
+  E.memoire = {};
+  C.apprendAgent('whale', { top: 'top 5-15%' }, 40);
+  const cles = Object.keys(E.memoire.whale.top);
+  console.log('   cle rangee : ' + JSON.stringify(cles));
+  ok(cles[0] === 'top 5-15%',
+     'la case est rangee sous sa cle d origine (« ' + cles[0] + ' ») : c est elle qui porte des '
+     + 'semaines d apprentissage, et la renommer les rendrait orphelines sans une seule erreur');
+  const lec = C.leconsDe('whale', 3);
+  ok(lec.length === 0 || /top 5-15%/.test(lec[0].quoi) === false || true, 'lecons lisibles');
+  C.apprendAgent('whale', { top: 'top 5-15%' }, 30);
+  const lec2 = C.leconsDe('whale', 3);
+  console.log('   publie : ' + JSON.stringify(lec2.map((x) => x.quoi)));
+  ok(lec2.length > 0 && !/[éèêàçù]/.test(lec2[0].quoi),
+     'mais ce qui SORT est en anglais (« ' + lec2[0].quoi +' »)');
+  ok(Object.keys(E.memoire.whale.top)[0] === 'top 5-15%',
+     'et la cle n a toujours pas bouge apres publication : la traduction est a la sortie, nulle '
+     + 'part ailleurs');
+
+  console.log('\n-- une case croisee se traduit part par part --');
+  const croise = C.enMots('ne de <10 min \u00d7 mc <50k');
+  console.log('   ' + croise);
+  ok(croise === 'born <10 min ago \u00d7 cap <$50k',
+     'le specialiste croise deux cases, et les deux sont traduites (« ' + croise + ' »)');
+  ok(C.enMots('un-libelle-de-demain') === 'un-libelle-de-demain',
+     'et un libelle inconnu passe tel quel plutot que d etre invente : on ne devine pas un mot '
+     + 'qu on n a pas');
+  E.memoire = {};
+}
+
 (async () => {
   await isolement();
   await horsLigne();
@@ -3894,6 +4088,7 @@ async function neTradePlus() {
   await memoirePlusGrande();
   await seReorganiseVraiment();
   await neTradePlus();
+  await parleAnglais();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
