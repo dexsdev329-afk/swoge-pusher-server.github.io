@@ -1987,11 +1987,45 @@ function planchers() {
      * peut toujours pas les bouger : c'est un humain, sur une mesure. */
     liq: Math.max(nEnv('LIQ_ACHAT_MIN', 1200),
                   (E.tresor || 0) * MISE_PART_MAX * nEnv('LIQ_PAR_MISE', 25)),
-    /* Meme releve pour la capitalisation : « sous le plancher d'achat »,
-       4 suivis, 2 montes, ZERO effondre, +66,9 % de moyenne. Elle descend a
-       4 000 — sous la capitalisation, la piscine ne represente plus rien du
-       jeton, et c'est ce cas-la que la regle suivante attrape, nommement. */
-    mc: nEnv('MC_ACHAT_MIN', 4000),
+    /* ---- ET LA CAPITALISATION CESSE DE FAIRE LE TRAVAIL DE LA PISCINE ----
+     *
+     * « SWOGE AI est toujours bloque. »
+     *
+     * Le releve du serveur, apres la baisse a 4 000, sur un tour reel. Les
+     * capitalisations refusees :
+     *
+     *     3 789 · 3 274 · 3 285 · 3 939 · 3 301 · 3 964
+     *
+     * Le plancher etait a 4 000. Il coupait a TRENTE-SIX DOLLARS pres. Sur
+     * une chaine dont les capitalisations se serrent entre 3 200 et 4 000,
+     * ce n'est plus un filtre : c'est un tirage au sort qui elimine la moitie
+     * du flux selon de quel cote d'un chiffre rond le jeton est tombe. Et
+     * l'audit, troisieme fois de suite, dit la meme chose : ZERO effondre.
+     *
+     * ---- CE QU'UN PLANCHER DE CAPITALISATION PROTEGE VRAIMENT ----
+     *
+     * Il avait ete pose pour une raison precise, et elle est ecrite plus
+     * haut : les positions restees ouvertes treize heures sans un prix relu
+     * avaient toutes une capitalisation d'achat entre 5 759 et 15 738 $. Ce
+     * n'etait donc pas un probleme de QUALITE mais de LECTURE — on ne savait
+     * pas les recoter. Depuis, le Veilleur relit les positions ouvertes et le
+     * prix de secours existe : ce trou-la est bouche ailleurs, par ce qui le
+     * bouchait vraiment.
+     *
+     * Ce qui reste dangereux, c'est d'entrer dans quelque chose de trop mince
+     * pour en ressortir — et ca, c'est la PISCINE qui le mesure, pas la
+     * capitalisation. Le plancher de piscine suit deja la mise. Garder en
+     * plus une borne de capitalisation posee a la main, c'est faire deux fois
+     * le meme travail, et le faire moins bien la seconde fois.
+     *
+     * Il reste donc, mais comme garde-fou d'absurdite, pas comme jugement :
+     * on n'achete pas un jeton qui vaut moins que dix fois notre mise — la, ce
+     * qu'on achete EST le marche, et le revendre n'a pas de sens. A 1 366 $ de
+     * caisse ca fait 1 093 $, et le plancher fixe de 1 500 $ tient au-dessus.
+     * Les six refuses ci-dessus passent tous ; un jeton a 200 $ de
+     * capitalisation, non. */
+    mc: Math.max(nEnv('MC_ACHAT_MIN', 1500),
+                 (E.tresor || 0) * MISE_PART_MAX * nEnv('MC_PAR_MISE', 10)),
     mcMax: nEnv('MC_ACHAT_MAX', 100000),
     /* ---- QUINZE MINUTES, ET POURQUOI PAS DEUX HEURES ----
      *
@@ -2075,8 +2109,19 @@ function vetoScout(t) {
    * quelque chose d'autre clochait — et donc que la reprise ne ramene pas un
    * jeton deja condamne. */
   if (P.ageMin > 0 && t.minutes !== null && t.minutes !== undefined && t.minutes < P.ageMin)
-    return 'trop jeune (' + Math.round(t.minutes) + ' min) : on attend '
-         + Math.round(P.ageMin / 60 * 10) / 10 + ' h pour voir si la piscine tient';
+    /* ---- ON DIT L'ATTENTE DANS L'UNITE OU ELLE EST ----
+     * La phrase divisait toujours par 60 : a quinze minutes elle affichait
+     * « on attend 0.3 h ». Reste de l'epoque ou l'attente etait de deux
+     * heures. Ca a fait croire — a son auteur comme a son lecteur — que la
+     * colonie mettait des jetons de cote pour des heures, alors qu'elle les
+     * reprend au quart d'heure.
+     * Et le mot compte : ce n'est pas un refus, c'est un REPORT. Le jeton
+     * revient quand il a l'age (voir la reprise par l'age, plus bas). Le dire
+     * ici evite de lire l'alerte comme une perte de flux. */
+    return 'trop jeune (' + Math.round(t.minutes) + ' min) : on le reprend a '
+         + (P.ageMin < 60 ? Math.round(P.ageMin) + ' min'
+                          : Math.round(P.ageMin / 60 * 10) / 10 + ' h')
+         + ', quand on saura si la piscine tient';
   return null;
 }
 
@@ -4004,16 +4049,31 @@ function alertes() {
   }
 
   if (sansAchat >= 20 && vus >= 12) {
-    const fam = Object.keys(E.refusFamilles || {})
-      .map((k) => ({ k, n: E.refusFamilles[k] }))
-      .sort((a, b) => b.n - a.n).slice(0, 3);
-    const dit = fam.map((f) => '« ' + f.k + ' » : ' + Math.round(f.n / vus * 100)
+    /* ---- UN REPORT N'EST PAS UN REFUS ----
+     *
+     * L'alerte annoncait « trop jeune : 30 % des refus » et faisait lire une
+     * perte de flux. Ce n'en est pas une : le jeton est mis de cote et REPRIS
+     * des qu'il a l'age — c'est ce que fait la reprise par l'age, et
+     * SURV_MAX est dimensionne pour qu'il soit encore en memoire a ce
+     * moment-la. Les compter avec les refus definitifs pousse a bouger le
+     * reglage qui coute le moins, et a laisser celui qui bloque vraiment.
+     *
+     * Les deux sont donc separes, et l'age est nomme pour ce qu'il est. */
+    const estReport = (k) => REFUS_AGE.test(k);
+    const tous = Object.keys(E.refusFamilles || {})
+      .map((k) => ({ k, n: E.refusFamilles[k] }));
+    const reports = tous.filter((f) => estReport(f.k)).reduce((a, b) => a + b.n, 0);
+    const fam = tous.filter((f) => !estReport(f.k)).sort((a, b) => b.n - a.n).slice(0, 3);
+    const fermes = Math.max(1, vus - reports);
+    const dit = fam.map((f) => '« ' + f.k + ' » : ' + Math.round(f.n / fermes * 100)
       + ' % des refus (reglage : ' + reglageDe(f.k) + ')');
     const heures = Math.round(sansAchat * (CADENCE_MS / 3600000) * 10) / 10;
     dis('haute', 'Aucun achat depuis ' + sansAchat + ' tours (' + heures + ' h)',
-      'Ce n\'est pas une panne : chaque jeton est bien lu et bien juge, et chacun est refuse par '
-      + 'une regle. Sur les ' + vus + ' derniers examines, voici ce qui les arrete — '
-      + dit.join(' · ') + '.',
+      'Ce n\'est pas une panne : chaque jeton est bien lu et bien juge.'
+      + (reports ? ' Sur les ' + vus + ' derniers examines, ' + reports + ' sont seulement MIS DE '
+        + 'COTE le temps d\'avoir l\'age voulu — ils reviennent, ils ne sont pas perdus.' : '')
+      + (dit.length ? ' Ce qui les arrete VRAIMENT, sur les ' + fermes + ' autres — '
+        + dit.join(' · ') + '.' : ''),
       'Les regles se cumulent : un jeton doit passer TOUTES les bornes en meme temps, et sur '
       + 'cette chaine il en reste alors tres peu. Si un seul reglage represente la moitie des '
       + 'refus, c\'est celui-la qu\'il faut bouger — les autres ne changeraient presque rien. '

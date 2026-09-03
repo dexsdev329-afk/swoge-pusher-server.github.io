@@ -3787,6 +3787,47 @@ async function neTradePlus() {
      'et tout ce qui reste ecarte l est par une regle que l audit soutient — pas par un plancher '
      + 'qui n a jamais evite un seul effondrement');
 
+  console.log('\n-- le tour ou la colonie etait « toujours bloquee » --');
+  /* Le SECOND releve, apres la premiere baisse. Les capitalisations refusees
+     ce jour-la : 3 789, 3 274, 3 285, 3 939, 3 301, 3 964 — pour un plancher
+     a 4 000. Il coupait a trente-six dollars pres. */
+  E.tresor = 1366;
+  const BLOQUE = [
+    { sym: 'RAIJIN', minutes: 1 }, { sym: 'DEV', ch_h1: -67 }, { sym: 'ZOLT', minutes: 1 },
+    { sym: 'APPLESEED', ch_h1: 296 }, { sym: 'CONFESSING', minutes: 1 },
+    { sym: 'BEAVER', ch_h1: 1804 }, { sym: 'COBI', minutes: 1 }, { sym: 'BLACKDIH', mc: 3789 },
+    { sym: 'CYBERBULL', liq: 988 }, { sym: 'TITO', ch_m5: 297 }, { sym: 'WINKCAT', liq: 1458 },
+    { sym: 'TULIP', minutes: 2 }, { sym: 'TITO2', mc: 3274 }, { sym: 'TITO3', mc: 3285 },
+    { sym: 'NUBY', mc: 3939 }, { sym: 'NUBY2', minutes: 2 }, { sym: 'SOLARIUS', mc: 3301 },
+    { sym: 'PNZ', minutes: 2 }, { sym: 'BLOXPAD', minutes: 2 }, { sym: 'WOJAK', mc: 3964 },
+  ];
+  const juges = BLOQUE.map((t) => ({ sym: t.sym,
+    r: C.vetoScout(Object.assign({ minutes: 40, ch_m5: 0, ch_h1: 0, ch_h6: 0,
+                                   vol: { h1: 0, h6: 0 }, tx: {}, liq: 9e4, mc: 9e4 }, t)) }));
+  const ouverts = juges.filter((x) => !x.r);
+  const remis = juges.filter((x) => x.r && /reprend/.test(x.r));
+  const fermes = juges.filter((x) => x.r && !/reprend/.test(x.r));
+  console.log('   ' + ouverts.length + ' passent · ' + remis.length + ' reportes · '
+    + fermes.length + ' ecartes');
+  ok(ouverts.length >= 5,
+     ouverts.length + ' des 20 passent le Scout, la ou ZERO passait : les six capitalisations '
+     + 'refusees ce jour-la allaient de 3 274 a 3 964 pour un plancher a 4 000 — il coupait a '
+     + 'trente-six dollars pres, sur une chaine ou elles se serrent toutes la');
+  ok(fermes.every((x) => /sommet|tombe|plancher d'achat/.test(x.r)),
+     'et tout ce qui reste ecarte l est par la hausse, la chute ou la profondeur de piscine — '
+     + 'jamais par une borne que l audit dit couteuse');
+  ok(remis.length > 0 && remis.every((x) => /on le reprend a 15 min/.test(x.r)),
+     'les jeunes sont REPORTES, pas refuses, et la phrase le dit dans la bonne unite (' 
+     + (remis[0] || {}).r + ') — elle divisait toujours par 60 et affichait « on attend 0.3 h »');
+
+  console.log('\n-- un jeton qui vaut moins que la mise reste dehors --');
+  const P3 = C.planchers();
+  console.log('   plancher de capitalisation : $' + Math.round(P3.mc));
+  ok(C.vetoScout(Object.assign({ minutes: 40, ch_m5: 0, ch_h1: 0, ch_h6: 0,
+      vol: { h1: 0, h6: 0 }, tx: {}, liq: 9e4, mc: 200 })) !== null,
+     'une capitalisation de 200 $ est toujours refusee : acheter la, c est ETRE le marche, et le '
+     + 'revendre n a pas de sens');
+
   console.log('\n-- et ce qui protege vraiment n a pas bouge --');
   /* « deja +x % en cinq minutes » : n=40, 14 montes mais 20 EFFONDRES. C est
      la seule regle de l audit qui evite plus qu elle ne coute. */
