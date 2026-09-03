@@ -3306,10 +3306,21 @@ async function pourquoiPasDAchat() {
      On change le MONDE, pas l'etat : `remise` remet la colonie a neuf, et
      l'appeler dans la boucle effacerait a chaque tour les compteurs qu'on
      cherche justement a mesurer. */
-  remise([0, 1, 2, 3, 4, 5].map((i) => jeton(i, { mc: 4000, liq: 4000, volH1: 2000 })));
+  /* ---- ET LES CHIFFRES SUIVENT LE PLANCHER, QUI A CHANGE ----
+     Ce banc posait des piscines de 4 000 $, sous l'ancien plancher fixe de
+     5 000. Le plancher suit desormais la mise — 2 000 $ a la caisse de depart
+     — donc 4 000 passait, plus rien n'etait refuse, et l'essai mesurait un
+     audit vide. Les valeurs descendent sous le nouveau plancher.
+
+     Et elles VARIENT d'un jeton a l'autre, ce que l'ancien banc ne faisait
+     pas : c'est tout l'objet du regroupement. Six piscines identiques
+     auraient donne la meme cle sans rien prouver ; six differentes doivent
+     donner UNE famille. */
+  const petit = (i) => ({ mc: 3000, liq: 600 + (i % 10) * 130, volH1: 2000 });
+  remise([0, 1, 2, 3, 4, 5].map((i) => jeton(i, petit(i))));
   const F = C._etat();
   for (let k = 0; k < 24; k++) {
-    MONDE.jetons = [0, 1, 2, 3, 4, 5].map((i) => jeton(k * 6 + i, { mc: 4000, liq: 4000, volH1: 2000 }));
+    MONDE.jetons = [0, 1, 2, 3, 4, 5].map((i) => jeton(k * 6 + i, petit(k * 6 + i)));
     MONDE.prixDe = (a) => { const t = MONDE.jetons.find((x) => x.addr === a); return t ? t.prix : 0; };
     for (const c of Object.keys(C._cache)) for (const j of Object.keys(C._cache[c])) delete C._cache[c][j];
     F.tours = k;
@@ -3324,8 +3335,12 @@ async function pourquoiPasDAchat() {
      'et les refus sont ranges par FAMILLE : « piscine de $4548 » et « piscine de $6202 » sont '
      + 'la meme regle, et les compter separement les rendrait invisibles');
   const cles = Object.keys(F.refusFamilles);
+  console.log('   familles : ' + JSON.stringify(cles.slice(0, 4)));
   ok(cles.some((k) => /#/.test(k)),
      'les nombres sont remplaces par un caractere, c est ce qui les regroupe (« ' + cles[0] + ' »)');
+  ok(cles.length <= 3,
+     'et soixante piscines toutes differentes ne font que ' + cles.length + ' famille(s) : c est '
+     + 'exactement ce que le regroupement doit produire');
 
   const a = v.alertes.find((x) => /Aucun achat depuis/.test(x.quoi));
   console.log('   ' + (a ? a.quoi : 'AUCUNE ALERTE'));
