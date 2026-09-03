@@ -3358,8 +3358,16 @@ async function pourquoiPasDAchat() {
      + 'la meme regle, et les compter separement les rendrait invisibles');
   const cles = Object.keys(F.refusFamilles);
   console.log('   familles : ' + JSON.stringify(cles.slice(0, 4)));
-  ok(cles.some((k) => /#/.test(k)),
-     'les nombres sont remplaces par un caractere, c est ce qui les regroupe (« ' + cles[0] + ' »)');
+  /* ---- CE QUI REGROUPE N'EST PLUS LE MASQUAGE DES CHIFFRES ----
+   * Remplacer les nombres suffisait tant que la phrase ne bougeait pas. Elle a
+   * bouge — de formulation, puis de langue — et la meme regle s'est mise a
+   * tenir trois lignes. Ce qui identifie une famille est donc la REGLE, sous
+   * un libelle stable ; le masquage ne sert plus que de repli, pour une regle
+   * qu'aucun motif ne connait encore. On mesure ce qui compte : une regle
+   * rencontree sur soixante piscines differentes ne fait qu une famille, et
+   * son libelle ne porte plus le chiffre d'un jeton. */
+  ok(cles.every((k) => !/\d/.test(k)),
+     'aucun libelle de famille ne porte le chiffre d un jeton (« ' + cles[0] + ' »)');
   ok(cles.length <= 3,
      'et soixante piscines toutes differentes ne font que ' + cles.length + ' famille(s) : c est '
      + 'exactement ce que le regroupement doit produire');
