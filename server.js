@@ -6874,13 +6874,6 @@ server.listen(cfg.PORT, () => {
     aiColonie.charge();
     console.log('[ai] colonie ETEINTE (AI_COLONIE=' + cfg.AI_COLONIE
       + ') — /ai/colonie sert le dernier etat relu sur disque, sans le faire avancer');
-  } else {
-    try {
-      aiColonie.demarre();
-      console.log('[ai] colonie demarree — vue publique sur /ai/colonie');
-    } catch (e) {
-      console.warn('[ai] colonie non demarree :', e.message);
-    }
   }
 
   /* ---- LE MIROIR : SUIVRE LA COLONIE AVEC SON PROPRE ARGENT ----
@@ -6889,6 +6882,15 @@ server.listen(cfg.PORT, () => {
    * sans `MIROIR_CLE` il refuse de creer le moindre portefeuille, donc il n'a
    * rien a suivre, et l'ecran a besoin de savoir POURQUOI plutot que de voir un
    * bouton qui ne repond pas.
+   *
+   * ---- ET IL EST POSE AVANT QUE LA COLONIE DEMARRE ----
+   *
+   * `demarre()` joue un tour TOUT DE SUITE, et c'est ce tour-la qui regle les
+   * positions restees ouvertes pendant la coupure — au prix du moment. Pose
+   * apres, le miroir manquait exactement ces ventes : le joueur gardait un
+   * jeton que la colonie avait vendu, sans signal pour le lui reprendre, et il
+   * aurait fallu qu'il appuie sur Stop pour s'en defaire. Un redeploiement par
+   * jour suffit a produire ce cas.
    *
    * Le mode est ecrit au demarrage, en toutes lettres. Un serveur qui signerait
    * des transactions avec l'argent de joueurs sans le dire dans son journal de
@@ -6910,6 +6912,18 @@ server.listen(cfg.PORT, () => {
     }
   } catch (e) {
     console.warn('[miroir] non demarre :', e.message);
+  }
+
+  /* Et maintenant seulement, la colonie part — miroirs branches, donc le
+     premier tour, celui qui solde ce que la coupure a laisse ouvert, est suivi
+     comme les autres. */
+  if (cfg.AI_COLONIE === '1') {
+    try {
+      aiColonie.demarre();
+      console.log('[ai] colonie demarree — vue publique sur /ai/colonie');
+    } catch (e) {
+      console.warn('[ai] colonie non demarree :', e.message);
+    }
   }
 
   /* ---- LES ACHATS DE $SWOGEBET PASSENT DANS LE CANAL ----
