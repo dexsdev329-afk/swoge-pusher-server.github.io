@@ -862,7 +862,11 @@ function reprendSansMethode() {
   for (const n of noeuds()) {
     const s = E.services[n.cle];
     if (!s || !s.sansMethode) continue;
-    if (s.sansMethodeUrl && s.sansMethodeUrl !== n.url) {
+    /* Un releve d'avant ce champ n'a pas d'adresse : on ne sait pas contre
+       qui ses refus ont ete appris. Mesure en direct : le nœud Alchemy
+       heritait des 421 refus de dRPC et n'etait jamais appele. Sans adresse,
+       ou avec une autre, le casier tombe et le nœud repart a zero. */
+    if (s.sansMethodeUrl !== n.url) {
       delete s.sansMethode; delete s.sansMethodeUrl;
       s.essais = 0; s.reussites = 0; s.dernierEchec = null;
       continue;
