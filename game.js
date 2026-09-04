@@ -3782,7 +3782,7 @@ class Game {
    * seul total ne dit rien — c'est la difference entre les issues qui permet
    * de reperer une erreur de saisie avant qu'elle ne paie.
    */
-  parisAregler(now) {
+  parisAregler(now, opt) {
     const t = Number(now) || Date.now();
     if (!this.parisRegles) this.parisRegles = {};
     const parMatch = new Map();
@@ -3875,7 +3875,22 @@ class Game {
         horsCalendrier: !!m.horsCalendrier, sansFiche: !!m.sansFiche,
       });
     }
-    return sortie.sort((a, b) => a.debut - b.debut);
+    sortie.sort((a, b) => a.debut - b.debut);
+    /* ---- ET CELLES QUE PERSONNE N'A PRISES NE SONT PLUS LISTEES ----
+     *
+     * « Il y a beaucoup de matchs pas clôturés alors qu'il y a 0 pari
+     *   dessus, ça ne sert à rien de les garder dans la liste. »
+     *
+     * Les lister « a zero » avait une raison : qu'elles ne trainent pas sans
+     * qu'aucun ecran ne le dise. Mais a raison de vingt rencontres jouees par
+     * jour dont deux portent un pari, la liste devenait le bruit dans lequel
+     * les deux qui font attendre des joueurs se perdaient — et c'est
+     * exactement l'inverse de ce qu'elle doit faire. Une rencontre sans pari
+     * ne fait attendre personne ; l'import automatique la tranche quand un
+     * resultat arrive, et sinon elle ne coute rien a personne. Elle n'est
+     * donc plus listee — elle est COMPTEE, pour que l'ecran puisse le dire.
+     * `tous: true` rend l'ancienne liste complete. */
+    return (opt && opt.tous) ? sortie : sortie.filter((x) => x.paris > 0);
   }
 
   /* ================= LE BILAN DES PARIS, PAR JOUEUR =================
@@ -4180,18 +4195,21 @@ class Game {
     if (!this.parisRegles) this.parisRegles = {};
     if (this.parisRegles[matchId]) throw new Error('already settled');
     const liste = this._parisDe(matchId).filter((p) => !p.regle);
-    let rendu = 0;
+    let rendu = 0, renduBet = 0, renduSwoge = 0;
     for (const p of liste) {
       p.regle = true; p.gagne = null;
       const q = this._p(p.addr);
       this._crediteTicket(q, p, WEI(p.mise));
       this._bumpDay(q);
       rendu += p.mise;
+      /* Par monnaie : un remboursement qui mele des tickets des deux epoques
+         doit dire combien de chaque, sinon l'un des deux totaux est faux. */
+      if (Game.jetonDuTicket(p) === 'swogebet') renduBet += p.mise; else renduSwoge += p.mise;
       journal.ajoute(p.addr, { k: 'pa', s: 'rembourse', m: String(p.mise), match: matchId });
     }
     this.parisRegles[matchId] = { t: Date.now(), resultat: null, rembourse: true,
                                   paris: liste.length, rendu };
-    return { match: matchId, paris: liste.length, rendu };
+    return { match: matchId, paris: liste.length, rendu, renduBet, renduSwoge };
   }
 
   /** La monnaie d'un ticket : 'swogebet' depuis le coffre des paris, 'swoge'

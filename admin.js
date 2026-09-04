@@ -383,7 +383,9 @@ function page(csrf) {
   <h2>&#9203; Matches waiting for a result</h2>
   <div class="sub" style="margin:0 0 10px">
     Kick-off has passed, bets are riding on it, and nothing has been decided.
-    <b>While this list is not empty, players are waiting to be paid.</b><br>
+    <b>While this list is not empty, players are waiting to be paid.</b>
+    Played matches nobody bet on are not listed: they make nobody wait, and the
+    auto-import settles them when a result comes in.<br>
     Each button shows what <b>that</b> outcome pays out. One combined total
     would tell you nothing &mdash; it is the gap between outcomes that lets you
     catch a wrong result before it pays.<br>
@@ -1764,8 +1766,14 @@ async function loadAregler(){
     var r=await fetch("/paris/aregler",{headers:{"x-admin-key":KEY}});
     if(!r.ok){ $("#argBody").innerHTML='<div class="muted2">could not load ('+r.status+')</div>'; return; }
     var d=await r.json(), ms=d.matchs||[];
-    if(!ms.length){ $("#argBody").innerHTML='<div class="muted2">Nothing waiting — every played match is settled ✓</div>'; return; }
-    $("#argBody").innerHTML=ms.map(function(m){
+    /* Les rencontres sans pari sont comptees, pas listees : la ligne dit
+       qu elles existent et qu elles ne demandent rien. */
+    var sansPari = d.sansPari>0
+      ? '<div class="muted2" style="margin-bottom:8px">'+d.sansPari+' played match'+(d.sansPari===1?'':'es')+
+        ' without a bet '+(d.sansPari===1?'is':'are')+' not listed — nothing to pay, nothing to do.</div>'
+      : '';
+    if(!ms.length){ $("#argBody").innerHTML=sansPari+'<div class="muted2">Nothing waiting — no player is owed a result ✓</div>'; return; }
+    $("#argBody").innerHTML=sansPari+ms.map(function(m){
       var h=Math.floor(m.attendDepuisMin/60);
       /* Une rencontre qui attend depuis plus de six heures est une rencontre
          qu'on a oubliee : elle se signale d'elle-meme. */
@@ -1861,10 +1869,19 @@ $("#argBody").addEventListener("click",async function(ev){
     if(j.error){ msg.textContent="✗ "+j.error; msg.className="argmsg argko";
                  [].forEach.call(boutons,function(x){ x.disabled=false; }); return; }
     msg.className="argmsg argok";
+    /* La monnaie du ticket, pas « $SWOGE » en dur : les paris se posent en
+       $SWOGEBET depuis le coffre des paris, et un reglement peut meler les
+       deux epoques. */
+    var parMonnaie = function(bet, swoge, total){
+      bet=Number(bet)||0; swoge=Number(swoge)||0;
+      if(bet>0 && swoge>0) return fmt(bet)+" $SWOGEBET and "+fmt(swoge)+" $SWOGE";
+      if(swoge>0 && !(bet>0)) return fmt(swoge)+" $SWOGE";
+      return fmt(bet>0?bet:(total||0))+" $SWOGEBET";
+    };
     msg.textContent = res==="__rembourse"
-      ? ("✓ refunded "+fmt(j.rendu||0)+" $SWOGE to "+(j.paris||0)+" bet(s)")
+      ? ("✓ refunded "+parMonnaie(j.renduBet,j.renduSwoge,j.rendu)+" to "+(j.paris||0)+" bet(s)")
       : ("✓ "+(j.score?j.score+" ("+j.resultat+") — ":"")+(j.gagnants||0)+" paid, "+
-         (j.perdus||0)+" lost, "+fmt(j.paye||0)+" $SWOGE out");
+         (j.perdus||0)+" lost, "+parMonnaie(j.payeBet,j.payeSwoge,j.paye)+" out");
     setTimeout(function(){ loadAregler(); loadBets(false); },1400);
   }catch(e){ msg.textContent="✗ "+e.message; msg.className="argmsg argko";
              [].forEach.call(boutons,function(x){ x.disabled=false; }); }

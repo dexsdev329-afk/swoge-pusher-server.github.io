@@ -670,6 +670,14 @@ function payeParMonnaie(r) {
   return `${fmtExact(bet > 0 ? bet : r.paye)} $SWOGEBET`;
 }
 
+/** Le meme mot pour un remboursement : ce qui est rendu, par monnaie. */
+function renduParMonnaie(r) {
+  const bet = Number(r.renduBet) || 0, swoge = Number(r.renduSwoge) || 0;
+  if (bet > 0 && swoge > 0) return `${fmtExact(bet)} $SWOGEBET and ${fmtExact(swoge)} $SWOGE`;
+  if (swoge > 0 && !(bet > 0)) return `${fmtExact(swoge)} $SWOGE`;
+  return `${fmtExact(bet > 0 ? bet : (r.rendu || 0))} $SWOGEBET`;
+}
+
 /* ------------------------------------------------- un match vient de tomber
  *
  * Le canal annoncait la POSE et jamais l'issue : on voyait partir des combines
@@ -3034,8 +3042,13 @@ const server = http.createServer(async (req, res) => {
   if (path === '/paris/aregler') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
+    /* Seules les rencontres qui font attendre un joueur sont listees ; celles
+       sans pari sont comptees, pour que l'ecran dise qu'elles existent et
+       qu'elles ne demandent rien. */
+    const tous = game.parisAregler(Date.now(), { tous: true });
+    const matchs = tous.filter((x) => x.paris > 0);
     res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ matchs: game.parisAregler(Date.now()) }));
+    return res.end(JSON.stringify({ matchs, sansPari: tous.length - matchs.length }));
   }
 
   if (path === '/paris/liste') {
@@ -3076,7 +3089,12 @@ const server = http.createServer(async (req, res) => {
       adminlog.ajoute({ acteur, action: geste, cible: String(q.match || ''),
                         avant: geste === 'pariRegle'
                           ? String(q.score || q.resultat) : null,
-                        apres: `${r.payes || 0} paye(s), ${r.total || 0} $SWOGE`,
+                        /* `r.payes` et `r.total` n existaient pas : le journal disait
+                           « 0 paye(s), 0 $SWOGE » a chaque reglement. Les vrais champs,
+                           et la monnaie du ticket. */
+                        apres: geste === 'pariRegle'
+                          ? `${r.gagnants || 0} paid, ${r.perdus || 0} lost, ${payeParMonnaie(r)} out`
+                          : `${r.paris || 0} bet(s) refunded, ${renduParMonnaie(r)}`,
                         motif: q.motif, ip: qui(req) });
       console.log('[paris]', JSON.stringify(r));
       res.writeHead(200, { 'content-type': 'application/json' });
