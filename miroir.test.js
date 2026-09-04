@@ -270,6 +270,15 @@ console.log('\n-- le miroir suit la vente --');
   const e = await M.etat(JOUEUR, false);
   eq(e.ouvertes.length, 1, 'il ne reste que l autre');
   ok(/Sold TEST/.test(e.journal[0].txt), 'et le journal dit ce qui a ete vendu : « ' + e.journal[0].txt + ' »');
+  /* La barre personnelle : profit, taux, trades, meilleur, ouvert — calcules
+     sur les ventes, en ETH. */
+  eq(e.bilan.trades, 1, 'le bilan compte une vente');
+  eq(e.bilan.ouvertes, 1, 'et une position encore ouverte');
+  ok(typeof e.bilan.profitEth === 'string' && isFinite(Number(e.bilan.profitEth)),
+     'le profit est un chiffre en ETH : ' + e.bilan.profitEth);
+  ok(e.bilan.meilleur >= 0 && (e.bilan.gagnantes === 0 || e.bilan.gagnantes === 1),
+     'meilleur ' + e.bilan.meilleur + '×, gagnantes ' + e.bilan.gagnantes);
+  ok(e.bilan.simule === true, 'et il dit que ces ventes sont simulees');
   eq(await M.surVente({ adr: '0x' + 'cc'.repeat(20) }), 0,
      'une vente sur un jeton qu aucun miroir ne tient ne fait rien');
 }
@@ -282,6 +291,8 @@ console.log('\n-- stop : on vend d abord, on balaie ensuite --');
   eq(r.rates.length, 0, 'sans echec');
   ok(!(await M.etat(JOUEUR, false)).actif, 'le miroir est arrete');
   eq((await M.etat(JOUEUR, false)).ouvertes.length, 0, 'et ne tient plus rien');
+  eq((await M.etat(JOUEUR, false)).bilan.trades, 2, 'la vente du stop entre dans le bilan (2 trades)');
+  eq((await M.etat(JOUEUR, false)).bilan.ouvertes, 0, 'et plus rien d ouvert');
   eq(chaine.envois.length, avant, 'toujours rien sur la chaine : en mode d essai, stop ne vend ni ne balaie pour de vrai');
   ok(/dry run/i.test((await M.etat(JOUEUR, false)).journal[0].txt), 'et il le DIT plutot que de laisser croire au balayage');
   await jete(() => M.arrete(JOUEUR, 'pas-une-adresse'), /destination/,

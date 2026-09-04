@@ -415,6 +415,24 @@ function revele(joueur) {
 }
 
 /** Ce que l'ecran montre. Jamais la cle. */
+const FERMEES_MAX = 300;
+/** Le bilan d'un miroir, calcule sur ses ventes. Les chiffres sont en ETH :
+ *  l'ecran les convertit s'il connait le cours, et le dit sinon. */
+function bilan(c) {
+  const f = (c.fermees || []).filter((x) => x.sortie !== null && x.sortie !== undefined);
+  let profit = 0, gagnantes = 0, meilleur = 0;
+  for (const x of f) {
+    const e = Number(x.entree) || 0, s = Number(x.sortie) || 0;
+    profit += s - e;
+    if (s > e) gagnantes++;
+    if (e > 0 && s / e > meilleur) meilleur = s / e;
+  }
+  return { trades: f.length, gagnantes, profitEth: profit.toFixed(6),
+           meilleur: Math.round(meilleur * 100) / 100,
+           ouvertes: Object.keys(c.ouvertes || {}).length,
+           simule: f.length > 0 && f.every((x) => x.simule) };
+}
+
 async function etat(joueur, lireChaine) {
   const c = fiche(joueur);
   const base = {
@@ -436,6 +454,7 @@ async function etat(joueur, lireChaine) {
       t: o.t, simule: !!o.simule,
     })),
     journal: (c.journal || []).slice(0, 20),
+    bilan: bilan(c),
   });
 }
 
@@ -617,6 +636,17 @@ async function vendPosition(c, adr, o) {
   if (!cleP) throw new Error('pool key lost for this token');
   const r = await vend(c, cleP, !o.zeroVersUn, adr, montant);
   delete c.ouvertes[adr];
+  /* ---- LE BILAN DU JOUEUR ----
+   * « L'utilisateur voit bien son solde, mais il faudrait une deuxieme barre,
+   *   personnelle : profit, taux de gain, trades, meilleur, ouvert. »
+   * Chaque vente laisse une ligne : ce qui est entre, ce qui est sorti, en
+   * ETH. C'est de la que la barre se calcule — pas d'un compteur qu'on
+   * incrementerait a cote et qui finirait par diverger. */
+  if (!Array.isArray(c.fermees)) c.fermees = [];
+  c.fermees.push({ adr, sym: o.sym || null, entree: o.entree,
+                   sortie: r.sortie ? ethers.utils.formatUnits(r.sortie, 18) : null,
+                   t0: o.t, t: Date.now(), simule: !!r.simule, tx: r.tx || null });
+  if (c.fermees.length > FERMEES_MAX) c.fermees.splice(0, c.fermees.length - FERMEES_MAX);
   note(c, (r.simule ? '[dry run] ' : '') + 'Sold ' + (o.sym || adr) + ' for '
         + ethers.utils.formatUnits(r.sortie, 18) + ' ETH (RH)', { adr, tx: r.tx || null });
   return r;
@@ -635,5 +665,5 @@ module.exports = {
   _idV4: idV4, _clePiscine: clePiscine, _devis: devis, _corpsV4: corpsV4,
   _plancher: plancher, _miseDe: miseDe, _balaie: balaie,
   _etat: () => R, _pose: (x) => { R = x; }, _poseProvider: poseProvider,
-  _fiche: fiche, _actifs: actifs,
+  _fiche: fiche, _actifs: actifs, _bilan: bilan,
 };
