@@ -1196,7 +1196,7 @@ async function lisPools() {
   const pools = new Map(), toks = new Map();
   for (const page of [1, 2, 3]) {
     let d = null;
-    try { d = await jsonGT('/new_pools?include=base_token&page=' + page);
+    try { d = await jsonGT('/new_pools?include=base_token,quote_token&page=' + page);
           noteService('pools', true); }
     catch (e) { noteService('pools', false, e.message); continue; }
     for (const inc of (d.included || [])) if (inc.type === 'token') toks.set(inc.id, inc.attributes);
@@ -1205,9 +1205,12 @@ async function lisPools() {
       const bt = p.relationships && p.relationships.base_token && p.relationships.base_token.data;
       const t = bt && toks.get(bt.id);
       if (!t || !t.address) continue;
+      const qt = p.relationships && p.relationships.quote_token && p.relationships.quote_token.data;
+      const q = qt && toks.get(qt.id);
       const addr = String(t.address).toLowerCase();
       const c = {
         addr, sym: (t.symbol || '?').toUpperCase().slice(0, 12), nom: (t.name || '').slice(0, 28),
+        quote: q ? { sym: String(q.symbol || '').slice(0, 12), adr: String(q.address || '').toLowerCase() } : null,
         pool: a.address, origine: 'pools', logo: urlImage(t.image_url),
         prix: nn(a.base_token_price_usd),
         mc: nn(a.market_cap_usd) || nn(a.fdv_usd),
@@ -1411,6 +1414,8 @@ async function lisDex(addr, opt) {
         .concat((i.websites || []).map((x) => ({ type: 'site', url: String(x.url || '') })))
         .filter((x) => /^https?:\/\//i.test(x.url)).slice(0, 5),
       pool: q.pairAddress || null, sym: bt.symbol || '', nom: bt.name || '',
+      quote: q.quoteToken ? { sym: String(q.quoteToken.symbol || '').slice(0, 12),
+                              adr: String(q.quoteToken.address || '').toLowerCase() } : null,
       logo: urlImage(i.imageUrl),
       liq: nn(q.liquidity && q.liquidity.usd), mc: nn(q.fdv) || nn(q.marketCap),
       cree: q.pairCreatedAt || null,
@@ -1646,7 +1651,7 @@ async function jetonDepuisDex(addr, origine) {
   return {
     addr, sym: (d.sym || '?').toUpperCase().slice(0, 12), nom: (d.nom || '').slice(0, 28),
     pool: d.pool, origine, logo: d.logo || null,
-    prix: d.prix, mc: d.mc || 0, liq: d.liq || 0,
+    prix: d.prix, mc: d.mc || 0, liq: d.liq || 0, quote: d.quote || null,
     minutes: d.cree ? (Date.now() - d.cree) / 60000 : null,
     cree: d.cree ? new Date(d.cree).toISOString() : null,
     tx: d.tx || {}, vol: d.vol || {},
@@ -2684,7 +2689,45 @@ function planchers() {
   };
 }
 
+/* ==========================================================================
+ * LA COLONIE NE TRADE QUE LES PAIRES CONTRE L'ETH
+ *
+ * « Fais en sorte que la colonie ne trade que des paires Robinhood ETH,
+ *   que ça soit réaliste. »
+ *
+ * Mesure le 4 septembre : sur les vingt derniers achats de la colonie, onze
+ * etaient cotes en GLD, SPY, AMC, TTWO, SGOV, cbBTC — des actions et de l'or
+ * tokenises, pas de l'ETH. Le papier les achetait sans frais ; le miroir,
+ * lui, ne peut pas les suivre sans un double saut. Un papier qui gagne sur
+ * des paires qu'aucun ordre reel ne peut prendre n'est pas un releve, c'est
+ * une fiction. La colonie refuse donc, au Scout, tout jeton dont la paire
+ * n'est pas cotee en ETH — et le dit avec la monnaie.
+ *
+ * La monnaie vient de la source qui a donne le jeton : GeckoTerminal nomme le
+ * `quote_token` de chaque pool (l'ETH natif y porte l'adresse 0xeeee…),
+ * DexScreener son `quoteToken`. Sans information, on ne refuse pas : on ne
+ * condamne pas sur ce qu'on n'a pas lu.
+ * ======================================================================== */
+const WETH_RH = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
+const ADRESSES_ETH = [WETH_RH, '0x0000000000000000000000000000000000000000',
+                      '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'];
+function pairesEthSeules() { return String(process.env.PAIRES_ETH_SEULES || '1') !== '0'; }
+/** true : cotee en ETH ; false : cotee en autre chose ; null : on ne sait pas. */
+function coteEnEth(q) {
+  if (!q) return null;
+  const adr = String(q.adr || '').toLowerCase();
+  if (adr && ADRESSES_ETH.indexOf(adr) >= 0) return true;
+  const sym = String(q.sym || '').toUpperCase();
+  if (!adr && !sym) return null;
+  return /^W?ETH$/.test(sym);
+}
+
 function vetoScout(t) {
+  /* La regle la plus precise passe d'abord : « cotee en GLD » dit ce qui se
+     passe, un plancher ne dirait que « trop petit ». */
+  if (pairesEthSeules() && coteEnEth(t.quote) === false)
+    return 'quoted in ' + (String((t.quote && t.quote.sym) || '?').toUpperCase().slice(0, 12))
+         + ', not ETH: a real order could not follow it';
   const v = t.vol || {}, mc = t.mc || 0, liq = t.liq || 0;
   const P = planchers();
   /* ---- LE REPOS APRES UNE VENTE ---- voir `noteVendu`. */
@@ -3556,6 +3599,7 @@ const FAMILLES = [
    'pool too thin for the cap: nothing to sell into'],
   [/not a market any more|ce n'est plus un marche/, 'volume on nothing: that is an exit, not a market'],
   [/no public presence|aucune presence publique/, 'no public presence at all'],
+  [/not ETH: a real order could not follow it/, 'quoted in something other than ETH'],
   [/not indexed by DexScreener|pas encore verifiable/, 'not indexed by DexScreener yet'],
   [/absent from DexScreener|absent de DexScreener/, 'absent from DexScreener'],
   [/^missing:|^il manque/, 'missing socials'],
@@ -5109,6 +5153,7 @@ function alertes() {
     [/^missing:|il manque :/, 'SOCIAUX_EXIGES'],
     [/no public presence/, 'SOCIAUX_EXIGES'],
     [/score too low|note trop basse/, 'the entry threshold, which the colony moves itself'],
+    [/not ETH: a real order could not follow it/, 'PAIRES_ETH_SEULES'],
     [/not indexed by DexScreener|pas encore verifiable/, 'SOCIAUX_EXIGES (the rule waits for DexScreener)'],
     /* Les regles qui n'ont PAS de variable : le dire aussi. Une famille sans
        reglage laisserait chercher une variable qui n'existe pas — c'est pire
@@ -6303,7 +6348,7 @@ module.exports = {
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,
   revoitStrategie, seuilCourant, partRefus, REFUS_AVEUGLE,
   revoitLesBornes, borne, BORNES, partAbandons, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
-  releve, recents, JOUR_MS, TTL_GOPLUS_MUET,
+  releve, recents, JOUR_MS, TTL_GOPLUS_MUET, coteEnEth, pairesEthSeules,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN, OMBRE_DISPARUE, OMBRE_SILENCES,

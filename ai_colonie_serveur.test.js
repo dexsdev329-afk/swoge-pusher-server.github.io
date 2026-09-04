@@ -87,6 +87,9 @@ function jeton(i, o) {
     goplus: o.goplus === undefined ? 'propre' : o.goplus,   /* propre | muet | honeypot */
     unSeulPorteur: !!o.unSeulPorteur,
     personneNeGarde: !!o.personneNeGarde,   /* chacun recoit puis renvoie : solde net nul */
+    /* La monnaie de la paire : l ETH natif par defaut, comme presque tout le
+       flux ; GLD, SPY, USDG… pour eprouver la regle des paires ETH. */
+    quote: o.quote, quoteAdr: o.quoteAdr,
     buys: o.buys === undefined ? 120 : o.buys,
     sells: o.sells === undefined ? 60 : o.sells,
     buyers: o.buyers === undefined ? 80 : o.buyers,
@@ -152,12 +155,19 @@ function poolsPage(page) {
         volume_usd: { m5: 2000, h1: t.volH1, h6: 60000, h24: 90000 },
         price_change_percentage: { m5: String(t.ch_m5), h1: String(t.ch_h1), h6: String(t.ch_h6) },
       },
-      relationships: { base_token: { data: { id: 'tok_' + t.sym } } },
+      relationships: { base_token: { data: { id: 'tok_' + t.sym } },
+                       quote_token: { data: { id: 'q_' + t.sym } } },
     })),
+    /* La monnaie de la paire, comme GeckoTerminal la nomme : l ETH natif y
+       porte l adresse 0xeeee… ; `quote` et `quoteAdr` servent a en faire une
+       autre. */
     included: liste.map((t) => ({
       type: 'token', id: 'tok_' + t.sym,
       attributes: { address: t.addr, symbol: t.sym, name: t.sym + ' coin' },
-    })),
+    })).concat(liste.map((t) => ({
+      type: 'token', id: 'q_' + t.sym,
+      attributes: { address: t.quoteAdr || '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', symbol: t.quote || 'WETH', name: t.quote || 'WETH' },
+    }))),
   };
 }
 
@@ -381,6 +391,7 @@ global.fetch = async function (url, opts) {
          qu'il differe de celui de la liste des flux. */
       chainId: 'robinhood', pairAddress: t.pool, priceUsd: String(t.dexPrix !== undefined ? t.dexPrix : t.prix),
       baseToken: { address: t.addr, symbol: t.sym, name: t.sym + ' coin' },
+      quoteToken: { address: t.quoteAdr || '0x0000000000000000000000000000000000000000', symbol: t.quote || 'ETH' },
       liquidity: { usd: t.liq }, fdv: t.mc,
       pairCreatedAt: Date.now() - t.minutes * 60000,
       txns: { h1: { buys: t.buys, sells: t.sells } },
@@ -2386,6 +2397,46 @@ async function venteAuPrixDuMoment() {
   ok(!!f && /45 s watch/.test(f.txt) && /DexScreener/.test(f.txt),
      'la coupe part sur le cours lu a l instant, et le dit');
   ok(G.positions.length === 0, 'la position est fermee');
+}
+
+/* ==========================================================================
+ * LA COLONIE NE TRADE QUE LES PAIRES CONTRE L'ETH
+ *
+ * « Fais en sorte que la colonie ne trade que des paires Robinhood ETH, que
+ *   ça soit réaliste. » Onze des vingt derniers achats etaient cotes en GLD,
+ * SPY, AMC… — des paires qu aucun ordre reel ne peut prendre.
+ * ======================================================================== */
+async function pairesEthSeulement() {
+  console.log('\n-- une paire cotee en GLD est refusee, avec la monnaie --');
+  remise([jeton(0, { quote: 'GLD', quoteAdr: '0x' + '9d'.repeat(20) }), jeton(1), jeton(2, { quote: 'ETH', quoteAdr: '0x' + '00'.repeat(20) })]);
+  delete process.env.PAIRES_ETH_SEULES;
+  await C.tour();
+  let v = C.vue();
+  const gld = v.candidats.find((c) => c.sym === 'TOK0');
+  ok(!!gld && /quoted in GLD, not ETH/.test(gld.refus || ''), 'TOK0/GLD est refuse : « ' + (gld && gld.refus) + ' »');
+  ok(gld.quiRefuse === 'scout', 'par le Scout, avant tout autre controle');
+  const eth = v.candidats.find((c) => c.sym === 'TOK1');
+  ok(!!eth && !/not ETH/.test(eth.refus || ''), 'TOK1/WETH (l ETH natif de GeckoTerminal, 0xeeee…) passe');
+  const eth2 = v.candidats.find((c) => c.sym === 'TOK2');
+  ok(!!eth2 && !/not ETH/.test(eth2.refus || ''), 'et TOK2/ETH a l adresse zero (v4) passe aussi');
+  ok(!C._etat().positions.some((p) => p.sym === 'TOK0'), 'aucune position n est ouverte sur la paire GLD');
+
+  console.log('\n-- la regle a un nom dans l audit, et une variable --');
+  ok(C.coteEnEth({ sym: 'GLD', adr: '0x' + '9d'.repeat(20) }) === false, 'GLD n est pas l ETH');
+  ok(C.coteEnEth({ sym: 'WETH', adr: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' }) === true, 'le WETH de GeckoTerminal l est');
+  ok(C.coteEnEth({ sym: 'ETH', adr: '0x0000000000000000000000000000000000000000' }) === true, 'l ETH natif v4 aussi');
+  ok(C.coteEnEth({ sym: 'WETH', adr: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73' }) === true, 'et le WETH de la chaine');
+  ok(C.coteEnEth(null) === null, 'sans information, on ne sait pas — et on ne refuse pas');
+  ok(C.coteEnEth({ sym: '', adr: '' }) === null, 'une monnaie vide non plus');
+
+  console.log('\n-- PAIRES_ETH_SEULES=0 rend l ancien comportement --');
+  remise([jeton(0, { quote: 'GLD', quoteAdr: '0x' + '9d'.repeat(20) }), jeton(1)]);
+  process.env.PAIRES_ETH_SEULES = '0';
+  await C.tour();
+  v = C.vue();
+  const gld2 = v.candidats.find((c) => c.sym === 'TOK0');
+  ok(!!gld2 && !/not ETH/.test(gld2.refus || ''), 'la paire GLD n est plus refusee pour sa monnaie');
+  delete process.env.PAIRES_ETH_SEULES;
 }
 
 /* ==========================================================================
@@ -4915,6 +4966,7 @@ function bornesQuiSeReglent() {
   await neTradePlus();
   await parleAnglais();
   await alertesDatees();
+  await pairesEthSeulement();
   await venteAuPrixDuMoment();
   motsQuiCommandent();
   uneRegleUneLigne();
