@@ -486,7 +486,10 @@ function ordre(r, sens, jeton, montant, mini, vers, echeance) {
       return { to: ROUTEUR4, data: i.encodeFunctionData('execute', [V4_SWAP, [corps], echeance]),
                value: achat ? montant : ethers.BigNumber.from(0) };
     }
-    const weth = zeroVersUn ? k[0] : k[1], jetonC = zeroVersUn ? k[1] : k[0];
+    /* Par IDENTITE, pas par sens : a la vente le WETH est la sortie, et le
+       prendre pour l entree reglerait la mauvaise monnaie. */
+    const weth = norm(k[0]) === norm(WETH) ? k[0] : k[1];
+    const jetonC = norm(k[0]) === norm(WETH) ? k[1] : k[0];
     const swap = A.encode([SWAP4_T], [[k, zeroVersUn, montant, mini, 0, '0x']]);
     if (achat) {
       /* WRAP_ETH(routeur, montant) puis le swap regle en WETH depuis le routeur. */
