@@ -83,7 +83,13 @@ module.exports = {
    * essai declenchait un tour complet : une quinzaine d'appels reseau vers
    * des services gratuits qui coupent, multiplies par le nombre d'essais.
    * Un essai qui depend d'Internet n'est pas un essai, c'est un tirage. */
-  AI_COLONIE: env('AI_COLONIE', '1'),
+  /* ---- EN PAUSE PAR L'EQUIPE (4 septembre 2026) ----
+     « Mets SWOGE AI en pause pour le moment. » La colonie enchainait les
+     entrees qui perdaient 50 a 90 % en dix minutes, les gardiens de chaine
+     etant aveugles faute de second noeud RPC. Le defaut est donc `0` : la page
+     sert le dernier etat connu et le dit. Pour la relancer : AI_COLONIE=1 dans
+     les variables de l'hebergeur, une fois RPC_SECOURS pose. */
+  AI_COLONIE: env('AI_COLONIE', '0'),
   SAVE_MS: parseInt(env('SAVE_MS', '10000'), 10),
 
   // Password for the private /admin dashboard + /stats (?key=…). Empty = open

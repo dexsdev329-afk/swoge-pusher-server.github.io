@@ -1954,7 +1954,9 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*',
                          'cache-control': 'no-store' });
-    return res.end(JSON.stringify(aiColonie.vue()));
+    /* En pause (AI_COLONIE=0), la vue le DIT : la page sert le dernier etat
+       connu, et sans ce drapeau il se lirait comme une colonie en panne. */
+    return res.end(JSON.stringify(Object.assign({ pause: cfg.AI_COLONIE !== '1' }, aiColonie.vue())));
   }
   /* ======================= ARRIVER D'UNE AUTRE CHAINE =======================
    *

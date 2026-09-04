@@ -157,7 +157,16 @@ const ENTETES = { Accept: 'application/json;version=20230302' };
  * L'espacement est tenu PAR NOEUD : c'est ce qui double reellement le debit,
  * et non le fait d'avoir une adresse de plus dans une liste. */
 const RPC_RH = 'https://rpc.mainnet.chain.robinhood.com';
-const RPC_SECOURS = 'https://robinhood.drpc.org';
+/* ---- LE SECOND NOEUD SE CHOISIT PAR L'ENVIRONNEMENT ----
+ * dRPC ne sert pas la chaine 4663 : 100 % de refus, avec ou sans cle, sur
+ * eth_getLogs, eth_call et eth_blockNumber. Le nœud officiel restait seul et
+ * son budget s'epuisait — Warden et Whale rendaient « inconnu » sur 843
+ * jetons sur 859. `RPC_SECOURS` recoit l'adresse d'un fournisseur qui sert
+ * la chaine (Alchemy, QuickNode…), `RPC_SECOURS_PLAGE` la plus grande
+ * fenetre de blocs qu'il accepte sur eth_getLogs. Sans rien, dRPC reste
+ * l'adresse par defaut, et la colonie apprend toute seule a ne plus l'appeler. */
+const RPC_SECOURS = (process.env.RPC_SECOURS || '').trim() || 'https://robinhood.drpc.org';
+const RPC_SECOURS_PLAGE = Math.max(100, parseInt(process.env.RPC_SECOURS_PLAGE || '10000', 10) || 10000);
 const SUJET_TRANSFERT = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const ZERO = '0x0000000000000000000000000000000000000000';
 const MORT = '0x000000000000000000000000000000000000dead';
@@ -833,13 +842,23 @@ function poseSansMethode(n, methode) {
   const s = E.services[n.cle] || (E.services[n.cle] = { essais: 0, reussites: 0, dernier: 0, dernierEchec: null });
   if (!s.sansMethode) s.sansMethode = {};
   s.sansMethode[methode] = true;
+  /* L'adresse a laquelle ce refus a ete appris : un refus de dRPC ne vaut
+     rien contre le fournisseur qui le remplace a la meme place. */
+  s.sansMethodeUrl = n.url;
   return true;
 }
-/* Au demarrage, on remet dans chaque noeud ce que le releve avait retenu. */
+/* Au demarrage, on remet dans chaque noeud ce que le releve avait retenu —
+   sauf si l'adresse du noeud a change depuis : ce qu'un fournisseur refusait
+   ne dit rien du suivant, et le nouveau repart sans casier. */
 function reprendSansMethode() {
   for (const n of noeuds()) {
     const s = E.services[n.cle];
     if (!s || !s.sansMethode) continue;
+    if (s.sansMethodeUrl && s.sansMethodeUrl !== n.url) {
+      delete s.sansMethode; delete s.sansMethodeUrl;
+      s.essais = 0; s.reussites = 0; s.dernierEchec = null;
+      continue;
+    }
     if (!n.sansMethode) n.sansMethode = {};
     for (const m of Object.keys(s.sansMethode)) n.sansMethode[m] = true;
   }
@@ -900,7 +919,7 @@ function noeuds() {
 
 const NOEUDS = [
   { url: RPC_RH, cle: 'chaine', plageLogs: BLOCS_PLAFOND, dernier: 0 },
-  { url: RPC_SECOURS, cle: 'chaine2', plageLogs: 10000, dernier: 0 },
+  { url: RPC_SECOURS, cle: 'chaine2', plageLogs: RPC_SECOURS_PLAGE, dernier: 0 },
 ];
 /* ---- UN NOEUD QUI DIT « JE NE SERS PAS CETTE METHODE » EST CRU ----
  *
