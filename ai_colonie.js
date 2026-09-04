@@ -179,6 +179,19 @@ const SECOURS_NOM = (function () {
   try { return 'RPC_SECOURS node (' + new URL(RPC_SECOURS).hostname + ')'; }
   catch (e) { return 'RPC_SECOURS node'; }
 })();
+/* Ce qu'il faut poser, dit une fois et au meme endroit dans chaque alerte qui
+   en a besoin : le site, le chemin dans le site, la variable, le
+   redeploiement. Pas dRPC : la colonie a mesure qu'il ne sert pas la chaine
+   4663, avec ou sans cle. */
+const RPC_SECOURS_COMMENT = 'What to supply: a dedicated node for chain 4663 in RPC_SECOURS. '
+  + 'Alchemy serves it on a free tier: dashboard.alchemy.com → Create app → network « Robinhood » '
+  + '→ copy the HTTPS URL (https://robinhood-mainnet.g.alchemy.com/v2/<key>) into RPC_SECOURS in '
+  + 'the Railway variables, then redeploy — a variable set after the last deployment is not seen '
+  + 'by the running process.';
+const RPC_SECOURS_PLUS = 'The only lever left is throughput on that node: a higher compute-unit '
+  + 'plan on its dashboard' + (/alchemy/i.test(process.env.RPC_SECOURS || '')
+    ? ' (dashboard.alchemy.com → Apps → this app → Usage)' : '')
+  + ', or a second provider that serves chain 4663 (QuickNode, Dwellir) in RPC_SECOURS.';
 const SUJET_TRANSFERT = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const ZERO = '0x0000000000000000000000000000000000000000';
 const MORT = '0x000000000000000000000000000000000000dead';
@@ -596,7 +609,7 @@ const VERSION_ETAT = 3;
 function etatNeuf() {
   return {
     v: VERSION_ETAT, tresor: DEPART, trades: 0, gains: 0, meilleur: 0, meilleurSym: '',
-    courbe: [DEPART], flux: [], positions: [], memoire: {}, compteurs: {},
+    courbe: [DEPART], flux: [], positions: [], memoire: {}, compteurs: {}, releves: [],
     ouvertures: 0, maj: 0, dernierTour: 0, candidats: [], derniereErreur: null,
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
     seuil: SEUIL, derniers: [], depuisAjustement: 0, suites: [], sortieEssais: 0,
@@ -658,6 +671,7 @@ function charge() {
   if (!Array.isArray(brut.positions)) brut.positions = [];
   if (!brut.memoire || typeof brut.memoire !== 'object') brut.memoire = {};
   if (!brut.compteurs || typeof brut.compteurs !== 'object') brut.compteurs = {};
+  if (!Array.isArray(brut.releves)) brut.releves = [];
   if (!brut.connus || typeof brut.connus !== 'object') brut.connus = {};
   if (!brut.services || typeof brut.services !== 'object') brut.services = {};
   if (!Array.isArray(brut.journalStructure)) brut.journalStructure = [];
@@ -1348,8 +1362,10 @@ async function lisOhlcv(pool) {
 /* Un SECOND avis sur le prix. Il ne dit pas qui se trompe : il dit a quel
    point le marche est mince ou rapide — ce qu'un agent doit savoir avant
    d'entrer. */
-async function lisDex(addr) {
-  const c = frais(CACHE.dex, addr, TTL_DEX); if (c !== null) return c;
+async function lisDex(addr, opt) {
+  /* `frais` : on veut le cours du MOMENT, pas celui du cache. C'est ce que
+     demande une vente — voir la recote des positions dans le tour. */
+  const c = (opt && opt.frais) ? null : frais(CACHE.dex, addr, TTL_DEX); if (c !== null) return c;
   try {
     const j = await json('https://api.dexscreener.com/latest/dex/tokens/' + addr);
     const p = (j.pairs || []).filter((x) => String(x.chainId || '').toLowerCase() === 'robinhood');
@@ -3957,6 +3973,36 @@ function tenueApprise() {
 
 function compte(k, n) { E.compteurs[k] = (E.compteurs[k] || 0) + (n || 1); }
 
+/* ==========================================================================
+ * LE RELEVE DATE
+ *
+ * « Faudrait retirer ce qui est fait, et être plus précis sur les demandes. »
+ *
+ * Un compteur additionne depuis le premier jour. « Le budget atteint 262
+ * fois » etait exact — et presque toutes ces fois dataient d'AVANT le noeud
+ * dedie, qui a double le budget. L'alerte reclamait donc un remede deja pose,
+ * et le reclamerait encore dans un mois : un cumul ne sait pas dire si une
+ * chose arrive ENCORE.
+ *
+ * Chaque evenement qui nourrit une alerte est donc aussi DATE ici, avec le
+ * peu qu'il faut pour chiffrer un remede (la liquidite d'une position perdue
+ * de vue, la raison d'une epreuve sans conclusion). Les alertes ne lisent
+ * que la fenetre ou la chose se produit encore — la journee, la semaine — et
+ * disparaissent d'elles-memes quand elle cesse. Le compteur reste, pour
+ * l'audit : lui compte l'histoire, le releve dit le present.
+ * ======================================================================== */
+const RELEVE_MAX = 800;
+const JOUR_MS = 24 * 3600e3;
+function releve(k, extra) {
+  if (!Array.isArray(E.releves)) E.releves = [];
+  E.releves.push(Object.assign({ k, t: Date.now() }, extra || {}));
+  if (E.releves.length > RELEVE_MAX) E.releves.splice(0, E.releves.length - RELEVE_MAX);
+}
+function recents(k, ms) {
+  const depuis = Date.now() - ms;
+  return (E.releves || []).filter((x) => x.k === k && x.t >= depuis);
+}
+
 /* ---- DEUX AGENTS OUVRENT ----
  * Le Closer dit oui et tient la duree qu'il a apprise ; le Banquier dit
  * combien, et sa raison part avec la position. Elle voyagera jusqu'a la
@@ -4168,9 +4214,15 @@ function texteSignal(s) {
       + echHtml(s.adr) + '\n'
       + 'The colony trades paper. This is not advice.' + vers;
   }
+  const usd = (v) => '$' + Math.round(v).toLocaleString('en-US');
   return '\ud83d\udd34 SWOGE AI \u00b7 SELL (paper)\n'
     + '$' + echHtml(s.sym) + ' \u00b7 ' + (isFinite(s.r) && s.r !== null ? d(s.r) : 'no result') + '\n'
     + (s.comment ? echHtml(s.comment) + '\n' : '')
+    /* La capitalisation de la vente et celle de l'achat, et l'age du prix :
+       c'est ce qui permet de contredire un « +1 % » depuis DexScreener. */
+    + (s.mc ? 'Market cap ' + usd(s.mc) + (s.mcAchat ? ' (bought at ' + usd(s.mcAchat) + ')' : '') + '\n' : '')
+    + (s.prixSrc ? 'Price read ' + (s.prixAge === null || s.prixAge === undefined ? 'at an unknown age' : s.prixAge + ' s before the sale')
+                   + ' (' + echHtml(s.prixSrc) + ')\n' : '')
     + echHtml(s.adr) + '\n'
     + 'The colony trades paper. This is not advice.' + vers;
 }
@@ -4281,6 +4333,11 @@ function arretSuiveur(p, r) {
        + ' points below its peak (+' + p.hautR.toFixed(1) + '%)';
 }
 
+/* « 15.3k », pas « 15311 » : dans un fil, le chiffre rond se lit. */
+function dollarsCourts(v) {
+  v = Number(v) || 0;
+  return v >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(Math.round(v));
+}
 function ferme(p, prix, quand, comment) {
   let r = (prix - p.prix0) / p.prix0 * 100;
   let aberrant = null;
@@ -4317,6 +4374,10 @@ function ferme(p, prix, quand, comment) {
   /* Ce qu'est devenue cette position, pour la part d'abandons : suivie
      jusqu'au bout, ou perdue de vue. Voir `partAbandons`. */
   noteSuivi(aberrant ? 1 : 0);
+  /* Une fermeture sur un vrai resultat, datee avec sa liquidite d'entree :
+     c'est ce qui permet de chiffrer ce qu'un plancher plus haut aurait COUTE,
+     pas seulement ce qu'il aurait epargne. */
+  if (!aberrant) releve('resultat', { sym: p.sym, liq: p.liq0 || 0, r: Math.round(rTotal * 10) / 10 });
   /* Le Closer apprend une DUREE — depuis la trajectoire reelle de la position,
      c'est-a-dire les prix qu'on a vraiment releves pendant qu'elle etait
      ouverte. */
@@ -4325,6 +4386,7 @@ function ferme(p, prix, quand, comment) {
       txt: 'unusable price (' + aberrant + ') · stake returned, nothing counted',
       cls: 'n', t: quand, tenue: quand - p.t0 });
     compte('prixAberrant');
+    releve('aberrant', { sym: p.sym, liq: p.liq0 || 0 });
     E.courbe.push(Math.round(E.tresor * 100) / 100);
     /* ---- UNE FERMETURE SANS RESULTAT EST QUAND MEME UNE FERMETURE ----
      * « Dans le wallet il y a pas mal de signaux dont on ne sait pas quand
@@ -4371,9 +4433,21 @@ function ferme(p, prix, quand, comment) {
     /* Ce qui avait deja ete pris en route : sans ca, une position sortie par
        morceaux affiche le seul reliquat et se lit comme une petite affaire. */
     + (reste < 0.999 ? '  ·  ' + Math.round((1 - reste) * 100) + '% already sold on the way' : '');
+  /* ---- LA COTE DE LA VENTE, ECRITE ----
+   * La capitalisation au moment de vendre, celle de l'achat a cote, et l'age
+   * du prix avec sa source. « +1 % » sur un jeton qui a fait +50 % ne se
+   * repere que si la vente dit sur quel chiffre elle s'est reglee. */
+  const cote = (comment && comment.cote) || null;
+  const age = (cote && cote.lu) ? Math.max(0, Math.round((quand - cote.lu) / 1000)) : null;
+  const coteTxt = cote
+    ? '  ·  ' + (cote.mc > 0 ? 'mc $' + dollarsCourts(cote.mc)
+                 + (p.mcAchat > 0 ? ' (bought at $' + dollarsCourts(p.mcAchat) + ')' : '') + ' · ' : '')
+      + 'price ' + (age === null ? 'age unknown' : age + ' s old')
+      + (cote.src ? ' (' + cote.src + ')' : '')
+    : '';
   E.flux.unshift({ sym: p.sym, pool: p.pool, tag: gainTotal >= 0 ? 'buy' : 'cut',
     txt: (gainTotal >= 0 ? '+' : '') + '$' + gainTotal.toFixed(2) + '  ·  '
-       + (r >= 0 ? '+' : '') + r.toFixed(1) + '%' + suffixe,
+       + (r >= 0 ? '+' : '') + r.toFixed(1) + '%' + suffixe + coteTxt,
     cls: gainTotal >= 0 ? 'up' : 'dn', t: quand, tenue: quand - p.t0, par: par || 'closer' });
   if (par === 'sentinelle') compte('sentinelleCoupe');
   /* Le signal de vente porte le rendement REEL de la position entiere, pas
@@ -4381,6 +4455,9 @@ function ferme(p, prix, quand, comment) {
      que l'operation a donne, pas ce que valait le reliquat. */
   signal({ k: 'vente', sym: p.sym, adr: p.adr, pool: p.pool, prix: prix,
            r: r, gain: gainTotal, logo: p.logo || null,
+           mc: (cote && cote.mc > 0) ? Math.round(cote.mc) : null,
+           mcAchat: p.mcAchat > 0 ? Math.round(p.mcAchat) : null,
+           prixSrc: cote ? cote.src : null, prixAge: age,
            comment: par === 'sentinelle' ? 'Cut: ' + comment.raison
                   : (p.prolonge ? 'Extended ' + p.prolonge + '×' : 'Duration reached') });
   noteVendu(p.adr, quand);
@@ -4453,6 +4530,7 @@ function abandonneLesPerdues() {
          + ' min · stake returned, nothing counted',
       cls: 'n', t: now, tenue: now - p.t0, par: 'closer' });
     compte('abandonneeSansPrix');
+    releve('abandon', { sym: p.sym, liq: p.liq0 || 0 });
     noteSuivi(1);
     /* Le portefeuille doit savoir que c'est fini : voir la note dans `ferme`
        sur les fermetures sans resultat. */
@@ -4475,6 +4553,8 @@ function regle(marche) {
     const x0 = (typeof brut === 'number') ? { prix: brut, liq: 0 } : brut;
     if (!x0 || !(x0.prix > 0)) return true;      /* pas de prix : on attend */
     const x = x0;
+    /* D'ou vient ce prix, et de quand : la fermeture l'ecrira. */
+    const cote = { mc: x.mc || 0, src: x.src || null, lu: x.lu || null };
     p.prixLu = now;
     const dt = now - p.t0;
     const r = (x.prix - p.prix0) / p.prix0 * 100;
@@ -4486,7 +4566,7 @@ function regle(marche) {
      * sans attendre le compte a rebours si le sol se derobe. */
     p.vuPar = casSentinelle(p, x);
     const danger = dangerSentinelle(p, x);
-    if (danger) { ferme(p, x.prix, now, { par: 'sentinelle', raison: danger }); n++; return false; }
+    if (danger) { ferme(p, x.prix, now, { cote, par: 'sentinelle', raison: danger }); n++; return false; }
 
     /* ---- L'ECHELLE DE SORTIE, PUIS L'ARRET SUIVEUR ----
      * D'abord les paliers : ils encaissent une part et laissent le reste
@@ -4502,16 +4582,16 @@ function regle(marche) {
      * s'appliquer ici, et il doit etre le MEME — un seuil recopie finirait par
      * diverger de celui de `ferme`. */
     if (!isFinite(r) || r > REND_MAX || r < REND_MIN) {
-      ferme(p, x.prix, now, { par: 'closer' });
+      ferme(p, x.prix, now, { cote, par: 'closer' });
       n++; return false;
     }
     if (joueEchelle(p, r, now)) {
-      ferme(p, x.prix, now, { par: 'sentinelle', raison: 'last rung reached' });
+      ferme(p, x.prix, now, { cote, par: 'sentinelle', raison: 'last rung reached' });
       n++; return false;
     }
     const suiv = arretSuiveur(p, r);
     if (suiv) {
-      ferme(p, x.prix, now, { par: 'sentinelle', raison: suiv });
+      ferme(p, x.prix, now, { cote, par: 'sentinelle', raison: suiv });
       compte('arretSuiveur');
       n++; return false;
     }
@@ -4523,7 +4603,7 @@ function regle(marche) {
     const casG = veutPrendre(p, r);
     if (casG) {
       noteSuite(p, x.prix, r, casG, now);
-      ferme(p, x.prix, now, { par: 'sentinelle',
+      ferme(p, x.prix, now, { cote, par: 'sentinelle',
         raison: 'gain taken at +' + r.toFixed(1) + '%, before the deadline' });
       compte('gainPris');
       n++;
@@ -4545,7 +4625,7 @@ function regle(marche) {
         cls: 'n', t: now, par: 'promoteur' });
       return true;
     }
-    ferme(p, x.prix, now, { par: 'closer' });
+    ferme(p, x.prix, now, { cote, par: 'closer' });
     n++;
     return false;
   });
@@ -4844,9 +4924,16 @@ function alertes() {
       remede = 'A dRPC key is set but the keyed node has not been called yet. If that persists, '
         + 'the server has not been redeployed since: a variable set after the last deployment is '
         + 'not seen by the running process.';
+    } else if (SECOURS_POSE) {
+      const sc = s('chaine2');
+      remede = 'Already in place: ' + SECOURS_NOM + ' (' + sc.reussites + '/' + sc.essais + ' reads '
+        + 'answered). The figures above are per node: refusals on the official node are its shared '
+        + 'limit, and nothing to set; refusals on the dedicated node are explained on its dashboard '
+        + '(quota reached, or a wrong URL). ' + RPC_SECOURS_PLUS;
     } else {
-      remede = 'A dedicated RPC for chain 4663 would lift the limit: dRPC serves it, and its key '
-        + 'goes in DRPC_API_KEY. The two public nodes used here are free and shared.';
+      /* Pas dRPC : la colonie a mesure elle-meme qu'il ne sert pas la chaine
+         4663, avec ou sans cle. On nomme le fournisseur qui la sert. */
+      remede = RPC_SECOURS_COMMENT;
     }
     /* ---- ET LE SECOURS NE RATTRAPE PLUS RIEN ----
      * Depuis l'age minimum d'achat, un jeton qu'on examine a deux heures ou
@@ -4899,19 +4986,75 @@ function alertes() {
       'Set ANTHROPIC_API_KEY in the Railway variables. One key is enough: the Advisor is only '
       + 'called on borderline cases, a few times per turn.');
 
-  const budget = E.compteurs.budgetAtteint || 0;
-  if (budget > 5)
-    dis('basse', 'The call budget was reached ' + budget + ' times',
-      'New tokens waited for the next turn for want of calls left in this one.',
-      'Same cause as the first alert: more throughput on the chain, and the budget follows.');
+  /* ==========================================================================
+   * CE QUI EST FAIT NE S'AFFICHE PLUS, ET CE QUI MANQUE EST NOMME
+   *
+   * « Faudrait retirer ce qui est fait et être plus précis sur les demandes :
+   *   s'ils ont besoin d'une API d'un site en particulier ou autre. »
+   *
+   * Les trois alertes qui suivent lisaient un compteur cumule : elles
+   * reclamaient un noeud deja pose, et « rien a fournir » n'est pas une
+   * demande. Elles lisent maintenant le releve date, et chaque remede dit
+   * trois choses dans l'ordre : ce qui est deja en place, ce qui reste, et OU
+   * l'obtenir — le site, la variable, le redeploiement. Une alerte dont le
+   * remede est « rien » n'existe plus : l'audit garde le chiffre.
+   * ======================================================================== */
+  const budget24 = recents('budget', JOUR_MS).length;
+  if (budget24 >= 5) {
+    const sc = s('chaine2');
+    dis('basse', 'The call budget (' + BUDGET_TOUR + ' calls per turn) was reached ' + budget24
+        + ' times in the last 24 h',
+      'New tokens waited for the next turn for want of calls left in this one. They are not '
+      + 'lost: they come back next turn, a few minutes older.',
+      SECOURS_POSE
+        ? 'Already in place: a dedicated node (' + SECOURS_NOM + ', ' + sc.reussites + '/'
+          + sc.essais + ' reads answered), and the budget already follows it — ' + BUDGET_TOUR
+          + ' calls per turn instead of 26. Nothing more to set for free. ' + RPC_SECOURS_PLUS
+        : RPC_SECOURS_COMMENT + ' The budget goes from 26 to 60 calls per turn by itself.');
+  }
 
-  const ab = E.compteurs.prixAberrant || 0;
-  if (ab > 0)
-    dis('haute', ab + ' position(s) closed on an unusable price',
-      'The re-read price implied a move impossible for that pool. Nothing was counted and nobody '
-      + 'learned anything from it — but the position itself is lost from view.',
-      'This is the mark of very low-decimal tokens or of drained pools. Nothing to supply: it is '
-      + 'noted here so that we know it happens, and how often.');
+  /* Perdues de vue cette semaine : sans prix relu, ou sur un prix inutilisable.
+     Le remede est un REGLAGE, chiffre des deux cotes : ce qu'un plancher plus
+     haut aurait refuse, et ce qu'il aurait coute parmi les positions qui ont
+     rendu un vrai resultat la meme semaine. */
+  {
+    const SEMAINE = 7 * JOUR_MS;
+    const perdus = recents('abandon', SEMAINE), aber = recents('aberrant', SEMAINE);
+    const vues = perdus.concat(aber);
+    if (vues.length) {
+      const liqs = vues.map((x) => Number(x.liq) || 0).filter((v) => v > 0).sort((a, b) => a - b);
+      const plancherLiq = Math.round(planchers().liq);
+      let remede;
+      if (liqs.length) {
+        const propose = Math.ceil((liqs[liqs.length - 1] + 1) / 100) * 100;
+        const res = recents('resultat', SEMAINE);
+        const coute = res.filter((x) => (Number(x.liq) || 0) < propose);
+        const gagnantes = coute.filter((x) => x.r > 0).length;
+        remede = 'Nothing to install: this is a setting. The buy floor is $' + plancherLiq
+          + ' of liquidity now; these ' + liqs.length + ' were bought with $' + Math.round(liqs[0])
+          + '–$' + Math.round(liqs[liqs.length - 1]) + '. A floor of $' + propose
+          + ' would have refused all of them — and also ' + coute.length + ' of the ' + res.length
+          + ' positions that closed on a real result this week (' + gagnantes + ' of those '
+          + coute.length + ' were winners). If that price is right for you: set LIQ_ACHAT_MIN='
+          + propose + ' in the Railway variables and redeploy. If not, leave it: this is what '
+          + 'buying that small costs, ' + vues.length + ' stake(s) returned untouched.';
+      } else {
+        remede = 'Nothing to install: this is a setting (LIQ_ACHAT_MIN, the liquidity floor, $'
+          + plancherLiq + ' now). These entries carry no liquidity figure yet; the next ones '
+          + 'will, and this line will then say which floor would have refused them, and what it '
+          + 'would have cost.';
+      }
+      dis(vues.length > 3 ? 'haute' : 'moyenne',
+        vues.length + ' position(s) closed without a result this week — ' + perdus.length
+          + ' abandoned for want of a price, ' + aber.length + ' on an unusable price',
+        'Abandoned: the price could never be re-read, not once, until the deadline expired. '
+        + 'Unusable: the re-read price implied a move impossible for that pool — very low-decimal '
+        + 'tokens, or drained pools. Either way the stake was given back and nobody learned '
+        + 'anything: we do not invent a zero result to close things tidily, that zero would enter '
+        + 'the agents\' memory as an observation when nothing was observed.',
+        remede);
+    }
+  }
 
   /* ==========================================================================
    * ELLE DIT ELLE-MEME POURQUOI ELLE N'ACHETE PAS
@@ -4991,31 +5134,53 @@ function alertes() {
    * tout, et inventer une garantie serait pire que de ne rien dire. On rend
    * le trou VISIBLE, parce qu'un risque qu'on ne voit pas ne se decide pas.
    * ======================================================================== */
+  /* Sur la journee, pas depuis le premier jour : « 3 986 fois muet » ne dit
+     pas si GoPlus repond mieux depuis qu'on a pose une cle. Et le remede nomme
+     le site, la variable et ce qui restera trou meme avec la cle. */
   {
-    const C0 = E.compteurs || {};
-    const muets = C0.goplusMuet || 0;
-    const inc = C0.cobayeIncertain || 0;
-    const cobVu = C0.cobayeVu || 0;
-    const wardenVu = C0.wardenVu || 0;
-    const wardenRefus = wardenVu - (C0.wardenOk || 0);
-    if (wardenVu > 200 && wardenRefus === 0 && muets > wardenVu / 2) {
-      dis('haute', 'The contract check is not running',
-        'The Warden has refused NO token out of ' + wardenVu + ' seen — not because they are '
-        + 'clean, but because GoPlus returned nothing ' + muets + ' times. It reads the contract: '
-        + 'honeypot, taxes, owner powers. It stays quiet when it has read nothing, and that is '
-        + 'right — but an agent that never refuses looks like a permissive agent, when it is '
-        + 'actually blind.'
-        + (cobVu ? ' The Cobaye covers that hole when it can: ' + (C0.cobayeBloque || 0)
-                 + ' blocks out of ' + cobVu + ' trials. But ' + inc + ' times it could not '
-                 + 'conclude, and an uncertain result does not stop a buy — condemning on a failed '
-                 + 'read would be worse. Those tokens were therefore bought without any contract '
-                 + 'check having actually run.' : ''),
-        'GoPlus does not index tokens a few minutes old: that is structural, not a fault. Two '
-        + 'real levers: set GOPLUS_APP_KEY / GOPLUS_APP_SECRET, which give better throughput and '
-        + 'coverage than free access; and make the Cobaye\'s trial conclude more often, which '
-        + 'needs chain reads that succeed — the same saturation as the first alert. Blocking on '
-        + 'uncertainty would stop nearly every buy and add no safety at all: we would still know '
-        + 'nothing about the contract.');
+    const w = recents('warden', JOUR_MS);
+    const muets = w.filter((x) => !x.lu).length;
+    const cob = recents('cobaye', JOUR_MS);
+    const bloques = cob.filter((x) => x.verdict === 'bloque').length;
+    const incs = cob.filter((x) => x.verdict === 'incertain');
+    if (w.length >= 50 && muets > w.length / 2) {
+      const raisons = {};
+      for (const x of incs) { const k = x.raison || 'reason not recorded'; raisons[k] = (raisons[k] || 0) + 1; }
+      const top = Object.entries(raisons).sort((a, b) => b[1] - a[1])[0];
+      const gk = s('goplusCle');
+      let remede = goplusIdentifie()
+        ? 'Already in place: the GoPlus pair is set'
+          + (gk.reussites ? ' and accepted (' + gk.reussites + '/' + gk.essais + ' tokens obtained)' : '')
+          + '. What remains is structural: GoPlus does not index a token a few minutes old, and no '
+          + 'key changes that. The Cobaye is the cover for those.'
+        : 'What to supply: a GoPlus API pair. gopluslabs.io → sign in → « API » → « Create App '
+          + 'Key » (free tier) gives an App Key and an App Secret: set GOPLUS_APP_KEY and '
+          + 'GOPLUS_APP_SECRET in the Railway variables, redeploy. It raises the rate limit and the '
+          + 'coverage; it does not index a three-minute-old token, so part of the hole stays — the '
+          + 'Cobaye covers that part.';
+      if (top) {
+        remede += ' The Cobaye\'s trial was inconclusive ' + incs.length + ' time(s) today, mostly « '
+          + top[0] + ' » (' + top[1] + ').';
+        if (/no known holder/.test(top[0]))
+          remede += SECOURS_POSE
+            ? ' That needs the token\'s transfers read on-chain: the dedicated node is in place, so what '
+              + 'is left is its eth_getLogs window (RPC_SECOURS_PLAGE) and the token\'s youth — nothing '
+              + 'else to supply.'
+            : ' That needs the token\'s transfers read on-chain, which the public node refuses under '
+              + 'load. ' + RPC_SECOURS_COMMENT;
+        else if (/market maker/.test(top[0]))
+          remede += ' No variable for that one: the trial needs a market maker seen in the transfers, '
+            + 'and a pool that only has an id has none yet. Nothing to supply.';
+      }
+      dis('haute', 'The contract check ran blind on ' + muets + ' of ' + w.length
+          + ' tokens in the last 24 h',
+        'The Warden reads the contract — honeypot, taxes, owner powers — through GoPlus, and GoPlus '
+        + 'returned nothing for those. It stays quiet when it has read nothing, and that is right: '
+        + 'saying « nothing to report » about a silence would be inventing a guarantee. The Cobaye '
+        + 'covers the hole by trying the exit: ' + bloques + ' block(s) out of ' + cob.length
+        + ' trials today, ' + incs.length + ' inconclusive — and an inconclusive trial does not stop '
+        + 'a buy, condemning on a failed read would be worse.',
+        remede);
     }
   }
 
@@ -5051,17 +5216,6 @@ function alertes() {
       + 'for each rule, what the tokens it set aside went on to do: that is the only way to know '
       + 'whether it protects or whether it costs.');
   }
-
-  const perdues = E.compteurs.abandonneeSansPrix || 0;
-  if (perdues > 0)
-    dis(perdues > 3 ? 'haute' : 'moyenne',
-      perdues + ' position(s) abandoned for want of a price',
-      'Their price could never be re-read, not once, until the deadline expired. The stake was '
-      + 'given back and nobody learned anything — we do not invent a zero result to close things '
-      + 'tidily; that zero would enter the agents\' memory as an observation when nothing was '
-      + 'observed.',
-      'It is almost always a token too small to be indexed: the real remedy is upstream, in the '
-      + 'liquidity floor that decides what gets bought.');
 
   return out;
 }
@@ -5579,7 +5733,7 @@ async function tour() {
     /* Les prix d'abord : une position due se ferme au prix qu'on vient de
        lire, pas au suivant. */
     const prix = {};
-    for (const t of liste) { prix[t.addr] = { prix: t.prix, liq: t.liq }; posePrix(t.addr, t.prix); }
+    for (const t of liste) { prix[t.addr] = { prix: t.prix, liq: t.liq, mc: t.mc || 0, src: 'feed listing' }; posePrix(t.addr, t.prix); }
 
     /* ---- UNE POSITION DONT LE JETON A QUITTE LE FLUX ----
      * Les flux ne servent que du NEUF. Une position tenue quarante minutes voit
@@ -5592,31 +5746,47 @@ async function tour() {
      * chacune, plafonne, et seulement pour celles que les flux n'ont pas
      * couvertes. Un prix relu reste un prix relu : rien n'est extrapole depuis
      * l'ancien, ce qui serait fabriquer le resultat qu'on mesure. */
-    let secours = 0;
+    /* ==========================================================================
+     * LE PRIX DE VENTE EST LU AU MOMENT DE LA VENTE
+     *
+     * « À 18h15 il vend ça, qui est à 15K de market cap, acheté à 10K, et il
+     *   dit +1 % : il n'actualise pas assez vite les données. »
+     *
+     * Mesure sur BTC-69, le 4 septembre. La colonie a ferme a 0,000009793 —
+     * le cours de 16:07 — a 16:15, quand la chandelle de la minute disait
+     * 0,0000143 a 0,0000148. Huit minutes de retard : +1,3 % annonce, +48 %
+     * reel. Le prix venait de la liste des flux, relue en tete de tour, et le
+     * secours passait par un cache de dix minutes — une « relecture » qui
+     * rendait l'ancien chiffre.
+     *
+     * Chaque position ouverte est donc recotee a l'adresse, cache contourne,
+     * juste avant que `regle` decide. Six appels au plus par tour, pour des
+     * positions qui valent chacune une mise. Le prix garde sa source et son
+     * age, et la vente les ecrit : un chiffre qui ne dit pas d'ou il vient ne
+     * peut pas etre contredit.
+     * ======================================================================== */
+    let secours = 0, recotes = 0;
     for (const p of E.positions) {
-      /* ---- LE GARDE-FOU QUI AVAIT CESSE DE GARDER ----
-       * Cette ligne testait `prix[p.adr] > 0` quand la carte portait des
-       * nombres. Elle porte maintenant des objets, et `{...} > 0` vaut
-       * toujours faux : le secours ne se declenchait donc plus « quand il
-       * manque un prix », il ECRASAIT les prix fraichement lus par une valeur
-       * en cache. Quatre positions — le plafond, exactement — se reglaient a
-       * +0,0 % sur un prix vieux de dix minutes, et rien ne le signalait :
-       * elles fermaient, la tresorerie ne bougeait pas, tout avait l'air
-       * normal. On teste le prix, pas la boite qui le contient. */
       const deja = prix[p.adr];
-      if ((deja && deja.prix > 0) || secours >= 4) continue;
-      secours++;
-      const d = await lisDex(p.adr);
-      if (d.vu && d.prix > 0) {
-        prix[p.adr] = { prix: d.prix, liq: d.liq || 0 }; posePrix(p.adr, d.prix);
-        /* Le secours compte comme une lecture : c'en est une. Sans ca, une
-           position que SEUL le secours sait coter serait abandonnee alors
-           qu'on la suit tres bien. */
+      const orphelin = !(deja && deja.prix > 0);
+      /* Le secours des orphelines reste plafonne : il ne mange pas le budget
+         du tour. La recote d'une position que les flux cotent deja n'est pas
+         un secours, c'est la lecture du moment. */
+      if (orphelin && secours >= 4) continue;
+      if (orphelin) secours++;
+      const d = await lisDex(p.adr, { frais: true });
+      if (d && d.vu && d.prix > 0) {
+        prix[p.adr] = { prix: d.prix, liq: d.liq || 0, mc: d.mc || 0, src: 'DexScreener', lu: Date.now() };
+        posePrix(p.adr, d.prix);
+        /* Une lecture est une lecture : sans ca, une position que SEUL le
+           secours sait coter serait abandonnee alors qu'on la suit tres bien. */
         p.prixLu = Date.now();
+        if (!orphelin) recotes++;
       }
       await dors(250);
     }
     if (secours) compte('prixDeSecours', secours);
+    if (recotes) compte('prixRecote', recotes);
     /* Et les ombres arrivees a echeance que les flux ne cotent plus : sans
        ca, on n'apprend que des survivants. Voir `secoursOmbres`. */
     await secoursOmbres(prix);
@@ -5649,7 +5819,7 @@ async function tour() {
     const examines = [];
     let ouvertes = 0, appelsTotal = 0, conseils = 0;
     for (const t of aVoir) {
-      if (appelsTotal >= BUDGET_TOUR) { compte('budgetAtteint'); break; }   /* le budget du tour, tenu */
+      if (appelsTotal >= BUDGET_TOUR) { compte('budgetAtteint'); releve('budget'); break; }   /* le budget du tour, tenu */
       t.lu = { pools: true }; t.appels = 0;
       if (t.dex) t.lu.dex = true;           /* les flux DexScreener l'ont deja paye */
       let refus = null, quiRefuse = null;
@@ -5674,6 +5844,7 @@ async function tour() {
       appelsTotal += t.appels;
       compte('scoutVu');
       if (t.lu.goplus && !(t.g && t.g.have)) compte('goplusMuet');
+      if (t.lu.goplus) releve('warden', { lu: !!(t.g && t.g.have) });
 
       let an = null;
       if (!refus) {
@@ -5702,6 +5873,8 @@ async function tour() {
           if (bloque) { refus = bloque; quiRefuse = 'cobaye'; compte('cobayeBloque'); }
           else if (t.epreuve.teste) compte('cobayeOk');
           else compte('cobayeIncertain');
+          releve('cobaye', { verdict: bloque ? 'bloque' : (t.epreuve.teste ? 'ok' : 'incertain'),
+                             raison: (!bloque && !t.epreuve.teste && t.epreuve.raison) || null });
           /* On recalcule : le resultat de l'epreuve est un trait, et il doit
              entrer dans ce que les agents retiendront de ce jeton. */
           an = analyse(t); t.an = an;
@@ -6012,7 +6185,9 @@ async function veille() {
   let n = 0, coupes = 0;
   for (const p of ouvertes) {
     try {
-      const d = await lisDex(p.adr);
+      /* Cache contourne : un veilleur qui lit toutes les quarante-cinq
+         secondes a travers un cache de dix minutes ne veille rien. */
+      const d = await lisDex(p.adr, { frais: true });
       if (!d || !d.vu || !(d.prix > 0)) continue;
       /* La reserve commune : ce que le reste de la colonie lit deja. */
       dernierPrix[p.adr] = { p: d.prix, t: Date.now() };
@@ -6034,7 +6209,8 @@ async function veille() {
       const danger = dangerSentinelle(p, { prix: d.prix, liq: d.liq || 0 });
       if (danger) {
         p.vuPar = casSentinelle(p, { prix: d.prix, liq: d.liq || 0 });
-        ferme(p, d.prix, Date.now(), { par: 'sentinelle', raison: danger + ' — caught by the 45 s watch' });
+        ferme(p, d.prix, Date.now(), { par: 'sentinelle', raison: danger + ' — caught by the 45 s watch',
+                                       cote: { mc: d.mc || 0, src: 'DexScreener', lu: Date.now() } });
         E.positions = (E.positions || []).filter((q) => q !== p);
         compte('veilleCoupe');
         coupes++;
@@ -6089,6 +6265,7 @@ module.exports = {
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,
   revoitStrategie, seuilCourant, partRefus, REFUS_AVEUGLE,
   revoitLesBornes, borne, BORNES, partAbandons, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
+  releve, recents, JOUR_MS,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN, OMBRE_DISPARUE, OMBRE_SILENCES,

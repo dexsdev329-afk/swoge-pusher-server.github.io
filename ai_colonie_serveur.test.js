@@ -377,7 +377,9 @@ global.fetch = async function (url, opts) {
        compteurs — c'est ce qui permet de reconstruire un jeton a partir de sa
        seule adresse, donc de suivre les deux flux qui n'en rendent qu'une. */
     return rep({ pairs: [{
-      chainId: 'robinhood', pairAddress: t.pool, priceUsd: String(t.prix),
+      /* `dexPrix` : le cours que DexScreener sert A L'ADRESSE, quand on veut
+         qu'il differe de celui de la liste des flux. */
+      chainId: 'robinhood', pairAddress: t.pool, priceUsd: String(t.dexPrix !== undefined ? t.dexPrix : t.prix),
       baseToken: { address: t.addr, symbol: t.sym, name: t.sym + ' coin' },
       liquidity: { usd: t.liq }, fdv: t.mc,
       pairCreatedAt: Date.now() - t.minutes * 60000,
@@ -1782,11 +1784,18 @@ async function prixAberrant() {
   console.log('   un vrai +500 % → tresorerie ' + C.vue().tresor);
   ok(C.vue().tresor === C.DEPART + 30 * 5, 'un +500 % reel est comptabilise ($' + C.vue().tresor + ')');
 
-  /* Et l alerte le signale. */
+  /* Et l alerte le signale — tant que ca arrive ENCORE. Un compteur cumule
+     depuis le premier jour ne fait plus d alerte a lui seul : « ce qui est
+     fait ne s affiche plus ». */
   remise(sains());
   C._etat().compteurs.prixAberrant = 3;
+  ok(!C.alertes().some((x) => /unusable price/.test(x.quoi)),
+     'un compteur d autrefois, sans date, ne fait plus d alerte a lui seul');
+  C._etat().releves.push({ k: 'aberrant', t: Date.now() - 3600e3, sym: 'X', liq: 900 });
   const a = C.alertes().find((x) => /unusable price/.test(x.quoi));
-  ok(!!a && a.gravite === 'haute', 'et une alerte le remonte : « ' + (a && a.quoi) + ' »');
+  ok(!!a, 'une fermeture datee de cette semaine, elle, remonte : « ' + (a && a.quoi) + ' »');
+  ok(/LIQ_ACHAT_MIN=\d+/.test(a && a.quoiFaire),
+     'et le remede est un reglage chiffre : « ' + (a && a.quoiFaire.slice(0, 120)) + '… »');
 }
 
 /* ==========================================================================
@@ -2196,6 +2205,163 @@ async function goplusCle() {
 }
 
 /* ==========================================================================
+ * CE QUI EST FAIT NE S'AFFICHE PLUS, ET CE QUI MANQUE EST NOMME
+ *
+ * « Faudrait retirer ce qui est fait et être plus précis sur les demandes :
+ *   s'ils ont besoin d'une API d'un site en particulier ou autre. »
+ *
+ * Releve du 4 septembre : « le budget atteint 262 fois » — presque toutes
+ * d'avant le noeud Alchemy, qui a double le budget. « Rien a fournir » sur
+ * les prix inutilisables. « Meme saturation que la premiere alerte », qui
+ * n'existait plus. Trois alertes qui parlaient du passe ou de rien.
+ * ======================================================================== */
+async function alertesDatees() {
+  console.log('\n-- un compteur cumule ne fait plus d alerte a lui seul --');
+  remise(sains());
+  let G = C._etat();
+  G.compteurs.budgetAtteint = 262; G.compteurs.prixAberrant = 3; G.compteurs.abandonneeSansPrix = 10;
+  G.compteurs.wardenVu = 4164; G.compteurs.wardenOk = 4164; G.compteurs.goplusMuet = 3986;
+  let al = C.alertes();
+  ok(!al.some((x) => /budget/.test(x.quoi)), 'pas d alerte budget sur 262 fois sans date');
+  ok(!al.some((x) => /without a result|unusable|abandoned/.test(x.quoi)),
+     'pas d alerte de positions perdues de vue sur des compteurs sans date');
+  ok(!al.some((x) => /contract check/.test(x.quoi)), 'pas d alerte Warden sur des compteurs sans date');
+  ok(!al.some((x) => /Same cause as the first alert/.test(x.quoiFaire)),
+     'et plus aucune alerte ne renvoie a « la premiere alerte », qui peut ne pas exister');
+
+  console.log('\n-- le budget : la journee, et le fournisseur nomme --');
+  const il_y_a = (ms) => Date.now() - ms;
+  for (let i = 0; i < 300; i++) G.releves.push({ k: 'budget', t: il_y_a(8 * C.JOUR_MS) });
+  ok(!C.alertes().some((x) => /budget/.test(x.quoi)), '300 fois il y a huit jours : rien a dire aujourd hui');
+  for (let i = 0; i < 6; i++) G.releves.push({ k: 'budget', t: il_y_a(3600e3 * (i + 1)) });
+  let a = C.alertes().find((x) => /budget/.test(x.quoi));
+  ok(!!a && /6 times in the last 24 h/.test(a.quoi), 'six fois aujourd hui : « ' + (a && a.quoi) + ' »');
+  ok(/RPC_SECOURS/.test(a.quoiFaire) && /alchemy\.com/.test(a.quoiFaire),
+     'le remede nomme la variable et le site : « ' + a.quoiFaire.slice(0, 100) + '… »');
+  ok(/Already in place|What to supply/.test(a.quoiFaire),
+     'et dit d abord ce qui est deja en place, ou ce qu il faut fournir');
+
+  console.log('\n-- perdues de vue : un plancher chiffre des deux cotes --');
+  remise(sains());
+  G = C._etat();
+  G.releves.push({ k: 'abandon', t: il_y_a(3600e3), sym: 'A', liq: 800 });
+  G.releves.push({ k: 'abandon', t: il_y_a(2 * 3600e3), sym: 'B', liq: 1500 });
+  G.releves.push({ k: 'aberrant', t: il_y_a(3 * 3600e3), sym: 'C', liq: 600 });
+  G.releves.push({ k: 'abandon', t: il_y_a(9 * C.JOUR_MS), sym: 'VIEUX', liq: 50 });
+  for (const [liq, r] of [[1200, 10], [1400, -5], [3000, 20], [5000, 3], [900, 50]])
+    G.releves.push({ k: 'resultat', t: il_y_a(3600e3), sym: 'R', liq, r });
+  a = C.alertes().find((x) => /without a result/.test(x.quoi));
+  console.log('   ' + (a && a.quoi));
+  console.log('   → ' + (a && a.quoiFaire));
+  ok(!!a && /^3 position/.test(a.quoi) && /2 abandoned/.test(a.quoi) && /1 on an unusable/.test(a.quoi),
+     'trois cette semaine, la vieille de neuf jours non comptee, et les deux causes separees');
+  ok(/LIQ_ACHAT_MIN=1600/.test(a.quoiFaire), 'le plancher propose est le premier cent au-dessus de la plus liquide des perdues (1 500 → 1 600)');
+  ok(/3 of the 5 positions/.test(a.quoiFaire) && /2 of those 3 were winners/.test(a.quoiFaire),
+     'et ce qu il aurait coute est dit : 3 des 5 vraies fermetures, dont 2 gagnantes');
+  ok(/Railway variables and redeploy/.test(a.quoiFaire), 'ou le poser, et le redeploiement');
+
+  console.log('\n-- le Warden aveugle : le site, la variable, et ce qui restera --');
+  remise(sains());
+  G = C._etat();
+  for (let i = 0; i < 60; i++) G.releves.push({ k: 'warden', t: il_y_a(60e3 * i), lu: i >= 40 });
+  for (let i = 0; i < 10; i++) G.releves.push({ k: 'cobaye', t: il_y_a(60e3 * i),
+    verdict: i < 4 ? 'incertain' : (i < 7 ? 'bloque' : 'ok'),
+    raison: i < 4 ? 'no known holder to try the exit with' : null });
+  a = C.alertes().find((x) => /contract check/.test(x.quoi));
+  console.log('   ' + (a && a.quoi));
+  ok(!!a && /40 of 60 tokens in the last 24 h/.test(a.quoi), 'sur la journee : « ' + (a && a.quoi) + ' »');
+  ok(/3 block\(s\) out of 10 trials/.test(a.pourquoi) && /4 inconclusive/.test(a.pourquoi),
+     'le Cobaye est compte sur la meme journee');
+  ok(/gopluslabs\.io/.test(a.quoiFaire) && /GOPLUS_APP_SECRET/.test(a.quoiFaire) && /redeploy/.test(a.quoiFaire),
+     'sans cle : le site, les deux variables, le redeploiement');
+  ok(/no known holder/.test(a.quoiFaire), 'et la raison dominante des epreuves sans conclusion est reprise');
+  process.env.GOPLUS_APP_KEY = 'k'; process.env.GOPLUS_APP_SECRET = 's';
+  a = C.alertes().find((x) => /contract check/.test(x.quoi));
+  ok(!!a && /Already in place/.test(a.quoiFaire) && !/Create App/.test(a.quoiFaire),
+     'avec la cle : on ne la redemande pas, on dit ce qui reste');
+  delete process.env.GOPLUS_APP_KEY; delete process.env.GOPLUS_APP_SECRET;
+
+  console.log('\n-- et le releve se remplit tout seul, borne, et survit a la relecture --');
+  remise(sains());
+  G = C._etat();
+  for (let i = 0; i < 900; i++) C.releve('budget');
+  ok(G.releves.length === 800, 'borne a 800 entrees (' + G.releves.length + ')');
+  ok(C.recents('budget', C.JOUR_MS).length === 800, 'et recents() les relit');
+  C.sauve();
+  C._pose(C.etatNeuf()); C.charge();
+  ok(Array.isArray(C._etat().releves) && C._etat().releves.length === 800, 'relu du disque tel quel');
+}
+
+/* ==========================================================================
+ * LE PRIX DE VENTE EST LU AU MOMENT DE LA VENTE
+ *
+ * « À 18h15 il vend ça, qui est à 15K de market cap, acheté à 10K, et il
+ *   dit +1 % : il n'actualise pas assez vite les données. »
+ *
+ * BTC-69, 4 septembre, 16:15 UTC : ferme a 0,000009793 — le cours de
+ * 16:07 — quand la chandelle disait 0,0000143. Huit minutes de retard,
+ * +1,3 % annonce, +48 % reel.
+ * ======================================================================== */
+async function venteAuPrixDuMoment() {
+  console.log('\n-- le cache de dix minutes ne fait plus le prix de vente --');
+  remise(sains());
+  let G = C._etat();
+  let t0 = MONDE.jetons[0];
+  const pose = (t) => G.positions.push({ sym: 'BTC-69', adr: t.addr, pool: t.pool, prix0: 1,
+    t0: Date.now() - 3 * 3600e3, prixLu: Date.now(), mise: 30, traits: {}, tenueMin: 20,
+    tenueBase: 20, traj: [], liq0: 50000, mcAchat: 10000 });
+  pose(t0);
+  /* Le monde a bouge : +50 %. Le cache, lui, garde +1 % — et il est FRAIS au
+     sens du TTL. Le jeton est sorti des flux (trop vieux) : c est le cas de
+     BTC-69, que seul le secours cotait. */
+  t0.minutes = 5000; t0.prix = 1.5; t0.mc = 15000;
+  C._cache.dex[t0.addr] = { t: Date.now(), v: { vu: true, prix: 1.01, liq: 50000, mc: 10100, pool: t0.pool } };
+  appels.dex = 0;
+  await C.tour();
+  let v = C.vue();
+  let s = (v.signaux || []).find((x) => x.k === 'vente' && x.sym === 'BTC-69');
+  console.log('   ' + JSON.stringify(s && { r: s.r, mc: s.mc, mcAchat: s.mcAchat, prixSrc: s.prixSrc, prixAge: s.prixAge }));
+  ok(!!s && Math.abs(s.r - 50) < 0.01, 'la vente se regle a +50 %, le cours du moment — pas au +1 % du cache (' + (s && s.r) + ')');
+  ok(s.mc === 15000 && s.mcAchat === 10000, 'et elle dit la capitalisation de la vente et celle de l achat');
+  ok(s.prixSrc === 'DexScreener' && s.prixAge !== null && s.prixAge <= 5,
+     'et d ou vient le prix, et son age : « ' + s.prixSrc + ', ' + s.prixAge + ' s »');
+  let f = G.flux.find((x) => x.sym === 'BTC-69' && /buy|cut/.test(x.tag));
+  console.log('   fil : ' + (f && f.txt));
+  ok(!!f && /mc \$15\.0k \(bought at \$10\.0k\)/.test(f.txt) && /price \d+ s old \(DexScreener\)/.test(f.txt),
+     'le fil l ecrit en clair');
+  const tv = C._texteSignal(s);
+  ok(/Market cap \$15,000 \(bought at \$10,000\)/.test(tv) && /Price read \d+ s before the sale \(DexScreener\)/.test(tv),
+     'et Telegram aussi');
+
+  console.log('\n-- une position que les flux cotent encore est recotee quand meme --');
+  remise(sains());
+  G = C._etat(); t0 = MONDE.jetons[0];
+  pose(t0);
+  t0.prix = 1.01;        /* la liste des flux, en retard */
+  t0.dexPrix = 1.5;      /* l adresse, au moment meme */
+  await C.tour();
+  v = C.vue();
+  s = (v.signaux || []).find((x) => x.k === 'vente' && x.sym === 'BTC-69');
+  ok(!!s && Math.abs(s.r - 50) < 0.01, 'le cours de l adresse l emporte sur la liste (' + (s && s.r) + ')');
+  ok((v.compteurs.prixRecote || 0) >= 1, 'et c est compte comme une recote, pas comme un secours');
+  delete t0.dexPrix;
+
+  console.log('\n-- et le veilleur des 45 s lit le moment, pas le cache --');
+  remise(sains());
+  G = C._etat(); t0 = MONDE.jetons[0];
+  pose(t0);
+  G.positions[0].t0 = Date.now() - 60e3;
+  t0.prix = 0.05; t0.mc = 500;          /* -95 % : la piscine s est videe */
+  C._cache.dex[t0.addr] = { t: Date.now(), v: { vu: true, prix: 1.0, liq: 50000, mc: 10000, pool: t0.pool } };
+  await C.veille();
+  f = G.flux.find((x) => x.sym === 'BTC-69' && x.tag === 'cut');
+  console.log('   fil : ' + (f && f.txt));
+  ok(!!f && /45 s watch/.test(f.txt) && /DexScreener/.test(f.txt),
+     'la coupe part sur le cours lu a l instant, et le dit');
+  ok(G.positions.length === 0, 'la position est fermee');
+}
+
+/* ==========================================================================
  * 31. LA CLE dRPC
  * ======================================================================== */
 async function drpcCle() {
@@ -2546,10 +2712,15 @@ async function quelNoeud() {
   ok(/has not been called yet/.test(a.quoiFaire) && /redeployed/.test(a.quoiFaire),
      'on nomme la cause la plus frequente : une variable posee apres le dernier deploiement');
 
-  console.log('\n-- et sans cle du tout, on dit laquelle poser --');
+  console.log('\n-- et sans cle du tout, on dit laquelle poser — et chez qui --');
   pose({ chaine: { essais: 500, reussites: 300, dernierEchec: 'sature' } }, null);
   a = C.alertes().find((x) => /chain nodes are refusing/.test(x.quoi));
-  ok(/DRPC_API_KEY/.test(a.quoiFaire), 'la variable est nommee : « ' + a.quoiFaire.slice(0, 80) + '… »');
+  /* Pas dRPC : la colonie a mesure elle-meme qu il ne sert pas la chaine
+     4663. La variable nommee est celle qui marche, et le site avec. */
+  ok(/RPC_SECOURS/.test(a.quoiFaire) && !/DRPC_API_KEY/.test(a.quoiFaire),
+     'la variable nommee est RPC_SECOURS, pas la cle dRPC d un fournisseur qui ne sert pas la chaine');
+  ok(/alchemy\.com/.test(a.quoiFaire) && /redeploy/.test(a.quoiFaire),
+     'avec le site ou l obtenir et le redeploiement : « ' + a.quoiFaire.slice(0, 90) + '… »');
 }
 
 
@@ -4716,6 +4887,8 @@ function bornesQuiSeReglent() {
   await seReorganiseVraiment();
   await neTradePlus();
   await parleAnglais();
+  await alertesDatees();
+  await venteAuPrixDuMoment();
   motsQuiCommandent();
   uneRegleUneLigne();
   await revocationNestPasUnePanne();
