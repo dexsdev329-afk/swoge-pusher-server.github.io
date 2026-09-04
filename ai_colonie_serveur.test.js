@@ -2485,6 +2485,41 @@ async function tranchesAuMiroir() {
 }
 
 /* ==========================================================================
+ * LES PLACES DU TOUR VONT A CEUX QUI COUTENT QUELQUE CHOSE
+ *
+ * « Comment faire pour qu il trouve plus de paires ETH ? » Le flux voit
+ * toutes les naissances ; ce sont les vingt places du tour que les refus
+ * gratuits (cote en USDG, trop jeune) prenaient.
+ * ======================================================================== */
+async function placesGratuites() {
+  console.log('\n-- un refus qui ne coute aucun appel ne prend pas une place --');
+  /* Le budget d appels du banc (26) limite ce qu un tour examine vraiment.
+     Temoin : six paires ETH seules → N examinees. Puis quinze jetons cotes
+     en GLD DEVANT les memes six : les six doivent etre examinees autant —
+     avant, vingt places prises dans l ordre auraient laisse dix GLD prendre
+     la place de paires ETH. */
+  const GLD = '0x' + '9d'.repeat(20);
+  const ethSeuls = [];
+  for (let i = 15; i < 21; i++) ethSeuls.push(jeton(i));
+  remise(ethSeuls);
+  await C.tour();
+  const temoin = (C.vue().candidats || []).filter((c) => Number(c.sym.slice(3)) >= 15).length;
+  const jetons = [];
+  for (let i = 0; i < 15; i++) jetons.push(jeton(i, { quote: 'GLD', quoteAdr: GLD }));
+  for (let i = 15; i < 21; i++) jetons.push(jeton(i));
+  remise(jetons);
+  await C.tour();
+  const vus = C.vue().candidats || [];
+  const eth = vus.filter((c) => Number(c.sym.slice(3)) >= 15);
+  const gld = vus.filter((c) => Number(c.sym.slice(3)) < 15);
+  console.log('   temoin : ' + temoin + ' paires ETH examinees seules · avec quinze GLD devant : ' + eth.length + ' · GLD examines ' + gld.length);
+  ok(temoin > 0 && eth.length === temoin, 'quinze refus gratuits devant ne prennent aucune place aux paires ETH (' + eth.length + ' = ' + temoin + ')');
+  ok(gld.length === 15 && gld.every((c) => /not ETH/.test(c.refus || '')), 'et les quinze GLD passent quand meme, refuses par le Scout, pour l audit');
+  ok(eth.every((c) => !/not ETH/.test(c.refus || '')), 'aucune paire ETH n est refusee pour sa monnaie');
+  ok(C.EXAMENS_TOUR === 20, 'vingt places payantes par tour par defaut (EXAMENS_TOUR)');
+}
+
+/* ==========================================================================
  * 31. LA CLE dRPC
  * ======================================================================== */
 async function drpcCle() {
@@ -5012,6 +5047,7 @@ function bornesQuiSeReglent() {
   await parleAnglais();
   await alertesDatees();
   await pairesEthSeulement();
+  await placesGratuites();
   await tranchesAuMiroir();
   await venteAuPrixDuMoment();
   motsQuiCommandent();

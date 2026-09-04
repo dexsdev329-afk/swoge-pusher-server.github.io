@@ -269,6 +269,9 @@ const SURV_PRIX = 1.10;         /* ou si le prix a pris 10 % */
  * pese quelques dizaines d'octets, et deux mille tiennent largement. Reglable,
  * parce que le volume du flux, lui, n'est pas une constante. */
 const SURV_MAX = nEnv('SURV_MAX', 2000);
+/* Les examens PAYANTS par tour — ceux qui coutent des appels. Vingt au lieu de
+   dix depuis que les appels qui ne peuvent pas repondre ne sont plus payes. */
+const EXAMENS_TOUR = Math.max(5, Math.round(nEnv('EXAMENS_TOUR', 20)));
 /* Reconnaitre le refus « trop jeune » ailleurs sans relire la phrase : elle
    changera. Pose ici, avec les autres constantes, parce que l'oubli des vieux
    connus s'en sert et qu'il vit tout en haut du fichier. */
@@ -5905,15 +5908,34 @@ async function tour() {
      * Les bannis sortent sans un appel. Les deja-juges dont rien n'a bouge
      * aussi. Le budget d'appels va aux jetons qu'on n'a jamais vus — ce qui,
      * a budget constant, en fait examiner davantage. */
+    /* ==========================================================================
+     * LES PLACES DU TOUR VONT A CEUX QUI COUTENT QUELQUE CHOSE
+     *
+     * « Comment faire pour qu il trouve plus de paires ETH ? »
+     *
+     * Mesure le 4 septembre : la chaine fait naitre une vingtaine de pools par
+     * minute, le flux les voit TOUTES (soixante pools couvrent six minutes,
+     * le tour en dure deux et demie). Ce n est pas le flux qui manque : c est
+     * la place. Vingt examens par tour, et sur les vingt de ce tour-la, huit
+     * etaient cotes en USDG et cinq trop jeunes — treize places prises par des
+     * jetons que le Scout refuse SANS UN APPEL, sur les seuls chiffres du flux.
+     * Sept vraies paires ETH examinees sur une soixantaine nees.
+     *
+     * Un refus qui ne coute rien ne prend donc plus de place : le Scout est
+     * consulte d avance, sur le flux, et seuls les jetons qu il laisse passer
+     * — ceux qui vont couter des appels — comptent dans les places. Les
+     * refuses passent quand meme par le pipeline, pour l audit et pour
+     * l ombre : ils ne coutent rien. EXAMENS_TOUR regle les places.
+     * ======================================================================== */
     const aVoir = [], ecartes = [];
+    let payants = 0;
     for (const t of liste) {
       const d = doitExaminer(t);
-      if (d.oui) aVoir.push(t); else ecartes.push({ sym: t.sym, pourquoi: d.pourquoi });
-      /* Vingt au lieu de dix : depuis que les appels qui ne peuvent pas
-         repondre ne sont plus payes, un jeton jeune et calme coute UN appel au
-         lieu de quatre. Le meme budget en couvre donc deux fois plus — et
-         chacun laisse une ombre dont tout le monde apprend. */
-      if (aVoir.length >= 20) break;
+      if (!d.oui) { ecartes.push({ sym: t.sym, pourquoi: d.pourquoi }); continue; }
+      const gratuit = !!vetoScout(t);
+      if (!gratuit && payants >= EXAMENS_TOUR) continue;
+      aVoir.push(t);
+      if (!gratuit) payants++;
     }
     compte('reexamensEvites', ecartes.length);
 
@@ -6371,7 +6393,7 @@ module.exports = {
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,
   revoitStrategie, seuilCourant, partRefus, REFUS_AVEUGLE,
   revoitLesBornes, borne, BORNES, partAbandons, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
-  releve, recents, JOUR_MS, TTL_GOPLUS_MUET, coteEnEth, pairesEthSeules,
+  releve, recents, JOUR_MS, TTL_GOPLUS_MUET, coteEnEth, pairesEthSeules, EXAMENS_TOUR,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN, OMBRE_DISPARUE, OMBRE_SILENCES,
