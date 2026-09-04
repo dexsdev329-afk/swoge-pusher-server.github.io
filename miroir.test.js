@@ -509,6 +509,49 @@ console.log('\n-- la clef v4 : par identifiant d abord, et les monnaies en sujet
              'une piscine cotee en GLD est refusee AVEC le nom de la monnaie — « no pool » n etait ni vrai ni utile');
 }
 
+console.log('\n-- une piscine v4 cotee en WETH : suivie, avec emballage a l achat et deballage a la vente --');
+{
+  /* SLINK, 4 septembre : currency0 = WETH, refuse « quoted in WETH, not ETH ». */
+  const ZERO = '0x' + '00'.repeat(20), SL = '0x' + 'e5'.repeat(20);
+  const k = [M.WETH, SL, 100, 1, ZERO];
+  const idW = M._idV4(k);
+  chaine.piscines[idW.toLowerCase()] = { c0: M.WETH, c1: SL, fee: 100, tick: 1, hooks: ZERO };
+  const r = await M._routeDe(SL, idW);
+  ok(r.ver === 'v4' && r.enWeth === true && r.zeroEstEth === true, 'la route est v4, cote ETH = WETH, currency0');
+  const A = ethers.utils.defaultAbiCoder, iu = new ethers.utils.Interface(['function execute(bytes commands,bytes[] inputs,uint256 deadline) payable']);
+  const moi = '0x' + '77'.repeat(20);
+  const oa = M._ordre(r, 'achat', SL, W('0.001'), ethers.BigNumber.from(500), moi, 42);
+  const da = iu.parseTransaction({ data: oa.data });
+  ok(oa.value.eq(W('0.001')) && da.args.commands === M.WRAP_ETH + M.V4_SWAP.slice(2), 'l achat : WRAP_ETH puis V4_SWAP, l ETH en valeur (' + da.args.commands + ')');
+  const wrap = A.decode(['address', 'uint256'], da.args.inputs[0]);
+  ok(wrap[0].toLowerCase() === M.ADRESSE_ROUTEUR && wrap[1].eq(W('0.001')), 'le WETH est emballe CHEZ LE ROUTEUR, pour le montant');
+  const c = A.decode(['bytes', 'bytes[]'], da.args.inputs[1]);
+  ok(c[0] === M.ACTES4_WETH_ACHAT, 'les actes : swap, SETTLE, TAKE_ALL (' + c[0] + ')');
+  const st = A.decode(['address', 'uint256', 'bool'], c[1][1]);
+  ok(st[0].toLowerCase() === M.WETH.toLowerCase() && st[1].isZero() && st[2] === false, 'SETTLE en WETH, open delta, paye par le routeur (pas par le miroir)');
+  const tk = A.decode(['address', 'uint256'], c[1][2]);
+  ok(tk[0].toLowerCase() === SL && tk[1].eq(500), 'TAKE_ALL du jeton au minimum');
+  const sw = A.decode([M.SWAP4_T], c[1][0])[0];
+  ok(sw[1] === true && sw[2].eq(W('0.001')) && sw[3].eq(500), 'le swap va de 0 (WETH) vers 1 (jeton), montant et minimum');
+  const ov = M._ordre(r, 'vente', SL, ethers.BigNumber.from(9000), ethers.BigNumber.from(700), moi, 43);
+  const dv = iu.parseTransaction({ data: ov.data });
+  ok(ov.value.isZero() && dv.args.commands === M.V4_SWAP + M.UNWRAP_WETH.slice(2), 'la vente : V4_SWAP puis UNWRAP_WETH, sans ETH en valeur (' + dv.args.commands + ')');
+  const cv = A.decode(['bytes', 'bytes[]'], dv.args.inputs[0]);
+  ok(cv[0] === M.ACTES4_WETH_VENTE, 'les actes : swap, SETTLE_ALL, TAKE (' + cv[0] + ')');
+  const sa = A.decode(['address', 'uint256'], cv[1][1]);
+  ok(sa[0].toLowerCase() === SL && sa[1].eq(9000), 'SETTLE_ALL du jeton, via Permit2');
+  const tv = A.decode(['address', 'address', 'uint256'], cv[1][2]);
+  ok(tv[0].toLowerCase() === M.WETH.toLowerCase() && tv[1].toLowerCase() === M.ADRESSE_ROUTEUR && tv[2].isZero(), 'TAKE du WETH vers le routeur, open delta');
+  const un = A.decode(['address', 'uint256'], dv.args.inputs[1]);
+  ok(un[0].toLowerCase() === moi && un[1].eq(700), 'puis UNWRAP_WETH vers le miroir, avec le meme minimum');
+  const swv = A.decode([M.SWAP4_T], cv[1][0])[0];
+  ok(swv[1] === false, 'et le swap va de 1 (jeton) vers 0 (WETH)');
+  /* Une piscine en ETH natif garde l ancien corps : rien a emballer. */
+  const rn = await M._routeDe(JETON, POOL);
+  const on = M._ordre(rn, 'achat', JETON, W('0.001'), ethers.BigNumber.from(1), moi, 1);
+  ok(rn.enWeth === false && iu.parseTransaction({ data: on.data }).args.commands === M.V4_SWAP, 'en ETH natif : V4_SWAP seul, comme avant');
+}
+
 console.log('\n-- une paire v2 : reconnue, cotee, et le calldata reel est le bon --');
 const J5 = '0x' + '55'.repeat(20);
 const ORE = '0x' + '0e'.repeat(20), PAIRE2 = '0x' + 'b2'.repeat(20);

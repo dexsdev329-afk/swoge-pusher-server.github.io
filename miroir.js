@@ -110,6 +110,21 @@ const CLE4_T  = '(address,address,uint24,int24,address)';
 const SWAP4_T = '(' + CLE4_T + ',bool,uint128,uint128,uint256,bytes)';
 const V4_SWAP = '0x10';                 // la commande du routeur
 const ACTES4  = '0x060c0f';             // SWAP_EXACT_IN_SINGLE, SETTLE_ALL, TAKE_ALL
+/* ---- UNE PISCINE V4 COTEE EN WETH, PAS EN ETH NATIF ----
+ * « Could not follow the buy on SLINK: its pool is quoted in WETH, not ETH » —
+ * ca aurait du passer. Sur v4 l'ETH natif est l'adresse zero, mais rien
+ * n'empeche une piscine d'etre creee contre le WETH (le jeton ERC-20), et
+ * SLINK l'est : currency0 = 0x0Bd7…, palier 0,01 %, avec un hook. Le miroir
+ * ne connaissait que la forme native et refusait l'autre.
+ * Le routeur sait faire : a l'achat il EMBALLE l'ETH recu (WRAP_ETH vers
+ * lui-meme) et regle la piscine depuis son propre solde (SETTLE, payerIsUser
+ * = false, montant OPEN_DELTA) ; a la vente il PREND le WETH chez lui (TAKE
+ * vers ADDRESS_THIS, OPEN_DELTA) et le deballe vers le miroir (UNWRAP_WETH,
+ * avec le meme minimum). Meme clef, meme quoteur, meme Permit2 qu'en natif. */
+const WRAP_ETH    = '0x0b';
+const UNWRAP_WETH = '0x0c';
+const ACTES4_WETH_ACHAT = '0x060b0f';   // SWAP_EXACT_IN_SINGLE, SETTLE(WETH, open delta, router pays), TAKE_ALL
+const ACTES4_WETH_VENTE = '0x060c0e';   // SWAP_EXACT_IN_SINGLE, SETTLE_ALL(jeton), TAKE(WETH → router, open delta)
 
 const SUJET_INIT = ethers.utils.id(
   'Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)');
@@ -341,11 +356,15 @@ async function clePiscine(jeton, pool, fenetre) {
     const id = idV4(k);
     if (norm(id) !== norm(l.topics[1])) continue;           /* la clef ne recompose pas l id : pas la notre */
     if (parId && norm(id) !== norm(pool)) continue;
-    const zeroEstEth = norm(c0) === norm(ETH4), unEstEth = norm(c1) === norm(ETH4);
+    const coteEth = (c) => norm(c) === norm(ETH4) || norm(c) === norm(WETH);
+    const zeroEstEth = coteEth(c0), unEstEth = coteEth(c1);
     if (!zeroEstEth && !unEstEth)
       return { cle: k, id, zeroEstEth: false, contreEth: false,
                autre: norm(c0) === norm(jeton) ? c1 : c0 };
-    return { cle: k, id, zeroEstEth, contreEth: true };
+    /* En WETH : le cote ETH est le jeton emballe, et l'ordre devra emballer
+       et deballer lui-meme. */
+    const enWeth = norm(zeroEstEth ? c0 : c1) === norm(WETH);
+    return { cle: k, id, zeroEstEth, contreEth: true, enWeth };
   }
   return null;
 }
@@ -394,7 +413,7 @@ async function routeDe(jeton, pool) {
   if (p4) {
     if (!p4.contreEth)
       throw new Error('its pool is quoted in ' + await symbole(p4.autre) + ', not ETH: the mirror only trades ETH pairs');
-    return { ver: 'v4', cle: p4.cle, id: p4.id, zeroEstEth: p4.zeroEstEth };
+    return { ver: 'v4', cle: p4.cle, id: p4.id, zeroEstEth: p4.zeroEstEth, enWeth: !!p4.enWeth };
   }
   if (!pool) {
     /* Sans indication de la colonie : les fabriques, dans l'ordre ou la
@@ -460,9 +479,36 @@ function ordre(r, sens, jeton, montant, mini, vers, echeance) {
   const achat = sens === 'achat';
   if (r.ver === 'v4') {
     const i = new ethers.utils.Interface(UR_ABI);
-    const corps = corpsV4(r.cle, achat ? r.zeroEstEth : !r.zeroEstEth, montant, mini);
-    return { to: ROUTEUR4, data: i.encodeFunctionData('execute', [V4_SWAP, [corps], echeance]),
-             value: achat ? montant : ethers.BigNumber.from(0) };
+    const A = ethers.utils.defaultAbiCoder;
+    const k = r.cle, zeroVersUn = achat ? r.zeroEstEth : !r.zeroEstEth;
+    if (!r.enWeth) {
+      const corps = corpsV4(k, zeroVersUn, montant, mini);
+      return { to: ROUTEUR4, data: i.encodeFunctionData('execute', [V4_SWAP, [corps], echeance]),
+               value: achat ? montant : ethers.BigNumber.from(0) };
+    }
+    const weth = zeroVersUn ? k[0] : k[1], jetonC = zeroVersUn ? k[1] : k[0];
+    const swap = A.encode([SWAP4_T], [[k, zeroVersUn, montant, mini, 0, '0x']]);
+    if (achat) {
+      /* WRAP_ETH(routeur, montant) puis le swap regle en WETH depuis le routeur. */
+      const corps = A.encode(['bytes', 'bytes[]'], [ACTES4_WETH_ACHAT, [
+        swap,
+        A.encode(['address', 'uint256', 'bool'], [weth, 0, false]),        /* SETTLE : open delta, le routeur paie */
+        A.encode(['address', 'uint256'], [jetonC, mini]),                   /* TAKE_ALL du jeton, au minimum */
+      ]]);
+      return { to: ROUTEUR4, value: montant,
+               data: i.encodeFunctionData('execute', [WRAP_ETH + V4_SWAP.slice(2), [
+                 A.encode(['address', 'uint256'], [ADRESSE_ROUTEUR, montant]), corps], echeance]) };
+    }
+    /* Le jeton part via Permit2, le WETH arrive chez le routeur, qui le deballe
+       vers le miroir — le minimum exige aux deux etapes. */
+    const corps = A.encode(['bytes', 'bytes[]'], [ACTES4_WETH_VENTE, [
+      swap,
+      A.encode(['address', 'uint256'], [jetonC, montant]),                  /* SETTLE_ALL du jeton */
+      A.encode(['address', 'address', 'uint256'], [weth, ADRESSE_ROUTEUR, 0]), /* TAKE du WETH vers le routeur, open delta */
+    ]]);
+    return { to: ROUTEUR4, value: ethers.BigNumber.from(0),
+             data: i.encodeFunctionData('execute', [V4_SWAP + UNWRAP_WETH.slice(2), [
+               corps, A.encode(['address', 'uint256'], [vers, mini])], echeance]) };
   }
   if (r.ver === 'v2') {
     const i = new ethers.utils.Interface(R2_ABI);
@@ -587,7 +633,7 @@ async function routeDePosition(adr, o) {
   if (o.ver === 'v3') return { ver: 'v3', paire: o.pool, fee: o.fee };
   const cle = o.cle || (await clePiscine(adr, o.pool) || {}).cle;
   if (!cle) throw new Error('pool key lost for this token');
-  return { ver: 'v4', cle, zeroEstEth: !!o.zeroVersUn };
+  return { ver: 'v4', cle, zeroEstEth: !!o.zeroVersUn, enWeth: !!o.enWeth };
 }
 
 /* ==================== CE QUE LE MIROIR PEUT ENGAGER ====================
@@ -942,6 +988,7 @@ async function achetePosition(c, t) {
     sym: t.sym || null, ver: route.ver,
     pool: route.ver === 'v4' ? route.id : route.paire,
     cle: route.cle || null, zeroVersUn: route.ver === 'v4' ? route.zeroEstEth : null,
+    enWeth: route.ver === 'v4' ? !!route.enWeth : null,
     fee: route.fee || null,
     entree: ethers.utils.formatUnits(mise, 18),
     /* Ce que le portefeuille a VRAIMENT depense : mise + gaz + autorisations,
@@ -1057,6 +1104,7 @@ module.exports = {
   /* les adresses du protocole */
   PM4, QUOTEUR4, ROUTEUR4, PERMIT2, ETH4, SUJET_INIT,
   WETH, ROUTEUR2, FABRIQUE2, ROUTEUR3, QUOTEUR3, FABRIQUE3, ADRESSE_ROUTEUR,
+  WRAP_ETH, UNWRAP_WETH, ACTES4_WETH_ACHAT, ACTES4_WETH_VENTE, SWAP4_T, V4_SWAP,
   /* exposes pour les essais : ce sont eux qui portent les regles */
   _chiffre: chiffre, _dechiffre: dechiffre, _cleMaitresse: cleMaitresse,
   _idV4: idV4, _clePiscine: clePiscine, _devis: devis, _corpsV4: corpsV4,
