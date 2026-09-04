@@ -68,6 +68,44 @@ const PERMIT2  = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 /* En v4, l'ETH natif n'est pas le WETH : c'est l'adresse zero. */
 const ETH4 = '0x0000000000000000000000000000000000000000';
 
+/* ---- ET LES DEUX AUTRES PLACES ----
+ * « Ca peut etre des pools v3 ou v2 aussi. » Mesure le 4 septembre, en
+ * mode reel : ORE se traite sur une paire Uniswap v2, GOBLIN sur une piscine
+ * v4 cotee en GLD. Le miroir ne connaissait que v4 contre l'ETH, et disait
+ * « no v4 pool found » pour les deux — ce qui n'etait ni vrai ni utile.
+ * Memes adresses que la page du portefeuille, eprouvees contre la chaine. */
+const WETH      = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73';
+const ROUTEUR2  = '0x89e5db8b5aa49aa85ac63f691524311aeb649eba';   // UniswapV2Router02
+const FABRIQUE2 = '0x8bceaa40b9acdfaedf85adf4ff01f5ad6517937f';
+const ROUTEUR3  = '0xcaf681a66d020601342297493863e78c959e5cb2';   // SwapRouter02 (v3, multicall)
+const QUOTEUR3  = '0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7';
+const FABRIQUE3 = '0x1f7d7550b1b028f7571e69a784071f0205fd2efa';
+/* « Garde le produit chez toi » : le routeur v3 lit cette adresse comme la
+   sienne, et c'est ce qui permet de vendre puis de deballer le WETH en un
+   seul appel. */
+const ADRESSE_ROUTEUR = '0x0000000000000000000000000000000000000002';
+const PALIERS3 = [100, 500, 3000, 10000];
+const R2_ABI = [
+  'function getAmountsOut(uint256,address[]) view returns (uint256[])',
+  'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256 amountOutMin,address[] path,address to,uint256 deadline) payable',
+  'function swapExactTokensForETHSupportingFeeOnTransferTokens(uint256 amountIn,uint256 amountOutMin,address[] path,address to,uint256 deadline)',
+];
+const F2_ABI = ['function getPair(address,address) view returns (address)'];
+const F3_ABI = ['function getPool(address,address,uint24) view returns (address)'];
+const Q3_ABI = ['function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96)) returns (uint256 amountOut,uint160,uint32,uint256)'];
+const R3_ABI = [
+  'function multicall(uint256 deadline,bytes[] data) payable returns (bytes[])',
+  'function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) payable returns (uint256)',
+  'function unwrapWETH9(uint256 amountMinimum,address recipient) payable',
+];
+const PAIRE_ABI = [
+  'function token0() view returns (address)',
+  'function token1() view returns (address)',
+  'function fee() view returns (uint24)',
+  'function getReserves() view returns (uint112,uint112,uint32)',
+];
+const SYM_ABI = ['function symbol() view returns (string)'];
+
 const CLE4_T  = '(address,address,uint24,int24,address)';
 const SWAP4_T = '(' + CLE4_T + ',bool,uint128,uint128,uint256,bytes)';
 const V4_SWAP = '0x10';                 // la commande du routeur
@@ -219,39 +257,120 @@ function idV4(k) {
  *
  * Il n'y a pas de fabrique a interroger : une piscine v4 n'existe que par ses
  * cinq champs, et le HOOK en fait partie — rien ne se devine. On lit les
- * evenements `Initialize` du PoolManager, dont les deux jetons sont INDEXES :
- * la chaine fait le tri, pas nous. Et comme la colonie achete des jetons de
- * quelques minutes, la fenetre recente suffit toujours.
+ * evenements `Initialize` du PoolManager.
  *
- * L'identifiant recalcule doit tomber sur celui qu'on cherche. Un index faux
- * pourrait nous faire rater une piscine ; il ne peut pas nous en faire
+ * ---- L'ORDRE DES SUJETS, MESURE SUR LA CHAINE ----
+ * L'evenement est `Initialize(id indexed, currency0 indexed, currency1
+ * indexed, fee, tickSpacing, hooks, sqrtPrice, tick)` : le PREMIER sujet
+ * indexe est l'identifiant de la piscine, les deux monnaies viennent APRES.
+ * Ce fichier filtrait [signature, monnaie0, monnaie1] — une adresse a la
+ * place d'un identifiant — et la chaine repondait zero evenement, toujours.
+ * Verifie le 4 septembre sur TRN : [sig, id] rend le bloc 54423937 avec
+ * ETH/TRN en sujets 2 et 3 ; l'ancien filtre rend zero sur un million de
+ * blocs. Le banc ne l'avait pas vu parce que sa fausse chaine renvoyait
+ * l'evenement quels que soient les sujets demandes. Il ne le fait plus.
+ *
+ * Quand la colonie donne l'identifiant, on demande PAR identifiant : c'est
+ * une lecture, et les monnaies arrivent avec. Sans identifiant, on cherche
+ * par les deux monnaies, l'ETH et le jeton. Et dans les deux cas
+ * l'identifiant recalcule doit tomber sur celui du sujet : un index faux
+ * pourrait nous faire rater une piscine, il ne peut pas nous en faire
  * inventer une. */
 async function clePiscine(jeton, pool, fenetre) {
   const p = provider();
   const mot = (a) => ethers.utils.hexZeroPad(a, 32);
   const tip = await p.getBlockNumber();
   const depuis = Math.max(0, tip - (fenetre || 1000000));
+  const lit = (topics) => p.getLogs({ address: PM4, fromBlock: depuis, toBlock: tip, topics });
   const paire = norm(ETH4) < norm(jeton) ? [ETH4, jeton] : [jeton, ETH4];
+  const parId = !!(pool && /^0x[0-9a-fA-F]{64}$/.test(String(pool)));
   let logs = [];
   try {
-    logs = await p.getLogs({ address: PM4, fromBlock: depuis, toBlock: tip,
-                             topics: [SUJET_INIT, mot(paire[0]), mot(paire[1])] });
+    if (parId) logs = await lit([SUJET_INIT, String(pool).toLowerCase()]);
+    if (!logs.length) logs = await lit([SUJET_INIT, null, mot(paire[0]), mot(paire[1])]);
   } catch (e) { throw new Error('pool lookup failed: ' + e.message); }
   for (const l of logs) {
+    if (!l.topics || l.topics.length < 4) continue;
+    const c0 = ethers.utils.getAddress('0x' + l.topics[2].slice(26));
+    const c1 = ethers.utils.getAddress('0x' + l.topics[3].slice(26));
     const d = ethers.utils.defaultAbiCoder.decode(
       ['uint24', 'int24', 'address', 'uint160', 'int24'], l.data);
-    const k = [paire[0], paire[1], d[0], d[1], d[2]];
+    const k = [c0, c1, d[0], d[1], d[2]];
     const id = idV4(k);
-    /* Sans pool demande, on prend la premiere : c'est le cas d'un jeton dont on
-       ne connait que l'adresse. Avec, on exige l'egalite — la colonie donne
-       l'identifiant que DexScreener publie, et c'est LUI qu'on doit echanger,
-       pas une autre piscine du meme jeton. */
-    if (!pool || norm(id) === norm(pool)) return { cle: k, id, zeroEstEth: norm(k[0]) === norm(ETH4) };
+    if (norm(id) !== norm(l.topics[1])) continue;           /* la clef ne recompose pas l id : pas la notre */
+    if (parId && norm(id) !== norm(pool)) continue;
+    const zeroEstEth = norm(c0) === norm(ETH4), unEstEth = norm(c1) === norm(ETH4);
+    if (!zeroEstEth && !unEstEth)
+      return { cle: k, id, zeroEstEth: false, contreEth: false,
+               autre: norm(c0) === norm(jeton) ? c1 : c0 };
+    return { cle: k, id, zeroEstEth, contreEth: true };
   }
   return null;
 }
 
-/** Ce que rend un echange, demande au quoteur du protocole lui-meme. */
+/** Le symbole d'un jeton, pour une phrase — ou son adresse courte s'il n'en
+ *  a pas. Jamais une exception : c'est du texte. */
+async function symbole(adr) {
+  try {
+    const s = await new ethers.Contract(adr, SYM_ABI, provider()).symbol();
+    if (s && String(s).trim()) return String(s).trim().slice(0, 12);
+  } catch (e) { /* pas de symbole lisible */ }
+  return String(adr).slice(0, 8) + '…';
+}
+
+/* ==================== LA ROUTE ====================
+ *
+ * Ou se traite ce jeton contre l'ETH : v4 (une clef), v3 (une piscine et
+ * son palier), v2 (une paire). La colonie donne ce que DexScreener publie —
+ * un identifiant de 32 octets pour v4, une adresse pour v2 et v3 — et c'est
+ * CETTE place qu'on doit echanger, pas une autre du meme jeton.
+ *
+ * Une adresse est v3 si elle repond a `fee()`, v2 si elle repond a
+ * `getReserves()` : une paire v2 n'a pas de palier, et une piscine v3 n'a pas
+ * de reserves. Et si ni l'une ni l'autre des deux monnaies n'est l'ETH, on
+ * le dit avec le nom de l'autre : « quoted in GLD, not ETH » est une raison ;
+ * « no pool » n'en etait pas une. */
+async function routeDe(jeton, pool) {
+  const p = provider();
+  if (pool && /^0x[0-9a-fA-F]{40}$/.test(String(pool))) {
+    const pr = new ethers.Contract(pool, PAIRE_ABI, p);
+    let t0, t1;
+    try { [t0, t1] = await Promise.all([pr.token0(), pr.token1()]); }
+    catch (e) { throw new Error('the pool address given by the colony does not answer like a pair (' + String(pool).slice(0, 10) + '…)'); }
+    const avecWeth = norm(t0) === norm(WETH) || norm(t1) === norm(WETH);
+    if (!avecWeth)
+      throw new Error('its pool is quoted in ' + await symbole(norm(t0) === norm(jeton) ? t1 : t0)
+                      + ', not ETH: the mirror only trades ETH pairs');
+    let fee = null;
+    try { fee = Number(await pr.fee()); } catch (e) { fee = null; }
+    if (fee !== null && isFinite(fee)) return { ver: 'v3', paire: ethers.utils.getAddress(pool), fee };
+    try { await pr.getReserves(); }
+    catch (e) { throw new Error('the pool address given by the colony is neither a v2 pair nor a v3 pool (' + String(pool).slice(0, 10) + '…)'); }
+    return { ver: 'v2', paire: ethers.utils.getAddress(pool) };
+  }
+  const p4 = await clePiscine(jeton, pool);
+  if (p4) {
+    if (!p4.contreEth)
+      throw new Error('its pool is quoted in ' + await symbole(p4.autre) + ', not ETH: the mirror only trades ETH pairs');
+    return { ver: 'v4', cle: p4.cle, id: p4.id, zeroEstEth: p4.zeroEstEth };
+  }
+  if (!pool) {
+    /* Sans indication de la colonie : les fabriques, dans l'ordre ou la
+       liquidite se trouve d'habitude sur cette chaine. */
+    const f3 = new ethers.Contract(FABRIQUE3, F3_ABI, p);
+    for (const fee of PALIERS3) {
+      let a = null; try { a = await f3.getPool(WETH, jeton, fee); } catch (e) { a = null; }
+      if (a && norm(a) !== norm(ETH4)) return { ver: 'v3', paire: ethers.utils.getAddress(a), fee };
+    }
+    const f2 = new ethers.Contract(FABRIQUE2, F2_ABI, p);
+    let a = null; try { a = await f2.getPair(WETH, jeton); } catch (e) { a = null; }
+    if (a && norm(a) !== norm(ETH4)) return { ver: 'v2', paire: ethers.utils.getAddress(a) };
+  }
+  throw new Error('no pool against ETH found for this token'
+                  + (pool ? ' (v4 id ' + String(pool).slice(0, 10) + '… given by the colony, not found in the last million blocks)' : ''));
+}
+
+/** Ce que rend un echange v4, demande au quoteur du protocole lui-meme. */
 async function devis(cleP, zeroVersUn, entree) {
   const q = new ethers.Contract(QUOTEUR4, Q4_ABI, provider());
   const r = await q.callStatic.quoteExactInputSingle({
@@ -260,6 +379,24 @@ async function devis(cleP, zeroVersUn, entree) {
     zeroForOne: zeroVersUn, exactAmount: entree, hookData: '0x',
   });
   return ethers.BigNumber.from(r.amountOut !== undefined ? r.amountOut : r[0]);
+}
+
+/** Le devis sur n'importe quelle route, dans un sens ou dans l'autre. Chaque
+ *  place a son quoteur ; aucun n'est remplace par une regle de trois. */
+async function devisRoute(r, sens, jeton, montant) {
+  const achat = sens === 'achat';
+  if (r.ver === 'v4') return devis(r.cle, achat ? r.zeroEstEth : !r.zeroEstEth, montant);
+  if (r.ver === 'v2') {
+    const v2 = new ethers.Contract(ROUTEUR2, R2_ABI, provider());
+    const a = await v2.getAmountsOut(montant, achat ? [WETH, jeton] : [jeton, WETH]);
+    return ethers.BigNumber.from(a[a.length - 1]);
+  }
+  const q = new ethers.Contract(QUOTEUR3, Q3_ABI, provider());
+  const x = await q.callStatic.quoteExactInputSingle({
+    tokenIn: achat ? WETH : jeton, tokenOut: achat ? jeton : WETH,
+    amountIn: montant, fee: r.fee, sqrtPriceLimitX96: 0,
+  });
+  return ethers.BigNumber.from(x.amountOut !== undefined ? x.amountOut : x[0]);
 }
 
 /** Le corps d'un echange v4, pret pour `execute`. Une seule forme sert les deux
@@ -271,6 +408,49 @@ function corpsV4(k, zeroVersUn, entree, mini) {
     A.encode(['address', 'uint256'], [zeroVersUn ? k[0] : k[1], entree]),
     A.encode(['address', 'uint256'], [zeroVersUn ? k[1] : k[0], mini]),
   ]]);
+}
+
+/** La transaction d'un ordre, ENTIEREMENT construite ici : a qui, quoi, et
+ *  combien d'ETH. Aucune chaine n'est touchee — c'est ce qui permet au banc
+ *  de decoder le calldata reel de chaque place et de verifier chaque champ,
+ *  sans signer. `vers` est le portefeuille du miroir. */
+function ordre(r, sens, jeton, montant, mini, vers, echeance) {
+  const achat = sens === 'achat';
+  if (r.ver === 'v4') {
+    const i = new ethers.utils.Interface(UR_ABI);
+    const corps = corpsV4(r.cle, achat ? r.zeroEstEth : !r.zeroEstEth, montant, mini);
+    return { to: ROUTEUR4, data: i.encodeFunctionData('execute', [V4_SWAP, [corps], echeance]),
+             value: achat ? montant : ethers.BigNumber.from(0) };
+  }
+  if (r.ver === 'v2') {
+    const i = new ethers.utils.Interface(R2_ABI);
+    /* Les variantes « SupportingFeeOnTransfer » : un jeton qui prend une taxe
+       au passage fait echouer les autres, et sur cette chaine c'est courant. */
+    return achat
+      ? { to: ROUTEUR2, value: montant,
+          data: i.encodeFunctionData('swapExactETHForTokensSupportingFeeOnTransferTokens',
+                                     [mini, [WETH, jeton], vers, echeance]) }
+      : { to: ROUTEUR2, value: ethers.BigNumber.from(0),
+          data: i.encodeFunctionData('swapExactTokensForETHSupportingFeeOnTransferTokens',
+                                     [montant, mini, [jeton, WETH], vers, echeance]) };
+  }
+  const i = new ethers.utils.Interface(R3_ABI);
+  if (achat) {
+    /* Le routeur v3 emballe lui-meme l'ETH recu quand l'entree est le WETH. */
+    return { to: ROUTEUR3, value: montant,
+             data: i.encodeFunctionData('exactInputSingle', [{
+               tokenIn: WETH, tokenOut: jeton, fee: r.fee, recipient: vers,
+               amountIn: montant, amountOutMinimum: mini, sqrtPriceLimitX96: 0 }]) };
+  }
+  /* Vendre rend du WETH au routeur, qui le deballe vers le miroir : deux
+     appels, une transaction, et le minimum est exige aux deux etapes. */
+  return { to: ROUTEUR3, value: ethers.BigNumber.from(0),
+           data: i.encodeFunctionData('multicall', [echeance, [
+             i.encodeFunctionData('exactInputSingle', [{
+               tokenIn: jeton, tokenOut: WETH, fee: r.fee, recipient: ADRESSE_ROUTEUR,
+               amountIn: montant, amountOutMinimum: mini, sqrtPriceLimitX96: 0 }]),
+             i.encodeFunctionData('unwrapWETH9', [mini, vers]),
+           ]]) };
 }
 
 /** Le minimum de sortie. JAMAIS zero : zero veut dire « accepte un jeton »,
@@ -286,25 +466,22 @@ function signataire(c) {
 
 /* ==================== LES ORDRES ====================
  *
- * Un achat : de l'ETH natif vers le jeton, en une transaction — le routeur
- * recoit l'ETH avec l'appel.
+ * Un achat : de l'ETH natif vers le jeton, en une transaction.
  *
- * Une vente : le jeton vers l'ETH, et il faut DEUX autorisations avant, parce
- * que le routeur ne prend pas les jetons lui-meme, c'est Permit2 qui les
- * deplace pour lui. Le jeton autorise Permit2 (approve ERC-20 usuel), puis
- * Permit2 autorise le routeur pour ce jeton. On ne les redemande pas a chaque
- * vente : on lit l'existant d'abord. */
-async function achete(c, cleP, zeroVersUn, entreeWei) {
-  const sortie = await devis(cleP, zeroVersUn, entreeWei);
+ * Une vente demande une autorisation avant. En v4, le routeur ne prend pas
+ * les jetons lui-meme, c'est Permit2 qui les deplace pour lui : le jeton
+ * autorise Permit2, puis Permit2 autorise le routeur. En v2 et v3, le routeur
+ * est autorise directement. On ne les redemande pas a chaque vente : on lit
+ * l'existant d'abord. */
+async function acheteRoute(c, r, jeton, entreeWei) {
+  const sortie = await devisRoute(r, 'achat', jeton, entreeWei);
   const mini = plancher(sortie);
   if (!EXECUTE) return { simule: true, sortie, mini, tx: null };
   const w = signataire(c);
-  const ur = new ethers.Contract(ROUTEUR4, UR_ABI, w);
-  const corps = corpsV4(cleP, zeroVersUn, entreeWei, mini);
-  const tx = await ur.execute(V4_SWAP, [corps], Math.floor(Date.now() / 1000) + ECHEANCE_S,
-                              { value: entreeWei });
-  const r = await tx.wait();
-  return { simule: false, sortie, mini, tx: r.transactionHash };
+  const o = ordre(r, 'achat', jeton, entreeWei, mini, w.address, Math.floor(Date.now() / 1000) + ECHEANCE_S);
+  const tx = await w.sendTransaction(o);
+  const rc = await tx.wait();
+  return { simule: false, sortie, mini, tx: rc.transactionHash };
 }
 
 async function autorise(w, jeton, montant) {
@@ -327,17 +504,37 @@ async function autorise(w, jeton, montant) {
   }
 }
 
-async function vend(c, cleP, zeroVersUn, jeton, montantWei) {
-  const sortie = await devis(cleP, zeroVersUn, montantWei);
+/** L'autorisation simple d'un ERC-20 vers un routeur v2 ou v3. */
+async function autoriseSimple(w, jeton, routeur, montant) {
+  const t = new ethers.Contract(jeton, ERC20_ABI, w);
+  const a = await t.allowance(w.address, routeur);
+  if (a.lt(montant)) {
+    const tx = await t.approve(routeur, ethers.constants.MaxUint256);
+    await tx.wait();
+  }
+}
+
+async function vendRoute(c, r, jeton, montantWei) {
+  const sortie = await devisRoute(r, 'vente', jeton, montantWei);
   const mini = plancher(sortie);
   if (!EXECUTE) return { simule: true, sortie, mini, tx: null };
   const w = signataire(c);
-  await autorise(w, jeton, montantWei);
-  const ur = new ethers.Contract(ROUTEUR4, UR_ABI, w);
-  const corps = corpsV4(cleP, zeroVersUn, montantWei, mini);
-  const tx = await ur.execute(V4_SWAP, [corps], Math.floor(Date.now() / 1000) + ECHEANCE_S);
-  const r = await tx.wait();
-  return { simule: false, sortie, mini, tx: r.transactionHash };
+  if (r.ver === 'v4') await autorise(w, jeton, montantWei);
+  else await autoriseSimple(w, jeton, r.ver === 'v2' ? ROUTEUR2 : ROUTEUR3, montantWei);
+  const o = ordre(r, 'vente', jeton, montantWei, mini, w.address, Math.floor(Date.now() / 1000) + ECHEANCE_S);
+  const tx = await w.sendTransaction(o);
+  const rc = await tx.wait();
+  return { simule: false, sortie, mini, tx: rc.transactionHash };
+}
+
+/** La route d'une position deja ouverte, telle qu'elle a ete notee a l'achat.
+ *  Une position d'avant les routes n'a qu'une clef : c'est du v4. */
+async function routeDePosition(adr, o) {
+  if (o.ver === 'v2') return { ver: 'v2', paire: o.pool };
+  if (o.ver === 'v3') return { ver: 'v3', paire: o.pool, fee: o.fee };
+  const cle = o.cle || (await clePiscine(adr, o.pool) || {}).cle;
+  if (!cle) throw new Error('pool key lost for this token');
+  return { ver: 'v4', cle, zeroEstEth: !!o.zeroVersUn };
 }
 
 /* ==================== CE QUE LE MIROIR PEUT ENGAGER ====================
@@ -450,7 +647,7 @@ async function etat(joueur, lireChaine) {
     existe: true, adresse: c.adr, actif: !!c.actif, cree: c.cree, joue: c.joue || 0,
     solde,
     ouvertes: Object.entries(c.ouvertes || {}).map(([adr, o]) => ({
-      adr, sym: o.sym, pool: o.pool, entree: o.entree, jetons: o.jetons,
+      adr, sym: o.sym, pool: o.pool, ver: o.ver || 'v4', entree: o.entree, jetons: o.jetons,
       t: o.t, simule: !!o.simule,
     })),
     journal: (c.journal || []).slice(0, 20),
@@ -600,12 +797,13 @@ async function achetePosition(c, t) {
     note(c, 'Skipped ' + (t.sym || adr) + ': not enough ETH (RH) left once the gas reserve is kept');
     return false;
   }
-  const p = await clePiscine(adr, t.pool);
-  if (!p) throw new Error('no v4 pool found for this token');
-  const zeroVersUn = p.zeroEstEth;                   /* ETH est currency0 ? alors on va de 0 vers 1 */
-  const r = await achete(c, p.cle, zeroVersUn, mise);
+  const route = await routeDe(adr, t.pool);
+  const r = await acheteRoute(c, route, adr, mise);
   c.ouvertes[adr] = {
-    sym: t.sym || null, pool: p.id, cle: p.cle, zeroVersUn,
+    sym: t.sym || null, ver: route.ver,
+    pool: route.ver === 'v4' ? route.id : route.paire,
+    cle: route.cle || null, zeroVersUn: route.ver === 'v4' ? route.zeroEstEth : null,
+    fee: route.fee || null,
     entree: ethers.utils.formatUnits(mise, 18),
     jetons: r.sortie.toString(), t: Date.now(), simule: r.simule, tx: r.tx || null,
   };
@@ -616,7 +814,8 @@ async function achetePosition(c, t) {
       + (t.score ? ' at score ' + t.score : '')
     : (Math.round(PART_ORDRE * 1000) / 10) + '% of what was free (fallback: no share from the colony)';
   note(c, (r.simule ? '[dry run] ' : '') + 'Bought ' + (t.sym || adr) + ' for '
-        + ethers.utils.formatUnits(mise, 18) + ' ETH (RH) · ' + dit, { adr, tx: r.tx || null });
+        + ethers.utils.formatUnits(mise, 18) + ' ETH (RH) on Uniswap ' + route.ver + ' · ' + dit,
+        { adr, tx: r.tx || null });
   return true;
 }
 
@@ -632,9 +831,8 @@ async function vendPosition(c, adr, o) {
     } catch (e) { /* illisible : on garde ce que le miroir avait note */ }
   }
   if (montant.lte(0)) { delete c.ouvertes[adr]; return { sortie: null, tx: null }; }
-  const cleP = o.cle || (await clePiscine(adr, o.pool) || {}).cle;
-  if (!cleP) throw new Error('pool key lost for this token');
-  const r = await vend(c, cleP, !o.zeroVersUn, adr, montant);
+  const route = await routeDePosition(adr, o);
+  const r = await vendRoute(c, route, adr, montant);
   delete c.ouvertes[adr];
   /* ---- LE BILAN DU JOUEUR ----
    * « L'utilisateur voit bien son solde, mais il faudrait une deuxieme barre,
@@ -648,7 +846,7 @@ async function vendPosition(c, adr, o) {
                    t0: o.t, t: Date.now(), simule: !!r.simule, tx: r.tx || null });
   if (c.fermees.length > FERMEES_MAX) c.fermees.splice(0, c.fermees.length - FERMEES_MAX);
   note(c, (r.simule ? '[dry run] ' : '') + 'Sold ' + (o.sym || adr) + ' for '
-        + ethers.utils.formatUnits(r.sortie, 18) + ' ETH (RH)', { adr, tx: r.tx || null });
+        + ethers.utils.formatUnits(r.sortie, 18) + ' ETH (RH) on Uniswap ' + route.ver, { adr, tx: r.tx || null });
   return r;
 }
 
@@ -660,10 +858,12 @@ module.exports = {
   TOLERANCE_BPS, FICHIER,
   /* les adresses du protocole */
   PM4, QUOTEUR4, ROUTEUR4, PERMIT2, ETH4, SUJET_INIT,
+  WETH, ROUTEUR2, FABRIQUE2, ROUTEUR3, QUOTEUR3, FABRIQUE3, ADRESSE_ROUTEUR,
   /* exposes pour les essais : ce sont eux qui portent les regles */
   _chiffre: chiffre, _dechiffre: dechiffre, _cleMaitresse: cleMaitresse,
   _idV4: idV4, _clePiscine: clePiscine, _devis: devis, _corpsV4: corpsV4,
   _plancher: plancher, _miseDe: miseDe, _balaie: balaie,
+  _routeDe: routeDe, _devisRoute: devisRoute, _ordre: ordre, _R2_ABI: R2_ABI, _R3_ABI: R3_ABI,
   _etat: () => R, _pose: (x) => { R = x; }, _poseProvider: poseProvider,
   _fiche: fiche, _actifs: actifs, _bilan: bilan,
 };
