@@ -170,6 +170,35 @@ console.log('\n-- la cle privee ne touche jamais le disque en clair --');
   await jete(() => M.cree(JOUEUR), /already has/, 'un second portefeuille sur le meme compte est refuse');
 }
 
+console.log('\n-- c est le Banquier qui dimensionne, pas le miroir --');
+{
+  /* « Quand quelqu'un depose 0,1 ETH, est-ce que le Banquier gere sa
+     bankroll ? » Il ne la gerait pas : le miroir avait sa propre part fixe, une
+     seconde facon de decider a cote de celle qui a ete apprise. */
+  const m = (eth, part) => Number(ethers.utils.formatUnits(M._miseDe(W(eth), part), 18));
+  const dispo = 0.1 - Number(M.GAZ_RESERVE);
+  ok(Math.abs(m('0.1', 0.04) - dispo * 0.04) < 1e-12,
+     'la fraction du Banquier decide : 4 % de sa caisse font 4 % de la notre (' + m('0.1', 0.04) + ' ETH)');
+  ok(Math.abs(m('0.1', 0.12) - dispo * 0.12) < 1e-12,
+     'et 12 % en font 12 % — l echelle par note, le regime et les plafonds du Banquier viennent avec');
+  ok(Math.abs(m('0.1') - dispo * M.PART_ORDRE) < 1e-12,
+     'sans fraction — caisse a zero, signal d une version anterieure — le repli local reprend la main');
+  ok(m('5', 0.3) === Number(M.ORDRE_MAX_ETH),
+     'mais le plafond par ordre reste le notre : le Banquier raisonne sur une caisse papier qu aucune piscine n absorbe');
+  eq(m('0.001', 0.3), 0, 'et la reserve de gaz n est jamais entamee, quelle que soit la fraction');
+  const C = require('./ai_colonie');
+  C._pose(Object.assign(C.etatNeuf(), { tresor: 1000 }));
+  ok(Math.abs(C._partDuBanquier({ mise: 40 }) - 0.04) < 1e-12,
+     'la colonie calcule la fraction chez elle, ou vit sa tresorerie (40 sur 1000 = 4 %)');
+  eq(C._partDuBanquier({ mise: 0 }), null, 'une mise nulle ne donne aucune fraction');
+  C._pose(Object.assign(C.etatNeuf(), { tresor: 0 }));
+  eq(C._partDuBanquier({ mise: 40 }), null,
+     'et une caisse a zero non plus : « engage tout » ne doit pas pouvoir se traduire chez quelqu un d autre');
+  C._pose(Object.assign(C.etatNeuf(), { tresor: 100 }));
+  eq(C._partDuBanquier({ mise: 90 }), C.MIROIR_PART_MAX,
+     'une fraction aberrante est bornee a ' + (C.MIROIR_PART_MAX * 100) + ' %');
+}
+
 console.log('\n-- les trois bornes de la mise --');
 {
   const m = (eth) => ethers.utils.formatUnits(M._miseDe(W(eth)), 18);

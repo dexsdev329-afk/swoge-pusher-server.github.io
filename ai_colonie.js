@@ -4054,11 +4054,39 @@ try { tg = require('./telegram.js'); } catch (e) { tg = null; }
 let miroir = null;
 function poseMiroir(m) { miroir = m; }
 
+/* ---- ET C'EST LE BANQUIER QUI DIMENSIONNE, PAS LE MIROIR ----
+ *
+ * Le miroir avait sa propre regle — une part fixe du solde — et c'etait une
+ * seconde facon de decider combien engager, a cote de celle qui a ete mesuree
+ * et apprise. La question posee etait la bonne : « quand quelqu'un depose 0,1
+ * ETH, est-ce que le Banquier gere sa bankroll ? » Il ne la gerait pas.
+ *
+ * Ce qu'on passe au miroir, c'est la FRACTION que le Banquier vient d'engager
+ * de sa propre caisse. Elle porte deja tout son travail : la methode apprise,
+ * l'echelle par note, le plafond par position, le plafond d'exposition totale,
+ * le plancher sous lequel il n'ouvre plus, et le regime. Le miroir n'a plus
+ * qu'a l'appliquer a SA caisse — c'est ce que « suivre » veut dire.
+ *
+ * Le rapport est calcule ICI parce que la tresorerie est ici, et il est borne :
+ * un `tresor` a zero, ou une mise plus grande que la caisse, ne doit pas
+ * pouvoir se traduire par « engage tout » chez quelqu'un d'autre. */
+const MIROIR_PART_MAX = 0.35;
+
+function partDuBanquier(s) {
+  const t = Number(E.tresor), m = Number(s && s.mise);
+  if (!isFinite(t) || !isFinite(m) || t <= 0 || m <= 0) return null;
+  const p = m / t;
+  if (!isFinite(p) || p <= 0) return null;
+  return Math.min(MIROIR_PART_MAX, p);
+}
+
 /* Ce que le miroir doit faire de ce signal — lance, jamais attendu. */
 function suitLeMiroir(s) {
   if (!miroir || !s || !s.adr) return;
   try {
-    const p = s.k === 'achat' ? miroir.surAchat({ sym: s.sym, adr: s.adr, pool: s.pool })
+    const p = s.k === 'achat'
+              ? miroir.surAchat({ sym: s.sym, adr: s.adr, pool: s.pool,
+                                  part: partDuBanquier(s), score: s.score })
             : s.k === 'vente' ? miroir.surVente({ adr: s.adr })
             : null;
     if (p && p.catch) p.catch((e) => console.warn('[miroir]', e && e.message));
@@ -6043,7 +6071,7 @@ function arrete() {
 
 module.exports = {
   demarre, arrete, vue, tour, charge, sauve, reprendSansMethode, veille,
-  poseMiroir, _suitLeMiroir: suitLeMiroir,
+  poseMiroir, _suitLeMiroir: suitLeMiroir, _partDuBanquier: partDuBanquier, MIROIR_PART_MAX,
   _signal: signal, _texteSignal: texteSignal, _ferme: ferme, _lienDex: lienDex,
   _poseTg: (x) => { tg = x; },
   _noteAudit: noteAudit, _auditDesRefus: auditDesRefus,

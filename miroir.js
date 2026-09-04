@@ -342,17 +342,40 @@ async function vend(c, cleP, zeroVersUn, jeton, montantWei) {
 
 /* ==================== CE QUE LE MIROIR PEUT ENGAGER ====================
  *
- * Une part du disponible, plafonnee en dur, et jamais la reserve de gaz. Les
- * trois bornes servent : la part garde de la ruine sur un seul jeton, le
- * plafond garde de l'impact sur une piscine mince, la reserve garde la
- * capacite de VENDRE — un miroir sans gaz est un miroir qui regarde son jeton
- * tomber sans pouvoir en sortir. */
-function miseDe(soldeWei) {
+ * ---- C'EST LE BANQUIER QUI DECIDE, PAS CE FICHIER ----
+ *
+ * La premiere version prenait une part fixe du solde. C'etait une SECONDE
+ * facon de dimensionner, a cote de celle que la colonie a apprise et mesuree —
+ * exactement le genre de doublon qu'on paie plus tard. La colonie passe donc
+ * la FRACTION que son Banquier vient d'engager de sa propre caisse, et le
+ * miroir l'applique a la sienne. Elle porte deja la methode apprise, l'echelle
+ * par note, le plafond par position, le plafond d'exposition totale et le
+ * regime : suivre la colonie, c'est engager la meme part qu'elle, pas un
+ * dixieme decide ici.
+ *
+ * `PART_ORDRE` reste le repli, pour le seul cas ou la fraction n'arrive pas —
+ * une caisse a zero, un signal d'une version anterieure.
+ *
+ * ---- ET DEUX BORNES QUI NE VIENNENT PAS DE LUI ----
+ *
+ * Le plafond par ordre, parce que le Banquier raisonne sur une caisse papier
+ * qu'aucune piscine ne doit absorber, alors qu'ici l'ordre part vraiment dans
+ * une piscine de mille dollars et paie son propre impact. Et la reserve de
+ * gaz, jamais entamee : un miroir sans gaz est un miroir qui regarde son jeton
+ * tomber sans pouvoir en sortir.
+ *
+ * La part s'applique au DISPONIBLE du moment, pas a un capital de depart : a
+ * mesure que des positions s'ouvrent, il reste moins, donc les ordres suivants
+ * sont plus petits. C'est plus prudent que la colonie, et dans ce sens-la. */
+function miseDe(soldeWei, part) {
   const dispo = ethers.BigNumber.from(soldeWei).sub(WEI(GAZ_RESERVE));
   if (dispo.lte(0)) return ethers.BigNumber.from(0);
-  const part = dispo.mul(Math.round(PART_ORDRE * 10000)).div(10000);
+  let p = Number(part);
+  if (!isFinite(p) || p <= 0) p = PART_ORDRE;
+  p = Math.min(0.5, p);
+  const mise = dispo.mul(Math.round(p * 10000)).div(10000);
   const plaf = WEI(ORDRE_MAX_ETH);
-  return part.gt(plaf) ? plaf : part;
+  return mise.gt(plaf) ? plaf : mise;
 }
 
 /* ==================== L'INTERFACE ====================
@@ -525,7 +548,7 @@ async function achetePosition(c, t) {
   if (!c.ouvertes) c.ouvertes = {};
   if (c.ouvertes[adr]) return false;                 /* une seule par jeton, comme la colonie */
   const solde = await provider().getBalance(c.adr);
-  const mise = miseDe(solde);
+  const mise = miseDe(solde, t.part);
   if (mise.lte(0)) {
     note(c, 'Skipped ' + (t.sym || adr) + ': not enough ETH (RH) left once the gas reserve is kept');
     return false;
@@ -539,8 +562,14 @@ async function achetePosition(c, t) {
     entree: ethers.utils.formatUnits(mise, 18),
     jetons: r.sortie.toString(), t: Date.now(), simule: r.simule, tx: r.tx || null,
   };
+  /* Le journal dit la PART, et d'ou elle vient : sans ca, « 0,0031 ETH » ne
+     laisse pas savoir si le miroir a suivi le Banquier ou son propre repli. */
+  const dit = t.part
+    ? (Math.round(t.part * 1000) / 10) + '% of what was free — the Banker\'s own share'
+      + (t.score ? ' at score ' + t.score : '')
+    : (Math.round(PART_ORDRE * 1000) / 10) + '% of what was free (fallback: no share from the colony)';
   note(c, (r.simule ? '[dry run] ' : '') + 'Bought ' + (t.sym || adr) + ' for '
-        + ethers.utils.formatUnits(mise, 18) + ' ETH (RH)', { adr, tx: r.tx || null });
+        + ethers.utils.formatUnits(mise, 18) + ' ETH (RH) · ' + dit, { adr, tx: r.tx || null });
   return true;
 }
 
