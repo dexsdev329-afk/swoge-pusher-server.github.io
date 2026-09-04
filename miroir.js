@@ -463,7 +463,9 @@ async function demarre(joueur) {
  *
  *  L'ordre compte, et il n'est pas negociable : balayer d'abord laisserait des
  *  jetons dans un portefeuille sans gaz pour les vendre. */
-async function arrete(joueur, versAdresse) {
+function arrete(joueur, versAdresse) { return enFile(() => arreteFile(joueur, versAdresse)); }
+
+async function arreteFile(joueur, versAdresse) {
   const c = fiche(joueur);
   if (!c) throw new Error('no mirror wallet on this account');
   const vers = norm(versAdresse);
@@ -511,13 +513,39 @@ async function balaie(c, vers) {
   return { envoye: ethers.utils.formatUnits(montant, 18), tx: r.transactionHash };
 }
 
+/* ==================== UNE SEULE CHOSE A LA FOIS ====================
+ *
+ * ---- LE DEFAUT QUE LE MODE D'ESSAI NE POUVAIT PAS MONTRER ----
+ *
+ * La colonie ouvre plusieurs positions dans le MEME tour, et chaque ouverture
+ * appelle `signal()`, qui lance le miroir sans l'attendre — c'est voulu, un
+ * miroir lent ne doit pas retarder un tour. Consequence : deux achats du meme
+ * tour partaient en parallele pour le meme portefeuille, tous deux allaient
+ * lire le meme `nonce`, et la seconde transaction remplacait la premiere ou
+ * etait rejetee. En mode d'essai rien ne part, donc rien ne se voyait : c'est
+ * exactement le genre de defaut qui attend l'argent reel pour apparaitre.
+ *
+ * Tout le travail du miroir passe donc par une file : les ordres s'enchainent,
+ * jamais ne se croisent. Elle est unique pour tous les miroirs — ils sont peu
+ * nombreux et les ordres rares — et elle ne casse jamais : une erreur dans un
+ * maillon ne doit pas emporter la file entiere avec elle. */
+let file = Promise.resolve();
+function enFile(fn) {
+  const suite = file.then(fn, fn);
+  file = suite.then(() => {}, () => {});
+  return suite;
+}
+
 /* ==================== CE QUE LA COLONIE DECLENCHE ====================
  *
  * Ces deux fonctions sont appelees depuis la boucle de la colonie. Elles ne
  * jettent JAMAIS : une erreur de miroir ne doit pas arreter la colonie, qui
  * n'a rien demande a personne. Chaque miroir est traite a son tour, avec une
  * pause — trente signatures dans le meme bloc, c'est la coupure assuree. */
-async function surAchat(t) {
+function surAchat(t) { return enFile(() => achatFile(t)); }
+function surVente(t) { return enFile(() => venteFile(t)); }
+
+async function achatFile(t) {
   const liste = actifs();
   if (!liste.length) return 0;
   let n = 0;
@@ -530,7 +558,7 @@ async function surAchat(t) {
   return n;
 }
 
-async function surVente(t) {
+async function venteFile(t) {
   let n = 0;
   for (const [, c] of Object.entries(R.comptes)) {
     const o = c.ouvertes && c.ouvertes[norm(t.adr)];

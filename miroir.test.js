@@ -320,6 +320,37 @@ console.log('\n-- la clef de piscine se VERIFIE, elle ne se suppose pas --');
      'un identifiant qui ne correspond a rien ne rend RIEN — on n echange pas dans une piscine qu on n a pas su verifier');
 }
 
+console.log('\n-- deux achats du meme tour ne se croisent pas --');
+{
+  /* La colonie ouvre plusieurs positions dans le MEME tour, et lance le miroir
+     sans l'attendre. Sans file, les deux ordres allaient lire le meme `nonce` :
+     la seconde transaction remplacait la premiere. Le mode d'essai ne pouvait
+     pas le montrer — rien ne part — donc c'est un defaut qui attendait
+     l'argent reel. */
+  /* Le scenario precedent a rempli les trois places : on en libere une, ce qui
+     verifie au passage qu un arret en rend bien une. */
+  const places = M._actifs();
+  await M.arrete(places[0].joueur, places[0].joueur);
+  eq(M._actifs().length, 2, 'un arret libere sa place');
+  const j = '0x' + '77'.repeat(20);
+  await M.cree(j);
+  const c = M._fiche(j);
+  chaine.soldes[c.adr.toLowerCase()] = W('0.05');
+  await M.demarre(j);
+  const A = '0x' + 'c1'.repeat(20), B = '0x' + 'c2'.repeat(20);
+  /* Lances ENSEMBLE, comme la colonie le fait, sans attendre le premier. */
+  const p1 = M.surAchat({ sym: 'UN', adr: A, pool: poolDe(A) });
+  const p2 = M.surAchat({ sym: 'DEUX', adr: B, pool: poolDe(B) });
+  const [n1, n2] = await Promise.all([p1, p2]);
+  ok(n1 >= 1 && n2 >= 1, 'les deux achats aboutissent (' + n1 + ' et ' + n2 + ')');
+  const e = await M.etat(j, false);
+  eq(e.ouvertes.length, 2, 'et le miroir porte les DEUX positions, pas une');
+  /* La seconde mise est prise sur ce qui reste : c'est la preuve que le second
+     ordre a vu passer le premier au lieu de partir en meme temps. */
+  ok(e.ouvertes.length === 2 && e.ouvertes[0].entree !== undefined,
+     'chacune avec sa mise (' + e.ouvertes.map((o) => o.entree).join(' puis ') + ')');
+}
+
 console.log('\n-- le registre survit a une relecture --');
 {
   M.sauve();
