@@ -113,7 +113,17 @@ class ChaineReelle extends ethers.providers.StaticJsonRpcProvider {
   appel(tx) {
     const a = String(tx.to || '').toLowerCase();
     const A = ethers.utils.defaultAbiCoder;
-    if (a === M.QUOTEUR4.toLowerCase()) return A.encode(['uint256', 'uint256'], [this.sortieDevis, 100000]);
+    if (a === M.QUOTEUR4.toLowerCase()) {
+      /* La vente (de 1 vers 0 sur la piscine ETH/JETON, l ETH etant currency0)
+         peut rendre autre chose que l achat : c est ce qu une piscine qui ne
+         laisse pas sortir fait voir. Par defaut, elle rend comme l achat. */
+      try {
+        const q = new ethers.utils.Interface(['function quoteExactInputSingle(((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) poolKey,bool zeroForOne,uint128 exactAmount,bytes hookData) params) returns (uint256 amountOut,uint256 gasEstimate)']);
+        const d = q.decodeFunctionData('quoteExactInputSingle', tx.data);
+        if (d.params.zeroForOne === false && this.sortieVente) return A.encode(['uint256', 'uint256'], [this.sortieVente, 100000]);
+      } catch (e) { /* pas ce format : le devis d achat */ }
+      return A.encode(['uint256', 'uint256'], [this.sortieDevis, 100000]);
+    }
     if (a === M.PERMIT2.toLowerCase()) return A.encode(['uint160', 'uint48', 'uint48'], [0, 0, 0]);
     return A.encode(['uint256'], [this.jetonsTenus]);
   }

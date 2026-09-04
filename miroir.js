@@ -162,6 +162,17 @@ const ORDRE_MIN_ETH = String(process.env.MIROIR_ORDRE_MIN || '0.001');
    c'est le gaz qu'on trade, pas le jeton. ~300 000 unites par echange. */
 const GAZ_ORDRE_UNITES = 300000;
 const GAZ_PART_MAX = Math.min(0.5, Math.max(0.01, nEnv('MIROIR_GAZ_PART_MAX', 0.1)));
+/* ---- L'ALLER-RETOUR, AVANT DE PARTIR ----
+ * SLINK, 4 septembre : l'achat de 0,001 ETH simule et passe ; la vente de ce
+ * qu'il rend, demandee au meme quoteur, rend 0,0000001 WETH — zero. Une
+ * piscine avec un hook qui laisse entrer et ne laisse pas sortir. Le papier
+ * de la colonie ne le sent pas : il « vend » au prix affiche. Un ordre reel
+ * le sentirait, une fois. Avant chaque achat, le miroir demande donc au
+ * quoteur ce que rendrait la vente immediate de ce qu'il va recevoir : sous
+ * cette part de la mise, il n'achete pas, et dit pourquoi. Sur une piscine
+ * saine, un petit ordre revient a 98–99 % ; le seuil laisse la place aux
+ * frais et a l'impact, pas a une porte fermee. */
+const RETOUR_MIN = Math.min(0.95, Math.max(0.1, nEnv('MIROIR_RETOUR_MIN', 0.6)));
 const MIN_ETH_CONF = String(process.env.MIROIR_MIN_ETH || '0.005');
 const MAX_ETH     = String(process.env.MIROIR_MAX_ETH || '0.5');
 /* La part du solde engagee par ordre. La colonie ouvre plusieurs positions a la
@@ -986,6 +997,17 @@ async function achetePosition(c, t) {
     return false;
   }
   const route = await routeDe(adr, t.pool);
+  /* L'aller-retour : ce que la vente immediate rendrait. */
+  const sortieAttendue = await devisRoute(route, 'achat', adr, mise);
+  if (sortieAttendue.lte(0)) throw new Error('the quoter returns nothing for this buy');
+  const retour = await devisRoute(route, 'vente', adr, sortieAttendue);
+  if (retour.mul(10000).lt(mise.mul(Math.round(RETOUR_MIN * 10000)))) {
+    const pct = mise.isZero() ? 0 : Math.round(Number(retour.mul(10000).div(mise)) / 100);
+    note(c, 'Skipped ' + (t.sym || adr) + ': selling straight back would return ' + pct + '% of the stake ('
+          + ethers.utils.formatUnits(retour, 18) + ' ETH for ' + ethers.utils.formatUnits(mise, 18)
+          + ') — the pool lets you in, not out. Nothing was sent', { adr });
+    return false;
+  }
   const r = await acheteRoute(c, route, adr, mise);
   c.ouvertes[adr] = {
     sym: t.sym || null, ver: route.ver,
@@ -1101,7 +1123,7 @@ module.exports = {
   /* l'interface du serveur */
   charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente,
   /* les reglages, pour l'ecran et pour les essais */
-  EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE,
+  EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN,
   GAZ_ORDRE_UNITES, GAZ_PART_MAX,
   TOLERANCE_BPS, FICHIER,
   /* les adresses du protocole */

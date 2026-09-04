@@ -138,7 +138,17 @@ class FausseChaine extends ethers.providers.StaticJsonRpcProvider {
     const a = String(tx.to || '').toLowerCase();
     const sel = String(tx.data || '').slice(0, 10);
     const A = ethers.utils.defaultAbiCoder;
-    if (a === M.QUOTEUR4.toLowerCase()) return A.encode(['uint256', 'uint256'], [this.sortieDevis, 100000]);
+    if (a === M.QUOTEUR4.toLowerCase()) {
+      /* La vente (de 1 vers 0 sur la piscine ETH/JETON, l ETH etant currency0)
+         peut rendre autre chose que l achat : c est ce qu une piscine qui ne
+         laisse pas sortir fait voir. Par defaut, elle rend comme l achat. */
+      try {
+        const q = new ethers.utils.Interface(['function quoteExactInputSingle(((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) poolKey,bool zeroForOne,uint128 exactAmount,bytes hookData) params) returns (uint256 amountOut,uint256 gasEstimate)']);
+        const d = q.decodeFunctionData('quoteExactInputSingle', tx.data);
+        if (d.params.zeroForOne === false && this.sortieVente) return A.encode(['uint256', 'uint256'], [this.sortieVente, 100000]);
+      } catch (e) { /* pas ce format : le devis d achat */ }
+      return A.encode(['uint256', 'uint256'], [this.sortieDevis, 100000]);
+    }
     if (a === M.PERMIT2.toLowerCase()) return A.encode(['uint160', 'uint48', 'uint48'], [0, 0, 0]);
     /* Les deux autres places : le routeur v2 cote, le quoteur v3 cote, les
        fabriques ne connaissent rien (le banc donne toujours la piscine). */
@@ -507,6 +517,32 @@ console.log('\n-- la clef v4 : par identifiant d abord, et les monnaies en sujet
   chaine.symboles[GLD] = 'GLD';
   await jete(() => M._routeDe(GOB, idG), /quoted in GLD, not ETH/,
              'une piscine cotee en GLD est refusee AVEC le nom de la monnaie — « no pool » n etait ni vrai ni utile');
+}
+
+console.log('\n-- avant d acheter, l aller-retour : une piscine qui ne laisse pas sortir n est pas achetee --');
+{
+  /* SLINK, 4 septembre : l achat simule passe, la vente de ce qu il rend
+     rend zero. */
+  const JR = '0x' + '5a'.repeat(20), J6 = '0x' + '66'.repeat(19) + '01';
+  for (const { joueur } of M._actifs()) await M.arrete(joueur, joueur);   /* le plafond de l essai est de trois */
+  await M.cree(J6);
+  const cA = M._fiche(J6);
+  chaine.soldes[cA.adr.toLowerCase()] = W('0.05');
+  await M.demarre(J6);
+  ok(!!cA && cA.actif, 'un miroir en marche');
+  const avant = Object.keys(cA.ouvertes || {}).length;
+  chaine.sortieVente = W('0.0000001');            /* la vente rend zero */
+  await M.surAchat({ sym: 'PIEGE', adr: JR, pool: poolDe(JR), part: 0.1 });
+  ok(Object.keys(cA.ouvertes).length === avant, 'rien n est achete');
+  const e = await M.etat(J6, false);
+  ok(/Skipped PIEGE: selling straight back would return 0% of the stake/.test(e.journal[0].txt) && /lets you in, not out/.test(e.journal[0].txt),
+     'et le journal dit pourquoi : « ' + e.journal[0].txt.slice(0, 110) + '… »');
+  chaine.sortieVente = W('0.0039');              /* 80 % de la mise de 0,00485 : frais et impact, pas une porte fermee */
+  await M.surAchat({ sym: 'PIEGE', adr: JR, pool: poolDe(JR), part: 0.1 });
+  ok(Object.keys(cA.ouvertes).length === avant + 1, 'a 80 % de retour, l achat part (seuil ' + Math.round(M.RETOUR_MIN * 100) + ' %)');
+  chaine.sortieVente = null;
+  await M.surVente({ adr: JR });
+  await M.arrete(J6, J6);
 }
 
 console.log('\n-- une piscine v4 cotee en WETH : suivie, avec emballage a l achat et deballage a la vente --');
