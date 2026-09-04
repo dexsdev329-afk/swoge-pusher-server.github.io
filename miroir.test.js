@@ -561,6 +561,20 @@ console.log('\n-- une adresse qui n est ni l un ni l autre, ou pas contre l ETH,
   await M.arrete(J5, J5);
 }
 
+console.log('\n-- une erreur d ordre se lit en une phrase, et dit si de l argent est parti --');
+{
+  /* Vu dans le journal d un joueur : cinq lignes de JSON de transaction,
+     code=UNPREDICTABLE_GAS_LIMIT, et pas un mot sur ce qui s est passe. */
+  const gros = new Error('cannot estimate gas; transaction may fail or may require manual gas limit [ See: https://links.ethers.org/v5-errors-UNPREDICTABLE_GAS_LIMIT ] (reason="execution reverted", method="estimateGas", transaction={"from":"0x..","maxFeePerGas":{"type":"BigNumber"}}, code=UNPREDICTABLE_GAS_LIMIT, version=abstract-signer/5.8.0)');
+  gros.code = 'UNPREDICTABLE_GAS_LIMIT';
+  const r = M._resume(gros);
+  ok(/would revert/.test(r) && /Nothing was sent, nothing was spent/.test(r) && r.length < 220,
+     'un gaz inestimable devient : « ' + r + ' »');
+  ok(/not enough ETH/.test(M._resume(Object.assign(new Error('x'), { code: 'INSUFFICIENT_FUNDS' }))), 'fonds insuffisants : dit');
+  eq(M._resume(new Error('pool key lost for this token')), 'pool key lost for this token', 'une erreur a nous garde sa phrase');
+  ok(M._resume(new Error('a\nb\nc')).indexOf('\n') < 0, 'et jamais plus d une ligne');
+}
+
 console.log('\n-- le registre survit a une relecture --');
 {
   M.sauve();

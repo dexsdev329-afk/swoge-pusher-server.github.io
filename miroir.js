@@ -252,6 +252,26 @@ function actifs() {
     .filter(([, c]) => c && c.actif)
     .map(([j, c]) => ({ joueur: j, c }));
 }
+/* ==================== CE QU UNE ERREUR VEUT DIRE ====================
+ * ethers rend, pour un ordre refuse, l objet entier de la transaction : cinq
+ * lignes de JSON dans le journal du joueur, et pas un mot sur ce qui s est
+ * passe. On traduit les codes qu on connait ; le reste garde sa premiere
+ * ligne. Chaque phrase dit si de l argent est parti : c est la question. */
+function resume(e) {
+  const code = e && e.code;
+  if (code === 'UNPREDICTABLE_GAS_LIMIT' || code === 'CALL_EXCEPTION')
+    return 'the chain refused to simulate this order, it would revert — slippage past the tolerance, a transfer tax, '
+      + 'or a pool that will not take this size. Nothing was sent, nothing was spent';
+  if (code === 'INSUFFICIENT_FUNDS')
+    return 'not enough ETH (RH) for the order plus its gas. Nothing was sent';
+  if (code === 'NONCE_EXPIRED' || code === 'REPLACEMENT_UNDERPRICED')
+    return 'a previous transaction of this wallet is still pending; the order will be retried on the next signal';
+  if (code === 'TIMEOUT' || code === 'SERVER_ERROR' || code === 'NETWORK_ERROR')
+    return 'the node did not answer in time (' + code + '). If a transaction was sent it will settle on its own; the balance is re-read at the next state';
+  const msg = String((e && (e.reason || e.message)) || e || 'unknown error');
+  return msg.split('\n')[0].split(' [ See:')[0].slice(0, 200);
+}
+
 function note(c, txt, extra) {
   if (!Array.isArray(c.journal)) c.journal = [];
   c.journal.unshift(Object.assign({ t: Date.now(), txt }, extra || {}));
@@ -793,8 +813,8 @@ async function arreteFile(joueur, versAdresse) {
       const r = await vendPosition(c, adr, o);
       vendus.push({ sym: o.sym, sortie: r.sortie ? ethers.utils.formatUnits(r.sortie, 18) : null, tx: r.tx });
     } catch (e) {
-      rates.push({ sym: o.sym, adr, pourquoi: e.message });
-      note(c, 'Could not sell ' + (o.sym || adr) + ' on stop: ' + e.message, { adr });
+      rates.push({ sym: o.sym, adr, pourquoi: resume(e) });
+      note(c, 'Could not sell ' + (o.sym || adr) + ' on stop: ' + resume(e), { adr });
     }
     await dors(PAUSE_MS);
   }
@@ -802,7 +822,7 @@ async function arreteFile(joueur, versAdresse) {
   let balaye = null;
   if (EXECUTE) {
     try { balaye = await balaie(c, vers); }
-    catch (e) { note(c, 'Sweep failed: ' + e.message); }
+    catch (e) { note(c, 'Sweep failed: ' + resume(e)); }
   } else {
     note(c, 'Stop — dry run: nothing was sold and nothing was swept');
   }
@@ -865,7 +885,7 @@ async function achatFile(t) {
   let n = 0;
   for (const { c } of liste) {
     try { if (await achetePosition(c, t)) n++; }
-    catch (e) { note(c, 'Could not follow the buy on ' + (t.sym || t.adr) + ': ' + e.message, { adr: t.adr }); }
+    catch (e) { note(c, 'Could not follow the buy on ' + (t.sym || t.adr) + ': ' + resume(e), { adr: t.adr }); }
     await dors(PAUSE_MS);
   }
   if (n) sauve();
@@ -878,7 +898,7 @@ async function venteFile(t) {
     const o = c.ouvertes && c.ouvertes[norm(t.adr)];
     if (!o) continue;
     try { await vendPosition(c, norm(t.adr), o); n++; }
-    catch (e) { note(c, 'Could not follow the sell on ' + (o.sym || t.adr) + ': ' + e.message, { adr: t.adr }); }
+    catch (e) { note(c, 'Could not follow the sell on ' + (o.sym || t.adr) + ': ' + resume(e), { adr: t.adr }); }
     await dors(PAUSE_MS);
   }
   if (n) sauve();
@@ -998,6 +1018,6 @@ module.exports = {
   _plancher: plancher, _miseDe: miseDe, _pourquoiPasDeMise: pourquoiPasDeMise, _balaie: balaie,
   _routeDe: routeDe, _devisRoute: devisRoute, _ordre: ordre, _R2_ABI: R2_ABI, _R3_ABI: R3_ABI,
   _etat: () => R, _pose: (x) => { R = x; }, _poseProvider: poseProvider,
-  _fiche: fiche, _actifs: actifs, _bilan: bilan, _reconcilie: reconcilie,
+  _fiche: fiche, _actifs: actifs, _bilan: bilan, _reconcilie: reconcilie, _resume: resume,
   _oublieReconciliation: () => derniereReconciliation.clear(),
 };
