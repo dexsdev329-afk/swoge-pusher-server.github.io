@@ -218,6 +218,23 @@ const BLOCS_HEURE = Math.round(3600 / BLOC_SECONDES);
 const BLOCS_PLAFOND = 200000;   /* la plage que le noeud accepte, verifiee */
 
 const TTL_GOPLUS = 6 * 3600e3, TTL_OHLCV = 30 * 60e3, TTL_DEX = 10 * 60e3, TTL_CHAINE = 10 * 60e3;
+/* ==========================================================================
+ * UN SILENCE DE GOPLUS N'EST PAS UNE REPONSE DE SIX HEURES
+ *
+ * Releve du 4 septembre : le Warden aveugle sur 49 jetons sur 53 dans la
+ * journee, cle posee et acceptee. L'alerte disait « structurel : GoPlus
+ * n'indexe pas un jeton de quelques minutes ». Vrai a la premiere lecture —
+ * mais cette lecture vide etait GARDEE SIX HEURES, comme une vraie reponse.
+ * Le jeton repassait a vingt minutes, a une heure, par la reprise par l'age
+ * et la surveillance : le Warden relisait le cache, toujours vide, et restait
+ * aveugle sur un contrat que GoPlus connaissait depuis longtemps. Le trou
+ * n'etait pas chez GoPlus, il etait dans notre cache.
+ *
+ * Un silence est donc garde huit minutes : assez pour ne pas repayer l'appel
+ * dans le meme tour, pas plus. La reponse suivante, quand elle vient, est
+ * gardee six heures comme avant.
+ * ======================================================================== */
+const TTL_GOPLUS_MUET = 8 * 60e3;
 const TTL_TRADES = 8 * 60e3;   /* les trades vieillissent vite : c'est tout leur interet */
 
 /* ---- CE QUE LE BANQUIER NE PEUT PAS APPRENDRE A DESSERRER ----
@@ -916,8 +933,10 @@ const urlImage = (u) => {
   return x.slice(0, 300);
 };
 const CACHE = { goplus: {}, ohlcv: {}, dex: {}, chaine: {}, trades: {}, poolDe: {} };
-const frais = (c, k, ttl) => { const x = c[k]; return (x && Date.now() - x.t < ttl) ? x.v : null; };
-const garde = (c, k, v) => { c[k] = { t: Date.now(), v }; return v; };
+/* Une entree peut porter SA duree : un silence ne vaut pas une reponse, et ne
+   doit pas etre garde aussi longtemps. */
+const frais = (c, k, ttl) => { const x = c[k]; return (x && Date.now() - x.t < (x.ttl || ttl)) ? x.v : null; };
+const garde = (c, k, v, ttl) => { c[k] = { t: Date.now(), v, ttl: ttl || undefined }; return v; };
 const dors = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function json(url, opts) {
@@ -1329,6 +1348,8 @@ async function lisGoplus(t) {
     codeSu: !seContredit && info.is_open_source !== undefined,
     unverified: !seContredit && info.is_open_source === '0',
   });
+  /* Un silence se relit dans huit minutes, pas dans six heures. */
+  if (!t.g.have && CACHE.goplus[t.addr]) CACHE.goplus[t.addr].ttl = TTL_GOPLUS_MUET;
 }
 
 async function lisOhlcv(pool) {
@@ -5139,20 +5160,34 @@ function alertes() {
      le site, la variable et ce qui restera trou meme avec la cle. */
   {
     const w = recents('warden', JOUR_MS);
-    const muets = w.filter((x) => !x.lu).length;
+    const muetsL = w.filter((x) => !x.lu);
+    const muets = muetsL.length;
+    /* Sous vingt minutes, GoPlus n'a souvent pas encore le jeton : c'est la
+       jeunesse, pas une panne. Au-dela, il devrait l'avoir — et un silence
+       la est une question a poser a la cle, pas a la structure. */
+    const AGE_CONNU = 20;
+    const vieuxMuets = muetsL.filter((x) => typeof x.age === 'number' && x.age >= AGE_CONNU).length;
+    const jeunesMuets = muetsL.filter((x) => typeof x.age === 'number' && x.age < AGE_CONNU).length;
     const cob = recents('cobaye', JOUR_MS);
     const bloques = cob.filter((x) => x.verdict === 'bloque').length;
     const incs = cob.filter((x) => x.verdict === 'incertain');
-    if (w.length >= 50 && muets > w.length / 2) {
+    /* Sans cle : une demande. Avec la cle : une alerte seulement si des jetons
+       assez vieux pour etre connus reviennent vides — sinon il n'y a rien a
+       demander, et une alerte sans demande n'existe plus ; l'audit garde le
+       chiffre. */
+    if (w.length >= 50 && muets > w.length / 2 && (!goplusIdentifie() || vieuxMuets >= w.length / 4)) {
       const raisons = {};
       for (const x of incs) { const k = x.raison || 'reason not recorded'; raisons[k] = (raisons[k] || 0) + 1; }
       const top = Object.entries(raisons).sort((a, b) => b[1] - a[1])[0];
       const gk = s('goplusCle');
+      const gp = s('goplus');
       let remede = goplusIdentifie()
         ? 'Already in place: the GoPlus pair is set'
-          + (gk.reussites ? ' and accepted (' + gk.reussites + '/' + gk.essais + ' tokens obtained)' : '')
-          + '. What remains is structural: GoPlus does not index a token a few minutes old, and no '
-          + 'key changes that. The Cobaye is the cover for those.'
+          + (gk.reussites ? ' and accepted (access token obtained ' + gk.reussites + '/' + gk.essais + ' times)' : '')
+          + '. Yet ' + vieuxMuets + ' tokens older than ' + AGE_CONNU + ' min came back empty, and that is not '
+          + 'youth: GoPlus should know those. Check the key\'s plan and quota on gopluslabs.io'
+          + (gp.dernierEchec ? ' (last refusal: « ' + gp.dernierEchec + ' »)' : '') + '. A silence is now '
+          + 're-read after 8 min instead of 6 h, so a token indexed late gets its check on its next examination.'
         : 'What to supply: a GoPlus API pair. gopluslabs.io → sign in → « API » → « Create App '
           + 'Key » (free tier) gives an App Key and an App Secret: set GOPLUS_APP_KEY and '
           + 'GOPLUS_APP_SECRET in the Railway variables, redeploy. It raises the rate limit and the '
@@ -5175,7 +5210,9 @@ function alertes() {
       dis('haute', 'The contract check ran blind on ' + muets + ' of ' + w.length
           + ' tokens in the last 24 h',
         'The Warden reads the contract — honeypot, taxes, owner powers — through GoPlus, and GoPlus '
-        + 'returned nothing for those. It stays quiet when it has read nothing, and that is right: '
+        + 'returned nothing for those: ' + jeunesMuets + ' were under ' + AGE_CONNU + ' min old when read (GoPlus '
+        + 'rarely has those yet), ' + vieuxMuets + ' were older (it should know those). '
+        + 'It stays quiet when it has read nothing, and that is right: '
         + 'saying « nothing to report » about a silence would be inventing a guarantee. The Cobaye '
         + 'covers the hole by trying the exit: ' + bloques + ' block(s) out of ' + cob.length
         + ' trials today, ' + incs.length + ' inconclusive — and an inconclusive trial does not stop '
@@ -5844,7 +5881,8 @@ async function tour() {
       appelsTotal += t.appels;
       compte('scoutVu');
       if (t.lu.goplus && !(t.g && t.g.have)) compte('goplusMuet');
-      if (t.lu.goplus) releve('warden', { lu: !!(t.g && t.g.have) });
+      if (t.lu.goplus) releve('warden', { lu: !!(t.g && t.g.have),
+                                          age: (typeof t.minutes === 'number' && isFinite(t.minutes)) ? Math.round(t.minutes) : null });
 
       let an = null;
       if (!refus) {
@@ -6265,7 +6303,7 @@ module.exports = {
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,
   revoitStrategie, seuilCourant, partRefus, REFUS_AVEUGLE,
   revoitLesBornes, borne, BORNES, partAbandons, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
-  releve, recents, JOUR_MS,
+  releve, recents, JOUR_MS, TTL_GOPLUS_MUET,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN, OMBRE_DISPARUE, OMBRE_SILENCES,

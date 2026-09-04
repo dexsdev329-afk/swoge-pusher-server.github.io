@@ -2263,7 +2263,8 @@ async function alertesDatees() {
   console.log('\n-- le Warden aveugle : le site, la variable, et ce qui restera --');
   remise(sains());
   G = C._etat();
-  for (let i = 0; i < 60; i++) G.releves.push({ k: 'warden', t: il_y_a(60e3 * i), lu: i >= 40 });
+  /* 45 minutes : des jetons que GoPlus devrait connaitre. */
+  for (let i = 0; i < 60; i++) G.releves.push({ k: 'warden', t: il_y_a(60e3 * i), lu: i >= 40, age: 45 });
   for (let i = 0; i < 10; i++) G.releves.push({ k: 'cobaye', t: il_y_a(60e3 * i),
     verdict: i < 4 ? 'incertain' : (i < 7 ? 'bloque' : 'ok'),
     raison: i < 4 ? 'no known holder to try the exit with' : null });
@@ -2278,8 +2279,34 @@ async function alertesDatees() {
   process.env.GOPLUS_APP_KEY = 'k'; process.env.GOPLUS_APP_SECRET = 's';
   a = C.alertes().find((x) => /contract check/.test(x.quoi));
   ok(!!a && /Already in place/.test(a.quoiFaire) && !/Create App/.test(a.quoiFaire),
-     'avec la cle : on ne la redemande pas, on dit ce qui reste');
+     'avec la cle : on ne la redemande pas');
+  ok(/40 were older/.test(a.pourquoi) && /older than 20 min came back empty/.test(a.quoiFaire) && /quota/.test(a.quoiFaire),
+     'et des jetons de 45 minutes revenus vides ne sont pas « structurels » : on envoie verifier la cle et son quota');
+  /* Les memes silences sur des jetons de trois minutes : c est la jeunesse,
+     il n y a rien a demander — donc pas d alerte. L audit garde le chiffre. */
+  for (const x of G.releves) if (x.k === 'warden') x.age = 3;
+  ok(!C.alertes().some((x) => /contract check/.test(x.quoi)),
+     'les memes silences sur des jetons de trois minutes, cle posee : aucune alerte — rien a fournir');
   delete process.env.GOPLUS_APP_KEY; delete process.env.GOPLUS_APP_SECRET;
+  ok(!!C.alertes().find((x) => /contract check/.test(x.quoi)),
+     'sans cle, les memes silences redeviennent une demande : la cle');
+
+  console.log('\n-- un silence de GoPlus est garde huit minutes, pas six heures --');
+  remise([jeton(0, { goplus: 'muet' }), jeton(1)]);
+  await C.tour();
+  const muet = C._cache.goplus[MONDE.jetons[0].addr], plein = C._cache.goplus[MONDE.jetons[1].addr];
+  ok(!!muet && muet.v && muet.v.have === false && muet.ttl === C.TTL_GOPLUS_MUET,
+     'le silence porte sa duree courte (' + (muet && muet.ttl / 60000) + ' min) : le Warden relira au prochain passage');
+  ok(!!plein && plein.v && plein.v.have === true && plein.ttl === undefined,
+     'une vraie reponse garde les six heures');
+  const gAvant = appels.goplus;
+  muet.t = Date.now() - C.TTL_GOPLUS_MUET - 1000;      /* huit minutes plus tard */
+  /* Et le jeton doit REPASSER : un jeton deja juge dont rien n a bouge n est
+     pas reexamine — c est la reprise par l age ou la surveillance qui le
+     ramene. On recule sa derniere lecture. */
+  for (const j of MONDE.jetons) if (C._etat().connus[j.addr]) C._etat().connus[j.addr].dernier = 0;
+  await C.tour();
+  ok(appels.goplus > gAvant, 'passe le delai, le jeton muet est relu (' + (appels.goplus - gAvant) + ' appel), le plein ne l est pas');
 
   console.log('\n-- et le releve se remplit tout seul, borne, et survit a la relecture --');
   remise(sains());
