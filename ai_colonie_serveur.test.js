@@ -2437,6 +2437,18 @@ async function pairesEthSeulement() {
   const gld2 = v.candidats.find((c) => c.sym === 'TOK0');
   ok(!!gld2 && !/not ETH/.test(gld2.refus || ''), 'la paire GLD n est plus refusee pour sa monnaie');
   delete process.env.PAIRES_ETH_SEULES;
+
+  console.log('\n-- quand cette regle domine les refus, l alerte dit qu elle est un choix, et nomme sa variable --');
+  remise(sains());
+  const G2 = C._etat();
+  G2.toursSansAchat = 21; G2.refusVus = 80;
+  G2.refusFamilles = { 'quoted in something other than ETH': 57, 'pool below the buy floor': 23 };
+  const al = C.alertes().find((x) => /Nothing bought for/.test(x.quoi));
+  ok(!!al, 'l alerte « rien achete » est la');
+  ok(/quoted in something other than ETH » : 71% of refusals \(setting: PAIRES_ETH_SEULES\)/.test(al.pourquoi),
+     'la famille porte sa variable, pas « no variable » : « ' + al.pourquoi.slice(al.pourquoi.indexOf('What REALLY'), al.pourquoi.indexOf('What REALLY') + 110) + '… »');
+  ok(/deliberate/.test(al.quoiFaire) && /PAIRES_ETH_SEULES=0/.test(al.quoiFaire) && /Look at the next rules/.test(al.quoiFaire),
+     'et le remede dit que cette regle est un choix, ce que la lever couterait, et renvoie aux suivantes');
 }
 
 /* ==========================================================================

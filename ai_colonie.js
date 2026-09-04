@@ -5164,7 +5164,7 @@ function alertes() {
     [/^missing:|il manque :/, 'SOCIAUX_EXIGES'],
     [/no public presence/, 'SOCIAUX_EXIGES'],
     [/score too low|note trop basse/, 'the entry threshold, which the colony moves itself'],
-    [/not ETH: a real order could not follow it/, 'PAIRES_ETH_SEULES'],
+    [/not ETH: a real order could not follow it|quoted in something other than ETH/, 'PAIRES_ETH_SEULES'],
     [/not indexed by DexScreener|pas encore verifiable/, 'SOCIAUX_EXIGES (the rule waits for DexScreener)'],
     /* Les regles qui n'ont PAS de variable : le dire aussi. Une famille sans
        reglage laisserait chercher une variable qui n'existe pas — c'est pire
@@ -5303,7 +5303,19 @@ function alertes() {
         + 'they reach the required age — they come back, they are not lost.' : '')
       + (dit.length ? ' What REALLY stops them, on the other ' + fermes + ' — '
         + dit.join(' · ') + '.' : ''),
-      'The rules stack: a token has to clear EVERY bound at once, and on this chain very few then '
+      /* ---- LA REGLE DES PAIRES ETH EST UN CHOIX, PAS UN REGLAGE A BOUGER ----
+       * Depuis qu elle existe, elle domine les refus (71 % le 4 septembre) et
+       * l alerte disait « si un seul reglage fait la moitie des refus, c est
+       * celui-la qu il faut bouger ». Pas celui-la : le baisser ferait acheter
+       * au papier des paires qu aucun ordre reel ne peut suivre. On le dit, et
+       * on renvoie aux regles suivantes. */
+      (fam.length && /quoted in something other than ETH|not ETH/.test(fam[0].k) && fam[0].n >= fermes / 2
+        ? 'The top one is deliberate: « quoted in something other than ETH » keeps the paper on pairs a real '
+          + 'order can follow, and fewer buys is its price — on this chain most new tokens are launched against '
+          + 'tokenised stocks or gold. PAIRES_ETH_SEULES=0 would have the paper buy them again, and the mirror '
+          + 'could follow none of them. Look at the next rules instead. '
+        : '')
+      + 'The rules stack: a token has to clear EVERY bound at once, and on this chain very few then '
       + 'remain. If a single setting accounts for half the refusals, that is the one to move — the '
       + 'others would change almost nothing. And the "what becomes of the rejected" panel says, '
       + 'for each rule, what the tokens it set aside went on to do: that is the only way to know '
