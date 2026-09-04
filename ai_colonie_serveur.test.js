@@ -2520,6 +2520,33 @@ async function placesGratuites() {
 }
 
 /* ==========================================================================
+ * LA MEMOIRE NE GARDE QUE DES PAIRES ETH
+ * ======================================================================== */
+async function memoireDesPairesEth() {
+  console.log('\n-- la surveillance et la reprise ignorent un jeton cote ailleurs qu en ETH --');
+  const GLD = '0x' + '9d'.repeat(20);
+  remise([jeton(0, { quote: 'GLD', quoteAdr: GLD }), jeton(1, { mc: 150000 })]);   /* TOK1 : refuse (plafond), mais ETH */
+  await C.tour();
+  const G = C._etat();
+  const cg = G.connus[MONDE.jetons[0].addr], ce = G.connus[MONDE.jetons[1].addr];
+  ok(!!cg && cg.quote && cg.quote.sym === 'GLD', 'la memoire garde la monnaie de la paire (' + JSON.stringify(cg && cg.quote) + ')');
+  ok(!!ce && ce.quote && /ETH/.test(ce.quote.sym), 'et celle de la paire ETH');
+  /* On les met tous deux « pres du seuil », refuses, ages de vingt minutes. */
+  for (const c of [cg, ce]) { c.meilleure = 90; c.ne = Date.now() - 20 * 60000; c.repris = 0; }
+  cg.verdict = 'quoted in GLD, not ETH: a real order could not follow it'; ce.verdict = 'cap: above the buy ceiling';
+  const sv = C.surveilles();
+  ok(sv.some((x) => x.addr === MONDE.jetons[1].addr) && !sv.some((x) => x.addr === MONDE.jetons[0].addr),
+     'la surveillance garde la paire ETH et pas la GLD, a note egale');
+  appels.dex = 0;
+  const rep = await C.reprises(new Map());
+  ok(rep.some((x) => x.addr === MONDE.jetons[1].addr) && !rep.some((x) => x.addr === MONDE.jetons[0].addr),
+     'la reprise relit la paire ETH et pas la GLD : ' + rep.length + ' relue(s), ' + appels.dex + ' appel(s) DexScreener');
+  process.env.PAIRES_ETH_SEULES = '0';
+  ok(C.surveilles().some((x) => x.addr === MONDE.jetons[0].addr), 'regle levee, la GLD revient en surveillance');
+  delete process.env.PAIRES_ETH_SEULES;
+}
+
+/* ==========================================================================
  * 31. LA CLE dRPC
  * ======================================================================== */
 async function drpcCle() {
@@ -5048,6 +5075,7 @@ function bornesQuiSeReglent() {
   await alertesDatees();
   await pairesEthSeulement();
   await placesGratuites();
+  await memoireDesPairesEth();
   await tranchesAuMiroir();
   await venteAuPrixDuMoment();
   motsQuiCommandent();

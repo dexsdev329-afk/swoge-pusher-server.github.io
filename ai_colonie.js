@@ -3248,6 +3248,9 @@ function noteConnu(t, verdict, note) {
   c.note = note === undefined ? null : note;
   c.liq = Math.round(t.liq || 0);
   c.prix = t.prix || 0;
+  /* La monnaie de sa paire, pour que la memoire sache qu il n est pas
+     achetable : voir `surveilles` et `reprises`. */
+  if (t.quote) c.quote = { sym: t.quote.sym, adr: t.quote.adr };
   if (verdict && REFUS_DEFINITIFS.test(verdict)) c.permanent = true;
   if (note !== undefined && note !== null && (c.meilleure === undefined || note > c.meilleure)) c.meilleure = note;
   return c;
@@ -3277,11 +3280,31 @@ function doitExaminer(t) {
 }
 /* Ce que la page montre sous « surveillance » : ceux qu'on garde a l'oeil
    parce qu'ils ont frole le seuil, et non ceux qu'on a bannis. */
+/* ==========================================================================
+ * LA MEMOIRE NE GARDE QUE DES PAIRES ETH
+ *
+ * « Vérifie que la watchlist fait bien son travail : elle garde en mémoire
+ *   des tokens ETH RH. »
+ *
+ * Releve le 4 septembre : douze places de surveillance, cinq prises par des
+ * jetons cotes en META, QQQ, SGOV — une note de 84 a 90, donc « pres du
+ * seuil », et pourtant jamais achetables. Et la reprise, qui relit cinq
+ * jetons par tour en payant DexScreener, les relisait eux : les meilleures
+ * notes d abord, et les leurs etaient bonnes. Cinq places sur douze, et une
+ * part des cinq relectures, pour des jetons que le Scout refuserait a coup
+ * sur. La memoire garde donc la monnaie de la paire, et ni la surveillance ni
+ * la reprise ne s occupent d un jeton dont on sait qu il n est pas cote en
+ * ETH — tant que la regle des paires ETH est en vigueur.
+ * ======================================================================== */
+function achetable(c) {
+  return !(pairesEthSeules() && c.quote && coteEnEth(c.quote) === false);
+}
 function surveilles() {
   const out = [];
   for (const addr in E.connus) {
     const c = E.connus[addr];
     if (c.permanent) continue;
+    if (!achetable(c)) continue;
     if (!(c.meilleure >= SEUIL - 20)) continue;
     out.push({ addr, sym: c.sym, vu: c.vu, note: c.note, meilleure: c.meilleure,
                dernier: c.dernier, verdict: c.verdict, liq: c.liq });
@@ -5684,6 +5707,7 @@ async function reprises(dejaVu) {
     const c = E.connus[addr];
     if (c.permanent || dejaVu.has(addr)) continue;
     if (!c.verdict) continue;                       /* jamais refuse : rien a reprendre */
+    if (!achetable(c)) continue;                    /* cote en GLD : on ne le relira pas pour rien */
     /* Un refus « trop jeune » ne dit rien du jeton : il dit l'heure. Exiger en
        plus une note serait juger sur ce qu'on a lu a deux minutes, c'est-a-dire
        presque rien — et la regle d'age n'aurait alors ecarte que du silence. */
