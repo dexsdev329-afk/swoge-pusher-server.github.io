@@ -35,6 +35,7 @@ const paris = require('./paris');
 const parisImport = require('./paris_import');
 const espn = require('./scores_espn');
 const aiColonie = require('./ai_colonie');
+const miroir = require('./miroir');
 
 /* ---- IL VIT AU MODULE, PAS DANS LA REQUETE ----
  * Il etait declare dans le gestionnaire HTTP, c'est-a-dire RECONSTRUIT a
@@ -3800,6 +3801,55 @@ wss.on('connection', (ws) => {
        * (`voucher` porte le coffre a appeler), pour que la page n'ait qu'un
        * seul chemin d'encaissement. */
       if (m.type === 'betBalance') return send(ws, { type: 'betBalance', betBalance: game.betBalanceStr(ws.addr) });
+
+      /* ---- LE MIROIR DE SWOGE AI ----
+       *
+       * Suivre la colonie avec son propre argent. Cinq messages, et tous
+       * portent sur LE portefeuille du joueur connecte : `ws.addr` est
+       * l'adresse prouvee par signature a la connexion, jamais un champ du
+       * message. Un miroir qu'on pourrait designer par son adresse serait un
+       * miroir que n'importe qui pourrait vider.
+       *
+       * La cle privee ne part que sur ces deux messages-la, jamais dans un
+       * etat, jamais dans une annonce, jamais dans un journal. */
+      if (m.type === 'miroirEtat') {
+        try { send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr))); }
+        catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'miroirCree') {
+        try {
+          const r = await miroir.cree(ws.addr);
+          console.log('[miroir] portefeuille cree pour ' + ws.addr.slice(0, 10) + '…');
+          send(ws, { type: 'miroirCle', adresse: r.adresse, cle: r.cle, neuf: true });
+          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'miroirCle') {
+        try { send(ws, Object.assign({ type: 'miroirCle', neuf: false }, miroir.revele(ws.addr))); }
+        catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'miroirPlay') {
+        try {
+          await miroir.demarre(ws.addr);
+          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'miroirStop') {
+        try {
+          /* La destination n'est pas choisie par le message : c'est le
+             portefeuille du COMPTE, celui qui a signe la connexion. Laisser le
+             client nommer l'adresse de sortie, c'est offrir le balayage a qui
+             sait envoyer un message. */
+          const r = await miroir.arrete(ws.addr, ws.addr);
+          send(ws, Object.assign({ type: 'miroirStop' }, r));
+          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
       if (m.type === 'betWithdraw') {
         try {
           if (!chainBet.suitLesRetraits()) throw new Error('the $SWOGEBET vault is not deployed yet');
@@ -6831,6 +6881,35 @@ server.listen(cfg.PORT, () => {
     } catch (e) {
       console.warn('[ai] colonie non demarree :', e.message);
     }
+  }
+
+  /* ---- LE MIROIR : SUIVRE LA COLONIE AVEC SON PROPRE ARGENT ----
+   *
+   * On le charge et on le pose sur la colonie meme quand il est inutilisable :
+   * sans `MIROIR_CLE` il refuse de creer le moindre portefeuille, donc il n'a
+   * rien a suivre, et l'ecran a besoin de savoir POURQUOI plutot que de voir un
+   * bouton qui ne repond pas.
+   *
+   * Le mode est ecrit au demarrage, en toutes lettres. Un serveur qui signerait
+   * des transactions avec l'argent de joueurs sans le dire dans son journal de
+   * demarrage est un serveur dont personne ne sait ce qu'il fait. */
+  try {
+    miroir.charge();
+    aiColonie.poseMiroir(miroir);
+    const p = miroir.pret();
+    if (!p.ok) {
+      console.log('[miroir] ETEINT : ' + p.pourquoi
+        + ' — aucun portefeuille ne peut etre cree, et l ecran le dit');
+    } else if (!miroir.EXECUTE) {
+      console.log('[miroir] ESSAI (MIROIR_EXECUTE=0) — les ordres sont chiffres et journalises,'
+        + ' RIEN n est envoye sur la chaine. Passer a 1 fait signer de l argent reel.');
+    } else {
+      console.warn('[miroir] REEL (MIROIR_EXECUTE=1) — ce serveur SIGNE avec l argent des joueurs.\n'
+        + '         Plafond ' + miroir.MAX_ETH + ' ETH par portefeuille, '
+        + miroir.MIROIRS_MAX + ' miroirs actifs au plus, ' + miroir.ORDRE_MAX_ETH + ' ETH par ordre.');
+    }
+  } catch (e) {
+    console.warn('[miroir] non demarre :', e.message);
   }
 
   /* ---- LES ACHATS DE $SWOGEBET PASSENT DANS LE CANAL ----
