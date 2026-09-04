@@ -4064,9 +4064,17 @@ function signal(s) {
  * « token not found » au bout d'un lien qu'on a propose soi-meme est pire
  * qu'une absence de lien. La recherche par contrat, elle, existe toujours.
  * On prend donc la paire quand on l'a, la recherche sinon. */
+/* ---- ET LE POOL PEUT FAIRE SOIXANTE-SIX CARACTERES ----
+ * Sur Robinhood Chain, les paires Uniswap V4 n'ont pas d'adresse : elles ont
+ * un identifiant de trente-deux octets, « 0x » plus soixante-quatre chiffres.
+ * La borne a soixante caracteres les rejetait TOUTES, et chaque signal partait
+ * vers la page de recherche au lieu de la paire — « ca ne redirige pas sur le
+ * jeton ». DexScreener lui-meme ecrit ses adresses de page avec cet
+ * identifiant (champ `url` de son API) : c'est exactement ce qu'on rebatit. */
+const POOL_LIEN = /^0x(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/;
 function lienDex(s) {
-  if (s.pool && /^[0-9a-zA-Z]{20,60}$/.test(String(s.pool)))
-    return 'https://dexscreener.com/robinhood/' + encodeURIComponent(s.pool);
+  if (s.pool && POOL_LIEN.test(String(s.pool)))
+    return 'https://dexscreener.com/robinhood/' + String(s.pool).toLowerCase();
   if (/^0x[0-9a-fA-F]{40}$/.test(String(s.adr || '')))
     return 'https://dexscreener.com/search?q=' + encodeURIComponent(s.adr);
   return null;
@@ -6005,7 +6013,7 @@ function arrete() {
 
 module.exports = {
   demarre, arrete, vue, tour, charge, sauve, reprendSansMethode, veille,
-  _signal: signal, _texteSignal: texteSignal, _ferme: ferme,
+  _signal: signal, _texteSignal: texteSignal, _ferme: ferme, _lienDex: lienDex,
   _poseTg: (x) => { tg = x; },
   _noteAudit: noteAudit, _auditDesRefus: auditDesRefus,
   _familleRefus: familleRefus, _regroupeAudit: regroupeAudit, _noeudMort: noeudMort,

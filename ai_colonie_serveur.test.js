@@ -3388,6 +3388,20 @@ async function lesSignaux() {
    * telephone. */
   ok(/<a href="https:\/\/dexscreener\.com\//.test(t) && t.indexOf('$' + a.sym) > 0,
      'le message mene a DexScreener, sur le jeton concerne');
+  /* ---- ET SUR LA PAIRE, MEME QUAND LE POOL FAIT SOIXANTE-SIX CARACTERES ----
+   * Les paires Uniswap V4 de Robinhood Chain ont un identifiant de trente-deux
+   * octets, pas une adresse. La borne a soixante caracteres les rejetait
+   * toutes, et chaque signal partait vers la page de RECHERCHE : « ca ne
+   * redirige pas sur le jeton ». */
+  const v4 = '0xdc12cc18d43af3d6db81aac43ed48cb9029a898184a15f9a32b7565b6d5904e0';
+  const tv4 = C._texteSignal(Object.assign({}, a, { pool: v4 }));
+  ok(tv4.indexOf('https://dexscreener.com/robinhood/' + v4) >= 0 && tv4.indexOf('search?q=') < 0,
+     'un pool V4 de 66 caracteres mene a SA page de paire, pas a la recherche');
+  ok(C._lienDex({ pool: '0x5475476E20F141AE50279CD352D874C83B0B96AE', adr: a.adr })
+       === 'https://dexscreener.com/robinhood/0x5475476e20f141ae50279cd352d874c83b0b96ae',
+     'une adresse de paire de 42 caracteres aussi, en minuscules');
+  ok(/search\?q=/.test(C._lienDex({ pool: 'pas-un-pool', adr: a.adr })),
+     'et sans pool lisible, la recherche par contrat reste le repli');
 
   /* ---- CE QUI VIENT D'UN JETON NE PART PAS TEL QUEL EN HTML ----
    * Le message est envoye en `parse_mode: HTML`, et le symbole vient de
