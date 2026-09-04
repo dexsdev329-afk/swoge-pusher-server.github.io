@@ -167,6 +167,13 @@ const RPC_RH = 'https://rpc.mainnet.chain.robinhood.com';
  * l'adresse par defaut, et la colonie apprend toute seule a ne plus l'appeler. */
 const RPC_SECOURS = (process.env.RPC_SECOURS || '').trim() || 'https://robinhood.drpc.org';
 const RPC_SECOURS_PLAGE = Math.max(100, parseInt(process.env.RPC_SECOURS_PLAGE || '10000', 10) || 10000);
+/* Le nom qu'on lui donne dans la vue et les alertes : « dRPC » quand c'est
+   dRPC, sinon l'hote de l'adresse posee — sans la cle, qui est dedans. */
+const SECOURS_NOM = (function () {
+  if (!(process.env.RPC_SECOURS || '').trim()) return 'public dRPC node';
+  try { return 'RPC_SECOURS node (' + new URL(RPC_SECOURS).hostname + ')'; }
+  catch (e) { return 'RPC_SECOURS node'; }
+})();
 const SUJET_TRANSFERT = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const ZERO = '0x0000000000000000000000000000000000000000';
 const MORT = '0x000000000000000000000000000000000000dead';
@@ -260,7 +267,8 @@ const SERVICES = {
   profils: { nom: 'DexScreener · recent profiles', cout: 0, quoi: 'new tokens whose profile someone filled in' },
   boosts:  { nom: 'DexScreener · boosted tokens', cout: 0, quoi: 'tokens someone paid to promote' },
   chaine:  { nom: 'Chain 4663 · official node', cout: 1, quoi: 'who holds what, by adding up transfers' },
-  chaine2: { nom: 'Chain 4663 · public dRPC node', cout: 1, quoi: 'the same, as backup when the official one saturates (10,000 blocks max)' },
+  chaine2: { nom: 'Chain 4663 · ' + SECOURS_NOM, cout: 1,
+             quoi: 'the same, as backup when the official one saturates (' + RPC_SECOURS_PLAGE.toLocaleString('en-US') + ' blocks max)' },
   chaineCle: { nom: 'Chain 4663 · our own dRPC node', cout: 1,
                quoi: 'the same, but on throughput that belongs to us instead of being shared' },
   goplus:  { nom: 'GoPlus · contract safety', cout: 1, quoi: 'honeypot, taxes, owner powers' },
@@ -4669,7 +4677,7 @@ function alertes() {
   const noeudsVus = [
     { cle: 'chaineCle', nom: 'the keyed node (dRPC)', s: s('chaineCle') },
     { cle: 'chaine', nom: 'the official node', s: s('chaine') },
-    { cle: 'chaine2', nom: 'the public dRPC node', s: s('chaine2') },
+    { cle: 'chaine2', nom: 'the ' + SECOURS_NOM, s: s('chaine2') },
   ].filter((x) => x.s.essais > 0);
 
   /* ---- CE QUI EST ENCORE APPELE, ET CE QUI NE L'EST PLUS ----
