@@ -166,7 +166,12 @@ const RPC_RH = 'https://rpc.mainnet.chain.robinhood.com';
  * fenetre de blocs qu'il accepte sur eth_getLogs. Sans rien, dRPC reste
  * l'adresse par defaut, et la colonie apprend toute seule a ne plus l'appeler. */
 const RPC_SECOURS = (process.env.RPC_SECOURS || '').trim() || 'https://robinhood.drpc.org';
-const RPC_SECOURS_PLAGE = Math.max(100, parseInt(process.env.RPC_SECOURS_PLAGE || '10000', 10) || 10000);
+const SECOURS_POSE = !!(process.env.RPC_SECOURS || '').trim();
+/* La plage par defaut suit le fournisseur quand on le reconnait : Alchemy
+   borne eth_getLogs a 2 000 blocs. Un chiffre pose dans l'environnement
+   l'emporte toujours. */
+const RPC_SECOURS_PLAGE = Math.max(100, parseInt(process.env.RPC_SECOURS_PLAGE
+  || (/alchemy\.com/i.test(RPC_SECOURS) ? '2000' : '10000'), 10) || 10000);
 /* Le nom qu'on lui donne dans la vue et les alertes : « dRPC » quand c'est
    dRPC, sinon l'hote de l'adresse posee — sans la cle, qui est dedans. */
 const SECOURS_NOM = (function () {
@@ -930,10 +935,20 @@ function noeuds() {
   return l.concat(NOEUDS);
 }
 
-const NOEUDS = [
-  { url: RPC_RH, cle: 'chaine', plageLogs: BLOCS_PLAFOND, dernier: 0 },
-  { url: RPC_SECOURS, cle: 'chaine2', plageLogs: RPC_SECOURS_PLAGE, dernier: 0 },
-];
+/* ---- LE NOEUD QU'ON PAIE PASSE DEVANT, ET IL VA PLUS VITE ----
+ * `rpc` prend les noeuds dans l'ordre et s'arrete au premier qui repond. Avec
+ * le nœud officiel en tete, un fournisseur pose dans RPC_SECOURS n'etait
+ * appele que sur ses refus — mesure en direct : zero appel en dix tours,
+ * pendant que le budget du tour s'epuisait sur le public. Quand RPC_SECOURS
+ * est pose, c'est un debit qui nous appartient : il passe devant, et on
+ * l'espace a 250 ms au lieu des 900 ms qu'impose le nœud partage. */
+const NOEUD_OFFICIEL = { url: RPC_RH, cle: 'chaine', plageLogs: BLOCS_PLAFOND, dernier: 0, espace: 900 };
+const NOEUD_SECOURS = { url: RPC_SECOURS, cle: 'chaine2', plageLogs: RPC_SECOURS_PLAGE, dernier: 0,
+                        espace: SECOURS_POSE ? 250 : 900 };
+const NOEUDS = SECOURS_POSE ? [NOEUD_SECOURS, NOEUD_OFFICIEL] : [NOEUD_OFFICIEL, NOEUD_SECOURS];
+/* Le budget d'appels de chaine par tour : 26 sur un nœud public partage,
+   60 quand un nœud a nous prend le gros du trafic. */
+const BUDGET_TOUR = SECOURS_POSE ? 60 : 26;
 /* ---- UN NOEUD QUI DIT « JE NE SERS PAS CETTE METHODE » EST CRU ----
  *
  * Releve sur la colonie apres treize heures : les deux noeuds dRPC ont rendu
@@ -1039,7 +1054,8 @@ function plageDe(methode, params) {
 }
 async function unNoeud(n, methode, params) {
   const depuis = Date.now() - n.dernier;
-  if (depuis < 900) await dors(900 - depuis);
+  const espace = n.espace || 900;
+  if (depuis < espace) await dors(espace - depuis);
   n.dernier = Date.now();
   const r = await fetch(n.url, {
     method: 'POST', headers: { 'content-type': 'application/json' },
@@ -5567,7 +5583,7 @@ async function tour() {
     const examines = [];
     let ouvertes = 0, appelsTotal = 0, conseils = 0;
     for (const t of aVoir) {
-      if (appelsTotal >= 26) { compte('budgetAtteint'); break; }   /* le budget du tour, tenu */
+      if (appelsTotal >= BUDGET_TOUR) { compte('budgetAtteint'); break; }   /* le budget du tour, tenu */
       t.lu = { pools: true }; t.appels = 0;
       if (t.dex) t.lu.dex = true;           /* les flux DexScreener l'ont deja paye */
       let refus = null, quiRefuse = null;
