@@ -183,6 +183,27 @@ const poolDe = (j) => {
   ok(/Skipped PETIT: 0\.0008 ETH \(RH\) free/.test(e3.journal[0].txt) && /at least 0\.001 ETH/.test(e3.journal[0].txt),
      'le journal dit le libre, le plancher et quoi faire : « ' + e3.journal[0].txt.slice(0, 120) + '… »');
 
+  console.log('\n-- en reel, les tranches rendent ce que le solde regagne, et la fermeture compte tout --');
+  {
+    chaine.soldes[c.adr.toLowerCase()] = W('0.05');
+    const JT = '0x' + 'dd'.repeat(20);
+    await M.surAchat({ sym: 'TRANCHE', adr: JT, pool: poolDe(JT), part: 0.1 });
+    const cout = W(c.ouvertes[JT].cout);
+    const s0 = chaine.soldes[c.adr.toLowerCase()];
+    eq(await M.surVente({ adr: JT, part: 0.35, raison: 'palier +15%' }), 1, 'la tranche part en reel');
+    const s1 = chaine.soldes[c.adr.toLowerCase()];
+    const recu1 = s1.sub(s0);
+    ok(recu1.eq(RENDU_VENTE.sub(GAZ_TX).sub(GAZ_TX)), 'ce qui est revenu est lu sur le solde, autorisation et gaz deduits : ' + F(recu1) + ' ETH');
+    ok(W(c.ouvertes[JT].sortiesPartielles).eq(recu1), 'et la position le garde : ' + c.ouvertes[JT].sortiesPartielles + ' ETH banked');
+    ok(Math.abs(c.ouvertes[JT].reste - 0.65) < 1e-9, '65 % encore en course');
+    eq(await M.surVente({ adr: JT }), 1, 'puis la fermeture');
+    const s2 = chaine.soldes[c.adr.toLowerCase()];
+    const f = c.fermees[c.fermees.length - 1];
+    ok(W(f.sortie).eq(s2.sub(s0)), 'la sortie du bilan est TOUT ce que le solde a regagne, tranche comprise : ' + f.sortie + ' ETH');
+    ok(W(f.entree).eq(cout), 'contre le cout reel de l achat');
+    ok(/banked on the way/.test((await M.etat(JOUEUR, false)).journal[0].txt), 'et le journal le dit : « ' + (await M.etat(JOUEUR, false)).journal[0].txt.slice(0, 120) + '… »');
+  }
+
   console.log('\n-- une position que le portefeuille ne tient plus n est plus comptee ouverte --');
   {
     /* « J ai ferme la position manuellement et il dit encore mirror open 1. » */
@@ -218,7 +239,7 @@ const poolDe = (j) => {
   ok(chaine.envois.length >= n1 + 2, 'la vente et le balayage sont partis (' + (chaine.envois.length - n1) + ' transactions)');
   const dernier = chaine.envois[chaine.envois.length - 1];
   eq(dernier.vers, JOUEUR.toLowerCase(), 'la derniere va au portefeuille du compte');
-  eq((await M.etat(JOUEUR, false)).bilan.trades, 2, 'la vente du stop est au bilan');
+  eq((await M.etat(JOUEUR, false)).bilan.trades, 3, 'la vente du stop est au bilan');
 
   console.log('\nmiroir_reel.test.js : ' + n + ' verifications OK');
 })().catch((e) => { console.error('EXCEPTION :', e); process.exit(1); });

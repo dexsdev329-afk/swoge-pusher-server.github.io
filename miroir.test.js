@@ -346,6 +346,39 @@ console.log('\n-- un miroir a l arret ne suit rien --');
   eq((await M.etat(JOUEUR, false)).ouvertes.length, 2, 'et celui qui joue en a deux');
 }
 
+console.log('\n-- le miroir vend les memes tranches que la colonie, et garde le reste en course --');
+{
+  /* « Le mode miroir vend ses positions comme le mode de présentation ? »
+     Le papier encaisse 35 % a +15 %, 35 % a +40 %, 20 % a +80 %, et garde
+     10 % jusqu au bout. Le miroir doit faire pareil. */
+  const c1 = M._fiche(JOUEUR);
+  const o0 = c1.ouvertes[JETON];
+  const jetons0 = ethers.BigNumber.from(o0.jetons);
+  eq(await M.surVente({ adr: JETON, part: 0.35, raison: 'palier +15%' }), 1, 'la tranche est suivie');
+  const o1 = c1.ouvertes[JETON];
+  ok(!!o1, 'la position reste ouverte');
+  ok(Math.abs(o1.reste - 0.65) < 1e-9, 'il en reste 65 % (' + o1.reste + ')');
+  ok(ethers.BigNumber.from(o1.jetons).eq(jetons0.mul(650000).div(1000000)), 'et 65 % des jetons sont encore tenus');
+  const e1 = await M.etat(JOUEUR, false);
+  ok(/Sold 35% of TEST/.test(e1.journal[0].txt) && /palier \+15%/.test(e1.journal[0].txt) && /65% still running/.test(e1.journal[0].txt),
+     'le journal dit la tranche, le palier et ce qui court encore : « ' + e1.journal[0].txt.slice(0, 100) + '… »');
+  ok(e1.ouvertes.find((x) => x.adr === JETON).reste === o1.reste, 'et l etat porte le reste');
+  eq(await M.surVente({ adr: JETON, part: 0.35, raison: 'palier +40%' }), 1, 'deuxieme tranche');
+  ok(Math.abs(c1.ouvertes[JETON].reste - 0.30) < 1e-9, 'il en reste 30 %');
+  ok(ethers.BigNumber.from(c1.ouvertes[JETON].jetons).eq(jetons0.mul(300000).div(1000000).add(0).sub(0)) || Math.abs(Number(c1.ouvertes[JETON].jetons) / Number(jetons0.toString()) - 0.30) < 1e-6,
+     '30 % des jetons de depart, malgre deux arrondis successifs');
+  /* Une tranche qui viderait la position est une fermeture : on ne laisse
+     pas trainer trois jetons. */
+  eq(await M.surVente({ adr: JETON, part: 0.30 }), 1, 'la derniere tranche');
+  ok(!c1.ouvertes[JETON], 'vide la position au lieu de laisser un reliquat');
+  const f = c1.fermees[c1.fermees.length - 1];
+  ok(Number(f.sortie) === 3 * Number(ethers.utils.formatUnits(chaine.sortieDevis, 18)),
+     'et la ligne du bilan compte les trois ventes : ' + f.sortie + ' ETH (' + f.tranches + ' des tranches)');
+  /* On rouvre pour les scenarios suivants, qui attendent une position sur TEST. */
+  await M.surAchat({ sym: 'TEST', adr: JETON, pool: POOL, part: 0.1 });
+  ok(!!c1.ouvertes[JETON], 'rouverte pour la suite');
+}
+
 console.log('\n-- le miroir suit la vente --');
 {
   const suivis = await M.surVente({ adr: JETON });
@@ -355,11 +388,11 @@ console.log('\n-- le miroir suit la vente --');
   ok(/Sold TEST/.test(e.journal[0].txt), 'et le journal dit ce qui a ete vendu : « ' + e.journal[0].txt + ' »');
   /* La barre personnelle : profit, taux, trades, meilleur, ouvert — calcules
      sur les ventes, en ETH. */
-  eq(e.bilan.trades, 1, 'le bilan compte une vente');
+  eq(e.bilan.trades, 2, 'le bilan compte cette vente, apres celle des tranches');
   eq(e.bilan.ouvertes, 1, 'et une position encore ouverte');
   ok(typeof e.bilan.profitEth === 'string' && isFinite(Number(e.bilan.profitEth)),
      'le profit est un chiffre en ETH : ' + e.bilan.profitEth);
-  ok(e.bilan.meilleur >= 0 && (e.bilan.gagnantes === 0 || e.bilan.gagnantes === 1),
+  ok(e.bilan.meilleur >= 0 && e.bilan.gagnantes <= e.bilan.trades,
      'meilleur ' + e.bilan.meilleur + '×, gagnantes ' + e.bilan.gagnantes);
   ok(e.bilan.simule === true, 'et il dit que ces ventes sont simulees');
   eq(await M.surVente({ adr: '0x' + 'cc'.repeat(20) }), 0,
@@ -374,7 +407,7 @@ console.log('\n-- stop : on vend d abord, on balaie ensuite --');
   eq(r.rates.length, 0, 'sans echec');
   ok(!(await M.etat(JOUEUR, false)).actif, 'le miroir est arrete');
   eq((await M.etat(JOUEUR, false)).ouvertes.length, 0, 'et ne tient plus rien');
-  eq((await M.etat(JOUEUR, false)).bilan.trades, 2, 'la vente du stop entre dans le bilan (2 trades)');
+  eq((await M.etat(JOUEUR, false)).bilan.trades, 3, 'la vente du stop entre dans le bilan (3 trades)');
   eq((await M.etat(JOUEUR, false)).bilan.ouvertes, 0, 'et plus rien d ouvert');
   eq(chaine.envois.length, avant, 'toujours rien sur la chaine : en mode d essai, stop ne vend ni ne balaie pour de vrai');
   ok(/dry run/i.test((await M.etat(JOUEUR, false)).journal[0].txt), 'et il le DIT plutot que de laisser croire au balayage');

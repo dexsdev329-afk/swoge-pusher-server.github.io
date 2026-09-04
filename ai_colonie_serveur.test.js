@@ -2440,6 +2440,39 @@ async function pairesEthSeulement() {
 }
 
 /* ==========================================================================
+ * LE MIROIR VEND LES MEMES TRANCHES QUE LA COLONIE
+ *
+ * « Le mode miroir vend ses positions comme le mode de présentation ? »
+ * ======================================================================== */
+async function tranchesAuMiroir() {
+  console.log('\n-- chaque tranche vendue par la colonie part au miroir, avec sa part --');
+  remise(sains());
+  const appelsMiroir = [];
+  C.poseMiroir({ surAchat: async () => 0, surVente: async (t) => { appelsMiroir.push(t); return 1; } });
+  const G = C._etat();
+  const adr = MONDE.jetons[0].addr;
+  G.positions.push({ sym: 'ECH', adr, pool: MONDE.jetons[0].pool, prix0: 1, t0: Date.now() - 60e3, prixLu: Date.now(),
+    mise: 30, traits: {}, tenueMin: 20, tenueBase: 20, traj: [], liq0: 50000, score: 70 });
+  /* +20 % : le premier palier (+15 %) tombe, 35 % de la position part. */
+  C.regle({ [adr]: { prix: 1.2, liq: 50000 } });
+  const t1 = appelsMiroir[appelsMiroir.length - 1];
+  console.log('   miroir : ' + JSON.stringify(appelsMiroir));
+  ok(appelsMiroir.length >= 1 && t1 && t1.adr === adr && Math.abs(t1.part - 0.35) < 1e-9,
+     'la tranche de 35 % au palier +15 % est envoyee au miroir avec sa part');
+  ok(/palier/.test(t1.raison || ''), 'et sa raison');
+  ok(G.positions.some((p) => p.adr === adr), 'la colonie, elle, garde le reste en course');
+  ok(!(C.vue().signaux || []).some((x) => x.k === 'vente' && x.adr === adr),
+     'sans signal public : les signaux n annoncent que les operations entieres');
+  /* La fermeture entiere : un appel sans part. */
+  for (const p of G.positions) if (p.adr === adr) p.t0 = Date.now() - 3 * 3600e3;
+  C.regle({ [adr]: { prix: 1.25, liq: 50000 } });
+  const fin = appelsMiroir[appelsMiroir.length - 1];
+  ok(!G.positions.some((p) => p.adr === adr) && fin && fin.adr === adr && fin.part === undefined,
+     'la fermeture part sans part : le miroir vend ce qui reste');
+  C.poseMiroir(null);
+}
+
+/* ==========================================================================
  * 31. LA CLE dRPC
  * ======================================================================== */
 async function drpcCle() {
@@ -4967,6 +5000,7 @@ function bornesQuiSeReglent() {
   await parleAnglais();
   await alertesDatees();
   await pairesEthSeulement();
+  await tranchesAuMiroir();
   await venteAuPrixDuMoment();
   motsQuiCommandent();
   uneRegleUneLigne();

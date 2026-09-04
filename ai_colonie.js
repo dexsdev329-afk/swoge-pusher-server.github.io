@@ -4199,6 +4199,7 @@ function suitLeMiroir(s) {
               ? miroir.surAchat({ sym: s.sym, adr: s.adr, pool: s.pool,
                                   part: partDuBanquier(s), score: s.score })
             : s.k === 'vente' ? miroir.surVente({ adr: s.adr })
+            : s.k === 'tranche' ? miroir.surVente({ adr: s.adr, part: s.part, raison: s.raison })
             : null;
     if (p && p.catch) p.catch((e) => console.warn('[miroir]', e && e.message));
   } catch (e) { console.warn('[miroir]', e && e.message); }
@@ -4365,6 +4366,16 @@ function vendUneTranche(p, r, part, quand, pourquoi) {
     cls: pnl >= 0 ? 'up' : 'dn', t: quand, par: 'sentinelle' });
   compte('tranchesVendues');
   E.courbe.push(Math.round(E.tresor * 100) / 100);
+  /* ---- ET LE MIROIR VEND LA MEME TRANCHE ----
+   * « Le mode miroir vend ses positions comme le mode de présentation ? »
+   * Il ne le faisait pas : seule la fermeture entiere emettait un signal, et
+   * le miroir gardait 100 % jusqu'au bout quand le papier avait deja encaisse
+   * 35 % a +15 %, 35 % a +40 %, 20 % a +80 %. Deux courbes qui ne se
+   * ressemblaient pas, pour un ecran qui les presente cote a cote. La
+   * tranche part donc au miroir, avec sa part de la position DE DEPART —
+   * pas dans les signaux publics, qui n'annoncent que les operations
+   * entieres. */
+  suitLeMiroir({ k: 'tranche', adr: p.adr, sym: p.sym, part: f, raison: pourquoi });
   return true;
 }
 

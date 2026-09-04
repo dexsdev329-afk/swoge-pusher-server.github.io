@@ -767,6 +767,8 @@ async function etat(joueur, lireChaine) {
     ouvertes: Object.entries(c.ouvertes || {}).map(([adr, o]) => ({
       adr, sym: o.sym, pool: o.pool, ver: o.ver || 'v4', entree: o.entree, jetons: o.jetons,
       t: o.t, simule: !!o.simule,
+      /* Ce qu'il reste en course, et ce que les tranches ont deja rendu. */
+      reste: o.reste === undefined ? 1 : o.reste, banked: o.sortiesPartielles || null,
     })),
     journal: (c.journal || []).slice(0, 20),
     bilan: bilan(c),
@@ -894,10 +896,18 @@ async function achatFile(t) {
 
 async function venteFile(t) {
   let n = 0;
+  /* Une TRANCHE : la colonie vient d'encaisser une part de sa position de
+     depart (35 % au palier +15 %, …). Le miroir vend la meme part de la
+     sienne, et garde le reste en course. Sans `part`, c'est la fermeture. */
+  const part = Number(t.part);
   for (const [, c] of Object.entries(R.comptes)) {
     const o = c.ouvertes && c.ouvertes[norm(t.adr)];
     if (!o) continue;
-    try { await vendPosition(c, norm(t.adr), o); n++; }
+    const reste = o.reste === undefined ? 1 : o.reste;
+    const tranche = isFinite(part) && part > 0 && reste - Math.min(part, reste) > 0.001;
+    try { if (tranche) await vendTranche(c, norm(t.adr), o, Math.min(part, reste), t.raison);
+          else await vendPosition(c, norm(t.adr), o);
+          n++; }
     catch (e) { note(c, 'Could not follow the sell on ' + (o.sym || t.adr) + ': ' + resume(e), { adr: t.adr }); }
     await dors(PAUSE_MS);
   }
@@ -953,17 +963,46 @@ async function achetePosition(c, t) {
   return true;
 }
 
+/** Ce que le portefeuille tient de ce jeton — lu sur la chaine en reel, note
+ *  par le miroir en essai. */
+async function tenu(c, adr, o) {
+  let montant = ethers.BigNumber.from(o.jetons || '0');
+  if (EXECUTE) {
+    try { montant = await new ethers.Contract(adr, ERC20_ABI, provider()).balanceOf(c.adr); }
+    catch (e) { /* illisible : on garde ce que le miroir avait note */ }
+  }
+  return montant;
+}
+
+/** Vendre une PART de la position de depart, comme la colonie vient de le
+ *  faire. `f` est la fraction de la position initiale ; ce qu'on vend est la
+ *  fraction correspondante de ce qu'on tient ENCORE. Ce qui revient s'ajoute
+ *  a la position, pour que la fermeture compte tout. */
+async function vendTranche(c, adr, o, f, raison) {
+  const reste = o.reste === undefined ? 1 : o.reste;
+  const montantTenu = await tenu(c, adr, o);
+  if (montantTenu.lte(0)) { delete c.ouvertes[adr]; return { sortie: null, tx: null }; }
+  const montant = montantTenu.mul(Math.round(f / reste * 1e6)).div(1e6);
+  if (montant.lte(0)) return { sortie: null, tx: null };
+  const route = await routeDePosition(adr, o);
+  const r = await vendRoute(c, route, adr, montant);
+  o.jetons = montantTenu.sub(montant).toString();
+  o.reste = Math.max(0, reste - f);
+  const revenu = r.recuReel || r.sortie;
+  o.sortiesPartielles = ethers.utils.formatUnits(
+    WEI(o.sortiesPartielles || '0').add(revenu), 18);
+  note(c, (r.simule ? '[dry run] ' : '') + 'Sold ' + Math.round(f * 100) + '% of ' + (o.sym || adr)
+        + ' for ' + ethers.utils.formatUnits(revenu, 18) + ' ETH (RH)' + (r.recuReel ? ' net of gas' : '')
+        + ' on Uniswap ' + route.ver + (raison ? ' · ' + raison : '')
+        + ' · ' + Math.round(o.reste * 100) + '% still running', { adr, tx: r.tx || null });
+  return r;
+}
+
 async function vendPosition(c, adr, o) {
   /* On vend ce que le portefeuille TIENT, pas ce qu'on croit qu'il tient. En
      execution reelle, une taxe de transfert ou un arrondi fait diverger les
      deux, et vendre un montant qu'on n'a pas fait echouer tout l'ordre. */
-  let montant = ethers.BigNumber.from(o.jetons || '0');
-  if (EXECUTE) {
-    try {
-      const t = new ethers.Contract(adr, ERC20_ABI, provider());
-      montant = await t.balanceOf(c.adr);
-    } catch (e) { /* illisible : on garde ce que le miroir avait note */ }
-  }
+  const montant = await tenu(c, adr, o);
   if (montant.lte(0)) { delete c.ouvertes[adr]; return { sortie: null, tx: null }; }
   const route = await routeDePosition(adr, o);
   const r = await vendRoute(c, route, adr, montant);
@@ -983,10 +1022,14 @@ async function vendPosition(c, adr, o) {
    * reel, l'entree est ce que le solde a perdu a l'achat, la sortie ce qu'il
    * a regagne a la vente — gaz compris des deux cotes. Le devis reste note,
    * pour comparer. */
+  /* Ce que les tranches ont deja rendu compte dans la sortie : la ligne dit
+     ce que la position ENTIERE a rapporte, pas ce que valait le reliquat. */
+  const deja = WEI(o.sortiesPartielles || '0');
+  const finale = r.recuReel || r.sortie || ethers.BigNumber.from(0);
   c.fermees.push({ adr, sym: o.sym || null,
                    entree: o.cout || o.entree, mise: o.entree,
-                   sortie: r.recuReel ? ethers.utils.formatUnits(r.recuReel, 18)
-                                      : (r.sortie ? ethers.utils.formatUnits(r.sortie, 18) : null),
+                   sortie: (r.recuReel || r.sortie) ? ethers.utils.formatUnits(deja.add(finale), 18) : null,
+                   tranches: o.sortiesPartielles ? ethers.utils.formatUnits(deja, 18) : null,
                    devis: r.sortie ? ethers.utils.formatUnits(r.sortie, 18) : null,
                    reel: !!r.recuReel,
                    t0: o.t, t: Date.now(), simule: !!r.simule, tx: r.tx || null });
@@ -995,9 +1038,11 @@ async function vendPosition(c, adr, o) {
      le devis n est qu une comparaison. En essai, il n y a que le devis. */
   note(c, r.recuReel
     ? 'Sold ' + (o.sym || adr) + ' for ' + ethers.utils.formatUnits(r.recuReel, 18) + ' ETH (RH) net of gas on Uniswap '
-      + route.ver + ' · quote was ' + ethers.utils.formatUnits(r.sortie, 18) + ' ETH · result '
-      + ethers.utils.formatUnits(r.recuReel.sub(WEI(o.cout || o.entree)), 18) + ' ETH incl. gas both ways'
-    : '[dry run] Sold ' + (o.sym || adr) + ' for ' + ethers.utils.formatUnits(r.sortie, 18) + ' ETH (RH) on Uniswap ' + route.ver,
+      + route.ver + ' · quote was ' + ethers.utils.formatUnits(r.sortie, 18) + ' ETH'
+      + (o.sortiesPartielles ? ' · plus ' + o.sortiesPartielles + ' ETH banked on the way' : '')
+      + ' · result ' + ethers.utils.formatUnits(r.recuReel.add(WEI(o.sortiesPartielles || '0')).sub(WEI(o.cout || o.entree)), 18) + ' ETH incl. gas both ways'
+    : '[dry run] Sold ' + (o.sym || adr) + ' for ' + ethers.utils.formatUnits(r.sortie, 18) + ' ETH (RH) on Uniswap ' + route.ver
+      + (o.sortiesPartielles ? ' · plus ' + o.sortiesPartielles + ' ETH banked on the way' : ''),
     { adr, tx: r.tx || null });
   return r;
 }
