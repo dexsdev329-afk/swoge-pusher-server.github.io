@@ -4036,11 +4036,41 @@ const SIGNAUX_MAX = 120;
 let tg = null;
 try { tg = require('./telegram.js'); } catch (e) { tg = null; }
 
+/* ---- ET LE MIROIR, QUAND IL Y EN A UN ----
+ *
+ * Des joueurs peuvent suivre la colonie avec leur propre argent (voir
+ * `miroir.js`). Le branchement se fait ICI, sur le signal, et pas dans `ouvre`
+ * et `ferme` : le signal est deja l'endroit ou l'on dit ce que la colonie vient
+ * de faire, il couvre TOUTES les fermetures — y compris celles qui n'ont pas
+ * de resultat — et un miroir qui suit exactement ce que le canal annonce est un
+ * miroir dont on verifie le comportement en lisant le canal.
+ *
+ * Il est POSE par `server.js`, jamais requis d'ici : la colonie doit pouvoir
+ * tourner, et s'essayer, sans qu'un module d'argent reel soit charge.
+ *
+ * ET IL N'EST JAMAIS ATTENDU. Un miroir lent — une piscine a retrouver, une
+ * transaction a miner — ne doit pas retarder d'une seconde le tour de la
+ * colonie, et un miroir qui echoue ne doit pas l'interrompre. */
+let miroir = null;
+function poseMiroir(m) { miroir = m; }
+
+/* Ce que le miroir doit faire de ce signal — lance, jamais attendu. */
+function suitLeMiroir(s) {
+  if (!miroir || !s || !s.adr) return;
+  try {
+    const p = s.k === 'achat' ? miroir.surAchat({ sym: s.sym, adr: s.adr, pool: s.pool })
+            : s.k === 'vente' ? miroir.surVente({ adr: s.adr })
+            : null;
+    if (p && p.catch) p.catch((e) => console.warn('[miroir]', e && e.message));
+  } catch (e) { console.warn('[miroir]', e && e.message); }
+}
+
 function signal(s) {
   if (!Array.isArray(E.signaux)) E.signaux = [];
   s.t = Date.now();
   E.signaux.unshift(s);
   if (E.signaux.length > SIGNAUX_MAX) E.signaux = E.signaux.slice(0, SIGNAUX_MAX);
+  suitLeMiroir(s);
   /* ---- TELEGRAM : LA MEME PASTILLE QUE DANS LE PORTEFEUILLE ----
    * Avec le logo quand on l'a, en texte quand on ne l'a pas — et `notifyPhoto`
    * retombe TOUT SEUL sur le texte si Telegram refuse l'image. C'est ce qui
@@ -6013,6 +6043,7 @@ function arrete() {
 
 module.exports = {
   demarre, arrete, vue, tour, charge, sauve, reprendSansMethode, veille,
+  poseMiroir, _suitLeMiroir: suitLeMiroir,
   _signal: signal, _texteSignal: texteSignal, _ferme: ferme, _lienDex: lienDex,
   _poseTg: (x) => { tg = x; },
   _noteAudit: noteAudit, _auditDesRefus: auditDesRefus,
