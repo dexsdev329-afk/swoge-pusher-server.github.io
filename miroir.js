@@ -664,7 +664,9 @@ const FERMEES_MAX = 300;
 /** Le bilan d'un miroir, calcule sur ses ventes. Les chiffres sont en ETH :
  *  l'ecran les convertit s'il connait le cours, et le dit sinon. */
 function bilan(c) {
-  const f = (c.fermees || []).filter((x) => x.sortie !== null && x.sortie !== undefined);
+  const toutes = c.fermees || [];
+  const f = toutes.filter((x) => x.sortie !== null && x.sortie !== undefined);
+  const horsMiroir = toutes.filter((x) => x.horsMiroir && !x.simule).length;
   let profit = 0, gagnantes = 0, meilleur = 0;
   for (const x of f) {
     const e = Number(x.entree) || 0, s = Number(x.sortie) || 0;
@@ -677,7 +679,52 @@ function bilan(c) {
            ouvertes: Object.keys(c.ouvertes || {}).length,
            simule: f.length > 0 && f.every((x) => x.simule),
            /* Reel : entree et sortie lues sur le solde, gaz compris. */
-           reel: f.length > 0 && f.every((x) => x.reel) };
+           reel: f.length > 0 && f.every((x) => x.reel),
+           /* Fermees hors du miroir : tenues puis parties sans qu'il vende. Leur
+              resultat est inconnu, donc hors du profit — et c'est dit. */
+           horsMiroir };
+}
+
+/* ==================== CE QUE LE PORTEFEUILLE TIENT VRAIMENT ====================
+ *
+ * « J'ai fermé la position manuellement et il dit encore mirror open 1. »
+ *
+ * Le registre disait « ouverte » tant que le miroir n'avait pas vendu lui-meme.
+ * Une position vendue avec la cle depuis un autre portefeuille, une vente du
+ * stop qui a echoue, un reste du mode d'essai : autant de lignes que le
+ * portefeuille ne tient plus et que l'ecran comptait quand meme. En reel, la
+ * chaine sait : on lit le solde du jeton, et zero veut dire ferme. On ne
+ * connait pas ce que la vente a rendu — on le dit, et on ne l'invente pas. */
+ const RECONCILIE_MS = 30000;
+const derniereReconciliation = new Map();
+async function reconcilie(c) {
+  if (!EXECUTE || !c || !c.ouvertes) return 0;
+  const now = Date.now();
+  if (now - (derniereReconciliation.get(c.adr) || 0) < RECONCILIE_MS) return 0;
+  derniereReconciliation.set(c.adr, now);
+  let n = 0;
+  for (const [adr, o] of Object.entries(c.ouvertes)) {
+    let tenu = null;
+    if (o.simule) tenu = ethers.BigNumber.from(0);          /* un essai n'a jamais rien achete */
+    else {
+      try { tenu = await new ethers.Contract(adr, ERC20_ABI, provider()).balanceOf(c.adr); }
+      catch (e) { continue; }                                /* illisible : on ne conclut rien */
+    }
+    if (tenu.gt(0)) continue;
+    delete c.ouvertes[adr];
+    if (!Array.isArray(c.fermees)) c.fermees = [];
+    c.fermees.push({ adr, sym: o.sym || null, entree: o.cout || o.entree, mise: o.entree,
+                     sortie: null, devis: null, reel: true, horsMiroir: true,
+                     t0: o.t, t: now, simule: !!o.simule, tx: null });
+    note(c, o.simule
+      ? 'Position ' + (o.sym || adr) + ' dropped: it was opened in dry run, nothing was ever bought'
+      : 'Position ' + (o.sym || adr) + ' closed outside the mirror: the wallet no longer holds the token, '
+        + 'so it is no longer counted as open. What that sale returned is unknown and left out of the profit.',
+      { adr });
+    n++;
+  }
+  if (n) sauve();
+  return n;
 }
 
 async function etat(joueur, lireChaine) {
@@ -690,6 +737,7 @@ async function etat(joueur, lireChaine) {
   if (!c) return Object.assign(base, { existe: false });
   let solde = null;
   if (lireChaine !== false) {
+    try { await reconcilie(c); } catch (e) { /* l'ecran ne tombe pas pour ca */ }
     try { solde = ethers.utils.formatUnits(await provider().getBalance(c.adr), 18); }
     catch (e) { solde = null; }
   }
@@ -950,5 +998,6 @@ module.exports = {
   _plancher: plancher, _miseDe: miseDe, _pourquoiPasDeMise: pourquoiPasDeMise, _balaie: balaie,
   _routeDe: routeDe, _devisRoute: devisRoute, _ordre: ordre, _R2_ABI: R2_ABI, _R3_ABI: R3_ABI,
   _etat: () => R, _pose: (x) => { R = x; }, _poseProvider: poseProvider,
-  _fiche: fiche, _actifs: actifs, _bilan: bilan,
+  _fiche: fiche, _actifs: actifs, _bilan: bilan, _reconcilie: reconcilie,
+  _oublieReconciliation: () => derniereReconciliation.clear(),
 };

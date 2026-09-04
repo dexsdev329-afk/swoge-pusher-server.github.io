@@ -120,6 +120,8 @@ class ChaineReelle extends ethers.providers.StaticJsonRpcProvider {
 }
 const chaine = new ChaineReelle();
 M._poseProvider(chaine);
+/* La reconciliation se fait au plus toutes les trente secondes : on la force. */
+const derniere = () => M._oublieReconciliation();
 const poolDe = (j) => {
   const p = M.ETH4.toLowerCase() < j.toLowerCase() ? [M.ETH4, j] : [j, M.ETH4];
   return M._idV4([p[0], p[1], 3000, 60, '0x' + '00'.repeat(20)]);
@@ -180,6 +182,32 @@ const poolDe = (j) => {
   const e3 = await M.etat(JOUEUR, false);
   ok(/Skipped PETIT: 0\.0008 ETH \(RH\) free/.test(e3.journal[0].txt) && /at least 0\.001 ETH/.test(e3.journal[0].txt),
      'le journal dit le libre, le plancher et quoi faire : « ' + e3.journal[0].txt.slice(0, 120) + '… »');
+
+  console.log('\n-- une position que le portefeuille ne tient plus n est plus comptee ouverte --');
+  {
+    /* « J ai ferme la position manuellement et il dit encore mirror open 1. » */
+    chaine.soldes[c.adr.toLowerCase()] = W('0.05');
+    const J3 = '0x' + 'cc'.repeat(20);
+    await M.surAchat({ sym: 'MANUEL', adr: J3, pool: poolDe(J3), part: 0.1 });
+    eq((await M.etat(JOUEUR, false)).bilan.ouvertes, 1, 'une position ouverte');
+    const nAvant = (await M.etat(JOUEUR, false)).bilan.trades;
+    chaine.jetonsTenus = ethers.BigNumber.from(0);         /* vendu avec la cle, ailleurs */
+    derniere();
+    const e = await M.etat(JOUEUR);                          /* l ecran demande l etat : la chaine est lue */
+    eq(e.bilan.ouvertes, 0, 'l ecran ne la compte plus : le portefeuille ne tient plus le jeton');
+    eq(e.ouvertes.length, 0, 'et elle n est plus dans la liste');
+    ok(/closed outside the mirror/.test(e.journal[0].txt) && /unknown/.test(e.journal[0].txt),
+       'le journal le dit, et dit que le resultat est inconnu : « ' + e.journal[0].txt.slice(0, 100) + '… »');
+    eq(e.bilan.trades, nAvant, 'elle n entre pas dans les trades comptes — on n invente pas un resultat');
+    eq(e.bilan.horsMiroir, 1, 'mais le bilan compte une fermeture hors miroir');
+    chaine.jetonsTenus = W(1000);
+    /* Et un reste du mode d essai, sous le mode reel, tombe aussi. */
+    c.ouvertes[J3] = { sym: 'ESSAI', entree: '0.001', jetons: '1', t: Date.now(), simule: true, ver: 'v4' };
+    derniere();
+    const e2 = await M.etat(JOUEUR);
+    eq(e2.bilan.ouvertes, 0, 'un reste du mode d essai est retire aussi');
+    ok(/dry run, nothing was ever bought/.test(e2.journal[0].txt), 'et dit pour ce qu il est');
+  }
 
   console.log('\n-- stop en reel : vendre, puis balayer vers le compte --');
   chaine.soldes[c.adr.toLowerCase()] = W('0.05');
