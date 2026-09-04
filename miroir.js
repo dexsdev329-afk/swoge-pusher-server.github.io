@@ -133,7 +133,21 @@ const PERMIT2_ABI = [
 const nEnv = (k, d) => { const v = parseFloat(process.env[k]); return isFinite(v) ? v : d; };
 const EXECUTE     = String(process.env.MIROIR_EXECUTE || '0') === '1';
 const MIROIRS_MAX = Math.max(1, Math.round(nEnv('MIROIR_MAX', 25)));
-const MIN_ETH     = String(process.env.MIROIR_MIN_ETH || '0.002');
+/* ---- LE MINIMUM POUR JOUER SUIT LE PLANCHER PAR ORDRE ----
+ * « Vérifie qu'il respecte bien les mises par rapport à notre capital. »
+ * Mesure le 4 septembre, en reel : un miroir a 0,0023 ETH. La reserve de gaz
+ * laisse 0,0008 ; la part du Banquier (3 %) en fait 0,000025 ETH d'ordre —
+ * six centimes — quand une transaction coute 0,00003 ETH de gaz. Chaque
+ * ordre perdait plus en gaz qu'il n'engageait. La part du Banquier est
+ * juste pour une caisse de mille dollars ; sur cinq dollars elle ne veut
+ * plus rien dire. Un ordre a donc un PLANCHER, et un miroir qui ne peut
+ * pas le tenir n'ordonne pas : il le dit. */
+const ORDRE_MIN_ETH = String(process.env.MIROIR_ORDRE_MIN || '0.001');
+/* Le gaz d'un ordre ne doit pas depasser un dixieme de la mise : au-dela,
+   c'est le gaz qu'on trade, pas le jeton. ~300 000 unites par echange. */
+const GAZ_ORDRE_UNITES = 300000;
+const GAZ_PART_MAX = Math.min(0.5, Math.max(0.01, nEnv('MIROIR_GAZ_PART_MAX', 0.1)));
+const MIN_ETH_CONF = String(process.env.MIROIR_MIN_ETH || '0.005');
 const MAX_ETH     = String(process.env.MIROIR_MAX_ETH || '0.5');
 /* La part du solde engagee par ordre. La colonie ouvre plusieurs positions a la
    fois ; a un dixieme, un miroir peut en tenir dix avant d'etre a sec. */
@@ -145,6 +159,14 @@ const ORDRE_MAX_ETH = String(process.env.MIROIR_ORDRE_MAX || '0.05');
 /* Ce qu'on garde toujours pour le gaz : un miroir qui met tout son ETH dans un
    achat ne peut plus jamais vendre, et c'est la pire panne possible ici. */
 const GAZ_RESERVE = String(process.env.MIROIR_GAZ || '0.0015');
+/* Le minimum pour jouer ne peut pas etre sous la reserve plus un ordre : un
+   reglage plus bas laisserait entrer un miroir qui ne pourra jamais ordonner,
+   et qui le decouvrirait au premier signal. */
+const MIN_ETH = (function () {
+  const conf = ethers.utils.parseUnits(MIN_ETH_CONF, 18);
+  const plancher = ethers.utils.parseUnits(GAZ_RESERVE, 18).add(ethers.utils.parseUnits(ORDRE_MIN_ETH, 18));
+  return conf.gte(plancher) ? MIN_ETH_CONF : ethers.utils.formatUnits(plancher, 18);
+})();
 /* La tolerance de glissement. Large, parce que ces piscines bougent entre le
    devis et le bloc suivant ; la taille de l'ordre borne deja l'impact. */
 const TOLERANCE_BPS = Math.min(3000, Math.max(50, Math.round(nEnv('MIROIR_TOLERANCE_BPS', 500))));
@@ -478,10 +500,15 @@ async function acheteRoute(c, r, jeton, entreeWei) {
   const mini = plancher(sortie);
   if (!EXECUTE) return { simule: true, sortie, mini, tx: null };
   const w = signataire(c);
+  const avant = await provider().getBalance(w.address);
   const o = ordre(r, 'achat', jeton, entreeWei, mini, w.address, Math.floor(Date.now() / 1000) + ECHEANCE_S);
   const tx = await w.sendTransaction(o);
   const rc = await tx.wait();
-  return { simule: false, sortie, mini, tx: rc.transactionHash };
+  const apres = await provider().getBalance(w.address);
+  /* Un depot arrive pendant la transaction rendrait le cout negatif : on
+     retombe alors sur la mise, jamais sur un chiffre absurde. */
+  const coutReel = avant.gt(apres) ? avant.sub(apres) : entreeWei;
+  return { simule: false, sortie, mini, tx: rc.transactionHash, coutReel };
 }
 
 async function autorise(w, jeton, montant) {
@@ -519,12 +546,18 @@ async function vendRoute(c, r, jeton, montantWei) {
   const mini = plancher(sortie);
   if (!EXECUTE) return { simule: true, sortie, mini, tx: null };
   const w = signataire(c);
+  /* Avant les autorisations : leur gaz fait partie du prix de cette vente. */
+  const avant = await provider().getBalance(w.address);
   if (r.ver === 'v4') await autorise(w, jeton, montantWei);
   else await autoriseSimple(w, jeton, r.ver === 'v2' ? ROUTEUR2 : ROUTEUR3, montantWei);
   const o = ordre(r, 'vente', jeton, montantWei, mini, w.address, Math.floor(Date.now() / 1000) + ECHEANCE_S);
   const tx = await w.sendTransaction(o);
   const rc = await tx.wait();
-  return { simule: false, sortie, mini, tx: rc.transactionHash };
+  const apres = await provider().getBalance(w.address);
+  /* Ce qui est revenu, gaz deduit. Une vente qui rend moins que son gaz
+     donne un chiffre negatif : c'est la verite, on la garde. */
+  const recuReel = apres.sub(avant);
+  return { simule: false, sortie, mini, tx: rc.transactionHash, recuReel };
 }
 
 /** La route d'une position deja ouverte, telle qu'elle a ete notee a l'achat.
@@ -570,9 +603,24 @@ function miseDe(soldeWei, part) {
   let p = Number(part);
   if (!isFinite(p) || p <= 0) p = PART_ORDRE;
   p = Math.min(0.5, p);
-  const mise = dispo.mul(Math.round(p * 10000)).div(10000);
-  const plaf = WEI(ORDRE_MAX_ETH);
+  let mise = dispo.mul(Math.round(p * 10000)).div(10000);
+  const plaf = WEI(ORDRE_MAX_ETH), mini = WEI(ORDRE_MIN_ETH);
+  /* Sous le plancher, on prend le plancher si le disponible le permet : un
+     petit portefeuille tient moins de positions, mais des positions qui
+     valent leur gaz. Sinon, rien — et `pourquoiPasDeMise` le dit. */
+  if (mise.lt(mini)) mise = dispo.gte(mini) ? mini : ethers.BigNumber.from(0);
   return mise.gt(plaf) ? plaf : mise;
+}
+
+/** La phrase qui va avec une mise nulle : les chiffres, et quoi faire. */
+function pourquoiPasDeMise(soldeWei) {
+  const solde = ethers.utils.formatUnits(soldeWei, 18);
+  const dispo = ethers.BigNumber.from(soldeWei).sub(WEI(GAZ_RESERVE));
+  if (dispo.lte(0))
+    return solde + ' ETH (RH) is under the ' + GAZ_RESERVE + ' ETH gas reserve, which is never spent on a buy';
+  return ethers.utils.formatUnits(dispo, 18) + ' ETH (RH) free after the ' + GAZ_RESERVE
+    + ' ETH gas reserve, and an order needs at least ' + ORDRE_MIN_ETH + ' ETH to be worth its gas'
+    + ' — fund the mirror with ' + MIN_ETH + ' ETH or more';
 }
 
 /* ==================== L'INTERFACE ====================
@@ -627,14 +675,16 @@ function bilan(c) {
   return { trades: f.length, gagnantes, profitEth: profit.toFixed(6),
            meilleur: Math.round(meilleur * 100) / 100,
            ouvertes: Object.keys(c.ouvertes || {}).length,
-           simule: f.length > 0 && f.every((x) => x.simule) };
+           simule: f.length > 0 && f.every((x) => x.simule),
+           /* Reel : entree et sortie lues sur le solde, gaz compris. */
+           reel: f.length > 0 && f.every((x) => x.reel) };
 }
 
 async function etat(joueur, lireChaine) {
   const c = fiche(joueur);
   const base = {
     pret: pret().ok, pourquoi: pret().pourquoi, execute: EXECUTE,
-    min: MIN_ETH, max: MAX_ETH, part: PART_ORDRE, ordreMax: ORDRE_MAX_ETH,
+    min: MIN_ETH, max: MAX_ETH, part: PART_ORDRE, ordreMax: ORDRE_MAX_ETH, ordreMin: ORDRE_MIN_ETH,
     gaz: GAZ_RESERVE, places: Math.max(0, MIROIRS_MAX - actifs().length),
   };
   if (!c) return Object.assign(base, { existe: false });
@@ -794,7 +844,18 @@ async function achetePosition(c, t) {
   const solde = await provider().getBalance(c.adr);
   const mise = miseDe(solde, t.part);
   if (mise.lte(0)) {
-    note(c, 'Skipped ' + (t.sym || adr) + ': not enough ETH (RH) left once the gas reserve is kept');
+    note(c, 'Skipped ' + (t.sym || adr) + ': ' + pourquoiPasDeMise(solde));
+    return false;
+  }
+  /* Le gaz du moment, lu sur la chaine, contre la mise : un ordre dont le gaz
+     mange plus d'un dixieme ne part pas — en essai comme en reel, pour que
+     le papier montre ce que le reel ferait. */
+  let gaz = null;
+  try { gaz = (await provider().getGasPrice()).mul(GAZ_ORDRE_UNITES); } catch (e) { gaz = null; }
+  if (gaz && gaz.mul(Math.round(1 / GAZ_PART_MAX)).gt(mise)) {
+    note(c, 'Skipped ' + (t.sym || adr) + ': gas for one order is about ' + ethers.utils.formatUnits(gaz, 18)
+          + ' ETH (RH), more than ' + Math.round(GAZ_PART_MAX * 100) + '% of the ' + ethers.utils.formatUnits(mise, 18)
+          + ' ETH stake — trading that would be trading gas');
     return false;
   }
   const route = await routeDe(adr, t.pool);
@@ -805,6 +866,9 @@ async function achetePosition(c, t) {
     cle: route.cle || null, zeroVersUn: route.ver === 'v4' ? route.zeroEstEth : null,
     fee: route.fee || null,
     entree: ethers.utils.formatUnits(mise, 18),
+    /* Ce que le portefeuille a VRAIMENT depense : mise + gaz + autorisations,
+       lu sur le solde avant et apres. En essai, la mise seule. */
+    cout: r.coutReel ? ethers.utils.formatUnits(r.coutReel, 18) : null,
     jetons: r.sortie.toString(), t: Date.now(), simule: r.simule, tx: r.tx || null,
   };
   /* Le journal dit la PART, et d'ou elle vient : sans ca, « 0,0031 ETH » ne
@@ -814,7 +878,9 @@ async function achetePosition(c, t) {
       + (t.score ? ' at score ' + t.score : '')
     : (Math.round(PART_ORDRE * 1000) / 10) + '% of what was free (fallback: no share from the colony)';
   note(c, (r.simule ? '[dry run] ' : '') + 'Bought ' + (t.sym || adr) + ' for '
-        + ethers.utils.formatUnits(mise, 18) + ' ETH (RH) on Uniswap ' + route.ver + ' · ' + dit,
+        + ethers.utils.formatUnits(mise, 18) + ' ETH (RH) on Uniswap ' + route.ver
+        + (r.coutReel ? ' · cost incl. gas ' + ethers.utils.formatUnits(r.coutReel, 18) + ' ETH' : '')
+        + ' · ' + dit,
         { adr, tx: r.tx || null });
   return true;
 }
@@ -841,12 +907,30 @@ async function vendPosition(c, adr, o) {
    * ETH. C'est de la que la barre se calcule — pas d'un compteur qu'on
    * incrementerait a cote et qui finirait par diverger. */
   if (!Array.isArray(c.fermees)) c.fermees = [];
-  c.fermees.push({ adr, sym: o.sym || null, entree: o.entree,
-                   sortie: r.sortie ? ethers.utils.formatUnits(r.sortie, 18) : null,
+  /* ---- LES PERTES SE COMPTENT SUR LE SOLDE, PAS SUR LE DEVIS ----
+   * « Il ne calcule pas correctement les pertes, c'est sur. » Il comptait le
+   * devis du quoteur comme sortie, et la mise comme entree : ni le gaz des
+   * deux transactions, ni les autorisations, ni l'ecart entre le devis et le
+   * bloc. Sur un ordre de 0,00003 ETH, le gaz seul en valait autant. En
+   * reel, l'entree est ce que le solde a perdu a l'achat, la sortie ce qu'il
+   * a regagne a la vente — gaz compris des deux cotes. Le devis reste note,
+   * pour comparer. */
+  c.fermees.push({ adr, sym: o.sym || null,
+                   entree: o.cout || o.entree, mise: o.entree,
+                   sortie: r.recuReel ? ethers.utils.formatUnits(r.recuReel, 18)
+                                      : (r.sortie ? ethers.utils.formatUnits(r.sortie, 18) : null),
+                   devis: r.sortie ? ethers.utils.formatUnits(r.sortie, 18) : null,
+                   reel: !!r.recuReel,
                    t0: o.t, t: Date.now(), simule: !!r.simule, tx: r.tx || null });
   if (c.fermees.length > FERMEES_MAX) c.fermees.splice(0, c.fermees.length - FERMEES_MAX);
-  note(c, (r.simule ? '[dry run] ' : '') + 'Sold ' + (o.sym || adr) + ' for '
-        + ethers.utils.formatUnits(r.sortie, 18) + ' ETH (RH) on Uniswap ' + route.ver, { adr, tx: r.tx || null });
+  /* En reel, le chiffre qui compte est ce que le solde a regagne, gaz deduit ;
+     le devis n est qu une comparaison. En essai, il n y a que le devis. */
+  note(c, r.recuReel
+    ? 'Sold ' + (o.sym || adr) + ' for ' + ethers.utils.formatUnits(r.recuReel, 18) + ' ETH (RH) net of gas on Uniswap '
+      + route.ver + ' · quote was ' + ethers.utils.formatUnits(r.sortie, 18) + ' ETH · result '
+      + ethers.utils.formatUnits(r.recuReel.sub(WEI(o.cout || o.entree)), 18) + ' ETH incl. gas both ways'
+    : '[dry run] Sold ' + (o.sym || adr) + ' for ' + ethers.utils.formatUnits(r.sortie, 18) + ' ETH (RH) on Uniswap ' + route.ver,
+    { adr, tx: r.tx || null });
   return r;
 }
 
@@ -854,7 +938,8 @@ module.exports = {
   /* l'interface du serveur */
   charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente,
   /* les reglages, pour l'ecran et pour les essais */
-  EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, GAZ_RESERVE,
+  EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE,
+  GAZ_ORDRE_UNITES, GAZ_PART_MAX,
   TOLERANCE_BPS, FICHIER,
   /* les adresses du protocole */
   PM4, QUOTEUR4, ROUTEUR4, PERMIT2, ETH4, SUJET_INIT,
@@ -862,7 +947,7 @@ module.exports = {
   /* exposes pour les essais : ce sont eux qui portent les regles */
   _chiffre: chiffre, _dechiffre: dechiffre, _cleMaitresse: cleMaitresse,
   _idV4: idV4, _clePiscine: clePiscine, _devis: devis, _corpsV4: corpsV4,
-  _plancher: plancher, _miseDe: miseDe, _balaie: balaie,
+  _plancher: plancher, _miseDe: miseDe, _pourquoiPasDeMise: pourquoiPasDeMise, _balaie: balaie,
   _routeDe: routeDe, _devisRoute: devisRoute, _ordre: ordre, _R2_ABI: R2_ABI, _R3_ABI: R3_ABI,
   _etat: () => R, _pose: (x) => { R = x; }, _poseProvider: poseProvider,
   _fiche: fiche, _actifs: actifs, _bilan: bilan,

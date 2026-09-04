@@ -77,7 +77,9 @@ class FausseChaine extends ethers.providers.StaticJsonRpcProvider {
   async send(methode, params) {
     if (methode === 'eth_chainId') return '0x1237';
     if (methode === 'eth_blockNumber') return '0x' + this.bloc.toString(16);
-    if (methode === 'eth_gasPrice') return '0x' + (1000000000).toString(16);
+    /* 0,1 gwei, comme la chaine reelle (0,134) : a 1 gwei, chaque ordre du
+       banc aurait un gaz superieur au dixieme de sa mise et serait refuse. */
+    if (methode === 'eth_gasPrice') return '0x' + (this.prixGaz || 100000000).toString(16);
     if (methode === 'eth_getBalance') {
       const a = String(params[0]).toLowerCase();
       return (this.soldes[a] || ethers.BigNumber.from(0)).toHexString();
@@ -240,6 +242,44 @@ console.log('\n-- c est le Banquier qui dimensionne, pas le miroir --');
   C._pose(Object.assign(C.etatNeuf(), { tresor: 100 }));
   eq(C._partDuBanquier({ mise: 90 }), C.MIROIR_PART_MAX,
      'une fraction aberrante est bornee a ' + (C.MIROIR_PART_MAX * 100) + ' %');
+}
+
+console.log('\n-- un ordre a un plancher, et un miroir trop petit le dit --');
+{
+  /* Mesure le 4 septembre : 0,0023 ETH, part du Banquier 3 %, ordre de
+     0,000025 ETH — six centimes, moins que le gaz. */
+  const m = (eth, part) => ethers.utils.formatUnits(M._miseDe(W(eth), part), 18);
+  eq(m('0.0023', 0.03), '0.0', '0,0023 ETH a 3 % : rien — 0,0008 de libre ne tient pas un ordre de ' + M.ORDRE_MIN_ETH);
+  eq(m('0.0109', 0.03), M.ORDRE_MIN_ETH + (M.ORDRE_MIN_ETH.indexOf('.') < 0 ? '.0' : ''),
+     '0,0109 ETH a 3 % : le plancher (' + m('0.0109', 0.03) + '), pas 0,00028 — moins de positions, mais qui valent leur gaz');
+  ok(Math.abs(Number(m('0.1', 0.04)) - (0.1 - Number(M.GAZ_RESERVE)) * 0.04) < 1e-12,
+     'et au-dessus du plancher, la part du Banquier decide, comme avant');
+  const p = M._pourquoiPasDeMise(W('0.0023'));
+  ok(/0\.0008 ETH \(RH\) free/.test(p) && new RegExp(M.ORDRE_MIN_ETH + ' ETH').test(p) && new RegExp('fund the mirror with ' + M.MIN_ETH).test(p),
+     'la phrase donne le libre, le plancher et quoi faire : « ' + p + ' »');
+  ok(Number(M.MIN_ETH) >= Number(M.GAZ_RESERVE) + Number(M.ORDRE_MIN_ETH),
+     'et le minimum pour jouer (' + M.MIN_ETH + ') couvre la reserve plus au moins un ordre');
+}
+
+console.log('\n-- le gaz du moment est lu, et un ordre qui serait du gaz ne part pas --');
+{
+  const JG = '0x' + '66'.repeat(20);
+  for (const { joueur } of M._actifs()) await M.arrete(joueur, joueur);
+  await M.cree(JG);
+  const cg = M._fiche(JG);
+  chaine.soldes[cg.adr.toLowerCase()] = W('0.05');
+  await M.demarre(JG);
+  chaine.prixGaz = 10000000000;            /* 10 gwei : 300 000 unites font 0,003 ETH */
+  const JX = '0x' + '67'.repeat(20);
+  await M.surAchat({ sym: 'GAZ', adr: JX, pool: poolDe(JX), part: 0.1 });
+  const e = await M.etat(JG, false);
+  ok(!e.ouvertes.length, 'a 10 gwei, l ordre de 0,00485 ETH ne part pas');
+  ok(/Skipped GAZ: gas for one order is about 0\.003 ETH/.test(e.journal[0].txt) && /trading gas/.test(e.journal[0].txt),
+     'et le journal dit le gaz, la mise et pourquoi : « ' + e.journal[0].txt.slice(0, 90) + '… »');
+  chaine.prixGaz = null;
+  await M.surAchat({ sym: 'GAZ', adr: JX, pool: poolDe(JX), part: 0.1 });
+  eq((await M.etat(JG, false)).ouvertes.length, 1, 'a 0,1 gwei, le meme ordre part');
+  await M.arrete(JG, JG);
 }
 
 console.log('\n-- les trois bornes de la mise --');
