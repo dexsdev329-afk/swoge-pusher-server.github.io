@@ -869,6 +869,7 @@ function reprendSansMethode() {
     if (s.sansMethodeUrl !== n.url) {
       delete s.sansMethode; delete s.sansMethodeUrl;
       s.essais = 0; s.reussites = 0; s.dernierEchec = null;
+      n.sansMethode = {};
       continue;
     }
     if (!n.sansMethode) n.sansMethode = {};
