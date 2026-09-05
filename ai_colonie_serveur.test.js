@@ -307,6 +307,11 @@ global.fetch = async function (url, opts) {
   const rep = (o, st) => ({ ok: st === undefined || st < 400, status: st || 200, json: async () => o });
   if (MONDE.coupe) throw new Error('Failed to fetch');
   /* Le catalogue pons : une liste, ou une panne quand le banc le demande. */
+  if (/hood\.fun/.test(url)) {
+    appels.hood = (appels.hood || 0) + 1;
+    if (MONDE.hoodCasse) return rep({ error: 'down' }, 503);
+    return rep({ tokens: MONDE.hood || [], activity: {}, profiles: {} });
+  }
   if (/ponsfamily\.com/.test(url)) {
     appels.pons = (appels.pons || 0) + 1;
     if (MONDE.ponsCasse) return rep({ error: 'down' }, 503);
@@ -455,9 +460,24 @@ global.fetch = async function (url, opts) {
       if (plage > 10000) return rep({ error: { message: 'ranges over 10000 blocks are not supported' } }, 400);
     }
     const b = JSON.parse(opts.body);
-    if (b.method === 'eth_blockNumber') return rep({ result: hex(MONDE.bloc) });
+    /* ---- CE QUI N EST PAS UNE LECTURE DE JETON ----
+     * Les evenements du lanceur Secretpad sont une lecture du TOUR, pas d un
+     * jeton : ils ont leur propre compte, et `rpc`/`rpc2` restent ce que les
+     * jetons coutent. Le numero de bloc reste compte — un noeud qui ne sert
+     * que lui est mesure la-dessus — et compte AUSSI a part, pour le
+     * scenario qui veut zero lecture de jeton. */
+    if (b.method === 'eth_blockNumber') { appels.rpcBloc = (appels.rpcBloc || 0) + 1; return rep({ result: hex(MONDE.bloc) }); }
+    if (b.method === 'eth_getTransactionByHash')
+      return rep({ result: (MONDE.txFrom || {})[b.params[0]] ? { from: MONDE.txFrom[b.params[0]] } : null });
     if (b.method === 'eth_getLogs') {
       const a = String(b.params[0].address || '').toLowerCase();
+      if (a === C.SECRETPAD_LANCEUR) {
+        appels.secretpad = (appels.secretpad || 0) + 1;
+        if (secours) appels.rpc2--; else appels.rpc--;
+        const de = parseInt(b.params[0].fromBlock, 16), jusqu = parseInt(b.params[0].toBlock, 16);
+        MONDE.secretpadPlages = (MONDE.secretpadPlages || []).concat([[de, jusqu]]);
+        return rep({ result: (MONDE.secretpadLogs || []).filter((l) => parseInt(l.blockNumber, 16) >= de && parseInt(l.blockNumber, 16) <= jusqu) });
+      }
       const t = MONDE.jetons.find((x) => x.addr === a);
       return rep({ result: t ? logsDe(t) : [] });
     }
@@ -2606,6 +2626,83 @@ async function pepitesPons() {
   const sp = (C.vue().services || []).find((x) => x.cle === 'pons');
   ok(!!sp && sp.essais > 0 && sp.reussites === 0, 'et le service pons dit qu il n a pas repondu');
   MONDE.ponsCasse = false; MONDE.pons = [];
+  poolsPageFiltre = null;            /* le filtre du flux est au banc, pas au monde : on le rend */
+}
+
+/* ==========================================================================
+ * SECRETPAD ET HOOD.FUN
+ *
+ * « hood.fun, rain.fun, Robinpad, Secretpad : il faudrait pouvoir aussi
+ *   surveiller cela, on aura beaucoup plus de choix comme ca. »
+ * ======================================================================== */
+async function pepitesDesPads() {
+  console.log('\n-- secretpad : le lanceur est lu dans les blocs, et qui a lance devient une case --');
+  remise([jeton(0), jeton(1), jeton(2)]);
+  const DEP = '0x' + 'e1'.repeat(20), DEP2 = '0x' + 'e2'.repeat(20);
+  const adr32 = (a) => '0x' + '0'.repeat(24) + a.slice(2);
+  const lance = (adr, bloc, tx) => ({ address: C.SECRETPAD_LANCEUR, topics: [C.SUJET_SECRETPAD_LANCE, adr32(adr)],
+    data: '0x', blockNumber: hex(bloc), transactionHash: tx });
+  /* DEP a lance quatre jetons (trois inconnus du banc, puis TOK0) ; DEP2 en a lance un seul, TOK2. */
+  MONDE.secretpadLogs = [1, 2, 3].map((i) => lance('0x' + ('b' + i).repeat(20), MONDE.bloc - 400 - i, '0xt' + i))
+    .concat([lance(MONDE.jetons[0].addr, MONDE.bloc - 50, '0xt0'), lance(MONDE.jetons[2].addr, MONDE.bloc - 40, '0xt9')]);
+  MONDE.txFrom = { '0xt1': DEP, '0xt2': DEP, '0xt3': DEP, '0xt0': DEP, '0xt9': DEP2 };
+  MONDE.secretpadPlages = []; MONDE.hood = []; MONDE.pons = [];
+  poolsPageFiltre = [MONDE.jetons[0].addr, MONDE.jetons[1].addr];
+  appels.secretpad = 0;
+  const bloc1 = MONDE.bloc;
+  await C.tour();
+  const S = C._etat().pads.secretpad;
+  ok(appels.secretpad >= 1 && S.bloc === bloc1, 'les blocs du lanceur sont lus jusqu au bloc courant (' + appels.secretpad + ' lecture(s), bloc ' + S.bloc + ')');
+  ok(Object.keys(S.jetons).length === 5 && S.createurs[DEP] === 4 && S.createurs[DEP2] === 1,
+     'cinq lancements retenus, le lanceur DEP en compte quatre et DEP2 un');
+  const t0 = C.annotePads({ addr: MONDE.jetons[0].addr }), t2 = C.annotePads({ addr: MONDE.jetons[2].addr }), t1 = C.annotePads({ addr: MONDE.jetons[1].addr });
+  console.log('   TOK0 : ' + C.litTrait('pad', t0) + ' · ' + C.litTrait('padDep', t0) + ' ; TOK2 : ' + C.litTrait('padDep', t2) + ' ; TOK1 : ' + C.litTrait('pad', t1) + ' · ' + C.litTrait('padDep', t1));
+  ok(C.litTrait('pad', t0) === 'secretpad launch' && C.litTrait('padDep', t0) === 'launcher: 4+ launches', 'TOK0 : lance par secretpad, par un lanceur a quatre lancements');
+  ok(C.litTrait('padDep', t2) === 'launcher: first launch', 'TOK2 : premier lancement de son lanceur');
+  ok(C.litTrait('pad', t1) === 'not from a launchpad' && C.litTrait('padDep', t1) === 'no launchpad record', 'TOK1 ne vient d aucun launchpad, et le dit dans les deux cases');
+  const c2 = C.vue().candidats.find((c) => c.sym === 'TOK2');
+  ok(!!c2 && c2.origine === 'secretpad', 'TOK2, absent du flux, est pousse dans le tour par secretpad (origine « ' + (c2 && c2.origine) + ' »)');
+  ok(C._etat().roster.find((a) => a.key === 'scout').traits.indexOf('padDep') >= 0, 'le Scout porte les deux cases');
+  ok(!!(C.vue().services || []).find((x) => x.cle === 'secretpad') && !!(C.vue().services || []).find((x) => x.cle === 'hood'), 'secretpad et hood.fun sont des services nommes a l ecran');
+
+  console.log('\n-- la lecture suivante repart du dernier bloc lu, pas du debut --');
+  MONDE.bloc += 300; MONDE.secretpadPlages = [];
+  await C.tour();
+  const pl = MONDE.secretpadPlages;
+  ok(pl.length >= 1 && pl[0][0] === bloc1 + 1 && C._etat().pads.secretpad.bloc === MONDE.bloc,
+     'lue de ' + (pl[0] && pl[0][0]) + ' a ' + (pl[0] && pl[0][1]) + ' (attendu depuis ' + (bloc1 + 1) + ')');
+
+  console.log('\n-- hood.fun : c est le passage de la courbe a Uniswap qui date la graduation --');
+  remise([jeton(0), jeton(1), jeton(2)]);
+  MONDE.secretpadLogs = [];
+  const H1 = '0x' + 'f1'.repeat(20);
+  const ligne = (t, migre) => ({ address: t.addr, creator: H1, symbol: t.sym, timestamp: Math.floor(Date.now() / 1000) - 3600,
+    curve: { graduated: migre, migrated: migre } });
+  /* TOK2 encore sur la courbe, TOK1 deja migre AVANT qu on regarde : lui n est pas datable */
+  MONDE.hood = [ligne(MONDE.jetons[2], false), ligne(MONDE.jetons[1], true)];
+  C._etat().pads.hood.lu = 0;
+  poolsPageFiltre = [MONDE.jetons[0].addr];
+  await C.tour();
+  ok(Object.keys(C._etat().pads.hood.jetons).length === 0, 'premiere lecture : rien n est date, TOK1 deja migre n est pas devine');
+  MONDE.hood = [ligne(MONDE.jetons[2], true), ligne(MONDE.jetons[1], true)];
+  C._etat().pads.hood.lu = 0;
+  await C.tour();
+  const hj = C._etat().pads.hood.jetons[MONDE.jetons[2].addr];
+  ok(!!hj && hj.createur === H1, 'TOK2 a migre entre deux lectures : il est gradue, date de maintenant');
+  const th = C.annotePads({ addr: MONDE.jetons[2].addr });
+  ok(C.litTrait('pad', th) === 'hood.fun graduate' && C.litTrait('padDep', th) === 'launcher: 2-3 launches', 'TOK2 : gradue hood.fun, lanceur a deux jetons');
+  const ch = C.vue().candidats.find((c) => c.sym === 'TOK2');
+  ok(!!ch && ch.origine === 'hood', 'et il est pousse dans le tour par hood.fun (origine « ' + (ch && ch.origine) + ' »)');
+
+  console.log('\n-- un tableau hood muet ne casse rien --');
+  remise([jeton(0), jeton(1)]);
+  MONDE.hoodCasse = true; C._etat().pads.hood.lu = 0;
+  await C.tour();
+  ok((C.vue().candidats || []).length > 0, 'le tour se fait (' + C.vue().candidats.length + ' jetons)');
+  const sh = (C.vue().services || []).find((x) => x.cle === 'hood');
+  ok(!!sh && sh.essais > 0 && sh.reussites < sh.essais, 'et le service hood.fun dit qu il n a pas repondu');
+  MONDE.hoodCasse = false; MONDE.hood = []; MONDE.secretpadLogs = []; MONDE.txFrom = {};
+  poolsPageFiltre = null;
 }
 
 /* ==========================================================================
@@ -2741,13 +2838,15 @@ async function appelsInutiles() {
   remise([0, 1, 2, 3, 4, 5].map((i) => jeton(i, { minutes: 2, buys: 2, sells: 1, buyers: 2 })));
   await C.tour();
   let v = C.vue();
-  const jeunes = { ohlcv: appels.ohlcv, dex: appels.dex, trades: appels.trades, rpc: appels.rpc };
+  /* Le numero du bloc courant est lu pour le lanceur Secretpad, pas pour un jeton : il est compte a part. */
+  const jeunes = { ohlcv: appels.ohlcv, dex: appels.dex, trades: appels.trades, rpc: appels.rpc - (appels.rpcBloc || 0) };
   console.log('   six jetons de 2 min, calmes : ' + JSON.stringify(jeunes)
     + ' · refus : ' + JSON.stringify((v.candidats[0] || {}).refus));
   ok(jeunes.ohlcv === 0 && jeunes.trades === 0,
      'aucun appel de chandelles ni de trades : a deux minutes, ils ne peuvent rien rendre');
   ok(jeunes.rpc === 0,
-     'ni meme un appel a la chaine : le Scout tranche sur l age, et son controle ne coute rien');
+     'ni meme un appel a la chaine pour un jeton : le Scout tranche sur l age, et son controle ne coute rien '
+     + '(le bloc courant et le lanceur Secretpad sont des lectures du tour, comptees a part)');
   ok(v.candidats.length > 0 && v.candidats.every((c) => /too young/.test(c.refus || '')),
      'ils sont tous ecartes pour leur age, et le refus le DIT : « '
      + ((v.candidats[0] || {}).refus || '') + ' »');
@@ -5139,6 +5238,7 @@ function bornesQuiSeReglent() {
   await placesGratuites();
   await memoireDesPairesEth();
   await pepitesPons();
+  await pepitesDesPads();
   await tranchesAuMiroir();
   await venteAuPrixDuMoment();
   motsQuiCommandent();

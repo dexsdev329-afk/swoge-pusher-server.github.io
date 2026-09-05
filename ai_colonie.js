@@ -306,6 +306,10 @@ const SERVICES = {
   boosts:  { nom: 'DexScreener · boosted tokens', cout: 0, quoi: 'tokens someone paid to promote' },
   pons:    { nom: 'pons · graduations', cout: 0,
              quoi: 'tokens that raised their WETH threshold on the pons launchpad, and who launched them' },
+  secretpad: { nom: 'Secretpad · launcher contract', cout: 1,
+             quoi: 'tokens the Secretpad launcher put straight on Uniswap v4, read in the blocks, and who launched them' },
+  hood:    { nom: 'hood.fun · board', cout: 0,
+             quoi: 'tokens on the hood.fun curve, the ones that graduated to Uniswap, and who created them' },
   chaine:  { nom: 'Chain 4663 · official node', cout: 1, quoi: 'who holds what, by adding up transfers' },
   chaine2: { nom: 'Chain 4663 · ' + SECOURS_NOM, cout: 1,
              quoi: 'the same, as backup when the official one saturates (' + RPC_SECOURS_PLAGE.toLocaleString('en-US') + ' blocks max)' },
@@ -404,6 +408,34 @@ const TRAITS = {
   ponsInit: { besoin: null, f: (t) => { if (!t.pons) return 'not from pons';
               const e = t.pons.initialBuy || 0;
               return e <= 0 ? 'launcher bought nothing' : e < 0.05 ? 'launcher bought <0.05 ETH' : e < 0.5 ? 'launcher bought 0.05-0.5 ETH' : 'launcher bought >0.5 ETH'; } },
+  /* ---- LES AUTRES LAUNCHPADS ----
+   * « hood.fun, rain.fun, Robinpad, Secretpad : il faudrait pouvoir aussi
+   *   surveiller cela, on aura beaucoup plus de choix comme ca. »
+   *
+   * Mesure le 5 septembre, sur la chaine et sur leurs sites, avant d'ecrire
+   * une ligne :
+   *   Secretpad  un contrat lanceur (0x0000ffff…) qui pose le jeton DIRECTEMENT
+   *              sur Uniswap v4, pas de courbe : 258 jetons en 24 h. Le site
+   *              n'a pas d'API — il relit la chaine ; on fait pareil.
+   *   hood.fun   une courbe puis Uniswap, comme pons, et un tableau public
+   *              (/api/board) : 384 jetons depuis juillet, 12 crees en 24 h,
+   *              QUATRE gradues en tout, zero en sept jours.
+   *   rain.fun   API « suspended », factory 0xE67B… sans un seul evenement
+   *              en trente jours : mort.
+   *   Robinpad   trois sites homonymes ; robinpad.xyz (agents IA) : contrat
+   *              muet trente jours ; rpad.fun : des ventes IDO, derniere il y
+   *              a dix-sept jours ; robinpad.fi : repond 402. Rien a lire.
+   *
+   * Ce que ces launchpads AJOUTENT n'est pas des jetons — tout ce qu'ils
+   * posent sur Uniswap, le flux des pools le voit deja — c'est d'ou vient le
+   * jeton et qui l'a lance. Deux cases, gratuites, que les agents jugent. */
+  pad:     { besoin: null, f: (t) => t.pons ? 'pons graduate'
+              : !t.pad ? 'not from a launchpad'
+              : t.pad.hood ? 'hood.fun graduate' : 'secretpad launch' },
+  padDep:  { besoin: null, f: (t) => { if (!t.pad) return 'no launchpad record';
+              const n = t.pad.lances;
+              if (!(n >= 1)) return 'launcher unknown';
+              return n <= 1 ? 'launcher: first launch' : n <= 3 ? 'launcher: 2-3 launches' : 'launcher: 4+ launches'; } },
   /* Ce que le Conseiller a repondu devient une case comme une autre. C'est ce
      qui fait qu'il REPOND de ses avis : si « favorable » finit mal, la case le
      dit, et son influence se reduit d'elle-meme. */
@@ -567,7 +599,7 @@ function besoinsDuTrait(spec) {
 const ROSTER_DEPART = [
   { key: 'scout', nom: 'Scout', emoji: '🛰️', couleur: '#3d7bd6', role: 'source', ordre: 0,
     mission: 'Sweeps three feeds, and drops what is already empty on sight',
-    traits: ['age', 'liq', 'origine', 'pons', 'ponsGradAge', 'ponsVitesse', 'ponsDep', 'ponsInit'] },
+    traits: ['age', 'liq', 'origine', 'pons', 'ponsGradAge', 'ponsVitesse', 'ponsDep', 'ponsInit', 'pad', 'padDep'] },
   { key: 'warden', nom: 'Warden', emoji: '🛡️', couleur: '#9b6cf0', role: 'garde', ordre: 1,
     mission: 'Checks the contract: honeypot, taxes, owner powers',
     traits: ['taxe', 'code', 'pouv'] },
@@ -656,6 +688,7 @@ function etatNeuf() {
     v: VERSION_ETAT, tresor: DEPART, trades: 0, gains: 0, meilleur: 0, meilleurSym: '',
     courbe: [DEPART], flux: [], positions: [], memoire: {}, compteurs: {}, releves: [],
     pons: { jetons: {}, deployeurs: {}, lu: 0 },
+    pads: { secretpad: { jetons: {}, createurs: {}, bloc: 0, lu: 0 }, hood: { jetons: {}, createurs: {}, courbe: {}, lu: 0 } },
     ouvertures: 0, maj: 0, dernierTour: 0, candidats: [], derniereErreur: null,
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
     seuil: SEUIL, derniers: [], depuisAjustement: 0, suites: [], sortieEssais: 0,
@@ -1821,6 +1854,9 @@ function fane(c) {
 const MOTS = {
   /* pons : ces libelles sont deja en anglais, ils se traduisent par eux-memes */
   'not from pons': 'not from pons', 'pons graduate': 'pons graduate',
+  'not from a launchpad': 'not from a launchpad', 'secretpad launch': 'secretpad launch', 'hood.fun graduate': 'hood.fun graduate',
+  'no launchpad record': 'no launchpad record', 'launcher unknown': 'launcher unknown',
+  'launcher: first launch': 'launcher: first launch', 'launcher: 2-3 launches': 'launcher: 2-3 launches', 'launcher: 4+ launches': 'launcher: 4+ launches',
   'graduated <15 min ago': 'graduated <15 min ago', 'graduated 15-60 min ago': 'graduated 15-60 min ago',
   'graduated 1-6 h ago': 'graduated 1-6 h ago', 'graduated >6 h ago': 'graduated >6 h ago',
   'graduated in <30 min': 'graduated in <30 min', 'graduated in 30 min-6 h': 'graduated in 30 min-6 h',
@@ -5912,6 +5948,143 @@ function annotePons(t) {
   return t;
 }
 
+/* ==========================================================================
+ * SECRETPAD ET HOOD.FUN
+ *
+ * Voir la note au-dessus du trait `pad` : ce qui a ete mesure avant d'ecrire.
+ *
+ * Secretpad n'a pas d'API. Son lanceur emet un evenement par jeton pose sur
+ * Uniswap v4 ; on lit les blocs depuis le dernier lu, par tranches que le
+ * noeud accepte, et pour chaque lancement on demande QUI a envoye la
+ * transaction — c'est le lanceur, et son compte de lancements fait une case.
+ * Six lanceurs par tour au plus : 258 lancements par jour, c'est un appel
+ * tous les deux tours, pas un budget.
+ *
+ * hood.fun publie un tableau (quatre cents kilooctets) sans date de
+ * graduation : on retient l'etat de chaque jeton, et c'est le PASSAGE de
+ * « sur la courbe » a « migre » qui date la graduation. Un jeton deja migre a
+ * la premiere lecture n'est pas date, donc pas pousse : on ne devine pas.
+ * ======================================================================== */
+const SECRETPAD_LANCEUR = '0x0000ffffbe8efe702c8703ae3477ff5de3d319c0';
+const SUJET_SECRETPAD_LANCE = '0x2e2b3f61b70d2d131b2a807371103cc98d51adcaa5e9a8f9c32658ad8426e74e';
+const SECRETPAD_PLAGE_MAX = 9000;         /* blocs par lecture, sous la limite des noeuds */
+const SECRETPAD_LECTURES_TOUR = 3;        /* tranches par tour : un retard se rattrape, sans avaler le tour */
+const SECRETPAD_CREATEURS_TOUR = 6;
+const PADS_GARDE_MS = 48 * 3600e3;
+const PADS_PAR_TOUR = 3;
+const HOOD_URL = 'https://hood.fun/api/board';
+const HOOD_TTL = 15 * 60e3;
+function padsEtat() {
+  if (!E.pads || typeof E.pads !== 'object') E.pads = {};
+  if (!E.pads.secretpad) E.pads.secretpad = { jetons: {}, createurs: {}, bloc: 0, lu: 0 };
+  if (!E.pads.hood) E.pads.hood = { jetons: {}, createurs: {}, courbe: {}, lu: 0 };
+  return E.pads;
+}
+async function lisSecretpad() {
+  const S = padsEtat().secretpad;
+  const now = Date.now();
+  try {
+    /* Le bloc courant que le tour lit de toute facon : pas un appel de plus
+       quand un jeton vient d etre lu. */
+    const bloc = await blocCourant();
+    if (!(bloc > 0)) throw new Error('no block number');
+    /* La plus large tranche qu'un noeud vivant accepte, bornee. */
+    const vivants = noeuds().filter((n) => !noeudMort(n) && !(n.sansMethode && n.sansMethode.eth_getLogs));
+    const plage = Math.max(1, Math.min(SECRETPAD_PLAGE_MAX, ...vivants.map((n) => n.plageLogs || 0)));
+    let de = S.bloc > 0 ? S.bloc + 1 : Math.max(0, bloc - plage + 1);
+    if (bloc - de + 1 > SECRETPAD_LECTURES_TOUR * plage) de = bloc - SECRETPAD_LECTURES_TOUR * plage + 1;
+    let lectures = 0;
+    while (de <= bloc && lectures < SECRETPAD_LECTURES_TOUR) {
+      const a = Math.min(bloc, de + plage - 1);
+      const logs = await rpc('eth_getLogs', [{ address: SECRETPAD_LANCEUR, topics: [SUJET_SECRETPAD_LANCE],
+        fromBlock: '0x' + de.toString(16), toBlock: '0x' + a.toString(16) }]);
+      for (const l of (logs || [])) {
+        const adr = ('0x' + String(l.topics && l.topics[1] || '').slice(26)).toLowerCase();
+        if (!/^0x[0-9a-f]{40}$/.test(adr) || S.jetons[adr]) continue;
+        const b = parseInt(l.blockNumber, 16);
+        S.jetons[adr] = { t: now - Math.max(0, bloc - (b || bloc)) * BLOC_SECONDES * 1000, tx: l.transactionHash || null, createur: null };
+      }
+      S.bloc = a; de = a + 1; lectures++;
+    }
+    /* Qui a lance : l'envoyeur de la transaction, quelques-uns par tour. */
+    let vus = 0;
+    for (const adr of Object.keys(S.jetons).sort((x, y) => S.jetons[y].t - S.jetons[x].t)) {
+      const j = S.jetons[adr];
+      if (j.createur !== null || !j.tx) continue;
+      if (vus >= SECRETPAD_CREATEURS_TOUR) break;
+      vus++;
+      const tx = await rpc('eth_getTransactionByHash', [j.tx]).catch(() => null);
+      const de = tx && tx.from ? String(tx.from).toLowerCase() : '';
+      if (!/^0x[0-9a-f]{40}$/.test(de)) { j.tx = null; continue; }   /* illisible : on ne redemande pas */
+      j.createur = de;
+      S.createurs[de] = (S.createurs[de] || 0) + 1;
+    }
+    for (const adr in S.jetons) if (now - S.jetons[adr].t > PADS_GARDE_MS) delete S.jetons[adr];
+    S.lu = now;
+    noteService('secretpad', true);
+  } catch (e) { noteService('secretpad', false, e.message); }
+  return S;
+}
+async function lisHood() {
+  const H = padsEtat().hood;
+  const now = Date.now();
+  if (now - (H.lu || 0) < HOOD_TTL) return H;
+  let b;
+  try { b = await json(HOOD_URL); } catch (e) { noteService('hood', false, e.message); return H; }
+  const liste = b && Array.isArray(b.tokens) ? b.tokens : null;
+  if (!liste) { noteService('hood', false, 'no token list'); return H; }
+  const createurs = {};
+  for (const x of liste) {
+    const adr = String(x.address || '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(adr)) continue;
+    const cr = String(x.creator || '').toLowerCase();
+    if (cr) createurs[cr] = (createurs[cr] || 0) + 1;
+    const migre = !!(x.curve && x.curve.migrated);
+    const avant = H.courbe[adr];
+    /* Vu sur la courbe a une lecture, migre a la suivante : c'est la
+       graduation, et elle est datee de maintenant. */
+    if (avant && !avant.migre && migre && !H.jetons[adr])
+      H.jetons[adr] = { sym: String(x.symbol || '').slice(0, 12), createur: cr, gradue: now, t: now };
+    H.courbe[adr] = { migre, t: Number(x.timestamp) > 0 ? Number(x.timestamp) * 1000 : now };
+  }
+  for (const adr in H.courbe) if (now - H.courbe[adr].t > 7 * 864e5) delete H.courbe[adr];
+  for (const adr in H.jetons) if (now - H.jetons[adr].t > PADS_GARDE_MS) delete H.jetons[adr];
+  H.createurs = createurs; H.lu = now; H.total = liste.length;
+  noteService('hood', true);
+  return H;
+}
+/* Ce qu'un launchpad sait d'un jeton, accroche au jeton. */
+function annotePads(t) {
+  const P = padsEtat();
+  const sp = P.secretpad.jetons[t.addr];
+  if (sp) t.pad = { nom: 'secretpad', createur: sp.createur, lances: sp.createur ? (P.secretpad.createurs[sp.createur] || 1) : null, t: sp.t };
+  const h = P.hood.jetons[t.addr];
+  if (h) t.pad = { nom: 'hood.fun', hood: true, createur: h.createur, lances: h.createur ? (P.hood.createurs[h.createur] || 1) : null, t: h.gradue };
+  return t;
+}
+/* Les nouveaux venus des launchpads, quelques-uns par tour, s'ils ne sont
+   pas deja dans le tour par un flux. */
+async function poussePads(parAdresse) {
+  const P = padsEtat();
+  const now = Date.now();
+  const frais = [];
+  for (const a in P.hood.jetons) if (now - P.hood.jetons[a].gradue <= AGE_MAX_MIN * 60000) frais.push({ a, t: P.hood.jetons[a].gradue, o: 'hood' });
+  for (const a in P.secretpad.jetons) if (now - P.secretpad.jetons[a].t <= AGE_MAX_MIN * 60000) frais.push({ a, t: P.secretpad.jetons[a].t, o: 'secretpad' });
+  frais.sort((x, y) => y.t - x.t);
+  let pris = 0;
+  for (const f of frais) {
+    if (parAdresse.has(f.a)) continue;
+    if (pris >= PADS_PAR_TOUR) break;
+    const c = E.connus[f.a];
+    if (c && c.permanent) continue;
+    if (c && now - (c.dernier || 0) < SURV_MIN_MS) continue;
+    const t = await jetonDepuisDex(f.a, f.o);
+    pris++;
+    if (t && t.prix > 0) parAdresse.set(f.a, t);
+    await dors(250);
+  }
+}
+
 async function rassemble() {
   const parAdresse = new Map();
   for (const t of await lisPools()) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
@@ -5953,12 +6126,17 @@ async function rassemble() {
       await dors(250);
     }
   } catch (e) { noteService('pons', false, e.message); }
+  /* ---- ET LES AUTRES LAUNCHPADS ----
+   * Secretpad dans les blocs, hood.fun sur son tableau ; chacun en panne
+   * reste en panne pour lui seul. */
+  try { await lisSecretpad(); await lisHood(); await poussePads(parAdresse); }
+  catch (e) { noteService('secretpad', false, e.message); }
   /* Et ceux qu'on avait mis de cote, maintenant qu'ils ont eu le temps
      d'exister. C'est la seule source qui serve autre chose que du tout neuf. */
   for (const t of await reprises(parAdresse)) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
   /* Quelle que soit la source, un jeton que pons connait porte ce que pons
      en sait. */
-  return [...parAdresse.values()].map(annotePons);
+  return [...parAdresse.values()].map(annotePons).map(annotePads);
 }
 
 async function tour() {
@@ -6535,6 +6713,7 @@ module.exports = {
   revoitLesBornes, borne, BORNES, partAbandons, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
   releve, recents, JOUR_MS, TTL_GOPLUS_MUET, coteEnEth, pairesEthSeules, EXAMENS_TOUR,
   lisPons, annotePons, PONS_URL, PONS_PAR_TOUR,
+  lisSecretpad, lisHood, annotePads, poussePads, SECRETPAD_LANCEUR, SUJET_SECRETPAD_LANCE, HOOD_URL, PADS_PAR_TOUR,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN, OMBRE_DISPARUE, OMBRE_SILENCES,
