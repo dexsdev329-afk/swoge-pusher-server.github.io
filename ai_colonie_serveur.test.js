@@ -306,6 +306,12 @@ global.fetch = async function (url, opts) {
   envoyes.push({ url, body: (opts || {}).body, headers: (opts || {}).headers });
   const rep = (o, st) => ({ ok: st === undefined || st < 400, status: st || 200, json: async () => o });
   if (MONDE.coupe) throw new Error('Failed to fetch');
+  /* Le catalogue pons : une liste, ou une panne quand le banc le demande. */
+  if (/ponsfamily\.com/.test(url)) {
+    appels.pons = (appels.pons || 0) + 1;
+    if (MONDE.ponsCasse) return rep({ error: 'down' }, 503);
+    return rep(MONDE.pons || []);
+  }
 
   if (/coingecko\.com/.test(url)) {
     const pro = /pro-api/.test(url);
@@ -2544,6 +2550,62 @@ async function memoireDesPairesEth() {
   process.env.PAIRES_ETH_SEULES = '0';
   ok(C.surveilles().some((x) => x.addr === MONDE.jetons[0].addr), 'regle levee, la GLD revient en surveillance');
   delete process.env.PAIRES_ETH_SEULES;
+}
+
+/* ==========================================================================
+ * LE LAUNCHPAD PONS
+ *
+ * « Il faudrait pouvoir analyser les sorties de cette plateforme, je pense
+ *   qu'on peut réussir à trouver des pépites Robinhood. »
+ * ======================================================================== */
+async function pepitesPons() {
+  console.log('\n-- ce que pons sait d un jeton devient des cases, quelle que soit la source --');
+  remise([jeton(0), jeton(1), jeton(2)]);
+  const now = Date.now();
+  const DEP = '0x' + 'd1'.repeat(20), DEP2 = '0x' + 'd2'.repeat(20);
+  const ent = (t, dep, lance, grad, buy) => ({ token: t.addr, deployer: dep, symbol: t.sym, launchedAt: new Date(lance).toISOString(),
+    graduatedAt: new Date(grad).toISOString(), initialBuyWei: String(buy), marketCapUsd: 50000, graduationThresholdEth: 4.2 });
+  /* TOK0 : gradue il y a 10 min, lance il y a 30 min, par un lanceur a cinq graduations,
+     qui a achete 0,1 ETH. TOK2 : n est pas dans le flux GeckoTerminal, seulement chez pons. */
+  MONDE.pons = [ent(MONDE.jetons[0], DEP, now - 30 * 60000, now - 10 * 60000, 1e17),
+                ent(MONDE.jetons[2], DEP2, now - 3 * 3600e3, now - 20 * 60000, 0)]
+    .concat([1, 2, 3, 4].map((i) => ({ token: '0x' + ('c' + i).repeat(20), deployer: DEP, symbol: 'OLD' + i,
+      launchedAt: new Date(now - 10 * 864e5).toISOString(), graduatedAt: new Date(now - 9 * 864e5).toISOString(), initialBuyWei: '0' })));
+  poolsPageFiltre = [MONDE.jetons[0].addr, MONDE.jetons[1].addr];
+  appels.pons = 0;
+  await C.tour();
+  const v = C.vue();
+  ok(appels.pons === 1, 'le catalogue pons est lu une fois (' + appels.pons + ')');
+  const P = C._etat().pons;
+  ok(P && Object.keys(P.jetons).length === 2 && P.deployeurs[DEP] === 5, 'deux gradues recents gardes, et le lanceur compte cinq graduations en tout');
+  const t0 = C.annotePons({ addr: MONDE.jetons[0].addr }), t1 = C.annotePons({ addr: MONDE.jetons[1].addr });
+  const cases = ['pons', 'ponsGradAge', 'ponsVitesse', 'ponsDep', 'ponsInit'].map((k) => C.litTrait(k, t0));
+  console.log('   TOK0 : ' + JSON.stringify(cases));
+  ok(cases[0] === 'pons graduate' && cases[1] === 'graduated <15 min ago' && cases[2] === 'graduated in <30 min'
+     && cases[3] === 'launcher: 4+ graduations' && cases[4] === 'launcher bought 0.05-0.5 ETH', 'TOK0 porte ses cinq cases pons');
+  ok(C.litTrait('pons', t1) === 'not from pons' && C.litTrait('ponsDep', t1) === 'not from pons', 'TOK1, hors pons, le dit dans chaque case');
+  const c2 = v.candidats.find((c) => c.sym === 'TOK2');
+  ok(!!c2 && c2.origine === 'pons', 'TOK2, absent du flux GeckoTerminal, est pousse dans le tour par pons (origine « ' + (c2 && c2.origine) + ' »)');
+  ok(C._etat().roster.find((a) => a.key === 'scout').traits.indexOf('ponsDep') >= 0, 'le Scout porte les traits pons');
+  const srv = (v.services || []).find((x) => x.cle === 'pons' || /pons/.test(x.nom || ''));
+  ok(!!srv, 'et pons est un service nomme a l ecran');
+
+  console.log('\n-- un etat relu d avant les traits pons les recoit, sans perdre le reste --');
+  const G = C._etat();
+  const scout = G.roster.find((a) => a.key === 'scout');
+  scout.traits = ['age', 'liq', 'origine'];
+  C.sauve(); C._pose(C.etatNeuf()); C.charge();
+  const s2 = C._etat().roster.find((a) => a.key === 'scout');
+  ok(s2.traits.indexOf('ponsDep') >= 0 && s2.traits.indexOf('age') >= 0, 'le Scout relu porte age, liq, origine ET les traits pons (' + s2.traits.join(',') + ')');
+
+  console.log('\n-- un catalogue muet ne casse rien --');
+  remise([jeton(0), jeton(1)]);
+  MONDE.ponsCasse = true;
+  await C.tour();
+  ok((C.vue().candidats || []).length > 0, 'le tour se fait (' + C.vue().candidats.length + ' jetons)');
+  const sp = (C.vue().services || []).find((x) => x.cle === 'pons');
+  ok(!!sp && sp.essais > 0 && sp.reussites === 0, 'et le service pons dit qu il n a pas repondu');
+  MONDE.ponsCasse = false; MONDE.pons = [];
 }
 
 /* ==========================================================================
@@ -5076,6 +5138,7 @@ function bornesQuiSeReglent() {
   await pairesEthSeulement();
   await placesGratuites();
   await memoireDesPairesEth();
+  await pepitesPons();
   await tranchesAuMiroir();
   await venteAuPrixDuMoment();
   motsQuiCommandent();

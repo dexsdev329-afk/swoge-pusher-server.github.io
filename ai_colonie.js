@@ -304,6 +304,8 @@ const SERVICES = {
   pools:   { nom: 'GeckoTerminal · new pools', cout: 0, quoi: 'age, liquidity, cap, buys and sells' },
   profils: { nom: 'DexScreener · recent profiles', cout: 0, quoi: 'new tokens whose profile someone filled in' },
   boosts:  { nom: 'DexScreener · boosted tokens', cout: 0, quoi: 'tokens someone paid to promote' },
+  pons:    { nom: 'pons · graduations', cout: 0,
+             quoi: 'tokens that raised their WETH threshold on the pons launchpad, and who launched them' },
   chaine:  { nom: 'Chain 4663 · official node', cout: 1, quoi: 'who holds what, by adding up transfers' },
   chaine2: { nom: 'Chain 4663 · ' + SECOURS_NOM, cout: 1,
              quoi: 'the same, as backup when the official one saturates (' + RPC_SECOURS_PLAGE.toLocaleString('en-US') + ' blocks max)' },
@@ -379,6 +381,29 @@ const TRAITS = {
    * lequel a paye est une lecon que la colonie ne pouvait pas apprendre tant
    * qu'elle n'avait qu'une seule source. */
   origine: { besoin: null, f: (t) => 'trouve par ' + (t.origine || 'pools') },
+  /* ---- LE LAUNCHPAD PONS ----
+   * « Il faudrait pouvoir analyser les sorties de cette plateforme, je pense
+   *   qu'on peut réussir à trouver des pépites Robinhood. »
+   * Sur pons, un jeton nait sur une courbe et ne sort sur Uniswap qu'en
+   * « graduant » : quand assez de WETH a ete mis en face (4,2 ETH par defaut).
+   * Mesure le 5 septembre : 8 600 lancements par jour, 116 graduations —
+   * 1,3 %. La graduation est un filtre a argent reel, pas a mots. Et le
+   * lanceur a une histoire : combien de ses lancements ont gradue. Tout ca
+   * vient du catalogue public de pons, gratuit, et devient des cases dont les
+   * agents apprennent ce qu'elles valent — pas des regles ecrites a la main. */
+  pons:    { besoin: null, f: (t) => t.pons ? 'pons graduate' : 'not from pons' },
+  ponsGradAge: { besoin: null, f: (t) => { if (!t.pons) return 'not from pons';
+              const m = (Date.now() - (t.pons.gradue || 0)) / 60000;
+              return m < 15 ? 'graduated <15 min ago' : m < 60 ? 'graduated 15-60 min ago' : m < 360 ? 'graduated 1-6 h ago' : 'graduated >6 h ago'; } },
+  ponsVitesse: { besoin: null, f: (t) => { if (!t.pons || !t.pons.lance) return 'not from pons';
+              const m = ((t.pons.gradue || 0) - t.pons.lance) / 60000;
+              return m < 30 ? 'graduated in <30 min' : m < 360 ? 'graduated in 30 min-6 h' : 'graduated in >6 h'; } },
+  ponsDep: { besoin: null, f: (t) => { if (!t.pons) return 'not from pons';
+              const g = t.pons.depGradues || 1;
+              return g <= 1 ? 'launcher: first graduation' : g <= 3 ? 'launcher: 2-3 graduations' : 'launcher: 4+ graduations'; } },
+  ponsInit: { besoin: null, f: (t) => { if (!t.pons) return 'not from pons';
+              const e = t.pons.initialBuy || 0;
+              return e <= 0 ? 'launcher bought nothing' : e < 0.05 ? 'launcher bought <0.05 ETH' : e < 0.5 ? 'launcher bought 0.05-0.5 ETH' : 'launcher bought >0.5 ETH'; } },
   /* Ce que le Conseiller a repondu devient une case comme une autre. C'est ce
      qui fait qu'il REPOND de ses avis : si « favorable » finit mal, la case le
      dit, et son influence se reduit d'elle-meme. */
@@ -542,7 +567,7 @@ function besoinsDuTrait(spec) {
 const ROSTER_DEPART = [
   { key: 'scout', nom: 'Scout', emoji: '🛰️', couleur: '#3d7bd6', role: 'source', ordre: 0,
     mission: 'Sweeps three feeds, and drops what is already empty on sight',
-    traits: ['age', 'liq', 'origine'] },
+    traits: ['age', 'liq', 'origine', 'pons', 'ponsGradAge', 'ponsVitesse', 'ponsDep', 'ponsInit'] },
   { key: 'warden', nom: 'Warden', emoji: '🛡️', couleur: '#9b6cf0', role: 'garde', ordre: 1,
     mission: 'Checks the contract: honeypot, taxes, owner powers',
     traits: ['taxe', 'code', 'pouv'] },
@@ -630,6 +655,7 @@ function etatNeuf() {
   return {
     v: VERSION_ETAT, tresor: DEPART, trades: 0, gains: 0, meilleur: 0, meilleurSym: '',
     courbe: [DEPART], flux: [], positions: [], memoire: {}, compteurs: {}, releves: [],
+    pons: { jetons: {}, deployeurs: {}, lu: 0 },
     ouvertures: 0, maj: 0, dernierTour: 0, candidats: [], derniereErreur: null,
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
     seuil: SEUIL, derniers: [], depuisAjustement: 0, suites: [], sortieEssais: 0,
@@ -692,6 +718,7 @@ function charge() {
   if (!brut.memoire || typeof brut.memoire !== 'object') brut.memoire = {};
   if (!brut.compteurs || typeof brut.compteurs !== 'object') brut.compteurs = {};
   if (!Array.isArray(brut.releves)) brut.releves = [];
+  if (!brut.pons || typeof brut.pons !== 'object') brut.pons = { jetons: {}, deployeurs: {}, lu: 0 };
   if (!brut.connus || typeof brut.connus !== 'object') brut.connus = {};
   if (!brut.services || typeof brut.services !== 'object') brut.services = {};
   if (!Array.isArray(brut.journalStructure)) brut.journalStructure = [];
@@ -723,6 +750,14 @@ function charge() {
     vif.emoji = base.emoji;
     vif.couleur = base.couleur;
     vif.mission = base.mission;
+    /* ---- UN TRAIT NOUVEAU DANS LE CODE REJOINT L'AGENT ----
+     * Le decoupage des traits est appris et vient de l'etat — mais un trait
+     * qui n'existait pas quand l'etat a ete ecrit n'y sera jamais. On
+     * l'ajoute ; ce que l'agent avait appris sur les autres reste. */
+    if (Array.isArray(vif.traits)) {
+      const noms = new Set(vif.traits.map((x) => nomTrait(x)));
+      for (const tr of (base.traits || [])) if (!noms.has(nomTrait(tr))) vif.traits.push(tr);
+    }
   }
   brut.roster = brut.roster.filter((a) => a && a.key && Array.isArray(a.traits));
   E = brut;
@@ -1784,6 +1819,16 @@ function fane(c) {
  * ajoute demain sans sa ligne ici fera echouer l'essai, pas l'ecran.
  * ======================================================================== */
 const MOTS = {
+  /* pons : ces libelles sont deja en anglais, ils se traduisent par eux-memes */
+  'not from pons': 'not from pons', 'pons graduate': 'pons graduate',
+  'graduated <15 min ago': 'graduated <15 min ago', 'graduated 15-60 min ago': 'graduated 15-60 min ago',
+  'graduated 1-6 h ago': 'graduated 1-6 h ago', 'graduated >6 h ago': 'graduated >6 h ago',
+  'graduated in <30 min': 'graduated in <30 min', 'graduated in 30 min-6 h': 'graduated in 30 min-6 h',
+  'graduated in >6 h': 'graduated in >6 h',
+  'launcher: first graduation': 'launcher: first graduation', 'launcher: 2-3 graduations': 'launcher: 2-3 graduations',
+  'launcher: 4+ graduations': 'launcher: 4+ graduations',
+  'launcher bought nothing': 'launcher bought nothing', 'launcher bought <0.05 ETH': 'launcher bought <0.05 ETH',
+  'launcher bought 0.05-0.5 ETH': 'launcher bought 0.05-0.5 ETH', 'launcher bought >0.5 ETH': 'launcher bought >0.5 ETH',
   /* age */
   'age ?': 'age ?', 'ne de <10 min': 'born <10 min ago', '10-30 min': '10-30 min',
   '30 min-2 h': '30 min-2 h', '2-6 h': '2-6 h',
@@ -5820,6 +5865,53 @@ async function secoursOmbres(marche) {
   return n;
 }
 
+/* ==========================================================================
+ * LE CATALOGUE PONS
+ *
+ * Un seul appel HTTP toutes les cinq minutes : la liste publique des
+ * graduations, avec le lanceur, l'heure de lancement, l'heure de graduation
+ * et l'achat initial du lanceur. On en garde les jetons de moins de deux
+ * jours, et pour chaque lanceur son compte de graduations — c'est son
+ * histoire, et c'est elle qui fait un trait. Un catalogue muet ne casse rien :
+ * le dernier lu reste, et le service le dit.
+ * ======================================================================== */
+const PONS_URL = 'https://www.ponsfamily.com/api/pons-launches/graduations?catalog=1&v=12';
+const PONS_TTL = 5 * 60e3;
+const PONS_GARDE_MS = 48 * 3600e3;
+const PONS_PAR_TOUR = 6;
+async function lisPons() {
+  if (!E.pons) E.pons = { jetons: {}, deployeurs: {}, lu: 0 };
+  if (Date.now() - (E.pons.lu || 0) < PONS_TTL) return E.pons;
+  let liste;
+  try { liste = await json(PONS_URL); noteService('pons', true); }
+  catch (e) { noteService('pons', false, e.message); return E.pons; }
+  if (!Array.isArray(liste)) { noteService('pons', false, 'not a list'); return E.pons; }
+  const now = Date.now();
+  const deployeurs = {};
+  const jetons = {};
+  for (const x of liste) {
+    const adr = String(x.token || '').toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(adr)) continue;
+    const dep = String(x.deployer || '').toLowerCase();
+    if (dep) deployeurs[dep] = (deployeurs[dep] || 0) + 1;
+    const gradue = x.graduatedAt ? Date.parse(x.graduatedAt) : null;
+    const lance = x.launchedAt ? Date.parse(x.launchedAt) : null;
+    if (!gradue || now - gradue > PONS_GARDE_MS) continue;
+    jetons[adr] = { sym: String(x.symbol || '').slice(0, 12), deployeur: dep, lance, gradue,
+                    initialBuy: Number(x.initialBuyWei || 0) / 1e18, seuil: Number(x.graduationThresholdEth) || null,
+                    mc: Number(x.realMcapUsd || x.marketCapUsd) || 0 };
+  }
+  for (const adr in jetons) jetons[adr].depGradues = deployeurs[jetons[adr].deployeur] || 1;
+  E.pons = { jetons, deployeurs, lu: now, total: liste.length };
+  return E.pons;
+}
+/* Ce que pons sait d'un jeton, accroche au jeton : les traits le lisent la. */
+function annotePons(t) {
+  const p = E.pons && E.pons.jetons && E.pons.jetons[t.addr];
+  if (p) t.pons = p;
+  return t;
+}
+
 async function rassemble() {
   const parAdresse = new Map();
   for (const t of await lisPools()) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
@@ -5839,10 +5931,34 @@ async function rassemble() {
     }
     await dors(400);
   }
+  /* ---- LES GRADUES PONS DES SIX DERNIERES HEURES ----
+   * Ils ont un pool depuis leur graduation, donc DexScreener les sert ; on
+   * les pousse dans le tour, les plus frais d'abord, au plus six a la fois. */
+  try {
+    const P = await lisPons();
+    const now = Date.now();
+    const frais = Object.keys(P.jetons || {})
+      .filter((a) => now - P.jetons[a].gradue <= AGE_MAX_MIN * 60000)
+      .sort((a, b) => P.jetons[b].gradue - P.jetons[a].gradue);
+    let pris = 0;
+    for (const a of frais) {
+      if (parAdresse.has(a)) continue;
+      if (pris >= PONS_PAR_TOUR) break;
+      const c = E.connus[a];
+      if (c && c.permanent) continue;
+      if (c && Date.now() - (c.dernier || 0) < SURV_MIN_MS) continue;   /* deja juge, rien de neuf */
+      const t = await jetonDepuisDex(a, 'pons');
+      pris++;
+      if (t && t.prix > 0) parAdresse.set(a, t);
+      await dors(250);
+    }
+  } catch (e) { noteService('pons', false, e.message); }
   /* Et ceux qu'on avait mis de cote, maintenant qu'ils ont eu le temps
      d'exister. C'est la seule source qui serve autre chose que du tout neuf. */
   for (const t of await reprises(parAdresse)) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
-  return [...parAdresse.values()];
+  /* Quelle que soit la source, un jeton que pons connait porte ce que pons
+     en sait. */
+  return [...parAdresse.values()].map(annotePons);
 }
 
 async function tour() {
@@ -6418,6 +6534,7 @@ module.exports = {
   revoitStrategie, seuilCourant, partRefus, REFUS_AVEUGLE,
   revoitLesBornes, borne, BORNES, partAbandons, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
   releve, recents, JOUR_MS, TTL_GOPLUS_MUET, coteEnEth, pairesEthSeules, EXAMENS_TOUR,
+  lisPons, annotePons, PONS_URL, PONS_PAR_TOUR,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN, OMBRE_DISPARUE, OMBRE_SILENCES,
