@@ -561,6 +561,36 @@ function plancher(sortie) {
   return ethers.BigNumber.from(sortie).mul(10000 - TOLERANCE_BPS).div(10000);
 }
 
+/* ==========================================================================
+ * LE PRIX DU GAZ EST LE NOTRE
+ *
+ * « Comment c'est possible de payer le gaz aussi cher que le trade ? »
+ *
+ * SHARE, 4 septembre : achat 0,00217 ETH, gaz 0,00006 — 3 %, normal. Vente :
+ * devis 0,0004 ETH, net de gaz -0,0020. La vente et ses deux autorisations
+ * ont coute 0,0024 ETH de gaz, dix fois l'achat. Sans reglage, ethers signe
+ * des transactions EIP-1559 avec un pourboire de 1,5 gwei par defaut, sur
+ * une chaine dont le prix de base est 0,13 a 0,7 gwei : trois a douze fois
+ * le prix reel, a chaque transaction. On signe donc au prix du gaz lu sur
+ * la chaine, plus vingt pour cent de marge, en transaction classique : ce
+ * qu'on paie est ce qu'on a lu. */
+async function fraisGaz() {
+  const prix = await provider().getGasPrice();
+  return { gasPrice: prix.mul(12).div(10) };
+}
+/* ---- ET UNE VENTE QUI COUTE PLUS QU'ELLE NE RAPPORTE NE PART PAS ----
+ * « Ca ne sert a rien de vendre, on perd plus qu'on n'y gagne. » Une position
+ * tombee a 0,0004 ETH ne merite pas 0,0004 ETH de gaz. Sous deux fois le gaz
+ * estime de la vente (l'echange et ses autorisations), les jetons restent
+ * dans le portefeuille — ils sont au joueur — et la position est comptee
+ * comme une perte entiere : c'est ce qu'elle est. */
+const POUSSIERE_MULT = Math.max(1, nEnv('MIROIR_POUSSIERE_MULT', 2));
+async function gazDeVente(route) {
+  const prix = await provider().getGasPrice();
+  const unites = GAZ_ORDRE_UNITES + (route.ver === 'v4' ? 2 : 1) * 60000;   /* l'echange, plus les autorisations au pire */
+  return prix.mul(unites);
+}
+
 /** Le portefeuille d'un miroir, dechiffre le temps d'une signature. */
 function signataire(c) {
   return new ethers.Wallet(dechiffre(c.cle), provider());
@@ -582,7 +612,7 @@ async function acheteRoute(c, r, jeton, entreeWei) {
   const w = signataire(c);
   const avant = await provider().getBalance(w.address);
   const o = ordre(r, 'achat', jeton, entreeWei, mini, w.address, Math.floor(Date.now() / 1000) + ECHEANCE_S);
-  const tx = await w.sendTransaction(o);
+  const tx = await w.sendTransaction(Object.assign(o, await fraisGaz()));
   const rc = await tx.wait();
   const apres = await provider().getBalance(w.address);
   /* Un depot arrive pendant la transaction rendrait le cout negatif : on
@@ -595,7 +625,7 @@ async function autorise(w, jeton, montant) {
   const t = new ethers.Contract(jeton, ERC20_ABI, w);
   const a1 = await t.allowance(w.address, PERMIT2);
   if (a1.lt(montant)) {
-    const tx = await t.approve(PERMIT2, ethers.constants.MaxUint256);
+    const tx = await t.approve(PERMIT2, ethers.constants.MaxUint256, await fraisGaz());
     await tx.wait();
   }
   const p2 = new ethers.Contract(PERMIT2, PERMIT2_ABI, w);
@@ -606,7 +636,7 @@ async function autorise(w, jeton, montant) {
     /* Le maximum d'un uint160, et une echeance courte : une autorisation
        illimitee ET eternelle est ce qu'on retrouve dans tous les post-mortem. */
     const tx = await p2.approve(jeton, ROUTEUR4,
-      ethers.BigNumber.from(2).pow(160).sub(1), Math.floor(Date.now() / 1000) + 86400);
+      ethers.BigNumber.from(2).pow(160).sub(1), Math.floor(Date.now() / 1000) + 86400, await fraisGaz());
     await tx.wait();
   }
 }
@@ -616,13 +646,13 @@ async function autoriseSimple(w, jeton, routeur, montant) {
   const t = new ethers.Contract(jeton, ERC20_ABI, w);
   const a = await t.allowance(w.address, routeur);
   if (a.lt(montant)) {
-    const tx = await t.approve(routeur, ethers.constants.MaxUint256);
+    const tx = await t.approve(routeur, ethers.constants.MaxUint256, await fraisGaz());
     await tx.wait();
   }
 }
 
-async function vendRoute(c, r, jeton, montantWei) {
-  const sortie = await devisRoute(r, 'vente', jeton, montantWei);
+async function vendRoute(c, r, jeton, montantWei, sortieConnue) {
+  const sortie = sortieConnue || await devisRoute(r, 'vente', jeton, montantWei);
   const mini = plancher(sortie);
   if (!EXECUTE) return { simule: true, sortie, mini, tx: null };
   const w = signataire(c);
@@ -631,7 +661,7 @@ async function vendRoute(c, r, jeton, montantWei) {
   if (r.ver === 'v4') await autorise(w, jeton, montantWei);
   else await autoriseSimple(w, jeton, r.ver === 'v2' ? ROUTEUR2 : ROUTEUR3, montantWei);
   const o = ordre(r, 'vente', jeton, montantWei, mini, w.address, Math.floor(Date.now() / 1000) + ECHEANCE_S);
-  const tx = await w.sendTransaction(o);
+  const tx = await w.sendTransaction(Object.assign(o, await fraisGaz()));
   const rc = await tx.wait();
   const apres = await provider().getBalance(w.address);
   /* Ce qui est revenu, gaz deduit. Une vente qui rend moins que son gaz
@@ -733,6 +763,19 @@ async function cree(joueur) {
 
 /** Rendre la cle au joueur qui la demande. C'est SA cle : la lui refuser ne le
  *  protegerait de rien et le laisserait dependre de nous pour sortir. */
+/** Effacer le journal — et rien d'autre : les positions, les ventes et le
+ *  bilan ne bougent pas. « Ca prend beaucoup de place a l'ecran. » Une ligne
+ *  reste, qui dit que ca a ete fait, et combien. */
+function effaceJournal(joueur) {
+  const c = fiche(joueur);
+  if (!c) throw new Error('no mirror wallet on this account');
+  const n = (c.journal || []).length;
+  c.journal = [];
+  note(c, 'Log cleared (' + n + ' line' + (n === 1 ? '' : 's') + '). Positions, trades and the balance are untouched.');
+  sauve();
+  return { efface: n };
+}
+
 function revele(joueur) {
   const c = fiche(joueur);
   if (!c) throw new Error('no mirror wallet on this account');
@@ -902,7 +945,7 @@ async function balaie(c, vers) {
   const cout = prix.mul(21000).mul(12).div(10);   /* 20 % de marge sur le prix du gaz */
   if (solde.lte(cout)) return { envoye: '0', pourquoi: 'nothing left after gas' };
   const montant = solde.sub(cout);
-  const tx = await w.sendTransaction({ to: vers, value: montant });
+  const tx = await w.sendTransaction({ to: vers, value: montant, gasPrice: prix.mul(12).div(10) });
   const r = await tx.wait();
   note(c, 'Swept ' + ethers.utils.formatUnits(montant, 18) + ' ETH (RH) back to your account wallet',
        { tx: r.transactionHash });
@@ -1057,7 +1100,16 @@ async function vendTranche(c, adr, o, f, raison) {
   const montant = montantTenu.mul(Math.round(f / reste * 1e6)).div(1e6);
   if (montant.lte(0)) return { sortie: null, tx: null };
   const route = await routeDePosition(adr, o);
-  const r = await vendRoute(c, route, adr, montant);
+  const devisT = await devisRoute(route, 'vente', adr, montant);
+  const gazT = await gazDeVente(route);
+  if (devisT.lt(gazT.mul(POUSSIERE_MULT))) {
+    /* La tranche vaut moins que son gaz : on la laisse courir avec le reste. */
+    note(c, 'Kept the ' + Math.round(f * 100) + '% tranche of ' + (o.sym || adr) + ': selling it would return '
+          + ethers.utils.formatUnits(devisT, 18) + ' ETH (RH) for about ' + ethers.utils.formatUnits(gazT, 18)
+          + ' ETH of gas — not worth it, it stays in the position', { adr });
+    return { sortie: null, tx: null, poussiere: true };
+  }
+  const r = await vendRoute(c, route, adr, montant, devisT);
   o.jetons = montantTenu.sub(montant).toString();
   o.reste = Math.max(0, reste - f);
   const revenu = r.recuReel || r.sortie;
@@ -1077,7 +1129,26 @@ async function vendPosition(c, adr, o) {
   const montant = await tenu(c, adr, o);
   if (montant.lte(0)) { delete c.ouvertes[adr]; return { sortie: null, tx: null }; }
   const route = await routeDePosition(adr, o);
-  const r = await vendRoute(c, route, adr, montant);
+  const devisV = await devisRoute(route, 'vente', adr, montant);
+  const gazV = await gazDeVente(route);
+  if (devisV.lt(gazV.mul(POUSSIERE_MULT))) {
+    /* Vendre couterait plus que ce que ca rend : les jetons restent au joueur,
+       la position est fermee comme une perte entiere, et c'est dit. */
+    delete c.ouvertes[adr];
+    if (!Array.isArray(c.fermees)) c.fermees = [];
+    const deja = WEI(o.sortiesPartielles || '0');
+    c.fermees.push({ adr, sym: o.sym || null, entree: o.cout || o.entree, mise: o.entree,
+                     sortie: ethers.utils.formatUnits(deja, 18), tranches: o.sortiesPartielles || null,
+                     devis: ethers.utils.formatUnits(devisV, 18), reel: EXECUTE, poussiere: true,
+                     t0: o.t, t: Date.now(), simule: !EXECUTE, tx: null });
+    if (c.fermees.length > FERMEES_MAX) c.fermees.splice(0, c.fermees.length - FERMEES_MAX);
+    note(c, 'Kept ' + (o.sym || adr) + ': selling would return ' + ethers.utils.formatUnits(devisV, 18)
+          + ' ETH (RH) for about ' + ethers.utils.formatUnits(gazV, 18) + ' ETH of gas — not worth it. The tokens '
+          + 'stay in the wallet (they are yours); the position counts as a loss of '
+          + ethers.utils.formatUnits(WEI(o.cout || o.entree).sub(deja), 18) + ' ETH', { adr });
+    return { sortie: null, tx: null, poussiere: true };
+  }
+  const r = await vendRoute(c, route, adr, montant, devisV);
   delete c.ouvertes[adr];
   /* ---- LE BILAN DU JOUEUR ----
    * « L'utilisateur voit bien son solde, mais il faudrait une deuxieme barre,
@@ -1121,9 +1192,9 @@ async function vendPosition(c, adr, o) {
 
 module.exports = {
   /* l'interface du serveur */
-  charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente,
+  charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, effaceJournal,
   /* les reglages, pour l'ecran et pour les essais */
-  EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN,
+  EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN, POUSSIERE_MULT,
   GAZ_ORDRE_UNITES, GAZ_PART_MAX,
   TOLERANCE_BPS, FICHIER,
   /* les adresses du protocole */

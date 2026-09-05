@@ -87,7 +87,7 @@ class ChaineReelle extends ethers.providers.StaticJsonRpcProvider {
       if (routeur && tx.value.gt(0)) solde = solde.sub(tx.value);            /* achat */
       else if (routeur) solde = solde.add(RENDU_VENTE);                       /* vente */
       this.soldes[de] = solde;
-      this.envois.push({ de, vers, valeur: tx.value, data: tx.data });
+      this.envois.push({ de, vers, valeur: tx.value, data: tx.data, type: tx.type, gasPrice: tx.gasPrice, maxPriorityFeePerGas: tx.maxPriorityFeePerGas });
       return ethers.utils.keccak256(params[0]);       /* ethers verifie que le hash rendu est celui de la transaction signee */
     }
     if (methode === 'eth_getTransactionReceipt') {
@@ -214,6 +214,37 @@ const poolDe = (j) => {
     ok(/banked on the way/.test((await M.etat(JOUEUR, false)).journal[0].txt), 'et le journal le dit : « ' + (await M.etat(JOUEUR, false)).journal[0].txt.slice(0, 120) + '… »');
   }
 
+  console.log('\n-- chaque transaction est signee au prix du gaz lu, sans le pourboire par defaut --');
+  {
+    /* SHARE : 0,0024 ETH de gaz pour une vente a 0,0004. ethers signait en
+       EIP-1559 avec 1,5 gwei de pourboire sur une chaine a 0,13. */
+    const attendu = ethers.BigNumber.from(134102000).mul(12).div(10);
+    ok(chaine.envois.length > 0 && chaine.envois.every((e) => e.gasPrice && e.gasPrice.eq(attendu)),
+       'toutes les transactions (' + chaine.envois.length + ') portent le prix lu plus 20 % : ' + F(attendu.mul(1e9)) + ' gwei');
+    ok(chaine.envois.every((e) => !e.maxPriorityFeePerGas || e.maxPriorityFeePerGas.isZero()),
+       'et aucun pourboire de 1,5 gwei');
+  }
+
+  console.log('\n-- une vente qui couterait plus de gaz qu elle ne rend ne part pas --');
+  {
+    chaine.soldes[c.adr.toLowerCase()] = W('0.05');
+    const JP = '0x' + 'ab'.repeat(20);
+    await M.surAchat({ sym: 'POUSS', adr: JP, pool: poolDe(JP), part: 0.1 });
+    const cout = c.ouvertes[JP].cout;
+    const n0 = chaine.envois.length, s0 = chaine.soldes[c.adr.toLowerCase()];
+    chaine.sortieVente = W('0.00001');            /* la position vaut un centime */
+    eq(await M.surVente({ adr: JP }), 1, 'la vente de la colonie est suivie');
+    eq(chaine.envois.length, n0, 'mais RIEN ne part : ni autorisation, ni echange');
+    ok(chaine.soldes[c.adr.toLowerCase()].eq(s0), 'le solde n a pas bouge d un wei');
+    ok(!c.ouvertes[JP], 'la position est fermee');
+    const f = c.fermees[c.fermees.length - 1];
+    ok(f.poussiere === true && f.sortie === '0.0' && f.entree === cout, 'comptee comme une perte entiere : sortie 0, entree ' + f.entree);
+    const e = await M.etat(JOUEUR, false);
+    ok(/^Kept POUSS: selling would return 0\.00001 ETH/.test(e.journal[0].txt) && /not worth it/.test(e.journal[0].txt) && /they are yours/.test(e.journal[0].txt),
+       'et le journal dit pourquoi, et que les jetons restent au joueur : « ' + e.journal[0].txt.slice(0, 120) + '… »');
+    chaine.sortieVente = null;
+  }
+
   console.log('\n-- une position que le portefeuille ne tient plus n est plus comptee ouverte --');
   {
     /* « J ai ferme la position manuellement et il dit encore mirror open 1. » */
@@ -249,7 +280,7 @@ const poolDe = (j) => {
   ok(chaine.envois.length >= n1 + 2, 'la vente et le balayage sont partis (' + (chaine.envois.length - n1) + ' transactions)');
   const dernier = chaine.envois[chaine.envois.length - 1];
   eq(dernier.vers, JOUEUR.toLowerCase(), 'la derniere va au portefeuille du compte');
-  eq((await M.etat(JOUEUR, false)).bilan.trades, 3, 'la vente du stop est au bilan');
+  eq((await M.etat(JOUEUR, false)).bilan.trades, 4, 'la vente du stop est au bilan');
 
   console.log('\nmiroir_reel.test.js : ' + n + ' verifications OK');
 })().catch((e) => { console.error('EXCEPTION :', e); process.exit(1); });

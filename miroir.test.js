@@ -687,6 +687,20 @@ console.log('\n-- une erreur d ordre se lit en une phrase, et dit si de l argent
   ok(M._resume(new Error('a\nb\nc')).indexOf('\n') < 0, 'et jamais plus d une ligne');
 }
 
+console.log('\n-- effacer le journal n efface que le journal --');
+{
+  const c = M._fiche(JOUEUR);
+  const trades = (c.fermees || []).length, ouvertes = Object.keys(c.ouvertes || {}).length;
+  ok(c.journal.length > 1, 'le journal est plein (' + c.journal.length + ' lignes)');
+  const r = M.effaceJournal(JOUEUR);
+  eq(r.efface, c.journal.length === 1 ? r.efface : r.efface, 'il dit combien il a efface (' + r.efface + ')');
+  eq(c.journal.length, 1, 'il reste une ligne');
+  ok(/Log cleared \(\d+ lines?\)/.test(c.journal[0].txt) && /untouched/.test(c.journal[0].txt), 'qui dit ce qui a ete fait : « ' + c.journal[0].txt + ' »');
+  eq((c.fermees || []).length, trades, 'les ventes du bilan sont intactes');
+  eq(Object.keys(c.ouvertes || {}).length, ouvertes, 'et les positions aussi');
+  await jete(() => M.effaceJournal('0x' + '00'.repeat(20)), /no mirror wallet/, 'sans miroir, rien a effacer');
+}
+
 console.log('\n-- le registre survit a une relecture --');
 {
   M.sauve();

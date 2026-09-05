@@ -3856,6 +3856,13 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
+      if (m.type === 'miroirEffaceJournal') {
+        try {
+          miroir.effaceJournal(ws.addr);
+          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
       if (m.type === 'miroirStop') {
         try {
           /* La destination n'est pas choisie par le message : c'est le
