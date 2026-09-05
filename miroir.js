@@ -591,6 +591,73 @@ async function gazDeVente(route) {
   return prix.mul(unites);
 }
 
+/* ==========================================================================
+ * LA MEILLEURE PLACE, MESUREE
+ *
+ * « C'est vraiment sur le WETH que tu dois te concentrer, les frais sont
+ *   moins chers. »
+ *
+ * Mesure le 5 septembre, 0,001 ETH aller-retour : une paire v2 rend 99,3 %,
+ * un pool v3 a 1 % rend 97,9 %, un pool v4 a hook rend 98,0 %. Et le gaz
+ * n'est pas le meme : v4 passe par Permit2 (deux autorisations) et un
+ * echange plus lourd ; v2 et v3, une autorisation et un echange leger. Ce
+ * qui est moins cher n'est donc pas « le WETH », c'est une place precise,
+ * pour ce jeton, pour cette mise — et ca se mesure. Avant chaque achat, le
+ * miroir demande a DexScreener toutes les paires du jeton contre l'ETH ou le
+ * WETH, chiffre l'aller-retour de chacune au quoteur de sa place, retire le
+ * gaz estime, et prend la meilleure. La colonie a donne une piscine ; le
+ * miroir la garde si rien ne fait mieux. */
+const LIQ_PLACE_MIN = 2000;
+const GAZ_PLACE = { v4: 2 * 60000 + 2 * 300000, v3: 60000 + 2 * 200000, v2: 60000 + 2 * 150000 };   /* autorisations + aller + retour */
+let sourcePaires = async function (jeton) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), 8000);
+  try {
+    const r = await fetch('https://api.dexscreener.com/latest/dex/tokens/' + jeton, { signal: ac.signal });
+    if (!r.ok) return [];
+    const j = await r.json();
+    return (j.pairs || []).filter((p) => String(p.chainId || '').toLowerCase() === 'robinhood')
+      .map((p) => ({ pool: p.pairAddress, liq: Number(p.liquidity && p.liquidity.usd) || 0,
+                     quote: String((p.quoteToken || {}).address || '').toLowerCase(), labels: p.labels || [] }));
+  } catch (e) { return []; }
+  finally { clearTimeout(t); }
+};
+function poseSourcePaires(f) { sourcePaires = f; }
+const ADRESSES_ETH_PLACE = [norm(ETH4), norm(WETH), '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'];
+
+/** Toutes les places d'un jeton, chiffrees pour cette mise. Rend la meilleure
+ *  nette de gaz, et la liste comparee pour le journal. Celle de la colonie
+ *  est toujours dans la liste ; sans rien de mieux, c'est elle. */
+async function meilleurePlace(jeton, poolColonie, mise) {
+  const vues = new Set();
+  const cand = [];
+  if (poolColonie) { cand.push(String(poolColonie)); vues.add(norm(poolColonie)); }
+  let autres = [];
+  try { autres = await sourcePaires(jeton); } catch (e) { autres = []; }
+  for (const p of autres) {
+    if (!p.pool || vues.has(norm(p.pool))) continue;
+    if (!(p.liq >= LIQ_PLACE_MIN)) continue;
+    if (p.quote && ADRESSES_ETH_PLACE.indexOf(norm(p.quote)) < 0) continue;
+    vues.add(norm(p.pool)); cand.push(String(p.pool));
+  }
+  const prixGaz = await provider().getGasPrice();
+  const essais = [];
+  for (const pool of cand) {
+    try {
+      const route = await routeDe(jeton, pool);
+      const sortie = await devisRoute(route, 'achat', jeton, mise);
+      if (sortie.lte(0)) continue;
+      const retour = await devisRoute(route, 'vente', jeton, sortie);
+      const gaz = prixGaz.mul(GAZ_PLACE[route.ver] || GAZ_PLACE.v4);
+      essais.push({ route, pool, sortie, retour, gaz, net: retour.sub(gaz), colonie: norm(pool) === norm(poolColonie) });
+    } catch (e) { /* une place qui ne repond pas n'est pas candidate */ }
+  }
+  if (!essais.length) throw new Error(poolColonie ? 'no venue answers for this token' : 'no pool against ETH found for this token');
+  essais.sort((a, b) => (b.net.gt(a.net) ? 1 : b.net.lt(a.net) ? -1 : (a.colonie ? -1 : b.colonie ? 1 : 0)));
+  const pct = (e) => mise.isZero() ? 0 : Math.round(Number(e.retour.mul(10000).div(mise)) / 100 * 10) / 10;
+  return { choix: essais[0], compare: essais.map((e) => ({ ver: e.route.ver, pool: e.pool, retourPct: pct(e), colonie: e.colonie })) };
+}
+
 /** Le portefeuille d'un miroir, dechiffre le temps d'une signature. */
 function signataire(c) {
   return new ethers.Wallet(dechiffre(c.cle), provider());
@@ -1039,11 +1106,8 @@ async function achetePosition(c, t) {
           + ' ETH stake — trading that would be trading gas');
     return false;
   }
-  const route = await routeDe(adr, t.pool);
-  /* L'aller-retour : ce que la vente immediate rendrait. */
-  const sortieAttendue = await devisRoute(route, 'achat', adr, mise);
-  if (sortieAttendue.lte(0)) throw new Error('the quoter returns nothing for this buy');
-  const retour = await devisRoute(route, 'vente', adr, sortieAttendue);
+  const { choix, compare } = await meilleurePlace(adr, t.pool, mise);
+  const route = choix.route, retour = choix.retour;
   if (retour.mul(10000).lt(mise.mul(Math.round(RETOUR_MIN * 10000)))) {
     const pct = mise.isZero() ? 0 : Math.round(Number(retour.mul(10000).div(mise)) / 100);
     note(c, 'Skipped ' + (t.sym || adr) + ': selling straight back would return ' + pct + '% of the stake ('
@@ -1070,8 +1134,11 @@ async function achetePosition(c, t) {
     ? (Math.round(t.part * 1000) / 10) + '% of what was free — the Banker\'s own share'
       + (t.score ? ' at score ' + t.score : '')
     : (Math.round(PART_ORDRE * 1000) / 10) + '% of what was free (fallback: no share from the colony)';
+  const places = compare.length > 1
+    ? ' · best of ' + compare.length + ' venues (' + compare.map((x) => x.ver + ' ' + x.retourPct + '%' + (x.colonie ? ', the colony\'s' : '')).join(', ') + ' round trip)'
+    : '';
   note(c, (r.simule ? '[dry run] ' : '') + 'Bought ' + (t.sym || adr) + ' for '
-        + ethers.utils.formatUnits(mise, 18) + ' ETH (RH) on Uniswap ' + route.ver
+        + ethers.utils.formatUnits(mise, 18) + ' ETH (RH) on Uniswap ' + route.ver + places
         + (r.coutReel ? ' · cost incl. gas ' + ethers.utils.formatUnits(r.coutReel, 18) + ' ETH' : '')
         + ' · ' + dit,
         { adr, tx: r.tx || null });
@@ -1206,6 +1273,7 @@ module.exports = {
   _idV4: idV4, _clePiscine: clePiscine, _devis: devis, _corpsV4: corpsV4,
   _plancher: plancher, _miseDe: miseDe, _pourquoiPasDeMise: pourquoiPasDeMise, _balaie: balaie,
   _routeDe: routeDe, _devisRoute: devisRoute, _ordre: ordre, _R2_ABI: R2_ABI, _R3_ABI: R3_ABI,
+  _meilleurePlace: meilleurePlace, _poseSourcePaires: poseSourcePaires, GAZ_PLACE, LIQ_PLACE_MIN,
   _etat: () => R, _pose: (x) => { R = x; }, _poseProvider: poseProvider,
   _fiche: fiche, _actifs: actifs, _bilan: bilan, _reconcilie: reconcilie, _resume: resume,
   _oublieReconciliation: () => derniereReconciliation.clear(),

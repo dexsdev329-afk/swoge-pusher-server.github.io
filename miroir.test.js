@@ -175,6 +175,7 @@ class FausseChaine extends ethers.providers.StaticJsonRpcProvider {
 }
 const chaine = new FausseChaine();
 M._poseProvider(chaine);
+M._poseSourcePaires(async () => []);   /* pas de reseau au banc : la colonie donne la piscine */
 
 /* La clef et l'identifiant d'une piscine, calcules comme le module le fera. */
 function poolDe(jeton) {
@@ -543,6 +544,42 @@ console.log('\n-- avant d acheter, l aller-retour : une piscine qui ne laisse pa
   chaine.sortieVente = null;
   await M.surVente({ adr: JR });
   await M.arrete(J6, J6);
+}
+
+console.log('\n-- la meilleure place se mesure : v2 quand elle rend autant pour moins de gaz --');
+{
+  /* Le meme jeton sur v4 (la piscine de la colonie) et sur une paire v2
+     WETH : memes devis au banc, donc le gaz tranche, et v2 en demande
+     moitie moins. Une paire trop mince n est pas candidate. */
+  const JM = '0x' + '4d'.repeat(20), PV2 = '0x' + 'b6'.repeat(20), PMINCE = '0x' + 'b7'.repeat(20);
+  chaine.paires[PV2] = { t0: M.WETH, t1: JM, fee: null };
+  chaine.paires[PMINCE] = { t0: M.WETH, t1: JM, fee: null };
+  M._poseSourcePaires(async (j) => j.toLowerCase() === JM
+    ? [{ pool: PV2, liq: 5000, quote: M.WETH.toLowerCase(), labels: ['v2'] }, { pool: PMINCE, liq: 500, quote: M.WETH.toLowerCase(), labels: ['v2'] }]
+    : []);
+  const mp = await M._meilleurePlace(JM, poolDe(JM), W('0.005'));
+  console.log('   ' + JSON.stringify(mp.compare));
+  eq(mp.compare.length, 2, 'deux places comparees : la v4 de la colonie et la v2 ; la paire a 500 $ est ecartee');
+  eq(mp.choix.route.ver, 'v2', 'a devis egal, la v2 gagne : moins de gaz');
+  ok(mp.compare.some((x) => x.colonie && x.ver === 'v4'), 'et la piscine de la colonie est dans la comparaison, nommee');
+  /* Sans autre place, c est celle de la colonie, sans comparaison. */
+  M._poseSourcePaires(async () => []);
+  const seule = await M._meilleurePlace(JM, poolDe(JM), W('0.005'));
+  eq(seule.compare.length, 1, 'sans autre place, celle de la colonie');
+  eq(seule.choix.route.ver, 'v4', 'sur v4');
+  /* Et l achat suivi prend la v2, et le journal le dit. */
+  M._poseSourcePaires(async (j) => j.toLowerCase() === JM ? [{ pool: PV2, liq: 5000, quote: M.WETH.toLowerCase(), labels: ['v2'] }] : []);
+  const J7 = '0x' + '88'.repeat(19) + '02';
+  for (const { joueur } of M._actifs()) await M.arrete(joueur, joueur);
+  await M.cree(J7); chaine.soldes[M._fiche(J7).adr.toLowerCase()] = W('0.05'); await M.demarre(J7);
+  await M.surAchat({ sym: 'MIX', adr: JM, pool: poolDe(JM), part: 0.1 });
+  const o = M._fiche(J7).ouvertes[JM];
+  ok(!!o && o.ver === 'v2' && o.pool.toLowerCase() === PV2, 'la position est ouverte sur la v2, pas sur la piscine donnee par la colonie');
+  const e = await M.etat(J7, false);
+  ok(/on Uniswap v2 · best of 2 venues \(v2 [\d.]+%, v4 [\d.]+%, the colony's round trip\)/.test(e.journal[0].txt),
+     'et le journal compare : « ' + e.journal[0].txt.slice(0, 120) + '… »');
+  await M.arrete(J7, J7);
+  M._poseSourcePaires(async () => []);
 }
 
 console.log('\n-- une piscine v4 cotee en WETH : suivie, avec emballage a l achat et deballage a la vente --');

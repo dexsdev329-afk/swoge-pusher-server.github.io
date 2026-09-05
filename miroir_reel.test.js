@@ -130,6 +130,7 @@ class ChaineReelle extends ethers.providers.StaticJsonRpcProvider {
 }
 const chaine = new ChaineReelle();
 M._poseProvider(chaine);
+M._poseSourcePaires(async () => []);   /* pas de reseau au banc : la colonie donne la piscine */
 /* La reconciliation se fait au plus toutes les trente secondes : on la force. */
 const derniere = () => M._oublieReconciliation();
 const poolDe = (j) => {
