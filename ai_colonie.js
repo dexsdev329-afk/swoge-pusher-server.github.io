@@ -461,9 +461,11 @@ const TRAITS = {
   top:    { besoin: 'chaine', f: (t) => { const c = t.chaine || {}, g = t.g || {};
               const v = (c.vu && c.top !== null && c.top !== undefined) ? c.top : (g.topSu ? g.top : null);
               if (c.personne) return 'personne ne garde';
+              if (c.foule && v === null) return c.foule === 10000 ? 'foule >10k transferts' : 'foule : trop de transferts';
               return v === null ? 'concentration inconnue' : tranche(v, [5, 15, 30, 50],
                 ['top <5%', 'top 5-15%', 'top 15-30%', 'top 30-50%', 'top >50%']); } },
   det:    { besoin: 'chaine', f: (t) => { const c = t.chaine || {}, g = t.g || {};
+              if (c.foule && !g.detSue) return c.foule === 10000 ? 'foule >10k transferts' : 'foule : trop de transferts';
               if (c.vu && c.porteurs !== null && c.porteurs !== undefined)
                 return tranche(c.porteurs, [10, 30, 100, 500],
                   ['<10 porteurs', '10-30', '30-100', '100-500', '>500 porteurs']);
@@ -1200,6 +1202,11 @@ async function rpc(methode, params) {
   let derniere = null;
   for (let tour = 0; tour < 2; tour++) {
     for (const n of capables) {
+      /* Ce qu'un noeud vient de dire de lui-meme vaut des la reprise : une
+         limite de plage ou une methode absente apprises au premier passage
+         lui epargnent la meme demande au second. Mesure au banc : deux refus
+         d'Alchemy pour une seule lecture, le second identique au premier. */
+      if (plage > n.plageLogs || (n.sansMethode && n.sansMethode[methode])) continue;
       try {
         /* On note l'heure AVANT l'appel : sinon un noeud mort retente a chaque
            lecture tant qu'il echoue, et l'heure de controle ne servirait a
@@ -1226,7 +1233,18 @@ async function rpc(methode, params) {
           console.log('[ai] ' + n.cle + ' : ne sert pas ' + sm[1]
             + ' — retenu, on ne le lui redemandera plus (il garde le reste)');
         }
-        const m = /over (\d+) blocks/.exec(String(e.message || ''));
+        /* ---- DEUX FOURNISSEURS, DEUX PHRASES POUR LA MEME LIMITE ----
+         * dRPC : « ranges over 10000 blocks are not supported ». Alchemy, sur
+         * le forfait gratuit : « Under the Free tier plan, you can make
+         * eth_getLogs requests with up to a 10 block range ». Mesure le 6
+         * septembre : 137 refus sur 430, tous celui-la — une limite de FORFAIT,
+         * pas de quota, que le tableau de bord ne montre pas comme un
+         * depassement. Tant que la phrase n'etait pas reconnue, chaque lecture
+         * de journaux repartait vers ce noeud, et repartait refusee. */
+        const m = /over (\d+) blocks/.exec(String(e.message || ''))
+          /* Coupee a quatre-vingts caracteres par `unNoeud` : la phrase d'Alchemy
+             s'arrete a « up to a 10 blo ». On reconnait le debut, pas la fin. */
+          || /up to a (\d+)[ -]?blo/i.exec(String(e.message || ''));
         if (m) {
           const max = parseInt(m[1], 10);
           if (max > 0 && max < n.plageLogs) {
@@ -1536,7 +1554,27 @@ async function lisChaine(addr, minutes, pool) {
         break;
       } catch (e) { derniere = e; }
     }
-    if (logs === null) throw derniere || new Error('logs illisibles');
+    if (logs === null) {
+      /* ---- TROP DE TRANSFERTS N'EST PAS « ILLISIBLE » ----
+       * « logs matched by query exceeds limit of 10000 » : le noeud officiel
+       * refuse de rendre plus de dix mille lignes. Mesure le 6 septembre, c'est
+       * le motif de 28 sondes sur 42 — et ca ne tombe que sur les jetons qui
+       * ont plus de dix mille transferts dans leur vie, c'est-a-dire les plus
+       * actifs du flux. Les rendre « inconnu » les ecartait pour la raison
+       * inverse de ce qu'ils sont. On ne compte pas les porteurs — on ne les
+       * a pas lus, et on ne les invente pas — mais on SAIT une chose vraie :
+       * il y a foule. C'est une case, et les agents en apprendront la valeur. */
+      const f = /exceeds limit of (\d+)/.exec(String((derniere && derniere.message) || ''));
+      if (f) {
+        compte('chaineFoule');
+        return garde(CACHE.chaine, addr, {
+          vu: true, montantsLus: false, foule: parseInt(f[1], 10),
+          transferts: null, recepteurs: null, porteurs: null, personne: false, top: null,
+          plusGros: null, cobayes: [], infra: 0, participants: null, infraAdresses: [], brule: null,
+        });
+      }
+      throw derniere || new Error('logs illisibles');
+    }
     /* ---- ZERO TRANSFERT N'EST PAS « PERSONNE NE LE GARDE » ----
      *
      * `minutes` est l'age de la PISCINE, pas du jeton : c'est
@@ -1913,6 +1951,7 @@ const MOTS = {
   'aucun pouvoir': 'no owner powers',
   /* concentration */
   'personne ne garde': 'nobody holds', 'concentration inconnue': 'concentration unknown',
+  'foule >10k transferts': 'crowd: >10k transfers', 'foule : trop de transferts': 'crowd: too many transfers to count',
   'top <5%': 'top <5%', 'top 5-15%': 'top 5-15%', 'top 15-30%': 'top 15-30%',
   'top 30-50%': 'top 30-50%', 'top >50%': 'top >50%',
   /* porteurs */
@@ -5125,11 +5164,20 @@ function alertes() {
      * porteurs. Le dire change ce qu'il faut faire — ce n'est plus « le
      * secours prendra le relais », c'est « il n'y a plus de secours ». */
     const P0 = planchers();
-    if (P0.ageMin > 17)
+    /* La limite du secours est celle qu'il a ANNONCEE, pas un chiffre ecrit
+       ici : Alchemy en forfait gratuit dit dix blocs, dRPC dix mille. */
+    const n2 = noeuds().find((n) => n.cle === 'chaine2');
+    const cap2 = n2 ? n2.plageLogs : RPC_SECOURS_PLAGE;
+    if (P0.ageMin > 17 || cap2 < 1000)
       remede += ' Worth noting: with a minimum buy age of '
         + Math.round(P0.ageMin / 60 * 10) / 10 + ' h, one block read needs about '
         + Math.round(P0.ageMin * 60 / BLOC_SECONDES / 1000) + ',000 blocks. The backup node caps '
-        + 'at 10,000: it can no longer serve ANY holder count, only the block number and the '
+        + 'at ' + cap2.toLocaleString('en-US') + ' blocks'
+        + (cap2 < 1000
+            ? ' — that is what its plan allows for eth_getLogs (Alchemy\'s Free tier says 10), a plan '
+              + 'limit rather than a quota, so the dashboard shows nothing exceeded; a paid plan lifts it'
+            : '')
+        + ': it can no longer serve ANY holder count, only the block number and the '
         + 'Cobaye\'s trial. The official node is therefore the only one able to count holders, and '
         + 'when it saturates they all turn to "unknown".';
     dis('haute', 'The chain nodes are refusing ' + Math.round(echecs / total * 100) + '% of reads',
@@ -5967,7 +6015,7 @@ function annotePons(t) {
  * ======================================================================== */
 const SECRETPAD_LANCEUR = '0x0000ffffbe8efe702c8703ae3477ff5de3d319c0';
 const SUJET_SECRETPAD_LANCE = '0x2e2b3f61b70d2d131b2a807371103cc98d51adcaa5e9a8f9c32658ad8426e74e';
-const SECRETPAD_PLAGE_MAX = 9000;         /* blocs par lecture, sous la limite des noeuds */
+const SECRETPAD_PLAGE_MAX = 3000;         /* blocs par lecture : cinq minutes de chaine, leger pour le noeud */
 const SECRETPAD_LECTURES_TOUR = 3;        /* tranches par tour : un retard se rattrape, sans avaler le tour */
 const SECRETPAD_CREATEURS_TOUR = 6;
 const PADS_GARDE_MS = 48 * 3600e3;
@@ -5990,7 +6038,10 @@ async function lisSecretpad() {
     if (!(bloc > 0)) throw new Error('no block number');
     /* La plus large tranche qu'un noeud vivant accepte, bornee. */
     const vivants = noeuds().filter((n) => !noeudMort(n) && !(n.sansMethode && n.sansMethode.eth_getLogs));
-    const plage = Math.max(1, Math.min(SECRETPAD_PLAGE_MAX, ...vivants.map((n) => n.plageLogs || 0)));
+    /* Le plus capable des vivants, borne : la demande part vers celui qui
+       peut la servir. Prendre le MOINS capable — c'etait le cas — aurait fait
+       des tranches de dix blocs le jour ou Alchemy a dit sa limite. */
+    const plage = Math.max(1, Math.min(SECRETPAD_PLAGE_MAX, Math.max(0, ...vivants.map((n) => n.plageLogs || 0))));
     let de = S.bloc > 0 ? S.bloc + 1 : Math.max(0, bloc - plage + 1);
     if (bloc - de + 1 > SECRETPAD_LECTURES_TOUR * plage) de = bloc - SECRETPAD_LECTURES_TOUR * plage + 1;
     let lectures = 0;
@@ -6370,6 +6421,7 @@ async function tour() {
       infra: x.t.chaine && x.t.chaine.vu ? (x.t.chaine.infra || 0) : null,
       participants: x.t.chaine && x.t.chaine.vu ? (x.t.chaine.participants || 0) : null,
       personne: !!(x.t.chaine && x.t.chaine.personne),
+      foule: (x.t.chaine && x.t.chaine.foule) || null,
       transferts: x.t.chaine && x.t.chaine.vu ? x.t.chaine.transferts : null,
       goplusSait: !!(x.t.g && x.t.g.have),
       goplusSeContredit: !!(x.t.g && x.t.g.seContredit),

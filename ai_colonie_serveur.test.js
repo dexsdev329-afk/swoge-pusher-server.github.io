@@ -456,6 +456,10 @@ global.fetch = async function (url, opts) {
     if (secours && b0.method === 'eth_getLogs') {
       const f = b0.params[0];
       const plage = parseInt(f.toBlock, 16) - parseInt(f.fromBlock, 16);
+      appels.rpc2Logs = (appels.rpc2Logs || 0) + 1;
+      /* La phrase d Alchemy en forfait gratuit, mot pour mot. */
+      if (MONDE.secoursDixBlocs && plage > 9)
+        return rep({ error: { message: 'Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block range. Based on your parameters and the response size limit, this block range should work: [0x1, 0xa]' } }, 400);
       /* Sa vraie limite, relevee sur le service : dix mille blocs. */
       if (plage > 10000) return rep({ error: { message: 'ranges over 10000 blocks are not supported' } }, 400);
     }
@@ -471,6 +475,8 @@ global.fetch = async function (url, opts) {
       return rep({ result: (MONDE.txFrom || {})[b.params[0]] ? { from: MONDE.txFrom[b.params[0]] } : null });
     if (b.method === 'eth_getLogs') {
       const a = String(b.params[0].address || '').toLowerCase();
+      if ((MONDE.foule || []).indexOf(a) >= 0)
+        return rep({ error: { message: 'logs matched by query exceeds limit of 10000' } }, 400);
       if (a === C.SECRETPAD_LANCEUR) {
         appels.secretpad = (appels.secretpad || 0) + 1;
         if (secours) appels.rpc2--; else appels.rpc--;
@@ -2703,6 +2709,53 @@ async function pepitesDesPads() {
   ok(!!sh && sh.essais > 0 && sh.reussites < sh.essais, 'et le service hood.fun dit qu il n a pas repondu');
   MONDE.hoodCasse = false; MONDE.hood = []; MONDE.secretpadLogs = []; MONDE.txFrom = {};
   poolsPageFiltre = null;
+}
+
+/* ==========================================================================
+ * DEUX REFUS QUI ONT UN NOM
+ *
+ * « Il me faut un quota plus eleve ? » — « Non, le quota est bon, je viens
+ *   de regarder le tableau de bord. »
+ *
+ * Sonde le 6 septembre, 42 lectures de l etat en trois minutes : le noeud
+ * officiel refusait « logs matched by query exceeds limit of 10000 », le
+ * secours Alchemy « Under the Free tier plan ... up to a 10 block range ».
+ * Ni l un ni l autre n est un quota.
+ * ======================================================================== */
+async function deuxRefusQuiOntUnNom() {
+  console.log('\n-- un jeton a plus de dix mille transferts : il y a foule, ce n est pas « inconnu » --');
+  remise(sains());
+  MONDE.foule = [MONDE.jetons[0].addr];
+  await C.tour();
+  const c0 = C.vue().candidats.find((c) => c.sym === 'TOK0');
+  console.log('   TOK0 : ' + JSON.stringify(c0 && { chaineVue: c0.chaineVue, foule: c0.foule, porteurs: c0.porteurs, refus: c0.refus }));
+  ok(!!c0 && c0.chaineVue && c0.foule === 10000 && c0.porteurs === null,
+     'la chaine est VUE, la foule est dite (10 000), et les porteurs restent non comptes — pas inventes');
+  const ch = C._cache.chaine[MONDE.jetons[0].addr];
+  const tf = { chaine: ch && ch.v, g: {} };
+  ok(C.litTrait('top', tf) === 'foule >10k transferts' && C.litTrait('det', tf) === 'foule >10k transferts',
+     'et le Whale-Watch a une case pour ca : « ' + C.enMots(C.litTrait('top', tf)) + ' », pas « concentration unknown »');
+  ok(!(c0.refus && /unknown|inconnu/.test(c0.refus)), 'le jeton n est pas ecarte pour une lecture qu on n a pas pu faire');
+  const c1 = C.vue().candidats.find((c) => c.sym === 'TOK1');
+  ok(!!c1 && c1.chaineVue && c1.porteurs > 0 && !c1.foule, 'le voisin, lui, est compte normalement');
+  ok((C._etat().compteurs.chaineFoule || 0) === 1, 'et c est compte une fois');
+
+  console.log('\n-- le secours annonce dix blocs : on le retient, et on ne lui renvoie plus de journaux --');
+  remise(sains(), { rpcSature: true });
+  MONDE.secoursDixBlocs = true;
+  ok(C.noeuds().find((n) => n.cle === 'chaine2').plageLogs === 10000, 'on part de la limite connue (10 000)');
+  await C.tour();
+  const n2 = C.noeuds().find((n) => n.cle === 'chaine2');
+  console.log('   plage retenue : ' + n2.plageLogs + ' · lectures de journaux envoyees au secours : ' + (appels.rpc2Logs || 0));
+  ok(n2.plageLogs === 10, 'la limite retenue est celle que le service a dite : 10 blocs');
+  ok((appels.rpc2Logs || 0) === 1, 'UNE lecture refusee, pas une par jeton (' + (appels.rpc2Logs || 0) + ')');
+  C._etat().services = { chaine: { essais: 500, reussites: 300, dernierEchec: 'sature' },
+                         chaine2: { essais: 430, reussites: 293, dernierEchec: null } };
+  const a = C.alertes().find((x) => /chain nodes are refusing/.test(x.quoi));
+  console.log('   ' + ((a && a.quoiFaire.match(/The backup node caps[^.]*\./) || [''])[0]));
+  ok(!!a && /caps at 10 blocks/.test(a.quoiFaire) && /plan limit rather than a quota/.test(a.quoiFaire),
+     'l alerte dit la limite mesuree et que c est le forfait, pas le quota');
+  MONDE.secoursDixBlocs = false; MONDE.foule = [];
 }
 
 /* ==========================================================================
@@ -5215,6 +5268,7 @@ function bornesQuiSeReglent() {
   await bandesDage();
   await prendreUnGain();
   await quelNoeud();
+  await deuxRefusQuiOntUnNom();
   await livreDOmbre();
   await profilsDansLeTemps();
   await jalonsHonnetes();
