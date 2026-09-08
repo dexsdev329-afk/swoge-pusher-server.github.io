@@ -3815,7 +3815,18 @@ function regleLesSuites(marche) {
    longtemps pour l'atteindre, et il y en a plus a la fois. Vingt jetons par
    tour, un tour toutes les deux minutes et demie, deux heures de suivi : mille
    deux cents suffit largement, et le fichier reste petit. */
-const OMBRES_MAX = 1200;
+/* ---- LE PLAFOND, ET CE QU'IL EFFACAIT ----
+ * Releve le 8 septembre, apres quatre heures de rejeu en place : « le rejeu
+ * dira » sur les vingt et une lignes de l'audit, zero rejeu compte, et
+ * 1 200 ombres en attente — exactement le plafond. La colonie examine
+ * trente jetons par tour, un tour fait deux minutes et demie : mille deux
+ * cents ombres, c'est cent minutes de vie. Aucune n'atteignait ses cent
+ * quatre-vingts minutes, la ou le rejeu avait lieu ; le plafond les
+ * effacait avant, sans rien rejouer, et sans le jalon de deux heures.
+ * Deux mille quatre cents, c'est deux cents minutes : la derniere
+ * echeance est mesuree, et l'ombre part par la porte prevue. Et celle
+ * que le plafond pousse quand meme est rejouee sur ce qu'elle a laisse. */
+const OMBRES_MAX = 2400;
 const OMBRE_OUBLI_MS = 3 * 3600e3;
 const OMBRE_TENUE_MIN = 20;     /* la meme echeance qu'une position, pour comparer ce qui l'est */
 
@@ -3838,7 +3849,18 @@ function noteOmbre(t, an, refus, quiRefuse) {
     dexVu: !!(t.dex && t.dex.vu),
     jalons: {},           /* ce qu'il valait a chaque echeance atteinte */
   });
-  if (E.ombres.length > OMBRES_MAX) E.ombres = E.ombres.slice(-OMBRES_MAX);
+  if (E.ombres.length > OMBRES_MAX) {
+    for (const o of E.ombres.slice(0, E.ombres.length - OMBRES_MAX)) rejoueLOmbre(o);
+    E.ombres = E.ombres.slice(-OMBRES_MAX);
+  }
+}
+/* Quand une ombre s'en va — par oubli, par sa derniere echeance, ou poussee
+   par le plafond — la strategie est rejouee UNE fois sur ce qu'elle a laisse. */
+function rejoueLOmbre(o) {
+  if (!o || o.rejouee || !o.jalons || o.jalons[HORIZON_REF] === undefined) return;
+  const rs = rejoue(o.jalons);
+  if (rs !== null) noteAuditStrat(cleAudit(o), rs);
+  o.rejouee = true;
 }
 
 /* L'audit des vetos : par raison de refus, ce que les jetons ecartes ont fait.
@@ -3957,14 +3979,7 @@ function regleLesOmbres(marche) {
   const dernier = HORIZONS[HORIZONS.length - 1];
   /* Quand une ombre s en va — par oubli ou parce que sa derniere echeance est
      passee — la strategie est rejouee une fois sur ce qu elle a laisse. */
-  const rejoueEtPart = (o) => {
-    if (!o.rejouee && o.jalons && o.jalons[HORIZON_REF] !== undefined) {
-      const rs = rejoue(o.jalons);
-      if (rs !== null) noteAuditStrat(cleAudit(o), rs);
-      o.rejouee = true;
-    }
-    return false;
-  };
+  const rejoueEtPart = (o) => { rejoueLOmbre(o); return false; };
   E.ombres = E.ombres.filter((o) => {
     if (now - o.t > OMBRE_OUBLI_MS) return rejoueEtPart(o);
     const age = (now - o.t) / 60000;
@@ -4083,6 +4098,20 @@ function noteAuditStrat(cle, rs) {
 }
 /* Ce que la page montre de l'audit : par raison, combien ont ete ecartes et ce
    qu'ils ont fait. Trie par ce qui coute le plus cher a se tromper. */
+/* Ce que l'audit dit d'une FAMILLE de refus, tous agents confondus, contre
+   ce qui est achete — le meme verdict que la page. Sous AUDIT_MIN_OBS, rien. */
+function auditDeFamille(fam) {
+  const A = E.audit || {};
+  let n = 0, montes = 0;
+  for (const k in A) if (k === fam || k.endsWith(' · ' + fam)) { n += A[k].n || 0; montes += A[k].montes || 0; }
+  const ref = A['achete ou retenu'];
+  const refP = ref && ref.n >= AUDIT_MIN_OBS ? Math.round(ref.montes / ref.n * 100) : null;
+  if (n < AUDIT_MIN_OBS) return { n, refP, verdict: 'unknown' };
+  const p = Math.round(montes / n * 100);
+  const verdict = refP === null ? (p >= 25 ? 'costs' : 'unknown')
+    : p >= refP + 10 ? 'costs' : p <= refP - 15 ? 'protects' : 'same';
+  return { n, p, refP, verdict };
+}
 function auditDesRefus() {
   const out = [];
   for (const cle in (E.audit || {})) {
@@ -5759,8 +5788,26 @@ function alertes() {
     const reports = tous.filter((f) => estReport(f.k)).reduce((a, b) => a + b.n, 0);
     const fam = tous.filter((f) => !estReport(f.k)).sort((a, b) => b.n - a.n).slice(0, 3);
     const fermes = Math.max(1, vus - reports);
+    /* ---- ET CE QUE LE PANNEAU DIT DE CHACUNE ----
+     * « Si un seul reglage fait la moitie des refus, c'est celui-la qu'il
+     * faut bouger. » Releve le 8 septembre : « quoted in something other
+     * than ETH », 43 % des refus — et 18 % de ses ecartes montent, contre
+     * 37 % de ce qui est achete. Cette regle PROTEGE ; la bouger aurait
+     * fait acheter plus, et plus mal. La part des refus dit ce qui bloque,
+     * pas ce qui coute : le panneau seul le sait, et l'alerte le lit
+     * avant de nommer un reglage. Le verdict est celui de la page,
+     * relatif a ce qui est achete. */
+    for (const f of fam) f.a = auditDeFamille(f.k);
+    const ditVerdict = (a) => a.verdict === 'costs'
+        ? ' — the panel says it COSTS: ' + a.p + '% of what it set aside went up, against ' + (a.refP === null ? 25 : a.refP) + '% for what was bought (' + a.n + ' followed)'
+      : a.verdict === 'protects'
+        ? ' — the panel says it protects: ' + a.p + '% went up against ' + a.refP + '% for what was bought (' + a.n + ' followed)'
+      : a.verdict === 'same'
+        ? ' — the panel cannot tell yet: ' + a.p + '% went up, about the same as the ' + a.refP + '% of what was bought'
+        : ' — the panel has not followed enough of them yet (' + a.n + ')';
     const dit = fam.map((f) => '« ' + f.k + ' » : ' + Math.round(f.n / fermes * 100)
-      + '% of refusals (setting: ' + reglageDe(f.k) + ')');
+      + '% of refusals (setting: ' + reglageDe(f.k) + ')' + ditVerdict(f.a));
+    const chere = fam.find((f) => f.a.verdict === 'costs');
     const heures = Math.round(sansAchat * (CADENCE_MS / 3600000) * 10) / 10;
     dis('haute', 'Nothing bought for ' + sansAchat + ' turns (' + heures + ' h)',
       'This is not a fault: every token is read properly and judged properly.'
@@ -5780,11 +5827,15 @@ function alertes() {
           + 'tokenised stocks or gold. PAIRES_ETH_SEULES=0 would have the paper buy them again, and the mirror '
           + 'could follow none of them. Look at the next rules instead. '
         : '')
+      + (chere
+        ? 'The one to move is « ' + chere.k + ' » (setting: ' + reglageDe(chere.k) + '): it blocks '
+          + Math.round(chere.n / fermes * 100) + '% of the refusals AND the panel says it costs — its rejects go up more often than what was bought. '
+        : 'None of these is the one to move today: the panel says each of them protects, or cannot tell yet. '
+          + 'A rule worth moving would show its rejects going up MORE often than what was bought; the share of refusals '
+          + 'alone says what blocks, not what costs. The shortage is the chain\'s, not a setting\'s. ')
       + 'The rules stack: a token has to clear EVERY bound at once, and on this chain very few then '
-      + 'remain. If a single setting accounts for half the refusals, that is the one to move — the '
-      + 'others would change almost nothing. And the "what becomes of the rejected" panel says, '
-      + 'for each rule, what the tokens it set aside went on to do: that is the only way to know '
-      + 'whether it protects or whether it costs.');
+      + 'remain. The "what becomes of the rejected" panel says, for each rule, what the tokens it set '
+      + 'aside went on to do: that is the only way to know whether it protects or whether it costs.');
   }
 
   return out;
@@ -7138,7 +7189,7 @@ module.exports = {
   poseMiroir, _suitLeMiroir: suitLeMiroir, _partDuBanquier: partDuBanquier, MIROIR_PART_MAX,
   _signal: signal, _texteSignal: texteSignal, _ferme: ferme, _lienDex: lienDex,
   _poseTg: (x) => { tg = x; },
-  _noteAudit: noteAudit, _auditDesRefus: auditDesRefus,
+  _noteAudit: noteAudit, _auditDesRefus: auditDesRefus, _auditDeFamille: auditDeFamille, OMBRES_MAX,
   _familleRefus: familleRefus, _regroupeAudit: regroupeAudit, _noeudMort: noeudMort,
   _journal: journal, _journalPublie: journalPublie, _memeRegard: memeRegard,
   /* exposes pour l'essai : ce sont eux qui portent les regles */

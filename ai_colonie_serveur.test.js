@@ -2496,6 +2496,33 @@ async function pairesEthSeulement() {
      'la famille porte sa variable, pas « no variable » : « ' + al.pourquoi.slice(al.pourquoi.indexOf('What REALLY'), al.pourquoi.indexOf('What REALLY') + 110) + '… »');
   ok(/deliberate/.test(al.quoiFaire) && /PAIRES_ETH_SEULES=0/.test(al.quoiFaire) && /Look at the next rules/.test(al.quoiFaire),
      'et le remede dit que cette regle est un choix, ce que la lever couterait, et renvoie aux suivantes');
+
+  console.log('\n-- l alerte lit le panneau avant de designer le reglage a bouger --');
+  /* Releve le 8 septembre : la regle des paires ETH faisait 43 % des refus,
+     et 18 % de ses ecartes montaient contre 37 % de ce qui est achete. Elle
+     protege : la part des refus dit ce qui bloque, pas ce qui coute. */
+  G2.audit = { 'achete ou retenu': { n: 86, s: 0, montes: 32, effondres: 22 },
+               'scout · quoted in something other than ETH': { n: 1220, s: 0, montes: 218, effondres: 464 },
+               'scout · pool below the buy floor': { n: 156, s: 0, montes: 16, effondres: 6 } };
+  const al2 = C.alertes().find((x) => /Nothing bought for/.test(x.quoi));
+  console.log('   ' + al2.pourquoi.slice(al2.pourquoi.indexOf('What REALLY')));
+  ok(/quoted in something other than ETH » : 71% of refusals \(setting: PAIRES_ETH_SEULES\) — the panel says it protects: 18% went up against 37% for what was bought \(1220 followed\)/.test(al2.pourquoi),
+     'chaque regle porte le verdict du panneau, avec ses chiffres, contre ce qui est achete');
+  ok(/pool below the buy floor » : 29% of refusals[^—]*— the panel says it protects: 10% went up against 37%/.test(al2.pourquoi), 'la deuxieme aussi');
+  ok(/None of these is the one to move today/.test(al2.quoiFaire) && !/that is the one to move/.test(al2.quoiFaire),
+     'et le remede ne designe AUCUN reglage : les deux protegent — la part des refus dit ce qui bloque, pas ce qui coute');
+  ok(/panel/.test(al2.quoiFaire) && /protects/.test(al2.quoiFaire), 'il renvoie toujours au panneau');
+  /* Une regle dont les ecartes montent PLUS que ce qui est achete : c est celle-la. */
+  G2.audit['scout · pool below the buy floor'] = { n: 100, s: 0, montes: 52, effondres: 10 };
+  const al3 = C.alertes().find((x) => /Nothing bought for/.test(x.quoi));
+  ok(/pool below the buy floor » : 29% of refusals[^—]*— the panel says it COSTS: 52% of what it set aside went up, against 37%/.test(al3.pourquoi), 'une regle qui coute est dite telle');
+  ok(/The one to move is « pool below the buy floor » \(setting: LIQ_ACHAT_MIN \/ MC_ACHAT_MIN\)/.test(al3.quoiFaire), 'et c est elle que le remede designe, avec sa variable : « ' + al3.quoiFaire.slice(0, 160) + '… »');
+  /* Sans assez d observations, le panneau ne dit rien — et l alerte non plus. */
+  G2.audit = { 'scout · pool below the buy floor': { n: 5, s: 0, montes: 4, effondres: 0 } };
+  const al4 = C.alertes().find((x) => /Nothing bought for/.test(x.quoi));
+  ok(/pool below the buy floor » : 29%[^—]*— the panel has not followed enough of them yet \(5\)/.test(al4.pourquoi) && /None of these/.test(al4.quoiFaire),
+     'cinq ombres ne font pas un verdict : « pas assez suivies », et rien n est designe');
+  delete G2.audit;
 }
 
 /* ==========================================================================
@@ -2923,6 +2950,28 @@ async function rejeuDeLaStrategie() {
   ok(!!l && l.nStrat === 1 && Math.abs(l.strat - 22.25) < 0.1, 'la regle porte ce que la strategie aurait fait : +22,3 % sur une ombre (arrondi au dixieme)');
   ok(F.ombres.length === 0, 'et l ombre est partie, rejouee une fois');
   ok((F.compteurs.rejeux || 0) === 1, 'compte comme un rejeu');
+
+  console.log('\n-- une ombre poussee par le plafond est rejouee avant de partir --');
+  /* Releve le 8 septembre : 1 200 ombres en attente, exactement le plafond,
+     zero rejeu en quatre heures. Le plafond effacait les ombres avant leur
+     derniere echeance, sans rien rejouer. */
+  F.audit = {};
+  F.compteurs.rejeux = 0;
+  F.ombres = [];
+  /* la ligne existe par le brut (trois juges) : le rejeu s y ajoute */
+  for (const r of [40, -50, 25]) C._noteAudit('scout · ' + C._familleRefus('already +120% in five minutes: we would be paying the top'), r);
+  for (let i = 0; i < C.OMBRES_MAX; i++)
+    F.ombres.push({ adr: '0xp' + i, sym: 'P' + i, prix0: 1, t: now - 60 * 60000, echeance: now, traits: {}, score: 50,
+                    refus: 'already +120% in five minutes: we would be paying the top', quiRefuse: 'scout', dexVu: true,
+                    jalons: i === 0 ? { 5: 20, 15: 50, 30: 10 } : { 5: 1 } });
+  C.noteOmbre({ addr: '0xnouveau', sym: 'NEU', prix: 1 }, { traits: {}, score: 50 }, 'score too low', 'oracle');
+  ok(F.ombres.length === C.OMBRES_MAX && !F.ombres.some((o) => o.adr === '0xp0') && F.ombres[F.ombres.length - 1].adr === '0xnouveau',
+     'le plafond (' + C.OMBRES_MAX + ') pousse la plus vieille, et garde la nouvelle');
+  const lp = C._auditDesRefus().find((x) => /paying the top/.test(x.cle));
+  ok(!!lp && lp.nStrat === 1 && Math.abs(lp.strat - 22.25) < 0.1, 'et la poussee a ete rejouee sur ses trois jalons : +22,3 %');
+  ok((F.compteurs.rejeux || 0) === 1, 'un rejeu compte');
+  ok(C.OMBRES_MAX >= 2400, 'et le plafond laisse deux cents minutes de vie a trente examens par tour : la derniere echeance (120 min) est atteignable');
+  F.ombres = [];
 }
 
 /* ==========================================================================
