@@ -196,6 +196,12 @@ const PONTS = String(process.env.MIROIR_PONTS === undefined ? 'USDG,NVDA' : proc
   .split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
 const PONT_LIQ_MIN = Math.max(10000, nEnv('MIROIR_PONT_LIQ_MIN', 200000));
 const PONT_TTL_MS = 3600e3;          /* un pont mesure vaut une heure */
+/* ---- ET LES PONTS RESTENT EN ESSAI TANT QU'ON NE LES A PAS VUS TOURNER ----
+ * Le miroir execute en reel (MIROIR_EXECUTE=1) ; une position pontee, elle,
+ * ne part sur la chaine que si MIROIR_PONTS_EXECUTE=1. Avant : le journal
+ * montre ce qu'un ordre reel aurait fait, deux jambes comprises, et rien ne
+ * part. C'est le meme interrupteur, au meme endroit, que pour le reste. */
+const PONTS_EXECUTE = String(process.env.MIROIR_PONTS_EXECUTE || '0') === '1';
 const PONT_ECHEC_MS = 10 * 60000;    /* un pont introuvable est recherche de nouveau apres dix minutes */
 const MIN_ETH_CONF = String(process.env.MIROIR_MIN_ETH || '0.005');
 const MAX_ETH     = String(process.env.MIROIR_MAX_ETH || '0.5');
@@ -860,10 +866,13 @@ function signataire(c) {
  * autorise Permit2, puis Permit2 autorise le routeur. En v2 et v3, le routeur
  * est autorise directement. On ne les redemande pas a chaque vente : on lit
  * l'existant d'abord. */
+/** Reel, ou en essai : en essai pour tout sans MIROIR_EXECUTE, et pour une
+ *  route pontee sans MIROIR_PONTS_EXECUTE. */
+function enReel(r) { return EXECUTE && (!r.pont || PONTS_EXECUTE); }
 async function acheteRoute(c, r, jeton, entreeWei) {
   const sortie = await devisRoute(r, 'achat', jeton, entreeWei);
   const mini = plancher(sortie);
-  if (!EXECUTE) return { simule: true, sortie, mini, tx: null };
+  if (!enReel(r)) return { simule: true, sortie, mini, tx: null };
   const w = signataire(c);
   const avant = await provider().getBalance(w.address);
   let tx, txs = null;
@@ -1016,7 +1025,7 @@ async function autoriseSimple(w, jeton, routeur, montant) {
 async function vendRoute(c, r, jeton, montantWei, sortieConnue) {
   const sortie = sortieConnue || await devisRoute(r, 'vente', jeton, montantWei);
   const mini = plancher(sortie);
-  if (!EXECUTE) return { simule: true, sortie, mini, tx: null };
+  if (!enReel(r)) return { simule: true, sortie, mini, tx: null };
   const w = signataire(c);
   /* Avant les autorisations : leur gaz fait partie du prix de cette vente. */
   const avant = await provider().getBalance(w.address);
@@ -1537,6 +1546,7 @@ async function achetePosition(c, t) {
   note(c, (r.simule ? '[dry run] ' : '') + 'Bought ' + (t.sym || adr) + ' for '
         + ethers.utils.formatUnits(mise, 18) + ' ETH (RH) on Uniswap ' + route.ver + viaPont(route) + places
         + (r.coutReel ? ' · cost incl. gas ' + ethers.utils.formatUnits(r.coutReel, 18) + ' ETH' : '')
+        + (r.simule && EXECUTE && route.pont ? ' · bridged positions stay dry-run until MIROIR_PONTS_EXECUTE=1' : '')
         + ' · ' + dit,
         { adr, tx: r.tx || null });
   return true;
@@ -1715,7 +1725,7 @@ module.exports = {
   _idV4: idV4, _clePiscine: clePiscine, _devis: devis, _corpsV4: corpsV4,
   _plancher: plancher, _miseDe: miseDe, _pourquoiPasDeMise: pourquoiPasDeMise, _balaie: balaie,
   _routeDe: routeDe, _devisRoute: devisRoute, _devisJambe: devisJambe, _ordre: ordre, _R2_ABI: R2_ABI, _R3_ABI: R3_ABI,
-  _deuxJambes: deuxJambes, _monnaieDe: monnaieDe, _pontPour: pontPour, _oublieLesPonts: oublieLesPonts, PONTS, PONT_LIQ_MIN,
+  _deuxJambes: deuxJambes, _monnaieDe: monnaieDe, _pontPour: pontPour, _oublieLesPonts: oublieLesPonts, PONTS, PONT_LIQ_MIN, PONTS_EXECUTE,
   _meilleurePlace: meilleurePlace, _poseSourcePaires: poseSourcePaires, GAZ_PLACE, LIQ_PLACE_MIN,
   _etat: () => R, _pose: (x) => { R = x; }, _poseProvider: poseProvider,
   _fiche: fiche, _actifs: actifs, _bilan: bilan, _reconcilie: reconcilie, _resume: resume,

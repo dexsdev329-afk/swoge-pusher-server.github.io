@@ -827,6 +827,7 @@ console.log('\n-- une piscine cotee en NVDA : deux jambes, par le pont ETH/NVDA 
     ? [{ pool: '0x' + 'b9'.repeat(20), liq: 7000, quote: M.WETH.toLowerCase(), labels: ['v3'] }, { pool: PB, liq: 1184565, quote: M.WETH.toLowerCase(), labels: ['v3'] }]
     : []);
   ok(M.PONTS.indexOf('NVDA') >= 0 && M.PONTS.indexOf('USDG') >= 0 && M.PONTS.length === 2, 'par defaut, deux ponts : USDG et NVDA (' + M.PONTS.join(', ') + ')');
+  ok(M.PONTS_EXECUTE === false, 'et les positions pontees restent en essai tant que MIROIR_PONTS_EXECUTE ne vaut pas 1 — meme avec MIROIR_EXECUTE=1');
   /* ETH/USDG, le pont le plus profond, est plus vieux que la fenetre du
      million de blocs : « not found in the last million blocks », et pas de
      pont. Par identifiant, on relit depuis le premier bloc. */
