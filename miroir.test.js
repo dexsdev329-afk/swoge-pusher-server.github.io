@@ -390,6 +390,36 @@ console.log('\n-- le miroir vend les memes tranches que la colonie, et garde le 
   ok(!!c1.ouvertes[JETON], 'rouverte pour la suite');
 }
 
+console.log('\n-- le joueur vend maintenant, et achete maintenant --');
+{
+  /* « Rajoute un bouton sell maintenant, et pouvoir fermer et ouvrir. » */
+  const avant = (await M.etat(JOUEUR, false)).bilan.trades;
+  await jete(() => M.vendsMaintenant(JOUEUR, '0x' + 'cc'.repeat(20)), /no open position/,
+    'vendre un jeton qu on ne tient pas est refuse, et dit pourquoi');
+  await jete(() => M.vendsMaintenant(JOUEUR, 'pas-une-adresse'), /not a token address/,
+    'une adresse mal formee est refusee avant tout appel');
+  const r = await M.vendsMaintenant(JOUEUR, JETON);
+  eq(r.adr, JETON, 'la vente a la demande rend le jeton vendu');
+  const e = await M.etat(JOUEUR, false);
+  ok(!e.ouvertes.some((o) => o.adr === JETON), 'la position est fermee');
+  eq(e.bilan.trades, avant + 1, 'et compte dans le bilan comme une vente suivie');
+  ok(e.journal.some((j) => /Sell now on TEST/.test(j.txt) && /at your request/.test(j.txt)),
+     'le journal dit que c est le joueur qui a demande : « ' + (e.journal.find((j) => /Sell now/.test(j.txt)) || {}).txt + ' »');
+  /* Pas de piscine donnee par la colonie : c est DexScreener qui nomme les places. Au banc, on la nomme nous-memes. */
+  M._poseSourcePaires(async (j) => j.toLowerCase() === JETON ? [{ pool: POOL, liq: 5000, quote: M.ETH4.toLowerCase(), labels: ['v4'] }] : []);
+  chaine.symboles[JETON] = 'TEST';       /* le symbole se lit sur le contrat : c est lui que le journal nomme */
+  const o = await M.ouvreMaintenant(JOUEUR, JETON);
+  eq(o.sym, 'TEST', 'le symbole est lu sur le contrat');
+  M._poseSourcePaires(async () => []);
+  eq(o.adr, JETON, 'l achat a la demande ouvre sur le jeton nomme');
+  const e2 = await M.etat(JOUEUR, false);
+  ok(e2.ouvertes.some((x) => x.adr === JETON), 'la position est rouverte');
+  ok(e2.journal.some((j) => /Bought/.test(j.txt) && /at your request/.test(j.txt)),
+     'et le journal dit la part engagee, et que c est a la demande du joueur');
+  await jete(() => M.ouvreMaintenant(JOUEUR, JETON), /already open/, 'une seule position par jeton, comme la colonie');
+  await jete(() => M.ouvreMaintenant(JOUEUR2, JETON), /press Play first/, 'un miroir arrete n achete pas, meme a la demande');
+}
+
 console.log('\n-- le miroir suit la vente --');
 {
   const suivis = await M.surVente({ adr: JETON });
@@ -399,7 +429,7 @@ console.log('\n-- le miroir suit la vente --');
   ok(/Sold TEST/.test(e.journal[0].txt), 'et le journal dit ce qui a ete vendu : « ' + e.journal[0].txt + ' »');
   /* La barre personnelle : profit, taux, trades, meilleur, ouvert — calcules
      sur les ventes, en ETH. */
-  eq(e.bilan.trades, 2, 'le bilan compte cette vente, apres celle des tranches');
+  eq(e.bilan.trades, 3, 'le bilan compte cette vente, apres celle des tranches et celle a la demande');
   eq(e.bilan.ouvertes, 1, 'et une position encore ouverte');
   ok(typeof e.bilan.profitEth === 'string' && isFinite(Number(e.bilan.profitEth)),
      'le profit est un chiffre en ETH : ' + e.bilan.profitEth);
@@ -418,7 +448,7 @@ console.log('\n-- stop : on vend d abord, on balaie ensuite --');
   eq(r.rates.length, 0, 'sans echec');
   ok(!(await M.etat(JOUEUR, false)).actif, 'le miroir est arrete');
   eq((await M.etat(JOUEUR, false)).ouvertes.length, 0, 'et ne tient plus rien');
-  eq((await M.etat(JOUEUR, false)).bilan.trades, 3, 'la vente du stop entre dans le bilan (3 trades)');
+  eq((await M.etat(JOUEUR, false)).bilan.trades, 4, 'la vente du stop entre dans le bilan (4 trades)');
   eq((await M.etat(JOUEUR, false)).bilan.ouvertes, 0, 'et plus rien d ouvert');
   eq(chaine.envois.length, avant, 'toujours rien sur la chaine : en mode d essai, stop ne vend ni ne balaie pour de vrai');
   ok(/dry run/i.test((await M.etat(JOUEUR, false)).journal[0].txt), 'et il le DIT plutot que de laisser croire au balayage');

@@ -1133,7 +1133,9 @@ async function achetePosition(c, t) {
   const dit = t.part
     ? (Math.round(t.part * 1000) / 10) + '% of what was free — the Banker\'s own share'
       + (t.score ? ' at score ' + t.score : '')
-    : (Math.round(PART_ORDRE * 1000) / 10) + '% of what was free (fallback: no share from the colony)';
+    : t.manuel
+      ? (Math.round(PART_ORDRE * 1000) / 10) + '% of what was free — at your request'
+      : (Math.round(PART_ORDRE * 1000) / 10) + '% of what was free (fallback: no share from the colony)';
   const places = compare.length > 1
     ? ' · best of ' + compare.length + ' venues (' + compare.map((x) => x.ver + ' ' + x.retourPct + '%' + (x.colonie ? ', the colony\'s' : '')).join(', ') + ' round trip)'
     : '';
@@ -1257,9 +1259,50 @@ async function vendPosition(c, adr, o) {
   return r;
 }
 
+/* ==================== A LA DEMANDE DU JOUEUR ====================
+ *
+ * « Rajoute un bouton sell maintenant, et une colonne pour voir les positions
+ *   ouvertes du miroir et pouvoir les fermer et les ouvrir. »
+ *
+ * Deux gestes, sur SON miroir seulement — le serveur passe l'adresse prouvee
+ * a la connexion, jamais un champ du message. Ils passent par la meme file
+ * et les memes routes que ce que la colonie declenche : memes devis, meme
+ * garde d'aller-retour, meme journal, meme bilan. Un geste du joueur n'a pas
+ * de chemin a part : ce qui protege l'ordre de la colonie le protege aussi. */
+function vendsMaintenant(joueur, adr) { return enFile(() => vendsFile(joueur, adr)); }
+async function vendsFile(joueur, adr) {
+  const c = fiche(joueur);
+  if (!c) throw new Error('no mirror wallet');
+  const a = norm(adr);
+  if (!/^0x[0-9a-f]{40}$/.test(a)) throw new Error('not a token address');
+  const o = c.ouvertes && c.ouvertes[a];
+  if (!o) throw new Error('no open position on that token');
+  note(c, 'Sell now on ' + (o.sym || a) + ' — at your request', { adr: a });
+  const r = await vendPosition(c, a, o);
+  sauve();
+  return { adr: a, sym: o.sym || null, poussiere: !!r.poussiere,
+           sortie: r.sortie ? ethers.utils.formatUnits(r.sortie, 18) : null, tx: r.tx || null };
+}
+function ouvreMaintenant(joueur, adr) { return enFile(() => ouvreFile(joueur, adr)); }
+async function ouvreFile(joueur, adr) {
+  const c = fiche(joueur);
+  if (!c) throw new Error('no mirror wallet');
+  if (!c.actif) throw new Error('press Play first: the mirror only trades while it is running');
+  const a = norm(adr);
+  if (!/^0x[0-9a-f]{40}$/.test(a)) throw new Error('not a token address');
+  if (c.ouvertes && c.ouvertes[a]) throw new Error('already open on that token');
+  const sym = await symbole(a);
+  note(c, 'Buy now on ' + sym + ' — at your request', { adr: a });
+  const ok = await achetePosition(c, { adr: a, sym, pool: null, manuel: true });
+  sauve();
+  if (!ok) throw new Error('nothing was bought on ' + sym + ' — the log says why');
+  return { adr: a, sym };
+}
+
 module.exports = {
   /* l'interface du serveur */
   charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, effaceJournal,
+  vendsMaintenant, ouvreMaintenant,
   /* les reglages, pour l'ecran et pour les essais */
   EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN, POUSSIERE_MULT,
   GAZ_ORDRE_UNITES, GAZ_PART_MAX,

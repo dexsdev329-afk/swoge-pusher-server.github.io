@@ -3863,6 +3863,29 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
+      /* ---- LES DEUX GESTES DU JOUEUR SUR SES POSITIONS ----
+       * Vendre maintenant, acheter maintenant. L'adresse du JETON vient du
+       * message ; celle du miroir, jamais : c'est celle de la session. */
+      if (m.type === 'miroirVends') {
+        try {
+          const r = await miroir.vendsMaintenant(ws.addr, String(m.adr || ''));
+          send(ws, Object.assign({ type: 'miroirVends' }, r));
+          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+      if (m.type === 'miroirOuvre') {
+        try {
+          const r = await miroir.ouvreMaintenant(ws.addr, String(m.adr || ''));
+          send(ws, Object.assign({ type: 'miroirOuvre' }, r));
+          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+        } catch (e) {
+          send(ws, { type: 'error', error: e.message });
+          /* Le journal dit pourquoi rien n'est parti : on le renvoie. */
+          try { send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr))); } catch (e2) {}
+        }
+        return;
+      }
       if (m.type === 'miroirStop') {
         try {
           /* La destination n'est pas choisie par le message : c'est le
