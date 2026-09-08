@@ -843,6 +843,25 @@ function effaceJournal(joueur) {
   return { efface: n };
 }
 
+/* ---- REMETTRE LA BARRE A ZERO ----
+ * « Il faudrait un bouton pour remettre les stats du miroir a zero, si des
+ *   personnes veulent. »
+ * La barre se calcule sur les fermees : on les efface, et elles seules. Les
+ * positions ouvertes, le journal et le solde ne bougent pas — une remise a
+ * zero qui toucherait a une position en cours ne serait plus une remise a
+ * zero, ce serait une vente. Le journal garde une ligne qui le dit, avec ce
+ * qui a ete efface : le chiffre disparait de la barre, pas de l'histoire. */
+function remetLesStats(joueur) {
+  const c = fiche(joueur);
+  if (!c) throw new Error('no mirror wallet on this account');
+  const b = bilan(c);
+  c.fermees = [];
+  note(c, 'Stats reset: ' + b.trades + ' trade' + (b.trades === 1 ? '' : 's') + ' cleared (' + b.profitEth
+        + ' ETH of profit, ' + b.gagnantes + ' winner' + (b.gagnantes === 1 ? '' : 's') + '). Open positions, the log and the balance are untouched.');
+  sauve();
+  return { effaces: b.trades, profitEth: b.profitEth };
+}
+
 function revele(joueur) {
   const c = fiche(joueur);
   if (!c) throw new Error('no mirror wallet on this account');
@@ -1302,7 +1321,7 @@ async function ouvreFile(joueur, adr) {
 module.exports = {
   /* l'interface du serveur */
   charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, effaceJournal,
-  vendsMaintenant, ouvreMaintenant,
+  vendsMaintenant, ouvreMaintenant, remetLesStats,
   /* les reglages, pour l'ecran et pour les essais */
   EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN, POUSSIERE_MULT,
   GAZ_ORDRE_UNITES, GAZ_PART_MAX,

@@ -420,6 +420,23 @@ console.log('\n-- le joueur vend maintenant, et achete maintenant --');
   await jete(() => M.ouvreMaintenant(JOUEUR2, JETON), /press Play first/, 'un miroir arrete n achete pas, meme a la demande');
 }
 
+console.log('\n-- la barre se remet a zero, et rien d autre --');
+{
+  /* « Un bouton pour remettre les stats du miroir a zero, si des personnes veulent. » */
+  const avant = await M.etat(JOUEUR, false);
+  ok(avant.bilan.trades >= 1 && avant.ouvertes.length >= 1, 'avant : ' + avant.bilan.trades + ' trade(s), ' + avant.ouvertes.length + ' ouverte(s)');
+  const r = M.remetLesStats(JOUEUR);
+  eq(r.effaces, avant.bilan.trades, 'la remise a zero dit combien de trades elle efface');
+  const apres = await M.etat(JOUEUR, false);
+  eq(apres.bilan.trades, 0, 'la barre repart de zero');
+  eq(apres.bilan.profitEth, '0.000000', 'profit a zero');
+  eq(apres.ouvertes.length, avant.ouvertes.length, 'les positions ouvertes ne bougent pas');
+  ok(apres.journal.length >= avant.journal.length, 'le journal n est pas efface');
+  ok(/Stats reset: \d+ trade/.test(apres.journal[0].txt) && /untouched/.test(apres.journal[0].txt),
+     'et il dit ce qui a ete efface, et ce qui ne l a pas ete : « ' + apres.journal[0].txt + ' »');
+  await jete(() => M.remetLesStats('0x' + '99'.repeat(20)), /no mirror wallet/, 'sans miroir, refus dit');
+}
+
 console.log('\n-- le miroir suit la vente --');
 {
   const suivis = await M.surVente({ adr: JETON });
@@ -429,7 +446,7 @@ console.log('\n-- le miroir suit la vente --');
   ok(/Sold TEST/.test(e.journal[0].txt), 'et le journal dit ce qui a ete vendu : « ' + e.journal[0].txt + ' »');
   /* La barre personnelle : profit, taux, trades, meilleur, ouvert — calcules
      sur les ventes, en ETH. */
-  eq(e.bilan.trades, 3, 'le bilan compte cette vente, apres celle des tranches et celle a la demande');
+  eq(e.bilan.trades, 1, 'le bilan, remis a zero juste avant, compte cette vente');
   eq(e.bilan.ouvertes, 1, 'et une position encore ouverte');
   ok(typeof e.bilan.profitEth === 'string' && isFinite(Number(e.bilan.profitEth)),
      'le profit est un chiffre en ETH : ' + e.bilan.profitEth);
@@ -448,7 +465,7 @@ console.log('\n-- stop : on vend d abord, on balaie ensuite --');
   eq(r.rates.length, 0, 'sans echec');
   ok(!(await M.etat(JOUEUR, false)).actif, 'le miroir est arrete');
   eq((await M.etat(JOUEUR, false)).ouvertes.length, 0, 'et ne tient plus rien');
-  eq((await M.etat(JOUEUR, false)).bilan.trades, 4, 'la vente du stop entre dans le bilan (4 trades)');
+  eq((await M.etat(JOUEUR, false)).bilan.trades, 2, 'la vente du stop entre dans le bilan (2 trades depuis la remise a zero)');
   eq((await M.etat(JOUEUR, false)).bilan.ouvertes, 0, 'et plus rien d ouvert');
   eq(chaine.envois.length, avant, 'toujours rien sur la chaine : en mode d essai, stop ne vend ni ne balaie pour de vrai');
   ok(/dry run/i.test((await M.etat(JOUEUR, false)).journal[0].txt), 'et il le DIT plutot que de laisser croire au balayage');

@@ -3856,6 +3856,14 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
+      if (m.type === 'miroirRemetStats') {
+        try {
+          const r = miroir.remetLesStats(ws.addr);
+          send(ws, Object.assign({ type: 'miroirRemetStats' }, r));
+          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
       if (m.type === 'miroirEffaceJournal') {
         try {
           miroir.effaceJournal(ws.addr);
