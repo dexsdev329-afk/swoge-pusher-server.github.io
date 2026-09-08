@@ -89,6 +89,7 @@ const R2_ABI = [
   'function getAmountsOut(uint256,address[]) view returns (uint256[])',
   'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256 amountOutMin,address[] path,address to,uint256 deadline) payable',
   'function swapExactTokensForETHSupportingFeeOnTransferTokens(uint256 amountIn,uint256 amountOutMin,address[] path,address to,uint256 deadline)',
+  'function swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256 amountIn,uint256 amountOutMin,address[] path,address to,uint256 deadline)',
 ];
 const F2_ABI = ['function getPair(address,address) view returns (address)'];
 const F3_ABI = ['function getPool(address,address,uint24) view returns (address)'];
@@ -135,6 +136,7 @@ const ERC20_ABI = [
   'function balanceOf(address) view returns (uint256)',
   'function approve(address,uint256) returns (bool)',
   'function allowance(address,address) view returns (uint256)',
+  'function decimals() view returns (uint8)',
 ];
 const PERMIT2_ABI = [
   'function allowance(address,address,address) view returns (uint160 amount,uint48 expiration,uint48 nonce)',
@@ -173,6 +175,28 @@ const GAZ_PART_MAX = Math.min(0.5, Math.max(0.01, nEnv('MIROIR_GAZ_PART_MAX', 0.
  * saine, un petit ordre revient a 98–99 % ; le seuil laisse la place aux
  * frais et a l'impact, pas a une porte fermee. */
 const RETOUR_MIN = Math.min(0.95, Math.max(0.1, nEnv('MIROIR_RETOUR_MIN', 0.6)));
+/* ---- LES PONTS : LES PAIRES COTEES EN ACTIONS ----
+ * « Il n'y a plus de trades, les filtres sont trop stricts. » 8 septembre, un
+ * tour : 39 jetons examines, 18 cotes en NVDA, USDG ou GOOGL, 0 en ETH. Les
+ * lancements de cette chaine se font contre des actions tokenisees, et le
+ * miroir ne savait acheter qu'avec de l'ETH en entree. Mesure le meme soir :
+ * ETH/USDG 8,9 M$ de liquidite (v4), ETH/NVDA 1,2 M$ (v3), ETH/SPY 1,9 M$,
+ * ETH/GLD 0,7 M$, ETH/GOOGL 46 k$. Un ordre de 0,01 ETH passe sans impact
+ * sur les quatre premiers.
+ *
+ * Un PONT est la piscine ETH <-> monnaie la plus profonde. Une position
+ * cotee en NVDA se prend en DEUX jambes — ETH vers NVDA sur le pont, NVDA
+ * vers le jeton sur sa piscine — et se rend de meme. Deux transactions par
+ * sens, le double de gaz, et une jambe qui peut echouer apres l'autre :
+ * c'est pour ca que la liste est courte, lisible, et vide par choix quand
+ * on ne veut que l'ETH. Le pont se cherche par ADRESSE et se gagne par
+ * liquidite : trois adresses portent le symbole NVDA sur cette chaine, une
+ * seule a la liquidite. */
+const PONTS = String(process.env.MIROIR_PONTS === undefined ? 'USDG,NVDA' : process.env.MIROIR_PONTS)
+  .split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+const PONT_LIQ_MIN = Math.max(10000, nEnv('MIROIR_PONT_LIQ_MIN', 200000));
+const PONT_TTL_MS = 3600e3;          /* un pont mesure vaut une heure */
+const PONT_ECHEC_MS = 10 * 60000;    /* un pont introuvable est recherche de nouveau apres dix minutes */
 const MIN_ETH_CONF = String(process.env.MIROIR_MIN_ETH || '0.005');
 const MAX_ETH     = String(process.env.MIROIR_MAX_ETH || '0.5');
 /* La part du solde engagee par ordre. La colonie ouvre plusieurs positions a la
@@ -409,22 +433,25 @@ async function routeDe(jeton, pool) {
     let t0, t1;
     try { [t0, t1] = await Promise.all([pr.token0(), pr.token1()]); }
     catch (e) { throw new Error('the pool address given by the colony does not answer like a pair (' + String(pool).slice(0, 10) + '…)'); }
-    const avecWeth = norm(t0) === norm(WETH) || norm(t1) === norm(WETH);
-    if (!avecWeth)
-      throw new Error('its pool is quoted in ' + await symbole(norm(t0) === norm(jeton) ? t1 : t0)
-                      + ', not ETH: the mirror only trades ETH pairs');
+    /* L'autre monnaie de la paire : l'ETH, ou une monnaie qu'un pont sait
+       rejoindre — sinon c'est dit avec son nom. */
+    const m = await monnaieDe(norm(t0) === norm(jeton) ? t1 : t0);
     let fee = null;
     try { fee = Number(await pr.fee()); } catch (e) { fee = null; }
-    if (fee !== null && isFinite(fee)) return { ver: 'v3', paire: ethers.utils.getAddress(pool), fee };
+    if (fee !== null && isFinite(fee)) return avecMonnaie({ ver: 'v3', paire: ethers.utils.getAddress(pool), fee }, m);
     try { await pr.getReserves(); }
     catch (e) { throw new Error('the pool address given by the colony is neither a v2 pair nor a v3 pool (' + String(pool).slice(0, 10) + '…)'); }
-    return { ver: 'v2', paire: ethers.utils.getAddress(pool) };
+    return avecMonnaie({ ver: 'v2', paire: ethers.utils.getAddress(pool) }, m);
   }
   const p4 = await clePiscine(jeton, pool);
   if (p4) {
-    if (!p4.contreEth)
-      throw new Error('its pool is quoted in ' + await symbole(p4.autre) + ', not ETH: the mirror only trades ETH pairs');
-    return { ver: 'v4', cle: p4.cle, id: p4.id, zeroEstEth: p4.zeroEstEth, enWeth: !!p4.enWeth };
+    if (!p4.contreEth) {
+      const m = await monnaieDe(p4.autre);
+      /* `zeroEstEth` dit, sur une piscine pontee, si currency0 est la MONNAIE :
+         c'est le cote « contre » de la piscine, celui d'ou l'on entre. */
+      return avecMonnaie({ ver: 'v4', cle: p4.cle, id: p4.id, zeroEstEth: norm(p4.cle[0]) === norm(m.adr), enWeth: false }, m);
+    }
+    return { ver: 'v4', cle: p4.cle, id: p4.id, zeroEstEth: p4.zeroEstEth, enWeth: !!p4.enWeth, monnaie: MONNAIE_ETH, pont: null };
   }
   if (!pool) {
     /* Sans indication de la colonie : les fabriques, dans l'ordre ou la
@@ -441,6 +468,78 @@ async function routeDe(jeton, pool) {
   throw new Error('no pool against ETH found for this token'
                   + (pool ? ' (v4 id ' + String(pool).slice(0, 10) + '… given by the colony, not found in the last million blocks)' : ''));
 }
+const MONNAIE_ETH = { adr: ETH4, sym: 'ETH', eth: true, dec: 18 };
+/** La route, avec sa monnaie et son pont quand il en faut un. Les routes en
+ *  ETH portent `monnaie: ETH` et `pont: null` : une seule forme partout. */
+function avecMonnaie(r, m) {
+  r.monnaie = { adr: m.adr, sym: m.sym, eth: !!m.eth, dec: m.dec === undefined ? 18 : m.dec };
+  r.pont = m.eth ? null : m.pont;
+  return r;
+}
+/** Ce qu'est l'autre monnaie d'une piscine : l'ETH (natif ou emballe), ou une
+ *  monnaie de la liste des ponts avec un pont assez profond — sinon une
+ *  erreur qui dit laquelle, et pourquoi. */
+async function monnaieDe(adr) {
+  if (norm(adr) === norm(ETH4) || norm(adr) === norm(WETH)) return MONNAIE_ETH;
+  const sym = await symbole(adr);
+  if (PONTS.indexOf(sym.toUpperCase()) < 0)
+    throw new Error('its pool is quoted in ' + sym + ', not ETH: the mirror only crosses '
+                    + (PONTS.length ? PONTS.join(', ') : 'nothing') + ' (MIROIR_PONTS)');
+  const pont = await pontPour(adr, sym);
+  return { adr: ethers.utils.getAddress(adr), sym, eth: false, dec: pont.dec, pont: pont.route };
+}
+/* ==================== LES PONTS ====================
+ * Par adresse de monnaie : la route ETH <-> monnaie la plus profonde, lue sur
+ * DexScreener et verifiee sur la chaine, gardee une heure. Un pont introuvable
+ * est note aussi, avec sa raison, et cherche de nouveau apres dix minutes. */
+const PONTS_VUS = {};
+const PONTS_EN_COURS = {};
+async function pontPour(adr, sym) {
+  const k = norm(adr);
+  const vu = PONTS_VUS[k];
+  const now = Date.now();
+  if (vu && vu.route && now - vu.t < PONT_TTL_MS) return vu;
+  if (vu && !vu.route && now - vu.t < PONT_ECHEC_MS) throw new Error(vu.raison);
+  if (PONTS_EN_COURS[k]) return PONTS_EN_COURS[k];
+  PONTS_EN_COURS[k] = (async () => {
+    try {
+      let paires = [];
+      try { paires = await sourcePaires(adr); } catch (e) { paires = []; }
+      const contreEth = paires.filter((x) => x.pool && x.liq > 0
+        && (ADRESSES_ETH_PLACE.indexOf(norm(x.quote)) >= 0 || (x.base && ADRESSES_ETH_PLACE.indexOf(norm(x.base)) >= 0)))
+        .sort((a, b) => b.liq - a.liq);
+      const meilleure = contreEth[0];
+      if (!meilleure || meilleure.liq < PONT_LIQ_MIN) {
+        const raison = 'quoted in ' + sym + ', and no ETH bridge deep enough for it'
+          + (meilleure ? ' (best ' + Math.round(meilleure.liq) + ' $ of liquidity, ' + PONT_LIQ_MIN + ' needed)' : ' (no ETH pair listed)');
+        PONTS_VUS[k] = { t: Date.now(), route: null, raison };
+        throw new Error(raison);
+      }
+      const route = await routeDe(adr, meilleure.pool);
+      if (!route.monnaie || !route.monnaie.eth) throw new Error('the bridge pool of ' + sym + ' is not against ETH');
+      let dec = 18;
+      try { dec = Number(await new ethers.Contract(adr, ERC20_ABI, provider()).decimals()); } catch (e) { dec = 18; }
+      if (!isFinite(dec) || dec < 0 || dec > 36) dec = 18;
+      PONTS_VUS[k] = { t: Date.now(), route, liq: meilleure.liq, dec, sym };
+      return PONTS_VUS[k];
+    } finally { delete PONTS_EN_COURS[k]; }
+  })();
+  return PONTS_EN_COURS[k];
+}
+/** Pour la colonie, qui decide en synchrone : ce pont est-il connu et bon ?
+ *  Inconnu, on le cherche en arriere-plan et on repond non — au tour suivant,
+ *  la reponse est la. Hors liste, non tout court, sans rien chercher. */
+function pontConnu(adr, sym) {
+  const s = String(sym || '').toUpperCase();
+  if (!adr || PONTS.indexOf(s) < 0) return false;
+  const vu = PONTS_VUS[norm(adr)];
+  const now = Date.now();
+  if (vu && vu.route && now - vu.t < PONT_TTL_MS) return true;
+  if (vu && !vu.route && now - vu.t < PONT_ECHEC_MS) return false;
+  pontPour(adr, s).catch(() => {});
+  return false;
+}
+function oublieLesPonts() { for (const k in PONTS_VUS) delete PONTS_VUS[k]; }
 
 /** Ce que rend un echange v4, demande au quoteur du protocole lui-meme. */
 async function devis(cleP, zeroVersUn, entree) {
@@ -455,20 +554,37 @@ async function devis(cleP, zeroVersUn, entree) {
 
 /** Le devis sur n'importe quelle route, dans un sens ou dans l'autre. Chaque
  *  place a son quoteur ; aucun n'est remplace par une regle de trois. */
-async function devisRoute(r, sens, jeton, montant) {
+/** Le cote « contre » d'une route sur v2 et v3 : le WETH, ou la monnaie du
+ *  pont quand la piscine est cotee en NVDA. */
+function contre(r) { return r.monnaie && !r.monnaie.eth ? r.monnaie.adr : WETH; }
+async function devisJambe(r, sens, jeton, montant) {
   const achat = sens === 'achat';
   if (r.ver === 'v4') return devis(r.cle, achat ? r.zeroEstEth : !r.zeroEstEth, montant);
+  const C = contre(r);
   if (r.ver === 'v2') {
     const v2 = new ethers.Contract(ROUTEUR2, R2_ABI, provider());
-    const a = await v2.getAmountsOut(montant, achat ? [WETH, jeton] : [jeton, WETH]);
+    const a = await v2.getAmountsOut(montant, achat ? [C, jeton] : [jeton, C]);
     return ethers.BigNumber.from(a[a.length - 1]);
   }
   const q = new ethers.Contract(QUOTEUR3, Q3_ABI, provider());
   const x = await q.callStatic.quoteExactInputSingle({
-    tokenIn: achat ? WETH : jeton, tokenOut: achat ? jeton : WETH,
+    tokenIn: achat ? C : jeton, tokenOut: achat ? jeton : C,
     amountIn: montant, fee: r.fee, sqrtPriceLimitX96: 0,
   });
   return ethers.BigNumber.from(x.amountOut !== undefined ? x.amountOut : x[0]);
+}
+/** Le devis de la route ENTIERE : une jambe en ETH, deux avec un pont — ce que
+ *  le pont rend en monnaie entre dans la piscine du jeton, et inversement. */
+async function devisRoute(r, sens, jeton, montant) {
+  if (!r.pont) return devisJambe(r, sens, jeton, montant);
+  if (sens === 'achat') {
+    const m = await devisJambe(r.pont, 'achat', r.monnaie.adr, montant);
+    if (m.lte(0)) return m;
+    return devisJambe(r, 'achat', jeton, m);
+  }
+  const m = await devisJambe(r, 'vente', jeton, montant);
+  if (m.lte(0)) return m;
+  return devisJambe(r.pont, 'vente', r.monnaie.adr, m);
 }
 
 /** Le corps d'un echange v4, pret pour `execute`. Une seule forme sert les deux
@@ -488,14 +604,17 @@ function corpsV4(k, zeroVersUn, entree, mini) {
  *  sans signer. `vers` est le portefeuille du miroir. */
 function ordre(r, sens, jeton, montant, mini, vers, echeance) {
   const achat = sens === 'achat';
+  /* La jambe du jeton sur une piscine pontee : un ERC-20 des deux cotes, pas
+     d'ETH en valeur, rien a emballer — l'entree passe par l'autorisation. */
+  const enMonnaie = !!(r.monnaie && !r.monnaie.eth);
   if (r.ver === 'v4') {
     const i = new ethers.utils.Interface(UR_ABI);
     const A = ethers.utils.defaultAbiCoder;
     const k = r.cle, zeroVersUn = achat ? r.zeroEstEth : !r.zeroEstEth;
-    if (!r.enWeth) {
+    if (enMonnaie || !r.enWeth) {
       const corps = corpsV4(k, zeroVersUn, montant, mini);
       return { to: ROUTEUR4, data: i.encodeFunctionData('execute', [V4_SWAP, [corps], echeance]),
-               value: achat ? montant : ethers.BigNumber.from(0) };
+               value: achat && !enMonnaie ? montant : ethers.BigNumber.from(0) };
     }
     /* Par IDENTITE, pas par sens : a la vente le WETH est la sortie, et le
        prendre pour l entree reglerait la mauvaise monnaie. */
@@ -528,6 +647,10 @@ function ordre(r, sens, jeton, montant, mini, vers, echeance) {
     const i = new ethers.utils.Interface(R2_ABI);
     /* Les variantes « SupportingFeeOnTransfer » : un jeton qui prend une taxe
        au passage fait echouer les autres, et sur cette chaine c'est courant. */
+    if (enMonnaie)
+      return { to: ROUTEUR2, value: ethers.BigNumber.from(0),
+               data: i.encodeFunctionData('swapExactTokensForTokensSupportingFeeOnTransferTokens',
+                                          [montant, mini, achat ? [r.monnaie.adr, jeton] : [jeton, r.monnaie.adr], vers, echeance]) };
     return achat
       ? { to: ROUTEUR2, value: montant,
           data: i.encodeFunctionData('swapExactETHForTokensSupportingFeeOnTransferTokens',
@@ -537,6 +660,14 @@ function ordre(r, sens, jeton, montant, mini, vers, echeance) {
                                      [montant, mini, [jeton, WETH], vers, echeance]) };
   }
   const i = new ethers.utils.Interface(R3_ABI);
+  if (enMonnaie) {
+    /* Monnaie contre jeton, dans un sens ou dans l'autre : un seul appel, le
+       produit chez le miroir, rien a deballer. */
+    return { to: ROUTEUR3, value: ethers.BigNumber.from(0),
+             data: i.encodeFunctionData('exactInputSingle', [{
+               tokenIn: achat ? r.monnaie.adr : jeton, tokenOut: achat ? jeton : r.monnaie.adr, fee: r.fee, recipient: vers,
+               amountIn: montant, amountOutMinimum: mini, sqrtPriceLimitX96: 0 }]) };
+  }
   if (achat) {
     /* Le routeur v3 emballe lui-meme l'ETH recu quand l'entree est le WETH. */
     return { to: ROUTEUR3, value: montant,
@@ -588,7 +719,9 @@ const POUSSIERE_MULT = Math.max(1, nEnv('MIROIR_POUSSIERE_MULT', 2));
 async function gazDeVente(route) {
   const prix = await provider().getGasPrice();
   const unites = GAZ_ORDRE_UNITES + (route.ver === 'v4' ? 2 : 1) * 60000;   /* l'echange, plus les autorisations au pire */
-  return prix.mul(unites);
+  /* Avec un pont : une seconde transaction et son autorisation. */
+  const pont = route.pont ? GAZ_ORDRE_UNITES + (route.pont.ver === 'v4' ? 2 : 1) * 60000 : 0;
+  return prix.mul(unites + pont);
 }
 
 /* ==========================================================================
@@ -618,7 +751,9 @@ let sourcePaires = async function (jeton) {
     const j = await r.json();
     return (j.pairs || []).filter((p) => String(p.chainId || '').toLowerCase() === 'robinhood')
       .map((p) => ({ pool: p.pairAddress, liq: Number(p.liquidity && p.liquidity.usd) || 0,
-                     quote: String((p.quoteToken || {}).address || '').toLowerCase(), labels: p.labels || [] }));
+                     quote: String((p.quoteToken || {}).address || '').toLowerCase(),
+                     quoteSym: String((p.quoteToken || {}).symbol || ''),
+                     base: String((p.baseToken || {}).address || '').toLowerCase(), labels: p.labels || [] }));
   } catch (e) { return []; }
   finally { clearTimeout(t); }
 };
@@ -637,25 +772,34 @@ async function meilleurePlace(jeton, poolColonie, mise) {
   for (const p of autres) {
     if (!p.pool || vues.has(norm(p.pool))) continue;
     if (!(p.liq >= LIQ_PLACE_MIN)) continue;
-    if (p.quote && ADRESSES_ETH_PLACE.indexOf(norm(p.quote)) < 0) continue;
+    /* Contre l'ETH, ou contre une monnaie de la liste des ponts : la route
+       dira si le pont est assez profond. */
+    if (p.quote && ADRESSES_ETH_PLACE.indexOf(norm(p.quote)) < 0
+        && !(p.quoteSym && PONTS.indexOf(String(p.quoteSym).toUpperCase()) >= 0)) continue;
     vues.add(norm(p.pool)); cand.push(String(p.pool));
   }
   const prixGaz = await provider().getGasPrice();
   const essais = [];
+  let derniere = null;
   for (const pool of cand) {
     try {
       const route = await routeDe(jeton, pool);
       const sortie = await devisRoute(route, 'achat', jeton, mise);
       if (sortie.lte(0)) continue;
       const retour = await devisRoute(route, 'vente', jeton, sortie);
-      const gaz = prixGaz.mul(GAZ_PLACE[route.ver] || GAZ_PLACE.v4);
+      /* Le gaz d'une place pontee compte ses deux jambes, a l'aller et au retour. */
+      const gaz = prixGaz.mul((GAZ_PLACE[route.ver] || GAZ_PLACE.v4) + (route.pont ? (GAZ_PLACE[route.pont.ver] || GAZ_PLACE.v4) : 0));
       essais.push({ route, pool, sortie, retour, gaz, net: retour.sub(gaz), colonie: norm(pool) === norm(poolColonie) });
-    } catch (e) { /* une place qui ne repond pas n'est pas candidate */ }
+    } catch (e) { derniere = resume(e); /* une place qui ne repond pas n'est pas candidate */ }
   }
-  if (!essais.length) throw new Error(poolColonie ? 'no venue answers for this token' : 'no pool against ETH found for this token');
+  /* Aucune place : la derniere raison est dite — « quoted in NVDA, and no ETH
+     bridge deep enough » vaut mieux que « no venue answers ». */
+  if (!essais.length) throw new Error((poolColonie ? 'no venue answers for this token' : 'no pool against ETH found for this token')
+                                      + (derniere ? ' (' + derniere + ')' : ''));
   essais.sort((a, b) => (b.net.gt(a.net) ? 1 : b.net.lt(a.net) ? -1 : (a.colonie ? -1 : b.colonie ? 1 : 0)));
   const pct = (e) => mise.isZero() ? 0 : Math.round(Number(e.retour.mul(10000).div(mise)) / 100 * 10) / 10;
-  return { choix: essais[0], compare: essais.map((e) => ({ ver: e.route.ver, pool: e.pool, retourPct: pct(e), colonie: e.colonie })) };
+  return { choix: essais[0], compare: essais.map((e) => ({ ver: e.route.ver, pool: e.pool, retourPct: pct(e), colonie: e.colonie,
+                                                            via: e.route.pont ? e.route.monnaie.sym : null })) };
 }
 
 /* ---- L'ALLER-RETOUR, POUR LE PAPIER AUSSI ----
@@ -695,14 +839,121 @@ async function acheteRoute(c, r, jeton, entreeWei) {
   if (!EXECUTE) return { simule: true, sortie, mini, tx: null };
   const w = signataire(c);
   const avant = await provider().getBalance(w.address);
-  const o = ordre(r, 'achat', jeton, entreeWei, mini, w.address, Math.floor(Date.now() / 1000) + ECHEANCE_S);
-  const tx = await w.sendTransaction(Object.assign(o, await fraisGaz()));
-  const rc = await tx.wait();
+  let tx, txs = null;
+  if (!r.pont) {
+    const o = ordre(r, 'achat', jeton, entreeWei, mini, w.address, Math.floor(Date.now() / 1000) + ECHEANCE_S);
+    const t = await w.sendTransaction(Object.assign(o, await fraisGaz()));
+    tx = (await t.wait()).transactionHash;
+  } else {
+    const j = await deuxJambes(c, r, 'achat', jeton, entreeWei, (rr, sens, jj, m, sc) => jambe(w, rr, sens, jj, m, sc));
+    tx = j.tx; txs = j.txs;
+  }
   const apres = await provider().getBalance(w.address);
   /* Un depot arrive pendant la transaction rendrait le cout negatif : on
      retombe alors sur la mise, jamais sur un chiffre absurde. */
   const coutReel = avant.gt(apres) ? avant.sub(apres) : entreeWei;
-  return { simule: false, sortie, mini, tx: rc.transactionHash, coutReel };
+  return { simule: false, sortie, mini, tx, txs, coutReel };
+}
+
+/* ==================== UNE JAMBE, ET DEUX ====================
+ * Une jambe est un echange, une transaction : autorisation de l'entree quand
+ * elle n'est pas l'ETH, ordre, et ce qui est RECU lu sur le solde du jeton
+ * de sortie — c'est ce montant-la, pas le devis, qui entre dans la jambe
+ * suivante. */
+async function soldeJeton(adr, qui) {
+  return new ethers.Contract(adr, ERC20_ABI, provider()).balanceOf(qui);
+}
+async function autorisePour(w, r, jetonEntree, montant) {
+  if (r.ver === 'v4') return autorise(w, jetonEntree, montant);
+  return autoriseSimple(w, jetonEntree, r.ver === 'v2' ? ROUTEUR2 : ROUTEUR3, montant);
+}
+async function jambe(w, r, sens, jeton, montant, sortieConnue) {
+  const achat = sens === 'achat';
+  const enMonnaie = !!(r.monnaie && !r.monnaie.eth);
+  const sortie = sortieConnue || await devisJambe(r, sens, jeton, montant);
+  const mini = plancher(sortie);
+  const entreeErc20 = achat ? (enMonnaie ? r.monnaie.adr : null) : jeton;
+  if (entreeErc20) await autorisePour(w, r, entreeErc20, montant);
+  const sortieAdr = achat ? jeton : (enMonnaie ? r.monnaie.adr : null);    /* null : l'ETH */
+  const avant = sortieAdr ? await soldeJeton(sortieAdr, w.address) : null;
+  const o = ordre(r, sens, jeton, montant, mini, w.address, Math.floor(Date.now() / 1000) + ECHEANCE_S);
+  const tx = await w.sendTransaction(Object.assign(o, await fraisGaz()));
+  const rc = await tx.wait();
+  let recu = sortie;
+  if (sortieAdr) {
+    try { const d = (await soldeJeton(sortieAdr, w.address)).sub(avant); if (d.gt(0)) recu = d; } catch (e) { /* le devis fera foi */ }
+  }
+  return { sortie, mini, tx: rc.transactionHash, recu };
+}
+/* ---- DEUX JAMBES, ET CE QUI ARRIVE ENTRE LES DEUX ----
+ * A l'achat : ETH -> monnaie sur le pont, puis monnaie -> jeton. Si la seconde
+ * echoue, le miroir tient de la monnaie et pas de jeton : on la ramene en ETH
+ * tout de suite ; si ca echoue aussi, elle est notee EN TRANSIT — elle est au
+ * joueur, dans son portefeuille — et retentee a chaque tour. A la vente :
+ * jeton -> monnaie, puis monnaie -> ETH ; si le pont echoue, meme transit, et
+ * la position est comptee sur ce que le solde ETH a vu, c'est-a-dire rien
+ * encore : ce que le transit rendra sera compte a part, quand il rendra.
+ * `execute` est injecte : c'est ce qui permet au banc de jouer une jambe qui
+ * casse sans chaine. */
+async function deuxJambes(c, r, sens, jeton, montant, execute) {
+  const m = r.monnaie;
+  const fmt = (x) => ethers.utils.formatUnits(x, m.dec === undefined ? 18 : m.dec);
+  if (sens === 'achat') {
+    const a = await execute(r.pont, 'achat', m.adr, montant);
+    let b;
+    try { b = await execute(r, 'achat', jeton, a.recu); }
+    catch (e) {
+      try {
+        const ret = await execute(r.pont, 'vente', m.adr, a.recu);
+        note(c, 'The bridge leg passed but the token leg failed (' + resume(e) + '): ' + fmt(a.recu) + ' ' + m.sym
+              + ' sold straight back to ETH. Nothing is held', { tx: ret.tx || null });
+      } catch (e2) { metsEnTransit(c, m, a.recu, e2); }
+      throw e;
+    }
+    return { sortie: b.sortie, tx: b.tx, txs: [a.tx, b.tx], viaMonnaie: a.recu };
+  }
+  const b = await execute(r, 'vente', jeton, montant);
+  let a;
+  try { a = await execute(r.pont, 'vente', m.adr, b.recu); }
+  catch (e) {
+    metsEnTransit(c, m, b.recu, e);
+    return { sortie: ethers.BigNumber.from(0), tx: b.tx, txs: [b.tx], enTransit: b.recu };
+  }
+  return { sortie: a.sortie, tx: a.tx, txs: [b.tx, a.tx], viaMonnaie: b.recu };
+}
+function metsEnTransit(c, m, montant, e) {
+  if (!Array.isArray(c.transit)) c.transit = [];
+  const dec = m.dec === undefined ? 18 : m.dec;
+  c.transit.push({ adr: m.adr, sym: m.sym, dec, montant: montant.toString(), t: Date.now(), erreur: resume(e) });
+  note(c, 'Stranded: ' + ethers.utils.formatUnits(montant, dec) + ' ' + m.sym + ' sit in the wallet — the bridge to ETH failed ('
+        + resume(e) + '). They are yours; the mirror will try to bring them back to ETH every turn', { adr: m.adr });
+}
+/** A chaque tour : ce qui est en transit est ramene en ETH, et compte a part
+ *  quand ca rend. Rien n'est tente sans chaine. */
+async function rattrapeTransit(c) {
+  if (!Array.isArray(c.transit) || !c.transit.length) return 0;
+  if (!EXECUTE) return 0;
+  let n = 0;
+  const w = signataire(c);
+  for (const t of c.transit.slice()) {
+    try {
+      const pont = await pontPour(t.adr, t.sym);
+      const montant = await soldeJeton(t.adr, w.address);
+      if (montant.lte(0)) { c.transit.splice(c.transit.indexOf(t), 1); note(c, 'Nothing left of the stranded ' + t.sym + ': cleared', { adr: t.adr }); continue; }
+      const avant = await provider().getBalance(w.address);
+      const j = await jambe(w, pont.route, 'vente', t.adr, montant);
+      const recu = (await provider().getBalance(w.address)).sub(avant);
+      c.transit.splice(c.transit.indexOf(t), 1);
+      if (!Array.isArray(c.fermees)) c.fermees = [];
+      c.fermees.push({ adr: t.adr, sym: t.sym + ' (recovered)', entree: '0', mise: '0', sortie: ethers.utils.formatUnits(recu, 18),
+                       transit: true, reel: true, simule: false, t0: t.t, t: Date.now(), tx: j.tx });
+      note(c, 'Recovered: the stranded ' + ethers.utils.formatUnits(montant, t.dec || 18) + ' ' + t.sym + ' came back as '
+            + ethers.utils.formatUnits(recu, 18) + ' ETH (RH), net of gas', { adr: t.adr, tx: j.tx });
+      n++;
+    } catch (e) { note(c, 'Still stranded: ' + t.sym + ' — ' + resume(e), { adr: t.adr }); }
+    await dors(PAUSE_MS);
+  }
+  return n;
 }
 
 async function autorise(w, jeton, montant) {
@@ -742,26 +993,41 @@ async function vendRoute(c, r, jeton, montantWei, sortieConnue) {
   const w = signataire(c);
   /* Avant les autorisations : leur gaz fait partie du prix de cette vente. */
   const avant = await provider().getBalance(w.address);
-  if (r.ver === 'v4') await autorise(w, jeton, montantWei);
-  else await autoriseSimple(w, jeton, r.ver === 'v2' ? ROUTEUR2 : ROUTEUR3, montantWei);
-  const o = ordre(r, 'vente', jeton, montantWei, mini, w.address, Math.floor(Date.now() / 1000) + ECHEANCE_S);
-  const tx = await w.sendTransaction(Object.assign(o, await fraisGaz()));
-  const rc = await tx.wait();
+  let tx, txs = null;
+  if (!r.pont) {
+    if (r.ver === 'v4') await autorise(w, jeton, montantWei);
+    else await autoriseSimple(w, jeton, r.ver === 'v2' ? ROUTEUR2 : ROUTEUR3, montantWei);
+    const o = ordre(r, 'vente', jeton, montantWei, mini, w.address, Math.floor(Date.now() / 1000) + ECHEANCE_S);
+    const t = await w.sendTransaction(Object.assign(o, await fraisGaz()));
+    tx = (await t.wait()).transactionHash;
+  } else {
+    const j = await deuxJambes(c, r, 'vente', jeton, montantWei, (rr, sens, jj, m, sc) => jambe(w, rr, sens, jj, m, sc));
+    tx = j.tx; txs = j.txs;
+  }
   const apres = await provider().getBalance(w.address);
   /* Ce qui est revenu, gaz deduit. Une vente qui rend moins que son gaz
      donne un chiffre negatif : c'est la verite, on la garde. */
   const recuReel = apres.sub(avant);
-  return { simule: false, sortie, mini, tx: rc.transactionHash, recuReel };
+  return { simule: false, sortie, mini, tx, txs, recuReel };
 }
 
 /** La route d'une position deja ouverte, telle qu'elle a ete notee a l'achat.
  *  Une position d'avant les routes n'a qu'une clef : c'est du v4. */
 async function routeDePosition(adr, o) {
-  if (o.ver === 'v2') return { ver: 'v2', paire: o.pool };
-  if (o.ver === 'v3') return { ver: 'v3', paire: o.pool, fee: o.fee };
+  /* La monnaie et le pont tels qu'ils ont ete notes a l'achat : une position
+     d'avant les ponts est en ETH. Le pont est relu s'il a vieilli. */
+  const m = o.monnaie && !o.monnaie.eth ? o.monnaie : MONNAIE_ETH;
+  let pont = null;
+  if (!m.eth) {
+    try { pont = (await pontPour(m.adr, m.sym)).route; }
+    catch (e) { if (!o.pont) throw e; pont = o.pont; }
+  }
+  const fini = (r) => { r.monnaie = m; r.pont = pont; return r; };
+  if (o.ver === 'v2') return fini({ ver: 'v2', paire: o.pool });
+  if (o.ver === 'v3') return fini({ ver: 'v3', paire: o.pool, fee: o.fee });
   const cle = o.cle || (await clePiscine(adr, o.pool) || {}).cle;
   if (!cle) throw new Error('pool key lost for this token');
-  return { ver: 'v4', cle, zeroEstEth: !!o.zeroVersUn, enWeth: !!o.enWeth };
+  return fini({ ver: 'v4', cle, zeroEstEth: !!o.zeroVersUn, enWeth: !!o.enWeth });
 }
 
 /* ==================== CE QUE LE MIROIR PEUT ENGAGER ====================
@@ -894,13 +1160,17 @@ function bilan(c) {
   const f = toutes.filter((x) => x.sortie !== null && x.sortie !== undefined);
   const horsMiroir = toutes.filter((x) => x.horsMiroir && !x.simule).length;
   let profit = 0, gagnantes = 0, meilleur = 0;
+  let transit = 0;
   for (const x of f) {
     const e = Number(x.entree) || 0, s = Number(x.sortie) || 0;
     profit += s - e;
+    /* Une recuperation de transit rend de l'ETH sans avoir ete un trade :
+       elle entre dans le profit, pas dans les trades ni les gagnantes. */
+    if (x.transit) { transit++; continue; }
     if (s > e) gagnantes++;
     if (e > 0 && s / e > meilleur) meilleur = s / e;
   }
-  return { trades: f.length, gagnantes, profitEth: profit.toFixed(6),
+  return { trades: f.length - transit, gagnantes, profitEth: profit.toFixed(6),
            meilleur: Math.round(meilleur * 100) / 100,
            ouvertes: Object.keys(c.ouvertes || {}).length,
            simule: f.length > 0 && f.every((x) => x.simule),
@@ -975,7 +1245,11 @@ async function etat(joueur, lireChaine) {
       t: o.t, simule: !!o.simule,
       /* Ce qu'il reste en course, et ce que les tranches ont deja rendu. */
       reste: o.reste === undefined ? 1 : o.reste, banked: o.sortiesPartielles || null,
+      /* La monnaie du pont, quand la position en a un. */
+      via: o.monnaie && !o.monnaie.eth ? o.monnaie.sym : null,
     })),
+    /* Ce qui est reste entre deux jambes, et que le miroir ramene chaque tour. */
+    transit: (c.transit || []).map((t) => ({ sym: t.sym, adr: t.adr, montant: ethers.utils.formatUnits(t.montant, t.dec || 18), t: t.t })),
     journal: (c.journal || []).slice(0, 20),
     bilan: bilan(c),
   });
@@ -1026,6 +1300,12 @@ async function arreteFile(joueur, versAdresse) {
     }
     await dors(PAUSE_MS);
   }
+  /* Ce qui est reste entre deux jambes d'un pont : on le ramene en ETH avant
+     de balayer, sinon il resterait dans un portefeuille qu'on vide. */
+  try { await rattrapeTransit(c); } catch (e) { note(c, 'Transit on stop: ' + resume(e)); }
+  if (Array.isArray(c.transit) && c.transit.length)
+    note(c, 'Still in the mirror wallet after stop: ' + c.transit.map((t) => ethers.utils.formatUnits(t.montant, t.dec || 18) + ' ' + t.sym).join(', ')
+          + ' — the bridge to ETH keeps failing. The key is yours; they are not lost');
 
   let balaye = null;
   if (EXECUTE) {
@@ -1112,6 +1392,7 @@ async function rattrapeFile(papier) {
   const now = Date.now();
   let n = 0;
   for (const { c } of actifs()) {
+    try { n += await rattrapeTransit(c); } catch (e) { note(c, 'Transit: ' + resume(e)); }
     for (const [adr, o] of Object.entries(c.ouvertes || {})) {
       if (o.manuel || tenus.has(adr)) continue;
       if (now - (o.t || 0) < RATTRAPE_MIN_MS) continue;
@@ -1205,6 +1486,7 @@ async function achetePosition(c, t) {
     cle: route.cle || null, zeroVersUn: route.ver === 'v4' ? route.zeroEstEth : null,
     enWeth: route.ver === 'v4' ? !!route.enWeth : null,
     fee: route.fee || null,
+    monnaie: route.monnaie || MONNAIE_ETH, pont: route.pont || null,
     entree: ethers.utils.formatUnits(mise, 18),
     /* Ce que le portefeuille a VRAIMENT depense : mise + gaz + autorisations,
        lu sur le solde avant et apres. En essai, la mise seule. */
@@ -1223,10 +1505,10 @@ async function achetePosition(c, t) {
       ? (Math.round(PART_ORDRE * 1000) / 10) + '% of what was free — at your request'
       : (Math.round(PART_ORDRE * 1000) / 10) + '% of what was free (fallback: no share from the colony)';
   const places = compare.length > 1
-    ? ' · best of ' + compare.length + ' venues (' + compare.map((x) => x.ver + ' ' + x.retourPct + '%' + (x.colonie ? ', the colony\'s' : '')).join(', ') + ' round trip)'
+    ? ' · best of ' + compare.length + ' venues (' + compare.map((x) => x.ver + (x.via ? ' via ' + x.via : '') + ' ' + x.retourPct + '%' + (x.colonie ? ', the colony\'s' : '')).join(', ') + ' round trip)'
     : '';
   note(c, (r.simule ? '[dry run] ' : '') + 'Bought ' + (t.sym || adr) + ' for '
-        + ethers.utils.formatUnits(mise, 18) + ' ETH (RH) on Uniswap ' + route.ver + places
+        + ethers.utils.formatUnits(mise, 18) + ' ETH (RH) on Uniswap ' + route.ver + viaPont(route) + places
         + (r.coutReel ? ' · cost incl. gas ' + ethers.utils.formatUnits(r.coutReel, 18) + ' ETH' : '')
         + ' · ' + dit,
         { adr, tx: r.tx || null });
@@ -1235,6 +1517,10 @@ async function achetePosition(c, t) {
 
 /** Ce que le portefeuille tient de ce jeton — lu sur la chaine en reel, note
  *  par le miroir en essai. */
+/** « via NVDA (bridge Uniswap v3) » — ou rien, en ETH. */
+function viaPont(r) {
+  return r && r.pont ? ' via ' + r.monnaie.sym + ' (bridge Uniswap ' + r.pont.ver + ')' : '';
+}
 async function tenu(c, adr, o) {
   let montant = ethers.BigNumber.from(o.jetons || '0');
   if (EXECUTE) {
@@ -1272,7 +1558,7 @@ async function vendTranche(c, adr, o, f, raison) {
     WEI(o.sortiesPartielles || '0').add(revenu), 18);
   note(c, (r.simule ? '[dry run] ' : '') + 'Sold ' + Math.round(f * 100) + '% of ' + (o.sym || adr)
         + ' for ' + ethers.utils.formatUnits(revenu, 18) + ' ETH (RH)' + (r.recuReel ? ' net of gas' : '')
-        + ' on Uniswap ' + route.ver + (raison ? ' · ' + raison : '')
+        + ' on Uniswap ' + route.ver + viaPont(route) + (raison ? ' · ' + raison : '')
         + ' · ' + Math.round(o.reste * 100) + '% still running', { adr, tx: r.tx || null });
   return r;
 }
@@ -1336,10 +1622,10 @@ async function vendPosition(c, adr, o) {
      le devis n est qu une comparaison. En essai, il n y a que le devis. */
   note(c, r.recuReel
     ? 'Sold ' + (o.sym || adr) + ' for ' + ethers.utils.formatUnits(r.recuReel, 18) + ' ETH (RH) net of gas on Uniswap '
-      + route.ver + ' · quote was ' + ethers.utils.formatUnits(r.sortie, 18) + ' ETH'
+      + route.ver + viaPont(route) + ' · quote was ' + ethers.utils.formatUnits(r.sortie, 18) + ' ETH'
       + (o.sortiesPartielles ? ' · plus ' + o.sortiesPartielles + ' ETH banked on the way' : '')
       + ' · result ' + ethers.utils.formatUnits(r.recuReel.add(WEI(o.sortiesPartielles || '0')).sub(WEI(o.cout || o.entree)), 18) + ' ETH incl. gas both ways'
-    : '[dry run] Sold ' + (o.sym || adr) + ' for ' + ethers.utils.formatUnits(r.sortie, 18) + ' ETH (RH) on Uniswap ' + route.ver
+    : '[dry run] Sold ' + (o.sym || adr) + ' for ' + ethers.utils.formatUnits(r.sortie, 18) + ' ETH (RH) on Uniswap ' + route.ver + viaPont(route)
       + (o.sortiesPartielles ? ' · plus ' + o.sortiesPartielles + ' ETH banked on the way' : ''),
     { adr, tx: r.tx || null });
   return r;
@@ -1387,7 +1673,7 @@ async function ouvreFile(joueur, adr) {
 
 module.exports = {
   /* l'interface du serveur */
-  charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, surTour, allerRetour, effaceJournal,
+  charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, surTour, allerRetour, pontConnu, effaceJournal,
   vendsMaintenant, ouvreMaintenant, remetLesStats,
   /* les reglages, pour l'ecran et pour les essais */
   EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN, POUSSIERE_MULT,
@@ -1401,7 +1687,8 @@ module.exports = {
   _chiffre: chiffre, _dechiffre: dechiffre, _cleMaitresse: cleMaitresse,
   _idV4: idV4, _clePiscine: clePiscine, _devis: devis, _corpsV4: corpsV4,
   _plancher: plancher, _miseDe: miseDe, _pourquoiPasDeMise: pourquoiPasDeMise, _balaie: balaie,
-  _routeDe: routeDe, _devisRoute: devisRoute, _ordre: ordre, _R2_ABI: R2_ABI, _R3_ABI: R3_ABI,
+  _routeDe: routeDe, _devisRoute: devisRoute, _devisJambe: devisJambe, _ordre: ordre, _R2_ABI: R2_ABI, _R3_ABI: R3_ABI,
+  _deuxJambes: deuxJambes, _monnaieDe: monnaieDe, _pontPour: pontPour, _oublieLesPonts: oublieLesPonts, PONTS, PONT_LIQ_MIN,
   _meilleurePlace: meilleurePlace, _poseSourcePaires: poseSourcePaires, GAZ_PLACE, LIQ_PLACE_MIN,
   _etat: () => R, _pose: (x) => { R = x; }, _poseProvider: poseProvider,
   _fiche: fiche, _actifs: actifs, _bilan: bilan, _reconcilie: reconcilie, _resume: resume,

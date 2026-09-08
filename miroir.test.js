@@ -169,6 +169,7 @@ class FausseChaine extends ethers.providers.StaticJsonRpcProvider {
       }
     }
     if (sel === '0x95d89b41' && this.symboles[a]) return A.encode(['string'], [this.symboles[a]]);   /* symbol */
+    if (sel === '0x313ce567') return A.encode(['uint8'], [18]);                                     /* decimals */
     /* Un ERC-20 : solde et autorisation. Le solde sert a la vente reelle. */
     return A.encode(['uint256'], [this.jetonsTenus || 0]);
   }
@@ -804,6 +805,125 @@ console.log('\n-- une piscine v3 : le palier lu sur place, et deux appels en une
   ok(s2.name === 'unwrapWETH9' && s2.args.amountMinimum.eq(4000) && s2.args.recipient.toLowerCase() === c5.adr.toLowerCase(),
      'puis le WETH deballe vers le miroir, le meme minimum exige une seconde fois');
   eq(await M.surVente({ adr: J3 }), 1, 'et la vente de la colonie la ferme');
+}
+
+console.log('\n-- une piscine cotee en NVDA : deux jambes, par le pont ETH/NVDA --');
+{
+  /* « Il n y a plus de trades, les filtres sont trop stricts. » 8 septembre,
+     un tour : 39 jetons examines, 18 cotes en NVDA, USDG ou GOOGL, 0 en ETH.
+     Le pont ETH/NVDA mesure ce soir-la : 1,18 M$ de liquidite, en v3. */
+  const ZERO = '0x' + '00'.repeat(20);
+  const NVDA = '0x' + 'd0'.repeat(20), JN = '0x' + 'e7'.repeat(20), PB = '0x' + 'b8'.repeat(20);
+  chaine.symboles[NVDA] = 'NVDA';
+  const kN = [NVDA, JN, 3000, 60, ZERO];
+  const idN = M._idV4(kN);
+  chaine.piscines[idN.toLowerCase()] = { c0: NVDA, c1: JN, fee: 3000, tick: 60, hooks: ZERO };
+  chaine.paires[PB] = { t0: M.WETH, t1: NVDA, fee: 3000 };
+  M._oublieLesPonts();
+  M._poseSourcePaires(async (j) => j.toLowerCase() === NVDA
+    ? [{ pool: '0x' + 'b9'.repeat(20), liq: 7000, quote: M.WETH.toLowerCase(), labels: ['v3'] }, { pool: PB, liq: 1184565, quote: M.WETH.toLowerCase(), labels: ['v3'] }]
+    : []);
+  ok(M.PONTS.indexOf('NVDA') >= 0 && M.PONTS.indexOf('USDG') >= 0 && M.PONTS.length === 2, 'par defaut, deux ponts : USDG et NVDA (' + M.PONTS.join(', ') + ')');
+  const r = await M._routeDe(JN, idN);
+  ok(r.ver === 'v4' && r.monnaie && r.monnaie.sym === 'NVDA' && r.monnaie.eth === false, 'la route est v4, cotee en NVDA');
+  ok(r.zeroEstEth === true, 'currency0 est la monnaie (NVDA < JN) : on entre par le cote zero');
+  ok(!!r.pont && r.pont.ver === 'v3' && r.pont.paire.toLowerCase() === PB && r.pont.monnaie.eth === true, 'et le pont est la paire v3 ETH/NVDA la plus profonde (1,18 M$), pas celle a 7 000 $');
+  ok(!r.pont.pont, 'le pont lui-meme est en ETH : pas de pont de pont');
+  eq(r.monnaie.dec, 18, 'les decimales de la monnaie sont lues');
+  const dv = await M._devisRoute(r, 'achat', JN, W('0.01'));
+  ok(dv.gt(0), 'l achat se chiffre en deux devis enchaines : ' + dv.toString());
+  /* Le calldata de la jambe du jeton : un ERC-20 des deux cotes, rien en valeur. */
+  const A = ethers.utils.defaultAbiCoder, iu = new ethers.utils.Interface(['function execute(bytes commands,bytes[] inputs,uint256 deadline) payable']);
+  const moi = '0x' + '78'.repeat(20);
+  const oa = M._ordre(r, 'achat', JN, W('5'), W('4.5'), moi, 7);
+  const da = iu.parseTransaction({ data: oa.data });
+  ok(oa.value.isZero() && da.args.commands === M.V4_SWAP, 'l achat du jeton en NVDA : V4_SWAP seul, ZERO ETH en valeur');
+  const ca = A.decode(['bytes', 'bytes[]'], da.args.inputs[0]);
+  const sa = A.decode(['address', 'uint256'], ca[1][1]), ta = A.decode(['address', 'uint256'], ca[1][2]);
+  ok(ca[0] === '0x060c0f' && sa[0].toLowerCase() === NVDA && sa[1].eq(W('5')) && ta[0].toLowerCase() === JN && ta[1].eq(W('4.5')), 'SETTLE_ALL du NVDA (via Permit2), TAKE_ALL du jeton au minimum');
+  ok(A.decode([M.SWAP4_T], ca[1][0])[0][1] === true, 'et le swap va de 0 (NVDA) vers 1 (jeton)');
+  const ov = M._ordre(r, 'vente', JN, W('4'), W('3.8'), moi, 8);
+  const dvv = iu.parseTransaction({ data: ov.data });
+  const cv = A.decode(['bytes', 'bytes[]'], dvv.args.inputs[0]);
+  const sv = A.decode(['address', 'uint256'], cv[1][1]), tv = A.decode(['address', 'uint256'], cv[1][2]);
+  ok(ov.value.isZero() && sv[0].toLowerCase() === JN && tv[0].toLowerCase() === NVDA && A.decode([M.SWAP4_T], cv[1][0])[0][1] === false, 'la vente du jeton : SETTLE_ALL du jeton, TAKE_ALL du NVDA, de 1 vers 0');
+  /* La jambe du pont garde sa forme en ETH. */
+  const i3 = new ethers.utils.Interface(M._R3_ABI);
+  const op = M._ordre(r.pont, 'achat', NVDA, W('0.01'), W('4'), moi, 9);
+  const dp = i3.parseTransaction({ data: op.data });
+  ok(op.value.eq(W('0.01')) && dp.name === 'exactInputSingle' && dp.args[0].tokenIn.toLowerCase() === M.WETH.toLowerCase() && dp.args[0].tokenOut.toLowerCase() === NVDA, 'le pont a l achat : ETH -> NVDA en v3, l ETH en valeur');
+  const opv = M._ordre(r.pont, 'vente', NVDA, W('4'), W('0.0099'), moi, 10);
+  ok(opv.value.isZero() && i3.parseTransaction({ data: opv.data }).name === 'multicall', 'et au retour : NVDA -> WETH puis deballage, en un appel');
+  /* Une jambe v3 et une jambe v2 en monnaie, par la forme de leur calldata. */
+  const r3 = { ver: 'v3', paire: '0x' + 'c3'.repeat(20), fee: 500, monnaie: r.monnaie, pont: r.pont };
+  const o3 = M._ordre(r3, 'achat', JN, W('5'), W('1'), moi, 11);
+  const d3 = i3.parseTransaction({ data: o3.data });
+  ok(o3.value.isZero() && d3.name === 'exactInputSingle' && d3.args[0].tokenIn.toLowerCase() === NVDA && d3.args[0].tokenOut.toLowerCase() === JN && d3.args[0].recipient.toLowerCase() === moi, 'en v3, NVDA -> jeton en un appel, sans emballage, le produit chez le miroir');
+  const d3v = i3.parseTransaction({ data: M._ordre(r3, 'vente', JN, W('2'), W('1'), moi, 12).data });
+  ok(d3v.name === 'exactInputSingle' && d3v.args[0].tokenIn.toLowerCase() === JN && d3v.args[0].tokenOut.toLowerCase() === NVDA && d3v.args[0].recipient.toLowerCase() === moi, 'et jeton -> NVDA au retour, sans deballage');
+  const r2 = { ver: 'v2', paire: '0x' + 'c2'.repeat(20), monnaie: r.monnaie, pont: r.pont };
+  const i2 = new ethers.utils.Interface(M._R2_ABI);
+  const o2 = M._ordre(r2, 'achat', JN, W('5'), W('1'), moi, 13);
+  const d2 = i2.parseTransaction({ data: o2.data });
+  ok(o2.value.isZero() && d2.name === 'swapExactTokensForTokensSupportingFeeOnTransferTokens' && d2.args.path.map((x) => x.toLowerCase()).join(',') === NVDA + ',' + JN, 'en v2, jeton contre jeton avec la variante a taxe, chemin NVDA -> jeton');
+  const d2v = i2.parseTransaction({ data: M._ordre(r2, 'vente', JN, W('2'), W('1'), moi, 14).data });
+  ok(d2v.args.path.map((x) => x.toLowerCase()).join(',') === JN + ',' + NVDA, 'et jeton -> NVDA au retour');
+  /* Un vrai suivi, en essai : la position note sa monnaie et son pont, le journal dit « via ». */
+  const J8 = '0x' + '88'.repeat(19) + '03';
+  for (const { joueur } of M._actifs()) await M.arrete(joueur, joueur);
+  await M.cree(J8); chaine.soldes[M._fiche(J8).adr.toLowerCase()] = W('0.05'); await M.demarre(J8);
+  chaine.sortieVente = null;
+  await M.surAchat({ sym: 'JN', adr: JN, pool: idN, part: 0.1 });
+  const c8 = M._fiche(J8);
+  ok(!!c8.ouvertes[JN] && c8.ouvertes[JN].monnaie.sym === 'NVDA' && c8.ouvertes[JN].pont && c8.ouvertes[JN].pont.ver === 'v3', 'la position est ouverte, avec sa monnaie et son pont : ' + (c8.ouvertes[JN] ? 'oui' : c8.journal[0].txt));
+  ok(/Bought JN .* on Uniswap v4 via NVDA \(bridge Uniswap v3\)/.test(c8.journal[0].txt), 'et le journal dit par ou : « ' + c8.journal[0].txt.slice(0, 90) + '… »');
+  const e8 = await M.etat(J8, false);
+  ok(e8.ouvertes[0].via === 'NVDA' && Array.isArray(e8.transit) && e8.transit.length === 0, 'l ecran voit « via NVDA », et rien en transit');
+  await M.surVente({ adr: JN });
+  ok(!c8.ouvertes[JN] && /Sold JN .* via NVDA/.test(c8.journal[0].txt), 'la vente repasse par le pont, et le dit : « ' + c8.journal[0].txt.slice(0, 80) + '… »');
+  /* Une monnaie de la liste sans pont assez profond : dit avec le chiffre. */
+  const NV2 = '0x' + 'd1'.repeat(20), JN2 = '0x' + 'e8'.repeat(20);
+  chaine.symboles[NV2] = 'NVDA';
+  const k2 = [NV2, JN2, 3000, 60, ZERO]; const id2 = M._idV4(k2);
+  chaine.piscines[id2.toLowerCase()] = { c0: NV2, c1: JN2, fee: 3000, tick: 60, hooks: ZERO };
+  M._poseSourcePaires(async (j) => j.toLowerCase() === NV2 ? [{ pool: '0x' + 'ba'.repeat(20), liq: 6339, quote: M.WETH.toLowerCase(), labels: ['v3'] }] : []);
+  await jete(() => M._routeDe(JN2, id2), /quoted in NVDA, and no ETH bridge deep enough for it \(best 6339 \$ of liquidity, 200000 needed\)/, 'un faux NVDA, sans liquidite contre l ETH, n a pas de pont — le symbole ne suffit pas');
+  ok(M.pontConnu(NV2, 'GLD') === false, 'GLD n est pas dans la liste : non, sans chercher');
+  /* pontConnu, pour la colonie : non d abord, puis oui une fois mesure. */
+  M._oublieLesPonts();
+  M._poseSourcePaires(async (j) => j.toLowerCase() === NVDA ? [{ pool: PB, liq: 1184565, quote: M.WETH.toLowerCase(), labels: ['v3'] }] : []);
+  ok(M.pontConnu(NVDA, 'NVDA') === false, 'un pont pas encore mesure repond non, et la recherche part');
+  await M._pontPour(NVDA, 'NVDA');
+  ok(M.pontConnu(NVDA, 'NVDA') === true, 'mesure : oui');
+
+  console.log('\n-- une jambe qui casse apres l autre : on revient, ou on note le transit --');
+  const appels = [];
+  const exec = (casse) => async (rr, sens, j, m) => {
+    appels.push((rr.pont ? 'jeton' : 'pont') + ':' + sens);
+    const c = casse[appels.length - 1];
+    if (c) throw new Error(c);
+    return { sortie: m.mul(2), recu: m.mul(2), tx: '0x' + appels.length };
+  };
+  const cX = { journal: [], transit: [] };
+  const rX = { ver: 'v4', cle: kN, zeroEstEth: true, monnaie: r.monnaie, pont: r.pont };
+  const ok1 = await M._deuxJambes(cX, rX, 'achat', JN, W('0.01'), exec([]));
+  ok(appels.join(' ') === 'pont:achat jeton:achat' && ok1.txs.length === 2 && ok1.viaMonnaie.eq(W('0.02')), 'achat : le pont d abord, puis le jeton avec ce que le pont a RENDU (' + appels.join(' ') + ')');
+  appels.length = 0;
+  let err = null;
+  try { await M._deuxJambes(cX, rX, 'achat', JN, W('0.01'), exec([null, 'execution reverted'])); } catch (e) { err = e; }
+  ok(!!err && appels.join(' ') === 'pont:achat jeton:achat pont:vente' && cX.transit.length === 0, 'le jeton refuse apres le pont : le NVDA est revendu en ETH aussitot, rien en transit (' + appels.join(' ') + ')');
+  ok(/bridge leg passed but the token leg failed/.test(cX.journal[0].txt) && /sold straight back to ETH/.test(cX.journal[0].txt), 'et le journal le dit : « ' + cX.journal[0].txt.slice(0, 100) + '… »');
+  appels.length = 0; err = null;
+  try { await M._deuxJambes(cX, rX, 'achat', JN, W('0.01'), exec([null, 'execution reverted', 'rpc timeout'])); } catch (e) { err = e; }
+  ok(!!err && cX.transit.length === 1 && cX.transit[0].sym === 'NVDA' && cX.transit[0].montant === W('0.02').toString(), 'le retour casse aussi : 0,02 NVDA notes EN TRANSIT');
+  ok(/Stranded: 0\.02 NVDA/.test(cX.journal[0].txt) && /every turn/.test(cX.journal[0].txt), 'et dit au joueur ou ils sont : « ' + cX.journal[0].txt.slice(0, 110) + '… »');
+  appels.length = 0;
+  const v1 = await M._deuxJambes(cX, rX, 'vente', JN, W('3'), exec([null, 'bridge down']));
+  ok(appels.join(' ') === 'jeton:vente pont:vente' && v1.sortie.isZero() && cX.transit.length === 2, 'a la vente, le pont casse : le jeton est vendu, le NVDA reste en transit, et la sortie vaut zero pour l instant');
+  const bX = M._bilan({ fermees: [{ entree: '0.01', sortie: '0.005', simule: false, reel: true }, { entree: '0', sortie: '0.004', transit: true, reel: true }] });
+  ok(bX.trades === 1 && bX.gagnantes === 0 && bX.profitEth === '-0.001000', 'une recuperation de transit entre dans le profit, pas dans les trades : 1 trade, -0,001 ETH');
+  M._poseSourcePaires(async () => []);
+  await M.arrete(J8, J8);
 }
 
 console.log('\n-- une adresse qui n est ni l un ni l autre, ou pas contre l ETH, est dite pour ce qu elle est --');

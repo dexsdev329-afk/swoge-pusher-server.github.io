@@ -2939,10 +2939,24 @@ function coteEnEth(q) {
   return /^W?ETH$/.test(sym);
 }
 
+/* ---- LES PONTS DU MIROIR ----
+ * « Il n'y a plus de trades, les filtres sont trop stricts. » 8 septembre, un
+ * tour : 39 examines, 18 cotes en NVDA, USDG ou GOOGL, 0 en ETH. Le miroir
+ * sait desormais franchir un PONT (ETH <-> NVDA, ETH <-> USDG : voir
+ * MIROIR_PONTS dans miroir.js) : une paire cotee dans une monnaie qu'il sait
+ * franchir est suivable par un ordre reel, donc achetable par le papier. C'est
+ * le miroir qui le dit — il mesure le pont, sa liquidite, son age — et il
+ * repond en synchrone sur ce qu'il a deja mesure : un pont inconnu vaut non
+ * ce tour-ci, et la mesure part ; au tour suivant, la reponse est la. Sans
+ * miroir pose, rien ne change : cote en autre chose que l'ETH, refuse. */
+function franchissable(q) {
+  if (!q || !q.adr || !miroir || typeof miroir.pontConnu !== 'function') return false;
+  try { return miroir.pontConnu(q.adr, q.sym) === true; } catch (e) { return false; }
+}
 function vetoScout(t) {
   /* La regle la plus precise passe d'abord : « cotee en GLD » dit ce qui se
      passe, un plancher ne dirait que « trop petit ». */
-  if (pairesEthSeules() && coteEnEth(t.quote) === false)
+  if (pairesEthSeules() && coteEnEth(t.quote) === false && !franchissable(t.quote))
     return 'quoted in ' + (String((t.quote && t.quote.sym) || '?').toUpperCase().slice(0, 12))
          + ', not ETH: a real order could not follow it';
   const v = t.vol || {}, mc = t.mc || 0, liq = t.liq || 0;
@@ -3511,7 +3525,7 @@ function doitExaminer(t) {
  * ETH — tant que la regle des paires ETH est en vigueur.
  * ======================================================================== */
 function achetable(c) {
-  return !(pairesEthSeules() && c.quote && coteEnEth(c.quote) === false);
+  return !(pairesEthSeules() && c.quote && coteEnEth(c.quote) === false && !franchissable(c.quote));
 }
 function surveilles() {
   const out = [];

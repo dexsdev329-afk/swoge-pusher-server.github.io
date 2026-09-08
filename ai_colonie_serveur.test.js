@@ -2485,6 +2485,30 @@ async function pairesEthSeulement() {
   ok(!!gld2 && !/not ETH/.test(gld2.refus || ''), 'la paire GLD n est plus refusee pour sa monnaie');
   delete process.env.PAIRES_ETH_SEULES;
 
+  console.log('\n-- une paire cotee dans une monnaie que le miroir sait franchir est achetable --');
+  /* « Il n y a plus de trades, les filtres sont trop stricts. » 39 examines,
+     18 cotes en NVDA, USDG ou GOOGL, 0 en ETH. Le miroir sait franchir un
+     pont ETH/NVDA : c est lui qui le dit, et le papier suit. */
+  const demandes = [];
+  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0,
+                 pontConnu: (adr, sym) => { demandes.push(sym); return sym === 'NVDA' && adr === '0x' + 'd0'.repeat(20); } });
+  remise([jeton(0, { quote: 'NVDA', quoteAdr: '0x' + 'd0'.repeat(20) }), jeton(1, { quote: 'GLD', quoteAdr: '0x' + '9d'.repeat(20) }), jeton(2, { quote: 'NVDA', quoteAdr: '0x' + 'd1'.repeat(20) })]);
+  await C.tour();
+  v = C.vue();
+  const nvda = v.candidats.find((c) => c.sym === 'TOK0');
+  ok(!!nvda && !/not ETH/.test(nvda.refus || ''), 'TOK0/NVDA n est plus refuse pour sa monnaie : le miroir a un pont (' + (nvda && (nvda.refus || 'achete')) + ')');
+  const gld3 = v.candidats.find((c) => c.sym === 'TOK1');
+  ok(!!gld3 && /quoted in GLD, not ETH/.test(gld3.refus || ''), 'TOK1/GLD reste refuse : pas de pont pour GLD');
+  const faux = v.candidats.find((c) => c.sym === 'TOK2');
+  ok(!!faux && /quoted in NVDA, not ETH/.test(faux.refus || ''), 'et un NVDA a une AUTRE adresse, sans pont mesure, reste refuse : le pont se cherche par adresse');
+  ok(demandes.indexOf('NVDA') >= 0 && demandes.indexOf('GLD') >= 0, 'c est le miroir qui a ete demande, pour chaque monnaie (' + demandes.filter((x, i) => demandes.indexOf(x) === i).join(', ') + ')');
+  ok(C.surveilles !== undefined, 'la memoire des paires suit la meme regle');
+  C.poseMiroir(null);
+  remise([jeton(0, { quote: 'NVDA', quoteAdr: '0x' + 'd0'.repeat(20) })]);
+  await C.tour();
+  const sansMiroir = C.vue().candidats.find((c) => c.sym === 'TOK0');
+  ok(!!sansMiroir && /quoted in NVDA, not ETH/.test(sansMiroir.refus || ''), 'sans miroir pose, rien ne change : cote en NVDA, refuse');
+
   console.log('\n-- quand cette regle domine les refus, l alerte dit qu elle est un choix, et nomme sa variable --');
   remise(sains());
   const G2 = C._etat();
