@@ -5735,11 +5735,21 @@ function alertes() {
     const cob = recents('cobaye', JOUR_MS);
     const bloques = cob.filter((x) => x.verdict === 'bloque').length;
     const incs = cob.filter((x) => x.verdict === 'incertain');
-    /* Sans cle : une demande. Avec la cle : une alerte seulement si des jetons
-       assez vieux pour etre connus reviennent vides — sinon il n'y a rien a
-       demander, et une alerte sans demande n'existe plus ; l'audit garde le
-       chiffre. */
-    if (w.length >= 50 && muets > w.length / 2 && (!goplusIdentifie() || vieuxMuets >= w.length / 4)) {
+    /* ---- SUR CETTE CHAINE, GOPLUS N'INDEXE PRESQUE RIEN ----
+     * L'alerte envoyait « verifier le forfait et le quota de la cle » : la cle
+     * etait acceptee 241 fois sur 241, et 355 jetons de plus de vingt minutes
+     * revenaient vides quand meme. Mesure le 8 septembre, jeton par jeton :
+     * douze heures apres leur naissance, 3 sur 18 sont connus de GoPlus ;
+     * cinq heures apres, 1 sur 34 ; tous les autres rendent la fiche vide
+     * (is_in_dex = 0). Ce n'est pas la cle, c'est la couverture de la chaine
+     * 4663 chez GoPlus. Le Warden lit le bytecode a la place : si cette
+     * lecture couvre les silences, il n'y a rien a fournir — et une alerte
+     * sans demande n'existe plus. Reste une alerte quand le CODE non plus
+     * n'a pas pu etre lu : la, le trou est celui du noeud. */
+    const lusParLeCode = muetsL.filter((x) => x.code).length;
+    const drapeaux = muetsL.filter((x) => x.drapeau).length;
+    const codeCouvre = muets > 0 && lusParLeCode >= muets * 0.8;
+    if (w.length >= 50 && muets > w.length / 2 && (!goplusIdentifie() || (vieuxMuets >= w.length / 4 && !codeCouvre))) {
       const raisons = {};
       for (const x of incs) { const k = x.raison || 'reason not recorded'; raisons[k] = (raisons[k] || 0) + 1; }
       const top = Object.entries(raisons).sort((a, b) => b[1] - a[1])[0];
@@ -5748,10 +5758,17 @@ function alertes() {
       let remede = goplusIdentifie()
         ? 'Already in place: the GoPlus pair is set'
           + (gk.reussites ? ' and accepted (access token obtained ' + gk.reussites + '/' + gk.essais + ' times)' : '')
-          + '. Yet ' + vieuxMuets + ' tokens older than ' + AGE_CONNU + ' min came back empty, and that is not '
-          + 'youth: GoPlus should know those. Check the key\'s plan and quota on gopluslabs.io'
-          + (gp.dernierEchec ? ' (last refusal: « ' + gp.dernierEchec + ' »)' : '') + '. A silence is now '
-          + 're-read after 8 min instead of 6 h, so a token indexed late gets its check on its next examination.'
+          + '. Yet ' + vieuxMuets + ' tokens older than ' + AGE_CONNU + ' min came back empty — and on this chain that is '
+          + 'not the key: GoPlus indexes few chain-4663 tokens even hours later (measured 8 Sep, one by one: 3 of 18 '
+          + 'known after twelve hours, 1 of 34 after five; the rest answer an empty sheet). The Warden reads the '
+          + 'bytecode instead: ' + lusParLeCode + ' of the ' + muets + ' silent ones were read on-chain today ('
+          + drapeaux + ' with a mint, blacklist, pause or fee switch). '
+          + (lusParLeCode < muets * 0.8
+              ? 'The other ' + (muets - lusParLeCode) + ' could not be read either: the node refused eth_getCode, and '
+                + 'that hole is the node\'s — ' + (SECOURS_POSE ? 'the dedicated node is in place, so watch its refusals in the services card.' : RPC_SECOURS_COMMENT)
+              : 'Nothing to supply.')
+          + (gp.dernierEchec ? ' (last GoPlus refusal: « ' + gp.dernierEchec + ' »)' : '')
+          + ' A silence is re-read after 8 min instead of 6 h, so a token indexed late gets its check on its next examination.'
         : 'What to supply: a GoPlus API pair. gopluslabs.io → sign in → « API » → « Create App '
           + 'Key » (free tier) gives an App Key and an App Secret: set GOPLUS_APP_KEY and '
           + 'GOPLUS_APP_SECRET in the Railway variables, redeploy. It raises the rate limit and the '
@@ -6791,8 +6808,13 @@ async function tour() {
       appelsTotal += t.appels;
       compte('scoutVu');
       if (t.lu.goplus && !(t.g && t.g.have)) compte('goplusMuet');
+      /* Et si le Warden a lu le BYTECODE a la place de GoPlus, et ce qu'il y a
+         vu : c'est ce qui dit, dans l'alerte, si le trou est couvert. */
       if (t.lu.goplus) releve('warden', { lu: !!(t.g && t.g.have),
-                                          age: (typeof t.minutes === 'number' && isFinite(t.minutes)) ? Math.round(t.minutes) : null });
+                                          age: (typeof t.minutes === 'number' && isFinite(t.minutes)) ? Math.round(t.minutes) : null,
+                                          code: !!(t.octets && t.octets.vu && !t.octets.deGoplus),
+                                          drapeau: !!(t.octets && t.octets.vu && !t.octets.deGoplus
+                                                      && (t.octets.mint || t.octets.liste || t.octets.pause || t.octets.frais)) });
 
       let an = null;
       if (!refus) {

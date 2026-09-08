@@ -2338,8 +2338,22 @@ async function alertesDatees() {
   a = C.alertes().find((x) => /contract check/.test(x.quoi));
   ok(!!a && /Already in place/.test(a.quoiFaire) && !/Create App/.test(a.quoiFaire),
      'avec la cle : on ne la redemande pas');
-  ok(/40 were older/.test(a.pourquoi) && /older than 20 min came back empty/.test(a.quoiFaire) && /quota/.test(a.quoiFaire),
-     'et des jetons de 45 minutes revenus vides ne sont pas « structurels » : on envoie verifier la cle et son quota');
+  ok(/40 were older/.test(a.pourquoi) && /older than 20 min came back empty/.test(a.quoiFaire) && /not the key/.test(a.quoiFaire) && !/quota/.test(a.quoiFaire),
+     'et des jetons de 45 minutes revenus vides ne renvoient PLUS vers le quota de la cle : sur cette chaine, GoPlus n indexe presque rien');
+  ok(/3 of 18 known after twelve hours/.test(a.quoiFaire) && /0 of the 40 silent ones were read on-chain/.test(a.quoiFaire) && /eth_getCode/.test(a.quoiFaire),
+     'la mesure est citee, et le trou restant est nomme : le code n a pas pu etre lu non plus, c est le noeud — « ' + a.quoiFaire.slice(a.quoiFaire.indexOf('The Warden reads'), a.quoiFaire.indexOf('The Warden reads') + 120) + '… »');
+  /* Le Warden a lu le bytecode de 36 des 40 silencieux : le trou est couvert, il n y a rien a fournir — pas d alerte. */
+  let nCode = 0;
+  for (const x of G.releves) if (x.k === 'warden' && !x.lu && nCode < 36) { x.code = true; x.drapeau = nCode % 5 === 0; nCode++; }
+  ok(!C.alertes().some((x) => /contract check/.test(x.quoi)),
+     'quand le bytecode couvre au moins 80 % des silences, aucune alerte : rien a fournir, l audit garde le chiffre');
+  /* Couvert a moitie seulement : l alerte revient, avec les deux chiffres. */
+  nCode = 0;
+  for (const x of G.releves) if (x.k === 'warden' && !x.lu) { x.code = nCode < 20; x.drapeau = x.code && nCode % 5 === 0; nCode++; }
+  a = C.alertes().find((x) => /contract check/.test(x.quoi));
+  ok(!!a && /20 of the 40 silent ones were read on-chain today \(4 with a mint, blacklist, pause or fee switch\)/.test(a.quoiFaire) && /The other 20 could not be read/.test(a.quoiFaire),
+     'a moitie couvert : l alerte dit combien le code a lu, ce qu il y a vu, et combien restent : « ' + a.quoiFaire.slice(a.quoiFaire.indexOf('The Warden reads'), a.quoiFaire.indexOf('The Warden reads') + 150) + '… »');
+  for (const x of G.releves) if (x.k === 'warden') { delete x.code; delete x.drapeau; }
   /* Les memes silences sur des jetons de trois minutes : c est la jeunesse,
      il n y a rien a demander — donc pas d alerte. L audit garde le chiffre. */
   for (const x of G.releves) if (x.k === 'warden') x.age = 3;
