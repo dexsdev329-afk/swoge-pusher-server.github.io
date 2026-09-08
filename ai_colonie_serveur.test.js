@@ -2989,6 +2989,59 @@ async function plafondAppris() {
 }
 
 /* ==========================================================================
+ * LA MAIN DU PROPRIETAIRE SUR LE PAPIER
+ *
+ * « Il faut qu'on puisse prolonger la position papier pour qu'elle ne se
+ *   ferme pas ; certains jetons tombent puis remontent. Et si on ferme un
+ *   trade avec le miroir, il faut que le papier ferme aussi. »
+ * ======================================================================== */
+async function laMainDuProprietaire() {
+  console.log('\n-- tenir a la main : la coupe, l arret suiveur et le gain pris attendent, l echelle continue --');
+  remise(sains());
+  const E = C._etat();
+  const A = '0x' + 'a7'.repeat(20);
+  const p = { sym: 'REMONTE', adr: A, pool: '0xpr', prix0: 1, t0: Date.now() - 15 * 60000,
+    mise: 30, traits: {}, tenueMin: 20, tenueBase: 20, traj: [], liq0: 9000, score: 70, hautR: 30 };
+  E.positions = [p];
+  const r = C.tiensParMain(A, 30);
+  ok(r.adr === A && r.minutes === 30 && p.tenuParMain && p.tenuParMain.jusqua > Date.now() + 29 * 60000, 'la tenue est posee pour trente minutes');
+  ok(p.tenueMin >= 45, 'le compte a rebours du Closer est repousse au-dela (' + p.tenueMin + ' min)');
+  ok(/HELD by hand/.test((C.vue().flux[0] || {}).txt) && C.vue().flux[0].par === 'owner', 'le fil le dit, au nom du proprietaire');
+  ok(C.regle({ [A]: { prix: 0.55, liq: 9000 } }) === 0 && E.positions.length === 1, '-45 % : la coupe attend, la position reste');
+  ok(C.regle({ [A]: { prix: 0.9, liq: 9000 } }) === 0 && E.positions.length === 1, 'et l arret suiveur aussi (le sommet d avant la tenue est oublie)');
+  ok(C.regle({ [A]: { prix: 1.5, liq: 9000 } }) === 0 && E.positions.length === 1 && p.reste < 1, '+50 % : l echelle encaisse ses paliers (reste ' + p.reste + '), sans fermer');
+  const vp = C.vue().positions.find((x) => x.adr === A);
+  ok(!!vp && vp.tenuParMain && vp.tenuParMain.par === 'owner', 'la vue porte la tenue, avec son echeance');
+  p.tenuParMain.jusqua = Date.now() - 1000;
+  ok(C.regle({ [A]: { prix: 0.55, liq: 9000 } }) === 1 && E.positions.length === 0, 'la tenue passee, les regles reprennent : -45 %, coupe');
+  ok(!(C.vue().positions || []).length, 'et il ne reste rien');
+  ok(C.tiensParMain.length === 3 && (() => { try { C.tiensParMain('0x' + 'a8'.repeat(20), 30); return false; } catch (e) { return /no open paper position/.test(e.message); } })(),
+     'tenir un jeton qu on ne tient pas est refuse, et dit pourquoi');
+
+  console.log('\n-- fermer a la main : au prix du moment, et le signal part vers les miroirs --');
+  remise(sains());
+  const F = C._etat();
+  const t0 = MONDE.jetons[0];
+  t0.prix = 1.2;
+  const q = { sym: t0.sym, adr: t0.addr, pool: t0.pool, prix0: 1, t0: Date.now() - 8 * 60000,
+    mise: 30, traits: {}, tenueMin: 20, tenueBase: 20, traj: [], liq0: 9000, score: 70 };
+  F.positions = [q];
+  const suivis = [];
+  C.poseMiroir({ surAchat: async () => 0, surVente: async (x) => { suivis.push(x); return 1; } });
+  const f = await C.fermeParMain(t0.addr);
+  ok(f.adr === t0.addr && Math.abs(f.prix - 1.2) < 1e-9, 'fermee au prix relu a l instant (' + f.prix + ')');
+  ok(F.positions.length === 0 && F.trades === 1, 'la position est fermee et comptee');
+  ok(/closed by hand/.test((C.vue().flux[0] || {}).txt) && /\+20\.0%/.test(C.vue().flux[0].txt), 'le fil dit « closed by hand » et le rendement : « ' + C.vue().flux[0].txt.slice(0, 60) + ' »');
+  const sg = (F.signaux || []).find((x) => x.k === 'vente' && x.adr === t0.addr);
+  ok(!!sg && /Closed by hand/.test(sg.comment), 'le signal de vente porte la raison');
+  ok(suivis.length === 1 && suivis[0].adr === t0.addr, 'et le miroir le suit : c est le meme chemin qu une vente de la colonie');
+  C.poseMiroir(null);
+  let refuse = null;
+  try { await C.fermeParMain('0x' + 'a9'.repeat(20)); } catch (e) { refuse = e.message; }
+  ok(/no open paper position/.test(refuse || ''), 'fermer un jeton qu on ne tient pas est refuse : « ' + refuse + ' »');
+}
+
+/* ==========================================================================
  * 31. LA CLE dRPC
  * ======================================================================== */
 async function drpcCle() {
@@ -5529,6 +5582,7 @@ function bornesQuiSeReglent() {
   await rejeuDeLaStrategie();
   await toutesLesSortiesSontSuivies();
   await plafondAppris();
+  await laMainDuProprietaire();
   await tranchesAuMiroir();
   await venteAuPrixDuMoment();
   motsQuiCommandent();

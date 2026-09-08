@@ -35,6 +35,12 @@ const paris = require('./paris');
 const parisImport = require('./paris_import');
 const espn = require('./scores_espn');
 const aiColonie = require('./ai_colonie');
+/* Les adresses qui ont la main sur le papier de la colonie (AI_OWNER). */
+const proprietaireIA = (adr) => !!adr && String(cfg.AI_OWNER || '').toLowerCase().split(/[\s,;]+/)
+  .filter(Boolean).indexOf(String(adr).toLowerCase()) >= 0;
+async function etatMiroirPour(ws) {
+  return Object.assign({ type: 'miroirEtat', proprietaire: proprietaireIA(ws.addr) }, await miroir.etat(ws.addr));
+}
 const miroir = require('./miroir');
 
 /* ---- IL VIT AU MODULE, PAS DANS LA REQUETE ----
@@ -3830,8 +3836,22 @@ wss.on('connection', (ws) => {
        *
        * La cle privee ne part que sur ces deux messages-la, jamais dans un
        * etat, jamais dans une annonce, jamais dans un journal. */
+      /* ---- QUI A LA MAIN SUR LE PAPIER ----
+       * AI_OWNER nomme les adresses qui peuvent tenir ou fermer une position
+       * de la colonie. L'etat du miroir le dit a la page, qui montre alors les
+       * boutons ; le serveur le REVERIFIE a chaque geste. */
+      if (m.type === 'colonieTiens' || m.type === 'colonieFerme') {
+        if (!proprietaireIA(ws.addr)) return send(ws, { type: 'error', error: 'only the colony owner can steer the paper book (AI_OWNER on the server)' });
+        try {
+          const r = m.type === 'colonieTiens'
+            ? aiColonie.tiensParMain(String(m.adr || ''), Number(m.minutes) || 30, 'owner')
+            : await aiColonie.fermeParMain(String(m.adr || ''), 'owner');
+          send(ws, Object.assign({ type: 'colonieAction', geste: m.type, ok: true }, r));
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
       if (m.type === 'miroirEtat') {
-        try { send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr))); }
+        try { send(ws, await etatMiroirPour(ws)); }
         catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -3840,7 +3860,7 @@ wss.on('connection', (ws) => {
           const r = await miroir.cree(ws.addr);
           console.log('[miroir] portefeuille cree pour ' + ws.addr.slice(0, 10) + '…');
           send(ws, { type: 'miroirCle', adresse: r.adresse, cle: r.cle, neuf: true });
-          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+          send(ws, await etatMiroirPour(ws));
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -3852,7 +3872,7 @@ wss.on('connection', (ws) => {
       if (m.type === 'miroirPlay') {
         try {
           await miroir.demarre(ws.addr);
-          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+          send(ws, await etatMiroirPour(ws));
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -3860,14 +3880,14 @@ wss.on('connection', (ws) => {
         try {
           const r = miroir.remetLesStats(ws.addr);
           send(ws, Object.assign({ type: 'miroirRemetStats' }, r));
-          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+          send(ws, await etatMiroirPour(ws));
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
       if (m.type === 'miroirEffaceJournal') {
         try {
           miroir.effaceJournal(ws.addr);
-          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+          send(ws, await etatMiroirPour(ws));
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -3878,7 +3898,15 @@ wss.on('connection', (ws) => {
         try {
           const r = await miroir.vendsMaintenant(ws.addr, String(m.adr || ''));
           send(ws, Object.assign({ type: 'miroirVends' }, r));
-          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+          /* « Si on ferme un trade avec le miroir, il faut que le papier ferme
+             aussi. » Pour le proprietaire seulement : le papier est le livre
+             que TOUS les miroirs suivent. Sans position papier (achat a la
+             main), il n'y a rien a fermer, et ce n'est pas une erreur. */
+          if (proprietaireIA(ws.addr)) {
+            try { await aiColonie.fermeParMain(String(m.adr || ''), 'owner'); }
+            catch (e) { if (!/no open paper position/.test(e.message)) console.warn('[ai] fermeture papier apres le miroir :', e.message); }
+          }
+          send(ws, await etatMiroirPour(ws));
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -3886,11 +3914,11 @@ wss.on('connection', (ws) => {
         try {
           const r = await miroir.ouvreMaintenant(ws.addr, String(m.adr || ''));
           send(ws, Object.assign({ type: 'miroirOuvre' }, r));
-          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+          send(ws, await etatMiroirPour(ws));
         } catch (e) {
           send(ws, { type: 'error', error: e.message });
           /* Le journal dit pourquoi rien n'est parti : on le renvoie. */
-          try { send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr))); } catch (e2) {}
+          try { send(ws, await etatMiroirPour(ws)); } catch (e2) {}
         }
         return;
       }
@@ -3902,7 +3930,7 @@ wss.on('connection', (ws) => {
              sait envoyer un message. */
           const r = await miroir.arrete(ws.addr, ws.addr);
           send(ws, Object.assign({ type: 'miroirStop' }, r));
-          send(ws, Object.assign({ type: 'miroirEtat' }, await miroir.etat(ws.addr)));
+          send(ws, await etatMiroirPour(ws));
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }

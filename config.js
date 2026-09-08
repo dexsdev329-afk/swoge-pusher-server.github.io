@@ -89,6 +89,9 @@ module.exports = {
      repartie une fois RPC_SECOURS pose (Alchemy). A `0`, la page sert le
      dernier etat connu et le dit. */
   AI_COLONIE: env('AI_COLONIE', '1'),
+  // Les adresses (virgule) qui ont la main sur le livre de PAPIER de la colonie :
+  // tenir une position, la fermer. Vide = personne.
+  AI_OWNER: env('AI_OWNER', ''),
   SAVE_MS: parseInt(env('SAVE_MS', '10000'), 10),
 
   // Password for the private /admin dashboard + /stats (?key=…). Empty = open

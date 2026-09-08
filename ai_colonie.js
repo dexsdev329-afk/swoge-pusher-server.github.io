@@ -3560,6 +3560,58 @@ function surveilles() {
 const CHUTE_COUPE = -35;        /* le prix a perdu plus d'un tiers depuis l'entree */
 const LIQ_COUPE = 0.5;          /* ou la piscine a perdu la moitie de son fond */
 const PROLONGE_MAX = 3;         /* on ne prolonge pas indefiniment */
+/* ==========================================================================
+ * LA MAIN DU PROPRIETAIRE SUR LE PAPIER
+ *
+ * « Il faut qu'on puisse prolonger la position papier pour qu'elle ne se
+ *   ferme pas, et que le miroir suive le papier : certains jetons tombent
+ *   puis remontent, donc il ne faut pas forcement sortir. Et si on ferme un
+ *   trade avec le miroir, il faut que le papier ferme aussi. »
+ *
+ * Deux gestes, et ils ne s'apprennent pas : ce sont des DECISIONS, prises
+ * par une personne, sur le livre que tous les miroirs suivent. Tenir, c'est
+ * suspendre la coupe, l'arret suiveur et le gain pris pendant un temps
+ * borne — l'echelle continue d'encaisser ses paliers, elle ne ferme rien.
+ * Fermer, c'est vendre au prix du moment, ce qui envoie le signal que les
+ * miroirs suivent. Le serveur decide QUI a cette main (AI_OWNER) ; ici on
+ * ne verifie que le geste. */
+const TENUE_MAIN_MAX = 6 * 60;   /* six heures au plus : une tenue sans fin serait une position sans regle */
+function tiensParMain(adr, minutes, par) {
+  const a = String(adr || '').toLowerCase();
+  const p = E.positions.find((x) => x.adr === a);
+  if (!p) throw new Error('no open paper position on that token');
+  const m = Math.max(5, Math.min(TENUE_MAIN_MAX, Math.round(Number(minutes) || 30)));
+  const now = Date.now();
+  p.tenuParMain = { jusqua: now + m * 60000, par: par || 'owner', depuis: now };
+  /* Le compte a rebours du Closer ne doit pas fermer pendant la tenue. */
+  const ouverte = (now - p.t0) / 60000;
+  p.tenueMin = Math.max(p.tenueMin || TENUE_DEFAUT_MIN, Math.ceil(ouverte + m));
+  /* L'arret suiveur repart du moment de la decision : sinon, au retour des
+     regles, il fermerait sur un sommet d'avant la tenue. */
+  p.hautR = undefined;
+  E.flux.unshift({ sym: p.sym, pool: p.pool, tag: 'open',
+    txt: 'HELD by hand for ' + m + ' min · floor cut, trailing stop and gain-taking wait; the ladder still banks its rungs',
+    cls: 'n', t: now, par: 'owner' });
+  compte('tenuParMain');
+  sauve();
+  return { adr: a, sym: p.sym, jusqua: p.tenuParMain.jusqua, minutes: m };
+}
+async function fermeParMain(adr, par) {
+  const a = String(adr || '').toLowerCase();
+  const p = E.positions.find((x) => x.adr === a);
+  if (!p) throw new Error('no open paper position on that token');
+  let d = null;
+  try { d = await lisDex(a, { frais: true }); } catch (e) { d = null; }
+  const prix = (d && d.vu && d.prix > 0) ? d.prix : prixFrais(a);
+  if (!(prix > 0)) throw new Error('no fresh price to close ' + (p.sym || a) + ' at: try again in a minute');
+  const now = Date.now();
+  ferme(p, prix, now, { cote: { mc: (d && d.vu && d.mc) || 0, src: (d && d.vu) ? 'DexScreener' : 'last read', lu: now },
+                        par: 'owner', raison: 'closed by hand' });
+  E.positions = E.positions.filter((x) => x !== p);
+  compte('fermeParMain');
+  sauve();
+  return { adr: a, sym: p.sym, prix };
+}
 
 function casSentinelle(p, x) {
   const cas = {};
@@ -4824,6 +4876,7 @@ function ferme(p, prix, quand, comment) {
 
   const par = comment && comment.par;
   const suffixe = (par === 'sentinelle' ? '  ·  cut: ' + comment.raison
+                : par === 'owner' ? '  ·  closed by hand'
                 : (p.prolonge ? '  ·  extended ' + p.prolonge + '×' : ''))
     /* Ce qui avait deja ete pris en route : sans ca, une position sortie par
        morceaux affiche le seul reliquat et se lit comme une petite affaire. */
@@ -4854,6 +4907,7 @@ function ferme(p, prix, quand, comment) {
            mcAchat: p.mcAchat > 0 ? Math.round(p.mcAchat) : null,
            prixSrc: cote ? cote.src : null, prixAge: age,
            comment: par === 'sentinelle' ? 'Cut: ' + comment.raison
+                  : par === 'owner' ? 'Closed by hand'
                   : (p.prolonge ? 'Extended ' + p.prolonge + '×' : 'Duration reached') });
   noteVendu(p.adr, quand);
   E.courbe.push(Math.round(E.tresor * 100) / 100);
@@ -4960,7 +5014,11 @@ function regle(marche) {
      * Elle note ce qu'elle voit — c'est de la qu'elle apprendra — et elle coupe
      * sans attendre le compte a rebours si le sol se derobe. */
     p.vuPar = casSentinelle(p, x);
-    const danger = dangerSentinelle(p, x);
+    /* La main du proprietaire : tant qu'elle tient, la coupe, l'arret
+       suiveur et le gain pris attendent. L'echelle, elle, continue. */
+    const tenu = !!(p.tenuParMain && now < p.tenuParMain.jusqua);
+    if (p.tenuParMain && !tenu) delete p.tenuParMain;
+    const danger = tenu ? null : dangerSentinelle(p, x);
     /* ---- CHAQUE SORTIE LAISSE UNE SUITE ----
      * Releve du 8 septembre : 23 sorties jugees sur 397 trades. Seul le
      * gain pris etait suivi ; la coupe, l'arret suiveur et le dernier
@@ -4995,7 +5053,7 @@ function regle(marche) {
       ferme(p, x.prix, now, { cote, par: 'sentinelle', raison: 'last rung reached' });
       n++; return false;
     }
-    const suiv = arretSuiveur(p, r);
+    const suiv = tenu ? null : arretSuiveur(p, r);
     if (suiv) {
       noteSuite(p, x.prix, r, { sortie: 'arret suiveur' }, now, now + HORIZON_REF * 60000);
       ferme(p, x.prix, now, { cote, par: 'sentinelle', raison: suiv });
@@ -5007,7 +5065,7 @@ function regle(marche) {
      * Sans attendre la fin du compte a rebours. Ce qu'elle prend est note, et
      * on reviendra voir a l'echeance ce que garder aurait donne : c'est de
      * cette difference-la qu'elle apprend, pas du gain lui-meme. */
-    const casG = veutPrendre(p, r);
+    const casG = tenu ? null : veutPrendre(p, r);
     if (casG) {
       noteSuite(p, x.prix, r, casG, now);
       ferme(p, x.prix, now, { cote, par: 'sentinelle',
@@ -6786,6 +6844,7 @@ function vue() {
                mcAchat: p.mcAchat === undefined ? (p.mc || null) : p.mcAchat,
                tenueRaison: p.tenueRaison || null,
                liens: p.liens || null, prolonge: p.prolonge || 0, dexVu: !!p.dexVu,
+               tenuParMain: (p.tenuParMain && Date.now() < p.tenuParMain.jusqua) ? { jusqua: p.tenuParMain.jusqua, par: p.tenuParMain.par } : null,
                logo: p.logo || null,
                ouverteDepuis: Date.now() - p.t0, tenueMin: p.tenueMin,
                mise: p.mise, methode: p.methode, regime: enMots(p.regime), raisonMise: p.raisonMise,
@@ -7022,6 +7081,7 @@ module.exports = {
   caseNonLue, CASES_NON_LUES, TRAITS, MEMOIRE_DEMIVIE_J, SURV_MAX, fane,
   enMots, MOTS,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
+  tiensParMain, fermeParMain, TENUE_MAIN_MAX,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,
   revoitStrategie, seuilCourant, partRefus, REFUS_AVEUGLE,
