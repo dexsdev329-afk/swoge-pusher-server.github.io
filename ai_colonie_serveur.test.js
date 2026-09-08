@@ -361,6 +361,13 @@ global.fetch = async function (url, opts) {
     appels.boosts++;
     return rep((MONDE.boosts || []).map((a) => ({ chainId: 'robinhood', tokenAddress: a })));
   }
+  if (/\/networks\/robinhood\/pools\/[^/?]+$/.test(url)) {
+    appels.piscine = (appels.piscine || 0) + 1;
+    const pool = (url.match(/pools\/([^/?]+)$/) || [])[1];
+    const t = MONDE.jetons.find((x) => x.pool === pool);
+    if (!t || t.piscineDisparue) return rep({ errors: [{ status: '404', title: 'Not Found' }] }, 404);
+    return rep({ data: { attributes: { base_token_price_usd: String(t.prix), reserve_in_usd: String(t.liq) } } });
+  }
   if (/\/trades/.test(url)) {
     appels.trades++;
     const pool = (url.match(/pools\/([^/]+)\/trades/) || [])[1];
@@ -393,7 +400,7 @@ global.fetch = async function (url, opts) {
     appels.dex++;
     const a = (url.split('/tokens/')[1] || '').toLowerCase();
     const t = MONDE.jetons.find((x) => x.addr === a);
-    if (!t) return rep({ pairs: [] });
+    if (!t || t.dexMuet) return rep({ pairs: [] });
     /* La vraie reponse porte le pool, l'age, la capitalisation et les
        compteurs — c'est ce qui permet de reconstruire un jeton a partir de sa
        seule adresse, donc de suivre les deux flux qui n'en rendent qu'une. */
@@ -471,6 +478,12 @@ global.fetch = async function (url, opts) {
      * que lui est mesure la-dessus — et compte AUSSI a part, pour le
      * scenario qui veut zero lecture de jeton. */
     if (b.method === 'eth_blockNumber') { appels.rpcBloc = (appels.rpcBloc || 0) + 1; return rep({ result: hex(MONDE.bloc) }); }
+    if (b.method === 'eth_getCode') {
+      appels.code = (appels.code || 0) + 1;
+      if (MONDE.codeCasse) return rep({ error: { message: 'internal error' } }, 500);
+      const a = String(b.params[0] || '').toLowerCase();
+      return rep({ result: (MONDE.codes || {})[a] || '0x6080604052' });
+    }
     if (b.method === 'eth_getTransactionByHash')
       return rep({ result: (MONDE.txFrom || {})[b.params[0]] ? { from: MONDE.txFrom[b.params[0]] } : null });
     if (b.method === 'eth_getLogs') {
@@ -2759,6 +2772,114 @@ async function deuxRefusQuiOntUnNom() {
 }
 
 /* ==========================================================================
+ * CE QUE LES DONNEES DE SEPT JOURS ONT DIT
+ *
+ * « Ameliore SWOGE AI avec toutes les donnees que tu as maintenant. »
+ * Releve du 8 septembre : 13 876 relectures muettes pour 5 100 ombres
+ * jugees et zero disparue ; GoPlus muet sur 414 jetons sur 437 ; « trouve
+ * par pons » a -8 % contre +35 % pour les pools, avec six places par tour.
+ * ======================================================================== */
+async function ombresSansBiais() {
+  console.log('\n-- une ombre que DexScreener ne connait pas est jugee par sa piscine --');
+  remise([jeton(0), jeton(1)]);
+  MONDE.jetons[0].dexMuet = true;          /* jamais indexe par DexScreener : le cas des jetons ecartes par le Scout */
+  await C.tour();
+  const o = C._etat().ombres.find((x) => x.adr === MONDE.jetons[0].addr);
+  ok(!!o && o.pool === MONDE.jetons[0].pool, 'l ombre garde la piscine par laquelle le jeton est entre');
+  /* Le jeton sort des flux, DexScreener se tait, et trente minutes passent : la piscine, elle, cote a -60 %. */
+  poolsPageFiltre = [MONDE.jetons[1].addr];
+  MONDE.jetons[0].prix = 0.4;
+  for (const x of C._etat().ombres) { x.t -= 31 * 60000; x.echeance -= 31 * 60000; }
+  appels.piscine = 0;
+  await C.tour();
+  const o2 = C._etat().ombres.find((x) => x.adr === MONDE.jetons[0].addr);
+  console.log('   jalons : ' + JSON.stringify(o2 && o2.jalons) + ' · lectures de piscine : ' + appels.piscine);
+  ok(appels.piscine >= 1, 'la piscine est relue sur GeckoTerminal quand DexScreener ne repond pas');
+  ok(!!o2 && o2.jalons && Math.abs(o2.jalons[30] + 60) < 1, 'et l ombre est jugee a l echeance de reference : -60 %, pas « muette »');
+  ok((C._etat().compteurs.ombresParPiscine || 0) >= 1, 'c est compte comme une lecture par la piscine');
+
+  console.log('\n-- une piscine que GeckoTerminal ne connait plus, deux fois, est une ombre evaporee --');
+  poolsPageFiltre = null;
+  remise([jeton(0), jeton(1)]);
+  MONDE.jetons[0].dexMuet = true;
+  await C.tour();
+  poolsPageFiltre = [MONDE.jetons[1].addr];
+  MONDE.jetons[0].piscineDisparue = true;
+  for (const x of C._etat().ombres) { x.t -= 31 * 60000; x.echeance -= 31 * 60000; }
+  await C.tour();
+  let o3 = C._etat().ombres.find((x) => x.adr === MONDE.jetons[0].addr);
+  ok(!!o3 && o3.jalons[30] === undefined && (o3.absente || 0) === 1, 'un premier silence de la piscine ne juge rien encore');
+  await C.tour();
+  o3 = C._etat().ombres.find((x) => x.adr === MONDE.jetons[0].addr);
+  console.log('   ' + JSON.stringify(o3 && { jalons: o3.jalons, absente: o3.absente, disparue: o3.disparue }));
+  ok(!!o3 && o3.jalons[30] === C.OMBRE_DISPARUE && o3.disparue === true, 'au second, elle est jugee evaporee (' + C.OMBRE_DISPARUE + ' %), sans que DexScreener l ait jamais vue');
+  ok((C._etat().compteurs.ombreDisparue || 0) === 1, 'et c est compte comme une disparition');
+  poolsPageFiltre = null;
+}
+
+async function wardenLitLeCode() {
+  console.log('\n-- le Warden lit le bytecode : ce que le contrat expose devient des cases --');
+  /* GoPlus muet, comme sur 95 % des jetons : c est la que le code est lu. Quand GoPlus repond, il dit deja tout ca. */
+  remise([0, 1, 2, 3, 4, 5, 6].map((k) => jeton(k, { goplus: 'muet' })));
+  const sel = (h) => '63' + h;
+  MONDE.codes = {};
+  /* TOK0 expose mint et une liste noire ; TOK1 n expose rien ; TOK2 porte le selecteur de mint
+     a une position IMPAIRE, au milieu d une constante : ce n est pas une fonction. */
+  MONDE.codes[MONDE.jetons[0].addr] = '0x6080604052' + sel('40c10f19') + '1461' + sel('f9f92be4') + '14';
+  MONDE.codes[MONDE.jetons[1].addr] = '0x6080604052' + sel('a9059cbb') + '14';
+  MONDE.codes[MONDE.jetons[2].addr] = '0x6080604052' + '0' + sel('40c10f19') + '0';
+  await C.tour();
+  const lit = (i, k) => C.litTrait(k, { octets: (C._cache.octets[MONDE.jetons[i].addr] || {}).v });
+  console.log('   TOK0 : ' + ['octEmit', 'octListe', 'octPause', 'octFrais'].map((k) => C.enMots(lit(0, k))).join(' · '));
+  ok(lit(0, 'octEmit') === 'code : peut emettre' && lit(0, 'octListe') === 'code : liste noire', 'TOK0 : mint et liste noire, lus dans le code');
+  ok(lit(0, 'octPause') === 'code : sans pause' && lit(0, 'octFrais') === 'code : frais fixes', 'et ce qu il n expose pas est dit aussi');
+  ok(lit(1, 'octEmit') === 'code : sans emission' && lit(1, 'octListe') === 'code : sans liste noire', 'TOK1 : rien de tout ca');
+  ok(lit(2, 'octEmit') === 'code : sans emission', 'TOK2 : un selecteur au milieu d une constante n est pas une fonction');
+  ok(C.enMots('code : peut emettre') === 'bytecode: can mint', 'et l ecran le lit en anglais');
+  const lus = appels.code;
+  ok(lus >= 3, 'une lecture de code par jeton examine (' + lus + ')');
+  ok(C._etat().roster.find((a) => a.key === 'warden').traits.indexOf('octEmit') >= 0, 'le Warden porte les quatre cases');
+  for (const j of MONDE.jetons) if (C._etat().connus[j.addr]) C._etat().connus[j.addr].dernier = 0;
+  await C.tour();
+  ok(appels.code === lus, 'un code ne change pas : au tour suivant, aucune relecture (' + appels.code + ')');
+
+  console.log('\n-- un noeud qui ne rend pas le code laisse une case non lue, pas une case fausse --');
+  remise([0, 1, 2].map((k) => jeton(k, { goplus: 'muet' })));
+  MONDE.codeCasse = true;
+  await C.tour();
+  const c0 = C.vue().candidats.find((c) => c.sym === 'TOK0');
+  ok(!!c0 && c0.octets === null && lit(0, 'octEmit') === 'code illisible', 'la case dit « code illisible »');
+  ok(C.caseNonLue ? C.caseNonLue('code illisible') : true, 'et elle compte comme non lue : elle peut inquieter, jamais rassurer');
+  MONDE.codeCasse = false;
+}
+
+async function poussesMesurees() {
+  console.log('\n-- la part d une source suit ce qu elle rend, contre le fond --');
+  remise([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => jeton(i)));
+  const now = Date.now();
+  ok(C.poussesPour('pons', 6) === 6, 'sans mesure, la part par defaut (6)');
+  const G = C._etat();
+  G.base = { n: 100, s: 2000, s2: 100000, maj: now };
+  G.memoire.scout = { origine: { 'trouve par pons': { n: 200, s: -4000, s2: 200000, maj: now } } };
+  ok(C.poussesPour('pons', 6) === 2, 'une source a -20 contre un fond a +20 : un tiers des places (2)');
+  G.memoire.scout.origine['trouve par pons'] = { n: 200, s: 8000, s2: 400000, maj: now };
+  ok(C.poussesPour('pons', 6) === 10, 'a +40 contre +20 : le double, borne a la moitie des places (10)');
+  G.memoire.scout.origine['trouve par pons'] = { n: 50, s: -1000, s2: 50000, maj: now };
+  ok(C.poussesPour('pons', 6) === 6, 'cinquante observations ne sont pas une mesure : la part par defaut');
+  /* Et dans le tour : neuf gradues pons frais, la source mal notee, deux entrent. */
+  G.memoire.scout.origine['trouve par pons'] = { n: 200, s: -4000, s2: 200000, maj: now };
+  const ent = (t) => ({ token: t.addr, deployer: '0x' + 'd1'.repeat(20), symbol: t.sym, launchedAt: new Date(now - 30 * 60000).toISOString(),
+    graduatedAt: new Date(now - 10 * 60000).toISOString(), initialBuyWei: '0', marketCapUsd: 50000, graduationThresholdEth: 4.2 });
+  MONDE.pons = MONDE.jetons.slice(1).map(ent);
+  poolsPageFiltre = [MONDE.jetons[0].addr];
+  await C.tour();
+  console.log('   pousses pons : ' + (C._etat().compteurs.poussePons || 0) + ' · vue : ' + JSON.stringify(C.vue().pousses));
+  ok((C._etat().compteurs.poussePons || 0) === 2, 'deux gradues pons poussees dans le tour, pas six');
+  ok(C.vue().pousses && C.vue().pousses.pons === 2, 'et la vue dit la part du moment');
+  poolsPageFiltre = null; MONDE.pons = [];
+}
+
+/* ==========================================================================
  * 31. LA CLE dRPC
  * ======================================================================== */
 async function drpcCle() {
@@ -4812,7 +4933,7 @@ async function parleAnglais() {
        libelle est « trouve par pools », compose a l'execution. On ne peut pas
        filtrer par la forme : « calme », « stable », « effondre » sont des
        libelles d'un seul mot. */
-    if (/^(goplus|chaine|trades|dex|ohlcv|besoin|f|pools)$/.test(t)) continue;
+    if (/^(goplus|chaine|trades|dex|ohlcv|octets|besoin|f|pools)$/.test(t)) continue;
     if (/^[a-z]+$/.test(t) && t.length < 5) continue;
     /* Une chaine qui finit par une espace est un PREFIXE qu'on concatene
        (« trouve par », « conseiller ») : le libelle complet est produit par
@@ -5293,6 +5414,9 @@ function bornesQuiSeReglent() {
   await memoireDesPairesEth();
   await pepitesPons();
   await pepitesDesPads();
+  await ombresSansBiais();
+  await wardenLitLeCode();
+  await poussesMesurees();
   await tranchesAuMiroir();
   await venteAuPrixDuMoment();
   motsQuiCommandent();

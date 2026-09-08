@@ -316,6 +316,8 @@ const SERVICES = {
   chaineCle: { nom: 'Chain 4663 · our own dRPC node', cout: 1,
                quoi: 'the same, but on throughput that belongs to us instead of being shared' },
   goplus:  { nom: 'GoPlus · contract safety', cout: 1, quoi: 'honeypot, taxes, owner powers' },
+  octets:  { nom: 'Chain 4663 · contract bytecode', cout: 1,
+             quoi: 'the functions the contract exposes: mint, blacklist, pause, fee setters' },
   trades:  { nom: 'GeckoTerminal · trades one by one', cout: 1, quoi: 'which wallets are buying, and for how much' },
   dex:     { nom: 'DexScreener · second opinion', cout: 1, quoi: 'a second price, the other pools, the socials' },
   ohlcv:   { nom: 'GeckoTerminal · candles', cout: 1, quoi: 'the volatility actually observed' },
@@ -451,6 +453,20 @@ const TRAITS = {
   taxe:   { besoin: 'goplus', f: (t) => { const g = t.g || {};
               return !g.taxeSue ? 'taxe inconnue' : (g.buyTax + g.sellTax) === 0 ? 'aucune taxe'
                 : (g.buyTax + g.sellTax) <= 10 ? 'taxe <=10%' : 'taxe >10%'; } },
+  /* ---- LE BYTECODE, QUAND GOPLUS SE TAIT ----
+   * Releve du 8 septembre : GoPlus muet sur 414 jetons sur 437 — le Warden
+   * ne lisait rien, ne refusait rien, et ses trois cases valaient
+   * « inconnu » pour tout le monde. Le contrat, lui, est sur la chaine, et
+   * son code dit quelles fonctions il expose : un `mint`, une liste noire,
+   * une pause, un reglage de frais. On cherche les selecteurs de ces
+   * fonctions dans le code (un PUSH4 suivi des quatre octets), une lecture
+   * par jeton, gardee un jour. Ce n'est pas une preuve — un nom de fonction
+   * n'est pas son corps — c'est une CASE, et les agents apprennent ce
+   * qu'elle vaut, comme les autres. */
+  octEmit:  { besoin: 'octets', f: (t) => { const o = t.octets; return !o || !o.vu ? 'code illisible' : o.mint ? 'code : peut emettre' : 'code : sans emission'; } },
+  octListe: { besoin: 'octets', f: (t) => { const o = t.octets; return !o || !o.vu ? 'code illisible' : o.liste ? 'code : liste noire' : 'code : sans liste noire'; } },
+  octPause: { besoin: 'octets', f: (t) => { const o = t.octets; return !o || !o.vu ? 'code illisible' : o.pause ? 'code : pausable' : 'code : sans pause'; } },
+  octFrais: { besoin: 'octets', f: (t) => { const o = t.octets; return !o || !o.vu ? 'code illisible' : o.frais ? 'code : frais reglables' : 'code : frais fixes'; } },
   code:   { besoin: 'goplus', f: (t) => { const g = t.g || {};
               return !g.codeSu ? 'code inconnu' : (g.unverified ? 'code non verifie' : 'code verifie'); } },
   pouv:   { besoin: 'goplus', f: (t) => { const g = t.g || {};
@@ -549,6 +565,7 @@ const TRAITS = {
 const CASES_NON_LUES = new Set([
   'age ?',                 /* le flux n'a pas donne l'age du pool */
   'taxe inconnue', 'code inconnu', 'pouvoirs ?',        /* GoPlus s'est tu */
+  'code illisible',                                     /* le noeud n'a pas rendu le bytecode */
   'concentration inconnue', 'porteurs inconnus', 'brule inconnu',  /* la chaine n'a pas repondu */
   'flux inconnu', 'acheteurs ?', 'tailles ?',           /* les trades n'ont pas ete lus */
   'pools ?', 'reseaux ?',                               /* DexScreener n'a pas repondu */
@@ -604,7 +621,7 @@ const ROSTER_DEPART = [
     traits: ['age', 'liq', 'origine', 'pons', 'ponsGradAge', 'ponsVitesse', 'ponsDep', 'ponsInit', 'pad', 'padDep'] },
   { key: 'warden', nom: 'Warden', emoji: '🛡️', couleur: '#9b6cf0', role: 'garde', ordre: 1,
     mission: 'Checks the contract: honeypot, taxes, owner powers',
-    traits: ['taxe', 'code', 'pouv'] },
+    traits: ['taxe', 'code', 'pouv', 'octEmit', 'octListe', 'octPause', 'octFrais'] },
   { key: 'whale', nom: 'Whale-Watch', emoji: '🐋', couleur: '#e8552d', role: 'garde', ordre: 2,
     mission: 'Adds up transfers in the blocks: who holds, and how much',
     traits: ['top', 'det', 'brule'] },
@@ -1005,7 +1022,7 @@ const urlImage = (u) => {
   if (/missing\.png$/i.test(x)) return null;
   return x.slice(0, 300);
 };
-const CACHE = { goplus: {}, ohlcv: {}, dex: {}, chaine: {}, trades: {}, poolDe: {} };
+const CACHE = { goplus: {}, ohlcv: {}, dex: {}, chaine: {}, trades: {}, poolDe: {}, octets: {} };
 /* Une entree peut porter SA duree : un silence ne vaut pas une reponse, et ne
    doit pas etre garde aussi longtemps. */
 const frais = (c, k, ttl) => { const x = c[k]; return (x && Date.now() - x.t < (x.ttl || ttl)) ? x.v : null; };
@@ -1432,7 +1449,7 @@ async function lisGoplus(t) {
     ownerBal: su(info.owner_change_balance), selfd: su(info.selfdestruct),
     perslip: su(info.personal_slippage_modifiable), hpSame: su(info.honeypot_with_same_creator),
     slipMod: su(info.slippage_modifiable), cooldown: su(info.trading_cooldown), proxy: su(info.is_proxy),
-    mintable: su(info.is_mintable),
+    mintable: su(info.is_mintable), liste: su(info.is_blacklisted),
     taxeSue: !seContredit && info.buy_tax !== undefined && info.buy_tax !== '',
     buyTax: Math.round(nn(info.buy_tax) * 100), sellTax: Math.round(nn(info.sell_tax) * 100),
     detSue: !seContredit && info.holder_count !== undefined, holders: parseInt(info.holder_count) || 0,
@@ -1442,6 +1459,40 @@ async function lisGoplus(t) {
   });
   /* Un silence se relit dans huit minutes, pas dans six heures. */
   if (!t.g.have && CACHE.goplus[t.addr]) CACHE.goplus[t.addr].ttl = TTL_GOPLUS_MUET;
+}
+
+/* ---- LES SELECTEURS QU'ON CHERCHE DANS LE CODE ----
+ * Les quatre premiers octets de keccak(signature), calcules une fois pour
+ * toutes : un nom de fonction n'est pas son corps, mais un contrat sans
+ * `mint` ne peut pas emettre, et c'est deja quelque chose de vrai. */
+const SELECTEURS = {
+  mint:  ['40c10f19', 'a0712d68', '449a52f8'],                          /* mint(address,uint256) mint(uint256) mintTo */
+  liste: ['f9f92be4', '0ecb93c0', '153b0d1e', '455a4396', 'd01dd6d2', 'fe575a87', 'ffecf516', '9c0db5f3'],
+  pause: ['8456cb59', '16c38b3c', '1031e36e'],                          /* pause() setPaused(bool) pauseTrading() */
+  frais: ['69fe0e2d', '0b78f9c0', '2e5bb6ff', 'c647b20e', 'dc1052e2', '8cd09d50', '6db79437', '0cc835a3', '8b4cee08'],
+};
+const TTL_OCTETS = 24 * 3600e3;
+/* Un selecteur est « expose » s'il apparait derriere un PUSH4 (0x63), a une
+   position paire : c'est ainsi que le repartiteur d'un contrat compare le
+   selecteur recu. Quatre octets pris au milieu d'une constante ne comptent
+   pas. */
+function exposeUn(hex, sels) {
+  for (const sel of sels) {
+    let i = hex.indexOf('63' + sel);
+    while (i >= 0) { if (i % 2 === 0) return true; i = hex.indexOf('63' + sel, i + 1); }
+  }
+  return false;
+}
+async function lisCode(t) {
+  const c = frais(CACHE.octets, t.addr, TTL_OCTETS); if (c !== null) return c;
+  let code = null;
+  try { code = await rpc('eth_getCode', [t.addr, 'latest']); } catch (e) { code = null; }
+  if (typeof code !== 'string' || !/^0x[0-9a-fA-F]*$/.test(code) || code.length < 4)
+    return garde(CACHE.octets, t.addr, { vu: false }, 10 * 60e3);   /* on redemandera, mais pas tout de suite */
+  const hex = code.slice(2).toLowerCase();
+  return garde(CACHE.octets, t.addr, { vu: true, octets: hex.length / 2,
+    mint: exposeUn(hex, SELECTEURS.mint), liste: exposeUn(hex, SELECTEURS.liste),
+    pause: exposeUn(hex, SELECTEURS.pause), frais: exposeUn(hex, SELECTEURS.frais) });
 }
 
 async function lisOhlcv(pool) {
@@ -1945,6 +1996,12 @@ const MOTS = {
   /* code du contrat */
   'code inconnu': 'code unknown', 'code non verifie': 'code unverified',
   'code verifie': 'code verified',
+  /* le bytecode lu sur la chaine */
+  'code illisible': 'bytecode unread',
+  'code : peut emettre': 'bytecode: can mint', 'code : sans emission': 'bytecode: no mint',
+  'code : liste noire': 'bytecode: has a blacklist', 'code : sans liste noire': 'bytecode: no blacklist',
+  'code : pausable': 'bytecode: can pause transfers', 'code : sans pause': 'bytecode: no pause',
+  'code : frais reglables': 'bytecode: fee setter', 'code : frais fixes': 'bytecode: no fee setter',
   /* pouvoirs du proprietaire */
   'pouvoirs ?': 'owner powers ?', 'mint + proxy': 'mint + proxy',
   'emission possible': 'can mint', 'contrat proxy': 'proxy contract',
@@ -3681,6 +3738,9 @@ function noteOmbre(t, an, refus, quiRefuse) {
     echeance: now + OMBRE_TENUE_MIN * 60000,
     traits: an.traits, score: an.score,
     refus: refus || null, quiRefuse: quiRefuse || null,
+    /* La piscine par laquelle il est entre : c'est elle qu'on relira quand
+       les flux et DexScreener se taisent (voir `secoursOmbres`). */
+    pool: t.pool || null,
     /* DexScreener le connaissait-il a l'entree ? C'est ce qui permet, plus
        tard, de distinguer « jamais indexe » de « disparu » (voir
        `regleLesOmbres`). */
@@ -3810,7 +3870,11 @@ function regleLesOmbres(marche) {
     if (!o.jalons) o.jalons = {};
     const brut = marche[o.adr];
     let x = (typeof brut === 'number') ? { prix: brut } : brut;
-    if (!(x && x.prix > 0) && o.dexVu && (o.muets || 0) >= OMBRE_SILENCES
+    /* Vu par DexScreener a l'entree et muet deux fois — ou, quel que soit
+       DexScreener, une piscine que GeckoTerminal ne connait plus deux fois de
+       suite : les deux disent la meme chose. */
+    const evapore = (o.dexVu && (o.muets || 0) >= OMBRE_SILENCES) || (o.absente || 0) >= OMBRE_SILENCES;
+    if (!(x && x.prix > 0) && evapore
         && age >= HORIZON_REF && o.jalons[HORIZON_REF] === undefined) {
       /* Jugee au prix d'une piscine vide, a l'echeance de reference, et
          seulement a celle-la : les autres n'ont pas ete mesurees. */
@@ -3870,7 +3934,7 @@ function auditDesRefus() {
                partMontes: Math.round(a.montes / a.n * 100) });
   }
   out.sort((x, y) => y.partMontes - x.partMontes);
-  return out.slice(0, 10);
+  return out.slice(0, 25);
 }
 
 
@@ -5782,6 +5846,12 @@ async function assure(t, besoins) {
     }
     t.lu[b] = true;
     if (b === 'goplus') { await lisGoplus(t); t.appels++; }
+    else if (b === 'octets') {
+      /* GoPlus a repondu : il dit deja mint, pause, liste noire et frais
+         modifiables — pas d appel de plus pour relire ce qu on sait. */
+      if (t.g && t.g.have) t.octets = { vu: true, deGoplus: true, mint: !!t.g.mintable, liste: !!t.g.liste, pause: !!t.g.pausable, frais: !!t.g.slipMod };
+      else { t.octets = await lisCode(t); t.appels++; }
+    }
     else if (b === 'chaine') { t.chaine = await lisChaine(t.addr, t.minutes, t.pool); t.appels++; }
     else if (b === 'trades') { t.trades = await lisTrades(t.pool); t.appels++; }
     else if (b === 'ohlcv') { const o = await lisOhlcv(t.pool); t.vola = o.vola; t.appels++; }
@@ -5910,6 +5980,18 @@ async function reprises(dejaVu) {
  * un appel pour un prix qu'on a.
  * ======================================================================== */
 const OMBRES_SECOURS_PAR_TOUR = 6;
+/* Une piscine, par son identifiant, telle que GeckoTerminal la voit : le prix
+   du jeton de base et la reserve. `absente` quand il ne la connait plus. */
+async function lisPiscine(pool) {
+  try {
+    const j = await jsonGT('/pools/' + pool);
+    const a = ((j || {}).data || {}).attributes || {};
+    return { prix: nn(a.base_token_price_usd), liq: nn(a.reserve_in_usd) };
+  } catch (e) {
+    if (/^404$/.test(String(e.message || ''))) return { prix: 0, liq: 0, absente: true };
+    return null;
+  }
+}
 async function secoursOmbres(marche) {
   if (!Array.isArray(E.ombres) || !E.ombres.length) return 0;
   const now = Date.now();
@@ -5937,12 +6019,37 @@ async function secoursOmbres(marche) {
       posePrix(d.o.adr, x.prix);
       d.o.muets = 0;
       n++;
-    } else {
-      compte('ombreMuette');
-      /* Un silence de plus, sur CETTE ombre : c'est `regleLesOmbres` qui en
-         tire quelque chose, et seulement si le jeton avait ete vu. */
-      d.o.muets = (d.o.muets || 0) + 1;
+      continue;
     }
+    /* ---- LA PISCINE ELLE-MEME, QUAND DEXSCREENER SE TAIT ----
+     * Releve du 8 septembre, apres sept jours : 13 876 relectures muettes
+     * contre 5 100 ombres jugees, et ZERO « disparue ». La regle du dessous
+     * ne juge effondre qu'un jeton que DexScreener CONNAISSAIT — or les
+     * jetons ecartes par le Scout ne font jamais lire DexScreener. Leur
+     * silence ne valait donc rien, et seuls les survivants apprenaient aux
+     * agents : « not from a launchpad » rendait +45 quand « pons graduate »
+     * rendait -7 — les gradues pons sont indexes, donc juges, chutes
+     * comprises ; les autres ne l'etaient que quand ils montaient.
+     * La piscine par laquelle le jeton est entre, elle, est connue de
+     * GeckoTerminal tant qu'elle existe : on lui demande son prix. Un prix
+     * bas est un jugement vrai ; une piscine que GeckoTerminal ne connait
+     * plus, deux fois de suite, en est un aussi. */
+    if (d.o.pool) {
+      const g = await lisPiscine(d.o.pool);
+      if (g && g.prix > 0) {
+        marche[d.o.adr] = { prix: g.prix, liq: g.liq || 0 };
+        posePrix(d.o.adr, g.prix);
+        d.o.muets = 0;
+        n++; compte('ombresParPiscine');
+        await dors(250);
+        continue;
+      }
+      if (g && g.absente) d.o.absente = (d.o.absente || 0) + 1;
+    }
+    compte('ombreMuette');
+    /* Un silence de plus, sur CETTE ombre : c'est `regleLesOmbres` qui en
+       tire quelque chose. */
+    d.o.muets = (d.o.muets || 0) + 1;
     await dors(250);
   }
   if (n) compte('ombresDeSecours', n);
@@ -5963,6 +6070,24 @@ const PONS_URL = 'https://www.ponsfamily.com/api/pons-launches/graduations?catal
 const PONS_TTL = 5 * 60e3;
 const PONS_GARDE_MS = 48 * 3600e3;
 const PONS_PAR_TOUR = 6;
+/* ---- UNE SOURCE QUI REND MOINS QUE LE FOND PREND MOINS DE PLACE ----
+ * Releve du 8 septembre, apres sept jours : « trouve par pons » rendait
+ * -8 % a trente minutes sur 1 210 ombres, « trouve par pools » +35 % sur
+ * 1 849. Six places par tour allaient a la source qui rend le moins, sur
+ * vingt. La part d'une source suit donc sa case apprise contre le fond :
+ * dix points sous le fond, un tiers des places ; dix points au-dessus, le
+ * double. Jamais zero — une source qu'on ne lit plus ne peut plus
+ * remonter — et seulement quand la case est mesuree (cent observations). */
+const POUSSE_MIN_OBS = 100;
+function poussesPour(source, defaut) {
+  const c = memLit('scout', 'origine', 'trouve par ' + source);
+  const fond = E.base ? fane(E.base) : null;
+  if (!c || !(c.n >= POUSSE_MIN_OBS) || !fond || !(fond.n >= BASE_MIN_OBS)) return defaut;
+  const ecart = c.s / c.n - fond.s / fond.n;
+  if (ecart <= -10) return Math.max(1, Math.round(defaut / 3));
+  if (ecart >= 10) return Math.min(defaut * 2, Math.floor(EXAMENS_TOUR / 2));
+  return defaut;
+}
 async function lisPons() {
   if (!E.pons) E.pons = { jetons: {}, deployeurs: {}, lu: 0 };
   if (Date.now() - (E.pons.lu || 0) < PONS_TTL) return E.pons;
@@ -6122,15 +6247,15 @@ async function poussePads(parAdresse) {
   for (const a in P.hood.jetons) if (now - P.hood.jetons[a].gradue <= AGE_MAX_MIN * 60000) frais.push({ a, t: P.hood.jetons[a].gradue, o: 'hood' });
   for (const a in P.secretpad.jetons) if (now - P.secretpad.jetons[a].t <= AGE_MAX_MIN * 60000) frais.push({ a, t: P.secretpad.jetons[a].t, o: 'secretpad' });
   frais.sort((x, y) => y.t - x.t);
-  let pris = 0;
+  const pris = {};
   for (const f of frais) {
     if (parAdresse.has(f.a)) continue;
-    if (pris >= PADS_PAR_TOUR) break;
+    if ((pris[f.o] || 0) >= poussesPour(f.o, PADS_PAR_TOUR)) continue;
     const c = E.connus[f.a];
     if (c && c.permanent) continue;
     if (c && now - (c.dernier || 0) < SURV_MIN_MS) continue;
     const t = await jetonDepuisDex(f.a, f.o);
-    pris++;
+    pris[f.o] = (pris[f.o] || 0) + 1; compte('pousse_' + f.o);
     if (t && t.prix > 0) parAdresse.set(f.a, t);
     await dors(250);
   }
@@ -6165,14 +6290,15 @@ async function rassemble() {
       .filter((a) => now - P.jetons[a].gradue <= AGE_MAX_MIN * 60000)
       .sort((a, b) => P.jetons[b].gradue - P.jetons[a].gradue);
     let pris = 0;
+    const maxPons = poussesPour('pons', PONS_PAR_TOUR);
     for (const a of frais) {
       if (parAdresse.has(a)) continue;
-      if (pris >= PONS_PAR_TOUR) break;
+      if (pris >= maxPons) break;
       const c = E.connus[a];
       if (c && c.permanent) continue;
       if (c && Date.now() - (c.dernier || 0) < SURV_MIN_MS) continue;   /* deja juge, rien de neuf */
       const t = await jetonDepuisDex(a, 'pons');
-      pris++;
+      pris++; compte('poussePons');
       if (t && t.prix > 0) parAdresse.set(a, t);
       await dors(250);
     }
@@ -6424,6 +6550,7 @@ async function tour() {
       foule: (x.t.chaine && x.t.chaine.foule) || null,
       transferts: x.t.chaine && x.t.chaine.vu ? x.t.chaine.transferts : null,
       goplusSait: !!(x.t.g && x.t.g.have),
+      octets: (x.t.octets && x.t.octets.vu) ? { mint: x.t.octets.mint, liste: x.t.octets.liste, pause: x.t.octets.pause, frais: x.t.octets.frais } : null,
       goplusSeContredit: !!(x.t.g && x.t.g.seContredit),
       dexVu: !!(x.t.dex && x.t.dex.vu),
       liens: (x.t.dex && x.t.dex.vu) ? (x.t.dex.liens || []) : null,
@@ -6561,6 +6688,7 @@ function vue() {
           actif: baseCourante() !== 0 }
       : null,
     audit: auditDesRefus(),
+    pousses: { pons: poussesPour('pons', PONS_PAR_TOUR), hood: poussesPour('hood', PADS_PAR_TOUR), secretpad: poussesPour('secretpad', PADS_PAR_TOUR) },
     traits: classementDesTraits().slice(0, 12),
     horizons: HORIZONS, horizonRef: HORIZON_REF,
     jalons: E.compteurs.jalons || 0,
@@ -6764,7 +6892,7 @@ module.exports = {
   revoitStrategie, seuilCourant, partRefus, REFUS_AVEUGLE,
   revoitLesBornes, borne, BORNES, partAbandons, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
   releve, recents, JOUR_MS, TTL_GOPLUS_MUET, coteEnEth, pairesEthSeules, EXAMENS_TOUR,
-  lisPons, annotePons, PONS_URL, PONS_PAR_TOUR,
+  lisPons, annotePons, PONS_URL, PONS_PAR_TOUR, poussesPour, POUSSE_MIN_OBS, lisPiscine, lisCode, exposeUn, SELECTEURS,
   lisSecretpad, lisHood, annotePads, poussePads, SECRETPAD_LANCEUR, SUJET_SECRETPAD_LANCE, HOOD_URL, PADS_PAR_TOUR,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
