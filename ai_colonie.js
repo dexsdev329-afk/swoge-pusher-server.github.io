@@ -167,11 +167,16 @@ const RPC_RH = 'https://rpc.mainnet.chain.robinhood.com';
  * l'adresse par defaut, et la colonie apprend toute seule a ne plus l'appeler. */
 const RPC_SECOURS = (process.env.RPC_SECOURS || '').trim() || 'https://robinhood.drpc.org';
 const SECOURS_POSE = !!(process.env.RPC_SECOURS || '').trim();
-/* La plage par defaut suit le fournisseur quand on le reconnait : Alchemy
-   borne eth_getLogs a 2 000 blocs. Un chiffre pose dans l'environnement
-   l'emporte toujours. */
+/* ---- LA PLAGE SE MESURE, ELLE NE SE SUPPOSE PAS ----
+ * Alchemy en forfait gratuit borne eth_getLogs a dix blocs, en forfait
+ * paye a bien plus — et il le DIT dans son refus (« up to a 10 block
+ * range », « up to a 2K block range »). On part donc large, et le noeud
+ * apprend sa vraie limite au premier refus, en une lecture. Partir bas
+ * (2 000) aurait laisse un forfait paye a 2 000 pour toujours : la limite
+ * apprise ne fait que descendre. Un chiffre pose dans l'environnement
+ * l'emporte toujours. */
 const RPC_SECOURS_PLAGE = Math.max(100, parseInt(process.env.RPC_SECOURS_PLAGE
-  || (/alchemy\.com/i.test(RPC_SECOURS) ? '2000' : '10000'), 10) || 10000);
+  || (/alchemy\.com/i.test(RPC_SECOURS) ? '200000' : '10000'), 10) || 10000);
 /* Le nom qu'on lui donne dans la vue et les alertes : « dRPC » quand c'est
    dRPC, sinon l'hote de l'adresse posee — sans la cle, qui est dedans. */
 const SECOURS_NOM = (function () {
@@ -271,7 +276,9 @@ const SURV_PRIX = 1.10;         /* ou si le prix a pris 10 % */
 const SURV_MAX = nEnv('SURV_MAX', 2000);
 /* Les examens PAYANTS par tour — ceux qui coutent des appels. Vingt au lieu de
    dix depuis que les appels qui ne peuvent pas repondre ne sont plus payes. */
-const EXAMENS_TOUR = Math.max(5, Math.round(nEnv('EXAMENS_TOUR', 20)));
+/* Trente places quand un noeud a nous prend le trafic, vingt sur le public
+   seul. Un chiffre pose dans l'environnement l'emporte. */
+const EXAMENS_TOUR = Math.max(5, Math.round(nEnv('EXAMENS_TOUR', SECOURS_POSE ? 30 : 20)));
 /* Reconnaitre le refus « trop jeune » ailleurs sans relire la phrase : elle
    changera. Pose ici, avec les autres constantes, parce que l'oubli des vieux
    connus s'en sert et qu'il vit tout en haut du fichier. */
@@ -1067,7 +1074,10 @@ function noeuds() {
  * l'espace a 250 ms au lieu des 900 ms qu'impose le nœud partage. */
 const NOEUD_OFFICIEL = { url: RPC_RH, cle: 'chaine', plageLogs: BLOCS_PLAFOND, dernier: 0, espace: 900 };
 const NOEUD_SECOURS = { url: RPC_SECOURS, cle: 'chaine2', plageLogs: RPC_SECOURS_PLAGE, dernier: 0,
-                        espace: SECOURS_POSE ? 250 : 900 };
+                        /* Un debit qui nous appartient : dix mille unites par seconde sur le
+                           forfait paye, une lecture de journaux en vaut 75. Cent vingt
+                           millisecondes, c'est huit lectures par seconde, loin du plafond. */
+                        espace: SECOURS_POSE ? 120 : 900 };
 const NOEUDS = SECOURS_POSE ? [NOEUD_SECOURS, NOEUD_OFFICIEL] : [NOEUD_OFFICIEL, NOEUD_SECOURS];
 /* Le budget d'appels de chaine par tour : 26 sur un nœud public partage,
    60 quand un nœud a nous prend le gros du trafic. */
@@ -1261,7 +1271,10 @@ async function rpc(methode, params) {
         const m = /over (\d+) blocks/.exec(String(e.message || ''))
           /* Coupee a quatre-vingts caracteres par `unNoeud` : la phrase d'Alchemy
              s'arrete a « up to a 10 blo ». On reconnait le debut, pas la fin. */
-          || /up to a (\d+)[ -]?blo/i.exec(String(e.message || ''));
+          || /up to a (\d+)[ -]?bl/i.exec(String(e.message || ''))
+          /* « up to a 2K block range » : le K compte pour mille. Lu comme
+             « 2 », il aurait rendu le noeud aveugle pour de bon. */
+          || (function () { const k = /up to a (\d+)k[ -]?bl/i.exec(String(e.message || '')); return k ? [k[0], String(parseInt(k[1], 10) * 1000)] : null; })();
         if (m) {
           const max = parseInt(m[1], 10);
           if (max > 0 && max < n.plageLogs) {
@@ -1615,7 +1628,11 @@ async function lisChaine(addr, minutes, pool) {
        * inverse de ce qu'ils sont. On ne compte pas les porteurs — on ne les
        * a pas lus, et on ne les invente pas — mais on SAIT une chose vraie :
        * il y a foule. C'est une case, et les agents en apprendront la valeur. */
-      const f = /exceeds limit of (\d+)/.exec(String((derniere && derniere.message) || ''));
+      const msgF = String((derniere && derniere.message) || '');
+      /* Le noeud officiel : « exceeds limit of 10000 ». Alchemy : « a cap of
+         10K logs in the response ». La meme chose, deux phrases. */
+      const f = /exceeds limit of (\d+)/.exec(msgF)
+        || (function () { const k = /cap of (\d+)k logs/i.exec(msgF); return k ? [k[0], String(parseInt(k[1], 10) * 1000)] : null; })();
       if (f) {
         compte('chaineFoule');
         return garde(CACHE.chaine, addr, {
@@ -2062,6 +2079,7 @@ const MOTS = {
   'note 55-60': 'score 55-60', 'note 60-70': 'score 60-70',
   'note 70-85': 'score 70-85', 'note 85+': 'score 85+',
   /* la Sentinelle, encore : a quel palier le gain a ete pris */
+  'sol coupe': 'floor cut', 'dernier palier': 'last rung reached', 'arret suiveur': 'trailing stop',
   'gain pris a +20-35%': 'gain taken at +20-35%', 'gain pris a +35-60%': 'gain taken at +35-60%',
   'gain pris a +60-120%': 'gain taken at +60-120%', 'gain pris a +120%': 'gain taken at +120%',
   /* le Banquier : le regime de caisse */
@@ -2613,6 +2631,15 @@ const BORNES = {
      dela — et `pas` est petit expres : on veut une pente, pas un saut. */
   ageMin:     { env: 'AGE_ACHAT_MIN', defaut: 15, min: 4, max: 90, pas: 2 },
   liqParMise: { env: 'LIQ_PAR_MISE',  defaut: 25, min: 8, max: 60, pas: 3 },
+  /* ---- LE PLAFOND DE CAPITALISATION ----
+   * Releve du 8 septembre : la meilleure case mesuree etait « 30 min a 2 h
+   * × cap 0,5-5 M$ », +65 % sur 25 ombres — et le plafond d'achat etait a
+   * 100 000 $, ecrit en dur. Il bouge donc comme les deux autres, sur
+   * l'audit de sa propre regle (« cap above the buy ceiling »). `sens: -1` :
+   * resserrer, ici, c'est BAISSER le plafond. Et les abandons ne le
+   * gouvernent pas : une position perdue de vue est une position trop
+   * jeune ou trop mince, jamais une trop grosse. */
+  mcMax:      { env: 'MC_ACHAT_MAX', defaut: 100000, min: 50000, max: 1000000, pas: 25000, sens: -1, sansAbandons: true },
 };
 /* La valeur en vigueur : ce que la colonie a appris, ou l'environnement tant
    qu'elle n'a rien appris. Toujours ramenee entre les butees — un etat relu
@@ -2683,23 +2710,33 @@ function revoitLesBornes() {
       quoi: 'minimum buy age', unite: ' min' },
     { k: 'liqParMise', motif: /pool below the buy floor|nothing to sell into/,
       quoi: 'pool depth required per stake', unite: '× the stake' },
+    { k: 'mcMax', motif: /above the buy ceiling/,
+      quoi: 'buy ceiling on market cap', unite: ' $' },
   ];
   for (const c of cas) {
     const b = BORNES[c.k], avant = borne(c.k);
     const l = auditDe(c.motif);
     let apres = avant, pourquoi = null;
+    /* Le sens d'une borne : resserrer monte l'age et la profondeur, mais
+       BAISSE un plafond. Les deux branches ci-dessous parlent en
+       « serrer » et « desserrer », et c'est `sens` qui traduit en +/-. */
+    const sens = b.sens || 1;
+    const serre = () => Math.min(b.max, Math.max(b.min, avant + sens * b.pas));
+    const desserre = () => Math.min(b.max, Math.max(b.min, avant - sens * b.pas));
+    const peutSerrer = sens > 0 ? avant < b.max : avant > b.min;
+    const peutDesserrer = sens > 0 ? avant > b.min : avant < b.max;
 
     /* ---- ON RESERRE D'ABORD ----
      * Le cout du desserrage se lit sur TOUTES les positions, pas seulement
      * sur celles de cette regle : on le regarde donc avant tout le reste, et
      * il l'emporte. */
-    if (ab !== null && ab > ABANDON_TROP && avant < b.max) {
-      apres = Math.min(b.max, avant + b.pas);
+    if (!b.sansAbandons && ab !== null && ab > ABANDON_TROP && peutSerrer) {
+      apres = serre();
       pourquoi = Math.round(ab * 100) + '% of opened positions could never be re-read to their '
         + 'deadline. That is what buying too young and too thin costs, and it is measured on '
         + 'every position, not just the ones this rule touches';
-    } else if (l && l.n >= AUDIT_MIN_OBS && l.partMontes <= AUDIT_PROTEGE && avant < b.max) {
-      apres = Math.min(b.max, avant + b.pas);
+    } else if (l && l.n >= AUDIT_MIN_OBS && l.partMontes <= AUDIT_PROTEGE && peutSerrer) {
+      apres = serre();
       pourquoi = 'only ' + l.partMontes + '% of the ' + l.n + ' tokens it set aside went up: '
         + 'this rule protects, and it can afford to protect more';
     /* ---- ET ON NE DESSERRE QUE SI LES DEUX SONT D'ACCORD ----
@@ -2707,8 +2744,8 @@ function revoitLesBornes() {
      * Un seul des deux ne suffit pas : c'est ce « et » qui empeche la
      * descente. */
     } else if (l && l.n >= AUDIT_MIN_OBS && l.partMontes >= AUDIT_COUTE
-               && ab !== null && ab < ABANDON_SAIN && avant > b.min) {
-      apres = Math.max(b.min, avant - b.pas);
+               && (b.sansAbandons || (ab !== null && ab < ABANDON_SAIN)) && peutDesserrer) {
+      apres = desserre();
       pourquoi = l.partMontes + '% of the ' + l.n + ' tokens it set aside went up (average '
         + l.moyenne + '%), and only ' + Math.round(ab * 100) + '% of opened positions were lost '
         + 'for want of a price: it costs more than it protects';
@@ -2836,7 +2873,7 @@ function planchers() {
      * capitalisation, non. */
     mc: Math.max(nEnv('MC_ACHAT_MIN', 1500),
                  (E.tresor || 0) * MISE_PART_MAX * nEnv('MC_PAR_MISE', 10)),
-    mcMax: nEnv('MC_ACHAT_MAX', 100000),
+    mcMax: borne('mcMax'),
     /* ---- QUINZE MINUTES, ET POURQUOI PAS DEUX HEURES ----
      *
      * Deux heures etaient posees pour eviter les rug pulls. La colonie a
@@ -3633,13 +3670,15 @@ function veutPrendre(p, r) {
 }
 
 /* On note ce qu'on vient de prendre, et QUAND il faudra revenir voir. */
-function noteSuite(p, prix, r, cas, quand) {
+function noteSuite(p, prix, r, cas, quand, echeance) {
   if (!Array.isArray(E.suites)) E.suites = [];
   E.suites.push({
-    adr: p.adr, sym: p.sym, prix0: p.prix0, rSortie: Math.round(r * 100) / 100,
+    adr: p.adr, sym: p.sym, pool: p.pool || null, prix0: p.prix0, rSortie: Math.round(r * 100) / 100,
     cas, t: quand,
-    /* Le moment ou la position se serait fermee si on n'avait rien fait. */
-    echeance: p.t0 + (p.tenueMin || TENUE_DEFAUT_MIN) * 60000,
+    /* Le moment ou la position se serait fermee si on n'avait rien fait —
+       ou, pour une coupe, trente minutes plus tard : ce qu'on compare, c'est
+       tenir encore un peu contre couper la. */
+    echeance: echeance || (p.t0 + (p.tenueMin || TENUE_DEFAUT_MIN) * 60000),
   });
   if (E.suites.length > SUITES_MAX) E.suites = E.suites.slice(-SUITES_MAX);
 }
@@ -3864,8 +3903,18 @@ function regleLesOmbres(marche) {
   const now = Date.now();
   let n = 0;
   const dernier = HORIZONS[HORIZONS.length - 1];
+  /* Quand une ombre s en va — par oubli ou parce que sa derniere echeance est
+     passee — la strategie est rejouee une fois sur ce qu elle a laisse. */
+  const rejoueEtPart = (o) => {
+    if (!o.rejouee && o.jalons && o.jalons[HORIZON_REF] !== undefined) {
+      const rs = rejoue(o.jalons);
+      if (rs !== null) noteAuditStrat(cleAudit(o), rs);
+      o.rejouee = true;
+    }
+    return false;
+  };
   E.ombres = E.ombres.filter((o) => {
-    if (now - o.t > OMBRE_OUBLI_MS) return false;
+    if (now - o.t > OMBRE_OUBLI_MS) return rejoueEtPart(o);
     const age = (now - o.t) / 60000;
     if (!o.jalons) o.jalons = {};
     const brut = marche[o.adr];
@@ -3885,8 +3934,11 @@ function regleLesOmbres(marche) {
       compte('jalons');
       for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
       apprendBase(r);
-      noteAudit(o.refus ? (o.quiRefuse || 'refus') + ' · ' + familleRefus(o.refus)
-                        : 'achete ou retenu', r);
+      noteAudit(cleAudit(o), r);
+      /* Une piscine evaporee : la strategie aurait tout perdu aussi, moins
+         ce que les paliers avaient encaisse avant. */
+      const rs0 = rejoue(o.jalons);
+      if (rs0 !== null) { noteAuditStrat(cleAudit(o), rs0); o.rejouee = true; }
       compte('ombresJugees'); compte('ombreDisparue');
       n++;
       return age <= dernier + Math.max(5, dernier * 0.5);
@@ -3916,12 +3968,67 @@ function regleLesOmbres(marche) {
         }
       }
     }
-    /* On la garde tant qu'une echeance reste atteignable. */
-    return age <= dernier + Math.max(5, dernier * 0.5);
+    /* On la garde tant qu'une echeance reste atteignable — et quand elle
+       part, on rejoue la strategie sur ce qu'elle a laisse. */
+    if (age <= dernier + Math.max(5, dernier * 0.5)) return true;
+    return rejoueEtPart(o);
   });
   return n;
 }
 
+/* ==========================================================================
+ * CE QUE LA STRATEGIE AURAIT FAIT, PAS CE QUE LE JETON A FAIT
+ *
+ * L'audit notait un jeton ecarte sur son rendement brut a trente minutes.
+ * Releve du 8 septembre : « paying the top » ecartait 556 jetons a +43 %
+ * de moyenne, dont 41 % effondres. Brut, on ne peut pas dire si la regle
+ * coute ou protege : la colonie ne tient pas un jeton a trente minutes,
+ * elle encaisse par paliers, suit le plus haut, et coupe sur un
+ * effondrement. On rejoue donc l'echelle, l'arret suiveur et la coupe sur
+ * les jalons de l'ombre — cinq points, pas un chemin : entre deux jalons on
+ * suppose un passage monotone, un palier franchi est encaisse AU palier
+ * (prudent, jamais au-dessus), et l'arret suiveur ne se declenche que sur
+ * un jalon lu. Le chiffre est une borne basse honnete de ce que la colonie
+ * aurait fait, et c'est lui qui juge la regle desormais, a cote du brut.
+ * ======================================================================== */
+function rejoue(jalons, E2) {
+  E2 = E2 || echelle();
+  const hs = Object.keys(jalons || {}).map(Number)
+    .filter((h) => isFinite(h) && typeof jalons[h] === 'number' && isFinite(jalons[h])).sort((a, b) => a - b);
+  if (!hs.length) return null;
+  let reste = 1, realise = 0, haut = 0;
+  const pris = {};
+  const niveaux = [{ k: 1, a: E2.p1, v: E2.v1 }, { k: 2, a: E2.p2, v: E2.v2 }, { k: 3, a: E2.p3, v: E2.v3 }];
+  const arrondi = (x) => Math.round(x * 100) / 100;
+  for (const h of hs) {
+    const r = jalons[h];
+    if (r <= CHUTE_COUPE) return arrondi(realise + reste * r);      /* la Sentinelle coupe : c'est dans le code */
+    if (E2.actif) {
+      for (const n of niveaux) {
+        if (pris[n.k] || !(n.a > 0) || r < n.a) continue;
+        pris[n.k] = true;
+        const part = Math.min(reste, n.v / 100);
+        realise += part * n.a; reste -= part;
+      }
+      if (reste <= 0.001) return arrondi(realise);
+      if (r > haut) haut = r;
+      if (haut >= E2.suivDepart) {
+        const ecart = haut >= E2.suivSerreA ? E2.suivSerre : E2.suivEcart;
+        if (r <= haut - ecart) return arrondi(realise + reste * r);
+      }
+    }
+  }
+  return arrondi(realise + reste * jalons[hs[hs.length - 1]]);
+}
+function cleAudit(o) {
+  return o.refus ? (o.quiRefuse || 'refus') + ' · ' + familleRefus(o.refus) : 'achete ou retenu';
+}
+function noteAuditStrat(cle, rs) {
+  if (!E.audit || typeof E.audit !== 'object') E.audit = {};
+  const a = E.audit[cle] || (E.audit[cle] = { n: 0, s: 0, montes: 0, effondres: 0 });
+  a.nStrat = (a.nStrat || 0) + 1; a.strat = (a.strat || 0) + rs;
+  compte('rejeux');
+}
 /* Ce que la page montre de l'audit : par raison, combien ont ete ecartes et ce
    qu'ils ont fait. Trie par ce qui coute le plus cher a se tromper. */
 function auditDesRefus() {
@@ -3931,7 +4038,9 @@ function auditDesRefus() {
     if (a.n < 3) continue;
     out.push({ cle, n: a.n, moyenne: Math.round(a.s / a.n * 10) / 10,
                montes: a.montes, effondres: a.effondres,
-               partMontes: Math.round(a.montes / a.n * 100) });
+               partMontes: Math.round(a.montes / a.n * 100),
+               /* ce que la strategie aurait fait, rejouee sur les jalons */
+               nStrat: a.nStrat || 0, strat: a.nStrat ? Math.round(a.strat / a.nStrat * 10) / 10 : null });
   }
   out.sort((x, y) => y.partMontes - x.partMontes);
   return out.slice(0, 25);
@@ -4852,7 +4961,17 @@ function regle(marche) {
      * sans attendre le compte a rebours si le sol se derobe. */
     p.vuPar = casSentinelle(p, x);
     const danger = dangerSentinelle(p, x);
-    if (danger) { ferme(p, x.prix, now, { cote, par: 'sentinelle', raison: danger }); n++; return false; }
+    /* ---- CHAQUE SORTIE LAISSE UNE SUITE ----
+     * Releve du 8 septembre : 23 sorties jugees sur 397 trades. Seul le
+     * gain pris etait suivi ; la coupe, l'arret suiveur et le dernier
+     * palier — l'immense majorite des sorties — ne l'etaient pas, et rien
+     * ne pouvait dire s'ils vendaient bien ou trop tot. On revient voir
+     * trente minutes apres chacune. La coupe reste une securite qui ne
+     * s'apprend pas ; ce qu'on apprend, c'est ce qu'elle a coute. */
+    if (danger) {
+      noteSuite(p, x.prix, r, { sortie: 'sol coupe' }, now, now + HORIZON_REF * 60000);
+      ferme(p, x.prix, now, { cote, par: 'sentinelle', raison: danger }); n++; return false;
+    }
 
     /* ---- L'ECHELLE DE SORTIE, PUIS L'ARRET SUIVEUR ----
      * D'abord les paliers : ils encaissent une part et laissent le reste
@@ -4872,11 +4991,13 @@ function regle(marche) {
       n++; return false;
     }
     if (joueEchelle(p, r, now)) {
+      noteSuite(p, x.prix, r, { sortie: 'dernier palier' }, now, now + HORIZON_REF * 60000);
       ferme(p, x.prix, now, { cote, par: 'sentinelle', raison: 'last rung reached' });
       n++; return false;
     }
     const suiv = arretSuiveur(p, r);
     if (suiv) {
+      noteSuite(p, x.prix, r, { sortie: 'arret suiveur' }, now, now + HORIZON_REF * 60000);
       ferme(p, x.prix, now, { cote, par: 'sentinelle', raison: suiv });
       compte('arretSuiveur');
       n++; return false;
@@ -5993,10 +6114,15 @@ async function lisPiscine(pool) {
   }
 }
 async function secoursOmbres(marche) {
-  if (!Array.isArray(E.ombres) || !E.ombres.length) return 0;
+  /* Sans ombre, il peut rester des suites dues : on ne s arrete pas avant de
+     les avoir regardees. Mesure au banc : une suite de coupe jamais jugee,
+     parce que la position avait ete ouverte a la main dans un etat sans ombre. */
+  const ombres = Array.isArray(E.ombres) ? E.ombres : [];
+  const suites = Array.isArray(E.suites) ? E.suites : [];
+  if (!ombres.length && !suites.length) return 0;
   const now = Date.now();
   const dues = [];
-  for (const o of E.ombres) {
+  for (const o of ombres) {
     const deja = marche[o.adr];
     if (deja && deja.prix > 0) continue;
     const age = (now - o.t) / 60000;
@@ -6007,6 +6133,15 @@ async function secoursOmbres(marche) {
       dues.push({ o, ref: h === HORIZON_REF ? 0 : 1, reste: h + Math.max(5, h * 0.5) - age });
       break;
     }
+  }
+  /* ---- ET LES SUITES DUES, QUE LES FLUX NE COTENT PLUS ----
+   * Une position coupee sur un effondrement est sortie des flux : sa suite
+   * attendait quatre heures un prix qui ne venait jamais, puis tombait. */
+  for (const su of suites) {
+    if (now < su.echeance) continue;
+    const deja = marche[su.adr];
+    if (deja && deja.prix > 0) continue;
+    dues.push({ o: su, ref: 0, reste: 0 });
   }
   if (!dues.length) return 0;
   dues.sort((a, b) => a.ref - b.ref || a.reste - b.reste);
@@ -6893,6 +7028,7 @@ module.exports = {
   revoitLesBornes, borne, BORNES, partAbandons, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
   releve, recents, JOUR_MS, TTL_GOPLUS_MUET, coteEnEth, pairesEthSeules, EXAMENS_TOUR,
   lisPons, annotePons, PONS_URL, PONS_PAR_TOUR, poussesPour, POUSSE_MIN_OBS, lisPiscine, lisCode, exposeUn, SELECTEURS,
+  rejoue, cleAudit, noteAuditStrat, CHUTE_COUPE, HORIZON_REF,
   lisSecretpad, lisHood, annotePads, poussePads, SECRETPAD_LANCEUR, SUJET_SECRETPAD_LANCE, HOOD_URL, PADS_PAR_TOUR,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,

@@ -465,6 +465,8 @@ global.fetch = async function (url, opts) {
       const plage = parseInt(f.toBlock, 16) - parseInt(f.fromBlock, 16);
       appels.rpc2Logs = (appels.rpc2Logs || 0) + 1;
       /* La phrase d Alchemy en forfait gratuit, mot pour mot. */
+      if (MONDE.secoursDeuxK && plage > 2000)
+        return rep({ error: { message: 'Log response size exceeded. You can make eth_getLogs requests with up to a 2K block range and no limit on the response size, or you can request any block range with a cap of 10K logs in the response.' } }, 400);
       if (MONDE.secoursDixBlocs && plage > 9)
         return rep({ error: { message: 'Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block range. Based on your parameters and the response size limit, this block range should work: [0x1, 0xa]' } }, 400);
       /* Sa vraie limite, relevee sur le service : dix mille blocs. */
@@ -2737,7 +2739,9 @@ async function pepitesDesPads() {
  * ======================================================================== */
 async function deuxRefusQuiOntUnNom() {
   console.log('\n-- un jeton a plus de dix mille transferts : il y a foule, ce n est pas « inconnu » --');
-  remise(sains());
+  /* Trois jetons, pas sept : le budget du tour en couvre six, et l ordre d examen
+     est tire au sort — avec sept, celui qu on veut voir peut rester dehors. */
+  remise([jeton(0), jeton(1), jeton(2)]);
   MONDE.foule = [MONDE.jetons[0].addr];
   await C.tour();
   const c0 = C.vue().candidats.find((c) => c.sym === 'TOK0');
@@ -2769,6 +2773,14 @@ async function deuxRefusQuiOntUnNom() {
   ok(!!a && /caps at 10 blocks/.test(a.quoiFaire) && /plan limit rather than a quota/.test(a.quoiFaire),
      'l alerte dit la limite mesuree et que c est le forfait, pas le quota');
   MONDE.secoursDixBlocs = false; MONDE.foule = [];
+
+  console.log('\n-- le forfait paye dit « 2K » : le K compte pour mille --');
+  remise(sains(), { rpcSature: true });
+  MONDE.secoursDeuxK = true;
+  await C.tour();
+  const n2k = C.noeuds().find((n) => n.cle === 'chaine2');
+  ok(n2k.plageLogs === 2000, 'la limite retenue est 2 000 blocs, pas 2 (' + n2k.plageLogs + ')');
+  MONDE.secoursDeuxK = false;
 }
 
 /* ==========================================================================
@@ -2820,7 +2832,7 @@ async function ombresSansBiais() {
 async function wardenLitLeCode() {
   console.log('\n-- le Warden lit le bytecode : ce que le contrat expose devient des cases --');
   /* GoPlus muet, comme sur 95 % des jetons : c est la que le code est lu. Quand GoPlus repond, il dit deja tout ca. */
-  remise([0, 1, 2, 3, 4, 5, 6].map((k) => jeton(k, { goplus: 'muet' })));
+  remise([0, 1, 2].map((k) => jeton(k, { goplus: 'muet' })));   /* trois : tous examines, quel que soit l ordre tire */
   const sel = (h) => '63' + h;
   MONDE.codes = {};
   /* TOK0 expose mint et une liste noire ; TOK1 n expose rien ; TOK2 porte le selecteur de mint
@@ -2877,6 +2889,103 @@ async function poussesMesurees() {
   ok((C._etat().compteurs.poussePons || 0) === 2, 'deux gradues pons poussees dans le tour, pas six');
   ok(C.vue().pousses && C.vue().pousses.pons === 2, 'et la vue dit la part du moment');
   poolsPageFiltre = null; MONDE.pons = [];
+}
+
+/* ==========================================================================
+ * CE QUE LA STRATEGIE AURAIT FAIT
+ * ======================================================================== */
+async function rejeuDeLaStrategie() {
+  console.log('\n-- l echelle et l arret suiveur, rejoues sur cinq jalons --');
+  remise(sains());
+  const E2 = { actif: true, p1: 15, v1: 35, p2: 40, v2: 35, p3: 80, v3: 20, suivDepart: 10, suivEcart: 20, suivSerre: 10, suivSerreA: 40 };
+  const r1 = C.rejoue({ 5: 20, 15: 50, 30: 10 }, E2);
+  console.log('   +20 / +50 / +10 : brut a 30 min = +10, strategie = ' + r1);
+  ok(Math.abs(r1 - 22.25) < 0.01, '35 % encaisses a +15, 35 % a +40, le reste ferme par l arret suiveur a +10 : +22,25 %');
+  ok(C.rejoue({ 30: -95 }, E2) === -95, 'une piscine evaporee : tout est perdu, la coupe n a rien pu faire');
+  ok(C.rejoue({ 5: 5, 15: 8, 30: -40 }, E2) === -40, 'pas de palier, arret non arme (+8 < +10), la coupe a -40 : -40');
+  ok(C.rejoue({ 5: 20, 15: 90, 30: 5 }, E2) === 35.75, 'les trois paliers pris AU palier (5,25 + 14 + 16), et le reliquat (10 %) ferme par l arret a +5 (0,5) : ' + C.rejoue({ 5: 20, 15: 90, 30: 5 }, E2));
+  ok(C.rejoue({ 5: 3, 15: 6, 30: 4 }, E2) === 4, 'rien ne se passe : le dernier jalon fait foi (+4)');
+  ok(C.rejoue({}, E2) === null, 'sans jalon, pas de rejeu');
+  ok(C.rejoue({ 5: 20, 15: 50, 30: 10 }, Object.assign({}, E2, { actif: false })) === 10, 'echelle eteinte : le brut, sauf la coupe');
+
+  console.log('\n-- et l audit porte le rejeu quand l ombre s en va --');
+  const F = C._etat();
+  const now = Date.now();
+  F.audit = {};
+  /* La ligne existe deja par le brut (trois jetons juges a l echeance) : le rejeu s y ajoute. */
+  for (const r of [40, -50, 25]) C._noteAudit('scout · ' + C._familleRefus('already +120% in five minutes: we would be paying the top'), r);
+  F.ombres = [{ adr: '0x' + 'a1'.repeat(20), sym: 'REJ', prix0: 1, t: now - 200 * 60000, echeance: now, traits: {}, score: 50,
+                refus: 'already +120% in five minutes: we would be paying the top', quiRefuse: 'scout', dexVu: true,
+                jalons: { 5: 20, 15: 50, 30: 10, 60: 5, 120: 0 } }];
+  C.regleLesOmbres({});
+  const l = C._auditDesRefus().find((x) => /paying the top/.test(x.cle));
+  console.log('   ' + JSON.stringify(l));
+  ok(!!l && l.nStrat === 1 && Math.abs(l.strat - 22.25) < 0.1, 'la regle porte ce que la strategie aurait fait : +22,3 % sur une ombre (arrondi au dixieme)');
+  ok(F.ombres.length === 0, 'et l ombre est partie, rejouee une fois');
+  ok((F.compteurs.rejeux || 0) === 1, 'compte comme un rejeu');
+}
+
+/* ==========================================================================
+ * TOUTES LES SORTIES SONT SUIVIES
+ * ======================================================================== */
+async function toutesLesSortiesSontSuivies() {
+  console.log('\n-- un arret suiveur laisse une suite, jugee trente minutes plus tard --');
+  remise(sains());
+  const E = C._etat();
+  const p = { sym: 'SUIVI', adr: '0x' + 'a2'.repeat(20), pool: '0xps', prix0: 1, t0: Date.now() - 6 * 60000,
+    mise: 30, traits: {}, tenueMin: 20, tenueBase: 20, traj: [], liq0: 9000, score: 70, hautR: 45, reste: 1, paliers: { 1: true, 2: true } };
+  E.positions = [p];
+  const n = C.regle({ [p.adr]: { prix: 1.3, liq: 9000 } });   /* +30 apres un plus haut a +45 : l arret suiveur ferme */
+  ok(n === 1 && E.positions.length === 0 && /trailing stop/.test((C.vue().flux[0] || {}).txt), 'la position est fermee par l arret suiveur');
+  ok(E.suites.length === 1 && E.suites[0].cas.sortie === 'arret suiveur' && E.suites[0].pool === '0xps',
+     'et une suite est notee, avec sa piscine et sa raison : « ' + C.enMots(E.suites[0].cas.sortie) + ' »');
+  ok(E.suites[0].echeance > Date.now() + 25 * 60000 && E.suites[0].echeance < Date.now() + 35 * 60000, 'echeance trente minutes plus tard');
+  E.suites[0].echeance = Date.now() - 1000;
+  C.regleLesSuites({ [p.adr]: { prix: 1.6, liq: 9000 } });
+  const m = E.memoire.sentinelle.sortie['arret suiveur'];
+  ok(!!m && Math.abs(m.s / m.n + 30) < 0.01, 'la lecon : vendu a +30, ca valait +60 trente minutes plus tard, -30 pts (« sold too early »)');
+
+  console.log('\n-- une coupe aussi, et la suite sortie des flux est relue par la piscine --');
+  remise([jeton(0), jeton(1)]);
+  const G = C._etat();
+  const t0 = MONDE.jetons[0];
+  const q = { sym: t0.sym, adr: t0.addr, pool: t0.pool, prix0: 1, t0: Date.now() - 6 * 60000,
+    mise: 30, traits: {}, tenueMin: 20, tenueBase: 20, traj: [], liq0: 9000, score: 70 };
+  G.positions = [q];
+  C.regle({ [q.adr]: { prix: 0.6, liq: 9000 } });   /* -40 : la Sentinelle coupe */
+  ok(G.positions.length === 0 && G.suites.length === 1 && G.suites[0].cas.sortie === 'sol coupe', 'la coupe laisse une suite « sol coupe »');
+  /* Trente minutes plus tard : le jeton est sorti des flux, DexScreener se tait, la piscine cote a 0,3. */
+  G.suites[0].echeance = Date.now() - 1000;
+  poolsPageFiltre = [MONDE.jetons[1].addr];
+  t0.dexMuet = true; t0.prix = 0.3;
+  await C.tour();
+  const m2 = G.memoire.sentinelle.sortie['sol coupe'];
+  console.log('   ' + JSON.stringify(m2) + ' · sorties jugees ' + (G.compteurs.sortiesJugees || 0));
+  ok((G.compteurs.sortiesJugees || 0) === 1, 'la suite est jugee grace a la piscine, sans attendre un flux qui ne reviendra pas');
+  ok(!!m2 && m2.s / m2.n > 25, 'et la lecon dit que la coupe a bien fait : vendue a -40, ca valait -70 (+30 pts)');
+  poolsPageFiltre = null;
+}
+
+/* ==========================================================================
+ * LE PLAFOND DE CAPITALISATION EST APPRIS
+ * ======================================================================== */
+async function plafondAppris() {
+  console.log('\n-- le plafond bouge sur l audit de sa regle, dans le bon sens --');
+  remise(sains());
+  const E = C._etat();
+  ok(C.borne('mcMax') === 100000 && C.planchers().mcMax === 100000, 'au depart, 100 000 $, et c est lui que les planchers lisent');
+  E.depuisBornes = C.BORNES ? 24 : 24;
+  E.audit = { 'scout · cap above the buy ceiling': { n: 20, s: 900, montes: 12, effondres: 2 } };   /* 60 % montes : la regle coute */
+  ok(C.revoitLesBornes() === true && C.borne('mcMax') === 125000, 'la regle coute (60 % montes) : le plafond MONTE a 125 000 $ (' + C.borne('mcMax') + ')');
+  E.depuisBornes = 24;
+  E.audit = { 'scout · cap above the buy ceiling': { n: 20, s: -200, montes: 1, effondres: 9 } };    /* 5 % montes : elle protege */
+  ok(C.revoitLesBornes() === true && C.borne('mcMax') === 100000, 'la regle protege (5 % montes) : le plafond BAISSE a 100 000 $ (' + C.borne('mcMax') + ')');
+  E.bornes.mcMax = 50000; E.depuisBornes = 24;
+  ok(C.revoitLesBornes() === false && C.borne('mcMax') === 50000, 'et jamais sous 50 000 $ : la butee est dans le code');
+  E.bornes.mcMax = 1000000; E.depuisBornes = 24;
+  E.audit = { 'scout · cap above the buy ceiling': { n: 20, s: 900, montes: 12, effondres: 2 } };
+  ok(C.revoitLesBornes() === false && C.borne('mcMax') === 1000000, 'ni au-dessus d un million');
+  ok(!(C.vue().bornes || []).some((b) => b.cle === 'mcMax' && b.max !== 1000000), 'la vue porte la borne et ses butees');
 }
 
 /* ==========================================================================
@@ -5344,8 +5453,8 @@ function bornesQuiSeReglent() {
   /* ---- ET CE QUI NE BOUGE PAS ----
    * La liste est courte et elle doit le rester : c'est elle qui separe un
    * reglage de metier d'une garde qu'on abaisse. */
-  ok(Object.keys(C.BORNES).length === 2 && C.BORNES.ageMin && C.BORNES.liqParMise,
-     'DEUX bornes, et deux seulement : les controles de securite et les bornes de mise ne sont '
+  ok(Object.keys(C.BORNES).length === 3 && C.BORNES.ageMin && C.BORNES.liqParMise && C.BORNES.mcMax,
+     'TROIS bornes, et trois seulement : les controles de securite et les bornes de mise ne sont '
      + 'pas dans cette table, donc aucun agent ne peut les atteindre');
   C._pose(E);
 }
@@ -5417,6 +5526,9 @@ function bornesQuiSeReglent() {
   await ombresSansBiais();
   await wardenLitLeCode();
   await poussesMesurees();
+  await rejeuDeLaStrategie();
+  await toutesLesSortiesSontSuivies();
+  await plafondAppris();
   await tranchesAuMiroir();
   await venteAuPrixDuMoment();
   motsQuiCommandent();
