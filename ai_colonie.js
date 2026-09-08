@@ -7058,6 +7058,12 @@ function vue() {
       }).filter((x) => x.par.length),
     },
     tenue: tenueApprise(),
+    /* ---- LES PONTS DU MIROIR ----
+       La liste des monnaies qu'il sait franchir, et ce qu'il a mesure de
+       chacune : c'est ce qui dit, a l'ecran, pourquoi une paire cotee en USDG
+       est achetable et une paire cotee en GLD ne l'est pas. */
+    ponts: miroir && typeof miroir.pontsVus === 'function'
+      ? { liste: Array.isArray(miroir.PONTS) ? miroir.PONTS : [], vus: miroir.pontsVus() } : null,
     /* ---- LES SERVICES, ET CEUX QUI NE MARCHENT PAS ---- */
     services: Object.keys(SERVICES).map((k) => {
       const s = E.services[k] || { essais: 0, reussites: 0, dernier: 0, dernierEchec: null };

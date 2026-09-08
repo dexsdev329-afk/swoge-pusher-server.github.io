@@ -2503,6 +2503,11 @@ async function pairesEthSeulement() {
   ok(!!faux && /quoted in NVDA, not ETH/.test(faux.refus || ''), 'et un NVDA a une AUTRE adresse, sans pont mesure, reste refuse : le pont se cherche par adresse');
   ok(demandes.indexOf('NVDA') >= 0 && demandes.indexOf('GLD') >= 0, 'c est le miroir qui a ete demande, pour chaque monnaie (' + demandes.filter((x, i) => demandes.indexOf(x) === i).join(', ') + ')');
   ok(C.surveilles !== undefined, 'la memoire des paires suit la meme regle');
+  ok(v.ponts === null || v.ponts === undefined, 'sans pontsVus chez le miroir, l ecran ne recoit pas de liste de ponts');
+  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, PONTS: ['USDG', 'NVDA'], pontConnu: () => false,
+                 pontsVus: () => [{ adr: '0x' + 'd0'.repeat(20), sym: 'NVDA', ok: true, liq: 1184565, ver: 'v3', raison: null, t: Date.now() }] });
+  const vp = C.vue().ponts;
+  ok(!!vp && vp.liste.join(',') === 'USDG,NVDA' && vp.vus.length === 1 && vp.vus[0].sym === 'NVDA' && vp.vus[0].ok === true, 'l ecran recoit la liste des ponts et ce qui est mesure : ' + JSON.stringify(vp));
   C.poseMiroir(null);
   remise([jeton(0, { quote: 'NVDA', quoteAdr: '0x' + 'd0'.repeat(20) })]);
   await C.tour();

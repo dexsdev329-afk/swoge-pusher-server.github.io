@@ -373,7 +373,7 @@ async function clePiscine(jeton, pool, fenetre) {
   const mot = (a) => ethers.utils.hexZeroPad(a, 32);
   const tip = await p.getBlockNumber();
   const depuis = Math.max(0, tip - (fenetre || 1000000));
-  const lit = (topics) => p.getLogs({ address: PM4, fromBlock: depuis, toBlock: tip, topics });
+  const lit = (topics, dep) => p.getLogs({ address: PM4, fromBlock: dep === undefined ? depuis : dep, toBlock: tip, topics });
   const paire = norm(ETH4) < norm(jeton) ? [ETH4, jeton] : [jeton, ETH4];
   const parId = !!(pool && /^0x[0-9a-fA-F]{64}$/.test(String(pool)));
   let logs = [];
@@ -381,6 +381,25 @@ async function clePiscine(jeton, pool, fenetre) {
     if (parId) logs = await lit([SUJET_INIT, String(pool).toLowerCase()]);
     if (!logs.length) logs = await lit([SUJET_INIT, null, mot(paire[0]), mot(paire[1])]);
   } catch (e) { throw new Error('pool lookup failed: ' + e.message); }
+  const trouve = choisisLaPiscine(logs, jeton, pool, parId);
+  if (trouve) return trouve;
+  /* ---- UNE PISCINE PLUS VIEILLE QUE LA FENETRE ----
+   * ETH/USDG, 8,9 M$ de liquidite, le pont le plus profond de la chaine :
+   * creee au bloc 41 259 014, seize millions de blocs avant la fenetre du
+   * million. « Not found in the last million blocks » — et le pont n'existait
+   * pas. Par identifiant, une seule reponse est possible : on relit depuis
+   * le premier bloc (263 ms sur le noeud officiel, mesure le 8 septembre). */
+  if (parId && !fenetre) {
+    let vieux = [];
+    try { vieux = await lit([SUJET_INIT, String(pool).toLowerCase()], 0); }
+    catch (e) { throw new Error('pool lookup failed: ' + e.message); }
+    return choisisLaPiscine(vieux, jeton, pool, parId);
+  }
+  return null;
+}
+/** Parmi des evenements Initialize, celui dont la clef recompose l'identifiant
+ *  demande — ou, sans identifiant, le premier dont la clef se recompose. */
+function choisisLaPiscine(logs, jeton, pool, parId) {
   for (const l of logs) {
     if (!l.topics || l.topics.length < 4) continue;
     const c0 = ethers.utils.getAddress('0x' + l.topics[2].slice(26));
@@ -512,7 +531,7 @@ async function pontPour(adr, sym) {
       if (!meilleure || meilleure.liq < PONT_LIQ_MIN) {
         const raison = 'quoted in ' + sym + ', and no ETH bridge deep enough for it'
           + (meilleure ? ' (best ' + Math.round(meilleure.liq) + ' $ of liquidity, ' + PONT_LIQ_MIN + ' needed)' : ' (no ETH pair listed)');
-        PONTS_VUS[k] = { t: Date.now(), route: null, raison };
+        PONTS_VUS[k] = { t: Date.now(), route: null, raison, sym };
         throw new Error(raison);
       }
       const route = await routeDe(adr, meilleure.pool);
@@ -540,6 +559,14 @@ function pontConnu(adr, sym) {
   return false;
 }
 function oublieLesPonts() { for (const k in PONTS_VUS) delete PONTS_VUS[k]; }
+/** Pour l'ecran : la liste des ponts, et ce qu'on sait de chacun. */
+function pontsVus() {
+  return Object.keys(PONTS_VUS).map((adr) => {
+    const v = PONTS_VUS[adr];
+    return { adr, sym: v.sym || null, ok: !!v.route, liq: v.liq || null, ver: v.route ? v.route.ver : null,
+             raison: v.raison || null, t: v.t };
+  });
+}
 
 /** Ce que rend un echange v4, demande au quoteur du protocole lui-meme. */
 async function devis(cleP, zeroVersUn, entree) {
@@ -1673,7 +1700,7 @@ async function ouvreFile(joueur, adr) {
 
 module.exports = {
   /* l'interface du serveur */
-  charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, surTour, allerRetour, pontConnu, effaceJournal,
+  charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, surTour, allerRetour, pontConnu, pontsVus, effaceJournal,
   vendsMaintenant, ouvreMaintenant, remetLesStats,
   /* les reglages, pour l'ecran et pour les essais */
   EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN, POUSSIERE_MULT,

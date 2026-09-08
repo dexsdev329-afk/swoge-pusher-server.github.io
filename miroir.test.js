@@ -126,6 +126,9 @@ class FausseChaine extends ethers.providers.StaticJsonRpcProvider {
     });
     if (t[1] && !t[2]) {
       const p = this.piscines[String(t[1]).toLowerCase()];
+      /* Une piscine VIEILLE n est dans aucune fenetre : seule une lecture
+         depuis le premier bloc la rend, comme sur la chaine. */
+      if (p && p.vieille && parseInt(filtre.fromBlock, 16) !== 0) return [];
       return p ? [log(String(t[1]).toLowerCase(), p.c0, p.c1, p.fee, p.tick, p.hooks)] : [];
     }
     if (!t[1] && t[2] && t[3]) {
@@ -824,6 +827,26 @@ console.log('\n-- une piscine cotee en NVDA : deux jambes, par le pont ETH/NVDA 
     ? [{ pool: '0x' + 'b9'.repeat(20), liq: 7000, quote: M.WETH.toLowerCase(), labels: ['v3'] }, { pool: PB, liq: 1184565, quote: M.WETH.toLowerCase(), labels: ['v3'] }]
     : []);
   ok(M.PONTS.indexOf('NVDA') >= 0 && M.PONTS.indexOf('USDG') >= 0 && M.PONTS.length === 2, 'par defaut, deux ponts : USDG et NVDA (' + M.PONTS.join(', ') + ')');
+  /* ETH/USDG, le pont le plus profond, est plus vieux que la fenetre du
+     million de blocs : « not found in the last million blocks », et pas de
+     pont. Par identifiant, on relit depuis le premier bloc. */
+  const USDG = '0x' + 'd2'.repeat(20);
+  chaine.symboles[USDG] = 'USDG';
+  const kU = [ZERO, USDG, 500, 10, ZERO]; const idU = M._idV4(kU);
+  chaine.piscines[idU.toLowerCase()] = { c0: ZERO, c1: USDG, fee: 500, tick: 10, hooks: ZERO, vieille: true };
+  chaine.filtres = [];
+  const pu = await M._clePiscine(USDG, idU);
+  ok(!!pu && pu.id.toLowerCase() === idU.toLowerCase() && pu.contreEth === true, 'une piscine plus vieille que la fenetre est quand meme retrouvee');
+  ok(chaine.filtres.length === 3 && String(chaine.filtres[2][1]).toLowerCase() === idU.toLowerCase(), 'par une troisieme lecture, depuis le premier bloc, par identifiant — apres la fenetre et la paire (' + chaine.filtres.length + ' lectures)');
+  M._poseSourcePaires(async (j) => j.toLowerCase() === USDG ? [{ pool: idU, liq: 8934887, quote: ZERO, labels: ['v4'] }] : []);
+  const pontU = await M._pontPour(USDG, 'USDG');
+  ok(pontU.route.ver === 'v4' && pontU.liq === 8934887 && pontU.route.monnaie.eth === true, 'et le pont ETH/USDG en v4 se mesure : 8,9 M$');
+  const vus = M.pontsVus();
+  ok(vus.some((x) => x.sym === 'USDG' && x.ok === true && x.ver === 'v4' && x.liq === 8934887), 'l ecran peut lire la liste des ponts mesures : ' + JSON.stringify(vus.find((x) => x.sym === 'USDG')));
+  M._oublieLesPonts();
+  M._poseSourcePaires(async (j) => j.toLowerCase() === NVDA
+    ? [{ pool: '0x' + 'b9'.repeat(20), liq: 7000, quote: M.WETH.toLowerCase(), labels: ['v3'] }, { pool: PB, liq: 1184565, quote: M.WETH.toLowerCase(), labels: ['v3'] }]
+    : []);
   const r = await M._routeDe(JN, idN);
   ok(r.ver === 'v4' && r.monnaie && r.monnaie.sym === 'NVDA' && r.monnaie.eth === false, 'la route est v4, cotee en NVDA');
   ok(r.zeroEstEth === true, 'currency0 est la monnaie (NVDA < JN) : on entre par le cote zero');
