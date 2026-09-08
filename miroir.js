@@ -658,6 +658,23 @@ async function meilleurePlace(jeton, poolColonie, mise) {
   return { choix: essais[0], compare: essais.map((e) => ({ ver: e.route.ver, pool: e.pool, retourPct: pct(e), colonie: e.colonie })) };
 }
 
+/* ---- L'ALLER-RETOUR, POUR LE PAPIER AUSSI ----
+ * « Comment ca se fait qu'il achete, meme le miroir, si c'est un pot de miel ? »
+ * DFC, 8 septembre : le miroir a refuse — « the pool lets you in, not out »,
+ * 0 % de retour — mais le papier avait ouvert, parce que son Cobaye simule le
+ * TRANSFERT vers la piscine, pas l'echange entier. Le papier demande donc ici
+ * le meme devis que le miroir, sur une sonde de la taille d'un ordre
+ * ordinaire : ce que le miroir n'acheterait pas, le papier ne l'ouvre plus.
+ * Rien n'est signe : ce sont les quoteurs qui repondent, comme pour le
+ * miroir. */
+const SONDE_ETH = String(process.env.MIROIR_SONDE_ETH || '0.01');
+async function allerRetour(jeton, pool) {
+  const mise = ethers.utils.parseUnits(SONDE_ETH, 18);
+  const { choix, compare } = await meilleurePlace(jeton, pool, mise);
+  const pct = Math.round(Number(choix.retour.mul(10000).div(mise)) / 100 * 10) / 10;
+  return { pct, min: Math.round(RETOUR_MIN * 100), ver: choix.route.ver, pool: choix.pool, sonde: SONDE_ETH, compare };
+}
+
 /** Le portefeuille d'un miroir, dechiffre le temps d'une signature. */
 function signataire(c) {
   return new ethers.Wallet(dechiffre(c.cle), provider());
@@ -1068,6 +1085,53 @@ function enFile(fn) {
  * n'a rien demande a personne. Chaque miroir est traite a son tour, avec une
  * pause — trente signatures dans le meme bloc, c'est la coupure assuree. */
 function surAchat(t) { return enFile(() => achatFile(t)); }
+/* ==================== LE RATTRAPAGE, A CHAQUE TOUR ====================
+ *
+ * « Regarde pourquoi j ai du vendre FAT a la main, ca doit etre automatique. »
+ *
+ * Le 8 septembre : le papier ferme FAT a 16:25 UTC (duree atteinte, -23 %),
+ * le signal part — et le miroir ne vend pas, sans une ligne de journal. Une
+ * heure et demie plus tard, la vente a la main. Un signal est un evenement :
+ * s il se perd (un processus qui redemarre au mauvais moment, une lecture
+ * qui echoue avant la note), il est perdu pour toujours, et personne ne
+ * revient voir. L etat, lui, ne se perd pas : a chaque tour, la colonie dit
+ * au miroir ce qu elle TIENT. Toute position du miroir que le papier ne
+ * tient plus — et qui n a pas ete ouverte a la main — est une vente
+ * manquee : on la rattrape, et on ecrit pourquoi. La position doit avoir
+ * deux minutes : un achat que la colonie vient de signaler peut ne pas
+ * etre encore dans sa liste au tour ou le miroir l a suivi. */
+const RATTRAPE_MIN_MS = 2 * 60000;
+/* Une vente qui echoue (route perdue, noeud muet) n est pas retentee au tour
+   d apres : un tour fait deux minutes et demie, et soixante lignes de journal
+   seraient pleines en une heure. On attend dix minutes, et on redit pourquoi. */
+const RATTRAPE_ATTENTE_MS = 10 * 60000;
+function surTour(papier) { return enFile(() => rattrapeFile(papier)); }
+async function rattrapeFile(papier) {
+  const tenus = new Set(((papier && papier.ouvertes) || []).map(norm));
+  const ventes = (papier && papier.ventes) || {};
+  const now = Date.now();
+  let n = 0;
+  for (const { c } of actifs()) {
+    for (const [adr, o] of Object.entries(c.ouvertes || {})) {
+      if (o.manuel || tenus.has(adr)) continue;
+      if (now - (o.t || 0) < RATTRAPE_MIN_MS) continue;
+      if (o.rattrapeApres && now < o.rattrapeApres) continue;
+      const quand = ventes[adr];
+      const h = quand ? new Date(quand).toISOString().slice(11, 16) + ' UTC' : null;
+      note(c, 'Catching up: the colony no longer holds ' + (o.sym || adr) + (h ? ' (it sold at ' + h + ')' : '')
+            + ' and this mirror had missed the sale — selling now', { adr });
+      try { await vendPosition(c, adr, o); n++; }
+      catch (e) {
+        o.rattrapeApres = Date.now() + RATTRAPE_ATTENTE_MS;
+        note(c, 'Could not catch up on ' + (o.sym || adr) + ': ' + resume(e) + ' — will try again in '
+              + Math.round(RATTRAPE_ATTENTE_MS / 60000) + ' min', { adr });
+      }
+      await dors(PAUSE_MS);
+    }
+  }
+  if (n) sauve();
+  return n;
+}
 function surVente(t) { return enFile(() => venteFile(t)); }
 
 async function achatFile(t) {
@@ -1146,6 +1210,9 @@ async function achetePosition(c, t) {
        lu sur le solde avant et apres. En essai, la mise seule. */
     cout: r.coutReel ? ethers.utils.formatUnits(r.coutReel, 18) : null,
     jetons: r.sortie.toString(), t: Date.now(), simule: r.simule, tx: r.tx || null,
+    /* Une position ouverte a la main n a pas de jumelle de papier : le
+       rattrapage ne doit pas la prendre pour une vente manquee. */
+    manuel: !!t.manuel,
   };
   /* Le journal dit la PART, et d'ou elle vient : sans ca, « 0,0031 ETH » ne
      laisse pas savoir si le miroir a suivi le Banquier ou son propre repli. */
@@ -1320,7 +1387,7 @@ async function ouvreFile(joueur, adr) {
 
 module.exports = {
   /* l'interface du serveur */
-  charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, effaceJournal,
+  charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, surTour, allerRetour, effaceJournal,
   vendsMaintenant, ouvreMaintenant, remetLesStats,
   /* les reglages, pour l'ecran et pour les essais */
   EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN, POUSSIERE_MULT,

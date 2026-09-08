@@ -3901,7 +3901,7 @@ const FAMILLES = [
   [/absent from DexScreener|absent de DexScreener/, 'absent from DexScreener'],
   [/^missing:|^il manque/, 'missing socials'],
   [/score too low|note trop basse/, 'score too low'],
-  [/exit is blocked|la sortie est bloquee/, 'the exit is blocked'],
+  [/exit is blocked|la sortie est bloquee|lets you in, not out/, 'the exit is blocked'],
   [/holder holds|porteur tient/, 'one holder holds too much'],
   [/nobody holds|aucune ne le garde/, 'nobody holds it'],
   [/single wallet makes|portefeuille fait/, 'one wallet makes most of the volume'],
@@ -4334,7 +4334,7 @@ function cibleDeVente(t) {
   return null;
 }
 
-async function simuleVente(t) {
+async function simuleTransfert(t) {
   const ch = t.chaine || {};
   const cob = (ch.cobayes || []).slice(0, 3);
   if (!ch.vu || !cob.length || !t.pool)
@@ -4378,10 +4378,64 @@ async function simuleVente(t) {
            raison: refus < vus ? null : (dernier || 'every transfer to the ' + cible.via + ' is refused') };
 }
 
+/* ---- ET L'ECHANGE ENTIER, PAR LE QUOTEUR DU MIROIR ----
+ * « Comment ca se fait qu'il achete, meme le miroir, si c'est un pot de
+ *   miel ? »
+ * DFC, 8 septembre : « Skipped DFC: selling straight back would return 0 %
+ * of the stake — the pool lets you in, not out. » Le miroir a refuse ; le
+ * papier avait ouvert. Les deux epreuves ne regardent pas la meme chose : le
+ * Cobaye simule le TRANSFERT du jeton vers la piscine (ce qu'un contrat
+ * piege refuse), le miroir demande au quoteur ce que rendrait la VENTE
+ * immediate de ce qu'il va recevoir (ce qu'une piscine a hook, ou une taxe
+ * qui ramene la sortie a zero, refuse). Un piege qui laisse passer le
+ * transfert et vide l'echange passait le papier et pas le miroir — et le
+ * papier comptait ensuite un « resultat » que personne ne pouvait toucher.
+ *
+ * Le Cobaye demande donc aussi l'aller-retour, sur une sonde de la taille
+ * d'un ordre ordinaire, quand le miroir est la pour le chiffrer. Sous le
+ * seuil du miroir, le papier n'ouvre pas, avec la meme phrase. Et sur un
+ * pool V4 sans teneur de marche — la ou le transfert n'etait « pas
+ * testable » — l'aller-retour, lui, repond : l'epreuve devient jouable la
+ * ou elle ne l'etait pas.
+ *
+ * Ce que ca ne prouve toujours pas : une liste noire qui se referme apres
+ * l'achat, une liquidite retiree plus tard. Un devis dit ce que la piscine
+ * rendrait MAINTENANT, rien de plus. Le quoteur qui ne repond pas ne
+ * condamne personne : le transfert garde alors son verdict, et la raison
+ * est ecrite. */
+const RETOUR_DELAI_MS = 15000;
+async function allerRetourMiroir(t) {
+  if (!miroir || typeof miroir.allerRetour !== 'function' || !t.pool || !t.addr) return null;
+  let minuteur = null;
+  try {
+    const r = await Promise.race([
+      miroir.allerRetour(t.addr, t.pool),
+      new Promise((_, rej) => { minuteur = setTimeout(() => rej(new Error('the quoter took more than ' + (RETOUR_DELAI_MS / 1000) + ' s')), RETOUR_DELAI_MS); if (minuteur.unref) minuteur.unref(); }),
+    ]);
+    if (!r || typeof r.pct !== 'number' || !isFinite(r.pct) || typeof r.min !== 'number') return { raison: 'the quoter gave no figure' };
+    return { pct: r.pct, min: r.min, ver: r.ver || null, pool: r.pool || null, sonde: r.sonde || null };
+  } catch (e) { return { raison: String((e && e.message) || e).slice(0, 80) }; }
+  finally { if (minuteur) clearTimeout(minuteur); }
+}
+async function simuleVente(t) {
+  const a = await simuleTransfert(t);
+  const rt = await allerRetourMiroir(t);
+  if (!rt) return a;
+  a.retour = rt;
+  if (rt.pct === undefined) return a;           /* pas de devis : le transfert decide seul */
+  if (!a.teste) { a.teste = true; a.essais = 0; a.refus = 0; a.passe = true; a.raison = null; }
+  if (rt.pct < rt.min) { a.passe = false; a.raison = 'selling straight back would return ' + rt.pct + '% of the stake'; }
+  return a;
+}
+
 function vetoCobaye(t) {
   const e = t.epreuve;
   if (!e || !e.teste) return null;        /* non testable n'est pas coupable */
   if (e.passe) return null;
+  const rt = e.retour;
+  if (rt && rt.pct !== undefined && rt.pct < rt.min)
+    return 'the pool lets you in, not out: selling straight back would return ' + rt.pct + '% of the stake ('
+         + rt.min + '% needed, quoted on Uniswap ' + (rt.ver || '?') + ')';
   return 'the exit is blocked: ' + e.refus + '/' + e.essais
        + ' holders cannot send the token to the ' + (e.via || 'pool');
 }
@@ -4576,6 +4630,19 @@ function suitLeMiroir(s) {
   } catch (e) { console.warn('[miroir]', e && e.message); }
 }
 
+/* A la fin de chaque tour, ce que le papier tient et ce qu il a vendu : le
+   miroir s y compare et rattrape une vente manquee. Voir `surTour` dans
+   miroir.js. Jamais bloquant, jamais jete : une erreur de miroir ne doit pas
+   toucher la colonie. */
+function rattrapeLeMiroir() {
+  if (!miroir || typeof miroir.surTour !== 'function') return;
+  try {
+    const ventes = {};
+    for (const x of (E.signaux || [])) if (x.k === 'vente' && x.adr && !ventes[x.adr]) ventes[x.adr] = x.t;
+    const p = miroir.surTour({ ouvertes: E.positions.map((x) => x.adr), ventes });
+    if (p && p.catch) p.catch((e) => console.warn('[miroir] rattrapage :', e && e.message));
+  } catch (e) { console.warn('[miroir] rattrapage :', e && e.message); }
+}
 function signal(s) {
   if (!Array.isArray(E.signaux)) E.signaux = [];
   s.t = Date.now();
@@ -5572,7 +5639,7 @@ function alertes() {
     [/holder holds|porteur tient/, 'no variable: Whale rule, in the code'],
     [/nobody holds|aucune ne le garde/, 'no variable: Whale rule, in the code'],
     [/honeypot|tax|proprietaire|taxe|self-destruct|auto-destruction/, 'no variable: contract safety'],
-    [/exit is blocked|la sortie est bloquee/, 'no variable: the Cobaye\'s trial'],
+    [/exit is blocked|la sortie est bloquee|lets you in, not out/, 'no variable: the Cobaye\'s trial'],
   ];
   const reglageDe = (k) => {
     const r = REGLAGES.find((x) => x[0].test(k));
@@ -6801,6 +6868,7 @@ async function tour() {
     E.dernierTour = Date.now();
     E.derniereErreur = null;
     sauve();
+    rattrapeLeMiroir();
   } catch (e) {
     /* On DIT que la lecture a echoue. Rien n'est fabrique pour combler : sans
        prix, il n'y a ni ouverture ni reglement, et l'ecran doit le montrer

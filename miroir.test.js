@@ -437,6 +437,56 @@ console.log('\n-- la barre se remet a zero, et rien d autre --');
   await jete(() => M.remetLesStats('0x' + '99'.repeat(20)), /no mirror wallet/, 'sans miroir, refus dit');
 }
 
+console.log('\n-- une vente manquee est rattrapee au tour suivant --');
+{
+  /* « Regarde pourquoi j ai du vendre FAT a la main, ca doit etre automatique. » */
+  const AUTRE = '0x' + 'bb'.repeat(20);   /* le second jeton tenu, ouvert plus haut */
+  const e0 = await M.etat(JOUEUR, false);
+  ok(e0.ouvertes.some((o) => o.adr === JETON), 'TEST est tenu par le miroir');
+  const c1 = M._fiche(JOUEUR);
+  /* Le scenario precedent l a rouverte A LA MAIN ; ici on la veut suivie de la colonie, comme FAT l etait. */
+  c1.ouvertes[JETON].manuel = false;
+  /* Le papier tient encore TEST : rien a rattraper. */
+  eq(await M.surTour({ ouvertes: [JETON, AUTRE], ventes: {} }), 0, 'tant que le papier tient le jeton, le tour ne vend rien');
+  /* Le papier ne le tient plus, mais l achat a moins de deux minutes : on attend. */
+  eq(await M.surTour({ ouvertes: [AUTRE], ventes: { [JETON]: Date.now() } }), 0, 'une position de moins de deux minutes n est pas rattrapee : l achat peut etre en vol');
+  c1.ouvertes[JETON].t = Date.now() - 3 * 60000;
+  const avant = (await M.etat(JOUEUR, false)).bilan.trades;
+  eq(await M.surTour({ ouvertes: [AUTRE], ventes: { [JETON]: Date.now() - 90 * 60000 } }), 1, 'le papier a vendu il y a une heure et demie et le miroir l a manque : rattrape');
+  const e1 = await M.etat(JOUEUR, false);
+  ok(!e1.ouvertes.some((o) => o.adr === JETON) && e1.ouvertes.some((o) => o.adr === AUTRE), 'TEST est vendu, AUTRE reste');
+  eq(e1.bilan.trades, avant + 1, 'et compte comme une vente');
+  ok(e1.journal.some((j) => /Catching up: the colony no longer holds TEST/.test(j.txt) && /it sold at \d\d:\d\d UTC/.test(j.txt)),
+     'le journal dit pourquoi, et quand le papier avait vendu : « ' + (e1.journal.find((j) => /Catching up/.test(j.txt)) || {}).txt + ' »');
+  /* Une vente qui echoue n est pas retentee a chaque tour : dix minutes d attente, et le journal le dit. */
+  const PERDU = '0x' + 'cc'.repeat(20);
+  c1.ouvertes[PERDU] = { sym: 'LOST', entree: '0.01', jetons: '1000', pool: null, cle: null, t: Date.now() - 3 * 60000, manuel: false };
+  const nJ = (await M.etat(JOUEUR, false)).journal.length;
+  const litLogs = chaine.getLogs;
+  chaine.getLogs = async () => { throw new Error('node down'); };   /* le noeud est muet : la clef de piscine ne se retrouve pas */
+  eq(await M.surTour({ ouvertes: [AUTRE], ventes: {} }), 0, 'le noeud est muet : la vente echoue, rien n est compte');
+  chaine.getLogs = litLogs;
+  ok(!!c1.ouvertes[PERDU] && c1.ouvertes[PERDU].rattrapeApres > Date.now() + 9 * 60000, 'la position reste, avec une attente de dix minutes');
+  const jE = (await M.etat(JOUEUR, false)).journal;
+  ok(jE.some((j) => /Could not catch up on LOST/.test(j.txt) && /try again in 10 min/.test(j.txt)), 'et le journal dit pourquoi, et quand il reessaie : « ' + (jE.find((j) => /LOST/.test(j.txt)) || {}).txt + ' »');
+  const nJ2 = jE.length;
+  eq(await M.surTour({ ouvertes: [AUTRE], ventes: {} }), 0, 'le tour suivant ne retente pas, meme le noeud revenu');
+  eq((await M.etat(JOUEUR, false)).journal.length, nJ2, 'et n ecrit rien de plus');
+  ok(nJ2 - nJ <= 2, 'un echec, deux lignes au plus (' + (nJ2 - nJ) + ')');
+  delete c1.ouvertes[PERDU];
+  /* Une position ouverte a la main n a pas de jumelle de papier : elle n est jamais rattrapee. */
+  M._poseSourcePaires(async (j) => j.toLowerCase() === JETON ? [{ pool: POOL, liq: 5000, quote: M.ETH4.toLowerCase(), labels: ['v4'] }] : []);
+  await M.ouvreMaintenant(JOUEUR, JETON);
+  M._poseSourcePaires(async () => []);
+  c1.ouvertes[JETON].t = Date.now() - 3 * 60000;
+  eq(await M.surTour({ ouvertes: [], ventes: {} }), 0, 'ouverte a la main, elle reste : le papier n a jamais tenu ce jeton');
+  ok(!!c1.ouvertes[JETON] && c1.ouvertes[JETON].manuel === true, 'et elle est marquee comme telle');
+  /* On la referme pour la suite du banc, qui attend TEST suivi de la colonie. */
+  await M.vendsMaintenant(JOUEUR, JETON);
+  await M.surAchat({ sym: 'TEST', adr: JETON, pool: POOL, part: 0.1 });
+  ok(!!c1.ouvertes[JETON] && !c1.ouvertes[JETON].manuel, 'rouverte par la colonie pour la suite');
+}
+
 console.log('\n-- le miroir suit la vente --');
 {
   const suivis = await M.surVente({ adr: JETON });
@@ -446,7 +496,7 @@ console.log('\n-- le miroir suit la vente --');
   ok(/Sold TEST/.test(e.journal[0].txt), 'et le journal dit ce qui a ete vendu : « ' + e.journal[0].txt + ' »');
   /* La barre personnelle : profit, taux, trades, meilleur, ouvert — calcules
      sur les ventes, en ETH. */
-  eq(e.bilan.trades, 1, 'le bilan, remis a zero juste avant, compte cette vente');
+  eq(e.bilan.trades, 3, 'le bilan, remis a zero avant le rattrapage, compte le rattrapage, la fermeture a la main et cette vente');
   eq(e.bilan.ouvertes, 1, 'et une position encore ouverte');
   ok(typeof e.bilan.profitEth === 'string' && isFinite(Number(e.bilan.profitEth)),
      'le profit est un chiffre en ETH : ' + e.bilan.profitEth);
@@ -465,7 +515,7 @@ console.log('\n-- stop : on vend d abord, on balaie ensuite --');
   eq(r.rates.length, 0, 'sans echec');
   ok(!(await M.etat(JOUEUR, false)).actif, 'le miroir est arrete');
   eq((await M.etat(JOUEUR, false)).ouvertes.length, 0, 'et ne tient plus rien');
-  eq((await M.etat(JOUEUR, false)).bilan.trades, 2, 'la vente du stop entre dans le bilan (2 trades depuis la remise a zero)');
+  eq((await M.etat(JOUEUR, false)).bilan.trades, 4, 'la vente du stop entre dans le bilan (4 trades depuis la remise a zero)');
   eq((await M.etat(JOUEUR, false)).bilan.ouvertes, 0, 'et plus rien d ouvert');
   eq(chaine.envois.length, avant, 'toujours rien sur la chaine : en mode d essai, stop ne vend ni ne balaie pour de vrai');
   ok(/dry run/i.test((await M.etat(JOUEUR, false)).journal[0].txt), 'et il le DIT plutot que de laisser croire au balayage');
@@ -614,6 +664,16 @@ console.log('\n-- la meilleure place se mesure : v2 quand elle rend autant pour 
   const seule = await M._meilleurePlace(JM, poolDe(JM), W('0.005'));
   eq(seule.compare.length, 1, 'sans autre place, celle de la colonie');
   eq(seule.choix.route.ver, 'v4', 'sur v4');
+  /* L aller-retour que le papier demande : la meme mesure que le miroir, sur une sonde. */
+  chaine.sortieVente = W('0.0098');
+  const ar = await M.allerRetour(JM, poolDe(JM));
+  eq(ar.pct, 98, 'l aller-retour pour le papier : 98 % de retour sur une sonde de ' + ar.sonde + ' ETH');
+  eq(ar.min, Math.round(M.RETOUR_MIN * 100), 'et il porte le seuil du miroir (' + ar.min + ' %)');
+  eq(ar.ver, 'v4', 'et la place chiffree');
+  chaine.sortieVente = W('0.00001');
+  const ferme = await M.allerRetour(JM, poolDe(JM));
+  ok(ferme.pct < 1 && ferme.pct < ferme.min, 'une piscine qui laisse entrer et pas sortir : ' + ferme.pct + ' % de retour');
+  chaine.sortieVente = null;
   /* Et l achat suivi prend la v2, et le journal le dit. */
   M._poseSourcePaires(async (j) => j.toLowerCase() === JM ? [{ pool: PV2, liq: 5000, quote: M.WETH.toLowerCase(), labels: ['v2'] }] : []);
   const J7 = '0x' + '88'.repeat(19) + '02';

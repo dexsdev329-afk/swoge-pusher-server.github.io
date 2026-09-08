@@ -3018,6 +3018,17 @@ async function laMainDuProprietaire() {
   ok(C.tiensParMain.length === 3 && (() => { try { C.tiensParMain('0x' + 'a8'.repeat(20), 30); return false; } catch (e) { return /no open paper position/.test(e.message); } })(),
      'tenir un jeton qu on ne tient pas est refuse, et dit pourquoi');
 
+  console.log('\n-- a chaque tour, la colonie dit au miroir ce qu elle tient --');
+  remise(sains());
+  let recu = null;
+  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, surTour: async (x) => { recu = x; return 0; } });
+  await C.tour();
+  const tenues = C._etat().positions.map((p) => p.adr);
+  ok(!!recu && Array.isArray(recu.ouvertes) && JSON.stringify(recu.ouvertes) === JSON.stringify(tenues),
+     'le miroir recoit la liste des positions de papier (' + tenues.length + ') a la fin du tour');
+  ok(!!recu && recu.ventes && typeof recu.ventes === 'object', 'et les ventes signalees, par jeton');
+  C.poseMiroir(null);
+
   console.log('\n-- fermer a la main : au prix du moment, et le signal part vers les miroirs --');
   remise(sains());
   const F = C._etat();
@@ -3710,6 +3721,50 @@ async function epreuveDeVente() {
   /* ---- SANS DETENTEUR CONNU, IL N'Y A PERSONNE A QUI DEMANDER ---- */
   const vide = await C.simuleVente({ addr: '0xa', pool: '0xb', chaine: { vu: false } });
   ok(vide.teste === false, 'sans lecture de chaine, l epreuve ne peut pas etre jouee');
+
+  /* ---- L'ALLER-RETOUR DU MIROIR, POUR LE PAPIER ----
+   * « Comment ca se fait qu'il achete, meme le miroir, si c'est un pot de
+   *   miel ? » DFC : le miroir refuse (0 % de retour), le papier ouvre. Le
+   * Cobaye demande donc au miroir le meme devis : ce que le miroir
+   * n'acheterait pas, le papier ne l'ouvre pas. */
+  console.log('\n-- le Cobaye demande aussi l aller-retour du miroir --');
+  remise([jeton(0, { piege: true }), jeton(1)]);
+  const cob2 = ['0x' + '1'.repeat(40), '0x' + '2'.repeat(40)];
+  const bon2 = { addr: MONDE.jetons[1].addr, pool: MONDE.jetons[1].pool, chaine: { vu: true, cobayes: cob2 } };
+  const mauvais2 = { addr: MONDE.jetons[0].addr, pool: MONDE.jetons[0].pool, chaine: { vu: true, cobayes: cob2 } };
+  const surV4 = { addr: MONDE.jetons[1].addr, pool: '0x' + 'ab'.repeat(32), chaine: { vu: true, cobayes: cob2 } };
+  let devis = { pct: 0.1, min: 60, ver: 'v4', pool: 'p' };
+  const demandes = [];
+  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, allerRetour: async (adr, pool) => { demandes.push({ adr, pool }); return devis; } });
+  const dfc = await C.simuleVente(bon2);
+  console.log('   DFC : ' + JSON.stringify(dfc));
+  ok(dfc.teste && !dfc.passe && dfc.retour && dfc.retour.pct === 0.1 && dfc.refus === 0,
+     'les cobayes passent le transfert, mais la vente rendrait 0,1 % : l epreuve echoue');
+  ok(demandes.length === 1 && demandes[0].adr === bon2.addr && demandes[0].pool === bon2.pool, 'le devis est demande sur ce jeton et sa piscine');
+  ok(/^the pool lets you in, not out: selling straight back would return 0\.1% of the stake \(60% needed, quoted on Uniswap v4\)$/.test(C.vetoCobaye({ epreuve: dfc }) || ''),
+     'et le veto le dit comme le miroir : « ' + C.vetoCobaye({ epreuve: dfc }) + ' »');
+  ok(C._familleRefus(C.vetoCobaye({ epreuve: dfc })) === 'the exit is blocked', 'dans l audit, c est la famille de la sortie bloquee');
+  devis = { pct: 98.2, min: 60, ver: 'v4', pool: 'p' };
+  const sainRt = await C.simuleVente(bon2);
+  ok(sainRt.teste && sainRt.passe && sainRt.retour.pct === 98.2 && !C.vetoCobaye({ epreuve: sainRt }), 'a 98 %, elle passe, et le chiffre est garde');
+  /* Sur un pool V4 sans teneur de marche, le transfert n etait pas testable : l aller-retour, lui, repond. */
+  const v4 = await C.simuleVente(surV4);
+  ok(v4.teste && v4.passe && v4.essais === 0 && v4.retour.pct === 98.2, 'un pool V4 sans teneur, non testable par transfert, est teste par l aller-retour : ' + JSON.stringify(v4));
+  devis = { pct: 0, min: 60, ver: 'v4', pool: 'p' };
+  const v4ferme = await C.simuleVente(surV4);
+  ok(v4ferme.teste && !v4ferme.passe && /lets you in, not out/.test(C.vetoCobaye({ epreuve: v4ferme }) || ''),
+     'et il bloque un pool V4 qui ne laisse pas sortir — la ou le transfert ne voyait rien');
+  /* Le quoteur qui ne repond pas ne condamne personne, et le transfert garde son verdict. */
+  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, allerRetour: async () => { throw new Error('no venue answers for this token'); } });
+  const sansDevis = await C.simuleVente(bon2);
+  ok(sansDevis.teste && sansDevis.passe && /no venue/.test(sansDevis.retour.raison), 'sans devis, le transfert decide seul, et la raison est gardee : « ' + sansDevis.retour.raison + ' »');
+  const piegeSansDevis = await C.simuleVente(mauvais2);
+  ok(piegeSansDevis.teste && !piegeSansDevis.passe && /exit is blocked/.test(C.vetoCobaye({ epreuve: piegeSansDevis })), 'et le piege du transfert reste un piege');
+  const v4sans = await C.simuleVente(surV4);
+  ok(v4sans.teste === false && !C.vetoCobaye({ epreuve: v4sans }), 'sans devis ni teneur, un pool V4 reste non testable — et non coupable');
+  C.poseMiroir(null);
+  const sansMiroir = await C.simuleVente(bon2);
+  ok(sansMiroir.teste && sansMiroir.passe && sansMiroir.retour === undefined, 'sans miroir, rien ne change');
 
   /* ---- ET DANS UN TOUR COMPLET ----
    * Le piege passe GoPlus (« propre »), passe la chaine (130 porteurs),
