@@ -1539,9 +1539,35 @@ async function lisOhlcv(pool) {
 /* Un SECOND avis sur le prix. Il ne dit pas qui se trompe : il dit a quel
    point le marche est mince ou rapide — ce qu'un agent doit savoir avant
    d'entrer. */
+/* ==========================================================================
+ * UNE POSITION SE COTE DANS SA PISCINE, PAS DANS LA PLUS PROFONDE
+ *
+ * Cette lecture rendait le prix de la piscine la PLUS LIQUIDE du jeton. Pour
+ * choisir un jeton, c'est le bon chiffre. Pour recoter une position ouverte,
+ * c'est le mauvais : le miroir, lui, vend dans la piscine ou il a achete —
+ * `routeDePosition` s'en tient a celle-la, et c'est cette piscine-la qui
+ * fixera ce qu'il touche. Quand un jeton en a deux, le papier mesurait donc
+ * un rendement dans une piscine et le miroir encaissait dans une autre.
+ *
+ * Mesure le 9 septembre : sur les 22 jetons du tour, AUCUN n'a deux piscines
+ * — a leur age, ils n'en ont qu'une, et le defaut ne se voit pas. Mais sur
+ * MET, un jeton etabli, les deux piscines cotent 0,000565 et 0,001619 : 187 %
+ * d'ecart. Un jeton qui recoit une seconde piscine pendant qu'on le tient
+ * ferait donc apparaitre, d'un tour a l'autre, un mouvement de prix qui n'a
+ * jamais eu lieu — et la coupe de la Sentinelle part a -35 %. Rare, et cher
+ * quand ca tombe : la position se vend a perte pour une piscine qu'on ne
+ * tradait meme pas.
+ *
+ * `opt.pool` demande donc la cote D'UNE piscine precise. Si elle n'est plus
+ * servie, on retombe sur la plus profonde et on le DIT (`autrePiscine`) :
+ * changer de piscine sans le dire, c'est exactement ce qui produisait le
+ * faux mouvement. Et cette lecture-la ne va pas dans le cache commun : elle
+ * repond a une question particuliere, et le reste de la colonie pose l'autre.
+ * ======================================================================== */
 async function lisDex(addr, opt) {
   /* `frais` : on veut le cours du MOMENT, pas celui du cache. C'est ce que
      demande une vente — voir la recote des positions dans le tour. */
+  const surPiscine = (opt && opt.pool) ? String(opt.pool).toLowerCase() : null;
   const c = (opt && opt.frais) ? null : frais(CACHE.dex, addr, TTL_DEX); if (c !== null) return c;
   try {
     const j = await json('https://api.dexscreener.com/latest/dex/tokens/' + addr);
@@ -1549,14 +1575,23 @@ async function lisDex(addr, opt) {
     noteService('dex', true);
     if (!p.length) return garde(CACHE.dex, addr, { vu: false });
     p.sort((a, b) => nn(b.liquidity && b.liquidity.usd) - nn(a.liquidity && a.liquidity.usd));
-    const q = p[0], i = q.info || {}, bt = q.baseToken || {};
+    /* La piscine demandee si elle est la, la plus profonde sinon. */
+    const voulue = surPiscine ? p.find((x) => String(x.pairAddress || '').toLowerCase() === surPiscine) : null;
+    const q = voulue || p[0], i = q.info || {}, bt = q.baseToken || {};
+    /* Une cote sur une piscine nommee ne remplace pas la cote du jeton dans le
+       cache commun : deux questions differentes, deux reponses differentes. */
+    const range = (v) => (surPiscine ? v : garde(CACHE.dex, addr, v));
     /* ---- IL EN DIT BEAUCOUP PLUS QU'UN PRIX ----
      * Cette reponse porte le pool, l'age, la liquidite, les compteurs d'achats
      * et les reseaux sociaux. Tant qu'on n'en lisait que le prix, retrouver un
      * jeton a partir de sa seule adresse — ce que rendent les deux flux de
      * DexScreener — demandait un appel de plus. Tout est deja la. */
-    return garde(CACHE.dex, addr, {
+    return range({
       vu: true, prix: nn(q.priceUsd), pools: p.length,
+      /* Vrai quand la piscine demandee n'est plus servie : le prix vient d'une
+         AUTRE, et un rendement calcule dessus ne dit pas ce que la position
+         vaut. Celui qui a pose la question doit pouvoir refuser la reponse. */
+      autrePiscine: !!(surPiscine && !voulue),
       socials: (i.socials || []).length + (i.websites || []).length,
       /* Les liens eux-memes, pas seulement leur nombre : « affiche les reseaux
          s'il y en a ». Bornes, et on ne garde que http(s) — une reponse de
@@ -3615,7 +3650,7 @@ async function fermeParMain(adr, par) {
   const p = E.positions.find((x) => x.adr === a);
   if (!p) throw new Error('no open paper position on that token');
   let d = null;
-  try { d = await lisDex(a, { frais: true }); } catch (e) { d = null; }
+  try { d = await lisDex(a, { frais: true, pool: p.pool || null }); } catch (e) { d = null; }
   const prix = (d && d.vu && d.prix > 0) ? d.prix : prixFrais(a);
   if (!(prix > 0)) throw new Error('no fresh price to close ' + (p.sym || a) + ' at: try again in a minute');
   const now = Date.now();
@@ -4570,6 +4605,10 @@ function ouvre(t) {
       ? 'its trait curves peak at ' + tenue.min + ' min (weight ' + tenue.poids + ')'
       : (tenue.appris ? 'duration learned by the Closer' : 'default duration'),
     mcAchat: Math.round(t.mc || 0), liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null,
+    /* L'offre implicite au moment de l'achat : la capitalisation divisee par
+       le prix, c'est-a-dire le nombre de jetons. C'est elle qui relie les
+       deux chiffres — voir `capDe`. */
+    offre0: (t.mc > 0 && t.prix > 0) ? t.mc / t.prix : 0,
     dexVu: !!(t.dex && t.dex.vu),
     /* Le logo est GARDE avec la position, pas relu a l'affichage : elle vit
        des heures apres la lecture qui l'a donne, et le flux des pools ne sert
@@ -4767,7 +4806,8 @@ function texteSignal(s) {
     + (s.comment ? echHtml(s.comment) + '\n' : '')
     /* La capitalisation de la vente et celle de l'achat, et l'age du prix :
        c'est ce qui permet de contredire un « +1 % » depuis DexScreener. */
-    + (s.mc ? 'Market cap ' + usd(s.mc) + (s.mcAchat ? ' (bought at ' + usd(s.mcAchat) + ')' : '') + '\n' : '')
+    + (s.mc ? 'Market cap ' + usd(s.mc) + (s.mcAchat ? ' (bought at ' + usd(s.mcAchat) + ')' : '')
+            + (s.mcSource ? ' · the source says ' + usd(s.mcSource) + ' for the same price' : '') + '\n' : '')
     + (s.prixSrc ? 'Price read ' + (s.prixAge === null || s.prixAge === undefined ? 'at an unknown age' : s.prixAge + ' s before the sale')
                    + ' (' + echHtml(s.prixSrc) + ')\n' : '')
     + echHtml(s.adr) + '\n'
@@ -4895,6 +4935,61 @@ function dollarsCourts(v) {
   v = Number(v) || 0;
   return v >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(Math.round(v));
 }
+/* ==========================================================================
+ * LA CAPITALISATION VA AVEC LE PRIX, OU ELLE NE VAUT RIEN
+ *
+ * « Fais en sorte que l'affichage du market cap soit plus precis ; parfois
+ *   ca nous fait vendre a perte, le decalage. »
+ *
+ * Mesure le 9 septembre sur les jetons du tour. L'OFFRE IMPLICITE — la
+ * capitalisation divisee par le prix, c'est-a-dire le nombre de jetons —
+ * tombe au meme chiffre chez GeckoTerminal et chez DexScreener cinq fois
+ * sur six ; la sixieme s'ecarte de 21 % ($PHUB : 8,29e8 contre 1,00e9).
+ * Sur MECHA, les deux sources donnent le meme prix a 0,7 % pres et des
+ * capitalisations qui different de 22 %. Sur MET, elles ne parlent meme pas
+ * de la meme piscine : 187 % d'ecart sur le prix.
+ *
+ * Consequence, sous les yeux du lecteur : une position achetee sur le
+ * chiffre d'une source et affichee sur celui de l'autre montre un ecart de
+ * capitalisation qui n'est PAS un mouvement de prix — alors que le
+ * pourcentage ecrit juste a cote, lui, vient du prix. Les deux se
+ * contredisent, et c'est le pourcentage qui a raison : c'est lui qui compte
+ * l'argent. Un lecteur qui fait confiance a la capitalisation croit gagner
+ * quand il perd, et l'inverse.
+ *
+ * On cesse donc de melanger. La capitalisation ecrite a cote d'un rendement
+ * est TOUJOURS celle qui va avec le prix qui a servi a le calculer :
+ * l'offre lue a l'achat (`mcAchat / prix0`, un rapport MESURE, pas une
+ * invention) multipliee par le prix du moment. Par construction,
+ * `mc / mcAchat` vaut exactement `1 + r/100` : le pourcentage se verifie
+ * sur les deux chiffres qu'on montre, ce qui n'etait pas le cas.
+ *
+ * Et quand la source annonce, elle, une autre capitalisation pour ce meme
+ * prix, on ne l'efface pas : son chiffre est ecrit a cote avec l'ecart.
+ * Soit l'offre a bouge — un mint, un burn —, soit la source se trompe ;
+ * dans les deux cas c'est un renseignement sur le jeton, pas un detail de
+ * mise en forme. Ce qu'on refuse, c'est de le faire passer pour un
+ * mouvement de prix.
+ * ======================================================================== */
+const CAP_ECART = 0.1;      /* au-dela de dix pour cent, la source est citee */
+function offreDe(p) {
+  if (p.offre0 > 0) return p.offre0;
+  /* Une position ouverte avant ce calcul porte quand meme de quoi le faire. */
+  return (p.mcAchat > 0 && p.prix0 > 0) ? p.mcAchat / p.prix0 : 0;
+}
+function capDe(p, prix) {
+  const o = offreDe(p);
+  return (o > 0 && prix > 0) ? o * prix : 0;
+}
+/** Le chiffre de la source, s'il dit autre chose que le prix pour ce meme
+ *  instant — sinon rien : repeter le meme nombre n'apprend rien. */
+function capQuiDiverge(p, prix, mcSource) {
+  const c = capDe(p, prix);
+  if (!(c > 0) || !(mcSource > 0)) return null;
+  const f = mcSource / c;
+  return (f > 1 + CAP_ECART || f < 1 - CAP_ECART) ? { mc: mcSource, part: Math.round(f * 100) } : null;
+}
+
 function ferme(p, prix, quand, comment) {
   let r = (prix - p.prix0) / p.prix0 * 100;
   let aberrant = null;
@@ -4997,11 +5092,20 @@ function ferme(p, prix, quand, comment) {
    * repere que si la vente dit sur quel chiffre elle s'est reglee. */
   const cote = (comment && comment.cote) || null;
   const age = (cote && cote.lu) ? Math.max(0, Math.round((quand - cote.lu) / 1000)) : null;
+  /* La capitalisation qui va avec CE prix — celle du pourcentage ecrit juste
+     avant. Voir `capDe` : sans offre connue, on retombe sur le chiffre de la
+     source, qui est alors le seul qu'on ait. */
+  const capVente = capDe(p, prix);
+  const mcVu = capVente > 0 ? capVente : (cote ? cote.mc : 0);
+  const diverge = cote ? capQuiDiverge(p, prix, cote.mc) : null;
   const coteTxt = cote
-    ? '  ·  ' + (cote.mc > 0 ? 'mc $' + dollarsCourts(cote.mc)
+    ? '  ·  ' + (mcVu > 0 ? 'mc $' + dollarsCourts(mcVu)
                  + (p.mcAchat > 0 ? ' (bought at $' + dollarsCourts(p.mcAchat) + ')' : '') + ' · ' : '')
       + 'price ' + (age === null ? 'age unknown' : age + ' s old')
       + (cote.src ? ' (' + cote.src + ')' : '')
+      + (cote.autrePiscine ? ' · its own pool was no longer listed: price from another pool of the same token' : '')
+      + (diverge ? ' · ' + (cote.src || 'the source') + ' says $' + dollarsCourts(diverge.mc)
+                 + ' for the same price (' + diverge.part + '% of the supply read at entry)' : '')
     : '';
   E.flux.unshift({ sym: p.sym, pool: p.pool, tag: gainTotal >= 0 ? 'buy' : 'cut',
     txt: (gainTotal >= 0 ? '+' : '') + '$' + gainTotal.toFixed(2) + '  ·  '
@@ -5013,8 +5117,10 @@ function ferme(p, prix, quand, comment) {
      que l'operation a donne, pas ce que valait le reliquat. */
   signal({ k: 'vente', sym: p.sym, adr: p.adr, pool: p.pool, prix: prix,
            r: r, gain: gainTotal, logo: p.logo || null,
-           mc: (cote && cote.mc > 0) ? Math.round(cote.mc) : null,
+           mc: mcVu > 0 ? Math.round(mcVu) : null,
            mcAchat: p.mcAchat > 0 ? Math.round(p.mcAchat) : null,
+           /* Le chiffre de la source quand il diverge : jamais a la place, toujours a cote. */
+           mcSource: diverge ? Math.round(diverge.mc) : null,
            prixSrc: cote ? cote.src : null, prixAge: age,
            comment: par === 'sentinelle' ? 'Cut: ' + comment.raison
                   : par === 'owner' ? 'Closed by hand'
@@ -5113,7 +5219,7 @@ function regle(marche) {
     if (!x0 || !(x0.prix > 0)) return true;      /* pas de prix : on attend */
     const x = x0;
     /* D'ou vient ce prix, et de quand : la fermeture l'ecrira. */
-    const cote = { mc: x.mc || 0, src: x.src || null, lu: x.lu || null };
+    const cote = { mc: x.mc || 0, src: x.src || null, lu: x.lu || null, autrePiscine: !!x.autrePiscine };
     p.prixLu = now;
     const dt = now - p.t0;
     const r = (x.prix - p.prix0) / p.prix0 * 100;
@@ -6719,9 +6825,11 @@ async function tour() {
          un secours, c'est la lecture du moment. */
       if (orphelin && secours >= 4) continue;
       if (orphelin) secours++;
-      const d = await lisDex(p.adr, { frais: true });
+      /* Dans SA piscine : c'est celle ou le miroir vendra. */
+      const d = await lisDex(p.adr, { frais: true, pool: p.pool || null });
       if (d && d.vu && d.prix > 0) {
-        prix[p.adr] = { prix: d.prix, liq: d.liq || 0, mc: d.mc || 0, src: 'DexScreener', lu: Date.now() };
+        prix[p.adr] = { prix: d.prix, liq: d.liq || 0, mc: d.mc || 0, src: 'DexScreener', lu: Date.now(),
+                        autrePiscine: !!d.autrePiscine };
         posePrix(p.adr, d.prix);
         /* Une lecture est une lecture : sans ca, une position que SEUL le
            secours sait coter serait abandonnee alors qu'on la suit tres bien. */
@@ -7018,8 +7126,17 @@ function vue() {
                 * La capitalisation du MOMENT, a cote de celle de l'achat : ce
                 * sont les deux qu'on veut voir ensemble, et c'est leur ecart
                 * qui dit quelque chose. Et l'heure de la lecture, parce qu'un
-                * chiffre sans son heure ne dit pas s'il est encore vrai. */
-               mcMaintenant: p.mcVeille === undefined ? null : Math.round(p.mcVeille),
+                * chiffre sans son heure ne dit pas s'il est encore vrai.
+                *
+                * Elle se calcule sur le MEME prix que le `latent` affiche juste
+                * au-dessus (voir `capDe`) : les deux chiffres racontaient la
+                * meme position avec deux sources differentes, et se
+                * contredisaient de vingt pour cent. Le chiffre brut du
+                * Veilleur reste a cote quand il dit autre chose. */
+               mcMaintenant: capDe(p, x) > 0 ? Math.round(capDe(p, x))
+                 : (p.mcVeille === undefined ? null : Math.round(p.mcVeille)),
+               mcSource: (p.mcVeille === undefined) ? null
+                 : ((capQuiDiverge(p, x, p.mcVeille) || {}).mc || null),
                veilleT: p.veilleT || 0,
                prixVu: dernierPrix[p.adr] ? dernierPrix[p.adr].t : 0 };
     }),
@@ -7177,6 +7294,7 @@ async function veille() {
          `mcAchat` : c'est la comparaison des deux qui dit quelque chose, et
          ecraser l'une par l'autre effacerait le point de depart. */
       if (d.mc > 0) p.mcVeille = d.mc;
+      p.veillePiscineAutre = !!d.autrePiscine;
       p.veilleT = Date.now();
       n++;
       /* ---- LA SEULE DECISION QU'IL PRENNE : LA COUPE DE SECURITE ----
@@ -7187,6 +7305,18 @@ async function veille() {
        * fermaient a -54, -62, -72, -82, -92 % parce que la premiere lecture
        * apres la chute etait celle du tour suivant. Le Veilleur, lui, lit
        * toutes les quarante-cinq secondes : c'est a lui de tirer le frein. */
+      /* ---- ET QUAND SA PISCINE N'EST PLUS SERVIE ----
+       * On le DIT, une fois, parce qu'un prix venu d'une autre piscine ne dit
+       * plus ce que la position vaut. Mais on ne desarme rien : une piscine qui
+       * disparait de DexScreener, c'est le plus souvent une piscine qu'on vient
+       * de vider — le moment ou la coupe sert le plus. Refuser de couper la
+       * serait garder une position rugee pour une raison de forme. */
+      if (d.autrePiscine && !p.ditPiscine) {
+        p.ditPiscine = true;
+        E.flux.unshift({ sym: p.sym, pool: p.pool, tag: 'open', cls: 'n', t: Date.now(),
+          txt: 'Its own pool is no longer listed: this price comes from another pool of the same token. '
+             + 'The mirror sells in the pool it bought in, so read the number with that in mind' });
+      }
       const danger = dangerSentinelle(p, { prix: d.prix, liq: d.liq || 0 });
       if (danger) {
         p.vuPar = casSentinelle(p, { prix: d.prix, liq: d.liq || 0 });

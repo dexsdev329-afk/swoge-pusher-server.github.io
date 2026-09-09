@@ -426,7 +426,25 @@ global.fetch = async function (url, opts) {
             websites: [{ url: 'https://' + t.sym + '.example' }] }
         : { socials: [{ type: 'twitter', url: 'https://x.com/' + t.sym },
                       { type: 'telegram', url: 'https://t.me/' + t.sym }],
-            websites: [{ url: 'https://' + t.sym + '.example' }] } }] });
+            websites: [{ url: 'https://' + t.sym + '.example' }] } }]
+      /* ---- UN JETON PEUT AVOIR DEUX PISCINES ----
+       * `secondePiscine` : { pool, prix, liq }. DexScreener les rend toutes,
+       * la plus liquide d'abord chez le lecteur. `piscineDePartRetiree` :
+       * celle du jeton n'est plus servie du tout. */
+      .filter(() => !t.piscineDePartRetiree)
+      .concat(t.secondePiscine ? [{
+        chainId: 'robinhood', pairAddress: t.secondePiscine.pool,
+        priceUsd: String(t.secondePiscine.prix),
+        baseToken: { address: t.addr, symbol: t.sym, name: t.sym + ' coin' },
+        quoteToken: { address: '0x0000000000000000000000000000000000000000', symbol: 'ETH' },
+        liquidity: { usd: t.secondePiscine.liq }, fdv: t.secondePiscine.prix * 1e9,
+        pairCreatedAt: Date.now() - t.minutes * 60000,
+        txns: { h1: { buys: t.buys, sells: t.sells } },
+        volume: { m5: 2000, h1: 20000, h6: 60000, h24: 90000 },
+        priceChange: { m5: 0, h1: 0, h6: 0 },
+        info: { socials: [{ type: 'twitter', url: 'https://x.com/' + t.sym },
+                          { type: 'telegram', url: 'https://t.me/' + t.sym }],
+                websites: [{ url: 'https://' + t.sym + '.example' }] } }] : []) });
   }
   if (/lb\.drpc\.org/.test(url)) {
     appels.rpcCle++;
@@ -2432,6 +2450,63 @@ async function venteAuPrixDuMoment() {
   ok(/Market cap \$15,000 \(bought at \$10,000\)/.test(tv) && /Price read \d+ s before the sale \(DexScreener\)/.test(tv),
      'et Telegram aussi');
 
+  console.log('\n-- la capitalisation affichee va avec le prix, et une source qui diverge est citee --');
+  {
+    /* « Fais en sorte que l affichage du market cap soit plus precis ; parfois
+       ca nous fait vendre a perte, le decalage. » Mesure le 9 septembre :
+       l offre implicite (capitalisation / prix) s ecarte de 21 % entre
+       GeckoTerminal et DexScreener sur $PHUB, de 22 % sur MECHA a prix
+       identique. Achetee sur une source, affichee sur l autre, la position
+       montrait un ecart de capitalisation qui n etait pas un mouvement de
+       prix — pendant que le pourcentage a cote, lui, venait du prix. */
+    remise(sains());
+    G = C._etat(); t0 = MONDE.jetons[0];
+    pose(t0);
+    /* Le prix double. La source, elle, annonce une capitalisation calculee sur
+       une offre de 20 % superieure : 24 000 la ou le prix en dit 20 000. */
+    t0.minutes = 5000; t0.prix = 2; t0.mc = 24000;
+    await C.tour();
+    v = C.vue();
+    s = (v.signaux || []).find((x) => x.k === 'vente' && x.sym === 'BTC-69');
+    console.log('   ' + JSON.stringify(s && { r: s.r, mc: s.mc, mcAchat: s.mcAchat, mcSource: s.mcSource }));
+    ok(!!s && Math.abs(s.r - 100) < 0.01, 'le rendement se lit sur le prix : +100 %');
+    ok(s.mc === 20000 && s.mcAchat === 10000,
+       'et la capitalisation affichee DOUBLE elle aussi : 10 000 → 20 000, exactement le pourcentage annonce');
+    ok(s.mcSource === 24000, 'le chiffre de la source n est pas efface : il est rendu a cote (' + s.mcSource + ')');
+    f = G.flux.find((x) => x.sym === 'BTC-69' && /buy|cut/.test(x.tag));
+    console.log('   fil : ' + (f && f.txt));
+    ok(!!f && /mc \$20\.0k \(bought at \$10\.0k\)/.test(f.txt),
+       'le fil ecrit celle qui va avec le prix, pas celle de la source');
+    ok(!!f && /DexScreener says \$24\.0k for the same price \(120% of the supply read at entry\)/.test(f.txt),
+       'et il dit ce que la source annonce, et de combien son offre differe : « ' + (f && f.txt.slice(f.txt.indexOf('DexScreener says'))) + ' »');
+    ok(/the source says \$24,000 for the same price/.test(C._texteSignal(s)), 'Telegram le porte aussi');
+    /* Et quand les deux s accordent, on ne repete pas le meme nombre deux fois. */
+    remise(sains());
+    G = C._etat(); t0 = MONDE.jetons[0];
+    pose(t0);
+    t0.minutes = 5000; t0.prix = 2; t0.mc = 20000;
+    await C.tour();
+    s = (C.vue().signaux || []).find((x) => x.k === 'vente' && x.sym === 'BTC-69');
+    ok(s.mc === 20000 && s.mcSource === null, 'source d accord : rien n est cite en plus');
+    f = G.flux.find((x) => x.sym === 'BTC-69' && /buy|cut/.test(x.tag));
+    ok(!/says \$/.test(f.txt), 'et le fil reste court');
+    /* Une position ouverte : la capitalisation du moment se calcule sur le meme
+       prix que le latent, et l ecart de la source est rendu a cote. */
+    remise(sains());
+    G = C._etat(); t0 = MONDE.jetons[0];
+    pose(t0);
+    G.positions[0].t0 = Date.now();          /* elle ne se ferme pas ce tour-ci */
+    G.positions[0].tenueMin = 600;
+    t0.prix = 1.3; t0.mc = 16900;            /* la source : offre 1,3 fois celle de l entree */
+    C.posePrix(t0.addr, 1.3);
+    G.positions[0].mcVeille = 16900;
+    const vp = C.vue().positions.find((x) => x.sym === 'BTC-69');
+    console.log('   position : ' + JSON.stringify({ latent: vp.latent, mcAchat: vp.mcAchat, mcMaintenant: vp.mcMaintenant, mcSource: vp.mcSource }));
+    ok(vp.latent === 30 && vp.mcMaintenant === 13000,
+       'a +30 %, la capitalisation du moment est 13 000 : le meme +30 % que le latent (' + vp.mcMaintenant + ')');
+    ok(vp.mcSource === 16900, 'et ce que le Veilleur a lu chez la source est rendu a cote, sans remplacer');
+  }
+
   console.log('\n-- une position que les flux cotent encore est recotee quand meme --');
   remise(sains());
   G = C._etat(); t0 = MONDE.jetons[0];
@@ -2444,6 +2519,46 @@ async function venteAuPrixDuMoment() {
   ok(!!s && Math.abs(s.r - 50) < 0.01, 'le cours de l adresse l emporte sur la liste (' + (s && s.r) + ')');
   ok((v.compteurs.prixRecote || 0) >= 1, 'et c est compte comme une recote, pas comme un secours');
   delete t0.dexPrix;
+
+  console.log('\n-- une position est cotee DANS SA PISCINE, pas dans la plus profonde --');
+  {
+    /* Le miroir vend dans la piscine ou il a achete (`routeDePosition`). Le
+       papier, lui, prenait le prix de la piscine la plus LIQUIDE du jeton :
+       quand un jeton en recoit une seconde pendant qu on le tient, le papier
+       mesurait un rendement dans une piscine et le miroir encaissait dans une
+       autre. Mesure le 9 septembre sur MET : 0,000565 contre 0,001619 entre
+       ses deux piscines, 187 % d ecart. */
+    remise(sains());
+    G = C._etat(); t0 = MONDE.jetons[0];
+    pose(t0);
+    t0.minutes = 5000;
+    t0.prix = 1.2; t0.mc = 12000; t0.liq = 3000;      /* sa piscine : +20 % */
+    t0.secondePiscine = { pool: '0x' + 'de'.repeat(20), prix: 0.5, liq: 900000 };  /* une autre, bien plus grosse, a -50 % */
+    await C.tour();
+    s = (C.vue().signaux || []).find((x) => x.k === 'vente' && x.sym === 'BTC-69');
+    console.log('   ' + JSON.stringify(s && { r: s.r, mc: s.mc }));
+    ok(!!s && Math.abs(s.r - 20) < 0.01,
+       'le rendement est celui de SA piscine (+20 %), pas celui de la piscine profonde (-50 %) : ' + (s && s.r) + '%');
+    f = G.flux.find((x) => x.sym === 'BTC-69' && /buy|cut/.test(x.tag));
+    ok(!/another pool/.test(f.txt), 'et rien n est signale : sa piscine etait bien la');
+    delete t0.secondePiscine;
+
+    /* Et quand SA piscine n est plus servie, le prix vient d ailleurs — on le dit. */
+    remise(sains());
+    G = C._etat(); t0 = MONDE.jetons[0];
+    pose(t0);
+    t0.minutes = 5000;
+    t0.piscineDePartRetiree = true;
+    t0.secondePiscine = { pool: '0x' + 'de'.repeat(20), prix: 0.5, liq: 900000 };
+    await C.tour();
+    s = (C.vue().signaux || []).find((x) => x.k === 'vente' && x.sym === 'BTC-69');
+    f = G.flux.find((x) => x.sym === 'BTC-69' && /buy|cut/.test(x.tag));
+    console.log('   fil : ' + (f && f.txt));
+    ok(!!s && Math.abs(s.r + 50) < 0.01, 'sans sa piscine, on retombe sur l autre : -50 %');
+    ok(!!f && /its own pool was no longer listed: price from another pool of the same token/.test(f.txt),
+       'et la vente ECRIT que le prix ne vient pas de sa piscine : « ' + (f && f.txt.slice(f.txt.indexOf('its own pool'))) + ' »');
+    delete t0.secondePiscine; delete t0.piscineDePartRetiree;
+  }
 
   console.log('\n-- et le veilleur des 45 s lit le moment, pas le cache --');
   remise(sains());
