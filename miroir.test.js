@@ -950,6 +950,46 @@ console.log('\n-- une piscine cotee en NVDA : deux jambes, par le pont ETH/NVDA 
   await M.arrete(J8, J8);
 }
 
+console.log('\n-- une piscine morte est dite, et la colonie l apprend --');
+{
+  /* JACOB, 9 septembre : le papier ferme a +39,9 % et compte +25,97 $ pendant
+     que le miroir n obtient plus rien de la meme piscine. Reserves lues sur la
+     chaine : 0,000005 WETH pour une position achetee 0,0127 ETH. */
+  const JM = '0x' + '7d'.repeat(20);
+  const dits = [];
+  M.poseColonie({ piscineMorte: (adr, part) => { dits.push({ adr, part }); return true; } });
+  const J9 = '0x' + '88'.repeat(19) + '04';
+  for (const { joueur } of M._actifs()) await M.arrete(joueur, joueur);
+  await M.cree(J9); chaine.soldes[M._fiche(J9).adr.toLowerCase()] = W('0.05'); await M.demarre(J9);
+  chaine.sortieVente = null;
+  await M.surAchat({ sym: 'JACOB', adr: JM, pool: poolDe(JM), part: 0.25 });
+  const c9 = M._fiche(J9);
+  ok(!!c9.ouvertes[JM], 'la position est ouverte');
+  const paye = c9.ouvertes[JM].cout || c9.ouvertes[JM].entree;
+  /* La piscine est videe : elle ne rend plus qu un dix-millieme de la mise. */
+  chaine.sortieVente = W(String(Number(paye) / 10000));
+  await M.surVente({ adr: JM });
+  console.log('   ' + c9.journal.slice(0, 2).map((j) => j.txt.slice(0, 110)).join('\n   '));
+  ok(c9.journal.some((j) => /The pool of JACOB is dead/.test(j.txt) && /0\.01% of it/.test(j.txt) && /liquidity is gone/.test(j.txt)),
+     'le miroir DIT que la piscine est morte, avec ce qu elle rend : « ' + (c9.journal.find((j) => /is dead/.test(j.txt)) || {}).txt + ' »');
+  ok(dits.length === 1 && dits[0].adr === JM && dits[0].part < 0.0002,
+     'et il le dit a la colonie, avec la part qui revient (' + JSON.stringify(dits[0]) + ')');
+  ok(!c9.ouvertes[JM], 'la position est fermee cote miroir');
+  /* Une piscine qui rend mal mais pas a ce point n est PAS dite morte : c est
+     une question de taille de portefeuille, pas de marche. */
+  dits.length = 0;
+  chaine.sortieVente = null;
+  await M.surAchat({ sym: 'JACOB', adr: JM, pool: poolDe(JM), part: 0.25 });
+  ok(!!c9.ouvertes[JM], 'une seconde position est ouverte, la piscine repondant de nouveau');
+  const paye2 = c9.ouvertes[JM].cout || c9.ouvertes[JM].entree;
+  chaine.sortieVente = W(String(Number(paye2) / 2));
+  await M.surVente({ adr: JM });
+  ok(dits.length === 0, 'a la moitie de la mise, rien n est signale : la piscine vit');
+  chaine.sortieVente = null;
+  M.poseColonie(null);
+  await M.arrete(J9, J9);
+}
+
 console.log('\n-- une adresse qui n est ni l un ni l autre, ou pas contre l ETH, est dite pour ce qu elle est --');
 {
   const X = '0x' + '4a'.repeat(20), NI = '0x' + 'b4'.repeat(20), GLD2 = '0x' + '9e'.repeat(20), PG = '0x' + 'b5'.repeat(20);

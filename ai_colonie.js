@@ -3645,6 +3645,43 @@ function tiensParMain(adr, minutes, par) {
   sauve();
   return { adr: a, sym: p.sym, jusqua: p.tenuParMain.jusqua, minutes: m };
 }
+/* ---- LA PISCINE EST MORTE, ET C'EST LE MIROIR QUI L'A VU ----
+ *
+ * JACOB, 9 septembre : le papier a ferme a +39,9 % et compte +25,97 $ pendant
+ * que le miroir n'obtenait plus RIEN de la meme piscine — 0,000000000000000077
+ * ETH pour une tranche. Reserves lues sur la chaine : 0,000005 WETH. La
+ * liquidite avait ete retiree cinq minutes apres l'achat, et le prix servi par
+ * DexScreener ne le disait pas encore.
+ *
+ * Un prix de flux est le dernier echange qu'on a vu passer. Ce que la piscine
+ * RENDRAIT, elle, se demande au quoteur, et c'est le seul chiffre qui engage
+ * quelqu'un. Quand il tombe sous un centieme de ce qui a ete verse, il n'y a
+ * plus de marche : la position vaut ce qu'on peut en sortir, c'est-a-dire
+ * presque rien, et le papier doit le compter comme tel. La refermer a
+ * +39,9 % n'est pas seulement une ligne fausse a l'ecran : les agents
+ * APPRENNENT ce trade comme une reussite et le referont.
+ *
+ * On ne coupe donc pas sur un prix : on ferme sur ce que le devis rend. Et si
+ * la position n'est plus ouverte, il n'y a rien a faire — la lecon est deja
+ * ecrite, on ne la reecrit pas apres coup. */
+function piscineMorte(adr, part) {
+  const a = String(adr || '').toLowerCase();
+  const f = Number(part);
+  if (!isFinite(f) || f < 0 || f > 1) return false;
+  const p = (E.positions || []).find((x) => x.adr === a);
+  if (!p) return false;
+  const prix = p.prix0 * f;
+  const now = Date.now();
+  ferme(p, prix > 0 ? prix : p.prix0 * 1e-9, now,
+        { par: 'sentinelle', mesure: true,
+          raison: 'the pool is dead: a real sale returns ' + Math.round(f * 10000) / 100 + '% of the stake',
+          cote: { mc: 0, src: 'pool quote', lu: now } });
+  E.positions = E.positions.filter((x) => x !== p);
+  compte('piscineMorte');
+  sauve();
+  return true;
+}
+
 async function fermeParMain(adr, par) {
   const a = String(adr || '').toLowerCase();
   const p = E.positions.find((x) => x.adr === a);
@@ -4993,7 +5030,16 @@ function capQuiDiverge(p, prix, mcSource) {
 function ferme(p, prix, quand, comment) {
   let r = (prix - p.prix0) / p.prix0 * 100;
   let aberrant = null;
-  if (!isFinite(r) || r > REND_MAX || r < REND_MIN) {
+  /* ---- UN DEVIS N'EST PAS UNE LECTURE DE COURS ----
+   * `REND_MIN` ecarte les -100 % parce qu'ils viennent presque toujours d'un
+   * pool vide relu de travers, pas d'un cours. Presque : quand c'est le QUOTEUR
+   * qui repond — « ce que la piscine rend pour ce qu'on lui donne » — le -100 %
+   * est mesure, et le rendre a zero est exactement ce qui a fait passer JACOB
+   * pour une reussite le 9 septembre. On accepte donc la perte totale quand
+   * elle est mesuree, et vers le bas seulement : un devis fantaisiste ne doit
+   * pas pouvoir fabriquer un gain. */
+  const mesure = !!(comment && comment.mesure);
+  if (!isFinite(r) || r > REND_MAX || (r < REND_MIN && !(mesure && r >= -100))) {
     aberrant = (isFinite(r) ? (r > 0 ? '+' : '') + Math.round(r) + '%' : 'non calculable')
              + ' entre ' + p.prix0 + ' et ' + prix;
     r = 0;   /* la mise est rendue : on ne gagne ni ne perd sur une lecture qu'on rejette */
@@ -7371,7 +7417,7 @@ module.exports = {
   noteVendu, REACHAT_REPOS_MIN,
   caseNonLue, CASES_NON_LUES, TRAITS, MEMOIRE_DEMIVIE_J, SURV_MAX, fane,
   enMots, MOTS,
-  regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre,
+  regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre, piscineMorte,
   tiensParMain, fermeParMain, TENUE_MAIN_MAX,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,

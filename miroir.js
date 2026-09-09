@@ -1422,6 +1422,44 @@ const RATTRAPE_MIN_MS = 2 * 60000;
    seraient pleines en une heure. On attend dix minutes, et on redit pourquoi. */
 const RATTRAPE_ATTENTE_MS = 10 * 60000;
 function surTour(papier) { return enFile(() => rattrapeFile(papier)); }
+/* ==================== QUAND LA PISCINE EST MORTE ====================
+ *
+ * JACOB, 9 septembre. 04:18 UTC : la colonie ouvre, le miroir achete pour
+ * 0,0127 ETH sur une paire v2. 04:23 : le papier vend son palier a +27,8 %,
+ * le miroir demande le devis de la meme tranche et obtient 0,000000000000000077
+ * ETH. 04:35 : le papier ferme a +39,9 % et compte +25,97 $, le miroir passe
+ * la position entiere par pertes et profits. Reserves de la paire, lues sur
+ * la chaine apres coup : 0,000005 WETH. La liquidite avait ete retiree cinq
+ * minutes apres l'achat, et DexScreener servait encore un prix.
+ *
+ * Le papier a donc encaisse un gain que PERSONNE ne pouvait prendre — et il
+ * l'a appris comme un succes, ce qui est pire que la perte elle-meme : il
+ * refera ce trade. Le miroir, lui, l'avait vu tout de suite, avec le seul
+ * chiffre qui ne ment pas : ce que la piscine rend pour ce qu'on lui a
+ * donne.
+ *
+ * Il le DIT donc a la colonie. Le seuil n'est pas le gaz — un ordre peut ne
+ * pas valoir son gaz sur une piscine parfaitement vivante, et ca depend de
+ * la taille du portefeuille. Ce qui est signale ici est sans rapport avec la
+ * taille : la piscine ne rend pas UN CENTIEME de ce qu'elle a recu. A ce
+ * niveau-la, il n'y a plus de marche, et c'est vrai pour tout le monde.
+ * ==================================================================== */
+const PISCINE_MORTE = 100;        /* elle rend moins d'un centieme de la mise */
+let colonie = null;
+function poseColonie(c) { colonie = c; }
+function ditPiscineMorte(c, adr, o, devis) {
+  const paye = WEI(o.cout || o.entree || '0');
+  if (paye.lte(0) || devis.mul(PISCINE_MORTE).gte(paye)) return false;
+  const bps = paye.isZero() ? 0 : Number(devis.mul(10000).div(paye));
+  note(c, 'The pool of ' + (o.sym || adr) + ' is dead: selling back what was bought for '
+        + ethers.utils.formatUnits(paye, 18) + ' ETH would return '
+        + ethers.utils.formatUnits(devis, 18) + ' ETH — ' + (bps / 100) + '% of it. The liquidity is gone', { adr });
+  if (colonie && typeof colonie.piscineMorte === 'function') {
+    try { colonie.piscineMorte(adr, bps / 10000); }
+    catch (e) { console.warn('[miroir] piscine morte :', e && e.message); }
+  }
+  return true;
+}
 async function rattrapeFile(papier) {
   const tenus = new Set(((papier && papier.ouvertes) || []).map(norm));
   const ventes = (papier && papier.ventes) || {};
@@ -1582,6 +1620,11 @@ async function vendTranche(c, adr, o, f, raison) {
   const gazT = await gazDeVente(route);
   if (devisT.lt(gazT.mul(POUSSIERE_MULT))) {
     /* La tranche vaut moins que son gaz : on la laisse courir avec le reste. */
+    /* Une tranche qui ne vaut pas son gaz peut n'etre qu'une petite tranche.
+       Une piscine qui ne rend plus rien du tout, non : on le dit, et on le dit
+       a la colonie — c'est le papier qui compte un gain imprenable. */
+    ditPiscineMorte(c, adr, Object.assign({}, o, { cout: null, entree: ethers.utils.formatUnits(
+      WEI(o.cout || o.entree || '0').mul(Math.max(1, Math.round(f * 1000))).div(1000), 18) }), devisT);
     note(c, 'Kept the ' + Math.round(f * 100) + '% tranche of ' + (o.sym || adr) + ': selling it would return '
           + ethers.utils.formatUnits(devisT, 18) + ' ETH (RH) for about ' + ethers.utils.formatUnits(gazT, 18)
           + ' ETH of gas — not worth it, it stays in the position', { adr });
@@ -1612,6 +1655,7 @@ async function vendPosition(c, adr, o) {
   if (devisV.lt(gazV.mul(POUSSIERE_MULT))) {
     /* Vendre couterait plus que ce que ca rend : les jetons restent au joueur,
        la position est fermee comme une perte entiere, et c'est dit. */
+    ditPiscineMorte(c, adr, o, devisV);
     delete c.ouvertes[adr];
     if (!Array.isArray(c.fermees)) c.fermees = [];
     const deja = WEI(o.sortiesPartielles || '0');
@@ -1711,6 +1755,7 @@ async function ouvreFile(joueur, adr) {
 module.exports = {
   /* l'interface du serveur */
   charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, surTour, allerRetour, pontConnu, pontsVus, effaceJournal,
+  poseColonie, PISCINE_MORTE,
   vendsMaintenant, ouvreMaintenant, remetLesStats,
   /* les reglages, pour l'ecran et pour les essais */
   EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN, POUSSIERE_MULT,

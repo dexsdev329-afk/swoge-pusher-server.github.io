@@ -2520,6 +2520,31 @@ async function venteAuPrixDuMoment() {
   ok((v.compteurs.prixRecote || 0) >= 1, 'et c est compte comme une recote, pas comme un secours');
   delete t0.dexPrix;
 
+  console.log('\n-- une piscine morte ferme le papier sur ce qu elle rend, pas sur le prix affiche --');
+  {
+    /* JACOB, 9 septembre : le papier a ferme a +39,9 % et compte +25,97 $
+       pendant que le miroir n obtenait plus rien de la meme piscine. Reserves
+       lues sur la chaine : 0,000005 WETH. Le gain etait imprenable — et les
+       agents l apprenaient comme une reussite. */
+    remise(sains());
+    G = C._etat(); t0 = MONDE.jetons[0];
+    pose(t0);
+    const avant = G.trades;
+    ok(C.piscineMorte(t0.addr, 0.0001) === true, 'le miroir dit que la piscine ne rend plus qu un dix-millieme : le papier ferme');
+    ok(G.positions.length === 0, 'la position n est plus ouverte');
+    s = (C.vue().signaux || []).find((x) => x.k === 'vente' && x.sym === 'BTC-69');
+    console.log('   ' + JSON.stringify(s && { r: Math.round(s.r * 100) / 100, comment: s.comment }));
+    ok(!!s && s.r < -99, 'et elle est comptee pour ce qu elle vaut : ' + (s && Math.round(s.r * 100) / 100) + ' %');
+    f = G.flux.find((x) => x.sym === 'BTC-69' && x.tag === 'cut');
+    ok(!!f && /the pool is dead: a real sale returns 0\.01% of the stake/.test(f.txt),
+       'le fil dit pourquoi, avec le chiffre du quoteur : « ' + (f && f.txt) + ' »');
+    ok(G.trades === avant + 1, 'et le trade est compte, comme n importe quelle fermeture');
+    /* Rien d ouvert sur ce jeton : il n y a rien a refermer, et on ne reecrit
+       pas une lecon apres coup. */
+    ok(C.piscineMorte(t0.addr, 0.0001) === false, 'une seconde fois, sans position ouverte, ne fait rien');
+    ok(C.piscineMorte(t0.addr, 5) === false, 'une part hors de [0,1] est refusee');
+  }
+
   console.log('\n-- une position est cotee DANS SA PISCINE, pas dans la plus profonde --');
   {
     /* Le miroir vend dans la piscine ou il a achete (`routeDePosition`). Le

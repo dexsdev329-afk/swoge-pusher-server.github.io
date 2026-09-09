@@ -6982,6 +6982,9 @@ server.listen(cfg.PORT, () => {
   try {
     miroir.charge();
     aiColonie.poseMiroir(miroir);
+    /* Et dans l'autre sens : le miroir est le seul a savoir ce qu'une piscine
+       rend VRAIMENT, parce qu'il le demande au quoteur avant chaque vente. */
+    miroir.poseColonie(aiColonie);
     const p = miroir.pret();
     if (!p.ok) {
       console.log('[miroir] ETEINT : ' + p.pourquoi
