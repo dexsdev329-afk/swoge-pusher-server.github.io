@@ -1605,7 +1605,9 @@ async function lisDex(addr, opt) {
       quote: q.quoteToken ? { sym: String(q.quoteToken.symbol || '').slice(0, 12),
                               adr: String(q.quoteToken.address || '').toLowerCase() } : null,
       logo: urlImage(i.imageUrl),
-      liq: nn(q.liquidity && q.liquidity.usd), mc: nn(q.fdv) || nn(q.marketCap),
+      /* Idem : la liquidite non servie reste `null`, elle ne devient pas zero. */
+      liq: (q.liquidity && q.liquidity.usd !== undefined && q.liquidity.usd !== null) ? nn(q.liquidity.usd) : null,
+      mc: nn(q.fdv) || nn(q.marketCap),
       cree: q.pairCreatedAt || null,
       tx: q.txns || {}, vol: { m5: nn((q.volume || {}).m5), h1: nn((q.volume || {}).h1),
                                h6: nn((q.volume || {}).h6), h24: nn((q.volume || {}).h24) },
@@ -3832,7 +3834,11 @@ function regleLesSuites(marche) {
     const brut = marche[s.adr];
     const x = (typeof brut === 'number') ? { prix: brut } : brut;
     if (!x || !(x.prix > 0)) return true;             /* pas de prix relu : on attend */
-    const rTenu = (x.prix - s.prix0) / s.prix0 * 100;
+    /* Ce qu'on aurait VENDU en tenant, pas ce que le prix affichait : c'est la
+       meme correction de profondeur que pour les jalons, et elle compte double
+       ici — « vendu trop tot » sur une pompe fantome apprend a la Sentinelle
+       a ne plus couper. */
+    const rTenu = rendementVendable((x.prix - s.prix0) / s.prix0 * 100, x.liq);
     if (!isFinite(rTenu) || rTenu > REND_MAX || rTenu < REND_MIN) return false;
     /* La valeur de la decision : ce qu'on a pris moins ce qu'on aurait eu. */
     const gain = s.rSortie - rTenu;
@@ -3946,6 +3952,12 @@ function rejoueLOmbre(o) {
   if (!o || o.rejouee || !o.jalons || o.jalons[HORIZON_REF] === undefined) return;
   const rs = rejoue(o.jalons);
   if (rs !== null) noteAuditStrat(cleAudit(o), rs);
+  /* Et les jeux concurrents, sur les MEMES jalons : c'est la seule facon de
+     les comparer sans qu'aucun ne trade. */
+  for (const v of VARIANTES) {
+    const r2 = rejoue(o.jalons, v.E || undefined);
+    if (r2 !== null) noteVariante(v.cle, r2);
+  }
   o.rejouee = true;
 }
 
@@ -4097,11 +4109,18 @@ function regleLesOmbres(marche) {
       return age <= dernier + Math.max(5, dernier * 0.5);
     }
     if (x && x.prix > 0) {
-      const r = (x.prix - o.prix0) / o.prix0 * 100;
+      const brutR = (x.prix - o.prix0) / o.prix0 * 100;
       /* Les memes bornes que pour une position : un rapport aberrant ne decrit
          rien, et une lecon tiree d'un chiffre faux se propage a tous les
          jetons qui partagent le trait. */
-      if (!isFinite(r) || r > REND_MAX || r < REND_MIN) { compte('ombreAberrante'); return false; }
+      if (!isFinite(brutR) || brutR > REND_MAX || brutR < REND_MIN) { compte('ombreAberrante'); return false; }
+      /* ---- ET CE QU'ON POURRAIT VRAIMENT EN SORTIR ----
+       * Le prix seul a fait apprendre +1158 % sur une piscine videe. Le jalon
+       * est donc borne par la profondeur, avec la liquidite lue a cote du prix
+       * — voir `rendementVendable`. TOUT ce qui suit s'apprend sur ce
+       * chiffre-la : les courbes de traits, la memoire des agents, l'audit des
+       * refus et le rejeu. */
+      const r = rendementVendable(brutR, x.liq);
       for (const h of HORIZONS) {
         if (o.jalons[h] !== undefined) continue;
         if (!jalonValable(h, age)) continue;
@@ -4144,18 +4163,137 @@ function regleLesOmbres(marche) {
  * un jalon lu. Le chiffre est une borne basse honnete de ce que la colonie
  * aurait fait, et c'est lui qui juge la regle desormais, a cote du brut.
  * ======================================================================== */
+/* ==========================================================================
+ * UN GAIN QU'ON NE PEUT PAS VENDRE N'EST PAS UN GAIN
+ *
+ * JACOB, 9 septembre. Le papier ferme a +39,9 % et compte +25,97 $ ; le miroir,
+ * au meme instant, n'obtient plus RIEN de la meme piscine. Reserves lues sur la
+ * chaine : 0,000005 WETH. Deux heures plus tard, les chandelles de cette piscine
+ * affichent encore +1158 % — des echanges minuscules dans un carnet vide font
+ * bouger un prix sans qu'il y ait de quoi sortir.
+ *
+ * Ce prix-la n'est pas seulement faux a l'ecran : il entre dans TOUT ce que la
+ * colonie apprend. Les jalons des ombres nourrissent les courbes de traits,
+ * l'audit des refus et le rejeu de la strategie. Une pompe fantome apprend donc
+ * aux agents a acheter ce qui monte sans etre vendable — exactement l'erreur qui
+ * coute de l'argent.
+ *
+ * On borne donc chaque jalon par la PROFONDEUR de sa piscine, avec le seul
+ * chiffre deja lu a cote du prix : la liquidite. Sur une courbe a produit
+ * constant, vendre une position qui vaut V dans une piscine de liquidite L rend
+ * V / (1 + 2V/L) — c'est de l'arithmetique sur la courbe, pas une estimation.
+ * Sur une piscine profonde, la correction est invisible : 40 $ dans 20 000 $ de
+ * liquidite perdent deux dixiemes de point. Sur une piscine videe, elle ramene
+ * le gain a la perte qu'il est.
+ *
+ * Elle ne s'applique QUE si la liquidite a ete lue. Sans elle, on ne corrige
+ * rien : borner avec un chiffre qu'on n'a pas serait fabriquer l'inverse du
+ * defaut qu'on repare.
+ * ======================================================================== */
+const MISE_OMBRE = 30;              /* la taille d'une position, en dollars : c'est ce que le Banquier pose */
+const OMBRE_LIQ_MORTE = 200;        /* sous ce fond, il n'y a plus de marche du tout */
+function rendementVendable(r, liq) {
+  if (!isFinite(r)) return r;
+  if (typeof liq !== 'number' || !isFinite(liq) || liq < 0) return r;   /* non lue : on ne corrige pas */
+  if (liq < OMBRE_LIQ_MORTE) { compte('jalonFantome'); return OMBRE_DISPARUE; }
+  const V = MISE_OMBRE * (1 + r / 100);
+  if (!(V > 0)) return r;
+  const rendu = V / (1 + 2 * V / liq);
+  const rv = (rendu - MISE_OMBRE) / MISE_OMBRE * 100;
+  if (r - rv >= 10) compte('jalonRabote');
+  return Math.round(rv * 10) / 10;
+}
+
+/* ==========================================================================
+ * TROIS JEUX DE REGLES QUI COURENT EN MEME TEMPS
+ *
+ * « Faire mesurer par la colonie elle-meme, sur chaque ombre, ce que donneraient
+ *   deux ou trois jeux de regles concurrents. »
+ *
+ * Le rejeu existait deja, mais il ne rejouait QUE la strategie en vigueur : il
+ * disait ce qu'un refus avait coute, jamais si une autre sortie aurait fait
+ * mieux. Mesure a la main le 9 septembre sur seize trades, avec les frais
+ * reels : les regles actuelles rendent -52 $ la ou des paliers plus hauts et un
+ * arret suiveur large rendent +86 $. Mais tout le gain tenait sur trois trades,
+ * et seize trades ne decident de rien.
+ *
+ * Chaque ombre qui s'en va rejoue donc TOUS ces jeux, pas seulement celui du
+ * jour. En quelques jours, la comparaison porte sur des centaines de jetons au
+ * lieu de seize — et c'est elle, pas moi, qui dira lequel change quelque chose.
+ * Rien n'est applique automatiquement : ces jeux ne decident aucun trade, ils
+ * comptent. Le jour ou l'un gagne nettement, le changer sera une decision, prise
+ * sur des chiffres.
+ * ======================================================================== */
+const VARIANTES = [
+  { cle: 'en vigueur', quoi: 'the rules actually trading today' },
+  /* Ne rien prendre avant +50 %, et laisser cent points de recul : c'est la
+     forme qui gagnait a la main, celle qui accepte dix petites pertes pour un
+     gros mouvement. */
+  { cle: 'paliers hauts', quoi: 'rungs at +50% and +150%, trailing stop 100 pts, cut at -20%',
+    E: { actif: true, p1: 50, v1: 30, p2: 150, v2: 30, p3: 0, v3: 0,
+         suivDepart: 10, suivEcart: 100, suivSerre: 100, suivSerreA: 40, coupe: 20 } },
+  /* Et la forme extreme : aucun palier, on ne sort que sur le recul ou la
+     coupe. Elle borne ce que « laisser courir » peut rapporter. */
+  { cle: 'laisser courir', quoi: 'no rungs at all, trailing stop 100 pts, cut at -15%',
+    E: { actif: true, p1: 0, v1: 0, p2: 0, v2: 0, p3: 0, v3: 0,
+         suivDepart: 10, suivEcart: 100, suivSerre: 100, suivSerreA: 40, coupe: 15 } },
+  /* « Il a scalpe la chart, il aurait pu laisser un moon bag. » Le meme scalp
+     qu'aujourd'hui, mais un cinquieme de la position n'est vendu par rien et
+     sort au dernier jalon. C'est le seul changement teste a la main qui
+     ameliore la moyenne ET la mediane. */
+  { cle: 'scalp + moon bag', quoi: 'today rungs and trailing stop, but 20% of the position is never sold and rides to the end',
+    E: { actif: true, p1: 15, v1: 35, p2: 40, v2: 35, p3: 80, v3: 20,
+         suivDepart: 10, suivEcart: 20, suivSerre: 10, suivSerreA: 40, coupe: 20, moon: 0.20 } },
+];
+function noteVariante(cle, rs) {
+  if (!E.variantes || typeof E.variantes !== 'object') E.variantes = {};
+  const v = E.variantes[cle] || (E.variantes[cle] = { n: 0, s: 0, gagnantes: 0, meilleur: 0 });
+  v.n++; v.s += rs;
+  if (rs > 0) v.gagnantes++;
+  if (rs > v.meilleur) v.meilleur = Math.round(rs * 10) / 10;
+}
+/** Ce que la page montre : chaque jeu, sa moyenne, sa part de gagnantes. */
+function bancsDEssai() {
+  const out = [];
+  for (const v of VARIANTES) {
+    const c = (E.variantes || {})[v.cle];
+    if (!c || !c.n) { out.push({ cle: v.cle, quoi: v.quoi, n: 0, moyenne: null, partGagnantes: null, meilleur: null }); continue; }
+    out.push({ cle: v.cle, quoi: v.quoi, n: c.n,
+               moyenne: Math.round(c.s / c.n * 10) / 10,
+               partGagnantes: Math.round(c.gagnantes / c.n * 100),
+               meilleur: c.meilleur });
+  }
+  return out;
+}
+
 function rejoue(jalons, E2) {
   E2 = E2 || echelle();
   const hs = Object.keys(jalons || {}).map(Number)
     .filter((h) => isFinite(h) && typeof jalons[h] === 'number' && isFinite(jalons[h])).sort((a, b) => a - b);
   if (!hs.length) return null;
-  let reste = 1, realise = 0, haut = 0;
+  /* ---- LE MOON BAG ----
+   * « Il est rentre et a scalpe la chart, il aurait pu laisser un moon bag. »
+   * Une part de la position n'est vendue par RIEN : ni palier, ni arret
+   * suiveur, ni coupe. Elle sort au dernier jalon connu. Sur une distribution
+   * ou trois jetons sur seize font +200 a +600 %, cette part coute presque
+   * rien sur les perdants et rapporte tout sur les gagnants. Mesure a la main
+   * le 9 septembre : 20 % gardes font passer les regles actuelles de -13 $ a
+   * +6 $ sur seize trades, et ameliorent AUSSI la mediane — la seule idee
+   * testee qui fasse les deux. */
+  const moon = (typeof E2.moon === 'number' && E2.moon > 0) ? Math.min(0.9, E2.moon) : 0;
+  let reste = 1 - moon, realise = 0, haut = 0;
   const pris = {};
   const niveaux = [{ k: 1, a: E2.p1, v: E2.v1 }, { k: 2, a: E2.p2, v: E2.v2 }, { k: 3, a: E2.p3, v: E2.v3 }];
   const arrondi = (x) => Math.round(x * 100) / 100;
+  /* La coupe de la Sentinelle est dans le code pour la strategie en vigueur ;
+     un jeu de regles concurrent peut en proposer une autre — c'est justement
+     ce qu'on mesure. */
+  const coupe = (typeof E2.coupe === 'number' && isFinite(E2.coupe)) ? -Math.abs(E2.coupe) : CHUTE_COUPE;
+  const dernier = jalons[hs[hs.length - 1]];
+  const finMoon = moon * dernier;      /* le moon bag ne sort qu'au bout, quoi qu'il arrive */
   for (const h of hs) {
     const r = jalons[h];
-    if (r <= CHUTE_COUPE) return arrondi(realise + reste * r);      /* la Sentinelle coupe : c'est dans le code */
+    if (r <= coupe) return arrondi(realise + reste * r + finMoon);
     if (E2.actif) {
       for (const n of niveaux) {
         if (pris[n.k] || !(n.a > 0) || r < n.a) continue;
@@ -4163,15 +4301,15 @@ function rejoue(jalons, E2) {
         const part = Math.min(reste, n.v / 100);
         realise += part * n.a; reste -= part;
       }
-      if (reste <= 0.001) return arrondi(realise);
+      if (reste <= 0.001) return arrondi(realise + finMoon);
       if (r > haut) haut = r;
       if (haut >= E2.suivDepart) {
         const ecart = haut >= E2.suivSerreA ? E2.suivSerre : E2.suivEcart;
-        if (r <= haut - ecart) return arrondi(realise + reste * r);
+        if (r <= haut - ecart) return arrondi(realise + reste * r + finMoon);
       }
     }
   }
-  return arrondi(realise + reste * jalons[hs[hs.length - 1]]);
+  return arrondi(realise + reste * dernier + finMoon);
 }
 function cleAudit(o) {
   return o.refus ? (o.quiRefuse || 'refus') + ' · ' + familleRefus(o.refus) : 'achete ou retenu';
@@ -6466,7 +6604,11 @@ async function lisPiscine(pool) {
   try {
     const j = await jsonGT('/pools/' + pool);
     const a = ((j || {}).data || {}).attributes || {};
-    return { prix: nn(a.base_token_price_usd), liq: nn(a.reserve_in_usd) };
+    /* `null` quand la reserve n'est PAS servie, zero quand elle l'est et vaut
+       zero : les deux se ressemblent une fois passes par `nn`, et confondre
+       « pas lu » avec « piscine vide » ferait inventer une perte. */
+    return { prix: nn(a.base_token_price_usd),
+             liq: (a.reserve_in_usd === undefined || a.reserve_in_usd === null) ? null : nn(a.reserve_in_usd) };
   } catch (e) {
     if (/^404$/.test(String(e.message || ''))) return { prix: 0, liq: 0, absente: true };
     return null;
@@ -6509,7 +6651,7 @@ async function secoursOmbres(marche) {
     delete CACHE.dex[d.o.adr];
     const x = await lisDex(d.o.adr);
     if (x && x.vu && x.prix > 0) {
-      marche[d.o.adr] = { prix: x.prix, liq: x.liq || 0 };
+      marche[d.o.adr] = { prix: x.prix, liq: (typeof x.liq === 'number') ? x.liq : null };
       posePrix(d.o.adr, x.prix);
       d.o.muets = 0;
       n++;
@@ -6874,7 +7016,7 @@ async function tour() {
       /* Dans SA piscine : c'est celle ou le miroir vendra. */
       const d = await lisDex(p.adr, { frais: true, pool: p.pool || null });
       if (d && d.vu && d.prix > 0) {
-        prix[p.adr] = { prix: d.prix, liq: d.liq || 0, mc: d.mc || 0, src: 'DexScreener', lu: Date.now(),
+        prix[p.adr] = { prix: d.prix, liq: (typeof d.liq === 'number') ? d.liq : null, mc: d.mc || 0, src: 'DexScreener', lu: Date.now(),
                         autrePiscine: !!d.autrePiscine };
         posePrix(p.adr, d.prix);
         /* Une lecture est une lecture : sans ca, une position que SEUL le
@@ -7243,6 +7385,11 @@ function vue() {
       }).filter((x) => x.par.length),
     },
     tenue: tenueApprise(),
+    /* ---- LES JEUX DE REGLES QUI COURENT EN PARALLELE ----
+       Ils ne tradent rien : ils rejouent les memes ombres et disent ce qu'ils
+       auraient rendu. C'est ce qui remplace seize trades mesures a la main par
+       des centaines. */
+    bancs: bancsDEssai(),
     /* ---- LES PONTS DU MIROIR ----
        La liste des monnaies qu'il sait franchir, et ce qu'il a mesure de
        chacune : c'est ce qui dit, a l'ecran, pourquoi une paire cotee en USDG
@@ -7418,6 +7565,7 @@ module.exports = {
   caseNonLue, CASES_NON_LUES, TRAITS, MEMOIRE_DEMIVIE_J, SURV_MAX, fane,
   enMots, MOTS,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre, piscineMorte,
+  rendementVendable, bancsDEssai, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
   tiensParMain, fermeParMain, TENUE_MAIN_MAX,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,

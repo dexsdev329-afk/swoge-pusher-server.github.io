@@ -665,7 +665,11 @@ async function apprendreDesMorts() {
   const inconnu = '0x' + 'ee'.repeat(20);
   E.ombres = [ombre(MONDE.jetons[0].addr, 32), ombre(MONDE.jetons[1].addr, 8),
               ombre(MONDE.jetons[2].addr, 32), ombre(inconnu, 32)];
-  const marche = { [MONDE.jetons[2].addr]: { prix: 1 } };
+  /* Avec sa liquidite : depuis le 9 septembre un jalon est borne par la
+     profondeur, et un marche sans liquidite lue n est pas corrige — on veut
+     ici que les DEUX ombres le soient, pour que le fond apprenne la meme
+     chose des deux. */
+  const marche = { [MONDE.jetons[2].addr]: { prix: 1, liq: 9000 } };
   appels.dex = 0;
   const relues = await C.secoursOmbres(marche);
   console.log('   relues ' + relues + ' · appels DexScreener ' + appels.dex + ' · muettes ' + (E.compteurs.ombreMuette || 0));
@@ -680,8 +684,9 @@ async function apprendreDesMorts() {
   /* Deux ombres ont un prix a l echeance : la relue, et celle que le marche
      cotait deja. Toutes deux a +100 % — et le fond en compte deux, pas cinq
      traits fois deux : une fois par jeton. */
-  ok(E.base && E.base.n === avantBase + 2 && Math.abs(E.base.s - 200) < 1e-9,
-     'jugees a +100 %, les deux entrent dans le fond, une fois chacune : c est de la que le fond apprend');
+  ok(E.base && E.base.n === avantBase + 2 && Math.abs(E.base.s - 196.9) < 0.3,
+     'jugees a ce qu on aurait pu en SORTIR (+97,4 % dans 9 000 $ de fond, +99,5 % dans 50 000 $, la ou le prix '
+     + 'affichait +100 %), les deux entrent dans le fond une fois chacune : c est de la que le fond apprend');
   E.ombres = MONDE.jetons.map((j) => ombre(j.addr, 32));
   appels.dex = 0;
   const n6 = await C.secoursOmbres({});
@@ -3155,6 +3160,100 @@ async function rejeuDeLaStrategie() {
   ok((F.compteurs.rejeux || 0) === 1, 'un rejeu compte');
   ok(C.OMBRES_MAX >= 2400, 'et le plafond laisse deux cents minutes de vie a trente examens par tour : la derniere echeance (120 min) est atteignable');
   F.ombres = [];
+
+  console.log('\n-- un gain qu on ne peut pas vendre n est pas un gain --');
+  {
+    /* JACOB, 9 septembre : le papier ferme a +39,9 %, le miroir n obtient plus
+       rien de la meme piscine (0,000005 WETH de reserve), et deux heures plus
+       tard les chandelles affichent +1158 %. Ce prix-la entrait dans les
+       courbes de traits, l audit et le rejeu. */
+    ok(C.rendementVendable(1158, 0) === C.OMBRE_DISPARUE,
+       'une piscine sans fond ramene le jalon a ' + C.OMBRE_DISPARUE + ' %, pas +1158 %');
+    ok(C.rendementVendable(300, 50) === C.OMBRE_DISPARUE, 'sous ' + C.OMBRE_LIQ_MORTE + ' $ de fond, il n y a plus de marche du tout');
+    ok(Math.abs(C.rendementVendable(33, 20000) - 32.5) < 0.2,
+       'sur une piscine profonde la correction est invisible : +33 % restent +32,5 % (' + C.rendementVendable(33, 20000) + ')');
+    ok(C.rendementVendable(200, 3000) === 183,
+       'sur une piscine mince, sortir 90 $ de 3 000 $ coute vraiment : +200 % deviennent +183 %');
+    ok(C.rendementVendable(50, undefined) === 50 && C.rendementVendable(50, null) === 50,
+       'sans liquidite LUE, on ne corrige rien : borner avec un chiffre qu on n a pas serait le meme defaut a l envers');
+    /* Et de bout en bout : une ombre dont la piscine s est videe n apprend plus un gain. */
+    remise(sains());
+    const G3 = C._etat();
+    G3.ombres = []; G3.audit = {}; G3.memoire = C.etatNeuf().memoire; G3.profils = {};
+    G3.base = { n: 0, s: 0, s2: 0, maj: Date.now() };
+    C.noteOmbre({ addr: '0xfantome', sym: 'FAN', prix: 1 },
+                { traits: { scout: { elan: '5m >20%' } }, score: 60 }, 'score too low', 'oracle');
+    const om = G3.ombres.find((x) => x.adr === '0xfantome');
+    om.t = Date.now() - 31 * 60000;                       /* l echeance de reference est passee */
+    C.regleLesOmbres({ '0xfantome': { prix: 6, liq: 0 } });   /* +500 %, dans une piscine vide */
+    /* La page ne liste une ligne qu a partir de trois observations : on lit
+       donc l audit lui-meme, ou une seule suffit a montrer ce qui est appris. */
+    const l3 = (G3.audit || {})['oracle · score too low'];
+    console.log('   ' + JSON.stringify(l3));
+    ok(!!l3 && l3.n === 1 && l3.s === C.OMBRE_DISPARUE,
+       'l audit apprend ' + C.OMBRE_DISPARUE + ' %, pas la pompe fantome (' + (l3 && l3.s) + ')');
+    const cb = C._etat().base;
+    ok(!!cb && cb.n >= 1 && cb.s < 0,
+       'et la memoire de base aussi : elle retient une perte, pas un gain (' + (cb && Math.round(cb.s)) + ' sur ' + (cb && cb.n) + ')');
+    ok((G3.compteurs.jalonFantome || 0) >= 1, 'et le jalon fantome est compte : ' + G3.compteurs.jalonFantome);
+  }
+
+  console.log('\n-- trois jeux de regles rejouent les memes ombres, et aucun ne trade --');
+  {
+    /* « Faire mesurer par la colonie elle-meme ce que donneraient deux ou trois
+       jeux de regles concurrents. » Seize trades mesures a la main ne decident
+       de rien ; des centaines d ombres, oui. */
+    const cles = C.VARIANTES.map((x) => x.cle);
+    ok(cles.length === 4 && cles[0] === 'en vigueur', 'quatre jeux, dont celui qui trade aujourd hui : ' + cles.join(', '));
+    const F3 = C._etat();
+    F3.variantes = {};
+    const now3 = Date.now();
+    /* Une ombre qui monte fort puis retombe un peu : les paliers bas sortent
+       tot, l arret large laisse courir. C est exactement le desaccord qu on
+       veut mesurer. */
+    F3.ombres = [{ adr: '0x' + 'c1'.repeat(20), sym: 'RUN', prix0: 1, t: now3 - 200 * 60000,
+                   echeance: now3, traits: {}, score: 50, dexVu: true,
+                   jalons: { 5: 20, 15: 60, 30: 200, 60: 400, 120: 330 } }];
+    C.regleLesOmbres({});
+    const b = C.bancsDEssai();
+    console.log('   ' + JSON.stringify(b.map((x) => ({ cle: x.cle, n: x.n, moy: x.moyenne }))));
+    ok(b.every((x) => x.n === 1), 'chaque jeu a rejoue la MEME ombre, une fois');
+    const vig = b.find((x) => x.cle === 'en vigueur'), hauts = b.find((x) => x.cle === 'paliers hauts');
+    ok(vig.moyenne < hauts.moyenne,
+       'sur un jeton qui fait +400 %, les paliers bas rendent ' + vig.moyenne + ' % contre ' + hauts.moyenne + ' % aux paliers hauts');
+    /* « Il a scalpe la chart, il aurait pu laisser un moon bag. » Une part
+       que rien ne vend, qui sort au dernier jalon. */
+    const moon = b.find((x) => x.cle === 'scalp + moon bag');
+    ok(!!moon && moon.moyenne > vig.moyenne,
+       'garder un cinquieme jusqu au bout bat le meme scalp sans moon bag : ' + moon.moyenne + ' % contre ' + vig.moyenne + ' %');
+    ok(b.every((x) => x.partGagnantes === 100), 'et la part de gagnantes est comptee');
+    /* Un jeu de regles ne decide rien : aucune position n a bouge. */
+    ok(F3.positions.length === 0 && (F3.compteurs.closer || 0) >= 0, 'aucun de ces jeux n ouvre ni ne ferme quoi que ce soit');
+    /* La coupe est propre a chaque jeu. */
+    F3.variantes = {};
+    F3.ombres = [{ adr: '0x' + 'c2'.repeat(20), sym: 'CHUTE', prix0: 1, t: now3 - 200 * 60000,
+                   echeance: now3, traits: {}, score: 50, dexVu: true,
+                   jalons: { 5: -5, 15: -18, 30: -25, 60: -60, 120: -80 } }];
+    C.regleLesOmbres({});
+    const b2 = C.bancsDEssai();
+    const lc = b2.find((x) => x.cle === 'laisser courir');
+    ok(lc.moyenne <= -15 && lc.moyenne > -30,
+       '« laisser courir » coupe a -15 % et s arrete la, sans attendre -80 % (' + lc.moyenne + ' %)');
+    /* Et sur un jeton qui meurt, le moon bag COUTE : c est le prix du billet.
+       On compare a regles IDENTIQUES, seul le moon bag change — sinon c est la
+       coupe qui explique l ecart, pas lui. */
+    const memes = { actif: true, p1: 15, v1: 35, p2: 40, v2: 35, p3: 80, v3: 20,
+                    suivDepart: 10, suivEcart: 20, suivSerre: 10, suivSerreA: 40, coupe: 20 };
+    const meurt = { 5: -5, 15: -18, 30: -25, 60: -60, 120: -80 };
+    const sans = C.rejoue(meurt, memes);
+    const avec = C.rejoue(meurt, Object.assign({}, memes, { moon: 0.2 }));
+    ok(avec < sans, 'sur un jeton qui meurt, garder un cinquieme coute : ' + avec + ' % contre ' + sans + ' % — c est le prix du billet');
+    const monte = { 5: 20, 15: 60, 30: 200, 60: 400, 120: 330 };
+    ok(C.rejoue(monte, Object.assign({}, memes, { moon: 0.2 })) > C.rejoue(monte, memes),
+       'et sur un jeton qui court, il rapporte : c est le meme billet');
+    F3.ombres = [];
+  }
+
 }
 
 /* ==========================================================================
@@ -3175,7 +3274,14 @@ async function toutesLesSortiesSontSuivies() {
   E.suites[0].echeance = Date.now() - 1000;
   C.regleLesSuites({ [p.adr]: { prix: 1.6, liq: 9000 } });
   const m = E.memoire.sentinelle.sortie['arret suiveur'];
-  ok(!!m && Math.abs(m.s / m.n + 30) < 0.01, 'la lecon : vendu a +30, ca valait +60 trente minutes plus tard, -30 pts (« sold too early »)');
+  /* ---- LES LECONS SONT EN NET DE PROFONDEUR ----
+     Depuis le 9 septembre, « ce que ca valait » veut dire « ce qu on aurait pu
+     en SORTIR » : le jalon est borne par la liquidite de la piscine (voir
+     `rendementVendable`). Sortir 48 $ d une piscine de 9 000 $ coute environ un
+     point ; c est petit ici, et c est ce qui ramene une pompe fantome a la
+     perte qu elle est. Les chiffres attendus le portent. */
+  ok(!!m && Math.abs(m.s / m.n + 28.3) < 0.05,
+     'la lecon : vendu a +30, ca valait +58,3 % vendable trente minutes plus tard (+60 au prix affiche), -28,3 pts (« sold too early »)');
 
   console.log('\n-- une coupe aussi, et la suite sortie des flux est relue par la piscine --');
   remise([jeton(0), jeton(1)]);
@@ -3518,12 +3624,12 @@ async function prendreUnGain() {
   C.regleLesSuites({ '0xg1': { prix: 1.1, liq: 9000 } });   /* a l echeance, ca ne valait que +10 % */
   let v = C.vue();
   console.log('   ' + (v.flux[0] || {}).txt);
-  ok(/it was worth \+10\.0%/.test((v.flux[0] || {}).txt),
-     'la lecon compare ce qu on a pris a ce qu on aurait eu');
+  ok(/it was worth \+9\.2%/.test((v.flux[0] || {}).txt),
+     'la lecon compare ce qu on a pris a ce qu on aurait pu en SORTIR : +9,2 % vendable la ou le prix affichait +10 %');
   const m = C._etat().memoire.sentinelle.sortie['gain pris a +35-60%'];
   console.log('   lecon : ' + JSON.stringify(m));
-  ok(!!m && Math.abs(m.s / m.n - 30) < 0.01,
-     'et ce qu elle retient est la DIFFERENCE (+30 pts), pas le gain lui-meme — noter « j ai eu '
+  ok(!!m && Math.abs(m.s / m.n - 30.8) < 0.05,
+     'et ce qu elle retient est la DIFFERENCE (+30,8 pts), pas le gain lui-meme — noter « j ai eu '
      + '+40 % » serait circulaire et n apprendrait rien');
   ok(C._etat().suites.length === 0, 'la suite est soldee, elle ne sera pas jugee deux fois');
 
