@@ -1623,6 +1623,47 @@ async function evalueFile() {
 const PISCINE_MORTE = 100;        /* elle rend moins d'un centieme de la mise */
 let colonie = null;
 function poseColonie(c) { colonie = c; }
+/* ==================== CE QUE LE MIROIR A VRAIMENT TOUCHE ====================
+ *
+ * « Faire apprendre la colonie sur les executions reelles du miroir. C'est le
+ *   dernier mensonge du circuit, et le plus cher. »
+ *
+ * Le papier apprend sur des prix. Le miroir, lui, connait trois chiffres que le
+ * prix ignore : ce qu'un achat a coute gaz compris, ce qu'une vente a rendu net
+ * de gaz, et l'ecart entre le devis et ce qui est arrive. C'est tout l'ecart
+ * entre +119 % affiches depuis le 1er septembre et -45 $ dans le portefeuille.
+ *
+ * A chaque fermeture REELLE — un essai n'a ni gaz ni glissement, il n'apprend
+ * rien — le miroir renvoie donc son rendement a la colonie, qui le range a
+ * cote de celui du papier pour le meme jeton. La difference des deux, en
+ * points, EST le cout reel d'un aller-retour : mesure, plus estime.
+ * ==================================================================== */
+function ditExecutionReelle(c, adr, o, r) {
+  if (!colonie || typeof colonie.executionReelle !== 'function') return;
+  if (!r || !r.recuReel) return;                 /* un essai n'a rien coute : il n'apprend rien */
+  const paye = WEI(o.cout || o.entree || '0');
+  if (paye.lte(0)) return;
+  const deja = WEI(o.sortiesPartielles || '0');
+  const rendu = r.recuReel.add(deja);
+  const rReel = Number(rendu.sub(paye).mul(10000).div(paye)) / 100;
+  /* Le glissement : ce que le devis promettait contre ce que le solde a vu.
+     Il ne vaut que pour la derniere vente, la seule dont on ait les deux. */
+  let glissement = null;
+  if (r.sortie && r.sortie.gt(0))
+    glissement = Number(r.recuReel.sub(r.sortie).mul(10000).div(r.sortie)) / 100;
+  try {
+    colonie.executionReelle({
+      adr, sym: o.sym || null,
+      r: Math.round(rReel * 100) / 100,
+      glissement: glissement === null ? null : Math.round(glissement * 100) / 100,
+      cout: ethers.utils.formatUnits(paye, 18),
+      rendu: ethers.utils.formatUnits(rendu, 18),
+      tenue: Date.now() - (o.t || Date.now()),
+      pont: !!(o.monnaie && !o.monnaie.eth),
+    });
+  } catch (e) { console.warn('[miroir] execution reelle :', e && e.message); }
+}
+
 function ditPiscineMorte(c, adr, o, devis) {
   const paye = WEI(o.cout || o.entree || '0');
   if (paye.lte(0) || devis.mul(PISCINE_MORTE).gte(paye)) return false;
@@ -1892,6 +1933,9 @@ async function vendPosition(c, adr, o) {
                    reel: !!r.recuReel,
                    t0: o.t, t: Date.now(), simule: !!r.simule, tx: r.tx || null });
   if (c.fermees.length > FERMEES_MAX) c.fermees.splice(0, c.fermees.length - FERMEES_MAX);
+  /* Et la colonie apprend sur CE chiffre-la, pas sur le prix : voir
+     `ditExecutionReelle`. */
+  ditExecutionReelle(c, adr, o, r);
   /* En reel, le chiffre qui compte est ce que le solde a regagne, gaz deduit ;
      le devis n est qu une comparaison. En essai, il n y a que le devis. */
   note(c, r.recuReel

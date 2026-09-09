@@ -286,6 +286,23 @@ const FAUX = '0x' + '0'.repeat(64);
 function ethCall(p) {
   appels.call++;
   const to = String(p.to || '').toLowerCase();
+  /* ---- LE JETON DE LIQUIDITE D UNE PAIRE V2 ----
+   * Sur une paire v2, la paire EST le jeton de liquidite : `totalSupply` et
+   * `balanceOf` d une adresse morte disent qui peut retirer le fond.
+   * `lpBrulee` (en %) regle ce que le banc veut montrer ; `lpSansJeton` joue un
+   * pool v3, qui ne repond pas ; `lpMuet` joue un noeud qui ne repond pas. */
+  const sel = String(p.data || '').slice(0, 10);
+  if (sel === '0x18160ddd' || sel === '0x70a08231') {
+    const jp = MONDE.jetons.find((x) => String(x.pool || '').toLowerCase() === to);
+    if (!jp) return { result: '0x0' };
+    if (jp.lpSansJeton) return { error: { message: 'execution reverted' } };
+    if (jp.lpMuet) return { error: { message: 'execution timeout' } };
+    const total = 1000000n;
+    if (sel === '0x18160ddd') return { result: '0x' + total.toString(16) };
+    const bps = BigInt(Math.round((jp.lpBrulee === undefined ? 0 : jp.lpBrulee) * 100));
+    /* Les deux adresses mortes se partagent la part brulee. */
+    return { result: '0x' + (total * bps / 10000n / 2n).toString(16) };
+  }
   const t = MONDE.jetons.find((x) => x.addr === to);
   if (!t) return { result: VRAI };
   if (t.callMuet) return { error: { message: 'execution timeout' } };
@@ -3160,6 +3177,84 @@ async function rejeuDeLaStrategie() {
   ok((F.compteurs.rejeux || 0) === 1, 'un rejeu compte');
   ok(C.OMBRES_MAX >= 2400, 'et le plafond laisse deux cents minutes de vie a trente examens par tour : la derniere echeance (120 min) est atteignable');
   F.ombres = [];
+
+  console.log('\n-- qui tient la liquidite, et peut donc la retirer --');
+  {
+    /* JACOB, 9 septembre : achete a 04:18, piscine videe a 04:23. Le contrat
+       etait sain ; c est la LIQUIDITE qui est partie. Sur une paire v2, deux
+       lectures disent qui peut la retirer. */
+    /* La fabrique du banc ne recopie que les champs qu elle connait : on pose
+       ceux-ci apres, sur le monde, comme partout ailleurs ici. */
+    remise([jeton(0), jeton(1), jeton(2)]);
+    MONDE.jetons[0].lpBrulee = 100; MONDE.jetons[1].lpBrulee = 0; MONDE.jetons[2].lpBrulee = 60;
+    C._cache.lp = {};
+    const brulee = await C.litLp({ addr: MONDE.jetons[0].addr, pool: MONDE.jetons[0].pool });
+    const tenue = await C.litLp({ addr: MONDE.jetons[1].addr, pool: MONDE.jetons[1].pool });
+    const moitie = await C.litLp({ addr: MONDE.jetons[2].addr, pool: MONDE.jetons[2].pool });
+    console.log('   ' + JSON.stringify({ brulee, tenue, moitie }));
+    ok(brulee.vu && brulee.brulee === 100, 'une liquidite entierement brulee est lue comme telle : plus personne ne peut la reprendre');
+    ok(tenue.vu && tenue.brulee === 0, 'une liquidite entierement detenue aussi : elle peut partir a la seconde');
+    ok(moitie.vu && Math.abs(moitie.brulee - 60) < 0.2, 'et les cas entre les deux, avec leur part (' + moitie.brulee + ' %)');
+    ok(C.litTrait('lp', { lp: brulee }) === 'liquidite brulee'
+       && C.litTrait('lp', { lp: tenue }) === 'liquidite detenue'
+       && C.litTrait('lp', { lp: moitie }) === 'liquidite a moitie brulee',
+       'le trait porte les trois cases, et rien de plus : c est un fait, pas un verdict');
+    /* Un pool v4 n a pas de jeton de liquidite : on le DIT au lieu d inventer une case. */
+    const v4 = await C.litLp({ addr: '0xzz', pool: '0x' + 'ab'.repeat(32) });
+    ok(!v4.vu && /NFT/.test(v4.raison) && C.litTrait('lp', { lp: v4 }) === 'pas de jeton de liquidite',
+       'un pool v4 n en a pas, et la case le dit : « ' + v4.raison + ' »');
+    /* Un pool v3 ne repond pas a totalSupply : ce n est pas une panne, c est une reponse. */
+    remise([jeton(0)]);
+    MONDE.jetons[0].lpSansJeton = true; C._cache.lp = {};
+    const v3 = await C.litLp({ addr: MONDE.jetons[0].addr, pool: MONDE.jetons[0].pool });
+    ok(!v3.vu && /no LP token/.test(v3.raison), 'un pool v3 non plus : « ' + v3.raison + ' »');
+    /* Et un noeud muet laisse la case NON LUE, il n accuse personne. */
+    remise([jeton(0)]);
+    MONDE.jetons[0].lpMuet = true; C._cache.lp = {};
+    const muet = await C.litLp({ addr: MONDE.jetons[0].addr, pool: MONDE.jetons[0].pool });
+    ok(!muet.vu && C.litTrait('lp', { lp: muet }) !== 'liquidite detenue',
+       'un noeud muet laisse la case non lue : on ne condamne pas sur une lecture ratee');
+    /* La lecture coute deux appels, et seulement sur un jeton qu on va acheter. */
+    remise([jeton(0), jeton(1), jeton(2)]);
+    MONDE.jetons[0].lpBrulee = 100; C._cache.lp = {};
+    const avant = appels.call;
+    await C.tour();
+    const v = C.vue();
+    const achete = (v.candidats || []).filter((x) => !x.refus).length;
+    console.log('   ' + achete + ' jeton(s) sans refus · appels eth_call du tour : ' + (appels.call - avant));
+    ok((C._etat().compteurs.cobayeVu || 0) >= 1, 'la lecture se fait au meme endroit que l epreuve de sortie : juste avant l achat');
+  }
+
+  console.log('\n-- le miroir dit ce qu il a VRAIMENT touche, et l ecart se mesure --');
+  {
+    /* « Le papier apprend sur des prix. Le miroir connait ce qu un achat a
+       coute gaz compris et ce qu une vente a rendu net de gaz. » */
+    remise(sains());
+    const G4 = C._etat();
+    G4.reel = null;
+    G4.signaux = [{ k: 'vente', adr: '0xjacob', sym: 'JACOB', r: 39.9, t: Date.now() }];
+    ok(C.coutReel().n === 0 && C.coutReel().ecart === null, 'sans fermeture reelle, rien n est affiche — surtout pas un zero');
+    ok(C.executionReelle({ adr: '0xJACOB', sym: 'JACOB', r: -4.2, glissement: -1.8, cout: '0.0127', rendu: '0.0122' }) === true,
+       'le miroir renvoie ce qu il a touche');
+    const c1 = C.coutReel();
+    console.log('   ' + JSON.stringify({ n: c1.n, moyenne: c1.moyenne, ecart: c1.ecart, glissement: c1.glissement }));
+    ok(c1.n === 1 && c1.moyenne === -4.2, 'la colonie garde le rendement REEL, celui du portefeuille');
+    ok(c1.ecart === 44.1 && c1.nEcart === 1,
+       'et l ecart avec ce que le papier a compte : 39,9 - (-4,2) = 44,1 points de cout reel, mesures');
+    ok(c1.glissement === -1.8, 'le glissement entre le devis et le prix obtenu est garde a part');
+    ok(c1.lignes[0].sym === 'JACOB' && c1.lignes[0].papier === 39.9, 'la ligne porte les deux chiffres cote a cote');
+    const f4 = G4.flux.find((x) => /a mirror actually got/.test(x.txt || ''));
+    console.log('   fil : ' + (f4 && f4.txt));
+    ok(!!f4 && /the paper counted \+39\.9%/.test(f4.txt) && /44\.1 points of real cost/.test(f4.txt),
+       'et le fil le dit en clair, sans qu on ait a chercher');
+    /* Un jeton que le papier ne connait plus : le rendement reel compte quand meme. */
+    C.executionReelle({ adr: '0xinconnu', sym: 'X', r: 10, glissement: null });
+    const c2 = C.coutReel();
+    ok(c2.n === 2 && c2.nEcart === 1, 'sans rendement papier a comparer, le reel compte seul et l ecart ne bouge pas');
+    ok(C.executionReelle({ adr: '0xz', r: NaN }) === false && C.executionReelle(null) === false,
+       'et un chiffre illisible n entre pas');
+    ok(C.vue().reel.n === 2, 'l ecran le recoit');
+  }
 
   console.log('\n-- un gain qu on ne peut pas vendre n est pas un gain --');
   {

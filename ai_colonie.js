@@ -455,6 +455,13 @@ const TRAITS = {
   cobaye:  { besoin: null, f: (t) => !t.epreuve ? 'sortie non testee'
               : !t.epreuve.teste ? 'sortie non testable'
               : t.epreuve.passe ? 'sortie simulee OK' : 'sortie bloquee' },
+  /* Qui tient la liquidite, et peut donc la retirer — voir `litLp`. Une case
+     a part pour « pas de jeton de liquidite » : un pool v4 n'en a pas, et ce
+     n'est ni bon ni mauvais tant que la colonie ne l'a pas mesure. */
+  lp:      { besoin: null, f: (t) => !t.lp ? 'liquidite non lue'
+              : !t.lp.vu ? 'pas de jeton de liquidite'
+              : t.lp.brulee >= 95 ? 'liquidite brulee'
+              : t.lp.brulee >= 50 ? 'liquidite a moitie brulee' : 'liquidite detenue' },
 
   /* --- un appel a GoPlus --- */
   taxe:   { besoin: 'goplus', f: (t) => { const g = t.g || {};
@@ -1029,7 +1036,7 @@ const urlImage = (u) => {
   if (/missing\.png$/i.test(x)) return null;
   return x.slice(0, 300);
 };
-const CACHE = { goplus: {}, ohlcv: {}, dex: {}, chaine: {}, trades: {}, poolDe: {}, octets: {} };
+const CACHE = { goplus: {}, ohlcv: {}, dex: {}, chaine: {}, trades: {}, poolDe: {}, octets: {}, lp: {} };
 /* Une entree peut porter SA duree : un silence ne vaut pas une reponse, et ne
    doit pas etre garde aussi longtemps. */
 const frais = (c, k, ttl) => { const x = c[k]; return (x && Date.now() - x.t < (x.ttl || ttl)) ? x.v : null; };
@@ -1506,6 +1513,74 @@ async function lisCode(t) {
   return garde(CACHE.octets, t.addr, { vu: true, octets: hex.length / 2,
     mint: exposeUn(hex, SELECTEURS.mint), liste: exposeUn(hex, SELECTEURS.liste),
     pause: exposeUn(hex, SELECTEURS.pause), frais: exposeUn(hex, SELECTEURS.frais) });
+}
+
+/* ==========================================================================
+ * QUI TIENT LA LIQUIDITE, ET PEUT DONC LA RETIRER
+ *
+ * JACOB, 9 septembre : achete a 04:18, la piscine videe a 04:23. La position
+ * entiere perdue, et c'est ce trade seul qui a coute plus que tout le reste
+ * reuni. Aucun controle du contrat ne voit venir ca : le contrat etait
+ * parfaitement sain, c'est la LIQUIDITE qui est partie.
+ *
+ * Sur une paire Uniswap v2, la paire EST le jeton de liquidite. Deux lectures
+ * suffisent donc a savoir qui peut la retirer : l'offre totale, et ce qui est
+ * envoye a une adresse morte. Une liquidite brulee ne peut plus etre reprise
+ * par personne — c'est l'engagement le plus fort qu'un lanceur puisse prendre,
+ * et il est verifiable, contrairement a tout ce qu'il ecrit. Une liquidite
+ * detenue peut partir a la seconde.
+ *
+ * ---- POURQUOI UN TRAIT ET PAS UN VETO ----
+ *
+ * Sur un lancement manuel frais, le lanceur tient sa liquidite : c'est l'etat
+ * NORMAL, pas une anomalie. En faire un veto ecarterait presque tout, et on
+ * viendrait de mesurer que les barrieres actuelles ont deja raison. On en fait
+ * donc un TRAIT : les agents apprennent ce qu'il vaut sur les ombres, comme le
+ * reste, et il pese a la hauteur de ce qu'il separe — zero s'il ne separe
+ * rien. C'est la meme discipline que partout ailleurs ici : mesurer avant de
+ * decider.
+ *
+ * Un pool v3 ou v4 n'a pas de jeton de liquidite — les positions y sont des
+ * NFT — et la lecture le dit au lieu d'inventer une case.
+ * ======================================================================== */
+const TTL_LP = 30 * 60e3;
+const SEL_TOTAL_SUPPLY = '0x18160ddd';
+const SEL_BALANCE_OF   = '0x70a08231';
+const ADRESSES_MORTES = ['0x000000000000000000000000000000000000dead',
+                         '0x0000000000000000000000000000000000000000'];
+function motAdresse(a) { return String(a).toLowerCase().replace(/^0x/, '').padStart(64, '0'); }
+function grosNombre(hex) {
+  if (typeof hex !== 'string' || !/^0x[0-9a-fA-F]*$/.test(hex) || hex.length < 3) return null;
+  try { return BigInt(hex); } catch (e) { return null; }
+}
+async function litLp(t) {
+  const c = frais(CACHE.lp, t.addr, TTL_LP); if (c !== null) return c;
+  const pool = String(t.pool || '');
+  /* Un identifiant de 32 octets est un pool v4 : pas de jeton de liquidite. */
+  if (!/^0x[0-9a-fA-F]{40}$/.test(pool))
+    return garde(CACHE.lp, t.addr, { vu: false, raison: 'v4 pool: liquidity is an NFT, not a token' });
+  let total = null;
+  try { total = grosNombre(await rpc('eth_call', [{ to: pool, data: SEL_TOTAL_SUPPLY }, 'latest'])); }
+  catch (e) { total = null; }
+  /* Un pool v3 ne repond pas a `totalSupply` : ce n'est pas une panne, c'est
+     une reponse — il n'a pas de jeton de liquidite non plus. */
+  if (total === null)
+    return garde(CACHE.lp, t.addr, { vu: false, raison: 'no LP token on this pool (v3, or the node did not answer)' }, 10 * 60e3);
+  if (total === 0n)
+    return garde(CACHE.lp, t.addr, { vu: false, raison: 'no LP supply at all' });
+  let mortes = 0n, lu = 0;
+  for (const m of ADRESSES_MORTES) {
+    try {
+      const b = grosNombre(await rpc('eth_call', [{ to: pool, data: SEL_BALANCE_OF + motAdresse(m) }, 'latest']));
+      if (b !== null) { mortes += b; lu++; }
+    } catch (e) { /* une lecture ratee laisse la part inconnue */ }
+    /* Pas de pause ici : deux `eth_call` minuscules sur le meme noeud, et
+       `rpc` espace deja ce qu'il faut espacer. Une pause de plus par achat
+       coutait des minutes au banc pour rien. */
+  }
+  if (!lu) return garde(CACHE.lp, t.addr, { vu: false, raison: 'the node did not answer on the LP holders' }, 10 * 60e3);
+  const part = Number(mortes * 10000n / total) / 100;
+  return garde(CACHE.lp, t.addr, { vu: true, brulee: Math.round(part * 10) / 10, partielle: lu < ADRESSES_MORTES.length });
 }
 
 async function lisOhlcv(pool) {
@@ -2044,6 +2119,10 @@ const MOTS = {
   /* epreuve de vente */
   'sortie non testee': 'exit not tested', 'sortie non testable': 'exit not testable',
   'sortie simulee OK': 'exit simulated OK', 'sortie bloquee': 'exit blocked',
+  /* qui tient la liquidite */
+  'liquidite non lue': 'LP not read', 'pas de jeton de liquidite': 'no LP token (v3/v4 pool)',
+  'liquidite brulee': 'LP burned', 'liquidite a moitie brulee': 'LP half burned',
+  'liquidite detenue': 'LP still held — it can be pulled',
   /* taxes */
   'taxe inconnue': 'tax unknown', 'aucune taxe': 'no tax', 'taxe <=10%': 'tax <=10%',
   'taxe >10%': 'tax >10%',
@@ -3666,6 +3745,67 @@ function tiensParMain(adr, minutes, par) {
  * On ne coupe donc pas sur un prix : on ferme sur ce que le devis rend. Et si
  * la position n'est plus ouverte, il n'y a rien a faire — la lecon est deja
  * ecrite, on ne la reecrit pas apres coup. */
+/* ==========================================================================
+ * CE QUE LE MIROIR A TOUCHE, A COTE DE CE QUE LE PAPIER A COMPTE
+ *
+ * « Le papier apprend sur des prix. Le miroir connait ce qu'un achat a coute
+ *   gaz compris, ce qu'une vente a rendu net de gaz, et l'ecart entre le devis
+ *   et le prix obtenu. C'est tout l'ecart entre +119 % affiches et -45 $. »
+ *
+ * Le papier ne peut pas connaitre ces trois chiffres : il ne signe rien. Il ne
+ * faut donc pas qu'il les devine — il faut que celui qui les paie les dise. A
+ * chaque fermeture reelle, le miroir renvoie ici son rendement, et on le range
+ * A COTE de celui que le papier a compte pour le meme jeton. La difference
+ * moyenne des deux, en points, est le cout reel d'un aller-retour sur cette
+ * chaine : un chiffre mesure a la place d'une estimation.
+ *
+ * On ne l'utilise pour rien d'autre pour l'instant. C'est une mesure, pas une
+ * regle : la faire entrer dans les decisions avant de savoir ce qu'elle vaut
+ * serait exactement l'erreur qu'on repare. Elle s'affiche, elle s'accumule, et
+ * elle dira dans quelques jours ce que l'ecran coute vraiment.
+ * ======================================================================== */
+const REEL_MAX = 200;              /* on garde les dernieres fermetures reelles */
+function executionReelle(x) {
+  if (!x || !x.adr) return false;
+  const r = Number(x.r);
+  if (!isFinite(r)) return false;
+  const adr = String(x.adr).toLowerCase();
+  /* Ce que le PAPIER a compte pour ce meme jeton, s'il l'a encore en memoire :
+     c'est la comparaison qui apprend quelque chose, pas le chiffre seul. */
+  const s = (E.signaux || []).find((v) => v.k === 'vente' && v.adr === adr && typeof v.r === 'number');
+  const papier = s ? s.r : null;
+  if (!E.reel || typeof E.reel !== 'object') E.reel = { lignes: [], n: 0, s: 0, nEcart: 0, ecart: 0, nGliss: 0, gliss: 0 };
+  const R = E.reel;
+  R.n++; R.s += r;
+  if (papier !== null) { R.nEcart++; R.ecart += papier - r; }
+  if (typeof x.glissement === 'number' && isFinite(x.glissement)) { R.nGliss++; R.gliss += x.glissement; }
+  R.lignes.unshift({ sym: x.sym || null, adr, r, papier, glissement: x.glissement === undefined ? null : x.glissement,
+                     cout: x.cout || null, rendu: x.rendu || null, pont: !!x.pont, t: Date.now() });
+  if (R.lignes.length > REEL_MAX) R.lignes.length = REEL_MAX;
+  compte('executionReelle');
+  E.flux.unshift({ sym: x.sym || adr.slice(0, 8), tag: r >= 0 ? 'buy' : 'cut', cls: r >= 0 ? 'up' : 'dn', t: Date.now(),
+    txt: 'a mirror actually got ' + (r >= 0 ? '+' : '') + r.toFixed(1) + '% on this one'
+       + (papier !== null ? ', the paper counted ' + (papier >= 0 ? '+' : '') + papier.toFixed(1) + '% — ' + Math.abs(papier - r).toFixed(1) + ' points of real cost' : '')
+       + (typeof x.glissement === 'number' ? ' · fill ' + (x.glissement >= 0 ? '+' : '') + x.glissement.toFixed(1) + '% off the quote' : ''),
+    par: 'miroir' });
+  sauve();
+  return true;
+}
+/** Ce que la page montre : le cout reel, mesure, et sur combien de fermetures. */
+function coutReel() {
+  const R = E.reel;
+  if (!R || !R.n) return { n: 0, moyenne: null, ecart: null, glissement: null, lignes: [] };
+  return {
+    n: R.n,
+    moyenne: Math.round(R.s / R.n * 10) / 10,
+    /* Le papier moins le miroir : ce que l'ecran promet de trop, en points. */
+    ecart: R.nEcart ? Math.round(R.ecart / R.nEcart * 10) / 10 : null,
+    nEcart: R.nEcart,
+    glissement: R.nGliss ? Math.round(R.gliss / R.nGliss * 10) / 10 : null,
+    lignes: (R.lignes || []).slice(0, 8),
+  };
+}
+
 function piscineMorte(adr, part) {
   const a = String(adr || '').toLowerCase();
   const f = Number(part);
@@ -7133,6 +7273,10 @@ async function tour() {
            * Le jeton a tout passe : c'est maintenant, et seulement maintenant,
            * que la simulation vaut ses appels. */
           compte('cobayeVu');
+          /* Qui tient la liquidite : deux lectures, et seulement sur un jeton
+             qu'on s'apprete a acheter — comme l'epreuve de sortie. */
+          t.lp = await litLp(t);
+          if (t.lp && t.lp.vu) t.appels += 3;
           t.epreuve = await simuleVente(t);
           t.appels += (t.epreuve.essais || 0);
           const bloque = vetoCobaye(t);
@@ -7385,6 +7529,10 @@ function vue() {
       }).filter((x) => x.par.length),
     },
     tenue: tenueApprise(),
+    /* ---- CE QUE LE MIROIR A VRAIMENT TOUCHE ----
+       Le papier ne signe rien, donc il ne peut pas connaitre le gaz ni le
+       glissement. Celui qui les paie les dit. */
+    reel: coutReel(),
     /* ---- LES JEUX DE REGLES QUI COURENT EN PARALLELE ----
        Ils ne tradent rien : ils rejouent les memes ombres et disent ce qu'ils
        auraient rendu. C'est ce qui remplace seize trades mesures a la main par
@@ -7566,6 +7714,7 @@ module.exports = {
   enMots, MOTS,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre, piscineMorte,
   rendementVendable, bancsDEssai, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
+  executionReelle, coutReel,
   tiensParMain, fermeParMain, TENUE_MAIN_MAX,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,
@@ -7581,7 +7730,7 @@ module.exports = {
   noteProfil, courbeDe, horizonPour, informationDe, classementDesTraits,
   vetoOracle, vetoScout, vetoWarden, vetoWhale, vetoWhisper, VETOS,
   REFUS_AGE, REFUS_DEFINITIFS,
-  sociauxExiges, SOCIAUX_DEFAUT, simuleVente, vetoCobaye,
+  sociauxExiges, SOCIAUX_DEFAUT, simuleVente, vetoCobaye, litLp,
   planchers, echelle, joueEchelle, arretSuiveur, vendUneTranche, reprises,
   abandonDelai, abandonneLesPerdues,
   HORIZONS, HORIZON_REF, PROFIL_MIN_OBS, jalonValable,
