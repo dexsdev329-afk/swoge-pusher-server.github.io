@@ -223,6 +223,83 @@ const MIN_ETH = (function () {
   const plancher = ethers.utils.parseUnits(GAZ_RESERVE, 18).add(ethers.utils.parseUnits(ORDRE_MIN_ETH, 18));
   return conf.gte(plancher) ? MIN_ETH_CONF : ethers.utils.formatUnits(plancher, 18);
 })();
+/* ==========================================================================
+ * LE PLANCHER D'UN ORDRE EST EN DOLLARS
+ *
+ * « Il y a des personnes qui n'ont pas les moyens de mettre 1000 $, donc elles
+ *   tradent trop petit. Une regle : la mise minimum sur le miroir, c'est 15 $,
+ *   meme si la banque est trop petite. Les grosses banques n'ont pas ce
+ *   souci. »
+ *
+ * Le plancher existait, mais en ETH — 0,001, soit 2,49 $ au cours du
+ * 9 septembre. C'est sous ce qu'un aller-retour coute sur ces piscines. Un
+ * portefeuille de cinquante dollars prenait donc, a un dixieme du disponible,
+ * des positions de cinq dollars dont le gaz des deux cotes mange la moitie du
+ * mouvement : il ne pouvait pas gagner, quoi que la colonie trouve. Le
+ * plancher en ETH avait en plus le defaut de flotter avec le cours, alors que
+ * le gaz, lui, se compte en dollars pour celui qui le paie.
+ *
+ * Il est donc en DOLLARS et il est TENU : sous la part du Banquier, la mise
+ * monte a quinze dollars si le disponible le permet. Un petit portefeuille
+ * tient donc moins de positions a la fois, mais des positions qui peuvent
+ * rendre quelque chose — et c'est le seul arbitrage disponible quand la caisse
+ * est petite. Au-dessus, rien ne change : la part du Banquier depasse le
+ * plancher, et c'est elle qui decide.
+ *
+ * Le cours de l'ETH se lit sur la paire WETH la plus profonde de la chaine
+ * (31 M$ de liquidite contre le dollar au 9 septembre), pas sur une source
+ * exterieure de plus. Sans cours lisible on retombe sur le plancher en ETH, et
+ * on le dit : convertir avec un chiffre qu'on n'a pas serait inventer la mise.
+ * ======================================================================== */
+const ORDRE_MIN_USD = Math.max(0, nEnv('MIROIR_ORDRE_MIN_USD', 15));
+const ETH_USD_TTL = 10 * 60000;
+let ethUsd = { v: 0, t: 0 };
+let sourceEthUsd = async function () {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), 8000);
+  try {
+    const r = await fetch('https://api.dexscreener.com/latest/dex/tokens/' + WETH, { signal: ac.signal });
+    if (!r.ok) return 0;
+    const j = await r.json();
+    /* Les paires ou le WETH est la BASE : c'est la que `priceUsd` est le cours
+       de l'ETH. La plus profonde gagne. */
+    const l = (j.pairs || [])
+      .filter((x) => String(x.chainId || '').toLowerCase() === 'robinhood'
+                  && String((x.baseToken || {}).address || '').toLowerCase() === norm(WETH)
+                  && Number(x.priceUsd) > 0)
+      .sort((a, b) => Number((b.liquidity || {}).usd || 0) - Number((a.liquidity || {}).usd || 0));
+    return l.length ? Number(l[0].priceUsd) : 0;
+  } catch (e) { return 0; }
+  finally { clearTimeout(t); }
+};
+function poseSourceEthUsd(f) { sourceEthUsd = f; }
+async function litEthUsd() {
+  if (ethUsd.v > 0 && Date.now() - ethUsd.t < ETH_USD_TTL) return ethUsd.v;
+  let v = 0;
+  try { v = Number(await sourceEthUsd()); } catch (e) { v = 0; }
+  if (isFinite(v) && v > 0) ethUsd = { v, t: Date.now() };
+  return ethUsd.v > 0 && Date.now() - ethUsd.t < ETH_USD_TTL ? ethUsd.v : 0;
+}
+/** Le cours deja lu, ou zero. Jamais d'appel : les decisions se prennent sur ce
+ *  qu'on SAIT, et la lecture se fait a un endroit nomme. */
+function coursEth() { return (ethUsd.v > 0 && Date.now() - ethUsd.t < ETH_USD_TTL) ? ethUsd.v : 0; }
+function oublieLeCours() { ethUsd = { v: 0, t: 0 }; }
+/** Le plancher d'un ordre, en wei : le plus haut des deux, celui en ETH et
+ *  celui en dollars. Sans cours, celui en ETH seul. */
+function plancherOrdre() {
+  const enEth = WEI(ORDRE_MIN_ETH);
+  const c = coursEth();
+  if (!(c > 0) || !(ORDRE_MIN_USD > 0)) return enEth;
+  const enUsd = WEI((ORDRE_MIN_USD / c).toFixed(18));
+  return enUsd.gt(enEth) ? enUsd : enEth;
+}
+/** Ce qu'il faut sur le portefeuille pour jouer : la reserve de gaz plus un
+ *  ordre au plancher. Il suit donc le cours, comme le plancher. */
+function minPourJouer() {
+  const p = WEI(GAZ_RESERVE).add(plancherOrdre());
+  const conf = WEI(MIN_ETH_CONF);
+  return ethers.utils.formatUnits(conf.gte(p) ? conf : p, 18);
+}
 /* La tolerance de glissement. Large, parce que ces piscines bougent entre le
    devis et le bloc suivant ; la taille de l'ordre borne deja l'impact. */
 const TOLERANCE_BPS = Math.min(3000, Math.max(50, Math.round(nEnv('MIROIR_TOLERANCE_BPS', 500))));
@@ -1100,12 +1177,28 @@ function miseDe(soldeWei, part) {
   if (!isFinite(p) || p <= 0) p = PART_ORDRE;
   p = Math.min(0.5, p);
   let mise = dispo.mul(Math.round(p * 10000)).div(10000);
-  const plaf = WEI(ORDRE_MAX_ETH), mini = WEI(ORDRE_MIN_ETH);
+  const plaf = WEI(ORDRE_MAX_ETH), mini = plancherOrdre();
   /* Sous le plancher, on prend le plancher si le disponible le permet : un
      petit portefeuille tient moins de positions, mais des positions qui
      valent leur gaz. Sinon, rien — et `pourquoiPasDeMise` le dit. */
   if (mise.lt(mini)) mise = dispo.gte(mini) ? mini : ethers.BigNumber.from(0);
   return mise.gt(plaf) ? plaf : mise;
+}
+/** La part du Banquier seule, sans le plancher : c'est la comparaison des deux
+ *  qui dit au joueur que sa mise a ete RELEVEE, et de combien. */
+function partSeule(soldeWei, part) {
+  const dispo = ethers.BigNumber.from(soldeWei).sub(WEI(GAZ_RESERVE));
+  if (dispo.lte(0)) return ethers.BigNumber.from(0);
+  let p = Number(part);
+  if (!isFinite(p) || p <= 0) p = PART_ORDRE;
+  return dispo.mul(Math.round(Math.min(0.5, p) * 10000)).div(10000);
+}
+/** Un montant en ETH, dit en dollars quand on connait le cours. */
+function enDollars(wei) {
+  const c = coursEth();
+  if (!(c > 0)) return '';
+  const v = Number(ethers.utils.formatUnits(wei, 18)) * c;
+  return '$' + (v >= 100 ? Math.round(v) : v.toFixed(2));
 }
 
 /** La phrase qui va avec une mise nulle : les chiffres, et quoi faire. */
@@ -1114,9 +1207,11 @@ function pourquoiPasDeMise(soldeWei) {
   const dispo = ethers.BigNumber.from(soldeWei).sub(WEI(GAZ_RESERVE));
   if (dispo.lte(0))
     return solde + ' ETH (RH) is under the ' + GAZ_RESERVE + ' ETH gas reserve, which is never spent on a buy';
+  const mini = plancherOrdre();
   return ethers.utils.formatUnits(dispo, 18) + ' ETH (RH) free after the ' + GAZ_RESERVE
-    + ' ETH gas reserve, and an order needs at least ' + ORDRE_MIN_ETH + ' ETH to be worth its gas'
-    + ' — fund the mirror with ' + MIN_ETH + ' ETH or more';
+    + ' ETH gas reserve, and an order needs at least ' + ethers.utils.formatUnits(mini, 18) + ' ETH'
+    + (coursEth() > 0 ? ' (' + enDollars(mini) + ', the floor under which gas eats the trade)' : ' to be worth its gas')
+    + ' — fund the mirror with ' + minPourJouer() + ' ETH or more';
 }
 
 /* ==================== L'INTERFACE ====================
@@ -1263,7 +1358,11 @@ async function etat(joueur, lireChaine) {
   const c = fiche(joueur);
   const base = {
     pret: pret().ok, pourquoi: pret().pourquoi, execute: EXECUTE,
-    min: MIN_ETH, max: MAX_ETH, part: PART_ORDRE, ordreMax: ORDRE_MAX_ETH, ordreMin: ORDRE_MIN_ETH,
+    min: minPourJouer(), max: MAX_ETH, part: PART_ORDRE, ordreMax: ORDRE_MAX_ETH,
+    ordreMin: ethers.utils.formatUnits(plancherOrdre(), 18),
+    /* Le plancher tel qu'il est REGLE, et le cours qui le convertit : sans le
+       cours, l'ecran doit pouvoir dire que la conversion n'a pas eu lieu. */
+    ordreMinUsd: ORDRE_MIN_USD, coursEth: coursEth() || null,
     gaz: GAZ_RESERVE, places: Math.max(0, MIROIRS_MAX - actifs().length),
   };
   if (!c) return Object.assign(base, { existe: false });
@@ -1310,8 +1409,11 @@ async function demarre(joueur) {
   if (actifs().length >= MIROIRS_MAX)
     throw new Error('the mirror is full (' + MIROIRS_MAX + ' active): too many wallets on the same pools would bid against each other');
   const solde = await provider().getBalance(c.adr);
-  if (solde.lt(WEI(MIN_ETH)))
-    throw new Error('fund the mirror wallet first — at least ' + MIN_ETH + ' ETH (RH)');
+  await litEthUsd();
+  const min = minPourJouer();
+  if (solde.lt(WEI(min)))
+    throw new Error('fund the mirror wallet first — at least ' + min + ' ETH (RH)'
+                    + (coursEth() > 0 ? ' (' + enDollars(WEI(min)) + ')' : ''));
   if (solde.gt(WEI(MAX_ETH)))
     throw new Error('over the ceiling of ' + MAX_ETH + ' ETH (RH). This is a stake, not a vault: take some out first');
   c.actif = true; c.joue = Date.now();
@@ -1567,6 +1669,10 @@ async function rattrapeFile(papier) {
 function surVente(t) { return enFile(() => venteFile(t)); }
 
 async function achatFile(t) {
+  /* Le cours de l'ETH avant de dimensionner : le plancher est en dollars. Un
+     seul appel, garde dix minutes, et sans lui on retombe sur le plancher en
+     ETH plutot que d'inventer une conversion. */
+  await litEthUsd();
   const liste = actifs();
   if (!liste.length) return 0;
   let n = 0;
@@ -1610,6 +1716,11 @@ async function achetePosition(c, t) {
     note(c, 'Skipped ' + (t.sym || adr) + ': ' + pourquoiPasDeMise(solde));
     return false;
   }
+  /* Le plancher a-t-il RELEVE la mise ? Le joueur doit le savoir : sa position
+     pese alors plus que la part du Banquier, donc son portefeuille en tiendra
+     moins a la fois. */
+  const partB = partSeule(solde, t.part);
+  const releve = partB.gt(0) && mise.gt(partB);
   /* Le gaz du moment, lu sur la chaine, contre la mise : un ordre dont le gaz
      mange plus d'un dixieme ne part pas — en essai comme en reel, pour que
      le papier montre ce que le reel ferait. */
@@ -1649,7 +1760,12 @@ async function achetePosition(c, t) {
   };
   /* Le journal dit la PART, et d'ou elle vient : sans ca, « 0,0031 ETH » ne
      laisse pas savoir si le miroir a suivi le Banquier ou son propre repli. */
-  const dit = t.part
+  const dit = releve
+    ? 'raised to the ' + (ORDRE_MIN_USD > 0 && coursEth() > 0 ? '$' + ORDRE_MIN_USD : ORDRE_MIN_ETH + ' ETH')
+      + ' floor — the Banker\'s share would have been ' + ethers.utils.formatUnits(partB, 18) + ' ETH'
+      + (coursEth() > 0 ? ' (' + enDollars(partB) + ')' : '')
+      + ', too small to survive the gas on both sides. This wallet holds fewer positions at once'
+    : t.part
     ? (Math.round(t.part * 1000) / 10) + '% of what was free — the Banker\'s own share'
       + (t.score ? ' at score ' + t.score : '')
     : t.manuel
@@ -1833,6 +1949,8 @@ module.exports = {
   /* l'interface du serveur */
   charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, surTour, allerRetour, pontConnu, pontsVus, effaceJournal,
   poseColonie, PISCINE_MORTE, evalueFile, EVAL_TTL_MS,
+  ORDRE_MIN_USD, litEthUsd, coursEth, plancherOrdre, minPourJouer,
+  _poseSourceEthUsd: poseSourceEthUsd, _partSeule: partSeule, _oublieLeCours: oublieLeCours,
   vendsMaintenant, ouvreMaintenant, remetLesStats,
   /* les reglages, pour l'ecran et pour les essais */
   EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN, POUSSIERE_MULT,

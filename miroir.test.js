@@ -180,6 +180,10 @@ class FausseChaine extends ethers.providers.StaticJsonRpcProvider {
 const chaine = new FausseChaine();
 M._poseProvider(chaine);
 M._poseSourcePaires(async () => []);   /* pas de reseau au banc : la colonie donne la piscine */
+/* Ni pour le cours de l'ETH : sans lui, le plancher d'un ordre reste celui
+   en ETH, et c'est ce que la plupart des scenarios mesurent. Celui qui
+   eprouve le plancher en dollars pose son propre cours. */
+M._poseSourceEthUsd(async () => 0);
 
 /* La clef et l'identifiant d'une piscine, calcules comme le module le fera. */
 function poolDe(jeton) {
@@ -948,6 +952,62 @@ console.log('\n-- une piscine cotee en NVDA : deux jambes, par le pont ETH/NVDA 
   ok(bX.trades === 1 && bX.gagnantes === 0 && bX.profitEth === '-0.001000', 'une recuperation de transit entre dans le profit, pas dans les trades : 1 trade, -0,001 ETH');
   M._poseSourcePaires(async () => []);
   await M.arrete(J8, J8);
+}
+
+console.log('\n-- la mise minimum est en DOLLARS : une petite banque joue 15 $, pas 3 $ --');
+{
+  /* « Il y a des personnes qui n ont pas les moyens de mettre 1000 $, donc
+     elles tradent trop petit. La mise minimum sur le miroir, ce serait 15 $,
+     meme si la banque est trop petite. Les grosses banques n ont pas ce
+     souci. » Le plancher etait en ETH (0,001 = 2,49 $ au cours du 9 septembre),
+     donc sous ce qu un aller-retour coute. */
+  M._poseSourceEthUsd(async () => 2500);
+  await M.litEthUsd();
+  ok(Math.abs(Number(ethers.utils.formatUnits(M.plancherOrdre(), 18)) - 0.006) < 1e-9,
+     '15 $ a 2 500 $ l ETH font 0,006 ETH de plancher (' + ethers.utils.formatUnits(M.plancherOrdre(), 18) + ')');
+  ok(M.minPourJouer() === '0.0075', 'et il faut la reserve de gaz plus un ordre pour jouer : ' + M.minPourJouer() + ' ETH');
+  /* Une PETITE banque : 0,02 ETH (50 $). La part du Banquier a 3 % en ferait
+     0,00055 ETH, soit 1,40 $ — moins que le gaz des deux cotes. */
+  const petite = W('0.02');
+  const part = M._partSeule(petite, 0.03);
+  ok(Math.abs(Number(ethers.utils.formatUnits(part, 18)) - 0.000555) < 1e-6,
+     'la part du Banquier seule ferait ' + ethers.utils.formatUnits(part, 18) + ' ETH, soit environ 1,39 $');
+  const mise = M._miseDe(petite, 0.03);
+  ok(Math.abs(Number(ethers.utils.formatUnits(mise, 18)) - 0.006) < 1e-9,
+     'la mise est RELEVEE au plancher : ' + ethers.utils.formatUnits(mise, 18) + ' ETH, soit 15 $');
+  /* Une GROSSE banque n est pas touchee : la part depasse le plancher. */
+  const grosse = W('1');
+  ok(Math.abs(Number(ethers.utils.formatUnits(M._miseDe(grosse, 0.03), 18)) - 0.029955) < 1e-6,
+     'une grosse banque garde la part du Banquier, le plancher ne la concerne pas ('
+     + ethers.utils.formatUnits(M._miseDe(grosse, 0.03), 18) + ' ETH)');
+  /* Trop petite pour meme un ordre : on ne joue pas, et on dit combien il faut. */
+  const minus = W('0.004');
+  ok(M._miseDe(minus, 0.03).isZero(), 'sous le plancher, aucun ordre : on ne fabrique pas une mise qu on n a pas');
+  const pq = M._pourquoiPasDeMise(minus);
+  console.log('   ' + pq);
+  ok(/an order needs at least 0\.006 ETH \(\$15\.00, the floor under which gas eats the trade\)/.test(pq)
+     && /fund the mirror with 0\.0075 ETH or more/.test(pq),
+     'et le refus dit le plancher en ETH ET en dollars, et ce qu il faut deposer');
+  /* Le journal dit au joueur que sa mise a ete relevee, et ce que ca implique. */
+  const JP = '0x' + '88'.repeat(19) + '06';
+  for (const { joueur } of M._actifs()) await M.arrete(joueur, joueur);
+  await M.cree(JP); chaine.soldes[M._fiche(JP).adr.toLowerCase()] = W('0.02'); await M.demarre(JP);
+  const JT = '0x' + '5e'.repeat(20);
+  await M.surAchat({ sym: 'PETIT', adr: JT, pool: poolDe(JT), part: 0.03 });
+  const cp = M._fiche(JP);
+  console.log('   ' + cp.journal[0].txt);
+  ok(!!cp.ouvertes[JT] && Math.abs(Number(cp.ouvertes[JT].entree) - 0.006) < 1e-9,
+     'la position est ouverte a 0,006 ETH, le plancher');
+  ok(/raised to the \$15 floor/.test(cp.journal[0].txt)
+     && /the Banker's share would have been 0\.000555 ETH \(\$1\.39\)/.test(cp.journal[0].txt)
+     && /holds fewer positions at once/.test(cp.journal[0].txt),
+     'et le journal dit que la mise a ete relevee, ce que la part aurait donne, et le prix a payer');
+  /* Sans cours lisible, on retombe sur le plancher en ETH plutot que d inventer. */
+  M._poseSourceEthUsd(async () => 0);
+  M._oublieLeCours();
+  ok(ethers.utils.formatUnits(M.plancherOrdre(), 18) === '0.001',
+     'sans cours de l ETH, le plancher en dollars ne s applique pas : on ne convertit pas avec un chiffre qu on n a pas');
+  await M.arrete(JP, JP);
 }
 
 console.log('\n-- ce que la position vaut MAINTENANT, demande au quoteur --');
