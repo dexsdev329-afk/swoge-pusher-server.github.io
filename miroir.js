@@ -1283,6 +1283,16 @@ async function etat(joueur, lireChaine) {
       reste: o.reste === undefined ? 1 : o.reste, banked: o.sortiesPartielles || null,
       /* La monnaie du pont, quand la position en a un. */
       via: o.monnaie && !o.monnaie.eth ? o.monnaie.sym : null,
+      /* ---- CE QU'ELLE VAUT, ET DEPUIS QUAND ----
+       * `valeur` est ce que le quoteur DONNERAIT pour tout ce qu'on tient, sur
+       * la route ou le miroir vendra — pas le prix affiche multiplie par la
+       * quantite. `gain` compte les tranches deja encaissees et ce que la
+       * position a coute, gaz compris. Sans lecture reussie, tout est nul :
+       * l'ecran ecrira « pas encore lu » plutot qu'un zero. */
+      cout: o.cout || o.entree, valeur: o.valeur || null, valeurT: o.valeurT || 0,
+      gain: o.gain === undefined ? null : o.gain,
+      gainPct: o.gainPct === undefined ? null : o.gainPct,
+      valeurErreur: o.valeurErreur || null,
     })),
     /* Ce qui est reste entre deux jambes, et que le miroir ramene chaque tour. */
     transit: (c.transit || []).map((t) => ({ sym: t.sym, adr: t.adr, montant: ethers.utils.formatUnits(t.montant, t.dec || 18), t: t.t })),
@@ -1422,6 +1432,70 @@ const RATTRAPE_MIN_MS = 2 * 60000;
    seraient pleines en une heure. On attend dix minutes, et on redit pourquoi. */
 const RATTRAPE_ATTENTE_MS = 10 * 60000;
 function surTour(papier) { return enFile(() => rattrapeFile(papier)); }
+/* ==================== CE QUE LA POSITION VAUT MAINTENANT ====================
+ *
+ * « Sur les positions du miroir, il faudrait voir le market cap et le benefice
+ *   en direct. »
+ *
+ * Le benefice d'une position ouverte se lisait jusqu'ici sur le prix : ce que
+ * le jeton VAUT, multiplie par ce qu'on en tient. C'est le chiffre du papier,
+ * et le 9 septembre il a valu +25,97 $ sur JACOB pendant que la piscine ne
+ * rendait plus rien. On ne demande donc pas son prix au marche : on demande
+ * au quoteur ce qu'il DONNERAIT pour tout ce qu'on tient, sur la route ou le
+ * miroir vendra. C'est le seul chiffre qui engage quelqu'un, il porte la
+ * profondeur de la piscine, et c'est exactement ce que « Sell now » ferait.
+ *
+ * Une evaluation coute deux lectures : le solde et le devis. Elles sont donc
+ * espacees (une par minute et demie par position au plus), plafonnees par
+ * tour, et l'ecran porte l'heure de la lecture — un benefice sans son heure
+ * ne dit pas s'il est encore vrai.
+ *
+ * Et elles servent deux fois : une piscine qui ne rend plus un centieme de ce
+ * qu'elle a recu est signalee ICI, au tour ou elle meurt, au lieu d'attendre
+ * qu'une vente le decouvre. Sur JACOB, cela aurait ete cinq minutes apres
+ * l'achat au lieu de dix-sept.
+ * ==================================================================== */
+const EVAL_TTL_MS = 90000;        /* une position n'est pas reevaluee plus souvent */
+const EVAL_PAR_TOUR = 40;         /* et le tour ne s'y perd pas */
+async function evaluePosition(c, adr, o) {
+  const route = await routeDePosition(adr, o);
+  const montant = await tenu(c, adr, o);
+  if (montant.lte(0)) return null;
+  const devis = await devisRoute(route, 'vente', adr, montant);
+  o.valeur = ethers.utils.formatUnits(devis, 18);
+  o.valeurT = Date.now();
+  /* Le resultat de la position ENTIERE : ce qu'on en sortirait, plus ce que
+     les tranches ont deja rendu, moins ce qu'elle a coute. */
+  const paye = WEI(o.cout || o.entree || '0');
+  const deja = WEI(o.sortiesPartielles || '0');
+  o.gain = ethers.utils.formatUnits(devis.add(deja).sub(paye), 18);
+  o.gainPct = paye.isZero() ? null
+    : Math.round(Number(devis.add(deja).sub(paye).mul(10000).div(paye))) / 100;
+  return devis;
+}
+async function evalueFile() {
+  const now = Date.now();
+  let faites = 0;
+  for (const { c } of actifs()) {
+    for (const [adr, o] of Object.entries(c.ouvertes || {})) {
+      if (faites >= EVAL_PAR_TOUR) break;
+      if (o.valeurT && now - o.valeurT < EVAL_TTL_MS) continue;
+      try {
+        const devis = await evaluePosition(c, adr, o);
+        faites++;
+        /* Morte : on le dit tout de suite, sans attendre une vente. */
+        if (devis) ditPiscineMorte(c, adr, o, devis);
+      } catch (e) {
+        /* Une evaluation ratee laisse la precedente, avec son heure : on ne
+           remplace pas un chiffre lu par un chiffre suppose. */
+        o.valeurErreur = resume(e);
+      }
+      await dors(PAUSE_MS);
+    }
+  }
+  if (faites) sauve();
+  return faites;
+}
 /* ==================== QUAND LA PISCINE EST MORTE ====================
  *
  * JACOB, 9 septembre. 04:18 UTC : la colonie ouvre, le miroir achete pour
@@ -1465,6 +1539,9 @@ async function rattrapeFile(papier) {
   const ventes = (papier && papier.ventes) || {};
   const now = Date.now();
   let n = 0;
+  /* Ce que chaque position vaut vraiment, avant tout le reste : c'est ce que
+     l'ecran montre, et c'est ce qui reveille une piscine morte. */
+  try { await evalueFile(); } catch (e) { console.warn('[miroir] evaluation :', e && e.message); }
   for (const { c } of actifs()) {
     try { n += await rattrapeTransit(c); } catch (e) { note(c, 'Transit: ' + resume(e)); }
     for (const [adr, o] of Object.entries(c.ouvertes || {})) {
@@ -1755,7 +1832,7 @@ async function ouvreFile(joueur, adr) {
 module.exports = {
   /* l'interface du serveur */
   charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, surTour, allerRetour, pontConnu, pontsVus, effaceJournal,
-  poseColonie, PISCINE_MORTE,
+  poseColonie, PISCINE_MORTE, evalueFile, EVAL_TTL_MS,
   vendsMaintenant, ouvreMaintenant, remetLesStats,
   /* les reglages, pour l'ecran et pour les essais */
   EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN, POUSSIERE_MULT,

@@ -950,6 +950,51 @@ console.log('\n-- une piscine cotee en NVDA : deux jambes, par le pont ETH/NVDA 
   await M.arrete(J8, J8);
 }
 
+console.log('\n-- ce que la position vaut MAINTENANT, demande au quoteur --');
+{
+  /* « Sur les positions du miroir, il faudrait voir le market cap et le
+     benefice en direct. » Le benefice se lisait sur le prix affiche ; le
+     9 septembre il valait +25,97 $ sur JACOB pendant que la piscine ne rendait
+     plus rien. On demande donc au quoteur ce qu il DONNERAIT pour tout ce
+     qu on tient. */
+  const JV = '0x' + '6c'.repeat(20);
+  const JX = '0x' + '88'.repeat(19) + '05';
+  for (const { joueur } of M._actifs()) await M.arrete(joueur, joueur);
+  await M.cree(JX); chaine.soldes[M._fiche(JX).adr.toLowerCase()] = W('0.05'); await M.demarre(JX);
+  chaine.sortieVente = null;
+  await M.surAchat({ sym: 'VAL', adr: JV, pool: poolDe(JV), part: 0.25 });
+  const cx = M._fiche(JX);
+  const paye = Number(cx.ouvertes[JV].cout || cx.ouvertes[JV].entree);
+  /* Rien n a encore ete evalue : l ecran doit le dire, pas afficher un zero. */
+  let e = await M.etat(JX, false);
+  ok(e.ouvertes[0].valeur === null && e.ouvertes[0].gain === null && e.ouvertes[0].valeurT === 0,
+     'avant toute lecture, la valeur est nulle — l ecran ecrira « pas encore lu », pas « 0 »');
+  /* La piscine rend 1,4 fois la mise : le gain doit le dire. */
+  chaine.sortieVente = W(String(paye * 1.4));
+  ok(await M.evalueFile() === 1, 'une position evaluee');
+  e = await M.etat(JX, false);
+  const o = e.ouvertes[0];
+  console.log('   ' + JSON.stringify({ cout: o.cout, valeur: o.valeur, gain: o.gain, gainPct: o.gainPct }));
+  ok(Math.abs(Number(o.valeur) - paye * 1.4) < 1e-9, 'la valeur est ce que le QUOTEUR donnerait pour tout ce qu on tient : ' + o.valeur + ' ETH');
+  ok(Math.abs(o.gainPct - 40) < 0.5, 'et le benefice est +40 %, gaz de l achat compris (' + o.gainPct + ' %)');
+  ok(o.valeurT > 0 && Date.now() - o.valeurT < 5000, 'avec l heure de la lecture : un chiffre sans son heure ne dit pas s il est encore vrai');
+  /* Elle n est pas relue a chaque appel : une evaluation coute deux lectures. */
+  ok(await M.evalueFile() === 0, 'et elle n est pas relue avant ' + Math.round(M.EVAL_TTL_MS / 1000) + ' s');
+  /* La piscine s effondre : l evaluation la trouve MORTE, sans attendre une vente. */
+  const dits = [];
+  M.poseColonie({ piscineMorte: (adr, part) => { dits.push({ adr, part }); return true; } });
+  cx.ouvertes[JV].valeurT = 0;
+  chaine.sortieVente = W(String(paye / 5000));
+  ok(await M.evalueFile() === 1, 'la position est reevaluee');
+  ok(dits.length === 1 && dits[0].adr === JV, 'la piscine morte est vue AU TOUR, pas a la vente : ' + JSON.stringify(dits[0]));
+  ok(cx.journal.some((j) => /The pool of VAL is dead/.test(j.txt)), 'et le journal le dit');
+  const e2 = await M.etat(JX, false);
+  ok(e2.ouvertes[0].gainPct < -99, 'le benefice affiche devient -100 % : c est ce que la position vaut vraiment (' + e2.ouvertes[0].gainPct + ' %)');
+  M.poseColonie(null);
+  chaine.sortieVente = null;
+  await M.arrete(JX, JX);
+}
+
 console.log('\n-- une piscine morte est dite, et la colonie l apprend --');
 {
   /* JACOB, 9 septembre : le papier ferme a +39,9 % et compte +25,97 $ pendant
