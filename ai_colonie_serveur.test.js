@@ -131,7 +131,7 @@ function mondeNeuf(jetons, extra) {
     prixDe: (a) => { const t = jetons.find((x) => x.addr === a); return t ? t.prix : 0; },
     coupe: false,
     bloc: 5000000,
-    profils: [], boosts: [], goplusCasse: false, rpcSature: false, claude: null, claudeCasse: false,
+    profils: [], boosts: [], boostsTop: [], goplusCasse: false, rpcSature: false, claude: null, claudeCasse: false,
     cgCle: null, cgPorte: null, cgQuota: false,
     /* La porte demo est celle que tout le monde partage : elle rend des 429 a
        qui veut, cle bonne ou pas. C'est ce qui piegeait la sonde. */
@@ -380,6 +380,10 @@ global.fetch = async function (url, opts) {
     appels.profils++;
     return rep((MONDE.profils || []).map((a) => ({ chainId: 'robinhood', tokenAddress: a })));
   }
+  if (/token-boosts\/top/.test(url)) {
+    appels.boostsTop = (appels.boostsTop || 0) + 1;
+    return rep((MONDE.boostsTop || []).map((a) => ({ chainId: 'robinhood', tokenAddress: a })));
+  }
   if (/token-boosts/.test(url)) {
     appels.boosts++;
     return rep((MONDE.boosts || []).map((a) => ({ chainId: 'robinhood', tokenAddress: a })));
@@ -554,7 +558,7 @@ const C = require('./ai_colonie.js');
 function remise(jetons, extra) {
   MONDE = mondeNeuf(jetons, extra);
   envoyes = [];
-  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0, rpc2: 0, trades: 0, profils: 0, boosts: 0, claude: 0, cgDemo: 0, cgPro: 0, goplusJeton: 0, goplusAuth: 0, rpcCle: 0, rpcCleLogs: 0, call: 0 };
+  appels = { pools: 0, goplus: 0, ohlcv: 0, dex: 0, rpc: 0, rpc2: 0, trades: 0, profils: 0, boosts: 0, boostsTop: 0, claude: 0, cgDemo: 0, cgPro: 0, goplusJeton: 0, goplusAuth: 0, rpcCle: 0, rpcCleLogs: 0, call: 0 };
   for (const k of Object.keys(C._cache)) for (const j of Object.keys(C._cache[k])) delete C._cache[k][j];
   for (const k of Object.keys(C._prix)) delete C._prix[k];
   C._pose(C.etatNeuf());
@@ -1012,10 +1016,26 @@ async function neufSeulement() {
   await C.tour();
   const v = C.vue();
   console.log('   examines : ' + JSON.stringify(v.candidats.map((x) => x.sym + ':' + x.minutes + 'min')));
-  ok(v.candidats.every((x) => x.minutes <= C.AGE_MAX_MIN),
-     'aucun jeton de plus de ' + C.AGE_MAX_MIN + ' minutes n est examine');
-  ok(v.candidats.length === 1 && v.candidats[0].sym === 'TOK2',
-     'seul le jeton neuf passe — un seul jeton etabli suffirait a fausser ce que les agents apprennent');
+  /* ---- CE QUI COMPTE N EST PAS « AUCUN VIEUX N ENTRE » ----
+   * L essai exigeait qu aucun jeton de plus de six heures ne soit examine. Le
+   * but derriere cette exigence est ecrit dans sa propre phrase : « un seul
+   * jeton etabli suffirait a fausser ce que les agents apprennent ». C est
+   * l APPRENTISSAGE qu il fallait proteger, pas l examen — et le plafond, en
+   * filtrant en amont, protegeait l apprentissage au prix de ne jamais pouvoir
+   * etre juge lui-meme (voir `plafondDageJugeable`).
+   * On verifie donc l intention, qui est plus forte : un jeton etabli peut
+   * entrer, mais UNIQUEMENT en observation — refuse par le Scout, jamais
+   * achete, et hors de tout ce que les agents retiennent. */
+  const neuf = v.candidats.filter((x) => x.minutes <= C.AGE_MAX_MIN);
+  const vieux = v.candidats.filter((x) => x.minutes > C.AGE_MAX_MIN);
+  ok(neuf.length === 1 && neuf[0].sym === 'TOK2', 'le jeton neuf passe');
+  ok(vieux.every((x) => /watched only, never bought/.test(x.refus || '')),
+     'et tout jeton etabli qui entre est en OBSERVATION, refuse d avance : '
+     + (vieux.length ? '« ' + vieux[0].refus + ' »' : 'aucun ce tour-ci'));
+  ok(!C._etat().positions.some((p) => p.minutes > C.AGE_MAX_MIN),
+     'aucune position n est ouverte sur un jeton etabli');
+  ok(C._etat().ombres.filter((o) => o.hors).every((o) => !!o.refus),
+     'et leurs ombres portent la marque qui les tient hors de l apprentissage');
 }
 
 /* ==========================================================================
@@ -2713,6 +2733,110 @@ async function venteAuPrixDuMoment() {
  *   ça soit réaliste. » Onze des vingt derniers achats etaient cotes en GLD,
  * SPY, AMC… — des paires qu aucun ordre reel ne peut prendre.
  * ======================================================================== */
+/* ==========================================================================
+ * LE PLAFOND D AGE, ENFIN JUGEABLE — ET SANS RIEN LUI FAIRE ACHETER
+ *
+ * Toutes les regles d achat se mesurent : le jeton refuse laisse une ombre,
+ * l ombre atteint son echeance, l audit dit ce que le refus a coute. Toutes,
+ * sauf le plafond d age : il filtrait la liste AVANT tout examen, donc il n a
+ * jamais rendu de comptes. Six heures etaient un choix jamais mesure.
+ *
+ * Ce banc verifie les TROIS garanties qui rendent l observation acceptable :
+ * jamais achete, gratuit, hors apprentissage. Si l une saute, le plafond
+ * redevient un pari — mais un pari qui coute de l argent cette fois.
+ * ======================================================================== */
+async function plafondDageJugeable() {
+  console.log('\n-- le plafond d age devient jugeable : les vieux entrent, EN OBSERVATION --');
+  /* Sept jetons neufs, et trois nettement trop vieux pour etre achetes. */
+  const neufs = [0, 1, 2, 3, 4, 5, 6].map((i) => jeton(i));
+  const vieux = [20, 21, 22].map((i, k) => jeton(i, { minutes: C.AGE_MAX_MIN + 60 + k * 30 }));
+  remise(neufs.concat(vieux));
+  await C.tour();
+  let v = C.vue();
+  const obs = v.candidats.filter((c) => /watched only, never bought/.test(c.refus || ''));
+  console.log('   observes : ' + obs.length + ' · ' + obs.map((c) => c.sym).join(', '));
+  ok(obs.length === 3, 'les trois jetons trop vieux sont bien ENTRES, au lieu d etre filtres en amont');
+  ok(obs.every((c) => /too old \(\d+ min\)/.test(c.refus)),
+     'et leur refus dit l age en clair : « ' + (obs[0] && obs[0].refus) + ' »');
+
+  /* ---- 1. JAMAIS ACHETES ---- */
+  const symsVieux = new Set(vieux.map((t) => t.sym));
+  ok(!v.positions.some((p) => symsVieux.has(p.sym)),
+     'AUCUN n est achete : le Scout les refuse en premier, donc `ouvre()` n est jamais atteint');
+  ok(!v.signaux.some((x) => x.k === 'achat' && symsVieux.has(x.sym)),
+     'et aucun signal d achat ne les nomme');
+
+  /* ---- 2. ILS NE PRENNENT AUCUNE PLACE PAYANTE ----
+     Temoin : les memes sept neufs, seuls. Le nombre examine doit etre le meme. */
+  const av = C.vue().candidats.filter((c) => !symsVieux.has(c.sym)).length;
+  remise(neufs);
+  await C.tour();
+  const temoin = C.vue().candidats.length;
+  console.log('   neufs examines avec les vieux devant : ' + av + ' · seuls : ' + temoin);
+  ok(av === temoin,
+     'les observes ne volent aucune place aux neufs (' + av + ' = ' + temoin + ') : un refus du '
+     + 'Scout est gratuit, et ils passent en queue');
+
+  /* ---- 3. ILS N APPRENNENT RIEN AUX AGENTS ----
+     Une ombre d observation atteint son echeance : l audit doit la compter,
+     les courbes de traits et la base NON. */
+  console.log('\n-- une ombre d observation nourrit l audit, et rien d autre --');
+  remise(sains());
+  const F = C._etat();
+  F.profils = {}; F.base = null; F.audit = {};
+  const now = Date.now();
+  const traits = { scout: { liquidite: 'piscine profonde' } };
+  F.ombres = [
+    { adr: '0x' + 'e1'.repeat(20), sym: 'VIEUX', prix0: 1, t: now - 35 * 60000, echeance: now,
+      traits, score: 40, dexVu: true, hors: true,
+      refus: 'too old (500 min): watched only, never bought', quiRefuse: 'scout', jalons: {} },
+  ];
+  C.regleLesOmbres({ ['0x' + 'e1'.repeat(20)]: { prix: 1.5, liq: 50000 } });
+  const apresHors = { profils: Object.keys(F.profils).length, base: F.base,
+                      audit: Object.keys(F.audit).length };
+  console.log('   apres une ombre HORS : ' + JSON.stringify(apresHors));
+  ok(apresHors.audit > 0, 'l audit la compte — c est tout l objet de l operation');
+  ok(apresHors.profils === 0,
+     'mais AUCUNE courbe de trait ne bouge : un jeton etabli n a pas les memes ressorts qu un jeton d une heure');
+  ok(!F.base || !F.base.n, 'et le fond commun ne bouge pas non plus');
+  const ligne = Object.keys(F.audit).find((k) => /too old/.test(k));
+  ok(!!ligne, 'et elle porte sa propre ligne d audit, a cote des autres refus : « ' + ligne + ' »');
+
+  /* Le temoin : la MEME ombre sans la marque apprend, elle. */
+  F.profils = {}; F.base = null; F.audit = {};
+  F.ombres = [
+    { adr: '0x' + 'e2'.repeat(20), sym: 'NEUF', prix0: 1, t: now - 35 * 60000, echeance: now,
+      traits, score: 40, dexVu: true, hors: false,
+      refus: 'pool below the buy floor', quiRefuse: 'scout', jalons: {} },
+  ];
+  C.regleLesOmbres({ ['0x' + 'e2'.repeat(20)]: { prix: 1.5, liq: 50000 } });
+  console.log('   apres une ombre ORDINAIRE : ' + JSON.stringify({ profils: Object.keys(F.profils).length, base: !!F.base }));
+  ok(Object.keys(F.profils).length > 0 && !!F.base,
+     'la meme ombre SANS la marque apprend normalement : c est bien `hors` qui separe, pas un hasard');
+  F.ombres = [];
+
+  /* ---- ET LA SOURCE QUI LES APPORTE ---- */
+  console.log('\n-- le top des boosts est lu, et il est gratuit --');
+  remise(sains(), { boostsTop: ['0x' + 'f1'.repeat(20)] });
+  await C.tour();
+  v = C.vue();
+  console.log('   appels boostsTop : ' + appels.boostsTop);
+  ok(appels.boostsTop > 0, 'la liste « top des boosts » est interrogee');
+  const src = v.services.find((x) => x.cle === 'boostsTop');
+  ok(!!src && src.cout === 0, 'et elle est annoncee pour ce qu elle est : gratuite');
+  ok(!!src && src.essais > 0, 'avec son releve, comme toutes les autres');
+
+  /* ---- LE COUPE-CIRCUIT ---- */
+  console.log('\n-- et tout ceci se coupe d un mot --');
+  process.env.OBS_VIEUX_PAR_TOUR = '0';
+  delete require.cache[require.resolve('./ai_colonie.js')];
+  const C2 = require('./ai_colonie.js');
+  ok(C2.OBS_PAR_TOUR === 0, 'OBS_VIEUX_PAR_TOUR=0 ferme l observation, sans toucher au reste');
+  delete process.env.OBS_VIEUX_PAR_TOUR;
+  delete require.cache[require.resolve('./ai_colonie.js')];
+  require('./ai_colonie.js');
+}
+
 async function pairesEthSeulement() {
   console.log('\n-- une paire cotee en GLD est refusee, avec la monnaie --');
   remise([jeton(0, { quote: 'GLD', quoteAdr: '0x' + '9d'.repeat(20) }), jeton(1), jeton(2, { quote: 'ETH', quoteAdr: '0x' + '00'.repeat(20) })]);
@@ -6192,6 +6316,7 @@ function bornesQuiSeReglent() {
   await neTradePlus();
   await parleAnglais();
   await alertesDatees();
+  await plafondDageJugeable();
   await pairesEthSeulement();
   await placesGratuites();
   await memoireDesPairesEth();

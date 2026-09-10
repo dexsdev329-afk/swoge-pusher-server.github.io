@@ -259,6 +259,44 @@ const DEPART = 1000;            /* la tresorerie papier de depart */
 const MISE = 50;                /* ce qu'une position engage */
 const TENUE_DEFAUT_MIN = 20;    /* et ce que le Closer tient, avant d'apprendre */
 const AGE_MAX_MIN = 360;        /* au-dela, ce n'est plus un jeton neuf */
+/* ==========================================================================
+ * LE SEUL VERROU QUI N'AVAIT JAMAIS ETE JUGE
+ *
+ * Toutes les regles d'achat de cette colonie se mesurent : chaque jeton refuse
+ * laisse une ombre, l'ombre atteint son echeance, et l'audit dit ce que le refus
+ * a coute ou protege. Toutes, sauf UNE. Le plafond d'age filtre la liste AVANT
+ * que quoi que ce soit ne soit examine : pas d'ombre, pas de ligne d'audit, pas
+ * de chiffre. Six heures etaient un choix, et ce choix n'a jamais rendu de
+ * comptes.
+ *
+ * On admet donc un petit nombre de jetons plus vieux par tour, EN OBSERVATION
+ * SEULE. Trois garanties, et elles sont ce qui rend la chose acceptable :
+ *
+ *   1. ILS NE PEUVENT PAS ETRE ACHETES. Le Scout les refuse en premier, avant
+ *      tout le reste : `refus` est pose, donc `ouvre()` n'est jamais atteint.
+ *      Ce n'est pas une intention, c'est le chemin du code.
+ *
+ *   2. ILS NE COUTENT RIEN. Un refus du Scout est gratuit — il se prononce sur
+ *      les seuls chiffres du flux — donc ils ne prennent aucune des places
+ *      payantes du tour. Ils passent en QUEUE de liste : le neuf est servi
+ *      d'abord, et le budget du tour est deja consomme quand ils arrivent.
+ *
+ *   3. ILS N'APPRENNENT RIEN AUX AGENTS. Leur ombre porte `hors: true`. Elle
+ *      nourrit l'audit des refus — c'est tout l'objet — mais ni les courbes de
+ *      traits, ni la memoire des agents, ni la base. Un jeton etabli n'a pas les
+ *      memes ressorts qu'un jeton d'une heure ; le laisser deteindre sur ce que
+ *      les agents apprennent serait exactement le defaut que le plafond
+ *      empechait.
+ *
+ * Dans quelques jours, l'audit dira « too old » avec sa part de montees, a cote
+ * des autres refus, et le plafond sera une regle comme les autres : discutable
+ * sur des chiffres. On ne change RIEN a six heures d'ici la.
+ * ======================================================================== */
+const OBS_PAR_TOUR = Math.max(0, nEnv('OBS_VIEUX_PAR_TOUR', 6));
+/* Et pas n'importe quel vieux : au-dela d'un jour, ce n'est plus le meme sujet.
+   La question est « six heures, est-ce trop tot ? », pas « faut-il acheter des
+   jetons d'une semaine ? ». */
+const OBS_AGE_MAX_MIN = Math.max(AGE_MAX_MIN, nEnv('OBS_VIEUX_AGE_MAX', 1440));
 const SEUIL = 55;               /* la note qu'il faut atteindre pour entrer */
 /* ---- COMBIEN DE POSITIONS A LA FOIS ----
  * Six, c'etait une prudence de trop : la vraie borne est celle du Banquier —
@@ -365,6 +403,8 @@ const SERVICES = {
   pools:   { nom: 'GeckoTerminal · new pools', cout: 0, quoi: 'age, liquidity, cap, buys and sells' },
   profils: { nom: 'DexScreener · recent profiles', cout: 0, quoi: 'new tokens whose profile someone filled in' },
   boosts:  { nom: 'DexScreener · boosted tokens', cout: 0, quoi: 'tokens someone paid to promote' },
+  boostsTop: { nom: 'DexScreener · top boosted', cout: 0,
+             quoi: 'the most promoted tokens — older by construction, watched but never bought' },
   pons:    { nom: 'pons · graduations', cout: 0,
              quoi: 'tokens that raised their WETH threshold on the pons launchpad, and who launched them' },
   secretpad: { nom: 'Secretpad · launcher contract', cout: 1,
@@ -1974,6 +2014,17 @@ async function lisChaine(addr, minutes, pool) {
 async function lisFluxDex(quoi) {
   const url = quoi === 'profils'
     ? 'https://api.dexscreener.com/token-profiles/latest/v1'
+    /* ---- LE TOP DES BOOSTS, MESURE AVANT D'ETRE BRANCHE ----
+     * Releve du 10 septembre sur la chaine 4663 : les profils servent 10 jetons,
+     * les boosts recents 12, et le TOP des boosts 15 — dont DOUZE que les deux
+     * autres ne servent pas. C'est la seule liste gratuite qui restait.
+     * Ce qu'elle sert est vieux, et c'est structurel : pour etre en tete des
+     * boosts, un jeton doit avoir eu le temps d'en accumuler. Le plus jeune des
+     * douze avait 394 minutes, le plafond d'achat est a 360. Elle n'apporte donc
+     * AUCUN achat — elle apporte de quoi juger le plafond, ce qui n'existait
+     * nulle part ailleurs. Voir `OBS_PAR_TOUR`. */
+    : quoi === 'boostsTop'
+    ? 'https://api.dexscreener.com/token-boosts/top/v1'
     : 'https://api.dexscreener.com/token-boosts/latest/v1';
   try {
     const d = await json(url);
@@ -3124,6 +3175,12 @@ function franchissable(q) {
   try { return miroir.pontConnu(q.adr, q.sym) === true; } catch (e) { return false; }
 }
 function vetoScout(t) {
+  /* ---- L'OBSERVATION, AVANT TOUT LE RESTE ----
+   * Un jeton admis pour juger le plafond d'age est refuse ICI, en premier, et
+   * pour cette raison-la. C'est ce qui garantit qu'il n'est jamais achete — et
+   * qu'il ne coute aucune place, un refus du Scout etant gratuit. */
+  if (t.observation)
+    return 'too old (' + Math.round(t.minutes || 0) + ' min): watched only, never bought';
   /* La regle la plus precise passe d'abord : « cotee en GLD » dit ce qui se
      passe, un plancher ne dirait que « trop petit ». */
   if (pairesEthSeules() && coteEnEth(t.quote) === false && !franchissable(t.quote))
@@ -4126,6 +4183,9 @@ function noteOmbre(t, an, refus, quiRefuse) {
     echeance: now + OMBRE_TENUE_MIN * 60000,
     traits: an.traits, score: an.score,
     refus: refus || null, quiRefuse: quiRefuse || null,
+    /* Hors apprentissage : l'audit oui, les courbes et les agents non. Voir
+       `OBS_PAR_TOUR`. */
+    hors: !!t.observation,
     /* La piscine par laquelle il est entre : c'est elle qu'on relira quand
        les flux et DexScreener se taisent (voir `secoursOmbres`). */
     pool: t.pool || null,
@@ -4292,10 +4352,13 @@ function regleLesOmbres(marche) {
       const r = OMBRE_DISPARUE;
       o.jalons[HORIZON_REF] = r;
       o.disparue = true;
-      noteProfil(o.traits, HORIZON_REF, r);
+      /* Une ombre d'observation nourrit l'audit, et RIEN d'autre. */
+      if (!o.hors) {
+        noteProfil(o.traits, HORIZON_REF, r);
+        for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
+        apprendBase(r);
+      }
       compte('jalons');
-      for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
-      apprendBase(r);
       noteAudit(cleAudit(o), r);
       /* Une piscine evaporee : la strategie aurait tout perdu aussi, moins
          ce que les paliers avaient encaisse avant. */
@@ -4322,14 +4385,16 @@ function regleLesOmbres(marche) {
         if (o.jalons[h] !== undefined) continue;
         if (!jalonValable(h, age)) continue;
         o.jalons[h] = Math.round(r * 10) / 10;
-        noteProfil(o.traits, h, r);
+        if (!o.hors) noteProfil(o.traits, h, r);
         compte('jalons');
         /* L'echeance de reference est la seule qui nourrisse la memoire des
            agents et l'audit des vetos : sinon le meme jeton compterait cinq
            fois, et les cases gonfleraient sans qu'on ait vu cinq jetons. */
         if (h === HORIZON_REF) {
-          for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
-          apprendBase(r);
+          if (!o.hors) {
+            for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
+            apprendBase(r);
+          }
           noteAudit(o.refus ? (o.quiRefuse || 'refus') + ' · ' + familleRefus(o.refus)
                             : 'achete ou retenu', r);
           compte('ombresJugees');
@@ -7154,7 +7219,7 @@ async function rassemble() {
   const parAdresse = new Map();
   for (const t of await lisPools()) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
 
-  for (const flux of ['profils', 'boosts']) {
+  for (const flux of ['profils', 'boosts', 'boostsTop']) {
     const adrs = await lisFluxDex(flux);
     let pris = 0;
     for (const a of adrs) {
@@ -7217,9 +7282,17 @@ async function tour() {
     /* ---- RIEN DE VIEUX N'ENTRE ----
      * Le but est d'analyser du NEUF. Un seul jeton etabli dans le pipeline
      * suffit a fausser ce que les agents apprennent. */
-    const liste = parBandes((await rassemble())
-      .filter((t) => t.liq >= 500 && t.prix > 0)
-      .filter((t) => t.minutes !== null && t.minutes <= AGE_MAX_MIN));
+    const tout = (await rassemble()).filter((t) => t.liq >= 500 && t.prix > 0);
+    const liste = parBandes(tout.filter((t) => t.minutes !== null && t.minutes <= AGE_MAX_MIN));
+    /* ---- ET LES OBSERVES, EN QUEUE ----
+     * Les plus jeunes des trop vieux d'abord : ce sont eux qui repondent a la
+     * question posee — « six heures, est-ce trop tot ? ». Ils sont ajoutes
+     * APRES la liste, donc le neuf garde la main sur le budget du tour. */
+    const observes = OBS_PAR_TOUR > 0 ? tout
+      .filter((t) => t.minutes !== null && t.minutes > AGE_MAX_MIN && t.minutes <= OBS_AGE_MAX_MIN)
+      .sort((a, b) => a.minutes - b.minutes)
+      .slice(0, OBS_PAR_TOUR) : [];
+    for (const t of observes) { t.observation = true; liste.push(t); compte('observeVieux'); }
     if (!liste.length) throw new Error('no new token liquid enough');
 
     /* Les prix d'abord : une position due se ferme au prix qu'on vient de
@@ -7331,8 +7404,23 @@ async function tour() {
     const gardes = gardesEnOrdre();
     const examines = [];
     let ouvertes = 0, appelsTotal = 0, conseils = 0;
+    let budgetDit = false;
     for (const t of aVoir) {
-      if (appelsTotal >= BUDGET_TOUR) { compte('budgetAtteint'); releve('budget'); break; }   /* le budget du tour, tenu */
+      /* ---- LE BUDGET COMPTE DES APPELS, PAS DES JETONS ----
+       * C'etait un `break` : une fois le budget atteint, la boucle s'arretait
+       * net. Or elle contient AUSSI les jetons que le Scout refuse sur les
+       * seuls chiffres du flux, qui ne coutent aucun appel — et ceux-la se
+       * faisaient effacer par un plafond qui ne les concernait pas. Selon le
+       * nombre d'appels que les premiers avaient consomme, quinze refus
+       * gratuits en devenaient cinq, d'une execution a l'autre : c'est ce qui
+       * faisait clignoter le banc, et c'est surtout ce qui aurait efface les
+       * jetons mis en observation, tous en queue de liste.
+       * On saute donc ce qui COUTE, et on laisse passer ce qui est gratuit. */
+      if (appelsTotal >= BUDGET_TOUR && !vetoScout(t)) {
+        compte('budgetAtteint');
+        if (!budgetDit) { releve('budget'); budgetDit = true; }
+        continue;
+      }
       t.lu = { pools: true }; t.appels = 0;
       if (t.dex) t.lu.dex = true;           /* les flux DexScreener l'ont deja paye */
       let refus = null, quiRefuse = null;
@@ -7683,6 +7771,9 @@ function vue() {
                   poids: CONSEIL_POIDS, parTour: CONSEIL_MAX_PAR_TOUR,
                   rendus: E.compteurs.conseilRendu || 0 },
     seuil: seuilCourant(), seuilDepart: SEUIL, ageMax: AGE_MAX_MIN,
+    /* Ce que l'observation admet, pour que le plafond soit jugeable. */
+    observation: { parTour: OBS_PAR_TOUR, ageMax: OBS_AGE_MAX_MIN,
+                   vus: (E.compteurs || {}).observeVieux || 0 },
     sociauxExiges: sociauxExiges(),
     /* Les reglages qui decident ce qu'on achete et comment on en sort. Une
        borne qu'on ne voit pas ne peut pas etre discutee. */
@@ -7857,6 +7948,7 @@ module.exports = {
   _poseporte: (p, t) => { cgPorte = p; cgEchecs = 0; cgSondeT = t === undefined ? Date.now() : t; },
   sondeCoingecko, _echecsCg: () => cgEchecs, CG_RESONDE_ECHECS, CG_RESONDE_MS,
   FICHIER, SEUIL, AGE_MAX_MIN, MISE, DEPART, METHODES, SERVICES, HORS_SERVICE,
+  OBS_PAR_TOUR, OBS_AGE_MAX_MIN,
   MISE_MIN, MISE_PART_MAX, EXPO_PART_MAX, PLANCHER, ENFANTS_MAX,
   ECART_TYPE_BRUIT, VARIANCE_MIN_OBS, ROSTER_DEPART, REORDONNABLES,
   VERSION_ETAT, SEUIL_MIN, SEUIL_MAX, REND_MAX, REND_MIN, CHUTE_COUPE, AGE_PRIX_MAX,
