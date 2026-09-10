@@ -589,5 +589,52 @@ const cotes = require('./cotes');
        + ' — c est ce qui rattrape ce qui a rate son creneau');
   }
 
+  /* ==========================================================================
+   * LA DATE JUSQU'A LAQUELLE LE QUOTA DOIT TENIR SE CALCULE
+   *
+   * Elle valait `2026-09-30`, ecrit en dur. Le forfait se recharge au premier
+   * du mois : le 1er octobre, `joursRestants()` serait retombe a son plancher
+   * de 1 et `partDuJour` — 90 % du solde divise par les jours restants —
+   * aurait autorise quatre cent cinquante credits EN UN JOUR. Le garde-fou ne
+   * se serait pas plaint : il aurait simplement cesse de garder.
+   * ======================================================================== */
+  console.log('\n-- la fin de periode suit le calendrier, elle ne s ecrit pas a la main --');
+  {
+    const fixe = process.env.ODDS_API_FIN;
+    delete process.env.ODDS_API_FIN;
+    /* Des mois de 31, de 30, un fevrier ordinaire et un fevrier bissextile :
+       c est le calendrier qui repond, pas une table ecrite a la main. */
+    ok(imp.finDuMois(Date.parse('2026-09-10T10:00:00Z')) === '2026-09-30', 'septembre finit le 30');
+    ok(imp.finDuMois(Date.parse('2026-10-01T00:00:00Z')) === '2026-10-31',
+       'et le 1er octobre bascule sur le 31 octobre, sans que personne n y touche');
+    ok(imp.finDuMois(Date.parse('2026-12-31T23:00:00Z')) === '2026-12-31',
+       'le dernier jour de l annee est encore dans son propre mois');
+    ok(imp.finDuMois(Date.parse('2027-02-05T00:00:00Z')) === '2027-02-28', 'un fevrier ordinaire finit le 28');
+    ok(imp.finDuMois(Date.parse('2028-02-05T00:00:00Z')) === '2028-02-29', 'et un fevrier bissextile le 29');
+    ok(imp.fin() === imp.finDuMois(), 'sans variable posee, la fin de periode est celle du mois en cours');
+    /* Et le jour du basculement il reste un mois entier a rationner, pas un
+       seul jour — c est tout ce que ce correctif change. */
+    /* Le nombre de jours attendu se RECALCULE ici, sur la meme horloge : un
+       seuil ecrit en dur (« moins de cent ») serait tombe le 30 du mois, ou
+       joursRestants vaut legitimement 1. Un essai qui depend du jour ou on le
+       lance ne mesure pas ce qu il croit. */
+    const attendus = Math.max(1, Math.ceil((Date.parse(imp.finDuMois() + 'T23:59:59Z') - Date.now()) / 86400000));
+    const j = imp.joursRestants();
+    ok(j === attendus, `il reste ${j} jour(s), et c est bien ce que le calendrier dit (${attendus})`);
+    ok(imp.partDuJour(500) === Math.max(1, Math.floor(500 * 0.9 / attendus)),
+       `la part du jour suit ce compte : ${imp.partDuJour(500)} credit(s) sur 500`);
+    /* Et le point du correctif : le 1er octobre, l ancienne date figee au
+       30 septembre donnait UN jour restant, donc 450 credits autorises dans la
+       journee. La date qui roule en donne trente et un. */
+    const avant = Math.max(1, Math.ceil((Date.parse('2026-09-30T23:59:59Z') - Date.parse('2026-10-01T12:00:00Z')) / 86400000));
+    const apres = Math.max(1, Math.ceil((Date.parse(imp.finDuMois(Date.parse('2026-10-01T12:00:00Z')) + 'T23:59:59Z') - Date.parse('2026-10-01T12:00:00Z')) / 86400000));
+    ok(avant === 1 && apres === 31,
+       `le 1er octobre : la date figee laissait ${avant} jour (450 credits autorises d un coup), celle qui roule en laisse ${apres}`);
+    /* La variable garde la priorite : viser un tournoi reste possible. */
+    process.env.ODDS_API_FIN = '2026-11-15';
+    ok(imp.fin() === '2026-11-15', 'et une date posee a la main l emporte toujours');
+    if (fixe === undefined) delete process.env.ODDS_API_FIN; else process.env.ODDS_API_FIN = fixe;
+  }
+
   console.log(`paris_import.test.js : ${n} verifications OK`);
 })().catch((e) => { console.error(e); process.exit(1); });

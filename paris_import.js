@@ -198,7 +198,33 @@ const MARCHE = 'h2h';                       // 1 x 2 — le seul marche du site
 /* Le budget. `ODDS_API_FIN` est la date jusqu'a laquelle le quota doit tenir ;
    `ODDS_API_TOTAL` n'est la que pour le premier appel, avant qu'on ait lu un
    `x-requests-remaining` du serveur. */
-const FIN = process.env.ODDS_API_FIN || '2026-09-30';
+/* ---- ET CETTE DATE NE PEUT PAS ETRE UN JOUR ECRIT EN DUR ----
+ *
+ * Elle valait `2026-09-30`. Le forfait, lui, se recharge au premier du mois :
+ * le 1er octobre, `joursRestants()` serait retombe a son plancher de 1, et
+ * `partDuJour` — 90 % de ce qui reste divise par le nombre de jours — aurait
+ * autorise QUATRE CENT CINQUANTE credits dans la journee. Le garde-fou ne
+ * refuse rien de faux dans ce cas : il cesse simplement de garder, en silence,
+ * et le premier mois ou une ligue s'ajoute il laisse tout partir en un jour.
+ *
+ * Ce fichier dit lui-meme, vingt lignes plus haut, pourquoi c'est inacceptable
+ * ici : « un quota qui s'epuise doit s'arreter tout seul ; compter sur
+ * quelqu'un pour surveiller un compteur, c'est le laisser filer. » Une date
+ * qu'il faut repousser a la main chaque mois est exactement ce compteur-la.
+ *
+ * Elle se calcule donc, et sur la meme horloge que le fournisseur : la fin du
+ * mois EN COURS, en temps universel, relue a chaque appel. `ODDS_API_FIN`
+ * reste prioritaire pour qui veut viser une autre date — un tournoi, un essai
+ * — mais plus rien n'expire tout seul quand personne ne regarde. */
+function finDuMois(t) {
+  const d = new Date(t === undefined ? Date.now() : t);
+  /* Le jour 0 du mois SUIVANT est le dernier du mois courant, y compris en
+     fevrier et les annees bissextiles : c'est le calendrier qui compte, pas
+     une table. */
+  const f = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
+  return f.toISOString().slice(0, 10);
+}
+function fin() { return process.env.ODDS_API_FIN || finDuMois(); }
 const TOTAL = Number(process.env.ODDS_API_TOTAL || 500);
 /* Combien de jours a l'avance on regarde. Au-dela, les rencontres bougent
    encore et la moitie n'a pas d'adversaire connu (tennis). */
@@ -223,8 +249,8 @@ function ecritQuota(q) {
 }
 function jourCourant() { return new Date().toISOString().slice(0, 10); }
 function joursRestants() {
-  const fin = Date.parse(FIN + 'T23:59:59Z');
-  return Math.max(1, Math.ceil((fin - Date.now()) / 86400000));
+  const t = Date.parse(fin() + 'T23:59:59Z');
+  return Math.max(1, Math.ceil((t - Date.now()) / 86400000));
 }
 /** La part du jour : ce qu'on peut depenser aujourd'hui sans compromettre la
  *  suite. On garde 10 % de reserve pour les jours ou il faut reessayer. */
@@ -251,7 +277,7 @@ function autorise(cout, quoi) {
   if (q.depenseDuJour + cout > part) {
     throw new Error(`[odds] REFUSE ${quoi} : ${cout} credit(s) demande(s), ` +
       `${q.depenseDuJour} deja depense(s) aujourd hui, part du jour = ${part} ` +
-      `(${q.reste} restants pour ${joursRestants()} jour(s) jusqu au ${FIN})`);
+      `(${q.reste} restants pour ${joursRestants()} jour(s) jusqu au ${fin()})`);
   }
   return q;
 }
@@ -293,7 +319,7 @@ function etatImport() {
     cle: !!CLE,
     ligues: LIGUES.map((l) => l.sport + '=' + l.clef),
     horizonJours: HORIZON_JOURS,
-    fin: FIN,
+    fin: fin(),
     joursRestants: joursRestants(),
     quota: { reste: q.reste, utilise: q.utilise, depenseDuJour: q.depenseDuJour,
              partDuJour: partDuJour(q.reste), vu: q.vu },
@@ -919,7 +945,7 @@ function montreQuota() {
   const q = etatQuota();
   const j = joursRestants();
   console.log(`[odds] ${q.reste} credit(s) restant(s), ${q.utilise} utilise(s)`);
-  console.log(`[odds] ${j} jour(s) jusqu au ${FIN} → part du jour = ${partDuJour(q.reste)}`);
+  console.log(`[odds] ${j} jour(s) jusqu au ${fin()} → part du jour = ${partDuJour(q.reste)}`);
   console.log(`[odds] depense aujourd hui : ${q.depenseDuJour}`);
   console.log(`[odds] releve du serveur : ${q.vu || 'jamais — les chiffres ci-dessus sont une prevision'}`);
   console.log(`[odds] rappel : --matchs ne coute RIEN (endpoint /events).`);
@@ -992,7 +1018,7 @@ function planifie(signale, aRegler) {
   console.log(`[odds] alimentation automatique : rencontres toutes les 12 h (0 credit), ` +
               `scores une fois par jour, etalonnage une fois par semaine. ` +
               `${etatQuota().reste} credit(s), ` +
-              `part du jour ${partDuJour(etatQuota().reste)} jusqu au ${FIN}`);
+              `part du jour ${partDuJour(etatQuota().reste)} jusqu au ${fin()}`);
   /* On rend les minuteries : une minuterie oubliee garde le processus en
      vie a l arret et peut refaire un appel reseau en plein redeploiement. */
   return { rafraichit, releve, etalonne, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
@@ -1016,6 +1042,7 @@ if (require.main === module) {
 }
 
 module.exports = { LIGUES, LIGUES_DEFAUT, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie,
+                   finDuMois, fin,
                    etatImport, noteDernier,
                    trieReglements, AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
