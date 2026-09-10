@@ -96,30 +96,70 @@ const CG_PRO = 'https://pro-api.coingecko.com/api/v3/onchain/networks/robinhood'
 const GT = GT_LIBRE;   /* le defaut, et le repli */
 
 let cgPorte = null;    /* null = pas encore sonde ; 'demo' | 'pro' | 'libre' */
+/* ---- ET LA PORTE RETENUE PEUT ETRE LA MAUVAISE ----
+ * Releve du serveur, 10 septembre : `porte: "demo"`, et le releve de la source
+ * dit 330 essais, ZERO reussite. La sonde avait retenu Demo, et les 330
+ * lectures qui ont suivi sont toutes tombees, chacune se rabattant sur l'acces
+ * libre. Pire : l'alerte qui devait prevenir ne se declenche que sur
+ * `porte === 'libre'` — une porte retenue et fausse ne disait donc RIEN, et la
+ * cle payee ne servait a rien pendant des jours sans que rien ne le signale.
+ *
+ * Deux causes, toutes deux corrigees ici :
+ *
+ *   1. L'ORDRE. Demo etait sonde en premier. L'acces demo est celui que tout le
+ *      monde partage : il rend des 429 en permanence, et le 429 etait accepte
+ *      comme une preuve que la cle est bonne. Une cle PRO envoyee a la porte
+ *      demo s'y fait refuser a chaque lecture — mais la sonde, elle, avait deja
+ *      verrouille. On sonde donc PRO d'abord, et surtout on n'accepte un 429
+ *      que si AUCUNE porte n'a repondu franchement oui : un vrai 200 l'emporte
+ *      toujours sur un « bonne cle, trop vite ».
+ *
+ *   2. LE VERROU. `cgPorte` etait fixe pour la vie du processus. Une porte qui
+ *      echoue a chaque lecture doit etre resondee, pas gardee jusqu'au prochain
+ *      deploiement. Cinq echecs d'affilee et dix minutes de recul suffisent :
+ *      assez pour ne pas resonder a chaque hoquet, assez peu pour ne pas perdre
+ *      une journee.
+ * ==================================================================== */
+const CG_RESONDE_ECHECS = 5;          /* echecs d'affilee avant de resonder */
+const CG_RESONDE_MS = 10 * 60e3;      /* et jamais deux sondes plus rapprochees */
+let cgEchecs = 0;
+let cgSondeT = 0;
 function cleCoingecko() { return (process.env.COINGECKO_API_KEY || '').trim(); }
 
 async function sondeCoingecko() {
   const cle = cleCoingecko();
   if (!cle) { cgPorte = 'libre'; return cgPorte; }
-  for (const [porte, base, entete] of [['demo', CG_DEMO, 'x-cg-demo-api-key'],
-                                       ['pro', CG_PRO, 'x-cg-pro-api-key']]) {
+  cgSondeT = Date.now();
+  cgEchecs = 0;
+  /* PRO d'abord : une cle demo s'y fait refuser proprement (401) et on passe a
+     la suivante, alors qu'une cle pro envoyee a la porte demo peut y recevoir
+     un 429 partage et verrouiller la mauvaise porte. */
+  let quota = null;   /* une porte qui a repondu 429 : gardee en repli seulement */
+  for (const [porte, base, entete] of [['pro', CG_PRO, 'x-cg-pro-api-key'],
+                                       ['demo', CG_DEMO, 'x-cg-demo-api-key']]) {
     try {
       const r = await fetch(base + '/new_pools?page=1',
         { headers: Object.assign({}, ENTETES, { [entete]: cle }), signal: AbortSignal.timeout(12000) });
-      /* ---- UN 429 N'EST PAS UN REFUS ----
-       * Il veut dire que la cle est BONNE et qu'on va trop vite. La traiter
-       * comme un refus ferait declarer « cle invalide » a une cle parfaitement
-       * valide, et on la changerait pour rien. On retient donc la porte : les
-       * lectures y passeront, et celles qui se font refuser retomberont une par
-       * une sur l'acces libre, ce qui est le comportement voulu. */
-      if (r.ok || r.status === 429) {
+      if (r.ok) {
         cgPorte = porte;
         console.log('[ai] cle CoinGecko acceptee en ' + porte.toUpperCase()
-          + (r.status === 429 ? ' (mais deja au quota a la premiere lecture)' : '')
           + ' — les lectures GeckoTerminal passent par ' + base);
         return cgPorte;
       }
+      /* ---- UN 429 N'EST PAS UN REFUS, MAIS CE N'EST PAS UNE PREUVE ----
+       * Il veut dire « la cle est bonne et on va trop vite » — ou bien qu'on
+       * partage une file avec la terre entiere, ce qui est exactement le cas de
+       * l'acces demo. On le garde donc en repli, jamais comme un choix : si
+       * l'autre porte repond franchement oui, c'est elle qu'on prend. */
+      if (r.status === 429 && !quota) quota = [porte, base];
     } catch (e) { /* on essaie l'autre porte */ }
+  }
+  if (quota) {
+    cgPorte = quota[0];
+    console.log('[ai] cle CoinGecko retenue en ' + quota[0].toUpperCase()
+      + ' sur un 429 (aucune porte n\'a repondu franchement oui) — lectures par ' + quota[1]
+      + '. Elle sera resondee si les lectures echouent.');
+    return cgPorte;
   }
   cgPorte = 'libre';
   console.warn('[ai] COINGECKO_API_KEY posee mais refusee en Demo comme en Pro — on continue sur '
@@ -135,11 +175,25 @@ async function jsonGT(chemin) {
     const base = cgPorte === 'pro' ? CG_PRO : CG_DEMO;
     const entete = cgPorte === 'pro' ? 'x-cg-pro-api-key' : 'x-cg-demo-api-key';
     try {
-      return await json(base + chemin, { headers: Object.assign({}, ENTETES, { [entete]: cle }) });
+      const r = await json(base + chemin, { headers: Object.assign({}, ENTETES, { [entete]: cle }) });
+      /* Une reussite se compte AUSSI : sans elle, le releve de la source ne
+         pouvait afficher que des echecs, et « 0 reussite » ne voulait rien
+         dire — on ne savait pas si la porte servait ou pas. */
+      noteService('coingecko', true);
+      cgEchecs = 0;
+      return r;
     } catch (e) {
       /* Quota atteint ou cle revoquee en pleine journee : on ne perd pas la
          lecture pour autant. On le NOTE, et on repasse par l'acces libre. */
       noteService('coingecko', false, String(e.message || e).slice(0, 40));
+      /* Et si la porte retenue echoue a la chaine, c'est qu'elle est la
+         mauvaise : on la resonde au lieu d'y insister jusqu'au redeploiement. */
+      cgEchecs++;
+      if (cgEchecs >= CG_RESONDE_ECHECS && Date.now() - cgSondeT >= CG_RESONDE_MS) {
+        console.warn('[ai] porte CoinGecko ' + String(cgPorte).toUpperCase() + ' : '
+          + cgEchecs + ' echecs d affilee — on resonde.');
+        cgPorte = null;
+      }
       return json(GT_LIBRE + chemin, { headers: ENTETES });
     }
   }
@@ -6033,6 +6087,25 @@ function alertes() {
       'Check the key at coingecko.com/en/developers/dashboard, then redeploy. A variable set '
       + 'after the last deployment is not seen by the running process.');
 
+  /* ---- UNE PORTE RETENUE QUI NE SERT RIEN EST PIRE QU'UNE PORTE REFUSEE ----
+   * Refusee, elle declenchait l'alerte ci-dessus. Retenue et fausse, elle ne
+   * disait rien : mesure du 10 septembre, `porte: "demo"`, 330 essais, zero
+   * reussite, et pas une alerte. C'est exactement le cas qu'il faut voir. */
+  {
+    const cg = (E.services || {}).coingecko;
+    if (cleCoingecko() && cgPorte && cgPorte !== 'libre' && cg && cg.essais >= 20 && !cg.reussites)
+      dis('haute', 'The CoinGecko key is accepted but every read through it fails',
+        'The probe kept the ' + String(cgPorte).toUpperCase() + ' door, and the ' + cg.essais
+        + ' reads that went through it have all fallen back to free access. A paid key answering '
+        + 'on the wrong door does exactly this: it is accepted once, then refuses every read. '
+        + (cg.dernierEchec ? 'Last refusal: « ' + cg.dernierEchec + ' ». ' : '')
+        + 'Nothing is broken — reads continue over free access, which is the shared queue the key '
+        + 'was bought to leave.',
+        'Check on coingecko.com/en/developers/dashboard which plan the key belongs to: a Demo key '
+        + 'goes through api.coingecko.com, a paid one through pro-api.coingecko.com. The door is '
+        + 're-probed on its own after ' + CG_RESONDE_ECHECS + ' failures in a row.');
+  }
+
   if (!process.env.ANTHROPIC_API_KEY)
     dis('moyenne', 'The Advisor is off: no Anthropic key',
       'The agents judge on rules and on what they have measured. A model\'s view on borderline '
@@ -7600,7 +7673,8 @@ function vue() {
     })),
     abandons: partAbandons(),
     horsService: HORS_SERVICE,
-    coingecko: { cle: !!cleCoingecko(), porte: cgPorte || 'not probed yet' },
+    coingecko: { cle: !!cleCoingecko(), porte: cgPorte || 'not probed yet',
+                 echecs: cgEchecs, sonde: cgSondeT || null },
     rpcCle: { pose: !!(process.env.DRPC_API_KEY || '').trim(),
               plage: noeuds._cle ? noeuds._cle.plageLogs : null },
     goplus: { identifie: goplusIdentifie(), jeton: !!goplusJeton.valeur,
@@ -7777,7 +7851,11 @@ module.exports = {
   lisTrades, lisFluxDex, jetonDepuisDex, rassemble,
   sondeCoingecko, jsonGT, cleCoingecko, goplusEntetes, goplusIdentifie, noeuds, peutRepondre,
   _jeton: () => goplusJeton, _posejeton: (j) => { goplusJeton = j; },
-  _porte: () => cgPorte, _poseporte: (p) => { cgPorte = p; },
+  _porte: () => cgPorte,
+  /* `t` permet a un essai de placer la derniere sonde dans le passe, pour
+     verifier le re-sondage sans attendre dix minutes. */
+  _poseporte: (p, t) => { cgPorte = p; cgEchecs = 0; cgSondeT = t === undefined ? Date.now() : t; },
+  sondeCoingecko, _echecsCg: () => cgEchecs, CG_RESONDE_ECHECS, CG_RESONDE_MS,
   FICHIER, SEUIL, AGE_MAX_MIN, MISE, DEPART, METHODES, SERVICES, HORS_SERVICE,
   MISE_MIN, MISE_PART_MAX, EXPO_PART_MAX, PLANCHER, ENFANTS_MAX,
   ECART_TYPE_BRUIT, VARIANCE_MIN_OBS, ROSTER_DEPART, REORDONNABLES,

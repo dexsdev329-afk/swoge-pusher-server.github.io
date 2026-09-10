@@ -133,6 +133,9 @@ function mondeNeuf(jetons, extra) {
     bloc: 5000000,
     profils: [], boosts: [], goplusCasse: false, rpcSature: false, claude: null, claudeCasse: false,
     cgCle: null, cgPorte: null, cgQuota: false,
+    /* La porte demo est celle que tout le monde partage : elle rend des 429 a
+       qui veut, cle bonne ou pas. C'est ce qui piegeait la sonde. */
+    cgDemoSature: false,
     gpCle: null, gpSecret: null, drpcRefuse: false, drpcPlage: 0, drpcSansLogs: false,
   }, extra || {});
 }
@@ -342,6 +345,9 @@ global.fetch = async function (url, opts) {
     if (pro) appels.cgPro++; else appels.cgDemo++;
     /* Le monde accepte la cle sur UNE seule des deux portes : c'est le cas
        reel, et c'est ce qui oblige a sonder plutot qu'a demander. */
+    /* Un acces demo sature repond 429 AVANT de regarder la cle : c'est le
+       comportement reel, et c'est lui qui faisait retenir la mauvaise porte. */
+    if (!pro && MONDE.cgDemoSature) return rep({ status: { error_message: 'throttled' } }, 429);
     if (cle !== MONDE.cgCle || MONDE.cgPorte !== (pro ? 'pro' : 'demo'))
       return rep({ status: { error_message: 'API Key Missing' } }, 401);
     if (MONDE.cgQuota) return rep({ status: { error_message: 'quota' } }, 429);
@@ -1234,7 +1240,17 @@ async function surveillance() {
   remise(sains());
   await C.tour();
   const t1 = { goplus: appels.goplus, chaine: appels.rpc, trades: appels.trades };
-  const vus1 = C.vue().candidats.length;
+  /* ---- ON RETIENT QUI A ETE JUGE, PAS UN NOM ECRIT D AVANCE ----
+   * L essai nommait « TOK0 » et supposait qu il faisait partie des six juges au
+   * premier tour. Or c est le BUDGET qui decide lesquels des sept passent, et
+   * l ordre depend de celui ou les sources repondent — il varie d une execution
+   * a l autre. Une fois sur quelques dizaines, TOK0 etait justement le septieme,
+   * celui qui doit legitimement etre examine au second tour, et l essai tombait
+   * en accusant le code d un defaut qui n existait pas.
+   * On releve donc l ENSEMBLE reellement juge, et on verifie ce que la regle dit
+   * vraiment : aucun de ceux-la ne repasse. */
+  const juges1 = new Set(C.vue().candidats.map((c) => c.sym));
+  const vus1 = juges1.size;
   console.log('   1er tour : ' + vus1 + ' jetons examines · ' + JSON.stringify(t1));
 
   /* Deuxieme tour, meme monde : rien n'a bouge, rien ne merite d'etre repaye. */
@@ -1254,8 +1270,10 @@ async function surveillance() {
   ok(v.candidats.length < vus1,
      'et il examine ' + v.candidats.length + ' jeton(s) au lieu de ' + vus1
      + ' — ceux que le budget du premier tour n avait pas atteints');
-  ok(!v.candidats.some((c) => c.sym === 'TOK0'),
-     'le premier jeton du tour precedent n est pas repasse a l analyse');
+  const repasses = v.candidats.filter((c) => juges1.has(c.sym)).map((c) => c.sym);
+  ok(repasses.length === 0,
+     'AUCUN des ' + vus1 + ' jetons juges au tour precedent n est repasse a l analyse'
+     + (repasses.length ? ' (repasses : ' + repasses.join(', ') + ')' : ''));
   ok(v.evites.length > 0,
      v.evites.length + ' jeton(s) ecartes sans un appel, et la raison est ecrite (« '
      + (v.evites[0] || {}).pourquoi + ' »)');
@@ -2179,6 +2197,9 @@ async function coingecko() {
   console.log('   porte : ' + v.coingecko.porte + ' · demo ' + appels.cgDemo
     + ' · pro ' + appels.cgPro + ' · libre ' + appels.pools);
   ok(v.coingecko.porte === 'demo', 'la porte Demo est retenue');
+  ok(appels.cgPro >= 1,
+     'apres un refus franc sur PRO, qui est sonde en premier : une cle demo s y fait proprement '
+     + 'renvoyer (401), la ou une cle pro sur la porte demo pouvait ramasser un 429 partage');
   ok(appels.cgDemo > 1, 'et les lectures y passent (' + appels.cgDemo + ')');
   ok(appels.pools === 0, 'plus aucune ne passe par la file commune');
   ok(v.candidats.length > 0, 'et les jetons sont lus normalement : la forme des reponses est la meme');
@@ -2190,7 +2211,10 @@ async function coingecko() {
   v = C.vue();
   console.log('   porte : ' + v.coingecko.porte + ' · demo ' + appels.cgDemo + ' · pro ' + appels.cgPro);
   ok(v.coingecko.porte === 'pro', 'la porte Pro est retenue');
-  ok(appels.cgDemo >= 1, 'apres avoir essaye la Demo d abord — les deux cles ne se distinguent pas a l oeil');
+  ok(appels.cgPro >= 1, 'trouvee du premier coup : PRO est sonde en premier, et un vrai 200 y suffit');
+  ok(appels.cgDemo === 0,
+     'sans meme toucher la porte demo — celle que tout le monde partage, et dont le 429 avait fini '
+     + 'par verrouiller la mauvaise porte sur le serveur reel');
   ok(appels.cgPro > 1, 'et les lectures passent par la Pro (' + appels.cgPro + ')');
 
   console.log('\n-- une cle refusee ne casse rien, et elle est signalee --');
@@ -2226,7 +2250,67 @@ async function coingecko() {
   ok(v.candidats.length > 0, 'et le tour se fait quand meme (' + v.candidats.length + ' jetons)');
   ok(s.essais > s.reussites && !!s.dernierEchec,
      'le refus est compte et nomme : « ' + s.dernierEchec + ' »');
+
+  /* ======================================================================
+   * UNE PORTE DEMO SATUREE NE DOIT PAS VOLER LA PLACE D'UNE CLE PAYANTE
+   *
+   * Releve du serveur, 10 septembre : `porte: "demo"`, 330 essais, ZERO
+   * reussite. La sonde essayait demo en premier, l acces demo — celui que
+   * tout le monde partage — repondait 429, et le 429 etait pris pour une
+   * preuve que la cle est bonne. La porte se verrouillait la, et les 330
+   * lectures suivantes tombaient toutes en se rabattant sur l acces libre.
+   * La cle payante ne servait a rien, et l alerte ne se declenchait pas :
+   * elle ne regardait que le cas « refusee aux deux portes ».
+   * ==================================================================== */
+  console.log('\n-- une porte demo saturee ne vole plus la place d une cle payante --');
+  remise(sains(), { cgCle: 'cg-pro-456', cgPorte: 'pro', cgDemoSature: true });
+  process.env.COINGECKO_API_KEY = 'cg-pro-456';
+  C._poseporte(null);
+  const porteChoisie = await C.sondeCoingecko();
+  console.log('   porte retenue : ' + porteChoisie);
+  ok(porteChoisie === 'pro',
+     'un vrai 200 sur PRO l emporte sur un 429 partage sur demo (retenu : ' + porteChoisie + ')');
+  await C.tour();
+  v = C.vue();
+  const sp = v.services.find((x) => x.cle === 'coingecko');
+  console.log('   service coingecko ' + JSON.stringify({ essais: sp.essais, reussites: sp.reussites }));
+  ok(sp.reussites > 0,
+     'et les lectures passent VRAIMENT par elle : ' + sp.reussites + ' reussite(s) comptee(s)');
+  ok(!v.alertes.some((x) => /every read through it fails/.test(x.quoi)),
+     'aucune alerte : la porte sert');
+
+  /* ---- ET UNE PORTE RETENUE QUI ECHOUE A LA CHAINE SE RESONDE ---- */
+  console.log('\n-- une porte retenue qui echoue a chaque lecture est resondee, pas gardee --');
+  remise(sains(), { cgCle: 'cg-pro-456', cgPorte: 'pro', cgDemoSature: false });
+  process.env.COINGECKO_API_KEY = 'cg-pro-456';
+  /* On la force sur DEMO — la mauvaise — et on place la derniere sonde assez
+     loin dans le passe pour que le recul de dix minutes soit tenu. */
+  C._poseporte('demo', Date.now() - C.CG_RESONDE_MS - 1000);
+  ok(C._porte() === 'demo', 'la colonie part sur la mauvaise porte, comme le serveur reel');
+  for (let i = 0; i < C.CG_RESONDE_ECHECS + 1 && C._porte() === 'demo'; i++) await C.tour();
+  console.log('   porte apres les echecs : ' + C._porte() + ' · echecs ' + C._echecsCg());
+  ok(C._porte() !== 'demo',
+     'apres ' + C.CG_RESONDE_ECHECS + ' echecs d affilee elle est resondee au lieu de tenir '
+     + 'jusqu au redeploiement (porte : ' + C._porte() + ')');
+
+  /* ---- ET TANT QU ELLE EST FAUSSE, ELLE EST DITE ---- */
+  console.log('\n-- une porte acceptee dont AUCUNE lecture ne passe est signalee --');
+  remise(sains(), { cgCle: 'cg-pro-456', cgPorte: 'pro' });
+  process.env.COINGECKO_API_KEY = 'cg-pro-456';
+  C._poseporte('demo');
+  const F = C._etat();
+  F.services.coingecko = { essais: 330, reussites: 0, dernier: 0, dernierEchec: 'HTTP 401' };
+  const ac = C.vue().alertes.find((x) => /every read through it fails/.test(x.quoi));
+  ok(!!ac && ac.gravite === 'haute',
+     'l alerte existe, la ou « porte retenue mais fausse » ne disait rien : « ' + (ac && ac.quoi) + ' »');
+  ok(!!ac && /330 reads/.test(ac.pourquoi) && /DEMO/.test(ac.pourquoi),
+     'elle nomme la porte et le nombre de lectures perdues');
+  ok(!!ac && /HTTP 401/.test(ac.pourquoi), 'et le dernier refus, en toutes lettres');
+  ok(!!ac && /pro-api\.coingecko\.com/.test(ac.quoiFaire),
+     'avec la porte qu une cle payante doit prendre');
+
   delete process.env.COINGECKO_API_KEY;
+  C._poseporte(null);
 }
 
 
