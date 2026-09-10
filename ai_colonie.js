@@ -4094,9 +4094,12 @@ function rejoueLOmbre(o) {
   if (rs !== null) noteAuditStrat(cleAudit(o), rs);
   /* Et les jeux concurrents, sur les MEMES jalons : c'est la seule facon de
      les comparer sans qu'aucun ne trade. */
+  /* `o.refus` porte la raison qui l'a ecarte, et vaut null quand rien ne l'a
+     ecarte : c'est exactement la separation qui compte. */
+  const retenu = !o.refus;
   for (const v of VARIANTES) {
     const r2 = rejoue(o.jalons, v.E || undefined);
-    if (r2 !== null) noteVariante(v.cle, r2);
+    if (r2 !== null) noteVariante(v.cle, r2, retenu);
   }
   o.rejouee = true;
 }
@@ -4385,23 +4388,60 @@ const VARIANTES = [
     E: { actif: true, p1: 15, v1: 35, p2: 40, v2: 35, p3: 80, v3: 20,
          suivDepart: 10, suivEcart: 20, suivSerre: 10, suivSerreA: 40, coupe: 20, moon: 0.20 } },
 ];
-function noteVariante(cle, rs) {
+/* ---- ET SEPARE SELON QU'ON L'AURAIT ACHETE OU NON ----
+ *
+ * Le banc rejouait toutes les ombres dans le meme sac. Or une ombre est posee
+ * sur CHAQUE jeton examine, pas seulement sur ceux qu'on achete — et on en
+ * refuse environ trente-neuf sur quarante. La moyenne du banc etait donc celle
+ * du jeton moyen de la chaine, pas celle de nos trades : -9,7 % sur 824 rejeux
+ * ne dit rien de nos sorties, il dit que le memecoin moyen perd.
+ *
+ * Et l'audit des refus dit precisement pourquoi ce melange trompe : ce que le
+ * plancher ecarte monte dans 4 % des cas, ce qu'on achete dans 36 %. Ce sont
+ * deux populations sans rapport. Une sortie reglee pour la premiere n'a aucune
+ * raison d'etre la bonne pour la seconde : sur du rebut, tout ce qui vend tot
+ * perd, et « laisser courir » gagne en ne coupant qu'une fois ; sur ce qu'on
+ * achete, la question est renversee.
+ *
+ * On tient donc les deux comptes separement. Celui qui decide d'un changement
+ * de sortie est « ce qu'on aurait achete », et lui seul. L'autre reste affiche
+ * parce qu'il repond a une autre question — ce que nos filtres laissent passer
+ * a cote — mais il ne commande rien.
+ *
+ * Le comparatif reste valable dans les deux colonnes pour une raison qui ne
+ * depend pas de la population : les jeux rejouent LES MEMES jalons du MEME
+ * jeton. Ce qui les separe est la regle de sortie et rien d'autre. */
+function noteVariante(cle, rs, retenu) {
   if (!E.variantes || typeof E.variantes !== 'object') E.variantes = {};
   const v = E.variantes[cle] || (E.variantes[cle] = { n: 0, s: 0, gagnantes: 0, meilleur: 0 });
   v.n++; v.s += rs;
   if (rs > 0) v.gagnantes++;
   if (rs > v.meilleur) v.meilleur = Math.round(rs * 10) / 10;
+  const cle2 = retenu ? 'retenus' : 'ecartes';
+  const b = v[cle2] || (v[cle2] = { n: 0, s: 0, gagnantes: 0 });
+  b.n++; b.s += rs;
+  if (rs > 0) b.gagnantes++;
+}
+/** Le resume d'un sous-compte, ou null tant qu'il est vide. */
+function resumeBanc(b) {
+  if (!b || !b.n) return null;
+  return { n: b.n, moyenne: Math.round(b.s / b.n * 10) / 10,
+           partGagnantes: Math.round(b.gagnantes / b.n * 100) };
 }
 /** Ce que la page montre : chaque jeu, sa moyenne, sa part de gagnantes. */
 function bancsDEssai() {
   const out = [];
   for (const v of VARIANTES) {
     const c = (E.variantes || {})[v.cle];
-    if (!c || !c.n) { out.push({ cle: v.cle, quoi: v.quoi, n: 0, moyenne: null, partGagnantes: null, meilleur: null }); continue; }
+    if (!c || !c.n) { out.push({ cle: v.cle, quoi: v.quoi, n: 0, moyenne: null, partGagnantes: null, meilleur: null,
+                                 retenus: null, ecartes: null }); continue; }
     out.push({ cle: v.cle, quoi: v.quoi, n: c.n,
                moyenne: Math.round(c.s / c.n * 10) / 10,
                partGagnantes: Math.round(c.gagnantes / c.n * 100),
-               meilleur: c.meilleur });
+               meilleur: c.meilleur,
+               /* Le seul des deux qui puisse decider d'un changement de sortie. */
+               retenus: resumeBanc(c.retenus),
+               ecartes: resumeBanc(c.ecartes) });
   }
   return out;
 }
@@ -7713,7 +7753,7 @@ module.exports = {
   caseNonLue, CASES_NON_LUES, TRAITS, MEMOIRE_DEMIVIE_J, SURV_MAX, fane,
   enMots, MOTS,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre, piscineMorte,
-  rendementVendable, bancsDEssai, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
+  rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
   executionReelle, coutReel,
   tiensParMain, fermeParMain, TENUE_MAIN_MAX,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,

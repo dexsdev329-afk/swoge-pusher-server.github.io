@@ -3346,6 +3346,55 @@ async function rejeuDeLaStrategie() {
     const monte = { 5: 20, 15: 60, 30: 200, 60: 400, 120: 330 };
     ok(C.rejoue(monte, Object.assign({}, memes, { moon: 0.2 })) > C.rejoue(monte, memes),
        'et sur un jeton qui court, il rapporte : c est le meme billet');
+
+    /* ---- ET LE BANC SEPARE CE QU ON AURAIT ACHETE DU RESTE ----
+       Une ombre est posee sur CHAQUE jeton examine, et la colonie en refuse
+       environ trente-neuf sur quarante. Melanger les deux fait du banc la
+       moyenne du memecoin moyen de la chaine, pas celle de nos trades — et
+       l audit dit que ce sont deux populations sans rapport : 4 % de ce qui est
+       ecarte monte, contre 36 % de ce qui est achete. */
+    F3.variantes = {};
+    const cours = { 5: 20, 15: 60, 30: 200, 60: 400, 120: 330 };
+    const meurt2 = { 5: -5, 15: -18, 30: -25, 60: -60, 120: -80 };
+    F3.ombres = [
+      /* Deux qu on aurait pris : `refus` vaut null. */
+      { adr: '0x' + 'd1'.repeat(20), sym: 'PRIS1', prix0: 1, t: now3 - 200 * 60000, echeance: now3,
+        traits: {}, score: 70, dexVu: true, refus: null, jalons: cours },
+      { adr: '0x' + 'd2'.repeat(20), sym: 'PRIS2', prix0: 1, t: now3 - 200 * 60000, echeance: now3,
+        traits: {}, score: 70, dexVu: true, refus: null, jalons: cours },
+      /* Trois qu un veto a ecartes. */
+      { adr: '0x' + 'd3'.repeat(20), sym: 'JETE1', prix0: 1, t: now3 - 200 * 60000, echeance: now3,
+        traits: {}, score: 40, dexVu: true, refus: 'pool below the buy floor', jalons: meurt2 },
+      { adr: '0x' + 'd4'.repeat(20), sym: 'JETE2', prix0: 1, t: now3 - 200 * 60000, echeance: now3,
+        traits: {}, score: 40, dexVu: true, refus: 'pool below the buy floor', jalons: meurt2 },
+      { adr: '0x' + 'd5'.repeat(20), sym: 'JETE3', prix0: 1, t: now3 - 200 * 60000, echeance: now3,
+        traits: {}, score: 40, dexVu: true, refus: 'cap above the buy ceiling', jalons: meurt2 },
+    ];
+    C.regleLesOmbres({});
+    const b3 = C.bancsDEssai();
+    const v3 = b3.find((x) => x.cle === 'en vigueur');
+    console.log('   ' + JSON.stringify({ lot: v3.n, retenus: v3.retenus, ecartes: v3.ecartes }));
+    ok(v3.n === 5, 'le lot compte les cinq ombres, achetees ou non : ' + v3.n);
+    ok(v3.retenus && v3.retenus.n === 2, 'deux seulement sont celles qu on aurait achetees : ' + (v3.retenus || {}).n);
+    ok(v3.ecartes && v3.ecartes.n === 3, 'et trois ont ete ecartees par un veto : ' + (v3.ecartes || {}).n);
+    ok(v3.retenus.n + v3.ecartes.n === v3.n, 'les deux sous-comptes partitionnent le lot, sans trou ni doublon');
+    /* Et le chiffre qui decide est DIFFERENT de celui du lot : c est tout
+       l objet de la separation. Ici les achetes courent et les ecartes
+       meurent, donc la moyenne du lot est tiree vers le bas par du rebut
+       qu on n aurait jamais touche. */
+    ok(v3.retenus.moyenne > v3.moyenne,
+       'la moyenne sur les achetes (' + v3.retenus.moyenne + ' %) n est pas celle du lot ('
+       + v3.moyenne + ' %) : melanger les deux noyait nos trades dans le rebut');
+    ok(v3.retenus.partGagnantes === 100 && v3.ecartes.partGagnantes === 0,
+       'chaque sous-compte porte sa propre part de gagnantes');
+    /* La comparaison entre jeux reste valable dans les deux colonnes : ils
+       rejouent les MEMES jalons du MEME jeton. */
+    const h3 = b3.find((x) => x.cle === 'paliers hauts');
+    ok(h3.retenus.n === v3.retenus.n && h3.ecartes.n === v3.ecartes.n,
+       'tous les jeux rejouent exactement les memes ombres, dans les memes deux colonnes');
+    ok(h3.retenus.moyenne !== v3.retenus.moyenne,
+       'et ils s y separent : ' + h3.retenus.moyenne + ' % contre ' + v3.retenus.moyenne + ' % sur ce qu on aurait achete');
+    F3.variantes = {};
     F3.ombres = [];
   }
 
