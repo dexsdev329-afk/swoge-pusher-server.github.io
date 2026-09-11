@@ -6181,6 +6181,95 @@ function bornesQuiSeReglent() {
   const PROTEGE = { 'scout · too young: set aside until it has the age':
                     { n: 44, s: -900, montes: 4, effondres: 26 } };
 
+  /* ======================================================================
+   * UNE REGLE SE JUGE CONTRE CE QU ON ACHETE, PAS CONTRE UN CHIFFRE ROND
+   *
+   * Releve du 11 septembre, 5 925 tours : ce que la colonie ACHETE monte dans
+   * 35 % des cas. Et « already up too far » — le refus d entrer apres une
+   * pompe — ecarte 1 056 jetons qui montent dans 35 % des cas aussi, pour une
+   * moyenne MEILLEURE (+31,9 % contre +22,7 %). Cette regle ecarte exactement
+   * ce qu on prend, en mieux, sur mille observations.
+   *
+   * Jugee contre `AUDIT_COUTE` = 40 ecrit en dur, elle etait declaree « ni
+   * l un ni l autre » et ne bougeait jamais. La page faisait deja la
+   * correction pour l affichage ; la DECISION, non.
+   * ==================================================================== */
+  console.log('\n-- une regle se juge contre ce qu on achete, pas contre un chiffre rond --');
+  {
+    /* La reference : ce qu on achete monte a 35 %. */
+    const REF = { 'achete ou retenu': { n: 106, s: 2406, montes: 37, effondres: 30 } };
+    /* Et la pompe ecarte 1 056 jetons qui montent AUTANT. */
+    const POMPE = Object.assign({}, REF, {
+      'scout · already up too far: we would be paying the top':
+        { n: 1056, s: 33686, montes: 370, effondres: 300 } });
+    let G = pose({ audit: POMPE, abandons: 1 });
+    const S = C.seuilsAudit();
+    console.log('   seuils du jour : ' + JSON.stringify(S.ref ? { coute: S.coute, protege: S.protege } : S));
+    ok(S.ref && S.coute === 35,
+       'le seuil « cette regle coute » EST ce qu on achete (' + S.coute + ' %), pas 40 ecrit en dur');
+    ok(S.protege === Math.round(35 * C.REF_PROTEGE),
+       'et « elle protege » se rapporte a la meme reference (' + S.protege + ' %)');
+    const avP = C.borne('pumpMax');
+    ok(C.revoitLesBornes() === true, 'elle bouge');
+    console.log('   pompe ' + avP + ' → ' + C.borne('pumpMax') + ' % · ' + (G.journalStructure[0] || {}).txt);
+    ok(C.borne('pumpMax') > avP,
+       'le plafond de pompe MONTE : une regle qui ecarte aussi souvent que ce qu on achete '
+       + 'ne protege de rien (' + avP + ' → ' + C.borne('pumpMax') + ')');
+    ok(/as often as the 35% we actually buy/.test((G.journalStructure[0] || {}).txt || ''),
+       'et le journal dit la comparaison qui l a decidee, pas un seuil abstrait');
+
+    /* ---- LE CONTRE-EXEMPLE : SANS LA REFERENCE, RIEN NE BOUGE ----
+       C est exactement l ancien comportement, et c est pourquoi la regle est
+       restee immobile pendant des jours. */
+    G = pose({ audit: { 'scout · already up too far: we would be paying the top':
+                        { n: 1056, s: 33686, montes: 370, effondres: 300 } }, abandons: 1 });
+    const S2 = C.seuilsAudit();
+    ok(S2.ref === null && S2.coute === 40,
+       'sans reference assez fournie, on retombe sur les anciens seuils fixes — on ne juge pas '
+       + 'sur un chiffre qui ne vaut rien');
+    const avP2 = C.borne('pumpMax');
+    C.revoitLesBornes();
+    ok(C.borne('pumpMax') === avP2,
+       '35 % contre 40 ecrit en dur : la regle ne bouge pas, ce qui est precisement ce qui la '
+       + 'laissait immobile pendant des jours');
+
+    /* ---- ET LA BUTEE DU CODE TIENT ---- */
+    /* Le repos se purge a chaque tour, mais l etat — donc la borne apprise —
+       est GARDE : sinon chaque passage repartirait du defaut. */
+    G = pose({ audit: POMPE, abandons: 1 });
+    for (let i = 0; i < 40; i++) { G.depuisBornes = 999; C.revoitLesBornes(); }
+    console.log('   apres 40 revisions : pompe ' + C.borne('pumpMax') + ' %');
+    ok(C.borne('pumpMax') === C.BORNES.pumpMax.max,
+       'le plafond de pompe s arrete NET sur la butee ecrite dans le code ('
+       + C.BORNES.pumpMax.max + ' %), pas un point au-dessus');
+
+    /* ---- ET IL REDESCEND SI LA MESURE S INVERSE ---- */
+    const PROTEGE_P = Object.assign({}, REF, {
+      'scout · already up too far: we would be paying the top':
+        { n: 1056, s: -2000, montes: 40, effondres: 700 } });   /* 4 % : bien sous 16 */
+    pose({ audit: PROTEGE_P, abandons: 1 });
+    C._etat().bornes = { pumpMax: 200 };
+    C.revoitLesBornes();
+    ok(C.borne('pumpMax') < 200,
+       'et il REDESCEND des que la mesure s inverse : ce n est pas un desserrage a sens unique ('
+       + C.borne('pumpMax') + ')');
+  }
+
+  console.log('\n-- deux libelles pour le meme refus : on lit celui qui a le plus d observations --');
+  {
+    /* Le meme refus a ete formule en francais puis en anglais ; les deux
+       familles coexistent dans l audit. `find` rendait la premiere par ordre
+       de montees — parfois une ligne a 40 observations au lieu d une a 1 056. */
+    pose({ audit: {
+      'scout · deja +#% en cinq minutes : on paierait le sommet':
+        { n: 40, s: 1420, montes: 16, effondres: 10 },
+      'scout · already up too far: we would be paying the top':
+        { n: 1056, s: 33686, montes: 370, effondres: 300 } } });
+    const l = C.auditDe(/paying the top|paierait le sommet/);
+    ok(l && l.n === 1056,
+       'c est la ligne a 1 056 observations qui decide, pas celle a 40 (' + (l && l.n) + ')');
+  }
+
   console.log('\n-- la colonie desserre quand les DEUX mesures sont d accord --');
   let F = pose({ audit: COUTE, abandons: 1 });        /* 1/40 = 2,5 % : sain */
   const av = C.borne('ageMin');
@@ -6251,8 +6340,9 @@ function bornesQuiSeReglent() {
   /* ---- ET CE QUI NE BOUGE PAS ----
    * La liste est courte et elle doit le rester : c'est elle qui separe un
    * reglage de metier d'une garde qu'on abaisse. */
-  ok(Object.keys(C.BORNES).length === 3 && C.BORNES.ageMin && C.BORNES.liqParMise && C.BORNES.mcMax,
-     'TROIS bornes, et trois seulement : les controles de securite et les bornes de mise ne sont '
+  ok(Object.keys(C.BORNES).length === 4 && C.BORNES.ageMin && C.BORNES.liqParMise && C.BORNES.mcMax
+     && C.BORNES.pumpMax,
+     'QUATRE bornes, et quatre seulement : les controles de securite et les bornes de mise ne sont '
      + 'pas dans cette table, donc aucun agent ne peut les atteindre');
   C._pose(E);
 }

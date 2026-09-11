@@ -2861,6 +2861,30 @@ const BORNES = {
    * gouvernent pas : une position perdue de vue est une position trop
    * jeune ou trop mince, jamais une trop grosse. */
   mcMax:      { env: 'MC_ACHAT_MAX', defaut: 100000, min: 50000, max: 1000000, pas: 25000, sens: -1, sansAbandons: true },
+  /* ---- LE PLAFOND DE POMPE, MESURE PENDANT DES JOURS SANS POUVOIR BOUGER ----
+   *
+   * Releve du 11 septembre, 5 925 tours. Ce que la colonie ACHETE monte dans
+   * 35 % des cas, pour +22,7 % de moyenne. Et « already up too far: we would be
+   * paying the top » — la regle qui refuse d'entrer apres une pompe — a ecarte
+   * 1 056 jetons qui montent dans 35 % des cas, pour +31,9 % de moyenne.
+   *
+   * Meme taux de reussite, et une moyenne MEILLEURE, sur mille observations.
+   * Cette regle ne protege de rien : elle ecarte exactement la meme chose que
+   * ce qu'on achete, en mieux. C'est, de loin, le plus gros cout mesure du
+   * systeme — et le seul des grands refus dont la colonie n'avait AUCUN moyen
+   * d'agir, parce qu'il n'etait pas dans cette table.
+   *
+   * Il y entre donc, avec les memes garde-fous que les autres : des butees
+   * ecrites dans le code qu'aucune mesure ne franchit, un pas petit, un repos
+   * de vingt-quatre tours entre deux mouvements, et le taux d'abandon qui
+   * gouverne — un jeton achete apres une pompe qu'on ne sait plus relire est
+   * exactement le genre de position qu'on perd de vue, donc cette regle-la
+   * n'est PAS `sansAbandons`.
+   *
+   * `sens: -1` : resserrer, ici, c'est BAISSER le plafond. L'heure d'apres
+   * reste toujours accrochee au double, comme aujourd'hui (100 / 200) : c'est
+   * un rapport qui n'a jamais ete mis en cause, et un seul bouton se juge. */
+  pumpMax:    { env: 'PUMP_MAX_M5', defaut: 100, min: 50, max: 300, pas: 25, sens: -1 },
 };
 /* La valeur en vigueur : ce que la colonie a appris, ou l'environnement tant
    qu'elle n'a rien appris. Toujours ramenee entre les butees — un etat relu
@@ -2914,9 +2938,51 @@ const AUDIT_COUTE = 40;          /* % de montees au-dessus duquel la regle coute
 const AUDIT_PROTEGE = 15;        /* et en dessous duquel elle protege vraiment */
 const BORNES_REPOS = 24;         /* tours entre deux mouvements : on regarde l'effet */
 
-/* La ligne d'audit d'une regle, par son libelle de famille. */
+/* La ligne d'audit d'une regle, par son libelle de famille. Quand plusieurs
+   libelles correspondent — le meme refus a ete formule en francais puis en
+   anglais, et les deux familles coexistent — on prend CELLE QUI A LE PLUS
+   D'OBSERVATIONS : `find` rendait la premiere par ordre de montees, c'est-a-dire
+   parfois une ligne a quarante observations au lieu d'une a mille. */
 function auditDe(motif) {
-  return auditDesRefus().find((x) => motif.test(x.cle)) || null;
+  const l = auditDesRefus().filter((x) => motif.test(x.cle));
+  if (!l.length) return null;
+  return l.reduce((a, b) => ((b.n || 0) > (a.n || 0) ? b : a));
+}
+
+/* ==========================================================================
+ * UNE REGLE SE JUGE CONTRE CE QU'ON ACHETE, PAS CONTRE UN CHIFFRE ROND
+ *
+ * `AUDIT_COUTE` valait 40 % et `AUDIT_PROTEGE` 15 %, ecrits en dur. Or la
+ * question n'est pas « ce refus ecarte-t-il des jetons qui montent ? » — tous
+ * en ecartent — mais « en ecarte-t-il PLUS QUE CE QU'ON ACHETE ? ».
+ *
+ * Releve du 11 septembre : ce qu'on achete monte dans 35 % des cas. Une regle
+ * qui ecarte des jetons montant a 35 % ecarte donc exactement la meme chose que
+ * ce qu'on prend — elle ne protege de rien — et pourtant, jugee contre 40, elle
+ * etait declaree « ni l'un ni l'autre » et ne bougeait jamais. C'est le cas de
+ * « already up too far », mille cinquante-six observations.
+ *
+ * La page faisait deja cette correction pour l'affichage, et le commentaire y
+ * est ecrit depuis des jours : « la ligne de reference etait jugee comme une
+ * regle, et chaque regle etait jugee contre un chiffre fixe alors que ce qu'on
+ * ACHETE monte a 36 % ». L'ecran avait ete corrige ; la DECISION, non. Elle
+ * l'est ici.
+ *
+ * Les deux constantes restent, comme repli : tant que la reference n'a pas
+ * assez d'observations pour valoir quelque chose, on ne va pas juger sur elle.
+ * ======================================================================== */
+const REF_PROTEGE = 0.45;        /* sous 45 % de la reference, la regle protege vraiment */
+function refMontes() {
+  const r = auditDesRefus().find((x) => x.cle === 'achete ou retenu');
+  return (r && r.n >= AUDIT_MIN_OBS && typeof r.partMontes === 'number') ? r : null;
+}
+/** Les deux seuils du jour : relatifs a ce qu'on achete, ou les anciens fixes. */
+function seuilsAudit() {
+  const r = refMontes();
+  if (!r) return { coute: AUDIT_COUTE, protege: AUDIT_PROTEGE, ref: null };
+  return { coute: r.partMontes,
+           protege: Math.round(r.partMontes * REF_PROTEGE),
+           ref: r };
 }
 
 function revoitLesBornes() {
@@ -2926,6 +2992,8 @@ function revoitLesBornes() {
   if (E.depuisBornes < BORNES_REPOS) return false;
 
   const ab = partAbandons();
+  /* Les seuils du jour, rapportes a ce qu'on achete — voir `seuilsAudit`. */
+  const S = seuilsAudit();
   const cas = [
     { k: 'ageMin', motif: /too young/,
       quoi: 'minimum buy age', unite: ' min' },
@@ -2933,6 +3001,8 @@ function revoitLesBornes() {
       quoi: 'pool depth required per stake', unite: '× the stake' },
     { k: 'mcMax', motif: /above the buy ceiling/,
       quoi: 'buy ceiling on market cap', unite: ' $' },
+    { k: 'pumpMax', motif: /paying the top|paierait le sommet/,
+      quoi: 'how far up we still buy', unite: ' % in five minutes' },
   ];
   for (const c of cas) {
     const b = BORNES[c.k], avant = borne(c.k);
@@ -2956,19 +3026,23 @@ function revoitLesBornes() {
       pourquoi = Math.round(ab * 100) + '% of opened positions could never be re-read to their '
         + 'deadline. That is what buying too young and too thin costs, and it is measured on '
         + 'every position, not just the ones this rule touches';
-    } else if (l && l.n >= AUDIT_MIN_OBS && l.partMontes <= AUDIT_PROTEGE && peutSerrer) {
+    } else if (l && l.n >= AUDIT_MIN_OBS && l.partMontes <= S.protege && peutSerrer) {
       apres = serre();
-      pourquoi = 'only ' + l.partMontes + '% of the ' + l.n + ' tokens it set aside went up: '
-        + 'this rule protects, and it can afford to protect more';
+      pourquoi = 'only ' + l.partMontes + '% of the ' + l.n + ' tokens it set aside went up'
+        + (S.ref ? ', against ' + S.ref.partMontes + '% for what we actually buy' : '')
+        + ': this rule protects, and it can afford to protect more';
     /* ---- ET ON NE DESSERRE QUE SI LES DEUX SONT D'ACCORD ----
      * L'audit doit dire que la regle coute, ET les abandons doivent etre bas.
      * Un seul des deux ne suffit pas : c'est ce « et » qui empeche la
      * descente. */
-    } else if (l && l.n >= AUDIT_MIN_OBS && l.partMontes >= AUDIT_COUTE
+    } else if (l && l.n >= AUDIT_MIN_OBS && l.partMontes >= S.coute
                && (b.sansAbandons || (ab !== null && ab < ABANDON_SAIN)) && peutDesserrer) {
       apres = desserre();
       pourquoi = l.partMontes + '% of the ' + l.n + ' tokens it set aside went up (average '
-        + l.moyenne + '%), and only ' + Math.round(ab * 100) + '% of opened positions were lost '
+        + l.moyenne + '%)'
+        + (S.ref ? ', as often as the ' + S.ref.partMontes + '% we actually buy — it is setting '
+                 + 'aside the same thing we take' : '')
+        + ', and only ' + Math.round(ab * 100) + '% of opened positions were lost '
         + 'for want of a price: it costs more than it protects';
     }
     if (apres === avant || !pourquoi) continue;
@@ -3120,8 +3194,10 @@ function planchers() {
      * troisieme heure — et c'est le Cobaye, redevenu operationnel, qui porte
      * la protection contre le piege. */
     ageMin: borne('ageMin'),
-    pumpM5: nEnv('PUMP_MAX_M5', 100),
-    pumpH1: nEnv('PUMP_MAX_H1', 200),
+    /* Appris, dans les butees du code — voir `BORNES.pumpMax`. L'heure reste
+       accrochee au double des cinq minutes, sauf reglage explicite. */
+    pumpM5: borne('pumpMax'),
+    pumpH1: nEnv('PUMP_MAX_H1', borne('pumpMax') * 2),
     dumpM5: nEnv('DUMP_MAX_M5', 40),
     dumpH1: nEnv('DUMP_MAX_H1', 50),
   };
@@ -7919,6 +7995,7 @@ module.exports = {
   enMots, MOTS,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre, piscineMorte,
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
+  seuilsAudit, refMontes, REF_PROTEGE, auditDe,
   executionReelle, coutReel,
   tiensParMain, fermeParMain, TENUE_MAIN_MAX,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
