@@ -163,6 +163,39 @@ const ORDRE_MIN_ETH = String(process.env.MIROIR_ORDRE_MIN || '0.001');
 /* Le gaz d'un ordre ne doit pas depasser un dixieme de la mise : au-dela,
    c'est le gaz qu'on trade, pas le jeton. ~300 000 unites par echange. */
 const GAZ_ORDRE_UNITES = 300000;
+/* ==========================================================================
+ * UN TRADE EST UN ALLER-RETOUR, PAS UN ORDRE
+ *
+ * « On est en negatif, le miroir perd des sous. »
+ *
+ * Releve du 11 septembre. Quatre jetons fermes le meme jour par DEUX
+ * portefeuilles miroir, sur les memes signaux, aux memes instants. A chaque
+ * fois, le PETIT portefeuille perd plus que le gros :
+ *
+ *     FLY       0,0061 ETH → -23,6 %   contre   0,0161 ETH → -22,0 %
+ *     COO       0,0061 ETH → -36,0 %   contre   0,0166 ETH → -35,5 %
+ *     SCOUT     0,0061 ETH → -10,3 %   contre   0,0166 ETH →  -8,8 %
+ *     FLYSWARM  0,0061 ETH → -53,2 %   contre   0,0163 ETH → -37,7 %
+ *
+ * Quatre fois sur quatre, dans le meme sens. Ce n'est pas le marche : les deux
+ * ordres suivent le meme jeton a la meme seconde. C'est le GAZ, qui est un
+ * montant FIXE et pese donc deux fois plus sur un ordre deux fois plus petit.
+ * En resolvant le systeme sur ces paires — meme mouvement de prix, deux
+ * tailles — il sort entre 0,000052 et 0,000156 ETH par ALLER-RETOUR.
+ *
+ * Or le garde-fou ci-dessus comptait le gaz d'UN SEUL ECHANGE, et sans les
+ * autorisations. Il mesurait donc moins de la moitie de ce qu'un trade coute
+ * vraiment — `gazDeVente`, dix lignes plus bas, compte bien l'echange PLUS
+ * l'autorisation, et il le fait pour une seule jambe. Un ordre dont le gaz
+ * reel mangeait un quart de la mise passait ce controle sans difficulte.
+ *
+ * On compte donc les deux jambes, chacune avec son autorisation, exactement
+ * comme `gazDeVente`. Le seuil, lui, ne bouge PAS : ce n'est pas un chiffre
+ * choisi qu'on remplace par un autre, c'est une arithmetique fausse qu'on
+ * corrige. A 10 % d'un aller-retour au lieu de 10 % d'une demi-jambe, le meme
+ * reglage refuse desormais ce qu'il aurait toujours du refuser.
+ * ======================================================================== */
+const GAZ_ALLER_RETOUR_UNITES = (GAZ_ORDRE_UNITES + 60000) * 2;
 const GAZ_PART_MAX = Math.min(0.5, Math.max(0.01, nEnv('MIROIR_GAZ_PART_MAX', 0.1)));
 /* ---- L'ALLER-RETOUR, AVANT DE PARTIR ----
  * SLINK, 4 septembre : l'achat de 0,001 ETH simule et passe ; la vente de ce
@@ -1762,13 +1795,15 @@ async function achetePosition(c, t) {
      moins a la fois. */
   const partB = partSeule(solde, t.part);
   const releve = partB.gt(0) && mise.gt(partB);
-  /* Le gaz du moment, lu sur la chaine, contre la mise : un ordre dont le gaz
-     mange plus d'un dixieme ne part pas — en essai comme en reel, pour que
-     le papier montre ce que le reel ferait. */
+  /* Le gaz du moment, lu sur la chaine, contre la mise : un trade dont le gaz
+     de l'ALLER-RETOUR mange plus d'un dixieme ne part pas — en essai comme en
+     reel, pour que le papier montre ce que le reel ferait. Voir
+     `GAZ_ALLER_RETOUR_UNITES` : on entre pour ressortir, et c'est la somme des
+     deux jambes qui se compare a la mise, pas la moitie d'une. */
   let gaz = null;
-  try { gaz = (await provider().getGasPrice()).mul(GAZ_ORDRE_UNITES); } catch (e) { gaz = null; }
+  try { gaz = (await provider().getGasPrice()).mul(GAZ_ALLER_RETOUR_UNITES); } catch (e) { gaz = null; }
   if (gaz && gaz.mul(Math.round(1 / GAZ_PART_MAX)).gt(mise)) {
-    note(c, 'Skipped ' + (t.sym || adr) + ': gas for one order is about ' + ethers.utils.formatUnits(gaz, 18)
+    note(c, 'Skipped ' + (t.sym || adr) + ': gas for the round trip is about ' + ethers.utils.formatUnits(gaz, 18)
           + ' ETH (RH), more than ' + Math.round(GAZ_PART_MAX * 100) + '% of the ' + ethers.utils.formatUnits(mise, 18)
           + ' ETH stake — trading that would be trading gas');
     return false;
@@ -1998,7 +2033,7 @@ module.exports = {
   vendsMaintenant, ouvreMaintenant, remetLesStats,
   /* les reglages, pour l'ecran et pour les essais */
   EXECUTE, MIROIRS_MAX, MIN_ETH, MAX_ETH, PART_ORDRE, ORDRE_MAX_ETH, ORDRE_MIN_ETH, GAZ_RESERVE, RETOUR_MIN, POUSSIERE_MULT,
-  GAZ_ORDRE_UNITES, GAZ_PART_MAX,
+  GAZ_ORDRE_UNITES, GAZ_ALLER_RETOUR_UNITES, GAZ_PART_MAX,
   TOLERANCE_BPS, FICHIER,
   /* les adresses du protocole */
   PM4, QUOTEUR4, ROUTEUR4, PERMIT2, ETH4, SUJET_INIT,

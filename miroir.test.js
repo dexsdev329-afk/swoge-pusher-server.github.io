@@ -293,8 +293,41 @@ console.log('\n-- le gaz du moment est lu, et un ordre qui serait du gaz ne part
   await M.surAchat({ sym: 'GAZ', adr: JX, pool: poolDe(JX), part: 0.1 });
   const e = await M.etat(JG, false);
   ok(!e.ouvertes.length, 'a 10 gwei, l ordre de 0,00485 ETH ne part pas');
-  ok(/Skipped GAZ: gas for one order is about 0\.003 ETH/.test(e.journal[0].txt) && /trading gas/.test(e.journal[0].txt),
-     'et le journal dit le gaz, la mise et pourquoi : « ' + e.journal[0].txt.slice(0, 90) + '… »');
+  ok(/Skipped GAZ: gas for the round trip is about 0\.0072 ETH/.test(e.journal[0].txt) && /trading gas/.test(e.journal[0].txt),
+     'et le journal dit le gaz, la mise et pourquoi : « ' + e.journal[0].txt.slice(0, 95) + '… »');
+
+  /* ======================================================================
+   * UN TRADE EST UN ALLER-RETOUR, PAS UN ORDRE
+   *
+   * Releve du 11 septembre : quatre jetons fermes le meme jour par DEUX
+   * portefeuilles miroir, memes signaux, memes instants. Quatre fois sur
+   * quatre, le petit portefeuille perd plus que le gros (FLY -23,6 contre
+   * -22,0 ; COO -36,0 contre -35,5 ; SCOUT -10,3 contre -8,8 ; FLYSWARM
+   * -53,2 contre -37,7). Le gaz est un montant FIXE : il pese deux fois plus
+   * sur un ordre deux fois plus petit.
+   *
+   * Le garde-fou comptait UNE jambe, sans son autorisation — moins de la
+   * moitie de ce qu un trade coute. Ce tour-ci est celui qu il laissait
+   * passer : a 1 gwei, l aller-retour mange 15 % de la mise.
+   * ==================================================================== */
+  console.log('\n-- le gaz compte l ALLER-RETOUR : le tour que l ancien calcul laissait passer --');
+  chaine.prixGaz = 1000000000;             /* 1 gwei */
+  const avantG = (await M.etat(JG, false)).ouvertes.length;
+  await M.surAchat({ sym: 'GAZ', adr: JX, pool: poolDe(JX), part: 0.1 });
+  const e2 = await M.etat(JG, false);
+  const unJambe = 1e9 * M.GAZ_ORDRE_UNITES / 1e18;
+  const allerRetour = 1e9 * M.GAZ_ALLER_RETOUR_UNITES / 1e18;
+  console.log('   une jambe ' + unJambe.toFixed(5) + ' ETH (passait) · aller-retour '
+              + allerRetour.toFixed(5) + ' ETH sur une mise de 0,00485');
+  ok(e2.ouvertes.length === avantG,
+     'a 1 gwei l ordre ne part plus : son aller-retour mange 15 % de la mise, la ou l ancien '
+     + 'calcul n en voyait que 6 %');
+  ok(/round trip is about 0\.00072 ETH/.test(e2.journal[0].txt),
+     'et le journal nomme l aller-retour, pas une demi-jambe : « ' + e2.journal[0].txt.slice(0, 95) + '… »');
+  ok(M.GAZ_ALLER_RETOUR_UNITES === (M.GAZ_ORDRE_UNITES + 60000) * 2,
+     'deux jambes, chacune avec son autorisation — la meme formule que `gazDeVente` ('
+     + M.GAZ_ALLER_RETOUR_UNITES + ' unites contre ' + M.GAZ_ORDRE_UNITES + ')');
+
   chaine.prixGaz = null;
   await M.surAchat({ sym: 'GAZ', adr: JX, pool: poolDe(JX), part: 0.1 });
   eq((await M.etat(JG, false)).ouvertes.length, 1, 'a 0,1 gwei, le meme ordre part');
