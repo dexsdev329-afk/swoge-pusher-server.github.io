@@ -133,6 +133,8 @@ function mondeNeuf(jetons, extra) {
     bloc: 5000000,
     profils: [], boosts: [], boostsTop: [], goplusCasse: false, rpcSature: false, claude: null, claudeCasse: false,
     cgCle: null, cgPorte: null, cgQuota: false,
+    /* La piscine cote-t-elle autrement que le flux, ou pas du tout ? */
+    piscineDerive: 0, piscineMuette: false,
     /* La porte demo est celle que tout le monde partage : elle rend des 429 a
        qui veut, cle bonne ou pas. C'est ce qui piegeait la sonde. */
     cgDemoSature: false,
@@ -393,7 +395,12 @@ global.fetch = async function (url, opts) {
     const pool = (url.match(/pools\/([^/?]+)$/) || [])[1];
     const t = MONDE.jetons.find((x) => x.pool === pool);
     if (!t || t.piscineDisparue) return rep({ errors: [{ status: '404', title: 'Not Found' }] }, 404);
-    return rep({ data: { attributes: { base_token_price_usd: String(t.prix), reserve_in_usd: String(t.liq) } } });
+    /* La piscine peut coter AUTREMENT que le flux : c est tout le sujet de la
+       relecture au moment d acheter. `piscineMuette` simule un noeud qui ne
+       repond pas — la relecture echoue et on garde le prix du flux. */
+    if (MONDE.piscineMuette) return rep({ errors: [{ status: '503' }] }, 503);
+    const px = MONDE.piscineDerive ? t.prix * MONDE.piscineDerive : t.prix;
+    return rep({ data: { attributes: { base_token_price_usd: String(px), reserve_in_usd: String(t.liq) } } });
   }
   if (/\/trades/.test(url)) {
     appels.trades++;
@@ -2745,6 +2752,64 @@ async function venteAuPrixDuMoment() {
  * jamais achete, gratuit, hors apprentissage. Si l une saute, le plafond
  * redevient un pari — mais un pari qui coute de l argent cette fois.
  * ======================================================================== */
+/* ==========================================================================
+ * LE PRIX D ENTREE EST CELUI DE L ACHAT, PAS CELUI DU FLUX
+ *
+ * HASHSTR, 11 septembre : le papier compte +59,9 %, et les DEUX portefeuilles
+ * miroir touchent +18,5 % et +21,0 % sur le meme jeton, aux memes instants.
+ * Quarante et un points d ecart sur un GAGNANT. ZALA le meme jour, dans
+ * l autre sens : papier -35,0 %, miroir -20,5 %.
+ *
+ * Une seule cause : `prix0` etait le prix lu par le flux AU DEBUT DU TOUR,
+ * avant le rassemblement, les gardes, les lectures de chaine et l epreuve du
+ * Cobaye. Le miroir achete a la fin de tout cela. Le papier n etait pas
+ * optimiste — il etait EN AVANCE, sur un prix qui n existait plus.
+ * ======================================================================== */
+async function prixDeLAchat() {
+  console.log('\n-- le prix d entree est celui de l ACHAT, pas celui du flux --');
+  remise(sains());
+  /* La piscine cote 30 % plus haut que ce que le flux avait servi : c est
+     exactement le cas HASHSTR, ou l entree reelle etait 35 % au-dessus. */
+  MONDE.piscineDerive = 1.3;
+  await C.tour();
+  let F = C._etat();
+  const p = F.positions[0];
+  ok(!!p, 'une position est ouverte');
+  console.log('   flux ' + MONDE.jetons[0].prix + ' · piscine relue ' + (MONDE.jetons[0].prix * 1.3).toFixed(4)
+              + ' · prix0 ' + (p && p.prix0));
+  ok(p && Math.abs(p.prix0 - MONDE.jetons.find((x) => x.addr === p.adr).prix * 1.3) < 1e-9,
+     'le papier entre au prix RELU sur la piscine (' + (p && p.prix0) + '), pas a celui du flux');
+  const d = C.deriveDuPrix();
+  console.log('   derive : ' + JSON.stringify(d));
+  ok(d.n > 0 && Math.abs(d.moyenne - 30) < 0.5,
+     'et la derive est MESUREE, pas seulement corrigee : ' + d.moyenne + ' % en moyenne sur ' + d.n);
+  ok(d.hausse === 100, 'avec la part qui monte entre le flux et l achat (' + d.hausse + ' %)');
+
+  console.log('\n-- une derive absurde ne remplace pas le prix : c est une lecture abimee --');
+  remise(sains());
+  MONDE.piscineDerive = 50;                 /* +4900 % : personne ne croit ca */
+  await C.tour();
+  F = C._etat();
+  const p2 = F.positions[0];
+  ok(!!p2, 'la position s ouvre quand meme');
+  const attendu = MONDE.jetons.find((x) => x.addr === p2.adr).prix;
+  ok(Math.abs(p2.prix0 - attendu) < 1e-9,
+     'mais au prix du flux : au-dela de ' + C.DERIVE_MAX + ' %, la relecture decrit une piscine videe, '
+     + 'pas un marche (' + p2.prix0 + ')');
+  ok((F.compteurs.deriveAberrante || 0) > 0, 'et elle est comptee a part, au lieu d etre ignoree en silence');
+
+  console.log('\n-- sans relecture, on garde le comportement d avant --');
+  remise(sains());
+  MONDE.piscineMuette = true;
+  await C.tour();
+  F = C._etat();
+  const p3 = F.positions[0];
+  ok(!!p3, 'la position s ouvre : une piscine muette n empeche pas d acheter');
+  const att3 = MONDE.jetons.find((x) => x.addr === p3.adr).prix;
+  ok(Math.abs(p3.prix0 - att3) < 1e-9, 'au prix du flux, exactement comme avant ce changement');
+  MONDE.piscineMuette = false; MONDE.piscineDerive = 0;
+}
+
 async function plafondDageJugeable() {
   console.log('\n-- le plafond d age devient jugeable : les vieux entrent, EN OBSERVATION --');
   /* Sept jetons neufs, et trois nettement trop vieux pour etre achetes. */
@@ -6406,6 +6471,7 @@ function bornesQuiSeReglent() {
   await neTradePlus();
   await parleAnglais();
   await alertesDatees();
+  await prixDeLAchat();
   await plafondDageJugeable();
   await pairesEthSeulement();
   await placesGratuites();

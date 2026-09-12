@@ -4245,6 +4245,30 @@ function regleLesSuites(marche) {
  * Deux mille quatre cents, c'est deux cents minutes : la derniere
  * echeance est mesuree, et l'ombre part par la porte prevue. Et celle
  * que le plafond pousse quand meme est rejouee sur ce qu'elle a laisse. */
+/* ==========================================================================
+ * CE QUE LE PRIX BOUGE ENTRE LE FLUX ET L'ACHAT
+ *
+ * Mesure, et rien d'autre : la moyenne et la part des derives lues au moment
+ * d'ouvrir. C'est elle qui dira, dans un jour, ce que la relecture a rattrape
+ * — et elle qui dira si le flux est en avance de dix points ou de trente.
+ * ======================================================================== */
+const DERIVE_MAX = 300;          /* au-dela, c'est une lecture abimee, pas un marche */
+function noteDerive(d) {
+  if (!E.derive || typeof E.derive !== 'object') E.derive = { n: 0, s: 0, hausse: 0, baisse: 0, pire: 0 };
+  const D = E.derive;
+  D.n++; D.s += d;
+  if (d > 0) D.hausse++; else if (d < 0) D.baisse++;
+  if (Math.abs(d) > Math.abs(D.pire)) D.pire = Math.round(d * 10) / 10;
+  compte('deriveLue');
+}
+/** Ce que la page montre : de combien le prix a bouge entre le flux et l'achat. */
+function deriveDuPrix() {
+  const D = E.derive;
+  if (!D || !D.n) return { n: 0, moyenne: null, hausse: null, pire: null };
+  return { n: D.n, moyenne: Math.round(D.s / D.n * 10) / 10,
+           hausse: Math.round(D.hausse / D.n * 100), pire: D.pire };
+}
+
 const OMBRES_MAX = 2400;
 const OMBRE_OUBLI_MS = 3 * 3600e3;
 const OMBRE_TENUE_MIN = 20;     /* la meme echeance qu'une position, pour comparer ce qui l'est */
@@ -5143,7 +5167,9 @@ function ouvre(t) {
   const tenue = horizon ? { min: horizon.min, appris: true, parProfil: true, poids: horizon.poids }
                         : tenueApprise();
   E.positions.push({
-    sym: t.sym, adr: t.addr, pool: t.pool, prix0: t.prix, t0: Date.now(),
+    /* Le prix RELU au moment d'acheter, pas celui du flux en debut de tour —
+       voir la relecture dans le tour. */
+    sym: t.sym, adr: t.addr, pool: t.pool, prix0: t.prixAchat > 0 ? t.prixAchat : t.prix, t0: Date.now(),
     /* Le delai d'abandon compte depuis la DERNIERE fois qu'on a su lire un
        prix, pas depuis l'ouverture : une position tenue trois heures et cotee
        a chaque tour n'a rien d'une position perdue de vue. A l'ouverture on
@@ -7574,6 +7600,48 @@ async function tour() {
         an = analyse(t);
         t.an = an;
       }
+      /* ---- LE PRIX D'ENTREE EST CELUI DE L'ACHAT, PAS CELUI DU FLUX ----
+       *
+       * « Le miroir perd des sous. » HASHSTR, 11 septembre : le papier compte
+       * +59,9 %, et les DEUX portefeuilles miroir touchent +18,5 % et +21,0 %
+       * sur le meme jeton, aux memes instants. Quarante et un points d'ecart
+       * sur un GAGNANT. Et ZALA le meme jour, dans l'autre sens : le papier
+       * compte -35,0 %, le miroir ne perd que -20,5 %.
+       *
+       * Les deux s'expliquent par UNE cause. `prix0` etait `t.prix`, c'est-a-
+       * dire le prix lu par le flux AU DEBUT DU TOUR — avant le rassemblement
+       * des sources, avant les gardes, avant les lectures de chaine, avant
+       * l'epreuve du Cobaye. Le miroir, lui, achete a la fin de tout cela. Sur
+       * un jeton qui fait +100 % en cinq minutes — et c'est exactement ce que
+       * la colonie cherche — ces minutes valent des dizaines de points.
+       *
+       * En resolvant sur HASHSTR : pour que +59,9 % du papier devienne +18,5 %
+       * du miroir a la meme sortie, l'entree reelle etait 35 % plus haut. Sur
+       * ZALA, 18 % plus bas. Le papier n'etait pas optimiste : il etait EN
+       * AVANCE. Il achetait a un prix qui n'existait plus.
+       *
+       * On relit donc le prix sur la piscine du jeton juste avant d'ouvrir.
+       * Un appel, et seulement pour les jetons qu'on va reellement acheter —
+       * une poignee par jour. Sans reponse, on garde l'ancien comportement :
+       * un prix suppose vaut mieux qu'aucune position, et c'est ce qui se
+       * faisait jusqu'ici. */
+      if (!refus) {
+        try {
+          const frais = await lisPiscine(t.pool);
+          if (frais && frais.prix > 0 && t.prix > 0) {
+            const derive = (frais.prix - t.prix) / t.prix * 100;
+            if (isFinite(derive) && Math.abs(derive) <= DERIVE_MAX) {
+              t.prixAchat = frais.prix;
+              noteDerive(derive);
+            } else if (isFinite(derive)) {
+              /* Une derive absurde ne decrit pas le marche : elle decrit une
+                 lecture abimee, ou une piscine qui vient d'etre videe. On ne
+                 s'en sert pas, et on la compte a part. */
+              compte('deriveAberrante');
+            }
+          }
+        } catch (e) { compte('deriveNonLue'); }
+      }
       noteConnu(t, refus, an.score);
       /* Achete ou refuse, il laisse une ombre : c'est de la que viendra le
          gros de l'apprentissage, et l'audit des vetos avec. */
@@ -7806,6 +7874,10 @@ function vue() {
       }).filter((x) => x.par.length),
     },
     tenue: tenueApprise(),
+    /* ---- CE QUE LE PRIX BOUGE ENTRE LE FLUX ET L'ACHAT ----
+       Le papier achetait au prix du debut de tour ; le miroir, minutes plus
+       tard, au prix du moment. Voir `noteDerive`. */
+    derive: deriveDuPrix(),
     /* ---- CE QUE LE MIROIR A VRAIMENT TOUCHE ----
        Le papier ne signe rien, donc il ne peut pas connaitre le gaz ni le
        glissement. Celui qui les paie les dit. */
@@ -7996,6 +8068,7 @@ module.exports = {
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre, piscineMorte,
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
   seuilsAudit, refMontes, REF_PROTEGE, auditDe,
+  deriveDuPrix, noteDerive, DERIVE_MAX,
   executionReelle, coutReel,
   tiensParMain, fermeParMain, TENUE_MAIN_MAX,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
