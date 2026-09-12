@@ -6068,6 +6068,21 @@ function regle(marche) {
         cls: 'n', t: now, par: 'promoteur' });
       return true;
     }
+    /* ---- ET LA SORTIE LA PLUS FREQUENTE DE TOUTES ----
+     *
+     * Releve du 12 septembre : 545 fermetures par le Closer contre 237 par la
+     * Sentinelle, et SOIXANTE-DIX-HUIT sorties jugees en tout. Le commentaire
+     * du 8 septembre, vingt lignes plus haut, disait deja : « seul le gain
+     * pris etait suivi ; la coupe, l'arret suiveur et le dernier palier ne
+     * l'etaient pas ». Trois chemins ont ete corriges ce jour-la. Celui-ci —
+     * la fermeture a l'echeance, c'est-a-dire LA PLUS FREQUENTE — a ete
+     * oublie, et il est reste aveugle quatre jours de plus.
+     *
+     * C'est exactement la sortie sur laquelle la question revient : « vingt
+     * minutes et on ferme, ce n'est pas trop court ? ». La colonie ne pouvait
+     * pas y repondre, parce que c'est la seule sortie dont elle ne regardait
+     * jamais la suite. Elle la regarde maintenant, comme les trois autres. */
+    noteSuite(p, x.prix, r, { sortie: 'echeance' }, now, now + HORIZON_REF * 60000);
     ferme(p, x.prix, now, { cote, par: 'closer' });
     n++;
     return false;

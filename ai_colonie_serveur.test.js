@@ -2786,6 +2786,56 @@ async function venteAuPrixDuMoment() {
  * total, aucune moyenne. C est pourtant LA question posee trois fois cette
  * semaine.
  * ======================================================================== */
+/* ==========================================================================
+ * LA SORTIE LA PLUS FREQUENTE ETAIT LA SEULE QU ON NE JUGEAIT PAS
+ *
+ * Releve du 12 septembre : 545 fermetures par le Closer contre 237 par la
+ * Sentinelle, et 78 sorties jugees en tout. Le commentaire du 8 septembre
+ * disait deja « seul le gain pris etait suivi » et trois chemins avaient ete
+ * corriges — la fermeture a l ECHEANCE, la plus frequente, avait ete oubliee.
+ *
+ * C est exactement la sortie sur laquelle la question revient : « vingt
+ * minutes et on ferme, ce n est pas trop court ? ».
+ * ======================================================================== */
+async function echeanceJugee() {
+  console.log('\n-- la sortie la plus frequente laisse enfin une suite --');
+  remise(sains());
+  const F = C._etat();
+  await C.tour();
+  ok(F.positions.length > 0, 'des positions sont ouvertes (' + F.positions.length + ')');
+  F.suites = [];
+  /* On force l echeance : la position a passe sa duree, sans danger ni palier
+     — c est le chemin du Closer, celui qui fermait sans laisser de trace. */
+  for (const p of F.positions) { p.t0 = Date.now() - 10 * 3600e3; p.tenueMin = 1; }
+  const marche = {};
+  for (const p of F.positions) marche[p.adr] = { prix: p.prix0 * 1.05, liq: 500000 };
+  const avant = F.positions.length;
+  C.regle(marche);
+  console.log('   fermees : ' + (avant - F.positions.length) + ' · suites laissees : ' + F.suites.length);
+  ok(F.positions.length < avant, 'elles se ferment a l echeance');
+  ok(F.suites.length > 0,
+     'et CHACUNE laisse une suite (' + F.suites.length + ') : avant ce changement, la sortie la plus '
+     + 'frequente du systeme ne laissait aucune trace');
+  ok(F.suites.every((x) => x.cas && x.cas.sortie === 'echeance'),
+     'nommee « echeance », pour qu elle se juge a part de la coupe et des paliers');
+
+  /* ---- ET ELLE ARRIVE BIEN JUSQU AU VERDICT ---- */
+  F.verdicts = {};
+  const now = Date.now();
+  for (const su of F.suites) su.echeance = now - 1000;
+  const m2 = {};
+  for (const su of F.suites) m2[su.adr] = { prix: su.prix0 * 1.30, liq: 500000 };
+  C.regleLesSuites(m2);
+  const v = C.verdictsDesSorties();
+  console.log('   verdict : ' + JSON.stringify(v));
+  ok(v.length === 1 && v[0].sortie === 'echeance',
+     'le verdict porte enfin sur l echeance, a cote des autres sorties');
+  ok(v[0].partTropTot === 100 && v[0].ecart < 0,
+     'et il dit ce qu on voulait savoir : en tenant, ca valait ' + v[0].tenuMoyen + ' % contre '
+     + v[0].prisMoyen + ' % pris — vendu trop tot de ' + Math.abs(v[0].ecart) + ' points');
+  F.verdicts = {}; F.suites = [];
+}
+
 async function vendOnTropTot() {
   console.log('\n-- vend-on trop tot : le verdict de chaque sortie est enfin compte --');
   remise(sains());
@@ -6601,6 +6651,7 @@ function bornesQuiSeReglent() {
   await neTradePlus();
   await parleAnglais();
   await alertesDatees();
+  await echeanceJugee();
   await vendOnTropTot();
   await carnetDesTrades();
   await prixDeLAchat();
