@@ -2777,6 +2777,58 @@ async function venteAuPrixDuMoment() {
  * relisible — et toutes les questions de la semaine demandaient exactement
  * ces champs-la.
  * ======================================================================== */
+/* ==========================================================================
+ * « VEND-ON TROP TOT ? » — LE CHIFFRE EXISTAIT, IL N ETAIT NULLE PART
+ *
+ * `regleLesSuites` revient voir chaque sortie a son echeance et calcule ce
+ * qu on a pris MOINS ce qu on aurait eu en tenant. Il partait dans la memoire
+ * de la Sentinelle et dans une ligne de flux, puis il etait perdu : aucun
+ * total, aucune moyenne. C est pourtant LA question posee trois fois cette
+ * semaine.
+ * ======================================================================== */
+async function vendOnTropTot() {
+  console.log('\n-- vend-on trop tot : le verdict de chaque sortie est enfin compte --');
+  remise(sains());
+  const F = C._etat();
+  F.verdicts = {};
+  const now = Date.now();
+  const adr = MONDE.jetons[0].addr;
+  /* Trois sorties du meme type : deux ou tenir aurait rapporte plus (vendu
+     trop tot), une ou vendre etait le bon choix. */
+  F.suites = [
+    { adr, sym: 'A', pool: MONDE.jetons[0].pool, prix0: 1, rSortie: 20, cas: { sortie: 'arret suiveur' }, t: now - 60000, echeance: now - 1000 },
+    { adr, sym: 'B', pool: MONDE.jetons[0].pool, prix0: 1, rSortie: 15, cas: { sortie: 'arret suiveur' }, t: now - 60000, echeance: now - 1000 },
+    { adr, sym: 'C', pool: MONDE.jetons[0].pool, prix0: 1, rSortie: 60, cas: { sortie: 'arret suiveur' }, t: now - 60000, echeance: now - 1000 },
+  ];
+  /* Le marche a l echeance : +50 %. Donc A et B ont vendu trop tot (-30 et
+     -35 points), C a bien vendu (+10). */
+  C.regleLesSuites({ [adr]: { prix: 1.5, liq: 500000 } });
+  const v = C.verdictsDesSorties();
+  console.log('   ' + JSON.stringify(v));
+  ok(v.length === 1 && v[0].sortie === 'arret suiveur',
+     'les sorties sont comptees PAR TYPE : une coupe et un palier ne se jugent pas ensemble');
+  ok(v[0].n === 3, 'les trois sorties sont comptees');
+  ok(v[0].partTropTot === 67,
+     'deux sur trois ont vendu trop tot (' + v[0].partTropTot + ' %) — c est la reponse a la question, '
+     + 'et elle n existait nulle part');
+  ok(Math.abs(v[0].ecart + 18.3) < 0.5,
+     'avec de COMBIEN de points en moyenne (' + v[0].ecart + ') : negatif veut dire vendu trop tot');
+  ok(Math.abs(v[0].prisMoyen - 31.7) < 0.5 && Math.abs(v[0].tenuMoyen - 50) < 0.5,
+     'ce qu on a pris (' + v[0].prisMoyen + ' %) a cote de ce qu on aurait eu en tenant ('
+     + v[0].tenuMoyen + ' %) : deux chiffres, pas un verdict opaque');
+  ok(v[0].pire <= -34, 'et la pire sortie, celle qui coute le plus (' + v[0].pire + ' pts)');
+
+  /* ---- ET UNE SORTIE QUI VEND BIEN LE DIT AUSSI ---- */
+  F.verdicts = {};
+  F.suites = [{ adr, sym: 'D', pool: MONDE.jetons[0].pool, prix0: 1, rSortie: 40, cas: { sortie: 'sol coupe' }, t: now - 60000, echeance: now - 1000 }];
+  C.regleLesSuites({ [adr]: { prix: 0.7, liq: 500000 } });
+  const v2 = C.verdictsDesSorties();
+  ok(v2.length === 1 && v2[0].partTropTot === 0 && v2[0].ecart > 0,
+     'une coupe qui a evite une chute est comptee comme un BON choix (+' + v2[0].ecart + ' pts), '
+     + 'pas noyee dans une moyenne');
+  F.verdicts = {}; F.suites = [];
+}
+
 async function carnetDesTrades() {
   console.log('\n-- le carnet garde ce que les compteurs jetaient --');
   remise(sains());
@@ -6549,6 +6601,7 @@ function bornesQuiSeReglent() {
   await neTradePlus();
   await parleAnglais();
   await alertesDatees();
+  await vendOnTropTot();
   await carnetDesTrades();
   await prixDeLAchat();
   await plafondDageJugeable();

@@ -4021,8 +4021,20 @@ function bilanDe(l) {
   return { n: l.length, moyenne: moy(l),
            partGagnantes: Math.round(g.length / l.length * 100),
            gagnantMoyen: moy(g), perdantMoyen: moy(pp),
-           /* Ce que la somme des mises a vraiment rendu, en dollars. */
-           gain: Math.round(l.reduce((s, x) => s + (x.gain || 0), 0) * 100) / 100 };
+           /* Ce que la somme des mises a vraiment rendu. Les lignes du carnet
+              le portent en dollars ; les fermetures REELLES portent un cout et
+              un rendu en ETH, et la difference des deux est le meme chiffre
+              dans l'autre monnaie. Sans l'un ni l'autre, nul — et non zero,
+              qui se lirait comme « ca n'a rien rapporte ». */
+           gain: (() => {
+             let d = 0, vu = false;
+             for (const x of l) {
+               if (typeof x.gain === 'number' && isFinite(x.gain)) { d += x.gain; vu = true; continue; }
+               const c = Number(x.cout), r = Number(x.rendu);
+               if (isFinite(c) && isFinite(r)) { d += r - c; vu = true; }
+             }
+             return vu ? Math.round(d * 1e6) / 1e6 : null;
+           })() };
 }
 const CARNET_TENUES = [0, 5, 10, 20, 40, 80];
 function carnetBilan() {
@@ -4266,6 +4278,52 @@ function noteSuite(p, prix, r, cas, quand, echeance) {
   if (E.suites.length > SUITES_MAX) E.suites = E.suites.slice(-SUITES_MAX);
 }
 
+/* ==========================================================================
+ * « VEND-ON TROP TOT ? » — LA REPONSE EXISTAIT, ELLE N'ETAIT NULLE PART
+ *
+ * `regleLesSuites` revient voir chaque sortie a son echeance et calcule
+ * exactement le bon chiffre : ce qu'on a pris MOINS ce qu'on aurait eu en
+ * tenant. Negatif, on a vendu trop tot. Positif, on a bien vendu. Il partait
+ * dans la memoire de la Sentinelle et dans une ligne de flux, puis il etait
+ * perdu — aucun total, aucune moyenne, rien a regarder.
+ *
+ * C'est pourtant LA question posee trois fois cette semaine : « 20 min et on
+ * ferme, c'est pas trop court ? », « il aurait pu laisser un moon bag »,
+ * « avant on prenait des x2 x5 x10 ». Le banc de rejeu n'y repond qu'avec
+ * seize observations sur ce qu'on achete ; ce compteur-ci, lui, porte sur
+ * TOUTES les sorties reellement faites, et par TYPE de sortie — parce qu'une
+ * coupe et un palier ne se jugent pas ensemble.
+ *
+ * On ne decide rien avec : on compte. Comme partout ailleurs ici.
+ * ======================================================================== */
+function noteVerdictSortie(cas, rSortie, rTenu, gain) {
+  if (!E.verdicts || typeof E.verdicts !== 'object') E.verdicts = {};
+  const k = (cas && cas.sortie) || 'inconnue';
+  const v = E.verdicts[k] || (E.verdicts[k] = { n: 0, s: 0, tot: 0, sSortie: 0, sTenu: 0, pire: 0 });
+  v.n++; v.s += gain; v.sSortie += rSortie; v.sTenu += rTenu;
+  if (gain < 0) v.tot++;
+  if (gain < v.pire) v.pire = Math.round(gain * 10) / 10;
+}
+/** Ce que la page montre : par type de sortie, ce qu'on a pris contre ce qu'on
+ *  aurait eu en tenant jusqu'a l'echeance. */
+function verdictsDesSorties() {
+  const out = [];
+  for (const k in (E.verdicts || {})) {
+    const v = E.verdicts[k];
+    if (!v || !v.n) continue;
+    out.push({ sortie: k, n: v.n,
+               /* Positif : on a bien vendu. Negatif : on a vendu trop tot, et
+                  de combien de points. */
+               ecart: Math.round(v.s / v.n * 10) / 10,
+               partTropTot: Math.round(v.tot / v.n * 100),
+               prisMoyen: Math.round(v.sSortie / v.n * 10) / 10,
+               tenuMoyen: Math.round(v.sTenu / v.n * 10) / 10,
+               pire: v.pire });
+  }
+  out.sort((a, b) => b.n - a.n);
+  return out;
+}
+
 /* Et on revient voir. C'est ici que la lecon se forme. */
 function regleLesSuites(marche) {
   if (!Array.isArray(E.suites) || !E.suites.length) return 0;
@@ -4286,6 +4344,7 @@ function regleLesSuites(marche) {
     /* La valeur de la decision : ce qu'on a pris moins ce qu'on aurait eu. */
     const gain = s.rSortie - rTenu;
     apprendAgent('sentinelle', s.cas, gain);
+    noteVerdictSortie(s.cas, s.rSortie, rTenu, gain);
     compte('sortiesJugees');
     E.flux.unshift({ sym: s.sym, tag: gain >= 0 ? 'buy' : 'cut',
       txt: 'sold at ' + (s.rSortie >= 0 ? '+' : '') + s.rSortie.toFixed(1) + '%, it was worth '
@@ -7992,6 +8051,9 @@ function vue() {
       }).filter((x) => x.par.length),
     },
     tenue: tenueApprise(),
+    /* ---- VEND-ON TROP TOT ? ----
+       Le chiffre existait a chaque sortie et n'etait agrege nulle part. */
+    verdicts: verdictsDesSorties(),
     /* ---- LE CARNET : CE QUE CHAQUE TRADE A VRAIMENT FAIT ----
        Les compteurs disaient combien de trades ; le carnet dit lesquels. */
     carnet: carnetBilan(),
@@ -8191,6 +8253,7 @@ module.exports = {
   seuilsAudit, refMontes, REF_PROTEGE, auditDe,
   deriveDuPrix, noteDerive, DERIVE_MAX,
   noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES,
+  verdictsDesSorties, noteVerdictSortie,
   executionReelle, coutReel,
   tiensParMain, fermeParMain, TENUE_MAIN_MAX,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
