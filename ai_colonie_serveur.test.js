@@ -2765,6 +2765,84 @@ async function venteAuPrixDuMoment() {
  * Cobaye. Le miroir achete a la fin de tout cela. Le papier n etait pas
  * optimiste — il etait EN AVANCE, sur un prix qui n existait plus.
  * ======================================================================== */
+/* ==========================================================================
+ * LE CARNET : UNE LIGNE PAR TRADE, GARDEE
+ *
+ * « Comment veux-tu t ameliorer si tu n enregistres pas toutes les donnees en
+ *   memoire ? »
+ *
+ * A chaque fermeture, la colonie mettait a jour des COMPTEURS et jetait le
+ * reste : prix d entree, prix de sortie, duree de detention, motif de sortie,
+ * traits du jeton. Cinq cent dix-neuf trades avaient eu lieu, pas un n etait
+ * relisible — et toutes les questions de la semaine demandaient exactement
+ * ces champs-la.
+ * ======================================================================== */
+async function carnetDesTrades() {
+  console.log('\n-- le carnet garde ce que les compteurs jetaient --');
+  remise(sains());
+  await C.tour();
+  let F = C._etat();
+  const ouvertes = F.positions.length;
+  ok(ouvertes > 0, 'des positions sont ouvertes (' + ouvertes + ')');
+  /* On les ferme a des rendements et des durees differents, a la main, pour
+     que le decoupage ait quelque chose a decouper. */
+  const cas = [
+    { r: 0.6, tenue: 3, par: 'closer' },      /* -40 %, trois minutes */
+    { r: 1.5, tenue: 12, par: 'closer' },     /* +50 %, douze minutes */
+    { r: 0.8, tenue: 45, par: 'sentinelle' }, /* -20 %, coupe, trois quarts d heure */
+  ];
+  const avant = F.trades;
+  for (let i = 0; i < cas.length && i < F.positions.length; i++) {
+    const p = F.positions[0];
+    p.t0 = Date.now() - cas[i].tenue * 60000;
+    C._ferme(p, p.prix0 * cas[i].r, Date.now(), { par: cas[i].par, raison: cas[i].par === "sentinelle" ? "fell too far" : null });
+    F.positions.shift();
+  }
+  ok(F.trades === avant + cas.length, 'les compteurs comptent comme avant (' + F.trades + ')');
+  const car = F.carnet || [];
+  console.log('   carnet : ' + car.length + ' ligne(s) · ' + JSON.stringify(car.slice(0, 1)).slice(0, 190));
+  ok(car.length >= cas.length, 'et le carnet garde UNE LIGNE PAR TRADE (' + car.length + ')');
+
+  /* ---- LES CHAMPS QUI ETAIENT JETES ---- */
+  const l0 = car[0];
+  ok(l0 && typeof l0.tenue === 'number', 'chaque ligne porte la DUREE de detention (' + (l0 && l0.tenue) + ' min) — la premiere donnee qui disparaissait');
+  ok(l0 && l0.prix0 > 0 && l0.prix > 0, 'le prix d entree ET celui de sortie (' + (l0 && l0.prix0) + ' → ' + (l0 && l0.prix) + ')');
+  ok(l0 && !!l0.par, 'qui a ferme (' + (l0 && l0.par) + ')');
+  ok(car.some((x) => x.par === 'sentinelle' && /fell too far/.test(x.raison || '')),
+     'et POURQUOI, quand il y a une raison : une coupe et un palier ne sont pas la meme decision');
+  ok(l0 && l0.traits && Object.keys(l0.traits).length > 0,
+     'avec les traits du jeton A L ACHAT : sans eux on ne peut plus demander « quel GENRE de jeton a paye »');
+  ok(l0 && typeof l0.mise === 'number' && l0.liq0 > 0,
+     'la mise et la liquidite d entree (' + (l0 && l0.mise) + ' $, piscine ' + (l0 && l0.liq0) + ')');
+
+  /* ---- ET CE QUE LE CARNET REPOND TOUT SEUL ---- */
+  const b = C.carnetBilan();
+  console.log('   bilan : ' + JSON.stringify(b.tout) + ' · par tenue ' + b.parTenue.length + ' tranche(s) · par sortie '
+              + JSON.stringify(b.parSortie.map((x) => x.par)));
+  ok(b.n === cas.length, 'le bilan porte sur les ' + b.n + ' trades du carnet');
+  ok(b.tout && b.tout.partGagnantes === 33,
+     'avec le taux de reussite (' + (b.tout && b.tout.partGagnantes) + ' % : un gagnant sur trois)');
+  ok(b.tout && b.tout.gagnantMoyen > 0 && b.tout.perdantMoyen < 0,
+     'le gagnant moyen ET le perdant moyen, separes : une strategie ne se juge pas sur sa moyenne, '
+     + 'elle se juge sur la forme de sa distribution (' + (b.tout && b.tout.gagnantMoyen) + ' / '
+     + (b.tout && b.tout.perdantMoyen) + ')');
+  ok(b.parTenue.length >= 2,
+     'decoupe par DUREE de detention : « ferme-t-on trop tot ? » se lit ici et nulle part ailleurs ('
+     + b.parTenue.map((x) => x.de + '-' + (x.a === null ? '+' : x.a) + ' min : ' + x.n).join(' · ') + ')');
+  ok(b.parSortie.some((x) => x.par === 'sentinelle') && b.parSortie.some((x) => x.par === 'closer'),
+     'et par MOTIF de sortie, la coupe a part du reste');
+
+  /* ---- LE PLAFOND, ET LE COUPE-CIRCUIT ---- */
+  ok(C.CARNET_MAX >= 1000, 'le carnet garde des milliers de lignes (' + C.CARNET_MAX + '), pas une poignee');
+  F.carnet = new Array(C.CARNET_MAX + 50).fill(0).map(() => Object.assign({}, l0));
+  const p2 = F.positions[0];
+  if (p2) { C._ferme(p2, p2.prix0 * 1.1, Date.now(), { par: "closer" }); F.positions.shift(); }
+  ok(F.carnet.length <= C.CARNET_MAX,
+     'et il s arrete NET a son plafond : un carnet qui grossit sans fin finit par ne plus etre ecrit ('
+     + F.carnet.length + ')');
+  F.carnet = [];
+}
+
 async function prixDeLAchat() {
   console.log('\n-- le prix d entree est celui de l ACHAT, pas celui du flux --');
   remise(sains());
@@ -6471,6 +6549,7 @@ function bornesQuiSeReglent() {
   await neTradePlus();
   await parleAnglais();
   await alertesDatees();
+  await carnetDesTrades();
   await prixDeLAchat();
   await plafondDageJugeable();
   await pairesEthSeulement();

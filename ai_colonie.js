@@ -3951,6 +3951,99 @@ function tiensParMain(adr, minutes, par) {
  * serait exactement l'erreur qu'on repare. Elle s'affiche, elle s'accumule, et
  * elle dira dans quelques jours ce que l'ecran coute vraiment.
  * ======================================================================== */
+/* ==========================================================================
+ * LE CARNET : UNE LIGNE PAR TRADE, GARDEE
+ *
+ * « Comment veux-tu t'ameliorer si tu n'enregistres pas toutes les donnees
+ *   en memoire ? »
+ *
+ * La question est juste, et le code lui donnait raison. A chaque fermeture, la
+ * colonie mettait a jour des COMPTEURS — tresor, nombre de trades, nombre de
+ * gagnants, meilleur multiple — et poussait le rendement dans une liste des
+ * soixante derniers. Puis le prix d'entree, le prix de sortie, la duree de
+ * detention, le motif de sortie et les traits du jeton disparaissaient.
+ * Cinq cent dix-neuf trades avaient eu lieu ; pas un n'etait relisible.
+ *
+ * Toutes les questions posees cette semaine demandaient exactement ces
+ * champs-la : « aurait-il fallu attendre plus longtemps ? », « le moon bag
+ * paie-t-il ? », « quelle duree de detention ? », « faut-il entrer dans un
+ * creux ? ». A chaque fois il a fallu aller rechercher dehors, sur quelques
+ * dizaines de jetons, ce que des centaines de trades deja faits auraient
+ * repondu tout seuls.
+ *
+ * Une ligne par position fermee, donc, avec de quoi reposer n'importe quelle
+ * question plus tard — sans rien recalculer a l'avance, parce qu'on ne sait
+ * pas encore ce qu'on cherchera. Deux mille lignes : des semaines de trades
+ * pour quelques centaines de kilo-octets sur le volume.
+ * ======================================================================== */
+const CARNET_MAX = Math.max(0, nEnv('CARNET_MAX', 2000));
+function noteCarnet(p, prix, r, gainTotal, quand, comment, aberrant) {
+  if (!CARNET_MAX) return;
+  if (!Array.isArray(E.carnet)) E.carnet = [];
+  const reste = p.reste === undefined ? 1 : p.reste;
+  E.carnet.unshift({
+    sym: p.sym || null, adr: p.adr,
+    /* Quand, et combien de temps : la duree est LA question des sorties, et
+       c'etait la premiere donnee jetee. */
+    t0: p.t0, t: quand, tenue: Math.round((quand - p.t0) / 60000),
+    /* Ce qui a ete paye et ce qui a ete rendu. */
+    prix0: p.prix0, prix, mise: Math.round((p.mise || 0) * 100) / 100,
+    r: Math.round(r * 10) / 10, gain: Math.round(gainTotal * 100) / 100,
+    /* Ce qui avait deja ete encaisse en route : une position sortie par
+       morceaux ne se lit pas sur son seul reliquat. */
+    reste: Math.round(reste * 100) / 100,
+    encaisse: Math.round((p.encaisse || 0) * 100) / 100,
+    /* QUI a ferme, et pourquoi : c'est ce qui separe une coupe d'un palier. */
+    par: (comment && comment.par) || 'closer',
+    raison: (comment && comment.raison) || null,
+    /* L'etat du jeton a l'achat : sans lui, on ne peut plus demander « quel
+       GENRE de jeton a paye ». */
+    score: p.score === undefined ? null : p.score,
+    traits: p.traits || null,
+    liq0: Math.round(p.liq0 || 0), mcAchat: p.mcAchat || 0,
+    tenueBase: p.tenueBase || null,
+    /* Une lecture rejetee est une ligne comme une autre : elle dit qu'on a
+       perdu le jeton de vue, ce qui est une information sur le jeton. */
+    aberrant: aberrant || null,
+  });
+  if (E.carnet.length > CARNET_MAX) E.carnet.length = CARNET_MAX;
+}
+
+/* ---- ET CE QUE LE CARNET REPOND, SANS QU'ON AIT A LE RELIRE A LA MAIN ----
+ * Le taux de reussite, le gagnant moyen et le perdant moyen — les trois
+ * chiffres qui decident d'une strategie — puis le meme decoupage par DUREE de
+ * detention et par MOTIF de sortie. Une strategie ne se juge pas sur sa
+ * moyenne : elle se juge sur la forme de sa distribution. */
+function bilanDe(l) {
+  if (!l.length) return null;
+  const g = l.filter((x) => x.r > 0), pp = l.filter((x) => x.r <= 0);
+  const moy = (a) => a.length ? Math.round(a.reduce((s, x) => s + x.r, 0) / a.length * 10) / 10 : null;
+  return { n: l.length, moyenne: moy(l),
+           partGagnantes: Math.round(g.length / l.length * 100),
+           gagnantMoyen: moy(g), perdantMoyen: moy(pp),
+           /* Ce que la somme des mises a vraiment rendu, en dollars. */
+           gain: Math.round(l.reduce((s, x) => s + (x.gain || 0), 0) * 100) / 100 };
+}
+const CARNET_TENUES = [0, 5, 10, 20, 40, 80];
+function carnetBilan() {
+  const l = (E.carnet || []).filter((x) => !x.aberrant && typeof x.r === 'number' && isFinite(x.r));
+  if (!l.length) return { n: 0, tout: null, parTenue: [], parSortie: [] };
+  /* Par duree : la question « ferme-t-on trop tot ? » se lit ici, et nulle
+     part ailleurs, parce qu'elle demande la tenue de CHAQUE trade. */
+  const parTenue = [];
+  for (let i = 0; i < CARNET_TENUES.length; i++) {
+    const bas = CARNET_TENUES[i], haut = CARNET_TENUES[i + 1];
+    const b = bilanDe(l.filter((x) => x.tenue >= bas && (haut === undefined || x.tenue < haut)));
+    if (b) parTenue.push(Object.assign({ de: bas, a: haut === undefined ? null : haut }, b));
+  }
+  /* Par motif : une coupe et un palier ne sont pas la meme decision. */
+  const motifs = {};
+  for (const x of l) (motifs[x.par] || (motifs[x.par] = [])).push(x);
+  const parSortie = Object.keys(motifs).map((k) => Object.assign({ par: k }, bilanDe(motifs[k])))
+    .sort((a, b) => b.n - a.n);
+  return { n: l.length, tout: bilanDe(l), parTenue, parSortie };
+}
+
 const REEL_MAX = 200;              /* on garde les dernieres fermetures reelles */
 function executionReelle(x) {
   if (!x || !x.adr) return false;
@@ -3967,7 +4060,10 @@ function executionReelle(x) {
   if (papier !== null) { R.nEcart++; R.ecart += papier - r; }
   if (typeof x.glissement === 'number' && isFinite(x.glissement)) { R.nGliss++; R.gliss += x.glissement; }
   R.lignes.unshift({ sym: x.sym || null, adr, r, papier, glissement: x.glissement === undefined ? null : x.glissement,
-                     cout: x.cout || null, rendu: x.rendu || null, pont: !!x.pont, t: Date.now() });
+                     cout: x.cout || null, rendu: x.rendu || null, pont: !!x.pont, t: Date.now(),
+                     /* Le miroir l'envoyait depuis le debut, et on la jetait :
+                        c'est pourtant LA donnee qui juge une sortie. */
+                     tenue: (typeof x.tenue === 'number' && isFinite(x.tenue)) ? Math.round(x.tenue / 60000) : null });
   if (R.lignes.length > REEL_MAX) R.lignes.length = REEL_MAX;
   compte('executionReelle');
   E.flux.unshift({ sym: x.sym || adr.slice(0, 8), tag: r >= 0 ? 'buy' : 'cut', cls: r >= 0 ? 'up' : 'dn', t: Date.now(),
@@ -3978,6 +4074,22 @@ function executionReelle(x) {
   sauve();
   return true;
 }
+/** Le bilan des fermetures REELLES : les trois chiffres qui decident d'une
+ *  strategie, plus le decoupage par duree. C'est le meme calcul que le carnet,
+ *  sur l'argent qui a vraiment bouge. */
+function bilanReel() {
+  const l = (E.reel && E.reel.lignes || []).filter((x) => typeof x.r === 'number' && isFinite(x.r));
+  if (!l.length) return { n: 0, tout: null, parTenue: [] };
+  const parTenue = [];
+  for (let i = 0; i < CARNET_TENUES.length; i++) {
+    const bas = CARNET_TENUES[i], haut = CARNET_TENUES[i + 1];
+    const t = l.filter((x) => typeof x.tenue === 'number' && x.tenue >= bas && (haut === undefined || x.tenue < haut));
+    const b = bilanDe(t);
+    if (b) parTenue.push(Object.assign({ de: bas, a: haut === undefined ? null : haut }, b));
+  }
+  return { n: l.length, tout: bilanDe(l), parTenue };
+}
+
 /** Ce que la page montre : le cout reel, mesure, et sur combien de fermetures. */
 function coutReel() {
   const R = E.reel;
@@ -3989,7 +4101,11 @@ function coutReel() {
     ecart: R.nEcart ? Math.round(R.ecart / R.nEcart * 10) / 10 : null,
     nEcart: R.nEcart,
     glissement: R.nGliss ? Math.round(R.gliss / R.nGliss * 10) / 10 : null,
-    lignes: (R.lignes || []).slice(0, 8),
+    /* Soixante, pas huit : une carte qui affiche une moyenne doit pouvoir
+       etre verifiee sur ses lignes, et huit ne montraient que quatre jetons. */
+    lignes: (R.lignes || []).slice(0, 60),
+    /* Le meme decoupage que le carnet, sur l'argent REEL. */
+    bilan: bilanReel(),
   };
 }
 
@@ -5619,6 +5735,7 @@ function ferme(p, prix, quand, comment) {
      c'est-a-dire les prix qu'on a vraiment releves pendant qu'elle etait
      ouverte. */
   const vus = {};
+  if (aberrant) noteCarnet(p, prix, 0, gainTotal, quand, comment, aberrant);
   if (aberrant) { E.flux.unshift({ sym: p.sym, pool: p.pool, tag: 'cut',
       txt: 'unusable price (' + aberrant + ') · stake returned, nothing counted',
       cls: 'n', t: quand, tenue: quand - p.t0 });
@@ -5664,6 +5781,7 @@ function ferme(p, prix, quand, comment) {
   if (p.casProlonge && p.rDecision !== undefined)
     apprendAgent('promoteur', p.casProlonge, r - p.rDecision);
 
+  noteCarnet(p, prix, r, gainTotal, quand, comment, null);
   const par = comment && comment.par;
   const suffixe = (par === 'sentinelle' ? '  ·  cut: ' + comment.raison
                 : par === 'owner' ? '  ·  closed by hand'
@@ -7874,6 +7992,9 @@ function vue() {
       }).filter((x) => x.par.length),
     },
     tenue: tenueApprise(),
+    /* ---- LE CARNET : CE QUE CHAQUE TRADE A VRAIMENT FAIT ----
+       Les compteurs disaient combien de trades ; le carnet dit lesquels. */
+    carnet: carnetBilan(),
     /* ---- CE QUE LE PRIX BOUGE ENTRE LE FLUX ET L'ACHAT ----
        Le papier achetait au prix du debut de tour ; le miroir, minutes plus
        tard, au prix du moment. Voir `noteDerive`. */
@@ -8069,6 +8190,7 @@ module.exports = {
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
   seuilsAudit, refMontes, REF_PROTEGE, auditDe,
   deriveDuPrix, noteDerive, DERIVE_MAX,
+  noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES,
   executionReelle, coutReel,
   tiensParMain, fermeParMain, TENUE_MAIN_MAX,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
