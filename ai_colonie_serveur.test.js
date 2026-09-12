@@ -2819,6 +2819,51 @@ async function venteAuPrixDuMoment() {
  * sous le flux ; le miroir a paye 8 % au-dessus. Il n existe qu un prix
  * d entree qui ne soit pas une fiction : celui que le miroir a paye.
  * ======================================================================== */
+/* ==========================================================================
+ * LES TRANCHES DE CAPITALISATION REPONDENT A LA QUESTION POSEE
+ *
+ * « Les meilleures capitalisations, c est entre 10k et 30k. Apres une courbe
+ *   de lancement ca pique a 40k et ca corrige a 20k, et nous on achete a 40k. »
+ * Les tranches etaient <50k · 50-500k · 0,5-5M · >5M : tout ce qu on achete
+ * tombait dans la premiere, et l instrument ne distinguait pas 10k de 45k.
+ * ======================================================================== */
+async function tranchesDeCapitalisation() {
+  console.log('\n-- les tranches de capitalisation repondent a la question posee --');
+  const f = C.TRAITS.mc.f;
+  const cas = [[4000, 'mc <10k'], [10000, 'mc 10-25k'], [18000, 'mc 10-25k'], [24999, 'mc 10-25k'],
+               [25000, 'mc 25-50k'], [40000, 'mc 25-50k'], [49999, 'mc 25-50k'], [50000, 'mc 50-100k'],
+               [99999, 'mc 50-100k'], [250000, 'mc 100-500k'], [2e6, 'mc 0,5-5M'], [9e6, 'mc >5M']];
+  let bons = 0;
+  for (const [mc, attendu] of cas) if (f({ mc }) === attendu) bons++;
+  console.log('   ' + cas.map(([mc, a]) => mc + '→' + f({ mc })).join(' · '));
+  ok(bons === cas.length, 'douze capitalisations tombent chacune dans la tranche attendue (' + bons + '/' + cas.length + ')');
+  ok(f({ mc: 18000 }) !== f({ mc: 40000 }),
+     '18k et 40k ne sont plus dans la meme case : c est exactement la distinction que la question demandait');
+  ok(f({ mc: 40000 }) !== f({ mc: 60000 }), 'et 40k (sous le plafond d achat) se distingue de 60k (au-dessus)');
+
+  console.log('\n-- et la vue rend TOUTE la courbe d un trait, pas seulement ses deux bouts --');
+  remise(sains());
+  const F = C._etat();
+  /* Une memoire de profils fabriquee : quatre tranches, effectifs et moyennes
+     distincts, a l horizon de reference. */
+  const h = C.HORIZON_REF;
+  F.profils = { mc: {
+    'mc <10k':   { [h]: { n: 40, s: 40 * 12, s2: 40 * 12 * 12 + 40 * 900 } },
+    'mc 10-25k': { [h]: { n: 60, s: 60 * 31, s2: 60 * 31 * 31 + 60 * 900 } },
+    'mc 25-50k': { [h]: { n: 80, s: 80 * -4, s2: 80 * 16 + 80 * 900 } },
+    'mc 50-100k':{ [h]: { n: 30, s: 30 * 3, s2: 30 * 9 + 30 * 900 } } } };
+  const v = C.vue();
+  const t = (v.traits || []).find((x) => x.trait === 'mc');
+  console.log('   ' + JSON.stringify(t && t.courbe));
+  ok(!!t && Array.isArray(t.courbe) && t.courbe.length === 4,
+     'les quatre tranches sont la, avec leur effectif et leur moyenne (' + (t && t.courbe && t.courbe.length) + ')');
+  ok(t && t.courbe[0].quoi === 'mc 10-25k' && t.courbe[0].moyenne === 31 && t.courbe[0].n === 60,
+     'classees de la meilleure a la pire, la premiere est bien 10-25k a +31 % sur 60');
+  ok(t && t.courbe.every((x) => typeof x.ecart === 'number'),
+     'et chacune porte son ecart type : une moyenne sans son bruit ne se compare pas');
+  F.profils = {};
+}
+
 async function prixQueLeMiroirAPaye() {
   console.log('\n-- la capitalisation d achat suit le prix booke, pas celui du flux --');
   remise(sains());
@@ -6864,6 +6909,7 @@ function bornesQuiSeReglent() {
   await neTradePlus();
   await parleAnglais();
   await alertesDatees();
+  await tranchesDeCapitalisation();
   await prixQueLeMiroirAPaye();
   await tenuesExplorees();
   await echeanceJugee();

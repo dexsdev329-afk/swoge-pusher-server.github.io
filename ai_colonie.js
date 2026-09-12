@@ -470,8 +470,17 @@ const TRAITS = {
               : t.minutes < 30 ? '10-30 min' : t.minutes < 120 ? '30 min-2 h' : '2-6 h' },
   liq:    { besoin: null, f: (t) => tranche(t.liq || 0, [1e3, 5e3, 25e3, 1e5],
               ['liq<1k', 'liq 1-5k', 'liq 5-25k', 'liq 25-100k', 'liq>100k']) },
-  mc:     { besoin: null, f: (t) => tranche(t.mc || 0, [5e4, 5e5, 5e6],
-              ['mc <50k', 'mc 50-500k', 'mc 0,5-5M', 'mc >5M']) },
+  /* ---- LA CAPITALISATION, EN TRANCHES QUI REPONDENT A LA QUESTION POSEE ----
+   * « Les meilleures capitalisations, c'est entre 10k et 30k. Apres une courbe
+   *   de lancement ca pique a 40k et ca corrige a 20k, et nous on achete a 40k. »
+   * Les tranches etaient <50k · 50-500k · 0,5-5M · >5M : tout ce qu'on achete
+   * tombait dans la premiere, et l'instrument ne distinguait pas 10k de 45k.
+   * Il ne pouvait ni confirmer ni infirmer. Trois tranches sous 50k, donc, et
+   * une de plus sous 500k — les anciennes cases gardent leurs observations en
+   * memoire, mais ne sont plus alimentees : ce trait repart de zero, et c'est
+   * le prix d'une question qu'on n'avait pas posee assez fin. */
+  mc:     { besoin: null, f: (t) => tranche(t.mc || 0, [1e4, 2.5e4, 5e4, 1e5, 5e5, 5e6],
+              ['mc <10k', 'mc 10-25k', 'mc 25-50k', 'mc 50-100k', 'mc 100-500k', 'mc 0,5-5M', 'mc >5M']) },
   elan:   { besoin: null, f: (t) => tranche(t.ch_m5 || 0, [-5, 0, 5, 20],
               ['5m <-5%', '5m -5-0%', '5m 0-5%', '5m 5-20%', '5m >20%']) },
   press:  { besoin: null, f: (t) => { const h = (t.tx || {}).h1 || {};
@@ -2195,8 +2204,11 @@ const MOTS = {
   'liq<1k': 'pool <$1k', 'liq 1-5k': 'pool $1-5k', 'liq 5-25k': 'pool $5-25k',
   'liq 25-100k': 'pool $25-100k', 'liq>100k': 'pool >$100k',
   /* capitalisation */
-  'mc <50k': 'cap <$50k', 'mc 50-500k': 'cap $50-500k', 'mc 0,5-5M': 'cap $0.5-5M',
+  'mc <10k': 'cap <$10k', 'mc 10-25k': 'cap $10-25k', 'mc 25-50k': 'cap $25-50k',
+  'mc 50-100k': 'cap $50-100k', 'mc 100-500k': 'cap $100-500k', 'mc 0,5-5M': 'cap $0.5-5M',
   'mc >5M': 'cap >$5M',
+  /* anciennes tranches (profils deja en memoire avant le 12/09/2026) */
+  'mc <50k': 'cap <$50k', 'mc 50-500k': 'cap $50-500k',
   /* elan */
   '5m <-5%': '5m <-5%', '5m -5-0%': '5m -5-0%', '5m 0-5%': '5m 0-5%',
   '5m 5-20%': '5m 5-20%', '5m >20%': '5m >20%',
@@ -5189,6 +5201,13 @@ function informationDe(trait) {
   const pire = vals.slice().sort((a, b) => a.moy - b.moy)[0];
   return {
     trait, obs: tot, valeurs: vals.length,
+    /* ---- TOUTE LA COURBE, PAS SEULEMENT SES DEUX BOUTS ----
+     * La vue ne rendait que la meilleure et la pire case. « Entre 10k et 30k,
+     * c'est la que sont les multiplicateurs » ne se verifie pas avec deux
+     * bouts : il faut voir chaque tranche, son effectif et sa moyenne. */
+    courbe: vals.slice().sort((a, b) => b.moy - a.moy)
+      .map((x) => ({ quoi: x.val, n: Math.round(x.n), moyenne: Math.round(x.moy * 10) / 10,
+                     ecart: Math.round(x.sd * 10) / 10 })),
     separation: Math.round(entre / dedans * 100) / 100,
     ecartValeurs: Math.round((meilleure.moy - pire.moy) * 10) / 10,
     meilleure: { quoi: meilleure.val, moyenne: Math.round(meilleure.moy * 10) / 10, n: meilleure.n },
