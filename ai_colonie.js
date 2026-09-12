@@ -929,9 +929,44 @@ function charge() {
     }
   }
   brut.roster = brut.roster.filter((a) => a && a.key && Array.isArray(a.traits));
+  recadreLesBornes(brut);
   E = brut;
   regroupeAudit();
   centreLesNotes();
+}
+
+/* ---- UNE VALEUR APPRISE SOUS D'ANCIENNES BUTEES N'EST PAS UNE VALEUR APPRISE ----
+ * Le plafond de capitalisation dormait a 50 000 $ parce que c'etait la butee
+ * basse, pas parce que l'audit l'y avait mene. Quand les butees d'une borne
+ * bougent dans le code, la valeur du fichier a ete apprise dans un autre
+ * espace : elle rend la place au defaut, et l'apprentissage repart. Les
+ * autres bornes gardent la leur. Un etat ecrit avant que les butees soient
+ * notees dans le fichier est un etat ecrit sous celles d'avant le 12/09/2026 :
+ * elles sont ici, pour qu'on puisse le lire. */
+const BUTEES_AVANT = { ageMin: '4/90', liqParMise: '8/60', mcMax: '50000/1000000', pumpMax: '50/300' };
+function buteesDuCode() {
+  const o = {};
+  for (const k of Object.keys(BORNES)) o[k] = BORNES[k].min + '/' + BORNES[k].max;
+  return o;
+}
+function recadreLesBornes(brut) {
+  const code = buteesDuCode();
+  const avant = (brut.butees && typeof brut.butees === 'object') ? brut.butees : Object.assign({}, BUTEES_AVANT);
+  const apres = {};
+  for (const k of Object.keys(code)) {
+    apres[k] = code[k];
+    if (avant[k] === code[k]) continue;
+    const v = brut.bornes && brut.bornes[k];
+    if (typeof v !== 'number') continue;
+    delete brut.bornes[k];
+    if (!Array.isArray(brut.journalStructure)) brut.journalStructure = [];
+    brut.journalStructure.unshift({ t: Date.now(), quoi: 'bornes',
+      chiffres: { cle: k, avant: v, butees: avant[k] || null, nouvelles: code[k] },
+      txt: 'The learned bound ' + k + ' (' + v + ') was learned between the old limits ('
+         + (avant[k] || 'none') + '); the limits are now ' + code[k]
+         + ', so it starts again from the code default (' + nEnv(BORNES[k].env, BORNES[k].defaut) + ').' });
+  }
+  brut.butees = apres;
 }
 
 /* ---- UN ETAT D'AVANT LE FOND REPART AVEC LE SEUIL DU DEPART ----
@@ -2871,8 +2906,22 @@ const BORNES = {
    * l'audit de sa propre regle (« cap above the buy ceiling »). `sens: -1` :
    * resserrer, ici, c'est BAISSER le plafond. Et les abandons ne le
    * gouvernent pas : une position perdue de vue est une position trop
-   * jeune ou trop mince, jamais une trop grosse. */
-  mcMax:      { env: 'MC_ACHAT_MAX', defaut: 100000, min: 50000, max: 1000000, pas: 25000, sens: -1, sansAbandons: true },
+   * jeune ou trop mince, jamais une trop grosse.
+   *
+   * ---- 25 000 $ AU DEPART, ET LA BUTEE BASSE AVEC ----
+   * Releve du 12 septembre, 114 fermetures papier et 116 reelles relues avec
+   * leur capitalisation d'achat. Ce qu'on achetait entre 25 et 50k — la
+   * moitie des achats, 61 sur 114 — est la pire tranche : 39 % de gagnants
+   * pour -2,6 % en papier, 29 % pour -7,3 % en reel. Entre 10 et 25k : 64 %
+   * de gagnants pour +2,3 % en papier (33), 40 % pour -5,2 % en reel (43).
+   * Sous 10k : 71 % pour +21,8 % (14 papier), +9,4 % (10 reels). La butee
+   * basse etait a 50 000 $ : la borne y dormait, et l'audit de ce qu'elle
+   * refusait (27 % de montes sur 998, contre 35 % pour ce qu'on achete) ne
+   * pouvait ni la descendre ni rien dire des 25-50k qu'elle laissait passer.
+   * Le plafond part donc de 25 000 $, et ce qu'il refuse entre 25 et 50k
+   * tombe sous l'audit de sa propre regle : si ces jetons montent plus que
+   * ce qu'on achete, la regle coute et le plafond remonte tout seul. */
+  mcMax:      { env: 'MC_ACHAT_MAX', defaut: 25000, min: 25000, max: 1000000, pas: 25000, sens: -1, sansAbandons: true },
   /* ---- LE PLAFOND DE POMPE, MESURE PENDANT DES JOURS SANS POUVOIR BOUGER ----
    *
    * Releve du 11 septembre, 5 925 tours. Ce que la colonie ACHETE monte dans
@@ -8489,6 +8538,7 @@ let veilleur = null;
 
 function demarre() {
   charge();
+  if (!E.butees) E.butees = buteesDuCode();
   /* Ce que les noeuds ont deja refuse de servir : on le remet en place AVANT
      le premier tour, sinon le tour du demarrage repaie les memes refus. */
   reprendSansMethode();
@@ -8526,7 +8576,7 @@ module.exports = {
   enMots, MOTS,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre, piscineMorte,
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
-  seuilsAudit, refMontes, REF_PROTEGE, auditDe, SANS_ACHAT_DESSERRE,
+  seuilsAudit, refMontes, REF_PROTEGE, auditDe, SANS_ACHAT_DESSERRE, recadreLesBornes, buteesDuCode, BUTEES_AVANT,
   deriveDuPrix, noteDerive, DERIVE_MAX,
   noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES,
   TENUES, TENUE_EXPLORE, tenueAExplorer, cestUnTourDExploration,

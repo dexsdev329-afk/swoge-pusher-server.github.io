@@ -572,6 +572,11 @@ function remise(jetons, extra) {
   C._poseporte(null);            /* la porte CoinGecko est resondee a chaque scenario */
   C._posejeton({ valeur: null, jusqua: 0, essaye: false });
   delete process.env.COINGECKO_API_KEY;
+  /* Le monde de ces essais est bati sur des jetons a 60 000 $ de capitalisation,
+     ecrits avant que le plafond de depart passe a 25 000 $ (12/09/2026). Le
+     plafond du code est juge dans son propre scenario (`plafondAppris`) ; ici
+     c'est le reglage de l'environnement, qui est la porte prevue pour ca. */
+  process.env.MC_ACHAT_MAX = '100000';
   delete process.env.GOPLUS_APP_KEY; delete process.env.GOPLUS_APP_SECRET;
   delete process.env.DRPC_API_KEY;
   delete C.noeuds._cle;
@@ -4099,19 +4104,58 @@ async function plafondAppris() {
   console.log('\n-- le plafond bouge sur l audit de sa regle, dans le bon sens --');
   remise(sains());
   const E = C._etat();
-  ok(C.borne('mcMax') === 100000 && C.planchers().mcMax === 100000, 'au depart, 100 000 $, et c est lui que les planchers lisent');
+  delete process.env.MC_ACHAT_MAX;   /* ici c'est le plafond du CODE qu'on juge, pas celui du monde d'essai */
+  ok(C.borne('mcMax') === 25000 && C.planchers().mcMax === 25000, 'au depart, 25 000 $ — la tranche 25-50k etait la pire de ce qu on achetait —, et c est lui que les planchers lisent');
   E.depuisBornes = C.BORNES ? 24 : 24;
   E.audit = { 'scout · cap above the buy ceiling': { n: 20, s: 900, montes: 12, effondres: 2 } };   /* 60 % montes : la regle coute */
-  ok(C.revoitLesBornes() === true && C.borne('mcMax') === 125000, 'la regle coute (60 % montes) : le plafond MONTE a 125 000 $ (' + C.borne('mcMax') + ')');
+  ok(C.revoitLesBornes() === true && C.borne('mcMax') === 50000, 'la regle coute (60 % montes) : le plafond MONTE a 50 000 $ (' + C.borne('mcMax') + ') — ce que le 12/09 refuse entre 25 et 50k est sous audit, et remonte seul s il le merite');
   E.depuisBornes = 24;
   E.audit = { 'scout · cap above the buy ceiling': { n: 20, s: -200, montes: 1, effondres: 9 } };    /* 5 % montes : elle protege */
-  ok(C.revoitLesBornes() === true && C.borne('mcMax') === 100000, 'la regle protege (5 % montes) : le plafond BAISSE a 100 000 $ (' + C.borne('mcMax') + ')');
-  E.bornes.mcMax = 50000; E.depuisBornes = 24;
-  ok(C.revoitLesBornes() === false && C.borne('mcMax') === 50000, 'et jamais sous 50 000 $ : la butee est dans le code');
+  ok(C.revoitLesBornes() === true && C.borne('mcMax') === 25000, 'la regle protege (5 % montes) : le plafond BAISSE a 25 000 $ (' + C.borne('mcMax') + ')');
+  E.depuisBornes = 24;
+  ok(C.revoitLesBornes() === false && C.borne('mcMax') === 25000, 'et jamais sous 25 000 $ : la butee est dans le code');
   E.bornes.mcMax = 1000000; E.depuisBornes = 24;
   E.audit = { 'scout · cap above the buy ceiling': { n: 20, s: 900, montes: 12, effondres: 2 } };
   ok(C.revoitLesBornes() === false && C.borne('mcMax') === 1000000, 'ni au-dessus d un million');
   ok(!(C.vue().bornes || []).some((b) => b.cle === 'mcMax' && b.max !== 1000000), 'la vue porte la borne et ses butees');
+  process.env.MC_ACHAT_MAX = '100000';
+}
+
+/* ==========================================================================
+ * UNE VALEUR APPRISE SOUS D'ANCIENNES BUTEES REND SA PLACE
+ *
+ * Le plafond dormait a 50 000 $ parce que c'etait la butee basse. Quand la
+ * butee bouge dans le code, le fichier ne doit pas continuer a imposer
+ * l'ancienne : la valeur repart du defaut. Les autres bornes gardent la leur.
+ * ======================================================================== */
+async function buteesRecadrees() {
+  console.log('\n-- une borne dont les butees ont bouge repart du defaut ; les autres gardent ce qu elles ont appris --');
+  remise(sains());
+  delete process.env.MC_ACHAT_MAX;
+  const code = C.buteesDuCode();
+  ok(code.mcMax === '25000/1000000' && Object.keys(code).length === 4, 'les butees du code se lisent (' + JSON.stringify(code) + ')');
+  ok(C.BUTEES_AVANT.mcMax === '50000/1000000' && C.BUTEES_AVANT.ageMin === code.ageMin, 'et celles d avant le 12/09 sont ecrites, pour lire un fichier qui ne les note pas');
+  /* un etat d'avant : pas de `butees`, quatre bornes apprises, le plafond a l'ancienne butee */
+  const ancien = Object.assign(C.etatNeuf(), { bornes: { ageMin: 90, liqParMise: 60, mcMax: 50000, pumpMax: 225 } });
+  fs.writeFileSync(C.FICHIER, JSON.stringify(ancien));
+  C.charge();
+  const E = C._etat();
+  ok(E.bornes.mcMax === undefined && C.borne('mcMax') === 25000, 'le plafond appris a 50 000 $ sous l ancienne butee est rendu : 25 000 $, le defaut du code');
+  ok(E.bornes.ageMin === 90 && E.bornes.liqParMise === 60 && E.bornes.pumpMax === 225, 'l age, la profondeur et la pompe gardent ce qu elles ont appris : leurs butees n ont pas bouge');
+  ok(JSON.stringify(E.butees) === JSON.stringify(code), 'et le fichier note maintenant les butees sous lesquelles il apprend');
+  const j = (E.journalStructure || []).find((x) => x.quoi === 'bornes');
+  ok(!!j && /mcMax \(50000\)/.test(j.txt) && /50000\/1000000/.test(j.txt) && /25000/.test(j.txt), 'le journal dit quoi, d ou, et ou ca repart : « ' + (j ? j.txt.slice(0, 90) : '') + ' »');
+  /* relu une seconde fois, avec ses butees a jour : rien ne bouge */
+  E.bornes.mcMax = 50000;
+  fs.writeFileSync(C.FICHIER, JSON.stringify(E));
+  C.charge();
+  ok(C._etat().bornes.mcMax === 50000, 'un plafond appris SOUS les nouvelles butees (remonte a 50 000 $ par l audit) est garde : c est une migration, pas une regle');
+  /* et un fichier qui note d'autres butees encore : seule la borne concernee bouge */
+  const autre = Object.assign(C.etatNeuf(), { bornes: { ageMin: 30, mcMax: 75000 }, butees: Object.assign({}, code, { ageMin: '2/120' }) });
+  fs.writeFileSync(C.FICHIER, JSON.stringify(autre));
+  C.charge();
+  ok(C._etat().bornes.ageMin === undefined && C._etat().bornes.mcMax === 75000, 'des butees d age differentes rendent l age appris, et laissent le plafond');
+  process.env.MC_ACHAT_MAX = '100000';
 }
 
 /* ==========================================================================
@@ -6399,6 +6443,10 @@ async function parleAnglais() {
  * ======================================================================== */
 function motsQuiCommandent() {
   console.log('\n-- les deux motifs qui decident, sur les phrases du code --');
+  /* Son propre monde : il lisait jusqu'ici le plafond laisse par le scenario
+     d'avant (un million), et un plafond a 75 000 $ laisse derriere lui
+     transformait le refus « trop jeune » en refus de capitalisation. */
+  remise(sains());
   const socle = { minutes: 40, ch_m5: 0, ch_h1: 0, ch_h6: 0, vol: { h1: 0, h6: 0 }, tx: {},
                   liq: 9e4, mc: 9e4 };
 
@@ -6928,6 +6976,7 @@ function bornesQuiSeReglent() {
   await rejeuDeLaStrategie();
   await toutesLesSortiesSontSuivies();
   await plafondAppris();
+  await buteesRecadrees();
   await laMainDuProprietaire();
   await tranchesAuMiroir();
   await venteAuPrixDuMoment();
