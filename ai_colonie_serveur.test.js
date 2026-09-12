@@ -2797,6 +2797,88 @@ async function venteAuPrixDuMoment() {
  * C est exactement la sortie sur laquelle la question revient : « vingt
  * minutes et on ferme, ce n est pas trop court ? ».
  * ======================================================================== */
+/* ==========================================================================
+ * LE CLOSER N A JAMAIS ESSAYE DE TENIR PLUS DE VINGT MINUTES
+ *
+ * Releve du 12 septembre, apres 786 trades. La memoire du Closer, par duree :
+ *     20 min   n =   2,2   moyenne +31,6 %   <- la MEILLEURE
+ *     10 min   n = 311,3   moyenne  +5,5 %   <- celle qu il choisit
+ *      5 min   n = 440,3   moyenne  +4,1 %
+ * `TENUES` en propose six. 40, 80 et 160 minutes n ont JAMAIS ete essayees.
+ *
+ * `tenueApprise` note par `confiance(n) x moyenne` : la meilleure moyenne a
+ * deux observations, la confiance l ecrase, dix minutes gagne, donc c est la
+ * case de dix minutes qui recoit les observations suivantes. Un verrou.
+ * ======================================================================== */
+async function tenuesExplorees() {
+  console.log('\n-- une position sur cinq va voir une duree qu on n a jamais tenue --');
+  remise(sains());
+  const F = C._etat();
+  /* La memoire reelle du serveur : deux durees ecrasantes, une prometteuse a
+     deux observations, et trois jamais essayees. */
+  F.memoire.closer = { tenue: {
+    '5 min':  { n: 440.3, s: 440.3 * 4.1, s2: 0 },
+    '10 min': { n: 311.3, s: 311.3 * 5.5, s2: 0 },
+    '20 min': { n: 2.2,   s: 2.2 * 31.6,  s2: 0 } } };
+  const app = C.tenueApprise();
+  console.log('   apprise : ' + app.min + ' min (moy ' + app.moy + ' sur ' + Math.round(app.n) + ')');
+  ok(app.min === 10,
+     'la duree APPRISE reste 10 min, malgre les +31,6 % de la duree de 20 : deux observations ne '
+     + 'battent pas trois cents, et c est juste — mais c est aussi le verrou');
+  const e = C.tenueAExplorer();
+  console.log('   a explorer : ' + e.min + ' min (' + e.n + ' observation)');
+  ok(e.min === 40 && e.n === 0,
+     'on explore 40 min, jamais tenue : le cran AU-DESSUS de la duree apprise, pas le saut');
+  /* Et jamais vers le bas : raccourcir une position irait chercher ce qu on
+     sait deja (750 observations sur 5 et 10 min) et trahirait le Closer. */
+  ok(e.min > app.min, 'et toujours PLUS LONG que ce qu on tient (' + e.min + ' > ' + app.min + ') : '
+     + 'le defaut mesure est que les longues durees ne sont jamais essayees, pas les courtes');
+
+  /* ---- LE RYTHME : UNE SUR CINQ, AU COMPTEUR ---- */
+  const rythme = [];
+  for (let i = 0; i < 10; i++) { F.ouvertures = i; rythme.push(C.cestUnTourDExploration()); }
+  console.log('   rythme sur dix ouvertures : ' + rythme.map((x) => (x ? 'X' : '.')).join(''));
+  ok(rythme.filter(Boolean).length === 2,
+     'deux ouvertures sur dix explorent : une sur cinq, ni plus ni moins');
+  ok(rythme[4] === true && rythme[9] === true,
+     'et le rythme est REGULIER, au compteur d ouvertures — pas un tirage au sort, pour qu un banc '
+     + 'rejoue la meme suite');
+
+  /* ---- ET LA POSITION PORTE SA RAISON ---- */
+  F.ouvertures = 4;                          /* la prochaine ouverture explore */
+  F.positions = [];
+  await C.tour();
+  const ex = F.positions.find((p) => p.tenueExplore);
+  console.log('   positions : ' + F.positions.map((p) => p.tenueBase + (p.tenueExplore ? '(X)' : '')).join(' '));
+  ok(!!ex, 'une position exploratoire est bien ouverte');
+  ok(ex && ex.tenueBase === 40, 'elle tient la duree jamais essayee (' + (ex && ex.tenueBase) + ' min)');
+  ok(ex && /exploring 40 min: the least tried duration/.test(ex.tenueRaison || ''),
+     'et elle DIT pourquoi : « ' + (ex && ex.tenueRaison || '').slice(0, 95) + '… »');
+  ok(F.positions.filter((p) => !p.tenueExplore).every((p) => p.tenueBase === 10),
+     'les autres tiennent la duree apprise, exactement comme avant');
+  ok((F.compteurs.tenueExploree || 0) > 0, 'et l exploration est comptee');
+
+  /* ---- LES GARDE-FOUS NE BOUGENT PAS ---- */
+  const pe = F.positions.find((p) => p.tenueExplore);
+  const marche = {};
+  for (const p of F.positions) marche[p.adr] = { prix: p.prix0 * 0.5, liq: 50000 };
+  const avant = F.positions.length;
+  C.regle(marche);
+  ok(!F.positions.some((p) => p.adr === pe.adr),
+     'une position exploratoire qui s effondre est coupee comme les autres : tenir plus longtemps '
+     + 'repousse l ECHEANCE, ca ne retire aucun garde-fou');
+  ok(F.positions.length < avant, 'la coupe a bien joue (' + avant + ' → ' + F.positions.length + ')');
+
+  /* ---- LE COUPE-CIRCUIT ---- */
+  process.env.TENUE_EXPLORE_PART = '0';
+  delete require.cache[require.resolve('./ai_colonie.js')];
+  const C2 = require('./ai_colonie.js');
+  ok(C2.TENUE_EXPLORE === 0, 'TENUE_EXPLORE_PART=0 ferme l exploration, sans toucher au reste');
+  delete process.env.TENUE_EXPLORE_PART;
+  delete require.cache[require.resolve('./ai_colonie.js')];
+  require('./ai_colonie.js');
+}
+
 async function echeanceJugee() {
   console.log('\n-- la sortie la plus frequente laisse enfin une suite --');
   remise(sains());
@@ -6718,6 +6800,7 @@ function bornesQuiSeReglent() {
   await neTradePlus();
   await parleAnglais();
   await alertesDatees();
+  await tenuesExplorees();
   await echeanceJugee();
   await vendOnTropTot();
   await carnetDesTrades();

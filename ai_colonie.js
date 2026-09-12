@@ -4058,6 +4058,9 @@ function noteCarnet(p, prix, r, gainTotal, quand, comment, aberrant) {
     traits: p.traits || null,
     liq0: Math.round(p.liq0 || 0), mcAchat: p.mcAchat || 0,
     tenueBase: p.tenueBase || null,
+    /* Une position exploratoire se relit a part : sinon sa duree inhabituelle
+       passe pour du bruit dans le carnet. */
+    tenueExplore: !!p.tenueExplore,
     /* Une lecture rejetee est une ligne comme une autre : elle dit qu'on a
        perdu le jeton de vue, ce qui est une information sur le jeton. */
     aberrant: aberrant || null,
@@ -5330,6 +5333,73 @@ function trancheTenue(min) {
   for (const t of TENUES) if (min >= t) b = t;
   return b + ' min';
 }
+/* ==========================================================================
+ * LE CLOSER N'A JAMAIS ESSAYE DE TENIR PLUS DE VINGT MINUTES
+ *
+ * Releve du 12 septembre, apres 786 trades. La memoire du Closer, par duree :
+ *
+ *     20 min    n =   2,2    moyenne  +31,6 %     <- la MEILLEURE
+ *     10 min    n = 311,3    moyenne   +5,5 %     <- celle qu'il choisit
+ *      5 min    n = 440,3    moyenne   +4,1 %
+ *
+ * Et `TENUES` en propose six. Quarante, quatre-vingts et cent soixante minutes
+ * n'ont JAMAIS ete essayees. Pas une fois en sept cent quatre-vingt-six trades.
+ *
+ * La cause est dans `tenueApprise` : elle note chaque duree par
+ * `confiance(n) x moyenne`. La duree de vingt minutes a la meilleure moyenne de
+ * loin, mais deux observations — la confiance l'ecrase. Dix minutes gagne, donc
+ * on tient dix minutes, donc c'est la case de dix minutes qui recoit les
+ * observations suivantes, donc elle gagne encore. C'est un verrou : la colonie
+ * ne peut pas decouvrir qu'une duree plus longue paie, puisqu'elle ne l'essaie
+ * jamais.
+ *
+ * Et l'argent reel le dit dans l'autre sens : sur les fermetures dont on
+ * connait la duree, 5-10 min rend -26 % et 10-20 min rend -14,1 % avec 11 % de
+ * reussite. Les deux seules durees que la colonie pratique sont les deux seules
+ * qu'on ait mesurees, et elles perdent.
+ *
+ * ---- CE QU'ON CHANGE, ET CE QU'ON NE CHANGE PAS ----
+ *
+ * Une position sur cinq tient la duree LA MOINS OBSERVEE, au lieu de la
+ * mieux notee. Quatre sur cinq continuent exactement comme avant. Le choix se
+ * fait sur le compteur d'ouvertures — pas sur un tirage au sort : un banc doit
+ * pouvoir le rejouer a l'identique.
+ *
+ * Ce que l'exploration ne touche PAS : la coupe de la Sentinelle, l'arret
+ * suiveur et l'echelle de sortie restent armes a l'identique. Tenir plus
+ * longtemps veut dire repousser l'ECHEANCE, pas retirer les garde-fous — une
+ * position exploratoire qui s'effondre est coupee comme les autres.
+ * ======================================================================== */
+const TENUE_EXPLORE = Math.max(0, Math.min(1, nEnv('TENUE_EXPLORE_PART', 0.2)));
+/** La duree la moins observee PARMI CELLES PLUS LONGUES que celle qu'on tient.
+ *
+ *  Plus longues, et c'est le coeur de l'affaire : le defaut mesure n'est pas
+ *  « une duree au hasard n'a pas ete essayee », c'est que les LONGUES ne l'ont
+ *  jamais ete — 40, 80 et 160 minutes a zero observation, pendant que 5 et 10
+ *  en cumulent sept cent cinquante. Explorer vers le bas irait chercher ce
+ *  qu'on sait deja, et raccourcirait une position que le Closer voulait tenir.
+ *
+ *  A egalite d'observations — le cas courant, puisqu'elles sont a zero — on
+ *  prend LA PLUS COURTE des inconnues : le cran suivant, pas le saut. */
+function tenueAExplorer() {
+  const cases = ((E.memoire.closer || {}).tenue) || {};
+  const base = (tenueApprise().min) || TENUE_DEFAUT_MIN;
+  let moins = null;
+  for (const t of TENUES) {
+    if (t <= base) continue;                 /* jamais plus court que ce qu'on tient deja */
+    const c = cases[t + ' min'];
+    const n = (c && c.n) || 0;
+    if (!moins || n < moins.n) moins = { min: t, n };
+  }
+  return moins;
+}
+/** Est-ce le tour d'explorer ? Une ouverture sur cinq, au compteur — pas au
+ *  hasard, pour qu'un banc rejoue la meme suite. */
+function cestUnTourDExploration() {
+  if (!(TENUE_EXPLORE > 0)) return false;
+  const pas = Math.max(2, Math.round(1 / TENUE_EXPLORE));
+  return ((E.ouvertures || 0) + 1) % pas === 0;
+}
 function tenueApprise() {
   const cases = ((E.memoire.closer || {}).tenue) || {};
   let best = null;
@@ -5395,8 +5465,18 @@ function ouvre(t) {
    * elles ont assez d'observations, elles decident ; sinon la tenue apprise
    * par le Closer reprend la main, comme avant. */
   const horizon = horizonPour(t.an && t.an.traits);
-  const tenue = horizon ? { min: horizon.min, appris: true, parProfil: true, poids: horizon.poids }
-                        : tenueApprise();
+  let tenue = horizon ? { min: horizon.min, appris: true, parProfil: true, poids: horizon.poids }
+                      : tenueApprise();
+  /* ---- UNE SUR CINQ VA VOIR AILLEURS ----
+   * Sans cela, la duree la mieux notee est la seule jamais tenue, donc la seule
+   * jamais mesuree — voir `tenueAExplorer`. */
+  if (cestUnTourDExploration()) {
+    const e = tenueAExplorer();
+    if (e && e.min !== tenue.min) {
+      tenue = { min: e.min, appris: false, explore: true, vues: Math.round(e.n * 10) / 10 };
+      compte('tenueExploree');
+    }
+  }
   E.positions.push({
     /* Le prix RELU au moment d'acheter, pas celui du flux en debut de tour —
        voir la relecture dans le tour. */
@@ -5408,7 +5488,12 @@ function ouvre(t) {
     prixLu: Date.now(),
     mise: b.mise, methode: b.methode, regime: b.regime, raisonMise: b.raison,
     liq0: t.liq || 0, tenueBase: tenue.min,
-    tenueRaison: tenue.parProfil
+    tenueExplore: !!tenue.explore,
+    tenueRaison: tenue.explore
+      ? 'exploring ' + tenue.min + ' min: the least tried duration (' + tenue.vues
+        + ' observations) — one position in five goes and looks, or the best-scored duration '
+        + 'stays the only one ever measured'
+      : tenue.parProfil
       ? 'its trait curves peak at ' + tenue.min + ' min (weight ' + tenue.poids + ')'
       : (tenue.appris ? 'duration learned by the Closer' : 'default duration'),
     mcAchat: Math.round(t.mc || 0), liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null,
@@ -8324,6 +8409,7 @@ module.exports = {
   seuilsAudit, refMontes, REF_PROTEGE, auditDe, SANS_ACHAT_DESSERRE,
   deriveDuPrix, noteDerive, DERIVE_MAX,
   noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES,
+  TENUES, TENUE_EXPLORE, tenueAExplorer, cestUnTourDExploration,
   verdictsDesSorties, noteVerdictSortie,
   executionReelle, coutReel,
   tiensParMain, fermeParMain, TENUE_MAIN_MAX,
