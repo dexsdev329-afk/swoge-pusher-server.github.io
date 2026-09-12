@@ -2810,6 +2810,70 @@ async function venteAuPrixDuMoment() {
  * deux observations, la confiance l ecrase, dix minutes gagne, donc c est la
  * case de dix minutes qui recoit les observations suivantes. Un verrou.
  * ======================================================================== */
+/* ==========================================================================
+ * LE PRIX D ENTREE DU PAPIER EST CELUI QUE LE MIROIR A PAYE
+ *
+ * BANGERCAT, 12 septembre, 17 h 32 : papier +43,5 %, capitalisation 29k → 31k
+ * (+8,8 %), miroir +0,4 % sur son vrai devis. Trois chiffres pour le meme
+ * jeton au meme instant. La relecture avant achat avait rendu un prix 24 %
+ * sous le flux ; le miroir a paye 8 % au-dessus. Il n existe qu un prix
+ * d entree qui ne soit pas une fiction : celui que le miroir a paye.
+ * ======================================================================== */
+async function prixQueLeMiroirAPaye() {
+  console.log('\n-- la capitalisation d achat suit le prix booke, pas celui du flux --');
+  remise(sains());
+  MONDE.piscineDerive = 0.76;               /* la relecture rend 24 % sous le flux, comme BANGERCAT */
+  await C.tour();
+  let F = C._etat();
+  const p = F.positions[0];
+  ok(!!p, 'une position est ouverte');
+  const t = MONDE.jetons.find((x) => x.addr === p.adr);
+  const rapport = C.capDe(p, t.prix * 0.76 * 1.088) / p.mcAchat;   /* le prix monte de 8,8 % depuis l achat */
+  console.log('   prix0 ' + p.prix0 + ' · mcAchat ' + p.mcAchat + ' (flux ' + t.mc + ') · cap/mcAchat a +8,8 % = ' + rapport.toFixed(3));
+  ok(Math.abs(p.mcAchat - t.mc * 0.76) < 1,
+     'mcAchat est la capitalisation AU PRIX BOOKE (' + p.mcAchat + '), pas celle du flux (' + t.mc + ')');
+  ok(Math.abs(rapport - 1.088) < 1e-6,
+     'et l invariant tient : cap / mcAchat = 1 + r/100 — la page ne peut plus dire +43 % a cote de « 29k → 31k »');
+  MONDE.piscineDerive = 0;
+
+  console.log('\n-- le papier adopte le prix que le miroir a paye --');
+  /* Le miroir dit avoir paye 8 % AU-DESSUS du flux — soit 42 % au-dessus de la
+     relecture. C est exactement le cas reel. */
+  const prixMiroir = t.prix * 1.08;
+  const avantMc = p.mcAchat, avantPrix = p.prix0;
+  ok(C.entreeReelle({ adr: p.adr, sym: p.sym, prixUsd: prixMiroir }), 'le prix reel est accepte');
+  ok(Math.abs(p.prix0 - prixMiroir) < 1e-12, 'prix0 est desormais celui du miroir (' + p.prix0 + ', etait ' + avantPrix + ')');
+  ok(Math.abs(p.mcAchat - t.mc * 1.08) < 1, 'et la capitalisation d achat est recalee avec lui (' + p.mcAchat + ', etait ' + avantMc + ')');
+  ok(Math.abs(C.capDe(p, prixMiroir * 1.05) / p.mcAchat - 1.05) < 1e-6, 'l invariant tient toujours apres le recalage');
+  ok(p.prixReel && p.prixReel.applique && Math.abs(p.prixReel.ecart - 42.1) < 0.2,
+     'la position dit ce qui s est passe : le miroir a paye ' + (p.prixReel && p.prixReel.ecart) + ' % de plus que le papier');
+  ok(p.prixPapier === avantPrix, 'et garde le prix que le papier avait booke, pour la mesure');
+  const e = C.ecartEntree();
+  console.log('   ecart mesure : ' + JSON.stringify(e));
+  ok(e.n === 1 && Math.abs(e.moyenne - 42.1) < 0.2, 'l ecart relecture → reel est MESURE, pas seulement corrige');
+  ok(F.flux.some((f) => /a mirror actually paid \+42\.1% vs the paper entry/.test(f.txt)),
+     'et le flux le dit en clair');
+
+  /* ---- LE PREMIER MIROIR FAIT FOI ---- */
+  ok(!C.entreeReelle({ adr: p.adr, prixUsd: t.prix * 1.5 }), 'un second miroir ne recale pas une seconde fois');
+  ok(Math.abs(p.prix0 - prixMiroir) < 1e-12, 'le prix reste celui du premier');
+  ok(C.ecartEntree().n === 2, 'mais son ecart est compte quand meme');
+
+  /* ---- UN RATIO ABSURDE NE TOUCHE A RIEN ---- */
+  remise(sains()); await C.tour(); F = C._etat();
+  const q = F.positions[0]; const av = q.prix0;
+  ok(!C.entreeReelle({ adr: q.adr, prixUsd: av * 10 }), 'x10 n est pas un remplissage, c est une lecture abimee : refuse');
+  ok(q.prix0 === av && !q.prixReel, 'et rien n a bouge');
+  ok((F.compteurs.entreeAberrante || 0) > 0, 'compte a part');
+
+  /* ---- TROP TARD SI UN PALIER A DEJA VENDU ---- */
+  q.paliers = { 1: true };
+  ok(!C.entreeReelle({ adr: q.adr, prixUsd: av * 1.1 }), 'un palier a deja vendu sur l ancien prix : on ne reecrit pas l histoire');
+  ok(q.prix0 === av && q.prixReel && q.prixReel.applique === false,
+     'le prix reste, l ecart est note comme non applique');
+  ok((F.compteurs.entreeTardive || 0) > 0, 'et compte comme tardif');
+}
+
 async function tenuesExplorees() {
   console.log('\n-- une position sur cinq va voir une duree qu on n a jamais tenue --');
   remise(sains());
@@ -6800,6 +6864,7 @@ function bornesQuiSeReglent() {
   await neTradePlus();
   await parleAnglais();
   await alertesDatees();
+  await prixQueLeMiroirAPaye();
   await tenuesExplorees();
   await echeanceJugee();
   await vendOnTropTot();

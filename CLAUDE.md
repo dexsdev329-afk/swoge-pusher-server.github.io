@@ -34,11 +34,12 @@ d'observations, un chiffre. C'est la convention centrale du projet.
 
 ## Les essais
 
-Quatre suites, lancées à la main. **Aucun commit sans code de sortie vert.**
+Cinq suites, lancées à la main. **Aucun commit sans code de sortie vert.** `miroir_reel.test.js` est tombée trois jours sans que personne ne le voie parce qu'elle n'était pas dans la boucle : elle y est.
 
 ```bash
 node ai_colonie_serveur.test.js     # ~20 min, la plus grosse — la lancer SEULE
 node miroir.test.js
+node miroir_reel.test.js            # MIROIR_EXECUTE=1 sur une fausse chaine : la seule qui couvre l argent reel
 node /home/user/SWOGE.github.io/ai_colonie.test.js    # Playwright, voir NODE_PATH ci-dessous
 node /home/user/SWOGE.github.io/cache_marqueur.test.js
 ```

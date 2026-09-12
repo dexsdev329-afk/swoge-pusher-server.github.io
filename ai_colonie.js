@@ -4115,6 +4115,90 @@ function carnetBilan() {
   return { n: l.length, tout: bilanDe(l), parTenue, parSortie };
 }
 
+/* ==========================================================================
+ * LE PRIX D'ENTREE DU PAPIER EST CELUI QUE LE MIROIR A PAYE
+ *
+ * BANGERCAT, 12 septembre, 17 h 32. La page montre :
+ *
+ *     papier      +43,5 %        (entre au prix relu sur la piscine)
+ *     capitalisation  29k → 31k  = +8,8 %
+ *     miroir      +0,4 %         (sur son VRAI devis)
+ *
+ * Trois chiffres pour le meme jeton au meme instant. La relecture avant achat
+ * — posee la veille pour corriger le retard du flux — avait rendu un prix 24 %
+ * sous le flux. Le miroir, lui, a paye 8 % AU-DESSUS du flux. La relecture a
+ * donc donne un prix qu'aucun ordre reel n'a obtenu, et quatre minutes plus
+ * tard le papier fermait a +43 % et l'apprenait aux agents. C'est l'ecart de
+ * 7,8 points entre papier et reel, vu en train de se fabriquer.
+ *
+ * Il n'existe qu'un prix d'entree qui ne soit pas une fiction : celui que le
+ * miroir a paye. Quand un miroir execute reellement, il le renvoie ici dans la
+ * minute qui suit l'ouverture, et le papier l'ADOPTE — `prix0` et la
+ * capitalisation d'achat sont recales, l'offre (le nombre de jetons) ne bouge
+ * pas puisqu'elle ne depend pas du prix. Le premier miroir qui repond fait
+ * foi ; les suivants sont comptes, pas appliques.
+ *
+ * Deux garde-fous. Un ratio hors de [0,3 ; 3] n'est pas un remplissage, c'est
+ * une lecture abimee : on le compte a part et on ne touche a rien. Et si un
+ * palier a deja vendu sur l'ancien prix, il est trop tard pour reecrire
+ * l'histoire : on note l'ecart, on ne recale pas.
+ *
+ * Et l'ecart lui-meme est MESURE — moyenne, part au-dessus, pire cas — parce
+ * que c'est lui qui dit de combien la relecture, ou le flux, se trompent. La
+ * derive flux→relecture affichait -3,5 % ; celle-ci dira relecture→reel.
+ * ======================================================================== */
+const ENTREE_RATIO_MIN = 0.3, ENTREE_RATIO_MAX = 3;
+function noteEntree(ratio) {
+  if (!E.entree || typeof E.entree !== 'object') E.entree = { n: 0, s: 0, hausse: 0, pire: 0 };
+  const d = (ratio - 1) * 100;
+  const T = E.entree;
+  T.n++; T.s += d;
+  if (d > 0) T.hausse++;
+  if (Math.abs(d) > Math.abs(T.pire)) T.pire = Math.round(d * 10) / 10;
+}
+function entreeReelle(x) {
+  if (!x || !x.adr || !(Number(x.prixUsd) > 0)) return false;
+  const adr = String(x.adr).toLowerCase();
+  const p = E.positions.find((q) => q.adr === adr);
+  if (!p || !(p.prix0 > 0)) return false;
+  const prixUsd = Number(x.prixUsd);
+  const ratio = prixUsd / p.prix0;
+  if (!isFinite(ratio) || ratio < ENTREE_RATIO_MIN || ratio > ENTREE_RATIO_MAX) {
+    compte('entreeAberrante');
+    return false;
+  }
+  noteEntree(ratio);
+  const ecart = Math.round((ratio - 1) * 1000) / 10;
+  if (p.prixReel) { compte('entreeDeja'); return false; }           /* le premier miroir fait foi */
+  if (p.paliers && Object.keys(p.paliers).length) {                 /* un palier a deja vendu : trop tard */
+    p.prixReel = { usd: prixUsd, t: Date.now(), ecart, applique: false };
+    compte('entreeTardive');
+    return false;
+  }
+  p.prixPapier = p.prix0;
+  p.prix0 = prixUsd;
+  p.mcAchat = Math.round((p.mcAchat || 0) * ratio);
+  /* Le sommet vu et la trajectoire etaient mesures sur l'ancien prix : ils
+     repartent du vrai. */
+  p.hautR = undefined;
+  p.traj = [];
+  p.prixReel = { usd: prixUsd, t: Date.now(), ecart, applique: true };
+  compte('entreeReelle');
+  E.flux.unshift({ sym: p.sym, pool: p.pool, tag: 'open', cls: 'n', t: Date.now(), par: 'miroir',
+    txt: 'a mirror actually paid ' + (ecart >= 0 ? '+' : '') + ecart.toFixed(1)
+       + '% vs the paper entry — the paper now starts from that price' });
+  sauve();
+  return true;
+}
+/** Ce que la page montre : de combien le prix reellement paye s'ecarte de
+ *  celui que le papier avait booke. */
+function ecartEntree() {
+  const T = E.entree;
+  if (!T || !T.n) return { n: 0, moyenne: null, hausse: null, pire: null };
+  return { n: T.n, moyenne: Math.round(T.s / T.n * 10) / 10,
+           hausse: Math.round(T.hausse / T.n * 100), pire: T.pire };
+}
+
 const REEL_MAX = 200;              /* on garde les dernieres fermetures reelles */
 function executionReelle(x) {
   if (!x || !x.adr) return false;
@@ -5477,10 +5561,13 @@ function ouvre(t) {
       compte('tenueExploree');
     }
   }
+  /* Le prix RELU au moment d'acheter, pas celui du flux en debut de tour —
+     voir la relecture dans le tour. Et si un miroir achete VRAIMENT dans la
+     minute, c'est son prix de remplissage qui remplacera celui-ci : voir
+     `entreeReelle`. */
+  const prix0 = t.prixAchat > 0 ? t.prixAchat : t.prix;
   E.positions.push({
-    /* Le prix RELU au moment d'acheter, pas celui du flux en debut de tour —
-       voir la relecture dans le tour. */
-    sym: t.sym, adr: t.addr, pool: t.pool, prix0: t.prixAchat > 0 ? t.prixAchat : t.prix, t0: Date.now(),
+    sym: t.sym, adr: t.addr, pool: t.pool, prix0: prix0, t0: Date.now(),
     /* Le delai d'abandon compte depuis la DERNIERE fois qu'on a su lire un
        prix, pas depuis l'ouverture : une position tenue trois heures et cotee
        a chaque tour n'a rien d'une position perdue de vue. A l'ouverture on
@@ -5496,7 +5583,15 @@ function ouvre(t) {
       : tenue.parProfil
       ? 'its trait curves peak at ' + tenue.min + ' min (weight ' + tenue.poids + ')'
       : (tenue.appris ? 'duration learned by the Closer' : 'default duration'),
-    mcAchat: Math.round(t.mc || 0), liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null,
+    /* ---- LA CAPITALISATION D'ACHAT EST CELLE DU PRIX BOOKE ----
+     * BANGERCAT, 12 septembre : le papier entre au prix RELU (24 % sous le
+     * flux), mais `mcAchat` restait la capitalisation du flux. La page disait
+     * alors « +43,5 % · $31k cap now · bought at $29k » — trois chiffres qui
+     * ne pouvaient pas etre vrais ensemble, et le proprietaire l'a vu. Par
+     * construction `mc / mcAchat` doit valoir `1 + r/100` : la capitalisation
+     * d'achat suit donc le prix d'achat, pas celui du flux. */
+    mcAchat: Math.round((t.mc || 0) * (t.prix > 0 ? prix0 / t.prix : 1)),
+    liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null,
     /* L'offre implicite au moment de l'achat : la capitalisation divisee par
        le prix, c'est-a-dire le nombre de jetons. C'est elle qui relie les
        deux chiffres — voir `capDe`. */
@@ -8132,6 +8227,9 @@ function vue() {
                encaisse: Math.round((p.encaisse || 0) * 100) / 100,
                paliers: p.paliers ? Object.keys(p.paliers).length : 0,
                hautR: p.hautR === undefined ? null : Math.round(p.hautR * 10) / 10,
+               /* Le prix que le miroir a paye, s'il l'a dit, et l'ecart avec
+                  celui que le papier avait booke. */
+               prixReel: p.prixReel || null,
                /* ---- CE QUE LE VEILLEUR A LU ----
                 * La capitalisation du MOMENT, a cote de celle de l'achat : ce
                 * sont les deux qu'on veut voir ensemble, et c'est leur ecart
@@ -8213,6 +8311,9 @@ function vue() {
     /* ---- LE CARNET : CE QUE CHAQUE TRADE A VRAIMENT FAIT ----
        Les compteurs disaient combien de trades ; le carnet dit lesquels. */
     carnet: carnetBilan(),
+    /* ---- CE QUE LE MIROIR A VRAIMENT PAYE, CONTRE CE QUE LE PAPIER AVAIT BOOKE ----
+       Voir `entreeReelle`. */
+    entree: ecartEntree(),
     /* ---- CE QUE LE PRIX BOUGE ENTRE LE FLUX ET L'ACHAT ----
        Le papier achetait au prix du debut de tour ; le miroir, minutes plus
        tard, au prix du moment. Voir `noteDerive`. */
@@ -8411,7 +8512,8 @@ module.exports = {
   noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES,
   TENUES, TENUE_EXPLORE, tenueAExplorer, cestUnTourDExploration,
   verdictsDesSorties, noteVerdictSortie,
-  executionReelle, coutReel,
+  executionReelle, coutReel, entreeReelle, ecartEntree, ENTREE_RATIO_MIN, ENTREE_RATIO_MAX,
+  capDe, offreDe, capQuiDiverge,
   tiensParMain, fermeParMain, TENUE_MAIN_MAX,
   miseDe, methodeApprise, banquierApprend, regime, statsRendement,
   revoitOrdre, engendre, elague, doitExaminer, noteConnu, surveilles,

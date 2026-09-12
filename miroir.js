@@ -1697,6 +1697,34 @@ function ditExecutionReelle(c, adr, o, r) {
   } catch (e) { console.warn('[miroir] execution reelle :', e && e.message); }
 }
 
+/* ==================== CE QUE L'ACHAT A VRAIMENT COUTE, PAR JETON ====================
+ *
+ * Le papier entre a un prix LU ; le miroir entre a un prix PAYE. BANGERCAT,
+ * 12 septembre : 24 % d'ecart entre les deux, dans le sens qui flatte le
+ * papier. Apres un achat reel, on renvoie donc a la colonie le prix par jeton
+ * effectivement paye — la mise divisee par ce que le devis a rendu, en dollars
+ * via le cours du moment — et c'est lui que le papier adopte.
+ *
+ * Il faut les decimales du jeton pour compter ses unites : une lecture, et
+ * seulement sur un achat reel. Sans decimales ou sans cours, on ne dit rien —
+ * un prix suppose est exactement ce qu'on essaie de ne plus apprendre. */
+async function ditEntreeReelle(c, adr, r, mise, sym) {
+  if (!colonie || typeof colonie.entreeReelle !== 'function') return;
+  if (!r || r.simule || !r.sortie || r.sortie.lte(0)) return;
+  const cours = coursEth();
+  if (!(cours > 0)) return;
+  let dec = null;
+  try { dec = Number(await new ethers.Contract(adr, ERC20_ABI, provider()).decimals()); } catch (e) { dec = null; }
+  if (!isFinite(dec) || dec < 0 || dec > 36) return;
+  const jetons = Number(ethers.utils.formatUnits(r.sortie, dec));
+  const eth = Number(ethers.utils.formatUnits(mise, 18));
+  if (!(jetons > 0) || !(eth > 0)) return;
+  const prixUsd = eth / jetons * cours;
+  try {
+    colonie.entreeReelle({ adr, sym: sym || null, prixUsd, prixEth: eth / jetons });
+  } catch (e) { console.warn('[miroir] entree reelle :', e && e.message); }
+}
+
 function ditPiscineMorte(c, adr, o, devis) {
   const paye = WEI(o.cout || o.entree || '0');
   if (paye.lte(0) || devis.mul(PISCINE_MORTE).gte(paye)) return false;
@@ -1834,6 +1862,9 @@ async function achetePosition(c, t) {
        rattrapage ne doit pas la prendre pour une vente manquee. */
     manuel: !!t.manuel,
   };
+  /* Et le papier apprend ce que l'achat a VRAIMENT coute par jeton — pas une
+     position manuelle, qui n'a pas de jumelle. */
+  if (!t.manuel) await ditEntreeReelle(c, adr, r, mise, t.sym);
   /* Le journal dit la PART, et d'ou elle vient : sans ca, « 0,0031 ETH » ne
      laisse pas savoir si le miroir a suivi le Banquier ou son propre repli. */
   const dit = releve

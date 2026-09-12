@@ -31,6 +31,15 @@ process.env.MIROIR_MAX = '3';
 process.env.MIROIR_PAUSE_MS = '0';
 
 const M = require('./miroir');
+/* ---- AUCUN COURS REEL NE DOIT ENTRER ICI ----
+ * Le plancher d'un ordre est en dollars depuis le 10 septembre, et il se
+ * convertit avec le cours de l'ETH lu sur DexScreener. Sans ce bouchon, le
+ * banc allait chercher le VRAI cours, le plancher passait de 0,001 a
+ * 0,0059 ETH, et la phrase attendue au scenario « PETIT » ne correspondait
+ * plus — la suite tombait, silencieusement, depuis trois jours, parce qu'elle
+ * n'etait pas dans la boucle des quatre. Un banc qui depend du reseau ne
+ * mesure pas le code, il mesure la meteo. */
+M._poseSourceEthUsd(async () => 0);
 
 let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n++; console.log('  ok   ' + m); };
@@ -125,6 +134,10 @@ class ChaineReelle extends ethers.providers.StaticJsonRpcProvider {
       return A.encode(['uint256', 'uint256'], [this.sortieDevis, 100000]);
     }
     if (a === M.PERMIT2.toLowerCase()) return A.encode(['uint160', 'uint48', 'uint48'], [0, 0, 0]);
+    /* `decimals()` sur un jeton : dix-huit, comme l'autre fausse chaine. Sans
+       cette ligne, la reponse par defaut (le solde tenu, 10^21) decodee en
+       uint8 valait ZERO, et un prix par jeton se retrouvait divise par 10^21. */
+    if (String(tx.data || '').slice(0, 10) === '0x313ce567') return A.encode(['uint8'], [18]);
     return A.encode(['uint256'], [this.jetonsTenus]);
   }
 }
@@ -270,6 +283,54 @@ const poolDe = (j) => {
     const e2 = await M.etat(JOUEUR);
     eq(e2.bilan.ouvertes, 0, 'un reste du mode d essai est retire aussi');
     ok(/dry run, nothing was ever bought/.test(e2.journal[0].txt), 'et dit pour ce qu il est');
+  }
+
+  /* ======================================================================
+   * LE PAPIER APPREND CE QUE L ACHAT A VRAIMENT COUTE PAR JETON
+   *
+   * BANGERCAT, 12 septembre : le papier entre au prix relu (24 % sous le
+   * flux), le miroir paie 8 % au-dessus. Apres un achat REEL, le miroir renvoie
+   * le prix par jeton effectivement paye — mise / jetons recus, en dollars via
+   * le cours — et c est lui que le papier adopte.
+   * ==================================================================== */
+  console.log('\n-- le papier apprend ce que l achat a coute par jeton --');
+  {
+    const dits = [];
+    M.poseColonie({ entreeReelle: (x) => { dits.push(x); return true; } });
+    M._poseSourceEthUsd(async () => 4000);
+    M._oublieLeCours();
+    chaine.soldes[c.adr.toLowerCase()] = W('0.05');
+    const JE = '0x' + 'e7'.repeat(20);
+    await M.surAchat({ sym: 'ENTREE', adr: JE, pool: poolDe(JE), part: 0.1 });
+    eq(dits.length, 1, 'apres un achat reel, le miroir dit a la colonie ce qu il a paye');
+    const x = dits[0] || {};
+    const mise = Number(ethers.utils.formatUnits(M._miseDe(W('0.05'), 0.1), 18));
+    const attendu = mise / 1000 * 4000;              /* le devis rend 1000 jetons, l ETH vaut 4000 $ */
+    console.log('   mise ' + mise.toFixed(6) + ' ETH · 1000 jetons · prix dit ' + (x.prixUsd || 0).toFixed(6) + ' $ · attendu ' + attendu.toFixed(6));
+    ok(x.adr === JE && x.sym === 'ENTREE', 'pour le bon jeton');
+    ok(Math.abs(x.prixUsd - attendu) / attendu < 1e-6,
+       'et le prix par jeton est la mise divisee par les jetons recus, en dollars (' + x.prixUsd.toFixed(6) + ' $)');
+    ok(Math.abs(x.prixEth - mise / 1000) / (mise / 1000) < 1e-6, 'avec le meme prix en ETH a cote');
+
+    /* Sans cours, on ne dit rien : un prix suppose est ce qu on veut ne plus apprendre. */
+    dits.length = 0;
+    M._poseSourceEthUsd(async () => 0);
+    M._oublieLeCours();
+    const JF = '0x' + 'e8'.repeat(20);
+    await M.surAchat({ sym: 'SANSCOURS', adr: JF, pool: poolDe(JF), part: 0.1 });
+    eq(dits.length, 0, 'sans cours de l ETH, le miroir ne dit rien plutot que d inventer un prix');
+
+    /* Une position manuelle n a pas de jumelle de papier : rien a dire. */
+    M._poseSourceEthUsd(async () => 4000);
+    M._oublieLeCours();
+    const JM = '0x' + 'e9'.repeat(20);
+    await M.surAchat({ sym: 'MANUEL', adr: JM, pool: poolDe(JM), part: 0.1, manuel: true });
+    eq(dits.length, 0, 'une position ouverte a la main ne recale aucun papier : elle n en a pas');
+
+    for (const j of [JE, JF, JM]) delete c.ouvertes[j];
+    M.poseColonie(null);
+    M._poseSourceEthUsd(async () => 0);
+    M._oublieLeCours();
   }
 
   console.log('\n-- stop en reel : vendre, puis balayer vers le compte --');
