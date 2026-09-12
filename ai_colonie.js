@@ -2994,6 +2994,33 @@ function revoitLesBornes() {
   const ab = partAbandons();
   /* Les seuils du jour, rapportes a ce qu'on achete — voir `seuilsAudit`. */
   const S = seuilsAudit();
+  /* ==========================================================================
+   * UNE REGLE QUI NE LAISSE PLUS RIEN PASSER N'EST PLUS UNE REGLE
+   *
+   * Releve du 12 septembre, et c'est une regression que ce fichier s'est faite
+   * a lui-meme. Les trois bornes apprises etaient TOUTES a leur butee la plus
+   * serree — age minimum 90 min (le maximum du code), profondeur exigee 60 fois
+   * la mise (le maximum), plafond de capitalisation 50 000 $ (le minimum) — et
+   * le plancher de piscine avait double dans la journee, de 5 229 $ a 13 079 $.
+   * Resultat : zero position ouverte, rien achete depuis vingt-huit tours.
+   *
+   * Le mecanisme est une roue a cliquet. Une regle qui ecarte des jetons qui
+   * montent peu est declaree protectrice, donc on la RESSERRE ; elle en ecarte
+   * alors davantage, dont encore moins montent, donc on la resserre encore. Le
+   * desserrage, lui, exige que la regle ecarte des jetons qui montent AUTANT
+   * que ce qu'on achete — ce qui devient impossible quand on n'achete plus
+   * rien, faute de reference. La boucle ne pouvait que se fermer.
+   *
+   * `revoitStrategie` avait deja sa soupape : au bout de quarante tours sans
+   * achat, le seuil d'entree descend d'un cran. Les bornes n'en avaient pas.
+   * Elles en ont une maintenant, et elle est symetrique : tant que la colonie
+   * est a l'arret, on ne resserre RIEN, et on desserre la borne dont la regle
+   * ecarte le plus — celle qui bloque reellement, pas celle qui se juge le
+   * mieux. Les butees du code restent, comme partout : une soupape ne les
+   * franchit pas.
+   * ======================================================================== */
+  const faim = (E.toursSansAchat || 0) >= SANS_ACHAT_DESSERRE && !E.positions.length;
+  const candidatsFaim = [];
   const cas = [
     { k: 'ageMin', motif: /too young/,
       quoi: 'minimum buy age', unite: ' min' },
@@ -3021,7 +3048,10 @@ function revoitLesBornes() {
      * Le cout du desserrage se lit sur TOUTES les positions, pas seulement
      * sur celles de cette regle : on le regarde donc avant tout le reste, et
      * il l'emporte. */
-    if (!b.sansAbandons && ab !== null && ab > ABANDON_TROP && peutSerrer) {
+    if (faim) {
+      /* A l'arret : on ne resserre rien, et on desserre la plus bloquante.
+         Le choix se fait plus bas, une fois toutes les lignes connues. */
+    } else if (!b.sansAbandons && ab !== null && ab > ABANDON_TROP && peutSerrer) {
       apres = serre();
       pourquoi = Math.round(ab * 100) + '% of opened positions could never be re-read to their '
         + 'deadline. That is what buying too young and too thin costs, and it is measured on '
@@ -3045,6 +3075,7 @@ function revoitLesBornes() {
         + ', and only ' + Math.round(ab * 100) + '% of opened positions were lost '
         + 'for want of a price: it costs more than it protects';
     }
+    if (faim) { candidatsFaim.push({ c, b, avant, l, peutDesserrer, desserre }); continue; }
     if (apres === avant || !pourquoi) continue;
     E.bornes[c.k] = apres;
     E.depuisBornes = 0;
@@ -3053,6 +3084,31 @@ function revoitLesBornes() {
       [{ regle: l ? l.cle : c.k, montes: l ? l.partMontes + '%' : null, n: l ? l.n : null,
          abandons: ab === null ? null : Math.round(ab * 100) + '%' }]);
     return true;
+  }
+  /* ---- LA SOUPAPE, QUAND PLUS RIEN N'ENTRE ----
+   * On desserre CELLE QUI BLOQUE LE PLUS, mesuree au nombre de jetons qu'elle
+   * ecarte — pas celle dont l'audit est le plus flatteur. Une seule par
+   * passage, comme partout ici : on bouge, puis on REGARDE ce que ca fait. */
+  if (faim && candidatsFaim.length) {
+    const eligibles = candidatsFaim.filter((x) => x.peutDesserrer);
+    if (eligibles.length) {
+      eligibles.sort((x, y) => ((y.l && y.l.n) || 0) - ((x.l && x.l.n) || 0));
+      const g = eligibles[0];
+      const apres = g.desserre();
+      if (apres !== g.avant) {
+        E.bornes[g.c.k] = apres;
+        E.depuisBornes = 0;
+        compte('borneDesserreeFaim');
+        journal('bornes', g.c.quoi + ' ' + g.avant + g.c.unite + ' → ' + apres + g.c.unite
+          + '. Nothing has been bought for ' + (E.toursSansAchat || 0) + ' turns and no position is open: '
+          + 'a rule that lets nothing through can no longer be judged on what it sets aside. This is the '
+          + 'one that sets aside the most (' + ((g.l && g.l.n) || 0) + ' tokens), so it is the one that gives. '
+          + 'Bounded to [' + g.b.min + ', ' + g.b.max + '] in the code, which no measurement moves.',
+          [{ regle: g.l ? g.l.cle : g.c.k, n: g.l ? g.l.n : null,
+             toursSansAchat: E.toursSansAchat || 0 }]);
+        return true;
+      }
+    }
   }
   return false;
 }
@@ -8265,7 +8321,7 @@ module.exports = {
   enMots, MOTS,
   regle, ouvre, ferme, etatNeuf, litTrait, besoinsDe, coutDe, gardesEnOrdre, piscineMorte,
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
-  seuilsAudit, refMontes, REF_PROTEGE, auditDe,
+  seuilsAudit, refMontes, REF_PROTEGE, auditDe, SANS_ACHAT_DESSERRE,
   deriveDuPrix, noteDerive, DERIVE_MAX,
   noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES,
   verdictsDesSorties, noteVerdictSortie,

@@ -6549,6 +6549,73 @@ function bornesQuiSeReglent() {
      'quatre montees sur quarante-quatre : la regle merite sa place, et elle en gagne. Sans ce '
      + 'sens-la, ce ne serait pas un reglage, ce serait une descente');
 
+  /* ======================================================================
+   * UNE REGLE QUI NE LAISSE PLUS RIEN PASSER N EST PLUS UNE REGLE
+   *
+   * Releve du 12 septembre : les TROIS bornes apprises etaient a leur butee la
+   * plus serree — age 90 min (le max du code), profondeur 60x la mise (le max),
+   * plafond 50 000 $ (le min) — le plancher de piscine avait double dans la
+   * journee (5 229 → 13 079 $), et la colonie n avait rien achete depuis 28
+   * tours, zero position ouverte.
+   *
+   * C est une roue a cliquet : une regle qui ecarte des jetons qui montent peu
+   * est declaree protectrice, donc on la RESSERRE ; elle en ecarte alors
+   * davantage, dont encore moins montent, donc on la resserre encore. Et le
+   * desserrage exige que la regle ecarte des jetons montant AUTANT que ce qu on
+   * achete — impossible quand on n achete plus rien.
+   * ==================================================================== */
+  console.log('\n-- a l arret, on ne resserre plus rien : la roue a cliquet est cassee --');
+  {
+    /* La regle protege (4 montees sur 44) : sans la soupape, elle resserre. */
+    let G = pose({ audit: PROTEGE, abandons: 1 });
+    G.toursSansAchat = 0;
+    const avantN = C.borne('ageMin');
+    C.revoitLesBornes();
+    ok(C.borne('ageMin') > avantN,
+       'en marche, une regle protectrice se resserre comme avant (' + avantN + ' → ' + C.borne('ageMin') + ')');
+
+    /* La MEME regle, mais la colonie est a l arret depuis quarante tours. */
+    G = pose({ audit: PROTEGE, abandons: 1 });
+    G.toursSansAchat = C.SANS_ACHAT_DESSERRE;
+    G.positions = [];
+    const avantF = C.borne('ageMin');
+    C.revoitLesBornes();
+    console.log('   a l arret : ' + avantF + ' → ' + C.borne('ageMin') + ' min · '
+                + ((G.journalStructure[0] || {}).txt || '').slice(0, 120));
+    ok(C.borne('ageMin') <= avantF,
+       'a l arret, elle ne se resserre PLUS (' + avantF + ' → ' + C.borne('ageMin') + ') : une regle '
+       + 'qui ne laisse rien passer ne peut plus etre jugee sur ce qu elle ecarte');
+    ok(C.borne('ageMin') < avantF,
+       'et elle DESSERRE : c est la soupape, symetrique de celle que le seuil d entree avait deja');
+    ok(/Nothing has been bought for/.test((G.journalStructure[0] || {}).txt || ''),
+       'le journal dit pourquoi, avec le nombre de tours : « '
+       + ((G.journalStructure[0] || {}).txt || '').slice(0, 90) + '… »');
+    ok((G.compteurs.borneDesserreeFaim || 0) > 0, 'et le desserrage de famine est compte a part');
+
+    /* ---- CELLE QUI BLOQUE LE PLUS, PAS CELLE QUI SE JUGE LE MIEUX ---- */
+    G = pose({ audit: {
+      'scout · too young: set aside until it has the age': { n: 20, s: -400, montes: 2, effondres: 12 },
+      'scout · pool below the buy floor': { n: 900, s: -1800, montes: 18, effondres: 600 } }, abandons: 1 });
+    G.toursSansAchat = C.SANS_ACHAT_DESSERRE;
+    G.positions = [];
+    const avA = C.borne('ageMin'), avL = C.borne('liqParMise');
+    C.revoitLesBornes();
+    console.log('   age ' + avA + ' → ' + C.borne('ageMin') + ' · piscine ' + avL + ' → ' + C.borne('liqParMise'));
+    ok(C.borne('liqParMise') < avL && C.borne('ageMin') === avA,
+       'c est la regle qui ecarte le PLUS de jetons (900 contre 20) qui donne, pas celle dont l audit '
+       + 'est le plus flatteur');
+
+    /* ---- ET LA BUTEE DU CODE TIENT MEME EN FAMINE ---- */
+    G = pose({ audit: PROTEGE, abandons: 1 });
+    G.toursSansAchat = C.SANS_ACHAT_DESSERRE;
+    G.positions = [];
+    G.bornes = { ageMin: C.BORNES.ageMin.min };
+    C.revoitLesBornes();
+    ok(C.borne('ageMin') === C.BORNES.ageMin.min,
+       'a la butee basse, la soupape ne va pas plus loin (' + C.borne('ageMin') + ' min) : une soupape '
+       + 'ne franchit pas les butees du code');
+  }
+
   console.log('\n-- ca ne descend pas jusqu a zero --');
   /* On laisse tourner cent fois avec le cas le plus permissif possible. */
   F = pose({ audit: COUTE, abandons: 0 });
