@@ -4098,6 +4098,40 @@ async function toutesLesSortiesSontSuivies() {
 }
 
 /* ==========================================================================
+ * LE PLANCHER DE PISCINE PROTEGE LA MISE DU MIROIR, PAS CELLE DU PAPIER
+ *
+ * 13 septembre : la caisse du papier a fait +175 % sans qu un dollar reel
+ * bouge, et le plancher qui la suivait etait monte a 13 025 $ — 96 tours
+ * sans achat. Les ordres reels font 15 a 26 $.
+ * ======================================================================== */
+async function plancherDePiscine() {
+  console.log('\n-- le plancher de piscine suit une mise de reference, pas la caisse du papier --');
+  remise(sains());
+  const E = C._etat();
+  delete process.env.MISE_REF_USD; delete process.env.LIQ_ACHAT_MIN;
+  E.bornes = { liqParMise: 60 };
+  E.tresor = 2754;
+  const haut = C.planchers().liq;
+  E.tresor = 50;
+  const bas = C.planchers().liq;
+  console.log('   caisse 2 754 $ → plancher ' + haut + ' · caisse 50 $ → ' + bas);
+  ok(haut === 6000 && bas === 6000, 'a 60 fois la mise de reference (100 $), 6 000 $ — que la caisse du papier soit a 2 754 ou a 50');
+  E.bornes = { liqParMise: 8 };
+  ok(C.planchers().liq === 1200, 'a 8 fois, 800 $ : le plancher fixe de 1 200 $ tient dessous');
+  process.env.MISE_REF_USD = '250';
+  ok(C.planchers().liq === 2000, 'et la mise de reference se regle (250 $ × 8 = 2 000)');
+  delete process.env.MISE_REF_USD;
+  /* Le carnet se decoupe par piscine d achat, pour juger ce plancher sur des trades. */
+  E.carnet = [];
+  const pose = (liq, r) => E.carnet.push({ sym: 'X', adr: '0x1', t0: 0, t: 1, tenue: 15, r, gain: r, par: 'closer', liq0: liq });
+  pose(3000, -10); pose(7000, 12); pose(9000, -4); pose(20000, 30); pose(50000, 5);
+  const cb = C.carnetBilan();
+  console.log('   ' + JSON.stringify(cb.parLiq));
+  ok(cb.parLiq.length === 4 && cb.parLiq[1].de === 6000 && cb.parLiq[1].a === 13000 && cb.parLiq[1].n === 2 && cb.parLiq[1].moyenne === 4,
+     'les piscines de 6 a 13k — celles que le plancher du 13/09 laisse entrer et que l ancien refusait — ont leur propre ligne (' + C.CARNET_LIQ.join('/') + ')');
+}
+
+/* ==========================================================================
  * L ALLER-RETOUR A UN PRIX, ET IL SE MESURE PAR TRADE
  *
  * Releve du 13 septembre, 123 fermetures reelles jointes a leur vente papier :
@@ -6135,6 +6169,11 @@ async function seReorganiseVraiment() {
  * ======================================================================== */
 async function neTradePlus() {
   const E = C._etat();
+  /* Les releves rejoues ici datent d un plafond de capitalisation a 100 000 $ :
+     le scenario le pose lui-meme au lieu de compter sur celui qu un scenario
+     precedent aurait laisse dans l environnement (seul, il tombait sur les
+     30 000 $ du code et tout etait refuse pour « above the buy ceiling »). */
+  process.env.MC_ACHAT_MAX = '100000';
   const remetSeuil = (v) => { E.seuil = v; E.depuisAjustement = 0; E.desserreDernier = 0;
                               E.toursSansAchat = 0; E.positions = []; };
 
@@ -6228,13 +6267,26 @@ async function neTradePlus() {
      + 'de 8 % a l entree et le rebougent a la sortie — la perte est mecanique, elle ne dit rien '
      + 'du jeton');
 
+  /* ---- IL MONTE AVEC LA MISE QU IL PROTEGE, PAS AVEC LA CAISSE DU PAPIER ----
+   * L essai exigeait « le plancher monte avec la caisse ». 13 septembre : la
+   * caisse du papier avait fait +175 % sans qu un dollar reel bouge, et le
+   * plancher etait monte a 13 025 $ — 96 tours sans achat. L intention est
+   * dans la phrase d origine : « plus la mise est grosse, plus il faut de
+   * profondeur ». La mise, c est celle du miroir (15 a 26 $ reels), portee par
+   * MISE_REF_USD — pas une caisse de papier. */
   E.tresor = 8000;
   const P2 = C.planchers();
   console.log('   caisse $8000 → plancher $' + Math.round(P2.liq));
-  ok(P2.liq > P.liq,
-     'et le plancher MONTE avec la caisse (' + Math.round(P.liq) + ' → ' + Math.round(P2.liq)
-     + ') : plus la mise est grosse, plus il faut de profondeur pour entrer sans deplacer le prix. '
-     + 'C est un chiffre qui se regle tout seul sur la seule chose qui change vraiment');
+  ok(P2.liq === P.liq,
+     'la caisse du papier ne bouge PLUS le plancher (' + Math.round(P.liq) + ' → ' + Math.round(P2.liq)
+     + ') : elle a fait +175 % sans qu un dollar reel bouge, et le plancher qui la suivait fermait le marche');
+  process.env.MISE_REF_USD = '320';
+  const PM = C.planchers();
+  delete process.env.MISE_REF_USD;
+  console.log('   mise de reference 320 $ → plancher $' + Math.round(PM.liq));
+  ok(PM.liq > P.liq,
+     'et il MONTE avec la mise qu il protege (' + Math.round(P.liq) + ' → ' + Math.round(PM.liq)
+     + ') : plus la mise est grosse, plus il faut de profondeur pour entrer sans deplacer le prix');
   E.tresor = 50;
   console.log('   caisse $50 → plancher $' + Math.round(C.planchers().liq));
   ok(C.planchers().liq >= 1000,
@@ -6274,7 +6326,7 @@ async function neTradePlus() {
                                        vol: { h1: 0, h6: 0 }, tx: {} }, t)) }));
   const passent = vus.filter((x) => !x.refus);
   console.log('   ' + passent.length + '/20 passent le Scout · ecartes : '
-    + JSON.stringify(vus.filter((x) => x.refus).map((x) => x.sym)));
+    + JSON.stringify(vus.filter((x) => x.refus).map((x) => x.sym + ' (' + String(x.refus).slice(0, 40) + ')')));
   ok(passent.length >= 8,
      passent.length + ' des 20 candidats du tour reel atteignent enfin les agents suivants. Ce '
      + 'jour-la il y en avait ZERO : les vingt etaient arretes par le Scout, et l Oracle, le '
@@ -6305,7 +6357,7 @@ async function neTradePlus() {
   const remis = juges.filter((x) => x.r && /picked up again/.test(x.r));
   const fermes = juges.filter((x) => x.r && !/picked up again/.test(x.r));
   console.log('   ' + ouverts.length + ' passent · ' + remis.length + ' reportes · '
-    + fermes.length + ' ecartes');
+    + fermes.length + ' ecartes : ' + JSON.stringify(fermes.slice(0, 6).map((x) => x.sym + ' (' + String(x.r).slice(0, 40) + ')')));
   ok(ouverts.length >= 5,
      ouverts.length + ' des 20 passent le Scout, la ou ZERO passait : les six capitalisations '
      + 'refusees ce jour-la allaient de 3 274 a 3 964 pour un plancher a 4 000 — il coupait a '
@@ -7102,6 +7154,7 @@ function bornesQuiSeReglent() {
   await poussesMesurees();
   await rejeuDeLaStrategie();
   await toutesLesSortiesSontSuivies();
+  await plancherDePiscine();
   await allerRetourMesure();
   await referenceNourrie();
   await plafondAppris();

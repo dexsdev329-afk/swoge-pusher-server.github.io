@@ -3268,8 +3268,28 @@ function planchers() {
      * l'environnement tant qu'elle n'a rien appris. Les butees, elles, sont
      * ecrites en dur juste au-dessus de cette fonction : aucun apprentissage
      * ne les franchit. */
+    /* ---- LA MISE QUE LE PLANCHER PROTEGE EST CELLE DU MIROIR, PAS CELLE DU PAPIER ----
+     *
+     * 13 septembre. « Quand la caisse grandit, le plancher monte tout seul »
+     * — et la caisse du PAPIER a fait +175 % depuis le 1er, sans qu'un dollar
+     * reel ait bouge : 2 754 $ de tresor fictif, 220 $ de mise fictive, 60
+     * fois ca, 13 025 $ de plancher. Les ordres reels du miroir font 15 a
+     * 26 $ (0,006 a 0,010 ETH sur 234 fermetures). Le glissement que ce
+     * plancher protege se calcule sur CES ordres-la : un plancher qui suit
+     * une caisse de papier ne protege de rien, il ferme le marche a mesure
+     * que le papier s'invente des gains — 96 tours sans achat ce matin.
+     *
+     * Le plancher suit donc une mise de reference en dollars, `MISE_REF_USD`
+     * (100 $ : quatre fois l'ordre reel d'aujourd'hui, la marge pour des
+     * portefeuilles plus gros), multipliee par la profondeur apprise. A 60
+     * fois, 6 000 $ ; a 8 fois, 800 $, et le plancher fixe de 1 200 $ tient
+     * dessous. Ce que les ombres disent des piscines, a trente minutes, sur
+     * 18 227 observations : moins de 1k -6,5 %, 1-5k -1,3 % (6 815), 5-25k
+     * +1,8 % (8 433), 25-100k +24,4 % (2 618). Six mille est le bas de la
+     * premiere tranche qui ne perd pas ; en dessous, c'est a l'audit de la
+     * regle de le dire, et au carnet, decoupe par piscine d'achat. */
     liq: Math.max(nEnv('LIQ_ACHAT_MIN', 1200),
-                  (E.tresor || 0) * MISE_PART_MAX * borne('liqParMise')),
+                  Math.max(0, nEnv('MISE_REF_USD', 100)) * borne('liqParMise')),
     /* ---- ET LA CAPITALISATION CESSE DE FAIRE LE TRAVAIL DE LA PISCINE ----
      *
      * « SWOGE AI est toujours bloque. »
@@ -4193,6 +4213,8 @@ const CARNET_TENUES = [0, 5, 10, 20, 40, 80];
    de 7 % on paie une piscine mince. C'est ici que se lit ce que le frottement
    fait a la marge — et ce que `ALLER_RETOUR_MAX` devrait valoir. */
 const CARNET_ALLER_RETOUR = [0, 2, 4, 7, 12];
+/* Par piscine a l'achat : 6 000 est le plancher du 13/09, 13 000 celui d'avant. */
+const CARNET_LIQ = [0, 6000, 13000, 25000, 100000];
 function parTranchesDe(l, champ, bornes) {
   const out = [];
   for (let i = 0; i < bornes.length; i++) {
@@ -4219,7 +4241,10 @@ function carnetBilan() {
   const parSortie = Object.keys(motifs).map((k) => Object.assign({ par: k }, bilanDe(motifs[k])))
     .sort((a, b) => b.n - a.n);
   return { n: l.length, tout: bilanDe(l), parTenue, parSortie,
-           parAllerRetour: parTranchesDe(l, 'allerRetour', CARNET_ALLER_RETOUR) };
+           parAllerRetour: parTranchesDe(l, 'allerRetour', CARNET_ALLER_RETOUR),
+           /* Par piscine d'achat : c'est ce qui jugera le plancher a 6 000 $
+              contre celui de 13 000 $, sur des trades faits et non sur des ombres. */
+           parLiq: parTranchesDe(l, 'liq0', CARNET_LIQ) };
 }
 
 /* ==========================================================================
@@ -8669,7 +8694,7 @@ module.exports = {
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
   seuilsAudit, refMontes, REF_PROTEGE, auditDe, SANS_ACHAT_DESSERRE, recadreLesBornes, buteesDuCode, BUTEES_AVANT,
   deriveDuPrix, noteDerive, DERIVE_MAX,
-  noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, ALLER_RETOUR_MAX, coutAllerRetour,
+  noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, CARNET_LIQ, ALLER_RETOUR_MAX, coutAllerRetour,
   TENUES, TENUE_EXPLORE, tenueAExplorer, cestUnTourDExploration,
   verdictsDesSorties, noteVerdictSortie,
   executionReelle, coutReel, entreeReelle, ecartEntree, ENTREE_RATIO_MIN, ENTREE_RATIO_MAX,
