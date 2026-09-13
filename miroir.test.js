@@ -679,6 +679,13 @@ console.log('\n-- avant d acheter, l aller-retour : une piscine qui ne laisse pa
   chaine.sortieVente = W('0.0039');              /* 80 % de la mise de 0,00485 : frais et impact, pas une porte fermee */
   await M.surAchat({ sym: 'PIEGE', adr: JR, pool: poolDe(JR), part: 0.1 });
   ok(Object.keys(cA.ouvertes).length === avant + 1, 'a 80 % de retour, l achat part (seuil ' + Math.round(M.RETOUR_MIN * 100) + ' %)');
+  /* Et la position garde ce que l aller-retour aurait coute : c est le frottement
+     que le papier ne voit pas, et il se relit par trade. */
+  const ar = (cA.ouvertes[JR] || {}).allerRetour;
+  console.log('   aller-retour devise : ' + ar + ' % de cout');
+  ok(typeof ar === 'number' && ar > 15 && ar < 25, 'la position note le cout devise de l aller-retour (' + ar + ' %, pour 80 % de retour)');
+  const e80 = await M.etat(J6, false);
+  ok(/a round trip quoted at [0-9.]+% cost/.test(e80.journal[0].txt), 'et le journal le dit : « ' + (e80.journal[0].txt.match(/a round trip quoted at [^ ]+ cost/) || [''])[0] + ' »');
   chaine.sortieVente = null;
   await M.surVente({ adr: JR });
   await M.arrete(J6, J6);

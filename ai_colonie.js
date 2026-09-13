@@ -4135,6 +4135,8 @@ function noteCarnet(p, prix, r, gainTotal, quand, comment, aberrant) {
     score: p.score === undefined ? null : p.score,
     traits: p.traits || null,
     liq0: Math.round(p.liq0 || 0), mcAchat: p.mcAchat || 0,
+    /* Le cout devise de l'aller-retour a l'achat : la marge se lit contre lui. */
+    allerRetour: (typeof p.allerRetour === 'number') ? p.allerRetour : null,
     tenueBase: p.tenueBase || null,
     /* Une position exploratoire se relit a part : sinon sa duree inhabituelle
        passe pour du bruit dans le carnet. */
@@ -4174,9 +4176,22 @@ function bilanDe(l) {
            })() };
 }
 const CARNET_TENUES = [0, 5, 10, 20, 40, 80];
+/* Par cout d'aller-retour devise a l'achat : sous 2 % on paie les frais, au-dela
+   de 7 % on paie une piscine mince. C'est ici que se lit ce que le frottement
+   fait a la marge — et ce que `ALLER_RETOUR_MAX` devrait valoir. */
+const CARNET_ALLER_RETOUR = [0, 2, 4, 7, 12];
+function parTranchesDe(l, champ, bornes) {
+  const out = [];
+  for (let i = 0; i < bornes.length; i++) {
+    const bas = bornes[i], haut = bornes[i + 1];
+    const b = bilanDe(l.filter((x) => typeof x[champ] === 'number' && x[champ] >= bas && (haut === undefined || x[champ] < haut)));
+    if (b) out.push(Object.assign({ de: bas, a: haut === undefined ? null : haut }, b));
+  }
+  return out;
+}
 function carnetBilan() {
   const l = (E.carnet || []).filter((x) => !x.aberrant && typeof x.r === 'number' && isFinite(x.r));
-  if (!l.length) return { n: 0, tout: null, parTenue: [], parSortie: [] };
+  if (!l.length) return { n: 0, tout: null, parTenue: [], parSortie: [], parAllerRetour: [] };
   /* Par duree : la question « ferme-t-on trop tot ? » se lit ici, et nulle
      part ailleurs, parce qu'elle demande la tenue de CHAQUE trade. */
   const parTenue = [];
@@ -4190,7 +4205,8 @@ function carnetBilan() {
   for (const x of l) (motifs[x.par] || (motifs[x.par] = [])).push(x);
   const parSortie = Object.keys(motifs).map((k) => Object.assign({ par: k }, bilanDe(motifs[k])))
     .sort((a, b) => b.n - a.n);
-  return { n: l.length, tout: bilanDe(l), parTenue, parSortie };
+  return { n: l.length, tout: bilanDe(l), parTenue, parSortie,
+           parAllerRetour: parTranchesDe(l, 'allerRetour', CARNET_ALLER_RETOUR) };
 }
 
 /* ==========================================================================
@@ -4296,7 +4312,9 @@ function executionReelle(x) {
                      cout: x.cout || null, rendu: x.rendu || null, pont: !!x.pont, t: Date.now(),
                      /* Le miroir l'envoyait depuis le debut, et on la jetait :
                         c'est pourtant LA donnee qui juge une sortie. */
-                     tenue: (typeof x.tenue === 'number' && isFinite(x.tenue)) ? Math.round(x.tenue / 60000) : null });
+                     tenue: (typeof x.tenue === 'number' && isFinite(x.tenue)) ? Math.round(x.tenue / 60000) : null,
+                     /* L'aller-retour que le miroir avait devise a l'achat, sur sa mise. */
+                     allerRetour: (typeof x.allerRetour === 'number' && isFinite(x.allerRetour)) ? x.allerRetour : null });
   if (R.lignes.length > REEL_MAX) R.lignes.length = REEL_MAX;
   compte('executionReelle');
   E.flux.unshift({ sym: x.sym || adr.slice(0, 8), tag: r >= 0 ? 'buy' : 'cut', cls: r >= 0 ? 'up' : 'dn', t: Date.now(),
@@ -4312,15 +4330,12 @@ function executionReelle(x) {
  *  sur l'argent qui a vraiment bouge. */
 function bilanReel() {
   const l = (E.reel && E.reel.lignes || []).filter((x) => typeof x.r === 'number' && isFinite(x.r));
-  if (!l.length) return { n: 0, tout: null, parTenue: [] };
-  const parTenue = [];
-  for (let i = 0; i < CARNET_TENUES.length; i++) {
-    const bas = CARNET_TENUES[i], haut = CARNET_TENUES[i + 1];
-    const t = l.filter((x) => typeof x.tenue === 'number' && x.tenue >= bas && (haut === undefined || x.tenue < haut));
-    const b = bilanDe(t);
-    if (b) parTenue.push(Object.assign({ de: bas, a: haut === undefined ? null : haut }, b));
-  }
-  return { n: l.length, tout: bilanDe(l), parTenue };
+  if (!l.length) return { n: 0, tout: null, parTenue: [], parAllerRetour: [] };
+  return { n: l.length, tout: bilanDe(l),
+           parTenue: parTranchesDe(l, 'tenue', CARNET_TENUES),
+           /* Le meme decoupage par frottement, sur l'argent reel : l'aller-retour
+              que le miroir a devise sur SA mise, pas sur la sonde. */
+           parAllerRetour: parTranchesDe(l, 'allerRetour', CARNET_ALLER_RETOUR) };
 }
 
 /** Ce que la page montre : le cout reel, mesure, et sur combien de fermetures. */
@@ -5470,6 +5485,30 @@ async function simuleTransfert(t) {
  * condamne personne : le transfert garde alors son verdict, et la raison
  * est ecrite. */
 const RETOUR_DELAI_MS = 15000;
+/* ==========================================================================
+ * L'ALLER-RETOUR A UN PRIX, ET C'EST LUI QUI MANGE LA MARGE
+ *
+ * Releve du 13 septembre, 123 fermetures reelles jointes a leur vente papier :
+ * le miroir vend 19 s (mediane) apres le papier, et ce qu'il recoit est a
+ * -0,4 % du devis. Ni le delai ni le glissement n'expliquent donc les -8
+ * points d'ecart papier → reel. Ce qui reste, c'est l'entree (corrigee le 12,
+ * par le prix paye) et le cout de l'aller-retour lui-meme : frais de la
+ * piscine sur les deux jambes, impact d'un ordre sur une piscine mince.
+ * Apres la correction de l'entree, l'ecart residuel est de -5 points sur les
+ * deux premiers trades — et le papier gagne +1 a +3 % par trade en moyenne.
+ * Un aller-retour devise a 10 % avant meme d'entrer ne peut pas etre
+ * rentabilise par une strategie qui rend +2 : le refuser ne coute rien qu'on
+ * ait jamais gagne. Le seuil de 60 % de retour (`RETOUR_MIN`) attrape les
+ * portes fermees, pas les portes cheres. Celui-ci est une REGLE, donc il a
+ * sa ligne d'audit : si ce qu'il ecarte monte plus que ce qu'on achete, il
+ * coute, et ca se verra. Chaque trade garde l'aller-retour devise a l'achat
+ * (papier et reel), decoupe dans les bilans : c'est la mesure qui fixera ce
+ * seuil, et pas ce commentaire. */
+const ALLER_RETOUR_MAX = Math.max(1, nEnv('ALLER_RETOUR_MAX', 10));
+/** Ce que l'aller-retour devise couterait, en points : 100 moins le retour. */
+function coutAllerRetour(rt) {
+  return (rt && typeof rt.pct === 'number' && isFinite(rt.pct)) ? Math.round((100 - rt.pct) * 10) / 10 : null;
+}
 async function allerRetourMiroir(t) {
   if (!miroir || typeof miroir.allerRetour !== 'function' || !t.pool || !t.addr) return null;
   let minuteur = null;
@@ -5491,6 +5530,10 @@ async function simuleVente(t) {
   if (rt.pct === undefined) return a;           /* pas de devis : le transfert decide seul */
   if (!a.teste) { a.teste = true; a.essais = 0; a.refus = 0; a.passe = true; a.raison = null; }
   if (rt.pct < rt.min) { a.passe = false; a.raison = 'selling straight back would return ' + rt.pct + '% of the stake'; }
+  else if (coutAllerRetour(rt) > ALLER_RETOUR_MAX) {
+    a.passe = false;
+    a.raison = 'a round trip would cost ' + coutAllerRetour(rt) + '% in fees and depth';
+  }
   return a;
 }
 
@@ -5502,6 +5545,10 @@ function vetoCobaye(t) {
   if (rt && rt.pct !== undefined && rt.pct < rt.min)
     return 'the pool lets you in, not out: selling straight back would return ' + rt.pct + '% of the stake ('
          + rt.min + '% needed, quoted on Uniswap ' + (rt.ver || '?') + ')';
+  if (rt && rt.pct !== undefined && coutAllerRetour(rt) > ALLER_RETOUR_MAX)
+    return 'round trip too costly: fees and depth would eat ' + coutAllerRetour(rt) + '% of a '
+         + (rt.sonde || '?') + ' ETH order (' + ALLER_RETOUR_MAX + '% at most, quoted on Uniswap ' + (rt.ver || '?')
+         + ') — more than the edge the paper has ever shown';
   return 'the exit is blocked: ' + e.refus + '/' + e.essais
        + ' holders cannot send the token to the ' + (e.via || 'pool');
 }
@@ -5699,6 +5746,9 @@ function ouvre(t) {
     logo: t.logo || (t.dex && t.dex.logo) || null,
     traits: t.an.traits, score: t.an.score, mc: t.mc, minutes: Math.round(t.minutes || 0),
     origine: t.origine || 'pools', tenueMin: tenue.min, traj: [],
+    /* L'aller-retour devise a l'achat (sonde du Cobaye), en points de cout :
+       c'est le frottement que le miroir paiera, et il se relit par trade. */
+    allerRetour: coutAllerRetour(t.epreuve && t.epreuve.retour),
   });
   E.ouvertures++;
   compte('closer');
@@ -8606,7 +8656,7 @@ module.exports = {
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
   seuilsAudit, refMontes, REF_PROTEGE, auditDe, SANS_ACHAT_DESSERRE, recadreLesBornes, buteesDuCode, BUTEES_AVANT,
   deriveDuPrix, noteDerive, DERIVE_MAX,
-  noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES,
+  noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, ALLER_RETOUR_MAX, coutAllerRetour,
   TENUES, TENUE_EXPLORE, tenueAExplorer, cestUnTourDExploration,
   verdictsDesSorties, noteVerdictSortie,
   executionReelle, coutReel, entreeReelle, ecartEntree, ENTREE_RATIO_MIN, ENTREE_RATIO_MAX,

@@ -4098,6 +4098,68 @@ async function toutesLesSortiesSontSuivies() {
 }
 
 /* ==========================================================================
+ * L ALLER-RETOUR A UN PRIX, ET IL SE MESURE PAR TRADE
+ *
+ * Releve du 13 septembre, 123 fermetures reelles jointes a leur vente papier :
+ * le miroir vend 19 s apres le papier, a -0,4 % du devis — et l ecart est de
+ * -8 points. Ce n est ni le delai ni le glissement : c est l entree (corrigee)
+ * et le cout de l aller-retour lui-meme. Il est desormais garde par trade,
+ * papier et reel, et un aller-retour devise au-dela de ALLER_RETOUR_MAX est
+ * refuse par le Cobaye — avec sa ligne d audit, comme toute regle.
+ * ======================================================================== */
+async function allerRetourMesure() {
+  console.log('\n-- l aller-retour devise est garde par trade, et refuse au-dela du plafond --');
+  remise(sains());
+  const E = C._etat();
+  const cob = ['0x' + '1'.repeat(40), '0x' + '2'.repeat(40)];
+  const jet = { addr: MONDE.jetons[1].addr, pool: MONDE.jetons[1].pool, chaine: { vu: true, cobayes: cob } };
+  let devis = { pct: 85, min: 60, ver: 'v4', pool: 'p', sonde: '0.01' };
+  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, allerRetour: async () => devis });
+  ok(C.ALLER_RETOUR_MAX === 10, 'le plafond du code est a 10 % de cout (' + C.ALLER_RETOUR_MAX + ')');
+  const cher = await C.simuleVente(jet);
+  const veto = C.vetoCobaye({ epreuve: cher }) || '';
+  console.log('   a 85 % de retour : ' + veto);
+  ok(cher.teste && !cher.passe && /round trip would cost 15%/.test(cher.raison), 'un retour de 85 % (15 % de cout) ne passe pas, alors qu il passait la porte des 60 %');
+  ok(/^round trip too costly: fees and depth would eat 15% of a 0\.01 ETH order \(10% at most, quoted on Uniswap v4\)/.test(veto), 'et le veto le dit, avec le chiffre, la sonde et le plafond');
+  ok(C._familleRefus(veto) === C._familleRefus(veto.replace('15%', '22%')), 'dans l audit, tous les couts tombent dans la meme ligne : « ' + C._familleRefus(veto) + ' »');
+  devis = { pct: 94, min: 60, ver: 'v4', pool: 'p', sonde: '0.01' };
+  const ok6 = await C.simuleVente(jet);
+  ok(ok6.teste && ok6.passe && !C.vetoCobaye({ epreuve: ok6 }), 'a 94 % (6 % de cout), elle passe');
+  ok(C.coutAllerRetour(ok6.retour) === 6, 'et le cout se lit sur l epreuve (' + C.coutAllerRetour(ok6.retour) + ' %)');
+
+  /* ---- LA POSITION ET LE CARNET LE GARDENT ---- */
+  remise(sains());
+  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, allerRetour: async () => ({ pct: 96.5, min: 60, ver: 'v4', pool: 'p', sonde: '0.01' }) });
+  await C.tour();
+  const G = C._etat();
+  ok(G.positions.length > 0 && G.positions.every((p) => p.allerRetour === 3.5), 'chaque position ouverte porte l aller-retour devise a l achat (3,5 %) : ' + JSON.stringify(G.positions.map((p) => p.allerRetour)));
+  const p0 = G.positions[0];
+  C._ferme(p0, p0.prix0 * 1.2, 20, { par: 'closer', raison: 'test' }, Date.now());
+  ok(G.carnet.length === 1 && G.carnet[0].allerRetour === 3.5, 'et la ligne du carnet aussi');
+  /* Le bilan par frottement : on le lit sur des lignes posees, pour voir les tranches. */
+  G.carnet = [];
+  const pose = (ar, r) => G.carnet.push({ sym: 'X', adr: '0x1', t0: 0, t: 1, tenue: 15, r, gain: r, par: 'closer', allerRetour: ar });
+  pose(1, 30); pose(1.5, -10); pose(3, 5); pose(5, -20); pose(9, -30); pose(20, -40); pose(null, 50);
+  const cb = C.carnetBilan();
+  console.log('   ' + JSON.stringify(cb.parAllerRetour));
+  ok(cb.parAllerRetour.length === 5 && cb.parAllerRetour[0].n === 2 && cb.parAllerRetour[0].moyenne === 10
+     && cb.parAllerRetour[4].de === 12 && cb.parAllerRetour[4].a === null && cb.parAllerRetour[4].n === 1,
+     'le carnet se decoupe par cout d aller-retour (' + C.CARNET_ALLER_RETOUR.join('/') + ') et une ligne sans devis n entre dans aucune tranche');
+  ok(cb.tout.n === 7, 'mais elle compte dans le total');
+
+  /* ---- ET LA LIGNE REELLE, SUR LA MISE DU MIROIR ---- */
+  ok(C.executionReelle({ adr: '0x' + 'ab'.repeat(20), sym: 'REEL', r: -6.2, cout: '0.01', rendu: '0.00938', tenue: 17 * 60000, allerRetour: 4.8 }),
+     'une fermeture reelle qui dit son aller-retour est prise');
+  ok(G.reel.lignes[0].allerRetour === 4.8, 'la ligne reelle le garde (' + G.reel.lignes[0].allerRetour + ' %)');
+  ok(C.executionReelle({ adr: '0x' + 'ac'.repeat(20), sym: 'SANS', r: 3, cout: '0.01', rendu: '0.0103', tenue: 12 * 60000 })
+     && G.reel.lignes[0].allerRetour === null, 'et sans devis, la ligne dit null, pas zero');
+  const br = C.bilanReel();
+  ok(br.parAllerRetour.length === 1 && br.parAllerRetour[0].de === 4 && br.parAllerRetour[0].n === 1 && br.parAllerRetour[0].moyenne === -6.2,
+     'le bilan reel se decoupe pareil : ' + JSON.stringify(br.parAllerRetour));
+  C.poseMiroir(null);
+}
+
+/* ==========================================================================
  * UN JETON REFUSE PUIS ACHETE NOURRIT LA REFERENCE
  *
  * Releve du 13 septembre : 549 achats, 115 observations dans « achete ou
@@ -7034,6 +7096,7 @@ function bornesQuiSeReglent() {
   await poussesMesurees();
   await rejeuDeLaStrategie();
   await toutesLesSortiesSontSuivies();
+  await allerRetourMesure();
   await referenceNourrie();
   await plafondAppris();
   await buteesRecadrees();

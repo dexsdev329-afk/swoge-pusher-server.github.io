@@ -1693,6 +1693,7 @@ function ditExecutionReelle(c, adr, o, r) {
       rendu: ethers.utils.formatUnits(rendu, 18),
       tenue: Date.now() - (o.t || Date.now()),
       pont: !!(o.monnaie && !o.monnaie.eth),
+      allerRetour: (typeof o.allerRetour === 'number') ? o.allerRetour : null,
     });
   } catch (e) { console.warn('[miroir] execution reelle :', e && e.message); }
 }
@@ -1845,9 +1846,15 @@ async function achetePosition(c, t) {
           + ') — the pool lets you in, not out. Nothing was sent', { adr });
     return false;
   }
+  /* Le cout devise de l'aller-retour, en points : frais des deux jambes et
+     impact de CETTE mise sur cette piscine. Il est garde avec la position et
+     renvoye au papier a la fermeture — c'est lui qui explique l'ecart. */
+  const allerRetour = mise.isZero() ? null
+    : Math.round((10000 - Number(retour.mul(10000).div(mise))) / 100 * 10) / 10;
   const r = await acheteRoute(c, route, adr, mise);
   c.ouvertes[adr] = {
     sym: t.sym || null, ver: route.ver,
+    allerRetour,
     pool: route.ver === 'v4' ? route.id : route.paire,
     cle: route.cle || null, zeroVersUn: route.ver === 'v4' ? route.zeroEstEth : null,
     enWeth: route.ver === 'v4' ? !!route.enWeth : null,
@@ -1884,6 +1891,7 @@ async function achetePosition(c, t) {
   note(c, (r.simule ? '[dry run] ' : '') + 'Bought ' + (t.sym || adr) + ' for '
         + ethers.utils.formatUnits(mise, 18) + ' ETH (RH) on Uniswap ' + route.ver + viaPont(route) + places
         + (r.coutReel ? ' · cost incl. gas ' + ethers.utils.formatUnits(r.coutReel, 18) + ' ETH' : '')
+        + (allerRetour !== null ? ' · a round trip quoted at ' + allerRetour + '% cost' : '')
         + (r.simule && EXECUTE && route.pont ? ' · bridged positions stay dry-run until MIROIR_PONTS_EXECUTE=1' : '')
         + ' · ' + dit,
         { adr, tx: r.tx || null });

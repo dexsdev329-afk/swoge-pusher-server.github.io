@@ -327,6 +327,19 @@ const poolDe = (j) => {
     await M.surAchat({ sym: 'MANUEL', adr: JM, pool: poolDe(JM), part: 0.1, manuel: true });
     eq(dits.length, 0, 'une position ouverte a la main ne recale aucun papier : elle n en a pas');
 
+    /* A la fermeture reelle, le miroir renvoie aussi l aller-retour qu il avait
+       devise a l achat : la ligne reelle du papier se relit alors par frottement. */
+    const ex = [];
+    M.poseColonie({ entreeReelle: () => true, executionReelle: (x) => { ex.push(x); return true; } });
+    const arJE = (c.ouvertes[JE] || {}).allerRetour;
+    await M.surVente({ adr: JE });
+    console.log('   aller-retour devise a l achat : ' + arJE + ' % · renvoye a la fermeture : ' + JSON.stringify(ex.map((x) => x.allerRetour)));
+    eq(ex.length, 1, 'la fermeture reelle est dite a la colonie');
+    ok(typeof arJE === 'number' && isFinite(arJE) && ex[0].allerRetour === arJE,
+       'avec l aller-retour devise a l achat (' + arJE + ' %), le meme chiffre que la position portait');
+    /* Cette vente n appartient pas au bilan compte plus bas : on retire sa ligne. */
+    c.fermees = (c.fermees || []).filter((f) => f.adr !== JE);
+
     for (const j of [JE, JF, JM]) delete c.ouvertes[j];
     M.poseColonie(null);
     M._poseSourceEthUsd(async () => 0);
