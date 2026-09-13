@@ -4207,15 +4207,15 @@ async function plafondAppris() {
   remise(sains());
   const E = C._etat();
   delete process.env.MC_ACHAT_MAX;   /* ici c'est le plafond du CODE qu'on juge, pas celui du monde d'essai */
-  ok(C.borne('mcMax') === 25000 && C.planchers().mcMax === 25000, 'au depart, 25 000 $ — la tranche 25-50k etait la pire de ce qu on achetait —, et c est lui que les planchers lisent');
+  ok(C.borne('mcMax') === 30000 && C.planchers().mcMax === 30000, 'au depart, 30 000 $ — la zone d achat demandee par le proprietaire le 13/09 —, et c est lui que les planchers lisent');
   E.depuisBornes = C.BORNES ? 24 : 24;
   E.audit = { 'scout · cap above the buy ceiling': { n: 20, s: 900, montes: 12, effondres: 2 } };   /* 60 % montes : la regle coute */
-  ok(C.revoitLesBornes() === true && C.borne('mcMax') === 50000, 'la regle coute (60 % montes) : le plafond MONTE a 50 000 $ (' + C.borne('mcMax') + ') — ce que le 12/09 refuse entre 25 et 50k est sous audit, et remonte seul s il le merite');
+  ok(C.revoitLesBornes() === true && C.borne('mcMax') === 40000, 'la regle coute (60 % montes) : le plafond MONTE a 40 000 $ (' + C.borne('mcMax') + '), par pas de 10 000 — ce qu il refuse au-dessus est sous audit, et il remonte seul s il le merite');
   E.depuisBornes = 24;
   E.audit = { 'scout · cap above the buy ceiling': { n: 20, s: -200, montes: 1, effondres: 9 } };    /* 5 % montes : elle protege */
-  ok(C.revoitLesBornes() === true && C.borne('mcMax') === 25000, 'la regle protege (5 % montes) : le plafond BAISSE a 25 000 $ (' + C.borne('mcMax') + ')');
+  ok(C.revoitLesBornes() === true && C.borne('mcMax') === 30000, 'la regle protege (5 % montes) : le plafond BAISSE a 30 000 $ (' + C.borne('mcMax') + ')');
   E.depuisBornes = 24;
-  ok(C.revoitLesBornes() === false && C.borne('mcMax') === 25000, 'et jamais sous 25 000 $ : la butee est dans le code');
+  ok(C.revoitLesBornes() === false && C.borne('mcMax') === 30000, 'et jamais sous 30 000 $ : la butee est dans le code');
   E.bornes.mcMax = 1000000; E.depuisBornes = 24;
   E.audit = { 'scout · cap above the buy ceiling': { n: 20, s: 900, montes: 12, effondres: 2 } };
   ok(C.revoitLesBornes() === false && C.borne('mcMax') === 1000000, 'ni au-dessus d un million');
@@ -4235,23 +4235,29 @@ async function buteesRecadrees() {
   remise(sains());
   delete process.env.MC_ACHAT_MAX;
   const code = C.buteesDuCode();
-  ok(code.mcMax === '25000/1000000' && Object.keys(code).length === 4, 'les butees du code se lisent (' + JSON.stringify(code) + ')');
+  ok(code.mcMax === '30000/1000000' && Object.keys(code).length === 4, 'les butees du code se lisent (' + JSON.stringify(code) + ')');
   ok(C.BUTEES_AVANT.mcMax === '50000/1000000' && C.BUTEES_AVANT.ageMin === code.ageMin, 'et celles d avant le 12/09 sont ecrites, pour lire un fichier qui ne les note pas');
   /* un etat d'avant : pas de `butees`, quatre bornes apprises, le plafond a l'ancienne butee */
   const ancien = Object.assign(C.etatNeuf(), { bornes: { ageMin: 90, liqParMise: 60, mcMax: 50000, pumpMax: 225 } });
   fs.writeFileSync(C.FICHIER, JSON.stringify(ancien));
   C.charge();
   const E = C._etat();
-  ok(E.bornes.mcMax === undefined && C.borne('mcMax') === 25000, 'le plafond appris a 50 000 $ sous l ancienne butee est rendu : 25 000 $, le defaut du code');
+  ok(E.bornes.mcMax === undefined && C.borne('mcMax') === 30000, 'le plafond appris a 50 000 $ sous l ancienne butee est rendu : 30 000 $, le defaut du code');
   ok(E.bornes.ageMin === 90 && E.bornes.liqParMise === 60 && E.bornes.pumpMax === 225, 'l age, la profondeur et la pompe gardent ce qu elles ont appris : leurs butees n ont pas bouge');
   ok(JSON.stringify(E.butees) === JSON.stringify(code), 'et le fichier note maintenant les butees sous lesquelles il apprend');
   const j = (E.journalStructure || []).find((x) => x.quoi === 'bornes');
-  ok(!!j && /mcMax \(50000\)/.test(j.txt) && /50000\/1000000/.test(j.txt) && /25000/.test(j.txt), 'le journal dit quoi, d ou, et ou ca repart : « ' + (j ? j.txt.slice(0, 90) : '') + ' »');
+  ok(!!j && /mcMax \(50000\)/.test(j.txt) && /50000\/1000000/.test(j.txt) && /30000/.test(j.txt), 'le journal dit quoi, d ou, et ou ca repart : « ' + (j ? j.txt.slice(0, 90) : '') + ' »');
   /* relu une seconde fois, avec ses butees a jour : rien ne bouge */
   E.bornes.mcMax = 50000;
   fs.writeFileSync(C.FICHIER, JSON.stringify(E));
   C.charge();
   ok(C._etat().bornes.mcMax === 50000, 'un plafond appris SOUS les nouvelles butees (remonte a 50 000 $ par l audit) est garde : c est une migration, pas une regle');
+  /* Et l etat du 12 septembre, ecrit sous 25000/1000000 avec son plafond a 25 000 : il repart a 30 000. */
+  const hier = Object.assign(C.etatNeuf(), { bornes: { mcMax: 25000, pumpMax: 250 }, butees: Object.assign({}, code, { mcMax: '25000/1000000' }) });
+  fs.writeFileSync(C.FICHIER, JSON.stringify(hier));
+  C.charge();
+  ok(C._etat().bornes.mcMax === undefined && C.borne('mcMax') === 30000 && C._etat().bornes.pumpMax === 250,
+     'l etat de la veille (butee basse a 25 000) rend son plafond et garde sa pompe');
   /* et un fichier qui note d'autres butees encore : seule la borne concernee bouge */
   const autre = Object.assign(C.etatNeuf(), { bornes: { ageMin: 30, mcMax: 75000 }, butees: Object.assign({}, code, { ageMin: '2/120' }) });
   fs.writeFileSync(C.FICHIER, JSON.stringify(autre));

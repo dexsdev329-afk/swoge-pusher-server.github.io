@@ -2920,8 +2920,15 @@ const BORNES = {
    * pouvait ni la descendre ni rien dire des 25-50k qu'elle laissait passer.
    * Le plafond part donc de 25 000 $, et ce qu'il refuse entre 25 et 50k
    * tombe sous l'audit de sa propre regle : si ces jetons montent plus que
-   * ce qu'on achete, la regle coute et le plafond remonte tout seul. */
-  mcMax:      { env: 'MC_ACHAT_MAX', defaut: 25000, min: 25000, max: 1000000, pas: 25000, sens: -1, sansAbandons: true },
+   * ce qu'on achete, la regle coute et le plafond remonte tout seul.
+   *
+   * ---- 30 000 $ LE 13 SEPTEMBRE, A LA DEMANDE DU PROPRIETAIRE ----
+   * « Elargir de 2k mc a 30k la zone de recherche d'achat. » Les tranches
+   * mesurees (10-25k contre 25-50k) ne disent rien de 25-30k en particulier ;
+   * c'est sa decision, datee. Et le pas passe de 25 000 a 10 000 $ : un
+   * plafond qui bouge par bonds de 25 000 ne peut visiter que 25k, 50k, 75k,
+   * et jamais 30 ou 40 — l'apprentissage se fait a pas fins ou pas du tout. */
+  mcMax:      { env: 'MC_ACHAT_MAX', defaut: 30000, min: 30000, max: 1000000, pas: 10000, sens: -1, sansAbandons: true },
   /* ---- LE PLAFOND DE POMPE, MESURE PENDANT DES JOURS SANS POUVOIR BOUGER ----
    *
    * Releve du 11 septembre, 5 925 tours. Ce que la colonie ACHETE monte dans
@@ -3300,8 +3307,14 @@ function planchers() {
      * caisse ca fait 1 093 $, et le plancher fixe de 1 500 $ tient au-dessus.
      * Les six refuses ci-dessus passent tous ; un jeton a 200 $ de
      * capitalisation, non. */
-    mc: Math.max(nEnv('MC_ACHAT_MIN', 1500),
-                 (E.tresor || 0) * MISE_PART_MAX * nEnv('MC_PAR_MISE', 10)),
+    /* ---- 2 000 $, ET PLUS UN PLANCHER QUI MONTE AVEC LA CAISSE ----
+     * 13 septembre, le proprietaire : « elargir de 2k mc a 30k la zone de
+     * recherche d'achat ». Le terme « dix fois la mise » suivait la caisse du
+     * PAPIER (2 754 $ → un plancher a 2 171 $), qui n'est pas de l'argent : la
+     * mise du miroir est de l'ordre de 45 $, dix fois ca fait 450 $, bien
+     * sous 2 000. Le plancher est donc le reglage, et rien d'autre ; la
+     * profondeur de piscine, elle, suit toujours la mise (`liqParMise`). */
+    mc: Math.max(0, nEnv('MC_ACHAT_MIN', 2000)),
     mcMax: borne('mcMax'),
     /* ---- QUINZE MINUTES, ET POURQUOI PAS DEUX HEURES ----
      *
