@@ -3279,17 +3279,21 @@ function planchers() {
      * une caisse de papier ne protege de rien, il ferme le marche a mesure
      * que le papier s'invente des gains — 96 tours sans achat ce matin.
      *
-     * Le plancher suit donc une mise de reference en dollars, `MISE_REF_USD`
-     * (100 $ : quatre fois l'ordre reel d'aujourd'hui, la marge pour des
-     * portefeuilles plus gros), multipliee par la profondeur apprise. A 60
-     * fois, 6 000 $ ; a 8 fois, 800 $, et le plancher fixe de 1 200 $ tient
-     * dessous. Ce que les ombres disent des piscines, a trente minutes, sur
-     * 18 227 observations : moins de 1k -6,5 %, 1-5k -1,3 % (6 815), 5-25k
-     * +1,8 % (8 433), 25-100k +24,4 % (2 618). Six mille est le bas de la
-     * premiere tranche qui ne perd pas ; en dessous, c'est a l'audit de la
-     * regle de le dire, et au carnet, decoupe par piscine d'achat. */
+     * Le plancher suit donc une mise de reference en dollars, `MISE_REF_USD`,
+     * multipliee par la profondeur apprise. Le proprietaire a tranche le 13
+     * septembre : « le ramener a ce que la mise reelle justifie ». La mise
+     * reelle, sur les 60 dernieres fermetures : 15 $ de mediane, 25 $ de
+     * moyenne, 39 $ au plus (0,0157 ETH). La reference est ce plus gros
+     * ordre, 40 $ : a 60 fois, 2 400 $ ; a 25 fois, 1 000 $, et le plancher
+     * fixe de 1 200 $ tient dessous. Ce que les ombres disent des piscines, a
+     * trente minutes, sur 18 227 observations : moins de 1k -6,5 %, 1-5k
+     * -1,3 % (6 815), 5-25k +1,8 % (8 433), 25-100k +24,4 % (2 618). La
+     * tranche 1-5k perd un peu en moyenne ; ce qui protege vraiment d'une
+     * piscine trop mince, c'est l'aller-retour devise avant chaque achat
+     * (`ALLER_RETOUR_MAX`), qui mesure le glissement reel de CET ordre sur
+     * CETTE piscine. Le carnet, decoupe par piscine d'achat, dira le reste. */
     liq: Math.max(nEnv('LIQ_ACHAT_MIN', 1200),
-                  Math.max(0, nEnv('MISE_REF_USD', 100)) * borne('liqParMise')),
+                  Math.max(0, nEnv('MISE_REF_USD', 40)) * borne('liqParMise')),
     /* ---- ET LA CAPITALISATION CESSE DE FAIRE LE TRAVAIL DE LA PISCINE ----
      *
      * « SWOGE AI est toujours bloque. »
@@ -4213,8 +4217,9 @@ const CARNET_TENUES = [0, 5, 10, 20, 40, 80];
    de 7 % on paie une piscine mince. C'est ici que se lit ce que le frottement
    fait a la marge — et ce que `ALLER_RETOUR_MAX` devrait valoir. */
 const CARNET_ALLER_RETOUR = [0, 2, 4, 7, 12];
-/* Par piscine a l'achat : 6 000 est le plancher du 13/09, 13 000 celui d'avant. */
-const CARNET_LIQ = [0, 6000, 13000, 25000, 100000];
+/* Par piscine a l'achat : 2 400 est le plancher du 13/09 (a 60 fois 40 $),
+   6 000 celui de la mi-journee, 13 000 celui d'avant. */
+const CARNET_LIQ = [0, 2400, 6000, 13000, 25000, 100000];
 function parTranchesDe(l, champ, bornes) {
   const out = [];
   for (let i = 0; i < bornes.length; i++) {

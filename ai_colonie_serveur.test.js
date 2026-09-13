@@ -4115,9 +4115,9 @@ async function plancherDePiscine() {
   E.tresor = 50;
   const bas = C.planchers().liq;
   console.log('   caisse 2 754 $ → plancher ' + haut + ' · caisse 50 $ → ' + bas);
-  ok(haut === 6000 && bas === 6000, 'a 60 fois la mise de reference (100 $), 6 000 $ — que la caisse du papier soit a 2 754 ou a 50');
+  ok(haut === 2400 && bas === 2400, 'a 60 fois la mise de reference (40 $, le plus gros ordre reel), 2 400 $ — que la caisse du papier soit a 2 754 ou a 50');
   E.bornes = { liqParMise: 8 };
-  ok(C.planchers().liq === 1200, 'a 8 fois, 800 $ : le plancher fixe de 1 200 $ tient dessous');
+  ok(C.planchers().liq === 1200, 'a 8 fois, 320 $ : le plancher fixe de 1 200 $ tient dessous');
   process.env.MISE_REF_USD = '250';
   ok(C.planchers().liq === 2000, 'et la mise de reference se regle (250 $ × 8 = 2 000)');
   delete process.env.MISE_REF_USD;
@@ -4127,8 +4127,9 @@ async function plancherDePiscine() {
   pose(3000, -10); pose(7000, 12); pose(9000, -4); pose(20000, 30); pose(50000, 5);
   const cb = C.carnetBilan();
   console.log('   ' + JSON.stringify(cb.parLiq));
-  ok(cb.parLiq.length === 4 && cb.parLiq[1].de === 6000 && cb.parLiq[1].a === 13000 && cb.parLiq[1].n === 2 && cb.parLiq[1].moyenne === 4,
-     'les piscines de 6 a 13k — celles que le plancher du 13/09 laisse entrer et que l ancien refusait — ont leur propre ligne (' + C.CARNET_LIQ.join('/') + ')');
+  const t6 = cb.parLiq.find((x) => x.de === 6000);
+  ok(cb.parLiq.length === 4 && !!t6 && t6.a === 13000 && t6.n === 2 && t6.moyenne === 4 && cb.parLiq[0].de === 2400 && cb.parLiq[0].n === 1,
+     'les piscines de 6 a 13k — que l ancien plancher refusait — ont leur propre ligne, et 2 400 ouvre le decoupage (' + C.CARNET_LIQ.join('/') + ')');
 }
 
 /* ==========================================================================
@@ -6262,10 +6263,13 @@ async function neTradePlus() {
      Math.round(P.liq) + ' $ de plancher laisse passer ' + passe.length + ' des ' + PISCINES.length
      + ' piscines refusees ce jour-la : a 5 000 il n en passait AUCUNE, et ces neuf-la sont le '
      + 'marche entier de la chaine');
-  ok(!passe.includes(519) && !passe.includes(1586),
-     'mais les deux plus petites restent dehors : 42 $ dans une piscine de 519 $ bougent le prix '
-     + 'de 8 % a l entree et le rebougent a la sortie — la perte est mecanique, elle ne dit rien '
-     + 'du jeton');
+  /* L essai gardait aussi 1 586 dehors, pour une mise de 42 $ « qui bouge le
+     prix de 8 % ». La mise reelle fait 40 $ au plus : dans 1 586 $ elle bouge
+     le prix de 2,5 %, et c est l aller-retour devise avant l achat qui mesure
+     ce glissement-la, ordre par ordre. Seule la flaque de 519 $ reste dehors. */
+  ok(!passe.includes(519) && passe.includes(1586),
+     'la flaque de 519 $ reste dehors (plancher fixe de 1 200 $) ; 1 586 passe, et c est l aller-retour '
+     + 'devise qui dira si 40 $ y glissent trop');
 
   /* ---- IL MONTE AVEC LA MISE QU IL PROTEGE, PAS AVEC LA CAISSE DU PAPIER ----
    * L essai exigeait « le plancher monte avec la caisse ». 13 septembre : la
