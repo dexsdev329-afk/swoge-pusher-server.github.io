@@ -585,6 +585,33 @@ console.log('\n-- le nombre de miroirs actifs est borne --');
   eq(e.places, 0, 'et l ecran voit qu il n y a plus de place');
 }
 
+console.log('\n-- le miroir prioritaire passe en premier, a l achat comme a la vente --');
+{
+  /* Releve du 13 septembre : le second miroir vend dans l impact du premier
+     (CALI +25,2 % puis +23,2 % ; PURGE -10,8 % puis -12,3 %). Le proprietaire
+     a dit lequel compte. Les trois miroirs du scenario precedent sont en
+     marche, dans l ordre de creation. */
+  const trois = M._actifs().map((x) => x.joueur);
+  eq(trois.length, 3, 'trois miroirs en marche, dans l ordre de creation');
+  const JP = '0x' + '5b'.repeat(20);
+  await M.surAchat({ sym: 'ORDRE', adr: JP, pool: poolDe(JP), part: 0.1 });
+  eq(JSON.stringify(M._dernierOrdre()), JSON.stringify(trois), 'sans priorite, l achat suit l ordre de creation');
+  /* Le troisieme cree devient prioritaire, par son adresse de PORTEFEUILLE miroir. */
+  M._posePriorite([M._fiche(trois[2]).adr.toUpperCase()]);
+  eq(M._rangDe(trois[2], M._fiche(trois[2])), 0, 'l adresse du portefeuille miroir suffit, quelle que soit la casse');
+  eq(M._rangDe(trois[0], M._fiche(trois[0])), 1, 'les autres viennent apres');
+  await M.surVente({ adr: JP });
+  eq(JSON.stringify(M._dernierOrdre()), JSON.stringify([trois[2], trois[0], trois[1]]),
+     'a la vente, le prioritaire vend en premier — avant que les autres aient bouge le prix — et les autres gardent leur ordre');
+  /* Par l adresse de JOUEUR, et deux prioritaires dans l ordre donne. */
+  M._posePriorite([trois[1], trois[2]]);
+  await M.surAchat({ sym: 'ORDRE', adr: JP, pool: poolDe(JP), part: 0.1 });
+  eq(JSON.stringify(M._dernierOrdre()), JSON.stringify([trois[1], trois[2], trois[0]]), 'a l achat aussi, dans l ordre de la liste');
+  await M.surVente({ adr: JP });
+  M._posePriorite([]);
+  eq(JSON.stringify(M._actifs().map((x) => x.joueur)), JSON.stringify(trois), 'sans liste, l ordre de creation revient');
+}
+
 console.log('\n-- la clef de piscine se VERIFIE, elle ne se suppose pas --');
 {
   const p = await M._clePiscine(JETON, POOL);

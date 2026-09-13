@@ -413,11 +413,40 @@ function sauve() {
   } catch (e) { console.warn('[miroir] sauvegarde impossible :', e.message); }
 }
 function fiche(joueur) { return R.comptes[norm(joueur)] || null; }
-function actifs() {
-  return Object.entries(R.comptes)
-    .filter(([, c]) => c && c.actif)
-    .map(([j, c]) => ({ joueur: j, c }));
+/* ==================== QUI PASSE EN PREMIER ====================
+ *
+ * Releve du 13 septembre. Les miroirs suivent la meme colonie et passent leurs
+ * ordres l'un apres l'autre, dans l'ordre de creation : le second vend dans
+ * l'impact du premier. CALI : +25,2 % pour le premier, +23,2 % pour le
+ * second ; PURGE : -10,8 % puis -12,3 %. Un a deux points par trade, toujours
+ * pour le meme. Le proprietaire a dit lequel compte : « le plus important,
+ * c'est celui-la ». `MIROIR_PRIORITE` — des adresses, de joueur ou de
+ * portefeuille miroir, separees par des virgules — passe en tete dans cet
+ * ordre, a l'achat comme a la vente ; les autres gardent l'ordre de creation.
+ * Rien d'autre ne change : chacun est toujours execute. */
+/* Le portefeuille nomme par le proprietaire le 13 septembre 2026 (« le plus
+   important, c'est celui-la ») : 617 transactions sur la chaine a cette date.
+   Une adresse publique, pas un secret ; l'environnement la remplace. */
+const PRIORITE_DEFAUT = '0xe12ED891AEAd2CaAf3414de51D0C11E4EEb21EE8';
+let PRIORITE = String(process.env.MIROIR_PRIORITE || PRIORITE_DEFAUT).toLowerCase().split(/[\s,;]+/).filter(Boolean);
+function posePriorite(liste) { PRIORITE = (liste || []).map((a) => String(a).toLowerCase()).filter(Boolean); }
+function rangDe(joueur, c) {
+  const j = String(joueur || '').toLowerCase(), a = String((c && c.adr) || '').toLowerCase();
+  const i = PRIORITE.findIndex((x) => x === j || (a && x === a));
+  return i < 0 ? PRIORITE.length : i;
 }
+/** Tous les comptes, les prioritaires d'abord, puis l'ordre de creation. */
+function comptesParPriorite() {
+  return Object.entries(R.comptes)
+    .map(([j, c], i) => ({ joueur: j, c, i }))
+    .sort((x, y) => (rangDe(x.joueur, x.c) - rangDe(y.joueur, y.c)) || (x.i - y.i))
+    .map(({ joueur, c }) => ({ joueur, c }));
+}
+function actifs() {
+  return comptesParPriorite().filter(({ c }) => c && c.actif);
+}
+/* L'ordre dans lequel les derniers ordres sont partis : ce que l'essai lit. */
+let dernierOrdre = [];
 /* ==================== CE QU UNE ERREUR VEUT DIRE ====================
  * ethers rend, pour un ordre refuse, l objet entier de la transaction : cinq
  * lignes de JSON dans le journal du joueur, et pas un mot sur ce qui s est
@@ -1779,7 +1808,9 @@ async function achatFile(t) {
   const liste = actifs();
   if (!liste.length) return 0;
   let n = 0;
-  for (const { c } of liste) {
+  dernierOrdre = [];
+  for (const { joueur, c } of liste) {
+    dernierOrdre.push(joueur);
     try { if (await achetePosition(c, t)) n++; }
     catch (e) { note(c, 'Could not follow the buy on ' + (t.sym || t.adr) + ': ' + resume(e), { adr: t.adr }); }
     await dors(PAUSE_MS);
@@ -1794,9 +1825,11 @@ async function venteFile(t) {
      depart (35 % au palier +15 %, …). Le miroir vend la meme part de la
      sienne, et garde le reste en course. Sans `part`, c'est la fermeture. */
   const part = Number(t.part);
-  for (const [, c] of Object.entries(R.comptes)) {
+  dernierOrdre = [];
+  for (const { joueur, c } of comptesParPriorite()) {
     const o = c.ouvertes && c.ouvertes[norm(t.adr)];
     if (!o) continue;
+    dernierOrdre.push(joueur);
     const reste = o.reste === undefined ? 1 : o.reste;
     const tranche = isFinite(part) && part > 0 && reste - Math.min(part, reste) > 0.001;
     try { if (tranche) await vendTranche(c, norm(t.adr), o, Math.min(part, reste), t.raison);
@@ -2086,6 +2119,6 @@ module.exports = {
   _deuxJambes: deuxJambes, _monnaieDe: monnaieDe, _pontPour: pontPour, _oublieLesPonts: oublieLesPonts, PONTS, PONT_LIQ_MIN, PONTS_EXECUTE,
   _meilleurePlace: meilleurePlace, _poseSourcePaires: poseSourcePaires, GAZ_PLACE, LIQ_PLACE_MIN,
   _etat: () => R, _pose: (x) => { R = x; }, _poseProvider: poseProvider,
-  _fiche: fiche, _actifs: actifs, _bilan: bilan, _reconcilie: reconcilie, _resume: resume,
+  _fiche: fiche, _actifs: actifs, _bilan: bilan, _posePriorite: posePriorite, _dernierOrdre: () => dernierOrdre.slice(), _rangDe: rangDe, _reconcilie: reconcilie, _resume: resume,
   _oublieReconciliation: () => derniereReconciliation.clear(),
 };
