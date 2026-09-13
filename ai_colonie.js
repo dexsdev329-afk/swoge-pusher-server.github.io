@@ -3153,7 +3153,20 @@ function revoitLesBornes() {
   if (faim && candidatsFaim.length) {
     const eligibles = candidatsFaim.filter((x) => x.peutDesserrer);
     if (eligibles.length) {
-      eligibles.sort((x, y) => ((y.l && y.l.n) || 0) - ((x.l && x.l.n) || 0));
+      /* ---- CELLE DONT LES REFUS MONTENT LE PLUS, PAS CELLE QUI REFUSE LE PLUS ----
+       * Nuit du 12 au 13 septembre, six heures : la soupape a desserre trois
+       * fois « pool below the buy floor », la regle qui ecarte le plus (5 071
+       * jetons) — et dont 2 % seulement montent, contre 35 % pour ce qu'on
+       * achete. L'audit l'a resserree a chaque fois vingt-quatre tours plus
+       * tard : trois allers-retours, rien de gagne, deux achats en six heures.
+       * Pendant ce temps « already up too far » ecartait 1 374 jetons qui
+       * montent a 34 %, autant que ce qu'on achete. Desserrer coute ce que
+       * les jetons relaches ne font pas : la regle la moins chere a ouvrir
+       * est celle dont les refus montent le plus. Sans audit (moins de
+       * AUDIT_MIN_OBS), on retombe sur celle qui ecarte le plus. */
+      const cout = (x) => (x.l && (x.l.n || 0) >= AUDIT_MIN_OBS && typeof x.l.partMontes === 'number')
+        ? x.l.partMontes : -1;
+      eligibles.sort((x, y) => (cout(y) - cout(x)) || (((y.l && y.l.n) || 0) - ((x.l && x.l.n) || 0)));
       const g = eligibles[0];
       const apres = g.desserre();
       if (apres !== g.avant) {
@@ -3162,8 +3175,12 @@ function revoitLesBornes() {
         compte('borneDesserreeFaim');
         journal('bornes', g.c.quoi + ' ' + g.avant + g.c.unite + ' → ' + apres + g.c.unite
           + '. Nothing has been bought for ' + (E.toursSansAchat || 0) + ' turns and no position is open: '
-          + 'a rule that lets nothing through can no longer be judged on what it sets aside. This is the '
-          + 'one that sets aside the most (' + ((g.l && g.l.n) || 0) + ' tokens), so it is the one that gives. '
+          + 'a rule that lets nothing through can no longer be judged on what it sets aside. '
+          + (cout(g) >= 0
+              ? 'Of what it sets aside, ' + g.l.partMontes + '% went up (' + g.l.n + ' tokens'
+                + (S.ref ? ', against ' + S.ref.partMontes + '% for what we buy' : '')
+                + '): the highest share of any rule, so loosening it costs the least. '
+              : 'This is the one that sets aside the most (' + ((g.l && g.l.n) || 0) + ' tokens), so it is the one that gives. ')
           + 'Bounded to [' + g.b.min + ', ' + g.b.max + '] in the code, which no measurement moves.',
           [{ regle: g.l ? g.l.cle : g.c.k, n: g.l ? g.l.n : null,
              toursSansAchat: E.toursSansAchat || 0 }]);
@@ -4655,7 +4672,18 @@ const OMBRE_TENUE_MIN = 20;     /* la meme echeance qu'une position, pour compar
 function noteOmbre(t, an, refus, quiRefuse) {
   if (!Array.isArray(E.ombres)) E.ombres = [];
   if (!(t.prix > 0) || !an) return;
-  if (E.ombres.some((o) => o.adr === t.addr)) return;   /* une seule ombre a la fois par jeton */
+  /* ---- UNE OMBRE PAR JETON ET PAR VERDICT, PAS UNE PAR JETON ----
+   * Releve du 13 septembre : 549 achats depuis le 1er, et la ligne de
+   * reference « achete ou retenu » — celle contre laquelle TOUTE regle se
+   * juge — n'avait que 115 observations, et n'avait pas bouge en treize
+   * heures malgre douze achats. Cause : « une seule ombre a la fois par
+   * jeton ». Presque tout ce qu'on achete a d'abord ete vu trop jeune et
+   * refuse ; l'ombre de ce refus, gardee trois heures, bloquait celle de
+   * l'achat. La reference ne recevait que les jetons achetes au premier
+   * regard — un achat sur cinq, et pas les memes. Un refus et un achat sont
+   * deux verdicts, juges chacun depuis son propre prix : deux ombres. Le
+   * meme verdict deux fois, toujours une seule. */
+  if (E.ombres.some((o) => o.adr === t.addr && !o.refus === !refus)) return;
   const now = Date.now();
   E.ombres.push({
     adr: t.addr, sym: t.sym, prix0: t.prix, t: now,

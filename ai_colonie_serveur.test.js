@@ -4098,6 +4098,46 @@ async function toutesLesSortiesSontSuivies() {
 }
 
 /* ==========================================================================
+ * UN JETON REFUSE PUIS ACHETE NOURRIT LA REFERENCE
+ *
+ * Releve du 13 septembre : 549 achats, 115 observations dans « achete ou
+ * retenu », et pas une de plus en treize heures malgre douze achats. L ombre
+ * du premier refus (trop jeune, gardee trois heures) bloquait celle de
+ * l achat. Toute regle se juge contre cette reference : elle ne portait
+ * qu un achat sur cinq, et pas les memes.
+ * ======================================================================== */
+async function referenceNourrie() {
+  console.log('\n-- un jeton refuse puis achete laisse DEUX ombres : celle du refus et celle de l achat --');
+  remise([jeton(0, { minutes: 5 })]);
+  const E = C._etat();
+  const t0 = MONDE.jetons[0];
+  await C.tour();
+  const o1 = E.ombres.filter((o) => o.adr === t0.addr);
+  console.log('   a 5 min : ' + JSON.stringify(o1.map((o) => o.refus)));
+  ok(o1.length === 1 && /too young/.test(o1[0].refus || ''), 'vu a 5 min : refuse trop jeune, une ombre porte ce refus');
+  ok(E.positions.length === 0, 'et rien n est achete');
+  t0.minutes = 40;
+  E.connus[t0.addr].dernier = 0;      /* « looked at again after N min » : le temps a passe */
+  await C.tour();
+  ok(E.positions.length === 1, 'revu a 40 min : achete');
+  const o2 = E.ombres.filter((o) => o.adr === t0.addr);
+  console.log('   a 40 min : ' + JSON.stringify(o2.map((o) => o.refus)));
+  ok(o2.length === 2 && o2.some((o) => !o.refus) && o2.some((o) => /too young/.test(o.refus || '')),
+     'et une SECONDE ombre, sans refus : celle de l achat. Jusqu ici la premiere bloquait la seconde, '
+     + 'et 549 achats n avaient donne que 115 observations a la reference');
+  for (const o of o2) o.t = Date.now() - C.HORIZON_REF * 60000;
+  const n = C.regleLesOmbres({ [t0.addr]: { prix: 1.3, liq: 50000 } });
+  const ref = E.audit['achete ou retenu'];
+  const jeune = Object.keys(E.audit).find((k) => /too young/.test(k));
+  console.log('   jugees ' + n + ' · reference ' + JSON.stringify(ref) + ' · ' + jeune + ' ' + JSON.stringify(E.audit[jeune]));
+  ok(n === 2 && !!ref && ref.n === 1 && ref.montes === 1, 'a l echeance, la reference recoit son observation (+30 %)');
+  ok(!!jeune && E.audit[jeune].n === 1, 'et le refus d age recoit la sienne : deux verdicts, juges chacun depuis son propre prix');
+  await C.tour();
+  ok(E.ombres.filter((o) => o.adr === t0.addr && !o.refus).length === 1,
+     'une seule ombre d achat par jeton : le tour suivant n en ajoute pas');
+}
+
+/* ==========================================================================
  * LE PLAFOND DE CAPITALISATION EST APPRIS
  * ======================================================================== */
 async function plafondAppris() {
@@ -6831,7 +6871,13 @@ function bornesQuiSeReglent() {
        + ((G.journalStructure[0] || {}).txt || '').slice(0, 90) + '… »');
     ok((G.compteurs.borneDesserreeFaim || 0) > 0, 'et le desserrage de famine est compte a part');
 
-    /* ---- CELLE QUI BLOQUE LE PLUS, PAS CELLE QUI SE JUGE LE MIEUX ---- */
+    /* ---- CELLE DONT LES REFUS MONTENT LE PLUS, PAS CELLE QUI REFUSE LE PLUS ----
+     * L essai exigeait l inverse : « celle qui ecarte le plus donne ». Nuit du
+     * 12 au 13 septembre : la soupape a desserre trois fois la regle de
+     * piscine (5 071 refus, 2 % de montees), et l audit l a resserree a chaque
+     * fois. Trois allers-retours, deux achats en six heures. L intention de
+     * la soupape est de laisser passer quelque chose au moindre cout — et le
+     * cout d un desserrage, c est ce que les jetons relaches ne font pas. */
     G = pose({ audit: {
       'scout · too young: set aside until it has the age': { n: 20, s: -400, montes: 2, effondres: 12 },
       'scout · pool below the buy floor': { n: 900, s: -1800, montes: 18, effondres: 600 } }, abandons: 1 });
@@ -6839,10 +6885,23 @@ function bornesQuiSeReglent() {
     G.positions = [];
     const avA = C.borne('ageMin'), avL = C.borne('liqParMise');
     C.revoitLesBornes();
-    console.log('   age ' + avA + ' → ' + C.borne('ageMin') + ' · piscine ' + avL + ' → ' + C.borne('liqParMise'));
-    ok(C.borne('liqParMise') < avL && C.borne('ageMin') === avA,
-       'c est la regle qui ecarte le PLUS de jetons (900 contre 20) qui donne, pas celle dont l audit '
-       + 'est le plus flatteur');
+    console.log('   age ' + avA + ' → ' + C.borne('ageMin') + ' · piscine ' + avL + ' → ' + C.borne('liqParMise')
+                + ' · ' + ((G.journalStructure[0] || {}).txt || '').slice(0, 160));
+    ok(C.borne('ageMin') < avA && C.borne('liqParMise') === avL,
+       'c est la regle dont les refus MONTENT le plus (10 % contre 2 %) qui donne, pas celle qui ecarte '
+       + 'le plus (900 contre 20) : la desserrer coute le moins');
+    ok(/10% went up/.test((G.journalStructure[0] || {}).txt || ''),
+       'et le journal donne la part de montees qui l a choisie');
+    /* Sans audit jugeable (moins de AUDIT_MIN_OBS), on retombe sur celle qui ecarte le plus. */
+    G = pose({ audit: {
+      'scout · too young: set aside until it has the age': { n: 5, s: -100, montes: 3, effondres: 1 },
+      'scout · pool below the buy floor': { n: 9, s: -18, montes: 0, effondres: 6 } }, abandons: 1 });
+    G.toursSansAchat = C.SANS_ACHAT_DESSERRE;
+    G.positions = [];
+    const avA2 = C.borne('ageMin'), avL2 = C.borne('liqParMise');
+    C.revoitLesBornes();
+    ok(C.borne('liqParMise') < avL2 && C.borne('ageMin') === avA2,
+       'sans audit jugeable, celle qui ecarte le plus (9 contre 5) donne, comme avant');
 
     /* ---- ET LA BUTEE DU CODE TIENT MEME EN FAMINE ---- */
     G = pose({ audit: PROTEGE, abandons: 1 });
@@ -6975,6 +7034,7 @@ function bornesQuiSeReglent() {
   await poussesMesurees();
   await rejeuDeLaStrategie();
   await toutesLesSortiesSontSuivies();
+  await referenceNourrie();
   await plafondAppris();
   await buteesRecadrees();
   await laMainDuProprietaire();
