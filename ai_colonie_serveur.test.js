@@ -4101,6 +4101,71 @@ async function toutesLesSortiesSontSuivies() {
 }
 
 /* ==========================================================================
+ * L AGE SE JUGE A SA MARGE, PAS AU PREMIER REGARD
+ *
+ * 16 septembre : « too young », 9 700 observations, 8 % de montees, borne a
+ * 90 min — et la courbe du trait age donne 30 min-2 h comme MEILLEURE tranche
+ * (+17,3 % sur 780). La ligne ne mesurait que le premier regard, a 3 min.
+ * ======================================================================== */
+async function ageJugeASaMarge() {
+  console.log('\n-- le refus d age se range par tranche, et la borne se juge sur la tranche sous elle --');
+  remise(sains());
+  const E = C._etat();
+  ok(C._familleRefus('too young (3 min): picked up again at 90 min, once we know whether the pool holds') === 'too young: under 10 min'
+     && C._familleRefus('too young (45 min): picked up again at 90 min') === 'too young: 30-60 min'
+     && C._familleRefus('too young (75 min): picked up again at 90 min') === 'too young: 60-90 min'
+     && C._familleRefus('trop jeune (12 min)') === 'too young: 10-30 min',
+     'le meme refus tombe dans quatre lignes selon l age au moment du refus');
+  ok(C._familleRefus('too young: set aside until it has the age') === 'too young: set aside until it has the age',
+     'et l ancienne ligne, sans minutes, garde son nom : ses 9 700 observations restent lisibles, elles ne decident plus');
+  ok(C.bandeSousLaBorne(90) === 'too young: 60-90 min' && C.bandeSousLaBorne(30) === 'too young: 10-30 min'
+     && C.bandeSousLaBorne(15) === 'too young: 10-30 min' && C.bandeSousLaBorne(8) === 'too young: under 10 min',
+     'la tranche sous la borne : a 90 min c est 60-90, a 30 c est 10-30, a 8 c est moins de 10');
+
+  /* ---- UNE OMBRE PAR TRANCHE ---- */
+  const t0 = MONDE.jetons[0];
+  E.bornes = { ageMin: 90 };
+  t0.minutes = 3;
+  await C.tour();
+  E.connus[t0.addr].dernier = 0;
+  t0.minutes = 45;
+  await C.tour();
+  E.connus[t0.addr].dernier = 0;
+  t0.minutes = 50;
+  await C.tour();
+  const o = E.ombres.filter((x) => x.adr === t0.addr).map((x) => x.cleOmbre);
+  console.log('   ombres du jeton : ' + JSON.stringify(o));
+  ok(o.length === 2 && o.includes('too young: under 10 min') && o.includes('too young: 30-60 min'),
+     'refuse a 3 min puis a 45 min, il laisse DEUX ombres, une par tranche — et pas une troisieme a 50 min, meme tranche');
+  for (const x of E.ombres) x.t = Date.now() - C.HORIZON_REF * 60000;
+  C.regleLesOmbres({ [t0.addr]: { prix: 1.3, liq: 50000 } });
+  ok(!!E.audit['scout · too young: under 10 min'] && !!E.audit['scout · too young: 30-60 min'],
+     'a l echeance, chaque tranche recoit son observation : ' + JSON.stringify(Object.keys(E.audit)));
+
+  /* ---- LA BORNE NE LIT QUE SA MARGE ---- */
+  const pose = (audit) => { C._pose(C.etatNeuf()); const F = C._etat(); F.bornes = { ageMin: 90 }; F.ouvertures = 40; F.depuisBornes = 999; F.audit = audit; return F; };
+  /* Le premier regard est affreux (2 % de montees), la marge coute (60 %) : c est la marge qui decide. */
+  pose({ 'scout · too young: under 10 min': { n: 9000, s: -300000, montes: 180, effondres: 6000 },
+         'scout · too young: 60-90 min': { n: 20, s: 900, montes: 12, effondres: 2 },
+         'achete ou retenu': { n: 100, s: 2000, montes: 30, effondres: 20 } });
+  C.revoitLesBornes();
+  ok(C.borne('ageMin') < 90, 'la borne a 90 lit la tranche 60-90 (60 % de montees) et DESSERRE (' + C.borne('ageMin') + ') — les 9 000 refus a 3 min, qui la faisaient monter, ne la gouvernent plus');
+  /* Sans ligne a la marge, elle ne bouge pas : on ne juge pas sur ce qu on n a pas mesure. */
+  pose({ 'scout · too young: under 10 min': { n: 9000, s: -300000, montes: 180, effondres: 6000 },
+         'achete ou retenu': { n: 100, s: 2000, montes: 30, effondres: 20 } });
+  C.revoitLesBornes();
+  ok(C.borne('ageMin') === 90, 'sans observation dans la tranche 60-90, elle ne bouge pas : l ancien cliquet est casse');
+  /* Et a 30 min, c est la tranche 10-30 qui compte. */
+  const F3 = pose({ 'scout · too young: 60-90 min': { n: 20, s: 900, montes: 12, effondres: 2 },
+                    'scout · too young: 10-30 min': { n: 20, s: -400, montes: 1, effondres: 12 },
+                    'achete ou retenu': { n: 100, s: 2000, montes: 30, effondres: 20 } });
+  F3.bornes = { ageMin: 30 };
+  C.revoitLesBornes();
+  ok(C.borne('ageMin') > 30, 'a 30 min, la tranche 10-30 (5 % de montees) protege : elle RESSERRE (' + C.borne('ageMin') + '), sans regarder la 60-90');
+  ok(Array.isArray(C.vue().carnet.lignes), 'et la vue expose les lignes du carnet, pour que chaque moyenne se verifie');
+}
+
+/* ==========================================================================
  * LE PLANCHER DE PISCINE PROTEGE LA MISE DU MIROIR, PAS CELLE DU PAPIER
  *
  * 13 septembre : la caisse du papier a fait +175 % sans qu un dollar reel
@@ -6850,11 +6915,17 @@ function bornesQuiSeReglent() {
   };
   /* Une regle que l'audit condamne : beaucoup d'observations, beaucoup de
      montees. C'est le cas ou le desserrage est justifie. */
-  const COUTE = { 'scout · too young: set aside until it has the age':
-                  { n: 44, s: 3946, montes: 23, effondres: 5 } };
+  /* Depuis le 16/09 le refus d age est range par tranche, et la borne se juge
+     sur la tranche juste sous elle : les fixtures posent la meme ligne sous
+     toutes les tranches, pour que le verdict ne depende pas d ou est la borne. */
+  const ageLignes = (l) => {
+    const o = {};
+    for (const b of [0, 10, 30, 60, 90]) o['scout · ' + C.bandeAge(b)] = Object.assign({}, l);
+    return o;
+  };
+  const COUTE = ageLignes({ n: 44, s: 3946, montes: 23, effondres: 5 });
   /* Et la meme, quand elle protege : presque rien ne monte. */
-  const PROTEGE = { 'scout · too young: set aside until it has the age':
-                    { n: 44, s: -900, montes: 4, effondres: 26 } };
+  const PROTEGE = ageLignes({ n: 44, s: -900, montes: 4, effondres: 26 });
 
   /* ======================================================================
    * UNE REGLE SE JUGE CONTRE CE QU ON ACHETE, PAS CONTRE UN CHIFFRE ROND
@@ -7029,9 +7100,8 @@ function bornesQuiSeReglent() {
      * fois. Trois allers-retours, deux achats en six heures. L intention de
      * la soupape est de laisser passer quelque chose au moindre cout — et le
      * cout d un desserrage, c est ce que les jetons relaches ne font pas. */
-    G = pose({ audit: {
-      'scout · too young: set aside until it has the age': { n: 20, s: -400, montes: 2, effondres: 12 },
-      'scout · pool below the buy floor': { n: 900, s: -1800, montes: 18, effondres: 600 } }, abandons: 1 });
+    G = pose({ audit: Object.assign(ageLignes({ n: 20, s: -400, montes: 2, effondres: 12 }), {
+      'scout · pool below the buy floor': { n: 900, s: -1800, montes: 18, effondres: 600 } }), abandons: 1 });
     G.toursSansAchat = C.SANS_ACHAT_DESSERRE;
     G.positions = [];
     const avA = C.borne('ageMin'), avL = C.borne('liqParMise');
@@ -7044,9 +7114,8 @@ function bornesQuiSeReglent() {
     ok(/10% went up/.test((G.journalStructure[0] || {}).txt || ''),
        'et le journal donne la part de montees qui l a choisie');
     /* Sans audit jugeable (moins de AUDIT_MIN_OBS), on retombe sur celle qui ecarte le plus. */
-    G = pose({ audit: {
-      'scout · too young: set aside until it has the age': { n: 5, s: -100, montes: 3, effondres: 1 },
-      'scout · pool below the buy floor': { n: 9, s: -18, montes: 0, effondres: 6 } }, abandons: 1 });
+    G = pose({ audit: Object.assign(ageLignes({ n: 5, s: -100, montes: 3, effondres: 1 }), {
+      'scout · pool below the buy floor': { n: 9, s: -18, montes: 0, effondres: 6 } }), abandons: 1 });
     G.toursSansAchat = C.SANS_ACHAT_DESSERRE;
     G.positions = [];
     const avA2 = C.borne('ageMin'), avL2 = C.borne('liqParMise');
@@ -7185,6 +7254,7 @@ function bornesQuiSeReglent() {
   await poussesMesurees();
   await rejeuDeLaStrategie();
   await toutesLesSortiesSontSuivies();
+  await ageJugeASaMarge();
   await plancherDePiscine();
   await allerRetourMesure();
   await referenceNourrie();

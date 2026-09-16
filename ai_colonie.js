@@ -3091,6 +3091,9 @@ function revoitLesBornes() {
   const candidatsFaim = [];
   const cas = [
     { k: 'ageMin', motif: /too young/,
+      /* Pas la ligne la plus grosse (le premier regard, a 3 min) : celle de
+         la tranche juste sous la borne — ce qu'elle refuse a sa marge. */
+      ligne: () => auditDesRefus().find((x) => x.cle === 'scout · ' + bandeSousLaBorne(borne('ageMin'))) || null,
       quoi: 'minimum buy age', unite: ' min' },
     { k: 'liqParMise', motif: /pool below the buy floor|nothing to sell into/,
       quoi: 'pool depth required per stake', unite: '× the stake' },
@@ -3101,7 +3104,7 @@ function revoitLesBornes() {
   ];
   for (const c of cas) {
     const b = BORNES[c.k], avant = borne(c.k);
-    const l = auditDe(c.motif);
+    const l = c.ligne ? c.ligne() : auditDe(c.motif);
     let apres = avant, pourquoi = null;
     /* Le sens d'une borne : resserrer monte l'age et la profondeur, mais
        BAISSE un plafond. Les deux branches ci-dessous parlent en
@@ -4758,13 +4761,17 @@ function noteOmbre(t, an, refus, quiRefuse) {
    * regard — un achat sur cinq, et pas les memes. Un refus et un achat sont
    * deux verdicts, juges chacun depuis son propre prix : deux ombres. Le
    * meme verdict deux fois, toujours une seule. */
-  if (E.ombres.some((o) => o.adr === t.addr && !o.refus === !refus)) return;
+  /* Et pour l'age, une par TRANCHE : le refus a 3 min et le refus a 45 min
+     ne mesurent pas la meme chose (voir `bandeAge`). */
+  const cleOmbre = !refus ? 'achat' : (REFUS_AGE.test(String(refus)) ? familleRefus(refus) : 'refus');
+  if (E.ombres.some((o) => o.adr === t.addr
+        && (o.cleOmbre || (o.refus ? 'refus' : 'achat')) === cleOmbre)) return;
   const now = Date.now();
   E.ombres.push({
     adr: t.addr, sym: t.sym, prix0: t.prix, t: now,
     echeance: now + OMBRE_TENUE_MIN * 60000,
     traits: an.traits, score: an.score,
-    refus: refus || null, quiRefuse: quiRefuse || null,
+    refus: refus || null, quiRefuse: quiRefuse || null, cleOmbre,
     /* Hors apprentissage : l'audit oui, les courbes et les agents non. Voir
        `OBS_PAR_TOUR`. */
     hors: !!t.observation,
@@ -4867,8 +4874,42 @@ const FAMILLES = [
   [/honeypot/, 'honeypot'],
   [/sell tax|buy tax|taxe vente|taxe achat/, 'tax too high'],
 ];
+/* ==========================================================================
+ * L'AGE SE JUGE A SA MARGE, PAS AU PREMIER REGARD
+ *
+ * Releve du 16 septembre. La ligne « too young » avait 9 700 observations,
+ * 8 % de montees, et la borne d'age etait montee a 90 min, son maximum. Or la
+ * courbe du trait « age », sur 27 922 ombres, dit : ne de <10 min +1,3 %,
+ * 10-30 min +11,4 %, 30 min-2 h +17,3 % (la MEILLEURE tranche), 2-6 h -0,1 %.
+ * La borne refusait donc exactement la tranche qui monte le plus.
+ *
+ * L'explication est dans la mesure elle-meme. Un jeton vu a 3 min est refuse
+ * « trop jeune » : son ombre part du prix de la minute 3, et ces jetons-la
+ * s'effondrent presque tous. Revu a 45 min et refuse encore (la borne est a
+ * 90), il n'avait PAS de seconde ombre — une par jeton et par verdict. La
+ * ligne d'audit ne mesurait donc jamais ce que la regle refuse a sa marge,
+ * les 60-90 min ; elle mesurait le premier regard, toujours affreux, et la
+ * borne montait a chaque revue. Une roue a cliquet, encore.
+ *
+ * Le refus d'age est donc range par TRANCHE d'age au moment du refus, une
+ * ombre par tranche, et la borne se juge sur la tranche juste sous elle. */
+const AGE_BANDES = [10, 30, 60, 90];
+function bandeAge(minutes) {
+  const m = Number(minutes);
+  if (!isFinite(m)) return 'too young: set aside until it has the age';
+  if (m < AGE_BANDES[0]) return 'too young: under ' + AGE_BANDES[0] + ' min';
+  for (let i = 1; i < AGE_BANDES.length; i++)
+    if (m < AGE_BANDES[i]) return 'too young: ' + AGE_BANDES[i - 1] + '-' + AGE_BANDES[i] + ' min';
+  return 'too young: ' + AGE_BANDES[AGE_BANDES.length - 1] + ' min and more';
+}
+/** La tranche juste sous la borne : ce que la regle refuse a sa marge. */
+function bandeSousLaBorne(ageMin) { return bandeAge(Math.max(0, Number(ageMin) - 0.5)); }
 function familleRefus(r) {
   const t = String(r);
+  if (/too young|trop jeune/.test(t)) {
+    const m = t.match(/\((\d+(?:[.,]\d+)?) min\)/);
+    return m ? bandeAge(m[1].replace(',', '.')) : 'too young: set aside until it has the age';
+  }
   const f = FAMILLES.find((x) => x[0].test(t));
   if (f) return f[1];
   return t.replace(/\d[\d.,]*/g, '#').replace(/\s+/g, ' ').trim().slice(0, 70);
@@ -8529,7 +8570,10 @@ function vue() {
     verdicts: verdictsDesSorties(),
     /* ---- LE CARNET : CE QUE CHAQUE TRADE A VRAIMENT FAIT ----
        Les compteurs disaient combien de trades ; le carnet dit lesquels. */
-    carnet: carnetBilan(),
+    carnet: Object.assign(carnetBilan(), {
+      /* Les 300 dernieres lignes, telles quelles : une moyenne qu'on ne
+         peut pas verifier ligne a ligne n'est pas une mesure. */
+      lignes: (E.carnet || []).slice(0, 300) }),
     /* ---- CE QUE LE MIROIR A VRAIMENT PAYE, CONTRE CE QUE LE PAPIER AVAIT BOOKE ----
        Voir `entreeReelle`. */
     entree: ecartEntree(),
@@ -8716,7 +8760,7 @@ module.exports = {
   _signal: signal, _texteSignal: texteSignal, _ferme: ferme, _lienDex: lienDex,
   _poseTg: (x) => { tg = x; },
   _noteAudit: noteAudit, _auditDesRefus: auditDesRefus, _auditDeFamille: auditDeFamille, OMBRES_MAX,
-  _familleRefus: familleRefus, _regroupeAudit: regroupeAudit, _noeudMort: noeudMort,
+  _familleRefus: familleRefus, _regroupeAudit: regroupeAudit, bandeAge, bandeSousLaBorne, AGE_BANDES, _noeudMort: noeudMort,
   _journal: journal, _journalPublie: journalPublie, _memeRegard: memeRegard,
   /* exposes pour l'essai : ce sont eux qui portent les regles */
   scoreBase, analyse, traitsDe, tenueApprise, leconsDe, apprendAgent, ajustementAgent, ecartType,
