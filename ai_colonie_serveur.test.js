@@ -4101,6 +4101,29 @@ async function toutesLesSortiesSontSuivies() {
 }
 
 /* ==========================================================================
+ * CE QUE 172 TRADES ONT DIT : TROIS PORTES, CHACUNE AVEC SON AUDIT
+ * ======================================================================== */
+async function portesDuCarnet() {
+  console.log('\n-- volatilite, reseaux, capitalisation : les trois portes du carnet du 16 septembre --');
+  remise(sains());
+  const trois = { dex: { vu: true, liens: [{ type: 'site' }, { type: 'twitter' }, { type: 'telegram' }] } };
+  ok(C.vetoOracle(Object.assign({ vola: 14.2 }, trois)) !== null && /^too volatile: 14\.2% per candle \(12% at most/.test(C.vetoOracle(Object.assign({ vola: 14.2 }, trois)) || ''),
+     'a 14,2 % par bougie, l Oracle refuse et dit le plafond : « ' + String(C.vetoOracle(Object.assign({ vola: 14.2 }, trois))).slice(0, 50) + '… »');
+  ok(C.vetoOracle(Object.assign({ vola: 11.9 }, trois)) === null, 'a 11,9 %, il passe');
+  ok(C.vetoOracle(Object.assign({ vola: null }, trois)) === null && C.vetoOracle(trois) === null, 'sans bougies lues, pas de verdict : on ne condamne pas sur une absence');
+  process.env.VOLA_MAX = '0';
+  ok(C.vetoOracle(Object.assign({ vola: 40 }, trois)) === null, 'VOLA_MAX=0 coupe la porte');
+  delete process.env.VOLA_MAX;
+  ok(C._familleRefus(C.vetoOracle(Object.assign({ vola: 14.2 }, trois))) === 'too volatile'
+     && C._familleRefus('only 2 public links: fewer than the 3 measured to pay') === 'too few public links',
+     'chaque porte a sa ligne d audit : « too volatile », « too few public links »');
+  const oracle = (C._etat().roster || []).find((a) => a.key === 'oracle');
+  ok(!!oracle && C.besoinsDe(oracle).indexOf('ohlcv') >= 0, 'et l Oracle lit les bougies avant de parler : sa porte en a besoin');
+  ok(C.planchers().mc === 25000, 'le plancher de capitalisation est a 25 000 $ (sous : 47 trades a -6,4 %)');
+  ok(C.volaMax() === 12 && C.sociauxMin() === 3, 'les deux reglages se lisent (' + C.volaMax() + ' % · ' + C.sociauxMin() + ' liens)');
+}
+
+/* ==========================================================================
  * L AGE SE JUGE A SA MARGE, PAS AU PREMIER REGARD
  *
  * 16 septembre : « too young », 9 700 observations, 8 % de montees, borne a
@@ -5240,9 +5263,16 @@ async function presenceDuProjet() {
   const sansTg = { dex: { vu: true, liens: [
     { type: 'site', url: 'https://a.example' }, { type: 'twitter', url: 'https://x.com/a' }] } };
   console.log('   sans telegram : ' + C.vetoOracle(sansTg));
-  ok(C.vetoOracle(sansTg) === null,
-     'et un projet a qui il manque UN des trois passe aussi : c est exactement ce que la regle '
-     + 'refusait, et ce que l audit a chiffre a +28,6 %');
+  /* Le 8 septembre, l audit disait que la LISTE des trois coutait (+28,6 % sur
+     ce qu elle refusait) : elle est tombee. Le 16, le carnet a dit autre chose
+     du NOMBRE : 3 liens et plus, 65 trades a +4,0 % ; 1 ou 2, 107 trades a
+     -3,4 % et 20 des 23 coupes. Ce n est plus une liste, c est un compte. */
+  ok(/^only 2 public links: fewer than the 3 measured to pay/.test(C.vetoOracle(sansTg) || ''),
+     'un projet a deux liens est refuse pour le NOMBRE, et le refus porte la mesure : « '
+     + String(C.vetoOracle(sansTg)).slice(0, 60) + '… »');
+  process.env.SOCIAUX_MIN = '0';
+  ok(C.vetoOracle(sansTg) === null, 'SOCIAUX_MIN=0 remet la regle du 8 septembre : une presence suffit');
+  delete process.env.SOCIAUX_MIN;
 
   /* ---- MAIS ZERO NE PASSE PAS ----
    * C'est la seule chose que la regle prouvait vraiment. La relacher ne veut
@@ -5273,9 +5303,10 @@ async function presenceDuProjet() {
   process.env.SOCIAUX_EXIGES = '';
   ok(C.vetoOracle(sansTg) === null && C.vetoOracle(absent) === null,
      'a vide, la regle ne refuse plus rien');
-  process.env.SOCIAUX_EXIGES = 'site';
+  process.env.SOCIAUX_EXIGES = 'site'; process.env.SOCIAUX_MIN = '0';
   ok(C.vetoOracle(sansTg) === null && /site/.test(C.vetoOracle({ dex: { vu: true, liens: [] } }) || ''),
      'et on peut n en exiger qu un');
+  delete process.env.SOCIAUX_MIN;
   /* ---- LA SEVERITE D'AVANT EST TOUJOURS DISPONIBLE ----
    * Relacher un defaut n'est pas retirer une capacite. Si l'audit de demain
    * dit l'inverse de celui d'hier, une variable d'environnement suffit a
@@ -5295,9 +5326,15 @@ async function presenceDuProjet() {
   await C.tour();
   const v = C.vue();
   console.log('   ' + JSON.stringify(v.candidats.map((x) => x.sym + ' : ' + x.refus)));
+  ok(C._etat().positions.length === 0 && v.candidats.every((x) => /only 2 public links/.test(x.refus || '')),
+     'un flux de jetons a deux liens n ouvre rien, et chaque refus dit le compte : c est le carnet '
+     + 'du 16 septembre (1-2 liens : 107 trades a -3,4 %), pas une regle de gout');
+  process.env.SOCIAUX_MIN = '0';
+  remise([jeton(0, { sansTelegram: true }), jeton(1, { sansTelegram: true })]);
+  await C.tour();
+  delete process.env.SOCIAUX_MIN;
   ok(C._etat().positions.length > 0,
-     'un flux de jetons sans Telegram — mais avec site et X — ouvre maintenant des positions : '
-     + 'c est exactement l opportunite que la regle faisait manquer');
+     'et a SOCIAUX_MIN=0, le meme flux ouvre : la regle du 8 septembre est toujours la, reglable');
   ok(v.candidats.every((x) => !/telegram/.test(x.refus || '')),
      'et plus aucun refus ne cite Telegram');
   ok(v.sociauxExiges && v.sociauxExiges.length === 1 && v.sociauxExiges[0] === 'un',
@@ -5843,6 +5880,10 @@ async function leVeilleur() {
      'le signal de vente dit la coupe ET qui l a tiree : « ' + (sig && sig.comment) + ' »');
   ok((H.signaux || []).length === sigAvant + 1 && (H.compteurs.veilleCoupe || 0) === 1,
      'un seul signal, et la coupe du Veilleur est comptee a part');
+  const suiteCoupe = (H.suites || []).find((x) => x.adr === p2.adr && x.cas && x.cas.sortie === 'sol coupe');
+  ok(!!suiteCoupe && Math.abs(suiteCoupe.rSortie - (-60)) < 1,
+     'et elle laisse une suite « sol coupe » a -60 % : 22 des 23 coupes du carnet du 16/09 venaient du Veilleur, '
+     + 'et une seule etait relue trente minutes apres');
 
   /* ---- SANS POSITION, IL NE COUTE RIEN ---- */
   G.positions = [];
@@ -6425,7 +6466,7 @@ async function neTradePlus() {
      plupart — mais pour une raison mesuree cette fois, et ecrite dans chaque
      refus. Ce qui reste a verifier : que tout refus soit une regle que l audit
      soutient, et que rien ne soit ecarte sans phrase. */
-  ok(vus.every((x) => !x.refus || /\$\d+ pool: below the buy floor \(\$13000\)|paying the top|already down|that is an exit|buy ceiling/.test(x.refus)),
+  ok(vus.every((x) => !x.refus || /\$\d+ (pool|cap): below the buy floor \(\$(13000|25000)\)|paying the top|already down|that is an exit|buy ceiling/.test(x.refus)),
      'chacun des ' + (20 - passent.length) + ' refus du tour reel porte sa regle et son chiffre — la piscine sous 13 000 $ en premier');
   const ecartes = vus.filter((x) => x.refus).map((x) => x.refus);
   ok(ecartes.every((r) => /paying the top|already down|that is an exit|buy ceiling|buy floor/.test(r)),
@@ -6454,10 +6495,15 @@ async function neTradePlus() {
   const fermes = juges.filter((x) => x.r && !/picked up again/.test(x.r));
   console.log('   ' + ouverts.length + ' passent · ' + remis.length + ' reportes · '
     + fermes.length + ' ecartes : ' + JSON.stringify(fermes.slice(0, 6).map((x) => x.sym + ' (' + String(x.r).slice(0, 40) + ')')));
-  ok(ouverts.length >= 5,
-     ouverts.length + ' des 20 passent le Scout, la ou ZERO passait : les six capitalisations '
-     + 'refusees ce jour-la allaient de 3 274 a 3 964 pour un plancher a 4 000 — il coupait a '
-     + 'trente-six dollars pres, sur une chaine ou elles se serrent toutes la');
+  /* Le 8 septembre, ZERO passait et l essai a exige qu au moins cinq passent :
+     les six capitalisations de 3 274 a 3 964 $ tombaient a 36 $ d un plancher a
+     4 000. Le 16, le carnet a tranche sur 172 trades : sous 25k, 47 trades a
+     -6,4 %, 30 % de gagnants. Les six sont refuses, et le refus dit le
+     plancher et la mesure — c est l intention de l essai, pas son chiffre. */
+  const capFloor = fermes.filter((x) => /cap: below the buy floor \(\$25000\)/.test(x.r));
+  ok(ouverts.length === 0 && capFloor.length === 6,
+     'les six capitalisations de 3 274 a 3 964 $ sont refusees par le plancher de 25 000 $ (' + capFloor.length + '), '
+     + 'et rien ne passe : ce jour-la, rien ne meritait de passer');
   ok(fermes.every((x) => /paying the top|already down|below the buy floor/.test(x.r)),
      'et tout ce qui reste ecarte l est par la hausse, la chute ou la profondeur de piscine — '
      + 'jamais par une borne que l audit dit couteuse');
@@ -7254,6 +7300,7 @@ function bornesQuiSeReglent() {
   await poussesMesurees();
   await rejeuDeLaStrategie();
   await toutesLesSortiesSontSuivies();
+  await portesDuCarnet();
   await ageJugeASaMarge();
   await plancherDePiscine();
   await allerRetourMesure();

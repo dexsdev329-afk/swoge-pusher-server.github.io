@@ -3353,7 +3353,15 @@ function planchers() {
      * mise du miroir est de l'ordre de 45 $, dix fois ca fait 450 $, bien
      * sous 2 000. Le plancher est donc le reglage, et rien d'autre ; la
      * profondeur de piscine, elle, suit toujours la mise (`liqParMise`). */
-    mc: Math.max(0, nEnv('MC_ACHAT_MIN', 2000)),
+    /* ---- 25 000 $ LE 16 SEPTEMBRE : LE CARNET L'A DIT ----
+     * Le 13, le proprietaire demandait « de 2k a 30k ». Trois jours et 172
+     * trades plus tard, par capitalisation d'achat : sous 25k, 47 trades,
+     * -6,4 %, 30 % de gagnants, -236 $ ; 25k et plus, 125 trades, +1,6 %,
+     * 48 %. Les ombres, sur 27 922 jetons : mc 10-25k -6,6 %, <10k -6,1 %,
+     * 50-100k +35 %. Sur cette chaine, les petites capitalisations
+     * s'effondrent. Le plancher est reglable, et la ligne d'audit « cap
+     * below the buy floor » dira si ce qu'il refuse se met a monter. */
+    mc: Math.max(0, nEnv('MC_ACHAT_MIN', 25000)),
     mcMax: borne('mcMax'),
     /* ---- QUINZE MINUTES, ET POURQUOI PAS DEUX HEURES ----
      *
@@ -3563,6 +3571,30 @@ function vetoScout(t) {
  * qui n'a ni site, ni X, ni Telegram n'a personne derriere — la, l'absence dit
  * quelque chose. La liste reste reglable par SOCIAUX_EXIGES, et vide desactive
  * la regle. */
+/* ==========================================================================
+ * CE QUE 172 TRADES ONT DIT, LE 16 SEPTEMBRE
+ *
+ * Le carnet, ligne a ligne, du 12 au 16 : -102 $ en tout. Les 23 coupes de la
+ * Sentinelle (a -35 % et pire, tirees par le Veilleur) font -763 $ ; les 149
+ * autres trades font +660 $, +5,8 % de moyenne, 50 % de gagnants. Tout ce que
+ * le papier perd, il le perd sur des jetons qui s'effondrent dans les
+ * minutes qui suivent l'achat. Ce qui les distingue AVANT l'achat :
+ *
+ *   reseaux publics   3 et plus : 65 trades, +4,0 %, 57 % de gagnants, 3 coupes
+ *                     1 ou 2    : 107 trades, -3,4 %, 35 %, 20 coupes
+ *   volatilite        plus de 12 % par bougie : 21 trades, -7,9 %, 6 coupes
+ *   capitalisation    sous 25k : 47 trades, -6,4 % ; 25k et plus : 125, +1,6 %
+ *
+ * Les trois ensemble : 45 trades, +5,7 %, 58 % de gagnants, 2 coupes — et
+ * positif chacun des cinq jours, la ou l'ensemble ne l'etait que deux jours
+ * sur cinq. Les ombres disent la meme chose sur 27 922 jetons : 3+ reseaux
+ * +10,7 %, aucun -6,7 % ; mc 10-25k -6,6 %, 50-100k +35 %.
+ *
+ * Trois portes, donc, chacune reglable, chacune avec sa ligne d'audit : si ce
+ * qu'elle refuse monte plus que ce qu'on achete, ca se verra. Un echantillon
+ * de 172 est ce qu'il est ; c'est l'audit qui confirmera ou infirmera. */
+const sociauxMin = () => Math.max(0, Math.round(nEnv('SOCIAUX_MIN', 3)));
+const volaMax = () => Math.max(0, nEnv('VOLA_MAX', 12));
 const SOCIAUX_DEFAUT = 'un';
 function sociauxExiges() {
   const v = (process.env.SOCIAUX_EXIGES === undefined ? SOCIAUX_DEFAUT : process.env.SOCIAUX_EXIGES);
@@ -3588,11 +3620,21 @@ function vetoOracle(t) {
      defaut, et il se lit comme ce qu'il est — pas une liste de trois noms
      dont on aurait retire deux au hasard. */
   if (exiges.length === 1 && exiges[0] === 'un') {
-    if (a.size > 0) return null;
-    return 'no public presence at all: no site, no X, no Telegram';
+    if (a.size === 0) return 'no public presence at all: no site, no X, no Telegram';
+  } else {
+    const manque = exiges.filter((x) => !a.has(x));
+    if (manque.length) return 'missing: ' + manque.join(', ');
   }
-  const manque = exiges.filter((x) => !a.has(x));
-  if (manque.length) return 'missing: ' + manque.join(', ');
+  const min = sociauxMin();
+  if (min > 0 && a.size < min)
+    return 'only ' + a.size + ' public link' + (a.size > 1 ? 's' : '') + ': fewer than the ' + min
+         + ' measured to pay (3+ links: 65 trades at +4.0%, 1-2 links: 107 at -3.4%)';
+  /* La volatilite se lit apres les traits (elle demande les bougies) : sans
+     lecture, pas de verdict. */
+  const vmax = volaMax();
+  if (vmax > 0 && typeof t.vola === 'number' && isFinite(t.vola) && t.vola > vmax)
+    return 'too volatile: ' + Math.round(t.vola * 10) / 10 + '% per candle (' + vmax
+         + '% at most: above it, 21 trades lost 7.9% on average, six of them cut)';
   return null;
 }
 const VETOS = { scout: vetoScout, warden: vetoWarden, whale: vetoWhale, whisper: vetoWhisper,
@@ -3604,7 +3646,8 @@ const VETOS = { scout: vetoScout, warden: vetoWarden, whale: vetoWhale, whisper:
 /* Ce dont un agent a besoin pour parler : l'union des besoins de ses traits et
    celui de son veto. C'est ce nombre qui donne son COUT, et le cout est la
    moitie de la decision d'ordre. */
-const BESOIN_VETO = { warden: ['goplus'], whale: ['chaine'], whisper: ['trades'] };
+/* L'Oracle lit les bougies avant de parler : sa porte de volatilite en a besoin. */
+const BESOIN_VETO = { warden: ['goplus'], whale: ['chaine'], whisper: ['trades'], oracle: ['ohlcv'] };
 function besoinsDe(agent) {
   const out = [];
   const pousse = (b) => { if (b && out.indexOf(b) < 0) out.push(b); };
@@ -4862,6 +4905,8 @@ const FAMILLES = [
    'pool too thin for the cap: nothing to sell into'],
   [/not a market any more|ce n'est plus un marche/, 'volume on nothing: that is an exit, not a market'],
   [/no public presence|aucune presence publique/, 'no public presence at all'],
+  [/^only \d+ public link/, 'too few public links'],
+  [/^too volatile/, 'too volatile'],
   [/not ETH: a real order could not follow it/, 'quoted in something other than ETH'],
   [/not indexed by DexScreener|pas encore verifiable/, 'not indexed by DexScreener yet'],
   [/absent from DexScreener|absent de DexScreener/, 'absent from DexScreener'],
@@ -8717,6 +8762,12 @@ async function veille() {
       const danger = dangerSentinelle(p, { prix: d.prix, liq: d.liq || 0 });
       if (danger) {
         p.vuPar = casSentinelle(p, { prix: d.prix, liq: d.liq || 0 });
+        /* ---- ELLE AUSSI LAISSE UNE SUITE ----
+         * 16 septembre : 23 coupes dans le carnet, 22 tirees par le Veilleur,
+         * et UNE seule sortie « sol coupe » jugee. La coupe qui fait toute la
+         * perte etait la seule qu'on ne relisait pas trente minutes apres. */
+        const now = Date.now();
+        noteSuite(p, d.prix, (d.prix - p.prix0) / p.prix0 * 100, { sortie: 'sol coupe' }, now, now + HORIZON_REF * 60000);
         ferme(p, d.prix, Date.now(), { par: 'sentinelle', raison: danger + ' — caught by the 45 s watch',
                                        cote: { mc: d.mc || 0, src: 'DexScreener', lu: Date.now() } });
         E.positions = (E.positions || []).filter((q) => q !== p);
@@ -8791,7 +8842,7 @@ module.exports = {
   veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN, OMBRE_DISPARUE, OMBRE_SILENCES,
   noteProfil, courbeDe, horizonPour, informationDe, classementDesTraits,
-  vetoOracle, vetoScout, vetoWarden, vetoWhale, vetoWhisper, VETOS,
+  vetoOracle, vetoScout, vetoWarden, vetoWhale, vetoWhisper, VETOS, sociauxMin, volaMax,
   REFUS_AGE, REFUS_DEFINITIFS,
   sociauxExiges, SOCIAUX_DEFAUT, simuleVente, vetoCobaye, litLp,
   planchers, echelle, joueEchelle, arretSuiveur, vendUneTranche, reprises,
