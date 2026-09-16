@@ -3292,7 +3292,19 @@ function planchers() {
      * piscine trop mince, c'est l'aller-retour devise avant chaque achat
      * (`ALLER_RETOUR_MAX`), qui mesure le glissement reel de CET ordre sur
      * CETTE piscine. Le carnet, decoupe par piscine d'achat, dira le reste. */
-    liq: Math.max(nEnv('LIQ_ACHAT_MIN', 1200),
+    /* ---- 13 000 $ FIXES, LE 16 SEPTEMBRE, PARCE QUE LE CARNET L'A DIT ----
+     * Le 13, le plancher est descendu a 2 400 $ (40 $ de mise reelle, fois
+     * 60). Trois jours et 139 trades papier plus tard, decoupes par piscine
+     * d'achat : 6-13k, 28 trades, -7,8 % de moyenne, 29 % de gagnants ;
+     * 13-25k, 106 trades, +1,2 %, 46 % ; 25-100k, 31 trades, +2,3 %, 42 %.
+     * Et les ombres, sur 27 922 observations a trente minutes : piscine 1-5k
+     * -2,7 %, 5-25k -0,4 %, 25-100k +24,8 %. Le glissement d'un ordre de 40 $
+     * n'est pas ce qui perd dans une piscine de 8 000 $ : c'est le jeton
+     * lui-meme. Le plancher fixe remonte donc a 13 000 $, la ou les trades
+     * ont ete positifs ; la mise de reference reste en dessous pour le jour
+     * ou ce chiffre redescendra, et le carnet par piscine garde la question
+     * ouverte. */
+    liq: Math.max(nEnv('LIQ_ACHAT_MIN', 13000),
                   Math.max(0, nEnv('MISE_REF_USD', 40)) * borne('liqParMise')),
     /* ---- ET LA CAPITALISATION CESSE DE FAIRE LE TRAVAIL DE LA PISCINE ----
      *
@@ -4220,6 +4232,10 @@ const CARNET_ALLER_RETOUR = [0, 2, 4, 7, 12];
 /* Par piscine a l'achat : 2 400 est le plancher du 13/09 (a 60 fois 40 $),
    6 000 celui de la mi-journee, 13 000 celui d'avant. */
 const CARNET_LIQ = [0, 2400, 6000, 13000, 25000, 100000];
+/* Par capitalisation d'achat : la question « 2k-30k, c'est la que sont les
+   multiplicateurs » se juge ici, sur des trades faits. Les ombres du 16/09
+   disent le contraire (mc 10-25k -6,6 % sur 1 148, 50-100k +35 % sur 478). */
+const CARNET_MC = [0, 10000, 25000, 50000, 100000, 500000];
 function parTranchesDe(l, champ, bornes) {
   const out = [];
   for (let i = 0; i < bornes.length; i++) {
@@ -4249,7 +4265,8 @@ function carnetBilan() {
            parAllerRetour: parTranchesDe(l, 'allerRetour', CARNET_ALLER_RETOUR),
            /* Par piscine d'achat : c'est ce qui jugera le plancher a 6 000 $
               contre celui de 13 000 $, sur des trades faits et non sur des ombres. */
-           parLiq: parTranchesDe(l, 'liq0', CARNET_LIQ) };
+           parLiq: parTranchesDe(l, 'liq0', CARNET_LIQ),
+           parMc: parTranchesDe(l, 'mcAchat', CARNET_MC) };
 }
 
 /* ==========================================================================
@@ -5547,7 +5564,11 @@ const RETOUR_DELAI_MS = 15000;
  * coute, et ca se verra. Chaque trade garde l'aller-retour devise a l'achat
  * (papier et reel), decoupe dans les bilans : c'est la mesure qui fixera ce
  * seuil, et pas ce commentaire. */
-const ALLER_RETOUR_MAX = Math.max(1, nEnv('ALLER_RETOUR_MAX', 10));
+/* 7 % le 16 septembre. Trois jours de trades avec l'aller-retour note :
+ * papier, 4-7 % de cout, 89 trades, +1,6 % ; 7-12 %, 14 trades, -0,3 %. Reel,
+ * 7-12 %, 4 fermetures, 4 perdantes, -14,2 % de moyenne. Ce que le devis
+ * annonce a 7 % et plus, le portefeuille ne l'a jamais rattrape. */
+const ALLER_RETOUR_MAX = Math.max(1, nEnv('ALLER_RETOUR_MAX', 7));
 /** Ce que l'aller-retour devise couterait, en points : 100 moins le retour. */
 function coutAllerRetour(rt) {
   return (rt && typeof rt.pct === 'number' && isFinite(rt.pct)) ? Math.round((100 - rt.pct) * 10) / 10 : null;
@@ -5640,7 +5661,16 @@ function trancheTenue(min) {
  * longtemps veut dire repousser l'ECHEANCE, pas retirer les garde-fous — une
  * position exploratoire qui s'effondre est coupee comme les autres.
  * ======================================================================== */
-const TENUE_EXPLORE = Math.max(0, Math.min(1, nEnv('TENUE_EXPLORE_PART', 0.2)));
+/* ---- UNE SUR DIX, LE 16 SEPTEMBRE : L'EXPLORATION A MESURE, ET CA COUTE ----
+ * 30 positions exploratoires en quatre jours. Le carnet, par duree tenue :
+ * 10-20 min, 130 trades, +2,3 %, +223 $ ; 20-40 min, 6 trades, -4,9 % ;
+ * 40-80 min, 7 trades, -31,1 %, -173 $ ; plus de 80 min, 12 trades, -11,1 %,
+ * -107 $. Les sorties a l'echeance, relues trente minutes plus tard : dans
+ * 41 % des cas on a vendu trop tot, mais tenir aurait rendu -0,2 % contre
+ * +1,7 % pris. Tenir plus longtemps ne paie pas sur cette chaine, et
+ * l'exploration l'a etabli sur 25 trades ; elle continue, a une position
+ * sur dix, pour le jour ou le marche changera. */
+const TENUE_EXPLORE = Math.max(0, Math.min(1, nEnv('TENUE_EXPLORE_PART', 0.1)));
 /** La duree la moins observee PARMI CELLES PLUS LONGUES que celle qu'on tient.
  *
  *  Plus longues, et c'est le coeur de l'affaire : le defaut mesure n'est pas
@@ -8699,7 +8729,7 @@ module.exports = {
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
   seuilsAudit, refMontes, REF_PROTEGE, auditDe, SANS_ACHAT_DESSERRE, recadreLesBornes, buteesDuCode, BUTEES_AVANT,
   deriveDuPrix, noteDerive, DERIVE_MAX,
-  noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, CARNET_LIQ, ALLER_RETOUR_MAX, coutAllerRetour,
+  noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, CARNET_LIQ, CARNET_MC, ALLER_RETOUR_MAX, coutAllerRetour,
   TENUES, TENUE_EXPLORE, tenueAExplorer, cestUnTourDExploration,
   verdictsDesSorties, noteVerdictSortie,
   executionReelle, coutReel, entreeReelle, ecartEntree, ENTREE_RATIO_MIN, ENTREE_RATIO_MAX,

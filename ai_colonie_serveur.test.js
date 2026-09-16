@@ -2948,18 +2948,21 @@ async function tenuesExplorees() {
   ok(e.min > app.min, 'et toujours PLUS LONG que ce qu on tient (' + e.min + ' > ' + app.min + ') : '
      + 'le defaut mesure est que les longues durees ne sont jamais essayees, pas les courtes');
 
-  /* ---- LE RYTHME : UNE SUR CINQ, AU COMPTEUR ---- */
+  /* ---- LE RYTHME : UNE SUR DIX, AU COMPTEUR ----
+   * Une sur cinq jusqu au 16 septembre. L exploration a mesure ce qu elle
+   * devait : 25 trades tenus au-dela de 20 min, -305 $ de papier, contre
+   * +223 $ pour 130 trades a 10-20 min. Elle continue, moitie moins. */
   const rythme = [];
-  for (let i = 0; i < 10; i++) { F.ouvertures = i; rythme.push(C.cestUnTourDExploration()); }
-  console.log('   rythme sur dix ouvertures : ' + rythme.map((x) => (x ? 'X' : '.')).join(''));
+  for (let i = 0; i < 20; i++) { F.ouvertures = i; rythme.push(C.cestUnTourDExploration()); }
+  console.log('   rythme sur vingt ouvertures : ' + rythme.map((x) => (x ? 'X' : '.')).join(''));
   ok(rythme.filter(Boolean).length === 2,
-     'deux ouvertures sur dix explorent : une sur cinq, ni plus ni moins');
-  ok(rythme[4] === true && rythme[9] === true,
+     'deux ouvertures sur vingt explorent : une sur dix, ni plus ni moins');
+  ok(rythme[9] === true && rythme[19] === true,
      'et le rythme est REGULIER, au compteur d ouvertures — pas un tirage au sort, pour qu un banc '
      + 'rejoue la meme suite');
 
   /* ---- ET LA POSITION PORTE SA RAISON ---- */
-  F.ouvertures = 4;                          /* la prochaine ouverture explore */
+  F.ouvertures = 9;                          /* la prochaine ouverture explore */
   F.positions = [];
   await C.tour();
   const ex = F.positions.find((p) => p.tenueExplore);
@@ -4111,16 +4114,24 @@ async function plancherDePiscine() {
   delete process.env.MISE_REF_USD; delete process.env.LIQ_ACHAT_MIN;
   E.bornes = { liqParMise: 60 };
   E.tresor = 2754;
+  const fixe = C.planchers().liq;
+  E.tresor = 50;
+  ok(fixe === 13000 && C.planchers().liq === 13000,
+     'le plancher fixe du 16/09 est a 13 000 $ (6-13k : 28 trades, -7,8 % ; 13-25k : 106 trades, +1,2 %), que la caisse du papier soit a 2 754 ou a 50');
+  /* Sous le plancher fixe, la mise de reference fait le reste : c est elle qui
+     servira le jour ou 13 000 redescendra. */
+  process.env.LIQ_ACHAT_MIN = '0';
+  E.tresor = 2754;
   const haut = C.planchers().liq;
   E.tresor = 50;
   const bas = C.planchers().liq;
-  console.log('   caisse 2 754 $ → plancher ' + haut + ' · caisse 50 $ → ' + bas);
+  console.log('   sans plancher fixe : caisse 2 754 $ → ' + haut + ' · caisse 50 $ → ' + bas);
   ok(haut === 2400 && bas === 2400, 'a 60 fois la mise de reference (40 $, le plus gros ordre reel), 2 400 $ — que la caisse du papier soit a 2 754 ou a 50');
   E.bornes = { liqParMise: 8 };
-  ok(C.planchers().liq === 1200, 'a 8 fois, 320 $ : le plancher fixe de 1 200 $ tient dessous');
+  ok(C.planchers().liq === 320, 'a 8 fois, 320 $');
   process.env.MISE_REF_USD = '250';
   ok(C.planchers().liq === 2000, 'et la mise de reference se regle (250 $ × 8 = 2 000)');
-  delete process.env.MISE_REF_USD;
+  delete process.env.MISE_REF_USD; delete process.env.LIQ_ACHAT_MIN;
   /* Le carnet se decoupe par piscine d achat, pour juger ce plancher sur des trades. */
   E.carnet = [];
   const pose = (liq, r) => E.carnet.push({ sym: 'X', adr: '0x1', t0: 0, t: 1, tenue: 15, r, gain: r, par: 'closer', liq0: liq });
@@ -4130,6 +4141,15 @@ async function plancherDePiscine() {
   const t6 = cb.parLiq.find((x) => x.de === 6000);
   ok(cb.parLiq.length === 4 && !!t6 && t6.a === 13000 && t6.n === 2 && t6.moyenne === 4 && cb.parLiq[0].de === 2400 && cb.parLiq[0].n === 1,
      'les piscines de 6 a 13k — que l ancien plancher refusait — ont leur propre ligne, et 2 400 ouvre le decoupage (' + C.CARNET_LIQ.join('/') + ')');
+  /* Et par capitalisation d achat : « 2k-30k, c est la que sont les multiplicateurs » se juge sur des trades. */
+  E.carnet = [];
+  const poseMc = (mc, r) => E.carnet.push({ sym: 'X', adr: '0x1', t0: 0, t: 1, tenue: 15, r, gain: r, par: 'closer', mcAchat: mc });
+  poseMc(8000, -20); poseMc(12000, 10); poseMc(24000, -30); poseMc(40000, 50); poseMc(340000, 5);
+  const cm = C.carnetBilan();
+  console.log('   ' + JSON.stringify(cm.parMc));
+  ok(cm.parMc.length === 4 && cm.parMc[1].de === 10000 && cm.parMc[1].a === 25000 && cm.parMc[1].n === 2 && cm.parMc[1].moyenne === -10
+     && cm.parMc[3].de === 100000 && cm.parMc[3].a === 500000,
+     'le carnet se decoupe par capitalisation d achat (' + C.CARNET_MC.join('/') + ')');
 }
 
 /* ==========================================================================
@@ -4150,13 +4170,16 @@ async function allerRetourMesure() {
   const jet = { addr: MONDE.jetons[1].addr, pool: MONDE.jetons[1].pool, chaine: { vu: true, cobayes: cob } };
   let devis = { pct: 85, min: 60, ver: 'v4', pool: 'p', sonde: '0.01' };
   C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, allerRetour: async () => devis });
-  ok(C.ALLER_RETOUR_MAX === 10, 'le plafond du code est a 10 % de cout (' + C.ALLER_RETOUR_MAX + ')');
+  ok(C.ALLER_RETOUR_MAX === 7, 'le plafond du code est a 7 % de cout (' + C.ALLER_RETOUR_MAX + ') : au-dela, 4 fermetures reelles sur 4 ont perdu');
   const cher = await C.simuleVente(jet);
   const veto = C.vetoCobaye({ epreuve: cher }) || '';
   console.log('   a 85 % de retour : ' + veto);
   ok(cher.teste && !cher.passe && /round trip would cost 15%/.test(cher.raison), 'un retour de 85 % (15 % de cout) ne passe pas, alors qu il passait la porte des 60 %');
-  ok(/^round trip too costly: fees and depth would eat 15% of a 0\.01 ETH order \(10% at most, quoted on Uniswap v4\)/.test(veto), 'et le veto le dit, avec le chiffre, la sonde et le plafond');
+  ok(/^round trip too costly: fees and depth would eat 15% of a 0\.01 ETH order \(7% at most, quoted on Uniswap v4\)/.test(veto), 'et le veto le dit, avec le chiffre, la sonde et le plafond');
   ok(C._familleRefus(veto) === C._familleRefus(veto.replace('15%', '22%')), 'dans l audit, tous les couts tombent dans la meme ligne : « ' + C._familleRefus(veto) + ' »');
+  devis = { pct: 92, min: 60, ver: 'v4', pool: 'p', sonde: '0.01' };
+  const ok8 = await C.simuleVente(jet);
+  ok(ok8.teste && !ok8.passe && /cost 8%/.test(ok8.raison), 'a 92 % (8 % de cout), elle ne passe plus : c etait la tranche 7-12 %, 14 trades papier a -0,3 % et 4 reels tous perdants');
   devis = { pct: 94, min: 60, ver: 'v4', pool: 'p', sonde: '0.01' };
   const ok6 = await C.simuleVente(jet);
   ok(ok6.teste && ok6.passe && !C.vetoCobaye({ epreuve: ok6 }), 'a 94 % (6 % de cout), elle passe');
@@ -6250,26 +6273,27 @@ async function neTradePlus() {
      'et des qu elle rachete, le compteur repart de zero : le desserrage ne tourne que pendant le '
      + 'silence');
 
-  console.log('\n-- le plancher de piscine suit la MISE, pas un chiffre choisi a la main --');
+  console.log('\n-- le plancher de piscine suit la MESURE, pas un chiffre choisi a la main --');
   E.positions = [];
-  /* Les vraies piscines refusees au dernier tour du serveur. */
+  /* Les vraies piscines refusees au dernier tour du serveur, le 8 septembre.
+     L essai a exige tour a tour qu elles passent (« ces neuf-la sont le marche
+     entier de la chaine », quand l audit ne voyait aucun effondrement dessus)
+     puis, le 13, que seule la flaque de 519 $ reste dehors. Le 16, le carnet a
+     parle : 6-13k, 28 trades, -7,8 %, 29 % de gagnants ; 13-25k, 106 trades,
+     +1,2 %. Et les ombres, 12 244 piscines de 1 a 5k a trente minutes : -2,7 %.
+     Ce marche-la perd. L intention de l essai — que le plancher vienne d une
+     mesure et non d une main — est intacte ; la mesure a change de sens. */
   const PISCINES = [519, 1586, 3332, 3977, 4053, 4112, 4265, 4384, 4710];
   E.tresor = 1366;             /* la caisse reelle au moment de la plainte */
   const P = C.planchers();
   const passe = PISCINES.filter((x) => x >= P.liq);
   console.log('   caisse $1366 → plancher $' + Math.round(P.liq) + ' · passent : '
     + JSON.stringify(passe));
-  ok(passe.length >= 6,
-     Math.round(P.liq) + ' $ de plancher laisse passer ' + passe.length + ' des ' + PISCINES.length
-     + ' piscines refusees ce jour-la : a 5 000 il n en passait AUCUNE, et ces neuf-la sont le '
-     + 'marche entier de la chaine');
-  /* L essai gardait aussi 1 586 dehors, pour une mise de 42 $ « qui bouge le
-     prix de 8 % ». La mise reelle fait 40 $ au plus : dans 1 586 $ elle bouge
-     le prix de 2,5 %, et c est l aller-retour devise avant l achat qui mesure
-     ce glissement-la, ordre par ordre. Seule la flaque de 519 $ reste dehors. */
-  ok(!passe.includes(519) && passe.includes(1586),
-     'la flaque de 519 $ reste dehors (plancher fixe de 1 200 $) ; 1 586 passe, et c est l aller-retour '
-     + 'devise qui dira si 40 $ y glissent trop');
+  ok(P.liq === 13000 && passe.length === 0,
+     Math.round(P.liq) + ' $ de plancher : aucune des neuf piscines du 8 septembre ne passe, et c est le carnet '
+     + 'qui le dit (6-13k : 28 trades a -7,8 %), pas un chiffre rond');
+  ok(P.liq === Math.max(13000, 40 * C.borne('liqParMise')),
+     'et il ne depend pas de la caisse du papier : plancher fixe, ou la mise reelle fois la profondeur apprise');
 
   /* ---- IL MONTE AVEC LA MISE QU IL PROTEGE, PAS AVEC LA CAISSE DU PAPIER ----
    * L essai exigeait « le plancher monte avec la caisse ». 13 septembre : la
@@ -6284,10 +6308,10 @@ async function neTradePlus() {
   ok(P2.liq === P.liq,
      'la caisse du papier ne bouge PLUS le plancher (' + Math.round(P.liq) + ' → ' + Math.round(P2.liq)
      + ') : elle a fait +175 % sans qu un dollar reel bouge, et le plancher qui la suivait fermait le marche');
-  process.env.MISE_REF_USD = '320';
+  process.env.MISE_REF_USD = '600';         /* 600 × 25 = 15 000, au-dessus du plancher fixe */
   const PM = C.planchers();
   delete process.env.MISE_REF_USD;
-  console.log('   mise de reference 320 $ → plancher $' + Math.round(PM.liq));
+  console.log('   mise de reference 600 $ → plancher $' + Math.round(PM.liq));
   ok(PM.liq > P.liq,
      'et il MONTE avec la mise qu il protege (' + Math.round(P.liq) + ' → ' + Math.round(PM.liq)
      + ') : plus la mise est grosse, plus il faut de profondeur pour entrer sans deplacer le prix');
@@ -6331,10 +6355,13 @@ async function neTradePlus() {
   const passent = vus.filter((x) => !x.refus);
   console.log('   ' + passent.length + '/20 passent le Scout · ecartes : '
     + JSON.stringify(vus.filter((x) => x.refus).map((x) => x.sym + ' (' + String(x.refus).slice(0, 40) + ')')));
-  ok(passent.length >= 8,
-     passent.length + ' des 20 candidats du tour reel atteignent enfin les agents suivants. Ce '
-     + 'jour-la il y en avait ZERO : les vingt etaient arretes par le Scout, et l Oracle, le '
-     + 'Whale et le Cobaye n ont rien eu a juger de la journee');
+  /* Le 8 septembre, ZERO des vingt passait et l essai a exige qu au moins huit
+     passent. Le 16, le plancher mesure a 13 000 $ en refuse a nouveau la
+     plupart — mais pour une raison mesuree cette fois, et ecrite dans chaque
+     refus. Ce qui reste a verifier : que tout refus soit une regle que l audit
+     soutient, et que rien ne soit ecarte sans phrase. */
+  ok(vus.every((x) => !x.refus || /\$\d+ pool: below the buy floor \(\$13000\)|paying the top|already down|that is an exit|buy ceiling/.test(x.refus)),
+     'chacun des ' + (20 - passent.length) + ' refus du tour reel porte sa regle et son chiffre — la piscine sous 13 000 $ en premier');
   const ecartes = vus.filter((x) => x.refus).map((x) => x.refus);
   ok(ecartes.every((r) => /paying the top|already down|that is an exit|buy ceiling|buy floor/.test(r)),
      'et tout ce qui reste ecarte l est par une regle que l audit soutient — pas par un plancher '
