@@ -22,5 +22,6 @@ lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js
 lance marqueur "$SITE" node cache_marqueur.test.js
+lance minifie "$SITE" node minifie.test.js
 echo "  $(( $(date +%s) - T0 )) s au total · $([ $RATE -eq 0 ] && echo 'TOUT VERT : on peut commettre' || echo 'ROUGE : on ne commet pas')"
 exit $RATE

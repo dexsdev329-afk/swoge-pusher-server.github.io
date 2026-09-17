@@ -11,10 +11,10 @@ PW="$HOME/.swoge-pw"                     # Playwright + ws, hors des depots
 if [ -f "$SRV/package.json" ]; then (cd "$SRV" && npm install --no-audit --no-fund --loglevel=error); fi
 
 # Playwright, une fois : les navigateurs sont deja dans PLAYWRIGHT_BROWSERS_PATH.
-if [ ! -d "$PW/node_modules/playwright" ]; then
+if [ ! -d "$PW/node_modules/playwright" ] || [ ! -d "$PW/node_modules/terser" ]; then
   mkdir -p "$PW" && cd "$PW"
   [ -f package.json ] || echo '{ "name": "swoge-pw", "private": true }' > package.json
-  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --loglevel=error playwright@1.56.1 ws@8
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --loglevel=error playwright@1.56.1 ws@8 terser@5
 fi
 
 # Ce que les suites de page attendent : voir CLAUDE.md.
