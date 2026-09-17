@@ -34,7 +34,13 @@ d'observations, un chiffre. C'est la convention centrale du projet.
 
 ## Les essais
 
-Cinq suites, lancées à la main. **Aucun commit sans code de sortie vert.** `miroir_reel.test.js` est tombée trois jours sans que personne ne le voie parce qu'elle n'était pas dans la boucle : elle y est.
+Cinq suites, une commande : `./verifie.sh` (la colonie seule d'abord, ~25 min,
+journaux dans `_logs/`) ou `./verifie.sh --vite` (miroir, réel, marqueur : ~5 s,
+pour un changement qui ne touche ni la colonie ni la page). **Aucun commit sans
+code de sortie vert.** `miroir_reel.test.js` est tombée trois jours sans que
+personne ne le voie parce qu'elle n'était pas dans la boucle : elle y est. Le
+crochet de démarrage (`.claude/hooks/session-start.sh`) installe les dépendances
+et pose `NODE_PATH` : plus rien à installer à la main.
 
 ```bash
 node ai_colonie_serveur.test.js     # ~20 min, la plus grosse — la lancer SEULE
@@ -62,6 +68,15 @@ Un échec s'écrit `RATE` et la dernière ligne donne `RATES : n/total`.
   d'une exécution à l'autre.
 - Quand un essai existant contredit un changement voulu, réécrire l'essai sur
   son **intention** (souvent écrite dans sa propre phrase), pas le supprimer.
+
+## Lire la colonie en direct
+
+```bash
+node releve.js --depuis 24h     # bornes, carnet par tranche, lignes réelles, audit à la marge, journal
+```
+
+Chaque appel garde un instantané dans `_releves/` (hors dépôt). C'est le point
+de départ de toute analyse : ne pas refaire ces calculs à la main.
 
 ## Publier
 
