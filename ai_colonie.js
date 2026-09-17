@@ -958,13 +958,30 @@ function recadreLesBornes(brut) {
     if (avant[k] === code[k]) continue;
     const v = brut.bornes && brut.bornes[k];
     if (typeof v !== 'number') continue;
-    delete brut.bornes[k];
+    /* ---- TROIS CAS, PAS UN ----
+     * 17 septembre. Une valeur posee SUR une ancienne butee n'a rien appris :
+     * elle dormait contre un mur (le plafond a 50 000 le 12/09) — elle repart
+     * du defaut. Une valeur que la nouvelle limite depasse (630 000 quand la
+     * butee haute descend a 500 000) a ete apprise en montant : seule la
+     * limite bouge, elle est ramenee dessus. Une valeur que les nouvelles
+     * limites contiennent encore, et qui ne touchait aucune ancienne, est
+     * gardee : rien ne l'a contredite. */
+    const [oMin, oMax] = String(avant[k] || '').split('/').map(Number);
+    const b = BORNES[k];
+    let apresV, pourquoi;
+    if (v === oMin || v === oMax) {
+      apresV = undefined;
+      pourquoi = 'it sat on an old limit, so it had learned nothing: it starts again from the code default (' + nEnv(b.env, b.defaut) + ')';
+    } else if (v < b.min || v > b.max) {
+      apresV = Math.min(b.max, Math.max(b.min, v));
+      pourquoi = 'the new limit moved past it: it is brought back to ' + apresV;
+    } else continue;
+    if (apresV === undefined) delete brut.bornes[k]; else brut.bornes[k] = apresV;
     if (!Array.isArray(brut.journalStructure)) brut.journalStructure = [];
     brut.journalStructure.unshift({ t: Date.now(), quoi: 'bornes',
-      chiffres: { cle: k, avant: v, butees: avant[k] || null, nouvelles: code[k] },
+      chiffres: { cle: k, avant: v, apres: apresV === undefined ? null : apresV, butees: avant[k] || null, nouvelles: code[k] },
       txt: 'The learned bound ' + k + ' (' + v + ') was learned between the old limits ('
-         + (avant[k] || 'none') + '); the limits are now ' + code[k]
-         + ', so it starts again from the code default (' + nEnv(BORNES[k].env, BORNES[k].defaut) + ').' });
+         + (avant[k] || 'none') + '); the limits are now ' + code[k] + ', and ' + pourquoi + '.' });
   }
   brut.butees = apres;
 }
@@ -2928,7 +2945,17 @@ const BORNES = {
    * c'est sa decision, datee. Et le pas passe de 25 000 a 10 000 $ : un
    * plafond qui bouge par bonds de 25 000 ne peut visiter que 25k, 50k, 75k,
    * et jamais 30 ou 40 — l'apprentissage se fait a pas fins ou pas du tout. */
-  mcMax:      { env: 'MC_ACHAT_MAX', defaut: 30000, min: 30000, max: 1000000, pas: 10000, sens: -1, sansAbandons: true },
+  /* ---- BUTEE HAUTE A 500 000 $ LE 17 SEPTEMBRE ----
+   * La vanne de famine a monte le plafond de 30 000 a 630 000 $ en quatre
+   * jours, de 10 000 en 10 000, parce que ce qu'il refusait montait plus que
+   * ce qu'on achetait (58 % sur les 72 derniers juges). Le carnet, lui, par
+   * capitalisation d'achat : 100-500k, 25 trades, +1,9 % ; au-dela de 500k,
+   * UN trade, HPAY a 570k, -63,6 % en douze minutes, coupe par le Veilleur.
+   * Un seul trade ne juge rien ; c'est le proprietaire qui pose la limite,
+   * et elle est datee. Une valeur apprise au-dessus est ramenee a la butee
+   * (voir `recadreLesBornes`), pas remise au defaut : elle a ete apprise en
+   * montant, seule la limite bouge. */
+  mcMax:      { env: 'MC_ACHAT_MAX', defaut: 30000, min: 30000, max: 500000, pas: 10000, sens: -1, sansAbandons: true },
   /* ---- LE PLAFOND DE POMPE, MESURE PENDANT DES JOURS SANS POUVOIR BOUGER ----
    *
    * Releve du 11 septembre, 5 925 tours. Ce que la colonie ACHETE monte dans
