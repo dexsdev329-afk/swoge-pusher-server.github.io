@@ -10,3 +10,8 @@ state.json
 # Journaux
 *.log
 npm-debug.log
+
+# Outils de travail : journaux des suites, instantanes du releve, scenario isole
+_logs/
+_releves/
+_iso.test.js
