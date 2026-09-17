@@ -969,12 +969,34 @@ function montreQuota() {
  * Telegram : sans ca, elle serait ecrite dans un journal que personne ne lit,
  * et les paris resteraient ouverts.
  */
+const H = 3600000;
+const SEMAINE = 7 * 24 * H;
+
+/* ---- LE PREMIER ETALONNAGE NE SE PAIE PAS A CHAQUE DEMARRAGE ----
+ *
+ * Il etait pose une heure apres CHAQUE demarrage, et le commentaire au-dessus
+ * de la minuterie promettait qu'un redeploiement ne coute rien. Mesure du
+ * 18 septembre 2026 : 118 deploiements Railway sur 17 jours, un etalonnage a
+ * neuf ligues actives chaque fois que le processus a vecu plus d'une heure,
+ * et 211 credits partis dans le mois quand les scores en coutent quatre par
+ * jour (relevé de `odds_quota.json` : 289 restants sur 500 le 17). La date
+ * du dernier etalonnage est deja sur le volume, `calibre.quand` dans
+ * `odds_dernier.json` : on repart d'elle. Moins de sept jours, on attend le
+ * reste ; sept jours ou plus, ou jamais etalonne, une heure comme avant.
+ * Jamais moins d'une heure : un serveur qui redemarre en boucle ne doit pas
+ * etalonner en boucle. */
+function delaiAvantEtalonnage(maintenant) {
+  const d = litDernier().calibre;
+  const t = d ? Date.parse(d.quand) : NaN;
+  if (!isFinite(t)) return H;
+  return Math.max(H, SEMAINE - ((maintenant || Date.now()) - t));
+}
+
 function planifie(signale, aRegler) {
   if (!CLE) {
     console.log('[odds] ODDS_API_KEY absente : le calendrier reste celui du depot');
     return null;
   }
-  const H = 3600000;
   const sur = (quoi, f) => f().catch((e) => console.error('[odds] ' + quoi + ' : ' + (e.message || e)));
 
   const rafraichit = () => sur('matchs', async () => {
@@ -1005,18 +1027,25 @@ function planifie(signale, aRegler) {
     await rafraichit();     // les cotes se refont avec les forces corrigees
   });
 
+  const premier = delaiAvantEtalonnage();
   const minuteries = [
     setTimeout(rafraichit, 30000),
     setInterval(rafraichit, 12 * H),
     setTimeout(releve, 5 * 60000),
     setInterval(releve, 24 * H),
-    /* Pas au demarrage : un redeploiement ne doit pas couter de credits.
-       Le premier etalonnage a lieu une heure apres, puis chaque semaine. */
-    setTimeout(etalonne, H),
-    setInterval(etalonne, 7 * 24 * H),
+    /* Le premier etalonnage attend ce qui reste des sept jours depuis le
+       dernier (voir `delaiAvantEtalonnage`), et c'est LUI qui pose la
+       cadence hebdomadaire : un intervalle compte depuis le demarrage aurait
+       refait un etalonnage sept jours apres le boot, soit un jour apres le
+       premier quand celui-ci en attendait six. */
+    setTimeout(function () {
+      etalonne();
+      minuteries.push(setInterval(etalonne, SEMAINE));
+    }, premier),
   ];
   console.log(`[odds] alimentation automatique : rencontres toutes les 12 h (0 credit), ` +
-              `scores une fois par jour, etalonnage une fois par semaine. ` +
+              `scores une fois par jour, etalonnage une fois par semaine ` +
+              `(le prochain dans ${Math.round(premier / H)} h). ` +
               `${etatQuota().reste} credit(s), ` +
               `part du jour ${partDuJour(etatQuota().reste)} jusqu au ${fin()}`);
   /* On rend les minuteries : une minuterie oubliee garde le processus en
@@ -1041,7 +1070,7 @@ if (require.main === module) {
          .catch((e) => { console.error(String(e.message || e)); process.exit(1); });
 }
 
-module.exports = { LIGUES, LIGUES_DEFAUT, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie,
+module.exports = { LIGUES, LIGUES_DEFAUT, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie, delaiAvantEtalonnage,
                    finDuMois, fin,
                    etatImport, noteDernier,
                    trieReglements, AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,

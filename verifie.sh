@@ -18,6 +18,7 @@ lance() {  # nom · dossier · commande…
   [ $code -eq 0 ] || { RATE=1; grep -m3 "  RATE \|EXCEPTION\|Error" "$log" | sed 's/^/           /'; }
 }
 [ $VITE -eq 1 ] || lance colonie "$SRV" node ai_colonie_serveur.test.js
+lance etalonnage "$SRV" node etalonnage_boot.test.js
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js
