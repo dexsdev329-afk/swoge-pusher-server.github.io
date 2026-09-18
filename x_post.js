@@ -384,6 +384,18 @@ async function tache(opts) {
   }
 }
 
+/** Remet les essais du jour a zero — apres avoir corrige une cle ou une
+ *  permission, sans attendre demain. L image et le texte du jour sont gardes. */
+function reprend(t) {
+  const jour = jourDe(t || Date.now());
+  const journal = litJournal();
+  const e = journal.jours[jour];
+  if (!e || e.id) return false;
+  delete e.essais; delete e.erreur;
+  ecritJournal(journal);
+  return true;
+}
+
 /** Dans le serveur : un regard toutes les cinq minutes, le journal decide. */
 function planifie(signale) {
   if (!enabled()) {
@@ -398,7 +410,7 @@ function planifie(signale) {
 }
 
 module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, sceneDuJour, promptImage, faitsDuJour,
-                   nettoie, ecritTexte, genereImage, televerse, publie, tache, planifie, derniere,
+                   nettoie, ecritTexte, genereImage, televerse, publie, tache, planifie, derniere, reprend,
                    heureAtteinte, jourDe, litJournal, DOSSIER_IMAGES, RESERVE };
 
 // ------------------------------------------------------------ en ligne de commande

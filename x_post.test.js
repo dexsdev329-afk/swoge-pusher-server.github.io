@@ -158,6 +158,14 @@ const x = require('./x_post');
     eq(r.essais, 3, 'trois essais');
     r = await x.tache({ maintenant: T2, prendre: faux });
     eq(r.etat, 'abandon', 'au quatrieme, on abandonne la journee en le disant');
+    /* La cle corrigee, on reprend le jour meme, avec la meme image. */
+    refuseTweet = false;
+    const imagesAvant = appels.filter((a) => /openai/.test(a.u)).length;
+    ok(x.reprend(T2), 'reprendre remet les essais du jour a zero');
+    r = await x.tache({ maintenant: T2, prendre: faux, force: true });
+    eq(r.etat, 'poste', 'et le post part sans attendre demain');
+    eq(appels.filter((a) => /openai/.test(a.u)).length, imagesAvant, 'avec l image deja payee');
+    eq(x.reprend(T2), false, 'un jour deja poste ne se reprend pas');
   }
 
   console.log(`\nx_post.test.js : ${n} verifications OK`);

@@ -2929,6 +2929,19 @@ const server = http.createServer(async (req, res) => {
     return res.end(png);
   }
 
+  /* Reposter le jour meme apres une cle ou une permission corrigee : le
+     journal avait abandonne la journee au troisieme refus. Administrateur
+     seulement, en POST, comme l import. */
+  if (path === '/x/publie') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
+    xPost.reprend();
+    const r = await xPost.tache({ force: true, signale: (p) => tg.notifyPhoto(p.image, p.texte + '\n' + p.url) });
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(r));
+  }
+
   if (path === '/vitrine.json') {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*',
