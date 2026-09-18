@@ -33,6 +33,7 @@ const paris = require('./paris');
    que si ODDS_API_KEY est posee — sans elle il le dit au demarrage et ne
    fait rien, le calendrier reste celui du depot. */
 const parisImport = require('./paris_import');
+const xPost = require('./x_post');
 const espn = require('./scores_espn');
 const aiColonie = require('./ai_colonie');
 /* Les adresses qui ont la main sur le papier de la colonie (AI_OWNER). */
@@ -157,6 +158,7 @@ function directFrais(t) {
 const boutique = require('./boutique');
 const skins = require('./skins');
 let calendrierAuto = null;          // les minuteries de l alimentation
+let xQuotidien = null;
 const journal = require('./journal');
 const adminlog = require('./adminlog');
 const reglages = require('./reglages');
@@ -2908,6 +2910,23 @@ const server = http.createServer(async (req, res) => {
     const haut = Object.entries(vues).sort((a, b) => b[1] - a[1]).slice(0, 50);
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=60' });
     return res.end(JSON.stringify({ vues: Object.fromEntries(haut) }));
+  }
+
+  /* ---- LE POST QUOTIDIEN SUR X : ce qu il a fait, et son image ----
+     Le journal sans rien de secret, et l image du jour servie depuis le
+     volume — c est elle que le Telegram montre, et que l on peut relire. */
+  if (path === '/x/derniere') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(xPost.derniere()));
+  }
+  if (path.startsWith('/x/image/')) {
+    const jour = path.slice('/x/image/'.length).replace(/\.png$/, '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(jour)) { res.writeHead(404); return res.end(); }
+    let png = null;
+    try { png = fs.readFileSync(require('path').join(xPost.DOSSIER_IMAGES(), jour + '.png')); } catch (e) { /* pas d image ce jour-la */ }
+    if (!png) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400', 'content-length': png.length });
+    return res.end(png);
   }
 
   if (path === '/vitrine.json') {
@@ -7157,11 +7176,15 @@ server.listen(cfg.PORT, () => {
    * module ne connait pas le moteur — d'ou ce rappel. */
   calendrierAuto = parisImport.planifie(reglementAuto,
                                         (id) => game.engagementMatch(id) > 0);
+  /* Le post quotidien sur X, arme seulement si ses cinq cles sont la ; la
+     copie part sur le Telegram avec le lien du post. */
+  xQuotidien = xPost.planifie((p) => tg.notifyPhoto(p.image, p.texte + '\n' + p.url));
 });
 
 function shutdown() {
   clearInterval(niveauInterval); clearInterval(prixInterval); clearInterval(prixMondeInterval); clearInterval(backupInterval); clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
   if (calendrierAuto) calendrierAuto.arrete();
+  if (xQuotidien) xQuotidien.arrete();
   persistComplet(); // instantane complet : rien ne se perd au redeploiement
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
      qui attend encore doit partir maintenant, sinon les dernieres manches
