@@ -56,8 +56,10 @@ function env() {
   const e = xp.env();
   return Object.assign(e, {
     comptes: String(process.env.X_VEILLE || 'elonmusk,mayemusk').split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean),
-    minutes: Math.max(10, Number(process.env.X_VEILLE_MIN) || 30),
-    maxJour: Math.max(0, Number(process.env.X_VEILLE_MAX_JOUR) || 2),
+    /* Dix minutes et trois par jour depuis le 18 septembre 2026 : une reponse
+       est vue dans les premieres minutes sous le post, pas une heure apres. */
+    minutes: Math.max(10, Number(process.env.X_VEILLE_MIN) || 10),
+    maxJour: Math.max(0, Number(process.env.X_VEILLE_MAX_JOUR) || 3),
     chat: process.env.X_VEILLE_CHAT || cfg.TG_BACKUP_CHAT_ID || '',
     mots: String(process.env.X_VEILLE_MOTS || '').split(',').map((s) => s.trim()).filter(Boolean),
   });
@@ -147,7 +149,8 @@ function derniereDe(j, compte) {
 
 const SYSTEME = `You are the voice of SWOGE ($SWOGE), a community-run memecoin with a real crypto game ecosystem, mascot: a very buff Shiba Inu. You are shown a post by a famous account. Decide whether a SHORT, witty reply from the buff dog would land well there — funny, relevant to the post, never spammy, never begging for attention, never rude, no links, no hashtags, no price talk, at most one emoji, maximum 180 characters. Mentioning $SWOGE is fine only if it fits naturally. If a reply would look like a bot pushing a coin under an unrelated post, say it is not pertinent.
 Also describe, in one sentence, an image scene where the buff Shiba is placed IN the context of the post (same theme, same objects), no text in the image.
-Answer with JSON only: {"pertinent": true|false, "raison": "...", "reponse": "...", "scene": "..."}`;
+Finally rate your confidence from 0 to 10 that this reply lands well with that audience and could never be mistaken for a bot pushing a coin: 10 = a human community manager would post it without hesitation, 5 = debatable, 0 = spam.
+Answer with JSON only: {"pertinent": true|false, "raison": "...", "reponse": "...", "scene": "...", "confiance": 0-10}`;
 
 async function juge(compte, post, prendre) {
   const e = env();
@@ -166,8 +169,10 @@ async function juge(compte, post, prendre) {
   const m = brut.match(/\{[\s\S]*\}/);
   if (!m) throw new Error('modele : reponse illisible');
   const a = JSON.parse(m[0]);
+  const confiance = Number(a.confiance);
   return { pertinent: !!a.pertinent, raison: String(a.raison || '').slice(0, 200),
-           reponse: nettoieReponse(a.reponse), scene: String(a.scene || '').slice(0, 400) };
+           reponse: nettoieReponse(a.reponse), scene: String(a.scene || '').slice(0, 400),
+           confiance: isFinite(confiance) ? Math.min(10, Math.max(0, Math.round(confiance))) : null };
 }
 /** Une reponse propre : pas de lien, pas de dieze, 200 caracteres au plus. $SWOGE n est PAS force ici. */
 function nettoieReponse(brut) {
@@ -182,7 +187,9 @@ async function envoieProposition(p, prendre) {
   const e = env();
   const f = prendre || fetch;
   const base = e.domaine ? `https://${e.domaine}` : '';
-  const caption = `🐦 <b>@${p.compte}</b> vient de poster :\n<i>${echappe(p.postTexte.slice(0, 300))}</i>\n\n💬 Réponse proposée :\n<b>${echappe(p.reponse)}</b>\n\n` +
+  /* La note de Claude en tete : a 9 ou 10, on peut appuyer sans relire. */
+  const note = p.confiance === null || p.confiance === undefined ? '' : `${p.confiance >= 9 ? '🟢' : p.confiance >= 7 ? '🟡' : '🔴'} Confiance de Claude : <b>${p.confiance}/10</b>\n\n`;
+  const caption = note + `🐦 <b>@${p.compte}</b> vient de poster :\n<i>${echappe(p.postTexte.slice(0, 300))}</i>\n\n💬 Réponse proposée :\n<b>${echappe(p.reponse)}</b>\n\n` +
                   `Valable 12 h. Rien ne part sans le bouton.`;
   const boutons = [[{ text: '✅ Poster la réponse', url: `${base}/x/reponse/${p.jeton}/poster` },
                     { text: '🗑 Ignorer', url: `${base}/x/reponse/${p.jeton}/ignorer` }],
@@ -252,7 +259,7 @@ async function veille(opts) {
           fs.writeFileSync(path.join(xp.DOSSIER_IMAGES(), image), g.png);
           const p = { compte, postId: post.id, postTexte: post.texte, url: `https://x.com/${compte}/status/${post.id}`,
                       reponse: v.reponse, scene: v.scene, image, jeton, etat: 'proposee', quand: new Date(t).toISOString(),
-                      expire: new Date(t + 12 * 3600000).toISOString(), mots };
+                      expire: new Date(t + 12 * 3600000).toISOString(), mots, confiance: v.confiance };
           journal.propositions[pid] = p; ecritJournal(journal);
           await envoieProposition(p, o.prendre);
           b.proposees++; bilan.proposees++;
@@ -303,7 +310,7 @@ function etat() {
   const e = env();
   const l = Object.entries(j.propositions).filter(([, p]) => !p.silencieux)
     .sort((a, b) => (b[1].quand || '').localeCompare(a[1].quand || '')).slice(0, 20)
-    .map(([k, p]) => ({ cle: k, compte: p.compte, post: p.url, reponse: p.reponse, etat: p.etat, quand: p.quand, image: '/x/image/' + p.image.replace(/\.png$/, '') + '.png', reponseUrl: p.replyUrl || null }));
+    .map(([k, p]) => ({ cle: k, compte: p.compte, post: p.url, reponse: p.reponse, etat: p.etat, quand: p.quand, confiance: p.confiance === undefined ? null : p.confiance, image: '/x/image/' + p.image.replace(/\.png$/, '') + '.png', reponseUrl: p.replyUrl || null }));
   return { actif: enabled(), manque: manque(), comptes: e.comptes, toutesLes: e.minutes + ' min', maxJour: e.maxJour,
            suivis: Object.fromEntries(Object.entries(j.comptes).map(([c, v]) => [c, { id: v.id, depuis: v.depuis || null }])), propositions: l };
 }

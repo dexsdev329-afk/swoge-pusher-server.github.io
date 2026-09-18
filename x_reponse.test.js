@@ -65,6 +65,9 @@ const x = require('./x_reponse');
   console.log('\n-- 3. un tour complet --');
   {
     process.env.X_VEILLE_CHAT = '12345'; process.env.X_VEILLE = 'elonmusk,mayemusk';
+    eq(x.env().minutes, 10, 'la veille passe toutes les dix minutes par defaut');
+    eq(x.env().maxJour, 3, 'et trois propositions par jour par defaut');
+    process.env.X_VEILLE_MAX_JOUR = '2';   // l essai ci-dessous compte avec deux
     const T = Date.parse('2026-09-19T12:00:00Z');
     const recent = (min) => new Date(T - min * 60000).toISOString();
     const appels = [];
@@ -83,7 +86,7 @@ const x = require('./x_reponse');
       if (/users\/by\/username\/mayemusk/.test(u)) return rep(200, { data: { id: '9000', username: 'mayemusk' } });
       if (/users\/44196397\/tweets/.test(u)) return rep(200, { data: postsElon });
       if (/users\/9000\/tweets/.test(u)) return rep(200, { data: postsMaye });
-      if (/anthropic/.test(u)) return rep(200, { content: [{ type: 'text', text: JSON.stringify({ pertinent, raison: pertinent ? 'a dog!' : 'not our place', reponse: 'Walk the dog? He walks YOU. 🐕 https://x.example', scene: 'the buff Shiba walking a small humanoid robot on a leash' }) }] });
+      if (/anthropic/.test(u)) return rep(200, { content: [{ type: 'text', text: JSON.stringify({ pertinent, raison: pertinent ? 'a dog!' : 'not our place', reponse: 'Walk the dog? He walks YOU. 🐕 https://x.example', scene: 'the buff Shiba walking a small humanoid robot on a leash', confiance: 9 }) }] });
       if (/openai/.test(u)) return rep(200, { data: [{ b64_json: Buffer.from('PNG-factice').toString('base64') }] });
       if (/telegram/.test(u)) return rep(200, { ok: true });
       if (/media\/upload/.test(u)) return rep(200, { data: { id: '777' } });
@@ -108,6 +111,7 @@ const x = require('./x_reponse');
     ok(/poster$/.test(tg[0].corps.reply_markup.inline_keyboard[0][0].url) && /ignorer$/.test(tg[0].corps.reply_markup.inline_keyboard[0][1].url), 'avec les deux boutons Poster et Ignorer');
     ok(/https:\/\/serveur\.test\/x\/image\/rep_1003\.png/.test(tg[0].corps.photo), 'et l image generee pour ce post');
     ok(/Walk the dog\? He walks YOU\. 🐕/.test(tg[0].corps.caption) && !/x\.example/.test(tg[0].corps.caption), 'la reponse proposee, sans le lien que le modele avait glisse');
+    ok(/🟢 Confiance de Claude : <b>9\/10<\/b>/.test(tg[0].corps.caption), 'et la note de confiance du modele en tete, en vert a 9');
     const j = x.litJournal();
     eq(j.comptes.elonmusk.id, '44196397', 'l identifiant est garde');
     eq(j.comptes.elonmusk.depuis, '1003', 'et le dernier post lu aussi');
