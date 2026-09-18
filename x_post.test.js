@@ -1,17 +1,19 @@
 'use strict';
 /*
- * LE POST QUOTIDIEN SUR X — ce qu on verifie sans toucher a X ni a OpenAI.
+ * LES POSTS SUR X — ce qu on verifie sans toucher a X ni a OpenAI.
  *
  *  1. La signature OAuth 1.0a, contre l exemple CHIFFRE de la documentation
  *     de X (docs.x.com, « creating a signature », lu le 18 septembre 2026) :
  *     memes cles, meme nonce, meme horodatage, meme signature attendue au
  *     caractere pres. Une signature fausse donne un 401 sans autre detail.
  *  2. Sans les cles, rien ne part et le module DIT ce qui manque.
- *  3. Les scenes tournent : jamais la meme deux jours de suite.
- *  4. Le texte respecte les regles quoi qu ait ecrit le modele.
- *  5. Un tour complet contre de faux serveurs : l ordre des appels, le corps
- *     du post, UN post par jour, et un refus de X qui ne fait pas repayer
- *     l image.
+ *  3. L heure : midi et minuit a PARIS, ete comme hiver, et un creneau = une cle.
+ *  4. Les scenes tournent : jamais une des six dernieres.
+ *  5. Le texte respecte les regles quoi qu ait ecrit le modele.
+ *  6. Des tours complets contre de faux serveurs : l ordre des appels, le
+ *     corps du post, UN post par creneau, deux par jour avec des scenes et
+ *     des angles differents, un refus de X qui ne fait pas repayer l image,
+ *     la reprise, et un post special sur un sujet impose.
  */
 const assert = require('assert');
 const fs = require('fs');
@@ -20,7 +22,7 @@ const path = require('path');
 
 const VOL = fs.mkdtempSync(path.join(os.tmpdir(), 'xpost-'));
 process.env.DATA_DIR = VOL;
-for (const k of ['X_CONSUMER_KEY', 'X_CONSUMER_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'X_LIEN', 'X_HEURE']) delete process.env[k];
+for (const k of ['X_CONSUMER_KEY', 'X_CONSUMER_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'X_LIEN', 'X_HEURE', 'X_HEURES', 'X_FUSEAU']) delete process.env[k];
 
 let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n++; console.log('  ok   ' + m); };
@@ -56,25 +58,40 @@ const x = require('./x_post');
     eq(x.planifie(), null, 'et le serveur n arme rien');
   }
 
-  console.log('\n-- 3. les scenes tournent --');
+  console.log('\n-- 3. midi et minuit a Paris, ete comme hiver --');
   {
-    ok(x.SCENES.length >= 20, x.SCENES.length + ' scenes dans la banque');
-    eq(new Set(x.SCENES.map((s) => s.nom)).size, x.SCENES.length, 'toutes de nom different');
-    const t0 = Date.parse('2026-09-18T12:00:00Z');
-    const journal = { jours: {} }; const vues = new Set(); let repetes = 0; let prec = null;
-    for (let i = 0; i < 90; i++) {
-      const t = t0 + i * 86400000;
-      const s = x.sceneDuJour(t, journal);
-      if (prec === s.nom) repetes++;
-      journal.jours[x.jourDe(t)] = { scene: s.nom }; vues.add(s.nom); prec = s.nom;
-    }
-    eq(repetes, 0, 'jamais la meme deux jours de suite sur quatre-vingt-dix jours');
-    ok(vues.size >= 20, vues.size + ' scenes differentes en quatre-vingt-dix jours');
-    ok(/no text, no letters/i.test(x.promptImage(x.SCENES[0])) && /buff Doge/.test(x.promptImage(x.SCENES[0])),
-       'le prompt porte le personnage et refuse le texte dans l image');
+    const H = ['12:00', '00:00'];
+    eq(x.env().heures.join(','), '12:00,00:00', 'par defaut : midi et minuit');
+    eq(x.env().fuseau, 'Europe/Paris', 'a l heure de Paris');
+    eq(x.creneauDu(Date.parse('2026-09-18T21:59:00Z'), H, 'Europe/Paris').cle, '2026-09-18#12:00', 'a 23 h 59 a Paris (ete), le creneau en cours est celui de midi');
+    eq(x.creneauDu(Date.parse('2026-09-18T22:00:00Z'), H, 'Europe/Paris').cle, '2026-09-19#00:00', 'a minuit pile a Paris, c est le creneau de minuit du jour suivant');
+    eq(x.creneauDu(Date.parse('2026-09-19T09:59:00Z'), H, 'Europe/Paris').cle, '2026-09-19#00:00', 'a 11 h 59, toujours celui de minuit — pas encore midi');
+    eq(x.creneauDu(Date.parse('2026-09-19T10:00:00Z'), H, 'Europe/Paris').cle, '2026-09-19#12:00', 'a midi pile, celui de midi');
+    eq(x.creneauDu(Date.parse('2026-12-01T23:00:00Z'), H, 'Europe/Paris').cle, '2026-12-02#00:00', 'en hiver, minuit a Paris tombe a 23 h UTC : pas de recalcul a la main');
+    eq(x.creneauDu(Date.parse('2026-09-19T08:00:00Z'), ['16:00'], 'UTC'), null, 'un seul horaire pas encore passe : aucun creneau, on attend');
   }
 
-  console.log('\n-- 4. le texte, quoi qu ait ecrit le modele --');
+  console.log('\n-- 4. les scenes tournent --');
+  {
+    ok(x.SCENES.length >= 24, x.SCENES.length + ' scenes dans la banque');
+    eq(new Set(x.SCENES.map((s) => s.nom)).size, x.SCENES.length, 'toutes de nom different');
+    const journal = { jours: {} }; const vues = new Set(); let doublons = 0;
+    const fenetre = [];
+    for (let i = 0; i < 120; i++) {
+      const cle = '2026-10-' + String(1 + Math.floor(i / 2)).padStart(2, '0') + (i % 2 ? '#00:00' : '#12:00');
+      const s = x.sceneSuivante(cle, journal);
+      if (fenetre.includes(s.nom)) doublons++;
+      fenetre.push(s.nom); if (fenetre.length > 6) fenetre.shift();
+      journal.jours[cle] = { scene: s.nom, id: String(i), quand: new Date(Date.UTC(2026, 9, 1) + i * 43200000).toISOString() }; vues.add(s.nom);
+    }
+    eq(doublons, 0, 'jamais une des six dernieres, sur cent vingt posts');
+    ok(vues.size >= 24, vues.size + ' scenes differentes en soixante jours');
+    ok(/no text, no letters/i.test(x.promptImage(x.SCENES[0])) && /buff Doge/.test(x.promptImage(x.SCENES[0])),
+       'le prompt porte le personnage et refuse le texte dans l image');
+    ok(x.ANGLES.length >= 8, x.ANGLES.length + ' angles d ecriture');
+  }
+
+  console.log('\n-- 5. le texte, quoi qu ait ecrit le modele --');
   {
     eq(x.nettoie('"  Big day for the dog!  "', false), 'Big day for the dog! $SWOGE', 'guillemets retires, $SWOGE ajoute s il manque');
     eq(x.nettoie('Go go go https://evil.example/x $SWOGE', false), 'Go go go $SWOGE', 'un lien que le modele a glisse est retire : il couterait treize fois le prix');
@@ -84,50 +101,68 @@ const x = require('./x_post');
     ok(/\nhttps:\/\/swoleeswoge\.dog$/.test(avec) && avec.length <= 280, 'avec X_LIEN, le lien du site est ajoute en derniere ligne');
     ok(x.RESERVE.every((t) => x.nettoie(t, false).length <= 280 && /\$SWOGE/.test(x.nettoie(t, false))), 'les phrases de reserve passent les memes regles');
     const faits = x.faitsDuJour(Date.now());
-    ok(faits.length >= 4 && faits.some((f) => /SWOGE Bet/.test(f)), 'les faits du jour parlent du site : ' + faits[0].slice(0, 60));
-    ok(x.heureAtteinte(Date.parse('2026-09-18T16:00:00Z'), '16:00') && !x.heureAtteinte(Date.parse('2026-09-18T15:59:00Z'), '16:00'),
-       'l heure est comparee en UTC, a la minute');
+    ok(faits.length >= 5 && faits.some((f) => /SWOGE Bet/.test(f)) && faits.some((f) => /AI agent/.test(f)), 'les faits du jour parlent du site, et de l agent lui-meme');
   }
 
-  console.log('\n-- 5. un tour complet, contre de faux serveurs --');
+  console.log('\n-- 5 bis. le journal du premier jour --');
+  {
+    /* Le 18 septembre 2026, il y avait un post par jour, sous la cle du jour.
+       Elle se lit comme le creneau de midi : sinon le serveur, au premier
+       tour apres deploiement, aurait « rattrape » un midi deja poste. */
+    fs.mkdirSync(VOL, { recursive: true });
+    fs.writeFileSync(path.join(VOL, 'x_posts.json'), JSON.stringify({ jours: { '2026-09-18': { scene: 'course', id: '1', quand: '2026-09-18T16:47:00.000Z', texte: 'x $SWOGE' } } }));
+    const j = x.litJournal();
+    ok(j.jours['2026-09-18#12:00'] && !j.jours['2026-09-18'], 'une cle sans creneau se lit comme le creneau de midi');
+    fs.unlinkSync(path.join(VOL, 'x_posts.json'));
+  }
+
+  console.log('\n-- 6. des tours complets, contre de faux serveurs --');
   {
     Object.assign(process.env, { X_CONSUMER_KEY: 'ck', X_CONSUMER_SECRET: 'cs', X_ACCESS_TOKEN: 'at', X_ACCESS_SECRET: 'as',
-                                 OPENAI_API_KEY: 'ok', ANTHROPIC_API_KEY: 'ak', X_HEURE: '16:00' });
+                                 OPENAI_API_KEY: 'ok', ANTHROPIC_API_KEY: 'ak' });
     const appels = [];
-    let refuseTweet = false;
+    let refuseTweet = false; let nTexte = 0;
     const faux = async (url, o) => {
       const u = String(url); const corps = o && o.body ? JSON.parse(o.body) : null;
       appels.push({ u, corps, auth: (o && o.headers && (o.headers.authorization || o.headers['x-api-key'])) || '' });
       const rep = (statut, j) => ({ ok: statut < 300, status: statut, json: async () => j, text: async () => JSON.stringify(j) });
       if (/openai/.test(u)) return rep(200, { data: [{ b64_json: Buffer.from('PNG-factice').toString('base64') }], usage: { output_tokens: 6893 } });
-      if (/anthropic/.test(u)) return rep(200, { content: [{ type: 'text', text: '"Seven sports, one very buff dog. $SWOGE Bet is LIVE 🏟️🐕 https://spam.example"' }] });
+      if (/anthropic/.test(u)) { nTexte++; return rep(200, { content: [{ type: 'text', text: `"Post number ${nTexte}, one very buff dog. $SWOGE Bet is LIVE 🏟️🐕 https://spam.example"` }] }); }
       if (/media\/upload/.test(u)) return rep(200, { data: { id: '777', media_key: '3_777' } });
-      if (/2\/tweets/.test(u)) return refuseTweet ? rep(403, { detail: 'Forbidden' }) : rep(201, { data: { id: '999', text: corps.text } });
+      if (/2\/tweets/.test(u)) return refuseTweet ? rep(403, { detail: 'Forbidden' }) : rep(201, { data: { id: String(900 + appels.length), text: corps.text } });
       throw new Error('url inattendue ' + u);
     };
-    const T = Date.parse('2026-09-18T15:00:00Z');
-    let r = await x.tache({ maintenant: T, prendre: faux });
-    eq(r.etat, 'attend', 'avant l heure, on attend (' + r.heure + ' UTC)');
-    eq(appels.length, 0, 'et rien n est appele');
+    const MIDI = Date.parse('2026-09-19T10:00:00Z');       // midi a Paris
+    /* A 11 h, le creneau en cours est celui de minuit, jamais parti : le
+       serveur le rattrape, c est voulu (un redeploiement a 00 h 30 ne doit pas
+       perdre le post de minuit). */
+    let r = await x.tache({ maintenant: MIDI - 3600000, prendre: faux });
+    eq(r.etat, 'poste', 'a 11 h, le creneau de minuit n est pas parti : il part — un creneau manque se rattrape');
+    eq(r.cle, '2026-09-19#00:00', 'sous la cle de minuit');
+    const journalMinuit = x.litJournal();
+    ok(journalMinuit.jours['2026-09-19#00:00'].angle, 'un angle d ecriture est note : ' + journalMinuit.jours['2026-09-19#00:00'].angle.slice(0, 30));
 
-    /* Un refus de X d abord : l image doit etre gardee. */
+    /* Un refus de X a midi : l image doit etre gardee. */
     refuseTweet = true;
-    r = await x.tache({ maintenant: T + 3600000, prendre: faux });
-    eq(r.etat, 'rate', 'X refuse : le tour se dit rate');
-    eq(r.essais, 1, 'premier essai compte');
+    const avantMidi = appels.length;
+    r = await x.tache({ maintenant: MIDI + 60000, prendre: faux });
+    eq(r.etat, 'rate', 'X refuse a midi : le tour se dit rate');
+    eq(r.cle, '2026-09-19#12:00', 'sous la cle de midi');
     ok(/HTTP 403/.test(r.erreur) && /Forbidden/.test(r.erreur), 'et l erreur dit le code et le detail de X : ' + r.erreur);
-    ok(fs.existsSync(path.join(x.DOSSIER_IMAGES(), '2026-09-18.png')), 'l image est sur le volume');
-    eq(appels.filter((a) => /openai/.test(a.u)).length, 1, 'une image payee');
+    ok(fs.existsSync(path.join(x.DOSSIER_IMAGES(), '2026-09-19_12_00.png')), 'l image est sur le volume');
+    const demandeTexte = appels.slice(avantMidi).find((a) => /anthropic/.test(a.u)).corps.messages[0].content;
+    ok(/Previous posts/.test(demandeTexte) && /Post number 1/.test(demandeTexte), 'le modele recoit les posts precedents pour ne pas les repeter');
+    ok(/ANGLE: /.test(demandeTexte), 'et l angle du creneau');
 
     refuseTweet = false;
     let signale = null;
-    r = await x.tache({ maintenant: T + 7200000, prendre: faux, signale: (s) => { signale = s; } });
-    eq(r.etat, 'poste', 'au second tour, poste');
-    eq(r.id, '999', 'avec l identifiant rendu par X');
-    eq(appels.filter((a) => /openai/.test(a.u)).length, 1, 'SANS repayer l image : celle du disque a servi');
-    eq(appels.filter((a) => /anthropic/.test(a.u)).length, 1, 'ni reecrire le texte');
-    const ordre = appels.map((a) => /openai/.test(a.u) ? 'image' : /anthropic/.test(a.u) ? 'texte' : /media/.test(a.u) ? 'media' : 'tweet');
-    eq(ordre.join(','), 'image,texte,media,tweet,media,tweet', 'l ordre : image, texte, media, post — puis media, post au second tour');
+    r = await x.tache({ maintenant: MIDI + 600000, prendre: faux, signale: (s) => { signale = s; } });
+    eq(r.etat, 'poste', 'au tour suivant, poste');
+    eq(appels.filter((a) => /openai/.test(a.u)).length, 2, 'deux images payees en tout : minuit, midi — pas une de plus pour la reprise');
+    eq(appels.filter((a) => /anthropic/.test(a.u)).length, 2, 'deux textes');
+    const j = x.litJournal();
+    ok(j.jours['2026-09-19#00:00'].scene !== j.jours['2026-09-19#12:00'].scene, 'deux scenes differentes le meme jour : ' + j.jours['2026-09-19#00:00'].scene + ' puis ' + j.jours['2026-09-19#12:00'].scene);
+    ok(j.jours['2026-09-19#00:00'].texte !== j.jours['2026-09-19#12:00'].texte, 'et deux textes differents');
     const media = appels.find((a) => /media\/upload/.test(a.u));
     eq(media.corps.media_category, 'tweet_image', 'le media est declare image de post');
     eq(media.corps.media, Buffer.from('PNG-factice').toString('base64'), 'et porte le PNG en base64');
@@ -135,37 +170,42 @@ const x = require('./x_post');
        'signe en OAuth 1.0a, jeton du compte, nonce neuf');
     const tweet = appels.filter((a) => /2\/tweets/.test(a.u)).pop();
     eq(tweet.corps.media.media_ids.join(','), '777', 'le post attache l identifiant du media');
-    eq(tweet.corps.text, 'Seven sports, one very buff dog. $SWOGE Bet is LIVE 🏟️🐕', 'le texte est celui du modele, nettoye : guillemets et lien retires');
-    ok(signale && signale.id === '999' && signale.url === 'https://x.com/SwoleDogeSwoge/status/999', 'et le Telegram est prevenu avec le lien du post');
+    ok(/^Post number 2, one very buff dog\. \$SWOGE Bet is LIVE 🏟️🐕$/.test(tweet.corps.text), 'le texte est celui du modele, nettoye : guillemets et lien retires');
+    ok(signale && signale.id === r.id && signale.url === 'https://x.com/SwoleDogeSwoge/status/' + r.id, 'et le Telegram est prevenu avec le lien du post');
 
-    r = await x.tache({ maintenant: T + 10800000, prendre: faux });
-    eq(r.etat, 'deja', 'un troisieme tour le meme jour ne reposte pas');
-    eq(appels.filter((a) => /2\/tweets/.test(a.u)).length, 2, 'aucun appel de plus');
+    r = await x.tache({ maintenant: MIDI + 7200000, prendre: faux });
+    eq(r.etat, 'deja', 'a 14 h, le creneau de midi est deja parti : rien');
     const d = x.derniere();
-    ok(d.actif && d.derniere && d.derniere.id === '999' && d.derniere.image === '/x/image/2026-09-18.png' && !JSON.stringify(d).includes('"ck"'),
-       '/x/derniere dit le post du jour, son image, et aucune cle');
+    ok(d.actif && d.derniere && d.derniere.cle === '2026-09-19#12:00' && d.derniere.image === '/x/image/2026-09-19_12_00.png' && d.recents.length === 2 && !JSON.stringify(d).includes('"ck"'),
+       '/x/derniere dit le dernier post, son image, les recents, et aucune cle');
 
-    /* Le lendemain : nouveau post, autre scene. */
-    r = await x.tache({ maintenant: T + 86400000 + 7200000, prendre: faux });
-    eq(r.etat, 'poste', 'le lendemain, un nouveau post');
-    const j = x.litJournal();
-    ok(j.jours['2026-09-19'].scene !== j.jours['2026-09-18'].scene, 'avec une autre scene : ' + j.jours['2026-09-18'].scene + ' puis ' + j.jours['2026-09-19'].scene);
-
-    /* Trois refus, et on s arrete. */
+    /* Trois refus, et on s arrete ; puis la reprise. */
     refuseTweet = true;
-    const T2 = T + 2 * 86400000 + 7200000;
-    for (let i = 0; i < 3; i++) r = await x.tache({ maintenant: T2, prendre: faux });
-    eq(r.essais, 3, 'trois essais');
-    r = await x.tache({ maintenant: T2, prendre: faux });
-    eq(r.etat, 'abandon', 'au quatrieme, on abandonne la journee en le disant');
-    /* La cle corrigee, on reprend le jour meme, avec la meme image. */
+    const MINUIT = Date.parse('2026-09-19T22:00:00Z');
+    for (let i = 0; i < 3; i++) r = await x.tache({ maintenant: MINUIT, prendre: faux });
+    eq(r.essais, 3, 'trois essais a minuit');
+    r = await x.tache({ maintenant: MINUIT, prendre: faux });
+    eq(r.etat, 'abandon', 'au quatrieme, on abandonne le creneau en le disant');
     refuseTweet = false;
     const imagesAvant = appels.filter((a) => /openai/.test(a.u)).length;
-    ok(x.reprend(T2), 'reprendre remet les essais du jour a zero');
-    r = await x.tache({ maintenant: T2, prendre: faux, force: true });
-    eq(r.etat, 'poste', 'et le post part sans attendre demain');
+    eq(x.reprend(), 1, 'reprendre remet a zero le creneau rate');
+    r = await x.tache({ maintenant: MINUIT + 60000, prendre: faux });
+    eq(r.etat, 'poste', 'et le post part sans attendre le creneau suivant');
     eq(appels.filter((a) => /openai/.test(a.u)).length, imagesAvant, 'avec l image deja payee');
-    eq(x.reprend(T2), false, 'un jour deja poste ne se reprend pas');
+    eq(x.reprend(), 0, 'plus rien a reprendre');
+
+    /* Un post special : sujet impose, image a lui, hors creneau. */
+    const avantSpecial = appels.length;
+    r = await x.tache({ maintenant: MINUIT + 120000, prendre: faux,
+                        special: { nom: 'agent', sujet: 'An AI agent now writes, illustrates and posts here on its own', prompt: 'at a desk with a robot painter' } });
+    eq(r.etat, 'poste', 'un post special part meme quand le creneau est deja servi');
+    eq(r.cle, '2026-09-19#agent', 'sous sa propre cle');
+    ok(/Today's announcement.*AI agent now writes/.test(appels.slice(avantSpecial).find((a) => /anthropic/.test(a.u)).corps.messages[0].content), 'le modele recoit le sujet impose');
+    ok(/at a desk with a robot painter/.test(appels.slice(avantSpecial).find((a) => /openai/.test(a.u)).corps.prompt), 'et l image, sa scene a elle');
+    r = await x.tache({ maintenant: MINUIT + 180000, prendre: faux, special: { nom: 'agent', sujet: 'encore' } });
+    eq(r.etat, 'deja', 'le meme post special ne part pas deux fois le meme jour');
+    r = await x.tache({ maintenant: MINUIT + 180000, prendre: faux, special: { nom: 'sans-sujet' } });
+    eq(r.etat, 'refuse', 'et sans sujet, refuse');
   }
 
   console.log(`\nx_post.test.js : ${n} verifications OK`);

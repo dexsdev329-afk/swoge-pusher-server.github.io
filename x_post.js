@@ -1,16 +1,17 @@
 'use strict';
 /*
- * ==================== LE POST QUOTIDIEN SUR X ====================
+ * ==================== LES POSTS QUOTIDIENS SUR X ====================
  *
  * ---- pourquoi ce fichier existe ----
  *
  * « Une image par jour avec SWOGE, differente, et un post bullish, que
- * j automatise. » Chaque jour a l heure dite : une scene tiree d une banque
- * (jamais la meme deux jours de suite), une image generee par l API d images
- * d OpenAI, un texte court ecrit par un modele a partir de ce que le site
- * fait VRAIMENT ce jour-la (rencontres ouvertes, sports, salles du Nexus),
- * puis l envoi sur X en deux appels : l image, le post. Une copie part sur
- * le Telegram, le journal reste sur le volume.
+ * j automatise. » Puis : « deux posts par jour, midi et minuit, des textes
+ * et des images differents a chaque fois. » A chaque creneau : une scene
+ * tiree d une banque (jamais une des six dernieres), une image generee par
+ * l API d images d OpenAI, un texte court ecrit par un modele sous un ANGLE
+ * qui tourne (hype, chiffres, humour, communaute…) a partir de ce que le
+ * site fait VRAIMENT ce jour-la, puis l envoi sur X en deux appels : l image,
+ * le post. Une copie part sur le Telegram, le journal reste sur le volume.
  *
  * ---- ce que ca coute, mesure le 18 septembre 2026 ----
  *
@@ -20,19 +21,25 @@
  *  - X, en paiement a l usage : « Post: Create » 0,015 $ SANS lien dans le
  *    texte, 0,200 $ AVEC (grille docs.x.com, meme jour). D ou `X_LIEN` : le
  *    lien ne part que si on le demande, c est treize fois le prix.
- *  Soit environ 7 $ par mois sans lien, 13 $ avec.
+ *  Deux posts par jour : environ 14 $ par mois sans lien, 26 $ avec.
  *
  * ---- les verrous ----
  *
- *  - UN post par jour, garde par le journal sur le volume : un redeploiement
- *    en cours de journee ne reposte pas.
+ *  - UN post par creneau, garde par le journal sur le volume : un
+ *    redeploiement en cours de journee ne reposte pas.
  *  - L image est ECRITE SUR LE DISQUE avant l envoi : si X refuse, le
  *    prochain essai reprend la meme image au lieu d en payer une autre.
- *  - Trois essais par jour, pas plus ; au-dela on ecrit pourquoi et on
- *    attend demain. Rien ne boucle sur une cle refusee.
+ *  - Trois essais par creneau, pas plus ; au-dela on ecrit pourquoi et on
+ *    attend le suivant. Rien ne boucle sur une cle refusee.
  *  - Sans les cinq cles, le module DIT ce qui manque et ne fait rien.
  *  - Aucune cle ne sort de l environnement : ni dans le journal, ni dans
  *    les reponses, ni dans le depot.
+ *
+ * ---- l heure ----
+ *
+ * Les creneaux sont donnes dans le fuseau du proprietaire (`X_FUSEAU`,
+ * Europe/Paris) : « midi et minuit » veulent dire midi et minuit a Paris,
+ * ete comme hiver, sans recalcul a la main au changement d heure.
  *
  * ---- l authentification ----
  *
@@ -40,7 +47,9 @@
  * ce que la console X donne pour un compte (cle consommateur + jeton
  * d acces, permissions Read and Write). L implementation est verifiee dans
  * `x_post.test.js` contre l exemple chiffre de la documentation de X, au
- * caractere pres — une signature fausse ne se debogue pas a l oeil.
+ * caractere pres. Premiere execution en service le 18 septembre 2026 :
+ * 403 tant que le jeton avait ete genere en « Lire » ; poste des le jeton
+ * regenere en « Lire et ecrire ».
  */
 const fs = require('fs');
 const path = require('path');
@@ -56,7 +65,8 @@ function env() {
     ck: process.env.X_CONSUMER_KEY || '', cs: process.env.X_CONSUMER_SECRET || '',
     at: process.env.X_ACCESS_TOKEN || '', as: process.env.X_ACCESS_SECRET || '',
     openai: process.env.OPENAI_API_KEY || '', anthropic: process.env.ANTHROPIC_API_KEY || '',
-    heure: process.env.X_HEURE || '16:00',              // UTC — 18 h a Paris l ete
+    heures: String(process.env.X_HEURES || process.env.X_HEURE || '12:00,00:00').split(',').map((h) => h.trim()).filter((h) => /^\d{1,2}:\d{2}$/.test(h)),
+    fuseau: process.env.X_FUSEAU || 'Europe/Paris',
     lien: process.env.X_LIEN === '1',
     qualite: process.env.X_QUALITE || 'high',
     modeleImage: process.env.X_MODELE_IMAGE || 'gpt-image-1.5',
@@ -100,9 +110,33 @@ function signeOAuth(methode, url, params, cles, opts) {
   return { entete, base, signature: oauth.oauth_signature };
 }
 
+// ------------------------------------------------------------ le temps
+
+/** L heure et le jour dans le fuseau du proprietaire. */
+function heureLocale(t, fuseau) {
+  const f = new Intl.DateTimeFormat('en-CA', { timeZone: fuseau || 'Europe/Paris', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const p = {};
+  for (const x of f.formatToParts(new Date(t))) p[x.type] = x.value;
+  return { jour: `${p.year}-${p.month}-${p.day}`, minutes: (Number(p.hour) % 24) * 60 + Number(p.minute) };
+}
+const minutesDe = (h) => { const m = /^(\d{1,2}):(\d{2})$/.exec(h); return m ? Number(m[1]) * 60 + Number(m[2]) : 0; };
+/**
+ * Le creneau en cours : le dernier horaire deja passe aujourd hui (heure
+ * locale), ou null s il n y en a pas encore eu. Sa cle est `jour#heure`, et
+ * c est elle qui garantit UN post par creneau.
+ */
+function creneauDu(t, heures, fuseau) {
+  const l = heureLocale(t, fuseau);
+  const passes = (heures || []).filter((h) => minutesDe(h) <= l.minutes).sort((a, b) => minutesDe(b) - minutesDe(a));
+  if (!passes.length) return null;
+  return { cle: l.jour + '#' + passes[0], jour: l.jour, heure: passes[0] };
+}
+function jourDe(t) { return new Date(t).toISOString().slice(0, 10); }
+
 // ------------------------------------------------------------ les scenes
 
-/* Le personnage, toujours le meme : c est lui qu on reconnait d un jour a
+/* Le personnage, toujours le meme : c est lui qu on reconnait d un post a
    l autre. La scene change, pas lui. */
 const PERSONNAGE = "the famous 'buff Doge' meme character: a Shiba Inu head with a calm, smug expression on an extremely muscular bodybuilder torso, cream and tan fur, painterly digital-art style, wearing a royal blue tank top";
 const STYLE = 'Landscape social-media illustration, dark cinematic style of a crypto game poster, deep navy and black background with electric green, gold and blue light, faint circuit traces, gold coins with a paw print floating in the air, high contrast, epic';
@@ -133,17 +167,21 @@ const SCENES = [
   { nom: 'hockey', prompt: 'on the ice in a hockey rink, stick in paw, puck mid-air, snow spraying' },
   { nom: 'tennis', prompt: 'mid-serve on a floodlit tennis court, racket high, ball tossed, crowd silhouettes' },
   { nom: 'dragon', prompt: 'standing on the head of a friendly golden dragon flying over a neon city at night' },
+  { nom: 'nuit', prompt: 'on a skyscraper rooftop at midnight overlooking a neon city, cape in the wind, full moon with a paw print' },
+  { nom: 'labo', prompt: 'in a glowing laboratory mixing a bubbling green potion, safety goggles on the forehead, holographic formulas around' },
+  { nom: 'surf', prompt: 'surfing a giant green wave shaped like a rising chart, sunglasses, spray everywhere' },
+  { nom: 'chef', prompt: 'in a chef hat flipping a golden pancake shaped like a coin in a bright kitchen, puppies waiting with plates' },
+  { nom: 'concert', prompt: 'on a festival stage with an electric guitar, lasers, a crowd of thousands of Shiba fans holding glowing paws' },
+  { nom: 'agent', prompt: 'sitting at a futuristic desk typing on a holographic keyboard while a small glowing robot assistant paints pictures on floating screens around him, a bird-shaped hologram taking off from the screen' },
 ];
 
-/* Le jour de l annee choisit la scene ; on decale d un cran si c est celle
-   d hier (deux jours de suite, le fil ressemble a une panne). */
-function sceneDuJour(t, journal) {
-  const d = new Date(t);
-  const jour = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 86400000);
-  let i = ((jour * 7) % SCENES.length + SCENES.length) % SCENES.length;
-  const hier = jourDe(t - 86400000);
-  const prec = journal && journal.jours && journal.jours[hier] && journal.jours[hier].scene;
-  if (prec && SCENES[i].nom === prec) i = (i + 1) % SCENES.length;
+/* La scene est choisie par la cle du creneau, et ne peut pas etre une des
+   six dernieres postees : deux posts par jour avec la meme image, le fil
+   ressemble a une panne. */
+function sceneSuivante(cle, journal) {
+  const recentes = dernieres(journal, 6).map((e) => e.scene);
+  let i = Number.parseInt(crypto.createHash('sha1').update(String(cle)).digest('hex').slice(0, 8), 16) % SCENES.length;
+  for (let k = 0; k < SCENES.length && recentes.includes(SCENES[i].nom); k++) i = (i + 1) % SCENES.length;
   return SCENES[i];
 }
 function promptImage(scene) { return `${STYLE}. In the center, ${PERSONNAGE}, ${scene.prompt}. ${NEGATIF}`; }
@@ -168,18 +206,31 @@ function faitsDuJour(t) {
   faits.push('SWOGE Nexus: a 2.5D pixel world with an arcade, a casino, a cinema, SWOGE TV (285 free live channels) and a pet world');
   faits.push('SWOGE Wallet: multi-chain, Solana included, keys stay on your device');
   faits.push('SWOGE is a community-run memecoin (CTO) with a real product shipping every week');
+  faits.push('An AI agent writes, illustrates and posts on this X account by itself, twice a day');
   return faits;
 }
 
 // ------------------------------------------------------------ le texte
 
-const SYSTEME = `You write ONE post per day on X for SWOGE ($SWOGE), a community-run memecoin (CTO) with a real crypto game ecosystem.
-Voice: bullish, playful, meme energy, confident and fun, never desperate, never rude.
-Hard rules: English. Maximum 240 characters. Must contain "$SWOGE". 1 to 3 emojis. At most 2 hashtags. No links. No promises of returns, no "guaranteed", no price targets. Use the facts you are given when they are interesting; never invent numbers. Mention the scene of today's image if it fits.
+/* L angle tourne d un post a l autre : deux posts par jour ecrits sur le
+   meme ton se lisent comme un robot. */
+const ANGLES = [
+  'pure hype: short punchy lines, one big claim about momentum',
+  'the numbers: lead with one real stat from the facts, make it feel huge',
+  'humor: a joke about the very buff dog, self-aware meme energy',
+  'community: talk to the holders as a pack, we/us, CTO pride',
+  'teaser: hint at what is coming next without details, build curiosity',
+  'product flex: name one concrete feature from the facts and why it is cool',
+  'midnight vibes: calm, confident, the dog never sleeps, late-night degen energy',
+  'challenge: dare the reader to try one thing on the site today',
+];
+const SYSTEME = `You write posts on X for SWOGE ($SWOGE), a community-run memecoin (CTO) with a real crypto game ecosystem. The goal is viral, bullish, shareable posts.
+Voice: bullish, playful, meme energy, confident and fun, never desperate, never rude, never repetitive.
+Hard rules: English. Maximum 240 characters. Must contain "$SWOGE". 1 to 3 emojis. At most 2 hashtags. No links. No promises of returns, no "guaranteed", no price targets. Use the facts you are given when they are interesting; never invent numbers. Write under the given ANGLE. Do NOT reuse the opening words, the structure or the jokes of the previous posts you are shown. Mention today's image if it fits.
 Output only the post text, nothing else.`;
 
 /* Si le modele ne repond pas, on poste quand meme — avec une phrase de
-   reserve, vraie, plutot que de rater le jour. */
+   reserve, vraie, plutot que de rater le creneau. */
 const RESERVE = [
   'Another day, another rep. $SWOGE keeps shipping. 💪🐕',
   'Bet, play, stake, repeat. The SWOGE machine never sleeps. 🐕🚀',
@@ -206,19 +257,27 @@ function nettoie(brut, lien) {
   return t;
 }
 
-async function ecritTexte(faits, scene, t, prendre) {
+/**
+ * `o.scene` : la scene de l image ; `o.sujet` : un sujet impose (un post
+ * special) ; `o.angle` : l angle du jour ; `o.precedents` : les derniers
+ * textes, pour ne pas les repeter.
+ */
+async function ecritTexte(faits, o, prendre) {
   const e = env();
   const f = prendre || fetch;
-  const jour = new Date(t || Date.now()).toISOString().slice(0, 10);
+  const t = o.maintenant || Date.now();
+  const jour = jourDe(t);
   if (e.anthropic) {
     try {
+      const demande = [`Date: ${jour}`, `ANGLE: ${o.angle || ANGLES[0]}`]
+        .concat(o.sujet ? [`Today's announcement (this is the subject of the post): ${o.sujet}`] : [])
+        .concat([`Today's image: SWOGE ${o.scene.prompt}`, `Facts:\n- ${faits.join('\n- ')}`])
+        .concat((o.precedents || []).length ? [`Previous posts (do not repeat their openings, structure or jokes):\n- ${o.precedents.join('\n- ')}`] : [])
+        .join('\n');
       const r = await f('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': e.anthropic, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({
-          model: e.modeleTexte, max_tokens: 200, system: SYSTEME,
-          messages: [{ role: 'user', content: `Date: ${jour}\nToday's image: SWOGE ${scene.prompt}\nFacts:\n- ${faits.join('\n- ')}` }],
-        }),
+        body: JSON.stringify({ model: e.modeleTexte, max_tokens: 200, system: SYSTEME, messages: [{ role: 'user', content: demande }] }),
         signal: AbortSignal.timeout(20000),
       });
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -230,7 +289,7 @@ async function ecritTexte(faits, scene, t, prendre) {
       console.error('[x] texte : le modele n a pas repondu (' + (err.message || err) + '), phrase de reserve');
     }
   }
-  const i = Math.floor(Date.parse(jour) / 86400000) % RESERVE.length;
+  const i = Number.parseInt(crypto.createHash('sha1').update(String(o.cle || jour)).digest('hex').slice(0, 6), 16) % RESERVE.length;
   return { texte: nettoie(RESERVE[i], e.lien), via: 'reserve' };
 }
 
@@ -290,38 +349,49 @@ async function publie(texte, mediaId, prendre) {
 const FICHIER = () => path.join(cfg.DATA_DIR, 'x_posts.json');
 const DOSSIER_IMAGES = () => path.join(cfg.DATA_DIR, 'x_images');
 function litJournal() {
-  try { return JSON.parse(fs.readFileSync(FICHIER(), 'utf8')) || { jours: {} }; }
-  catch (e) { return { jours: {} }; }
+  try {
+    const j = JSON.parse(fs.readFileSync(FICHIER(), 'utf8')) || {};
+    const jours = {};
+    /* Le premier jour (18 septembre 2026) avait un post par jour, sous la
+       cle du jour seul : elle se lit comme le creneau de midi, sinon le
+       premier tour apres deploiement « rattraperait » un midi deja poste. */
+    for (const [k, e] of Object.entries(j.jours || {})) jours[k.includes('#') ? k : k + '#12:00'] = e;
+    return { jours };
+  } catch (e) { return { jours: {} }; }
 }
 function ecritJournal(j) {
   fs.mkdirSync(cfg.DATA_DIR, { recursive: true });
   fs.writeFileSync(FICHIER(), JSON.stringify(j, null, 1));
 }
-function jourDe(t) { return new Date(t).toISOString().slice(0, 10); }
-function heureAtteinte(t, heure) {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(heure || '');
-  if (!m) return true;
-  const d = new Date(t);
-  return d.getUTCHours() * 60 + d.getUTCMinutes() >= Number(m[1]) * 60 + Number(m[2]);
+/** Les derniers posts PARTIS, du plus recent au plus ancien. */
+function dernieres(journal, n) {
+  return Object.entries(journal.jours).filter(([, e]) => e.id)
+    .sort((a, b) => (b[1].quand || '').localeCompare(a[1].quand || '') || b[0].localeCompare(a[0]))
+    .slice(0, n).map(([cle, e]) => Object.assign({ cle }, e));
 }
-/* Trente images gardees : de quoi relire un mois, pas de quoi remplir le volume. */
+/* Soixante images gardees : un mois a deux par jour, pas de quoi remplir le volume. */
 function purgeImages() {
   try {
     const l = fs.readdirSync(DOSSIER_IMAGES()).filter((f) => /\.png$/.test(f)).sort();
-    for (const f of l.slice(0, Math.max(0, l.length - 30))) fs.unlinkSync(path.join(DOSSIER_IMAGES(), f));
+    for (const f of l.slice(0, Math.max(0, l.length - 60))) fs.unlinkSync(path.join(DOSSIER_IMAGES(), f));
   } catch (e) { /* dossier absent */ }
+}
+const nomImage = (cle) => String(cle).replace(/[^0-9A-Za-z-]+/g, '_');
+function vue(cle, e) {
+  return { cle, scene: e.scene, angle: e.angle || null, texte: e.texte, id: e.id || null, essais: e.essais || 0, erreur: e.erreur || null,
+           via: e.via || null, quand: e.quand || null, image: e.image ? '/x/image/' + e.image.replace(/\.png$/, '') + '.png' : null,
+           url: e.id ? `https://x.com/${env().compte}/status/${e.id}` : null };
 }
 /** Ce que le serveur montre sur /x/derniere : le journal sans rien de secret. */
 function derniere() {
   const j = litJournal();
-  const jours = Object.keys(j.jours).sort();
-  const d = jours[jours.length - 1];
-  if (!d) return { actif: enabled(), manque: manque(), heure: env().heure, derniere: null };
-  const e = j.jours[d];
-  return { actif: enabled(), manque: manque(), heure: env().heure,
-           derniere: { jour: d, scene: e.scene, texte: e.texte, id: e.id || null, essais: e.essais || 0, erreur: e.erreur || null,
-                       via: e.via || null, image: e.image ? '/x/image/' + d + '.png' : null,
-                       url: e.id ? `https://x.com/${env().compte}/status/${e.id}` : null } };
+  const e = env();
+  const cles = Object.keys(j.jours).sort((a, b) => ((j.jours[b].quand || '') + b).localeCompare((j.jours[a].quand || '') + a));
+  const c = cles[0];
+  return { actif: enabled(), manque: manque(), heures: e.heures, fuseau: e.fuseau,
+           creneau: creneauDu(Date.now(), e.heures, e.fuseau),
+           derniere: c ? vue(c, j.jours[c]) : null,
+           recents: dernieres(j, 6).map((x) => ({ cle: x.cle, scene: x.scene, quand: x.quand, url: `https://x.com/${e.compte}/status/${x.id}` })) };
 }
 
 // ------------------------------------------------------------ la tache
@@ -330,88 +400,104 @@ let enCours = false;
 /**
  * Un tour. Rend un etat lisible : inactif · attend · deja · abandon · poste · rate.
  * `opts.maintenant` et `opts.prendre` (un faux fetch) servent aux essais ;
- * `opts.force` ignore l heure — pour `--publie`, pas pour le serveur.
+ * `opts.force` ignore l heure — pour `--publie`, pas pour le serveur ;
+ * `opts.special = { nom, prompt, sujet }` fait un post hors creneau, sur un
+ * sujet impose, avec sa propre image.
  */
 async function tache(opts) {
   const o = opts || {};
   const t = o.maintenant || Date.now();
   if (!enabled()) return { etat: 'inactif', manque: manque() };
   const e = env();
-  const jour = jourDe(t);
   const journal = litJournal();
-  const entree = journal.jours[jour] || { essais: 0 };
-  if (entree.id) return { etat: 'deja', id: entree.id };
-  if (!o.force && !heureAtteinte(t, e.heure)) return { etat: 'attend', heure: e.heure };
-  if (entree.essais >= 3) return { etat: 'abandon', erreur: entree.erreur };
+  let cle;
+  if (o.special) {
+    if (!o.special.nom || !o.special.sujet) return { etat: 'refuse', erreur: 'un post special demande un nom et un sujet' };
+    cle = jourDe(t) + '#' + String(o.special.nom).replace(/[^0-9A-Za-z-]+/g, '-').slice(0, 24);
+  } else {
+    const c = creneauDu(t, e.heures, e.fuseau);
+    if (!c && !o.force) return { etat: 'attend', heures: e.heures, fuseau: e.fuseau };
+    cle = c ? c.cle : heureLocale(t, e.fuseau).jour + '#force';
+  }
+  const entree = journal.jours[cle] || { essais: 0 };
+  if (entree.id) return { etat: 'deja', cle, id: entree.id };
+  if (entree.essais >= 3) return { etat: 'abandon', cle, erreur: entree.erreur };
   if (enCours) return { etat: 'en cours' };
   enCours = true;
   try {
-    const scene = entree.scene ? SCENES.find((s) => s.nom === entree.scene) || sceneDuJour(t, journal) : sceneDuJour(t, journal);
+    const scene = o.special && o.special.prompt ? { nom: o.special.nom, prompt: o.special.prompt }
+                : entree.scene ? (SCENES.find((s) => s.nom === entree.scene) || sceneSuivante(cle, journal))
+                : sceneSuivante(cle, journal);
     entree.scene = scene.nom;
+    if (!entree.angle) entree.angle = ANGLES[Number.parseInt(crypto.createHash('sha1').update(cle).digest('hex').slice(0, 6), 16) % ANGLES.length];
     /* L image d abord, sur le disque : un refus de X plus loin ne la fait
        pas payer deux fois. */
     fs.mkdirSync(DOSSIER_IMAGES(), { recursive: true });
-    const fichierImage = path.join(DOSSIER_IMAGES(), jour + '.png');
+    const fichierImage = path.join(DOSSIER_IMAGES(), nomImage(cle) + '.png');
     let png;
     if (entree.image && fs.existsSync(fichierImage)) png = fs.readFileSync(fichierImage);
     else {
       const g = await genereImage(promptImage(scene), o.prendre);
       png = g.png; fs.writeFileSync(fichierImage, png);
-      entree.image = jour + '.png'; entree.jetonsImage = g.jetons;
-      journal.jours[jour] = entree; ecritJournal(journal);
+      entree.image = nomImage(cle) + '.png'; entree.jetonsImage = g.jetons;
+      journal.jours[cle] = entree; ecritJournal(journal);
     }
     if (!entree.texte) {
-      const r = await ecritTexte(faitsDuJour(t), scene, t, o.prendre);
+      const r = await ecritTexte(faitsDuJour(t), { scene, cle, maintenant: t, angle: entree.angle,
+                                                    sujet: o.special && o.special.sujet,
+                                                    precedents: dernieres(journal, 5).map((x) => x.texte) }, o.prendre);
       entree.texte = r.texte; entree.via = r.via;
-      journal.jours[jour] = entree; ecritJournal(journal);
+      journal.jours[cle] = entree; ecritJournal(journal);
     }
     const mediaId = await televerse(png, o.prendre);
     const id = await publie(entree.texte, mediaId, o.prendre);
     entree.id = id; entree.quand = new Date(t).toISOString(); delete entree.erreur;
-    journal.jours[jour] = entree; ecritJournal(journal);
+    journal.jours[cle] = entree; ecritJournal(journal);
     purgeImages();
-    console.log(`[x] poste ${jour} · scene ${scene.nom} · https://x.com/${e.compte}/status/${id}`);
-    if (o.signale) { try { o.signale({ jour, texte: entree.texte, id, image: e.domaine ? `https://${e.domaine}/x/image/${jour}.png` : null, url: `https://x.com/${e.compte}/status/${id}` }); } catch (x) { /* le Telegram ne fait pas rater le post */ } }
-    return { etat: 'poste', id, texte: entree.texte, scene: scene.nom };
+    console.log(`[x] poste ${cle} · scene ${scene.nom} · https://x.com/${e.compte}/status/${id}`);
+    if (o.signale) {
+      try { o.signale({ cle, texte: entree.texte, id, image: e.domaine ? `https://${e.domaine}/x/image/${nomImage(cle)}.png` : null, url: `https://x.com/${e.compte}/status/${id}` }); }
+      catch (x) { /* le Telegram ne fait pas rater le post */ }
+    }
+    return { etat: 'poste', cle, id, texte: entree.texte, scene: scene.nom, angle: entree.angle };
   } catch (err) {
     entree.essais = (entree.essais || 0) + 1;
     entree.erreur = String(err && err.message || err).slice(0, 200);
-    journal.jours[jour] = entree; ecritJournal(journal);
-    console.error(`[x] rate (${entree.essais}/3) : ${entree.erreur}`);
-    return { etat: 'rate', essais: entree.essais, erreur: entree.erreur };
+    journal.jours[cle] = entree; ecritJournal(journal);
+    console.error(`[x] rate ${cle} (${entree.essais}/3) : ${entree.erreur}`);
+    return { etat: 'rate', cle, essais: entree.essais, erreur: entree.erreur };
   } finally {
     enCours = false;
   }
 }
 
-/** Remet les essais du jour a zero — apres avoir corrige une cle ou une
- *  permission, sans attendre demain. L image et le texte du jour sont gardes. */
-function reprend(t) {
-  const jour = jourDe(t || Date.now());
+/** Remet a zero les essais des creneaux non partis — apres une cle ou une
+ *  permission corrigee, sans attendre le creneau suivant. Image et texte gardes. */
+function reprend() {
   const journal = litJournal();
-  const e = journal.jours[jour];
-  if (!e || e.id) return false;
-  delete e.essais; delete e.erreur;
-  ecritJournal(journal);
-  return true;
+  let n = 0;
+  for (const e of Object.values(journal.jours)) if (!e.id && e.essais) { delete e.essais; delete e.erreur; n++; }
+  if (n) ecritJournal(journal);
+  return n;
 }
 
 /** Dans le serveur : un regard toutes les cinq minutes, le journal decide. */
 function planifie(signale) {
   if (!enabled()) {
-    console.log('[x] post quotidien ETEINT : il manque ' + manque().join(', '));
+    console.log('[x] posts ETEINTS : il manque ' + manque().join(', '));
     return null;
   }
-  console.log(`[x] post quotidien ARME a ${env().heure} UTC`);
-  const tour = () => tache({ signale }).catch((e) => console.error('[x] ' + (e.message || e)));
+  const e = env();
+  console.log(`[x] posts ARMES a ${e.heures.join(' et ')} (${e.fuseau})`);
+  const tour = () => tache({ signale }).catch((x) => console.error('[x] ' + (x.message || x)));
   const premier = setTimeout(tour, 120000);
   const minuterie = setInterval(tour, 5 * 60000);
   return { arrete() { clearTimeout(premier); clearInterval(minuterie); } };
 }
 
-module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, sceneDuJour, promptImage, faitsDuJour,
+module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, ANGLES, sceneSuivante, promptImage, faitsDuJour,
                    nettoie, ecritTexte, genereImage, televerse, publie, tache, planifie, derniere, reprend,
-                   heureAtteinte, jourDe, litJournal, DOSSIER_IMAGES, RESERVE };
+                   heureLocale, creneauDu, jourDe, litJournal, dernieres, DOSSIER_IMAGES, RESERVE };
 
 // ------------------------------------------------------------ en ligne de commande
 
@@ -421,22 +507,26 @@ if (require.main === module) {
     if (a.includes('--essai')) {
       /* Image + texte, RIEN n est poste : pour voir a quoi ca ressemble. Coute l image. */
       if (!process.env.OPENAI_API_KEY) { console.error('OPENAI_API_KEY absente'); process.exit(1); }
-      const t = Date.now(); const scene = sceneDuJour(t, litJournal());
+      const t = Date.now(); const j = litJournal(); const cle = 'essai#' + t;
+      const scene = sceneSuivante(cle, j);
       console.log('scene :', scene.nom);
       const g = await genereImage(promptImage(scene));
-      const sortie = path.resolve(a[a.indexOf('--essai') + 1] && !a[a.indexOf('--essai') + 1].startsWith('--') ? a[a.indexOf('--essai') + 1] : '_x_essai.png');
+      const i = a.indexOf('--essai');
+      const sortie = path.resolve(a[i + 1] && !a[i + 1].startsWith('--') ? a[i + 1] : '_x_essai.png');
       fs.writeFileSync(sortie, g.png);
       console.log('image :', sortie, '·', g.jetons, 'jetons');
-      const r = await ecritTexte(faitsDuJour(t), scene, t);
+      const r = await ecritTexte(faitsDuJour(t), { scene, cle, maintenant: t, angle: ANGLES[t % ANGLES.length], precedents: dernieres(j, 5).map((x) => x.texte) });
       console.log('texte (' + r.via + ') :\n' + r.texte);
       return;
     }
     if (a.includes('--publie')) {
+      reprend();
       const r = await tache({ force: true });
       console.log(JSON.stringify(r, null, 1));
       process.exit(r.etat === 'poste' || r.etat === 'deja' ? 0 : 1);
     }
-    console.log('usage : --essai [fichier.png]  (image + texte, sans poster) | --publie  (poste maintenant, une fois par jour)');
+    console.log('usage : --essai [fichier.png]  (image + texte, sans poster) | --publie  (poste le creneau en cours)');
     console.log('cles :', enabled() ? 'toutes presentes' : 'il manque ' + manque().join(', '));
+    console.log('creneaux :', env().heures.join(', '), env().fuseau);
   })().catch((e) => { console.error(e.message || e); process.exit(1); });
 }

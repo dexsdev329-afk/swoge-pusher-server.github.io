@@ -2921,7 +2921,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (path.startsWith('/x/image/')) {
     const jour = path.slice('/x/image/'.length).replace(/\.png$/, '');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(jour)) { res.writeHead(404); return res.end(); }
+    if (!/^[0-9A-Za-z_-]{1,40}$/.test(jour)) { res.writeHead(404); return res.end(); }
     let png = null;
     try { png = fs.readFileSync(require('path').join(xPost.DOSSIER_IMAGES(), jour + '.png')); } catch (e) { /* pas d image ce jour-la */ }
     if (!png) { res.writeHead(404); return res.end(); }
@@ -2936,8 +2936,13 @@ const server = http.createServer(async (req, res) => {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
     if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
-    xPost.reprend();
-    const r = await xPost.tache({ force: true, signale: (p) => tg.notifyPhoto(p.image, p.texte + '\n' + p.url) });
+    /* Sans corps : reprend le creneau en cours. Avec { nom, sujet, prompt } :
+       un post special, sur ce sujet, avec sa propre image. */
+    const d = await donPost(req);
+    const signale = (p) => tg.notifyPhoto(p.image, p.texte + '\n' + p.url);
+    let r;
+    if (d && d.sujet) r = await xPost.tache({ signale, special: { nom: String(d.nom || 'special').slice(0, 24), sujet: String(d.sujet).slice(0, 400), prompt: d.prompt ? String(d.prompt).slice(0, 600) : undefined } });
+    else { xPost.reprend(); r = await xPost.tache({ force: true, signale }); }
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(r));
   }
