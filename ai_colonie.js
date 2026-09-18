@@ -829,6 +829,8 @@ function etatNeuf() {
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
     seuil: SEUIL, derniers: [], depuisAjustement: 0, suites: [], sortieEssais: 0,
     ombres: [], audit: {}, profils: {},
+    /* l audit du Conseiller : par avis, ce que ses jetons ont fait */
+    auditConseil: {},
     /* le fond de rendement que toute case se compare a (voir `apprendBase`),
        et la marque que le seuil a ete pose pour des notes centrees */
     base: null, adjCentre: true,
@@ -4842,6 +4844,11 @@ function noteOmbre(t, an, refus, quiRefuse) {
     echeance: now + OMBRE_TENUE_MIN * 60000,
     traits: an.traits, score: an.score,
     refus: refus || null, quiRefuse: quiRefuse || null, cleOmbre,
+    /* L'avis du Conseiller sur CE jeton, s'il a ete consulte : c'est lui
+       qu'on relira a quinze et a soixante minutes (voir `noteAuditConseil`).
+       Garde meme quand le jeton a ete refuse ensuite — un avis favorable sur
+       un jeton qu'un veto a ecarte reste un avis a juger. */
+    conseil: (t.conseil && t.conseil.avis) ? { avis: t.conseil.avis, points: t.conseil.points } : null,
     /* Hors apprentissage : l'audit oui, les courbes et les agents non. Voir
        `OBS_PAR_TOUR`. */
     hors: !!t.observation,
@@ -4987,6 +4994,93 @@ function familleRefus(r) {
   return t.replace(/\d[\d.,]*/g, '#').replace(/\s+/g, ' ').trim().slice(0, 70);
 }
 
+/* ==========================================================================
+ * LE CONSEILLER DEVIENT JUGEABLE
+ *
+ * Releve du 18 septembre 2026 : 1 173 avis rendus depuis le 31 aout, et
+ * AUCUNE ligne d'audit. On ne savait donc pas s'il avait raison — ni s'il
+ * valait ses appels, ni s'il fallait lui donner plus de poids ou un modele
+ * plus cher. « Une regle sans ligne d'audit n'est pas jugeable » : c'est la
+ * convention du depot, et elle s'applique d'abord a lui, qui est le seul a
+ * porter un avis qu'on ne peut pas relire ligne a ligne.
+ *
+ * Ce qu'on mesure, et rien de plus : pour chacun de ses trois avis, ce que
+ * les jetons ont fait A QUINZE ET A SOIXANTE MINUTES. Deux echeances, pas
+ * une : un avis qui separe a quinze minutes et ne separe plus a soixante dit
+ * quelque chose sur la TENUE, pas sur le jeton, et l'ecraser sur une seule
+ * echeance aurait cache ca.
+ *
+ * Les memes bornes que `noteAudit` — monte a +20 %, effondre a -30 % — pour
+ * que les deux tableaux se lisent l'un a cote de l'autre sans conversion.
+ *
+ * Sa reference est la SOMME de ses trois avis, et non ce que la colonie
+ * achete : il n'est consulte que dans la bande autour du seuil (voir
+ * `CONSEIL_MARGE`), donc il ne voit pas la meme population que le reste.
+ * Le comparer a une autre ligne serait comparer deux echantillons differents.
+ * ======================================================================== */
+const CONSEIL_ECHEANCES = [15, 60];
+const CONSEIL_AUDIT_MIN = 40;    /* par avis et par echeance : en dessous, on ne conclut pas */
+const CONSEIL_SEPARE = 10;       /* points d'ecart de montees entre favorable et defavorable */
+
+function noteAuditConseil(avis, h, r) {
+  if (!avis) return;
+  if (!E.auditConseil || typeof E.auditConseil !== 'object') E.auditConseil = {};
+  const a = E.auditConseil[avis] || (E.auditConseil[avis] = {});
+  const c = a[h] || (a[h] = { n: 0, s: 0, montes: 0, effondres: 0 });
+  c.n++; c.s += r;
+  if (r >= 20) c.montes++;
+  if (r <= -30) c.effondres++;
+}
+
+/** Ce que l'audit du Conseiller dit, pret a lire. Sous le minimum : rien. */
+function auditConseil() {
+  const A = E.auditConseil || {};
+  const AVIS = ['favorable', 'reserve', 'defavorable'];
+  const ligne = (c) => (!c || !c.n) ? null
+    : { n: c.n, moyenne: Math.round(c.s / c.n * 10) / 10,
+        partMontes: Math.round(c.montes / c.n * 100),
+        partEffondres: Math.round(c.effondres / c.n * 100) };
+  const lignes = AVIS.map((avis) => {
+    const par = {};
+    for (const h of CONSEIL_ECHEANCES) par[h] = ligne((A[avis] || {})[h]);
+    return { avis, par };
+  });
+  /* L'ensemble des jetons qu'il a vus : sa propre reference. */
+  const ens = {};
+  for (const h of CONSEIL_ECHEANCES) {
+    const t = { n: 0, s: 0, montes: 0, effondres: 0 };
+    for (const avis of AVIS) {
+      const c = (A[avis] || {})[h];
+      if (c) { t.n += c.n; t.s += c.s; t.montes += c.montes; t.effondres += c.effondres; }
+    }
+    ens[h] = ligne(t);
+  }
+  /* ---- LE VERDICT, ET SON REFUS DE CONCLURE ----
+   * Il ne dit « il separe » que si, a une echeance au moins, ses favorables
+   * montent nettement plus que ses defavorables, ET que les deux cases ont
+   * assez d'observations. Autrement il dit combien il en manque. C'est la
+   * seule phrase qui autorise a lui donner plus de poids. */
+  let verdict = 'unknown', detail = null;
+  for (const h of CONSEIL_ECHEANCES) {
+    const f = (A.favorable || {})[h], d = (A.defavorable || {})[h];
+    if (!f || !d || f.n < CONSEIL_AUDIT_MIN || d.n < CONSEIL_AUDIT_MIN) continue;
+    const ecart = Math.round(f.montes / f.n * 100) - Math.round(d.montes / d.n * 100);
+    if (ecart >= CONSEIL_SEPARE) {
+      verdict = 'separe';
+      detail = h + ' min : ' + ecart + ' points de montees en plus quand il est favorable';
+      break;
+    }
+    verdict = 'ne separe pas';
+    detail = h + ' min : ' + ecart + ' point(s) d ecart seulement';
+  }
+  if (verdict === 'unknown') {
+    const f = ((A.favorable || {})[CONSEIL_ECHEANCES[0]] || {}).n || 0;
+    const d = ((A.defavorable || {})[CONSEIL_ECHEANCES[0]] || {}).n || 0;
+    detail = 'il faut ' + CONSEIL_AUDIT_MIN + ' observations par avis : favorable ' + f + ', defavorable ' + d;
+  }
+  return { echeances: CONSEIL_ECHEANCES, minimum: CONSEIL_AUDIT_MIN, lignes, ensemble: ens, verdict, detail };
+}
+
 function noteAudit(cle, r) {
   if (!E.audit || typeof E.audit !== 'object') E.audit = {};
   const a = E.audit[cle] || (E.audit[cle] = { n: 0, s: 0, montes: 0, effondres: 0 });
@@ -5047,6 +5141,13 @@ function regleLesOmbres(marche) {
       const r = OMBRE_DISPARUE;
       o.jalons[HORIZON_REF] = r;
       o.disparue = true;
+      /* ---- UNE PISCINE EVAPOREE COMPTE POUR LE CONSEILLER, AUX DEUX ----
+       * Elle ne remplit que l'echeance de reference — les autres n'ont pas ete
+       * mesurees — mais une piscine videe est videe a quinze comme a soixante
+       * minutes. L'omettre aurait retire de son releve exactement les rug
+       * pulls qu'on lui demande de voir : son tableau aurait eu l'air bien
+       * meilleur qu'il n'est. */
+      if (o.conseil) for (const h of CONSEIL_ECHEANCES) noteAuditConseil(o.conseil.avis, h, r);
       /* Une ombre d'observation nourrit l'audit, et RIEN d'autre. */
       if (!o.hors) {
         noteProfil(o.traits, HORIZON_REF, r);
@@ -5081,6 +5182,9 @@ function regleLesOmbres(marche) {
         if (!jalonValable(h, age)) continue;
         o.jalons[h] = Math.round(r * 10) / 10;
         if (!o.hors) noteProfil(o.traits, h, r);
+        /* L'audit du Conseiller, a SES echeances. Il recoit aussi les ombres
+           d'observation : son avis a ete rendu de la meme facon sur elles. */
+        if (o.conseil && CONSEIL_ECHEANCES.indexOf(h) >= 0) noteAuditConseil(o.conseil.avis, h, r);
         compte('jalons');
         /* L'echeance de reference est la seule qui nourrisse la memoire des
            agents et l'audit des vetos : sinon le meme jeton compterait cinq
@@ -5943,6 +6047,11 @@ function ouvre(t) {
                    txt: 'OPENED · $' + b.mise.toFixed(2) + ' · ' + b.methode, cls: 'n', t: Date.now() });
   signal({ k: 'achat', sym: t.sym, adr: t.addr, pool: t.pool, prix: t.prix,
            score: t.an.score, mise: b.mise, mc: t.mc || 0,
+           /* Les deux chiffres que la regle de frottement compare — voir
+              `suitLeMiroir`. Ils voyagent avec le signal parce que c'est lui
+              que le miroir suit, et qu'il faut pouvoir les relire ensuite. */
+           esperance: esperanceDeLaCase(t),
+           allerRetour: coutAllerRetour(t.epreuve && t.epreuve.retour),
            logo: t.logo || (t.dex && t.dex.logo) || null,
            liens: (t.dex && t.dex.vu) ? (t.dex.liens || []) : null });
   return true;
@@ -6017,9 +6126,102 @@ function partDuBanquier(s) {
   return Math.min(MIROIR_PART_MAX, p);
 }
 
+/* ==========================================================================
+ * LE FROTTEMENT SE COMPARE A CE QUE LA CASE RAPPORTE, PAS A UN CHIFFRE ROND
+ *
+ * Releve du 18 septembre 2026, et c'est l'ecart le plus cher du dossier :
+ *
+ *     papier   723 trades, tresor 1 000 → 2 532 $
+ *     REEL     266 trades, moyenne -3,7 % PAR TRADE, aller-retour 3 a 6 %
+ *
+ * Le papier gagne et le reel perd, sur les memes jetons. L'ecart n'est donc
+ * pas dans le CHOIX des jetons — il est dans ce que l'aller-retour prend au
+ * passage. `ALLER_RETOUR_MAX` existait deja, mais c'est un plafond ABSOLU a
+ * 7 % : il laisse passer un frottement de 6 % sur une case dont on a mesure
+ * qu'elle rapporte +2 %. Cette position-la est perdante AVANT d'etre ouverte,
+ * et aucune lecture de jeton ne peut la sauver.
+ *
+ * La regle est donc relative, et elle n'utilise que des chiffres deja
+ * mesures : la case « age × capitalisation » du jeton — le trait croise le
+ * mieux observe de la colonie, 35 973 observations — a son esperance a
+ * l'echeance de reference ; le Cobaye a devise l'aller-retour sur CE jeton.
+ * Si l'esperance de la case est sous le frottement, le miroir n'achete pas.
+ *
+ * ---- POURQUOI LE PAPIER, LUI, CONTINUE D'ACHETER ----
+ *
+ * Parce que c'est lui qui MESURE. Couper le papier fermerait la case : plus
+ * d'observations, donc plus d'esperance, donc la case resterait a jamais
+ * refusee sur la mesure qui l'a fait refuser une fois. Le papier garde la
+ * case ouverte et payante en information ; seul l'argent reel s'abstient.
+ * C'est la meme separation que l'observation des vieux jetons
+ * (`OBS_VIEUX_PAR_TOUR`) : mesurer sans engager.
+ *
+ * ---- ET SANS MESURE, ON N'INTERDIT RIEN ----
+ *
+ * Une case sous `PROFIL_MIN_OBS` observations, ou un jeton sans devis
+ * d'aller-retour, ne tombe pas sous la regle : un inconnu n'est pas un
+ * mauvais signe, c'est un inconnu. Le plafond absolu reste par-dessus.
+ * ======================================================================== */
+const CASE_ESPERANCE_TRAIT = ['age', 'mc'];
+
+/** L'esperance mesuree de la case de ce jeton, a l'echeance de reference. */
+function esperanceDeLaCase(t) {
+  if (!t) return null;
+  const valeur = litTrait(CASE_ESPERANCE_TRAIT, t);
+  const nom = nomTrait(CASE_ESPERANCE_TRAIT);
+  const c = (((E.profils || {})[nom] || {})[valeur] || {})[HORIZON_REF];
+  if (!c || !c.n || c.n < PROFIL_MIN_OBS) return { valeur, n: (c && c.n) || 0, moyenne: null };
+  return { valeur, n: c.n, moyenne: Math.round(c.s / c.n * 10) / 10 };
+}
+
+/**
+ * Le miroir doit-il s'abstenir ? Rend la phrase du refus, ou null.
+ * `esp` est l'esperance de la case, `cout` l'aller-retour devise, en points.
+ */
+function frottementRefuse(esp, cout) {
+  if (!esp || esp.moyenne === null || typeof cout !== 'number' || !isFinite(cout)) return null;
+  if (esp.moyenne > cout) return null;
+  return 'cell ' + esp.valeur + ' returns ' + esp.moyenne + '% on average over '
+       + esp.n + ' reads at ' + HORIZON_REF + ' min, the round trip costs ' + cout + '%';
+}
+
+/* Ce que la regle a retenu : un compteur et les dernieres lignes, pour
+   qu'elle soit relisible comme n'importe quelle autre regle du depot. */
+const FROTTEMENT_LIGNES = 40;
+/* Sa propre cle, et non un champ de `E.reel` : le carnet reel a une forme
+   precise, posee ailleurs, et un initialiseur de plus l'aurait un jour
+   remise a zero en la croyant absente. */
+function noteFrottement(s, esp, cout, raison) {
+  const f = E.frottement || (E.frottement = { n: 0, lignes: [] });
+  f.n++;
+  f.lignes.unshift({ sym: s.sym, adr: s.adr, case: esp.valeur, esperance: esp.moyenne,
+                     obs: esp.n, cout, t: Date.now(), raison });
+  if (f.lignes.length > FROTTEMENT_LIGNES) f.lignes.length = FROTTEMENT_LIGNES;
+}
+/** Ce que la page montre de la regle : combien d'achats reels elle a retenus. */
+function frottementBilan() {
+  const f = E.frottement || { n: 0, lignes: [] };
+  return { n: f.n || 0, gardees: (f.lignes || []).length, lignes: (f.lignes || []).slice(0, 12),
+           trait: nomTrait(CASE_ESPERANCE_TRAIT), echeance: HORIZON_REF, minObs: PROFIL_MIN_OBS };
+}
+
 /* Ce que le miroir doit faire de ce signal — lance, jamais attendu. */
 function suitLeMiroir(s) {
   if (!miroir || !s || !s.adr) return;
+  /* ---- LA REGLE DE FROTTEMENT, ICI ET NULLE PART AILLEURS ----
+   * Le papier a deja achete quand on arrive ici : c'est exactement ce qu'on
+   * veut. Seul l'ordre reel est retenu, et il l'est en le DISANT. */
+  if (s.k === 'achat') {
+    const raison = frottementRefuse(s.esperance, s.allerRetour);
+    if (raison) {
+      noteFrottement(s, s.esperance, s.allerRetour, raison);
+      compte('frottementRetenu');
+      E.flux.unshift({ sym: s.sym, pool: s.pool, tag: 'skip',
+                       txt: 'PAPER ONLY · ' + raison, cls: 'w', t: Date.now() });
+      console.log('[ai] miroir retenu sur ' + s.sym + ' : ' + raison);
+      return;
+    }
+  }
   try {
     const p = s.k === 'achat'
               ? miroir.surAchat({ sym: s.sym, adr: s.adr, pool: s.pool,
@@ -8657,6 +8859,9 @@ function vue() {
        Le papier ne signe rien, donc il ne peut pas connaitre le gaz ni le
        glissement. Celui qui les paie les dit. */
     reel: coutReel(),
+    /* Ce que la regle de frottement a retenu : le seul endroit ou l'argent
+       reel s'abstient alors que le papier achete. */
+    frottement: frottementBilan(),
     /* ---- LES JEUX DE REGLES QUI COURENT EN PARALLELE ----
        Ils ne tradent rien : ils rejouent les memes ombres et disent ce qu'ils
        auraient rendu. C'est ce qui remplace seize trades mesures a la main par
@@ -8692,7 +8897,10 @@ function vue() {
               moitie: !!process.env.GOPLUS_APP_KEY !== !!process.env.GOPLUS_APP_SECRET },
     conseiller: { actif: conseillerActif(), modele: CONSEIL_MODELE,
                   poids: CONSEIL_POIDS, parTour: CONSEIL_MAX_PAR_TOUR,
-                  rendus: E.compteurs.conseilRendu || 0 },
+                  rendus: E.compteurs.conseilRendu || 0,
+                  /* Ce qu'il a VALU : sans cette ligne, lui donner plus de
+                     poids ou un modele plus cher serait un pari. */
+                  audit: auditConseil() },
     seuil: seuilCourant(), seuilDepart: SEUIL, ageMax: AGE_MAX_MIN,
     /* Ce que l'observation admet, pour que le plafond soit jugeable. */
     observation: { parTour: OBS_PAR_TOUR, ageMax: OBS_AGE_MAX_MIN,
@@ -8838,6 +9046,8 @@ module.exports = {
   _signal: signal, _texteSignal: texteSignal, _ferme: ferme, _lienDex: lienDex,
   _poseTg: (x) => { tg = x; },
   _noteAudit: noteAudit, _auditDesRefus: auditDesRefus, _auditDeFamille: auditDeFamille, OMBRES_MAX,
+  noteAuditConseil, auditConseil, CONSEIL_ECHEANCES, CONSEIL_AUDIT_MIN, CONSEIL_SEPARE,
+  esperanceDeLaCase, frottementRefuse, CASE_ESPERANCE_TRAIT, frottementBilan,
   _familleRefus: familleRefus, _regroupeAudit: regroupeAudit, bandeAge, bandeSousLaBorne, AGE_BANDES, _noeudMort: noeudMort,
   _journal: journal, _journalPublie: journalPublie, _memeRegard: memeRegard,
   /* exposes pour l'essai : ce sont eux qui portent les regles */

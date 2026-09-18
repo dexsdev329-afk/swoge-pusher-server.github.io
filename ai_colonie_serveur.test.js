@@ -4250,6 +4250,127 @@ async function plancherDePiscine() {
  * papier et reel, et un aller-retour devise au-dela de ALLER_RETOUR_MAX est
  * refuse par le Cobaye — avec sa ligne d audit, comme toute regle.
  * ======================================================================== */
+/* ==========================================================================
+ * LE CONSEILLER EST JUGEABLE, ET LA REGLE DE FROTTEMENT RETIENT LE MIROIR
+ *
+ * Deux manques releves le 18 septembre 2026 sur la colonie en service :
+ *
+ *  1. 1 173 avis rendus, ZERO ligne d'audit. On ne pouvait donc ni lui donner
+ *     plus de poids ni passer a un modele plus cher sans parier.
+ *  2. Le papier gagne (1 000 → 2 532 $ sur 723 trades) et le REEL perd
+ *     (-3,7 % par trade sur 266), avec un aller-retour de 3 a 6 %. Le plafond
+ *     absolu de 7 % laissait donc passer des positions perdantes d'avance :
+ *     6 % de frottement sur une case qui rapporte 2 %.
+ * ======================================================================== */
+function conseillerJugeable() {
+  console.log('\n-- le Conseiller porte sa propre ligne d audit, a quinze et a soixante minutes --');
+  remise(sains());
+  const E = C._etat();
+  ok(C.CONSEIL_ECHEANCES.join(',') === '15,60',
+     'deux echeances, pas une : un avis qui separe a quinze et plus a soixante parle de la TENUE (' + C.CONSEIL_ECHEANCES.join(' et ') + ' min)');
+  let a = C.auditConseil();
+  ok(a.verdict === 'unknown' && /favorable 0/.test(a.detail),
+     'a vide, il ne conclut pas et dit ce qui manque : ' + a.detail);
+
+  /* Les memes bornes que l'audit des refus : monte a +20, effondre a -30. */
+  C.noteAuditConseil('favorable', 15, 40);
+  C.noteAuditConseil('favorable', 15, -35);
+  C.noteAuditConseil('defavorable', 15, 5);
+  a = C.auditConseil();
+  const fav = a.lignes.find((x) => x.avis === 'favorable').par[15];
+  ok(fav.n === 2 && fav.moyenne === 2.5 && fav.partMontes === 50 && fav.partEffondres === 50,
+     'une ligne par avis : n, moyenne, part de montees et part d effondrements (' + JSON.stringify(fav) + ')');
+  ok(a.ensemble[15].n === 3,
+     'et sa reference est la SOMME de ses avis : il ne voit que la bande autour du seuil, pas la meme population que le reste');
+  ok(a.verdict === 'unknown' && /il faut 40 observations/.test(a.detail),
+     'sous le minimum il refuse toujours de conclure : ' + a.detail);
+
+  /* Assez d'observations, et il separe nettement. */
+  C._pose(C.etatNeuf());
+  for (let i = 0; i < 40; i++) C.noteAuditConseil('favorable', 15, i < 20 ? 50 : -5);
+  for (let i = 0; i < 40; i++) C.noteAuditConseil('defavorable', 15, i < 2 ? 50 : -5);
+  a = C.auditConseil();
+  ok(a.verdict === 'separe' && /45 points/.test(a.detail),
+     'avec assez d observations et un vrai ecart, il DIT qu il separe : ' + a.detail);
+  C._pose(C.etatNeuf());
+  for (let i = 0; i < 40; i++) C.noteAuditConseil('favorable', 15, i < 10 ? 50 : -5);
+  for (let i = 0; i < 40; i++) C.noteAuditConseil('defavorable', 15, i < 9 ? 50 : -5);
+  a = C.auditConseil();
+  ok(a.verdict === 'ne separe pas',
+     'et quand ses deux avis se valent, il le dit aussi — c est la ligne qui interdit de lui donner plus de poids : ' + a.detail);
+
+  /* L'avis voyage sur l'ombre, et la piscine evaporee compte aux DEUX echeances. */
+  C._pose(C.etatNeuf());
+  const G = C._etat();
+  G.ombres = [{ adr: '0x' + 'aa'.repeat(20), sym: 'X', prix0: 1, t: Date.now() - 16 * 60000,
+                echeance: Date.now() + 3600000, traits: {}, jalons: {}, hors: false,
+                conseil: { avis: 'favorable', points: 5 } }];
+  C.regleLesOmbres({ ['0x' + 'aa'.repeat(20)]: { prix: 1.3, liq: 50000 } });
+  const ap = C.auditConseil().lignes.find((x) => x.avis === 'favorable').par;
+  ok(ap[15] && ap[15].n === 1 && !ap[60],
+     'une ombre relue a seize minutes remplit l echeance de quinze, et seulement elle');
+
+  C._pose(C.etatNeuf());
+  const H = C._etat();
+  H.ombres = [{ adr: '0x' + 'bb'.repeat(20), sym: 'Y', prix0: 1, t: Date.now() - 35 * 60000,
+                echeance: Date.now() + 3600000, traits: {}, jalons: {}, hors: false, dexVu: true,
+                muets: 9, conseil: { avis: 'favorable', points: 6 } }];
+  C.regleLesOmbres({});
+  const ev = C.auditConseil().lignes.find((x) => x.avis === 'favorable').par;
+  ok(ev[15] && ev[60] && ev[15].n === 1 && ev[60].n === 1 && ev[15].partEffondres === 100,
+     'une piscine EVAPOREE compte aux deux echeances : l omettre retirerait de son releve exactement les rug pulls qu on lui demande de voir');
+}
+
+function frottementContreEsperance() {
+  console.log('\n-- le miroir n achete pas une case qui rapporte moins que son aller-retour --');
+  remise(sains());
+  const E = C._etat();
+  ok(C.CASE_ESPERANCE_TRAIT.join('×') === 'age×mc',
+     'la case est « age × capitalisation » : le trait croise le mieux observe de la colonie (' + C.CASE_ESPERANCE_TRAIT.join('×') + ')');
+
+  /* Une case mesuree, et une case qu'on ne connait pas. */
+  const jeton = { minutes: 5, mc: 60000 };
+  let esp = C.esperanceDeLaCase(jeton);
+  ok(esp.moyenne === null && esp.n === 0,
+     'une case jamais observee ne rend pas de chiffre : un inconnu n est pas un mauvais signe (' + esp.valeur + ')');
+  ok(C.frottementRefuse(esp, 6) === null, 'et elle ne fait donc refuser personne');
+
+  const nom = C.CASE_ESPERANCE_TRAIT.join('×');
+  E.profils = { [nom]: { [esp.valeur]: { 30: { n: 50, s: 100, s2: 0 } } } };   // +2 % de moyenne
+  esp = C.esperanceDeLaCase(jeton);
+  ok(esp.moyenne === 2 && esp.n === 50, 'une case mesuree rend son esperance a l echeance de reference (' + esp.moyenne + ' % sur ' + esp.n + ')');
+  const refus = C.frottementRefuse(esp, 6);
+  ok(refus && /returns 2% on average over 50 reads at 30 min, the round trip costs 6%/.test(refus),
+     'a 6 % de frottement sur une case a +2 %, la position est perdante AVANT d etre ouverte, et le refus le dit : ' + refus);
+  ok(C.frottementRefuse(esp, 1.5) === null, 'a 1,5 % de frottement, elle passe');
+  ok(C.frottementRefuse(esp, null) === null, 'et sans devis d aller-retour, la regle ne s applique pas');
+
+  /* Le miroir est retenu, le papier ne l est pas. */
+  let achats = 0;
+  C.poseMiroir({ surAchat: async () => { achats++; return 0; }, surVente: async () => 0 });
+  C._suitLeMiroir({ k: 'achat', sym: 'PERDANT', adr: '0x' + 'cc'.repeat(20), pool: 'p',
+                    mise: 10, esperance: esp, allerRetour: 6 });
+  ok(achats === 0, 'le miroir n a pas achete');
+  const b = C.frottementBilan();
+  ok(b.n === 1 && b.lignes[0].sym === 'PERDANT' && b.lignes[0].esperance === 2 && b.lignes[0].cout === 6,
+     'et la regle garde sa ligne, relisible comme n importe quelle autre : ' + JSON.stringify(b.lignes[0]));
+  C._suitLeMiroir({ k: 'achat', sym: 'BON', adr: '0x' + 'dd'.repeat(20), pool: 'p',
+                    mise: 10, esperance: esp, allerRetour: 1.5 });
+  ok(achats === 1, 'le meme jeton a 1,5 % de frottement passe au miroir');
+  C._suitLeMiroir({ k: 'achat', sym: 'INCONNU', adr: '0x' + 'ee'.repeat(20), pool: 'p',
+                    mise: 10, esperance: { valeur: 'x', n: 2, moyenne: null }, allerRetour: 6 });
+  ok(achats === 2, 'et une case non mesuree passe aussi : on n interdit rien sur un inconnu');
+
+  /* ---- ET LE PAPIER, LUI, CONTINUE D ACHETER ----
+   * C est la moitie de la regle : couper le papier fermerait la case, donc
+   * l esperance, donc la case resterait refusee a jamais sur la mesure qui l a
+   * fait refuser une fois. */
+  const av = E.ouvertures;
+  ok(typeof C.ouvre === 'function' && av === E.ouvertures,
+     'la regle vit dans `suitLeMiroir` et nulle part ailleurs : `ouvre` ne la connait pas, le papier garde la case ouverte et payante en information');
+  C.poseMiroir(null);
+}
+
 async function allerRetourMesure() {
   console.log('\n-- l aller-retour devise est garde par trade, et refuse au-dela du plafond --');
   remise(sains());
@@ -7315,6 +7436,8 @@ function bornesQuiSeReglent() {
   await portesDuCarnet();
   await ageJugeASaMarge();
   await plancherDePiscine();
+  conseillerJugeable();
+  frottementContreEsperance();
   await allerRetourMesure();
   await referenceNourrie();
   await plafondAppris();
