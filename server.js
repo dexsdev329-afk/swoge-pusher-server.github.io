@@ -2875,6 +2875,41 @@ const server = http.createServer(async (req, res) => {
    * Ce qu'elle ne rend PAS : rien par joueur, aucune adresse. Des totaux, et
    * le detail reste derriere la porte du panneau.
    */
+  /* ---- SWOGE TV : CE QUE LES JOUEURS REGARDENT, TOUS ENSEMBLE ----
+   *
+   * Le panneau de la tele classait « le plus regarde » sur l appareil seul :
+   * un compteur par navigateur, dans localStorage. Ici le compteur est
+   * commun. Une chaine n est comptee que quand le lecteur a VU l image
+   * (`tv.html` le dit au panneau, qui le dit ici) : une chaine qu on ouvre et
+   * qui ne repond pas ne monte pas.
+   * Rien par joueur, aucune adresse : un identifiant de chaine et un nombre.
+   * Le fichier vit sur le volume, comme le reste de l etat. Un compteur
+   * borne : un seul identifiant par appel, 64 caracteres au plus, et la
+   * table ne grandit pas au-dela de mille chaines — la liste en a 285. */
+  if (path === '/tv/vues') {
+    const fichierTv = require('path').join(cfg.DATA_DIR, 'tv_vues.json');
+    let vues = {};
+    try { vues = JSON.parse(fs.readFileSync(fichierTv, 'utf8')) || {}; } catch (e) {}
+    if (req.method === 'POST') {
+      const d = await donPost(req);
+      const id = String((d && d.id) || '').slice(0, 64);
+      if (!/^[A-Za-z0-9._-]{2,64}$/.test(id)) { res.writeHead(400); return res.end('{"error":"channel id"}'); }
+      if (!(id in vues) && Object.keys(vues).length >= 1000) { res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); return res.end('{"ok":false,"pourquoi":"table pleine"}'); }
+      vues[id] = (Number(vues[id]) || 0) + 1;
+      try { fs.writeFileSync(fichierTv, JSON.stringify(vues)); } catch (e) {}
+      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      return res.end(JSON.stringify({ ok: true, vues: vues[id] }));
+    }
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type' });
+      return res.end();
+    }
+    /* Les cinquante plus vues, du plus au moins : c est tout ce que le panneau lit. */
+    const haut = Object.entries(vues).sort((a, b) => b[1] - a[1]).slice(0, 50);
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=60' });
+    return res.end(JSON.stringify({ vues: Object.fromEntries(haut) }));
+  }
+
   if (path === '/vitrine.json') {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*',
