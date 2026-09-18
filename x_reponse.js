@@ -56,9 +56,12 @@ function env() {
   const e = xp.env();
   return Object.assign(e, {
     comptes: String(process.env.X_VEILLE || 'elonmusk,mayemusk').split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean),
-    /* Dix minutes et trois par jour depuis le 18 septembre 2026 : une reponse
-       est vue dans les premieres minutes sous le post, pas une heure apres. */
-    minutes: Math.max(10, Number(process.env.X_VEILLE_MIN) || 10),
+    /* Trente minutes, decision du proprietaire le 18 septembre 2026 (« ils
+       ne sont pas actifs souvent et ca coute de l argent »). Ce qui coute,
+       c est le post LU (0,005 $), pas l appel : avec `since_id`, un tour sans
+       nouveau post ne rend rien. Trente minutes reste dans la fenetre ou une
+       reponse est vue. */
+    minutes: Math.max(10, Number(process.env.X_VEILLE_MIN) || 30),
     maxJour: Math.max(0, Number(process.env.X_VEILLE_MAX_JOUR) || 3),
     chat: process.env.X_VEILLE_CHAT || cfg.TG_BACKUP_CHAT_ID || '',
     mots: String(process.env.X_VEILLE_MOTS || '').split(',').map((s) => s.trim()).filter(Boolean),

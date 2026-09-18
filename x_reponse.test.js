@@ -65,7 +65,7 @@ const x = require('./x_reponse');
   console.log('\n-- 3. un tour complet --');
   {
     process.env.X_VEILLE_CHAT = '12345'; process.env.X_VEILLE = 'elonmusk,mayemusk';
-    eq(x.env().minutes, 10, 'la veille passe toutes les dix minutes par defaut');
+    eq(x.env().minutes, 30, 'la veille passe toutes les trente minutes par defaut');
     eq(x.env().maxJour, 3, 'et trois propositions par jour par defaut');
     process.env.X_VEILLE_MAX_JOUR = '2';   // l essai ci-dessous compte avec deux
     const T = Date.parse('2026-09-19T12:00:00Z');
