@@ -2074,8 +2074,10 @@ function xRend(v, d){
        '<div style="flex:1;min-width:0">'+xConf(p.confiance)+'<b>@'+esc(p.compte)+'</b> · '+etat+' · '+esc((p.quand||'').replace('T',' ').slice(0,16))+
        ' · <a href="'+esc(p.post)+'" target="_blank" rel="noopener">le post</a><br>'+
        '<span style="color:#fff">'+esc(p.reponse)+'</span>'+
-       (p.etat==='proposee'?'<div class="row" style="margin-top:8px"><button class="ghost" data-xg="poster" data-xk="'+esc(p.cle)+'">✅ Poster la réponse</button> '+
-                             '<button class="ghost" data-xg="ignorer" data-xk="'+esc(p.cle)+'">🗑 Ignorer</button></div>':'')+
+       (p.etat==='proposee'?'<div class="row" style="margin-top:8px"><a class="ghost" style="text-decoration:none" href="'+esc(p.intent||p.post)+'" target="_blank" rel="noopener">✍️ Répondre dans X</a> '+
+                             '<button class="ghost" data-xg="faite" data-xk="'+esc(p.cle)+'">✅ Fait</button> '+
+                             '<button class="ghost" data-xg="ignorer" data-xk="'+esc(p.cle)+'">🗑 Ignorer</button>'+
+                             '<div class="muted2" style="padding:4px 0 0;text-align:left">X refuse les réponses par API depuis février 2026 : le lien ouvre X avec la réponse prête, joignez l’image.</div></div>':'')+
        '</div></div>';
   });
   $("#xBody").innerHTML=h;

@@ -108,7 +108,12 @@ const x = require('./x_reponse');
     const tg = appels.filter((a) => /telegram/.test(a.u));
     eq(tg.length, 2, 'deux messages Telegram');
     eq(String(tg[0].corps.chat_id), '12345', 'dans le chat PRIVE');
-    ok(/poster$/.test(tg[0].corps.reply_markup.inline_keyboard[0][0].url) && /ignorer$/.test(tg[0].corps.reply_markup.inline_keyboard[0][1].url), 'avec les deux boutons Poster et Ignorer');
+    const b0 = tg[0].corps.reply_markup.inline_keyboard[0];
+    /* Depuis fevrier 2026, X refuse les reponses par l API en libre-service :
+       le bouton ouvre le compositeur de X, sous le bon post, texte pret. */
+    ok(/^https:\/\/x\.com\/intent\/post\?in_reply_to=1003&text=Walk%20the%20dog/.test(b0[0].url), 'le premier bouton ouvre X avec la reponse prete sous le post d origine');
+    ok(/faite$/.test(b0[1].url) && /ignorer$/.test(b0[2].url), 'puis « Fait » et « Ignorer »');
+    ok(!JSON.stringify(tg[0].corps.reply_markup).includes('/poster'), 'et aucun bouton ne tente de poster par l API : X le refuse');
     ok(/https:\/\/serveur\.test\/x\/image\/rep_1003\.png/.test(tg[0].corps.photo), 'et l image generee pour ce post');
     ok(/Walk the dog\? He walks YOU\. 🐕/.test(tg[0].corps.caption) && !/x\.example/.test(tg[0].corps.caption), 'la reponse proposee, sans le lien que le modele avait glisse');
     ok(/🟢 Confiance de Claude : <b>9\/10<\/b>/.test(tg[0].corps.caption), 'et la note de confiance du modele en tete, en vert a 9');
@@ -164,6 +169,17 @@ const x = require('./x_reponse');
     const q = x.litJournal().propositions['rep-2001'];
     g = await x.geste(q.jeton, 'ignorer', { prendre: faux, maintenant: T + 3600000 });
     eq(g.etat, 'ignoree', 'Ignorer : rien ne part');
+    process.env.X_VEILLE_MAX_JOUR = '9';
+    postsMaye = [{ id: '2002b', text: 'Puppy on the moon', created_at: new Date(T + 5 * 3600000).toISOString() }];
+    await x.veille({ maintenant: T + 5 * 3600000, prendre: faux });
+    const f = x.litJournal().propositions['rep-2002b'];
+    ok(f && f.jeton, 'une proposition de plus pour « Fait »');
+    const avantFait = appels.length;
+    g = await x.geste(f.jeton, 'faite', { prendre: faux, maintenant: T + 5 * 3600000 });
+    eq(g.etat, 'repondue', '« Fait » : la reponse est notee comme envoyee depuis X');
+    eq(appels.slice(avantFait).length, 0, 'sans aucun appel : c est le proprietaire qui a poste');
+    eq((await x.geste(f.jeton, 'faite', { prendre: faux })).etat, 'inconnu', 'et le jeton est consomme');
+    process.env.X_VEILLE_MAX_JOUR = '2';
     eq(appels.filter((a) => /2\/tweets/.test(a.u)).length, 1, 'un seul post en tout');
     const e = x.litJournal().propositions['rep-1006'];
     g = await x.geste(e.jeton, 'poster', { prendre: faux, maintenant: J2 + 3600000 + 13 * 3600000 });
@@ -180,7 +196,7 @@ const x = require('./x_reponse');
     eq((await x.gesteParCle('nc-1005', 'poster', { prendre: faux })).etat, 'inconnu', 'une entree silencieuse ne se poste pas');
     eq((await x.gesteParCle('rien', 'poster', { prendre: faux })).etat, 'inconnu', 'une cle inconnue non plus');
     const et = x.etat();
-    ok(et.actif && et.propositions.length === 4 && !JSON.stringify(et).includes('jeton') && !JSON.stringify(et).includes('"ck"'), '/x/veille montre les propositions, sans jeton ni cle');
+    ok(et.actif && et.propositions.length === 5 && !JSON.stringify(et).includes('jeton') && !JSON.stringify(et).includes('"ck"'), '/x/veille montre les propositions, sans jeton ni cle');
   }
 
   console.log(`\nx_reponse.test.js : ${n} verifications OK`);

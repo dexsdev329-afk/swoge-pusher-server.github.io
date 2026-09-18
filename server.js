@@ -2969,10 +2969,11 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(xReponse.etat()));
   }
   {
-    const mr = /^\/x\/reponse\/([A-Za-z0-9_-]{16,40})\/(poster|ignorer)$/.exec(path);
+    const mr = /^\/x\/reponse\/([A-Za-z0-9_-]{16,40})\/(poster|ignorer|faite)$/.exec(path);
     if (mr) {
       const r = await xReponse.geste(mr[1], mr[2]);
       const phrase = { postee: 'Réponse postée : ' + (r.url || ''), ignoree: 'Proposition ignorée. Rien n a été posté.',
+                       repondue: 'Noté : réponse envoyée depuis X. Merci.',
                        expiree: 'Trop tard : cette proposition a plus de douze heures. Rien n a été posté.',
                        inconnu: 'Lien inconnu ou déjà utilisé.', rate: 'X a refusé : ' + (r.erreur || '') }[r.etat]
                     || ('Déjà traité : ' + r.etat + (r.url ? ' — ' + r.url : ''));

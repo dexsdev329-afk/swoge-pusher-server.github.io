@@ -193,8 +193,16 @@ async function envoieProposition(p, prendre) {
   /* La note de Claude en tete : a 9 ou 10, on peut appuyer sans relire. */
   const note = p.confiance === null || p.confiance === undefined ? '' : `${p.confiance >= 9 ? '🟢' : p.confiance >= 7 ? '🟡' : '🔴'} Confiance de Claude : <b>${p.confiance}/10</b>\n\n`;
   const caption = note + `🐦 <b>@${p.compte}</b> vient de poster :\n<i>${echappe(p.postTexte.slice(0, 300))}</i>\n\n💬 Réponse proposée :\n<b>${echappe(p.reponse)}</b>\n\n` +
-                  `Valable 12 h. Rien ne part sans le bouton.`;
-  const boutons = [[{ text: '✅ Poster la réponse', url: `${base}/x/reponse/${p.jeton}/poster` },
+                  `« Répondre dans X » ouvre X avec la réponse prête sous le post : joignez l image ci-dessus, envoyez, puis « Fait ». Valable 12 h.`;
+  /* ---- POURQUOI X S OUVRE, ET NON L API ----
+   * Depuis fevrier 2026, X refuse toute reponse par l API sur les offres en
+   * libre-service (403 « You can only reply to or quote posts where you are
+   * mentioned or are the author ») : une reponse ne peut partir que d un
+   * humain, depuis l application. Le bouton passe donc la reponse au
+   * compositeur de X (« web intent », `in_reply_to` + `text`), sous le bon
+   * post, prete ; l image est celle du message, a joindre. */
+  const boutons = [[{ text: '✍️ Répondre dans X', url: intentReponse(p) },
+                    { text: '✅ Fait', url: `${base}/x/reponse/${p.jeton}/faite` },
                     { text: '🗑 Ignorer', url: `${base}/x/reponse/${p.jeton}/ignorer` }],
                    [{ text: '🔗 Voir le post', url: p.url }]];
   const r = await f(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/sendPhoto`, {
@@ -207,6 +215,8 @@ async function envoieProposition(p, prendre) {
   if (!r.ok || j.ok === false) throw new Error('telegram : ' + (j.description || r.status));
   return true;
 }
+/** Le lien qui ouvre le compositeur de X sur une reponse prete. */
+function intentReponse(p) { return `https://x.com/intent/post?in_reply_to=${encodeURIComponent(p.postId)}&text=${encodeURIComponent(p.reponse)}`; }
 const echappe = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 // ------------------------------------------------------------ la veille
@@ -302,6 +312,8 @@ async function agit(journal, cle, action, opts) {
   if (p.etat !== 'proposee') return { etat: p.etat, url: p.replyUrl || null };
   if (Date.parse(p.expire) < t) { p.etat = 'expiree'; ecritJournal(journal); return { etat: 'expiree' }; }
   if (action === 'ignorer') { p.etat = 'ignoree'; p.jeton = null; ecritJournal(journal); return { etat: 'ignoree' }; }
+  /* « Fait » : la reponse est partie de la main du proprietaire, depuis X. */
+  if (action === 'faite') { p.etat = 'repondue'; p.jeton = null; p.posteeLe = new Date(t).toISOString(); ecritJournal(journal); return { etat: 'repondue' }; }
   if (action !== 'poster') return { etat: 'inconnu' };
   try {
     const png = fs.readFileSync(path.join(xp.DOSSIER_IMAGES(), p.image));
@@ -323,7 +335,8 @@ function etat() {
   const e = env();
   const l = Object.entries(j.propositions).filter(([, p]) => !p.silencieux)
     .sort((a, b) => (b[1].quand || '').localeCompare(a[1].quand || '')).slice(0, 20)
-    .map(([k, p]) => ({ cle: k, compte: p.compte, post: p.url, reponse: p.reponse, etat: p.etat, quand: p.quand, confiance: p.confiance === undefined ? null : p.confiance, image: '/x/image/' + p.image.replace(/\.png$/, '') + '.png', reponseUrl: p.replyUrl || null }));
+    .map(([k, p]) => ({ cle: k, compte: p.compte, post: p.url, reponse: p.reponse, etat: p.etat, quand: p.quand, confiance: p.confiance === undefined ? null : p.confiance,
+                        intent: p.etat === 'proposee' ? intentReponse(p) : null, image: '/x/image/' + p.image.replace(/\.png$/, '') + '.png', reponseUrl: p.replyUrl || null }));
   return { actif: enabled(), manque: manque(), comptes: e.comptes, toutesLes: e.minutes + ' min', maxJour: e.maxJour,
            suivis: Object.fromEntries(Object.entries(j.comptes).map(([c, v]) => [c, { id: v.id, depuis: v.depuis || null }])), propositions: l };
 }
@@ -338,4 +351,4 @@ function planifie() {
   return { arrete() { clearTimeout(premier); clearInterval(minuterie); } };
 }
 
-module.exports = { enabled, manque, env, MOTS, sujet, nettoieReponse, juge, veille, geste, gesteParCle, etat, planifie, litJournal };
+module.exports = { enabled, manque, env, MOTS, sujet, nettoieReponse, juge, veille, geste, gesteParCle, etat, planifie, litJournal, intentReponse };
