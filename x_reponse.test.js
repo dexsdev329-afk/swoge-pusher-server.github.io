@@ -39,6 +39,14 @@ const x = require('./x_reponse');
     eq(r.etat, 'inactif', 'la veille se dit inactive');
     ok(r.manque.some((m) => /X_VEILLE_CHAT/.test(m)), 'et reclame un chat PRIVE : ' + r.manque.join(', '));
     eq(x.planifie(), null, 'le serveur n arme rien');
+    /* Vecu le 18 septembre 2026 : le nom du canal public dans la variable. */
+    process.env.X_VEILLE_CHAT = '@swogecanal';
+    let r2 = await x.veille({ prendre: async () => { throw new Error('ne doit pas etre appele'); } });
+    ok(r2.etat === 'inactif' && r2.manque.some((m) => /NUMERIQUE/.test(m)), 'un canal « @… » est refuse en le disant : les boutons n iront jamais devant tout le monde');
+    process.env.X_VEILLE_CHAT = '-1001234567890';
+    r2 = await x.veille({ prendre: async () => { throw new Error('ne doit pas etre appele'); } });
+    eq(r2.etat, 'inactif', 'un groupe « -100… » aussi');
+    delete process.env.X_VEILLE_CHAT;
   }
 
   console.log('\n-- 2. le filtre de mots --');

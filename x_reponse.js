@@ -62,9 +62,19 @@ function env() {
     mots: String(process.env.X_VEILLE_MOTS || '').split(',').map((s) => s.trim()).filter(Boolean),
   });
 }
+/* ---- LE CHAT DOIT ETRE PRIVE, ET ON LE VERIFIE ----
+ * Le 18 septembre 2026, a la mise en service, la variable a ete remplie avec
+ * le nom du canal public (« @… »), le meme que TG_CHAT_ID : les boutons —
+ * des liens qui postent au nom du compte — seraient partis devant tout le
+ * monde. Un chat prive Telegram a un identifiant NUMERIQUE POSITIF ; un canal
+ * ou un groupe commence par « @ » ou par « -100 ». On refuse tout le reste,
+ * en le disant, et surtout la valeur du canal public. */
+function chatPrive(v) { return /^\d{5,20}$/.test(String(v || '')) && String(v) !== String(cfg.TG_CHAT_ID || ''); }
 function manque() {
   const m = xp.manque();
-  if (!(process.env.X_VEILLE_CHAT || cfg.TG_BACKUP_CHAT_ID)) m.push('X_VEILLE_CHAT (un chat Telegram PRIVE pour les boutons)');
+  const chat = process.env.X_VEILLE_CHAT || cfg.TG_BACKUP_CHAT_ID || '';
+  if (!chat) m.push('X_VEILLE_CHAT (un chat Telegram PRIVE pour les boutons)');
+  else if (!chatPrive(chat)) m.push('X_VEILLE_CHAT doit etre l identifiant NUMERIQUE d un chat prive (ex. 123456789), pas un canal ni un groupe : les boutons postent au nom du compte');
   if (!cfg.TG_BOT_TOKEN) m.push('TG_BOT_TOKEN');
   return m;
 }
