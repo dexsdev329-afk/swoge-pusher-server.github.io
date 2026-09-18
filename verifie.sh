@@ -22,6 +22,7 @@ lance etalonnage "$SRV" node etalonnage_boot.test.js
 lance tv_vues "$SRV" node tv_vues.test.js
 lance x_post  "$SRV" node x_post.test.js
 lance x_veille "$SRV" node x_reponse.test.js
+lance tg_cmd  "$SRV" node tg_commandes.test.js
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js

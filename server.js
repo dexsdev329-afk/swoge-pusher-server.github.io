@@ -35,6 +35,7 @@ const paris = require('./paris');
 const parisImport = require('./paris_import');
 const xPost = require('./x_post');
 const xReponse = require('./x_reponse');
+const tgCommandes = require('./tg_commandes');
 const espn = require('./scores_espn');
 const aiColonie = require('./ai_colonie');
 /* Les adresses qui ont la main sur le papier de la colonie (AI_OWNER). */
@@ -161,6 +162,7 @@ const skins = require('./skins');
 let calendrierAuto = null;          // les minuteries de l alimentation
 let xQuotidien = null;
 let xVeille = null;
+let tgCmd = null;
 const journal = require('./journal');
 const adminlog = require('./adminlog');
 const reglages = require('./reglages');
@@ -7223,6 +7225,8 @@ server.listen(cfg.PORT, () => {
   /* La veille des comptes suivis : propose sur un Telegram prive, ne poste
      jamais seule. */
   xVeille = xReponse.planifie();
+  /* Le bot repond a /id en prive : l identifiant a mettre dans X_VEILLE_CHAT. */
+  tgCmd = tgCommandes.planifie();
 });
 
 function shutdown() {
@@ -7230,6 +7234,7 @@ function shutdown() {
   if (calendrierAuto) calendrierAuto.arrete();
   if (xQuotidien) xQuotidien.arrete();
   if (xVeille) xVeille.arrete();
+  if (tgCmd) tgCmd.arrete();
   persistComplet(); // instantane complet : rien ne se perd au redeploiement
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
      qui attend encore doit partir maintenant, sinon les dernieres manches
