@@ -76,6 +76,17 @@ const SPORTS = {
      Terrain : l'avantage est reel — conditions locales, rosee, public — mais
      plus faible qu'au football. */
   cricket: { nom: 'Cricket', issues: ['1', '2'], equipes: true, terrain: 40 },
+  /* Le hockey ne finit plus jamais a egalite en saison reguliere depuis 2005 :
+     prolongation, puis tirs au but. Deux issues, comme tous les livres.
+     Terrain : MESURE sur le tableau d ESPN, janvier 2026, 240 rencontres
+     finies — le domicile en gagne 52,1 %, soit 14 points Elo. C est le plus
+     faible des sports suivis, et 240 rencontres laissent trois points de
+     pourcentage d incertitude : l etalonnage hebdomadaire corrige le reste. */
+  nhl: { nom: 'NHL', issues: ['1', '2'], equipes: true, terrain: 14 },
+  /* Le baseball joue des manches supplementaires jusqu a un vainqueur : deux
+     issues. Terrain : MESURE sur ESPN, aout 2026, 417 rencontres finies — le
+     domicile en gagne 55,2 %, soit 36 points Elo. */
+  mlb: { nom: 'MLB', issues: ['1', '2'], equipes: true, terrain: 36 },
 };
 /* Les trois vues d'avant, deduites du registre. Elles restent exportees : une
    dizaine d'appelants les lisent, et les renommer toutes n'apprendrait rien a

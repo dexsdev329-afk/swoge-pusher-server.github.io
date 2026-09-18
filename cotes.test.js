@@ -413,4 +413,39 @@ cotes.chargeNotes(TMP);
   eq(cotes.note('foot', 'sauvegarde  fc'), 1777, 'meme ecrite autrement');
 }
 
+/* ==== LES FORCES VIVENT SUR LE VOLUME, L AMORCE RESTE LUE ====
+ * Releve du 18 septembre 2026 : le fichier etait ecrit a cote du code, donc
+ * remis a l amorce a chaque redeploiement. On verifie ici les trois choses
+ * qui comptent : le volume l emporte sur l amorce pour une force etalonnee,
+ * une force ou un alias ecrit dans l amorce reste connu, et sauver ecrit sur
+ * le volume — jamais dans le depot. */
+{
+  const os = require('os');
+  const VOL = fs.mkdtempSync(path.join(os.tmpdir(), 'notes-'));
+  const depot = path.join(__dirname, 'paris_notes.json');
+  const avant = fs.readFileSync(depot, 'utf8');
+  const amorce = JSON.parse(avant);
+  const uneCle = Object.keys(amorce).find((k) => k[0] !== '_' && k.startsWith('foot:'));
+  fs.writeFileSync(path.join(VOL, 'paris_notes.json'),
+    JSON.stringify({ [uneCle]: 1234, 'foot:equipe du volume': 1600, _alias: { 'foot:alias du volume': 'foot:equipe du volume' } }));
+  const frais = process.env.DATA_DIR;
+  process.env.DATA_DIR = VOL;
+  delete require.cache[require.resolve('./cotes')];
+  const c2 = require('./cotes');
+  const lu = c2.chargeNotes();
+  eq(lu[uneCle], 1234, 'une force etalonnee sur le volume l emporte sur l amorce : ' + uneCle);
+  const sansAlias = (o) => Object.keys(o).filter((k) => k[0] !== '_').length;
+  eq(sansAlias(lu), sansAlias(amorce) + 1,
+     'et les forces de l amorce restent toutes connues, plus celles du volume');
+  ok(Object.keys(lu._alias || {}).length >= Object.keys(amorce._alias || {}).length + 1,
+     'les alias des deux cotes sont reunis');
+  c2.poseNote('foot', 'Equipe du volume', 1650);
+  c2.sauveNotes();
+  eq(JSON.parse(fs.readFileSync(path.join(VOL, 'paris_notes.json'), 'utf8'))['foot:equipe du volume'], 1650,
+     'sauver ecrit sur le volume');
+  eq(fs.readFileSync(depot, 'utf8'), avant, 'et jamais dans le depot');
+  if (frais === undefined) delete process.env.DATA_DIR; else process.env.DATA_DIR = frais;
+  delete require.cache[require.resolve('./cotes')];
+}
+
 console.log(`cotes.test.js : ${n} verifications OK`);

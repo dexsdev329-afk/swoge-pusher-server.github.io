@@ -87,6 +87,7 @@ const SCORES = {
   tennis_atp_us_open: [],
 };
 
+const SPORTS_LISTE = [];
 global.fetch = async (url) => {
   const u = new URL(String(url));
   /* ---- ESPN N'EST PAS THE ODDS API ----
@@ -99,6 +100,12 @@ global.fetch = async (url) => {
   if (/espn\.com$/.test(u.hostname)) {
     return { ok: true, status: 200, headers: { get: () => null },
              json: async () => ({ events: [] }) };
+  }
+  /* La liste des sports (gratuite) : c est elle que lit le joker du tennis. */
+  if (/\/sports\/?$/.test(u.pathname)) {
+    appels.push({ ligue: null, quoi: 'sports', cout: 0 });
+    return { ok: true, status: 200, headers: { get: () => null },
+             json: async () => SPORTS_LISTE, text: async () => '[]' };
   }
   const m = u.pathname.match(/\/sports\/([^/]+)\/(\w+)/);
   const ligue = m && m[1], quoi = m && m[2];
@@ -475,10 +482,11 @@ const cotes = require('./cotes');
     ok(total <= 350, `et garde ${500 - total} credits de marge pour les reprises`);
 
     /* Et l'erreur a ne pas faire : interroger toutes les ligues chaque jour.
-       Ce test tourne avec trois ligues, mais la liste par defaut en compte
-       neuf — c'est sur celle-la qu'il faut faire le calcul, puisque c'est
-       elle qui sera en service. */
-    const LIGUES_DEFAUT = 9;
+       Ce test tourne avec trois ligues, mais c'est sur la liste par defaut
+       qu'il faut faire le calcul, puisque c'est elle qui sera en service —
+       neuf ligues au depart, vingt-six depuis le 18 septembre 2026, dont le
+       joker du tennis qui en vaut autant qu il y a de tournois en cours. */
+    const LIGUES_DEFAUT = imp.LIGUES_DEFAUT.length;
     const naif = JOURS * LIGUES_DEFAUT * 2;
     ok(naif > 500, `interroger les ${LIGUES_DEFAUT} ligues par defaut chaque jour couterait ` +
        `${naif} credits — le forfait sauterait vers le ${Math.floor(500 / (LIGUES_DEFAUT * 2))}e jour, ` +
@@ -634,6 +642,53 @@ const cotes = require('./cotes');
     process.env.ODDS_API_FIN = '2026-11-15';
     ok(imp.fin() === '2026-11-15', 'et une date posee a la main l emporte toujours');
     if (fixe === undefined) delete process.env.ODDS_API_FIN; else process.env.ODDS_API_FIN = fixe;
+  }
+
+  // ==== 10. LE TENNIS SUIT LES TOURNOIS TOUT SEUL
+  /*
+   * Le 18 septembre 2026, la liste par defaut portait encore les deux cles de
+   * l US Open, inactives depuis dix jours : le tennis etait vide, et rien ne
+   * le disait. « tennis=* » lit les cles actives sur /sports — gratuit — au
+   * moment de l import. Ce qu on verifie : les cles actives entrent, les
+   * inactives et les classements non, un joker d un autre sport est refuse
+   * en le disant, la liste n est relue qu apres douze heures, et tout cela ne
+   * coute pas un credit.
+   */
+  {
+    const frais = process.env.ODDS_API_LIGUES;
+    process.env.ODDS_API_LIGUES = 'foot=soccer_epl,tennis=*,nba=*';
+    delete require.cache[require.resolve('./paris_import')];
+    const dit = [];
+    const vraiErr = console.error;
+    console.error = (...a2) => dit.push(a2.join(' '));
+    const imp3 = require('./paris_import');
+    console.error = vraiErr;
+    ok(dit.some((m2) => /nba=\*/.test(m2) && /tennis/.test(m2)),
+       'le joker d un autre sport est ecarte en le disant : ' + (dit[0] || 'rien').slice(0, 80));
+    eq(imp3.LIGUES.map((l) => l.sport + '=' + l.clef).join(','), 'foot=soccer_epl,tennis=*',
+       'la liste ecrite garde le joker tel quel');
+    SPORTS_LISTE.splice(0, SPORTS_LISTE.length,
+      { key: 'tennis_atp_us_open', active: false, group: 'Tennis' },
+      { key: 'tennis_wta_guadalajara_open', active: true, group: 'Tennis' },
+      { key: 'tennis_atp_tokyo', active: true, group: 'Tennis' },
+      { key: 'tennis_atp_french_open_winner', active: true, group: 'Tennis' },
+      { key: 'basketball_nba', active: true, group: 'Basketball' },
+      { key: 'soccer_epl', active: true, group: 'Soccer' });
+    const avant = appels.length;
+    const l1 = await imp3.liguesEnService();
+    eq(l1.map((l) => l.sport + '=' + l.clef).join(','),
+       'foot=soccer_epl,tennis=tennis_wta_guadalajara_open,tennis=tennis_atp_tokyo',
+       'en service, le joker vaut les tournois ACTIFS — ni l US Open fini, ni le classement, ni la NBA');
+    eq(appels.slice(avant).map((a) => a.quoi).join(','), 'sports', 'lus en un appel a /sports');
+    eq(appels.slice(avant).reduce((t, a) => t + a.cout, 0), 0, 'qui ne coute rien');
+    const l2 = await imp3.liguesEnService();
+    eq(appels.length, avant + 1, 'et la liste n est pas relue avant douze heures');
+    eq(l2.length, l1.length, 'la seconde lecture rend la meme chose');
+    ok(imp3.etatImport().jokers && /tennis=tennis_wta_guadalajara_open\+tennis_atp_tokyo/.test(imp3.etatImport().jokers.cles.join(' ')),
+       'et l etat de l import DIT ce que le joker a donne : ' + imp3.etatImport().jokers.cles.join(' '));
+    process.env.ODDS_API_LIGUES = frais;
+    delete require.cache[require.resolve('./paris_import')];
+    require('./paris_import');
   }
 
   console.log(`paris_import.test.js : ${n} verifications OK`);

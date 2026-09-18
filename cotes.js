@@ -220,22 +220,42 @@ function raboteIssues(c, p, iss, marge, gradue) {
   return out;
 }
 
-const FICHIER_NOTES = path.join(__dirname, 'paris_notes.json');
+/* ---- OU VIVENT LES FORCES ----
+ * Dans le depot, `paris_notes.json` est une AMORCE : les forces ecrites a la
+ * main, et celles etalonnees une fois depuis ici. En service, le fichier
+ * VIVANT est sur le volume (`DATA_DIR`), comme le calendrier.
+ * Releve du 18 septembre 2026 : il etait ecrit A COTE DU CODE, donc remis a
+ * l amorce a chaque redeploiement — Railway en fait une centaine par mois.
+ * L amorce ne connaissant que le football, chaque redeploiement effacait les
+ * forces de la NFL, du cricket et du tennis jusqu a l etalonnage suivant, et
+ * leurs rencontres, sans force, etaient ecartees de l import. Personne ne le
+ * voyait parce que l etalonnage tournait par erreur une heure apres chaque
+ * demarrage ; ce defaut corrige le meme jour, celui-ci serait devenu visible
+ * sous huit jours.
+ * Lecture : l amorce d abord, le fichier du volume PAR-DESSUS. Une force ou
+ * un alias ajoute a la main dans le depot reste donc pris en compte, et une
+ * force etalonnee sur le volume l emporte sur l amorce. Un chemin donne
+ * explicitement (les essais) est lu seul, comme avant. */
+const FICHIER_AMORCE = path.join(__dirname, 'paris_notes.json');
+const FICHIER_NOTES = path.join(process.env.DATA_DIR || __dirname, 'paris_notes.json');
 
 // ------------------------------------------------------------- les forces
 
 let NOTES = null;
 
-/** Relit le fichier des forces. Un fichier absent n'est pas une erreur : on
- *  part alors de zero, et toutes les equipes valent 1500. */
+function litJson(f) {
+  try { return JSON.parse(fs.readFileSync(f, 'utf8')); }
+  catch (e) { if (e.code !== 'ENOENT') throw e; return null; }
+}
+/** Relit les forces. Un fichier absent n'est pas une erreur : on part alors
+ *  de l amorce, ou de zero, et toutes les equipes valent 1500. */
 function chargeNotes(fichier) {
-  const f = fichier || FICHIER_NOTES;
-  try {
-    NOTES = JSON.parse(fs.readFileSync(f, 'utf8'));
-  } catch (e) {
-    if (e.code !== 'ENOENT') throw e;
-    NOTES = {};
-  }
+  if (fichier) { NOTES = litJson(fichier) || {}; return NOTES; }
+  const amorce = litJson(FICHIER_AMORCE) || {};
+  const vivant = FICHIER_NOTES === FICHIER_AMORCE ? null : litJson(FICHIER_NOTES);
+  if (!vivant) { NOTES = amorce; return NOTES; }
+  NOTES = Object.assign({}, amorce, vivant);
+  if (amorce._alias || vivant._alias) NOTES._alias = Object.assign({}, amorce._alias || {}, vivant._alias || {});
   return NOTES;
 }
 function notes() { return NOTES || chargeNotes(); }

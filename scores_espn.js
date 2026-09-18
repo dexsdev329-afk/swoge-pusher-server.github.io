@@ -56,9 +56,26 @@ const CHEMINS = {
   basketball_nba: 'basketball/nba',
   americanfootball_nfl: 'football/nfl',
   cricket_international_t20: 'cricket/8039',
+  /* Les treize du 18 septembre 2026. Chacune a repondu depuis ce serveur ce
+     jour-la, jour par jour — le tableau REFUSE une fenetre de dix jours
+     (400, « Failed to get events endpoint ») ; `releve` n en demande jamais
+     plus de trois, autour de la rencontre. */
+  soccer_efl_champ: 'soccer/eng.2',
+  soccer_france_ligue_two: 'soccer/fra.2',
+  soccer_germany_bundesliga2: 'soccer/ger.2',
+  soccer_spain_segunda_division: 'soccer/esp.2',
+  soccer_italy_serie_b: 'soccer/ita.2',
+  soccer_netherlands_eredivisie: 'soccer/ned.1',
+  soccer_portugal_primeira_liga: 'soccer/por.1',
+  soccer_belgium_first_div: 'soccer/bel.1',
+  soccer_turkey_super_league: 'soccer/tur.1',
+  soccer_usa_mls: 'soccer/usa.1',
+  soccer_mexico_ligamx: 'soccer/mex.1',
+  icehockey_nhl: 'hockey/nhl',
+  baseball_mlb: 'baseball/mlb',
 };
 
-/* ---- LES QUATORZE ECARTS, ECRITS ----
+/* ---- LES ECARTS, ECRITS (quatorze au depart, puis ceux de chaque ligue ajoutee) ----
  * A gauche le nom normalise tel que The Odds API le donne, a droite celui
  * d'ESPN. Ils ont ete releves en comparant les deux calendriers, pas devines.
  * Une ligne de plus se constate de la meme facon : une rencontre qui ne se
@@ -80,6 +97,67 @@ const ALIAS = {
      Alaves, qui reste « deportivo alaves » de son cote — c'est aussi pourquoi
      « deportivo » ne peut pas entrer dans la liste des mots de bruit. */
   'deportivo la coruna': 'deportivo',
+  /* ---- LES ECARTS DES TREIZE LIGUES AJOUTEES, RELEVES LE 18 SEPTEMBRE 2026 ----
+   * Meme methode : les deux calendriers cote a cote, ligue par ligue, et une
+   * ligne par paire qui ne tombe pas juste. NHL et MLB : 62 clubs, zero ecart.
+   * Championship : 24 clubs, zero ecart. Les autres sont ici. */
+  // Ligue 2 (11/18 exacts)
+  'dijon': 'dijon fco',
+  'clermont': 'clermont foot',
+  'rodez af': 'rodez aveyron',
+  'nancy': 'nancy lorraine',
+  'usl dunkerque': 'dunkerque',
+  'stade lavallois': 'stade laval',
+  'red star': 'red star 93',
+  // 2. Bundesliga (15/18)
+  'greuther furth': 'spvgg greuther furth',
+  '1 kaiserslautern': 'kaiserslautern',
+  '1 heidenheim': '1 heidenheim 1846',
+  // Segunda (15/22)
+  'real sociedad b': 'real sociedad ii',
+  'cd castellon': 'castellon',
+  'cd eldense': 'eldense',
+  'sd eibar': 'eibar',
+  'sabadell': 'cd sabadell',
+  'oviedo': 'real oviedo',
+  'ad ceuta': 'ceuta',
+  // Serie B (19/20)
+  'catanzaro 1929': 'catanzaro',
+  // Eredivisie (14/18)
+  'zwolle': 'pec zwolle',
+  'ajax': 'ajax amsterdam',
+  'feyenoord': 'feyenoord rotterdam',
+  'twente enschede': 'twente',
+  // Primeira Liga (14/18)
+  'cs maritimo': 'maritimo',
+  'nacional': 'c d nacional',
+  'sporting lisbon': 'sporting cp',
+  'vitoria': 'vitoria guimaraes',
+  // Belgique (9/18)
+  'gent': 'kaa gent',
+  'leuven': 'oh leuven',
+  'charleroi': 'royal charleroi',
+  'royal antwerp': 'antwerp',
+  'union saint gilloise': 'union st gilloise',
+  'sint truiden': 'sint truidense',
+  'westerlo': 'kvc westerlo',
+  'genk': 'racing genk',
+  'sk beveren': 'waasland beveren',
+  // Turquie (11/18)
+  'kasimpasa sk': 'kasimpasa',
+  'torku konyaspor': 'konyaspor',
+  'gazisehir gaziantep': 'gaziantep fk',
+  'basaksehir': 'istanbul basaksehir',
+  'genclerbirligi sk': 'genclerbirligi',
+  'amed sk': 'amed sfk',
+  'besiktas jk': 'besiktas',
+  // MLS (28/30)
+  'new york red bulls': 'red bull new york',
+  'los angeles': 'lafc',
+  // Liga MX (15/18)
+  'tigres': 'tigres uanl',
+  'pumas': 'pumas unam',
+  'santos laguna': 'santos',
 };
 
 /* Les mots qui ne distinguent aucune equipe de sa voisine. « Deportivo » n'y

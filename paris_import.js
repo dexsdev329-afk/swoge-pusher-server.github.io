@@ -80,8 +80,15 @@ const LIGUES_DEFAUT = [
   'foot=soccer_italy_serie_a',
   'foot=soccer_germany_bundesliga',
   'foot=soccer_uefa_champs_league',
-  'tennis=tennis_atp_us_open',
-  'tennis=tennis_wta_us_open',
+  /* ---- LE TENNIS SUIT LES TOURNOIS TOUT SEUL ----
+   * Ses cles sont par TOURNOI et meurent avec lui. Le 18 septembre 2026, les
+   * deux cles de l US Open ecrites ici etaient inactives depuis dix jours :
+   * le tennis — notre plus gros sport — etait vide, et rien ne le disait.
+   * « * » veut dire : toutes les cles ATP et WTA actives, lues sur `/sports`
+   * (0 credit) au moment de l import et relues toutes les douze heures. Les
+   * cles de classement (`_winner`) sont ecartees : pas de rencontres dedans.
+   * Voir `liguesEnService`. */
+  'tennis=*',
   'nba=basketball_nba',
   /* ---- LA NFL, ET PAS SA PRESAISON ----
    * `americanfootball_nfl` ne porte QUE la saison reguliere. C'est un choix,
@@ -100,8 +107,49 @@ const LIGUES_DEFAUT = [
   'cricket=cricket_international_t20',
   'cricket=cricket_t20_blast',
   'cricket=cricket_odi',
+  /* ---- LES TREIZE AJOUTEES LE 18 SEPTEMBRE 2026 ----
+   * Choisies parmi les 84 competitions actives ce jour-la (`--sports`, 0
+   * credit) sur deux criteres mesures : ESPN sert leurs scores gratuitement
+   * (chemin dans `scores_espn.js`), et leurs noms d equipe se rapprochent
+   * de ceux de The Odds API — exactement, ou par un ALIAS releve ce jour-la.
+   * Ce qui ne remplit pas ces deux conditions n est pas suivi : un score qui
+   * ne se lit pas coute 2 credits par ligue et par jour, puis un reglement a
+   * la main. Ecartes pour cela : Ecosse (pas de code de pays pour le drapeau),
+   * Conference League (36 clubs, 15 noms differents, six journees par an),
+   * MMA (ESPN ne rend que la soiree, pas les combats).
+   * Une ligue nouvelle n ouvre RIEN avant son premier etalonnage : une equipe
+   * sans force n est pas cotee (`cotes.pourquoiPasCotable`), la rencontre est
+   * ecartee de l import. Donc pas de cote plate a 1500 contre 1500 sur
+   * Ajax – Telstar en attendant. */
+  'foot=soccer_efl_champ',
+  'foot=soccer_france_ligue_two',
+  'foot=soccer_germany_bundesliga2',
+  'foot=soccer_spain_segunda_division',
+  'foot=soccer_italy_serie_b',
+  'foot=soccer_netherlands_eredivisie',
+  'foot=soccer_portugal_primeira_liga',
+  'foot=soccer_belgium_first_div',
+  'foot=soccer_turkey_super_league',
+  'foot=soccer_usa_mls',
+  'foot=soccer_mexico_ligamx',
+  /* La NHL : `icehockey_nhl` ne porte pas la presaison, contrairement a ce
+     qu on pouvait craindre apres la NFL. Mesure le 18 septembre 2026 : ses
+     premieres rencontres sont du 29 septembre, et ESPN classe ce jour-la en
+     saison reguliere (type 2), la presaison (type 1) s arretant le 25. */
+  'nhl=icehockey_nhl',
+  'mlb=baseball_mlb',
 ];
 
+/* ---- LE JOKER, ET POUR QUI ----
+ * « sport=* » suit toutes les cles actives du sport. Seul le tennis en a le
+ * droit : ses cles tournent chaque semaine, et l on ne peut pas les ecrire.
+ * Un joker au football suivrait quarante championnats d un coup, a un credit
+ * d etalonnage par ligue et par semaine — c est un choix, il s ecrit ligne
+ * par ligne. Les cles de classement (`_winner`) ne portent pas de
+ * rencontres : ecartees. */
+const JOKERS = {
+  tennis: (s) => /^tennis_(atp|wta)_/.test(String(s.key)) && !/_winner$/.test(String(s.key)),
+};
 const LIGUES = (process.env.ODDS_API_LIGUES || LIGUES_DEFAUT.join(','))
   .split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
   const [sport, clef] = x.split('=');
@@ -117,6 +165,11 @@ const LIGUES = (process.env.ODDS_API_LIGUES || LIGUES_DEFAUT.join(','))
    * On refuse donc au plus pres de la cause, en disant quoi faire. La ligue
    * est ECARTEE, pas fatale : les autres continuent d'alimenter le
    * calendrier, ce qui vaut mieux qu'un import qui refuse tout. */
+  if (x.clef === '*' && !JOKERS[x.sport]) {
+    console.error(`[odds] LIGUE IGNOREE « ${x.sport}=* » : le joker n existe que pour `
+      + `${Object.keys(JOKERS).join(', ')} — les autres sports s ecrivent ligue par ligue.`);
+    return false;
+  }
   if (paris.sportConnu(x.sport)) return true;
   console.error(`[odds] LIGUE IGNOREE « ${x.sport}=${x.clef} » : le sport `
     + `« ${x.sport} » n'est pas declare. Ajoutez-le a SPORTS dans paris.js — `
@@ -124,6 +177,40 @@ const LIGUES = (process.env.ODDS_API_LIGUES || LIGUES_DEFAUT.join(','))
     + `Connus : ${Object.keys(paris.SPORTS).join(', ')}`);
   return false;
 });
+
+/* ---- LES LIGUES REELLEMENT INTERROGEES ----
+ * `LIGUES` est la liste ECRITE ; celle-ci est la liste EN SERVICE : la meme,
+ * ou chaque joker est remplace par les cles actives de son sport chez The
+ * Odds API. La liste des sports est gratuite ; on la relit toutes les douze
+ * heures, et si elle ne repond pas on garde la derniere lue plutot que de
+ * vider le tennis pour un 502 passager. */
+const JOKER_TTL = 12 * 3600000;
+let jokerCache = { t: 0, cles: null };
+async function liguesEnService() {
+  const fixes = LIGUES.filter((l) => l.clef !== '*');
+  const jokers = LIGUES.filter((l) => l.clef === '*');
+  if (!jokers.length) return fixes;
+  if (!jokerCache.cles || Date.now() - jokerCache.t > JOKER_TTL) {
+    try {
+      const tous = await appel('/sports', { all: 'true' }, 0, 'sports');
+      jokerCache = { t: Date.now(), cles: (tous || []).filter((s) => s && s.active && s.key) };
+    } catch (e) {
+      console.error('[odds] liste des sports injoignable — '
+        + (jokerCache.cles ? 'on garde la derniere lue' : 'les jokers attendront') + ' : ' + e.message);
+      if (!jokerCache.cles) return fixes;
+    }
+  }
+  const deja = new Set(fixes.map((l) => l.clef));
+  const out = fixes.slice();
+  for (const j of jokers) {
+    for (const s of jokerCache.cles) {
+      if (!JOKERS[j.sport](s) || deja.has(s.key)) continue;
+      deja.add(s.key);
+      out.push({ sport: j.sport, clef: s.key });
+    }
+  }
+  return out;
+}
 
 /*
  * ---- LES DRAPEAUX ----
@@ -158,13 +245,19 @@ const PAYS_LIGUE = {
   soccer_germany_bundesliga: 'DE', soccer_germany_bundesliga2: 'DE',
   soccer_netherlands_eredivisie: 'NL', soccer_portugal_primeira_liga: 'PT',
   soccer_belgium_first_div: 'BE', soccer_turkey_super_league: 'TR',
-  soccer_usa_mls: 'US', basketball_nba: 'US', americanfootball_nfl: 'US',
+  soccer_usa_mls: 'US', soccer_mexico_ligamx: 'MX',
+  basketball_nba: 'US', americanfootball_nfl: 'US',
+  /* NHL et MLB : la ligue est americaine, sept clubs de hockey et un de
+     baseball sont canadiens — ceux-la sont dans `paris_pays.json`, qui
+     passe avant la ligue. */
+  icehockey_nhl: 'US', baseball_mlb: 'US',
   cricket_t20_blast: 'GB', cricket_the_hundred: 'GB',
 };
 /* Le nom du pays, pour le champ `pays` de la rencontre. */
 const NOM_PAYS = {
   GB: 'England', FR: 'France', ES: 'Spain', IT: 'Italy', DE: 'Germany',
   NL: 'Netherlands', PT: 'Portugal', BE: 'Belgium', TR: 'Turkey', US: 'USA',
+  MX: 'Mexico',
 };
 
 const FICHIER_PAYS = path.join(__dirname, 'paris_pays.json');
@@ -318,6 +411,13 @@ function etatImport() {
     /* Jamais la cle — seulement si elle est la. */
     cle: !!CLE,
     ligues: LIGUES.map((l) => l.sport + '=' + l.clef),
+    /* Ce que le joker a donne a la derniere lecture — null tant qu il n a
+       pas ete lu. C est la ligne a regarder quand le tennis est vide. */
+    jokers: jokerCache.cles
+      ? { lu: new Date(jokerCache.t).toISOString(),
+          cles: LIGUES.filter((l) => l.clef === '*')
+            .map((j) => j.sport + '=' + jokerCache.cles.filter(JOKERS[j.sport]).map((s) => s.key).join('+')) }
+      : null,
     horizonJours: HORIZON_JOURS,
     fin: fin(),
     joursRestants: joursRestants(),
@@ -392,8 +492,31 @@ function identifiant(ligue, ev) {
   return `${court}-${jour}-${abrege(ev.home_team)}-${abrege(ev.away_team)}`.slice(0, 64);
 }
 
-const NOM_COMPET = (clef) => clef.replace(/^soccer_|^tennis_|^basketball_/, '')
-  .replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+/* ---- LE NOM QUE LA PAGE TITRE ----
+ * La cle de The Odds API, decoupee, donnait « Spain La Liga » a cote d un
+ * pays qui dit deja « Spain », « Usa Mls », « Germany Bundesliga2 ». C est le
+ * titre du bloc que le joueur deplie : il porte le nom courant de la
+ * competition, et rien d autre — le pays est un champ a part. Une cle absente
+ * de la table (un tournoi de tennis, qui change chaque semaine) garde le
+ * decoupage, avec ses sigles en capitales. */
+const NOMS_COMPET = {
+  soccer_epl: 'Premier League', soccer_efl_champ: 'Championship',
+  soccer_france_ligue_one: 'Ligue 1', soccer_france_ligue_two: 'Ligue 2',
+  soccer_spain_la_liga: 'La Liga', soccer_spain_segunda_division: 'La Liga 2',
+  soccer_italy_serie_a: 'Serie A', soccer_italy_serie_b: 'Serie B',
+  soccer_germany_bundesliga: 'Bundesliga', soccer_germany_bundesliga2: '2. Bundesliga',
+  soccer_netherlands_eredivisie: 'Eredivisie', soccer_portugal_primeira_liga: 'Primeira Liga',
+  soccer_belgium_first_div: 'Pro League', soccer_turkey_super_league: 'Süper Lig',
+  soccer_usa_mls: 'MLS', soccer_mexico_ligamx: 'Liga MX',
+  soccer_uefa_champs_league: 'Champions League',
+  basketball_nba: 'NBA', americanfootball_nfl: 'NFL', icehockey_nhl: 'NHL', baseball_mlb: 'MLB',
+  cricket_the_hundred: 'The Hundred', cricket_international_t20: 'International T20',
+  cricket_t20_blast: 'T20 Blast', cricket_odi: 'One Day Internationals',
+};
+const SIGLES = /^(nhl|mlb|nfl|nba|mls|epl|efl|odi|t20|atp|wta|uefa)$/i;
+const NOM_COMPET = (clef) => NOMS_COMPET[clef]
+  || clef.replace(/^soccer_|^tennis_|^basketball_|^icehockey_|^baseball_|^americanfootball_/, '')
+    .replace(/_/g, ' ').replace(/\b\w+/g, (m) => SIGLES.test(m) ? m.toUpperCase() : m[0].toUpperCase() + m.slice(1));
 
 // ------------------------------------------------------------ les actions
 
@@ -405,7 +528,7 @@ async function importeMatchs() {
 
   const echouees = new Set(), erreurs = [], parLigueCompte = {};
   let repondues = 0;
-  for (const l of LIGUES) {
+  for (const l of await liguesEnService()) {
     let evs;
     try {
       evs = await appel(`/sports/${l.clef}/events`, {}, 0, 'events ' + l.clef);
@@ -851,7 +974,8 @@ function trieReglements(finis, expositionDe, now) {
  * bookmaker sur un seul match ferait sauter nos forces a chaque releve.
  */
 async function calibre(ligueDemandee) {
-  const cibles = ligueDemandee ? LIGUES.filter((l) => l.clef === ligueDemandee) : LIGUES;
+  const enService = await liguesEnService();
+  const cibles = ligueDemandee ? enService.filter((l) => l.clef === ligueDemandee) : enService;
   if (!cibles.length) throw new Error('[odds] ligue inconnue : ' + ligueDemandee);
   let bouges = 0;
 
@@ -907,7 +1031,17 @@ async function calibre(ligueDemandee) {
       /* Un quart du chemin, module par le nombre de livres d'accord : une
          mediane sur six maisons vaut mieux qu'un prix isole, et le pas doit
          le dire. */
-      const delta = (ecartVu - ecartNotre) * 0.25 * confiance;
+      /* ---- UNE EQUIPE JAMAIS VUE PREND D UN COUP LA FORCE DES LIVRES ----
+       * Le quart de chemin est fait pour une force qui EXISTE : il amortit un
+       * releve. Une equipe inconnue vaut 1500 par convention, pas par mesure ;
+       * lui appliquer un quart laisserait une ligue nouvelle a des cotes
+       * presque plates pendant un mois (0,25 par semaine) — un prix qu on
+       * SAIT faux. Elle prend donc la force que la mediane des livres lui
+       * donne, en entier ; la semaine d apres elle est connue, et le quart
+       * s applique. Regle posee le 18 septembre 2026 avec les treize ligues
+       * ajoutees, dont aucune equipe n avait de force. */
+      const neuve = !!cotes.pourquoiPasCotable(l.sport, ev.home_team, ev.away_team);
+      const delta = (ecartVu - ecartNotre) * (neuve ? 1 : 0.25 * confiance);
       cotes.poseNote(l.sport, ev.home_team, cotes.note(l.sport, ev.home_team) + delta / 2);
       cotes.poseNote(l.sport, ev.away_team, cotes.note(l.sport, ev.away_team) - delta / 2);
       bouges++;
@@ -1070,7 +1204,7 @@ if (require.main === module) {
          .catch((e) => { console.error(String(e.message || e)); process.exit(1); });
 }
 
-module.exports = { LIGUES, LIGUES_DEFAUT, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie, delaiAvantEtalonnage,
+module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie, delaiAvantEtalonnage,
                    finDuMois, fin,
                    etatImport, noteDernier,
                    trieReglements, AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
