@@ -2954,6 +2954,16 @@ const server = http.createServer(async (req, res) => {
   /* ---- LA VEILLE : ce qu elle a propose, et les deux boutons ----
      Le jeton du lien est la seule cle : a usage unique, douze heures, envoye
      dans un chat prive. La page repond en francais, en une phrase. */
+  /* Le meme geste depuis le panneau d administration : la session vaut le jeton. */
+  if (path === '/x/reponse/geste') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
+    const d = await donPost(req);
+    const r = await xReponse.gesteParCle(String((d && d.cle) || '').slice(0, 64), String((d && d.action) || '').slice(0, 10));
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(r));
+  }
   if (path === '/x/veille') {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(xReponse.etat()));

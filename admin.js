@@ -145,6 +145,7 @@ function page(csrf) {
   <button data-go="collection"><span class="ic">🍎</span>Collection</button>
   <button data-go="engagement"><span class="ic">🔥</span>Engagement</button>
   <button data-go="liveops"><span class="ic">🎛️</span>Live Ops</button>
+  <button data-go="x"><span class="ic">🐦</span>Agent X<span class="bad" id="badX" style="display:none">0</span></button>
   <div class="sep">rarement</div>
   <button data-go="confiance"><span class="ic">🛡️</span>Confiance</button>
   <button data-go="sys"><span class="ic">⚙️</span>Système</button>
@@ -352,6 +353,24 @@ function page(csrf) {
   </div>
   <div class="tri" id="usJours" style="margin:0 0 10px">Sur</div>
   <div id="usCorps"><div class="muted2">chargement…</div></div>
+</div>
+
+<!-- ---- L'AGENT X ----
+     Ce que l'agent a propose sous les comptes suivis, et les deux gestes —
+     les memes que les boutons du Telegram prive, par la session
+     d'administrateur au lieu du jeton du lien. Rien ne part sans un clic. -->
+<div data-vue="x" class="panel">
+  <h2>&#128038; Agent X — réponses proposées</h2>
+  <div class="sub" style="margin:0 0 10px">
+    L'agent lit les comptes suivis, prépare une réponse et son image, et attend.
+    <b>Poster</b> l'envoie en réponse au post d'origine ; <b>Ignorer</b> la ferme.
+    La note est la confiance de Claude (vert à partir de 9).
+  </div>
+  <div id="xBody"><div class="muted2">chargement&hellip;</div></div>
+</div>
+<div data-vue="x" class="panel" style="margin-top:14px">
+  <h2>&#128197; Les posts du jour</h2>
+  <div id="xPosts"><div class="muted2">chargement&hellip;</div></div>
 </div>
 
 <div data-vue="jeux" class="panel" style="margin-top:14px">
@@ -902,6 +921,7 @@ function vaVers(v, arg){
   if (VUE === "liveops") { chargeReglages(); chargeCinemas(); }
   if (VUE === "sys") peintSante();
   if (VUE === "jeux") chargeUsage();
+  if (VUE === "x") loadX();
 }
 function duHash(){
   var h = (location.hash || "#apercu").slice(1);
@@ -2028,6 +2048,64 @@ function impRend(e){
      'Tennis keys are per tournament — they disappear when the tournament ends.</span></div>';
   $("#impBody").innerHTML='<div class="impg">'+cartes+'</div>'+l;
 }
+/* ================= L'AGENT X =================
+ * Tout vient de /x/veille et /x/derniere, sans jeton : les gestes passent par
+ * /x/reponse/geste avec la session, et la liste est RELUE apres chaque geste
+ * — on montre ce que le serveur a retenu, jamais ce qu'on vient de cliquer. */
+function xConf(c){ if(c===null||c===undefined) return ''; var coul=c>=9?'#22C55E':c>=7?'#F4C542':'#F2685E'; return '<b style="color:'+coul+'">'+c+'/10</b> '; }
+function xRend(v, d){
+  var attente=(v.propositions||[]).filter(function(p){ return p.etat==='proposee'; });
+  var b=$("#badX"); if(b){ b.textContent=attente.length; b.style.display=attente.length?'':'none'; }
+  var h='';
+  if(!v.actif){
+    h+='<div class="impl impbad"><b>Veille éteinte.</b> Il manque : '+esc((v.manque||[]).join(', '))+'</div>';
+  } else {
+    h+='<div class="impg">'+
+       '<div class="impc"><span>Comptes suivis</span><b>@'+esc((v.comptes||[]).join(' @'))+'</b></div>'+
+       '<div class="impc"><span>Lecture</span><b>toutes les '+esc(v.toutesLes)+'</b></div>'+
+       '<div class="impc"><span>Plafond</span><b>'+v.maxJour+' / jour</b></div>'+
+       '<div class="impc"><span>En attente</span><b>'+attente.length+'</b></div></div>';
+  }
+  if(!(v.propositions||[]).length) h+='<div class="impl">Aucune proposition pour l’instant : rien dans les posts récents ne passait les filtres.</div>';
+  (v.propositions||[]).forEach(function(p){
+    var etat=p.etat==='proposee'?'<b class="impwarn">en attente</b>':p.etat==='postee'?'<b class="impok">postée</b>'+(p.reponseUrl?' — <a href="'+esc(p.reponseUrl)+'" target="_blank" rel="noopener">voir</a>':''):'<span class="muted2" style="display:inline;padding:0">'+esc(p.etat)+'</span>';
+    h+='<div class="impl" style="display:flex;gap:12px;align-items:flex-start">'+
+       (p.image?'<a href="'+esc(p.image)+'" target="_blank"><img src="'+esc(p.image)+'" alt="" style="width:140px;border-radius:8px"></a>':'')+
+       '<div style="flex:1;min-width:0">'+xConf(p.confiance)+'<b>@'+esc(p.compte)+'</b> · '+etat+' · '+esc((p.quand||'').replace('T',' ').slice(0,16))+
+       ' · <a href="'+esc(p.post)+'" target="_blank" rel="noopener">le post</a><br>'+
+       '<span style="color:#fff">'+esc(p.reponse)+'</span>'+
+       (p.etat==='proposee'?'<div class="row" style="margin-top:8px"><button class="ghost" data-xg="poster" data-xk="'+esc(p.cle)+'">✅ Poster la réponse</button> '+
+                             '<button class="ghost" data-xg="ignorer" data-xk="'+esc(p.cle)+'">🗑 Ignorer</button></div>':'')+
+       '</div></div>';
+  });
+  $("#xBody").innerHTML=h;
+  var dd=d&&d.derniere;
+  var hp=dd?'<div class="impl" style="display:flex;gap:12px;align-items:flex-start">'+(dd.image?'<img src="'+esc(dd.image)+'" alt="" style="width:140px;border-radius:8px">':'')+
+     '<div><b>'+esc(dd.cle)+'</b> · '+(dd.id?'<b class="impok">posté</b> — <a href="'+esc(dd.url)+'" target="_blank" rel="noopener">voir</a>':'<b class="impbad">'+esc(dd.erreur||'pas encore parti')+'</b>')+
+     '<br><span style="color:#fff">'+esc(dd.texte||'')+'</span></div></div>':'<div class="impl">Aucun post encore.</div>';
+  hp+='<div class="impl">Créneaux : <b>'+esc((d&&d.heures||[]).join(' et '))+'</b> ('+esc(d&&d.fuseau||'')+')'+
+      ((d&&d.recents||[]).length?'<br>Récents : '+d.recents.map(function(r){ return '<a href="'+esc(r.url)+'" target="_blank" rel="noopener">'+esc(r.cle)+'</a>'; }).join(' · '):'')+'</div>';
+  $("#xPosts").innerHTML=hp;
+  document.querySelectorAll("[data-xg]").forEach(function(bt){
+    bt.addEventListener("click", async function(){
+      bt.disabled=true; bt.textContent='…';
+      try{
+        var r=await fetch("/x/reponse/geste",{method:"POST",headers:{"x-admin-key":KEY,"content-type":"application/json"},
+                          body:JSON.stringify({cle:bt.getAttribute("data-xk"),action:bt.getAttribute("data-xg")})});
+        var j=await r.json();
+        if(j.etat==='rate') alert('X a refusé : '+(j.erreur||''));
+      }catch(e){ alert(e.message); }
+      loadX();
+    });
+  });
+}
+async function loadX(){
+  try{
+    var r=await fetch("/x/veille"), v=await r.json();
+    var r2=await fetch("/x/derniere"), d=await r2.json();
+    xRend(v, d);
+  }catch(e){ $("#xBody").innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
+}
 async function loadImport(){
   try{
     var r=await fetch("/paris/import",{headers:{"x-admin-key":KEY}});
@@ -2257,6 +2335,7 @@ $("#impGo").onclick=async function(){
   b.disabled=false;
 };
 loadImport(); setInterval(loadImport,60000);
+loadX(); setInterval(loadX,60000);
 /* Un clic sur la ligne ouvre son detail, et referme celui qui l'etait : deux
    panneaux ouverts noient le tableau. */
 $("#pbody").addEventListener("click",function(e){

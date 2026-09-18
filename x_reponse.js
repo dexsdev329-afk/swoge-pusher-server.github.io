@@ -280,11 +280,21 @@ async function veille(opts) {
 
 /** Le geste du proprietaire : `poster` ou `ignorer`, par le jeton du lien. */
 async function geste(jeton, action, opts) {
+  const journal = litJournal();
+  const cle = Object.keys(journal.propositions).find((k) => jeton && journal.propositions[k].jeton === jeton);
+  if (!cle) return { etat: 'inconnu' };
+  return agit(journal, cle, action, opts);
+}
+/** Le meme geste depuis le panneau d administration, par la cle de la
+ *  proposition : la session d administrateur vaut le jeton du lien. */
+async function gesteParCle(cle, action, opts) {
+  const journal = litJournal();
+  if (!journal.propositions[cle] || journal.propositions[cle].silencieux) return { etat: 'inconnu' };
+  return agit(journal, cle, action, opts);
+}
+async function agit(journal, cle, action, opts) {
   const o = opts || {};
   const t = o.maintenant || Date.now();
-  const journal = litJournal();
-  const cle = Object.keys(journal.propositions).find((k) => journal.propositions[k].jeton === jeton);
-  if (!cle) return { etat: 'inconnu' };
   const p = journal.propositions[cle];
   if (p.etat !== 'proposee') return { etat: p.etat, url: p.replyUrl || null };
   if (Date.parse(p.expire) < t) { p.etat = 'expiree'; ecritJournal(journal); return { etat: 'expiree' }; }
@@ -325,4 +335,4 @@ function planifie() {
   return { arrete() { clearTimeout(premier); clearInterval(minuterie); } };
 }
 
-module.exports = { enabled, manque, env, MOTS, sujet, nettoieReponse, juge, veille, geste, etat, planifie, litJournal };
+module.exports = { enabled, manque, env, MOTS, sujet, nettoieReponse, juge, veille, geste, gesteParCle, etat, planifie, litJournal };

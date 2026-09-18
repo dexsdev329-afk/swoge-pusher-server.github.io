@@ -168,8 +168,19 @@ const x = require('./x_reponse');
     const e = x.litJournal().propositions['rep-1006'];
     g = await x.geste(e.jeton, 'poster', { prendre: faux, maintenant: J2 + 3600000 + 13 * 3600000 });
     eq(g.etat, 'expiree', 'apres douze heures, le lien est expire : rien ne part');
+    /* Le panneau d administration agit par la cle, sans jeton. */
+    process.env.X_VEILLE_MAX_JOUR = '9';
+    postsMaye = [{ id: '2003', text: 'Another puppy video', created_at: new Date(J2 + 20 * 3600000).toISOString() }];
+    await x.veille({ maintenant: J2 + 20 * 3600000, prendre: faux });
+    const avant4 = appels.length;
+    g = await x.gesteParCle('rep-2003', 'poster', { prendre: faux, maintenant: J2 + 20 * 3600000 });
+    eq(g.etat, 'postee', 'depuis le panneau, Poster par la cle de la proposition');
+    eq(appels.slice(avant4).find((a) => /2\/tweets/.test(a.u)).corps.reply.in_reply_to_tweet_id, '2003', 'en reponse au bon post');
+    eq((await x.gesteParCle('rep-2003', 'poster', { prendre: faux })).etat, 'postee', 'une seconde fois : deja postee, rien ne repart');
+    eq((await x.gesteParCle('nc-1005', 'poster', { prendre: faux })).etat, 'inconnu', 'une entree silencieuse ne se poste pas');
+    eq((await x.gesteParCle('rien', 'poster', { prendre: faux })).etat, 'inconnu', 'une cle inconnue non plus');
     const et = x.etat();
-    ok(et.actif && et.propositions.length === 3 && !JSON.stringify(et).includes('jeton') && !JSON.stringify(et).includes('"ck"'), '/x/veille montre les propositions, sans jeton ni cle');
+    ok(et.actif && et.propositions.length === 4 && !JSON.stringify(et).includes('jeton') && !JSON.stringify(et).includes('"ck"'), '/x/veille montre les propositions, sans jeton ni cle');
   }
 
   console.log(`\nx_reponse.test.js : ${n} verifications OK`);
