@@ -337,8 +337,10 @@ async function televerse(png, prendre) {
   if (!id) throw new Error('X media : reponse sans identifiant');
   return String(id);
 }
-async function publie(texte, mediaId, prendre) {
-  const j = await appelX('/2/tweets', { text: texte, media: { media_ids: [mediaId] } }, prendre);
+async function publie(texte, mediaId, prendre, enReponseA) {
+  const corps = { text: texte, media: { media_ids: [mediaId] } };
+  if (enReponseA) corps.reply = { in_reply_to_tweet_id: String(enReponseA) };
+  const j = await appelX('/2/tweets', corps, prendre);
   const id = j.data && j.data.id;
   if (!id) throw new Error('X tweets : reponse sans identifiant');
   return String(id);

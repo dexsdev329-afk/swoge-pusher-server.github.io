@@ -34,6 +34,7 @@ const paris = require('./paris');
    fait rien, le calendrier reste celui du depot. */
 const parisImport = require('./paris_import');
 const xPost = require('./x_post');
+const xReponse = require('./x_reponse');
 const espn = require('./scores_espn');
 const aiColonie = require('./ai_colonie');
 /* Les adresses qui ont la main sur le papier de la colonie (AI_OWNER). */
@@ -159,6 +160,7 @@ const boutique = require('./boutique');
 const skins = require('./skins');
 let calendrierAuto = null;          // les minuteries de l alimentation
 let xQuotidien = null;
+let xVeille = null;
 const journal = require('./journal');
 const adminlog = require('./adminlog');
 const reglages = require('./reglages');
@@ -2945,6 +2947,27 @@ const server = http.createServer(async (req, res) => {
     else { xPost.reprend(); r = await xPost.tache({ force: true, signale }); }
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(r));
+  }
+
+  /* ---- LA VEILLE : ce qu elle a propose, et les deux boutons ----
+     Le jeton du lien est la seule cle : a usage unique, douze heures, envoye
+     dans un chat prive. La page repond en francais, en une phrase. */
+  if (path === '/x/veille') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(xReponse.etat()));
+  }
+  {
+    const mr = /^\/x\/reponse\/([A-Za-z0-9_-]{16,40})\/(poster|ignorer)$/.exec(path);
+    if (mr) {
+      const r = await xReponse.geste(mr[1], mr[2]);
+      const phrase = { postee: 'Réponse postée : ' + (r.url || ''), ignoree: 'Proposition ignorée. Rien n a été posté.',
+                       expiree: 'Trop tard : cette proposition a plus de douze heures. Rien n a été posté.',
+                       inconnu: 'Lien inconnu ou déjà utilisé.', rate: 'X a refusé : ' + (r.erreur || '') }[r.etat]
+                    || ('Déjà traité : ' + r.etat + (r.url ? ' — ' + r.url : ''));
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end('<!doctype html><meta name="viewport" content="width=device-width"><body style="font:18px/1.5 system-ui;padding:24px;background:#0B1B36;color:#fff">'
+        + '<p>' + phrase.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/(https?:\/\/\S+)/, '<a style="color:#F4C542" href="$1">$1</a>') + '</p></body>');
+    }
   }
 
   if (path === '/vitrine.json') {
@@ -7197,12 +7220,16 @@ server.listen(cfg.PORT, () => {
   /* Le post quotidien sur X, arme seulement si ses cinq cles sont la ; la
      copie part sur le Telegram avec le lien du post. */
   xQuotidien = xPost.planifie((p) => tg.notifyPhoto(p.image, p.texte + '\n' + p.url));
+  /* La veille des comptes suivis : propose sur un Telegram prive, ne poste
+     jamais seule. */
+  xVeille = xReponse.planifie();
 });
 
 function shutdown() {
   clearInterval(niveauInterval); clearInterval(prixInterval); clearInterval(prixMondeInterval); clearInterval(backupInterval); clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
   if (calendrierAuto) calendrierAuto.arrete();
   if (xQuotidien) xQuotidien.arrete();
+  if (xVeille) xVeille.arrete();
   persistComplet(); // instantane complet : rien ne se perd au redeploiement
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
      qui attend encore doit partir maintenant, sinon les dernieres manches
