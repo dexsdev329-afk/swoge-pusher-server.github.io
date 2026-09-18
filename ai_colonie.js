@@ -1046,6 +1046,18 @@ function regroupeAudit() {
     if (k !== cle) refondues++;
     const d = neuf[k] || (neuf[k] = { n: 0, s: 0, montes: 0, effondres: 0 });
     d.n += a.n; d.s += a.s; d.montes += a.montes || 0; d.effondres += a.effondres || 0;
+    /* ---- ET LA COLONNE STRATEGIE, QUI PARTAIT A CHAQUE REGROUPEMENT ----
+     * Releve du 18 septembre 2026, par trois chiffres qui ne pouvaient pas
+     * coexister : le compteur disait 30 006 rejeux, les jeux concurrents en
+     * avaient garde 28 887 dans `E.variantes` — et l'audit n'en montrait que
+     * 43. Or `rejoueLOmbre` ecrit les trois au meme instant. Une seule chose
+     * reconstruit `E.audit` : cette fonction, qui recopiait n, s, montes et
+     * effondres en OUBLIANT nStrat et strat. A chaque redemarrage — Railway en
+     * fait une centaine par mois — la colonne « ce que la strategie aurait
+     * fait » repartait de zero, et « already up too far » se lisait avec deux
+     * observations la ou il y en avait des milliers. La regle etait donc
+     * injugeable sur la seule colonne qui dise ce qu'elle aurait RAPPORTE. */
+    if (a.nStrat) { d.nStrat = (d.nStrat || 0) + a.nStrat; d.strat = (d.strat || 0) + (a.strat || 0); }
   }
   if (refondues) {
     console.log('[ai] audit : ' + refondues + ' case(s) regroupee(s) par regle plutot que par jeton — '
@@ -4869,7 +4881,13 @@ function noteOmbre(t, an, refus, quiRefuse) {
 /* Quand une ombre s'en va — par oubli, par sa derniere echeance, ou poussee
    par le plafond — la strategie est rejouee UNE fois sur ce qu'elle a laisse. */
 function rejoueLOmbre(o) {
-  if (!o || o.rejouee || !o.jalons || o.jalons[HORIZON_REF] === undefined) return;
+  if (!o || o.rejouee) return;
+  /* ---- CE QU'ON NE PEUT PAS REJOUER SE COMPTE ----
+   * Sans l'echeance de reference, il n'y a rien a rejouer — mais il faut que
+   * ca se VOIE. C'est en comparant `rejeux` a ce que l'audit montrait qu'on a
+   * trouve les deux fuites de la colonne strategie ; sans un compteur en face,
+   * l'ecart suivant se cacherait aussi longtemps. */
+  if (!o.jalons || o.jalons[HORIZON_REF] === undefined) { compte('rejeuSansJalon'); return; }
   const rs = rejoue(o.jalons);
   if (rs !== null) noteAuditStrat(cleAudit(o), rs);
   /* Et les jeux concurrents, sur les MEMES jalons : c'est la seule facon de
@@ -5169,7 +5187,16 @@ function regleLesOmbres(marche) {
       /* Les memes bornes que pour une position : un rapport aberrant ne decrit
          rien, et une lecon tiree d'un chiffre faux se propage a tous les
          jetons qui partagent le trait. */
-      if (!isFinite(brutR) || brutR > REND_MAX || brutR < REND_MIN) { compte('ombreAberrante'); return false; }
+      /* ---- UNE LECTURE ABERRANTE JETTE LA LECTURE, PAS L'OMBRE ----
+       * Elle partait par `return false`, sans passer par le rejeu : 1 390
+       * ombres comptees au 18 septembre 2026, chacune emportant ses jalons
+       * deja mesures. C'est la seconde fuite de la colonne strategie, et elle
+       * est silencieuse — le compteur `ombreAberrante` disait bien qu'on
+       * jetait quelque chose, jamais qu'on jetait AUSSI le rejeu.
+       * Le rapport aberrant, lui, reste ecarte : il n'entre dans aucun jalon.
+       * On rejoue donc sur ce que l'ombre avait deja de valable, comme pour
+       * n'importe quel depart. */
+      if (!isFinite(brutR) || brutR > REND_MAX || brutR < REND_MIN) { compte('ombreAberrante'); return rejoueEtPart(o); }
       /* ---- ET CE QU'ON POURRAIT VRAIMENT EN SORTIR ----
        * Le prix seul a fait apprendre +1158 % sur une piscine videe. Le jalon
        * est donc borne par la profondeur, avec la liquidite lue a cote du prix
@@ -5417,6 +5444,18 @@ function noteAuditStrat(cle, rs) {
   const a = E.audit[cle] || (E.audit[cle] = { n: 0, s: 0, montes: 0, effondres: 0 });
   a.nStrat = (a.nStrat || 0) + 1; a.strat = (a.strat || 0) + rs;
   compte('rejeux');
+}
+
+/* ---- LES DEUX CHIFFRES QUI DOIVENT SE RESSEMBLER ----
+ * Ce que le compteur dit avoir rejoue, et ce que l'audit en a garde. Ils ont
+ * diverge de 30 006 contre 43 sans que rien ne le signale : les mettre l'un a
+ * cote de l'autre est ce qui rend l'ecart lisible en un coup d'oeil. */
+function rejeuxBilan() {
+  const c = E.compteurs || {};
+  let garde = 0;
+  for (const k in (E.audit || {})) garde += (E.audit[k].nStrat || 0);
+  return { rejoues: c.rejeux || 0, gardes: garde, sansJalon: c.rejeuSansJalon || 0,
+           aberrantes: c.ombreAberrante || 0 };
 }
 /* Ce que la page montre de l'audit : par raison, combien ont ete ecartes et ce
    qu'ils ont fait. Trie par ce qui coute le plus cher a se tromper. */
@@ -8788,7 +8827,10 @@ function vue() {
     suites: (E.suites || []).map((s) => ({ sym: s.sym, rSortie: s.rSortie, echeance: s.echeance })),
     ombres: { enAttente: (E.ombres || []).length, jugees: E.compteurs.ombresJugees || 0,
               relues: E.compteurs.ombresDeSecours || 0, muettes: E.compteurs.ombreMuette || 0,
-              disparues: E.compteurs.ombreDisparue || 0 },
+              disparues: E.compteurs.ombreDisparue || 0,
+              /* Rejoues contre gardes : l'ecart entre les deux est ce qui a
+                 cache deux fuites pendant des semaines. */
+              rejeux: rejeuxBilan() },
     /* Le fond que toute case se compare a : sans lui a l'ecran, un
        ajustement de zero se lirait comme « rien appris ». */
     base: E.base && E.base.n > 0
@@ -9048,6 +9090,7 @@ module.exports = {
   _noteAudit: noteAudit, _auditDesRefus: auditDesRefus, _auditDeFamille: auditDeFamille, OMBRES_MAX,
   noteAuditConseil, auditConseil, CONSEIL_ECHEANCES, CONSEIL_AUDIT_MIN, CONSEIL_SEPARE,
   esperanceDeLaCase, frottementRefuse, CASE_ESPERANCE_TRAIT, frottementBilan,
+  rejeuxBilan, rejoueLOmbre, noteAuditStrat,
   _familleRefus: familleRefus, _regroupeAudit: regroupeAudit, bandeAge, bandeSousLaBorne, AGE_BANDES, _noeudMort: noeudMort,
   _journal: journal, _journalPublie: journalPublie, _memeRegard: memeRegard,
   /* exposes pour l'essai : ce sont eux qui portent les regles */

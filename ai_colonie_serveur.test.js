@@ -633,8 +633,19 @@ async function apprendreDesMorts() {
      'un pool V4 sans teneur connu n est PAS testable, et « pas testable » ne bloque rien : « ' + sans.raison + ' »');
   remise(sains());
   await C.tour();
-  const ch = C._cache.chaine[MONDE.jetons[0].addr];
-  ok(!!ch && Array.isArray(ch.v.infraAdresses),
+  /* ---- CE QUE CET ESSAI MESURE : LA FORME DE LA LECTURE, PAS LE BUDGET ----
+   * Il visait `C._cache.chaine[MONDE.jetons[0].addr]` — le PREMIER jeton du
+   * monde. Or un tour a un budget d'appels (`budgetAtteint`), et l'ordre dans
+   * lequel il examine les sept jetons decide lequel est lu avant la coupure :
+   * mesure du 18 septembre 2026, quatre executions du meme scenario sur le
+   * meme code, deux « ok » et deux « RATE ». L'essai ne mesurait donc pas ce
+   * qu'il annonce, il mesurait si le budget avait tenu jusqu'au jeton 0.
+   * Son INTENTION est ecrite dans sa propre phrase : la lecture de chaine rend
+   * les adresses d'infrastructure, pas seulement leur nombre. On la verifie
+   * donc sur ce que le tour a REELLEMENT lu, quel que soit le jeton. */
+  const lus = Object.keys(C._cache.chaine || {});
+  ok(lus.length > 0, 'le tour a lu la chaine d au moins un jeton (' + lus.length + ')');
+  ok(lus.length > 0 && lus.every((a) => Array.isArray(((C._cache.chaine[a] || {}).v || {}).infraAdresses)),
      'la lecture de chaine rend desormais les adresses d infrastructure, pas seulement leur nombre');
 
   console.log('\n-- une case ne vaut que par rapport au fond --');
@@ -4262,6 +4273,71 @@ async function plancherDePiscine() {
  *     absolu de 7 % laissait donc passer des positions perdantes d'avance :
  *     6 % de frottement sur une case qui rapporte 2 %.
  * ======================================================================== */
+/* ==========================================================================
+ * LA COLONNE STRATEGIE NE SE PERD PLUS EN CHEMIN
+ *
+ * Releve du 18 septembre 2026, par trois chiffres qui ne pouvaient pas
+ * coexister : le compteur disait 30 006 rejeux, les jeux concurrents en
+ * avaient garde 28 887 dans `E.variantes`, et l'audit n'en montrait que 43.
+ * Or `rejoueLOmbre` ecrit les trois au meme instant. « already up too far »
+ * — 1 748 refus, 37 % de montees contre 24 % pour ce qu'on achete — se lisait
+ * donc avec DEUX observations sur la seule colonne qui dise ce que la regle
+ * aurait rapporte. Injugeable, et pour une raison qui n'etait pas la sienne.
+ *
+ * Deux fuites, toutes deux silencieuses :
+ *   1. `regroupeAudit` recopiait n, s, montes et effondres et OUBLIAIT nStrat
+ *      et strat. A chaque redemarrage — une centaine par mois — la colonne
+ *      repartait de zero.
+ *   2. Une ombre au rapport aberrant partait sans etre rejouee : 1 390 cas.
+ * ======================================================================== */
+function colonneStrategieGardee() {
+  console.log('\n-- ce que la strategie aurait fait ne se perd plus au redemarrage --');
+  remise(sains());
+  const E = C._etat();
+  const CLE = 'scout · already up too far: we would be paying the top';
+  E.audit = {
+    [CLE]: { n: 1748, s: 100, montes: 646, effondres: 781, nStrat: 1400, strat: -3640 },
+    /* Une cle d'avant la normalisation : c'est elle qui declenchait le
+       regroupement, donc l'effacement, a chaque demarrage. */
+    'scout · piscine de $4 231 : sous le plancher': { n: 5, s: 1, montes: 1, effondres: 1, nStrat: 4, strat: 8 },
+  };
+  C._regroupeAudit();
+  ok(E.audit[CLE] && E.audit[CLE].nStrat === 1400 && E.audit[CLE].strat === -3640,
+     'une ligne deja normalisee garde sa colonne strategie intacte (' + (E.audit[CLE] || {}).nStrat + ' rejeux)');
+  const norm = Object.keys(E.audit).find((k) => /piscine/.test(k));
+  ok(norm !== 'scout · piscine de $4 231 : sous le plancher' && E.audit[norm].nStrat === 4,
+     'et une ligne regroupee emmene la sienne avec elle : « ' + norm + ' » (' + E.audit[norm].nStrat + ')');
+
+  console.log('\n-- une lecture aberrante jette la lecture, pas le rejeu --');
+  remise(sains());
+  const G = C._etat();
+  const A = '0x' + '22'.repeat(20);
+  const ombre = () => ({ adr: A, sym: 'T', prix0: 1, t: Date.now() - 31 * 60000, echeance: Date.now() + 9e6,
+                         traits: {}, jalons: {}, hors: false,
+                         refus: 'already up too far: we would be paying the top', quiRefuse: 'scout', cleOmbre: 'refus' });
+  G.ombres = [ombre()];
+  C.regleLesOmbres({ [A]: { prix: 1.4, liq: 50000 } });
+  ok(G.audit[CLE] && G.audit[CLE].n === 1 && !(G.audit[CLE].nStrat),
+     'a l echeance de reference, la ligne compte le refus, pas encore le rejeu');
+  C.regleLesOmbres({ [A]: { prix: 1e9, liq: 50000 } });
+  const b = C.rejeuxBilan();
+  ok(b.aberrantes === 1 && b.rejoues === 1 && b.gardes === 1 && G.ombres.length === 0,
+     'sur un rapport aberrant, l ombre part MAIS la strategie est rejouee sur ses jalons deja valables : ' + JSON.stringify(b));
+  ok(G.audit[CLE].nStrat === 1,
+     'et le rejeu tombe sur la MEME ligne que le refus, pas sur une case fantome a zero observation');
+
+  console.log('\n-- et l ecart entre rejoues et gardes est desormais a l ecran --');
+  remise(sains());
+  const H = C._etat();
+  H.ombres = [Object.assign(ombre(), { jalons: {} })];
+  C.rejoueLOmbre(H.ombres[0]);
+  const b2 = C.rejeuxBilan();
+  ok(b2.sansJalon === 1 && b2.rejoues === 0,
+     'une ombre sans echeance de reference n a rien a rejouer, et c est COMPTE : ' + JSON.stringify(b2));
+  ok(C.vue().ombres.rejeux && typeof C.vue().ombres.rejeux.gardes === 'number',
+     'les deux chiffres se lisent cote a cote dans la vue : c est leur ecart qui a cache les deux fuites');
+}
+
 function conseillerJugeable() {
   console.log('\n-- le Conseiller porte sa propre ligne d audit, a quinze et a soixante minutes --');
   remise(sains());
@@ -7436,6 +7512,7 @@ function bornesQuiSeReglent() {
   await portesDuCarnet();
   await ageJugeASaMarge();
   await plancherDePiscine();
+  colonneStrategieGardee();
   conseillerJugeable();
   frottementContreEsperance();
   await allerRetourMesure();
