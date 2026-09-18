@@ -214,19 +214,31 @@ function faitsDuJour(t) {
 
 /* L angle tourne d un post a l autre : deux posts par jour ecrits sur le
    meme ton se lisent comme un robot. */
+/* ---- LA PLUPART DES POSTS NE PARLENT PAS DU SITE ----
+ * Demande du proprietaire, le 18 septembre 2026 : « pas forcement parler du
+ * site, juste faire un tweet bullish ». Deux posts par jour qui enumerent des
+ * fonctionnalites se lisent comme un catalogue, et un catalogue ne se partage
+ * pas. Les angles marques `produit: false` interdisent de nommer quoi que ce
+ * soit : c'est du meme, du ton, de l'humeur. Trois sur onze seulement parlent
+ * de ce qu'on a construit — assez pour que le fil ne soit pas creux, assez peu
+ * pour qu'il ne soit pas une brochure. */
 const ANGLES = [
-  'pure hype: short punchy lines, one big claim about momentum',
-  'the numbers: lead with one real stat from the facts, make it feel huge',
-  'humor: a joke about the very buff dog, self-aware meme energy',
-  'community: talk to the holders as a pack, we/us, CTO pride',
-  'teaser: hint at what is coming next without details, build curiosity',
-  'product flex: name one concrete feature from the facts and why it is cool',
-  'midnight vibes: calm, confident, the dog never sleeps, late-night degen energy',
-  'challenge: dare the reader to try one thing on the site today',
+  { a: 'pure hype: two or three punchy lines about momentum and conviction, nothing else', produit: false },
+  { a: 'humor: a joke about the very buff dog, self-aware meme energy', produit: false },
+  { a: 'community: talk to the holders as a pack, we/us, CTO pride', produit: false },
+  { a: 'midnight vibes: calm and confident, the dog never sleeps, late-night degen energy', produit: false },
+  { a: 'one-liner: a single short line that could be a caption, sharp enough to quote', produit: false },
+  { a: 'the flex: the dog is simply built different, say it with swagger', produit: false },
+  { a: 'patience: early is uncomfortable, holders know, quiet conviction', produit: false },
+  { a: 'good morning energy: greet the pack, set the tone for the day, light and warm', produit: false },
+  { a: 'the numbers: lead with one real stat from the facts, make it feel huge', produit: true },
+  { a: 'product flex: name ONE concrete thing from the facts and why it is cool, no list', produit: true },
+  { a: 'teaser: hint at what is coming next without details, build curiosity', produit: true },
 ];
-const SYSTEME = `You write posts on X for SWOGE ($SWOGE), a community-run memecoin (CTO) with a real crypto game ecosystem. The goal is viral, bullish, shareable posts.
+const SYSTEME = `You write posts on X for SWOGE ($SWOGE), a community-run memecoin (CTO) whose mascot is a very buff Shiba Inu. The goal is viral, bullish, shareable posts.
 Voice: bullish, playful, meme energy, confident and fun, never desperate, never rude, never repetitive.
-Hard rules: English. Maximum 240 characters. Must contain "$SWOGE". 1 to 3 emojis. At most 2 hashtags. No links. No promises of returns, no "guaranteed", no price targets. Use the facts you are given when they are interesting; never invent numbers. Write under the given ANGLE. Do NOT reuse the opening words, the structure or the jokes of the previous posts you are shown. Mention today's image if it fits.
+MOST POSTS ARE PURE VIBES. You do NOT have to talk about the product. A post that lists features reads like a brochure and nobody shares a brochure. The ANGLE tells you which kind this one is: when it says NO PRODUCT, write pure meme and conviction and mention no feature, no number, no place, nothing that is being built — the facts are there only so you never contradict them. When the ANGLE asks for the product, name ONE thing and one only.
+Hard rules: English. Maximum 240 characters, and shorter is usually better. Must contain "$SWOGE". 1 to 3 emojis. At most 2 hashtags. No links. No promises of returns, no "guaranteed", no price targets. Never invent a number. Do NOT reuse the opening words, the structure or the jokes of the previous posts you are shown. Mention today's image only if it lands naturally.
 Output only the post text, nothing else.`;
 
 /* Si le modele ne repond pas, on poste quand meme — avec une phrase de
@@ -241,6 +253,13 @@ const RESERVE = [
   'Strong paws only. $SWOGE 🐕💪',
   'Every day the dog gets bigger. $SWOGE 📈🐕',
 ];
+
+/** L'angle, retrouve par son libelle : le journal n'en garde que le texte. */
+function angleDe(a) {
+  if (a && typeof a === 'object' && a.a) return a;
+  const x = ANGLES.find((y) => y.a === a);
+  return x || { a: a || ANGLES[0].a, produit: false };
+}
 
 /** Le texte, rendu presentable et dans les regles, quoi qu ait ecrit le modele. */
 function nettoie(brut, lien) {
@@ -269,9 +288,15 @@ async function ecritTexte(faits, o, prendre) {
   const jour = jourDe(t);
   if (e.anthropic) {
     try {
-      const demande = [`Date: ${jour}`, `ANGLE: ${o.angle || ANGLES[0]}`]
+      /* L'angle dit s'il a le droit de nommer quelque chose. Un post special
+         (`o.sujet`) parle toujours de son sujet : c'est sa raison d'etre. */
+      const ang = angleDe(o.angle);
+      const produit = !!o.sujet || ang.produit;
+      const demande = [`Date: ${jour}`, `ANGLE: ${ang.a}${produit ? '' : ' — NO PRODUCT: mention nothing that is built, no feature, no number, no place'}`]
         .concat(o.sujet ? [`Today's announcement (this is the subject of the post): ${o.sujet}`] : [])
-        .concat([`Today's image: SWOGE ${o.scene.prompt}`, `Facts:\n- ${faits.join('\n- ')}`])
+        .concat([`Today's image: SWOGE ${o.scene.prompt}`,
+                 produit ? `Facts:\n- ${faits.join('\n- ')}`
+                         : `Background, do not quote any of it, it is only here so you never contradict it:\n- ${faits.join('\n- ')}`])
         .concat((o.precedents || []).length ? [`Previous posts (do not repeat their openings, structure or jokes):\n- ${o.precedents.join('\n- ')}`] : [])
         .join('\n');
       const r = await f('https://api.anthropic.com/v1/messages', {
@@ -431,7 +456,7 @@ async function tache(opts) {
                 : entree.scene ? (SCENES.find((s) => s.nom === entree.scene) || sceneSuivante(cle, journal))
                 : sceneSuivante(cle, journal);
     entree.scene = scene.nom;
-    if (!entree.angle) entree.angle = ANGLES[Number.parseInt(crypto.createHash('sha1').update(cle).digest('hex').slice(0, 6), 16) % ANGLES.length];
+    if (!entree.angle) entree.angle = ANGLES[Number.parseInt(crypto.createHash('sha1').update(cle).digest('hex').slice(0, 6), 16) % ANGLES.length].a;
     /* L image d abord, sur le disque : un refus de X plus loin ne la fait
        pas payer deux fois. */
     fs.mkdirSync(DOSSIER_IMAGES(), { recursive: true });
@@ -517,7 +542,7 @@ if (require.main === module) {
       const sortie = path.resolve(a[i + 1] && !a[i + 1].startsWith('--') ? a[i + 1] : '_x_essai.png');
       fs.writeFileSync(sortie, g.png);
       console.log('image :', sortie, '·', g.jetons, 'jetons');
-      const r = await ecritTexte(faitsDuJour(t), { scene, cle, maintenant: t, angle: ANGLES[t % ANGLES.length], precedents: dernieres(j, 5).map((x) => x.texte) });
+      const r = await ecritTexte(faitsDuJour(t), { scene, cle, maintenant: t, angle: ANGLES[t % ANGLES.length].a, precedents: dernieres(j, 5).map((x) => x.texte) });
       console.log('texte (' + r.via + ') :\n' + r.texte);
       return;
     }

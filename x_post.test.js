@@ -153,6 +153,28 @@ const x = require('./x_post');
     const demandeTexte = appels.slice(avantMidi).find((a) => /anthropic/.test(a.u)).corps.messages[0].content;
     ok(/Previous posts/.test(demandeTexte) && /Post number 1/.test(demandeTexte), 'le modele recoit les posts precedents pour ne pas les repeter');
     ok(/ANGLE: /.test(demandeTexte), 'et l angle du creneau');
+    /* ---- LA PLUPART DES POSTS NE PARLENT PAS DU SITE ----
+     * « Pas forcement parler du site, juste faire un tweet bullish » : huit
+     * angles sur onze interdisent de nommer quoi que ce soit, et sur ceux-la
+     * les faits ne sont donnes que pour ne pas etre contredits. */
+    eq(x.ANGLES.filter((a) => !a.produit).length, 8, 'huit angles sur ' + x.ANGLES.length + ' sont du pur bullish, sans produit');
+    ok(x.ANGLES.every((a) => a.a && typeof a.produit === 'boolean'), 'et chacun dit s il a le droit de nommer quelque chose');
+    const sansProduit = x.ANGLES.find((a) => !a.produit).a;
+    const avecProduit = x.ANGLES.find((a) => a.produit).a;
+    let d1 = null;
+    await x.ecritTexte(['fait A', 'fait B'], { scene: { prompt: 's' }, cle: 'k', angle: sansProduit },
+                       async (u, o) => { d1 = JSON.parse(o.body).messages[0].content; return { ok: true, json: async () => ({ content: [{ type: 'text', text: 'pure vibes $SWOGE 🐕' }] }) }; });
+    ok(/NO PRODUCT/.test(d1) && /do not quote any of it/.test(d1) && !/^Facts:/m.test(d1),
+       'sur un angle sans produit, le modele recoit l interdiction et les faits en simple garde-fou');
+    let d2 = null;
+    await x.ecritTexte(['fait A'], { scene: { prompt: 's' }, cle: 'k', angle: avecProduit },
+                       async (u, o) => { d2 = JSON.parse(o.body).messages[0].content; return { ok: true, json: async () => ({ content: [{ type: 'text', text: 'one thing $SWOGE 🐕' }] }) }; });
+    ok(!/NO PRODUCT/.test(d2) && /^Facts:/m.test(d2), 'et sur un angle produit, il recoit les faits pour de bon');
+    let d3 = null;
+    await x.ecritTexte(['fait A'], { scene: { prompt: 's' }, cle: 'k', angle: sansProduit, sujet: 'une annonce' },
+                       async (u, o) => { d3 = JSON.parse(o.body).messages[0].content; return { ok: true, json: async () => ({ content: [{ type: 'text', text: 'news $SWOGE 🐕' }] }) }; });
+    ok(!/NO PRODUCT/.test(d3) && /Today.s announcement/.test(d3),
+       'un post special parle TOUJOURS de son sujet, quel que soit l angle : c est sa raison d etre');
 
     refuseTweet = false;
     let signale = null;
