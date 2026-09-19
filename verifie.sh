@@ -24,6 +24,8 @@ lance x_post  "$SRV" node x_post.test.js
 lance x_veille "$SRV" node x_reponse.test.js
 lance tg_cmd  "" node tg_commandes.test.js
 lance perp    "$SRV" node ai_perp.test.js
+lance journal "$SRV" node perp_journal.test.js
+[ $VITE -eq 1 ] || lance releve "$SRV" node perp_releve.test.js   # mille melanges par decoupage : ~1 min
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js

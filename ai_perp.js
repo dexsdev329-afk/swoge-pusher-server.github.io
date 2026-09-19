@@ -64,6 +64,8 @@
  * ======================================================================== */
 const fs = require('fs');
 const path = require('path');
+/* Le journal brut : il observe, il ne decide rien. Voir son en-tete. */
+const journal = require('./perp_journal');
 const cfg = require('./config');
 
 const BASE = 'https://api.bitget.com/api/v2/mix/market';
@@ -142,6 +144,17 @@ function etatNeuf() {
     tresor: DEPART, depart: DEPART, trades: 0, gains: 0, meilleur: 0,
     positions: [], carnet: [], ombres: [], audit: {}, profils: {},
     compteurs: {}, flux: [], derniereErreur: null,
+    /* Le dernier interet ouvert vu par marche : il sert a calculer sa
+       VARIATION, qui part au journal. Rien d autre ne le lit. */
+    interetVu: {},
+    /* ---- LE DERNIER PRIX VU, PAR MARCHE ----
+     * « On ne voit pas le prix actuel ni combien on gagne. » Une position
+     * ouverte n affichait que son entree, son stop et sa cible : trois
+     * chiffres figes au moment de l ouverture. Ce qu on vient voir, c est ou
+     * en est le prix MAINTENANT et ce que la position vaut a cet instant.
+     * Le tour le sait — il vient de lire les marches — mais il ne le gardait
+     * nulle part entre deux tours. */
+    prixVu: {},
     /* le financement paye ou recu, cumule : c est la ligne qu on regarde
        quand le papier gagne et qu on se demande ce qu il coute vraiment */
     financement: { n: 0, total: 0 },
@@ -265,6 +278,29 @@ function mesures(m) {
     carnet: (m.bid !== null && m.ask !== null && (m.bid + m.ask) > 0)
       ? (m.bid - m.ask) / (m.bid + m.ask) : null,
     interet: m.interet, var24: m.var24 !== null ? m.var24 * 100 : null,
+    /* ---- CE QUI EST MESURE MAIS NE DECIDE RIEN ----
+     * Meme frontiere que `OBS_VIEUX_PAR_TOUR` dans la colonie de jetons : on
+     * rend une chose mesurable AVANT de lui faire prendre une position. Ces
+     * trois-la partent dans le journal brut a chaque tour ; aucune n entre
+     * dans une note, un veto ou une mise. Le jour ou le journal dira qu une
+     * d elles paie, elle deviendra un trait — avec le nombre d observations
+     * qui l aura decide, ecrit a cote.
+     *
+     * `base`  l ecart entre le prix marque et l index. Sur un perpetuel, il
+     *         dit si le contrat se paie au-dessus ou en dessous du comptant :
+     *         c est la prime que la foule accepte de payer.
+     * `volume`  le volume en dollars sur vingt-quatre heures. Un signal lu
+     *         sur un marche a l arret ne vaut pas le meme sur un marche
+     *         plein.
+     * `varInteret`  la variation de l interet ouvert d un tour a l autre.
+     *         Des positions qui s ouvrent pendant que le prix monte ne
+     *         racontent pas la meme chose que des positions qui se ferment.
+     *         Elle vaut `null` au premier tour : on n invente pas une
+     *         variation sans point de depart. */
+    base: (m.marque !== null && m.index !== null && m.index > 0)
+      ? (m.marque - m.index) / m.index * 100 : null,
+    volume: m.volume,
+    varInteret: null,
   };
 }
 
@@ -507,6 +543,10 @@ function noteOmbre(x, sens, refus, quiRefuse, traits) {
   if (S.ombres.some((o) => o.cle === cle && o.sens === sens && o.sym === x.sym
                            && now - o.t < HORIZON_REF * 60000)) return;
   S.ombres.push({ cle, sens, sym: x.sym, prix0: x.prix, t: now, traits, jalons: {},
+                  /* L identifiant de la ligne d observation : c est lui qui
+                     relie « ce qu on a vu » a « ce que ca a donne ». Sans ce
+                     fil, le journal n est qu une liste de photos. */
+                  oid: x.oid || null,
                   fin0: x.financement === null ? null : x.financement });
   if (S.ombres.length > OMBRES_MAX) S.ombres = S.ombres.slice(-OMBRES_MAX);
 }
@@ -546,6 +586,12 @@ function regleLesOmbres(lus) {
       o.jalons[h] = r;
       noteProfil(o.traits, h, r);
       compte('jalons');
+      /* Ce que la situation a REELLEMENT donne, echeance par echeance. C est
+         la moitie du journal qui manque a un simple releve de marche. */
+      journal.noteResultat({ id: o.oid, t: now, sym: o.sym, sens: o.sens, horizon: h,
+                             rendement: r, brut: Math.round(brut * 1000) / 1000,
+                             financement: Math.round(coutFinancement(o.sens, o.fin0, age) * 1000) / 1000,
+                             cle: o.cle });
       if (h === HORIZON_REF) { noteAudit(o.cle, r); compte('ombresJugees'); n++; }
     }
     return age <= dernier + Math.max(5, dernier * 0.35);
@@ -642,7 +688,12 @@ async function tour(opts) {
       const m = o.marches ? o.marches[sym] : await litMarche(sym, o.prendre);
       const x = mesures(m);
       x.sym = sym;
-      if (x.prix > 0) lus[sym] = x;
+      /* La variation de l interet ouvert depuis le tour precedent. Elle part
+         au journal et nulle part ailleurs — voir la note dans `mesures()`. */
+      const vu = S.interetVu[sym];
+      if (vu && vu > 0 && x.interet !== null) x.varInteret = (x.interet - vu) / vu * 100;
+      if (x.interet !== null) S.interetVu[sym] = x.interet;
+      if (x.prix > 0) { lus[sym] = x; S.prixVu[sym] = { prix: x.prix, t: Date.now() }; }
     } catch (e) {
       rates.push(sym + ' : ' + String(e.message || e).slice(0, 80));
       compte('lectureRatee');
@@ -685,6 +736,19 @@ async function tour(opts) {
    * soit mieux. La meilleure note l emporte, quel que soit le marche — c est
    * exactement ce que le decoupage en cinq colonies ne savait pas faire. */
   const pris = verdicts.filter((v) => !v.refus).sort((a, b) => b.score - a.score)[0];
+
+  /* ---- LA LIGNE BRUTE, UNE PAR MARCHE ----
+   * Ecrite APRES la decision, pour qu elle la porte, et avant les ombres,
+   * pour qu elles reprennent son identifiant. Elle n influence rien : si le
+   * journal tombe, le tour se termine pareil. */
+  for (const sym of Object.keys(lus)) {
+    const x = lus[sym];
+    x.oid = journal.idObs(x.t || Date.now(), sym, S.tours);
+    const sides = verdicts.filter((v) => v.sym === sym);
+    journal.noteObservation({ id: x.oid, t: Date.now(), x, sides,
+                              prise: (pris && pris.sym === sym) ? pris.sens : null });
+  }
+
   for (const v of verdicts) {
     if (pris && v === pris) noteOmbre(lus[v.sym], v.sens, null, null, v.an.traits);
     else noteOmbre(lus[v.sym], v.sens, v.refus, v.qui, v.an.traits);
@@ -751,9 +815,28 @@ function vue() {
        papier a l air bon. */
     financement: { n: f.n, total: Math.round(f.total * 1000) / 1000,
                    moyenne: f.n ? Math.round(f.total / f.n * 1000) / 1000 : null },
-    positions: S.positions.map((p) => ({ sym: p.sym, nom: String(p.sym || '').replace(/USDT$/, ''),
-                                         sens: p.sens, prix0: p.prix0, stop: p.stop, cible: p.cible,
-                                         mise: p.mise, score: p.score, depuis: p.t })),
+    positions: S.positions.map((p) => {
+      /* ---- CE QUE LA POSITION VAUT MAINTENANT ----
+       * Le meme calcul qu a la fermeture, financement compris : sans lui, le
+       * chiffre affiche serait plus flatteur que celui qu on encaissera, et
+       * c est exactement le mensonge que cette colonie existe pour eviter.
+       * `null` quand le marche n a pas ete lu : on ne devine pas un prix. */
+      const vu = S.prixVu[p.sym];
+      const prix = (vu && vu.prix > 0) ? vu.prix : null;
+      let brut = null, fin = null, net = null, gain = null;
+      if (prix !== null) {
+        const minutes = (Date.now() - p.t) / 60000;
+        brut = Math.round((prix - p.prix0) / p.prix0 * 100 * p.sens * 1000) / 1000;
+        fin = Math.round(coutFinancement(p.sens, p.fin0, minutes) * 1000) / 1000;
+        net = Math.round((brut + fin) * 1000) / 1000;
+        gain = Math.round(p.mise * net / 100 * 100) / 100;
+      }
+      return { sym: p.sym, nom: String(p.sym || '').replace(/USDT$/, ''),
+               sens: p.sens, prix0: p.prix0, prix, prixVu: vu ? vu.t : null,
+               stop: p.stop, cible: p.cible, mise: p.mise, levier: p.levier,
+               brut, financement: fin, net, gain,
+               score: p.score, depuis: p.t };
+    }),
     carnet: S.carnet.slice(0, 40),
     parMarche: parMarche(),
     agents: AGENTS.map((x) => ({ key: x.key, nom: x.nom, emoji: x.emoji, role: x.role, quoi: x.quoi, traits: x.traits })),
@@ -761,6 +844,9 @@ function vue() {
     reference: reference(),
     verdicts: a.map((l) => Object.assign({ cle: l.cle }, verdictRegle(l.cle))),
     ombres: { enAttente: S.ombres.length, jugees: S.compteurs.ombresJugees || 0 },
+    /* Ce que le journal brut porte : sans ca, on ne sait pas si la question
+       « comment gagne-t-on sur la duree » a seulement de quoi etre posee. */
+    journal: journal.etat(),
     horizons: HORIZONS, horizonRef: HORIZON_REF, minObs: AUDIT_MIN_OBS, profilMinObs: PROFIL_MIN_OBS,
     gagne: GAGNE, perd: PERD, seuil: S.seuil,
     flux: S.flux.slice(0, 20),
