@@ -203,9 +203,102 @@ const neuf = (sym) => { P._pose(sym, P.etatNeuf(sym)); return P.etat(sym); };
     ok(v.papier === true && !JSON.stringify(v).toLowerCase().includes('secret'), 'et la vue le dit : papier');
     ok(Array.isArray(v.agents) && v.agents.length === 8 && v.horizonRef === 240,
        'la vue porte les agents et l echeance de reference (' + v.horizonRef + ' min)');
-    eq(P.SYMBOLES.join(','), 'BTCUSDT,ETHUSDT', 'deux colonies, une par instrument');
+    /* L essai disait « deux colonies » et recopiait la liste. Son intention
+       est qu il y ait UNE colonie par instrument, chacune avec son etat — pas
+       qu il y en ait exactement deux : la liste est une variable
+       d environnement, elle a vocation a bouger. */
+    ok(P.SYMBOLES.length >= 2 && P.SYMBOLES.every((x) => /USDT$/.test(x)),
+       P.SYMBOLES.length + ' colonies, une par instrument : ' + P.SYMBOLES.join(', '));
     const e = P.etat('ETHUSDT');
     ok(e.sym === 'ETHUSDT' && e !== P.etat('BTCUSDT'), 'et chacune a son etat, separe de l autre');
+    ok(new Set(P.SYMBOLES.map((x) => P.etat(x))).size === P.SYMBOLES.length,
+       'aucune colonie n en partage un avec une autre');
+  }
+
+  /* ======================================================================
+   * 9. L AUDIT COMMUN AUX MARCHES
+   *
+   * Une regle produit au plus douze ombres par jour et par marche. Douze
+   * observations, c est le minimum pour un verdict, et c est un verdict
+   * fragile ; une regle qui ne se declenche pas a chaque fenetre met des
+   * semaines a les atteindre. Mis en commun, les marches donnent cinq fois
+   * l echantillon pour le meme temps ecoule.
+   *
+   * Mais additionner suppose que la regle se comporte PAREIL partout. Ce
+   * qui est mesure ici est surtout ce que l audit commun REFUSE de conclure
+   * quand ce n est pas le cas.
+   * ==================================================================== */
+  console.log('\n-- 9. l audit commun aux marches --');
+  {
+    /* Deux marches neufs, remplis a la main : on met a l essai l addition et
+       le refus d additionner, pas le moteur qui produit les ombres. */
+    const A = 'BTCUSDT', B = 'ETHUSDT';
+    const poseAudit = (sym, table) => {
+      const S = P.etatNeuf(sym);
+      for (const cle in table) {
+        const [nn, gg] = table[cle];
+        S.audit[cle] = { n: nn, s: 0, gagnantes: gg, perdantes: nn - gg };
+      }
+      P._pose(sym, S);
+    };
+    for (const sym of P.SYMBOLES) P._pose(sym, P.etatNeuf(sym));
+
+    /* Les deux marches sont d accord : 20 % de gagnantes chez l un, 22 % chez
+       l autre, contre 45 % pour ce qu on prend. La regle protege. */
+    poseAudit(A, { 'pris': [40, 18], 'Funding · too expensive': [30, 6] });
+    poseAudit(B, { 'pris': [40, 18], 'Funding · too expensive': [32, 7] });
+    const ref = P.referenceCommune();
+    eq(ref.n, 80, 'la reference commune additionne ce que TOUS les marches prennent');
+    eq(ref.partGagnantes, 45, 'et sa part de gagnantes porte sur les 80');
+    const w = P.verdictCommun('Funding · too expensive');
+    eq(w.n, 62, 'la regle est jugee sur 62 observations, pas sur 30');
+    eq(w.verdict, 'protects', 'deux marches d accord : elle protege (' + w.partGagnantes + '% contre ' + w.reference + '%)');
+    eq(w.marches, 2, 'et le verdict dit sur combien de marches il porte');
+
+    /* ---- CE QU ON N A PAS LE DROIT D ADDITIONNER ----
+     * 10 % chez l un, 60 % chez l autre : le total ferait 35 %, un chiffre
+     * juste sur rien. La regle ne se comporte pas pareil selon le marche, et
+     * la ligne doit le DIRE au lieu de conclure. */
+    poseAudit(A, { 'pris': [40, 18], 'Range · too far': [30, 3] });
+    poseAudit(B, { 'pris': [40, 18], 'Range · too far': [30, 18] });
+    const d = P.verdictCommun('Range · too far');
+    eq(d.verdict, 'diverge', 'marches en desaccord : aucun verdict commun');
+    ok(d.ecart >= P.DIVERGE_POINTS, 'et l ecart constate est rendu : ' + d.ecart + ' points');
+    /* Chaque marche garde son propre verdict : c est la mise en commun qui
+       est refusee, pas la mesure. */
+    ok(P.verdictRegle(A, 'Range · too far').verdict !== 'diverge',
+       'chaque marche garde son verdict a lui : ' + P.verdictRegle(A, 'Range · too far').verdict);
+
+    /* Un seul marche a assez d observations : rien a comparer, donc rien a
+       refuser — on additionne, faute de mieux, et la ligne dit sur combien de
+       marches elle porte. */
+    for (const sym of P.SYMBOLES) P._pose(sym, P.etatNeuf(sym));
+    poseAudit(A, { 'pris': [40, 18], 'Regime · chop': [30, 20] });
+    const un = P.verdictCommun('Regime · chop');
+    ok(un.verdict !== 'diverge', 'un seul marche fourni : pas de divergence possible (' + un.verdict + ')');
+    eq(un.marches, 1, 'et la ligne dit qu elle ne porte que sur un marche');
+
+    /* Sous le minimum, aucun verdict — la meme regle que par marche. */
+    for (const sym of P.SYMBOLES) P._pose(sym, P.etatNeuf(sym));
+    poseAudit(A, { 'Regime · chop': [5, 3] });
+    const jeune = P.verdictCommun('Regime · chop');
+    eq(jeune.verdict, 'unknown', 'sous douze observations, aucun verdict commun');
+    eq(jeune.manque, P.AUDIT_MIN_OBS - 5, 'et il dit combien il en manque');
+
+    /* La vue porte tout ca, et « pris » n est pas une regle de refus. */
+    for (const sym of P.SYMBOLES) P._pose(sym, P.etatNeuf(sym));
+    poseAudit(A, { 'pris': [40, 18], 'Funding · too expensive': [30, 6] });
+    poseAudit(B, { 'pris': [40, 18], 'Funding · too expensive': [32, 7] });
+    const vue = P.vue(A);
+    ok(vue.commun && Array.isArray(vue.commun.audit), 'la vue de chaque marche porte l audit commun');
+    ok(!vue.commun.audit.some((l) => l.cle === 'pris'), 'la reference n y figure pas comme une regle');
+    const ligne = vue.commun.audit.find((l) => /Funding/.test(l.cle));
+    ok(ligne && ligne.marches[A] && ligne.marches[B], 'chaque ligne porte sa repartition par marche');
+    eq(ligne.marches[A].n, 30, 'avec l effectif de chacun');
+    eq(vue.commun.symboles.length, P.SYMBOLES.length, 'et la vue nomme les marches suivis');
+    /* La borne de divergence est posee SANS mesure : elle doit au moins etre
+       lisible, sinon personne ne saura contre quoi la relire. */
+    eq(vue.commun.divergePoints, P.DIVERGE_POINTS, 'la borne de divergence est rendue, pas cachee');
   }
 
   console.log(`\nai_perp.test.js : ${n} verifications OK`);

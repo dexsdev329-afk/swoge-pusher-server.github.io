@@ -69,8 +69,19 @@ const cfg = require('./config');
 const BASE = 'https://api.bitget.com/api/v2/mix/market';
 const PRODUIT = 'USDT-FUTURES';
 
-/* Les deux colonies. Chacune a son etat, ses agents, son audit, sa page. */
-const SYMBOLES = String(process.env.PERP_SYMBOLES || 'BTCUSDT,ETHUSDT')
+/* ---- CINQ COLONIES, PAS DEUX ----
+ * « Pourquoi deux differentes ? Il me semble qu il trade n importe quel gros
+ * token. » — et c est possible : Bitget expose 797 perpetuels, et la liste
+ * est une variable d environnement, pas une reecriture. Les cinq marches
+ * retenus le 19 septembre 2026, mesures ce jour-la sur `/mix/market/tickers` :
+ * BTC 2 875 M$ sur 24 h, ETH 2 392, SOL 342, XRP 233, DOGE 57. Au-dessous, le
+ * carnet devient trop mince pour qu un devis veuille dire quelque chose.
+ *
+ * Chacun garde SA colonie — tresorerie, positions, traits. Ce qu un agent
+ * apprend sur la volatilite de DOGE ne vaut rien sur BTC, et une colonie
+ * unique moyennerait les cinq sans en apprendre un seul. Ce qui se met en
+ * commun, c est l AUDIT : voir `auditCommun()`. */
+const SYMBOLES = String(process.env.PERP_SYMBOLES || 'BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,DOGEUSDT')
   .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
 
 /* ---- LES ECHEANCES ----
@@ -415,6 +426,112 @@ function auditDesRefus(sym) {
   out.sort((x, y) => y.partGagnantes - x.partGagnantes);
   return out.slice(0, 25);
 }
+/* ==========================================================================
+ * L AUDIT COMMUN AUX CINQ MARCHES
+ *
+ * Une regle produit au plus deux ombres par tranche de quatre heures et par
+ * marche (une par sens : `noteOmbre` refuse les doublons), soit douze par
+ * jour. Avec `AUDIT_MIN_OBS` a douze, un verdict par marche tombe donc en
+ * environ un jour — ce n est pas la vitesse qui manque, c est l ECHANTILLON :
+ * douze observations, c est un verdict fragile, et une regle qui ne se
+ * declenche pas a chaque fenetre met des semaines a les atteindre.
+ *
+ * Mis en commun, les cinq marches donnent cinq fois l echantillon pour le
+ * meme temps ecoule. Mais additionner suppose que la regle se comporte PAREIL
+ * partout — et c est exactement le genre de chose que ce depot mesure au lieu
+ * de la supposer. La repartition par marche part donc avec le total, et le
+ * verdict commun se declare « les marches ne disent pas la meme chose » quand
+ * ils divergent.
+ *
+ * L audit commun n est pas un second fichier : il est DERIVE des audits par
+ * marche, additionnes. Rien a garder d accord, rien a migrer, et la
+ * repartition vient gratuitement.
+ * ======================================================================== */
+
+/* ---- LA BORNE DE DIVERGENCE ----
+ * POSEE SANS MESURE le 19 septembre 2026 : aucun echantillon n existe encore,
+ * les colonies naissent aujourd hui. Vingt points d ecart entre le marche le
+ * plus favorable et le moins favorable, sur les marches qui ont au moins la
+ * moitie du minimum. Ce n est pas un seuil mesure, c est un point de depart —
+ * et il est rendu JUGEABLE tout de suite : `ecartsVus` garde, pour chaque
+ * regle, l ecart constate et le nombre de marches qui l ont porte, pour qu on
+ * puisse relire cette borne avec des chiffres des la premiere semaine plutot
+ * que de la deplacer au feeling. */
+const DIVERGE_POINTS = 20;
+const DIVERGE_MIN_OBS = Math.ceil(AUDIT_MIN_OBS / 2);
+
+/** Les audits des cinq marches, additionnes par regle, avec leur repartition. */
+function auditCommun() {
+  const out = {};
+  for (const sym of SYMBOLES) {
+    const A = (E[sym] && E[sym].audit) || {};
+    for (const cle in A) {
+      const a = A[cle];
+      const d = out[cle] || (out[cle] = { cle, n: 0, s: 0, gagnantes: 0, perdantes: 0, marches: {} });
+      d.n += a.n; d.s += a.s; d.gagnantes += a.gagnantes; d.perdantes += a.perdantes;
+      d.marches[sym] = { n: a.n, gagnantes: a.gagnantes,
+                         partGagnantes: a.n ? Math.round(a.gagnantes / a.n * 100) : null };
+    }
+  }
+  return out;
+}
+/** La reference commune : ce que les cinq colonies prennent reellement. */
+function referenceCommune() {
+  const a = auditCommun()['pris'];
+  return (a && a.n >= AUDIT_MIN_OBS) ? { n: a.n, partGagnantes: Math.round(a.gagnantes / a.n * 100) } : null;
+}
+/**
+ * L ecart entre marches pour une regle : la difference de part de gagnantes
+ * entre le marche le plus favorable et le moins favorable, sur ceux qui ont
+ * assez d observations pour etre compares. `null` tant qu il n y en a pas deux.
+ */
+function ecartEntreMarches(d) {
+  const parts = Object.keys(d.marches)
+    .filter((k) => d.marches[k].n >= DIVERGE_MIN_OBS)
+    .map((k) => d.marches[k].partGagnantes);
+  if (parts.length < 2) return { ecart: null, marches: parts.length };
+  return { ecart: Math.max.apply(null, parts) - Math.min.apply(null, parts), marches: parts.length };
+}
+/**
+ * Le verdict commun. Il dit d abord s il a le DROIT de mettre en commun :
+ * quand les marches divergent au-dela de la borne, la ligne le dit et ne
+ * conclut pas — additionner des choses qui ne se comportent pas pareil donne
+ * un chiffre juste sur rien.
+ */
+function verdictCommun(cle) {
+  const d = auditCommun()[cle];
+  if (!d || d.n < AUDIT_MIN_OBS) {
+    return { verdict: 'unknown', n: (d && d.n) || 0, manque: AUDIT_MIN_OBS - ((d && d.n) || 0) };
+  }
+  const e = ecartEntreMarches(d);
+  const p = Math.round(d.gagnantes / d.n * 100);
+  if (e.ecart !== null && e.ecart > DIVERGE_POINTS) {
+    return { verdict: 'diverge', n: d.n, partGagnantes: p, ecart: e.ecart, marches: e.marches };
+  }
+  const ref = referenceCommune();
+  if (!ref) return { verdict: 'unknown', n: d.n, partGagnantes: p, pourquoi: 'nothing taken yet to compare against' };
+  return { verdict: p >= ref.partGagnantes + 8 ? 'costs' : p <= ref.partGagnantes * 0.6 ? 'protects' : 'same',
+           n: d.n, partGagnantes: p, reference: ref.partGagnantes,
+           ecart: e.ecart, marches: e.marches };
+}
+/** Ce que la page montre de l audit commun : les regles, leur repartition, leur verdict. */
+function auditCommunVue() {
+  const A = auditCommun();
+  const out = [];
+  for (const cle in A) {
+    const d = A[cle];
+    if (cle === 'pris' || d.n < 3) continue;
+    const e = ecartEntreMarches(d);
+    out.push({ cle, n: d.n, moyenne: Math.round(d.s / d.n * 1000) / 1000,
+               gagnantes: d.gagnantes, perdantes: d.perdantes,
+               partGagnantes: Math.round(d.gagnantes / d.n * 100),
+               marches: d.marches, ecart: e.ecart, marchesCompares: e.marches,
+               verdict: verdictCommun(cle) });
+  }
+  out.sort((x, y) => y.n - x.n);
+  return out.slice(0, 25);
+}
+
 /** La reference : ce qu on PREND. Une regle se juge contre elle, pas contre un rond. */
 function reference(sym) {
   const a = etat(sym).audit['pris'];
@@ -644,6 +761,11 @@ function vue(sym) {
     reference: reference(sym),
     verdicts: auditDesRefus(sym).map((l) => Object.assign({ cle: l.cle }, verdictRegle(sym, l.cle))),
     ombres: { enAttente: S.ombres.length, jugees: S.compteurs.ombresJugees || 0 },
+    /* L audit commun aux cinq marches : cinq fois l echantillon pour le meme
+       temps ecoule, et la repartition a cote pour qu on voie si on a le droit
+       de les additionner. */
+    commun: { audit: auditCommunVue(), reference: referenceCommune(),
+              symboles: SYMBOLES, divergePoints: DIVERGE_POINTS, divergeMinObs: DIVERGE_MIN_OBS },
     horizons: HORIZONS, horizonRef: HORIZON_REF, minObs: AUDIT_MIN_OBS,
     gagne: GAGNE, perd: PERD, seuil: S.seuil,
     flux: S.flux.slice(0, 20),
@@ -681,6 +803,8 @@ module.exports = {
   charge, etat, etatNeuf, vue, tour, demarre, litMarche,
   mesures, traitsDe, note, noteOmbre, regleLesOmbres, noteAudit, auditDesRefus,
   reference, verdictRegle, coutFinancement, ouvre, ferme, surveille,
+  auditCommun, auditCommunVue, referenceCommune, verdictCommun, ecartEntreMarches,
+  DIVERGE_POINTS, DIVERGE_MIN_OBS,
   volatilite, position, ema,
   _pose: (sym, e) => { E[sym] = e; },
 };
