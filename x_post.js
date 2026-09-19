@@ -139,8 +139,19 @@ function jourDe(t) { return new Date(t).toISOString().slice(0, 10); }
 /* Le personnage, toujours le meme : c est lui qu on reconnait d un post a
    l autre. La scene change, pas lui. */
 const PERSONNAGE = "the famous 'buff Doge' meme character: a Shiba Inu head with a calm, smug expression on an extremely muscular bodybuilder torso, cream and tan fur, painterly digital-art style, wearing a royal blue tank top";
-const STYLE = 'Landscape social-media illustration, dark cinematic style of a crypto game poster, deep navy and black background with electric green, gold and blue light, faint circuit traces, gold coins with a paw print floating in the air, high contrast, epic';
-const NEGATIF = 'No text, no letters, no numbers, no logos, no watermark.';
+/* ---- PLUS DE PIECES A EMPREINTE DE PATTE ----
+ * Elles etaient dans le style, donc sur CHAQUE image : une pluie de jetons
+ * dores flottant derriere le chien, scene apres scene. Demande du
+ * proprietaire le 19 septembre 2026 : « enleve les pattes en or, ca sert a
+ * rien ». C'est juste : elles remplissaient le fond sans rien raconter, et
+ * elles se ressemblaient toutes d'un post a l'autre — exactement ce qu'on
+ * evite avec la rotation des scenes. Une scene qui a besoin de pieces le dit
+ * elle-meme (le coffre, la mine, la pluie d'or) ; les autres respirent.
+ * Le refus est ecrit dans `NEGATIF` et non seulement retire du style : le
+ * modele a vu ce motif sur des dizaines d'images de la meme famille, et un
+ * simple silence le laisserait revenir. */
+const STYLE = 'Landscape social-media illustration, dark cinematic style of a crypto game poster, deep navy and black background with electric green, gold and blue light, faint circuit traces, high contrast, epic';
+const NEGATIF = 'No text, no letters, no numbers, no logos, no watermark. No paw prints anywhere, and no floating coins unless the scene asks for them.';
 
 const SCENES = [
   { nom: 'stade', prompt: 'standing like a champion with arms crossed in a stadium at night, floodlights, a wall of glowing scoreboards, sports balls of every sport floating around him' },
@@ -167,7 +178,7 @@ const SCENES = [
   { nom: 'hockey', prompt: 'on the ice in a hockey rink, stick in paw, puck mid-air, snow spraying' },
   { nom: 'tennis', prompt: 'mid-serve on a floodlit tennis court, racket high, ball tossed, crowd silhouettes' },
   { nom: 'dragon', prompt: 'standing on the head of a friendly golden dragon flying over a neon city at night' },
-  { nom: 'nuit', prompt: 'on a skyscraper rooftop at midnight overlooking a neon city, cape in the wind, full moon with a paw print' },
+  { nom: 'nuit', prompt: 'on a skyscraper rooftop at midnight overlooking a neon city, cape in the wind, huge full moon behind him' },
   { nom: 'labo', prompt: 'in a glowing laboratory mixing a bubbling green potion, safety goggles on the forehead, holographic formulas around' },
   { nom: 'surf', prompt: 'surfing a giant green wave shaped like a rising chart, sunglasses, spray everywhere' },
   { nom: 'chef', prompt: 'in a chef hat flipping a golden pancake shaped like a coin in a bright kitchen, puppies waiting with plates' },

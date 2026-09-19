@@ -86,6 +86,15 @@ const x = require('./x_post');
     }
     eq(doublons, 0, 'jamais une des six dernieres, sur cent vingt posts');
     ok(vues.size >= 24, vues.size + ' scenes differentes en soixante jours');
+    /* ---- PLUS DE PIECES A EMPREINTE DE PATTE ----
+     * Elles etaient dans le STYLE, donc sur chaque image, scene apres scene.
+     * Retirees le 19 septembre 2026 : elles remplissaient le fond sans rien
+     * raconter. Le refus est ECRIT, pas seulement le motif retire — le modele
+     * a vu ce motif sur des dizaines d images de la meme famille. */
+    ok(x.SCENES.every((s) => !/paw print/i.test(s.prompt)), 'aucune scene ne demande d empreinte de patte');
+    ok(x.SCENES.every((s) => /No paw prints anywhere/.test(x.promptImage(s))), 'et chaque prompt la refuse explicitement');
+    ok(!/paw print/i.test(x.promptImage(x.SCENES[0]).replace(/No paw prints[^.]*\./, '')),
+       'le style lui-meme n en porte plus');
     ok(/no text, no letters/i.test(x.promptImage(x.SCENES[0])) && /buff Doge/.test(x.promptImage(x.SCENES[0])),
        'le prompt porte le personnage et refuse le texte dans l image');
     ok(x.ANGLES.length >= 8, x.ANGLES.length + ' angles d ecriture');
