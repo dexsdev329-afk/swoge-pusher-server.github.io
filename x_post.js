@@ -136,55 +136,121 @@ function jourDe(t) { return new Date(t).toISOString().slice(0, 10); }
 
 // ------------------------------------------------------------ les scenes
 
-/* Le personnage, toujours le meme : c est lui qu on reconnait d un post a
-   l autre. La scene change, pas lui. */
-const PERSONNAGE = "the famous 'buff Doge' meme character: a Shiba Inu head with a calm, smug expression on an extremely muscular bodybuilder torso, cream and tan fur, painterly digital-art style, wearing a royal blue tank top";
-/* ---- PLUS DE PIECES A EMPREINTE DE PATTE ----
- * Elles etaient dans le style, donc sur CHAQUE image : une pluie de jetons
- * dores flottant derriere le chien, scene apres scene. Demande du
- * proprietaire le 19 septembre 2026 : « enleve les pattes en or, ca sert a
- * rien ». C'est juste : elles remplissaient le fond sans rien raconter, et
- * elles se ressemblaient toutes d'un post a l'autre — exactement ce qu'on
- * evite avec la rotation des scenes. Une scene qui a besoin de pieces le dit
- * elle-meme (le coffre, la mine, la pluie d'or) ; les autres respirent.
- * Le refus est ecrit dans `NEGATIF` et non seulement retire du style : le
- * modele a vu ce motif sur des dizaines d'images de la meme famille, et un
- * simple silence le laisserait revenir. */
-const STYLE = 'Landscape social-media illustration, dark cinematic style of a crypto game poster, deep navy and black background with electric green, gold and blue light, faint circuit traces, high contrast, epic';
-const NEGATIF = 'No text, no letters, no numbers, no logos, no watermark. No paw prints anywhere, and no floating coins unless the scene asks for them.';
+/* ==========================================================================
+ * CHAQUE IMAGE A SON PROPRE MONDE
+ *
+ * Releve du proprietaire, 19 septembre 2026 : « toutes les images que tu as
+ * faites se ressemblent, il faut vraiment qu elles soient toutes uniques,
+ * avec des scenes differentes, sans trop de courbes crypto ou autre ». C est
+ * juste, et la cause etait dans le code : un STYLE unique — « affiche de jeu
+ * crypto, bleu nuit et noir, vert electrique et or, traces de circuit » —
+ * etait colle devant CHAQUE scene. Trente scenes differentes rendues avec la
+ * meme recette donnent trente images qui se ressemblent : le fond, la lumiere
+ * et la palette etaient identiques, seul le premier plan changeait.
+ *
+ * Trois changements, et ils portent tous sur ce qui se voit en premier :
+ *
+ *  1. LE MONDE EST DANS LA SCENE. Chaque scene decrit son lieu, sa lumiere et
+ *     sa palette. Il n y a plus de fond commun a toutes.
+ *  2. LA DIRECTION ARTISTIQUE TOURNE. Douze rendus — photographie argentique,
+ *     encre de bande dessinee, peinture a l huile, estampe, rendu 3D, fusain…
+ *     — tires par la cle du creneau. La meme scene deux mois plus tard n est
+ *     donc pas la meme image.
+ *  3. LES CLICHES SONT REFUSES. Courbes de bougies, ecrans de trading, pluie
+ *     de pieces, symboles de cryptomonnaie : ecrits dans le refus, parce que
+ *     le modele les ramene tout seul des qu il sent le sujet. Une scene qui en
+ *     a vraiment besoin les demande elle-meme.
+ *
+ * Le personnage, lui, ne bouge pas : c est la seule chose qu on doit
+ * reconnaitre d une image a l autre.
+ * ======================================================================== */
+const PERSONNAGE = "the famous 'buff Doge' meme character: a Shiba Inu head with a calm, confident expression on an extremely muscular bodybuilder torso, cream and tan fur, wearing a royal blue tank top. He is the subject of the picture, large in frame";
 
-const SCENES = [
-  { nom: 'stade', prompt: 'standing like a champion with arms crossed in a stadium at night, floodlights, a wall of glowing scoreboards, sports balls of every sport floating around him' },
-  { nom: 'arcade', prompt: 'leaning on a glowing retro arcade cabinet in a neon arcade hall, joystick in one paw, tokens raining' },
-  { nom: 'casino', prompt: 'at a blackjack table under a golden chandelier, flipping a card with a grin, chips stacked high' },
-  { nom: 'lune', prompt: 'planting a flag on the moon in a spacesuit with the visor open, Earth glowing behind, a rocket landed nearby' },
-  { nom: 'fusee', prompt: 'riding a rocket through a green candlestick chart shooting upward, cape flying' },
-  { nom: 'coffre', prompt: 'opening a giant golden vault door with one paw, light and coins pouring out' },
-  { nom: 'chenil', prompt: 'kneeling with three adorable Shiba puppies at his feet next to a cozy dog house with a glowing paw sign' },
-  { nom: 'tv', prompt: 'sitting on a couch in front of a wall of glowing TV screens showing sports and movies, remote in paw, popcorn' },
-  { nom: 'cinema', prompt: 'walking down a red carpet in front of a grand cinema marquee, paparazzi flashes, sunglasses on' },
-  { nom: 'salle', prompt: 'lifting a barbell loaded with giant gold coins in a gym, sweat and sparks' },
-  { nom: 'trading', prompt: 'in front of six holographic trading screens with green candles, a coffee mug in one paw, thumbs up' },
-  { nom: 'plage', prompt: 'on a tropical beach at sunset on a deck chair, cocktail with a tiny umbrella, a laptop showing a green chart' },
-  { nom: 'trone', prompt: 'sitting on a golden throne made of coins in a throne room, crown slightly tilted, relaxed' },
-  { nom: 'ring', prompt: 'in a boxing ring with a championship belt over the shoulder, arms raised, crowd of Shiba fans cheering' },
-  { nom: 'course', prompt: 'crossing the finish line of a race track in first place, confetti, a checkered flag' },
-  { nom: 'mine', prompt: 'in a crystal mine with a pickaxe over the shoulder, a cart full of glowing gold coins' },
-  { nom: 'marche', prompt: 'behind a bustling market stall selling glowing potions and golden coins in a fantasy village' },
-  { nom: 'portail', prompt: 'stepping through a glowing blue magic portal into a fantasy world, wind in the fur' },
-  { nom: 'pluie', prompt: 'standing under a rain of gold coins with an umbrella turned upside down to catch them, laughing' },
-  { nom: 'vaisseau', prompt: 'at the captain chair of a starship bridge, stars streaking past the window, one paw on the throttle' },
-  { nom: 'foot', prompt: 'on a football pitch at night in a blue kit, ball under one foot, stadium roaring' },
-  { nom: 'hockey', prompt: 'on the ice in a hockey rink, stick in paw, puck mid-air, snow spraying' },
-  { nom: 'tennis', prompt: 'mid-serve on a floodlit tennis court, racket high, ball tossed, crowd silhouettes' },
-  { nom: 'dragon', prompt: 'standing on the head of a friendly golden dragon flying over a neon city at night' },
-  { nom: 'nuit', prompt: 'on a skyscraper rooftop at midnight overlooking a neon city, cape in the wind, huge full moon behind him' },
-  { nom: 'labo', prompt: 'in a glowing laboratory mixing a bubbling green potion, safety goggles on the forehead, holographic formulas around' },
-  { nom: 'surf', prompt: 'surfing a giant green wave shaped like a rising chart, sunglasses, spray everywhere' },
-  { nom: 'chef', prompt: 'in a chef hat flipping a golden pancake shaped like a coin in a bright kitchen, puppies waiting with plates' },
-  { nom: 'concert', prompt: 'on a festival stage with an electric guitar, lasers, a crowd of thousands of Shiba fans holding glowing paws' },
-  { nom: 'agent', prompt: 'sitting at a futuristic desk typing on a holographic keyboard while a small glowing robot assistant paints pictures on floating screens around him, a bird-shaped hologram taking off from the screen' },
+/* Douze directions artistiques. Aucune ne parle de crypto : c est le sujet qui
+   raconte, pas la technique, et c est ce qui rendait les images jumelles. */
+const RENDUS = [
+  '35mm film photograph, natural light, shallow depth of field, visible grain',
+  'bold comic book ink, heavy black outlines, flat saturated colour, halftone dots',
+  'oil painting on canvas, thick visible brushwork, dramatic chiaroscuro',
+  'Japanese woodblock print, flat colour planes, bold outline, aged paper texture',
+  'high-end 3D render, soft studio lighting, clean matte surfaces, subtle depth of field',
+  'gritty 1970s film still, warm faded colours, heavy vignette, anamorphic flare',
+  'hand-painted animation cel, saturated colour, strong rim light, painted background',
+  'charcoal and ink drawing on rough paper, monochrome with one spot colour',
+  'vintage screen-printed travel poster, flat shapes, four-colour limited palette',
+  'hyperreal macro photograph, single hard light source, deep black background',
+  'watercolour and ink, loose wet edges, white paper showing through',
+  'low-angle sports photography, long lens, frozen motion, stadium light',
 ];
+const NEGATIF = 'No text, no letters, no numbers, no logos, no watermark. No paw prints anywhere. No candlestick charts, no trading screens, no floating coins, no cryptocurrency symbols, no circuit-board patterns unless the scene explicitly asks for them.';
+
+/* ---- LES SCENES ----
+ * Chacune porte SON lieu, SA lumiere et SA palette. Elles sont volontairement
+ * eloignees les unes des autres : un desert, une cuisine, un ring, un fond
+ * marin, une bibliotheque — pas trente variantes d une salle sombre. */
+const SCENES = [
+  { nom: 'stade', prompt: 'standing dead centre of a packed football stadium at night, arms crossed, the crowd a blur of colour behind him',
+    monde: 'cold white floodlights cutting through drifting mist, emerald green pitch, deep blue night sky' },
+  { nom: 'arcade', prompt: 'leaning on a battered arcade cabinet, joystick under one paw, a kid barely reaching his elbow looking up at him',
+    monde: 'a 1990s Tokyo arcade, magenta and cyan tube light, sticky carpet, smoke, warm reflections on chrome' },
+  { nom: 'casino', prompt: 'mid-shuffle at a card table, cards fanned impossibly wide between his paws, dealer frozen mid-gasp',
+    monde: 'a red velvet private room, one low brass lamp, cigar haze, deep burgundy and gold' },
+  { nom: 'lune', prompt: 'planting a plain flag in grey dust, visor up, Earth a small blue marble over his shoulder',
+    monde: 'lunar surface, hard unfiltered sunlight, pure black sky, grey and white with one blue accent' },
+  { nom: 'desert', prompt: 'walking out of a heat shimmer on a cracked salt flat, jacket over one shoulder, utterly calm',
+    monde: 'white salt desert at noon, brutal overhead sun, pale gold and bleached blue, horizon warped by heat' },
+  { nom: 'coffre', prompt: 'pulling open a bank vault door the size of a wall with one paw, the mechanism still turning',
+    monde: 'a marble bank hall, cold morning light through tall windows, polished steel and cream stone' },
+  { nom: 'chenil', prompt: 'sitting cross-legged on a lawn while five Shiba puppies climb all over him, laughing',
+    monde: 'a suburban back garden at golden hour, long grass, warm low sun, soft greens and honey light' },
+  { nom: 'cinema', prompt: 'alone in the front row of an empty cinema, feet up, the screen lighting his face',
+    monde: 'red seats in near darkness, the only light is the flicker of the screen, deep reds and cold white' },
+  { nom: 'salle', prompt: 'mid-lift under a loaded barbell, veins up, chalk dust hanging in the air',
+    monde: 'an old iron gym, dusty window light in shafts, rust, worn rubber, grey and amber' },
+  { nom: 'plage', prompt: 'floating flat on his back in clear shallow water, eyes closed, completely at peace',
+    monde: 'a turquoise lagoon seen from above, white sand, caustic light patterns, tropical blue and cream' },
+  { nom: 'trone', prompt: 'slouched sideways on an enormous stone throne, one leg over the armrest, bored',
+    monde: 'a vast empty throne room, dust in a single shaft of light from high above, cold stone greys' },
+  { nom: 'ring', prompt: 'in the corner of a boxing ring between rounds, breathing hard, towel round his neck, staring past the camera',
+    monde: 'a smoky fight hall, one harsh overhead light, everything else black, sweat catching the light' },
+  { nom: 'course', prompt: 'crossing a finish line in first, tape breaking across his chest, arms wide',
+    monde: 'a red running track at dusk, low orange sun, long shadows, confetti caught in the air' },
+  { nom: 'mine', prompt: 'deep in a crystal cavern, pickaxe resting on his shoulder, looking up at something enormous',
+    monde: 'a cave of pale glowing crystals, cold blue light from within the rock, wet dark stone' },
+  { nom: 'marche', prompt: 'haggling across a market stall piled with fruit, one paw raised, grinning',
+    monde: 'a crowded Moroccan souk at midday, striped awnings, dust in slanted light, ochre and spice colours' },
+  { nom: 'portail', prompt: 'stepping through a doorway of light that has opened in the middle of a forest',
+    monde: 'a misty pine forest at dawn, cold blue-green shadows, one impossible warm light spilling out' },
+  { nom: 'orage', prompt: 'standing on a cliff edge facing a wall of storm, fur and clothes flattened by the wind',
+    monde: 'black thunderheads over a grey sea, one fork of lightning, monochrome with a sliver of white' },
+  { nom: 'vaisseau', prompt: 'reclined in a pilot seat with his feet on the console, stars streaking past the canopy',
+    monde: 'a cramped spacecraft cockpit, instrument glow on his face, everything else near black' },
+  { nom: 'foot', prompt: 'mid-bicycle-kick, horizontal in the air, ball leaving his boot',
+    monde: 'a floodlit pitch from a low angle, wet grass spraying, stadium lights flaring behind him' },
+  { nom: 'hockey', prompt: 'carving a hard stop, ice spray exploding sideways, stick low',
+    monde: 'an ice rink, blue-white ice, advertising boards blurred by speed, cold clean light' },
+  { nom: 'tennis', prompt: 'at the top of a serve, fully extended, ball suspended above the racket',
+    monde: 'a clay court in late afternoon, terracotta ground, long shadow, hot white light' },
+  { nom: 'dragon', prompt: 'riding the neck of a vast dragon banking through cloud, one paw on a horn',
+    monde: 'above a sea of cloud at sunrise, pink and gold light, the dragon in silhouette' },
+  { nom: 'nuit', prompt: 'sitting alone on the edge of a rooftop, legs hanging over, looking at the city',
+    monde: 'a sleeping city from twenty floors up, sodium street light, a huge low moon, deep blue and amber' },
+  { nom: 'labo', prompt: 'peering into a beaker held up to the light, goggles pushed onto his forehead, one eyebrow raised',
+    monde: 'a cluttered chemistry lab, green liquid casting light on his face, brass and glassware, dark wood' },
+  { nom: 'surf', prompt: 'inside the barrel of a huge wave, one paw dragging the wall of water',
+    monde: 'a breaking ocean wave from inside, sunlight through green water, spray, turquoise and white' },
+  { nom: 'chef', prompt: 'tossing a pan of flames in a professional kitchen, entirely unbothered',
+    monde: 'a restaurant kitchen at service, stainless steel, orange fire light against cold overheads' },
+  { nom: 'concert', prompt: 'at the front of a stage mid-song, arm out to a crowd of thousands of lit phones',
+    monde: 'a night festival main stage, hard back-light and lasers, silhouette against white beams' },
+  { nom: 'bibliotheque', prompt: 'balanced on a rolling ladder in a vast library, three books open at once, absorbed',
+    monde: 'an old university library, warm lamp light, endless dark wood shelves, dust in the air' },
+  { nom: 'fond', prompt: 'walking along the seabed past the ribs of a shipwreck, unhurried, no equipment',
+    monde: 'deep ocean, shafts of light from far above, blue-green gloom, drifting particles' },
+  { nom: 'sommet', prompt: 'sitting on a narrow summit with his legs over the drop, eating a sandwich',
+    monde: 'a rock spire above the clouds at sunrise, pink light on snow, impossible exposure, cold clean air' },
+];
+
 
 /* La scene est choisie par la cle du creneau, et ne peut pas etre une des
    six dernieres postees : deux posts par jour avec la meme image, le fil
@@ -195,7 +261,20 @@ function sceneSuivante(cle, journal) {
   for (let k = 0; k < SCENES.length && recentes.includes(SCENES[i].nom); k++) i = (i + 1) % SCENES.length;
   return SCENES[i];
 }
-function promptImage(scene) { return `${STYLE}. In the center, ${PERSONNAGE}, ${scene.prompt}. ${NEGATIF}`; }
+/* Le rendu est tire de la cle du creneau, pas de la scene : la meme scene
+   revenue deux mois plus tard n est donc pas la meme image. Ordre voulu :
+   d abord la technique, puis le sujet, puis le monde — le modele suit le
+   debut de la phrase, et c est le personnage qu on veut en grand. */
+function renduDe(cle) {
+  const n = Number.parseInt(crypto.createHash('sha1').update('rendu:' + String(cle)).digest('hex').slice(0, 8), 16);
+  return RENDUS[n % RENDUS.length];
+}
+function promptImage(scene, cle) {
+  /* Une scene ecrite a la main depuis le panneau (`special`) porte deja son
+     decor dans sa phrase : on ne lui en colle pas un deuxieme. */
+  const monde = scene.monde ? scene.monde + '. ' : '';
+  return `${renduDe(cle)}. ${PERSONNAGE}, ${scene.prompt}. ${monde}${NEGATIF}`;
+}
 
 // ------------------------------------------------------------ les faits du jour
 
@@ -475,7 +554,7 @@ async function tache(opts) {
     let png;
     if (entree.image && fs.existsSync(fichierImage)) png = fs.readFileSync(fichierImage);
     else {
-      const g = await genereImage(promptImage(scene), o.prendre);
+      const g = await genereImage(promptImage(scene, cle), o.prendre);
       png = g.png; fs.writeFileSync(fichierImage, png);
       entree.image = nomImage(cle) + '.png'; entree.jetonsImage = g.jetons;
       journal.jours[cle] = entree; ecritJournal(journal);
@@ -533,7 +612,7 @@ function planifie(signale) {
   return { arrete() { clearTimeout(premier); clearInterval(minuterie); } };
 }
 
-module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, ANGLES, sceneSuivante, promptImage, faitsDuJour,
+module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, RENDUS, NEGATIF, ANGLES, renduDe, sceneSuivante, promptImage, faitsDuJour,
                    nettoie, ecritTexte, genereImage, televerse, publie, tache, planifie, derniere, reprend,
                    heureLocale, creneauDu, jourDe, litJournal, dernieres, DOSSIER_IMAGES, RESERVE };
 
@@ -548,7 +627,7 @@ if (require.main === module) {
       const t = Date.now(); const j = litJournal(); const cle = 'essai#' + t;
       const scene = sceneSuivante(cle, j);
       console.log('scene :', scene.nom);
-      const g = await genereImage(promptImage(scene));
+      const g = await genereImage(promptImage(scene, cle));
       const i = a.indexOf('--essai');
       const sortie = path.resolve(a[i + 1] && !a[i + 1].startsWith('--') ? a[i + 1] : '_x_essai.png');
       fs.writeFileSync(sortie, g.png);

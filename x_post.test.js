@@ -92,11 +92,39 @@ const x = require('./x_post');
      * raconter. Le refus est ECRIT, pas seulement le motif retire — le modele
      * a vu ce motif sur des dizaines d images de la meme famille. */
     ok(x.SCENES.every((s) => !/paw print/i.test(s.prompt)), 'aucune scene ne demande d empreinte de patte');
-    ok(x.SCENES.every((s) => /No paw prints anywhere/.test(x.promptImage(s))), 'et chaque prompt la refuse explicitement');
-    ok(!/paw print/i.test(x.promptImage(x.SCENES[0]).replace(/No paw prints[^.]*\./, '')),
+    ok(x.SCENES.every((s) => /No paw prints anywhere/.test(x.promptImage(s, 'k'))), 'et chaque prompt la refuse explicitement');
+    ok(!/paw print/i.test(x.promptImage(x.SCENES[0], 'k').replace(/No paw prints[^.]*\./, '')),
        'le style lui-meme n en porte plus');
-    ok(/no text, no letters/i.test(x.promptImage(x.SCENES[0])) && /buff Doge/.test(x.promptImage(x.SCENES[0])),
+    ok(/no text, no letters/i.test(x.promptImage(x.SCENES[0], 'k')) && /buff Doge/.test(x.promptImage(x.SCENES[0], 'k')),
        'le prompt porte le personnage et refuse le texte dans l image');
+    /* ---- CHAQUE IMAGE A SON PROPRE MONDE ----
+     * Releve du proprietaire, 19 septembre 2026 : les images se ressemblaient
+     * toutes. La cause etait dans le code — un STYLE unique (bleu nuit, vert
+     * electrique, traces de circuit) colle devant les trente scenes. Ce qui
+     * est verifie ici est donc la CAUSE, pas le symptome : aucun decor commun,
+     * un monde par scene, et une direction artistique tiree du creneau. */
+    ok(x.SCENES.every((s) => s.monde && s.monde.length > 20), 'chaque scene porte son lieu, sa lumiere et sa palette');
+    eq(new Set(x.SCENES.map((s) => s.monde)).size, x.SCENES.length, 'et deux scenes ne partagent jamais le meme monde');
+    ok(x.SCENES.every((s) => x.promptImage(s, 'k').includes(s.monde)), 'le monde de la scene est bien dans le prompt');
+    ok(x.RENDUS.length >= 10, x.RENDUS.length + ' directions artistiques');
+    ok(x.RENDUS.every((r) => !/crypto|coin|chart|neon|circuit/i.test(r)),
+       'aucune ne parle de crypto : c est le sujet qui raconte, pas la technique');
+    {
+      /* La meme scene, deux creneaux eloignes : si le rendu ne tournait pas,
+         la banque de scenes ne suffirait pas a varier les images. */
+      const vus = new Set();
+      for (let i = 0; i < 60; i++) vus.add(x.renduDe('2026-10-' + String(1 + Math.floor(i / 2)).padStart(2, '0') + (i % 2 ? '#00:00' : '#12:00')));
+      ok(vus.size >= 8, vus.size + ' rendus differents sur trente jours de posts');
+      ok(x.promptImage(x.SCENES[0], 'a#12:00') !== x.promptImage(x.SCENES[0], 'b#00:00')
+         || x.promptImage(x.SCENES[0], 'a#12:00') !== x.promptImage(x.SCENES[0], 'c#00:00'),
+         'la meme scene revenue plus tard n est pas rendue de la meme facon');
+      eq(x.renduDe('meme#cle'), x.renduDe('meme#cle'), 'mais une reprise du meme creneau refait exactement la meme image');
+    }
+    /* Les cliches que le modele ramene tout seul des qu il sent le sujet. */
+    ok(/candlestick|trading screens/i.test(x.NEGATIF) && /floating coins/i.test(x.NEGATIF),
+       'courbes, ecrans et pluie de pieces sont refuses par ecrit');
+    ok(x.promptImage({ nom: 'special', prompt: 'on a boat with a cigar' }, 'k').length > 100,
+       'une scene ecrite a la main depuis le panneau passe sans monde, sans casser le prompt');
     ok(x.ANGLES.length >= 8, x.ANGLES.length + ' angles d ecriture');
   }
 
