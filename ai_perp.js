@@ -109,12 +109,36 @@ const PERD = -1.5;
 
 // --------------------------------------------------------------- l etat
 
-const FICHIER = (sym) => path.join(cfg.DATA_DIR, 'ai_perp_' + sym + '.json');
+const FICHIER = () => path.join(cfg.DATA_DIR, 'ai_perp.json');
 const DEPART = Number(process.env.PERP_DEPART || 1000);
 
-function etatNeuf(sym) {
+/* ==========================================================================
+ * UNE COLONIE POUR TOUS LES PERPETUELS
+ *
+ * Il y en a eu une par marche : cinq tresoreries, cinq audits, cinq memoires.
+ * « Non, il faudrait une colonie pour tous les perps. » C est le bon sens
+ * d un bureau de trading — un capital, qui va la ou ca paie — et ca corrige
+ * un defaut que le decoupage rendait invisible :
+ *
+ *   - cinq memoires qui apprennent chacune sur un cinquieme des observations
+ *     n apprennent rien. Une seule, nourrie par les cinq marches, apprend
+ *     cinq fois plus vite.
+ *   - cinq tresoreries de mille dollars ne se comparent pas a une de cinq
+ *     mille : la mise est une PART du capital, donc cinq petites colonies
+ *     prennent cinq petites positions la ou une seule en prend une vraie.
+ *
+ * ---- ET CE QUE LE DECOUPAGE DISAIT DE VRAI ----
+ * Il disait qu un marche ne se lit pas comme un autre : la volatilite de DOGE
+ * n est pas celle de BTC. C est vrai, et ca ne justifie pas cinq colonies —
+ * ca justifie que le MARCHE SOIT UN TRAIT. Il en est un (`TRAITS.marche`) :
+ * la memoire apprend ce que chaque marche a rendu, exactement comme elle
+ * apprend ce qu a rendu un regime calme ou un financement negatif. La
+ * question « DOGE paie-t-il comme BTC ? » se repond alors par une mesure, au
+ * lieu d etre tranchee par la forme du code.
+ * ======================================================================== */
+function etatNeuf() {
   return {
-    v: 1, sym, depuis: Date.now(), tours: 0, maj: 0,
+    v: 2, depuis: Date.now(), tours: 0, maj: 0,
     tresor: DEPART, depart: DEPART, trades: 0, gains: 0, meilleur: 0,
     positions: [], carnet: [], ombres: [], audit: {}, profils: {},
     compteurs: {}, flux: [], derniereErreur: null,
@@ -124,28 +148,28 @@ function etatNeuf(sym) {
     seuil: Number(process.env.PERP_SEUIL || 55),
   };
 }
-const E = {};                     /* un etat par symbole */
-function etat(sym) { return E[sym] || (E[sym] = etatNeuf(sym)); }
+let E = null;                     /* UNE colonie, pour tous les marches */
+function etat() { return E || (E = etatNeuf()); }
 
 function charge() {
-  for (const sym of SYMBOLES) {
-    try {
-      const j = JSON.parse(fs.readFileSync(FICHIER(sym), 'utf8'));
-      if (j && j.sym === sym) { E[sym] = Object.assign(etatNeuf(sym), j); continue; }
-    } catch (e) { if (e.code !== 'ENOENT') console.error('[perp] ' + sym + ' : ' + e.message); }
-    E[sym] = etatNeuf(sym);
-  }
+  try {
+    const j = JSON.parse(fs.readFileSync(FICHIER(), 'utf8'));
+    /* `v` fait foi : un etat de la version par marche ne se recolle pas en
+       un seul, et il ne vaut rien — les colonies sont nees le meme jour. */
+    if (j && j.v === 2) { E = Object.assign(etatNeuf(), j); return SYMBOLES.slice(); }
+  } catch (e) { if (e.code !== 'ENOENT') console.error('[perp] ' + e.message); }
+  E = etatNeuf();
   return SYMBOLES.slice();
 }
-function sauve(sym) {
+function sauve() {
   try {
     fs.mkdirSync(cfg.DATA_DIR, { recursive: true });
-    const t = FICHIER(sym) + '.tmp';
-    fs.writeFileSync(t, JSON.stringify(etat(sym)));
-    fs.renameSync(t, FICHIER(sym));
-  } catch (e) { console.error('[perp] sauvegarde ' + sym + ' : ' + e.message); }
+    const t = FICHIER() + '.tmp';
+    fs.writeFileSync(t, JSON.stringify(etat()));
+    fs.renameSync(t, FICHIER());
+  } catch (e) { console.error('[perp] sauvegarde : ' + e.message); }
 }
-function compte(sym, k) { const c = etat(sym).compteurs; c[k] = (c[k] || 0) + 1; }
+function compte(k) { const c = etat().compteurs; c[k] = (c[k] || 0) + 1; }
 
 // --------------------------------------------------------------- la lecture
 
@@ -281,6 +305,13 @@ const TRAITS = {
   /* La journee : ou en est le prix sur vingt-quatre heures. */
   jour:  (x) => tranche(x.var24, [-3, -0.7, 0.7, 3],
                         ['jour <-3%', 'jour -3/-0,7%', 'jour plat', 'jour 0,7/3%', 'jour >3%']),
+  /* ---- LE MARCHE LUI-MEME ----
+   * C est ce qui justifiait cinq colonies : « la volatilite de DOGE n est pas
+   * celle de BTC ». Vrai — et c est une MESURE, pas une raison de decouper le
+   * code. En trait, la question se repond : la memoire apprend ce que chaque
+   * marche a rendu, comme elle apprend ce qu a rendu un regime calme. Si DOGE
+   * ne paie pas, la case le dira, et le Banquier en tiendra compte. */
+  marche: (x) => (x.sym ? String(x.sym).replace(/USDT$/, '') : null),
 };
 
 /** Les traits de ce moment, par agent — comme dans la colonie de jetons. */
@@ -313,7 +344,7 @@ const AGENTS = [
     quoi: 'the top of the book, and nothing it cannot see' },
   { key: 'journee', nom: 'Session', emoji: '🕐', role: 'specialiste', traits: ['jour'],
     quoi: 'what the last twenty-four hours already did' },
-  { key: 'banquier', nom: 'Banker', emoji: '🏦', role: 'banque', traits: [],
+  { key: 'banquier', nom: 'Banker', emoji: '🏦', role: 'banque', traits: ['marche'],
     quoi: 'sizes the paper position against the book' },
   { key: 'closer', nom: 'Closer', emoji: '🚪', role: 'execution', traits: [],
     quoi: 'the stop, the target, and the clock' },
@@ -378,7 +409,7 @@ function note(x, sens) {
   let lecon = 0, nLecon = 0;
   for (const agent in tr) {
     for (const k in tr[agent]) {
-      const c = caseProfil(x.__sym, k, tr[agent][k], HORIZON_REF, true);
+      const c = caseProfil(k, tr[agent][k], HORIZON_REF, true);
       if (c && c.n >= PROFIL_MIN_OBS) { lecon += (c.s / c.n) * sens; nLecon++; }
     }
   }
@@ -391,31 +422,31 @@ function note(x, sens) {
 
 // --------------------------------------------------------------- la memoire
 
-function caseProfil(sym, trait, valeur, h, lectureSeule) {
-  const P = etat(sym).profils;
+function caseProfil(trait, valeur, h, lectureSeule) {
+  const P = etat().profils;
   if (lectureSeule) return ((P[trait] || {})[valeur] || {})[h] || null;
   const t = P[trait] || (P[trait] = {});
   const v = t[valeur] || (t[valeur] = {});
   return v[h] || (v[h] = { n: 0, s: 0 });
 }
-function noteProfil(sym, traits, h, r) {
+function noteProfil(traits, h, r) {
   for (const agent in traits) {
     for (const k in traits[agent]) {
-      const c = caseProfil(sym, k, traits[agent][k], h, false);
+      const c = caseProfil(k, traits[agent][k], h, false);
       c.n++; c.s += r;
     }
   }
 }
-function noteAudit(sym, cle, r) {
-  const A = etat(sym).audit;
+function noteAudit(cle, r) {
+  const A = etat().audit;
   const a = A[cle] || (A[cle] = { n: 0, s: 0, gagnantes: 0, perdantes: 0 });
   a.n++; a.s += r;
   if (r >= GAGNE) a.gagnantes++;
   if (r <= PERD) a.perdantes++;
 }
 /** Ce que la page montre de l audit : par regle, ce que les refuses ont fait. */
-function auditDesRefus(sym) {
-  const A = etat(sym).audit, out = [];
+function auditDesRefus() {
+  const A = etat().audit, out = [];
   for (const cle in A) {
     const a = A[cle];
     if (a.n < 3) continue;
@@ -426,121 +457,15 @@ function auditDesRefus(sym) {
   out.sort((x, y) => y.partGagnantes - x.partGagnantes);
   return out.slice(0, 25);
 }
-/* ==========================================================================
- * L AUDIT COMMUN AUX CINQ MARCHES
- *
- * Une regle produit au plus deux ombres par tranche de quatre heures et par
- * marche (une par sens : `noteOmbre` refuse les doublons), soit douze par
- * jour. Avec `AUDIT_MIN_OBS` a douze, un verdict par marche tombe donc en
- * environ un jour — ce n est pas la vitesse qui manque, c est l ECHANTILLON :
- * douze observations, c est un verdict fragile, et une regle qui ne se
- * declenche pas a chaque fenetre met des semaines a les atteindre.
- *
- * Mis en commun, les cinq marches donnent cinq fois l echantillon pour le
- * meme temps ecoule. Mais additionner suppose que la regle se comporte PAREIL
- * partout — et c est exactement le genre de chose que ce depot mesure au lieu
- * de la supposer. La repartition par marche part donc avec le total, et le
- * verdict commun se declare « les marches ne disent pas la meme chose » quand
- * ils divergent.
- *
- * L audit commun n est pas un second fichier : il est DERIVE des audits par
- * marche, additionnes. Rien a garder d accord, rien a migrer, et la
- * repartition vient gratuitement.
- * ======================================================================== */
-
-/* ---- LA BORNE DE DIVERGENCE ----
- * POSEE SANS MESURE le 19 septembre 2026 : aucun echantillon n existe encore,
- * les colonies naissent aujourd hui. Vingt points d ecart entre le marche le
- * plus favorable et le moins favorable, sur les marches qui ont au moins la
- * moitie du minimum. Ce n est pas un seuil mesure, c est un point de depart —
- * et il est rendu JUGEABLE tout de suite : `ecartsVus` garde, pour chaque
- * regle, l ecart constate et le nombre de marches qui l ont porte, pour qu on
- * puisse relire cette borne avec des chiffres des la premiere semaine plutot
- * que de la deplacer au feeling. */
-const DIVERGE_POINTS = 20;
-const DIVERGE_MIN_OBS = Math.ceil(AUDIT_MIN_OBS / 2);
-
-/** Les audits des cinq marches, additionnes par regle, avec leur repartition. */
-function auditCommun() {
-  const out = {};
-  for (const sym of SYMBOLES) {
-    const A = (E[sym] && E[sym].audit) || {};
-    for (const cle in A) {
-      const a = A[cle];
-      const d = out[cle] || (out[cle] = { cle, n: 0, s: 0, gagnantes: 0, perdantes: 0, marches: {} });
-      d.n += a.n; d.s += a.s; d.gagnantes += a.gagnantes; d.perdantes += a.perdantes;
-      d.marches[sym] = { n: a.n, gagnantes: a.gagnantes,
-                         partGagnantes: a.n ? Math.round(a.gagnantes / a.n * 100) : null };
-    }
-  }
-  return out;
-}
-/** La reference commune : ce que les cinq colonies prennent reellement. */
-function referenceCommune() {
-  const a = auditCommun()['pris'];
-  return (a && a.n >= AUDIT_MIN_OBS) ? { n: a.n, partGagnantes: Math.round(a.gagnantes / a.n * 100) } : null;
-}
-/**
- * L ecart entre marches pour une regle : la difference de part de gagnantes
- * entre le marche le plus favorable et le moins favorable, sur ceux qui ont
- * assez d observations pour etre compares. `null` tant qu il n y en a pas deux.
- */
-function ecartEntreMarches(d) {
-  const parts = Object.keys(d.marches)
-    .filter((k) => d.marches[k].n >= DIVERGE_MIN_OBS)
-    .map((k) => d.marches[k].partGagnantes);
-  if (parts.length < 2) return { ecart: null, marches: parts.length };
-  return { ecart: Math.max.apply(null, parts) - Math.min.apply(null, parts), marches: parts.length };
-}
-/**
- * Le verdict commun. Il dit d abord s il a le DROIT de mettre en commun :
- * quand les marches divergent au-dela de la borne, la ligne le dit et ne
- * conclut pas — additionner des choses qui ne se comportent pas pareil donne
- * un chiffre juste sur rien.
- */
-function verdictCommun(cle) {
-  const d = auditCommun()[cle];
-  if (!d || d.n < AUDIT_MIN_OBS) {
-    return { verdict: 'unknown', n: (d && d.n) || 0, manque: AUDIT_MIN_OBS - ((d && d.n) || 0) };
-  }
-  const e = ecartEntreMarches(d);
-  const p = Math.round(d.gagnantes / d.n * 100);
-  if (e.ecart !== null && e.ecart > DIVERGE_POINTS) {
-    return { verdict: 'diverge', n: d.n, partGagnantes: p, ecart: e.ecart, marches: e.marches };
-  }
-  const ref = referenceCommune();
-  if (!ref) return { verdict: 'unknown', n: d.n, partGagnantes: p, pourquoi: 'nothing taken yet to compare against' };
-  return { verdict: p >= ref.partGagnantes + 8 ? 'costs' : p <= ref.partGagnantes * 0.6 ? 'protects' : 'same',
-           n: d.n, partGagnantes: p, reference: ref.partGagnantes,
-           ecart: e.ecart, marches: e.marches };
-}
-/** Ce que la page montre de l audit commun : les regles, leur repartition, leur verdict. */
-function auditCommunVue() {
-  const A = auditCommun();
-  const out = [];
-  for (const cle in A) {
-    const d = A[cle];
-    if (cle === 'pris' || d.n < 3) continue;
-    const e = ecartEntreMarches(d);
-    out.push({ cle, n: d.n, moyenne: Math.round(d.s / d.n * 1000) / 1000,
-               gagnantes: d.gagnantes, perdantes: d.perdantes,
-               partGagnantes: Math.round(d.gagnantes / d.n * 100),
-               marches: d.marches, ecart: e.ecart, marchesCompares: e.marches,
-               verdict: verdictCommun(cle) });
-  }
-  out.sort((x, y) => y.n - x.n);
-  return out.slice(0, 25);
-}
-
 /** La reference : ce qu on PREND. Une regle se juge contre elle, pas contre un rond. */
-function reference(sym) {
-  const a = etat(sym).audit['pris'];
+function reference() {
+  const a = etat().audit['pris'];
   return (a && a.n >= AUDIT_MIN_OBS) ? { n: a.n, partGagnantes: Math.round(a.gagnantes / a.n * 100) } : null;
 }
 /** Le verdict d une regle : elle protege, elle coute, ou on ne sait pas encore. */
-function verdictRegle(sym, cle) {
-  const a = etat(sym).audit[cle];
-  const ref = reference(sym);
+function verdictRegle(cle) {
+  const a = etat().audit[cle];
+  const ref = reference();
   if (!a || a.n < AUDIT_MIN_OBS) return { verdict: 'unknown', n: (a && a.n) || 0, manque: AUDIT_MIN_OBS - ((a && a.n) || 0) };
   const p = Math.round(a.gagnantes / a.n * 100);
   if (!ref) return { verdict: 'unknown', n: a.n, partGagnantes: p, pourquoi: 'nothing taken yet to compare against' };
@@ -562,8 +487,8 @@ function nomAgent(k) {
   const a = AGENTS.find((z) => z.key === k);
   return a ? a.nom : k;
 }
-function noteOmbre(sym, x, sens, refus, quiRefuse, traits) {
-  const S = etat(sym);
+function noteOmbre(x, sens, refus, quiRefuse, traits) {
+  const S = etat();
   if (!(x.prix > 0)) return;
   /* ---- LA CLE D AUDIT SE LIT SUR LA PAGE ----
      Elle etait construite sur la CLE de l agent — `tendance`, `couloir`,
@@ -576,8 +501,12 @@ function noteOmbre(sym, x, sens, refus, quiRefuse, traits) {
   const now = Date.now();
   /* Une seule ombre par cle et par sens a la fois : sinon chaque tour en
      empile une et la meme situation compte cent fois. */
-  if (S.ombres.some((o) => o.cle === cle && o.sens === sens && now - o.t < HORIZON_REF * 60000)) return;
-  S.ombres.push({ cle, sens, prix0: x.prix, t: now, traits, jalons: {},
+  /* Une seule ombre par cle, par sens ET PAR MARCHE : sans le marche, une
+     ombre posee sur BTC empecherait la meme regle d en poser une sur DOGE, et
+     l audit ne verrait plus qu un marche sur cinq. */
+  if (S.ombres.some((o) => o.cle === cle && o.sens === sens && o.sym === x.sym
+                           && now - o.t < HORIZON_REF * 60000)) return;
+  S.ombres.push({ cle, sens, sym: x.sym, prix0: x.prix, t: now, traits, jalons: {},
                   fin0: x.financement === null ? null : x.financement });
   if (S.ombres.length > OMBRES_MAX) S.ombres = S.ombres.slice(-OMBRES_MAX);
 }
@@ -594,14 +523,19 @@ function coutFinancement(sens, taux, minutes) {
   return -sens * taux * 100 * periodes;      /* en points de pourcentage */
 }
 
-function regleLesOmbres(sym, x) {
-  const S = etat(sym);
-  if (!S.ombres.length || !(x.prix > 0)) return 0;
+/** Chaque ombre se juge au prix de SON marche : `lus` est {symbole: mesures}. */
+function regleLesOmbres(lus) {
+  const S = etat();
+  if (!S.ombres.length) return 0;
   const now = Date.now();
   const dernier = HORIZONS[HORIZONS.length - 1];
   let n = 0;
   S.ombres = S.ombres.filter((o) => {
+    const x = lus[o.sym];
     const age = (now - o.t) / 60000;
+    /* Le marche n a pas ete lu ce tour : l ombre attend plutot que d etre
+       jugee au prix d un autre instrument. */
+    if (!x || !(x.prix > 0)) return age <= dernier + Math.max(5, dernier * 0.35);
     const brut = (x.prix - o.prix0) / o.prix0 * 100 * o.sens;
     const r = Math.round((brut + coutFinancement(o.sens, o.fin0, age)) * 1000) / 1000;
     for (const h of HORIZONS) {
@@ -610,9 +544,9 @@ function regleLesOmbres(sym, x) {
          pas un jalon. Meme regle que dans l autre colonie. */
       if (!(age >= h && age <= h + Math.max(5, h * 0.35))) continue;
       o.jalons[h] = r;
-      noteProfil(sym, o.traits, h, r);
-      compte(sym, 'jalons');
-      if (h === HORIZON_REF) { noteAudit(sym, o.cle, r); compte(sym, 'ombresJugees'); n++; }
+      noteProfil(o.traits, h, r);
+      compte('jalons');
+      if (h === HORIZON_REF) { noteAudit(o.cle, r); compte('ombresJugees'); n++; }
     }
     return age <= dernier + Math.max(5, dernier * 0.35);
   });
@@ -630,28 +564,30 @@ function regleLesOmbres(sym, x) {
 const STOP_VOL = 3.0, CIBLE_VOL = 5.0, TENUE_MAX_MIN = 720;
 const LEVIER = 1;                 /* PAPIER, et sans levier : voir l en-tete */
 
-function ouvre(sym, x, sens, an) {
-  const S = etat(sym);
+function ouvre(x, sens, an) {
+  const S = etat();
   const v = x.vol15 === null ? 0.15 : x.vol15;
   /* Le Banquier : une part fixe du papier, bornee. Rien d appris tant que
      rien n est mesure — et c est dit. */
   const mise = Math.max(1, Math.min(S.tresor * 0.1, S.tresor / 4));
   const p = {
-    sens, prix0: x.prix, t: Date.now(), mise, levier: LEVIER,
+    sym: x.sym, sens, prix0: x.prix, t: Date.now(), mise, levier: LEVIER,
     stop: x.prix * (1 - sens * STOP_VOL * v / 100),
     cible: x.prix * (1 + sens * CIBLE_VOL * v / 100),
     fin0: x.financement, score: an.score, traits: an.traits,
     vol: v, jusqua: Date.now() + TENUE_MAX_MIN * 60000,
   };
   S.positions.push(p);
-  S.flux.unshift({ t: Date.now(), quoi: (sens > 0 ? 'LONG' : 'SHORT') + ' at ' + x.prix, score: an.score });
+  S.flux.unshift({ t: Date.now(), sym: x.sym,
+                   quoi: (sens > 0 ? 'LONG' : 'SHORT') + ' ' + String(x.sym).replace(/USDT$/, '') + ' at ' + x.prix,
+                   score: an.score });
   if (S.flux.length > 60) S.flux.length = 60;
-  compte(sym, 'ouvertures');
+  compte('ouvertures');
   return p;
 }
 
-function ferme(sym, p, prix, pourquoi) {
-  const S = etat(sym);
+function ferme(p, prix, pourquoi) {
+  const S = etat();
   const minutes = (Date.now() - p.t) / 60000;
   const brut = (prix - p.prix0) / p.prix0 * 100 * p.sens;
   const fin = coutFinancement(p.sens, p.fin0, minutes);
@@ -661,91 +597,153 @@ function ferme(sym, p, prix, pourquoi) {
   S.trades++; S.gains += gain;
   if (r > S.meilleur) S.meilleur = r;
   S.financement.n++; S.financement.total += fin;
-  S.carnet.unshift({ sens: p.sens, prix0: p.prix0, prix, r, brut: Math.round(brut * 1000) / 1000,
+  S.carnet.unshift({ sym: p.sym, sens: p.sens, prix0: p.prix0, prix, r, brut: Math.round(brut * 1000) / 1000,
                      financement: Math.round(fin * 1000) / 1000, gain, minutes: Math.round(minutes),
                      pourquoi, t: Date.now() });
   if (S.carnet.length > 200) S.carnet.length = 200;
   S.positions = S.positions.filter((q) => q !== p);
-  S.flux.unshift({ t: Date.now(), quoi: 'CLOSED ' + r.toFixed(2) + '% · ' + pourquoi });
+  S.flux.unshift({ t: Date.now(), sym: p.sym,
+                   quoi: 'CLOSED ' + String(p.sym).replace(/USDT$/, '') + ' ' + r.toFixed(2) + '% · ' + pourquoi });
   if (S.flux.length > 60) S.flux.length = 60;
-  compte(sym, 'fermetures');
+  compte('fermetures');
   return r;
 }
 
-function surveille(sym, x) {
-  const S = etat(sym);
+/** Chaque position est surveillee au prix de SON marche. */
+function surveille(lus) {
+  const S = etat();
   for (const p of S.positions.slice()) {
-    if (!(x.prix > 0)) continue;
-    if (p.sens > 0 ? x.prix <= p.stop : x.prix >= p.stop) { ferme(sym, p, p.stop, 'stop'); continue; }
-    if (p.sens > 0 ? x.prix >= p.cible : x.prix <= p.cible) { ferme(sym, p, p.cible, 'target'); continue; }
-    if (Date.now() >= p.jusqua) ferme(sym, p, x.prix, 'time');
+    const x = lus[p.sym];
+    if (!x || !(x.prix > 0)) continue;
+    if (p.sens > 0 ? x.prix <= p.stop : x.prix >= p.stop) { ferme(p, p.stop, 'stop'); continue; }
+    if (p.sens > 0 ? x.prix >= p.cible : x.prix <= p.cible) { ferme(p, p.cible, 'target'); continue; }
+    if (Date.now() >= p.jusqua) ferme(p, x.prix, 'time');
   }
 }
 
 // --------------------------------------------------------------- le tour
 
 /**
- * Un tour pour un symbole. `opts.prendre` remplace `fetch` dans les essais,
- * `opts.marche` court-circuite la lecture (pour un banc).
+ * UN tour, TOUS les marches. `opts.marches` ({symbole: marche}) remplace la
+ * lecture pour un banc ; `opts.prendre` remplace `fetch` dans les essais.
  */
-async function tour(sym, opts) {
+async function tour(opts) {
   const o = opts || {};
-  const S = etat(sym);
-  let m;
-  try {
-    m = o.marche || await litMarche(sym, o.prendre);
-    S.derniereErreur = null;
-  } catch (e) {
-    S.derniereErreur = String(e.message || e).slice(0, 160);
-    compte(sym, 'lectureRatee');
-    return { sym, etat: 'lecture ratee', erreur: S.derniereErreur };
+  const S = etat();
+  /* ---- LIRE D ABORD, DECIDER ENSUITE ----
+   * Les cinq marches sont lus avant qu une seule decision soit prise : la
+   * colonie choisit le meilleur parmi ce qu elle a vu, et non le premier qui
+   * passe la barre. C est la difference entre un bureau et cinq guichets. */
+  const lus = {};
+  const symboles = o.marches ? Object.keys(o.marches) : SYMBOLES;
+  const rates = [];
+  for (const sym of symboles) {
+    try {
+      const m = o.marches ? o.marches[sym] : await litMarche(sym, o.prendre);
+      const x = mesures(m);
+      x.sym = sym;
+      if (x.prix > 0) lus[sym] = x;
+    } catch (e) {
+      rates.push(sym + ' : ' + String(e.message || e).slice(0, 80));
+      compte('lectureRatee');
+    }
   }
-  const x = mesures(m);
-  x.__sym = sym;
+  if (!Object.keys(lus).length) {
+    S.derniereErreur = rates.join(' · ').slice(0, 160) || 'no market could be read';
+    return { etat: 'lecture ratee', erreur: S.derniereErreur };
+  }
+  /* Un marche muet sur cinq n est pas une panne : on le dit sans effacer le
+     tour, parce que les quatre autres ont bien ete lus. */
+  S.derniereErreur = rates.length ? rates.join(' · ').slice(0, 160) : null;
   S.tours++; S.maj = Date.now();
 
-  regleLesOmbres(sym, x);
-  surveille(sym, x);
+  regleLesOmbres(lus);
+  surveille(lus);
 
-  /* Les deux sens sont examines separement : un refus de long et un refus de
-     short ne disent pas la meme chose, et chacun merite sa ligne d audit. */
+  /* Les deux sens sont examines separement, sur chaque marche : un refus de
+     long et un refus de short ne disent pas la meme chose, et chacun merite
+     sa ligne d audit. */
   const verdicts = [];
-  for (const sens of [1, -1]) {
-    let refus = null, qui = null;
-    for (const a of AGENTS) {
-      const v = VETOS[a.key];
-      if (!v) continue;
-      const r = v(x, sens);
-      if (r) { refus = r; qui = a.key; break; }
+  for (const sym of Object.keys(lus)) {
+    const x = lus[sym];
+    for (const sens of [1, -1]) {
+      let refus = null, qui = null;
+      for (const a of AGENTS) {
+        const v = VETOS[a.key];
+        if (!v) continue;
+        const r = v(x, sens);
+        if (r) { refus = r; qui = a.key; break; }
+      }
+      const an = note(x, sens);
+      if (!refus && an.score < S.seuil) { refus = 'score below the bar'; qui = 'tendance'; }
+      verdicts.push({ sym, sens, refus, qui, score: an.score, an });
     }
-    const an = note(x, sens);
-    if (!refus && an.score < S.seuil) { refus = 'score below the bar'; qui = 'tendance'; }
-    verdicts.push({ sens, refus, qui, score: an.score, an });
   }
-  /* On ne tient qu une position a la fois par colonie : deux sens ouverts en
-     meme temps sur le meme instrument s annulent et paient deux financements. */
+  /* ---- UNE POSITION A LA FOIS, POUR TOUTE LA COLONIE ----
+   * La mise est une PART de la tresorerie : deux positions ouvertes en meme
+   * temps, c est deux fois l exposition, et rien n a encore mesure que ce
+   * soit mieux. La meilleure note l emporte, quel que soit le marche — c est
+   * exactement ce que le decoupage en cinq colonies ne savait pas faire. */
   const pris = verdicts.filter((v) => !v.refus).sort((a, b) => b.score - a.score)[0];
   for (const v of verdicts) {
-    if (pris && v === pris) noteOmbre(sym, x, v.sens, null, null, v.an.traits);
-    else noteOmbre(sym, x, v.sens, v.refus, v.qui, v.an.traits);
+    if (pris && v === pris) noteOmbre(lus[v.sym], v.sens, null, null, v.an.traits);
+    else noteOmbre(lus[v.sym], v.sens, v.refus, v.qui, v.an.traits);
   }
-  if (pris && !S.positions.length) ouvre(sym, x, pris.sens, pris.an);
-  else if (pris) compte(sym, 'dejaEngage');
+  if (pris && !S.positions.length) ouvre(lus[pris.sym], pris.sens, pris.an);
+  else if (pris) compte('dejaEngage');
 
-  sauve(sym);
-  return { sym, etat: 'ok', prix: x.prix, verdicts: verdicts.map((v) => ({ sens: v.sens, score: v.score, refus: v.refus })),
+  sauve();
+  return { etat: 'ok', marches: Object.keys(lus), rates,
+           verdicts: verdicts.map((v) => ({ sym: v.sym, sens: v.sens, score: v.score, refus: v.refus })),
            ouvert: S.positions.length, tresor: S.tresor };
 }
 
 // --------------------------------------------------------------- la vue
 
 /** Ce que la page lit. Aucune cle, aucun secret : il n y en a pas ici. */
-function vue(sym) {
-  const S = etat(sym);
+/* ---- CE QUE CHAQUE MARCHE A RENDU ----
+ * Le decoupage en cinq colonies donnait cette repartition gratuitement ; une
+ * colonie unique doit la RENDRE, sinon on perd la seule chose que le
+ * decoupage faisait bien : savoir sur quel marche la colonie gagne. Elle est
+ * tiree du carnet — ce qui a ete ferme, pas ce qu on esperait — et chaque
+ * ligne porte son effectif, parce qu un marche vu trois fois ne se compare
+ * pas a un marche vu cent fois. */
+function parMarche() {
+  const S = etat();
+  const out = {};
+  for (const sym of SYMBOLES) out[sym] = { sym, nom: sym.replace(/USDT$/, ''), n: 0, gagnantes: 0, gain: 0, financement: 0 };
+  for (const c of S.carnet) {
+    const d = out[c.sym] || (out[c.sym] = { sym: c.sym, nom: String(c.sym || '?').replace(/USDT$/, ''),
+                                            n: 0, gagnantes: 0, gain: 0, financement: 0 });
+    d.n++; if (c.r > 0) d.gagnantes++;
+    d.gain += c.gain || 0; d.financement += c.financement || 0;
+  }
+  /* La case memoire du marche : ce que la colonie a APPRIS de lui, a cote de
+     ce qu elle y a gagne. Les deux ne disent pas la meme chose — l une porte
+     sur les trades fermes, l autre sur toutes les ombres jugees. */
+  return Object.keys(out).map((k) => {
+    const d = out[k];
+    const c = caseProfil('marche', d.nom, HORIZON_REF, true);
+    return Object.assign(d, {
+      gain: Math.round(d.gain * 100) / 100,
+      financement: Math.round(d.financement * 1000) / 1000,
+      partGagnantes: d.n ? Math.round(d.gagnantes / d.n * 100) : null,
+      /* `null` tant que la case n a pas ses observations : une esperance sur
+         trois ombres est du bruit, et elle se lirait comme un jugement. */
+      appris: (c && c.n >= PROFIL_MIN_OBS) ? { n: c.n, moyenne: Math.round(c.s / c.n * 1000) / 1000 } : null,
+      obs: (c && c.n) || 0,
+    });
+  }).sort((a, b) => b.n - a.n || b.obs - a.obs);
+}
+
+/** Ce que la page lit. Aucune cle, aucun secret : il n y en a pas ici. */
+function vue() {
+  const S = etat();
   const f = S.financement;
+  const a = auditDesRefus();
   return {
-    sym, tours: S.tours, maj: S.maj, depuis: S.depuis, erreur: S.derniereErreur,
-    tresor: Math.round(S.tresor * 100) / 100, depart: S.depart,
+    tours: S.tours, maj: S.maj, depuis: S.depuis, erreur: S.derniereErreur,
+    marches: SYMBOLES, tresor: Math.round(S.tresor * 100) / 100, depart: S.depart,
     profit: Math.round((S.tresor - S.depart) * 100) / 100,
     trades: S.trades, meilleur: S.meilleur,
     partGagnantes: S.carnet.length ? Math.round(S.carnet.filter((c) => c.r > 0).length / S.carnet.length * 100) : null,
@@ -753,20 +751,17 @@ function vue(sym) {
        papier a l air bon. */
     financement: { n: f.n, total: Math.round(f.total * 1000) / 1000,
                    moyenne: f.n ? Math.round(f.total / f.n * 1000) / 1000 : null },
-    positions: S.positions.map((p) => ({ sens: p.sens, prix0: p.prix0, stop: p.stop, cible: p.cible,
+    positions: S.positions.map((p) => ({ sym: p.sym, nom: String(p.sym || '').replace(/USDT$/, ''),
+                                         sens: p.sens, prix0: p.prix0, stop: p.stop, cible: p.cible,
                                          mise: p.mise, score: p.score, depuis: p.t })),
     carnet: S.carnet.slice(0, 40),
-    agents: AGENTS.map((a) => ({ key: a.key, nom: a.nom, emoji: a.emoji, role: a.role, quoi: a.quoi, traits: a.traits })),
-    audit: auditDesRefus(sym),
-    reference: reference(sym),
-    verdicts: auditDesRefus(sym).map((l) => Object.assign({ cle: l.cle }, verdictRegle(sym, l.cle))),
+    parMarche: parMarche(),
+    agents: AGENTS.map((x) => ({ key: x.key, nom: x.nom, emoji: x.emoji, role: x.role, quoi: x.quoi, traits: x.traits })),
+    audit: a,
+    reference: reference(),
+    verdicts: a.map((l) => Object.assign({ cle: l.cle }, verdictRegle(l.cle))),
     ombres: { enAttente: S.ombres.length, jugees: S.compteurs.ombresJugees || 0 },
-    /* L audit commun aux cinq marches : cinq fois l echantillon pour le meme
-       temps ecoule, et la repartition a cote pour qu on voie si on a le droit
-       de les additionner. */
-    commun: { audit: auditCommunVue(), reference: referenceCommune(),
-              symboles: SYMBOLES, divergePoints: DIVERGE_POINTS, divergeMinObs: DIVERGE_MIN_OBS },
-    horizons: HORIZONS, horizonRef: HORIZON_REF, minObs: AUDIT_MIN_OBS,
+    horizons: HORIZONS, horizonRef: HORIZON_REF, minObs: AUDIT_MIN_OBS, profilMinObs: PROFIL_MIN_OBS,
     gagne: GAGNE, perd: PERD, seuil: S.seuil,
     flux: S.flux.slice(0, 20),
     compteurs: S.compteurs,
@@ -781,16 +776,14 @@ let minuterie = null;
 const CADENCE_MS = Math.max(60000, Number(process.env.PERP_CADENCE_MS || 5 * 60000));
 function demarre() {
   if (String(process.env.PERP_COLONIES || '1') !== '1') {
-    console.log('[perp] colonies eteintes (PERP_COLONIES=0)');
+    console.log('[perp] colonie eteinte (PERP_COLONIES=0)');
     return null;
   }
   charge();
-  console.log('[perp] colonies PAPIER armees : ' + SYMBOLES.join(', ') + ' · un tour toutes les '
+  console.log('[perp] colonie PAPIER armee sur ' + SYMBOLES.join(', ') + ' · un tour toutes les '
               + Math.round(CADENCE_MS / 60000) + ' min · aucune cle, aucun ordre');
   const boucle = async () => {
-    for (const sym of SYMBOLES) {
-      try { await tour(sym); } catch (e) { console.error('[perp] ' + sym + ' : ' + (e.message || e)); }
-    }
+    try { await tour(); } catch (e) { console.error('[perp] ' + (e.message || e)); }
   };
   setTimeout(boucle, 20000);
   minuterie = setInterval(boucle, CADENCE_MS);
@@ -803,8 +796,7 @@ module.exports = {
   charge, etat, etatNeuf, vue, tour, demarre, litMarche,
   mesures, traitsDe, note, noteOmbre, regleLesOmbres, noteAudit, auditDesRefus,
   reference, verdictRegle, coutFinancement, ouvre, ferme, surveille,
-  auditCommun, auditCommunVue, referenceCommune, verdictCommun, ecartEntreMarches,
-  DIVERGE_POINTS, DIVERGE_MIN_OBS,
+  parMarche, caseProfil, noteProfil,
   volatilite, position, ema,
-  _pose: (sym, e) => { E[sym] = e; },
+  _pose: (e) => { E = e; },
 };

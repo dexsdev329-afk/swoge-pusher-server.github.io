@@ -1973,13 +1973,13 @@ const server = http.createServer(async (req, res) => {
    * du moment. Un cache de soixante secondes montrerait a l'un ce que l'autre
    * a deja vu changer — c'est-a-dire, exactement, deux colonies differentes. */
   /* Une colonie de perpetuels par instrument. Sans symbole, la liste. */
+  /* UNE colonie pour tous les perpetuels : une seule vue. Le chemin par
+     symbole a existe le temps qu il y ait une colonie par marche ; il rend
+     desormais la meme vue, pour qu un lien garde ne tombe pas dans le vide. */
   if (path === '/ai/perp' || path.startsWith('/ai/perp/')) {
-    const sym = path === '/ai/perp' ? '' : path.slice('/ai/perp/'.length).toUpperCase();
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*', 'cache-control': 'no-store' });
-    if (!sym) return res.end(JSON.stringify({ symboles: aiPerp.SYMBOLES, papier: true }));
-    if (aiPerp.SYMBOLES.indexOf(sym) < 0) return res.end(JSON.stringify({ erreur: 'unknown symbol', symboles: aiPerp.SYMBOLES }));
-    return res.end(JSON.stringify(aiPerp.vue(sym)));
+    return res.end(JSON.stringify(aiPerp.vue()));
   }
 
   if (path === '/ai/colonie') {
