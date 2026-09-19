@@ -147,6 +147,8 @@ function etatNeuf() {
     /* Le dernier interet ouvert vu par marche : il sert a calculer sa
        VARIATION, qui part au journal. Rien d autre ne le lit. */
     interetVu: {},
+    /* Tours consecutifs sans rien prendre : c est lui qui ouvre la soupape. */
+    disette: 0,
     /* ---- LE DERNIER PRIX VU, PAR MARCHE ----
      * « On ne voit pas le prix actuel ni combien on gagne. » Une position
      * ouverte n affichait que son entree, son stop et sa cible : trois
@@ -389,20 +391,66 @@ const AGENTS = [
 /* ---- LES VETOS ----
  * Ils rendent une PHRASE, en anglais, et cette phrase devient une ligne
  * d audit. Elle doit donc nommer la regle, pas le chiffre du moment. */
-const VETOS = {
-  tendance: (x, sens) => {
-    if (x.fond === null || x.ecartEma === null) return 'trend unreadable: not enough candles yet';
-    /* On ne prend pas a contre-sens du fond quand il est marque. Seuil a 4 %,
-       pose le 19 septembre 2026 : c est la borne haute de la tranche « fond
-       neutre » du trait, donc la regle et la mesure parlent de la meme chose. */
-    if (sens > 0 && x.fond < -4) return 'long against a deep downtrend';
-    if (sens < 0 && x.fond > 4) return 'short against a deep uptrend';
-    return null;
-  },
+/* ==========================================================================
+ * DEUX SORTES DE REFUS, ET C EST CE QUI A BLOQUE LA COLONIE
+ *
+ * ---- CE QUI EST ARRIVE, 19 septembre 2026, sept tours ----
+ *
+ * Zero position ouverte, dix ombres en attente, aucun trade. Un tour rejoue
+ * a la main contre le vrai marche a donne, sur les CINQ marches a la fois :
+ *
+ *   LONG   note 36 a 51   « score below the bar »        (la barre est a 55)
+ *   SHORT  note 49 a 64   « short against a deep uptrend »
+ *
+ * Ce n est pas une panne, c est une contradiction de conception. La NOTE est
+ * contrariante : le financement, le couloir et la journee — 28 points sur 48
+ * — poussent CONTRE le mouvement en cours. Le VETO, lui, suit la tendance :
+ * jamais de short contre un fond haussier. Quand le fond monte, le short est
+ * le cote que la note aime et que le veto interdit ; le long est le cote que
+ * le veto autorise et que la note deteste. L intersection est VIDE, et elle
+ * l est exactement dans l etat de marche le plus frequent.
+ *
+ * Et la consequence est pire que l inaction : `reference()` exige douze
+ * observations de la ligne « pris » pour exister. Sans rien de pris, la
+ * reference n existe jamais, donc `verdictRegle` ne peut JAMAIS rendre autre
+ * chose que « unknown ». L audit est structurellement incapable de conclure.
+ * La colonie n apprend pas — elle ne le peut pas.
+ *
+ * ---- DEJA VU, ET DEJA PAYE ----
+ *
+ * La colonie de jetons a vecu la meme roue a cliquet le 12 septembre : trois
+ * bornes a leur butee, vingt-huit tours sans achat, et un desserrage qui
+ * exigeait une reference qu on ne pouvait plus produire. « La boucle ne
+ * pouvait que se fermer. » Elle a recu une soupape de famine. Celle-ci en
+ * recoit une aussi.
+ *
+ * ---- LA SEPARATION ----
+ *
+ * Un refus de SECURITE protege d une position qu on ne saurait pas juger :
+ * donnees illisibles, marche mort, tempete. Il ne cede jamais.
+ * Un refus d AVIS est une opinion sur la direction. C est lui qui cede quand
+ * la colonie est a l arret, parce qu une opinion qu on ne peut pas mesurer
+ * n est pas une regle : c est une croyance.
+ * ======================================================================== */
+const VETOS_SECURITE = {
   regime: (x) => {
     if (x.vol15 === null) return 'volatility unreadable: not enough candles yet';
     if (x.vol15 < 0.04) return 'market is dead: nothing moves enough to pay the funding';
     if (x.vol15 > 0.6) return 'storm: a stop would be hit by noise alone';
+    return null;
+  },
+  donnees: (x) => (x.fond === null || x.ecartEma === null) ? 'trend unreadable: not enough candles yet' : null,
+};
+
+const VETOS = {
+  tendance: (x, sens) => {
+    if (x.fond === null) return null;         /* illisible : c est la securite qui le dit */
+    /* On ne prend pas a contre-sens du fond quand il est marque. Seuil a 4 %,
+       pose le 19 septembre 2026 : c est la borne haute de la tranche « fond
+       neutre » du trait, donc la regle et la mesure parlent de la meme chose.
+       C est un AVIS : il cede devant la soupape de famine. */
+    if (sens > 0 && x.fond < -4) return 'long against a deep downtrend';
+    if (sens < 0 && x.fond > 4) return 'short against a deep uptrend';
     return null;
   },
 };
@@ -607,6 +655,24 @@ function regleLesOmbres(lus) {
  * inexistant en tempete, et c est la premiere facon de se faire sortir par le
  * bruit. Les multiples sont volontairement larges et fixes tant qu aucune
  * mesure ne les a departages — l audit des sorties les jugera. */
+/* ---- LA SOUPAPE DE FAMINE ----
+ * Au bout de ce nombre de tours consecutifs sans rien prendre, la colonie
+ * prend le meilleur candidat que la SECURITE laisse passer, meme s il est
+ * sous la barre ou refuse par un avis de direction. Un tour dure cinq
+ * minutes : douze tours font une heure.
+ *
+ * POSE SANS MESURE le 19 septembre 2026 — la colonie n avait rien pris du
+ * tout, il n existait donc aucun echantillon pour le choisir. C est un point
+ * de depart, et il est rendu jugeable immediatement.
+ *
+ * Une prise de soupape reste classee « pris » dans l audit, et c est voulu :
+ * la reference est ce qu on prend REELLEMENT, et la soupape est une facon de
+ * prendre. Mais chaque trade ferme garde sa marque, et la vue rend les deux
+ * groupes cote a cote avec leur effectif (`soupapeBilan`). Dans quinze jours
+ * on saura : si la soupape rapporte moins, elle se resserre ; si elle
+ * rapporte autant, c est la barre a 55 qui est trop haute. */
+const FAMINE_TOURS = Math.max(1, Number(process.env.PERP_FAMINE_TOURS || 12));
+
 const STOP_VOL = 3.0, CIBLE_VOL = 5.0, TENUE_MAX_MIN = 720;
 const LEVIER = 1;                 /* PAPIER, et sans levier : voir l en-tete */
 
@@ -643,7 +709,8 @@ function ferme(p, prix, pourquoi) {
   S.trades++; S.gains += gain;
   if (r > S.meilleur) S.meilleur = r;
   S.financement.n++; S.financement.total += fin;
-  S.carnet.unshift({ sym: p.sym, sens: p.sens, prix0: p.prix0, prix, r, brut: Math.round(brut * 1000) / 1000,
+  S.carnet.unshift({ sym: p.sym, soupape: !!p.soupape,
+                     sens: p.sens, prix0: p.prix0, prix, r, brut: Math.round(brut * 1000) / 1000,
                      financement: Math.round(fin * 1000) / 1000, gain, minutes: Math.round(minutes),
                      pourquoi, t: Date.now() });
   if (S.carnet.length > 200) S.carnet.length = 200;
@@ -718,16 +785,25 @@ async function tour(opts) {
   for (const sym of Object.keys(lus)) {
     const x = lus[sym];
     for (const sens of [1, -1]) {
-      let refus = null, qui = null;
-      for (const a of AGENTS) {
-        const v = VETOS[a.key];
-        if (!v) continue;
-        const r = v(x, sens);
-        if (r) { refus = r; qui = a.key; break; }
+      /* La securite d abord, et elle ne cede jamais : une position prise sur
+         des donnees illisibles ou dans une tempete ne serait pas jugeable. */
+      let refus = null, qui = null, securite = false;
+      for (const k of Object.keys(VETOS_SECURITE)) {
+        const r = VETOS_SECURITE[k](x, sens);
+        if (r) { refus = r; qui = k === 'donnees' ? 'tendance' : k; securite = true; break; }
+      }
+      /* Puis les avis de direction, qui cedent devant la soupape. */
+      if (!refus) {
+        for (const a of AGENTS) {
+          const v = VETOS[a.key];
+          if (!v) continue;
+          const r = v(x, sens);
+          if (r) { refus = r; qui = a.key; break; }
+        }
       }
       const an = note(x, sens);
       if (!refus && an.score < S.seuil) { refus = 'score below the bar'; qui = 'tendance'; }
-      verdicts.push({ sym, sens, refus, qui, score: an.score, an });
+      verdicts.push({ sym, sens, refus, qui, securite, score: an.score, an });
     }
   }
   /* ---- UNE POSITION A LA FOIS, POUR TOUTE LA COLONIE ----
@@ -735,7 +811,20 @@ async function tour(opts) {
    * temps, c est deux fois l exposition, et rien n a encore mesure que ce
    * soit mieux. La meilleure note l emporte, quel que soit le marche — c est
    * exactement ce que le decoupage en cinq colonies ne savait pas faire. */
-  const pris = verdicts.filter((v) => !v.refus).sort((a, b) => b.score - a.score)[0];
+  let pris = verdicts.filter((v) => !v.refus).sort((a, b) => b.score - a.score)[0];
+  /* ---- LA SOUPAPE ----
+   * Rien ne passe depuis trop longtemps : on prend le meilleur candidat que
+   * la SECURITE laisse passer. Sans elle, la colonie n a aucun moyen de
+   * construire la ligne « pris » qui sert de reference a tout l audit — et
+   * sans reference, aucune regle ne peut jamais etre jugee. */
+  let parSoupape = false;
+  if (!pris) {
+    S.disette = (S.disette || 0) + 1;
+    if (S.disette >= FAMINE_TOURS && !S.positions.length) {
+      const ouvert = verdicts.filter((v) => !v.securite).sort((a, b) => b.score - a.score)[0];
+      if (ouvert) { pris = ouvert; parSoupape = true; }
+    }
+  } else S.disette = 0;
 
   /* ---- LA LIGNE BRUTE, UNE PAR MARCHE ----
    * Ecrite APRES la decision, pour qu elle la porte, et avant les ombres,
@@ -753,8 +842,17 @@ async function tour(opts) {
     if (pris && v === pris) noteOmbre(lus[v.sym], v.sens, null, null, v.an.traits);
     else noteOmbre(lus[v.sym], v.sens, v.refus, v.qui, v.an.traits);
   }
-  if (pris && !S.positions.length) ouvre(lus[pris.sym], pris.sens, pris.an);
-  else if (pris) compte('dejaEngage');
+  if (pris && !S.positions.length) {
+    const p = ouvre(lus[pris.sym], pris.sens, pris.an);
+    p.soupape = parSoupape;
+    S.disette = 0;
+    if (parSoupape) {
+      compte('soupape');
+      /* Ecrit dans le journal du panneau : une prise de soupape ne doit pas
+         se lire comme une prise ordinaire. */
+      S.flux[0].quoi += ' · valve';
+    }
+  } else if (pris) compte('dejaEngage');
 
   sauve();
   return { etat: 'ok', marches: Object.keys(lus), rates,
@@ -763,6 +861,25 @@ async function tour(opts) {
 }
 
 // --------------------------------------------------------------- la vue
+
+/* ---- LA SOUPAPE RAPPORTE-T-ELLE MOINS QUE LA COLONIE ? ----
+ * Les deux groupes cote a cote, chacun avec son effectif. Aucun verdict tant
+ * que les deux n ont pas atteint le minimum : comparer trois trades a
+ * quarante ne dit rien, et l afficher quand meme serait pire que se taire. */
+function soupapeBilan() {
+  const S = etat();
+  const g = { soupape: { n: 0, gagnantes: 0, somme: 0 }, colonie: { n: 0, gagnantes: 0, somme: 0 } };
+  for (const c of S.carnet) {
+    const d = c.soupape ? g.soupape : g.colonie;
+    d.n++; d.somme += c.r; if (c.r > 0) d.gagnantes++;
+  }
+  const fini = (d) => d.n ? { n: d.n, moyenne: Math.round(d.somme / d.n * 1000) / 1000,
+                              partGagnantes: Math.round(d.gagnantes / d.n * 100) } : { n: 0, moyenne: null, partGagnantes: null };
+  const a = fini(g.soupape), b = fini(g.colonie);
+  return { soupape: a, colonie: b, tours: FAMINE_TOURS,
+           comparable: a.n >= AUDIT_MIN_OBS && b.n >= AUDIT_MIN_OBS,
+           disette: S.disette || 0, prises: S.compteurs.soupape || 0 };
+}
 
 /** Ce que la page lit. Aucune cle, aucun secret : il n y en a pas ici. */
 /* ---- CE QUE CHAQUE MARCHE A RENDU ----
@@ -839,6 +956,7 @@ function vue() {
     }),
     carnet: S.carnet.slice(0, 40),
     parMarche: parMarche(),
+    soupape: soupapeBilan(),
     agents: AGENTS.map((x) => ({ key: x.key, nom: x.nom, emoji: x.emoji, role: x.role, quoi: x.quoi, traits: x.traits })),
     audit: a,
     reference: reference(),
@@ -878,11 +996,11 @@ function demarre() {
 
 module.exports = {
   SYMBOLES, HORIZONS, HORIZON_REF, AGENTS, TRAITS, VETOS, GAGNE, PERD,
-  AUDIT_MIN_OBS, PROFIL_MIN_OBS, PERIODE_FIN_MIN,
+  AUDIT_MIN_OBS, PROFIL_MIN_OBS, PERIODE_FIN_MIN, FAMINE_TOURS, VETOS_SECURITE,
   charge, etat, etatNeuf, vue, tour, demarre, litMarche,
   mesures, traitsDe, note, noteOmbre, regleLesOmbres, noteAudit, auditDesRefus,
   reference, verdictRegle, coutFinancement, ouvre, ferme, surveille,
-  parMarche, caseProfil, noteProfil,
+  parMarche, soupapeBilan, caseProfil, noteProfil,
   volatilite, position, ema,
   _pose: (e) => { E = e; },
 };
