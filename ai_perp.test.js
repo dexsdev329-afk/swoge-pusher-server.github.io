@@ -137,8 +137,14 @@ const neuf = (sym) => { P._pose(sym, P.etatNeuf(sym)); return P.etat(sym); };
     let r = await P.tour(SYM, { marche: marche({ bruit: 0.001, pente: 0 }) });
     ok(r.verdicts.every((v) => /dead/.test(v.refus || '')), 'un marche mort refuse les deux sens : « ' + r.verdicts[0].refus + ' »');
     eq(r.ouvert, 0, 'et rien ne s ouvre');
-    ok(S.ombres.length === 2 && S.ombres.every((o) => /regime/.test(o.cle)),
-       'deux ombres, une par sens, sous la regle qui a refuse');
+    /* La cle d audit porte le NOM anglais de l agent, pas sa cle interne :
+       c est cette chaine que la page affiche, au milieu d un panneau anglais.
+       Ce qui est verifie reste le meme — l ombre est classee sous l agent qui
+       a refuse — mais sous le nom qu'on lira. */
+    const nomRegime = P.AGENTS.find((a) => a.key === 'regime').nom;
+    ok(S.ombres.length === 2 && S.ombres.every((o) => o.cle.indexOf(nomRegime + ' · ') === 0),
+       'deux ombres, une par sens, sous la regle qui a refuse (« ' + S.ombres[0].cle + ' »)');
+    ok(!/regime ·/.test(S.ombres[0].cle), 'et pas sous sa cle interne, qui est francaise');
 
     /* Tempete : refusee aussi, et par une autre phrase. */
     const S2 = neuf(SYM);

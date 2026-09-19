@@ -439,10 +439,23 @@ const OMBRES_MAX = 4000;
  * son sens, parce qu un refus de long ne se juge pas sur le mouvement du prix
  * mais sur ce qu aurait fait ce long.
  */
+/** Le nom anglais d un agent depuis sa cle — c est ce nom qui va a l ecran. */
+function nomAgent(k) {
+  if (!k) return null;
+  const a = AGENTS.find((z) => z.key === k);
+  return a ? a.nom : k;
+}
 function noteOmbre(sym, x, sens, refus, quiRefuse, traits) {
   const S = etat(sym);
   if (!(x.prix > 0)) return;
-  const cle = refus ? (quiRefuse || 'refus') + ' · ' + refus : 'pris';
+  /* ---- LA CLE D AUDIT SE LIT SUR LA PAGE ----
+     Elle etait construite sur la CLE de l agent — `tendance`, `couloir`,
+     `journee` — et la page l affiche telle quelle : une ligne d audit moitie
+     francaise au milieu d un panneau anglais. Le nom de l agent est deja
+     anglais et deja montre a cote, dans la liste des agents : c est lui qui
+     nomme la regle. Change avant la premiere mesure, donc sans rien perdre —
+     apres, une cle qui change repartirait d un echantillon vide. */
+  const cle = refus ? (nomAgent(quiRefuse) || 'refus') + ' · ' + refus : 'pris';
   const now = Date.now();
   /* Une seule ombre par cle et par sens a la fois : sinon chaque tour en
      empile une et la meme situation compte cent fois. */
