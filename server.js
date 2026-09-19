@@ -38,6 +38,7 @@ const xReponse = require('./x_reponse');
 const tgCommandes = require('./tg_commandes');
 const espn = require('./scores_espn');
 const aiColonie = require('./ai_colonie');
+const aiPerp = require('./ai_perp');
 /* Les adresses qui ont la main sur le papier de la colonie (AI_OWNER). */
 const proprietaireIA = (adr) => !!adr && String(cfg.AI_OWNER || '').toLowerCase().split(/[\s,;]+/)
   .filter(Boolean).indexOf(String(adr).toLowerCase()) >= 0;
@@ -1971,6 +1972,16 @@ const server = http.createServer(async (req, res) => {
    * `no-store` : la vue porte l'heure de la derniere lecture et la tresorerie
    * du moment. Un cache de soixante secondes montrerait a l'un ce que l'autre
    * a deja vu changer — c'est-a-dire, exactement, deux colonies differentes. */
+  /* Une colonie de perpetuels par instrument. Sans symbole, la liste. */
+  if (path === '/ai/perp' || path.startsWith('/ai/perp/')) {
+    const sym = path === '/ai/perp' ? '' : path.slice('/ai/perp/'.length).toUpperCase();
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    if (!sym) return res.end(JSON.stringify({ symboles: aiPerp.SYMBOLES, papier: true }));
+    if (aiPerp.SYMBOLES.indexOf(sym) < 0) return res.end(JSON.stringify({ erreur: 'unknown symbol', symboles: aiPerp.SYMBOLES }));
+    return res.end(JSON.stringify(aiPerp.vue(sym)));
+  }
+
   if (path === '/ai/colonie') {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*',
@@ -7115,6 +7126,8 @@ server.listen(cfg.PORT, () => {
   if (cfg.AI_COLONIE === '1') {
     try {
       aiColonie.demarre();
+      /* Les colonies de perpetuels : PAPIER, aucune cle, aucun ordre. */
+      aiPerp.demarre();
       console.log('[ai] colonie demarree — vue publique sur /ai/colonie');
     } catch (e) {
       console.warn('[ai] colonie non demarree :', e.message);
