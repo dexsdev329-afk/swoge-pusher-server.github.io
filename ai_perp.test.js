@@ -361,11 +361,20 @@ const neuf = () => { P._pose(P.etatNeuf()); return P.etat(); };
   {
     /* L etat bloque, reproduit : un FOND marque (pente des bougies de quatre
        heures) avec une volatilite COURTE calme, donc aucun refus de securite.
-       Mesure : fond 5,15 %, vol15 0,168 — au-dessus du seuil de 4 % du veto
-       de tendance, et bien a l interieur des bornes du regime. */
+       Le seuil du mur de tendance a deja bouge une fois — 4 % le 19
+       septembre, 8 % le 20, parce que l audit disait qu il coutait — donc la
+       pente est CHOISIE pour le depasser, quel qu il soit : un essai qui
+       recopie un seuil se casse a chaque mesure. */
     neuf();
     const S = P.etat();
-    const haut = marche({ prix: 80000, pente: 0.03, pente4: 0.2, bruit: 0.12 });
+    let haut = null, fondVu = 0;
+    for (let p4 = 0.2; p4 <= 4 && !haut; p4 += 0.15) {
+      const m = marche({ prix: 80000, pente: 0.03, pente4: p4, bruit: 0.12 });
+      const x = P.mesures(m);
+      if (x.fond > P.FOND_MUR * 1.15) { haut = m; fondVu = x.fond; }
+    }
+    ok(!!haut, 'un fond de ' + fondVu.toFixed(1) + ' % depasse le mur de ' + P.FOND_MUR + ' %');
+    ok(P.mesures(haut).vol15 < 0.6, 'sans declencher le refus de tempete, qui est un refus de SECURITE');
     let r = await P.tour({ marches: { BTCUSDT: haut } });
     const short = r.verdicts.find((v) => v.sens < 0);
     const long = r.verdicts.find((v) => v.sens > 0);
@@ -408,6 +417,52 @@ const neuf = () => { P._pose(P.etatNeuf()); return P.etat(); };
     ok(b.soupape && b.colonie, 'le bilan separe ce que prend la soupape de ce que prend la colonie');
     eq(b.comparable, false, 'et il refuse de conclure tant que les deux groupes n ont pas leur echantillon');
     eq(b.tours, P.FAMINE_TOURS, 'il rappelle au bout de combien de tours elle s ouvre');
+  }
+
+  /* ======================================================================
+   * 12. PLUSIEURS POSITIONS, UNE PAR MARCHE
+   *
+   * ---- LA MESURE QUI L A DECIDE ----
+   * 20 septembre 2026, 283 tours en production : 4 ouvertures et
+   * 211 `dejaEngage`. Deux cent onze fois, un candidat avait passe la
+   * securite, l avis ET la barre, et la colonie n a rien fait parce qu elle
+   * tenait deja une position AILLEURS. Une position se tient jusqu a douze
+   * heures : sur cinq marches, une seule a la fois laisse passer l essentiel
+   * de ce qu on a su reperer.
+   *
+   * La regle d origine — deux sens sur le MEME instrument s annulent et
+   * paient deux financements — reste vraie, et reste appliquee.
+   * ==================================================================== */
+  console.log('\n-- 12. plusieurs positions, une par marche --');
+  {
+    neuf();
+    const S = P.etat();
+    /* Trois marches lisibles et franchement orientes : de quoi ouvrir. */
+    const bon = (p) => marche({ prix: 100, pente: p, bruit: 0.12, financement: -0.0009 });
+    const trois = { BTCUSDT: bon(0.3), ETHUSDT: bon(0.3), SOLUSDT: bon(0.3) };
+    await P.tour({ marches: trois });
+    eq(S.positions.length, 1, 'un tour n ouvre qu une position : la meilleure note, pas toutes');
+    await P.tour({ marches: trois });
+    ok(S.positions.length === 2, 'le tour suivant en ouvre une autre, sur un AUTRE marche : ' + S.positions.length);
+    const marches = S.positions.map((p) => p.sym);
+    eq(new Set(marches).size, marches.length, 'jamais deux positions sur le meme instrument : ' + marches.join(', '));
+    ok(!S.compteurs.dejaEngage, 'et le compteur fourre-tout `dejaEngage` a disparu');
+
+    /* Le plafond mord, et il se compte. */
+    for (let i = 0; i < 6; i++) await P.tour({ marches: trois });
+    ok(S.positions.length <= P.POSITIONS_MAX,
+       'le plafond de ' + P.POSITIONS_MAX + ' tient : ' + S.positions.length + ' positions');
+    ok((S.compteurs.plafondPositions || 0) + (S.compteurs.dejaSurCeMarche || 0) > 0,
+       'et les deux raisons de ne rien faire sont comptees SEPAREMENT : plafond '
+       + (S.compteurs.plafondPositions || 0) + ', marche deja tenu ' + (S.compteurs.dejaSurCeMarche || 0));
+
+    /* Chaque position garde son marche, et se surveille au prix du sien. */
+    const avant = S.positions.length;
+    const p0 = S.positions[0];
+    const contre = p0.prix0 * (1 - p0.sens * 0.05);
+    P.surveille({ [p0.sym]: { prix: contre } });
+    eq(S.positions.length, avant - 1, 'un stop ne ferme que la position de SON marche');
+    eq(S.carnet[0].sym, p0.sym, 'et le carnet dit lequel : ' + S.carnet[0].sym);
   }
 
   console.log(`\nai_perp.test.js : ${n} verifications OK`);

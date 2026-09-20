@@ -432,6 +432,11 @@ const AGENTS = [
  * la colonie est a l arret, parce qu une opinion qu on ne peut pas mesurer
  * n est pas une regle : c est une croyance.
  * ======================================================================== */
+/* Le mur de tendance : voir la mesure dans `VETOS.tendance`. 4 % le
+   19 septembre (sans mesure), 8 % le 20 (parce que l audit disait qu il
+   coutait). */
+const FOND_MUR = Math.max(1, Number(process.env.PERP_FOND_MUR || 8));
+
 const VETOS_SECURITE = {
   regime: (x) => {
     if (x.vol15 === null) return 'volatility unreadable: not enough candles yet';
@@ -445,12 +450,27 @@ const VETOS_SECURITE = {
 const VETOS = {
   tendance: (x, sens) => {
     if (x.fond === null) return null;         /* illisible : c est la securite qui le dit */
-    /* On ne prend pas a contre-sens du fond quand il est marque. Seuil a 4 %,
-       pose le 19 septembre 2026 : c est la borne haute de la tranche « fond
-       neutre » du trait, donc la regle et la mesure parlent de la meme chose.
-       C est un AVIS : il cede devant la soupape de famine. */
-    if (sens > 0 && x.fond < -4) return 'long against a deep downtrend';
-    if (sens < 0 && x.fond > 4) return 'short against a deep uptrend';
+    /* ---- CE QUE L AUDIT A DIT DE CETTE REGLE ----
+     *
+     * Seuil pose a 4 % le 19 septembre 2026, sans mesure — c etait la borne
+     * haute de la tranche « fond neutre » du trait.
+     *
+     * Premiere mesure, 20 septembre, 80 ombres jugees :
+     *
+     *   Trend · short against a deep uptrend   n=13   31 % de gagnantes   moy +0,80 %
+     *   pris (la reference)                    n=25    8 % de gagnantes   moy +0,40 %
+     *
+     * Les shorts REFUSES par cette regle ont gagne quatre fois plus souvent
+     * que ce que la colonie prend reellement, et rapporte le double en
+     * moyenne. Le verdict du moteur lui-meme, sur son propre minimum de douze
+     * observations : « costs ». La regle ne protegeait pas, elle coutait.
+     *
+     * Elle n est pas supprimee — un fond a +20 % reste un mur — mais son
+     * seuil passe a 8 %, ce qui divise sa portee. Elle garde donc sa ligne
+     * d audit : si elle coute encore a 8 %, on l elargira encore, avec le
+     * chiffre qui l aura decide. C est un AVIS : il cede devant la soupape. */
+    if (sens > 0 && x.fond < -FOND_MUR) return 'long against a deep downtrend';
+    if (sens < 0 && x.fond > FOND_MUR) return 'short against a deep uptrend';
     return null;
   },
 };
@@ -673,6 +693,27 @@ function regleLesOmbres(lus) {
  * rapporte autant, c est la barre a 55 qui est trop haute. */
 const FAMINE_TOURS = Math.max(1, Number(process.env.PERP_FAMINE_TOURS || 12));
 
+/* ---- COMBIEN DE POSITIONS A LA FOIS ----
+ *
+ * Mesure du 20 septembre 2026, 283 tours : **4 ouvertures** et
+ * **211 `dejaEngage`**. Deux cent onze fois, un candidat avait passe la
+ * securite, l avis ET la barre — et la colonie n a rien fait, parce qu elle
+ * tenait deja une position ailleurs. Une position se tient jusqu a douze
+ * heures : sur cinq marches, une seule a la fois laisse passer l essentiel de
+ * ce qu on a su reperer.
+ *
+ * La regle d origine — « deux sens ouverts en meme temps sur le MEME
+ * instrument s annulent et paient deux financements » — reste vraie et reste
+ * appliquee : un marche a la fois. Elle ne disait rien de deux marches
+ * differents, et c est elle qu on avait etendue trop loin.
+ *
+ * Trois, POSE SANS MESURE : la mise est un dixieme de la tresorerie, donc
+ * trois positions font trois dixiemes d exposition. Rendu jugeable
+ * immediatement — `plafondPositions` compte les fois ou le plafond mord, et
+ * `dejaSurCeMarche` celles ou c est la regle du marche unique. Si le plafond
+ * mord souvent sans que le papier souffre, il monte. */
+const POSITIONS_MAX = Math.max(1, Number(process.env.PERP_POSITIONS_MAX || 3));
+
 const STOP_VOL = 3.0, CIBLE_VOL = 5.0, TENUE_MAX_MIN = 720;
 const LEVIER = 1;                 /* PAPIER, et sans levier : voir l en-tete */
 
@@ -811,7 +852,18 @@ async function tour(opts) {
    * temps, c est deux fois l exposition, et rien n a encore mesure que ce
    * soit mieux. La meilleure note l emporte, quel que soit le marche — c est
    * exactement ce que le decoupage en cinq colonies ne savait pas faire. */
-  let pris = verdicts.filter((v) => !v.refus).sort((a, b) => b.score - a.score)[0];
+  /* ---- LE MEILLEUR PARMI LES MARCHES LIBRES ----
+   * Premiere ecriture : on prenait la meilleure note, PUIS on abandonnait si
+   * ce marche etait deja tenu. Un candidat excellent sur un marche libre
+   * etait donc perdu parce qu un autre, meilleur, se trouvait sur un marche
+   * occupe — exactement le defaut qu on venait de corriger, deplace d un
+   * cran. On ecarte d abord les marches tenus, on choisit ensuite. */
+  const tenus = new Set(S.positions.map((q) => q.sym));
+  const passants = verdicts.filter((v) => !v.refus);
+  let pris = passants.filter((v) => !tenus.has(v.sym)).sort((a, b) => b.score - a.score)[0];
+  /* Un candidat existait, mais seulement la ou l on est deja : ce n est pas
+     la meme chose que « rien ne passe », et ca se compte a part. */
+  if (!pris && passants.length) compte('dejaSurCeMarche');
   /* ---- LA SOUPAPE ----
    * Rien ne passe depuis trop longtemps : on prend le meilleur candidat que
    * la SECURITE laisse passer. Sans elle, la colonie n a aucun moyen de
@@ -819,7 +871,13 @@ async function tour(opts) {
    * sans reference, aucune regle ne peut jamais etre jugee. */
   let parSoupape = false;
   if (!pris) {
-    S.disette = (S.disette || 0) + 1;
+    /* La disette compte les tours ou RIEN ne passe. Un tour ou un candidat
+       existait — mais sur un marche deja tenu — n est pas une disette : la
+       colonie fonctionne, elle est juste occupee. */
+    if (!passants.length) S.disette = (S.disette || 0) + 1;
+    /* La soupape ne s ouvre que si la colonie est a PLAT. Elle existe pour
+       construire la reference quand on ne prend rien ; ajouter de
+       l exposition a une colonie deja engagee n est pas son role. */
     if (S.disette >= FAMINE_TOURS && !S.positions.length) {
       const ouvert = verdicts.filter((v) => !v.securite).sort((a, b) => b.score - a.score)[0];
       if (ouvert) { pris = ouvert; parSoupape = true; }
@@ -842,7 +900,8 @@ async function tour(opts) {
     if (pris && v === pris) noteOmbre(lus[v.sym], v.sens, null, null, v.an.traits);
     else noteOmbre(lus[v.sym], v.sens, v.refus, v.qui, v.an.traits);
   }
-  if (pris && !S.positions.length) {
+  const plein = S.positions.length >= POSITIONS_MAX;
+  if (pris && !plein) {
     const p = ouvre(lus[pris.sym], pris.sens, pris.an);
     p.soupape = parSoupape;
     S.disette = 0;
@@ -852,7 +911,13 @@ async function tour(opts) {
          se lire comme une prise ordinaire. */
       S.flux[0].quoi += ' · valve';
     }
-  } else if (pris) compte('dejaEngage');
+  } else if (pris) {
+    /* Le plafond mord : un candidat passait, sur un marche libre, et il n y a
+       plus de place. C est la seule raison qui reste, et elle se compte a
+       part — les melanger cachait laquelle mordait, et c est ce melange qui a
+       laisse passer les 211 occasions. */
+    compte('plafondPositions');
+  }
 
   sauve();
   return { etat: 'ok', marches: Object.keys(lus), rates,
@@ -956,7 +1021,7 @@ function vue() {
     }),
     carnet: S.carnet.slice(0, 40),
     parMarche: parMarche(),
-    soupape: soupapeBilan(),
+    soupape: soupapeBilan(), positionsMax: POSITIONS_MAX, fondMur: FOND_MUR,
     agents: AGENTS.map((x) => ({ key: x.key, nom: x.nom, emoji: x.emoji, role: x.role, quoi: x.quoi, traits: x.traits })),
     audit: a,
     reference: reference(),
@@ -997,6 +1062,7 @@ function demarre() {
 module.exports = {
   SYMBOLES, HORIZONS, HORIZON_REF, AGENTS, TRAITS, VETOS, GAGNE, PERD,
   AUDIT_MIN_OBS, PROFIL_MIN_OBS, PERIODE_FIN_MIN, FAMINE_TOURS, VETOS_SECURITE,
+  POSITIONS_MAX, FOND_MUR,
   charge, etat, etatNeuf, vue, tour, demarre, litMarche,
   mesures, traitsDe, note, noteOmbre, regleLesOmbres, noteAudit, auditDesRefus,
   reference, verdictRegle, coutFinancement, ouvre, ferme, surveille,
