@@ -5710,6 +5710,113 @@ function horizonPour(traits) {
  * types de 15, le trait separe pour de bon. Si toutes ses valeurs rendent
  * +2 % a 40 pres, il ne separe rien.
  * ======================================================================== */
+/* ==========================================================================
+ * LE SCAN PUBLIC — CE QUE LA COLONIE A MESURE SUR UN JETON
+ *
+ * Personne n a besoin d un casino. Tout le monde, avant d acheter, se pose la
+ * meme question : « celui-la, c est un piege ? » — et cherche la reponse
+ * ailleurs. On peut y repondre mieux que la plupart, parce qu on ne devine
+ * pas : on a des dizaines de milliers d observations sur des cases, chacune
+ * avec son effectif.
+ *
+ * ---- CE QUE CE SCAN N EST PAS ----
+ *
+ * Ce n est pas un avis d achat, et il ne dit jamais « sur » ou « rug ». Il
+ * rend des CASES et ce qu elles ont rendu : « deployeur a 4+ lancements :
+ * -43,7 % de moyenne sur 642 observations ». Le lecteur conclut. Une case
+ * sous le minimum d observations ne sort pas du tout — un chiffre sur six
+ * lectures se lirait avec la meme autorite qu un chiffre sur six cents.
+ *
+ * ---- POURQUOI IL NE PEUT PAS COUTER CHER ----
+ *
+ * La route est publique et sans cle : elle doit etre incapable de faire
+ * saigner les services. Tout passe par les MEMES caches que le tour de la
+ * colonie (`CACHE.dex`, `CACHE.goplus`, `CACHE.octets`), donc un jeton deja
+ * vu ne coute rien, et un scan ne declenche au pire que les trois appels
+ * qu un examen normal aurait faits. Le debit est borne cote serveur.
+ * ======================================================================== */
+
+/** Ce que la memoire a retenu d une case, ou `null` si elle n en sait rien. */
+function caseApprise(trait, valeur) {
+  const c = (((E.profils || {})[trait] || {})[valeur] || {})[HORIZON_REF];
+  if (!c || !c.n || c.n < PROFIL_MIN_OBS) return null;
+  return { n: Math.round(c.n), moyenne: Math.round(c.s / c.n * 10) / 10 };
+}
+
+/**
+ * Le scan d un jeton, pour la page publique.
+ * Rend `{ jeton, cases, contrat, avertissements, mesureSur }` — jamais un
+ * verdict, toujours des mesures avec leur effectif.
+ */
+async function scanJeton(adr) {
+  const addr = String(adr || '').trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) throw new Error('paste a 0x… token address');
+
+  const t = { addr, sym: '', lu: {}, appels: 0, minutes: null };
+  try { await lisPons(); } catch (e) { /* le catalogue peut etre muet : le scan continue */ }
+  annotePons(t);
+  annotePads(t);
+
+  const d = await lisDex(addr);
+  if (!d || !d.vu) throw new Error('not found on Robinhood Chain');
+  t.dex = d; t.lu.dex = true;
+  t.pool = d.pool; t.prix = d.prix; t.sym = d.sym || '';
+  t.mc = d.mc || 0; t.liq = d.liq;
+  t.socials = d.socials || 0; t.liens = d.liens || [];
+  /* L age : la piscine fait foi quand le catalogue ne dit rien. */
+  const nePar = (t.pons && t.pons.gradue) || d.cree || null;
+  t.minutes = nePar ? Math.max(0, (Date.now() - nePar) / 60000) : null;
+
+  /* Le contrat : GoPlus s il repond, les octets sinon — exactement la regle
+     du tour, sans appel de plus. */
+  try { await assure(t, ['goplus', 'octets']); } catch (e) { /* un service muet n arrete pas le scan */ }
+
+  /* Toutes les cases de ce jeton, puis ce que la memoire en sait. */
+  const vues = {}, cases = [];
+  const parAgent = traitsDe(t);
+  for (const agent in parAgent) {
+    for (const trait in parAgent[agent]) {
+      const val = parAgent[agent][trait];
+      if (val === null || val === undefined || vues[trait]) continue;
+      vues[trait] = true;
+      const m = caseApprise(trait, val);
+      if (!m) continue;               /* sous le minimum : on se tait */
+      cases.push({ trait, case: String(val), n: m.n, moyenne: m.moyenne });
+    }
+  }
+  /* Les plus tranchees d abord — c est ce qu on vient lire. */
+  cases.sort((a, b) => Math.abs(b.moyenne) - Math.abs(a.moyenne));
+
+  /* ---- CE QUI SE DIT SANS MEMOIRE ----
+   * Un contrat qui peut frapper des jetons ou geler les transferts n a pas
+   * besoin d une moyenne pour etre signale : c est un FAIT, lu sur la chaine
+   * ou chez GoPlus, et il vaut pour lui-meme. */
+  const o = t.octets || {}, g = t.g || {};
+  const faits = [];
+  const dit = (c, quoi, source) => { if (c) faits.push({ quoi, source }); };
+  dit(o.mint || g.mintable, 'the contract can mint more tokens', o.deGoplus || g.have ? 'GoPlus' : 'bytecode');
+  dit(o.pause || g.pausable, 'transfers can be paused', o.deGoplus || g.have ? 'GoPlus' : 'bytecode');
+  dit(o.liste || g.liste, 'the contract has a blacklist', o.deGoplus || g.have ? 'GoPlus' : 'bytecode');
+  dit(o.frais || g.slipMod, 'fees can be changed after the fact', o.deGoplus || g.have ? 'GoPlus' : 'bytecode');
+  dit(g.hpSame, 'this creator already made a honeypot', 'GoPlus');
+  dit(g.honeypot, 'GoPlus flags this as a honeypot', 'GoPlus');
+
+  return {
+    jeton: { adr: addr, sym: t.sym, nom: d.nom || '', logo: d.logo || null,
+             prix: d.prix || null, mc: t.mc || null, liq: t.liq,
+             minutes: t.minutes === null ? null : Math.round(t.minutes),
+             pools: d.pools || 1, liens: t.liens, pool: t.pool },
+    lanceur: t.pons ? { source: 'pons', lancements: t.pons.depGradues || 1,
+                        achatInitial: t.pons.initialBuy || 0 }
+           : (t.pad ? { source: t.pad.nom || 'launchpad', lancements: t.pad.lances || 1 } : null),
+    cases, faits,
+    /* Sur quoi tout ca repose : sans ce chiffre, le reste n est qu un avis. */
+    mesureSur: { observations: (E.compteurs && E.compteurs.jalons) || 0,
+                 tours: E.tours || 0, depuis: E.depuis || null, minObs: PROFIL_MIN_OBS,
+                 echeance: HORIZON_REF },
+  };
+}
+
 function informationDe(trait) {
   const v = (E.profils || {})[trait];
   if (!v) return null;
@@ -9240,7 +9347,7 @@ module.exports = {
   revoitStrategie, seuilCourant, partRefus, REFUS_AVEUGLE,
   revoitLesBornes, borne, BORNES, partAbandons, noteResultat, alertes, remiseAZero, nObs, parBandes, BANDES,
   releve, recents, JOUR_MS, TTL_GOPLUS_MUET, coteEnEth, pairesEthSeules, EXAMENS_TOUR,
-  lisPons, annotePons, PONS_URL, PONS_PAR_TOUR, poussesPour, POUSSE_MIN_OBS, lisPiscine, lisCode, exposeUn, SELECTEURS,
+  scanJeton, caseApprise, lisPons, annotePons, PONS_URL, PONS_PAR_TOUR, poussesPour, POUSSE_MIN_OBS, lisPiscine, lisCode, exposeUn, SELECTEURS,
   rejoue, cleAudit, noteAuditStrat, CHUTE_COUPE, HORIZON_REF,
   lisSecretpad, lisHood, annotePads, poussePads, SECRETPAD_LANCEUR, SUJET_SECRETPAD_LANCE, HOOD_URL, PADS_PAR_TOUR,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,

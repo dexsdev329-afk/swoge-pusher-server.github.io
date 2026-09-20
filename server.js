@@ -1574,6 +1574,26 @@ function bloque(req) {
   if (Date.now() - e.t > ESSAIS_FENETRE) { essais.delete(ip); return false; }
   return e.n >= ESSAIS_MAX;
 }
+/* ---- LE DEBIT DU SCAN ----
+ * Une route publique sans cle doit etre incapable de faire saigner les
+ * services qu elle interroge. Vingt scans par minute et par adresse IP :
+ * largement de quoi regarder une liste de jetons a la main, bien trop peu
+ * pour en balayer un annuaire. Compteur en memoire, remis a zero par fenetre
+ * — il n a pas a survivre a un redemarrage. */
+const SCAN_PAR_MIN = Math.max(1, Number(process.env.SCAN_PAR_MIN || 20));
+const scansVus = new Map();
+function scanDebit(req) {
+  const ip = qui(req);
+  const now = Date.now();
+  const e = scansVus.get(ip);
+  if (!e || now - e.t > 60000) { scansVus.set(ip, { n: 1, t: now }); }
+  else if (e.n >= SCAN_PAR_MIN) return false;
+  else e.n++;
+  /* Le tableau ne grandit pas sans fin : on oublie les fenetres passees. */
+  if (scansVus.size > 5000) for (const [k, v] of scansVus) if (now - v.t > 60000) scansVus.delete(k);
+  return true;
+}
+
 function rate(req, ok) {
   const ip = qui(req);
   if (ok) { essais.delete(ip); return; }
@@ -1980,6 +2000,50 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(aiPerp.vue()));
+  }
+
+  /* ==========================================================================
+   * LE SCAN PUBLIC D UN JETON
+   *
+   * Personne ne cherche un casino. Tout le monde, avant d acheter, cherche la
+   * meme chose : « celui-la, c est un piege ? ». C est la seule porte du site
+   * par ou peut entrer quelqu un qui n a jamais entendu parler de SWOGE.
+   *
+   * Publique, sans cle, sans portefeuille — sinon elle ne sert a rien. Ce qui
+   * la protege n est donc pas une cle mais son ETROITESSE : une adresse, rien
+   * d autre, et un debit borne par adresse IP. Les lectures passent par les
+   * memes caches que le tour de la colonie, donc un jeton deja vu ne coute
+   * aucun appel.
+   * ======================================================================== */
+  if (path === '/scan' || path.startsWith('/scan/')) {
+    const adr = path === '/scan'
+      ? String(new URLSearchParams(req.url.split('?')[1] || '').get('adr') || '').trim()
+      : path.slice('/scan/'.length);
+    res.setHeader('access-control-allow-origin', '*');
+    /* ---- LA FORME D ABORD, LE DEBIT ENSUITE ----
+     * Une adresse mal formee ne touche aucun service : la refuser ne coute
+     * rien, donc elle ne doit pas consommer le quota. Sinon deux fautes de
+     * frappe suffisent a bloquer quelqu un qui n a encore rien demande. */
+    if (!/^0x[0-9a-fA-F]{40}$/.test(adr)) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ erreur: 'paste a 0x… token address' }));
+    }
+    if (!scanDebit(req)) {
+      res.writeHead(429, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ erreur: 'too many scans, wait a minute' }));
+    }
+    try {
+      const r = await aiColonie.scanJeton(adr);
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                           /* Trente secondes : assez pour qu un partage ne
+                              refasse pas le travail, assez court pour qu un
+                              jeton de dix minutes ne soit pas servi perime. */
+                           'cache-control': 'public, max-age=30' });
+      return res.end(JSON.stringify(r));
+    } catch (e) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ erreur: String(e.message || e).slice(0, 160) }));
+    }
   }
 
   if (path === '/ai/colonie') {
