@@ -3553,6 +3553,14 @@ function vetoScout(t) {
    * garantit qu'un jeton ecarte pour son age l'aurait ete de toute facon si
    * quelque chose d'autre clochait — et donc que la reprise ne ramene pas un
    * jeton deja condamne. */
+  /* ---- LE QUOTA DES JEUNES ----
+   * Avant de reporter pour l age : si la tranche de ce jeton est celle que
+   * l audit designe — sous la borne, bien echantillonnee, strategie positive,
+   * et montant au moins autant que ce qu on achete — on en laisse passer un
+   * petit nombre par tour. L age est le DERNIER veto, donc ce jeton a deja
+   * franchi tout le reste : le quota n ouvre rien d autre. */
+  if (P.ageMin > 0 && t.minutes !== null && t.minutes !== undefined && t.minutes < P.ageMin
+      && quotaJeunePrend(t)) return null;
   if (P.ageMin > 0 && t.minutes !== null && t.minutes !== undefined && t.minutes < P.ageMin)
     /* ---- ON DIT L'ATTENTE DANS L'UNITE OU ELLE EST ----
      * La phrase divisait toujours par 60 : a quinze minutes elle affichait
@@ -4856,6 +4864,9 @@ function noteOmbre(t, an, refus, quiRefuse) {
     echeance: now + OMBRE_TENUE_MIN * 60000,
     traits: an.traits, score: an.score,
     refus: refus || null, quiRefuse: quiRefuse || null, cleOmbre,
+    /* Pris par le quota des jeunes : sa ligne d audit est SEPAREE de la
+       reference, sinon on ne pourrait plus comparer les deux. */
+    quotaJeune: !!t.quotaJeune,
     /* L'avis du Conseiller sur CE jeton, s'il a ete consulte : c'est lui
        qu'on relira a quinze et a soixante minutes (voir `noteAuditConseil`).
        Garde meme quand le jeton a ete refuse ensuite — un avis favorable sur
@@ -4990,6 +5001,58 @@ const FAMILLES = [
  *
  * Le refus d'age est donc range par TRANCHE d'age au moment du refus, une
  * ombre par tranche, et la borne se juge sur la tranche juste sous elle. */
+/* ==========================================================================
+ * LE QUOTA DES JEUNES — UNE BORNE QUI GLISSE NE PEUT PAS FRANCHIR UN CREUX
+ *
+ * ---- LA MESURE, 20 septembre 2026, 11 354 tours ----
+ *
+ * La borne d age apprise est montee a CINQUANTE minutes. Voici ce qu elle
+ * refuse, par tranche, avec la colonne STRATEGIE — qui ne dit pas « est-ce
+ * que ca monte » mais rejoue la sortie complete (paliers, arret suiveur,
+ * plancher de coupe, moon bag), donc ce qu on aurait REELLEMENT encaisse :
+ *
+ *   moins de 10 min   n=297   47 % montent   strategie  +3,1 %   (294 obs)
+ *   10-30 min         n= 59   31 %           strategie  +3,6 %   ( 57 obs)
+ *   30-60 min         n= 30   27 %           strategie -21,4 %   ( 35 obs)
+ *   60-90 min         n= 19   32 %           strategie -10,4 %   ( 20 obs)
+ *   reference (ce qu on achete)  n=241   25 % montent
+ *
+ * ---- LE DEFAUT, ET IL EST STRUCTUREL ----
+ *
+ * Le desserrage juge la borne sur « la tranche juste sous la borne — ce
+ * qu elle refuse a sa marge ». C est juste SI la relation age/rendement est
+ * monotone. Elle ne l est pas. La borne est a 50, sa marge est donc la
+ * tranche 30-60 : la PIRE du tableau. Elle refuse de se desserrer, et elle a
+ * raison sur cette tranche-la.
+ *
+ * Mais la MEILLEURE tranche est la plus jeune, et une borne qui glisse d un
+ * cran a la fois ne peut jamais l atteindre : il faudrait traverser le creux.
+ * La colonie est structurellement aveugle a sa meilleure tranche d age.
+ *
+ * ---- CE QU ON FAIT, ET CE QU ON NE FAIT PAS ----
+ *
+ * On ne deplace pas la borne : elle a raison a sa marge. On autorise un
+ * PETIT NOMBRE d achats par tour dans la tranche que l audit designe, sous la
+ * borne — meme geste qu `OBS_VIEUX_PAR_TOUR`, pousse d un cran : celui-la
+ * rendait une tranche observable sans rien lui faire acheter, celui-ci la
+ * rend mesurable SUR DE L ARGENT.
+ *
+ * Et c est necessaire, pas seulement plus rapide : les 294 observations de
+ * rejeu portent sur les jetons qui ont SURVECU assez longtemps pour laisser
+ * des jalons. Un jeton qui s effondre en trois minutes n en laisse aucun. Le
+ * +3,1 % est donc optimiste d un montant inconnu, et seul un achat reel le
+ * mesure — un achat, lui, ne peut pas ne pas compter.
+ *
+ * Ces achats portent leur PROPRE ligne d audit (`achete par quota jeune`) :
+ * ils ne se melangent pas a la reference, sinon on ne pourrait plus comparer
+ * les deux. Si le quota perd, il se referme tout seul (la condition ci-dessous
+ * cesse d etre vraie). S il gagne, c est la borne qu il faudra revoir.
+ * ======================================================================== */
+const QUOTA_JEUNE_PAR_TOUR = Math.max(0, nEnv('ACHATS_JEUNES_PAR_TOUR', 1));
+/* Sous ce nombre de rejeux, une tranche n est pas une tranche : le quota ne
+   s ouvre pas sur une impression. */
+const QUOTA_JEUNE_MIN_OBS = Math.max(20, nEnv('ACHATS_JEUNES_MIN_OBS', 100));
+
 const AGE_BANDES = [10, 30, 60, 90];
 function bandeAge(minutes) {
   const m = Number(minutes);
@@ -5001,6 +5064,61 @@ function bandeAge(minutes) {
 }
 /** La tranche juste sous la borne : ce que la regle refuse a sa marge. */
 function bandeSousLaBorne(ageMin) { return bandeAge(Math.max(0, Number(ageMin) - 0.5)); }
+
+/**
+ * LA TRANCHE QUE L AUDIT DESIGNE, sous la borne. Rend son nom, ou `null`.
+ *
+ * Quatre conditions, et il les faut toutes :
+ *   - la tranche est SOUS la borne (sinon on l achete deja) ;
+ *   - elle a au moins `QUOTA_JEUNE_MIN_OBS` rejeux de strategie ;
+ *   - sa strategie rejouee est POSITIVE (pas seulement « meilleure que ») ;
+ *   - et ses jetons montent au moins autant que ce qu on achete, plus la
+ *     marge que le moteur exige deja pour dire qu une regle coute.
+ * Une seule qui tombe, le quota se referme — sans qu on ait a y toucher.
+ */
+/**
+ * Consomme une place du quota pour ce jeton, s il est dans la bonne tranche
+ * et qu il en reste pour ce tour. Rend `true` si la place est prise.
+ * Le compteur est PAR TOUR : un quota par heure se lirait comme un quota par
+ * tour le jour ou la cadence change.
+ */
+function quotaJeunePrend(t) {
+  const tr = trancheJeuneOuverte();
+  if (!tr) return false;
+  if (bandeAge(t.minutes) !== tr.nom) return false;
+  const q = E.quotaJeune && E.quotaJeune.tour === E.tours ? E.quotaJeune : (E.quotaJeune = { tour: E.tours, n: 0 });
+  if (q.n >= QUOTA_JEUNE_PAR_TOUR) return false;
+  q.n++;
+  t.quotaJeune = true;
+  compte('quotaJeune');
+  return true;
+}
+
+function trancheJeuneOuverte() {
+  if (QUOTA_JEUNE_PAR_TOUR <= 0) return null;
+  const lignes = auditDesRefus();
+  /* Le seuil « coute » du jour, calcule par le moteur lui-meme : une regle
+     coute des que ce qu elle ecarte monte autant que ce qu on achete. On ne
+     reinvente pas une marge a cote. */
+  const S = seuilsAudit();
+  if (!S.ref || !S.ref.n || S.ref.n < AUDIT_MIN_OBS) return null;
+  const borneAge = Number(borne('ageMin')) || 0;
+  let meilleure = null;
+  for (let i = 0; i < AGE_BANDES.length; i++) {
+    /* Le haut de la tranche doit etre sous la borne : une tranche a cheval
+       sur elle est deja a moitie achetee, et sa mesure ne dit plus rien. */
+    const haut = AGE_BANDES[i];
+    if (haut > borneAge) break;
+    const nom = i === 0 ? 'too young: under ' + AGE_BANDES[0] + ' min'
+                        : 'too young: ' + AGE_BANDES[i - 1] + '-' + AGE_BANDES[i] + ' min';
+    const l = lignes.find((x) => x.cle === 'scout · ' + nom);
+    if (!l || !l.nStrat || l.nStrat < QUOTA_JEUNE_MIN_OBS) continue;
+    if (!(l.strat > 0)) continue;
+    if (!(l.partMontes >= S.coute)) continue;
+    if (!meilleure || l.strat > meilleure.strat) meilleure = { nom, strat: l.strat, n: l.nStrat, part: l.partMontes };
+  }
+  return meilleure;
+}
 function familleRefus(r) {
   const t = String(r);
   if (/too young|trop jeune/.test(t)) {
@@ -5437,7 +5555,10 @@ function rejoue(jalons, E2) {
   return arrondi(realise + reste * dernier + finMoon);
 }
 function cleAudit(o) {
-  return o.refus ? (o.quiRefuse || 'refus') + ' · ' + familleRefus(o.refus) : 'achete ou retenu';
+  if (o.refus) return (o.quiRefuse || 'refus') + ' · ' + familleRefus(o.refus);
+  /* Le quota a sa propre ligne : melangee a la reference, elle deplacerait le
+     seuil contre lequel elle est justement jugee. */
+  return o.quotaJeune ? 'achete par quota jeune' : 'achete ou retenu';
 }
 function noteAuditStrat(cle, rs) {
   if (!E.audit || typeof E.audit !== 'object') E.audit = {};
@@ -8945,7 +9066,10 @@ function vue() {
                   audit: auditConseil() },
     seuil: seuilCourant(), seuilDepart: SEUIL, ageMax: AGE_MAX_MIN,
     /* Ce que l'observation admet, pour que le plafond soit jugeable. */
-    observation: { parTour: OBS_PAR_TOUR, ageMax: OBS_AGE_MAX_MIN,
+    quotaJeune: (function(){ const t = trancheJeuneOuverte();
+    return { parTour: QUOTA_JEUNE_PAR_TOUR, minObs: QUOTA_JEUNE_MIN_OBS, tranche: t,
+             pris: (E.compteurs && E.compteurs.quotaJeune) || 0 }; })(),
+  observation: { parTour: OBS_PAR_TOUR, ageMax: OBS_AGE_MAX_MIN,
                    vus: (E.compteurs || {}).observeVieux || 0 },
     sociauxExiges: sociauxExiges(),
     /* Les reglages qui decident ce qu'on achete et comment on en sort. Une
@@ -9091,6 +9215,7 @@ module.exports = {
   noteAuditConseil, auditConseil, CONSEIL_ECHEANCES, CONSEIL_AUDIT_MIN, CONSEIL_SEPARE,
   esperanceDeLaCase, frottementRefuse, CASE_ESPERANCE_TRAIT, frottementBilan,
   rejeuxBilan, rejoueLOmbre, noteAuditStrat,
+  trancheJeuneOuverte, quotaJeunePrend, QUOTA_JEUNE_PAR_TOUR, QUOTA_JEUNE_MIN_OBS,
   _familleRefus: familleRefus, _regroupeAudit: regroupeAudit, bandeAge, bandeSousLaBorne, AGE_BANDES, _noeudMort: noeudMort,
   _journal: journal, _journalPublie: journalPublie, _memeRegard: memeRegard,
   /* exposes pour l'essai : ce sont eux qui portent les regles */
