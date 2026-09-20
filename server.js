@@ -1580,6 +1580,15 @@ function bloque(req) {
  * largement de quoi regarder une liste de jetons a la main, bien trop peu
  * pour en balayer un annuaire. Compteur en memoire, remis a zero par fenetre
  * — il n a pas a survivre a un redemarrage. */
+const carteScan = require('./carte_scan');
+/* Les cartes deja dessinees. Un lien partage est demande une fois par robot
+   et par reseau, parfois quatre fois en dix secondes. */
+const CARTES = new Map();
+/* Ou vit le site, et ou vit le serveur. Deux adresses differentes : l apercu
+   pointe son image ICI et sa page LA-BAS. */
+const SITE_URL = String(process.env.SITE_URL || 'https://swoleeswoge.dog').replace(/\/+$/, '');
+const MOI_URL = String(process.env.PUBLIC_URL || 'https://web-production-220a3.up.railway.app').replace(/\/+$/, '');
+
 const SCAN_PAR_MIN = Math.max(1, Number(process.env.SCAN_PAR_MIN || 20));
 const scansVus = new Map();
 function scanDebit(req) {
@@ -2015,6 +2024,91 @@ const server = http.createServer(async (req, res) => {
    * memes caches que le tour de la colonie, donc un jeton deja vu ne coute
    * aucun appel.
    * ======================================================================== */
+  /* ---- LA CARTE D UN SCAN, EN PNG ----
+   * Le site est statique sur GitHub Pages et les robots de X ne lisent pas
+   * le JavaScript : la carte dessinee dans la page ne sera jamais vue par
+   * eux. Celle-ci est ecrite pixel par pixel, sans dependance — voir
+   * `carte_png.js`, et `outils/police.js` pour la typographie.
+   *
+   * Gardee en memoire cinq minutes : un lien partage est demande une fois par
+   * robot et par reseau, parfois quatre fois en dix secondes, et redessiner
+   * quatre fois la meme image pour rien serait du travail pur. */
+  if (path.startsWith('/scan/carte/')) {
+    const adr = path.slice('/scan/carte/'.length).replace(/\.png$/i, '');
+    res.setHeader('access-control-allow-origin', '*');
+    if (!/^0x[0-9a-fA-F]{40}$/.test(adr)) { res.writeHead(400); return res.end(); }
+    if (!scanDebit(req)) { res.writeHead(429); return res.end(); }
+    const cle = adr.toLowerCase();
+    const vu = CARTES.get(cle);
+    if (vu && Date.now() - vu.t < 5 * 60000) {
+      res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=300' });
+      return res.end(vu.png);
+    }
+    try {
+      const d = await aiColonie.scanJeton(adr);
+      const png = carteScan.dessine(d);
+      CARTES.set(cle, { t: Date.now(), png });
+      /* Le tableau ne grandit pas sans fin. */
+      if (CARTES.size > 200) for (const [k, v] of CARTES) if (Date.now() - v.t > 5 * 60000) CARTES.delete(k);
+      res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=300' });
+      return res.end(png);
+    } catch (e) {
+      /* Un jeton inconnu n a pas de carte : on ne dessine pas une image qui
+         dirait quelque chose de faux. */
+      res.writeHead(404); return res.end();
+    }
+  }
+
+  /* ---- LE LIEN QU ON PARTAGE ----
+   * `/s/0x…` : une page minuscule, servie par le SERVEUR, dont les balises
+   * `og:` parlent de CE jeton. C est la seule facon d avoir un apercu qui dit
+   * quelque chose : le site est statique, et un robot qui ne lit pas le
+   * JavaScript n y verra jamais que le titre generique.
+   *
+   * Un humain qui l ouvre est envoye sur la vraie page, avec son jeton. */
+  if (path.startsWith('/s/')) {
+    const adr = path.slice('/s/'.length).replace(/\/$/, '');
+    if (!/^0x[0-9a-fA-F]{40}$/.test(adr)) {
+      res.writeHead(302, { location: SITE_URL + '/swoge_scan.html' });
+      return res.end();
+    }
+    let d = null;
+    try { d = await aiColonie.scanJeton(adr); } catch (e) { d = null; }
+    const j = (d && d.jeton) || {};
+    const sym = String(j.sym || 'token').replace(/[^\w$.-]/g, '').slice(0, 16);
+    /* Le titre et la description portent la MESURE : c est ce qu on lit dans
+       un apercu, bien avant de cliquer. Et jamais un verdict. */
+    const tete = (d && d.cases && d.cases[0])
+      ? d.cases[0].case + ' : ' + (d.cases[0].moyenne > 0 ? '+' : '') + d.cases[0].moyenne
+        + '% over ' + d.cases[0].n + ' observations'
+      : 'No cell measured enough on this one yet';
+    const desc = (d && d.faits && d.faits.length ? d.faits.map((f) => f.quoi).join(' · ') + ' — ' : '')
+      + tete + '. Never a buy signal.';
+    const ech = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const page = SITE_URL + '/swoge_scan.html?t=' + adr.toLowerCase();
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' });
+    return res.end('<!doctype html><html lang="en"><meta charset="utf-8">'
+      + '<title>' + ech('$' + sym) + ' — is this token a scam? · SWOGE Scan</title>'
+      + '<link rel="canonical" href="' + ech(page) + '">'
+      + '<meta name="description" content="' + ech(desc) + '">'
+      + '<meta property="og:type" content="website">'
+      + '<meta property="og:site_name" content="SWOGE Scan">'
+      + '<meta property="og:title" content="' + ech('$' + sym + ' — is this token a scam?') + '">'
+      + '<meta property="og:description" content="' + ech(desc) + '">'
+      + '<meta property="og:url" content="' + ech(page) + '">'
+      + '<meta property="og:image" content="' + ech(MOI_URL + '/scan/carte/' + adr.toLowerCase() + '.png') + '">'
+      + '<meta property="og:image:width" content="' + carteScan.L + '">'
+      + '<meta property="og:image:height" content="' + carteScan.H + '">'
+      + '<meta name="twitter:card" content="summary_large_image">'
+      + '<meta name="twitter:site" content="@SwoleDogeSwoge">'
+      + '<meta name="twitter:title" content="' + ech('$' + sym + ' — is this token a scam?') + '">'
+      + '<meta name="twitter:description" content="' + ech(desc) + '">'
+      + '<meta name="twitter:image" content="' + ech(MOI_URL + '/scan/carte/' + adr.toLowerCase() + '.png') + '">'
+      + '<meta http-equiv="refresh" content="0; url=' + ech(page) + '">'
+      + '<body style="font:16px/1.6 system-ui,sans-serif;padding:24px">'
+      + '<a href="' + ech(page) + '">' + ech('$' + sym) + ' on SWOGE Scan</a></body></html>');
+  }
+
   if (path === '/scan' || path.startsWith('/scan/')) {
     const adr = path === '/scan'
       ? String(new URLSearchParams(req.url.split('?')[1] || '').get('adr') || '').trim()
