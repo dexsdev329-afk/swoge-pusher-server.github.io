@@ -103,8 +103,14 @@ const ENTITES = {
   /* Les selecteurs. Ils entrent, mais ils ne se deploient pas : voir
      `CONNECTEURS` — aucun connecteur ne produit d entites a partir d eux,
      il ne produit que des FAITS fermes. */
-  email: { graine: false, selecteur: true, normalise: normaliseEmail,
-           quoi: 'an e-mail address (exposure check only)' },
+  /* L email est une GRAINE : son domaine de messagerie est un fait public
+     et evident (« jane@acme.io » -> acme.io), et enqueter sur l organisation
+     derriere une adresse est legitime. Ce n est PAS profiler la personne :
+     on investigue acme.io, que n importe qui pourrait taper, plus ce que
+     l adresse elle-meme expose (fuites, Gravatar public). Le pivot vers un
+     fournisseur grand public (gmail...) est ecarte par le connecteur. */
+  email: { graine: true, normalise: normaliseEmail,
+           quoi: 'an e-mail address (pivots to its domain, plus its own exposure)' },
   pseudo: { graine: false, selecteur: true, normalise: normalisePseudo,
             quoi: 'a username (account existence only)' },
   telephone: { graine: false, selecteur: true, normalise: normaliseTelephone,
@@ -126,8 +132,6 @@ const REFUS_GRAINE = {
           + 'a name search returns nothing — what makes it work elsewhere is data brokers and '
           + 'leaked databases, which this tool does not query. Start from a domain, an IP, a website '
           + 'or an on-chain address.',
-  email: 'An e-mail address is a selector, not a seed: you can check what is publicly known ABOUT it '
-       + '(breach exposure, its domain), not expand it into a person.',
   pseudo: 'A username is a selector, not a seed: you can check where an account with that name exists, '
         + 'not who owns it.',
   telephone: 'A phone number is a selector, not a seed: you can check its numbering plan, nothing more.',

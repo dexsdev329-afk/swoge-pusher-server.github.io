@@ -44,18 +44,19 @@ function recuOk(sur) {
     deAdr: '0x' + 'b'.repeat(40), statut: 1,
   }, sur || {});
 }
-const attendu = (sur) => Object.assign({ prixSwoge: 5000, decimales: 18 }, sur || {});
+const attendu = (sur) => Object.assign({ montantSwoge: 5000, decimales: 18 }, sur || {});
 
 (async () => {
 
 console.log('-- 1. le registre des modeles, extensible et honnete --');
 {
-  const cat = S.catalogue({});
+  const cat = S.catalogue({ SWOGE_PRIX_USD: '0.00002' });
   ok(cat.length >= 3, 'image, video, texte sont declares [' + cat.length + ']');
-  ok(cat.every((m) => m.prixSwoge >= 0 && m.genre && m.fournisseur), 'chacun porte prix, genre, fournisseur');
+  ok(cat.every((m) => m.prixUsd > 0 && m.genre && m.fournisseur), 'chacun porte son prix ANCRE en USD, genre, fournisseur');
   /* La video coute plus cher que l image : plus de calcul. */
   const img = cat.find((m) => m.genre === 'image'), vid = cat.find((m) => m.genre === 'video');
-  ok(vid.prixSwoge > img.prixSwoge, 'la video coute plus que l image [' + vid.prixSwoge + ' > ' + img.prixSwoge + ']');
+  ok(vid.prixUsd > img.prixUsd, 'la video coute plus que l image [$' + vid.prixUsd + ' > $' + img.prixUsd + ']');
+  ok(vid.prixSwoge > img.prixSwoge && vid.prixIndicatif, 'et sa traduction en $SWOGE au cours du moment est indicative');
   /* Sans cle, un modele est EN PREPARATION et le dit. */
   ok(cat.every((m) => !m.actif), 'sans cle, aucun modele n est actif');
   ok(cat.every((m) => m.enAttente), 'et chacun dit ce qui lui manque');
@@ -65,10 +66,10 @@ console.log('-- 1. le registre des modeles, extensible et honnete --');
      'la cle posee dans l environnement l allume');
   /* Ajouter un modele ne casse rien et refuse les doublons. */
   let jete = null;
-  try { S.declareModele({ id: 'image-openai', genre: 'image', fournisseur: 'X', prixSwoge: 1 }); }
+  try { S.declareModele({ id: 'image-openai', genre: 'image', fournisseur: 'X', prixUsd: 1 }); }
   catch (e) { jete = e.message; }
   ok(jete && /double/.test(jete), 'un id en double est refuse');
-  try { S.declareModele({ id: 'z', genre: 'hologramme', fournisseur: 'X', prixSwoge: 1 }); jete = null; }
+  try { S.declareModele({ id: 'z', genre: 'hologramme', fournisseur: 'X', prixUsd: 1 }); jete = null; }
   catch (e) { jete = e.message; }
   ok(jete && /genre/.test(jete), 'un genre inconnu est refuse');
 }
@@ -145,6 +146,37 @@ console.log('\n-- 6. deux clics simultanes ne passent pas tous les deux --');
   const h = '0x' + '3'.repeat(64);
   const essais = await Promise.all(Array.from({ length: 10 }, async () => S.reserve(h).ok));
   eq(essais.filter(Boolean).length, 1, 'sur dix reservations simultanees, une seule gagne');
+}
+
+console.log('\n-- 6bis. le prix suit le cours du $SWOGE, pas l inverse --');
+{
+  /* Le point que le proprietaire a souleve : le cours du $SWOGE bouge, donc
+     un prix fige en $SWOGE ne tient pas. L ancre est en USD ; le montant en
+     $SWOGE se recalcule au cours du moment. */
+  const bas = S.deviseSwoge(0.50, 0.00002);   /* cours bas : beaucoup de jetons */
+  const haut = S.deviseSwoge(0.50, 0.0002);   /* cours x10 : dix fois moins */
+  eq(bas, 25000, '0,50 $ a 0,00002 $/SWOGE = 25 000 $SWOGE');
+  eq(haut, 2500, 'le meme 0,50 $ a 0,0002 $/SWOGE = 2 500 $SWOGE : le cout reel ne bouge pas');
+  /* On arrondit AU JETON SUPERIEUR : jamais facturer moins que le cout. */
+  eq(S.deviseSwoge(0.50, 0.00003), Math.ceil(0.50 / 0.00003), 'arrondi au jeton superieur, jamais en dessous du cout');
+  eq(S.deviseSwoge(0.50, 0), null, 'cours inconnu : pas de prix invente');
+
+  /* Le devis VERROUILLE le montant pour une fenetre : le paiement sera
+     compare a CE montant, pas a un prix recalcule entre-temps. */
+  const d = S.devis('video-grok', 0.00002, 1000);
+  ok(d.ok && d.montantSwoge === 25000, 'un devis fixe le montant en $SWOGE');
+  ok(d.expire > d.t, 'et il a une fenetre de validite');
+  ok(S.devisValide(d, 1000), 'valide juste apres emission');
+  ok(!S.devisValide(d, d.expire + 1), 'et perime apres sa fenetre');
+  eq(S.devis('inconnu', 0.00002).ok, false, 'un modele inconnu ne se devise pas');
+
+  /* Et la verification compare au MONTANT DEVISE, pas a un prix libre. Un
+     devis a 25 000, paye 25 000 : ok. Sans devis : refuse. */
+  const recuVideo = recuOk({ montantBase: (25000n * 10n ** 18n).toString() });
+  ok(S.verifieRecu(recuVideo, { montantSwoge: d.montantSwoge, decimales: 18 }).ok,
+     'paiement egal au montant devise : accepte');
+  ok(!S.verifieRecu(recuVideo, { decimales: 18 }).ok,
+     'sans montant verrouille a comparer : refuse, on ne devine pas le prix');
 }
 
 console.log('\n-- 7. rien ne genere tant que le paiement n est pas cable --');

@@ -518,3 +518,94 @@ N.declare({
 });
 
 module.exports.PLATEFORMES_N = PLATEFORMES.length;
+
+/* ==================================================================
+ * L EMAIL COMME GRAINE — vers son domaine, et sa propre exposition
+ * ==================================================================
+ * « jane@acme.io » ne devient pas un dossier sur Jane. Il devient : une
+ * enquete sur acme.io (l organisation derriere l adresse, que n importe qui
+ * pourrait taper directement), plus ce que l adresse elle-meme expose. Le
+ * lien de causalite ne s inverse jamais — on ne part pas d une personne. */
+const crypto = require('crypto');
+
+/* Le pivot vers le domaine. Ecarte les fournisseurs grand public : enqueter
+   sur gmail.com n a aucun sens et taperait un geant pour rien. */
+N.declare({
+  nom: 'courriel', consomme: ['email'], produit: ['domaine'],
+  ttl: 60 * 60 * 1000, cout: 'free',
+  async lance(cible) {
+    const dom = cible.valeur.split('@')[1];
+    if (!dom) return { faits: [] };
+    if (D.FOURNISSEURS_PERSO.has(dom)) {
+      return { faits: [f({ sujet: cible, predicat: 'MAILBOX PROVIDER', valeur: dom,
+        source: 'the address itself', verifie: true, confiance: 'HIGH',
+        pourquoi: 'a consumer mailbox: its domain is the provider, not an organisation to investigate' })] };
+    }
+    const o = e('domaine', dom);
+    if (!o) return { faits: [] };
+    return {
+      entites: [o],
+      faits: [f({ sujet: cible, predicat: 'EMAIL DOMAIN', objet: o, source: 'the address itself',
+        verifie: true, confiance: 'HIGH',
+        pourquoi: 'the domain of the address is public on its face; the organisation behind it is investigated' })],
+    };
+  },
+});
+
+/* Gravatar : un profil PUBLIC que la personne a elle-meme cree et rattache a
+   son adresse, servi par hash md5 de l email. Aucune authentification, aucune
+   ruse : on lit ce que le titulaire a choisi de publier. Produit des faits,
+   jamais d entite. */
+N.declare({
+  nom: 'gravatar', consomme: ['email'], produit: [],
+  hote: 'gravatar.com', parMinute: 30, ttl: 6 * 60 * 60 * 1000, cout: 'free',
+  async lance(cible) {
+    const md5 = crypto.createHash('md5').update(cible.valeur.trim().toLowerCase()).digest('hex');
+    const r = await D.recuperePage('https://gravatar.com/' + md5 + '.json', 'application/json');
+    if (r.code === 404) {
+      return { faits: [f({ sujet: cible, predicat: 'GRAVATAR', valeur: 'no public Gravatar profile',
+        source: 'gravatar.com', verifie: true, confiance: 'MEDIUM' })] };
+    }
+    if (!r.ok) return { faits: [] };
+    let j = null;
+    try { j = JSON.parse(r.corps).entry[0]; } catch (err) { return { faits: [] }; }
+    const faits = [f({ sujet: cible, predicat: 'GRAVATAR',
+      valeur: 'public profile' + (j.displayName ? ' (' + j.displayName + ')' : ''),
+      source: 'https://gravatar.com/' + md5, verifie: true, confiance: 'HIGH',
+      pourquoi: 'a profile the account holder created and attached to this address themselves' })];
+    /* Les comptes que le titulaire a LUI-MEME listes sur son Gravatar : c est
+       lui qui les a publies la, pas nous qui les avons relies. */
+    for (const a of (j.accounts || []).slice(0, 20)) {
+      if (!a.url) continue;
+      faits.push(f({ sujet: cible, predicat: 'LINKED ACCOUNT', valeur: (a.shortname || a.name || '') + ' ' + a.url,
+        source: 'https://gravatar.com/' + md5, verifie: true, confiance: 'MEDIUM',
+        pourquoi: 'listed by the account holder on their own Gravatar profile' }));
+    }
+    return { faits };
+  },
+});
+
+/* Le telephone : le plan de numerotation est public et gratuit ; l operateur
+   et mobile/fixe demandent une base payante. On la DECLARE, eteinte tant que
+   la cle manque — extensible, honnete, jamais un « mobile » invente. */
+N.declare({
+  nom: 'numverify', consomme: ['telephone'], produit: [], cle: 'NUMVERIFY_API_KEY',
+  hote: 'apilayer.net', parMinute: 20, ttl: 24 * 60 * 60 * 1000, cout: 'key required (free tier available)',
+  async lance(cible, ctx) {
+    const url = 'http://apilayer.net/api/validate?access_key=' + encodeURIComponent((ctx.env || process.env).NUMVERIFY_API_KEY)
+              + '&number=' + encodeURIComponent(cible.valeur);
+    const r = await D.recuperePage(url, 'application/json');
+    if (!r.ok) throw new Error('numverify HTTP ' + r.code);
+    let j = {}; try { j = JSON.parse(r.corps); } catch (e) { throw new Error('numverify: unreadable'); }
+    if (!j.valid) return { faits: [f({ sujet: cible, predicat: 'CARRIER', valeur: 'number not valid per numverify',
+      source: 'numverify', verifie: true, confiance: 'MEDIUM' })] };
+    const faits = [];
+    if (j.carrier) faits.push(f({ sujet: cible, predicat: 'CARRIER', valeur: String(j.carrier),
+      source: 'numverify', verifie: true, confiance: 'HIGH' }));
+    if (j.line_type) faits.push(f({ sujet: cible, predicat: 'LINE TYPE', valeur: String(j.line_type),
+      source: 'numverify', verifie: true, confiance: 'HIGH' }));
+    if (j.location) faits.push(f({ sujet: cible, predicat: 'REGION', valeur: String(j.location),
+      source: 'numverify', verifie: true, confiance: 'MEDIUM' }));
+    return { faits };
+  },
+});

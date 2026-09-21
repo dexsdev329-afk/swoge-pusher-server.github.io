@@ -35,20 +35,62 @@ const config = require('./config');
  * LE REGISTRE DES MODELES
  * ================================================================== */
 
-/* Le prix est en $SWOGE ENTIERS, jamais en unites de base : un prix ecrit
-   en wei se relit faux six mois plus tard, et c est le genre d erreur qui
-   fait payer mille fois trop. La conversion en unites de base se fait une
-   seule fois, a la verification, avec les decimales du contrat. */
+/* ---- LE PRIX EST ANCRE EN USD, PAS EN $SWOGE ----
+ * Le cout reel d une generation, c est ce que le fournisseur nous facture,
+ * en dollars. Le cours du $SWOGE bouge tous les jours : un prix fige a
+ * « 25 000 $SWOGE » devient absurde si le $SWOGE fait x10, et nous fait
+ * perdre de l argent s il chute. On ancre donc chaque modele en USD
+ * (`prixUsd`, cout fournisseur + marge), et on convertit en $SWOGE AU
+ * MOMENT du devis, avec le cours du $SWOGE lu sur le dex — le meme que le
+ * scan et la colonie lisent deja, donc aucun appel de plus.
+ *
+ * Le devis VERROUILLE le montant en $SWOGE pour quelques minutes : entre le
+ * moment ou on annonce le prix et celui ou le joueur paie, le cours n a pas
+ * le temps de deriver assez pour que ca compte, et s il derive, on redevise.
+ * La conversion en unites de base, elle, se fait une seule fois a la
+ * verification, avec les decimales du contrat. */
 const MODELES = [];
 function declareModele(m) {
-  for (const champ of ['id', 'genre', 'fournisseur', 'prixSwoge']) {
+  for (const champ of ['id', 'genre', 'fournisseur', 'prixUsd']) {
     if (m[champ] === undefined) throw new Error('modele sans ' + champ + ' : ' + JSON.stringify(m));
   }
   if (!['image', 'video', 'texte'].includes(m.genre)) throw new Error('genre inconnu : ' + m.genre);
   if (MODELES.some((x) => x.id === m.id)) throw new Error('modele en double : ' + m.id);
-  if (!(m.prixSwoge >= 0)) throw new Error('prix invalide : ' + m.id);
+  if (!(m.prixUsd > 0)) throw new Error('prix USD invalide : ' + m.id);
   MODELES.push(Object.assign({ cle: null, entree: 'prompt', actif: false, note: null }, m));
   return MODELES[MODELES.length - 1];
+}
+
+/* Le cours du $SWOGE en USD. Pour l instant, un reglage de l hote
+   (`SWOGE_PRIX_USD`) — quand le studio ouvrira, ce sera `lisDex(SWOGE).prix`,
+   deja en cache. `null` quand on ne le connait pas : alors on n affiche pas
+   un prix en $SWOGE qu on serait incapable de tenir. */
+function prixSwogeUsd(env) {
+  const v = Number((env || process.env).SWOGE_PRIX_USD);
+  return v > 0 ? v : null;
+}
+
+/* USD -> $SWOGE, ARRONDI AU JETON SUPERIEUR : on ne facture jamais MOINS que
+   le cout. Rend null si le cours est inconnu. */
+function deviseSwoge(prixUsd, cours) {
+  if (!(cours > 0)) return null;
+  return Math.ceil(Number(prixUsd) / cours);
+}
+
+/* Un devis : le montant en $SWOGE verrouille pour une fenetre. Le paiement
+   sera compare a CE montant, pas a un prix recalcule entre-temps. */
+const DEVIS_FENETRE_MS = Math.max(60000, Number(process.env.STUDIO_DEVIS_MS || 5 * 60 * 1000));
+function devis(id, cours, maintenant) {
+  const m = modele(id);
+  if (!m) return { ok: false, raison: 'unknown model' };
+  const swoge = deviseSwoge(m.prixUsd, cours);
+  if (swoge === null) return { ok: false, raison: 'the $SWOGE price is not available right now' };
+  const t = maintenant || Date.now();
+  return { ok: true, id, prixUsd: m.prixUsd, coursUsd: cours,
+           montantSwoge: swoge, t, expire: t + DEVIS_FENETRE_MS };
+}
+function devisValide(d, maintenant) {
+  return !!(d && d.ok && (maintenant || Date.now()) < d.expire);
 }
 
 /* Un modele est ACTIF quand sa cle est dans l environnement de l hote. Sans
@@ -63,27 +105,34 @@ function actif(m, env) {
 /* Image — OpenAI. */
 declareModele({ id: 'image-openai', genre: 'image', fournisseur: 'OpenAI',
   nom: 'Image', modele: 'gpt-image-1.5', cle: 'OPENAI_API_KEY',
-  prixSwoge: 5000, entree: 'prompt', resolutions: ['1024x1024', '1536x1024', '1024x1536'],
+  prixUsd: 0.10, entree: 'prompt', resolutions: ['1024x1024', '1536x1024', '1024x1536'],
   note: 'Text-to-image. The same path the announcement posters already use.' });
 /* Video — Grok Imagine. Image->video ET prompt->video. */
 declareModele({ id: 'video-grok', genre: 'video', fournisseur: 'xAI Grok Imagine',
   nom: 'Video', modele: 'grok-imagine-video', cle: 'GROK_API_KEY',
-  prixSwoge: 25000, entree: 'image_ou_prompt', durees: [6, 10], resolutions: ['720p', '1080p'],
+  prixUsd: 0.50, entree: 'image_ou_prompt', durees: [6, 10], resolutions: ['720p', '1080p'],
   note: 'Image-to-video or prompt-to-video. Costs more: a video is more compute than an image.' });
 /* Texte — Claude, pour les fonctions IA existantes (titres, descriptions,
    reformulation d un prompt). */
 declareModele({ id: 'texte-claude', genre: 'texte', fournisseur: 'Anthropic Claude',
   nom: 'Text', modele: 'claude', cle: 'ANTHROPIC_API_KEY',
-  prixSwoge: 500, entree: 'prompt',
+  prixUsd: 0.01, entree: 'prompt',
   note: 'Rewrites a rough idea into a strong image or video prompt.' });
 
 function catalogue(env) {
+  const cours = prixSwogeUsd(env);
   return MODELES.map((m) => ({
     id: m.id, genre: m.genre, nom: m.nom, fournisseur: m.fournisseur,
-    prixSwoge: m.prixSwoge, entree: m.entree,
-    durees: m.durees || null, resolutions: m.resolutions || null,
+    /* Le prix vrai, l ancre : en USD. */
+    prixUsd: m.prixUsd,
+    /* Et sa traduction en $SWOGE AU COURS DU MOMENT — indicative : le
+       montant exact est verrouille dans un devis au moment de payer. Null
+       si on ne connait pas le cours, plutot qu un chiffre qu on ne tiendrait
+       pas. */
+    prixSwoge: deviseSwoge(m.prixUsd, cours),
+    prixIndicatif: true,
+    entree: m.entree, durees: m.durees || null, resolutions: m.resolutions || null,
     note: m.note, actif: actif(m, env),
-    /* Ce qui manque pour l allumer, dit en clair. */
     enAttente: actif(m, env) ? null : (m.cle ? 'provider key not set (' + m.cle + ')' : 'not wired'),
   }));
 }
@@ -161,7 +210,11 @@ function verifieRecu(recu, attendu) {
   /* Le montant : AU MOINS le prix. On compare en unites de base, en BigInt,
      jamais en flottant — un centieme de jeton perdu en flottant, multiplie
      par mille paiements, est un trou. */
-  const du = enUnitesBase(attendu.prixSwoge, attendu.decimales);
+  /* Le montant du : celui du DEVIS verrouille (montantSwoge), le seul qui
+     fait foi — pas un prix recalcule apres coup, qui pourrait avoir bouge
+     entre le devis et le paiement. */
+  if (!(attendu.montantSwoge > 0)) return { ok: false, raison: 'no locked quote amount to check against' };
+  const du = enUnitesBase(attendu.montantSwoge, attendu.decimales);
   let paye;
   try { paye = BigInt(recu.montantBase); } catch (e) { return { ok: false, raison: 'unreadable amount' }; }
   if (paye < du) return { ok: false, raison: 'underpaid: ' + paye + ' < ' + du + ' base units' };
@@ -211,6 +264,7 @@ function rend(hash) { CONSOMMES.delete(String(hash || '').toLowerCase()); }
 
 module.exports = {
   MODELES, declareModele, actif, catalogue, modele,
+  prixSwogeUsd, deviseSwoge, devis, devisValide, DEVIS_FENETRE_MS,
   CONFIRMATIONS_MIN, destinataire, jetonAttendu, enUnitesBase, verifieRecu,
   CONSOMMES, dejaConsomme, reserve, rend,
   /* pret : rien ne genere tant que ni cle ni adresse de paiement ne sont la */

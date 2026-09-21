@@ -60,7 +60,8 @@ console.log('-- 1. ce qu on tape, et ce qui se deploie a partir de la --');
 console.log('\n-- 2. graine ou selecteur : la regle est dans le code --');
 {
   for (const t of ['domaine', 'ip', 'url', 'adresse']) ok(N.ENTITES[t].graine, t + ' est une graine');
-  for (const t of ['email', 'pseudo', 'telephone']) {
+  ok(N.ENTITES.email.graine, 'email est une graine : il pivote vers son domaine');
+  for (const t of ['pseudo', 'telephone']) {
     ok(!N.ENTITES[t].graine && N.ENTITES[t].selecteur, t + ' est un selecteur, pas une graine');
   }
   ok(!N.ENTITES.personne.graine && !N.ENTITES.personne.selecteur, 'une personne n est ni l un ni l autre');
@@ -72,7 +73,7 @@ console.log('\n-- 2. graine ou selecteur : la regle est dans le code --');
      commentaires et un connecteur distrait suffirait a l enfreindre. */
   let jete = null;
   try {
-    N.declare({ nom: 'essai_interdit', consomme: ['email'], produit: ['personne'], lance: async () => ({}) });
+    N.declare({ nom: 'essai_interdit', consomme: ['pseudo'], produit: ['personne'], lance: async () => ({}) });
   } catch (e) { jete = e.message; }
   ok(jete && /selecteur/.test(jete), 'un connecteur sur un selecteur ne PEUT PAS produire d entite');
   ok(!N.REGISTRE.has('essai_interdit'), 'et il n est pas enregistre');
@@ -259,8 +260,16 @@ console.log('\n-- 8. aucun secret, nulle part --');
      detient. Ce projet n en manipule aucun : elle n est pas branchee, et
      cet essai le fige. */
   ok(!/pwnedpassword|range\//i.test(src), 'l API des mots de passe n est PAS branchee');
-  ok(!/password.*=|hash|sha1\(.*mot/i.test(src.replace(/Passwords/g, '')),
-     'et rien dans le source ne manipule un secret');
+  /* Le seul condensat present est le md5 d une adresse pour Gravatar : c est
+     le mecanisme PUBLIC et documente de Gravatar (le titulaire a rattache un
+     profil a son adresse), pas un secret. Ce qu on interdit, c est manipuler
+     un mot de passe ou un secret : on cible ceux-la, pas le mot « hash ». */
+  ok(!/password\s*[=:]|secret\s*[=:]|sha1\([^)]*(pass|secret|pwd|mot)/i.test(src),
+     'aucun mot de passe ni secret manipule dans le source');
+  const condensats = (src.match(/createHash\('(\w+)'\)/g) || []);
+  ok(condensats.every((c) => /md5/.test(c)) , 'le seul condensat est le md5 public de Gravatar [' + condensats.join(',') + ']');
+  ok(/gravatar/i.test(src.slice(Math.max(0, src.indexOf('createHash') - 200), src.indexOf('createHash') + 60)),
+     'et il sert bien a Gravatar, pas a autre chose');
   /* Ce qu on rend d une breche : son nom, sa date, les CATEGORIES. */
   ok(/DataClasses/.test(src), 'les categories exposees sont lues');
   ok(/BreachDate/.test(src), 'la date aussi');
