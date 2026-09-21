@@ -44,7 +44,7 @@ function recuOk(sur) {
     deAdr: '0x' + 'b'.repeat(40), statut: 1,
   }, sur || {});
 }
-const attendu = (sur) => Object.assign({ montantSwoge: 5000, decimales: 18 }, sur || {});
+const attendu = (sur) => Object.assign({ genre: 'erc20', jeton: JETON, montant: 5000, decimales: 18 }, sur || {});
 
 (async () => {
 
@@ -163,20 +163,63 @@ console.log('\n-- 6bis. le prix suit le cours du $SWOGE, pas l inverse --');
 
   /* Le devis VERROUILLE le montant pour une fenetre : le paiement sera
      compare a CE montant, pas a un prix recalcule entre-temps. */
-  const d = S.devis('video-grok', 0.00002, 1000);
+  const d = S.devis('video-grok', 'swoge', 0.00002, 1000);
   ok(d.ok && d.montantSwoge === 25000, 'un devis fixe le montant en $SWOGE');
   ok(d.expire > d.t, 'et il a une fenetre de validite');
   ok(S.devisValide(d, 1000), 'valide juste apres emission');
   ok(!S.devisValide(d, d.expire + 1), 'et perime apres sa fenetre');
-  eq(S.devis('inconnu', 0.00002).ok, false, 'un modele inconnu ne se devise pas');
+  eq(S.devis('inconnu', 'swoge', 0.00002).ok, false, 'un modele inconnu ne se devise pas');
 
   /* Et la verification compare au MONTANT DEVISE, pas a un prix libre. Un
      devis a 25 000, paye 25 000 : ok. Sans devis : refuse. */
   const recuVideo = recuOk({ montantBase: (25000n * 10n ** 18n).toString() });
-  ok(S.verifieRecu(recuVideo, { montantSwoge: d.montantSwoge, decimales: 18 }).ok,
+  ok(S.verifieRecu(recuVideo, { genre:'erc20', jeton: JETON, montantBase: d.montantBase }).ok,
      'paiement egal au montant devise : accepte');
-  ok(!S.verifieRecu(recuVideo, { decimales: 18 }).ok,
+  ok(!S.verifieRecu(recuVideo, { genre:'erc20', jeton: JETON, decimales: 18 }).ok,
      'sans montant verrouille a comparer : refuse, on ne devine pas le prix');
+}
+
+console.log('\n-- 6ter. payer en ETH : natif, et le prix arrondi en WEI --');
+{
+  /* Le proprietaire veut aussi l ETH. La difference qui compte : un paiement
+     ETH est NATIF (pas de contrat de jeton), un paiement $SWOGE passe par le
+     contrat. On ne les confond pas. */
+  eq(S.moyen('eth').genre, 'native', 'ETH est une monnaie native');
+  eq(S.moyen('swoge').genre, 'erc20', '$SWOGE est un jeton ERC-20');
+
+  /* LE BUG ATTRAPE : arrondir au jeton entier ruine l ETH. 0,50 $ a 2500 $/ETH
+     doit faire 0,0002 ETH (2e14 wei), PAS 1 ETH. On arrondit en unites de
+     base. */
+  eq(S.montantBaseDe(0.50, 2500, 18).toString(), '200000000000000', '0,50 $ a 2500 $/ETH = 2e14 wei, pas 1 ETH');
+  eq(S.montantBaseDe(0.50, 0.00002, 18).toString(), '25000000000000000000000', 'et 25000e18 pour le $SWOGE');
+  /* Jamais un flottant sur 25000e18 : le montant reste exact. */
+  ok(S.formateBase('200000000000000', 18) === '0.0002', 'l affichage est exact : 0.0002 ETH');
+  ok(S.formateBase('25000000000000000000000', 18) === '25000', 'et 25000 pile pour le $SWOGE, pas 24999.99');
+
+  const dE = S.devis('video-grok', 'eth', 2500, 1000);
+  ok(dE.ok && dE.genre === 'native' && dE.jeton === null, 'un devis ETH est natif, sans contrat de jeton');
+  eq(dE.montantBase, '200000000000000', 'et il verrouille 0,0002 ETH en wei');
+
+  /* La verification d un paiement NATIF : aucun contrat de jeton ne doit
+     apparaitre. */
+  const recuEth = { hash: '0x' + '9'.repeat(64), versAdr: DEST, jetonAdr: null,
+    montantBase: '200000000000000', confirmations: 12, deAdr: '0x' + 'b'.repeat(40), statut: 1 };
+  ok(S.verifieRecu(recuEth, { genre: 'native', nom: 'ETH', montantBase: dE.montantBase }).ok,
+     'un vrai paiement ETH natif est accepte');
+  /* La fraude : un jeton sans valeur envoye a la bonne adresse, presente
+     comme de l ETH. */
+  const faux = Object.assign({}, recuEth, { jetonAdr: '0x' + 'e'.repeat(40) });
+  eq(S.verifieRecu(faux, { genre: 'native', nom: 'ETH', montantBase: dE.montantBase }).ok, false,
+     'un transfert de jeton presente comme de l ETH natif : refuse');
+  ok(/token transfer/i.test(S.verifieRecu(faux, { genre: 'native', montantBase: dE.montantBase }).raison),
+     '  et il DIT pourquoi');
+  /* Et l inverse : de l ETH natif presente comme un paiement $SWOGE. */
+  eq(S.verifieRecu(recuEth, { genre: 'erc20', jeton: JETON, montantBase: dE.montantBase }).ok, false,
+     'de l ETH natif presente comme un paiement en jeton : refuse');
+  /* Sous-payer en ETH : refuse, au wei pres. */
+  const presque = Object.assign({}, recuEth, { montantBase: '199999999999999' });
+  eq(S.verifieRecu(presque, { genre: 'native', montantBase: dE.montantBase }).ok, false,
+     'un wei de moins en ETH : refuse');
 }
 
 console.log('\n-- 7. rien ne genere tant que le paiement n est pas cable --');

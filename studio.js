@@ -54,7 +54,7 @@ function declareModele(m) {
   for (const champ of ['id', 'genre', 'fournisseur', 'prixUsd']) {
     if (m[champ] === undefined) throw new Error('modele sans ' + champ + ' : ' + JSON.stringify(m));
   }
-  if (!['image', 'video', 'texte'].includes(m.genre)) throw new Error('genre inconnu : ' + m.genre);
+  if (!['image', 'video', 'texte', 'reponse'].includes(m.genre)) throw new Error('genre inconnu : ' + m.genre);
   if (MODELES.some((x) => x.id === m.id)) throw new Error('modele en double : ' + m.id);
   if (!(m.prixUsd > 0)) throw new Error('prix USD invalide : ' + m.id);
   MODELES.push(Object.assign({ cle: null, entree: 'prompt', actif: false, note: null }, m));
@@ -70,8 +70,43 @@ function prixSwogeUsd(env) {
   return v > 0 ? v : null;
 }
 
-/* USD -> $SWOGE, ARRONDI AU JETON SUPERIEUR : on ne facture jamais MOINS que
-   le cout. Rend null si le cours est inconnu. */
+/* USD -> unites de base de la monnaie, ARRONDI AU SUPERIEUR, en BigInt.
+ *
+ * LE PIEGE, attrape a l essai : arrondir au JETON entier marche pour le
+ * $SWOGE (un jeton vaut ~0,00002 $) mais RUINE l ETH — 0,50 $ a 2500 $/ETH
+ * donne 0,0002 ETH, et ceil au jeton entier facturerait 1 ETH, soit 2500 $
+ * pour une generation a 0,50 $. On arrondit donc en UNITES DE BASE (wei),
+ * la ou 0,0002 ETH = 2e14 wei se represente exactement.
+ *
+ * Et on ne multiplie jamais un flottant par 1e18 : 25000e18 depasse le plus
+ * grand entier sur d un flottant. On met prix et cours a l echelle entiere
+ * (1e12), puis tout le calcul est en BigInt. */
+const ECHELLE = 1000000000000n;   /* 1e12 : 12 decimales, assez pour un cours a 1e-9 $ */
+function montantBaseDe(prixUsd, cours, decimales) {
+  if (!(cours > 0) || !(prixUsd > 0)) return null;
+  const p = BigInt(Math.round(Number(prixUsd) * 1e12));
+  const c = BigInt(Math.round(Number(cours) * 1e12));
+  if (c <= 0n) return null;
+  const d = BigInt(Number.isInteger(decimales) ? decimales : 18);
+  /* ceil(p * 10^d / c), les echelles 1e12 s annulent. */
+  const num = p * (10n ** d);
+  return (num + c - 1n) / c;
+}
+
+/* Unites de base -> texte exact, sans flottant. 25000e18 -> « 25000 »,
+   2e14 a 18 decimales -> « 0.0002 ». L affichage ne doit jamais montrer
+   24999.9999 la ou le montant facture est exactement 25000. */
+function formateBase(base, decimales) {
+  let b = BigInt(base);
+  const d = BigInt(Number.isInteger(decimales) ? decimales : 18);
+  const un = 10n ** d;
+  const entier = b / un;
+  let frac = (b % un).toString().padStart(Number(d), '0').replace(/0+$/, '');
+  return frac ? entier + '.' + frac : entier.toString();
+}
+
+/* USD -> $SWOGE ENTIERS, pour l affichage indicatif du catalogue seulement.
+   Le montant REELLEMENT facture passe par montantBaseDe, en unites de base. */
 function deviseSwoge(prixUsd, cours) {
   if (!(cours > 0)) return null;
   return Math.ceil(Number(prixUsd) / cours);
@@ -80,14 +115,25 @@ function deviseSwoge(prixUsd, cours) {
 /* Un devis : le montant en $SWOGE verrouille pour une fenetre. Le paiement
    sera compare a CE montant, pas a un prix recalcule entre-temps. */
 const DEVIS_FENETRE_MS = Math.max(60000, Number(process.env.STUDIO_DEVIS_MS || 5 * 60 * 1000));
-function devis(id, cours, maintenant) {
-  const m = modele(id);
-  if (!m) return { ok: false, raison: 'unknown model' };
-  const swoge = deviseSwoge(m.prixUsd, cours);
-  if (swoge === null) return { ok: false, raison: 'the $SWOGE price is not available right now' };
+function devis(id, moyenId, cours, maintenant) {
+  const md = modele(id);
+  if (!md) return { ok: false, raison: 'unknown model' };
+  const mo = moyen(moyenId);
+  if (!mo) return { ok: false, raison: 'unknown payment method' };
+  /* Combien d unites de LA MONNAIE CHOISIE pour couvrir le prix USD. Arrondi
+     au superieur : jamais facturer moins que le cout. */
+  if (!(cours > 0)) return { ok: false, raison: 'the ' + mo.nom + ' price is not available right now' };
+  const base = montantBaseDe(md.prixUsd, cours, mo.decimales);
+  if (base === null) return { ok: false, raison: 'the ' + mo.nom + ' price is not available right now' };
+  /* Le montant humain, pour l affichage : les unites de base ramenees a la
+     monnaie. Entier pour le $SWOGE, fractionnaire pour l ETH (0,0002). */
+  const montant = Number(base) / Math.pow(10, mo.decimales);
   const t = maintenant || Date.now();
-  return { ok: true, id, prixUsd: m.prixUsd, coursUsd: cours,
-           montantSwoge: swoge, t, expire: t + DEVIS_FENETRE_MS };
+  return { ok: true, id, moyen: mo.id, nom: mo.nom, genre: mo.genre, jeton: mo.jeton(),
+           decimales: mo.decimales, prixUsd: md.prixUsd, coursUsd: cours,
+           montant, montantTexte: formateBase(base, mo.decimales), montantBase: base.toString(),
+           montantSwoge: mo.id === 'swoge' ? Math.round(montant) : null,
+           t, expire: t + DEVIS_FENETRE_MS };
 }
 function devisValide(d, maintenant) {
   return !!(d && d.ok && (maintenant || Date.now()) < d.expire);
@@ -118,6 +164,20 @@ declareModele({ id: 'texte-claude', genre: 'texte', fournisseur: 'Anthropic Clau
   nom: 'Text', modele: 'claude', cle: 'ANTHROPIC_API_KEY',
   prixUsd: 0.01, entree: 'prompt',
   note: 'Rewrites a rough idea into a strong image or video prompt.' });
+/* Reponse — facon Perplexity : une question, une reponse SOURCEE. Elle
+   cherche le web et repond en citant. Fournisseur Perplexity, ou Claude
+   avec recherche web — le registre permet d en changer sans toucher la page. */
+declareModele({ id: 'reponse-perplexity', genre: 'reponse', fournisseur: 'Perplexity',
+  nom: 'Answer', modele: 'sonar', cle: 'PERPLEXITY_API_KEY',
+  prixUsd: 0.02, entree: 'question',
+  note: 'Ask a question, get an answer with its sources \u2014 like Perplexity. Cited, not made up.' });
+/* Chat — Claude en conversation, pour tout le reste. C est la brique qui fait
+   de Studio « tous les modeles au meme endroit » plutot qu un simple
+   generateur d images. */
+declareModele({ id: 'chat-claude', genre: 'texte', fournisseur: 'Anthropic Claude',
+  nom: 'Chat', modele: 'claude', cle: 'ANTHROPIC_API_KEY',
+  prixUsd: 0.02, entree: 'prompt',
+  note: 'A conversation with Claude \u2014 the everything model, in the same place.' });
 
 function catalogue(env) {
   const cours = prixSwogeUsd(env);
@@ -137,6 +197,37 @@ function catalogue(env) {
   }));
 }
 const modele = (id) => MODELES.find((m) => m.id === id) || null;
+
+/* ==================================================================
+ * LES MOYENS DE PAIEMENT — $SWOGE, ou ETH
+ * ==================================================================
+ * Le wallet accepte plusieurs monnaies : on laisse payer en $SWOGE (le
+ * jeton, ERC-20) ou en ETH (la monnaie native de la chaine). Le prix reste
+ * ancre en USD ; chaque moyen le convertit a SON cours.
+ *
+ * LA DIFFERENCE QUI COMPTE POUR LA SECURITE : un paiement NATIF (ETH) est un
+ * transfert de valeur, il n a pas de contrat de jeton. Un paiement ERC-20
+ * ($SWOGE) passe par le contrat du jeton. Les confondre est une fraude
+ * classique — envoyer un jeton sans valeur a la bonne adresse et jurer que
+ * c est de l ETH. La verification exige donc, pour le natif, qu il n y ait
+ * AUCUN contrat de jeton dans le recu ; pour l ERC-20, que ce soit LE bon
+ * contrat. Le registre est extensible : ajouter une monnaie, c est une
+ * entree de plus, rien d autre. */
+const MOYENS = {
+  swoge: { id: 'swoge', nom: '$SWOGE', genre: 'erc20', decimales: 18,
+           coursEnv: 'SWOGE_PRIX_USD', jeton: () => jetonAttendu(),
+           chaine: 'Robinhood Chain' },
+  eth: { id: 'eth', nom: 'ETH', genre: 'native', decimales: 18,
+         coursEnv: 'ETH_PRIX_USD', jeton: () => null,
+         chaine: 'Robinhood Chain' },
+};
+function moyen(id) { return MOYENS[id] || null; }
+function coursMoyen(id, env) {
+  const m = MOYENS[id];
+  if (!m) return null;
+  const v = Number((env || process.env)[m.coursEnv]);
+  return v > 0 ? v : null;
+}
 
 /* ==================================================================
  * LE PAIEMENT — ne jamais crediter une generation non payee,
@@ -201,20 +292,41 @@ function verifieRecu(recu, attendu) {
   if (String(recu.versAdr || '').toLowerCase() !== dest) {
     return { ok: false, raison: 'paid to the wrong address' };
   }
-  /* Le bon jeton : un paiement en un autre jeton, ou en monnaie native, ne
-     compte pas. C est une fraude courante — envoyer un jeton sans valeur a
-     la bonne adresse. */
-  if (String(recu.jetonAdr || '').toLowerCase() !== jetonAttendu()) {
-    return { ok: false, raison: 'paid in the wrong token' };
+  /* LA MONNAIE : natif ou ERC-20, et on ne les confond pas.
+     - erc20 : ce doit etre LE bon contrat de jeton. Un autre jeton, meme
+       envoye a la bonne adresse, ne compte pas — fraude classique.
+     - natif : il ne doit y avoir AUCUN contrat de jeton. Sinon quelqu un
+       paie un jeton sans valeur et le fait passer pour de l ETH. */
+  const genre = attendu.genre || 'erc20';
+  if (genre === 'erc20') {
+    const jeton = String(attendu.jeton || jetonAttendu());
+    if (!jeton) return { ok: false, raison: 'no token address to check against' };
+    if (String(recu.jetonAdr || '').toLowerCase() !== jeton.toLowerCase()) {
+      return { ok: false, raison: 'paid in the wrong token' };
+    }
+  } else if (genre === 'native') {
+    if (recu.jetonAdr) {
+      return { ok: false, raison: 'expected a native ' + (attendu.nom || 'ETH')
+                                + ' payment, but a token transfer was sent' };
+    }
+  } else {
+    return { ok: false, raison: 'unknown payment kind: ' + genre };
   }
-  /* Le montant : AU MOINS le prix. On compare en unites de base, en BigInt,
-     jamais en flottant — un centieme de jeton perdu en flottant, multiplie
-     par mille paiements, est un trou. */
-  /* Le montant du : celui du DEVIS verrouille (montantSwoge), le seul qui
-     fait foi — pas un prix recalcule apres coup, qui pourrait avoir bouge
-     entre le devis et le paiement. */
-  if (!(attendu.montantSwoge > 0)) return { ok: false, raison: 'no locked quote amount to check against' };
-  const du = enUnitesBase(attendu.montantSwoge, attendu.decimales);
+  /* Le montant du : celui du DEVIS verrouille — le seul qui fait foi, pas un
+     prix recalcule apres coup. On accepte le montant deja en unites de base
+     (`montantBase`) ou un montant a convertir. Compare en BigInt, jamais en
+     flottant : un centieme perdu, multiplie par mille paiements, est un trou. */
+  let du;
+  if (attendu.montantBase !== undefined && attendu.montantBase !== null) {
+    try { du = BigInt(attendu.montantBase); } catch (e) { return { ok: false, raison: 'bad quote amount' }; }
+  } else if (attendu.montant > 0) {
+    du = enUnitesBase(attendu.montant, attendu.decimales);
+  } else if (attendu.montantSwoge > 0) {
+    du = enUnitesBase(attendu.montantSwoge, attendu.decimales);   /* compat */
+  } else {
+    return { ok: false, raison: 'no locked quote amount to check against' };
+  }
+  if (!(du > 0n)) return { ok: false, raison: 'quote amount is zero' };
   let paye;
   try { paye = BigInt(recu.montantBase); } catch (e) { return { ok: false, raison: 'unreadable amount' }; }
   if (paye < du) return { ok: false, raison: 'underpaid: ' + paye + ' < ' + du + ' base units' };
@@ -264,7 +376,8 @@ function rend(hash) { CONSOMMES.delete(String(hash || '').toLowerCase()); }
 
 module.exports = {
   MODELES, declareModele, actif, catalogue, modele,
-  prixSwogeUsd, deviseSwoge, devis, devisValide, DEVIS_FENETRE_MS,
+  MOYENS, moyen, coursMoyen,
+  prixSwogeUsd, deviseSwoge, montantBaseDe, formateBase, devis, devisValide, DEVIS_FENETRE_MS,
   CONFIRMATIONS_MIN, destinataire, jetonAttendu, enUnitesBase, verifieRecu,
   CONSOMMES, dejaConsomme, reserve, rend,
   /* pret : rien ne genere tant que ni cle ni adresse de paiement ne sont la */

@@ -2183,6 +2183,10 @@ const server = http.createServer(async (req, res) => {
         : 'Studio is in preparation: provider keys and the $SWOGE payment address are not set yet.',
       jeton: config.SWOGE_TOKEN,
       confirmations: studio.CONFIRMATIONS_MIN,
+      /* Les moyens de paiement : $SWOGE ou ETH. Le prix est ancre en USD et
+         converti dans la monnaie choisie au moment du devis. */
+      moyens: Object.values(studio.MOYENS).map((m) => ({ id: m.id, nom: m.nom, genre: m.genre,
+        chaine: m.chaine, cours: studio.coursMoyen(m.id) })),
       modeles: studio.catalogue(),
     }));
   }
