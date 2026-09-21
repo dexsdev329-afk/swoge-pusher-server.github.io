@@ -55,6 +55,7 @@
 const fs = require('fs');
 const path = require('path');
 const cfg = require('./config');
+const tgCanal = require('./tg_canal');   /* un canal Telegram public comme source d'adresses */
 
 const FICHIER = path.join(cfg.DATA_DIR, 'ai_colonie.json');
 const TMP = FICHIER + '.tmp';
@@ -428,6 +429,9 @@ const SERVICES = {
                quoi: 'the same reads, but through our own door instead of the shared queue' },
   conseil: { nom: 'Anthropic · Claude Haiku', cout: 1,
              quoi: 'a view on borderline cases, capped at 8 points and never on a veto' },
+  telegram: { nom: 'Telegram · watched channels', cout: 0,
+             quoi: 'contract addresses posted in the public preview of ' + (tgCanal.CANAUX.join(', ') || 'no channel')
+                 + ' — proposed only, judged on paper like any other source' },
 };
 
 /* ---- CE QUI A ETE ESSAYE ET QUI NE MARCHE PAS ----
@@ -8546,6 +8550,8 @@ async function poussePads(parAdresse) {
   }
 }
 
+const TG_PAR_TOUR = 6;   /* comme un flux DexScreener : le canal ne monopolise pas le budget */
+
 async function rassemble() {
   const parAdresse = new Map();
   for (const t of await lisPools()) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
@@ -8565,6 +8571,29 @@ async function rassemble() {
     }
     await dors(400);
   }
+  /* ---- LES CONTRATS POSTES DANS UN CANAL TELEGRAM ----
+   * Une source d'adresses de plus, lue passivement sur l'apercu public. Elle
+   * ne fait que PROPOSER : `jetonDepuisDex` verifie la chaine et jette toute
+   * adresse sans paire `robinhood`, donc une adresse hors chaine ou un mint
+   * Solana ne survit pas. Le trait `origine = 'telegram'` laisse la colonie
+   * apprendre ce que vaut le canal, au lieu qu'on en decide ici. */
+  try {
+    const { adresses, erreurs } = await tgCanal.adressesRecentes();
+    noteService('telegram', erreurs.length === 0,
+      erreurs.map((e) => e.canal + ': ' + e.message).join(' · ').slice(0, 60));
+    let pris = 0;
+    for (const { addr } of adresses) {
+      if (parAdresse.has(addr)) continue;
+      if (pris >= TG_PAR_TOUR) break;
+      const c = E.connus[addr];
+      if (c && c.permanent) continue;                                   /* banni : pas meme un appel */
+      if (c && Date.now() - (c.dernier || 0) < SURV_MIN_MS) continue;   /* deja juge, rien de neuf */
+      const t = await jetonDepuisDex(addr, 'telegram');
+      pris++; compte('telegram');
+      if (t && t.prix > 0) parAdresse.set(addr, t);
+      await dors(250);
+    }
+  } catch (e) { noteService('telegram', false, String(e.message || e).slice(0, 50)); }
   /* ---- LES GRADUES PONS DES SIX DERNIERES HEURES ----
    * Ils ont un pool depuis leur graduation, donc DexScreener les sert ; on
    * les pousse dans le tour, les plus frais d'abord, au plus six a la fois. */

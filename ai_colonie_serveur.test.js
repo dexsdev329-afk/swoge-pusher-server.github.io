@@ -33,6 +33,10 @@ const path = require('path');
    production, ni le `state.json` du poste de developpement. */
 const DOSSIER = fs.mkdtempSync(path.join(os.tmpdir(), 'colonie-'));
 process.env.DATA_DIR = DOSSIER;
+/* La source Telegram est mesuree a part (tg_canal.test.js). Ce banc juge la
+   colonie sur un monde factice ferme : on eteint donc le canal, sinon
+   `rassemble` irait chercher un apercu Telegram hors du monde. */
+process.env.TG_SURV_CANAUX = '';
 
 let n = 0, rates = 0;
 const ok = (v, m) => { n++; if (v) console.log('  ok   ' + m); else { rates++; console.log('  RATE ' + m); } };
