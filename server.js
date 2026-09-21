@@ -1603,6 +1603,7 @@ const osintNoyau = require('./osint_noyau');
 const studio = require('./studio');
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
+const predictServeur = require('./predict_serveur');   /* le releve papier partage de swoge_predict */
 const OSINT_PAR_MIN = Math.max(1, Number(process.env.OSINT_PAR_MIN || 5));
 const OSINT_TTL = 10 * 60 * 1000;
 const osintsVus = new Map();
@@ -2310,6 +2311,15 @@ const server = http.createServer(async (req, res) => {
       note: 'Targets and counts only. Facts are not kept on disk.',
       entrees: osintNoyau.historique(Number(new URLSearchParams(req.url.split('?')[1] || '').get('n')) || 50),
     }));
+  }
+
+  /* Le releve papier PARTAGE de swoge_predict : win / raté, gains / pertes de
+     la banque, qui s accumulent sur le serveur comme la colonie. Lisible
+     depuis le site (CORS), jamais autre chose que du papier. */
+  if (path === '/predict/etat') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(predictServeur.etat()));
   }
 
   /* ---- LE RELEVE D UN DOMAINE ----
@@ -7502,6 +7512,25 @@ server.listen(cfg.PORT, () => {
     } catch (e) {
       console.warn('[ai] colonie non demarree :', e.message);
     }
+  }
+
+  /* ---- LE RELEVE PAPIER PARTAGE DE PREDICT ----
+   * Un seul bot BNB tourne ici, en continu, et son releve (win / raté, P/L de
+   * la banque) persiste et se sert a tout le monde par /predict/etat — comme
+   * la colonie. PAPIER : aucune cle, aucun ordre. Eteint par PREDICT_AI=0, il
+   * relit quand meme le disque pour servir le dernier releve daté. */
+  try {
+    if (process.env.PREDICT_AI === '1') {
+      predictServeur.demarre();
+      console.log('[predict] releve papier partagé demarré — vue publique sur /predict/etat (BNB, papier)');
+    } else {
+      /* Eteint par defaut, comme la colonie (AI_COLONIE=1) : on relit quand
+         meme le disque pour servir le dernier releve daté sur /predict/etat. */
+      predictServeur.charge();
+      console.log('[predict] releve ETEINT (PREDICT_AI!=1) — /predict/etat sert le dernier releve relu sur disque');
+    }
+  } catch (e) {
+    console.warn('[predict] releve non demarré :', e.message);
   }
 
   /* ---- LES ACHATS DE $SWOGEBET PASSENT DANS LE CANAL ----

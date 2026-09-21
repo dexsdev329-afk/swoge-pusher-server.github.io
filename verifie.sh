@@ -39,6 +39,7 @@ lance studio  "$SRV" node studio.test.js   # le paiement : double depense, fauss
 lance marches "$SRV" node perp_marches.test.js   # decouverte multi-exchange, forme unique
 lance perpws  "$SRV" node perp_ws.test.js   # le vrai WS Hyperliquid : live ou ignore, jamais simule
 lance predict "$SITE" node predict_moteur.test.js   # indicateurs, martingale, risque, backtest
+lance predsrv "$SRV" node predict_serveur.test.js   # le releve papier PARTAGE : round, win/raté, banque, persistance
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js
