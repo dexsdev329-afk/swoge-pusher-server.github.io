@@ -421,6 +421,31 @@ const INDICATIFS = [
   ['972', 'Israel'], ['974', 'Qatar'], ['994', 'Azerbaijan'], ['998', 'Uzbekistan'],
 ].sort((a, b) => b[0].length - a[0].length);     /* le plus long d abord : 1 ne doit pas gagner sur 1XX */
 
+/* Le TYPE de ligne et la region se lisent dans le PREFIXE du plan national,
+   PAS dans une base de portabilite. La portabilite ne change que l OPERATEUR
+   d un numero, jamais son type ni sa zone : un 06 reste un mobile meme apres
+   dix changements d operateur. numverify rend souvent un operateur vide sur un
+   numero francais pour cette raison exacte — mais le type, lui, est certain.
+   Plan de numerotation ARCEP (France), `nat` = le numero national sans le +33 :
+     6, 7  -> mobile
+     1     -> fixe, Ile-de-France        4 -> fixe, Sud-Est
+     2     -> fixe, Nord-Ouest           5 -> fixe, Sud-Ouest
+     3     -> fixe, Nord-Est             9 -> VoIP / non geographique
+     8     -> numero special (0800-0805 vert, sinon a tarif majore) */
+function typeFR(nat) {
+  if (!nat) return null;
+  const d = nat[0];
+  if (d === '6' || d === '7') return 'mobile';
+  if (d === '1') return 'fixed line · Île-de-France (Paris region)';
+  if (d === '2') return 'fixed line · North-West France';
+  if (d === '3') return 'fixed line · North-East France';
+  if (d === '4') return 'fixed line · South-East France';
+  if (d === '5') return 'fixed line · South-West France';
+  if (d === '9') return 'VoIP / non-geographic fixed';
+  if (d === '8') return /^80[0-5]/.test(nat) ? 'special number · freephone (numéro vert)' : 'special-rate number (08)';
+  return null;
+}
+
 N.declare({
   nom: 'numerotation', consomme: ['telephone'], produit: [],
   ttl: 24 * 60 * 60 * 1000, cout: 'free',
@@ -431,15 +456,30 @@ N.declare({
                        valeur: trouve ? '+' + trouve[0] + ' — ' + trouve[1] : 'country code not recognised',
                        source: 'ITU-T E.164 country calling codes', verifie: true,
                        confiance: trouve ? 'HIGH' : 'LOW' })];
-    faits.push(f({ sujet: cible, predicat: 'LINE TYPE', valeur: 'not determined',
-                   source: 'ITU-T E.164 country calling codes', verifie: true, confiance: 'HIGH',
-                   pourquoi: 'telling mobile from landline, or naming the carrier, needs a paid portability '
-                           + 'database. We do not have one, so we do not guess.' }));
+    /* Le type de ligne : deterministe pour la France (plan ARCEP). Ailleurs, on
+       ne decode pas le plan national ici, donc on ne devine pas. */
+    const nat = trouve ? nu.slice(trouve[0].length) : '';
+    const type = (trouve && trouve[0] === '33') ? typeFR(nat) : null;
+    if (type) {
+      faits.push(f({ sujet: cible, predicat: 'LINE TYPE', valeur: type,
+                     source: 'ARCEP national numbering plan (France)', verifie: true, confiance: 'HIGH' }));
+    } else {
+      faits.push(f({ sujet: cible, predicat: 'LINE TYPE', valeur: 'not determined',
+                     source: 'ITU-T E.164 country calling codes', verifie: true, confiance: 'MEDIUM',
+                     pourquoi: 'the national numbering plan for this country is not decoded here.' }));
+    }
+    /* L OPERATEUR, lui, demande vraiment une base de portabilite qu on n a pas.
+       On ne le devine pas — et on DIT pourquoi, pour ne pas se lire comme un
+       manque de travail. */
+    faits.push(f({ sujet: cible, predicat: 'CARRIER', valeur: 'not determined',
+                   source: 'number portability database (not queried)', verifie: true, confiance: 'HIGH',
+                   pourquoi: 'a number keeps its number across carriers (portability), so the current '
+                           + 'operator cannot be read from the prefix — only a paid portability database has it.' }));
     return { faits };
   },
 });
 
-module.exports = { PLATEFORMES, INDICATIFS };
+module.exports = { PLATEFORMES, INDICATIFS, typeFR };
 
 /* ---- L ARCHIVE DU WEB ----
  * Wayback Machine : ce qu un domaine a montre au monde par le passe, tel

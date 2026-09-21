@@ -33,6 +33,7 @@ lance osint   "$SRV" node osint.test.js
 lance noyau   "$SRV" node osint_noyau.test.js   # le noyau : faits, connecteurs, planificateur, regles
 lance identite "$SRV" node osint_identite.test.js   # un nom rend des candidats SEPARES, jamais fusionnes ; ASN, CVE
 lance tgcanal "$SRV" node tg_canal.test.js   # un canal Telegram public comme source d'adresses (extraction, dedup, cache)
+lance osinttel "$SRV" node osint_tel.test.js   # le plan de numerotation FR : type + region, deterministes, sans cle
 lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route publique du releve
 lance osintv2 "$SRV" node osint_v2.test.js   # un vrai serveur : la route v2, exports, historique
 lance studio  "$SRV" node studio.test.js   # le paiement : double depense, fausse confirmation
