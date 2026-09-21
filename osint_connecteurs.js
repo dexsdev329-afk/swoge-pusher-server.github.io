@@ -609,3 +609,128 @@ N.declare({
     return { faits };
   },
 });
+
+/* ==================================================================
+ * LE NOM — DES CANDIDATS PUBLICS, JAMAIS UNE IDENTITE
+ * ==================================================================
+ * « Jean Dupont » ne devient pas un dossier sur une personne. Il devient une
+ * liste de CANDIDATS publics distincts : une entite Wikidata (personne
+ * notable), un compte GitHub au nom cherche. Chacun est une entite a part,
+ * marquee non verifiee, JAMAIS fusionnee avec une autre — porter le meme nom
+ * n est pas etre la meme personne, et c est la regle centrale de ce module.
+ *
+ * On ne fabrique rien : si Wikidata et GitHub ne rendent rien, on le dit.
+ * Aucune base fuitee, aucun courtier de donnees, aucune deduction d identite. */
+
+/* Wikidata : le graphe de connaissances public. Ses candidats sont des
+   personnes/organisations notables, avec une description et une URL. */
+N.declare({
+  nom: 'wikidata', consomme: ['personne'], produit: ['candidat'],
+  hote: 'www.wikidata.org', parMinute: 30, ttl: 24 * 60 * 60 * 1000, cout: 'free',
+  async lance(cible) {
+    const url = 'https://www.wikidata.org/w/api.php?action=wbsearchentities&search='
+              + encodeURIComponent(cible.valeur) + '&language=en&format=json&limit=7&type=item';
+    const r = await D.recuperePage(url, 'application/json');
+    if (!r.ok) return { faits: [] };
+    let j = null; try { j = JSON.parse(r.corps); } catch (e) { return { faits: [] }; }
+    const faits = [], entites = [];
+    for (const it of (j.search || [])) {
+      /* Chaque candidat est DISTINCT — cle sur l identifiant Wikidata, pas
+         sur le nom. Deux « John Doe » sont deux entites, pas une. */
+      const o = e('candidat', it.label + ' — ' + (it.id || ''));
+      if (!o) continue;
+      entites.push(o);
+      const src = it.concepturi || ('https://www.wikidata.org/wiki/' + it.id);
+      faits.push(f({ sujet: cible, predicat: 'PUBLIC CANDIDATE', objet: o, source: src,
+        verifie: false, confiance: 'LOW',
+        pourquoi: 'a public Wikidata entity sharing this name. Same name is not the same person — unverified.',
+        extrait: it.description || '' }));
+      if (it.description) faits.push(f({ sujet: o, predicat: 'DESCRIBED AS', valeur: it.description,
+        source: src, verifie: false, confiance: 'LOW' }));
+    }
+    if (!faits.length) faits.push(f({ sujet: cible, predicat: 'WIKIDATA', valeur: 'no public entity of this name',
+      source: 'wikidata.org', verifie: true, confiance: 'MEDIUM' }));
+    return { faits, entites };
+  },
+});
+
+/* GitHub : les comptes publics dont le NOM affiche correspond. On lit le
+   compte, jamais son contenu prive. Un homonyme n est pas la personne. */
+N.declare({
+  nom: 'github_noms', consomme: ['personne'], produit: ['candidat'],
+  hote: 'api.github.com', parMinute: 10, ttl: 6 * 60 * 60 * 1000, cout: 'free',
+  async lance(cible) {
+    const url = 'https://api.github.com/search/users?q=' + encodeURIComponent(cible.valeur + ' in:name')
+              + '&per_page=5';
+    const r = await D.recuperePage(url, 'application/vnd.github+json');
+    if (!r.ok) return { faits: [] };
+    let j = null; try { j = JSON.parse(r.corps); } catch (e) { return { faits: [] }; }
+    const faits = [], entites = [];
+    for (const it of (j.items || []).slice(0, 5)) {
+      if (it.type !== 'User') continue;
+      const o = e('candidat', '@' + it.login + ' (GitHub)');
+      if (!o) continue;
+      entites.push(o);
+      faits.push(f({ sujet: cible, predicat: 'PUBLIC CANDIDATE', objet: o, source: it.html_url,
+        verifie: false, confiance: 'LOW',
+        pourquoi: 'a GitHub account whose profile name matches. Matching a name does not confirm identity — unverified.' }));
+    }
+    return { faits, entites };
+  },
+});
+
+/* ==================================================================
+ * ASN — l operateur reseau, via RIPEstat (public)
+ * ================================================================== */
+N.declare({
+  nom: 'asn', consomme: ['asn'], produit: ['reseau'],
+  hote: 'stat.ripe.net', parMinute: 20, ttl: 24 * 60 * 60 * 1000, cout: 'free',
+  async lance(cible) {
+    const num = cible.valeur.replace(/^AS/, '');
+    const r = await D.recuperePage('https://stat.ripe.net/data/as-overview/data.json?resource=' + num, 'application/json');
+    if (!r.ok) return { faits: [] };
+    let j = null; try { j = JSON.parse(r.corps); } catch (e) { return { faits: [] }; }
+    const d = j.data || {};
+    const faits = [], entites = [];
+    if (d.holder) {
+      const o = e('reseau', d.holder);
+      entites.push(o);
+      faits.push(f({ sujet: cible, predicat: 'OPERATED BY', objet: o,
+        source: 'https://stat.ripe.net/AS' + num, verifie: false, confiance: 'HIGH' }));
+    }
+    faits.push(f({ sujet: cible, predicat: 'ANNOUNCED', valeur: d.announced ? 'announced in the routing table' : 'not currently announced',
+      source: 'https://stat.ripe.net/AS' + num, verifie: false, confiance: 'MEDIUM' }));
+    /* Les prefixes annonces : point de pivot vers l infrastructure. */
+    return { faits, entites };
+  },
+});
+
+/* ==================================================================
+ * CVE — une vulnerabilite publique, via le NVD (public)
+ * ================================================================== */
+N.declare({
+  nom: 'cve', consomme: ['cve'], produit: [],
+  hote: 'services.nvd.nist.gov', parMinute: 5, ttl: 24 * 60 * 60 * 1000, cout: 'free', delaiMs: 12000,
+  async lance(cible) {
+    const r = await D.recuperePage('https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=' + cible.valeur, 'application/json');
+    if (!r.ok) return { faits: [] };
+    let j = null; try { j = JSON.parse(r.corps); } catch (e) { return { faits: [] }; }
+    const v = j.vulnerabilities && j.vulnerabilities[0] && j.vulnerabilities[0].cve;
+    if (!v) return { faits: [f({ sujet: cible, predicat: 'CVE', valeur: 'not found in the NVD',
+      source: 'nvd.nist.gov', verifie: true, confiance: 'MEDIUM' })] };
+    const src = 'https://nvd.nist.gov/vuln/detail/' + cible.valeur;
+    const desc = (v.descriptions || []).find((x) => x.lang === 'en');
+    const faits = [];
+    if (desc) faits.push(f({ sujet: cible, predicat: 'DESCRIPTION', valeur: String(desc.value).slice(0, 240),
+      source: src, verifie: true, confiance: 'HIGH' }));
+    if (v.published) faits.push(f({ sujet: cible, predicat: 'PUBLISHED ON', valeur: String(v.published).slice(0, 10),
+      source: src, verifie: true, confiance: 'HIGH' }));
+    /* La severite CVSS, si le NVD la donne. */
+    const m = v.metrics || {};
+    const cvss = (m.cvssMetricV31 || m.cvssMetricV30 || m.cvssMetricV2 || [])[0];
+    if (cvss && cvss.cvssData) faits.push(f({ sujet: cible, predicat: 'SEVERITY',
+      valeur: (cvss.cvssData.baseSeverity || '') + ' (' + cvss.cvssData.baseScore + ')',
+      source: src, verifie: true, confiance: 'HIGH' }));
+    return { faits };
+  },
+});

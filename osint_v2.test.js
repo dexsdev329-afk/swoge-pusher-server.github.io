@@ -6,8 +6,9 @@
  * propre a la porte publique :
  *
  *   1. UN SEUL POINT D ENTREE devine le type et applique la regle
- *      graine/selecteur. Un nom est refuse ; un domaine, une IP, un email
- *      passent.
+ *      graine/selecteur. Un domaine, une IP, un email passent ; un nom passe
+ *      aussi mais ne rend que des candidats publics separes, jamais « la
+ *      personne ».
  *   2. L EXPORT NE RELANCE PAS LE TRAVAIL. .csv et .pdf sont la MEME enquete,
  *      servie autrement : le site vise ne paie pas notre envie de tableur.
  *   3. LE PDF EST UN VRAI PDF. Entete, longueur annoncee, il s ouvre.
@@ -68,13 +69,19 @@ D._reseau(async (u) => {
     eq((await lit('/osint/v2/acme.io')).cors, '*', 'lisible depuis le site');
   }
 
-  console.log('\n-- 2. un nom n est pas un point de depart, et ca se dit --');
+  console.log('\n-- 2. un nom passe, mais ne rend que des candidats separes --');
   {
+    /* Un nom est une graine honnete : accepte, il rend des CANDIDATS
+       publics (Wikidata, GitHub), jamais « la personne ». Ici le faux
+       internet ne repond rien pour l identite, donc la boite est vide —
+       mais la porte accepte le nom et le reconnait, sans le refuser. */
     const r = await lit('/osint/v2/' + encodeURIComponent('Jean Dupont'));
-    eq(r.code, 400, 'un nom est refuse');
-    ok(/domain|IP|website|address/i.test(json(r).erreur), 'et le refus dit quoi taper a la place');
-    /* Un email en revanche PASSE : c est un selecteur, pas une graine. */
-    eq((await lit('/osint/v2/' + encodeURIComponent('bob@acme.io'))).code, 200, 'un email, lui, passe : c est un selecteur');
+    eq(r.code, 200, 'un nom est accepte');
+    const j = json(r);
+    eq(j.cible.type, 'personne', 'et il est reconnu comme un nom');
+    ok(Array.isArray(j.faits), 'la reponse a une liste de faits');
+    /* Un email PASSE aussi : c est une graine (son domaine). */
+    eq((await lit('/osint/v2/' + encodeURIComponent('bob@acme.io'))).code, 200, 'un email, lui aussi, passe : c est une graine');
   }
 
   console.log('\n-- 3. les constats et les contradictions sont dans la reponse --');
@@ -134,7 +141,8 @@ D._reseau(async (u) => {
     eq(f.produit.length, 0, 'un connecteur de selecteur ne produit aucune entite');
     ok(r.connecteurs.some((c) => c.mode === 'actif') && r.connecteurs.some((c) => c.mode === 'passif'),
        'passif et actif sont distingues');
-    ok(/data brokers/i.test(r.refus.personne), 'le refus d une recherche par personne est explique');
+    ok(/selector/i.test(r.refus.pseudo) && /selector/i.test(r.refus.telephone),
+       'la limite d un selecteur (pseudo, telephone) est expliquee en clair');
     ok(r.regles.length >= 5, 'les regles de croisement sont exposees [' + r.regles.length + ']');
   }
 

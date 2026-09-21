@@ -91,6 +91,18 @@ function normaliseUrl(v) {
   } catch (e) { return null; }
 }
 
+function normaliseAsn(v) {
+  const s = String(v == null ? '' : v).trim().toUpperCase().replace(/\s+/g, '');
+  const m = s.match(/^(?:AS)?(\d{1,10})$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return n >= 1 && n <= 4294967295 ? 'AS' + n : null;
+}
+function normaliseCve(v) {
+  const s = String(v == null ? '' : v).trim().toUpperCase();
+  return /^CVE-\d{4}-\d{4,7}$/.test(s) ? s : null;
+}
+
 const ENTITES = {
   domaine: { graine: true, normalise: (v) => osintD.normaliseDomaine(v),
              quoi: 'a domain name' },
@@ -116,22 +128,35 @@ const ENTITES = {
   telephone: { graine: false, selecteur: true, normalise: normaliseTelephone,
                quoi: 'a phone number in +CC form (numbering plan only)' },
 
+  /* Un numero de systeme autonome — l operateur reseau. Public. */
+  asn: { graine: true, normalise: normaliseAsn, quoi: 'an autonomous system number (AS15169)' },
+  /* Une reference de vulnerabilite publique. */
+  cve: { graine: true, normalise: normaliseCve, quoi: 'a public vulnerability (CVE-2021-44228)' },
+
+  /* ---- LE NOM EST UNE GRAINE, MAIS QUI NE REND QUE DES CANDIDATS ----
+     Un nom ne designe PAS une personne unique : plusieurs gens le portent.
+     Le connecteur d identite ne rend donc jamais « la personne John Doe » —
+     il rend des CANDIDATS publics separes (une entite Wikidata, un compte
+     GitHub), chacun distinct, marque non verifie, jamais fusionne avec un
+     autre. Porter le meme nom n est pas etre la meme personne, et le code le
+     tient : chaque candidat est une entite a part. */
+  personne: { graine: true, normalise: (v) => (String(v || '').trim().replace(/\s+/g, ' ').slice(0, 120) || null),
+              quoi: 'a person name — returns SEPARATE public candidates, never a single identity' },
+
   /* Produites par les connecteurs, jamais tapees. */
   organisation: { graine: false, normalise: (v) => (String(v || '').trim().slice(0, 160) || null),
                   quoi: 'an organisation' },
-  personne: { graine: false, normalise: (v) => (String(v || '').trim().slice(0, 120) || null),
-              quoi: 'a person named by an organisation on its own pages' },
+  /* Un candidat public rattache a un nom : distinct, jamais fusionne. */
+  candidat: { graine: false, normalise: (v) => (String(v || '').trim().slice(0, 160) || null),
+              quoi: 'a public candidate matching a name (unconfirmed)' },
   jeton: { graine: false, normalise: (v) => osintD.normaliseAdresse(v), quoi: 'a token' },
   reseau: { graine: false, normalise: (v) => (String(v || '').trim().slice(0, 80) || null), quoi: 'a network / ASN' },
+  vulnerabilite: { graine: false, normalise: (v) => (String(v || '').trim().slice(0, 40) || null), quoi: 'a vulnerability' },
 };
 
 /* Ce qu on refuse en entree, avec la raison en clair. Le message est montre
    tel quel : un refus qui n explique pas se lit comme une panne. */
 const REFUS_GRAINE = {
-  personne: 'A person’s name is not a starting point. With the lawful sources this tool uses, '
-          + 'a name search returns nothing — what makes it work elsewhere is data brokers and '
-          + 'leaked databases, which this tool does not query. Start from a domain, an IP, a website '
-          + 'or an on-chain address.',
   pseudo: 'A username is a selector, not a seed: you can check where an account with that name exists, '
         + 'not who owns it.',
   telephone: 'A phone number is a selector, not a seed: you can check its numbering plan, nothing more.',
@@ -140,13 +165,21 @@ const REFUS_GRAINE = {
 /* Reconnait le type d une entree sans qu on ait a le declarer. L ordre
    compte : une adresse de chaine ressemble a un pseudo, un domaine
    ressemble a un pseudo. Le plus specifique gagne. */
-const ORDRE_DETECTION = ['adresse', 'email', 'ip', 'url', 'domaine', 'telephone', 'pseudo'];
+const ORDRE_DETECTION = ['cve', 'asn', 'adresse', 'email', 'ip', 'url', 'domaine', 'telephone', 'pseudo'];
 function detecte(brut) {
   const s = String(brut == null ? '' : brut).trim();
   if (!s) return null;
   for (const type of ORDRE_DETECTION) {
     const v = ENTITES[type].normalise(s);
     if (v) return { type, valeur: v };
+  }
+  /* Dernier recours : un texte de PLUSIEURS mots de lettres, sans @ ni
+     chiffres, est un NOM. « Jean Dupont » -> personne. Un seul mot est
+     ambigu (prenom ou pseudo) : il est deja parti en pseudo plus haut, on
+     ne le reprend pas ici. */
+  if (/\s/.test(s) && /^[\p{L}][\p{L}'’.\- ]{1,80}$/u.test(s) && s.split(/\s+/).length >= 2 && s.split(/\s+/).length <= 5) {
+    const v = ENTITES.personne.normalise(s);
+    if (v) return { type: 'personne', valeur: v };
   }
   return null;
 }
@@ -540,8 +573,11 @@ async function enFile(taches, largeur, travail) {
 
 const CALQUE = {
   domaine: 'infrastructure', ip: 'infrastructure', reseau: 'infrastructure', url: 'infrastructure',
+  vulnerabilite: 'infrastructure',
   organisation: 'organization',
-  personne: 'contacts', email: 'contacts', telephone: 'contacts', pseudo: 'contacts',
+  /* Un candidat public rattache a un nom est une personne (non confirmee) :
+     il vit dans le meme calque que les contacts, et se dessine en humain. */
+  personne: 'contacts', candidat: 'contacts', email: 'contacts', telephone: 'contacts', pseudo: 'contacts',
   adresse: 'chain', jeton: 'chain',
 };
 
@@ -552,10 +588,11 @@ function graphe(rapport) {
     if (!noeuds.has(k)) {
       noeuds.set(k, { id: k, type: e.type, nom: String(e.valeur),
                       filtre: CALQUE[e.type] || 'infrastructure',
-                      /* Une personne se dessine autrement qu une machine.
-                         C est la seule propriete que le peintre lit pour
-                         changer de forme, et elle est calculee ici. */
-                      humain: e.type === 'personne',
+                      /* Une personne — ou un candidat public rattache a un
+                         nom — se dessine autrement qu une machine. C est la
+                         seule propriete que le peintre lit pour changer de
+                         forme, et elle est calculee ici. */
+                      humain: e.type === 'personne' || e.type === 'candidat',
                       attributs: [] });
     }
     return noeuds.get(k);
@@ -806,7 +843,7 @@ function versPDF(rapport) {
 /* Ce que la suite ne fait pas, dans CHAQUE rapport. Un rapport qui sort de
    l outil et circule sans ses limites finit par etre lu comme une preuve. */
 const LIMITES_RAPPORT = [
-  'Seeds are domains, IPs, websites and on-chain addresses. This tool cannot be searched by a person’s name.',
+  'A person’s name returns SEPARATE public candidates (Wikidata, GitHub) — never a confirmed identity. Same name is not the same person, and nothing is merged.',
   'E-mail addresses, usernames and phone numbers are selectors: closed questions about them, never an expansion into a person.',
   'No leaked or private database is queried. No login, paywall or anti-bot protection is bypassed. robots.txt is obeyed.',
   'No password, hash or secret is ever fetched, stored or shown — breach checks report presence and data categories only.',

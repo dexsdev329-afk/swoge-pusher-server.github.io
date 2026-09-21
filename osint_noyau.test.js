@@ -47,7 +47,7 @@ console.log('-- 1. ce qu on tape, et ce qui se deploie a partir de la --');
      parce que le normaliseur d URL acceptait un domaine nu, et le connecteur
      DNS n etait donc jamais appele. */
   eq(N.detecte('acme.io').type, 'domaine', 'un domaine nu n est PAS une URL');
-  eq(N.detecte('Jean Dupont'), null, 'un nom n est aucun type connu');
+  eq(N.detecte('Jean Dupont').type, 'personne', 'un nom de plusieurs mots est reconnu comme personne');
   eq(N.detecte(''), null, 'le vide non plus');
 
   /* La normalisation avant tout : trois ecritures, un seul noeud. */
@@ -64,10 +64,21 @@ console.log('\n-- 2. graine ou selecteur : la regle est dans le code --');
   for (const t of ['pseudo', 'telephone']) {
     ok(!N.ENTITES[t].graine && N.ENTITES[t].selecteur, t + ' est un selecteur, pas une graine');
   }
-  ok(!N.ENTITES.personne.graine && !N.ENTITES.personne.selecteur, 'une personne n est ni l un ni l autre');
-  ok(/data brokers/i.test(N.REFUS_GRAINE.personne) && /returns nothing/i.test(N.REFUS_GRAINE.personne),
-     'et le refus dit POURQUOI, en clair : la boite serait vide');
-  ok(/domain, an IP, a website/i.test(N.REFUS_GRAINE.personne), 'et ce qu il faut taper a la place');
+  /* Le nom est devenu une GRAINE — mais une graine honnete. Un nom ne
+     designe pas une personne unique : plusieurs gens le portent. Il rend
+     donc des CANDIDATS publics separes, jamais « la personne ». La garantie
+     n est pas un refus, elle est dans le code : les connecteurs d identite
+     consomment un nom mais ne produisent QUE des candidats, jamais une
+     entite personne qu on pourrait fusionner. */
+  ok(N.ENTITES.personne.graine, 'un nom est une graine : on peut en chercher des candidats publics');
+  ok(/separate|candidate|never a single/i.test(N.ENTITES.personne.quoi),
+     'et son intitule dit qu il rend des candidats separes, jamais une identite unique');
+  {
+    const ids = N.connecteurs().filter((c) => c.consomme.includes('personne'));
+    ok(ids.length >= 1, 'au moins un connecteur consomme un nom [' + ids.length + ']');
+    ok(ids.every((c) => !c.produit.includes('personne')),
+       'et AUCUN ne produit une entite personne : un nom ne rend que des candidats, jamais « la personne »');
+  }
 
   /* LA GARDE STRUCTURELLE. Sans elle, la regle vivrait dans les
      commentaires et un connecteur distrait suffirait a l enfreindre. */

@@ -31,6 +31,7 @@ lance scanpub   "$SRV" node scan_public.test.js
 lance secuws  "$SRV" node securite_ws.test.js   # un vrai serveur, deux comptes, les gestes d argent
 lance osint   "$SRV" node osint.test.js
 lance noyau   "$SRV" node osint_noyau.test.js   # le noyau : faits, connecteurs, planificateur, regles
+lance identite "$SRV" node osint_identite.test.js   # un nom rend des candidats SEPARES, jamais fusionnes ; ASN, CVE
 lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route publique du releve
 lance osintv2 "$SRV" node osint_v2.test.js   # un vrai serveur : la route v2, exports, historique
 lance studio  "$SRV" node studio.test.js   # le paiement : double depense, fausse confirmation
