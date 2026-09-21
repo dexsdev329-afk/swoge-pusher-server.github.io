@@ -32,6 +32,7 @@ lance secuws  "$SRV" node securite_ws.test.js   # un vrai serveur, deux comptes,
 lance osint   "$SRV" node osint.test.js
 lance noyau   "$SRV" node osint_noyau.test.js   # le noyau : faits, connecteurs, planificateur, regles
 lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route publique du releve
+lance osintv2 "$SRV" node osint_v2.test.js   # un vrai serveur : la route v2, exports, historique
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js

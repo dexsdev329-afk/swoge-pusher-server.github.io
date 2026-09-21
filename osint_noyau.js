@@ -628,6 +628,9 @@ function mode(c) { return c.mode === 'actif' ? 'actif' : 'passif'; }
  *
  * Chaque regle dit ce qu elle a vu, pourquoi ca compte, et sur quels faits
  * elle s appuie — jamais un verdict sans ses pieces. */
+/* Les gravites, cote interne et cote montre. */
+const GRAVITES = { haute: 'HIGH', moyenne: 'MEDIUM', basse: 'LOW', info: 'NOTE' };
+
 const REGLES = [
   {
     nom: 'mail-usurpable', gravite: 'haute',
@@ -723,7 +726,12 @@ function constats(faits) {
     let v = null;
     try { v = r.quand(ix); } catch (e) { v = null; }
     if (!v) continue;
-    out.push({ regle: r.nom, gravite: r.gravite, dit: v.dit,
+    out.push({ regle: r.nom, gravite: r.gravite,
+               /* Le nom interne reste en francais comme tout le code ; le
+                  LIBELLE montre aux gens est en anglais, comme tout ce qui
+                  sort de l outil. */
+               etiquette: GRAVITES[r.gravite] || 'NOTE',
+               dit: v.dit,
                pieces: v.pieces.map((f) => ({ predicat: f.predicat,
                  valeur: f.valeur || (f.objet && f.objet.valeur), sources: f.sources })) });
   }
@@ -733,5 +741,94 @@ function constats(faits) {
 
 module.exports.mode = mode;
 module.exports.REGLES = REGLES;
+module.exports.GRAVITES = GRAVITES;
 module.exports.constats = constats;
 module.exports.index = index;
+
+/* Le rapport PDF. L ordre n est pas decoratif : les CONSTATS d abord —
+   c est ce qu on vient chercher — puis les contradictions, puis les faits,
+   puis les sources et les limites. Un rapport qui commence par trois pages
+   d enregistrements DNS n est jamais lu jusqu aux constats. */
+function versPDF(rapport) {
+  const pdf = require('./osint_pdf');
+  const L = [];
+  const gris = (t, ta) => L.push({ texte: t, taille: ta || 8, gris: 0.45 });
+  const titre = (t) => { L.push({ texte: t, taille: 12, gras: true, avant: 14 }); L.push({ trait: true }); };
+
+  gris(rapport.cible.type.toUpperCase() + '  ' + rapport.cible.valeur + '   ·   ' + rapport.date
+     + '   ·   ' + (rapport.ms / 1000).toFixed(1) + 's'
+     + '   ·   ' + (rapport.passif ? 'passive: the target was never touched'
+                                        : 'active: the target saw our requests'), 9);
+
+  titre('FINDINGS');
+  if (!(rapport.constats || []).length) {
+    gris('Nothing crossed. That is a result, not an absence of work — see the facts below.', 9.5);
+  }
+  for (const c of rapport.constats || []) {
+    L.push({ texte: '[' + (c.etiquette || 'NOTE') + ']  ' + c.dit, taille: 9.5, avant: 6 });
+    for (const p of c.pieces) gris('   ' + p.predicat + ': ' + p.valeur + '   — ' + (p.sources || []).join(', '));
+  }
+
+  if ((rapport.contradictions || []).length) {
+    titre('SOURCES DISAGREE');
+    for (const k of rapport.contradictions) {
+      L.push({ texte: k.sujet.valeur + ' — ' + k.predicat, taille: 9.5, gras: true, avant: 6 });
+      for (const v of k.versions) gris('   ' + v.valeur + '   (' + v.confiance + ', ' + v.score + ')   — ' + v.sources.join(', '));
+      gris('   ' + k.note);
+    }
+  }
+
+  titre('FACTS');
+  for (const f of rapport.faits) {
+    L.push({ texte: f.sujet.valeur + '  —  ' + f.predicat + '  —  '
+                  + (f.objet ? f.objet.valeur : f.valeur)
+                  + '   [' + f.confiance + ' ' + f.score + (f.conteste ? ', disputed' : '') + ']', taille: 9 });
+    gris('   ' + (f.sources || []).join(', ') + (f.pourquoi ? '   — ' + f.pourquoi : ''));
+  }
+
+  titre('WHAT WAS NOT DONE');
+  for (const e of rapport.connecteursEteints || []) gris('off: ' + e.nom + ' — ' + e.pourquoi + (e.cout ? ' (' + e.cout + ')' : ''), 9);
+  for (const e of rapport.connecteursEcartes || []) gris('skipped: ' + e.nom + ' — ' + e.pourquoi, 9);
+  for (const l of LIMITES_RAPPORT) L.push({ texte: '• ' + l, taille: 8.5 });
+
+  return pdf.pdf('SWOGE OSINT — ' + rapport.cible.valeur, L);
+}
+
+/* Ce que la suite ne fait pas, dans CHAQUE rapport. Un rapport qui sort de
+   l outil et circule sans ses limites finit par etre lu comme une preuve. */
+const LIMITES_RAPPORT = [
+  'Seeds are domains, IPs, websites and on-chain addresses. This tool cannot be searched by a person’s name.',
+  'E-mail addresses, usernames and phone numbers are selectors: closed questions about them, never an expansion into a person.',
+  'No leaked or private database is queried. No login, paywall or anti-bot protection is bypassed. robots.txt is obeyed.',
+  'No password, hash or secret is ever fetched, stored or shown — breach checks report presence and data categories only.',
+  'Being named on a page is not owning a domain. Sources that disagree are both shown; nothing is picked for you.',
+  'Every number carries how many observations it rests on. A past record is a measurement, not a prediction.',
+];
+
+/* ==================================================================
+ * L HISTORIQUE — minimise par construction
+ * ==================================================================
+ * On garde la CIBLE, la date, les comptes. Pas les faits : ils vivent
+ * dans le cache le temps de leur TTL, et une enquete sur une personne
+ * nommee par une organisation n a pas a rester dans un journal sur le
+ * disque parce que quelqu un a tape un domaine une fois. */
+const HISTORIQUE = [];
+const HISTO_MAX = Math.max(10, Number(process.env.OSINT_HISTO_MAX || 200));
+function noteHistorique(r) {
+  HISTORIQUE.unshift({
+    cible: r.cible, date: r.date, t: Date.now(), ms: r.ms,
+    faits: r.faits.length, constats: (r.constats || []).length,
+    contradictions: (r.contradictions || []).length,
+    entites: r.entites ? r.entites.length : 0,
+    passif: !!r.passif,
+  });
+  if (HISTORIQUE.length > HISTO_MAX) HISTORIQUE.length = HISTO_MAX;
+  return HISTORIQUE[0];
+}
+const historique = (n) => HISTORIQUE.slice(0, Math.max(1, Math.min(HISTO_MAX, n || 50)));
+
+module.exports.versPDF = versPDF;
+module.exports.LIMITES_RAPPORT = LIMITES_RAPPORT;
+module.exports.noteHistorique = noteHistorique;
+module.exports.historique = historique;
+module.exports.HISTORIQUE = HISTORIQUE;

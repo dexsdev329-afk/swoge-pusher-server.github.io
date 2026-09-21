@@ -339,12 +339,31 @@ N.declare({
  * sur deux sites, c est deux comptes du meme pseudo. En faire une identite
  * est exactement le saut que ce projet s interdit. */
 const PLATEFORMES = [
+  /* Chacune est une PAGE PUBLIQUE : on fait un GET, on lit le CODE de
+     reponse, jamais le contenu. C est ce que fait un navigateur qui ouvre
+     l URL — une visite. Ce qu on ne fait PAS, et qui separe ceci de
+     Maigret a 6000 sites : abuser un formulaire de recuperation de mot de
+     passe, contourner une protection anti-robot, ou relier deux comptes du
+     meme pseudo comme s ils etaient la meme personne. Deux comptes du meme
+     pseudo, c est deux comptes du meme pseudo. */
   { nom: 'GitHub', hote: 'github.com', url: (u) => 'https://github.com/' + u },
   { nom: 'GitLab', hote: 'gitlab.com', url: (u) => 'https://gitlab.com/' + u },
   { nom: 'Reddit', hote: 'reddit.com', url: (u) => 'https://www.reddit.com/user/' + u + '/about.json' },
   { nom: 'Telegram', hote: 't.me', url: (u) => 'https://t.me/' + u },
   { nom: 'Bluesky', hote: 'bsky.app', url: (u) => 'https://bsky.app/profile/' + u },
   { nom: 'Medium', hote: 'medium.com', url: (u) => 'https://medium.com/@' + u },
+  { nom: 'Keybase', hote: 'keybase.io', url: (u) => 'https://keybase.io/' + u },
+  { nom: 'Gravatar', hote: 'gravatar.com', url: (u) => 'https://gravatar.com/' + u },
+  { nom: 'Mastodon (social)', hote: 'mastodon.social', url: (u) => 'https://mastodon.social/@' + u },
+  { nom: 'Dev.to', hote: 'dev.to', url: (u) => 'https://dev.to/' + u },
+  { nom: 'HackerNews', hote: 'news.ycombinator.com', url: (u) => 'https://news.ycombinator.com/user?id=' + u },
+  { nom: 'npm', hote: 'npmjs.com', url: (u) => 'https://www.npmjs.com/~' + u },
+  { nom: 'PyPI', hote: 'pypi.org', url: (u) => 'https://pypi.org/user/' + u + '/' },
+  { nom: 'Docker Hub', hote: 'hub.docker.com', url: (u) => 'https://hub.docker.com/u/' + u },
+  { nom: 'Steam', hote: 'steamcommunity.com', url: (u) => 'https://steamcommunity.com/id/' + u },
+  { nom: 'Twitch', hote: 'twitch.tv', url: (u) => 'https://www.twitch.tv/' + u },
+  { nom: 'SoundCloud', hote: 'soundcloud.com', url: (u) => 'https://soundcloud.com/' + u },
+  { nom: 'Behance', hote: 'behance.net', url: (u) => 'https://www.behance.net/' + u },
 ];
 N.declare({
   nom: 'comptes', consomme: ['pseudo'], produit: [],
@@ -421,3 +440,81 @@ N.declare({
 });
 
 module.exports = { PLATEFORMES, INDICATIFS };
+
+/* ---- L ARCHIVE DU WEB ----
+ * Wayback Machine : ce qu un domaine a montre au monde par le passe, tel
+ * qu une archive publique l a garde. Purement passif — on lit l archive,
+ * jamais le site. Utile quand une page de contact a ete retiree mais
+ * qu elle reste dans l archive : c est de l information publique, elle a
+ * juste demenage. */
+N.declare({
+  nom: 'archive', consomme: ['domaine'], produit: [],
+  hote: 'web.archive.org', parMinute: 15, ttl: 6 * 60 * 60 * 1000, cout: 'free', delaiMs: 12000,
+  async lance(cible) {
+    const url = 'https://web.archive.org/cdx/search/cdx?url=' + encodeURIComponent(cible.valeur)
+              + '*&output=json&fl=timestamp,original&collapse=urlkey&limit=1000';
+    const r = await D.recuperePage(url, 'application/json');
+    if (!r.ok) return { faits: [] };
+    let lignes = [];
+    try { lignes = JSON.parse(r.corps); } catch (e) { return { faits: [] }; }
+    if (!Array.isArray(lignes) || lignes.length < 2) return { faits: [] };
+    const corps = lignes.slice(1);            /* la premiere ligne est l en-tete */
+    const dates = corps.map((l) => l[0]).filter(Boolean).sort();
+    const faits = [f({ sujet: cible, predicat: 'WEB ARCHIVE',
+                       valeur: corps.length + ' archived pages, from '
+                             + (dates[0] || '?').slice(0, 4) + ' to ' + (dates[dates.length - 1] || '?').slice(0, 4),
+                       source: 'https://web.archive.org/web/*/' + cible.valeur, verifie: true, confiance: 'MEDIUM',
+                       pourquoi: 'a public archive of what this domain showed the world over time' })];
+    return { faits };
+  },
+});
+
+/* ==================================================================
+ * LES CONNECTEURS A CLE — declares, eteints tant que la cle manque
+ * ==================================================================
+ * Chacun est une source professionnelle standard (SpiderFoot, BBOT et
+ * OpenOSINT les integrent tous). On les DECLARE pour que la plomberie
+ * existe et que la page les montre en « eteint, cle requise » : le jour ou
+ * une cle est posee dans l environnement, le connecteur s allume sans
+ * qu on touche au code. Un connecteur eteint qui se DIT eteint vaut mieux
+ * qu une source absente qu on croit avoir. */
+
+/* Shodan : ce qu une IP expose au monde — ports, bannieres, services. */
+N.declare({
+  nom: 'shodan', consomme: ['ip'], produit: [], cle: 'SHODAN_API_KEY',
+  hote: 'api.shodan.io', parMinute: 30, ttl: 6 * 60 * 60 * 1000, cout: 'key required (free tier available)',
+  async lance(cible, ctx) {
+    const k = (ctx.env || process.env).SHODAN_API_KEY;
+    const r = await D.recuperePage('https://api.shodan.io/shodan/host/' + cible.valeur + '?key=' + encodeURIComponent(k),
+                                   'application/json');
+    if (r.code === 404) return { faits: [f({ sujet: cible, predicat: 'EXPOSED SERVICES',
+      valeur: 'nothing indexed by Shodan', source: 'shodan.io', verifie: true, confiance: 'MEDIUM' })] };
+    if (!r.ok) throw new Error('Shodan HTTP ' + r.code);
+    let j = {}; try { j = JSON.parse(r.corps); } catch (e) { throw new Error('Shodan: unreadable'); }
+    const ports = Array.isArray(j.ports) ? j.ports : [];
+    const faits = [f({ sujet: cible, predicat: 'EXPOSED SERVICES',
+                       valeur: ports.length ? ports.length + ' open port(s): ' + ports.join(', ') : 'none',
+                       source: 'https://www.shodan.io/host/' + cible.valeur, verifie: true, confiance: 'HIGH' })];
+    if (j.org) faits.push(f({ sujet: cible, predicat: 'OPERATED BY', valeur: String(j.org),
+                             source: 'shodan.io', verifie: true, confiance: 'HIGH' }));
+    return { faits };
+  },
+});
+
+/* AbuseIPDB : une IP a-t-elle ete signalee, et combien de fois. */
+N.declare({
+  nom: 'abuseipdb', consomme: ['ip'], produit: [], cle: 'ABUSEIPDB_API_KEY',
+  hote: 'api.abuseipdb.com', parMinute: 20, ttl: 3 * 60 * 60 * 1000, cout: 'key required (free tier available)',
+  async lance(cible, ctx) {
+    const r = await D.recuperePage('https://api.abuseipdb.com/api/v2/check?ipAddress=' + cible.valeur + '&maxAgeInDays=180',
+                                   'application/json', { Key: (ctx.env || process.env).ABUSEIPDB_API_KEY });
+    if (!r.ok) throw new Error('AbuseIPDB HTTP ' + r.code);
+    let j = {}; try { j = JSON.parse(r.corps).data || {}; } catch (e) { throw new Error('AbuseIPDB: unreadable'); }
+    return { faits: [f({ sujet: cible, predicat: 'ABUSE REPORTS',
+      valeur: (j.totalReports || 0) + ' report(s), ' + (j.abuseConfidenceScore || 0) + '% confidence of abuse',
+      source: 'https://www.abuseipdb.com/check/' + cible.valeur, verifie: true,
+      confiance: (j.abuseConfidenceScore || 0) > 50 ? 'HIGH' : 'MEDIUM' })] };
+  },
+});
+
+module.exports.PLATEFORMES_N = PLATEFORMES.length;

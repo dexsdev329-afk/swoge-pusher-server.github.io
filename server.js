@@ -48,7 +48,7 @@ async function etatMiroirPour(ws) {
 const miroir = require('./miroir');
 
 /* ---- IL VIT AU MODULE, PAS DANS LA REQUETE ----
- * Il etait declare dans le gestionnaire HTTP, c'est-a-dire OSINTSTRUIT a
+ * Il etait declare dans le gestionnaire HTTP, c'est-a-dire reconstruit a
  * chaque visite : la releve remplissait un objet que la reponse suivante ne
  * voyait jamais. Rien ne cassait — la page recevait simplement un tableau
  * vide, indefiniment, pendant que le serveur interrogeait ESPN a chaque
@@ -1599,6 +1599,8 @@ const SCAN_PAR_MIN = Math.max(1, Number(process.env.SCAN_PAR_MIN || 20));
  * une liste. Le releve est garde dix minutes — un partage ne refait pas le
  * travail sur le dos du site vise. */
 const osint = require('./osint');
+const osintNoyau = require('./osint_noyau');
+require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
 const OSINT_PAR_MIN = Math.max(1, Number(process.env.OSINT_PAR_MIN || 5));
 const OSINT_TTL = 10 * 60 * 1000;
 const osintsVus = new Map();
@@ -2161,6 +2163,108 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       return res.end(JSON.stringify({ erreur: String(e.message || e).slice(0, 160) }));
     }
+  }
+
+  /* ==================== OSINT v2 ====================
+   * Le noyau a faits : constats, contradictions, graphe derive, exports.
+   * La route v1 (`/osint/<domaine>`) reste tant que la page v1 l utilise —
+   * on ne casse pas une adresse qui tourne pour livrer la suivante.
+   *
+   * `.csv` et `.pdf` ne sont pas des routes separees : c est la MEME
+   * enquete, rendue autrement. Un export qui relancerait le travail ferait
+   * payer au site vise le fait qu on veuille un tableur. */
+  if (path === '/osint/v2' || path.startsWith('/osint/v2/')) {
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    let brut = path === '/osint/v2' ? String(q.get('q') || '').trim()
+      : decodeURIComponent(path.slice('/osint/v2/'.length));
+    let format = 'json';
+    const ext = brut.match(/\.(csv|pdf|json)$/i);
+    if (ext) { format = ext[1].toLowerCase(); brut = brut.slice(0, -ext[0].length); }
+    res.setHeader('access-control-allow-origin', '*');
+
+    /* La forme d abord, le debit ensuite : une faute de frappe ne touche
+       aucun service, donc elle ne doit pas consommer le quota. */
+    const cible = osintNoyau.detecte(brut);
+    if (!cible) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ erreur: 'Not a recognised target. Paste a domain, an IP, a website address, '
+        + 'an on-chain address, or an e-mail / username to check its exposure.' }));
+    }
+    const def = osintNoyau.ENTITES[cible.type];
+    if (!def.graine && !def.selecteur) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ erreur: osintNoyau.REFUS_GRAINE[cible.type] || 'Not a starting point.' }));
+    }
+    const passif = q.get('passif') === '1';
+    const cle = 'v2|' + osintNoyau.cleEntite(cible) + '|' + (passif ? 'p' : 'a');
+    let r = null;
+    const garde = OSINTS.get(cle);
+    if (garde && Date.now() - garde.t < OSINT_TTL) r = garde.r;
+    if (!r) {
+      if (!osintDebit(req)) {
+        res.writeHead(429, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(JSON.stringify({ erreur: 'too many reports, wait a minute' }));
+      }
+      try {
+        r = await osintNoyau.enquete(cible, { passifSeulement: passif });
+        r.graphe = osintNoyau.graphe(r);
+        osintNoyau.noteHistorique(r);
+        OSINTS.set(cle, { t: Date.now(), r });
+        if (OSINTS.size > 400) for (const [k, v] of OSINTS) if (Date.now() - v.t > OSINT_TTL) OSINTS.delete(k);
+      } catch (e) {
+        res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(JSON.stringify({ erreur: String(e.message || e).slice(0, 400) }));
+      }
+    }
+    const nom = 'swoge-osint-' + String(cible.valeur).replace(/[^a-z0-9.@+-]/gi, '_').slice(0, 60);
+    if (format === 'csv') {
+      res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8',
+                           'content-disposition': 'attachment; filename="' + nom + '.csv"',
+                           'cache-control': 'public, max-age=300' });
+      return res.end(osintNoyau.versCSV(r));
+    }
+    if (format === 'pdf') {
+      const b = osintNoyau.versPDF(r);
+      res.writeHead(200, { 'content-type': 'application/pdf',
+                           'content-disposition': 'attachment; filename="' + nom + '.pdf"',
+                           'content-length': b.length, 'cache-control': 'public, max-age=300' });
+      return res.end(b);
+    }
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' });
+    return res.end(JSON.stringify(r));
+  }
+
+  /* Ce que la suite sait faire, et ce qui est eteint faute de cle. La page
+     le montre : un connecteur muet parce qu il manque une cle ne doit pas
+     se lire comme une source qui n a rien trouve. */
+  if (path === '/osint/connecteurs') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*', 'cache-control': 'public, max-age=60' });
+    return res.end(JSON.stringify({
+      entites: Object.keys(osintNoyau.ENTITES).map((t) => Object.assign(
+        { type: t }, { graine: !!osintNoyau.ENTITES[t].graine, selecteur: !!osintNoyau.ENTITES[t].selecteur,
+                       quoi: osintNoyau.ENTITES[t].quoi })),
+      refus: osintNoyau.REFUS_GRAINE,
+      connecteurs: osintNoyau.connecteurs().map((c) => ({
+        nom: c.nom, consomme: c.consomme, produit: c.produit, mode: osintNoyau.mode(c),
+        hote: c.hote, parMinute: c.parMinute, cout: c.cout,
+        actif: osintNoyau.actif(c), cle: c.cle || null })),
+      regles: osintNoyau.REGLES.map((r) => ({ nom: r.nom, gravite: r.gravite })),
+      limites: osintNoyau.LIMITES_RAPPORT,
+    }));
+  }
+
+  /* L historique, minimise par construction : la cible, la date, les
+     comptes. Pas les faits — ils vivent dans le cache le temps de leur TTL
+     et n ont pas a rester sur le disque parce que quelqu un a tape un
+     domaine une fois. */
+  if (path === '/osint/historique') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify({
+      note: 'Targets and counts only. Facts are not kept on disk.',
+      entrees: osintNoyau.historique(Number(new URLSearchParams(req.url.split('?')[1] || '').get('n')) || 50),
+    }));
   }
 
   /* ---- LE RELEVE D UN DOMAINE ----
