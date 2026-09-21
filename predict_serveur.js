@@ -31,7 +31,13 @@ const ROUND_MS = Math.max(30, Number(process.env.PREDICT_ROUND_S || 300)) * 1000
 const TIC_MS = Math.max(5, Number(process.env.PREDICT_TIC_S || 15)) * 1000;
 const BANK0 = Math.max(1, Number(process.env.PREDICT_BANK || 1000));
 const MISE = Math.max(0.01, Number(process.env.PREDICT_BET || 10));
-const MART = process.env.PREDICT_MART === '1';   /* a plat par defaut : un releve, pas un feu d'artifice */
+/* Martingale ACTIVE par defaut (demande explicite) : la mise double apres une
+   perte et revient a la mise de base apres un gain — la banque bouge beaucoup
+   plus, et « se rattrape »… jusqu a une serie perdante qui touche le plafond ou
+   vide la caisse, la ou elle repart d une caisse neuve. C est le comportement
+   voulu ET l honnetete de la page : une martingale ne se rattrape pas toujours.
+   PREDICT_MART=0 revient a la mise a plat. */
+const MART = process.env.PREDICT_MART !== '0';
 const HISTO_MAX = 300;
 const FICHIER = path.join(cfg.DATA_DIR, 'predict.json');
 const HL = 'https://api.hyperliquid.xyz/info';
