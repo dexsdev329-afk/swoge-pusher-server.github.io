@@ -607,48 +607,135 @@ function nomsDe(fenetre) {
   return out;
 }
 
-/* ---- LES PROFILS PROFESSIONNELS PUBLIES ----
- * Un lien vers un annuaire professionnel, imprime par l organisation a cote
- * du nom de quelqu un, est une information professionnelle explicitement
- * publiee — exactement ce que ce module a le droit de relever.
+/* ---- LES COMPTES PUBLICS PUBLIES PAR L ORGANISATION ----
+ * Un lien vers un compte, imprime par l organisation A COTE du nom d une
+ * personne nommee, sur sa propre page equipe ou contact, est une
+ * information publiee — pas une information collectee.
  *
- * La liste est courte et volontairement severe : LinkedIn, GitHub, GitLab,
- * ORCID. Pas de compte social personnel, meme public. Un compte X ou
- * Instagram n est pas un « profil professionnel » : le relever reviendrait a
- * commencer le profil personnel que tout le reste du fichier s interdit.
+ * CE QUI REND CECI SUR, ET CE QUI LE RENDRAIT DANGEREUX. Ramasser les
+ * comptes de quelqu un a travers les plateformes A PARTIR D UN PSEUDO,
+ * c est le pistage par nom d utilisateur, et c est precisement ce que ce
+ * module ne peut pas faire : il n y a aucune entree par une personne. Ici,
+ * on ne part jamais d un compte pour trouver quelqu un — on part d un
+ * domaine, et on lit ce que l organisation a elle-meme ecrit. Le lien de
+ * causalite est dans ce sens-la et ne peut pas s inverser.
  *
- * Le motif de chemin compte autant que l hote : `github.com/acme/projet` est
- * un DEPOT, pas quelqu un. Seule la racine d un compte passe. */
+ * Deux garde-fous portent tout le reste, et ils sont dans les motifs :
+ *
+ *   1. SEULE LA RACINE D UN COMPTE PASSE. `github.com/acme/projet` est un
+ *      DEPOT, `instagram.com/p/xyz` une PHOTO, `linkedin.com/company/acme`
+ *      une SOCIETE. Aucun des trois n est quelqu un.
+ *   2. LES CHEMINS DE PARTAGE SONT EXCLUS NOMMEMENT. `x.com/share`,
+ *      `x.com/intent`, `facebook.com/sharer` tiennent dans le motif d un
+ *      pseudo et vivent dans le pied de page de la moitie du web : sans
+ *      INTERDITS, chaque site rendrait un « compte » qui n existe pas.
+ *
+ * Et le troisieme, qui n est pas ici mais dans `proprietaireDu` : un compte
+ * sans nom de personne a cote n appartient a personne. C est ce qui fait
+ * tomber les boutons de partage et les comptes de la societe, qui vivent
+ * justement dans les pieds de page, loin de tout nom. */
+const INTERDITS = new Set([
+  'share', 'sharer', 'intent', 'intents', 'home', 'search', 'explore', 'about',
+  'login', 'signup', 'register', 'privacy', 'terms', 'legal', 'help', 'support',
+  'settings', 'p', 'reel', 'reels', 'stories', 'story', 'status', 'watch',
+  'hashtag', 'tags', 'pin', 'create', 'embed', 'widgets', 'i', 'c', 'u',
+  'channel', 'playlist', 'results', 'feed', 'download', 'apps', 'developers',
+  'jobs', 'careers', 'press', 'blog', 'contact', 'directory', 'pages', 'groups',
+  'events', 'marketplace', 'messages', 'notifications', 'bookmarks', 'topics',
+  'profile', 'sharer', 'intent.php', 'dialog',
+]);
+/* Les segments qui ANNONCENT un compte au lieu d en etre un : `/in/jane`,
+   `/users/42`, `/profile/jane.bsky.social`. Admis seulement devant un
+   dernier segment, jamais seuls. */
+const PREFIXES_OK = new Set(['in', 'users', 'user', 'u', 'profile', 'citations', 'c']);
+/* `genre` sert a l affichage : un annuaire professionnel et un compte social
+   ne se presentent pas du meme mot. On ne melange pas les deux sous une
+   etiquette « professionnel » qui serait fausse pour la moitie d entre eux. */
 const HOTES_PROFIL = [
-  { hote: 'linkedin.com', motif: /^\/in\/[A-Za-z0-9\-%_.]{2,}\/?$/ },
-  { hote: 'github.com', motif: /^\/[A-Za-z0-9][A-Za-z0-9-]{0,38}\/?$/ },
-  { hote: 'gitlab.com', motif: /^\/[A-Za-z0-9][A-Za-z0-9-_.]{0,59}\/?$/ },
-  { hote: 'orcid.org', motif: /^\/\d{4}-\d{4}-\d{4}-\d{3}[\dX]\/?$/ },
+  /* — les annuaires professionnels — */
+  { hote: 'linkedin.com', genre: 'pro', motif: /^\/in\/[A-Za-z0-9\-%_.]{2,100}\/?$/ },
+  { hote: 'github.com', genre: 'pro', motif: /^\/[A-Za-z0-9][A-Za-z0-9-]{0,38}\/?$/ },
+  { hote: 'gitlab.com', genre: 'pro', motif: /^\/[A-Za-z0-9][A-Za-z0-9-_.]{0,59}\/?$/ },
+  { hote: 'orcid.org', genre: 'pro', motif: /^\/\d{4}-\d{4}-\d{4}-\d{3}[\dX]\/?$/ },
+  { hote: 'stackoverflow.com', genre: 'pro', motif: /^\/users\/\d{1,12}(\/[A-Za-z0-9\-%_.]{1,60})?\/?$/ },
+  { hote: 'behance.net', genre: 'pro', motif: /^\/[A-Za-z0-9_-]{3,40}\/?$/ },
+  { hote: 'dribbble.com', genre: 'pro', motif: /^\/[A-Za-z0-9_-]{3,40}\/?$/ },
+  { hote: 'about.me', genre: 'pro', motif: /^\/[A-Za-z0-9_.-]{3,40}\/?$/ },
+  { hote: 'keybase.io', genre: 'pro', motif: /^\/[A-Za-z0-9_]{2,40}\/?$/ },
+  { hote: 'scholar.google.com', genre: 'pro', motif: /^\/citations\/?$/ },
+  /* — les comptes sociaux publics — */
+  { hote: 'x.com', genre: 'social', motif: /^\/[A-Za-z0-9_]{1,15}\/?$/ },
+  { hote: 'twitter.com', genre: 'social', motif: /^\/[A-Za-z0-9_]{1,15}\/?$/ },
+  { hote: 'instagram.com', genre: 'social', motif: /^\/[A-Za-z0-9._]{1,30}\/?$/ },
+  { hote: 'facebook.com', genre: 'social', motif: /^\/[A-Za-z0-9.]{5,50}\/?$/ },
+  { hote: 'threads.net', genre: 'social', motif: /^\/@[A-Za-z0-9._]{2,30}\/?$/ },
+  { hote: 'threads.com', genre: 'social', motif: /^\/@[A-Za-z0-9._]{2,30}\/?$/ },
+  { hote: 'tiktok.com', genre: 'social', motif: /^\/@[A-Za-z0-9._]{2,24}\/?$/ },
+  { hote: 'youtube.com', genre: 'social', motif: /^\/(@[A-Za-z0-9._-]{3,30}|user\/[A-Za-z0-9_-]{3,40})\/?$/ },
+  { hote: 'bsky.app', genre: 'social', motif: /^\/profile\/[A-Za-z0-9.\-]{3,64}\/?$/ },
+  { hote: 't.me', genre: 'social', motif: /^\/[A-Za-z0-9_]{5,32}\/?$/ },
+  { hote: 'reddit.com', genre: 'social', motif: /^\/(user|u)\/[A-Za-z0-9_-]{3,20}\/?$/ },
+  { hote: 'twitch.tv', genre: 'social', motif: /^\/[A-Za-z0-9_]{4,25}\/?$/ },
+  { hote: 'medium.com', genre: 'social', motif: /^\/@[A-Za-z0-9._-]{3,30}\/?$/ },
+  { hote: 'soundcloud.com', genre: 'social', motif: /^\/[A-Za-z0-9_-]{3,40}\/?$/ },
+  { hote: 'pinterest.com', genre: 'social', motif: /^\/[A-Za-z0-9_]{3,30}\/?$/ },
+  { hote: 'vk.com', genre: 'social', motif: /^\/[A-Za-z0-9_.]{3,32}\/?$/ },
+  { hote: 'mastodon.social', genre: 'social', motif: /^\/@[A-Za-z0-9_]{1,30}\/?$/ },
+  { hote: 'mastodon.online', genre: 'social', motif: /^\/@[A-Za-z0-9_]{1,30}\/?$/ },
 ];
 function profilsDe(html) {
   const out = [];
+  /* ---- LE PIED DE PAGE NE PARLE DE PERSONNE ----
+   * `linkedin.com/company/acme` se reconnait a son URL. Un compte X de
+   * societe, lui, s ecrit exactement comme celui d une personne :
+   * `x.com/acmecorp`. Mesure sur le cas le plus simple — « Ana Ruiz,
+   * Founder » suivi d un pied de page portant le X de la boite — le compte
+   * de la societe atterrissait sur Ana, parce qu elle etait le nom le plus
+   * proche.
+   *
+   * On efface donc le contenu de `footer`, `nav` et `header` avant de
+   * chercher : ce sont, par definition, des meubles de site, pas la carte
+   * de quelqu un. Ca emporte au passage les barres de partage.
+   *
+   * Ca ne rattrape pas un site qui ecrit son pied de page dans un `div` sans
+   * role — et c est exactement pour ca que ce champ ne promet jamais plus
+   * que ce qu on a vu : un compte imprime A COTE de ce nom, sur cette page. */
+  const propre = String(html || '')
+    .replace(/<footer\b[\s\S]*?<\/footer>/gi, ' ')
+    .replace(/<nav\b[\s\S]*?<\/nav>/gi, ' ')
+    .replace(/<header\b[\s\S]*?<\/header>/gi, ' ');
   const re = /<a\b[^>]*href\s*=\s*["']([^"']{4,300})["']/gi;
   let m;
-  while ((m = re.exec(String(html || '')))) {
+  while ((m = re.exec(propre))) {
     let u;
     try { u = new URL(m[1], 'https://rien.invalid'); } catch (e) { continue; }
     if (u.protocol !== 'https:' && u.protocol !== 'http:') continue;
     const h = u.hostname.replace(/^www\./, '');
     const p = HOTES_PROFIL.find((x) => h === x.hote || h.endsWith('.' + x.hote));
     if (!p || !p.motif.test(u.pathname)) continue;
+    /* Le motif d un pseudo accepte aussi `x.com/share` et `facebook.com/
+       sharer.php`, qui vivent dans le pied de page de la moitie du web.
+       On regarde donc les SEGMENTS : le dernier est le compte et ne doit
+       pas etre un mot reserve ; ceux d avant ne peuvent etre que des
+       annonceurs de compte. */
+    const segs = u.pathname.split('/').filter(Boolean);
+    if (!segs.length) continue;
+    const nu = (x) => String(x).replace(/^@/, '').replace(/\.php$/, '').toLowerCase();
+    if (INTERDITS.has(nu(segs[segs.length - 1]))) continue;
+    if (segs.slice(0, -1).some((x) => !PREFIXES_OK.has(nu(x)))) continue;
     /* Le texte autour du lien : c est lui qui dira DE QUI il s agit. Un lien
        rattache a personne ne sort pas — un pied de page porte souvent le
        LinkedIn de la societe, qui n est le profil de personne. */
     const d = Math.max(0, m.index - 300);
-    const f = Math.min(html.length, m.index + 300);
+    const f = Math.min(propre.length, m.index + 300);
     /* Coupe AU LIEN : ce qui le precede et ce qui le suit sont deux choses
        differentes. Premiere version : une seule fenetre, et « le nom est
        quelque part dedans ». Elle donnait le LinkedIn de Jane a Bob, dont la
        carte suivait. On garde donc les deux cotes separement, et le
        rattachement se fera sur la DISTANCE au lien. */
-    out.push({ url: u.origin + u.pathname.replace(/\/$/, ''),
-               avant: texteDe(html.slice(d, m.index)).replace(/\s+/g, ' '),
-               apres: texteDe(html.slice(m.index, f)).replace(/\s+/g, ' ') });
+    out.push({ url: u.origin + u.pathname.replace(/\/$/, ''), genre: p.genre,
+               avant: texteDe(propre.slice(d, m.index)).replace(/\s+/g, ' '),
+               apres: texteDe(propre.slice(m.index, f)).replace(/\s+/g, ' ') });
     if (out.length > 60) break;
   }
   return out;
@@ -675,9 +762,17 @@ function proprietaireDu(p) {
   if (apres.length) return (p.proprietaire = apres[0].nom);
   return (p.proprietaire = null);
 }
-function profilDe(profils, nom) {
-  const p = profils.find((x) => proprietaireDu(x) === nom);
-  return p ? p.url : null;
+/* TOUS les comptes rattaches a ce nom, pas seulement le premier : une
+   personne qui publie son LinkedIn ET son X en publie deux, et n en montrer
+   qu un serait choisir a sa place. Les annuaires professionnels passent
+   devant — c est ce qu on cherche le plus souvent ici. */
+function profilsDuNom(profils, nom) {
+  const vus = new Set();
+  return profils
+    .filter((x) => proprietaireDu(x) === nom)
+    .filter((x) => (vus.has(x.url) ? false : vus.add(x.url)))
+    .sort((a, b) => (a.genre === b.genre ? 0 : a.genre === 'pro' ? -1 : 1))
+    .map((x) => ({ url: x.url, genre: x.genre }));
 }
 
 /* Les personnes. Un nom ne sort QUE s il est colle a une fonction dans la
@@ -743,7 +838,10 @@ function personnesDe(html, roleDeLaPage) {
       complet: choisi.nom,
       fonction: titre.join(' ').replace(/[\s:,–—-]+$/, '').trim() || f.fonction,
       mail: mail ? mail.adresse : null,
-      profil: profilDe(profils, choisi.nom),
+      /* Un annuaire professionnel et un compte social ne se presentent pas
+         du meme mot : les melanger sous « professionnel » serait faux pour
+         la moitie d entre eux — d ou le `genre` porte par chacun. */
+      profils: profilsDuNom(profils, choisi.nom),
       extrait: caviarde(f.texte.slice(0, 160).trim(), mail ? mail.adresse : null),
     });
   }
@@ -817,6 +915,7 @@ const LIMITES = [
   'Entry point is a domain or an IP. This tool cannot be searched by a person’s name, e-mail, phone or handle.',
   'E-mail addresses are only read where the organisation printed them. None is ever guessed or built from a name.',
   'Consumer mailbox providers (gmail, outlook, proton…) are dropped at extraction: a personal address is never collected.',
+  'Accounts are only read where the organisation printed them next to a person’s name. This tool cannot look up someone’s accounts from a name or a handle — there is no way to search it by a person.',
   'Sources are public by design: DNS, the domain registry (RDAP), certificate transparency logs, and the domain’s own pages.',
   'No leaked or private database is ever queried. No login, paywall or anti-bot protection is ever bypassed.',
   'robots.txt is obeyed, the crawler identifies itself, and a 401/403/429 is recorded as a refusal — never retried in disguise.',
@@ -1068,7 +1167,7 @@ function graphe(r) {
 
   for (const p of r.personnes) {
     const P = nd('person:' + p.complet, 'personne', p.complet, 'contacts',
-                 { fonction: p.fonction, profil: p.profil || null, confiance: p.confiance,
+                 { fonction: p.fonction, profils: p.profils || [], confiance: p.confiance,
                    source: p.source, lien: p.lien, preuve: p.preuve, verifie: p.verifie });
     ar(P, D, p.lien, p.source, p.confiance);
     /* Le nom et l adresse n ont ete relies que s ils etaient imprimes
@@ -1085,7 +1184,7 @@ function graphe(r) {
 module.exports = {
   recon, normaliseDomaine, estIpPublique,
   dnsDe, rdapDomaine, rdapIp, certsDe, robotsDe, robotsPermet,
-  litSecurityTxt, mailRecevable, mailsDe, telsDe, personnesDe, profilsDe, profilDe,
+  litSecurityTxt, mailRecevable, mailsDe, telsDe, personnesDe, profilsDe, profilsDuNom,
   texteDe, fenetresDe, nomsDe, caviarde, confiance, lienAuDomaine, graphe, faitContact, nomVcard,
   recuperePage,
   LIMITES, FOURNISSEURS_PERSO, BOITES_ROLE, PAGES_CANDIDATES, FONCTIONS, UA,

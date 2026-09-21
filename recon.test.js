@@ -169,35 +169,67 @@ console.log('\n-- 5. qui porte le titre : la convention d ecriture, pas la dista
      'et une page qui n est pas faite pour ca ne donne AUCUNE personne');
 }
 
-console.log('\n-- 5 bis. le profil professionnel, et a qui il appartient --');
+console.log('\n-- 5 bis. les comptes publies, et a qui ils appartiennent --');
 {
-  /* La liste des hotes est severe : un annuaire professionnel, pas un compte
-     social. Relever l Instagram de quelqu un serait commencer le profil
-     personnel que tout ce fichier s interdit. */
+  /* Ce qui rend ceci sur : on ne part JAMAIS d un compte pour trouver
+     quelqu un. Il n y a pas d entree par une personne, donc pas de pistage
+     par pseudo a travers les plateformes. On part d un domaine, et on lit
+     ce que l organisation a elle-meme imprime a cote d un nom. */
   const pro = R.profilsDe('<a href="https://www.linkedin.com/in/jane-doe">a</a>'
     + '<a href="https://github.com/janedoe">b</a>'
-    + '<a href="https://orcid.org/0000-0002-1825-0097">c</a>');
-  eq(pro.length, 3, 'LinkedIn, GitHub, ORCID sont des profils professionnels');
-  eq(R.profilsDe('<a href="https://x.com/janedoe">x</a><a href="https://instagram.com/janedoe">i</a>').length,
-     0, 'un compte social personnel n en est PAS un');
-  eq(R.profilsDe('<a href="https://github.com/acme/site">repo</a>').length,
-     0, 'et un depot n est pas quelqu un : seule la racine d un compte passe');
-  eq(R.profilsDe('<a href="https://www.linkedin.com/company/acme">us</a>').length,
-     0, 'la page societe de LinkedIn non plus');
+    + '<a href="https://orcid.org/0000-0002-1825-0097">c</a>'
+    + '<a href="https://x.com/janedoe">d</a>'
+    + '<a href="https://www.instagram.com/janedoe">e</a>'
+    + '<a href="https://bsky.app/profile/jane.bsky.social">f</a>'
+    + '<a href="https://reddit.com/u/janedoe">g</a>');
+  eq(pro.length, 7, 'annuaires professionnels ET comptes sociaux courants');
+  eq(pro.filter((x) => x.genre === 'pro').length, 3, 'et chacun sait lequel il est');
+
+  /* Seule la racine d un compte passe : le reste, ce n est pas quelqu un. */
+  for (const u of ['https://github.com/acme/site', 'https://instagram.com/p/Cabc123',
+                   'https://www.linkedin.com/company/acme', 'https://youtube.com/watch',
+                   'https://x.com/acme/status/12345', 'https://pinterest.com/pin/create/button'])
+    eq(R.profilsDe('<a href="' + u + '">x</a>').length, 0, u.slice(8, 48) + ' n est pas un compte');
+
+  /* Les boutons de partage tiennent dans le motif d un pseudo et vivent
+     dans le pied de page de la moitie du web. Sans INTERDITS, chaque site
+     rendrait un « compte » qui n existe pas. */
+  for (const u of ['https://x.com/share?url=x', 'https://www.facebook.com/sharer.php?u=x',
+                   'https://x.com/intent/post', 'https://t.me/share/url?url=x'])
+    eq(R.profilsDe('<a href="' + u + '">partager</a>').length, 0, 'bouton de partage ecarte : ' + u.slice(8, 44));
 
   /* A QUI. Le cas qui a fait reecrire la regle : deux cartes qui se touchent. */
   const deux = R.personnesDe('<div><h3>Jane Doe</h3><p>CTO</p>'
     + '<a href="https://www.linkedin.com/in/jane-doe">LinkedIn</a></div>'
     + '<div><h3>Bob Durand</h3><p>CFO</p></div>', 'equipe');
-  eq(deux.find((p) => p.complet === 'Jane Doe').profil, 'https://www.linkedin.com/in/jane-doe',
-     'le profil va a celle dont le nom precede le lien');
-  eq(deux.find((p) => p.complet === 'Bob Durand').profil, null,
+  eq(deux.find((p) => p.complet === 'Jane Doe').profils[0].url, 'https://www.linkedin.com/in/jane-doe',
+     'le compte va a celle dont le nom precede le lien');
+  eq(deux.find((p) => p.complet === 'Bob Durand').profils.length, 0,
      'et PAS a son voisin de carte, qui n a rien publie');
 
-  eq(R.personnesDe('<li><a href="https://www.linkedin.com/in/ana-ruiz">Ana Ruiz</a> <span>Founder</span></li>', 'equipe')[0].profil,
+  eq(R.personnesDe('<li><a href="https://www.linkedin.com/in/ana-ruiz">Ana Ruiz</a> <span>Founder</span></li>', 'equipe')[0].profils[0].url,
      'https://www.linkedin.com/in/ana-ruiz', 'un nom ecrit DANS l ancre compte aussi');
-  eq(R.personnesDe('<p>Tom Clark, CEO</p><footer><a href="https://www.linkedin.com/company/acme">Follow us</a></footer>', 'equipe')[0].profil,
-     null, 'le compte de la societe, dans un pied de page, n appartient a personne');
+
+  /* LE CAS QUI A COUTE LE PLUS CHER EN AJOUTANT LES RESEAUX SOCIAUX.
+     `linkedin.com/company/acme` se reconnait a son URL ; le X d une societe
+     s ecrit exactement comme celui d une personne. Le compte de la boite
+     atterrissait sur la derniere personne nommee au-dessus du pied de page. */
+  eq(R.personnesDe('<p>Ana Ruiz, Founder</p><footer><a href="https://x.com/acmecorp">us</a>'
+     + '<a href="https://instagram.com/acmecorp">ig</a></footer>', 'equipe')[0].profils.length, 0,
+     'les comptes d un PIED DE PAGE n appartiennent a personne');
+  eq(R.personnesDe('<nav><a href="https://x.com/acmecorp">X</a></nav><p>Ana Ruiz, Founder</p>', 'equipe')[0].profils.length, 0,
+     'ceux d une barre de navigation non plus');
+
+  /* Une personne qui en publie trois en publie trois : n en montrer qu un
+     serait choisir a sa place. Les annuaires professionnels d abord. */
+  const trois = R.personnesDe('<li>Ana Ruiz <span>Founder</span>'
+    + '<a href="https://x.com/anaruiz">x</a>'
+    + '<a href="https://linkedin.com/in/ana-ruiz">li</a>'
+    + '<a href="https://instagram.com/anaruiz">ig</a></li>', 'equipe')[0];
+  eq(trois.profils.length, 3, 'les trois comptes sortent');
+  eq(trois.profils[0].genre, 'pro', 'et le professionnel passe devant');
+  eq(R.personnesDe('<p>Tom Clark, CEO</p>', 'equipe')[0].profils.length, 0,
+     'quelqu un qui n en publie aucun n en recoit aucun');
 
   /* Le titre ne doit pas avaler ce qui traine autour du lien. */
   eq(R.personnesDe('<li>Ana Ruiz <span>Founder</span> <a href="https://github.com/acme/site">repo</a></li>', 'equipe')[0].fonction,
@@ -282,7 +314,7 @@ let releve = null;
     'https://acme.io/robots.txt': 'User-agent: *\nDisallow: /a-propos\n',
     'https://acme.io/.well-known/security.txt': 'Contact: mailto:security@acme.io\nExpires: 2027-01-01T00:00:00Z\n',
     'https://acme.io/mentions-legales': '<p>Directeur de la publication : Marc Lefevre</p><p>presse@acme.io</p><a href="tel:+33145678900">01 45 67 89 00</a>',
-    'https://acme.io/contact': '<a href="mailto:contact@acme.io">nous ecrire</a><p>Jane Doe, Chief Technology Officer — jane.doe@acme.io <a href="https://www.linkedin.com/in/jane-doe">LinkedIn</a></p><p>ecrivez-nous sur perso.truc@gmail.com</p>',
+    'https://acme.io/contact': '<a href="mailto:contact@acme.io">nous ecrire</a><p>Jane Doe, Chief Technology Officer — jane.doe@acme.io <a href="https://www.linkedin.com/in/jane-doe">LinkedIn</a> <a href="https://x.com/janedoe">X</a></p><p>ecrivez-nous sur perso.truc@gmail.com</p>',
     'https://acme.io/team': 403,
     'https://acme.io/': '<title>Acme — build things</title><p>hello@acme.io</p><p>Tom Clark, Chief Executive Officer</p>',
   });
@@ -343,8 +375,9 @@ let releve = null;
   const jane = releve.personnes.find((p) => p.complet === 'Jane Doe');
   eq(jane.lien, 'PUBLICLY ASSOCIATED WITH DOMAIN', 'Jane est associee, pas proprietaire');
   eq(jane.confiance, 'MEDIUM', 'son adresse est collee a son nom : MEDIUM, pas plus');
-  eq(jane.profil, 'https://www.linkedin.com/in/jane-doe', 'et son profil professionnel, imprime juste apres son nom');
-  eq(marc.profil, null, 'Marc n en a pas : aucun lien n est rattache a lui');
+  eq(jane.profils[0].url, 'https://www.linkedin.com/in/jane-doe', 'et son profil professionnel, imprime juste apres son nom');
+  eq(jane.profils.map((x) => x.genre).join(','), 'pro,social', 'et son compte X, imprime a cote — le professionnel devant');
+  eq(marc.profils.length, 0, 'Marc n en a pas : aucun lien n est rattache a lui');
   ok(!releve.personnes.some((p) => p.complet === 'Tom Clark'),
      'Tom Clark, nomme sur l accueil, ne devient PAS une fiche : l accueil n est pas une page de contact');
 
@@ -443,6 +476,8 @@ console.log('\n-- 13. ce qu il ne fait pas est ecrit, en anglais, dans le releve
   ok(/leaked or private database/i.test(t), 'aucune base fuitee');
   ok(/anti-bot/i.test(t) && /bypassed/i.test(t), 'aucun contournement');
   ok(/robots\.txt is obeyed/i.test(t), 'robots.txt est obei');
+  ok(/cannot look up someone/i.test(t) && /from a name or a handle/i.test(t),
+     'aucun pistage par pseudo a travers les plateformes');
   ok(/PUBLICLY ASSOCIATED WITH DOMAIN/.test(t), 'et la propriete ne se deduit pas');
   ok(!/[éèêàùôîçœ]/.test(t), 'le texte montre aux gens est en anglais');
 }
@@ -478,7 +513,7 @@ console.log('\n-- 15. la forme que la page lit ne bouge pas sans qu on le sache 
     'contacts.0.type', 'contacts.0.valeur', 'contacts.0.nominatif', 'contacts.0.source',
     'contacts.0.vu', 'contacts.0.verifie', 'contacts.0.confiance', 'contacts.0.pourquoi', 'contacts.0.extrait',
     'personnes.0.complet', 'personnes.0.fonction', 'personnes.0.lien', 'personnes.0.preuve',
-    'personnes.0.profil', 'personnes.0.verifie', 'personnes.0.confiance', 'personnes.0.pourquoi', 'personnes.0.extrait', 'personnes.0.source',
+    'personnes.0.profils', 'personnes.0.verifie', 'personnes.0.confiance', 'personnes.0.pourquoi', 'personnes.0.extrait', 'personnes.0.source',
     'pages.0.chemin', 'sources.0.url', 'sources.0.ok',
     'graphe.filtres', 'graphe.noeuds.0.id', 'graphe.noeuds.0.type', 'graphe.noeuds.0.nom',
     'graphe.noeuds.0.filtre', 'graphe.noeuds.0.humain',
