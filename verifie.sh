@@ -30,6 +30,7 @@ lance quotajeune "$SRV" node quota_jeune.test.js
 lance scanpub   "$SRV" node scan_public.test.js
 lance secuws  "$SRV" node securite_ws.test.js   # un vrai serveur, deux comptes, les gestes d argent
 lance osint   "$SRV" node osint.test.js
+lance noyau   "$SRV" node osint_noyau.test.js   # le noyau : faits, connecteurs, planificateur, regles
 lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route publique du releve
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js

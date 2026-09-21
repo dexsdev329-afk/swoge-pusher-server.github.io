@@ -31,6 +31,7 @@
  * « ca a l air vrai ». */
 
 const dnsp = require('dns').promises;
+const net = require('net');
 
 /* Les bornes. Une route publique ne doit pas pouvoir faire saigner le
    serveur ni le site vise : huit pages au plus, cinq secondes chacune,
@@ -118,6 +119,20 @@ function normaliseDomaine(entree) {
  * APRES resolution, pas sur l allure du nom. */
 function estIpPublique(ip) {
   const s = String(ip || '').trim();
+  /* ---- LA FORME AVANT LA PORTEE ----
+   * Defaut trouve en branchant la detection d entite : la version d avant
+   * testait `s.includes(':')` puis passait aux plages v6. Resultat,
+   * « https://acme.io/contact » contient un deux-points, ne commence ni par
+   * fc, ni fe80, ni ff — et la fonction repondait PUBLIQUE. Une garde SSRF
+   * qui dit oui a n importe quoi echoue du mauvais cote.
+   *
+   * Elle n avait jamais mordu parce qu elle n etait appelee que sur des
+   * adresses sorties du DNS. C est exactement le genre de defaut qui attend
+   * le premier appel avec une entree d utilisateur.
+   *
+   * `net.isIP` tranche la forme exactement, sans regex maison. */
+  const forme = net.isIP(s.replace(/^\[|\]$/g, ''));
+  if (forme === 0) return false;
   const v4 = s.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (v4) {
     const o = v4.slice(1).map(Number);
@@ -159,12 +174,15 @@ let RESOLVEUR = {
    redirection vers une adresse privee. Rend toujours un objet — un echec
    est un FAIT a montrer (« le site nous a refuses »), pas une exception a
    avaler. */
-async function recuperePage(url, type) {
+async function recuperePage(url, type, entetes) {
   const debut = Date.now();
   try {
     const r = await RESEAU(url, {
       redirect: 'follow',
-      headers: { 'user-agent': UA, accept: type || 'text/html,text/plain,*/*' },
+      /* `entetes` sert aux services qui demandent une cle d acces. Elle
+         n est jamais posee ailleurs : un site qu on visite ne recoit que
+         notre nom et ce qu on accepte de lire. */
+      headers: Object.assign({ 'user-agent': UA, accept: type || 'text/html,text/plain,*/*' }, entetes || {}),
       signal: AbortSignal.timeout(DELAI_MS),
     });
     const code = r.status;
@@ -1194,3 +1212,250 @@ module.exports = {
   _reseau: (f) => { RESEAU = f; },
   _resolveur: (r) => { RESOLVEUR = r; },
 };
+
+/* ==================================================================
+ * UNE ADRESSE DE CHAINE — publique par construction, et ce n est
+ * toujours PAS quelqu un
+ * ==================================================================
+ *
+ * Un registre de chaine est public par nature : chaque transaction est
+ * lisible par le monde entier depuis le premier jour, c est le sens meme
+ * d une chaine ouverte. Relever ce qu une adresse a fait ne demande donc
+ * aucune ruse — seulement de la lecture.
+ *
+ * LA MEME LIGNE QUE POUR UN DOMAINE, ET ELLE EST PLUS FACILE A FRANCHIR
+ * ICI : une adresse n est pas une personne. Ce releve ne nomme jamais qui
+ * est derriere, ne le devine pas, et ne croise rien pour l approcher. Une
+ * adresse est un compte ; ce qu on en dit, c est ce qu elle a FAIT.
+ *
+ * CE QUE LE SERVEUR PEUT LIRE, ET CE QU IL NE PEUT PAS. L explorateur de
+ * la chaine est derriere une protection anti-robot — le depot le note
+ * lui-meme (`HORS_SERVICE.blockscout`, « Cloudflare challenge on the API
+ * as on the pages »). Le contourner est interdit, et pas seulement par
+ * politesse : c est ecrit dans les limites que cette page affiche.
+ *
+ * Donc le partage est net :
+ *   - LE NAVIGATEUR du visiteur lit la chaine. Une personne qui ouvre une
+ *     API publique depuis son navigateur ne contourne rien : c est une
+ *     visite. La page le fait deja pour les detenteurs d un jeton.
+ *   - LE SERVEUR rend ce que le navigateur NE PEUT PAS savoir : les
+ *     registres de launchpad qu il tient en memoire, et surtout ce que la
+ *     colonie a MESURE sur des lanceurs comme celui-la.
+ *
+ * C est ce second point qui fait la difference avec un explorateur ou un
+ * Maltego : ils savent dire « cette adresse a deploye sept contrats ».
+ * Seul ce serveur sait dire ce que les jetons des lanceurs a sept
+ * lancements ont donne, et sur combien d observations. */
+
+const BANDES_LANCEUR = ['launcher: first launch', 'launcher: 2-3 launches', 'launcher: 4+ launches'];
+
+function normaliseAdresse(entree) {
+  const s = String(entree == null ? '' : entree).trim().toLowerCase();
+  return /^0x[0-9a-f]{40}$/.test(s) ? s : null;
+}
+
+/* La colonie est chargee a la demande : `osint.js` n en depend pas pour
+   relever un domaine, et les essais peuvent la remplacer par ce qu ils
+   veulent sans demarrer une colonie entiere. */
+let COLONIE = null;
+function colonie() {
+  if (COLONIE) return COLONIE;
+  COLONIE = require('./ai_colonie');
+  return COLONIE;
+}
+
+/* Ce que les registres savent d un lanceur : sur quel launchpad, combien
+   de lancements, et lesquels. Les trois registres sont lus tels que la
+   colonie les tient — aucun appel de plus. */
+async function lanceurDe(adr, C) {
+  const out = { trouve: false, lances: 0, pads: [], jetons: [] };
+  const sur = async (f) => { try { return await f(); } catch (e) { return null; } };
+
+  const pons = await sur(() => C.lisPons());
+  if (pons && pons.deployeurs && pons.deployeurs[adr]) {
+    const j = [];
+    for (const a in pons.jetons) {
+      if (pons.jetons[a].deployeur !== adr) continue;
+      j.push({ addr: a, sym: pons.jetons[a].sym || '', gradue: pons.jetons[a].gradue || null,
+               mc: pons.jetons[a].mc || 0, pad: 'pons' });
+    }
+    out.pads.push({ nom: 'pons', lances: pons.deployeurs[adr], vus: j.length });
+    out.jetons.push(...j);
+    out.lances += pons.deployeurs[adr];
+    out.trouve = true;
+  }
+
+  for (const [nom, lit] of [['secretpad', () => C.lisSecretpad()], ['hood.fun', () => C.lisHood()]]) {
+    const R = await sur(lit);
+    if (!R || !R.createurs || !R.createurs[adr]) continue;
+    const j = [];
+    for (const a in (R.jetons || {})) {
+      if (String(R.jetons[a].createur || '').toLowerCase() !== adr) continue;
+      j.push({ addr: a, sym: R.jetons[a].sym || '', gradue: R.jetons[a].gradue || R.jetons[a].t || null, pad: nom });
+    }
+    out.pads.push({ nom, lances: R.createurs[adr], vus: j.length });
+    out.jetons.push(...j);
+    out.lances += R.createurs[adr];
+    out.trouve = true;
+  }
+  /* Un jeton vu par deux registres ne compte qu une fois. */
+  const vus = new Set();
+  out.jetons = out.jetons.filter((x) => (vus.has(x.addr) ? false : vus.add(x.addr)));
+  return out;
+}
+
+/* La bande dans laquelle tombe ce lanceur — MEME regle que le trait
+   `padDep` de la colonie, pas une variante recopiee : si la regle bouge
+   la-bas, l essai de cohérence tombe ici. */
+function bandeLanceur(lances) {
+  if (!(lances >= 1)) return null;
+  return lances <= 1 ? BANDES_LANCEUR[0] : lances <= 3 ? BANDES_LANCEUR[1] : BANDES_LANCEUR[2];
+}
+
+/* Ce que la colonie a mesure sur CHAQUE bande de lanceur. On rend les
+   trois, pas seulement celle de l adresse : un chiffre seul ne veut rien
+   dire, c est l ecart entre les bandes qui parle. Et chacun part avec son
+   effectif — sous le minimum, la colonie rend null et on l ecrit. */
+function mesureDesBandes(C) {
+  const out = [];
+  for (const b of BANDES_LANCEUR) {
+    let m = null;
+    try { m = C.caseApprise('padDep', b); } catch (e) { m = null; }
+    out.push({ bande: b, n: m ? m.n : 0, moyenne: m ? m.moyenne : null,
+               assez: !!m });
+  }
+  return out;
+}
+
+/* Les pivots : ce qu on peut aller relever ENSUITE, et par quel chemin.
+ * C est la piece qui fait un graphe plutot qu une fiche — un jeton declare
+ * un site, ce site a un domaine, et ce domaine se releve avec l autre
+ * moitie de ce fichier. Chaque pivot porte D OU il vient. */
+function pivotsDe(jetons) {
+  const out = [];
+  for (const j of jetons) {
+    out.push({ type: 'token', valeur: j.addr, via: 'deployed by this address',
+               vers: '/scan/' + j.addr });
+  }
+  return out;
+}
+
+/**
+ * Le releve d une adresse de chaine.
+ *
+ * Il ne lit PAS la chaine : l explorateur est derriere une protection
+ * anti-robot que ce module s interdit de contourner. Il rend ce que le
+ * navigateur du visiteur ne peut pas savoir — les registres de launchpad
+ * et la mesure de la colonie — et la page compose les deux.
+ */
+async function adresse(entree, quiColonie) {
+  const adr = normaliseAdresse(entree);
+  if (!adr) throw new Error('paste a 0x… address — this tool cannot be searched by a person');
+  const t0 = Date.now();
+  const C = quiColonie || colonie();
+  const date = new Date().toISOString().slice(0, 10);
+
+  const lanceur = await lanceurDe(adr, C);
+  const bande = bandeLanceur(lanceur.lances);
+  const bandes = mesureDesBandes(C);
+  const sienne = bandes.find((b) => b.bande === bande) || null;
+
+  const r = {
+    adresse: adr, date, ms: Date.now() - t0,
+    /* Ce qu elle EST, au sens des registres qu on tient. « Pas trouvee »
+       n est pas « propre » : c est « aucun de nos trois registres ne la
+       connait », et la page doit le dire comme ca. */
+    lanceur: {
+      trouve: lanceur.trouve,
+      lances: lanceur.lances,
+      pads: lanceur.pads,
+      bande,
+      /* La mesure de SA bande, et les trois pour comparer. Un chiffre sans
+         son effectif ment ; un chiffre sans ses voisins ne veut rien dire. */
+      mesure: sienne && sienne.assez ? { n: sienne.n, moyenne: sienne.moyenne } : null,
+      bandes,
+    },
+    jetons: lanceur.jetons.sort((a, b) => (b.gradue || 0) - (a.gradue || 0)).slice(0, 50),
+    pivots: pivotsDe(lanceur.jetons.slice(0, 50)),
+    /* La chaine elle-meme n est pas lue ici — et la page doit savoir
+       POURQUOI, sinon elle affichera un vide qui se lira comme « rien a
+       signaler ». */
+    chaine: {
+      luIci: false,
+      pourquoi: 'The chain explorer is behind anti-bot protection. This server does not '
+              + 'work around it. Your browser reads the public explorer directly.',
+      explorateur: 'https://robinhoodchain.blockscout.com',
+    },
+    sources: [
+      { url: 'pons (launchpad registry held by the colony)', ok: true, role: 'lanceur' },
+      { url: 'secretpad + hood.fun (launchpad registries held by the colony)', ok: true, role: 'lanceur' },
+      { url: 'SWOGE AI measured outcomes, horizon ' + (C.HORIZON_REF || '?'), ok: true, role: 'mesure' },
+    ],
+    limites: LIMITES_ADRESSE,
+  };
+  r.graphe = grapheAdresse(r);
+  return r;
+}
+
+/* Ce que le releve d une adresse ne fait pas. Montre avec le resultat,
+   comme pour un domaine : un outil qui n annonce que ce qu il trouve
+   laisse croire qu il trouve tout. */
+const LIMITES_ADRESSE = [
+  'An address is not a person. This report never names who is behind one, never guesses it, '
+    + 'and cannot be searched by a person’s name, e-mail, phone or handle.',
+  'Chain data is public by construction: every transaction has been readable by anyone since it was made.',
+  'The chain explorer is behind anti-bot protection. This server does not work around it — '
+    + 'your own browser reads the public explorer, which is an ordinary visit, not a bypass.',
+  'Launch counts come from the launchpad registries this server already holds. "Not found" means '
+    + 'none of them knows this address — it does not mean the address is clean.',
+  'Every measured number carries how many observations it rests on, and is withheld below the minimum.',
+  'A past record is not a prediction. What tokens from similar launchers did is a measurement, not a verdict.',
+];
+
+/* Le graphe d une adresse. Aucun noeud `personne` n y existe, et ce n est
+   pas un oubli : rien dans ce releve ne designe quelqu un. Le peintre de
+   la page est le meme que pour un domaine — memes regles, meme exigence
+   qu une arete porte sa source. */
+function grapheAdresse(r) {
+  const noeuds = [];
+  const aretes = [];
+  const vus = new Set();
+  const nd = (id, type, nom, filtre, extra) => {
+    if (vus.has(id)) return id;
+    vus.add(id);
+    noeuds.push(Object.assign({ id, type, nom, filtre, humain: false }, extra || {}));
+    return id;
+  };
+  const ar = (de, vers, relation, source, conf) => {
+    if (!de || !vers || !vus.has(de) || !vus.has(vers) || !source) return;
+    aretes.push({ de, vers, relation, source, confiance: conf || 'MEDIUM' });
+  };
+
+  const A = nd('addr:' + r.adresse, 'adresse', r.adresse.slice(0, 10) + '…' + r.adresse.slice(-6),
+               'address', { complet: r.adresse });
+
+  for (const p of r.lanceur.pads) {
+    nd('pad:' + p.nom, 'launchpad', p.nom, 'launchpads', { lances: p.lances });
+    ar(A, 'pad:' + p.nom, 'LAUNCHED ' + p.lances + ' TOKEN' + (p.lances === 1 ? '' : 'S') + ' ON',
+       p.nom + ' launchpad registry', 'HIGH');
+  }
+  for (const j of r.jetons.slice(0, 30)) {
+    nd('token:' + j.addr, 'jeton', j.sym || j.addr.slice(0, 10) + '…', 'tokens',
+       { adresse: j.addr, pad: j.pad, mc: j.mc || null, verifie: true });
+    /* « DEPLOYED » est un fait du registre, pas une deduction — d ou HIGH.
+       Ce qu on n ecrit nulle part : a qui appartient l adresse. */
+    ar(A, 'token:' + j.addr, 'DEPLOYED', (j.pad || 'launchpad') + ' registry', 'HIGH');
+  }
+  return { noeuds, aretes, filtres: ['address', 'launchpads', 'tokens'] };
+}
+
+module.exports.adresse = adresse;
+module.exports.normaliseAdresse = normaliseAdresse;
+module.exports.lanceurDe = lanceurDe;
+module.exports.bandeLanceur = bandeLanceur;
+module.exports.mesureDesBandes = mesureDesBandes;
+module.exports.grapheAdresse = grapheAdresse;
+module.exports.pivotsDe = pivotsDe;
+module.exports.BANDES_LANCEUR = BANDES_LANCEUR;
+module.exports.LIMITES_ADRESSE = LIMITES_ADRESSE;
+module.exports._colonie = (c) => { COLONIE = c; };
