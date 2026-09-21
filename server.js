@@ -1600,6 +1600,7 @@ const SCAN_PAR_MIN = Math.max(1, Number(process.env.SCAN_PAR_MIN || 20));
  * travail sur le dos du site vise. */
 const osint = require('./osint');
 const osintNoyau = require('./osint_noyau');
+const studio = require('./studio');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
 const OSINT_PAR_MIN = Math.max(1, Number(process.env.OSINT_PAR_MIN || 5));
 const OSINT_TTL = 10 * 60 * 1000;
@@ -2165,7 +2166,28 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  /* ==================== OSINT v2 ====================
+  /* ==================== SWOGE STUDIO ====================
+   * Generer des images et des videos, payer en \$SWOGE. RIEN ne genere
+   * encore — les cles ne sont pas la, le paiement n est pas cable — et la
+   * route le DIT plutot que de promettre. Ce qui existe des maintenant : le
+   * catalogue des modeles et leurs prix, que la page LIT pour se peindre.
+   * Ajouter un modele plus tard ne touchera pas la page. */
+  if (path === '/studio/catalogue') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*', 'cache-control': 'public, max-age=60' });
+    return res.end(JSON.stringify({
+      /* L etat, franc : ouvert seulement quand une cle ET l adresse de
+         paiement sont posees. Tant que non, la page montre « en preparation ». */
+      ouvert: studio.ouvert(),
+      note: studio.ouvert() ? null
+        : 'Studio is in preparation: provider keys and the $SWOGE payment address are not set yet.',
+      jeton: config.SWOGE_TOKEN,
+      confirmations: studio.CONFIRMATIONS_MIN,
+      modeles: studio.catalogue(),
+    }));
+  }
+
+    /* ==================== OSINT v2 ====================
    * Le noyau a faits : constats, contradictions, graphe derive, exports.
    * La route v1 (`/osint/<domaine>`) reste tant que la page v1 l utilise —
    * on ne casse pas une adresse qui tourne pour livrer la suivante.
