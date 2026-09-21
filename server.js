@@ -1601,6 +1601,7 @@ const SCAN_PAR_MIN = Math.max(1, Number(process.env.SCAN_PAR_MIN || 20));
 const osint = require('./osint');
 const osintNoyau = require('./osint_noyau');
 const studio = require('./studio');
+const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
 const OSINT_PAR_MIN = Math.max(1, Number(process.env.OSINT_PAR_MIN || 5));
 const OSINT_TTL = 10 * 60 * 1000;
@@ -2162,6 +2163,24 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify(r));
     } catch (e) {
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ erreur: String(e.message || e).slice(0, 160) }));
+    }
+  }
+
+  /* ==================== PERP — DECOUVERTE DES MARCHES ====================
+   * La couche « Market Discovery + Cache » : le serveur decouvre les marches
+   * des exchanges QU IL PEUT JOINDRE (Hyperliquid, OKX), les normalise a la
+   * forme unique, et les met en cache. Le frontend lit ca une fois, puis
+   * ouvre les WebSocket LUI-MEME pour le temps reel. La reponse dit l etat
+   * REEL de chaque exchange — jamais « live » si ce n est pas vrai. */
+  if (path === '/marches/perp') {
+    try {
+      const v = await perpMarches.decouvre();
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                           'access-control-allow-origin': '*', 'cache-control': 'public, max-age=60' });
+      return res.end(JSON.stringify(v));
+    } catch (e) {
+      res.writeHead(502, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       return res.end(JSON.stringify({ erreur: String(e.message || e).slice(0, 160) }));
     }
   }

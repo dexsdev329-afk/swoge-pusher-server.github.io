@@ -34,6 +34,8 @@ lance noyau   "$SRV" node osint_noyau.test.js   # le noyau : faits, connecteurs,
 lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route publique du releve
 lance osintv2 "$SRV" node osint_v2.test.js   # un vrai serveur : la route v2, exports, historique
 lance studio  "$SRV" node studio.test.js   # le paiement : double depense, fausse confirmation
+lance marches "$SRV" node perp_marches.test.js   # decouverte multi-exchange, forme unique
+lance perpws  "$SRV" node perp_ws.test.js   # le vrai WS Hyperliquid : live ou ignore, jamais simule
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js
@@ -41,6 +43,7 @@ lance reel    "$SRV" node miroir_reel.test.js
 lance scanpage "$SITE" node scan_page.test.js
 lance osintpage "$SITE" node osint_page.test.js
 lance studiopage "$SITE" node studio_page.test.js
+lance marketpage "$SITE" node markets_page.test.js
 # Elle criait dans le vide : 30 echecs sur 617, jamais lus, parce qu elle
 # n etait pas dans cette boucle — exactement la panne de miroir_reel.test.js.
 lance reference "$SITE" node referencement.test.js
