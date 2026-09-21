@@ -1604,6 +1604,7 @@ const studio = require('./studio');
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
 const predictServeur = require('./predict_serveur');   /* le releve papier partage de swoge_predict */
+const predictPancake = require('./predict_pancake');   /* etage 1 : deviner les vrais rounds PancakeSwap, papier */
 const OSINT_PAR_MIN = Math.max(1, Number(process.env.OSINT_PAR_MIN || 5));
 const OSINT_TTL = 10 * 60 * 1000;
 const osintsVus = new Map();
@@ -2320,6 +2321,14 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(predictServeur.etat()));
+  }
+
+  /* Etage 1 PancakeSwap : les vrais rounds on-chain, la vraie côte, la porte
+     EV — tout en papier. Lisible depuis le site. */
+  if (path === '/predict/pancake') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(predictPancake.etat()));
   }
 
   /* ---- LE RELEVE D UN DOMAINE ----
@@ -7531,6 +7540,20 @@ server.listen(cfg.PORT, () => {
     }
   } catch (e) {
     console.warn('[predict] releve non demarré :', e.message);
+  }
+
+  /* Etage 1 PancakeSwap : lit les vrais rounds + côtes, devine, porte EV — tout
+     PAPIER, aucune cle, aucun ordre. Eteint par defaut (PREDICT_PANCAKE=1). */
+  try {
+    if (process.env.PREDICT_PANCAKE === '1') {
+      predictPancake.demarre();
+      console.log('[pancake] etage 1 demarré — /predict/pancake (vrais rounds BNB, papier, porte EV)');
+    } else {
+      predictPancake.charge();
+      console.log('[pancake] ETEINT (PREDICT_PANCAKE!=1) — /predict/pancake sert le dernier releve relu');
+    }
+  } catch (e) {
+    console.warn('[pancake] etage 1 non demarré :', e.message);
   }
 
   /* ---- LES ACHATS DE $SWOGEBET PASSENT DANS LE CANAL ----
