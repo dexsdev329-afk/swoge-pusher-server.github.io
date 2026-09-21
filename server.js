@@ -1590,6 +1590,29 @@ const SITE_URL = String(process.env.SITE_URL || 'https://swoleeswoge.dog').repla
 const MOI_URL = String(process.env.PUBLIC_URL || 'https://web-production-220a3.up.railway.app').replace(/\/+$/, '');
 
 const SCAN_PAR_MIN = Math.max(1, Number(process.env.SCAN_PAR_MIN || 20));
+
+/* ---- LE DEBIT DU RECON ----
+ * Bien plus serre que celui du scan, et pour une raison qui n a rien a voir
+ * avec nous : un scan de jeton lit NOTRE base, un releve de domaine envoie
+ * une quinzaine de requetes CHEZ QUELQU UN D AUTRE. Cinq par minute et par
+ * adresse : de quoi regarder des domaines a la main, trop peu pour balayer
+ * une liste. Le releve est garde dix minutes — un partage ne refait pas le
+ * travail sur le dos du site vise. */
+const recon = require('./recon');
+const RECON_PAR_MIN = Math.max(1, Number(process.env.RECON_PAR_MIN || 5));
+const RECON_TTL = 10 * 60 * 1000;
+const reconsVus = new Map();
+const RECONS = new Map();
+function reconDebit(req) {
+  const ip = qui(req);
+  const now = Date.now();
+  const e = reconsVus.get(ip);
+  if (!e || now - e.t > 60000) { reconsVus.set(ip, { n: 1, t: now }); }
+  else if (e.n >= RECON_PAR_MIN) return false;
+  else e.n++;
+  if (reconsVus.size > 5000) for (const [k, v] of reconsVus) if (now - v.t > 60000) reconsVus.delete(k);
+  return true;
+}
 const scansVus = new Map();
 function scanDebit(req) {
   const ip = qui(req);
@@ -2133,6 +2156,46 @@ const server = http.createServer(async (req, res) => {
                               refasse pas le travail, assez court pour qu un
                               jeton de dix minutes ne soit pas servi perime. */
                            'cache-control': 'public, max-age=30' });
+      return res.end(JSON.stringify(r));
+    } catch (e) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ erreur: String(e.message || e).slice(0, 160) }));
+    }
+  }
+
+  /* ---- LE RELEVE D UN DOMAINE ----
+   * Publique, sans cle : c est le meme pari que le scan de jeton — la porte
+   * par ou entre quelqu un qui n a jamais entendu parler de SWOGE.
+   *
+   * L entree est un DOMAINE. Il n existe pas de variante de cette route qui
+   * prenne un nom, un mail ou un numero : la garantie est dans le chemin de
+   * code, pas dans le formulaire. */
+  if (path === '/recon' || path.startsWith('/recon/')) {
+    const brut = path === '/recon'
+      ? String(new URLSearchParams(req.url.split('?')[1] || '').get('d') || '').trim()
+      : decodeURIComponent(path.slice('/recon/'.length));
+    res.setHeader('access-control-allow-origin', '*');
+    /* La forme d abord, le debit ensuite : une faute de frappe ne touche
+       aucun site tiers, donc elle ne doit pas consommer le quota. */
+    const dom = recon.normaliseDomaine(brut);
+    if (!dom) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ erreur: 'paste a domain like example.com — this tool cannot be searched by a person' }));
+    }
+    const garde = RECONS.get(dom);
+    if (garde && Date.now() - garde.t < RECON_TTL) {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' });
+      return res.end(JSON.stringify(garde.r));
+    }
+    if (!reconDebit(req)) {
+      res.writeHead(429, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ erreur: 'too many domain reports, wait a minute' }));
+    }
+    try {
+      const r = await recon.recon(dom);
+      RECONS.set(dom, { t: Date.now(), r });
+      if (RECONS.size > 400) for (const [k, v] of RECONS) if (Date.now() - v.t > RECON_TTL) RECONS.delete(k);
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' });
       return res.end(JSON.stringify(r));
     } catch (e) {
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });

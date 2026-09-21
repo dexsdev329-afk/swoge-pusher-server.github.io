@@ -29,11 +29,14 @@ lance journal "$SRV" node perp_journal.test.js
 lance quotajeune "$SRV" node quota_jeune.test.js
 lance scanpub   "$SRV" node scan_public.test.js
 lance secuws  "$SRV" node securite_ws.test.js   # un vrai serveur, deux comptes, les gestes d argent
+lance recon   "$SRV" node recon.test.js
+lance reconrte "$SRV" node recon_route.test.js   # un vrai serveur : la route publique de recon
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js
 [ $VITE -eq 1 ] || lance perppage "$SITE" node perp_page.test.js
 lance scanpage "$SITE" node scan_page.test.js
+lance reconpage "$SITE" node recon_page.test.js
 lance marqueur "$SITE" node cache_marqueur.test.js
 lance minifie "$SITE" node minifie.test.js
 echo "  $(( $(date +%s) - T0 )) s au total · $([ $RATE -eq 0 ] && echo 'TOUT VERT : on peut commettre' || echo 'ROUGE : on ne commet pas')"
