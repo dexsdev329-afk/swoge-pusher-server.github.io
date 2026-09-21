@@ -1,5 +1,5 @@
 /* ==================================================================
- * SWOGE RECON — ce qu une organisation publie ELLE-MEME sur son domaine
+ * SWOGE OSINT — ce qu une organisation publie ELLE-MEME sur son domaine
  * ==================================================================
  *
  * LA REGLE QUI TIENT TOUT LE RESTE : on entre par un DOMAINE ou une IP,
@@ -39,15 +39,15 @@ const dnsp = require('dns').promises;
    l une repond (voir la boucle du releve), donc un site ordinaire en coute
    six ; le plafond ne sert qu au site qui n a aucune de ces pages et nous
    renvoie quatorze 404. */
-const PAGES_MAX = Math.max(1, Number(process.env.RECON_PAGES_MAX || 14));
-const DELAI_MS = Math.max(1000, Number(process.env.RECON_DELAI_MS || 5000));
-const TAILLE_MAX = Math.max(16384, Number(process.env.RECON_TAILLE_MAX || 512 * 1024));
-const TOTAL_MS = Math.max(5000, Number(process.env.RECON_TOTAL_MS || 20000));
-const SOUS_DOMAINES_MAX = Math.max(1, Number(process.env.RECON_SOUS_MAX || 200));
+const PAGES_MAX = Math.max(1, Number(process.env.OSINT_PAGES_MAX || 14));
+const DELAI_MS = Math.max(1000, Number(process.env.OSINT_DELAI_MS || 5000));
+const TAILLE_MAX = Math.max(16384, Number(process.env.OSINT_TAILLE_MAX || 512 * 1024));
+const TOTAL_MS = Math.max(5000, Number(process.env.OSINT_TOTAL_MS || 20000));
+const SOUS_DOMAINES_MAX = Math.max(1, Number(process.env.OSINT_SOUS_MAX || 200));
 
 /* On s annonce. Un site qui ne veut pas de nous doit pouvoir nous refuser
    par notre nom — c est l inverse exact d un contournement. */
-const UA = 'SwogeRecon/1.0 (+https://swoleeswoge.dog/swoge_recon.html)';
+const UA = 'SwogeOsint/1.0 (+https://swoleeswoge.dog/swoge_osint.html)';
 
 /* Les fournisseurs de messagerie grand public. Une adresse chez eux est une
    adresse PERSONNELLE, meme imprimee sur une page publique : elle ne sort
@@ -926,7 +926,7 @@ const LIMITES = [
  * LE RELEVE COMPLET
  * ================================================================== */
 
-async function recon(entree) {
+async function osint(entree) {
   const domaine = normaliseDomaine(entree);
   if (!domaine) throw new Error('paste a domain like example.com');
   const t0 = Date.now();
@@ -1182,7 +1182,7 @@ function graphe(r) {
 }
 
 module.exports = {
-  recon, normaliseDomaine, estIpPublique,
+  osint, normaliseDomaine, estIpPublique,
   dnsDe, rdapDomaine, rdapIp, certsDe, robotsDe, robotsPermet,
   litSecurityTxt, mailRecevable, mailsDe, telsDe, personnesDe, profilsDe, profilsDuNom,
   texteDe, fenetresDe, nomsDe, caviarde, confiance, lienAuDomaine, graphe, faitContact, nomVcard,

@@ -48,7 +48,7 @@ async function etatMiroirPour(ws) {
 const miroir = require('./miroir');
 
 /* ---- IL VIT AU MODULE, PAS DANS LA REQUETE ----
- * Il etait declare dans le gestionnaire HTTP, c'est-a-dire RECONSTRUIT a
+ * Il etait declare dans le gestionnaire HTTP, c'est-a-dire OSINTSTRUIT a
  * chaque visite : la releve remplissait un objet que la reponse suivante ne
  * voyait jamais. Rien ne cassait — la page recevait simplement un tableau
  * vide, indefiniment, pendant que le serveur interrogeait ESPN a chaque
@@ -1591,26 +1591,26 @@ const MOI_URL = String(process.env.PUBLIC_URL || 'https://web-production-220a3.u
 
 const SCAN_PAR_MIN = Math.max(1, Number(process.env.SCAN_PAR_MIN || 20));
 
-/* ---- LE DEBIT DU RECON ----
+/* ---- LE DEBIT DU OSINT ----
  * Bien plus serre que celui du scan, et pour une raison qui n a rien a voir
  * avec nous : un scan de jeton lit NOTRE base, un releve de domaine envoie
  * une quinzaine de requetes CHEZ QUELQU UN D AUTRE. Cinq par minute et par
  * adresse : de quoi regarder des domaines a la main, trop peu pour balayer
  * une liste. Le releve est garde dix minutes — un partage ne refait pas le
  * travail sur le dos du site vise. */
-const recon = require('./recon');
-const RECON_PAR_MIN = Math.max(1, Number(process.env.RECON_PAR_MIN || 5));
-const RECON_TTL = 10 * 60 * 1000;
-const reconsVus = new Map();
-const RECONS = new Map();
-function reconDebit(req) {
+const osint = require('./osint');
+const OSINT_PAR_MIN = Math.max(1, Number(process.env.OSINT_PAR_MIN || 5));
+const OSINT_TTL = 10 * 60 * 1000;
+const osintsVus = new Map();
+const OSINTS = new Map();
+function osintDebit(req) {
   const ip = qui(req);
   const now = Date.now();
-  const e = reconsVus.get(ip);
-  if (!e || now - e.t > 60000) { reconsVus.set(ip, { n: 1, t: now }); }
-  else if (e.n >= RECON_PAR_MIN) return false;
+  const e = osintsVus.get(ip);
+  if (!e || now - e.t > 60000) { osintsVus.set(ip, { n: 1, t: now }); }
+  else if (e.n >= OSINT_PAR_MIN) return false;
   else e.n++;
-  if (reconsVus.size > 5000) for (const [k, v] of reconsVus) if (now - v.t > 60000) reconsVus.delete(k);
+  if (osintsVus.size > 5000) for (const [k, v] of osintsVus) if (now - v.t > 60000) osintsVus.delete(k);
   return true;
 }
 const scansVus = new Map();
@@ -2170,31 +2170,31 @@ const server = http.createServer(async (req, res) => {
    * L entree est un DOMAINE. Il n existe pas de variante de cette route qui
    * prenne un nom, un mail ou un numero : la garantie est dans le chemin de
    * code, pas dans le formulaire. */
-  if (path === '/recon' || path.startsWith('/recon/')) {
-    const brut = path === '/recon'
+  if (path === '/osint' || path.startsWith('/osint/')) {
+    const brut = path === '/osint'
       ? String(new URLSearchParams(req.url.split('?')[1] || '').get('d') || '').trim()
-      : decodeURIComponent(path.slice('/recon/'.length));
+      : decodeURIComponent(path.slice('/osint/'.length));
     res.setHeader('access-control-allow-origin', '*');
     /* La forme d abord, le debit ensuite : une faute de frappe ne touche
        aucun site tiers, donc elle ne doit pas consommer le quota. */
-    const dom = recon.normaliseDomaine(brut);
+    const dom = osint.normaliseDomaine(brut);
     if (!dom) {
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       return res.end(JSON.stringify({ erreur: 'paste a domain like example.com — this tool cannot be searched by a person' }));
     }
-    const garde = RECONS.get(dom);
-    if (garde && Date.now() - garde.t < RECON_TTL) {
+    const garde = OSINTS.get(dom);
+    if (garde && Date.now() - garde.t < OSINT_TTL) {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' });
       return res.end(JSON.stringify(garde.r));
     }
-    if (!reconDebit(req)) {
+    if (!osintDebit(req)) {
       res.writeHead(429, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       return res.end(JSON.stringify({ erreur: 'too many domain reports, wait a minute' }));
     }
     try {
-      const r = await recon.recon(dom);
-      RECONS.set(dom, { t: Date.now(), r });
-      if (RECONS.size > 400) for (const [k, v] of RECONS) if (Date.now() - v.t > RECON_TTL) RECONS.delete(k);
+      const r = await osint.osint(dom);
+      OSINTS.set(dom, { t: Date.now(), r });
+      if (OSINTS.size > 400) for (const [k, v] of OSINTS) if (Date.now() - v.t > OSINT_TTL) OSINTS.delete(k);
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' });
       return res.end(JSON.stringify(r));
     } catch (e) {

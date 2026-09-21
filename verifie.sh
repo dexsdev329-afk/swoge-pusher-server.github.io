@@ -29,14 +29,14 @@ lance journal "$SRV" node perp_journal.test.js
 lance quotajeune "$SRV" node quota_jeune.test.js
 lance scanpub   "$SRV" node scan_public.test.js
 lance secuws  "$SRV" node securite_ws.test.js   # un vrai serveur, deux comptes, les gestes d argent
-lance recon   "$SRV" node recon.test.js
-lance reconrte "$SRV" node recon_route.test.js   # un vrai serveur : la route publique de recon
+lance osint   "$SRV" node osint.test.js
+lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route publique du releve
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js
 [ $VITE -eq 1 ] || lance perppage "$SITE" node perp_page.test.js
 lance scanpage "$SITE" node scan_page.test.js
-lance reconpage "$SITE" node recon_page.test.js
+lance osintpage "$SITE" node osint_page.test.js
 # Elle criait dans le vide : 30 echecs sur 617, jamais lus, parce qu elle
 # n etait pas dans cette boucle — exactement la panne de miroir_reel.test.js.
 lance reference "$SITE" node referencement.test.js

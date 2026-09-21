@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================================
- * SWOGE RECON — CE QU IL REFUSE DE FAIRE COMPTE PLUS QUE CE QU IL TROUVE
+ * SWOGE OSINT — CE QU IL REFUSE DE FAIRE COMPTE PLUS QUE CE QU IL TROUVE
  *
  * Un outil qui va chercher des informations sur une organisation se juge sur
  * ses bords, pas sur son centre. Trouver l adresse de presse d une societe
@@ -33,7 +33,7 @@ let n = 0, rates = 0;
 const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; console.log('  RATE ' + m); } };
 const eq = (a, b, m) => ok(a === b, m + ' [' + JSON.stringify(a) + ']');
 
-const R = require('./recon');
+const R = require('./osint');
 
 /* ---- UN FAUX INTERNET ----
  * Tout ce fichier tourne sans reseau : les essais ne doivent pas dependre de
@@ -84,7 +84,7 @@ console.log('\n-- 1. l entree est un domaine : une personne n y entre pas --');
   const exportes = Object.keys(R);
   const suspects = exportes.filter((k) => /personne$|parNom|parMail|parEmail|parTel|cherchePersonne|identite/i.test(k));
   eq(suspects.length, 0, 'aucune fonction exportee ne cherche par personne');
-  ok(typeof R.recon === 'function' && R.recon.length === 1, 'recon prend UN argument : le domaine');
+  ok(typeof R.osint === 'function' && R.osint.length === 1, 'osint prend UN argument : le domaine');
 }
 
 console.log('\n-- 2. la garde SSRF : le reseau interne n est jamais visite --');
@@ -108,7 +108,7 @@ console.log('\n-- 3. aucune adresse mail n est fabriquee --');
   /* La regle la plus facile a violer sans s en rendre compte : il suffirait
      d une ligne « local = prenom + "." + nom ». On la cherche dans le
      source, et on verifie le comportement. */
-  const src = fs.readFileSync(path.join(__dirname, 'recon.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, 'osint.js'), 'utf8');
   const fabrique = /['"`]\s*\+\s*['"`]@['"`]|@['"`]\s*\+\s*(?:domaine|dom)\b|`\$\{[^}]*\}@\$\{/;
   ok(!fabrique.test(src), 'le source ne compose jamais une adresse autour d un @');
 
@@ -251,7 +251,7 @@ console.log('\n-- 6. la propriete ne se deduit pas --');
      'et le defaut DIT qu il n etablit pas la propriete');
 
   /* Le texte montre aux gens est en anglais. */
-  const src = fs.readFileSync(path.join(__dirname, 'recon.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, 'osint.js'), 'utf8');
   const lignes = src.split('\n').filter((l) => /lien:|preuve:/.test(l));
   ok(lignes.every((l) => !/[éèêàùôîç]/.test(l.split('//')[0])), 'les libelles du lien sont en anglais');
 }
@@ -318,7 +318,7 @@ let releve = null;
     'https://acme.io/team': 403,
     'https://acme.io/': '<title>Acme — build things</title><p>hello@acme.io</p><p>Tom Clark, Chief Executive Officer</p>',
   });
-  releve = await R.recon('https://WWW.ACME.IO/quelque-chose');
+  releve = await R.osint('https://WWW.ACME.IO/quelque-chose');
 
   eq(releve.domaine, 'acme.io', 'le domaine est normalise avant tout');
   eq(releve.infra.dns.hebergeurMail, 'google.com', 'le courrier est chez google — le MX le dit, on ne demande rien de plus');
@@ -453,7 +453,7 @@ console.log('\n-- 12. un domaine injoignable rend un releve, pas une panne --');
   APPELS.length = 0;
   R._resolveur(RESOLVEUR_MUET);
   faussenet({});
-  const r = await R.recon('nexistepas.example');
+  const r = await R.osint('nexistepas.example');
   eq(r.joignable, false, 'le releve DIT que le domaine ne resout pas');
   eq(r.contacts.length, 0, 'et ne pretend rien avoir trouve');
   ok(!APPELS.some((a) => new URL(a.url).hostname === 'nexistepas.example'),
@@ -463,7 +463,7 @@ console.log('\n-- 12. un domaine injoignable rend un releve, pas une panne --');
   /* Une entree qui n est pas un domaine s arrete avant tout reseau. */
   APPELS.length = 0;
   let jete = null;
-  try { await R.recon('Jean Dupont'); } catch (e) { jete = e.message; }
+  try { await R.osint('Jean Dupont'); } catch (e) { jete = e.message; }
   ok(jete && /domain/i.test(jete), 'une personne en entree est refusee, en clair');
   eq(APPELS.length, 0, 'et sans qu un seul appel reseau soit parti');
 }
@@ -522,7 +522,7 @@ console.log('\n-- 15. la forme que la page lit ne bouge pas sans qu on le sache 
   ];
   const lis = (o, c) => c.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
   const manquants = CHEMINS.filter((c) => lis(releve, c) === undefined);
-  eq(manquants.join(', '), '', 'les ' + CHEMINS.length + ' chemins lus par swoge_recon.html sont tous servis');
+  eq(manquants.join(', '), '', 'les ' + CHEMINS.length + ' chemins lus par swoge_osint.html sont tous servis');
 
   /* Et le champ le plus fragile du lot : `titulaire` vaut null quand il est
      masque. `undefined` casserait le rendu « redacted » de la page, et un
