@@ -38,8 +38,9 @@ eq(C.typeFR(''), null, 'rien a decoder rend null');
   ok(plan && /France/.test(plan.valeur), 'le plan dit France');
   ok(type && /mobile/.test(type.valeur), 'le TYPE est mobile — ce que numverify ne donnait pas [' + (type && type.valeur) + ']');
   ok(type && /ARCEP/.test((type.sources || [])[0] || ''), 'et il est sourcé au plan ARCEP');
-  ok(car && /not determined/.test(car.valeur) && /portability/.test(car.pourquoi || ''),
-     'l operateur reste « not determined », avec la raison : la portabilité');
+  /* `numerotation` ne parle PAS de l opérateur : sans clé numverify, aucun
+     CARRIER n est affirmé — on ne fabrique pas une fausse contradiction. */
+  ok(!car, 'numerotation ne prétend rien sur l opérateur : c est le rôle de numverify quand sa clé est là');
 
   console.log('\nVERIFICATIONS : ' + n + '  —  ' + (rates ? ('RATES : ' + rates + '/' + n) : 'tout passe'));
   process.exit(rates ? 1 : 0);

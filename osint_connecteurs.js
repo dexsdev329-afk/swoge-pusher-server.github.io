@@ -468,13 +468,10 @@ N.declare({
                      source: 'ITU-T E.164 country calling codes', verifie: true, confiance: 'MEDIUM',
                      pourquoi: 'the national numbering plan for this country is not decoded here.' }));
     }
-    /* L OPERATEUR, lui, demande vraiment une base de portabilite qu on n a pas.
-       On ne le devine pas — et on DIT pourquoi, pour ne pas se lire comme un
-       manque de travail. */
-    faits.push(f({ sujet: cible, predicat: 'CARRIER', valeur: 'not determined',
-                   source: 'number portability database (not queried)', verifie: true, confiance: 'HIGH',
-                   pourquoi: 'a number keeps its number across carriers (portability), so the current '
-                           + 'operator cannot be read from the prefix — only a paid portability database has it.' }));
+    /* On NE dit RIEN de l operateur ici : le prefixe ne le porte pas (la
+       portabilite l a decorrele), et c est numverify — quand sa cle est posee —
+       qui rend le CARRIER. Emettre un « not determined » a cote de la reponse
+       de numverify fabriquait une fausse contradiction : on s en abstient. */
     return { faits };
   },
 });
