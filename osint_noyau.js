@@ -509,6 +509,11 @@ async function enquete(brut, o) {
       return cc && mode(cc) === 'actif';
     }),
     budgetAtteint: Date.now() - t0 >= opt.budgetMs,
+    /* Les limites voyagent dans CHAQUE rapport, pas seulement dans le PDF :
+       un rapport JSON qui circule sans ses bords finit lu comme une preuve.
+       LIMITES_RAPPORT est defini plus bas — une const lue a l appel, pas au
+       chargement, donc l ordre ne pose pas de probleme. */
+    limites: LIMITES_RAPPORT,
   };
 }
 
