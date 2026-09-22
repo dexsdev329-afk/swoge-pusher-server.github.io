@@ -13,6 +13,8 @@
  *      un saut ne touche rien.
  *   4. Bout en bout : un round se décide près du lock, un round fermé se résout.
  *   5. Papier : aucune clé, aucune signature, aucun ordre dans le module.
+ *   6. La martingale : monte après une perte, repart après un gain, plafonne
+ *      (bust compté), et ne mise jamais plus que la caisse.
  * ==========================================================================*/
 const fs = require('fs'), os = require('os'), path = require('path');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-'));
@@ -21,6 +23,8 @@ process.env.PREDICT_PANCAKE_GAZ = '0.0006';
 process.env.PREDICT_PANCAKE_MARGE = '0.05';
 process.env.PREDICT_PANCAKE_BANK = '1';
 process.env.PREDICT_PANCAKE_LEAD_S = '45';
+process.env.PREDICT_PANCAKE_MART_FACTEUR = '2';
+process.env.PREDICT_PANCAKE_MART_PALIERS = '3';   /* petit, pour atteindre le bust dans le test */
 const P = require('./predict_pancake');
 
 let n = 0, rates = 0;
@@ -104,6 +108,46 @@ const near = (a, b, e, m) => ok(Math.abs(a - b) <= e, m + ' [' + a + ']');
     const src = fs.readFileSync(path.join(__dirname, 'predict_pancake.js'), 'utf8');
     ok(!/privateKey|sendTransaction|signTransaction|betBull|betBear|Wallet\(|signer/i.test(src),
        'aucune signature, aucun betBull/betBear, aucun wallet dans l étage 1');
+  }
+
+  console.log('\n-- 6. la martingale : monte, repart, plafonne, bornée par la caisse --');
+  {
+    /* Une mise plus grosse DILUE la côte (elle s ajoute au pool de notre camp). */
+    ok(P.cote(0.1, 0.6, 0.03, 0.5) < P.cote(0.1, 0.6, 0.03, 0.01),
+       'une grosse mise dilue la côte de son camp');
+
+    const predUp = { sens: 'UP', prob: 55, assez: true };
+    const pool = { bull: 0.1, bear: 0.5, total: 0.6 };   /* BULL gras : on miserait */
+    /* parie() relit l état FRAIS à chaque appel : P._reset() rebind l objet S,
+     * une référence capturée deviendrait périmée. */
+    const parie = (ep, monte) => {
+      const S = P._S();
+      S.enAttente[ep] = P.decide(predUp, pool, 0.03, S.miseCourante);
+      P.resous(ep, { lockPrice: '100', closePrice: monte ? '120' : '90', bull: pool.bull, bear: pool.bear, total: pool.total, oracleCalled: true }, 0.03);
+    };
+    P._reset();
+
+    ok(Math.abs(P.etat().martingale.miseCourante - 0.01) < 1e-9, 'on démarre à la mise de base');
+    parie(300, false);   /* perte 1 */
+    const m1 = P.etat().martingale;
+    ok(m1.palier === 1 && m1.miseCourante > 0.01, 'après une perte : palier 1, mise ×2 [' + m1.miseCourante + ']');
+    parie(301, false);   /* perte 2 */
+    const m2 = P.etat().martingale;
+    ok(m2.palier === 2 && m2.miseCourante > m1.miseCourante, 'deux pertes : palier 2, mise plus grosse [' + m2.miseCourante + ']');
+    parie(302, true);    /* gain → reset */
+    const m3 = P.etat().martingale;
+    ok(m3.palier === 0 && Math.abs(m3.miseCourante - 0.01) < 1e-9, 'un gain remet à la base [palier ' + m3.palier + ']');
+
+    /* Quatre pertes d affilée (MART_PALIERS=3) : la 4e casse l échelle → bust. */
+    P._reset();
+    for (let i = 0; i < 4; i++) parie(400 + i, false);
+    const m4 = P.etat().martingale;
+    ok(m4.busts >= 1, 'une série plus longue que le plafond casse l échelle (bust compté) [' + m4.busts + ']');
+    ok(m4.palier === 0, 'et l échelle repart de zéro après le bust');
+    ok(m4.miseCourante <= Math.max(0.01, P._S().bank) + 1e-9, 'la mise ne dépasse jamais la caisse [' + m4.miseCourante + ' vs ' + P._S().bank.toFixed(4) + ']');
+
+    /* La mise réellement engagée est tracée dans l historique. */
+    ok(P.etat().dernier.every((d) => typeof d.mise === 'number'), 'chaque ligne d historique porte sa mise');
   }
 
   console.log('\nVERIFICATIONS : ' + n + '  —  ' + (rates ? ('RATES : ' + rates + '/' + n) : 'tout passe'));
