@@ -833,6 +833,11 @@ function etatNeuf() {
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
     seuil: SEUIL, derniers: [], depuisAjustement: 0, suites: [], sortieEssais: 0,
     ombres: [], audit: {}, profils: {},
+    /* Le coût d'aller-retour MESURÉ par case (age×mc), depuis les devis que le
+       cobaye fait déjà sur les candidats — pour juger l'audit en NET, pas en
+       brut. Vide au départ : l'audit reste brut tant qu'une case n'a pas de
+       mesure, puis se nette case par case. Voir `noteCoutCase`/`coutCelluleDe`. */
+    coutCase: {},
     /* l audit du Conseiller : par avis, ce que ses jetons ont fait */
     auditConseil: {},
     /* le fond de rendement que toute case se compare a (voir `apprendBase`),
@@ -4886,6 +4891,9 @@ function noteOmbre(t, an, refus, quiRefuse) {
        tard, de distinguer « jamais indexe » de « disparu » (voir
        `regleLesOmbres`). */
     dexVu: !!(t.dex && t.dex.vu),
+    /* La case (age×mc) a l'entree : elle sert a netter l'audit du coût
+       d'aller-retour mesuré pour cette case (voir `coutCelluleDe`). */
+    caseFrott: litTrait(CASE_ESPERANCE_TRAIT, t),
     jalons: {},           /* ce qu'il valait a chaque echeance atteinte */
   });
   if (E.ombres.length > OMBRES_MAX) {
@@ -5295,7 +5303,10 @@ function regleLesOmbres(marche) {
         apprendBase(r);
       }
       compte('jalons');
-      noteAudit(cleAudit(o), r);
+      /* L'audit (et la reference) se jugent NET du coût d'aller-retour mesuré de
+         la case ; les courbes, la memoire des agents et le frottement restent
+         BRUTS, eux, pour ne pas se compter deux fois. Voir `coutCelluleDe`. */
+      noteAudit(cleAudit(o), r - coutCelluleDe(o));
       /* Une piscine evaporee : la strategie aurait tout perdu aussi, moins
          ce que les paliers avaient encaisse avant. */
       const rs0 = rejoue(o.jalons);
@@ -5343,8 +5354,10 @@ function regleLesOmbres(marche) {
             for (const k of apprenants()) if (o.traits && o.traits[k]) apprendAgent(k, o.traits[k], r);
             apprendBase(r);
           }
+          /* NET du coût d'aller-retour mesuré de la case (l'audit et la
+             reference seulement ; les courbes/agents/frottement restent bruts). */
           noteAudit(o.refus ? (o.quiRefuse || 'refus') + ' · ' + familleRefus(o.refus)
-                            : 'achete ou retenu', r);
+                            : 'achete ou retenu', r - coutCelluleDe(o));
           compte('ombresJugees');
           n++;
         }
@@ -6080,6 +6093,7 @@ async function simuleVente(t) {
   if (!rt) return a;
   a.retour = rt;
   if (rt.pct === undefined) return a;           /* pas de devis : le transfert decide seul */
+  noteCoutCase(t, coutAllerRetour(rt));          /* range le coût réel dans la case, pour l'audit net */
   if (!a.teste) { a.teste = true; a.essais = 0; a.refus = 0; a.passe = true; a.raison = null; }
   if (rt.pct < rt.min) { a.passe = false; a.raison = 'selling straight back would return ' + rt.pct + '% of the stake'; }
   else if (coutAllerRetour(rt) > ALLER_RETOUR_MAX) {
@@ -6449,6 +6463,29 @@ function esperanceDeLaCase(t) {
  * Le miroir doit-il s'abstenir ? Rend la phrase du refus, ou null.
  * `esp` est l'esperance de la case, `cout` l'aller-retour devise, en points.
  */
+/* ---- LE COÛT D'ALLER-RETOUR MESURÉ, PAR CASE ----
+ * Le cobaye devise déjà l'aller-retour réel de chaque candidat (`simuleVente`).
+ * On range ce coût dans la case (age×mc) du jeton — une moyenne courante — pour
+ * que l'audit se juge NET, comme le réel paie. Rien ici ne décide : c'est de la
+ * mesure. La case reste absente tant qu'aucun devis ne l'a remplie, donc l'audit
+ * reste brut pour elle jusqu'à ce qu'on ait la donnée — « rendre mesurable
+ * d'abord », jamais deviner un chiffre. */
+function noteCoutCase(t, cout) {
+  if (typeof cout !== 'number' || !isFinite(cout) || cout < 0) return;
+  const valeur = litTrait(CASE_ESPERANCE_TRAIT, t);
+  if (valeur === null || valeur === undefined) return;
+  const C = E.coutCase || (E.coutCase = {});
+  const c = C[valeur] || (C[valeur] = { n: 0, s: 0 });
+  c.n++; c.s += cout;
+}
+/* Le coût moyen de la case d'une ombre, ou 0 si on ne l'a pas encore mesuré. */
+function coutCelluleDe(o) {
+  const v = o && o.caseFrott;
+  if (v === null || v === undefined) return 0;
+  const c = (E.coutCase || {})[v];
+  return (c && c.n >= PROFIL_MIN_OBS) ? c.s / c.n : 0;
+}
+
 function frottementRefuse(esp, cout) {
   if (!esp || esp.moyenne === null || typeof cout !== 'number' || !isFinite(cout)) return null;
   if (esp.moyenne > cout) return null;
@@ -9349,7 +9386,7 @@ module.exports = {
   _poseTg: (x) => { tg = x; },
   _noteAudit: noteAudit, _auditDesRefus: auditDesRefus, _auditDeFamille: auditDeFamille, OMBRES_MAX,
   noteAuditConseil, auditConseil, CONSEIL_ECHEANCES, CONSEIL_AUDIT_MIN, CONSEIL_SEPARE,
-  esperanceDeLaCase, frottementRefuse, CASE_ESPERANCE_TRAIT, frottementBilan,
+  esperanceDeLaCase, frottementRefuse, CASE_ESPERANCE_TRAIT, frottementBilan, noteCoutCase, coutCelluleDe,
   rejeuxBilan, rejoueLOmbre, noteAuditStrat,
   trancheJeuneOuverte, quotaJeunePrend, QUOTA_JEUNE_PAR_TOUR, QUOTA_JEUNE_MIN_OBS,
   _familleRefus: familleRefus, _regroupeAudit: regroupeAudit, bandeAge, bandeSousLaBorne, AGE_BANDES, _noeudMort: noeudMort,
