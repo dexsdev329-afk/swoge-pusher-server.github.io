@@ -152,20 +152,28 @@ function decide(pred, r, fee, stake) {
                               : 'skip: EV ' + Math.round(ev * 100) + '% — the ' + m.toFixed(2) + 'x payout is not worth it' };
 }
 
-/* L'échelle martingale, après un pari résolu. Un gagnant remet à la base ;
- * un perdant monte d'un palier (mise × facteur) ; au-delà de MART_PALIERS on
- * casse et on repart (bust compté). Bornée par la caisse : on ne mise jamais
- * plus qu'on n'a. Sans martingale, la mise reste la base. */
+/* L'échelle martingale, PURE et partagée (étage 1 papier ET étage 2 réel) :
+ * elle fait avancer `mart` ({palier, palierMax, busts}) selon l'issue et rend la
+ * PROCHAINE mise. Un gagnant remet à la base ; un perdant monte d'un palier
+ * (mise × facteur) ; au-delà de `paliers` on casse et on repart (bust compté).
+ * Bornée par la caisse : on ne mise jamais plus qu'on n'a. Un seul endroit où
+ * la martingale est écrite — c'est la règle mesurée, elle ne doit exister qu'ici. */
+function prochaineMise(mart, issue, o) {
+  const base = o.base, facteur = o.facteur, paliers = o.paliers, bank = o.bank;
+  if (issue === 'win') { mart.palier = 0; }
+  else if (issue === 'loss') {
+    mart.palier++;
+    if (mart.palier > paliers) { mart.busts++; mart.palier = 0; }
+  } /* refund : l'échelle ne bouge pas (mise rendue) */
+  if (mart.palier > mart.palierMax) mart.palierMax = mart.palier;
+  const voulue = base * Math.pow(facteur, mart.palier);
+  return Math.round(Math.min(voulue, Math.max(base, bank)) * 1e6) / 1e6;
+}
+
+/* L'échelle appliquée à l'état papier de l'étage 1. Sans martingale, mise à plat. */
 function escalade(issue) {
   if (!MART) { S.miseCourante = STAKE; return; }
-  if (issue === 'win') { S.mart.palier = 0; }
-  else if (issue === 'loss') {
-    S.mart.palier++;
-    if (S.mart.palier > MART_PALIERS) { S.mart.busts++; S.mart.palier = 0; }
-  } /* refund : l'échelle ne bouge pas (mise rendue) */
-  if (S.mart.palier > S.mart.palierMax) S.mart.palierMax = S.mart.palier;
-  const voulue = STAKE * Math.pow(MART_FACTEUR, S.mart.palier);
-  S.miseCourante = Math.round(Math.min(voulue, Math.max(STAKE, S.bank)) * 1e6) / 1e6;
+  S.miseCourante = prochaineMise(S.mart, issue, { base: STAKE, facteur: MART_FACTEUR, paliers: MART_PALIERS, bank: S.bank });
 }
 
 /* Résoudre un round fermé pour lequel on avait décidé. */
@@ -247,5 +255,6 @@ function demarre() { charge(); if (boucle) return; tic(); boucle = setInterval(t
 function arrete() { if (boucle) { clearInterval(boucle); boucle = null; } }
 function _reset() { S = { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0, enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03, round: null, service: { ok: null, quand: 0, message: null }, miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 } }; }
 
-module.exports = { demarre, arrete, charge, etat, tic, decide, cote, resous,
-                   ADDR, _chaineTest, _reseau, _reset, _S: () => S };
+module.exports = { demarre, arrete, charge, etat, tic, decide, cote, resous, predit, prochaineMise,
+                   ADDR, RPC, STAKE, GAZ, MARGE, MART, MART_FACTEUR, MART_PALIERS,
+                   _chaineTest, _reseau, _reset, _S: () => S };

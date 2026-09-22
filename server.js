@@ -45,6 +45,10 @@ const proprietaireIA = (adr) => !!adr && String(cfg.AI_OWNER || '').toLowerCase(
 async function etatMiroirPour(ws) {
   return Object.assign({ type: 'miroirEtat', proprietaire: proprietaireIA(ws.addr) }, await miroir.etat(ws.addr));
 }
+/* L'etat de l'etage 2 PancakeSwap pour le proprietaire (jamais la cle). */
+function etatPancakeReelPour(ws) {
+  return Object.assign({ type: 'pancakeReelEtat', proprietaire: proprietaireIA(ws.addr) }, predictPancakeReel.etat(ws.addr));
+}
 const miroir = require('./miroir');
 
 /* ---- IL VIT AU MODULE, PAS DANS LA REQUETE ----
@@ -1605,6 +1609,7 @@ const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
 const predictServeur = require('./predict_serveur');   /* le releve papier partage de swoge_predict */
 const predictPancake = require('./predict_pancake');   /* etage 1 : deviner les vrais rounds PancakeSwap, papier */
+const predictPancakeReel = require('./predict_pancake_reel');   /* etage 2 : les VRAIS BNB, portefeuille dedie, gated */
 const OSINT_PAR_MIN = Math.max(1, Number(process.env.OSINT_PAR_MIN || 5));
 const OSINT_TTL = 10 * 60 * 1000;
 const osintsVus = new Map();
@@ -4439,6 +4444,41 @@ wss.on('connection', (ws) => {
           const r = await miroir.arrete(ws.addr, ws.addr);
           send(ws, Object.assign({ type: 'miroirStop' }, r));
           send(ws, await etatMiroirPour(ws));
+        } catch (e) { send(ws, { type: 'error', error: e.message }); }
+        return;
+      }
+
+      /* ---- ÉTAGE 2 PANCAKESWAP : les VRAIS BNB, réservé au propriétaire ----
+       * C'est le bot d'argent réel du propriétaire (AI_OWNER) : chaque geste le
+       * REVÉRIFIE ici, la page ne fait que montrer les boutons. La clé privée ne
+       * part que sur cree/cle, jamais dans un état. La destination du stop est le
+       * portefeuille du COMPTE (ws.addr), jamais une adresse reçue. */
+      if (m.type === 'pancakeReelEtat' || m.type === 'pancakeReelCree' || m.type === 'pancakeReelCle'
+          || m.type === 'pancakeReelPlay' || m.type === 'pancakeReelStop') {
+        if (!proprietaireIA(ws.addr)) return send(ws, { type: 'error', error: 'only the colony owner can run the real PancakeSwap wallet (AI_OWNER on the server)' });
+        try {
+          if (m.type === 'pancakeReelEtat') { send(ws, etatPancakeReelPour(ws)); return; }
+          if (m.type === 'pancakeReelCree') {
+            const r = await predictPancakeReel.cree(ws.addr);
+            console.log('[pancake] etage 2 : portefeuille cree pour ' + ws.addr.slice(0, 10) + '…');
+            send(ws, { type: 'pancakeReelCle', adresse: r.adresse, cle: r.cle, neuf: true });
+            send(ws, etatPancakeReelPour(ws));
+            return;
+          }
+          if (m.type === 'pancakeReelCle') { send(ws, Object.assign({ type: 'pancakeReelCle', neuf: false }, predictPancakeReel.revele(ws.addr))); return; }
+          if (m.type === 'pancakeReelPlay') {
+            const r = await predictPancakeReel.demarre(ws.addr);
+            send(ws, Object.assign({ type: 'pancakeReelPlay' }, r));
+            send(ws, etatPancakeReelPour(ws));
+            return;
+          }
+          if (m.type === 'pancakeReelStop') {
+            /* Destination = le portefeuille du COMPTE, jamais une adresse du message. */
+            const r = await predictPancakeReel.arrete(ws.addr, ws.addr);
+            send(ws, Object.assign({ type: 'pancakeReelStop' }, r));
+            send(ws, etatPancakeReelPour(ws));
+            return;
+          }
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -7554,6 +7594,22 @@ server.listen(cfg.PORT, () => {
     }
   } catch (e) {
     console.warn('[pancake] etage 1 non demarré :', e.message);
+  }
+
+  /* Etage 2 PancakeSwap : les VRAIS BNB, portefeuille dedie sur BSC. Trois
+     verrous pour un vrai pari : PREDICT_PANCAKE_EXECUTE=1 + AI_OWNER (reverifie
+     ici) + Play. La boucle ne tourne que si l'etage PancakeSwap est activé du
+     tout ; elle n'agit que sur les comptes actifs et ne signe que sous EXECUTE. */
+  try {
+    predictPancakeReel.charge();
+    if (process.env.PREDICT_PANCAKE === '1' || process.env.PREDICT_PANCAKE_EXECUTE === '1') {
+      predictPancakeReel.demarreBoucle();
+      console.log('[pancake] etage 2 en veille — ' + (predictPancakeReel.EXECUTE ? 'ARMÉ (EXECUTE=1) : Play signe de vrais BNB' : 'dry run (EXECUTE!=1)'));
+    } else {
+      console.log('[pancake] etage 2 chargé, boucle non demarrée (PREDICT_PANCAKE!=1)');
+    }
+  } catch (e) {
+    console.warn('[pancake] etage 2 non demarré :', e.message);
   }
 
   /* ---- LES ACHATS DE $SWOGEBET PASSENT DANS LE CANAL ----
