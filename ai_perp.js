@@ -416,6 +416,17 @@ const AGENTS = [
  * chose que « unknown ». L audit est structurellement incapable de conclure.
  * La colonie n apprend pas — elle ne le peut pas.
  *
+ * ---- RESOLU LE 22 SEPTEMBRE 2026 : LA NOTE SUIT LA TENDANCE ----
+ * La contradiction ci-dessus venait d une note CONTRARIANTE contre un veto qui
+ * suit la tendance. `perp_edge.js` a tranche sur de vraies bougies Bitget : la
+ * note a contre-mouvement PERD (29,3 % de gagnants sur 10 j, 36,0 % sur 31 j,
+ * point mort a 37,5 %), suivre la tendance GAGNE (48,5 % / 41,6 %) sur les cinq
+ * marches. Le couloir et la journee suivent donc desormais le mouvement (voir
+ * `note()`), la note s aligne sur le veto au lieu de le combattre, et l
+ * intersection n est plus vide. Le financement, lui, reste a contre-foule : il
+ * n a pas ete mesure (inconnu bougie par bougie dans l historique), donc on n y
+ * touche pas — sa propre ligne d audit le jugera.
+ *
  * ---- DEJA VU, ET DEJA PAYE ----
  *
  * La colonie de jetons a vecu la meme roue a cliquet le 12 septembre : trois
@@ -498,15 +509,27 @@ function note(x, sens) {
            'funding ' + (x.financement * 100).toFixed(4) + '% per 8h');
   }
   if (x.couloir !== null) {
-    /* Acheter bas, vendre haut : le couloir pousse le long quand le prix est
-       bas dans sa journee, le short quand il est haut. */
+    /* ---- CONTINUATION, PAS RENVERSEMENT (renversé le 22 septembre 2026) ----
+     * Ce spécialiste « achetait bas, vendait haut » : il poussait le long quand
+     * le prix était bas dans sa journée. Mesuré faux. `perp_edge.js` rejoue le
+     * VRAI scoreur sur de vraies bougies Bitget et simule la sortie du bot
+     * (stop 3σ / cible 5σ / 12 h ; point mort d'une marche aléatoire = 37,5 %).
+     * La note « à contre-mouvement » PERD — 29,3 % de gagnants sur 10 j,
+     * 36,0 % sur 31 j, brut moyen négatif, quasi comme l'inverse de la tendance —
+     * alors que SUIVRE la tendance passe le point mort (48,5 % / 41,6 %,
+     * +0,20 puis +0,05 %/trade) sur les 5 marchés. Le couloir suit donc le
+     * mouvement : le prix haut dans sa journée est un signe de force. Son ombre
+     * continue de mesurer ; s'il coûte en range prolongé, la mémoire le dira. */
     const c = (x.couloir - 0.5) * 2;
-    ajoute('couloir', -c * sens * POIDS.couloir, 'day range at ' + Math.round(x.couloir * 100) + '%');
+    ajoute('couloir', c * sens * POIDS.couloir, 'day range at ' + Math.round(x.couloir * 100) + '%');
   }
   if (x.carnet !== null) ajoute('carnet', x.carnet * sens * POIDS.carnet, 'book imbalance ' + Math.round(x.carnet * 100) + '%');
   if (x.var24 !== null) {
+    /* Continuation aussi : suivre le mouvement des 24 h, pas le contrer — même
+       mesure que le couloir ci-dessus (perp_edge.js, 22 septembre 2026 : trend
+       au-dessus du point mort, contre-mouvement dessous, sur 10 et 31 jours). */
     const j = Math.max(-1, Math.min(1, x.var24 / 3));
-    ajoute('journee', -j * sens * POIDS.journee * 0.5, 'day ' + x.var24.toFixed(2) + '%');
+    ajoute('journee', j * sens * POIDS.journee * 0.5, 'day ' + x.var24.toFixed(2) + '%');
   }
   /* Ce que la memoire a retenu des cases de ce moment. */
   const tr = traitsDe(x);

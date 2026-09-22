@@ -358,49 +358,45 @@ const neuf = () => { P._pose(P.etatNeuf()); return P.etat(); };
    *   LONG  36 a 51 « score below the bar »  ·  SHORT 49 a 64 « short against
    *   a deep uptrend ».
    *
-   * Ce n etait pas une panne mais une contradiction : la NOTE est
-   * contrariante (financement, couloir, journee : 28 points sur 48 poussent
-   * contre le mouvement), le VETO suit la tendance. Quand le fond monte, le
-   * short est le cote que la note aime et que le veto interdit ; le long est
-   * celui que le veto autorise et que la note deteste. L intersection est
-   * vide — dans l etat de marche le plus frequent.
+   * Ce n etait pas une panne mais une contradiction, RESOLUE le 22 septembre :
+   * la NOTE etait contrariante (couloir, journee poussaient contre le
+   * mouvement) alors que le VETO suit la tendance — en fond haussier, le short
+   * etait le cote que la note aimait et que le veto interdisait, le long celui
+   * que le veto autorisait et que la note detestait, l intersection etait vide.
+   * `perp_edge.js` a tranche sur de vraies bougies (trend au-dessus du point
+   * mort, contre-mouvement dessous) et la note suit desormais la tendance : en
+   * fond haussier le long PASSE. Le blocage HONNETE qui reste, et que la soupape
+   * garde, est un marche PLAT : aucun sens n atteint la barre.
    *
-   * Et pire : `reference()` exige douze « pris » pour exister. Sans rien de
-   * pris, aucune regle ne peut JAMAIS etre jugee. Meme roue a cliquet que la
-   * colonie de jetons le 12 septembre, meme reponse : une soupape.
+   * Et pire, quel que soit le blocage : `reference()` exige douze « pris » pour
+   * exister. Sans rien de pris, aucune regle ne peut JAMAIS etre jugee. Meme
+   * roue a cliquet que la colonie de jetons le 12 septembre, meme reponse :
+   * une soupape.
    * ==================================================================== */
   console.log('\n-- 11. la soupape de famine --');
   {
-    /* L etat bloque, reproduit : un FOND marque (pente des bougies de quatre
-       heures) avec une volatilite COURTE calme, donc aucun refus de securite.
-       Le seuil du mur de tendance a deja bouge une fois — 4 % le 19
-       septembre, 8 % le 20, parce que l audit disait qu il coutait — donc la
-       pente est CHOISIE pour le depasser, quel qu il soit : un essai qui
-       recopie un seuil se casse a chaque mesure. */
+    /* Le blocage reproduit apres l alignement de la note : un marche PLAT et
+       sans financement penchant. Aucun sens n atteint la barre (« score below
+       the bar », note 50 < 55) : c est un refus d AVIS, pas de securite — la
+       volatilite est vivante (ni marche mort, ni tempete) et le fond lisible. */
     neuf();
     const S = P.etat();
-    let haut = null, fondVu = 0;
-    for (let p4 = 0.2; p4 <= 4 && !haut; p4 += 0.15) {
-      const m = marche({ prix: 80000, pente: 0.03, pente4: p4, bruit: 0.12 });
-      const x = P.mesures(m);
-      if (x.fond > P.FOND_MUR * 1.15) { haut = m; fondVu = x.fond; }
-    }
-    ok(!!haut, 'un fond de ' + fondVu.toFixed(1) + ' % depasse le mur de ' + P.FOND_MUR + ' %');
-    ok(P.mesures(haut).vol15 < 0.6, 'sans declencher le refus de tempete, qui est un refus de SECURITE');
-    let r = await P.tour({ marches: { BTCUSDT: haut } });
-    const short = r.verdicts.find((v) => v.sens < 0);
-    const long = r.verdicts.find((v) => v.sens > 0);
-    ok(short && /uptrend/.test(short.refus || ''), 'le short est refuse par l avis de tendance : « ' + (short && short.refus) + ' »');
-    ok(long && long.refus, 'et le long ne passe pas non plus : « ' + (long && long.refus) + ' »');
+    const plat = marche({ prix: 80000, pente: 0, pente4: 0, bruit: 0.12, financement: 0, var24: 0 });
+    const xPlat = P.mesures(plat);
+    ok(xPlat.vol15 >= 0.04 && xPlat.vol15 <= 0.6, 'le marche est vivant : ni mort ni tempete (vol ' + xPlat.vol15.toFixed(3) + ')');
+    ok(Math.abs(xPlat.fond) <= P.FOND_MUR, 'et son fond ne declenche pas le mur de tendance (fond ' + xPlat.fond.toFixed(2) + ' %)');
+    let r = await P.tour({ marches: { BTCUSDT: plat } });
+    const refuses = r.verdicts.filter((v) => /below the bar/.test(v.refus || ''));
+    ok(refuses.length === 2, 'les deux sens sont refuses par la barre, pas par la securite (' + refuses.length + '/2)');
     eq(r.ouvert, 0, 'donc rien ne s ouvre — c est le blocage');
     eq(S.disette, 1, 'la disette se compte');
 
     /* Les tours passent. Le premier a deja compte : il en reste
        FAMINE_TOURS - 2 avant celui qui ouvre la soupape. */
-    for (let i = 2; i <= P.FAMINE_TOURS - 1; i++) r = await P.tour({ marches: { BTCUSDT: haut } });
+    for (let i = 2; i <= P.FAMINE_TOURS - 1; i++) r = await P.tour({ marches: { BTCUSDT: plat } });
     eq(S.disette, P.FAMINE_TOURS - 1, 'la disette monte, et rien ne s est ouvert avant l heure');
     eq(S.positions.length, 0, 'la soupape ne s ouvre pas une seconde trop tot');
-    r = await P.tour({ marches: { BTCUSDT: haut } });
+    r = await P.tour({ marches: { BTCUSDT: plat } });
     eq(r.ouvert, 1, 'au bout de ' + P.FAMINE_TOURS + ' tours, la soupape prend le meilleur candidat');
     ok(S.positions[0].soupape === true, 'et la position porte sa marque');
     eq(S.compteurs.soupape, 1, 'la prise de soupape est comptee a part');
