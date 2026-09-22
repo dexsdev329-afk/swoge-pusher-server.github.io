@@ -744,12 +744,26 @@ const FAMINE_TOURS = Math.max(1, Number(process.env.PERP_FAMINE_TOURS || 12));
  * appliquee : un marche a la fois. Elle ne disait rien de deux marches
  * differents, et c est elle qu on avait etendue trop loin.
  *
- * Trois, POSE SANS MESURE : la mise est un dixieme de la tresorerie, donc
+ * Trois etait POSE SANS MESURE : la mise est un dixieme de la tresorerie, donc
  * trois positions font trois dixiemes d exposition. Rendu jugeable
  * immediatement — `plafondPositions` compte les fois ou le plafond mord, et
- * `dejaSurCeMarche` celles ou c est la regle du marche unique. Si le plafond
- * mord souvent sans que le papier souffre, il monte. */
-const POSITIONS_MAX = Math.max(1, Number(process.env.PERP_POSITIONS_MAX || 3));
+ * `dejaSurCeMarche` celles ou c est la regle du marche unique.
+ *
+ * ---- PORTE A CINQ LE 22 SEPTEMBRE 2026 : UNE PAR MARCHE ----
+ * Il y a CINQ marches (BTC, ETH, SOL, XRP, DOGE) et la regle « un marche a la
+ * fois » interdit deja d en tenir deux sur le meme : cinq est donc la borne
+ * PRINCIPIELLE (une position par marche), pas un chiffre choisi. A trois, le
+ * plafond etait le seul frein qui empechait de couvrir les cinq marches ; a
+ * cinq c est la regle du marche unique qui borne, et `plafondPositions` ne
+ * mordra plus que si un marche portait deux candidats — ce qu on interdit par
+ * ailleurs. Ce qui a change le calcul : le sens de l entree est desormais
+ * MESURE positif (note 43,1 % de gagnants, +0,070 %/trade sur 31 jours de
+ * bougies Bitget, cf. `perp_edge.js`), donc couvrir plus de marches expose a
+ * un edge positif au lieu de multiplier une perte. Exposition max = 5 x 10 % =
+ * 50 % du capital partage ; reglable par `PERP_POSITIONS_MAX`. Le compteur
+ * reste : si couvrir les cinq fait souffrir le papier, on redescend, avec le
+ * chiffre qui l aura decide. */
+const POSITIONS_MAX = Math.max(1, Number(process.env.PERP_POSITIONS_MAX || 5));
 
 const STOP_VOL = 3.0, CIBLE_VOL = 5.0, TENUE_MAX_MIN = 720;
 const LEVIER = 1;                 /* PAPIER, et sans levier : voir l en-tete */
