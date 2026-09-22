@@ -765,7 +765,19 @@ const FAMINE_TOURS = Math.max(1, Number(process.env.PERP_FAMINE_TOURS || 12));
  * chiffre qui l aura decide. */
 const POSITIONS_MAX = Math.max(1, Number(process.env.PERP_POSITIONS_MAX || 5));
 
-const STOP_VOL = 3.0, CIBLE_VOL = 5.0, TENUE_MAX_MIN = 720;
+/* ---- LA GEOMETRIE DE SORTIE : stop et cible, en ecarts-types de volatilite ----
+ * Le stop passe de 3σ a 4σ le 22 septembre 2026, MESURE. `perp_edge.js` rejoue
+ * la tendance (le sens desormais pris) sur 31 jours de vraies bougies Bitget et
+ * balaie les geometries ; brut moyen par trade (l esperance, financement exclu) :
+ *   stop 3σ / cible 5σ (avant)   41,7 % de gagnants   +0,060 %/trade
+ *   stop 4σ / cible 5σ (apres)   49,0 % de gagnants   +0,100 %/trade
+ * Un stop a 3σ se faisait sortir par le bruit avant que la tendance ne serve ;
+ * a 4σ le trade a la place de vivre. On garde la cible a 5σ (4σ/6σ donne encore
+ * un peu plus, +0,123 %, mais tient plus longtemps donc paie plus de
+ * financement, que cette mesure n inclut pas). Reglable si l audit dit mieux. */
+const STOP_VOL = Math.max(0.5, Number(process.env.PERP_STOP_VOL || 4.0));
+const CIBLE_VOL = Math.max(0.5, Number(process.env.PERP_CIBLE_VOL || 5.0));
+const TENUE_MAX_MIN = 720;
 const LEVIER = 1;                 /* PAPIER, et sans levier : voir l en-tete */
 
 function ouvre(x, sens, an) {

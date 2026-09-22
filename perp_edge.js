@@ -67,9 +67,10 @@ function marcheDepuis(sym, c15, jusqu4) {
 /* Rejouer la sortie exacte du bot sur les bougies suivantes. Rend le sens du
    résultat : +1 cible atteinte, -1 stop atteint, 0 sortie au temps (signe du
    mouvement), et le rendement brut % (prix seul, hors financement). */
-function issue(sens, prix, vol, avenir) {
-  const stop = prix * (1 - sens * STOP_VOL * vol / 100);
-  const cible = prix * (1 + sens * CIBLE_VOL * vol / 100);
+function issue(sens, prix, vol, avenir, stopV, cibleV) {
+  const sv = stopV || STOP_VOL, cv = cibleV || CIBLE_VOL;
+  const stop = prix * (1 - sens * sv * vol / 100);
+  const cible = prix * (1 + sens * cv * vol / 100);
   for (let k = 0; k < avenir.length && k < TENUE_BARS; k++) {
     const bar = avenir[k];
     if (sens > 0) {
@@ -106,6 +107,10 @@ function noteDir(x) {
   return best ? best.sens : 0;
 }
 
+/* Le régime (comme le trait `regime` du bot) et la force du fond (4 h). */
+function regimeDe(vol) { return vol < 0.08 ? 'calme' : vol < 0.18 ? 'normal' : vol < 0.35 ? 'agite' : 'tempete'; }
+function fondBucket(f) { const a = Math.abs(f); return a < 1 ? 'plat <1%' : a < 4 ? 'moyen 1-4%' : 'fort >4%'; }
+
 function agrege() { return { n: 0, cible: 0, stop: 0, temps: 0, gagne: 0, brut: 0 }; }
 function ajoute(a, r) { a.n++; if (r.g > 0) a.gagne++; if (r.temps) a.temps++; else if (r.g > 0) a.cible++; else a.stop++; a.brut += r.brut; }
 function ligne(nom, a) {
@@ -121,6 +126,13 @@ function ligne(nom, a) {
   console.log('PERP EDGE — edge de DIRECTION, hors financement (celui-ci ne peut qu\'aggraver)');
   console.log('Point mort d\'une marche aléatoire (stop 3σ / cible 5σ) = ' + BARRIERE_PM.toFixed(1) + '% de réussite\n');
   const tot = { note: agrege(), trend: agrege(), fond: agrege(), contre: agrege() };
+  /* Pour la direction gagnante (trend), on découpe par régime et par force du
+     fond : on cherche OÙ la tendance paie, pour ne la prendre que là. */
+  const parReg = {}, parFnd = {};
+  /* Balayage de la géométrie de sortie (stop σ / cible σ) sur la tendance :
+     on cherche celle qui maximise l'espérance par trade (brut moyen). */
+  const GEOMS = [[2, 3], [2, 4], [2.5, 4], [3, 4], [3, 5], [3, 6], [4, 5], [4, 6], [2.5, 5]];
+  const sweep = {}; GEOMS.forEach((g) => sweep[g.join('/')] = agrege());
   for (const sym of SYMBOLES) {
     let c15, c4;
     try { c15 = await candles(sym, '15m', Math.max(300, Number(process.env.PERP_EDGE_VISE || 3000))); c4 = await candles(sym, '4H', 200); }
@@ -147,6 +159,16 @@ function ligne(nom, a) {
         const r = issue(s, x.prix, vol, avenir); if (!r) continue;
         ajoute(par[k], r); ajoute(tot[k], r);
       }
+      /* Découpe de la tendance par régime et par force du fond. */
+      if (dirs.trend) {
+        const r = issue(dirs.trend, x.prix, vol, avenir);
+        if (r) {
+          const rg = regimeDe(vol), fb = fondBucket(x.fond);
+          (parReg[rg] || (parReg[rg] = agrege())) && ajoute(parReg[rg], r);
+          (parFnd[fb] || (parFnd[fb] = agrege())) && ajoute(parFnd[fb], r);
+        }
+        for (const g of GEOMS) { const rg2 = issue(dirs.trend, x.prix, vol, avenir, g[0], g[1]); if (rg2) ajoute(sweep[g.join('/')], rg2); }
+      }
     }
     console.log(sym.replace('USDT', '') + ' (' + (c15.length) + ' bougies 15 min ≈ ' + Math.round(c15.length / 96) + ' j)');
     for (const k of ['note', 'trend', 'fond', 'contre']) console.log(ligne(k, par[k]));
@@ -154,4 +176,12 @@ function ligne(nom, a) {
   }
   console.log('TOUS MARCHÉS CONFONDUS');
   for (const k of ['note', 'trend', 'fond', 'contre']) console.log(ligne(k, tot[k]));
+
+  console.log('\nLA TENDANCE, DÉCOUPÉE PAR RÉGIME (où elle paie)');
+  for (const rg of ['calme', 'normal', 'agite', 'tempete']) if (parReg[rg]) console.log(ligne(rg, parReg[rg]));
+  console.log('\nLA TENDANCE, DÉCOUPÉE PAR FORCE DU FOND (4 h)');
+  for (const fb of ['plat <1%', 'moyen 1-4%', 'fort >4%']) if (parFnd[fb]) console.log(ligne(fb, parFnd[fb]));
+  console.log('\nGÉOMÉTRIE DE SORTIE (stop σ / cible σ) — celle qui maximise le brut moyen gagne');
+  const clas = GEOMS.map((g) => g.join('/')).sort((a, b) => (sweep[b].brut / sweep[b].n) - (sweep[a].brut / sweep[a].n));
+  for (const key of clas) console.log(ligne(key + (key === '3/5' ? ' (actuel)' : ''), sweep[key]));
 })().catch((e) => { console.error('ÉCHEC :', e && e.stack || e); process.exit(1); });
