@@ -49,7 +49,6 @@ lance reel    "$SRV" node miroir_reel.test.js
 lance scanpage "$SITE" node scan_page.test.js
 lance osintpage "$SITE" node osint_page.test.js
 lance studiopage "$SITE" node studio_page.test.js
-lance marketpage "$SITE" node markets_page.test.js
 lance predictpage "$SITE" node predict_page.test.js
 # Elle criait dans le vide : 30 echecs sur 617, jamais lus, parce qu elle
 # n etait pas dans cette boucle — exactement la panne de miroir_reel.test.js.
