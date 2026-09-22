@@ -533,6 +533,20 @@ function caseProfil(trait, valeur, h, lectureSeule) {
   const v = t[valeur] || (t[valeur] = {});
   return v[h] || (v[h] = { n: 0, s: 0 });
 }
+/* ---- LA PORTE PAR MARCHÉ : la mémoire prime ----
+ * Un marché dont l'espérance apprise (ombres, à l'horizon de référence) est
+ * négative sur assez d'observations ne mérite pas qu'on y engage le papier. On
+ * refuse — mais en AVIS, pas en sécurité : la soupape peut passer outre pour
+ * garder la ligne de référence vivante, et l'ombre continue de mesurer le
+ * marché (donc l'espérance se corrige toute seule si le marché redevient bon).
+ * Mesuré le 22 septembre 2026, espérance par marché à 240 min : BTC -0,079,
+ * ETH -0,01, XRP -0,011, SOL -0,096 (négatifs), DOGE +0,10 — 4 sur 5 saignaient.
+ * Rend la phrase du refus, ou null. */
+function marcheRefuse(nom) {
+  const c = caseProfil('marche', nom, HORIZON_REF, true);
+  if (c && c.n >= PROFIL_MIN_OBS && c.s / c.n <= 0) return 'market memory: this market loses on average';
+  return null;
+}
 function noteProfil(traits, h, r) {
   for (const agent in traits) {
     for (const k in traits[agent]) {
@@ -858,6 +872,14 @@ async function tour(opts) {
    * etait donc perdu parce qu un autre, meilleur, se trouvait sur un marche
    * occupe — exactement le defaut qu on venait de corriger, deplace d un
    * cran. On ecarte d abord les marches tenus, on choisit ensuite. */
+  /* La porte par marché : un marché à espérance apprise négative est refusé
+     (avis), donc écarté du choix — mais son ombre est quand même notée plus
+     bas, donc il continue d'apprendre, et la soupape peut passer outre. */
+  for (const v of verdicts) {
+    if (v.refus) continue;
+    const r = marcheRefuse((lus[v.sym] && lus[v.sym].nom) || v.sym);
+    if (r) { v.refus = r; v.qui = 'Memory'; }
+  }
   const tenus = new Set(S.positions.map((q) => q.sym));
   const passants = verdicts.filter((v) => !v.refus);
   let pris = passants.filter((v) => !tenus.has(v.sym)).sort((a, b) => b.score - a.score)[0];
@@ -1066,7 +1088,7 @@ module.exports = {
   charge, etat, etatNeuf, vue, tour, demarre, litMarche,
   mesures, traitsDe, note, noteOmbre, regleLesOmbres, noteAudit, auditDesRefus,
   reference, verdictRegle, coutFinancement, ouvre, ferme, surveille,
-  parMarche, soupapeBilan, caseProfil, noteProfil,
+  parMarche, soupapeBilan, caseProfil, noteProfil, marcheRefuse,
   volatilite, position, ema,
   _pose: (e) => { E = e; },
 };

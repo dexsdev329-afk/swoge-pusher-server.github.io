@@ -139,6 +139,18 @@ const neuf = () => { P._pose(P.etatNeuf()); return P.etat(); };
     ok(P.auditDesRefus().every((l) => l.n >= 3), 'le tableau ecarte ce qui a moins de trois observations');
   }
 
+  console.log('\n-- 4bis. la porte par marché : la mémoire écarte un marché perdant --');
+  {
+    neuf();
+    var neg = P.caseProfil('marche', 'ETH', P.HORIZON_REF, false); neg.n = 20; neg.s = -4;    /* moyenne -0,2 */
+    var pos = P.caseProfil('marche', 'DOGE', P.HORIZON_REF, false); pos.n = 20; pos.s = 4;     /* +0,2 */
+    var jeune = P.caseProfil('marche', 'XRP', P.HORIZON_REF, false); jeune.n = 3; jeune.s = -9; /* négatif mais trop peu vu */
+    ok(P.marcheRefuse('ETH'), 'un marché à espérance apprise négative est refusé');
+    ok(!P.marcheRefuse('DOGE'), 'un marché à espérance positive passe');
+    ok(!P.marcheRefuse('XRP'), 'sous le minimum d observations, on ne conclut pas (aucun refus)');
+    ok(!P.marcheRefuse('INCONNU'), 'un marché jamais vu n est pas refusé : un inconnu n est pas un mauvais signe');
+  }
+
   console.log('\n-- 5. un tour complet, contre un faux marche --');
   {
     const S = neuf();
