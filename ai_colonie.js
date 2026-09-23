@@ -6068,8 +6068,17 @@ const RETOUR_DELAI_MS = 15000;
 /* 7 % le 16 septembre. Trois jours de trades avec l'aller-retour note :
  * papier, 4-7 % de cout, 89 trades, +1,6 % ; 7-12 %, 14 trades, -0,3 %. Reel,
  * 7-12 %, 4 fermetures, 4 perdantes, -14,2 % de moyenne. Ce que le devis
- * annonce a 7 % et plus, le portefeuille ne l'a jamais rattrape. */
-const ALLER_RETOUR_MAX = Math.max(1, nEnv('ALLER_RETOUR_MAX', 7));
+ * annonce a 7 % et plus, le portefeuille ne l'a jamais rattrape.
+ * ABAISSE a 4 % le 23 septembre 2026. 60 fermetures REELLES decoupees par cout
+ * d'aller-retour : <2 %, +5,7 % (n=1) ; 2-4 %, -4,2 % (n=8) ; 4-6 %, -10,5 %
+ * (n=6) ; >=6 %, -12,8 % (n=15). La relation est monotone et la theorie la
+ * prevoit : le frottement se retranche du rendement. Le point mort reel est
+ * vers ~2 %, mais le passer si bas sur n=1 affamerait la colonie ; a 4 % on
+ * coupe les deux pires tranches (4-6 % et >=6 %, 21 trades a ~-12 %) en gardant
+ * du volume. C'est un plafond qui ne peut que REFUSER des trades pires, jamais
+ * en prendre. Le vrai levier reste la SELECTION a l'entree (42 des 60 trades
+ * etaient deja perdants) : a mesurer ensuite. Reglable si l'audit dit mieux. */
+const ALLER_RETOUR_MAX = Math.max(1, nEnv('ALLER_RETOUR_MAX', 4));
 /** Ce que l'aller-retour devise couterait, en points : 100 moins le retour. */
 function coutAllerRetour(rt) {
   return (rt && typeof rt.pct === 'number' && isFinite(rt.pct)) ? Math.round((100 - rt.pct) * 10) / 10 : null;

@@ -4459,20 +4459,23 @@ async function allerRetourMesure() {
   const jet = { addr: MONDE.jetons[1].addr, pool: MONDE.jetons[1].pool, chaine: { vu: true, cobayes: cob } };
   let devis = { pct: 85, min: 60, ver: 'v4', pool: 'p', sonde: '0.01' };
   C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, allerRetour: async () => devis });
-  ok(C.ALLER_RETOUR_MAX === 7, 'le plafond du code est a 7 % de cout (' + C.ALLER_RETOUR_MAX + ') : au-dela, 4 fermetures reelles sur 4 ont perdu');
+  ok(C.ALLER_RETOUR_MAX === 4, 'le plafond du code est a 4 % de cout (' + C.ALLER_RETOUR_MAX + ') : abaisse de 7 a 4 le 23 sept, 60 fermetures reelles montrant 4-6 % a -10,5 % et >=6 % a -12,8 %');
   const cher = await C.simuleVente(jet);
   const veto = C.vetoCobaye({ epreuve: cher }) || '';
   console.log('   a 85 % de retour : ' + veto);
   ok(cher.teste && !cher.passe && /round trip would cost 15%/.test(cher.raison), 'un retour de 85 % (15 % de cout) ne passe pas, alors qu il passait la porte des 60 %');
-  ok(/^round trip too costly: fees and depth would eat 15% of a 0\.01 ETH order \(7% at most, quoted on Uniswap v4\)/.test(veto), 'et le veto le dit, avec le chiffre, la sonde et le plafond');
+  ok(/^round trip too costly: fees and depth would eat 15% of a 0\.01 ETH order \(4% at most, quoted on Uniswap v4\)/.test(veto), 'et le veto le dit, avec le chiffre, la sonde et le plafond');
   ok(C._familleRefus(veto) === C._familleRefus(veto.replace('15%', '22%')), 'dans l audit, tous les couts tombent dans la meme ligne : « ' + C._familleRefus(veto) + ' »');
   devis = { pct: 92, min: 60, ver: 'v4', pool: 'p', sonde: '0.01' };
   const ok8 = await C.simuleVente(jet);
   ok(ok8.teste && !ok8.passe && /cost 8%/.test(ok8.raison), 'a 92 % (8 % de cout), elle ne passe plus : c etait la tranche 7-12 %, 14 trades papier a -0,3 % et 4 reels tous perdants');
   devis = { pct: 94, min: 60, ver: 'v4', pool: 'p', sonde: '0.01' };
-  const ok6 = await C.simuleVente(jet);
-  ok(ok6.teste && ok6.passe && !C.vetoCobaye({ epreuve: ok6 }), 'a 94 % (6 % de cout), elle passe');
-  ok(C.coutAllerRetour(ok6.retour) === 6, 'et le cout se lit sur l epreuve (' + C.coutAllerRetour(ok6.retour) + ' %)');
+  const ko6 = await C.simuleVente(jet);
+  ok(ko6.teste && !ko6.passe, 'a 94 % (6 % de cout), elle ne passe PLUS : sous le cap de 7 elle passait, abaisse a 4 le 23 sept (tranche 4-6 % : -10,5 % reel sur 6 fermetures)');
+  devis = { pct: 97, min: 60, ver: 'v4', pool: 'p', sonde: '0.01' };
+  const ok3 = await C.simuleVente(jet);
+  ok(ok3.teste && ok3.passe && !C.vetoCobaye({ epreuve: ok3 }), 'a 97 % (3 % de cout), elle passe : sous le cap de 4 %');
+  ok(C.coutAllerRetour(ok3.retour) === 3, 'et le cout se lit sur l epreuve (' + C.coutAllerRetour(ok3.retour) + ' %)');
 
   /* ---- LA POSITION ET LE CARNET LE GARDENT ---- */
   remise(sains());
