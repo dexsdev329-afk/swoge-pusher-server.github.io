@@ -145,8 +145,12 @@ async function predit() {
 /* La « génération » de la caisse : bumper `PREDICT_PANCAKE_GEN` (ex. de 1 à 2)
  * remet la caisse papier à zéro UNE fois au prochain démarrage — pour repartir
  * propre quand on change de stratégie (ex. le mode inverse). Idempotent : une
- * fois la nouvelle génération enregistrée, un redémarrage ne réinitialise plus. */
-const GEN = String(process.env.PREDICT_PANCAKE_GEN || '1');
+ * fois la nouvelle génération enregistrée, un redémarrage ne réinitialise plus.
+ * Génération 2 le 23 septembre 2026 : caisse repartie à zéro (l'ancienne était
+ * à −29,3 % sur 5 paris) pour observer proprement le mode inverse en papier, à
+ * la demande du propriétaire — voir si l'on bat vraiment le pile ou face. Paris
+ * papier restés actifs (PREDICT_PANCAKE_PARIE=1), aucun argent réel. */
+const GEN = String(process.env.PREDICT_PANCAKE_GEN || '2');
 let S = { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0,
           enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03,
           round: null, service: { ok: null, quand: 0, message: null },

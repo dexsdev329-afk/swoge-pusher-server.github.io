@@ -166,7 +166,7 @@ const near = (a, b, e, m) => ok(Math.abs(a - b) <= e, m + ' [' + a + ']');
   console.log('\n-- 8. la remise à zéro par génération (bump de PREDICT_PANCAKE_GEN) --');
   {
     P._reset(); const S = P._S();
-    S.bank = 0.5; S.wins = 9; S.pl = -0.5; S.gen = '1';
+    S.bank = 0.5; S.wins = 9; S.pl = -0.5; S.gen = '2';   /* la génération courante du code */
     require('fs').writeFileSync(require('path').join(process.env.DATA_DIR, 'predict_pancake.json'), JSON.stringify(S));
     /* Recharger AVEC la même génération : rien ne bouge. */
     P.charge();
