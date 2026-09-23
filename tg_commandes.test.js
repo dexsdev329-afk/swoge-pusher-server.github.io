@@ -16,7 +16,7 @@ const c = require('./tg_commandes');
 
 (async () => {
   ok(/123456789/.test(c.reponseA({ chat: { id: 123456789, type: 'private' }, text: '/id' })), '/id en prive : l identifiant est dans la reponse');
-  ok(/X_VEILLE_CHAT/.test(c.reponseA({ chat: { id: 123456789, type: 'private' }, text: '/start' })), '/start aussi, et la reponse dit ou le mettre');
+  ok(/TG_BACKUP_CHAT_ID/.test(c.reponseA({ chat: { id: 123456789, type: 'private' }, text: '/start' })), '/start aussi, et la reponse dit ou le mettre');
   ok(c.reponseA({ chat: { id: 123456789, type: 'private' }, text: '/id@SwogeBot' }), 'la forme /id@SwogeBot passe');
   eq(c.reponseA({ chat: { id: -1001, type: 'supergroup' }, text: '/id' }), null, 'dans un groupe : silence');
   eq(c.reponseA({ chat: { id: -1002, type: 'channel' }, text: '/id' }), null, 'dans un canal : silence');

@@ -21,7 +21,6 @@ lance() {  # nom · dossier · commande…
 lance etalonnage "$SRV" node etalonnage_boot.test.js
 lance tv_vues "$SRV" node tv_vues.test.js
 lance x_post  "$SRV" node x_post.test.js
-lance x_veille "$SRV" node x_reponse.test.js
 lance tg_cmd  "" node tg_commandes.test.js
 lance perp    "$SRV" node ai_perp.test.js
 lance journal "$SRV" node perp_journal.test.js

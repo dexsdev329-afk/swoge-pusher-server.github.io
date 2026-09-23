@@ -5,17 +5,17 @@
  * ---- pourquoi ce fichier existe ----
  *
  * « T as une commande pour que le bot affiche son numero ? » Il n y en avait
- * pas : @SwogeBot ne faisait qu ENVOYER (annonces, sauvegardes, posts X) —
- * aucun des trois services qui portent son jeton ne lisait ce qu on lui
- * ecrit. Or la veille des comptes suivis a besoin d un chat PRIVE, donc de
- * l identifiant numerique du proprietaire, et le trouver a la main (un
- * autre bot, une adresse d API) est la premiere chose qui a ete mal faite le
- * 18 septembre 2026 : le nom du canal public a la place.
+ * pas : @SwogeBot ne faisait qu ENVOYER (annonces, sauvegardes) — aucun des
+ * services qui portent son jeton ne lisait ce qu on lui ecrit. Or une
+ * sauvegarde privee a besoin d un chat PRIVE, donc de l identifiant numerique
+ * du proprietaire, et le trouver a la main (un autre bot, une adresse d API)
+ * est la premiere chose qui a ete mal faite le 18 septembre 2026 : le nom du
+ * canal public a la place.
  *
  * Ici, le bot lit ses messages toutes les trente secondes (`getUpdates`,
  * avec un decalage garde sur le volume pour ne pas relire) et repond a deux
  * commandes, en prive seulement :
- *   /id      → « Votre identifiant : 123456789 », a coller dans X_VEILLE_CHAT
+ *   /id      → « Votre identifiant : 123456789 », a coller dans TG_BACKUP_CHAT_ID
  *   /start   → la meme chose, puisque c est le premier bouton qu on presse
  * Tout le reste est ignore, et rien n est jamais repondu dans un canal ou un
  * groupe : la commande y serait une invitation a la copier.
@@ -43,7 +43,7 @@ function reponseA(m) {
   if (!m || !m.chat || m.chat.type !== 'private') return null;
   const t = String(m.text || '').trim();
   if (!/^\/(id|start)(@\w+)?$/i.test(t)) return null;
-  return `Votre identifiant Telegram : ${m.chat.id}\n\nC est ce nombre qu il faut mettre dans la variable X_VEILLE_CHAT du serveur pour recevoir ici les reponses proposees, avec leurs boutons.`;
+  return `Votre identifiant Telegram : ${m.chat.id}\n\nC est ce nombre qu il faut mettre dans la variable TG_BACKUP_CHAT_ID du serveur pour recevoir ici les sauvegardes en prive.`;
 }
 
 async function envoie(chatId, texte, prendre) {
