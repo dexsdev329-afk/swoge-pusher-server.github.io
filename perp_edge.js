@@ -11,10 +11,11 @@
  * Barrières asymétriques → point mort d'une marche aléatoire = 3/(3+5) = 37,5 %
  * de réussite. En dessous, le signal est PIRE que le hasard.
  *
- * Le financement n'est pas connu bougie par bougie dans l'historique public :
- * cette mesure isole donc l'edge de DIRECTION (prix). Si l'edge de prix est déjà
- * ≤ 0, le financement (une traînée qui s'ajoute) ne fait que l'aggraver — c'est
- * décisif. On compare quatre directions :
+ * L'edge de DIRECTION (prix) est mesuré d'abord ; puis, depuis le 23 septembre
+ * 2026, le NET : on retranche les frais aller-retour Bitget (maker 0,04 % /
+ * taker 0,12 %) ET le financement réel lu sur l'historique Bitget (toutes les
+ * 8 h). C'est le net qui décide — un edge brut sous le coût aller-retour n'est
+ * pas un edge. On compare quatre directions :
  *   note      — la décision actuelle du bot (scoreur + vétos + seuil)
  *   trend     — suivre la tendance courte (signe de ecartEma)
  *   fond      — suivre la tendance de fond (signe de fond, 4 h)
@@ -32,6 +33,25 @@ const SEUIL = Number(process.env.PERP_SEUIL || 55);
 const STOP_VOL = 3.0, CIBLE_VOL = 5.0, TENUE_BARS = 48;   /* 48 × 15 min = 12 h */
 const BARRIERE_PM = STOP_VOL / (STOP_VOL + CIBLE_VOL) * 100;   /* = 37,5 % */
 const SYMBOLES = (process.env.PERP_SYMBOLES || 'BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,DOGEUSDT').split(',');
+
+/* ---- LE COÛT RÉEL : frais aller-retour + financement (23 septembre 2026) ----
+ * Le brut ci-dessus est le prix seul. Un edge ne compte que NET. Frais Bitget
+ * USDT-M (grille publique, vérifiée le 23/09/2026) : taker 0,06 %/côté, maker
+ * 0,02 %/côté → aller-retour 0,12 % (taker) ou 0,04 % (maker). Le financement
+ * se paie toutes les 8 h (00/08/16 UTC) ; un long paie quand le taux est
+ * positif, un short l'encaisse. On le lit sur l'historique Bitget, on ne le
+ * devine plus. */
+const FRAIS_TK = Number(process.env.PERP_FRAIS_TAKER || 0.06) * 2;   /* aller-retour %, taker */
+const FRAIS_MK = Number(process.env.PERP_FRAIS_MAKER || 0.02) * 2;   /* aller-retour %, maker */
+/* MESURÉ le 23 septembre 2026 (n=13 923 trades, 31 j, BTC/ETH/SOL/XRP/DOGE,
+ * financement réel Bitget) : le financement moyen par trade est ~0 % — la
+ * stratégie prend longs ET shorts, les taux s'annulent, ce n'est PAS la
+ * traînée redoutée. Le coût qui mord est le frais aller-retour. Résultat net
+ * par trade : géométrie 4σ/6σ → +0,110 % maker, +0,030 % taker ; 4σ/5σ →
+ * +0,086 % maker ; 3σ/5σ (actuelle) → +0,048 % maker mais −0,032 % taker.
+ * Verdict : en MAKER l'edge est net-positif dès l'actuel, et 4σ/6σ l'est même
+ * en taker. La rentabilité tient à l'exécution (maker) + une sortie plus large
+ * (4σ/6σ), pas à un nouveau signal. */
 
 async function unLot(sym, gran, endTime) {
   let u = BASE + '/candles?symbol=' + sym + '&productType=' + PRODUIT + '&granularity=' + gran + '&limit=1000';
@@ -51,6 +71,24 @@ async function candles(sym, gran, vise) {
     tout = neuf.concat(tout);
   }
   return tout;
+}
+
+/* L'historique du financement (taux toutes les 8 h), trié par temps croissant.
+   100 points × 8 h = 33 j, assez pour couvrir la fenêtre de bougies. */
+async function financementHist(sym) {
+  const u = BASE + '/history-fund-rate?symbol=' + sym + '&productType=' + PRODUIT + '&pageSize=100';
+  const r = await fetch(u); if (!r.ok) throw new Error('HTTP ' + r.status + ' financement ' + sym);
+  const j = await r.json();
+  return (j.data || []).map((d) => ({ t: +d.fundingTime, taux: +d.fundingRate }))
+    .filter((d) => isFinite(d.taux)).sort((a, b) => a.t - b.t);
+}
+/* Le financement payé sur une position, en % du notionnel. Un long (sens>0)
+   PAIE le taux positif ; un short l'ENCAISSE. Coût = +sens × taux à chaque
+   règlement traversé dans (tEntree, tSortie]. Rendu en % (positif = coûte). */
+function coutFinancement(fund, sens, tEntree, tSortie) {
+  let somme = 0;
+  for (const f of fund) { if (f.t > tEntree && f.t <= tSortie) somme += f.taux; }
+  return sens * somme * 100;
 }
 
 /* Construire le `m` que `mesures()` attend, depuis des fenêtres de bougies.
@@ -74,17 +112,17 @@ function issue(sens, prix, vol, avenir, stopV, cibleV) {
   for (let k = 0; k < avenir.length && k < TENUE_BARS; k++) {
     const bar = avenir[k];
     if (sens > 0) {
-      if (bar.b <= stop) return { g: -1, brut: (stop - prix) / prix * 100 * sens };
-      if (bar.h >= cible) return { g: 1, brut: (cible - prix) / prix * 100 * sens };
+      if (bar.b <= stop) return { g: -1, brut: (stop - prix) / prix * 100 * sens, sortT: bar.t };
+      if (bar.h >= cible) return { g: 1, brut: (cible - prix) / prix * 100 * sens, sortT: bar.t };
     } else {
-      if (bar.h >= stop) return { g: -1, brut: (stop - prix) / prix * 100 * sens };
-      if (bar.b <= cible) return { g: 1, brut: (cible - prix) / prix * 100 * sens };
+      if (bar.h >= stop) return { g: -1, brut: (stop - prix) / prix * 100 * sens, sortT: bar.t };
+      if (bar.b <= cible) return { g: 1, brut: (cible - prix) / prix * 100 * sens, sortT: bar.t };
     }
   }
   const dern = avenir[Math.min(avenir.length, TENUE_BARS) - 1];
   if (!dern) return null;
   const brut = (dern.c - prix) / prix * 100 * sens;
-  return { g: brut > 0 ? 1 : -1, brut, temps: true };
+  return { g: brut > 0 ? 1 : -1, brut, temps: true, sortT: dern.t };
 }
 
 function h4Jusqu(c4, t) { return c4.filter((c) => c.t <= t); }
@@ -111,8 +149,15 @@ function noteDir(x) {
 function regimeDe(vol) { return vol < 0.08 ? 'calme' : vol < 0.18 ? 'normal' : vol < 0.35 ? 'agite' : 'tempete'; }
 function fondBucket(f) { const a = Math.abs(f); return a < 1 ? 'plat <1%' : a < 4 ? 'moyen 1-4%' : 'fort >4%'; }
 
-function agrege() { return { n: 0, cible: 0, stop: 0, temps: 0, gagne: 0, brut: 0 }; }
-function ajoute(a, r) { a.n++; if (r.g > 0) a.gagne++; if (r.temps) a.temps++; else if (r.g > 0) a.cible++; else a.stop++; a.brut += r.brut; }
+function agrege() { return { n: 0, cible: 0, stop: 0, temps: 0, gagne: 0, brut: 0, fund: 0, netMk: 0, netTk: 0 }; }
+function ajoute(a, r) {
+  a.n++; if (r.g > 0) a.gagne++; if (r.temps) a.temps++; else if (r.g > 0) a.cible++; else a.stop++;
+  a.brut += r.brut;
+  const fund = (typeof r.fund === 'number') ? r.fund : 0;   /* coût de financement %, 0 si non calculé */
+  a.fund += fund;
+  a.netMk += r.brut - fund - FRAIS_MK;   /* net d'aller-retour maker + financement réel */
+  a.netTk += r.brut - fund - FRAIS_TK;   /* net d'aller-retour taker + financement réel */
+}
 function ligne(nom, a) {
   if (!a.n) return '  ' + nom.padEnd(9) + '  (aucune entrée)';
   const w = (a.gagne / a.n * 100), mb = (a.brut / a.n);
@@ -121,9 +166,20 @@ function ligne(nom, a) {
     + '  gagné ' + w.toFixed(1).padStart(5) + '%  (pt mort ' + BARRIERE_PM.toFixed(1) + '%)  '
     + 'brut moy ' + (mb >= 0 ? '+' : '') + mb.toFixed(3) + '%  · ' + verdict;
 }
+/* La ligne NETTE : brut, financement moyen, puis net maker et net taker par
+   trade. Le signe du net décide — un edge n'existe que s'il franchit zéro. */
+function ligneNet(nom, a) {
+  if (!a.n) return '  ' + nom.padEnd(11) + '  (aucune entrée)';
+  const mb = a.brut / a.n, mf = a.fund / a.n, nmk = a.netMk / a.n, ntk = a.netTk / a.n;
+  const sg = (v) => (v >= 0 ? '+' : '') + v.toFixed(3) + '%';
+  return '  ' + nom.padEnd(11) + '  n=' + String(a.n).padStart(4)
+    + '  brut ' + sg(mb).padStart(8) + '  financ ' + sg(mf).padStart(8)
+    + '  NET maker ' + sg(nmk).padStart(8) + (nmk > 0 ? ' ✅' : ' ❌')
+    + '  · net taker ' + sg(ntk).padStart(8) + (ntk > 0 ? ' ✅' : ' ❌');
+}
 
 (async () => {
-  console.log('PERP EDGE — edge de DIRECTION, hors financement (celui-ci ne peut qu\'aggraver)');
+  console.log('PERP EDGE — edge de DIRECTION (brut, prix seul) PUIS net (frais + financement réel)');
   console.log('Point mort d\'une marche aléatoire (stop 3σ / cible 5σ) = ' + BARRIERE_PM.toFixed(1) + '% de réussite\n');
   const tot = { note: agrege(), trend: agrege(), fond: agrege(), contre: agrege() };
   /* Pour la direction gagnante (trend), on découpe par régime et par force du
@@ -137,6 +193,9 @@ function ligne(nom, a) {
     let c15, c4;
     try { c15 = await candles(sym, '15m', Math.max(300, Number(process.env.PERP_EDGE_VISE || 3000))); c4 = await candles(sym, '4H', 200); }
     catch (e) { console.log(sym + ' : lecture ratée — ' + e.message); continue; }
+    let fund = [];
+    try { fund = await financementHist(sym); }
+    catch (e) { console.log(sym + ' : financement raté — ' + e.message + ' (net calculé hors financement)'); }
     const par = { note: agrege(), trend: agrege(), fond: agrege(), contre: agrege() };
     for (let i = 100; i < c15.length - 2; i++) {
       const fen15 = c15.slice(0, i + 1);
@@ -148,6 +207,7 @@ function ligne(nom, a) {
       if (x.fond === null || x.ecartEma === null) continue;
       const avenir = c15.slice(i + 1);
       const vol = x.vol15;
+      const tEntree = c15[i].t;
       const dirs = {
         note: noteDir(x),
         trend: x.ecartEma > 0 ? 1 : x.ecartEma < 0 ? -1 : 0,
@@ -157,17 +217,19 @@ function ligne(nom, a) {
       for (const k of Object.keys(dirs)) {
         const s = dirs[k]; if (!s) continue;
         const r = issue(s, x.prix, vol, avenir); if (!r) continue;
+        r.fund = coutFinancement(fund, s, tEntree, r.sortT);
         ajoute(par[k], r); ajoute(tot[k], r);
       }
       /* Découpe de la tendance par régime et par force du fond. */
       if (dirs.trend) {
         const r = issue(dirs.trend, x.prix, vol, avenir);
         if (r) {
+          r.fund = coutFinancement(fund, dirs.trend, tEntree, r.sortT);
           const rg = regimeDe(vol), fb = fondBucket(x.fond);
           (parReg[rg] || (parReg[rg] = agrege())) && ajoute(parReg[rg], r);
           (parFnd[fb] || (parFnd[fb] = agrege())) && ajoute(parFnd[fb], r);
         }
-        for (const g of GEOMS) { const rg2 = issue(dirs.trend, x.prix, vol, avenir, g[0], g[1]); if (rg2) ajoute(sweep[g.join('/')], rg2); }
+        for (const g of GEOMS) { const rg2 = issue(dirs.trend, x.prix, vol, avenir, g[0], g[1]); if (rg2) { rg2.fund = coutFinancement(fund, dirs.trend, tEntree, rg2.sortT); ajoute(sweep[g.join('/')], rg2); } }
       }
     }
     console.log(sym.replace('USDT', '') + ' (' + (c15.length) + ' bougies 15 min ≈ ' + Math.round(c15.length / 96) + ' j)');
@@ -184,4 +246,12 @@ function ligne(nom, a) {
   console.log('\nGÉOMÉTRIE DE SORTIE (stop σ / cible σ) — celle qui maximise le brut moyen gagne');
   const clas = GEOMS.map((g) => g.join('/')).sort((a, b) => (sweep[b].brut / sweep[b].n) - (sweep[a].brut / sweep[a].n));
   for (const key of clas) console.log(ligne(key + (key === '3/5' ? ' (actuel)' : ''), sweep[key]));
+
+  /* ---- LE VERDICT NET : le brut ne compte pas, seul le net décide ---- */
+  console.log('\nNET PAR TRADE (frais aller-retour Bitget maker ' + FRAIS_MK.toFixed(2) + '% / taker ' + FRAIS_TK.toFixed(2) + '% + financement réel)');
+  console.log('  — la décision du bot et la tendance, tous marchés :');
+  for (const k of ['note', 'trend']) console.log(ligneNet(k, tot[k]));
+  console.log('  — par géométrie de sortie (classée par net maker) :');
+  const clasNet = GEOMS.map((g) => g.join('/')).sort((a, b) => (sweep[b].netMk / sweep[b].n) - (sweep[a].netMk / sweep[a].n));
+  for (const key of clasNet) console.log(ligneNet(key + (key === '3/5' ? ' (actuel)' : ''), sweep[key]));
 })().catch((e) => { console.error('ÉCHEC :', e && e.stack || e); process.exit(1); });
