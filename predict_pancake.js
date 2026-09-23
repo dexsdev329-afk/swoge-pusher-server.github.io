@@ -37,7 +37,13 @@ const RPC = process.env.BSC_RPC || 'https://bsc-dataseed.binance.org';
 const ADDR = process.env.PANCAKE_PREDICTION || '0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA';
 const HL = 'https://api.hyperliquid.xyz/info';
 const TIC_MS = Math.max(10, Number(process.env.PREDICT_PANCAKE_TIC_S || 20)) * 1000;
-const STAKE = Math.max(0.0001, Number(process.env.PREDICT_PANCAKE_STAKE || 0.01));   /* mise papier, en BNB */
+/* Mise de base abaissee de 0,01 a 0,002 BNB le 23 septembre 2026, a la demande
+ * du proprietaire, avec la remise a zero (gen 2). Raison mesuree : a 0,01 avec
+ * martingale ×2 sur 6 paliers, l'echelle totale risquee vaut 0,01+0,02+…+0,32 =
+ * 0,63 BNB, soit 63 % d'une caisse de 1 BNB — c'est pour ca que 5 pertes l'ont
+ * mise a -29 %. A 0,002, l'echelle totale fait 0,126 BNB (~13 % de la caisse) et
+ * chaque palier reste petit devant les piscines minces de PancakeSwap. */
+const STAKE = Math.max(0.0001, Number(process.env.PREDICT_PANCAKE_STAKE || 0.002));   /* mise papier, en BNB */
 const GAZ = Math.max(0, Number(process.env.PREDICT_PANCAKE_GAZ || 0.0006));           /* aller-retour bet+claim, en BNB */
 const MARGE = Number(process.env.PREDICT_PANCAKE_MARGE || 0.05);                      /* EV mini pour miser (papier) */
 const BANK0 = Math.max(0.001, Number(process.env.PREDICT_PANCAKE_BANK || 1));         /* caisse papier, en BNB */
