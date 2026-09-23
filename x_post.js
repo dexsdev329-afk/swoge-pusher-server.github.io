@@ -6,9 +6,9 @@
  *
  * « Une image par jour avec SWOGE, differente, et un post bullish, que
  * j automatise. » Puis : « deux posts par jour, midi et minuit, des textes
- * et des images differents a chaque fois. » Porte a dix creneaux le
- * 23 septembre 2026 (toutes les 2 h de 6h a minuit), a la demande du
- * proprietaire, pour un compte beaucoup plus actif.
+ * et des images differents a chaque fois. » Porte a vingt-quatre creneaux le
+ * 23 septembre 2026 (un par heure, 00:00 a 23:00), a la demande du
+ * proprietaire, pour un compte le plus actif possible.
  * A chaque creneau : une scene
  * tiree d une banque (jamais une des six dernieres), une image generee par
  * l API d images d OpenAI, un texte court ecrit par un modele sous un ANGLE
@@ -41,7 +41,7 @@
  * ---- l heure ----
  *
  * Les creneaux sont donnes dans le fuseau du proprietaire (`X_FUSEAU`,
- * Europe/Paris) : toutes les 2 h de 6h a minuit, ces heures a Paris,
+ * Europe/Paris) : un par heure, ces heures a Paris,
  * ete comme hiver, sans recalcul a la main au changement d heure.
  *
  * ---- l authentification ----
@@ -68,7 +68,7 @@ function env() {
     ck: process.env.X_CONSUMER_KEY || '', cs: process.env.X_CONSUMER_SECRET || '',
     at: process.env.X_ACCESS_TOKEN || '', as: process.env.X_ACCESS_SECRET || '',
     openai: process.env.OPENAI_API_KEY || '', anthropic: process.env.ANTHROPIC_API_KEY || '',
-    heures: String(process.env.X_HEURES || process.env.X_HEURE || '06:00,08:00,10:00,12:00,14:00,16:00,18:00,20:00,22:00,00:00').split(',').map((h) => h.trim()).filter((h) => /^\d{1,2}:\d{2}$/.test(h)),
+    heures: String(process.env.X_HEURES || process.env.X_HEURE || '00:00,01:00,02:00,03:00,04:00,05:00,06:00,07:00,08:00,09:00,10:00,11:00,12:00,13:00,14:00,15:00,16:00,17:00,18:00,19:00,20:00,21:00,22:00,23:00').split(',').map((h) => h.trim()).filter((h) => /^\d{1,2}:\d{2}$/.test(h)),
     fuseau: process.env.X_FUSEAU || 'Europe/Paris',
     lien: process.env.X_LIEN === '1',
     qualite: process.env.X_QUALITE || 'high',

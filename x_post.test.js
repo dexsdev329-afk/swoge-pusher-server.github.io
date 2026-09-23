@@ -61,7 +61,7 @@ const x = require('./x_post');
   console.log('\n-- 3. midi et minuit a Paris, ete comme hiver --');
   {
     const H = ['12:00', '00:00'];
-    eq(x.env().heures.join(','), '06:00,08:00,10:00,12:00,14:00,16:00,18:00,20:00,22:00,00:00', 'par defaut : dix creneaux, toutes les 2 h de 6h a minuit');
+    eq(x.env().heures.join(','), '00:00,01:00,02:00,03:00,04:00,05:00,06:00,07:00,08:00,09:00,10:00,11:00,12:00,13:00,14:00,15:00,16:00,17:00,18:00,19:00,20:00,21:00,22:00,23:00', 'par defaut : vingt-quatre creneaux, un par heure');
     eq(x.env().fuseau, 'Europe/Paris', 'a l heure de Paris');
     eq(x.creneauDu(Date.parse('2026-09-18T21:59:00Z'), H, 'Europe/Paris').cle, '2026-09-18#12:00', 'a 23 h 59 a Paris (ete), le creneau en cours est celui de midi');
     eq(x.creneauDu(Date.parse('2026-09-18T22:00:00Z'), H, 'Europe/Paris').cle, '2026-09-19#00:00', 'a minuit pile a Paris, c est le creneau de minuit du jour suivant');
@@ -170,15 +170,15 @@ const x = require('./x_post');
       throw new Error('url inattendue ' + u);
     };
     const MIDI = Date.parse('2026-09-19T10:00:00Z');       // midi a Paris
-    /* A 11 h, le creneau en cours est celui de 10 h, jamais parti : le
-       serveur le rattrape, c est voulu (un redeploiement a 10 h 30 ne doit pas
-       perdre le post de 10 h). Avec les dix creneaux par defaut (toutes les
-       2 h), 10 h est le dernier horaire passe avant 11 h. */
+    /* A 11 h, le creneau en cours est celui de 11 h, jamais parti : le
+       serveur le rattrape, c est voulu (un redeploiement a 11 h 30 ne doit pas
+       perdre le post de 11 h). Avec les vingt-quatre creneaux par defaut (un
+       par heure), 11 h est le dernier horaire passe a 11 h. */
     let r = await x.tache({ maintenant: MIDI - 3600000, prendre: faux });
-    eq(r.etat, 'poste', 'a 11 h, le creneau de 10 h n est pas parti : il part — un creneau manque se rattrape');
-    eq(r.cle, '2026-09-19#10:00', 'sous la cle de 10 h');
-    const journal10h = x.litJournal();
-    ok(journal10h.jours['2026-09-19#10:00'].angle, 'un angle d ecriture est note : ' + journal10h.jours['2026-09-19#10:00'].angle.slice(0, 30));
+    eq(r.etat, 'poste', 'a 11 h, le creneau de 11 h n est pas parti : il part — un creneau manque se rattrape');
+    eq(r.cle, '2026-09-19#11:00', 'sous la cle de 11 h');
+    const journal11h = x.litJournal();
+    ok(journal11h.jours['2026-09-19#11:00'].angle, 'un angle d ecriture est note : ' + journal11h.jours['2026-09-19#11:00'].angle.slice(0, 30));
 
     /* Un refus de X a midi : l image doit etre gardee. */
     refuseTweet = true;
@@ -218,11 +218,11 @@ const x = require('./x_post');
     let signale = null;
     r = await x.tache({ maintenant: MIDI + 600000, prendre: faux, signale: (s) => { signale = s; } });
     eq(r.etat, 'poste', 'au tour suivant, poste');
-    eq(appels.filter((a) => /openai/.test(a.u)).length, 2, 'deux images payees en tout : 10 h, midi — pas une de plus pour la reprise');
+    eq(appels.filter((a) => /openai/.test(a.u)).length, 2, 'deux images payees en tout : 11 h, midi — pas une de plus pour la reprise');
     eq(appels.filter((a) => /anthropic/.test(a.u)).length, 2, 'deux textes');
     const j = x.litJournal();
-    ok(j.jours['2026-09-19#10:00'].scene !== j.jours['2026-09-19#12:00'].scene, 'deux scenes differentes le meme jour : ' + j.jours['2026-09-19#10:00'].scene + ' puis ' + j.jours['2026-09-19#12:00'].scene);
-    ok(j.jours['2026-09-19#10:00'].texte !== j.jours['2026-09-19#12:00'].texte, 'et deux textes differents');
+    ok(j.jours['2026-09-19#11:00'].scene !== j.jours['2026-09-19#12:00'].scene, 'deux scenes differentes le meme jour : ' + j.jours['2026-09-19#11:00'].scene + ' puis ' + j.jours['2026-09-19#12:00'].scene);
+    ok(j.jours['2026-09-19#11:00'].texte !== j.jours['2026-09-19#12:00'].texte, 'et deux textes differents');
     const media = appels.find((a) => /media\/upload/.test(a.u));
     eq(media.corps.media_category, 'tweet_image', 'le media est declare image de post');
     eq(media.corps.media, Buffer.from('PNG-factice').toString('base64'), 'et porte le PNG en base64');
@@ -233,8 +233,8 @@ const x = require('./x_post');
     ok(/^Post number 2, one very buff dog\. \$SWOGE Bet is LIVE 🏟️🐕$/.test(tweet.corps.text), 'le texte est celui du modele, nettoye : guillemets et lien retires');
     ok(signale && signale.id === r.id && signale.url === 'https://x.com/SwoleDogeSwoge/status/' + r.id, 'et le Telegram est prevenu avec le lien du post');
 
-    r = await x.tache({ maintenant: MIDI + 3600000, prendre: faux });
-    eq(r.etat, 'deja', 'a 13 h, toujours dans le creneau de midi, deja parti : rien');
+    r = await x.tache({ maintenant: MIDI + 1800000, prendre: faux });
+    eq(r.etat, 'deja', 'a 12 h 30, toujours dans le creneau de midi (un par heure), deja parti : rien');
     const d = x.derniere();
     ok(d.actif && d.derniere && d.derniere.cle === '2026-09-19#12:00' && d.derniere.image === '/x/image/2026-09-19_12_00.png' && d.recents.length === 2 && !JSON.stringify(d).includes('"ck"'),
        '/x/derniere dit le dernier post, son image, les recents, et aucune cle');
