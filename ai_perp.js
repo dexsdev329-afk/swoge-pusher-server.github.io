@@ -34,12 +34,16 @@
  *    rendement est celui du sens choisi. Une regle qui refuse un long est
  *    jugee sur ce qu aurait fait CE long, pas sur le mouvement du prix.
  *
- * 2. LE FINANCEMENT EST UN COUT, ET IL EST COMPTE DES LE PREMIER JOUR.
+ * 2. LES COUTS SONT COMPTES DES LE PREMIER JOUR : FINANCEMENT ET FRAIS.
  *    Tenir un perpetuel se paie toutes les huit heures. La lecon vient de la
  *    colonie de jetons, mesuree le 18 septembre 2026 : son papier gagnait et
  *    son reel perdait 3,7 % par trade, uniquement par frottement, parce que
  *    le cout n entrait nulle part dans le papier. Ici il entre des le debut :
- *    le rendement d une position papier est net du financement paye ou recu.
+ *    le rendement d une position papier est net du financement paye ou recu
+ *    ET du frais aller-retour (maker Bitget 0,04 %, `FRAIS_AR`), ajoute le
+ *    23 septembre 2026 apres la mesure nette de `perp_edge.js` (l edge brut
+ *    +0,150 % en 4σ/6σ reste +0,110 % net maker — donc rentable, mais seulement
+ *    parce que le cout est desormais dedans, pas cache).
  *
  * ---- ce que ce fichier NE fait pas ----
  *
@@ -766,19 +770,26 @@ const FAMINE_TOURS = Math.max(1, Number(process.env.PERP_FAMINE_TOURS || 12));
 const POSITIONS_MAX = Math.max(1, Number(process.env.PERP_POSITIONS_MAX || 5));
 
 /* ---- LA GEOMETRIE DE SORTIE : stop et cible, en ecarts-types de volatilite ----
- * Le stop passe de 3σ a 4σ le 22 septembre 2026, MESURE. `perp_edge.js` rejoue
- * la tendance (le sens desormais pris) sur 31 jours de vraies bougies Bitget et
- * balaie les geometries ; brut moyen par trade (l esperance, financement exclu) :
- *   stop 3σ / cible 5σ (avant)   41,7 % de gagnants   +0,060 %/trade
- *   stop 4σ / cible 5σ (apres)   49,0 % de gagnants   +0,100 %/trade
- * Un stop a 3σ se faisait sortir par le bruit avant que la tendance ne serve ;
- * a 4σ le trade a la place de vivre. On garde la cible a 5σ (4σ/6σ donne encore
- * un peu plus, +0,123 %, mais tient plus longtemps donc paie plus de
- * financement, que cette mesure n inclut pas). Reglable si l audit dit mieux. */
+ * Le stop est passe de 3σ a 4σ le 22 septembre 2026 ; la cible passe de 5σ a 6σ
+ * le 23 septembre 2026, MESURE NET. `perp_edge.js` rejoue la tendance sur 31 j de
+ * vraies bougies Bitget (n=13 923) et, desormais, NET des frais aller-retour
+ * Bitget ET du financement REEL lu sur l historique. Net par trade :
+ *   stop 4σ / cible 5σ (avant)   +0,126 % brut   +0,086 % net maker   +0,006 % net taker
+ *   stop 4σ / cible 6σ (apres)   +0,150 % brut   +0,110 % net maker   +0,030 % net taker
+ * On avait garde 5σ par peur du financement d une tenue plus longue ; cette peur
+ * est MESUREE et fausse : le financement moyen par trade est ~0 (la strategie
+ * prend longs ET shorts, les taux s annulent). 4σ/6σ domine donc en net, et c est
+ * la seule geometrie net-positive meme en taker. Reglable si l audit dit mieux. */
 const STOP_VOL = Math.max(0.5, Number(process.env.PERP_STOP_VOL || 4.0));
-const CIBLE_VOL = Math.max(0.5, Number(process.env.PERP_CIBLE_VOL || 5.0));
+const CIBLE_VOL = Math.max(0.5, Number(process.env.PERP_CIBLE_VOL || 6.0));
 const TENUE_MAX_MIN = 720;
 const LEVIER = 1;                 /* PAPIER, et sans levier : voir l en-tete */
+/* Le frais aller-retour maker Bitget (0,02 %/cote × 2), retire du rendement de
+ * chaque position papier comme le financement : sans lui, le papier gagnerait
+ * et le reel perdrait — l erreur exacte que la colonie de jetons a payee. Le
+ * mesure du 23/09/2026 est faite au maker : c est l execution visee (ordres
+ * limites), reglable via PERP_FRAIS si l on bascule taker (0,12 %). */
+const FRAIS_AR = Math.max(0, Number(process.env.PERP_FRAIS || 0.04));
 
 function ouvre(x, sens, an) {
   const S = etat();
@@ -807,7 +818,9 @@ function ferme(p, prix, pourquoi) {
   const minutes = (Date.now() - p.t) / 60000;
   const brut = (prix - p.prix0) / p.prix0 * 100 * p.sens;
   const fin = coutFinancement(p.sens, p.fin0, minutes);
-  const r = Math.round((brut + fin) * 1000) / 1000;
+  /* Le rendement papier est NET : mouvement du prix, moins le financement paye,
+     moins le frais aller-retour. C est ce que le reel encaisserait vraiment. */
+  const r = Math.round((brut + fin - FRAIS_AR) * 1000) / 1000;
   const gain = Math.round(p.mise * r / 100 * 100) / 100;
   S.tresor = Math.round((S.tresor + gain) * 100) / 100;
   S.trades++; S.gains += gain;
@@ -815,7 +828,7 @@ function ferme(p, prix, pourquoi) {
   S.financement.n++; S.financement.total += fin;
   S.carnet.unshift({ sym: p.sym, soupape: !!p.soupape,
                      sens: p.sens, prix0: p.prix0, prix, r, brut: Math.round(brut * 1000) / 1000,
-                     financement: Math.round(fin * 1000) / 1000, gain, minutes: Math.round(minutes),
+                     financement: Math.round(fin * 1000) / 1000, frais: FRAIS_AR, gain, minutes: Math.round(minutes),
                      pourquoi, t: Date.now() });
   if (S.carnet.length > 200) S.carnet.length = 200;
   S.positions = S.positions.filter((q) => q !== p);
@@ -1081,7 +1094,8 @@ function vue() {
         const minutes = (Date.now() - p.t) / 60000;
         brut = Math.round((prix - p.prix0) / p.prix0 * 100 * p.sens * 1000) / 1000;
         fin = Math.round(coutFinancement(p.sens, p.fin0, minutes) * 1000) / 1000;
-        net = Math.round((brut + fin) * 1000) / 1000;
+        /* Net des DEUX couts, comme a la fermeture : financement + frais AR. */
+        net = Math.round((brut + fin - FRAIS_AR) * 1000) / 1000;
         gain = Math.round(p.mise * net / 100 * 100) / 100;
       }
       return { sym: p.sym, nom: String(p.sym || '').replace(/USDT$/, ''),

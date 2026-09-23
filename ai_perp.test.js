@@ -207,6 +207,12 @@ const neuf = () => { P._pose(P.etatNeuf()); return P.etat(); };
        'le carnet dit pourquoi et combien : ' + JSON.stringify(S5.carnet[0].r));
     ok(typeof S5.carnet[0].financement === 'number' && typeof S5.carnet[0].brut === 'number',
        'et il separe le mouvement du prix du financement paye — sans cette colonne, on ne sait pas ce qui a coute');
+    /* Le rendement papier est NET des DEUX couts : financement ET frais aller-retour.
+       Sans le frais, le papier gagnerait et le reel perdrait — le mensonge a eviter. */
+    const cc = S5.carnet[0];
+    ok(cc.frais > 0, 'le carnet porte le frais aller-retour preleve : ' + cc.frais + '%');
+    ok(Math.abs(cc.r - (cc.brut + cc.financement - cc.frais)) < 0.0015,
+       'et le rendement est NET : brut + financement - frais, pas le brut seul');
     ok(S5.tresor < tresorAvant, 'le papier a baisse');
     ok(S5.trades === 1 && P.vue().financement.n === 1, 'le trade est compte, le financement aussi');
   }
