@@ -61,7 +61,7 @@ const x = require('./x_post');
   console.log('\n-- 3. midi et minuit a Paris, ete comme hiver --');
   {
     const H = ['12:00', '00:00'];
-    eq(x.env().heures.join(','), '12:00,00:00', 'par defaut : midi et minuit');
+    eq(x.env().heures.join(','), '06:00,12:00,20:00,00:00', 'par defaut : 6h, midi, 20h, minuit');
     eq(x.env().fuseau, 'Europe/Paris', 'a l heure de Paris');
     eq(x.creneauDu(Date.parse('2026-09-18T21:59:00Z'), H, 'Europe/Paris').cle, '2026-09-18#12:00', 'a 23 h 59 a Paris (ete), le creneau en cours est celui de midi');
     eq(x.creneauDu(Date.parse('2026-09-18T22:00:00Z'), H, 'Europe/Paris').cle, '2026-09-19#00:00', 'a minuit pile a Paris, c est le creneau de minuit du jour suivant');
@@ -170,14 +170,15 @@ const x = require('./x_post');
       throw new Error('url inattendue ' + u);
     };
     const MIDI = Date.parse('2026-09-19T10:00:00Z');       // midi a Paris
-    /* A 11 h, le creneau en cours est celui de minuit, jamais parti : le
-       serveur le rattrape, c est voulu (un redeploiement a 00 h 30 ne doit pas
-       perdre le post de minuit). */
+    /* A 11 h, le creneau en cours est celui de 6 h, jamais parti : le
+       serveur le rattrape, c est voulu (un redeploiement a 06 h 30 ne doit pas
+       perdre le post de 6 h). Avec les quatre creneaux par defaut, 6 h est le
+       dernier horaire passe avant 11 h. */
     let r = await x.tache({ maintenant: MIDI - 3600000, prendre: faux });
-    eq(r.etat, 'poste', 'a 11 h, le creneau de minuit n est pas parti : il part — un creneau manque se rattrape');
-    eq(r.cle, '2026-09-19#00:00', 'sous la cle de minuit');
-    const journalMinuit = x.litJournal();
-    ok(journalMinuit.jours['2026-09-19#00:00'].angle, 'un angle d ecriture est note : ' + journalMinuit.jours['2026-09-19#00:00'].angle.slice(0, 30));
+    eq(r.etat, 'poste', 'a 11 h, le creneau de 6 h n est pas parti : il part — un creneau manque se rattrape');
+    eq(r.cle, '2026-09-19#06:00', 'sous la cle de 6 h');
+    const journal6h = x.litJournal();
+    ok(journal6h.jours['2026-09-19#06:00'].angle, 'un angle d ecriture est note : ' + journal6h.jours['2026-09-19#06:00'].angle.slice(0, 30));
 
     /* Un refus de X a midi : l image doit etre gardee. */
     refuseTweet = true;
@@ -217,11 +218,11 @@ const x = require('./x_post');
     let signale = null;
     r = await x.tache({ maintenant: MIDI + 600000, prendre: faux, signale: (s) => { signale = s; } });
     eq(r.etat, 'poste', 'au tour suivant, poste');
-    eq(appels.filter((a) => /openai/.test(a.u)).length, 2, 'deux images payees en tout : minuit, midi — pas une de plus pour la reprise');
+    eq(appels.filter((a) => /openai/.test(a.u)).length, 2, 'deux images payees en tout : 6 h, midi — pas une de plus pour la reprise');
     eq(appels.filter((a) => /anthropic/.test(a.u)).length, 2, 'deux textes');
     const j = x.litJournal();
-    ok(j.jours['2026-09-19#00:00'].scene !== j.jours['2026-09-19#12:00'].scene, 'deux scenes differentes le meme jour : ' + j.jours['2026-09-19#00:00'].scene + ' puis ' + j.jours['2026-09-19#12:00'].scene);
-    ok(j.jours['2026-09-19#00:00'].texte !== j.jours['2026-09-19#12:00'].texte, 'et deux textes differents');
+    ok(j.jours['2026-09-19#06:00'].scene !== j.jours['2026-09-19#12:00'].scene, 'deux scenes differentes le meme jour : ' + j.jours['2026-09-19#06:00'].scene + ' puis ' + j.jours['2026-09-19#12:00'].scene);
+    ok(j.jours['2026-09-19#06:00'].texte !== j.jours['2026-09-19#12:00'].texte, 'et deux textes differents');
     const media = appels.find((a) => /media\/upload/.test(a.u));
     eq(media.corps.media_category, 'tweet_image', 'le media est declare image de post');
     eq(media.corps.media, Buffer.from('PNG-factice').toString('base64'), 'et porte le PNG en base64');
