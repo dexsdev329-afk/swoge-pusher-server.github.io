@@ -253,6 +253,7 @@ async function decideEtPlace(c, ep, r, fee, ch) {
   d.place = false; d.reel = false; d.tx = null;
   if (d.wouldBet) {
     if (d.mise < MIN_BET) { d.wouldBet = false; d.raison = 'below the ' + MIN_BET + ' BNB minimum bet'; }
+    else if (!E1.PARIE) { d.wouldBet = false; d.raison = 'betting is off (PREDICT_PANCAKE_PARIE): the game is a measured coin flip, no real bet is placed'; }
     else if (EXECUTE && c.actif) {
       try {
         const bal = await ch.balance(c.adr); c.solde = bal;

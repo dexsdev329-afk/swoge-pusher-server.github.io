@@ -24,6 +24,7 @@ process.env.PREDICT_PANCAKE_GAZ = '0.0006';
 process.env.PREDICT_PANCAKE_MARGE = '0.05';
 process.env.PREDICT_PANCAKE_MART_FACTEUR = '2';
 process.env.PREDICT_PANCAKE_MART_PALIERS = '6';
+process.env.PREDICT_PANCAKE_PARIE = '1';       /* on TESTE le chemin de pari ; défaut prod = off */
 delete process.env.PREDICT_PANCAKE_EXECUTE;   /* d'abord ÉTEINT */
 
 let n = 0, rates = 0;

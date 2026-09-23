@@ -54,6 +54,18 @@ const DECISION_LEAD = Math.max(10, Number(process.env.PREDICT_PANCAKE_LEAD_S || 
  * miser l'inverse (et la prob du camp inversé = 100 − prob), l'état le dit, et
  * on lira dans quelques jours si la caisse monte. Papier. */
 const INVERSE = process.env.PREDICT_PANCAKE_INVERSE === '1';
+
+/* ---- L'INTERRUPTEUR DES PARIS (défaut : ÉTEINT) ----
+ * Mesuré et retranché le 23 septembre 2026 : la direction 5 min de PancakeSwap
+ * est une PIÈCE. Moteur 49,1 % sur 28 j (n=7876) ; l'inverse 50,9 % (sous le
+ * point mort de 51,5 % à la côte moyenne) ; le momentum près du lock 48,6–50,2 %
+ * sur toutes les fenêtres (1 à 30 min, BNB 1 min) ; le live inverse 0/5 à −29 %,
+ * la martingale crevant sa propre côte sur des pools minces. Aucun angle ne bat
+ * les 3 % de frais + le gaz. On garde la LECTURE des vrais rounds/côtes (la carte
+ * reste vivante), mais on ne mise plus — ni papier, ni réel — tant que
+ * `PREDICT_PANCAKE_PARIE=1` n'est pas posé. C'est le juge : le jeu n'est pas
+ * gagnable avec ce qu'on sait, et on refuse d'y risquer un centime. */
+const PARIE = process.env.PREDICT_PANCAKE_PARIE === '1';
 /* Renverse une prédiction : l'autre camp, avec la probabilité de CE camp. Pur. */
 function inverse(p) {
   if (p && (p.sens === 'UP' || p.sens === 'DOWN')) {
@@ -239,19 +251,22 @@ async function tic() {
     S.round = { epoch: e, lock: rEnCours.lock, bull: rEnCours.bull, bear: rEnCours.bear,
                 total: rEnCours.total, coteBull: cote(rEnCours.bull, rEnCours.total, S.fee),
                 coteBear: cote(rEnCours.bear, rEnCours.total, S.fee) };
-    if (!S.enAttente[e] && rEnCours.lock && now >= rEnCours.lock - DECISION_LEAD && now < rEnCours.lock) {
-      const p = await predit();
-      const d = decide(p, rEnCours, S.fee, S.miseCourante);   /* la mise du moment = base × échelle martingale */
-      S.enAttente[e] = d;
-      S.round.decision = d;
-    } else if (S.enAttente[e]) {
-      S.round.decision = S.enAttente[e];
-    }
-    /* Les rounds fermés récents : on résout ceux qu'on avait décidés. */
-    for (const ep of Object.keys(S.enAttente)) {
-      const n = Number(ep);
-      if (n >= e - 1) continue;                 /* pas encore fermé */
-      try { const rc = await ch.round(n); if (rc.oracleCalled) resous(n, rc, S.fee); } catch (x) {}
+    /* Les paris sont éteints (défaut) : on LIT les rounds/côtes, on ne mise pas. */
+    if (PARIE) {
+      if (!S.enAttente[e] && rEnCours.lock && now >= rEnCours.lock - DECISION_LEAD && now < rEnCours.lock) {
+        const p = await predit();
+        const d = decide(p, rEnCours, S.fee, S.miseCourante);   /* la mise du moment = base × échelle martingale */
+        S.enAttente[e] = d;
+        S.round.decision = d;
+      } else if (S.enAttente[e]) {
+        S.round.decision = S.enAttente[e];
+      }
+      /* Les rounds fermés récents : on résout ceux qu'on avait décidés. */
+      for (const ep of Object.keys(S.enAttente)) {
+        const n = Number(ep);
+        if (n >= e - 1) continue;                 /* pas encore fermé */
+        try { const rc = await ch.round(n); if (rc.oracleCalled) resous(n, rc, S.fee); } catch (x) {}
+      }
     }
     S.maj = Date.now(); note(true); sauve();
   } catch (e) { note(false, String(e.message || e).slice(0, 90)); }
@@ -261,7 +276,7 @@ function etat() {
   const n = S.wins + S.losses;
   return {
     marche: 'BNB', contrat: ADDR, roundSec: 300, paper: true, fee: S.fee,
-    mise: STAKE, gaz: GAZ, marge: MARGE, depuis: S.depuis, maj: S.maj, inverse: INVERSE,
+    mise: STAKE, gaz: GAZ, marge: MARGE, depuis: S.depuis, maj: S.maj, inverse: INVERSE, parie: PARIE,
     enPause: process.env.PREDICT_PANCAKE !== '1',
     service: S.service,
     round: S.round,
@@ -273,7 +288,9 @@ function etat() {
                   palier: S.mart.palier, palierMax: S.mart.palierMax, busts: S.mart.busts,
                   miseCourante: Math.round(S.miseCourante * 1e6) / 1e6 },
     dernier: S.dernier.slice(0, 40),
-    note: MART
+    note: !PARIE
+      ? 'Betting is OFF. The card reads the real PancakeSwap rounds and odds, but places no bet — paper or real. Measured verdict: 5-min direction is a coin flip (49%), the inverse and near-lock momentum do not beat the 3% fee, and a martingale craters its own odds on thin pools. Set PREDICT_PANCAKE_PARIE=1 only to re-open a paper measurement.'
+      : MART
       ? 'Paper only. Martingale on: after a losing bet the stake ×' + MART_FACTEUR + ', reset after a win, capped at ' + MART_PALIERS + ' steps (past that the ladder busts — counted). It does NOT guarantee recovery: a long streak, or the bank capping the stake, breaks it, and PancakeSwap often pays under 2× so a win recovers less than a full double. Kept paper to measure whether it survives before any real BNB.'
       : 'Paper only — reads the real PancakeSwap rounds and payouts, bets nothing. It skips a round when the payout (côte) makes the bet negative-EV.',
   };
@@ -284,5 +301,5 @@ function arrete() { if (boucle) { clearInterval(boucle); boucle = null; } }
 function _reset() { S = { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0, enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03, round: null, service: { ok: null, quand: 0, message: null }, miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 }, gen: GEN }; }
 
 module.exports = { demarre, arrete, charge, etat, tic, decide, cote, resous, predit, prochaineMise, inverse,
-                   ADDR, RPC, STAKE, GAZ, MARGE, MART, MART_FACTEUR, MART_PALIERS, INVERSE,
+                   ADDR, RPC, STAKE, GAZ, MARGE, MART, MART_FACTEUR, MART_PALIERS, INVERSE, PARIE,
                    _chaineTest, _reseau, _reset, _S: () => S };

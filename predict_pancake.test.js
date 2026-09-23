@@ -25,6 +25,7 @@ process.env.PREDICT_PANCAKE_BANK = '1';
 process.env.PREDICT_PANCAKE_LEAD_S = '45';
 process.env.PREDICT_PANCAKE_MART_FACTEUR = '2';
 process.env.PREDICT_PANCAKE_MART_PALIERS = '3';   /* petit, pour atteindre le bust dans le test */
+process.env.PREDICT_PANCAKE_PARIE = '1';          /* on TESTE le chemin de pari ; défaut prod = off */
 const P = require('./predict_pancake');
 
 let n = 0, rates = 0;
@@ -177,6 +178,25 @@ const near = (a, b, e, m) => ok(Math.abs(a - b) <= e, m + ' [' + a + ']');
     P.charge();
     ok(P._S().gen !== '0' && P._S().wins === 0 && Math.abs(P._S().bank - 1) < 1e-9,
        'génération différente : caisse remise à zéro (bank 1, wins 0)');
+  }
+
+  console.log('\n-- 9. paris ÉTEINTS (défaut) : on lit les rounds/côtes, on ne mise pas --');
+  {
+    delete require.cache[require.resolve('./predict_pancake')];
+    delete process.env.PREDICT_PANCAKE_PARIE;
+    const P2 = require('./predict_pancake');
+    ok(P2.PARIE === false, 'PARIE éteint par défaut');
+    P2._reset();
+    P2._reseau(async () => { const a = []; let p = 100; for (let i = 0; i < 60; i++) { p += 1; a.push({ o: p - 0.5, c: p, h: p + 0.3, l: p - 0.7, v: 100 + i }); } return a; });
+    const nowS = Math.floor(Date.now() / 1000);
+    const rounds = { 300: { epoch: '300', lock: nowS + 10, close: nowS + 310, lockPrice: '0', closePrice: '0', bull: 0.1, bear: 0.6, total: 0.7, oracleCalled: false } };
+    P2._chaineTest({ epoch: async () => 300, fee: async () => 0.03, round: async (e) => rounds[Number(e)] });
+    await P2.tic();
+    const e = P2.etat();
+    ok(e.round && e.round.epoch === 300 && e.round.coteBull > 0, 'la carte lit toujours le round et les côtes');
+    ok(!e.round.decision, 'mais AUCUNE décision de pari');
+    ok(Object.keys(P2._S().enAttente).length === 0 && e.banque.mises === 0, 'rien en attente, aucune mise');
+    ok(/betting is off/i.test(e.note), 'l état dit que les paris sont éteints');
   }
 
   console.log('\nVERIFICATIONS : ' + n + '  —  ' + (rates ? ('RATES : ' + rates + '/' + n) : 'tout passe'));
