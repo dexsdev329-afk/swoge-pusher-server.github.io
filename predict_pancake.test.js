@@ -150,6 +150,35 @@ const near = (a, b, e, m) => ok(Math.abs(a - b) <= e, m + ' [' + a + ']');
     ok(P.etat().dernier.every((d) => typeof d.mise === 'number'), 'chaque ligne d historique porte sa mise');
   }
 
+  console.log('\n-- 7. le mode inverse : l autre camp, avec la prob de ce camp --');
+  {
+    /* inverse() est pur : UP↔DOWN, prob → 100 − prob (la prob du camp choisi). */
+    const up = P.inverse({ sens: 'UP', prob: 55, assez: true });
+    ok(up.sens === 'DOWN' && up.prob === 45 && up.inverse === true, 'UP 55 % → DOWN 45 % [' + up.sens + ' ' + up.prob + ']');
+    const dn = P.inverse({ sens: 'DOWN', prob: 60, assez: true });
+    ok(dn.sens === 'UP' && dn.prob === 40, 'DOWN 60 % → UP 40 %');
+    const neu = P.inverse({ sens: 'NEUTRAL', prob: 50, assez: false });
+    ok(neu.sens === 'NEUTRAL', 'un neutre reste neutre (rien à inverser)');
+    ok(P.etat().inverse === false, 'éteint par défaut (l état le dit)');
+  }
+
+  console.log('\n-- 8. la remise à zéro par génération (bump de PREDICT_PANCAKE_GEN) --');
+  {
+    P._reset(); const S = P._S();
+    S.bank = 0.5; S.wins = 9; S.pl = -0.5; S.gen = '1';
+    require('fs').writeFileSync(require('path').join(process.env.DATA_DIR, 'predict_pancake.json'), JSON.stringify(S));
+    /* Recharger AVEC la même génération : rien ne bouge. */
+    P.charge();
+    ok(P._S().wins === 9, 'même génération : la caisse est relue telle quelle');
+    /* Simuler un bump : le fichier porte gen 1, l env demande 2 → reset au chargement.
+       On force via _S (GEN est figé au require) : on prouve la logique de charge(). */
+    const g = P._S(); g.gen = '0';   /* fichier « ancienne génération » */
+    require('fs').writeFileSync(require('path').join(process.env.DATA_DIR, 'predict_pancake.json'), JSON.stringify(g));
+    P.charge();
+    ok(P._S().gen !== '0' && P._S().wins === 0 && Math.abs(P._S().bank - 1) < 1e-9,
+       'génération différente : caisse remise à zéro (bank 1, wins 0)');
+  }
+
   console.log('\nVERIFICATIONS : ' + n + '  —  ' + (rates ? ('RATES : ' + rates + '/' + n) : 'tout passe'));
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.log('  EXCEPTION ' + (e && e.stack || e)); process.exit(1); });

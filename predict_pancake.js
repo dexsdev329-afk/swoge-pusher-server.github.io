@@ -43,6 +43,26 @@ const MARGE = Number(process.env.PREDICT_PANCAKE_MARGE || 0.05);                
 const BANK0 = Math.max(0.001, Number(process.env.PREDICT_PANCAKE_BANK || 1));         /* caisse papier, en BNB */
 const DECISION_LEAD = Math.max(10, Number(process.env.PREDICT_PANCAKE_LEAD_S || 45)); /* on décide N s avant le lock (pools quasi finaux) */
 
+/* ---- LE MODE INVERSE (papier, mesuré) ----
+ * « Fais l'inverse de ce que tu veux miser pour que ce soit rentable. » Idée
+ * juste QUAND le signal est à contresens — c'est ce qui a sauvé le perp. Mais
+ * mesuré hors ligne le 23 septembre 2026 (predict_moteur sur 28 j de BNB 5 min,
+ * n=7876) : le moteur fait 49,1 %, donc l'inverse 50,9 % — sous le point mort
+ * de PancakeSwap à la côte moyenne (1,94× → 51,5 %). La direction 5 min est une
+ * PIÈCE, pas un contresens : inverser une pièce reste une pièce. On ne le croit
+ * donc pas — on le MESURE sur les vrais rounds : éteint par défaut, `=1` fait
+ * miser l'inverse (et la prob du camp inversé = 100 − prob), l'état le dit, et
+ * on lira dans quelques jours si la caisse monte. Papier. */
+const INVERSE = process.env.PREDICT_PANCAKE_INVERSE === '1';
+/* Renverse une prédiction : l'autre camp, avec la probabilité de CE camp. Pur. */
+function inverse(p) {
+  if (p && (p.sens === 'UP' || p.sens === 'DOWN')) {
+    return Object.assign({}, p, { sens: p.sens === 'UP' ? 'DOWN' : 'UP',
+      prob: (typeof p.prob === 'number') ? 100 - p.prob : p.prob, inverse: true });
+  }
+  return p;
+}
+
 /* ---- LA MARTINGALE (papier, mesurée avant tout étage réel) ----
  * Le joueur veut « toujours se rattraper » : après un pari perdu on multiplie
  * la mise par MART_FACTEUR ; après un gagnant on repart à la base. MAIS elle ne
@@ -105,14 +125,20 @@ async function predit() {
   const parIv = {};
   for (const iv of ['1m', '5m', '15m', '1h']) { try { parIv[iv] = await _bougies(iv); } catch (e) { parIv[iv] = []; } }
   const multi = moteur.multiHorizons(parIv);
-  return (multi['5m'] && multi['5m'].assez) ? multi['5m'] : moteur.evalue(parIv['5m'] || []);
+  const p = (multi['5m'] && multi['5m'].assez) ? multi['5m'] : moteur.evalue(parIv['5m'] || []);
+  return INVERSE ? inverse(p) : p;
 }
 
 /* ---- L'état, persistant ---- */
+/* La « génération » de la caisse : bumper `PREDICT_PANCAKE_GEN` (ex. de 1 à 2)
+ * remet la caisse papier à zéro UNE fois au prochain démarrage — pour repartir
+ * propre quand on change de stratégie (ex. le mode inverse). Idempotent : une
+ * fois la nouvelle génération enregistrée, un redémarrage ne réinitialise plus. */
+const GEN = String(process.env.PREDICT_PANCAKE_GEN || '1');
 let S = { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0,
           enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03,
           round: null, service: { ok: null, quand: 0, message: null },
-          miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 } };
+          miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 }, gen: GEN };
 let boucle = null;
 
 function sauve() {
@@ -126,6 +152,8 @@ function sauve() {
 function charge() {
   try { const o = JSON.parse(fs.readFileSync(FICHIER, 'utf8')); if (o && typeof o.bank === 'number') S = Object.assign(S, o); }
   catch (e) { /* premier démarrage */ }
+  /* Bump de génération → caisse neuve, une seule fois. */
+  if (S.gen !== GEN) { _reset(); S.gen = GEN; sauve(); console.log('[pancake] caisse remise à zéro (génération ' + GEN + ')'); }
 }
 function note(ok, m) { S.service = { ok, quand: Date.now(), message: m || null }; }
 
@@ -233,7 +261,7 @@ function etat() {
   const n = S.wins + S.losses;
   return {
     marche: 'BNB', contrat: ADDR, roundSec: 300, paper: true, fee: S.fee,
-    mise: STAKE, gaz: GAZ, marge: MARGE, depuis: S.depuis, maj: S.maj,
+    mise: STAKE, gaz: GAZ, marge: MARGE, depuis: S.depuis, maj: S.maj, inverse: INVERSE,
     enPause: process.env.PREDICT_PANCAKE !== '1',
     service: S.service,
     round: S.round,
@@ -253,8 +281,8 @@ function etat() {
 
 function demarre() { charge(); if (boucle) return; tic(); boucle = setInterval(tic, TIC_MS); if (boucle.unref) boucle.unref(); }
 function arrete() { if (boucle) { clearInterval(boucle); boucle = null; } }
-function _reset() { S = { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0, enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03, round: null, service: { ok: null, quand: 0, message: null }, miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 } }; }
+function _reset() { S = { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0, enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03, round: null, service: { ok: null, quand: 0, message: null }, miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 }, gen: GEN }; }
 
-module.exports = { demarre, arrete, charge, etat, tic, decide, cote, resous, predit, prochaineMise,
-                   ADDR, RPC, STAKE, GAZ, MARGE, MART, MART_FACTEUR, MART_PALIERS,
+module.exports = { demarre, arrete, charge, etat, tic, decide, cote, resous, predit, prochaineMise, inverse,
+                   ADDR, RPC, STAKE, GAZ, MARGE, MART, MART_FACTEUR, MART_PALIERS, INVERSE,
                    _chaineTest, _reseau, _reset, _S: () => S };
