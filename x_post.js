@@ -6,9 +6,9 @@
  *
  * « Une image par jour avec SWOGE, differente, et un post bullish, que
  * j automatise. » Puis : « deux posts par jour, midi et minuit, des textes
- * et des images differents a chaque fois. » Porte a vingt-quatre creneaux le
- * 23 septembre 2026 (un par heure, 00:00 a 23:00), a la demande du
- * proprietaire, pour un compte le plus actif possible.
+ * et des images differents a chaque fois. » Porte a douze creneaux le
+ * 24 septembre 2026 (toutes les 2 h, 00:00 a 22:00), a la demande du
+ * proprietaire — vingt-quatre spammait trop.
  * A chaque creneau : une scene
  * tiree d une banque (jamais une des six dernieres), une image generee par
  * l API d images d OpenAI, un texte court ecrit par un modele sous un ANGLE
@@ -41,7 +41,7 @@
  * ---- l heure ----
  *
  * Les creneaux sont donnes dans le fuseau du proprietaire (`X_FUSEAU`,
- * Europe/Paris) : un par heure, ces heures a Paris,
+ * Europe/Paris) : toutes les 2 h, ces heures a Paris,
  * ete comme hiver, sans recalcul a la main au changement d heure.
  *
  * ---- l authentification ----
@@ -68,7 +68,7 @@ function env() {
     ck: process.env.X_CONSUMER_KEY || '', cs: process.env.X_CONSUMER_SECRET || '',
     at: process.env.X_ACCESS_TOKEN || '', as: process.env.X_ACCESS_SECRET || '',
     openai: process.env.OPENAI_API_KEY || '', anthropic: process.env.ANTHROPIC_API_KEY || '',
-    heures: String(process.env.X_HEURES || process.env.X_HEURE || '00:00,01:00,02:00,03:00,04:00,05:00,06:00,07:00,08:00,09:00,10:00,11:00,12:00,13:00,14:00,15:00,16:00,17:00,18:00,19:00,20:00,21:00,22:00,23:00').split(',').map((h) => h.trim()).filter((h) => /^\d{1,2}:\d{2}$/.test(h)),
+    heures: String(process.env.X_HEURES || process.env.X_HEURE || '00:00,02:00,04:00,06:00,08:00,10:00,12:00,14:00,16:00,18:00,20:00,22:00').split(',').map((h) => h.trim()).filter((h) => /^\d{1,2}:\d{2}$/.test(h)),
     fuseau: process.env.X_FUSEAU || 'Europe/Paris',
     lien: process.env.X_LIEN === '1',
     qualite: process.env.X_QUALITE || 'high',
@@ -331,7 +331,7 @@ const ANGLES = [
 const SYSTEME = `You write posts on X for SWOGE ($SWOGE), a community-run memecoin (CTO) whose mascot is a very buff Shiba Inu. The goal is viral, bullish, shareable posts.
 Voice: bullish, playful, meme energy, confident and fun, never desperate, never rude, never repetitive.
 MOST POSTS ARE PURE VIBES. You do NOT have to talk about the product. A post that lists features reads like a brochure and nobody shares a brochure. The ANGLE tells you which kind this one is: when it says NO PRODUCT, write pure meme and conviction and mention no feature, no number, no place, nothing that is being built — the facts are there only so you never contradict them. When the ANGLE asks for the product, name ONE thing and one only.
-Hard rules: English. Maximum 240 characters, and shorter is usually better. Must contain "$SWOGE". 1 to 3 emojis. At most 2 hashtags. No links. No promises of returns, no "guaranteed", no price targets. Never invent a number. Do NOT reuse the opening words, the structure or the jokes of the previous posts you are shown. Mention today's image only if it lands naturally.
+Hard rules: English. Maximum 240 characters, and shorter is usually better. Do NOT force the ticker: MOST posts should NOT contain "$SWOGE" — use it only on the rare post where it truly lands, never as a reflex. 1 to 3 emojis. At most 2 hashtags. No links. No promises of returns, no "guaranteed", no price targets. Never invent a number. Do NOT reuse the opening words, the structure or the jokes of the previous posts you are shown. Mention today's image only if it lands naturally.
 Output only the post text, nothing else.`;
 
 /* Si le modele ne repond pas, on poste quand meme — avec une phrase de
@@ -358,12 +358,12 @@ function angleDe(a) {
 function nettoie(brut, lien) {
   let t = String(brut || '').replace(/^["'\s]+|["'\s]+$/g, '').replace(/\s+\n/g, '\n').replace(/[ \t]+/g, ' ').trim();
   t = t.replace(/https?:\/\/\S+/gi, '').replace(/\s{2,}/g, ' ').trim();
-  if (!/\$SWOGE/i.test(t)) t += ' $SWOGE';
+  /* On ne FORCE plus « $SWOGE » : l'avoir dans chaque post spammait (retire le
+     24 sept 2026, demande du proprietaire). Le modele le met quand ca colle. */
   const max = lien ? 280 - (LIEN.length + 1) : 280;
   if (t.length > max) {
     const coupe = (s, m) => { s = s.slice(0, m); return s.slice(0, Math.max(s.lastIndexOf(' '), m - 40)).trim(); };
     t = coupe(t, max);
-    if (!/\$SWOGE/i.test(t)) t = coupe(t, max - 7) + ' $SWOGE';
   }
   if (lien) t += '\n' + LIEN;
   return t;
