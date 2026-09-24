@@ -1603,6 +1603,12 @@ const SCAN_PAR_MIN = Math.max(1, Number(process.env.SCAN_PAR_MIN || 20));
 const osint = require('./osint');
 const osintNoyau = require('./osint_noyau');
 const studio = require('./studio');
+const studioChat = require('./studio_chat');
+const studioClaude = require('./studio_claude');
+/* Le module des sessions JOUEUR, sous son propre nom : dans le gestionnaire
+   HTTP, `session` désigne la session ADMIN (ligne `sessionValide`) et masque
+   le module — `session.lire` y vaudrait null. */
+const sessionJoueur = require('./session');
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
 const predictServeur = require('./predict_serveur');   /* le releve papier partage de swoge_predict */
@@ -2213,6 +2219,70 @@ const server = http.createServer(async (req, res) => {
         chaine: m.chaine, cours: studio.coursMoyen(m.id) })),
       modeles: studio.catalogue(),
     }));
+  }
+
+  /* ==================== SWOGE AI CHAT ====================
+   * Le chat façon ChatGPT / Claude / Perplexity, payé à la requête sur le
+   * solde de jeu. Toute la logique d'argent est dans `studio_chat.js`
+   * (réserver le pire cas, facturer le réel, rendre le reste) ; cette route
+   * ne fait qu'authentifier et transporter.
+   *
+   * L'AUTH : le jeton de session que la page garde après la signature du
+   * wallet (`localStorage.swogeSession`), envoyé en `Authorization: Bearer`.
+   * `sessionJoueur.lire` rend l'adresse signée par le serveur — c'est la SEULE
+   * adresse débitée, jamais une adresse lue dans le corps. Un site tiers ne
+   * peut pas poser cet en-tête : pas de requête forgée par un lien.
+   *
+   * LA RÉPONSE : un flux SSE (`texte`, `etape`, puis `fin` ou `erreur`) —
+   * le joueur voit la réponse s'écrire, et le solde réglé arrive avec `fin`. */
+  if (path === '/studio/chat' || path === '/studio/chat/catalogue' || path === '/studio/chat/solde') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (path === '/studio/chat/catalogue') {
+      const cours = await studioChat.coursSwoge();
+      const M = studioChat.MESURE;
+      return json(200, Object.assign(studioChat.catalogue(cours, studioClaude.actif()), {
+        /* Ce qu'on mesure, public : coût réel payé contre facturé. */
+        mesure: { requetes: M.requetes, echecs: M.echecs, depassements: M.depassements,
+                  coutUsd: Number(M.coutUsd.toFixed(4)), factureUsd: Number(M.factureUsd.toFixed(4)) },
+      }));
+    }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (path === '/studio/chat/solde') {
+      if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+      return json(200, { ok: true, adresse: addr, solde: game.balanceStr(addr) });
+    }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    if (!studioClaude.actif()) return json(503, { ok: false, raison: 'The AI provider key is not set on the server yet.' });
+    let q;
+    try { q = JSON.parse((await corps(req, 256 * 1024)).toString('utf8') || '{}'); }
+    catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    res.writeHead(200, Object.assign({ 'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no' }, cors));
+    const envoie = (type, d) => { try { res.write('event: ' + type + '\ndata: ' + JSON.stringify(d) + '\n\n'); } catch (e) { /* client parti */ } };
+    let r;
+    try {
+      r = await studioChat.repond({ addr, modele: q.modele, messages: q.messages, recherche: !!q.recherche, effort: q.effort }, {
+        cours: () => studioChat.coursSwoge(),
+        solde: {
+          reserve: (a, w) => game.studioReserve(a, w),
+          regle: (a, rw, fw) => { const s = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s }); return s; },
+        },
+        fournisseur: (p) => studioClaude.repond(p),
+        surTexte: (t) => envoie('texte', { t }),
+        surReflexion: () => envoie('etape', { quoi: 'reflexion' }),
+        surRecherche: () => envoie('etape', { quoi: 'recherche' }),
+      });
+    } catch (e) {
+      console.error('[chat] ' + (e && e.stack || e));
+      r = { ok: false, code: 500, raison: 'server error — you were not charged' };
+    }
+    envoie(r.ok ? 'fin' : 'erreur', r);
+    return res.end();
   }
 
     /* ==================== OSINT v2 ====================

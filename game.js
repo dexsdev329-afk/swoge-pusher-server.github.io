@@ -2412,10 +2412,10 @@ class Game {
          frais de marche. Un argument ignore en silence est pire qu'un argument
          absent : il donne l'impression que la donnee existe quelque part. */
       const j = m.joueurs[qui] || (m.joueurs[qui] = { mises: 0, rendus: 0, staking: 0, bonus: 0,
-                                                     boutique: 0, marche: 0, primes: 0, rachat: 0 });
+                                                     boutique: 0, marche: 0, primes: 0, rachat: 0, studio: 0 });
       /* Les fiches ecrites avant ces quatre cles n'en ont pas : on les ouvre a
          la premiere ecriture plutot que de perdre le mouvement. */
-      if (j[quoi] === undefined && ['boutique', 'marche', 'primes', 'rachat'].indexOf(quoi) >= 0) j[quoi] = 0;
+      if (j[quoi] === undefined && ['boutique', 'marche', 'primes', 'rachat', 'studio'].indexOf(quoi) >= 0) j[quoi] = 0;
       if (j[quoi] !== undefined) j[quoi] = Number((j[quoi] + v).toFixed(6));
     }
   }
@@ -5806,6 +5806,32 @@ class Game {
   }
 
   canDrop(addr) { return this._p(addr).balance.gte(COST); }
+
+  /* ---- SWOGE AI CHAT : RÉSERVER PUIS RÉGLER ----
+   * Une question au chat réserve d'abord son PIRE cas sur le solde de jeu,
+   * puis `studioRegle` facture le coût réel et rend le reste (tout, si le
+   * fournisseur a échoué). Ce n'est pas une mise : ni `dayNet`, ni le volume
+   * de jeu, ni la cagnotte du classement n'en sont touchés — c'est un achat,
+   * compté à part sous `studio` dans le compte du mois et la fiche du joueur.
+   * Montants en unités de base (BigInt ou chaîne), jamais en flottant. */
+  studioReserve(addr, wei) {
+    const p = this._p(addr);
+    const w = ethers.BigNumber.from(String(wei));
+    if (w.lte(0) || p.balance.lt(w)) return false;
+    p.balance = p.balance.sub(w);
+    return true;
+  }
+
+  studioRegle(addr, reserveWei, factureWei) {
+    const p = this._p(addr);
+    const r = ethers.BigNumber.from(String(reserveWei));
+    let f = ethers.BigNumber.from(String(factureWei));
+    if (f.lt(0)) f = ethers.BigNumber.from(0);
+    if (f.gt(r)) f = r;                       /* jamais plus que ce qu'on a bloqué */
+    p.balance = p.balance.add(r.sub(f));
+    if (f.gt(0)) this.note('studio', ethers.utils.formatUnits(f, cfg.DECIMALS), addr);
+    return this.balanceStr(addr);
+  }
 
   /**
    * Consume 1 drop cost. Returns { value, jackpotWon } (both provably-fair):

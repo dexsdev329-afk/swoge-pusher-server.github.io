@@ -208,7 +208,12 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
   {
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
     const deps = Object.keys(pkg.dependencies || {});
-    eq(deps.length, 3, 'le depot a toujours ses trois dependances : ' + deps.join(', '));
+    /* L intention n a jamais ete « trois », c est « aucune ne s ajoute sans
+       qu on le decide ». La liste est donc NOMMEE : le SDK Anthropic (SWOGE AI
+       Chat, 24 septembre 2026) y est entre en connaissance de cause — du JS
+       pur, sans script d installation ni fichier `.node`. */
+    const CONNUES = ['@anthropic-ai/sdk', 'cannon-es', 'ethers', 'ws'];
+    eq(deps.slice().sort().join(', '), CONNUES.join(', '), 'le depot n a que ses dependances connues');
     ok(!deps.some((d) => /sharp|canvas|resvg|jimp|puppeteer/.test(d)),
        'aucune n est un moteur de rendu : ils embarquent des binaires natifs qui cassent un deploiement');
     const src = fs.readFileSync(path.join(__dirname, 'carte_png.js'), 'utf8');

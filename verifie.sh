@@ -36,6 +36,7 @@ lance osinttel "$SRV" node osint_tel.test.js   # le plan de numerotation FR : ty
 lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route publique du releve
 lance osintv2 "$SRV" node osint_v2.test.js   # un vrai serveur : la route v2, exports, historique
 lance studio  "$SRV" node studio.test.js   # le paiement : double depense, fausse confirmation
+lance studiochat "$SRV" node studio_chat.test.js   # SWOGE AI Chat : jamais sous le cout, tout rendu si le fournisseur echoue, bout en bout
 lance marches "$SRV" node perp_marches.test.js   # decouverte multi-exchange, forme unique
 lance perpws  "$SRV" node perp_ws.test.js   # le vrai WS Hyperliquid : live ou ignore, jamais simule
 lance predict "$SITE" node predict_moteur.test.js   # indicateurs, martingale, risque, backtest
@@ -49,6 +50,7 @@ lance reel    "$SRV" node miroir_reel.test.js
 lance scanpage "$SITE" node scan_page.test.js
 lance osintpage "$SITE" node osint_page.test.js
 lance studiopage "$SITE" node studio_page.test.js
+lance chatpage "$SITE" node chat_page.test.js   # SWOGE AI Chat : jeton et jamais adresse, texte echappe, 320 px
 lance predictpage "$SITE" node predict_page.test.js
 # Elle criait dans le vide : 30 echecs sur 617, jamais lus, parce qu elle
 # n etait pas dans cette boucle — exactement la panne de miroir_reel.test.js.

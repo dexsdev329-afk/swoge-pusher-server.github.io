@@ -3,9 +3,14 @@
   "version": "1.0.0",
   "description": "Authoritative real-time server for the shared SWOGE Pusher table (one table for everyone).",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
-  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
     "cannon-es": "^0.20.0",
     "ethers": "^5.8.0",
     "ws": "^8.21.2"
