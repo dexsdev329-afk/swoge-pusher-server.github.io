@@ -117,6 +117,13 @@ const PERD = -1.5;
 
 const FICHIER = () => path.join(cfg.DATA_DIR, 'ai_perp.json');
 const DEPART = Number(process.env.PERP_DEPART || 1000);
+/* La « génération » du trésor papier : bumper `PERP_GEN` (ex. 1→2) remet le
+ * trésor à zéro UNE fois au prochain démarrage — pour repartir propre quand on
+ * change la stratégie de sortie. Idempotent, comme la caisse Pancake.
+ * Génération 2 le 24 septembre 2026 : l'ancien relevé mélangeait le 3σ/5σ
+ * perdant au nouveau 4σ/6σ net-positif (mesuré +0,110 %/trade maker) ; on
+ * repart propre pour que la nouvelle géométrie se juge seule. Papier. */
+const GEN = String(process.env.PERP_GEN || '2');
 
 /* ==========================================================================
  * UNE COLONIE POUR TOUS LES PERPETUELS
@@ -144,7 +151,7 @@ const DEPART = Number(process.env.PERP_DEPART || 1000);
  * ======================================================================== */
 function etatNeuf() {
   return {
-    v: 2, depuis: Date.now(), tours: 0, maj: 0,
+    v: 2, gen: GEN, depuis: Date.now(), tours: 0, maj: 0,
     tresor: DEPART, depart: DEPART, trades: 0, gains: 0, meilleur: 0,
     positions: [], carnet: [], ombres: [], audit: {}, profils: {},
     compteurs: {}, flux: [], derniereErreur: null,
@@ -175,7 +182,11 @@ function charge() {
     const j = JSON.parse(fs.readFileSync(FICHIER(), 'utf8'));
     /* `v` fait foi : un etat de la version par marche ne se recolle pas en
        un seul, et il ne vaut rien — les colonies sont nees le meme jour. */
-    if (j && j.v === 2) { E = Object.assign(etatNeuf(), j); return SYMBOLES.slice(); }
+    if (j && j.v === 2) {
+      /* Génération différente → trésor remis à zéro une fois (comme Pancake). */
+      if (String(j.gen || '1') !== GEN) { E = etatNeuf(); sauve(); console.log('[perp] trésor remis à zéro (génération ' + GEN + ')'); return SYMBOLES.slice(); }
+      E = Object.assign(etatNeuf(), j); return SYMBOLES.slice();
+    }
   } catch (e) { if (e.code !== 'ENOENT') console.error('[perp] ' + e.message); }
   E = etatNeuf();
   return SYMBOLES.slice();
