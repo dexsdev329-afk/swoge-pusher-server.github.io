@@ -44,10 +44,30 @@ const TIC_MS = Math.max(10, Number(process.env.PREDICT_PANCAKE_TIC_S || 20)) * 1
  * mise a -29 %. A 0,002, l'echelle totale fait 0,126 BNB (~13 % de la caisse) et
  * chaque palier reste petit devant les piscines minces de PancakeSwap. */
 const STAKE = Math.max(0.0001, Number(process.env.PREDICT_PANCAKE_STAKE || 0.002));   /* mise papier, en BNB */
-const GAZ = Math.max(0, Number(process.env.PREDICT_PANCAKE_GAZ || 0.0006));           /* aller-retour bet+claim, en BNB */
+/* Le gaz, MESURE le 24 septembre 2026 sur les recus du contrat (bloc
+ * 123 777 537) : pari BULL 99 k, pari BEAR 119 k (max 136 k), claim 94 k de gaz
+ * (medianes, n = 9 / 11 / 8), a 0,05–0,1 gwei (max vu 1 gwei). L'aller-retour
+ * pari + claim coute donc ~0,00002 BNB. L'ancien defaut, 0,0006, le comptait
+ * VINGT-SIX fois : 30 % d'une mise de 0,002 partait en gaz imaginaire. 0,0001
+ * garde une marge ×5 (tient jusqu'a ~0,45 gwei). */
+const GAZ = Math.max(0, Number(process.env.PREDICT_PANCAKE_GAZ || 0.0001));           /* aller-retour bet+claim, en BNB */
 const MARGE = Number(process.env.PREDICT_PANCAKE_MARGE || 0.05);                      /* EV mini pour miser (papier) */
 const BANK0 = Math.max(0.001, Number(process.env.PREDICT_PANCAKE_BANK || 1));         /* caisse papier, en BNB */
-const DECISION_LEAD = Math.max(10, Number(process.env.PREDICT_PANCAKE_LEAD_S || 45)); /* on décide N s avant le lock (pools quasi finaux) */
+const DECISION_LEAD = Math.max(10, Number(process.env.PREDICT_PANCAKE_LEAD_S || 45)); /* on décide N s avant le lock — les pools n'y sont PAS finaux, voir plus bas */
+
+/* ---- LA CÔTE FINALE, PAS CELLE DU MOMENT ----
+ * MESURE le 24 septembre 2026, 13 rounds consecutifs (epochs 518504–518516,
+ * journaux d'evenements des paris du contrat) : 45 s avant le lock, il n'y a que 32 %
+ * du pool final (mediane) ; 53 % a 20 s ; 68 % a 8 s. Un tiers de l'argent
+ * arrive dans les HUIT dernieres secondes. La cote lue a la decision n'est donc
+ * pas celle qu'on touche : sur les 13 paris papier des 40 derniers rounds, la
+ * cote de decision moyenne etait 13,04× et la cote finale 2,03× — un « EV
+ * +3 761 % a 85,52× » a paye 2,22×. L'ancienne porte EV triait sur du bruit.
+ * On decide donc sur la cote finale ATTENDUE : la mediane des cotes finales du
+ * camp sur les derniers rounds, et jamais plus que la cote visible (une foule
+ * deja la ne repart pas). Sous FINALES_MIN rounds observes, on ne conclut pas. */
+const FINALES_MAX = 60;
+const FINALES_MIN = 12;
 
 /* ---- LE MODE INVERSE (papier, mesuré) ----
  * « Fais l'inverse de ce que tu veux miser pour que ce soit rentable. » Idée
@@ -156,11 +176,17 @@ async function predit() {
  * à −29,3 % sur 5 paris) pour observer proprement le mode inverse en papier, à
  * la demande du propriétaire — voir si l'on bat vraiment le pile ou face. Paris
  * papier restés actifs (PREDICT_PANCAKE_PARIE=1), aucun argent réel. */
-const GEN = String(process.env.PREDICT_PANCAKE_GEN || '2');
+/* Génération 3 le 24 septembre 2026 : la porte EV passe de la cote du moment
+ * à la cote finale attendue (voir LA CÔTE FINALE). La génération 2 finissait a
+ * +3,03 % (63 paris, 33–30, 52,4 %) — mais a mise fixe, les 13 paris des 40
+ * derniers rounds perdaient (−0,0106 BNB avec le gaz d'alors, −0,0028 sans) :
+ * le gain venait de la martingale, pas de la porte. On ne mele pas les deux. */
+const GEN = String(process.env.PREDICT_PANCAKE_GEN || '3');
 let S = { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0,
           enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03,
           round: null, service: { ok: null, quand: 0, message: null },
-          miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 }, gen: GEN };
+          miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 }, gen: GEN,
+          finales: { BULL: [], BEAR: [], dernierEp: 0 } };
 let boucle = null;
 
 function sauve() {
@@ -176,6 +202,7 @@ function charge() {
   catch (e) { /* premier démarrage */ }
   /* Bump de génération → caisse neuve, une seule fois. */
   if (S.gen !== GEN) { _reset(); S.gen = GEN; sauve(); console.log('[pancake] caisse remise à zéro (génération ' + GEN + ')'); }
+  if (!S.finales) S.finales = { BULL: [], BEAR: [], dernierEp: 0 };
 }
 function note(ok, m) { S.service = { ok, quand: Date.now(), message: m || null }; }
 
@@ -187,19 +214,51 @@ function cote(sideAmt, total, fee, stake) {
   return a > 0 ? (t * (1 - fee)) / a : null;
 }
 
-/* La décision, sur un round en cours de mise. `stake` = la mise (martingale incluse). */
-function decide(pred, r, fee, stake) {
+/* Retient la cote finale des DEUX camps d'un round ferme (sans notre mise :
+ * c'est la foule seule), une fois par epoch. Pur sur `fin`. */
+function noteFinale(fin, ep, r, fee) {
+  if (!fin || !r || !r.oracleCalled || !(r.total > 0) || ep <= fin.dernierEp) return;
+  fin.dernierEp = ep;
+  for (const side of ['BULL', 'BEAR']) {
+    const a = side === 'BULL' ? r.bull : r.bear;
+    if (a > 0) { fin[side].push({ c: r.total * (1 - fee) / a, t: r.total }); if (fin[side].length > FINALES_MAX) fin[side].shift(); }
+  }
+}
+const mediane = (a) => { const b = a.slice().sort((x, y) => x - y); const k = b.length >> 1; return b.length % 2 ? b[k] : (b[k - 1] + b[k]) / 2; };
+
+/* La cote finale attendue d'un camp, NOTRE mise diluee dedans : pool median,
+ * part du camp tiree de la cote mediane. null sous FINALES_MIN observations. */
+function coteEstimee(side, fee, stake, fin) {
+  const L = fin && fin[side];
+  if (!L || L.length < FINALES_MIN) return null;
+  const c = mediane(L.map((o) => o.c)), T = mediane(L.map((o) => o.t));
+  const partCamp = T * (1 - fee) / c;
+  return { cote: cote(partCamp, T, fee, stake), n: L.length };
+}
+
+/* La décision, sur un round en cours de mise. `stake` = la mise (martingale
+ * incluse) ; `fin` = les cotes finales observees (par defaut, celles de l'état). */
+function decide(pred, r, fee, stake, fin) {
   const s = stake > 0 ? stake : STAKE;
   const side = pred.sens === 'UP' ? 'BULL' : pred.sens === 'DOWN' ? 'BEAR' : null;
   if (!side || !pred.assez) return { side: side, wouldBet: false, cote: null, ev: null, mise: s, raison: 'no clear prediction' };
-  const m = cote(side === 'BULL' ? r.bull : r.bear, r.total, fee, s);
-  if (m == null) return { side, wouldBet: false, cote: null, ev: null, mise: s, raison: 'empty side' };
+  const vue = cote(side === 'BULL' ? r.bull : r.bear, r.total, fee, s);
+  if (vue == null) return { side, wouldBet: false, cote: null, ev: null, mise: s, raison: 'empty side' };
+  const est = coteEstimee(side, fee, s, fin || S.finales);
+  const coteVue = Math.round(vue * 100) / 100;
+  if (!est) {
+    const n = ((fin || S.finales || {})[side] || []).length;
+    return { side, cote: null, coteVue, ev: null, prob: pred.prob, mise: Math.round(s * 1e6) / 1e6, wouldBet: false,
+             raison: 'learning the final payouts (' + n + '/' + FINALES_MIN + ' rounds) — the pool before lock is not the final one' };
+  }
+  const m = Math.min(vue, est.cote);
   const p = pred.prob / 100;
   const ev = p * m - 1 - GAZ / s;
-  return { side, cote: Math.round(m * 100) / 100, ev: Math.round(ev * 1000) / 1000, prob: pred.prob, mise: Math.round(s * 1e6) / 1e6,
+  return { side, cote: Math.round(m * 100) / 100, coteVue, coteEstimee: Math.round(est.cote * 100) / 100, nFinales: est.n,
+           ev: Math.round(ev * 1000) / 1000, prob: pred.prob, mise: Math.round(s * 1e6) / 1e6,
            wouldBet: ev > MARGE,
-           raison: ev > MARGE ? 'EV +' + Math.round(ev * 100) + '% at ' + m.toFixed(2) + 'x'
-                              : 'skip: EV ' + Math.round(ev * 100) + '% — the ' + m.toFixed(2) + 'x payout is not worth it' };
+           raison: ev > MARGE ? 'EV +' + Math.round(ev * 100) + '% at an expected ' + m.toFixed(2) + 'x final payout'
+                              : 'skip: EV ' + Math.round(ev * 100) + '% — the expected ' + m.toFixed(2) + 'x final payout is not worth it' };
 }
 
 /* L'échelle martingale, PURE et partagée (étage 1 papier ET étage 2 réel) :
@@ -258,6 +317,11 @@ async function tic() {
     const e = await ch.epoch();
     /* Le round en cours de MISE est `e` : on décide une fois, près du lock. */
     const rEnCours = await ch.round(e);
+    /* La cote finale du dernier round ferme, qu'on parie ou non : c'est elle
+       qui apprend a la porte EV ce qu'un camp paie vraiment. */
+    if (e - 2 > S.finales.dernierEp) {
+      try { const rf = await ch.round(e - 2); noteFinale(S.finales, e - 2, rf, S.fee); } catch (x) {}
+    }
     S.round = { epoch: e, lock: rEnCours.lock, bull: rEnCours.bull, bear: rEnCours.bear,
                 total: rEnCours.total, coteBull: cote(rEnCours.bull, rEnCours.total, S.fee),
                 coteBear: cote(rEnCours.bear, rEnCours.total, S.fee) };
@@ -298,18 +362,25 @@ function etat() {
                   palier: S.mart.palier, palierMax: S.mart.palierMax, busts: S.mart.busts,
                   miseCourante: Math.round(S.miseCourante * 1e6) / 1e6 },
     dernier: S.dernier.slice(0, 40),
+    /* Ce que la porte EV croit qu'un camp paie, et sur combien de rounds. */
+    finales: ['BULL', 'BEAR'].reduce((o, side) => {
+      const L = (S.finales && S.finales[side]) || [];
+      o[side] = { n: L.length, mediane: L.length ? Math.round(mediane(L.map((x) => x.c)) * 100) / 100 : null, min: FINALES_MIN };
+      return o;
+    }, {}),
     note: !PARIE
       ? 'Betting is OFF. The card reads the real PancakeSwap rounds and odds, but places no bet — paper or real. Measured verdict: 5-min direction is a coin flip (49%), the inverse and near-lock momentum do not beat the 3% fee, and a martingale craters its own odds on thin pools. Set PREDICT_PANCAKE_PARIE=1 only to re-open a paper measurement.'
       : MART
-      ? 'Paper only. Martingale on: after a losing bet the stake ×' + MART_FACTEUR + ', reset after a win, capped at ' + MART_PALIERS + ' steps (past that the ladder busts — counted). It does NOT guarantee recovery: a long streak, or the bank capping the stake, breaks it, and PancakeSwap often pays under 2× so a win recovers less than a full double. Kept paper to measure whether it survives before any real BNB.'
+      ? 'Paper only. Each bet is judged on the EXPECTED FINAL payout (median of recent rounds), not the thin pool 45 s before lock — measured: two thirds of the money lands in the last 45 s. Martingale on: after a losing bet the stake ×' + MART_FACTEUR + ', reset after a win, capped at ' + MART_PALIERS + ' steps (past that the ladder busts — counted). It does NOT guarantee recovery: a long streak, or the bank capping the stake, breaks it, and PancakeSwap often pays under 2× so a win recovers less than a full double. Kept paper to measure whether it survives before any real BNB.'
       : 'Paper only — reads the real PancakeSwap rounds and payouts, bets nothing. It skips a round when the payout (côte) makes the bet negative-EV.',
   };
 }
 
 function demarre() { charge(); if (boucle) return; tic(); boucle = setInterval(tic, TIC_MS); if (boucle.unref) boucle.unref(); }
 function arrete() { if (boucle) { clearInterval(boucle); boucle = null; } }
-function _reset() { S = { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0, enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03, round: null, service: { ok: null, quand: 0, message: null }, miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 }, gen: GEN }; }
+function _reset() { S = { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0, enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03, round: null, service: { ok: null, quand: 0, message: null }, miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 }, gen: GEN, finales: { BULL: [], BEAR: [], dernierEp: 0 } }; }
 
 module.exports = { demarre, arrete, charge, etat, tic, decide, cote, resous, predit, prochaineMise, inverse,
+                   noteFinale, coteEstimee, FINALES_MIN,
                    ADDR, RPC, STAKE, GAZ, MARGE, MART, MART_FACTEUR, MART_PALIERS, INVERSE, PARIE,
                    _chaineTest, _reseau, _reset, _S: () => S };

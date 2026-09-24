@@ -44,16 +44,33 @@ const near = (a, b, e, m) => ok(Math.abs(a - b) <= e, m + ' [' + a + ']');
   console.log('\n-- 2. la décision : la côte peut tuer une prédiction juste --');
   {
     const predUp = { sens: 'UP', prob: 55, assez: true };
-    /* Bonne côte : peu de monde sur BULL → 5×+ → EV largement positif. */
-    const bon = P.decide(predUp, { bull: 0.1, bear: 0.5, total: 0.6 }, 0.03);
+    /* Ce que les rounds fermés ont PAYÉ : l'historique de `noteFinale`. */
+    const histo = (bull, bear, total, n) => { const f = { BULL: [], BEAR: [], dernierEp: 0 };
+      for (let i = 1; i <= n; i++) P.noteFinale(f, i, { oracleCalled: true, bull, bear, total }, 0.03); return f; };
+    const gras = histo(0.1, 0.5, 0.6, 12);     /* BULL a payé ~5,8× douze fois */
+    /* Bonne côte, vue ET finale : peu de monde sur BULL → EV largement positif. */
+    const bon = P.decide(predUp, { bull: 0.1, bear: 0.5, total: 0.6 }, 0.03, 0, gras);
     ok(bon.side === 'BULL' && bon.wouldBet && bon.ev > 0, 'BULL sur une côte grasse : on miserait [' + bon.cote + '×, EV ' + bon.ev + ']');
-    /* Côte pourrie : la foule est sur BULL → ~1,16× → −EV → on SAUTE. */
-    const mauvais = P.decide(predUp, { bull: 0.5, bear: 0.1, total: 0.6 }, 0.03);
+    /* Côte pourrie : la foule est DÉJÀ sur BULL → ~1,16× → −EV → on SAUTE,
+       quoi qu'ait payé le passé : une foule déjà là ne repart pas. */
+    const mauvais = P.decide(predUp, { bull: 0.5, bear: 0.1, total: 0.6 }, 0.03, 0, gras);
     ok(mauvais.side === 'BULL' && !mauvais.wouldBet && mauvais.ev < 0,
        'même prédiction, côte pourrie : on saute [' + mauvais.cote + '×, EV ' + mauvais.ev + ']');
     ok(/not worth it/.test(mauvais.raison), 'et la raison le dit : le payout ne vaut pas le coup');
+    /* LE CAS MESURÉ le 24 septembre : 45 s avant le lock le pool est mince et
+       affiche 5×, mais les rounds fermés paient ~1,9× — les deux tiers de
+       l'argent arrivent après. On juge sur la cote FINALE attendue : on saute. */
+    const fantome = P.decide(predUp, { bull: 0.1, bear: 0.5, total: 0.6 }, 0.03, 0, histo(0.3, 0.3, 0.6, 12));
+    ok(fantome.coteVue > 4 && !fantome.wouldBet && fantome.cote < 2,
+       'une côte vue de ' + fantome.coteVue + '× qui finit à ~' + fantome.cote + '× : on ne s y laisse pas prendre');
+    /* Sous FINALES_MIN rounds observés, on ne conclut pas. */
+    const tot = P.decide(predUp, { bull: 0.1, bear: 0.5, total: 0.6 }, 0.03, 0, histo(0.1, 0.5, 0.6, P.FINALES_MIN - 1));
+    ok(!tot.wouldBet && /learning the final payouts/.test(tot.raison), 'trop peu de rounds observés : aucun pari [' + tot.raison + ']');
+    /* L'historique retient chaque epoch UNE fois, les deux camps. */
+    const f = histo(0.1, 0.5, 0.6, 3); P.noteFinale(f, 3, { oracleCalled: true, bull: 0.1, bear: 0.5, total: 0.6 }, 0.03);
+    ok(f.BULL.length === 3 && f.BEAR.length === 3, 'une cote finale par camp et par round, jamais deux fois le même');
     /* Sans prédiction sûre, jamais de pari. */
-    ok(!P.decide({ sens: 'NEUTRAL', prob: 50, assez: false }, { bull: 0.1, bear: 0.5, total: 0.6 }, 0.03).wouldBet,
+    ok(!P.decide({ sens: 'NEUTRAL', prob: 50, assez: false }, { bull: 0.1, bear: 0.5, total: 0.6 }, 0.03, 0, gras).wouldBet,
        'pas de prédiction sûre → aucun pari');
   }
 
@@ -121,8 +138,13 @@ const near = (a, b, e, m) => ok(Math.abs(a - b) <= e, m + ' [' + a + ']');
     const pool = { bull: 0.1, bear: 0.5, total: 0.6 };   /* BULL gras : on miserait */
     /* parie() relit l état FRAIS à chaque appel : P._reset() rebind l objet S,
      * une référence capturée deviendrait périmée. */
+    /* L'échelle se teste sur des rounds qu'on JOUE : la porte EV a vu douze
+       rounds fermés où BULL payait gras (`noteFinale`), comme le pool. */
+    const nourrit = () => { const f = P._S().finales;
+      for (let i = 1; i <= P.FINALES_MIN; i++) P.noteFinale(f, i, { oracleCalled: true, bull: pool.bull, bear: pool.bear, total: pool.total }, 0.03); };
     const parie = (ep, monte) => {
       const S = P._S();
+      if (S.finales.BULL.length < P.FINALES_MIN) nourrit();
       S.enAttente[ep] = P.decide(predUp, pool, 0.03, S.miseCourante);
       P.resous(ep, { lockPrice: '100', closePrice: monte ? '120' : '90', bull: pool.bull, bear: pool.bear, total: pool.total, oracleCalled: true }, 0.03);
     };
@@ -166,7 +188,7 @@ const near = (a, b, e, m) => ok(Math.abs(a - b) <= e, m + ' [' + a + ']');
   console.log('\n-- 8. la remise à zéro par génération (bump de PREDICT_PANCAKE_GEN) --');
   {
     P._reset(); const S = P._S();
-    S.bank = 0.5; S.wins = 9; S.pl = -0.5; S.gen = '2';   /* la génération courante du code */
+    S.bank = 0.5; S.wins = 9; S.pl = -0.5;   /* S.gen vient de _reset : la génération courante du code */
     require('fs').writeFileSync(require('path').join(process.env.DATA_DIR, 'predict_pancake.json'), JSON.stringify(S));
     /* Recharger AVEC la même génération : rien ne bouge. */
     P.charge();

@@ -87,6 +87,15 @@ function ferme200Gagnant(ch) {
     ok(P.revele(JOUEUR).cle === r.cle, 'revele rend SA clé au joueur (déchiffrée)');
   }
 
+  /* La porte EV juge sur la cote FINALE attendue (étage 1, `noteFinale`) : elle
+     a vu douze rounds fermés où BULL payait gras, comme le round 200. Le même
+     module sert l'étage 2 — un seul historique, une seule décision. */
+  {
+    const E1 = require('./predict_pancake');
+    for (let i = 1; i <= E1.FINALES_MIN; i++)
+      E1.noteFinale(E1._S().finales, i, { oracleCalled: true, bull: 0.1, bear: 0.5, total: 0.6 }, 0.03);
+  }
+
   console.log('\n-- 2. dry run (EXECUTE éteint) : on décide, rien ne se signe --');
   {
     const P = require('./predict_pancake_reel');
