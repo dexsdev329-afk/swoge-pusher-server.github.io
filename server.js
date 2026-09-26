@@ -1615,7 +1615,8 @@ const studioXai = require('./studio_xai');
 const reprises = require('./reprises');
 const studioOpenai = require('./studio_openai');
 const studioCompat = require('./studio_compat');   /* le chat ChatGPT et Grok (Chat Completions) */
-const chatActif = (f) => (f === 'anthropic' ? studioClaude.actif() : studioCompat.actif(f));   /* « ChatGPT Image » */
+const studioRecherche = require('./studio_recherche');   /* la recherche web pour GPT et Grok (Perplexity Search API) */
+const chatActif = (f) => (f === 'anthropic' ? studioClaude.actif() : f === 'perplexity' ? studioRecherche.actif() : studioCompat.actif(f));   /* « ChatGPT Image » */
 const studioFichiers = require('./studio_fichiers');   /* les images generees, rangees sur le volume */   /* une reponse retrouvee apres un rechargement de la page */   /* offre, brule, coffre : lus sur la chaine */
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
@@ -2251,7 +2252,7 @@ const server = http.createServer(async (req, res) => {
     if (path === '/studio/chat/catalogue') {
       const cours = await studioChat.coursSwoge();
       const M = studioChat.MESURE;
-      return json(200, Object.assign(studioChat.catalogue(cours, { anthropic: chatActif('anthropic'), openai: chatActif('openai'), xai: chatActif('xai') }), {
+      return json(200, Object.assign(studioChat.catalogue(cours, { anthropic: chatActif('anthropic'), openai: chatActif('openai'), xai: chatActif('xai'), perplexity: chatActif('perplexity') }), {
         /* Ce qu'on mesure, public : coût réel payé contre facturé. */
         mesure: { requetes: M.requetes, echecs: M.echecs, depassements: M.depassements,
                   coutUsd: Number(M.coutUsd.toFixed(4)), factureUsd: Number(M.factureUsd.toFixed(4)) },

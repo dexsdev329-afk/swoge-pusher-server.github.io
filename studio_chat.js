@@ -59,24 +59,26 @@ const MODELES = [
    * et table des modèles xAI (contexte < 200 k — l'historique est borné à
    * 24 000 caractères, on n'en approche pas). La réserve compte `maxTokens` de
    * sortie : chez OpenAI le raisonnement est compté DANS ces jetons, et
-   * `max_completion_tokens` le borne. xAI rend son coût exact, qui fait foi. */
+   * `max_completion_tokens` le borne. xAI rend son coût exact, qui fait foi.
+   * `recherche: 'perplexity'` : la recherche web passe par la Search API de
+   * Perplexity (studio_recherche.js), allumee si PERPLEXITY_API_KEY est posee. */
   { id: 'gpt-6-astra', nom: 'GPT-6 Astra', api: 'gpt-6-astra', fournisseur: 'openai',
-    entree: 10, sortie: 50, maxTokens: 8000, recherche: null, effort: true,
+    entree: 10, sortie: 50, maxTokens: 8000, recherche: 'perplexity', effort: true,
     note: 'OpenAI\'s most capable, for the hardest work' },
   { id: 'gpt-6-sol', nom: 'GPT-6 Sol', api: 'gpt-6-sol', fournisseur: 'openai',
-    entree: 2, sortie: 10, maxTokens: 8000, recherche: null, effort: true,
+    entree: 2, sortie: 10, maxTokens: 8000, recherche: 'perplexity', effort: true,
     note: 'Strong all-rounder for coding and complex tasks' },
   { id: 'gpt-6-luna', nom: 'GPT-6 Luna', api: 'gpt-6-luna', fournisseur: 'openai',
-    entree: 0.1, sortie: 0.5, maxTokens: 6000, recherche: null, effort: true,
+    entree: 0.1, sortie: 0.5, maxTokens: 6000, recherche: 'perplexity', effort: true,
     note: 'Fastest and cheapest from OpenAI' },
   { id: 'grok-4-7', nom: 'Grok 4.7', api: 'grok-4.7', fournisseur: 'xai',
-    entree: 2, sortie: 6, maxTokens: 8000, recherche: null, effort: false,
+    entree: 2, sortie: 6, maxTokens: 8000, recherche: 'perplexity', effort: false,
     note: 'xAI\'s latest flagship' },
   { id: 'grok-4-20-reasoning', nom: 'Grok 4.20 Reasoning', api: 'grok-4.20-0309-reasoning', fournisseur: 'xai',
-    entree: 1.25, sortie: 2.5, maxTokens: 8000, recherche: null, effort: false,
+    entree: 1.25, sortie: 2.5, maxTokens: 8000, recherche: 'perplexity', effort: false,
     note: 'Thinks step by step before answering' },
   { id: 'grok-4-3', nom: 'Grok 4.3', api: 'grok-4.3', fournisseur: 'xai',
-    entree: 1.25, sortie: 2.5, maxTokens: 6000, recherche: null, effort: false,
+    entree: 1.25, sortie: 2.5, maxTokens: 6000, recherche: 'perplexity', effort: false,
     note: 'Fast and cheap from xAI' },
 ];
 const NOMS_FOURNISSEURS = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok' };
@@ -97,27 +99,33 @@ const RECHERCHE_JETONS = 30000;
 const PRIX_RECHERCHE_USD = 0.01;          /* 10 $ les 1 000 recherches */
 const MARGE = () => Math.max(1, Number(process.env.STUDIO_MARGE || 1.5));
 const MIN_USD = 0.001;
+const Rech = require('./studio_recherche');   /* la recherche web des modeles sans outil (Perplexity) */
 
 function modele(id) { return MODELES.find((m) => m.id === id) || null; }
 
 /** Le coût réel d'une réponse, en USD, lu dans `usage`. */
 function coutUsd(m, usage) {
   const u = usage || {};
+  /* La recherche Perplexity (0,005 $ la requete reussie) s'ajoute a tout. */
+  const pplx = (Number(u.recherches_perplexity) || 0) * Rech.PRIX_USD;
   /* Le coût EXACT rendu par le fournisseur (xAI : cost_in_usd_ticks) fait foi. */
-  if (Number.isFinite(u.coutExactUsd) && u.coutExactUsd > 0) return u.coutExactUsd;
+  if (Number.isFinite(u.coutExactUsd) && u.coutExactUsd > 0) return u.coutExactUsd + pplx;
   const entree = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) * 1.25
     + (u.cache_read_input_tokens || 0) * 0.1;
   const sortie = u.output_tokens || 0;
   const rech = (u.server_tool_use && u.server_tool_use.web_search_requests) || 0;
-  return entree * m.entree / 1e6 + sortie * m.sortie / 1e6 + rech * PRIX_RECHERCHE_USD;
+  return entree * m.entree / 1e6 + sortie * m.sortie / 1e6 + rech * PRIX_RECHERCHE_USD + pplx;
 }
 
 /** Le pire cas d'une requête, en USD, AVANT marge. */
 function pireCasUsd(m, messages, recherche) {
   const car = (messages || []).reduce((s, x) => s + String(x.content || '').length, 0);
-  const entree = Math.ceil(car / 2) + SYSTEME_JETONS + (recherche ? RECHERCHE_JETONS : 0);
+  /* Perplexity : une seule requete, et au plus JETONS_CONTEXTE de resultats
+     ajoutes a la question. Claude : jusqu'a RECHERCHE_MAX recherches. */
+  const pplx = recherche && m.recherche === 'perplexity';
+  const entree = Math.ceil(car / 2) + SYSTEME_JETONS + (recherche ? (pplx ? Rech.JETONS_CONTEXTE : RECHERCHE_JETONS) : 0);
   return entree * m.entree / 1e6 + m.maxTokens * m.sortie / 1e6
-    + (recherche ? RECHERCHE_MAX * PRIX_RECHERCHE_USD : 0);
+    + (recherche ? (pplx ? Rech.PRIX_USD : RECHERCHE_MAX * PRIX_RECHERCHE_USD) : 0);
 }
 
 /** Ce que le joueur paie pour un coût donné : marge, et un plancher. */
@@ -216,7 +224,7 @@ function catalogue(cours, cle) {
     modeles: MODELES.map((m) => ({
       id: m.id, nom: m.nom, note: m.note, fournisseur: m.fournisseur, nomFournisseur: NOMS_FOURNISSEURS[m.fournisseur],
       actif: !!a[m.fournisseur], effort: m.effort,
-      recherche: !!m.recherche,
+      recherche: !!m.recherche && (m.recherche !== 'perplexity' || !!a.perplexity),
       typiqueSwoge: enSwoge(factureUsd(typique(m))),
       maxSwoge: enSwoge(factureUsd(pireCasUsd(m, [{ content: 'x'.repeat(4000) }], !!m.recherche))),
     })),
@@ -241,7 +249,8 @@ async function repond(q, deps) {
   if (deps.actif && !deps.actif(m.fournisseur)) return { ok: false, code: 503, raison: m.nom + ' is not switched on yet — pick another model.' };
   const messages = nettoie(q.messages);
   if (!messages) return { ok: false, code: 400, raison: 'empty question' };
-  const recherche = !!q.recherche && !!m.recherche;
+  const recherche = !!q.recherche && !!m.recherche
+    && (m.recherche !== 'perplexity' || !deps.actif || !!deps.actif('perplexity'));
   const effort = m.effort && EFFORTS.includes(q.effort) ? q.effort : null;
   if (EN_VOL.has(addr)) return { ok: false, code: 429, raison: 'one question at a time' };
   if (!rythmeOk(addr, q.maintenant)) return { ok: false, code: 429, raison: 'too many questions — wait a minute' };
@@ -288,7 +297,8 @@ async function repond(q, deps) {
     modele: m.id, servi: r.servi || m.api, recherche,
     factureSwoge: studio.formateBase(factureWei, dec), factureUsd: Number(facture.toFixed(5)),
     usage: { entree: (r.usage && r.usage.input_tokens) || 0, sortie: (r.usage && r.usage.output_tokens) || 0,
-      recherches: (r.usage && r.usage.server_tool_use && r.usage.server_tool_use.web_search_requests) || 0 },
+      recherches: ((r.usage && r.usage.server_tool_use && r.usage.server_tool_use.web_search_requests) || 0)
+        + ((r.usage && r.usage.recherches_perplexity) || 0) },
     solde,
   };
 }

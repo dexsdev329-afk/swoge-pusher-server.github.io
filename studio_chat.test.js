@@ -56,8 +56,13 @@ const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(
          réalité en anglais), max_tokens atteint, 3 recherches, 30 k jetons de
          résultats. La réserve compte 2 caractères par jeton : elle couvre. */
       const hist = [{ role: 'user', content: 'x'.repeat(C.ENTREE_MAX_CAR) }];
-      const usagePire = { input_tokens: C.ENTREE_MAX_CAR / 4 + 400 + 30000, output_tokens: m.maxTokens,
-        server_tool_use: { web_search_requests: C.RECHERCHE_MAX } };
+      /* Les modeles sans outil (GPT, Grok) cherchent par Perplexity : UNE requete,
+         et au plus JETONS_CONTEXTE de resultats ajoutes a la question. */
+      const R = require('./studio_recherche');
+      const usagePire = m.recherche === 'perplexity'
+        ? { input_tokens: C.ENTREE_MAX_CAR / 4 + 400 + R.JETONS_CONTEXTE, output_tokens: m.maxTokens, recherches_perplexity: 1 }
+        : { input_tokens: C.ENTREE_MAX_CAR / 4 + 400 + 30000, output_tokens: m.maxTokens,
+            server_tool_use: { web_search_requests: C.RECHERCHE_MAX } };
       const cout = C.coutUsd(m, usagePire);
       ok(C.pireCasUsd(m, hist, true) >= cout, m.nom + ' : la réserve (' + C.pireCasUsd(m, hist, true).toFixed(4) + ' $) couvre le pire coût réel (' + cout.toFixed(4) + ' $)');
       ok(C.factureUsd(cout) >= cout, m.nom + ' : la facture couvre le coût (marge ≥ 1)');

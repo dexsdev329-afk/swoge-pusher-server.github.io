@@ -26,6 +26,15 @@ process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801'; process
     let b = ''; q.on('data', (c) => { b += c; }); q.on('end', () => {
       const corps = JSON.parse(b || '{}');
       vus.push({ hote: q.headers.host, url: q.url, auth: q.headers.authorization, corps });
+      /* La Search API de Perplexity (forme de sa specification). */
+      if (q.url === '/search') {
+        if (/panne/.test(corps.query)) { r.writeHead(500, { 'content-type': 'application/json' }); return r.end('{}'); }
+        r.writeHead(200, { 'content-type': 'application/json' });
+        return r.end(JSON.stringify({ id: 's1', results: [
+          { title: 'Doge news', url: 'https://news.example/doge', snippet: 'The doge lifted 500 kg today.', date: '2026-09-26' },
+          { title: 'Bad scheme', url: 'javascript:alert(1)', snippet: 'x' },
+          { title: 'Robinhood Chain', url: 'https://rh.example/chain', snippet: 'Chain 4663 launched.' }] }));
+      }
       if (corps.model === 'modele-panne') { r.writeHead(429, { 'content-type': 'application/json' }); return r.end(JSON.stringify({ error: { message: 'rate limited' } })); }
       r.writeHead(200, { 'content-type': 'text/event-stream' });
       const xai = /grok/.test(corps.model);
@@ -42,6 +51,7 @@ process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801'; process
   const port = await libre(); await new Promise((r) => faux.listen(port, r));
   process.env.OPENAI_BASE_URL = process.env.XAI_BASE_URL = 'http://127.0.0.1:' + port;
   process.env.OPENAI_API_KEY = 'sk-oa-test'; process.env.XAI_API_KEY = 'xai-test';
+  process.env.PERPLEXITY_API_KEY = 'pplx-test'; process.env.PERPLEXITY_BASE_URL = 'http://127.0.0.1:' + port;
   const P = require('./studio_compat');
   const C = require('./studio_chat');
 
@@ -69,6 +79,31 @@ process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801'; process
     ok(panne, 'une erreur du fournisseur remonte avec son code et son message');
   }
 
+  console.log('\n-- 1 bis. la recherche web pour GPT et Grok (Perplexity Search API) --');
+  {
+    let etape = 0;
+    const r = await P.repond({ m: C.modele('grok-4-3'), recherche: true, surRecherche: () => { etape++; },
+      messages: [{ role: 'user', content: 'old question' }, { role: 'assistant', content: 'old answer' }, { role: 'user', content: 'What did the doge lift?' }] });
+    const vs = vus.filter((v) => v.url === '/search').pop();
+    const vm = vus.filter((v) => v.url === '/v1/chat/completions').pop();
+    ok(vs && vs.corps.query === 'What did the doge lift?' && vs.corps.max_results === 6 && vs.corps.max_tokens_per_page > 0, 'Perplexity recoit la DERNIERE question, 6 resultats, pages bornees — les champs de sa specification');
+    eq(vs.auth, 'Bearer pplx-test', 'avec la cle Perplexity, depuis le serveur');
+    eq(etape, 1, 'la page est prevenue qu une recherche est en cours');
+    const derniere = vm.corps.messages[vm.corps.messages.length - 1].content;
+    ok(/^What did the doge lift\?/.test(derniere) && /\[1\] Doge news/.test(derniere) && /https:\/\/news\.example\/doge/.test(derniere) && /cite each claim/.test(derniere), 'le modele recoit les resultats numerotes avec la consigne de citer');
+    ok(vm.corps.messages[1].content === 'old question', 'l historique, lui, reste intact');
+    eq(r.sources.map((x) => x.url).join(','), 'https://news.example/doge,https://rh.example/chain', 'les sources rendues a la page : https seulement, dans l ordre des numeros');
+    eq(r.usage.recherches_perplexity, 1, 'et la recherche est comptee pour la facture');
+    const sans = await P.repond({ m: C.modele('grok-4-3'), recherche: false, messages: [{ role: 'user', content: 'hi' }] });
+    ok(sans.sources.length === 0 && sans.usage.recherches_perplexity === 0 && vus.filter((v) => v.url === '/search').length === 1, 'sans « Search » : aucune recherche, rien de facture');
+    const rate = await P.repond({ m: C.modele('gpt-6-luna'), recherche: true, messages: [{ role: 'user', content: 'panne please' }] });
+    ok(rate.texte === 'Hello SWOGE.' && rate.sources.length === 0 && rate.usage.recherches_perplexity === 0, 'une recherche ratee : on repond sans, et on ne la facture pas');
+    const cat = C.catalogue(0.00002801, { anthropic: true, openai: true, xai: true, perplexity: false });
+    ok(!cat.modeles.find((x) => x.id === 'grok-4-3').recherche && cat.modeles.find((x) => x.id === 'opus-5-5').recherche, 'sans cle Perplexity : « Search » eteint pour GPT et Grok, Claude garde le sien');
+    const cat2 = C.catalogue(0.00002801, { anthropic: true, openai: true, xai: true, perplexity: true });
+    ok(cat2.modeles.filter((x) => x.fournisseur !== 'anthropic').every((x) => x.recherche), 'avec la cle : « Search » pour tous les modeles');
+  }
+
   console.log('\n-- 2. la facture : jamais sous le cout, le cout exact quand il est rendu --');
   {
     const cours = 0.00002801;
@@ -81,6 +116,12 @@ process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801'; process
       const cout = m.fournisseur === 'xai' ? 0.0055555 : (1000 * m.entree + 200 * m.entree * 0.1 + 900 * m.sortie) / 1e6;
       ok(r.ok && usd(s.r[0].fw) >= cout * 1.5 - 1e-9 && s.r[0].fw <= s.r[0].rw, m.nom + ' : facture ' + usd(s.r[0].fw).toFixed(5) + ' $ ≥ cout ' + cout.toFixed(5) + ' × 1,5, sous la reserve');
     }
+    /* La recherche Perplexity s'ajoute au cout, meme au cout exact de xAI. */
+    const sr = solde();
+    const rr = await C.repond({ addr: '0xsearch', modele: 'grok-4-3', recherche: true, messages: [{ role: 'user', content: 'doge?' }] },
+      { cours: async () => cours, solde: sr.o, actif: () => true, fournisseur: (p) => P.repond(p) });
+    ok(rr.ok && Math.abs(rr.factureUsd - (0.0055555 + 0.005) * 1.5) < 1e-5 && rr.usage.recherches === 1 && rr.sources.length === 2,
+       'Grok + recherche : facture = (cout exact xAI + 0,005 $ Perplexity) × 1,5, une recherche, deux sources [' + rr.factureUsd + ']');
     const s = solde(); let appel = false;
     const r = await C.repond({ addr: '0xoff', modele: 'grok-4-3', messages: [{ role: 'user', content: 'Hi' }] },
       { cours: async () => cours, solde: s.o, actif: (f) => f !== 'xai', fournisseur: () => { appel = true; } });

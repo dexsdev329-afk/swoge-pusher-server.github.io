@@ -18,10 +18,11 @@
  * Aucune logique d'argent ici (c'est `studio_chat.js`). On rend l'usage sous
  * la forme que la facturation lit déjà (celle d'Anthropic) : input_tokens,
  * output_tokens, cache_read_input_tokens — et `coutExactUsd` quand le
- * fournisseur le donne (xAI). La recherche web n'est pas branchée ici : elle
- * reste une fonction des modèles Claude. */
+ * fournisseur le donne (xAI). La recherche web (`recherche`) passe par la
+ * Search API de Perplexity AVANT l'appel : voir studio_recherche.js. */
 
 const { SYSTEME } = require('./studio_claude');
+const Rech = require('./studio_recherche');
 
 const FOURNISSEURS = {
   openai: { base: () => process.env.OPENAI_BASE_URL || 'https://api.openai.com', cle: () => process.env.OPENAI_API_KEY || '' },
@@ -47,13 +48,30 @@ function usageDe(f, u) {
  * reçoit le texte au fil de l'eau ; `surReflexion` est appelé une fois quand le
  * modèle raisonne avant d'écrire (on ne voit pas son raisonnement).
  */
-async function repond({ m, messages, effort, surTexte, surReflexion }) {
+async function repond({ m, messages, recherche, effort, surTexte, surReflexion, surRecherche }) {
   const F = FOURNISSEURS[m.fournisseur];
   if (!F) throw new Error('fournisseur inconnu : ' + m.fournisseur);
+  /* La recherche web, faite AVANT : ses résultats rejoignent la question, et
+     deviennent les pastilles de sources. Une requête réussie est facturée par
+     Perplexity même vide ; une requête ratée ne l'est pas — on répond alors
+     sans, et on ne la facture pas non plus. */
+  let envoyes = messages, sources = [], recherches = 0;
+  if (recherche && m.recherche === 'perplexity') {
+    if (surRecherche) surRecherche();
+    try {
+      const res = await Rech.cherche(Rech.requeteDe(messages));
+      recherches = 1;
+      if (res.length) {
+        sources = res.map((x) => ({ url: x.url, titre: x.titre }));
+        const der = messages[messages.length - 1];
+        envoyes = messages.slice(0, -1).concat([{ role: 'user', content: der.content + '\n\n---\n' + Rech.contexte(res) }]);
+      }
+    } catch (e) { console.warn('[chat] recherche web ratee (' + String(e.message || e).slice(0, 80) + ') : reponse sans'); }
+  }
   const corps = {
     model: m.api, stream: true, stream_options: { include_usage: true },
     max_completion_tokens: m.maxTokens,
-    messages: [{ role: 'system', content: SYSTEME }].concat(messages),
+    messages: [{ role: 'system', content: SYSTEME }].concat(envoyes),
   };
   if (effort && m.effort) corps.reasoning_effort = effort;
   if (surReflexion) surReflexion();
@@ -91,7 +109,8 @@ async function repond({ m, messages, effort, surTexte, surReflexion }) {
       if (c && c.finish_reason) stop = c.finish_reason;
     }
   }
-  return { texte, sources: [], usage: usageDe(m.fournisseur, usage), stop: stop === 'content_filter' ? 'refusal' : stop, servi };
+  return { texte, sources, usage: Object.assign(usageDe(m.fournisseur, usage), { recherches_perplexity: recherches }),
+           stop: stop === 'content_filter' ? 'refusal' : stop, servi };
 }
 
 module.exports = { repond, actif, usageDe };
