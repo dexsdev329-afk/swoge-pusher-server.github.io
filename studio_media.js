@@ -34,9 +34,38 @@ const config = require('./config');
 const studio = require('./studio');
 
 const IMAGE = [
-  { id: 'rapide', nom: 'Speed', api: 'grok-imagine-image', usd: 0.02 },
-  { id: 'qualite', nom: 'Quality (2.0)', api: 'grok-imagine-image-2.0', usd: 0.04 },
+  { id: 'rapide', fournisseur: 'grok', nom: 'Speed', api: 'grok-imagine-image', usd: 0.02 },
+  { id: 'qualite', fournisseur: 'grok', nom: 'Quality (2.0)', api: 'grok-imagine-image-2.0', usd: 0.04 },
+  /* ---- « ChatGPT Image » (OpenAI), ajouté le 26 septembre 2026 ----
+   * Pas de prix à l'image : OpenAI facture des JETONS (grille relue le même
+   * jour, par million) — gpt-image-2 : texte 5 $, image d'entrée 8 $, image de
+   * sortie 30 $. Mesure du 18 septembre sur le compte (posts X, gpt-image-1.5,
+   * 1536×1024 en « high ») : 6 893 jetons de sortie pour une image. La réserve
+   * compte 12 000 jetons de sortie par image (×1,74 cette mesure), 2 000 de
+   * texte et 12 000 d'image d'entrée pour une retouche ; la facture, elle, lit
+   * `usage`. « Speed » = qualité medium, « Quality » = high. */
+  { id: 'rapide', fournisseur: 'openai', nom: 'Speed', qualite: 'medium' },
+  { id: 'qualite', fournisseur: 'openai', nom: 'Quality', qualite: 'high' },
 ];
+const FOURNISSEURS_IMAGE = [{ id: 'grok', nom: 'Grok Imagine' }, { id: 'openai', nom: 'ChatGPT Image' }];
+/* Prix OpenAI par million de jetons (texte, image d'entrée, image de sortie).
+   Un modèle absent de la table est facturé au plus cher connu. */
+const PRIX_OPENAI = {
+  'gpt-image-2': { t: 5, i: 8, o: 30 }, 'gpt-image-1.5': { t: 5, i: 8, o: 32 },
+  'gpt-image-1': { t: 5, i: 10, o: 40 }, 'gpt-image-1-mini': { t: 2, i: 2.5, o: 8 },
+};
+const OPENAI_MESURE_SORTIE = 6893;      /* jetons, une 1536x1024 « high », 18 septembre 2026 */
+const OPENAI_RESERVE_SORTIE = 12000, OPENAI_RESERVE_TEXTE = 2000, OPENAI_RESERVE_ENTREE = 12000;
+function modeleOpenai() { return (process.env.STUDIO_OPENAI_IMAGE || 'gpt-image-2').trim(); }
+function prixOpenai() { return PRIX_OPENAI[modeleOpenai()] || { t: 5, i: 10, o: 40 }; }
+function coutOpenai(usage) {
+  if (!usage || !Number.isFinite(Number(usage.output_tokens))) return null;
+  const p = prixOpenai(), d = usage.input_tokens_details || {};
+  const entree = Number(usage.input_tokens) || 0;
+  const texte = Number.isFinite(Number(d.text_tokens)) ? Number(d.text_tokens) : 0;
+  const image = Number.isFinite(Number(d.image_tokens)) ? Number(d.image_tokens) : entree - texte;   /* sans detail : tout au prix image, le plus cher */
+  return (texte * p.t + image * p.i + Number(usage.output_tokens) * p.o) / 1e6;
+}
 const VIDEO = [
   { id: 'rapide', nom: 'Speed', api: 'grok-imagine-video', usdSeconde: 0.05 },
   { id: 'qualite', nom: 'Quality (1.5)', api: 'grok-imagine-video-1.5', usdSeconde: 0.08 },
@@ -82,14 +111,29 @@ function imageJointe(x) {
 function pourSwoge(usd, cours) { return cours > 0 ? Math.ceil(factureUsd(usd) / cours) : null; }
 
 /** Le catalogue montré à la page : modèles, options, prix typiques en $SWOGE. */
-function catalogue(cours, actif) {
+function catalogue(cours, actifs) {
+  /* `actifs` : { grok, openai } — ou un booleen (l'ancien appel : Grok seul). */
+  const a = (actifs && typeof actifs === 'object') ? actifs : { grok: !!actifs, openai: false };
+  const actif = !!a.grok;
+  const p = prixOpenai();
+  const image = {
+    fournisseurs: FOURNISSEURS_IMAGE.map((f) => ({ id: f.id, nom: f.nom, actif: !!a[f.id],
+      modeles: IMAGE.filter((m) => m.fournisseur === f.id).map((m) => (m.fournisseur === 'openai'
+        ? { id: m.id, nom: m.nom, parImageSwoge: pourSwoge(OPENAI_MESURE_SORTIE * p.o / 1e6, cours), estime: true }
+        : { id: m.id, nom: m.nom, parImageSwoge: pourSwoge(m.usd, cours) })) })),
+    formats: FORMATS_IMAGE, nombres: NOMBRES,
+  };
+  /* Compatibilite : l'ancienne page lit image.modeles (Grok). */
+  image.modeles = image.fournisseurs[0].modeles;
   return {
-    ouvert: !!actif && cours > 0,
-    note: !actif ? 'Image and video generation is not switched on yet (the provider key is not set on the server).'
+    ouvert: (!!a.grok || !!a.openai) && cours > 0,
+    videoOuverte: actif && cours > 0,
+    note: !(a.grok || a.openai) ? 'Image and video generation is not switched on yet (the provider key is not set on the server).'
+      : !(cours > 0) ? 'The $SWOGE price is unavailable right now — generation is paused so nobody is overcharged.' : null,
+    videoNote: !actif ? 'Video is not switched on yet (the Grok Imagine key is not set on the server).'
       : !(cours > 0) ? 'The $SWOGE price is unavailable right now — generation is paused so nobody is overcharged.' : null,
     marge: MARGE(),
-    image: { modeles: IMAGE.map((m) => ({ id: m.id, nom: m.nom, parImageSwoge: pourSwoge(m.usd, cours) })),
-             formats: FORMATS_IMAGE, nombres: NOMBRES },
+    image,
     video: { modeles: VIDEO.map((m) => ({ id: m.id, nom: m.nom, parSecondeSwoge: pourSwoge(m.usdSeconde, cours),
                                            typiqueSwoge: pourSwoge(m.usdSeconde * DUREES[0], cours) })),
              formats: FORMATS_VIDEO, durees: DUREES, resolutions: RESOLUTIONS },
@@ -124,7 +168,10 @@ async function reserve(deps, addr, usd) {
 async function images(q, deps) {
   const addr = q && q.addr;
   if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
-  const m = IMAGE.find((x) => x.id === q.modele) || IMAGE[0];
+  const fid = q.fournisseur === 'openai' ? 'openai' : 'grok';
+  const m = IMAGE.find((x) => x.fournisseur === fid && x.id === q.modele) || IMAGE.find((x) => x.fournisseur === fid);
+  const four = (deps.fournisseurs && deps.fournisseurs[fid]) || (fid === 'grok' ? deps.fournisseur : null);
+  if (!four || (four.actif && !four.actif())) return { ok: false, code: 503, raison: (fid === 'openai' ? 'ChatGPT Image' : 'Grok Imagine') + ' is not switched on yet.' };
   const prompt = String(q.prompt || '').trim().slice(0, PROMPT_MAX);
   if (!prompt) return { ok: false, code: 400, raison: 'describe the image to create' };
   const n = NOMBRES.includes(Number(q.n)) ? Number(q.n) : 1;
@@ -133,12 +180,20 @@ async function images(q, deps) {
   if (image === false) return { ok: false, code: 400, raison: 'the attached image must be a PNG, JPEG or WebP under 6 MB' };
   if (EN_VOL.has(addr)) return { ok: false, code: 429, raison: 'one generation at a time' };
   if (!rythmeOk(addr, q.maintenant || Date.now())) return { ok: false, code: 429, raison: 'too many generations — wait a minute' };
-  const listeUsd = m.usd * (n + (image ? 1 : 0));
-  const r = await reserve(deps, addr, m.usd * n * RESERVE_X + (image ? m.usd * RESERVE_X : 0));
+  let listeUsd, reserveUsd;
+  if (fid === 'openai') {
+    const p = prixOpenai();
+    listeUsd = (n * OPENAI_MESURE_SORTIE * p.o + OPENAI_RESERVE_TEXTE * p.t + (image ? OPENAI_RESERVE_ENTREE * p.i : 0)) / 1e6;
+    reserveUsd = (n * OPENAI_RESERVE_SORTIE * p.o + OPENAI_RESERVE_TEXTE * p.t + (image ? OPENAI_RESERVE_ENTREE * p.i : 0)) / 1e6;
+  } else {
+    listeUsd = m.usd * (n + (image ? 1 : 0));
+    reserveUsd = m.usd * n * RESERVE_X + (image ? m.usd * RESERVE_X : 0);
+  }
+  const r = await reserve(deps, addr, reserveUsd);
   if (r.erreur) return r.erreur;
   EN_VOL.add(addr);
   let rep;
-  try { rep = await deps.fournisseur.images({ api: m.api, prompt, n, format, image }); }
+  try { rep = await four.images({ api: m.api || modeleOpenai(), prompt, n, format, image, qualite: m.qualite }); }
   catch (e) {
     deps.solde.regle(addr, r.wei, 0n); MESURE.echecs++; EN_VOL.delete(addr);
     return { ok: false, code: 502, raison: 'the image provider failed — you were not charged', detail: String(e && e.message || e).slice(0, 200) };
@@ -149,8 +204,11 @@ async function images(q, deps) {
     return { ok: false, code: 502, raison: 'no image came back (possibly refused by moderation) — you were not charged' };
   }
   MESURE.images += rep.urls.length;
-  const f = regle(deps, addr, r.wei, r.cours, coutDe(rep.usage), listeUsd);
-  return Object.assign({ ok: true, genre: 'image', modele: m.id, urls: rep.urls, retouche: !!image }, f);
+  const f = regle(deps, addr, r.wei, r.cours, fid === 'openai' ? coutOpenai(rep.usage) : coutDe(rep.usage), listeUsd);
+  /* Les images en base64 (OpenAI) sont rangees chez nous : la page recoit une
+     adresse, pas des megaoctets (voir studio_fichiers.js). */
+  const urls = rep.urls.map((u) => (/^data:/.test(u) && deps.range ? (deps.range(u) || u) : u));
+  return Object.assign({ ok: true, genre: 'image', fournisseur: fid, modele: m.id, urls, retouche: !!image }, f);
 }
 
 /** Lance une vidéo. q = { addr, modele, prompt, duree, resolution, format, image } */
@@ -172,7 +230,9 @@ async function lanceVideo(q, deps) {
   const r = await reserve(deps, addr, listeUsd * RESERVE_X);
   if (r.erreur) return r.erreur;
   let rid;
-  try { rid = await deps.fournisseur.lanceVideo({ api: m.api, prompt, duree, resolution, format, image }); }
+  const fv = (deps.fournisseurs && deps.fournisseurs.grok) || deps.fournisseur;
+  if (!fv || (fv.actif && !fv.actif())) { deps.solde.regle(addr, r.wei, 0n); return { ok: false, code: 503, raison: 'Video is not switched on yet (Grok Imagine).' }; }
+  try { rid = await fv.lanceVideo({ api: m.api, prompt, duree, resolution, format, image }); }
   catch (e) {
     deps.solde.regle(addr, r.wei, 0n); MESURE.echecs++;
     return { ok: false, code: 502, raison: 'the video provider failed — you were not charged', detail: String(e && e.message || e).slice(0, 200) };
@@ -190,7 +250,7 @@ async function avance(job, deps, maintenant) {
   if (job.status !== 'pending') return job;
   const t = maintenant || Date.now();
   let v = null;
-  try { v = await deps.fournisseur.litVideo(job.rid); } catch (e) { v = null; }
+  try { v = await ((deps.fournisseurs && deps.fournisseurs.grok) || deps.fournisseur).litVideo(job.rid); } catch (e) { v = null; }
   if (v && v.status === 'done' && v.video && v.video.url) {
     job.status = 'done'; job.url = v.video.url; job.progress = 100;
     const secondes = Number(v.video.duration) > 0 ? Number(v.video.duration) : job.duree;
@@ -227,5 +287,5 @@ function etatVideo(id, addr) {
            solde: j.solde, raison: j.raison };
 }
 
-module.exports = { IMAGE, VIDEO, FORMATS_IMAGE, FORMATS_VIDEO, NOMBRES, DUREES, RESOLUTIONS, RESERVE_X,
+module.exports = { FOURNISSEURS_IMAGE, PRIX_OPENAI, coutOpenai, modeleOpenai, IMAGE, VIDEO, FORMATS_IMAGE, FORMATS_VIDEO, NOMBRES, DUREES, RESOLUTIONS, RESERVE_X,
                    MESURE, JOBS, EN_VOL, RYTHME, catalogue, images, lanceVideo, avance, etatVideo, imageJointe, coutDe };

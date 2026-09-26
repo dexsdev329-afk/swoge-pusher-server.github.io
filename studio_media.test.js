@@ -54,7 +54,7 @@ const W = (x) => ethers.utils.parseUnits(String(x), 18);
 
   console.log('-- 1. une image : le cout reel de xAI, avec marge, jamais sous le cout --');
   {
-    for (const m of M.IMAGE) for (const nb of M.NOMBRES) {
+    for (const m of M.IMAGE.filter((x) => x.fournisseur === 'grok')) for (const nb of M.NOMBRES) {
       const s = faux();
       const cout = m.usd * nb;                         /* le prix de liste, rendu en ticks */
       const r = await M.images({ addr: '0xa' + m.id + nb, modele: m.id, prompt: 'a buff doge', n: nb }, {
@@ -64,6 +64,29 @@ const W = (x) => ethers.utils.parseUnits(String(x), 18);
       ok(r.ok && enUsd(f.f) >= cout * 1.5 - 1e-6, m.nom + ' ×' + nb + ' : facture ' + enUsd(f.f).toFixed(4) + ' $ ≥ cout ' + cout.toFixed(2) + ' × 1,5');
       ok(enUsd(f.r) >= enUsd(f.f), 'et la reserve couvrait la facture');
     }
+  }
+
+  console.log('\n-- 1 bis. ChatGPT Image : factures aux JETONS lus dans usage, jamais sous le cout --');
+  {
+    const P = M.PRIX_OPENAI[M.modeleOpenai()];
+    for (const m of M.IMAGE.filter((x) => x.fournisseur === 'openai')) for (const nb of M.NOMBRES) for (const retouche of [false, true]) {
+      const s = faux(); let demande = null;
+      /* Un usage realiste et large : 7 000 jetons de sortie par image (la mesure du 18 septembre : 6 893). */
+      const usage = { input_tokens: 60 + (retouche ? 9000 : 0), input_tokens_details: { text_tokens: 60, image_tokens: retouche ? 9000 : 0 }, output_tokens: 7000 * nb };
+      const cout = (60 * P.t + (retouche ? 9000 : 0) * P.i + 7000 * nb * P.o) / 1e6;
+      const r = await M.images({ addr: '0xo' + m.id + nb + retouche, fournisseur: 'openai', modele: m.id, prompt: 'a buff doge', n: nb,
+        image: retouche ? 'data:image/png;base64,iVBORw0KGgo=' : undefined }, {
+        cours: async () => COURS, solde: s.solde, range: (u) => '/studio/media/fichier/' + 'a'.repeat(48) + '.jpg',
+        fournisseurs: { openai: { actif: () => true, images: async (o) => { demande = o; return { urls: Array(nb).fill('data:image/jpeg;base64,/9j/AAA='), usage }; } } } });
+      const f = s.reglements[0];
+      ok(r.ok && enUsd(f.f) >= cout * 1.5 - 1e-6 && enUsd(f.r) >= enUsd(f.f),
+         'ChatGPT ' + m.nom + ' ×' + nb + (retouche ? ' retouche' : '') + ' : facture ' + enUsd(f.f).toFixed(4) + ' $ ≥ cout ' + cout.toFixed(4) + ' × 1,5, sous la reserve');
+      if (nb === 1 && !retouche) ok(demande.qualite === (m.id === 'qualite' ? 'high' : 'medium'), m.nom + ' = qualite ' + demande.qualite);
+      if (nb === 1 && !retouche) ok(r.urls[0].startsWith('/studio/media/fichier/'), 'les images en base64 sont rangees chez nous : la page recoit une adresse');
+    }
+    const r = await M.images({ addr: '0xoff', fournisseur: 'openai', prompt: 'x' }, { cours: async () => COURS, solde: faux().solde,
+      fournisseurs: { openai: { actif: () => false, images: async () => ({ urls: ['u'] }) } } });
+    eq(r.code, 503, 'sans cle OpenAI : 503, rien n est reserve');
   }
 
   console.log('\n-- 2. tout est rendu quand rien n est livre --');
@@ -151,6 +174,22 @@ const W = (x) => ethers.utils.parseUnits(String(x), 18);
     });
     const pX = await libre(); await new Promise((r) => fauxXai.listen(pX, r));
     process.env.XAI_API_KEY = 'xai-test-local';
+    /* Un faux OpenAI : generation en JSON, retouche en multipart, images en base64. */
+    const vusOA = [];
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]).toString('base64');
+    const fauxOA = http.createServer((q, r) => {
+      const morceaux = []; q.on('data', (c) => morceaux.push(c)); q.on('end', () => {
+        const brut = Buffer.concat(morceaux);
+        vusOA.push({ url: q.url, type: q.headers['content-type'] || '', auth: q.headers.authorization, brut: brut.toString('latin1'),
+                     corps: /json/.test(q.headers['content-type'] || '') ? JSON.parse(brut.toString('utf8')) : null });
+        r.writeHead(200, { 'content-type': 'application/json' });
+        r.end(JSON.stringify({ created: 1, data: [{ b64_json: JPEG }],
+          usage: { input_tokens: 50, input_tokens_details: { text_tokens: 50, image_tokens: 0 }, output_tokens: 6000 } }));
+      });
+    });
+    const pO = await libre(); await new Promise((r) => fauxOA.listen(pO, r));
+    process.env.OPENAI_API_KEY = 'sk-openai-test-local';
+    process.env.OPENAI_BASE_URL = 'http://127.0.0.1:' + pO;
     process.env.XAI_BASE_URL = 'http://127.0.0.1:' + pX;
 
     const { Game } = require('./game');
@@ -205,6 +244,31 @@ const W = (x) => ethers.utils.parseUnits(String(x), 18);
     ok(Math.abs(Number(ev.factureUsd) - 0.3 * 1.5) < 1e-6, 'facturee au cout rendu par xAI (0,30 $) × 1,5 [' + ev.factureSwoge + ' $SWOGE]');
     const autreJeton = await (await fetch(base + '/studio/media/video/' + rv.id, { headers: { authorization: 'Bearer faux' } })).status;
     eq(autreJeton, 401, 'sans la bonne session : personne ne lit la video');
+
+    /* ---- ChatGPT Image, de bout en bout ---- */
+    const cat2 = await (await fetch(base + '/studio/media/catalogue')).json();
+    ok(cat2.image.fournisseurs.map((f) => f.id + ':' + f.actif).join(',') === 'grok:true,openai:true', 'le catalogue propose Grok Imagine ET ChatGPT Image');
+    const av2 = W(moteur.balanceStr(adr));
+    const ro = await (await fetch(base + '/studio/media/image', { method: 'POST', headers: H,
+      body: JSON.stringify({ fournisseur: 'openai', modele: 'qualite', prompt: 'a doge astronaut', n: 1, format: '9:16' }) })).json();
+    const go = vusOA.find((v) => v.url === '/v1/images/generations');
+    ok(ro.ok && go && go.corps.model === 'gpt-image-2' && go.corps.size === '1024x1536' && go.corps.quality === 'high' && go.corps.n === 1,
+       'OpenAI recoit model gpt-image-2, size 1024x1536 (9:16), quality high, n — les champs de sa specification');
+    eq(go.auth, 'Bearer sk-openai-test-local', 'la cle OpenAI part du serveur');
+    ok(!JSON.stringify(ro).includes('sk-openai') && !JSON.stringify(ro).includes('base64'), 'la page ne recoit ni la cle, ni des megaoctets de base64');
+    const img = await fetch(base + ro.urls[0]);
+    ok(img.status === 200 && img.headers.get('content-type') === 'image/jpeg' && Buffer.from(await img.arrayBuffer()).toString('base64') === JPEG,
+       'l image est rangee chez nous et servie telle quelle, en image/jpeg');
+    eq((await fetch(base + '/studio/media/fichier/..%2F..%2Fstate.json')).status, 404, 'rien d autre ne sort du dossier des images');
+    const cout = (50 * 5 + 6000 * 30) / 1e6;
+    ok(Math.abs(Number(ro.factureUsd) - cout * 1.5) < 1e-5,   /* factureUsd est arrondie a 5 decimales */ 'facture = jetons lus dans usage × grille gpt-image-2 × 1,5 [' + ro.factureUsd + ' $]');
+    ok(av2.sub(W(moteur.balanceStr(adr))).eq(W(ro.factureSwoge)), 'et la session est debitee exactement de la facture');
+    const re = await (await fetch(base + '/studio/media/image', { method: 'POST', headers: H,
+      body: JSON.stringify({ fournisseur: 'openai', modele: 'rapide', prompt: 'make it gold', image: 'data:image/png;base64,iVBORw0KGgo=' }) })).json();
+    const eo = vusOA.find((v) => v.url === '/v1/images/edits');
+    ok(re.ok && eo && /multipart\/form-data/.test(eo.type) && /name="image"; filename="photo.png"/.test(eo.brut) && /name="quality"\r\n\r\nmedium/.test(eo.brut),
+       'une retouche part en multipart, la photo en fichier, qualite medium pour « Speed »');
+    fauxOA.close();
 
     s.close(); fauxXai.close();
   }

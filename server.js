@@ -1612,7 +1612,9 @@ const sessionJoueur = require('./session');
 const economie = require('./economie');
 const studioMedia = require('./studio_media');   /* images et videos Grok Imagine, payees en $SWOGE */
 const studioXai = require('./studio_xai');
-const reprises = require('./reprises');   /* une reponse retrouvee apres un rechargement de la page */   /* offre, brule, coffre : lus sur la chaine */
+const reprises = require('./reprises');
+const studioOpenai = require('./studio_openai');   /* « ChatGPT Image » */
+const studioFichiers = require('./studio_fichiers');   /* les images generees, rangees sur le volume */   /* une reponse retrouvee apres un rechargement de la page */   /* offre, brule, coffre : lus sur la chaine */
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
 const predictServeur = require('./predict_serveur');   /* le releve papier partage de swoge_predict */
@@ -3453,6 +3455,15 @@ const server = http.createServer(async (req, res) => {
      Meme regle que le chat : la session dit QUI paie (jamais le corps), le
      serveur reserve, facture le cout reel rendu par xAI, rend le reste. Une
      video se lance ici et se lit ici, par son proprietaire seulement. */
+  /* Une image generee, rangee chez nous : nom aleatoire de 48 caracteres,
+     rien d'autre ne sort du dossier. Publique par son nom, comme un lien. */
+  if (path.startsWith(studioFichiers.PREFIXE)) {
+    const f = studioFichiers.lit(path.slice(studioFichiers.PREFIXE.length));
+    if (!f) { res.writeHead(404, { 'access-control-allow-origin': '*' }); return res.end(); }
+    res.writeHead(200, { 'content-type': f.type, 'content-length': f.octets.length, 'access-control-allow-origin': '*',
+                         'cache-control': 'public, max-age=604800, immutable' });
+    return res.end(f.octets);
+  }
   if (path === '/studio/media/catalogue' || path === '/studio/media/image' || path === '/studio/media/video'
       || path.startsWith('/studio/media/video/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
@@ -3461,7 +3472,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
     if (path === '/studio/media/catalogue') {
       const M = studioMedia.MESURE;
-      return json(200, Object.assign(studioMedia.catalogue(await studioChat.coursSwoge(), studioXai.actif()), {
+      return json(200, Object.assign(studioMedia.catalogue(await studioChat.coursSwoge(), { grok: studioXai.actif(), openai: studioOpenai.actif() }), {
         mesure: { images: M.images, videos: M.videos, echecs: M.echecs, depassements: M.depassements, sansUsage: M.sansUsage,
                   coutUsd: Number(M.coutUsd.toFixed(4)), factureUsd: Number(M.factureUsd.toFixed(4)) } }));
     }
@@ -3473,7 +3484,7 @@ const server = http.createServer(async (req, res) => {
       return json(r.ok ? 200 : r.code, r);
     }
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
-    if (!studioXai.actif()) return json(503, { ok: false, raison: 'Image and video generation is not switched on yet.' });
+    if (!studioXai.actif() && !studioOpenai.actif()) return json(503, { ok: false, raison: 'Image and video generation is not switched on yet.' });
     let q;
     try { q = JSON.parse((await corps(req, 9 * 1024 * 1024)).toString('utf8') || '{}'); }
     catch (e) { return json(400, { ok: false, raison: 'unreadable request (an attached image must stay under 6 MB)' }); }
@@ -3484,6 +3495,8 @@ const server = http.createServer(async (req, res) => {
         regle: (a, rw, fw) => { const s = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s }); return s; },
       },
       fournisseur: studioXai,
+      fournisseurs: { grok: studioXai, openai: studioOpenai },
+      range: (u) => studioFichiers.range(u),
     };
     const base = { addr, modele: q.modele, prompt: q.prompt, format: q.format, image: q.image };
     const rid = reprises.ridOk(q.rid) ? q.rid : null;
@@ -3491,7 +3504,7 @@ const server = http.createServer(async (req, res) => {
     let r;
     try {
       r = path === '/studio/media/image'
-        ? await studioMedia.images(Object.assign(base, { n: q.n }), deps)
+        ? await studioMedia.images(Object.assign(base, { n: q.n, fournisseur: q.fournisseur }), deps)
         : await studioMedia.lanceVideo(Object.assign(base, { duree: q.duree, resolution: q.resolution }), deps);
     } catch (e) {
       console.error('[studio] ' + (e && e.stack || e));
@@ -3903,6 +3916,9 @@ function diffuseCompte() {
 }
 // et un rappel regulier, pour les onglets ouverts depuis longtemps
 const compteInterval = setInterval(() => broadcast(compte()), 60000);
+/* Les images de Studio rangees sur le volume : effacees apres STUDIO_FICHIERS_JOURS (7). */
+const studioFichiersInterval = setInterval(() => { const n = studioFichiers.menage(); if (n) console.log('[studio] ' + n + ' image(s) effacee(s)'); }, 60 * 60 * 1000);
+if (studioFichiersInterval.unref) studioFichiersInterval.unref();
 
 /* Les fiches qui n'ont jamais rien fait quittent aussi la memoire. Elles ne
    sont deja plus ecrites sur le disque ; les garder en RAM laisserait quand
