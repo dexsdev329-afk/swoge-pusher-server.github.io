@@ -248,6 +248,33 @@ const neuf = () => { P._pose(P.etatNeuf()); return P.etat(); };
   /* ======================================================================
    * 9. UNE COLONIE, PLUSIEURS MARCHES
    * ==================================================================== */
+  console.log('\n-- 8 bis. au plus deux positions dans le meme sens, et la regle se juge --');
+  {
+    /* Choix du proprietaire, le 26 septembre 2026 : cinq cryptos prises dans
+       le meme sens sont un seul pari pose cinq fois. La regle refuse le
+       troisieme candidat d'un sens, et son ombre est jugee comme toute regle. */
+    eq(P.MEME_SENS_MAX, 2, 'deux positions au plus dans un sens (defaut)');
+    neuf();
+    const S = P.etat();
+    const pose = (sym, prix, sens) => { const x = P.mesures(marche({ prix })); x.sym = sym; return P.ouvre(x, sens, { score: 80, traits: {} }); };
+    pose('BTCUSDT', 60000, 1); pose('ETHUSDT', 3000, 1);
+    const DOGE = marche({ prix: 0.2, pente: 0.45, bruit: 0.1, financement: -0.0009 });
+    const r = await P.tour({ marches: { BTCUSDT: marche({ prix: 60000 }), ETHUSDT: marche({ prix: 3000 }), DOGEUSDT: DOGE } });
+    const long = r.verdicts.find((v) => v.sym === 'DOGEUSDT' && v.sens === 1);
+    const garde = r.verdicts.filter((v) => v.sens === 1 && v.refus === 'too many positions the same way');
+    ok(garde.length >= 1 && garde.every((v) => v.sens === 1), 'deux longs ouverts : un troisieme long est refuse, et le refus nomme la regle (« ' + (long && long.refus) + ' »)');
+    ok(!r.verdicts.some((v) => v.sens === -1 && v.refus === 'too many positions the same way'), 'un short, lui, reste possible : la regle ne compte que le meme sens');
+    ok(S.positions.filter((q) => q.sens === 1).length <= 2, 'et aucun troisieme long ne s ouvre');
+    ok(S.ombres.some((o) => o.cle === 'Exposure · too many positions the same way' && o.sens === 1),
+       'le candidat refuse laisse son ombre sous « Exposure · too many positions the same way » : l audit la jugera contre « pris »');
+    ok(P.vue().memeSensMax === 2, 'la page peut dire la regle');
+
+    neuf();
+    pose('BTCUSDT', 60000, 1);
+    const r2 = await P.tour({ marches: { BTCUSDT: marche({ prix: 60000 }), ETHUSDT: marche({ prix: 3000 }), DOGEUSDT: DOGE } });
+    ok(!r2.verdicts.some((v) => v.refus === 'too many positions the same way'), 'un seul long ouvert : la regle ne refuse rien');
+  }
+
   console.log('\n-- 9. un tour lit TOUS les marches et prend le meilleur --');
   {
     neuf();
@@ -466,9 +493,14 @@ const neuf = () => { P._pose(P.etatNeuf()); return P.etat(); };
     for (let i = 0; i < 6; i++) await P.tour({ marches: trois });
     ok(S.positions.length <= P.POSITIONS_MAX,
        'le plafond de ' + P.POSITIONS_MAX + ' tient : ' + S.positions.length + ' positions');
-    ok((S.compteurs.plafondPositions || 0) + (S.compteurs.dejaSurCeMarche || 0) > 0,
-       'et les deux raisons de ne rien faire sont comptees SEPAREMENT : plafond '
-       + (S.compteurs.plafondPositions || 0) + ', marche deja tenu ' + (S.compteurs.dejaSurCeMarche || 0));
+    /* Depuis le 26 septembre 2026, une troisieme raison existe : trois marches
+       tous longs, et au-dela de deux longs la regle du meme sens refuse. Elle
+       se compte a part elle aussi (`memeSens`) — c'est l'intention de l'essai. */
+    ok((S.compteurs.plafondPositions || 0) + (S.compteurs.dejaSurCeMarche || 0) + (S.compteurs.memeSens || 0) > 0,
+       'et les raisons de ne rien faire sont comptees SEPAREMENT : plafond '
+       + (S.compteurs.plafondPositions || 0) + ', marche deja tenu ' + (S.compteurs.dejaSurCeMarche || 0)
+       + ', meme sens ' + (S.compteurs.memeSens || 0));
+    ok(S.positions.filter((q) => q.sens === 1).length <= P.MEME_SENS_MAX, 'trois marches tous longs : jamais plus de ' + P.MEME_SENS_MAX + ' longs a la fois');
 
     /* Chaque position garde son marche, et se surveille au prix du sien. */
     const avant = S.positions.length;

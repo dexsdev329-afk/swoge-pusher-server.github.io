@@ -780,6 +780,23 @@ const FAMINE_TOURS = Math.max(1, Number(process.env.PERP_FAMINE_TOURS || 12));
  * chiffre qui l aura decide. */
 const POSITIONS_MAX = Math.max(1, Number(process.env.PERP_POSITIONS_MAX || 5));
 
+/* ---- AU PLUS DEUX POSITIONS DANS LE MEME SENS (26 septembre 2026) ----
+ * Releve du 26 septembre, 12:21 UTC, depuis le 24 a 06:40 : 38 trades,
+ * 26 % de gagnants, tresor papier 1 000 → 983,65. Sorties : 23 stops a
+ * -1,45 % en moyenne, 9 cibles a +2,04 %, 6 fins de tenue a ~0. Le point
+ * mort a ces ecarts est 41 % de gagnants. Et les stops tombent ENSEMBLE :
+ * le 25 a 14:06, XRP et DOGE longs stoppes la meme minute ; a 12:16, BTC et
+ * SOL longs aussi. Cinq cryptos qui bougent ensemble, prises dans le meme
+ * sens, c'est UN pari pose cinq fois, pas cinq paris.
+ * Le proprietaire a choisi de l'essayer comme une regle MESURABLE : au-dela
+ * de MEME_SENS_MAX positions dans un sens, le candidat de ce sens est refuse
+ * sous sa propre cle d'audit (« Exposure · too many positions the same
+ * way »), donc son ombre est jugee a 4 h contre « pris », comme toute autre
+ * regle. Verdict a relire apres 100 trades : si ce qu'elle refuse monte
+ * autant que ce qu'on prend, elle ne sert a rien et on l'enleve.
+ * `PERP_MEME_SENS_MAX` la regle ; 5 la rend inoperante. */
+const MEME_SENS_MAX = Math.max(1, Number(process.env.PERP_MEME_SENS_MAX || 2));
+
 /* ---- LA GEOMETRIE DE SORTIE : stop et cible, en ecarts-types de volatilite ----
  * Le stop est passe de 3σ a 4σ le 22 septembre 2026 ; la cible passe de 5σ a 6σ
  * le 23 septembre 2026, MESURE NET. `perp_edge.js` rejoue la tendance sur 31 j de
@@ -953,6 +970,15 @@ async function tour(opts) {
     const r = marcheRefuse((lus[v.sym] && lus[v.sym].nom) || v.sym);
     if (r) { v.refus = r; v.qui = 'Memory'; }
   }
+  /* L'exposition dans un sens : voir MEME_SENS_MAX. Apres les avis de
+     direction, pour ne compter que les candidats qui seraient pris. */
+  for (const v of verdicts) {
+    if (v.refus) continue;
+    if (S.positions.filter((q) => q.sens === v.sens).length >= MEME_SENS_MAX) {
+      v.refus = 'too many positions the same way'; v.qui = 'Exposure';
+      compte('memeSens');
+    }
+  }
   const tenus = new Set(S.positions.map((q) => q.sym));
   const passants = verdicts.filter((v) => !v.refus);
   let pris = passants.filter((v) => !tenus.has(v.sym)).sort((a, b) => b.score - a.score)[0];
@@ -1117,7 +1143,7 @@ function vue() {
     }),
     carnet: S.carnet.slice(0, 40),
     parMarche: parMarche(),
-    soupape: soupapeBilan(), positionsMax: POSITIONS_MAX, fondMur: FOND_MUR,
+    soupape: soupapeBilan(), positionsMax: POSITIONS_MAX, memeSensMax: MEME_SENS_MAX, fondMur: FOND_MUR,
     agents: AGENTS.map((x) => ({ key: x.key, nom: x.nom, emoji: x.emoji, role: x.role, quoi: x.quoi, traits: x.traits })),
     audit: a,
     reference: reference(),
@@ -1158,7 +1184,7 @@ function demarre() {
 module.exports = {
   SYMBOLES, HORIZONS, HORIZON_REF, AGENTS, TRAITS, VETOS, GAGNE, PERD,
   AUDIT_MIN_OBS, PROFIL_MIN_OBS, PERIODE_FIN_MIN, FAMINE_TOURS, VETOS_SECURITE,
-  POSITIONS_MAX, FOND_MUR,
+  POSITIONS_MAX, MEME_SENS_MAX, FOND_MUR,
   charge, etat, etatNeuf, vue, tour, demarre, litMarche,
   mesures, traitsDe, note, noteOmbre, regleLesOmbres, noteAudit, auditDesRefus,
   reference, verdictRegle, coutFinancement, ouvre, ferme, surveille,
