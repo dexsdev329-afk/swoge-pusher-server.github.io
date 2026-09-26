@@ -131,13 +131,19 @@ const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(
     ok((await C.repond(q({ addr: null }), { cours, solde: faux().api, fournisseur: async () => ({}) })).code === 401, 'sans adresse de session : 401');
     ok((await C.repond(q({ modele: 'gpt-9' }), { cours, solde: faux().api, fournisseur: async () => ({}) })).code === 400, 'modèle inconnu : 400');
 
-    /* Une question à la fois par joueur. */
-    f = faux(); let libere;
-    const enCours = C.repond(q({ addr: '0xvol' }), { cours, solde: f.api, fournisseur: () => new Promise((res) => { libere = () => res({ usage }); }) });
+    /* Au plus STUDIO_CHAT_EN_VOL (3) reponses en vol par joueur : de quoi
+       comparer trois modeles sur la meme question, pas davantage. */
+    f = faux(); const liberes = [], enCours = [];
+    for (let i = 0; i < 3; i++) enCours.push(C.repond(q({ addr: '0xvol' }), { cours, solde: f.api, fournisseur: () => new Promise((res) => { liberes.push(() => res({ usage })); }) }));
     await new Promise((res) => setTimeout(res, 20));
-    const second = await C.repond(q({ addr: '0xvol' }), { cours, solde: f.api, fournisseur: async () => ({ usage }) });
-    ok(second.code === 429, 'une seconde question pendant la première : 429');
-    libere(); await enCours;
+    eq(liberes.length, 3, 'trois reponses partent ensemble (une comparaison de trois modeles)');
+    const quatrieme = await C.repond(q({ addr: '0xvol' }), { cours, solde: f.api, fournisseur: async () => ({ usage }) });
+    ok(quatrieme.code === 429, 'une quatrieme pendant les trois : 429');
+    const autre = await C.repond(q({ addr: '0xautre-vol' }), { cours, solde: faux().api, fournisseur: async () => ({ usage }) });
+    ok(autre.ok, 'la borne est par joueur : un autre n est pas gene');
+    liberes.forEach((l) => l()); await Promise.all(enCours);
+    const apres = await C.repond(q({ addr: '0xvol' }), { cours, solde: f.api, fournisseur: async () => ({ usage }) });
+    ok(apres.ok, 'une fois finies, la place se libere');
 
     /* Pas plus de N par minute. */
     C.RYTHME.clear(); process.env.STUDIO_PAR_MINUTE = '2';

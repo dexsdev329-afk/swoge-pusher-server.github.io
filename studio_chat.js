@@ -185,8 +185,20 @@ async function coursSwoge(prendre, maintenant) {
   return COURS.v;
 }
 
-/* ---- LE DÉBIT : un appel en vol par joueur, et pas plus de N par minute ---- */
-const EN_VOL = new Set();
+/* ---- JUSQU'A TROIS REPONSES EN VOL PAR JOUEUR ----
+ * C'etait une : « une question a la fois ». Le 26 septembre 2026, SwoleMind
+ * compare 2 ou 3 modeles sur la MEME question (demande du proprietaire) — trois
+ * reponses partent ensemble, chacune reservee, facturee et rendue a part. La
+ * borne passe donc a STUDIO_CHAT_EN_VOL (3) ; le rythme par minute, lui, compte
+ * chaque reponse. */
+const EN_VOL_MAX = () => Math.max(1, Number(process.env.STUDIO_CHAT_EN_VOL || 3));
+const EN_VOL = {
+  n: new Map(),
+  has(a) { return (this.n.get(a) || 0) >= EN_VOL_MAX(); },
+  add(a) { this.n.set(a, (this.n.get(a) || 0) + 1); },
+  delete(a) { const k = (this.n.get(a) || 0) - 1; if (k > 0) this.n.set(a, k); else this.n.delete(a); },
+  clear() { this.n.clear(); },
+};
 const RYTHME = new Map();
 const PAR_MINUTE = () => Math.max(1, Number(process.env.STUDIO_PAR_MINUTE || 8));
 function rythmeOk(addr, maintenant) {
@@ -252,7 +264,7 @@ async function repond(q, deps) {
   const recherche = !!q.recherche && !!m.recherche
     && (m.recherche !== 'perplexity' || !deps.actif || !!deps.actif('perplexity'));
   const effort = m.effort && EFFORTS.includes(q.effort) ? q.effort : null;
-  if (EN_VOL.has(addr)) return { ok: false, code: 429, raison: 'one question at a time' };
+  if (EN_VOL.has(addr)) return { ok: false, code: 429, raison: 'too many answers at once — wait for one to finish' };
   if (!rythmeOk(addr, q.maintenant)) return { ok: false, code: 429, raison: 'too many questions — wait a minute' };
 
   const cours = await deps.cours();
