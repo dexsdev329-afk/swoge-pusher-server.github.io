@@ -32,6 +32,7 @@ function fausseChaine(o) {
   c.gazPrix = async () => v.gp; c.soldeGaz = async () => v.gaz;
   c.solde = async () => v.solde; c.allowance = async () => v.allowance; c.noncesJeton = async () => v.noncesJeton;
   c.nonceLibre = async () => v.libre;
+  c.soldeUsdg = async () => (v.soldeUsdg !== undefined ? v.soldeUsdg : B.from(1000000000)); c.autorisationLibre = async () => (v.autorisationLibre !== undefined ? v.autorisationLibre : true);
   c.simule = async (m) => { c.simules.push(m); if (v.simuleEchoue) throw new Error(v.simuleEchoue); return []; };
   c.regle = async (m, a) => { await new Promise((r) => setTimeout(r, 20)); if (v.regleEchoue) return { ok: false, erreur: v.regleEchoue }; c.regles.push({ m, a }); return { ok: true, hash: '0x' + String(c.regles.length).padStart(64, '0'), gasUsed: '91234' }; };
   return c;
@@ -41,7 +42,7 @@ function monde(o) {
   const chaine = fausseChaine(o && o.chaine);
   let t = 1790000000000;
   const journal = [];
-  const x = X.cree({ asset: SWOGE, payTo: TRESOR, chaine, cours: async () => 0.00002493, ethUsd: async () => 2688.57,
+  const x = X.cree({ asset: SWOGE, usdg: (o && o.usdg) || null, payTo: TRESOR, chaine, cours: (o && o.cours) || (async () => 0.00002493), ethUsd: async () => 2688.57,
     prixOutilUsd: (outil) => ({ scan_token: 0.01, swoge_economy: 0.001, wallet_intel: 0.02 })[outil] || null,
     maintenant: () => t, journal: (l) => journal.push(l) });
   return { x, chaine, journal, avance: (ms) => { t += ms; }, s: () => Math.floor(t / 1000) };
@@ -65,6 +66,17 @@ async function signe(w, req, o) {
     p.extensions = { eip2612GasSponsoring: { info: { from: w.address, asset: SWOGE, spender: X.PERMIT2, amount: v.value, nonce: v.nonce, deadline: v.deadline, signature: sig, version: '1' } } };
   }
   return { entete: X.b64(p), auth };
+}
+
+/* Ce qu'un client x402 signe pour l'USDG (EIP-3009, spec v2 « exact », méthode eip3009). */
+async function signe3009(w, req, o) {
+  o = o || {};
+  const acc = Object.assign({}, req.accepts.find((a) => a.extra.assetTransferMethod === 'eip3009'), o.accepted || {});
+  const auth = { from: w.address, to: o.to || acc.payTo, value: o.value || acc.amount, validAfter: String(o.validAfter || o.s - 600),
+    validBefore: String(o.validBefore || o.s + 100), nonce: o.nonce || ethers.utils.hexlify(ethers.utils.randomBytes(32)) };
+  const signature = await (o.autre || w)._signTypedData(Object.assign({ chainId: X.CHAIN_ID, verifyingContract: acc.asset }, X.DOMAINE_USDG), X.TYPES_3009, auth);
+  if (o.nonceApres) auth.nonce = o.nonceApres;      /* un en-tete fabrique a la main : ethers refuse de signer un tel nonce */
+  return { entete: X.b64({ x402Version: 2, resource: req.resource, accepted: acc, payload: { signature, authorization: auth } }), auth, acc };
 }
 
 const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { ok: true, outil: 'scan_token', resultat: { token: 'SWOGE' }, texte: 'x' }; };
@@ -234,6 +246,73 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
     M.chaine.regle = async (m, x) => { ordre.push('debut'); const r = await lent(m, x); ordre.push('fin'); return r; };
     await Promise.all([e1, e2].map((e) => M.x.traite({ outil: 'scan_token', url: 'u', entete: e, sert: sert({}) })));
     eq(ordre.join(','), 'debut,fin,debut,fin', 'deux paiements distincts se reglent l un apres l autre (un seul nonce de gaz)');
+  }
+
+  console.log('\n-- 7. payer en USDG (EIP-3009) --');
+  {
+    const M = monde({ usdg: X.USDG });
+    const p = await M.x.prix('scan_token');
+    ok(Number(p.montantUsdg) >= (0.01 + p.gazUsd) * 1e6 - 1 && Number(p.montantUsdg) - (0.01 + p.gazUsd) * 1e6 < 2, 'le prix en USDG (6 decimales) au micro-dollar superieur : ' + p.montantUsdg + ' pour ' + (0.01 + p.gazUsd).toFixed(8) + ' $');
+    eq((await M.x.prix('swoge_economy')).montantUsdg, '20000', 'le minimum de 0,02 $ = 20 000 unites d USDG, exactement');
+    const r = await M.x.traite({ outil: 'scan_token', url: 'u', sert: sert({}) });
+    const req = de64(r.entetes['payment-required']);
+    ok(req.accepts.length === 2 && req.accepts[0].asset === X.USDG && req.accepts[0].extra.assetTransferMethod === 'eip3009'
+       && req.accepts[0].extra.name === 'Global Dollar' && req.accepts[0].extra.version === '1' && req.accepts[1].asset === SWOGE,
+       'le 402 propose l USDG d abord (eip3009, domaine Global Dollar v1), puis le $SWOGE (permit2)');
+    ok(/USDG or \$SWOGE/.test(req.resource.description), 'la description le dit');
+    const sans = monde({ usdg: X.USDG, cours: async () => null });
+    const rs = de64((await sans.x.traite({ outil: 'scan_token', url: 'u', sert: sert({}) })).entetes['payment-required']);
+    ok(rs.accepts.length === 1 && rs.accepts[0].asset === X.USDG, 'sans cours du $SWOGE, l USDG reste payable (le prix en $ ne depend pas de notre jeton)');
+
+    const w = ethers.Wallet.createRandom();
+    const { entete, auth } = await signe3009(w, req, { s: M.s() });
+    const compte = {};
+    const ok1 = await M.x.traite({ outil: 'scan_token', url: 'u', entete, sert: sert(compte) });
+    eq(ok1.status, 200, 'paye en USDG : 200');
+    const reg = M.chaine.regles[0];
+    const sp = ethers.utils.splitSignature(de64(entete).payload.signature);
+    ok(reg.m === 'transferWithAuthorization' && reg.a[0] === w.address && reg.a[1] === TRESOR && reg.a[2] === req.accepts[0].amount
+       && reg.a[5] === auth.nonce && reg.a[6] === sp.v && reg.a[7] === sp.r && reg.a[8] === sp.s,
+       'transferWithAuthorization(from = le payeur, to = la tresorerie, le montant du devis, nonce, v, r, s)');
+    ok(M.chaine.simules[0] === 'transferWithAuthorization' && compte.n === 1, 'simule avant de servir, servi une fois');
+    const c1 = JSON.parse(ok1.corps);
+    ok(c1.x402.asset === X.USDG && M.journal[0].asset === X.USDG && M.journal[0].methode === 'transferWithAuthorization', 'le recu et le journal disent USDG');
+    ok(M.x.MESURE.gazParMethode.transferWithAuthorization.length === 1, 'le gaz reel est range par methode');
+    const rej = await M.x.traite({ outil: 'scan_token', url: 'u', entete, sert: sert({}) });
+    ok(rej.status === 402 && M.chaine.regles.length === 1, 'la meme autorisation rejouee : 402, un seul reglement');
+
+    const essai = async (m, o, attendu, v) => {
+      Object.assign(M.chaine.v, v || {});
+      const { entete: e } = await signe3009(w, req, Object.assign({ s: M.s() }, o));
+      const cc = {}, avant = M.chaine.regles.length;
+      const rr = await M.x.traite({ outil: 'scan_token', url: 'u', entete: e, sert: sert(cc) });
+      const raison = JSON.parse(rr.corps).raison;
+      ok(rr.status === 402 && !cc.n && M.chaine.regles.length === avant && attendu.test(raison), m + ' → 402 ' + raison + ', rien servi, rien regle');
+      Object.assign(M.chaine.v, { soldeUsdg: undefined, autorisationLibre: undefined, simuleEchoue: null });
+    };
+    const moins = String(Number(req.accepts[0].amount) - 1);
+    await essai('un montant signe plus bas que le devis', { value: moins }, /value_mismatch/);
+    await essai('un montant jamais devise', { accepted: { amount: moins }, value: moins }, /invalid_payment_requirements/);
+    await essai('le montant $SWOGE presente comme de l USDG', { accepted: { amount: req.accepts[1].amount }, value: req.accepts[1].amount }, /invalid_payment_requirements/);
+    await essai('un autre destinataire', { to: ethers.Wallet.createRandom().address }, /recipient_mismatch/);
+    await essai('expiree (validBefore passe)', { validBefore: M.s() - 1 }, /valid_before/);
+    await essai('validBefore a plus d une heure', { validBefore: M.s() + 4000 }, /invalid_payload/);
+    await essai('pas encore valide', { validAfter: M.s() + 60 }, /valid_after/);
+    await essai('signee par un AUTRE que « from »', { autre: ethers.Wallet.createRandom() }, /signature/);
+    await essai('un nonce qui n est pas un bytes32', { nonceApres: '0x1234' }, /invalid_payload/);
+    await essai('un solde USDG trop bas', {}, /insufficient_funds/, { soldeUsdg: B.from(1) });
+    await essai('une autorisation deja utilisee sur la chaine', {}, /invalid_transaction_state/, { autorisationLibre: false });
+    await essai('une simulation qui revert (InsufficientFunds)', {}, /invalid_transaction_state/, { simuleEchoue: 'InsufficientFunds()' });
+    const autreJeton = await signe3009(w, req, { s: M.s(), accepted: { asset: '0x' + '22'.repeat(20) } });
+    ok(/invalid_payment_requirements/.test(JSON.parse((await M.x.traite({ outil: 'scan_token', url: 'u', entete: autreJeton.entete, sert: sert({}) })).corps).raison), 'un autre jeton que le vrai USDG : refuse');
+
+    const { entete: ep } = await signe3009(w, req, { s: M.s() });
+    const avant = M.chaine.regles.length;
+    const panne = await M.x.traite({ outil: 'scan_token', url: 'u', entete: ep, sert: async () => ({ ok: false, code: 502, raison: 'x' }) });
+    ok(panne.status === 502 && M.chaine.regles.length === avant, 'outil en panne : l autorisation USDG n est jamais soumise');
+    eq((await M.x.traite({ outil: 'scan_token', url: 'u', entete: ep, sert: sert({}) })).status, 200, 'et elle reste utilisable ensuite, une fois');
+    const [a2, b2] = await Promise.all([1, 2].map(async () => M.x.traite({ outil: 'scan_token', url: 'u', entete: (await signe3009(w, req, { s: M.s(), nonce: '0x' + 'ab'.repeat(32) })).entete, sert: sert({}) })));
+    ok([a2.status, b2.status].sort().join() === '200,402', 'meme nonce EIP-3009 en simultane : une seule passe [' + a2.status + ',' + b2.status + ']');
   }
 
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));

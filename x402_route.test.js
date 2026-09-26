@@ -28,6 +28,8 @@ const X = require('./x402');
 const PROXY_ABI = new ethers.utils.Interface([
   'function settle(((address token,uint256 amount) permitted,uint256 nonce,uint256 deadline) permit,address owner,(address to,uint256 validAfter) witness,bytes signature)',
   'function settleWithPermit((uint256 value,uint256 deadline,bytes32 r,bytes32 s,uint8 v) permit2612,((address token,uint256 amount) permitted,uint256 nonce,uint256 deadline) permit,address owner,(address to,uint256 validAfter) witness,bytes signature)']);
+const USDG_ABI = new ethers.utils.Interface(['function transferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce,uint8 v,bytes32 r,bytes32 s)',
+  'function authorizationState(address,bytes32) view returns (bool)']);
 const LECT = new ethers.utils.Interface(['function balanceOf(address) view returns (uint256)', 'function allowance(address,address) view returns (uint256)',
   'function nonces(address) view returns (uint256)', 'function nonceBitmap(address,uint256) view returns (uint256)']);
 
@@ -57,6 +59,8 @@ function fauxNoeud() {
             const to = String(p[0].to).toLowerCase(), data = p[0].data, sel = data.slice(0, 10);
             appels.push({ to, sel });
             if (to === X.PROXY.toLowerCase()) { PROXY_ABI.parseTransaction({ data }); return r('0x'); }   /* la simulation passe si l'ABI se décode */
+            if (to === X.USDG.toLowerCase() && sel === USDG_ABI.getSighash('transferWithAuthorization')) { USDG_ABI.parseTransaction({ data }); return r('0x'); }
+            if (to === X.USDG.toLowerCase() && sel === USDG_ABI.getSighash('authorizationState')) return r(ethers.utils.defaultAbiCoder.encode(['bool'], [false]));
             const f = LECT.parseTransaction({ data }).name;
             const v = f === 'balanceOf' ? ethers.utils.parseEther('100000000') : f === 'allowance' ? ethers.constants.MaxUint256 : ethers.constants.Zero;
             return r(ethers.utils.defaultAbiCoder.encode(['uint256'], [v]));
@@ -64,7 +68,7 @@ function fauxNoeud() {
           case 'eth_estimateGas': return r('0x30000');
           case 'eth_sendRawTransaction': {
             const tx = ethers.utils.parseTransaction(p[0]);
-            envoyees.push(Object.assign({ decode: PROXY_ABI.parseTransaction({ data: tx.data }) }, tx));
+            envoyees.push(Object.assign({ decode: (tx.to.toLowerCase() === X.USDG.toLowerCase() ? USDG_ABI : PROXY_ABI).parseTransaction({ data: tx.data }) }, tx));
             recus.set(tx.hash, { transactionHash: tx.hash, blockHash: '0x' + 'cd'.repeat(32), blockNumber: '0x' + bloc.toString(16), transactionIndex: '0x0',
               from: tx.from, to: tx.to, gasUsed: '0x' + (91234).toString(16), cumulativeGasUsed: '0x' + (91234).toString(16), effectiveGasPrice: '0x' + (28000000).toString(16),
               logs: [], logsBloom: '0x' + '00'.repeat(256), status: '0x1', contractAddress: null, type: '0x0' });
@@ -127,6 +131,7 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   await lis(r1.clone());
   eq(r1.status, 402, 'sans cle ni paiement : 402 (et non plus 401)');
   const exi = de64(r1.headers.get('payment-required'));
+  ok(exi.accepts.map((a) => a.extra.assetTransferMethod).join() === 'eip3009,permit2' && exi.accepts[0].asset === X.USDG, 'deux facons de payer : USDG (eip3009) d abord, puis $SWOGE (permit2)');
   ok(exi.accepts[0].payTo === TRESOR && exi.accepts[0].network === 'eip155:4663' && /\/agentic\/call\/colony_activity$/.test(exi.resource.url),
      'PAYMENT-REQUIRED : la tresorerie, le reseau, la ressource');
   ok(/payment-required/.test(r1.headers.get('access-control-expose-headers') || ''), 'l en-tete est expose aux navigateurs (CORS)');
@@ -136,7 +141,7 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
 
   console.log('\n-- 3. un agent paie --');
   const payeur = ethers.Wallet.createRandom();
-  const acc = exi.accepts[0];
+  const acc = exi.accepts.find((a) => a.extra.assetTransferMethod === 'permit2');
   const s = Math.floor(Date.now() / 1000);
   const auth = { from: payeur.address, permitted: { token: acc.asset, amount: acc.amount }, spender: X.PROXY, nonce: '424242',
     deadline: String(s + 110), witness: { to: acc.payTo, validAfter: String(s - 600) } };
@@ -160,6 +165,27 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   ok(jr.length === 1 && jr[0].payer === payeur.address && jr[0].gasUsed === '91234', 'le journal DATA_DIR/x402.jsonl note le paiement et le gaz reel');
   const et2 = JSON.parse(await lis(await fetch(base + '/agentic/x402')));
   ok(et2.mesure.payes === 1 && et2.mesure.gasUsedMedian === 91234, 'la mesure du gaz reel est publique (' + et2.mesure.gasUsedMedian + ' contre ' + et2.mesure.gazUnitesEstimees + ' estimes)');
+
+  console.log('\n-- 3 bis. un agent paie en USDG --');
+  const r3 = await appel('new_launches', { arguments: { limit: 3 } });
+  const exi3 = de64(r3.headers.get('payment-required'));
+  const au = exi3.accepts.find((a) => a.extra.assetTransferMethod === 'eip3009');
+  const s3 = Math.floor(Date.now() / 1000);
+  const m3 = { from: payeur.address, to: au.payTo, value: au.amount, validAfter: String(s3 - 600), validBefore: String(s3 + 110), nonce: ethers.utils.hexlify(ethers.utils.randomBytes(32)) };
+  const sig3 = await payeur._signTypedData(Object.assign({ chainId: 4663, verifyingContract: au.asset }, X.DOMAINE_USDG), X.TYPES_3009, m3);
+  const e3 = X.b64({ x402Version: 2, resource: exi3.resource, accepted: au, payload: { signature: sig3, authorization: m3 } });
+  const p3 = await appel('new_launches', { arguments: { limit: 3 } }, { 'payment-signature': e3 });
+  const c3 = JSON.parse(await lis(p3.clone()));
+  ok(p3.status === 200 && c3.x402.asset === X.USDG && Array.isArray(c3.resultat.fresh), 'paye en USDG : 200, les lancements, le recu dit USDG');
+  const t3 = noeud.envoyees[1], sp3 = ethers.utils.splitSignature(sig3);
+  ok(t3 && t3.from === GAZ.address && t3.to === X.USDG && t3.decode.name === 'transferWithAuthorization' && t3.decode.args.from === payeur.address
+     && t3.decode.args.to === TRESOR && t3.decode.args.value.toString() === au.amount && t3.decode.args.nonce === m3.nonce && t3.decode.args.v === sp3.v && t3.decode.args.r === sp3.r,
+     'envoyee au contrat USDG : transferWithAuthorization(le payeur → la tresorerie, le montant du devis, v, r, s)');
+  const et3 = JSON.parse(await lis(await fetch(base + '/agentic/x402')));
+  ok(et3.encaisse.USDG && et3.encaisse.USDG.paiements === 1 && et3.encaisse.USDG.montant === ethers.utils.formatUnits(au.amount, 6)
+     && et3.encaisse.SWOGE.paiements === 1, 'l etat public dit ce qui a ete encaisse, par jeton (USDG ' + (et3.encaisse.USDG && et3.encaisse.USDG.montant) + ' $) — la base d un rachat de $SWOGE');
+  ok(et3.gazParMethode.transferWithAuthorization && et3.gazParMethode.settle, 'le gaz reel, par methode');
+  ok(et3.outils.every((o) => /^[0-9]+$/.test(o.amountUsdg)) && et3.assets.map((a) => a.symbol).join() === 'USDG,SWOGE', 'chaque outil a son prix en USDG ; les deux jetons sont annonces');
 
   console.log('\n-- 4. la cle du portefeuille de gaz --');
   const k = GAZ.privateKey.slice(2).toLowerCase();

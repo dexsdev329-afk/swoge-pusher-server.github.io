@@ -1688,12 +1688,14 @@ const x402 = () => {
   if (!/^0x[0-9a-fA-F]{40}$/.test(payTo) || !cle) { x402V = null; return x402V; }
   const X = require('./x402');
   let chaine;
-  try { chaine = X.chaineEthers({ rpc: process.env.X402_RPC || cfg.RPC_URL, cle, asset: cfg.SWOGE_TOKEN }); }
+  /* L'USDG (Global Dollar) est accepte par defaut ; X402_USDG=0 le coupe, une autre adresse le remplace. */
+  const usdg = process.env.X402_USDG === '0' ? null : (/^0x[0-9a-fA-F]{40}$/.test(String(process.env.X402_USDG || '')) ? process.env.X402_USDG : X.USDG);
+  try { chaine = X.chaineEthers({ rpc: process.env.X402_RPC || cfg.RPC_URL, cle, asset: cfg.SWOGE_TOKEN, usdg }); }
   catch (e) { console.error('[x402] X402_CLE is not a usable private key — x402 stays off'); x402V = null; return x402V; }
   if (chaine.porteGaz.toLowerCase() === payTo.toLowerCase()) console.warn('[x402] X402_PAYTO is the gas wallet itself — use your treasury address');
   const JOURNAL = require('path').join(cfg.DATA_DIR, 'x402.jsonl');
   x402V = X.cree({
-    asset: cfg.SWOGE_TOKEN, payTo, chaine,
+    asset: cfg.SWOGE_TOKEN, usdg, payTo, chaine,
     cours: () => studioChat.coursSwoge(),
     /* L'ETH en $ (pour le gaz), 60 s en cache ; STUDIO_DEX=0 (essais) : le reglage ETH_PRIX_USD, aucune lecture reseau. */
     ethUsd: async () => {
@@ -1709,6 +1711,8 @@ const x402 = () => {
   x402V.porteGaz = chaine.porteGaz;
   x402V.soldeGaz = () => chaine.soldeGaz();
   x402V.payTo = payTo;
+  x402V.usdg = usdg;
+  x402V.journalFichier = JOURNAL;
   console.log('[x402] on — payments to ' + payTo + ', gas paid by ' + chaine.porteGaz);
   return x402V;
 };
@@ -1719,7 +1723,10 @@ async function x402Etat(detail) {
   const X = require('./x402');
   const x = x402();
   if (!x) return { actif: false };
-  const e = { actif: true, x402Version: X.X402_VERSION, scheme: 'exact', network: X.RESEAU, asset: cfg.SWOGE_TOKEN, payTo: x.payTo,
+  const assets = [];
+  if (x.usdg) assets.push({ symbol: 'USDG', asset: x.usdg, decimals: X.DECIMALES_USDG, assetTransferMethod: 'eip3009', name: X.DOMAINE_USDG.name, version: X.DOMAINE_USDG.version });
+  assets.push({ symbol: 'SWOGE', asset: cfg.SWOGE_TOKEN, decimals: 18, assetTransferMethod: 'permit2', name: X.DOMAINE_JETON.name, version: X.DOMAINE_JETON.version });
+  const e = { actif: true, x402Version: X.X402_VERSION, scheme: 'exact', network: X.RESEAU, asset: cfg.SWOGE_TOKEN, payTo: x.payTo, assets,
               assetTransferMethod: 'permit2', permit2: X.PERMIT2, proxy: X.PROXY, minimumUsd: X.MIN_USD, header: 'PAYMENT-SIGNATURE' };
   if (!detail) return e;
   const g = x.MESURE.gasUsed.slice().sort((a, b) => a - b);
@@ -1729,9 +1736,26 @@ async function x402Etat(detail) {
   for (const d of require('./agentic').definitions({ recherche: chatActif('perplexity') })) {
     if (!agentic().x402Payable(d.name)) continue;
     const p = await x.prix(d.name).catch(() => null);
-    outils.push({ name: d.name, usd: p ? p.usd : null, gazUsd: p ? p.gazUsd : null, amount: p ? p.montant : null });
+    outils.push({ name: d.name, usd: p ? p.usd : null, gazUsd: p ? p.gazUsd : null, amount: p ? p.montant : null, amountUsdg: p ? p.montantUsdg : null });
   }
-  return Object.assign(e, { porteGaz: x.porteGaz, soldeGazEth, outils,
+  /* Ce qui a ete encaisse, par jeton, relu dans le journal (il survit aux redemarrages) :
+     c'est la base d'un rachat de $SWOGE avec l'USDG recu. */
+  const encaisse = {};
+  try {
+    for (const l of fs.readFileSync(x.journalFichier, 'utf8').split('\n')) {
+      if (!l.trim()) continue;
+      let j; try { j = JSON.parse(l); } catch (err) { continue; }
+      const k = String(j.asset || cfg.SWOGE_TOKEN).toLowerCase() === String(x.usdg || '').toLowerCase() ? 'USDG' : 'SWOGE';
+      const c = (encaisse[k] = encaisse[k] || { paiements: 0, unites: 0n });
+      c.paiements++; c.unites += BigInt(j.montant || 0);
+    }
+  } catch (err) { /* pas encore de journal */ }
+  const ethersU = require('ethers').utils;
+  for (const k of Object.keys(encaisse)) encaisse[k] = { paiements: encaisse[k].paiements, montant: ethersU.formatUnits(encaisse[k].unites.toString(), k === 'USDG' ? X.DECIMALES_USDG : 18) };
+  const med = (l) => { const t = (l || []).slice().sort((a, b) => a - b); return t.length ? t[Math.floor(t.length / 2)] : null; };
+  const gazParMethode = {};
+  for (const [m, l] of Object.entries(x.MESURE.gazParMethode)) gazParMethode[m] = { n: l.length, median: med(l) };
+  return Object.assign(e, { porteGaz: x.porteGaz, soldeGazEth, outils, encaisse, gazParMethode,
     mesure: { devis: x.MESURE.devis, payes: x.MESURE.payes, refuses: x.MESURE.refuses, echecsReglement: x.MESURE.echecsReglement,
               gasUsedN: g.length, gasUsedMedian: g.length ? g[Math.floor(g.length / 2)] : null, gazUnitesEstimees: X.GAZ_UNITES } });
 }

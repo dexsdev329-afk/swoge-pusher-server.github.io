@@ -1,6 +1,6 @@
 'use strict';
 /* ==================================================================
- * SWOGEAGENTIC — PAYER À L'APPEL SANS COMPTE : x402 v2, EN $SWOGE
+ * SWOGEAGENTIC — PAYER À L'APPEL SANS COMPTE : x402 v2, EN USDG OU EN $SWOGE
  * ==================================================================
  *
  * Étape 5, décidée par le propriétaire le 26 septembre 2026 : un agent paie
@@ -13,7 +13,14 @@
  *   - le serveur vérifie, sert, règle sur la chaîne et répond avec
  *     `PAYMENT-RESPONSE` (success, transaction, network, payer).
  *
- * ---- POURQUOI PERMIT2, ET POURQUOI C'EST SANS GAZ POUR LE PAYEUR ----
+ * ---- L'USDG D'ABORD (ajouté le 26 septembre 2026, demande du propriétaire) ----
+ * Relevé du marché x402 ce jour-là (78 267 routes) : presque tout se paie en
+ * dollars numériques ; HYRE et quatre concurrents acceptent déjà l'USDG sans
+ * gaz sur Robinhood Chain. Un agent n'a pas de $SWOGE : sans USDG, il ne
+ * pouvait pas payer. L'USDG a EIP-3009 (voir USDG plus bas) : le 402 le
+ * propose EN PREMIER, le $SWOGE (Permit2) reste proposé en second.
+ *
+ * ---- POURQUOI PERMIT2 POUR LE $SWOGE, ET POURQUOI C'EST SANS GAZ POUR LE PAYEUR ----
  * Le $SWOGE n'a pas `transferWithAuthorization` (EIP-3009) mais il a `permit`
  * (EIP-2612) — vérifié sur la chaîne le 26 septembre (domaine « Swole Doge »,
  * version « 1 », DOMAIN_SEPARATOR recalculé = lu). Permit2 canonique et le
@@ -61,6 +68,22 @@ const GAZ_UNITES = 200000;
 const DELAI_S = 120;
 const DEADLINE_MAX_S = 3600;
 
+/* L'USDG (« Global Dollar », Paxos) sur Robinhood Chain : les agents
+   détiennent des dollars, pas notre jeton. VÉRIFIÉ SUR LA CHAÎNE le 26
+   septembre 2026 : nom « Global Dollar », symbole USDG, 6 décimales,
+   693 651 206 d'offre ; DOMAIN_SEPARATOR recalculé (nom « Global Dollar »,
+   version « 1 ») = lu ; c'est le jeton de la piscine WETH la plus profonde de
+   la chaîne (19 M $) — le clone ne l'est pas. EIP-3009 (transferWithAuthorization
+   v,r,s) simulé : signature valide d'un portefeuille vide → InsufficientFunds()
+   (0x356680b7), signée par un autre → InvalidSignature() (0x8baa579f),
+   expirée → AuthorizationExpired() (0x0f05f5bf). Pas de Permit2 ni de proxy :
+   le jeton impose lui-même `to` et `value` signés. */
+const USDG = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168';
+const DOMAINE_USDG = { name: 'Global Dollar', version: '1' };
+const DECIMALES_USDG = 6;
+const TYPES_3009 = { TransferWithAuthorization: [{ name: 'from', type: 'address' }, { name: 'to', type: 'address' },
+  { name: 'value', type: 'uint256' }, { name: 'validAfter', type: 'uint256' }, { name: 'validBefore', type: 'uint256' }, { name: 'nonce', type: 'bytes32' }] };
+
 const TYPES_PERMIT2 = {
   PermitWitnessTransferFrom: [{ name: 'permitted', type: 'TokenPermissions' }, { name: 'spender', type: 'address' },
     { name: 'nonce', type: 'uint256' }, { name: 'deadline', type: 'uint256' }, { name: 'witness', type: 'Witness' }],
@@ -84,27 +107,35 @@ const SCHEMA_2612 = { $schema: 'https://json-schema.org/draft/2020-12/schema', t
   required: ['from', 'asset', 'spender', 'amount', 'nonce', 'deadline', 'signature', 'version'] };
 
 /**
- * deps = { asset, payTo, chaine, cours() ($ par $SWOGE), ethUsd(), prixOutilUsd(outil), maintenant() }
+ * deps = { asset ($SWOGE), usdg (adresse, ou null : pas d'USDG), payTo, chaine, cours() ($ par $SWOGE),
+ *          ethUsd(), prixOutilUsd(outil), maintenant(), journal(ligne) }
  * chaine = { gazPrix() (wei), soldeGaz() (wei), porteGaz (adresse), solde(from), allowance(from),
- *            noncesJeton(from), nonceLibre(from, nonce), simule(methode, args), regle(methode, args) → { hash, ok, gasUsed } }
+ *            noncesJeton(from), nonceLibre(from, nonce), soldeUsdg(from), autorisationLibre(from, nonce),
+ *            simule(methode, args), regle(methode, args) → { hash, ok, gasUsed } }
  */
 function cree(deps) {
   const emis = new Map();          /* devis émis : outil|montant → expiration (ms) */
   const pris = new Map();          /* from|nonce déjà présentés → deadline (ms) : pas de rejeu ; oubliés une fois la deadline passée (la signature ne vaut plus rien) */
-  const MESURE = { devis: 0, payes: 0, refuses: 0, echecsReglement: 0, gasUsed: [] };
+  const MESURE = { devis: 0, payes: 0, refuses: 0, echecsReglement: 0, gasUsed: [], gazParMethode: {} };
   let file = Promise.resolve();    /* un règlement à la fois : le portefeuille de gaz n'a qu'un nonce */
   const maintenant = () => (deps.maintenant ? deps.maintenant() : Date.now());
 
-  /** Le prix x402 d'un outil : prix + gaz, au moins MIN_USD, en unités atomiques de $SWOGE. */
+  /**
+   * Le prix x402 d'un outil : prix + gaz, au moins MIN_USD. En unités atomiques
+   * de $SWOGE (`montant`, si le cours est connu) et d'USDG (`montantUsdg`, au
+   * micro-dollar SUPÉRIEUR : jamais sous le prix). Sans ETH connu, pas de prix.
+   */
   async function prix(outil) {
     const base = deps.prixOutilUsd(outil);
     if (!(base > 0)) return null;
-    const [cours, eth, gp] = await Promise.all([deps.cours(), deps.ethUsd(), deps.chaine.gazPrix()]);
-    if (!(cours > 0) || !(eth > 0)) return null;
+    const [cours, eth, gp] = await Promise.all([Promise.resolve().then(() => deps.cours()).catch(() => null), deps.ethUsd(), deps.chaine.gazPrix()]);
+    if (!(eth > 0)) return null;
     const gazUsd = Number(ethers.BigNumber.from(gp).mul(GAZ_UNITES)) / 1e18 * eth;
     const usd = Math.max(MIN_USD, base + gazUsd);
-    const montant = ethers.utils.parseUnits((usd / cours).toFixed(18), 18).toString();
-    return { usd: Math.round(usd * 1e6) / 1e6, gazUsd: Math.round(gazUsd * 1e6) / 1e6, montant };
+    const montant = cours > 0 ? ethers.utils.parseUnits((usd / cours).toFixed(18), 18).toString() : null;
+    const montantUsdg = deps.usdg ? String(Math.ceil(Math.round(usd * 1e9) / 1e3)) : null;
+    if (!montant && !montantUsdg) return null;
+    return { usd: Number(montantUsdg ? (Number(montantUsdg) / 1e6).toFixed(6) : (Math.round(usd * 1e6) / 1e6)), gazUsd: Math.round(gazUsd * 1e6) / 1e6, montant, montantUsdg };
   }
 
   /** Le 402 : ce qu'il faut payer, et le devis retenu DELAI_S secondes. */
@@ -112,12 +143,24 @@ function cree(deps) {
     const p = await prix(outil);
     if (!p) return null;
     for (const [k, v] of emis) if (v < maintenant()) emis.delete(k);
-    emis.set(outil + '|' + p.montant, maintenant() + DELAI_S * 1000);
+    const fin = maintenant() + DELAI_S * 1000;
+    const accepts = [];
+    /* L'USDG d'abord : la spec préfère eip3009, et c'est ce que les agents détiennent. */
+    if (p.montantUsdg) {
+      emis.set(outil + '|' + deps.usdg.toLowerCase() + '|' + p.montantUsdg, fin);
+      accepts.push({ scheme: 'exact', network: RESEAU, amount: p.montantUsdg, asset: deps.usdg, payTo: deps.payTo, maxTimeoutSeconds: DELAI_S,
+        extra: { assetTransferMethod: 'eip3009', name: DOMAINE_USDG.name, version: DOMAINE_USDG.version } });
+    }
+    if (p.montant) {
+      emis.set(outil + '|' + deps.asset.toLowerCase() + '|' + p.montant, fin);
+      accepts.push({ scheme: 'exact', network: RESEAU, amount: p.montant, asset: deps.asset, payTo: deps.payTo, maxTimeoutSeconds: DELAI_S,
+        extra: { assetTransferMethod: 'permit2', name: DOMAINE_JETON.name, version: DOMAINE_JETON.version } });
+    }
     MESURE.devis++;
+    const en = [p.montantUsdg ? 'USDG' : null, p.montant ? '$SWOGE' : null].filter(Boolean).join(' or ');
     return { x402Version: X402_VERSION, error: raison || 'PAYMENT-SIGNATURE header is required',
-      resource: { url, description: 'SwogeAgentic tool ' + outil + ' — $' + p.usd + ' in $SWOGE (tool price + settlement gas, minimum $' + MIN_USD + ')', mimeType: 'application/json' },
-      accepts: [{ scheme: 'exact', network: RESEAU, amount: p.montant, asset: deps.asset, payTo: deps.payTo, maxTimeoutSeconds: DELAI_S,
-                  extra: { assetTransferMethod: 'permit2', name: DOMAINE_JETON.name, version: DOMAINE_JETON.version } }],
+      resource: { url, description: 'SwogeAgentic tool ' + outil + ' — $' + p.usd + ' in ' + en + ' (tool price + settlement gas, minimum $' + MIN_USD + ')', mimeType: 'application/json' },
+      accepts,
       extensions: { eip2612GasSponsoring: { info: { description: 'The server accepts an EIP-2612 permit to the canonical Permit2 contract (value = the exact payment amount) and pays the gas.', version: '1' }, schema: SCHEMA_2612 } } };
   }
 
@@ -131,9 +174,11 @@ function cree(deps) {
     const acc = p.accepted || {}, pl = p.payload || {}, a = pl.permit2Authorization || {};
     if (acc.scheme !== 'exact') return non('unsupported_scheme');
     if (acc.network !== RESEAU) return non('invalid_network');
-    if (!meme(acc.asset, deps.asset) || !meme(acc.payTo, deps.payTo)) return non('invalid_payment_requirements');
-    const echeance = emis.get(outil + '|' + String(acc.amount));
+    const enUsdg = !!deps.usdg && meme(acc.asset, deps.usdg);
+    if ((!enUsdg && !meme(acc.asset, deps.asset)) || !meme(acc.payTo, deps.payTo)) return non('invalid_payment_requirements');
+    const echeance = emis.get(outil + '|' + String(acc.asset).toLowerCase() + '|' + String(acc.amount));
     if (!echeance || echeance < maintenant()) return non('invalid_payment_requirements', 'no current quote for this amount — request the resource again for a fresh 402');
+    if (enUsdg) return verifie3009(acc, pl);
     if (!a.permitted || !meme(a.permitted.token, deps.asset)) return non('invalid_payload', 'permitted.token must be the $SWOGE asset');
     if (String(a.permitted.amount) !== String(acc.amount)) return non('invalid_exact_evm_payload_authorization_value_mismatch');
     if (!meme(a.spender, PROXY)) return non('invalid_payload', 'spender must be the canonical x402ExactPermit2Proxy');
@@ -150,16 +195,56 @@ function cree(deps) {
           witness: { to: a.witness.to, validAfter: a.witness.validAfter } }, pl.signature);
     } catch (e) { signataire = null; }
     if (!meme(signataire, a.from)) return non('invalid_exact_evm_payload_signature');
-    const cleNonce = String(a.from).toLowerCase() + '|' + a.nonce;
-    if (pris.has(cleNonce)) return non('invalid_payload', 'this Permit2 nonce was already presented');
-    /* Pris TOUT DE SUITE (avant la première lecture asynchrone) : deux requêtes
-       simultanées avec la même signature ne passent pas toutes les deux. Rendu
-       si la vérification échoue plus loin. */
+    return prend('permit2|' + String(a.from).toLowerCase() + '|' + a.nonce, Number(a.deadline), () => suite(p, acc, pl, a, s));
+  }
+
+  /**
+   * Le nonce est pris TOUT DE SUITE (avant la première lecture asynchrone) :
+   * deux requêtes simultanées avec la même signature ne passent pas toutes les
+   * deux. Rendu si la vérification échoue plus loin.
+   */
+  async function prend(cleNonce, finS, suiteFn) {
+    if (pris.has(cleNonce)) return { ok: false, raison: 'invalid_payload', detail: 'this nonce was already presented' };
     for (const [k, v] of pris) if (v < maintenant()) pris.delete(k);
-    pris.set(cleNonce, Number(a.deadline) * 1000);
-    const r = await suite(p, acc, pl, a, s);
+    pris.set(cleNonce, finS * 1000);
+    const r = await suiteFn();
     if (!r.ok) pris.delete(cleNonce); else r.cleNonce = cleNonce;
     return r;
+  }
+
+  /** Le portefeuille de gaz peut-il payer ce règlement (deux fois la borne, par prudence) ? */
+  async function gazOk() {
+    const [gp, gaz] = await Promise.all([deps.chaine.gazPrix(), deps.chaine.soldeGaz()]);
+    return !ethers.BigNumber.from(gaz).lt(ethers.BigNumber.from(gp).mul(GAZ_UNITES * 2));
+  }
+
+  /** La branche USDG : EIP-3009, le jeton impose lui-même `to` et `value` signés. */
+  async function verifie3009(acc, pl) {
+    const non = (raison, detail) => ({ ok: false, raison, detail });
+    const a = pl.authorization || {};
+    if (!meme(a.to, deps.payTo)) return non('invalid_exact_evm_payload_recipient_mismatch');
+    if (String(a.value) !== String(acc.amount)) return non('invalid_exact_evm_payload_authorization_value_mismatch');
+    if (!adresseOk(a.from) || !entierOk(a.validAfter) || !entierOk(a.validBefore) || !/^0x[0-9a-fA-F]{64}$/.test(String(a.nonce || ''))) return non('invalid_payload');
+    const s = Math.floor(maintenant() / 1000);
+    if (Number(a.validBefore) <= s) return non('invalid_exact_evm_payload_authorization_valid_before');
+    if (Number(a.validBefore) > s + DEADLINE_MAX_S) return non('invalid_payload', 'validBefore too far in the future');
+    if (Number(a.validAfter) > s) return non('invalid_exact_evm_payload_authorization_valid_after');
+    const m = { from: a.from, to: a.to, value: a.value, validAfter: a.validAfter, validBefore: a.validBefore, nonce: a.nonce };
+    let signataire = null;
+    try { signataire = ethers.utils.verifyTypedData(Object.assign({ chainId: CHAIN_ID, verifyingContract: deps.usdg }, DOMAINE_USDG), TYPES_3009, m, pl.signature); }
+    catch (e) { signataire = null; }
+    if (!meme(signataire, a.from)) return non('invalid_exact_evm_payload_signature');
+    return prend('usdg|' + String(a.from).toLowerCase() + '|' + String(a.nonce).toLowerCase(), Number(a.validBefore), async () => {
+      const [solde, libre] = await Promise.all([deps.chaine.soldeUsdg(a.from), deps.chaine.autorisationLibre(a.from, a.nonce)]);
+      if (ethers.BigNumber.from(solde).lt(ethers.BigNumber.from(acc.amount))) return non('insufficient_funds');
+      if (!libre) return non('invalid_transaction_state', 'this EIP-3009 authorization was already used on-chain');
+      if (!(await gazOk())) return non('unexpected_verify_error', 'the settlement gas wallet is empty — try again later');
+      const sp = ethers.utils.splitSignature(pl.signature);
+      const args = [a.from, a.to, a.value, a.validAfter, a.validBefore, a.nonce, sp.v, sp.r, sp.s];
+      try { await deps.chaine.simule('transferWithAuthorization', args); }
+      catch (e) { return non('invalid_transaction_state', 'the settlement would revert: ' + String(e && (e.reason || e.errorName || e.message) || e).slice(0, 120)); }
+      return { ok: true, methode: 'transferWithAuthorization', args, from: a.from, montant: String(acc.amount), asset: deps.usdg };
+    });
   }
 
   async function suite(p, acc, pl, a, s) {
@@ -193,10 +278,9 @@ function cree(deps) {
       methode = 'settleWithPermit';
       args = [{ value: x.amount, deadline: x.deadline, r: sp.r, s: sp.s, v: sp.v }].concat(args);
     }
-    const [gp, gaz] = await Promise.all([deps.chaine.gazPrix(), deps.chaine.soldeGaz()]);
-    if (ethers.BigNumber.from(gaz).lt(ethers.BigNumber.from(gp).mul(GAZ_UNITES * 2))) return non('unexpected_verify_error', 'the settlement gas wallet is empty — try again later');
-    try { await deps.chaine.simule(methode, args); } catch (e) { return non('invalid_transaction_state', 'the settlement would revert: ' + String(e && (e.reason || e.message) || e).slice(0, 120)); }
-    return { ok: true, methode, args, from: a.from, montant: acc.amount };
+    if (!(await gazOk())) return non('unexpected_verify_error', 'the settlement gas wallet is empty — try again later');
+    try { await deps.chaine.simule(methode, args); } catch (e) { return non('invalid_transaction_state', 'the settlement would revert: ' + String(e && (e.reason || e.errorName || e.message) || e).slice(0, 120)); }
+    return { ok: true, methode, args, from: a.from, montant: String(acc.amount), asset: deps.asset };
   }
 
   /**
@@ -233,16 +317,22 @@ function cree(deps) {
         { 'payment-response': b64(reponse) });
     }
     MESURE.payes++;
-    if (reglement.gasUsed) { MESURE.gasUsed.push(Number(reglement.gasUsed)); if (MESURE.gasUsed.length > 100) MESURE.gasUsed.shift(); }
-    if (deps.journal) deps.journal({ t: maintenant(), outil, payer: v.from, montant: v.montant, transaction: reglement.hash, methode: v.methode, gasUsed: reglement.gasUsed || null });
-    return json(200, Object.assign({}, r, { x402: { transaction: reglement.hash, network: RESEAU, amount: v.montant, asset: deps.asset } }), { 'payment-response': b64(reponse) });
+    if (reglement.gasUsed) {
+      /* Le gaz réel, par méthode : settle, settleWithPermit et transferWithAuthorization ne coûtent pas pareil. */
+      const g = Number(reglement.gasUsed), l = (MESURE.gazParMethode[v.methode] = MESURE.gazParMethode[v.methode] || []);
+      MESURE.gasUsed.push(g); l.push(g);
+      if (MESURE.gasUsed.length > 100) MESURE.gasUsed.shift();
+      if (l.length > 100) l.shift();
+    }
+    if (deps.journal) deps.journal({ t: maintenant(), outil, payer: v.from, asset: v.asset, montant: v.montant, transaction: reglement.hash, methode: v.methode, gasUsed: reglement.gasUsed || null });
+    return json(200, Object.assign({}, r, { x402: { transaction: reglement.hash, network: RESEAU, amount: v.montant, asset: v.asset } }), { 'payment-response': b64(reponse) });
   }
 
   return { prix, exige, verifie, traite, MESURE };
 }
 
 /** Le lien réel avec Robinhood Chain (ethers v5). La clé ne sort jamais d'ici. */
-function chaineEthers({ rpc, cle, asset }) {
+function chaineEthers({ rpc, cle, asset, usdg }) {
   const p = new ethers.providers.JsonRpcProvider(rpc, CHAIN_ID);
   const w = new ethers.Wallet(cle, p);
   const jeton = new ethers.Contract(asset, ['function balanceOf(address) view returns (uint256)', 'function allowance(address,address) view returns (uint256)', 'function nonces(address) view returns (uint256)'], p);
@@ -251,8 +341,18 @@ function chaineEthers({ rpc, cle, asset }) {
     'function settle(((address token,uint256 amount) permitted,uint256 nonce,uint256 deadline) permit,address owner,(address to,uint256 validAfter) witness,bytes signature)',
     'function settleWithPermit((uint256 value,uint256 deadline,bytes32 r,bytes32 s,uint8 v) permit2612,((address token,uint256 amount) permitted,uint256 nonce,uint256 deadline) permit,address owner,(address to,uint256 validAfter) witness,bytes signature)',
   ], w);
+  /* L'USDG : transferWithAuthorization en v,r,s (la forme simulée sur la chaîne le 26 septembre 2026). */
+  const usdgC = new ethers.Contract(usdg || USDG, ['function balanceOf(address) view returns (uint256)',
+    'function authorizationState(address,bytes32) view returns (bool)',
+    'function transferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce,uint8 v,bytes32 r,bytes32 s)'], w);
+  /* ATTENTION, relevé le 26 septembre 2026 : `provider.call` brut d'ethers v5 rend
+     les données d'un revert COMME UN RÉSULTAT (l'USDG renvoyait 0x356680b7 sans
+     erreur). On ne simule donc que par `Contract.callStatic`, qui décode et lève. */
+  const contrat = (methode) => (methode === 'transferWithAuthorization' ? usdgC : proxy);
   return {
     porteGaz: w.address,
+    soldeUsdg: (a) => usdgC.balanceOf(a),
+    autorisationLibre: async (a, nonce) => !(await usdgC.authorizationState(a, nonce)),
     gazPrix: () => p.getGasPrice(),
     soldeGaz: () => p.getBalance(w.address),
     solde: (a) => jeton.balanceOf(a),
@@ -263,9 +363,9 @@ function chaineEthers({ rpc, cle, asset }) {
       const mot = await p2.nonceBitmap(a, n.shr(8));
       return mot.and(ethers.BigNumber.from(1).shl(n.and(255).toNumber())).isZero();
     },
-    simule: (methode, args) => proxy.callStatic[methode](...args),
+    simule: (methode, args) => contrat(methode).callStatic[methode](...args),
     regle: async (methode, args) => {
-      const tx = await proxy[methode](...args, { gasLimit: 300000 });
+      const tx = await contrat(methode)[methode](...args, { gasLimit: 300000 });
       /* Une transaction envoyée peut être passée même si l'attente échoue (RPC
          coupé) : on relit son reçu avant de conclure — sinon le payeur
          paierait sans recevoir le résultat. Un revert, lui, n'a rien pris. */
@@ -278,5 +378,5 @@ function chaineEthers({ rpc, cle, asset }) {
   };
 }
 
-module.exports = { cree, chaineEthers, domainePermit2, TYPES_PERMIT2, TYPES_2612, DOMAINE_JETON,
+module.exports = { cree, chaineEthers, domainePermit2, TYPES_PERMIT2, TYPES_2612, DOMAINE_JETON, USDG, DOMAINE_USDG, DECIMALES_USDG, TYPES_3009,
   X402_VERSION, CHAIN_ID, RESEAU, PERMIT2, PROXY, MIN_USD, GAZ_UNITES, DELAI_S, b64 };
