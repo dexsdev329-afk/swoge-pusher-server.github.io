@@ -25,6 +25,7 @@
 const AnthropicMod = require('@anthropic-ai/sdk');
 const Anthropic = AnthropicMod.default || AnthropicMod;
 const { RECHERCHE_MAX } = require('./studio_chat');
+const Pieces = require('./studio_pieces');
 
 const SYSTEME = [
   'You are SwoleMind, the AI assistant of SWOGE WORLD.',
@@ -67,7 +68,7 @@ function sourcesDe(content) {
  */
 async function repond({ m, messages, recherche, effort, surTexte, surReflexion, surRecherche }, deps) {
   const c = (deps && deps.client) || leClient();
-  const params = { model: m.api, max_tokens: m.maxTokens, system: SYSTEME, messages };
+  const params = { model: m.api, max_tokens: m.maxTokens, system: SYSTEME, messages: messages.map(Pieces.pourClaude) };
   if (effort) params.output_config = { effort };
   if (recherche) params.tools = [{ type: m.recherche, name: 'web_search', max_uses: RECHERCHE_MAX }];
   const stream = m.repli
@@ -95,4 +96,16 @@ async function repond({ m, messages, recherche, effort, surTexte, surReflexion, 
   };
 }
 
-module.exports = { repond, actif, sourcesDe, SYSTEME };
+/**
+ * Le compte EXACT des jetons d'entree d'une conversation (PDF et photos
+ * compris), avant de reserver : `messages.countTokens`, gratuit. Les jetons
+ * d'une page de PDF dependent de son contenu : aucune estimation ne vaut ce
+ * compte-la.
+ */
+async function compte({ m, messages }, deps) {
+  const c = (deps && deps.client) || leClient();
+  const r = await c.messages.countTokens({ model: m.api, system: SYSTEME, messages: messages.map(Pieces.pourClaude) });
+  return Number(r && r.input_tokens) || 0;
+}
+
+module.exports = { repond, compte, actif, sourcesDe, SYSTEME };

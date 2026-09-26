@@ -23,6 +23,7 @@
 
 const { SYSTEME } = require('./studio_claude');
 const Rech = require('./studio_recherche');
+const Pieces = require('./studio_pieces');
 
 const FOURNISSEURS = {
   openai: { base: () => process.env.OPENAI_BASE_URL || 'https://api.openai.com', cle: () => process.env.OPENAI_API_KEY || '' },
@@ -64,14 +65,15 @@ async function repond({ m, messages, recherche, effort, surTexte, surReflexion, 
       if (res.length) {
         sources = res.map((x) => ({ url: x.url, titre: x.titre }));
         const der = messages[messages.length - 1];
-        envoyes = messages.slice(0, -1).concat([{ role: 'user', content: der.content + '\n\n---\n' + Rech.contexte(res) }]);
+        envoyes = messages.slice(0, -1).concat([Object.assign({}, der, { content: der.content + '\n\n---\n' + Rech.contexte(res) })]);
       }
     } catch (e) { console.warn('[chat] recherche web ratee (' + String(e.message || e).slice(0, 80) + ') : reponse sans'); }
   }
   const corps = {
     model: m.api, stream: true, stream_options: { include_usage: true },
     max_completion_tokens: m.maxTokens,
-    messages: [{ role: 'system', content: SYSTEME }].concat(envoyes),
+    /* Une photo jointe devient une partie `image_url` (data URL) ; jamais de PDF ici. */
+    messages: [{ role: 'system', content: SYSTEME }].concat(envoyes.map(Pieces.pourCompat)),
   };
   if (effort && m.effort) corps.reasoning_effort = effort;
   if (surReflexion) surReflexion();

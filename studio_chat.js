@@ -101,6 +101,7 @@ const MARGE = () => Math.max(1, Number(process.env.STUDIO_MARGE || 1.5));
 const MIN_USD = 0.001;
 const Rech = require('./studio_recherche');   /* la recherche web des modeles sans outil (Perplexity) */
 const Jeton = require('./studio_jeton');       /* une adresse de jeton collee : marche, securite, colonie */
+const Pieces = require('./studio_pieces');     /* une photo ou un PDF joint a la question */
 
 function modele(id) { return MODELES.find((m) => m.id === id) || null; }
 
@@ -120,12 +121,16 @@ function coutUsd(m, usage) {
 
 /** Le pire cas d'une requête, en USD, AVANT marge. `fiches` : les adresses
  *  de jeton lues pour la question, chacune ajoutant JETONS_PAR_FICHE en entrée. */
-function pireCasUsd(m, messages, recherche, fiches) {
+function pireCasUsd(m, messages, recherche, fiches, entreeComptee) {
   const car = (messages || []).reduce((s, x) => s + String(x.content || '').length, 0);
   /* Perplexity : une seule requete, et au plus JETONS_CONTEXTE de resultats
      ajoutes a la question. Claude : jusqu'a RECHERCHE_MAX recherches. */
   const pplx = recherche && m.recherche === 'perplexity';
-  const entree = Math.ceil(car / 2) + SYSTEME_JETONS + (recherche ? (pplx ? Rech.JETONS_CONTEXTE : RECHERCHE_JETONS) : 0)
+  /* `entreeComptee` : le compte EXACT de l'entree (un PDF joint, compte par
+     Anthropic avant l'appel) remplace l'estimation du texte et des images. */
+  const base = Number.isFinite(entreeComptee) ? entreeComptee
+    : Math.ceil(car / 2) + SYSTEME_JETONS + Pieces.jetonsImages(messages);
+  const entree = base + (recherche ? (pplx ? Rech.JETONS_CONTEXTE : RECHERCHE_JETONS) : 0)
     + (Number(fiches) || 0) * Jeton.JETONS_PAR_FICHE;
   return entree * m.entree / 1e6 + m.maxTokens * m.sortie / 1e6
     + (recherche ? (pplx ? Rech.PRIX_USD : RECHERCHE_MAX * PRIX_RECHERCHE_USD) : 0);
@@ -139,7 +144,12 @@ function factureUsd(cout) { return Math.max(MIN_USD, cout * MARGE()); }
 function nettoie(messages) {
   const l = (Array.isArray(messages) ? messages : [])
     .filter((x) => x && (x.role === 'user' || x.role === 'assistant') && typeof x.content === 'string')
-    .map((x) => ({ role: x.role, content: x.content.trim().slice(0, MESSAGE_MAX_CAR) }))
+    .map((x) => {
+      const pieces = x.role === 'user' && Array.isArray(x.pieces) && x.pieces.length ? x.pieces : null;
+      /* Une photo seule, sans question : on la fait lire quand meme. */
+      const content = x.content.trim().slice(0, MESSAGE_MAX_CAR) || (pieces ? 'See the attached file.' : '');
+      return pieces ? { role: x.role, content, pieces } : { role: x.role, content };
+    })
     .filter((x) => x.content);
   const garde = [];
   let total = 0;
@@ -239,6 +249,8 @@ function catalogue(cours, cle) {
     modeles: MODELES.map((m) => ({
       id: m.id, nom: m.nom, note: m.note, fournisseur: m.fournisseur, nomFournisseur: NOMS_FOURNISSEURS[m.fournisseur],
       actif: !!a[m.fournisseur], effort: m.effort,
+      /* Ce que le modele sait lire en piece jointe : tous les photos, Claude seul les PDF. */
+      pieces: { images: true, pdf: m.fournisseur === 'anthropic' },
       recherche: !!m.recherche && (m.recherche !== 'perplexity' || !!a.perplexity),
       typiqueSwoge: enSwoge(factureUsd(typique(m))),
       maxSwoge: enSwoge(factureUsd(pireCasUsd(m, [{ content: 'x'.repeat(4000) }], !!m.recherche))),
@@ -262,13 +274,29 @@ async function repond(q, deps) {
   const m = modele(q.modele || DEFAUT);
   if (!m) return { ok: false, code: 400, raison: 'unknown model' };
   if (deps.actif && !deps.actif(m.fournisseur)) return { ok: false, code: 503, raison: m.nom + ' is not switched on yet — pick another model.' };
-  const messages = nettoie(q.messages);
+  /* Les pieces jointes, verifiees AVANT tout : forme, taille, dimensions. */
+  const vp = Pieces.verifie(q.messages);
+  if (vp.erreur) return { ok: false, code: 400, raison: vp.erreur };
+  const messages = nettoie(vp.messages);
   if (!messages) return { ok: false, code: 400, raison: 'empty question' };
+  const pdf = Pieces.aUnPdf(messages);
+  if (pdf && m.fournisseur !== 'anthropic') return { ok: false, code: 400, raison: 'PDFs are read by Claude models — pick Opus, Fable, Sonnet or Haiku.' };
   const recherche = !!q.recherche && !!m.recherche
     && (m.recherche !== 'perplexity' || !deps.actif || !!deps.actif('perplexity'));
   const effort = m.effort && EFFORTS.includes(q.effort) ? q.effort : null;
   if (EN_VOL.has(addr)) return { ok: false, code: 429, raison: 'too many answers at once — wait for one to finish' };
   if (!rythmeOk(addr, q.maintenant)) return { ok: false, code: 429, raison: 'too many questions — wait a minute' };
+
+  /* Un PDF : son cout depend de ses pages, qu'on ne sait pas compter ici. On
+     demande le compte EXACT a Anthropic (gratuit) et on reserve sur lui. */
+  let entreeComptee;
+  if (pdf) {
+    if (!deps.compte) return { ok: false, code: 503, raison: 'PDF reading is not switched on yet' };
+    try { entreeComptee = await deps.compte({ m, messages }); }
+    catch (e) { return { ok: false, code: 502, raison: 'could not read the PDF — you were not charged', detail: String(e && e.message || e).slice(0, 160) }; }
+    if (!(entreeComptee > 0)) return { ok: false, code: 502, raison: 'could not read the PDF — you were not charged' };
+    if (entreeComptee > Pieces.PDF_JETONS_MAX) return { ok: false, code: 413, raison: 'this PDF is too long for one question (~' + Math.round(entreeComptee / 1000) + 'k tokens, max ' + Pieces.PDF_JETONS_MAX / 1000 + 'k) — send fewer pages' };
+  }
 
   const cours = await deps.cours();
   if (!(cours > 0)) return { ok: false, code: 503, raison: 'the $SWOGE price is unavailable — try again shortly' };
@@ -276,7 +304,7 @@ async function repond(q, deps) {
   /* Une adresse de jeton dans la question : sa fiche (marche, securite,
      colonie) rejoint la question, et la reserve compte ses jetons. */
   const adresses = deps.jetons ? Jeton.adressesDe(messages[messages.length - 1].content) : [];
-  const reserveUsd = factureUsd(pireCasUsd(m, messages, recherche, adresses.length));
+  const reserveUsd = factureUsd(pireCasUsd(m, messages, recherche, adresses.length, entreeComptee));
   const reserveWei = studio.montantBaseDe(reserveUsd, cours, dec);
   if (!deps.solde.reserve(addr, reserveWei)) {
     return { ok: false, code: 402, raison: 'balance too low for this model',
@@ -292,7 +320,7 @@ async function repond(q, deps) {
       try { fiches = await deps.jetons(adresses); } catch (e) { fiches = []; }
       if (fiches.length) {
         const der = messages[messages.length - 1];
-        envoyes = messages.slice(0, -1).concat([{ role: 'user', content: der.content + '\n\n---\n' + Jeton.contexte(fiches) }]);
+        envoyes = messages.slice(0, -1).concat([Object.assign({}, der, { content: der.content + '\n\n---\n' + Jeton.contexte(fiches) })]);
       }
     }
     r = await deps.fournisseur({ m, messages: envoyes, recherche, effort,
@@ -334,5 +362,5 @@ async function repond(q, deps) {
 module.exports = {
   MODELES, DEFAUT, EFFORTS, modele, coutUsd, pireCasUsd, factureUsd, nettoie,
   coursPrudent, coursSwoge, catalogue, repond, MESURE, EN_VOL, RYTHME, COURS,
-  ENTREE_MAX_CAR, RECHERCHE_MAX, PRIX_RECHERCHE_USD,
+  ENTREE_MAX_CAR, RECHERCHE_MAX, PRIX_RECHERCHE_USD, SYSTEME_JETONS,
 };

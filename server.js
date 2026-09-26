@@ -2269,8 +2269,11 @@ const server = http.createServer(async (req, res) => {
     if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
     if (!chatActif('anthropic') && !chatActif('openai') && !chatActif('xai')) return json(503, { ok: false, raison: 'The AI provider key is not set on the server yet.' });
     let q;
-    try { q = JSON.parse((await corps(req, 256 * 1024)).toString('utf8') || '{}'); }
-    catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    /* 20 Mo : un PDF de 10 Mo en base64 (13,4 Mo) et quatre photos reduites
+       par la page. Lu APRES la session : un inconnu ne peut rien envoyer. */
+    try { q = JSON.parse((await corps(req, 20 * 1024 * 1024)).toString('utf8') || '{}'); }
+    catch (e) { return json(e && e.message === 'body too large' ? 413 : 400, { ok: false,
+      raison: e && e.message === 'body too large' ? 'attachments too large (max 20 MB per question)' : 'unreadable request' }); }
     res.writeHead(200, Object.assign({ 'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no' }, cors));
     const envoie = (type, d) => { try { res.write('event: ' + type + '\ndata: ' + JSON.stringify(d) + '\n\n'); } catch (e) { /* client parti */ } };
@@ -2287,6 +2290,8 @@ const server = http.createServer(async (req, res) => {
           regle: (a, rw, fw) => { const s = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s }); return s; },
         },
         fournisseur: (p) => (p.m.fournisseur === 'anthropic' ? studioClaude.repond(p) : studioCompat.repond(p)),
+        /* Un PDF joint : le compte exact de l'entree, demande a Anthropic avant de reserver. */
+        compte: (p) => studioClaude.compte(p),
         actif: chatActif,
         surTexte: (t) => { if (rid) reprises.ajoute(addr, rid, t); envoie('texte', { t }); },
         surReflexion: () => envoie('etape', { quoi: 'reflexion' }),
