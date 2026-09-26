@@ -1606,12 +1606,13 @@ const studio = require('./studio');
 const studioChat = require('./studio_chat');
 const studioJeton = require('./studio_jeton');
 const studioHisto = require('./studio_histo').cree();
+const studioAgent = require('./studio_agent');
+const economie = require('./economie');
 const studioClaude = require('./studio_claude');
 /* Le module des sessions JOUEUR, sous son propre nom : dans le gestionnaire
    HTTP, `session` désigne la session ADMIN (ligne `sessionValide`) et masque
    le module — `session.lire` y vaudrait null. */
 const sessionJoueur = require('./session');
-const economie = require('./economie');
 const studioMedia = require('./studio_media');   /* images et videos Grok Imagine, payees en $SWOGE */
 const studioXai = require('./studio_xai');
 const reprises = require('./reprises');
@@ -2246,6 +2247,79 @@ const server = http.createServer(async (req, res) => {
    *
    * LA RÉPONSE : un flux SSE (`texte`, `etape`, puis `fin` ou `erreur`) —
    * le joueur voit la réponse s'écrire, et le solde réglé arrive avec `fin`. */
+  /* ==================== SWOGEAGENTIC — UN AGENT AUX OUTILS DE SWOGE ====================
+   * Une page a part (swogeagentic.html). Meme session, meme facturation que le
+   * chat (studio_chat.repond : reserve du pire cas, cout reel, reste rendu),
+   * avec le pire cas de l'agent (plusieurs appels). Claude seul : c'est le
+   * fournisseur dont la boucle d'outils est ecrite et essayee ici. Les outils
+   * ne font que LIRE — voir studio_agent.js. */
+  if (path === '/studio/agent' || path === '/studio/agent/catalogue') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const rech = chatActif('perplexity');
+    if (path === '/studio/agent/catalogue') {
+      const cours = await studioChat.coursSwoge();
+      const enSwoge = (usd) => (cours > 0 ? Math.ceil(studioChat.factureUsd(usd) / cours) : null);
+      /* « Typique » : trois appels, une recherche, une reponse moyenne. */
+      const typique = (m) => (3 * 6000 * m.entree + 3 * 900 * m.sortie) / 1e6 + (rech ? 0.005 : 0);
+      return json(200, {
+        ouvert: chatActif('anthropic') && cours > 0, monnaie: '$SWOGE', coursUsd: cours || null, defaut: 'sonnet-5',
+        note: !chatActif('anthropic') ? 'The AI provider key is not set on the server yet.' : !(cours > 0) ? 'The $SWOGE price is unavailable right now.' : null,
+        etapesMax: studioAgent.ETAPES_MAX,
+        outils: studioAgent.definitions({ recherche: rech }).map((o) => ({ nom: o.name, description: o.description })),
+        modeles: studioChat.MODELES.filter((m) => m.fournisseur === 'anthropic').map((m) => ({ id: m.id, nom: m.nom, note: m.note,
+          typiqueSwoge: enSwoge(typique(m)), maxSwoge: enSwoge(studioAgent.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], rech)) })),
+      });
+    }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    if (!chatActif('anthropic')) return json(503, { ok: false, raison: 'The AI provider key is not set on the server yet.' });
+    let q;
+    try { q = JSON.parse((await corps(req, 256 * 1024)).toString('utf8') || '{}'); }
+    catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    const m = studioChat.modele(q.modele || 'sonnet-5');
+    if (!m || m.fournisseur !== 'anthropic') return json(400, { ok: false, raison: 'SwogeAgentic runs on Claude models — pick Opus, Fable, Sonnet or Haiku.' });
+    res.writeHead(200, Object.assign({ 'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no' }, cors));
+    const envoie = (type, d) => { try { res.write('event: ' + type + '\ndata: ' + JSON.stringify(d) + '\n\n'); } catch (e) { /* client parti */ } };
+    const rid = reprises.ridOk(q.rid) ? q.rid : null;
+    if (rid) reprises.note(addr, rid, { genre: 'chat', status: 'pending', texte: '' });
+    const src = {
+      recherche: rech, Jeton: studioJeton,
+      fiche: (a) => studioJeton.fiche(a, { scan: (y) => aiColonie.scanJeton(y) }),
+      vue: () => Object.assign({ pause: cfg.AI_COLONIE !== '1' }, aiColonie.vue()),
+      economie: () => economie.etat(), cours: () => studioChat.coursSwoge(),
+      cherche: (x) => studioRecherche.cherche(x), contexteRecherche: (r) => studioRecherche.contexte(r),
+    };
+    let r;
+    try {
+      r = await studioChat.repond({ addr, modele: m.id, messages: q.messages, recherche: false }, {
+        cours: () => studioChat.coursSwoge(),
+        solde: {
+          reserve: (a, w) => game.studioReserve(a, w),
+          regle: (a, rw, fw) => { const s2 = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s2 }); return s2; },
+        },
+        actif: chatActif,
+        pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, rech),
+        fournisseur: (p) => studioAgent.repond(p, { src }),
+        surTexte: (t) => { if (rid) reprises.ajoute(addr, rid, t); envoie('texte', { t }); },
+        surReflexion: () => envoie('etape', { quoi: 'reflexion' }),
+        surOutil: (o) => envoie('outil', o),
+        surResultat: (o) => envoie('resultat', o),
+      });
+    } catch (e) {
+      console.error('[agent] ' + (e && e.stack || e));
+      r = { ok: false, code: 500, raison: 'server error — you were not charged' };
+    }
+    if (rid) reprises.note(addr, rid, Object.assign({}, r, { genre: 'chat', status: r.ok ? 'done' : 'failed' }));
+    envoie(r.ok ? 'fin' : 'erreur', r);
+    return res.end();
+  }
+
   /* ==================== SWOLEMIND — L'HISTORIQUE PAR PORTEFEUILLE ====================
    * GET /studio/histo?depuis=<ms serveur> : ce qui a change ; PUT /studio/histo/<id> :
    * une conversation ; DELETE /studio/histo/<id>?maj= : une pierre tombale.

@@ -41,6 +41,7 @@ lance compat  "$SRV" node studio_compat.test.js   # le chat ChatGPT et Grok : re
 lance jeton   "$SRV" node studio_jeton.test.js    # une adresse de jeton dans le chat : piscine la plus profonde, GoPlus tri-etat, colonie avec effectifs
 lance pieces  "$SRV" node studio_pieces.test.js   # photo ou PDF joint : en-tetes lus, pire cas borne, PDF a Claude seul sur compte exact
 lance histo   "$SRV" node studio_histo.test.js    # historique par portefeuille : chacun son fichier, la plus recente gagne, jamais un vide sur un illisible
+lance agent   "$SRV" node studio_agent.test.js    # SwogeAgentic : boucle bornee, usage additionne, pire cas tenu, outils de lecture seulement
 lance studiomedia "$SRV" node studio_media.test.js   # Studio images/videos Grok Imagine : cout reel, tout rendu, proprietaire seul, bout en bout
 lance reprises "$SRV" node reprises.test.js   # une reponse retrouvee apres rechargement : par adresse de session seulement
 lance economie "$SRV" node economie.test.js   # la carte $SWOGE ECONOMY : offre, brule, coffre lus sur la chaine
@@ -58,6 +59,7 @@ lance scanpage "$SITE" node scan_page.test.js
 lance osintpage "$SITE" node osint_page.test.js
 lance studiopage "$SITE" node studio_page.test.js
 lance chatpage "$SITE" node chat_page.test.js   # SWOGE AI Chat : jeton et jamais adresse, texte echappe, 320 px
+lance agentpage "$SITE" node agent_page.test.js   # SwogeAgentic : chaque geste visible, echappe, jeton jamais adresse, reprise par rid
 lance ecopage "$SITE" node economie_page.test.js   # la carte $SWOGE ECONOMY et le whitepaper suivent /economie.json
 lance predictpage "$SITE" node predict_page.test.js
 # Elle criait dans le vide : 30 echecs sur 617, jamais lus, parce qu elle

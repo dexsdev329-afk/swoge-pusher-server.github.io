@@ -304,7 +304,10 @@ async function repond(q, deps) {
   /* Une adresse de jeton dans la question : sa fiche (marche, securite,
      colonie) rejoint la question, et la reserve compte ses jetons. */
   const adresses = deps.jetons ? Jeton.adressesDe(messages[messages.length - 1].content) : [];
-  const reserveUsd = factureUsd(pireCasUsd(m, messages, recherche, adresses.length, entreeComptee));
+  /* `deps.pireCas` : un fournisseur qui enchaine plusieurs appels (l'agent de
+     SwogeAgentic) donne SON pire cas ; la regle de la reserve ne change pas. */
+  const reserveUsd = factureUsd(deps.pireCas ? deps.pireCas(m, messages, recherche)
+    : pireCasUsd(m, messages, recherche, adresses.length, entreeComptee));
   const reserveWei = studio.montantBaseDe(reserveUsd, cours, dec);
   if (!deps.solde.reserve(addr, reserveWei)) {
     return { ok: false, code: 402, raison: 'balance too low for this model',
@@ -325,7 +328,8 @@ async function repond(q, deps) {
     }
     r = await deps.fournisseur({ m, messages: envoyes, recherche, effort,
       surTexte: deps.surTexte || (() => {}), surReflexion: deps.surReflexion || (() => {}),
-      surRecherche: deps.surRecherche || (() => {}) });
+      surRecherche: deps.surRecherche || (() => {}),
+      surOutil: deps.surOutil, surResultat: deps.surResultat });
   } catch (e) {
     /* Échec avant toute réponse facturable : on rend TOUT. */
     deps.solde.regle(addr, reserveWei, 0n);
@@ -349,7 +353,8 @@ async function repond(q, deps) {
   mesure(m.id, cout, facture, depasse);
   return {
     ok: true, texte: r.texte || '', sources: Jeton.sources(fiches).concat(r.sources || []), stop: r.stop || null,
-    jetons: fiches.map(Jeton.carte),
+    jetons: fiches.map(Jeton.carte).concat(r.jetons || []),
+    etapes: r.etapes || undefined,
     modele: m.id, servi: r.servi || m.api, recherche,
     factureSwoge: studio.formateBase(factureWei, dec), factureUsd: Number(facture.toFixed(5)),
     usage: { entree: (r.usage && r.usage.input_tokens) || 0, sortie: (r.usage && r.usage.output_tokens) || 0,
