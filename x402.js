@@ -124,6 +124,9 @@ function cree(deps) {
   const MESURE = { devis: 0, payes: 0, refuses: 0, echecsReglement: 0, gasUsed: [], gazParMethode: {} };
   let file = Promise.resolve();    /* un règlement à la fois : le portefeuille de gaz n'a qu'un nonce */
   const maintenant = () => (deps.maintenant ? deps.maintenant() : Date.now());
+  /* Une transaction du portefeuille de gaz à la fois — règlements ET caisse
+     (caisse.js) : un seul nonce. Une erreur ne bloque pas la suite de la file. */
+  function enFile(fn) { const p = file.then(() => fn()); file = p.catch(() => {}); return p; }
 
   /**
    * Le prix x402 d'un outil : prix + gaz, au moins MIN_USD. En unités atomiques
@@ -314,7 +317,7 @@ function cree(deps) {
       pris.delete(v.cleNonce);
       return json(r && r.code === 400 ? 400 : 502, { ok: false, raison: (r && r.raison) || 'the tool failed — nothing was charged', paye: false });
     }
-    const reglement = await (file = file.then(() => deps.chaine.regle(v.methode, v.args)).catch((e) => ({ ok: false, erreur: String(e && (e.reason || e.message) || e).slice(0, 160) })));
+    const reglement = await enFile(() => deps.chaine.regle(v.methode, v.args)).catch((e) => ({ ok: false, erreur: String(e && (e.reason || e.message) || e).slice(0, 160) }));
     const reponse = { success: !!reglement.ok, transaction: reglement.hash || '', network: RESEAU, payer: v.from };
     if (!reglement.ok) {
       MESURE.echecsReglement++;
@@ -334,7 +337,7 @@ function cree(deps) {
     return json(200, Object.assign({}, r, { x402: { transaction: reglement.hash, network: RESEAU, amount: v.montant, asset: v.asset } }), { 'payment-response': b64(reponse) });
   }
 
-  return { prix, exige, verifie, traite, MESURE };
+  return { prix, exige, verifie, traite, MESURE, enFile };
 }
 
 /** Le lien réel avec Robinhood Chain (ethers v5). La clé ne sort jamais d'ici. */
@@ -357,6 +360,9 @@ function chaineEthers({ rpc, cle, asset, usdg }) {
   const contrat = (methode) => (methode === 'transferWithAuthorization' ? usdgC : proxy);
   return {
     porteGaz: w.address,
+    /* La preuve de propriété, quand la caisse EST ce portefeuille (caisse.js) : signer l'origine. */
+    signe: (message) => w.signMessage(message),
+    wallet: w,
     soldeUsdg: (a) => usdgC.balanceOf(a),
     autorisationLibre: async (a, nonce) => !(await usdgC.authorizationState(a, nonce)),
     gazPrix: () => p.getGasPrice(),
@@ -371,7 +377,10 @@ function chaineEthers({ rpc, cle, asset, usdg }) {
     },
     simule: (methode, args) => contrat(methode).callStatic[methode](...args),
     regle: async (methode, args) => {
-      const tx = await contrat(methode)[methode](...args, { gasLimit: 300000 });
+      /* Le prix du gaz LU, +20 %, en transaction classique (règle du miroir, miroir.js
+         fraisGaz) : sans lui, ethers ajoute 1,5 gwei de pourboire sur une chaîne
+         relevée à ~0,028 gwei le 26 septembre 2026 — jusqu'à cinquante fois le prix. */
+      const tx = await contrat(methode)[methode](...args, { gasLimit: 300000, gasPrice: (await p.getGasPrice()).mul(12).div(10) });
       /* Une transaction envoyée peut être passée même si l'attente échoue (RPC
          coupé) : on relit son reçu avant de conclure — sinon le payeur
          paierait sans recevoir le résultat. Un revert, lui, n'a rien pris. */

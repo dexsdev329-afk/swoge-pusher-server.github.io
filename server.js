@@ -1705,9 +1705,15 @@ const x402 = () => {
   try { chaine = X.chaineEthers({ rpc: process.env.X402_RPC || cfg.RPC_URL, cle, asset: cfg.SWOGE_TOKEN, usdg }); }
   catch (e) { console.error('[x402] X402_CLE is not a usable private key — x402 stays off'); x402V = null; return x402V; }
   if (chaine.porteGaz.toLowerCase() === payTo.toLowerCase()) console.warn('[x402] X402_PAYTO is the gas wallet itself — use your treasury address');
+  /* ---- LA CAISSE AUTOMATIQUE (caisse.js ; decision du proprietaire, 26 septembre 2026) ----
+     X402_CAISSE=1 : les agents paient le portefeuille de GAZ (sa cle est ici :
+     c'est ce qui rend tout automatique), qui rachete 5 % en $SWOGE et verse tout
+     a la tresorerie (X402_PAYTO) chaque heure. Sans elle, ils paient la tresorerie. */
+  const enCaisse = process.env.X402_CAISSE === '1' && usdg;
+  const destinataire = enCaisse ? chaine.porteGaz : payTo;
   const JOURNAL = require('path').join(cfg.DATA_DIR, 'x402.jsonl');
   x402V = X.cree({
-    asset: cfg.SWOGE_TOKEN, usdg, payTo, chaine,
+    asset: cfg.SWOGE_TOKEN, usdg, payTo: destinataire, chaine,
     cours: () => studioChat.coursSwoge(),
     /* L'ETH en $ (pour le gaz), 60 s en cache ; STUDIO_DEX=0 (essais) : le reglage ETH_PRIX_USD, aucune lecture reseau. */
     ethUsd: async () => {
@@ -1722,10 +1728,24 @@ const x402 = () => {
   });
   x402V.porteGaz = chaine.porteGaz;
   x402V.soldeGaz = () => chaine.soldeGaz();
-  x402V.payTo = payTo;
+  x402V.payTo = destinataire;
+  x402V.tresor = payTo;
   x402V.usdg = usdg;
   x402V.journalFichier = JOURNAL;
-  console.log('[x402] on — payments to ' + payTo + ', gas paid by ' + chaine.porteGaz);
+  x402V.preuveAuto = null;
+  if (enCaisse) {
+    const K = require('./caisse');
+    const JC = require('path').join(cfg.DATA_DIR, 'caisse.jsonl');
+    x402V.caisse = K.cree({ chaine: K.chaineEthers({ wallet: chaine.wallet, routeur: K.ROUTEUR2 }), tresor: payTo, usdg, swoge: cfg.SWOGE_TOKEN,
+      weth: require('./cours_chaine').WETH, fichier: require('path').join(cfg.DATA_DIR, 'caisse.json'), enFile: x402V.enFile,
+      journal: (l) => fs.appendFile(JC, JSON.stringify(l) + '\n', () => {}) });
+    const tourne = () => x402V.caisse.tour().catch((e) => console.error('[caisse] ' + (e && e.message || e)));
+    setTimeout(tourne, Math.max(1000, Number(process.env.X402_CAISSE_PREMIER_MS || 120000))).unref();
+    setInterval(tourne, Math.max(60000, Number(process.env.X402_CAISSE_MS || 3600000))).unref();
+    /* La preuve de propriete : la caisse EST le payTo, le serveur signe l'origine lui-meme. */
+    chaine.signe(require('./decouverte').origine(MOI_URL)).then((sig) => { x402V.preuveAuto = sig; }).catch(() => {});
+    console.log('[x402] on — CAISSE: payments to the gas wallet ' + chaine.porteGaz + ', ' + Math.round(K.PART() * 100) + '% buys back $SWOGE, everything swept hourly to ' + payTo);
+  } else console.log('[x402] on — payments to ' + payTo + ', gas paid by ' + chaine.porteGaz);
   return x402V;
 };
 /* ---- SE FAIRE TROUVER (voir decouverte.js) ----
@@ -1750,7 +1770,7 @@ async function prixDecouverte() {
 }
 /* La preuve de propriete : posee par le proprietaire (X402_PREUVE, signature
    EIP-191 de l'origine par la tresorerie), verifiee ici, publiee seulement juste. */
-const preuvesX402 = () => (x402() ? require('./decouverte').preuvesValides(process.env.X402_PREUVE, require('./decouverte').origine(MOI_URL), x402().payTo) : []);
+const preuvesX402 = () => (x402() ? require('./decouverte').preuvesValides([process.env.X402_PREUVE, x402().preuveAuto].filter(Boolean).join(','), require('./decouverte').origine(MOI_URL), x402().payTo) : []);
 
 /* L'etat PUBLIC de x402 : reseau, jeton, tresorerie, adresse du portefeuille
    de gaz et son solde, compteurs. Jamais la cle. `detail` : les prix du moment
@@ -1762,7 +1782,7 @@ async function x402Etat(detail) {
   const assets = [];
   if (x.usdg) assets.push({ symbol: 'USDG', asset: x.usdg, decimals: X.DECIMALES_USDG, assetTransferMethod: 'eip3009', name: X.DOMAINE_USDG.name, version: X.DOMAINE_USDG.version });
   assets.push({ symbol: 'SWOGE', asset: cfg.SWOGE_TOKEN, decimals: 18, assetTransferMethod: 'permit2', name: X.DOMAINE_JETON.name, version: X.DOMAINE_JETON.version });
-  const e = { actif: true, x402Version: X.X402_VERSION, scheme: 'exact', network: X.RESEAU, asset: cfg.SWOGE_TOKEN, payTo: x.payTo, assets,
+  const e = { actif: true, x402Version: X.X402_VERSION, scheme: 'exact', network: X.RESEAU, asset: cfg.SWOGE_TOKEN, payTo: x.payTo, tresor: x.tresor, assets,
               assetTransferMethod: 'permit2', permit2: X.PERMIT2, proxy: X.PROXY, minimumUsd: X.MIN_USD, header: 'PAYMENT-SIGNATURE' };
   if (!detail) return e;
   const g = x.MESURE.gasUsed.slice().sort((a, b) => a - b);
@@ -1793,6 +1813,7 @@ async function x402Etat(detail) {
   const gazParMethode = {};
   for (const [m, l] of Object.entries(x.MESURE.gazParMethode)) gazParMethode[m] = { n: l.length, median: med(l) };
   return Object.assign(e, { porteGaz: x.porteGaz, soldeGazEth, outils, encaisse, gazParMethode,
+    caisse: x.caisse ? x.caisse.vue() : { actif: false },
     images: studioMedia.MESURE.horsSolde,
     mesure: { devis: x.MESURE.devis, payes: x.MESURE.payes, refuses: x.MESURE.refuses, echecsReglement: x.MESURE.echecsReglement,
               gasUsedN: g.length, gasUsedMedian: g.length ? g[Math.floor(g.length / 2)] : null, gazUnitesEstimees: X.GAZ_UNITES } });

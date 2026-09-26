@@ -49,6 +49,8 @@ lance agenticrte "$SRV" node agentic_route.test.js   # de bout en bout : vrai se
 lance x402    "$SRV" node x402.test.js    # payer sans compte : vraies signatures Permit2/EIP-2612, rejeu, montant exact, outil en panne → rien regle
 lance x402rte "$SRV" node x402_route.test.js   # x402 de bout en bout : vrai serveur, faux noeud qui decode settle, la cle de gaz jamais montree
 lance decouv  "$SRV" node decouverte.test.js   # se faire trouver : openapi.json, /.well-known/x402, preuve de propriete verifiee, fiche MCP au schema
+lance caisse  "$SRV" node caisse.test.js    # la caisse : 5 % rachetent du $SWOGE, jamais partage deux fois, tout a la tresorerie, jamais l ETH
+lance caisrte "$SRV" node x402_caisse_route.test.js   # mode caisse sur le vrai serveur : payTo = portefeuille de gaz, preuve signee par le serveur
 lance studiomedia "$SRV" node studio_media.test.js   # Studio images/videos Grok Imagine : cout reel, tout rendu, proprietaire seul, bout en bout
 lance comprend "$SRV" node studio_comprend.test.js   # image comprise : reference SWOGE, fil repris, reecriture facturee sous sa reserve
 lance reprises "$SRV" node reprises.test.js   # une reponse retrouvee apres rechargement : par adresse de session seulement

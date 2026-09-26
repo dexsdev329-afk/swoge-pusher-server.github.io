@@ -164,6 +164,7 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   eq(noeud.envoyees.length, 1, 'une transaction envoyee');
   const tx = noeud.envoyees[0], d = tx.decode;
   ok(tx.from === GAZ.address && tx.to === X.PROXY && tx.chainId === 4663, 'envoyee PAR le portefeuille de gaz, AU proxy canonique, sur la chaine 4663');
+  ok(!tx.type && !tx.maxFeePerGas && tx.gasPrice && tx.gasPrice.eq(28000000 * 12 / 10), 'au prix du gaz LU +20 % (0,0336 gwei), en transaction classique — pas les 1,5 gwei de pourboire par defaut d ethers');
   ok(d.name === 'settle' && d.args.owner === payeur.address && d.args.witness.to === TRESOR && d.args.permit.permitted.amount.toString() === acc.amount
      && d.args.permit.permitted.token === SWOGE && d.args.signature === signature, 'settle decode : owner = le payeur, to = la tresorerie, le montant du devis, sa signature');
   ok(noeud.appels.some((x) => x.to === X.PROXY.toLowerCase()), 'le reglement a ete simule (eth_call au proxy) avant d etre envoye');
