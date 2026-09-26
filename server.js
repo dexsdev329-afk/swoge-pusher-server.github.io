@@ -1609,7 +1609,9 @@ const studioClaude = require('./studio_claude');
    HTTP, `session` désigne la session ADMIN (ligne `sessionValide`) et masque
    le module — `session.lire` y vaudrait null. */
 const sessionJoueur = require('./session');
-const economie = require('./economie');   /* offre, brule, coffre : lus sur la chaine */
+const economie = require('./economie');
+const studioMedia = require('./studio_media');   /* images et videos Grok Imagine, payees en $SWOGE */
+const studioXai = require('./studio_xai');   /* offre, brule, coffre : lus sur la chaine */
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
 const predictServeur = require('./predict_serveur');   /* le releve papier partage de swoge_predict */
@@ -3423,6 +3425,55 @@ const server = http.createServer(async (req, res) => {
     else { xPost.reprend(); r = await xPost.tache({ force: true, signale }); }
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(r));
+  }
+
+  /* ---- STUDIO : IMAGES ET VIDEOS (Grok Imagine) ----
+     Meme regle que le chat : la session dit QUI paie (jamais le corps), le
+     serveur reserve, facture le cout reel rendu par xAI, rend le reste. Une
+     video se lance ici et se lit ici, par son proprietaire seulement. */
+  if (path === '/studio/media/catalogue' || path === '/studio/media/image' || path === '/studio/media/video'
+      || path.startsWith('/studio/media/video/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (path === '/studio/media/catalogue') {
+      const M = studioMedia.MESURE;
+      return json(200, Object.assign(studioMedia.catalogue(await studioChat.coursSwoge(), studioXai.actif()), {
+        mesure: { images: M.images, videos: M.videos, echecs: M.echecs, depassements: M.depassements, sansUsage: M.sansUsage,
+                  coutUsd: Number(M.coutUsd.toFixed(4)), factureUsd: Number(M.factureUsd.toFixed(4)) } }));
+    }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    if (path.startsWith('/studio/media/video/')) {
+      const r = studioMedia.etatVideo(decodeURIComponent(path.slice('/studio/media/video/'.length)), addr);
+      return json(r.ok ? 200 : r.code, r);
+    }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    if (!studioXai.actif()) return json(503, { ok: false, raison: 'Image and video generation is not switched on yet.' });
+    let q;
+    try { q = JSON.parse((await corps(req, 9 * 1024 * 1024)).toString('utf8') || '{}'); }
+    catch (e) { return json(400, { ok: false, raison: 'unreadable request (an attached image must stay under 6 MB)' }); }
+    const deps = {
+      cours: () => studioChat.coursSwoge(),
+      solde: {
+        reserve: (a, w) => game.studioReserve(a, w),
+        regle: (a, rw, fw) => { const s = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s }); return s; },
+      },
+      fournisseur: studioXai,
+    };
+    const base = { addr, modele: q.modele, prompt: q.prompt, format: q.format, image: q.image };
+    let r;
+    try {
+      r = path === '/studio/media/image'
+        ? await studioMedia.images(Object.assign(base, { n: q.n }), deps)
+        : await studioMedia.lanceVideo(Object.assign(base, { duree: q.duree, resolution: q.resolution }), deps);
+    } catch (e) {
+      console.error('[studio] ' + (e && e.stack || e));
+      r = { ok: false, code: 500, raison: 'server error — you were not charged' };
+    }
+    return json(r.ok ? 200 : (r.code || 500), r);
   }
 
   /* L'economie $SWOGE lue sur la chaine (offre, brule, coffre) : la carte de
