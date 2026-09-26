@@ -61,8 +61,15 @@ const x = require('./x_post');
   console.log('\n-- 3. midi et minuit a Paris, ete comme hiver --');
   {
     const H = ['12:00', '00:00'];
-    eq(x.env().heures.join(','), '00:00,02:00,04:00,06:00,08:00,10:00,12:00,14:00,16:00,18:00,20:00,22:00', 'par defaut : douze creneaux, toutes les 2 h');
-    eq(x.env().fuseau, 'Europe/Paris', 'a l heure de Paris');
+    /* Le 26 septembre 2026 : quatre creneaux, a l heure du public vise
+       (americain), au lieu de douze a l heure de Paris dont la moitie tombait
+       la nuit pour lui. */
+    eq(x.env().heures.join(','), '09:00,12:30,17:00,20:30', 'par defaut : quatre creneaux aux heures actives');
+    eq(x.env().fuseau, 'America/New_York', 'a l heure de New York');
+    const NY = x.env().heures;
+    eq(x.creneauDu(Date.parse('2026-09-28T13:00:00Z'), NY, 'America/New_York').cle, '2026-09-28#09:00', '9 h a New York en ete = 13 h UTC : le creneau du matin');
+    eq(x.creneauDu(Date.parse('2026-12-01T14:00:00Z'), NY, 'America/New_York').cle, '2026-12-01#09:00', 'en hiver, 9 h a New York = 14 h UTC : pas de recalcul a la main');
+    eq(x.creneauDu(Date.parse('2026-09-29T00:30:00Z'), NY, 'America/New_York').cle, '2026-09-28#20:30', '20 h 30 a New York tombe le lendemain en UTC : le creneau reste celui du soir, du bon jour');
     eq(x.creneauDu(Date.parse('2026-09-18T21:59:00Z'), H, 'Europe/Paris').cle, '2026-09-18#12:00', 'a 23 h 59 a Paris (ete), le creneau en cours est celui de midi');
     eq(x.creneauDu(Date.parse('2026-09-18T22:00:00Z'), H, 'Europe/Paris').cle, '2026-09-19#00:00', 'a minuit pile a Paris, c est le creneau de minuit du jour suivant');
     eq(x.creneauDu(Date.parse('2026-09-19T09:59:00Z'), H, 'Europe/Paris').cle, '2026-09-19#00:00', 'a 11 h 59, toujours celui de minuit — pas encore midi');
@@ -137,8 +144,18 @@ const x = require('./x_post');
     const avec = x.nettoie('To the moon $SWOGE 🚀', true);
     ok(/\nhttps:\/\/swoleeswoge\.dog$/.test(avec) && avec.length <= 280, 'avec X_LIEN, le lien du site est ajoute en derniere ligne');
     ok(x.RESERVE.every((t) => x.nettoie(t, false).length <= 280), 'les phrases de reserve passent les memes regles (le ticker n est plus force)');
+    /* La rotation exacte : le cashtag un creneau sur deux, le hashtag un sur trois. */
+    const NY = x.env().heures, tags = [];
+    for (const d of ['2026-09-27', '2026-09-28', '2026-09-29']) for (const h of NY) tags.push(x.etiquettes(d + '#' + h, NY));
+    eq(tags.filter((t) => t.ticker).length, 6, 'sur trois jours (douze posts), $SWOGE six fois — un sur deux');
+    eq(tags.filter((t) => t.hashtag).length, 4, 'et #RobinhoodChain quatre fois — un sur trois');
+    ok(tags.every((t, i) => i === 0 || t.ticker !== tags[i - 1].ticker), 'jamais deux posts d affilee avec (ou sans) le cashtag');
+    eq(x.nettoie('The #dog is #huge $SWOGE on #RobinhoodChain 🚀', false, { ticker: false, hashtag: false }), 'The dog is huge SWOGE on Robinhood Chain 🚀',
+       'hors rotation : le signe part, le mot reste, la phrase reste entiere ; aucun autre hashtag');
+    eq(x.nettoie('Big dog energy 🐕', false, { ticker: true, hashtag: true }), 'Big dog energy 🐕 $SWOGE #RobinhoodChain', 'dans la rotation : ajoutes si le modele les a oublies');
+    eq(x.nettoie('Stack $SWOGE on #RobinhoodChain 🐕', false, { ticker: true, hashtag: true }), 'Stack $SWOGE on #RobinhoodChain 🐕', 'et jamais en double quand il les a mis');
     const faits = x.faitsDuJour(Date.now());
-    ok(faits.length >= 5 && faits.some((f) => /SWOGE Bet/.test(f)) && faits.some((f) => /AI agent/.test(f)), 'les faits du jour parlent du site, et de l agent lui-meme');
+    ok(faits.length >= 5 && faits.some((f) => /SWOGE Bet/.test(f)) && faits.some((f) => /AI agent/.test(f)) && faits.some((f) => /Robinhood Chain/.test(f)), 'les faits du jour parlent du site, de l agent lui-meme, et de Robinhood Chain');
   }
 
   console.log('\n-- 5 bis. le journal du premier jour --');
@@ -156,7 +173,12 @@ const x = require('./x_post');
   console.log('\n-- 6. des tours complets, contre de faux serveurs --');
   {
     Object.assign(process.env, { X_CONSUMER_KEY: 'ck', X_CONSUMER_SECRET: 'cs', X_ACCESS_TOKEN: 'at', X_ACCESS_SECRET: 'as',
-                                 OPENAI_API_KEY: 'ok', ANTHROPIC_API_KEY: 'ak' });
+                                 OPENAI_API_KEY: 'ok', ANTHROPIC_API_KEY: 'ak',
+                                 /* Ce bloc essaie le TOUR (rattrapage, refus de X, image gardee), pas la
+                                    cadence : il garde son horaire a lui, douze creneaux a Paris, pour que
+                                    ses heures restent lisibles. La cadence par defaut est essayee en 3. */
+                                 X_HEURES: '00:00,02:00,04:00,06:00,08:00,10:00,12:00,14:00,16:00,18:00,20:00,22:00',
+                                 X_FUSEAU: 'Europe/Paris' });
     const appels = [];
     let refuseTweet = false; let nTexte = 0;
     const faux = async (url, o) => {
@@ -172,7 +194,7 @@ const x = require('./x_post');
     const MIDI = Date.parse('2026-09-19T10:00:00Z');       // midi a Paris
     /* A 11 h, le creneau en cours est celui de 10 h, jamais parti : le
        serveur le rattrape, c est voulu (un redeploiement a 10 h 30 ne doit pas
-       perdre le post de 10 h). Avec les douze creneaux par defaut (toutes les
+       perdre le post de 10 h). Avec les douze creneaux de ce bloc (toutes les
        2 h), 10 h est le dernier horaire passe avant 11 h. */
     let r = await x.tache({ maintenant: MIDI - 3600000, prendre: faux });
     eq(r.etat, 'poste', 'a 11 h, le creneau de 10 h n est pas parti : il part — un creneau manque se rattrape');
@@ -230,7 +252,12 @@ const x = require('./x_post');
        'signe en OAuth 1.0a, jeton du compte, nonce neuf');
     const tweet = appels.filter((a) => /2\/tweets/.test(a.u)).pop();
     eq(tweet.corps.media.media_ids.join(','), '777', 'le post attache l identifiant du media');
-    ok(/^Post number 2, one very buff dog\. \$SWOGE Bet is LIVE 🏟️🐕$/.test(tweet.corps.text), 'le texte est celui du modele, nettoye : guillemets et lien retires');
+    /* Le texte du modele, nettoye : guillemets et lien retires. Le ticker suit
+       la rotation du creneau de midi (garde ou ramene a « SWOGE ») : on
+       compare a ce que la rotation de CE creneau commande. */
+    const tg = x.etiquettes('2026-09-19#12:00', x.env().heures);
+    const attendu = 'Post number 2, one very buff dog. ' + (tg.ticker ? '$SWOGE' : 'SWOGE') + ' Bet is LIVE 🏟️🐕' + (tg.hashtag ? ' #RobinhoodChain' : '');
+    eq(tweet.corps.text, attendu, 'le texte est celui du modele, nettoye : guillemets et lien retires, etiquettes selon la rotation');
     ok(signale && signale.id === r.id && signale.url === 'https://x.com/SwoleDogeSwoge/status/' + r.id, 'et le Telegram est prevenu avec le lien du post');
 
     r = await x.tache({ maintenant: MIDI + 1800000, prendre: faux });

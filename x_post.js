@@ -9,6 +9,14 @@
  * et des images differents a chaque fois. » Porte a douze creneaux le
  * 24 septembre 2026 (toutes les 2 h, 00:00 a 22:00), a la demande du
  * proprietaire — vingt-quatre spammait trop.
+ * RAMENE A QUATRE, A L HEURE DE NEW YORK, le 26 septembre 2026 : « avant on
+ * faisait des centaines de vues » a deux par jour ; a douze, chaque post
+ * partage la meme poignee d abonnes, et la moitie des creneaux tombaient la
+ * nuit pour le public vise, americain. 09:00 / 12:30 / 17:00 / 20:30 heure de
+ * New York : debut de journee cote Est, dejeuner (9:30 cote Ouest), fin de
+ * journee, et le soir, quand le X crypto est le plus actif des deux cotes.
+ * Aucune mesure de vues n est disponible cote serveur (elles vivent dans X
+ * Analytics) : on comparera les vues moyennes par post sur une semaine.
  * A chaque creneau : une scene
  * tiree d une banque (jamais une des six dernieres), une image generee par
  * l API d images d OpenAI, un texte court ecrit par un modele sous un ANGLE
@@ -40,9 +48,9 @@
  *
  * ---- l heure ----
  *
- * Les creneaux sont donnes dans le fuseau du proprietaire (`X_FUSEAU`,
- * Europe/Paris) : toutes les 2 h, ces heures a Paris,
- * ete comme hiver, sans recalcul a la main au changement d heure.
+ * Les creneaux sont donnes dans le fuseau du PUBLIC (`X_FUSEAU`,
+ * America/New_York) : ces heures a New York, ete comme hiver, sans recalcul
+ * a la main au changement d heure americain.
  *
  * ---- l authentification ----
  *
@@ -68,8 +76,8 @@ function env() {
     ck: process.env.X_CONSUMER_KEY || '', cs: process.env.X_CONSUMER_SECRET || '',
     at: process.env.X_ACCESS_TOKEN || '', as: process.env.X_ACCESS_SECRET || '',
     openai: process.env.OPENAI_API_KEY || '', anthropic: process.env.ANTHROPIC_API_KEY || '',
-    heures: String(process.env.X_HEURES || process.env.X_HEURE || '00:00,02:00,04:00,06:00,08:00,10:00,12:00,14:00,16:00,18:00,20:00,22:00').split(',').map((h) => h.trim()).filter((h) => /^\d{1,2}:\d{2}$/.test(h)),
-    fuseau: process.env.X_FUSEAU || 'Europe/Paris',
+    heures: String(process.env.X_HEURES || process.env.X_HEURE || '09:00,12:30,17:00,20:30').split(',').map((h) => h.trim()).filter((h) => /^\d{1,2}:\d{2}$/.test(h)),
+    fuseau: process.env.X_FUSEAU || 'America/New_York',
     lien: process.env.X_LIEN === '1',
     qualite: process.env.X_QUALITE || 'high',
     modeleImage: process.env.X_MODELE_IMAGE || 'gpt-image-1.5',
@@ -299,7 +307,9 @@ function faitsDuJour(t) {
   faits.push('SWOGE Nexus: a 2.5D pixel world with an arcade, a casino, a cinema, SWOGE TV (285 free live channels) and a pet world');
   faits.push('SWOGE Wallet: multi-chain, Solana included, keys stay on your device');
   faits.push('SWOGE is a community-run memecoin (CTO) with a real product shipping every week');
-  faits.push('An AI agent writes, illustrates and posts on this X account by itself, twice a day');
+  faits.push('$SWOGE lives on Robinhood Chain (chain 4663), the new chain from Robinhood');
+  faits.push('SWOGE AI: a colony of 13 AI agents that scouts new Robinhood Chain tokens and paper-trades them on real prices, every trade public');
+  faits.push('An AI agent writes, illustrates and posts on this X account by itself, four times a day');
   return faits;
 }
 
@@ -328,10 +338,11 @@ const ANGLES = [
   { a: 'product flex: name ONE concrete thing from the facts and why it is cool, no list', produit: true },
   { a: 'teaser: hint at what is coming next without details, build curiosity', produit: true },
 ];
-const SYSTEME = `You write posts on X for SWOGE ($SWOGE), a community-run memecoin (CTO) whose mascot is a very buff Shiba Inu. The goal is viral, bullish, shareable posts.
+const SYSTEME = `You write posts on X for SWOGE ($SWOGE), a community-run memecoin (CTO) on Robinhood Chain whose mascot is a very buff Shiba Inu. The goal is viral, bullish, shareable posts.
+Audience: American crypto Twitter. Write in natural US English, with the humor and slang of US crypto X where it fits (never forced). Robinhood Chain is the hook Americans recognize: bring it up when it lands, never in every post.
 Voice: bullish, playful, meme energy, confident and fun, never desperate, never rude, never repetitive.
 MOST POSTS ARE PURE VIBES. You do NOT have to talk about the product. A post that lists features reads like a brochure and nobody shares a brochure. The ANGLE tells you which kind this one is: when it says NO PRODUCT, write pure meme and conviction and mention no feature, no number, no place, nothing that is being built — the facts are there only so you never contradict them. When the ANGLE asks for the product, name ONE thing and one only.
-Hard rules: English. Maximum 240 characters, and shorter is usually better. Do NOT force the ticker: MOST posts should NOT contain "$SWOGE" — use it only on the rare post where it truly lands, never as a reflex. 1 to 3 emojis. At most 2 hashtags. No links. No promises of returns, no "guaranteed", no price targets. Never invent a number. Do NOT reuse the opening words, the structure or the jokes of the previous posts you are shown. Mention today's image only if it lands naturally.
+Hard rules: English. Maximum 240 characters, and shorter is usually better. The request tells you, in its TICKER and HASHTAG lines, whether this post carries "$SWOGE" and "#RobinhoodChain": follow them exactly, and weave them in naturally rather than tacking them on. No other hashtag. 1 to 3 emojis. No links. No promises of returns, no "guaranteed", no price targets. Never invent a number. Do NOT reuse the opening words, the structure or the jokes of the previous posts you are shown. Mention today's image only if it lands naturally.
 Output only the post text, nothing else.`;
 
 /* Si le modele ne repond pas, on poste quand meme — avec une phrase de
@@ -354,12 +365,40 @@ function angleDe(a) {
   return x || { a: a || ANGLES[0].a, produit: false };
 }
 
+/* ---- LE TICKER ET LE HASHTAG, PAR ROTATION EXACTE ----
+ * Le 24 septembre, « $SWOGE » dans chaque post spammait : on l'avait retire
+ * partout. Mais sur le X crypto c'est le cashtag qui rend TROUVABLE, et
+ * « #RobinhoodChain » est ce que cherche un Americain curieux de la chaine.
+ * Decide le 26 septembre 2026 avec le proprietaire : le cashtag un creneau
+ * sur DEUX, le hashtag un sur TROIS. Le numero du creneau (jour × creneaux +
+ * rang) decide, pas le modele : laisse a lui-meme il le mettait partout ou
+ * nulle part. `nettoie` ajoute ce qui manque et neutralise ce qui est en trop. */
+function etiquettes(cle, heures) {
+  const m = /^(\d{4}-\d{2}-\d{2})#(\d{1,2}:\d{2})$/.exec(String(cle || ''));
+  let n;
+  if (m && (heures || []).indexOf(m[2]) >= 0) {
+    n = Math.floor(Date.parse(m[1] + 'T00:00:00Z') / 864e5) * heures.length + heures.indexOf(m[2]);
+  } else {
+    n = Number.parseInt(crypto.createHash('sha1').update(String(cle || '')).digest('hex').slice(0, 6), 16);
+  }
+  return { ticker: n % 2 === 0, hashtag: n % 3 === 0 };
+}
+
 /** Le texte, rendu presentable et dans les regles, quoi qu ait ecrit le modele. */
-function nettoie(brut, lien) {
+function nettoie(brut, lien, tags) {
   let t = String(brut || '').replace(/^["'\s]+|["'\s]+$/g, '').replace(/\s+\n/g, '\n').replace(/[ \t]+/g, ' ').trim();
   t = t.replace(/https?:\/\/\S+/gi, '').replace(/\s{2,}/g, ' ').trim();
-  /* On ne FORCE plus « $SWOGE » : l'avoir dans chaque post spammait (retire le
-     24 sept 2026, demande du proprietaire). Le modele le met quand ca colle. */
+  if (tags) {
+    /* En trop : on garde le mot, on retire le signe — « $SWOGE keeps shipping »
+       devient « SWOGE keeps shipping », la phrase reste entiere. */
+    if (!tags.ticker) t = t.replace(/\$SWOGE\b/gi, 'SWOGE');
+    if (!tags.hashtag) t = t.replace(/#RobinhoodChain\b/gi, 'Robinhood Chain');
+    t = t.replace(/#(?!RobinhoodChain\b)[A-Za-z]\w*/g, (h) => h.slice(1));   /* aucun autre hashtag */
+    const ajout = [];
+    if (tags.ticker && !/\$SWOGE\b/i.test(t)) ajout.push('$SWOGE');
+    if (tags.hashtag && !/#RobinhoodChain\b/i.test(t)) ajout.push('#RobinhoodChain');
+    if (ajout.length) t = t + ' ' + ajout.join(' ');
+  }
   const max = lien ? 280 - (LIEN.length + 1) : 280;
   if (t.length > max) {
     const coupe = (s, m) => { s = s.slice(0, m); return s.slice(0, Math.max(s.lastIndexOf(' '), m - 40)).trim(); };
@@ -379,13 +418,16 @@ async function ecritTexte(faits, o, prendre) {
   const f = prendre || fetch;
   const t = o.maintenant || Date.now();
   const jour = jourDe(t);
+  const tags = etiquettes(o.cle, e.heures);
   if (e.anthropic) {
     try {
       /* L'angle dit s'il a le droit de nommer quelque chose. Un post special
          (`o.sujet`) parle toujours de son sujet : c'est sa raison d'etre. */
       const ang = angleDe(o.angle);
       const produit = !!o.sujet || ang.produit;
-      const demande = [`Date: ${jour}`, `ANGLE: ${ang.a}${produit ? '' : ' — NO PRODUCT: mention nothing that is built, no feature, no number, no place'}`]
+      const demande = [`Date: ${jour}`, `ANGLE: ${ang.a}${produit ? '' : ' — NO PRODUCT: mention nothing that is built, no feature, no number, no place'}`,
+        `TICKER: ${tags.ticker ? 'include "$SWOGE" exactly once' : 'do NOT write "$SWOGE"'}`,
+        `HASHTAG: ${tags.hashtag ? 'include "#RobinhoodChain" exactly once' : 'no hashtag at all'}`]
         .concat(o.sujet ? [`Today's announcement (this is the subject of the post): ${o.sujet}`] : [])
         .concat([`Today's image: SWOGE ${o.scene.prompt}`,
                  produit ? `Facts:\n- ${faits.join('\n- ')}`
@@ -401,14 +443,14 @@ async function ecritTexte(faits, o, prendre) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       const brut = ((j.content || []).find((b) => b.type === 'text') || {}).text || '';
-      if (brut.trim()) return { texte: nettoie(brut, e.lien), via: 'modele' };
+      if (brut.trim()) return { texte: nettoie(brut, e.lien, tags), via: 'modele' };
       throw new Error('reponse vide');
     } catch (err) {
       console.error('[x] texte : le modele n a pas repondu (' + (err.message || err) + '), phrase de reserve');
     }
   }
   const i = Number.parseInt(crypto.createHash('sha1').update(String(o.cle || jour)).digest('hex').slice(0, 6), 16) % RESERVE.length;
-  return { texte: nettoie(RESERVE[i], e.lien), via: 'reserve' };
+  return { texte: nettoie(RESERVE[i], e.lien, tags), via: 'reserve' };
 }
 
 // ------------------------------------------------------------ l image
@@ -615,7 +657,7 @@ function planifie(signale) {
   return { arrete() { clearTimeout(premier); clearInterval(minuterie); } };
 }
 
-module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, RENDUS, NEGATIF, ANGLES, renduDe, sceneSuivante, promptImage, faitsDuJour,
+module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, RENDUS, NEGATIF, ANGLES, renduDe, sceneSuivante, promptImage, faitsDuJour, etiquettes,
                    nettoie, ecritTexte, genereImage, televerse, publie, tache, planifie, derniere, reprend,
                    heureLocale, creneauDu, jourDe, litJournal, dernieres, DOSSIER_IMAGES, RESERVE };
 
