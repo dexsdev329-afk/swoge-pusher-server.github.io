@@ -43,7 +43,13 @@ const cfg = require('./config');
 const FICHIER = path.join(cfg.DATA_DIR, 'reglages.json');
 
 /* n = nombre · b = booleen · s = chaine.  min/max bornent les nombres. */
+/* Une liste de canaux Telegram : « @canal », « t.me/canal » ou « canal », separes par des virgules. */
+const CANAL_TG = /^(@|(https?:\/\/)?(www\.)?t(elegram)?\.me\/(s\/)?)?[A-Za-z][A-Za-z0-9_]{3,31}\/?$/;
 const PERMISES = {
+  // ---- la colonie : ses sources ----
+  TG_SURV_CANAUX:         { t: 's', quoi: 'Canaux Telegram publics surveilles (separes par des virgules) — la colonie y lit les contrats Robinhood Chain',
+                            valide: (v) => String(v).split(',').map((x) => x.trim()).filter(Boolean).every((x) => CANAL_TG.test(x)) },
+
   // ---- la boutique et la collection ----
   RACHAT_BASE:            { t: 'n', min: 0,   max: 100000, quoi: 'Prix de rachat du commun (les autres en derivent)' },
   RACHAT_RECYCLE:         { t: 'b',                        quoi: 'L objet rachete retourne au coffre' },
@@ -163,6 +169,7 @@ function pose(cle, valeur) {
     v = (v === true || v === 'true' || v === '1' || v === 1);
   } else {
     v = String(v).slice(0, 200);
+    if (d.valide && !d.valide(v)) return { ok: false, error: 'invalid value' };
   }
 
   surcharges[cle] = v;

@@ -101,6 +101,8 @@ module.exports = {
   // ---- Chain ----
   RPC_URL: env('RPC_URL', 'https://rpc.mainnet.chain.robinhood.com'),
   CHAIN_ID: parseInt(env('CHAIN_ID', '4663'), 10),
+  /* Les canaux Telegram publics surveilles par la colonie (tg_canal.js) ; reglable a chaud. */
+  TG_SURV_CANAUX: env('TG_SURV_CANAUX', 'Exceptionalmemes'),
   SWOGE_TOKEN: env('SWOGE_TOKEN', '0x8a166Fb41Cd659a0a43396272FF73973Ce29F817'),
   VAULT_ADDRESS: env('VAULT_ADDRESS', ''), // set after deploying SwogePusherVault
   /* ---- LE COFFRE DES PARIS, EN $SWOGEBET ----

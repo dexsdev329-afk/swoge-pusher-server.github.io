@@ -8654,7 +8654,8 @@ async function rassemble() {
     noteService('telegram', erreurs.length === 0,
       erreurs.map((e) => e.canal + ': ' + e.message).join(' · ').slice(0, 60));
     let pris = 0;
-    for (const { addr } of adresses) {
+    for (const x of adresses) {
+      const { addr } = x;
       if (parAdresse.has(addr)) continue;
       if (pris >= TG_PAR_TOUR) break;
       const c = E.connus[addr];
@@ -8662,6 +8663,9 @@ async function rassemble() {
       if (c && Date.now() - (c.dernier || 0) < SURV_MIN_MS) continue;   /* deja juge, rien de neuf */
       const t = await jetonDepuisDex(addr, 'telegram');
       pris++; compte('telegram');
+      /* Le module retient ce qui n'est PAS sur Robinhood (plus redemande avant
+         six heures : c'etait 2 039 appels en cinq jours, releve du 26 septembre). */
+      tgCanal.note(addr, x, t && t.prix > 0 ? 'proposé' : 'hors robinhood');
       if (t && t.prix > 0) parAdresse.set(addr, t);
       await dors(250);
     }
@@ -9172,6 +9176,16 @@ function vue() {
     horizons: HORIZONS, horizonRef: HORIZON_REF,
     jalons: E.compteurs.jalons || 0,
     surveillance: surveilles(),
+    /* Les canaux Telegram surveilles : ce qu'on y lit, ce qu'on en tire, et le
+       verdict de la colonie sur chaque jeton propose (sa memoire, rien d'autre). */
+    telegram: (() => {
+      const v = tgCanal.vue();
+      v.trouvailles = v.trouvailles.map((x) => {
+        const c = E.connus[x.addr];
+        return Object.assign({}, x, c ? { sym: c.sym || null, verdict: c.verdict || null, note: c.note, liq: c.liq || 0 } : {});
+      });
+      return v;
+    })(),
     connus: Object.keys(E.connus).length,
     bannis: Object.keys(E.connus).filter((k) => E.connus[k].permanent).length,
     compteurs: E.compteurs,
