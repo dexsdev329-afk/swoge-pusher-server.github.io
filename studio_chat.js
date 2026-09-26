@@ -176,7 +176,9 @@ function coursPrudent(dernier, hist) {
   if (!(dernier > 0)) return h.length ? mediane(h) : null;
   return h.length ? Math.min(dernier, mediane(h)) : dernier;
 }
-async function coursSwoge(prendre, maintenant) {
+/* Le lecteur de la chaine, cree a la premiere lecture de secours (voir cours_chaine.js). */
+let litChaine = null;
+async function coursSwoge(prendre, maintenant, lit) {
   const t = maintenant || Date.now();
   if (COURS.v !== null && t - COURS.t < COURS_TTL_MS) return COURS.v;
   let lu = null;
@@ -191,7 +193,18 @@ async function coursSwoge(prendre, maintenant) {
       .sort((a, b) => ((b.liquidity && b.liquidity.usd) || 0) - ((a.liquidity && a.liquidity.usd) || 0));
     const v = p[0] ? Number(p[0].priceUsd) : NaN;
     if (v > 0) lu = v;
-  } catch (e) { /* la lecture ratée retombe sur l'historique ou le réglage */ }
+  } catch (e) { /* la lecture ratée retombe sur la chaîne, l'historique ou le réglage */ }
+  /* ---- DEXSCREENER SE TAIT : LA PISCINE, SUR LA CHAÎNE (26 septembre 2026) ----
+   * Voir cours_chaine.js : DexScreener rendait `pairs: null` pour le vrai
+   * $SWOGE, et le chat se fermait faute de cours. La piscine connue, lue par
+   * son adresse, donne le prix ; `coursPrudent` le borne comme l'autre. */
+  if (lu === null && process.env.STUDIO_DEX !== '0') try {
+    const CC = require('./cours_chaine');
+    if (!lit && !litChaine) litChaine = CC.lecteurEthers(config.RPC_URL, config.CHAIN_ID);
+    const v = await CC.cours({ lit: lit || litChaine, prendre, pool: process.env.SWOGE_POOL || CC.POOL, swoge: config.SWOGE_TOKEN });
+    if (v > 0) { lu = v; COURS.source = 'chaine'; }
+  } catch (e) { /* la chaîne muette aussi : l'historique ou le réglage */ }
+  else if (lu !== null) COURS.source = 'dexscreener';
   if (lu !== null) { COURS.hist.push(lu); if (COURS.hist.length > 20) COURS.hist.shift(); }
   const v = coursPrudent(lu, COURS.hist) || studio.prixSwogeUsd();
   COURS.t = t; COURS.v = v || null;

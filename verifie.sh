@@ -37,6 +37,7 @@ lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route pu
 lance osintv2 "$SRV" node osint_v2.test.js   # un vrai serveur : la route v2, exports, historique
 lance studio  "$SRV" node studio.test.js   # le paiement : double depense, fausse confirmation
 lance studiochat "$SRV" node studio_chat.test.js   # SWOGE AI Chat : jamais sous le cout, tout rendu si le fournisseur echoue, bout en bout
+lance courschaine "$SRV" node cours_chaine.test.js   # cours $SWOGE sur la chaine quand DexScreener se tait : piscine connue, clone refuse, pompe sans effet
 lance compat  "$SRV" node studio_compat.test.js   # le chat ChatGPT et Grok : requete conforme, usage lu, cout exact xAI, 503 sans cle
 lance jeton   "$SRV" node studio_jeton.test.js    # une adresse de jeton dans le chat : piscine la plus profonde, GoPlus tri-etat, colonie avec effectifs
 lance pieces  "$SRV" node studio_pieces.test.js   # photo ou PDF joint : en-tetes lus, pire cas borne, PDF a Claude seul sur compte exact
