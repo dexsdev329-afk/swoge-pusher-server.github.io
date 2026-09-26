@@ -30,7 +30,15 @@ const Chat = require('./studio_chat');
 const Agent = require('./studio_agent');
 const Rech = require('./studio_recherche');
 
-const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0.001 };
+const Media = require('./studio_media');
+
+/* Ajoutes le 26 septembre 2026 (etape 3) : les lancements du moment, le
+   renseignement sur un lanceur, l'OSINT d'infrastructure — memes reperes de
+   prix (lire nos propres donnees ne nous coute rien ; l'OSINT interroge des
+   services tiers, d'ou un prix plus haut). Prix de depart, pas des mesures. */
+const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0.001,
+  new_launches: 0.005, wallet_intel: 0.02, osint_lookup: 0.02 };
+const VARIABLES = ['ask_agent', 'generate_image'];
 const APPELS_PAR_MINUTE = 60;
 const TACHE_MAX_CAR = 4000;
 
@@ -49,6 +57,10 @@ function definitions(actifs) {
   base.push({ name: 'ask_agent', description: 'Give a whole task to SwogeAgentic (a Claude agent that chains the tools above and answers with the numbers it read, with sources). Billed at its real cost, up to the quoted maximum. Takes 10 to 60 seconds.',
     inputSchema: { type: 'object', properties: { task: { type: 'string', description: 'what you want researched, in any language' },
       model: { type: 'string', enum: Chat.MODELES.filter((m) => m.fournisseur === 'anthropic').map((m) => m.id), description: 'optional Claude model (default sonnet-5)' } }, required: ['task'] } });
+  base.push({ name: 'generate_image', description: 'Create an image with Grok Imagine or ChatGPT Image. A prompt that names SWOGE is drawn from the official SWOGE character. Billed at its real cost, up to the quoted maximum. Returns image URLs.',
+    inputSchema: { type: 'object', properties: { prompt: { type: 'string', description: 'what to draw, in any language' },
+      provider: { type: 'string', enum: ['grok', 'openai'], description: 'grok (Grok Imagine, default) or openai (ChatGPT Image)' },
+      count: { type: 'integer', enum: [1, 2, 4], description: 'how many images (default 1)' } }, required: ['prompt'] } });
   return base;
 }
 
@@ -59,6 +71,12 @@ function entreeInvalide(outil, a) {
   if (outil === 'web_search' && !String(a.query || '').trim()) return 'query is required';
   if (outil === 'ask_agent' && !String(a.task || '').trim()) return 'task is required';
   if (outil === 'ask_agent' && String(a.task).length > TACHE_MAX_CAR) return 'task is too long (max ' + TACHE_MAX_CAR + ' characters)';
+  if (outil === 'generate_image' && !String(a.prompt || '').trim()) return 'prompt is required';
+  if (outil === 'generate_image' && String(a.prompt).length > TACHE_MAX_CAR) return 'prompt is too long (max ' + TACHE_MAX_CAR + ' characters)';
+  if (outil === 'generate_image' && a.provider !== undefined && !['grok', 'openai'].includes(a.provider)) return 'provider must be grok or openai';
+  if (outil === 'generate_image' && a.count !== undefined && ![1, 2, 4].includes(Number(a.count))) return 'count must be 1, 2 or 4';
+  if ((outil === 'wallet_intel') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
+  if (outil === 'osint_lookup' && !String(a.target || '').trim()) return 'target is required';
   return null;
 }
 
@@ -89,6 +107,10 @@ function cree(deps) {
     const act = deps.actifs ? deps.actifs() : {};
     return { ok: true, monnaie: '$SWOGE', coursUsd: cours || null,
       outils: definitions(act).map((d) => {
+        if (d.name === 'generate_image') {
+          const max = Media.pireCasImageUsd('openai', 'qualite', 1);
+          return Object.assign({}, d, { prix: { variable: true, maxUsd: Number(max.toFixed(4)), maxSwoge: enSwoge(max), note: 'real cost, up to this maximum for one ChatGPT Image (Grok Imagine costs less)' } });
+        }
         if (d.name === 'ask_agent') {
           const m = Chat.modele('sonnet-5');
           const max = Chat.factureUsd(Agent.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], !!act.recherche));
@@ -111,6 +133,24 @@ function cree(deps) {
     if (inv) return { ok: false, code: 400, raison: inv, facture: null };
     const cours = await deps.cours();
     if (!(cours > 0)) return { ok: false, code: 503, raison: 'the $SWOGE price is unavailable — try again shortly' };
+
+    if (outil === 'generate_image') {
+      const fournisseur = args.provider === 'openai' ? 'openai' : 'grok', nb = Number(args.count || 1);
+      const maxUsd = Media.pireCasImageUsd(fournisseur, 'qualite', nb);
+      const maxSwoge = studio.formateBase(studio.montantBaseDe(maxUsd, cours, dec), dec);
+      if (devis) return { ok: true, outil, devis: { variable: true, maxSwoge, maxUsd: Number(maxUsd.toFixed(4)) } };
+      if (!deps.cles.sousPlafond(cle.h, Number(maxSwoge))) return { ok: false, code: 402, raison: 'this key\'s daily cap does not leave room for this image (up to ' + maxSwoge + ' $SWOGE)' };
+      if (!rythmeOk(cle.h)) return { ok: false, code: 429, raison: 'too many calls — max ' + APPELS_PAR_MINUTE + ' per minute per key' };
+      if (!deps.image) return { ok: false, code: 503, raison: 'image generation is not switched on yet' };
+      const r = await deps.image({ addr: cle.addr, prompt: String(args.prompt), fournisseur, n: nb });
+      if (!r || !r.ok) return { ok: false, code: (r && r.code) || 502, raison: (r && r.raison) || 'the image provider failed — you were not charged' };
+      const swoge = String(r.factureSwoge);
+      const recu = crypto.randomBytes(8).toString('hex');
+      deps.cles.depense(cle.h, Number(swoge), { id: recu, outil, swoge, usd: r.factureUsd });
+      const urls = (r.urls || []).map((u) => (deps.urlPublique ? deps.urlPublique(u) : u));
+      return { ok: true, outil, resultat: { images: urls, provider: fournisseur, understoodAs: r.compris || null, reference: r.reference || null },
+               texte: 'Images:\n' + urls.join('\n') + (r.compris ? '\nUnderstood as: ' + r.compris : ''), facture: { swoge, usd: r.factureUsd }, solde: r.solde, recu };
+    }
 
     if (outil === 'ask_agent') {
       const m = Chat.modele(args.model || 'sonnet-5');
@@ -150,4 +190,4 @@ function cree(deps) {
   return { catalogue, appelle };
 }
 
-module.exports = { cree, definitions, prixUsd, entreeInvalide, PRIX_DEFAUT, APPELS_PAR_MINUTE };
+module.exports = { cree, definitions, prixUsd, entreeInvalide, PRIX_DEFAUT, VARIABLES, APPELS_PAR_MINUTE };

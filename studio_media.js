@@ -165,6 +165,31 @@ async function reserve(deps, addr, usd) {
   return { cours, wei };
 }
 
+/**
+ * Le prix « liste » et la réserve (pire cas, AVANT marge) d'une demande
+ * d'image. Une seule fonction : la demande elle-même et le devis que l'API
+ * des agents annonce avant de débiter (agentic.js) lisent le même calcul.
+ */
+function coutsImage(fid, m, n, avecImage, reecrit) {
+  let listeUsd, reserveUsd;
+  if (fid === 'openai') {
+    const p = prixOpenai();
+    listeUsd = (n * OPENAI_MESURE_SORTIE * p.o + OPENAI_RESERVE_TEXTE * p.t + (avecImage ? OPENAI_RESERVE_ENTREE * p.i : 0)) / 1e6;
+    reserveUsd = (n * OPENAI_RESERVE_SORTIE * p.o + OPENAI_RESERVE_TEXTE * p.t + (avecImage ? OPENAI_RESERVE_ENTREE * p.i : 0)) / 1e6;
+  } else {
+    listeUsd = m.usd * (n + (avecImage ? 1 : 0));
+    reserveUsd = m.usd * n * RESERVE_X + (avecImage ? m.usd * RESERVE_X : 0);
+  }
+  if (reecrit) reserveUsd += Comp.RESERVE_USD;
+  return { listeUsd, reserveUsd };
+}
+/** Le pire cas facturé d'une demande d'image (marge comprise), pour un devis : avec image de départ et réécriture. */
+function pireCasImageUsd(fournisseur, modele, n) {
+  const fid = fournisseur === 'openai' ? 'openai' : 'grok';
+  const m = IMAGE.find((x) => x.fournisseur === fid && x.id === modele) || IMAGE.find((x) => x.fournisseur === fid);
+  return factureUsd(coutsImage(fid, m, NOMBRES.includes(Number(n)) ? Number(n) : 1, true, true).reserveUsd);
+}
+
 /** Des images. q = { addr, modele, prompt, n, format, image } */
 async function images(q, deps) {
   const addr = q && q.addr;
@@ -189,16 +214,7 @@ async function images(q, deps) {
   const refSwoge = !image && deps.reference && Comp.parleDeSwoge(prompt, contexte) ? await deps.reference() : null;
   const envoyee = image || refSwoge || null;
   const reecrit = !!(deps.comprend && contexte.length);
-  let listeUsd, reserveUsd;
-  if (fid === 'openai') {
-    const p = prixOpenai();
-    listeUsd = (n * OPENAI_MESURE_SORTIE * p.o + OPENAI_RESERVE_TEXTE * p.t + (envoyee ? OPENAI_RESERVE_ENTREE * p.i : 0)) / 1e6;
-    reserveUsd = (n * OPENAI_RESERVE_SORTIE * p.o + OPENAI_RESERVE_TEXTE * p.t + (envoyee ? OPENAI_RESERVE_ENTREE * p.i : 0)) / 1e6;
-  } else {
-    listeUsd = m.usd * (n + (envoyee ? 1 : 0));
-    reserveUsd = m.usd * n * RESERVE_X + (envoyee ? m.usd * RESERVE_X : 0);
-  }
-  if (reecrit) reserveUsd += Comp.RESERVE_USD;
+  const { listeUsd, reserveUsd } = coutsImage(fid, m, n, !!envoyee, reecrit);
   const r = await reserve(deps, addr, reserveUsd);
   if (r.erreur) return r.erreur;
   EN_VOL.add(addr);
@@ -302,5 +318,5 @@ function etatVideo(id, addr) {
            solde: j.solde, raison: j.raison };
 }
 
-module.exports = { FOURNISSEURS_IMAGE, PRIX_OPENAI, coutOpenai, modeleOpenai, IMAGE, VIDEO, FORMATS_IMAGE, FORMATS_VIDEO, NOMBRES, DUREES, RESOLUTIONS, RESERVE_X,
+module.exports = { pireCasImageUsd, coutsImage, FOURNISSEURS_IMAGE, PRIX_OPENAI, coutOpenai, modeleOpenai, IMAGE, VIDEO, FORMATS_IMAGE, FORMATS_VIDEO, NOMBRES, DUREES, RESOLUTIONS, RESERVE_X,
                    MESURE, JOBS, EN_VOL, RYTHME, catalogue, images, lanceVideo, avance, etatVideo, imageJointe, coutDe };

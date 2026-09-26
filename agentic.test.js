@@ -40,8 +40,11 @@ const outils = {
   swoge_economy: async () => ({ erreur: 'rpc down' }),
   web_search: async () => ({ texte: 'RESULTS', sources: [{ url: 'https://n.example' }], recherche: 1 }),
 };
+let imageAppele = null;
 const api = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () => ({ recherche: true }),
-  agent: async (q) => { agentAppele = q; return { ok: true, texte: 'Answer.', sources: [], factureSwoge: '321.5', factureUsd: 0.009, solde: '999', etapes: 3 }; } });
+  agent: async (q) => { agentAppele = q; return { ok: true, texte: 'Answer.', sources: [], factureSwoge: '321.5', factureUsd: 0.009, solde: '999', etapes: 3 }; },
+  image: async (q) => { imageAppele = q; return { ok: true, urls: ['/studio/media/fichier/' + 'a'.repeat(48) + '.jpg', 'https://imgen.x.ai/b.png'], factureSwoge: '4284.18', factureUsd: 0.12, solde: '900', compris: 'SWOGE on a boat', reference: 'swoge' }; },
+  urlPublique: (u) => (/^\/studio\//.test(u) ? 'https://srv.example' + u : u) });
 
 (async () => {
   console.log('-- 1. les cles --');
@@ -109,6 +112,21 @@ const api = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () =
   ok((await api.appelle({ cle: cp, outil: 'ask_agent', args: { task: 'x' } })).code === 402, 'une cle dont le plafond ne couvre pas le maximum de la tache est refusee avant de lancer l agent');
   ok((await api.appelle({ cle, outil: 'ask_agent', args: { task: 'x', model: 'gpt-6-sol' } })).code === 400, 'ask_agent ne tourne que sur Claude');
 
+  /* Les outils ajoutes le 26 septembre : prix, entrees refusees avant debit, image au reel. */
+  ok(cat.outils.find((o) => o.name === 'new_launches').prix.usd === 0.005 && cat.outils.find((o) => o.name === 'wallet_intel').prix.usd === 0.02 && cat.outils.find((o) => o.name === 'osint_lookup').prix.usd === 0.02,
+     'lancements 0,005 $, lanceur 0,02 $, OSINT 0,02 $ (prix de depart)');
+  const nReg2 = sol.regles.length;
+  ok((await api.appelle({ cle, outil: 'wallet_intel', args: { address: 'x' } })).code === 400 && (await api.appelle({ cle, outil: 'generate_image', args: { prompt: 'x', count: 3 } })).code === 400
+     && sol.regles.length === nReg2, 'une entree invalide (adresse, nombre d images) est refusee avant tout debit');
+  const iq = await api.appelle({ cle, outil: 'generate_image', args: { prompt: 'swoge on a boat', provider: 'openai' }, devis: true });
+  ok(iq.ok && iq.devis.variable && Number(iq.devis.maxSwoge) > 0 && imageAppele === null, 'le devis d une image : son maximum, sans rien generer');
+  const im = await api.appelle({ cle, outil: 'generate_image', args: { prompt: 'swoge on a boat', count: 2 } });
+  ok(im.ok && imageAppele.addr === ADDR && imageAppele.fournisseur === 'grok' && imageAppele.n === 2, 'l image part au nom de l adresse de la cle, Grok par defaut, le nombre demande');
+  ok(im.resultat.images[0] === 'https://srv.example/studio/media/fichier/' + 'a'.repeat(48) + '.jpg' && im.resultat.understoodAs === 'SWOGE on a boat', 'une image rangee chez nous revient en adresse ABSOLUE, avec la demande comprise');
+  ok(im.facture.swoge === '4284.18' && cles.recus(ADDR)[0].outil === 'generate_image', 'facturee au reel, avec son recu');
+  const petite2 = cles.resout(cles.nouvelle(AUTRE, 'mini', 50).cle);
+  ok((await api.appelle({ cle: petite2, outil: 'generate_image', args: { prompt: 'x' } })).code === 402, 'un plafond qui ne couvre pas le maximum de l image : refuse avant de generer');
+
   console.log('\n-- 3. MCP, epoque heritee (initialize) --');
   const deps = { agentic: api, actifs: () => ({ recherche: true }) };
   const post = (corps, entetes, c) => MCP.traite({ methode: 'POST', entetes: entetes || {}, corps: JSON.stringify(corps), cle: c === undefined ? cle : c, origines: ['https://claude.ai'] }, deps);
@@ -120,7 +138,7 @@ const api = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () =
   ok(!init.entetes['mcp-session-id'], 'aucun identifiant de session emis');
   eq((await post({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202, 'une notification : 202 sans corps');
   const tl = lit(await post({ jsonrpc: '2.0', id: 3, method: 'tools/list' })).result.tools;
-  ok(tl.length === 5 && tl.every((x) => x.inputSchema && x.inputSchema.type === 'object' && x.annotations.readOnlyHint === true), 'tools/list : 5 outils, schemas objets, marques lecture seule');
+  ok(tl.length === A.definitions({ recherche: true }).length && tl.every((x) => x.inputSchema && x.inputSchema.type === 'object' && x.annotations.readOnlyHint === true), 'tools/list : tous les outils du catalogue, schemas objets, marques lecture seule');
   ok(tl.every((x) => x.inputSchema.properties.quote), 'chaque outil accepte « quote » pour connaitre son prix');
   const tc = lit(await post({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'scan_token', arguments: { address: '0x' + '4'.repeat(40) } } })).result;
   ok(tc.isError === false && /Token 0x4444/.test(tc.content[0].text) && /billed .* \$SWOGE/.test(tc.content[0].text) && tc.structuredContent.receipt, 'tools/call : le texte pour le modele, la facture et le recu');
@@ -140,7 +158,7 @@ const api = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () =
   ok(disc.status === 200 && dr.resultType === 'complete' && dr.supportedVersions[0] === '2026-07-28' && dr.supportedVersions.includes('2025-11-25') && dr._meta['io.modelcontextprotocol/serverInfo'].name === 'swogeagentic',
      'server/discover : versions servies (les deux epoques), capacites, identite dans _meta');
   const ml = lit(await post({ jsonrpc: '2.0', id: 9, method: 'tools/list', params: { _meta: meta } }, H('tools/list'))).result;
-  ok(ml.resultType === 'complete' && ml.tools.length === 5, 'tools/list moderne');
+  ok(ml.resultType === 'complete' && ml.tools.length === tl.length, 'tools/list moderne');
   const mc = lit(await post({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { _meta: meta, name: 'colony_activity', arguments: {} } }, H('tools/call', 'colony_activity'))).result;
   ok(mc.resultType === 'complete' && mc.isError === false, 'tools/call moderne');
   const b64 = lit(await post({ jsonrpc: '2.0', id: 11, method: 'tools/call', params: { _meta: meta, name: 'colony_activity', arguments: {} } }, H('tools/call', '=?base64?' + Buffer.from('colony_activity').toString('base64') + '?='))).result;

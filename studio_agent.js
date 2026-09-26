@@ -42,8 +42,11 @@ const ETAPES_MAX = 6;
 const OUTILS_PAR_ETAPE = 3;
 const RESULTAT_CAR_MAX = 8000;
 const SORTIE_MAX = 4000;
-/* Les définitions d'outils et la consigne, comptées largement. */
-const OUTILS_JETONS = 1500;
+/* Les définitions d'outils, à la règle des réserves (un jeton pour deux
+   caractères). Mesuré le 26 septembre 2026 avec les 7 outils : 3 120
+   caractères, soit 1 560 jetons — l'ancienne borne de 1 500 ne tenait plus.
+   L'essai vérifie que la borne couvre toujours les définitions. */
+const OUTILS_JETONS = 2000;
 const SYSTEME_JETONS = 500;
 const PRIX_RECHERCHE_USD = 0.005;      /* Perplexity Search API, la requête réussie */
 
@@ -64,6 +67,16 @@ function definitions(actifs) {
       input_schema: { type: 'object', properties: { token: { type: 'string', description: 'optional token symbol (e.g. TELEPAD) or address to filter on' } } } },
     { name: 'swoge_economy', description: 'The $SWOGE token economy read on-chain: total supply, burnt, casino vault, and the current $SWOGE price in USD.',
       input_schema: { type: 'object', properties: {} } },
+    /* ---- AJOUTES LE 26 SEPTEMBRE 2026 (etape 3 de SwogeAgentic) ----
+       Trois lectures qui existaient deja sur le serveur, jamais exposees :
+       ce que la colonie vient de trouver, l'historique d'un lanceur (OSINT
+       passif sur une adresse), la reconnaissance passive d'une infrastructure. */
+    { name: 'new_launches', description: 'The newest tokens the SWOGE AI colony just found on Robinhood Chain (minutes old), with pool size, cap, 5-minute move and why the colony did or did not buy each one, plus the older tokens it keeps watching and its verdict on each.',
+      input_schema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 30, description: 'how many fresh tokens (default 15)' } } } },
+    { name: 'wallet_intel', description: 'What is known about an EVM wallet address: whether it launched tokens on the launchpads we index, which tokens it deployed, and what the SWOGE AI colony measured on launchers like it (with observation counts). Passive: the address is never contacted.',
+      input_schema: { type: 'object', properties: { address: { type: 'string', description: 'EVM address, 0x followed by 40 hex characters' } }, required: ['address'] } },
+    { name: 'osint_lookup', description: 'Passive reconnaissance on infrastructure: a domain, an IP address, a website URL, an autonomous system (AS15169) or a CVE. Returns DNS, certificates, registration, hosting and exposure findings, each with its source. People (e-mails, usernames, phone numbers, names) are not accepted.',
+      input_schema: { type: 'object', properties: { target: { type: 'string', description: 'a domain, IP, URL, AS number or CVE id' } }, required: ['target'] } },
   ];
   if (actifs && actifs.recherche) d.push({ name: 'web_search', description: 'Search the web (Perplexity). Returns ranked results with title, URL, date and an extract. Use it for news, projects, people, anything outside SWOGE data.',
     input_schema: { type: 'object', properties: { query: { type: 'string', description: 'the search query, as you would type it' } }, required: ['query'] } });
@@ -84,6 +97,18 @@ function pireCasUsd(m, messages, recherche) {
 }
 
 const adresseOk = (a) => /^0x[0-9a-fA-F]{40}$/.test(String(a || ''));
+/* L'OSINT offert aux autres agents ne vise que l'INFRASTRUCTURE : vendre a
+   n'importe quel agent une recherche sur des personnes, en serie, serait
+   offrir du profilage. Le module sait faire plus ; ce n'est pas exposé ici. */
+const OSINT_TYPES = ['domaine', 'ip', 'url', 'asn', 'cve'];
+/** Un rapport OSINT, en texte court pour un modele : constats d'abord, puis faits sources. */
+function resumeOsint(r) {
+  const cst = (r.constats || []).slice(0, 10).map((c) => '- [' + c.etiquette + '] ' + c.dit);
+  const fts = (r.faits || []).slice(0, 30).map((f) => '- ' + f.predicat + ': ' + String(f.valeur || (f.objet && f.objet.valeur) || f.extrait || '').slice(0, 160)
+    + (f.sources && f.sources.length ? ' (source: ' + f.sources.slice(0, 2).join(', ') + ')' : ''));
+  return 'Target: ' + (r.cible ? r.cible.type + ' ' + r.cible.valeur : '?') + ' (passive, ' + (r.faits || []).length + ' facts)\n'
+    + (cst.length ? 'Findings:\n' + cst.join('\n') + '\n' : 'No finding raised.\n') + (fts.length ? 'Facts:\n' + fts.join('\n') : '');
+}
 const coupe = (s) => { s = String(s); return s.length > RESULTAT_CAR_MAX ? s.slice(0, RESULTAT_CAR_MAX) + '\n[truncated]' : s; };
 
 /**
@@ -122,6 +147,27 @@ function outils(src) {
     async swoge_economy() {
       const [e, cours] = await Promise.all([src.economie(), src.cours()]);
       return { texte: JSON.stringify({ economy: e, swogePriceUsd: cours || null, source: 'on-chain reads (chain 4663) and DexScreener' }) };
+    },
+    async new_launches(e) {
+      const v = src.vue() || {};
+      const n = Math.max(1, Math.min(30, parseInt((e && e.limit) || 15, 10) || 15));
+      const frais = (v.candidats || []).slice().sort((a, b) => (a.minutes || 0) - (b.minutes || 0)).slice(0, n).map((c) => ({
+        sym: c.sym, address: c.addr, ageMinutes: c.minutes, poolUsd: c.liq, capUsd: c.mc, change5mPct: c.ch_m5, score: c.score,
+        decision: c.refus ? 'not bought: ' + c.refus : 'passed the colony\'s gates', origin: c.origine }));
+      const suivis = (v.surveillance || []).slice(0, 15).map((w) => ({ sym: w.sym, address: w.addr, timesSeen: w.vu, poolUsd: w.liq, verdict: w.verdict }));
+      return { texte: JSON.stringify({ note: 'Live reads of the SWOGE AI colony on Robinhood Chain: measurements and decisions, never advice.', fresh: frais, watched: suivis }) };
+    },
+    async wallet_intel(e) {
+      if (!adresseOk(e && e.address)) return { erreur: 'address must be 0x followed by 40 hex characters' };
+      const r = await src.osint('adresse', String(e.address).toLowerCase());
+      return { texte: resumeOsint(r) };
+    },
+    async osint_lookup(e) {
+      const g = src.detecte(String((e && e.target) || '').trim().slice(0, 300));
+      if (!g) return { erreur: 'not a recognised target: give a domain, an IP address, a URL, an AS number or a CVE id' };
+      if (!OSINT_TYPES.includes(g.type)) return { erreur: 'only infrastructure is accepted here (domain, IP, URL, AS number, CVE) — not people, e-mails, usernames or phone numbers' };
+      const r = await src.osint(g.type, g.valeur);
+      return { texte: resumeOsint(r) };
     },
     async web_search(e) {
       const q = String((e && e.query) || '').trim().slice(0, 400);
@@ -202,5 +248,5 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
   return { texte: textes.join('\n\n'), sources, usage, stop: stop === 'tool_use' ? 'max_steps' : stop, servi, jetons: cartes, etapes };
 }
 
-module.exports = { repond, definitions, outils, pireCasUsd, SYSTEME,
+module.exports = { repond, definitions, outils, pireCasUsd, SYSTEME, OSINT_TYPES, resumeOsint, OUTILS_JETONS, SYSTEME_JETONS,
   ETAPES_MAX, OUTILS_PAR_ETAPE, RESULTAT_CAR_MAX, SORTIE_MAX };

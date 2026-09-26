@@ -53,7 +53,9 @@ const m = C.modele('sonnet-5');
   {
     const d = A.definitions({ recherche: true });
     ok(d.every((x) => x.name && x.description && x.input_schema && x.input_schema.type === 'object'), 'forme de l API Messages : name, description, input_schema');
-    eq(d.map((x) => x.name).join(','), 'scan_token,colony_activity,swoge_economy,web_search', 'quatre outils avec Perplexity');
+    eq(d.map((x) => x.name).join(','), 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,web_search', 'sept outils avec Perplexity (trois ajoutes le 26 septembre : lancements, lanceur, OSINT)');
+    ok(Math.ceil(JSON.stringify(d).length / 2) <= A.OUTILS_JETONS && Math.ceil(A.SYSTEME.length / 2) <= A.SYSTEME_JETONS,
+       'le pire cas couvre les definitions et la consigne, a un jeton pour deux caracteres [' + Math.ceil(JSON.stringify(d).length / 2) + ' ≤ ' + A.OUTILS_JETONS + ']');
     ok(!A.definitions({ recherche: false }).some((x) => x.name === 'web_search'), 'sans cle Perplexity : pas de recherche web');
   }
 
@@ -75,7 +77,31 @@ const m = C.modele('sonnet-5');
     ok(r.sources.map((x) => x.url).join(',') === 'https://dexscreener.com/ethereum/0xp,https://news.example/a' && r.jetons.length === 1 && r.jetons[0].sym === 'PEPE', 'les sources et la carte du jeton remontent');
     ok(outils.map((x) => x.nom).join(',') === 'scan_token,colony_activity,web_search' && resultats.every((x) => x.ok), 'la page voit chaque outil appele et son resultat');
     eq(texte, 'Let me look.\n\nPEPE has $25M liquidity [1].', 'le texte arrive au fil de l eau, les etapes separees');
-    ok(cl.vus.every((p) => p.tools && p.tools.length === 4 && !p.tool_choice), 'les outils sont declares a chaque appel, sans forcer');
+    ok(cl.vus.every((p) => p.tools && p.tools.length === A.definitions({ recherche: true }).length && !p.tool_choice), 'les outils sont declares a chaque appel, sans forcer');
+  }
+
+  console.log('\n-- 2 bis. les lancements, le lanceur, l OSINT d infrastructure --');
+  {
+    const vues = [];
+    const S = src({ vue: () => ({ candidats: [{ sym: 'OLD', addr: '0xo', minutes: 40, liq: 20000, mc: 90000, ch_m5: 1, score: 60, refus: null, origine: 'pools' },
+                                             { sym: 'NEW', addr: '0xn', minutes: 1, liq: 8000, mc: 9000, ch_m5: 65, score: 48, refus: '$8000 pool: below the buy floor ($13000)', origine: 'pools' }],
+                                surveillance: [{ sym: 'TALIS', addr: '0xt', vu: 29, liq: 53366, verdict: 'too old (819 min): watched only, never bought' }] }),
+      detecte: (x) => (/@/.test(x) ? { type: 'email', valeur: x } : /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(x) ? { type: 'domaine', valeur: x } : null),
+      osint: async (type, valeur) => { vues.push([type, valeur]); return { cible: { type, valeur }, faits: [{ predicat: 'LAUNCHED TOKENS ON', valeur: 'pons × 4', sources: ['pons registry'] }],
+        constats: [{ etiquette: 'HIGH', dit: 'This address is a repeat launcher, and repeat launchers measure worse.' }] }; } });
+    const O = A.outils(S);
+    const nl = JSON.parse((await O.new_launches({ limit: 1 })).texte);
+    ok(nl.fresh.length === 1 && nl.fresh[0].sym === 'NEW' && /below the buy floor/.test(nl.fresh[0].decision) && nl.watched[0].verdict.startsWith('too old'),
+       'new_launches : le plus frais d abord, avec la decision de la colonie, et ce qu elle surveille');
+    ok((await O.wallet_intel({ address: 'nope' })).erreur && vues.length === 0, 'wallet_intel : une adresse hors forme ne touche aucun service');
+    const wi = await O.wallet_intel({ address: '0x' + 'AB'.repeat(20) });
+    ok(vues[0][0] === 'adresse' && vues[0][1] === '0x' + 'ab'.repeat(20) && /repeat launcher/.test(wi.texte) && /pons × 4 \(source: pons registry\)/.test(wi.texte),
+       'wallet_intel : l OSINT de l adresse, constats d abord, chaque fait avec sa source');
+    const mail = await O.osint_lookup({ target: 'someone@example.com' });
+    ok(mail.erreur && /not people/.test(mail.erreur) && vues.length === 1, 'osint_lookup refuse une personne (e-mail) : aucun service interroge');
+    const dom = await O.osint_lookup({ target: 'example.com' });
+    ok(!dom.erreur && vues[1][0] === 'domaine', 'et accepte un domaine');
+    ok(A.OSINT_TYPES.join(',') === 'domaine,ip,url,asn,cve', 'l OSINT offert ne vise que l infrastructure');
   }
 
   console.log('\n-- 3. les bornes --');

@@ -43,7 +43,8 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
 
   console.log('-- 1. le catalogue, public --');
   const cat = await J('/agentic/tools');
-  ok(cat.status === 200 && cat.b.outils.map((o) => o.name).join(',') === 'scan_token,colony_activity,swoge_economy,ask_agent', 'les outils et leurs prix (sans cle Perplexity : pas de recherche web)');
+  ok(cat.status === 200 && cat.b.outils.map((o) => o.name).join(',') === 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,ask_agent,generate_image',
+     'les outils et leurs prix (sans cle Perplexity : pas de recherche web) [' + cat.b.outils.map((o) => o.name).join(',') + ']');
 
   console.log('\n-- 2. un joueur signe et cree une cle --');
   const w = ethers.Wallet.createRandom();
@@ -83,8 +84,12 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   ok((await J('/agentic/call/scan_token', { method: 'POST', headers: K, body: JSON.stringify({ arguments: { address: 'nope' } }) })).status === 400
      && ethers.utils.parseUnits(moteur.balanceStr(adr), 18).eq(apres), 'une entree invalide : 400, rien debite');
   eq((await J('/agentic/call/colony_activity', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401, 'sans cle : 401');
+  const nl = await J('/agentic/call/new_launches', { method: 'POST', headers: K, body: JSON.stringify({ arguments: { limit: 5 } }) });
+  ok(nl.status === 200 && Array.isArray(nl.b.resultat.fresh) && Array.isArray(nl.b.resultat.watched), 'new_launches sur le vrai serveur : les listes de la colonie');
+  const people = await J('/agentic/call/osint_lookup', { method: 'POST', headers: K, body: JSON.stringify({ arguments: { target: 'someone@example.com' } }) });
+  ok(people.status === 400 && /not people/.test(people.b.raison), 'osint_lookup refuse une personne, sans rien facturer');
   const recus = await J('/agentic/recus', { headers: S });
-  eq(recus.b.recus[0].id, r.b.recu, 'le joueur lit ses recus depuis la page');
+  ok(recus.b.recus.some((x) => x.id === r.b.recu), 'le joueur lit ses recus depuis la page');
 
   console.log('\n-- 4. le serveur MCP --');
   const mcp = (chemin, corps, en) => fetch(base + chemin, { method: 'POST', headers: Object.assign({ 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, en || {}), body: JSON.stringify(corps) });

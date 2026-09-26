@@ -1616,6 +1616,33 @@ const srcAgent = () => ({
   vue: () => Object.assign({ pause: cfg.AI_COLONIE !== '1' }, aiColonie.vue()),
   economie: () => economie.etat(), cours: () => studioChat.coursSwoge(),
   cherche: (x) => studioRecherche.cherche(x), contexteRecherche: (r) => studioRecherche.contexte(r),
+  /* L'OSINT, PASSIF toujours (la cible ne voit jamais nos requetes), dans le
+     meme cache que la page OSINT : un rapport deja fait ne se refait pas. */
+  detecte: (x) => osintNoyau.detecte(x),
+  osint: async (type, valeur) => {
+    const cible = osintNoyau.entite(type, valeur);
+    if (!cible) throw new Error('not a recognised target');
+    const cle = 'v2|' + osintNoyau.cleEntite(cible) + '|p';
+    const garde = OSINTS.get(cle);
+    if (garde && Date.now() - garde.t < OSINT_TTL) return garde.r;
+    const r = await osintNoyau.enquete(cible, { passifSeulement: true });
+    r.graphe = osintNoyau.graphe(r);
+    OSINTS.set(cle, { t: Date.now(), r });
+    return r;
+  },
+});
+/* Les dependances des images : la page (route /studio/media) et l'API des agents. */
+const depsMedia = () => ({
+  cours: () => studioChat.coursSwoge(),
+  solde: {
+    reserve: (a, w) => game.studioReserve(a, w),
+    regle: (a, rw, fw) => { const s2 = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s2 }); return s2; },
+  },
+  fournisseur: studioXai,
+  fournisseurs: { grok: studioXai, openai: studioOpenai },
+  range: (u) => studioFichiers.range(u),
+  comprend: chatActif('anthropic') ? { deps: { client: clientComprend() } } : null,
+  reference: () => studioComprend.referenceSwoge({ site: SITE_URL }),
 });
 const agenticCles = require('./agentic_cles').cree();
 const agenticMcp = require('./agentic_mcp');
@@ -1630,6 +1657,13 @@ const agentic = () => {
     solde: { reserve: (a, w) => game.studioReserve(a, w), regle },
     outils: studioAgent.outils(srcAgent()),
     actifs: () => ({ recherche: chatActif('perplexity') }),
+    /* Une image pour un agent : la MEME fonction que la page (reserve, cout
+       reel, reste rendu), au nom de l'adresse de la cle. */
+    image: ({ addr, prompt, fournisseur, n }) => {
+      if (!studioXai.actif() && !studioOpenai.actif()) return Promise.resolve({ ok: false, code: 503, raison: 'image generation is not switched on yet' });
+      return studioMedia.images({ addr, modele: 'qualite', prompt, n, fournisseur, format: 'auto' }, depsMedia());
+    },
+    urlPublique: (u) => (/^\/studio\/media\/fichier\//.test(String(u)) ? MOI_URL + u : u),
     agent: ({ addr, tache, modele }) => {
       if (!chatActif('anthropic')) return Promise.resolve({ ok: false, code: 503, raison: 'the agent is not switched on yet' });
       const src = srcAgent();
@@ -3712,20 +3746,9 @@ const server = http.createServer(async (req, res) => {
     let q;
     try { q = JSON.parse((await corps(req, 9 * 1024 * 1024)).toString('utf8') || '{}'); }
     catch (e) { return json(400, { ok: false, raison: 'unreadable request (an attached image must stay under 6 MB)' }); }
-    const deps = {
-      cours: () => studioChat.coursSwoge(),
-      solde: {
-        reserve: (a, w) => game.studioReserve(a, w),
-        regle: (a, rw, fw) => { const s = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s }); return s; },
-      },
-      fournisseur: studioXai,
-      fournisseurs: { grok: studioXai, openai: studioOpenai },
-      range: (u) => studioFichiers.range(u),
-      /* La demande comprise avec son fil (Claude Haiku 4.5) et l'image
-         officielle de SWOGE, lue sur le site — voir studio_comprend.js. */
-      comprend: chatActif('anthropic') ? { deps: { client: clientComprend() } } : null,
-      reference: () => studioComprend.referenceSwoge({ site: SITE_URL }),
-    };
+    /* Voir depsMedia : la demande comprise avec son fil (Claude Haiku 4.5) et
+       l'image officielle de SWOGE, lue sur le site — studio_comprend.js. */
+    const deps = depsMedia();
     const base = { addr, modele: q.modele, prompt: q.prompt, format: q.format, image: q.image, contexte: q.contexte };
     const rid = reprises.ridOk(q.rid) ? q.rid : null;
     if (rid) reprises.note(addr, rid, { genre: path === '/studio/media/image' ? 'image' : 'video', status: 'pending' });
