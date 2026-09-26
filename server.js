@@ -1659,10 +1659,22 @@ const agentic = () => {
     actifs: () => ({ recherche: chatActif('perplexity') }),
     /* Une image pour un agent : la MEME fonction que la page (reserve, cout
        reel, reste rendu), au nom de l'adresse de la cle. */
-    image: ({ addr, prompt, fournisseur, n }) => {
+    image: ({ addr, prompt, fournisseur, n, modele, format }) => {
       if (!studioXai.actif() && !studioOpenai.actif()) return Promise.resolve({ ok: false, code: 503, raison: 'image generation is not switched on yet' });
-      return studioMedia.images({ addr, modele: 'qualite', prompt, n, fournisseur, format: 'auto' }, depsMedia());
+      return studioMedia.images({ addr, modele: modele || 'qualite', prompt, n, fournisseur, format: format || 'auto' }, depsMedia());
     },
+    /* Une image payee D'AVANCE (x402) : meme fonction, hors solde de jeu, au nom du payeur. */
+    imageHorsSolde: ({ addr, prompt, fournisseur, n, modele, format, prixUsd }) => {
+      if (!studioXai.actif() && !studioOpenai.actif()) return Promise.resolve({ ok: false, code: 503, raison: 'image generation is not switched on yet' });
+      return studioMedia.images({ addr, modele, prompt, n, fournisseur, format: format || 'auto', prixUsd }, Object.assign({}, depsMedia(), { horsSolde: true }));
+    },
+    /* Une video pour un agent a cle : la MEME fonction que la page (reserve,
+       suivi par le serveur, cout reel a l'arrivee, tout rendu si elle echoue). */
+    video: ({ addr, prompt, modele, duree, resolution, format }) => {
+      if (!studioXai.actif()) return Promise.resolve({ ok: false, code: 503, raison: 'video generation is not switched on yet (Grok Imagine)' });
+      return studioMedia.lanceVideo({ addr, modele, prompt, duree, resolution, format: format || 'auto' }, depsMedia());
+    },
+    etatVideo: (id, addr) => studioMedia.etatVideo(id, addr),
     urlPublique: (u) => (/^\/studio\/media\/fichier\//.test(String(u)) ? MOI_URL + u : u),
     agent: ({ addr, tache, modele }) => {
       if (!chatActif('anthropic')) return Promise.resolve({ ok: false, code: 503, raison: 'the agent is not switched on yet' });
@@ -1705,7 +1717,7 @@ const x402 = () => {
       if (v) { ETH_USD.v = v; ETH_USD.t = Date.now(); }
       return v || ETH_USD.v;
     },
-    prixOutilUsd: (o) => require('./agentic').prixUsd(o),
+    prixOutilUsd: (o, a) => require('./agentic').prixX402Usd(o, a),
     journal: (l) => fs.appendFile(JOURNAL, JSON.stringify(l) + '\n', () => {}),
   });
   x402V.porteGaz = chaine.porteGaz;
@@ -1735,7 +1747,8 @@ async function x402Etat(detail) {
   const outils = [];
   for (const d of require('./agentic').definitions({ recherche: chatActif('perplexity') })) {
     if (!agentic().x402Payable(d.name)) continue;
-    const p = await x.prix(d.name).catch(() => null);
+    /* Une image : le prix de la demande la plus courante (Grok, Quality, 1 image) ; le 402 donne celui de CHAQUE demande. */
+    const p = await x.prix(d.name, d.name === 'generate_image' ? { prompt: '' } : undefined).catch(() => null);
     outils.push({ name: d.name, usd: p ? p.usd : null, gazUsd: p ? p.gazUsd : null, amount: p ? p.montant : null, amountUsdg: p ? p.montantUsdg : null });
   }
   /* Ce qui a ete encaisse, par jeton, relu dans le journal (il survit aux redemarrages) :
@@ -1756,6 +1769,7 @@ async function x402Etat(detail) {
   const gazParMethode = {};
   for (const [m, l] of Object.entries(x.MESURE.gazParMethode)) gazParMethode[m] = { n: l.length, median: med(l) };
   return Object.assign(e, { porteGaz: x.porteGaz, soldeGazEth, outils, encaisse, gazParMethode,
+    images: studioMedia.MESURE.horsSolde,
     mesure: { devis: x.MESURE.devis, payes: x.MESURE.payes, refuses: x.MESURE.refuses, echecsReglement: x.MESURE.echecsReglement,
               gasUsedN: g.length, gasUsedMedian: g.length ? g[Math.floor(g.length / 2)] : null, gazUnitesEstimees: X.GAZ_UNITES } });
 }
@@ -2456,8 +2470,8 @@ const server = http.createServer(async (req, res) => {
         if (!cleTexte && !devis && x402() && agentic().x402Payable(outil)) {
           const inv = require('./agentic').entreeInvalide(outil, q.arguments || {});
           if (inv) return json(400, { ok: false, raison: inv });
-          const x = await x402().traite({ outil, url: MOI_URL + path, entete: req.headers['payment-signature'],
-            sert: () => agentic().sertSansFacture({ outil, args: q.arguments || {} }) });
+          const x = await x402().traite({ outil, url: MOI_URL + path, entete: req.headers['payment-signature'], args: q.arguments || {},
+            sert: (payeur) => agentic().sertSansFacture({ outil, args: q.arguments || {}, payeur }) });
           res.writeHead(x.status, Object.assign({ 'cache-control': 'no-store' }, cors, x.entetes));
           return res.end(x.corps);
         }

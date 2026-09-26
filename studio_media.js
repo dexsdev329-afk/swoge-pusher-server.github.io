@@ -87,7 +87,10 @@ const MARGE = () => Math.max(1, Number(process.env.STUDIO_MARGE || 1.5));
 const MIN_USD = 0.001;
 const PAR_MINUTE = () => Math.max(1, Number(process.env.STUDIO_MEDIA_PAR_MINUTE || 6));
 
-const MESURE = { images: 0, videos: 0, echecs: 0, coutUsd: 0, factureUsd: 0, depassements: 0, sansUsage: 0 };
+const MESURE = { images: 0, videos: 0, echecs: 0, coutUsd: 0, factureUsd: 0, depassements: 0, sansUsage: 0,
+  /* Les images payées en x402 (prix FIXE = le pire cas, faute de mesure) : ce
+     qu'elles ont coûté vraiment, pour baisser ce prix sur mesure et non au jugé. */
+  horsSolde: { images: 0, coutUsd: 0, prixUsd: 0, sansUsage: 0 } };
 const EN_VOL = new Set();          /* une image en cours par adresse */
 const RYTHME = new Map();
 const JOBS = new Map();            /* id -> vidéo en cours ou finie (gardée 1 h) */
@@ -190,7 +193,26 @@ function pireCasImageUsd(fournisseur, modele, n) {
   return factureUsd(coutsImage(fid, m, NOMBRES.includes(Number(n)) ? Number(n) : 1, true, true).reserveUsd);
 }
 
-/** Des images. q = { addr, modele, prompt, n, format, image } */
+/**
+ * Le prix FIXE d'une demande d'image payée d'avance (x402), marge comprise :
+ * le pire cas de la réserve — la liste ×3 chez Grok, 12 000 jetons de sortie
+ * par image chez OpenAI —, avec l'image de référence et la réécriture si la
+ * demande nomme SWOGE. Pas de retouche (pas d'image jointe en x402). Relevé du
+ * 26 septembre 2026 : AUCUNE mesure du coût réel Grok contre sa liste — ce
+ * prix ne se baisse qu'avec `MESURE.horsSolde` (coût réel de chaque image payée).
+ */
+function prixFixeImageUsd({ fournisseur, modele, n, prompt }) {
+  const fid = fournisseur === 'openai' ? 'openai' : 'grok';
+  const m = IMAGE.find((x) => x.fournisseur === fid && x.id === modele) || IMAGE.find((x) => x.fournisseur === fid);
+  const swoge = Comp.parleDeSwoge(String(prompt || ''), []);
+  return factureUsd(coutsImage(fid, m, NOMBRES.includes(Number(n)) ? Number(n) : 1, swoge, swoge).reserveUsd);
+}
+
+/**
+ * Des images. q = { addr, modele, prompt, n, format, image }
+ * `deps.horsSolde` : payée AILLEURS (x402, d'avance) — ni réserve ni règlement
+ * sur un solde de jeu ; le coût réel est quand même lu et compté.
+ */
 async function images(q, deps) {
   const addr = q && q.addr;
   if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
@@ -215,26 +237,35 @@ async function images(q, deps) {
   const envoyee = image || refSwoge || null;
   const reecrit = !!(deps.comprend && contexte.length);
   const { listeUsd, reserveUsd } = coutsImage(fid, m, n, !!envoyee, reecrit);
-  const r = await reserve(deps, addr, reserveUsd);
+  const r = deps.horsSolde ? { cours: null, wei: 0n } : await reserve(deps, addr, reserveUsd);
   if (r.erreur) return r.erreur;
+  const rend = () => { if (!deps.horsSolde) deps.solde.regle(addr, r.wei, 0n); };
   EN_VOL.add(addr);
   let rep, compris = { prompt, coutUsd: 0, reecrit: false };
   try {
     if (reecrit || refSwoge) compris = await Comp.comprend({ prompt, contexte: reecrit ? contexte : [], reference: image ? 'jointe' : refSwoge ? 'swoge' : null }, deps.comprend ? deps.comprend.deps : {});
     rep = await four.images({ api: m.api || modeleOpenai(), prompt: compris.prompt.slice(0, PROMPT_MAX), n, format, image: envoyee, qualite: m.qualite });
   } catch (e) {
-    deps.solde.regle(addr, r.wei, 0n); MESURE.echecs++; EN_VOL.delete(addr);
+    rend(); MESURE.echecs++; EN_VOL.delete(addr);
     return { ok: false, code: 502, raison: 'the image provider failed — you were not charged', detail: String(e && e.message || e).slice(0, 200) };
   }
   EN_VOL.delete(addr);
   if (!rep.urls || !rep.urls.length) {
-    deps.solde.regle(addr, r.wei, 0n); MESURE.echecs++;
+    rend(); MESURE.echecs++;
     return { ok: false, code: 502, raison: 'no image came back (possibly refused by moderation) — you were not charged' };
   }
   MESURE.images += rep.urls.length;
   /* La reecriture est un vrai cout : elle s'ajoute a celui de l'image. */
   const brut = fid === 'openai' ? coutOpenai(rep.usage) : coutDe(rep.usage);
-  const f = regle(deps, addr, r.wei, r.cours, brut == null ? null : brut + compris.coutUsd, listeUsd + compris.coutUsd);
+  let f;
+  if (deps.horsSolde) {
+    /* Payée d'avance : on COMPTE le coût réel contre le prix fixe encaissé. */
+    const c = (brut == null ? listeUsd : brut) + compris.coutUsd;
+    const H = MESURE.horsSolde;
+    H.images += rep.urls.length; H.coutUsd += c; H.prixUsd += Number(q.prixUsd) || 0; if (brut == null) H.sansUsage++;
+    MESURE.coutUsd += c;
+    f = { coutUsd: Number(c.toFixed(5)) };
+  } else f = regle(deps, addr, r.wei, r.cours, brut == null ? null : brut + compris.coutUsd, listeUsd + compris.coutUsd);
   /* Les images en base64 (OpenAI) sont rangees chez nous : la page recoit une
      adresse, pas des megaoctets (voir studio_fichiers.js). */
   const urls = rep.urls.map((u) => (/^data:/.test(u) && deps.range ? (deps.range(u) || u) : u));
@@ -318,5 +349,5 @@ function etatVideo(id, addr) {
            solde: j.solde, raison: j.raison };
 }
 
-module.exports = { pireCasImageUsd, coutsImage, FOURNISSEURS_IMAGE, PRIX_OPENAI, coutOpenai, modeleOpenai, IMAGE, VIDEO, FORMATS_IMAGE, FORMATS_VIDEO, NOMBRES, DUREES, RESOLUTIONS, RESERVE_X,
+module.exports = { pireCasImageUsd, prixFixeImageUsd, coutsImage, FOURNISSEURS_IMAGE, PRIX_OPENAI, coutOpenai, modeleOpenai, IMAGE, VIDEO, FORMATS_IMAGE, FORMATS_VIDEO, NOMBRES, DUREES, RESOLUTIONS, RESERVE_X,
                    MESURE, JOBS, EN_VOL, RYTHME, catalogue, images, lanceVideo, avance, etatVideo, imageJointe, coutDe };

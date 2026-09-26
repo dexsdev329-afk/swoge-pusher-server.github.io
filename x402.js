@@ -95,6 +95,11 @@ const TYPES_2612 = { Permit: [{ name: 'owner', type: 'address' }, { name: 'spend
 const domainePermit2 = () => ({ name: 'Permit2', chainId: CHAIN_ID, verifyingContract: PERMIT2 });
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64');
+/* L'empreinte des arguments d'un appel : un devis vaut pour CES arguments. Sans
+   elle, le devis d'une petite image (1, Speed) aurait payé une grosse (4, Quality). */
+const canon = (x) => (Array.isArray(x) ? x.map(canon) : x && typeof x === 'object'
+  ? Object.keys(x).sort().reduce((o, k) => { o[k] = canon(x[k]); return o; }, {}) : x);
+const empreinte = (a) => crypto.createHash('sha256').update(JSON.stringify(canon(a || {}))).digest('hex').slice(0, 20);
 const meme = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
 const adresseOk = (a) => /^0x[0-9a-fA-F]{40}$/.test(String(a || ''));
 const entierOk = (x) => /^[0-9]{1,78}$/.test(String(x));
@@ -125,8 +130,8 @@ function cree(deps) {
    * de $SWOGE (`montant`, si le cours est connu) et d'USDG (`montantUsdg`, au
    * micro-dollar SUPÉRIEUR : jamais sous le prix). Sans ETH connu, pas de prix.
    */
-  async function prix(outil) {
-    const base = deps.prixOutilUsd(outil);
+  async function prix(outil, args) {
+    const base = deps.prixOutilUsd(outil, args);
     if (!(base > 0)) return null;
     const [cours, eth, gp] = await Promise.all([Promise.resolve().then(() => deps.cours()).catch(() => null), deps.ethUsd(), deps.chaine.gazPrix()]);
     if (!(eth > 0)) return null;
@@ -139,20 +144,21 @@ function cree(deps) {
   }
 
   /** Le 402 : ce qu'il faut payer, et le devis retenu DELAI_S secondes. */
-  async function exige(outil, url, raison) {
-    const p = await prix(outil);
+  async function exige(outil, url, raison, args) {
+    const p = await prix(outil, args);
+    const cleDevis = outil + '|' + empreinte(args);
     if (!p) return null;
     for (const [k, v] of emis) if (v < maintenant()) emis.delete(k);
     const fin = maintenant() + DELAI_S * 1000;
     const accepts = [];
     /* L'USDG d'abord : la spec préfère eip3009, et c'est ce que les agents détiennent. */
     if (p.montantUsdg) {
-      emis.set(outil + '|' + deps.usdg.toLowerCase() + '|' + p.montantUsdg, fin);
+      emis.set(cleDevis + '|' + deps.usdg.toLowerCase() + '|' + p.montantUsdg, fin);
       accepts.push({ scheme: 'exact', network: RESEAU, amount: p.montantUsdg, asset: deps.usdg, payTo: deps.payTo, maxTimeoutSeconds: DELAI_S,
         extra: { assetTransferMethod: 'eip3009', name: DOMAINE_USDG.name, version: DOMAINE_USDG.version } });
     }
     if (p.montant) {
-      emis.set(outil + '|' + deps.asset.toLowerCase() + '|' + p.montant, fin);
+      emis.set(cleDevis + '|' + deps.asset.toLowerCase() + '|' + p.montant, fin);
       accepts.push({ scheme: 'exact', network: RESEAU, amount: p.montant, asset: deps.asset, payTo: deps.payTo, maxTimeoutSeconds: DELAI_S,
         extra: { assetTransferMethod: 'permit2', name: DOMAINE_JETON.name, version: DOMAINE_JETON.version } });
     }
@@ -165,7 +171,7 @@ function cree(deps) {
   }
 
   /** Vérifie un PAYMENT-SIGNATURE pour cet outil. Rend { ok, methode, args, from, montant } ou { ok:false, raison }. */
-  async function verifie(entete, outil) {
+  async function verifie(entete, outil, args) {
     const non = (raison, detail) => ({ ok: false, raison, detail });
     let p;
     try { p = JSON.parse(Buffer.from(String(entete || ''), 'base64').toString('utf8')); } catch (e) { return non('invalid_payload'); }
@@ -176,8 +182,8 @@ function cree(deps) {
     if (acc.network !== RESEAU) return non('invalid_network');
     const enUsdg = !!deps.usdg && meme(acc.asset, deps.usdg);
     if ((!enUsdg && !meme(acc.asset, deps.asset)) || !meme(acc.payTo, deps.payTo)) return non('invalid_payment_requirements');
-    const echeance = emis.get(outil + '|' + String(acc.asset).toLowerCase() + '|' + String(acc.amount));
-    if (!echeance || echeance < maintenant()) return non('invalid_payment_requirements', 'no current quote for this amount — request the resource again for a fresh 402');
+    const echeance = emis.get(outil + '|' + empreinte(args) + '|' + String(acc.asset).toLowerCase() + '|' + String(acc.amount));
+    if (!echeance || echeance < maintenant()) return non('invalid_payment_requirements', 'no current quote for this amount and these arguments — request the resource again (same arguments) for a fresh 402');
     if (enUsdg) return verifie3009(acc, pl);
     if (!a.permitted || !meme(a.permitted.token, deps.asset)) return non('invalid_payload', 'permitted.token must be the $SWOGE asset');
     if (String(a.permitted.amount) !== String(acc.amount)) return non('invalid_exact_evm_payload_authorization_value_mismatch');
@@ -288,21 +294,21 @@ function cree(deps) {
    * l'outil ({ ok, ... }) ; rien n'est réglé s'il échoue.
    * Rend { status, entetes, corps }.
    */
-  async function traite({ outil, url, entete, sert }) {
+  async function traite({ outil, url, entete, sert, args }) {
     const json = (status, corps, entetes) => ({ status, entetes: Object.assign({ 'content-type': 'application/json' }, entetes || {}), corps: JSON.stringify(corps) });
     if (!entete) {
-      const e = await exige(outil, url);
+      const e = await exige(outil, url, null, args);
       if (!e) return json(503, { ok: false, raison: 'x402 payment is unavailable right now (price or gas unknown)' });
       return json(402, Object.assign({ ok: false }, e), { 'payment-required': b64(e) });
     }
-    const v = await verifie(entete, outil);
+    const v = await verifie(entete, outil, args);
     if (!v.ok) {
       MESURE.refuses++;
-      const e = await exige(outil, url, v.raison + (v.detail ? ': ' + v.detail : ''));
+      const e = await exige(outil, url, v.raison + (v.detail ? ': ' + v.detail : ''), args);
       return json(402, Object.assign({ ok: false }, e || {}, { raison: v.raison, detail: v.detail || null }), e ? { 'payment-required': b64(e) } : {});
     }
     let r;
-    try { r = await sert(); } catch (e) { r = { ok: false, raison: 'the tool failed' }; }
+    try { r = await sert(v.from); } catch (e) { r = { ok: false, raison: 'the tool failed' }; }
     if (!r || !r.ok) {
       /* L'outil a échoué : on ne règle PAS — la signature n'est jamais soumise, le payeur ne paie rien. */
       pris.delete(v.cleNonce);
@@ -379,4 +385,4 @@ function chaineEthers({ rpc, cle, asset, usdg }) {
 }
 
 module.exports = { cree, chaineEthers, domainePermit2, TYPES_PERMIT2, TYPES_2612, DOMAINE_JETON, USDG, DOMAINE_USDG, DECIMALES_USDG, TYPES_3009,
-  X402_VERSION, CHAIN_ID, RESEAU, PERMIT2, PROXY, MIN_USD, GAZ_UNITES, DELAI_S, b64 };
+  X402_VERSION, CHAIN_ID, RESEAU, PERMIT2, PROXY, MIN_USD, GAZ_UNITES, DELAI_S, b64, empreinte };

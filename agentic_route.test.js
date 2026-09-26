@@ -43,7 +43,7 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
 
   console.log('-- 1. le catalogue, public --');
   const cat = await J('/agentic/tools');
-  ok(cat.status === 200 && cat.b.outils.map((o) => o.name).join(',') === 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,ask_agent,generate_image',
+  ok(cat.status === 200 && cat.b.outils.map((o) => o.name).join(',') === 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,ask_agent,generate_image,generate_video,video_status',
      'les outils et leurs prix (sans cle Perplexity : pas de recherche web) [' + cat.b.outils.map((o) => o.name).join(',') + ']');
 
   const lt = await fetch(base + '/llms.txt');
@@ -92,6 +92,16 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   ok(nl.status === 200 && Array.isArray(nl.b.resultat.fresh) && Array.isArray(nl.b.resultat.watched), 'new_launches sur le vrai serveur : les listes de la colonie');
   const people = await J('/agentic/call/osint_lookup', { method: 'POST', headers: K, body: JSON.stringify({ arguments: { target: 'someone@example.com' } }) });
   ok(people.status === 400 && /not people/.test(people.b.raison), 'osint_lookup refuse une personne, sans rien facturer');
+  /* Les videos (26 septembre 2026) : sans xAI allume, rien ne part et rien n'est debite ; relire une video est gratuit. */
+  const avantV = ethers.utils.parseUnits(moteur.balanceStr(adr), 18);
+  const gv = await J('/agentic/call/generate_video', { method: 'POST', headers: K, body: JSON.stringify({ arguments: { prompt: 'a dog surfing' } }) });
+  ok(gv.status === 402 && /daily cap/.test(gv.b.raison) && ethers.utils.parseUnits(moteur.balanceStr(adr), 18).eq(avantV),
+     'generate_video au-dela du plafond du jour de la cle (5 000 $SWOGE < le maximum d une video) : 402 AVANT de lancer quoi que ce soit, rien debite');
+  const dvV = await J('/agentic/call/generate_video', { method: 'POST', headers: K, body: JSON.stringify({ quote: true, arguments: { prompt: 'x', quality: 'quality', duration: 10 } }) });
+  ok(dvV.status === 200 && dvV.b.devis.variable && dvV.b.devis.maxUsd === 3.6, 'le devis d une video dit son maximum (Quality 10 s : 3,60 $)');
+  eq((await J('/agentic/call/video_status', { method: 'POST', headers: K, body: JSON.stringify({ arguments: { id: 'nope' } }) })).status, 400, 'video_status : un id mal forme, 400');
+  eq((await J('/agentic/call/video_status', { method: 'POST', headers: K, body: JSON.stringify({ arguments: { id: 'a'.repeat(24) } }) })).status, 404, 'video_status : la video d un autre (ou inconnue) — 404, jamais lue');
+  ok(ethers.utils.parseUnits(moteur.balanceStr(adr), 18).eq(avantV), 'et rien de tout cela n a coute');
   const recus = await J('/agentic/recus', { headers: S });
   ok(recus.b.recus.some((x) => x.id === r.b.recu), 'le joueur lit ses recus depuis la page');
 

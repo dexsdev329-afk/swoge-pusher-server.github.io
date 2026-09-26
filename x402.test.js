@@ -315,6 +315,29 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
     ok([a2.status, b2.status].sort().join() === '200,402', 'meme nonce EIP-3009 en simultane : une seule passe [' + a2.status + ',' + b2.status + ']');
   }
 
+  console.log('\n-- 8. un devis vaut pour CES arguments (images a prix fixe) --');
+  {
+    const chaine = fausseChaine();
+    let t = 1790000000000;
+    const servis = [];
+    const x = X.cree({ asset: SWOGE, usdg: X.USDG, payTo: TRESOR, chaine, cours: async () => 0.00002493, ethUsd: async () => 2688.57,
+      prixOutilUsd: (o, a) => (o === 'generate_image' ? 0.06 * Number((a && a.count) || 1) : null), maintenant: () => t });
+    const w = ethers.Wallet.createRandom();
+    const petit = { prompt: 'a cat', count: 1 }, gros = { prompt: 'a cat', count: 4 };
+    const reqP = de64((await x.traite({ outil: 'generate_image', url: 'u', args: petit, sert: async () => ({ ok: true }) })).entetes['payment-required']);
+    const reqG = de64((await x.traite({ outil: 'generate_image', url: 'u', args: gros, sert: async () => ({ ok: true }) })).entetes['payment-required']);
+    ok(Number(reqG.accepts[0].amount) > 3 * Number(reqP.accepts[0].amount), 'le prix suit les arguments : ' + reqP.accepts[0].amount + ' pour 1 image, ' + reqG.accepts[0].amount + ' pour 4');
+    const sert = (a) => async (payeur) => { servis.push({ a, payeur }); return { ok: true, resultat: a }; };
+    const { entete: e1 } = await signe3009(w, reqP, { s: Math.floor(t / 1000) });
+    const triche = await x.traite({ outil: 'generate_image', url: 'u', args: gros, entete: e1, sert: sert(gros) });
+    ok(triche.status === 402 && /invalid_payment_requirements/.test(JSON.parse(triche.corps).raison) && !servis.length && !chaine.regles.length,
+       'payer le devis d UNE image puis demander QUATRE : refuse, rien servi, rien regle');
+    const memes = { count: 1, prompt: 'a cat' };      /* memes arguments, autre ordre des cles */
+    const bon = await x.traite({ outil: 'generate_image', url: 'u', args: memes, entete: e1, sert: sert(memes) });
+    ok(bon.status === 200 && servis.length === 1 && chaine.regles.length === 1, 'les MEMES arguments (cles dans un autre ordre) : paye, servi, regle');
+    eq(servis[0].payeur, w.address, 'l outil sait QUI a paye (une image au nom du payeur, pas d une adresse du corps)');
+  }
+
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error('ESSAI CASSE :', e); process.exit(1); });

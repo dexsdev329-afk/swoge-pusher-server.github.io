@@ -180,6 +180,40 @@ const api = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () =
   eq((await MCP.traite({ methode: 'POST', entetes: {}, corps: 'nope', cle, origines: [] }, deps)).status, 400, 'JSON illisible : 400');
   eq((await MCP.traite({ methode: 'POST', entetes: {}, corps: '[]', cle, origines: [] }, deps)).status, 400, 'un lot (tableau) : 400, un message par POST');
 
+  console.log('\n-- 5 ter. videos et images pour les agents (26 septembre 2026) --');
+  {
+    let lance = null;
+    const JOB = { id: 'f'.repeat(24) };
+    const apiV = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () => ({ recherche: true }),
+      image: async (q) => { imageAppele = q; return { ok: true, urls: ['https://imgen.x.ai/c.png'], factureSwoge: '10', factureUsd: 0.05, solde: '1' }; },
+      video: async (q) => { lance = q; return { ok: true, id: JOB.id, status: 'pending', duree: q.duree, resolution: '480p' }; },
+      etatVideo: (id, addr) => (id === JOB.id && addr === ADDR ? { ok: true, id, status: 'done', progress: 100, url: '/studio/media/fichier/' + 'v'.repeat(48) + '.mp4', duree: 6, factureSwoge: '20000', factureUsd: 0.5 } : { ok: false, code: 404, raison: 'unknown video' }),
+      imageHorsSolde: async (q) => { imageAppele = q; return { ok: true, urls: ['https://imgen.x.ai/d.png'] }; },
+      urlPublique: (u) => (/^\/studio\//.test(u) ? 'https://srv.example' + u : u) });
+    const kv = cles.nouvelle(ADDR, 'video bot', 200000).cle;
+    const cle = cles.resout(kv);
+    const soldeAvant = sol.reserves.length;
+    const v = await apiV.appelle({ cle, outil: 'generate_video', args: { prompt: 'SWOGE surfing', quality: 'quality', duration: 10, aspect_ratio: '16:9' } });
+    ok(v.ok && v.resultat.id === JOB.id && v.resultat.poll === 'video_status' && v.facture.aLArrivee, 'generate_video : un id a suivre, facture a l arrivee');
+    ok(lance && lance.addr === ADDR && lance.modele === 'qualite' && lance.duree === 10 && lance.format === '16:9', 'lancee au nom de l adresse de la CLE, avec les reglages demandes');
+    eq(sol.reserves.length, soldeAvant, 'l API ne reserve rien elle-meme : c est studio_media qui reserve, suit et regle (meme fonction que la page)');
+    const recu = cles.recus(ADDR).find((x) => x.video === JOB.id);
+    ok(recu && recu.maximum === true && Number(recu.swoge) > 0, 'le plafond du jour compte le MAXIMUM de la video tout de suite (recu marque « maximum »)');
+    const st = await apiV.appelle({ cle, outil: 'video_status', args: { id: JOB.id } });
+    ok(st.ok && st.resultat.status === 'done' && /^https:\/\/srv\.example\/studio\/media\/fichier\//.test(st.resultat.url) && st.facture.swoge === '0', 'video_status : l URL publique, et c est gratuit');
+    const autreCle = cles.resout(cles.nouvelle(AUTRE, 'x', 1000).cle);
+    ok((await apiV.appelle({ cle: autreCle, outil: 'video_status', args: { id: JOB.id } })).code === 404, 'la video d un AUTRE : 404, jamais lue');
+    const im = await apiV.appelle({ cle, outil: 'generate_image', args: { prompt: 'a cat', quality: 'speed', aspect_ratio: '1:1' } });
+    ok(im.ok && imageAppele.modele === 'rapide' && imageAppele.format === '1:1', 'generate_image : qualite et format passent jusqu au fournisseur');
+    ok((await apiV.appelle({ cle, outil: 'generate_image', args: { prompt: 'x', aspect_ratio: '5:1' } })).code === 400, 'un format inconnu : 400, rien facture');
+    const hs = await apiV.sertSansFacture({ outil: 'generate_image', args: { prompt: 'a cat', count: 2 }, payeur: '0xAbC' + '0'.repeat(37) });
+    ok(hs.ok && imageAppele.addr === 'x402:0xabc' + '0'.repeat(37) && imageAppele.n === 2 && imageAppele.prixUsd === A.prixX402Usd('generate_image', { prompt: 'a cat', count: 2 }),
+       'payee d avance (x402) : generee HORS SOLDE au nom du payeur, avec le prix encaisse (pour mesurer le cout reel contre lui)');
+    ok(apiV.x402Payable('generate_image') && !apiV.x402Payable('generate_video') && !apiV.x402Payable('video_status') && !apiV.x402Payable('ask_agent'),
+       'x402 : les images oui (prix fixe par demande) ; video, statut et agent non');
+    ok(A.prixX402Usd('generate_image', { prompt: 'x', count: 4 }) > 3 * A.prixX402Usd('generate_image', { prompt: 'x', count: 1 }), 'le prix x402 d une image suit le nombre');
+  }
+
   console.log('\n-- 5 bis. llms.txt --');
   {
     const U = { api: 'https://api.example', site: 'https://site.example', page: 'https://site.example/swogeagentic.html', docs: 'https://site.example/swogeagentic_api.html' };

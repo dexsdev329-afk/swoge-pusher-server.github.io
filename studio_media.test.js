@@ -91,6 +91,24 @@ const W = (x) => ethers.utils.parseUnits(String(x), 18);
     eq(r.code, 503, 'sans cle OpenAI : 503, rien n est reserve');
   }
 
+  console.log('\n-- 1 ter. payee d avance (x402) : hors solde, cout reel compte --');
+  {
+    const s = faux(); const avant = s.bal;
+    const H0 = Object.assign({}, M.MESURE.horsSolde);
+    const prixUsd = M.prixFixeImageUsd({ fournisseur: 'grok', modele: 'qualite', n: 2, prompt: 'a buff doge' });
+    const r = await M.images({ addr: 'x402:0xpayeur', modele: 'qualite', prompt: 'a buff doge', n: 2, prixUsd }, { horsSolde: true, cours: async () => { throw new Error('ne doit pas lire le cours'); }, solde: s.solde,
+      fournisseur: { images: async () => ({ urls: ['https://x/1.png', 'https://x/2.png'], usage: { cost_in_usd_ticks: Math.round(0.08 * 1e10) } }) } });
+    ok(r.ok && s.bal.eq(avant) && !s.reserves.length && !s.reglements.length, 'aucun solde de jeu touche, aucun cours lu (le paiement est ailleurs)');
+    const H = M.MESURE.horsSolde;
+    ok(H.images - H0.images === 2 && Math.abs((H.coutUsd - H0.coutUsd) - 0.08) < 1e-9 && Math.abs((H.prixUsd - H0.prixUsd) - prixUsd) < 1e-9,
+       'le cout reel (0,08 $) et le prix encaisse (' + prixUsd.toFixed(3) + ' $) sont comptes cote a cote — la base pour baisser le prix sur mesure');
+    ok(prixUsd >= 0.08 * 1.5, 'et le prix fixe couvre ce cout avec la marge (jamais sous le cout)');
+    const panne = await M.images({ addr: 'x402:0xp2', modele: 'rapide', prompt: 'x' }, { horsSolde: true, solde: s.solde, fournisseur: { images: async () => { throw new Error('xAI 500'); } } });
+    ok(!panne.ok && panne.code === 502 && !s.reglements.length, 'en panne : 502, et toujours aucun mouvement de solde');
+    ok(M.prixFixeImageUsd({ fournisseur: 'grok', modele: 'rapide', n: 1, prompt: 'SWOGE on a boat' }) > M.prixFixeImageUsd({ fournisseur: 'grok', modele: 'rapide', n: 1, prompt: 'a boat' }),
+       'une demande qui nomme SWOGE coute plus (image de reference + reecriture comptees dans le prix)');
+  }
+
   console.log('\n-- 2. tout est rendu quand rien n est livre --');
   {
     const s = faux(); const avant = s.bal;

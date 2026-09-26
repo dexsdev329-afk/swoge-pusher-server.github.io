@@ -119,8 +119,10 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   const et = JSON.parse(await lis(await fetch(base + '/agentic/x402')));
   ok(et.porteGaz === GAZ.address && et.soldeGazEth === 0.001, 'l etat montre l ADRESSE du portefeuille de gaz et son solde (' + et.soldeGazEth + ' ETH)');
   const col = (et.outils || []).find((o) => o.name === 'colony_activity');
-  ok(col && Math.abs(col.usd - Math.max(0.02, 0.005 + col.gazUsd)) < 1e-6 && col.usd >= 0.02 && !et.outils.some((o) => o.name === 'ask_agent' || o.name === 'generate_image'),
-     'les prix x402 du moment : colony_activity = max(0,02 $ ; 0,005 $ + gaz ' + (col && col.gazUsd) + ' $) = ' + (col && col.usd) + ' $ ; aucun outil a prix variable');
+  ok(col && Math.abs(col.usd - Math.max(0.02, 0.005 + col.gazUsd)) < 1e-6 && col.usd >= 0.02 && !et.outils.some((o) => ['ask_agent', 'generate_video', 'video_status'].includes(o.name)),
+     'les prix x402 du moment : colony_activity = max(0,02 $ ; 0,005 $ + gaz ' + (col && col.gazUsd) + ' $) = ' + (col && col.usd) + ' $ ; ni agent, ni video (prix inconnu d avance)');
+  const img = et.outils.find((o) => o.name === 'generate_image');
+  ok(img && Math.abs(img.usd - (0.18 + img.gazUsd)) < 2e-6, 'une image Grok Quality : prix FIXE = le pire cas (0,18 $) + gaz = ' + (img && img.usd) + ' $');
   const eco = (et.outils || []).find((o) => o.name === 'swoge_economy');
   eq(eco && eco.usd, 0.02, 'swoge_economy (0,001 $ + gaz) : le minimum de 0,02 $');
   const lt = await lis(await fetch(base + '/llms.txt'));
@@ -186,6 +188,25 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
      && et3.encaisse.SWOGE.paiements === 1, 'l etat public dit ce qui a ete encaisse, par jeton (USDG ' + (et3.encaisse.USDG && et3.encaisse.USDG.montant) + ' $) — la base d un rachat de $SWOGE');
   ok(et3.gazParMethode.transferWithAuthorization && et3.gazParMethode.settle, 'le gaz reel, par methode');
   ok(et3.outils.every((o) => /^[0-9]+$/.test(o.amountUsdg)) && et3.assets.map((a) => a.symbol).join() === 'USDG,SWOGE', 'chaque outil a son prix en USDG ; les deux jetons sont annonces');
+
+  console.log('\n-- 3 ter. une image payee d avance --');
+  const i1 = await appel('generate_image', { arguments: { prompt: 'a cat', count: 1 } });
+  const i4 = await appel('generate_image', { arguments: { prompt: 'a cat', count: 4 } });
+  const a1 = de64(i1.headers.get('payment-required')).accepts[0], a4 = de64(i4.headers.get('payment-required')).accepts[0];
+  ok(i1.status === 402 && Number(a4.amount) > 3 * Number(a1.amount), 'le 402 d une image depend de la demande : 1 image ' + a1.amount + ', 4 images ' + a4.amount + ' (USDG)');
+  const i3 = await appel('generate_image', { arguments: { prompt: 'a cat', count: 3 } });
+  ok(i3.status === 400 && !i3.headers.get('payment-required'), 'une demande invalide (3 images) : 400 avant tout 402');
+  const s4 = Math.floor(Date.now() / 1000);
+  const m4 = { from: payeur.address, to: a1.payTo, value: a1.amount, validAfter: String(s4 - 600), validBefore: String(s4 + 110), nonce: ethers.utils.hexlify(ethers.utils.randomBytes(32)) };
+  const sig4 = await payeur._signTypedData(Object.assign({ chainId: 4663, verifyingContract: a1.asset }, X.DOMAINE_USDG), X.TYPES_3009, m4);
+  const e4 = X.b64({ x402Version: 2, resource: {}, accepted: a1, payload: { signature: sig4, authorization: m4 } });
+  const envAvant = noeud.envoyees.length;
+  const tri = await appel('generate_image', { arguments: { prompt: 'a cat', count: 4 } }, { 'payment-signature': e4 });
+  ok(tri.status === 402 && noeud.envoyees.length === envAvant, 'payer le devis d UNE image en demandant QUATRE : refuse, aucune transaction');
+  const off = await appel('generate_image', { arguments: { prompt: 'a cat', count: 1 } }, { 'payment-signature': e4 });
+  const co = JSON.parse(await lis(off.clone()));
+  ok(off.status === 502 && /not switched on/.test(co.raison) && /nothing was charged/.test(co.raison) && noeud.envoyees.length === envAvant,
+     'le bon paiement, mais le fournisseur d images eteint : 502, la signature n est JAMAIS soumise');
 
   console.log('\n-- 4. la cle du portefeuille de gaz --');
   const k = GAZ.privateKey.slice(2).toLowerCase();
