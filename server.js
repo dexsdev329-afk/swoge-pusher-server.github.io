@@ -1728,6 +1728,30 @@ const x402 = () => {
   console.log('[x402] on — payments to ' + payTo + ', gas paid by ' + chaine.porteGaz);
   return x402V;
 };
+/* ---- SE FAIRE TROUVER (voir decouverte.js) ----
+   Les prix affiches dans /openapi.json : en $ decimaux, un intervalle quand le
+   gaz ou la demande les font bouger (min = sans gaz ; max = avec dix fois le gaz
+   du moment, pour tenir la promesse si le gaz monte). */
+async function prixDecouverte() {
+  const x = x402();
+  if (!x) return {};
+  const A = require('./agentic'), X = require('./x402');
+  const out = {};
+  for (const d of A.definitions({ recherche: chatActif('perplexity') })) {
+    if (!agentic().x402Payable(d.name)) continue;
+    const bases = d.name === 'generate_image'
+      ? [A.prixX402Usd(d.name, { prompt: '', provider: 'grok', quality: 'speed', count: 1 }), A.prixX402Usd(d.name, { prompt: 'swoge', provider: 'openai', quality: 'quality', count: 4 })]
+      : [A.prixX402Usd(d.name)];
+    const p = await x.prix(d.name, d.name === 'generate_image' ? { prompt: '' } : undefined).catch(() => null);
+    const gaz = p ? p.gazUsd : 0;
+    out[d.name] = { min: Math.max(X.MIN_USD, Math.min(...bases)), max: Math.max(X.MIN_USD, Math.max(...bases) + 10 * gaz) };
+  }
+  return out;
+}
+/* La preuve de propriete : posee par le proprietaire (X402_PREUVE, signature
+   EIP-191 de l'origine par la tresorerie), verifiee ici, publiee seulement juste. */
+const preuvesX402 = () => (x402() ? require('./decouverte').preuvesValides(process.env.X402_PREUVE, require('./decouverte').origine(MOI_URL), x402().payTo) : []);
+
 /* L'etat PUBLIC de x402 : reseau, jeton, tresorerie, adresse du portefeuille
    de gaz et son solde, compteurs. Jamais la cle. `detail` : les prix du moment
    et le gaz mesure (route /agentic/x402). */
@@ -2438,6 +2462,18 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(r.status, Object.assign({ 'cache-control': 'no-store' }, r.entetes));
     return res.end(r.corps);
   }
+  /* ---- SE FAIRE TROUVER : OpenAPI, manifeste x402, fiche du registre MCP (decouverte.js) ---- */
+  if (path === '/openapi.json' || path === '/.well-known/x402' || path === '/.well-known/x402.json' || path === '/server.json') {
+    const D = require('./decouverte');
+    const envoieJ = (code, o) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=300' }); return res.end(JSON.stringify(o, null, 1)); };
+    if (path === '/server.json') return envoieJ(200, D.ficheMcp({ nom: process.env.MCP_NOM || 'io.github.dexsdev329-afk/swogeagentic', base: MOI_URL }));
+    const x = x402() ? await x402Etat(false) : null;
+    const c = { base: MOI_URL, outils: require('./agentic').definitions({ recherche: chatActif('perplexity') }), x402: x,
+      prixX402: await prixDecouverte(), preuves: preuvesX402(), page: SITE_URL + '/swogeagentic.html', docs: SITE_URL + '/swogeagentic_api.html' };
+    if (path === '/openapi.json') return envoieJ(200, D.openapi(c));
+    if (!x) return envoieJ(404, { ok: false, raison: 'x402 is not switched on on this server' });
+    return envoieJ(200, D.manifeste(c));
+  }
   /* L'API decrite aux agents, en direct depuis le catalogue (format llmstxt.org). */
   if (path === '/llms.txt') {
     const txt = require('./agentic').llmsTxt(Object.assign(await agentic().catalogue(), { x402: await x402Etat(false) }), { api: MOI_URL, site: SITE_URL, swoge: true,
@@ -2468,7 +2504,11 @@ const server = http.createServer(async (req, res) => {
         /* Sans cle, x402 allume, outil a prix fixe : payer a l'appel. L'entree
            est refusee AVANT le 402 — on ne fait pas signer pour une erreur. */
         if (!cleTexte && !devis && x402() && agentic().x402Payable(outil)) {
-          const inv = require('./agentic').entreeInvalide(outil, q.arguments || {});
+          /* Une vraie demande aux arguments invalides : 400 avant le 402 (on ne fait
+             pas signer pour une erreur). Une SONDE (aucun argument, aucun paiement) :
+             le 402 d'abord — la spec de decouverte (AgentCash, x402scan) l'exige. */
+          const sonde = !req.headers['payment-signature'] && (!q.arguments || !Object.keys(q.arguments).length);
+          const inv = sonde ? null : require('./agentic').entreeInvalide(outil, q.arguments || {});
           if (inv) return json(400, { ok: false, raison: inv });
           const x = await x402().traite({ outil, url: MOI_URL + path, entete: req.headers['payment-signature'], args: q.arguments || {},
             sert: (payeur) => agentic().sertSansFacture({ outil, args: q.arguments || {}, payeur }) });

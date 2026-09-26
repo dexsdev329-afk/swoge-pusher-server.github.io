@@ -50,6 +50,10 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   const ltxt = await lt.text();
   ok(lt.status === 200 && /text\/plain/.test(lt.headers.get('content-type')) && /^# SwogeAgentic/.test(ltxt) && /`new_launches\(limit\?\)`/.test(ltxt), '/llms.txt en direct, depuis le catalogue');
 
+  eq((await fetch(base + '/.well-known/x402')).status, 404, 'x402 eteint : pas de manifeste (rien de promis)');
+  const oa = await (await fetch(base + '/openapi.json')).json();
+  ok(oa.openapi === '3.1.0' && Object.values(oa.paths).every((p) => !(p.post && p.post['x-payment-info'])), '/openapi.json sans x402 : les appels par cle, aucun paiement sans cle promis');
+
   console.log('\n-- 2. un joueur signe et cree une cle --');
   const w = ethers.Wallet.createRandom();
   const s = new WebSocket('ws://127.0.0.1:' + port); s.recus = [];

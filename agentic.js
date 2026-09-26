@@ -327,8 +327,11 @@ function llmsTxt(cat, u) {
     '',
     '- [API documentation](' + u.docs + '): authentication, endpoints, MCP setup, errors, examples',
     '- [Live tool catalogue (JSON)](' + u.api + '/agentic/tools): tools, prices in $ and $SWOGE, input schemas',
+    '- [OpenAPI 3.1](' + u.api + '/openapi.json): every tool as an operation, with x-payment-info on those payable without a key',
     '- [Live llms.txt](' + u.api + '/llms.txt): this file, generated from the live catalogue',
-    '',
+  ])
+   .concat(cat && cat.x402 && cat.x402.actif ? ['- [x402 discovery manifest](' + u.api + '/.well-known/x402): the resources payable per call'] : [])
+   .concat(['',
     '## Optional',
     '',
     '- [SwogeAgentic in the browser](' + u.page + '): the same agent for humans, and where API keys are created',

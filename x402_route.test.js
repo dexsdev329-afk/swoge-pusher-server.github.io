@@ -23,7 +23,8 @@ const de64 = (h) => JSON.parse(Buffer.from(h, 'base64').toString('utf8'));
 
 const SWOGE = '0x8a166Fb41Cd659a0a43396272FF73973Ce29F817';
 const GAZ = ethers.Wallet.createRandom();
-const TRESOR = ethers.Wallet.createRandom().address;
+const TRESOR_W = ethers.Wallet.createRandom();
+const TRESOR = TRESOR_W.address;
 const X = require('./x402');
 const PROXY_ABI = new ethers.utils.Interface([
   'function settle(((address token,uint256 amount) permitted,uint256 nonce,uint256 deadline) permit,address owner,(address to,uint256 validAfter) witness,bytes signature)',
@@ -105,6 +106,11 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   process.env.X402_CLE = GAZ.privateKey;
   const port = await libre();
   process.env.PORT = String(port);
+  /* L'adresse publique du serveur, et la preuve de propriete que le proprietaire
+     signerait avec sa tresorerie (plus une fausse, qui doit etre ecartee). */
+  process.env.PUBLIC_URL = 'http://127.0.0.1:' + port;
+  const PREUVE = await TRESOR_W.signMessage('http://127.0.0.1:' + port);
+  process.env.X402_PREUVE = PREUVE + ',' + (await ethers.Wallet.createRandom().signMessage('http://127.0.0.1:' + port));
   require('./config');
   require('./server');
   await new Promise((r) => setTimeout(r, 900));
@@ -207,6 +213,20 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   const co = JSON.parse(await lis(off.clone()));
   ok(off.status === 502 && /not switched on/.test(co.raison) && /nothing was charged/.test(co.raison) && noeud.envoyees.length === envAvant,
      'le bon paiement, mais le fournisseur d images eteint : 502, la signature n est JAMAIS soumise');
+
+  console.log('\n-- 3 quater. se faire trouver --');
+  const oa = JSON.parse(await lis(await fetch(base + '/openapi.json')));
+  ok(oa.openapi === '3.1.0' && oa.servers[0].url === base && oa.paths['/agentic/call/scan_token'].post['x-payment-info'], '/openapi.json en direct : les outils, et x-payment-info sur les payables');
+  eq(JSON.stringify(oa['x-discovery']), JSON.stringify({ ownershipProofs: [PREUVE] }), 'la preuve de propriete VERIFIEE est publiee ; la fausse est ecartee');
+  const wk = await fetch(base + '/.well-known/x402');
+  const wkb = JSON.parse(await lis(wk.clone()));
+  ok(wk.status === 200 && wk.headers.get('access-control-allow-origin') === '*' && wkb.version === 1 && wkb.resources.includes(base + '/agentic/call/scan_token') && wkb.ownershipProofs[0] === PREUVE,
+     '/.well-known/x402 : les ressources payables et la preuve, lisibles de partout (CORS)');
+  const sonde = await appel('scan_token', {});
+  ok(sonde.status === 402 && sonde.headers.get('payment-required'), 'une SONDE sans arguments atteint le 402 avant la validation (exige par la spec de decouverte)');
+  eq((await appel('scan_token', { arguments: { address: 'nope' } })).status, 400, 'une vraie demande aux arguments invalides : toujours 400 avant tout 402');
+  const sj = JSON.parse(await lis(await fetch(base + '/server.json')));
+  ok(sj.remotes[0].url === base + '/mcp' && sj.description.length <= 100, '/server.json : la fiche du registre MCP, prete a publier');
 
   console.log('\n-- 4. la cle du portefeuille de gaz --');
   const k = GAZ.privateKey.slice(2).toLowerCase();
