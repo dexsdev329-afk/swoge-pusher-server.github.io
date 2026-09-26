@@ -1608,6 +1608,41 @@ const studioJeton = require('./studio_jeton');
 const studioHisto = require('./studio_histo').cree();
 const studioAgent = require('./studio_agent');
 const studioComprend = require('./studio_comprend');
+/* Ce que lisent les outils de l'agent (la page SwogeAgentic ET l'API des
+   autres agents) : un seul endroit, les memes lectures. */
+const srcAgent = () => ({
+  recherche: chatActif('perplexity'), Jeton: studioJeton,
+  fiche: (a) => studioJeton.fiche(a, { scan: (y) => aiColonie.scanJeton(y) }),
+  vue: () => Object.assign({ pause: cfg.AI_COLONIE !== '1' }, aiColonie.vue()),
+  economie: () => economie.etat(), cours: () => studioChat.coursSwoge(),
+  cherche: (x) => studioRecherche.cherche(x), contexteRecherche: (r) => studioRecherche.contexte(r),
+});
+const agenticCles = require('./agentic_cles').cree();
+const agenticMcp = require('./agentic_mcp');
+let agenticV = null;
+/* L'API des autres agents : les memes outils, la meme regle d'argent (reserve,
+   cout, reste rendu) sur le solde de jeu de l'adresse de la CLE. */
+const agentic = () => {
+  if (agenticV) return agenticV;
+  const regle = (a, rw, fw) => { const s = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s }); return s; };
+  agenticV = require('./agentic').cree({
+    cles: agenticCles, cours: () => studioChat.coursSwoge(),
+    solde: { reserve: (a, w) => game.studioReserve(a, w), regle },
+    outils: studioAgent.outils(srcAgent()),
+    actifs: () => ({ recherche: chatActif('perplexity') }),
+    agent: ({ addr, tache, modele }) => {
+      if (!chatActif('anthropic')) return Promise.resolve({ ok: false, code: 503, raison: 'the agent is not switched on yet' });
+      const src = srcAgent();
+      return studioChat.repond({ addr, modele, messages: [{ role: 'user', content: tache }], recherche: false }, {
+        cours: () => studioChat.coursSwoge(), solde: { reserve: (a, w) => game.studioReserve(a, w), regle }, actif: chatActif,
+        pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, src.recherche),
+        fournisseur: (p) => studioAgent.repond(p, { src }) });
+    },
+  });
+  return agenticV;
+};
+/* Les origines permises sur /mcp (un en-tete Origin present et hors liste → 403, spec MCP). */
+const MCP_ORIGINES = String(process.env.AGENTIC_ORIGINES || 'https://swoleeswoge.dog,https://claude.ai').split(',').map((x) => x.trim()).filter(Boolean);
 let clientComprendV = null;
 const clientComprend = () => {
   if (!clientComprendV) { const A = require('@anthropic-ai/sdk'); const K = A.default || A; clientComprendV = new K({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 30000 }); }
@@ -2253,6 +2288,69 @@ const server = http.createServer(async (req, res) => {
    *
    * LA RÉPONSE : un flux SSE (`texte`, `etape`, puis `fin` ou `erreur`) —
    * le joueur voit la réponse s'écrire, et le solde réglé arrive avec `fin`. */
+  /* ==================== SWOGEAGENTIC POUR LES AUTRES AGENTS ====================
+   * Voir agentic.js (outils payes a l'appel, devis), agentic_cles.js (cles
+   * d'API attachees au portefeuille, plafond par jour) et agentic_mcp.js
+   * (serveur MCP). Les cles se creent et se revoquent par la SESSION signee
+   * de la page ; une cle ne peut que lire et payer, dans son plafond. */
+  if (path === '/mcp' || path.startsWith('/mcp/k/')) {
+    const hdr = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim() || String(req.headers['x-api-key'] || '').trim();
+    const cleTexte = path.startsWith('/mcp/k/') ? decodeURIComponent(path.slice('/mcp/k/'.length)) : hdr;
+    let texte = '';
+    if (req.method === 'POST') {
+      try { texte = (await corps(req, 64 * 1024)).toString('utf8'); } catch (e) { res.writeHead(413); return res.end(); }
+    }
+    let r;
+    try { r = await agenticMcp.traite({ methode: req.method, entetes: req.headers, corps: texte, cle: agenticCles.resout(cleTexte), origines: MCP_ORIGINES }, { agentic: agentic(), actifs: () => ({ recherche: chatActif('perplexity') }) }); }
+    catch (e) { console.error('[mcp] ' + (e && e.stack || e)); r = { status: 500, entetes: { 'content-type': 'application/json' }, corps: JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Internal error' } }) }; }
+    res.writeHead(r.status, Object.assign({ 'cache-control': 'no-store' }, r.entetes));
+    return res.end(r.corps);
+  }
+  if (path === '/agentic/tools' || path.startsWith('/agentic/call/') || path === '/agentic/recus' || path === '/agentic/cles' || path.startsWith('/agentic/cles/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization, x-api-key' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (path === '/agentic/tools') return json(200, await agentic().catalogue());
+    const porteur = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const cleTexte = porteur.startsWith(require('./agentic_cles').PREFIXE) ? porteur : String(req.headers['x-api-key'] || '').trim();
+    const cle = cleTexte ? agenticCles.resout(cleTexte) : null;
+    /* La session signee de la page — jamais une cle : une cle ne gere pas les cles. */
+    const session = !cleTexte && porteur ? sessionJoueur.lire(game.sessionSecret, porteur) : null;
+    try {
+      if (path.startsWith('/agentic/call/')) {
+        if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+        let q;
+        try { q = JSON.parse((await corps(req, 64 * 1024)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+        const outil = decodeURIComponent(path.slice('/agentic/call/'.length));
+        const devis = q.quote === true || new URLSearchParams(req.url.split('?')[1] || '').get('quote') === '1';
+        const r = await agentic().appelle({ cle, outil, args: q.arguments || {}, devis });
+        return json(r.ok ? 200 : (r.code || 500), r);
+      }
+      if (path === '/agentic/recus') {
+        const addr = cle ? cle.addr : session;
+        if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet, or send your API key' });
+        return json(200, { ok: true, recus: agenticCles.recus(addr) });
+      }
+      if (!session) return json(401, { ok: false, raison: 'sign in with your wallet first (API keys cannot manage keys)' });
+      if (path === '/agentic/cles' && req.method === 'GET') return json(200, { ok: true, cles: agenticCles.liste(session) });
+      if (path === '/agentic/cles' && req.method === 'POST') {
+        let q;
+        try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+        const r = agenticCles.nouvelle(session, q.nom, q.plafondSwoge);
+        return json(r.ok ? 200 : r.code, r);
+      }
+      if (path.startsWith('/agentic/cles/') && req.method === 'DELETE') {
+        const r = agenticCles.revoque(session, decodeURIComponent(path.slice('/agentic/cles/'.length)));
+        return json(r.ok ? 200 : r.code, r);
+      }
+      return json(405, { ok: false, raison: 'method not allowed' });
+    } catch (e) {
+      console.error('[agentic] ' + (e && e.stack || e));
+      return json(503, { ok: false, raison: 'SwogeAgentic API is unavailable right now — you were not charged' });
+    }
+  }
+
   /* ==================== SWOGEAGENTIC — UN AGENT AUX OUTILS DE SWOGE ====================
    * Une page a part (swogeagentic.html). Meme session, meme facturation que le
    * chat (studio_chat.repond : reserve du pire cas, cout reel, reste rendu),
@@ -2294,13 +2392,7 @@ const server = http.createServer(async (req, res) => {
     const envoie = (type, d) => { try { res.write('event: ' + type + '\ndata: ' + JSON.stringify(d) + '\n\n'); } catch (e) { /* client parti */ } };
     const rid = reprises.ridOk(q.rid) ? q.rid : null;
     if (rid) reprises.note(addr, rid, { genre: 'chat', status: 'pending', texte: '' });
-    const src = {
-      recherche: rech, Jeton: studioJeton,
-      fiche: (a) => studioJeton.fiche(a, { scan: (y) => aiColonie.scanJeton(y) }),
-      vue: () => Object.assign({ pause: cfg.AI_COLONIE !== '1' }, aiColonie.vue()),
-      economie: () => economie.etat(), cours: () => studioChat.coursSwoge(),
-      cherche: (x) => studioRecherche.cherche(x), contexteRecherche: (r) => studioRecherche.contexte(r),
-    };
+    const src = srcAgent();
     let r;
     try {
       r = await studioChat.repond({ addr, modele: m.id, messages: q.messages, recherche: false }, {
