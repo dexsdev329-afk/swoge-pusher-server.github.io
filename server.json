@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.dexsdev329-afk/swogeagentic",
+  "name": "dog.swoleeswoge/swogeagentic",
   "title": "SwogeAgentic",
   "description": "Crypto intel for AI agents: token scans, SWOGE AI colony data, OSINT, web search, images, video",
   "version": "1.0.0",

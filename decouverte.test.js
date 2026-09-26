@@ -59,7 +59,7 @@ const A = require('./agentic');
   ok(m.ownershipProofs[0] === bonne && !('ownershipProofs' in D.manifeste({ base: BASE, prixX402, preuves: [] })), 'la preuve y est quand elle existe, absente sinon');
 
   console.log('\n-- 4. la fiche du registre MCP (server.json) --');
-  const f = D.ficheMcp({ nom: 'io.github.dexsdev329-afk/swogeagentic', base: BASE });
+  const f = D.ficheMcp({ nom: 'dog.swoleeswoge/swogeagentic', base: BASE });
   ok(/^[a-zA-Z0-9.-]+\/[a-zA-Z0-9._-]+$/.test(f.name) && f.name.length <= 200, 'name : forme reverse-DNS avec une seule barre (motif du schema)');
   ok(f.description.length >= 1 && f.description.length <= 100 && f.title.length <= 100, 'description ≤ 100 caracteres (' + f.description.length + '), title ≤ 100');
   ok(f.name && f.description && f.version && f.$schema === 'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json', 'les champs requis (name, description, version) et le schema 2025-12-11');
@@ -70,7 +70,7 @@ const A = require('./agentic');
   /* La fiche publiee dans le depot (celle que `mcp-publisher publish` lit) ne vieillit pas en silence. */
   const fs = require('fs');
   const depot = JSON.parse(fs.readFileSync(require('path').join(__dirname, 'server.json'), 'utf8'));
-  eq(JSON.stringify(depot), JSON.stringify(D.ficheMcp({ nom: 'io.github.dexsdev329-afk/swogeagentic', base: 'https://web-production-220a3.up.railway.app' })),
+  eq(JSON.stringify(depot), JSON.stringify(D.ficheMcp({ nom: 'dog.swoleeswoge/swogeagentic', base: 'https://web-production-220a3.up.railway.app' })),
      'server.json du depot = la fiche generee (sinon : la regenerer avec decouverte.ficheMcp)');
 
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));

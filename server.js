@@ -2487,7 +2487,7 @@ const server = http.createServer(async (req, res) => {
   if (path === '/openapi.json' || path === '/.well-known/x402' || path === '/.well-known/x402.json' || path === '/server.json') {
     const D = require('./decouverte');
     const envoieJ = (code, o) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=300' }); return res.end(JSON.stringify(o, null, 1)); };
-    if (path === '/server.json') return envoieJ(200, D.ficheMcp({ nom: process.env.MCP_NOM || 'io.github.dexsdev329-afk/swogeagentic', base: MOI_URL }));
+    if (path === '/server.json') return envoieJ(200, D.ficheMcp({ nom: process.env.MCP_NOM || 'dog.swoleeswoge/swogeagentic', base: MOI_URL }));
     const x = x402() ? await x402Etat(false) : null;
     const c = { base: MOI_URL, outils: require('./agentic').definitions({ recherche: chatActif('perplexity') }), x402: x,
       prixX402: await prixDecouverte(), preuves: preuvesX402(), page: SITE_URL + '/swogeagentic.html', docs: SITE_URL + '/swogeagentic_api.html' };
