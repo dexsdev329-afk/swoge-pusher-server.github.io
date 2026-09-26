@@ -38,6 +38,7 @@ lance osintv2 "$SRV" node osint_v2.test.js   # un vrai serveur : la route v2, ex
 lance studio  "$SRV" node studio.test.js   # le paiement : double depense, fausse confirmation
 lance studiochat "$SRV" node studio_chat.test.js   # SWOGE AI Chat : jamais sous le cout, tout rendu si le fournisseur echoue, bout en bout
 lance compat  "$SRV" node studio_compat.test.js   # le chat ChatGPT et Grok : requete conforme, usage lu, cout exact xAI, 503 sans cle
+lance jeton   "$SRV" node studio_jeton.test.js    # une adresse de jeton dans le chat : piscine la plus profonde, GoPlus tri-etat, colonie avec effectifs
 lance studiomedia "$SRV" node studio_media.test.js   # Studio images/videos Grok Imagine : cout reel, tout rendu, proprietaire seul, bout en bout
 lance reprises "$SRV" node reprises.test.js   # une reponse retrouvee apres rechargement : par adresse de session seulement
 lance economie "$SRV" node economie.test.js   # la carte $SWOGE ECONOMY : offre, brule, coffre lus sur la chaine

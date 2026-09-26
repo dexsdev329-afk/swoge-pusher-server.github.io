@@ -35,7 +35,9 @@ const BASE = () => (process.env.PERPLEXITY_BASE_URL || 'https://api.perplexity.a
 /** La question à chercher : le dernier message du joueur, borné. */
 function requeteDe(messages) {
   const d = (messages || []).filter((m) => m.role === 'user').pop();
-  return String((d && d.content) || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+  /* Sans ce que la page ou le serveur ont ajoute apres « --- » (la fiche d'un
+     jeton) : on cherche la question du joueur, pas nos propres chiffres. */
+  return String((d && d.content) || '').split('\n\n---\n')[0].replace(/\s+/g, ' ').trim().slice(0, 400);
 }
 
 /** Cherche ; rend les résultats (https seulement), ou lève. */

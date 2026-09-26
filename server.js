@@ -1604,6 +1604,7 @@ const osint = require('./osint');
 const osintNoyau = require('./osint_noyau');
 const studio = require('./studio');
 const studioChat = require('./studio_chat');
+const studioJeton = require('./studio_jeton');
 const studioClaude = require('./studio_claude');
 /* Le module des sessions JOUEUR, sous son propre nom : dans le gestionnaire
    HTTP, `session` désigne la session ADMIN (ligne `sessionValide`) et masque
@@ -2290,6 +2291,10 @@ const server = http.createServer(async (req, res) => {
         surTexte: (t) => { if (rid) reprises.ajoute(addr, rid, t); envoie('texte', { t }); },
         surReflexion: () => envoie('etape', { quoi: 'reflexion' }),
         surRecherche: () => envoie('etape', { quoi: 'recherche' }),
+        /* Une adresse de jeton collee : DexScreener, GoPlus, et le scan de la
+           colonie (memes caches que /scan) — voir studio_jeton.js. */
+        jetons: (a) => Promise.all(a.map((x) => studioJeton.fiche(x, { scan: (y) => aiColonie.scanJeton(y) }))),
+        surJeton: () => envoie('etape', { quoi: 'jeton' }),
       });
     } catch (e) {
       console.error('[chat] ' + (e && e.stack || e));

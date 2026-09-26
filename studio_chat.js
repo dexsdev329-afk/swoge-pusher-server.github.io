@@ -100,6 +100,7 @@ const PRIX_RECHERCHE_USD = 0.01;          /* 10 $ les 1 000 recherches */
 const MARGE = () => Math.max(1, Number(process.env.STUDIO_MARGE || 1.5));
 const MIN_USD = 0.001;
 const Rech = require('./studio_recherche');   /* la recherche web des modeles sans outil (Perplexity) */
+const Jeton = require('./studio_jeton');       /* une adresse de jeton collee : marche, securite, colonie */
 
 function modele(id) { return MODELES.find((m) => m.id === id) || null; }
 
@@ -117,13 +118,15 @@ function coutUsd(m, usage) {
   return entree * m.entree / 1e6 + sortie * m.sortie / 1e6 + rech * PRIX_RECHERCHE_USD + pplx;
 }
 
-/** Le pire cas d'une requête, en USD, AVANT marge. */
-function pireCasUsd(m, messages, recherche) {
+/** Le pire cas d'une requête, en USD, AVANT marge. `fiches` : les adresses
+ *  de jeton lues pour la question, chacune ajoutant JETONS_PAR_FICHE en entrée. */
+function pireCasUsd(m, messages, recherche, fiches) {
   const car = (messages || []).reduce((s, x) => s + String(x.content || '').length, 0);
   /* Perplexity : une seule requete, et au plus JETONS_CONTEXTE de resultats
      ajoutes a la question. Claude : jusqu'a RECHERCHE_MAX recherches. */
   const pplx = recherche && m.recherche === 'perplexity';
-  const entree = Math.ceil(car / 2) + SYSTEME_JETONS + (recherche ? (pplx ? Rech.JETONS_CONTEXTE : RECHERCHE_JETONS) : 0);
+  const entree = Math.ceil(car / 2) + SYSTEME_JETONS + (recherche ? (pplx ? Rech.JETONS_CONTEXTE : RECHERCHE_JETONS) : 0)
+    + (Number(fiches) || 0) * Jeton.JETONS_PAR_FICHE;
   return entree * m.entree / 1e6 + m.maxTokens * m.sortie / 1e6
     + (recherche ? (pplx ? Rech.PRIX_USD : RECHERCHE_MAX * PRIX_RECHERCHE_USD) : 0);
 }
@@ -270,7 +273,10 @@ async function repond(q, deps) {
   const cours = await deps.cours();
   if (!(cours > 0)) return { ok: false, code: 503, raison: 'the $SWOGE price is unavailable — try again shortly' };
   const dec = config.DECIMALS || 18;
-  const reserveUsd = factureUsd(pireCasUsd(m, messages, recherche));
+  /* Une adresse de jeton dans la question : sa fiche (marche, securite,
+     colonie) rejoint la question, et la reserve compte ses jetons. */
+  const adresses = deps.jetons ? Jeton.adressesDe(messages[messages.length - 1].content) : [];
+  const reserveUsd = factureUsd(pireCasUsd(m, messages, recherche, adresses.length));
   const reserveWei = studio.montantBaseDe(reserveUsd, cours, dec);
   if (!deps.solde.reserve(addr, reserveWei)) {
     return { ok: false, code: 402, raison: 'balance too low for this model',
@@ -278,9 +284,18 @@ async function repond(q, deps) {
   }
 
   EN_VOL.add(addr);
-  let r;
+  let r, fiches = [];
   try {
-    r = await deps.fournisseur({ m, messages, recherche, effort,
+    let envoyes = messages;
+    if (adresses.length) {
+      if (deps.surJeton) deps.surJeton();
+      try { fiches = await deps.jetons(adresses); } catch (e) { fiches = []; }
+      if (fiches.length) {
+        const der = messages[messages.length - 1];
+        envoyes = messages.slice(0, -1).concat([{ role: 'user', content: der.content + '\n\n---\n' + Jeton.contexte(fiches) }]);
+      }
+    }
+    r = await deps.fournisseur({ m, messages: envoyes, recherche, effort,
       surTexte: deps.surTexte || (() => {}), surReflexion: deps.surReflexion || (() => {}),
       surRecherche: deps.surRecherche || (() => {}) });
   } catch (e) {
@@ -305,7 +320,8 @@ async function repond(q, deps) {
   const solde = deps.solde.regle(addr, reserveWei, factureWei);
   mesure(m.id, cout, facture, depasse);
   return {
-    ok: true, texte: r.texte || '', sources: r.sources || [], stop: r.stop || null,
+    ok: true, texte: r.texte || '', sources: Jeton.sources(fiches).concat(r.sources || []), stop: r.stop || null,
+    jetons: fiches.map(Jeton.carte),
     modele: m.id, servi: r.servi || m.api, recherche,
     factureSwoge: studio.formateBase(factureWei, dec), factureUsd: Number(facture.toFixed(5)),
     usage: { entree: (r.usage && r.usage.input_tokens) || 0, sortie: (r.usage && r.usage.output_tokens) || 0,
