@@ -59,8 +59,11 @@ const enUsd = (w) => Number(w) / 1e18 * COURS;
     const cl = faux('unused'), f = four(), s = solde();
     const r = await M.images({ addr: '0x1', modele: 'qualite', prompt: 'crée moi une image de swoge sur un bateaux' }, Object.assign(deps(cl), { solde: s.solde, fournisseur: f }));
     ok(r.ok && f.demandes[0].image === REF, 'SWOGE nomme, rien de joint : l image officielle part comme reference');
-    ok(/swoge sur un bateaux/.test(f.demandes[0].prompt) && /reference image: a muscular shiba inu in a red suit with a red silk scarf/.test(f.demandes[0].prompt),
+    ok(/swoge sur un bateaux/.test(f.demandes[0].prompt) && /reference image: a very muscular, bodybuilder-build shiba inu/.test(f.demandes[0].prompt),
        'la demande garde ses mots et dit au generateur de garder le personnage de la reference');
+    /* 26 septembre 2026 : le personnage, pas l'uniforme — « meme corpulence, pas forcement le meme habit ». */
+    ok(/keep his face, fur colours and muscular build/.test(f.demandes[0].prompt) && /not a uniform/.test(f.demandes[0].prompt) && !/keep his face, fur, build and outfit/.test(f.demandes[0].prompt),
+       'on garde le visage, le pelage et la carrure ; la tenue et la pose suivent la scene (le costume rouge n est qu un exemple)');
     ok(cl.vus.length === 0 && r.reference === 'swoge', 'pas de fil : aucun appel de reecriture, et la reponse dit quelle reference a servi');
   }
 

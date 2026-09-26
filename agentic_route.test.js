@@ -43,7 +43,7 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
 
   console.log('-- 1. le catalogue, public --');
   const cat = await J('/agentic/tools');
-  ok(cat.status === 200 && cat.b.outils.map((o) => o.name).join(',') === 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,ask_agent,generate_image,generate_video,video_status',
+  ok(cat.status === 200 && cat.b.outils.map((o) => o.name).join(',') === 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,telegram_calls,ask_agent,generate_image,generate_video,video_status',
      'les outils et leurs prix (sans cle Perplexity : pas de recherche web) [' + cat.b.outils.map((o) => o.name).join(',') + ']');
 
   const lt = await fetch(base + '/llms.txt');
@@ -127,6 +127,15 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   eq((await J('/agentic/call/colony_activity', { method: 'POST', headers: K, body: '{}' })).status, 401, 'la cle revoquee est refusee');
 
   s.close();
+  console.log('\n-- 6. les appels Telegram, suivi eteint (colonie eteinte dans l essai) --');
+  {
+    const cle = (await J('/agentic/cles', { method: 'POST', headers: S, body: JSON.stringify({ nom: 'tg', plafondSwoge: 5000 }) })).b.cle;
+    const avantT = ethers.utils.parseUnits(moteur.balanceStr(adr), 18);
+    const r = await J('/agentic/call/telegram_calls', { method: 'POST', headers: { authorization: 'Bearer ' + cle, 'content-type': 'application/json' }, body: JSON.stringify({ arguments: { hours: 12 } }) });
+    ok(r.status === 400 && /not switched on/.test(r.b.raison) && ethers.utils.parseUnits(moteur.balanceStr(adr), 18).eq(avantT), 'suivi eteint : refuse, et rien debite');
+    eq((await J('/agentic/call/telegram_calls', { method: 'POST', headers: { authorization: 'Bearer ' + cle, 'content-type': 'application/json' }, body: JSON.stringify({ arguments: { hours: 999 } }) })).status, 400, 'des heures hors [1 ; 168] : 400');
+  }
+
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error('ESSAI CASSE :', e); process.exit(1); });

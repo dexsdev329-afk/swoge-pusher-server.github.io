@@ -1610,7 +1610,47 @@ const studioAgent = require('./studio_agent');
 const studioComprend = require('./studio_comprend');
 /* Ce que lisent les outils de l'agent (la page SwogeAgentic ET l'API des
    autres agents) : un seul endroit, les memes lectures. */
+/* ---- L'AGENT QUI SUIT LES CANAUX TELEGRAM (tg_appels.js ; idee du proprietaire, 26 septembre 2026) ----
+   Chaque appel Robinhood d'un canal surveille, au prix lu a la detection, suivi
+   ensuite (variation, plus haut) ; un score par canal sur les appels FRAIS, et
+   aucun sous dix. Tourne avec la colonie (meme apercu Telegram, meme cache) ;
+   TG_APPELS=1 l'allume seul, TG_APPELS=0 l'eteint. TG_APPELS_NOTIFIE=1 : chaque
+   nouvel appel frais part sur le Telegram du proprietaire. */
+let tgAppelsV;
+const tgAppels = () => {
+  if (tgAppelsV !== undefined) return tgAppelsV;
+  const actif = process.env.TG_APPELS === '1' || (process.env.TG_APPELS !== '0' && cfg.AI_COLONIE === '1');
+  if (!actif) { tgAppelsV = null; return tgAppelsV; }
+  const A = require('./tg_appels'), canaux = require('./tg_canal');
+  const usd = (x) => (x >= 1e6 ? (x / 1e6).toFixed(1) + 'M' : x >= 1e3 ? Math.round(x / 1e3) + 'k' : String(Math.round(x)));
+  tgAppelsV = A.cree({ tg: canaux, fichier: require('path').join(cfg.DATA_DIR, 'tg_appels.json'),
+    lit: (u) => fetch(u, { signal: AbortSignal.timeout(15000) }).then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))),
+    notifie: process.env.TG_APPELS_NOTIFIE === '1' ? (a) => tg.notify('📣 @' + a.canal + ' called $' + a.sym + ' on Robinhood Chain — cap $' + usd(a.mc0) + ', pool $' + usd(a.liq0)
+      + (a.ageJeton !== null ? ', token ' + (a.ageJeton < 120 ? a.ageJeton + ' min' : Math.round(a.ageJeton / 60) + ' h') + ' old' : '')
+      + '\n' + (a.post ? 'https://t.me/' + a.post + '\n' : '') + 'https://dexscreener.com/robinhood/' + a.addr + '\nJudged by SWOGE AI like any other source — not advice.') : null });
+  canaux.poseScores(() => tgAppelsV.scores());
+  /* La decouverte de nouveaux canaux, une fois par jour, sur mesure (tg_decouverte.js) ; TG_DECOUVERTE=0 l'eteint. */
+  if (process.env.TG_DECOUVERTE !== '0') {
+    const D = require('./tg_decouverte').cree({ tg: canaux, fichier: require('path').join(cfg.DATA_DIR, 'tg_decouverte.json'),
+      page: (c) => fetch('https://t.me/s/' + encodeURIComponent(c), { headers: { 'user-agent': 'Mozilla/5.0' }, redirect: 'manual', signal: AbortSignal.timeout(15000) })
+        .then(async (r) => ({ statut: r.status, html: r.status === 200 ? await r.text() : '' })),
+      litJson: (u) => fetch(u, { signal: AbortSignal.timeout(15000) }).then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))) });
+    canaux.poseDecouverte(() => D.vue());
+    const decouvre = () => D.tour().then((f) => { if (f.ajoutes.length || f.retires.length) console.log('[tg_decouverte] +' + f.ajoutes.map((x) => x.canal).join(',') + ' −' + f.retires.map((x) => x.canal).join(',')); })
+      .catch((e) => console.error('[tg_decouverte] ' + (e && e.message || e)));
+    setTimeout(decouvre, 10 * 60e3).unref();                          /* apres que les canaux suivis ont ete lus */
+    setInterval(decouvre, Math.max(3600e3, Number(process.env.TG_DECOUVERTE_MS || 24 * 3600e3))).unref();
+  }
+  const tourne = () => tgAppelsV.tour().catch((e) => console.error('[tg_appels] ' + (e && e.message || e)));
+  setTimeout(tourne, 30000).unref();
+  setInterval(tourne, A.TOUR_MS).unref();
+  console.log('[tg_appels] on — ' + canaux.canaux().length + ' Telegram channels watched' + (process.env.TG_APPELS_NOTIFIE === '1' ? ', fresh calls notified' : ''));
+  return tgAppelsV;
+};
+tgAppels();
 const srcAgent = () => ({
+  /* Les appels Telegram suivis (outil telegram_calls) ; null si le suivi est eteint. */
+  appels: tgAppels() ? (q) => tgAppels().liste({ canal: q.channel, heures: q.hours, limite: q.limit }) : null,
   recherche: chatActif('perplexity'), Jeton: studioJeton,
   fiche: (a) => studioJeton.fiche(a, { scan: (y) => aiColonie.scanJeton(y) }),
   vue: () => Object.assign({ pause: cfg.AI_COLONIE !== '1' }, aiColonie.vue()),
@@ -1838,6 +1878,19 @@ const studioOpenai = require('./studio_openai');
 const studioCompat = require('./studio_compat');   /* le chat ChatGPT et Grok (Chat Completions) */
 const studioRecherche = require('./studio_recherche');   /* la recherche web pour GPT et Grok (Perplexity Search API) */
 const chatActif = (f) => (f === 'anthropic' ? studioClaude.actif() : f === 'perplexity' ? studioRecherche.actif() : studioCompat.actif(f));   /* « ChatGPT Image » */
+/* Series et pubs : les memes personnages et les memes voix a chaque scene (studio_production.js). */
+const studioProductionMod = require('./studio_production');
+const studioProduction = studioProductionMod.cree({ dossier: require('path').join(cfg.DATA_DIR, 'productions') });
+/* L'essai de montage (xAI video edits) : un clip restyle, proprietaire seul,
+   pour MESURER qualite, cout reel et attente avant toute chaine « refaire une
+   video » (essai_montage.js). Le clip est servi a xAI par son nom le temps de
+   l'essai, puis efface ; chaque essai fini laisse une ligne au journal. */
+const essaiMontageMod = require('./essai_montage');
+const essaiMontage = essaiMontageMod.cree({
+  dossier: require('path').join(cfg.DATA_DIR, 'essai_montage'), fournisseur: studioXai,
+  urlPublique: (nom) => MOI_URL + essaiMontageMod.VIDEO_PREFIXE + nom,
+  journal: require('path').join(cfg.DATA_DIR, 'essai_montage.jsonl'),
+});
 const studioFichiers = require('./studio_fichiers');   /* les images generees, rangees sur le volume */   /* une reponse retrouvee apres un rechargement de la page */   /* offre, brule, coffre : lus sur la chaine */
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
@@ -3918,6 +3971,137 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': f.type, 'content-length': f.octets.length, 'access-control-allow-origin': '*',
                          'cache-control': 'public, max-age=604800, immutable' });
     return res.end(f.octets);
+  }
+  /* ---- STUDIO : SERIES ET PUBS ----
+     Une production (ses personnages ou son produit, leurs images, leurs voix)
+     appartient a l'adresse de la SESSION ; chaque scene est une video ordinaire
+     (meme reserve, meme cout reel, tout rendu si elle echoue), lancee avec les
+     MEMES references dans le MEME ordre. Les images sont publiques par leur nom
+     (48 hexa) : xAI doit pouvoir les lire. */
+  if (path.startsWith(studioProductionMod.IMAGE_PREFIXE)) {
+    const f = studioProduction.litImage(path.slice(studioProductionMod.IMAGE_PREFIXE.length));
+    if (!f) { res.writeHead(404, { 'access-control-allow-origin': '*' }); return res.end(); }
+    res.writeHead(200, { 'content-type': f.type, 'content-length': f.octets.length, 'access-control-allow-origin': '*',
+                         'cache-control': 'public, max-age=604800, immutable' });
+    return res.end(f.octets);
+  }
+  if (path === '/studio/production' || path.startsWith('/studio/production/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    const P = studioProductionMod, S = studioProduction;
+    const vuePublique = (p) => p && Object.assign({}, p, { scenes: (p.scenes || []).slice(-P.SCENES_MAX) });
+    /* Les scenes en cours : leur video est-elle finie ? (la memoire des videos garde une heure) */
+    const rafraichit = (p) => {
+      for (const sc of (p.scenes || [])) {
+        if (sc.statut !== 'pending' || !sc.video) continue;
+        const v = studioMedia.etatVideo(sc.video, addr);
+        if (v.ok && v.status !== 'pending') S.noteScene(addr, p.id, { id: sc.id, statut: v.status, url: v.url || null, factureSwoge: v.factureSwoge, raison: v.raison || null });
+        else if (!v.ok) S.noteScene(addr, p.id, { id: sc.id, statut: 'unknown', raison: 'the server restarted before this scene finished' });
+      }
+      return S.une(addr, p.id);
+    };
+    const m = /^\/studio\/production\/([0-9a-f]{16})(\/scene)?$/.exec(path);
+    if (path === '/studio/production' && req.method === 'GET') {
+      return json(200, { ok: true, productions: S.liste(addr).map(rafraichit).map(vuePublique),
+        voix: studioMedia.VOIX.filter((v) => studioMedia.voixPermises().includes(v.id)), modes: P.MODES,
+        personnagesMax: P.PERSONNAGES_MAX, productionsMax: P.PRODUCTIONS_MAX, scenesMax: P.SCENES_MAX,
+        durees: studioMedia.DUREES, swoge: SITE_URL + studioComprend.REFERENCE_CHEMIN });
+    }
+    if (req.method === 'DELETE' && m && !m[2]) {
+      const r = S.supprime(addr, m[1]);
+      return json(r.ok ? 200 : r.code, r);
+    }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'GET, POST or DELETE' });
+    let q;
+    try { q = JSON.parse((await corps(req, 20 * 1024 * 1024)).toString('utf8') || '{}'); }
+    catch (e) { return json(400, { ok: false, raison: 'unreadable request (each image must stay under 6 MB)' }); }
+    if (path === '/studio/production' || (m && !m[2])) {
+      /* creer, ou remplacer (les scenes restent) : valider puis poser, sans rien attendre entre les deux */
+      const v = P.valide(q.production, { image: S.outilImage(addr, (x) => studioMedia.imageJointe(x)), voixOk: (x) => studioMedia.voixPermises().includes(x) });
+      if (v.erreur) { S.menage(addr); return json(400, { ok: false, raison: v.erreur }); }
+      const r = S.pose(addr, v, m ? m[1] : null);
+      if (!r.ok) S.menage(addr);
+      return json(r.ok ? 200 : r.code, r.ok ? { ok: true, production: vuePublique(r.production) } : r);
+    }
+    /* une scene : la video, avec les references de la production */
+    if (!m || !m[2]) return json(404, { ok: false, raison: 'unknown route' });
+    if (!studioXai.actif()) return json(503, { ok: false, raison: 'Video is not switched on yet (Grok Imagine).' });
+    const prod = S.une(addr, m[1]);
+    if (!prod) return json(404, { ok: false, raison: 'unknown production' });
+    if ((prod.scenes || []).length >= P.SCENES_MAX) return json(400, { ok: false, raison: 'this production has ' + P.SCENES_MAX + ' scenes — start a new one' });
+    const duree = studioMedia.DUREES.includes(Number(q.duree)) ? Number(q.duree) : studioMedia.DUREES[studioMedia.DUREES.length - 1];
+    const sc = P.scene(prod, q.texte, duree);
+    if (sc.erreur) return json(400, { ok: false, raison: sc.erreur });
+    const deps = Object.assign(depsMedia(), {
+      referenceOk: (x) => x === P.SWOGE || (String(x).startsWith(P.IMAGE_PREFIXE) && !!S.litImage(String(x).slice(P.IMAGE_PREFIXE.length))),
+      urlReference: (x) => (x === P.SWOGE ? SITE_URL + studioComprend.REFERENCE_CHEMIN : MOI_URL + x),
+    });
+    let r;
+    try {
+      r = await studioMedia.lanceVideo({ addr, prompt: sc.prompt, duree, resolution: q.resolution, format: prod.format, references: sc.references, voix: sc.voix }, deps);
+    } catch (e) {
+      console.error('[production] ' + (e && e.stack || e));
+      r = { ok: false, code: 500, raison: 'server error — you were not charged' };
+    }
+    if (!r.ok) return json(r.code || 500, r);
+    const idScene = require('crypto').randomBytes(6).toString('hex');
+    S.noteScene(addr, prod.id, { id: idScene, texte: sc.texte, video: r.id, statut: 'pending', duree, t: Date.now() });
+    return json(200, Object.assign({}, r, { scene: idScene, production: prod.id }));
+  }
+  /* ---- STUDIO : ESSAI DE MONTAGE (xAI video edits), PROPRIETAIRE SEUL ----
+     Un clip court restyle (anime -> prise reelle, ou l'inverse) pour mesurer
+     avant de batir. AUCUN debit de $SWOGE : c'est la mesure du proprietaire,
+     sur la cle xAI de la maison ; la depense est bornee par le plafond du
+     module (ESSAI_MONTAGE_PAR_JOUR essais de 8,7 s au plus, par jour). */
+  /* Le clip d'un essai EN COURS : public par son nom (48 hexa), xAI doit le
+     lire ; avant tout controle de session. Efface des que l'essai finit. */
+  if (path.startsWith(essaiMontageMod.VIDEO_PREFIXE)) {
+    const f = (req.method === 'GET' || req.method === 'HEAD') ? essaiMontage.fichier(path.slice(essaiMontageMod.VIDEO_PREFIXE.length)) : null;
+    if (!f) { res.writeHead(404, { 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(); }
+    res.writeHead(200, { 'content-type': f.type, 'content-length': f.octets.length, 'access-control-allow-origin': '*',
+                         'cache-control': 'no-store' });
+    return res.end(req.method === 'HEAD' ? undefined : f.octets);
+  }
+  if (path === '/studio/essai-montage' || path.startsWith('/studio/essai-montage/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    /* Un autre portefeuille apprend qu'il n'est pas proprietaire, rien d'autre ;
+       tout autre geste est refuse AVANT de lire le corps (un clip de 36 Mo). */
+    if (!proprietaireIA(addr)) {
+      if (path === '/studio/essai-montage' && req.method === 'GET') return json(200, { ok: true, proprietaire: false });
+      return json(403, { ok: false, raison: 'owner only (AI_OWNER on the server)' });
+    }
+    if (path === '/studio/essai-montage' && req.method === 'GET') {
+      return json(200, Object.assign({ ok: true, proprietaire: true }, essaiMontage.vue(addr), { actif: studioXai.actif() }));
+    }
+    const m = /^\/studio\/essai-montage\/([0-9a-f]{24})$/.exec(path);
+    if (m && req.method === 'GET') { const r = essaiMontage.etat(m[1], addr); return json(r.ok ? 200 : r.code, r); }
+    if (path !== '/studio/essai-montage') return json(404, { ok: false, raison: 'unknown test' });
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'GET or POST' });
+    let q;
+    try { q = JSON.parse((await corps(req, 36 * 1024 * 1024)).toString('utf8') || '{}'); }
+    catch (e) { return json(400, { ok: false, raison: 'unreadable request (the clip must stay under 25 MB)' }); }
+    if (!q || typeof q !== 'object') q = {};
+    /* data-URL base64 : le type annonce ne prouve rien, l'en-tete MP4 est relu par le module */
+    const d = /^data:[a-z0-9.+\/-]*;base64,/i.exec(String(q && q.video || ''));
+    const octets = d ? Buffer.from(String(q.video).slice(d[0].length), 'base64') : Buffer.alloc(0);
+    let r;
+    try { r = await essaiMontage.lance({ addr, octets, sens: q.sens, prompt: q.prompt }); }
+    catch (e) {
+      console.error('[essai-montage] ' + (e && e.stack || e));
+      r = { ok: false, code: 500, raison: 'server error' };
+    }
+    return json(r.ok ? 200 : (r.code || 500), r);
   }
   if (path === '/studio/media/catalogue' || path === '/studio/media/image' || path === '/studio/media/video'
       || path.startsWith('/studio/media/video/')) {

@@ -53,7 +53,7 @@ const m = C.modele('sonnet-5');
   {
     const d = A.definitions({ recherche: true });
     ok(d.every((x) => x.name && x.description && x.input_schema && x.input_schema.type === 'object'), 'forme de l API Messages : name, description, input_schema');
-    eq(d.map((x) => x.name).join(','), 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,web_search', 'sept outils avec Perplexity (trois ajoutes le 26 septembre : lancements, lanceur, OSINT)');
+    eq(d.map((x) => x.name).join(','), 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,telegram_calls,web_search', 'huit outils avec Perplexity (lancements, lanceur, OSINT, puis les appels Telegram, ajoutes le 26 septembre)');
     ok(Math.ceil(JSON.stringify(d).length / 2) <= A.OUTILS_JETONS && Math.ceil(A.SYSTEME.length / 2) <= A.SYSTEME_JETONS,
        'le pire cas couvre les definitions et la consigne, a un jeton pour deux caracteres [' + Math.ceil(JSON.stringify(d).length / 2) + ' ≤ ' + A.OUTILS_JETONS + ']');
     ok(!A.definitions({ recherche: false }).some((x) => x.name === 'web_search'), 'sans cle Perplexity : pas de recherche web');
@@ -162,11 +162,23 @@ const m = C.modele('sonnet-5');
   console.log('\n-- 5. l agent ne fait que lire --');
   {
     const code = fs.readFileSync(path.join(__dirname, 'studio_agent.js'), 'utf8');
-    ok(!/require\('\.\/miroir'\)|surAchat|surVente|sendTransaction|signTransaction|x_post|telegram/.test(code), 'aucun outil n achete, ne vend, ne signe ni ne poste');
+    /* « telegram » seul n'est plus un signe de publication depuis le 26 septembre 2026 :
+       `telegram_calls` LIT les appels deja releves. Ce qui posterait : le module
+       d'envoi Telegram, ses fonctions d'envoi, ou le module des posts X. */
+    ok(!/require\('\.\/miroir'\)|surAchat|surVente|sendTransaction|signTransaction|x_post|require\('\.\/telegram'\)|\.notify(Photo)?\(|sendMessage|sendDocument/.test(code), 'aucun outil n achete, ne vend, ne signe ni ne poste');
     const srv = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
     const i = srv.indexOf("path === '/studio/agent' ||"), bloc = srv.slice(i, srv.indexOf('SWOLEMIND — L\'HISTORIQUE', i));
     ok(/sessionJoueur\.lire\(game\.sessionSecret, jeton\)/.test(bloc) && /fournisseur !== 'anthropic'/.test(bloc) && !/q\.addr|q\.adresse/.test(bloc),
        'la route prend l adresse dans la session, jamais dans le corps, et ne sert que Claude');
+  }
+
+  console.log('\n-- 6. les appels Telegram suivis (26 septembre 2026) --');
+  {
+    let q = null;
+    const O2 = A.outils({ appels: (x) => { q = x; return { calls: [{ channel: 'XandersOGCALLS', symbol: 'WICKR', changeSinceDetectionPct: 12.5 }], channels: [], method: 'not advice' }; } });
+    const r = await O2.telegram_calls({ channel: 'XandersOGCALLS', hours: 12, limit: 5 });
+    ok(q.channel === 'XandersOGCALLS' && q.hours === 12 && q.limit === 5 && JSON.parse(r.texte).calls[0].symbol === 'WICKR', 'telegram_calls transmet les filtres et rend les appels suivis en donnees');
+    ok(/not switched on/.test((await A.outils({}).telegram_calls({})).erreur), 'suivi eteint : une erreur dite, pas une liste vide trompeuse');
   }
 
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));

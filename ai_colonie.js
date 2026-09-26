@@ -1604,16 +1604,46 @@ async function goplusEntetes() {
  * concentration, aucune taxe, code verifie » donnait trente points de surete
  * a un jeton dont on ne savait rien — sur la classe de jetons ou le risque de
  * fuite est le plus grand. Chaque champ est tri-etat. */
+/* ---- CE QUE GOPLUS NOUS COUTE VRAIMENT (demande du proprietaire, 26 septembre 2026) ----
+ * « Eviter de gaspiller des jetons GoPlus en n'analysant pas plusieurs fois le
+ * meme jeton dans un temps court. » Releve du jour : `goplusMuet` 24 713 pour
+ * `wardenVu` 25 214 — mais ces compteurs comptaient les CONSULTATIONS, cache
+ * compris : le nombre d'appels RESEAU n'etait mesure nulle part, ni le temps
+ * que GoPlus met a connaitre un jeton muet. Or c'est ce temps-la qui dit si
+ * relire un silence toutes les TTL_GOPLUS_MUET (8 min) gaspille ou pas. On le
+ * MESURE avant de toucher au delai (convention du depot) :
+ *   goplusReseau / goplusCache       appels reellement faits / servis par le cache
+ *   goplusReseauMuet                 appels reseau revenus sans rien
+ *   goplusConnuApres_<tranche>       delai entre le 1er silence et la 1re vraie reponse
+ *   goplusMuet24h                    jetons encore muets 24 h apres le 1er silence
+ * Et deux lectures SIMULTANEES du meme jeton ne font plus qu'un appel. */
+const GOPLUS_EN_VOL = new Map();          /* addr → promesse de la lecture en cours */
+const GOPLUS_SILENCES = new Map();        /* addr → heure du premier silence (memoire, 24 h) */
+function trancheDelai(ms) {
+  const m = ms / 60e3;
+  return m < 15 ? '0-15min' : m < 30 ? '15-30min' : m < 60 ? '30-60min' : m < 120 ? '1-2h' : m < 360 ? '2-6h' : '6-24h';
+}
 async function lisGoplus(t) {
   const c = frais(CACHE.goplus, t.addr, TTL_GOPLUS);
-  if (c !== null) { t.g = c; return; }
+  if (c !== null) { t.g = c; compte('goplusCache'); return; }
+  if (GOPLUS_EN_VOL.has(t.addr)) {
+    await GOPLUS_EN_VOL.get(t.addr).catch(() => null);
+    const d = frais(CACHE.goplus, t.addr, TTL_GOPLUS);
+    if (d !== null) { t.g = d; compte('goplusCache'); return; }
+  }
   let info = {};
-  try {
+  const lecture = (async () => {
     const j = await json('https://api.gopluslabs.io/api/v1/token_security/4663?contract_addresses=' + t.addr,
                          { headers: await goplusEntetes() });
-    info = (j.result || {})[t.addr] || {};
+    return (j.result || {})[t.addr] || {};
+  })();
+  GOPLUS_EN_VOL.set(t.addr, lecture);
+  compte('goplusReseau');
+  try {
+    info = await lecture;
     noteService('goplus', true);
   } catch (e) { info = {}; noteService('goplus', false, e.message); }
+  finally { GOPLUS_EN_VOL.delete(t.addr); }
   const su = (x) => x === '1';
   const hs = info.holders || [];
   let top = 0;
@@ -1657,6 +1687,16 @@ async function lisGoplus(t) {
   });
   /* Un silence se relit dans huit minutes, pas dans six heures. */
   if (!t.g.have && CACHE.goplus[t.addr]) CACHE.goplus[t.addr].ttl = TTL_GOPLUS_MUET;
+  /* La mesure du delai : premier silence → premiere vraie reponse. */
+  const maint = Date.now();
+  for (const [a, t0] of GOPLUS_SILENCES) if (maint - t0 > 24 * 3600e3) { GOPLUS_SILENCES.delete(a); compte('goplusMuet24h'); }
+  if (!t.g.have) {
+    compte('goplusReseauMuet');
+    if (!GOPLUS_SILENCES.has(t.addr) && GOPLUS_SILENCES.size < 5000) GOPLUS_SILENCES.set(t.addr, maint);
+  } else if (GOPLUS_SILENCES.has(t.addr)) {
+    compte('goplusConnuApres_' + trancheDelai(maint - GOPLUS_SILENCES.get(t.addr)));
+    GOPLUS_SILENCES.delete(t.addr);
+  }
 }
 
 /* ---- LES SELECTEURS QU'ON CHERCHE DANS LE CODE ----
@@ -9433,6 +9473,7 @@ module.exports = {
   poseMiroir, _suitLeMiroir: suitLeMiroir, _partDuBanquier: partDuBanquier, MIROIR_PART_MAX,
   _signal: signal, _texteSignal: texteSignal, _ferme: ferme, _lienDex: lienDex,
   _poseTg: (x) => { tg = x; },
+  _lisGoplus: lisGoplus, _goplusSilences: GOPLUS_SILENCES, _cacheGoplus: () => CACHE.goplus,
   _noteAudit: noteAudit, _auditDesRefus: auditDesRefus, _auditDeFamille: auditDeFamille, OMBRES_MAX,
   noteAuditConseil, auditConseil, CONSEIL_ECHEANCES, CONSEIL_AUDIT_MIN, CONSEIL_SEPARE,
   esperanceDeLaCase, frottementRefuse, CASE_ESPERANCE_TRAIT, frottementBilan, noteCoutCase, coutCelluleDe,

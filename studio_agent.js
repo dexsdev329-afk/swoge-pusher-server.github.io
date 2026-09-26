@@ -77,6 +77,11 @@ function definitions(actifs) {
       input_schema: { type: 'object', properties: { address: { type: 'string', description: 'EVM address, 0x followed by 40 hex characters' } }, required: ['address'] } },
     { name: 'osint_lookup', description: 'Passive reconnaissance on infrastructure: a domain, an IP address, a website URL, an autonomous system (AS15169) or a CVE. Returns DNS, certificates, registration, hosting and exposure findings, each with its source. People (e-mails, usernames, phone numbers, names) are not accepted.',
       input_schema: { type: 'object', properties: { target: { type: 'string', description: 'a domain, IP, URL, AS number or CVE id' } }, required: ['target'] } },
+    /* ---- AJOUTE LE 26 SEPTEMBRE 2026 : l'agent qui suit les canaux Telegram (tg_appels.js) ---- */
+    { name: 'telegram_calls', description: 'Robinhood Chain tokens called in public Telegram call channels that SWOGE watches: each call with its post link, price at detection, change since and best since, and a per-channel score counted only on fresh calls (none under 10 calls).',
+      input_schema: { type: 'object', properties: { channel: { type: 'string', description: 'optional channel name to filter on' },
+        hours: { type: 'integer', minimum: 1, maximum: 168, description: 'look back this many hours (default 24)' },
+        limit: { type: 'integer', minimum: 1, maximum: 50, description: 'how many calls (default 20)' } } } },
   ];
   if (actifs && actifs.recherche) d.push({ name: 'web_search', description: 'Search the web (Perplexity). Returns ranked results with title, URL, date and an extract. Use it for news, projects, people, anything outside SWOGE data.',
     input_schema: { type: 'object', properties: { query: { type: 'string', description: 'the search query, as you would type it' } }, required: ['query'] } });
@@ -147,6 +152,11 @@ function outils(src) {
     async swoge_economy() {
       const [e, cours] = await Promise.all([src.economie(), src.cours()]);
       return { texte: JSON.stringify({ economy: e, swogePriceUsd: cours || null, source: 'on-chain reads (chain 4663) and DexScreener' }) };
+    },
+    async telegram_calls(e) {
+      if (!src.appels) return { erreur: 'telegram call tracking is not switched on' };
+      const r = src.appels({ channel: e && e.channel, hours: e && e.hours, limit: e && e.limit });
+      return { texte: JSON.stringify(r) };
     },
     async new_launches(e) {
       const v = src.vue() || {};

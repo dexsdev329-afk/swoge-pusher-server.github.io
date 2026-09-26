@@ -14,6 +14,12 @@
  *     aspect_ratio} → même réponse
  *   - POST /v1/videos/generations {model, prompt, image?, duration 1–15,
  *     aspect_ratio, resolution 480p|720p|1080p} → {request_id}
+ *     + reference_images [{url}] ≤ 3 et reference_audios [{voice_id}] ≤ 3
+ *     (reference-to-video, « grok-imagine-video-1.5 » seulement ; le prompt les
+ *     nomme <IMAGE_1..3> et <AUDIO_0..2> — guide xAI relu le 26 septembre 2026)
+ *   - POST /v1/videos/edits {model, prompt, video: {url}} → {request_id} ; la
+ *     vidéo est une adresse publique ou un data-URL base64, d'extension .mp4
+ *     (H.265, H.264, AV1) — l'essai de montage du propriétaire (essai_montage.js)
  *   - GET  /v1/videos/{request_id} → {status: pending|done|failed|expired,
  *     progress, video: {url, duration, respect_moderation}, usage, error}
  *   - `usage.cost_in_usd_ticks` : le coût RÉEL, 1 $ = 10 000 000 000 ticks.
@@ -52,12 +58,23 @@ async function images({ api, prompt, n, format, image }) {
 }
 
 /** Lance une vidéo (asynchrone) : rend l'identifiant à interroger. */
-async function lanceVideo({ api, prompt, duree, resolution, format, image }) {
+async function lanceVideo({ api, prompt, duree, resolution, format, image, references, voix }) {
   const corps = { model: api, duration: duree, resolution };
   if (prompt) corps.prompt = prompt;
   if (format && format !== 'auto') corps.aspect_ratio = format;
   if (image) corps.image = { url: image };
+  /* Les memes personnages et les memes voix d'une scene a l'autre (series, pubs). */
+  if (references && references.length) corps.reference_images = references.map((u) => ({ url: u }));
+  if (voix && voix.length) corps.reference_audios = voix.map((v) => ({ voice_id: v }));
   const j = await appel('/v1/videos/generations', corps);
+  if (!j.request_id) throw new Error('xAI : no request_id');
+  return j.request_id;
+}
+
+/** Retouche une vidéo existante (asynchrone, suivie comme une génération) :
+    rend l'identifiant à interroger avec litVideo. */
+async function editeVideo({ api, prompt, url }) {
+  const j = await appel('/v1/videos/edits', { model: api, prompt, video: { url } });
   if (!j.request_id) throw new Error('xAI : no request_id');
   return j.request_id;
 }
@@ -70,4 +87,4 @@ async function litVideo(id) {
            usage: v.usage || null, erreur: v.error ? String(v.error.message || v.error.code || '') : null };
 }
 
-module.exports = { actif, images, lanceVideo, litVideo };
+module.exports = { actif, images, lanceVideo, editeVideo, litVideo };

@@ -46,10 +46,20 @@ function normaliseCanal(x) {
   const s = String(x || '').trim().replace(/^https?:\/\//i, '').replace(/^(www\.)?t(elegram)?\.me\/(s\/)?/i, '').replace(/^@/, '').replace(/[/?#].*$/, '');
   return /^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(s) ? s : null;
 }
-function canaux() {
+/* Les canaux AJOUTES par la decouverte (tg_decouverte.js), en plus de la liste. */
+let _auto = () => [];
+function poseAuto(fn) { _auto = fn; }
+/** Les canaux de la liste (reglage), sans ceux de la decouverte. */
+function canauxListe() {
   const brut = cfg.TG_SURV_CANAUX !== undefined ? cfg.TG_SURV_CANAUX
     : (process.env.TG_SURV_CANAUX === undefined ? 'Exceptionalmemes' : process.env.TG_SURV_CANAUX);
   return [...new Set(String(brut || '').split(/[,\s]+/).map(normaliseCanal).filter(Boolean))];
+}
+function canaux() {
+  const l = canauxListe(), bas = new Set(l.map((c) => c.toLowerCase()));
+  let a = [];
+  try { a = (_auto() || []).map(normaliseCanal).filter((c) => c && !bas.has(c.toLowerCase())); } catch (e) { a = []; }
+  return l.concat(a);
 }
 
 /* L'apercu pese ~100 ko et un canal ne poste pas a la seconde. */
@@ -141,6 +151,16 @@ async function resousLien(id) {
 }
 
 const cache = new Map();      /* canal → { t, trouve: [{ addr, post, t }], messages, horsChaine } */
+const CITES = new Map();      /* canal cite (t.me/nom, @nom) → nombre de canaux suivis qui le citent */
+const CITE_PAR = new Map();   /* canal suivi → ses citations au dernier passage */
+/* Les canaux cites dans un apercu : liens t.me/<nom> et @mentions (ni bots, ni liens de service). */
+function citesDans(html) {
+  const out = new Set();
+  const s = String(html || '');
+  for (const m of s.matchAll(/t\.me\/([A-Za-z][A-Za-z0-9_]{3,31})(?![A-Za-z0-9_\/])/g)) out.add(m[1]);
+  for (const m of s.matchAll(/(?:^|[\s>(])@([A-Za-z][A-Za-z0-9_]{4,31})(?![A-Za-z0-9_])/g)) out.add(m[1]);
+  return [...out].filter((c) => !/bot$/i.test(c) && !/^(joinchat|share|addstickers|addlist|proxy|iv|s|c|telegram|durov)$/i.test(c));
+}
 const rejets = new Map();     /* addr → quand (pas de paire Robinhood) */
 const liensVus = new Map();   /* id de lien → adresse resolue (ou null) */
 const STATS = {};             /* canal → { lectures, erreurs, messages, dernierPost, horsChaine, proposes } */
@@ -173,6 +193,9 @@ async function lisCanal(canal) {
     for (const addr of a.nues) if (!trouve.some((x) => x.addr === addr)) trouve.push({ addr, post: m.post, t: m.t });
   }
   st.messages = ms.length; st.horsChaine = horsChaine;
+  CITE_PAR.set(canal, citesDans(html).filter((c) => c.toLowerCase() !== canal.toLowerCase()));
+  CITES.clear();
+  for (const l of CITE_PAR.values()) for (const c of l) CITES.set(c, (CITES.get(c) || 0) + 1);
   st.dernierPost = ms.length ? (ms[0].t || st.dernierPost) : st.dernierPost;
   const r = { t: Date.now(), trouve, messages: ms.length, horsChaine };
   cache.set(canal, r);
@@ -216,17 +239,31 @@ function note(addr, x, statut) {
   noteTrouvaille({ addr: a, canal: x.canal, post: x.post || null, t: x.t || null, statut, vu: Date.now() });
 }
 
-/** Ce que la page montre : les canaux, ce qu'on y a lu, ce qu'on en a tire. */
+/* Le score de chaque canal, pose par tg_appels.js quand le suivi des appels tourne. */
+let _scores = null;
+function poseScores(fn) { _scores = fn; }
+/* Ce que la decouverte a ajoute et mesure, pose par tg_decouverte.js. */
+let _decouverte = null;
+function poseDecouverte(fn) { _decouverte = fn; }
+
+/** Ce que la page montre : les canaux, ce qu'on y a lu, ce qu'on en a tire, et leur score. */
 function vue() {
-  return { canaux: canaux().map((c) => Object.assign({ canal: c }, STATS[c] || { lectures: 0 })),
+  let scores = null, decouverte = null;
+  try { scores = _scores ? _scores() : null; } catch (e) { scores = null; }
+  try { decouverte = _decouverte ? _decouverte() : null; } catch (e) { decouverte = null; }
+  const auto = new Set(canaux().filter((c) => !canauxListe().includes(c)));
+  return { scores, decouverte, canaux: canaux().map((c) => Object.assign({ canal: c, auto: auto.has(c) }, STATS[c] || { lectures: 0 })),
            trouvailles: TROUVAILLES.slice(), rejetsEnCours: rejets.size, rejetHeures: REJET_MS / 3600e3 };
 }
 
 /* Pour les essais. */
-function _videCache() { cache.clear(); rejets.clear(); liensVus.clear(); TROUVAILLES.length = 0; for (const k of Object.keys(STATS)) delete STATS[k]; }
+function _videCache() { cache.clear(); rejets.clear(); liensVus.clear(); CITES.clear(); CITE_PAR.clear(); TROUVAILLES.length = 0; for (const k of Object.keys(STATS)) delete STATS[k]; }
+/** Les canaux cites par les canaux suivis, du plus cite au moins cite. */
+function cites() { return [...CITES.entries()].sort((a, b) => b[1] - a[1]).map(([canal, n]) => ({ canal, n })); }
 
 module.exports = {
   get CANAUX() { return canaux(); },
-  canaux, normaliseCanal, analyse, extraisAdresses, messages, resousLien, adressesCanal, adressesRecentes, note, vue,
+  canaux, canauxListe, normaliseCanal, analyse, extraisAdresses, messages, resousLien, adressesCanal, adressesRecentes, note, vue, poseScores,
+  poseAuto, poseDecouverte, cites, citesDans,
   REJET_MS, _reseau, _chaine, _videCache,
 };

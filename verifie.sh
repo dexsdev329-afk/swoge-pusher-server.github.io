@@ -32,6 +32,9 @@ lance osint   "$SRV" node osint.test.js
 lance noyau   "$SRV" node osint_noyau.test.js   # le noyau : faits, connecteurs, planificateur, regles
 lance identite "$SRV" node osint_identite.test.js   # un nom rend des candidats SEPARES, jamais fusionnes ; ASN, CVE
 lance tgcanal "$SRV" node tg_canal.test.js   # canaux Telegram publics : Robinhood seulement, paires resolues, v4 sans fausse adresse, rejets retenus 6 h, liste a chaud
+lance tgappel "$SRV" node tg_appels.test.js   # les appels Telegram : prix a la detection, frais seulement, aucun score sous 10, une requete pour 30
+lance tgdecouv "$SRV" node tg_decouverte.test.js   # nouveaux canaux sur mesure : public, actif 48 h, >= 2 jetons Robinhood, max 10, retrait apres 7 jours
+lance goplus  "$SRV" node goplus_mesure.test.js   # GoPlus : appels reseau vs cache, deux lectures simultanees = un appel, delai silence -> reponse
 lance osinttel "$SRV" node osint_tel.test.js   # le plan de numerotation FR : type + region, deterministes, sans cle
 lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route publique du releve
 lance osintv2 "$SRV" node osint_v2.test.js   # un vrai serveur : la route v2, exports, historique
@@ -53,6 +56,10 @@ lance caisse  "$SRV" node caisse.test.js    # la caisse : 5 % rachetent du $SWOG
 lance caisrte "$SRV" node x402_caisse_route.test.js   # mode caisse sur le vrai serveur : payTo = portefeuille de gaz, preuve signee par le serveur
 lance studiomedia "$SRV" node studio_media.test.js   # Studio images/videos Grok Imagine : cout reel, tout rendu, proprietaire seul, bout en bout
 lance comprend "$SRV" node studio_comprend.test.js   # image comprise : reference SWOGE, fil repris, reecriture facturee sous sa reserve
+lance prod    "$SRV" node studio_production.test.js   # series et pubs : memes references dans le meme ordre a chaque scene, images a leur adresse seule
+lance prodrte "$SRV" node studio_production_route.test.js   # series et pubs sur le vrai serveur : faux xAI, memes reference_images/audios, debit exact
+lance essai   "$SRV" node essai_montage.test.js   # essai de montage xAI : longueur lue dans les boites MP4, clip efface apres fini/rate/delai, cout des ticks, plafond du jour
+lance essairte "$SRV" node essai_montage_route.test.js   # essai de montage sur le vrai serveur : proprietaire seul, 403 avant le corps, faux xAI, aucun debit, cle jamais montree
 lance reprises "$SRV" node reprises.test.js   # une reponse retrouvee apres rechargement : par adresse de session seulement
 lance economie "$SRV" node economie.test.js   # la carte $SWOGE ECONOMY : offre, brule, coffre lus sur la chaine
 lance marches "$SRV" node perp_marches.test.js   # decouverte multi-exchange, forme unique
@@ -69,6 +76,8 @@ lance scanpage "$SITE" node scan_page.test.js
 lance osintpage "$SITE" node osint_page.test.js
 lance studiopage "$SITE" node studio_page.test.js
 lance chatpage "$SITE" node chat_page.test.js   # SWOGE AI Chat : jeton et jamais adresse, texte echappe, 320 px
+lance prodpage "$SITE" node production_page.test.js   # SwoleMind series et pubs : jeton jamais adresse, photo reduite, echappe, 320 px
+lance essaipage "$SITE" node essai_montage_page.test.js   # SwoleMind essai de montage : proprietaire seul, longueur refusee dans la page, jeton jamais adresse, 320 px
 lance agentpage "$SITE" node agent_page.test.js   # SwogeAgentic : chaque geste visible, echappe, jeton jamais adresse, reprise par rid
 lance ecopage "$SITE" node economie_page.test.js   # la carte $SWOGE ECONOMY et le whitepaper suivent /economie.json
 lance predictpage "$SITE" node predict_page.test.js

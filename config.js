@@ -101,8 +101,14 @@ module.exports = {
   // ---- Chain ----
   RPC_URL: env('RPC_URL', 'https://rpc.mainnet.chain.robinhood.com'),
   CHAIN_ID: parseInt(env('CHAIN_ID', '4663'), 10),
-  /* Les canaux Telegram publics surveilles par la colonie (tg_canal.js) ; reglable a chaud. */
-  TG_SURV_CANAUX: env('TG_SURV_CANAUX', 'Exceptionalmemes'),
+  /* Les canaux Telegram publics surveilles par la colonie (tg_canal.js) ; reglable a chaud.
+     Liste du proprietaire du 26 septembre 2026, MESUREE ce jour-la (apercu public, activite,
+     jetons Robinhood confirmes sur les 20 derniers messages) : XandersOGCALLS 6, ChinaGamble 3,
+     mad_apes_gambles 3, CryptoLord100xCalls 2, abougems 2, chimexalpha 2... Ecartes : un lien
+     d'invitation prive, Moonwolfmooners et HoodTrenches (pas d'apercu public : groupes),
+     cryptostreetfighters (muet depuis mai). Zhufgambles et SpyDefi : trouves parmi les 72 canaux
+     cites par cette liste (26 publics, 3 avec du Robinhood). */
+  TG_SURV_CANAUX: env('TG_SURV_CANAUX', 'Exceptionalmemes,ChinaGamble,hemantrade,CarnagecallsGambles,justchadskingsofeth,CryptoLord100xCalls,mad_apes_gambles,mad_apes_call,abougems,XandersOGCALLS,furiousplays,chimexalpha,kobesgambles,beastmodeapecalls,Zhufgambles,SpyDefi,serchaddingsyotclub'),
   SWOGE_TOKEN: env('SWOGE_TOKEN', '0x8a166Fb41Cd659a0a43396272FF73973Ce29F817'),
   VAULT_ADDRESS: env('VAULT_ADDRESS', ''), // set after deploying SwogePusherVault
   /* ---- LE COFFRE DES PARIS, EN $SWOGEBET ----

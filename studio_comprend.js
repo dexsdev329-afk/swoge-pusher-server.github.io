@@ -35,13 +35,18 @@ const CAR_MAX = 400;
 const RESERVE_USD = ((250 + Math.ceil((CONTEXTE_MAX + 1) * CAR_MAX / 2)) * PRIX.entree + SORTIE_MAX * PRIX.sortie) / 1e6;
 const REFERENCE_CHEMIN = '/img/site/swoge_reference.jpg';
 const REFERENCE_TTL_MS = 3600e3;
-const SWOGE_DECRIT = 'SWOGE, the character in the reference image: a muscular shiba inu in a red suit with a red silk scarf — keep his face, fur, build and outfit';
+/* 26 septembre 2026, le proprietaire, devant « Swoge sur un bateau » rendu en costume
+   rouge comme la reference : « il me faut un Swoge, meme corpulence, un shiba muscle,
+   mais pas forcement la meme position ni le meme habit a chaque fois ». Le personnage,
+   c'est le visage, le pelage et la carrure ; la tenue et la pose suivent la scene. */
+const SWOGE_DECRIT = 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build; '
+  + 'dress and pose him for this scene (the red suit in the reference is one example, not a uniform — keep it only if asked)';
 
 const SYSTEME = [
   'You turn the LATEST image request of a chat into ONE standalone prompt for an image generator, in English.',
   'Use the earlier requests only when the latest one refers to them (e.g. "do it again", "same but…", "make it on a boat", "he looks like this", "redo the image").',
   'Keep every concrete detail the user asked for: subject, setting, action, style, text to write.',
-  'If a reference image is attached, say to keep the character from the reference image.',
+  'If a reference image is attached, say to keep the character\'s face, fur and muscular build from the reference image, but NOT necessarily his outfit or pose: choose clothes and a pose that fit the scene, unless the user asks for the same outfit.',
   'Reply with the prompt only: no preamble, no quotes, at most 120 words.',
 ].join(' ');
 

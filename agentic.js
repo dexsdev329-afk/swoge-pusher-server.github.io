@@ -37,7 +37,10 @@ const Media = require('./studio_media');
    prix (lire nos propres donnees ne nous coute rien ; l'OSINT interroge des
    services tiers, d'ou un prix plus haut). Prix de depart, pas des mesures. */
 const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0.001,
-  new_launches: 0.005, wallet_intel: 0.02, osint_lookup: 0.02 };
+  new_launches: 0.005, wallet_intel: 0.02, osint_lookup: 0.02,
+  /* 26 septembre 2026 : les appels Telegram suivis. Nos propres donnees, lues sans
+     appel payant : le prix de depart des lectures, pas une mesure. */
+  telegram_calls: 0.01 };
 const VARIABLES = ['ask_agent', 'generate_image', 'generate_video'];
 /* `video_status` : gratuit (relire SA vidéo), jamais facturé. */
 const GRATUITS = ['video_status'];
@@ -112,6 +115,9 @@ function entreeInvalide(outil, a) {
   if (outil === 'video_status' && !/^[0-9a-f]{24}$/.test(String(a.id || ''))) return 'id must be the id returned by generate_video';
   if ((outil === 'wallet_intel') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
   if (outil === 'osint_lookup' && !String(a.target || '').trim()) return 'target is required';
+  if (outil === 'telegram_calls' && a.hours !== undefined && !(Number(a.hours) >= 1 && Number(a.hours) <= 168)) return 'hours must be between 1 and 168';
+  if (outil === 'telegram_calls' && a.limit !== undefined && !(Number(a.limit) >= 1 && Number(a.limit) <= 50)) return 'limit must be between 1 and 50';
+  if (outil === 'telegram_calls' && a.channel !== undefined && !/^@?[A-Za-z][A-Za-z0-9_]{3,31}$/.test(String(a.channel))) return 'channel must be a public channel name';
   return null;
 }
 

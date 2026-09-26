@@ -77,6 +77,21 @@ const FORMATS_IMAGE = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'
 const FORMATS_VIDEO = ['auto', '16:9', '9:16', '1:1'];
 const NOMBRES = [1, 2, 4];
 const DUREES = [6, 10];
+/* ---- LES VOIX DES SERIES ET DES PUBS (26 septembre 2026) ----
+ * Les voix prededefinies d'xAI, nommees dans le guide reference-to-video et l'API
+ * Text to Speech : seules les cinq CONFIRMEES par la documentation de l'API.
+ * Le catalogue en annonce 28 ; `STUDIO_VOIX` (liste) en ajoute sans toucher au
+ * code, une fois l'identifiant verifie avec la cle du serveur. */
+const VOIX = [
+  { id: 'eve', nom: 'Eve', ton: 'energetic' }, { id: 'ara', nom: 'Ara', ton: 'warm' },
+  { id: 'rex', nom: 'Rex', ton: 'confident' }, { id: 'sal', nom: 'Sal', ton: 'balanced' },
+  { id: 'leo', nom: 'Leo', ton: 'authoritative' },
+];
+function voixPermises() {
+  const plus = String(process.env.STUDIO_VOIX || '').split(',').map((x) => x.trim().toLowerCase()).filter((x) => /^[a-z][a-z0-9_-]{1,30}$/.test(x));
+  return VOIX.map((v) => v.id).concat(plus.filter((x) => !VOIX.some((v) => v.id === x)));
+}
+const REFERENCES_MAX = 3;
 const RESOLUTIONS = ['480p', '720p'];
 const RESERVE_X = 3;
 const PROMPT_MAX = 4000;
@@ -277,11 +292,21 @@ async function images(q, deps) {
 async function lanceVideo(q, deps) {
   const addr = q && q.addr;
   if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
-  const m = VIDEO.find((x) => x.id === q.modele) || VIDEO[0];
+  /* Des references imposent le modele qui les comprend : « grok-imagine-video-1.5 ». */
+  const avecRefs = (Array.isArray(q.references) && q.references.length) || (Array.isArray(q.voix) && q.voix.length);
+  const m = avecRefs ? VIDEO.find((x) => x.api === 'grok-imagine-video-1.5') : (VIDEO.find((x) => x.id === q.modele) || VIDEO[0]);
   const prompt = String(q.prompt || '').trim().slice(0, PROMPT_MAX);
   const image = imageJointe(q.image);
   if (image === false) return { ok: false, code: 400, raison: 'the attached image must be a PNG, JPEG or WebP under 6 MB' };
   if (!prompt && !image) return { ok: false, code: 400, raison: 'describe the video, or attach an image to animate' };
+  /* Les references (series, pubs) : des images (data URL, ou une adresse publique
+     d'un fichier range chez nous) et des voix du catalogue, trois au plus chacune. */
+  const refs = Array.isArray(q.references) ? q.references : [];
+  const voix = Array.isArray(q.voix) ? q.voix.map((v) => String(v).toLowerCase()) : [];
+  if (refs.length > REFERENCES_MAX || voix.length > REFERENCES_MAX) return { ok: false, code: 400, raison: 'at most ' + REFERENCES_MAX + ' reference images and ' + REFERENCES_MAX + ' voices per scene' };
+  if (refs.some((r) => !(imageJointe(r) || (deps.referenceOk && deps.referenceOk(r))))) return { ok: false, code: 400, raison: 'each reference must be a PNG, JPEG or WebP under 6 MB' };
+  if (voix.some((v) => !voixPermises().includes(v))) return { ok: false, code: 400, raison: 'unknown voice — pick one of ' + voixPermises().join(', ') };
+  if ((refs.length || voix.length) && image) return { ok: false, code: 400, raison: 'use either a start image or references, not both' };
   const duree = DUREES.includes(Number(q.duree)) ? Number(q.duree) : DUREES[0];
   const resolution = RESOLUTIONS.includes(q.resolution) ? q.resolution : RESOLUTIONS[0];
   const format = FORMATS_VIDEO.includes(q.format) ? q.format : 'auto';
@@ -294,7 +319,7 @@ async function lanceVideo(q, deps) {
   let rid;
   const fv = (deps.fournisseurs && deps.fournisseurs.grok) || deps.fournisseur;
   if (!fv || (fv.actif && !fv.actif())) { deps.solde.regle(addr, r.wei, 0n); return { ok: false, code: 503, raison: 'Video is not switched on yet (Grok Imagine).' }; }
-  try { rid = await fv.lanceVideo({ api: m.api, prompt, duree, resolution, format, image }); }
+  try { rid = await fv.lanceVideo({ api: m.api, prompt, duree, resolution, format, image, references: refs.length ? refs.map((r) => (deps.urlReference ? deps.urlReference(r) : r)) : undefined, voix: voix.length ? voix : undefined }); }
   catch (e) {
     deps.solde.regle(addr, r.wei, 0n); MESURE.echecs++;
     return { ok: false, code: 502, raison: 'the video provider failed — you were not charged', detail: String(e && e.message || e).slice(0, 200) };
@@ -349,5 +374,5 @@ function etatVideo(id, addr) {
            solde: j.solde, raison: j.raison };
 }
 
-module.exports = { pireCasImageUsd, prixFixeImageUsd, coutsImage, FOURNISSEURS_IMAGE, PRIX_OPENAI, coutOpenai, modeleOpenai, IMAGE, VIDEO, FORMATS_IMAGE, FORMATS_VIDEO, NOMBRES, DUREES, RESOLUTIONS, RESERVE_X,
+module.exports = { VOIX, voixPermises, REFERENCES_MAX, pireCasImageUsd, prixFixeImageUsd, coutsImage, FOURNISSEURS_IMAGE, PRIX_OPENAI, coutOpenai, modeleOpenai, IMAGE, VIDEO, FORMATS_IMAGE, FORMATS_VIDEO, NOMBRES, DUREES, RESOLUTIONS, RESERVE_X,
                    MESURE, JOBS, EN_VOL, RYTHME, catalogue, images, lanceVideo, avance, etatVideo, imageJointe, coutDe };
