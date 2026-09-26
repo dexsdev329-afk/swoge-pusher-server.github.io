@@ -187,7 +187,31 @@ function cree(deps) {
     return { ok: true, outil, resultat: res.donnees, texte: res.texte, facture: { swoge, usd }, solde, recu };
   }
 
-  return { catalogue, appelle };
+  /**
+   * Un outil à PRIX FIXE servi sans clé ni solde : le paiement est réglé
+   * ailleurs (x402.js, sur la chaîne). Mêmes refus que `appelle` — outil
+   * inconnu, entrée invalide, outil en panne — et le payeur n'y paie rien.
+   * Les outils à coût variable (ask_agent, generate_image) n'y passent pas :
+   * x402 `exact` exige un montant connu avant d'agir.
+   */
+  async function sertSansFacture({ outil, args }) {
+    const defs = definitions(deps.actifs ? deps.actifs() : {});
+    if (!defs.some((d) => d.name === outil)) return { ok: false, code: 404, raison: 'unknown tool: ' + outil };
+    if (VARIABLES.includes(outil)) return { ok: false, code: 400, raison: outil + ' has a variable price — use an API key (x402 pays fixed-price tools only)' };
+    const inv = entreeInvalide(outil, args);
+    if (inv) return { ok: false, code: 400, raison: inv };
+    let r;
+    try { r = await deps.outils[outil](args); } catch (e) { return { ok: false, code: 502, raison: 'the tool failed — nothing was charged' }; }
+    if (!r || r.erreur) return { ok: false, code: 400, raison: (r && r.erreur) || 'the tool returned nothing — nothing was charged' };
+    const res = resultatDe(outil, r);
+    return { ok: true, outil, resultat: res.donnees, texte: res.texte };
+  }
+
+  /** Un outil payable en x402 : connu, actif, à prix fixe. */
+  const x402Payable = (outil) => !VARIABLES.includes(outil) && !!prixUsd(outil)
+    && definitions(deps.actifs ? deps.actifs() : {}).some((d) => d.name === outil);
+
+  return { catalogue, appelle, sertSansFacture, x402Payable };
 }
 
 /* ---- LLMS.TXT : l'API decrite aux agents (format llmstxt.org, relu le 26 septembre 2026) ----
@@ -209,11 +233,15 @@ function llmsTxt(cat, u) {
     '',
     'REST: `GET ' + u.api + '/agentic/tools` lists tools, prices and input schemas. `POST ' + u.api + '/agentic/call/<tool>` with `{"arguments": {...}}` runs one; add `"quote": true` to get the price without paying. Every paid call returns `facture` (the exact amount billed, as a string), `recu` (a receipt id) and `solde` (the balance left). Refused calls (bad input, tool failure, cap reached) are never billed. Errors: 400 bad input, 401 no/revoked key, 402 balance or daily cap, 404 unknown tool, 429 over 60 calls/minute/key, 502 tool failed, 503 unavailable.',
     '',
+  ].concat(cat && cat.x402 && cat.x402.actif ? [
+    'No account? Pay per call with x402 (v2): call `POST ' + u.api + '/agentic/call/<tool>` without a key and read the `PAYMENT-REQUIRED` header (402) — scheme `exact`, network `' + cat.x402.network + '`, asset $SWOGE `' + cat.x402.asset + '`, transfer method `permit2` (canonical Permit2 and x402ExactPermit2Proxy). Sign and retry with `PAYMENT-SIGNATURE`; we pay the gas. Price: tool price + settlement gas, minimum $' + cat.x402.minimumUsd + '. Fixed-price tools only. First payment without a Permit2 allowance: add the `eip2612GasSponsoring` extension (permit value = the exact amount). Status: `GET ' + u.api + '/agentic/x402`.',
+    '',
+  ] : []).concat([
     'MCP: Streamable HTTP at `' + u.api + '/mcp` with the same bearer key (protocol 2026-07-28, and 2025-11-25 / 2025-06-18 / 2025-03-26 via initialize). Every tool also takes `quote: true`. Claude Code: `claude mcp add --transport http swogeagentic ' + u.api + '/mcp --header "Authorization: Bearer swg_…"`.',
     '',
     'Tools:',
     '',
-  ].concat(outils.map((o) => '- `' + o.name + '(' + args(o) + ')` — ' + prix(o) + '. ' + String(o.description || '').split('. ')[0].replace(/\.$/, '') + '.'))
+  ]).concat(outils.map((o) => '- `' + o.name + '(' + args(o) + ')` — ' + prix(o) + '. ' + String(o.description || '').split('. ')[0].replace(/\.$/, '') + '.'))
    .concat(['',
     '## Docs',
     '',

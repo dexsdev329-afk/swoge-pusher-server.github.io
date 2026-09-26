@@ -1675,6 +1675,66 @@ const agentic = () => {
   });
   return agenticV;
 };
+/* ---- x402 : payer un outil a l'appel, sans cle ni compte (voir x402.js) ----
+   ALLUME seulement si X402_PAYTO (la tresorerie du proprietaire, ou vont les
+   paiements) est une adresse ET X402_CLE (le portefeuille de GAZ dedie,
+   jamais celui du miroir) est posee. La cle ne quitte jamais chaineEthers :
+   seule l'adresse publique du portefeuille de gaz est montree. */
+let x402V;
+const ETH_USD = { v: null, t: 0 };
+const x402 = () => {
+  if (x402V !== undefined) return x402V;
+  const payTo = String(process.env.X402_PAYTO || '').trim(), cle = String(process.env.X402_CLE || '').trim();
+  if (!/^0x[0-9a-fA-F]{40}$/.test(payTo) || !cle) { x402V = null; return x402V; }
+  const X = require('./x402');
+  let chaine;
+  try { chaine = X.chaineEthers({ rpc: process.env.X402_RPC || cfg.RPC_URL, cle, asset: cfg.SWOGE_TOKEN }); }
+  catch (e) { console.error('[x402] X402_CLE is not a usable private key — x402 stays off'); x402V = null; return x402V; }
+  if (chaine.porteGaz.toLowerCase() === payTo.toLowerCase()) console.warn('[x402] X402_PAYTO is the gas wallet itself — use your treasury address');
+  const JOURNAL = require('path').join(cfg.DATA_DIR, 'x402.jsonl');
+  x402V = X.cree({
+    asset: cfg.SWOGE_TOKEN, payTo, chaine,
+    cours: () => studioChat.coursSwoge(),
+    /* L'ETH en $ (pour le gaz), 60 s en cache ; STUDIO_DEX=0 (essais) : le reglage ETH_PRIX_USD, aucune lecture reseau. */
+    ethUsd: async () => {
+      if (process.env.STUDIO_DEX === '0') return Number(process.env.ETH_PRIX_USD) || null;
+      if (ETH_USD.v && Date.now() - ETH_USD.t < 60000) return ETH_USD.v;
+      const v = await require('./cours_chaine').ethUsd().catch(() => null);
+      if (v) { ETH_USD.v = v; ETH_USD.t = Date.now(); }
+      return v || ETH_USD.v;
+    },
+    prixOutilUsd: (o) => require('./agentic').prixUsd(o),
+    journal: (l) => fs.appendFile(JOURNAL, JSON.stringify(l) + '\n', () => {}),
+  });
+  x402V.porteGaz = chaine.porteGaz;
+  x402V.soldeGaz = () => chaine.soldeGaz();
+  x402V.payTo = payTo;
+  console.log('[x402] on — payments to ' + payTo + ', gas paid by ' + chaine.porteGaz);
+  return x402V;
+};
+/* L'etat PUBLIC de x402 : reseau, jeton, tresorerie, adresse du portefeuille
+   de gaz et son solde, compteurs. Jamais la cle. `detail` : les prix du moment
+   et le gaz mesure (route /agentic/x402). */
+async function x402Etat(detail) {
+  const X = require('./x402');
+  const x = x402();
+  if (!x) return { actif: false };
+  const e = { actif: true, x402Version: X.X402_VERSION, scheme: 'exact', network: X.RESEAU, asset: cfg.SWOGE_TOKEN, payTo: x.payTo,
+              assetTransferMethod: 'permit2', permit2: X.PERMIT2, proxy: X.PROXY, minimumUsd: X.MIN_USD, header: 'PAYMENT-SIGNATURE' };
+  if (!detail) return e;
+  const g = x.MESURE.gasUsed.slice().sort((a, b) => a - b);
+  let soldeGazEth = null;
+  try { soldeGazEth = Number(require('ethers').utils.formatEther(await x.soldeGaz())); } catch (err) { soldeGazEth = null; }
+  const outils = [];
+  for (const d of require('./agentic').definitions({ recherche: chatActif('perplexity') })) {
+    if (!agentic().x402Payable(d.name)) continue;
+    const p = await x.prix(d.name).catch(() => null);
+    outils.push({ name: d.name, usd: p ? p.usd : null, gazUsd: p ? p.gazUsd : null, amount: p ? p.montant : null });
+  }
+  return Object.assign(e, { porteGaz: x.porteGaz, soldeGazEth, outils,
+    mesure: { devis: x.MESURE.devis, payes: x.MESURE.payes, refuses: x.MESURE.refuses, echecsReglement: x.MESURE.echecsReglement,
+              gasUsedN: g.length, gasUsedMedian: g.length ? g[Math.floor(g.length / 2)] : null, gazUnitesEstimees: X.GAZ_UNITES } });
+}
 /* Les origines permises sur /mcp (un en-tete Origin present et hors liste → 403, spec MCP). */
 const MCP_ORIGINES = String(process.env.AGENTIC_ORIGINES || 'https://swoleeswoge.dog,https://claude.ai').split(',').map((x) => x.trim()).filter(Boolean);
 let clientComprendV = null;
@@ -2342,17 +2402,19 @@ const server = http.createServer(async (req, res) => {
   }
   /* L'API decrite aux agents, en direct depuis le catalogue (format llmstxt.org). */
   if (path === '/llms.txt') {
-    const txt = require('./agentic').llmsTxt(await agentic().catalogue(), { api: MOI_URL, site: SITE_URL, swoge: true,
+    const txt = require('./agentic').llmsTxt(Object.assign(await agentic().catalogue(), { x402: await x402Etat(false) }), { api: MOI_URL, site: SITE_URL, swoge: true,
       page: SITE_URL + '/swogeagentic.html', docs: SITE_URL + '/swogeagentic_api.html' });
     res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=300' });
     return res.end(txt);
   }
-  if (path === '/agentic/tools' || path.startsWith('/agentic/call/') || path === '/agentic/recus' || path === '/agentic/cles' || path.startsWith('/agentic/cles/')) {
+  if (path === '/agentic/tools' || path === '/agentic/x402' || path.startsWith('/agentic/call/') || path === '/agentic/recus' || path === '/agentic/cles' || path.startsWith('/agentic/cles/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
-                   'access-control-allow-headers': 'content-type, authorization, x-api-key' };
+                   'access-control-allow-headers': 'content-type, authorization, x-api-key, payment-signature',
+                   'access-control-expose-headers': 'payment-required, payment-response' };
     const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
-    if (path === '/agentic/tools') return json(200, await agentic().catalogue());
+    if (path === '/agentic/tools') return json(200, Object.assign(await agentic().catalogue(), { x402: await x402Etat(false) }));
+    if (path === '/agentic/x402') return json(200, Object.assign({ ok: true }, await x402Etat(true)));
     const porteur = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
     const cleTexte = porteur.startsWith(require('./agentic_cles').PREFIXE) ? porteur : String(req.headers['x-api-key'] || '').trim();
     const cle = cleTexte ? agenticCles.resout(cleTexte) : null;
@@ -2365,6 +2427,16 @@ const server = http.createServer(async (req, res) => {
         try { q = JSON.parse((await corps(req, 64 * 1024)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
         const outil = decodeURIComponent(path.slice('/agentic/call/'.length));
         const devis = q.quote === true || new URLSearchParams(req.url.split('?')[1] || '').get('quote') === '1';
+        /* Sans cle, x402 allume, outil a prix fixe : payer a l'appel. L'entree
+           est refusee AVANT le 402 — on ne fait pas signer pour une erreur. */
+        if (!cleTexte && !devis && x402() && agentic().x402Payable(outil)) {
+          const inv = require('./agentic').entreeInvalide(outil, q.arguments || {});
+          if (inv) return json(400, { ok: false, raison: inv });
+          const x = await x402().traite({ outil, url: MOI_URL + path, entete: req.headers['payment-signature'],
+            sert: () => agentic().sertSansFacture({ outil, args: q.arguments || {} }) });
+          res.writeHead(x.status, Object.assign({ 'cache-control': 'no-store' }, cors, x.entetes));
+          return res.end(x.corps);
+        }
         const r = await agentic().appelle({ cle, outil, args: q.arguments || {}, devis });
         return json(r.ok ? 200 : (r.code || 500), r);
       }

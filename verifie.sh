@@ -45,6 +45,8 @@ lance histo   "$SRV" node studio_histo.test.js    # historique par portefeuille 
 lance agent   "$SRV" node studio_agent.test.js    # SwogeAgentic : boucle bornee, usage additionne, pire cas tenu, outils de lecture seulement
 lance agentic "$SRV" node agentic.test.js    # API des autres agents : cles (empreinte, plafond), devis, recu, MCP deux epoques
 lance agenticrte "$SRV" node agentic_route.test.js   # de bout en bout : vrai serveur, vrai wallet, une cle ne gere pas les cles, debit exact au wei
+lance x402    "$SRV" node x402.test.js    # payer sans compte : vraies signatures Permit2/EIP-2612, rejeu, montant exact, outil en panne → rien regle
+lance x402rte "$SRV" node x402_route.test.js   # x402 de bout en bout : vrai serveur, faux noeud qui decode settle, la cle de gaz jamais montree
 lance studiomedia "$SRV" node studio_media.test.js   # Studio images/videos Grok Imagine : cout reel, tout rendu, proprietaire seul, bout en bout
 lance comprend "$SRV" node studio_comprend.test.js   # image comprise : reference SWOGE, fil repris, reecriture facturee sous sa reserve
 lance reprises "$SRV" node reprises.test.js   # une reponse retrouvee apres rechargement : par adresse de session seulement
