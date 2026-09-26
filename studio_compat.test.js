@@ -53,7 +53,7 @@ process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801'; process
     const v = vus.pop();
     ok(v.url === '/v1/chat/completions' && v.corps.model === 'gpt-6-sol' && v.corps.stream === true && v.corps.stream_options.include_usage === true, 'OpenAI : chat/completions, modele, stream, include_usage');
     ok(v.corps.max_completion_tokens === m.maxTokens && v.corps.reasoning_effort === 'high', 'max_completion_tokens borne la sortie, reasoning_effort part (supporte par GPT-6)');
-    ok(v.corps.messages[0].role === 'system' && /SWOGE AI/.test(v.corps.messages[0].content) && v.corps.messages[1].content === 'Hi', 'le message systeme de SWOGE AI, puis la conversation');
+    ok(v.corps.messages[0].role === 'system' && /SwoleMind/.test(v.corps.messages[0].content) && v.corps.messages[1].content === 'Hi', 'le message systeme de SwoleMind, puis la conversation');
     eq(v.auth, 'Bearer sk-oa-test', 'la cle OpenAI, depuis le serveur');
     ok(recu === 'Hello SWOGE.' && r.texte === 'Hello SWOGE.', 'le texte arrive au fil de l eau');
     ok(r.usage.input_tokens === 1000 && r.usage.cache_read_input_tokens === 200 && r.usage.output_tokens === 900 && !r.usage.coutExactUsd, 'l usage OpenAI est lu, le cache mis a part');
