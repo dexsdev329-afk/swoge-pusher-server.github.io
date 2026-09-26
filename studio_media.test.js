@@ -31,6 +31,8 @@ process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801';
 process.env.STUDIO_MARGE = '1.5';
 process.env.STUDIO_VIDEO_POLL_MS = '200'; process.env.STUDIO_VIDEO_MAX_MS = '60000';
 delete process.env.XAI_API_KEY; delete process.env.GROK_API_KEY;
+/* Hermetique : jamais la vraie cle OpenAI de l'environnement de developpement. */
+delete process.env.OPENAI_API_KEY; delete process.env.OPENAI_BASE_URL; delete process.env.XAI_BASE_URL;
 
 const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(0, () => { const q = s.address().port; s.close(() => r(q)); }); });
 const COURS = 0.00002801;

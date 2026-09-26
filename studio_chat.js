@@ -54,7 +54,32 @@ const MODELES = [
   { id: 'haiku-4-5', nom: 'Haiku 4.5', api: 'claude-haiku-4-5', fournisseur: 'anthropic',
     entree: 1, sortie: 5, maxTokens: 4000, recherche: 'web_search_20250305', effort: false,
     note: 'Fastest for quick answers' },
+  /* ---- CHATGPT ET GROK, ajoutés le 26 septembre 2026 (studio_compat.js) ----
+   * Prix par million de jetons relus le même jour : grille OpenAI (standard)
+   * et table des modèles xAI (contexte < 200 k — l'historique est borné à
+   * 24 000 caractères, on n'en approche pas). La réserve compte `maxTokens` de
+   * sortie : chez OpenAI le raisonnement est compté DANS ces jetons, et
+   * `max_completion_tokens` le borne. xAI rend son coût exact, qui fait foi. */
+  { id: 'gpt-6-astra', nom: 'GPT-6 Astra', api: 'gpt-6-astra', fournisseur: 'openai',
+    entree: 10, sortie: 50, maxTokens: 8000, recherche: null, effort: true,
+    note: 'OpenAI\'s most capable, for the hardest work' },
+  { id: 'gpt-6-sol', nom: 'GPT-6 Sol', api: 'gpt-6-sol', fournisseur: 'openai',
+    entree: 2, sortie: 10, maxTokens: 8000, recherche: null, effort: true,
+    note: 'Strong all-rounder for coding and complex tasks' },
+  { id: 'gpt-6-luna', nom: 'GPT-6 Luna', api: 'gpt-6-luna', fournisseur: 'openai',
+    entree: 0.1, sortie: 0.5, maxTokens: 6000, recherche: null, effort: true,
+    note: 'Fastest and cheapest from OpenAI' },
+  { id: 'grok-4-7', nom: 'Grok 4.7', api: 'grok-4.7', fournisseur: 'xai',
+    entree: 2, sortie: 6, maxTokens: 8000, recherche: null, effort: false,
+    note: 'xAI\'s latest flagship' },
+  { id: 'grok-4-20-reasoning', nom: 'Grok 4.20 Reasoning', api: 'grok-4.20-0309-reasoning', fournisseur: 'xai',
+    entree: 1.25, sortie: 2.5, maxTokens: 8000, recherche: null, effort: false,
+    note: 'Thinks step by step before answering' },
+  { id: 'grok-4-3', nom: 'Grok 4.3', api: 'grok-4.3', fournisseur: 'xai',
+    entree: 1.25, sortie: 2.5, maxTokens: 6000, recherche: null, effort: false,
+    note: 'Fast and cheap from xAI' },
 ];
+const NOMS_FOURNISSEURS = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok' };
 const DEFAUT = 'opus-5-5';
 const EFFORTS = ['low', 'medium', 'high'];
 
@@ -78,6 +103,8 @@ function modele(id) { return MODELES.find((m) => m.id === id) || null; }
 /** Le coût réel d'une réponse, en USD, lu dans `usage`. */
 function coutUsd(m, usage) {
   const u = usage || {};
+  /* Le coût EXACT rendu par le fournisseur (xAI : cost_in_usd_ticks) fait foi. */
+  if (Number.isFinite(u.coutExactUsd) && u.coutExactUsd > 0) return u.coutExactUsd;
   const entree = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) * 1.25
     + (u.cache_read_input_tokens || 0) * 0.1;
   const sortie = u.output_tokens || 0;
@@ -175,7 +202,9 @@ function mesure(id, cout, facture, depasse) {
 
 /** Le catalogue montré à la page : prix indicatif « typique » et « max ». */
 function catalogue(cours, cle) {
-  const actif = !!cle;
+  /* `cle` : { anthropic, openai, xai } — ou un booleen (l'ancien appel : Claude seul). */
+  const a = (cle && typeof cle === 'object') ? cle : { anthropic: !!cle, openai: false, xai: false };
+  const actif = !!(a.anthropic || a.openai || a.xai);
   const typique = (m) => 1500 * m.entree / 1e6 + 800 * m.sortie / 1e6;   /* une question courte */
   const enSwoge = (usd) => (cours > 0 ? Math.ceil(usd / cours) : null);
   return {
@@ -183,11 +212,13 @@ function catalogue(cours, cle) {
     note: !actif ? 'The AI provider key is not set on the server yet.'
       : !(cours > 0) ? 'The $SWOGE price is unavailable right now — requests are paused so nobody is overcharged.' : null,
     monnaie: '$SWOGE', coursUsd: cours || null, marge: MARGE(), defaut: DEFAUT, efforts: EFFORTS,
+    fournisseurs: Object.keys(NOMS_FOURNISSEURS).map((f) => ({ id: f, nom: NOMS_FOURNISSEURS[f], actif: !!a[f] })),
     modeles: MODELES.map((m) => ({
-      id: m.id, nom: m.nom, note: m.note, fournisseur: m.fournisseur, effort: m.effort,
+      id: m.id, nom: m.nom, note: m.note, fournisseur: m.fournisseur, nomFournisseur: NOMS_FOURNISSEURS[m.fournisseur],
+      actif: !!a[m.fournisseur], effort: m.effort,
       recherche: !!m.recherche,
       typiqueSwoge: enSwoge(factureUsd(typique(m))),
-      maxSwoge: enSwoge(factureUsd(pireCasUsd(m, [{ content: 'x'.repeat(4000) }], true))),
+      maxSwoge: enSwoge(factureUsd(pireCasUsd(m, [{ content: 'x'.repeat(4000) }], !!m.recherche))),
     })),
   };
 }
@@ -207,6 +238,7 @@ async function repond(q, deps) {
   if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
   const m = modele(q.modele || DEFAUT);
   if (!m) return { ok: false, code: 400, raison: 'unknown model' };
+  if (deps.actif && !deps.actif(m.fournisseur)) return { ok: false, code: 503, raison: m.nom + ' is not switched on yet — pick another model.' };
   const messages = nettoie(q.messages);
   if (!messages) return { ok: false, code: 400, raison: 'empty question' };
   const recherche = !!q.recherche && !!m.recherche;

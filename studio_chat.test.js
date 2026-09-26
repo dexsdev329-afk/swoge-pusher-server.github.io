@@ -29,6 +29,9 @@ process.env.AI_COLONIE = '0'; process.env.PERP_COLONIES = '0'; process.env.PERP_
 process.env.ODDS_API_KEY = ''; process.env.MONITEUR_URL = '';
 process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801';
 process.env.STUDIO_MARGE = '1.5';
+/* Hermetique : aucune vraie cle de fournisseur ne doit servir ici (l'environnement
+   de developpement peut en porter une). Chaque bloc pose la sienne, fausse. */
+for (const k of ['OPENAI_API_KEY', 'XAI_API_KEY', 'GROK_API_KEY', 'OPENAI_BASE_URL', 'XAI_BASE_URL']) delete process.env[k];
 
 const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(0, () => { const q = s.address().port; s.close(() => r(q)); }); });
 
@@ -42,9 +45,13 @@ const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(
 
   console.log('-- 1. on ne facture jamais sous le coût --');
   {
-    const grille = { 'opus-5-5': [4, 20], 'fable-5-1': [10, 50], 'sonnet-5': [2, 10], 'haiku-4-5': [1, 5] };
+    /* Chaque modele porte les prix PUBLICS de son fournisseur (entree/sortie $/M),
+       relus le 26 septembre 2026 : Anthropic ; OpenAI (standard) ; xAI (< 200 k). */
+    const grille = { 'opus-5-5': [4, 20], 'fable-5-1': [10, 50], 'sonnet-5': [2, 10], 'haiku-4-5': [1, 5],
+      'gpt-6-astra': [10, 50], 'gpt-6-sol': [2, 10], 'gpt-6-luna': [0.1, 0.5],
+      'grok-4-7': [2, 6], 'grok-4-20-reasoning': [1.25, 2.5], 'grok-4-3': [1.25, 2.5] };
     for (const m of C.MODELES) {
-      eq(JSON.stringify([m.entree, m.sortie]), JSON.stringify(grille[m.id]), m.nom + ' : tarifs = grille publique Anthropic (entrée/sortie $/M)');
+      eq(JSON.stringify([m.entree, m.sortie]), JSON.stringify(grille[m.id]), m.nom + ' : tarifs = grille publique de ' + m.fournisseur + ' (entrée/sortie $/M)');
       /* Le pire cas RÉEL : historique au plafond (4 caractères par jeton, la
          réalité en anglais), max_tokens atteint, 3 recherches, 30 k jetons de
          résultats. La réserve compte 2 caractères par jeton : elle couvre. */
@@ -174,7 +181,8 @@ const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(
 
     const base = 'http://127.0.0.1:' + port;
     const cat = await (await fetch(base + '/studio/chat/catalogue')).json();
-    ok(cat.ouvert === true && cat.modeles.length === 4 && cat.defaut === 'opus-5-5', 'le catalogue est ouvert, quatre modèles, Opus 5.5 par défaut');
+    ok(cat.ouvert === true && cat.modeles.length === C.MODELES.length && cat.defaut === 'opus-5-5', 'le catalogue est ouvert, tous les modèles, Opus 5.5 par défaut');
+    ok(['Claude', 'ChatGPT', 'Grok'].every((f) => cat.modeles.some((m) => m.nomFournisseur === f)), 'Claude, ChatGPT et Grok y sont');
     ok(cat.modeles.every((m) => m.typiqueSwoge > 0 && m.maxSwoge > m.typiqueSwoge), 'chaque modèle annonce un prix typique et un maximum en $SWOGE');
 
     const sans = await fetch(base + '/studio/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
@@ -220,6 +228,33 @@ const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(
     ok(rep2.status === 'done' && rep2.texte === 'Bonjour SWOGE.' && rep2.factureSwoge === fin.factureSwoge, 'une page rechargee retrouve la reponse finie, facture comprise');
     eq((await fetch(base + '/studio/reprise/rid-test-001')).status, 401, 'sans session, rien ne se relit');
     eq((await fetch(base + '/studio/reprise/rid-inconnu-9', { headers: { authorization: 'Bearer ' + auth.session } })).status, 404, 'un identifiant inconnu : 404');
+
+    /* ---- GROK, de bout en bout : le serveur aiguille vers xAI et facture le cout exact ---- */
+    const vusX = [];
+    const fauxX = http.createServer((q2, r2) => { let b = ''; q2.on('data', (c) => { b += c; }); q2.on('end', () => {
+      vusX.push(JSON.parse(b || '{}'));
+      r2.writeHead(200, { 'content-type': 'text/event-stream' });
+      r2.end(['{"choices":[{"delta":{"content":"Yo "}}]}', '{"choices":[{"delta":{"content":"doge."},"finish_reason":"stop"}]}',
+        '{"choices":[],"usage":{"prompt_tokens":300,"completion_tokens":40,"cost_in_usd_ticks":7000000}}'].map((x) => 'data: ' + x + '\n\n').join('') + 'data: [DONE]\n\n');
+    }); });
+    const pX = await libre(); await new Promise((r) => fauxX.listen(pX, r));
+    process.env.XAI_API_KEY = 'xai-test-local'; process.env.XAI_BASE_URL = 'http://127.0.0.1:' + pX;
+    const catX = await (await fetch(base + '/studio/chat/catalogue')).json();
+    ok(catX.modeles.filter((m) => m.fournisseur === 'xai').every((m) => m.actif) && catX.modeles.filter((m) => m.fournisseur === 'openai').every((m) => !m.actif),
+       'la cle xAI posee allume les modeles Grok ; sans cle OpenAI, les GPT-6 restent eteints');
+    const avX = ethers.utils.parseUnits(moteur.balanceStr(adr), 18);
+    const fluxX = await (await fetch(base + '/studio/chat', { method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.session },
+      body: JSON.stringify({ modele: 'grok-4-3', messages: [{ role: 'user', content: 'Salut' }] }) })).text();
+    const finX = JSON.parse((fluxX.split('event: fin\ndata: ')[1] || '{}').split('\n')[0]);
+    ok(finX.ok && finX.texte === 'Yo doge.' && vusX[0] && vusX[0].model === 'grok-4.3', 'Grok 4.3 repond, par xAI, en flux');
+    ok(Math.abs(finX.factureUsd - 0.0007 * 1.5) < 1e-6, 'facture = cout EXACT rendu par xAI (0,0007 $) × 1,5 [' + finX.factureUsd + ']');
+    eq(avX.sub(ethers.utils.parseUnits(moteur.balanceStr(adr), 18)).toString(), ethers.utils.parseUnits(finX.factureSwoge, 18).toString(), 'et la session est debitee exactement de la facture');
+    const off = await (await fetch(base + '/studio/chat', { method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.session },
+      body: JSON.stringify({ modele: 'gpt-6-sol', messages: [{ role: 'user', content: 'Salut' }] }) })).text();
+    ok(/event: erreur/.test(off) && /not switched on/.test(off), 'un GPT-6 sans cle OpenAI : refuse, rien de facture');
+    fauxX.close();
 
     const solde = await (await fetch(base + '/studio/chat/solde', { headers: { authorization: 'Bearer ' + auth.session } })).json();
     ok(solde.ok && solde.adresse === adr, 'le solde se lit avec le seul jeton de session');

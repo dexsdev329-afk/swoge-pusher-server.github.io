@@ -1613,7 +1613,9 @@ const economie = require('./economie');
 const studioMedia = require('./studio_media');   /* images et videos Grok Imagine, payees en $SWOGE */
 const studioXai = require('./studio_xai');
 const reprises = require('./reprises');
-const studioOpenai = require('./studio_openai');   /* « ChatGPT Image » */
+const studioOpenai = require('./studio_openai');
+const studioCompat = require('./studio_compat');   /* le chat ChatGPT et Grok (Chat Completions) */
+const chatActif = (f) => (f === 'anthropic' ? studioClaude.actif() : studioCompat.actif(f));   /* « ChatGPT Image » */
 const studioFichiers = require('./studio_fichiers');   /* les images generees, rangees sur le volume */   /* une reponse retrouvee apres un rechargement de la page */   /* offre, brule, coffre : lus sur la chaine */
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
@@ -2249,7 +2251,7 @@ const server = http.createServer(async (req, res) => {
     if (path === '/studio/chat/catalogue') {
       const cours = await studioChat.coursSwoge();
       const M = studioChat.MESURE;
-      return json(200, Object.assign(studioChat.catalogue(cours, studioClaude.actif()), {
+      return json(200, Object.assign(studioChat.catalogue(cours, { anthropic: chatActif('anthropic'), openai: chatActif('openai'), xai: chatActif('xai') }), {
         /* Ce qu'on mesure, public : coût réel payé contre facturé. */
         mesure: { requetes: M.requetes, echecs: M.echecs, depassements: M.depassements,
                   coutUsd: Number(M.coutUsd.toFixed(4)), factureUsd: Number(M.factureUsd.toFixed(4)) },
@@ -2263,7 +2265,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
     if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
-    if (!studioClaude.actif()) return json(503, { ok: false, raison: 'The AI provider key is not set on the server yet.' });
+    if (!chatActif('anthropic') && !chatActif('openai') && !chatActif('xai')) return json(503, { ok: false, raison: 'The AI provider key is not set on the server yet.' });
     let q;
     try { q = JSON.parse((await corps(req, 256 * 1024)).toString('utf8') || '{}'); }
     catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
@@ -2282,7 +2284,8 @@ const server = http.createServer(async (req, res) => {
           reserve: (a, w) => game.studioReserve(a, w),
           regle: (a, rw, fw) => { const s = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s }); return s; },
         },
-        fournisseur: (p) => studioClaude.repond(p),
+        fournisseur: (p) => (p.m.fournisseur === 'anthropic' ? studioClaude.repond(p) : studioCompat.repond(p)),
+        actif: chatActif,
         surTexte: (t) => { if (rid) reprises.ajoute(addr, rid, t); envoie('texte', { t }); },
         surReflexion: () => envoie('etape', { quoi: 'reflexion' }),
         surRecherche: () => envoie('etape', { quoi: 'recherche' }),
