@@ -1609,6 +1609,7 @@ const studioClaude = require('./studio_claude');
    HTTP, `session` désigne la session ADMIN (ligne `sessionValide`) et masque
    le module — `session.lire` y vaudrait null. */
 const sessionJoueur = require('./session');
+const economie = require('./economie');   /* offre, brule, coffre : lus sur la chaine */
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
 const predictServeur = require('./predict_serveur');   /* le releve papier partage de swoge_predict */
@@ -3422,6 +3423,16 @@ const server = http.createServer(async (req, res) => {
     else { xPost.reprend(); r = await xPost.tache({ force: true, signale }); }
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(r));
+  }
+
+  /* L'economie $SWOGE lue sur la chaine (offre, brule, coffre) : la carte de
+     l'accueil et le whitepaper ne recopient plus de chiffres. Voir economie.js. */
+  if (path === '/economie.json') {
+    const e = await economie.etat();
+    res.writeHead(e.ok ? 200 : 503, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*',
+                         'cache-control': 'public, max-age=60' });
+    return res.end(JSON.stringify(e));
   }
 
   if (path === '/vitrine.json') {
