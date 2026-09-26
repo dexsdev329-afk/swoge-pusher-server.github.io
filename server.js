@@ -1605,6 +1605,7 @@ const osintNoyau = require('./osint_noyau');
 const studio = require('./studio');
 const studioChat = require('./studio_chat');
 const studioJeton = require('./studio_jeton');
+const studioHisto = require('./studio_histo').cree();
 const studioClaude = require('./studio_claude');
 /* Le module des sessions JOUEUR, sous son propre nom : dans le gestionnaire
    HTTP, `session` désigne la session ADMIN (ligne `sessionValide`) et masque
@@ -2245,6 +2246,43 @@ const server = http.createServer(async (req, res) => {
    *
    * LA RÉPONSE : un flux SSE (`texte`, `etape`, puis `fin` ou `erreur`) —
    * le joueur voit la réponse s'écrire, et le solde réglé arrive avec `fin`. */
+  /* ==================== SWOLEMIND — L'HISTORIQUE PAR PORTEFEUILLE ====================
+   * GET /studio/histo?depuis=<ms serveur> : ce qui a change ; PUT /studio/histo/<id> :
+   * une conversation ; DELETE /studio/histo/<id>?maj= : une pierre tombale.
+   * L'adresse vient de la session signee, jamais du corps : chacun son historique.
+   * Voir studio_histo.js (un fichier par adresse, jamais dans state.json). */
+  if (path === '/studio/histo' || path.startsWith('/studio/histo/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, PUT, DELETE, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const lue = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    const addr = lue ? String(lue).toLowerCase() : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    const id = decodeURIComponent(path.slice('/studio/histo/'.length));
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    try {
+      if (path === '/studio/histo' && req.method === 'GET') return json(200, studioHisto.depuis(addr, qs.get('depuis')));
+      if (path !== '/studio/histo' && req.method === 'PUT') {
+        let c;
+        try { c = JSON.parse((await corps(req, 512 * 1024)).toString('utf8') || '{}'); }
+        catch (e) { return json(413, { ok: false, raison: 'this chat is too long to sync' }); }
+        const r = studioHisto.pose(addr, id, c);
+        return json(r.ok ? 200 : r.code, r);
+      }
+      if (path !== '/studio/histo' && req.method === 'DELETE') {
+        const r = studioHisto.supprime(addr, id, qs.get('maj'));
+        return json(r.ok ? 200 : r.code, r);
+      }
+      return json(405, { ok: false, raison: 'method not allowed' });
+    } catch (e) {
+      /* Un fichier illisible n'est jamais ecrase : on refuse, et on le journalise. */
+      console.error('[histo] ' + addr + ' : ' + (e && e.message || e));
+      return json(503, { ok: false, raison: 'chat history is unavailable right now' });
+    }
+  }
+
   if (path === '/studio/chat' || path === '/studio/chat/catalogue' || path === '/studio/chat/solde') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization' };
