@@ -1611,7 +1611,8 @@ const studioClaude = require('./studio_claude');
 const sessionJoueur = require('./session');
 const economie = require('./economie');
 const studioMedia = require('./studio_media');   /* images et videos Grok Imagine, payees en $SWOGE */
-const studioXai = require('./studio_xai');   /* offre, brule, coffre : lus sur la chaine */
+const studioXai = require('./studio_xai');
+const reprises = require('./reprises');   /* une reponse retrouvee apres un rechargement de la page */   /* offre, brule, coffre : lus sur la chaine */
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
 const predictServeur = require('./predict_serveur');   /* le releve papier partage de swoge_predict */
@@ -2267,6 +2268,10 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, Object.assign({ 'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no' }, cors));
     const envoie = (type, d) => { try { res.write('event: ' + type + '\ndata: ' + JSON.stringify(d) + '\n\n'); } catch (e) { /* client parti */ } };
+    /* La page peut etre rechargee pendant la reponse : le serveur la finit et
+       la facture quand meme, donc il la GARDE pour qu'elle la retrouve. */
+    const rid = reprises.ridOk(q.rid) ? q.rid : null;
+    if (rid) reprises.note(addr, rid, { genre: 'chat', status: 'pending', texte: '' });
     let r;
     try {
       r = await studioChat.repond({ addr, modele: q.modele, messages: q.messages, recherche: !!q.recherche, effort: q.effort }, {
@@ -2276,7 +2281,7 @@ const server = http.createServer(async (req, res) => {
           regle: (a, rw, fw) => { const s = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s }); return s; },
         },
         fournisseur: (p) => studioClaude.repond(p),
-        surTexte: (t) => envoie('texte', { t }),
+        surTexte: (t) => { if (rid) reprises.ajoute(addr, rid, t); envoie('texte', { t }); },
         surReflexion: () => envoie('etape', { quoi: 'reflexion' }),
         surRecherche: () => envoie('etape', { quoi: 'recherche' }),
       });
@@ -2284,6 +2289,7 @@ const server = http.createServer(async (req, res) => {
       console.error('[chat] ' + (e && e.stack || e));
       r = { ok: false, code: 500, raison: 'server error — you were not charged' };
     }
+    if (rid) reprises.note(addr, rid, Object.assign({}, r, { genre: 'chat', status: r.ok ? 'done' : 'failed' }));
     envoie(r.ok ? 'fin' : 'erreur', r);
     return res.end();
   }
@@ -3427,6 +3433,22 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(r));
   }
 
+  /* ---- STUDIO : RETROUVER UNE REPONSE APRES UN RECHARGEMENT ----
+     Par l'adresse de la SESSION et l'identifiant tire par la page : personne
+     d'autre ne la lit. Voir reprises.js. */
+  if (path.startsWith('/studio/reprise/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS',
+                   'access-control-allow-headers': 'authorization' };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    const v = reprises.lit(addr, decodeURIComponent(path.slice('/studio/reprise/'.length)));
+    if (!v) return json(404, { ok: false, status: 'unknown', raison: 'this answer is no longer on the server' });
+    return json(200, Object.assign({}, v, { ok: v.status !== 'failed' ? true : false }));
+  }
+
   /* ---- STUDIO : IMAGES ET VIDEOS (Grok Imagine) ----
      Meme regle que le chat : la session dit QUI paie (jamais le corps), le
      serveur reserve, facture le cout reel rendu par xAI, rend le reste. Une
@@ -3464,6 +3486,8 @@ const server = http.createServer(async (req, res) => {
       fournisseur: studioXai,
     };
     const base = { addr, modele: q.modele, prompt: q.prompt, format: q.format, image: q.image };
+    const rid = reprises.ridOk(q.rid) ? q.rid : null;
+    if (rid) reprises.note(addr, rid, { genre: path === '/studio/media/image' ? 'image' : 'video', status: 'pending' });
     let r;
     try {
       r = path === '/studio/media/image'
@@ -3473,6 +3497,7 @@ const server = http.createServer(async (req, res) => {
       console.error('[studio] ' + (e && e.stack || e));
       r = { ok: false, code: 500, raison: 'server error — you were not charged' };
     }
+    if (rid) reprises.note(addr, rid, Object.assign({}, r, { status: r.ok ? (r.genre === 'video' ? 'started' : 'done') : 'failed' }));
     return json(r.ok ? 200 : (r.code || 500), r);
   }
 

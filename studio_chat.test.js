@@ -201,7 +201,7 @@ const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(
     const autreAvant = moteur.balanceStr(autre);
     const rep = await fetch(base + '/studio/chat', { method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Bearer ' + auth.session },
-      body: JSON.stringify({ addr: autre, modele: 'haiku-4-5', messages: [{ role: 'user', content: 'Salut' }] }) });
+      body: JSON.stringify({ addr: autre, modele: 'haiku-4-5', rid: 'rid-test-001', messages: [{ role: 'user', content: 'Salut' }] }) });
     const flux = await rep.text();
     ok(/event: texte/.test(flux) && /Bonjour/.test(flux), 'la réponse arrive en flux (SSE)');
     const fin = JSON.parse((flux.split('event: fin\ndata: ')[1] || '{}').split('\n')[0]);
@@ -212,6 +212,14 @@ const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(
     eq(vu.corps.model, 'claude-haiku-4-5', 'le bon identifiant de modèle part chez Anthropic');
     ok(!('thinking' in vu.corps) && !('output_config' in vu.corps), 'Haiku : ni thinking ni effort (il les refuserait)');
     ok(vu.cle === 'sk-test-local', 'la clé ne vit que côté serveur, en en-tête vers le fournisseur');
+
+    /* ---- LA PAGE RECHARGEE RETROUVE LA REPONSE ----
+     * Signale le 26 septembre 2026 : une page rechargee pendant la reponse la
+     * perdait, alors que le serveur la finissait et la facturait. */
+    const rep2 = await (await fetch(base + '/studio/reprise/rid-test-001', { headers: { authorization: 'Bearer ' + auth.session } })).json();
+    ok(rep2.status === 'done' && rep2.texte === 'Bonjour SWOGE.' && rep2.factureSwoge === fin.factureSwoge, 'une page rechargee retrouve la reponse finie, facture comprise');
+    eq((await fetch(base + '/studio/reprise/rid-test-001')).status, 401, 'sans session, rien ne se relit');
+    eq((await fetch(base + '/studio/reprise/rid-inconnu-9', { headers: { authorization: 'Bearer ' + auth.session } })).status, 404, 'un identifiant inconnu : 404');
 
     const solde = await (await fetch(base + '/studio/chat/solde', { headers: { authorization: 'Bearer ' + auth.session } })).json();
     ok(solde.ok && solde.adresse === adr, 'le solde se lit avec le seul jeton de session');
