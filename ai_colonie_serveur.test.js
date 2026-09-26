@@ -4425,6 +4425,11 @@ function frottementContreEsperance() {
   ok(C.frottementRefuse(esp, 1.5) === null, 'a 1,5 % de frottement, elle passe');
   ok(C.frottementRefuse(esp, null) === null, 'et sans devis d aller-retour, la regle ne s applique pas');
 
+  /* Depuis le 26 septembre 2026, la regle est un reglage (MIROIR_FROTTEMENT=1) :
+     le proprietaire veut que le miroir suive tous les achats. Allumee, elle
+     retient comme avant ; eteinte (defaut), le miroir suit ET la ligne est notee. */
+  const avant = process.env.MIROIR_FROTTEMENT;
+  process.env.MIROIR_FROTTEMENT = '1';
   /* Le miroir est retenu, le papier ne l est pas. */
   let achats = 0;
   C.poseMiroir({ surAchat: async () => { achats++; return 0; }, surVente: async () => 0 });
@@ -4440,6 +4445,16 @@ function frottementContreEsperance() {
   C._suitLeMiroir({ k: 'achat', sym: 'INCONNU', adr: '0x' + 'ee'.repeat(20), pool: 'p',
                     mise: 10, esperance: { valeur: 'x', n: 2, moyenne: null }, allerRetour: 6 });
   ok(achats === 2, 'et une case non mesuree passe aussi : on n interdit rien sur un inconnu');
+  ok(b.bloque === true && b.lignes[0].suivi === false, 'reglage allume : la ligne dit que l achat a ete retenu');
+  delete process.env.MIROIR_FROTTEMENT;
+  C._suitLeMiroir({ k: 'achat', sym: 'SUIVI', adr: '0x' + 'ab'.repeat(20), pool: 'p',
+                    mise: 10, esperance: esp, allerRetour: 6 });
+  ok(achats === 3, 'reglage eteint (defaut, choix du proprietaire) : le miroir suit l achat que la regle aurait retenu');
+  const b2 = C.frottementBilan();
+  ok(b2.bloque === false && b2.lignes[0].sym === 'SUIVI' && b2.lignes[0].suivi === true && b2.suivis === 1,
+     'et la ligne est notee « suivi » : son resultat reel jugera la regle');
+  ok(C._etat().flux.some((x) => /^MIRRORED ANYWAY · cell/.test(x.txt || '')), 'le flux le dit : suivi malgre une case sous son aller-retour');
+  if (avant === undefined) delete process.env.MIROIR_FROTTEMENT; else process.env.MIROIR_FROTTEMENT = avant;
 
   /* ---- ET LE PAPIER, LUI, CONTINUE D ACHETER ----
    * C est la moitie de la regle : couper le papier fermerait la case, donc

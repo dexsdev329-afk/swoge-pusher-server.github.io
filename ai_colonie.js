@@ -6508,19 +6508,37 @@ const FROTTEMENT_LIGNES = 40;
 /* Sa propre cle, et non un champ de `E.reel` : le carnet reel a une forme
    precise, posee ailleurs, et un initialiseur de plus l'aurait un jour
    remise a zero en la croyant absente. */
-function noteFrottement(s, esp, cout, raison) {
+function noteFrottement(s, esp, cout, raison, suivi) {
   const f = E.frottement || (E.frottement = { n: 0, lignes: [] });
   f.n++;
   f.lignes.unshift({ sym: s.sym, adr: s.adr, case: esp.valeur, esperance: esp.moyenne,
-                     obs: esp.n, cout, t: Date.now(), raison });
+                     obs: esp.n, cout, t: Date.now(), raison, suivi: !!suivi });
   if (f.lignes.length > FROTTEMENT_LIGNES) f.lignes.length = FROTTEMENT_LIGNES;
 }
 /** Ce que la page montre de la regle : combien d'achats reels elle a retenus. */
 function frottementBilan() {
   const f = E.frottement || { n: 0, lignes: [] };
   return { n: f.n || 0, gardees: (f.lignes || []).length, lignes: (f.lignes || []).slice(0, 12),
+           bloque: FROTTEMENT_BLOQUE(), suivis: (f.lignes || []).filter((x) => x.suivi).length,
            trait: nomTrait(CASE_ESPERANCE_TRAIT), echeance: HORIZON_REF, minObs: PROFIL_MIN_OBS };
 }
+
+/* ---- LE 26 SEPTEMBRE 2026, LE PROPRIETAIRE A TRANCHE : LE MIROIR SUIT TOUT ----
+ * « La colonie l'a achete 3 fois, le miroir une fois ; il devrait suivre tous
+ * les achats de la colonie. » TELEPAD ce jour-la : un achat suivi (+37,4 %
+ * reel), trois retenus par cette regle, dont deux faits a la main.
+ * La mesure au moment de trancher (releve du 26 septembre, 11:43 UTC, achats
+ * clos depuis la mise en service de la regle le 22 a 23:21) :
+ *     retenus en papier seul   n = 11   +2,4 % papier en moyenne, 64 % gagnants
+ *     partis en reel           n = 14   +47,1 % en moyenne, 93 % gagnants
+ * La regle separait donc bien, mais sur 11 trades — trop peu pour conclure,
+ * et les retenus finissent a peu pres a zero apres un aller-retour de 2,5 %,
+ * pas en perte nette. Le proprietaire prefere suivre tout.
+ * La regle devient un REGLAGE : `MIROIR_FROTTEMENT=1` la rallume. Eteinte,
+ * elle continue de NOTER chaque achat qu'elle aurait retenu (`suivi: true`) :
+ * ce que ces achats rendent en reel se lira dans le carnet reel, et elle se
+ * jugera sur des centaines de trades au lieu de onze. */
+const FROTTEMENT_BLOQUE = () => process.env.MIROIR_FROTTEMENT === '1';
 
 /* Ce que le miroir doit faire de ce signal — lance, jamais attendu. */
 function suitLeMiroir(s) {
@@ -6530,13 +6548,21 @@ function suitLeMiroir(s) {
    * veut. Seul l'ordre reel est retenu, et il l'est en le DISANT. */
   if (s.k === 'achat') {
     const raison = frottementRefuse(s.esperance, s.allerRetour);
-    if (raison) {
-      noteFrottement(s, s.esperance, s.allerRetour, raison);
+    if (raison && FROTTEMENT_BLOQUE()) {
+      noteFrottement(s, s.esperance, s.allerRetour, raison, false);
       compte('frottementRetenu');
       E.flux.unshift({ sym: s.sym, pool: s.pool, tag: 'skip',
                        txt: 'PAPER ONLY · ' + raison, cls: 'w', t: Date.now() });
       console.log('[ai] miroir retenu sur ' + s.sym + ' : ' + raison);
       return;
+    }
+    if (raison) {
+      /* Suivi quand meme (reglage du proprietaire), et DIT : on sait lequel
+         la regle aurait retenu, et son resultat reel la jugera. */
+      noteFrottement(s, s.esperance, s.allerRetour, raison, true);
+      compte('frottementSuivi');
+      E.flux.unshift({ sym: s.sym, pool: s.pool, tag: 'open',
+                       txt: 'MIRRORED ANYWAY · ' + raison + ' — the mirror follows every colony buy', cls: 'w', t: Date.now() });
     }
   }
   try {
