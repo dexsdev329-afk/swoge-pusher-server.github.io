@@ -49,7 +49,7 @@ function usageDe(f, u) {
  * reçoit le texte au fil de l'eau ; `surReflexion` est appelé une fois quand le
  * modèle raisonne avant d'écrire (on ne voit pas son raisonnement).
  */
-async function repond({ m, messages, recherche, effort, surTexte, surReflexion, surRecherche }) {
+async function repond({ m, messages, recherche, effort, surTexte, surReflexion, surRecherche, signal }) {
   const F = FOURNISSEURS[m.fournisseur];
   if (!F) throw new Error('fournisseur inconnu : ' + m.fournisseur);
   /* La recherche web, faite AVANT : ses résultats rejoignent la question, et
@@ -81,7 +81,8 @@ async function repond({ m, messages, recherche, effort, surTexte, surReflexion, 
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + F.cle() },
     body: JSON.stringify(corps),
-    signal: AbortSignal.timeout(180000),
+    /* L'arrêt du joueur OU le délai : AbortSignal.any (Node ≥ 20.3) ; sans lui, le délai seul (l'arrêt libère quand même la place). */
+    signal: signal && AbortSignal.any ? AbortSignal.any([AbortSignal.timeout(180000), signal]) : AbortSignal.timeout(180000),
   });
   if (!r.ok || !r.body) {
     let msg = '';

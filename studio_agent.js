@@ -185,7 +185,7 @@ function outils(src) {
  * les appels, `recherches_perplexity` compté pour la facture. `surOutil`
  * et `surResultat` racontent chaque geste à la page.
  */
-async function repond({ m, messages, surTexte, surReflexion, surOutil, surResultat }, deps) {
+async function repond({ m, messages, surTexte, surReflexion, surOutil, surResultat, signal }, deps) {
   const c = (deps && deps.client) || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 180000 });
   const O = outils(deps.src);
   const tools = definitions({ recherche: !!deps.src.recherche });
@@ -195,6 +195,8 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
   let stop = null, servi = m.api, etapes = 0;
 
   while (etapes < ETAPES_MAX) {
+    /* Arrêté par le joueur : pas d'étape de plus (et le flux en cours est coupé par le signal). */
+    if (signal && signal.aborted) throw Object.assign(new Error('stopped'), { arrete: true });
     etapes++;
     /* Au dernier appel permis, il doit conclure avec ce qu'il a : les outils
        restent DECLARES (l'historique porte des blocs tool_use) mais
@@ -203,9 +205,10 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
     const dernier = etapes === ETAPES_MAX;
     const params = { model: m.api, max_tokens: Math.min(m.maxTokens, SORTIE_MAX), system: SYSTEME, messages: fil, tools };
     if (dernier) params.tool_choice = { type: 'none' };
+    const opts = signal ? { signal } : undefined;
     const flux = m.repli
-      ? c.beta.messages.stream(Object.assign({}, params, { betas: ['server-side-fallback-2026-06-01'], fallbacks: [{ model: m.repli }] }))
-      : c.messages.stream(params);
+      ? c.beta.messages.stream(Object.assign({}, params, { betas: ['server-side-fallback-2026-06-01'], fallbacks: [{ model: m.repli }] }), opts)
+      : c.messages.stream(params, opts);
     let texteEtape = '';
     for await (const ev of flux) {
       if (ev.type === 'content_block_start' && ev.content_block && ev.content_block.type === 'thinking' && surReflexion) surReflexion();

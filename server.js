@@ -2532,7 +2532,7 @@ const server = http.createServer(async (req, res) => {
     const src = srcAgent();
     let r;
     try {
-      r = await studioChat.repond({ addr, modele: m.id, messages: q.messages, recherche: false }, {
+      r = await studioChat.repond({ addr, rid, modele: m.id, messages: q.messages, recherche: false }, {
         cours: () => studioChat.coursSwoge(),
         solde: {
           reserve: (a, w) => game.studioReserve(a, w),
@@ -2592,6 +2592,25 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  /* ARRÊTER une réponse en cours (SwoleMind et SwogeAgentic) : par la SESSION,
+     jamais une adresse du corps — on n'arrête que ses propres réponses. Voir
+     studio_chat.arrete pour la regle d'argent. */
+  if (path === '/studio/chat/stop') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const qui = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!qui) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    let q;
+    try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    const rids = (Array.isArray(q.rids) ? q.rids : [q.rid]).filter((x) => reprises.ridOk(x)).slice(0, 5);
+    if (!rids.length) return json(400, { ok: false, raison: 'which answer? (rid)' });
+    let n = 0;
+    for (const x of rids) n += studioChat.arrete(qui, x);
+    return json(200, { ok: true, arretes: n });
+  }
   if (path === '/studio/chat' || path === '/studio/chat/catalogue' || path === '/studio/chat/solde') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization' };
@@ -2630,7 +2649,7 @@ const server = http.createServer(async (req, res) => {
     if (rid) reprises.note(addr, rid, { genre: 'chat', status: 'pending', texte: '' });
     let r;
     try {
-      r = await studioChat.repond({ addr, modele: q.modele, messages: q.messages, recherche: !!q.recherche, effort: q.effort }, {
+      r = await studioChat.repond({ addr, rid, modele: q.modele, messages: q.messages, recherche: !!q.recherche, effort: q.effort }, {
         cours: () => studioChat.coursSwoge(),
         solde: {
           reserve: (a, w) => game.studioReserve(a, w),

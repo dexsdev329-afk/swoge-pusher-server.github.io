@@ -43,6 +43,7 @@ lance jeton   "$SRV" node studio_jeton.test.js    # une adresse de jeton dans le
 lance pieces  "$SRV" node studio_pieces.test.js   # photo ou PDF joint : en-tetes lus, pire cas borne, PDF a Claude seul sur compte exact
 lance histo   "$SRV" node studio_histo.test.js    # historique par portefeuille : chacun son fichier, la plus recente gagne, jamais un vide sur un illisible
 lance agent   "$SRV" node studio_agent.test.js    # SwogeAgentic : boucle bornee, usage additionne, pire cas tenu, outils de lecture seulement
+lance arret   "$SRV" node studio_arret.test.js    # arreter une reponse : place liberee tout de suite, reserve gardee, fournisseur coupe, rien facture avant le modele
 lance agentic "$SRV" node agentic.test.js    # API des autres agents : cles (empreinte, plafond), devis, recu, MCP deux epoques
 lance agenticrte "$SRV" node agentic_route.test.js   # de bout en bout : vrai serveur, vrai wallet, une cle ne gere pas les cles, debit exact au wei
 lance x402    "$SRV" node x402.test.js    # payer sans compte : vraies signatures Permit2/EIP-2612, rejeu, montant exact, outil en panne → rien regle

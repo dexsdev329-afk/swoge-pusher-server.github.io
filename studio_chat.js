@@ -225,6 +225,34 @@ const EN_VOL = {
   delete(a) { const k = (this.n.get(a) || 0) - 1; if (k > 0) this.n.set(a, k); else this.n.delete(a); },
   clear() { this.n.clear(); },
 };
+/* ---- ARRÊTER UNE RÉPONSE (demande du propriétaire, 26 septembre 2026) ----
+ * « Je me suis trompé, je veux l'arrêter pour en faire une autre — pas grave de
+ * ne pas récupérer ses jetons. » Sans arrêt, la réponse tenait sa place dans
+ * EN_VOL jusqu'au bout (et fermer la page ne l'arrêtait pas : le serveur la
+ * finit pour la reprise). La règle d'argent de l'arrêt :
+ *   - avant que le fournisseur ne soit appelé : RIEN n'est facturé ;
+ *   - après : la RÉSERVE est gardée (choix du propriétaire) — le fournisseur a
+ *     pu déjà consommer, et un arrêt gratuit ferait lire une réponse partielle
+ *     pour rien.
+ * La place est libérée tout de suite ; le fournisseur reçoit le signal et
+ * s'arrête aussi (moins de jetons payés par la maison).
+ * Un arrêt peut arriver AVANT la requête elle-même (le clic précède le POST) :
+ * il est retenu ARRET_AVANT_MS et la requête, à son arrivée, ne réserve rien. */
+const ARRETS = new Map();          /* addr|rid → AbortController */
+const ARRETES_AVANT = new Map();   /* addr|rid → horodatage de l'arrêt demandé */
+const ARRET_AVANT_MS = 60000;
+const cleArret = (addr, rid) => String(addr).toLowerCase() + '|' + String(rid || '');
+/** Arrête les réponses d'une adresse (une seule si `rid`). Rend le nombre arrêté. */
+function arrete(addr, rid, maintenant) {
+  const t = maintenant || Date.now();
+  for (const [k, v] of ARRETES_AVANT) if (t - v > ARRET_AVANT_MS) ARRETES_AVANT.delete(k);
+  let n = 0;
+  const pref = String(addr).toLowerCase() + '|';
+  for (const [k, c] of ARRETS) if (rid ? k === cleArret(addr, rid) : k.startsWith(pref)) { c.abort(); n++; }
+  if (rid && !n) ARRETES_AVANT.set(cleArret(addr, rid), t);
+  return n;
+}
+
 const RYTHME = new Map();
 const PAR_MINUTE = () => Math.max(1, Number(process.env.STUDIO_PAR_MINUTE || 8));
 function rythmeOk(addr, maintenant) {
@@ -297,9 +325,19 @@ async function repond(q, deps) {
   const recherche = !!q.recherche && !!m.recherche
     && (m.recherche !== 'perplexity' || !deps.actif || !!deps.actif('perplexity'));
   const effort = m.effort && EFFORTS.includes(q.effort) ? q.effort : null;
+  const cle = cleArret(addr, q.rid || ('x' + Math.random()));
+  if (q.rid && ARRETES_AVANT.has(cle)) { ARRETES_AVANT.delete(cle); return { ok: false, code: 409, arrete: true, raison: 'stopped before it started — nothing was charged' }; }
   if (EN_VOL.has(addr)) return { ok: false, code: 429, raison: 'too many answers at once — wait for one to finish' };
   if (!rythmeOk(addr, q.maintenant)) return { ok: false, code: 429, raison: 'too many questions — wait a minute' };
 
+  const ctl = new AbortController();
+  ARRETS.set(cle, ctl);
+  try { return await repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort, ctl }); }
+  finally { ARRETS.delete(cle); }
+}
+
+async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort, ctl }) {
+  const arreteAvant = () => ({ ok: false, code: 409, arrete: true, raison: 'stopped — nothing was charged' });
   /* Un PDF : son cout depend de ses pages, qu'on ne sait pas compter ici. On
      demande le compte EXACT a Anthropic (gratuit) et on reserve sur lui. */
   let entreeComptee;
@@ -313,6 +351,7 @@ async function repond(q, deps) {
 
   const cours = await deps.cours();
   if (!(cours > 0)) return { ok: false, code: 503, raison: 'the $SWOGE price is unavailable — try again shortly' };
+  if (ctl.signal.aborted) return arreteAvant();
   const dec = config.DECIMALS || 18;
   /* Une adresse de jeton dans la question : sa fiche (marche, securite,
      colonie) rejoint la question, et la reserve compte ses jetons. */
@@ -328,22 +367,44 @@ async function repond(q, deps) {
   }
 
   EN_VOL.add(addr);
-  let r, fiches = [];
+  let r, fiches = [], appele = false;
+  /* L'arrêt gagne la course : la place se libère sans attendre le fournisseur. */
+  const arret = new Promise((res, rej) => {
+    const f = () => rej(Object.assign(new Error('stopped'), { arrete: true }));
+    if (ctl.signal.aborted) f(); else ctl.signal.addEventListener('abort', f, { once: true });
+  });
+  arret.catch(() => {});
   try {
-    let envoyes = messages;
-    if (adresses.length) {
-      if (deps.surJeton) deps.surJeton();
-      try { fiches = await deps.jetons(adresses); } catch (e) { fiches = []; }
-      if (fiches.length) {
-        const der = messages[messages.length - 1];
-        envoyes = messages.slice(0, -1).concat([Object.assign({}, der, { content: der.content + '\n\n---\n' + Jeton.contexte(fiches) })]);
+    const travail = (async () => {
+      let envoyes = messages;
+      if (adresses.length) {
+        if (deps.surJeton) deps.surJeton();
+        try { fiches = await deps.jetons(adresses); } catch (e) { fiches = []; }
+        if (fiches.length) {
+          const der = messages[messages.length - 1];
+          envoyes = messages.slice(0, -1).concat([Object.assign({}, der, { content: der.content + '\n\n---\n' + Jeton.contexte(fiches) })]);
+        }
       }
-    }
-    r = await deps.fournisseur({ m, messages: envoyes, recherche, effort,
-      surTexte: deps.surTexte || (() => {}), surReflexion: deps.surReflexion || (() => {}),
-      surRecherche: deps.surRecherche || (() => {}),
-      surOutil: deps.surOutil, surResultat: deps.surResultat });
+      if (ctl.signal.aborted) throw Object.assign(new Error('stopped'), { arrete: true });
+      appele = true;
+      return deps.fournisseur({ m, messages: envoyes, recherche, effort, signal: ctl.signal,
+        surTexte: (t) => { if (!ctl.signal.aborted && deps.surTexte) deps.surTexte(t); },
+        surReflexion: deps.surReflexion || (() => {}),
+        surRecherche: deps.surRecherche || (() => {}),
+        surOutil: deps.surOutil, surResultat: deps.surResultat });
+    })();
+    travail.catch(() => {});      /* perdante de la course : son rejet ne doit pas remonter seul */
+    r = await Promise.race([travail, arret]);
   } catch (e) {
+    if (ctl.signal.aborted) {
+      EN_VOL.delete(addr);
+      MESURE.arretes = (MESURE.arretes || 0) + 1;
+      if (!appele) { deps.solde.regle(addr, reserveWei, 0n); return arreteAvant(); }
+      /* Le fournisseur avait commencé : la réserve est gardée (règle du propriétaire). */
+      const solde = deps.solde.regle(addr, reserveWei, reserveWei);
+      return { ok: false, code: 409, arrete: true, raison: 'stopped — the amount reserved for this answer is kept',
+        factureSwoge: studio.formateBase(reserveWei, dec), factureUsd: Number(reserveUsd.toFixed(5)), solde };
+    }
     /* Échec avant toute réponse facturable : on rend TOUT. */
     deps.solde.regle(addr, reserveWei, 0n);
     MESURE.echecs++;
@@ -379,6 +440,6 @@ async function repond(q, deps) {
 
 module.exports = {
   MODELES, DEFAUT, EFFORTS, modele, coutUsd, pireCasUsd, factureUsd, nettoie,
-  coursPrudent, coursSwoge, catalogue, repond, MESURE, EN_VOL, RYTHME, COURS,
+  coursPrudent, coursSwoge, catalogue, repond, arrete, ARRETS, MESURE, EN_VOL, RYTHME, COURS,
   ENTREE_MAX_CAR, RECHERCHE_MAX, PRIX_RECHERCHE_USD, SYSTEME_JETONS,
 };
