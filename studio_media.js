@@ -32,6 +32,7 @@
 const crypto = require('crypto');
 const config = require('./config');
 const studio = require('./studio');
+const Comp = require('./studio_comprend');   /* la demande comprise avec son fil, et la reference SWOGE */
 
 const IMAGE = [
   { id: 'rapide', fournisseur: 'grok', nom: 'Speed', api: 'grok-imagine-image', usd: 0.02 },
@@ -180,21 +181,32 @@ async function images(q, deps) {
   if (image === false) return { ok: false, code: 400, raison: 'the attached image must be a PNG, JPEG or WebP under 6 MB' };
   if (EN_VOL.has(addr)) return { ok: false, code: 429, raison: 'one generation at a time' };
   if (!rythmeOk(addr, q.maintenant || Date.now())) return { ok: false, code: 429, raison: 'too many generations — wait a minute' };
+  /* ---- COMPRENDRE AVANT DE DESSINER (26 septembre 2026, voir studio_comprend.js) ----
+   * Une demande qui nomme SWOGE (elle, ou le fil auquel elle renvoie) part avec
+   * l'image officielle quand le joueur n'a rien joint ; une demande qui a un
+   * fil derriere elle est reecrite en une consigne complete. */
+  const contexte = Comp.contexteDe(q.contexte);
+  const refSwoge = !image && deps.reference && Comp.parleDeSwoge(prompt, contexte) ? await deps.reference() : null;
+  const envoyee = image || refSwoge || null;
+  const reecrit = !!(deps.comprend && contexte.length);
   let listeUsd, reserveUsd;
   if (fid === 'openai') {
     const p = prixOpenai();
-    listeUsd = (n * OPENAI_MESURE_SORTIE * p.o + OPENAI_RESERVE_TEXTE * p.t + (image ? OPENAI_RESERVE_ENTREE * p.i : 0)) / 1e6;
-    reserveUsd = (n * OPENAI_RESERVE_SORTIE * p.o + OPENAI_RESERVE_TEXTE * p.t + (image ? OPENAI_RESERVE_ENTREE * p.i : 0)) / 1e6;
+    listeUsd = (n * OPENAI_MESURE_SORTIE * p.o + OPENAI_RESERVE_TEXTE * p.t + (envoyee ? OPENAI_RESERVE_ENTREE * p.i : 0)) / 1e6;
+    reserveUsd = (n * OPENAI_RESERVE_SORTIE * p.o + OPENAI_RESERVE_TEXTE * p.t + (envoyee ? OPENAI_RESERVE_ENTREE * p.i : 0)) / 1e6;
   } else {
-    listeUsd = m.usd * (n + (image ? 1 : 0));
-    reserveUsd = m.usd * n * RESERVE_X + (image ? m.usd * RESERVE_X : 0);
+    listeUsd = m.usd * (n + (envoyee ? 1 : 0));
+    reserveUsd = m.usd * n * RESERVE_X + (envoyee ? m.usd * RESERVE_X : 0);
   }
+  if (reecrit) reserveUsd += Comp.RESERVE_USD;
   const r = await reserve(deps, addr, reserveUsd);
   if (r.erreur) return r.erreur;
   EN_VOL.add(addr);
-  let rep;
-  try { rep = await four.images({ api: m.api || modeleOpenai(), prompt, n, format, image, qualite: m.qualite }); }
-  catch (e) {
+  let rep, compris = { prompt, coutUsd: 0, reecrit: false };
+  try {
+    if (reecrit || refSwoge) compris = await Comp.comprend({ prompt, contexte: reecrit ? contexte : [], reference: image ? 'jointe' : refSwoge ? 'swoge' : null }, deps.comprend ? deps.comprend.deps : {});
+    rep = await four.images({ api: m.api || modeleOpenai(), prompt: compris.prompt.slice(0, PROMPT_MAX), n, format, image: envoyee, qualite: m.qualite });
+  } catch (e) {
     deps.solde.regle(addr, r.wei, 0n); MESURE.echecs++; EN_VOL.delete(addr);
     return { ok: false, code: 502, raison: 'the image provider failed — you were not charged', detail: String(e && e.message || e).slice(0, 200) };
   }
@@ -204,11 +216,14 @@ async function images(q, deps) {
     return { ok: false, code: 502, raison: 'no image came back (possibly refused by moderation) — you were not charged' };
   }
   MESURE.images += rep.urls.length;
-  const f = regle(deps, addr, r.wei, r.cours, fid === 'openai' ? coutOpenai(rep.usage) : coutDe(rep.usage), listeUsd);
+  /* La reecriture est un vrai cout : elle s'ajoute a celui de l'image. */
+  const brut = fid === 'openai' ? coutOpenai(rep.usage) : coutDe(rep.usage);
+  const f = regle(deps, addr, r.wei, r.cours, brut == null ? null : brut + compris.coutUsd, listeUsd + compris.coutUsd);
   /* Les images en base64 (OpenAI) sont rangees chez nous : la page recoit une
      adresse, pas des megaoctets (voir studio_fichiers.js). */
   const urls = rep.urls.map((u) => (/^data:/.test(u) && deps.range ? (deps.range(u) || u) : u));
-  return Object.assign({ ok: true, genre: 'image', fournisseur: fid, modele: m.id, urls, retouche: !!image }, f);
+  return Object.assign({ ok: true, genre: 'image', fournisseur: fid, modele: m.id, urls, retouche: !!envoyee,
+    reference: image ? 'jointe' : refSwoge ? 'swoge' : null, compris: compris.reecrit || refSwoge ? compris.prompt : null }, f);
 }
 
 /** Lance une vidéo. q = { addr, modele, prompt, duree, resolution, format, image } */

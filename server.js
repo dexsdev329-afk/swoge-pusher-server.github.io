@@ -1607,6 +1607,12 @@ const studioChat = require('./studio_chat');
 const studioJeton = require('./studio_jeton');
 const studioHisto = require('./studio_histo').cree();
 const studioAgent = require('./studio_agent');
+const studioComprend = require('./studio_comprend');
+let clientComprendV = null;
+const clientComprend = () => {
+  if (!clientComprendV) { const A = require('@anthropic-ai/sdk'); const K = A.default || A; clientComprendV = new K({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 30000 }); }
+  return clientComprendV;
+};
 const economie = require('./economie');
 const studioClaude = require('./studio_claude');
 /* Le module des sessions JOUEUR, sous son propre nom : dans le gestionnaire
@@ -3623,8 +3629,12 @@ const server = http.createServer(async (req, res) => {
       fournisseur: studioXai,
       fournisseurs: { grok: studioXai, openai: studioOpenai },
       range: (u) => studioFichiers.range(u),
+      /* La demande comprise avec son fil (Claude Haiku 4.5) et l'image
+         officielle de SWOGE, lue sur le site — voir studio_comprend.js. */
+      comprend: chatActif('anthropic') ? { deps: { client: clientComprend() } } : null,
+      reference: () => studioComprend.referenceSwoge({ site: SITE_URL }),
     };
-    const base = { addr, modele: q.modele, prompt: q.prompt, format: q.format, image: q.image };
+    const base = { addr, modele: q.modele, prompt: q.prompt, format: q.format, image: q.image, contexte: q.contexte };
     const rid = reprises.ridOk(q.rid) ? q.rid : null;
     if (rid) reprises.note(addr, rid, { genre: path === '/studio/media/image' ? 'image' : 'video', status: 'pending' });
     let r;
