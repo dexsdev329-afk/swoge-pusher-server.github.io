@@ -46,6 +46,10 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   ok(cat.status === 200 && cat.b.outils.map((o) => o.name).join(',') === 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,ask_agent,generate_image',
      'les outils et leurs prix (sans cle Perplexity : pas de recherche web) [' + cat.b.outils.map((o) => o.name).join(',') + ']');
 
+  const lt = await fetch(base + '/llms.txt');
+  const ltxt = await lt.text();
+  ok(lt.status === 200 && /text\/plain/.test(lt.headers.get('content-type')) && /^# SwogeAgentic/.test(ltxt) && /`new_launches\(limit\?\)`/.test(ltxt), '/llms.txt en direct, depuis le catalogue');
+
   console.log('\n-- 2. un joueur signe et cree une cle --');
   const w = ethers.Wallet.createRandom();
   const s = new WebSocket('ws://127.0.0.1:' + port); s.recus = [];

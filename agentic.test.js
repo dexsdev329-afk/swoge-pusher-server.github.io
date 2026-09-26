@@ -180,6 +180,23 @@ const api = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () =
   eq((await MCP.traite({ methode: 'POST', entetes: {}, corps: 'nope', cle, origines: [] }, deps)).status, 400, 'JSON illisible : 400');
   eq((await MCP.traite({ methode: 'POST', entetes: {}, corps: '[]', cle, origines: [] }, deps)).status, 400, 'un lot (tableau) : 400, un message par POST');
 
+  console.log('\n-- 5 bis. llms.txt --');
+  {
+    const U = { api: 'https://api.example', site: 'https://site.example', page: 'https://site.example/swogeagentic.html', docs: 'https://site.example/swogeagentic_api.html' };
+    const txt = A.llmsTxt(await api.catalogue(), Object.assign({ swoge: true }, U));
+    ok(/^# SwogeAgentic\n\n> /.test(txt) && !/^#{3,} /m.test(txt), 'format llmstxt.org : H1, resume en citation, pas de titre plus profond');
+    eq(txt.split('\n').filter((l) => /^## /.test(l)).join(','), '## Docs,## Optional', 'les liens sous des H2, « Optional » en dernier');
+    ok(A.definitions({ recherche: true }).every((d) => txt.includes('`' + d.name + '(')), 'chaque outil du catalogue y est, avec ses arguments');
+    ok(/\$0\.01 \(\d+(\.\d+)? \$SWOGE\)/.test(txt) && !/\$0\.01 \(/.test(A.llmsTxt(await api.catalogue(), Object.assign({ swoge: false }, U))), 'la version en direct dit le prix en $SWOGE ; la copie du site, en $ seulement');
+    /* La copie publiee sur le site ne doit pas vieillir en silence : memes outils que le catalogue. */
+    const site = path.join(__dirname, '..', 'SWOGE.github.io', 'llms.txt');
+    if (fs.existsSync(site)) {
+      const publie = fs.readFileSync(site, 'utf8');
+      const noms = (t) => (t.match(/^- `([a-z_]+)\(/gm) || []).map((x) => x.slice(3, -1)).join(',');
+      eq(noms(publie), noms(txt), 'le llms.txt du site liste exactement les outils du catalogue (sinon : le regenerer avec agentic.llmsTxt)');
+    }
+  }
+
   console.log('\n-- 6. ce que la route garantit --');
   {
     const src = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');

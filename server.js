@@ -2340,6 +2340,13 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(r.status, Object.assign({ 'cache-control': 'no-store' }, r.entetes));
     return res.end(r.corps);
   }
+  /* L'API decrite aux agents, en direct depuis le catalogue (format llmstxt.org). */
+  if (path === '/llms.txt') {
+    const txt = require('./agentic').llmsTxt(await agentic().catalogue(), { api: MOI_URL, site: SITE_URL, swoge: true,
+      page: SITE_URL + '/swogeagentic.html', docs: SITE_URL + '/swogeagentic_api.html' });
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=300' });
+    return res.end(txt);
+  }
   if (path === '/agentic/tools' || path.startsWith('/agentic/call/') || path === '/agentic/recus' || path === '/agentic/cles' || path.startsWith('/agentic/cles/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization, x-api-key' };

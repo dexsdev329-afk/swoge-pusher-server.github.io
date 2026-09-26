@@ -190,4 +190,42 @@ function cree(deps) {
   return { catalogue, appelle };
 }
 
-module.exports = { cree, definitions, prixUsd, entreeInvalide, PRIX_DEFAUT, VARIABLES, APPELS_PAR_MINUTE };
+/* ---- LLMS.TXT : l'API decrite aux agents (format llmstxt.org, relu le 26 septembre 2026) ----
+ * Un H1 (le seul obligatoire), un resume en citation, du detail sans titre,
+ * puis des listes de liens sous des H2, « Optional » en dernier. Le serveur le
+ * sert en direct depuis le catalogue (prix et outils toujours exacts) ; le
+ * site en publie une copie, faite par la MEME fonction, avec les prix en $. */
+function llmsTxt(cat, u) {
+  const outils = (cat && cat.outils) || [];
+  const prix = (o) => (o.prix && o.prix.variable ? 'real cost, up to $' + o.prix.maxUsd + (o.prix.maxSwoge && u.swoge ? ' (' + o.prix.maxSwoge + ' $SWOGE)' : '')
+    : o.prix ? '$' + o.prix.usd + (o.prix.swoge && u.swoge ? ' (' + o.prix.swoge + ' $SWOGE)' : '') : '?');
+  const args = (o) => Object.keys((o.inputSchema && o.inputSchema.properties) || {}).map((k) => k + ((o.inputSchema.required || []).includes(k) ? '' : '?')).join(', ');
+  return [
+    '# SwogeAgentic',
+    '',
+    '> Pay-per-call tools for AI agents from SWOGE WORLD: token scans (DexScreener, GoPlus, and what the SWOGE AI colony measured on Robinhood Chain, with sample sizes), the colony\'s newest launches and live activity, wallet and infrastructure OSINT (passive), the $SWOGE economy, web search, image generation and a full research agent. Read-only: nothing here buys, sells or signs. Each call is paid from the key owner\'s $SWOGE balance, within a daily cap they set.',
+    '',
+    'Get an API key at ' + u.page + ' (sign in with a wallet, set a daily cap; the key is shown once). Send it as `Authorization: Bearer swg_…`.',
+    '',
+    'REST: `GET ' + u.api + '/agentic/tools` lists tools, prices and input schemas. `POST ' + u.api + '/agentic/call/<tool>` with `{"arguments": {...}}` runs one; add `"quote": true` to get the price without paying. Every paid call returns `facture` (the exact amount billed, as a string), `recu` (a receipt id) and `solde` (the balance left). Refused calls (bad input, tool failure, cap reached) are never billed. Errors: 400 bad input, 401 no/revoked key, 402 balance or daily cap, 404 unknown tool, 429 over 60 calls/minute/key, 502 tool failed, 503 unavailable.',
+    '',
+    'MCP: Streamable HTTP at `' + u.api + '/mcp` with the same bearer key (protocol 2026-07-28, and 2025-11-25 / 2025-06-18 / 2025-03-26 via initialize). Every tool also takes `quote: true`. Claude Code: `claude mcp add --transport http swogeagentic ' + u.api + '/mcp --header "Authorization: Bearer swg_…"`.',
+    '',
+    'Tools:',
+    '',
+  ].concat(outils.map((o) => '- `' + o.name + '(' + args(o) + ')` — ' + prix(o) + '. ' + String(o.description || '').split('. ')[0].replace(/\.$/, '') + '.'))
+   .concat(['',
+    '## Docs',
+    '',
+    '- [API documentation](' + u.docs + '): authentication, endpoints, MCP setup, errors, examples',
+    '- [Live tool catalogue (JSON)](' + u.api + '/agentic/tools): tools, prices in $ and $SWOGE, input schemas',
+    '- [Live llms.txt](' + u.api + '/llms.txt): this file, generated from the live catalogue',
+    '',
+    '## Optional',
+    '',
+    '- [SwogeAgentic in the browser](' + u.page + '): the same agent for humans, and where API keys are created',
+    '- [SWOGE AI colony](' + u.site + '/swoge_ai.html): the autonomous colony whose measurements these tools return',
+    '']).join('\n');
+}
+
+module.exports = { cree, definitions, prixUsd, entreeInvalide, llmsTxt, PRIX_DEFAUT, VARIABLES, APPELS_PAR_MINUTE };
