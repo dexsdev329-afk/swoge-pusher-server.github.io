@@ -1,0 +1,160 @@
+'use strict';
+/* ============================================================================
+ * L'OBSERVATOIRE SOLANA / ETHEREUM (observatoire.js) — ETAPE 1, OBSERVER SEULEMENT
+ *
+ * Ce qu'il DOIT tenir :
+ *   1. il decouvre les nouveaux pools (GeckoTerminal), une fois chacun ;
+ *   2. il lit la securite sans GoPlus : Solana (frappe, GEL, Token-2022, frais ;
+ *      porteurs seulement avec un noeud prive), Ethereum (honeypot.is, 5 essais
+ *      pour un pool que le service ne connait pas encore) ; un 429 arrete la
+ *      lecture du cycle et se compte ;
+ *   3. premier prix et prix a 30 min par le MEME service (DexScreener) ; monte a
+ *      +20 %, effondre a -30 % (les seuils de la colonie) ; un pool disparu se
+ *      compte a part, jamais en -100 % invente ; un jeton jamais indexe sort
+ *      sans entrer dans les bilans ;
+ *   4. tout est garde (jsonl par jour, etat qui survit au redemarrage) ;
+ *   5. il ne parle qu'aux quatre services lus — aucune cle, aucune signature ;
+ *   6. la vue est en anglais, et une case sous 30 observations ne conclut pas.
+ * ==========================================================================*/
+const fs = require('fs'), path = require('path'), os = require('os');
+const O = require('./observatoire');
+
+let n = 0, rates = 0;
+const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; console.log('  RATE ' + m); } };
+
+const MIN = 60e3;
+let T = Date.UTC(2026, 8, 27, 12, 0, 0);
+const hotes = new Set();
+/* Le monde : des pools neufs, leurs prix (modifiables), leur securite. */
+const M = {
+  gt: { solana: [], eth: [] }, prix: {}, crees: {}, pools: {}, info: {}, sol: {}, hp: {}, hpTrouve: {}, top: {},
+  quota: { rpc: false, gecko: false },
+};
+const reponse = (status, j) => ({ status, ok: status >= 200 && status < 300, json: async () => j });
+async function faux(u, o) {
+  const url = new URL(u); hotes.add(url.host);
+  if (url.host === 'api.geckoterminal.com') {
+    if (M.quota.gecko) return reponse(429, {});
+    const c = url.pathname.split('/')[4];
+    return reponse(200, { data: M.gt[c].map((a) => ({ attributes: { address: M.pools[a], pool_created_at: new Date(M.crees[a]).toISOString() },
+      relationships: { base_token: { data: { id: c + '_' + a } }, dex: { data: { id: c === 'solana' ? 'pump-fun' : 'uniswap-v4-ethereum' } } } })) });
+  }
+  if (url.host === 'api.dexscreener.com') {
+    const adrs = url.pathname.split('/')[4].split(',');
+    const out = [];
+    for (const a of adrs) {
+      if (!(M.prix[a] > 0)) continue;
+      out.push({ chainId: 'x', dexId: 'pumpswap', pairAddress: M.pools[a], baseToken: { address: a }, quoteToken: { symbol: 'SOL' },
+        priceUsd: String(M.prix[a]), liquidity: { usd: 30000 }, marketCap: 60000, pairCreatedAt: M.crees[a], info: M.info[a] || null });
+      /* une paire plus ancienne du meme jeton (courbe de lancement) : c est elle qui date le jeton */
+      out.push({ dexId: 'pumpfun', pairAddress: 'courbe-' + a, baseToken: { address: a }, priceUsd: String(M.prix[a]), liquidity: { usd: 10 }, pairCreatedAt: M.crees[a] - 20 * MIN });
+    }
+    return reponse(200, out);
+  }
+  if (url.host === 'api.honeypot.is') {
+    const a = url.searchParams.get('address');
+    M.hp[a] = (M.hp[a] || 0) + 1;
+    if (!M.hpTrouve[a]) return reponse(404, { code: 404, error: 'pair not found' });
+    return reponse(200, M.hpTrouve[a]);
+  }
+  if (/solana|rpc\.prive/.test(url.host)) {
+    const b = JSON.parse(o.body);
+    if (M.quota.rpc) return reponse(200, { jsonrpc: '2.0', error: { code: 429, message: 'Too many requests for a specific RPC call' } });
+    const a = b.params[0];
+    if (b.method === 'getAccountInfo') {
+      const s = M.sol[a]; if (!s) return reponse(200, { result: { value: null } });
+      return reponse(200, { result: { value: { owner: s.t22 ? 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' : 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+        data: { parsed: { info: { mintAuthority: s.frappe ? 'Auth1' : null, freezeAuthority: s.gel ? 'Auth2' : null, supply: '1000000',
+          extensions: s.frais ? [{ extension: 'transferFeeConfig' }] : [] } } } } } });
+    }
+    if (b.method === 'getTokenLargestAccounts') return reponse(200, { result: { value: (M.top[a] || []).map((x) => ({ amount: String(x) })) } });
+  }
+  return reponse(500, {});
+}
+const nouveau = (c, a, prix, t) => { M.gt[c].push(a); M.pools[a] = 'pool-' + a; M.crees[a] = t; M.prix[a] = prix; };
+
+(async () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-'));
+  const mk = (x) => O.cree(Object.assign({ dossier, fetch: faux, maintenant: () => T }, x || {}));
+
+  console.log('-- 1. decouverte et securite --');
+  nouveau('solana', 'SOLok', 1.0, T - 2 * MIN); M.sol.SOLok = { frappe: false, gel: false };
+  nouveau('solana', 'SOLgel', 1.0, T - 2 * MIN); M.sol.SOLgel = { frappe: true, gel: true, t22: true, frais: true };
+  nouveau('solana', 'SOLjamais', 0, T - 2 * MIN);
+  nouveau('eth', '0xethok', 2.0, T - 3 * MIN); M.hpTrouve['0xethok'] = { honeypotResult: { isHoneypot: false }, simulationResult: { buyTax: 0, sellTax: 0 } };
+  nouveau('eth', '0xpiege', 2.0, T - 3 * MIN); M.hpTrouve['0xpiege'] = { honeypotResult: { isHoneypot: true }, simulationResult: { buyTax: 0, sellTax: 99 } };
+  nouveau('eth', '0xinconnu', 2.0, T - 3 * MIN);
+  let ob = mk();
+  await ob.cycle();
+  await ob.cycle();
+  const S = ob._etat('solana'), X = ob._etat('eth');
+  ok(Object.keys(S.suivis).length === 3 && Object.keys(X.suivis).length === 3 && S.compte.decouverts === 3, 'chaque pool est decouvert une fois, meme revu a chaque cycle');
+  ok(S.suivis.SOLok.secu.lu && !S.suivis.SOLok.secu.frappe && !S.suivis.SOLok.secu.gel && !S.suivis.SOLok.secu.t22, 'Solana : frappe et gel renonces, SPL Token');
+  const g = S.suivis.SOLgel.secu;
+  ok(g.frappe && g.gel && g.t22 && g.frais, 'Solana : autorite de frappe, autorite de GEL, Token-2022 et frais de transfert lus');
+  ok(g.top10 === null, 'sur le noeud public, les porteurs ne sont pas demandes (il rend 429) : inconnus');
+  ok(X.suivis['0xpiege'].secu.piege === true && X.suivis['0xpiege'].secu.taxeVente === 99 && X.suivis['0xethok'].secu.taxeVente === 0, 'Ethereum : honeypot.is lu (piege, taxe de vente)');
+  ok(!X.suivis['0xinconnu'].secu.lu && M.hp['0xinconnu'] === 2, 'un pool que honeypot.is ne connait pas encore est redemande au cycle suivant');
+  for (let i = 0; i < 5; i++) await ob.cycle();
+  ok(M.hp['0xinconnu'] === 5, 'et abandonne apres 5 essais, pas plus [' + M.hp['0xinconnu'] + ']');
+  ok(S.suivis.SOLok.p0 === 1 && S.suivis.SOLok.age0 === 22 && S.suivis.SOLok.quote === 'SOL', 'premier prix par DexScreener ; l age est celui du JETON (sa plus ancienne paire : 22 min)');
+
+  console.log('\n-- 2. trente minutes plus tard --');
+  T += 31 * MIN;
+  M.prix.SOLok = 1.25;           /* +25 % : monte */
+  M.prix.SOLgel = 0.55;          /* -45 % : effondre */
+  M.prix['0xethok'] = 2.1;       /* +5 % */
+  M.prix['0xpiege'] = 0;         /* disparu de DexScreener */
+  M.prix['0xinconnu'] = 1.0;     /* -50 % */
+  await ob.cycle();
+  const B = S.bilans, BX = X.bilans;
+  ok(B['all tokens'].n === 2 && B['all tokens'].montes === 1 && B['all tokens'].effondres === 1 && Math.abs(B['all tokens'].s - (25 - 45)) < 1e-9,
+     'Solana : +25 % compte monte, -45 % compte effondre (seuils de la colonie : +20 / -30)');
+  ok(B['Freeze authority = freeze authority active'].n === 1 && B['Freeze authority = freeze authority active'].effondres === 1, 'la case « freeze authority active » garde son effondrement');
+  ok(B['Top 10 holders = holders unknown'] && B['Top 10 holders = holders unknown'].n === 2, 'les porteurs inconnus ont leur case, dite telle quelle');
+  ok(BX['all tokens'].n === 2 && BX['all tokens'].disparus === 1 && X.compte.disparus === 1, 'Ethereum : le pool disparu est compte a part, pas en -100 %');
+  ok(BX['Sell simulation = sell unknown'] && BX['Sell simulation = sell unknown'].n === 1 && BX['Sell simulation = sell unknown'].effondres === 1, 'le jeton que honeypot.is n a jamais lu tombe dans « sell unknown »');
+  ok(Object.keys(S.suivis).length === 1 && S.suivis.SOLjamais, 'seul le jeton jamais indexe reste en attente');
+  T += 40 * MIN;
+  await ob.cycle();
+  ok(S.compte.jamaisIndexes === 1 && !S.suivis.SOLjamais && B['all tokens'].n === 2, 'apres une heure sans prix, il sort, compte « jamais indexe », hors des bilans');
+
+  console.log('\n-- 3. tout est garde --');
+  const f = path.join(dossier, 'solana', new Date(T).toISOString().slice(0, 10) + '.jsonl');
+  const lignes = fs.readFileSync(f, 'utf8').trim().split('\n').map((x) => JSON.parse(x));
+  const l = lignes.find((x) => x.addr === 'SOLgel');
+  ok(lignes.length === 3 && l && l.r === -45 && l.secu.gel === true && l.p0 === 1 && l.liq1 === 30000, 'une ligne complete par jeton observe (traits, prix, resultat), jamais indexe compris');
+  const ob2 = mk();
+  ok(ob2._etat('solana').bilans['all tokens'].n === 2 && ob2._etat('eth').compte.disparus === 1, 'l etat survit au redemarrage');
+
+  console.log('\n-- 4. quotas, porteurs, et les seuls services lus --');
+  M.quota.rpc = true;
+  nouveau('solana', 'SOLq1', 1, T); nouveau('solana', 'SOLq2', 1, T);
+  await ob2.cycle();
+  ok((ob2._etat('solana').compte.erreurs.rpc429 || 0) === 1, 'un 429 du noeud Solana arrete les lectures du cycle et se compte une fois');
+  M.quota.rpc = false;
+  M.gt.solana = []; M.gt.eth = [];
+  nouveau('solana', 'SOLtop', 1, T); M.sol.SOLtop = { frappe: false, gel: false }; M.top.SOLtop = [400000, 100000];
+  const d3 = fs.mkdtempSync(path.join(os.tmpdir(), 'obs3-'));
+  const ob3 = O.cree({ dossier: d3, fetch: faux, maintenant: () => T, solanaRpc: 'https://rpc.prive.example' });
+  await ob3.cycle();
+  ok(ob3._etat('solana').suivis.SOLtop.secu.top10 === 50, 'avec un noeud prive (SOLANA_RPC_URL), les 10 plus gros porteurs sont lus : 50 %');
+  ok([...hotes].every((h) => ['api.geckoterminal.com', 'api.dexscreener.com', 'api.honeypot.is', 'api.mainnet-beta.solana.com', 'rpc.prive.example'].includes(h)),
+     'il ne parle qu aux services lus : ' + [...hotes].join(', '));
+  const src = fs.readFileSync(path.join(__dirname, 'observatoire.js'), 'utf8');
+  ok(!/gopluslabs|privateKey|signTransaction|sendTransaction|MIROIR_CLE/.test(src), 'ni GoPlus (son quota revient a la colonie), ni cle, ni signature dans le module');
+  M.quota.gecko = true;
+  await ob3.cycle();
+  ok((ob3._etat('solana').compte.erreurs.gecko429 || 0) === 1, 'GeckoTerminal en 429 : le cycle continue, et c est compte');
+
+  console.log('\n-- 5. la vue --');
+  const v = ob.vue();
+  const sol = v.chaines.solana;
+  ok(/Observation only/.test(v.note) && /\+20%/.test(v.note) && /-30%/.test(v.note), 'la vue dit ce qu elle est, et les seuils');
+  ok(sol.cases[0].trait === 'all tokens' && sol.cases[0].n === 2 && sol.cases[0].moyenne === -10 && sol.cases[0].assez === false, 'la reference d abord ; sous 30 observations, « assez » est faux');
+  ok(/unknown: the public Solana node/.test(sol.holders) && v.chaines.eth.holders === null, 'elle dit pourquoi les porteurs Solana sont inconnus');
+  ok(!/[àâçéèêëîïôûùüÿœ]/i.test(JSON.stringify(v)), 'tout en anglais');
+
+  console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
+  process.exit(rates ? 1 : 0);
+})().catch((e) => { console.error('ESSAI CASSE :', e); process.exit(1); });

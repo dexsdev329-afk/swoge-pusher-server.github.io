@@ -1652,6 +1652,11 @@ tgAppels();
 /* « Puis-je revendre ce jeton ? » (outil can_i_sell, 27/09/2026) : l'epreuve
    du Cobaye jouee pour un tiers, en lecture seule, chaque reponse gardee dans
    DATA_DIR/sorties (epreuve_sortie.js). */
+/* L'OBSERVATOIRE SOLANA ET ETHEREUM (27/09/2026, etape 1 des colonies Solana et
+   Ethereum) : il lit les nouveaux jetons et ce qu'ils font en 30 min, rien de
+   plus — aucun achat, aucun papier, aucune cle. Demarre seulement avec
+   OBSERVATOIRE=1 (voir observatoire.js). */
+const observatoire = require('./observatoire').cree({ dossier: require('path').join(cfg.DATA_DIR, 'observatoire') });
 const epreuveSortie = require('./epreuve_sortie').cree({
   epreuve: (a) => aiColonie.epreuveDeSortie(a),
   dossier: cfg.DATA_DIR,
@@ -3274,6 +3279,11 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  /* L'observatoire Solana / Ethereum (etape 1, observer seulement) : public, comme la colonie. */
+  if (path === '/ai/observatoire') {
+    res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(Object.assign({ actif: process.env.OBSERVATOIRE === '1' }, observatoire.vue())));
+  }
   if (path === '/ai/colonie') {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*',
@@ -8652,6 +8662,11 @@ server.listen(cfg.PORT, () => {
     } catch (e) {
       console.warn('[ai] colonie non demarree :', e.message);
     }
+  }
+
+  if (process.env.OBSERVATOIRE === '1') {
+    observatoire.demarre();
+    console.log('[observatoire] Solana et Ethereum : observation seule (aucun achat, aucun papier) — vue publique sur /ai/observatoire');
   }
 
   /* ---- LE RELEVE PAPIER PARTAGE DE PREDICT ----
