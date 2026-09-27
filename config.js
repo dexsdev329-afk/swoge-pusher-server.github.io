@@ -903,6 +903,19 @@ module.exports = {
   // Paid FROM the vault — fund it (ownerDeposit) or it drains. 100% APR is a
   // BIG liability (you owe double after a year), so keep the vault funded.
   STAKE_APR_BPS: parseInt(env('STAKE_APR_BPS', '10000'), 10),        // 10000 = 100% APR
+  /* ---- LE STAKING FERME AUX NOUVELLES MISES (27 septembre 2026) ----
+   * Decision du proprietaire, sur la feuille de route du 26/09 : le plafond
+   * autorise 200 M $SWOGE de rendement promis a 100 %/an, le coffre en tient
+   * 15,16 M. Plus AUCUNE nouvelle mise ; ce qui est deja au staking reste a
+   * son proprietaire : reclamer et sortir restent ouverts a tout moment.
+   * STAKE_OUVERT=1 rouvre (apres avoir lu owedToPlayers dans /stats). */
+  STAKE_OUVERT: env('STAKE_OUVERT', '0') === '1',
+  /* ---- SWOGE FLIX RETIRE (27 septembre 2026) ----
+   * Decision du proprietaire : la salle cinema diffusait des liens vers des
+   * sites pirates (vidara.to, uqload.vc, luluvdo.com). Ses seances ne sont
+   * plus servies et on n'en ajoute plus ; les salles manga et series ne
+   * changent pas. SWOGE_FLIX=1 rouvre. */
+  SWOGE_FLIX: env('SWOGE_FLIX', '0') === '1',
   STAKE_LOCK_DAYS: parseInt(env('STAKE_LOCK_DAYS', '365'), 10),      // duree d echeance, sans effet tant que la penalite vaut 0
 
   /* ---- LA SORTIE EST LIBRE ----

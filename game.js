@@ -877,6 +877,8 @@ class Game {
   sallesFil() {
     return (cfg.SALLES_ECRAN || []).map((s) => {
       const v = this.cinemas && this.cinemas[s.cle];
+      /* SWOGE FLIX retire (cfg.SWOGE_FLIX, 27/09/2026) : la salle reste, vide. */
+      if (s.cle === 'cinema' && !cfg.SWOGE_FLIX) return { cle: s.cle, nom: s.nom, seances: [] };
       return { cle: s.cle, nom: s.nom, seances: Array.isArray(v) ? v : [] };
     });
   }
@@ -891,6 +893,7 @@ class Game {
    */
   galerieHeritee() {
     const k = Game.salleEcran('cinema') || ((cfg.SALLES_ECRAN || [])[0] || {}).cle;
+    if (k === 'cinema' && !cfg.SWOGE_FLIX) return [];     /* SWOGE FLIX retire, 27/09/2026 */
     const v = k && this.cinemas ? this.cinemas[k] : null;
     return Array.isArray(v) ? v : [];
   }
@@ -4843,6 +4846,8 @@ class Game {
          il decouvre que c'est plein apres avoir tape son montant, ce qui se
          lit comme une panne et non comme une regle. */
       capacite: this.capaciteStaking(addr),
+      /* Ferme aux nouvelles mises : la page peut le dire avant qu'on tape un montant. */
+      ouvert: !!cfg.STAKE_OUVERT,
     };
   }
 

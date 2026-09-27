@@ -1693,7 +1693,14 @@ const compteurs = require('./compteurs').cree({
     return m;
   },
 });
-const noteCompteur = (e, i) => compteurs.note(e, i);
+/* Une alerte Telegram a chaque appel PAYE d'un outil suivi (scan_token par
+   defaut, TG_ALERTE_OUTILS) — demande du proprietaire du 27 septembre 2026,
+   voir alerte_usage.js. Branchee sur le meme point que les compteurs. */
+const alerteUsage = require('./alerte_usage').cree({
+  notify: (t) => tg.notify(t),
+  maison: () => new Set(adressesDe(cfg.AI_OWNER).concat(adressesDe(process.env.COMPTEURS_MAISON), adressesDe(process.env.X402_PAYTO))),
+});
+const noteCompteur = (e, i) => { compteurs.note(e, i); alerteUsage.note(e, i); };
 studioChat.COMPTEUR.note = noteCompteur;
 /* Les dependances des images : la page (route /studio/media) et l'API des agents. */
 const depsMedia = () => ({
@@ -3975,6 +3982,7 @@ const server = http.createServer(async (req, res) => {
     /* La galerie pleine LEVE, et ce refus-la merite d'etre lu : « refusee »
        sur une adresse valable aurait envoye le proprietaire la recopier toute
        la soiree. */
+    if (k === 'cinema' && !cfg.SWOGE_FLIX) return refusEcriture(res, 'SWOGE FLIX is closed (owner decision, 27 Sept 2026) — SWOGE_FLIX=1 reopens it');
     let c = null;
     try { c = game.ajouteCinema(k, d); }
     catch (e) { return refusEcriture(res, e.message); }
@@ -5379,6 +5387,8 @@ wss.on('connection', (ws) => {
       }
       if (m.type === 'stake' || m.type === 'unstake' || m.type === 'claimStake') {
         try {
+          /* Ferme aux nouvelles mises (cfg.STAKE_OUVERT) : sortir et reclamer restent ouverts. */
+          if (m.type === 'stake' && !cfg.STAKE_OUVERT) throw new Error('Staking is closed to new deposits. What you already staked stays yours: claim your rewards or unstake anytime.');
           if (m.type === 'stake') game.stake(ws.addr, m.amount);
           else if (m.type === 'unstake') { const r = game.unstakeAll(ws.addr); send(ws, { type: 'stakeUnstaked', ...r }); }
           else { const r = game.claimStake(ws.addr); send(ws, { type: 'stakeClaimed', reward: r }); }

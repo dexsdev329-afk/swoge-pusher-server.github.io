@@ -796,7 +796,7 @@ function cree(deps) {
       const eth = await Promise.resolve().then(() => deps.ethUsd()).catch(() => null);
       if (eth > 0) coutUsd = Number(ethers.BigNumber.from(reglement.gasUsed).mul(ethers.BigNumber.from(reglement.gazPrix))) / 1e18 * eth;
     }
-    note('paye_x402', { qui: v.from, usd, coutUsd, sorte: meme(v.asset, deps.usdg) ? 'USDG' : 'SWOGE' });
+    note('paye_x402', { qui: v.from, usd, coutUsd, sorte: meme(v.asset, deps.usdg) ? 'USDG' : 'SWOGE', tx: reglement.hash, reseau: RESEAU });
     return { etape: 'paye', resultat: r, reponse, recu: { transaction: reglement.hash, network: RESEAU, amount: v.montant, asset: v.asset } };
   }
 
@@ -805,7 +805,7 @@ function cree(deps) {
     MESURE.payes++;
     par(B.reseau).payes++;
     if (deps.journal) deps.journal({ t: maintenant(), outil, payer: v.from, asset: v.asset, montant: v.montant, transaction: hash, methode: 'facilitateur', network: B.reseau });
-    note('paye_x402', { qui: v.from, usd: Number(v.montant) / 1e6, coutUsd: FRAIS_CDP_USD, sorte: 'USDC_BASE' });
+    note('paye_x402', { qui: v.from, usd: Number(v.montant) / 1e6, coutUsd: FRAIS_CDP_USD, sorte: 'USDC_BASE', tx: hash, reseau: B.reseau });
     return { etape: 'paye', resultat: r, reponse: { success: true, transaction: hash, network: B.reseau, payer: v.from },
       recu: { transaction: hash, network: B.reseau, amount: v.montant, asset: v.asset } };
   }

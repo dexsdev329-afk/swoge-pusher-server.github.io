@@ -43,6 +43,11 @@ process.env.GAME_IMAGE_BASE = 'https://example.invalid/media';
    pour toutes : plus bas, le serveur ecouterait sur 8080 pendant que l'essai
    frappe ailleurs, et le seul symptome serait « connexion refusee ». */
 process.env.PORT = String(9500 + (process.pid % 300));
+/* SWOGE FLIX est ferme par defaut depuis le 27 septembre 2026 (decision du
+   proprietaire). Cet essai pince le MECANISME des salles, qui reste derriere
+   l'interrupteur : on le rouvre ici. La fermeture a son propre essai
+   (fermetures.test.js). */
+process.env.SWOGE_FLIX = '1';
 const tg = require.resolve('./telegram');
 require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
   notify() {}, notifyPhoto() {}, sendDocument() {},
