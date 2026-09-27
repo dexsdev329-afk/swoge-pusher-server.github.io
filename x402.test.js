@@ -442,8 +442,9 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
         bazaar: BZ, description: (n2) => ((A.definitions({ recherche: true }).find((d) => d.name === n2)) || {}).description,
         service: { nom: 'SwogeAgentic', etiquettes: (n2) => D.ETIQUETTES_OUTIL[n2], icone: D.ICONE },
         agent: o.agent,
-        base: o.sansBase ? undefined : { reseau: X.RESEAU_BASE, chainId: 8453, usdc: X.USDC_BASE, domaine: X.DOMAINE_USDC_BASE, payTo: TRESOR, facilitateur: F, rpc: R, attenteMs: 40, cadenceMs: 5 } });
-      if (!o.sansBase) await x.sondeBase();
+        base: o.sansBase ? undefined : { reseau: X.RESEAU_BASE, chainId: 8453, usdc: X.USDC_BASE, domaine: X.DOMAINE_USDC_BASE, payTo: TRESOR, facilitateur: F, rpc: R, attenteMs: 40, cadenceMs: 5,
+          second: o.S, partSecond: o.part } });
+      if (!o.sansBase) { await x.sondeBase(); await dort(10); }
       return { x, chaine, journal, notes, F, R, avance: (ms) => { t += ms; }, s: () => Math.floor(t / 1000) };
     }
     const entete402 = async (M, outil, args) => de64((await M.x.traite({ outil, url: 'https://api/agentic/call/' + outil, args: args || {}, sert: sert({}) })).entetes['payment-required']);
@@ -910,6 +911,52 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
            && Mk.x.MESURE.payes === 0 && Mk.F.regles.length === 1 && ck.n === 1,
            m + ' : le resultat n est JAMAIS rendu ; echec definitif, 402 avec une NOUVELLE demande de paiement, MESURE.payes inchange');
       }
+    }
+    /* ---- PayAI, second facilitateur de Base (27/09/2026) ----
+       Leur catalogue (6 968 services) ne liste que ce qui passe par leur facilitateur
+       avec l'extension bazaar. Une part des paiements y passe ; chacun est verifie ET
+       regle au meme endroit ; PayAI muet ou a court de credits : pause, Coinbase reprend. */
+    {
+      const S = Object.assign(fauxFac(), { nom: 'payai' });
+      const Mq = await mondeBase({ S, part: 1 });
+      ok(Mq.x.MESURE.base.second.etat === 'on' && Mq.x.MESURE.base.second.nom === 'payai', 'PayAI liste eip155:8453 dans /supported : allume');
+      const w = ethers.Wallet.createRandom();
+      const paye = async () => { const q = await entete402(Mq, 'scan_token', {}); const sg = await signeBase(w, q, { s: Mq.s() }); return paie(Mq, 'scan_token', sg.entete, {}); };
+      const r1 = await paye();
+      ok(r1.status === 200 && S.verifies.length === 1 && S.regles.length === 1 && Mq.F.verifies.length === 0 && Mq.F.regles.length === 0,
+         'part 1 : verifie ET regle chez PayAI, Coinbase ne voit rien');
+      ok(S.verifies[0].p.extensions.bazaar && S.verifies[0].p.resource.url === 'https://api/agentic/call/scan_token' && S.verifies[0].e.payTo === TRESOR,
+         'avec NOTRE bloc bazaar, notre ressource et la tresorerie : c est ce qui nous inscrit dans son catalogue');
+      ok(Mq.x.MESURE.base.parFacilitateur.payai.payes === 1 && Mq.x.MESURE.base.parFacilitateur.payai.valides === 1, 'compte par facilitateur (payai : 1 valide, 1 paye)');
+      S.verifyRep = { etat: 'carte' };
+      const r2 = await paye();
+      ok(r2.status === 200 && S.verifies.length === 2 && S.regles.length === 1 && Mq.F.verifies.length === 1 && Mq.F.regles.length === 1,
+         'credits PayAI epuises (402) : le MEME paiement est verifie puis regle chez Coinbase');
+      ok(Mq.x.MESURE.base.second.etat === 'suspendu' && /credits exhausted/.test(Mq.x.MESURE.base.second.raison) && Mq.x.MESURE.base.parFacilitateur.payai.replis === 1 && Mq.x.baseActif(),
+         'PayAI en pause (Base reste allumee), le repli est compte');
+      const r3 = await paye();
+      ok(r3.status === 200 && S.verifies.length === 2 && Mq.F.regles.length === 2, 'pendant la pause, les paiements vont directement a Coinbase');
+      const S2 = Object.assign(fauxFac(), { nom: 'payai' });
+      S2.regleReps.push({ etat: 'echec', erreur: 'payment_method_required', pause: 'carte' });
+      const Mr = await mondeBase({ S: S2, part: 1 });
+      const q4 = await entete402(Mr, 'scan_token', {}); const s4 = await signeBase(w, q4, { s: Mr.s() });
+      const r4 = await paie(Mr, 'scan_token', s4.entete, {});
+      ok(r4.status === 402 && S2.regles.length === 1 && Mr.F.regles.length === 0 && Mr.x.MESURE.base.second.etat === 'suspendu' && Mr.x.baseActif(),
+         'un refus au REGLEMENT chez PayAI : jamais regle ailleurs (pas deux fois), PayAI en pause, Base reste allumee');
+      const S3 = Object.assign(fauxFac(), { nom: 'payai' });
+      const M0p = await mondeBase({ S: S3, part: 0 });
+      const q5 = await entete402(M0p, 'scan_token', {}); const s5 = await signeBase(w, q5, { s: M0p.s() });
+      ok((await paie(M0p, 'scan_token', s5.entete, {})).status === 200 && S3.verifies.length === 0 && M0p.F.regles.length === 1, 'part 0 : tout reste chez Coinbase');
+      const S4 = Object.assign(fauxFac(), { nom: 'payai', sup: { ok: true, kinds: [{ x402Version: 2, scheme: 'exact', network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp' }] } });
+      const Ms = await mondeBase({ S: S4, part: 1 });
+      const q6 = await entete402(Ms, 'scan_token', {}); const s6 = await signeBase(w, q6, { s: Ms.s() });
+      ok(Ms.x.MESURE.base.second.etat === 'off' && (await paie(Ms, 'scan_token', s6.entete, {})).status === 200 && S4.verifies.length === 0,
+         'PayAI qui ne liste pas Base : eteint, Coinbase regle tout');
+      /* le client sans cle : aucun en-tete Authorization */
+      let entetes = null;
+      const FP = require('./facilitateur_cdp').cree({ sansCle: true, nom: 'payai', url: 'https://facilitator.payai.network', fetch: async (u, o) => { entetes = { u, h: o.headers }; return { status: 200, text: async () => '{"kinds":[]}', headers: new Map() }; } });
+      await FP.supported();
+      ok(entetes.u === 'https://facilitator.payai.network/supported' && !('Authorization' in entetes.h) && FP.nom === 'payai', 'le client PayAI : https://facilitator.payai.network/supported, SANS en-tete Authorization');
     }
     delete process.env.X402_AGENT; delete process.env.TG_APPELS_VENTE;
   }

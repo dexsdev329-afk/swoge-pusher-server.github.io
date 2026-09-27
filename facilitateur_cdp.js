@@ -118,10 +118,17 @@ function extensionDe(h) {
  */
 function cree(o) {
   o = o || {};
-  const url = o.url || process.env.CDP_FACILITATOR_URL || URL_DEFAUT;
+  /* ---- SANS CLE : LE FACILITATEUR DE PAYAI (27 septembre 2026) ----
+   * Meme protocole x402 v2 (/supported, /verify, /settle, meme corps), mais
+   * « No API key required for ordinary exact payments » : 1 000 credits
+   * gratuits a vie par portefeuille receveur, ~430 reglements sur Base a
+   * 2,31 credits (docs.payai.network/x402/facilitators/pricing, relu le
+   * 27/09). Aucun en-tete Authorization n'est alors envoye. */
+  const sansCle = !!o.sansCle;
+  const url = o.url || (sansCle ? null : process.env.CDP_FACILITATOR_URL) || URL_DEFAUT;
   const cleId = String(o.cleId || '').trim();
-  if (!cleId) throw new Error('CDP_API_KEY_ID is missing');
-  const lu = lisSecret(o.cleSecrete);
+  if (!sansCle && !cleId) throw new Error('CDP_API_KEY_ID is missing');
+  const lu = sansCle ? { alg: 'none' } : lisSecret(o.cleSecrete);
   const f = o.fetch || fetch;
   const maintenant = () => (o.maintenant ? o.maintenant() : Date.now());
   const delaiVerifyMs = o.delaiVerifyMs || DELAI_VERIFY_MS;
@@ -135,7 +142,8 @@ function cree(o) {
     const ctl = new AbortController();
     const minuterie = setTimeout(() => ctl.abort(), Math.max(1, delaiMs));
     try {
-      const entetes = { Accept: 'application/json', Authorization: 'Bearer ' + jeton({ cleId, lu, methode, uri: a.uri, maintenant: maintenant() }) };
+      const entetes = { Accept: 'application/json' };
+      if (!sansCle) entetes.Authorization = 'Bearer ' + jeton({ cleId, lu, methode, uri: a.uri, maintenant: maintenant() });
       if (octets) entetes['Content-Type'] = 'application/json';
       const r = await f(a.fetch, { method: methode, headers: entetes, body: octets || undefined, signal: ctl.signal });
       const texte = await r.text();
@@ -240,7 +248,7 @@ function cree(o) {
     return Object.assign({ statut: r.statut || null, ms: r.ms, extension: extensions[extensions.length - 1] || null, extensions }, x);
   }
 
-  return { supported, verify, regle, algo: lu.alg, AMBIGUES };
+  return { supported, verify, regle, algo: lu.alg, AMBIGUES, nom: o.nom || (sansCle ? 'sans-cle' : 'cdp') };
 }
 
 module.exports = { cree, lisSecret, jeton, adresse, extensionDe, URL_DEFAUT, DELAI_SETTLE_MS, DELAI_VERIFY_MS, MARGE_VALIDITE_S, AMBIGUES };

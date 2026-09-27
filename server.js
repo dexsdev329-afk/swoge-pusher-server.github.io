@@ -1842,7 +1842,19 @@ function baseDepuisEnv(X, tresor, porteGaz) {
       /* Le journal du facilitateur : statut, raison, duree, reseau — jamais le secret ni le jeton. */
       journal: (l) => { if (l.statut !== 200) console.warn('[x402] CDP ' + l.op + (l.renvoi ? ' (resend)' : '') + ': ' + l.statut + (l.raison ? ' ' + l.raison : '') + (l.message ? ' - ' + String(l.message).slice(0, 120) : '') + ' (' + l.ms + ' ms)'); } });
   } catch (e) { console.error('[x402] CDP_API_KEY_SECRET is not an Ed25519 or P-256 key - Base stays off'); return null; }
-  return { reseau: sepolia ? X.RESEAU_BASE_SEPOLIA : X.RESEAU_BASE, chainId: sepolia ? 84532 : 8453,
+  /* ---- PAYAI, SECOND FACILITATEUR DE BASE (27/09/2026) ----
+     Une part des paiements Base (X402_PAYAI_PART, 0,5 par defaut) est verifiee
+     et reglee par PayAI : c'est ce qui inscrit nos outils dans son catalogue
+     public (6 968 services, zero a nous le 27/09). Sans cle (palier gratuit,
+     ~430 reglements Base) ; a court de credits il se met en pause et Coinbase
+     reprend. X402_PAYAI=0 le coupe. */
+  let second = null;
+  if (process.env.X402_PAYAI !== '0' && !sepolia) {
+    second = require('./facilitateur_cdp').cree({ sansCle: true, nom: 'payai', url: String(process.env.PAYAI_FACILITATOR_URL || 'https://facilitator.payai.network').trim(),
+      journal: (l) => { if (l.statut !== 200) console.warn('[x402] PayAI ' + l.op + ': ' + l.statut + (l.raison ? ' ' + l.raison : '') + (l.message ? ' - ' + String(l.message).slice(0, 120) : '') + ' (' + l.ms + ' ms)'); } });
+  }
+  const partSecond = process.env.X402_PAYAI_PART !== undefined && process.env.X402_PAYAI_PART !== '' && Number.isFinite(Number(process.env.X402_PAYAI_PART)) ? Number(process.env.X402_PAYAI_PART) : 0.5;
+  return { second, partSecond, reseau: sepolia ? X.RESEAU_BASE_SEPOLIA : X.RESEAU_BASE, chainId: sepolia ? 84532 : 8453,
     usdc: sepolia ? X.USDC_BASE_SEPOLIA : X.USDC_BASE, domaine: sepolia ? X.DOMAINE_USDC_BASE_SEPOLIA : X.DOMAINE_USDC_BASE,
     payTo, facilitateur, rpc: X.rpcBase(String(process.env.X402_BASE_RPC || '').trim() || (sepolia ? 'https://sepolia.base.org' : 'https://mainnet.base.org')),
     /* ESSAIS SEULEMENT : combien de temps relire la chaine apres un « en attente » (60 s par defaut,
@@ -2024,7 +2036,9 @@ async function x402Etat(detail) {
   const e = { actif: true, x402Version: X.X402_VERSION, scheme: 'exact', network: X.RESEAU, asset: cfg.SWOGE_TOKEN, payTo: x.payTo, tresor: x.tresor, assets,
               assetTransferMethod: 'permit2', permit2: X.PERMIT2, proxy: X.PROXY, minimumUsd: X.MIN_USD, header: 'PAYMENT-SIGNATURE',
               networks: (baseOn ? [x.baseReseau] : []).concat([X.RESEAU]),
-              base: { actif: baseOn, network: x.baseReseau || X.RESEAU_BASE, payTo: x.basePayTo || null, facilitateur: 'cdp', etat: x.basePayTo ? (MB.etat || 'off') : 'off' },
+              base: { actif: baseOn, network: x.baseReseau || X.RESEAU_BASE, payTo: x.basePayTo || null, facilitateur: 'cdp', etat: x.basePayTo ? (MB.etat || 'off') : 'off',
+                      /* le second facilitateur (PayAI) : son etat et, par facilitateur, verifies/payes/replis */
+                      second: MB.second ? { nom: MB.second.nom, etat: MB.second.etat, raison: MB.second.raison } : null, parFacilitateur: MB.parFacilitateur || {} },
               agent: { actif: agentic().x402Payable('ask_agent') } };
   if (!detail) return e;
   const g = x.MESURE.gasUsed.slice().sort((a, b) => a - b);

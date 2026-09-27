@@ -191,6 +191,7 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
   process.env.X402_PAYTO = TRESOR;
   process.env.X402_CLE = GAZ.privateKey;
   process.env.CDP_API_KEY_ID = KID;
+  process.env.X402_PAYAI = '0';   /* le chemin Coinbase ; PayAI (second facilitateur) a ses cas dans x402.test.js */
   process.env.CDP_API_KEY_SECRET = SECRET;
   process.env.CDP_FACILITATOR_URL = 'http://127.0.0.1:' + pc + '/platform/v2/x402/';     /* barre finale : tolérée */
   process.env.X402_BASE_RPC = 'http://127.0.0.1:' + pr;

@@ -238,7 +238,8 @@ const MESSAGES_CDP = {
  *          description(outil) — la description publique de l'outil (sa première phrase ouvre resource.description, Base allumé),
  *          service: { nom, etiquettes(outil), icone } — resource.serviceName/tags/iconUrl, Base allumé,
  *          base: { reseau, chainId, usdc, domaine, payTo, facilitateur (facilitateur_cdp), rpc (rpcBase),
- *                  attenteMs, cadenceMs } — optionnel : sans lui, AUCUNE option Base,
+ *                  attenteMs, cadenceMs, second (un autre facilitateur, PayAI), partSecond (0..1) }
+ *                — optionnel : sans lui, AUCUNE option Base,
  *          agent: { dureeMaxS, enVolMax, bloque(addr), nonRegle(addr, coutUsd, raison) } — ask_agent, optionnel }
  * chaine = { gazPrix() (wei), soldeGaz() (wei), porteGaz (adresse), solde(from), allowance(from),
  *            noncesJeton(from), nonceLibre(from, nonce), soldeUsdg(from), autorisationLibre(from, nonce),
@@ -252,7 +253,19 @@ function cree(deps) {
   const enAttente = new Map();     /* base|from|nonce → un résultat retenu pendant qu'un règlement est « en attente » (10 min) */
   const MESURE = { devis: 0, payes: 0, refuses: 0, echecsReglement: 0, gasUsed: [], gazParMethode: {}, parReseau: {},
     base: { etat: 'off', raison: deps.base ? 'not probed yet' : 'no CDP key', derniereSonde: null, jusqua: 0, lieuxDeSuite: 0,
-      bazaar: { success: 0, processing: 0, rejected: 0, dernierRejet: null } } };
+      bazaar: { success: 0, processing: 0, rejected: 0, dernierRejet: null },
+      /* ---- LE SECOND FACILITATEUR (PayAI, 27 septembre 2026) ----
+         « Rendre notre agentic mieux que PayAI » : leur catalogue public liste
+         6 968 services payables par des agents (discovery/resources, releve
+         complet du 27/09), dont ZERO a nous. L'inscription y est automatique
+         pour un service dont un paiement passe par leur facilitateur avec
+         l'extension `bazaar` (docs.payai.network/x402/facilitators/bazaar).
+         Une part des paiements Base y passe donc ; chacun est verifie ET regle
+         chez le MEME facilitateur. PayAI muet, ou a court de credits : il est
+         mis en pause et le paiement est verifie chez Coinbase (un verify ne
+         coute rien et ne deplace rien). */
+      second: { nom: (deps.base && deps.base.second && deps.base.second.nom) || null, etat: deps.base && deps.base.second ? 'off' : 'absent', raison: null, jusqua: 0 },
+      parFacilitateur: {} } };
   let file = Promise.resolve();    /* un règlement à la fois : le portefeuille de gaz n'a qu'un nonce */
   let agentEnVol = 0;
   const maintenant = () => (deps.maintenant ? deps.maintenant() : Date.now());
@@ -266,8 +279,34 @@ function cree(deps) {
   /* ---- L'ÉTAT DE BASE : 'on' seulement après une sonde /supported qui liste Base ---- */
   const B = deps.base || null;
   const baseActif = () => !!B && MESURE.base.etat === 'on';
+  const parFac = (nom) => (MESURE.base.parFacilitateur[nom] = MESURE.base.parFacilitateur[nom] || { verifies: 0, valides: 0, payes: 0, echecs: 0, replis: 0, msVerify: [], msSettle: [] });
+  const S2 = MESURE.base.second;
+  const secondActif = () => !!(B && B.second) && S2.etat === 'on' && !(S2.jusqua > maintenant());
+  /* Le choix : une part fixe des paiements, tiree du nonce (le meme paiement
+     representé retombe chez le meme facilitateur). */
+  function facilitateurDe(nonce) {
+    if (!secondActif()) return 'cdp';
+    const part = Math.max(0, Math.min(1, Number(B.partSecond == null ? 0.5 : B.partSecond)));
+    const h = parseInt(crypto.createHash('sha256').update(String(nonce)).digest('hex').slice(0, 8), 16) / 0xffffffff;
+    return h < part ? 'second' : 'cdp';
+  }
+  function pauseSecond(raison, ms) {
+    Object.assign(S2, { etat: 'suspendu', raison, jusqua: maintenant() + (ms || PAUSE_BASE_MS) });
+    console.warn('[x402] ' + (S2.nom || 'second facilitator') + ': ' + raison + ' - its share goes to CDP for ' + Math.round((ms || PAUSE_BASE_MS) / 60000) + ' min');
+  }
+  async function sondeSecond() {
+    if (!B || !B.second) return false;
+    let r;
+    try { r = await B.second.supported(); } catch (e) { r = { ok: false, erreur: 'reseau' }; }
+    const liste = r.ok && (r.kinds || []).some((k) => Number(k.x402Version) === 2 && k.scheme === 'exact' && k.network === B.reseau);
+    const avant = S2.etat;
+    if (liste) { Object.assign(S2, { etat: 'on', raison: null, jusqua: 0 }); if (avant !== 'on') console.log('[x402] ' + S2.nom + ' on - a share of Base payments is verified and settled by it'); }
+    else { Object.assign(S2, { etat: 'off', raison: r.ok ? '/supported does not list ' + B.reseau : '/supported answered ' + (r.statut || r.erreur || 'nothing') }); }
+    return liste;
+  }
   async function sondeBase() {
     if (!B) return false;
+    if (B.second && !(S2.jusqua > maintenant())) sondeSecond().catch(() => {});
     if (MESURE.base.jusqua > maintenant()) return false;           /* en pause (carte, lieu) : on attend la fin */
     let r;
     try { r = await B.facilitateur.supported(); } catch (e) { r = { ok: false, erreur: 'reseau' }; }
@@ -642,13 +681,25 @@ function cree(deps) {
       else if (deps.bazaar) { try { bz = deps.bazaar(outil) || null; } catch (e) { bz = null; } }
       const res = Object.assign({}, ressourcesEmises.get(k) || { description: 'SwogeAgentic tool ' + outil, mimeType: 'application/json' }, { url: ctx.url || (ressourcesEmises.get(k) || {}).url });
       const paiementCdp = Object.assign({}, p, { accepted: exigence, resource: res, extensions: bz ? { bazaar: bz } : {} });
-      const r = await B.facilitateur.verify(paiementCdp, exigence);
+      let fac = facilitateurDe(a.nonce);
+      let r = await (fac === 'second' ? B.second : B.facilitateur).verify(paiementCdp, exigence);
+      parFac(fac === 'second' ? S2.nom : 'cdp').verifies++;
+      if (fac === 'second' && (r.etat === 'inconnu' || r.etat === 'cle' || r.etat === 'carte')) {
+        /* PayAI muet (inconnu), cle exigee (401) ou credits epuises (402) : pause, et Coinbase verifie. */
+        pauseSecond(r.etat === 'carte' ? 'credits exhausted (402)' : r.etat === 'cle' ? 'key required (401)' : 'no answer on verify', r.etat === 'inconnu' ? 10 * 60000 : PAUSE_BASE_MS);
+        parFac(S2.nom).replis++;
+        fac = 'cdp';
+        r = await B.facilitateur.verify(paiementCdp, exigence);
+        parFac('cdp').verifies++;
+      }
       garde100(par(B.reseau).msVerify, r.ms);
+      garde100(parFac(fac === 'second' ? S2.nom : 'cdp').msVerify, r.ms);
       compteBazaar(r.extension);
       const indispo = 'payment check unavailable - try again or pay on Robinhood Chain';
       if (r.etat === 'valide') {
         MESURE.base.lieuxDeSuite = 0;
-        return { ok: true, methode: 'facilitateur', reseau: B.reseau, args: { paiement: paiementCdp, exigence }, from: a.from, montant: String(acc.amount), asset: B.usdc,
+        parFac(fac === 'second' ? S2.nom : 'cdp').valides++;
+        return { ok: true, methode: 'facilitateur', reseau: B.reseau, args: { paiement: paiementCdp, exigence, fac }, from: a.from, montant: String(acc.amount), asset: B.usdc,
           nonce: String(a.nonce), validBefore: Number(a.validBefore) };
       }
       if (r.etat === 'refuse') { MESURE.base.lieuxDeSuite = 0; return non(r.raison || 'invalid_payload', MESSAGES_CDP[r.raison] || (r.message ? ascii(r.message).slice(0, 200) : undefined)); }
@@ -848,10 +899,16 @@ function cree(deps) {
   /* Encaisser sur Base : Coinbase, JAMAIS dans enFile — cette file sert le nonce
      unique du portefeuille de gaz Robinhood, partagé avec la caisse. */
   async function regleBase(v, r, outil, url, args, opts, note) {
-    const x = await B.facilitateur.regle(v.args.paiement, v.args.exigence);
+    /* Regle chez le facilitateur qui a verifie : jamais un autre (le meme paiement ne part pas deux fois). */
+    const second = v.args.fac === 'second' && B.second;
+    const nomF = second ? S2.nom : 'cdp';
+    const x = await (second ? B.second : B.facilitateur).regle(v.args.paiement, v.args.exigence);
     garde100(par(B.reseau).msSettle, x.ms);
+    garde100(parFac(nomF).msSettle, x.ms);
+    if (x.etat === 'paye') parFac(nomF).payes++; else if (x.etat === 'echec') parFac(nomF).echecs++;
     for (const ext of x.extensions || [x.extension]) compteBazaar(ext);
-    if (x.pause) pauseSelon(x.pause);
+    if (x.pause && second) pauseSecond(x.pause === 'carte' ? 'credits exhausted (402)' : 'settle refused (' + x.pause + ')');
+    else if (x.pause) pauseSelon(x.pause);
     else if (x.etat !== 'inconnu') MESURE.base.lieuxDeSuite = 0;
     if (x.etat === 'paye') return livreBase(v, r, x.hash, outil, note);
     if (x.etat === 'echec') {
