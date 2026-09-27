@@ -1734,12 +1734,15 @@ const srcAgent = () => ({
 const adressesDe = (t) => String(t || '').toLowerCase().split(/[\s,;]+/).filter((a) => /^0x[0-9a-f]{40}$/.test(a));
 /* Nos adresses sans droit particulier (AI_OWNER, COMPTEURS_MAISON, X402_PAYTO) :
    un paiement de l'une d'elles est un essai de la maison. */
-const adresseMaison = (adr) => !!adr && adressesDe(cfg.AI_OWNER).concat(adressesDe(process.env.COMPTEURS_MAISON), adressesDe(process.env.X402_PAYTO))
-  .indexOf(String(adr).toLowerCase()) >= 0;
+/* Le portefeuille dedie de l'inscription automatique (auto_inscription.js) : son
+   ADRESSE seule, derivee une fois — la cle ne sort pas de ce module. */
+const AUTO_ADRESSE = (() => { const w = require('./auto_inscription').portefeuille(process.env.X402_AUTO_CLE); return w ? w.address.toLowerCase() : null; })();
+const adressesMaison = () => adressesDe(cfg.AI_OWNER).concat(adressesDe(process.env.COMPTEURS_MAISON), adressesDe(process.env.X402_PAYTO), AUTO_ADRESSE ? [AUTO_ADRESSE] : []);
+const adresseMaison = (adr) => !!adr && adressesMaison().indexOf(String(adr).toLowerCase()) >= 0;
 const compteurs = require('./compteurs').cree({
   dossier: require('path').join(cfg.DATA_DIR, 'compteurs'),
   maison: () => {
-    const m = new Set(adressesDe(cfg.AI_OWNER).concat(adressesDe(process.env.COMPTEURS_MAISON), adressesDe(process.env.X402_PAYTO)));
+    const m = new Set(adressesMaison());
     if (x402V && x402V.porteGaz) m.add(x402V.porteGaz.toLowerCase());
     return m;
   },
@@ -1749,7 +1752,7 @@ const compteurs = require('./compteurs').cree({
    voir alerte_usage.js. Branchee sur le meme point que les compteurs. */
 const alerteUsage = require('./alerte_usage').cree({
   notify: (t) => tg.notify(t),
-  maison: () => new Set(adressesDe(cfg.AI_OWNER).concat(adressesDe(process.env.COMPTEURS_MAISON), adressesDe(process.env.X402_PAYTO))),
+  maison: () => new Set(adressesMaison()),
 });
 const noteCompteur = (e, i) => { compteurs.note(e, i); alerteUsage.note(e, i); };
 studioChat.COMPTEUR.note = noteCompteur;
@@ -1928,6 +1931,28 @@ let registreAgentV = null;
 const registreAgent = () => registreAgentV || (registreAgentV = require('./x402_agent').cree({ fichier: require('path').join(cfg.DATA_DIR, 'x402_agent.json') }));
 /* La sonde de Base, depuis le rappel de `listen` : tout de suite, puis toutes les 10 min (contrat §E.2). */
 const BASE_SONDE_MS = 10 * 60 * 1000;
+/* ---- L'INSCRIPTION AUTOMATIQUE AU CATALOGUE PAYAI (auto_inscription.js, 27/09/2026) ----
+   X402_AUTO_CLE (un portefeuille DEDIE) : 3 min apres le demarrage (Base sondee,
+   serveur joignable), chaque outil payable absent du catalogue PayAI est paye
+   une fois, par Base, vers la tresorerie. Les outils trop chers pour le plafond
+   par appel ne sont pas tentes. */
+let AUTO_INSCRIPTION = null;
+function demarreAutoInscription(x) {
+  if (!process.env.X402_AUTO_CLE || AUTO_INSCRIPTION) return;
+  const AI = require('./auto_inscription');
+  const D = require('./decouverte'), A = require('./agentic');
+  const maxAppel = () => (Number(process.env.AUTO_MAX_APPEL_USD) > 0 ? Number(process.env.AUTO_MAX_APPEL_USD) : 0.03);
+  AUTO_INSCRIPTION = AI.cree({ cle: process.env.X402_AUTO_CLE, api: MOI_URL, payTo: x.basePayTo, fetch: (u, o) => fetch(u, o), dossier: cfg.DATA_DIR,
+    exemples: D.EXEMPLES_ENTREE,
+    outils: () => A.definitions({ recherche: chatActif('perplexity') }).map((d) => d.name)
+      .filter((nom) => agentic().x402Payable(nom) && (Number(A.prixX402Usd(nom, D.EXEMPLES_ENTREE[nom] || {})) || 0) + 0.001 <= maxAppel()),
+    inscrits: () => AI.inscritsPayai(MOI_URL, (u, o) => fetch(u, o), String(process.env.PAYAI_FACILITATOR_URL || 'https://facilitator.payai.network').trim()),
+    journal: (l) => console.log('[x402] auto-listing ' + l.outil + ': ' + (l.ok ? 'paid ' + l.usd + ' $' + (l.tx ? ' (' + l.tx + ')' : '') : 'not paid - ' + l.raison)) });
+  if (!AUTO_INSCRIPTION.adresse) { console.error('[x402] X402_AUTO_CLE is not a valid private key - auto-listing off'); return; }
+  console.log('[x402] auto-listing on, paying from ' + AUTO_INSCRIPTION.adresse + ' (dedicated wallet)');
+  setTimeout(() => AUTO_INSCRIPTION.passe().then((r) => console.log('[x402] auto-listing done: ' + JSON.stringify(r).slice(0, 400)))
+    .catch((e) => console.error('[x402] auto-listing: ' + (e && e.message || e))), 3 * 60e3).unref();
+}
 function demarreBase() {
   const x = x402();
   if (!x || !x.sondeBase) return;
@@ -1938,6 +1963,7 @@ function demarreBase() {
   if (!x.basePayTo && !x.solanaPayTo) return;
   sonde();
   setInterval(sonde, BASE_SONDE_MS).unref();
+  demarreAutoInscription(x);
 }
 const x402 = () => {
   if (x402V !== undefined) return x402V;
@@ -2103,6 +2129,7 @@ async function x402Etat(detail) {
                 etat: (x.MESURE.solana || {}).etat, raison: (x.MESURE.solana || {}).raison, feePayer: (x.MESURE.solana || {}).feePayer,
                 confirmes: (x.MESURE.solana || {}).confirmes, nonConfirmes: (x.MESURE.solana || {}).nonConfirmes, exclus: X.SOLANA_EXCLUS,
                 compteUsdc: (x.MESURE.solana || {}).compteUsdc, compteExiste: (x.MESURE.solana || {}).compteExiste } : null,
+              autoInscription: AUTO_INSCRIPTION ? AUTO_INSCRIPTION.etat() : null,
               agent: { actif: agentic().x402Payable('ask_agent') } };
   if (!detail) return e;
   const g = x.MESURE.gasUsed.slice().sort((a, b) => a - b);
