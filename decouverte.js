@@ -649,7 +649,9 @@ function manifeste(c) {
 const EXEMPLES_ENTREE = {
   scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, colony_activity: {},
   chat_completion: { messages: [{ role: 'user', content: 'Say hello in five words.' }], max_tokens: 64 },
-  robinhood_rpc: { method: 'eth_blockNumber' }, robinhood_token: { address: ADR }, robinhood_wallet: { address: ADR }, robinhood_tx: { hash: '0x' + 'ab'.repeat(32) }, swoge_economy: {}, new_launches: { limit: 5 },
+  robinhood_rpc: { method: 'eth_blockNumber' }, robinhood_token: { address: ADR }, robinhood_wallet: { address: ADR }, /* Une VRAIE transaction de Robinhood Chain (decodee le 27/09 : 2 transferts VAULT, un swap v4) : l'inscription
+     automatique paie avec cet exemple, et un hash invente rendait « no such transaction » (27/09, 22 h 17). */
+  robinhood_tx: { hash: '0x91dfeb2157f926164b5d7d4a02819a3b06b302f6694877c8fbb36502f426fbaf' }, swoge_economy: {}, new_launches: { limit: 5 },
   wallet_intel: { address: ADR }, osint_lookup: { target: 'example.com' }, telegram_calls: { hours: 24, limit: 20 },
   web_search: { query: 'robinhood chain' }, generate_image: { prompt: 'a swole doge', count: 1 },
   ask_agent: { task: 'is LOBSTER worth a look?' }, generate_video: { prompt: 'a swole doge lifting' }, video_status: { id: '66f5b1c2d3e4f5a6b7c8d9e0' },
