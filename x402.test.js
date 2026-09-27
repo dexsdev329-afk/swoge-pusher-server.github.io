@@ -444,7 +444,7 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
         agent: o.agent,
         solana: o.sol,
         base: o.sansBase ? undefined : { reseau: X.RESEAU_BASE, chainId: 8453, usdc: X.USDC_BASE, domaine: X.DOMAINE_USDC_BASE, payTo: TRESOR, facilitateur: F, rpc: R, attenteMs: 40, cadenceMs: 5,
-          second: o.S, partSecond: o.part } });
+          second: o.S, partSecond: o.part, versSecond: o.versSecond } });
       if (!o.sansBase) { await x.sondeBase(); await dort(10); }
       return { x, chaine, journal, notes, F, R, avance: (ms) => { t += ms; }, s: () => Math.floor(t / 1000) };
     }
@@ -948,6 +948,22 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
       const M0p = await mondeBase({ S: S3, part: 0 });
       const q5 = await entete402(M0p, 'scan_token', {}); const s5 = await signeBase(w, q5, { s: M0p.s() });
       ok((await paie(M0p, 'scan_token', s5.entete, {})).status === 200 && S3.verifies.length === 0 && M0p.F.regles.length === 1, 'part 0 : tout reste chez Coinbase');
+      /* Le proprietaire va TOUJOURS chez PayAI, meme a part 0 : c est son premier
+         reglement qui inscrit un outil au catalogue. Les autres gardent la part. */
+      const S5 = Object.assign(fauxFac(), { nom: 'payai' });
+      const proprio = ethers.Wallet.createRandom();
+      const Mo = await mondeBase({ S: S5, part: 0, versSecond: (adr) => String(adr).toLowerCase() === proprio.address.toLowerCase() });
+      const q7 = await entete402(Mo, 'scan_token', {}); const s7 = await signeBase(proprio, q7, { s: Mo.s() });
+      const r7 = await paie(Mo, 'scan_token', s7.entete, {});
+      ok(r7.status === 200 && S5.verifies.length === 1 && S5.regles.length === 1 && Mo.F.verifies.length === 0 && S5.verifies[0].p.extensions.bazaar,
+         'part 0, payeur proprietaire : verifie ET regle chez PayAI, avec le bloc bazaar');
+      const q8 = await entete402(Mo, 'scan_token', {}); const s8 = await signeBase(w, q8, { s: Mo.s() });
+      ok((await paie(Mo, 'scan_token', s8.entete, {})).status === 200 && S5.verifies.length === 1 && Mo.F.regles.length === 1,
+         'part 0, un autre payeur : Coinbase, comme avant');
+      S5.verifyRep = { etat: 'carte' };
+      const q9 = await entete402(Mo, 'scan_token', {}); const s9 = await signeBase(proprio, q9, { s: Mo.s() });
+      ok((await paie(Mo, 'scan_token', s9.entete, {})).status === 200 && Mo.F.regles.length === 2 && Mo.x.MESURE.base.second.etat === 'suspendu',
+         'PayAI a court de credits : le proprietaire est servi par Coinbase, PayAI en pause');
       const S4 = Object.assign(fauxFac(), { nom: 'payai', sup: { ok: true, kinds: [{ x402Version: 2, scheme: 'exact', network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp' }] } });
       const Ms = await mondeBase({ S: S4, part: 1 });
       const q6 = await entete402(Ms, 'scan_token', {}); const s6 = await signeBase(w, q6, { s: Ms.s() });

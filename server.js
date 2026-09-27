@@ -1874,7 +1874,8 @@ function baseDepuisEnv(X, tresor, porteGaz) {
       journal: (l) => { if (l.statut !== 200) console.warn('[x402] PayAI ' + l.op + ': ' + l.statut + (l.raison ? ' ' + l.raison : '') + (l.message ? ' - ' + String(l.message).slice(0, 120) : '') + ' (' + l.ms + ' ms)'); } });
   }
   const partSecond = process.env.X402_PAYAI_PART !== undefined && process.env.X402_PAYAI_PART !== '' && Number.isFinite(Number(process.env.X402_PAYAI_PART)) ? Number(process.env.X402_PAYAI_PART) : 0.5;
-  return { second, partSecond, reseau: sepolia ? X.RESEAU_BASE_SEPOLIA : X.RESEAU_BASE, chainId: sepolia ? 84532 : 8453,
+  /* Les paiements du proprietaire vont toujours chez PayAI : ils inscrivent nos outils dans son catalogue. */
+  return { second, partSecond, versSecond: proprietaireIA, reseau: sepolia ? X.RESEAU_BASE_SEPOLIA : X.RESEAU_BASE, chainId: sepolia ? 84532 : 8453,
     usdc: sepolia ? X.USDC_BASE_SEPOLIA : X.USDC_BASE, domaine: sepolia ? X.DOMAINE_USDC_BASE_SEPOLIA : X.DOMAINE_USDC_BASE,
     payTo, facilitateur, rpc: X.rpcBase(String(process.env.X402_BASE_RPC || '').trim() || (sepolia ? 'https://sepolia.base.org' : 'https://mainnet.base.org')),
     /* ESSAIS SEULEMENT : combien de temps relire la chaine apres un « en attente » (60 s par defaut,

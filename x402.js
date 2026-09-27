@@ -301,8 +301,14 @@ function cree(deps) {
   const secondActif = () => !!(B && B.second) && S2.etat === 'on' && !(S2.jusqua > maintenant());
   /* Le choix : une part fixe des paiements, tiree du nonce (le meme paiement
      representé retombe chez le meme facilitateur). */
-  function facilitateurDe(nonce) {
+  function facilitateurDe(nonce, from) {
     if (!secondActif()) return 'cdp';
+    /* Le proprietaire (AI_OWNER) va toujours chez le second : son catalogue
+       n'inscrit un outil qu'au premier reglement qui passe par lui (0 des
+       6 970 services a nous le 27/09, 0 reglement PayAI depuis la mise en
+       ligne). Le payeur est celui que la signature designe ; le choix du
+       facilitateur ne donne aucun droit. */
+    if (B.versSecond && from && B.versSecond(from)) return 'second';
     const part = Math.max(0, Math.min(1, Number(B.partSecond == null ? 0.5 : B.partSecond)));
     const h = parseInt(crypto.createHash('sha256').update(String(nonce)).digest('hex').slice(0, 8), 16) / 0xffffffff;
     return h < part ? 'second' : 'cdp';
@@ -732,7 +738,7 @@ function cree(deps) {
       else if (deps.bazaar) { try { bz = deps.bazaar(outil) || null; } catch (e) { bz = null; } }
       const res = Object.assign({}, ressourcesEmises.get(k) || { description: 'SwogeAgentic tool ' + outil, mimeType: 'application/json' }, { url: ctx.url || (ressourcesEmises.get(k) || {}).url });
       const paiementCdp = Object.assign({}, p, { accepted: exigence, resource: res, extensions: bz ? { bazaar: bz } : {} });
-      let fac = facilitateurDe(a.nonce);
+      let fac = facilitateurDe(a.nonce, a.from);
       let r = await (fac === 'second' ? B.second : B.facilitateur).verify(paiementCdp, exigence);
       parFac(fac === 'second' ? S2.nom : 'cdp').verifies++;
       if (fac === 'second' && (r.etat === 'inconnu' || r.etat === 'cle' || r.etat === 'carte')) {
