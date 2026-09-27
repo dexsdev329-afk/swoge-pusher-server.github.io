@@ -3,7 +3,7 @@
   "name": "dog.swoleeswoge/swogeagentic",
   "title": "SwogeAgentic",
   "description": "Crypto intel for AI agents: token scans, SWOGE AI colony data, OSINT, web search, images, video",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "remotes": [
     {
       "type": "streamable-http",
@@ -11,8 +11,8 @@
       "headers": [
         {
           "name": "Authorization",
-          "description": "Bearer swg_… — an API key from swoleeswoge.dog/swogeagentic.html (a daily cap bounds what it can spend)",
-          "isRequired": true,
+          "description": "Bearer swg_… — an API key from swoleeswoge.dog/swogeagentic.html (a daily cap bounds what it can spend). Optional: tools/list and free price quotes ({\"quote\": true}) work without a key; running a tool needs one, or x402 over REST",
+          "isRequired": false,
           "isSecret": true
         }
       ]

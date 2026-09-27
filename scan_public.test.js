@@ -231,6 +231,53 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
        'et l outil REFUSE de generer l atlas si la police du site n est pas arrivee');
   }
 
+  console.log('\n-- le scan porte ses liens : la carte, et la page qu on partage --');
+  {
+    /* Audit du 26 septembre 2026 : un agent (ou la page) qui lisait le scan
+       n avait aucun moyen de trouver l image partageable ni la page de
+       partage. Elles existaient ; le JSON ne les disait pas. */
+    const A = '0x254afb9fd36789bea39fb5656ba6fdb827be8dc5';
+    const r = await lit('/scan/' + A);
+    eq(r.code, 200, 'le scan de LOBSTER repond');
+    const l = (r.j && r.j.links) || {};
+    ok(new RegExp('/scan/carte/' + A + '\\.png$').test(l.card || '') && new RegExp('/s/' + A + '$').test(l.share || '') && /swoge_scan\.html\?t=0x/.test(l.page || ''),
+       'links : l image de la carte, la page de partage (og:image), la page du site');
+    const img = await fetch('http://127.0.0.1:' + port + new URL(l.card).pathname);
+    const part = await fetch('http://127.0.0.1:' + port + new URL(l.share).pathname);
+    const h = await part.text();
+    ok(img.status === 200 && img.headers.get('content-type') === 'image/png' && part.status === 200 && h.includes('og:image" content="' + l.card + '"'),
+       'et ils menent quelque part : le PNG, et la page dont l apercu EST cette carte');
+  }
+
+  console.log('\n-- le scan de LOBSTER, en anglais : le JSON, et l apercu partage --');
+  {
+    /* La colonie de l'essai est vide (DATA_DIR neuf) : son scan rend 0 case, et
+       « chaque case porte sa phrase » etait vrai sur un tableau vide — une route
+       qui aurait perdu les phrases, ou un apercu revenu a la cle brute, passaient.
+       Le temps de ce bloc, la colonie rend le releve de LOBSTER (35 cases, fixture
+       partagee) : ce que server.js en fait est juge sur la vraie route. */
+    const LOB = require('./scan_lobster.essai');
+    const adr = LOB.jeton.adr;
+    const scan0 = A.scanJeton;
+    A.scanJeton = async () => LOB;
+    try {
+      const r = await lit('/scan/' + adr);
+      const cs = (r.j && r.j.cases) || [];
+      ok(r.code === 200 && cs.length === LOB.cases.length && cs.every((c) => c.label && c.traitLabel),
+         'les ' + cs.length + ' cases du JSON portent leur phrase anglaise (label) et le nom de leur trait (traitLabel)');
+      ok(cs.every((c, i) => c.trait === LOB.cases[i].trait && c.case === LOB.cases[i].case), 'la cle brute reste a cote, dans l ordre de la colonie');
+      const li = (r.j && r.j.lines) || [];
+      ok(li.length === 21 && /^bytecode: no mint/.test(li[0].label) && li[0].traitLabel === 'Contract bytecode' && li[0].n === 2395
+         && li.filter((l) => /^bytecode:/.test(l.label)).length === 1,
+         'lines : ce que la page montre — 21 lignes, le bytecode en UNE ligne (' + (li[0] && li[0].label) + ', n=' + (li[0] && li[0].n) + ')');
+      ok(!li.some((l) => /code : |OCTEMIT|octEmit|reseaux|emission/i.test(l.label + ' ' + l.traitLabel)), 'aucune cle brute ni phrase francaise dans lines');
+      const h = await (await fetch('http://127.0.0.1:' + port + '/s/' + adr)).text();
+      const d = (h.match(/og:description" content="([^"]*)/) || [])[1] || '';
+      ok(/bytecode: no mint/.test(d) && /\+16\.9% over 2395 observations/.test(d) && !/code : |octEmit|emission/i.test(h),
+         'l apercu partage dit la premiere ligne EN ANGLAIS, avec son effectif (« ' + d.slice(0, 90) + '… »), plus « code : sans emission »');
+    } finally { A.scanJeton = scan0; }
+  }
+
   /* ---- EN DERNIER, ET C EST VOULU ----
    * Ce bloc EPUISE le quota : le placer avant les autres les faisait
    * echouer en 429, pour une raison qui n avait rien a voir avec ce

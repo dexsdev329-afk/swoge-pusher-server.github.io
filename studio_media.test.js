@@ -179,6 +179,36 @@ const W = (x) => ethers.utils.parseUnits(String(x), 18);
     eq(r5.code, 400, 'ni texte ni image : refusee avant tout debit');
   }
 
+  console.log('\n-- 4 bis. les compteurs durables : facture contre cout REEL (26 septembre 2026) --');
+  {
+    const notes = [];
+    const note = (e, i) => notes.push(Object.assign({ e }, i));
+    const s = faux();
+    const r = await M.images({ addr: '0xn1', modele: 'qualite', prompt: 'a buff doge', n: 1 }, { note, cours: async () => COURS, solde: s.solde,
+      fournisseur: { images: async () => ({ urls: ['u'], usage: { cost_in_usd_ticks: Math.round(0.05 * 1e10) } }) } });
+    const a = notes[0];
+    ok(r.ok && a && a.e === 'image_facturee' && a.canal === 'studio' && a.qui === '0xn1' && a.usd === r.factureUsd && Math.abs(a.coutUsd - 0.05) < 1e-9 && a.sorte === 'grok/qualite',
+       'une image de la page : facturee ' + (a && a.usd) + ' $ contre un cout reel de 0,05 $ lu dans usage, canal studio');
+    await M.images({ addr: '0xn2', modele: 'rapide', prompt: 'x', canal: 'mcp' }, { note, cours: async () => COURS, solde: faux().solde,
+      fournisseur: { images: async () => ({ urls: ['u'], usage: null }) } });
+    ok(notes[1] && notes[1].coutUsd === null && notes[1].canal === 'mcp', 'sans usage : cout INCONNU (null), pas le prix de liste — la marge ne se mesure pas sur une supposition');
+    const prixUsd = M.prixFixeImageUsd({ fournisseur: 'grok', modele: 'qualite', n: 1, prompt: 'x' });
+    await M.images({ addr: 'x402:0xpayeur', modele: 'qualite', prompt: 'x', n: 1, prixUsd }, { note, horsSolde: true, solde: faux().solde,
+      fournisseur: { images: async () => ({ urls: ['u'], usage: { cost_in_usd_ticks: Math.round(0.04 * 1e10) } }) } });
+    ok(notes[2] && notes[2].canal === 'rest' && notes[2].usd === prixUsd && Math.abs(notes[2].coutUsd - 0.04) < 1e-9 && notes[2].qui === 'x402:0xpayeur', 'payee d avance (x402) : le prix encaisse contre le cout reel, au nom du payeur');
+    const nAvant = notes.length;
+    await M.images({ addr: '0xn3', modele: 'rapide', prompt: 'x' }, { note, cours: async () => COURS, solde: faux().solde, fournisseur: { images: async () => { throw new Error('xAI 500'); } } });
+    eq(notes.length, nAvant, 'une image ratee n est pas comptee comme facturee');
+    const sv = faux(); let etat = { status: 'pending' };
+    const dv = { note, cours: async () => COURS, solde: sv.solde, sansBoucle: true, fournisseur: { lanceVideo: async () => 'rid-n', litVideo: async () => etat } };
+    const v = await M.lanceVideo({ addr: '0xnv', prompt: 'x', duree: 6, canal: 'rest' }, dv);
+    etat = { status: 'done', video: { url: 'https://vidgen.x.ai/n.mp4', duration: 6 }, usage: { cost_in_usd_ticks: 0.3 * 1e10 } };
+    await M.avance(M.JOBS.get(v.id), dv);
+    const vn = notes[notes.length - 1];
+    ok(vn.e === 'video_facturee' && vn.canal === 'rest' && vn.qui === '0xnv' && Math.abs(vn.coutUsd - 0.3) < 1e-9 && vn.usd === M.etatVideo(v.id, '0xnv').factureUsd,
+       'une video arrivee : facturee ' + vn.usd + ' $ contre 0,3 $ de cout reel, au canal de sa demande');
+  }
+
   console.log('\n-- 5. de bout en bout : vrai serveur, faux xAI --');
   {
     const vus = [];

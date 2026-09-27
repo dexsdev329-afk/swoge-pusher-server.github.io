@@ -18,6 +18,8 @@ const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; c
 const eq = (a, b, m) => ok(a === b, m + ' [' + a + ' vs ' + b + ']');
 process.env.STUDIO_MARGE = '1.5';
 delete process.env.AGENTIC_PRIX;
+/* Le reglage par defaut : telegram_calls n'est pas vendu (section 5 quater). */
+delete process.env.TG_APPELS_VENTE;
 
 const K = require('./agentic_cles');
 const A = require('./agentic');
@@ -76,6 +78,10 @@ const api = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () =
   ok(d.ok && d.devis.swoge === sc.prix.swoge && sol.reserves.length === 0, 'un devis rend le prix SANS rien reserver');
   const r = await api.appelle({ cle, outil: 'scan_token', args: { address: '0x' + '1'.repeat(40) } });
   ok(r.ok && r.resultat.token.sym === 'PEPE' && /Token 0x1111/.test(r.texte) && /^[0-9a-f]{16}$/.test(r.recu), 'l appel rend les donnees, le texte, un recu');
+  /* La licence GoPlus : « Powered by Go+ Security », avec un lien, sur chaque resultat vendu. */
+  eq(JSON.stringify(r.resultat.attribution), JSON.stringify({ security: 'Powered by Go+ Security', url: 'https://gopluslabs.io' }), 'scan_token paye : l attribution GoPlus en donnees');
+  ok(/Powered by Go\+ Security \(https:\/\/gopluslabs\.io\)/.test(r.texte) && r.texte.split('Powered by Go+ Security').length === 2,
+     'et dans le texte que lit l agent, une fois (ajoutee si la fiche ne la portait pas)');
   ok(sol.regles[0].fw === sol.reserves[0].w && sol.reserves[0].a === ADDR, 'debite le prix exact, sur l adresse de la CLE');
   eq(cles.recus(ADDR)[0].id, r.recu, 'le recu est garde, lisible par le joueur');
   const nReg = sol.regles.length;
@@ -142,6 +148,8 @@ const api = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () =
   ok(tl.every((x) => x.inputSchema.properties.quote), 'chaque outil accepte « quote » pour connaitre son prix');
   const tc = lit(await post({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'scan_token', arguments: { address: '0x' + '4'.repeat(40) } } })).result;
   ok(tc.isError === false && /Token 0x4444/.test(tc.content[0].text) && /billed .* \$SWOGE/.test(tc.content[0].text) && tc.structuredContent.receipt, 'tools/call : le texte pour le modele, la facture et le recu');
+  ok(/Powered by Go\+ Security \(https:\/\/gopluslabs\.io\)/.test(tc.content[0].text) && tc.structuredContent.result.attribution.url === 'https://gopluslabs.io',
+     'MCP : scan_token porte « Powered by Go+ Security » dans le texte ET dans structuredContent');
   const tq = lit(await post({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'scan_token', arguments: { address: '0x' + '4'.repeat(40), quote: true } } })).result;
   ok(/^Price: \d+(\.\d+)? \$SWOGE/.test(tq.content[0].text), 'quote : le prix, sans rien payer');
   const sans = lit(await post({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'scan_token', arguments: { address: '0x' + '4'.repeat(40) } } }, {}, null)).result;
@@ -227,8 +235,102 @@ const api = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () =
     if (fs.existsSync(site)) {
       const publie = fs.readFileSync(site, 'utf8');
       const noms = (t) => (t.match(/^- `([a-z_]+)\(/gm) || []).map((x) => x.slice(3, -1)).join(',');
-      eq(noms(publie), noms(txt), 'le llms.txt du site liste exactement les outils du catalogue (sinon : le regenerer avec agentic.llmsTxt)');
+      eq(noms(publie), noms(txt), 'le llms.txt du site liste exactement les outils du catalogue (sinon : node outils/llms_site.js > ../SWOGE.github.io/llms.txt)');
+      /* Mot pour mot : une description qui change (l'attribution GoPlus, le 26 septembre 2026) doit y arriver aussi. */
+      const genere = require('child_process').execFileSync(process.execPath, [path.join(__dirname, 'outils', 'llms_site.js')], { env: process.env, encoding: 'utf8' });
+      ok(publie === genere, 'le llms.txt du site = la sortie de outils/llms_site.js, mot pour mot (sinon : le regenerer)');
     }
+  }
+
+  console.log('\n-- 5 quater. telegram_calls : pas vendu sans TG_APPELS_VENTE=1 (conditions de Telegram, 26 septembre 2026) --');
+  {
+    let lus = 0;
+    const outilsT = Object.assign({}, outils, { telegram_calls: async () => { lus++; return { texte: JSON.stringify({ calls: [], channels: [] }) }; } });
+    const apiT = A.cree({ cles, cours: async () => COURS, solde, outils: outilsT, actifs: () => ({ recherche: true }) });
+    const cleT = cles.resout(cles.nouvelle('0x' + 'ef'.repeat(20), 'tg', 100000).cle);
+    const U = { api: 'https://api.example', site: 'https://site.example', page: 'https://site.example/p', docs: 'https://site.example/d' };
+    const depsT = { agentic: apiT, actifs: () => ({ recherche: true }) };
+    const mcpT = async (corps) => JSON.parse((await MCP.traite({ methode: 'POST', entetes: {}, corps: JSON.stringify(corps), cle: cleT, origines: [] }, depsT)).corps);
+    const nRes = sol.reserves.length;
+    /* Eteint (le defaut) : absent de tout ce qui se lit, et l'appeler = un outil inconnu, mot pour mot. */
+    const catT = await apiT.catalogue();
+    ok(!catT.outils.some((o) => o.name === 'telegram_calls') && !A.definitions({ recherche: true }).some((d) => d.name === 'telegram_calls'), 'eteint : absent du catalogue et des definitions publiques');
+    ok(!A.llmsTxt(catT, U).includes('telegram_calls'), 'eteint : absent de llms.txt');
+    const tg = await apiT.appelle({ cle: cleT, outil: 'telegram_calls', args: { hours: 12 } });
+    const inc = await apiT.appelle({ cle: cleT, outil: 'nope_tool', args: { hours: 12 } });
+    ok(tg.code === 404 && tg.raison === 'unknown tool: telegram_calls' && JSON.stringify(Object.keys(tg)) === JSON.stringify(Object.keys(inc)) && inc.code === 404,
+       'eteint : appele par une cle, 404 « unknown tool », la meme reponse qu un nom invente');
+    ok((await apiT.appelle({ cle: cleT, outil: 'telegram_calls', args: {}, devis: true })).code === 404, 'eteint : pas de devis non plus');
+    ok((await apiT.sertSansFacture({ outil: 'telegram_calls', args: {}, payeur: '0x' + '9'.repeat(40) })).code === 404 && !apiT.x402Payable('telegram_calls'), 'eteint : ni payable ni servi en x402');
+    ok(sol.reserves.length === nRes && lus === 0, 'eteint : rien reserve, rien debite, le suivi jamais lu');
+    const lT = (await mcpT({ jsonrpc: '2.0', id: 1, method: 'tools/list' })).result.tools;
+    const cT = await mcpT({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'telegram_calls', arguments: {} } });
+    const cI = await mcpT({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'nope_tool', arguments: {} } });
+    ok(!lT.some((x) => x.name === 'telegram_calls') && cT.error && cT.error.code === -32602 && cT.error.code === cI.error.code, 'eteint : absent de tools/list MCP ; tools/call → -32602 comme un outil inconnu');
+    /* Allume : il revient partout, au prix de depart, et se facture comme les autres. */
+    process.env.TG_APPELS_VENTE = '1';
+    const catOn = await apiT.catalogue();
+    const tgc = catOn.outils.find((o) => o.name === 'telegram_calls');
+    ok(tgc && tgc.prix.usd === 0.01 && A.llmsTxt(catOn, U).includes('`telegram_calls(channel?, hours?, limit?)`'), 'TG_APPELS_VENTE=1 : au catalogue (0,01 $) et dans llms.txt');
+    const on = await apiT.appelle({ cle: cleT, outil: 'telegram_calls', args: { hours: 12 } });
+    ok(on.ok && lus === 1 && sol.reserves.length === nRes + 1 && apiT.x402Payable('telegram_calls'), 'TG_APPELS_VENTE=1 : servi, facture, payable en x402');
+    ok((await mcpT({ jsonrpc: '2.0', id: 3, method: 'tools/list' })).result.tools.some((x) => x.name === 'telegram_calls'), 'TG_APPELS_VENTE=1 : dans tools/list MCP');
+    ok((await apiT.appelle({ cle: cleT, outil: 'telegram_calls', args: { hours: 999 } })).code === 400, 'TG_APPELS_VENTE=1 : des heures hors [1 ; 168] refusees avant debit');
+    delete process.env.TG_APPELS_VENTE;
+  }
+
+  console.log('\n-- 5 quinquies. x402 : scan_token porte aussi l attribution GoPlus --');
+  {
+    const x = await api.sertSansFacture({ outil: 'scan_token', args: { address: '0x' + '5'.repeat(40) }, payeur: '0x' + '9'.repeat(40) });
+    ok(x.ok && x.resultat.attribution && x.resultat.attribution.security === 'Powered by Go+ Security' && /Powered by Go\+ Security/.test(x.texte), 'paye d avance (x402) : la meme attribution, en donnees et en texte');
+  }
+
+  console.log('\n-- 5 sexies. sans cle : le devis gratuit, le refus qui dit comment payer, les compteurs (26 septembre 2026) --');
+  {
+    const notes = [];
+    let ouvert = true, devisX = 0;
+    const apiS = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () => ({ recherche: true }),
+      note: (e, i) => notes.push(Object.assign({ e }, i)), urls: { page: 'https://site.example/swogeagentic.html', api: 'https://api.example' },
+      x402: { actif: () => ouvert, devis: async (o) => { devisX++; return { x402Version: 2, accepts: [{ scheme: 'exact', amount: '20056', extra: { assetTransferMethod: 'eip3009' } }], resource: { url: 'https://api.example/agentic/call/' + o } }; } } });
+    const nRes = sol.reserves.length, nReg = sol.regles.length;
+    const q = await apiS.appelle({ cle: null, outil: 'scan_token', args: {}, devis: true, canal: 'rest', qui: 'ip:1' });
+    ok(q.ok && q.quote === true && q.tool === 'scan_token' && q.priceUsd === 0.01 && q.devis.usd === 0.01 && q.x402.accepts[0].amount === '20056' && devisX === 1,
+       'devis sans cle ni arguments : le prix par cle (0,01 $) et, x402 ouvert, ses exigences');
+    ok(sol.reserves.length === nRes && sol.regles.length === nReg, 'rien reserve, rien regle');
+    ok(/https:\/\/site\.example\/swogeagentic\.html/.test(q.howToPay) && q.howToPay.includes('POST https://api.example/agentic/call/scan_token'), 'howToPay : la page des cles, et x402 a l adresse de l outil');
+    const aq = await apiS.appelle({ cle: null, outil: 'ask_agent', args: {}, devis: true, qui: 'ip:1' });
+    ok(aq.ok && aq.priceUsd === aq.devis.maxUsd && !aq.x402 && /needs an API key/.test(aq.howToPay), 'ask_agent (prix variable) : son maximum, pas de x402 — la cle seulement');
+    const vs = await apiS.appelle({ cle: null, outil: 'video_status', args: {}, devis: true, qui: 'ip:1' });
+    ok(vs.ok && vs.priceUsd === 0 && vs.devis.gratuit, 'video_status : un devis a 0, sans rien lire');
+    const refus = await apiS.appelle({ cle: null, outil: 'colony_activity', args: {}, canal: 'mcp', qui: 'ip:2' });
+    ok(refus.code === 401 && refus.sansCle && /Authorization: Bearer swg_/.test(refus.raison) && refus.raison.includes('POST https://api.example/agentic/call/colony_activity') && /"quote": true/.test(refus.raison),
+       'un appel sans cle : 401 qui dit tout — la cle, x402 a cette adresse, le devis gratuit');
+    ouvert = false;
+    ok(!/x402/.test((await apiS.appelle({ cle: null, outil: 'colony_activity', args: {}, qui: 'ip:2' })).raison), 'x402 eteint : il n est pas propose');
+    ok((await apiS.appelle({ cle: null, clePresentee: true, outil: 'scan_token', args: {}, devis: true })).code === 401, 'une cle PRESENTEE mais inconnue : 401, meme pour un devis');
+    ok((await apiS.appelle({ cle: null, outil: 'nope', args: {}, devis: true })).code === 404, 'un outil inconnu : 404, cle ou pas');
+    let premier = 0;
+    for (let i = 1; i <= 70 && !premier; i++) if ((await apiS.appelle({ cle: null, outil: 'swoge_economy', args: {}, devis: true, qui: 'ip:3' })).code === 429) premier = i;
+    ok(premier === A.DEVIS_PAR_MINUTE + 1 && (await apiS.appelle({ cle: null, outil: 'swoge_economy', args: {}, devis: true, qui: 'ip:4' })).ok,
+       'au plus ' + A.DEVIS_PAR_MINUTE + ' devis sans cle par minute et par IP (le ' + premier + 'e : 429) ; une autre IP n est pas touchee');
+    /* Les compteurs : devis (qui = l IP sans cle, l adresse avec), refus, paye par cle, echec. */
+    notes.length = 0;
+    await apiS.appelle({ cle, outil: 'scan_token', args: { address: '0x' + '6'.repeat(40) }, devis: true, canal: 'mcp' });
+    await apiS.appelle({ cle, outil: 'scan_token', args: { address: '0x' + '6'.repeat(40) }, canal: 'rest' });
+    panne = true; await apiS.appelle({ cle, outil: 'scan_token', args: { address: '0x' + '7'.repeat(40) }, canal: 'rest' }); panne = false;
+    const r0 = notes.map((x) => x.e + ':' + x.canal + ':' + (x.qui === ADDR) + ':' + (x.usd === undefined ? '-' : x.usd) + (x.sorte ? ':' + x.sorte : '')).join(' | ');
+    eq(r0, 'devis:mcp:true:- | paye_cle:rest:true:0.01 | echec:rest:true:-:outil', 'les compteurs recoivent : le devis, le paiement par cle (0,01 $), l echec — avec le canal et l adresse de la CLE');
+    const mcpS = async (corps, req) => JSON.parse((await MCP.traite(Object.assign({ methode: 'POST', entetes: {}, corps: JSON.stringify(corps), cle: null, origines: [] }, req || {}), { agentic: apiS, actifs: () => ({ recherche: true }), api: 'https://api.example' })).corps);
+    ouvert = true;
+    const mq = (await mcpS({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'colony_activity', arguments: { quote: true } } }, { qui: 'ip:5' })).result;
+    ok(mq.isError === false && mq.structuredContent.quote === true && mq.structuredContent.priceUsd === 0.005 && mq.structuredContent.x402 && /^Price: .*Without an account \(x402\): USDG 0\.020056/.test(mq.content[0].text),
+       'MCP sans cle, quote: true : le devis, isError false, x402 dans le texte et structuredContent');
+    const mr = (await mcpS({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'colony_activity', arguments: {} } }, { qui: 'ip:5' })).result;
+    ok(mr.isError === true && mr.content[0].text.includes('POST https://api.example/agentic/call/colony_activity') && !/^Error: missing/.test(mr.content[0].text), 'MCP sans cle, un appel : isError, avec la marche a suivre');
+    const mk = (await mcpS({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'colony_activity', arguments: { quote: true } } }, { clePresentee: true })).result;
+    ok(mk.isError === true && /invalid or revoked API key/.test(mk.content[0].text), 'MCP, cle presentee mais inconnue : refusee, devis compris');
+    const ini = JSON.parse((await MCP.traite({ methode: 'POST', entetes: {}, corps: JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'initialize', params: { protocolVersion: '2025-11-25' } }), cle: null, origines: [] }, { agentic: apiS, actifs: () => ({ recherche: true }), api: 'https://api.example' })).corps).result;
+    ok(/No key needed/.test(ini.instructions) && ini.instructions.includes('POST https://api.example/agentic/call/<tool>') && ini.serverInfo.version === '1.0.1', 'les instructions MCP : devis sans cle, x402 en REST a cette adresse ; version 1.0.1');
   }
 
   console.log('\n-- 6. ce que la route garantit --');

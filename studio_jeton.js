@@ -39,6 +39,19 @@ const TTL_MS = 60000;
 const GOPLUS_CHAINES = { ethereum: '1', bsc: '56', arbitrum: '42161', polygon: '137', base: '8453',
   optimism: '10', avalanche: '43114', robinhood: '4663' };
 
+/* ---- « POWERED BY GO+ SECURITY » (decision du proprietaire, 26 septembre 2026) ----
+ * La licence de l'API GoPlus (https://docs.gopluslabs.io/reference/api-license-agreement-new,
+ * « Last Updated | August 21, 2023 », relue le 26 septembre 2026) : « Except for
+ * personal usage, Your Application should source attribution via a backlink or
+ * a mention that Your Application is “Powered by Go+ Security”. » La mention suit
+ * donc la donnee partout ou elle arrive : le texte que lit le modele, la carte
+ * des pages, le resultat de l'API (agentic.js). Le logo n'est PAS repris, par
+ * decision du proprietaire, alors que la clause 5 de la meme licence (« Display
+ * of GoPlus Logo ») EXIGE le logo GoPlus avec « Powered by GoPlus » : question
+ * ouverte, posee a GoPlus avec l'accord ecrit que l'usage commercial attend
+ * (EXPLOITATION.md, meme date). */
+const ATTRIBUTION = Object.freeze({ security: 'Powered by Go+ Security', url: 'https://gopluslabs.io' });
+
 const DEX = () => (process.env.DEXSCREENER_BASE_URL || 'https://api.dexscreener.com').replace(/\/$/, '');
 const GOPLUS = () => (process.env.GOPLUS_BASE_URL || 'https://api.gopluslabs.io').replace(/\/$/, '');
 const SITE = () => String(process.env.SITE_URL || 'https://swoleeswoge.dog').replace(/\/+$/, '');
@@ -121,6 +134,12 @@ async function lisColonie(addr, scan) {
   return {
     cases: (d.cases || []).slice(0, 6).map((c) => ({ trait: c.trait, case: c.case, n: c.n, moyenne: c.moyenne,
       assez: c.n >= OBS_ASSEZ })),
+    /* Toutes les cases, pour la traduction de studio_agent.ficheEnAnglais : elle
+       fusionne les doublons AVANT de couper. Coupees a 6 d'abord, les quatre
+       cases du bytecode de LOBSTER (une seule mesure) prenaient 4 des 6 places —
+       3 lignes pour l'agent qui paie, 5 sur la carte gratuite (releve du
+       26 septembre 2026). Jamais publiee telle quelle (carte() ne la copie pas). */
+    toutes: (d.cases || []).map((c) => ({ trait: c.trait, case: c.case, n: c.n, moyenne: c.moyenne })),
     faits: (d.faits || []).map((f) => f.quoi + ' (' + f.source + ')'),
     observations: (d.mesureSur && d.mesureSur.observations) || 0,
     echeance: (d.mesureSur && d.mesureSur.echeance) || null,
@@ -193,8 +212,11 @@ function contexte(fiches) {
     if (f.manque.length) l.push('- Not available right now: ' + f.manque.join(', ') + '.');
     return l.join('\n');
   });
+  /* GoPlus a repondu pour au moins un jeton : la mention, une fois, avec son lien. */
+  const goplus = fiches.some((f) => f.securite && f.securite.couverte);
   return ['Token data read live by SwoleMind (these are measurements, never a buy or sell signal: say so, quote the numbers with their source and sample size, '
-    + 'never call a token safe, and treat "unknown" as unknown — not as good news):'].concat(blocs).join('\n\n');
+    + 'never call a token safe, and treat "unknown" as unknown — not as good news):'].concat(blocs)
+    .concat(goplus ? ['Contract security data: ' + ATTRIBUTION.security + ' (' + ATTRIBUTION.url + ') — credit it that way when you quote it.'] : []).join('\n\n');
 }
 
 /** Les pastilles de sources : la piscine DexScreener, et le scan de la colonie. */
@@ -221,8 +243,10 @@ function carte(f) {
       oui(s.soldeModifiable, 'Owner can change balances'), s.codeOuvert === false ? 'Unverified code' : null].filter(Boolean),
     porteurs: s.porteurs ?? null, premierPorteur: s.premierPorteur ?? null, dixPremiers: s.dixPremiers ?? null,
     colonie: c ? { observations: c.observations, scan: c.scan, cases: c.cases } : null,
+    /* GoPlus a repondu (fiche lue ou vide) : la page montre « Powered by Go+ Security ». */
+    attribution: f.securite && s.couverte ? ATTRIBUTION : null,
   };
 }
 
 module.exports = { adressesDe, fiche, contexte, sources, carte, lisMarche, lisSecurite,
-  MAX_ADRESSES, JETONS_PAR_FICHE, OBS_ASSEZ, GOPLUS_CHAINES, CACHE };
+  MAX_ADRESSES, JETONS_PAR_FICHE, OBS_ASSEZ, GOPLUS_CHAINES, CACHE, ATTRIBUTION };

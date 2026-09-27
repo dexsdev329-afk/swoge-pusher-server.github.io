@@ -6,7 +6,8 @@
  * Ce qui fait utiliser HYRE : ses outils se branchent dans Claude Desktop,
  * Cursor et tout client MCP. Ici, `POST /mcp`, avec la clé d'API en
  * `Authorization: Bearer swg_…` (ou `/mcp/k/<clé>` pour un client qui ne sait
- * pas poser d'en-tête).
+ * pas poser d'en-tête). Sans clé : `tools/list` et les devis (`quote: true`)
+ * sont servis ; un appel reçoit la marche à suivre pour payer.
  *
  * Spécification relue le 26 septembre 2026 (modelcontextprotocol.io) : la
  * révision 2026-07-28 supprime la poignée de main `initialize` et porte la
@@ -31,8 +32,11 @@
 const MODERNES = ['2026-07-28'];
 const HERITEES = ['2025-11-25', '2025-06-18', '2025-03-26'];
 const META = 'io.modelcontextprotocol/';
-const SERVEUR = { name: 'swogeagentic', title: 'SwogeAgentic — SWOGE WORLD tools', version: '1.0.0' };
-const INSTRUCTIONS = 'SWOGE WORLD tools for crypto research on Robinhood Chain and beyond: token scans (DexScreener, GoPlus, and what the SWOGE AI colony measured, with sample sizes), the colony\'s live activity, the $SWOGE economy, web search, and a full research agent. Read-only: nothing here buys, sells or signs. Each call is billed from the key owner\'s $SWOGE balance; call a tool with {"quote": true} in its arguments to get its price without paying.';
+/* 1.0.1 (26 septembre 2026) : devis sans clé, refus qui dit comment payer — même numéro que server.json. */
+const SERVEUR = { name: 'swogeagentic', title: 'SwogeAgentic — SWOGE WORLD tools', version: '1.0.1' };
+/* 26 septembre 2026 : le devis est GRATUIT et sans clé (l'audit du jour l'a
+   trouvé promis ici mais refusé) ; la clé n'est requise que pour être servi. */
+const instructions = (api) => 'SWOGE WORLD tools for crypto research on Robinhood Chain and beyond: token scans (market from DexScreener, contract security Powered by Go+ Security (https://gopluslabs.io), and what the SWOGE AI colony measured, with sample sizes), the colony\'s live activity, the $SWOGE economy, web search, and a full research agent. Read-only: nothing here buys, sells or signs. No key needed to list the tools or to get a price: call any tool with {"quote": true} in its arguments — free, nothing runs. To run a tool, send an API key (create one at https://swoleeswoge.dog/swogeagentic.html, header "Authorization: Bearer swg_…"): each call is billed from the key owner\'s $SWOGE balance, within a daily cap. Fixed-price tools and images can also be paid per call without an account via x402 over REST: POST ' + (api || '') + '/agentic/call/<tool> (the quote says when that is open).';
 
 const erreur = (id, code, message, data) => ({ jsonrpc: '2.0', id: id === undefined ? null : id, error: Object.assign({ code, message }, data ? { data } : {}) });
 const json = (status, corps) => ({ status, entetes: { 'content-type': 'application/json' }, corps: JSON.stringify(corps) });
@@ -56,8 +60,9 @@ function outilsMcp(defs) {
 
 /**
  * Une requête HTTP sur l'endpoint MCP → { status, entetes, corps }.
- *   req  = { methode, entetes, corps (texte), cle (résolue ou null), origines (liste permise) }
- *   deps = { agentic: agentic.cree(...), actifs() }
+ *   req  = { methode, entetes, corps (texte), cle (résolue ou null), clePresentee (une clé a été
+ *            envoyée, même inconnue), qui (empreinte d'IP, pour les compteurs), origines (liste permise) }
+ *   deps = { agentic: agentic.cree(...), actifs(), api (adresse publique du serveur) }
  */
 async function traite(req, deps) {
   const origine = entete(req.entetes, 'origin');
@@ -88,7 +93,7 @@ async function traite(req, deps) {
     if (!MODERNES.includes(v)) return json(400, erreur(m.id, -32022, 'Unsupported protocol version', { supported: MODERNES.concat(HERITEES), requested: v }));
     if (m.method === 'server/discover') {
       return json(200, { jsonrpc: '2.0', id: m.id, result: { resultType: 'complete', supportedVersions: MODERNES.concat(HERITEES),
-        capabilities: { tools: {} }, _meta: { [META + 'serverInfo']: SERVEUR }, instructions: INSTRUCTIONS } });
+        capabilities: { tools: {} }, _meta: { [META + 'serverInfo']: SERVEUR }, instructions: instructions(deps.api) } });
     }
     if (m.method === 'tools/list') return json(200, { jsonrpc: '2.0', id: m.id, result: { resultType: 'complete', tools: defs() } });
     if (m.method === 'tools/call') {
@@ -102,7 +107,7 @@ async function traite(req, deps) {
   /* ---- HÉRITÉ (2025-11-25 et avant) ---- */
   if (m.method === 'initialize') {
     const v = HERITEES.includes(p.protocolVersion) ? p.protocolVersion : HERITEES[0];
-    return json(200, { jsonrpc: '2.0', id: m.id, result: { protocolVersion: v, capabilities: { tools: { listChanged: false } }, serverInfo: SERVEUR, instructions: INSTRUCTIONS } });
+    return json(200, { jsonrpc: '2.0', id: m.id, result: { protocolVersion: v, capabilities: { tools: { listChanged: false } }, serverInfo: SERVEUR, instructions: instructions(deps.api) } });
   }
   if (m.method === 'ping') return json(200, { jsonrpc: '2.0', id: m.id, result: {} });
   if (m.method === 'tools/list') return json(200, { jsonrpc: '2.0', id: m.id, result: { tools: defs() } });
@@ -114,21 +119,29 @@ async function traite(req, deps) {
   return json(200, erreur(m.id, -32601, 'Method not found: ' + m.method));
 }
 
-/* Un appel d'outil : devis ou exécution, et le résultat au format MCP. */
+/* Un appel d'outil : devis ou exécution, et le résultat au format MCP.
+   Sans clé : un devis est servi (gratuit) ; un appel reçoit une erreur
+   d'outil qui dit EXACTEMENT comment payer (clé, ou x402 en REST). */
 async function appel(p, req, deps, id) {
   const nom = String(p.name || ''), args = Object.assign({}, p.arguments || {});
   const devis = args.quote === true; delete args.quote;
-  const r = await deps.agentic.appelle({ cle: req.cle, outil: nom, args, devis });
+  const r = await deps.agentic.appelle({ cle: req.cle, clePresentee: !!req.clePresentee, outil: nom, args, devis, canal: 'mcp', qui: req.qui });
   if (r.code === 404) return { inconnu: true, content: [{ type: 'text', text: r.raison }], isError: true };
+  if (r.sansCle) return { content: [{ type: 'text', text: r.raison }], isError: true };
   if (!r.ok) return { content: [{ type: 'text', text: 'Error: ' + r.raison + (r.code === 401 ? ' (send it as "Authorization: Bearer swg_…")' : '') }], isError: true };
   if (devis) {
     const d = r.devis;
-    const t = d.variable ? 'Price: real cost, up to ' + d.maxSwoge + ' $SWOGE ($' + d.maxUsd + ').' : 'Price: ' + d.swoge + ' $SWOGE ($' + d.usd + ') per call.';
-    return { content: [{ type: 'text', text: t }], structuredContent: { quote: d }, isError: false };
+    const t = d.gratuit ? 'Price: free.' : d.variable ? 'Price: real cost, up to ' + d.maxSwoge + ' $SWOGE ($' + d.maxUsd + ').' : 'Price: ' + d.swoge + ' $SWOGE ($' + d.usd + ') per call.';
+    const x = r.x402 && Array.isArray(r.x402.accepts) && r.x402.accepts.length
+      ? ' Without an account (x402): ' + r.x402.accepts.map((a) => (a.extra && a.extra.assetTransferMethod === 'eip3009' ? 'USDG ' + (Number(a.amount) / 1e6) : a.amount + ' base units of $SWOGE')).join(' or ') + ' — see structuredContent.x402.'
+      : '';
+    const quote = { quote: true, tool: nom, priceUsd: r.priceUsd, devis: d, howToPay: r.howToPay };
+    if (r.x402) quote.x402 = r.x402;
+    return { content: [{ type: 'text', text: t + x + (req.cle ? '' : ' How to pay: ' + r.howToPay) }], structuredContent: quote, isError: false };
   }
   const pied = '\n\n— billed ' + r.facture.swoge + ' $SWOGE ($' + r.facture.usd + '), receipt ' + r.recu + ', balance ' + r.solde + ' $SWOGE';
   return { content: [{ type: 'text', text: String(r.texte || '') + pied }],
            structuredContent: { result: r.resultat, billed: r.facture, receipt: r.recu, balance: r.solde }, isError: false };
 }
 
-module.exports = { traite, outilsMcp, MODERNES, HERITEES, SERVEUR, decode };
+module.exports = { traite, outilsMcp, instructions, MODERNES, HERITEES, SERVEUR, decode };

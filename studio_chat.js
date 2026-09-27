@@ -267,6 +267,10 @@ function rythmeOk(addr, maintenant) {
  * Coût réel payé au fournisseur contre ce qu'on a facturé : la marge vécue,
  * et combien de fois la réserve a été dépassée (devrait rester à zéro). */
 const MESURE = { requetes: 0, echecs: 0, coutUsd: 0, factureUsd: 0, depassements: 0, parModele: {} };
+/* Les compteurs DURABLES (compteurs.js, 26 septembre 2026) : MESURE repart de
+   zéro à chaque redéploiement. server.js pose `COMPTEUR.note` ; sans lui (essais), rien. */
+const COMPTEUR = { note: null };
+function compte(evenement, info) { if (COMPTEUR.note) { try { COMPTEUR.note(evenement, info); } catch (e) { /* jamais bloquant */ } } }
 function mesure(id, cout, facture, depasse) {
   MESURE.requetes++; MESURE.coutUsd += cout; MESURE.factureUsd += facture;
   if (depasse) MESURE.depassements++;
@@ -402,6 +406,8 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
       if (!appele) { deps.solde.regle(addr, reserveWei, 0n); return arreteAvant(); }
       /* Le fournisseur avait commencé : la réserve est gardée (règle du propriétaire). */
       const solde = deps.solde.regle(addr, reserveWei, reserveWei);
+      /* Facturé (la réserve gardée), coût réel inconnu : l'appel a été coupé. */
+      compte('chat_facture', { outil: 'chat:' + m.id, canal: q.canal || (deps.pireCas ? 'agent' : 'chat'), qui: addr, usd: Number(reserveUsd.toFixed(5)), coutUsd: null, sorte: 'arrete' });
       return { ok: false, code: 409, arrete: true, raison: 'stopped — the amount reserved for this answer is kept',
         factureSwoge: studio.formateBase(reserveWei, dec), factureUsd: Number(reserveUsd.toFixed(5)), solde };
     }
@@ -425,6 +431,10 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
   }
   const solde = deps.solde.regle(addr, reserveWei, factureWei);
   mesure(m.id, cout, facture, depasse);
+  /* Le canal : celui que l'appelant donne (rest | mcp pour ask_agent), sinon
+     l'agent (plusieurs appels : deps.pireCas) ou le chat. Facturé = ce qui a été débité. */
+  compte('chat_facture', { outil: 'chat:' + m.id, canal: q.canal || (deps.pireCas ? 'agent' : 'chat'), qui: addr,
+    usd: depasse ? Number(reserveUsd.toFixed(5)) : Number(facture.toFixed(5)), coutUsd: cout });
   return {
     ok: true, texte: r.texte || '', sources: Jeton.sources(fiches).concat(r.sources || []), stop: r.stop || null,
     jetons: fiches.map(Jeton.carte).concat(r.jetons || []),
@@ -440,6 +450,6 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
 
 module.exports = {
   MODELES, DEFAUT, EFFORTS, modele, coutUsd, pireCasUsd, factureUsd, nettoie,
-  coursPrudent, coursSwoge, catalogue, repond, arrete, ARRETS, MESURE, EN_VOL, RYTHME, COURS,
+  coursPrudent, coursSwoge, catalogue, repond, arrete, ARRETS, MESURE, COMPTEUR, EN_VOL, RYTHME, COURS,
   ENTREE_MAX_CAR, RECHERCHE_MAX, PRIX_RECHERCHE_USD, SYSTEME_JETONS,
 };

@@ -21,6 +21,8 @@ const eq = (a, b, m) => ok(a === b, m + ' [' + a + ' vs ' + b + ']');
 
 process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801'; process.env.STUDIO_MARGE = '1.5';
 delete process.env.OPENAI_API_KEY; delete process.env.XAI_API_KEY; delete process.env.GROK_API_KEY; delete process.env.PERPLEXITY_API_KEY;
+/* Le reglage par defaut : telegram_calls n'est pas offert (voir la section 6). */
+delete process.env.TG_APPELS_VENTE;
 
 const A = require('./studio_agent');
 const C = require('./studio_chat');
@@ -53,10 +55,42 @@ const m = C.modele('sonnet-5');
   {
     const d = A.definitions({ recherche: true });
     ok(d.every((x) => x.name && x.description && x.input_schema && x.input_schema.type === 'object'), 'forme de l API Messages : name, description, input_schema');
-    eq(d.map((x) => x.name).join(','), 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,telegram_calls,web_search', 'huit outils avec Perplexity (lancements, lanceur, OSINT, puis les appels Telegram, ajoutes le 26 septembre)');
-    ok(Math.ceil(JSON.stringify(d).length / 2) <= A.OUTILS_JETONS && Math.ceil(A.SYSTEME.length / 2) <= A.SYSTEME_JETONS,
-       'le pire cas couvre les definitions et la consigne, a un jeton pour deux caracteres [' + Math.ceil(JSON.stringify(d).length / 2) + ' ≤ ' + A.OUTILS_JETONS + ']');
+    eq(d.map((x) => x.name).join(','), 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,web_search',
+       'sept outils avec Perplexity (lancements, lanceur, OSINT ajoutes le 26 septembre) ; les appels Telegram ne sont PAS offerts sans TG_APPELS_VENTE=1 (conditions de Telegram)');
+    process.env.TG_APPELS_VENTE = '1';
+    const dv = A.definitions({ recherche: true });
+    delete process.env.TG_APPELS_VENTE;
+    eq(dv.map((x) => x.name).join(','), 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,telegram_calls,web_search',
+       'TG_APPELS_VENTE=1 : les appels Telegram reviennent a leur place (huit outils)');
+    /* La borne se juge sur le catalogue le plus long : reglage allume. */
+    ok(Math.ceil(JSON.stringify(dv).length / 2) <= A.OUTILS_JETONS && Math.ceil(A.SYSTEME.length / 2) <= A.SYSTEME_JETONS,
+       'le pire cas couvre les definitions et la consigne, a un jeton pour deux caracteres [' + Math.ceil(JSON.stringify(dv).length / 2) + ' ≤ ' + A.OUTILS_JETONS + ']');
+    const sc = d.find((x) => x.name === 'scan_token').description;
+    ok(/Powered by Go\+ Security, https:\/\/gopluslabs\.io/.test(sc.split('. ')[0]),
+       'scan_token dit « Powered by Go+ Security » avec son lien, dans sa PREMIERE phrase (celle que reprennent llms.txt et openapi)');
     ok(!A.definitions({ recherche: false }).some((x) => x.name === 'web_search'), 'sans cle Perplexity : pas de recherche web');
+    /* ---- QUAND APPELER (decouverte, 26 septembre 2026) ----
+     * Un annuaire d'outils se parcourt par la tache : la PREMIERE phrase de
+     * chaque description vendue (celle que reprennent openapi.json et llms.txt)
+     * dit quand appeler. Juge sur l'intention, pas mot pour mot — et sur ce
+     * qui est PUBLIE (agentic.definitions : /agentic/tools, MCP tools/list,
+     * openapi, llms.txt), pas sur une constante : jugee sur DESCRIPTIONS_API
+     * seule, la regle passait alors que 4 outils publies ne la suivaient pas. */
+    process.env.TG_APPELS_VENTE = '1';
+    const publiees = require('./agentic').definitions({ recherche: true });
+    delete process.env.TG_APPELS_VENTE;
+    const toutes = publiees.map((x) => [x.name, x.description]);
+    const sansQuand = toutes.filter(([, t]) => !/\bwhen\b|\buse this\b/i.test(t.split('. ')[0])).map(([k]) => k);
+    ok(toutes.length === 12 && !sansQuand.length, 'les ' + toutes.length + ' descriptions PUBLIEES (agentic.definitions) disent QUAND appeler dans leur premiere phrase' + (sansQuand.length ? ' — manque : ' + sansQuand.join(', ') : ''));
+    const apiNoms = Object.keys(A.DESCRIPTIONS_API);
+    const nonBranchees = apiNoms.filter((k) => (publiees.find((x) => x.name === k) || {}).description !== A.DESCRIPTIONS_API[k]);
+    ok(apiNoms.length === 4 && !nonBranchees.length, 'les 4 descriptions de l API (DESCRIPTIONS_API) sont celles que agentic.definitions publie' + (nonBranchees.length ? ' — non branchees : ' + nonBranchees.join(', ') : ''));
+    const verdict = toutes.filter(([, t]) => /\b(safe|rug|scam)\b/i.test(t)).map(([k]) => k);
+    ok(!verdict.length, 'aucune ne promet un verdict (« safe », « rug ») : des mesures' + (verdict.length ? ' — ' + verdict.join(', ') : ''));
+    const courtes = toutes.filter(([, t]) => t.split('. ').length < 2 || t.split('. ')[0].length > 240).map(([k]) => k);
+    ok(!courtes.length, 'apres la phrase « quand », au moins une phrase sur ce qui revient ; premiere phrase lisible (≤ 240 caracteres)' + (courtes.length ? ' — ' + courtes.join(', ') : ''));
+    ok(toutes.every(([, t]) => !/[àâçéèêëîïôûùüÿœ]/i.test(t)), 'en anglais : aucun caractere accentue du francais');
+    ok(/Powered by Go\+ Security/.test(dv.find((x) => x.name === 'new_launches').description), 'new_launches cite aussi GoPlus : ses decisions en dependent');
   }
 
   console.log('\n-- 2. la boucle --');
@@ -75,6 +109,8 @@ const m = C.modele('sonnet-5');
     ok(/Token 0x6982/.test(t2[2].content[0].content) && /TELEPAD/.test(t2[2].content[1].content) && !/NOIR/.test(t2[2].content[1].content), 'le scan rend la fiche du jeton ; l activite de la colonie est filtree sur le jeton demande');
     ok(r.usage.input_tokens === 14000 && r.usage.output_tokens === 630 && r.usage.recherches_perplexity === 1, 'l usage de CHAQUE appel est additionne, la recherche comptee');
     ok(r.sources.map((x) => x.url).join(',') === 'https://dexscreener.com/ethereum/0xp,https://news.example/a' && r.jetons.length === 1 && r.jetons[0].sym === 'PEPE', 'les sources et la carte du jeton remontent');
+    ok(/Powered by Go\+ Security \(https:\/\/gopluslabs\.io\)/.test(t2[2].content[0].content) && r.jetons[0].attribution && r.jetons[0].attribution.url === 'https://gopluslabs.io',
+       'GoPlus a repondu : le modele lit « Powered by Go+ Security » avec le lien, et la carte porte l attribution pour la page');
     ok(outils.map((x) => x.nom).join(',') === 'scan_token,colony_activity,web_search' && resultats.every((x) => x.ok), 'la page voit chaque outil appele et son resultat');
     eq(texte, 'Let me look.\n\nPEPE has $25M liquidity [1].', 'le texte arrive au fil de l eau, les etapes separees');
     ok(cl.vus.every((p) => p.tools && p.tools.length === A.definitions({ recherche: true }).length && !p.tool_choice), 'les outils sont declares a chaque appel, sans forcer');
@@ -93,15 +129,57 @@ const m = C.modele('sonnet-5');
     const nl = JSON.parse((await O.new_launches({ limit: 1 })).texte);
     ok(nl.fresh.length === 1 && nl.fresh[0].sym === 'NEW' && /below the buy floor/.test(nl.fresh[0].decision) && nl.watched[0].verdict.startsWith('too old'),
        'new_launches : le plus frais d abord, avec la decision de la colonie, et ce qu elle surveille');
+    /* La licence GoPlus : un refus du Warden EST la phrase GoPlus (vetoWarden). Le
+       resultat vendu la credite, en donnees ET dans la note que lit le modele. */
+    const Sw = src({ vue: () => ({ candidats: [{ sym: 'HP', addr: '0xh', minutes: 2, liq: 9000, mc: 12000, ch_m5: 3, score: 40, refus: 'honeypot', quiRefuse: 'warden', origine: 'pools' },
+                                              { sym: 'TX', addr: '0xx', minutes: 3, liq: 9000, mc: 12000, ch_m5: 3, score: 40, refus: 'sell tax 25%', quiRefuse: 'warden', origine: 'pools' }], surveillance: [] }) });
+    const hp = (await A.outils(Sw).new_launches({})).texte, hpj = JSON.parse(hp);
+    ok(hpj.fresh.map((x) => x.decision).join('|') === 'not bought: honeypot|not bought: sell tax 25%'
+       && JSON.stringify(hpj.attribution) === JSON.stringify({ security: 'Powered by Go+ Security', url: 'https://gopluslabs.io' })
+       && /Powered by Go\+ Security \(https:\/\/gopluslabs\.io\)/.test(hpj.note),
+       'new_launches : un refus du Warden (« honeypot », donnee GoPlus) part avec « Powered by Go+ Security » et son lien, en donnees ET dans la note du modele');
+    ok(JSON.parse((await O.new_launches({ limit: 1 })).texte).attribution.url === 'https://gopluslabs.io',
+       'et toujours, meme sans refus du Warden : la note et « passed the colony s gates » tiennent compte de GoPlus');
     ok((await O.wallet_intel({ address: 'nope' })).erreur && vues.length === 0, 'wallet_intel : une adresse hors forme ne touche aucun service');
     const wi = await O.wallet_intel({ address: '0x' + 'AB'.repeat(20) });
-    ok(vues[0][0] === 'adresse' && vues[0][1] === '0x' + 'ab'.repeat(20) && /repeat launcher/.test(wi.texte) && /pons × 4 \(source: pons registry\)/.test(wi.texte),
-       'wallet_intel : l OSINT de l adresse, constats d abord, chaque fait avec sa source');
+    /* En DONNEES depuis le 26 septembre 2026 (l'API rendait `resultat: null`
+       pour un texte libre) : l'intention ne change pas — constats d'abord,
+       chaque fait avec sa source. */
+    const wij = JSON.parse(wi.texte);
+    ok(vues[0][0] === 'adresse' && vues[0][1] === '0x' + 'ab'.repeat(20) && Object.keys(wij).indexOf('findings') < Object.keys(wij).indexOf('facts')
+       && /repeat launcher/.test(wij.findings[0].text) && wij.findings[0].severity === 'HIGH'
+       && JSON.stringify(wij.facts[0]) === JSON.stringify({ predicate: 'LAUNCHED TOKENS ON', value: 'pons × 4', sources: ['pons registry'] }),
+       'wallet_intel : l OSINT de l adresse, en donnees, constats d abord, chaque fait avec sa source');
+    ok(JSON.stringify(wij.target) === JSON.stringify({ type: 'address', value: '0x' + 'ab'.repeat(20) }) && wij.passive === true && wij.factCount === 1,
+       'la cible en anglais (address), « passive », et le nombre de faits');
     const mail = await O.osint_lookup({ target: 'someone@example.com' });
     ok(mail.erreur && /not people/.test(mail.erreur) && vues.length === 1, 'osint_lookup refuse une personne (e-mail) : aucun service interroge');
     const dom = await O.osint_lookup({ target: 'example.com' });
     ok(!dom.erreur && vues[1][0] === 'domaine', 'et accepte un domaine');
     ok(A.OSINT_TYPES.join(',') === 'domaine,ip,url,asn,cve', 'l OSINT offert ne vise que l infrastructure');
+
+    /* ---- scan_token : les cases de la colonie en anglais, sans doublon, et les liens de la carte ----
+     * Releve reel du 26 septembre 2026 (LOBSTER) : quatre cases du bytecode,
+     * meme mesure (+16,9 %, 2 395 a 2 398 observations), sous leurs cles
+     * francaises — l'agent qui payait les lisait telles quelles. */
+    const ficheRH = Object.assign({}, fiche, { marche: Object.assign({}, fiche.marche, { chaine: 'robinhood' }),
+      colonie: { observations: 147292, echeance: 30, scan: 'https://site.example/swoge_scan.html?t=' + ADR, faits: [],
+        cases: [{ trait: 'octEmit', case: 'code : sans emission', n: 2395, moyenne: 16.9, assez: true }, { trait: 'octListe', case: 'code : sans liste noire', n: 2398, moyenne: 16.9, assez: true },
+                { trait: 'octPause', case: 'code : sans pause', n: 2396, moyenne: 16.9, assez: true }, { trait: 'octFrais', case: 'code : frais fixes', n: 2398, moyenne: 16.9, assez: true },
+                { trait: 'mc', case: 'mc <10k', n: 32821, moyenne: -4.3, assez: true }, { trait: 'age×mc', case: '2-6 h × mc <10k', n: 12, moyenne: -1.7, assez: false }] } });
+    const L = (a) => ({ card: 'https://api.example/scan/carte/' + a + '.png', share: 'https://api.example/s/' + a, page: 'https://site.example/swoge_scan.html?t=' + a });
+    const st = await A.outils(src({ fiche: async () => ficheRH, liensScan: L })).scan_token({ address: ADR });
+    const cs = st.carte.colonie.cases;
+    eq(cs.map((c) => c.trait + ' = ' + c.case + ' (' + c.n + ')').join(' | '),
+       'Contract bytecode = bytecode: no mint, no blacklist, no pause, no fee setter (2395) | Market cap = cap <$10k (32821) | Pool age × Market cap = 2-6 h × cap <$10k (12)',
+       'scan_token : les cases en anglais, la meme mesure une seule fois (la plus petite des n)');
+    ok(!/code : |octEmit|emission|liste noire/.test(st.texte) && /Contract bytecode = bytecode: no mint/.test(st.texte) && /too few to conclude/.test(st.texte),
+       'le texte lu par l agent : plus aucune cle francaise, et « trop peu » reste dit sous 30 observations');
+    ok(st.carte.links && st.carte.links.card === L(ADR).card && st.carte.links.share === L(ADR).share && st.texte.includes(L(ADR).card) && st.texte.includes(L(ADR).share),
+       'la colonie connait le jeton : les liens de sa carte partageable (image et page de partage), en donnees ET dans le texte');
+    ok(ficheRH.colonie.cases[0].trait === 'octEmit' && ficheRH.colonie.cases.length === 6, 'la fiche en cache n est pas touchee (la page SwoleMind la lit aussi)');
+    const sansColonie = await A.outils(src({ liensScan: L })).scan_token({ address: ADR });
+    ok(!sansColonie.carte.links && !/scan\/carte/.test(sansColonie.texte), 'hors Robinhood Chain (pas de colonie) : pas de lien vers une carte qui n existe pas');
   }
 
   console.log('\n-- 3. les bornes --');
@@ -172,13 +250,35 @@ const m = C.modele('sonnet-5');
        'la route prend l adresse dans la session, jamais dans le corps, et ne sert que Claude');
   }
 
-  console.log('\n-- 6. les appels Telegram suivis (26 septembre 2026) --');
+  console.log('\n-- 6. les appels Telegram suivis : offerts seulement avec TG_APPELS_VENTE=1 (26 septembre 2026) --');
   {
+    /* Eteint (le defaut) : l'agent des joueurs — facture a l'usage — ne le voit
+       pas, et un modele qui l'appellerait quand meme recoit « unknown tool »
+       comme pour un nom invente ; le suivi n'est jamais lu. */
+    let lus = 0;
+    const S6 = src({ appels: () => { lus++; return { calls: [], channels: [] }; } });
+    const tente = () => faux([{ stop: 'tool_use', content: [{ type: 'tool_use', id: 'tg', name: 'telegram_calls', input: { hours: 12 } },
+      { type: 'tool_use', id: 'zz', name: 'invented_tool', input: {} }] }]);
+    const c0 = tente();
+    await A.repond({ m, messages: [{ role: 'user', content: 'telegram calls?' }] }, { client: c0, src: S6 });
+    const r0 = c0.vus[1].messages[2].content;
+    ok(!c0.vus[0].tools.some((t) => t.name === 'telegram_calls'), 'eteint : l outil n est pas declare au modele');
+    ok(r0[0].is_error && r0[0].content === r0[1].content && /unknown tool/.test(r0[0].content) && lus === 0,
+       'eteint : l appeler quand meme = un outil inconnu, mot pour mot, et le suivi n est pas lu [' + r0[0].content + ']');
+
+    /* Allume : la couverture d'avant, inchangee. */
+    process.env.TG_APPELS_VENTE = '1';
     let q = null;
     const O2 = A.outils({ appels: (x) => { q = x; return { calls: [{ channel: 'XandersOGCALLS', symbol: 'WICKR', changeSinceDetectionPct: 12.5 }], channels: [], method: 'not advice' }; } });
     const r = await O2.telegram_calls({ channel: 'XandersOGCALLS', hours: 12, limit: 5 });
     ok(q.channel === 'XandersOGCALLS' && q.hours === 12 && q.limit === 5 && JSON.parse(r.texte).calls[0].symbol === 'WICKR', 'telegram_calls transmet les filtres et rend les appels suivis en donnees');
     ok(/not switched on/.test((await A.outils({}).telegram_calls({})).erreur), 'suivi eteint : une erreur dite, pas une liste vide trompeuse');
+    const c1 = tente();
+    await A.repond({ m, messages: [{ role: 'user', content: 'telegram calls?' }] }, { client: c1, src: S6 });
+    const r1 = c1.vus[1].messages[2].content;
+    ok(c1.vus[0].tools.some((t) => t.name === 'telegram_calls') && !r1[0].is_error && lus === 1 && r1[1].is_error,
+       'allume : declare au modele et execute ; un nom invente reste inconnu');
+    delete process.env.TG_APPELS_VENTE;
   }
 
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));

@@ -156,6 +156,22 @@ const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(
     const d0 = C.MESURE.depassements; f = faux();
     r = await C.repond(q({ addr: '0xgros' }), { cours, solde: f.api, fournisseur: async () => ({ usage: { input_tokens: 5e6, output_tokens: 1e6 } }) });
     ok(f.regles[0][1] === f.regles[0][0] && C.MESURE.depassements === d0 + 1, 'un coût au-delà de la réserve est borné à la réserve, et le dépassement est compté');
+
+    /* Les compteurs DURABLES (compteurs.js, 26 septembre 2026) : ce qui a été débité, contre le coût réel. */
+    const notes = [];
+    C.COMPTEUR.note = (e, i) => notes.push(Object.assign({ e }, i));
+    f = faux();
+    r = await C.repond(q({ addr: '0xcpt' }), { cours, solde: f.api, fournisseur: async () => ({ texte: 'ok', usage }) });
+    const cout = C.coutUsd(C.modele('sonnet-5'), usage);
+    ok(r.ok && notes.length === 1 && notes[0].e === 'chat_facture' && notes[0].outil === 'chat:sonnet-5' && notes[0].canal === 'chat' && notes[0].qui === '0xcpt'
+       && notes[0].usd === r.factureUsd && Math.abs(notes[0].coutUsd - cout) < 1e-12, 'une reponse facturee est comptee : ' + (notes[0] && notes[0].usd) + ' $ facture contre ' + cout.toFixed(5) + ' $ de cout reel');
+    await C.repond(q({ addr: '0xcpt2', canal: 'mcp' }), { cours, solde: faux().api, pireCas: () => 0.01, fournisseur: async () => ({ texte: 'ok', usage }) });
+    eq(notes[1] && notes[1].canal, 'mcp', 'le canal donne par l appelant (ask_agent par MCP) est garde');
+    await C.repond(q({ addr: '0xcpt3' }), { cours, solde: faux().api, pireCas: () => 0.01, fournisseur: async () => ({ texte: 'ok', usage }) });
+    eq(notes[2] && notes[2].canal, 'agent', 'l agent (plusieurs appels, pireCas) : canal agent');
+    await C.repond(q({ addr: '0xcpt4' }), { cours, solde: faux().api, fournisseur: async () => { throw new Error('overloaded'); } });
+    eq(notes.length, 3, 'un echec du fournisseur (rien facture) n est pas compte comme facture');
+    C.COMPTEUR.note = null;
   }
 
   console.log('\n-- 5. de bout en bout : vrai serveur, vrai SDK, faux Anthropic --');

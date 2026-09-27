@@ -113,13 +113,16 @@ const SCHEMA_2612 = { $schema: 'https://json-schema.org/draft/2020-12/schema', t
 
 /**
  * deps = { asset ($SWOGE), usdg (adresse, ou null : pas d'USDG), payTo, chaine, cours() ($ par $SWOGE),
- *          ethUsd(), prixOutilUsd(outil), maintenant(), journal(ligne) }
+ *          ethUsd(), prixOutilUsd(outil), maintenant(), journal(ligne),
+ *          note(evenement, info) — les compteurs durables (compteurs.js), optionnels,
+ *          bazaar(outil) — l'extension `bazaar` du 402 (decouverte.bazaar), optionnelle }
  * chaine = { gazPrix() (wei), soldeGaz() (wei), porteGaz (adresse), solde(from), allowance(from),
  *            noncesJeton(from), nonceLibre(from, nonce), soldeUsdg(from), autorisationLibre(from, nonce),
- *            simule(methode, args), regle(methode, args) → { hash, ok, gasUsed } }
+ *            simule(methode, args), regle(methode, args) → { hash, ok, gasUsed, gazPrix } }
  */
 function cree(deps) {
   const emis = new Map();          /* devis émis : outil|montant → expiration (ms) */
+  const prixEmis = new Map();      /* même clé → le prix en $ de ce devis (pour compter ce qui a été payé) */
   const pris = new Map();          /* from|nonce déjà présentés → deadline (ms) : pas de rejeu ; oubliés une fois la deadline passée (la signature ne vaut plus rien) */
   const MESURE = { devis: 0, payes: 0, refuses: 0, echecsReglement: 0, gasUsed: [], gazParMethode: {} };
   let file = Promise.resolve();    /* un règlement à la fois : le portefeuille de gaz n'a qu'un nonce */
@@ -146,31 +149,46 @@ function cree(deps) {
     return { usd: Number(montantUsdg ? (Number(montantUsdg) / 1e6).toFixed(6) : (Math.round(usd * 1e6) / 1e6)), gazUsd: Math.round(gazUsd * 1e6) / 1e6, montant, montantUsdg };
   }
 
-  /** Le 402 : ce qu'il faut payer, et le devis retenu DELAI_S secondes. */
-  async function exige(outil, url, raison, args) {
+  /**
+   * Le 402 : ce qu'il faut payer, et le devis retenu DELAI_S secondes.
+   * `opts.devis` : les mêmes exigences rendues par un DEVIS gratuit (agentic.js) —
+   * payables telles quelles, mais pas comptées comme un 402 émis (MESURE.devis).
+   */
+  async function exige(outil, url, raison, args, opts) {
     const p = await prix(outil, args);
     const cleDevis = outil + '|' + empreinte(args);
     if (!p) return null;
-    for (const [k, v] of emis) if (v < maintenant()) emis.delete(k);
+    for (const [k, v] of emis) if (v < maintenant()) { emis.delete(k); prixEmis.delete(k); }
     const fin = maintenant() + DELAI_S * 1000;
     const accepts = [];
     /* L'USDG d'abord : la spec préfère eip3009, et c'est ce que les agents détiennent. */
     if (p.montantUsdg) {
       emis.set(cleDevis + '|' + deps.usdg.toLowerCase() + '|' + p.montantUsdg, fin);
+      prixEmis.set(cleDevis + '|' + deps.usdg.toLowerCase() + '|' + p.montantUsdg, p.usd);
       accepts.push({ scheme: 'exact', network: RESEAU, amount: p.montantUsdg, asset: deps.usdg, payTo: deps.payTo, maxTimeoutSeconds: DELAI_S,
         extra: { assetTransferMethod: 'eip3009', name: DOMAINE_USDG.name, version: DOMAINE_USDG.version } });
     }
     if (p.montant) {
       emis.set(cleDevis + '|' + deps.asset.toLowerCase() + '|' + p.montant, fin);
+      prixEmis.set(cleDevis + '|' + deps.asset.toLowerCase() + '|' + p.montant, p.usd);
       accepts.push({ scheme: 'exact', network: RESEAU, amount: p.montant, asset: deps.asset, payTo: deps.payTo, maxTimeoutSeconds: DELAI_S,
         extra: { assetTransferMethod: 'permit2', name: DOMAINE_JETON.name, version: DOMAINE_JETON.version } });
     }
-    MESURE.devis++;
+    if (!(opts && opts.devis)) MESURE.devis++;
     const en = [p.montantUsdg ? 'USDG' : null, p.montant ? '$SWOGE' : null].filter(Boolean).join(' or ');
+    /* L'extension `bazaar` (schémas d'entrée et de sortie, exemple fixe) : ce que
+       lisent les annuaires x402 (@agentcash/discovery, x402scan, les
+       facilitateurs). Audit AgentCash du 26 septembre 2026 : 16 erreurs
+       « Input/Output schema is missing », 2 par outil payable, toutes à
+       `extensions.bazaar` ; essai local avec l'extension : 0. Jamais bloquante :
+       un 402 sans elle reste payable. */
+    let bz = null;
+    if (deps.bazaar) { try { bz = deps.bazaar(outil) || null; } catch (e) { bz = null; } }
     return { x402Version: X402_VERSION, error: raison || 'PAYMENT-SIGNATURE header is required',
       resource: { url, description: 'SwogeAgentic tool ' + outil + ' — $' + p.usd + ' in ' + en + ' (tool price + settlement gas, minimum $' + MIN_USD + ')', mimeType: 'application/json' },
       accepts,
-      extensions: { eip2612GasSponsoring: { info: { description: 'The server accepts an EIP-2612 permit to the canonical Permit2 contract (value = the exact payment amount) and pays the gas.', version: '1' }, schema: SCHEMA_2612 } } };
+      extensions: Object.assign({ eip2612GasSponsoring: { info: { description: 'The server accepts an EIP-2612 permit to the canonical Permit2 contract (value = the exact payment amount) and pays the gas.', version: '1' }, schema: SCHEMA_2612 } },
+        bz ? { bazaar: bz } : {}) };
   }
 
   /** Vérifie un PAYMENT-SIGNATURE pour cet outil. Rend { ok, methode, args, from, montant } ou { ok:false, raison }. */
@@ -297,16 +315,21 @@ function cree(deps) {
    * l'outil ({ ok, ... }) ; rien n'est réglé s'il échoue.
    * Rend { status, entetes, corps }.
    */
-  async function traite({ outil, url, entete, sert, args }) {
+  async function traite({ outil, url, entete, sert, args, canal, qui, sonde }) {
     const json = (status, corps, entetes) => ({ status, entetes: Object.assign({ 'content-type': 'application/json' }, entetes || {}), corps: JSON.stringify(corps) });
+    /* Les compteurs durables (compteurs.js) : 402 émis, payé, échec — `qui` est
+       l'empreinte d'IP avant paiement, l'adresse VÉRIFIÉE du payeur après. */
+    const note = (ev, info) => { if (deps.note) { try { deps.note(ev, Object.assign({ outil, canal: canal || 'rest' }, info)); } catch (e) { /* jamais bloquant */ } } };
     if (!entete) {
       const e = await exige(outil, url, null, args);
       if (!e) return json(503, { ok: false, raison: 'x402 payment is unavailable right now (price or gas unknown)' });
+      note('demande402', { qui, sorte: sonde ? 'sonde' : 'demande' });
       return json(402, Object.assign({ ok: false }, e), { 'payment-required': b64(e) });
     }
     const v = await verifie(entete, outil, args);
     if (!v.ok) {
       MESURE.refuses++;
+      note('echec', { qui, sorte: 'paiement_refuse:' + v.raison });
       const e = await exige(outil, url, v.raison + (v.detail ? ': ' + v.detail : ''), args);
       return json(402, Object.assign({ ok: false }, e || {}, { raison: v.raison, detail: v.detail || null }), e ? { 'payment-required': b64(e) } : {});
     }
@@ -315,12 +338,14 @@ function cree(deps) {
     if (!r || !r.ok) {
       /* L'outil a échoué : on ne règle PAS — la signature n'est jamais soumise, le payeur ne paie rien. */
       pris.delete(v.cleNonce);
+      note('echec', { qui: v.from, sorte: 'outil' });
       return json(r && r.code === 400 ? 400 : 502, { ok: false, raison: (r && r.raison) || 'the tool failed — nothing was charged', paye: false });
     }
     const reglement = await enFile(() => deps.chaine.regle(v.methode, v.args)).catch((e) => ({ ok: false, erreur: String(e && (e.reason || e.message) || e).slice(0, 160) }));
     const reponse = { success: !!reglement.ok, transaction: reglement.hash || '', network: RESEAU, payer: v.from };
     if (!reglement.ok) {
       MESURE.echecsReglement++;
+      note('echec', { qui: v.from, sorte: 'reglement' });
       reponse.errorReason = 'unexpected_settle_error';
       return json(402, { ok: false, raison: 'the payment could not be settled — the result is withheld and nothing was charged', detail: reglement.erreur || null },
         { 'payment-response': b64(reponse) });
@@ -333,7 +358,17 @@ function cree(deps) {
       if (MESURE.gasUsed.length > 100) MESURE.gasUsed.shift();
       if (l.length > 100) l.shift();
     }
-    if (deps.journal) deps.journal({ t: maintenant(), outil, payer: v.from, asset: v.asset, montant: v.montant, transaction: reglement.hash, methode: v.methode, gasUsed: reglement.gasUsed || null });
+    if (deps.journal) deps.journal({ t: maintenant(), outil, payer: v.from, asset: v.asset, montant: v.montant, transaction: reglement.hash, methode: v.methode, gasUsed: reglement.gasUsed || null, gazPrix: reglement.gazPrix || null });
+    /* Ce qui a été payé, en $ : exact en USDG (6 décimales), le prix du devis en $SWOGE.
+       Ce que ça nous a coûté : le gaz réel du règlement (gasUsed × prix payé × ETH). */
+    const cleP = outil + '|' + empreinte(args) + '|' + String(v.asset).toLowerCase() + '|' + v.montant;
+    const usd = deps.usdg && meme(v.asset, deps.usdg) ? Number(v.montant) / 1e6 : (prixEmis.has(cleP) ? prixEmis.get(cleP) : null);
+    let coutUsd = null;
+    if (reglement.gasUsed && reglement.gazPrix) {
+      const eth = await Promise.resolve().then(() => deps.ethUsd()).catch(() => null);
+      if (eth > 0) coutUsd = Number(ethers.BigNumber.from(reglement.gasUsed).mul(ethers.BigNumber.from(reglement.gazPrix))) / 1e18 * eth;
+    }
+    note('paye_x402', { qui: v.from, usd, coutUsd, sorte: meme(v.asset, deps.usdg) ? 'USDG' : 'SWOGE' });
     return json(200, Object.assign({}, r, { x402: { transaction: reglement.hash, network: RESEAU, amount: v.montant, asset: v.asset } }), { 'payment-response': b64(reponse) });
   }
 
@@ -388,7 +423,8 @@ function chaineEthers({ rpc, cle, asset, usdg }) {
       try { rc = await tx.wait(1); }
       catch (e) { rc = e && e.receipt ? e.receipt : await p.waitForTransaction(tx.hash, 1, 90000).catch(() => null); }
       if (!rc) return { ok: false, hash: tx.hash, erreur: 'settlement receipt not found in time' };
-      return { ok: rc.status === 1, hash: tx.hash, gasUsed: rc.gasUsed && rc.gasUsed.toString() };
+      const gp = rc.effectiveGasPrice || tx.gasPrice;
+      return { ok: rc.status === 1, hash: tx.hash, gasUsed: rc.gasUsed && rc.gasUsed.toString(), gazPrix: gp ? gp.toString() : null };
     },
   };
 }

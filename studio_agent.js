@@ -45,8 +45,16 @@ const SORTIE_MAX = 4000;
 /* Les définitions d'outils, à la règle des réserves (un jeton pour deux
    caractères). Mesuré le 26 septembre 2026 avec les 7 outils : 3 120
    caractères, soit 1 560 jetons — l'ancienne borne de 1 500 ne tenait plus.
-   L'essai vérifie que la borne couvre toujours les définitions. */
-const OUTILS_JETONS = 2000;
+   Remesuré le même jour après la mention GoPlus, recherche web comprise :
+   7 outils par défaut 3 165 caractères (1 583 jetons) ; 8 avec
+   TG_APPELS_VENTE=1, 3 804 caractères (1 902 jetons) — le cas qui compte.
+   Remesuré le même jour après les descriptions « quand appeler » (découverte) :
+   7 outils 4 339 caractères (2 170 jetons), 8 avec TG_APPELS_VENTE=1 5 038
+   caractères (2 519 jetons) — 2 000 ne tenait plus, d'où 2 600. Le pire cas
+   d'ask_agent monte d'autant : 1,278 $ → 1,289 $ (Sonnet 5, tâche de 2 000
+   caractères, marge comprise) ; la facture, elle, reste le réel.
+   L'essai vérifie que la borne couvre toujours les définitions, réglage allumé. */
+const OUTILS_JETONS = 2600;
 const SYSTEME_JETONS = 500;
 const PRIX_RECHERCHE_USD = 0.005;      /* Perplexity Search API, la requête réussie */
 
@@ -58,34 +66,101 @@ const SYSTEME = [
   'You can only READ: you cannot buy, sell, sign or post anything. If asked to, say so.',
 ].join(' ');
 
+/* ---- CE QUI N'EST PAS OFFERT (decision du proprietaire, 26 septembre 2026) ----
+ * Les conditions de Telegram (« Terms of Service for Content Licensing »,
+ * https://telegram.org/tos/content-licensing, relues le 26 septembre 2026)
+ * interdisent « the scraping, indexing, harvesting, aggregation or use of data
+ * obtained from its platform to [...] engage in the development, enhancement,
+ * benchmarking or deployment of artificial intelligence [...] ». Un outil
+ * PAYANT vendu a d'autres agents IA (`telegram_calls`) en est l'usage le plus
+ * expose. Decision : la colonie continue de lire les apercus publics
+ * (tg_canal, tg_appels, tg_decouverte) et la carte gratuite de la page SWOGE AI
+ * les montre ; l'outil, lui, n'est offert NULLE PART — ni a l'agent des
+ * joueurs (facture a l'usage), ni a l'API, ni au MCP, ni en x402, ni dans
+ * openapi.json / llms.txt — tant que TG_APPELS_VENTE ne vaut pas '1'.
+ * LE SEUL ROBINET : `definitions` ci-dessous. Tout ce qui liste un outil en
+ * derive (agentic.js, agentic_mcp.js, decouverte.js, x402, les routes, le
+ * llms.txt), et rien ne s'execute sans y etre : agentic.js refuse un outil
+ * absent du catalogue, la boucle de `repond` n'execute que les outils DECLARES
+ * au modele. Eteint, `telegram_calls` est donc un outil inconnu, exactement :
+ * 404 avec une cle, 401 sans, -32602 en MCP, « unknown tool » pour le modele —
+ * et rien de facture. Lu a chaque appel (pas au demarrage) : l'essai bascule
+ * le reglage a chaud. TG_APPELS_NOTIFIE (vers NOTRE Telegram) n'y est pour rien. */
+const NON_OFFERTS = () => (process.env.TG_APPELS_VENTE === '1' ? [] : ['telegram_calls']);
+
+/* ---- LES DESCRIPTIONS : QUAND APPELER, PUIS CE QUI REVIENT (26 septembre 2026) ----
+ * Elles nourrissent tout ce qu'un autre agent lit avant de choisir : le modele
+ * de la page, /agentic/tools, le MCP, openapi.json (la PREMIERE phrase devient
+ * le `summary`, que x402scan affiche tel quel), le manifeste x402 et llms.txt
+ * (premiere phrase aussi). Un annuaire d'outils se parcourt par la tache, pas
+ * par le nom : la premiere phrase dit donc QUAND appeler (« Use this when… »,
+ * « Use this before… »), la suite ce qui revient, d'ou ca vient et ses limites.
+ * Jamais « safe » : des mesures avec leur effectif. studio_agent.test.js le
+ * verifie sur l'intention (premiere phrase), pas mot pour mot. */
+/* Les outils que agentic.js ajoute pour l'API (ask_agent, generate_image,
+   generate_video, video_status), a la meme regle — agentic.definitions les lit ici. */
+const DESCRIPTIONS_API = Object.freeze({
+  ask_agent: 'Use this when a question needs several of these tools chained together and a written answer, for example comparing tokens or researching a launcher. '
+    + 'SwogeAgentic, a Claude agent, picks the tools, reads the numbers and answers in Markdown with its sources and sample sizes. '
+    + 'API key only: billed at its real cost, up to the quoted maximum ("quote": true gives it). Takes 10 to 60 seconds.',
+  generate_image: 'Use this when you need an image: an illustration, a meme, a post visual, or the SWOGE character (a prompt that names SWOGE is drawn from the official character). '
+    + 'Made with Grok Imagine (default) or ChatGPT Image, speed or quality, 1, 2 or 4 images. Returns image URLs. '
+    + 'With an API key: billed at its real cost, up to the quoted maximum. Without a key (x402): a fixed price for that exact request, quoted in the 402.',
+  generate_video: 'Use this when you need a short video clip, 6 or 10 seconds, made with Grok Imagine. '
+    + 'Returns a video id at once; poll it with video_status (free) until it is done and gives its URL. '
+    + 'API key only: billed at its real cost when the video arrives, up to the quoted maximum, nothing if it fails.',
+  video_status: 'Use this when you started a video with generate_video and want to know whether it is ready. '
+    + 'Returns pending, done with its URL, or failed and not charged, plus what was billed. Free.',
+});
+
 /* Les outils, au format de l'API Messages (name, description, input_schema). */
 function definitions(actifs) {
   const d = [
-    { name: 'scan_token', description: 'Read live data on a token by its EVM contract address (0x…): market (DexScreener, deepest pool on any chain), contract security (GoPlus: honeypot, taxes, owner powers, holder concentration) and, for Robinhood Chain tokens, what the SWOGE AI colony measured on tokens with the same traits (with observation counts).',
+    /* « Powered by Go+ Security » : la mention que la licence de l'API GoPlus
+       demande (https://docs.gopluslabs.io/reference/api-license-agreement-new,
+       relue le 26 septembre 2026). Dans la PREMIERE phrase : c'est elle que
+       llms.txt et le resume d'openapi.json reprennent. */
+    { name: 'scan_token', description: 'Use this before buying, listing or writing about an EVM token, to check its market and its contract in one call (contract security Powered by Go+ Security, https://gopluslabs.io). '
+        + 'Give the contract address (0x…), on any chain DexScreener indexes. Returns the deepest pool (price, liquidity, market cap, 24 h volume and change, from DexScreener), '
+        + 'the GoPlus contract checks where GoPlus covers the chain (honeypot, buy and sell tax, mint, pause, blacklist, hidden owner, holder concentration) and, for Robinhood Chain tokens, '
+        + 'the average 30-minute move the SWOGE AI colony measured on past tokens sharing each trait, with its number of observations, plus a shareable scan card. '
+        + 'Measurements, never a buy or sell signal; unknown stays unknown.',
       input_schema: { type: 'object', properties: { address: { type: 'string', description: 'EVM contract address, 0x followed by 40 hex characters' } }, required: ['address'] } },
-    { name: 'colony_activity', description: 'What the SWOGE AI colony (an autonomous paper-trading colony on Robinhood Chain that learns from every token it watches) is doing: open positions, latest buys and sells with their results, the real-money mirror record, and its overall paper ledger. Optionally filtered to one token symbol or address.',
+    { name: 'colony_activity', description: 'Use this when you want to know what the SWOGE AI colony, an autonomous paper-trading colony on Robinhood Chain, holds or did recently, overall or on one token. '
+        + 'Returns its open positions, latest buys and sells with results and reasons, its paper ledger (trades, average result, share of winners) and the record of the mirror that repeats some trades with real money. '
+        + 'Optionally filtered to one token symbol or address. Paper trades are measurements, never advice.',
       input_schema: { type: 'object', properties: { token: { type: 'string', description: 'optional token symbol (e.g. TELEPAD) or address to filter on' } } } },
-    { name: 'swoge_economy', description: 'The $SWOGE token economy read on-chain: total supply, burnt, casino vault, and the current $SWOGE price in USD.',
+    { name: 'swoge_economy', description: 'Use this when you need the current state of the $SWOGE token economy. '
+        + 'Returns total supply, the amount burned and the casino vault balance (each with its share of supply), the staking APR and cap, read on-chain on Robinhood Chain, and the $SWOGE price in USD from DexScreener.',
       input_schema: { type: 'object', properties: {} } },
     /* ---- AJOUTES LE 26 SEPTEMBRE 2026 (etape 3 de SwogeAgentic) ----
        Trois lectures qui existaient deja sur le serveur, jamais exposees :
        ce que la colonie vient de trouver, l'historique d'un lanceur (OSINT
        passif sur une adresse), la reconnaissance passive d'une infrastructure. */
-    { name: 'new_launches', description: 'The newest tokens the SWOGE AI colony just found on Robinhood Chain (minutes old), with pool size, cap, 5-minute move and why the colony did or did not buy each one, plus the older tokens it keeps watching and its verdict on each.',
+    { name: 'new_launches', description: 'Use this when you want the newest tokens on Robinhood Chain, minutes after their pool opens, with what an autonomous trading colony decided about each. '
+        + 'Returns up to 30 fresh tokens (age, pool size, market cap, 5-minute move, score, and why the SWOGE AI colony did or did not buy it) and the older tokens it keeps watching with its verdict on each. '
+        + 'Its contract checks use GoPlus data: Powered by Go+ Security (https://gopluslabs.io). Live reads, never advice.',
       input_schema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 30, description: 'how many fresh tokens (default 15)' } } } },
-    { name: 'wallet_intel', description: 'What is known about an EVM wallet address: whether it launched tokens on the launchpads we index, which tokens it deployed, and what the SWOGE AI colony measured on launchers like it (with observation counts). Passive: the address is never contacted.',
+    { name: 'wallet_intel', description: 'Use this when you need to know who is behind an EVM address, typically a token deployer, before trusting what it launches. '
+        + 'Returns findings first (such as repeat launching), then facts: the tokens it deployed on the launchpads the colony indexes and what the SWOGE AI colony measured on launchers like it (with observation counts), each with its source. '
+        + 'Passive: the address is never contacted.',
       input_schema: { type: 'object', properties: { address: { type: 'string', description: 'EVM address, 0x followed by 40 hex characters' } }, required: ['address'] } },
-    { name: 'osint_lookup', description: 'Passive reconnaissance on infrastructure: a domain, an IP address, a website URL, an autonomous system (AS15169) or a CVE. Returns DNS, certificates, registration, hosting and exposure findings, each with its source. People (e-mails, usernames, phone numbers, names) are not accepted.',
+    { name: 'osint_lookup', description: 'Use this when you need passive reconnaissance on internet infrastructure: a domain, an IP address, a website URL, an autonomous system (AS15169) or a CVE id. '
+        + 'Returns findings first, then DNS, certificate, registration, hosting and exposure facts, each with its source. '
+        + 'Passive only; people (e-mails, usernames, phone numbers, names) are refused.',
       input_schema: { type: 'object', properties: { target: { type: 'string', description: 'a domain, IP, URL, AS number or CVE id' } }, required: ['target'] } },
     /* ---- AJOUTE LE 26 SEPTEMBRE 2026 : l'agent qui suit les canaux Telegram (tg_appels.js) ---- */
-    { name: 'telegram_calls', description: 'Robinhood Chain tokens called in public Telegram call channels that SWOGE watches: each call with its post link, price at detection, change since and best since, and a per-channel score counted only on fresh calls (none under 10 calls).',
+    { name: 'telegram_calls', description: 'Use this when you want the Robinhood Chain tokens that public Telegram call channels are pushing, and how those calls did. '
+        + 'Returns each call with its post link, price at detection, change since and best since, and a per-channel score counted on fresh calls only (none under 10 calls). Not advice.',
       input_schema: { type: 'object', properties: { channel: { type: 'string', description: 'optional channel name to filter on' },
         hours: { type: 'integer', minimum: 1, maximum: 168, description: 'look back this many hours (default 24)' },
         limit: { type: 'integer', minimum: 1, maximum: 50, description: 'how many calls (default 20)' } } } },
   ];
-  if (actifs && actifs.recherche) d.push({ name: 'web_search', description: 'Search the web (Perplexity). Returns ranked results with title, URL, date and an extract. Use it for news, projects, people, anything outside SWOGE data.',
+  if (actifs && actifs.recherche) d.push({ name: 'web_search', description: 'Use this when the answer is outside SWOGE data: news, projects, teams, people, anything on the open web. '
+    + 'Returns ranked results with title, URL, date and an extract (Perplexity Search).',
     input_schema: { type: 'object', properties: { query: { type: 'string', description: 'the search query, as you would type it' } }, required: ['query'] } });
-  return d.map((x) => Object.assign({ eager_input_streaming: true }, x));
+  const retenus = NON_OFFERTS();
+  return d.filter((x) => !retenus.includes(x.name)).map((x) => Object.assign({ eager_input_streaming: true }, x));
 }
 
 /** Le pire cas d'une tâche, en USD avant marge — `messages` nettoyés par studio_chat. */
@@ -106,13 +181,45 @@ const adresseOk = (a) => /^0x[0-9a-fA-F]{40}$/.test(String(a || ''));
    n'importe quel agent une recherche sur des personnes, en serie, serait
    offrir du profilage. Le module sait faire plus ; ce n'est pas exposé ici. */
 const OSINT_TYPES = ['domaine', 'ip', 'url', 'asn', 'cve'];
-/** Un rapport OSINT, en texte court pour un modele : constats d'abord, puis faits sources. */
-function resumeOsint(r) {
-  const cst = (r.constats || []).slice(0, 10).map((c) => '- [' + c.etiquette + '] ' + c.dit);
-  const fts = (r.faits || []).slice(0, 30).map((f) => '- ' + f.predicat + ': ' + String(f.valeur || (f.objet && f.objet.valeur) || f.extrait || '').slice(0, 160)
-    + (f.sources && f.sources.length ? ' (source: ' + f.sources.slice(0, 2).join(', ') + ')' : ''));
-  return 'Target: ' + (r.cible ? r.cible.type + ' ' + r.cible.valeur : '?') + ' (passive, ' + (r.faits || []).length + ' facts)\n'
-    + (cst.length ? 'Findings:\n' + cst.join('\n') + '\n' : 'No finding raised.\n') + (fts.length ? 'Facts:\n' + fts.join('\n') : '');
+/* ---- UN RAPPORT OSINT, EN DONNEES (26 septembre 2026) ----
+ * C'etait un texte (« Target: … Findings: … Facts: … ») : l'agent de la page le
+ * lisait tres bien, mais l'API rend `resultat` en analysant le texte comme du
+ * JSON (agentic.resultatDe) — wallet_intel et osint_lookup, vendus 0,02 $,
+ * rendaient donc `resultat: null`. Memes bornes qu'avant (10 constats, 30
+ * faits, 160 caracteres, 2 sources), memes champs, constats d'abord ; les
+ * types de cible en anglais. */
+const TYPES_EN = { adresse: 'address', domaine: 'domain', ip: 'ip', url: 'url', asn: 'asn', cve: 'cve' };
+function rapportOsint(r) {
+  return {
+    target: r && r.cible ? { type: TYPES_EN[r.cible.type] || r.cible.type, value: r.cible.valeur } : null,
+    passive: true,
+    findings: ((r && r.constats) || []).slice(0, 10).map((c) => ({ severity: c.etiquette, text: c.dit })),
+    facts: ((r && r.faits) || []).slice(0, 30).map((f) => ({ predicate: f.predicat,
+      value: String(f.valeur || (f.objet && f.objet.valeur) || f.extrait || '').slice(0, 160), sources: (f.sources || []).slice(0, 2) })),
+    factCount: ((r && r.faits) || []).length,
+  };
+}
+
+/* ---- LE SCAN D'UN JETON, EN ANGLAIS ET AVEC SES LIENS (26 septembre 2026) ----
+ * La fiche (studio_jeton) porte les cases de la colonie sous leurs CLES
+ * internes (« octEmit = code : sans emission ») : l'agent qui paie les lisait
+ * telles quelles, et quatre fois la meme mesure (le bytecode lu une fois,
+ * range sous quatre traits). On passe par carte_scan.casesEnAnglais — la
+ * traduction et le dedoublonnage de la carte partagee — sur une COPIE : la
+ * fiche est en cache, et la page SwoleMind la lit aussi. */
+/* Traduites et dedoublonnees sur TOUTES les cases (`toutes`), puis coupees a
+   6 — au moins les 5 lignes de la carte gratuite. Coupees avant (les 6 cases
+   brutes de la fiche), LOBSTER rendait 3 lignes a l'agent qui paie contre 5 sur
+   la carte gratuite (releve du 26 septembre 2026). */
+const LIGNES_VENDUES = 6;
+function ficheEnAnglais(f, assez) {
+  if (!f || !f.colonie || !Array.isArray(f.colonie.cases)) return f;
+  const brutes = Array.isArray(f.colonie.toutes) ? f.colonie.toutes : f.colonie.cases;
+  const cases = require('./carte_scan').casesEnAnglais(brutes).slice(0, LIGNES_VENDUES)
+    .map((c) => ({ trait: c.traitLabel, case: c.label, n: c.n, moyenne: c.moyenne, assez: c.n >= (assez || 30) }));
+  const colonie = Object.assign({}, f.colonie, { cases });
+  delete colonie.toutes;
+  return Object.assign({}, f, { colonie });
 }
 const coupe = (s) => { s = String(s); return s.length > RESULTAT_CAR_MAX ? s.slice(0, RESULTAT_CAR_MAX) + '\n[truncated]' : s; };
 
@@ -127,8 +234,16 @@ function outils(src) {
   return {
     async scan_token(e) {
       if (!adresseOk(e.address)) return { erreur: 'address must be 0x followed by 40 hex characters' };
-      const f = await src.fiche(String(e.address).toLowerCase());
-      return { texte: src.Jeton.contexte([f]), carte: src.Jeton.carte(f), sources: src.Jeton.sources([f]) };
+      const adr = String(e.address).toLowerCase();
+      const f = ficheEnAnglais(await src.fiche(adr), src.Jeton.OBS_ASSEZ);
+      const carte = src.Jeton.carte(f);
+      let texte = src.Jeton.contexte([f]);
+      /* La carte partageable existe quand la colonie connait le jeton (sa route relit le meme scan). */
+      if (f && f.colonie && src.liensScan) {
+        carte.links = src.liensScan(adr);
+        texte += '\n\nShareable scan card (PNG): ' + carte.links.card + ' — share page (link preview on X, Telegram, Discord): ' + carte.links.share;
+      }
+      return { texte, carte, sources: src.Jeton.sources([f]) };
     },
     async colony_activity(e) {
       const v = src.vue() || {};
@@ -165,19 +280,30 @@ function outils(src) {
         sym: c.sym, address: c.addr, ageMinutes: c.minutes, poolUsd: c.liq, capUsd: c.mc, change5mPct: c.ch_m5, score: c.score,
         decision: c.refus ? 'not bought: ' + c.refus : 'passed the colony\'s gates', origin: c.origine }));
       const suivis = (v.surveillance || []).slice(0, 15).map((w) => ({ sym: w.sym, address: w.addr, timesSeen: w.vu, poolUsd: w.liq, verdict: w.verdict }));
-      return { texte: JSON.stringify({ note: 'Live reads of the SWOGE AI colony on Robinhood Chain: measurements and decisions, never advice.', fresh: frais, watched: suivis }) };
+      /* La licence GoPlus (decision du 26 septembre 2026) : ces decisions sont
+         aussi des donnees GoPlus. Un refus du Warden EST la phrase GoPlus
+         (ai_colonie.vetoWarden : « honeypot », « sell tax 25% »...), celui du
+         Whale peut venir du `top` GoPlus quand la chaine n'a pas ete lue, et
+         la note comme « passed the colony's gates » tiennent compte de GoPlus
+         des qu'il connait le jeton. La mention part donc TOUJOURS, en donnees
+         (`attribution`, reprise telle quelle par agentic.resultatDe : cle, MCP,
+         x402) et dans la note que lit le modele — une forme stable, sans
+         deviner jeton par jeton d'ou vient chaque verdict. */
+      const A = src.Jeton.ATTRIBUTION;
+      return { texte: JSON.stringify({ note: 'Live reads of the SWOGE AI colony on Robinhood Chain: measurements and decisions, never advice. Contract safety verdicts: '
+          + A.security + ' (' + A.url + ').', fresh: frais, watched: suivis, attribution: { security: A.security, url: A.url } }) };
     },
     async wallet_intel(e) {
       if (!adresseOk(e && e.address)) return { erreur: 'address must be 0x followed by 40 hex characters' };
       const r = await src.osint('adresse', String(e.address).toLowerCase());
-      return { texte: resumeOsint(r) };
+      return { texte: JSON.stringify(rapportOsint(r)) };
     },
     async osint_lookup(e) {
       const g = src.detecte(String((e && e.target) || '').trim().slice(0, 300));
       if (!g) return { erreur: 'not a recognised target: give a domain, an IP address, a URL, an AS number or a CVE id' };
       if (!OSINT_TYPES.includes(g.type)) return { erreur: 'only infrastructure is accepted here (domain, IP, URL, AS number, CVE) — not people, e-mails, usernames or phone numbers' };
       const r = await src.osint(g.type, g.valeur);
-      return { texte: resumeOsint(r) };
+      return { texte: JSON.stringify(rapportOsint(r)) };
     },
     async web_search(e) {
       const q = String((e && e.query) || '').trim().slice(0, 400);
@@ -199,6 +325,9 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
   const c = (deps && deps.client) || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 180000 });
   const O = outils(deps.src);
   const tools = definitions({ recherche: !!deps.src.recherche });
+  /* Seul un outil DECLARE s'execute : un nom que le modele invente, ou un outil
+     non offert (NON_OFFERTS) qu'il appellerait quand meme, est « inconnu ». */
+  const declares = new Set(tools.map((t) => t.name));
   const fil = messages.map((x) => ({ role: x.role, content: x.content }));
   const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, recherches_perplexity: 0 };
   const textes = [], sources = [], cartes = [];
@@ -241,7 +370,7 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
     const resultats = [];
     for (let i = 0; i < appels.length; i++) {
       const b = appels[i];
-      if (i >= OUTILS_PAR_ETAPE || !O[b.name] || !b.input || typeof b.input !== 'object') {
+      if (i >= OUTILS_PAR_ETAPE || !declares.has(b.name) || !O[b.name] || !b.input || typeof b.input !== 'object') {
         resultats.push({ type: 'tool_result', tool_use_id: b.id, is_error: true,
           content: i >= OUTILS_PAR_ETAPE ? 'at most ' + OUTILS_PAR_ETAPE + ' tools per step' : 'unknown tool or unreadable input' });
         continue;
@@ -261,5 +390,5 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
   return { texte: textes.join('\n\n'), sources, usage, stop: stop === 'tool_use' ? 'max_steps' : stop, servi, jetons: cartes, etapes };
 }
 
-module.exports = { repond, definitions, outils, pireCasUsd, SYSTEME, OSINT_TYPES, resumeOsint, OUTILS_JETONS, SYSTEME_JETONS,
+module.exports = { repond, definitions, outils, NON_OFFERTS, pireCasUsd, SYSTEME, OSINT_TYPES, rapportOsint, ficheEnAnglais, DESCRIPTIONS_API, OUTILS_JETONS, SYSTEME_JETONS,
   ETAPES_MAX, OUTILS_PAR_ETAPE, RESULTAT_CAR_MAX, SORTIE_MAX };

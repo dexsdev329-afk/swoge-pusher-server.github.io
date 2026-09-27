@@ -110,6 +110,23 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
     ok(JSON.parse(r.corps).accepts[0].amount === a.amount, 'le corps porte aussi les exigences (clients sans en-tetes)');
     const sansCours = X.cree({ asset: SWOGE, payTo: TRESOR, chaine: fausseChaine(), cours: async () => null, ethUsd: async () => 2688, prixOutilUsd: () => 0.01 });
     eq((await sansCours.traite({ outil: 'scan_token', url: 'u', sert: sert({}) })).status, 503, 'sans cours du $SWOGE : 503, pas un prix invente');
+    /* L'extension bazaar (audit AgentCash du 26 septembre 2026 : 16 erreurs, toutes a
+       extensions.bazaar) : posee par deps.bazaar, jamais bloquante. */
+    ok(!('bazaar' in req.extensions), 'sans deps.bazaar : aucune extension bazaar (rien d invente)');
+    const BZ = { info: { input: { type: 'http', method: 'POST', bodyType: 'json', body: { arguments: {} } }, output: { type: 'json' } }, schema: { type: 'object' } };
+    const vus = [];
+    const avecBz = X.cree({ asset: SWOGE, payTo: TRESOR, chaine: fausseChaine(), cours: async () => 0.00002493, ethUsd: async () => 2688, prixOutilUsd: () => 0.01,
+      bazaar: (o) => { vus.push(o); return BZ; } });
+    const rb = await avecBz.traite({ outil: 'scan_token', url: 'u', sert: sert({}), args: { address: '0x' + 'ee'.repeat(20) } });
+    const eb = de64(rb.entetes['payment-required']);
+    ok(rb.status === 402 && JSON.stringify(eb.extensions.bazaar) === JSON.stringify(BZ) && JSON.stringify(JSON.parse(rb.corps).extensions.bazaar) === JSON.stringify(BZ)
+       && eb.extensions.eip2612GasSponsoring && vus.join() === 'scan_token',
+       'deps.bazaar : l extension bazaar dans le 402 (en-tete ET corps), a cote d eip2612GasSponsoring, demandee par NOM d outil seulement');
+    const casse = X.cree({ asset: SWOGE, payTo: TRESOR, chaine: fausseChaine(), cours: async () => 0.00002493, ethUsd: async () => 2688, prixOutilUsd: () => 0.01,
+      bazaar: () => { throw new Error('casse'); } });
+    const rc = await casse.traite({ outil: 'scan_token', url: 'u', sert: sert({}) });
+    ok(rc.status === 402 && !('bazaar' in de64(rc.entetes['payment-required']).extensions) && de64(rc.entetes['payment-required']).accepts.length === 1,
+       'un bazaar qui echoue ne bloque jamais le 402 : payable sans lui');
   }
 
   console.log('\n-- 2. un paiement valide --');
@@ -336,6 +353,32 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
     const bon = await x.traite({ outil: 'generate_image', url: 'u', args: memes, entete: e1, sert: sert(memes) });
     ok(bon.status === 200 && servis.length === 1 && chaine.regles.length === 1, 'les MEMES arguments (cles dans un autre ordre) : paye, servi, regle');
     eq(servis[0].payeur, w.address, 'l outil sait QUI a paye (une image au nom du payeur, pas d une adresse du corps)');
+  }
+
+  console.log('\n-- 9. le devis sans cle et les compteurs durables (26 septembre 2026) --');
+  {
+    const chaine = fausseChaine();
+    chaine.regle = async (m, a) => { chaine.regles.push({ m, a }); return { ok: true, hash: '0x' + String(chaine.regles.length).padStart(64, '0'), gasUsed: '91234', gazPrix: '28000000' }; };
+    const t = 1790000000000, notes = [];
+    const x = X.cree({ asset: SWOGE, usdg: X.USDG, payTo: TRESOR, chaine, cours: async () => 0.00002493, ethUsd: async () => 2688.57,
+      prixOutilUsd: (o) => ({ scan_token: 0.01 })[o] || null, maintenant: () => t, note: (e, i) => notes.push(Object.assign({ e }, i)) });
+    const d0 = x.MESURE.devis;
+    const q = await x.exige('scan_token', 'u', null, {}, { devis: true });
+    ok(q && q.accepts.length === 2 && x.MESURE.devis === d0 && !notes.length, 'exige(…, {devis: true}) : les exigences, sans compter un 402 emis');
+    const w = ethers.Wallet.createRandom();
+    const { entete, acc } = await signe3009(w, q, { s: Math.floor(t / 1000) });
+    const r = await x.traite({ outil: 'scan_token', url: 'u', entete, args: {}, sert: sert({}), canal: 'rest', qui: 'ip:1' });
+    eq(r.status, 200, 'les exigences d un DEVIS se paient telles quelles (le devis est enregistre comme emis)');
+    const p = notes.find((y) => y.e === 'paye_x402');
+    ok(p && p.qui === w.address && p.canal === 'rest' && p.outil === 'scan_token' && p.usd === Number(acc.amount) / 1e6 && p.sorte === 'USDG',
+       'compte paye_x402 : l adresse VERIFIEE du payeur (pas l IP), le montant exact en USDG (' + (p && p.usd) + ' $)');
+    ok(p && Math.abs(p.coutUsd - 91234 * 28e6 / 1e18 * 2688.57) < 1e-9, 'et le cout reel : le gaz du reglement (91 234 × 0,028 gwei × ETH = ' + (p && p.coutUsd.toFixed(5)) + ' $)');
+    notes.length = 0;
+    await x.traite({ outil: 'scan_token', url: 'u', args: {}, sert: sert({}), canal: 'rest', qui: 'ip:2', sonde: true });
+    await x.traite({ outil: 'scan_token', url: 'u', args: { address: '0x' + '1'.repeat(40) }, sert: sert({}), canal: 'rest', qui: 'ip:2' });
+    await x.traite({ outil: 'scan_token', url: 'u', entete, args: {}, sert: sert({}), canal: 'rest', qui: 'ip:3' });
+    eq(notes.map((y) => y.e + ':' + y.qui + ':' + (y.sorte || '')).join(' | '), 'demande402:ip:2:sonde | demande402:ip:2:demande | echec:ip:3:paiement_refuse:invalid_payload',
+       'compte chaque 402 (sonde ou demande, par empreinte d IP) et chaque paiement refuse, avec sa raison x402');
   }
 
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));

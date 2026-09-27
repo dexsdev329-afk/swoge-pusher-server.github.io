@@ -281,6 +281,14 @@ async function images(q, deps) {
     MESURE.coutUsd += c;
     f = { coutUsd: Number(c.toFixed(5)) };
   } else f = regle(deps, addr, r.wei, r.cours, brut == null ? null : brut + compris.coutUsd, listeUsd + compris.coutUsd);
+  /* Les compteurs durables (compteurs.js) : facturé contre coût RÉEL, seulement
+     quand le fournisseur a dit son coût (sinon null : la marge ne se mesure pas sur une liste). */
+  if (deps.note) {
+    try {
+      deps.note('image_facturee', { outil: 'generate_image', canal: q.canal || (deps.horsSolde ? 'rest' : 'studio'), qui: addr, sorte: fid + '/' + m.id,
+        usd: deps.horsSolde ? (Number(q.prixUsd) || 0) : f.factureUsd, coutUsd: brut == null ? null : brut + compris.coutUsd });
+    } catch (e) { /* jamais bloquant */ }
+  }
   /* Les images en base64 (OpenAI) sont rangees chez nous : la page recoit une
      adresse, pas des megaoctets (voir studio_fichiers.js). */
   const urls = rep.urls.map((u) => (/^data:/.test(u) && deps.range ? (deps.range(u) || u) : u));
@@ -325,7 +333,7 @@ async function lanceVideo(q, deps) {
     return { ok: false, code: 502, raison: 'the video provider failed — you were not charged', detail: String(e && e.message || e).slice(0, 200) };
   }
   const id = crypto.randomBytes(12).toString('hex');
-  const job = { id, rid, addr, modele: m.id, duree, resolution, t0: t, status: 'pending', progress: 0,
+  const job = { id, rid, addr, canal: q.canal || 'studio', modele: m.id, duree, resolution, t0: t, status: 'pending', progress: 0,
                 reserveWei: r.wei, cours: r.cours, listeUsd, url: null, factureSwoge: null, solde: null, raison: null };
   JOBS.set(id, job);
   if (!deps.sansBoucle) suit(job, deps);
@@ -343,6 +351,10 @@ async function avance(job, deps, maintenant) {
     const secondes = Number(v.video.duration) > 0 ? Number(v.video.duration) : job.duree;
     Object.assign(job, regle(deps, job.addr, job.reserveWei, job.cours, coutDe(v.usage), job.listeUsd * secondes / job.duree));
     MESURE.videos++;
+    if (deps.note) {
+      try { deps.note('video_facturee', { outil: 'generate_video', canal: job.canal || 'studio', qui: job.addr, sorte: job.modele, usd: job.factureUsd, coutUsd: coutDe(v.usage) }); }
+      catch (e) { /* jamais bloquant */ }
+    }
   } else if (v && (v.status === 'failed' || v.status === 'expired')) {
     job.status = 'failed'; job.raison = 'the video could not be generated' + (v.erreur ? ' (' + v.erreur + ')' : '') + ' — you were not charged';
     job.solde = deps.solde.regle(job.addr, job.reserveWei, 0n); MESURE.echecs++;

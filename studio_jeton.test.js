@@ -123,6 +123,27 @@ const PANNE = '0x5555555555555555555555555555555555555555';
     ok(pan.marche === null && pan.manque.join() === 'DexScreener' && /Not found on DexScreener \(the lookup failed\)/.test(J.contexte([pan])),
        'DexScreener en panne : la fiche le dit, elle ne pretend pas que le jeton n existe pas');
 
+    /* LOBSTER, releve du 26 septembre 2026 (35 cases, quatre du bytecode a +16,9 %) :
+       coupees a 6 AVANT la traduction, l'agent qui paie recevait 3 lignes, la carte
+       gratuite 5. Ce que rend l'outil vendu porte au moins les 5 lignes de la carte. */
+    const LOBSTER = require('./scan_lobster.essai');
+    const Kc = require('./carte_scan'), Ag = require('./studio_agent');
+    J.CACHE.clear();
+    const scanL = async () => LOBSTER;
+    const fl = await J.fiche(RH, { scan: scanL });
+    const vendu = await Ag.outils({ Jeton: J, fiche: (a) => J.fiche(a, { scan: scanL }) }).scan_token({ address: RH });
+    const lignes = (vendu.carte && vendu.carte.colonie && vendu.carte.colonie.cases) || [];
+    const gratuite = Kc.casesEnAnglais(LOBSTER.cases).slice(0, 5);
+    ok(lignes.length === 6 && gratuite.every((g, i) => lignes[i].trait === g.traitLabel && lignes[i].case === g.label && lignes[i].n === g.n && lignes[i].moyenne === g.moyenne),
+       'scan_token vendu, LOBSTER : ' + lignes.length + ' lignes, dont les 5 de la carte gratuite dans le meme ordre (' + lignes.map((l) => l.trait).join(', ') + ')');
+    ok(fl.colonie.cases.length === 6 && fl.colonie.toutes.length === LOBSTER.cases.length && fl.colonie.cases[0].trait === 'octEmit',
+       'la fiche en cache garde ses 6 cases brutes (SwoleMind) et la liste complete pour la traduction');
+    ok(!/"toutes"/.test(JSON.stringify(vendu.carte)) && !/"toutes"/.test(JSON.stringify(J.carte(fl))) && !('toutes' in Ag.ficheEnAnglais(fl, J.OBS_ASSEZ).colonie),
+       'la liste complete ne sort jamais : ni dans la carte vendue, ni dans celle de la page (schema publie inchange)');
+    ok(/Contract bytecode = bytecode: no mint/.test(vendu.texte) && /Market cap = cap <\$10k: -4\.3% average over 32821 observations/.test(vendu.texte),
+       'et le texte que lit l agent porte les memes lignes, en anglais, avec leur effectif');
+    J.CACHE.clear();
+
     const ctx = J.contexte([f, fe]);
     ok(/never a buy or sell signal/.test(ctx) && /never call a token safe/.test(ctx), 'le modele recoit la consigne : des mesures, jamais un signal, jamais « sur »');
     ok(/deployeur = 4\+: -43\.7% average over 642 observations\n/.test(ctx) && /liq = <5k: \+18\.2% average over 12 observations \(too few to conclude\)/.test(ctx),
@@ -134,6 +155,15 @@ const PANNE = '0x5555555555555555555555555555555555555555';
     const c = J.carte(fe);
     ok(c.sym === 'PEPE' && c.securite === 'read' && c.alertes.join(',') === 'Pausable,Blacklist' && c.premierPorteur === 8.8, 'la carte de la page : les chiffres et les alertes, pas de verdict');
     eq(J.carte(f).securite, 'unknown', 'et elle dit quand la securite est inconnue');
+
+    /* La licence GoPlus (relue le 26 septembre 2026) : « Powered by Go+ Security »,
+       avec un lien, partout ou sa donnee arrive — et seulement la. */
+    eq(ctx.split('Powered by Go+ Security').length - 1, 1, 'le modele lit la mention « Powered by Go+ Security » une fois pour la question, meme avec deux jetons');
+    ok(/Contract security data: Powered by Go\+ Security \(https:\/\/gopluslabs\.io\)/.test(ctx), 'avec le lien vers gopluslabs.io');
+    eq(JSON.stringify(c.attribution), JSON.stringify({ security: 'Powered by Go+ Security', url: 'https://gopluslabs.io' }), 'la carte porte l attribution quand GoPlus a repondu (fiche lue)');
+    ok(J.carte(f).attribution && J.carte(f).attribution.url === 'https://gopluslabs.io', 'et quand GoPlus a repondu « je ne sais pas » (c est encore sa donnee)');
+    const hors = await J.fiche(SOLANA_SEUL, { scan });
+    ok(!/Go\+ Security/.test(J.contexte([hors])) && J.carte(hors).attribution === null, 'une chaine que GoPlus ne couvre pas : aucune donnee GoPlus, aucune mention');
 
     /* La fiche la plus longue qu'on sache fabriquer : toutes les alertes, six
        cases, des faits. La reserve compte JETONS_PAR_FICHE : elle doit couvrir
