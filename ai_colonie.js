@@ -5280,6 +5280,8 @@ function rejoueLOmbre(o) {
  * par aucun motif garde son texte, nombres remplaces : une regle nouvelle doit
  * apparaitre telle qu'elle, pas se faire absorber par la voisine. */
 const FAMILLES = [
+  /* En tete : la phrase du quoteur qu'elle cite peut contenir « not ETH » ou « exit ». */
+  [/^no venue can quote a real order/, 'no venue can quote a real order'],
   [/too young|trop jeune/, 'too young: set aside until it has the age'],
   [/cooling down/, 'sold recently: cooling down before buying it again'],
   [/paying the top|on paierait le sommet|paierait l/, 'already up too far: we would be paying the top'],
@@ -6578,12 +6580,15 @@ function motifDevisRate(raison) {
   if (/no venue answers|no pool against ETH|neither a v2 pair nor a v3 pool|no ETH bridge|, not ETH/.test(m)) return 'aucunePlace';
   return 'autre';
 }
-async function allerRetourMiroir(t) {
+async function allerRetourMiroir(t, opts) {
   if (!miroir || typeof miroir.allerRetour !== 'function' || !t.pool || !t.addr) return null;
+  /* `sansCompte` : un devis demande pour un TIERS (epreuveDeSortie, l'outil
+     can_i_sell) n'entre pas dans les compteurs des devis de la colonie. */
+  const hors = !!(opts && opts.sansCompte);
   let minuteur = null;
   const rate = (raison) => {
     const motif = motifDevisRate(raison);
-    compte('devisRate_' + motif);
+    if (!hors) compte('devisRate_' + motif);
     /* La phrase entiere : c'est elle qui dit QUELLE place manque. Coupee a
        200 caracteres, pas 80 — la raison utile venait souvent apres. */
     return { raison: String(raison).slice(0, 200), motif };
@@ -6594,10 +6599,31 @@ async function allerRetourMiroir(t) {
       new Promise((_, rej) => { minuteur = setTimeout(() => rej(new Error('the quoter took more than ' + (RETOUR_DELAI_MS / 1000) + ' s')), RETOUR_DELAI_MS); if (minuteur.unref) minuteur.unref(); }),
     ]);
     if (!r || typeof r.pct !== 'number' || !isFinite(r.pct) || typeof r.min !== 'number') return rate('the quoter gave no figure');
-    compte('devisOk');
+    if (!hors) compte('devisOk');
     return { pct: r.pct, min: r.min, ver: r.ver || null, pool: r.pool || null, sonde: r.sonde || null };
   } catch (e) { return rate((e && e.message) || e); }
   finally { if (minuteur) clearTimeout(minuteur); }
+}
+/* ---- L'EPREUVE DE SORTIE, POUR UN TIERS (outil can_i_sell, 27/09/2026) ----
+ * Ce que le Cobaye joue avant chaque achat, sur n'importe quel jeton de
+ * Robinhood Chain qu'un agent nous donne : les porteurs lus sur la chaine
+ * envoient une unite vers la piscine (eth_call), le quoteur du miroir chiffre
+ * l'aller-retour, la part de LP brulee est lue. LECTURE SEULE. Et rien n'entre
+ * dans la memoire de la colonie : pas de `noteCoutCase` (l'audit net), pas de
+ * compteur de devis, pas de jeton ajoute a `E.connus` — la mesure de la colonie
+ * ne doit parler que de ce que la colonie a vu elle-meme. Les caches de
+ * lecture (DexScreener, journaux, LP) sont partages : ils ne jugent rien. La
+ * sante des services et l'usage des noeuds (`services`, `noeudsHeures`) comptent
+ * ces appels : ils mesurent l'infrastructure, pas les jetons. */
+async function epreuveDeSortie(addr) {
+  const t = await jetonDepuisDex(String(addr).toLowerCase(), 'outil');
+  if (!t) return { trouve: false };
+  t.chaine = await lisChaine(t.addr, t.minutes, t.pool);
+  const transfert = await simuleTransfert(t);
+  const retour = await allerRetourMiroir(t, { sansCompte: true });
+  const lp = await litLp(t);
+  return { trouve: true, jeton: { sym: t.sym, pool: t.pool, minutes: t.minutes, liq: t.liq, mc: t.mc },
+           transfert, retour, lp, retourMax: ALLER_RETOUR_MAX };
 }
 /** Le devis manque-t-il, et pourquoi : `null` quand il y a un chiffre. */
 function devisManquant(t) {
@@ -6625,12 +6651,36 @@ function suiviDuMiroir() {
   if (!miroir || typeof miroir.suiviStats !== 'function') return null;
   try { return miroir.suiviStats(); } catch (e) { return null; }
 }
+/* ---- SANS PLACE OU ACHETER, LE PAPIER N'OUVRE PLUS (27 septembre 2026) ----
+ * Carnet du 27/09 (287 trades papier) : 62 sans devis d'aller-retour, +7,0 % de
+ * moyenne ; 225 avec devis, +0,9 %. Les meilleurs trades du papier etaient donc
+ * ceux qu'aucun ordre reel ne pouvait suivre. Cas du jour, METAHOOD : pool v4
+ * contre WETH avec un hook (0x8e60…0a80, avant chaque echange), 2 041 ventes en
+ * 24 h — pas un piege — mais la chaine refuse de simuler NOTRE ordre ; le
+ * miroir n'a pas suivi (suiviMiroir : 1 envoi, 0 suivi, « aucunePlace »), le
+ * papier a ouvert et comptait un resultat que personne ne pouvait toucher.
+ * Decision du proprietaire, meme jour : le papier fidele au reel.
+ *
+ * Ne bloque QUE le motif « aucunePlace » (aucune route, la chaine refuse de
+ * simuler) : c'est structurel, le miroir echouera pareil a l'achat. Un delai
+ * depasse, un devis sans chiffre, une autre panne ne condamnent personne,
+ * comme avant : le transfert decide seul. Sa ligne d'audit est la sienne
+ * (« no venue can quote a real order ») : ce qu'elle ecarte montera peut-etre
+ * plus que ce qu'on achete — c'est attendu, et ce gain-la n'est pas atteignable.
+ * DEVIS_EXIGE=0 rend l'ancien comportement. */
+const devisExige = () => process.env.DEVIS_EXIGE !== '0';
 async function simuleVente(t) {
   const a = await simuleTransfert(t);
   const rt = await allerRetourMiroir(t);
   if (!rt) return a;
   a.retour = rt;
-  if (rt.pct === undefined) return a;           /* pas de devis : le transfert decide seul */
+  if (rt.pct === undefined) {                   /* pas de devis */
+    if (devisExige() && rt.motif === 'aucunePlace') {
+      a.teste = true; a.essais = a.essais || 0; a.refus = a.refus || 0; a.passe = false; a.sansPlace = true;
+      a.raison = 'no venue can quote a real order';
+    }
+    return a;                                   /* sinon le transfert decide seul */
+  }
   noteCoutCase(t, coutAllerRetour(rt));          /* range le coût réel dans la case, pour l'audit net */
   if (!a.teste) { a.teste = true; a.essais = 0; a.refus = 0; a.passe = true; a.raison = null; }
   if (rt.pct < rt.min) { a.passe = false; a.raison = 'selling straight back would return ' + rt.pct + '% of the stake'; }
@@ -6653,6 +6703,9 @@ function vetoCobaye(t) {
     return 'round trip too costly: fees and depth would eat ' + coutAllerRetour(rt) + '% of a '
          + (rt.sonde || '?') + ' ETH order (' + ALLER_RETOUR_MAX + '% at most, quoted on Uniswap ' + (rt.ver || '?')
          + ') — more than the edge the paper has ever shown';
+  if (e.sansPlace)
+    return 'no venue can quote a real order: ' + String((rt && rt.raison) || 'the quoter found no route').slice(0, 160)
+         + ' — the mirror could not follow it, so the paper does not open either';
   return 'the exit is blocked: ' + e.refus + '/' + e.essais
        + ' holders cannot send the token to the ' + (e.via || 'pool');
 }
@@ -10198,6 +10251,7 @@ function arrete() {
 }
 
 module.exports = {
+  epreuveDeSortie,
   demarre, arrete, vue, tour, charge, sauve, reprendSansMethode, veille,
   poseMiroir, _suitLeMiroir: suitLeMiroir, _partDuBanquier: partDuBanquier, MIROIR_PART_MAX,
   motifDevisRate, devisManquant, devisBilan, suiviDuMiroir, DEVIS_MOTIFS,

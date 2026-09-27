@@ -5428,14 +5428,26 @@ async function epreuveDeVente() {
   const v4ferme = await C.simuleVente(surV4);
   ok(v4ferme.teste && !v4ferme.passe && /lets you in, not out/.test(C.vetoCobaye({ epreuve: v4ferme }) || ''),
      'et il bloque un pool V4 qui ne laisse pas sortir — la ou le transfert ne voyait rien');
-  /* Le quoteur qui ne repond pas ne condamne personne, et le transfert garde son verdict. */
-  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, allerRetour: async () => { throw new Error('no venue answers for this token'); } });
+  /* Le quoteur qui TOMBE (delai depasse) ne condamne personne, et le transfert garde son verdict. */
+  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, allerRetour: async () => { throw new Error('the quoter took more than 15 s'); } });
   const sansDevis = await C.simuleVente(bon2);
-  ok(sansDevis.teste && sansDevis.passe && /no venue/.test(sansDevis.retour.raison), 'sans devis, le transfert decide seul, et la raison est gardee : « ' + sansDevis.retour.raison + ' »');
+  ok(sansDevis.teste && sansDevis.passe && /took more/.test(sansDevis.retour.raison), 'un quoteur en panne : le transfert decide seul, et la raison est gardee : « ' + sansDevis.retour.raison + ' »');
   const piegeSansDevis = await C.simuleVente(mauvais2);
   ok(piegeSansDevis.teste && !piegeSansDevis.passe && /exit is blocked/.test(C.vetoCobaye({ epreuve: piegeSansDevis })), 'et le piege du transfert reste un piege');
   const v4sans = await C.simuleVente(surV4);
   ok(v4sans.teste === false && !C.vetoCobaye({ epreuve: v4sans }), 'sans devis ni teneur, un pool V4 reste non testable — et non coupable');
+  /* Mais « aucune place » (la chaine refuse de simuler NOTRE ordre, 27/09, METAHOOD) : le
+     miroir echouera pareil a l'achat, donc le papier n'ouvre plus — fidele au reel. */
+  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, allerRetour: async () => { throw new Error('no venue answers for this token (the chain refused to simulate this order, it would revert)'); } });
+  const sansPlace = await C.simuleVente(bon2);
+  const vetoPlace = C.vetoCobaye({ epreuve: sansPlace }) || '';
+  ok(sansPlace.teste && !sansPlace.passe && /^no venue can quote a real order: no venue answers/.test(vetoPlace) && /paper does not open/.test(vetoPlace),
+     'aucune place ou acheter : le transfert passait, le papier n ouvre plus, et le veto dit pourquoi : « ' + vetoPlace.slice(0, 90) + '… »');
+  ok(C._familleRefus(vetoPlace) === 'no venue can quote a real order', 'avec sa propre ligne d audit, pour mesurer ce qu elle ecarte');
+  process.env.DEVIS_EXIGE = '0';
+  const ancien = await C.simuleVente(bon2);
+  ok(ancien.teste && ancien.passe && !C.vetoCobaye({ epreuve: ancien }), 'DEVIS_EXIGE=0 rend l ancien comportement : le transfert decide seul');
+  delete process.env.DEVIS_EXIGE;
   C.poseMiroir(null);
   const sansMiroir = await C.simuleVente(bon2);
   ok(sansMiroir.teste && sansMiroir.passe && sansMiroir.retour === undefined, 'sans miroir, rien ne change');
@@ -6183,6 +6195,64 @@ async function surveillanceRamene() {
    * ramene puis a jeter ce qu il rapporte. */
   ok(C.doitExaminer({ addr: a, origine: 'surveillance', minutes: 30, liq: 1, prix: 1 }).oui,
      'un jeton qu on est alle rechercher expres est examine, pas ecarte pour « deja juge »');
+}
+
+/* ==========================================================================
+ * L'EPREUVE DE SORTIE POUR UN TIERS (outil can_i_sell, 27 septembre 2026)
+ *
+ * La meme epreuve que le Cobaye, jouee sur le jeton qu'un agent nous donne.
+ * Ce que l'essai tient : elle rend le transfert, le devis et le LP ; et elle ne
+ * laisse RIEN dans la memoire de la colonie — ni jeton connu, ni case d'audit,
+ * ni cout d'aller-retour range, ni compteur de devis. La mesure de la colonie
+ * ne parle que de ce que la colonie a vu elle-meme.
+ * ======================================================================== */
+async function epreuvePourUnTiers() {
+  console.log('\n-- l epreuve de sortie pour un tiers : la reponse, et rien dans la memoire de la colonie --');
+  remise(sains());
+  const E = C._etat();
+  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, allerRetour: async () => ({ pct: 96.5, min: 60, ver: 'v2', pool: 'p', sonde: '0.01' }) });
+  /* `services` et `noeudsHeures` mesurent l INFRASTRUCTURE (qui a repondu, quel
+     noeud a servi) : les vrais appels de l epreuve y comptent, et c est juste.
+     Tout le reste parle des jetons, et ne doit pas bouger. */
+  const INFRA = ['compteurs', 'services', 'noeudsHeures'];
+  const sansCompteurs = () => JSON.stringify(Object.fromEntries(Object.entries(E).filter(([k]) => !INFRA.includes(k))));
+  const avant = sansCompteurs();
+  const devis0 = JSON.stringify(Object.keys(E.compteurs || {}).filter((k) => /^devis/.test(k)).map((k) => [k, E.compteurs[k]]));
+  const J = MONDE.jetons[0];
+  const r = await C.epreuveDeSortie(J.addr.toUpperCase().replace('0X', '0x'));
+  console.log('   ' + JSON.stringify({ trouve: r.trouve, jeton: r.jeton && r.jeton.sym, transfert: r.transfert, retour: r.retour, lp: r.lp }));
+  ok(r.trouve && r.jeton && r.jeton.pool === J.pool, 'le jeton est trouve a son adresse (casse comprise), avec sa piscine');
+  ok(r.retour && r.retour.pct === 96.5 && r.retourMax === C.ALLER_RETOUR_MAX, 'le devis d aller-retour et le plafond de la colonie (' + C.ALLER_RETOUR_MAX + ' %) reviennent');
+  ok(r.transfert && typeof r.transfert.teste === 'boolean' && (r.transfert.teste || !!r.transfert.raison), 'le transfert est joue, ou dit pourquoi il ne l est pas');
+  const diff = Object.keys(E).filter((k) => !INFRA.includes(k) && JSON.stringify(E[k]) !== JSON.stringify(JSON.parse(avant)[k]));
+  ok(sansCompteurs() === avant, 'rien dans la memoire de la colonie : ni jeton connu, ni audit, ni cout range' + (diff.length ? ' — a bouge : ' + diff.join(', ') : ''));
+  const devis1 = JSON.stringify(Object.keys(E.compteurs || {}).filter((k) => /^devis/.test(k)).map((k) => [k, E.compteurs[k]]));
+  ok(devis1 === devis0, 'et les compteurs de devis de la colonie n ont pas bouge');
+  const inconnu = await C.epreuveDeSortie('0x' + '7'.repeat(40));
+  ok(inconnu && inconnu.trouve === false, 'un jeton inconnu de DexScreener sur Robinhood Chain : trouve = false');
+  /* De bout en bout, par le vrai module de l outil. */
+  const S = require('./epreuve_sortie').cree({ epreuve: (a) => C.epreuveDeSortie(a) });
+  const v = await S.verifie(J.addr);
+  ok(v.resultat && ['sellable', 'partial'].includes(v.resultat.verdict) && v.resultat.roundTrip.returnPct === 96.5,
+     'l outil rend un verdict sur la vraie epreuve : ' + (v.resultat ? v.resultat.verdict + ' — ' + v.resultat.why : v.erreur));
+  C.poseMiroir(null);
+}
+
+/* Le papier fidele au reel (27/09/2026) : dans un tour COMPLET, un jeton sans
+   place ou acheter ne s ouvre pas, et c est le Cobaye qui le dit. */
+async function sansPlaceNOuvrePas() {
+  console.log('\n-- sans place ou acheter, le papier n ouvre pas (tour complet) --');
+  remise([jeton(1), jeton(2)]);
+  const recus = [];
+  C.poseMiroir({ surAchat: async (t) => { recus.push(t); return 0; }, surVente: async () => 0,
+                 allerRetour: async () => { throw new Error('no venue answers for this token (the chain refused to simulate this order, it would revert)'); } });
+  await C.tour();
+  const E = C._etat();
+  const refus = C.vue().candidats.filter((c) => /^no venue can quote a real order/.test(c.refus || ''));
+  ok(E.positions.length === 0 && recus.length === 0, 'aucune position, rien envoye au miroir (' + E.positions.length + ' positions)');
+  ok(refus.length > 0 && refus.every((c) => c.quiRefuse === 'cobaye') && (E.compteurs.cobayeBloque || 0) >= refus.length,
+     'les jetons sont refuses par le Cobaye, et comptes (' + refus.length + ' refus)');
+  C.poseMiroir(null);
 }
 
 /* ==========================================================================
@@ -7538,6 +7608,10 @@ function bornesQuiSeReglent() {
  *    envoyes se lit dans la vue, et l'alerte dit « N envoyes, M suivis ». */
 async function miroirQuiNeSuitPas() {
   console.log('\n-- 1. pourquoi le miroir ne suit pas : le devis manque garde sa raison --');
+  /* Depuis le 27/09, « aucune place » n'ouvre plus le papier (DEVIS_EXIGE). Ce qui est
+     verifie ici, c'est la MESURE des achats sans devis : on rouvre l'ancien chemin le
+     temps du scenario, comme le fait DEVIS_EXIGE=0. */
+  process.env.DEVIS_EXIGE = '0';
   remise([jeton(1), jeton(2)]);
   const recus = [];
   let stats = { envois: 5, suivis: 1, sansDevis: 4, sansDevisSuivis: 0, raisons: { echecAchat: 4, suivi: 1 }, echecs: { aucunePlace: 4 },
@@ -7595,6 +7669,7 @@ async function miroirQuiNeSuitPas() {
   ok(C.motifDevisRate('quoted in GLD, not ETH') === 'aucunePlace' && C.motifDevisRate('boom') === 'autre', 'une monnaie sans pont est « aucune place », le reste « autre »');
   ok(C.devisManquant({ epreuve: { retour: { pct: 98, min: 60 } } }) === null, 'un devis chiffre n est pas un devis manquant');
   C.poseMiroir(null);
+  delete process.env.DEVIS_EXIGE;
 }
 
 
@@ -8125,6 +8200,8 @@ async function baleineParTranche() {
   await lesSignaux();
   await surveillanceRamene();
   await repriseSansFamine();
+  await epreuvePourUnTiers();
+  await sansPlaceNOuvrePas();
   await pourquoiPasDAchat();
   await memoirePlusGrande();
   await seReorganiseVraiment();

@@ -159,7 +159,11 @@ function valide(sc, v, ch, strict, err) {
     cherche: async () => [{ url: 'https://news.example/a', titre: 'News', extrait: 'x', date: null }], contexteRecherche: (r) => 'RESULTS ' + r.length,
     detecte: (x) => (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(x) ? { type: 'domaine', valeur: x } : null),
     osint: async (type, valeur) => ({ cible: { type, valeur }, faits: [{ predicat: 'A', valeur: '93.184.215.14', sources: ['dns.google'] }], constats: [{ etiquette: 'NOTE', dit: 'Hosted on a CDN.' }] }),
-    liensScan: (a) => ({ card: BASE + '/scan/carte/' + a + '.png', share: BASE + '/s/' + a, page: 'https://swoleeswoge.dog/swoge_scan.html?t=' + a }) };
+    liensScan: (a) => ({ card: BASE + '/scan/carte/' + a + '.png', share: BASE + '/s/' + a, page: 'https://swoleeswoge.dog/swoge_scan.html?t=' + a }),
+    /* can_i_sell : le VRAI module epreuve_sortie, sur une epreuve fixe (la chaine est hors de l essai). */
+    sortie: require('./epreuve_sortie').cree({ epreuve: async () => ({ trouve: true, retourMax: 4,
+      jeton: { sym: 'LOBSTER', pool: '0x2dc0fb72d9284228046cc95910eeaabebfe48456', minutes: 42.3, liq: 21000, mc: 64000 },
+      transfert: { teste: true, essais: 3, refus: 0, passe: true, via: 'pool' }, retour: { pct: 97.2, min: 60, ver: 'v2', sonde: '0.01' }, lp: { vu: true, brulee: 100 } }) }) };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'decouv-'));
   const cles = K.cree({ fichier: path.join(dir, 'cles.json') });
   const cle = cles.resout(cles.nouvelle('0x' + 'ab'.repeat(20), 'essai', 1e6).cle);
@@ -170,7 +174,7 @@ function valide(sc, v, ch, strict, err) {
     imageHorsSolde: async () => ({ ok: true, urls: ['https://imgen.x.ai/c.png'], compris: 'SWOGE on a boat', reference: 'swoge' }),
     video: async () => ({ ok: true, id: '66f5b1c2d3e4f5a6b7c8d9e0', status: 'pending', duree: 6, resolution: '480p' }),
     etatVideo: () => ({ ok: true, id: '66f5b1c2d3e4f5a6b7c8d9e0', status: 'done', progress: 100, url: 'https://srv.example/v.mp4', duree: 6, resolution: '480p', factureSwoge: '9621.43', factureUsd: 0.24 }) });
-  const ARGS = { scan_token: { address: ADR }, colony_activity: {}, swoge_economy: {}, new_launches: { limit: 5 }, wallet_intel: { address: '0x' + 'cd'.repeat(20) },
+  const ARGS = { scan_token: { address: ADR }, can_i_sell: { address: ADR }, colony_activity: {}, swoge_economy: {}, new_launches: { limit: 5 }, wallet_intel: { address: '0x' + 'cd'.repeat(20) },
     osint_lookup: { target: 'example.com' }, web_search: { query: 'robinhood chain' }, generate_image: { prompt: 'a swole doge', count: 1 },
     ask_agent: { task: 'is LOBSTER worth a look?' }, generate_video: { prompt: 'a swole doge lifting' }, video_status: { id: '66f5b1c2d3e4f5a6b7c8d9e0' } };
   for (const o of outils) {
@@ -279,7 +283,7 @@ function valide(sc, v, ch, strict, err) {
   process.env.TG_APPELS_VENTE = '1';
   const tous = require('./agentic').definitions({ recherche: true });
   delete process.env.TG_APPELS_VENTE;
-  ok(tous.length === 12 && tous.every((o) => D.EXEMPLES_ENTREE[o.name]), 'un exemple d entree fixe pour chacun des ' + tous.length + ' outils'
+  ok(tous.length === 13 && tous.every((o) => D.EXEMPLES_ENTREE[o.name]), 'un exemple d entree fixe pour chacun des ' + tous.length + ' outils'
      + (tous.filter((o) => !D.EXEMPLES_ENTREE[o.name]).length ? ' — manque : ' + tous.filter((o) => !D.EXEMPLES_ENTREE[o.name]).map((o) => o.name).join(', ') : ''));
   for (const o of tous) {
     const b = D.bazaar(o.name, o);

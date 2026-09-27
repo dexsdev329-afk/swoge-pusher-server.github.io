@@ -53,8 +53,13 @@ const SORTIE_MAX = 4000;
    caractères (2 519 jetons) — 2 000 ne tenait plus, d'où 2 600. Le pire cas
    d'ask_agent monte d'autant : 1,278 $ → 1,289 $ (Sonnet 5, tâche de 2 000
    caractères, marge comprise) ; la facture, elle, reste le réel.
+   Remesuré le 27 septembre 2026 avec can_i_sell : 8 outils par défaut 5 178
+   caractères (2 589 jetons), 9 avec TG_APPELS_VENTE=1 5 877 caractères
+   (2 939 jetons) — 2 600 ne tenait plus, d'où 3 000. Pire cas d'ask_agent
+   (Sonnet 5, tâche de 2 000 caractères, recherche, marge comprise) :
+   1,2888 $ → 1,2960 $ ; la facture reste le réel.
    L'essai vérifie que la borne couvre toujours les définitions, réglage allumé. */
-const OUTILS_JETONS = 2600;
+const OUTILS_JETONS = 3000;
 const SYSTEME_JETONS = 500;
 const PRIX_RECHERCHE_USD = 0.005;      /* Perplexity Search API, la requête réussie */
 
@@ -155,6 +160,14 @@ function definitions(actifs) {
         + 'the average 30-minute move the SWOGE AI colony measured on past tokens sharing each trait, with its number of observations, plus a shareable scan card. '
         + 'Measurements, never a buy or sell signal; unknown stays unknown.',
       input_schema: { type: 'object', properties: { address: { type: 'string', description: 'EVM contract address, 0x followed by 40 hex characters' } }, required: ['address'] } },
+    /* ---- AJOUTE LE 27 SEPTEMBRE 2026 : l'epreuve de sortie (epreuve_sortie.js) ----
+       Ce que le Cobaye joue avant chaque achat de la colonie, pour un tiers.
+       honeypot.is ne connait pas la chaine 4663 : peu d'autres le donnent. */
+    { name: 'can_i_sell', description: 'Use this right before buying a Robinhood Chain token, to know whether you could sell it back and at what cost. '
+        + 'Simulates the exit on-chain, read-only: real holders try to send the token to the pool, and a buy-then-sell round trip of a small order is quoted on Uniswap. '
+        + 'Returns a verdict (sellable, costly, blocked, or partial when only the transfer could be tested), the round-trip return and cost, the transfer test and the share of LP tokens burned. '
+        + 'Only an answer is billed: an unknown token or an untestable exit costs nothing. A simulation of now, never a buy or sell signal.',
+      input_schema: { type: 'object', properties: { address: { type: 'string', description: 'token contract address on Robinhood Chain, 0x followed by 40 hex characters' } }, required: ['address'] } },
     { name: 'colony_activity', description: 'Use this when you want to know what the SWOGE AI colony, an autonomous paper-trading colony on Robinhood Chain, holds or did recently, overall or on one token. '
         + 'Returns its open positions, latest buys and sells with results and reasons, its paper ledger (trades, average result, share of winners) and the record of the mirror that repeats some trades with real money. '
         + 'Optionally filtered to one token symbol or address. Paper trades are measurements, never advice.',
@@ -281,6 +294,12 @@ function outils(src) {
         texte += '\n\nShareable scan card (PNG): ' + carte.links.card + ' — share page (link preview on X, Telegram, Discord): ' + carte.links.share;
       }
       return { texte, carte, sources: src.Jeton.sources([f]) };
+    },
+    async can_i_sell(e) {
+      if (!src.sortie) return { erreur: 'the exit test is not switched on' };
+      const r = await src.sortie.verifie(e && e.address);
+      if (!r || !r.resultat) return { erreur: (r && r.erreur) || 'the exit could not be tested — nothing was charged' };
+      return { texte: src.sortie.texte(r), donnees: r.resultat };
     },
     async colony_activity(e) {
       const v = src.vue() || {};

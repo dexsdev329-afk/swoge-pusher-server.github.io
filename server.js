@@ -1649,7 +1649,16 @@ const tgAppels = () => {
   return tgAppelsV;
 };
 tgAppels();
+/* « Puis-je revendre ce jeton ? » (outil can_i_sell, 27/09/2026) : l'epreuve
+   du Cobaye jouee pour un tiers, en lecture seule, chaque reponse gardee dans
+   DATA_DIR/sorties (epreuve_sortie.js). */
+const epreuveSortie = require('./epreuve_sortie').cree({
+  epreuve: (a) => aiColonie.epreuveDeSortie(a),
+  dossier: cfg.DATA_DIR,
+});
 const srcAgent = () => ({
+  /* L'epreuve de sortie (can_i_sell) : { resultat } ou { erreur }, jamais facturee sur erreur. */
+  sortie: epreuveSortie,
   /* Les appels Telegram suivis (outil telegram_calls) ; null si le suivi est eteint.
      L'outil n'est OFFERT (agent, API, MCP, x402) que si TG_APPELS_VENTE=1 :
      voir studio_agent.NON_OFFERTS. Le suivi, lui, tourne pour la colonie. */

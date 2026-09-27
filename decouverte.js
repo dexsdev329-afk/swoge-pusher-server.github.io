@@ -89,6 +89,7 @@ const ETIQUETTES = [
 const ETIQUETTES_OUTIL = {
   scan_token: ['token-security', 'crypto', 'robinhood-chain'], colony_activity: ['robinhood-chain', 'crypto'], swoge_economy: ['crypto', 'robinhood-chain'],
   new_launches: ['robinhood-chain', 'crypto', 'token-security'], wallet_intel: ['osint', 'crypto', 'robinhood-chain'], osint_lookup: ['osint', 'research'],
+  can_i_sell: ['token-security', 'crypto', 'robinhood-chain'],
   telegram_calls: ['robinhood-chain', 'crypto'], web_search: ['research'], ask_agent: ['research', 'crypto'],
   generate_image: ['images'], generate_video: ['video'], video_status: ['video'],
 };
@@ -162,6 +163,32 @@ const SORTIES = {
       { url: 'https://swoleeswoge.dog/swoge_scan.html?t=' + ADR, titre: 'SWOGE Scan · $LOBSTER' }],
     attribution: ATTR_EX },
     texte: 'Token ' + ADR + ':\n- Market (DexScreener, deepest of 1 pool): $LOBSTER "Lobster" on robinhood (uniswap), price $0.000008424, liquidity $8,803, market cap $8,253…',
+  },
+  /* can_i_sell (27 septembre 2026) : epreuve_sortie.js, lu dans son code. Les
+     champs d'un aller-retour non chiffre (`reason`) et chiffre (`returnPct`…)
+     sont tous declares, un seul jeu est rendu a la fois. */
+  can_i_sell: {
+    schema: obj({
+      token: obj({ address: s('token contract, lower case'), symbol: sn('symbol from DexScreener'), chain: s('always robinhood'), pool: sn('the pool tested (address, or a Uniswap v4 id)'),
+        ageMinutes: nn('pool age, minutes'), liquidityUsd: nn('pool liquidity, USD'), marketCapUsd: nn('market cap, USD') },
+        ['address', 'symbol', 'chain', 'pool', 'ageMinutes', 'liquidityUsd', 'marketCapUsd']),
+      verdict: { type: 'string', enum: ['sellable', 'costly', 'blocked', 'partial'], description: 'sellable, costly (round trip above the SWOGE colony ceiling), blocked, or partial (transfer tested, no round-trip quote)' },
+      why: s('the reason for the verdict, in one sentence'),
+      transfer: obj({ tested: b('whether holders could be simulated'), tries: n('holders tried'), refused: n('holders refused'),
+        target: sn('where the token was sent: pool, market maker or largest holder'), reason: sn('why it was not tested') }, ['tested', 'tries', 'refused', 'target', 'reason']),
+      roundTrip: obj({ quoted: b('whether a buy-then-sell was quoted'), returnPct: n('share of the stake a round trip returns, %'), costPct: n('fees and depth, %'),
+        minReturnPct: n('below this return, the exit counts as blocked'), probeEth: nn('order size quoted, ETH'), uniswap: sn('Uniswap version quoted'),
+        maxCostPct: n('the round-trip cost the SWOGE colony itself accepts, %'), reason: s('why no quote') }, ['quoted']),
+      liquidity: obj({ lpTokenRead: b('whether the pool has a readable LP token'), burnedPct: n('share of LP tokens burned, %'), reason: sn('why it was not read') }, ['lpTokenRead']),
+      checkedAt: s('when, ISO 8601 UTC'), limits: s('what a simulation cannot see'),
+    }, ['token', 'verdict', 'why', 'transfer', 'roundTrip', 'liquidity', 'checkedAt', 'limits']),
+    exemple: { token: { address: ADR, symbol: 'LOBSTER', chain: 'robinhood', pool: '0x2dc0fb72d9284228046cc95910eeaabebfe48456', ageMinutes: 42.3, liquidityUsd: 21000, marketCapUsd: 64000 },
+      verdict: 'sellable', why: 'a round trip returns 97.2% of the stake (2.8% in fees and depth), and holders can send it to the pool',
+      transfer: { tested: true, tries: 3, refused: 0, target: 'pool', reason: null },
+      roundTrip: { quoted: true, returnPct: 97.2, costPct: 2.8, minReturnPct: 60, probeEth: 0.01, uniswap: 'v2', maxCostPct: 4 },
+      liquidity: { lpTokenRead: true, burnedPct: 100 }, checkedAt: '2026-09-27T12:00:00.000Z',
+      limits: 'A read-only simulation of what the pool would return NOW for a small order. It cannot see a blacklist that closes after you buy, liquidity pulled later, or a tax changed later. Measurements, never a buy or sell signal.' },
+    texte: 'Exit test for $LOBSTER ' + ADR + ' on Robinhood Chain: SELLABLE — a round trip returns 97.2% of the stake (2.8% in fees and depth)…',
   },
   colony_activity: {
     schema: obj({
@@ -535,7 +562,7 @@ function manifeste(c) {
 /* Un exemple VALIDE par outil (les ARGS de decouverte.test.js) : chacun passe
    son schéma d'entrée ET agentic.entreeInvalide — l'essai le vérifie. */
 const EXEMPLES_ENTREE = {
-  scan_token: { address: ADR }, colony_activity: {}, swoge_economy: {}, new_launches: { limit: 5 },
+  scan_token: { address: ADR }, can_i_sell: { address: ADR }, colony_activity: {}, swoge_economy: {}, new_launches: { limit: 5 },
   wallet_intel: { address: ADR }, osint_lookup: { target: 'example.com' }, telegram_calls: { hours: 24, limit: 20 },
   web_search: { query: 'robinhood chain' }, generate_image: { prompt: 'a swole doge', count: 1 },
   ask_agent: { task: 'is LOBSTER worth a look?' }, generate_video: { prompt: 'a swole doge lifting' }, video_status: { id: '66f5b1c2d3e4f5a6b7c8d9e0' },

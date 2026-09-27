@@ -51,7 +51,12 @@ const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0
      que TG_APPELS_VENTE ne vaut pas '1' (conditions de Telegram, meme jour) : le
      prix reste ici pour le jour ou on le rallume — il n'est lu que si l'outil est
      au catalogue (studio_agent.NON_OFFERTS). */
-  telegram_calls: 0.01 };
+  telegram_calls: 0.01,
+  /* 27 septembre 2026 : l'epreuve de sortie (can_i_sell). Ce qu'elle coute :
+     ~3 eth_call, une lecture de journaux, un devis du quoteur, sans fournisseur
+     payant. Le prix de scan_token sur Base (0,02 $ USDC, 402 lu le 27/09) :
+     un prix de depart, a relire quand de vrais agents l'auront achete. */
+  can_i_sell: 0.02 };
 const VARIABLES = ['ask_agent', 'generate_image', 'generate_video'];
 /* `video_status` : gratuit (relire SA vidéo), jamais facturé. */
 const GRATUITS = ['video_status'];
@@ -137,7 +142,7 @@ function definitions(actifs) {
 /** Une entrée invalide est refusée AVANT tout débit. Rend une phrase, ou null. */
 function entreeInvalide(outil, a) {
   a = a || {};
-  if (outil === 'scan_token' && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
+  if ((outil === 'scan_token' || outil === 'can_i_sell') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
   if (outil === 'web_search' && !String(a.query || '').trim()) return 'query is required';
   if (outil === 'ask_agent' && !String(a.task || '').trim()) return 'task is required';
   if (outil === 'ask_agent' && String(a.task).length > TACHE_MAX_CAR) return 'task is too long (max ' + TACHE_MAX_CAR + ' characters)';
@@ -187,6 +192,8 @@ function resultatDe(outil, r) {
              texte: t.includes(A.security) ? t : t + '\n\nContract security data: ' + A.security + ' (' + A.url + ').' };
   }
   if (outil === 'web_search') return { donnees: { results: r.sources || [] }, texte: r.texte };
+  /* can_i_sell rend ses donnees ET un texte lisible : les deux partent tels quels. */
+  if (r && r.donnees) return { donnees: r.donnees, texte: r.texte };
   try { return { donnees: JSON.parse(r.texte), texte: r.texte }; } catch (e) { return { donnees: null, texte: r.texte }; }
 }
 

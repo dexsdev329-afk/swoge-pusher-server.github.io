@@ -59,13 +59,13 @@ const m = C.modele('sonnet-5');
   {
     const d = A.definitions({ recherche: true });
     ok(d.every((x) => x.name && x.description && x.input_schema && x.input_schema.type === 'object'), 'forme de l API Messages : name, description, input_schema');
-    eq(d.map((x) => x.name).join(','), 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,web_search',
-       'sept outils avec Perplexity (lancements, lanceur, OSINT ajoutes le 26 septembre) ; les appels Telegram ne sont PAS offerts sans TG_APPELS_VENTE=1 (conditions de Telegram)');
+    eq(d.map((x) => x.name).join(','), 'scan_token,can_i_sell,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,web_search',
+       'huit outils avec Perplexity (lancements, lanceur, OSINT ajoutes le 26 septembre ; l epreuve de sortie can_i_sell le 27, juste apres scan_token) ; les appels Telegram ne sont PAS offerts sans TG_APPELS_VENTE=1 (conditions de Telegram)');
     process.env.TG_APPELS_VENTE = '1';
     const dv = A.definitions({ recherche: true });
     delete process.env.TG_APPELS_VENTE;
-    eq(dv.map((x) => x.name).join(','), 'scan_token,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,telegram_calls,web_search',
-       'TG_APPELS_VENTE=1 : les appels Telegram reviennent a leur place (huit outils)');
+    eq(dv.map((x) => x.name).join(','), 'scan_token,can_i_sell,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,telegram_calls,web_search',
+       'TG_APPELS_VENTE=1 : les appels Telegram reviennent a leur place (neuf outils)');
     /* La borne se juge sur le catalogue le plus long : reglage allume. */
     ok(Math.ceil(JSON.stringify(dv).length / 2) <= A.OUTILS_JETONS && Math.ceil(A.SYSTEME.length / 2) <= A.SYSTEME_JETONS,
        'le pire cas couvre les definitions et la consigne, a un jeton pour deux caracteres [' + Math.ceil(JSON.stringify(dv).length / 2) + ' ≤ ' + A.OUTILS_JETONS + ']');
@@ -85,7 +85,7 @@ const m = C.modele('sonnet-5');
     delete process.env.TG_APPELS_VENTE;
     const toutes = publiees.map((x) => [x.name, x.description]);
     const sansQuand = toutes.filter(([, t]) => !/\bwhen\b|\buse this\b/i.test(t.split('. ')[0])).map(([k]) => k);
-    ok(toutes.length === 12 && !sansQuand.length, 'les ' + toutes.length + ' descriptions PUBLIEES (agentic.definitions) disent QUAND appeler dans leur premiere phrase' + (sansQuand.length ? ' — manque : ' + sansQuand.join(', ') : ''));
+    ok(toutes.length === 13 && !sansQuand.length, 'les ' + toutes.length + ' descriptions PUBLIEES (agentic.definitions) disent QUAND appeler dans leur premiere phrase' + (sansQuand.length ? ' — manque : ' + sansQuand.join(', ') : ''));
     const apiNoms = Object.keys(A.DESCRIPTIONS_API);
     const nonBranchees = apiNoms.filter((k) => (publiees.find((x) => x.name === k) || {}).description !== A.DESCRIPTIONS_API[k]);
     ok(apiNoms.length === 4 && !nonBranchees.length, 'les 4 descriptions de l API (DESCRIPTIONS_API) sont celles que agentic.definitions publie' + (nonBranchees.length ? ' — non branchees : ' + nonBranchees.join(', ') : ''));
@@ -292,13 +292,20 @@ const m = C.modele('sonnet-5');
   console.log('\n-- 7. ask_agent en x402 : plafond dur, garde en direct --');
   {
     const L = A.LIMITES_X402;
-    /* Le pire cas a la formule (Sonnet 5, tache de 2 000 caracteres, recherche) : 0,3528 $,
-       sous le plafond par defaut (0,36 $) — verrouille le calcul du contrat §D.3. */
+    /* Le pire cas a la formule (Sonnet 5, tache de 2 000 caracteres, recherche) : 0,3528 $
+       au contrat §D.3, avec OUTILS_JETONS = 2 600. Chaque appel relit les definitions :
+       une borne d'outils plus haute (3 000 le 27/09, can_i_sell) ajoute
+       etapesMax x (borne - 2 600) jetons a 2 $/M — 0,3560 $. Ce qui est VERROUILLE : la
+       formule, et le plafond dur (0,36 $) qu'elle ne doit jamais depasser. */
     const pc = A.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], true, L);
-    ok(Math.abs(pc - 0.3528) < 1e-9 && pc <= A.BUDGET_X402_USD, 'pire cas x402 a la formule : ' + pc.toFixed(4) + ' $ <= plafond ' + A.BUDGET_X402_USD + ' $ (contrat §D.3 : 0,3528 $)');
+    const attendu = 0.3528 + L.etapesMax * (A.OUTILS_JETONS - 2600) * 2e-6;
+    ok(Math.abs(pc - attendu) < 1e-9 && pc <= A.BUDGET_X402_USD, 'pire cas x402 a la formule : ' + pc.toFixed(4) + ' $ (attendu ' + attendu.toFixed(4) + ') <= plafond ' + A.BUDGET_X402_USD + ' $');
     ok(L.modele === 'sonnet-5' && L.tacheMaxCar === 2000 && L.etapesMax === 4 && L.outilsParEtape === 2 && L.resultatCarMax === 6000 && L.sortieMax === 4000 && L.dureeMaxS === 150 && L.finalApresS === 105,
        'LIMITES_X402 : Sonnet 5, 2 000 caracteres, 4 appels, 2 outils, 6 000 caracteres, 4 000 jetons, 150 s, final force a 105 s');
-    eq(A.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], true), 0.8592, 'sans limites : le pire cas par cle, inchange (0,8592 $)');
+    /* Par cle : 0,8592 $ avec la borne de 2 600, plus ETAPES_MAX appels qui relisent chacun la borne. */
+    const parCle = A.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], true);
+    const attenduCle = 0.8592 + A.ETAPES_MAX * (A.OUTILS_JETONS - 2600) * 2e-6;
+    ok(Math.abs(parCle - attenduCle) < 1e-9, 'sans limites : le pire cas par cle suit la meme formule [' + parCle.toFixed(4) + ' vs ' + attenduCle.toFixed(4) + ']');
     /* Un faux client qui sait compter (messages.countTokens) et dont chaque appel coute cher. */
     const fauxCompte = (tours, o) => {
       const c = faux(tours);
