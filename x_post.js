@@ -175,7 +175,25 @@ function jourDe(t) { return new Date(t).toISOString().slice(0, 10); }
  * Le personnage, lui, ne bouge pas : c est la seule chose qu on doit
  * reconnaitre d une image a l autre.
  * ======================================================================== */
-const PERSONNAGE = "the famous 'buff Doge' meme character: a Shiba Inu head with a calm, confident expression on an extremely muscular bodybuilder torso, cream and tan fur, wearing a royal blue tank top. He is the subject of the picture, large in frame";
+/* Le 27 septembre 2026, le proprietaire : « j ai deja vu plusieurs fois des
+   images similaires ». Sur les images postees, le debardeur bleu roi etait LE
+   meme a chaque fois, quel que soit le decor : c est lui qui faisait le « deja
+   vu ». Le corps et la tete restent (on doit reconnaitre SWOGE), la tenue suit
+   la scene — la meme lecon que pour les images de SwoleMind. */
+const PERSONNAGE = "the famous 'buff Doge' meme character: a Shiba Inu head with a calm, confident expression on an extremely muscular bodybuilder torso, cream and tan fur. His clothes fit this particular scene (never a plain blue tank top). He is the subject of the picture";
+
+/* Le cadrage : la meme scene vue de pres, de loin, d en bas ou de dos n est pas
+   la meme image. Tire en evitant les FENETRE_CADRAGE derniers. */
+const CADRAGES = [
+  'tight close-up on his face and shoulders, background soft',
+  'wide establishing shot, he is small in a huge setting',
+  'low angle looking up at him, heroic',
+  'high angle looking down from above',
+  'seen from behind over his shoulder, looking at what he looks at',
+  'three-quarter view, mid shot, natural',
+  'dutch tilt, dynamic diagonal composition',
+  'silhouette against the brightest part of the scene',
+];
 
 /* Douze directions artistiques. Aucune ne parle de crypto : c est le sujet qui
    raconte, pas la technique, et c est ce qui rendait les images jumelles. */
@@ -266,8 +284,14 @@ const SCENES = [
 /* La scene est choisie par la cle du creneau, et ne peut pas etre une des
    six dernieres postees : deux posts par jour avec la meme image, le fil
    ressemble a une panne. */
+/* Six ne suffisaient pas (27 septembre 2026) : a quatre posts par jour, une
+   scene revenait en un jour et demi. Vingt sur trente : une scene ne revient
+   pas avant cinq jours. */
+const FENETRE_SCENES = 20;
+const FENETRE_RENDUS = 6;
+const FENETRE_CADRAGE = 4;
 function sceneSuivante(cle, journal) {
-  const recentes = dernieres(journal, 6).map((e) => e.scene);
+  const recentes = dernieres(journal, FENETRE_SCENES).map((e) => e.scene);
   let i = Number.parseInt(crypto.createHash('sha1').update(String(cle)).digest('hex').slice(0, 8), 16) % SCENES.length;
   for (let k = 0; k < SCENES.length && recentes.includes(SCENES[i].nom); k++) i = (i + 1) % SCENES.length;
   return SCENES[i];
@@ -280,11 +304,32 @@ function renduDe(cle) {
   const n = Number.parseInt(crypto.createHash('sha1').update('rendu:' + String(cle)).digest('hex').slice(0, 8), 16);
   return RENDUS[n % RENDUS.length];
 }
-function promptImage(scene, cle) {
+/* Le rendu et le cadrage d un creneau : tires par la cle (une reprise refait
+   la meme image), mais jamais un des derniers, et jamais un trio scene +
+   rendu + cadrage deja poste — le journal garde les trois. */
+function choixImage(cle, scene, journal) {
+  const passes = journal ? dernieres(journal, 10000) : [];
+  const rendusRecents = passes.slice(0, FENETRE_RENDUS).map((e) => e.rendu);
+  const cadragesRecents = passes.slice(0, FENETRE_CADRAGE).map((e) => e.cadrage);
+  const trios = new Set(passes.map((e) => e.scene + '|' + e.rendu + '|' + e.cadrage));
+  const h = (sel) => Number.parseInt(crypto.createHash('sha1').update(sel + String(cle)).digest('hex').slice(0, 8), 16);
+  let r = h('rendu:') % RENDUS.length, c = h('cadrage:') % CADRAGES.length;
+  for (let k = 0; k < RENDUS.length && rendusRecents.includes(r); k++) r = (r + 1) % RENDUS.length;
+  /* Le cadrage : ni un des derniers, ni un trio deja poste ; a defaut de
+     trio neuf (apres des mois), au moins pas un des derniers. */
+  const ok = (x) => !cadragesRecents.includes(x);
+  let neuf = -1;
+  for (let k = 0; k < CADRAGES.length; k++) { const x = (c + k) % CADRAGES.length; if (ok(x) && !trios.has(scene.nom + '|' + r + '|' + x)) { neuf = x; break; } }
+  if (neuf < 0) for (let k = 0; k < CADRAGES.length; k++) { const x = (c + k) % CADRAGES.length; if (ok(x)) { neuf = x; break; } }
+  return { rendu: r, cadrage: neuf < 0 ? c : neuf };
+}
+function promptImage(scene, cle, choix) {
   /* Une scene ecrite a la main depuis le panneau (`special`) porte deja son
      decor dans sa phrase : on ne lui en colle pas un deuxieme. */
   const monde = scene.monde ? scene.monde + '. ' : '';
-  return `${renduDe(cle)}. ${PERSONNAGE}, ${scene.prompt}. ${monde}${NEGATIF}`;
+  const rendu = choix ? RENDUS[choix.rendu] : renduDe(cle);
+  const cadrage = choix ? CADRAGES[choix.cadrage] : CADRAGES[Number.parseInt(crypto.createHash('sha1').update('cadrage:' + String(cle)).digest('hex').slice(0, 8), 16) % CADRAGES.length];
+  return `${rendu}. ${cadrage}. ${PERSONNAGE}, ${scene.prompt}. ${monde}${NEGATIF}`;
 }
 
 // ------------------------------------------------------------ les faits du jour
@@ -399,12 +444,13 @@ function nettoie(brut, lien, tags) {
     if (tags.hashtag && !/#RobinhoodChain\b/i.test(t)) ajout.push('#RobinhoodChain');
     if (ajout.length) t = t + ' ' + ajout.join(' ');
   }
-  const max = lien ? 280 - (LIEN.length + 1) : 280;
+  const url = typeof lien === 'string' ? lien : LIEN;
+  const max = lien ? 280 - (url.length + 1) : 280;
   if (t.length > max) {
     const coupe = (s, m) => { s = s.slice(0, m); return s.slice(0, Math.max(s.lastIndexOf(' '), m - 40)).trim(); };
     t = coupe(t, max);
   }
-  if (lien) t += '\n' + LIEN;
+  if (lien) t += '\n' + url;
   return t;
 }
 
@@ -443,14 +489,15 @@ async function ecritTexte(faits, o, prendre) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       const brut = ((j.content || []).find((b) => b.type === 'text') || {}).text || '';
-      if (brut.trim()) return { texte: nettoie(brut, e.lien, tags), via: 'modele' };
+      if (brut.trim()) return { texte: nettoie(brut, o.lien !== undefined ? o.lien : e.lien, tags), via: 'modele' };
       throw new Error('reponse vide');
     } catch (err) {
       console.error('[x] texte : le modele n a pas repondu (' + (err.message || err) + '), phrase de reserve');
     }
   }
   const i = Number.parseInt(crypto.createHash('sha1').update(String(o.cle || jour)).digest('hex').slice(0, 6), 16) % RESERVE.length;
-  return { texte: nettoie(RESERVE[i], e.lien, tags), via: 'reserve' };
+  if (o.reserve) return { texte: nettoie(o.reserve, o.lien !== undefined ? o.lien : e.lien, tags), via: 'reserve' };
+  return { texte: nettoie(RESERVE[i], o.lien !== undefined ? o.lien : e.lien, tags), via: 'reserve' };
 }
 
 // ------------------------------------------------------------ l image
@@ -469,6 +516,58 @@ async function genereImage(prompt, prendre) {
   const b64 = j.data && j.data[0] && j.data[0].b64_json;
   if (!b64) throw new Error('image : reponse sans image');
   return { png: Buffer.from(b64, 'base64'), jetons: (j.usage && j.usage.output_tokens) || null };
+}
+
+// ------------------------------------------------------------ l annonce en video
+
+/* ---- UNE ANNONCE, UNE FOIS, EN VIDEO ----
+ * Demande du proprietaire, 27 septembre 2026 : « le prochain tweet auto,
+ * exceptionnellement, une video de 6 secondes et un texte viral pour annoncer
+ * SwoleMind ; ensuite les tweets reprennent comme avant ». Le prochain creneau
+ * la prend ; le journal (`annonces`) la retient partie — ou abandonnee apres
+ * trois essais, et le creneau suivant redevient normal. `X_ANNONCE=0` l eteint.
+ * La video : Grok Imagine (xAI), POST /v1/videos/generations puis GET
+ * /v1/videos/{id} (specification OpenAPI xAI relue le 26 septembre 2026, voir
+ * studio_xai.js) ; « grok-imagine-video-1.5 » a 0,08 $ la seconde, soit
+ * environ 0,48 $ pour 6 s (prix du catalogue de studio_media.js). */
+const ANNONCE = {
+  nom: 'swolemind',
+  duree: 6,
+  lien: 'https://swoleeswoge.dog/swolemind.html',
+  sujet: 'SwoleMind is live: SWOGE\'s own AI app. Chat with Claude, ChatGPT and Grok in one place, create images and 6-second videos, and make mini-series or ads where the characters and their voices stay the same in every scene. Pay with $SWOGE.',
+  reserve: 'SwoleMind is live 🧠💪 Claude, ChatGPT and Grok in one app, plus images, videos and mini-series where every character keeps their face and voice. Built by the dog. $SWOGE',
+  prompt: 'Cinematic 6-second shot, smooth camera push-in. The famous buff Doge meme character: a Shiba Inu head with a calm, confident expression on an extremely muscular bodybuilder body, cream and tan fur, wearing a sleek black hoodie with the sleeves pushed up. He sits in a dark room in front of a glowing holographic screen, taps it once, and a burst of light pours out and forms floating panels around him: a painting coming to life, a tiny movie scene, a speech bubble. He turns to the camera and smirks. Neon blue and warm gold light, shallow depth of field. No text, no letters, no numbers, no logos, no watermark.',
+};
+function cleXai() { return (process.env.XAI_API_KEY || process.env.GROK_API_KEY || '').trim(); }
+function annonceEnAttente(journal) {
+  if (process.env.X_ANNONCE === '0' || !ANNONCE || !cleXai()) return false;
+  return !((journal.annonces || {})[ANNONCE.nom]);
+}
+async function genereVideo(prompt, duree, prendre, pause) {
+  const f = prendre || fetch;
+  const dors = pause || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const base = (process.env.XAI_BASE_URL || 'https://api.x.ai').replace(/\/$/, '');
+  const h = { 'content-type': 'application/json', authorization: 'Bearer ' + cleXai() };
+  const r = await f(base + '/v1/videos/generations', { method: 'POST', headers: h, signal: AbortSignal.timeout(60000),
+    body: JSON.stringify({ model: 'grok-imagine-video-1.5', prompt, duration: duree, resolution: '720p', aspect_ratio: '16:9' }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.request_id) throw new Error('video : HTTP ' + r.status + (j.error ? ' — ' + String(j.error.message || j.error).slice(0, 100) : ''));
+  for (let tour = 0; tour < 90; tour++) {                       /* 90 × 10 s : 15 min, comme STUDIO_VIDEO_MAX_MS */
+    await dors(10000);
+    const q = await f(base + '/v1/videos/' + encodeURIComponent(j.request_id), { headers: { authorization: h.authorization }, signal: AbortSignal.timeout(30000) });
+    const x = await q.json().catch(() => ({}));
+    const v = x.response && x.response.status ? x.response : x;
+    const st = v.status || x.status;
+    if (st === 'done' && v.video && v.video.url) {
+      const d = await f(v.video.url, { signal: AbortSignal.timeout(120000) });
+      if (!d.ok) throw new Error('video : telechargement HTTP ' + d.status);
+      const mp4 = Buffer.from(await d.arrayBuffer());
+      const ticks = v.usage && Number(v.usage.cost_in_usd_ticks);
+      return { mp4, coutUsd: Number.isFinite(ticks) ? ticks / 1e10 : null };
+    }
+    if (st === 'failed' || st === 'expired') throw new Error('video : ' + st + (v.error ? ' — ' + String(v.error.message || v.error.code || '').slice(0, 100) : ''));
+  }
+  throw new Error('video : pas prete apres 15 min');
 }
 
 // ------------------------------------------------------------ X
@@ -490,6 +589,45 @@ async function appelX(chemin, corps, prendre) {
     throw new Error(`X ${chemin} : HTTP ${r.status}${detail ? ' — ' + detail : ''}`);
   }
   return j;
+}
+async function appelXGet(chemin, params, prendre) {
+  const e = env();
+  const f = prendre || fetch;
+  const url = API + chemin;
+  const s = signeOAuth('GET', url, params, e);        /* les parametres de requete entrent dans la signature */
+  const r = await f(url + '?' + Object.keys(params).map((k) => enc(k) + '=' + enc(params[k])).join('&'), {
+    method: 'GET', headers: { authorization: s.entete }, signal: AbortSignal.timeout(60000),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`X ${chemin} : HTTP ${r.status}`);
+  return j;
+}
+/* ---- UNE VIDEO SUR X : le televersement en morceaux ----
+ * docs.x.com (relu le 27 septembre 2026) : POST /2/media/upload/initialize
+ * {media_type, total_bytes, media_category: tweet_video} → id ; POST
+ * /2/media/upload/{id}/append {media (base64 accepte en JSON), segment_index}
+ * par morceaux de 5 Mo au plus ; POST /2/media/upload/{id}/finalize ; puis
+ * GET /2/media/upload?command=STATUS&media_id=… tant que processing_info dit
+ * pending ou in_progress (check_after_secs). */
+const MORCEAU = 4 * 1024 * 1024;
+async function televerseVideo(mp4, prendre, pause) {
+  const dors = pause || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const i = await appelX('/2/media/upload/initialize', { media_type: 'video/mp4', total_bytes: mp4.length, media_category: 'tweet_video' }, prendre);
+  const id = String((i.data && (i.data.id || i.data.media_key)) || i.id || i.media_id_string || '');
+  if (!id) throw new Error('X media : initialize sans identifiant');
+  for (let k = 0, n = 0; k < mp4.length; k += MORCEAU, n++) {
+    await appelX('/2/media/upload/' + id + '/append', { media: mp4.slice(k, k + MORCEAU).toString('base64'), segment_index: n }, prendre);
+  }
+  let fin = await appelX('/2/media/upload/' + id + '/finalize', {}, prendre);
+  let info = (fin.data || fin).processing_info;
+  for (let tour = 0; info && (info.state === 'pending' || info.state === 'in_progress'); tour++) {
+    if (tour >= 60) throw new Error('X media : la video n est pas prete apres 60 lectures');
+    await dors(Math.min(30, Math.max(1, Number(info.check_after_secs) || 5)) * 1000);
+    const st = await appelXGet('/2/media/upload', { command: 'STATUS', media_id: id }, prendre);
+    info = (st.data || st).processing_info;
+  }
+  if (info && info.state === 'failed') throw new Error('X media : traitement de la video rate' + (info.error && info.error.message ? ' — ' + String(info.error.message).slice(0, 100) : ''));
+  return id;
 }
 async function televerse(png, prendre) {
   const j = await appelX('/2/media/upload', { media: png.toString('base64'), media_category: 'tweet_image' }, prendre);
@@ -518,8 +656,8 @@ function litJournal() {
        cle du jour seul : elle se lit comme le creneau de midi, sinon le
        premier tour apres deploiement « rattraperait » un midi deja poste. */
     for (const [k, e] of Object.entries(j.jours || {})) jours[k.includes('#') ? k : k + '#12:00'] = e;
-    return { jours };
-  } catch (e) { return { jours: {} }; }
+    return { jours, annonces: j.annonces || {} };
+  } catch (e) { return { jours: {}, annonces: {} }; }
 }
 function ecritJournal(j) {
   fs.mkdirSync(cfg.DATA_DIR, { recursive: true });
@@ -536,6 +674,8 @@ function purgeImages() {
   try {
     const l = fs.readdirSync(DOSSIER_IMAGES()).filter((f) => /\.png$/.test(f)).sort();
     for (const f of l.slice(0, Math.max(0, l.length - 60))) fs.unlinkSync(path.join(DOSSIER_IMAGES(), f));
+    const v = fs.readdirSync(DOSSIER_IMAGES()).filter((f) => /\.mp4$/.test(f)).sort();
+    for (const f of v.slice(0, Math.max(0, v.length - 5))) fs.unlinkSync(path.join(DOSSIER_IMAGES(), f));
   } catch (e) { /* dossier absent */ }
 }
 const nomImage = (cle) => String(cle).replace(/[^0-9A-Za-z-]+/g, '_');
@@ -587,6 +727,7 @@ async function tache(opts) {
   if (enCours) return { etat: 'en cours' };
   enCours = true;
   try {
+    if (!o.special && (entree.annonce || annonceEnAttente(journal))) return await posteAnnonce(cle, entree, journal, t, o);
     const scene = o.special && o.special.prompt ? { nom: o.special.nom, prompt: o.special.prompt }
                 : entree.scene ? (SCENES.find((s) => s.nom === entree.scene) || sceneSuivante(cle, journal))
                 : sceneSuivante(cle, journal);
@@ -599,7 +740,11 @@ async function tache(opts) {
     let png;
     if (entree.image && fs.existsSync(fichierImage)) png = fs.readFileSync(fichierImage);
     else {
-      const g = await genereImage(promptImage(scene, cle), o.prendre);
+      if (entree.rendu === undefined || entree.cadrage === undefined) {
+        const ch = choixImage(cle, scene, journal);
+        entree.rendu = ch.rendu; entree.cadrage = ch.cadrage;
+      }
+      const g = await genereImage(promptImage(scene, cle, { rendu: entree.rendu, cadrage: entree.cadrage }), o.prendre);
       png = g.png; fs.writeFileSync(fichierImage, png);
       entree.image = nomImage(cle) + '.png'; entree.jetonsImage = g.jetons;
       journal.jours[cle] = entree; ecritJournal(journal);
@@ -625,12 +770,52 @@ async function tache(opts) {
   } catch (err) {
     entree.essais = (entree.essais || 0) + 1;
     entree.erreur = String(err && err.message || err).slice(0, 200);
-    journal.jours[cle] = entree; ecritJournal(journal);
+    journal.jours[cle] = entree;
+    /* L annonce ratee trois fois : abandonnee, le creneau suivant redevient normal. */
+    if (entree.annonce && entree.essais >= 3) journal.annonces = Object.assign(journal.annonces || {}, { [entree.annonce]: { abandon: true, cle, erreur: entree.erreur } });
+    ecritJournal(journal);
     console.error(`[x] rate ${cle} (${entree.essais}/3) : ${entree.erreur}`);
     return { etat: 'rate', cle, essais: entree.essais, erreur: entree.erreur };
   } finally {
     enCours = false;
   }
+}
+
+/** Le creneau de l annonce : la video d abord, sur le disque (un refus de X
+ *  plus loin ne la fait pas payer deux fois), puis le texte, puis X. */
+async function posteAnnonce(cle, entree, journal, t, o) {
+  const e = env();
+  entree.annonce = ANNONCE.nom; entree.scene = 'annonce-' + ANNONCE.nom;
+  fs.mkdirSync(DOSSIER_IMAGES(), { recursive: true });
+  const fichier = path.join(DOSSIER_IMAGES(), nomImage(cle) + '.mp4');
+  let mp4;
+  if (entree.video && fs.existsSync(fichier)) mp4 = fs.readFileSync(fichier);
+  else {
+    const v = await genereVideo(ANNONCE.prompt, ANNONCE.duree, o.prendre, o.pause);
+    mp4 = v.mp4; fs.writeFileSync(fichier, mp4);
+    entree.video = nomImage(cle) + '.mp4'; entree.coutVideoUsd = v.coutUsd;
+    journal.jours[cle] = entree; ecritJournal(journal);
+  }
+  if (!entree.texte) {
+    const r = await ecritTexte(faitsDuJour(t), { scene: { nom: entree.scene, prompt: 'in a short video announcing SwoleMind' }, cle, maintenant: t,
+      angle: 'viral launch announcement: hype, one clear hook, make people want to try it now', sujet: ANNONCE.sujet, reserve: ANNONCE.reserve,
+      lien: ANNONCE.lien, precedents: dernieres(journal, 5).map((x) => x.texte) }, o.prendre);
+    entree.texte = r.texte; entree.via = r.via;
+    journal.jours[cle] = entree; ecritJournal(journal);
+  }
+  const mediaId = await televerseVideo(mp4, o.prendre, o.pause);
+  const id = await publie(entree.texte, mediaId, o.prendre);
+  entree.id = id; entree.quand = new Date(t).toISOString(); delete entree.erreur;
+  journal.jours[cle] = entree;
+  journal.annonces = Object.assign(journal.annonces || {}, { [ANNONCE.nom]: { cle, id, quand: entree.quand } });
+  ecritJournal(journal);
+  purgeImages();
+  console.log(`[x] annonce ${ANNONCE.nom} postee en video ${cle} · https://x.com/${e.compte}/status/${id}`);
+  if (o.signale) {
+    try { o.signale({ cle, texte: entree.texte, id, image: null, url: `https://x.com/${e.compte}/status/${id}` }); }
+    catch (x) { /* le Telegram ne fait pas rater le post */ }
+  }
+  return { etat: 'poste', cle, id, texte: entree.texte, scene: entree.scene, annonce: ANNONCE.nom };
 }
 
 /** Remet a zero les essais des creneaux non partis — apres une cle ou une
@@ -657,7 +842,8 @@ function planifie(signale) {
   return { arrete() { clearTimeout(premier); clearInterval(minuterie); } };
 }
 
-module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, RENDUS, NEGATIF, ANGLES, renduDe, sceneSuivante, promptImage, faitsDuJour, etiquettes,
+module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, RENDUS, CADRAGES, NEGATIF, ANGLES, renduDe, sceneSuivante, promptImage, choixImage,
+                   ANNONCE, annonceEnAttente, genereVideo, televerseVideo, appelXGet, FENETRE_SCENES, FENETRE_RENDUS, FENETRE_CADRAGE, faitsDuJour, etiquettes,
                    nettoie, ecritTexte, genereImage, televerse, publie, tache, planifie, derniere, reprend,
                    heureLocale, creneauDu, jourDe, litJournal, dernieres, DOSSIER_IMAGES, RESERVE };
 

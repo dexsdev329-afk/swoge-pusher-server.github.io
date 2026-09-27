@@ -22,7 +22,7 @@ const path = require('path');
 
 const VOL = fs.mkdtempSync(path.join(os.tmpdir(), 'xpost-'));
 process.env.DATA_DIR = VOL;
-for (const k of ['X_CONSUMER_KEY', 'X_CONSUMER_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'X_LIEN', 'X_HEURE', 'X_HEURES', 'X_FUSEAU']) delete process.env[k];
+for (const k of ['X_CONSUMER_KEY', 'X_CONSUMER_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'X_LIEN', 'X_HEURE', 'X_HEURES', 'X_FUSEAU', 'XAI_API_KEY', 'GROK_API_KEY', 'X_ANNONCE', 'XAI_BASE_URL']) delete process.env[k];
 
 let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n++; console.log('  ok   ' + m); };
@@ -293,6 +293,97 @@ const x = require('./x_post');
     eq(r.etat, 'deja', 'le meme post special ne part pas deux fois le meme jour');
     r = await x.tache({ maintenant: MINUIT + 180000, prendre: faux, special: { nom: 'sans-sujet' } });
     eq(r.etat, 'refuse', 'et sans sujet, refuse');
+  }
+
+  console.log('\n-- 7. jamais la meme image (27 septembre 2026) --');
+  {
+    /* « J ai deja vu plusieurs fois des images similaires » : le debardeur bleu
+       etait sur chaque image, et une scene revenait en un jour et demi. */
+    ok(!/royal blue tank top/.test(x.promptImage(x.SCENES[0], 'k')) && /never a plain blue tank top/.test(x.promptImage(x.SCENES[0], 'k')),
+       'le personnage garde son corps, pas un debardeur bleu impose');
+    const journal = { jours: {}, annonces: {} };
+    const hist = []; let viol = { scene: 0, rendu: 0, cadrage: 0, trio: 0 }; const trios = new Set();
+    for (let i = 0; i < 240; i++) {
+      const cle = '2026-11-' + String(1 + Math.floor(i / 4)).padStart(2, '0') + '#' + ['09:00', '12:30', '17:00', '20:30'][i % 4];
+      const sc = x.sceneSuivante(cle, journal);
+      const ch = x.choixImage(cle, sc, journal);
+      if (hist.slice(-x.FENETRE_SCENES).some((h) => h.scene === sc.nom)) viol.scene++;
+      if (hist.slice(-x.FENETRE_RENDUS).some((h) => h.rendu === ch.rendu)) viol.rendu++;
+      if (hist.slice(-x.FENETRE_CADRAGE).some((h) => h.cadrage === ch.cadrage)) viol.cadrage++;
+      const tr = sc.nom + '|' + ch.rendu + '|' + ch.cadrage; if (trios.has(tr)) viol.trio++; trios.add(tr);
+      hist.push({ scene: sc.nom, rendu: ch.rendu, cadrage: ch.cadrage });
+      journal.jours[cle] = { scene: sc.nom, rendu: ch.rendu, cadrage: ch.cadrage, id: String(i), quand: new Date(Date.UTC(2026, 10, 1) + i * 21600000).toISOString() };
+    }
+    eq(viol.scene, 0, 'sur 240 posts (deux mois a quatre par jour), jamais une des ' + x.FENETRE_SCENES + ' dernieres scenes');
+    eq(viol.rendu, 0, 'jamais un des ' + x.FENETRE_RENDUS + ' derniers rendus');
+    eq(viol.cadrage, 0, 'jamais un des ' + x.FENETRE_CADRAGE + ' derniers cadrages');
+    eq(viol.trio, 0, 'et jamais deux fois le meme trio scene + rendu + cadrage');
+    const a = x.choixImage('meme#cle', x.SCENES[0], journal), b = x.choixImage('meme#cle', x.SCENES[0], journal);
+    ok(a.rendu === b.rendu && a.cadrage === b.cadrage, 'une reprise du meme creneau refait la meme image (rien paye deux fois pour rien)');
+  }
+
+  console.log('\n-- 8. l annonce SwoleMind, une fois, en video --');
+  {
+    fs.readdirSync(VOL).forEach((f) => { if (f === 'x_posts.json') fs.unlinkSync(path.join(VOL, f)); });
+    process.env.XAI_API_KEY = 'xai-test';
+    process.env.X_HEURES = '09:00,12:30,17:00,20:30'; process.env.X_FUSEAU = 'America/New_York';
+    const MP4 = Buffer.alloc(9 * 1024 * 1024, 7);          // 9 Mo : trois morceaux de 4 Mo
+    const appels = []; let statuts = 0; let videoRate = false;
+    const faux = async (url, o) => {
+      const u = String(url); let corps = null; try { corps = o && o.body ? JSON.parse(o.body) : null; } catch (e) {}
+      appels.push({ u, corps, methode: (o && o.method) || 'GET', auth: (o && o.headers && (o.headers.authorization || o.headers['x-api-key'])) || '' });
+      const rep = (statut, j) => ({ ok: statut < 300, status: statut, json: async () => j, text: async () => JSON.stringify(j), arrayBuffer: async () => MP4 });
+      if (/api\.x\.ai\/v1\/videos\/generations/.test(u)) return videoRate ? rep(500, { error: { message: 'down' } }) : rep(200, { request_id: 'vid-1' });
+      if (/api\.x\.ai\/v1\/videos\/vid-1/.test(u)) return rep(200, { status: 'done', video: { url: 'https://vidgen.x.ai/vid-1.mp4', duration: 6 }, usage: { cost_in_usd_ticks: 4.8e9 } });
+      if (/vidgen\.x\.ai/.test(u)) return rep(200, {});
+      if (/openai/.test(u)) return rep(200, { data: [{ b64_json: Buffer.from('PNG').toString('base64') }] });
+      if (/anthropic/.test(u)) return rep(200, { content: [{ type: 'text', text: 'SwoleMind just dropped 🧠💪 Claude, ChatGPT and Grok in one app, plus videos with the same characters every scene. $SWOGE' }] });
+      if (/media\/upload\/initialize/.test(u)) return rep(200, { data: { id: 'v99', media_key: '7_v99' } });
+      if (/media\/upload\/v99\/append/.test(u)) return rep(200, { data: { expires_at: 1 } });
+      if (/media\/upload\/v99\/finalize/.test(u)) return rep(200, { data: { id: 'v99', processing_info: { state: 'pending', check_after_secs: 1 } } });
+      if (/media\/upload\?command=STATUS/.test(u)) { statuts++; return rep(200, { data: { id: 'v99', processing_info: { state: statuts < 2 ? 'in_progress' : 'succeeded' } } }); }
+      if (/media\/upload$/.test(u)) return rep(200, { data: { id: 'img1' } });
+      if (/2\/tweets/.test(u)) return rep(201, { data: { id: String(5000 + appels.length) } });
+      throw new Error('url inattendue ' + u);
+    };
+    const pause = async () => {};
+    const T1 = Date.parse('2026-10-01T13:05:00Z');          // 09:05 a New York
+    let r = await x.tache({ maintenant: T1, prendre: faux, pause });
+    eq(r.etat, 'poste', 'le prochain creneau part');
+    eq(r.annonce, 'swolemind', 'et c est l annonce SwoleMind');
+    const gen = appels.find((a) => /videos\/generations/.test(a.u));
+    ok(gen && gen.corps.duration === 6 && gen.corps.model === 'grok-imagine-video-1.5' && /buff Doge/.test(gen.corps.prompt) && /No text/.test(gen.corps.prompt),
+       'une video Grok Imagine de 6 s, le SWOGE musclé, sans texte a l image');
+    const init = appels.find((a) => /initialize/.test(a.u));
+    ok(init && init.corps.media_type === 'video/mp4' && init.corps.total_bytes === MP4.length && init.corps.media_category === 'tweet_video', 'X initialize : video/mp4, taille exacte, tweet_video');
+    const ap = appels.filter((a) => /append/.test(a.u));
+    ok(ap.length === 3 && ap.map((a) => a.corps.segment_index).join() === '0,1,2' && Buffer.from(ap[0].corps.media, 'base64').length === 4 * 1024 * 1024,
+       'trois morceaux de 4 Mo, numerotes 0, 1, 2');
+    const st = appels.filter((a) => /command=STATUS/.test(a.u));
+    ok(st.length === 2 && st.every((a) => a.methode === 'GET' && /oauth_signature=/.test(a.auth) && /media_id=v99/.test(a.u)), 'le traitement est suivi (STATUS, GET signe) jusqu a « succeeded »');
+    const tw = appels.filter((a) => /2\/tweets/.test(a.u)).pop();
+    ok(tw.corps.media.media_ids[0] === 'v99' && /swoleeswoge\.dog\/swolemind\.html/.test(tw.corps.text) && tw.corps.text.length <= 280, 'le tweet porte la video et le lien de SwoleMind');
+    ok(/Today's announcement.*SwoleMind is live/.test(appels.find((a) => /anthropic/.test(a.u)).corps.messages[0].content), 'le texte est ecrit sur le sujet de l annonce');
+    const j1 = x.litJournal();
+    ok(j1.annonces.swolemind && j1.annonces.swolemind.id, 'le journal retient l annonce partie');
+    ok(!appels.some((a) => /openai/.test(a.u)), 'aucune image payee pour ce creneau');
+    const nVid = appels.filter((a) => /videos\/generations/.test(a.u)).length;
+    r = await x.tache({ maintenant: Date.parse('2026-10-01T16:35:00Z'), prendre: faux, pause });   // 12:35
+    ok(r.etat === 'poste' && !r.annonce, 'le creneau suivant redevient un post normal');
+    ok(appels.filter((a) => /videos\/generations/.test(a.u)).length === nVid && appels.some((a) => /openai/.test(a.u)), 'avec une image, et plus aucune video');
+    /* Une annonce qui rate trois fois : abandonnee, le creneau d apres est normal. */
+    fs.unlinkSync(path.join(VOL, 'x_posts.json'));
+    videoRate = true;
+    const T2 = Date.parse('2026-10-02T13:05:00Z');
+    for (let i = 0; i < 3; i++) r = await x.tache({ maintenant: T2, prendre: faux, pause });
+    ok(r.etat === 'rate' && x.litJournal().annonces.swolemind.abandon === true, 'trois echecs de la video : l annonce est abandonnee (jamais une boucle de videos payees)');
+    videoRate = false;
+    r = await x.tache({ maintenant: Date.parse('2026-10-02T16:35:00Z'), prendre: faux, pause });
+    ok(r.etat === 'poste' && !r.annonce, 'et le creneau suivant part normalement');
+    process.env.X_ANNONCE = '0'; fs.unlinkSync(path.join(VOL, 'x_posts.json'));
+    ok(!x.annonceEnAttente(x.litJournal()), 'X_ANNONCE=0 l eteint');
+    delete process.env.X_ANNONCE; delete process.env.XAI_API_KEY;
+    ok(!x.annonceEnAttente(x.litJournal()), 'et sans cle xAI, pas d annonce video (le post reste une image)');
   }
 
   console.log(`\nx_post.test.js : ${n} verifications OK`);
