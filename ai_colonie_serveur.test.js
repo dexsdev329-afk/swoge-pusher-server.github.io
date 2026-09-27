@@ -6186,6 +6186,49 @@ async function surveillanceRamene() {
 }
 
 /* ==========================================================================
+ * 45 bis. LA FILE DE REPRISE NE S AFFAME PAS
+ *
+ * Releve du 27/09/2026 : 44 jetons refuses « not indexed by DexScreener yet »,
+ * zero repris. Le budget (5 par tour) etait plein et toutes les notes des
+ * surveilles valaient 100 : a egalite, les plus vieux passaient toujours devant.
+ * Ce que l essai tient : un jeton jamais relu passe avant ceux deja relus, a
+ * budget egal ; puis, parmi ceux deja relus, celui qui attend depuis le plus
+ * longtemps. Et le budget ne grandit pas.
+ * ======================================================================== */
+async function repriseSansFamine() {
+  console.log('\n-- la file de reprise : jamais relu d abord, a budget egal --');
+  remise(sains());
+  const F = C._etat();
+  const now = Date.now();
+  const J = MONDE.jetons;
+  /* Six vieux surveilles, note plafonnee a 100, deja relus il y a 25 min ; le
+     premier attend depuis une heure. Inseres AVANT le jeune : c est l ordre
+     qui les faisait passer devant. */
+  for (let i = 0; i < 6; i++) {
+    F.connus[J[i].addr] = { sym: 'VIEUX' + i, vu: 10, ne: now - 5 * 3600e3, dernier: now - 25 * 60000,
+      verdict: 'no public presence at all: no site, no X, no Telegram', meilleure: 100,
+      repris: now - (i === 0 ? 60 : 25) * 60000 };
+  }
+  const jeune = J[6].addr;
+  F.connus[jeune] = { sym: 'JEUNE', vu: 1, ne: now - 15 * 60000, dernier: now - 10 * 60000,
+    verdict: 'not indexed by DexScreener yet (5 min)', meilleure: 60 };
+  const repris = await C.reprises(new Map());
+  const qui = repris.map((t) => t.addr);
+  console.log('   repris : ' + repris.length + ' — ' + JSON.stringify(qui.map((a) => F.connus[a].sym)));
+  ok(repris.length === 5, 'le budget reste de 5 par tour [' + repris.length + ']');
+  ok(qui.indexOf(jeune) === 0, 'le jeune jamais relu passe en tete, malgre sa note de 60 contre 100');
+  ok(qui.indexOf(J[0].addr) === 1, 'puis, a note egale, le surveille qui attend depuis le plus longtemps');
+  ok(F.connus[jeune].repris > 0, 'et sa reprise est datee : il ne repasse pas en tete au tour suivant');
+  /* Rien ne s ouvre pour autant : un jeune qui n a jamais approche le seuil
+     reste dehors, comme avant. */
+  F.connus[jeune] = { sym: 'JEUNE', vu: 1, ne: now - 15 * 60000, dernier: now - 10 * 60000,
+    verdict: 'not indexed by DexScreener yet (5 min)', meilleure: 5 };
+  for (let i = 0; i < 6; i++) F.connus[J[i].addr].repris = now - 25 * 60000;
+  const bis = (await C.reprises(new Map())).map((t) => t.addr);
+  ok(bis.indexOf(jeune) < 0, 'un jeune loin du seuil n est pas repris : la file change d ordre, pas de porte');
+}
+
+/* ==========================================================================
  * 46. ELLE DIT ELLE-MEME POURQUOI ELLE N'ACHETE PAS
  *
  * « Regarde pourquoi le bot ne trade pas. »
@@ -8081,6 +8124,7 @@ async function baleineParTranche() {
   await leVeilleur();
   await lesSignaux();
   await surveillanceRamene();
+  await repriseSansFamine();
   await pourquoiPasDAchat();
   await memoirePlusGrande();
   await seReorganiseVraiment();

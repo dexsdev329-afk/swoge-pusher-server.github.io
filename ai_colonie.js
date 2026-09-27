@@ -8968,9 +8968,21 @@ async function reprises(dejaVu) {
     if (now - (c.repris || 0) < REPRISE_ESPACE_MIN * 60000) continue;
     cand.push({ addr, c });
   }
-  /* Les meilleures notes d'abord : le budget est petit, il va a ceux qui
-     etaient le plus pres de passer. */
-  cand.sort((a, b) => (b.c.meilleure || 0) - (a.c.meilleure || 0));
+  /* ---- JAMAIS RELU D'ABORD, PUIS LES MEILLEURES NOTES ----
+   * Releve du 27 septembre 2026, 11 h UTC : 44 jetons refuses « not indexed
+   * by DexScreener yet » depuis 08:23, ZERO repris (nonIndexe.repris = 0).
+   * Le budget etait plein : 1 577 reprises en 317 tours (4,97 pour 5), et
+   * les 12 jetons de la surveillance avaient TOUS « meilleure » = 100 — la
+   * note plafonne, le tri par note ne departageait plus rien, et a egalite
+   * l'ordre d'insertion de `E.connus` faisait repasser les plus vieux (jusqu'a
+   * six heures, toutes les 20 min). Le jeune mis de cote pour l'heure, jamais
+   * relu avec DexScreener, n'arrivait jamais en tete.
+   * Donc : celui qui n'a jamais ete repris passe avant celui qui l'a deja ete,
+   * puis la note, puis le plus longtemps sans relecture. Meme budget, memes
+   * gardes, aucun seuil touche : c'est l'ordre de la file, pas la porte. */
+  cand.sort((a, b) => (!a.c.repris === !b.c.repris ? 0 : (!a.c.repris ? -1 : 1))
+    || (b.c.meilleure || 0) - (a.c.meilleure || 0)
+    || (a.c.repris || 0) - (b.c.repris || 0));
   const out = [];
   for (const x of cand.slice(0, REPRISE_PAR_TOUR)) {
     x.c.repris = now;
