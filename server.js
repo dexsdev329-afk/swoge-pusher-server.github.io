@@ -1826,6 +1826,26 @@ const BAZAAR_MCP = new Map();   /* outil|recherche → extension bazaar d'un app
    portefeuille de gaz, meme avec X402_CAISSE=1 : la caisse (rachat de 5 %) ne vit
    que sur Robinhood Chain (caisse.js), et le depot n'a aucun pont. Rien n'est
    jamais journalise du secret, d'un jeton ou d'un en-tete Authorization. */
+/* ---- SOLANA (etape 2 du plan « mieux que PayAI », 27/09/2026) ----
+   X402_SOLANA_PAYTO : l'adresse PUBLIQUE de reception du proprietaire (jamais une
+   cle). L'USDC y arrive par le facilitateur de PayAI, qui paie les frais. La
+   confirmation sur la chaine passe par SOLANA_RPC_URL (sa cle n'est jamais ecrite
+   dans un journal). X402_SOLANA=0 coupe. */
+function solanaDepuisEnv(X) {
+  const payTo = String(process.env.X402_SOLANA_PAYTO || '').trim();
+  if (!payTo || process.env.X402_SOLANA === '0') return null;
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(payTo)) { console.error('[x402] X402_SOLANA_PAYTO is not a Solana address (base58, 32-44 characters) - Solana stays off'); return null; }
+  const facilitateur = require('./facilitateur_cdp').cree({ sansCle: true, nom: 'payai', url: String(process.env.PAYAI_FACILITATOR_URL || 'https://facilitator.payai.network').trim(),
+    journal: (l) => { if (l.statut !== 200) console.warn('[x402] PayAI (Solana) ' + l.op + ': ' + l.statut + (l.raison ? ' ' + l.raison : '') + (l.message ? ' - ' + String(l.message).slice(0, 120) : '') + ' (' + l.ms + ' ms)'); } });
+  const urlRpc = String(process.env.SOLANA_RPC_URL || '').trim();
+  const rpc = /^https:\/\//.test(urlRpc) ? async (methode, params) => {
+    const r = await fetch(urlRpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: methode, params }), signal: AbortSignal.timeout(10000) });
+    const j = await r.json();
+    if (j.error) throw new Error('rpc ' + (j.error.code || '') + ' ' + String(j.error.message || '').slice(0, 80));
+    return j.result;
+  } : null;
+  return { reseau: X.RESEAU_SOLANA, usdc: X.USDC_SOLANA, payTo, facilitateur, rpc };
+}
 function baseDepuisEnv(X, tresor, porteGaz) {
   const cleId = String(process.env.CDP_API_KEY_ID || '').trim();
   const secret = String(process.env.CDP_API_KEY_SECRET || '');
@@ -1874,7 +1894,7 @@ function demarreBase() {
     /* La preuve de propriete de l'adresse de Base : sans elle, on le dit (contrat §E.2.2, §G.2). */
     if (x.baseActif() && !preuvesX402().length) console.warn('[x402] no ownership proof for ' + x.basePayTo + ' - confirm you control this address on Base');
   }).catch((e) => console.error('[x402] Base probe: ' + (e && e.message || e)));
-  if (!x.basePayTo) return;
+  if (!x.basePayTo && !x.solanaPayTo) return;
   sonde();
   setInterval(sonde, BASE_SONDE_MS).unref();
 }
@@ -1897,6 +1917,7 @@ const x402 = () => {
   const destinataire = enCaisse ? chaine.porteGaz : payTo;
   const JOURNAL = require('path').join(cfg.DATA_DIR, 'x402.jsonl');
   const base = baseDepuisEnv(X, payTo, chaine.porteGaz);
+  const solana = solanaDepuisEnv(X);
   /* Le prix du gaz, garde 30 s : un devis sans cle (gratuit, 60 par minute et
      par IP) ne doit pas faire un appel RPC chacun. Le reglement, lui, relit le
      prix au moment d'envoyer (chaineEthers.regle), jamais celui-ci. */
@@ -1920,6 +1941,8 @@ const x402 = () => {
     prixOutilUsd: (o, a) => require('./agentic').prixX402Usd(o, a),
     /* Base (USDC, Coinbase) : null sans cle CDP valide — tout est alors comme avant. */
     base,
+    /* Solana (USDC, PayAI) : null sans X402_SOLANA_PAYTO. */
+    solana,
     /* La premiere phrase de l'outil ouvre resource.description (Base allumee) ; les
        details de service (bazaar.md « Service Metadata on `resource` »). */
     description: (o) => ((require('./agentic').definitions({ recherche: !!chatActif('perplexity') }).find((d) => d.name === o) || {}).description || ''),
@@ -1961,6 +1984,7 @@ const x402 = () => {
   x402V.basePayTo = base ? base.payTo : null;
   x402V.baseReseau = base ? base.reseau : null;
   x402V.baseUsdc = base ? base.usdc : null;
+  x402V.solanaPayTo = solana ? solana.payTo : null;
   x402V.soldeGaz = () => chaine.soldeGaz();
   x402V.gazPrix = gazPrix;
   /* La veille du portefeuille de gaz (voir gazEtat) : une minute apres le
@@ -2039,6 +2063,10 @@ async function x402Etat(detail) {
               base: { actif: baseOn, network: x.baseReseau || X.RESEAU_BASE, payTo: x.basePayTo || null, facilitateur: 'cdp', etat: x.basePayTo ? (MB.etat || 'off') : 'off',
                       /* le second facilitateur (PayAI) : son etat et, par facilitateur, verifies/payes/replis */
                       second: MB.second ? { nom: MB.second.nom, etat: MB.second.etat, raison: MB.second.raison } : null, parFacilitateur: MB.parFacilitateur || {} },
+              /* Solana (etape 2) : l'USDC regle par PayAI, les frais payes par son feePayer ; confirmes = relus sur la chaine. */
+              solana: x.solanaPayTo ? { actif: !!(x.solanaActif && x.solanaActif()), network: X.RESEAU_SOLANA, asset: X.USDC_SOLANA, payTo: x.solanaPayTo, facilitateur: 'payai',
+                etat: (x.MESURE.solana || {}).etat, raison: (x.MESURE.solana || {}).raison, feePayer: (x.MESURE.solana || {}).feePayer,
+                confirmes: (x.MESURE.solana || {}).confirmes, nonConfirmes: (x.MESURE.solana || {}).nonConfirmes, exclus: X.SOLANA_EXCLUS } : null,
               agent: { actif: agentic().x402Payable('ask_agent') } };
   if (!detail) return e;
   const g = x.MESURE.gasUsed.slice().sort((a, b) => a - b);

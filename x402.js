@@ -101,6 +101,22 @@ const DEADLINE_MAX_S = 3600;
    « 2 », 8453, USDC). Avec le nom « USDC », 0xe824be45… : faux — extra.name
    DOIT être « USD Coin ». Base Sepolia (essais seulement) : name() « USDC »,
    version() « 2 » (lu par https://sepolia.base.org). */
+/* ---- SOLANA, PAR PAYAI (27 septembre 2026, etape 2 du plan « mieux que PayAI ») ----
+   Schema exact SVM (x402-foundation specs/schemes/exact/scheme_exact_svm.md,
+   relu le 27/09) : le 402 porte `extra.feePayer` (l'adresse qui paie les frais,
+   donnee par le /supported du facilitateur) ; le payeur renvoie une transaction
+   partiellement signee (payload.transaction, base64 : un TransferChecked de
+   l'USDC vers le compte associe de payTo) ; le facilitateur la verifie, la
+   signe comme payeur des frais et la diffuse. /supported de PayAI en direct le
+   27/09 : solana:5eykt4… exact v2, extra feePayer, recentBlockhash,
+   lastValidBlockHeight. Tarif PayAI : 1,52 credit (0,00152 $) le reglement. */
+const RESEAU_SOLANA = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
+const USDC_SOLANA = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const FRAIS_SOLANA_USD = 0.002;
+/* Une transaction Solana vit ~60-90 s (son blockhash) : on ne la propose pas
+   pour ask_agent, reglé APRES un travail qui peut durer 150 s. */
+const SOLANA_EXCLUS = ['ask_agent'];
+const TX_SOLANA_MAX = 4000;                 /* caracteres base64 : une transaction fait au plus 1 232 octets */
 const RESEAU_BASE = 'eip155:8453';
 const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const DOMAINE_USDC_BASE = { name: 'USD Coin', version: '2' };
@@ -265,7 +281,8 @@ function cree(deps) {
          mis en pause et le paiement est verifie chez Coinbase (un verify ne
          coute rien et ne deplace rien). */
       second: { nom: (deps.base && deps.base.second && deps.base.second.nom) || null, etat: deps.base && deps.base.second ? 'off' : 'absent', raison: null, jusqua: 0 },
-      parFacilitateur: {} } };
+      parFacilitateur: {} },
+    solana: { etat: deps.solana ? 'off' : 'absent', raison: deps.solana ? 'not probed yet' : 'no X402_SOLANA_PAYTO', feePayer: null, jusqua: 0, confirmes: 0, nonConfirmes: 0 } };
   let file = Promise.resolve();    /* un règlement à la fois : le portefeuille de gaz n'a qu'un nonce */
   let agentEnVol = 0;
   const maintenant = () => (deps.maintenant ? deps.maintenant() : Date.now());
@@ -304,7 +321,27 @@ function cree(deps) {
     else { Object.assign(S2, { etat: 'off', raison: r.ok ? '/supported does not list ' + B.reseau : '/supported answered ' + (r.statut || r.erreur || 'nothing') }); }
     return liste;
   }
+  /* ---- SOLANA : 'on' seulement si le facilitateur liste le reseau ET donne son feePayer ---- */
+  const SOL = deps.solana || null;
+  const MS = MESURE.solana;
+  const solanaActif = () => !!SOL && MS.etat === 'on' && !(MS.jusqua > maintenant()) && !!MS.feePayer;
+  async function sondeSolana() {
+    if (!SOL) return false;
+    let r;
+    try { r = await SOL.facilitateur.supported(); } catch (e) { r = { ok: false, erreur: 'reseau' }; }
+    const k = r.ok ? (r.kinds || []).find((x) => Number(x.x402Version) === 2 && x.scheme === 'exact' && x.network === SOL.reseau) : null;
+    const fp = k && k.extra && typeof k.extra.feePayer === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(k.extra.feePayer) ? k.extra.feePayer : null;
+    const avant = MS.etat;
+    if (fp) { Object.assign(MS, { etat: 'on', raison: null, feePayer: fp }); if (avant !== 'on') console.log('[x402] Solana on - USDC on ' + SOL.reseau + ' to ' + SOL.payTo + ', fees paid by ' + (SOL.facilitateur.nom || 'the facilitator')); }
+    else Object.assign(MS, { etat: 'off', raison: !r.ok ? '/supported answered ' + (r.statut || r.erreur || 'nothing') : !k ? '/supported does not list ' + SOL.reseau : 'no feePayer in /supported' });
+    return solanaActif();
+  }
+  function pauseSolana(raison, ms) {
+    Object.assign(MS, { etat: 'suspendu', raison, jusqua: maintenant() + (ms || PAUSE_BASE_MS) });
+    console.warn('[x402] Solana: ' + raison + ' - off for ' + Math.round((ms || PAUSE_BASE_MS) / 60000) + ' min');
+  }
   async function sondeBase() {
+    if (SOL && !(MS.jusqua > maintenant())) await sondeSolana().catch(() => {});
     if (!B) return false;
     if (B.second && !(S2.jusqua > maintenant())) sondeSecond().catch(() => {});
     if (MESURE.base.jusqua > maintenant()) return false;           /* en pause (carte, lieu) : on attend la fin */
@@ -376,8 +413,14 @@ function cree(deps) {
       montantBase = String(Math.ceil(Math.round(ub * 1e9) / 1e3));
       usdBase = Number((Number(montantBase) / 1e6).toFixed(6));
     }
-    if (usd === null && montantBase === null) return null;
-    return { usd, gazUsd, montant, montantUsdg, usdBase, montantBase };
+    let usdSolana = null, montantSolana = null;
+    if (solanaActif() && !SOLANA_EXCLUS.includes(outil)) {
+      const us = Math.max(MIN_USD, base + FRAIS_SOLANA_USD);
+      montantSolana = String(Math.ceil(Math.round(us * 1e9) / 1e3));
+      usdSolana = Number((Number(montantSolana) / 1e6).toFixed(6));
+    }
+    if (usd === null && montantBase === null && montantSolana === null) return null;
+    return { usd, gazUsd, montant, montantUsdg, usdBase, montantBase, usdSolana, montantSolana };
   }
 
   /* La ressource annoncée. Base éteinte : la description d'AVANT, mot pour mot. Base
@@ -391,7 +434,7 @@ function cree(deps) {
     let desc = '';
     try { desc = deps.description ? deps.description(outil) : ''; } catch (e) { desc = ''; }
     const tete = ascii(premierePhrase(desc)) || 'SwogeAgentic tool ' + outil + '.';
-    const prixTxt = ' Price: $' + usdTexte(p.usdBase) + ' in USDC on Base' + (p.usd !== null && reseaux ? ', or $' + usdTexte(p.usd) + ' in ' + reseaux + ' on Robinhood Chain' : '')
+    const prixTxt = ' Price: $' + usdTexte(p.usdBase) + ' in USDC on Base' + (p.montantSolana ? ' or Solana' : '') + (p.usd !== null && reseaux ? ', or $' + usdTexte(p.usd) + ' in ' + reseaux + ' on Robinhood Chain' : '')
       + ' (tool price + settlement cost, minimum $' + MIN_USD + ').';
     const t = tete.length + prixTxt.length > DESCRIPTION_MAX ? coupeMots(tete, DESCRIPTION_MAX - prixTxt.length) + prixTxt : tete + prixTxt;
     const r = { url, description: coupeMots(ascii(t), DESCRIPTION_MAX), mimeType: 'application/json' };
@@ -426,6 +469,13 @@ function cree(deps) {
       emis.set(k, fin); prixEmis.set(k, p.usdBase); ressourcesEmises.set(k, res);
       accepts.push({ scheme: 'exact', network: B.reseau, amount: p.montantBase, asset: B.usdc, payTo: B.payTo, maxTimeoutSeconds: delaiS,
         extra: { name: B.domaine.name, version: B.domaine.version } });
+    }
+    /* Solana, apres Base : l'USDC, les frais payes par le facilitateur (feePayer). */
+    if (p.montantSolana) {
+      const k = cleDevis + '|' + SOL.reseau + '|' + SOL.usdc + '|' + p.montantSolana;
+      emis.set(k, fin); prixEmis.set(k, p.usdSolana); ressourcesEmises.set(k, res);
+      accepts.push({ scheme: 'exact', network: SOL.reseau, amount: p.montantSolana, asset: SOL.usdc, payTo: SOL.payTo, maxTimeoutSeconds: delaiS,
+        extra: { feePayer: MS.feePayer } });
     }
     /* Robinhood : l'USDG d'abord (la spec préfère eip3009, et c'est ce que les agents détiennent). */
     if (p.montantUsdg) {
@@ -487,6 +537,7 @@ function cree(deps) {
     const acc = p.accepted || {}, pl = p.payload || {}, a = pl.permit2Authorization || {};
     if (acc.scheme !== 'exact') return non('unsupported_scheme');
     if (B && acc.network === B.reseau) return verifieBase(p, acc, outil, args, ctx || {});
+    if (SOL && acc.network === SOL.reseau) return verifieSolana(p, acc, outil, args, ctx || {});
     if (acc.network !== RESEAU) return non('invalid_network');
     const enUsdg = !!deps.usdg && meme(acc.asset, deps.usdg);
     if ((!enUsdg && !meme(acc.asset, deps.asset)) || !meme(acc.payTo, deps.payTo)) return non('invalid_payment_requirements');
@@ -719,6 +770,87 @@ function cree(deps) {
    * status 1 portant, de l'adresse de l'USDC, AuthorizationUsed(from, nonce) ET
    * Transfer(from → payTo, montant). Rend { etat: 'paye'|'echec'|'annule'|'inconnu', hash }.
    */
+  /**
+   * Un paiement Solana. Nos controles d'abord (actif, destinataire, devis en
+   * cours, forme de la transaction, rejeu), puis le facilitateur verifie avec
+   * NOS conditions (feePayer compris), NOTRE ressource et NOTRE bloc bazaar.
+   */
+  async function verifieSolana(p, acc, outil, args, ctx) {
+    const non = (raison, detail) => ({ ok: false, raison, detail, reseau: SOL.reseau });
+    if (!solanaActif()) return non('invalid_network', 'Solana payments are off right now - pay in USDC on Base or on Robinhood Chain');
+    if (SOLANA_EXCLUS.includes(outil)) return non('invalid_network', outil + ' is not sold on Solana (a Solana transaction expires before the work ends) - pay on Base');
+    if (acc.asset !== SOL.usdc || acc.payTo !== SOL.payTo) return non('invalid_payment_requirements');
+    const k = outil + '|' + empreinte(args) + '|' + SOL.reseau + '|' + SOL.usdc + '|' + String(acc.amount);
+    const echeance = emis.get(k);
+    if (!echeance || echeance < maintenant()) return non('invalid_payment_requirements', 'no current quote for this amount and these arguments - request the resource again (same arguments) for a fresh 402');
+    const tx = (p.payload || {}).transaction;
+    if (typeof tx !== 'string' || !tx || tx.length > TX_SOLANA_MAX || !/^[A-Za-z0-9+/]+={0,2}$/.test(tx)) return non('invalid_payload', 'payload.transaction must be a base64 Solana transaction');
+    const cle = 'solana|' + crypto.createHash('sha256').update(tx).digest('hex');
+    return prend(cle, Math.floor(maintenant() / 1000) + delaiDe(outil), async () => {
+      const exigence = { scheme: 'exact', network: SOL.reseau, asset: SOL.usdc, amount: String(acc.amount), payTo: SOL.payTo, maxTimeoutSeconds: delaiDe(outil), extra: { feePayer: MS.feePayer } };
+      let bz = null;
+      if (ctx.bazaar !== undefined) bz = ctx.bazaar || null;
+      else if (deps.bazaar) { try { bz = deps.bazaar(outil) || null; } catch (e) { bz = null; } }
+      const res = Object.assign({}, ressourcesEmises.get(k) || { description: 'SwogeAgentic tool ' + outil, mimeType: 'application/json' }, { url: ctx.url || (ressourcesEmises.get(k) || {}).url });
+      const paiement = { x402Version: X402_VERSION, resource: res, accepted: exigence, payload: { transaction: tx }, extensions: bz ? { bazaar: bz } : {} };
+      const r = await SOL.facilitateur.verify(paiement, exigence);
+      garde100(par(SOL.reseau).msVerify, r.ms);
+      if (r.etat === 'valide' && r.payer) return { ok: true, methode: 'solana', reseau: SOL.reseau, args: { paiement, exigence }, from: r.payer, montant: String(acc.amount), asset: SOL.usdc };
+      if (r.etat === 'refuse') return non(r.raison || 'invalid_payload', r.message ? ascii(r.message).slice(0, 200) : undefined);
+      if (r.etat === 'cle' || r.etat === 'carte') pauseSolana(r.etat === 'carte' ? 'facilitator credits exhausted (402)' : 'facilitator key required (401)');
+      return non('unexpected_verify_error', 'Solana payment check unavailable - try again or pay on Base');
+    });
+  }
+  /* La signature d'une transaction Solana : confirmee sur la chaine ? (getSignatureStatuses) */
+  async function confirmeSolana(sig) {
+    if (!SOL.rpc || !/^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(String(sig || ''))) return 'inconnu';
+    const fin = maintenant() + (SOL.attenteMs || 30000);
+    for (;;) {
+      try {
+        const v = await SOL.rpc('getSignatureStatuses', [[sig], { searchTransactionHistory: true }]);
+        const s = v && v.value && v.value[0];
+        if (s && s.err) return 'echec';
+        if (s && (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized')) return 'paye';
+      } catch (e) { /* le noeud muet : on relit */ }
+      if (maintenant() >= fin) return 'inconnu';
+      await new Promise((r) => setTimeout(r, SOL.cadenceMs || 2000));
+    }
+  }
+  async function regleSolana(v, r, outil, url, args, opts, note) {
+    const x = await SOL.facilitateur.regle(v.args.paiement, v.args.exigence);
+    garde100(par(SOL.reseau).msSettle, x.ms);
+    if (x.pause) pauseSolana(x.pause === 'carte' ? 'facilitator credits exhausted (402)' : 'settle refused (' + x.pause + ')');
+    let etat = x.etat, hash = x.hash || '';
+    /* « The sponsor MUST verify the transfer actually executed on-chain » (spec) :
+       un succes est relu sur la chaine quand un noeud est la ; une issue inconnue aussi. */
+    if (hash && (etat === 'paye' || etat === 'attente' || etat === 'ambigu')) {
+      const c = await confirmeSolana(hash);
+      if (c === 'paye') { MS.confirmes++; etat = 'paye'; }
+      else if (c === 'echec') etat = 'echec';
+      else if (etat === 'paye') MS.nonConfirmes++;           /* le facilitateur dit paye, sans noeud pour le relire : on le croit, et on le compte */
+    }
+    const livre = () => {
+      MESURE.payes++; par(SOL.reseau).payes++;
+      if (deps.journal) deps.journal({ t: maintenant(), outil, payer: v.from, asset: v.asset, montant: v.montant, transaction: hash, methode: 'solana', network: SOL.reseau });
+      note('paye_x402', { qui: v.from, usd: Number(v.montant) / 1e6, coutUsd: FRAIS_SOLANA_USD, sorte: 'USDC_SOLANA', tx: hash, reseau: SOL.reseau });
+      return { etape: 'paye', resultat: r, reponse: { success: true, transaction: hash, network: SOL.reseau, payer: v.from }, recu: { transaction: hash, network: SOL.reseau, amount: v.montant, asset: v.asset } };
+    };
+    if (etat === 'paye') return livre();
+    if (etat === 'echec' || !hash) {
+      /* Echec, ou issue inconnue SANS signature : rien n'a pu etre relu, le resultat est retenu ;
+         la transaction du payeur expire d'elle-meme en ~90 s si elle n'est pas partie. */
+      MESURE.echecsReglement++; par(SOL.reseau).echecsReglement++;
+      note('echec', { qui: v.from, sorte: 'reglement' });
+      nonRegle(outil, v.from, r, x.erreur || 'settlement failed');
+      pris.delete(v.cleNonce);
+      const e = await exige(outil, url, 'Settlement failed: ' + (x.erreur || 'unexpected_settle_error'), args, opts);
+      return { etape: 'reglement', reponse: { success: false, errorReason: x.erreur || 'unexpected_settle_error', transaction: '', network: SOL.reseau, payer: v.from },
+        raison: 'the payment could not be settled - the result is withheld and nothing was charged', detail: x.erreur || null, exige: e };
+    }
+    par(SOL.reseau).enAttente++;
+    return { etape: 'attente', reponse: { success: false, errorReason: 'settlement_pending', transaction: hash, network: SOL.reseau, payer: v.from } };
+  }
+
   async function lisChaine(e) {
     const R = B.rpc, usdc = B.usdc.toLowerCase();
     const t = (l, i) => String(((l && l.topics) || [])[i] || '').toLowerCase();
@@ -818,6 +950,7 @@ function cree(deps) {
       return { etape: 'outil', code: r && r.code === 400 ? 400 : 502, raison: (r && r.raison) || 'the tool failed — nothing was charged' };
     }
     if (v.methode === 'facilitateur') return regleBase(v, r, outil, url, args, opts, note);
+    if (v.methode === 'solana') return regleSolana(v, r, outil, url, args, opts, note);
     const reglement = await enFile(() => deps.chaine.regle(v.methode, v.args)).catch((e) => ({ ok: false, erreur: String(e && (e.reason || e.message) || e).slice(0, 160) }));
     const reponse = { success: !!reglement.ok, transaction: reglement.hash || '', network: RESEAU, payer: v.from };
     if (!reglement.ok) {
@@ -965,7 +1098,7 @@ function cree(deps) {
     }
   }
 
-  return { prix, exige, verifie, paie, traite, MESURE, enFile, sondeBase, baseActif, pauseBase, propre };
+  return { prix, exige, verifie, paie, traite, MESURE, enFile, sondeBase, baseActif, pauseBase, propre, sondeSolana, solanaActif };
 }
 
 
@@ -1045,7 +1178,7 @@ function rpcBase(url, f) {
   };
 }
 
-module.exports = { cree, chaineEthers, rpcBase, domainePermit2, TYPES_PERMIT2, TYPES_2612, DOMAINE_JETON, USDG, DOMAINE_USDG, DECIMALES_USDG, TYPES_3009,
+module.exports = { RESEAU_SOLANA, USDC_SOLANA, FRAIS_SOLANA_USD, SOLANA_EXCLUS, cree, chaineEthers, rpcBase, domainePermit2, TYPES_PERMIT2, TYPES_2612, DOMAINE_JETON, USDG, DOMAINE_USDG, DECIMALES_USDG, TYPES_3009,
   X402_VERSION, CHAIN_ID, RESEAU, PERMIT2, PROXY, MIN_USD, GAZ_UNITES, DELAI_S, DELAI_AGENT_S, MARGE_AGENT_S, DEADLINE_MAX_S, b64, empreinte, ascii, asciiProfond,
   RESEAU_BASE, USDC_BASE, DOMAINE_USDC_BASE, DECIMALES_USDC, RESEAU_BASE_SEPOLIA, USDC_BASE_SEPOLIA, DOMAINE_USDC_BASE_SEPOLIA, FRAIS_CDP_USD,
   TOPIC_AUTH_USED, TOPIC_AUTH_CANCELED, TOPIC_TRANSFER, DESCRIPTION_MAX, PAUSE_BASE_MS, LIEUX_DE_SUITE_MAX };

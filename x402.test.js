@@ -442,6 +442,7 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
         bazaar: BZ, description: (n2) => ((A.definitions({ recherche: true }).find((d) => d.name === n2)) || {}).description,
         service: { nom: 'SwogeAgentic', etiquettes: (n2) => D.ETIQUETTES_OUTIL[n2], icone: D.ICONE },
         agent: o.agent,
+        solana: o.sol,
         base: o.sansBase ? undefined : { reseau: X.RESEAU_BASE, chainId: 8453, usdc: X.USDC_BASE, domaine: X.DOMAINE_USDC_BASE, payTo: TRESOR, facilitateur: F, rpc: R, attenteMs: 40, cadenceMs: 5,
           second: o.S, partSecond: o.part } });
       if (!o.sansBase) { await x.sondeBase(); await dort(10); }
@@ -957,6 +958,72 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
       const FP = require('./facilitateur_cdp').cree({ sansCle: true, nom: 'payai', url: 'https://facilitator.payai.network', fetch: async (u, o) => { entetes = { u, h: o.headers }; return { status: 200, text: async () => '{"kinds":[]}', headers: new Map() }; } });
       await FP.supported();
       ok(entetes.u === 'https://facilitator.payai.network/supported' && !('Authorization' in entetes.h) && FP.nom === 'payai', 'le client PayAI : https://facilitator.payai.network/supported, SANS en-tete Authorization');
+    }
+    /* ---- Solana, par PayAI (27/09/2026, etape 2) ---- */
+    {
+      const PAYTO_SOL = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU';
+      const FEE = 'EwWqGE4ZFKLofuestmU4LDdK7XM1N4ALgdZccwYugwGd';
+      const SIG = (i) => '5' + String(i).padStart(3, '1') + 'A'.repeat(84);
+      const fauxSol = (o) => {
+        const S = Object.assign(fauxFac(), { nom: 'payai' });
+        S.sup = { ok: true, kinds: [{ x402Version: 2, scheme: 'exact', network: X.RESEAU_SOLANA, extra: o && o.sansFee ? {} : { feePayer: FEE } }] };
+        S.verifyRep = { etat: 'valide', payer: 'PaYeR1111111111111111111111111111111111111' };
+        S.regle = async (p, e) => { S.regles.push({ p: JSON.parse(JSON.stringify(p)), e: JSON.parse(JSON.stringify(e)) }); return Object.assign({ ms: 5 }, S.regleReps.length ? S.regleReps.shift() : { etat: 'paye', hash: SIG(S.regles.length) }); };
+        return S;
+      };
+      const rpc = (statut) => { const R = { appels: 0 }; R.f = async (m, params) => { R.appels++; return { value: [statut === 'rien' ? null : statut === 'err' ? { err: { InstructionError: [2, 'x'] } } : { confirmationStatus: statut }] }; }; return R; };
+      const monde = async (o) => {
+        const S = o.S || fauxSol(o), R = o.R === undefined ? rpc('confirmed') : o.R;
+        const M = await mondeBase({ sol: { reseau: X.RESEAU_SOLANA, usdc: X.USDC_SOLANA, payTo: PAYTO_SOL, facilitateur: S, rpc: R ? R.f : null, attenteMs: 30, cadenceMs: 5 } });
+        return Object.assign(M, { S, R });
+      };
+      const signeSol = (req, tx) => { const acc = req.accepts.find((a) => a.network === X.RESEAU_SOLANA);
+        return { acc, entete: X.b64({ x402Version: 2, resource: req.resource, accepted: acc, payload: { transaction: tx || Buffer.from('tx-' + Math.random()).toString('base64') }, extensions: req.extensions }) }; };
+      const Ms = await monde({});
+      ok(Ms.x.solanaActif() && Ms.x.MESURE.solana.feePayer === FEE, 'Solana allume : PayAI liste solana:5eykt… et donne son feePayer');
+      const q = await entete402(Ms, 'scan_token', {});
+      const so = q.accepts.find((a) => a.network === X.RESEAU_SOLANA), iSo = q.accepts.indexOf(so);
+      const p0 = await Ms.x.prix('scan_token', {});
+      ok(so && iSo === 1 && so.asset === X.USDC_SOLANA && so.payTo === PAYTO_SOL && so.extra.feePayer === FEE && so.amount === p0.montantSolana && Number(so.amount) >= 20000,
+         'le 402 : Solana juste apres Base, USDC, notre adresse, le feePayer de PayAI, ' + so.amount + ' (prix + 0,002 $, minimum 0,02 $)');
+      ok(/in USDC on Base or Solana/.test(q.resource.description), 'la description le dit : « in USDC on Base or Solana »');
+      const qa = await entete402(Ms, 'ask_agent', { task: 'x' });
+      ok(!qa.accepts.some((a) => a.network === X.RESEAU_SOLANA), 'ask_agent : pas de Solana (sa transaction expirerait avant la fin du travail)');
+      const s1 = signeSol(q);
+      const r1 = await paie(Ms, 'scan_token', s1.entete, {});
+      const pr1 = de64(r1.entetes['payment-response']);
+      ok(r1.status === 200 && pr1.network === X.RESEAU_SOLANA && pr1.transaction === SIG(1) && pr1.payer === 'PaYeR1111111111111111111111111111111111111' && Ms.S.verifies.length === 1 && Ms.S.regles.length === 1,
+         'un paiement Solana : verifie puis regle par PayAI, 200, PAYMENT-RESPONSE solana avec la signature');
+      const v1 = Ms.S.verifies[0];
+      ok(v1.e.payTo === PAYTO_SOL && v1.e.extra.feePayer === FEE && v1.p.extensions.bazaar && v1.p.resource.url === 'https://api/agentic/call/scan_token' && v1.p.payload.transaction === JSON.parse(Buffer.from(s1.entete, 'base64')).payload.transaction,
+         'PayAI recoit NOS conditions (payTo, feePayer), notre ressource, notre bloc bazaar, et la transaction du payeur telle quelle');
+      ok(Ms.R.appels >= 1 && Ms.x.MESURE.solana.confirmes === 1 && Ms.x.MESURE.parReseau[X.RESEAU_SOLANA].payes === 1, 'le reglement est relu sur la chaine (confirmed) avant de livrer');
+      const rj = await paie(Ms, 'scan_token', s1.entete, {});
+      ok(rj.status === 402 && Ms.S.regles.length === 1 && /already presented|no current quote/.test(JSON.parse(rj.corps).detail || JSON.parse(rj.corps).raison), 'la MEME transaction representee : refusee, jamais reglee deux fois');
+      const faux = JSON.parse(Buffer.from(signeSol(await entete402(Ms, 'scan_token', {})).entete, 'base64'));
+      faux.accepted.payTo = 'AutreAdresse1111111111111111111111111111111';
+      ok(JSON.parse((await paie(Ms, 'scan_token', X.b64(faux), {})).corps).raison === 'invalid_payment_requirements', 'une autre adresse de reception : refusee avant PayAI');
+      ok(JSON.parse((await paie(Ms, 'scan_token', signeSol(await entete402(Ms, 'scan_token', {}), 'pas du base64 !').entete, {})).corps).raison === 'invalid_payload', 'une transaction qui n est pas du base64 : refusee');
+      Ms.S.regleReps.push({ etat: 'echec', erreur: 'transaction_simulation_failed' });
+      const rE = await paie(Ms, 'scan_token', signeSol(await entete402(Ms, 'scan_token', {})).entete, {});
+      ok(rE.status === 402 && !JSON.parse(rE.corps).resultat && de64(rE.entetes['payment-response']).success === false && rE.entetes['payment-required'], 'reglement refuse : le resultat est retenu, un nouveau 402');
+      const Me = await monde({ R: rpc('err') });
+      const rr = await paie(Me, 'scan_token', signeSol(await entete402(Me, 'scan_token', {})).entete, {});
+      ok(rr.status === 402 && !JSON.parse(rr.corps).resultat, 'PayAI dit paye mais la chaine dit echec : rien n est livre');
+      const Mn = await monde({ R: null });
+      const rn = await paie(Mn, 'scan_token', signeSol(await entete402(Mn, 'scan_token', {})).entete, {});
+      ok(rn.status === 200 && Mn.x.MESURE.solana.nonConfirmes === 1, 'sans noeud Solana : on croit PayAI, et on le compte (nonConfirmes)');
+      const Mp = await monde({ R: rpc('rien') });
+      Mp.S.regleReps.push({ etat: 'inconnu', erreur: 'unexpected_settle_error' });
+      const rp = await paie(Mp, 'scan_token', signeSol(await entete402(Mp, 'scan_token', {})).entete, {});
+      ok(rp.status === 402 && !JSON.parse(rp.corps).resultat, 'issue inconnue sans signature : rien de livre (la transaction expire d elle-meme)');
+      const Mc = await monde({});
+      Mc.S.verifyRep = { etat: 'carte' };
+      const rc = await paie(Mc, 'scan_token', signeSol(await entete402(Mc, 'scan_token', {})).entete, {});
+      ok(rc.status === 402 && !Mc.x.solanaActif() && /credits exhausted/.test(Mc.x.MESURE.solana.raison) && !(await entete402(Mc, 'scan_token', {})).accepts.some((a) => a.network === X.RESEAU_SOLANA),
+         'credits PayAI epuises : Solana se met en pause et disparait du 402');
+      const Mf = await monde({ sansFee: true });
+      ok(!Mf.x.solanaActif() && /no feePayer/.test(Mf.x.MESURE.solana.raison), 'sans feePayer dans /supported : Solana reste eteint');
     }
     delete process.env.X402_AGENT; delete process.env.TG_APPELS_VENTE;
   }
