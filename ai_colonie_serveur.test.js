@@ -7864,6 +7864,30 @@ async function borneQuiNeMordPas() {
 /* 4. Ce que DexScreener sait des jetons de 4 a 10 min : une a deux sondes par
  *    tour, verdict inchange, cache NON ecrit ; la ligne « not indexed » se
  *    decoupe en trois ; et on compte ceux qui sont repris puis achetes. */
+/* ---- LE LANCEUR EN SERIE (27/09/2026) ----
+ * « Supprimer les sources de launcher si c'est negatif » : 4+ lancements,
+ * 911 obs a -44,3 % ; 2-3, 474 obs a -32,7 %. Le Scout refuse des 2 lancements
+ * du meme portefeuille (gratuit, ombre gardee), laisse passer un premier
+ * lancement, et LANCEUR_SERIE_MIN=0 coupe la regle. */
+function lanceurEnSerie() {
+  console.log('\n-- le lanceur en serie : refuse par le Scout, avant tout appel --');
+  const base = () => ({ addr: '0x' + 'ab'.repeat(20), sym: 'SERIE', minutes: 40, liq: 60000, mc: 200000,
+                        ch_m5: 1, ch_h1: 2, ch_h6: 0, vol: {}, quote: null });
+  const sans = C.vetoScout(base());
+  const quatre = C.vetoScout(Object.assign(base(), { pad: { nom: 'secretpad', lances: 4 } }));
+  const deux = C.vetoScout(Object.assign(base(), { pad: { nom: 'hood.fun', lances: 2 } }));
+  const un = C.vetoScout(Object.assign(base(), { pad: { nom: 'secretpad', lances: 1 } }));
+  console.log('   ' + JSON.stringify({ sans, quatre, deux, un }));
+  ok(/^serial launcher: 4 launches from the same wallet$/.test(quatre || ''), '4 lancements du meme portefeuille : refuse, et le nombre est dit');
+  ok(/^serial launcher: 2 launches/.test(deux || ''), 'des 2 lancements (474 obs a -32,7 %) : refuse aussi');
+  ok(!/serial launcher/.test(un || '') && !/serial launcher/.test(sans || ''), 'un premier lancement, ou un jeton hors launchpad, ne l est pas');
+  ok(C._familleRefus(quatre) === 'serial launcher: several launches from the same wallet'
+     && C._familleRefus(deux) === C._familleRefus(quatre), 'les deux comptes tombent sur UNE ligne d audit, jugeable');
+  process.env.LANCEUR_SERIE_MIN = '0';
+  ok(!/serial launcher/.test(C.vetoScout(Object.assign(base(), { pad: { nom: 'secretpad', lances: 9 } })) || ''), 'LANCEUR_SERIE_MIN=0 coupe la regle');
+  delete process.env.LANCEUR_SERIE_MIN;
+}
+
 async function sondeDesJeunes() {
   console.log('\n-- 4. DexScreener sur les 4-10 min : mesure seule, verdict et cache intacts --');
   /* La SONDE est une mesure pure : ce scenario la verifie seule. L'essai des jeunes
@@ -8328,6 +8352,7 @@ async function baleineParTranche() {
   await tranchesQuiSurvivent();
   await borneQuiNeMordPas();
   await sondeDesJeunes();
+  lanceurEnSerie();
   await auditSurSeptJours();
   await noeudsDates();
   await baleineParTranche();

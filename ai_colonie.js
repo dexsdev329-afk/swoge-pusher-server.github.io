@@ -3828,6 +3828,8 @@ function franchissable(q) {
   if (!q || !q.adr || !miroir || typeof miroir.pontConnu !== 'function') return false;
   try { return miroir.pontConnu(q.adr, q.sym) === true; } catch (e) { return false; }
 }
+const lanceurSerieMin = () => (process.env.LANCEUR_SERIE_MIN !== undefined && process.env.LANCEUR_SERIE_MIN !== ''
+  && Number.isFinite(Number(process.env.LANCEUR_SERIE_MIN))) ? Number(process.env.LANCEUR_SERIE_MIN) : 2;
 function vetoScout(t) {
   /* ---- L'OBSERVATION, AVANT TOUT LE RESTE ----
    * Un jeton admis pour juger le plafond d'age est refuse ICI, en premier, et
@@ -3850,6 +3852,19 @@ function vetoScout(t) {
       return 'sold ' + Math.round(depuis) + ' min ago: cooling down for '
            + Math.round(REACHAT_REPOS_MIN) + ' min before buying it again';
   }
+  /* ---- LE LANCEUR EN SERIE ----
+   * Demande du proprietaire, 27/09/2026 : « supprimer les sources de launcher
+   * si c'est negatif ». Mesure du jour (lecons du Scout, chaque jeton suivi a
+   * son echeance) : lanceur a 4+ lancements, 911 obs, -44,3 % en moyenne ;
+   * 2-3 lancements, 474 obs, -32,7 % — contre +0,5 % pour l'ensemble des
+   * jetons suivis (48 557). Carnet : 0 des 288 trades fermes depuis le 12/09
+   * ne venait d'un launchpad, le score les ecartait deja. Ce refus ne change
+   * donc AUCUN achat mesure ; il les arrete avant GoPlus, la chaine et
+   * CoinGecko (dont le budget du mois est depasse). Refus du Scout = ombre
+   * gardee : la ligne d'audit « serial launcher » dira s'il protege.
+   * LANCEUR_SERIE_MIN=0 le coupe. */
+  if (lanceurSerieMin() > 0 && t.pad && t.pad.lances >= lanceurSerieMin())
+    return 'serial launcher: ' + t.pad.lances + ' launches from the same wallet';
   /* ---- LA CHUTE ---- */
   if (P.dumpH1 > 0 && t.ch_h1 <= -P.dumpH1)
     return 'already down ' + Math.round(-t.ch_h1) + '% in an hour';
@@ -5336,6 +5351,7 @@ const FAMILLES = [
   [/^no venue can quote a real order/, 'no venue can quote a real order'],
   [/too young|trop jeune/, 'too young: set aside until it has the age'],
   [/cooling down/, 'sold recently: cooling down before buying it again'],
+  [/serial launcher/, 'serial launcher: several launches from the same wallet'],
   [/paying the top|on paierait le sommet|paierait l/, 'already up too far: we would be paying the top'],
   [/already down|deja tombe|deja \-/, 'already down before we even look'],
   [/above the buy ceiling|au-dessus du plafond/, 'cap above the buy ceiling'],
