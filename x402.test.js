@@ -1050,6 +1050,8 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
       const pv = await Ms.x.prix('token_verdict', {}), ps = await Ms.x.prix('scan_token', {});
       ok(pv.montantBase === '10000' && pv.montantSolana === '10000' && pv.usd >= 0.02 && ps.montantBase === '20000' && ps.montantSolana === '20000',
          'token_verdict : 0,01 $ sur Base et Solana, ' + pv.usd + ' $ sur Robinhood Chain (gaz) ; scan_token reste a 0,02 $');
+      const pr = await Promise.all(['robinhood_rpc', 'robinhood_token', 'robinhood_wallet', 'robinhood_tx'].map((o) => Ms.x.prix(o, {})));
+      ok(pr.every((x) => x.montantBase === '5000' && x.montantSolana === '6000' && x.usd >= 0.02), 'les 4 lectures Robinhood : 0,005 $ sur Base (plancher), 0,006 $ sur Solana (0,004 + 0,002 de PayAI), 0,02 $ et plus sur Robinhood Chain (gaz)');
       const qa = await entete402(Ms, 'ask_agent', { task: 'x' });
       ok(!qa.accepts.some((a) => a.network === X.RESEAU_SOLANA), 'ask_agent : pas de Solana (sa transaction expirerait avant la fin du travail)');
       const s1 = signeSol(q);

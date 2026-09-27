@@ -90,6 +90,7 @@ const ETIQUETTES_OUTIL = {
   scan_token: ['token-security', 'crypto', 'robinhood-chain'], colony_activity: ['robinhood-chain', 'crypto'], swoge_economy: ['crypto', 'robinhood-chain'],
   new_launches: ['robinhood-chain', 'crypto', 'token-security'], wallet_intel: ['osint', 'crypto', 'robinhood-chain'], osint_lookup: ['osint', 'research'],
   can_i_sell: ['token-security', 'crypto', 'robinhood-chain'], token_verdict: ['token-security', 'crypto', 'robinhood-chain'],
+  robinhood_rpc: ['robinhood-chain', 'crypto'], robinhood_token: ['robinhood-chain', 'crypto', 'token-security'], robinhood_wallet: ['robinhood-chain', 'crypto'], robinhood_tx: ['robinhood-chain', 'crypto'],
   telegram_calls: ['robinhood-chain', 'crypto'], web_search: ['research'], ask_agent: ['research', 'crypto'],
   generate_image: ['images'], generate_video: ['video'], video_status: ['video'],
 };
@@ -189,6 +190,51 @@ const SORTIES = {
       liquidity: { lpTokenRead: true, burnedPct: 100 }, checkedAt: '2026-09-27T12:00:00.000Z',
       limits: 'A read-only simulation of what the pool would return NOW for a small order. It cannot see a blacklist that closes after you buy, liquidity pulled later, or a tax changed later. Measurements, never a buy or sell signal.' },
     texte: 'Exit test for $LOBSTER ' + ADR + ' on Robinhood Chain: SELLABLE — a round trip returns 97.2% of the stake (2.8% in fees and depth)…',
+  },
+  /* Les lectures Robinhood Chain (27 septembre 2026) : lectures_rh.js, lu dans son code. */
+  robinhood_rpc: {
+    schema: obj({ chain: s('always robinhood'), chainId: n('always 4663'), method: s('the JSON-RPC method called'),
+      result: { description: 'the node answer, as is (hex string, object, array or null)' }, truncated: b('eth_getLogs: cut at 500 logs') }, ['chain', 'chainId', 'method', 'result', 'truncated']),
+    exemple: { chain: 'robinhood', chainId: 4663, method: 'eth_blockNumber', result: '0x46d2468', truncated: false },
+    texte: '{"chain":"robinhood","chainId":4663,"method":"eth_blockNumber","result":"0x46d2468","truncated":false}',
+  },
+  robinhood_token: {
+    schema: obj({ chain: s('always robinhood'), address: s('lower case'), isContract: b('false for a wallet'), note: s('only when there is no code'), codeBytes: n('size of the deployed code'),
+      erc20: objn({ name: sn(), symbol: sn(), decimals: nn(), totalSupply: sn('raw units, as a decimal string'), totalSupplyUnits: nn('supply in token units') }, ['name', 'symbol', 'decimals', 'totalSupply', 'totalSupplyUnits'], 'null when not an ERC-20'),
+      owner: sn('owner() address, "renounced (zero address)", or null without owner()'),
+      proxy: objn({ standard: s('EIP-1967'), implementation: s(), admin: sn() }, ['standard', 'implementation', 'admin'], 'null when not an EIP-1967 proxy'),
+      powers: obj({ readFrom: { type: 'string', enum: ['contract', 'implementation'] }, mint: b(), blacklist: b(), pause: b(), feeSetter: b(), note: s() }, ['readFrom', 'mint', 'blacklist', 'pause', 'feeSetter', 'note']),
+      market: objn({ priceUsd: nn(), liquidityUsd: nn(), pool: sn(), url: sn(), marketCapUsd: nn('price x supply') }, ['priceUsd', 'liquidityUsd', 'pool', 'url', 'marketCapUsd'], 'DexScreener, null without a pool'),
+    }, ['chain', 'address', 'isContract']),
+    exemple: { chain: 'robinhood', address: '0x8a166fb41cd659a0a43396272ff73973ce29f817', isContract: true, codeBytes: 2466,
+      erc20: { name: 'Swole Doge', symbol: 'SWOGE', decimals: 18, totalSupply: '1000000000000000000000000000', totalSupplyUnits: 1000000000 }, owner: 'renounced (zero address)', proxy: null,
+      powers: { readFrom: 'contract', mint: false, blacklist: false, pause: false, feeSetter: false, note: 'function selectors exposed by the dispatcher: a power the code has, not proof it is used' },
+      market: { priceUsd: 0.00002579, liquidityUsd: 13569, pool: '0xpool', url: 'https://dexscreener.com/robinhood/0xpool', marketCapUsd: 25790 } },
+    texte: 'Robinhood Chain contract 0x8a166fb41cd659a0a43396272ff73973ce29f817: $SWOGE "Swole Doge", 1,000,000,000 supply, 18 decimals. Owner: renounced (zero address)…',
+  },
+  robinhood_wallet: {
+    schema: obj({ chain: s('always robinhood'), address: s('lower case'),
+      eth: obj({ balance: nn('ETH'), priceUsd: nn(), valueUsd: nn() }, ['balance', 'priceUsd', 'valueUsd']),
+      tokens: tab(obj({ token: s(), symbol: sn(), decimals: nn(), balance: sn('raw units, decimal string'), balanceUnits: nn(), priceUsd: nn('DexScreener'), valueUsd: nn('null when the price is unknown, never zero'), readable: b('false when balanceOf failed') },
+        ['token', 'symbol', 'decimals', 'balance', 'balanceUnits', 'priceUsd', 'valueUsd', 'readable'])),
+      totalValueUsd: nn('sum over known prices'), note: s() }, ['chain', 'address', 'eth', 'tokens', 'totalValueUsd', 'note']),
+    exemple: { chain: 'robinhood', address: '0x5593c8141303d14999df7aa03dd3d3a6d4335fab', eth: { balance: 0, priceUsd: 4000, valueUsd: 0 },
+      tokens: [{ token: '0x8a166fb41cd659a0a43396272ff73973ce29f817', symbol: 'SWOGE', decimals: 18, balance: '15155373088977158000000000', balanceUnits: 15155373.09, priceUsd: 0.00002579, valueUsd: 390.86, readable: true }],
+      totalValueUsd: 390.86, note: 'balances read on-chain in one Multicall3 call; prices from DexScreener (deepest pool), null when unknown - an unknown price is not zero' },
+    texte: 'Wallet 0x5593c8141303d14999df7aa03dd3d3a6d4335fab on Robinhood Chain: 0 ETH ($0); 15155373.09 SWOGE ($390.86)…',
+  },
+  robinhood_tx: {
+    schema: obj({ chain: s('always robinhood'), hash: s(), status: { type: 'string', enum: ['success', 'reverted', 'pending'] }, block: nn(), from: s(), to: sn('null for a contract creation'),
+      contractCreated: sn(), valueEth: n(), method: sn('4-byte selector'), gasUsed: nn(), feeEth: nn(), feeUsd: nn('at today\'s ETH price'),
+      transfers: tab(obj({ token: s(), symbol: sn(), from: s(), to: s(), amount: s('raw units'), amountUnits: nn(), valueUsdNow: nn('at today\'s price') }, ['token', 'symbol', 'from', 'to', 'amount', 'amountUnits', 'valueUsdNow']), 'ERC-20 transfers, 50 at most'),
+      transfersTruncated: b(), swaps: tab(obj({ uniswap: { type: 'string', enum: ['v2', 'v3', 'v4'] }, pool: s('pool address, or the v4 pool id') }, ['uniswap', 'pool'])), logCount: n(), note: s() },
+      ['chain', 'hash', 'status', 'block', 'from', 'to', 'contractCreated', 'valueEth', 'method', 'gasUsed', 'feeEth', 'feeUsd', 'transfers', 'transfersTruncated', 'swaps', 'logCount', 'note']),
+    exemple: { chain: 'robinhood', hash: '0x91dfeb2157f926164b5d7d4a02819a3b06b302f6694877c8fbb36502f426fbaf', status: 'success', block: 74258956, from: '0x93023bb3a59a63ecfb23301b94ad9101f1ed9973',
+      to: '0x540ee09a131bbffe1224ff5d85b3e9650f3d6089', contractCreated: null, valueEth: 0, method: '0x3593564c', gasUsed: 387269, feeEth: 0.000003872689618, feeUsd: 0.0155,
+      transfers: [{ token: '0x6e5b1e7b0b0e0f0e0d0c0b0a0908070605040302', symbol: 'VAULT', from: '0x93023bb3A59a63ECFb23301B94Ad9101F1ED9973', to: '0x540Ee09a131bbfFE1224Ff5D85B3e9650f3d6089', amount: '54647729283119560000000000', amountUnits: 54647729.28, valueUsdNow: null }],
+      transfersTruncated: false, swaps: [{ uniswap: 'v4', pool: '0x8abd9b14d9732e9217bb11fe8d0cab08b1ed0d2f232cc216873eaa7c0b4fd922' }], logCount: 7,
+      note: 'valueUsdNow uses today\'s DexScreener price, not the price at the time of the transaction' },
+    texte: 'Robinhood Chain transaction 0x91df…: SUCCESS, from 0x93023b… to 0x540ee0…, fee 0.000003872689618 ETH ($0.0155). 2 token transfers…',
   },
   /* token_verdict (27 septembre 2026) : verdict_jeton.js, lu dans son code. */
   token_verdict: {
@@ -588,7 +634,8 @@ function manifeste(c) {
 /* Un exemple VALIDE par outil (les ARGS de decouverte.test.js) : chacun passe
    son schéma d'entrée ET agentic.entreeInvalide — l'essai le vérifie. */
 const EXEMPLES_ENTREE = {
-  scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, colony_activity: {}, swoge_economy: {}, new_launches: { limit: 5 },
+  scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, colony_activity: {},
+  robinhood_rpc: { method: 'eth_blockNumber' }, robinhood_token: { address: ADR }, robinhood_wallet: { address: ADR }, robinhood_tx: { hash: '0x' + 'ab'.repeat(32) }, swoge_economy: {}, new_launches: { limit: 5 },
   wallet_intel: { address: ADR }, osint_lookup: { target: 'example.com' }, telegram_calls: { hours: 24, limit: 20 },
   web_search: { query: 'robinhood chain' }, generate_image: { prompt: 'a swole doge', count: 1 },
   ask_agent: { task: 'is LOBSTER worth a look?' }, generate_video: { prompt: 'a swole doge lifting' }, video_status: { id: '66f5b1c2d3e4f5a6b7c8d9e0' },

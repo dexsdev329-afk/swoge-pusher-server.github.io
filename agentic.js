@@ -62,7 +62,12 @@ const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0
      d'analyse de jetons du catalogue PayAI (releve du 27/09) est 0,01 $ : 0,008 $
      par cle ; en x402, le plancher de 0,01 $ (x402.PLANCHER_FACILITE) sur Base
      et Solana, 0,02 $ sur Robinhood Chain (le gaz). Prix de depart. */
-  token_verdict: 0.008 };
+  token_verdict: 0.008,
+  /* 27 septembre 2026 : les lectures Robinhood Chain (lectures_rh.js). OneSource
+     vend les memes lectures, brutes, 0,001 a 0,01 $ (llms.txt lu le 27/09) ; les
+     notres sont decodees. 0,004 $ par cle ; en x402, plancher de 0,005 $ sur
+     Base et Solana (le reglement coute 0,001 a 0,0023 $). Prix de depart. */
+  robinhood_rpc: 0.004, robinhood_token: 0.004, robinhood_wallet: 0.004, robinhood_tx: 0.004 };
 const VARIABLES = ['ask_agent', 'generate_image', 'generate_video'];
 /* `video_status` : gratuit (relire SA vidéo), jamais facturé. */
 const GRATUITS = ['video_status'];
@@ -125,6 +130,16 @@ function definitions(actifs) {
   /* Les quatre descriptions de l'API vivent dans studio_agent.DESCRIPTIONS_API
      (premiere phrase « quand appeler », comme les huit outils de l'agent) :
      studio_agent.test.js juge ce qui est PUBLIE ici, pas la constante. */
+  /* Les lectures Robinhood Chain (27/09) : vendues par l'API seulement. */
+  const ADR_E = { type: 'string', description: 'address on Robinhood Chain, 0x followed by 40 hex characters' };
+  base.push({ name: 'robinhood_token', description: Agent.DESCRIPTIONS_API.robinhood_token, inputSchema: { type: 'object', properties: { address: ADR_E }, required: ['address'] } });
+  base.push({ name: 'robinhood_wallet', description: Agent.DESCRIPTIONS_API.robinhood_wallet, inputSchema: { type: 'object', properties: { address: ADR_E,
+    tokens: { type: 'array', items: { type: 'string' }, description: 'up to 20 token addresses to read (default: $SWOGE and USDG)' } }, required: ['address'] } });
+  base.push({ name: 'robinhood_tx', description: Agent.DESCRIPTIONS_API.robinhood_tx, inputSchema: { type: 'object', properties: {
+    hash: { type: 'string', description: 'transaction hash, 0x followed by 64 hex characters' } }, required: ['hash'] } });
+  base.push({ name: 'robinhood_rpc', description: Agent.DESCRIPTIONS_API.robinhood_rpc, inputSchema: { type: 'object', properties: {
+    method: { type: 'string', enum: Object.keys(require('./lectures_rh').METHODES), description: 'the JSON-RPC method (read-only)' },
+    params: { type: 'array', description: 'its JSON-RPC params, as the node expects them' } }, required: ['method'] } });
   /* Vendu par l'API seulement : l'agent de la page a deja scan_token. */
   base.push({ name: 'token_verdict', description: Agent.DESCRIPTIONS_API.token_verdict,
     inputSchema: { type: 'object', properties: { address: { type: 'string', description: 'EVM contract address, 0x followed by 40 hex characters' } }, required: ['address'] } });
@@ -153,6 +168,11 @@ function entreeInvalide(outil, a) {
   a = a || {};
   if ((outil === 'scan_token' || outil === 'can_i_sell' || outil === 'token_verdict') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
   if (outil === 'web_search' && !String(a.query || '').trim()) return 'query is required';
+  if ((outil === 'robinhood_token' || outil === 'robinhood_wallet') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
+  if (outil === 'robinhood_wallet' && a.tokens !== undefined && !(Array.isArray(a.tokens) && a.tokens.length <= 20 && a.tokens.every((x) => /^0x[0-9a-fA-F]{40}$/.test(String(x))))) return 'tokens must be a list of at most 20 token addresses';
+  if (outil === 'robinhood_tx' && !/^0x[0-9a-fA-F]{64}$/.test(String(a.hash || ''))) return 'hash must be 0x followed by 64 hex characters';
+  if (outil === 'robinhood_rpc' && !require('./lectures_rh').METHODES[String(a.method || '')]) return 'method must be one of ' + Object.keys(require('./lectures_rh').METHODES).join(', ');
+  if (outil === 'robinhood_rpc' && a.params !== undefined && !Array.isArray(a.params)) return 'params must be an array';
   if (outil === 'ask_agent' && !String(a.task || '').trim()) return 'task is required';
   if (outil === 'ask_agent' && String(a.task).length > TACHE_MAX_CAR) return 'task is too long (max ' + TACHE_MAX_CAR + ' characters)';
   if (outil === 'generate_image' && !String(a.prompt || '').trim()) return 'prompt is required';

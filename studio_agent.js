@@ -134,6 +134,16 @@ const NON_OFFERTS = () => (process.env.TG_APPELS_VENTE === '1' ? [] : ['telegram
 /* Les outils que agentic.js ajoute pour l'API (ask_agent, generate_image,
    generate_video, video_status), a la meme regle — agentic.definitions les lit ici. */
 const DESCRIPTIONS_API = Object.freeze({
+  /* 27 septembre 2026 : les lectures Robinhood Chain (lectures_rh.js), vendues par l'API seulement. */
+  robinhood_rpc: 'Use this when you need a raw read on Robinhood Chain (chain id 4663) without running a node: one read-only JSON-RPC call. '
+    + 'Allowed: eth_blockNumber, eth_chainId, eth_gasPrice, eth_getBalance, eth_getCode, eth_getTransactionCount, eth_getStorageAt, eth_call, eth_estimateGas, '
+    + 'eth_getTransactionByHash, eth_getTransactionReceipt, eth_getBlockByNumber and eth_getBlockByHash (headers), eth_getLogs (10,000 blocks, 500 logs at most). Returns the node answer as is.',
+  robinhood_token: 'Use this when you need to know what a Robinhood Chain contract is before touching it: one call, decoded. '
+    + 'Returns ERC-20 name, symbol, decimals and supply, the owner (or renounced), the EIP-1967 proxy implementation, the powers its code exposes (mint, blacklist, pause, fee setter; read in the implementation behind a proxy) and the DexScreener price, liquidity and market cap.',
+  robinhood_wallet: 'Use this when you need the holdings of a Robinhood Chain address: ETH plus up to 20 tokens, read on-chain in one Multicall3 call. '
+    + 'Returns each balance in units with its symbol and decimals, the DexScreener price and USD value when known (unknown stays null, never zero), and the total.',
+  robinhood_tx: 'Use this when you need to understand what a Robinhood Chain transaction did. '
+    + 'Returns its status, from, to, method, gas and fee in ETH and USD, every ERC-20 transfer decoded with symbol and amount, and the Uniswap v2, v3 or v4 swaps it contains.',
   /* 27 septembre 2026 : le verdict rapide, vendu par l'API seulement (verdict_jeton.js). */
   token_verdict: 'Use this when you must decide fast whether an EVM token is worth a closer look: one verdict you can branch on (red_flags, caution, unknown or no_red_flag_found) with its reasons. '
     + 'Judges the same data as scan_token: the GoPlus contract checks (Powered by Go+ Security, https://gopluslabs.io), the deepest DexScreener pool and, for Robinhood Chain tokens, the traits the SWOGE AI colony measured on past tokens. '
@@ -308,6 +318,11 @@ function outils(src) {
       const v = V.juge(await src.fiche(String(e.address).toLowerCase()));
       return { texte: V.texte(v), donnees: v };
     },
+    /* Les lectures Robinhood Chain (lectures_rh.js) : vendues par l'API seulement. */
+    robinhood_rpc: (e) => (src.lectures ? src.lectures.robinhood_rpc(e) : { erreur: 'Robinhood Chain reads are not switched on' }),
+    robinhood_token: (e) => (src.lectures ? src.lectures.robinhood_token(e) : { erreur: 'Robinhood Chain reads are not switched on' }),
+    robinhood_wallet: (e) => (src.lectures ? src.lectures.robinhood_wallet(e) : { erreur: 'Robinhood Chain reads are not switched on' }),
+    robinhood_tx: (e) => (src.lectures ? src.lectures.robinhood_tx(e) : { erreur: 'Robinhood Chain reads are not switched on' }),
     async can_i_sell(e) {
       if (!src.sortie) return { erreur: 'the exit test is not switched on' };
       const r = await src.sortie.verifie(e && e.address);

@@ -1674,7 +1674,27 @@ const epreuveSortie = require('./epreuve_sortie').cree({
   epreuve: (a) => aiColonie.epreuveDeSortie(a),
   dossier: cfg.DATA_DIR,
 });
+/* Les lectures Robinhood Chain vendues aux agents (lectures_rh.js, 27/09/2026).
+   Le noeud est celui de la colonie (ou RH_LECTURES_RPC_URL) : le module a son
+   propre seau d'appels, la colonie passe avant. Jamais d'URL de noeud journalisee. */
+let LECTURES_RH = null;
+function lecturesRh() {
+  if (LECTURES_RH) return LECTURES_RH;
+  const url = String(process.env.RH_LECTURES_RPC_URL || cfg.RPC_URL || '').trim();
+  LECTURES_RH = require('./lectures_rh').cree({
+    rpc: async (m, p) => {
+      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: m, params: p }), signal: AbortSignal.timeout(10000) });
+      const j = await r.json();
+      if (j.error) throw new Error(String(j.error.message || j.error.code).slice(0, 120));
+      return j.result;
+    },
+    fetch: process.env.STUDIO_DEX === '0' ? null : (u, o) => fetch(u, o),
+    ethUsd: () => ethUsdPartage(),
+  });
+  return LECTURES_RH;
+}
 const srcAgent = () => ({
+  lectures: lecturesRh(),
   /* L'epreuve de sortie (can_i_sell) : { resultat } ou { erreur }, jamais facturee sur erreur. */
   sortie: epreuveSortie,
   /* Les appels Telegram suivis (outil telegram_calls) ; null si le suivi est eteint.
@@ -1820,6 +1840,15 @@ const agentic = () => {
    seule l'adresse publique du portefeuille de gaz est montree. */
 let x402V;
 const ETH_USD = { v: null, t: 0 };
+/* L'ETH en $, 60 s en cache, partage (gaz x402, lectures Robinhood Chain) ;
+   STUDIO_DEX=0 (essais) : le reglage ETH_PRIX_USD, aucune lecture reseau. */
+async function ethUsdPartage() {
+  if (process.env.STUDIO_DEX === '0') return Number(process.env.ETH_PRIX_USD) || null;
+  if (ETH_USD.v && Date.now() - ETH_USD.t < 60000) return ETH_USD.v;
+  const v = await require('./cours_chaine').ethUsd().catch(() => null);
+  if (v) { ETH_USD.v = v; ETH_USD.t = Date.now(); }
+  return v || ETH_USD.v;
+}
 const BAZAAR = new Map();   /* outil|recherche → extension bazaar du 402 (voir x402().bazaar) */
 const BAZAAR_MCP = new Map();   /* outil|recherche → extension bazaar d'un appel MCP (decouverte.bazaarMcp) */
 /* ---- BASE : L'USDC REGLE PAR COINBASE (lot Base, contrat §A.7 / §E, 27 septembre 2026) ----
@@ -1939,13 +1968,7 @@ const x402 = () => {
     note: noteCompteur,
     cours: () => studioChat.coursSwoge(),
     /* L'ETH en $ (pour le gaz), 60 s en cache ; STUDIO_DEX=0 (essais) : le reglage ETH_PRIX_USD, aucune lecture reseau. */
-    ethUsd: async () => {
-      if (process.env.STUDIO_DEX === '0') return Number(process.env.ETH_PRIX_USD) || null;
-      if (ETH_USD.v && Date.now() - ETH_USD.t < 60000) return ETH_USD.v;
-      const v = await require('./cours_chaine').ethUsd().catch(() => null);
-      if (v) { ETH_USD.v = v; ETH_USD.t = Date.now(); }
-      return v || ETH_USD.v;
-    },
+    ethUsd: () => ethUsdPartage(),
     prixOutilUsd: (o, a) => require('./agentic').prixX402Usd(o, a),
     /* Base (USDC, Coinbase) : null sans cle CDP valide — tout est alors comme avant. */
     base,
