@@ -27,7 +27,7 @@ let T = Date.UTC(2026, 8, 27, 12, 0, 0);
 const hotes = new Set();
 /* Le monde : des pools neufs, leurs prix (modifiables), leur securite. */
 const M = {
-  gt: { solana: [], eth: [] }, prix: {}, crees: {}, pools: {}, info: {}, sol: {}, hp: {}, hpTrouve: {}, top: {},
+  gt: { robinhood: [], solana: [], eth: [] }, prix: {}, mcs: {}, crees: {}, pools: {}, info: {}, sol: {}, hp: {}, hpTrouve: {}, top: {}, devDe: {},
   quota: { rpc: false, gecko: false },
 };
 const reponse = (status, j) => ({ status, ok: status >= 200 && status < 300, json: async () => j });
@@ -37,7 +37,7 @@ async function faux(u, o) {
     if (M.quota.gecko) return reponse(429, {});
     const c = url.pathname.split('/')[4];
     return reponse(200, { data: M.gt[c].map((a) => ({ attributes: { address: M.pools[a], pool_created_at: new Date(M.crees[a]).toISOString() },
-      relationships: { base_token: { data: { id: c + '_' + a } }, dex: { data: { id: c === 'solana' ? 'pump-fun' : 'uniswap-v4-ethereum' } } } })) });
+      relationships: { base_token: { data: { id: c + '_' + a } }, dex: { data: { id: c === 'solana' ? 'pump-fun' : 'uniswap-v4' } } } })) });
   }
   if (url.host === 'api.dexscreener.com') {
     const adrs = url.pathname.split('/')[4].split(',');
@@ -45,7 +45,7 @@ async function faux(u, o) {
     for (const a of adrs) {
       if (!(M.prix[a] > 0)) continue;
       out.push({ chainId: 'x', dexId: 'pumpswap', pairAddress: M.pools[a], baseToken: { address: a }, quoteToken: { symbol: 'SOL' },
-        priceUsd: String(M.prix[a]), liquidity: { usd: 30000 }, marketCap: 60000, pairCreatedAt: M.crees[a], info: M.info[a] || null });
+        priceUsd: String(M.prix[a]), liquidity: { usd: 30000 }, marketCap: M.mcs[a] || 60000, pairCreatedAt: M.crees[a], info: M.info[a] || null });
       /* une paire plus ancienne du meme jeton (courbe de lancement) : c est elle qui date le jeton */
       out.push({ dexId: 'pumpfun', pairAddress: 'courbe-' + a, baseToken: { address: a }, priceUsd: String(M.prix[a]), liquidity: { usd: 10 }, pairCreatedAt: M.crees[a] - 20 * MIN });
     }
@@ -56,6 +56,18 @@ async function faux(u, o) {
     M.hp[a] = (M.hp[a] || 0) + 1;
     if (!M.hpTrouve[a]) return reponse(404, { code: 404, error: 'pair not found' });
     return reponse(200, M.hpTrouve[a]);
+  }
+  if (url.host === 'rpc.mainnet.chain.robinhood.com' || url.host === 'ethereum-rpc.publicnode.com') {
+    const b = JSON.parse(o.body);
+    if (b.method === 'eth_blockNumber') return reponse(200, { result: '0x1000000' });
+    if (b.method === 'eth_getLogs') {
+      const a = b.params[0].address;
+      return reponse(200, { result: M.devDe[a] ? [{ transactionHash: '0xtx' + a }] : [] });
+    }
+    if (b.method === 'eth_getTransactionByHash') {
+      const a = b.params[0].slice(4);
+      return reponse(200, { result: { from: M.devDe[a], to: '0xLanceur' } });
+    }
   }
   if (/solana|rpc\.prive/.test(url.host)) {
     const b = JSON.parse(o.body);
@@ -123,7 +135,7 @@ const nouveau = (c, a, prix, t) => { M.gt[c].push(a); M.pools[a] = 'pool-' + a; 
   const f = path.join(dossier, 'solana', new Date(T).toISOString().slice(0, 10) + '.jsonl');
   const lignes = fs.readFileSync(f, 'utf8').trim().split('\n').map((x) => JSON.parse(x));
   const l = lignes.find((x) => x.addr === 'SOLgel');
-  ok(lignes.length === 3 && l && l.r === -45 && l.secu.gel === true && l.p0 === 1 && l.liq1 === 30000, 'une ligne complete par jeton observe (traits, prix, resultat), jamais indexe compris');
+  ok(lignes.length === 3 && l && l.r30 === -45 && l.secu.gel === true && l.p0 === 1 && l.liq1 === 30000, 'une ligne complete par jeton observe (traits, prix, resultat a 30 min), jamais indexe compris');
   const ob2 = mk();
   ok(ob2._etat('solana').bilans['all tokens'].n === 2 && ob2._etat('eth').compte.disparus === 1, 'l etat survit au redemarrage');
 
@@ -139,7 +151,8 @@ const nouveau = (c, a, prix, t) => { M.gt[c].push(a); M.pools[a] = 'pool-' + a; 
   const ob3 = O.cree({ dossier: d3, fetch: faux, maintenant: () => T, solanaRpc: 'https://rpc.prive.example' });
   await ob3.cycle();
   ok(ob3._etat('solana').suivis.SOLtop.secu.top10 === 50, 'avec un noeud prive (SOLANA_RPC_URL), les 10 plus gros porteurs sont lus : 50 %');
-  ok([...hotes].every((h) => ['api.geckoterminal.com', 'api.dexscreener.com', 'api.honeypot.is', 'api.mainnet-beta.solana.com', 'rpc.prive.example'].includes(h)),
+  ok([...hotes].every((h) => ['api.geckoterminal.com', 'api.dexscreener.com', 'api.honeypot.is', 'api.mainnet-beta.solana.com', 'rpc.prive.example',
+    'rpc.mainnet.chain.robinhood.com', 'ethereum-rpc.publicnode.com'].includes(h)),
      'il ne parle qu aux services lus : ' + [...hotes].join(', '));
   const src = fs.readFileSync(path.join(__dirname, 'observatoire.js'), 'utf8');
   ok(!/gopluslabs|privateKey|signTransaction|sendTransaction|MIROIR_CLE/.test(src), 'ni GoPlus (son quota revient a la colonie), ni cle, ni signature dans le module');
@@ -147,7 +160,41 @@ const nouveau = (c, a, prix, t) => { M.gt[c].push(a); M.pools[a] = 'pool-' + a; 
   await ob3.cycle();
   ok((ob3._etat('solana').compte.erreurs.gecko429 || 0) === 1, 'GeckoTerminal en 429 : le cycle continue, et c est compte');
 
-  console.log('\n-- 5. la vue --');
+  console.log('\n-- 5. le registre des devs (Robinhood) --');
+  {
+    const d5 = fs.mkdtempSync(path.join(os.tmpdir(), 'obs5-'));
+    M.quota.gecko = false; M.gt.solana = []; M.gt.eth = []; M.gt.robinhood = [];
+    const DEV = '0xdev0000000000000000000000000000000000001';
+    const t5 = T;
+    nouveau('robinhood', '0xrh1', 1.0, T); M.devDe['0xrh1'] = DEV; M.mcs['0xrh1'] = 50000;
+    nouveau('robinhood', '0xrh2', 1.0, T); M.devDe['0xrh2'] = DEV; M.mcs['0xrh2'] = 40000;
+    nouveau('robinhood', '0xrhsans', 1.0, T);                     /* frappe hors de la plage : dev inconnu */
+    const ob5 = O.cree({ dossier: d5, fetch: faux, maintenant: () => T, chaines: ['robinhood'] });
+    await ob5.cycle();
+    const R = ob5._etat('robinhood');
+    ok(R.suivis['0xrh1'].dev === DEV.toLowerCase() && R.suivis['0xrh1'].lanceur === '0xlanceur' && R.suivis['0xrhsans'].dev === null,
+       'le dev est l expediteur de la premiere frappe (et le lanceur est garde) ; sans frappe dans la plage, dev inconnu');
+    ok(R.suivis['0xrh1'].devHist === 'first token we see from this dev' && !R.suivis['0xrh1'].secu, 'son passe devient un trait ; la securite Robinhood reste a la colonie');
+    T += 31 * MIN; M.mcs['0xrh1'] = 150000; M.mcs['0xrh2'] = 90000; M.prix['0xrh1'] = 3; M.prix['0xrh2'] = 2.25;
+    await ob5.cycle();
+    ok(!R.suivis['0xrhsans'] && R.suivis['0xrh1'] && R.suivis['0xrh1'].jalon === 1, 'a 30 min : sans dev, il sort ; avec dev, il est suivi jusqu a 24 h');
+    ok(R.bilans['Dev history = first token we see from this dev'] && R.bilans['Dev history = first token we see from this dev'].n === 2, 'le trait « Dev history » est mesure a 30 min comme les autres');
+    T += 90 * MIN; M.mcs['0xrh1'] = 400000; M.mcs['0xrh2'] = 60000; await ob5.cycle();
+    T += 240 * MIN; M.mcs['0xrh1'] = 200000; M.prix['0xrh2'] = 0; await ob5.cycle();
+    T += 1080 * MIN; M.mcs['0xrh1'] = 120000; await ob5.cycle();
+    const fiche = ob5.dev('robinhood', DEV);
+    console.log('   ' + JSON.stringify(fiche));
+    ok(fiche && fiche.tokens === 2 && fiche.vanished === 1 && fiche.reached100k === 1, 'le dev : 2 jetons, 1 disparu (rug), 1 passe 100 k$');
+    ok(fiche.avgPeakCapUsd === Math.round((400000 + 90000) / 2), 'la moyenne des plus hauts OBSERVES aux jalons (400 k$ et 90 k$) : ' + fiche.avgPeakCapUsd);
+    ok(Object.keys(R.suivis).length === 0, 'et apres 24 h, plus rien en suivi');
+    nouveau('robinhood', '0xrh3', 1.0, T); M.devDe['0xrh3'] = DEV;
+    await ob5.cycle();
+    ok(R.suivis['0xrh3'].devHist === 'dev: half or more of past tokens vanished', 'son jeton suivant porte son passe : « ' + R.suivis['0xrh3'].devHist + ' »');
+    ok(ob5.dev('robinhood', '0x' + '9'.repeat(40)) === null && ob5.vue().chaines.robinhood.devs.recorded === 1, 'un dev inconnu rend null ; la vue compte les devs');
+    T = t5;
+  }
+
+  console.log('\n-- 6. la vue --');
   const v = ob.vue();
   const sol = v.chaines.solana;
   ok(/Observation only/.test(v.note) && /\+20%/.test(v.note) && /-30%/.test(v.note), 'la vue dit ce qu elle est, et les seuils');
