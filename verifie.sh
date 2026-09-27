@@ -72,6 +72,7 @@ lance comprend "$SRV" node studio_comprend.test.js   # image comprise : referenc
 lance prod    "$SRV" node studio_production.test.js   # series et pubs : memes references dans le meme ordre a chaque scene, images a leur adresse seule
 lance prodrte "$SRV" node studio_production_route.test.js   # series et pubs sur le vrai serveur : faux xAI, memes reference_images/audios, debit exact
 lance imagine "$SRV" node studio_imagine.test.js   # bouton magique SwoleMind : images de reference et brouillon envoyes, cout compte, borne par jour, panne sans cout
+lance derniere "$SRV" node derniere_image.test.js   # la derniere image d une video (ffmpeg) pour enchainer les scenes : la bonne image, fournisseurs seulement, null sans ffmpeg
 lance essai   "$SRV" node essai_montage.test.js   # essai de montage xAI : longueur lue dans les boites MP4, clip efface apres fini/rate/delai, cout des ticks, plafond du jour
 lance essairte "$SRV" node essai_montage_route.test.js   # essai de montage sur le vrai serveur : proprietaire seul, 403 avant le corps, faux xAI, aucun debit, cle jamais montree
 lance reprises "$SRV" node reprises.test.js   # une reponse retrouvee apres rechargement : par adresse de session seulement

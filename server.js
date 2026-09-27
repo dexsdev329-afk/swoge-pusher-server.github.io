@@ -1663,7 +1663,10 @@ const observatoire = require('./observatoire').cree({ dossier: require('path').j
 const kling = require('./kling').cree({});
 const KLING_JOURNAL = require('path').join(cfg.DATA_DIR, 'kling_essais.jsonl');
 /* Une image Kling postee sur Telegram a heure fixe, une seule fois (kling_telegram.js). KLING_TG=0 la coupe. */
+/* La derniere image d'une video, pour enchainer les scenes (derniere_image.js, ffmpeg dans le Dockerfile). */
+const derniereImage = require('./derniere_image').cree({});
 const klingTg = require('./kling_telegram').cree({ kling, telegram: tg, dossier: cfg.DATA_DIR, site: SITE_URL,
+  derniere: (u) => derniereImage.derniere(u),
   /* la serie automatique ecrit son histoire avec Claude (lu au moment voulu : les deux sont declares plus bas) */
   claude: () => (chatActif('anthropic') ? clientComprend() : null),
   journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } } });
@@ -4390,7 +4393,11 @@ const server = http.createServer(async (req, res) => {
     const duree = studioMedia.DUREES.includes(Number(q.duree)) ? Number(q.duree) : studioMedia.DUREES[studioMedia.DUREES.length - 1];
     /* La suite : la derniere scene de la production (son texte), et la camera choisie. */
     const derniere = (prod.scenes || []).filter((x) => x && x.texte).slice(-1)[0];
-    const sc = P.scene(prod, q.texte, duree, { camera: q.camera, precedente: q.suite === false ? '' : (derniere && derniere.texte) });
+    /* La suite : la derniere image de la scene d'avant devient la premiere de
+       celle-ci (seulement une scene finie, sur une video des fournisseurs). */
+    const faite = q.suite === false ? null : (prod.scenes || []).filter((x) => x && x.statut === 'done' && x.url).slice(-1)[0];
+    const debut = faite ? await derniereImage.derniere(faite.url) : null;
+    const sc = P.scene(prod, q.texte, duree, { camera: q.camera, precedente: q.suite === false ? '' : (derniere && derniere.texte), debut: !!debut });
     if (sc.erreur) return json(400, { ok: false, raison: sc.erreur });
     const deps = Object.assign(depsMedia(), {
       referenceOk: (x) => x === P.SWOGE || (String(x).startsWith(P.IMAGE_PREFIXE) && !!S.litImage(String(x).slice(P.IMAGE_PREFIXE.length))),
@@ -4398,14 +4405,14 @@ const server = http.createServer(async (req, res) => {
     });
     let r;
     try {
-      r = await studioMedia.lanceVideo({ addr, prompt: sc.prompt, duree, resolution: q.resolution, format: prod.format, references: sc.references, voix: sc.voix }, deps);
+      r = await studioMedia.lanceVideo({ addr, prompt: sc.prompt, duree, resolution: q.resolution, format: prod.format, references: sc.references, voix: sc.voix, debut }, deps);
     } catch (e) {
       console.error('[production] ' + (e && e.stack || e));
       r = { ok: false, code: 500, raison: 'server error — you were not charged' };
     }
     if (!r.ok) return json(r.code || 500, r);
     const idScene = require('crypto').randomBytes(6).toString('hex');
-    S.noteScene(addr, prod.id, { id: idScene, texte: sc.texte, camera: sc.camera, video: r.id, statut: 'pending', duree, t: Date.now() });
+    S.noteScene(addr, prod.id, { id: idScene, texte: sc.texte, camera: sc.camera, suite: !!debut, video: r.id, statut: 'pending', duree, t: Date.now() });
     return json(200, Object.assign({}, r, { scene: idScene, production: prod.id }));
   }
   /* ---- STUDIO : ESSAI DE MONTAGE (xAI video edits), PROPRIETAIRE SEUL ----

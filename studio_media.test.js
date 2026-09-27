@@ -179,6 +179,30 @@ const W = (x) => ethers.utils.parseUnits(String(x), 18);
     eq(r5.code, 400, 'ni texte ni image : refusee avant tout debit');
   }
 
+  console.log('\n-- 4 ter. la suite d une scene : la derniere image EN PLUS des references (27/09) --');
+  {
+    const JPG = 'data:image/jpeg;base64,' + Buffer.alloc(200, 7).toString('base64');
+    const vus = [];
+    const s = faux();
+    const d = { cours: async () => COURS, solde: s.solde, sansBoucle: true, referenceOk: () => true,
+      fournisseur: { lanceVideo: async (o) => { vus.push(o); return 'rid-s1'; }, litVideo: async () => ({ status: 'pending' }) } };
+    const r = await M.lanceVideo({ addr: '0xs1', prompt: 'SWOGE continues', duree: 10, references: ['swoge'], voix: ['rex'], debut: JPG }, d);
+    ok(r.ok && r.suite && vus[0].image === JPG && vus[0].references.length === 1 && vus[0].voix[0] === 'rex', 'la derniere image part en premiere image, AVEC les references et la voix');
+    /* xAI ne dit pas si image et reference_images se combinent : s il refuse, la suite part seule, dans la meme reservation. */
+    const s2 = faux(); const av = s2.bal; const vus2 = [];
+    const d2 = { cours: async () => COURS, solde: s2.solde, sansBoucle: true, referenceOk: () => true,
+      fournisseur: { lanceVideo: async (o) => { vus2.push(o); if (o.references) throw new Error('xAI 400: image and reference_images'); return 'rid-s2'; }, litVideo: async () => ({ status: 'pending' }) } };
+    const r2 = await M.lanceVideo({ addr: '0xs2', prompt: 'SWOGE continues', duree: 10, references: ['swoge'], debut: JPG }, d2);
+    ok(r2.ok && r2.suiteSeule && vus2.length === 2 && vus2[1].image === JPG && !vus2[1].references, 'refusee ensemble : relancee avec la derniere image seule');
+    ok(s2.reglements.length === 0 && !s2.bal.eq(av), 'une seule reservation, rien de regle ni rendu en double pendant le relais');
+    const s3 = faux(); const av3 = s3.bal;
+    const d3 = { cours: async () => COURS, solde: s3.solde, sansBoucle: true, referenceOk: () => true,
+      fournisseur: { lanceVideo: async () => { throw new Error('xAI down'); }, litVideo: async () => ({}) } };
+    const r3 = await M.lanceVideo({ addr: '0xs3', prompt: 'x', duree: 10, references: ['swoge'], debut: JPG }, d3);
+    ok(!r3.ok && r3.code === 502 && s3.bal.eq(av3), 'et si les deux echouent : rien n est debite');
+    ok((await M.lanceVideo({ addr: '0xs4', prompt: 'x', image: JPG, references: ['swoge'] }, d)).code === 400, 'une image du JOUEUR avec des references reste refusee (seul le serveur pose la suite)');
+  }
+
   console.log('\n-- 4 bis. les compteurs durables : facture contre cout REEL (26 septembre 2026) --');
   {
     const notes = [];

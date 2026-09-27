@@ -59,7 +59,7 @@ const SWOGE_MOT = 'SWOGE, a very muscular, bodybuilder-build shiba inu (keep his
 const SERIE_SYSTEME = 'You write tiny animated web series. Answer with JSON only, no prose, no code fence.';
 function consigneSerie(n) {
   return 'Invent an original ' + n + '-episode micro-series starring ' + SWOGE_MOT + '. Fun, epic, a clear story arc with a twist in episode ' + Math.max(2, n - 1)
-    + ' and a payoff in episode ' + n + '. Each episode is ONE 10-second shot. Return exactly: '
+    + ' and a payoff in episode ' + n + '. Each episode is ONE 10-second shot, and each one CONTINUES the previous shot seamlessly: the next episode starts on the last frame of the one before, so SWOGE keeps the same outfit and the action flows from place to place without jumps. Return exactly: '
     + '{"titre":"series title","episodes":[{"titre":"episode title","image":"the key frame: who, where, what, the light, 1-2 sentences","mouvement":"what moves in 10 seconds and ONE cinematic camera move (push-in, tracking, orbit, crane or low angle), 1-2 sentences","legende":"one short hook line for Telegram"}]} '
     + 'with ' + n + ' episodes. Always name SWOGE in image and mouvement. English.';
 }
@@ -165,13 +165,22 @@ function cree(deps) {
       const s = await ecritSerie(du.episodes);
       faits[du.cle].titre = s.titre; faits[du.cle].secours = !!s.secours; ecrit();
       journal({ programme: du.cle, type: 'serie', titre: s.titre, secours: !!s.secours, episodes: s.episodes.map((e) => e.titre) });
-      let postes = 0;
+      let postes = 0, precedente = null;
       for (let i = 0; i < s.episodes.length; i++) {
         const e = s.episodes[i], nom = 'Episode ' + (i + 1) + '/' + s.episodes.length;
-        const im = await deps.kling.image({ prompt: e.image + ' ' + SWOGE_MOT + '. Cinematic, detailed, film lighting.', image: deps.site + '/img/site/swoge_reference.jpg', reference: 'subject', format: du.format }, deps.attente);
-        const depart = im.ok && im.url ? im.url : deps.site + '/img/site/swoge_reference.jpg';
-        const v = await deps.kling.video({ prompt: e.mouvement + ' Keep SWOGE exactly as in the first frame.', image: depart, modele: du.modele, duree: du.duree, resolution: du.resolution, audio: du.audio }, deps.attente);
-        const ep = { n: i + 1, titre: e.titre, image: im.ok ? im.url : null, video: v.ok ? v.url : null, raison: v.ok ? null : v.raison };
+        /* ---- LA SUITE : la derniere image de l'episode precedent ----
+           « La seule facon de faire une suite, c'est la derniere seconde de
+           l'image » (27/09). A partir de l'episode 2, la premiere image est
+           la derniere de la video d'avant ; sans elle (ffmpeg absent, video
+           expiree, episode rate), une image cle neuve comme avant. */
+        const suite = precedente && deps.derniere ? await deps.derniere(precedente) : null;
+        const im = suite ? { ok: true, url: null, suite: true }
+          : await deps.kling.image({ prompt: e.image + ' ' + SWOGE_MOT + '. Cinematic, detailed, film lighting.', image: deps.site + '/img/site/swoge_reference.jpg', reference: 'subject', format: du.format }, deps.attente);
+        const depart = suite || (im.ok && im.url ? im.url : deps.site + '/img/site/swoge_reference.jpg');
+        const v = await deps.kling.video({ prompt: e.mouvement + (suite ? ' This shot continues directly from the first frame: same place, same outfit, same light, then the action moves on.' : '') + ' Keep SWOGE exactly as in the first frame.',
+          image: depart, modele: du.modele, duree: du.duree, resolution: du.resolution, audio: du.audio }, deps.attente);
+        precedente = v.ok ? v.url : null;
+        const ep = { n: i + 1, titre: e.titre, suite: !!suite, image: im.ok ? im.url : null, video: v.ok ? v.url : null, raison: v.ok ? null : v.raison };
         faits[du.cle].episodes.push(ep); ecrit();
         journal({ programme: du.cle, type: 'episode', n: i + 1, titre: e.titre, statut: v.ok ? 'succeeded' : 'failed', url: v.url || null, image: ep.image, message: v.ok ? null : v.raison });
         if (!v.ok) continue;                         /* un episode rate ne publie rien ; les suivants continuent */

@@ -151,6 +151,7 @@ function scene(prod, texte, duree, opts) {
     prompt = 'A scene from the series "' + prod.titre + '". Main characters — keep each one\'s face, fur or skin, body and build from its reference image in EVERY shot, never a different animal, breed or face; their clothes and poses follow the scene unless it says otherwise: '
       + roles.join('; ') + '.'
       + (avant ? ' This scene follows directly from the previous one: "' + avant + '" — same setting, lighting and outfits unless the scene says otherwise.' : '')
+      + (opts.debut ? ' The video starts exactly on the given first frame (the last frame of the previous scene) and continues the action from there.' : '')
       + ' Scene: ' + t + (/[.!?"”]$/.test(t) ? '' : '.')
       + (nommes.length ? ' Only the main characters named in the scene appear.' : ' All the main characters above are in this scene.')
       + ' Any other people or animals are unnamed background extras and must not look like the main characters.'

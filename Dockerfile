@@ -3,6 +3,10 @@
 FROM node:18-alpine
 WORKDIR /app
 
+# ffmpeg : la derniere image d'une video, pour enchainer les scenes (derniere_image.js).
+# « La seule facon de faire une suite, c'est la derniere seconde de l'image » (27/09).
+RUN apk add --no-cache ffmpeg
+
 # install deps first (better layer caching)
 COPY package*.json ./
 RUN npm install --omit=dev

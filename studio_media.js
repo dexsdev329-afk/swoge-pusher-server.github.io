@@ -315,6 +315,13 @@ async function lanceVideo(q, deps) {
   if (refs.some((r) => !(imageJointe(r) || (deps.referenceOk && deps.referenceOk(r))))) return { ok: false, code: 400, raison: 'each reference must be a PNG, JPEG or WebP under 6 MB' };
   if (voix.some((v) => !voixPermises().includes(v))) return { ok: false, code: 400, raison: 'unknown voice — pick one of ' + voixPermises().join(', ') };
   if ((refs.length || voix.length) && image) return { ok: false, code: 400, raison: 'use either a start image or references, not both' };
+  /* La suite d'une scene (27/09) : la derniere image de la scene d'avant, posee
+     par le serveur (jamais par le joueur), part EN PLUS des references. La
+     specification d'xAI ne dit pas si `image` et `reference_images` se
+     combinent : si le fournisseur refuse, on relance avec la premiere image
+     seule — c'est elle qui porte la suite — dans la meme reservation. */
+  const debut = q.debut ? imageJointe(q.debut) : null;
+  if (debut === false) return { ok: false, code: 400, raison: 'the continuation frame could not be read' };
   const duree = DUREES.includes(Number(q.duree)) ? Number(q.duree) : DUREES[0];
   const resolution = RESOLUTIONS.includes(q.resolution) ? q.resolution : RESOLUTIONS[0];
   const format = FORMATS_VIDEO.includes(q.format) ? q.format : 'auto';
@@ -327,17 +334,25 @@ async function lanceVideo(q, deps) {
   let rid;
   const fv = (deps.fournisseurs && deps.fournisseurs.grok) || deps.fournisseur;
   if (!fv || (fv.actif && !fv.actif())) { deps.solde.regle(addr, r.wei, 0n); return { ok: false, code: 503, raison: 'Video is not switched on yet (Grok Imagine).' }; }
-  try { rid = await fv.lanceVideo({ api: m.api, prompt, duree, resolution, format, image, references: refs.length ? refs.map((r) => (deps.urlReference ? deps.urlReference(r) : r)) : undefined, voix: voix.length ? voix : undefined }); }
+  let seule = false;
+  try { rid = await fv.lanceVideo({ api: m.api, prompt, duree, resolution, format, image: image || debut || undefined, references: refs.length ? refs.map((r) => (deps.urlReference ? deps.urlReference(r) : r)) : undefined, voix: voix.length ? voix : undefined }); }
   catch (e) {
-    deps.solde.regle(addr, r.wei, 0n); MESURE.echecs++;
-    return { ok: false, code: 502, raison: 'the video provider failed — you were not charged', detail: String(e && e.message || e).slice(0, 200) };
+    let e2 = e;
+    if (debut && (refs.length || voix.length)) {
+      try { rid = await fv.lanceVideo({ api: m.api, prompt, duree, resolution, format, image: debut }); seule = true; MESURE.suitesSeules = (MESURE.suitesSeules || 0) + 1; e2 = null; }
+      catch (e3) { e2 = e3; }
+    }
+    if (e2) {
+      deps.solde.regle(addr, r.wei, 0n); MESURE.echecs++;
+      return { ok: false, code: 502, raison: 'the video provider failed — you were not charged', detail: String(e2 && e2.message || e2).slice(0, 200) };
+    }
   }
   const id = crypto.randomBytes(12).toString('hex');
   const job = { id, rid, addr, canal: q.canal || 'studio', modele: m.id, duree, resolution, t0: t, status: 'pending', progress: 0,
                 reserveWei: r.wei, cours: r.cours, listeUsd, url: null, factureSwoge: null, solde: null, raison: null };
   JOBS.set(id, job);
   if (!deps.sansBoucle) suit(job, deps);
-  return { ok: true, genre: 'video', id, status: 'pending', duree, resolution, modele: m.id };
+  return { ok: true, genre: 'video', id, status: 'pending', duree, resolution, modele: m.id, suite: !!debut, suiteSeule: seule };
 }
 
 /** Un pas de suivi d'une vidéo : interroge xAI, règle si elle est finie. */

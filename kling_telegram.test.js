@@ -108,6 +108,24 @@ const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; c
     ok(/backup script/.test(posts[posts.length - 1].l) && /Golden Barbell/.test(posts[posts.length - 1].l), 'sans Claude : la serie de secours part quand meme, et la legende le dit');
     ok(KT.lisSerie('pas du json', 4) === null && KT.lisSerie(json, 5) === null && KT.lisSerie(json, 4).episodes.length === 4, 'un JSON illisible ou incomplet n est pas pris pour une serie');
   }
+  console.log('\n-- 5. la suite : chaque episode part de la derniere image du precedent (27/09) --');
+  {
+    const C = Date.parse('2026-09-27T18:30:00Z');
+    const images = [], videos = [], derniers = [];
+    const kt = KT.cree({ dossier: fs.mkdtempSync('/tmp/kling-tg-'), site: 'https://swoleeswoge.dog', maintenant: () => C + 1000, journal: () => {},
+      programme: [{ cle: 's', a: C, type: 'serie', episodes: 4, modele: 'kling-2.6', duree: 10, resolution: '720p', audio: 'off', format: '16:9' }],
+      derniere: async (u) => { derniers.push(u); return u === 'https://cdn/v2.mp4' ? null : 'data:image/jpeg;base64,FIN' + derniers.length; },
+      telegram: { notifyVideo: () => {} },
+      kling: { actif: () => true,
+        image: async (q) => { images.push(q); return { ok: true, url: 'https://cdn/i' + images.length + '.png' }; },
+        video: async (q) => { videos.push(q); return { ok: true, url: 'https://cdn/v' + videos.length + '.mp4' }; } } });
+    await kt.tour();
+    ok(videos[0].image === 'https://cdn/i1.png' && videos[1].image === 'data:image/jpeg;base64,FIN1', 'episode 2 : sa premiere image est la DERNIERE de l episode 1');
+    ok(derniers[0] === 'https://cdn/v1.mp4' && /continues directly from the first frame/.test(videos[1].prompt), 'lue sur la video de l episode 1, et le prompt le dit');
+    ok(images.length === 2 && videos[2].image === 'https://cdn/i2.png', 'derniere image illisible (episode 2) : l episode 3 repart d une image cle neuve');
+    ok(videos[3].image === 'data:image/jpeg;base64,FIN3', 'et l episode 4 reprend la derniere image du 3');
+    ok(/CONTINUES the previous shot seamlessly/.test(require('./kling_telegram').SERIE_SECOURS ? require('fs').readFileSync(require.resolve('./kling_telegram'), 'utf8') : ''), 'Claude est prevenu que les episodes s enchainent');
+  }
   const S3 = KT.PROGRAMME.find((p) => p.type === 'serie');
   ok(S3 && S3.a === Date.parse('2026-09-27T18:30:00Z') && S3.episodes === 4, 'le programme reel : la serie a 20 h 30 (Paris), 4 episodes');
   ok(KT.PROGRAMME[1] && KT.PROGRAMME[1].a === Date.parse('2026-09-27T18:11:00Z') && KT.PROGRAMME[1].depuis === KT.PROGRAMME[0].cle, 'le programme reel : la video a 20 h 11, depuis l image de 20 h');
