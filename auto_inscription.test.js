@@ -94,6 +94,56 @@ const monde = (o) => {
     ok(!r.ok && r.raison === 'X402_AUTO_CLE is not a valid private key' && A.etat().actif === false, 'une cle invalide : rien, et le message ne la repete pas');
     ok(!(await monde({ cle: '' }).A.passe()).ok, 'sans X402_AUTO_CLE : rien');
   }
+  /* ---- Une cle SOLANA (27/09 : le proprietaire a mis une cle Solana et ses USDC sur Solana) ---- */
+  {
+    const crypto = require('crypto');
+    const Sol = require('./x402_solana');
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
+    const graine = privateKey.export({ format: 'der', type: 'pkcs8' }).slice(-32), pub = publicKey.export({ format: 'der', type: 'spki' }).slice(-32);
+    const ADR = ethers.utils.base58.encode(pub), PHANTOM = ethers.utils.base58.encode(Buffer.concat([graine, pub]));
+    ok(AI.portefeuille(PHANTOM).type === 'solana' && AI.portefeuille(PHANTOM).address === ADR, 'la cle exportee de Phantom (base58, 64 octets) : un portefeuille Solana, la bonne adresse');
+    ok(AI.portefeuille(JSON.stringify(Array.from(Buffer.concat([graine, pub])))).address === ADR && AI.portefeuille(ethers.utils.base58.encode(graine)).address === ADR,
+       'le tableau JSON du CLI (64 nombres) et la graine seule (32 octets) : la meme adresse');
+    const faux = Buffer.concat([graine, crypto.randomBytes(32)]);
+    ok(AI.portefeuille(ethers.utils.base58.encode(faux)) === null, '64 octets dont la moitie publique ne correspond pas : refuse');
+    const PAYTO_SOL = 'CFg86EW2ZSAgGpf4o2XAt3gU59fgMfsuZyM6QDuDTmoM', FEE = 'CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww', BH = '9zJ3sY2qvAoMYrgkXYWkrvBWTTjvP6T9BGFsMwAGrFg6';
+    const b64 = (x) => Buffer.from(JSON.stringify(x)).toString('base64');
+    const recus = [];
+    const fetch = async (url, init) => {
+      const outil = url.split('/').pop(), sig = init.headers['payment-signature'];
+      const req = { x402Version: 2, resource: { url: API + '/agentic/call/' + outil },
+        accepts: [{ scheme: 'exact', network: 'eip155:8453', asset: AI.USDC_BASE, payTo: TRESOR, amount: '6000', maxTimeoutSeconds: 120, extra: { name: 'USD Coin', version: '2' } },
+          { scheme: 'exact', network: AI.RESEAU_SOLANA, asset: AI.USDC_SOLANA, payTo: PAYTO_SOL, amount: '6000', maxTimeoutSeconds: 120, extra: { feePayer: FEE } }], extensions: {} };
+      if (!sig) return { status: 402, headers: new Map([['payment-required', b64(req)]]), json: async () => ({}) };
+      const p = JSON.parse(Buffer.from(sig, 'base64').toString()), tx = Buffer.from(p.payload.transaction, 'base64');
+      recus.push({ outil, reseau: p.accepted.network, tx });
+      return { status: 200, headers: new Map([['payment-response', b64({ success: true, transaction: '5' + 'A'.repeat(87) })]]), json: async () => ({ ok: true }) };
+    };
+    const A = AI.cree({ cle: PHANTOM, api: API, payTo: TRESOR, payToSolana: PAYTO_SOL, fetch, dossier: fs.mkdtempSync(path.join(os.tmpdir(), 'autoinsc-')),
+      blockhash: async () => ({ ok: true, blockhash: BH }), outils: () => ['token_verdict'], inscrits: async () => new Set() });
+    const r = await A.passe();
+    const t = recus[0] && recus[0].tx, msg = t && t.slice(1 + 128);
+    const cle = crypto.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), pub]), format: 'der', type: 'spki' });
+    ok(r.ok && recus.length === 1 && recus[0].reseau === AI.RESEAU_SOLANA && A.etat().reseau === 'solana', 'une cle Solana paie l offre SOLANA du 402 (pas Base)');
+    ok(t && t[0] === 2 && t.slice(1, 65).every((x) => x === 0) && crypto.verify(null, msg, cle, t.slice(65, 129)), 'la transaction : la signature du feePayer vide, celle du payeur valide (ed25519)');
+    const attendu = await Sol.construit({ amount: '6000', asset: AI.USDC_SOLANA, payTo: PAYTO_SOL, extra: { feePayer: FEE } }, { payeur: ADR, blockhash: BH, memo: msg.slice(msg.length - 33, msg.length - 1).toString() });
+    ok(Buffer.from(attendu.message).equals(msg), 'le message signe : feePayer du 402, 6 000 (0,006 USDC) vers le compte USDC de NOTRE adresse, le blockhash de notre noeud');
+    const B = AI.cree({ cle: PHANTOM, api: API, payTo: TRESOR, payToSolana: 'Autre1111111111111111111111111111111111111', fetch, dossier: fs.mkdtempSync(path.join(os.tmpdir(), 'autoinsc-')),
+      blockhash: async () => ({ ok: true, blockhash: BH }), outils: () => ['token_verdict'], inscrits: async () => new Set() });
+    const rb = await B.passe();
+    ok(recus.length === 1 && /someone else/.test(rb.faits[0].raison), 'Solana aussi : un 402 qui paie une autre adresse que la notre est refuse, rien signe');
+    const C = AI.cree({ cle: PHANTOM, api: API, payTo: TRESOR, payToSolana: PAYTO_SOL, fetch, dossier: fs.mkdtempSync(path.join(os.tmpdir(), 'autoinsc-')),
+      blockhash: async () => ({ ok: false, raison: 'node down' }), outils: () => ['token_verdict'], inscrits: async () => new Set() });
+    const rc = await C.passe();
+    ok(recus.length === 1 && /no recent Solana blockhash \(node down\)/.test(rc.faits[0].raison) && C.etat().depenseUsd === 0, 'sans blockhash de notre noeud : rien signe, rien compte');
+    const tout = JSON.stringify(A.etat()) + JSON.stringify(r);
+    ok(!tout.includes(PHANTOM) && !tout.includes(PHANTOM.slice(0, 20)), 'la cle Solana n apparait nulle part');
+  }
+  /* Le constructeur Solana est le MEME fichier que celui de la page de test (site) : une seule verite. */
+  {
+    const site = path.join(__dirname, '..', 'SWOGE.github.io', 'x402_solana.js');
+    if (fs.existsSync(site)) ok(fs.readFileSync(site, 'utf8') === fs.readFileSync(path.join(__dirname, 'x402_solana.js'), 'utf8'), 'x402_solana.js : identique au fichier du site (sinon : le recopier)');
+  }
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error('ESSAI CASSE :', e); process.exit(1); });

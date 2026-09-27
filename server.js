@@ -1942,14 +1942,16 @@ function demarreAutoInscription(x) {
   const AI = require('./auto_inscription');
   const D = require('./decouverte'), A = require('./agentic');
   const maxAppel = () => (Number(process.env.AUTO_MAX_APPEL_USD) > 0 ? Number(process.env.AUTO_MAX_APPEL_USD) : 0.03);
-  AUTO_INSCRIPTION = AI.cree({ cle: process.env.X402_AUTO_CLE, api: MOI_URL, payTo: x.basePayTo, fetch: (u, o) => fetch(u, o), dossier: cfg.DATA_DIR,
+  const sol = (AI.portefeuille(process.env.X402_AUTO_CLE) || {}).type === 'solana';
+  AUTO_INSCRIPTION = AI.cree({ cle: process.env.X402_AUTO_CLE, api: MOI_URL, payTo: x.basePayTo, payToSolana: x.solanaPayTo,
+    blockhash: () => x.blockhashSolana(), fetch: (u, o) => fetch(u, o), dossier: cfg.DATA_DIR,
     exemples: D.EXEMPLES_ENTREE,
     outils: () => A.definitions({ recherche: chatActif('perplexity') }).map((d) => d.name)
-      .filter((nom) => agentic().x402Payable(nom) && (Number(A.prixX402Usd(nom, D.EXEMPLES_ENTREE[nom] || {})) || 0) + 0.001 <= maxAppel()),
+      .filter((nom) => agentic().x402Payable(nom) && !(sol && nom === 'ask_agent') && (Number(A.prixX402Usd(nom, D.EXEMPLES_ENTREE[nom] || {})) || 0) + (sol ? 0.002 : 0.001) <= maxAppel()),
     inscrits: () => AI.inscritsPayai(MOI_URL, (u, o) => fetch(u, o), String(process.env.PAYAI_FACILITATOR_URL || 'https://facilitator.payai.network').trim()),
     journal: (l) => console.log('[x402] auto-listing ' + l.outil + ': ' + (l.ok ? 'paid ' + l.usd + ' $' + (l.tx ? ' (' + l.tx + ')' : '') : 'not paid - ' + l.raison)) });
   if (!AUTO_INSCRIPTION.adresse) { console.error('[x402] X402_AUTO_CLE is not a valid private key - auto-listing off'); return; }
-  console.log('[x402] auto-listing on, paying from ' + AUTO_INSCRIPTION.adresse + ' (dedicated wallet)');
+  console.log('[x402] auto-listing on, paying in USDC on ' + (sol ? 'Solana' : 'Base') + ' from ' + AUTO_INSCRIPTION.adresse + ' (dedicated wallet)');
   setTimeout(() => AUTO_INSCRIPTION.passe().then((r) => console.log('[x402] auto-listing done: ' + JSON.stringify(r).slice(0, 400)))
     .catch((e) => console.error('[x402] auto-listing: ' + (e && e.message || e))), 3 * 60e3).unref();
 }
