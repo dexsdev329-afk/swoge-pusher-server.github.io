@@ -55,6 +55,7 @@ lance x402    "$SRV" node x402.test.js    # payer sans compte : vraies signature
 lance x402rte "$SRV" node x402_route.test.js   # x402 de bout en bout : vrai serveur, faux noeud qui decode settle, la cle de gaz jamais montree
 lance facil   "$SRV" node facilitateur_cdp.test.js   # le facilitateur CDP : jeton verifie par la cle publique, 401 text/plain, pending renvoye une fois, delai jamais rejoue, secret jamais dit
 lance x402base "$SRV" node x402_base_route.test.js   # USDC sur Base de bout en bout : sonde au demarrage, Base d abord, x402 sur MCP (objet, base64, en-tete), en attente sans accepts, secret CDP jamais montre
+lance solata "$SRV" node solana_ata.test.js   # le compte USDC associe d une adresse Solana (payTo), contre les vecteurs de web3.js : sans lui, pas de Solana dans le 402
 lance compteurs "$SRV" node compteurs.test.js   # compteurs durables : un fichier par jour UTC, survivent au redemarrage et a SIGTERM, maison a part, jamais l IP
 lance klingjev "$SRV" node kling_jev.test.js   # Kling (nouveau standard, cle API, grille officielle) et Jev (systemone, probabilites, cout) : rien ne part sans cle, jamais la cle dans une reponse
 lance klingrte "$SRV" node kling_route.test.js   # essai Kling sur un vrai serveur : proprietaire seul, 403 avant Kling, journalise, aucun debit
@@ -97,6 +98,7 @@ lance prodpage "$SITE" node production_page.test.js   # SwoleMind series et pubs
 lance essaipage "$SITE" node essai_montage_page.test.js   # SwoleMind essai de montage : proprietaire seul, longueur refusee dans la page, jeton jamais adresse, 320 px
 lance agentpage "$SITE" node agent_page.test.js   # SwogeAgentic : chaque geste visible, echappe, jeton jamais adresse, reprise par rid
 lance x402page "$SITE" node x402_essai_page.test.js   # payer un appel en USDC sur Base depuis son portefeuille : offre Base du 402, EIP-3009 signe et verifie, resultat echappe, 320 px
+lance x402sol "$SITE" node x402_solana.test.js   # la transaction Solana de la page : octet pour octet celle de web3.js (vecteurs figes), comptes USDC associes, memo aleatoire
 lance ecopage "$SITE" node economie_page.test.js   # la carte $SWOGE ECONOMY et le whitepaper suivent /economie.json
 lance predictpage "$SITE" node predict_page.test.js
 # Elle criait dans le vide : 30 echecs sur 617, jamais lus, parce qu elle

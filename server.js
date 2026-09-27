@@ -2074,7 +2074,8 @@ async function x402Etat(detail) {
               /* Solana (etape 2) : l'USDC regle par PayAI, les frais payes par son feePayer ; confirmes = relus sur la chaine. */
               solana: x.solanaPayTo ? { actif: !!(x.solanaActif && x.solanaActif()), network: X.RESEAU_SOLANA, asset: X.USDC_SOLANA, payTo: x.solanaPayTo, facilitateur: 'payai',
                 etat: (x.MESURE.solana || {}).etat, raison: (x.MESURE.solana || {}).raison, feePayer: (x.MESURE.solana || {}).feePayer,
-                confirmes: (x.MESURE.solana || {}).confirmes, nonConfirmes: (x.MESURE.solana || {}).nonConfirmes, exclus: X.SOLANA_EXCLUS } : null,
+                confirmes: (x.MESURE.solana || {}).confirmes, nonConfirmes: (x.MESURE.solana || {}).nonConfirmes, exclus: X.SOLANA_EXCLUS,
+                compteUsdc: (x.MESURE.solana || {}).compteUsdc, compteExiste: (x.MESURE.solana || {}).compteExiste } : null,
               agent: { actif: agentic().x402Payable('ask_agent') } };
   if (!detail) return e;
   const g = x.MESURE.gasUsed.slice().sort((a, b) => a - b);

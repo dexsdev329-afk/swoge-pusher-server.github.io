@@ -997,6 +997,29 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
         return { acc, entete: X.b64({ x402Version: 2, resource: req.resource, accepted: acc, payload: { transaction: tx || Buffer.from('tx-' + Math.random()).toString('base64') }, extensions: req.extensions }) }; };
       const Ms = await monde({});
       ok(Ms.x.solanaActif() && Ms.x.MESURE.solana.feePayer === FEE, 'Solana allume : PayAI liste solana:5eykt… et donne son feePayer');
+      /* Le compte USDC de payTo (mesure du 27/09 : celui du proprietaire n existait pas) */
+      {
+        const ATA = require('./solana_ata').ata(PAYTO_SOL, X.USDC_SOLANA);
+        const vus = [];
+        let existe = false;
+        const R = { f: async (m, params) => { vus.push([m, params[0]]); if (m === 'getAccountInfo') return { value: existe ? { owner: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' } : null }; return { value: [{ confirmationStatus: 'confirmed' }] }; } };
+        const Mc = await monde({ R });
+        const qc = await entete402(Mc, 'scan_token', {});
+        ok(!Mc.x.solanaActif() && !qc.accepts.some((a) => a.network === X.RESEAU_SOLANA) && vus.some((v) => v[0] === 'getAccountInfo' && v[1] === ATA),
+           'payTo sans compte USDC (getAccountInfo ' + ATA.slice(0, 6) + '… : rien) : Solana eteint, absent du 402');
+        ok(/no USDC account on Solana yet/.test(Mc.x.MESURE.solana.raison) && Mc.x.MESURE.solana.compteExiste === false && Mc.x.MESURE.solana.compteUsdc === ATA,
+           'la raison le dit, avec l adresse du compte a creer');
+        existe = true;
+        await Mc.x.sondeBase();
+        ok(Mc.x.solanaActif() && Mc.x.MESURE.solana.compteExiste === true && (await entete402(Mc, 'scan_token', {})).accepts.some((a) => a.network === X.RESEAU_SOLANA),
+           'le compte cree : la sonde suivante rallume Solana');
+        const n0 = vus.filter((v) => v[0] === 'getAccountInfo').length;
+        await Mc.x.sondeBase();
+        ok(vus.filter((v) => v[0] === 'getAccountInfo').length === n0, 'une fois vu, le compte n est plus relu');
+        const Rm = { f: async (m) => { if (m === 'getAccountInfo') throw new Error('rpc muet'); return { value: [{ confirmationStatus: 'confirmed' }] }; } };
+        const Mm = await monde({ R: Rm });
+        ok(Mm.x.solanaActif() && Mm.x.MESURE.solana.compteExiste === null, 'un noeud muet ne ferme pas Solana (compte : pas su)');
+      }
       const q = await entete402(Ms, 'scan_token', {});
       const so = q.accepts.find((a) => a.network === X.RESEAU_SOLANA), iSo = q.accepts.indexOf(so);
       const p0 = await Ms.x.prix('scan_token', {});

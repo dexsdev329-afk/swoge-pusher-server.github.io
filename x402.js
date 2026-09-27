@@ -282,7 +282,7 @@ function cree(deps) {
          coute rien et ne deplace rien). */
       second: { nom: (deps.base && deps.base.second && deps.base.second.nom) || null, etat: deps.base && deps.base.second ? 'off' : 'absent', raison: null, jusqua: 0 },
       parFacilitateur: {} },
-    solana: { etat: deps.solana ? 'off' : 'absent', raison: deps.solana ? 'not probed yet' : 'no X402_SOLANA_PAYTO', feePayer: null, jusqua: 0, confirmes: 0, nonConfirmes: 0 } };
+    solana: { etat: deps.solana ? 'off' : 'absent', raison: deps.solana ? 'not probed yet' : 'no X402_SOLANA_PAYTO', feePayer: null, jusqua: 0, confirmes: 0, nonConfirmes: 0, compteUsdc: null, compteExiste: null } };
   let file = Promise.resolve();    /* un règlement à la fois : le portefeuille de gaz n'a qu'un nonce */
   let agentEnVol = 0;
   const maintenant = () => (deps.maintenant ? deps.maintenant() : Date.now());
@@ -338,6 +338,21 @@ function cree(deps) {
     const k = r.ok ? (r.kinds || []).find((x) => Number(x.x402Version) === 2 && x.scheme === 'exact' && x.network === SOL.reseau) : null;
     const fp = k && k.extra && typeof k.extra.feePayer === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(k.extra.feePayer) ? k.extra.feePayer : null;
     const avant = MS.etat;
+    /* Le compte USDC associe de payTo doit exister : un TransferChecked vers un
+       compte absent echoue, et le schema ne laisse pas le payeur le creer
+       (solana_ata.js, mesure du 27/09). Une fois vu, il ne disparait pas ; un
+       noeud muet ne ferme pas Solana (null : pas su). */
+    if (fp && MS.compteExiste !== true && SOL.rpc) {
+      try {
+        MS.compteUsdc = MS.compteUsdc || require('./solana_ata').ata(SOL.payTo, SOL.usdc);
+        const v = await SOL.rpc('getAccountInfo', [MS.compteUsdc, { encoding: 'base64' }]);
+        MS.compteExiste = !!(v && v.value);
+      } catch (e) { MS.compteExiste = MS.compteExiste === false ? false : null; }
+    }
+    if (fp && MS.compteExiste === false) {
+      Object.assign(MS, { etat: 'off', feePayer: fp, raison: 'payTo has no USDC account on Solana yet (' + MS.compteUsdc + ') - send any amount of USDC to ' + SOL.payTo + ' once' });
+      return false;
+    }
     if (fp) { Object.assign(MS, { etat: 'on', raison: null, feePayer: fp }); if (avant !== 'on') console.log('[x402] Solana on - USDC on ' + SOL.reseau + ' to ' + SOL.payTo + ', fees paid by ' + (SOL.facilitateur.nom || 'the facilitator')); }
     else Object.assign(MS, { etat: 'off', raison: !r.ok ? '/supported answered ' + (r.statut || r.erreur || 'nothing') : !k ? '/supported does not list ' + SOL.reseau : 'no feePayer in /supported' });
     return solanaActif();
