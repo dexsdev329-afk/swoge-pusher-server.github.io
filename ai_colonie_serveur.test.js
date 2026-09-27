@@ -90,6 +90,7 @@ function jeton(i, o) {
     indexe: !!o.indexe,          /* le montant est dans topics[3], pas dans data */
     goplus: o.goplus === undefined ? 'propre' : o.goplus,   /* propre | muet | honeypot */
     unSeulPorteur: !!o.unSeulPorteur,
+    unLien: !!o.unLien, aucunLien: !!o.aucunLien,
     personneNeGarde: !!o.personneNeGarde,   /* chacun recoit puis renvoie : solde net nul */
     /* La monnaie de la paire : l ETH natif par defaut, comme presque tout le
        flux ; GLD, SPY, USDG… pour eprouver la regle des paires ETH. */
@@ -459,7 +460,8 @@ global.fetch = async function (url, opts) {
        * TOUS les jetons du banc et la suite se mesurait elle-meme au lieu de
        * mesurer le moteur. `sansTelegram` sert a l'inverse : eprouver la regle
        * sur un jeton a qui il manque vraiment quelque chose. */
-      info: t.sansTelegram
+      /* `unLien` / `aucunLien` : l'essai des jeunes (27/09) juge au nombre de liens. */
+      info: t.aucunLien ? {} : t.unLien ? { socials: [{ type: 'twitter', url: 'https://x.com/' + t.sym }] } : t.sansTelegram
         ? { socials: [{ type: 'twitter', url: 'https://x.com/' + t.sym }],
             websites: [{ url: 'https://' + t.sym + '.example' }] }
         : { socials: [{ type: 'twitter', url: 'https://x.com/' + t.sym },
@@ -6255,6 +6257,78 @@ async function sansPlaceNOuvrePas() {
   C.poseMiroir(null);
 }
 
+/* Le budget mensuel de la cle CoinGecko (27/09/2026, 94 712 credits sur 100 000
+   au 27) : en avance sur le rythme du mois, la cle sert ; en retard, la lecture
+   passe par l acces libre, sans rien perdre. */
+async function budgetCoingecko() {
+  console.log('\n-- la cle CoinGecko tient son budget du mois --');
+  const mois = new Date().toISOString().slice(0, 7);
+  remise(sains(), { cgCle: 'cg-pro-456', cgPorte: 'pro' });
+  process.env.COINGECKO_API_KEY = 'cg-pro-456';
+  await C.sondeCoingecko();
+  const E = C._etat();
+  E.cgCredits = { mois, n: 1e9, horsBudget: 0 };
+  const avant = appels.cgPro;
+  await C.tour();
+  let v = C.vue();
+  ok(appels.cgPro === avant && appels.pools > 0 && v.candidats.length > 0,
+     'en retard sur le budget : AUCUNE lecture par la cle, toutes par l acces libre, et le tour se fait (' + v.candidats.length + ' jetons)');
+  ok(v.coingecko.credits.dansLeBudget === false && v.coingecko.credits.luesSansLaCle > 0 && (E.compteurs.cgHorsBudget || 0) > 0,
+     'la vue le dit : ' + JSON.stringify(v.coingecko.credits));
+  E.cgCredits = { mois, n: 0, horsBudget: 0 };
+  const avant2 = appels.cgPro;
+  await C.tour();
+  v = C.vue();
+  ok(appels.cgPro > avant2 && v.coingecko.credits.utilises === appels.cgPro - avant2, 'en avance : la cle sert, et chaque lecture est comptee (' + v.coingecko.credits.utilises + ')');
+  delete E.cgCredits;
+  process.env.CG_CREDITS_UTILISES = mois + ':94712';
+  ok(C.budgetCg().utilises === 94712, 'le releve du tableau de bord (CG_CREDITS_UTILISES) amorce le mois en cours');
+  delete E.cgCredits;
+  process.env.CG_CREDITS_UTILISES = '1999-01:94712';
+  ok(C.budgetCg().utilises === 0, 'et seulement le mois qu il nomme');
+  delete process.env.CG_CREDITS_UTILISES; delete process.env.COINGECKO_API_KEY; delete E.cgCredits;
+}
+
+/* L'essai des jeunes (27/09/2026, decision du proprietaire : en direct avec le
+   miroir) : un jeune « pas encore indexe » connu de DexScreener avec UN lien est
+   rejuge ; au plus un par heure ; zero lien reste refuse ; tout le reste
+   (note, Cobaye) s applique ; le carnet le lit a part. */
+async function essaiDesJeunes() {
+  console.log('\n-- l essai des jeunes : un par heure, un lien au lieu de trois --');
+  process.env.AGE_ACHAT_MIN = '4';
+  const recus = [];
+  const miroir = { surAchat: async (t) => { recus.push(t); return 0; }, surVente: async () => 0,
+                   allerRetour: async () => ({ pct: 97, min: 60, ver: 'v2', pool: 'p', sonde: '0.01' }) };
+  remise([jeton(1, { minutes: 6, unLien: true }), jeton(2, { minutes: 6, unLien: true })]);
+  C.poseMiroir(miroir);
+  await C.tour();
+  let E = C._etat();
+  const jeunes = E.positions.filter((p) => p.exploration === 'jeune');
+  console.log('   ' + JSON.stringify({ positions: E.positions.map((p) => p.sym + '/' + p.exploration), c: ['jeuneTente', 'jeunePasse', 'jeuneAchete', 'jeuneOracle', 'jeuneSansLien'].map((k) => k + '=' + (E.compteurs[k] || 0)) }));
+  ok(jeunes.length === 1 && E.compteurs.jeuneAchete === 1, 'deux jeunes a un lien : UN seul achete (un par heure), marque « jeune »');
+  ok(recus.length === 1 && recus[0].adr === jeunes[0].adr, 'et le miroir le recoit, comme tout achat (decision du proprietaire)');
+  const autre = C.vue().candidats.find((c) => c.addr !== jeunes[0].adr && c.minutes <= 7);
+  ok(autre && /not indexed by DexScreener/.test(autre.refus || ''), 'le second garde son refus d origine : « ' + (autre && autre.refus) + ' »');
+  /* Le carnet le lit a part. */
+  C._ferme(jeunes[0], jeunes[0].prix0 * 1.3, Date.now(), { par: 'closer' });
+  const px = C.carnetBilan().parExploration;
+  ok(px && px[0].exploration === 'jeune' && px[0].n === 1 && px[1].exploration === 'le reste', 'le carnet decoupe l essai contre le reste : ' + JSON.stringify(px.map((x) => x.exploration + ':' + x.n)));
+  /* Zero lien : refuse, et compte. */
+  remise([jeton(3, { minutes: 6, aucunLien: true })]);
+  C.poseMiroir(miroir);
+  await C.tour();
+  E = C._etat();
+  ok(E.positions.length === 0 && (E.compteurs.jeuneSansLien || 0) === 1, 'zero lien public : toujours refuse (« no public presence » : 4 % de montees)');
+  /* Eteint. */
+  process.env.JEUNES_ESSAI = '0';
+  remise([jeton(4, { minutes: 6, unLien: true })]);
+  C.poseMiroir(miroir);
+  await C.tour();
+  ok(C._etat().positions.length === 0 && !(C._etat().compteurs.jeuneTente), 'JEUNES_ESSAI=0 : aucun essai');
+  delete process.env.JEUNES_ESSAI; delete process.env.AGE_ACHAT_MIN;
+  C.poseMiroir(null);
+}
+
 /* ==========================================================================
  * 45 bis. LA FILE DE REPRISE NE S AFFAME PAS
  *
@@ -7792,6 +7866,9 @@ async function borneQuiNeMordPas() {
  *    decoupe en trois ; et on compte ceux qui sont repris puis achetes. */
 async function sondeDesJeunes() {
   console.log('\n-- 4. DexScreener sur les 4-10 min : mesure seule, verdict et cache intacts --');
+  /* La SONDE est une mesure pure : ce scenario la verifie seule. L'essai des jeunes
+     (27/09, qui, lui, achete) a son propre scenario : coupe ici comme JEUNES_ESSAI=0. */
+  process.env.JEUNES_ESSAI = '0';
   remise([jeton(1, { minutes: 6 }), jeton(2, { minutes: 7 }), jeton(3, { minutes: 8 })]);
   MONDE.jetons[1].sansTelegram = true;     /* deux liens */
   MONDE.jetons[2].dexMuet = true;          /* DexScreener ne le connait pas */
@@ -7844,6 +7921,7 @@ async function sondeDesJeunes() {
   ok(N1.refusApres['too few public links'] === 1 && N1.refusApres.bought === 1, 'avec le verdict de la reprise : un refus de liens, un achat');
   ok(N1.achetes === 1, 'et un achete plus tard');
   ok(C.vue().nonIndexe && C.vue().nonIndexe.jetons === 3, 'la vue l expose');
+  delete process.env.JEUNES_ESSAI;
 }
 
 
@@ -8202,6 +8280,8 @@ async function baleineParTranche() {
   await repriseSansFamine();
   await epreuvePourUnTiers();
   await sansPlaceNOuvrePas();
+  await budgetCoingecko();
+  await essaiDesJeunes();
   await pourquoiPasDAchat();
   await memoirePlusGrande();
   await seReorganiseVraiment();

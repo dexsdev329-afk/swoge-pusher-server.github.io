@@ -169,10 +169,54 @@ async function sondeCoingecko() {
 }
 
 /* Une lecture GeckoTerminal, par la meilleure porte disponible, avec repli. */
+/* ---- LE BUDGET MENSUEL DE LA CLE COINGECKO (27 septembre 2026) ----
+ * Releve du proprietaire, 27/09 ~14 h UTC : 94 712 credits utilises sur
+ * 100 000 (plan mensuel, remis a zero le 1er, 300 appels/min), 5 288 restants
+ * pour ~3,4 jours ; le plan au-dessus « ne sert a rien » — il faut faire avec.
+ * La colonie consommait ~3 500 credits par jour, un mois entier et un peu plus.
+ * Le releve des services du meme jour (pools, trades, bougies) montre des
+ * lectures qui passent toutes par la cle quand elle est la.
+ *
+ * Donc : la cle ne sert que tant que la colonie est EN AVANCE sur le rythme du
+ * mois (credits utilises < budget × part du mois ecoulee). En retard, la lecture
+ * passe par l'acces libre — exactement le repli qui existe deja quand la cle
+ * tombe (« la cle est un bonus, jamais une dependance ») : rien ne se perd, on
+ * lit par la file commune. Le compteur est garde dans l'etat (redemarrage
+ * compris) et repart a zero le 1er du mois.
+ *
+ * CG_CREDITS_MOIS (defaut 100 000 ; 0 = pas de budget). CG_CREDITS_UTILISES
+ * « AAAA-MM:n » : les credits deja consommes ce mois-la avant le compteur (le
+ * releve du tableau de bord CoinGecko), lu une fois pour ce mois seulement. */
+const CG_CREDITS_MOIS = Math.max(0, parseInt(process.env.CG_CREDITS_MOIS || '100000', 10) || 0);
+function moisUtc(t) { return new Date(t).toISOString().slice(0, 7); }
+function partDuMois(t) {
+  const d = new Date(t), debut = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1), fin = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  return (t - debut) / (fin - debut);
+}
+function creditsCg(t) {
+  const now = t || Date.now(), m = moisUtc(now);
+  if (!E.cgCredits || E.cgCredits.mois !== m) {
+    const releve = String(process.env.CG_CREDITS_UTILISES || '').match(/^(\d{4}-\d{2}):(\d+)$/);
+    E.cgCredits = { mois: m, n: releve && releve[1] === m ? parseInt(releve[2], 10) : 0, horsBudget: 0 };
+  }
+  return E.cgCredits;
+}
+function cleDansLeBudget(t) {
+  if (!CG_CREDITS_MOIS) return true;
+  const now = t || Date.now();
+  return creditsCg(now).n < CG_CREDITS_MOIS * partDuMois(now);
+}
+function budgetCg() {
+  const now = Date.now(), c = creditsCg(now);
+  return { mois: c.mois, utilises: c.n, budgetMois: CG_CREDITS_MOIS || null,
+           permisAMaintenant: CG_CREDITS_MOIS ? Math.floor(CG_CREDITS_MOIS * partDuMois(now)) : null,
+           dansLeBudget: cleDansLeBudget(now), luesSansLaCle: c.horsBudget };
+}
 async function jsonGT(chemin) {
   if (cgPorte === null) await sondeCoingecko();
   const cle = cleCoingecko();
-  if (cle && cgPorte !== 'libre') {
+  if (cle && cgPorte !== 'libre' && !cleDansLeBudget()) { creditsCg().horsBudget++; compte('cgHorsBudget'); }
+  else if (cle && cgPorte !== 'libre') {
     const base = cgPorte === 'pro' ? CG_PRO : CG_DEMO;
     const entete = cgPorte === 'pro' ? 'x-cg-pro-api-key' : 'x-cg-demo-api-key';
     try {
@@ -182,6 +226,7 @@ async function jsonGT(chemin) {
          dire — on ne savait pas si la porte servait ou pas. */
       noteService('coingecko', true);
       cgEchecs = 0;
+      creditsCg().n++;
       return r;
     } catch (e) {
       /* Quota atteint ou cle revoquee en pleine journee : on ne perd pas la
@@ -3972,7 +4017,8 @@ function vetoOracle(t) {
     const manque = exiges.filter((x) => !a.has(x));
     if (manque.length) return 'missing: ' + manque.join(', ');
   }
-  const min = sociauxMin();
+  /* L'essai des jeunes (voir `essaieJeune`) : un lien public suffit au lieu de trois. */
+  const min = t.essaiJeune ? Math.min(sociauxMin(), JEUNES_LIENS_MIN) : sociauxMin();
   if (min > 0 && a.size < min)
     return 'only ' + a.size + ' public link' + (a.size > 1 ? 's' : '') + ': fewer than the ' + min
          + ' measured to pay (3+ links: 65 trades at +4.0%, 1-2 links: 107 at -3.4%)';
@@ -4582,6 +4628,7 @@ function noteCarnet(p, prix, r, gainTotal, quand, comment, aberrant) {
     /* Et quand il manque, le motif et la phrase du quoteur (rapport du 27
        septembre 2026 : 11 achats sur 21 sans devis, raison perdue). */
     devisEchec: p.devisEchec || null,
+    exploration: p.exploration || null,
     tenueBase: p.tenueBase || null,
     /* Une position exploratoire se relit a part : sinon sa duree inhabituelle
        passe pour du bruit dans le carnet. */
@@ -4672,6 +4719,11 @@ function carnetBilan() {
              const g = {};
              for (const x of l) if (x.devisEchec && x.devisEchec.motif) (g[x.devisEchec.motif] || (g[x.devisEchec.motif] = [])).push(x);
              return Object.keys(g).map((k) => Object.assign({ motif: k }, bilanDe(g[k]))).sort((a, b) => b.n - a.n);
+           })(),
+           /* L'essai des jeunes (27/09/2026) contre tout le reste : la ligne qui le jugera. */
+           parExploration: (() => {
+             const j = l.filter((x) => x.exploration === 'jeune'), autres = l.filter((x) => x.exploration !== 'jeune');
+             return [Object.assign({ exploration: 'jeune' }, bilanDe(j) || { n: 0 }), Object.assign({ exploration: 'le reste' }, bilanDe(autres) || { n: 0 })];
            })() };
 }
 
@@ -6917,7 +6969,10 @@ function ouvre(t) {
     allerRetour: coutAllerRetour(t.epreuve && t.epreuve.retour),
     /* Et quand il n'y en a pas, POURQUOI — voir `motifDevisRate`. */
     devisEchec: devisManquant(t),
+    /* L'essai des jeunes (27/09) : a relire a part dans le carnet. */
+    exploration: t.exploration || null,
   });
+  if (t.exploration === 'jeune') { E.jeuneDernier = Date.now(); compte('jeuneAchete'); }
   {
     const dm = devisManquant(t);
     if (dm) compte('achatSansDevis_' + dm.motif);
@@ -8933,6 +8988,49 @@ function nonIndexeBilan() {
            parTour: DEX_SONDE_PAR_TOUR };
 }
 
+/* ==========================================================================
+ * L'ESSAI DES JEUNES : UN JEUNE JETON PAR HEURE, AVEC UN SEUL LIEN (27/09/2026)
+ *
+ * Audit du 27/09 (en direct) : « scout · too young: under 10 min » n=223, 64 %
+ * de montees, strategie rejouee +24 % (219 rejeux) ; « oracle · not indexed by
+ * DexScreener yet: known, under 3 links » n=37, 51 %, +22,2 % (22 rejeux) —
+ * contre « achete ou retenu » 26 % et +4,3 %. Sous 10 min, la colonie ne
+ * consulte pas DexScreener (`peutRepondre`) et l'Oracle refuse tout ; et la
+ * sonde du matin trouvait ces jetons connus avec moins de 3 liens, 86 sur 86.
+ * La regle des 3 liens a ete mesuree sur des jetons etablis (1-2 liens : 107
+ * trades a -3,4 %) ; pour les jeunes, les rejeux disent l'inverse, mais sur 22.
+ *
+ * Decision du proprietaire, meme jour : essayer, EN DIRECT AVEC LE MIROIR (pas
+ * en papier seulement, comme propose). Donc, au plus un par heure : quand
+ * l'Oracle refuse un jeune « pas encore indexe », DexScreener est lu pour de
+ * vrai ; s'il connait le jeton ET qu'il a au moins UN lien public, l'Oracle le
+ * rejuge avec un lien au lieu de trois. « no public presence at all » reste un
+ * refus (4 % de montees, 1 537 obs : la regle la plus protectrice mesuree).
+ * Tout le reste s'applique comme a tous : note, Cobaye (aller-retour, « aucune
+ * place »), plafonds de mise ; le miroir suit comme pour tout achat.
+ *
+ * Chaque achat porte `exploration: 'jeune'` jusque dans le carnet
+ * (`carnetBilan().parExploration`) : c'est cette ligne qui dira, a 100 trades,
+ * si l'essai paie. JEUNES_ESSAI=0 l'arrete ; JEUNES_ESPACE_MIN (60) l'espace. */
+const JEUNES_LIENS_MIN = 1;
+const jeunesActif = () => process.env.JEUNES_ESSAI !== '0';
+const jeunesEspaceMs = () => Math.max(1, nEnv('JEUNES_ESPACE_MIN', 60)) * 60e3;
+async function essaieJeune(t) {
+  if (!jeunesActif()) return false;
+  if (Date.now() - (E.jeuneDernier || 0) < jeunesEspaceMs()) return false;
+  compte('jeuneTente');
+  let d = null;
+  try { d = await lisDex(t.addr, { sansCache: true }); } catch (e) { d = null; }
+  if (!d || !d.vu) { compte('jeuneInconnu'); return false; }
+  if (typesDeLiens(d) < JEUNES_LIENS_MIN) { compte('jeuneSansLien'); return false; }
+  t.dex = d;
+  if (t.saute) delete t.saute.dex;
+  t.essaiJeune = true;
+  const r = vetoOracle(t);
+  if (r) { t.essaiJeune = false; compte('jeuneOracle'); return false; }
+  compte('jeunePasse');
+  return true;
+}
 async function assure(t, besoins) {
   for (const b of besoins) {
     if (t.lu[b]) continue;
@@ -9653,6 +9751,10 @@ async function tour() {
         }
         compte(a.key + 'Ok');
       }
+      /* L'essai des jeunes : un refus « pas encore indexe » rejuge avec DexScreener lu. */
+      if (refus && quiRefuse === 'oracle' && familleRefus(refus) === NON_INDEXE && await essaieJeune(t)) {
+        refus = null; quiRefuse = null; t.exploration = 'jeune';
+      }
       appelsTotal += t.appels;
       /* ---- LE SCOUT ETAIT COMPTE DEUX FOIS ----
        * `compte(a.key + 'Vu')` dans la boucle des gardes compte deja chaque
@@ -10078,7 +10180,7 @@ function vue() {
     abandons: partAbandons(),
     horsService: HORS_SERVICE,
     coingecko: { cle: !!cleCoingecko(), porte: cgPorte || 'not probed yet',
-                 echecs: cgEchecs, sonde: cgSondeT || null },
+                 echecs: cgEchecs, sonde: cgSondeT || null, credits: budgetCg() },
     rpcCle: { pose: !!(process.env.DRPC_API_KEY || '').trim(),
               plage: noeuds._cle ? noeuds._cle.plageLogs : null },
     /* ---- CHAQUE NOEUD, SA FENETRE DE BLOCS APPRISE, SES VRAIS MESSAGES ----
@@ -10251,6 +10353,7 @@ function arrete() {
 }
 
 module.exports = {
+  budgetCg, cleDansLeBudget,
   epreuveDeSortie,
   demarre, arrete, vue, tour, charge, sauve, reprendSansMethode, veille,
   poseMiroir, _suitLeMiroir: suitLeMiroir, _partDuBanquier: partDuBanquier, MIROIR_PART_MAX,
