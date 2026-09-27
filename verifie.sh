@@ -24,6 +24,7 @@ lance x_post  "$SRV" node x_post.test.js
 lance tg_cmd  "" node tg_commandes.test.js
 lance perp    "$SRV" node ai_perp.test.js
 lance journal "$SRV" node perp_journal.test.js
+lance rejeu   "$SRV" node perp_rejeu.test.js   # la porte perp : sans chevauchement, frais reels, aucune fuite du futur, une marche aleatoire ne passe jamais
 [ $VITE -eq 1 ] || lance releve "$SRV" node perp_releve.test.js   # mille melanges par decoupage : ~1 min
 lance quotajeune "$SRV" node quota_jeune.test.js
 lance scanpub   "$SRV" node scan_public.test.js
@@ -52,6 +53,8 @@ lance agentic "$SRV" node agentic.test.js    # API des autres agents : cles (emp
 lance agenticrte "$SRV" node agentic_route.test.js   # de bout en bout : vrai serveur, vrai wallet, une cle ne gere pas les cles, debit exact au wei
 lance x402    "$SRV" node x402.test.js    # payer sans compte : vraies signatures Permit2/EIP-2612, rejeu, montant exact, outil en panne → rien regle
 lance x402rte "$SRV" node x402_route.test.js   # x402 de bout en bout : vrai serveur, faux noeud qui decode settle, la cle de gaz jamais montree
+lance facil   "$SRV" node facilitateur_cdp.test.js   # le facilitateur CDP : jeton verifie par la cle publique, 401 text/plain, pending renvoye une fois, delai jamais rejoue, secret jamais dit
+lance x402base "$SRV" node x402_base_route.test.js   # USDC sur Base de bout en bout : sonde au demarrage, Base d abord, x402 sur MCP (objet, base64, en-tete), en attente sans accepts, secret CDP jamais montre
 lance compteurs "$SRV" node compteurs.test.js   # compteurs durables : un fichier par jour UTC, survivent au redemarrage et a SIGTERM, maison a part, jamais l IP
 lance decouv  "$SRV" node decouverte.test.js   # se faire trouver : openapi.json, /.well-known/x402, preuve de propriete verifiee, fiche MCP au schema
 lance caisse  "$SRV" node caisse.test.js    # la caisse : 5 % rachetent du $SWOGE, jamais partage deux fois, tout a la tresorerie, jamais l ETH
@@ -70,6 +73,8 @@ lance predict "$SITE" node predict_moteur.test.js   # indicateurs, martingale, r
 lance predsrv "$SRV" node predict_serveur.test.js   # le releve papier PARTAGE : round, win/raté, banque, persistance
 lance pancake "$SRV" node predict_pancake.test.js   # etage 1 PancakeSwap : côte parimutuel, porte EV, résolution — papier
 lance pancakereel "$SRV" node predict_pancake_reel.test.js   # etage 2 PancakeSwap : vrais BNB sur fausse chaine — cle, verrous, martingale, stop
+lance pkjournal "$SRV" node predict_pancake_journal.test.js   # journal Pancake en ajout seul (decision / regle separes), remplissage borne lent reprenable, ombres : egalite perdue, annule rembourse, verdict a t >= 2,7
+lance pkrejeu "$SRV" node predict_pancake_rejeu.test.js   # la porte Pancake ACTUELLE rejouee sur 30 004 rounds stockes : 0 pari (mode direct : 18 279, le rejeu n est pas vide)
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js

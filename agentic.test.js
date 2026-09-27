@@ -10,7 +10,10 @@
  *      heritee (initialize → tools/list → tools/call) et moderne (_meta par
  *      requete, en-tetes compares au corps, -32020 / -32022 / 404 -32601,
  *      server/discover) ; GET → 405 ; Origin hors liste → 403 ;
- *   4. aucune cle ne gere les cles, aucun outil n'achete ni ne signe.
+ *   4. aucune cle ne gere les cles, aucun outil n'achete ni ne signe ;
+ *   7. (lot Base, 27 septembre 2026) ask_agent en x402 derriere X402_AGENT=1 :
+ *      prix fixe, bornes avant tout paiement, registre des pertes durable,
+ *      payeur bloque refuse a la verification ; la forme MCP des reponses x402.
  */
 const fs = require('fs'), os = require('os'), path = require('path');
 let n = 0, rates = 0;
@@ -343,6 +346,143 @@ const api = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () =
   }
 
   fs.rmSync(dir, { recursive: true, force: true });
+  /* ==================================================================
+   * 7. ASK_AGENT EN x402 ET x402 SUR MCP (lot Base, contrat §C, §D, §F.3, 27 septembre 2026)
+   * ================================================================== */
+  console.log('\n-- 7. ask_agent en x402 (X402_AGENT=1), et x402 sur MCP --');
+  {
+    const R = require('./x402_agent');
+    const Agent = require('./studio_agent');
+    const fr = path.join(dir, 'x402_agent.json');
+    let tR = Date.UTC(2026, 8, 27, 12, 0, 0);
+    const reg = R.cree({ fichier: fr, maintenant: () => tR });
+    let anthropic = false, agentX = null, repAgent = null;
+    const apiX = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () => ({ recherche: true }),
+      agentX402: { actif: () => anthropic, registre: reg },
+      agentHorsSolde: async (q) => { agentX = q; return repAgent; } });
+    delete process.env.X402_AGENT;
+    ok(!apiX.x402Payable('ask_agent') && A.prixX402Usd('ask_agent') === null, 'sans X402_AGENT=1 : ask_agent n est pas payable en x402, pas de prix (cle seulement, comme avant)');
+    process.env.X402_AGENT = '1';
+    ok(!apiX.x402Payable('ask_agent'), 'X402_AGENT=1 mais Anthropic eteint : pas payable');
+    anthropic = true;
+    ok(apiX.x402Payable('ask_agent'), 'X402_AGENT=1 et Anthropic allume : payable');
+    eq(A.prixX402Usd('ask_agent'), 0.54, 'le prix FIXE : plafond 0,36 $ × STUDIO_MARGE 1,5, au cent superieur');
+    process.env.X402_AGENT_BUDGET_USD = '0.313';
+    eq(A.prixX402Usd('ask_agent'), 0.47, 'un autre plafond (0,313 $ : sans recherche, contrat §D.3) : 0,47 $');
+    delete process.env.X402_AGENT_BUDGET_USD;
+    /* Les bornes x402, AVANT toute demande de paiement. */
+    ok(/too long for x402 \(max 2000/.test(A.entreeInvalideX402('ask_agent', { task: 'x'.repeat(2001) })) && A.entreeInvalideX402('ask_agent', { task: 'x'.repeat(2000) }) === null,
+       'tache de plus de 2 000 caracteres : refusee en x402 (2 000 passent)');
+    ok(/model must be sonnet-5/.test(A.entreeInvalideX402('ask_agent', { task: 'x', model: 'haiku-4-5' })) && A.entreeInvalideX402('ask_agent', { task: 'x', model: 'sonnet-5' }) === null,
+       'un autre modele que sonnet-5 : refuse en x402');
+    ok(A.entreeInvalide('ask_agent', { task: 'x'.repeat(4000), model: 'haiku-4-5' }) === null && A.entreeInvalideX402('scan_token', { address: 'nope' }) === A.entreeInvalide('scan_token', { address: 'nope' }),
+       'avec une cle : rien ne change (4 000 caracteres, tout modele Claude) ; les autres outils : memes refus');
+    /* L'execution payee d'avance. */
+    repAgent = { ok: true, texte: 'Answer [1].', sources: [{ url: 'https://a.example', titre: 'A' }], jetons: [], etapes: 3, stop: 'end_turn', coutUsd: 0.21, arretBudget: false };
+    const s1 = await apiX.sertSansFacture({ outil: 'ask_agent', args: { task: 'is LOBSTER worth a look?' }, payeur: '0x' + 'AB'.repeat(20) });
+    ok(s1.ok && s1.resultat.answer === 'Answer [1].' && s1.resultat.steps === 3 && s1.resultat.stoppedByBudget === false && s1._coutUsd === 0.21
+       && agentX.addr === 'x402:0x' + 'ab'.repeat(20) && agentX.limites === Agent.LIMITES_X402 && agentX.budgetUsd === 0.36 && agentX.prixUsd === 0.54,
+       'servi hors solde, au nom du payeur verifie, avec LIMITES_X402 et le plafond 0,36 $ ; le cout reel garde a part (_coutUsd, jamais rendu)');
+    repAgent = { ok: true, texte: '', coutUsd: 0.05, arretBudget: true, stop: 'budget' };
+    const s2 = await apiX.sertSansFacture({ outil: 'ask_agent', args: { task: 'x' }, payeur: '0x' + '12'.repeat(20) });
+    ok(!s2.ok && s2.code === 502 && /nothing was charged/.test(s2.raison) && reg.pertes24h() === 0.05, 'sans texte : 502, rien encaisse, et ce qu il a coute va au registre des pertes');
+    repAgent = { ok: true, texte: 'I cannot help.', stop: 'refusal', coutUsd: 0.01 };
+    ok(!(await apiX.sertSansFacture({ outil: 'ask_agent', args: { task: 'x' }, payeur: '0x' + '12'.repeat(20) })).ok && reg.pertes24h() === 0.06, 'un refus du modele : pas un succes, perte inscrite');
+    eq((await apiX.sertSansFacture({ outil: 'ask_agent', args: { task: 'x', model: 'haiku-4-5' }, payeur: '0x' + '12'.repeat(20) })).code, 400, 'le chemin paye revérifie les bornes x402 (400)');
+    /* Une panne du fournisseur APRES une depense, de bout en bout (studio_agent → studio_chat →
+       sertSansFacture) : le cout reel arrive au registre (contrat §D.6 ; revue du 27 septembre 2026). */
+    {
+      const C = require('./studio_chat'), Jeton = require('./studio_jeton');
+      const regP = R.cree({ fichier: path.join(dir, 'x402_agent_panne.json'), maintenant: () => tR });
+      const cher = { input_tokens: 30000, output_tokens: 4000 };
+      let appelsP = 0;
+      const client = { messages: {
+        countTokens: async () => ({ input_tokens: 30000 }),
+        stream: () => {
+          appelsP++;
+          if (appelsP === 1) {
+            const fin = { content: [{ type: 'text', text: 'step' }, { type: 'tool_use', id: 't1', name: 'colony_activity', input: {} }], stop_reason: 'tool_use', model: 'claude-sonnet-5', usage: cher };
+            return { [Symbol.asyncIterator]: async function* () { yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'step' } }; }, finalMessage: async () => fin };
+          }
+          const err = Object.assign(new Error('overloaded'), { status: 529 });
+          return { [Symbol.asyncIterator]: async function* () { throw err; }, finalMessage: async () => { throw err; } };
+        } } };
+      const apiP = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () => ({ recherche: true }),
+        agentX402: { actif: () => true, registre: regP },
+        agentHorsSolde: (q) => C.repond({ addr: q.addr, modele: 'sonnet-5', messages: [{ role: 'user', content: q.tache }] }, { horsSolde: true, prixUsd: q.prixUsd,
+          pireCas: (mm, msgs) => Agent.pireCasUsd(mm, msgs, false, q.limites),
+          fournisseur: (p) => Agent.repond(p, { client, src: { recherche: false, Jeton, vue: () => ({}) }, limites: q.limites, budgetUsd: q.budgetUsd }) }) });
+      const sP = await apiP.sertSansFacture({ outil: 'ask_agent', args: { task: 'x' }, payeur: '0x' + '78'.repeat(20) });
+      const premier = Agent.coutAppelUsd(C.modele('sonnet-5'), cher);
+      ok(!sP.ok && sP.code === 502 && appelsP === 2 && regP.pertes24h() >= premier - 1e-9 && regP.pertes24h() <= Agent.BUDGET_X402_USD + 1e-9,
+         '529 au 2e appel apres un 1er a ' + premier.toFixed(2) + ' $ : 502, rien encaisse, et ' + regP.pertes24h() + ' $ au registre des pertes (avant : 0)');
+    }
+    /* Le registre : plafond du jour, payeurs bloques, et un redemarrage ne perd rien. */
+    reg.perte(1.95, 'settlement failed');
+    ok(!apiX.x402Payable('ask_agent') && reg.pertes24h() >= 2, 'pertes des 24 h au plafond (2,00 $) : ask_agent n est plus payable en x402');
+    reg.bloque('0x' + '34'.repeat(20));
+    const reg2 = R.cree({ fichier: fr, maintenant: () => tR });
+    ok(reg2.pertes24h() === reg.pertes24h() && reg2.estBloque('0x' + '34'.repeat(20)) && !reg2.estBloque('0x' + '56'.repeat(20)) && !fs.readdirSync(dir).some((f) => /x402_agent\.json\.tmp$/.test(f)),
+       'relu depuis le disque (un redeploiement) : memes pertes, meme payeur bloque (ecrit par temporaire + rename)');
+    tR += 24 * 3600 * 1000 + 1;
+    ok(reg2.pertes24h() === 0 && !reg2.estBloque('0x' + '34'.repeat(20)), '24 h plus tard : pertes et blocage oublies (fenetre GLISSANTE)');
+    /* Un payeur bloque : refuse a la VERIFICATION, l'agent jamais lance (x402.js, vraie signature USDG). */
+    {
+      const X = require('./x402');
+      const { ethers } = require('ethers');
+      const BLOQUE = ethers.Wallet.createRandom(), TRESOR = ethers.Wallet.createRandom().address;
+      const reg3 = R.cree({});
+      reg3.bloque(BLOQUE.address);
+      const B = ethers.BigNumber;
+      const chaine = { gazPrix: async () => B.from(28000000), soldeGaz: async () => ethers.utils.parseEther('1'), soldeUsdg: async () => B.from(1e9), autorisationLibre: async () => true,
+        simule: async () => [], regle: async () => ({ ok: true, hash: '0x' + '1'.repeat(64) }) };
+      let lance = 0;
+      const x = X.cree({ asset: '0x8a166Fb41Cd659a0a43396272FF73973Ce29F817', usdg: X.USDG, payTo: TRESOR, chaine, cours: async () => COURS, ethUsd: async () => 2688,
+        prixOutilUsd: (o) => A.prixX402Usd(o), agent: { dureeMaxS: 150, enVolMax: 3, bloque: (a) => reg3.estBloque(a) } });
+      const q = JSON.parse(Buffer.from((await x.traite({ outil: 'ask_agent', url: 'u', args: { task: 'x' }, sert: async () => ({ ok: true }) })).entetes['payment-required'], 'base64').toString());
+      const acc = q.accepts[0], s = Math.floor(Date.now() / 1000);
+      const auth = { from: BLOQUE.address, to: acc.payTo, value: acc.amount, validAfter: String(s - 600), validBefore: String(s + 250), nonce: ethers.utils.hexlify(ethers.utils.randomBytes(32)) };
+      const sig = await BLOQUE._signTypedData(Object.assign({ chainId: X.CHAIN_ID, verifyingContract: X.USDG }, X.DOMAINE_USDG), X.TYPES_3009, auth);
+      const r = await x.traite({ outil: 'ask_agent', url: 'u', args: { task: 'x' }, entete: X.b64({ x402Version: 2, accepted: acc, payload: { signature: sig, authorization: auth } }), sert: async () => { lance++; return { ok: true }; } });
+      ok(r.status === 402 && JSON.parse(r.corps).raison === 'payer_blocked' && /paused for this address for 24 h/.test(JSON.parse(r.corps).detail) && lance === 0 && acc.maxTimeoutSeconds === 300,
+         'un payeur bloque (24 h) : refuse a la verification (payer_blocked), l agent JAMAIS lance ; ask_agent annonce 300 s');
+      /* Au plus X402_AGENT_EN_VOL executions : la suivante « occupe » AVANT de verifier. */
+      const x1 = X.cree({ asset: '0x8a166Fb41Cd659a0a43396272FF73973Ce29F817', usdg: X.USDG, payTo: TRESOR, chaine, cours: async () => COURS, ethUsd: async () => 2688,
+        prixOutilUsd: (o) => A.prixX402Usd(o), agent: { dureeMaxS: 150, enVolMax: 1, bloque: () => false } });
+      let libere;
+      const pend = x1.paie({ outil: 'ask_agent', url: 'u', args: { task: 'x' }, paiement: 'e30=', sert: async () => new Promise((res) => { libere = res; }) });
+      const occ = await x1.traite({ outil: 'ask_agent', url: 'u', args: { task: 'x' }, entete: 'e30=', sert: async () => ({ ok: true }) });
+      await pend;
+      ok(occ.status === 503 && /busy/.test(JSON.parse(occ.corps).raison), 'X402_AGENT_EN_VOL atteint : la suivante recoit 503 « busy » avant toute verification');
+      void libere;
+    }
+    delete process.env.X402_AGENT;
+
+    /* ---- x402 sur MCP : la forme des reponses (x402-foundation specs/transports-v2/mcp.md) ---- */
+    const PR = { x402Version: 2, error: 'PAYMENT-SIGNATURE header is required', resource: { url: 'https://api/mcp' },
+      accepts: [{ scheme: 'exact', network: 'eip155:8453', amount: '20000', asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', payTo: '0x' + '1'.repeat(40), maxTimeoutSeconds: 120, extra: { name: 'USD Coin', version: '2' } },
+        { scheme: 'exact', network: 'eip155:4663', amount: '24086', asset: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168', payTo: '0x' + '1'.repeat(40), maxTimeoutSeconds: 120, extra: { assetTransferMethod: 'eip3009' } },
+        { scheme: 'exact', network: 'eip155:4663', amount: '966103', asset: '0x8a166Fb41Cd659a0a43396272FF73973Ce29F817', payTo: '0x' + '1'.repeat(40), maxTimeoutSeconds: 120, extra: { assetTransferMethod: 'permit2' } }] };
+    const m1 = MCP.versMcp({ etape: 'exige', exige: PR }, 'scan_token', { api: 'https://api' });
+    ok(m1.isError === true && JSON.stringify(m1.structuredContent) === JSON.stringify(PR) && m1.content[0].text === JSON.stringify(m1.structuredContent) && m1._meta['x402/error'] === m1.structuredContent,
+       'MCP, sans paiement : resultat isError, structuredContent = PaymentRequired, content[0] = le meme en JSON, _meta["x402/error"] identique (Cloudflare)');
+    ok(/Price: USDC 0\.02 on Base, or USDG 0\.024086 on Robinhood Chain, or 966103 base units of \$SWOGE on Robinhood Chain\./.test(m1.content[1].text) && /https:\/\/api\/agentic\/call\/scan_token/.test(m1.content[1].text)
+       && !/[^\x20-\x7e]/.test(m1.content[1].text), 'la phrase de prix nomme reseau ET actif (plus « base units of $SWOGE » pour de l USDC) et l adresse HTTP, en ASCII');
+    const m2 = MCP.versMcp({ etape: 'attente', reponse: { success: false, errorReason: 'settlement_pending', transaction: '0x' + 'ab'.repeat(32), network: 'eip155:8453', payer: '0x1' } }, 'scan_token', {});
+    ok(m2.isError && !JSON.stringify(m2).includes('accepts') && !m2.structuredContent && !m2._meta['x402/error'] && m2._meta['x402/payment-response'].transaction === '0x' + 'ab'.repeat(32),
+       'MCP, en attente : AUCUN accepts nulle part (Cloudflare paierait une 2e fois), le hash dans _meta["x402/payment-response"]');
+    const m3 = MCP.versMcp({ etape: 'reglement', exige: PR, raison: 'x', detail: 'invalid_payload', reponse: { success: false }, resultat: { texte: 'SECRET TOOL OUTPUT' } }, 'scan_token', {});
+    ok(m3.isError && /Settlement failed: invalid_payload/.test(m3.structuredContent.error) && !JSON.stringify(m3).includes('SECRET TOOL OUTPUT'), 'MCP, reglement rate : l erreur de paiement, JAMAIS le resultat de l outil');
+    const m4 = MCP.versMcp({ etape: 'paye', resultat: { texte: 'Token X', resultat: { token: 1 } }, reponse: { success: true, transaction: '0xt', network: 'eip155:8453', payer: '0x1' },
+      recu: { transaction: '0xt', network: 'eip155:8453', amount: '20000', asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' } }, 'scan_token', {});
+    ok(m4.isError === false && m4.structuredContent.result.token === 1 && m4.structuredContent.x402.amount === '20000' && m4._meta['x402/payment-response'].success === true
+       && /paid \$0\.02 in USDC \(eip155:8453\), tx 0xt/.test(m4.content[0].text), 'MCP, paye : le resultat, le recu, _meta["x402/payment-response"]');
+    ok(MCP.outilsMcp(A.definitions({ recherche: true })).every((o) => !('outputSchema' in o) && !o._meta), 'tools/list : aucun outputSchema (le SDK MCP le verifierait meme sur une erreur), pas d indice de prix x402 eteint');
+    const avecPrix = MCP.outilsMcp(A.definitions({ recherche: true }), (nom) => (nom === 'scan_token' ? 0.02 : null));
+    ok(avecPrix.find((o) => o.name === 'scan_token')._meta['agents-x402/priceUSD'] === 0.02 && !avecPrix.find((o) => o.name === 'ask_agent')._meta, 'x402 sur MCP allume : l indice de prix (Cloudflare) sur les outils payables seulement');
+    ok(!/x402 over MCP/.test(MCP.instructions('https://api')) && /x402 over MCP \(_meta\["x402\/payment"\], USDC on Base first\)/.test(MCP.instructions('https://api', true)), 'les instructions ne parlent de x402 sur MCP que s il est allume');
+  }
+
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error('ESSAI CASSE :', e); process.exit(1); });

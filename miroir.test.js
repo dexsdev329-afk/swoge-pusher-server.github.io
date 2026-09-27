@@ -1213,6 +1213,114 @@ console.log('\n-- le registre survit a une relecture --');
   ok(/^0x[0-9a-f]{64}$/.test(M.revele(JOUEUR).cle), 'et leur cle se dechiffre encore apres le tour du disque');
 }
 
+/* ======================================================================
+ * POURQUOI LE MIROIR NE SUIT PAS — COMPTE, PAS DEVINE
+ *
+ * Rapport du 27 septembre 2026 : 12 achats envoyes en trois jours, un seul
+ * suivi, et la raison des onze autres perdue dans des journaux de 60 lignes.
+ * Chaque raison de ne pas suivre a son compteur, par envoi et par
+ * portefeuille, et le compteur survit a une relecture du registre. Aucun
+ * garde-fou ne bouge : on verifie ici que chacun refuse comme avant, et que
+ * son refus est COMPTE sous son nom.
+ * ==================================================================== */
+console.log('\n-- pourquoi le miroir ne suit pas : chaque raison est comptee --');
+{
+  for (const { joueur } of M._actifs()) await M.arrete(joueur, joueur);
+  delete M._etat().suivi;
+  const JS = '0x' + '5c'.repeat(20);
+  const A1 = '0x' + '5d'.repeat(20);
+  /* 1. Personne en marche : l'envoi est compte, et sa raison aussi. */
+  eq(await M.surAchat({ sym: 'SEUL', adr: A1, pool: poolDe(A1), sansDevis: true, devisMotif: 'aucunePlace' }), 0,
+     'sans miroir en marche, rien n est suivi');
+  let s = M.suiviStats();
+  eq(s.envois, 1, 'mais l envoi est compte');
+  eq(s.raisons.sansPortefeuille, 1, 'sous « aucun portefeuille actif »');
+  eq(s.sansDevis, 1, 'et l achat sans devis de la colonie est compte comme tel');
+  eq(s.jour.envois, 1, 'la fenetre de 24 h le voit aussi');
+  /* Le registre SUR LE DISQUE, lu directement : « toujours sauve » (revue du
+     27/09/2026 — l'essai appelait M.sauve() lui-meme et ne prouvait rien). */
+  const disque = () => JSON.parse(fs.readFileSync(path.join(DOSSIER, 'miroirs.json'), 'utf8')).suivi || {};
+  eq((disque().raisons || {}).sansPortefeuille, 1, 'sans portefeuille actif, la raison est deja sur le disque');
+
+  await M.cree(JS);
+  const cS = M._fiche(JS);
+  chaine.soldes[cS.adr.toLowerCase()] = W('0.05');
+  await M.demarre(JS);
+
+  /* 2. Le gaz : la garde refuse exactement comme avant, et le refus a son nom. */
+  const A2 = '0x' + '5e'.repeat(20);
+  chaine.prixGaz = 10000000000;
+  eq(await M.surAchat({ sym: 'GAZ2', adr: A2, pool: poolDe(A2), part: 0.1 }), 0, 'a 10 gwei, la garde du gaz refuse toujours');
+  chaine.prixGaz = null;
+  eq(M.suiviStats().raisons.gaz, 1, 'et le refus est compte sous « gaz »');
+  eq((disque().raisons || {}).gaz, 1, 'et il est sur le disque sans attendre un achat suivi');
+
+  /* 3. Le retour minimum : meme seuil, compte sous son nom. */
+  chaine.sortieVente = W('0.0000001');
+  eq(await M.surAchat({ sym: 'PORTE', adr: A2, pool: poolDe(A2), part: 0.1 }), 0, 'une piscine qui ne laisse pas sortir n est pas suivie');
+  chaine.sortieVente = null;
+  eq(M.suiviStats().raisons.retourMin, 1, 'compte sous « retour minimum »');
+
+  /* 4. Une route manquante : l'achat echoue, et le motif le dit. */
+  const A3 = '0x' + '5f'.repeat(20), NI3 = '0x' + 'b6'.repeat(20);
+  chaine.paires[NI3] = { t0: M.WETH, t1: A3, fee: null, sansReserves: true };
+  eq(await M.surAchat({ sym: 'SANSROUTE', adr: A3, pool: NI3, part: 0.1, sansDevis: true, devisMotif: 'aucunePlace' }), 0,
+     'une piscine que le miroir ne sait pas lire n est pas suivie');
+  s = M.suiviStats();
+  eq(s.raisons.echecAchat, 1, 'compte sous « echec d achat »');
+  eq(s.echecs.aucunePlace, 1, 'avec le motif « aucune place » : une route manquante, pas une transaction refusee');
+  ok(s.derniers[0].echec && /no venue answers/.test(s.derniers[0].echec.txt),
+     'et la phrase de l echec est gardee : « ' + (s.derniers[0].echec || {}).txt + ' »');
+  eq(M._motifEchecAchat(new Error('the chain refused to simulate')), 'autre', 'une autre erreur n est pas prise pour une route manquante');
+
+  /* 5. Le solde : pas de mise apres la reserve de gaz. */
+  chaine.soldes[cS.adr.toLowerCase()] = W('0.001');
+  const A4 = '0x' + '60'.repeat(20);
+  eq(await M.surAchat({ sym: 'PAUVRE', adr: A4, pool: poolDe(A4), part: 0.1 }), 0, 'sous la reserve de gaz, rien n est suivi');
+  eq(M.suiviStats().raisons.solde, 1, 'compte sous « solde »');
+  chaine.soldes[cS.adr.toLowerCase()] = W('0.05');
+
+  /* 6. Suivi, puis deja tenu. */
+  eq(await M.surAchat({ sym: 'BON', adr: A4, pool: poolDe(A4), part: 0.1 }), 1, 'un achat ordinaire est suivi');
+  eq(await M.surAchat({ sym: 'BON', adr: A4, pool: poolDe(A4), part: 0.1 }), 0, 'le meme jeton une seconde fois ne l est pas');
+  s = M.suiviStats();
+  eq(s.raisons.suivi, 1, 'le suivi est compte');
+  eq(s.raisons.dejaTenu, 1, 'et le doublon sous « deja tenu »');
+  eq(s.envois, 7, 'sept envois en tout');
+  eq(s.suivis, 1, 'un seul suivi : « 7 envoyes, 1 suivi », le chiffre de l alerte');
+  eq(s.jour.envois, 7, 'tous dans la fenetre de 24 h');
+  eq(s.jour.suivis, 1, 'et un suivi dans la fenetre');
+  eq(s.sansDevisSuivis, 0, 'aucun achat sans devis n a ete suivi ici');
+  eq(M.suiviStats(Date.now() + 25 * 3600e3).jour.envois, 0, 'vingt-cinq heures plus tard, la fenetre est vide — le cumul, lui, reste');
+
+  /* 6 bis. Un achat SANS DEVIS que le miroir suit quand meme : c'est le
+     compteur de la decision laissee au proprietaire (revue du 27/09/2026 :
+     retirer l'increment restait vert). Aucune garde ne change ici. */
+  const A5 = '0x' + '61'.repeat(20);
+  eq(await M.surAchat({ sym: 'SANSDEVIS', adr: A5, pool: poolDe(A5), part: 0.1, sansDevis: true, devisMotif: 'delai' }), 1,
+     'un achat sans devis de la colonie, que les gardes du miroir laissent passer, est suivi');
+  s = M.suiviStats();
+  eq(s.sansDevisSuivis, 1, 'il est compte « sans devis, suivi quand meme » dans le cumul');
+  eq(s.jour.sansDevisSuivis, 1, 'et dans la fenetre de 24 h que lit l alerte');
+  eq(s.sansDevis, 3, 'trois achats sans devis envoyes en tout');
+  /* Le dernier envoi avant la relecture n'est PAS suivi : sa raison doit
+     etre sur le disque sans qu'un achat reussi la sauve. */
+  eq(await M.surAchat({ sym: 'SANSDEVIS', adr: A5, pool: poolDe(A5), part: 0.1 }), 0, 'le meme jeton une seconde fois n est pas suivi');
+  eq((disque().raisons || {}).dejaTenu, 2, 'et ce refus est deja sur le disque');
+
+  /* 7. Relu depuis le disque, SANS sauvegarde de l'essai : un redemarrage
+     n'efface pas la mesure. */
+  M._pose({ v: 1, comptes: {} });
+  M.charge();
+  eq(M.suiviStats().envois, 9, 'apres relecture du registre, les neuf envois sont toujours la');
+  eq(M.suiviStats().raisons.gaz, 1, 'et leurs raisons aussi');
+  eq(M.suiviStats().raisons.dejaTenu, 2, 'y compris celle du dernier envoi, non suivi');
+  eq(M.suiviStats().sansDevisSuivis, 1, 'et l achat sans devis suivi quand meme');
+  await M.surVente({ adr: A4 });
+  await M.surVente({ adr: A5 });
+  await M.arrete(JS, JS);
+}
+
 fs.rmSync(DOSSIER, { recursive: true, force: true });
 console.log('\nmiroir.test.js : ' + n + ' verifications OK');
 })().catch((e) => {

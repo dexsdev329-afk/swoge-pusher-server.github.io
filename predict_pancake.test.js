@@ -15,6 +15,13 @@
  *   5. Papier : aucune clé, aucune signature, aucun ordre dans le module.
  *   6. La martingale : monte après une perte, repart après un gain, plafonne
  *      (bust compté), et ne mise jamais plus que la caisse.
+ *  10. Une égalité lock = close est PERDUE (contrat V2 : tout le pool au trésor).
+ *  11. Un round annulé (oracle jamais appelé, close + 30 s passé) est remboursé
+ *      ET résolu — il restait en attente pour toujours.
+ *  12. Paris éteints : chaque round est quand même jugé (raison du « 0 bet »,
+ *      prob × cote contre le seuil) et journalisé ; ses ombres se notent au
+ *      règlement ; la caisse papier reste à 0 pari.
+ * La porte rejouée sur 30 004 rounds stockés : predict_pancake_rejeu.test.js.
  * ==========================================================================*/
 const fs = require('fs'), os = require('os'), path = require('path');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-'));
@@ -219,6 +226,74 @@ const near = (a, b, e, m) => ok(Math.abs(a - b) <= e, m + ' [' + a + ']');
     ok(!e.round.decision, 'mais AUCUNE décision de pari');
     ok(Object.keys(P2._S().enAttente).length === 0 && e.banque.mises === 0, 'rien en attente, aucune mise');
     ok(/betting is off/i.test(e.note), 'l état dit que les paris sont éteints');
+  }
+
+  console.log('\n-- 10. égalité lock = close : PERDU (contrat V2 : tout le pool au trésor) --');
+  {
+    P._reset(); const S = P._S();
+    S.enAttente[500] = { side: 'BULL', wouldBet: true, cote: 2, ev: 0.1, prob: 55, mise: 0.01 };
+    P.resous(500, { lockPrice: '100', closePrice: '100', bull: 0.5, bear: 0.5, total: 1, oracleCalled: true }, 0.03);
+    const d = P.etat().dernier[0];
+    ok(S.losses === 1 && S.wins === 0 && d.gagnant === 'TIE' && d.issue === 'loss', 'une égalité est une PERTE, pas un remboursement [' + d.issue + ']');
+    near(1 - S.bank, 0.0106, 1e-9, 'elle coûte la mise et le gaz, comme toute perte');
+    ok(P.etat().martingale.palier === 1, 'la martingale papier la traite comme toute perte (palier 1)');
+    const src = fs.readFileSync(path.join(__dirname, 'predict_pancake.js'), 'utf8');
+    ok(!/gagnant === 'TIE'\)\s*\{\s*issue = 'refund'/.test(src), 'plus aucune branche « égalité = remboursement » dans le source');
+  }
+
+  console.log('\n-- 11. round annulé (oracle jamais appelé) : remboursé ET résolu --');
+  {
+    P._reset(); const S = P._S();
+    const t = Math.floor(Date.now() / 1000);
+    S.enAttente[600] = { side: 'BULL', wouldBet: true, cote: 2, ev: 0.1, prob: 55, mise: 0.02 };   /* palier 1 */
+    S.enAttente[601] = { side: 'BEAR', wouldBet: true, cote: 2, ev: 0.1, prob: 55, mise: 0.01 };
+    S.mart.palier = 1; S.miseCourante = 0.02;
+    const rounds = {
+      600: { epoch: '600', lock: t - 400, close: t - 100, lockPrice: '100', closePrice: '0', bull: 0.2, bear: 0.3, total: 0.5, oracleCalled: false },  /* annulé : close + 30 s passé */
+      601: { epoch: '601', lock: t - 300, close: t - 10, lockPrice: '100', closePrice: '0', bull: 0.2, bear: 0.3, total: 0.5, oracleCalled: false },   /* encore dans le délai */
+      603: { epoch: '603', lock: t + 250, close: t + 550, lockPrice: '0', closePrice: '0', bull: 0.1, bear: 0.1, total: 0.2, oracleCalled: false },
+    };
+    P._chaineTest({ epoch: async () => 603, fee: async () => 0.03, round: async (e) => rounds[Number(e)] });
+    await P.tic();
+    const e = P.etat();
+    ok(!P._S().enAttente[600], 'le round annulé ne reste plus en attente pour toujours');
+    ok(e.dernier[0].epoch === 600 && e.dernier[0].issue === 'refund' && e.dernier[0].gagnant === 'CANCELLED', 'il est résolu en REMBOURSEMENT');
+    ok(e.banque.refunds === 1 && e.banque.losses === 0 && e.banque.wins === 0, 'compté à part : ni gagné ni perdu');
+    near(1 - P._S().bank, 0.0006, 1e-9, 'la mise revient, le gaz non');
+    ok(e.martingale.palier === 1 && Math.abs(e.martingale.miseCourante - 0.02) < 1e-9, 'la martingale ne bouge pas sur un remboursement');
+    ok(!!P._S().enAttente[601], 'un round encore dans son délai d oracle (close + 30 s) attend');
+  }
+
+  console.log('\n-- 12. paris ÉTEINTS : chaque round est quand même JUGÉ et journalisé (ombres) --');
+  {
+    const J = require('./predict_pancake_journal');
+    const P3 = require('./predict_pancake');   /* PARIE éteint (section 9) */
+    P3._reset(); await J.indexe();   /* pas de charge() : le fichier d état est celui des sections précédentes */
+    P3._reseau(async () => { const a = []; let p = 100; for (let i = 0; i < 60; i++) { p += 1; a.push({ o: p - 0.5, c: p, h: p + 0.3, l: p - 0.7, v: 100 + i }); } return a; });
+    const t = Math.floor(Date.now() / 1000);
+    const rounds = { 700: { epoch: '700', lock: t + 10, close: t + 310, lockPrice: '0', closePrice: '0', bull: 0.1, bear: 0.6, total: 0.7, oracleCalled: false } };
+    P3._chaineTest({ epoch: async () => 700, fee: async () => 0.03, round: async (e) => rounds[Number(e)] });
+    await P3.tic();
+    const e = P3.etat();
+    ok(!e.round.decision && Object.keys(P3._S().enAttente).length === 0 && e.banque.mises === 0, 'aucun pari, rien en attente (paris éteints)');
+    ok(J.aDecide(700), 'mais le round 700 est JUGÉ et sa décision est au journal');
+    const pt = e.porte.derniere;
+    ok(pt && pt.epoch === 700 && e.round.porte && e.round.porte.epoch === 700, 'la porte du round est servie à la carte');
+    near(e.porte.requis, 1 + P3.GAZ / P3.STAKE + P3.MARGE, 1e-9, 'le seuil exigé est dit : 1 + gaz/mise + marge');
+    ok(pt.produit == null || Math.abs(pt.produit - pt.prob / 100 * pt.cote) < 0.002, 'et le produit prob × cote attendue [' + pt.produit + ' vs ' + e.porte.requis + ']');
+    ok(e.porte.evaluees >= 1, 'le compteur de rounds jugés avance [' + e.porte.evaluees + ']');
+    /* Le round 700 se règle, BULL gagne : les ombres le notent. */
+    rounds[700] = Object.assign({}, rounds[700], { lockPrice: '100', closePrice: '120', oracleCalled: true, bull: 0.3, bear: 0.7, total: 1.0 });
+    rounds[702] = { epoch: '702', lock: t + 610, close: t + 910, lockPrice: '0', closePrice: '0', bull: 0, bear: 0, total: 0, oracleCalled: false };
+    P3._chaineTest({ epoch: async () => 702, fee: async () => 0.03, round: async (e2) => rounds[Number(e2)] });
+    await P3.tic();
+    await J._vidange();
+    const o = P3.etat().ombres;
+    const bull = o.candidats.find((x) => x.id === 'bull'), mot = o.candidats.find((x) => x.id === 'moteur');
+    ok(bull.n >= 1 && bull.gagnes >= 1, 'le témoin « toujours BULL » a gagné ce round');
+    ok(mot.n >= 1, 'le camp du moteur est noté aussi [n ' + mot.n + ']');
+    ok(P3.etat().banque.mises === 0 && P3.etat().banque.solde === 1, 'la caisse papier reste à 0 pari, exprès');
+    ok(P3.etat().journal.rounds >= 1 && P3.etat().journal.decisions >= 1, 'le journal compte ses lignes');
   }
 
   console.log('\nVERIFICATIONS : ' + n + '  —  ' + (rates ? ('RATES : ' + rates + '/' + n) : 'tout passe'));

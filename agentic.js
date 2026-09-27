@@ -70,12 +70,34 @@ function prixUsd(outil) {
   return PRIX_DEFAUT[outil] || null;
 }
 
+/* ---- ASK_AGENT EN x402 (contrat base_design/CONTRAT.md §D, 27 septembre 2026) ----
+ * ÉTEINT sauf X402_AGENT=1 (le seul morceau du lot avec un vrai risque
+ * d'argent, §D.6). Prix FIXE = plafond × STUDIO_MARGE, arrondi au cent
+ * supérieur : 0,36 $ × 1,5 = 0,54 $ (Base : 0,541 $ avec les 0,001 $ de
+ * Coinbase). Plafond provisoire (studio_agent.BUDGET_X402_USD, réglable par
+ * X402_AGENT_BUDGET_USD) : le rapport caractères/jeton n'est pas mesuré sur
+ * Sonnet 5, la garde en direct de studio_agent.repond le rend dur. */
+const agentX402Allume = () => process.env.X402_AGENT === '1';
+const budgetAgentUsd = () => (Number(process.env.X402_AGENT_BUDGET_USD) > 0 ? Number(process.env.X402_AGENT_BUDGET_USD) : Agent.BUDGET_X402_USD);
+/* 2,00 $ de pertes sur 24 h glissantes, puis ask_agent n'est plus vendu en x402 (§D.6) — valeur de DÉPART. */
+const perteJourUsd = () => (Number(process.env.X402_AGENT_PERTE_JOUR_USD) > 0 ? Number(process.env.X402_AGENT_PERTE_JOUR_USD) : 2);
+/* 3 exécutions x402 à la fois au plus (§D.6) — valeur de DÉPART. */
+const agentEnVolMax = () => Math.max(1, Math.floor(Number(process.env.X402_AGENT_EN_VOL) || 3));
+const auCentSup = (x) => Math.ceil(Math.round(x * 1e6) / 1e4) / 100;
+function prixAgentX402Usd() {
+  let o = {};
+  try { o = JSON.parse(process.env.AGENTIC_PRIX || '{}') || {}; } catch (e) { o = {}; }
+  return auCentSup(Math.max(Number(o.ask_agent) || 0, Chat.factureUsd(budgetAgentUsd())));
+}
+
 /**
  * Le prix d'un appel payé D'AVANCE (x402, montant exact) : le prix fixe d'un
  * outil, ou pour une image le pire cas de CETTE demande (fournisseur, qualité,
- * nombre) — voir Media.prixFixeImageUsd. null : pas payable d'avance.
+ * nombre) — voir Media.prixFixeImageUsd ; ask_agent à prix fixe avec X402_AGENT=1.
+ * null : pas payable d'avance.
  */
 function prixX402Usd(outil, args) {
+  if (outil === 'ask_agent' && agentX402Allume()) return prixAgentX402Usd();
   if (outil === 'generate_image') {
     const a = args || {};
     return Media.prixFixeImageUsd({ fournisseur: a.provider === 'openai' ? 'openai' : 'grok', modele: a.quality === 'speed' ? 'rapide' : 'qualite',
@@ -136,6 +158,21 @@ function entreeInvalide(outil, a) {
   if (outil === 'telegram_calls' && a.hours !== undefined && !(Number(a.hours) >= 1 && Number(a.hours) <= 168)) return 'hours must be between 1 and 168';
   if (outil === 'telegram_calls' && a.limit !== undefined && !(Number(a.limit) >= 1 && Number(a.limit) <= 50)) return 'limit must be between 1 and 50';
   if (outil === 'telegram_calls' && a.channel !== undefined && !/^@?[A-Za-z][A-Za-z0-9_]{3,31}$/.test(String(a.channel))) return 'channel must be a public channel name';
+  return null;
+}
+
+/**
+ * L'entrée d'un appel payé en x402 : les mêmes refus, plus les bornes de
+ * l'agent vendu à prix fixe (studio_agent.LIMITES_X402) — Sonnet 5 seul, tâche
+ * de 2 000 caractères au plus. Refusée AVANT toute demande de paiement.
+ */
+function entreeInvalideX402(outil, a) {
+  const inv = entreeInvalide(outil, a);
+  if (inv || outil !== 'ask_agent') return inv;
+  const L = Agent.LIMITES_X402;
+  a = a || {};
+  if (String(a.task).length > L.tacheMaxCar) return 'task is too long for x402 (max ' + L.tacheMaxCar + ' characters; up to ' + TACHE_MAX_CAR + ' with an API key)';
+  if (a.model !== undefined && a.model !== L.modele) return 'model must be ' + L.modele + ' when paying per call with x402 (other Claude models need an API key)';
   return null;
 }
 
@@ -204,6 +241,8 @@ function cree(deps) {
   const PAGE = (deps.urls && deps.urls.page) || 'https://swoleeswoge.dog/swogeagentic.html';
   const API = (deps.urls && deps.urls.api) || '';
   const x402Ouvert = (outil) => !!(deps.x402 && deps.x402.actif && deps.x402.actif() && x402Payable(outil));
+  /* Base allumée (lot Base, 27 septembre 2026) : les textes nomment les réseaux ALLUMÉS, Base d'abord. */
+  const baseOn = () => !!(deps.x402 && deps.x402.baseActif && deps.x402.baseActif());
   const rythmeDevis = new Map();
   const devisOk = (qui) => {
     const k = String(qui || 'anonyme'), t = Date.now(), l = (rythmeDevis.get(k) || []).filter((x) => t - x < 60000);
@@ -215,6 +254,9 @@ function cree(deps) {
   function commentPayer(outil) {
     const cle = 'With an API key: create one at ' + PAGE + ' (sign in with a wallet, set a daily cap; the key is shown once) and send it as "Authorization: Bearer swg_…" — each call is billed from that wallet\'s $SWOGE balance.';
     if (x402Ouvert(outil)) {
+      if (baseOn()) {
+        return cle + ' Without an account: pay per call with x402 — POST ' + API + '/agentic/call/' + outil + ' with {"arguments": {...}} and no key; the 402 response\'s PAYMENT-REQUIRED header says what to sign (USDC on Base first, or USDG or $SWOGE on Robinhood Chain), then retry the same request with PAYMENT-SIGNATURE. The payer pays no gas on either network.';
+      }
       return cle + ' Without an account: pay per call with x402 — POST ' + API + '/agentic/call/' + outil + ' with {"arguments": {...}} and no key; the 402 response\'s PAYMENT-REQUIRED header says what to sign (USDG or $SWOGE on Robinhood Chain), then retry the same request with PAYMENT-SIGNATURE. We pay the gas.';
     }
     if (deps.x402 && deps.x402.actif && deps.x402.actif()) return cle + ' ' + outil + ' is billed at its real cost, so it needs an API key (x402 pays fixed-price tools and images only).';
@@ -375,6 +417,26 @@ function cree(deps) {
       return { ok: true, outil, resultat: { images: urls, provider: fournisseur, understoodAs: r.compris || null, reference: r.reference || null },
                texte: 'Images:\n' + urls.join('\n') };
     }
+    if (outil === 'ask_agent' && agentX402Allume()) {
+      /* Payé d'avance à prix fixe : hors solde, au nom du payeur, sous le plafond dur.
+         Réussi seulement avec un texte, et pas un refus du modèle ; sinon rien n'est
+         réglé, et ce que l'exécution a coûté va au registre des pertes (§D.6). */
+      if (!deps.agentHorsSolde) return { ok: false, code: 503, raison: 'the agent is not switched on yet' };
+      const inv2 = entreeInvalideX402(outil, args);
+      if (inv2) return { ok: false, code: 400, raison: inv2 };
+      let r;
+      try {
+        r = await deps.agentHorsSolde({ addr: 'x402:' + String(payeur || '').toLowerCase(), tache: String(args.task), limites: Agent.LIMITES_X402,
+          budgetUsd: budgetAgentUsd(), prixUsd: prixAgentX402Usd() });
+      } catch (e) { r = { ok: false, coutUsd: e && e.coutUsd }; }
+      const cout = Number(r && r.coutUsd) || 0;
+      if (!r || !r.ok || !String(r.texte || '').trim() || r.stop === 'refusal') {
+        if (cout > 0 && deps.agentX402 && deps.agentX402.registre) deps.agentX402.registre.perte(cout, 'agent failed');
+        return { ok: false, code: 502, raison: 'the agent could not answer - nothing was charged' };
+      }
+      return { ok: true, outil, resultat: { answer: r.texte, sources: r.sources || [], tokens: r.jetons || [], steps: r.etapes || 1, stoppedByBudget: !!r.arretBudget },
+        texte: r.texte, _coutUsd: cout };
+    }
     if (VARIABLES.includes(outil) || GRATUITS.includes(outil)) return { ok: false, code: 400, raison: outil + ' needs an API key (x402 pays fixed-price tools and images only)' };
     let r;
     try { r = await deps.outils[outil](args); } catch (e) { return { ok: false, code: 502, raison: 'the tool failed — nothing was charged' }; }
@@ -383,8 +445,14 @@ function cree(deps) {
     return { ok: true, outil, resultat: res.donnees, texte: res.texte };
   }
 
+  /* ask_agent en x402 : X402_AGENT=1, Anthropic allumé, pertes des 24 h sous le plafond du jour.
+     Conditions GLOBALES seulement (appelé avant de voir un paiement : route, découverte,
+     état) ; le payeur bloqué et la concurrence se jugent à la vérification (x402.js). */
+  const agentX402Ouvert = () => agentX402Allume() && !!deps.agentX402 && !!(deps.agentX402.actif && deps.agentX402.actif())
+    && !(deps.agentX402.registre && deps.agentX402.registre.pertes24h() >= perteJourUsd());
   /** Un outil payable en x402 : connu, actif, à prix fixe. */
-  const x402Payable = (outil) => (outil === 'generate_image' || (!VARIABLES.includes(outil) && !GRATUITS.includes(outil) && !!prixUsd(outil)))
+  const x402Payable = (outil) => (outil === 'ask_agent' ? agentX402Ouvert()
+    : (outil === 'generate_image' || (!VARIABLES.includes(outil) && !GRATUITS.includes(outil) && !!prixUsd(outil))))
     && definitions(deps.actifs ? deps.actifs() : {}).some((d) => d.name === outil);
 
   return { catalogue, appelle, sertSansFacture, x402Payable };
@@ -409,7 +477,13 @@ function llmsTxt(cat, u) {
     '',
     'REST: `GET ' + u.api + '/agentic/tools` lists tools, prices and input schemas. `POST ' + u.api + '/agentic/call/<tool>` with `{"arguments": {...}}` runs one; add `"quote": true` to get the price without paying — no key needed for a quote. Every paid call returns `facture` (the exact amount billed, as a string), `recu` (a receipt id) and `solde` (the balance left). Refused calls (bad input, tool failure, cap reached) are never billed. Errors: 400 bad input, 401 no key (the answer says how to pay) or revoked key, 402 balance or daily cap, 404 unknown tool, 429 over 60 calls/minute/key, 502 tool failed, 503 unavailable.',
     '',
-  ].concat(cat && cat.x402 && cat.x402.actif ? [
+  ].concat(cat && cat.x402 && cat.x402.actif && cat.x402.base && cat.x402.base.actif ? [
+    /* Base allumée : les réseaux ALLUMÉS, Base d'abord ; personne ne paie de gaz. */
+    'No account? Pay per call with x402 (v2): call `POST ' + u.api + '/agentic/call/<tool>` without a key and read the `PAYMENT-REQUIRED` header (402) — scheme `exact`, networks `' + (cat.x402.networks || []).join('`, `') + '` (first option: USDC on Base, settled by Coinbase), or '
+      + ((cat.x402.assets || []).filter((a) => a.network !== cat.x402.base.network).map((a) => a.symbol + ' `' + a.asset + '` (' + a.assetTransferMethod + ')').join(' or ')) + ' on Robinhood Chain. Sign and retry with `PAYMENT-SIGNATURE`; the payer pays no gas on either network. Price: tool price + settlement cost, minimum $' + cat.x402.minimumUsd + '. Fixed-price tools, and `generate_image` at a fixed price per request (the 402 quotes that exact request: pay it with the same arguments)'
+      + ((cat.outils || []).some((o) => o.name === 'ask_agent') && cat.x402.agent && cat.x402.agent.actif ? '; `ask_agent` at a flat price (Sonnet 5, task up to 2000 characters)' : '') + '. `generate_video` needs an API key. MCP clients can also pay in-band: `_meta["x402/payment"]` on `tools/call`. Status: `GET ' + u.api + '/agentic/x402`.',
+    '',
+  ] : cat && cat.x402 && cat.x402.actif ? [
     'No account? Pay per call with x402 (v2): call `POST ' + u.api + '/agentic/call/<tool>` without a key and read the `PAYMENT-REQUIRED` header (402) — scheme `exact`, network `' + cat.x402.network + '`, paid in ' + ((cat.x402.assets || []).map((a) => a.symbol + ' `' + a.asset + '` (' + a.assetTransferMethod + ')').join(' or ') || '$SWOGE `' + cat.x402.asset + '` (permit2)') + '. Sign and retry with `PAYMENT-SIGNATURE`; we pay the gas. Price: tool price + settlement gas, minimum $' + cat.x402.minimumUsd + '. Fixed-price tools, and `generate_image` at a fixed price per request (the 402 quotes that exact request: pay it with the same arguments). `ask_agent` and `generate_video` need an API key. With $SWOGE and no Permit2 allowance yet, add the `eip2612GasSponsoring` extension (permit value = the exact amount). Status: `GET ' + u.api + '/agentic/x402`.',
     '',
   ] : []).concat([
@@ -435,4 +509,5 @@ function llmsTxt(cat, u) {
     '']).join('\n');
 }
 
-module.exports = { cree, definitions, prixUsd, prixX402Usd, entreeInvalide, llmsTxt, PRIX_DEFAUT, VARIABLES, GRATUITS, APPELS_PAR_MINUTE, DEVIS_PAR_MINUTE };
+module.exports = { cree, definitions, prixUsd, prixX402Usd, entreeInvalide, entreeInvalideX402, llmsTxt, PRIX_DEFAUT, VARIABLES, GRATUITS, APPELS_PAR_MINUTE, DEVIS_PAR_MINUTE,
+  budgetAgentUsd, perteJourUsd, agentEnVolMax, prixAgentX402Usd, agentX402Allume };

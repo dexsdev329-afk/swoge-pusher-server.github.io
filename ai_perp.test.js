@@ -113,6 +113,9 @@ const neuf = () => { P._pose(P.etatNeuf()); return P.etat(); };
     /* 0,1 % par 8 h, tenu 4 h : la moitie, soit 0,05 point retire du +1 %. */
     ok(a && a.n === 1 && Math.abs(a.s - 0.95) < 0.02,
        'un long a +1 % brut qui a paye un demi-financement est juge a ' + a.s.toFixed(3) + ' %, pas a 1 %');
+    const b0 = Math.floor(S.ombres.length ? S.ombres[0].t / P.CRENEAU_AUDIT_MS : (Date.now() - 240 * 60000) / P.CRENEAU_AUDIT_MS);
+    ok(a.grp && a.grp.n === a.nz && Object.keys(a.grp.ouverts).map(Number).every((b) => Math.abs(b - b0) <= 1),
+       'et elle est rangee dans le creneau de 4 h de son OUVERTURE (groupe de l erreur-type du verdict)');
     const S2 = neuf();
     P.noteOmbre(x0, 1, null, null, {});
     S2.ombres[0].t = Date.now() - 400 * 60000;            /* la fenetre des 4 h est passee */
@@ -122,33 +125,162 @@ const neuf = () => { P._pose(P.etatNeuf()); return P.etat(); };
 
   console.log('\n-- 4. les deux sens, chacun sa ligne, jugee contre ce qu on prend --');
   {
+    /* ---- REECRIT LE 27 SEPTEMBRE 2026, SUR SON INTENTION ----
+     * L intention reste : une regle qui ecarte des perdants protege, une qui
+     * ecarte des gagnants coute, et sous le minimum on ne conclut pas. Ce qui
+     * change : le minimum vient d un calcul de puissance (12 donnait des
+     * verdicts sans valeur — il en faut ~310 par cote au seuil de +8 points,
+     * rapport du 26/09), et les rendements se lisent en unites de σ, pour
+     * que le melange de marches ne fabrique pas de verdict. L essai nourrit
+     * donc chaque ligne au-dela du minimum, en σ. */
+    /* Reecrit encore le 27/09 : chaque ombre porte son heure d OUVERTURE (le
+       verdict groupe par creneau de 4 h), et les lignes sont nourries dans
+       l ordre du temps, comme la boucle — une ombre par creneau et par
+       ligne ici, donc independantes : les verdicts d origine tiennent. */
     const S = neuf();
-    /* Une regle qui ecarte des perdants protege ; une qui ecarte des gagnants coute. */
-    for (let i = 0; i < 20; i++) P.noteAudit('pris', i < 8 ? 3 : -2);          /* 40 % de gagnantes */
-    for (let i = 0; i < 20; i++) P.noteAudit('regime · storm', -3);            /* 0 % */
-    for (let i = 0; i < 20; i++) P.noteAudit('tendance · long against a deep downtrend', 4); /* 100 % */
+    const N = P.AUDIT_MIN_MOYENNE + 10, L = P.CRENEAU_AUDIT_MS, T0 = 1e6 * L;
+    for (let i = 0; i < N; i++) {
+      const t = T0 + i * L;
+      /* « pris » : 20 % d ombres a +1,5 σ, le reste a -0,3 σ (en %, σ = 1). */
+      P.noteAudit('pris', i % 5 === 0 ? 1.5 : -0.3, i % 5 === 0 ? 1.5 : -0.3, t);
+      P.noteAudit('Regime · storm', i % 25 === 0 ? 1.5 : -1.2, i % 25 === 0 ? 1.5 : -1.2, t);     /* 4 % */
+      P.noteAudit('Trend · long against a deep downtrend', i % 2 ? 1.6 : -0.2, i % 2 ? 1.6 : -0.2, t); /* 50 % */
+      /* Une regle qui fait EXACTEMENT comme ce qu on prend : « same ». */
+      P.noteAudit('Session · same', i % 5 === 0 ? 1.5 : -0.3, i % 5 === 0 ? 1.5 : -0.3, t);
+    }
     const ref = P.reference();
-    eq(ref.partGagnantes, 40, 'la reference est ce qu on PREND : ' + ref.partGagnantes + ' % de gagnantes sur ' + ref.n);
-    eq(P.verdictRegle('regime · storm').verdict, 'protects',
-       'une regle qui n ecarte que des perdants protege');
-    eq(P.verdictRegle('tendance · long against a deep downtrend').verdict, 'costs',
+    ok(ref && ref.sigma.n === N && Math.abs(ref.sigma.part - 20) < 0.1,
+       'la reference est ce qu on PREND, en σ : ' + ref.sigma.part + ' % a ≥ +1 σ sur ' + ref.sigma.n);
+    eq(P.verdictRegle('Regime · storm').verdict, 'protects', 'une regle qui n ecarte que des perdants protege');
+    eq(P.verdictRegle('Trend · long against a deep downtrend').verdict, 'costs',
        'une regle qui n ecarte que des gagnants coute — et il faut la relire');
-    P.noteAudit('jamais vue', 1);
+    eq(P.verdictRegle('Session · same').verdict, 'same', 'une regle qui ecarte la meme chose que ce qu on prend : « same »');
+    P.noteAudit('jamais vue', 1, 1, T0);
     eq(P.verdictRegle('jamais vue').verdict, 'unknown', 'et sous le minimum, on ne conclut pas');
     eq(P.verdictRegle('jamais vue').manque, P.AUDIT_MIN_OBS - 1, 'en disant combien il manque');
     ok(P.auditDesRefus().every((l) => l.n >= 3), 'le tableau ecarte ce qui a moins de trois observations');
+    /* ---- LE MINIMUM EST UN CALCUL, PAS UN ROND ----
+     * La formule redonne les chiffres du rapport sur l ancienne base (11 % de
+     * ≥ +1,5 %) : ~310 pour « costs », ~650 pour « protects ». */
+    ok(Math.abs(P.nDeuxParts(0.11, 0.19) - 310) <= 3 && Math.abs(P.nDeuxParts(0.11, 0.066) - 650) <= 5,
+       'le calcul de puissance redonne ~310 et ~650 par cote : ' + P.nDeuxParts(0.11, 0.19) + ', ' + P.nDeuxParts(0.11, 0.066));
+    ok(P.AUDIT_MIN_OBS >= 300 && P.AUDIT_MIN_MOYENNE >= 1200,
+       'et les minimums en σ sont du meme ordre : ' + P.AUDIT_MIN_COUTE + ' / ' + P.AUDIT_MIN_PROTEGE + ' / ' + P.AUDIT_MIN_MOYENNE);
+    ok(P.vue().minObs === P.AUDIT_MIN_OBS, 'la page recoit ce minimum : ' + P.vue().minObs);
+    /* Sous le minimum de la PREMIERE regle mais avec une reference pleine :
+       ce qui etait « costs » a douze observations ne l est plus. */
+    neuf();
+    for (let i = 0; i < N; i++) P.noteAudit('pris', i % 5 === 0 ? 1.5 : -0.3, i % 5 === 0 ? 1.5 : -0.3, T0 + i * L);
+    for (let i = 0; i < 40; i++) P.noteAudit('Trend · jeune', 2, 2, T0 + (N + i) * L);
+    eq(P.verdictRegle('Trend · jeune').verdict, 'unknown', 'quarante ombres toutes gagnantes : toujours « unknown » — 40 n est pas un echantillon');
   }
 
-  console.log('\n-- 4bis. la porte par marché : la mémoire écarte un marché perdant --');
+  console.log('\n-- 4ter. cinq ombres du meme tour ne valent pas cinq observations --');
   {
+    /* Un veto refuse BTC, ETH, SOL, XRP et DOGE au meme tour : cinq ombres
+       ouvertes dans le meme creneau, a ρ 0,76 a 4 h (rapport du 26/09). Ici
+       le cas extreme : les cinq ont le MEME destin. 500 ombres, 28 % de
+       montees, contre « pris » a 20 % (+8 points, 500 ombres independantes).
+       L erreur-type i.i.d. donnait z ≈ 2,96 : « costs ». Groupee par
+       creneau, l effectif est de 100 creneaux, et z ≈ 1,65 : on ne conclut
+       pas. Les memes 28 % en 500 creneaux distincts restent « costs » : c est
+       bien le groupement qui change le verdict, rien d autre. */
+    const L = P.CRENEAU_AUDIT_MS, T0 = 2e6 * L;
+    const nourrit = (grappe) => {
+      neuf();
+      for (let i = 0; i < 500; i++) {
+        const t = T0 + i * L;
+        P.noteAudit('pris', i % 5 === 0 ? 1.5 : -0.3, i % 5 === 0 ? 1.5 : -0.3, t);
+        if (grappe) {
+          /* un creneau sur cinq (5j+2, ou « pris » perd toujours : covariance nulle), 5 ombres identiques */
+          if (i % 5 === 2) { const j = (i - 2) / 5, v = j < 28 ? 1.5 : -0.3; for (let m = 0; m < 5; m++) P.noteAudit('Veto · grappe', v, v, t); }
+        } else {
+          const v = i < 140 ? 1.5 : -0.3;
+          P.noteAudit('Veto · grappe', v, v, t);
+        }
+      }
+      return P.verdictRegle('Veto · grappe');
+    };
+    const vg = nourrit(true);
+    const zIid = (0.28 - 0.20) / Math.sqrt(0.24 * 0.76 * (2 / 500));
+    ok(vg.n === 500 && vg.groupes === 100 && vg.verdict === 'unknown' && vg.zParts < 1.96 && zIid > 1.96,
+       'grappes de 5 : ' + vg.verdict + ' a z ' + vg.zParts + ' sur ' + vg.groupes + ' creneaux (i.i.d. aurait dit z ' + zIid.toFixed(2) + ', « costs »)');
+    /* L erreur-type a la main : k/(k−1) Σ (G_g − p·n_g)² / n², regle + « pris ». */
+    const vRegle = (100 / 99) * (28 * Math.pow(5 - 1.4, 2) + 72 * Math.pow(1.4, 2)) / (500 * 500);
+    const vPris = (500 / 499) * (100 * 0.64 + 400 * 0.04) / (500 * 500);
+    ok(Math.abs(vg.seParts - Math.round(Math.sqrt(vRegle + vPris) * 1000) / 1000) < 1e-9,
+       'l erreur-type groupee est exactement la formule de seGroupe : ' + vg.seParts);
+    const vi = nourrit(false);
+    ok(vi.verdict === 'costs' && vi.groupes === 500, 'les memes 28 % sur 500 creneaux distincts : « costs » (z ' + vi.zParts + ')');
+
+    /* La covariance avec « pris » est retiree : une regle qui refuse, dans les
+       memes creneaux, exactement ce qu on prend a une difference toujours
+       nulle, donc une erreur-type nulle — pas √2 fois celle de « pris ». */
     neuf();
-    var neg = P.caseProfil('marche', 'ETH', P.HORIZON_REF, false); neg.n = 20; neg.s = -4;    /* moyenne -0,2 */
-    var pos = P.caseProfil('marche', 'DOGE', P.HORIZON_REF, false); pos.n = 20; pos.s = 4;     /* +0,2 */
-    var jeune = P.caseProfil('marche', 'XRP', P.HORIZON_REF, false); jeune.n = 3; jeune.s = -9; /* négatif mais trop peu vu */
-    ok(P.marcheRefuse('ETH'), 'un marché à espérance apprise négative est refusé');
+    for (let i = 0; i < 600; i++) {
+      const t = T0 + i * L, v = i % 5 === 0 ? 1.5 : -0.3;
+      P.noteAudit('pris', v, v, t); P.noteAudit('Session · jumelle', v, v, t);
+    }
+    const eJ = P.ecartGroupe(P.etat().audit['Session · jumelle'], P.etat().audit['pris']);
+    ok(eJ && eJ.seParts < 1e-9 && eJ.seMoyennes < 1e-9, 'une regle jumelle de « pris », meme creneaux : erreur-type de l ecart 0 [' + (eJ && eJ.seParts) + ']');
+
+    /* Le repli des creneaux clos ne perd rien : recalcul brut, sans repli. */
+    neuf();
+    const brut = { a: {}, r: {} };
+    let graine = 7; const alea = () => { graine = (graine * 16807) % 2147483647; return graine / 2147483647; };
+    for (let i = 0; i < 300; i++) {
+      const t = T0 + i * L + Math.floor(alea() * L);
+      const b = Math.floor(t / L);
+      for (const [cle, k] of [['pris', 'r'], ['Veto · melange', 'a']]) {
+        const m = 1 + Math.floor(alea() * 4);
+        for (let q = 0; q < m; q++) {
+          const z = alea() * 3 - 1.2;
+          P.noteAudit(cle, z, z, t);
+          const o = brut[k][b] || (brut[k][b] = { n: 0, g: 0, s: 0 });
+          o.n++; o.g += z >= 1 ? 1 : 0; o.s += z;
+        }
+      }
+    }
+    const tot = (B) => { let n = 0, g = 0, s = 0; for (const b in B) { n += B[b].n; g += B[b].g; s += B[b].s; } return { n, g, s, k: Object.keys(B).length }; };
+    const A = tot(brut.a), R = tot(brut.r);
+    const pa = A.g / A.n, pr = R.g / R.n;
+    let va = 0, vr = 0, cv = 0;
+    for (const b in brut.a) va += Math.pow(brut.a[b].g - pa * brut.a[b].n, 2);
+    for (const b in brut.r) vr += Math.pow(brut.r[b].g - pr * brut.r[b].n, 2);
+    for (const b in brut.a) if (brut.r[b]) cv += (brut.a[b].g - pa * brut.a[b].n) * (brut.r[b].g - pr * brut.r[b].n);
+    const cA = A.k / (A.k - 1), cR = R.k / (R.k - 1);
+    const seBrut = Math.sqrt(cA * va / (A.n * A.n) + cR * vr / (R.n * R.n) - 2 * Math.sqrt(cA * cR) * cv / (A.n * R.n));
+    const eM = P.ecartGroupe(P.etat().audit['Veto · melange'], P.etat().audit['pris']);
+    ok(eM && Math.abs(eM.seParts - seBrut) < 1e-12 && eM.groupes === A.k && Object.keys(P.etat().audit['pris'].grp.ouverts).length <= 4,
+       'creneaux replies au fil de l eau (' + Object.keys(P.etat().audit['pris'].grp.ouverts).length + ' encore ouverts) : meme erreur-type que le calcul brut [' + (eM && eM.seParts.toFixed(6)) + ' / ' + seBrut.toFixed(6) + ']');
+  }
+
+  console.log('\n-- 4bis. la porte par marché : corrigée, éteinte, et elle ne refuse qu au-delà du bruit --');
+  {
+    /* ---- REECRIT LE 27 SEPTEMBRE 2026, SUR SON INTENTION ----
+     * Intention d origine : « un marché à espérance apprise négative est
+     * refusé ». Le rapport du 26/09 a montré que la porte était MORTE (clé
+     * 'BTCUSDT' contre 'BTC') et que, réveillée telle quelle, elle aurait
+     * refusé BTC sur du bruit (−0,062 ± 0,12, n = 47). Elle refuse désormais
+     * une espérance négative AU-DELÀ du bruit (moyenne + 2 e.-t. < 0). */
+    neuf();
+    const pose = (nom, l) => { for (const r of l) P.noteProfil({ banquier: { marche: nom } }, P.HORIZON_REF, r); };
+    const bruit = (m, sd, n) => Array.from({ length: n }, (_, i) => m + (i % 2 ? sd : -sd));
+    pose('ETH', bruit(-0.3, 0.5, 200));          /* −0,3 ± 0,035 : négatif au-delà du bruit */
+    pose('BTC', bruit(-0.062, 0.84, 47));        /* le cas réel du 26/09 : −0,062, e.-t. ~0,12 */
+    pose('DOGE', bruit(0.2, 0.5, 200));
+    pose('XRP', bruit(-3, 0.1, 3));              /* négatif mais trop peu vu */
+    ok(P.marcheRefuse('ETH'), 'un marché qui perd au-delà du bruit est refusé');
+    ok(!P.marcheRefuse('BTC'), 'BTC du 26/09 (−0,062 sur 47, e.-t. ~0,12) : PAS refusé — c était du bruit');
     ok(!P.marcheRefuse('DOGE'), 'un marché à espérance positive passe');
     ok(!P.marcheRefuse('XRP'), 'sous le minimum d observations, on ne conclut pas (aucun refus)');
     ok(!P.marcheRefuse('INCONNU'), 'un marché jamais vu n est pas refusé : un inconnu n est pas un mauvais signe');
+    /* Une case d avant les carrés (n, s seulement) ne peut pas avoir d erreur-type. */
+    const vieille = P.caseProfil('marche', 'SOL', P.HORIZON_REF, false); vieille.n = 500; vieille.s = -500;
+    ok(!P.marcheRefuse('SOL'), 'une case sans somme des carrés ne refuse rien : sans erreur-type, pas de jugement');
+    const eth = P.caseProfil('marche', 'ETH', P.HORIZON_REF, true);
+    ok(eth.nq === 200 && typeof eth.q === 'number', 'la case garde la somme des carrés (' + eth.q.toFixed(1) + ') et son effectif');
+    eq(P.PORTE_MEMOIRE, false, 'et la porte est ÉTEINTE par défaut : l allumer est une décision du propriétaire');
   }
 
   console.log('\n-- 5. un tour complet, contre un faux marche --');
@@ -509,6 +641,235 @@ const neuf = () => { P._pose(P.etatNeuf()); return P.etat(); };
     P.surveille({ [p0.sym]: { prix: contre } });
     eq(S.positions.length, avant - 1, 'un stop ne ferme que la position de SON marche');
     eq(S.carnet[0].sym, p0.sym, 'et le carnet dit lequel : ' + S.carnet[0].sym);
+  }
+
+  /* ======================================================================
+   * 13. LES FRAIS PAR TYPE D ORDRE (27 septembre 2026)
+   * Le papier comptait 0,04 % aller-retour (maker des deux cotes). L entree,
+   * le stop et la sortie au temps sont des ordres au marche (taker 0,06 %),
+   * seule la cible peut etre un ordre limite (maker 0,02 %). Rapport du
+   * 26/09 : −0,377 → −0,449 % par trade sur les 40 trades visibles.
+   * ==================================================================== */
+  console.log('\n-- 13. les frais suivent le type d ordre --');
+  {
+    eq(P.fraisAR('stop'), 0.12, 'un stop paie taker a l entree et a la sortie : 0,12 %');
+    eq(P.fraisAR('time'), 0.12, 'une sortie au temps aussi : 0,12 %');
+    eq(P.fraisAR('target'), 0.08, 'une cible est un ordre limite pose : taker + maker = 0,08 %');
+    const S = neuf();
+    const x = P.mesures(marche({ prix: 100, financement: 0 })); x.sym = SYM;
+    const p1 = P.ouvre(x, 1, { score: 60, traits: {} });
+    P.ferme(p1, p1.cible, 'target');
+    const p2 = P.ouvre(x, 1, { score: 60, traits: {} });
+    P.ferme(p2, p2.stop, 'stop');
+    const [stop, cible] = S.carnet;
+    eq(cible.frais, 0.08, 'la ligne de la cible porte 0,08 %');
+    eq(stop.frais, 0.12, 'celle du stop 0,12 %');
+    ok(Math.abs(stop.r - (stop.brut + stop.financement - 0.12)) < 0.0015, 'et le net les retire : ' + stop.r);
+    /* Une ligne d AVANT (frais maker 0,04) garde son net comptabilise ; la vue
+       rend a cote son net aux frais reels, pour que les deux se comparent. */
+    S.carnet.push({ sym: SYM, sens: 1, prix0: 100, prix: 99, r: -1.04, brut: -1, financement: 0, frais: 0.04,
+                    gain: -1, minutes: 100, pourquoi: 'stop', t: Date.now() - 86400000 });
+    const vieille = P.vue().carnet.find((c) => c.frais === 0.04);
+    eq(vieille.r, -1.04, 'une ancienne ligne garde son net d origine (frais maker)');
+    eq(vieille.rReel, -1.12, 'et la vue lui ajoute son net aux frais reels : ' + vieille.rReel);
+    /* `PERP_FRAIS` garde son sens : un forfait aller-retour pour tous les trades. */
+    const { execFileSync } = require('child_process');
+    const forfait = execFileSync(process.execPath, ['-e',
+      "const P=require('./ai_perp');console.log(JSON.stringify([P.fraisAR('target'),P.fraisAR('stop'),P.fraisReels('target')]))"],
+      { cwd: __dirname, env: Object.assign({}, process.env, { PERP_FRAIS: '0.04' }) }).toString().trim();
+    eq(forfait, '[0.04,0.04,0.08]', 'PERP_FRAIS pose : le forfait s applique partout, les frais reels restent calculables');
+  }
+
+  console.log('\n-- 14. la periode de financement vient du contrat --');
+  {
+    const S = neuf();
+    const appels = [];
+    const prendre = async (u) => {
+      appels.push(u);
+      const sym = new URL(u).searchParams.get('symbol');
+      if (sym === 'BADUSDT') return { ok: false, status: 500, json: async () => ({}) };
+      return { ok: true, json: async () => ({ code: '00000', data: [{ symbol: sym, fundInterval: sym === 'ZECUSDT' ? '4' : '8' }] }) };
+    };
+    await P.litPeriodes(['BTCUSDT', 'ZECUSDT', 'BADUSDT'], prendre);
+    eq(P.periodeFin('BTCUSDT'), 480, 'BTC regle toutes les 8 h');
+    eq(P.periodeFin('ZECUSDT'), 240, 'un contrat a 4 h est lu comme tel (378 contrats Bitget sur 805)');
+    eq(P.periodeFin('BADUSDT'), 480, 'une lecture ratee retombe sur 480, le defaut');
+    ok(appels.every((u) => /\/contracts\?/.test(u)), 'lu sur /contracts');
+    await P.litPeriodes(['BTCUSDT', 'ZECUSDT'], prendre);
+    eq(appels.length, 3, 'et une seule fois par jour et par contrat : pas un appel de plus au tour suivant');
+    eq(P.coutFinancement(1, 0.0001, 240, 240), -0.01, 'a 4 h, quatre heures tenues coutent une periode entiere');
+    const x = P.mesures(marche({ prix: 100, financement: 0.0001 })); x.sym = 'ZECUSDT';
+    const pz = P.ouvre(x, 1, { score: 60, traits: {} });
+    eq(pz.pf, 240, 'la position garde la periode de SON contrat');
+    pz.t = Date.now() - 240 * 60000;
+    P.ferme(pz, 100, 'time');
+    eq(S.carnet[0].financement, -0.01, 'et le financement du trade la suit : ' + S.carnet[0].financement);
+  }
+
+  console.log('\n-- 15. le carnet est servi en entier --');
+  {
+    const S = neuf();
+    for (let i = 0; i < 150; i++) S.carnet.push({ sym: SYM, sens: 1, r: 0.1, brut: 0.22, financement: 0, frais: 0.12, pourquoi: 'time', t: Date.now() - i * 60000 });
+    eq(P.vue().carnet.length, 150, 'les 150 lignes du carnet partent a la page (40 avant le 27/09)');
+  }
+
+  /* ======================================================================
+   * 16. STOPS ET CIBLES JUGES SUR LES BOUGIES D UNE MINUTE
+   * Rejeu du 26/09 : un « temps −0,46 % » etait un stop touche a 188 min, et
+   * 9 stops sur 22 avaient ete vus avec 50 a 282 min de retard.
+   * ==================================================================== */
+  console.log('\n-- 16. les bougies fines jugent stops et cibles --');
+  {
+    const MIN = 60000;
+    const pose = () => {
+      const S = neuf();
+      const x = P.mesures(marche({ prix: 100, financement: 0 })); x.sym = SYM;
+      const p = P.ouvre(x, 1, { score: 60, traits: {} });
+      p.t = Date.now() - 300 * MIN; p.jusqua = p.t + 720 * MIN; p.stop = 98; p.cible = 103;
+      return { S, p };
+    };
+    const b = (t, o, h, lo, c) => ({ t, o, h, b: lo, c });
+    /* Le dernier prix est sage (100), mais une bougie a touche le stop il y a
+       deux heures : la position est fermee AU STOP, a l heure du stop. */
+    let { S, p } = pose();
+    const tStop = p.t + 120 * MIN;
+    P.surveille({ [SYM]: { prix: 100 } }, { [SYM]: [b(p.t + MIN, 100, 100.5, 99.5, 100), b(tStop, 99, 99.2, 97.9, 98.5), b(tStop + MIN, 98.5, 101, 98.4, 100)] });
+    eq(S.carnet[0] && S.carnet[0].pourquoi, 'stop', 'un stop touche entre deux tours est vu, meme si le prix est revenu');
+    eq(S.carnet[0].minutes, 120, 'et date a la minute du stop : ' + S.carnet[0].minutes + ' min, pas au tour');
+    ({ S, p } = pose());
+    P.surveille({ [SYM]: { prix: 100 } }, { [SYM]: [b(p.t - 30 * 1000, 100, 100, 90, 100), b(p.t + MIN, 100, 100.4, 99.6, 100)] });
+    eq(S.positions.length, 1, 'une bougie commencee AVANT l entree ne compte pas : ses extremes peuvent dater d avant');
+    ({ S, p } = pose());
+    P.surveille({ [SYM]: { prix: 100 } }, { [SYM]: [b(p.t + MIN, 100, 103.5, 97.5, 100)] });
+    eq(S.carnet[0].pourquoi, 'stop', 'stop et cible dans la meme bougie : le stop d abord (on ne sait pas l ordre)');
+    ({ S, p } = pose());
+    P.surveille({ [SYM]: { prix: 97 } }, { [SYM]: [b(p.t + MIN, 97, 97.2, 96.5, 97)] });
+    eq(S.carnet[0].prix, 97, 'une bougie qui OUVRE sous le stop le prend a l ouverture : un stop-market glisse');
+    ({ S, p } = pose());
+    P.surveille({ [SYM]: { prix: 102 } }, { [SYM]: [b(p.t + MIN, 100, 103.2, 99.9, 102)] });
+    ok(S.carnet[0].pourquoi === 'target' && S.carnet[0].prix === 103 && S.carnet[0].frais === 0.08,
+       'une cible touchee se prend a la cible, aux frais maker de sortie');
+    ({ S, p } = pose());
+    const fin = [];
+    for (let k = 719; k <= 721; k++) fin.push(b(p.t + k * MIN, 101, 101.2, 100.8, k === 719 ? 101.1 : 101));
+    P.surveille({ [SYM]: { prix: 100.5 } }, { [SYM]: fin });
+    ok(S.carnet[0].pourquoi === 'time' && S.carnet[0].prix === 101.1 && S.carnet[0].minutes === 720,
+       'la tenue echue sort au dernier cours AVANT l echeance, a 720 min : ' + S.carnet[0].prix + ' / ' + S.carnet[0].minutes);
+    /* La lecture : un appel par position, borne. */
+    const S2 = neuf();
+    for (const [sym, prix] of [['BTCUSDT', 100], ['ETHUSDT', 10]]) { const x = P.mesures(marche({ prix })); x.sym = sym; P.ouvre(x, 1, { score: 60, traits: {} }); }
+    const appels = [];
+    const f = await P.litFines(S2.positions, async (u) => { appels.push(u); return { ok: true, json: async () => ({ code: '00000', data: [[String(Date.now()), '1', '1', '1', '1', '1']] }) }; });
+    eq(appels.length, 2, 'un appel par position ouverte, pas plus');
+    ok(appels.every((u) => /granularity=1m/.test(u) && /startTime=/.test(u)), 'des bougies d une minute, depuis le dernier controle');
+    ok(Object.keys(f).length === 2 && f.BTCUSDT[0].c === 1, 'rendues sous la forme des autres bougies');
+    ok(P.POSITIONS_MAX <= 5, 'donc au plus ' + P.POSITIONS_MAX + ' appels de plus par tour');
+  }
+
+  console.log('\n-- 17. la porte mémoire : la bonne clé, éteinte, mesurée --');
+  {
+    const S = neuf();
+    const bruit = (m, sd, n2) => Array.from({ length: n2 }, (_, i) => m + (i % 2 ? sd : -sd));
+    for (const r of bruit(-0.5, 0.3, 100)) P.noteProfil({ banquier: { marche: 'DOGE' } }, P.HORIZON_REF, r);
+    ok(P.marcheRefuse('DOGE') && !P.marcheRefuse('DOGEUSDT'), 'la case est rangée sous « DOGE », pas « DOGEUSDT »');
+    const DOGE = marche({ prix: 0.2, pente: 0.45, bruit: 0.1, financement: -0.0009 });
+    DOGE.sym = 'DOGEUSDT';
+    const r = await P.tour({ marches: { DOGEUSDT: DOGE } });
+    ok(!r.verdicts.some((v) => /market memory/.test(v.refus || '')), 'éteinte, elle ne refuse rien en service');
+    ok((S.compteurs.memoireAuraitRefuse || 0) >= 1, 'mais elle compte ce qu elle aurait refusé : ' + S.compteurs.memoireAuraitRefuse);
+    const { execFileSync } = require('child_process');
+    /* Le meme marche, rejoue dans un processus ou la porte est ALLUMEE : le
+       marche passe par un fichier du bac temporaire, jamais par le depot. */
+    const fm = path.join(process.env.DATA_DIR, 'marche_doge.json');
+    fs.writeFileSync(fm, JSON.stringify(DOGE));
+    const code = "const P=require('./ai_perp');P._pose(P.etatNeuf());"
+      + "for(let i=0;i<100;i++)P.noteProfil({banquier:{marche:'DOGE'}},240,i%2?-0.2:-0.8);"
+      + "const m=JSON.parse(require('fs').readFileSync(process.env.MARCHE,'utf8'));"
+      + "P.tour({marches:{DOGEUSDT:m},sansSauver:true}).then(r=>console.log(JSON.stringify(r.verdicts.map(v=>v.refus))))";
+    const allumee = execFileSync(process.execPath, ['-e', code], { cwd: __dirname,
+      env: Object.assign({}, process.env, { PERP_PORTE_MEMOIRE: '1', PERP_JOURNAL: '0', MARCHE: fm }) }).toString().trim();
+    ok(/market memory: this market loses beyond noise/.test(allumee), 'allumée (PERP_PORTE_MEMOIRE=1), elle refuse DOGE : ' + allumee.slice(0, 80));
+  }
+
+  console.log('\n-- 18. l audit en σ, et « below the bar » rangé sous la note --');
+  {
+    const S = neuf();
+    const x = P.mesures(marche({ prix: 100, bruit: 0.12, financement: 0 })); x.sym = SYM;
+    P.noteOmbre(x, 1, null, null, {});
+    const o = S.ombres[0];
+    ok(Math.abs(o.sig - x.vol15 * 4) < 1e-9, 'l ombre porte le σ a 4 h de son marche (vol 15 min × 4) : ' + o.sig.toFixed(3) + ' %');
+    o.t = Date.now() - 240 * 60000;
+    const x1 = P.mesures(marche({ prix: 101, bruit: 0.12, financement: 0 })); x1.sym = SYM;
+    P.regleLesOmbres({ [SYM]: x1 });
+    const a = S.audit.pris;
+    ok(a.nz === 1 && Math.abs(a.sz - a.s / o.sig) < 1e-6, 'l audit la juge en unites de σ : ' + a.sz.toFixed(2) + ' σ pour ' + a.s.toFixed(2) + ' %');
+    /* Un marche plat, sans financement : la note reste sous la barre. */
+    neuf();
+    const plat = marche({ prix: 80000, pente: 0, pente4: 0, bruit: 0.12, financement: 0, var24: 0 });
+    const r = await P.tour({ marches: { BTCUSDT: plat } });
+    ok(r.verdicts.every((v) => v.refus === 'score below the bar'), 'la note est sous la barre des deux cotes');
+    const cles = P.etat().ombres.map((z) => z.cle);
+    ok(cles.every((c) => c === 'Score · score below the bar'),
+       'l ombre est rangee sous « Score », la note entiere, plus sous Trend : ' + cles[0]);
+    const trend = P.AGENTS.find((z) => z.key === 'tendance').nom;
+    ok(!cles.some((c) => c.indexOf(trend + ' · score') === 0), 'Trend n est plus accuse d un refus collectif');
+  }
+
+  console.log('\n-- 19. le bilan des trades : n, Wilson, net ± erreur-type, jugeable a 143 --');
+  {
+    eq(P.TRADES_JUGEABLES, 143, 'le seuil vient du calcul : +0,30 % a sd 1,44 %, 80 %, α 5 % unilateral → 143');
+    const S = neuf();
+    const x = P.mesures(marche({ prix: 100, financement: 0 })); x.sym = SYM;
+    for (let i = 0; i < 20; i++) {
+      const p = P.ouvre(x, 1, { score: 60, traits: {} });
+      P.ferme(p, i % 4 === 0 ? p.cible : p.stop, i % 4 === 0 ? 'target' : 'stop');
+    }
+    const b = P.vue().bilan;
+    eq(b.n, 20, 'vingt trades au bilan');
+    eq(b.gagnants, 5, 'cinq gagnants (les cibles)');
+    ok(b.wilson && b.wilson[0] < 25 && b.wilson[1] > 25, 'avec leur intervalle de Wilson : ' + b.wilson.join('–') + ' %');
+    ok(b.jugeable === false && b.seuil === 143, 'et « pas jugeable » sous 143 trades');
+    ok(typeof b.netReel === 'number' && b.parSortie.stop.n === 15 && b.parSortie.target.n === 5, 'le net aux frais reels, par sortie');
+    /* Tout le meme jour : une erreur-type groupee par jour n existe pas avec un seul jour. */
+    eq(b.se, null, 'un seul jour : pas d erreur-type groupee — on ne l invente pas');
+    for (const c of S.carnet.slice(0, 10)) c.t -= 86400000;
+    P.rebatitBilan(S);
+    const b2 = P.vue().bilan;
+    ok(b2.n === 20 && b2.jours === 2 && typeof b2.se === 'number', 'deux jours : l erreur-type groupee existe (' + b2.se + ')');
+    /* Un etat d avant le bilan se reconstruit depuis son carnet, et dit ce qui manque. */
+    S.trades = 260;
+    P.rebatitBilan(S);
+    eq(P.vue().bilan.manquants, 240, 'un etat qui a perdu des lignes de carnet le DIT : 240 trades manquants');
+    /* ---- LE TAUX DE GAIN PORTE SUR LE BILAN, PAS SUR LE CARNET ----
+     * 27/09 : 300 trades, les 100 premiers gagnants, les 200 derniers
+     * perdants. Le taux se lisait sur le carnet (200 lignes) : 0 %, servi a
+     * cote de trades = 300 et d un Wilson calcule sur 300 (28–39 %). */
+    const S3 = neuf();
+    for (let i = 0; i < 300; i++) {
+      const p = P.ouvre(x, 1, { score: 60, traits: {} });
+      P.ferme(p, i < 100 ? p.cible : p.stop, i < 100 ? 'target' : 'stop');
+    }
+    const v3 = P.vue();
+    ok(S3.carnet.length === 200 && v3.trades === 300 && v3.bilan.n === 300, 'carnet 200 lignes, 300 trades, bilan 300');
+    eq(v3.partGagnantes, Math.round(v3.bilan.gagnants / v3.bilan.n * 100), 'le taux vient du bilan, comme son n et son intervalle');
+    ok(v3.partGagnantes === 33 && v3.bilan.wilson[0] <= 33 && v3.bilan.wilson[1] >= 33,
+       'et son intervalle le contient : ' + v3.partGagnantes + ' % dans ' + v3.bilan.wilson.join('–') + ' % (le carnet disait 0 %)');
+  }
+
+  console.log('\n-- 20. le journal porte le detail de la note, agent par agent --');
+  {
+    neuf();
+    const J = require('./perp_journal');
+    const avant = J.relit('0000-00-00').obs.length;
+    const DOGE = marche({ prix: 0.2, pente: 0.45, bruit: 0.1, financement: -0.0009 });
+    const r = await P.tour({ marches: { DOGEUSDT: DOGE } });
+    const l = J.relit('0000-00-00').obs.slice(avant).find((z) => z.s === 'DOGEUSDT');
+    ok(l && Array.isArray(l.dt) && l.dt.length === 2 && l.dt.every((d) => d.length === J.DT_ORDRE.length),
+       'chaque ligne porte `dt` : ' + J.DT_ORDRE.length + ' contributions par sens');
+    const sc = r.verdicts.map((v) => v.score);
+    ok(l.dt.every((d, i) => Math.abs(50 + d.reduce((u, w) => u + w, 0) - sc[i]) <= 1),
+       'et 50 + la somme des contributions redonne la note : ' + sc.join(', '));
+    ok(l.dt[0][J.DT_ORDRE.indexOf('financement')] !== 0, 'Funding a sa colonne : on pourra lui faire un P/L');
   }
 
   console.log(`\nai_perp.test.js : ${n} verifications OK`);

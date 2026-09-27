@@ -40,10 +40,23 @@
  *    son reel perdait 3,7 % par trade, uniquement par frottement, parce que
  *    le cout n entrait nulle part dans le papier. Ici il entre des le debut :
  *    le rendement d une position papier est net du financement paye ou recu
- *    ET du frais aller-retour (maker Bitget 0,04 %, `FRAIS_AR`), ajoute le
- *    23 septembre 2026 apres la mesure nette de `perp_edge.js` (l edge brut
- *    +0,150 % en 4σ/6σ reste +0,110 % net maker — donc rentable, mais seulement
- *    parce que le cout est desormais dedans, pas cache).
+ *    ET des frais, PAR TYPE D ORDRE depuis le 27 septembre 2026 (`fraisAR()`,
+ *    taker 0,06 % a l entree, au stop et a la sortie au temps, maker 0,02 % a
+ *    la cible — grille Bitget lue sur `/contracts` le 26/09 : makerFeeRate
+ *    0.0002, takerFeeRate 0.0006 pour les 805 contrats).
+ *
+ *    ---- CE QUE LE « +0,110 % NET MAKER » VALAIT VRAIMENT ----
+ *    Ce chiffre a justifie le 4σ/6σ et les frais maker du 23 septembre. Il
+ *    venait de `perp_edge.js` : `trend` SEUL (pas la note), une entree a
+ *    CHAQUE bougie (n = 13 923, trades qui se chevauchent — n effectif ~500),
+ *    financement et carnet mis a null. Refait le 26 septembre 2026 avec la
+ *    meme methode : erreur-type 0,074 une fois groupee par jour, t ≈ 1,1 —
+ *    JAMAIS significatif. La regle EN SERVICE, rejouee sans chevauchement sur
+ *    31 jours (n = 330, une position par marche, deux au plus dans un sens) :
+ *    brut +0,030 %, net frais papier −0,008 ± 0,070, net frais reels −0,075.
+ *    Aucune geometrie de 2σ/3σ a 8σ/12σ n y est positive aux frais reels. La
+ *    geometrie reste donc 4σ/6σ faute de mieux, pas parce qu elle gagne ; tout
+ *    changement passe desormais par `outils/perp_rejeu.js` (12–24 mois).
  *
  * ---- ce que ce fichier NE fait pas ----
  *
@@ -100,7 +113,76 @@ const SYMBOLES = String(process.env.PERP_SYMBOLES || 'BTCUSDT,ETHUSDT,SOLUSDT,XR
 const HORIZONS = [15, 60, 240, 720, 1440];
 const HORIZON_REF = 240;
 const PROFIL_MIN_OBS = 8;        /* sous ca, une case n est pas une case */
-const AUDIT_MIN_OBS = 12;        /* sous ca, une part de gagnantes est du bruit */
+
+/* ---- LES MINIMUMS DE L AUDIT : UN CALCUL DE PUISSANCE, PLUS UN ROND ----
+ * `AUDIT_MIN_OBS` valait 12, pose sans calcul. Rapport du 26 septembre 2026
+ * (231 ombres jugees a 4 h) : pour que le verdict « coute » (+8 points de
+ * gagnantes sur la reference) ait 80 % de chances de se voir a α = 5 %, il
+ * faut ~310 ombres PAR COTE ; « protege » (part ≤ 0,6 × reference) en veut
+ * ~650 ; une difference de moyennes de 0,113 σ (0,15 % a σ 1,33 %) ~1 230.
+ * Douze donnait des verdicts qui ne voulaient rien dire.
+ *
+ * Les minimums sont CALCULES ici, avec les hypotheses ecrites, et non tapes :
+ * la base est la part d ombres qui montent d au moins +1 σ a 4 h, soit
+ * 15,9 % pour une loi normale (les rendements sont a queues epaisses, la
+ * base mesuree sera un peu plus basse : le calcul reste le bon ordre). */
+const Z_ALPHA = 1.959964;        /* bilateral, α = 5 % */
+const Z_BETA = 0.841621;         /* puissance 80 % */
+function nDeuxParts(p1, p2) {
+  const d = p1 - p2;
+  return Math.ceil(Math.pow(Z_ALPHA + Z_BETA, 2) * (p1 * (1 - p1) + p2 * (1 - p2)) / (d * d));
+}
+function nDeuxMoyennes(ecart, sd) {
+  return Math.ceil(2 * Math.pow(Z_ALPHA + Z_BETA, 2) * sd * sd / (ecart * ecart));
+}
+const PART_BASE_SIGMA = 0.159;
+/* Controle : la meme formule a la base de l ancien audit (11 % de ≥ +1,5 %)
+   rend 309 et 647 — les ~310 et ~650 du rapport. En σ, a 15,9 % : */
+const AUDIT_MIN_COUTE = nDeuxParts(PART_BASE_SIGMA, PART_BASE_SIGMA + 0.08);       /* 388 */
+const AUDIT_MIN_PROTEGE = nDeuxParts(PART_BASE_SIGMA, PART_BASE_SIGMA * 0.6);      /* 427 */
+const AUDIT_MIN_MOYENNE = nDeuxMoyennes(0.113, 1);                                 /* 1 230, en σ */
+/* Ces trois minimums SUPPOSENT des ombres indépendantes. Elles ne le sont pas :
+   un veto qui refuse BTC, ETH, SOL, XRP et DOGE au même tour pose cinq ombres
+   dont les rendements à 4 h ont ρ = 0,76 (rapport du 26/09). Les minimums ne
+   sont pas relevés : c'est l'ERREUR-TYPE du verdict qui porte la corrélation,
+   groupée par créneau d'ouverture de 4 h, covariance entre la règle et
+   « pris » comprise (voir `ecartGroupe`). Simulation sous H0 du 27/09
+   (grappes de 5 ombres à ρ 0,76, n 390) : avec l'erreur-type i.i.d., le z nul
+   avait un écart-type de 1,40–1,42, et les faux « costs » passaient de 0,10 %
+   à 1,9–2,05 %, les faux « protects » de 0,18 % à 2,2–3,0 %. À ces minimums,
+   un verdict est donc plus rare que ne le dit le calcul de puissance : c'est
+   voulu ; l'effectif réel se lit en créneaux (`groupes`) avec chaque verdict. */
+/* Le premier verdict possible : c est le chiffre que la page ecrit sous
+   « en dessous, aucune regle n a de verdict ». */
+const AUDIT_MIN_OBS = Math.min(AUDIT_MIN_COUTE, AUDIT_MIN_PROTEGE);
+
+/* ---- QUAND UN BILAN DE TRADES DEVIENT JUGEABLE ----
+ * Ecart-type d un trade net mesure le 26/09/2026 : 1,44 % (40 trades). Pour
+ * detecter +0,30 % par trade (unilateral, α 5 %, puissance 80 %) :
+ * ((1,645 + 0,842) × 1,44 / 0,30)² = 143 trades — 8 jours a 17,9 par jour.
+ * Sous ce nombre, la page ecrit « not judgeable (n/143) ». */
+const SD_TRADE = 1.44;
+const TRADES_JUGEABLES = Math.ceil(Math.pow((1.644854 + Z_BETA) * SD_TRADE / 0.30, 2));
+/* Comparer DEUX groupes de trades (la soupape contre le reste) demande plus :
+   un ecart de 0,30 % entre deux moyennes, bilateral → 362 par groupe. */
+const TRADES_COMPARABLES = nDeuxMoyennes(0.30, SD_TRADE);
+
+/** Intervalle de Wilson a 95 % d une part k/n, en fractions. */
+function wilson(k, n) {
+  if (!n) return null;
+  const z = Z_ALPHA, p = k / n, z2 = z * z;
+  const c = (p + z2 / (2 * n)) / (1 + z2 / n);
+  const h = z * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / (1 + z2 / n);
+  return [Math.max(0, c - h), Math.min(1, c + h)];
+}
+const r3 = (v) => (v === null || v === undefined || !isFinite(v)) ? null : Math.round(v * 1000) / 1000;
+/** Moyenne et erreur-type depuis n, somme et somme des carres. */
+function moyenneEt(n, s, q) {
+  if (!n) return { n: 0, moyenne: null, se: null };
+  const m = s / n;
+  const v = n > 1 ? Math.max(0, (q - n * m * m) / (n - 1)) : null;
+  return { n, moyenne: m, se: v === null ? null : Math.sqrt(v / n) };
+}
 
 /* ---- CE QUI COMPTE COMME UNE MONTEE ----
  * Sur un jeton de cinq minutes, +20 % est un evenement ordinaire. Sur BTC a
@@ -121,8 +203,12 @@ const DEPART = Number(process.env.PERP_DEPART || 1000);
  * trésor à zéro UNE fois au prochain démarrage — pour repartir propre quand on
  * change la stratégie de sortie. Idempotent, comme la caisse Pancake.
  * Génération 2 le 24 septembre 2026 : l'ancien relevé mélangeait le 3σ/5σ
- * perdant au nouveau 4σ/6σ net-positif (mesuré +0,110 %/trade maker) ; on
- * repart propre pour que la nouvelle géométrie se juge seule. Papier. */
+ * au 4σ/6σ, qu'on croyait net-positif (« +0,110 %/trade maker » — chiffre
+ * jamais significatif, voir l'en-tête : t ≈ 1,1 une fois groupé par jour) ;
+ * on repart propre pour que la géométrie se juge seule. Papier.
+ * Les frais par type d'ordre (27/09/2026) ne remettent PAS le trésor à zéro :
+ * les trades d'avant gardent leurs frais maker dans le carnet, et la vue rend
+ * à côté leur net aux frais réels (`rReel`), pour que les deux se comparent. */
 const GEN = String(process.env.PERP_GEN || '2');
 
 /* ==========================================================================
@@ -154,6 +240,9 @@ function etatNeuf() {
     v: 2, gen: GEN, depuis: Date.now(), tours: 0, maj: 0,
     tresor: DEPART, depart: DEPART, trades: 0, gains: 0, meilleur: 0,
     positions: [], carnet: [], ombres: [], audit: {}, profils: {},
+    /* Le plus récent créneau de 4 h d'ouverture vu par l'audit : les créneaux
+       plus vieux de 3 sont clos et se replient (voir `plieAudit`). */
+    auditTemps: { bMax: null },
     compteurs: {}, flux: [], derniereErreur: null,
     /* Le dernier interet ouvert vu par marche : il sert a calculer sa
        VARIATION, qui part au journal. Rien d autre ne le lit. */
@@ -172,7 +261,18 @@ function etatNeuf() {
        quand le papier gagne et qu on se demande ce qu il coute vraiment */
     financement: { n: 0, total: 0 },
     seuil: Number(process.env.PERP_SEUIL || 55),
+    /* Le bilan de TOUS les trades fermes, jamais tronque (le carnet garde
+       200 lignes) : effectif, gagnants, sommes et carres du net tel que
+       comptabilise ET du net aux frais reels, par sortie et par jour — de
+       quoi rendre n, Wilson et net ± erreur-type groupee par jour. */
+    bilan: bilanNeuf(),
+    /* La periode de financement de chaque contrat, lue sur `/contracts`
+       (`fundInterval`, en heures) : {sym: {min, t}}. */
+    periodesFin: {},
   };
+}
+function bilanNeuf() {
+  return { n: 0, gagnants: 0, s: 0, q: 0, sR: 0, qR: 0, parSortie: {}, jours: {}, manquants: 0 };
 }
 let E = null;                     /* UNE colonie, pour tous les marches */
 function etat() { return E || (E = etatNeuf()); }
@@ -185,7 +285,11 @@ function charge() {
     if (j && j.v === 2) {
       /* Génération différente → trésor remis à zéro une fois (comme Pancake). */
       if (String(j.gen || '1') !== GEN) { E = etatNeuf(); sauve(); console.log('[perp] trésor remis à zéro (génération ' + GEN + ')'); return SYMBOLES.slice(); }
-      E = Object.assign(etatNeuf(), j); return SYMBOLES.slice();
+      E = Object.assign(etatNeuf(), j);
+      /* Un etat d avant le bilan (27/09/2026) : on le reconstruit depuis le
+         carnet. S il manque des trades (plus de 200), le bilan le DIT. */
+      if (!j.bilan) rebatitBilan(E);
+      return SYMBOLES.slice();
     }
   } catch (e) { if (e.code !== 'ENOENT') console.error('[perp] ' + e.message); }
   E = etatNeuf();
@@ -227,9 +331,6 @@ async function litMarche(sym, prendre) {
      moyennes les plus longues qu on calcule. */
   const m15 = await lit('/candles', { symbol: sym, productType: PRODUIT, granularity: '15m', limit: 100 }, prendre);
   const h4 = await lit('/candles', { symbol: sym, productType: PRODUIT, granularity: '4H', limit: 60 }, prendre);
-  const nb = (x) => { const v = Number(x); return isFinite(v) ? v : null; };
-  const bougies = (l) => (l || []).map((c) => ({ t: nb(c[0]), o: nb(c[1]), h: nb(c[2]), b: nb(c[3]), c: nb(c[4]), v: nb(c[5]) }))
-    .filter((c) => c.c !== null);
   return {
     sym, t: Date.now(),
     prix: nb(t.lastPr), marque: nb(t.markPrice), index: nb(t.indexPrice),
@@ -240,6 +341,63 @@ async function litMarche(sym, prendre) {
     volume: nb(t.quoteVolume),
     m15: bougies(m15), h4: bougies(h4),
   };
+}
+const nb = (x) => { const v = Number(x); return (x !== null && x !== undefined && x !== '' && isFinite(v)) ? v : null; };
+function bougies(l) {
+  return (l || []).map((c) => ({ t: nb(c[0]), o: nb(c[1]), h: nb(c[2]), b: nb(c[3]), c: nb(c[4]), v: nb(c[5]) }))
+    .filter((c) => c.c !== null);
+}
+
+/* ---- LA PERIODE DE FINANCEMENT, CONTRAT PAR CONTRAT (27 septembre 2026) ----
+ * `PERIODE_FIN_MIN = 480` etait code en dur. Vrai pour les cinq marches
+ * suivis (`fundInterval` = 8 sur `/contracts`, lu le 26/09/2026), FAUX pour
+ * 378 des 805 perpetuels USDT de Bitget, qui reglent toutes les 4 h (et un
+ * toutes les heures). Elargir la liste des marches aurait donc divise par
+ * deux leur cout de financement sans que rien ne le dise. On lit le champ,
+ * une fois par jour et par contrat (5 appels par jour), et 480 reste le
+ * defaut quand la lecture echoue. */
+const PERIODES_TTL = 24 * 3600000;
+async function litPeriodes(symboles, prendre) {
+  const S = etat();
+  for (const sym of symboles) {
+    const vu = S.periodesFin[sym];
+    if (vu && Date.now() - vu.t < PERIODES_TTL) continue;
+    try {
+      const c = ((await lit('/contracts', { symbol: sym, productType: PRODUIT }, prendre)) || [])[0] || {};
+      const h = nb(c.fundInterval);
+      S.periodesFin[sym] = (h > 0 && h <= 24) ? { min: h * 60, t: Date.now() }
+                                               : { min: PERIODE_FIN_MIN, t: Date.now(), defaut: true };
+    } catch (e) { compte('lecturePeriodeRatee'); }
+  }
+}
+function periodeFin(sym) {
+  const v = etat().periodesFin && etat().periodesFin[sym];
+  return (v && v.min > 0) ? v.min : PERIODE_FIN_MIN;
+}
+
+/* ---- LES BOUGIES D UNE MINUTE, POUR JUGER STOPS ET CIBLES (27/09/2026) ----
+ * Le papier ne lisait que le DERNIER prix, toutes les cinq minutes. Rejeu du
+ * 26 septembre sur bougies Bitget 1 min des 40 trades visibles : 39 issues
+ * sur 40 identiques, mais un « temps −0,46 % » etait un stop touche a 188 min
+ * (−1,12 % net), et 9 stops sur 22 avaient ete vus avec 50 a 282 min de
+ * retard — le creneau restait occupe pendant ce temps. On lit donc, pour
+ * chaque position ouverte, les bougies d une minute depuis le dernier
+ * controle : un appel par position, au plus `POSITIONS_MAX` (5) par tour.
+ * Une lecture ratee retombe sur le dernier prix, comme avant. */
+const FINES_MAX_MIN = 1000;      /* la limite d un appel `/candles` */
+async function litFines(positions, prendre) {
+  const out = {};
+  const now = Date.now();
+  for (const p of positions.slice(0, POSITIONS_MAX)) {
+    if (out[p.sym]) continue;
+    const debut = Math.floor(Math.max(p.vu || p.t, now - FINES_MAX_MIN * 60000) / 60000) * 60000;
+    try {
+      out[p.sym] = bougies(await lit('/candles', { symbol: p.sym, productType: PRODUIT, granularity: '1m',
+                                                   startTime: debut, endTime: now, limit: FINES_MAX_MIN }, prendre));
+      compte('lecturesFines');
+    } catch (e) { compte('lectureFineRatee'); }
+  }
+  return out;
 }
 
 // --------------------------------------------------------------- les mesures
@@ -508,10 +666,17 @@ const VETOS = {
  * avant la premiere mesure serait inventer un chiffre. */
 const POIDS = { financement: 10, couloir: 10, carnet: 6, journee: 8, tendance: 14 };
 
-function note(x, sens) {
+function note(x, sens, muets) {
   let s = 50;
   const dit = [];
-  const ajoute = (k, v, pourquoi) => { if (v) { s += v; dit.push({ agent: k, points: Math.round(v), pourquoi }); } };
+  /* `muets` : les agents qu un BANC fait taire (le rejeu, pour mesurer une
+     variante). Le service ne le passe jamais : la note en service est
+     entiere. `v` garde la contribution exacte (deux decimales) : c est elle
+     qui part au journal, agent par agent, pour qu un P/L par agent existe. */
+  const ajoute = (k, v, pourquoi) => {
+    if (!v || (muets && muets.indexOf(k) >= 0)) return;
+    s += v; dit.push({ agent: k, points: Math.round(v), v: Math.round(v * 100) / 100, pourquoi });
+  };
   if (x.ecartEma !== null) {
     const v = Math.max(-1, Math.min(1, x.ecartEma / 0.6)) * sens * POIDS.tendance;
     ajoute('tendance', v, 'short-term trend ' + x.ecartEma.toFixed(2) + '%');
@@ -571,34 +736,186 @@ function caseProfil(trait, valeur, h, lectureSeule) {
   const v = t[valeur] || (t[valeur] = {});
   return v[h] || (v[h] = { n: 0, s: 0 });
 }
-/* ---- LA PORTE PAR MARCHÉ : la mémoire prime ----
+/* ---- LA PORTE PAR MARCHÉ : la mémoire prime — ÉTEINTE PAR DÉFAUT ----
  * Un marché dont l'espérance apprise (ombres, à l'horizon de référence) est
- * négative sur assez d'observations ne mérite pas qu'on y engage le papier. On
- * refuse — mais en AVIS, pas en sécurité : la soupape peut passer outre pour
- * garder la ligne de référence vivante, et l'ombre continue de mesurer le
- * marché (donc l'espérance se corrige toute seule si le marché redevient bon).
- * Mesuré le 22 septembre 2026, espérance par marché à 240 min : BTC -0,079,
- * ETH -0,01, XRP -0,011, SOL -0,096 (négatifs), DOGE +0,10 — 4 sur 5 saignaient.
- * Rend la phrase du refus, ou null. */
+ * négative ne mérite pas qu'on y engage le papier. Posée le 22 septembre 2026
+ * sur BTC -0,079, ETH -0,01, XRP -0,011, SOL -0,096, DOGE +0,10 (240 min).
+ *
+ * ---- CE QU'ELLE A FAIT EN VRAI : RIEN (mesuré le 26 septembre 2026) ----
+ * Elle cherchait la case `'BTCUSDT'` (`lus[sym].nom || sym` : `mesures()` ne
+ * rend pas de `nom`), alors que le trait `marche` range sous `'BTC'`. Code
+ * mort : BTC avait −0,062 sur n = 47 et un LONG BTC a été ouvert à 20:57.
+ * Réactivée telle quelle, elle aurait refusé BTC sur du BRUIT : −0,062 avec
+ * une erreur-type d'environ 0,12.
+ *
+ * Corrigée le 27 septembre 2026, derrière un interrupteur qui reste ÉTEINT
+ * (`PERP_PORTE_MEMOIRE=1` pour l'allumer, décision du propriétaire) :
+ *   - la clé est celle du trait (`TRAITS.marche(x)`, donc `'BTC'`) ;
+ *   - on ne refuse que si moyenne + 2 erreurs-types < 0 : une espérance
+ *     négative AU-DELÀ du bruit, pas une moyenne qui penche. Il faut
+ *     ~1 200 observations par marché pour voir −0,1 % : elle refusera
+ *     rarement, et c'est voulu ;
+ *   - l'erreur-type vient de la somme des carrés, gardée depuis ce jour
+ *     (`nq`, `sq`, `q`) : les observations d'avant n'ont pas de carré et ne
+ *     comptent pas pour la porte.
+ * Éteinte, elle se MESURE quand même : `memoireAuraitRefuse` compte les
+ * candidats qu'elle aurait écartés. Rend la phrase du refus, ou null. */
+const PORTE_MEMOIRE = String(process.env.PERP_PORTE_MEMOIRE || '0') === '1';
 function marcheRefuse(nom) {
   const c = caseProfil('marche', nom, HORIZON_REF, true);
-  if (c && c.n >= PROFIL_MIN_OBS && c.s / c.n <= 0) return 'market memory: this market loses on average';
-  return null;
+  if (!c || !(c.nq >= PROFIL_MIN_OBS)) return null;
+  const d = moyenneEt(c.nq, c.sq, c.q);
+  if (d.se === null || !(d.moyenne + 2 * d.se < 0)) return null;
+  return 'market memory: this market loses beyond noise';
 }
 function noteProfil(traits, h, r) {
   for (const agent in traits) {
     for (const k in traits[agent]) {
       const c = caseProfil(k, traits[agent][k], h, false);
       c.n++; c.s += r;
+      /* Les carrés, pour l'erreur-type : comptés À PART, depuis le jour où ils
+         existent, pour ne jamais mélanger une somme complète et une somme de
+         carrés partielle. */
+      c.nq = (c.nq || 0) + 1; c.sq = (c.sq || 0) + r; c.q = (c.q || 0) + r * r;
     }
   }
 }
-function noteAudit(cle, r) {
+
+/* ==========================================================================
+ * L'AUDIT, REFAIT LE 27 SEPTEMBRE 2026
+ *
+ * Ce que le rapport du 26 septembre a mesuré sur l'ancien (231 ombres à 4 h) :
+ *   1. la part « ≥ +1,5 % à 4 h » mesure surtout le MÉLANGE DE MARCHÉS :
+ *      P(|r 4 h| ≥ 1,5 %) vaut 5,4 % sur BTC et 31,7 % sur DOGE (10 jours).
+ *      Une règle qui écarte surtout du DOGE paraissait « coûteuse » par
+ *      construction ;
+ *   2. `minObs` = 12 contre ~310 ombres par côté pour son propre seuil de
+ *      verdict (+8 points) ;
+ *   3. la référence était jugée à 4 h fixes, alors que les trades sortent au
+ *      stop, à la cible ou à 12 h : l'audit ne mesurait pas ce que les trades
+ *      rapportent ;
+ *   4. « score below the bar » était attribué à Trend, alors que c'est la
+ *      NOTE ENTIÈRE qui est sous la barre, tous agents compris.
+ *
+ * D'où :
+ *   1. chaque ombre porte le σ à 4 h de SON marché au moment de la décision
+ *      (vol 15 min × √16) ; l'audit garde le rendement en unités de σ
+ *      (`z`), sa moyenne ± erreur-type, et la part z ≥ +1 avec son
+ *      intervalle de Wilson. Le rendement en % reste à côté ;
+ *   2. les minimums viennent du calcul de puissance plus haut ;
+ *   3. l'issue RÉELLE des trades (stop, cible, temps, frais réels) est une
+ *      ligne À PART (`bilan`), jamais mélangée à la référence à 4 h ;
+ *   4. le refus « score below the bar » est rangé sous « Score ».
+ * Ce qui NE bouge PAS : `PROFIL_MIN_OBS` (8) et le jalon de 240 min.
+ * Les anciennes lignes gardent leurs chiffres en % ; leur partie en σ part
+ * de zéro, et la page le dit par son effectif.
+ * ======================================================================== */
+const GAGNE_SIGMA = 1;           /* une montée d'au moins 1 σ à 4 h dans le sens pris */
+function noteAudit(cle, r, z, t0) {
   const A = etat().audit;
   const a = A[cle] || (A[cle] = { n: 0, s: 0, gagnantes: 0, perdantes: 0 });
   a.n++; a.s += r;
+  a.q = (a.q || 0) + r * r;
   if (r >= GAGNE) a.gagnantes++;
   if (r <= PERD) a.perdantes++;
+  if (z !== null && z !== undefined && isFinite(z)) {
+    a.nz = (a.nz || 0) + 1; a.sz = (a.sz || 0) + z; a.qz = (a.qz || 0) + z * z;
+    if (z >= GAGNE_SIGMA) a.gz = (a.gz || 0) + 1;
+    if (z <= -GAGNE_SIGMA) a.pz = (a.pz || 0) + 1;
+    /* La même ombre, rangée dans le créneau de 4 h où elle a été OUVERTE :
+       c'est le groupe de l'erreur-type du verdict. Sans heure d'ouverture,
+       elle n'entre pas dans les groupes, et le verdict ne la compte pas. */
+    if (t0 !== undefined && t0 !== null && isFinite(t0)) groupeAudit(a, Math.floor(t0 / CRENEAU_AUDIT_MS), z >= GAGNE_SIGMA ? 1 : 0, z);
+  }
+}
+
+/* ---- L'ERREUR-TYPE GROUPÉE PAR CRÉNEAU D'OUVERTURE ----
+ * Une ombre est ouverte à t0 et jugée à t0 + 240…324 min (le jalon de 4 h et
+ * sa tolérance de 35 %), donc au plus deux créneaux de 4 h après le sien.
+ * Chaque ligne garde ses créneaux OUVERTS (n, montées ≥ +1 σ, somme des z) et
+ * replie les créneaux clos — plus vieux de 3 que le plus récent vu — dans des
+ * sommes : nombre de créneaux k, Σn², ΣG², ΣG·n, ΣS², ΣS·n, et, contre
+ * « pris », les produits croisés du même créneau. Rien ne grossit avec le
+ * temps, et l'erreur-type est exacte (même formule que `seGroupe`). */
+const CRENEAU_AUDIT_MS = HORIZON_REF * 60000;
+function groupesNeufs() {
+  return { k: 0, n: 0, g: 0, s: 0, nn: 0, gg: 0, gn: 0, ss: 0, sn: 0, ouverts: {},
+           /* avec « pris », créneau par créneau (reste vide pour « pris ») */
+           x: { k: 0, nn: 0, gg: 0, gn: 0, ng: 0, ss: 0, sn: 0, ns: 0 } };
+}
+function groupeAudit(a, b, g, z) {
+  const G = a.grp || (a.grp = groupesNeufs());
+  const o = G.ouverts[b] || (G.ouverts[b] = { n: 0, g: 0, s: 0 });
+  o.n++; o.g += g; o.s += z;
+  G.n++; G.g += g; G.s += z;
+  const T = etat().auditTemps || (etat().auditTemps = { bMax: null });
+  if (T.bMax === null || b > T.bMax) { T.bMax = b; plieAudit(b - 3); }
+}
+/** Replie tous les créneaux ≤ limite : les règles d'abord, « pris » ensuite,
+ *  pour que le créneau de « pris » soit encore là quand une règle s'y croise. */
+function plieAudit(limite) {
+  const A = etat().audit, R = A['pris'] && A['pris'].grp;
+  const cles = Object.keys(A).filter((c) => c !== 'pris' && A[c].grp);
+  if (R) cles.push('pris');
+  for (const c of cles) {
+    const G = A[c].grp;
+    for (const bs of Object.keys(G.ouverts)) {
+      if (Number(bs) > limite) continue;
+      const o = G.ouverts[bs];
+      G.k++; G.nn += o.n * o.n; G.gg += o.g * o.g; G.gn += o.g * o.n; G.ss += o.s * o.s; G.sn += o.s * o.n;
+      const r = c !== 'pris' && R ? R.ouverts[bs] : null;
+      if (r) {
+        const X = G.x;
+        X.k++; X.nn += o.n * r.n; X.gg += o.g * r.g; X.gn += o.g * r.n; X.ng += o.n * r.g;
+        X.ss += o.s * r.s; X.sn += o.s * r.n; X.ns += o.n * r.s;
+      }
+      delete G.ouverts[bs];
+    }
+  }
+}
+/** Les sommes d'une ligne, créneaux clos ET ouverts (sans rien replier). */
+function sommesGroupes(G) {
+  const t = { k: G.k, n: G.n, g: G.g, s: G.s, nn: G.nn, gg: G.gg, gn: G.gn, ss: G.ss, sn: G.sn };
+  for (const bs in G.ouverts) { const o = G.ouverts[bs]; t.k++; t.nn += o.n * o.n; t.gg += o.g * o.g; t.gn += o.g * o.n; t.ss += o.s * o.s; t.sn += o.s * o.n; }
+  return t;
+}
+function croiseGroupes(G, R) {
+  const X = G.x, t = { nn: X.nn, gg: X.gg, gn: X.gn, ng: X.ng, ss: X.ss, sn: X.sn, ns: X.ns };
+  for (const bs in G.ouverts) {
+    const o = G.ouverts[bs], r = R.ouverts[bs];
+    if (!r) continue;
+    t.nn += o.n * r.n; t.gg += o.g * r.g; t.gn += o.g * r.n; t.ng += o.n * r.g; t.ss += o.s * r.s; t.sn += o.s * r.n; t.ns += o.n * r.s;
+  }
+  return t;
+}
+/**
+ * La différence règle − « pris », en parts (≥ +1 σ) et en moyennes (σ), avec
+ * son erreur-type groupée par créneau : Var(a) + Var(r) − 2·Cov(a, r), chaque
+ * terme valant k/(k−1) · Σ_créneaux (S_g − m·n_g)(…) / (n·n'). Null si l'une
+ * des lignes a moins de deux créneaux.
+ */
+function ecartGroupe(a, ref) {
+  if (!a.grp || !ref.grp) return null;
+  const A = sommesGroupes(a.grp), R = sommesGroupes(ref.grp), X = croiseGroupes(a.grp, ref.grp);
+  if (A.k < 2 || R.k < 2 || !A.n || !R.n) return null;
+  const cA = A.k / (A.k - 1), cR = R.k / (R.k - 1), cX = Math.sqrt(cA * cR);
+  const va = (m, SS, Sn, nn, n) => Math.max(0, SS - 2 * m * Sn + m * m * nn) / (n * n);
+  const pa = A.g / A.n, pr = R.g / R.n, ma = A.s / A.n, mr = R.s / R.n;
+  const vP = cA * va(pa, A.gg, A.gn, A.nn, A.n) + cR * va(pr, R.gg, R.gn, R.nn, R.n)
+           - 2 * cX * (X.gg - pr * X.gn - pa * X.ng + pa * pr * X.nn) / (A.n * R.n);
+  const vM = cA * va(ma, A.ss, A.sn, A.nn, A.n) + cR * va(mr, R.ss, R.sn, R.nn, R.n)
+           - 2 * cX * (X.ss - mr * X.sn - ma * X.ns + ma * mr * X.nn) / (A.n * R.n);
+  return { n: A.n, nRef: R.n, groupes: A.k, groupesRef: R.k, pa, pr, ma, mr,
+           seParts: Math.sqrt(Math.max(0, vP)), seMoyennes: Math.sqrt(Math.max(0, vM)) };
+}
+/** La partie en unités de σ d'une ligne : n, moyenne ± se, part z ≥ +1 (Wilson). */
+function ligneSigma(a) {
+  const nz = a.nz || 0;
+  const d = moyenneEt(nz, a.sz || 0, a.qz || 0);
+  const w = wilson(a.gz || 0, nz);
+  return { n: nz, moyenne: r3(d.moyenne), se: r3(d.se),
+           part: nz ? Math.round((a.gz || 0) / nz * 1000) / 10 : null,
+           wilson: w ? [Math.round(w[0] * 1000) / 10, Math.round(w[1] * 1000) / 10] : null };
 }
 /** Ce que la page montre de l audit : par regle, ce que les refuses ont fait. */
 function auditDesRefus() {
@@ -606,27 +923,65 @@ function auditDesRefus() {
   for (const cle in A) {
     const a = A[cle];
     if (a.n < 3) continue;
-    out.push({ cle, n: a.n, moyenne: Math.round(a.s / a.n * 1000) / 1000,
+    const d = a.q !== undefined ? moyenneEt(a.n, a.s, a.q) : { se: null };
+    out.push({ cle, n: a.n, moyenne: Math.round(a.s / a.n * 1000) / 1000, se: r3(d.se),
                gagnantes: a.gagnantes, perdantes: a.perdantes,
-               partGagnantes: Math.round(a.gagnantes / a.n * 100) });
+               partGagnantes: Math.round(a.gagnantes / a.n * 100),
+               sigma: ligneSigma(a) });
   }
-  out.sort((x, y) => y.partGagnantes - x.partGagnantes);
+  out.sort((x, y) => y.n - x.n);
   return out.slice(0, 25);
 }
 /** La reference : ce qu on PREND. Une regle se juge contre elle, pas contre un rond. */
 function reference() {
   const a = etat().audit['pris'];
-  return (a && a.n >= AUDIT_MIN_OBS) ? { n: a.n, partGagnantes: Math.round(a.gagnantes / a.n * 100) } : null;
+  if (!a || a.n < 3) return null;
+  const sg = ligneSigma(a);
+  return { n: a.n, partGagnantes: Math.round(a.gagnantes / a.n * 100), sigma: sg,
+           /* comparable seulement quand la partie en σ a son premier minimum */
+           suffisante: sg.n >= AUDIT_MIN_OBS };
 }
-/** Le verdict d une regle : elle protege, elle coute, ou on ne sait pas encore. */
+/**
+ * Le verdict d une regle : elle protege, elle coute, ou on ne sait pas encore.
+ * Tout se lit en unités de σ, contre la ligne « pris » :
+ *   « costs »    n ≥ AUDIT_MIN_COUTE des deux côtés, part ≥ référence + 8 points
+ *                ET écart de parts significatif (z ≥ 1,96) ;
+ *   « protects » n ≥ AUDIT_MIN_PROTEGE des deux côtés, part ≤ 0,6 × référence
+ *                ET z ≤ −1,96 ;
+ *   « same »     n ≥ AUDIT_MIN_MOYENNE des deux côtés et des moyennes en σ à
+ *                moins de 2 erreurs-types l'une de l'autre ;
+ *   sinon « unknown », avec ce qu'il manque pour le premier verdict possible.
+ */
 function verdictRegle(cle) {
   const a = etat().audit[cle];
-  const ref = reference();
-  if (!a || a.n < AUDIT_MIN_OBS) return { verdict: 'unknown', n: (a && a.n) || 0, manque: AUDIT_MIN_OBS - ((a && a.n) || 0) };
-  const p = Math.round(a.gagnantes / a.n * 100);
-  if (!ref) return { verdict: 'unknown', n: a.n, partGagnantes: p, pourquoi: 'nothing taken yet to compare against' };
-  return { verdict: p >= ref.partGagnantes + 8 ? 'costs' : p <= ref.partGagnantes * 0.6 ? 'protects' : 'same',
-           n: a.n, partGagnantes: p, reference: ref.partGagnantes };
+  const ref = etat().audit['pris'];
+  const sa = a ? ligneSigma(a) : { n: 0 };
+  if (!a || sa.n < AUDIT_MIN_OBS) {
+    return { verdict: 'unknown', n: sa.n, manque: AUDIT_MIN_OBS - sa.n, minObs: AUDIT_MIN_OBS };
+  }
+  const sr = ref ? ligneSigma(ref) : { n: 0 };
+  if (sr.n < AUDIT_MIN_OBS) return { verdict: 'unknown', n: sa.n, part: sa.part, pourquoi: 'the reference has too few observations yet', manqueReference: AUDIT_MIN_OBS - sr.n };
+  /* ---- ERREUR-TYPE GROUPÉE PAR CRÉNEAU D'OUVERTURE (27/09/2026) ----
+     Elle était binomiale i.i.d. (parts) et `moyenneEt` i.i.d. (moyennes) :
+     cinq ombres d'un même tour sur cinq marchés à ρ 0,76 comptaient pour
+     cinq. Le verdict se lit maintenant sur les ombres rangées par créneau
+     (toutes : l'audit en σ est né avec), contre « pris », covariance du même
+     créneau comprise. */
+  const E = ecartGroupe(a, ref);
+  if (!E) return { verdict: 'unknown', n: sa.n, part: sa.part, pourquoi: 'fewer than two 4-hour windows yet' };
+  const pa = E.pa, pr = E.pr;
+  const zP = E.seParts > 0 ? (pa - pr) / E.seParts : 0;
+  const base = { n: E.n, part: sa.part, reference: sr.part, zParts: Math.round(zP * 100) / 100,
+                 seParts: r3(E.seParts), groupes: E.groupes, groupesReference: E.groupesRef };
+  const nMin = Math.min(E.n, E.nRef);
+  if (nMin >= AUDIT_MIN_COUTE && pa >= pr + 0.08 && zP >= Z_ALPHA) return Object.assign({ verdict: 'costs' }, base);
+  if (nMin >= AUDIT_MIN_PROTEGE && pa <= pr * 0.6 && zP <= -Z_ALPHA) return Object.assign({ verdict: 'protects' }, base);
+  if (nMin >= AUDIT_MIN_MOYENNE) {
+    const ecart = E.ma - E.mr, se = E.seMoyennes;
+    if (Math.abs(ecart) <= 2 * se) return Object.assign({ verdict: 'same', ecartSigma: r3(ecart), se: r3(se) }, base);
+  }
+  return Object.assign({ verdict: 'unknown', pourquoi: 'no difference large enough to call yet',
+                         manque: Math.max(0, AUDIT_MIN_MOYENNE - nMin) }, base);
 }
 
 // --------------------------------------------------------------- les ombres
@@ -640,6 +995,11 @@ const OMBRES_MAX = 4000;
 /** Le nom anglais d un agent depuis sa cle — c est ce nom qui va a l ecran. */
 function nomAgent(k) {
   if (!k) return null;
+  /* « score below the bar » n'est le refus d'aucun agent : c'est la NOTE
+     ENTIÈRE, tous agents compris, qui reste sous la barre. Rangé sous Trend
+     jusqu'au 27 septembre 2026 — l'audit accusait un agent d'un refus
+     collectif. La ligne repart donc d'un échantillon vide, sous son vrai nom. */
+  if (k === 'score') return 'Score';
   const a = AGENTS.find((z) => z.key === k);
   return a ? a.nom : k;
 }
@@ -662,7 +1022,12 @@ function noteOmbre(x, sens, refus, quiRefuse, traits) {
      l audit ne verrait plus qu un marche sur cinq. */
   if (S.ombres.some((o) => o.cle === cle && o.sens === sens && o.sym === x.sym
                            && now - o.t < HORIZON_REF * 60000)) return;
-  S.ombres.push({ cle, sens, sym: x.sym, prix0: x.prix, t: now, traits, jalons: {},
+  /* Le σ à 4 h de CE marché, maintenant : c'est l'unité dans laquelle l'audit
+     juge l'ombre, pour qu'un refus sur DOGE ne pèse pas six fois un refus
+     sur BTC. `null` si la volatilité n'est pas lisible : on ne l'invente pas. */
+  const sig = (x.vol15 > 0) ? x.vol15 * Math.sqrt(HORIZON_REF / 15) : null;
+  S.ombres.push({ cle, sens, sym: x.sym, prix0: x.prix, t: now, traits, jalons: {}, sig,
+                  pf: x.periodeFin || periodeFin(x.sym),
                   /* L identifiant de la ligne d observation : c est lui qui
                      relie « ce qu on a vu » a « ce que ca a donne ». Sans ce
                      fil, le journal n est qu une liste de photos. */
@@ -676,10 +1041,10 @@ function noteOmbre(x, sens, refus, quiRefuse, traits) {
  * est positif coute ; tenir un short rapporte. Une ombre jugee sur le seul
  * mouvement du prix surestimerait donc tous les longs dans un marche haussier
  * — exactement le biais que la colonie de jetons a paye en argent reel. */
-const PERIODE_FIN_MIN = 480;
-function coutFinancement(sens, taux, minutes) {
+const PERIODE_FIN_MIN = 480;     /* le défaut ; la vraie période vient de `periodeFin(sym)` */
+function coutFinancement(sens, taux, minutes, periode) {
   if (taux === null || taux === undefined || !isFinite(taux)) return 0;
-  const periodes = minutes / PERIODE_FIN_MIN;
+  const periodes = minutes / (periode > 0 ? periode : PERIODE_FIN_MIN);
   return -sens * taux * 100 * periodes;      /* en points de pourcentage */
 }
 
@@ -697,7 +1062,8 @@ function regleLesOmbres(lus) {
        jugee au prix d un autre instrument. */
     if (!x || !(x.prix > 0)) return age <= dernier + Math.max(5, dernier * 0.35);
     const brut = (x.prix - o.prix0) / o.prix0 * 100 * o.sens;
-    const r = Math.round((brut + coutFinancement(o.sens, o.fin0, age)) * 1000) / 1000;
+    const fc = coutFinancement(o.sens, o.fin0, age, o.pf);
+    const r = Math.round((brut + fc) * 1000) / 1000;
     for (const h of HORIZONS) {
       if (o.jalons[h] !== undefined) continue;
       /* Une echeance ratee reste vide : un jalon pris au mauvais moment n est
@@ -710,9 +1076,9 @@ function regleLesOmbres(lus) {
          la moitie du journal qui manque a un simple releve de marche. */
       journal.noteResultat({ id: o.oid, t: now, sym: o.sym, sens: o.sens, horizon: h,
                              rendement: r, brut: Math.round(brut * 1000) / 1000,
-                             financement: Math.round(coutFinancement(o.sens, o.fin0, age) * 1000) / 1000,
-                             cle: o.cle });
-      if (h === HORIZON_REF) { noteAudit(o.cle, r); compte('ombresJugees'); n++; }
+                             financement: Math.round(fc * 1000) / 1000,
+                             cle: o.cle, z: o.sig ? Math.round(r / o.sig * 1000) / 1000 : null });
+      if (h === HORIZON_REF) { noteAudit(o.cle, r, o.sig ? r / o.sig : null, o.t); compte('ombresJugees'); n++; }
     }
     return age <= dernier + Math.max(5, dernier * 0.35);
   });
@@ -777,7 +1143,10 @@ const FAMINE_TOURS = Math.max(1, Number(process.env.PERP_FAMINE_TOURS || 12));
  * un edge positif au lieu de multiplier une perte. Exposition max = 5 x 10 % =
  * 50 % du capital partage ; reglable par `PERP_POSITIONS_MAX`. Le compteur
  * reste : si couvrir les cinq fait souffrir le papier, on redescend, avec le
- * chiffre qui l aura decide. */
+ * chiffre qui l aura decide.
+ * Relu le 26 septembre 2026 : ce « +0,070 % » comptait des entrees qui se
+ * chevauchent. Sans chevauchement (31 jours, n = 330), la note fait +0,030 %
+ * brut et −0,075 ± 0,068 net aux frais reels : l avantage n est pas mesure. */
 const POSITIONS_MAX = Math.max(1, Number(process.env.PERP_POSITIONS_MAX || 5));
 
 /* ---- AU PLUS DEUX POSITIONS DANS LE MEME SENS (26 septembre 2026) ----
@@ -798,26 +1167,63 @@ const POSITIONS_MAX = Math.max(1, Number(process.env.PERP_POSITIONS_MAX || 5));
 const MEME_SENS_MAX = Math.max(1, Number(process.env.PERP_MEME_SENS_MAX || 2));
 
 /* ---- LA GEOMETRIE DE SORTIE : stop et cible, en ecarts-types de volatilite ----
- * Le stop est passe de 3σ a 4σ le 22 septembre 2026 ; la cible passe de 5σ a 6σ
- * le 23 septembre 2026, MESURE NET. `perp_edge.js` rejoue la tendance sur 31 j de
- * vraies bougies Bitget (n=13 923) et, desormais, NET des frais aller-retour
- * Bitget ET du financement REEL lu sur l historique. Net par trade :
- *   stop 4σ / cible 5σ (avant)   +0,126 % brut   +0,086 % net maker   +0,006 % net taker
- *   stop 4σ / cible 6σ (apres)   +0,150 % brut   +0,110 % net maker   +0,030 % net taker
- * On avait garde 5σ par peur du financement d une tenue plus longue ; cette peur
- * est MESUREE et fausse : le financement moyen par trade est ~0 (la strategie
- * prend longs ET shorts, les taux s annulent). 4σ/6σ domine donc en net, et c est
- * la seule geometrie net-positive meme en taker. Reglable si l audit dit mieux. */
+ * Le stop est passe de 3σ a 4σ le 22 septembre 2026 ; la cible de 5σ a 6σ le
+ * 23 septembre, sur `perp_edge.js` (`trend` seul, n = 13 923 entrees qui se
+ * chevauchent) :
+ *   stop 4σ / cible 5σ   +0,126 % brut   +0,086 % net maker   +0,006 % net taker
+ *   stop 4σ / cible 6σ   +0,150 % brut   +0,110 % net maker   +0,030 % net taker
+ * ---- RELU LE 26 SEPTEMBRE 2026 : AUCUN DE CES CHIFFRES N ETAIT UN AVANTAGE ----
+ * Groupe par jour, l erreur-type du « +0,110 » vaut 0,074 (t ≈ 1,1). La regle
+ * EN SERVICE (note entiere, vetos, creneaux), rejouee sans chevauchement sur
+ * 31 jours de bougies Bitget, n = 330 : brut +0,030 %, net frais reels
+ * −0,075 ± 0,068. Balayage 2σ/3σ, 3σ/5σ, 4σ/6σ, 4σ/8σ, 6σ/9σ, 8σ/12σ : brut
+ * entre +0,005 et +0,071, AUCUN net positif aux frais reels. La geometrie
+ * n est pas le levier ; 4σ/6σ reste parce qu aucune autre ne fait mieux. Tout
+ * changement passe par `outils/perp_rejeu.js` (porte obligatoire).
+ *
+ * ---- LE REJEU LONG, 27 SEPTEMBRE 2026 (24 mois, 5 marches, 72 580 bougies
+ * 15 min chacun, aucune manquante ; frais reels ; garde = 3 derniers mois) ----
+ *                     ancien (reglage)                    garde (jugement)
+ *   service 4σ/6σ    n=7 200  −0,083 ± 0,021 [−0,124 ; −0,043]   n=1 052  −0,069 ± 0,038
+ *   3σ/5σ            n=9 567  −0,081 ± 0,015                     n=1 447  −0,055 ± 0,030
+ *   4σ/8σ            n=6 251  −0,073 ± 0,024                     n=899    −0,046 ± 0,046
+ *   6σ/9σ            n=4 989  −0,065 ± 0,030                     n=736    −0,002 ± 0,061
+ *   Funding muet     n=6 941  −0,068 ± 0,022                     n=1 000  −0,026 ± 0,044
+ * (net par trade aux frais reels, %, erreur-type groupee par jour.) Brut entre
+ * +0,020 et +0,105 partout : la note n a pas d avantage de direction qui
+ * paie ~0,10 % de frais. 6σ/9σ, choisie sur l ancien, ne conclut pas sur la
+ * garde (borne basse −0,122) : 5 variantes essayees, AUCUN changement. Sur
+ * 24 mois la regle en service PERD, et la borne haute de l ancien (−0,043)
+ * le dit au-dela du bruit. Garde de 6 mois : n=2 153, −0,095 ± 0,028. */
 const STOP_VOL = Math.max(0.5, Number(process.env.PERP_STOP_VOL || 4.0));
 const CIBLE_VOL = Math.max(0.5, Number(process.env.PERP_CIBLE_VOL || 6.0));
 const TENUE_MAX_MIN = 720;
 const LEVIER = 1;                 /* PAPIER, et sans levier : voir l en-tete */
-/* Le frais aller-retour maker Bitget (0,02 %/cote × 2), retire du rendement de
- * chaque position papier comme le financement : sans lui, le papier gagnerait
- * et le reel perdrait — l erreur exacte que la colonie de jetons a payee. Le
- * mesure du 23/09/2026 est faite au maker : c est l execution visee (ordres
- * limites), reglable via PERP_FRAIS si l on bascule taker (0,12 %). */
-const FRAIS_AR = Math.max(0, Number(process.env.PERP_FRAIS || 0.04));
+
+/* ---- LES FRAIS, PAR TYPE D ORDRE (27 septembre 2026) ----
+ * Le papier comptait 0,04 % aller-retour, soit MAKER des deux cotes. Or
+ * l entree se fait au dernier prix (ordre au marche : taker), le stop est un
+ * stop-market (taker), la sortie au temps est au marche (taker) ; seule la
+ * cible peut etre un ordre limite pose (maker). Grille Bitget USDT-M VIP 0,
+ * lue sur `/contracts` le 26/09/2026 pour les 805 contrats : maker 0,02 %,
+ * taker 0,06 % par cote. Aller-retour reel : 0,12 % au stop et au temps,
+ * 0,08 % a la cible. Recalcule sur les 40 trades visibles du 26/09 :
+ * −0,377 → −0,449 % par trade. Le tresor affiche baisse d autant : c est le
+ * papier qui cesse d etre optimiste, pas la colonie qui empire.
+ *
+ * `PERP_FRAIS` garde son sens : un aller-retour FORFAITAIRE applique a tous
+ * les trades. Pose, il prime (c est le reglage d avant) ; absent, les frais
+ * suivent le type d ordre (`PERP_FRAIS_TAKER`, `PERP_FRAIS_MAKER`, par cote). */
+const FRAIS_TAKER = Math.max(0, Number(process.env.PERP_FRAIS_TAKER || 0.06));
+const FRAIS_MAKER = Math.max(0, Number(process.env.PERP_FRAIS_MAKER || 0.02));
+const FRAIS_FORFAIT = (process.env.PERP_FRAIS !== undefined && String(process.env.PERP_FRAIS).trim() !== '')
+  ? Math.max(0, Number(process.env.PERP_FRAIS)) : null;
+/** Les frais REELS d un aller-retour selon la sortie : ce qu un compte paierait. */
+function fraisReels(pourquoi) { return FRAIS_TAKER + (pourquoi === 'target' ? FRAIS_MAKER : FRAIS_TAKER); }
+/** Les frais que le papier preleve : le forfait s il est pose, sinon les reels. */
+function fraisAR(pourquoi) { return FRAIS_FORFAIT !== null ? FRAIS_FORFAIT : fraisReels(pourquoi); }
+/* L ancien nom, garde pour qui le lit : l aller-retour d une sortie au marche. */
+const FRAIS_AR = fraisAR('stop');
 
 function ouvre(x, sens, an) {
   const S = etat();
@@ -829,7 +1235,9 @@ function ouvre(x, sens, an) {
     sym: x.sym, sens, prix0: x.prix, t: Date.now(), mise, levier: LEVIER,
     stop: x.prix * (1 - sens * STOP_VOL * v / 100),
     cible: x.prix * (1 + sens * CIBLE_VOL * v / 100),
-    fin0: x.financement, score: an.score, traits: an.traits,
+    fin0: x.financement, pf: x.periodeFin || periodeFin(x.sym), score: an.score, traits: an.traits,
+    /* le detail de la note a l entree : sans lui, aucun P/L par agent */
+    dit: (an.dit || []).map((d) => [d.agent, d.v !== undefined ? d.v : d.points]),
     vol: v, jusqua: Date.now() + TENUE_MAX_MIN * 60000,
   };
   S.positions.push(p);
@@ -841,24 +1249,54 @@ function ouvre(x, sens, an) {
   return p;
 }
 
-function ferme(p, prix, pourquoi) {
+/** Ajoute un trade ferme au bilan : tout, sans jamais tronquer. */
+function ajouteBilan(B, c) {
+  const r = c.r, rR = c.rReel !== undefined ? c.rReel : c.r;
+  B.n++; if (r > 0) B.gagnants++;
+  B.s += r; B.q += r * r; B.sR += rR; B.qR += rR * rR;
+  const k = c.pourquoi || '?';
+  const o = B.parSortie[k] || (B.parSortie[k] = { n: 0, s: 0, sR: 0 });
+  o.n++; o.s += r; o.sR += rR;
+  const j = new Date(c.t || Date.now()).toISOString().slice(0, 10);
+  const d = B.jours[j] || (B.jours[j] = { n: 0, s: 0, sR: 0 });
+  d.n++; d.s += r; d.sR += rR;
+}
+/** Le net aux frais reels d une ligne de carnet, meme ancienne (frais maker). */
+function rReelDe(c) {
+  if (typeof c.rReel === 'number') return c.rReel;
+  if (typeof c.brut !== 'number') return c.r;
+  return Math.round((c.brut + (c.financement || 0) - fraisReels(c.pourquoi)) * 1000) / 1000;
+}
+function rebatitBilan(S) {
+  S.bilan = bilanNeuf();
+  for (const c of S.carnet.slice().reverse()) ajouteBilan(S.bilan, Object.assign({}, c, { rReel: rReelDe(c) }));
+  S.bilan.manquants = Math.max(0, (S.trades || 0) - S.carnet.length);
+}
+
+function ferme(p, prix, pourquoi, quand) {
   const S = etat();
-  const minutes = (Date.now() - p.t) / 60000;
+  const tFin = quand || Date.now();
+  const minutes = (tFin - p.t) / 60000;
   const brut = (prix - p.prix0) / p.prix0 * 100 * p.sens;
-  const fin = coutFinancement(p.sens, p.fin0, minutes);
+  const fin = coutFinancement(p.sens, p.fin0, minutes, p.pf);
   /* Le rendement papier est NET : mouvement du prix, moins le financement paye,
-     moins le frais aller-retour. C est ce que le reel encaisserait vraiment. */
-  const r = Math.round((brut + fin - FRAIS_AR) * 1000) / 1000;
+     moins les frais de CET aller-retour. C est ce que le reel encaisserait. */
+  const frais = fraisAR(pourquoi);
+  const r = Math.round((brut + fin - frais) * 1000) / 1000;
+  const rReel = Math.round((brut + fin - fraisReels(pourquoi)) * 1000) / 1000;
   const gain = Math.round(p.mise * r / 100 * 100) / 100;
   S.tresor = Math.round((S.tresor + gain) * 100) / 100;
   S.trades++; S.gains += gain;
   if (r > S.meilleur) S.meilleur = r;
   S.financement.n++; S.financement.total += fin;
-  S.carnet.unshift({ sym: p.sym, soupape: !!p.soupape,
-                     sens: p.sens, prix0: p.prix0, prix, r, brut: Math.round(brut * 1000) / 1000,
-                     financement: Math.round(fin * 1000) / 1000, frais: FRAIS_AR, gain, minutes: Math.round(minutes),
-                     pourquoi, t: Date.now() });
+  const ligne = { sym: p.sym, soupape: !!p.soupape,
+                  sens: p.sens, prix0: p.prix0, prix, r, rReel, brut: Math.round(brut * 1000) / 1000,
+                  financement: Math.round(fin * 1000) / 1000, frais, gain, minutes: Math.round(minutes),
+                  pourquoi, t: tFin, ouvert: p.t, dit: p.dit || null, score: p.score };
+  S.carnet.unshift(ligne);
   if (S.carnet.length > 200) S.carnet.length = 200;
+  if (!S.bilan) S.bilan = bilanNeuf();
+  ajouteBilan(S.bilan, ligne);
   S.positions = S.positions.filter((q) => q !== p);
   S.flux.unshift({ t: Date.now(), sym: p.sym,
                    quoi: 'CLOSED ' + String(p.sym).replace(/USDT$/, '') + ' ' + r.toFixed(2) + '% · ' + pourquoi });
@@ -867,10 +1305,45 @@ function ferme(p, prix, pourquoi) {
   return r;
 }
 
-/** Chaque position est surveillee au prix de SON marche. */
-function surveille(lus) {
+/**
+ * Parcourt les bougies FINES d une position (1 min en service, 15 min au
+ * rejeu) depuis son dernier controle. Rend {prix, pourquoi, t} si une
+ * barriere est touchee, ou si la tenue est echue, sinon null.
+ *   - une bougie qui COMMENCE avant l entree est ignoree : ses extremes
+ *     peuvent dater d avant la position ;
+ *   - stop et cible dans la meme bougie : le stop d abord (prudent, on ne sait
+ *     pas l ordre) ;
+ *   - une bougie qui OUVRE au-dela du stop le prend a son ouverture (un
+ *     stop-market glisse) ; au-dela de la cible, a la cible (un ordre limite
+ *     pose ne s execute pas mieux que son prix) ;
+ *   - la tenue echue : sortie au dernier cours avant l echeance.
+ */
+function parcoursFin(p, fines) {
+  for (const c of fines) {
+    if (!(c.t >= p.t) || c.h === null || c.b === null) continue;
+    /* L echeance : le dernier cours vu AVANT elle (`vuC`, garde d un tour a
+       l autre). Sans cours vu, on laisse le dernier prix decider. */
+    if (c.t >= p.jusqua) return (p.vuC > 0) ? { prix: p.vuC, pourquoi: 'time', t: p.jusqua } : null;
+    p.vu = c.t;
+    if (p.sens > 0 ? c.b <= p.stop : c.h >= p.stop) {
+      const px = (c.o !== null && (p.sens > 0 ? c.o < p.stop : c.o > p.stop)) ? c.o : p.stop;
+      return { prix: px, pourquoi: 'stop', t: c.t };
+    }
+    if (p.sens > 0 ? c.h >= p.cible : c.b <= p.cible) return { prix: p.cible, pourquoi: 'target', t: c.t };
+    p.vuC = c.c;
+  }
+  return null;
+}
+
+/** Chaque position est surveillee au prix de SON marche, et sur ses bougies fines quand on les a. */
+function surveille(lus, fines) {
   const S = etat();
   for (const p of S.positions.slice()) {
+    const f = fines && fines[p.sym];
+    if (f && f.length) {
+      const res = parcoursFin(p, f);
+      if (res) { ferme(p, res.prix, res.pourquoi, res.t); compte('sortiesFines'); continue; }
+    }
     const x = lus[p.sym];
     if (!x || !(x.prix > 0)) continue;
     if (p.sens > 0 ? x.prix <= p.stop : x.prix >= p.stop) { ferme(p, p.stop, 'stop'); continue; }
@@ -884,6 +1357,9 @@ function surveille(lus) {
 /**
  * UN tour, TOUS les marches. `opts.marches` ({symbole: marche}) remplace la
  * lecture pour un banc ; `opts.prendre` remplace `fetch` dans les essais.
+ * Pour un banc (le rejeu, les essais) : `opts.fines` ({symbole: bougies})
+ * remplace la lecture des bougies fines, `opts.muets` fait taire des agents
+ * dans la note, `opts.sansSauver` evite d ecrire l etat a chaque tour.
  */
 async function tour(opts) {
   const o = opts || {};
@@ -919,9 +1395,17 @@ async function tour(opts) {
      tour, parce que les quatre autres ont bien ete lus. */
   S.derniereErreur = rates.length ? rates.join(' · ').slice(0, 160) : null;
   S.tours++; S.maj = Date.now();
+  /* La periode de financement de chaque contrat : une lecture par jour. */
+  if (!o.marches) await litPeriodes(Object.keys(lus), o.prendre);
+  for (const sym of Object.keys(lus)) {
+    const m = o.marches ? o.marches[sym] : null;
+    lus[sym].periodeFin = (m && m.periodeFin > 0) ? m.periodeFin : periodeFin(sym);
+  }
 
   regleLesOmbres(lus);
-  surveille(lus);
+  /* Les bougies d une minute des positions ouvertes : un appel par position. */
+  const fines = o.marches ? (o.fines || null) : await litFines(S.positions, o.prendre);
+  surveille(lus, fines);
 
   /* Les deux sens sont examines separement, sur chaque marche : un refus de
      long et un refus de short ne disent pas la meme chose, et chacun merite
@@ -946,8 +1430,9 @@ async function tour(opts) {
           if (r) { refus = r; qui = a.key; break; }
         }
       }
-      const an = note(x, sens);
-      if (!refus && an.score < S.seuil) { refus = 'score below the bar'; qui = 'tendance'; }
+      const an = note(x, sens, o.muets);
+      /* Sous la barre, c est la NOTE qui refuse, pas Trend : voir `nomAgent`. */
+      if (!refus && an.score < S.seuil) { refus = 'score below the bar'; qui = 'score'; }
       verdicts.push({ sym, sens, refus, qui, securite, score: an.score, an });
     }
   }
@@ -967,8 +1452,12 @@ async function tour(opts) {
      bas, donc il continue d'apprendre, et la soupape peut passer outre. */
   for (const v of verdicts) {
     if (v.refus) continue;
-    const r = marcheRefuse((lus[v.sym] && lus[v.sym].nom) || v.sym);
-    if (r) { v.refus = r; v.qui = 'Memory'; }
+    /* La cle est celle du TRAIT (`'BTC'`), plus le symbole (`'BTCUSDT'`) :
+       c etait le code mort. Eteinte, la porte ne refuse rien mais compte ce
+       qu elle aurait refuse — voir `marcheRefuse`. */
+    const r = marcheRefuse(TRAITS.marche(lus[v.sym]));
+    if (r && PORTE_MEMOIRE) { v.refus = r; v.qui = 'Memory'; }
+    else if (r) compte('memoireAuraitRefuse');
   }
   /* L'exposition dans un sens : voir MEME_SENS_MAX. Apres les avis de
      direction, pour ne compter que les candidats qui seraient pris. */
@@ -1040,7 +1529,7 @@ async function tour(opts) {
     compte('plafondPositions');
   }
 
-  sauve();
+  if (!o.sansSauver) sauve();
   return { etat: 'ok', marches: Object.keys(lus), rates,
            verdicts: verdicts.map((v) => ({ sym: v.sym, sens: v.sens, score: v.score, refus: v.refus })),
            ouvert: S.positions.length, tresor: S.tresor };
@@ -1062,8 +1551,10 @@ function soupapeBilan() {
   const fini = (d) => d.n ? { n: d.n, moyenne: Math.round(d.somme / d.n * 1000) / 1000,
                               partGagnantes: Math.round(d.gagnantes / d.n * 100) } : { n: 0, moyenne: null, partGagnantes: null };
   const a = fini(g.soupape), b = fini(g.colonie);
-  return { soupape: a, colonie: b, tours: FAMINE_TOURS,
-           comparable: a.n >= AUDIT_MIN_OBS && b.n >= AUDIT_MIN_OBS,
+  /* Comparable : deux groupes de trades, un ecart de 0,30 % a voir a 80 % —
+     `TRADES_COMPARABLES` par groupe (calcul de puissance, pas un rond). */
+  return { soupape: a, colonie: b, tours: FAMINE_TOURS, minTrades: TRADES_COMPARABLES,
+           comparable: a.n >= TRADES_COMPARABLES && b.n >= TRADES_COMPARABLES,
            disette: S.disette || 0, prises: S.compteurs.soupape || 0 };
 }
 
@@ -1103,6 +1594,32 @@ function parMarche() {
   }).sort((a, b) => b.n - a.n || b.obs - a.obs);
 }
 
+/* ---- LE BILAN DES TRADES, AVEC CE QU IL PEUT DIRE ----
+ * n, gagnants et leur intervalle de Wilson, net ± erreur-type GROUPEE PAR
+ * JOUR (les cinq cryptos bougent ensemble : correlation a 4 h ρ = 0,76,
+ * mesuree le 26/09 — des trades du meme jour ne sont pas independants), le
+ * meme net aux frais reels, et `jugeable` seulement a `TRADES_JUGEABLES`. */
+function seGroupe(jours, cle, n, moyenne) {
+  if (!n || moyenne === null) return null;
+  let v = 0, k = 0;
+  for (const j in jours) { const d = jours[j]; const e = d[cle] - moyenne * d.n; v += e * e; k++; }
+  if (k < 2) return null;
+  return Math.sqrt(v * k / (k - 1)) / n;
+}
+function bilanVue() {
+  const B = etat().bilan || bilanNeuf();
+  const m = B.n ? B.s / B.n : null, mR = B.n ? B.sR / B.n : null;
+  const w = wilson(B.gagnants, B.n);
+  const parSortie = {};
+  for (const k in B.parSortie) { const o = B.parSortie[k]; parSortie[k] = { n: o.n, moyenne: r3(o.s / o.n), moyenneReel: r3(o.sR / o.n) }; }
+  const se = seGroupe(B.jours, 's', B.n, m), seR = seGroupe(B.jours, 'sR', B.n, mR);
+  return { n: B.n, gagnants: B.gagnants, part: B.n ? Math.round(B.gagnants / B.n * 1000) / 10 : null,
+           wilson: w ? [Math.round(w[0] * 1000) / 10, Math.round(w[1] * 1000) / 10] : null,
+           net: r3(m), se: r3(se), netReel: r3(mR), seReel: r3(seR),
+           jours: Object.keys(B.jours).length, seuil: TRADES_JUGEABLES,
+           jugeable: B.n >= TRADES_JUGEABLES, manquants: B.manquants || 0, parSortie };
+}
+
 /** Ce que la page lit. Aucune cle, aucun secret : il n y en a pas ici. */
 function vue() {
   const S = etat();
@@ -1113,7 +1630,14 @@ function vue() {
     marches: SYMBOLES, tresor: Math.round(S.tresor * 100) / 100, depart: S.depart,
     profit: Math.round((S.tresor - S.depart) * 100) / 100,
     trades: S.trades, meilleur: S.meilleur,
-    partGagnantes: S.carnet.length ? Math.round(S.carnet.filter((c) => c.r > 0).length / S.carnet.length * 100) : null,
+    /* Le taux de gain vient du BILAN (tous les trades, jamais tronqué), pas du
+       carnet (200 lignes) : la page l'écrivait « on <trades> » alors qu'il
+       portait sur les 200 derniers — le 27/09, 300 trades dont les 100
+       premiers gagnants : « 0% on 300 · 95% CI 28–39% », un n faux et un
+       intervalle qui ne contenait pas le chiffre. Son n est `bilan.n`, son
+       intervalle `bilan.wilson` ; si le bilan a été rebâti depuis le carnet
+       (`manquants` > 0), ce sont les `bilan.n` trades les plus récents. */
+    partGagnantes: (S.bilan && S.bilan.n) ? Math.round(S.bilan.gagnants / S.bilan.n * 100) : null,
     /* Ce que le financement a coute en tout : la ligne qu on regarde quand le
        papier a l air bon. */
     financement: { n: f.n, total: Math.round(f.total * 1000) / 1000,
@@ -1130,9 +1654,10 @@ function vue() {
       if (prix !== null) {
         const minutes = (Date.now() - p.t) / 60000;
         brut = Math.round((prix - p.prix0) / p.prix0 * 100 * p.sens * 1000) / 1000;
-        fin = Math.round(coutFinancement(p.sens, p.fin0, minutes) * 1000) / 1000;
-        /* Net des DEUX couts, comme a la fermeture : financement + frais AR. */
-        net = Math.round((brut + fin - FRAIS_AR) * 1000) / 1000;
+        fin = Math.round(coutFinancement(p.sens, p.fin0, minutes, p.pf) * 1000) / 1000;
+        /* Net des DEUX couts, comme a la fermeture : financement + frais d une
+           sortie AU MARCHE maintenant (taker des deux cotes). */
+        net = Math.round((brut + fin - fraisAR('time')) * 1000) / 1000;
         gain = Math.round(p.mise * net / 100 * 100) / 100;
       }
       return { sym: p.sym, nom: String(p.sym || '').replace(/USDT$/, ''),
@@ -1141,7 +1666,11 @@ function vue() {
                brut, financement: fin, net, gain,
                score: p.score, depuis: p.t };
     }),
-    carnet: S.carnet.slice(0, 40),
+    /* Le carnet ENTIER (200 lignes au plus) : il n en servait que 40, et les
+       premiers trades n etaient plus relisibles de l exterieur (26/09/2026).
+       Chaque ligne porte son net aux frais REELS, meme les anciennes. */
+    carnet: S.carnet.map((c) => Object.assign({}, c, { rReel: rReelDe(c) })),
+    bilan: bilanVue(),
     parMarche: parMarche(),
     soupape: soupapeBilan(), positionsMax: POSITIONS_MAX, memeSensMax: MEME_SENS_MAX, fondMur: FOND_MUR,
     agents: AGENTS.map((x) => ({ key: x.key, nom: x.nom, emoji: x.emoji, role: x.role, quoi: x.quoi, traits: x.traits })),
@@ -1153,6 +1682,10 @@ function vue() {
        « comment gagne-t-on sur la duree » a seulement de quoi etre posee. */
     journal: journal.etat(),
     horizons: HORIZONS, horizonRef: HORIZON_REF, minObs: AUDIT_MIN_OBS, profilMinObs: PROFIL_MIN_OBS,
+    minObsAudit: { coute: AUDIT_MIN_COUTE, protege: AUDIT_MIN_PROTEGE, moyenne: AUDIT_MIN_MOYENNE },
+    frais: { taker: FRAIS_TAKER, maker: FRAIS_MAKER, forfait: FRAIS_FORFAIT },
+    porteMemoire: PORTE_MEMOIRE,
+    periodesFin: Object.keys(S.periodesFin || {}).reduce((o, k) => { o[k] = S.periodesFin[k].min; return o; }, {}),
     gagne: GAGNE, perd: PERD, seuil: S.seuil,
     flux: S.flux.slice(0, 20),
     compteurs: S.compteurs,
@@ -1186,9 +1719,14 @@ module.exports = {
   AUDIT_MIN_OBS, PROFIL_MIN_OBS, PERIODE_FIN_MIN, FAMINE_TOURS, VETOS_SECURITE,
   POSITIONS_MAX, MEME_SENS_MAX, FOND_MUR,
   charge, etat, etatNeuf, vue, tour, demarre, litMarche,
-  mesures, traitsDe, note, noteOmbre, regleLesOmbres, noteAudit, auditDesRefus,
+  mesures, traitsDe, note, noteOmbre, regleLesOmbres, noteAudit, ecartGroupe, CRENEAU_AUDIT_MS, auditDesRefus,
   reference, verdictRegle, coutFinancement, ouvre, ferme, surveille,
   parMarche, soupapeBilan, caseProfil, noteProfil, marcheRefuse,
   volatilite, position, ema,
+  /* 27 septembre 2026 : frais par ordre, periodes, bougies fines, audit en σ, bilan */
+  FRAIS_TAKER, FRAIS_MAKER, FRAIS_FORFAIT, FRAIS_AR, fraisAR, fraisReels, rReelDe,
+  periodeFin, litPeriodes, litFines, parcoursFin, bilanVue, rebatitBilan, ligneSigma, wilson, moyenneEt,
+  AUDIT_MIN_COUTE, AUDIT_MIN_PROTEGE, AUDIT_MIN_MOYENNE, TRADES_JUGEABLES, TRADES_COMPARABLES,
+  nDeuxParts, nDeuxMoyennes, PORTE_MEMOIRE, STOP_VOL, CIBLE_VOL, TENUE_MAX_MIN, bougies,
   _pose: (e) => { E = e; },
 };

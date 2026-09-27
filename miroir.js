@@ -1800,22 +1800,132 @@ async function rattrapeFile(papier) {
 }
 function surVente(t) { return enFile(() => venteFile(t)); }
 
+/* ==================== POURQUOI LE MIROIR NE SUIT PAS ====================
+ *
+ * Rapport du 27 septembre 2026 : du 23/09 17:53 au 26/09 11:43, 12 achats
+ * papier envoyes au miroir, UN seul suivi en reel (TELEPAD, +37,4 %). Et la
+ * raison de chacun des onze autres s'etait perdue dans le journal de chaque
+ * portefeuille (60 lignes, puis effacees) : impossible de dire si c'etait le
+ * solde, le gaz, le retour minimum ou une route que le miroir ne sait pas
+ * prendre. Dix des onze n'avaient eu AUCUN devis de la colonie.
+ *
+ * Ce bloc ne decide rien. Il COMPTE, pour chaque achat envoye, ce que chaque
+ * portefeuille en a fait — et il le garde sur disque, avec le registre, pour
+ * qu'un redemarrage n'efface pas la mesure (la lecon de l'audit des tranches
+ * d'age, meme rapport, proposition 2). Aucun seuil ne bouge : ni RETOUR_MIN,
+ * ni la garde du gaz, ni le plancher d'ordre.
+ *
+ *   sansPortefeuille   aucun miroir en marche au moment de l'achat (par envoi)
+ *   dejaTenu           ce portefeuille tient deja le jeton
+ *   solde              pas de mise possible apres la reserve de gaz
+ *   gaz                le gaz de l'aller-retour depasse la part permise
+ *   retourMin          la vente immediate rendrait moins que RETOUR_MIN
+ *   echecAchat         une exception : aucune place (route manquante) ou autre
+ *   suivi              le portefeuille a achete
+ *
+ * `sansDevis` : l'achat papier n'avait pas d'aller-retour chiffre par la
+ * colonie (quoteur muet, delai, aucune place). On compte combien de ceux-la
+ * ont quand meme ete suivis : ce sont des achats qui ont echappe au Cobaye et
+ * au plafond de 4 %. La mesure le dit ; la decision de les bloquer ou de
+ * reparer la route appartient au proprietaire (rapport, section 6). */
+const SUIVI_RECENTS_MAX = 300;
+const SUIVI_RAISONS = ['sansPortefeuille', 'dejaTenu', 'solde', 'gaz', 'retourMin', 'echecAchat', 'suivi'];
+/** Ce que dit une exception d'achat : une route manquante n'a pas le meme
+ *  remede qu'une transaction refusee. */
+function motifEchecAchat(e) {
+  const m = String((e && (e.reason || e.message)) || e || '');
+  if (/no venue answers|no pool against ETH|neither a v2 pair nor a v3 pool|no ETH bridge|not ETH\b|quoted in \w+, not ETH/i.test(m))
+    return 'aucunePlace';
+  return 'autre';
+}
+function registreSuivi() {
+  if (!R.suivi || typeof R.suivi !== 'object') {
+    R.suivi = { depuis: Date.now(), envois: 0, suivis: 0, sansDevis: 0, sansDevisSuivis: 0,
+                raisons: {}, echecs: {}, recents: [] };
+  }
+  const S = R.suivi;
+  if (!S.raisons) S.raisons = {};
+  if (!S.echecs) S.echecs = {};
+  if (!Array.isArray(S.recents)) S.recents = [];
+  return S;
+}
+function noteEnvoi(t) {
+  const S = registreSuivi();
+  const e = { t: Date.now(), sym: t.sym || null, adr: norm(t.adr), sansDevis: !!t.sansDevis,
+              devisMotif: t.devisMotif || null, raisons: {}, suivis: 0, echec: null };
+  S.envois++;
+  if (e.sansDevis) S.sansDevis++;
+  S.recents.unshift(e);
+  if (S.recents.length > SUIVI_RECENTS_MAX) S.recents.length = SUIVI_RECENTS_MAX;
+  return e;
+}
+function noteRaison(e, raison, detail) {
+  const S = registreSuivi();
+  S.raisons[raison] = (S.raisons[raison] || 0) + 1;
+  e.raisons[raison] = (e.raisons[raison] || 0) + 1;
+  if (raison === 'echecAchat') {
+    const motif = motifEchecAchat(detail);
+    S.echecs[motif] = (S.echecs[motif] || 0) + 1;
+    e.echec = { motif, txt: resume(detail).slice(0, 200) };
+  }
+}
+function finEnvoi(e) {
+  const S = registreSuivi();
+  if (e.suivis > 0) {
+    S.suivis++;
+    if (e.sansDevis) S.sansDevisSuivis++;
+  }
+}
+/** Ce que la colonie (et la page) lisent : le cumul depuis `depuis`, et la
+ *  meme chose sur les 24 dernieres heures — c'est la fenetre de l'alerte. */
+function suiviStats(maintenant) {
+  const S = registreSuivi();
+  const now = maintenant || Date.now();
+  const jour = { envois: 0, suivis: 0, sansDevis: 0, sansDevisSuivis: 0, raisons: {}, echecs: {} };
+  for (const e of S.recents) {
+    if (now - e.t > 24 * 3600e3) continue;
+    jour.envois++;
+    if (e.suivis > 0) jour.suivis++;
+    if (e.sansDevis) { jour.sansDevis++; if (e.suivis > 0) jour.sansDevisSuivis++; }
+    for (const k in e.raisons) jour.raisons[k] = (jour.raisons[k] || 0) + e.raisons[k];
+    if (e.echec) jour.echecs[e.echec.motif] = (jour.echecs[e.echec.motif] || 0) + 1;
+  }
+  return { depuis: S.depuis, envois: S.envois, suivis: S.suivis, sansDevis: S.sansDevis,
+           sansDevisSuivis: S.sansDevisSuivis, raisons: Object.assign({}, S.raisons),
+           echecs: Object.assign({}, S.echecs), jour, cles: SUIVI_RAISONS.slice(),
+           derniers: S.recents.slice(0, 12).map((e) => ({ t: e.t, sym: e.sym, suivis: e.suivis,
+             sansDevis: e.sansDevis, devisMotif: e.devisMotif, raisons: Object.assign({}, e.raisons),
+             echec: e.echec })) };
+}
+
 async function achatFile(t) {
   /* Le cours de l'ETH avant de dimensionner : le plancher est en dollars. Un
      seul appel, garde dix minutes, et sans lui on retombe sur le plancher en
      ETH plutot que d'inventer une conversion. */
   await litEthUsd();
+  const envoi = noteEnvoi(t);
   const liste = actifs();
-  if (!liste.length) return 0;
+  if (!liste.length) { noteRaison(envoi, 'sansPortefeuille'); finEnvoi(envoi); sauve(); return 0; }
   let n = 0;
   dernierOrdre = [];
   for (const { joueur, c } of liste) {
     dernierOrdre.push(joueur);
-    try { if (await achetePosition(c, t)) n++; }
-    catch (e) { note(c, 'Could not follow the buy on ' + (t.sym || t.adr) + ': ' + resume(e), { adr: t.adr }); }
+    const issue = {};
+    try {
+      if (await achetePosition(c, t, issue)) { n++; noteRaison(envoi, 'suivi'); }
+      else noteRaison(envoi, issue.raison || 'autre');
+    }
+    catch (e) {
+      noteRaison(envoi, 'echecAchat', e);
+      note(c, 'Could not follow the buy on ' + (t.sym || t.adr) + ': ' + resume(e), { adr: t.adr });
+    }
     await dors(PAUSE_MS);
   }
-  if (n) sauve();
+  envoi.suivis = n;
+  finEnvoi(envoi);
+  /* Toujours sauve : la raison d'un achat NON suivi est la mesure qu'on
+     cherche, et elle ne doit pas attendre le prochain achat reussi. */
+  sauve();
   return n;
 }
 
@@ -1842,15 +1952,19 @@ async function venteFile(t) {
   return n;
 }
 
-async function achetePosition(c, t) {
+async function achetePosition(c, t, issue) {
+  /* `issue.raison` : pourquoi ce portefeuille n'a pas suivi — voir
+     `SUIVI_RAISONS`. Rien ne change dans ce qui decide, seulement ce qu'on
+     en garde. */
+  const pourquoi = (r) => { if (issue) issue.raison = r; return false; };
   const adr = norm(t.adr);
   if (!c.ouvertes) c.ouvertes = {};
-  if (c.ouvertes[adr]) return false;                 /* une seule par jeton, comme la colonie */
+  if (c.ouvertes[adr]) return pourquoi('dejaTenu');  /* une seule par jeton, comme la colonie */
   const solde = await provider().getBalance(c.adr);
   const mise = miseDe(solde, t.part);
   if (mise.lte(0)) {
     note(c, 'Skipped ' + (t.sym || adr) + ': ' + pourquoiPasDeMise(solde));
-    return false;
+    return pourquoi('solde');
   }
   /* Le plancher a-t-il RELEVE la mise ? Le joueur doit le savoir : sa position
      pese alors plus que la part du Banquier, donc son portefeuille en tiendra
@@ -1868,7 +1982,7 @@ async function achetePosition(c, t) {
     note(c, 'Skipped ' + (t.sym || adr) + ': gas for the round trip is about ' + ethers.utils.formatUnits(gaz, 18)
           + ' ETH (RH), more than ' + Math.round(GAZ_PART_MAX * 100) + '% of the ' + ethers.utils.formatUnits(mise, 18)
           + ' ETH stake — trading that would be trading gas');
-    return false;
+    return pourquoi('gaz');
   }
   const { choix, compare } = await meilleurePlace(adr, t.pool, mise);
   const route = choix.route, retour = choix.retour;
@@ -1877,7 +1991,7 @@ async function achetePosition(c, t) {
     note(c, 'Skipped ' + (t.sym || adr) + ': selling straight back would return ' + pct + '% of the stake ('
           + ethers.utils.formatUnits(retour, 18) + ' ETH for ' + ethers.utils.formatUnits(mise, 18)
           + ') — the pool lets you in, not out. Nothing was sent', { adr });
-    return false;
+    return pourquoi('retourMin');
   }
   /* Le cout devise de l'aller-retour, en points : frais des deux jambes et
      impact de CETTE mise sur cette piscine. Il est garde avec la position et
@@ -2099,6 +2213,7 @@ async function ouvreFile(joueur, adr) {
 module.exports = {
   /* l'interface du serveur */
   charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, surTour, allerRetour, pontConnu, pontsVus, effaceJournal,
+  suiviStats, SUIVI_RAISONS, _motifEchecAchat: motifEchecAchat,
   poseColonie, PISCINE_MORTE, evalueFile, EVAL_TTL_MS,
   ORDRE_MIN_USD, litEthUsd, coursEth, plancherOrdre, minPourJouer,
   _poseSourceEthUsd: poseSourceEthUsd, _partSeule: partSeule, _oublieLeCours: oublieLeCours,

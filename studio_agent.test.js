@@ -12,7 +12,11 @@
  *      devient un resultat is_error, pas une tache cassee ;
  *   4. l'argent : via studio_chat, la reserve est le pire cas de l'agent, la
  *      facture le reel (recherches Perplexity comprises), jamais au-dessus ;
- *   5. l'agent ne fait que LIRE : aucun outil qui achete, vend ou signe.
+ *   5. l'agent ne fait que LIRE : aucun outil qui achete, vend ou signe ;
+ *   7. (lot Base, 27 septembre 2026) ask_agent vendu en x402 : bornes
+ *      LIMITES_X402, pire cas sous le plafond, chaque appel compte AVANT
+ *      (countTokens), final force par le budget ou a 105 s, recherche refusee
+ *      au-dela du plafond, a 150 s la tache rend ce qu'elle a.
  */
 const fs = require('fs'), path = require('path');
 let n = 0, rates = 0;
@@ -279,6 +283,98 @@ const m = C.modele('sonnet-5');
     ok(c1.vus[0].tools.some((t) => t.name === 'telegram_calls') && !r1[0].is_error && lus === 1 && r1[1].is_error,
        'allume : declare au modele et execute ; un nom invente reste inconnu');
     delete process.env.TG_APPELS_VENTE;
+  }
+
+  /* ==================================================================
+   * 7. ASK_AGENT VENDU EN x402 : LES BORNES ET LA GARDE EN DIRECT
+   *    (lot Base, contrat §D.2-D.4 et §F.3, 27 septembre 2026)
+   * ================================================================== */
+  console.log('\n-- 7. ask_agent en x402 : plafond dur, garde en direct --');
+  {
+    const L = A.LIMITES_X402;
+    /* Le pire cas a la formule (Sonnet 5, tache de 2 000 caracteres, recherche) : 0,3528 $,
+       sous le plafond par defaut (0,36 $) — verrouille le calcul du contrat §D.3. */
+    const pc = A.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], true, L);
+    ok(Math.abs(pc - 0.3528) < 1e-9 && pc <= A.BUDGET_X402_USD, 'pire cas x402 a la formule : ' + pc.toFixed(4) + ' $ <= plafond ' + A.BUDGET_X402_USD + ' $ (contrat §D.3 : 0,3528 $)');
+    ok(L.modele === 'sonnet-5' && L.tacheMaxCar === 2000 && L.etapesMax === 4 && L.outilsParEtape === 2 && L.resultatCarMax === 6000 && L.sortieMax === 4000 && L.dureeMaxS === 150 && L.finalApresS === 105,
+       'LIMITES_X402 : Sonnet 5, 2 000 caracteres, 4 appels, 2 outils, 6 000 caracteres, 4 000 jetons, 150 s, final force a 105 s');
+    eq(A.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], true), 0.8592, 'sans limites : le pire cas par cle, inchange (0,8592 $)');
+    /* Un faux client qui sait compter (messages.countTokens) et dont chaque appel coute cher. */
+    const fauxCompte = (tours, o) => {
+      const c = faux(tours);
+      c.comptes = [];
+      c.messages.countTokens = async (p) => { c.comptes.push(p); if (o && o.pendant) o.pendant(c.comptes.length); return { input_tokens: (o && o.n) || 30000 }; };
+      return c;
+    };
+    const outilTour = (id, name, input, usage) => ({ stop: 'tool_use', usage, content: [{ type: 'text', text: 'step ' + id }, { type: 'tool_use', id, name, input }] });
+    /* Chaque appel : 30 000 jetons d'entree, 4 000 de sortie = 0,10 $. */
+    const cher = { input_tokens: 30000, output_tokens: 4000 };
+    const c1 = fauxCompte([outilTour('a', 'colony_activity', {}, cher), outilTour('b', 'colony_activity', {}, cher), outilTour('c', 'colony_activity', {}, cher), outilTour('d', 'colony_activity', {}, cher)]);
+    const r1 = await A.repond({ m, messages: [{ role: 'user', content: 'q' }] }, { client: c1, src: src(), limites: L, budgetUsd: A.BUDGET_X402_USD });
+    ok(r1.etapes === 3 && c1.vus[2].tool_choice && c1.vus[2].tool_choice.type === 'none' && !c1.vus[1].tool_choice && r1.coutUsd <= A.BUDGET_X402_USD + 1e-12,
+       'un client qui depenserait trop : le 3e appel est FORCE final (tool_choice none), ' + r1.etapes + ' appels, depense ' + r1.coutUsd.toFixed(4) + ' $ <= plafond');
+    ok(c1.comptes.length === 3 && c1.comptes.every((p) => p.tools.every((t) => !('eager_input_streaming' in t)) && p.model === m.api && p.system),
+       'chaque appel est COMPTE avant (countTokens : modele, systeme, outils sans eager_input_streaming, messages)');
+    ok(c1.vus.every((p) => p.max_tokens === 4000 && p.tools.length) && c1.vus[1].messages[2].content.length === 1, 'x402 : 4 000 jetons de sortie par appel, 2 outils au plus par appel');
+    /* Le compte depasse ce qui reste : l'appel n'est pas fait. */
+    const c2 = fauxCompte([outilTour('a', 'colony_activity', {}, cher)], { n: 200000 });
+    const r2 = await A.repond({ m, messages: [{ role: 'user', content: 'q' }] }, { client: c2, src: src(), limites: L, budgetUsd: A.BUDGET_X402_USD });
+    ok(c2.vus.length === 0 && r2.arretBudget === true && r2.stop === 'budget' && r2.texte === '' && r2.coutUsd === 0, 'un premier appel qui pourrait crever le plafond : PAS fait, texte vide, rien depense');
+    /* La recherche web refusee une fois le budget atteint. */
+    let cherches = 0;
+    const S7 = src({ cherche: async () => { cherches++; return [{ url: 'https://n.example', titre: 'N', extrait: 'x', date: null }]; } });
+    const c3 = fauxCompte([outilTour('w', 'web_search', { query: 'x' }, { input_tokens: 1000, output_tokens: 19600 })], { n: 1000 });
+    const r3 = await A.repond({ m, messages: [{ role: 'user', content: 'q' }] }, { client: c3, src: S7, limites: L, budgetUsd: 0.2 });
+    ok(cherches === 0 && r3.arretBudget && r3.coutUsd <= 0.2 + 1e-12, 'la recherche (0,005 $) refusee quand elle crevait le plafond : Perplexity jamais appele, depense ' + r3.coutUsd.toFixed(4) + ' $ <= 0,20 $');
+    ok(c3.vus.length === 1 && r3.stop === 'budget' && /step w/.test(r3.texte), 'et aucun appel de plus (le suivant crevait le plafond) : la tache rend le texte deja ecrit');
+    /* Le temps : a 105 s, l'appel final est force (horloge de l'essai, 60 s par appel). */
+    let t = 0;
+    const c4 = fauxCompte([outilTour('a', 'colony_activity', {}, { input_tokens: 100, output_tokens: 10 }), outilTour('b', 'colony_activity', {}, { input_tokens: 100, output_tokens: 10 }),
+      { stop: 'end_turn', content: [{ type: 'text', text: 'final' }] }], { n: 100, pendant: () => { t += 60000; } });
+    const r4 = await A.repond({ m, messages: [{ role: 'user', content: 'q' }] }, { client: c4, src: src(), limites: L, budgetUsd: A.BUDGET_X402_USD, maintenant: () => t - 60000 });
+    ok(!c4.vus[0].tool_choice && !c4.vus[1].tool_choice && c4.vus[2].tool_choice && c4.vus[2].tool_choice.type === 'none' && /final/.test(r4.texte),
+       'la marque des 105 s : l appel qui part apres (120 s) est le final (tool_choice none)');
+    /* A 150 s : l'appel en vol est coupe, la tache REND son texte et son usage (ni exception, ni 409). */
+    const court = Object.assign({}, L, { dureeMaxS: 0.3, finalApresS: 0.25 });
+    const c5 = fauxCompte([outilTour('a', 'colony_activity', {}, { input_tokens: 1000, output_tokens: 100 })], { n: 1000 });
+    const s0 = c5.messages.stream;
+    c5.messages.stream = (p, o) => {
+      if (c5.vus.length < 1) return s0(p, o);
+      c5.vus.push(p);
+      /* Le 2e appel ne finit jamais : seul le signal du delai l'arrete. */
+      const coupe = new Promise((res, rej) => o.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true }));
+      return { [Symbol.asyncIterator]: async function* () { yield { type: 'content_block_delta', delta: { type: 'text_delta', text: ' partial' } }; await coupe; }, finalMessage: async () => coupe };
+    };
+    const deb = Date.now();
+    const r5 = await C.repond({ addr: 'x402:0x' + '5'.repeat(40), modele: 'sonnet-5', messages: [{ role: 'user', content: 'q' }] }, {
+      horsSolde: true, prixUsd: 0.54, pireCas: (mm, msgs) => A.pireCasUsd(mm, msgs, false, court),
+      fournisseur: (p) => A.repond(p, { client: c5, src: src(), limites: court, budgetUsd: A.BUDGET_X402_USD }) });
+    ok(r5.ok === true && r5.arretDelai === true && /step a/.test(r5.texte) && /partial/.test(r5.texte) && r5.coutUsd > 0 && Date.now() - deb < 2000,
+       'a la fin du temps : l appel en vol coupe, la tache rend son texte et son cout (ok, pas de 409) [' + JSON.stringify({ ok: r5.ok, code: r5.code, stop: r5.stop }) + ']');
+    ok(r5.coutUsd >= (1000 * 2 + 100 * 10) / 1e6 && C.MESURE.horsSolde.n >= 1, 'le cout rendu compte l appel fini ET le pire cas de l appel coupe (' + r5.coutUsd + ' $)');
+    /* Une panne du fournisseur APRES une depense (529 au 2e appel) : rien n est encaisse, mais
+       ce que l execution a deja coute remonte jusqu au registre des pertes (contrat §D.6 ;
+       revue du 27 septembre 2026 : avant, `throw e` perdait la depense, coutUsd null). */
+    const panne = (cl) => {
+      const s1 = cl.messages.stream;
+      cl.messages.stream = (p, o) => {
+        if (cl.vus.length < 1) return s1(p, o);
+        cl.vus.push(p);
+        const err = Object.assign(new Error('overloaded'), { status: 529 });
+        return { [Symbol.asyncIterator]: async function* () { throw err; }, finalMessage: async () => { throw err; } };
+      };
+      return cl;
+    };
+    const c6 = panne(fauxCompte([outilTour('a', 'colony_activity', {}, cher)], { n: 30000 }));
+    const r6 = await C.repond({ addr: 'x402:0x' + '6'.repeat(40), modele: 'sonnet-5', messages: [{ role: 'user', content: 'q' }] }, {
+      horsSolde: true, prixUsd: 0.54, pireCas: (mm, msgs) => A.pireCasUsd(mm, msgs, false, L),
+      fournisseur: (p) => A.repond(p, { client: c6, src: src(), limites: L, budgetUsd: A.BUDGET_X402_USD }) });
+    const premier = A.coutAppelUsd(m, cher);
+    ok(r6.ok === false && r6.code === 502 && c6.vus.length === 2 && r6.coutUsd >= premier - 1e-12 && r6.coutUsd <= A.BUDGET_X402_USD + 1e-12,
+       '529 au 2e appel apres un 1er a ' + premier.toFixed(2) + ' $ : 502, rien encaisse, coutUsd ' + r6.coutUsd + ' $ (>= le 1er appel, <= plafond) [' + JSON.stringify({ ok: r6.ok, code: r6.code }) + ']');
+    let e7 = null;
+    try { await A.repond({ m, messages: [{ role: 'user', content: 'q' }] }, { client: panne(faux([outilTour('a', 'colony_activity', {}, cher)])), src: src() }); } catch (e) { e7 = e; }
+    ok(e7 && e7.status === 529 && !('coutUsd' in e7), 'sans limites (page, cle) : l erreur remonte telle quelle, rien d ajoute');
   }
 
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));

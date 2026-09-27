@@ -43,15 +43,25 @@ const SYMBOLES = (process.env.PERP_SYMBOLES || 'BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,
  * devine plus. */
 const FRAIS_TK = Number(process.env.PERP_FRAIS_TAKER || 0.06) * 2;   /* aller-retour %, taker */
 const FRAIS_MK = Number(process.env.PERP_FRAIS_MAKER || 0.02) * 2;   /* aller-retour %, maker */
-/* MESURÉ le 23 septembre 2026 (n=13 923 trades, 31 j, BTC/ETH/SOL/XRP/DOGE,
- * financement réel Bitget) : le financement moyen par trade est ~0 % — la
- * stratégie prend longs ET shorts, les taux s'annulent, ce n'est PAS la
- * traînée redoutée. Le coût qui mord est le frais aller-retour. Résultat net
- * par trade : géométrie 4σ/6σ → +0,110 % maker, +0,030 % taker ; 4σ/5σ →
- * +0,086 % maker ; 3σ/5σ (actuelle) → +0,048 % maker mais −0,032 % taker.
- * Verdict : en MAKER l'edge est net-positif dès l'actuel, et 4σ/6σ l'est même
- * en taker. La rentabilité tient à l'exécution (maker) + une sortie plus large
- * (4σ/6σ), pas à un nouveau signal. */
+/* MESURÉ le 23 septembre 2026 (n=13 923 entrées, 31 j, BTC/ETH/SOL/XRP/DOGE,
+ * financement réel Bitget) : le financement moyen par trade est ~0 %. Net par
+ * trade : 4σ/6σ → +0,110 % maker, +0,030 % taker ; 4σ/5σ → +0,086 % maker ;
+ * 3σ/5σ → +0,048 % maker, −0,032 % taker.
+ *
+ * ---- CE QUE CES CHIFFRES VALAIENT (relu le 26 septembre 2026) ----
+ * Ils ne mesurent PAS la règle en service, et aucun n'est significatif :
+ *   1. une entrée à CHAQUE bougie : n = 13 923 ≈ 31 j × 96 × 5, des trades
+ *      qui se chevauchent sur ~27 bougies de tenue — n effectif ~500 ;
+ *   2. le balayage de géométrie porte sur `trend` SEUL, pas sur la note ;
+ *   3. financement et carnet sont mis à null : Funding (±10) et Book (±6),
+ *      deux agents en service, n'ont jamais été testés ici ;
+ *   4. `h4Jusqu` gardait la bougie 4 h EN COURS avec sa clôture finale : une
+ *      petite fuite du futur sur `fond` (corrigée plus bas, 27/09/2026).
+ * Refait avec la même méthode, erreur-type groupée par jour : 0,074 sur le
+ * « +0,110 », t ≈ 1,1. La règle en service rejouée SANS chevauchement
+ * (n = 330) : −0,075 ± 0,068 net aux frais réels. Ce script reste un
+ * instrument de direction ; la porte de tout changement de règle ou de
+ * géométrie est `outils/perp_rejeu.js` (12–24 mois, sans chevauchement). */
 
 async function unLot(sym, gran, endTime) {
   let u = BASE + '/candles?symbol=' + sym + '&productType=' + PRODUIT + '&granularity=' + gran + '&limit=1000';
@@ -125,7 +135,20 @@ function issue(sens, prix, vol, avenir, stopV, cibleV) {
   return { g: brut > 0 ? 1 : -1, brut, temps: true, sortT: dern.t };
 }
 
-function h4Jusqu(c4, t) { return c4.filter((c) => c.t <= t); }
+/* Les bougies 4 h connues à la clôture de la bougie 15 min qui commence à
+   `t`. Corrigé le 27 septembre 2026 : l'ancien filtre (`c.t <= t`) gardait la
+   bougie 4 h EN COURS avec sa clôture FINALE, donc le prix de jusqu'à
+   3 h 45 plus tard — une fuite du futur sur `fond`. En service, la dernière
+   bougie 4 h lue est en cours et sa clôture est le prix du moment : on refait
+   exactement ça, avec `prix` (la clôture de la bougie 15 min). */
+const H4_MS = 4 * 3600000, M15_MS = 15 * 60000;
+function h4Jusqu(c4, t, prix) {
+  const fin = t + M15_MS;
+  const out = c4.filter((c) => c.t + H4_MS <= fin);
+  const enCours = c4.find((c) => c.t <= t && c.t + H4_MS > fin);
+  if (enCours && prix > 0) out.push({ t: enCours.t, o: enCours.o, h: Math.max(enCours.o, prix), b: Math.min(enCours.o, prix), c: prix, v: null });
+  return out;
+}
 
 function noteDir(x) {
   /* La décision du bot : par sens, sécurité + véto de tendance + seuil, meilleure note. */
@@ -178,7 +201,8 @@ function ligneNet(nom, a) {
     + '  · net taker ' + sg(ntk).padStart(8) + (ntk > 0 ? ' ✅' : ' ❌');
 }
 
-(async () => {
+/* Lancé à la main, il mesure ; requis (par son essai), il ne fait qu'exporter. */
+async function principal() {
   console.log('PERP EDGE — edge de DIRECTION (brut, prix seul) PUIS net (frais + financement réel)');
   console.log('Point mort d\'une marche aléatoire (stop 3σ / cible 5σ) = ' + BARRIERE_PM.toFixed(1) + '% de réussite\n');
   const tot = { note: agrege(), trend: agrege(), fond: agrege(), contre: agrege() };
@@ -199,7 +223,7 @@ function ligneNet(nom, a) {
     const par = { note: agrege(), trend: agrege(), fond: agrege(), contre: agrege() };
     for (let i = 100; i < c15.length - 2; i++) {
       const fen15 = c15.slice(0, i + 1);
-      const jusq4 = h4Jusqu(c4, c15[i].t);
+      const jusq4 = h4Jusqu(c4, c15[i].t, c15[i].c);
       if (jusq4.length < 51) continue;                    /* fond (ema 50 en 4 h) pas encore lisible */
       const x = P.mesures(marcheDepuis(sym, fen15, jusq4));
       x.sym = sym;
@@ -254,4 +278,6 @@ function ligneNet(nom, a) {
   console.log('  — par géométrie de sortie (classée par net maker) :');
   const clasNet = GEOMS.map((g) => g.join('/')).sort((a, b) => (sweep[b].netMk / sweep[b].n) - (sweep[a].netMk / sweep[a].n));
   for (const key of clasNet) console.log(ligneNet(key + (key === '3/5' ? ' (actuel)' : ''), sweep[key]));
-})().catch((e) => { console.error('ÉCHEC :', e && e.stack || e); process.exit(1); });
+}
+if (require.main === module) principal().catch((e) => { console.error('ÉCHEC :', e && e.stack || e); process.exit(1); });
+module.exports = { h4Jusqu, marcheDepuis, issue };

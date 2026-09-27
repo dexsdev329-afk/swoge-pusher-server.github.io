@@ -121,7 +121,16 @@ async function decouvreOkx() {
       exchange: 'OKX', idExchange: s.instId,
       last, bid: nn(t.bidPx), ask: nn(t.askPx),
       markPrice: null, indexPrice: null, fundingRate: null,
-      volume24h: nn(t.volCcy24h), openInterest: null,
+      /* ---- LE VOLUME OKX EST EN MONNAIE DE BASE, PAS EN DOLLARS ----
+       * Pour un SWAP, `volCcy24h` compte des unites de la monnaie de BASE
+       * (des BTC, des SATS). Il etait rendu tel quel : `/marches/perp`
+       * affichait SATS a « 367 754 470 M$ » et PEPE a « 23 309 019 M$ »
+       * (releve du 26/09/2026). Relu le 27/09 sur `/market/ticker` :
+       * SATS volCcy24h 3,735e14 × last 1,268e-8 = 4,7 M$ ; BTC 22 548 ×
+       * 84 260 = 1,9 G$. Le notionnel est donc volCcy24h × last, et
+       * `null` quand l un des deux manque — jamais un chiffre en unites. */
+      volume24h: (nn(t.volCcy24h) !== null && last !== null) ? nn(t.volCcy24h) * last : null,
+      openInterest: null,
       variation24h: last && open ? ((last - open) / open) * 100 : null,
     }));
   }

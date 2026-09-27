@@ -36,9 +36,16 @@ const OKX_INST = JSON.stringify({ data: [
   { instId: 'BTC-USDT-SWAP', instType: 'SWAP', settleCcy: 'USDT', ctValCcy: 'BTC', state: 'live' },
   { instId: 'ETH-USD-SWAP', instType: 'SWAP', settleCcy: 'ETH', ctValCcy: 'ETH', state: 'live' },  /* pas USDT : ecarte */
   { instId: 'OLD-USDT-SWAP', instType: 'SWAP', settleCcy: 'USDT', ctValCcy: 'OLD', state: 'suspend' }, /* pas live */
+  { instId: 'SATS-USDT-SWAP', instType: 'SWAP', settleCcy: 'USDT', ctValCcy: 'SATS', state: 'live' },
+  { instId: 'NOVOL-USDT-SWAP', instType: 'SWAP', settleCcy: 'USDT', ctValCcy: 'NOVOL', state: 'live' },
 ] });
 const OKX_TICK = JSON.stringify({ data: [
   { instId: 'BTC-USDT-SWAP', last: '81500', bidPx: '81499', askPx: '81501', open24h: '80000', volCcy24h: '12345' },
+  /* Les chiffres VRAIS de SATS relus le 27/09/2026 sur /market/ticker : c est
+     la ligne qui s affichait « 367 754 470 M$ ». */
+  { instId: 'SATS-USDT-SWAP', last: '0.000000012683', bidPx: '0.000000012683', askPx: '0.000000012691',
+    open24h: '0.000000012217', volCcy24h: '373546580000000' },
+  { instId: 'NOVOL-USDT-SWAP', last: '2.5', open24h: '2.4' },
 ] });
 
 (async () => {
@@ -73,8 +80,16 @@ console.log('\n-- 2. OKX : meme forme, filtres reels --');
   M._videCache();
   const v = await M.decouvre(true);
   const okx = v.marches.filter((m) => m.exchange === 'OKX');
-  eq(okx.length, 1, 'seuls les swaps USDT vivants passent (ETH-USD et suspend ecartes)');
+  eq(okx.length, 3, 'seuls les swaps USDT vivants passent (ETH-USD et suspend ecartes)');
   eq(okx[0].symbole, 'BTC/USDT:PERP', 'meme forme que Hyperliquid, quote USDT');
+  /* ---- LE VOLUME EST UN NOTIONNEL EN DOLLARS, COMME CHEZ HYPERLIQUID ----
+   * `volCcy24h` compte des unites de la monnaie de base. Rendu tel quel, SATS
+   * valait « 367 754 470 M$ » sur la page (26/09/2026) pour ~4,7 M$ reels. */
+  eq(okx[0].volume24h, 12345 * 81500, 'BTC : volume 24 h = volCcy24h × last, en dollars');
+  const sats = okx.find((m) => m.base === 'SATS');
+  ok(sats && sats.volume24h > 4e6 && sats.volume24h < 5e6,
+     'SATS : ' + (sats && Math.round(sats.volume24h)) + ' $, pas 3,7e14 unites lues comme des dollars');
+  eq(okx.find((m) => m.base === 'NOVOL').volume24h, null, 'sans volume publie, null : jamais un volume invente');
   eq(okx[0].last, 81500, 'last du ticker');
   ok(Math.abs(okx[0].variation24h - ((81500 - 80000) / 80000 * 100)) < 1e-9, 'variation du open24h');
   /* Ce qu OKX ne donne pas dans ce lot reste null, jamais invente. */

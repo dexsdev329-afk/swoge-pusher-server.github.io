@@ -171,6 +171,20 @@ const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(
     eq(notes[2] && notes[2].canal, 'agent', 'l agent (plusieurs appels, pireCas) : canal agent');
     await C.repond(q({ addr: '0xcpt4' }), { cours, solde: faux().api, fournisseur: async () => { throw new Error('overloaded'); } });
     eq(notes.length, 3, 'un echec du fournisseur (rien facture) n est pas compte comme facture');
+    /* ---- ask_agent paye d'avance en x402 (lot Base, 27 septembre 2026) : `horsSolde` ----
+       Ni cours, ni reserve, ni reglement ; chat_facture note le PRIX x402 (0,54 $), jamais
+       le cout majore — sinon l'execution compterait deux fois (chat_facture ET paye_x402). */
+    const fh = faux();
+    const H0 = Object.assign({}, C.MESURE.horsSolde);
+    const rh = await C.repond(q({ addr: 'x402:0x' + '7'.repeat(40), canal: 'rest' }), { horsSolde: true, prixUsd: 0.54, solde: fh.api, cours: async () => { throw new Error('jamais lu'); },
+      pireCas: () => 0.35, fournisseur: async () => ({ texte: 'answer', usage, arretBudget: true }) });
+    const nh = notes[3];
+    ok(rh.ok && rh.texte === 'answer' && Math.abs(rh.coutUsd - cout) < 1e-6 && rh.arretBudget === true && !fh.regles.length && !rh.factureSwoge,
+       'horsSolde : servi sans cours ni reserve ni reglement sur un solde, le cout REEL rendu (' + rh.coutUsd + ' $)');
+    ok(nh && nh.e === 'chat_facture' && nh.usd === 0.54 && Math.abs(nh.coutUsd - cout) < 1e-12 && nh.sorte === 'x402' && nh.usd !== Number(C.factureUsd(cout).toFixed(5)),
+       'horsSolde : chat_facture note le prix x402 (0,54 $) contre le cout reel — pas le cout majore (' + C.factureUsd(cout).toFixed(5) + ' $)');
+    ok(C.MESURE.horsSolde.n === H0.n + 1 && Math.abs(C.MESURE.horsSolde.prixUsd - H0.prixUsd - 0.54) < 1e-9 && C.MESURE.horsSolde.arretsBudget === H0.arretsBudget + 1,
+       'MESURE.horsSolde : une execution, son prix, un arret par le plafond');
     C.COMPTEUR.note = null;
   }
 

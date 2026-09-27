@@ -32,6 +32,7 @@ const fs = require('fs');
 const path = require('path');
 const cfg = require('./config');
 const E = require('./predict_moteur');   /* le même moteur que la page */
+const J = require('./predict_pancake_journal');   /* le journal durable des rounds, les ombres, le remplissage */
 
 const RPC = process.env.BSC_RPC || 'https://bsc-dataseed.binance.org';
 const ADDR = process.env.PANCAKE_PREDICTION || '0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA';
@@ -133,11 +134,13 @@ function chaineReelle() {
     round: async (ep) => {
       const r = await c.rounds(ep);
       return {
-        epoch: r.epoch.toString(), lock: r.lockTimestamp.toNumber(), close: r.closeTimestamp.toNumber(),
+        epoch: r.epoch.toString(), start: r.startTimestamp.toNumber(), lock: r.lockTimestamp.toNumber(), close: r.closeTimestamp.toNumber(),
         lockPrice: r.lockPrice.toString(), closePrice: r.closePrice.toString(),
         bull: Number(ethers.utils.formatEther(r.bullAmount)),
         bear: Number(ethers.utils.formatEther(r.bearAmount)),
         total: Number(ethers.utils.formatEther(r.totalAmount)),
+        rb: Number(ethers.utils.formatEther(r.rewardBaseCalAmount)),
+        rw: Number(ethers.utils.formatEther(r.rewardAmount)),
         oracleCalled: r.oracleCalled,
       };
     },
@@ -158,14 +161,16 @@ let _bougies = async (iv) => {
 };
 function _reseau(fn) { _bougies = fn; }
 
-async function predit() {
+/* La note BRUTE du moteur (horizon 5 min), sans le mode inverse : les ombres
+ * notent le moteur ET son inverse, la porte prend l'un ou l'autre. */
+async function preditMoteur() {
   const moteur = new E.PredictionEngine();
   const parIv = {};
   for (const iv of ['1m', '5m', '15m', '1h']) { try { parIv[iv] = await _bougies(iv); } catch (e) { parIv[iv] = []; } }
   const multi = moteur.multiHorizons(parIv);
-  const p = (multi['5m'] && multi['5m'].assez) ? multi['5m'] : moteur.evalue(parIv['5m'] || []);
-  return INVERSE ? inverse(p) : p;
+  return (multi['5m'] && multi['5m'].assez) ? multi['5m'] : moteur.evalue(parIv['5m'] || []);
 }
+async function predit() { const p = await preditMoteur(); return INVERSE ? inverse(p) : p; }
 
 /* ---- L'état, persistant ---- */
 /* La « génération » de la caisse : bumper `PREDICT_PANCAKE_GEN` (ex. de 1 à 2)
@@ -182,11 +187,18 @@ async function predit() {
  * derniers rounds perdaient (−0,0106 BNB avec le gaz d'alors, −0,0028 sans) :
  * le gain venait de la martingale, pas de la porte. On ne mele pas les deux. */
 const GEN = String(process.env.PREDICT_PANCAKE_GEN || '3');
-let S = { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0,
-          enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03,
-          round: null, service: { ok: null, quand: 0, message: null },
-          miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 }, gen: GEN,
-          finales: { BULL: [], BEAR: [], dernierEp: 0 } };
+let S = etatNeuf();
+/* `porte` : ce que la porte EV a jugé sur CHAQUE round (paris allumés ou non),
+ * pour dire au joueur la vraie raison du « 0 bet » : prob × cote attendue
+ * contre les 1,10 exigés. `dernierEpDecide` : l'epoch déjà jugé (une fois). */
+function etatNeuf() {
+  return { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0, refunds: 0,
+           enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03,
+           round: null, service: { ok: null, quand: 0, message: null },
+           miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 }, gen: GEN,
+           finales: { BULL: [], BEAR: [], dernierEp: 0 },
+           porte: { evaluees: 0, passees: 0, maxProduit: null, derniere: null }, dernierEpDecide: 0 };
+}
 let boucle = null;
 
 function sauve() {
@@ -203,6 +215,10 @@ function charge() {
   /* Bump de génération → caisse neuve, une seule fois. */
   if (S.gen !== GEN) { _reset(); S.gen = GEN; sauve(); console.log('[pancake] caisse remise à zéro (génération ' + GEN + ')'); }
   if (!S.finales) S.finales = { BULL: [], BEAR: [], dernierEp: 0 };
+  if (!S.porte) S.porte = { evaluees: 0, passees: 0, maxProduit: null, derniere: null };
+  if (!S.dernierEpDecide) S.dernierEpDecide = 0;
+  if (!S.refunds) S.refunds = 0;
+  J.indexe();   /* le journal durable : relu en flux, sans bloquer */
 }
 function note(ok, m) { S.service = { ok, quand: Date.now(), message: m || null }; }
 
@@ -261,6 +277,41 @@ function decide(pred, r, fee, stake, fin) {
                               : 'skip: EV ' + Math.round(ev * 100) + '% — the expected ' + m.toFixed(2) + 'x final payout is not worth it' };
 }
 
+/* Rejouer LA porte actuelle — `decide`, `noteFinale`, `inverse`, le code même —
+ * sur des rounds stockés, dans l'ordre des epochs. Chaque ligne :
+ * { ep, bull, bear, tot?, oc, pred: { sens, prob } | null } (pred = la note du
+ * moteur à la décision). La cote finale d'un round n'est connue que deux
+ * rounds plus tard, comme dans `tic`. La cote VISIBLE de l'époque est perdue :
+ * on la prend la plus favorable (notre camp vide), ce qui retire le
+ * min(cote vue, …) — il ne peut que baisser la cote retenue. Le rejeu compte
+ * donc AU MOINS autant de paris que la porte n'en aurait faits. Pur. */
+function rejouePorte(lignes, o) {
+  o = o || {};
+  const inv = o.inverse != null ? !!o.inverse : INVERSE;
+  const fee = o.fee != null ? o.fee : 0.03, stake = o.stake > 0 ? o.stake : STAKE;
+  const L = lignes.slice().sort((a, b) => a.ep - b.ep);
+  const parEp = new Map(L.map((l) => [l.ep, l]));
+  const fin = { BULL: [], BEAR: [], dernierEp: 0 };
+  const out = { rounds: L.length, jugees: 0, paris: 0, maxEv: null, maxProb: null, maxProduit: null };
+  for (const l of L) {
+    const f = parEp.get(l.ep - 2);
+    if (f) noteFinale(fin, f.ep, { oracleCalled: !!f.oc, bull: f.bull, bear: f.bear, total: f.tot != null ? f.tot : f.bull + f.bear }, fee);
+    if (!l.pred || (l.pred.sens !== 'UP' && l.pred.sens !== 'DOWN')) continue;
+    let p = { sens: l.pred.sens, prob: l.pred.prob, assez: true };
+    if (inv) p = inverse(p);
+    const vis = p.sens === 'UP' ? { bull: 0, bear: 1e6, total: 1e6 } : { bull: 1e6, bear: 0, total: 1e6 };
+    const d = decide(p, vis, fee, stake, fin);
+    if (d.ev == null) continue;
+    out.jugees++;
+    if (d.wouldBet) out.paris++;
+    if (out.maxEv == null || d.ev > out.maxEv) out.maxEv = d.ev;
+    if (out.maxProb == null || p.prob > out.maxProb) out.maxProb = p.prob;
+    const pr = p.prob / 100 * d.cote;
+    if (out.maxProduit == null || pr > out.maxProduit) out.maxProduit = Math.round(pr * 1000) / 1000;
+  }
+  return out;
+}
+
 /* L'échelle martingale, PURE et partagée (étage 1 papier ET étage 2 réel) :
  * elle fait avancer `mart` ({palier, palierMax, busts}) selon l'issue et rend la
  * PROCHAINE mise. Un gagnant remet à la base ; un perdant monte d'un palier
@@ -285,28 +336,79 @@ function escalade(issue) {
   S.miseCourante = prochaineMise(S.mart, issue, { base: STAKE, facteur: MART_FACTEUR, paliers: MART_PALIERS, bank: S.bank });
 }
 
-/* Résoudre un round fermé pour lequel on avait décidé. */
+/* Résoudre un round fermé pour lequel on avait décidé.
+ *
+ * ÉGALITÉ lock = close : PERDU. Vérifié sur la source publiée du contrat V2
+ * (PancakePredictionV2.sol) le 26 septembre 2026 : `_calculateRewards`, branche
+ * « House wins », met rewardAmount = 0 et envoie tout le pool à la trésorerie ;
+ * `claimable` renvoie false quand lockPrice == closePrice. L'ancien code la
+ * comptait en remboursement — faux, sans effet mesurable aujourd'hui (0 égalité
+ * sur 29 959 rounds résolus du 12/06 au 26/09) mais faux.
+ * ANNULÉ (oracle non appelé, close + bufferSeconds dépassé) : REMBOURSÉ par le
+ * contrat (`refundable`, puis `claim`). 45 rounds sur 30 004 dans le même
+ * relevé ; l'ancien code ne les résolvait jamais — ils restaient en attente
+ * pour toujours. La mise revient, le gaz non ; la martingale ne bouge pas. */
 function resous(ep, r, fee) {
   const d = S.enAttente[ep];
   if (!d) return;
   delete S.enAttente[ep];
   const stake = d.mise > 0 ? d.mise : STAKE;   /* la mise réellement engagée (martingale) */
   const lp = Number(r.lockPrice), cp = Number(r.closePrice);
-  const gagnant = cp > lp ? 'BULL' : cp < lp ? 'BEAR' : 'TIE';
+  const gagnant = !r.oracleCalled ? 'CANCELLED' : cp > lp ? 'BULL' : cp < lp ? 'BEAR' : 'TIE';
   let issue = 'skip', pl = 0;
   if (d.wouldBet) {
     const mFinal = cote(d.side === 'BULL' ? r.bull : r.bear, r.total, fee, stake);
-    if (gagnant === 'TIE') { issue = 'refund'; pl = -GAZ; }
+    if (gagnant === 'CANCELLED') { issue = 'refund'; pl = -GAZ; S.refunds++; }
     else if (gagnant === d.side) { issue = 'win'; pl = (mFinal - 1) * stake - GAZ; S.wins++; }
-    else { issue = 'loss'; pl = -stake - GAZ; S.losses++; }
+    else { issue = 'loss'; pl = -stake - GAZ; S.losses++; }   /* camp adverse OU égalité : le pool part au trésor */
     if (issue !== 'refund') S.mises++;
     S.bank += pl; S.pl += pl;
-    escalade(issue);   /* la martingale monte/redescend selon l'issue */
+    escalade(issue);   /* la martingale monte/redescend selon l'issue ; un remboursement ne la bouge pas */
   } else { S.skips++; }
   S.dernier.unshift({ epoch: ep, side: d.side, cote: d.cote, ev: d.ev, prob: d.prob, mise: Math.round(stake * 1e6) / 1e6,
-    gagnant, issue, pl: Math.round(pl * 1e6) / 1e6, coteFinale: cote(d.side === 'BULL' ? r.bull : r.bear, r.total, fee, stake),
+    gagnant, issue, pl: Math.round(pl * 1e6) / 1e6, coteFinale: gagnant === 'CANCELLED' ? null : cote(d.side === 'BULL' ? r.bull : r.bear, r.total, fee, stake),
     bank: Math.round(S.bank * 1e6) / 1e6, palier: S.mart.palier, t: Date.now() });
   if (S.dernier.length > HISTO_MAX) S.dernier.pop();
+}
+
+/* Round annulé pour de bon : oracle non appelé, close + bufferSeconds passé.
+ * Partagé avec l'étage 2 (même règle que `refundable` du contrat). */
+function annule(r, nowS) { return J.annule(r, nowS); }
+
+/* Ce que la porte dit d'un jugement, pour l'écran : prob × cote attendue
+ * contre le seuil exigé (1 + gaz/mise + marge = 1,10 aux réglages du 26/09). */
+function resumePorte(d, stake) {
+  const s = stake > 0 ? stake : STAKE;
+  const requis = Math.round((1 + GAZ / s + MARGE) * 1000) / 1000;
+  const produit = (d && typeof d.prob === 'number' && d.cote != null) ? Math.round(d.prob / 100 * d.cote * 1000) / 1000 : null;
+  return { side: d ? d.side : null, prob: d ? d.prob : null, cote: d ? d.cote : null, coteVue: d ? d.coteVue : null,
+           coteEstimee: d ? (d.coteEstimee != null ? d.coteEstimee : null) : null, nFinales: d ? (d.nFinales || null) : null,
+           produit, requis, gaz: Math.round(GAZ / s * 1000) / 1000, marge: MARGE, passe: !!(d && d.wouldBet), raison: d ? d.raison : null };
+}
+
+/* Le jugement d'un round, UNE fois, près du lock : pour les ombres TOUJOURS,
+ * pour le pari papier seulement si PARIE. La ligne de décision est écrite au
+ * journal AVANT que l'issue existe. */
+async function jugeRound(e, r, now) {
+  S.dernierEpDecide = e;
+  const brut = await preditMoteur();
+  const pred = INVERSE ? inverse(brut) : brut;
+  const d = decide(pred, r, S.fee, S.miseCourante);
+  const pt = resumePorte(d, S.miseCourante);
+  S.porte.evaluees++;
+  if (pt.passe) S.porte.passees++;
+  if (pt.produit != null && (S.porte.maxProduit == null || pt.produit > S.porte.maxProduit)) S.porte.maxProduit = pt.produit;
+  S.porte.derniere = Object.assign({ epoch: e }, pt);
+  const sideMot = brut && brut.assez ? (brut.sens === 'UP' ? 'BULL' : brut.sens === 'DOWN' ? 'BEAR' : null) : null;
+  J.ajouteDecision({
+    ep: e, t: Date.now(), lock: r.lock, avantLock: r.lock - now, fee: S.fee, mise: STAKE,
+    vu: { bull: r.bull, bear: r.bear, total: r.total },
+    moteur: brut && brut.assez ? { sens: brut.sens, prob: brut.prob, confiance: brut.confiance } : null,
+    cand: { moteur: sideMot, inverse: sideMot ? (sideMot === 'BULL' ? 'BEAR' : 'BULL') : null,
+            outsider: r.bull < r.bear ? 'BULL' : r.bear < r.bull ? 'BEAR' : null, bull: 'BULL' },
+    porte: Object.assign({}, pt, { raison: undefined }), parie: PARIE, modeInverse: INVERSE,   /* la raison se relit de ses chiffres */
+  });
+  return d;
 }
 
 async function tic() {
@@ -325,25 +427,33 @@ async function tic() {
     S.round = { epoch: e, lock: rEnCours.lock, bull: rEnCours.bull, bear: rEnCours.bear,
                 total: rEnCours.total, coteBull: cote(rEnCours.bull, rEnCours.total, S.fee),
                 coteBear: cote(rEnCours.bear, rEnCours.total, S.fee) };
-    /* Les paris sont éteints (défaut) : on LIT les rounds/côtes, on ne mise pas. */
+    /* Chaque round est JUGÉ (ombres + raison du « 0 bet »), qu'on parie ou non. */
+    const fenetre = rEnCours.lock && now >= rEnCours.lock - DECISION_LEAD && now < rEnCours.lock;
+    if (fenetre && S.dernierEpDecide !== e && !S.enAttente[e]) {
+      const d = await jugeRound(e, rEnCours, now);
+      /* Les paris sont éteints (défaut) : on LIT, on JUGE, on ne mise pas. */
+      if (PARIE) { S.enAttente[e] = d; S.round.decision = d; }
+    } else if (PARIE && S.enAttente[e]) {
+      S.round.decision = S.enAttente[e];
+    }
+    if (S.porte.derniere && S.porte.derniere.epoch === e) S.round.porte = S.porte.derniere;
     if (PARIE) {
-      if (!S.enAttente[e] && rEnCours.lock && now >= rEnCours.lock - DECISION_LEAD && now < rEnCours.lock) {
-        const p = await predit();
-        const d = decide(p, rEnCours, S.fee, S.miseCourante);   /* la mise du moment = base × échelle martingale */
-        S.enAttente[e] = d;
-        S.round.decision = d;
-      } else if (S.enAttente[e]) {
-        S.round.decision = S.enAttente[e];
-      }
-      /* Les rounds fermés récents : on résout ceux qu'on avait décidés. */
+      /* Les rounds fermés récents : on résout ceux qu'on avait décidés — réglés
+         par l'oracle, ou annulés pour de bon (remboursés). */
       for (const ep of Object.keys(S.enAttente)) {
         const n = Number(ep);
         if (n >= e - 1) continue;                 /* pas encore fermé */
-        try { const rc = await ch.round(n); if (rc.oracleCalled) resous(n, rc, S.fee); } catch (x) {}
+        try { const rc = await ch.round(n); if (rc && (rc.oracleCalled || annule(rc, now))) resous(n, rc, S.fee); } catch (x) {}
       }
     }
+    /* Le journal durable : chaque round réglé, une ligne (et ses ombres). */
+    await J.regleRecents(ch, e, now);
     S.maj = Date.now(); note(true); sauve();
-  } catch (e) { note(false, String(e.message || e).slice(0, 90)); }
+  } catch (e) {
+    /* Une erreur ethers v5 cite l'URL du fournisseur (url="…") : BSC_RPC peut
+     * porter une clé, et service.message est servi sans authentification. */
+    note(false, J._masqueUrl(String((e && e.message) || e), RPC, 'rpc').slice(0, 90));
+  }
 }
 
 function etat() {
@@ -356,8 +466,18 @@ function etat() {
     round: S.round,
     banque: { depart: BANK0, solde: Math.round(S.bank * 1e6) / 1e6, pl: Math.round(S.pl * 1e6) / 1e6,
               roi: Math.round((S.bank / BANK0 - 1) * 1000) / 10, unite: 'BNB',
-              wins: S.wins, losses: S.losses, skips: S.skips, mises: S.mises,
+              wins: S.wins, losses: S.losses, skips: S.skips, mises: S.mises, refunds: S.refunds || 0,
               winRate: n ? Math.round(S.wins / n * 1000) / 10 : 0 },
+    /* La VRAIE raison du « 0 bet » : sur chaque round jugé, prob × cote finale
+       attendue contre le seuil exigé. En mode inverse la prob du camp misé est
+       ≤ 50 % (moteur bridé 50–68 %) et la cote attendue ~1,95× : le produit
+       reste sous 1,10. Rejoué sur 29 472 rounds (26/09) : 0 pari. */
+    porte: Object.assign({ evaluees: S.porte.evaluees, passees: S.porte.passees, maxProduit: S.porte.maxProduit,
+                           requis: Math.round((1 + GAZ / STAKE + MARGE) * 1000) / 1000 },
+                         { derniere: S.porte.derniere }),
+    /* Les ombres (A3) et le journal durable (A2). */
+    ombres: J.ombres(),
+    journal: J.etat(),
     martingale: { on: MART, facteur: MART_FACTEUR, paliers: MART_PALIERS,
                   palier: S.mart.palier, palierMax: S.mart.palierMax, busts: S.mart.busts,
                   miseCourante: Math.round(S.miseCourante * 1e6) / 1e6 },
@@ -376,11 +496,14 @@ function etat() {
   };
 }
 
-function demarre() { charge(); if (boucle) return; tic(); boucle = setInterval(tic, TIC_MS); if (boucle.unref) boucle.unref(); }
-function arrete() { if (boucle) { clearInterval(boucle); boucle = null; } }
-function _reset() { S = { bank: BANK0, wins: 0, losses: 0, skips: 0, mises: 0, pl: 0, enAttente: {}, dernier: [], depuis: Date.now(), maj: 0, fee: 0.03, round: null, service: { ok: null, quand: 0, message: null }, miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 }, gen: GEN, finales: { BULL: [], BEAR: [], dernierEp: 0 } }; }
+function demarre() {
+  charge(); if (boucle) return; tic(); boucle = setInterval(tic, TIC_MS); if (boucle.unref) boucle.unref();
+  J.indexe().then(() => J.demarreRemplissage()).catch(() => {});   /* 104 jours depuis la chaîne, lentement, une fois */
+}
+function arrete() { if (boucle) { clearInterval(boucle); boucle = null; } J.arreteRemplissage(); }
+function _reset() { S = etatNeuf(); }
 
-module.exports = { demarre, arrete, charge, etat, tic, decide, cote, resous, predit, prochaineMise, inverse,
-                   noteFinale, coteEstimee, FINALES_MIN,
+module.exports = { demarre, arrete, charge, etat, tic, decide, cote, resous, predit, preditMoteur, prochaineMise, inverse,
+                   noteFinale, coteEstimee, FINALES_MIN, annule, resumePorte, rejouePorte,
                    ADDR, RPC, STAKE, GAZ, MARGE, MART, MART_FACTEUR, MART_PALIERS, INVERSE, PARIE,
                    _chaineTest, _reseau, _reset, _S: () => S };

@@ -40,6 +40,27 @@ const MISE = Math.max(0.01, Number(process.env.PREDICT_BET || 10));
 const MART = process.env.PREDICT_MART !== '0';
 const HISTO_MAX = 300;
 const FICHIER = path.join(cfg.DATA_DIR, 'predict.json');
+/* ---- LE JOURNAL EN AJOUT SEUL (A5, rapport du 26/09/2026) ----
+ * Le 26 septembre, les 1 209 trades de la session 2 n'ont pu être relus que
+ * par un rejeu du moteur (97 % des sens retrouvés, 84 % des issues) : le
+ * serveur ne gardait que 300 trades, sans la confiance, sans égalité, et une
+ * ruine effaçait la caisse. Une ligne par round résolu (label EXACT, égalité,
+ * mise réelle, confiance, session), une ligne par ruine. ~250 octets par ligne,
+ * 288 par jour : ~26 Mo par an. */
+const JOURNAL = path.join(cfg.DATA_DIR, 'predict_journal.jsonl');
+/* ---- CE QUE PAIERAIT PANCAKESWAP ----
+ * Le papier paie 1:1 et une égalité ne coûte rien. PancakeSwap prend 3 % du
+ * pool : à pools équilibrés la cote est 0,97 × 2 = 1,94×, un gain rapporte
+ * +0,94 × la mise, une égalité donne tout le pool au trésor (perdu). Point
+ * mort : 1 / 1,94 = 51,5 %. */
+const PANCAKE_GAIN = 0.94;
+const POINT_MORT = 100 / (1 + PANCAKE_GAIN);   /* 51,5 % */
+/* ---- LA CONFIANCE, MESURÉE ----
+ * Rejeu du 26/09 (17 jours, 4 732 rounds) : HIGH 46,1 % sur 1 617 (IC 43,7–48,6),
+ * MEDIUM 49,7 % sur 2 342, LOW 49,9 % sur 773. Détecter 2 points au-dessus de
+ * 50 % demande ~1 700 rounds par niveau : sous ce seuil, la carte dit
+ * « not enough rounds (n/1,700) » et ne conclut rien. */
+const CONF_MIN = 1700;
 const HL = 'https://api.hyperliquid.xyz/info';
 
 /* Le reseau, injectable pour les essais : aucun appel sortant en test. */
@@ -49,8 +70,19 @@ function _reseau(fn) { _post = fn; }
 
 let bank = neuveBanque();
 let mart = neuveMart();
-let S = { compteur: 0, round: null, dernier: [], sessions: 1, depuis: Date.now(), maj: 0,
-          service: { ok: null, quand: 0, message: null } };
+let S = etatNeuf();
+/* `cumul` et `plat` traversent les ruines : ce sont les deux cumuls que la
+ * page n'avait pas (le 26/09 à 22:06 elle aurait affiché « +2 %, 100 % » sur
+ * 2 trades, deux caisses ruinées cachées derrière `sessions: 3`). `plat` joue
+ * la mise de base à plat sur les MÊMES appels : le coût propre de la
+ * martingale devient lisible sans l'éteindre. */
+function cumulNeuf() { return { trades: 0, wins: 0, losses: 0, egal: 0, mise: 0, pl: 0, plPancake: 0, depuis: Date.now() }; }
+function etatNeuf() {
+  return { compteur: 0, round: null, dernier: [], sessions: 1, depuis: Date.now(), maj: 0,
+           service: { ok: null, quand: 0, message: null },
+           cumul: cumulNeuf(), plat: cumulNeuf(), ruines: [], ruinesAvantJournal: 0,
+           parConfiance: { HIGH: { n: 0, justes: 0, egal: 0 }, MEDIUM: { n: 0, justes: 0, egal: 0 }, LOW: { n: 0, justes: 0, egal: 0 } } };
+}
 let boucle = null;
 
 function neuveBanque() { return new E.BankrollManager(BANK0); }
@@ -74,7 +106,8 @@ function sauve() {
     const tmp = FICHIER + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify({ v: 1, banque: serialiseBanque(bank),
       compteur: S.compteur, dernier: S.dernier.slice(0, HISTO_MAX), sessions: S.sessions,
-      depuis: S.depuis, round: S.round }));
+      depuis: S.depuis, round: S.round,
+      cumul: S.cumul, plat: S.plat, ruines: S.ruines, ruinesAvantJournal: S.ruinesAvantJournal, parConfiance: S.parConfiance }));
     fs.renameSync(tmp, FICHIER);
   } catch (e) { console.warn('[predict] sauvegarde : ' + e.message); }
 }
@@ -88,6 +121,15 @@ function charge() {
       S.sessions = o.sessions || 1;
       S.depuis = o.depuis || Date.now();
       S.round = o.round || null;
+      /* Les cumuls toutes caisses : absents d'un fichier d'avant le 27/09. Les
+         ruines d'avant n'ont laissé que leur NOMBRE (sessions − 1) : on le dit
+         tel quel, sans inventer leurs montants. */
+      S.cumul = o.cumul || cumulNeuf();
+      S.plat = o.plat || cumulNeuf();
+      S.ruines = Array.isArray(o.ruines) ? o.ruines : [];
+      S.ruinesAvantJournal = typeof o.ruinesAvantJournal === 'number' ? o.ruinesAvantJournal
+        : (Array.isArray(o.ruines) ? 0 : Math.max(0, (o.sessions || 1) - 1));
+      S.parConfiance = o.parConfiance || etatNeuf().parConfiance;
     }
   } catch (e) { /* pas de fichier : premier demarrage, banque neuve */ }
 }
@@ -115,7 +157,20 @@ async function predit() {
 }
 
 /* ---- la banque ruinee repart d'une caisse neuve, et on le NOTE ---- */
+/* Une ligne au journal, en ajout seul. Synchrone mais minuscule (une ligne par
+ * round de 5 min) ; une erreur de disque ne casse jamais le relevé. */
+function journal(o) {
+  try { fs.mkdirSync(path.dirname(JOURNAL), { recursive: true }); fs.appendFileSync(JOURNAL, JSON.stringify(o) + '\n'); }
+  catch (e) { console.warn('[predict] journal : ' + e.message); }
+}
 function nouvelleSession() {
+  /* La caisse ruinée est NOTÉE avant d'être remplacée : la liste des ruines et
+     le cumul toutes caisses survivent, eux. */
+  const st = bank.stats();
+  const ruine = { session: S.sessions, t: Date.now(), trades: st.trades, wins: st.wins, losses: st.losses,
+                  solde: st.solde, pl: st.pl, haut: st.haut };
+  S.ruines.push(ruine);
+  journal(Object.assign({ type: 'ruine' }, ruine));
   bank = neuveBanque();
   mart = neuveMart();
   S.sessions++;
@@ -124,16 +179,43 @@ function nouvelleSession() {
   if (S.dernier.length > HISTO_MAX) S.dernier.pop();
 }
 
-/* ---- resoudre un round sur le mouvement REEL ---- */
+/* ---- resoudre un round sur le mouvement REEL ----
+ * ÉGALITÉ (fermeture = ouverture) : `egal`, P/L 0, hors du win rate, et la
+ * martingale ne bouge pas. Le 26/09 : 5 égalités sur 126 trades réels (4 %,
+ * pas de 0,005 du prix médian), comptées GAGNÉES pour DOWN — DOWN flatté de
+ * +3,1 points, le total de +1,6.
+ * L'équivalent PancakeSwap les met à 0 et les compte à part : une égalité
+ * papier n'est PAS une égalité on-chain. Elle vient du pas de 0,005 du prix
+ * médian Hyperliquid ; Chainlink a 8 décimales, et la chaîne a donné 0
+ * égalité sur 29 959 rounds réglés (relevé du 26/09, pancake.md). Sur
+ * PancakeSwap, un mouvement de moins de 0,005 se règle ~pile ou face à
+ * ~1,94× : ~−0,03 × mise, pas −1. La compter perdue biaisait le chiffre de
+ * −0,97 × 4 % ≈ −3,9 % de la mise par round — plus que toute la marge de
+ * 1,5 point au-dessus du point mort (53 % hors égalités + 4 % d'égalités :
+ * +2,6 %/round en vrai, −1,3 % affiché). Même règle que `resumeConfiance`. */
 function resous(r, prixFerme) {
+  const egal = prixFerme === r.ouvre;
   const monte = prixFerme > r.ouvre;
-  const gagne = (r.sens === 'UP') === monte;
-  const pl = gagne ? r.mise : -r.mise;
-  bank.applique(pl, { sens: r.sens, mise: r.mise, gagne: gagne });
-  if (mart) mart.resultat(gagne);
-  S.dernier.unshift({ n: r.n, t: Date.now(), sens: r.sens, prob: r.prob, mise: r.mise,
-    ouvre: r.ouvre, ferme: prixFerme, gagne: gagne, pl: pl, solde: bank.solde });
+  const gagne = !egal && ((r.sens === 'UP') === monte);
+  const issue = egal ? 'egal' : gagne ? 'gagne' : 'perdu';
+  const pl = egal ? 0 : gagne ? r.mise : -r.mise;
+  bank.applique(pl, { sens: r.sens, mise: r.mise, gagne: gagne, egal: egal });   /* pl 0 : ni win ni loss */
+  if (mart && !egal) mart.resultat(gagne);
+  /* Les cumuls qui traversent les ruines : martingale (mises réelles) et plate. */
+  const plPk = egal ? 0 : gagne ? PANCAKE_GAIN * r.mise : -r.mise;
+  const plPlat = egal ? 0 : gagne ? MISE : -MISE, plPlatPk = egal ? 0 : gagne ? PANCAKE_GAIN * MISE : -MISE;
+  for (const [c, m, a, b] of [[S.cumul, r.mise, pl, plPk], [S.plat, MISE, plPlat, plPlatPk]]) {
+    c.trades++; c.mise += m; c.pl += a; c.plPancake += b;
+    if (egal) c.egal++; else if (gagne) c.wins++; else c.losses++;
+  }
+  const niv = S.parConfiance[r.confiance];
+  if (niv) { if (egal) niv.egal++; else { niv.n++; if (gagne) niv.justes++; } }
+  S.dernier.unshift({ n: r.n, t: Date.now(), sens: r.sens, prob: r.prob, confiance: r.confiance || null, mise: r.mise,
+    ouvre: r.ouvre, ferme: prixFerme, gagne: gagne, egal: egal, issue: issue, pl: pl, solde: bank.solde });
   if (S.dernier.length > HISTO_MAX) S.dernier.pop();
+  journal({ type: 'round', n: r.n, tOuvre: r.tOuvre, tFerme: Date.now(), sens: r.sens, prob: r.prob, confiance: r.confiance || null,
+            ouvre: r.ouvre, ferme: prixFerme, issue: issue, mise: r.mise, pl: pl, solde: bank.solde, session: S.sessions,
+            martingale: !!mart, platPl: plPlat });
 }
 
 /* ---- un tic : resoudre l'echu, ouvrir le suivant ---- */
@@ -160,6 +242,37 @@ async function tic() {
   } catch (e) { note(false, String(e.message || e).slice(0, 80)); }
 }
 
+/* ---- les chiffres montrés, chacun avec son n ---- */
+function wilson(k, n) {
+  if (!n) return [null, null];
+  const z = 1.96, p = k / n, d = 1 + z * z / n, c = p + z * z / (2 * n), m = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n));
+  return [Math.round((c - m) / d * 1000) / 10, Math.round((c + m) / d * 1000) / 10];
+}
+const pct = (k, n) => (n ? Math.round(k / n * 1000) / 10 : null);
+const arrondi = (x) => Math.round(x * 100) / 100;
+function resumeCumul(c) {
+  const n = c.wins + c.losses;   /* les égalités hors du taux */
+  return { trades: c.trades, wins: c.wins, losses: c.losses, egal: c.egal, winRate: pct(c.wins, n), wilson: wilson(c.wins, n),
+           mise: arrondi(c.mise), pl: arrondi(c.pl), plPancake: arrondi(c.plPancake), depuis: c.depuis };
+}
+/* Le taux mesuré par niveau de confiance. Verdict : sous CONF_MIN rien ;
+ * « edge » seulement si la borne basse dépasse le point mort PancakeSwap ;
+ * « worse than a coin flip » si la borne haute reste sous 50 %. */
+function resumeConfiance() {
+  const o = { min: CONF_MIN, pointMort: Math.round(POINT_MORT * 10) / 10, niveaux: {} };
+  for (const niv of ['HIGH', 'MEDIUM', 'LOW']) {
+    const c = S.parConfiance[niv] || { n: 0, justes: 0, egal: 0 };
+    const w = wilson(c.justes, c.n);
+    let verdict;
+    if (c.n < CONF_MIN) verdict = 'not enough rounds (' + c.n + '/' + CONF_MIN.toLocaleString('en-US') + ')';
+    else if (w[0] > POINT_MORT) verdict = 'edge: above the ' + (Math.round(POINT_MORT * 10) / 10) + '% PancakeSwap break-even';
+    else if (w[1] < 50) verdict = 'worse than a coin flip';
+    else verdict = 'coin flip';
+    o.niveaux[niv] = { n: c.n, justes: c.justes, egal: c.egal, taux: pct(c.justes, c.n), wilson: w, verdict, conclut: c.n >= CONF_MIN };
+  }
+  return o;
+}
+
 /* ---- ce que la page lit : le releve partage ---- */
 function etat() {
   const s = bank.stats();
@@ -173,7 +286,20 @@ function etat() {
     banque: s,   /* solde, pl, roi, winRate, lossRate, trades, wins, losses, serie, haut, bas, drawdownMax, depart */
     dernier: S.dernier.slice(0, 60),
     courbe: bank.histo.slice(-60).map((x) => x.solde),
-    note: 'Paper only, shared, server-side. A heuristic on short-term direction sits near 50% — this is not an edge.',
+    /* Toutes caisses confondues, jamais remis à zéro par une ruine. */
+    toutesCaisses: Object.assign(resumeCumul(S.cumul), { ruines: S.ruines.length + S.ruinesAvantJournal,
+                                                         ruinesAvantJournal: S.ruinesAvantJournal }),
+    ruines: S.ruines.slice(-20),
+    /* La mise de base à plat sur les mêmes appels, à côté de la martingale. */
+    plat: Object.assign(resumeCumul(S.plat), { miseFixe: MISE }),
+    /* Ce que les mêmes appels auraient rendu chez PancakeSwap (gain +0,94×),
+       égalités papier exclues (artefact du pas de prix, voir resous) et
+       comptées à côté : le chiffre porte sur `jugees` rounds. */
+    pancakeEquivalent: { gain: PANCAKE_GAIN, pointMort: Math.round(POINT_MORT * 10) / 10,
+                         plPlat: arrondi(S.plat.plPancake), plMartingale: arrondi(S.cumul.plPancake), trades: S.cumul.trades,
+                         egalitesExclues: S.cumul.egal, jugees: S.cumul.trades - S.cumul.egal },
+    parConfiance: resumeConfiance(),
+    note: 'Paper only, shared, server-side. A heuristic on short-term direction sits near 50% — this is not an edge. Ties are not wins: they pay 0 here. A paper tie comes from the 0.005 price step of the feed; on-chain PancakeSwap ties were 0 in 29,959 rounds, so the PancakeSwap-equivalent figure leaves paper ties out and says how many.',
   };
 }
 
@@ -188,6 +314,7 @@ function arrete() { if (boucle) { clearInterval(boucle); boucle = null; } }
 
 /* Pour les essais : etat interne, remise a zero, un tic manuel. */
 function _ref() { return S; }
-function _reset() { bank = neuveBanque(); mart = neuveMart(); S = { compteur: 0, round: null, dernier: [], sessions: 1, depuis: Date.now(), maj: 0, service: { ok: null, quand: 0, message: null } }; }
+function _reset() { bank = neuveBanque(); mart = neuveMart(); S = etatNeuf(); }
+function _mart() { return mart; }
 
-module.exports = { demarre, arrete, charge, etat, tic, COIN, ROUND_MS, _reseau, _ref, _reset };
+module.exports = { demarre, arrete, charge, etat, tic, resous, COIN, ROUND_MS, JOURNAL, POINT_MORT, CONF_MIN, _reseau, _ref, _reset, _mart };

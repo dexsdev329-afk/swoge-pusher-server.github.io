@@ -58,6 +58,35 @@ const OUTILS_JETONS = 2600;
 const SYSTEME_JETONS = 500;
 const PRIX_RECHERCHE_USD = 0.005;      /* Perplexity Search API, la requête réussie */
 
+/* ---- L'AGENT VENDU EN x402 : DES BORNES PLUS SERRÉES ET UN PLAFOND DUR (contrat §D.2-D.4, 27 septembre 2026) ----
+ * x402 « exact » exige le montant AVANT d'agir : ask_agent se vend à un prix
+ * fixe, et ce que coûte une exécution doit rester sous un plafond. Avec une
+ * clé, rien ne change (ETAPES_MAX, OUTILS_PAR_ETAPE, RESULTAT_CAR_MAX…).
+ *   modèle Sonnet 5 seul, tâche ≤ 2 000 caractères, 4 appels au plus (le
+ *   dernier sans outils), 2 outils par appel, résultats coupés à 6 000
+ *   caractères, 4 000 jetons de sortie par appel (Sonnet 5 réfléchit par
+ *   défaut et ça compte dedans : plus bas risquerait des réponses coupées),
+ *   150 s en tout, l'appel final forcé après 105 s.
+ * Pire cas à la formule (base_design/agent_budget_calc.js, relancé le 27
+ * septembre 2026) : 76 400 jetons d'entrée × 2 $/M + 16 000 de sortie × 10 $/M
+ * + 8 recherches × 0,005 $ = 0,3528 $ — SOUS L'HYPOTHÈSE NON MESURÉE d'un jeton
+ * pour deux caractères (le tokenizer de Sonnet 5 en compte ~30 % de plus que
+ * Sonnet 4.6 ; nos résultats sont du JSON plein d'adresses). D'où la GARDE EN
+ * DIRECT de `repond` (deps.limites + deps.budgetUsd) : chaque appel est compté
+ * AVANT (messages.countTokens, gratuit) et n'est pas fait s'il pouvait crever
+ * le plafond. 105 s / 150 s : valeurs de DÉPART, la durée d'un appel final de
+ * 4 000 jetons n'est pas mesurée (contrat §G.11) — à mesurer avant de les figer. */
+const LIMITES_X402 = Object.freeze({ modele: 'sonnet-5', tacheMaxCar: 2000, etapesMax: 4, outilsParEtape: 2, resultatCarMax: 6000, sortieMax: 4000,
+  dureeMaxS: 150, finalApresS: 105 });
+/* Le plafond provisoire d'une exécution x402 (X402_AGENT_BUDGET_USD) : au-dessus
+   du pire cas à la formule (0,3528 $). Prix = plafond × STUDIO_MARGE, arrondi
+   au cent supérieur (0,54 $). Provisoire : le rapport caractères/jeton n'est pas mesuré. */
+const BUDGET_X402_USD = 0.36;
+/* countTokens rend une ESTIMATION (doc Anthropic token-counting, copie du 26
+   septembre 2026, ligne 33) : +5 %. Un choix, pas une mesure ; la marge de prix
+   (50 %) absorbe davantage. */
+const MARGE_COMPTE = 1.05;
+
 const SYSTEME = [
   'You are SwogeAgentic, the research agent of SWOGE WORLD.',
   'You receive a task, decide which tools to call, call them (several if useful), then answer.',
@@ -163,18 +192,26 @@ function definitions(actifs) {
   return d.filter((x) => !retenus.includes(x.name)).map((x) => Object.assign({ eager_input_streaming: true }, x));
 }
 
-/** Le pire cas d'une tâche, en USD avant marge — `messages` nettoyés par studio_chat. */
-function pireCasUsd(m, messages, recherche) {
+/** Le pire cas d'une tâche, en USD avant marge — `messages` nettoyés par studio_chat.
+ *  `limites` (facultatif, LIMITES_X402) : les bornes de l'agent vendu en x402. */
+function pireCasUsd(m, messages, recherche, limites) {
+  const L = limites || {};
+  const E = L.etapesMax || ETAPES_MAX, T = L.outilsParEtape || OUTILS_PAR_ETAPE, R = L.resultatCarMax || RESULTAT_CAR_MAX, S = L.sortieMax || SORTIE_MAX;
   const car = (messages || []).reduce((s, x) => s + String(x.content || '').length, 0);
-  const sortie = Math.min(m.maxTokens, SORTIE_MAX);
+  const sortie = Math.min(m.maxTokens, S);
   const base = Math.ceil(car / 2) + SYSTEME_JETONS + OUTILS_JETONS;
-  const parEtape = sortie + OUTILS_PAR_ETAPE * Math.ceil(RESULTAT_CAR_MAX / 2);
-  /* L'appel k (0…ETAPES_MAX−1) relit la base et tout ce que les k précédents ont ajouté. */
+  const parEtape = sortie + T * Math.ceil(R / 2);
+  /* L'appel k (0…E−1) relit la base et tout ce que les k précédents ont ajouté. */
   let entree = 0;
-  for (let k = 0; k < ETAPES_MAX; k++) entree += base + k * parEtape;
-  const recherches = recherche ? ETAPES_MAX * OUTILS_PAR_ETAPE : 0;
-  return entree * m.entree / 1e6 + ETAPES_MAX * sortie * m.sortie / 1e6 + recherches * PRIX_RECHERCHE_USD;
+  for (let k = 0; k < E; k++) entree += base + k * parEtape;
+  /* E × T recherches : un peu trop (le dernier appel n'a pas d'outils), du bon côté. */
+  const recherches = recherche ? E * T : 0;
+  return entree * m.entree / 1e6 + E * sortie * m.sortie / 1e6 + recherches * PRIX_RECHERCHE_USD;
 }
+/* Le coût réel d'UN appel, lu dans son `usage` (écritures de cache à 1,25×, lectures à 0,1× —
+   la même règle que studio_chat.coutUsd ; la boucle n'allume jamais le cache). */
+const coutAppelUsd = (m, u) => (((u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) * 1.25 + (u.cache_read_input_tokens || 0) * 0.1) * m.entree
+  + (u.output_tokens || 0) * m.sortie) / 1e6;
 
 const adresseOk = (a) => /^0x[0-9a-fA-F]{40}$/.test(String(a || ''));
 /* L'OSINT offert aux autres agents ne vise que l'INFRASTRUCTURE : vendre a
@@ -221,7 +258,7 @@ function ficheEnAnglais(f, assez) {
   delete colonie.toutes;
   return Object.assign({}, f, { colonie });
 }
-const coupe = (s) => { s = String(s); return s.length > RESULTAT_CAR_MAX ? s.slice(0, RESULTAT_CAR_MAX) + '\n[truncated]' : s; };
+const coupe = (s, max) => { s = String(s); const k = max || RESULTAT_CAR_MAX; return s.length > k ? s.slice(0, k) + '\n[truncated]' : s; };
 
 /**
  * Les outils, câblés sur ce que le serveur sait déjà faire. `src` :
@@ -332,63 +369,142 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
   const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, recherches_perplexity: 0 };
   const textes = [], sources = [], cartes = [];
   let stop = null, servi = m.api, etapes = 0;
-
-  while (etapes < ETAPES_MAX) {
-    /* Arrêté par le joueur : pas d'étape de plus (et le flux en cours est coupé par le signal). */
-    if (signal && signal.aborted) throw Object.assign(new Error('stopped'), { arrete: true });
-    etapes++;
-    /* Au dernier appel permis, il doit conclure avec ce qu'il a : les outils
-       restent DECLARES (l'historique porte des blocs tool_use) mais
-       `tool_choice: none` les interdit — accepte par tous les modeles, quand
-       `any`/`tool` rendent un 400 sur Opus 5.5 et Fable 5.1 (doc relue). */
-    const dernier = etapes === ETAPES_MAX;
-    const params = { model: m.api, max_tokens: Math.min(m.maxTokens, SORTIE_MAX), system: SYSTEME, messages: fil, tools };
-    if (dernier) params.tool_choice = { type: 'none' };
-    const opts = signal ? { signal } : undefined;
-    const flux = m.repli
-      ? c.beta.messages.stream(Object.assign({}, params, { betas: ['server-side-fallback-2026-06-01'], fallbacks: [{ model: m.repli }] }), opts)
-      : c.messages.stream(params, opts);
-    let texteEtape = '';
-    for await (const ev of flux) {
-      if (ev.type === 'content_block_start' && ev.content_block && ev.content_block.type === 'thinking' && surReflexion) surReflexion();
-      if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
-        if (!texteEtape && textes.length && surTexte) surTexte('\n\n');
-        texteEtape += ev.delta.text;
-        if (surTexte) surTexte(ev.delta.text);
-      }
-    }
-    const msg = await flux.finalMessage();
-    const u = msg.usage || {};
-    usage.input_tokens += u.input_tokens || 0; usage.output_tokens += u.output_tokens || 0;
-    usage.cache_read_input_tokens += u.cache_read_input_tokens || 0; usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
-    servi = msg.model || servi; stop = msg.stop_reason || null;
-    if (texteEtape) textes.push(texteEtape);
-
-    const appels = (msg.content || []).filter((b) => b.type === 'tool_use');
-    if (stop !== 'tool_use' || !appels.length) break;          /* end_turn, refusal, max_tokens : on s'arrête */
-    fil.push({ role: 'assistant', content: msg.content });
-    const resultats = [];
-    for (let i = 0; i < appels.length; i++) {
-      const b = appels[i];
-      if (i >= OUTILS_PAR_ETAPE || !declares.has(b.name) || !O[b.name] || !b.input || typeof b.input !== 'object') {
-        resultats.push({ type: 'tool_result', tool_use_id: b.id, is_error: true,
-          content: i >= OUTILS_PAR_ETAPE ? 'at most ' + OUTILS_PAR_ETAPE + ' tools per step' : 'unknown tool or unreadable input' });
-        continue;
-      }
-      if (surOutil) surOutil({ id: b.id, nom: b.name, entree: b.input });
-      let r;
-      try { r = await O[b.name](b.input); } catch (e) { r = { erreur: 'the tool failed: ' + String(e && e.message || e).slice(0, 120) }; }
-      if (r.recherche) usage.recherches_perplexity += r.recherche;
-      if (r.sources) for (const s of r.sources) if (!sources.some((x) => x.url === s.url)) sources.push(s);
-      if (r.carte) cartes.push(r.carte);
-      if (surResultat) surResultat({ id: b.id, nom: b.name, ok: !r.erreur, resume: r.erreur || coupe(r.texte || '').slice(0, 280), carte: r.carte || null });
-      resultats.push(r.erreur ? { type: 'tool_result', tool_use_id: b.id, is_error: true, content: r.erreur }
-                              : { type: 'tool_result', tool_use_id: b.id, content: coupe(r.texte || '') });
-    }
-    fil.push({ role: 'user', content: resultats });
+  /* ---- LA GARDE EN DIRECT (x402 seulement : deps.limites) ----
+     Sans `limites`, tout est comme avant (page, API a cle, essais). */
+  const L = deps.limites || null;
+  const etapesMax = L ? L.etapesMax : ETAPES_MAX;
+  const outilsMax = L ? L.outilsParEtape : OUTILS_PAR_ETAPE;
+  const resultatMax = L ? L.resultatCarMax : RESULTAT_CAR_MAX;
+  const sortieMax = L ? L.sortieMax : SORTIE_MAX;
+  const plafond = L && deps.budgetUsd > 0 ? Number(deps.budgetUsd) : null;
+  const horloge = () => (deps.maintenant ? deps.maintenant() : Date.now());
+  const debut = horloge();
+  let depense = 0, supplement = 0, arretBudget = false, arretDelai = false, delaiAtteint = false;
+  /* Le delai TENU DANS LA BOUCLE : le `signal` existant jette « stopped » et
+     studio_chat en fait un 409 qui perd texte et usage (studio_agent.js
+     repond, studio_chat.js repondSuite) ; ici, a 150 s, l'appel en vol est
+     coupe et la tache rend ce qu'elle a. */
+  let ctlDelai = null, minuterie = null;
+  if (L) {
+    ctlDelai = new AbortController();
+    /* PAS unref : c'est elle qui debloque un appel pendu (effacee dans le finally). */
+    minuterie = setTimeout(() => { delaiAtteint = true; ctlDelai.abort(); }, Math.max(1, L.dureeMaxS * 1000 - (horloge() - debut)));
   }
-  return { texte: textes.join('\n\n'), sources, usage, stop: stop === 'tool_use' ? 'max_steps' : stop, servi, jetons: cartes, etapes };
+  const signalAppel = ctlDelai ? (signal ? AbortSignal.any([signal, ctlDelai.signal]) : ctlDelai.signal) : signal;
+  /* countTokens avec nos outils : `eager_input_streaming` retire de la COPIE comptee seulement
+     (son acceptation par countTokens n'est pas verifiee, contrat §D.4.1). */
+  const toolsCompte = tools.map((t) => { const x = Object.assign({}, t); delete x.eager_input_streaming; return x; });
+  const compte = async () => {
+    try {
+      const r = await c.messages.countTokens({ model: m.api, system: SYSTEME, tools: toolsCompte, messages: fil });
+      if (r && r.input_tokens > 0) return r.input_tokens;
+    } catch (e) { /* compte impossible : un jeton par caractere, pessimiste expres */ }
+    return JSON.stringify([SYSTEME, toolsCompte, fil]).length;
+  };
+
+  try {
+    while (etapes < etapesMax) {
+      /* Arrêté par le joueur : pas d'étape de plus (et le flux en cours est coupé par le signal). */
+      if (signal && signal.aborted) throw Object.assign(new Error('stopped'), { arrete: true });
+      if (L && (delaiAtteint || horloge() - debut >= L.dureeMaxS * 1000)) { arretDelai = true; break; }
+      /* Au dernier appel permis, il doit conclure avec ce qu'il a : les outils
+         restent DECLARES (l'historique porte des blocs tool_use) mais
+         `tool_choice: none` les interdit — accepte par tous les modeles, quand
+         `any`/`tool` rendent un 400 sur Opus 5.5 et Fable 5.1 (doc relue). */
+      let dernier = etapes + 1 === etapesMax;
+      if (L && horloge() - debut >= L.finalApresS * 1000) dernier = true;
+      const maxTok = Math.min(m.maxTokens, sortieMax);
+      let pireAppel = 0;
+      if (plafond !== null) {
+        const n = await compte();
+        pireAppel = n * MARGE_COMPTE * m.entree / 1e6 + maxTok * m.sortie / 1e6;
+        /* Cet appel pourrait crever le plafond : il n'est pas fait. */
+        if (depense + pireAppel > plafond) { arretBudget = true; break; }
+        /* Un tour d'outils de plus seulement si une reponse finale tient encore
+           apres lui (resultats comptes a un jeton par caractere, pessimiste expres). */
+        const pireFinal = (n + maxTok + outilsMax * resultatMax) * m.entree / 1e6 * MARGE_COMPTE + maxTok * m.sortie / 1e6;
+        if (!dernier && depense + pireAppel + pireFinal > plafond) dernier = true;
+      }
+      etapes++;
+      const params = { model: m.api, max_tokens: maxTok, system: SYSTEME, messages: fil, tools };
+      if (dernier) params.tool_choice = { type: 'none' };
+      const opts = signalAppel ? { signal: signalAppel } : undefined;
+      let texteEtape = '', msg;
+      try {
+        const flux = m.repli
+          ? c.beta.messages.stream(Object.assign({}, params, { betas: ['server-side-fallback-2026-06-01'], fallbacks: [{ model: m.repli }] }), opts)
+          : c.messages.stream(params, opts);
+        for await (const ev of flux) {
+          if (ev.type === 'content_block_start' && ev.content_block && ev.content_block.type === 'thinking' && surReflexion) surReflexion();
+          if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
+            if (!texteEtape && textes.length && surTexte) surTexte('\n\n');
+            texteEtape += ev.delta.text;
+            if (surTexte) surTexte(ev.delta.text);
+          }
+        }
+        msg = await flux.finalMessage();
+      } catch (e) {
+        /* Le delai de la garde : l'appel en vol est coupe, on rend ce qu'on a (son cout
+           n'est pas connu : on compte son pire cas, du bon cote). */
+        if (delaiAtteint && !(signal && signal.aborted)) {
+          if (texteEtape) textes.push(texteEtape);
+          supplement += pireAppel;
+          arretDelai = true;
+          break;
+        }
+        /* Toute autre panne (529, reseau…) sous la garde : l'appel en vol compte a son pire
+           cas, du bon cote — la depense deja faite part avec l'erreur (voir plus bas). */
+        if (L) supplement += pireAppel;
+        throw e;
+      }
+      const u = msg.usage || {};
+      usage.input_tokens += u.input_tokens || 0; usage.output_tokens += u.output_tokens || 0;
+      usage.cache_read_input_tokens += u.cache_read_input_tokens || 0; usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
+      depense += coutAppelUsd(m, u);
+      servi = msg.model || servi; stop = msg.stop_reason || null;
+      if (texteEtape) textes.push(texteEtape);
+
+      const appels = (msg.content || []).filter((b) => b.type === 'tool_use');
+      if (stop !== 'tool_use' || !appels.length) break;          /* end_turn, refusal, max_tokens : on s'arrête */
+      if (dernier && L) break;                                    /* forcé dernier (garde) : aucun outil de plus */
+      fil.push({ role: 'assistant', content: msg.content });
+      const resultats = [];
+      for (let i = 0; i < appels.length; i++) {
+        const b = appels[i];
+        if (i >= outilsMax || !declares.has(b.name) || !O[b.name] || !b.input || typeof b.input !== 'object') {
+          resultats.push({ type: 'tool_result', tool_use_id: b.id, is_error: true,
+            content: i >= outilsMax ? 'at most ' + outilsMax + ' tools per step' : 'unknown tool or unreadable input' });
+          continue;
+        }
+        /* La recherche coute 0,005 $ : refusee si elle crevait le plafond. */
+        if (plafond !== null && b.name === 'web_search' && depense + PRIX_RECHERCHE_USD > plafond) {
+          resultats.push({ type: 'tool_result', tool_use_id: b.id, is_error: true, content: 'search budget reached' });
+          continue;
+        }
+        if (surOutil) surOutil({ id: b.id, nom: b.name, entree: b.input });
+        let r;
+        try { r = await O[b.name](b.input); } catch (e) { r = { erreur: 'the tool failed: ' + String(e && e.message || e).slice(0, 120) }; }
+        if (r.recherche) { usage.recherches_perplexity += r.recherche; depense += r.recherche * PRIX_RECHERCHE_USD; }
+        if (r.sources) for (const s of r.sources) if (!sources.some((x) => x.url === s.url)) sources.push(s);
+        if (r.carte) cartes.push(r.carte);
+        if (surResultat) surResultat({ id: b.id, nom: b.name, ok: !r.erreur, resume: r.erreur || coupe(r.texte || '', resultatMax).slice(0, 280), carte: r.carte || null });
+        resultats.push(r.erreur ? { type: 'tool_result', tool_use_id: b.id, is_error: true, content: r.erreur }
+                                : { type: 'tool_result', tool_use_id: b.id, content: coupe(r.texte || '', resultatMax) });
+      }
+      fil.push({ role: 'user', content: resultats });
+    }
+  } catch (e) {
+    /* x402 (contrat §D.6) : une execution qui echoue APRES avoir depense doit porter ce
+       qu'elle a coute jusqu'au registre des pertes — sinon le plafond du jour sous-compte.
+       studio_chat.repond (horsSolde) le rend en `coutUsd`. */
+    if (L && e && typeof e === 'object') e.coutUsd = depense + supplement;
+    throw e;
+  } finally { if (minuterie) clearTimeout(minuterie); }
+  const out = { texte: textes.join('\n\n'), sources, usage, stop: arretBudget ? 'budget' : arretDelai ? 'time' : stop === 'tool_use' ? 'max_steps' : stop, servi, jetons: cartes, etapes };
+  /* x402 : ce qui a ete depense (cout reel des appels finis + recherches + pire cas d'un appel coupe). */
+  if (L) Object.assign(out, { coutUsd: depense + supplement, coutSupplementUsd: supplement, arretBudget, arretDelai });
+  return out;
 }
 
-module.exports = { repond, definitions, outils, NON_OFFERTS, pireCasUsd, SYSTEME, OSINT_TYPES, rapportOsint, ficheEnAnglais, DESCRIPTIONS_API, OUTILS_JETONS, SYSTEME_JETONS,
-  ETAPES_MAX, OUTILS_PAR_ETAPE, RESULTAT_CAR_MAX, SORTIE_MAX };
+module.exports = { repond, definitions, outils, NON_OFFERTS, pireCasUsd, coutAppelUsd, SYSTEME, OSINT_TYPES, rapportOsint, ficheEnAnglais, DESCRIPTIONS_API, OUTILS_JETONS, SYSTEME_JETONS,
+  ETAPES_MAX, OUTILS_PAR_ETAPE, RESULTAT_CAR_MAX, SORTIE_MAX, PRIX_RECHERCHE_USD, LIMITES_X402, BUDGET_X402_USD, MARGE_COMPTE };

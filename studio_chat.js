@@ -266,7 +266,12 @@ function rythmeOk(addr, maintenant) {
 /* ---- CE QU'ON MESURE (doctrine du dépôt : mesurer avant de changer) ----
  * Coût réel payé au fournisseur contre ce qu'on a facturé : la marge vécue,
  * et combien de fois la réserve a été dépassée (devrait rester à zéro). */
-const MESURE = { requetes: 0, echecs: 0, coutUsd: 0, factureUsd: 0, depassements: 0, parModele: {} };
+const MESURE = { requetes: 0, echecs: 0, coutUsd: 0, factureUsd: 0, depassements: 0, parModele: {},
+  /* ask_agent payé d'avance en x402 (contrat §D.5, 27 septembre 2026) : le coût RÉEL de
+     chaque exécution contre le prix fixe encaissé, les arrêts par le plafond, et ce qui a
+     été servi sans être encaissé (agentic.js / x402.js). Le prix ne se baisse QUE sur ces
+     mesures — même règle que les images (studio_media.js, prixFixeImageUsd). */
+  horsSolde: { n: 0, coutUsd: 0, prixUsd: 0, arretsBudget: 0, nonRegles: 0, coutNonRegleUsd: 0 } };
 /* Les compteurs DURABLES (compteurs.js, 26 septembre 2026) : MESURE repart de
    zéro à chaque redéploiement. server.js pose `COMPTEUR.note` ; sans lui (essais), rien. */
 const COMPTEUR = { note: null };
@@ -353,8 +358,11 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
     if (entreeComptee > Pieces.PDF_JETONS_MAX) return { ok: false, code: 413, raison: 'this PDF is too long for one question (~' + Math.round(entreeComptee / 1000) + 'k tokens, max ' + Pieces.PDF_JETONS_MAX / 1000 + 'k) — send fewer pages' };
   }
 
-  const cours = await deps.cours();
-  if (!(cours > 0)) return { ok: false, code: 503, raison: 'the $SWOGE price is unavailable — try again shortly' };
+  /* `deps.horsSolde` : payé AILLEURS (x402, d'avance, ask_agent) — ni cours, ni réserve,
+     ni règlement sur un solde de jeu ; le coût réel est quand même lu et compté. */
+  const hors = !!deps.horsSolde;
+  const cours = hors ? null : await deps.cours();
+  if (!hors && !(cours > 0)) return { ok: false, code: 503, raison: 'the $SWOGE price is unavailable — try again shortly' };
   if (ctl.signal.aborted) return arreteAvant();
   const dec = config.DECIMALS || 18;
   /* Une adresse de jeton dans la question : sa fiche (marche, securite,
@@ -364,8 +372,9 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
      SwogeAgentic) donne SON pire cas ; la regle de la reserve ne change pas. */
   const reserveUsd = factureUsd(deps.pireCas ? deps.pireCas(m, messages, recherche)
     : pireCasUsd(m, messages, recherche, adresses.length, entreeComptee));
-  const reserveWei = studio.montantBaseDe(reserveUsd, cours, dec);
-  if (!deps.solde.reserve(addr, reserveWei)) {
+  const reserveWei = hors ? 0n : studio.montantBaseDe(reserveUsd, cours, dec);
+  const solde0 = hors ? { reserve: () => true, regle: () => null } : deps.solde;
+  if (!solde0.reserve(addr, reserveWei)) {
     return { ok: false, code: 402, raison: 'balance too low for this model',
       requisSwoge: studio.formateBase(reserveWei, dec) };
   }
@@ -403,7 +412,8 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
     if (ctl.signal.aborted) {
       EN_VOL.delete(addr);
       MESURE.arretes = (MESURE.arretes || 0) + 1;
-      if (!appele) { deps.solde.regle(addr, reserveWei, 0n); return arreteAvant(); }
+      if (!appele) { solde0.regle(addr, reserveWei, 0n); return arreteAvant(); }
+      if (hors) return { ok: false, code: 409, arrete: true, raison: 'stopped', coutUsd: null };
       /* Le fournisseur avait commencé : la réserve est gardée (règle du propriétaire). */
       const solde = deps.solde.regle(addr, reserveWei, reserveWei);
       /* Facturé (la réserve gardée), coût réel inconnu : l'appel a été coupé. */
@@ -412,12 +422,29 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
         factureSwoge: studio.formateBase(reserveWei, dec), factureUsd: Number(reserveUsd.toFixed(5)), solde };
     }
     /* Échec avant toute réponse facturable : on rend TOUT. */
-    deps.solde.regle(addr, reserveWei, 0n);
+    solde0.regle(addr, reserveWei, 0n);
     MESURE.echecs++;
     EN_VOL.delete(addr);
-    return { ok: false, code: 502, raison: 'the AI provider failed — you were not charged', detail: String(e && e.message || e).slice(0, 160) };
+    /* Hors solde (x402) : ce que l'execution a deja coute avant la panne (studio_agent le
+       joint a l'erreur) remonte, pour le registre des pertes (contrat §D.6). */
+    return { ok: false, code: 502, raison: 'the AI provider failed — you were not charged', detail: String(e && e.message || e).slice(0, 160),
+      coutUsd: hors ? (Number(e && e.coutUsd) || null) : null };
   }
   EN_VOL.delete(addr);
+  if (hors) {
+    /* Payé d'avance : le coût RÉEL (appels finis + recherches + pire cas d'un appel coupé
+       par le délai) contre le prix encaissé. `chat_facture` note le PRIX x402 (ou 0) en
+       `usd` : jamais le coût majoré — sinon l'exécution compterait deux fois, en
+       chat_facture ET en paye_x402. */
+    const cout = coutUsd(m, r.usage) + (Number(r.coutSupplementUsd) || 0);
+    const H = MESURE.horsSolde;
+    H.n++; H.coutUsd += cout; H.prixUsd += Number(deps.prixUsd) || 0; if (r.arretBudget) H.arretsBudget++;
+    MESURE.requetes++; MESURE.coutUsd += cout;
+    compte('chat_facture', { outil: 'chat:' + m.id, canal: q.canal || 'rest', qui: addr, usd: Number(deps.prixUsd) || 0, coutUsd: cout, sorte: 'x402' });
+    return { ok: true, texte: r.texte || '', sources: Jeton.sources(fiches).concat(r.sources || []), stop: r.stop || null,
+      jetons: fiches.map(Jeton.carte).concat(r.jetons || []), etapes: r.etapes || undefined, modele: m.id, servi: r.servi || m.api,
+      coutUsd: Number(cout.toFixed(6)), arretBudget: !!r.arretBudget, arretDelai: !!r.arretDelai };
+  }
 
   /* Le repli (Fable 5.1 → Opus 4.8) facture aux tarifs du modèle demandé,
      qui sont les plus hauts : la maison ne perd pas, le joueur le sait. */

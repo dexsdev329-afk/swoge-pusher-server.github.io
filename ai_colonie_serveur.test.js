@@ -520,9 +520,16 @@ global.fetch = async function (url, opts) {
       const f = b0.params[0];
       const plage = parseInt(f.toBlock, 16) - parseInt(f.fromBlock, 16);
       appels.rpc2Logs = (appels.rpc2Logs || 0) + 1;
-      /* La phrase d Alchemy en forfait gratuit, mot pour mot. */
+      /* ---- REECRIT LE 27 SEPTEMBRE 2026, SUR SON INTENTION ----
+       * Ce refus portait la phrase entiere « Log response size exceeded… up to
+       * a 2K block range … or … a cap of 10K logs in the response » : c est la
+       * reponse d un jeton a plus de 10 000 transferts (rapport du 27/09,
+       * proposition 7), traitee depuis comme une reponse « foule » — elle
+       * n apprend plus de plage. L intention de l essai est le « K » : une
+       * limite de plage dite « 2K » vaut 2 000, pas 2. Elle se mesure sur un
+       * refus de plage seul, de la meme forme que celui du forfait gratuit. */
       if (MONDE.secoursDeuxK && plage > 2000)
-        return rep({ error: { message: 'Log response size exceeded. You can make eth_getLogs requests with up to a 2K block range and no limit on the response size, or you can request any block range with a cap of 10K logs in the response.' } }, 400);
+        return rep({ error: { message: 'Under the Growth tier plan, you can make eth_getLogs requests with up to a 2K block range.' } }, 400);
       if (MONDE.secoursDixBlocs && plage > 9)
         return rep({ error: { message: 'Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block range. Based on your parameters and the response size limit, this block range should work: [0x1, 0xa]' } }, 400);
       /* Sa vraie limite, relevee sur le service : dix mille blocs. */
@@ -546,6 +553,18 @@ global.fetch = async function (url, opts) {
       return rep({ result: (MONDE.txFrom || {})[b.params[0]] ? { from: MONDE.txFrom[b.params[0]] } : null });
     if (b.method === 'eth_getLogs') {
       const a = String(b.params[0].address || '').toLowerCase();
+      /* ---- ALCHEMY REPOND EN PREMIER (27/09) ----
+       * En production, RPC_SECOURS (Alchemy) passe devant l officiel. Ici le
+       * premier noeud de la rotation est l officiel : c est lui qui rend la
+       * phrase d Alchemy, entiere, pour les jetons de `fouleAlchemy`. Le second
+       * rend celle de l officiel, ou sature (`secondSature`). */
+      if ((MONDE.fouleAlchemy || []).indexOf(a) >= 0) {
+        if (!secours) return rep({ error: { message: 'Log response size exceeded. You can make eth_getLogs requests with up to a 2K block range and no limit on the response size, or you can request any block range with a cap of 10K logs in the response.' } }, 400);
+        if (MONDE.secondSature) return rep({ error: { code: 429, message: 'Too Many Requests' } }, 429);
+        return rep({ error: { message: 'logs matched by query exceeds limit of 10000' } }, 400);
+      }
+      if ((MONDE.fouleAlchemySeul || []).indexOf(a) >= 0 && !secours)
+        return rep({ error: { message: 'Log response size exceeded. You can make eth_getLogs requests with up to a 2K block range and no limit on the response size, or you can request any block range with a cap of 10K logs in the response.' } }, 400);
       if ((MONDE.foule || []).indexOf(a) >= 0)
         return rep({ error: { message: 'logs matched by query exceeds limit of 10000' } }, 400);
       if (a === C.SECRETPAD_LANCEUR) {
@@ -7391,6 +7410,14 @@ function bornesQuiSeReglent() {
     ok(/10% went up/.test((G.journalStructure[0] || {}).txt || ''),
        'et le journal donne la part de montees qui l a choisie');
     /* Sans audit jugeable (moins de AUDIT_MIN_OBS), on retombe sur celle qui ecarte le plus. */
+    /* ---- REECRIT LE 27 SEPTEMBRE 2026, SUR SON INTENTION ----
+     * L essai faisait desserrer liqParMise sous le plancher fixe de 13 000 $ —
+     * un geste qui ne changeait AUCUN plancher (40 × 60 = 2 400), et que la
+     * famine ne propose plus (rapport du 27/09 : 69 mouvements en 76 h, plancher
+     * a 13 000 dans tous les releves). L intention — sans audit jugeable, celle
+     * qui ecarte le plus donne — se mesure donc la ou la borne MORD : plancher
+     * fixe a 500 $, sous 40 × 25 = 1 000 $. */
+    process.env.LIQ_ACHAT_MIN = '500';
     G = pose({ audit: Object.assign(ageLignes({ n: 5, s: -100, montes: 3, effondres: 1 }), {
       'scout · pool below the buy floor': { n: 9, s: -18, montes: 0, effondres: 6 } }), abandons: 1 });
     G.toursSansAchat = C.SANS_ACHAT_DESSERRE;
@@ -7398,7 +7425,8 @@ function bornesQuiSeReglent() {
     const avA2 = C.borne('ageMin'), avL2 = C.borne('liqParMise');
     C.revoitLesBornes();
     ok(C.borne('liqParMise') < avL2 && C.borne('ageMin') === avA2,
-       'sans audit jugeable, celle qui ecarte le plus (9 contre 5) donne, comme avant');
+       'sans audit jugeable, celle qui ecarte le plus (9 contre 5) donne, comme avant — la ou elle change le plancher');
+    delete process.env.LIQ_ACHAT_MIN;
 
     /* ---- ET LA BUTEE DU CODE TIENT MEME EN FAMINE ---- */
     G = pose({ audit: PROTEGE, abandons: 1 });
@@ -7452,6 +7480,552 @@ function bornesQuiSeReglent() {
      'QUATRE bornes, et quatre seulement : les controles de securite et les bornes de mise ne sont '
      + 'pas dans cette table, donc aucun agent ne peut les atteindre');
   C._pose(E);
+}
+
+/* ==========================================================================
+ * RAPPORT DU 27 SEPTEMBRE 2026 : HUIT REPARATIONS DE MESURE
+ *
+ * Aucune ne touche un seuil, un plancher, une butee ou une garde du miroir.
+ * Chacune rend visible ce qui se perdait. Les essais ci-dessous verifient les
+ * deux moities : la mesure existe, et la decision n'a pas bouge.
+ * ========================================================================== */
+
+/* 1. Pourquoi le miroir ne suit pas : la raison du devis manque est gardee
+ *    dans le carnet et comptee par motif ; ce que le miroir a fait des achats
+ *    envoyes se lit dans la vue, et l'alerte dit « N envoyes, M suivis ». */
+async function miroirQuiNeSuitPas() {
+  console.log('\n-- 1. pourquoi le miroir ne suit pas : le devis manque garde sa raison --');
+  remise([jeton(1), jeton(2)]);
+  const recus = [];
+  let stats = { envois: 5, suivis: 1, sansDevis: 4, sansDevisSuivis: 0, raisons: { echecAchat: 4, suivi: 1 }, echecs: { aucunePlace: 4 },
+                jour: { envois: 5, suivis: 1, sansDevis: 4, sansDevisSuivis: 0, raisons: { echecAchat: 4, suivi: 1 }, echecs: { aucunePlace: 4 } } };
+  C.poseMiroir({ surAchat: async (t) => { recus.push(t); return 0; }, surVente: async () => 0,
+                 allerRetour: async () => { throw new Error('no venue answers for this token (v4 WETH pool not read)'); },
+                 suiviStats: () => stats });
+  await C.tour();
+  const E1 = C._etat();
+  const cpt = E1.compteurs;
+  ok(E1.positions.length > 0, 'sans devis, le papier ouvre comme avant : le transfert decide seul (' + E1.positions.length + ' positions)');
+  const p = E1.positions[0];
+  ok(p && p.allerRetour === null && p.devisEchec && p.devisEchec.motif === 'aucunePlace' && /no venue answers/.test(p.devisEchec.raison),
+     'la position garde le motif et la phrase du quoteur : ' + JSON.stringify(p && p.devisEchec));
+  ok((cpt.devisRate_aucunePlace || 0) >= E1.positions.length, 'chaque devis rate est compte par motif (devisRate_aucunePlace = ' + cpt.devisRate_aucunePlace + ')');
+  ok(cpt.achatSansDevis_aucunePlace === E1.positions.length, 'et chaque ACHAT sans devis aussi (' + cpt.achatSansDevis_aucunePlace + ')');
+  ok(recus.length === E1.positions.length && recus.every((t) => t.sansDevis === true && t.devisMotif === 'aucunePlace'),
+     'le miroir recoit l achat en sachant qu il n a pas de devis : ' + JSON.stringify(recus.map((t) => t.devisMotif)));
+  ok(cpt.miroirEnvoye === recus.length && cpt.miroirEnvoyeSansDevis === recus.length, 'la colonie compte ses envois au miroir (' + cpt.miroirEnvoye + ')');
+  C._ferme(p, p.prix0 * 1.1, Date.now(), { par: 'closer' });
+  const l0 = E1.carnet[0];
+  ok(l0 && l0.devisEchec && l0.devisEchec.motif === 'aucunePlace', 'le carnet garde le motif a la fermeture : ' + JSON.stringify(l0 && l0.devisEchec));
+  const cb = C.carnetBilan();
+  ok(cb.parDevisManquant && cb.parDevisManquant[0] && cb.parDevisManquant[0].motif === 'aucunePlace' && cb.parDevisManquant[0].n === 1,
+     'et le bilan du carnet decoupe les trades sans devis par motif : ' + JSON.stringify(cb.parDevisManquant));
+  const v = C.vue();
+  ok(v.devis && v.devis.rates.aucunePlace >= 1 && v.devis.achatsSansDevis.aucunePlace >= 1,
+     'la vue expose les devis par motif : ' + JSON.stringify(v.devis));
+  ok(v.suiviMiroir && v.suiviMiroir.jour.envois === 5, 'et ce que le miroir a fait des envois');
+  const al = C.alertes().find((a) => /buys sent to the mirror in 24 h/.test(a.quoi));
+  ok(al && al.quoi === '5 buys sent to the mirror in 24 h, 1 followed', 'l alerte dit « N envoyes, M suivis » : « ' + (al && al.quoi) + ' »');
+  ok(al && /no venue found ×4/.test(al.pourquoi) && /4 of the 5 had no round-trip quote/.test(al.pourquoi),
+     'avec les raisons par motif : « ' + (al && al.pourquoi.slice(0, 140)) + '… »');
+  ok(al && /neither the minimum return nor the gas guard should be loosened/.test(al.quoiFaire),
+     'et elle ne propose de desserrer aucune garde');
+  stats = { envois: 1, suivis: 0, raisons: {}, echecs: {}, jour: { envois: 1, suivis: 0, sansDevis: 0, sansDevisSuivis: 0, raisons: { solde: 1 }, echecs: {} } };
+  ok(!C.alertes().some((a) => /buys sent to the mirror/.test(a.quoi)), 'un seul achat manque en 24 h n est pas une tendance : pas d alerte');
+  stats = { envois: 4, suivis: 4, raisons: {}, echecs: {}, jour: { envois: 4, suivis: 4, sansDevis: 0, sansDevisSuivis: 0, raisons: { suivi: 4 }, echecs: {} } };
+  ok(!C.alertes().some((a) => /buys sent to the mirror/.test(a.quoi)), 'et tout suivi, pas d alerte non plus');
+  /* Revue du 27/09/2026 : la branche « suivi quand meme » n'etait lue par
+     aucun essai — c'est pourtant le chiffre de la decision laissee au
+     proprietaire (achats sans devis que le miroir a suivis). */
+  ok(al && !/followed anyway/.test(al.pourquoi), 'aucun achat sans devis suivi : l alerte ne le pretend pas');
+  stats = { envois: 6, suivis: 2, sansDevis: 3, sansDevisSuivis: 2, raisons: {}, echecs: {},
+            jour: { envois: 6, suivis: 2, sansDevis: 3, sansDevisSuivis: 2, raisons: { suivi: 2, gaz: 4 }, echecs: {} } };
+  const al2 = C.alertes().find((a) => /buys sent to the mirror in 24 h/.test(a.quoi));
+  ok(al2 && /3 of the 6 had no round-trip quote/.test(al2.pourquoi) && /2 of those were followed anyway/.test(al2.pourquoi)
+       && /without the 4% round-trip check/.test(al2.pourquoi),
+     'deux achats sans devis suivis quand meme : l alerte le dit, avec ce qui a ete saute : « ' + (al2 && al2.pourquoi.slice(0, 220)) + '… »');
+  /* Les autres motifs. */
+  C.poseMiroir({ surAchat: async () => 0, surVente: async () => 0, allerRetour: async () => ({}) });
+  const sans = await C.simuleVente({ addr: MONDE.jetons[0].addr, pool: MONDE.jetons[0].pool, chaine: { vu: false } });
+  ok(sans.retour && sans.retour.motif === 'pasDeChiffre', 'un quoteur qui repond sans chiffre : « pas de chiffre »');
+  ok(C.motifDevisRate('the quoter took more than 15 s') === 'delai', 'le delai de 15 s depasse a son motif');
+  ok(C.motifDevisRate('quoted in GLD, not ETH') === 'aucunePlace' && C.motifDevisRate('boom') === 'autre', 'une monnaie sans pont est « aucune place », le reste « autre »');
+  ok(C.devisManquant({ epreuve: { retour: { pct: 98, min: 60 } } }) === null, 'un devis chiffre n est pas un devis manquant');
+  C.poseMiroir(null);
+}
+
+
+/* 2. Les tranches d'age (et de baleine) survivent au regroupement : c'etait
+ *    le bogue qui les versait dans « set aside » a chaque redemarrage. */
+async function tranchesQuiSurvivent() {
+  console.log('\n-- 2. une tranche d age survit au regroupement, et au redemarrage --');
+  remise(sains());
+  const audit = () => ({
+    'scout · too young: under 10 min': { n: 169, s: 9000, montes: 96, effondres: 20, nStrat: 161, strat: 1835 },
+    'scout · too young: 10-30 min': { n: 59, s: 900, montes: 18, effondres: 9 },
+    'scout · too young: 30-60 min': { n: 30, s: -300, montes: 8, effondres: 7 },
+    'scout · too young: 60-90 min': { n: 19, s: -100, montes: 6, effondres: 3 },
+    'scout · too young: 90 min and more': { n: 7, s: 10, montes: 1, effondres: 1 },
+    'scout · too young: set aside until it has the age': { n: 12635, s: 60000, montes: 2100, effondres: 2600 },
+    'whale · one holder holds too much: 50-70%': { n: 40, s: 100, montes: 5, effondres: 1 },
+    'whale · one holder holds too much: 90% and more': { n: 12, s: 10, montes: 1, effondres: 0 },
+    'scout · pool below the buy floor': { n: 27603, s: 0, montes: 828, effondres: 2484, nStrat: 16542, strat: -122411 },
+  });
+  const E = C._etat();
+  E.audit = audit();
+  C._regroupeAudit();
+  const a = C._etat().audit;
+  ok(a['scout · too young: under 10 min'] && a['scout · too young: under 10 min'].n === 169,
+     'la tranche « under 10 min » ressort telle quelle du regroupement (n=' + (a['scout · too young: under 10 min'] || {}).n + ')');
+  ok(a['scout · too young: under 10 min'].nStrat === 161, 'avec sa colonne strategie (161 rejeux)');
+  ok(['10-30 min', '30-60 min', '60-90 min', '90 min and more'].every((b) => a['scout · too young: ' + b]),
+     'les quatre autres tranches aussi');
+  ok(a['scout · too young: set aside until it has the age'].n === 12635,
+     'et la vieille ligne « set aside » ne gagne rien (12 635, pas 12 919)');
+  ok(a['whale · one holder holds too much: 50-70%'] && a['whale · one holder holds too much: 90% and more'],
+     'une tranche de baleine survit de la meme facon');
+  ok(a['scout · pool below the buy floor'].n === 27603, 'un libelle de famille ordinaire ne bouge pas non plus');
+  for (const k of Object.keys(audit())) {
+    const f = k.slice(k.indexOf(' · ') + 3);
+    ok(C._familleRefus(f) === f, 'familleRefus rend « ' + f + ' » a lui-meme');
+  }
+  /* Le chemin reel : l'etat est relu sur disque au demarrage, et c'est `charge`
+     qui appelle le regroupement. */
+  E.audit = audit();
+  C.sauve();
+  C._pose(C.etatNeuf());
+  C.charge();
+  const b = C._etat().audit;
+  ok(b['scout · too young: under 10 min'] && b['scout · too young: under 10 min'].n === 169,
+     'apres un redemarrage (sauve puis charge), la tranche est toujours la avec n=169');
+  ok(b['scout · too young: set aside until it has the age'].n === 12635, 'et « set aside » n a rien absorbe');
+  /* Ce que le regroupement doit TOUJOURS faire : les anciennes phrases avec
+     un age entre parentheses rejoignent leur tranche. */
+  E.audit = { 'scout · trop jeune (3 min) : on attend': { n: 2, s: 10, montes: 1, effondres: 0 },
+              'scout · too young: under 10 min': { n: 5, s: 10, montes: 1, effondres: 0 } };
+  C._pose(E);
+  C._regroupeAudit();
+  ok(C._etat().audit['scout · too young: under 10 min'].n === 7, 'une ancienne phrase « (3 min) » rejoint la tranche « under 10 min » (5 + 2)');
+  const tjo = C.trancheJeuneOuverte;
+  ok(typeof tjo === 'function', 'le quota des jeunes lit toujours la meme ligne, qui ne s efface plus');
+}
+
+
+/* 3. La borne qui bougeait pour rien : en famine, avec le plancher fixe a
+ *    13 000 $, liqParMise ne descend pas et le plancher reste a 13 000 $. */
+async function borneQuiNeMordPas() {
+  console.log('\n-- 3. en famine, une borne qui ne change aucun plancher ne bouge pas --');
+  remise(sains());
+  delete process.env.LIQ_ACHAT_MIN; delete process.env.MISE_REF_USD;
+  const pose = (audit, bornes) => {
+    C._pose(C.etatNeuf());
+    const F = C._etat();
+    F.ouvertures = 40; F.compteurs.abandonneeSansPrix = 1;
+    F.depuisBornes = 999; F.audit = audit; F.bornes = bornes || {};
+    F.toursSansAchat = C.SANS_ACHAT_DESSERRE; F.positions = [];
+    return F;
+  };
+  /* Les trois autres bornes a leur butee lache, comme en production le 27/09 :
+     age 4, capi 500 000, pompe 300. Seule liqParMise reste « desserrable ». */
+  const BUTEES = { ageMin: C.BORNES.ageMin.min, mcMax: C.BORNES.mcMax.max, pumpMax: C.BORNES.pumpMax.max, liqParMise: 17 };
+  const AUDIT = { 'achete ou retenu': { n: 278, s: 5532, montes: 73, effondres: 56 },
+                  'scout · pool below the buy floor': { n: 27603, s: 0, montes: 828, effondres: 2484 } };
+  let F = pose(AUDIT, Object.assign({}, BUTEES));
+  const liq0 = C.planchers().liq;
+  ok(liq0 === 13000, 'le plancher de piscine est a 13 000 $ (' + liq0 + ')');
+  for (let i = 0; i < 30; i++) { F.depuisBornes = 999; F.tours = (F.tours || 0) + 1; C.revoitLesBornes(); }
+  ok(C.borne('liqParMise') === 17, 'trente revues en famine : liqParMise ne descend pas (' + C.borne('liqParMise') + ')');
+  ok(C.planchers().liq === 13000, 'et le plancher reste a 13 000 $');
+  ok(!(F.journalStructure || []).some((x) => x.quoi === 'bornes'), 'rien n est ecrit au journal : il n y avait rien a annoncer');
+  ok(!(F.compteurs.borneDesserreeFaim), 'aucun desserrage de famine n est compte');
+  ok((F.compteurs.faimBorneSansEffet || 0) >= 1, 'mais la famine qui n avait rien d utile a desserrer est comptee (' + F.compteurs.faimBorneSansEffet + ')');
+  /* Hors famine, l'audit la resserre (3 % contre 26 %) : le mouvement est fait,
+     compte, pas journalise, et il ne prend pas le creneau. */
+  F = pose(AUDIT, Object.assign({}, BUTEES));
+  F.toursSansAchat = 0;
+  F.tours = 100;
+  const bouge = C.revoitLesBornes();
+  ok(C.borne('liqParMise') === 20, 'hors famine, l audit la resserre d un pas (17 → ' + C.borne('liqParMise') + ')');
+  ok(bouge === false && F.depuisBornes === 999 + 1, 'sans consommer le creneau horaire (depuisBornes ' + F.depuisBornes + ')');
+  ok(!(F.journalStructure || []).some((x) => x.quoi === 'bornes'), 'et sans ligne de journal');
+  ok(F.compteurs.borneSansEffet_liqParMise === 1, 'le mouvement est seulement compte');
+  F.tours = 101; C.revoitLesBornes();
+  ok(C.borne('liqParMise') === 20, 'au tour suivant, son propre repos l arrete : une borne inerte ne court pas a 60 en quinze tours');
+  for (let t = 124; t < 124 + 24 * 20; t += 24) { F.tours = t; F.depuisBornes = 999; C.revoitLesBornes(); }
+  ok(C.borne('liqParMise') === C.BORNES.liqParMise.max, 'de repos en repos, elle monte a sa butee et s y arrete (' + C.borne('liqParMise') + ')');
+  ok(C.planchers().liq === 13000, 'et le plancher n a jamais quitte 13 000 $');
+  /* La borne qui MORD (plancher fixe abaisse) reste gouvernee comme avant. */
+  process.env.LIQ_ACHAT_MIN = '500';
+  F = pose(Object.assign({}, AUDIT), Object.assign({}, BUTEES, { liqParMise: 25 }));
+  F.toursSansAchat = C.SANS_ACHAT_DESSERRE;
+  C.revoitLesBornes();
+  const j = (F.journalStructure || []).find((x) => x.quoi === 'bornes');
+  ok(C.borne('liqParMise') === 22, 'si le plancher fixe etait abaisse a 500 $, la famine la desserrerait encore (25 → ' + C.borne('liqParMise') + ')');
+  ok(j && /the only bound that can still be loosened/.test(j.txt) && !/highest share of any rule/.test(j.txt),
+     'et le journal dit « the only bound that can still be loosened », plus « the highest share of any rule » : « ' + (j && j.txt.slice(0, 160)) + '… »');
+  delete process.env.LIQ_ACHAT_MIN;
+  ok(C.BORNES.liqParMise.min === 8 && C.BORNES.liqParMise.max === 60 && C.BORNES.liqParMise.pas === 3,
+     'les butees et le pas de la borne n ont pas bouge [8, 60], pas 3');
+}
+
+
+/* 4. Ce que DexScreener sait des jetons de 4 a 10 min : une a deux sondes par
+ *    tour, verdict inchange, cache NON ecrit ; la ligne « not indexed » se
+ *    decoupe en trois ; et on compte ceux qui sont repris puis achetes. */
+async function sondeDesJeunes() {
+  console.log('\n-- 4. DexScreener sur les 4-10 min : mesure seule, verdict et cache intacts --');
+  remise([jeton(1, { minutes: 6 }), jeton(2, { minutes: 7 }), jeton(3, { minutes: 8 })]);
+  MONDE.jetons[1].sansTelegram = true;     /* deux liens */
+  MONDE.jetons[2].dexMuet = true;          /* DexScreener ne le connait pas */
+  const E0 = C._etat();
+  E0.bornes = { ageMin: 4 };
+  await C.tour();
+  const E1 = C._etat();
+  const v = C.vue();
+  const refuses = v.candidats.filter((x) => /^not indexed by DexScreener yet \(\d+ min\)$/.test(x.refus || ''));
+  console.log('   ' + JSON.stringify(v.candidats.map((x) => ({ sym: x.sym, min: x.minutes, refus: x.refus }))));
+  ok(refuses.length === 3, 'les trois jeunes sont refuses « not indexed », comme avant la sonde (' + refuses.length + ')');
+  ok(E1.positions.length === 0, 'aucun n est achete : la sonde ne change aucun verdict');
+  ok(E1.compteurs.dexSonde === C.DEX_SONDE_PAR_TOUR && C.DEX_SONDE_PAR_TOUR === 2,
+     'deux sondes au plus par tour (' + E1.compteurs.dexSonde + ' pour trois candidats)');
+  const sondes = MONDE.jetons.filter((t) => E1.ombres.some((o) => o.adr === t.addr && o.dexSonde));
+  ok(sondes.length === 2, 'deux ombres portent ce que la sonde a vu');
+  ok(MONDE.jetons.every((t) => !C._cache.dex[t.addr]),
+     'et le cache DexScreener n a RIEN recu : la reprise de la minute 12 lira le jeton a neuf');
+  /* Les trois reponses possibles, jeton par jeton. */
+  const s1 = await C.sondeDexJeune(Object.assign({}, MONDE.jetons[0], { addr: MONDE.jetons[0].addr }));
+  const s2 = await C.sondeDexJeune(Object.assign({}, MONDE.jetons[1], { addr: MONDE.jetons[1].addr }));
+  const s3 = await C.sondeDexJeune(Object.assign({}, MONDE.jetons[2], { addr: MONDE.jetons[2].addr }));
+  ok(s1.v === 'connu3' && s1.liens === 3, 'connu avec trois liens : ' + JSON.stringify(s1));
+  ok(s2.v === 'connuMoins' && s2.liens === 2, 'connu avec deux liens : ' + JSON.stringify(s2));
+  ok(s3.v === 'inconnu', 'inconnu de DexScreener : ' + JSON.stringify(s3));
+  ok(MONDE.jetons.every((t) => !C._cache.dex[t.addr]), 'toujours rien dans le cache');
+  /* La ligne d'audit se decoupe en trois, et chaque sous-ligne survit au
+     regroupement du demarrage. */
+  const k = (x) => C.cleAudit({ refus: 'not indexed by DexScreener yet (6 min)', quiRefuse: 'oracle', dexSonde: x });
+  ok(k('connu3') === 'oracle · not indexed by DexScreener yet: known, 3+ links', k('connu3'));
+  ok(k('connuMoins') === 'oracle · not indexed by DexScreener yet: known, under 3 links', k('connuMoins'));
+  ok(k('inconnu') === 'oracle · not indexed by DexScreener yet: unknown to DexScreener', k('inconnu'));
+  ok(k(null) === 'oracle · not indexed by DexScreener yet', 'sans sonde, la ligne d origine');
+  ok(['connu3', 'connuMoins', 'inconnu'].every((x) => { const f = k(x).slice(9); return C._familleRefus(f) === f; }),
+     'et les trois sous-lignes ressortent telles quelles du regroupement');
+  E1.audit = { 'oracle · not indexed by DexScreener yet': { n: 10, s: 100, montes: 5, effondres: 1 },
+               'oracle · not indexed by DexScreener yet: known, 3+ links': { n: 4, s: 100, montes: 3, effondres: 0 } };
+  ok(C._auditDeFamille('not indexed by DexScreener yet').n === 14, 'la famille compte ses sous-lignes (10 + 4) : le decoupage precise, il ne retire rien');
+  /* Repris puis achetes : par jeton distinct. */
+  const N0 = C.nonIndexeBilan();
+  ok(N0.jetons === 3 && N0.repris === 0 && N0.achetes === 0, 'trois jetons refuses « not indexed » sont suivis : ' + JSON.stringify(N0));
+  const a = MONDE.jetons[1].addr;
+  C.suitLesNonIndexes({ addr: a, origine: 'surveillance', minutes: 14 }, 'only 2 public links: fewer than the 3 measured to pay', false);
+  C.suitLesNonIndexes({ addr: a, origine: 'surveillance', minutes: 36 }, 'only 2 public links: fewer than the 3 measured to pay', false);
+  const a0 = MONDE.jetons[0].addr;
+  C.suitLesNonIndexes({ addr: a0, origine: 'surveillance', minutes: 13 }, null, true);
+  const N1 = C.nonIndexeBilan();
+  console.log('   ' + JSON.stringify(N1));
+  ok(N1.repris === 2 && N1.ageMoyenRepris === 14, 'deux repris (une seule fois chacun), a 14 min en moyenne');
+  ok(N1.refusApres['too few public links'] === 1 && N1.refusApres.bought === 1, 'avec le verdict de la reprise : un refus de liens, un achat');
+  ok(N1.achetes === 1, 'et un achete plus tard');
+  ok(C.vue().nonIndexe && C.vue().nonIndexe.jetons === 3, 'la vue l expose');
+}
+
+
+/* 5. L'audit sur 7 jours a cote du cumul, les ombres sans lecture par ligne,
+ *    et des decisions qui lisent l'audit ENTIER et gardent le cumul tant que
+ *    la ligne ET la reference n'ont pas 40 cas chacune sur 7 jours. */
+async function auditSurSeptJours() {
+  console.log('\n-- 5. l audit sur 7 jours, a cote du cumul, et ce que les decisions en lisent --');
+  remise(sains());
+  const E = C._etat();
+  const REF = 'achete ou retenu', PISC = 'scout · pool below the buy floor';
+  E.audit = { [REF]: { n: 278, s: 5532, montes: 73, effondres: 56 },
+              [PISC]: { n: 27603, s: 0, montes: 828, effondres: 2484 } };
+  E.audit7 = {};
+  /* 45 achats sur 7 jours, dont 18 montent (40 %) ; 39 refus de piscine, 20 montent. */
+  for (let i = 0; i < 45; i++) C._noteAudit(REF, i < 18 ? 30 : 0);
+  for (let i = 0; i < 39; i++) C._noteAudit(PISC, i < 20 ? 30 : 0);
+  let l = C.auditComplet().find((x) => x.cle === PISC);
+  ok(l.n === 27642 && l.n7 === 39 && l.partMontes7 === 51, 'chaque ligne porte le cumul ET les 7 jours : ' + JSON.stringify({ n: l.n, n7: l.n7, p7: l.partMontes7 }));
+  let d = C.auditPourDecider().find((x) => x.cle === PISC);
+  ok(d.fenetre === 'cumulative' && d.partMontes === 3, 'a 39 cas sur 7 jours, la decision garde le cumul (3 %)');
+  C._noteAudit(PISC, 30);
+  d = C.auditPourDecider().find((x) => x.cle === PISC);
+  ok(d.fenetre === '7 days' && d.n === 40 && d.partMontes === 53, 'a 40, elle lit les 7 jours (' + d.partMontes + ' % sur ' + d.n + ')');
+  const S7 = C.seuilsAudit('7 days'), Sc = C.seuilsAudit();
+  ok(S7.ref && S7.ref.n === 45 && S7.coute === 40, 'contre la reference des MEMES 7 jours (' + (S7.ref && S7.ref.partMontes) + ' % sur 45)');
+  ok(Sc.ref && Sc.ref.n === 323, 'le cumul, lui, reste disponible pour les lignes qui n ont pas 40 cas (' + Sc.ref.n + ')');
+  /* La reference sous 40 sur 7 jours : tout reste au cumul, meme une ligne a 40. */
+  E.audit7 = {};
+  for (let i = 0; i < 39; i++) C._noteAudit(REF, 0);
+  for (let i = 0; i < 60; i++) C._noteAudit(PISC, 30);
+  d = C.auditPourDecider().find((x) => x.cle === PISC);
+  ok(d.fenetre === 'cumulative', 'reference a 39 cas sur 7 jours : la ligne a 60 garde le cumul — les deux doivent avoir 40');
+  /* Un jour vieux de huit jours sort de la fenetre. */
+  const vieux = new Date(Date.now() - 8 * 24 * 3600e3).toISOString().slice(0, 10);
+  E.audit7[vieux] = { [PISC]: { n: 500, s: 0, montes: 500, effondres: 0 } };
+  ok((C.audit7()[PISC] || {}).n === 60 && !E.audit7[vieux], 'un jour de plus de 7 jours ne compte plus, et il est purge');
+  /* Les ombres parties sans lecture a 30 min, par ligne. */
+  const o = { adr: '0x' + 'ab'.repeat(20), refus: 'only 2 public links: fewer than the 3', quiRefuse: 'oracle', jalons: { 5: 3 } };
+  C.rejoueLOmbre(o);
+  const liens = E.audit['oracle · too few public links'];
+  ok(liens && liens.sansLecture === 1, 'une ombre partie sans lecture a 30 min est comptee sur SA ligne (' + JSON.stringify(liens) + ')');
+  E.audit['oracle · too few public links'].n = 5; E.audit['oracle · too few public links'].montes = 1;
+  const lz = C.auditComplet().find((x) => x.cle === 'oracle · too few public links');
+  ok(lz && lz.sansLecture === 1 && lz.sansLecture7 === 1, 'et la ligne le montre, au cumul et sur 7 jours');
+  const rs = C.rejeuxBilan();
+  ok(rs.sansJalon >= 1, 'le compteur global reste la (' + rs.sansJalon + ')');
+  /* Les decisions lisent l'audit ENTIER : 30 lignes qui montent plus que la
+     reference la poussaient hors des 25 du panneau, et la reference
+     disparaissait des seuils. */
+  E.audit7 = {};
+  E.audit = { [REF]: { n: 278, s: 5532, montes: 73, effondres: 56 } };
+  for (let i = 0; i < 30; i++) E.audit['scout · regle ' + String.fromCharCode(97 + i) + ' de demain'] = { n: 50, s: 100, montes: 30, effondres: 1 };
+  E.audit['scout · pool below the buy floor'] = { n: 27603, s: 0, montes: 828, effondres: 2484 };
+  ok(!C._auditDesRefus().some((x) => x.cle === REF), 'la reference n est plus dans les 25 lignes du panneau');
+  ok(C.seuilsAudit().ref && C.seuilsAudit().ref.n === 278, 'mais les seuils du jour la trouvent toujours (n=278) : ils lisent l audit entier');
+  const lp = C.auditDe(/pool below the buy floor/);
+  ok(lp && lp.n === 27603, 'et la ligne du plancher de piscine, 32e, est jugee (' + (lp && lp.n) + ')');
+  /* Le regroupement du demarrage garde les deux nouveautes. */
+  E.audit = { [PISC]: { n: 10, s: 0, montes: 1, effondres: 0, sansLecture: 7 },
+              'scout · piscine de $# : sous le plancher d\'achat': { n: 2, s: 0, montes: 0, effondres: 0, sansLecture: 1 } };
+  E.audit7 = { [new Date().toISOString().slice(0, 10)]: { 'scout · piscine de $# : sous le plancher d\'achat': { n: 2, s: 0, montes: 0, effondres: 0 } } };
+  C._regroupeAudit();
+  ok(E.audit[PISC].n === 12 && E.audit[PISC].sansLecture === 8, 'le regroupement additionne aussi les ombres sans lecture (7 + 1)');
+  ok((C.audit7()[PISC] || {}).n === 2, 'et regroupe les jours de la fenetre');
+  ok(C.AUDIT7_MIN === 40, 'le minimum de 40 cas est celui du rapport');
+
+  /* ---- LES CHEMINS QUI DECIDENT LISENT LA REFERENCE DE LA MEME FENETRE ----
+   * Revue du 27/09/2026 : les trois mutants « la borne juge une ligne de 7
+   * jours contre la reference cumulee », « le quota fait de meme » et « le
+   * rejeu n'alimente pas nStrat sur 7 jours » passaient tous. Monde construit :
+   * ce qu'on achete monte a 31 % au cumul mais a 60 % sur 7 jours ; la ligne
+   * jugee monte a 45 % sur 7 jours. Contre la bonne reference (60 %), rien ne
+   * doit bouger ; contre le cumul (31 %), tout bougerait. Aucun seuil ni
+   * aucune butee n'est touche ici : c'est la comparaison qu'on verifie. */
+  console.log('\n-- 5. la borne et le quota comparent 7 jours a 7 jours --');
+  const septJours = (refMontes, cle, n7Ligne, montesLigne) => {
+    const X = C._etat();          /* l etat courant : _pose et remise le remplacent */
+    X.audit = { [REF]: { n: 278, s: 5532, montes: 73, effondres: 56 } };
+    X.audit7 = {};
+    for (let i = 0; i < 50; i++) C._noteAudit(REF, i < refMontes ? 30 : 0);
+    for (let i = 0; i < n7Ligne; i++) C._noteAudit(cle, i < montesLigne ? 30 : 0);
+  };
+  delete process.env.MISE_REF_USD;
+  process.env.LIQ_ACHAT_MIN = '500';       /* le plancher fixe abaisse : liqParMise MORD (voir borneQuiNeMordPas) */
+  const poseBornes = () => {
+    C._pose(C.etatNeuf());
+    const F = C._etat();
+    F.ouvertures = 40; F.compteurs.abandonneeSansPrix = 1;    /* 2,5 % d abandons : sain */
+    F.depuisBornes = 999; F.toursSansAchat = 0; F.positions = []; F.tours = 500;
+    F.bornes = { liqParMise: 25 };
+    return F;
+  };
+  /* 1. La borne : reference 60 % sur 7 jours, ligne 45 % → ni coute ni protege. */
+  let F = poseBornes();
+  septJours(30, PISC, 40, 18);
+  let lp7 = C.auditPourDecider().find((x) => x.cle === PISC);
+  ok(lp7.fenetre === '7 days' && lp7.partMontes === 45 && C.seuilsAudit('7 days').coute === 60 && C.seuilsAudit().coute === 31,
+     'le monde : ligne 45 % sur 7 jours, reference 60 % sur 7 jours, 31 % au cumul');
+  C.revoitLesBornes();
+  ok(C.borne('liqParMise') === 25 && !(F.journalStructure || []).some((x) => x.quoi === 'bornes'),
+     'jugee contre les 60 % des MEMES 7 jours, la borne ne bouge pas (contre le cumul a 31 %, elle aurait ete desserree) : ' + C.borne('liqParMise'));
+  /* 2. Reference 40 % sur 7 jours : la ligne (45 %) coute, la borne se desserre
+        — et le journal dit sur quelle fenetre. */
+  F = poseBornes();
+  septJours(20, PISC, 40, 18);
+  C.revoitLesBornes();
+  const jb = (F.journalStructure || []).find((x) => x.quoi === 'bornes');
+  ok(C.borne('liqParMise') === 22 && jb && jb.chiffres && jb.chiffres[0].fenetre === '7 days'
+       && /against 40% for what we actually buy|as often as the 40% we actually buy/.test(jb.txt),
+     'reference a 40 % sur 7 jours : desserree d un pas (25 → ' + C.borne('liqParMise') + '), et le journal dit « 7 days » : ' + JSON.stringify(jb && jb.chiffres));
+  delete process.env.LIQ_ACHAT_MIN;
+  /* 3. Le quota des jeunes : meme monde, sur la tranche « under 10 min ». */
+  const JEUNE = 'scout · too young: under 10 min';
+  const poseQuota = (refMontes) => {
+    remise(sains());
+    const Q = C._etat();
+    Q.bornes = Object.assign({}, Q.bornes || {}, { ageMin: 30 });
+    septJours(refMontes, JEUNE, 40, 18);
+    for (let i = 0; i < C.QUOTA_JEUNE_MIN_OBS; i++) C.noteAuditStrat(JEUNE, 5);
+    return Q;
+  };
+  poseQuota(30);
+  ok(C.borne('ageMin') === 30, 'la borne d age est a 30 min : la tranche « under 10 min » est entierement sous elle');
+  ok((C.audit7()[JEUNE] || {}).nStrat === C.QUOTA_JEUNE_MIN_OBS,
+     'le rejeu alimente AUSSI la fenetre de 7 jours (nStrat7 = ' + (C.audit7()[JEUNE] || {}).nStrat + ')');
+  const lj = C.auditPourDecider().find((x) => x.cle === JEUNE);
+  ok(lj && lj.fenetre === '7 days' && lj.nStrat === C.QUOTA_JEUNE_MIN_OBS && lj.partMontes === 45,
+     'la decision lit la tranche sur 7 jours, rejeu compris : ' + JSON.stringify(lj && { f: lj.fenetre, nStrat: lj.nStrat, p: lj.partMontes }));
+  ok(C.trancheJeuneOuverte() === null,
+     'contre la reference des 7 jours (60 %), 45 % ne coute pas : le quota reste ferme (contre le cumul a 31 %, il se serait ouvert)');
+  poseQuota(20);
+  const tq = C.trancheJeuneOuverte();
+  ok(tq && tq.nom === 'too young: under 10 min' && tq.n === C.QUOTA_JEUNE_MIN_OBS && tq.part === 45,
+     'reference a 40 % sur 7 jours : la tranche coute, le quota s ouvre sur ses ' + (tq && tq.n) + ' rejeux de 7 jours : ' + JSON.stringify(tq));
+}
+
+
+/* 7. L'alerte des noeuds : la fenetre apprise de chaque noeud, le vrai
+ *    message d'Alchemy, un jeton tres frequente reconnu quand Alchemy repond
+ *    en premier, « trop de transferts » traite comme une reponse, et l'alerte
+ *    sur les seuls noeuds en service, sur une fenetre datee. */
+async function noeudsDates() {
+  console.log('\n-- 7. un jeton tres frequente reste reconnu quand Alchemy repond en premier --');
+  remise([jeton(0, { minutes: 5 }), jeton(1, { minutes: 5 }), jeton(2, { minutes: 40 })]);
+  const [A, B, L] = MONDE.jetons.map((t) => t.addr);
+  const premier = C.noeuds()[0], second = C.noeuds()[1];
+  const plage0 = premier.plageLogs;
+  MONDE.fouleAlchemy = [A, B];
+  /* 1. Le second noeud rend la phrase de l officiel : reconnu. */
+  const r0 = appels.rpc;
+  let r = await C._lisChaine(A, 5, MONDE.jetons[0].pool);
+  ok(r && r.vu && r.foule === 10000, 'Alchemy en premier, l officiel ensuite : la foule est dite (' + (r && r.foule) + ')');
+  ok(appels.rpc > r0, 'le premier noeud a ete interroge (' + (appels.rpc - r0) + ' appel(s), numero de bloc compris)');
+  const l2 = appels.rpc2;
+  ok(l2 === 0, 'et PERSONNE d autre : « trop de transferts » est une reponse, pas une panne (second noeud : ' + l2 + ' appel)');
+  /* 2. Le second sature : toujours reconnu, puisqu on ne va plus le voir. */
+  MONDE.secondSature = true;
+  r = await C._lisChaine(B, 5, MONDE.jetons[1].pool);
+  ok(r && r.vu && r.foule === 10000, 'meme quand le second noeud sature, la foule est dite (' + (r && r.foule) + ')');
+  MONDE.secondSature = false;
+  /* 3. Seul le premier est candidat (40 min : plus que les 10 000 blocs du second) :
+     sa phrase entiere suffit — coupee a 80 caracteres, « cap of 10K logs »
+     (caractere 167) aurait disparu et le jeton serait devenu « inconnu ». */
+  MONDE.fouleAlchemySeul = [L];
+  r = await C._lisChaine(L, 40, MONDE.jetons[2].pool);
+  ok(r && r.vu && r.foule === 10000, 'seul Alchemy repond : la phrase entiere est lue, la foule est dite');
+  ok(premier.plageLogs === plage0, 'et aucune limite de plage n est apprise de cette phrase (« up to a 2K block range » decrit la requete sans plafond) : ' + premier.plageLogs);
+  ok((C._etat().compteurs.rpcFouleRepondue || 0) === 3, 'chaque reponse « foule » est comptee (' + C._etat().compteurs.rpcFouleRepondue + ')');
+  const f0 = C.noeudsSurFenetre(6)[premier.cle] || {};
+  ok(f0.foule === 3 && f0.reussites >= 3, 'et datee comme une reponse du noeud : ' + JSON.stringify(f0));
+  ok(C.fouleDe('logs matched by query exceeds limit of 10000') === 10000 && C.fouleDe('a cap of 10K logs in the response') === 10000
+     && C.fouleDe('ranges over 10000 blocks are not supported') === null, 'les deux phrases de foule, et elles seules');
+  MONDE.fouleAlchemy = []; MONDE.fouleAlchemySeul = [];
+
+  console.log('\n-- 7. le vrai message d un refus est garde entier, par noeud --');
+  MONDE.secoursDixBlocs = true;
+  second.plageLogs = 10000;
+  appels.rpc2Logs = 0;
+  const phrase = 'Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block range. Based on your parameters and the response size limit, this block range should work: [0x1, 0xa]';
+  /* Le premier (l officiel du banc) repond ; on force la lecture au second. */
+  premier.plageLogs = 50;
+  try { await C._rpc('eth_getLogs', [{ address: B, topics: [], fromBlock: '0x1', toBlock: '0x64' }]); } catch (e) { /* refus attendu */ }
+  premier.plageLogs = plage0;
+  const s2 = C._etat().services[second.cle] || {};
+  ok(s2.dernierEchecComplet === phrase, 'le message entier est garde (' + String(s2.dernierEchecComplet || '').length + ' caracteres, pas 80)');
+  ok(s2.messages && s2.messages[phrase] >= 1, 'et compte parmi les messages distincts du noeud');
+  ok(second.plageLogs === 10, 'la limite de plage, elle, s apprend toujours d un vrai refus de plage (10 blocs)');
+  MONDE.secoursDixBlocs = false;
+  const vn = C.vue().noeuds;
+  ok(Array.isArray(vn) && vn.length === C.noeuds().length && vn.every((x) => typeof x.plageLogs === 'number'),
+     'la vue montre la fenetre de blocs apprise de chaque noeud : ' + JSON.stringify(vn.map((x) => ({ cle: x.cle, plage: x.plageLogs }))));
+  ok(vn.find((x) => x.cle === second.cle).dernierEchec === phrase, 'et son vrai message');
+
+  console.log('\n-- 7. l alerte : les noeuds en service, sur une fenetre datee --');
+  remise(sains());
+  delete process.env.DRPC_API_KEY;
+  const G = C._etat();
+  /* L artefact du 26/09 : l officiel etale sur trois jours, Alchemy sur 1 h 30,
+     et la cle dRPC figee a 9/9 alors qu elle n est plus posee. */
+  G.services = { chaineCle: { essais: 9, reussites: 0, dernierEchec: 'Your token is invalid or expired' },
+                 chaine: { essais: 403, reussites: 12, dernierEchec: 'logs matched by query exceeds limit of 10000' },
+                 chaine2: { essais: 577, reussites: 547 } };
+  let a = C.alertes().find((x) => /chain nodes are refusing/.test(x.quoi));
+  ok(!!a, 'sans lecture datee (etat d avant), l alerte d avant reste : ' + (a && a.quoi));
+  const h = (i) => new Date(Date.now() - i * 3600e3).toISOString().slice(0, 13);
+  G.noeudsHeures = { [h(0)]: { chaine: { essais: 6, reussites: 6, foule: 3 }, chaine2: { essais: 300, reussites: 290, foule: 0 } },
+                     [h(3)]: { chaine2: { essais: 250, reussites: 240, foule: 0 } },
+                     [h(9)]: { chaine: { essais: 400, reussites: 0, foule: 0 } } };
+  a = C.alertes().find((x) => /chain nodes are refusing/.test(x.quoi));
+  ok(!a, 'sur les 6 dernieres heures, 20 refus sur 556 appels (4 %) : plus d alerte');
+  ok((C.noeudsSurFenetre(6).chaine || {}).essais === 6, 'l heure d il y a 9 h ne compte plus (' + JSON.stringify(C.noeudsSurFenetre(6).chaine) + ')');
+  G.noeudsHeures[h(1)] = { chaine2: { essais: 300, reussites: 100, foule: 0 } };
+  a = C.alertes().find((x) => /chain nodes are refusing/.test(x.quoi));
+  ok(!!a && /over the last 6 h/.test(a.pourquoi), 'une vraie vague de refus, elle, leve l alerte, et dit sa fenetre : « ' + (a && a.pourquoi.slice(0, 90)) + '… »');
+  ok(!!a && !/keyed node/.test(a.pourquoi), 'sans le noeud a cle, qui n est plus appele : il n est plus dans `noeuds()`');
+}
+
+
+/* 8. La baleine par tranche (50-70, 70-90, 90 et plus), le motif « none of
+ *    them holds it », un regard qui voit l'Oracle et le Cobaye, et le Scout
+ *    compte une seule fois par examen. */
+async function baleineParTranche() {
+  console.log('\n-- 8. la baleine par tranche, et le seuil de 50 % ne bouge pas --');
+  remise([jeton(0, { unSeulPorteur: true }), jeton(1), jeton(2)]);
+  const W = (top) => C.vetoWhale({ chaine: { vu: true, top } });
+  ok(W(49.9) === null && /holds 50% of the float/.test(W(50) || ''), 'le seuil reste 50 % : 49,9 passe, 50 refuse');
+  const k = (top) => C.cleAudit({ refus: W(top), quiRefuse: 'whale' });
+  ok(k(55) === 'whale · one holder holds too much: 50-70%', k(55));
+  ok(k(69.4) === 'whale · one holder holds too much: 50-70%' && k(70) === 'whale · one holder holds too much: 70-90%', '69 % dans 50-70, 70 % dans 70-90');
+  ok(k(89.4) === 'whale · one holder holds too much: 70-90%' && k(90) === 'whale · one holder holds too much: 90% and more' && k(100) === 'whale · one holder holds too much: 90% and more', '89 % dans 70-90, 90 et 100 % dans « 90% and more »');
+  ok(C._familleRefus(W(80)) === 'one holder holds too much', 'la famille reste la meme (les compteurs de refus et l alerte ne sont pas eclates)');
+  ok(['50-70%', '70-90%', '90% and more'].every((b) => { const f = 'one holder holds too much: ' + b; return C._familleRefus(f) === f; }),
+     'et chaque tranche ressort telle quelle du regroupement');
+  const E = C._etat();
+  E.audit = { 'whale · one holder holds too much': { n: 2109, s: 9000, montes: 211, effondres: 34 },
+              'whale · one holder holds too much: 50-70%': { n: 30, s: 100, montes: 9, effondres: 1 },
+              'whale · one holder holds too much: 90% and more': { n: 10, s: 10, montes: 1, effondres: 0 } };
+  ok(C._auditDeFamille('one holder holds too much').n === 2149, 'la famille compte ses tranches (2 109 + 30 + 10)');
+
+  console.log('\n-- 8. le jugement des ombres ecrit dans les sous-lignes, pas seulement cleAudit --');
+  {
+    /* Revue du 27/09/2026 : les essais appelaient C.cleAudit() a la main ;
+       remettre dans le chemin de jugement la cle construite a la main
+       (« quiRefuse · famille » / « achete ou retenu ») restait vert, et en
+       production les tranches de baleine, les sous-lignes de la sonde et la
+       ligne du quota n'auraient recu AUCUNE observation. On juge donc de
+       vraies ombres, par regleLesOmbres, et on lit E.audit. */
+    const refusOracle = 'not indexed by DexScreener yet (6 min)';
+    ok(C._familleRefus(refusOracle) === 'not indexed by DexScreener yet', 'le refus de l Oracle est bien dans la famille « not indexed »');
+    const AW = '0x' + 'c7'.repeat(20), AO = '0x' + 'c8'.repeat(20), AQ = '0x' + 'c9'.repeat(20);
+    const t0 = Date.now() - C.HORIZON_REF * 60000;
+    const ombre = (adr, x) => Object.assign({ adr, sym: 'J', prix0: 1, t: t0, jalons: {}, traits: {}, hors: true,
+                                              refus: null, quiRefuse: null, quotaJeune: false }, x);
+    E.audit = {};
+    E.ombres = [ombre(AW, { refus: W(80), quiRefuse: 'whale' }),
+                ombre(AO, { refus: refusOracle, quiRefuse: 'oracle', dexSonde: 'connu3' }),
+                ombre(AQ, { quotaJeune: true })];
+    const px = { prix: 1.3, liq: 50000 };
+    const nj = C.regleLesOmbres({ [AW]: px, [AO]: px, [AQ]: px });
+    ok(nj === 3, 'trois ombres jugees a l echeance de reference (' + nj + ')');
+    const lo = 'oracle · not indexed by DexScreener yet: known, ' + C.sociauxMin() + '+ links';
+    ok((E.audit['whale · one holder holds too much: 70-90%'] || {}).n === 1 && !E.audit['whale · one holder holds too much'],
+       'la baleine a 80 % tombe dans sa tranche 70-90 %, pas dans la ligne de famille : ' + JSON.stringify(Object.keys(E.audit)));
+    ok((E.audit[lo] || {}).n === 1 && !E.audit['oracle · not indexed by DexScreener yet'],
+       'le « not indexed » sonde « connu, 3+ liens » a sa sous-ligne : « ' + lo + ' »');
+    ok((E.audit['achete par quota jeune'] || {}).n === 1 && !E.audit['achete ou retenu'],
+       'et l achat du quota des jeunes a SA ligne : la reference ne le recoit pas');
+    E.ombres = [];
+  }
+
+  console.log('\n-- 8. « none of them holds it » rejoint sa famille --');
+  const pers = C.vetoWhale({ chaine: { vu: true, personne: true, recepteurs: 12 } });
+  ok(/none of them holds it/.test(pers) && C._familleRefus(pers) === 'nobody holds it', '« ' + pers + ' » → « nobody holds it »');
+  E.audit = { 'whale · # addresses touched the token, none of them holds it': { n: 27, s: 50, montes: 2, effondres: 0 },
+              'whale · nobody holds it': { n: 5, s: 5, montes: 0, effondres: 0 } };
+  C._regroupeAudit();
+  ok(E.audit['whale · nobody holds it'] && E.audit['whale · nobody holds it'].n === 32 && Object.keys(E.audit).length === 1,
+     'les ~27 jetons restes sous leur texte brut rejoignent la ligne « nobody holds it » (5 + 27)');
+
+  console.log('\n-- 8. le Scout compte une fois par examen, et le regard voit l Oracle et le Cobaye --');
+  await C.tour();
+  const c = C._etat().compteurs;
+  ok(c.scoutVu === (c.scoutOk || 0) + (c.scoutBloque || 0), 'scoutVu = scoutOk + scoutBloque (' + c.scoutVu + ' = ' + (c.scoutOk || 0) + ' + ' + (c.scoutBloque || 0) + '), plus le double');
+  ok(c.examines >= c.scoutVu && c.examines > 0, 'et les jetons examines ont leur propre compteur (' + c.examines + ')');
+  const tb = Object.keys(c).filter((x) => /^whaleBloque_/.test(x));
+  ok(tb.length >= 1 && tb.every((x) => /^whaleBloque_(50-70%|70-90%|90% and more)$/.test(x)), 'les refus de la baleine sont comptes par tranche : ' + JSON.stringify(tb.map((x) => x + '=' + c[x])));
+  const r = C.etatDuRegard();
+  const qui = r.gardes.map((x) => x.agent);
+  ok(qui.indexOf('oracle') >= 0 && qui.indexOf('cobaye') >= 0 && qui.indexOf('whale') >= 0, 'le regard voit l Oracle et le Cobaye, pas seulement les gardes : ' + JSON.stringify(qui));
+  ok(r.jetons_examines === c.examines && typeof r.warden_sans_fiche_goplus === 'number', 'avec les examens justes et le silence de GoPlus qui explique le Warden');
+  /* Un etat relu avec le vieux double compte est corrige, une fois. */
+  const G = C._etat();
+  G.compteurs.scoutOk = 48011; G.compteurs.scoutBloque = 377477; G.compteurs.scoutVu = 850976;
+  C.sauve();
+  C._pose(C.etatNeuf());
+  C.charge();
+  ok(C._etat().compteurs.scoutVu === 425488, 'relu, le compteur double du releve (850 976) redevient 425 488 = 48 011 + 377 477');
+  C.charge();
+  ok(C._etat().compteurs.scoutVu === 425488, 'et une seconde relecture n y touche plus');
 }
 
 (async () => {
@@ -7549,6 +8123,13 @@ function bornesQuiSeReglent() {
   await revocationNestPasUnePanne();
   seuilPasALAveugle();
   bornesQuiSeReglent();
+  await miroirQuiNeSuitPas();
+  await tranchesQuiSurvivent();
+  await borneQuiNeMordPas();
+  await sondeDesJeunes();
+  await auditSurSeptJours();
+  await noeudsDates();
+  await baleineParTranche();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

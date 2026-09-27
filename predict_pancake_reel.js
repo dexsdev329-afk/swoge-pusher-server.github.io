@@ -273,20 +273,34 @@ async function decideEtPlace(c, ep, r, fee, ch) {
   return d;
 }
 
-/** Résoudre un round fermé qu'on avait décidé : issue, P/L, martingale, claim. */
+/** Résoudre un round fermé qu'on avait décidé : issue, P/L, martingale, claim.
+ *
+ * ÉGALITÉ lock = close : une PERTE réelle. Source publiée du contrat V2
+ * (PancakePredictionV2.sol), lue le 26 septembre 2026 : `_calculateRewards`,
+ * branche « House wins », envoie tout le pool à la trésorerie, et `claimable`
+ * renvoie false quand lockPrice == closePrice — la mise est perdue et rien ne
+ * se réclame. L'ancien code la comptait en remboursement : l'étage réel aurait
+ * sous-déclaré une perte réelle (0 égalité sur 29 959 rounds du 12/06 au 26/09,
+ * mais le cas existe dans le contrat).
+ * ANNULÉ (oracle jamais appelé, close + bufferSeconds passé) : REMBOURSÉ —
+ * `refundable` devient vrai à ce moment et `claim` rend la mise. L'ancien code
+ * n'attendait que `oracleCalled` : le round restait en attente pour toujours
+ * et son remboursement réel n'était réclamé qu'au Stop (45 annulés sur 30 004).
+ * Ni l'un ni l'autre ne touche la taille des mises : l'égalité passe par la
+ * même règle qu'une perte, le remboursement laisse l'échelle où elle était. */
 async function resous(c, ep, r, fee, ch) {
   const d = c.enAttente[ep];
   if (!d) return;
   delete c.enAttente[ep];
   const stake = d.mise > 0 ? d.mise : E1.STAKE;
   const lp = Number(r.lockPrice), cp = Number(r.closePrice);
-  const gagnant = cp > lp ? 'BULL' : cp < lp ? 'BEAR' : 'TIE';
+  const gagnant = !r.oracleCalled ? 'CANCELLED' : cp > lp ? 'BULL' : cp < lp ? 'BEAR' : 'TIE';
   let issue = 'skip', pl = 0, tx = null;
   if (d.wouldBet && d.place) {
     const mFinal = E1.cote(d.side === 'BULL' ? r.bull : r.bear, r.total, fee, stake);
-    if (gagnant === 'TIE') { issue = 'refund'; pl = 0; }
+    if (gagnant === 'CANCELLED') { issue = 'refund'; pl = 0; }
     else if (gagnant === d.side) { issue = 'win'; pl = (mFinal - 1) * stake; c.wins++; }
-    else { issue = 'loss'; pl = -stake; c.losses++; }
+    else { issue = 'loss'; pl = -stake; c.losses++; }   /* camp adverse OU égalité (tout le pool au trésor) */
     if (issue !== 'refund') c.mises++;
     c.pl += pl;
     /* Réclamer le gain / le remboursement réel (les fonds reviennent au wallet). */
@@ -315,7 +329,7 @@ async function ticCompte(c) {
   for (const ep of Object.keys(c.enAttente)) {
     const n = Number(ep);
     if (n >= e - 1) continue;
-    try { const rc = await ch.round(n); if (rc.oracleCalled) await resous(c, n, rc, fee, ch); } catch (x) {}
+    try { const rc = await ch.round(n); if (rc && (rc.oracleCalled || E1.annule(rc, now))) await resous(c, n, rc, fee, ch); } catch (x) {}
   }
   try { c.solde = await ch.balance(c.adr); } catch (e2) {}
 }

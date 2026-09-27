@@ -10,7 +10,16 @@
  *   4. l'ordre qui protège le payeur : outil en panne → rien réglé ; règlement
  *      en échec → le résultat n'est PAS rendu ;
  *   5. la première fois, sans allowance : l'extension EIP-2612 (settleWithPermit) ;
- *   6. deux requêtes simultanées avec la même signature : une seule passe.
+ *   6. deux requêtes simultanées avec la même signature : une seule passe ;
+ *   10. (lot Base, 27 septembre 2026) l'USDC sur Base réglé par Coinbase : Base
+ *      d'abord, montants du contrat §A.2, ASCII, tailles d'en-têtes, NOS
+ *      conditions envoyées à Coinbase, signature décidée par le code du
+ *      signataire, « en attente » et ambigu décidés par la CHAÎNE (jamais
+ *      authorizationState), jamais dans la file du portefeuille de gaz ;
+ *      (revue du 27 septembre 2026) la reprise d'une attente réservée au MÊME
+ *      paiement pour le MÊME appel, l'emballage ERC-6492 laissé à Coinbase, le
+ *      registre des pertes d'ask_agent appelé dans les quatre cas, et la preuve
+ *      sur la chaîne en NÉGATIF (Transfer ailleurs, mauvais montant, revert).
  */
 let n = 0, rates = 0;
 const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; console.log('  RATE ' + m); } };
@@ -379,6 +388,530 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
     await x.traite({ outil: 'scan_token', url: 'u', entete, args: {}, sert: sert({}), canal: 'rest', qui: 'ip:3' });
     eq(notes.map((y) => y.e + ':' + y.qui + ':' + (y.sorte || '')).join(' | '), 'demande402:ip:2:sonde | demande402:ip:2:demande | echec:ip:3:paiement_refuse:invalid_payload',
        'compte chaque 402 (sonde ou demande, par empreinte d IP) et chaque paiement refuse, avec sa raison x402');
+  }
+
+  /* ==================================================================
+   * 10. BASE : L'USDC REGLE PAR COINBASE (lot Base, contrat §F.2, 27 septembre 2026)
+   * Un faux Coinbase (objet), un faux RPC de Base (lecture), de VRAIES
+   * signatures EIP-3009 sur le domaine de l'USDC de Base (USD Coin, 2, 8453).
+   * ================================================================== */
+  console.log('\n-- 10. Base : l USDC regle par Coinbase --');
+  {
+    const A = require('./agentic'), D = require('./decouverte');
+    const HASH = (i) => '0x' + String(i).padStart(64, 'c');
+    const dort = (ms) => new Promise((r) => setTimeout(r, ms));
+    const pad32 = (a) => '0x' + '0'.repeat(24) + a.slice(2).toLowerCase();
+    /* Le faux Coinbase : ce qu'il recoit, et ce qu'il repond (a choisir par essai). */
+    function fauxFac() {
+      const F = { verifies: [], regles: [], sup: { ok: true, kinds: [{ x402Version: 2, scheme: 'exact', network: 'eip155:8453' }] }, verifyRep: { etat: 'valide' }, regleReps: [] };
+      F.supported = async () => F.sup;
+      F.verify = async (p, e) => { F.verifies.push({ p: JSON.parse(JSON.stringify(p)), e: JSON.parse(JSON.stringify(e)) }); return Object.assign({ ms: 3 }, typeof F.verifyRep === 'function' ? F.verifyRep(p, e) : F.verifyRep); };
+      F.regle = async (p, e) => {
+        F.regles.push({ p: JSON.parse(JSON.stringify(p)), e: JSON.parse(JSON.stringify(e)) });
+        const r = F.regleReps.length ? F.regleReps.shift() : { etat: 'paye', hash: HASH(F.regles.length) };
+        if (r.attendMs) await dort(r.attendMs);
+        return Object.assign({ ms: 7 }, r);
+      };
+      return F;
+    }
+    /* Le faux RPC de Base : codes, recus, journaux — ce que la chaine dirait. */
+    function fauxRpc() {
+      const R = { codes: {}, recus: {}, logs: [], blocN: 5000, lus: [] };
+      R.code = async (a) => { R.lus.push('code'); return R.codes[String(a).toLowerCase()] || '0x'; };
+      R.recu = async (h) => { R.lus.push('recu'); return R.recus[h] || null; };
+      R.journaux = async (f) => { R.lus.push('logs'); return R.logs.filter((l) => l.address.toLowerCase() === f.address.toLowerCase() && f.topics.every((t, i) => !t || String(l.topics[i] || '').toLowerCase() === String(t).toLowerCase())); };
+      R.bloc = async () => R.blocN;
+      /* Un reglement reussi sur la chaine : AuthorizationUsed(from, nonce) + Transfer(from → payTo, montant), status 1. */
+      R.paye = (h, from, nonce, to, montant) => {
+        const logs = [{ address: X.USDC_BASE, topics: [X.TOPIC_AUTH_USED, pad32(from), nonce], data: '0x', transactionHash: h },
+          { address: X.USDC_BASE, topics: [X.TOPIC_TRANSFER, pad32(from), pad32(to)], data: ethers.utils.hexZeroPad(ethers.BigNumber.from(montant).toHexString(), 32), transactionHash: h }];
+        R.recus[h] = { status: '0x1', transactionHash: h, logs };
+        R.logs.push(...logs);
+      };
+      R.annule = (from, nonce) => R.logs.push({ address: X.USDC_BASE, topics: [X.TOPIC_AUTH_CANCELED, pad32(from), nonce], data: '0x', transactionHash: HASH(999) });
+      return R;
+    }
+    const BZ = (o) => D.bazaar(o, A.definitions({ recherche: true }).find((d) => d.name === o));
+    async function mondeBase(o) {
+      o = o || {};
+      const chaine = fausseChaine(o.chaine);
+      let t = o.t0 || Date.now();
+      const journal = [], notes = [], F = o.F || fauxFac(), R = o.R || fauxRpc();
+      const x = X.cree({ asset: SWOGE, usdg: X.USDG, payTo: TRESOR, chaine, cours: async () => 0.00002493, ethUsd: o.ethUsd || (async () => 2688.57),
+        prixOutilUsd: o.prix || ((outil, a) => A.prixX402Usd(outil, a)), maintenant: () => t, journal: (l) => journal.push(l), note: (e, i) => notes.push(Object.assign({ e }, i)),
+        bazaar: BZ, description: (n2) => ((A.definitions({ recherche: true }).find((d) => d.name === n2)) || {}).description,
+        service: { nom: 'SwogeAgentic', etiquettes: (n2) => D.ETIQUETTES_OUTIL[n2], icone: D.ICONE },
+        agent: o.agent,
+        base: o.sansBase ? undefined : { reseau: X.RESEAU_BASE, chainId: 8453, usdc: X.USDC_BASE, domaine: X.DOMAINE_USDC_BASE, payTo: TRESOR, facilitateur: F, rpc: R, attenteMs: 40, cadenceMs: 5 } });
+      if (!o.sansBase) await x.sondeBase();
+      return { x, chaine, journal, notes, F, R, avance: (ms) => { t += ms; }, s: () => Math.floor(t / 1000) };
+    }
+    const entete402 = async (M, outil, args) => de64((await M.x.traite({ outil, url: 'https://api/agentic/call/' + outil, args: args || {}, sert: sert({}) })).entetes['payment-required']);
+    /* Ce qu'un client x402 signe pour Base (EIP-3009, domaine USD Coin v2 sur 8453). */
+    async function signeBase(w, req, o) {
+      o = o || {};
+      const acc = Object.assign({}, req.accepts.find((a) => a.network === 'eip155:8453'), o.accepted || {});
+      const auth = { from: w.address, to: o.to || acc.payTo, value: o.value || acc.amount, validAfter: String(o.validAfter || o.s - 600),
+        validBefore: String(o.validBefore || o.s + 100), nonce: o.nonce || ethers.utils.hexlify(ethers.utils.randomBytes(32)) };
+      const dom = Object.assign({ chainId: o.chainId || 8453, verifyingContract: o.contrat || X.USDC_BASE }, o.domaine || X.DOMAINE_USDC_BASE);
+      const signature = await (o.autre || w)._signTypedData(dom, X.TYPES_3009, auth);
+      const p = { x402Version: 2, resource: o.resource || req.resource, accepted: acc, payload: { signature, authorization: auth }, extensions: o.extensions || req.extensions };
+      return { entete: X.b64(p), objet: p, auth, acc };
+    }
+    const paie = (M, outil, entete, args, s2) => M.x.traite({ outil, url: 'https://api/agentic/call/' + outil, entete, args: args || {}, sert: s2 || sert({}) });
+
+    /* ---- le 402, Base allumee ---- */
+    process.env.X402_AGENT = '1'; process.env.TG_APPELS_VENTE = '1'; process.env.STUDIO_MARGE = '1.5'; delete process.env.AGENTIC_PRIX;
+    const M = await mondeBase();
+    ok(M.x.baseActif() && M.x.MESURE.base.etat === 'on', 'la sonde /supported liste eip155:8453 : Base allumee');
+    const req = await entete402(M, 'scan_token', { address: '0x' + 'ee'.repeat(20) });
+    ok(req.accepts.map((a) => a.network + ':' + (a.extra.assetTransferMethod || 'base')).join() === 'eip155:8453:base,eip155:4663:eip3009,eip155:4663:permit2',
+       'les options : [USDC Base, USDG, $SWOGE] — Base d abord, Robinhood ensuite dans son ordre');
+    ok(JSON.stringify(req.accepts[0].extra) === '{"name":"USD Coin","version":"2"}' && req.accepts[0].asset === X.USDC_BASE && req.accepts[0].payTo === TRESOR && req.accepts[0].maxTimeoutSeconds === 120,
+       'Base : extra EXACTEMENT {name: USD Coin, version: 2}, sans assetTransferMethod ; l USDC de Base ; la tresorerie ; 120 s');
+    /* §A.2 : les montants, calcules par la fonction du depot (prix_base_calc.js, 27 septembre 2026). */
+    const attendus = [['scan_token', undefined, '20000'], ['colony_activity', undefined, '20000'], ['swoge_economy', undefined, '20000'], ['new_launches', undefined, '20000'],
+      ['wallet_intel', undefined, '21000'], ['osint_lookup', undefined, '21000'], ['telegram_calls', undefined, '20000'], ['web_search', undefined, '20000'],
+      ['generate_image', { prompt: 'a dog', provider: 'grok', quality: 'speed', count: 1 }, '91000'], ['generate_image', { prompt: 'a dog', provider: 'grok', quality: 'quality', count: 1 }, '181000'],
+      ['generate_image', { prompt: 'swoge on a boat', provider: 'grok', quality: 'quality', count: 1 }, '365725'], ['generate_image', { prompt: 'a dog', provider: 'openai', quality: 'quality', count: 1 }, '556000'],
+      ['generate_image', { prompt: 'swoge on a boat', provider: 'openai', quality: 'quality', count: 4 }, '2324725'], ['ask_agent', undefined, '541000']];
+    const lus = [];
+    for (const [o, a, m] of attendus) { const p = await M.x.prix(o, a); lus.push(o + (a ? '(' + a.provider + ',' + a.quality + ',' + a.count + ')' : '') + '=' + (p && p.montantBase)); ok(p && p.montantBase === m, 'prix Base de ' + lus[lus.length - 1] + ' (attendu ' + m + ', tableau §A.2)'); }
+    /* Chaque outil payable : description, ASCII, taille des en-tetes. */
+    const payables = A.definitions({ recherche: true }).map((d) => d.name).filter((o) => A.prixX402Usd(o, o === 'generate_image' ? { prompt: 'x' } : undefined) > 0);
+    let pire = { n: 0 }, pireSig = { n: 0 };
+    const w0 = ethers.Wallet.createRandom();
+    for (const o of payables) {
+      const a = o === 'generate_image' ? { prompt: 'swoge on a boat', provider: 'openai', quality: 'quality', count: 4 } : {};
+      const r = await M.x.traite({ outil: o, url: 'https://web-production-220a3.up.railway.app/agentic/call/' + o, args: a, sert: sert({}) });
+      const h = r.entetes['payment-required'], e = de64(h);
+      const d = e.resource.description;
+      ok(d.length <= 500 && !d.includes('…') && /Price: \$[0-9.]+ in USDC on Base, or \$[0-9.]+ in USDG or \$SWOGE on Robinhood Chain/.test(d) && e.resource.serviceName === 'SwogeAgentic'
+         && Array.isArray(e.resource.tags) && e.resource.tags.length <= 5 && e.resource.tags.every((x) => x.length <= 32) && e.resource.iconUrl === D.ICONE,
+         o + ' : description ' + d.length + ' car. (<= 500, sans « … »), premiere phrase + prix par reseau ; serviceName, tags, iconUrl');
+      const brut = JSON.stringify({ resource: e.resource, accepts: e.accepts, extensions: e.extensions });
+      const horsAscii = brut.match(/[^\x20-\x7e]/g);
+      ok(!horsAscii, o + ' : AUCUN caractere hors 0x20-0x7E dans resource, accepts et extensions (btoa de Cloudflare)' + (horsAscii ? ' — ' + JSON.stringify(horsAscii.slice(0, 5)) : ''));
+      ok(h.length < 8192, o + ' : en-tete PAYMENT-REQUIRED ' + h.length + ' caracteres, sous 8 192');
+      if (h.length > pire.n) pire = { n: h.length, o };
+      /* Le plus gros PAYMENT-SIGNATURE realiste : resource, accepted, bazaar complet renvoyes par le client. */
+      const sg = await signeBase(w0, e, { s: M.s() });
+      const sig = Buffer.byteLength(sg.entete) + Buffer.byteLength('payment-signature: \r\n');
+      if (sig > pireSig.n) pireSig = { n: sig, o };
+    }
+    ok(pireSig.n < 12288, 'le plus gros PAYMENT-SIGNATURE (' + pireSig.o + ') : ' + pireSig.n + ' octets, bien sous les 16 384 de Node pour TOUS les en-tetes (75 % au plus)');
+    console.log('       (plus gros PAYMENT-REQUIRED : ' + pire.o + ', ' + pire.n + ' caracteres)');
+    ok(!('bazaar' in (req.extensions.eip2612GasSponsoring || {})) && req.extensions.bazaar && req.extensions.eip2612GasSponsoring, 'extensions : eip2612GasSponsoring (pour le $SWOGE) et bazaar, gardees');
+
+    /* ---- Base eteinte : les options Robinhood d'aujourd'hui ---- */
+    const M0 = await mondeBase({ sansBase: true });
+    const req0 = await entete402(M0, 'scan_token', { address: '0x' + 'ee'.repeat(20) });
+    ok(JSON.stringify(req0.accepts) === JSON.stringify(req.accepts.slice(1)) && /^SwogeAgentic tool scan_token — \$[0-9.]+ in USDG or \$SWOGE \(tool price \+ settlement gas, minimum \$0\.02\)$/.test(req0.resource.description)
+       && !req0.resource.serviceName && req0.extensions.bazaar.info.output.example,
+       'Base eteinte : les options Robinhood IDENTIQUES a celles d apres Base, la description d avant mot pour mot ; seul ajout : bazaar.info.output.example');
+    const M0x = await mondeBase({ F: Object.assign(fauxFac(), { sup: { ok: false, statut: 401 } }) });
+    ok(!M0x.x.baseActif() && (await entete402(M0x, 'scan_token')).accepts.every((a) => a.network === 'eip155:4663'), 'une sonde /supported en 401 : Base eteinte, aucune option Base');
+
+    /* ---- l'independance des deux facons de payer ---- */
+    const Mi = await mondeBase({ chaine: { gp: null }, ethUsd: async () => { throw new Error('ETH muet'); } });
+    Mi.chaine.gazPrix = async () => { throw new Error('RPC Robinhood coupe'); };
+    const ri = await Mi.x.traite({ outil: 'scan_token', url: 'u', args: {}, sert: sert({}) });
+    const qi = de64(ri.entetes['payment-required']);
+    const pi = await Mi.x.prix('scan_token');
+    ok(ri.status === 402 && qi.accepts.length === 1 && qi.accepts[0].network === 'eip155:8453' && pi.usd === null && pi.usdBase === 0.02,
+       'Robinhood en panne (gaz et ETH inconnus) : Base reste offerte seule, usd = null, usdBase = 0.02');
+    const ann = await D.prixX402Annonces({ noms: ['scan_token', 'wallet_intel'], prix: (o, a) => Mi.x.prix(o, a), base: A.prixX402Usd, minUsd: 0.02 });
+    ok(ann.scan_token && ann.scan_token.min === 0.02 && ann.scan_token.max === 0.02 && ann.wallet_intel.min === 0.021, 'prixX402Annonces avec usd null : le prix Base (avant : l outil disparaissait)');
+    const annB = await D.prixX402Annonces({ noms: ['scan_token'], prix: (o, a) => M.x.prix(o, a), base: A.prixX402Usd, minUsd: 0.02 });
+    ok(annB.scan_token.min === 0.02 && annB.scan_token.max === (await M.x.prix('scan_token')).usd, 'deux reseaux : min = Base, max = Robinhood');
+    const Mr = await mondeBase({ sansBase: true });
+    Mr.chaine.gazPrix = async () => { throw new Error('RPC Robinhood coupe'); };
+    eq((await Mr.x.traite({ outil: 'scan_token', url: 'u', args: {}, sert: sert({}) })).status, 503, 'Base eteinte et Robinhood en panne : 503, comme avant');
+
+    /* ---- la duree d'un devis, par option ---- */
+    {
+      const Ma = await mondeBase({ prix: (o) => ({ ask_agent: 0.54, scan_token: 0.01 })[o] || null, agent: { dureeMaxS: 150, enVolMax: 3, bloque: () => false } });
+      const w = ethers.Wallet.createRandom();
+      const qa = await entete402(Ma, 'ask_agent', { task: 'x' });
+      const qs = await entete402(Ma, 'scan_token', {});
+      ok(qa.accepts.every((a) => a.maxTimeoutSeconds === 300) && qs.accepts.every((a) => a.maxTimeoutSeconds === 120) && qa.accepts[0].amount === '541000',
+         'ask_agent : 300 s sur CHAQUE option (Base 541000) ; un outil fixe : 120 s');
+      Ma.avance(200000);
+      const sa = await signeBase(w, qa, { s: Ma.s(), validBefore: Ma.s() + 250 });
+      const ra = await paie(Ma, 'ask_agent', sa.entete, { task: 'x' });
+      const ss = await signeBase(w, qs, { s: Ma.s() });
+      const rs = await paie(Ma, 'scan_token', ss.entete, {});
+      ok(ra.status === 200 && rs.status === 402 && /invalid_payment_requirements/.test(JSON.parse(rs.corps).raison),
+         'paye a t = 200 s : le devis ask_agent (300 s) passe, celui d un outil fixe (120 s) est refuse');
+      const sc = await signeBase(w, await entete402(Ma, 'ask_agent', { task: 'x' }), { s: Ma.s(), validBefore: Ma.s() + 170 });
+      const rc = await paie(Ma, 'ask_agent', sc.entete, { task: 'x' });
+      ok(rc.status === 402 && /valid_before/.test(JSON.parse(rc.corps).raison) && /180 s/.test(JSON.parse(rc.corps).detail), 'ask_agent signe pour moins de 150 + 30 s : refuse (« at least 180 s ahead »)');
+    }
+
+    /* ---- payer sur Base ---- */
+    {
+      const Mp = await mondeBase();
+      const w = ethers.Wallet.createRandom();
+      const q = await entete402(Mp, 'scan_token', { address: '0x' + 'ee'.repeat(20) });
+      const triche = { maxTimeoutSeconds: 99999, extra: { name: 'USDC', version: '9', assetTransferMethod: 'permit2' } };
+      const sg = await signeBase(w, q, { s: Mp.s(), accepted: triche, resource: { url: 'https://evil.example/x', description: 'free stuff' },
+        extensions: Object.assign({}, q.extensions, { bazaar: { info: { evil: true } }, autre: { x: 1 } }) });
+      const compte = {};
+      const r = await paie(Mp, 'scan_token', sg.entete, { address: '0x' + 'ee'.repeat(20) }, sert(compte));
+      const pr = de64(r.entetes['payment-response']);
+      ok(r.status === 200 && pr.success === true && pr.network === 'eip155:8453' && pr.payer === w.address && pr.transaction === HASH(1) && compte.n === 1,
+         'paye sur Base : 200, PAYMENT-RESPONSE eip155:8453, la transaction de Coinbase, servi une fois');
+      const v = Mp.F.verifies[0], g = Mp.F.regles[0];
+      ok(v && g && JSON.stringify(v.e) === JSON.stringify({ scheme: 'exact', network: 'eip155:8453', asset: X.USDC_BASE, amount: '20000', payTo: TRESOR, maxTimeoutSeconds: 120, extra: { name: 'USD Coin', version: '2' } })
+         && JSON.stringify(v.p.accepted) === JSON.stringify(v.e) && JSON.stringify(g.e) === JSON.stringify(v.e),
+         'Coinbase recoit NOS conditions (maxTimeoutSeconds et extra triches par le client : ignores), en paymentRequirements ET en accepted');
+      ok(v.p.resource.url === 'https://api/agentic/call/scan_token' && /Price: \$0\.02 in USDC on Base/.test(v.p.resource.description) && JSON.stringify(v.p.extensions) === JSON.stringify({ bazaar: BZ('scan_token') })
+         && !('eip2612GasSponsoring' in v.p.extensions) && JSON.stringify(v.p.payload) === JSON.stringify(sg.objet.payload),
+         'et NOTRE ressource, NOTRE bloc bazaar, aucune autre extension (ni eip2612GasSponsoring) ; la signature telle quelle');
+      ok(Mp.journal[0] && Mp.journal[0].network === 'eip155:8453' && Mp.journal[0].asset === X.USDC_BASE && !('gasUsed' in Mp.journal[0]) && Mp.chaine.regles.length === 0,
+         'le journal dit eip155:8453, sans gasUsed ; rien envoye sur Robinhood Chain');
+      const n = Mp.notes.find((y) => y.e === 'paye_x402');
+      ok(n && n.usd === 0.02 && n.coutUsd === 0.001 && n.sorte === 'USDC_BASE' && n.qui === w.address, 'compteur paye_x402 : 0,02 $, cout 0,001 $ (Coinbase), sorte USDC_BASE');
+      ok(Mp.x.MESURE.parReseau['eip155:8453'].payes === 1 && Mp.x.MESURE.parReseau['eip155:8453'].msVerify[0] === 3 && Mp.x.MESURE.parReseau['eip155:8453'].msSettle[0] === 7
+         && Mp.x.MESURE.parReseau['eip155:4663'].devis === 1 && !Mp.x.MESURE.parReseau['eip155:4663'].payes, 'MESURE.parReseau : les comptes separes par reseau, et les durees verify / settle');
+      const rej = await paie(Mp, 'scan_token', sg.entete, { address: '0x' + 'ee'.repeat(20) });
+      ok(rej.status === 402 && Mp.F.regles.length === 1 && de64(rej.entetes['payment-required']).accepts[0].network === 'eip155:8453', 'le MEME paiement rejoue : 402, un seul reglement, une nouvelle demande');
+      /* L'objet (MCP _meta) : meme chemin. */
+      const sg2 = await signeBase(w, q, { s: Mp.s() });
+      const rp = await Mp.x.paie({ outil: 'scan_token', url: 'https://api/mcp', paiement: sg2.objet, args: { address: '0x' + 'ee'.repeat(20) }, sert: sert({}), bazaar: { info: { mcp: 1 } } });
+      const vd = Mp.F.verifies[Mp.F.verifies.length - 1];
+      ok(rp.etape === 'paye' && Mp.F.verifies.length === 2 && vd.p.resource.url === 'https://api/mcp' && JSON.stringify(vd.p.extensions) === '{"bazaar":{"info":{"mcp":1}}}',
+         'un paiement OBJET (MCP) : paye ; Coinbase recoit l adresse /mcp et le bloc bazaar du canal MCP (un devis vaut sur tous les canaux)');
+    }
+
+    /* ---- la signature : decidee par le CODE du signataire ---- */
+    {
+      const Ms = await mondeBase();
+      const w = ethers.Wallet.createRandom(), autre = ethers.Wallet.createRandom();
+      const q = await entete402(Ms, 'scan_token', {});
+      Ms.R.codes[w.address.toLowerCase()] = '0x6080604052';
+      const sc = await signeBase(w, q, { s: Ms.s(), autre });
+      const rc = await paie(Ms, 'scan_token', sc.entete, {});
+      ok(rc.status === 200 && Ms.F.verifies.length === 1 && Ms.R.lus.includes('code'), 'un signataire AVEC du code (Safe, 7702) : 65 octets qui ne retrouvent pas from → pas refuse ici, Coinbase decide (EIP-1271)');
+      delete Ms.R.codes[w.address.toLowerCase()];
+      const sn = await signeBase(w, q, { s: Ms.s(), autre });
+      const rn = await paie(Ms, 'scan_token', sn.entete, {});
+      ok(rn.status === 402 && /invalid_exact_evm_payload_signature/.test(JSON.parse(rn.corps).raison) && Ms.F.verifies.length === 1, 'SANS code : refuse ici, Coinbase jamais appele');
+    }
+
+    /* ---- refuse SANS appeler Coinbase ---- */
+    {
+      const Mr2 = await mondeBase({ agent: { dureeMaxS: 150, enVolMax: 3, bloque: (a) => a.toLowerCase() === BLOQUE.address.toLowerCase() }, prix: (o) => ({ ask_agent: 0.54, scan_token: 0.01 })[o] || null });
+      const BLOQUE = ethers.Wallet.createRandom();
+      const w = ethers.Wallet.createRandom();
+      const q = await entete402(Mr2, 'scan_token', {});
+      const essai = async (m, o, re, outil, args, q2) => {
+        const s0 = await signeBase(o.w || w, q2 || q, Object.assign({ s: Mr2.s() }, o));
+        const avant = Mr2.F.verifies.length, regles = Mr2.F.regles.length, c = {};
+        const r = await paie(Mr2, outil || 'scan_token', s0.entete, args || {}, sert(c));
+        const raison = JSON.parse(r.corps).raison;
+        ok(r.status === 402 && re.test(raison) && Mr2.F.verifies.length === avant && Mr2.F.regles.length === regles && !c.n, m + ' → 402 ' + raison + ', Coinbase jamais appele, rien servi');
+        return s0;
+      };
+      await essai('signe pour la chaine 4663', { chainId: 4663 }, /signature/);
+      await essai('signe pour le contrat USDG', { contrat: X.USDG }, /signature/);
+      await essai('signe avec le nom « USDC » (domaine faux sur mainnet)', { domaine: { name: 'USDC', version: '2' } }, /signature/);
+      await essai('un autre destinataire', { to: ethers.Wallet.createRandom().address }, /recipient_mismatch/);
+      await essai('un montant different du devis', { value: '19999' }, /value_mismatch/);
+      await essai('expiree', { validBefore: Mr2.s() - 1 }, /valid_before/);
+      await essai('aucun devis pour ce montant', { accepted: { amount: '19999' }, value: '19999' }, /invalid_payment_requirements/);
+      const deja = await signeBase(w, q, { s: Mr2.s() });
+      eq((await paie(Mr2, 'scan_token', deja.entete, {})).status, 200, '(une premiere presentation passe)');
+      const av = Mr2.F.verifies.length;
+      const rj = await paie(Mr2, 'scan_token', deja.entete, {});
+      ok(rj.status === 402 && /already presented/.test(JSON.parse(rj.corps).detail) && Mr2.F.verifies.length === av, 'un nonce deja presente : refuse ici, Coinbase jamais rappele');
+      const qa = await entete402(Mr2, 'ask_agent', { task: 'x' });
+      await essai('ask_agent paye par un payeur BLOQUE', { w: BLOQUE, validBefore: Mr2.s() + 250 }, /payer_blocked/, 'ask_agent', { task: 'x' }, qa);
+    }
+
+    /* ---- l'ordre qui protege le payeur ---- */
+    {
+      const Mo = await mondeBase();
+      const w = ethers.Wallet.createRandom();
+      const q = await entete402(Mo, 'scan_token', {});
+      const s1 = await signeBase(w, q, { s: Mo.s() });
+      const panne = await paie(Mo, 'scan_token', s1.entete, {}, async () => ({ ok: false, code: 502, raison: 'the tool failed — nothing was charged' }));
+      ok(panne.status === 502 && Mo.F.regles.length === 0, 'l outil en panne : /settle JAMAIS appele');
+      Mo.F.regleReps.push({ etat: 'echec', erreur: 'invalid_payload', statut: 400 });
+      const s2 = await signeBase(w, q, { s: Mo.s() });
+      const rf = await paie(Mo, 'scan_token', s2.entete, {});
+      const cf = JSON.parse(rf.corps), pf = de64(rf.entetes['payment-response']);
+      ok(rf.status === 402 && !cf.resultat && pf.success === false && pf.errorReason === 'invalid_payload' && pf.transaction === '' && pf.network === 'eip155:8453' && pf.payer === w.address
+         && rf.entetes['payment-required'] && de64(rf.entetes['payment-required']).accepts.length === 3,
+         'echec definitif (400 invalid_payload) : resultat RETENU, PAYMENT-RESPONSE en echec, et un NOUVEAU PAYMENT-REQUIRED');
+    }
+
+    /* ---- ambigu : la chaine decide ---- */
+    for (const surChaine of [true, false]) {
+      const Mb = await mondeBase();
+      const w = ethers.Wallet.createRandom();
+      const q = await entete402(Mb, 'scan_token', {});
+      const sb = await signeBase(w, q, { s: Mb.s() });
+      if (surChaine) Mb.R.paye(HASH(77), w.address, sb.auth.nonce, TRESOR, '20000');
+      Mb.F.regleReps.push({ etat: 'ambigu', erreur: 'settle_exact_node_failure', statut: 400 });
+      const r = await paie(Mb, 'scan_token', sb.entete, {});
+      const c = JSON.parse(r.corps);
+      ok(surChaine ? r.status === 200 && c.x402.transaction === HASH(77) : r.status === 402 && !c.resultat && !c.accepts && !r.entetes['payment-required'],
+         '400 settle_exact_node_failure (ambigu), ' + (surChaine ? 'AuthorizationUsed + Transfer lus sur la chaine : le resultat est rendu' : 'rien sur la chaine : le resultat est RETENU'));
+    }
+
+    /* ---- en attente, puis la chaine confirme ---- */
+    {
+      const Me = await mondeBase();
+      const w = ethers.Wallet.createRandom();
+      const q = await entete402(Me, 'scan_token', {});
+      const se = await signeBase(w, q, { s: Me.s() });
+      Me.F.regleReps.push({ etat: 'attente', hash: HASH(55), erreur: 'settlement_pending' });
+      const c1 = {};
+      const r1 = await paie(Me, 'scan_token', se.entete, {}, sert(c1));
+      const p1 = de64(r1.entetes['payment-response']), b1 = JSON.parse(r1.corps);
+      ok(r1.status === 402 && p1.success === false && p1.errorReason === 'settlement_pending' && p1.transaction === HASH(55) && !r1.entetes['payment-required'] && !b1.accepts && !b1.resultat
+         && /retry the same request with the same PAYMENT-SIGNATURE/.test(b1.error),
+         'en attente : 402, PAYMENT-RESPONSE settlement_pending + le hash, AUCUN PAYMENT-REQUIRED, aucun accepts, resultat retenu');
+      const lusAvant = Me.R.lus.length;
+      const r1b = await paie(Me, 'scan_token', se.entete, {});
+      ok(r1b.status === 402 && de64(r1b.entetes['payment-response']).errorReason === 'settlement_pending' && Me.F.verifies.length === 1 && Me.F.regles.length === 1 && Me.R.lus.length > lusAvant,
+         'represente AVANT la confirmation : toujours en attente, la chaine relue, ni verify ni settle de plus');
+      Me.R.paye(HASH(55), w.address, se.auth.nonce, TRESOR, '20000');
+      const r2 = await paie(Me, 'scan_token', se.entete, {});
+      ok(r2.status === 200 && JSON.parse(r2.corps).x402.transaction === HASH(55) && c1.n === 1 && Me.F.verifies.length === 1 && Me.F.regles.length === 1,
+         'le recu arrive (status 1, AuthorizationUsed(from, nonce), Transfer(from → tresorerie, montant)) : le resultat GARDE est rendu, sans nouveau verify ni settle, l outil servi une seule fois');
+      const r3 = await paie(Me, 'scan_token', se.entete, {});
+      ok(r3.status === 402 && Me.F.regles.length === 1 && Me.x.MESURE.payes === 1, 'rendu UNE fois : represente encore, refuse');
+    }
+
+    /* ---- en attente, puis le payeur ANNULE ---- */
+    {
+      const Mc = await mondeBase();
+      const w = ethers.Wallet.createRandom();
+      const q = await entete402(Mc, 'scan_token', {});
+      const sa = await signeBase(w, q, { s: Mc.s() });
+      Mc.F.regleReps.push({ etat: 'attente', hash: HASH(66), erreur: 'settlement_pending' });
+      await paie(Mc, 'scan_token', sa.entete, {});
+      Mc.R.annule(w.address, sa.auth.nonce);
+      /* authorizationState serait VRAI ici (une annulation le met a vrai) : on ne le lit jamais. */
+      const rc = await paie(Mc, 'scan_token', sa.entete, {});
+      const bc = JSON.parse(rc.corps);
+      ok(rc.status === 402 && !bc.resultat && rc.entetes['payment-required'] && bc.accepts.length === 3 && /authorization_canceled/.test(bc.raison) && Mc.x.MESURE.payes === 0,
+         'AuthorizationCanceled vu : le resultat n est JAMAIS rendu ; un 402 normal, avec une nouvelle demande de paiement');
+    }
+
+    /* ---- settle sans reponse (pas de hash) : jamais rejoue, les journaux decident ---- */
+    for (const trouve of [true, false]) {
+      const Mt = await mondeBase();
+      const w = ethers.Wallet.createRandom();
+      const q = await entete402(Mt, 'scan_token', {});
+      const st = await signeBase(w, q, { s: Mt.s() });
+      if (trouve) Mt.R.paye(HASH(88), w.address, st.auth.nonce, TRESOR, '20000');
+      Mt.F.regleReps.push({ etat: 'inconnu', erreur: 'unexpected_settle_error' });
+      const r = await paie(Mt, 'scan_token', st.entete, {});
+      const pr = de64(r.entetes['payment-response']);
+      ok(Mt.F.regles.length === 1 && (trouve ? r.status === 200 && pr.transaction === HASH(88)
+        : r.status === 402 && pr.errorReason === 'unexpected_settle_error' && pr.transaction === '' && !r.entetes['payment-required']),
+        'settle en delai, sans hash : AUCUN rejeu ; ' + (trouve ? 'eth_getLogs trouve AuthorizationUsed : rendu' : 'rien trouve : unexpected_settle_error, transaction vide, pas de nouvelle demande'));
+    }
+
+    /* ---- Base ne passe jamais par la file du portefeuille de gaz ---- */
+    {
+      const Mf = await mondeBase();
+      const w = ethers.Wallet.createRandom();
+      const lent = Mf.chaine.regle;
+      Mf.chaine.regle = async (m, a) => { await dort(300); return lent(m, a); };
+      const q = await entete402(Mf, 'scan_token', {});
+      const sR = await signe3009(w, q, { s: Mf.s() });
+      const sB = await signeBase(w, q, { s: Mf.s() });
+      const fin = [];
+      const pR = paie(Mf, 'scan_token', sR.entete, {}).then((r) => fin.push('robinhood:' + r.status));
+      await dort(20);
+      const pB = paie(Mf, 'scan_token', sB.entete, {}).then((r) => fin.push('base:' + r.status));
+      await Promise.all([pR, pB]);
+      eq(fin.join(','), 'base:200,robinhood:200', 'un reglement Robinhood tenu 300 ms : le paiement Base, parti APRES, finit AVANT (jamais dans enFile)');
+      ok(Mf.journal.map((l) => l.network).sort().join() === 'eip155:4663,eip155:8453' && Mf.x.MESURE.parReseau['eip155:4663'].payes === 1 && Mf.x.MESURE.parReseau['eip155:8453'].payes === 1,
+         'journal et MESURE.parReseau : un paiement par reseau');
+    }
+    /* ---- en attente : SEUL le meme paiement, pour le meme appel, reprend le resultat retenu ----
+       (revue du 27 septembre 2026 : `from` et `nonce` sont publics des que Coinbase diffuse la
+       transaction ; avant, les presenter suffisait a emporter le resultat d un autre, pour
+       n importe quel outil, et la victime recevait ensuite « nonce already presented ».) */
+    {
+      const Mv = await mondeBase();
+      const w = ethers.Wallet.createRandom();
+      const argsV = { address: '0x' + 'ab'.repeat(20) };
+      const q = await entete402(Mv, 'wallet_intel', argsV);
+      const sv = await signeBase(w, q, { s: Mv.s() });
+      Mv.F.regleReps.push({ etat: 'attente', hash: HASH(44), erreur: 'settlement_pending' });
+      const cv = {};
+      const secret = async () => { cv.n = (cv.n || 0) + 1; return { ok: true, outil: 'wallet_intel', resultat: { secret: 'VICTIM PRIVATE RESULT' }, texte: 'x' }; };
+      const r0 = await paie(Mv, 'wallet_intel', sv.entete, argsV, secret);
+      ok(r0.status === 402 && de64(r0.entetes['payment-response']).errorReason === 'settlement_pending' && cv.n === 1, '(la victime paie wallet_intel : servi, reglement en attente, resultat retenu)');
+      const forge = (pl, outil, args) => paie(Mv, outil, X.b64({ x402Version: 2, accepted: { scheme: 'exact', network: 'eip155:8453' }, payload: pl }), args || {});
+      const essaisForges = async (quand) => {
+        const tentatives = [
+          ['signature vide, un autre outil', { signature: '0x', authorization: { from: w.address, nonce: sv.auth.nonce } }, 'swoge_economy', {}],
+          ['signature 0x00, le meme outil, d autres arguments', { signature: '0x00', authorization: { from: w.address, nonce: sv.auth.nonce } }, 'wallet_intel', { address: '0x' + 'cd'.repeat(20) }],
+          ['une autre signature, le meme appel', { signature: '0x' + '11'.repeat(65), authorization: sv.auth }, 'wallet_intel', argsV],
+          ['la VRAIE signature et autorisation (lisibles sur la chaine), un autre outil', sv.objet.payload, 'swoge_economy', {}],
+          ['la vraie signature, le meme outil, d autres arguments', sv.objet.payload, 'wallet_intel', { address: '0x' + 'cd'.repeat(20) }],
+          ['la vraie signature, une autorisation retouchee (value)', { signature: sv.objet.payload.signature, authorization: Object.assign({}, sv.auth, { value: '1' }) }, 'wallet_intel', argsV],
+        ];
+        for (const [m, pl, o, a] of tentatives) {
+          const avant = { v: Mv.F.verifies.length, g: Mv.F.regles.length, p: Mv.x.MESURE.payes };
+          const r = await forge(pl, o, a);
+          ok(r.status === 402 && !/VICTIM/.test(r.corps) && !/VICTIM/.test(JSON.stringify(r.entetes)) && /already presented/.test(JSON.parse(r.corps).detail || '')
+             && Mv.F.verifies.length === avant.v && Mv.F.regles.length === avant.g && Mv.x.MESURE.payes === avant.p && cv.n === 1,
+             quand + ', ' + m + ' (meme from et nonce) : 402, AUCUN resultat retenu, ni verify ni settle');
+        }
+      };
+      await essaisForges('en attente');
+      Mv.R.paye(HASH(44), w.address, sv.auth.nonce, TRESOR, '21000');
+      await essaisForges('confirme sur la chaine');
+      const rv = await paie(Mv, 'wallet_intel', sv.entete, argsV);
+      const bv = JSON.parse(rv.corps);
+      ok(rv.status === 200 && bv.resultat && bv.resultat.secret === 'VICTIM PRIVATE RESULT' && bv.x402.transaction === HASH(44) && cv.n === 1 && Mv.x.MESURE.payes === 1 && Mv.F.regles.length === 1,
+         'et la victime, avec SA signature, SON outil, SES arguments : le resultat retenu lui est rendu, l outil servi une seule fois');
+      /* Le meme paiement represente par MCP (objet), memes arguments : meme identite. */
+      const Mv2 = await mondeBase();
+      const q2 = await entete402(Mv2, 'scan_token', {});
+      const s2 = await signeBase(w, q2, { s: Mv2.s() });
+      Mv2.F.regleReps.push({ etat: 'attente', hash: HASH(45), erreur: 'settlement_pending' });
+      await paie(Mv2, 'scan_token', s2.entete, {});
+      Mv2.R.paye(HASH(45), w.address, s2.auth.nonce, TRESOR, '20000');
+      const rm = await Mv2.x.paie({ outil: 'scan_token', url: 'https://api/mcp', paiement: s2.objet, args: {}, sert: sert({}) });
+      ok(rm.etape === 'paye' && rm.recu.transaction === HASH(45), 'le meme paiement represente en OBJET (MCP), meme outil et memes arguments : rendu');
+    }
+
+    /* ---- un portefeuille intelligent PAS ENCORE deploye (emballage ERC-6492) : Coinbase decide ----
+       (contrat §A.4 etape 2 et §G.7 : jamais refuse ici ; sans code a `from`, par definition). */
+    {
+      const M6 = await mondeBase();
+      const w = ethers.Wallet.createRandom();
+      const q = await entete402(M6, 'scan_token', {});
+      const MAGIE = '6492'.repeat(16);
+      const emballe = async (queue) => {
+        const s0 = await signeBase(w, q, { s: M6.s() });
+        const p = JSON.parse(JSON.stringify(s0.objet));
+        /* usine (20 octets) + appel + signature interne, puis le suffixe magique : la forme ERC-6492. */
+        p.payload.signature = '0x' + '5f'.repeat(20) + 'ab'.repeat(100) + s0.objet.payload.signature.slice(2) + queue;
+        return { entete: X.b64(p), objet: p };
+      };
+      const codesAvant = M6.R.lus.filter((x) => x === 'code').length;
+      const s6 = await emballe(MAGIE);
+      const r6 = await paie(M6, 'scan_token', s6.entete, {});
+      ok(r6.status === 200 && M6.F.verifies.length === 1 && M6.F.verifies[0].p.payload.signature === s6.objet.payload.signature
+         && M6.R.lus.filter((x) => x === 'code').length === codesAvant && !M6.R.codes[w.address.toLowerCase()],
+         'signature ERC-6492 (suffixe 0x6492...6492), AUCUN code a from : pas refusee ici, passee telle quelle a Coinbase (eth_getCode pas lu)');
+      M6.F.verifyRep = { etat: 'refuse', raison: 'invalid_exact_evm_payload_undeployed_smart_wallet' };
+      const s7 = await emballe(MAGIE.toUpperCase());
+      const r7 = await paie(M6, 'scan_token', s7.entete, {});
+      const b7 = JSON.parse(r7.corps);
+      ok(r7.status === 402 && b7.raison === 'invalid_exact_evm_payload_undeployed_smart_wallet' && /not deployed on Base yet/.test(b7.detail) && M6.F.verifies.length === 2,
+         'Coinbase repond undeployed_smart_wallet : l agent recoit ce code et la phrase claire en anglais (suffixe en majuscules reconnu aussi)');
+      const s8 = await emballe('6492'.repeat(15) + '0000');
+      const r8 = await paie(M6, 'scan_token', s8.entete, {});
+      ok(r8.status === 402 && /invalid_exact_evm_payload_signature/.test(JSON.parse(r8.corps).raison) && M6.F.verifies.length === 2,
+         'une longue signature SANS le suffixe magique, sans code a from : toujours refusee ici, Coinbase jamais appele');
+    }
+
+    /* ---- ask_agent servi mais PAS encaisse : le registre des pertes est appele, chaque fois ----
+       (contrat §D.6 : le plafond du jour est la seule vraie borne ; ces quatre branchements
+       n etaient tenus par aucun essai — revue du 27 septembre 2026.) */
+    {
+      const appels = [];
+      const agent = { dureeMaxS: 150, enVolMax: 3, bloque: () => false, nonRegle: (from, usd, raison) => appels.push([from, usd, raison]) };
+      const T = { task: 'x' };
+      const sertA = async () => ({ ok: true, outil: 'ask_agent', resultat: { answer: 'a' }, texte: 'a', _coutUsd: 0.3 });
+      const Mn = await mondeBase({ prix: (o) => ({ ask_agent: 0.54, scan_token: 0.01 })[o] || null, agent });
+      const w = ethers.Wallet.createRandom();
+      const unSeul = (m, raison, av, r) => ok(r.status === 402 && !JSON.parse(r.corps).resultat && appels.length === av + 1 && appels[av][0] === w.address && appels[av][1] === 0.3 && appels[av][2] === raison,
+        m + ' : 402, resultat retenu, nonRegle(payeur, 0,3 $, « ' + raison + ' ») UNE fois ' + JSON.stringify(appels.slice(av)));
+      /* (a) Base, echec definitif du reglement. */
+      let av = appels.length;
+      Mn.F.regleReps.push({ etat: 'echec', erreur: 'invalid_payload', statut: 400 });
+      const sa = await signeBase(w, await entete402(Mn, 'ask_agent', T), { s: Mn.s(), validBefore: Mn.s() + 250 });
+      unSeul('(a) Base, 400 invalid_payload au reglement', 'invalid_payload', av, await paie(Mn, 'ask_agent', sa.entete, T, sertA));
+      /* (b) Base, en attente, puis le payeur annule : la reprise avec la meme signature. */
+      av = appels.length;
+      Mn.F.regleReps.push({ etat: 'attente', hash: HASH(31), erreur: 'settlement_pending' });
+      const sb = await signeBase(w, await entete402(Mn, 'ask_agent', T), { s: Mn.s(), validBefore: Mn.s() + 250 });
+      const rb1 = await paie(Mn, 'ask_agent', sb.entete, T, sertA);
+      ok(rb1.status === 402 && appels.length === av, '(b) en attente : PAS encore au registre (l issue est inconnue)');
+      Mn.R.annule(w.address, sb.auth.nonce);
+      unSeul('(b) puis AuthorizationCanceled, la meme signature representee', 'authorization canceled', av, await paie(Mn, 'ask_agent', sb.entete, T, sertA));
+      /* (c) Base, en attente, jamais resolu : oublie apres 10 min, et compte. */
+      av = appels.length;
+      Mn.F.regleReps.push({ etat: 'attente', hash: HASH(32), erreur: 'settlement_pending' });
+      const sc = await signeBase(w, await entete402(Mn, 'ask_agent', T), { s: Mn.s(), validBefore: Mn.s() + 250 });
+      await paie(Mn, 'ask_agent', sc.entete, T, sertA);
+      ok(appels.length === av, '(c) en attente : pas encore au registre');
+      Mn.avance(600001);
+      const rx = await paie(Mn, 'scan_token', X.b64({ x402Version: 2, accepted: { scheme: 'exact', network: 'eip155:8453' }, payload: {} }), {});
+      ok(rx.status === 402 && appels.length === av + 1 && appels[av][0] === w.address && appels[av][1] === 0.3 && appels[av][2] === 'pending expired',
+         '(c) 10 min plus tard, a la verification Base suivante (quelle qu elle soit) : l attente expiree va au registre ' + JSON.stringify(appels.slice(av)));
+      /* (d) Robinhood (USDG), le reglement sur la chaine rejette. */
+      av = appels.length;
+      const regleAvant = Mn.chaine.regle;
+      Mn.chaine.regle = async () => { throw new Error('RPC Robinhood coupe'); };
+      const sd = await signe3009(w, await entete402(Mn, 'ask_agent', T), { s: Mn.s(), validBefore: Mn.s() + 250 });
+      unSeul('(d) Robinhood USDG, chaine.regle rejette', 'settlement failed', av, await paie(Mn, 'ask_agent', sd.entete, T, sertA));
+      /* Jamais pour un outil a prix fixe (rien n a ete depense chez un fournisseur). */
+      av = appels.length;
+      const sertS = async () => ({ ok: true, outil: 'scan_token', resultat: {}, texte: 'x', _coutUsd: 0.3 });
+      Mn.F.regleReps.push({ etat: 'echec', erreur: 'invalid_payload', statut: 400 });
+      const qs = await entete402(Mn, 'scan_token', {});
+      const r1 = await paie(Mn, 'scan_token', (await signeBase(w, qs, { s: Mn.s() })).entete, {}, sertS);
+      const r2 = await paie(Mn, 'scan_token', (await signe3009(w, qs, { s: Mn.s() })).entete, {}, sertS);
+      Mn.F.regleReps.push({ etat: 'attente', hash: HASH(33), erreur: 'settlement_pending' });
+      const s3 = await signeBase(w, qs, { s: Mn.s() });
+      await paie(Mn, 'scan_token', s3.entete, {}, sertS);
+      Mn.R.annule(w.address, s3.auth.nonce);
+      const r3 = await paie(Mn, 'scan_token', s3.entete, {}, sertS);
+      ok(r1.status === 402 && r2.status === 402 && r3.status === 402 && appels.length === av, 'scan_token (Base en echec, Robinhood en echec, Base annulee) : nonRegle JAMAIS appele');
+      Mn.chaine.regle = regleAvant;
+    }
+
+    /* ---- la preuve sur la chaine, en NEGATIF (revue du 27 septembre 2026) ----
+       Un AuthorizationUsed(from, nonce) ne vaut pas paiement : l USDC partage UN espace de
+       nonces entre transferWithAuthorization et receiveWithAuthorization (circlefin
+       contracts/v2/EIP3009.sol:48, :205, :335-336) — pendant l attente, le payeur peut
+       consommer le meme nonce vers lui-meme. Il faut le Transfer(from -> payTo, montant) ET status 1. */
+    {
+      const AUTRE = ethers.Wallet.createRandom().address;
+      const logAuth = (h, from, nonce) => ({ address: X.USDC_BASE, topics: [X.TOPIC_AUTH_USED, pad32(from), nonce], data: '0x', transactionHash: h });
+      const logTr = (h, from, to, montant) => ({ address: X.USDC_BASE, topics: [X.TOPIC_TRANSFER, pad32(from), pad32(to)], data: ethers.utils.hexZeroPad(ethers.BigNumber.from(montant).toHexString(), 32), transactionHash: h });
+      const recu = (R, h, status, logs) => { R.recus[h] = { status, transactionHash: h, logs }; R.logs.push(...logs); };
+      const cas = [
+        ['recu status 1 de la transaction de Coinbase : AuthorizationUsed(from, nonce), mais le Transfer va a UNE AUTRE adresse',
+          (R, w, nonce) => recu(R, HASH(61), '0x1', [logAuth(HASH(61), w.address, nonce), logTr(HASH(61), w.address, AUTRE, '20000')])],
+        ['recu status 1 : AuthorizationUsed(from, nonce), Transfer a la tresorerie du MAUVAIS montant (19999)',
+          (R, w, nonce) => recu(R, HASH(61), '0x1', [logAuth(HASH(61), w.address, nonce), logTr(HASH(61), w.address, TRESOR, '19999')])],
+        ['le payeur consomme le nonce par receiveWithAuthorization (autre transaction, Transfer vers lui-meme)',
+          (R, w, nonce) => recu(R, HASH(62), '0x1', [logAuth(HASH(62), w.address, nonce), logTr(HASH(62), w.address, w.address, '20000')])],
+        ['recu status 0x0 (revert) de la transaction de Coinbase',
+          (R) => recu(R, HASH(61), '0x0', [])],
+      ];
+      for (const [m, pose] of cas) {
+        const Mk = await mondeBase();
+        const w = ethers.Wallet.createRandom();
+        const q = await entete402(Mk, 'scan_token', {});
+        const sk = await signeBase(w, q, { s: Mk.s() });
+        Mk.F.regleReps.push({ etat: 'attente', hash: HASH(61), erreur: 'settlement_pending' });
+        const ck = {};
+        const r1 = await paie(Mk, 'scan_token', sk.entete, {}, sert(ck));
+        ok(r1.status === 402 && de64(r1.entetes['payment-response']).errorReason === 'settlement_pending', '(en attente : ' + m.slice(0, 40) + '...)');
+        pose(Mk.R, w, sk.auth.nonce);
+        const r = await paie(Mk, 'scan_token', sk.entete, {});
+        const b = JSON.parse(r.corps);
+        ok(r.status === 402 && !b.resultat && !b.x402 && !r.entetes['payment-response'] && r.entetes['payment-required'] && b.accepts && b.accepts.length === 3
+           && Mk.x.MESURE.payes === 0 && Mk.F.regles.length === 1 && ck.n === 1,
+           m + ' : le resultat n est JAMAIS rendu ; echec definitif, 402 avec une NOUVELLE demande de paiement, MESURE.payes inchange');
+      }
+    }
+    delete process.env.X402_AGENT; delete process.env.TG_APPELS_VENTE;
   }
 
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));

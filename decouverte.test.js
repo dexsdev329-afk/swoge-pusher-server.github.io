@@ -20,6 +20,9 @@
  *      outil, `info` valide son propre schéma (la règle des facilitateurs), avec
  *      un exemple d'entrée FIXE — une sonde d'annuaire n'a pas d'arguments, et
  *      les arguments d'un acheteur ne sont jamais recopiés ;
+ *   3 ter. (lot Base, 27 septembre 2026) l'exemple de sortie, l'ASCII, les seuls
+ *      mots-clés que valide() comprend, ask_agent restreint, bazaarMcp, et les
+ *      textes de découverte construits sur les réseaux allumés ;
  *   4. la fiche du registre MCP : les contraintes du schéma server.json 2025-12-11.
  */
 let n = 0, rates = 0;
@@ -36,7 +39,7 @@ const A = require('./agentic');
 /* ---- UN VALIDATEUR MINUSCULE (JSON Schema, le sous-ensemble utilise ici) ----
  * type (y compris 'null' et 'integer', seul ou en liste), properties, required,
  * items, enum, const, anyOf, additionalProperties: false, minimum, maximum
- * (les bornes des schemas d'entree, ex. new_launches.limit). `strict` : un champ
+ * (les bornes des schemas d'entree, ex. new_launches.limit), maxLength (lot Base). `strict` : un champ
  * rendu que le schema ne decrit pas est une erreur (la sortie reelle ne doit
  * rien porter d'invisible). Rend la liste des erreurs, avec leur chemin. */
 let DOC = null;   /* le document ou se resolvent les $ref (#/components/schemas/…) */
@@ -60,6 +63,8 @@ function valide(sc, v, ch, strict, err) {
   if (sc.enum && !sc.enum.includes(v)) err.push(ch + ' : ' + JSON.stringify(v) + ' hors de ' + JSON.stringify(sc.enum));
   if (typeof v === 'number' && sc.minimum !== undefined && v < sc.minimum) err.push(ch + ' : ' + v + ' sous le minimum ' + sc.minimum);
   if (typeof v === 'number' && sc.maximum !== undefined && v > sc.maximum) err.push(ch + ' : ' + v + ' au-dessus du maximum ' + sc.maximum);
+  /* maxLength (lot Base, 27 septembre 2026) : la tache d'ask_agent vendu en x402, 2 000 caracteres. */
+  if (typeof v === 'string' && sc.maxLength !== undefined && v.length > sc.maxLength) err.push(ch + ' : ' + v.length + ' caracteres, au-dela de maxLength ' + sc.maxLength);
   if (v && typeof v === 'object' && !Array.isArray(v)) {
     for (const k of sc.required || []) if (!(k in v)) err.push(ch + '.' + k + ' : requis, absent');
     if (sc.properties) {
@@ -287,6 +292,81 @@ function valide(sc, v, ch, strict, err) {
   const acheteur = '0x' + 'ee'.repeat(20);
   const bzA = D.bazaar('scan_token', outils.find((o) => o.name === 'scan_token'), { address: acheteur });
   ok(JSON.stringify(bzA) === JSON.stringify(bz) && !JSON.stringify(bzA).includes(acheteur), 'l exemple est fixe : l adresse d un acheteur n est jamais recopiee dans l extension');
+
+  /* ==================================================================
+   * 3 ter. LOT BASE (27 septembre 2026) : l'exemple de sortie, ASCII, les
+   * seuls mots-cles que valide() comprend, ask_agent restreint, bazaarMcp, et
+   * les textes de decouverte construits sur les reseaux ALLUMES (Base d'abord).
+   * ================================================================== */
+  console.log('\n-- 3 ter. lot Base : exemple de sortie, mots-cles, bazaarMcp, textes par reseau --');
+  {
+    /* valide() est un validateur REDUIT, pas JSON Schema 2020-12 ; Coinbase applique une
+       validation stricte. Tout mot-cle hors de cet ensemble serait IGNORE ici sans bruit :
+       l'essai casse s'il en apparait un (contrat §B.2). */
+    const PERMIS = new Set(['$schema', 'additionalProperties', 'const', 'enum', 'items', 'maximum', 'minimum', 'properties', 'required', 'type', 'maxLength']);
+    const horsListe = (sc, ch, out) => {
+      if (!sc || typeof sc !== 'object' || Array.isArray(sc)) return out;
+      for (const k of Object.keys(sc)) {
+        if (!PERMIS.has(k)) out.push(ch + '.' + k);
+        if (k === 'properties') for (const [p, v] of Object.entries(sc.properties || {})) horsListe(v, ch + '.properties.' + p, out);
+        if (k === 'items') horsListe(sc.items, ch + '.items', out);
+      }
+      return out;
+    };
+    process.env.TG_APPELS_VENTE = '1';
+    const tous = require('./agentic').definitions({ recherche: true });
+    const defsMcp = require('./agentic_mcp').outilsMcp(tous);
+    delete process.env.TG_APPELS_VENTE;
+    const hors = [], nonAscii = [];
+    for (const o of tous) {
+      const b = D.bazaar(o.name, o), bm = D.bazaarMcp(o.name, defsMcp.find((d) => d.name === o.name));
+      hors.push(...horsListe(b.schema, o.name + '(http)', []), ...horsListe(bm.schema, o.name + '(mcp)', []));
+      const ex = b.info.output.example;
+      const eO = valide(b.schema.properties.output.properties.example, ex, '$.output.example', false);
+      ok(ex && ex.ok === true && ex.outil === o.name && !eO.length && JSON.stringify(ex).length <= 1200, o.name + ' : info.output.example (' + JSON.stringify(ex).length + ' car.' + (ex.resultat ? ', avec resultat' : ', enveloppe seule')
+        + ') valide le schema de sortie' + (eO.length ? ' — ' + eO.slice(0, 3).join(' ; ') : ''));
+      const eM = valide(bm.schema, bm.info, '$', false);
+      ok(!eM.length && bm.info.input.type === 'mcp' && bm.info.input.toolName === o.name && bm.info.input.transport === 'streamable-http'
+         && JSON.stringify(bm.info.input.inputSchema) === JSON.stringify(require('./agentic_mcp').outilsMcp([o])[0].inputSchema).replace(/"description":"[^"]*",?/g, '').replace(/,}/g, '}') || !eM.length && o.name === 'ask_agent',
+         o.name + ' : bazaarMcp valide son propre schema (type mcp, toolName, inputSchema de tools/list, streamable-http)' + (eM.length ? ' — ' + eM.slice(0, 3).join(' ; ') : ''));
+      for (const [k, v] of [['http', b], ['mcp', bm]]) if (/[^\x20-\x7e]/.test(JSON.stringify(v))) nonAscii.push(o.name + '(' + k + ')');
+    }
+    ok(!hors.length, 'les schemas bazaar (HTTP et MCP, 12 outils) n emploient QUE les mots-cles que valide() comprend' + (hors.length ? ' — hors liste : ' + hors.slice(0, 5).join(', ') : ''));
+    ok(!nonAscii.length, 'les blocs bazaar sont en ASCII imprimable (btoa de Cloudflare)' + (nonAscii.length ? ' — ' + nonAscii.join(', ') : ''));
+    const bzA = D.bazaar('ask_agent', tous.find((o) => o.name === 'ask_agent'));
+    const argsA = bzA.schema.properties.input.properties.body.properties.arguments;
+    ok(JSON.stringify(argsA.properties.model.enum) === '["sonnet-5"]' && argsA.properties.task.maxLength === 2000
+       && valide(argsA, { task: 'x'.repeat(2001) }, '$', false).length === 1 && valide(argsA, { task: 'x', model: 'haiku-4-5' }, '$', false).length === 1 && !valide(argsA, { task: 'x', model: 'sonnet-5' }, '$', false).length,
+       'ask_agent vendu en x402 : le bloc n annonce que sonnet-5 et 2 000 caracteres (valide() apprend maxLength)');
+    const bmA = D.bazaarMcp('ask_agent', defsMcp.find((d) => d.name === 'ask_agent'));
+    ok(JSON.stringify(bmA.info.input.inputSchema.properties.model.enum) === '["sonnet-5"]' && bmA.info.input.inputSchema.properties.task.maxLength === 2000, 'et bazaarMcp pareil');
+
+    /* Les textes, Base allumee. */
+    const xB = Object.assign({}, x402, { networks: ['eip155:8453', 'eip155:4663'], base: { actif: true, network: 'eip155:8453', payTo: tresor.address, facilitateur: 'cdp', etat: 'on' },
+      assets: [{ symbol: 'USDC', network: 'eip155:8453', asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', assetTransferMethod: 'eip3009', name: 'USD Coin', version: '2' }]
+        .concat(x402.assets.map((a) => Object.assign({ network: 'eip155:4663' }, a))) });
+    const prixB = async (nom, args) => { const p = await prixFaux(nom, args); const u = A.prixX402Usd(nom, args); return p ? Object.assign({ usdBase: Math.max(0.02, u + 0.001) }, p) : null; };
+    const pxB = await D.prixX402Annonces({ noms: payables, prix: prixB, base: A.prixX402Usd, minUsd: 0.02 });
+    ok(pxB.scan_token.min === 0.02 && pxB.scan_token.max === prixX402.scan_token.min && pxB.wallet_intel.min === 0.021, 'deux reseaux : min = le prix Base, max = le prix Robinhood (scan_token ' + pxB.scan_token.min + ' / ' + pxB.scan_token.max + ')');
+    const docB = D.openapi({ base: BASE, outils: cat.outils, x402: xB, prixX402: pxB, cours: 0.00002493, preuves: [], page: 'https://site/swogeagentic.html', docs: 'https://site/docs' });
+    DOC = docB;
+    const stB = docB.paths['/agentic/call/scan_token'].post;
+    ok(stB['x-payment-info'].price.mode === 'dynamic' && stB['x-payment-info'].price.min === '0.020000', '/openapi.json, Base allumee : le prix Base comme minimum (' + JSON.stringify(stB['x-payment-info'].price) + ')');
+    ok(/first option USDC on Base, eip155:8453/.test(docB.info['x-guidance']) && /no gas on either network/.test(docB.info['x-guidance']) && docB.info['x-guidance'].length < 4000,
+       'x-guidance : USDC sur Base d abord, puis Robinhood ; « the payer pays no gas on either network »');
+    ok(/in USDC on Base or USDG or \$SWOGE on Robinhood Chain/.test(stB.description) && /no gas on either network/.test(stB.description) && !/settlement gas/.test(stB.description),
+       'la phrase de prix de l operation : construite sur les reseaux ALLUMES (plus « settlement gas » quand Base paie le gaz)');
+    const d402B = stB.responses['402'].content['application/json'];
+    const e402B = valide(d402B.schema, d402B.example, '$', false);
+    ok(!e402B.length && d402B.example.accepts[0].network === 'eip155:8453' && d402B.example.accepts[0].amount === '20000' && !d402B.example.accepts[0].extra.assetTransferMethod
+       && d402B.example.accepts[1].extra.assetTransferMethod === 'eip3009' && !/[^\x20-\x7e]/.test(d402B.example.resource.description),
+       'l exemple 402 : Base d abord (20000, sans assetTransferMethod), puis USDG — et il valide PaymentRequired' + (e402B.length ? ' — ' + e402B.join(' ; ') : ''));
+    const e200B = valide(stB.responses['200'].content['application/json'].schema, stB.responses['200'].content['application/json'].example, '$', true);
+    ok(!e200B.length && stB.responses['200'].content['application/json'].example.x402.network === 'eip155:8453', 'l exemple 200 : le recu d un paiement Base, valide');
+    const mB = D.manifeste({ base: BASE, x402: xB, prixX402: pxB, preuves: [] });
+    ok(/USDC on Base \(eip155:8453\) first/.test(mB.instructions) && /no gas on either network/.test(mB.instructions), 'le manifeste : Base d abord, personne ne paie de gaz');
+    DOC = doc;
+  }
 
   console.log('\n-- 4. la fiche du registre MCP (server.json) --');
   const f = D.ficheMcp({ nom: 'dog.swoleeswoge/swogeagentic', base: BASE });

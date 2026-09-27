@@ -232,7 +232,8 @@ const SORTIES = {
     exemple: { results: [{ url: 'https://robinhood.com/us/en/newsroom/robinhood-chain/', titre: 'Robinhood Chain' }] },
   },
   ask_agent: {
-    schema: obj({ answer: s('Markdown answer'), sources: tab(SOURCE), tokens: tab({ type: 'object', description: 'token cards read on the way (same shape as scan_token.token)' }), steps: n('model calls used') },
+    schema: obj({ answer: s('Markdown answer'), sources: tab(SOURCE), tokens: tab({ type: 'object', description: 'token cards read on the way (same shape as scan_token.token)' }), steps: n('model calls used'),
+      stoppedByBudget: b('paid per call (x402): true when the spending cap ended the run early') },
       ['answer', 'sources', 'tokens', 'steps']),
     exemple: { answer: 'LOBSTER has an $8.8k pool. The colony measured +16.9% on 2,395 tokens whose bytecode shows no mint function [1].', sources: [{ url: 'https://swoleeswoge.dog/swoge_scan.html?t=' + ADR, titre: 'SWOGE Scan · $LOBSTER' }],
       tokens: [], steps: 3 },
@@ -287,8 +288,9 @@ function exemple200(nom, payable, c) {
   const S = SORTIES[nom] || {};
   const e = { ok: true, outil: nom, resultat: S.exemple === undefined ? null : S.exemple, texte: S.texte || JSON.stringify(S.exemple || {}).slice(0, 160) };
   if (payable) {
-    const a = ((c.x402 && c.x402.assets) || []).find((x) => x.symbol === 'USDG');
-    e.x402 = { transaction: '0x8c1f3e2d4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0', network: (c.x402 && c.x402.network) || 'eip155:4663',
+    /* Base allumée : le reçu d'un paiement en USDC sur Base (le premier proposé). */
+    const a = ((c.x402 && c.x402.assets) || []).find((x) => x.symbol === (baseOn(c) ? 'USDC' : 'USDG'));
+    e.x402 = { transaction: '0x8c1f3e2d4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0', network: baseOn(c) ? c.x402.base.network : ((c.x402 && c.x402.network) || 'eip155:4663'),
       amount: String(Math.round(payable.min * 1e6)), asset: a ? a.asset : '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168' };
   } else {
     e.facture = { swoge: '51606.49', usd: 1.2888 };
@@ -306,19 +308,37 @@ const DEFI_X402 = obj({
   ok: { type: 'boolean', const: false },
   x402Version: { type: 'integer', const: 2 }, error: s(),
   resource: obj({ url: s(), description: s('price in dollars, what it covers'), mimeType: s() }, ['url']),
-  accepts: tab(obj({ scheme: { type: 'string', const: 'exact' }, network: s('eip155:4663'), amount: s('atomic units of the asset (USDG: 6 decimals, $SWOGE: 18)'), asset: s(), payTo: s(),
-    maxTimeoutSeconds: n(), extra: obj({ assetTransferMethod: { type: 'string', enum: ['eip3009', 'permit2'] }, name: s('EIP-712 domain name'), version: s('EIP-712 domain version') }, ['assetTransferMethod']) },
-  ['scheme', 'network', 'amount', 'asset', 'payTo']), 'USDG (EIP-3009) first, then $SWOGE (Permit2)'),
+  accepts: tab(obj({ scheme: { type: 'string', const: 'exact' }, network: s('eip155:8453 (Base) or eip155:4663 (Robinhood Chain)'), amount: s('atomic units of the asset (USDC and USDG: 6 decimals, $SWOGE: 18)'), asset: s(), payTo: s(),
+    maxTimeoutSeconds: n(), extra: obj({ assetTransferMethod: { type: 'string', enum: ['eip3009', 'permit2'] }, name: s('EIP-712 domain name'), version: s('EIP-712 domain version') }, []) },
+  ['scheme', 'network', 'amount', 'asset', 'payTo']), 'USDC on Base first when it is on (settled by Coinbase, no assetTransferMethod), then USDG (EIP-3009), then $SWOGE (Permit2) on Robinhood Chain'),
   extensions: { type: 'object', description: 'eip2612GasSponsoring: the server takes an EIP-2612 permit to Permit2 and pays the gas. bazaar: the input and output schemas of this tool, with a fixed example request (x402 bazaar extension)' },
   raison: s('why a payment was refused'), detail: sn(),
 }, ['x402Version', 'accepts']);
 const REFUS_CLE = obj({ ok: { type: 'boolean', const: false }, raison: s('what to do'), requisSwoge: s('$SWOGE needed') }, ['ok', 'raison']);
 
+/* Base allumée (lot Base, 27 septembre 2026) : l'état public porte `base.actif`. */
+const baseOn = (c) => !!(c && c.x402 && c.x402.base && c.x402.base.actif);
 function exemple402(nom, p, c) {
   const x = c.x402 || {};
   const usdg = (x.assets || []).find((a) => a.symbol === 'USDG');
   const swoge = (x.assets || []).find((a) => a.symbol === 'SWOGE');
   const accepts = [];
+  const delai = nom === 'ask_agent' ? 300 : 120;
+  if (baseOn(c)) {
+    /* Base d'abord, au prix Base (le minimum) ; Robinhood ensuite, à son prix (le maximum). */
+    const usdc = (x.assets || []).find((a) => a.symbol === 'USDC') || {};
+    accepts.push({ scheme: 'exact', network: x.base.network, amount: String(Math.round(p.min * 1e6)), asset: usdc.asset, payTo: x.base.payTo, maxTimeoutSeconds: delai,
+      extra: { name: usdc.name || 'USD Coin', version: usdc.version || '2' } });
+    if (usdg) accepts.push({ scheme: 'exact', network: x.network, amount: String(Math.round(p.max * 1e6)), asset: usdg.asset, payTo: x.payTo, maxTimeoutSeconds: delai,
+      extra: { assetTransferMethod: 'eip3009', name: usdg.name || 'Global Dollar', version: usdg.version || '1' } });
+    if (swoge && c.cours > 0) accepts.push({ scheme: 'exact', network: x.network, amount: ethers.utils.parseUnits((p.max / c.cours).toFixed(18), 18).toString(), asset: swoge.asset, payTo: x.payTo,
+      maxTimeoutSeconds: delai, extra: { assetTransferMethod: 'permit2', name: swoge.name || 'Swole Doge', version: swoge.version || '1' } });
+    return { ok: false, x402Version: 2, error: 'PAYMENT-SIGNATURE header is required',
+      resource: { url: c.base + '/agentic/call/' + nom, description: 'SwogeAgentic tool ' + nom + '. Price: $' + Number(p.min.toFixed(6)) + ' in USDC on Base'
+        + (accepts.length > 1 ? ', or $' + Number(p.max.toFixed(6)) + ' in ' + [usdg ? 'USDG' : null, accepts.length > 2 ? '$SWOGE' : null].filter(Boolean).join(' or ') + ' on Robinhood Chain' : '')
+        + ' (tool price + settlement cost, minimum $' + (x.minimumUsd || 0.02) + ').', mimeType: 'application/json' },
+      accepts, extensions: { eip2612GasSponsoring: { info: { description: 'The server accepts an EIP-2612 permit to the canonical Permit2 contract (value = the exact payment amount) and pays the gas.', version: '1' } } } };
+  }
   if (usdg) accepts.push({ scheme: 'exact', network: x.network, amount: String(Math.round(p.min * 1e6)), asset: usdg.asset, payTo: x.payTo, maxTimeoutSeconds: 120,
     extra: { assetTransferMethod: 'eip3009', name: usdg.name || 'Global Dollar', version: usdg.version || '1' } });
   if (swoge && c.cours > 0) accepts.push({ scheme: 'exact', network: x.network, amount: ethers.utils.parseUnits((p.min / c.cours).toFixed(18), 18).toString(), asset: swoge.asset, payTo: x.payTo,
@@ -347,6 +367,8 @@ const OPTIONS_IMAGE = (() => {
     l.push({ prompt, provider, quality, count });
   return l;
 })();
+/* Les prix d'un x402.prix, par réseau prixé : Base (usdBase) et Robinhood (usd). */
+const cotesDe = (p) => [p.usdBase, p.usd].filter((x) => typeof x === 'number' && x > 0);
 async function prixX402Annonces({ noms, prix, base, minUsd }) {
   const out = {};
   const plancher = (x) => Math.max(minUsd || 0.02, x || 0);
@@ -355,13 +377,18 @@ async function prixX402Annonces({ noms, prix, base, minUsd }) {
       const cotes = OPTIONS_IMAGE.map((a) => ({ a, u: base(nom, a) })).filter((x) => x.u > 0).sort((x, y) => x.u - y.u);
       if (!cotes.length) continue;
       const [bas, haut] = await Promise.all([prix(nom, cotes[0].a), prix(nom, cotes[cotes.length - 1].a)].map((p) => Promise.resolve(p).catch(() => null)));
-      out[nom] = { min: bas ? bas.usd : plancher(cotes[0].u), max: haut ? haut.usd : plancher(cotes[cotes.length - 1].u),
+      const mn = bas ? Math.min(...cotesDe(bas)) : NaN, mx = haut ? Math.max(...cotesDe(haut)) : NaN;
+      out[nom] = { min: mn > 0 ? mn : plancher(cotes[0].u), max: mx > 0 ? mx : plancher(cotes[cotes.length - 1].u),
         options: { min: cotes[0].a, max: cotes[cotes.length - 1].a } };
       continue;
     }
     const p = await Promise.resolve().then(() => prix(nom)).catch(() => null);
-    const u = p ? p.usd : plancher(base(nom));
-    if (u > 0) out[nom] = { min: u, max: u };
+    /* Lot Base (27 septembre 2026) : le prix de CHAQUE réseau prixé — Base (min) et
+       Robinhood (max) ; un seul prixé (usd null si le RPC de Robinhood se tait) : le sien.
+       Avant, `u > 0` sur un usd null faisait disparaître l'outil des prix. */
+    const l = p ? cotesDe(p) : [];
+    if (l.length) out[nom] = { min: Math.min(...l), max: Math.max(...l) };
+    else { const u = plancher(base(nom)); if (u > 0) out[nom] = { min: u, max: u }; }
   }
   return out;
 }
@@ -373,6 +400,14 @@ function phrasePrix(o, p, c) {
     : pr.variable ? 'With an API key: its real cost, up to $' + pr.maxUsd + ' ("quote": true gives the maximum for your arguments), billed in $SWOGE at the live price.'
       : pr.usd ? 'With an API key: $' + pr.usd + ' per call, billed in $SWOGE at the live price.' : '';
   if (!p) return cle + (!c.x402 ? '' : pr.gratuit ? ' API key only (it reads the video of that key).' : pr.variable ? ' API key only (its price is not known before it runs).' : '');
+  if (baseOn(c)) {
+    /* La phrase du gaz, construite sur les réseaux ALLUMÉS : Base allumée, personne ne paie de gaz. */
+    const rh = ((c.x402 && c.x402.assets) || []).filter((a) => a.symbol !== 'USDC').map((a) => (a.symbol === 'SWOGE' ? '$SWOGE' : a.symbol)).join(' or ');
+    const xb = o.name === 'generate_image' ? 'from $' + Number(p.min.toFixed(6)) + ' to $' + Number(p.max.toFixed(6)) + ' now, by request (provider, quality, count)'
+      : p.min === p.max ? '$' + Number(p.min.toFixed(6)) + ' now' : '$' + Number(p.min.toFixed(6)) + ' now in USDC on Base, $' + Number(p.max.toFixed(6)) + ' on Robinhood Chain';
+    return (cle ? cle + ' ' : '') + 'Without a key (x402): ' + xb + ', in USDC on Base' + (rh ? ' or ' + rh + ' on Robinhood Chain' : '') + ' (tool price + settlement cost, minimum $'
+      + ((c.x402 && c.x402.minimumUsd) || 0.02) + '; the payer pays no gas on either network); the 402 quotes the exact amount for your arguments.';
+  }
   const en = ((c.x402 && c.x402.assets) || []).map((a) => (a.symbol === 'SWOGE' ? '$SWOGE' : a.symbol)).join(' or ') || '$SWOGE';
   const x = p.min === p.max ? '$' + Number(p.min.toFixed(6)) + ' now' : 'from $' + Number(p.min.toFixed(6)) + ' to $' + Number(p.max.toFixed(6)) + ' now, by request (provider, quality, count)';
   return (cle ? cle + ' ' : '') + 'Without a key (x402): ' + x + ', in ' + en + ' on Robinhood Chain (tool price + settlement gas, minimum $' + ((c.x402 && c.x402.minimumUsd) || 0.02)
@@ -437,7 +472,9 @@ function openapi(c) {
       description: DESCRIPTION,
       'x-guidance': 'POST /agentic/call/<tool> with a JSON body {"arguments": {...}}; GET /agentic/tools lists tools, input schemas and prices. Add "quote": true to get the price without running anything. '
         + 'With an API key (Authorization: Bearer swg_… or X-API-Key, created at ' + (c.page || 'the SwogeAgentic page') + ') the call is billed from the key owner\'s $SWOGE balance, within the daily cap they set. '
-        + (c.x402 ? 'Without a key, tools marked x-payment-info answer 402 with a PAYMENT-REQUIRED header (x402 v2, scheme exact, ' + c.x402.network + ', ' + (c.x402.assets || []).map((a) => a.symbol + ' via ' + a.assetTransferMethod).join(' or ') + '): sign and retry with PAYMENT-SIGNATURE and the SAME arguments; the server pays the gas. ' : '')
+        + (baseOn(c) ? 'Without a key, tools marked x-payment-info answer 402 with a PAYMENT-REQUIRED header (x402 v2, scheme exact; first option USDC on Base, ' + c.x402.base.network + ', settled by Coinbase; then on Robinhood Chain, ' + c.x402.network + ', '
+          + (c.x402.assets || []).filter((a) => a.symbol !== 'USDC').map((a) => a.symbol + ' via ' + a.assetTransferMethod).join(' or ') + '): sign and retry with PAYMENT-SIGNATURE and the SAME arguments; the payer pays no gas on either network. '
+          : c.x402 ? 'Without a key, tools marked x-payment-info answer 402 with a PAYMENT-REQUIRED header (x402 v2, scheme exact, ' + c.x402.network + ', ' + (c.x402.assets || []).map((a) => a.symbol + ' via ' + a.assetTransferMethod).join(' or ') + '): sign and retry with PAYMENT-SIGNATURE and the SAME arguments; the server pays the gas. ' : '')
         + 'Every number from the SWOGE AI colony comes with its observation count: quote it. Results are measurements, never buy or sell signals. MCP (Streamable HTTP, same key): /mcp.',
       contact: Object.assign({ name: 'SWOGE WORLD', url: c.page || 'https://swoleeswoge.dog/swogeagentic.html' }, c.email ? { email: c.email } : {}),
       'x-logo': { url: c.icone || ICONE, altText: 'SWOGE' },
@@ -468,8 +505,9 @@ function manifeste(c) {
   const m = { version: 1, x402Version: 2, name: 'SwogeAgentic', description: RESUME,
     resources: Object.keys(c.prixX402 || {}).map((n) => c.base + '/agentic/call/' + n),
     instructions: DESCRIPTION + ' How to pay: POST the resource with {"arguments": {...}} and no key; the 402 PAYMENT-REQUIRED header (x402 v2, scheme exact'
-      + (c.x402 ? ', ' + c.x402.network + ', ' + (c.x402.assets || []).map((a) => a.symbol + ' via ' + a.assetTransferMethod).join(' or ') : '')
-      + ') quotes that exact request; sign it and retry with PAYMENT-SIGNATURE and the same arguments. We pay the gas. '
+      + (baseOn(c) ? '; USDC on Base (' + c.x402.base.network + ') first, then on Robinhood Chain (' + c.x402.network + ') ' + (c.x402.assets || []).filter((a) => a.symbol !== 'USDC').map((a) => a.symbol + ' via ' + a.assetTransferMethod).join(' or ')
+        : c.x402 ? ', ' + c.x402.network + ', ' + (c.x402.assets || []).map((a) => a.symbol + ' via ' + a.assetTransferMethod).join(' or ') : '')
+      + ') quotes that exact request; sign it and retry with PAYMENT-SIGNATURE and the same arguments. ' + (baseOn(c) ? 'The payer pays no gas on either network. ' : 'We pay the gas. ')
       + 'Input and output schemas, prices and tags: ' + c.base + '/openapi.json. Guidance for agents: ' + c.base + '/llms.txt.' };
   if (c.preuves && c.preuves.length) m.ownershipProofs = c.preuves;
   if (c.docs) m.docs = c.docs;
@@ -510,18 +548,96 @@ const EXEMPLES_ENTREE = {
    /openapi.json ; ici, la forme seule. */
 const sec = (x) => (Array.isArray(x) ? x.map(sec) : x && typeof x === 'object'
   ? Object.keys(x).filter((k) => k !== 'description').reduce((o, k) => { o[k] = sec(x[k]); return o; }, {}) : x);
+
+/* ---- ASCII (lot Base, 27 septembre 2026) ----
+   Tout ce qu'un client recopie dans son paiement (resource, accepts[].extra,
+   extensions.*) reste en ASCII imprimable : le client MCP de Cloudflare encode
+   par btoa(JSON.stringify(…)) et jette au-delà de U+00FF (cloudflare/agents
+   packages/agents/src/mcp/client/x402.ts:454-488, commit dbf170cf). Les
+   exemples de SORTIES portent « · », « × », « … » : remplacés ici. */
+const REMPLACE = { '\u2014': '-', '\u2013': '-', '\u2026': '...', '\u00b7': '-', '\u00d7': 'x', '\u2019': "'", '\u2018': "'", '\u201c': '"', '\u201d': '"', '\u2192': '->', '\u00a0': ' ' };
+const ascii = (t) => String(t).replace(/[^\x20-\x7e]/g, (ch) => (REMPLACE[ch] !== undefined ? REMPLACE[ch] : ch === '\n' || ch === '\t' ? ' ' : ''));
+const asciiProfond = (x) => (Array.isArray(x) ? x.map(asciiProfond) : x && typeof x === 'object'
+  ? Object.keys(x).reduce((o, k) => { o[ascii(k)] = asciiProfond(x[k]); return o; }, {}) : typeof x === 'string' ? ascii(x) : x);
+
+/* ---- L'EXEMPLE DE SORTIE (info.output.example ; lot Base, 27 septembre 2026) ----
+ * Le validateur de Coinbase le marque « advisory » (bazaar.info.output.example,
+ * relevé du 27 septembre 2026, base_design/skeptic/val_2026-09-27.json) ; DOCS
+ * get-discovered : « Complete input and output schemas with realistic examples
+ * raise metadata quality ». PETIT : le bloc voyage dans l'en-tête
+ * PAYMENT-REQUIRED (6 581 caractères pour scan_token le 27 septembre 2026,
+ * plafond d'essai 8 192) et revient dans le PAYMENT-SIGNATURE du client
+ * (16 384 octets d'en-têtes au total chez Node). `resultat` (l'exemple de
+ * SORTIES, en ASCII) n'y entre que s'il tient en EXEMPLE_SORTIE_MAX_CAR
+ * caractères — un choix de départ, vérifié par les essais de taille
+ * (x402.test.js, x402_route.test.js) ; sinon l'enveloppe seule (ok, outil,
+ * texte), qui valide aussi le schéma (resultat n'y est pas requis). */
+const EXEMPLE_SORTIE_MAX_CAR = 700;
+function exempleSortie(nom) {
+  const S = SORTIES[nom] || {};
+  const e = { ok: true, outil: nom };
+  if (S.exemple !== undefined) {
+    const r = asciiProfond(S.exemple);
+    if (JSON.stringify(r).length <= EXEMPLE_SORTIE_MAX_CAR) e.resultat = r;
+  }
+  if (S.texte) e.texte = ascii(S.texte);
+  else if (!e.resultat) e.texte = 'See resultat: the ' + nom + ' result as data.';
+  return e;
+}
+
+/* ask_agent vendu en x402 (X402_AGENT=1, contrat §B.2) : le bloc n'annonce que ce
+   que le chemin x402 accepte — Sonnet 5 seul, tâche de 2 000 caractères au plus
+   (studio_agent.LIMITES_X402). Sinon il afficherait des modèles refusés en 400. */
+const MODELE_AGENT_X402 = 'sonnet-5';
+const TACHE_AGENT_X402_MAX = 2000;
+function entreeVendue(nom, schema) {
+  if (nom !== 'ask_agent' || !schema || !schema.properties) return schema;
+  const props = Object.assign({}, schema.properties);
+  if (props.task) props.task = Object.assign({}, props.task, { maxLength: TACHE_AGENT_X402_MAX });
+  if (props.model) props.model = Object.assign({}, props.model, { enum: [MODELE_AGENT_X402] });
+  return Object.assign({}, schema, { properties: props });
+}
+
 function bazaar(nom, def) {
-  const corps = { type: 'object', properties: { arguments: Object.assign({ type: 'object' }, sec((def && def.inputSchema) || {})) }, required: ['arguments'] };
+  const corps = { type: 'object', properties: { arguments: Object.assign({ type: 'object' }, sec(entreeVendue(nom, (def && def.inputSchema) || {}))) }, required: ['arguments'] };
   const env = enveloppe(nom);
   /* La sortie d'un appel paye sans cle : le resultat, son texte, le reglement x402. */
   const sortie = { type: 'object', required: ['ok', 'outil'], properties: { ok: env.properties.ok, outil: env.properties.outil, resultat: sec(env.properties.resultat),
     texte: { type: 'string' }, x402: sec(env.properties.x402.anyOf[0]) } };
   return {
-    info: { input: { type: 'http', method: 'POST', bodyType: 'json', body: { arguments: Object.assign({}, EXEMPLES_ENTREE[nom] || {}) } }, output: { type: 'json' } },
+    info: { input: { type: 'http', method: 'POST', bodyType: 'json', body: { arguments: Object.assign({}, EXEMPLES_ENTREE[nom] || {}) } }, output: { type: 'json', example: exempleSortie(nom) } },
     schema: { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object',
       properties: {
         input: { type: 'object', properties: { type: { type: 'string', const: 'http' }, method: { type: 'string', enum: ['POST'] }, bodyType: { type: 'string', enum: ['json'] },
           body: corps }, required: ['type', 'method', 'bodyType', 'body'], additionalProperties: false },
+        output: { type: 'object', properties: { type: { type: 'string' }, example: sortie }, required: ['type'] },
+      }, required: ['input'] },
+  };
+}
+
+/**
+ * Le bloc bazaar d'un outil MCP (x402 sur MCP, contrat §C.3 ; x402-foundation
+ * specs/extensions/bazaar.md:170-240, commit 4fcf836c) : `info.input.type` 'mcp',
+ * le NOM de l'outil, son inputSchema EXACTEMENT comme tools/list le donne
+ * (agentic_mcp.outilsMcp), le transport, un exemple d'entrée fixe. Une fiche
+ * = l'adresse de l'endpoint + le nom de l'outil (bazaar.md:282). Pas de limite
+ * d'en-tête ici (corps JSON), mais petit et ASCII quand même.
+ */
+function bazaarMcp(nom, defMcp) {
+  const d = defMcp || {};
+  const schemaEntree = asciiProfond(sec(entreeVendue(nom, d.inputSchema || { type: 'object' })));
+  const env = enveloppe(nom);
+  const sortie = { type: 'object', required: ['ok', 'outil'], properties: { ok: env.properties.ok, outil: env.properties.outil, resultat: sec(env.properties.resultat),
+    texte: { type: 'string' }, x402: sec(env.properties.x402.anyOf[0]) } };
+  const desc = ascii(String(d.description || '').split('. ')[0].replace(/\.$/, '')) + '.';
+  return {
+    info: { input: { type: 'mcp', toolName: nom, description: desc, inputSchema: schemaEntree, transport: 'streamable-http', example: Object.assign({}, EXEMPLES_ENTREE[nom] || {}) },
+      output: { type: 'json', example: exempleSortie(nom) } },
+    schema: { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object',
+      properties: {
+        input: { type: 'object', properties: { type: { type: 'string', const: 'mcp' }, toolName: { type: 'string', const: nom }, description: { type: 'string' },
+          inputSchema: { type: 'object' }, transport: { type: 'string', enum: ['streamable-http'] }, example: { type: 'object' } },
+        required: ['type', 'toolName', 'inputSchema'], additionalProperties: false },
         output: { type: 'object', properties: { type: { type: 'string' }, example: sortie }, required: ['type'] },
       }, required: ['input'] },
   };
@@ -548,5 +664,5 @@ function ficheMcp({ nom, base, version }) {
   };
 }
 
-module.exports = { origine, preuvesValides, openapi, manifeste, ficheMcp, usd6, prixX402Annonces, bazaar, EXEMPLES_ENTREE, enveloppe, SORTIES, ETIQUETTES, ETIQUETTES_OUTIL,
-  DEFI_X402, REFUS_CLE, OPTIONS_IMAGE, RESUME, DESCRIPTION, ICONE };
+module.exports = { origine, preuvesValides, openapi, manifeste, ficheMcp, usd6, prixX402Annonces, bazaar, bazaarMcp, exempleSortie, EXEMPLES_ENTREE, enveloppe, SORTIES, ETIQUETTES, ETIQUETTES_OUTIL,
+  DEFI_X402, REFUS_CLE, OPTIONS_IMAGE, RESUME, DESCRIPTION, ICONE, EXEMPLE_SORTIE_MAX_CAR, ascii, asciiProfond, MODELE_AGENT_X402, TACHE_AGENT_X402_MAX };

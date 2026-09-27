@@ -1726,6 +1726,7 @@ const agentic = () => {
        enregistrees comme un devis emis, donc payables telles quelles. */
     x402: {
       actif: () => !!x402(),
+      baseActif: () => !!(x402() && x402().baseActif()),
       devis: async (outil, args) => {
         const e = await x402().exige(outil, MOI_URL + '/agentic/call/' + outil, null, args, { devis: true });
         return e ? { x402Version: e.x402Version, resource: e.resource, accepts: e.accepts, extensions: e.extensions } : null;
@@ -1752,6 +1753,17 @@ const agentic = () => {
     },
     etatVideo: (id, addr) => studioMedia.etatVideo(id, addr),
     urlPublique: (u) => (/^\/studio\/media\/fichier\//.test(String(u)) ? MOI_URL + u : u),
+    /* ask_agent en x402 (X402_AGENT=1, contrat §D) : Anthropic allume, registre des pertes. */
+    agentX402: { actif: () => chatActif('anthropic'), registre: registreAgent() },
+    /* L'agent paye d'avance : hors solde, Sonnet 5, les bornes x402 et le plafond dur (studio_agent). */
+    agentHorsSolde: ({ addr, tache, limites, budgetUsd, prixUsd }) => {
+      if (!chatActif('anthropic')) return Promise.resolve({ ok: false, code: 503, raison: 'the agent is not switched on yet' });
+      const src = srcAgent();
+      return studioChat.repond({ addr, modele: limites.modele, messages: [{ role: 'user', content: tache }], recherche: false, canal: 'rest' }, {
+        horsSolde: true, prixUsd, actif: chatActif,
+        pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, src.recherche, limites),
+        fournisseur: (p) => studioAgent.repond(p, { src, limites, budgetUsd }) });
+    },
     agent: ({ addr, tache, modele, canal }) => {
       if (!chatActif('anthropic')) return Promise.resolve({ ok: false, code: 503, raison: 'the agent is not switched on yet' });
       const src = srcAgent();
@@ -1771,6 +1783,55 @@ const agentic = () => {
 let x402V;
 const ETH_USD = { v: null, t: 0 };
 const BAZAAR = new Map();   /* outil|recherche → extension bazaar du 402 (voir x402().bazaar) */
+const BAZAAR_MCP = new Map();   /* outil|recherche → extension bazaar d'un appel MCP (decouverte.bazaarMcp) */
+/* ---- BASE : L'USDC REGLE PAR COINBASE (lot Base, contrat §A.7 / §E, 27 septembre 2026) ----
+   Allumee SEULEMENT si : x402 est allume (X402_PAYTO + X402_CLE), CDP_API_KEY_ID
+   et CDP_API_KEY_SECRET sont poses, X402_BASE ne vaut pas '0', le secret se lit
+   (Ed25519 ou P-256) et le payTo de Base passe getAddress(). Les paiements Base
+   vont TOUJOURS a la tresorerie (X402_BASE_PAYTO, sinon X402_PAYTO) — jamais au
+   portefeuille de gaz, meme avec X402_CAISSE=1 : la caisse (rachat de 5 %) ne vit
+   que sur Robinhood Chain (caisse.js), et le depot n'a aucun pont. Rien n'est
+   jamais journalise du secret, d'un jeton ou d'un en-tete Authorization. */
+function baseDepuisEnv(X, tresor, porteGaz) {
+  const cleId = String(process.env.CDP_API_KEY_ID || '').trim();
+  const secret = String(process.env.CDP_API_KEY_SECRET || '');
+  if (!cleId || !secret.trim()) return null;
+  if (process.env.X402_BASE === '0') { console.log('[x402] X402_BASE=0 - Base stays off'); return null; }
+  const sepolia = String(process.env.X402_BASE_RESEAU || '').trim() === X.RESEAU_BASE_SEPOLIA;
+  let payTo;
+  try { payTo = ethers.utils.getAddress(String(process.env.X402_BASE_PAYTO || tresor).trim()); }
+  catch (e) { console.error('[x402] X402_BASE_PAYTO is not a valid address - Base stays off'); return null; }
+  if (porteGaz && payTo.toLowerCase() === String(porteGaz).toLowerCase()) { console.error('[x402] the Base payTo is the gas wallet - use your treasury address; Base stays off'); return null; }
+  let facilitateur;
+  try {
+    facilitateur = require('./facilitateur_cdp').cree({ cleId, cleSecrete: secret,
+      /* Le journal du facilitateur : statut, raison, duree, reseau — jamais le secret ni le jeton. */
+      journal: (l) => { if (l.statut !== 200) console.warn('[x402] CDP ' + l.op + (l.renvoi ? ' (resend)' : '') + ': ' + l.statut + (l.raison ? ' ' + l.raison : '') + (l.message ? ' - ' + String(l.message).slice(0, 120) : '') + ' (' + l.ms + ' ms)'); } });
+  } catch (e) { console.error('[x402] CDP_API_KEY_SECRET is not an Ed25519 or P-256 key - Base stays off'); return null; }
+  return { reseau: sepolia ? X.RESEAU_BASE_SEPOLIA : X.RESEAU_BASE, chainId: sepolia ? 84532 : 8453,
+    usdc: sepolia ? X.USDC_BASE_SEPOLIA : X.USDC_BASE, domaine: sepolia ? X.DOMAINE_USDC_BASE_SEPOLIA : X.DOMAINE_USDC_BASE,
+    payTo, facilitateur, rpc: X.rpcBase(String(process.env.X402_BASE_RPC || '').trim() || (sepolia ? 'https://sepolia.base.org' : 'https://mainnet.base.org')),
+    /* ESSAIS SEULEMENT : combien de temps relire la chaine apres un « en attente » (60 s par defaut,
+       DOCS x402/seller/settlement-pending) — l'essai de route ne peut pas attendre une minute par cas. */
+    attenteMs: Number(process.env.X402_BASE_ATTENTE_MS) > 0 ? Number(process.env.X402_BASE_ATTENTE_MS) : undefined,
+    cadenceMs: Number(process.env.X402_BASE_ATTENTE_MS) > 0 ? Math.max(5, Math.floor(Number(process.env.X402_BASE_ATTENTE_MS) / 10)) : undefined };
+}
+/* Le registre des pertes d'ask_agent en x402 (x402_agent.js) : durable, dans DATA_DIR. */
+let registreAgentV = null;
+const registreAgent = () => registreAgentV || (registreAgentV = require('./x402_agent').cree({ fichier: require('path').join(cfg.DATA_DIR, 'x402_agent.json') }));
+/* La sonde de Base, depuis le rappel de `listen` : tout de suite, puis toutes les 10 min (contrat §E.2). */
+const BASE_SONDE_MS = 10 * 60 * 1000;
+function demarreBase() {
+  const x = x402();
+  if (!x || !x.sondeBase) return;
+  const sonde = () => x.sondeBase().then(() => {
+    /* La preuve de propriete de l'adresse de Base : sans elle, on le dit (contrat §E.2.2, §G.2). */
+    if (x.baseActif() && !preuvesX402().length) console.warn('[x402] no ownership proof for ' + x.basePayTo + ' - confirm you control this address on Base');
+  }).catch((e) => console.error('[x402] Base probe: ' + (e && e.message || e)));
+  if (!x.basePayTo) return;
+  sonde();
+  setInterval(sonde, BASE_SONDE_MS).unref();
+}
 const x402 = () => {
   if (x402V !== undefined) return x402V;
   const payTo = String(process.env.X402_PAYTO || '').trim(), cle = String(process.env.X402_CLE || '').trim();
@@ -1789,6 +1850,7 @@ const x402 = () => {
   const enCaisse = process.env.X402_CAISSE === '1' && usdg;
   const destinataire = enCaisse ? chaine.porteGaz : payTo;
   const JOURNAL = require('path').join(cfg.DATA_DIR, 'x402.jsonl');
+  const base = baseDepuisEnv(X, payTo, chaine.porteGaz);
   /* Le prix du gaz, garde 30 s : un devis sans cle (gratuit, 60 par minute et
      par IP) ne doit pas faire un appel RPC chacun. Le reglement, lui, relit le
      prix au moment d'envoyer (chaineEthers.regle), jamais celui-ci. */
@@ -1810,6 +1872,24 @@ const x402 = () => {
       return v || ETH_USD.v;
     },
     prixOutilUsd: (o, a) => require('./agentic').prixX402Usd(o, a),
+    /* Base (USDC, Coinbase) : null sans cle CDP valide — tout est alors comme avant. */
+    base,
+    /* La premiere phrase de l'outil ouvre resource.description (Base allumee) ; les
+       details de service (bazaar.md « Service Metadata on `resource` »). */
+    description: (o) => ((require('./agentic').definitions({ recherche: !!chatActif('perplexity') }).find((d) => d.name === o) || {}).description || ''),
+    service: { nom: 'SwogeAgentic', etiquettes: (o) => require('./decouverte').ETIQUETTES_OUTIL[o] || [], icone: require('./decouverte').ICONE },
+    /* ask_agent en x402 (X402_AGENT=1) : 150 s de travail au plus, 3 en vol, payeurs
+       bloques et pertes au registre durable (x402_agent.js). */
+    agent: {
+      dureeMaxS: studioAgent.LIMITES_X402.dureeMaxS,
+      enVolMax: require('./agentic').agentEnVolMax(),
+      bloque: (a) => registreAgent().estBloque(a),
+      nonRegle: (from, cout, raison) => {
+        registreAgent().perte(cout, raison); registreAgent().bloque(from);
+        const H = studioChat.MESURE.horsSolde; H.nonRegles++; H.coutNonRegleUsd += Number(cout) || 0;
+        console.warn('[x402] ask_agent served but not collected (' + String(raison || '').slice(0, 60) + ') - payer paused 24 h, loss $' + (Number(cout) || 0).toFixed(4));
+      },
+    },
     /* L'extension `bazaar` du 402 (decouverte.bazaar) : schemas d'entree et de
        sortie, exemple d'entree FIXE (jamais les arguments de l'acheteur). Audit
        AgentCash du 26 septembre 2026 : 16 erreurs, toutes la ; essai local avec
@@ -1832,6 +1912,9 @@ const x402 = () => {
     journal: (l) => { try { fs.appendFileSync(JOURNAL, JSON.stringify(l) + '\n'); } catch (e) { console.error('[x402] journal write failed: ' + (e && e.code || e)); } },
   });
   x402V.porteGaz = chaine.porteGaz;
+  x402V.basePayTo = base ? base.payTo : null;
+  x402V.baseReseau = base ? base.reseau : null;
+  x402V.baseUsdc = base ? base.usdc : null;
   x402V.soldeGaz = () => chaine.soldeGaz();
   x402V.gazPrix = gazPrix;
   /* La veille du portefeuille de gaz (voir gazEtat) : une minute apres le
@@ -1874,7 +1957,18 @@ async function prixDecouverte() {
 }
 /* La preuve de propriete : posee par le proprietaire (X402_PREUVE, signature
    EIP-191 de l'origine par la tresorerie), verifiee ici, publiee seulement juste. */
-const preuvesX402 = () => (x402() ? require('./decouverte').preuvesValides([process.env.X402_PREUVE, x402().preuveAuto].filter(Boolean).join(','), require('./decouverte').origine(MOI_URL), x402().payTo) : []);
+/* Lot Base (27 septembre 2026) : une preuve vaut pour N'IMPORTE laquelle de nos adresses de
+   reception — payTo de Robinhood, payTo de Base, tresorerie. */
+const preuvesX402 = () => {
+  const x = x402();
+  if (!x) return [];
+  const D = require('./decouverte');
+  const brut = [process.env.X402_PREUVE, x.preuveAuto].filter(Boolean).join(',');
+  const orig = D.origine(MOI_URL);
+  const vues = new Set();
+  for (const a of [x.payTo, x.basePayTo, x.tresor].filter(Boolean)) for (const p of D.preuvesValides(brut, orig, a)) vues.add(p);
+  return [...vues];
+};
 
 /* L'etat PUBLIC de x402 : reseau, jeton, tresorerie, adresse du portefeuille
    de gaz et son solde, compteurs. Jamais la cle. `detail` : les prix du moment
@@ -1884,10 +1978,20 @@ async function x402Etat(detail) {
   const x = x402();
   if (!x) return { actif: false };
   const assets = [];
-  if (x.usdg) assets.push({ symbol: 'USDG', asset: x.usdg, decimals: X.DECIMALES_USDG, assetTransferMethod: 'eip3009', name: X.DOMAINE_USDG.name, version: X.DOMAINE_USDG.version });
-  assets.push({ symbol: 'SWOGE', asset: cfg.SWOGE_TOKEN, decimals: 18, assetTransferMethod: 'permit2', name: X.DOMAINE_JETON.name, version: X.DOMAINE_JETON.version });
+  /* Lot Base (27 septembre 2026) : `network`, `payTo`, `asset` restent tels quels (la page
+     swogeagentic_api.html lit x.network et x.payTo) ; chaque actif dit son reseau ; l'USDC
+     de Base d'abord quand Base est allumee ; `networks` = les reseaux ALLUMES. */
+  const baseOn = !!(x.baseActif && x.baseActif());
+  if (baseOn) assets.push({ symbol: 'USDC', network: x.baseReseau, asset: x.baseUsdc, decimals: X.DECIMALES_USDC, assetTransferMethod: 'eip3009',
+    name: x.baseReseau === X.RESEAU_BASE ? X.DOMAINE_USDC_BASE.name : X.DOMAINE_USDC_BASE_SEPOLIA.name, version: '2' });
+  if (x.usdg) assets.push({ symbol: 'USDG', network: X.RESEAU, asset: x.usdg, decimals: X.DECIMALES_USDG, assetTransferMethod: 'eip3009', name: X.DOMAINE_USDG.name, version: X.DOMAINE_USDG.version });
+  assets.push({ symbol: 'SWOGE', network: X.RESEAU, asset: cfg.SWOGE_TOKEN, decimals: 18, assetTransferMethod: 'permit2', name: X.DOMAINE_JETON.name, version: X.DOMAINE_JETON.version });
+  const MB = x.MESURE.base || {};
   const e = { actif: true, x402Version: X.X402_VERSION, scheme: 'exact', network: X.RESEAU, asset: cfg.SWOGE_TOKEN, payTo: x.payTo, tresor: x.tresor, assets,
-              assetTransferMethod: 'permit2', permit2: X.PERMIT2, proxy: X.PROXY, minimumUsd: X.MIN_USD, header: 'PAYMENT-SIGNATURE' };
+              assetTransferMethod: 'permit2', permit2: X.PERMIT2, proxy: X.PROXY, minimumUsd: X.MIN_USD, header: 'PAYMENT-SIGNATURE',
+              networks: (baseOn ? [x.baseReseau] : []).concat([X.RESEAU]),
+              base: { actif: baseOn, network: x.baseReseau || X.RESEAU_BASE, payTo: x.basePayTo || null, facilitateur: 'cdp', etat: x.basePayTo ? (MB.etat || 'off') : 'off' },
+              agent: { actif: agentic().x402Payable('ask_agent') } };
   if (!detail) return e;
   const g = x.MESURE.gasUsed.slice().sort((a, b) => a - b);
   /* Le solde du portefeuille de gaz : relu au plus toutes les 10 min (gazEtat). */
@@ -1898,7 +2002,9 @@ async function x402Etat(detail) {
     if (!agentic().x402Payable(d.name)) continue;
     /* Une image : le prix de la demande la plus courante (Grok, Quality, 1 image) ; le 402 donne celui de CHAQUE demande. */
     const p = await x.prix(d.name, d.name === 'generate_image' ? { prompt: '' } : undefined).catch(() => null);
-    outils.push({ name: d.name, usd: p ? p.usd : null, gazUsd: p ? p.gazUsd : null, amount: p ? p.montant : null, amountUsdg: p ? p.montantUsdg : null });
+    /* `usd` (Robinhood) peut etre null quand son RPC se tait : `usdBase` reste. */
+    outils.push({ name: d.name, usd: p ? p.usd : null, gazUsd: p ? p.gazUsd : null, amount: p ? p.montant : null, amountUsdg: p ? p.montantUsdg : null,
+      usdBase: p ? p.usdBase : null, amountBase: p ? p.montantBase : null });
   }
   /* Ce qui a ete encaisse, par jeton, relu dans le journal (il survit aux redemarrages) :
      c'est la base d'un rachat de $SWOGE avec l'USDG recu. */
@@ -1907,21 +2013,30 @@ async function x402Etat(detail) {
     for (const l of fs.readFileSync(x.journalFichier, 'utf8').split('\n')) {
       if (!l.trim()) continue;
       let j; try { j = JSON.parse(l); } catch (err) { continue; }
-      const k = String(j.asset || cfg.SWOGE_TOKEN).toLowerCase() === String(x.usdg || '').toLowerCase() ? 'USDG' : 'SWOGE';
+      /* Par reseau ET actif : avant, tout ce qui n'etait pas l'USDG comptait en $SWOGE a 18 decimales
+         (l'USDC de Base se serait lu ~0). */
+      const net = j.network || X.RESEAU;
+      const k = net !== X.RESEAU ? 'USDC_BASE' : String(j.asset || cfg.SWOGE_TOKEN).toLowerCase() === String(x.usdg || '').toLowerCase() ? 'USDG' : 'SWOGE';
       const c = (encaisse[k] = encaisse[k] || { paiements: 0, unites: 0n });
       c.paiements++; c.unites += BigInt(j.montant || 0);
     }
   } catch (err) { /* pas encore de journal */ }
   const ethersU = require('ethers').utils;
-  for (const k of Object.keys(encaisse)) encaisse[k] = { paiements: encaisse[k].paiements, montant: ethersU.formatUnits(encaisse[k].unites.toString(), k === 'USDG' ? X.DECIMALES_USDG : 18) };
+  for (const k of Object.keys(encaisse)) encaisse[k] = { paiements: encaisse[k].paiements, montant: ethersU.formatUnits(encaisse[k].unites.toString(), k === 'SWOGE' ? 18 : 6), decimales: k === 'SWOGE' ? 18 : 6 };
   const med = (l) => { const t = (l || []).slice().sort((a, b) => a - b); return t.length ? t[Math.floor(t.length / 2)] : null; };
   const gazParMethode = {};
   for (const [m, l] of Object.entries(x.MESURE.gazParMethode)) gazParMethode[m] = { n: l.length, median: med(l) };
   return Object.assign(e, { porteGaz: x.porteGaz, soldeGazEth, gaz, outils, encaisse, gazParMethode,
     caisse: x.caisse ? x.caisse.vue() : { actif: false },
     images: studioMedia.MESURE.horsSolde,
+    /* ask_agent en x402 : cout reel contre prix, arrets par le plafond, servi sans encaisser, registre des 24 h. */
+    agent: Object.assign({ actif: agentic().x402Payable('ask_agent'), prixUsd: require('./agentic').agentX402Allume() ? require('./agentic').prixAgentX402Usd() : null,
+      plafondUsd: require('./agentic').budgetAgentUsd(), perteJourMaxUsd: require('./agentic').perteJourUsd() }, studioChat.MESURE.horsSolde, registreAgent().vue()),
+    base: Object.assign({}, e.base, { raison: MB.raison || null, derniereSonde: MB.derniereSonde || null, bazaar: MB.bazaar || null }),
     mesure: { devis: x.MESURE.devis, payes: x.MESURE.payes, refuses: x.MESURE.refuses, echecsReglement: x.MESURE.echecsReglement,
-              gasUsedN: g.length, gasUsedMedian: g.length ? g[Math.floor(g.length / 2)] : null, gazUnitesEstimees: X.GAZ_UNITES } });
+              gasUsedN: g.length, gasUsedMedian: g.length ? g[Math.floor(g.length / 2)] : null, gazUnitesEstimees: X.GAZ_UNITES,
+              parReseau: Object.fromEntries(Object.entries(x.MESURE.parReseau || {}).map(([k, v]) => [k, { devis: v.devis, payes: v.payes, refuses: v.refuses,
+                echecsReglement: v.echecsReglement, enAttente: v.enAttente, msVerifyMedian: med(v.msVerify), msSettleMedian: med(v.msSettle), n: v.msSettle.length }])) } });
 }
 /* ---- L'ALERTE DU GAZ (26 septembre 2026) ----
    Audit du jour : 0,003 ETH sur le portefeuille de gaz, soit ~550 reglements
@@ -1983,6 +2098,28 @@ async function gazEtat() {
   }
   return out;
 }
+/* ---- x402 SUR MCP (contrat §C, 27 septembre 2026) ----
+   Allume seulement Base allumee (les clients MCP qui paient en bande ne paient
+   que sur Base : mcpc ne connait que Base et Base Sepolia) et X402_MCP != '0'.
+   Sinon null : /mcp garde le comportement du lot #28 (cle, ou marche a suivre). */
+const bazaarMcpDe = (o) => {
+  const rech = !!chatActif('perplexity'), k = o + '|' + rech;
+  if (!BAZAAR_MCP.has(k)) {
+    const def = agenticMcp.outilsMcp(require('./agentic').definitions({ recherche: rech })).find((d) => d.name === o);
+    BAZAAR_MCP.set(k, def ? require('./decouverte').bazaarMcp(o, def) : null);
+  }
+  return BAZAAR_MCP.get(k);
+};
+const x402Mcp = () => {
+  const x = x402();
+  if (!x) return null;
+  const A = require('./agentic');
+  return { actif: () => !!x402() && x402().baseActif() && process.env.X402_MCP !== '0', payable: (o) => agentic().x402Payable(o),
+    entreeInvalide: A.entreeInvalideX402,
+    /* L'indice de prix de tools/list : le prix Base (max(0,02 $ ; prix + 0,001 $)), seulement affiche. */
+    prixBase: (o) => { if (!agentic().x402Payable(o)) return null; const u = A.prixX402Usd(o, o === 'generate_image' ? { prompt: '' } : undefined); return u > 0 ? Number(Math.max(require('./x402').MIN_USD, u + require('./x402').FRAIS_CDP_USD).toFixed(6)) : null; },
+    paie: (q) => x402().paie(Object.assign({ bazaar: bazaarMcpDe(q.outil) }, q)) };
+};
 /* Les origines permises sur /mcp (un en-tete Origin present et hors liste → 403, spec MCP). */
 const MCP_ORIGINES = String(process.env.AGENTIC_ORIGINES || 'https://swoleeswoge.dog,https://claude.ai').split(',').map((x) => x.trim()).filter(Boolean);
 let clientComprendV = null;
@@ -2451,6 +2588,14 @@ const server = http.createServer(async (req, res) => {
   /* UNE colonie pour tous les perpetuels : une seule vue. Le chemin par
      symbole a existe le temps qu il y ait une colonie par marche ; il rend
      desormais la meme vue, pour qu un lien garde ne tombe pas dans le vide. */
+  /* ---- LE JOURNAL BRUT, EN LECTURE (27 septembre 2026) ----
+   * Un jour par requete, servi en flux, debit borne : tout est dans
+   * `perp_journal.sert`, que son essai juge entier. AVANT le chemin generique
+   * `/ai/perp/…`, qui rendrait sinon la vue a sa place. */
+  if (path === '/ai/perp/journal') {
+    const jour = new URLSearchParams(req.url.split('?')[1] || '').get('jour');
+    return require('./perp_journal').sert(req, res, jour, qui(req));
+  }
   if (path === '/ai/perp' || path.startsWith('/ai/perp/')) {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*', 'cache-control': 'no-store' });
@@ -2670,7 +2815,7 @@ const server = http.createServer(async (req, res) => {
     /* Sans cle : tools/list et les devis sont servis ; un appel recoit la marche a suivre. Une cle
        envoyee mais inconnue ou revoquee reste refusee. `qui` : l'empreinte salee de l'IP (compteurs). */
     try { r = await agenticMcp.traite({ methode: req.method, entetes: req.headers, corps: texte, cle: cleTexte ? agenticCles.resout(cleTexte) : null, clePresentee: !!cleTexte,
-      qui: compteurs.ip(qui(req)), origines: MCP_ORIGINES }, { agentic: agentic(), actifs: () => ({ recherche: chatActif('perplexity') }), api: MOI_URL }); }
+      qui: compteurs.ip(qui(req)), origines: MCP_ORIGINES }, { agentic: agentic(), actifs: () => ({ recherche: chatActif('perplexity') }), api: MOI_URL, x402: x402Mcp() }); }
     catch (e) { console.error('[mcp] ' + (e && e.stack || e)); r = { status: 500, entetes: { 'content-type': 'application/json' }, corps: JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Internal error' } }) }; }
     res.writeHead(r.status, Object.assign({ 'cache-control': 'no-store' }, r.entetes));
     return res.end(r.corps);
@@ -2728,7 +2873,8 @@ const server = http.createServer(async (req, res) => {
              pas signer pour une erreur). Une SONDE (aucun argument, aucun paiement) :
              le 402 d'abord — la spec de decouverte (AgentCash, x402scan) l'exige. */
           const sonde = !req.headers['payment-signature'] && (!q.arguments || !Object.keys(q.arguments).length);
-          const inv = sonde ? null : require('./agentic').entreeInvalide(outil, q.arguments || {});
+          /* entreeInvalideX402 : les memes refus, plus les bornes d'ask_agent vendu a prix fixe. */
+          const inv = sonde ? null : require('./agentic').entreeInvalideX402(outil, q.arguments || {});
           if (inv) return json(400, { ok: false, raison: inv });
           const x = await x402().traite({ outil, url: MOI_URL + path, entete: req.headers['payment-signature'], args: q.arguments || {},
             canal: 'rest', qui: quiIp, sonde,
@@ -8410,6 +8556,12 @@ server.listen(cfg.PORT, () => {
   console.log(`  telegram=${tg.enabled() ? 'ON (chat ' + cfg.TG_CHAT_ID + ')' : 'OFF (set TG_BOT_TOKEN + TG_CHAT_ID)'}`);
   tg.notify('🟢 <b>SWOGE server online</b> — notifications actives'); // startup ping = quick check that TG works
   sante.demarre({ jeu: game, tg });
+  /* ---- x402 ET BASE DES LE DEMARRAGE (lot Base, contrat §A.7 / §E.2, 27 septembre 2026) ----
+     x402() etait construit a la premiere requete : Base (et x402 sur MCP) ne
+     s'allumait qu'apres. Ici, la sonde /supported de Coinbase (gratuite) part tout
+     de suite, puis toutes les 10 min ; tant qu'elle n'a pas repondu, le 402 est
+     offert SANS Base. */
+  try { demarreBase(); } catch (e) { console.error('[x402] Base start: ' + (e && e.message || e)); }
 
   /* ---- LA COLONIE TOURNE, QUE QUELQU'UN REGARDE OU NON ----
    * Elle se relit sur le disque et reprend ou elle en etait : les positions

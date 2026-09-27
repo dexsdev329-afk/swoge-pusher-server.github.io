@@ -15,6 +15,10 @@
  *      l'étage 1 papier).
  *   5. Stop : on balaie le BNB vers le portefeuille du COMPTE, jamais une adresse
  *      reçue dans un message.
+ *   5b. Égalité lock = close : une PERTE réelle (contrat V2 : tout le pool au
+ *      trésor, `claimable` faux) — l'ancien code la comptait remboursée.
+ *   5c. Round annulé (oracle jamais appelé, close + 30 s passé) : remboursé,
+ *      réclamé tout de suite, résolu — il restait en attente pour toujours.
  * ==========================================================================*/
 const fs = require('fs'), os = require('os'), path = require('path');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pancake-reel-'));
@@ -183,6 +187,56 @@ function ferme200Gagnant(ch) {
     ok(P._fiche(JOUEUR).actif === false, 'et le compte n est plus actif');
     let sansDest = false; try { await P.arrete(JOUEUR, ''); } catch (e) { sansDest = /destination/.test(e.message); }
     ok(sansDest, 'un stop sans destination valable refuse');
+  }
+
+  console.log('\n-- 5b. égalité lock = close : une PERTE réelle, rien à réclamer --');
+  {
+    delete require.cache[require.resolve('./predict_pancake_reel')];
+    process.env.PREDICT_PANCAKE_EXECUTE = '1';
+    const P = require('./predict_pancake_reel');
+    P._reset();
+    await P.cree(JOUEUR);
+    const ch = fausseChaine(P._fiche(JOUEUR).adr);
+    P._chaineTest(ch);
+    P._predicteur(async () => ({ sens: 'UP', prob: 55, assez: true }));
+    await P.demarre(JOUEUR);
+    await P.tic();                       /* pari #200 BULL, 0.01 */
+    ok(ch._st.bets.length === 1, 'un pari réel est parti');
+    /* Le contrat V2 : lock = close → « House wins », claimable = false. */
+    ch._st.rounds[200] = Object.assign({}, ch._st.rounds[200], { lockPrice: '100', closePrice: '100', oracleCalled: true, bullWon: false });
+    ch._st.epoch = 202;
+    await P.tic();
+    const e = P.etat(JOUEUR);
+    ok(e.fermees[0].issue === 'loss' && e.fermees[0].gagnant === 'TIE', 'l égalité est comptée PERDUE [' + e.fermees[0].issue + ']');
+    ok(e.banque.losses === 1 && e.banque.pl < 0 && Math.abs(e.banque.pl + 0.01) < 1e-9, 'la perte réelle est déclarée : −0,01 BNB');
+    ok(ch._st.claims.length === 0, 'rien n est réclamé (claimable est faux sur une égalité)');
+    ok(e.martingale.palier === 1, 'l échelle suit la règle d une perte, inchangée');
+  }
+
+  console.log('\n-- 5c. round annulé (oracle jamais appelé) : remboursé, réclamé, résolu --');
+  {
+    delete require.cache[require.resolve('./predict_pancake_reel')];
+    process.env.PREDICT_PANCAKE_EXECUTE = '1';
+    const P = require('./predict_pancake_reel');
+    P._reset();
+    await P.cree(JOUEUR);
+    const ch = fausseChaine(P._fiche(JOUEUR).adr);
+    P._chaineTest(ch);
+    P._predicteur(async () => ({ sens: 'UP', prob: 55, assez: true }));
+    await P.demarre(JOUEUR);
+    await P.tic();                       /* pari #200 BULL */
+    const t = Math.floor(Date.now() / 1000);
+    ch.refundable = async (ep) => Number(ep) === 200;
+    /* L'opérateur n'a jamais appelé l'oracle ; close + 30 s est passé. */
+    ch._st.rounds[200] = Object.assign({}, ch._st.rounds[200], { oracleCalled: false, close: t - 60, lockPrice: '100', closePrice: '0' });
+    ch._st.epoch = 202;
+    await P.tic();
+    const e = P.etat(JOUEUR);
+    ok(e.enAttente.length === 0, 'le round annulé ne reste plus en attente pour toujours');
+    ok(e.fermees[0].issue === 'refund' && e.fermees[0].gagnant === 'CANCELLED', 'il est résolu en REMBOURSEMENT');
+    ok(ch._st.claims.length === 1 && ch._st.claims[0].eps[0] === 200, 'et le remboursement est réclamé tout de suite (claim #200), pas seulement au Stop');
+    ok(e.banque.losses === 0 && e.banque.wins === 0 && e.banque.pl === 0, 'ni gagné ni perdu, P/L 0');
+    ok(e.martingale.palier === 0, 'l échelle ne bouge pas sur un remboursement');
   }
 
   console.log('\n-- 6. papier de sécurité : le module ne porte aucune clé en dur --');
