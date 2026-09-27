@@ -95,6 +95,24 @@ function notifyPhoto(photo, caption) {
   }).catch(() => {});
 }
 
+/** Une video par son adresse (sendVideo) ; refusee ou injoignable, le texte part avec le lien. */
+function notifyVideo(video, caption) {
+  if (!video) return notify(caption);
+  if (!enabled()) return note('sendVideo', false, 'config', 'TG_BOT_TOKEN ou TG_CHAT_ID absent', caption);
+  chain = chain.then(async () => {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/sendVideo`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: cfg.TG_CHAT_ID, video, caption, parse_mode: 'HTML', supports_streaming: true }),
+      });
+      const j = await res.json().catch(() => ({}));
+      note('sendVideo', !!j.ok, j.error_code, j.description, video);
+      if (!j.ok) notify(caption + '\n' + video);
+    } catch (e) { note('sendVideo', false, 'reseau', e.message, video); notify(caption + '\n' + video); }
+    await new Promise((r) => setTimeout(r, 400));
+  }).catch(() => {});
+}
+
 /**
  * Envoie un FICHIER. C'est ce qui permet a une sauvegarde de quitter la
  * machine sans aucune infrastructure : le canal prive du proprietaire devient
@@ -159,4 +177,4 @@ async function sendDocument(buffer, nom, legende, chatId) {
   } catch (e) { console.warn('[tg] document echoue :', e.message); return false; }
 }
 
-module.exports = { notify, notifyPhoto, sendDocument, chatEstPublic, enabled, journal };
+module.exports = { notify, notifyPhoto, notifyVideo, sendDocument, chatEstPublic, enabled, journal };

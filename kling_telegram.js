@@ -29,6 +29,15 @@ const PROGRAMME = [
       + 'tall stacks of gold chips in front of him, other players in shadow, green felt, warm cinematic lighting, confident smirk, highly detailed, sharp focus.',
     legende: '🃏 <b>SWOGE at the poker table</b>\nFirst picture made with <b>Kling AI</b> from the official SWOGE character.\n\n♠️ Play live: https://swoleeswoge.dog/swoge_poker.html',
     format: '3:4', reference: 'subject' },
+  /* « Vu que tu auras l'image test, le modele video, et poste une video aussi
+     a 20 h 11. » La video part de l'image de 20 h (premiere image) ; si
+     l'image a echoue, de la reference officielle. Kling 2.6, 5 s, 720p sans
+     son : 0,21 $ (grille officielle, kling.js). */
+  { cle: 'poker-video-2026-09-27', a: Date.parse('2026-09-27T18:11:00Z'), type: 'video', depuis: 'poker-2026-09-27',
+    prompt: 'SWOGE, the very muscular shiba inu, sits at the poker table, slowly pushes all his gold chips to the center, '
+      + 'then turns his cards over to reveal a royal flush and grins; the casino lights flicker, other players gasp, cinematic slow camera push-in.',
+    legende: '🎬 <b>SWOGE goes all-in</b>\nFirst video made with <b>Kling AI</b>, from the picture posted at 20:00.\n\n♠️ Play live: https://swoleeswoge.dog/swoge_poker.html',
+    modele: 'kling-2.6', duree: 5, resolution: '720p', audio: 'off' },
 ];
 const RETARD_MAX_MS = 60 * 60e3;
 
@@ -56,6 +65,10 @@ function cree(deps) {
     for (const p of programme) if (!faits[p.cle] && t - p.a > RETARD_MAX_MS) { faits[p.cle] = { etat: 'manque', t }; ecrit(); journal({ programme: p.cle, statut: 'manque' }); }
     if (!du) return null;
     if (!deps.kling.actif()) return null;          // sans cle, on attend : l'essai reste du tant qu'il est dans l'heure
+    /* La video attend que son image soit finie (ou tombee) ; elle ne part pas sur une image en cours. */
+    const source = du.depuis ? faits[du.depuis] : null;
+    if (du.depuis && source && source.etat === 'lance') return null;
+    if (du.type === 'video') return video(du, t, source);
     enCours = true;
     faits[du.cle] = { etat: 'lance', t }; ecrit();  // ecrit AVANT : un redemarrage pendant l'attente ne relance pas
     try {
@@ -68,6 +81,24 @@ function cree(deps) {
       deps.telegram.notifyPhoto(r.url, du.legende);
       faits[du.cle] = { etat: 'poste', t, id: r.id, url: r.url, reference: r.reference }; ecrit();
       journal({ programme: du.cle, type: 'image', id: r.id, statut: 'succeed', url: r.url, reference: r.reference, estimationUsd: r.estimationUsd, essais: r.essais });
+      return { cle: du.cle, ok: true, url: r.url };
+    } finally { enCours = false; }
+  }
+
+  async function video(du, t, source) {
+    enCours = true;
+    faits[du.cle] = { etat: 'lance', t }; ecrit();
+    try {
+      const image = source && source.etat === 'poste' && source.url ? source.url : deps.site + '/img/site/swoge_reference.jpg';
+      const r = await deps.kling.video({ prompt: du.prompt, image, modele: du.modele, duree: du.duree, resolution: du.resolution, audio: du.audio }, deps.attente);
+      if (!r.ok) {
+        faits[du.cle] = { etat: 'echec', t, raison: r.raison }; ecrit();
+        journal({ programme: du.cle, type: 'video', statut: 'failed', message: r.raison });
+        return { cle: du.cle, ok: false, raison: r.raison };
+      }
+      (deps.telegram.notifyVideo || deps.telegram.notifyPhoto)(r.url, du.legende);
+      faits[du.cle] = { etat: 'poste', t, id: r.id, url: r.url, depuisImage: image }; ecrit();
+      journal({ programme: du.cle, type: 'video', id: r.id, statut: 'succeeded', url: r.url, estimationUsd: r.estimationUsd, depuisImage: image });
       return { cle: du.cle, ok: true, url: r.url };
     } finally { enCours = false; }
   }

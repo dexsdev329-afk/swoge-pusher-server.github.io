@@ -94,7 +94,8 @@ function cree(deps) {
     const estimationUsd = prixUsd(modele, resolution, audio, duree);
     if (estimationUsd === null) return { ok: false, code: 400, raison: modele + ' does not offer ' + duree + ' s at ' + resolution + (MODELES[modele].audioReglable ? ' with audio ' + audio : '') };
     let image = null;
-    if (q.image) {
+    if (q.image && /^https:\/\//.test(String(q.image))) image = String(q.image);   /* la doc : URL ou base64 nu */
+    else if (q.image) {
       const m = /^data:image\/(png|jpeg|jpg|webp);base64,/i.exec(String(q.image));
       if (!m) return { ok: false, code: 400, raison: 'the first frame must be a PNG, JPEG or WebP picture' };
       image = String(q.image).slice(m[0].length);
@@ -189,7 +190,23 @@ function cree(deps) {
     }
   }
 
-  return { actif, lance, etat, lanceImage, etatImage, image };
+  /** Lance puis attend la video (toutes les `pasMs`, au plus `maxMs`). */
+  async function video(q, o) {
+    o = o || {};
+    const dort = o.dort || ((ms) => new Promise((r) => setTimeout(r, ms)));
+    const l = await lance(q);
+    if (!l.ok) return l;
+    const fin = Date.now() + (o.maxMs || 12 * 60e3);
+    for (;;) {
+      await dort(o.pasMs || 10000);
+      const e = await etat(l.id);
+      if (e.ok && e.statut === 'succeeded' && e.url) return Object.assign({}, l, { ok: true, statut: 'succeeded', url: e.url });
+      if (e.ok && e.statut === 'failed') return Object.assign({}, l, { ok: false, code: 502, raison: 'Kling failed: ' + (e.message || 'no reason given') });
+      if (Date.now() > fin) return Object.assign({}, l, { ok: false, code: 504, raison: 'Kling did not finish in time (last status: ' + (e.statut || e.raison) + ')' });
+    }
+  }
+
+  return { actif, lance, etat, lanceImage, etatImage, image, video };
 }
 
 const IMAGE_MODELES = ['kling-v3', 'kling-v2-1'];

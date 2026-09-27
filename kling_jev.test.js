@@ -89,6 +89,17 @@ const rep = (status, j) => ({ status, ok: status >= 200 && status < 300, json: a
     ok((await k.lanceImage({ prompt: 'x', image: 'data:image/png;base64,AAA' })).code === 400, 'une reference avec prefixe data: est refusee (la doc veut du base64 nu ou une URL)');
   }
 
+  console.log('\n-- 2 ter. Kling : la video attendue, premiere image par URL --');
+  {
+    const vus = []; const etats = ['processing', 'succeeded'];
+    const k = K.cree({ cle: () => 'k', fetch: async (u, o) => { vus.push({ u, b: o.body ? JSON.parse(o.body) : null });
+      if (/\/tasks\?/.test(u)) { const s = etats.shift(); return rep(200, { code: 0, data: [{ id: 'V1', status: s, outputs: s === 'succeeded' ? [{ type: 'video', url: 'https://cdn.kling.example/v.mp4' }] : [] }] }); }
+      return rep(200, { code: 0, data: { id: 'V1', status: 'submitted' } }); } });
+    const r = await k.video({ prompt: 'SWOGE goes all-in', image: 'https://cdn.kling.example/i.png', duree: 5 }, { dort: async () => {} });
+    ok(vus[0].u.endsWith('/image-to-video/kling-2.6') && vus[0].b.contents[1].url === 'https://cdn.kling.example/i.png', 'une image par URL part telle quelle en premiere image');
+    ok(r.ok && r.url === 'https://cdn.kling.example/v.mp4' && vus.length === 3 && r.estimationUsd === 0.21, 'la video est attendue jusqu a « succeeded » : 0,21 $');
+  }
+
   console.log('\n-- 3. Jev --');
   {
     let vu = null;

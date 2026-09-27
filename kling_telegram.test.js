@@ -56,6 +56,32 @@ const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; c
     await sansCle.kt.tour();
     ok(sansCle.demandes.length === 0 && sansCle.kt.etat()[0].fait === null, 'sans KLING_API_KEY : on attend, l envoi reste du tant qu il est dans l heure');
   }
+  console.log('\n-- 3. la video de 20 h 11, faite sur l image de 20 h --');
+  {
+    const B = Date.parse('2026-09-27T18:11:00Z');
+    const prog2 = [{ cle: 'img', a: A, prompt: 'p', legende: 'L1' }, { cle: 'vid', a: B, type: 'video', depuis: 'img', prompt: 'v', legende: 'L2', modele: 'kling-2.6', duree: 5, resolution: '720p', audio: 'off' }];
+    const dossier = fs.mkdtempSync('/tmp/kling-tg-');
+    const photos = [], videos = [], demandes = [];
+    let t = A + 1000, imageFinie = null;
+    const kt = KT.cree({ dossier, site: 'https://swoleeswoge.dog', programme: prog2, maintenant: () => t, journal: () => {},
+      telegram: { notifyPhoto: (u) => photos.push(u), notifyVideo: (u, l) => videos.push({ u, l }) },
+      kling: { actif: () => true, image: async () => { await new Promise((r) => { imageFinie = r; }); return { ok: true, id: 'I', url: 'https://cdn.kling.example/i.png' }; },
+               video: async (q) => { demandes.push(q); return { ok: true, id: 'V', url: 'https://cdn.kling.example/v.mp4', estimationUsd: 0.21 }; } } });
+    const enCoursImage = kt.tour();
+    await new Promise((r) => setTimeout(r, 20));
+    t = B + 1000;
+    ok((await kt.tour()) === null && demandes.length === 0, 'a 20 h 11, l image encore en cours : la video attend');
+    imageFinie(); await enCoursImage;
+    const r = await kt.tour();
+    ok(r && r.ok && demandes[0].image === 'https://cdn.kling.example/i.png' && demandes[0].modele === 'kling-2.6' && demandes[0].duree === 5,
+       'l image finie, la video part DE cette image (kling-2.6, 5 s)');
+    ok(videos.length === 1 && videos[0].u === 'https://cdn.kling.example/v.mp4' && videos[0].l === 'L2' && photos.length === 1, 'et elle est postee en video, une fois, apres la photo');
+    const sans = KT.cree({ dossier: fs.mkdtempSync('/tmp/kling-tg-'), site: 'https://swoleeswoge.dog', programme: [prog2[1]], maintenant: () => B + 1000, journal: () => {},
+      telegram: { notifyVideo: () => {} }, kling: { actif: () => true, video: async (q) => { demandes.push(q); return { ok: true, id: 'V', url: 'https://x/v.mp4' }; } } });
+    await sans.tour();
+    ok(demandes[1].image === 'https://swoleeswoge.dog/img/site/swoge_reference.jpg', 'sans image de 20 h, elle part de la reference officielle');
+  }
+  ok(KT.PROGRAMME[1] && KT.PROGRAMME[1].a === Date.parse('2026-09-27T18:11:00Z') && KT.PROGRAMME[1].depuis === KT.PROGRAMME[0].cle, 'le programme reel : la video a 20 h 11, depuis l image de 20 h');
   ok(KT.PROGRAMME[0].a === Date.parse('2026-09-27T18:00:00Z') && /reference image/.test(KT.PROGRAMME[0].prompt) && /poker/.test(KT.PROGRAMME[0].prompt),
      'le programme reel : 20 h a Paris le 27/09 (18 h UTC), SWOGE au poker, sur la reference');
 
