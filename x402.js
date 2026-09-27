@@ -116,6 +116,7 @@ const FRAIS_SOLANA_USD = 0.002;
 /* Une transaction Solana vit ~60-90 s (son blockhash) : on ne la propose pas
    pour ask_agent, reglé APRES un travail qui peut durer 150 s. */
 const SOLANA_EXCLUS = ['ask_agent'];
+const BH_CACHE_MS = 5000;                   /* le blockhash rendu aux payeurs Solana, partage 5 s */
 const TX_SOLANA_MAX = 4000;                 /* caracteres base64 : une transaction fait au plus 1 232 octets */
 const RESEAU_BASE = 'eip155:8453';
 const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -1119,7 +1120,27 @@ function cree(deps) {
     }
   }
 
-  return { prix, exige, verifie, paie, traite, MESURE, enFile, sondeBase, baseActif, pauseBase, propre, sondeSolana, solanaActif };
+  /* Le blockhash recent, pour un payeur Solana qui n'a pas de noeud (27/09) : le
+     RPC public de Solana refuse les pages web (« Solana RPC: Access forbidden »
+     chez le proprietaire, depuis x402_essai.html). Un appel au noeud au plus
+     toutes les BH_CACHE_MS, quelle que soit la charge (les demandes
+     simultanees partagent le meme appel). Un blockhash vit ~60-90 s : 5 s de
+     cache en laissent au moins 55 pour signer. */
+  let bh = null;
+  async function blockhashSolana() {
+    if (!SOL || !SOL.rpc) return { ok: false, code: 503, raison: 'Solana payments are not set up on this server' };
+    if (!solanaActif()) return { ok: false, code: 503, raison: 'Solana payments are off right now' + (MS.raison ? ' (' + MS.raison + ')' : '') };
+    if (bh && maintenant() - bh.t < BH_CACHE_MS) return bh.p;
+    const t = maintenant();
+    const p = SOL.rpc('getLatestBlockhash', [{ commitment: 'confirmed' }]).then((r) => {
+      const v = r && r.value;
+      if (!v || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(v.blockhash))) throw new Error('bad answer');
+      return { ok: true, blockhash: v.blockhash, lastValidBlockHeight: Number(v.lastValidBlockHeight) || null };
+    }).catch(() => { if (bh && bh.p === p) bh = null; return { ok: false, code: 502, raison: 'the Solana node did not answer - try again' }; });
+    bh = { t, p };
+    return p;
+  }
+  return { prix, exige, verifie, paie, traite, MESURE, enFile, sondeBase, baseActif, pauseBase, propre, sondeSolana, solanaActif, blockhashSolana };
 }
 
 

@@ -2929,7 +2929,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=300' });
     return res.end(txt);
   }
-  if (path === '/agentic/tools' || path === '/agentic/x402' || path.startsWith('/agentic/call/') || path === '/agentic/recus' || path === '/agentic/cles' || path.startsWith('/agentic/cles/')) {
+  if (path === '/agentic/tools' || path === '/agentic/x402' || path === '/agentic/solana/blockhash' || path.startsWith('/agentic/call/') || path === '/agentic/recus' || path === '/agentic/cles' || path.startsWith('/agentic/cles/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization, x-api-key, payment-signature',
                    'access-control-expose-headers': 'payment-required, payment-response' };
@@ -2938,6 +2938,12 @@ const server = http.createServer(async (req, res) => {
     if (path === '/agentic/tools') return json(200, Object.assign(await agentic().catalogue(), { x402: await x402Etat(false) }));
     /* `jours` : les compteurs durables des 30 derniers jours (compteurs.js) — des nombres, jamais une identite ni une empreinte. */
     if (path === '/agentic/x402') return json(200, Object.assign({ ok: true }, await x402Etat(true), { jours: compteurs.publique(30) }));
+    /* Le blockhash recent pour payer sur Solana sans noeud (x402.js, blockhashSolana). */
+    if (path === '/agentic/solana/blockhash') {
+      const xv = x402();
+      const r = xv && xv.blockhashSolana ? await xv.blockhashSolana() : { ok: false, code: 503, raison: 'Solana payments are not set up on this server' };
+      return r.ok ? json(200, r) : json(r.code || 502, { ok: false, raison: r.raison });
+    }
     const porteur = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
     const cleTexte = porteur.startsWith(require('./agentic_cles').PREFIXE) ? porteur : String(req.headers['x-api-key'] || '').trim();
     const cle = cleTexte ? agenticCles.resout(cleTexte) : null;

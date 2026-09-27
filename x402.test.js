@@ -997,6 +997,25 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
         return { acc, entete: X.b64({ x402Version: 2, resource: req.resource, accepted: acc, payload: { transaction: tx || Buffer.from('tx-' + Math.random()).toString('base64') }, extensions: req.extensions }) }; };
       const Ms = await monde({});
       ok(Ms.x.solanaActif() && Ms.x.MESURE.solana.feePayer === FEE, 'Solana allume : PayAI liste solana:5eykt… et donne son feePayer');
+      /* Le blockhash pour un payeur sans noeud (le RPC public refuse les pages web, 27/09) */
+      {
+        let appels = 0, rep = { value: { blockhash: '9zJ3sY2qvAoMYrgkXYWkrvBWTTjvP6T9BGFsMwAGrFg6', lastValidBlockHeight: 300 } };
+        const R = { f: async (m) => { if (m === 'getLatestBlockhash') { appels++; if (rep === 'panne') throw new Error('x'); return rep; } return { value: [{ confirmationStatus: 'confirmed' }] }; } };
+        const Mb = await monde({ R });
+        const [b1, b2] = await Promise.all([Mb.x.blockhashSolana(), Mb.x.blockhashSolana()]);
+        ok(b1.ok && b1.blockhash === rep.value.blockhash && b1.lastValidBlockHeight === 300 && b2.blockhash === b1.blockhash && appels === 1,
+           'blockhash : rendu depuis NOTRE noeud, deux demandes simultanees = un seul appel');
+        Mb.avance(4000); await Mb.x.blockhashSolana();
+        ok(appels === 1, 'moins de 5 s apres : le meme, sans rappeler le noeud');
+        Mb.avance(2000); rep = { value: { blockhash: 'EZ3rST5dvHmbanh75jc4PuLfV96vp9fEYBVeNk4FfM1k', lastValidBlockHeight: 400 } };
+        ok((await Mb.x.blockhashSolana()).blockhash === 'EZ3rST5dvHmbanh75jc4PuLfV96vp9fEYBVeNk4FfM1k' && appels === 2, 'apres 5 s : un blockhash frais');
+        Mb.avance(6000); rep = 'panne';
+        const bp = await Mb.x.blockhashSolana();
+        Mb.avance(100); rep = { value: { blockhash: 'EZ3rST5dvHmbanh75jc4PuLfV96vp9fEYBVeNk4FfM1k', lastValidBlockHeight: 401 } };
+        ok(!bp.ok && bp.code === 502 && (await Mb.x.blockhashSolana()).ok, 'noeud muet : 502, et l echec n est pas garde en cache');
+        const Mn = await monde({ R: null });
+        ok((await Mn.x.blockhashSolana()).code === 503, 'sans SOLANA_RPC_URL : 503, rien a rendre');
+      }
       /* Le compte USDC de payTo (mesure du 27/09 : celui du proprietaire n existait pas) */
       {
         const ATA = require('./solana_ata').ata(PAYTO_SOL, X.USDC_SOLANA);
