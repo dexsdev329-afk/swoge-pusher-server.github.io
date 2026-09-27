@@ -144,6 +144,15 @@ const nouveau = (c, a, prix, t) => { M.gt[c].push(a); M.pools[a] = 'pool-' + a; 
   nouveau('solana', 'SOLq1', 1, T); nouveau('solana', 'SOLq2', 1, T);
   await ob2.cycle();
   ok((ob2._etat('solana').compte.erreurs.rpc429 || 0) === 1, 'un 429 du noeud Solana arrete les lectures du cycle et se compte une fois');
+  /* Un noeud prive qui refuse (cle mal collee) : le motif se lit d ici, jamais l adresse (elle porte la cle). */
+  const d4 = fs.mkdtempSync(path.join(os.tmpdir(), 'obs4-'));
+  const refuse = async (u, o) => (/cle-secrete/.test(u) ? { status: 401, ok: false, json: async () => ({}) } : faux(u, o));
+  const ob4 = O.cree({ dossier: d4, fetch: refuse, maintenant: () => T, chaines: ['solana'], solanaRpc: 'https://noeud.example/?api-key=cle-secrete' });
+  M.quota.rpc = false;
+  await ob4.cycle();
+  const c4 = ob4._etat('solana').compte;
+  ok(c4.erreurs.rpc >= 1 && c4.motifs.rpc === 'HTTP 401' && !JSON.stringify(ob4.vue()).includes('cle-secrete'),
+     'un noeud qui refuse : « ' + c4.motifs.rpc + ' » dans la vue, et la cle n y apparait nulle part');
   M.quota.rpc = false;
   M.gt.solana = []; M.gt.eth = [];
   nouveau('solana', 'SOLtop', 1, T); M.sol.SOLtop = { frappe: false, gel: false }; M.top.SOLtop = [400000, 100000];

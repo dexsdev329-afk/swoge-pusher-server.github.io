@@ -148,13 +148,23 @@ function cree(deps) {
       fs.appendFileSync(path.join(d, jourUtc(ligne.t1 || maintenant()) + '.jsonl'), JSON.stringify(ligne) + '\n');
     } catch (e) { erreur(c, 'disque'); }
   }
-  function erreur(c, k) { const x = E[c].compte.erreurs; x[k] = (x[k] || 0) + 1; }
+  /* Le compte ET le dernier motif, pour qu'une panne se diagnostique d'ici. Le motif est
+     un code HTTP ou un nom d'erreur : JAMAIS l'adresse appelee — celle d'un noeud prive
+     (SOLANA_RPC_URL) porte sa cle. */
+  function erreur(c, k, e) {
+    const x = E[c].compte.erreurs; x[k] = (x[k] || 0) + 1;
+    if (e) {
+      const m = E[c].compte.motifs || (E[c].compte.motifs = {});
+      const brut = String((e && (e.statut ? 'HTTP ' + e.statut : (e.cause && e.cause.code) || e.name || 'error')) || 'error');
+      m[k] = brut.replace(/https?:\/\/\S+/g, '[url]').slice(0, 40);
+    }
+  }
   for (const c of noms) E[c] = charge(c);
 
   async function json(u, o) {
     const r = await chercher(u, o);
     if (r.status === 429) { const e = new Error('429'); e.quota = true; throw e; }
-    if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
+    if (!r.ok && r.status !== 404) { const e = new Error('HTTP ' + r.status); e.statut = r.status; throw e; }
     return { status: r.status, j: await r.json() };
   }
 
@@ -163,7 +173,7 @@ function cree(deps) {
     const S = E[c];
     let r;
     try { r = await json('https://api.geckoterminal.com/api/v2/networks/' + CHAINES[c].gt + '/new_pools?page=1'); }
-    catch (e) { erreur(c, e.quota ? 'gecko429' : 'gecko'); return; }
+    catch (e) { erreur(c, e.quota ? 'gecko429' : 'gecko', e); return; }
     const finis = new Set(S.finis);
     for (const p of ((r.j && r.j.data) || [])) {
       const a = p.attributes || {}, rel = p.relationships || {};
@@ -219,7 +229,7 @@ function cree(deps) {
         const s = c === 'solana' ? await secuSolana(o) : await secuEth(o);
         const essais = ((o.secu && o.secu.essais) || 0) + 1;
         o.secu = Object.assign(s, { essais });
-      } catch (e) { erreur(c, e.quota ? (c === 'solana' ? 'rpc429' : 'honeypot429') : (c === 'solana' ? 'rpc' : 'honeypot')); if (e.quota) break; }
+      } catch (e) { erreur(c, e.quota ? (c === 'solana' ? 'rpc429' : 'honeypot429') : (c === 'solana' ? 'rpc' : 'honeypot'), e); if (e.quota) break; }
     }
   }
 
@@ -261,7 +271,7 @@ function cree(deps) {
         const tx = await appelEvm(c, 'eth_getTransactionByHash', [logs[0].transactionHash]);
         o.dev = tx && tx.from ? String(tx.from).toLowerCase() : null;
         if (o.dev) { o.lanceur = tx.to ? String(tx.to).toLowerCase() : null; o.devHist = histoireDe(c, o.dev); }
-      } catch (e) { erreur(c, e.quota ? 'rpc429' : 'rpc'); if (e.quota) break; }
+      } catch (e) { erreur(c, e.quota ? 'rpc429' : 'rpc', e); if (e.quota) break; }
     }
   }
 
@@ -274,7 +284,7 @@ function cree(deps) {
   async function lot(c, liste) {
     let r;
     try { r = await json('https://api.dexscreener.com/tokens/v1/' + CHAINES[c].dex + '/' + liste.map((o) => o.addr).join(',')); }
-    catch (e) { erreur(c, e.quota ? 'dex429' : 'dex'); return null; }
+    catch (e) { erreur(c, e.quota ? 'dex429' : 'dex', e); return null; }
     return Array.isArray(r.j) ? r.j : [];
   }
   const echeance = (o) => o.t0 + JALONS[o.jalon || 0] * 60e3;
