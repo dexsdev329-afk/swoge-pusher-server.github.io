@@ -293,6 +293,30 @@ const x = require('./x_post');
     eq(r.etat, 'deja', 'le meme post special ne part pas deux fois le meme jour');
     r = await x.tache({ maintenant: MINUIT + 180000, prendre: faux, special: { nom: 'sans-sujet' } });
     eq(r.etat, 'refuse', 'et sans sujet, refuse');
+
+    /* ---- Les posts PROGRAMMES (27 septembre 2026) : texte impose, heure fixe, une fois ---- */
+    const P = { nom: 'essai-prog', a: Date.parse('2026-09-19T22:55:00Z'), lien: 'https://swoleeswoge.dog/swogeagentic.html', sujet: 'x402 on PayAI',
+      texte: 'Line one 🤖\n\nLine two.\n\nLine three $SWOGE', prompt: 'at an API shop counter with robots' };
+    const avantProg = appels.length;
+    let rp = await x.programmes({ maintenant: P.a - 60000, prendre: faux, liste: [P] });
+    eq(rp.length, 0, 'avant son heure : rien');
+    rp = await x.programmes({ maintenant: P.a + 60000, prendre: faux, liste: [P] });
+    const tweetProg = appels.slice(avantProg).find((a) => /2\/tweets/.test(a.u));
+    eq(rp[0] && rp[0].etat, 'poste', 'a son heure : poste');
+    eq(tweetProg.corps.text, 'Line one 🤖\n\nLine two.\n\nLine three $SWOGE\n\nhttps://swoleeswoge.dog/swogeagentic.html', 'le texte IMPOSE part mot pour mot, paragraphes gardes, lien a la fin');
+    ok(!appels.slice(avantProg).some((a) => /anthropic/.test(a.u)), 'aucun modele n ecrit (le texte est impose)');
+    ok(/at an API shop counter with robots/.test(appels.slice(avantProg).find((a) => /openai/.test(a.u)).corps.prompt), 'l image : sa scene a lui');
+    const nTweets = appels.filter((a) => /2\/tweets/.test(a.u)).length;
+    await x.programmes({ maintenant: P.a + 4 * 3600e3 * 0.4, prendre: faux, liste: [P] });
+    await x.programmes({ maintenant: Date.parse('2026-09-20T00:10:00Z'), prendre: faux, liste: [P] });
+    eq(appels.filter((a) => /2\/tweets/.test(a.u)).length, nTweets, 'plus tard, et apres minuit : jamais reposte (la cle suit SON heure)');
+    const Q = Object.assign({}, P, { nom: 'essai-tard', a: Date.parse('2026-09-19T12:00:00Z') });
+    const avantTard = appels.length;
+    await x.programmes({ maintenant: Q.a + x.PROGRAMME_RETARD_MS + 60000, prendre: faux, liste: [Q] });
+    ok(!appels.slice(avantTard).length && x.litJournal().jours['2026-09-19#essai-tard'].abandonne, 'plus de 2 h en retard (serveur arrete) : abandonne, rien poste, rien paye');
+    const reel = x.PROGRAMMES.find((p) => p.nom === 'x402-payai');
+    ok(reel && reel.texte.length + reel.lien.length + 2 <= 280 && /PayAI x402/.test(reel.texte) && /Base or Solana/.test(reel.texte) && /15 tools/.test(reel.texte),
+       'le vrai post x402/PayAI : ' + (reel.texte.length + reel.lien.length + 2) + ' caracteres avec le lien (<= 280), les faits verifies (15 outils, Base ou Solana)');
   }
 
   console.log('\n-- 7. jamais la meme image (27 septembre 2026) --');

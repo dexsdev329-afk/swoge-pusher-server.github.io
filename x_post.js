@@ -749,6 +749,14 @@ async function tache(opts) {
       entree.image = nomImage(cle) + '.png'; entree.jetonsImage = g.jetons;
       journal.jours[cle] = entree; ecritJournal(journal);
     }
+    /* `special.texte` (27/09) : un texte ecrit a l avance part tel quel (nettoie seul : longueur, lien). */
+    if (!entree.texte && o.special && o.special.texte) {
+      /* Les paragraphes gardes (nettoie les ecrase) ; trop long : nettoie coupe proprement. */
+      const lien = o.special.lien || '', brut = String(o.special.texte).trim();
+      entree.texte = brut.length + (lien ? lien.length + 2 : 0) <= 280 ? brut + (lien ? '\n\n' + lien : '') : nettoie(brut, lien || false, null);
+      entree.via = 'impose';
+      journal.jours[cle] = entree; ecritJournal(journal);
+    }
     if (!entree.texte) {
       const r = await ecritTexte(faitsDuJour(t), { scene, cle, maintenant: t, angle: entree.angle,
                                                     sujet: o.special && o.special.sujet,
@@ -828,6 +836,42 @@ function reprend() {
   return n;
 }
 
+/* ---- LES POSTS PROGRAMMES (27 septembre 2026) ----
+ * Un post special a heure fixe, une fois : sa cle est calculee sur SON heure
+ * (`maintenant: p.a`), donc un redeploiement ou minuit ne le reposte pas ; au-dela
+ * de PROGRAMME_RETARD_MS apres l heure, il est abandonne sans rien poster.
+ * « Fais un post X viral sur x402, PayAI et notre agentic, programme-le, et
+ * fais une image en rapport » (27/09, 00 h 35 a Paris). Faits verifies le meme
+ * soir : 15 outils au catalogue public de PayAI (/discovery/resources),
+ * payables en USDC sur Base et Solana (et Robinhood Chain), dont
+ * chat_completion (Claude, GPT-6, Grok). Le lien (0,20 $ au lieu de 0,015 $
+ * chez X) : c est un post de lancement, il doit mener quelque part. */
+const PROGRAMME_RETARD_MS = 2 * 3600e3;
+const PROGRAMMES = [
+  { nom: 'x402-payai', a: Date.parse('2026-09-27T22:55:00Z'), lien: 'https://swoleeswoge.dog/swogeagentic.html',
+    sujet: 'SWOGE AI agents are live on the PayAI x402 catalog: 15 tools any AI agent can pay per call in USDC on Base or Solana, no account, no API key.',
+    texte: 'AI agents can now hire SWOGE 🤖💪\n\n15 tools on the PayAI x402 catalog: token scans, "can I sell?", Robinhood Chain reads, Claude, GPT and Grok per call.\n\n'
+      + 'No account. No API key. Just USDC, Base or Solana.\n\nThe dog has an API now. $SWOGE',
+    prompt: 'standing behind the counter of a futuristic neon "API shop" at night, calmly serving a long queue of small friendly robot AI agents; each robot drops a glowing blue coin '
+      + 'into a slot and receives a glowing data cube from him; holographic screens behind him show charts and a big glowing padlock opening; confident smirk, cinematic lighting' },
+];
+async function programmes(o) {
+  const t = (o && o.maintenant) || Date.now();
+  const journal = litJournal(), faits = [];
+  for (const p of (o && o.liste) || PROGRAMMES) {
+    if (t < p.a) continue;
+    const cle = jourDe(p.a) + '#' + String(p.nom).replace(/[^0-9A-Za-z-]+/g, '-').slice(0, 24);
+    const e = journal.jours[cle] || {};
+    if (e.id || e.abandonne || (e.essais || 0) >= 3) continue;
+    if (t - p.a > PROGRAMME_RETARD_MS) {
+      journal.jours[cle] = Object.assign(e, { abandonne: true, erreur: 'trop tard : plus de 2 h apres l heure prevue' }); ecritJournal(journal);
+      console.log(`[x] programme ${p.nom} abandonne (trop tard)`); continue;
+    }
+    faits.push(await tache(Object.assign({}, o, { maintenant: p.a, special: { nom: p.nom, sujet: p.sujet, prompt: p.prompt, texte: p.texte, lien: p.lien } })));
+  }
+  return faits;
+}
+
 /** Dans le serveur : un regard toutes les cinq minutes, le journal decide. */
 function planifie(signale) {
   if (!enabled()) {
@@ -836,7 +880,8 @@ function planifie(signale) {
   }
   const e = env();
   console.log(`[x] posts ARMES a ${e.heures.join(' et ')} (${e.fuseau})`);
-  const tour = () => tache({ signale }).catch((x) => console.error('[x] ' + (x.message || x)));
+  const tour = () => tache({ signale }).catch((x) => console.error('[x] ' + (x.message || x)))
+    .then(() => programmes({ signale })).catch((x) => console.error('[x] programme : ' + (x.message || x)));
   const premier = setTimeout(tour, 120000);
   const minuterie = setInterval(tour, 5 * 60000);
   return { arrete() { clearTimeout(premier); clearInterval(minuterie); } };
@@ -844,7 +889,7 @@ function planifie(signale) {
 
 module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, RENDUS, CADRAGES, NEGATIF, ANGLES, renduDe, sceneSuivante, promptImage, choixImage,
                    ANNONCE, annonceEnAttente, genereVideo, televerseVideo, appelXGet, FENETRE_SCENES, FENETRE_RENDUS, FENETRE_CADRAGE, faitsDuJour, etiquettes,
-                   nettoie, ecritTexte, genereImage, televerse, publie, tache, planifie, derniere, reprend,
+                   nettoie, ecritTexte, genereImage, televerse, publie, tache, planifie, derniere, reprend, programmes, PROGRAMMES, PROGRAMME_RETARD_MS,
                    heureLocale, creneauDu, jourDe, litJournal, dernieres, DOSSIER_IMAGES, RESERVE };
 
 // ------------------------------------------------------------ en ligne de commande
