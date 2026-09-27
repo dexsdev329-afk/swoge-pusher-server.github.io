@@ -1656,7 +1656,12 @@ tgAppels();
    Ethereum) : il lit les nouveaux jetons et ce qu'ils font en 30 min, rien de
    plus — aucun achat, aucun papier, aucune cle. Demarre seulement avec
    OBSERVATOIRE=1 (voir observatoire.js). */
-const observatoire = require('./observatoire').cree({ dossier: require('path').join(cfg.DATA_DIR, 'observatoire') });
+/* Jev (TypeSafe) : decisions typees, en test fantome dans l'observatoire (jev.js). TYPESAFE_API_KEY. */
+const jev = require('./jev').cree({});
+const observatoire = require('./observatoire').cree({ dossier: require('path').join(cfg.DATA_DIR, 'observatoire'), jev });
+/* Kling : video, en essai proprietaire d'abord (kling.js, route /studio/kling). KLING_API_KEY. */
+const kling = require('./kling').cree({});
+const KLING_JOURNAL = require('path').join(cfg.DATA_DIR, 'kling_essais.jsonl');
 const epreuveSortie = require('./epreuve_sortie').cree({
   epreuve: (a) => aiColonie.epreuveDeSortie(a),
   dossier: cfg.DATA_DIR,
@@ -4388,6 +4393,43 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': f.type, 'content-length': f.octets.length, 'access-control-allow-origin': '*',
                          'cache-control': 'no-store' });
     return res.end(req.method === 'HEAD' ? undefined : f.octets);
+  }
+  /* ---- KLING, ESSAI PROPRIETAIRE (27/09/2026) ----
+   * Comme l'essai de restylage : session signee, AI_OWNER reverifie a chaque geste,
+   * aucun debit (c'est le compte Kling du proprietaire qui paie), chaque essai
+   * journalise avec son estimation d'apres la grille officielle, pour mesurer
+   * qualite, attente et cout avant de rien proposer aux joueurs. */
+  if (path === '/studio/kling' || path.startsWith('/studio/kling/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    if (!proprietaireIA(addr)) {
+      if (path === '/studio/kling' && req.method === 'GET') return json(200, { ok: true, proprietaire: false });
+      return json(403, { ok: false, raison: 'owner only (AI_OWNER on the server)' });
+    }
+    const journalKling = (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } };
+    if (path === '/studio/kling' && req.method === 'GET') {
+      let essais = [];
+      try { essais = require('fs').readFileSync(KLING_JOURNAL, 'utf8').trim().split('\n').filter(Boolean).slice(-20).map((l) => JSON.parse(l)).reverse(); } catch (e) { essais = []; }
+      return json(200, { ok: true, proprietaire: true, actif: kling.actif(), modeles: require('./kling').MODELES, essais });
+    }
+    const m = /^\/studio\/kling\/([0-9A-Za-z_-]{1,64})$/.exec(path);
+    if (m && req.method === 'GET') {
+      const r = await kling.etat(m[1]);
+      if (r.ok && (r.statut === 'succeeded' || r.statut === 'failed')) journalKling({ id: r.id, statut: r.statut, duree: r.duree, message: r.message });
+      return json(r.ok ? 200 : r.code, r);
+    }
+    if (path !== '/studio/kling' || req.method !== 'POST') return json(404, { ok: false, raison: 'unknown' });
+    let q;
+    try { q = JSON.parse((await corps(req, 14 * 1024 * 1024)).toString('utf8') || '{}'); }
+    catch (e) { return json(400, { ok: false, raison: 'unreadable request (the picture must stay under 10 MB)' }); }
+    const r = await kling.lance({ prompt: q && q.prompt, image: q && q.image, modele: q && q.modele, duree: q && q.duree, resolution: q && q.resolution, audio: q && q.audio });
+    if (r.ok) journalKling({ id: r.id, modele: r.modele, duree: r.duree, resolution: r.resolution, audio: r.audio, image: r.image, estimationUsd: r.estimationUsd });
+    return json(r.ok ? 200 : (r.code || 500), r);
   }
   if (path === '/studio/essai-montage' || path.startsWith('/studio/essai-montage/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',

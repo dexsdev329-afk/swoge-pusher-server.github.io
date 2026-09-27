@@ -203,6 +203,33 @@ const nouveau = (c, a, prix, t) => { M.gt[c].push(a); M.pools[a] = 'pool-' + a; 
     T = t5;
   }
 
+  console.log('\n-- 5 bis. Jev, en test fantome --');
+  {
+    const d6 = fs.mkdtempSync(path.join(os.tmpdir(), 'obs6-'));
+    M.gt.solana = []; M.gt.eth = []; M.gt.robinhood = [];
+    const questions = [];
+    const jevFaux = { actif: () => true, MESURE: { appels: 0 }, demande: async (state, q) => { questions.push({ state, q }); return { ok: true, answers: { hausse: { type: 'noul', noul: 0.62 }, chute: { type: 'noul', noul: 0.04 } } }; } };
+    nouveau('solana', 'SOLjev', 1.0, T); M.sol.SOLjev = { frappe: false, gel: false };
+    const ob6 = O.cree({ dossier: d6, fetch: faux, maintenant: () => T, chaines: ['solana'], jev: jevFaux });
+    await ob6.cycle();
+    const J6 = ob6._etat('solana').suivis.SOLjev;
+    ok(J6.jev && J6.jev.hausse === 0.62 && J6.jev.chute === 0.04 && questions.length === 1, 'au premier prix, Jev donne deux probabilites (monter de 20 %, s effondrer)');
+    ok(questions[0].q.hausse.type === 'noul' && questions[0].state.chain === 'Solana' && questions[0].state.security.freeze_authority === 'renounced', 'la situation envoyee : la chaine, les traits, la securite lue');
+    T += 31 * MIN; M.prix.SOLjev = 1.3;
+    await ob6.cycle();
+    const B6 = ob6._etat('solana').bilans;
+    ok(B6['Jev: rise probability = 50%+'] && B6['Jev: rise probability = 50%+'].n === 1 && B6['Jev: rise probability = 50%+'].montes === 1, 'a 30 min, sa probabilite est une case comme les autres (« 50%+ » : 1 observation, montee)');
+    ok(questions.length === 1, 'un jeton deja relu n est plus questionne');
+    nouveau('solana', 'SOLtard', 1.0, T); M.sol.SOLtard = { frappe: false, gel: false };
+    await ob6.cycle();                                   /* premier prix pose, dans les 5 min : questionne */
+    const avant = questions.length;
+    const S6 = ob6._etat('solana');
+    S6.suivis.SOLtard.jev = undefined; S6.suivis.SOLtard.t0 = T - 6 * MIN;
+    await ob6.cycle();
+    ok(questions.length === avant, 'plus de 5 min apres le premier prix : plus de question (une part des 30 min serait deja jouee)');
+    T -= 31 * MIN;
+  }
+
   console.log('\n-- 6. la vue --');
   const v = ob.vue();
   const sol = v.chaines.solana;

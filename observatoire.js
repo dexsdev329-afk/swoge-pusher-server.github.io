@@ -68,6 +68,8 @@ const BLOCS_FRAPPE = 9999;          /* la plage que les noeuds acceptent (ai_col
    15 par cycle ~ 10 appels/min sur le noeud Robinhood, que la colonie partage. */
 const DEV_PAR_CYCLE = 15;
 const DEVS_MAX = 20000, DEV_JETONS_MAX = 30;
+/* Jev : questions par chaine et par cycle (une par jeton, deux questions chacune). */
+const JEV_PAR_CYCLE = 20;
 const HORIZON_MIN = 30;             /* la colonie juge a 30 min */
 const MONTE = 20, EFFONDRE = -30;   /* ai_colonie, memes seuils */
 const ASSEZ = 30;                   /* sous 30 observations, une case ne conclut pas (BANCS_ASSEZ, le meme ordre) */
@@ -94,6 +96,12 @@ function traitsDe(o) {
   const t = { 'Age at first price': caseAge(o.age0), 'Pool size': caseLiq(o.liq0), 'Market cap': caseMc(o.mc0),
               'Venue': o.dexId || null, 'Quoted in': o.quote || null, 'Social links': caseSociaux(o.sociaux) };
   if (o.devHist) t['Dev history'] = o.devHist;
+  /* Jev (TypeSafe), en test fantome : ses probabilites deviennent des cases, jugees a 30 min. */
+  if (o.jev) {
+    const q = (p) => (p == null ? null : p < 0.1 ? 'under 10%' : p < 0.25 ? '10-25%' : p < 0.5 ? '25-50%' : '50%+');
+    t['Jev: rise probability'] = q(o.jev.hausse);
+    t['Jev: collapse probability'] = q(o.jev.chute);
+  }
   const s = o.secu || {};
   if (o.chaine === 'robinhood') return t;      /* sa securite, c'est la colonie qui la lit */
   if (o.chaine === 'solana') {
@@ -385,6 +393,31 @@ function cree(deps) {
     garde(c, Object.assign({ chaine: c }, o, { t1: maintenant(), sansPrix: sansPrix || null }));
   }
 
+  /* ---- 5. Jev, en test fantome : au premier prix, deux probabilites ---- */
+  async function jevDemande(c) {
+    if (!deps.jev || !deps.jev.actif()) return;
+    const S = E[c];
+    let n = 0;
+    for (const o of Object.values(S.suivis)) {
+      if (n >= JEV_PAR_CYCLE) break;
+      /* Seulement dans les 5 min du premier prix : plus tard, une part des 30 min serait deja jouee. */
+      if (o.p0 == null || o.jev !== undefined || (o.jalon || 0) > 0 || maintenant() - o.t0 > 5 * 60e3) continue;
+      n++;
+      const s = o.secu || {};
+      const state = { chain: CHAINES[c].nom, venue: o.dexId || null, quoted_in: o.quote || null, token_age_minutes: o.age0,
+        pool_usd: o.liq0, market_cap_usd: o.mc0, public_links: o.sociaux, dev_history: o.devHist || 'unknown',
+        security: c === 'solana' ? { mint_authority: s.lu ? (s.frappe ? 'active' : 'renounced') : 'unknown', freeze_authority: s.lu ? (s.gel ? 'active' : 'renounced') : 'unknown', top10_holders_pct: s.top10 == null ? 'unknown' : s.top10 }
+          : c === 'eth' ? { honeypot: s.lu ? !!s.piege : 'unknown', sell_tax_pct: s.lu ? s.taxeVente : 'unknown' } : 'read by the colony, not here' };
+      const r = await deps.jev.demande(state, {
+        hausse: { type: 'noul', instructions: 'Will this newly launched token trade at least 20% higher 30 minutes from now?' },
+        chute: { type: 'noul', instructions: 'Will this token lose 30% or more, or its pool disappear, within the next 30 minutes?' } });
+      if (!r.ok) { erreur(c, 'jev', { name: r.raison }); o.jev = null; continue; }
+      const a = r.answers || {};
+      const p = (x) => (x && typeof x.noul === 'number' && isFinite(x.noul) ? Math.round(x.noul * 1000) / 1000 : null);
+      o.jev = { hausse: p(a.hausse), chute: p(a.chute) };
+    }
+  }
+
   async function cycle() {
     if (enCours) return;
     enCours = true;
@@ -395,6 +428,7 @@ function cree(deps) {
         await securise(c);
         await devs(c);
         await prix(c);
+        await jevDemande(c);
         sauve(c);
       }
     } finally { enCours = false; }
@@ -428,7 +462,7 @@ function cree(deps) {
         .sort((x, y) => y.avgPeakCapUsd - x.avgPeakCapUsd);
       out.chaines[c] = { nom: CHAINES[c].nom, depuis: new Date(S.depuis).toISOString(), cycles: S.cycles,
         enCours: Object.keys(S.suivis).length, compte: S.compte, holders: c === 'solana' ? (solPrive ? 'read (SOLANA_RPC_URL)' : 'unknown: the public Solana node refuses holder reads — set SOLANA_RPC_URL') : null,
-        cases, derniers: S.derniers,
+        cases, derniers: S.derniers, jev: deps.jev ? { actif: deps.jev.actif(), mesure: deps.jev.MESURE } : null,
         devs: CHAINES[c].evm ? { recorded: lesDevs.length, withThreeTokensOrMore: classes.length,
           bestAvgPeak: classes.slice(0, 10), mostVanished: classes.filter((x) => x.vanished).sort((x, y) => y.vanished / y.tokens - x.vanished / x.tokens).slice(0, 10) } : null };
     }
