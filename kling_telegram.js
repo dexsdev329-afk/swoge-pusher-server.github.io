@@ -48,6 +48,30 @@ const PROGRAMME = [
      1,79 $ sur le compte Kling, ~0,01 $ de Claude. */
   { cle: 'serie-2026-09-27', a: Date.parse('2026-09-27T18:30:00Z'), type: 'serie', episodes: 4,
     modele: 'kling-2.6', duree: 10, resolution: '720p', audio: 'off', format: '16:9' },
+  /* « Fais une video qui arrive sur le canal Telegram pour annoncer qu'on a des
+     agents AI x402 sur PayAI ; essaie de la rendre virale, avec un bon texte. »
+     (27/09, 23 h 12 a Paris). Fait mesure le meme soir : nos 6 outils sont dans
+     le catalogue public de PayAI (/discovery/resources, 6 971 services), payables
+     en USDC sur Base et Solana. Le logo de PayAI n'est PAS repris : leur marque
+     dans notre pub laisserait croire a un partenariat, alors qu'on est liste
+     dans un catalogue ouvert. L'image cle (verticale, pour le telephone) n'est
+     pas postee ; la video part d'elle, avec le son natif de Kling (une replique
+     de SWOGE). Cout : 0,028 $ + 10 s × 0,14 $ = 1,43 $ sur le compte Kling. */
+  { cle: 'payai-image-2026-09-27', a: Date.parse('2026-09-27T21:20:00Z'), muet: true, format: '9:16', reference: 'subject',
+    prompt: 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build. '
+      + 'He stands in a futuristic neon trading command center at night, wearing a sleek black hoodie, surrounded by floating holographic screens of green crypto charts; '
+      + 'three small glowing robot drones hover around him, each carrying a shining blue coin. Vertical cinematic shot, dramatic rim lighting, highly detailed, sharp focus, no text, no logos.' },
+  { cle: 'payai-video-2026-09-27', a: Date.parse('2026-09-27T21:20:00Z'), type: 'video', depuis: 'payai-image-2026-09-27',
+    prompt: 'SWOGE, the muscular shiba inu, looks straight into the camera with a confident smirk and says: "My AI agents are live. Any AI can hire them." '
+      + 'The small robot drones zip around him and drop glowing blue coins into his open palm; the holographic charts spike upward. '
+      + 'Slow cinematic push-in on his face, neon light flickers, deep bass hit at the end.',
+    legende: '🤖 <b>SWOGE AI agents are now live on PayAI</b>\n\n'
+      + 'Our x402 tools are listed in PayAI\'s public catalog of agent services. Any AI agent can hire them and pay per call in USDC on <b>Base</b> or <b>Solana</b> — no account, no API key.\n\n'
+      + '🔎 <b>scan_token</b> — market + contract checks (Powered by Go+ Security)\n'
+      + '🚪 <b>can_i_sell</b> — can you exit a Robinhood Chain token?\n'
+      + '🧠 <b>colony_activity</b> · <b>new_launches</b> · <b>swoge_economy</b> — live data from the SWOGE AI colony\n\n'
+      + '💸 From $0.02 a call\n👉 https://swoleeswoge.dog/swogeagentic.html',
+    modele: 'kling-2.6', duree: 10, resolution: '1080p', audio: 'native' },
 ];
 const RETARD_MAX_MS = 60 * 60e3;
 
@@ -120,8 +144,10 @@ function cree(deps) {
         journal({ programme: du.cle, type: 'image', statut: 'failed', message: r.raison, essais: r.essais });
         return { cle: du.cle, ok: false, raison: r.raison };
       }
-      deps.telegram.notifyPhoto(r.url, du.legende);
-      faits[du.cle] = { etat: 'poste', t, id: r.id, url: r.url, reference: r.reference }; ecrit();
+      /* `muet` : l'image n'est que la premiere image d'une video (l'annonce PayAI
+         du 27/09 : une video seule sur le canal, pas une photo puis une video). */
+      if (!du.muet) deps.telegram.notifyPhoto(r.url, du.legende);
+      faits[du.cle] = { etat: 'poste', t, id: r.id, url: r.url, reference: r.reference, muet: !!du.muet }; ecrit();
       journal({ programme: du.cle, type: 'image', id: r.id, statut: 'succeed', url: r.url, reference: r.reference, estimationUsd: r.estimationUsd, essais: r.essais });
       return { cle: du.cle, ok: true, url: r.url };
     } finally { enCours = false; }

@@ -81,6 +81,24 @@ const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; c
     await sans.tour();
     ok(demandes[1].image === 'https://swoleeswoge.dog/img/site/swoge_reference.jpg', 'sans image de 20 h, elle part de la reference officielle');
   }
+  console.log('\n-- 3b. l annonce PayAI : une image cle muette, puis la video seule --');
+  {
+    const P = KT.PROGRAMME.filter((p) => /^payai-/.test(p.cle));
+    const photos = [], videos = [], demandes = [];
+    const kt = KT.cree({ dossier: fs.mkdtempSync('/tmp/kling-tg-'), site: 'https://swoleeswoge.dog', programme: P, maintenant: () => P[0].a + 1000, journal: () => {},
+      telegram: { notifyPhoto: (u) => photos.push(u), notifyVideo: (u, l) => videos.push({ u, l }) },
+      kling: { actif: () => true, image: async (q) => { demandes.push(q); return { ok: true, id: 'I', url: 'https://cdn.kling.example/k.png' }; },
+               video: async (q) => { demandes.push(q); return { ok: true, id: 'V', url: 'https://cdn.kling.example/a.mp4' }; } } });
+    await kt.tour(); await kt.tour();
+    ok(P.length === 2 && photos.length === 0 && videos.length === 1 && videos[0].u === 'https://cdn.kling.example/a.mp4', 'l image cle n est PAS postee ; seule la video part sur le canal');
+    ok(demandes[0].format === '9:16' && demandes[0].reference === 'subject' && demandes[1].image === 'https://cdn.kling.example/k.png'
+       && demandes[1].modele === 'kling-2.6' && demandes[1].resolution === '1080p' && demandes[1].audio === 'native' && demandes[1].duree === 10,
+       'verticale (9:16) sur la reference officielle ; la video part d elle, kling-2.6 1080p, son natif, 10 s');
+    const l = videos[0].l;
+    ok(l.length <= 1024 && /live on PayAI/.test(l) && /Base<\/b> or <b>Solana/.test(l) && /Powered by Go\+ Security/.test(l) && /swogeagentic\.html/.test(l) && !/token_verdict/.test(l),
+       'la legende : sous la limite de Telegram (' + l.length + '/1024), PayAI, Base et Solana, la mention GoPlus, le lien — et rien de ce qui n est pas encore en ligne');
+    ok(!/logo/i.test(P[0].prompt.replace(/no logos/, '')) && /no text, no logos/.test(P[0].prompt), 'aucun logo de tiers demande a Kling (« no text, no logos »)');
+  }
   console.log('\n-- 4. la serie automatique de 20 h 30 --');
   {
     const C = Date.parse('2026-09-27T18:30:00Z');
