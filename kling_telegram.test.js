@@ -81,6 +81,35 @@ const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; c
     await sans.tour();
     ok(demandes[1].image === 'https://swoleeswoge.dog/img/site/swoge_reference.jpg', 'sans image de 20 h, elle part de la reference officielle');
   }
+  console.log('\n-- 4. la serie automatique de 20 h 30 --');
+  {
+    const C = Date.parse('2026-09-27T18:30:00Z');
+    const json = JSON.stringify({ titre: 'SWOGE vs The Machine', episodes: [1, 2, 3, 4].map((i) => ({ titre: 'Ep' + i, image: 'SWOGE scene ' + i, mouvement: 'SWOGE moves ' + i + ', push-in', legende: 'hook ' + i })) });
+    const posts = [], images = [], videos = [];
+    const kt = KT.cree({ dossier: fs.mkdtempSync('/tmp/kling-tg-'), site: 'https://swoleeswoge.dog', maintenant: () => C + 1000, journal: () => {},
+      programme: [{ cle: 's', a: C, type: 'serie', episodes: 4, modele: 'kling-2.6', duree: 10, resolution: '720p', audio: 'off', format: '16:9' }],
+      claude: () => ({ messages: { create: async () => ({ content: [{ type: 'text', text: 'Here: ' + json }] }) } }),
+      telegram: { notifyVideo: (u, l) => posts.push({ u, l }) },
+      kling: { actif: () => true,
+        image: async (q) => { images.push(q); return { ok: true, url: 'https://cdn/i' + images.length + '.png' }; },
+        video: async (q) => { videos.push(q); return videos.length === 3 ? { ok: false, raison: 'Kling failed: risk' } : { ok: true, url: 'https://cdn/v' + videos.length + '.mp4' }; } } });
+    const r = await kt.tour();
+    ok(images.length === 4 && images.every((q) => q.image === 'https://swoleeswoge.dog/img/site/swoge_reference.jpg' && q.reference === 'subject' && /SWOGE, a very muscular/.test(q.prompt)),
+       'quatre images cles, chacune sur la reference officielle de SWOGE');
+    ok(videos.length === 4 && videos[0].image === 'https://cdn/i1.png' && videos[3].image === 'https://cdn/i4.png' && videos[0].duree === 10 && /push-in/.test(videos[0].prompt),
+       'chaque video part de SON image, 10 s, avec le mouvement ecrit par Claude');
+    ok(posts.length === 3 && /SWOGE vs The Machine<\/b> — Episode 1\/4: <b>Ep1/.test(posts[0].l) && /Episode 4\/4/.test(posts[2].l) && /story by Claude, pictures and video by Kling/.test(posts[0].l),
+       'postes dans l ordre ; l episode 3 rate ne publie rien et n arrete pas le 4');
+    ok(r && r.postes === 3 && kt.etat()[0].fait.episodes.length === 4, 'l etat garde les 4 episodes (un redemarrage n en rejoue aucun)');
+    const sans = KT.cree({ dossier: fs.mkdtempSync('/tmp/kling-tg-'), site: 'https://s', maintenant: () => C + 1000, journal: () => {},
+      programme: [{ cle: 's', a: C, type: 'serie', episodes: 4 }], telegram: { notifyVideo: (u, l) => posts.push({ u, l }) },
+      kling: { actif: () => true, image: async () => ({ ok: false }), video: async () => ({ ok: true, url: 'https://cdn/x.mp4' }) } });
+    await sans.tour();
+    ok(/backup script/.test(posts[posts.length - 1].l) && /Golden Barbell/.test(posts[posts.length - 1].l), 'sans Claude : la serie de secours part quand meme, et la legende le dit');
+    ok(KT.lisSerie('pas du json', 4) === null && KT.lisSerie(json, 5) === null && KT.lisSerie(json, 4).episodes.length === 4, 'un JSON illisible ou incomplet n est pas pris pour une serie');
+  }
+  const S3 = KT.PROGRAMME.find((p) => p.type === 'serie');
+  ok(S3 && S3.a === Date.parse('2026-09-27T18:30:00Z') && S3.episodes === 4, 'le programme reel : la serie a 20 h 30 (Paris), 4 episodes');
   ok(KT.PROGRAMME[1] && KT.PROGRAMME[1].a === Date.parse('2026-09-27T18:11:00Z') && KT.PROGRAMME[1].depuis === KT.PROGRAMME[0].cle, 'le programme reel : la video a 20 h 11, depuis l image de 20 h');
   ok(KT.PROGRAMME[0].a === Date.parse('2026-09-27T18:00:00Z') && /reference image/.test(KT.PROGRAMME[0].prompt) && /poker/.test(KT.PROGRAMME[0].prompt),
      'le programme reel : 20 h a Paris le 27/09 (18 h UTC), SWOGE au poker, sur la reference');

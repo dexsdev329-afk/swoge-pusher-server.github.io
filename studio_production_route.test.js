@@ -141,6 +141,11 @@ async function connecte(port, moteur) {
   console.log('\n-- 5. un autre portefeuille ne voit, ne tourne, ne supprime rien --');
   eq((await api('/studio/production/' + id + '/scene', bob.H, 'POST', { texte: 'x' })).statut, 404, 'Bob ne tourne pas une scene de la serie d Alice');
   eq((await api('/studio/production/' + id, bob.H, 'DELETE')).statut, 404, 'ni ne la supprime');
+  /* Le bouton magique (studio_imagine.js) : meme session, meme proprietaire. */
+  eq((await api('/studio/production/' + id + '/imagine', bob.H, 'POST', { texte: 'x' })).statut, 404, 'ni n imagine une scene sur la serie d Alice (bouton magique)');
+  const mag = await api('/studio/production/' + id + '/imagine', alice.H, 'POST', { texte: 'Luna spots SWOGE' });
+  ok(process.env.ANTHROPIC_API_KEY ? mag.statut !== 404 : (mag.statut === 503 && /not switched on/.test(mag.raison || '')),
+     'Alice, sans cle Anthropic sur ce serveur : le bouton magique le dit (503), rien ne part');
   const vol = await api('/studio/production', bob.H, 'POST', { production: { mode: 'serie', titre: 'Vol', personnages: [{ nom: 'X', image: imgLuna }] } });
   ok(vol.statut === 400 && /PNG, JPEG or WebP/.test(vol.raison), 'ni ne reprend l image rangee par Alice');
 

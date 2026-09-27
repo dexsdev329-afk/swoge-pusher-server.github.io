@@ -75,7 +75,16 @@ const serie = (ps, plus) => Object.assign({ mode: 'serie', titre: 'Gym Wars', pe
     eq(a.voix.join(','), 'rex,eve', 'le personnage sans voix n occupe pas de place audio');
     ok(/SWOGE is the character in <IMAGE_1>[^;]*<AUDIO_0>/.test(a.prompt) && /Luna is the character in <IMAGE_2>[^;]*<AUDIO_1>/.test(a.prompt), 'le prompt nomme chacun par son image et sa voix');
     ok(/Coach is the character in <IMAGE_3>/.test(a.prompt) && !/Coach[^;]*<AUDIO/.test(a.prompt), 'et le personnage muet sans voix');
-    ok(/Visual style: anime/.test(a.prompt) && /Only characters named in the scene appear/.test(a.prompt), 'le style et la regle des absents');
+    ok(/Visual style: anime/.test(a.prompt) && /Only the main characters named in the scene appear/.test(a.prompt), 'le style et la regle des absents (une scene qui nomme ses personnages)');
+    /* 27/09, deux videos du proprietaire : « fais la suite » ne nommait personne, SWOGE a perdu son visage. */
+    const suite = P.scene(p, 'fais la suite', 10, { precedente: 'SWOGE lifts. Luna says "Not bad."' });
+    ok(/All the main characters above are in this scene/.test(suite.prompt), 'une scene qui ne nomme personne garde TOUTE la distribution');
+    ok(/in EVERY shot, never a different animal, breed or face/.test(suite.prompt) && /background extras and must not look like the main characters/.test(suite.prompt),
+       'chaque personnage garde son visage dans chaque plan, et les figurants ne lui ressemblent pas');
+    ok(/follows directly from the previous one: "SWOGE lifts\. Luna says "Not bad\.""/.test(suite.prompt), 'la scene precedente est rappelee');
+    ok(/Cinematic camera: one smooth, motivated camera move/.test(suite.prompt) && suite.camera === 'auto', 'sans choix, un mouvement de camera cinematique est demande');
+    ok(/Camera: slow orbit around the main character/.test(P.scene(p, 'SWOGE poses', 10, { camera: 'orbit' }).prompt), 'la camera choisie est ecrite');
+    ok(P.scene(p, 'SWOGE poses', 10, { camera: 'drone<script>' }).camera === 'auto', 'une camera inconnue retombe sur « auto »');
     ok(/describe the scene/.test(P.scene(p, '  ').erreur), 'une scene vide est refusee');
     prodSerie = p;
   }

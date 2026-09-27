@@ -1664,6 +1664,8 @@ const kling = require('./kling').cree({});
 const KLING_JOURNAL = require('path').join(cfg.DATA_DIR, 'kling_essais.jsonl');
 /* Une image Kling postee sur Telegram a heure fixe, une seule fois (kling_telegram.js). KLING_TG=0 la coupe. */
 const klingTg = require('./kling_telegram').cree({ kling, telegram: tg, dossier: cfg.DATA_DIR, site: SITE_URL,
+  /* la serie automatique ecrit son histoire avec Claude (lu au moment voulu : les deux sont declares plus bas) */
+  claude: () => (chatActif('anthropic') ? clientComprend() : null),
   journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } } });
 const epreuveSortie = require('./epreuve_sortie').cree({
   epreuve: (a) => aiColonie.epreuveDeSortie(a),
@@ -2152,6 +2154,7 @@ const x402Mcp = () => {
 /* Les origines permises sur /mcp (un en-tete Origin present et hors liste → 403, spec MCP). */
 const MCP_ORIGINES = String(process.env.AGENTIC_ORIGINES || 'https://swoleeswoge.dog,https://claude.ai').split(',').map((x) => x.trim()).filter(Boolean);
 let clientComprendV = null;
+let studioImagineV = null;    /* le bouton magique de SwoleMind, cree au premier appel (studio_imagine.js) */
 const clientComprend = () => {
   if (!clientComprendV) { const A = require('@anthropic-ai/sdk'); const K = A.default || A; clientComprendV = new K({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 30000 }); }
   return clientComprendV;
@@ -4335,7 +4338,7 @@ const server = http.createServer(async (req, res) => {
       }
       return S.une(addr, p.id);
     };
-    const m = /^\/studio\/production\/([0-9a-f]{16})(\/scene)?$/.exec(path);
+    const m = /^\/studio\/production\/([0-9a-f]{16})(\/scene|\/imagine)?$/.exec(path);
     if (path === '/studio/production' && req.method === 'GET') {
       return json(200, { ok: true, productions: S.liste(addr).map(rafraichit).map(vuePublique),
         voix: studioMedia.VOIX.filter((v) => studioMedia.voixPermises().includes(v.id)), modes: P.MODES,
@@ -4358,6 +4361,26 @@ const server = http.createServer(async (req, res) => {
       if (!r.ok) S.menage(addr);
       return json(r.ok ? 200 : r.code, r.ok ? { ok: true, production: vuePublique(r.production) } : r);
     }
+    /* ---- LE BOUTON MAGIQUE (studio_imagine.js) : une scene proposee, rien de filme ----
+       Les images lues sont celles de la production DE CETTE SESSION (S.une(addr)),
+       ou la reference officielle de SWOGE : jamais une image designee par le message. */
+    if (m && m[2] === '/imagine') {
+      const prod = S.une(addr, m[1]);
+      if (!prod) return json(404, { ok: false, raison: 'unknown production' });
+      const refs = (prod.mode === 'pub' ? [prod.produit && prod.produit.image, prod.produit && prod.produit.presentateur]
+        : (prod.personnages || []).map((c) => c.image)).filter(Boolean).slice(0, 3);
+      const images = [];
+      for (const x of refs) {
+        if (x === P.SWOGE) images.push(await studioComprend.referenceSwoge({ site: SITE_URL }));
+        else if (String(x).startsWith(P.IMAGE_PREFIXE)) {
+          const f = S.litImage(String(x).slice(P.IMAGE_PREFIXE.length));
+          images.push(f ? 'data:' + f.type + ';base64,' + f.octets.toString('base64') : null);
+        } else images.push(null);
+      }
+      if (!studioImagineV) studioImagineV = require('./studio_imagine').cree({ client: chatActif('anthropic') ? clientComprend() : null });
+      const r = await studioImagineV.imagine({ addr, prod, texte: q.texte, images, histoire: (prod.scenes || []).map((x) => x.texte).filter(Boolean).slice(-3) });
+      return json(r.ok ? 200 : r.code, r.ok ? { ok: true, texte: r.texte, restant: r.restant } : r);
+    }
     /* une scene : la video, avec les references de la production */
     if (!m || !m[2]) return json(404, { ok: false, raison: 'unknown route' });
     if (!studioXai.actif()) return json(503, { ok: false, raison: 'Video is not switched on yet (Grok Imagine).' });
@@ -4365,7 +4388,9 @@ const server = http.createServer(async (req, res) => {
     if (!prod) return json(404, { ok: false, raison: 'unknown production' });
     if ((prod.scenes || []).length >= P.SCENES_MAX) return json(400, { ok: false, raison: 'this production has ' + P.SCENES_MAX + ' scenes — start a new one' });
     const duree = studioMedia.DUREES.includes(Number(q.duree)) ? Number(q.duree) : studioMedia.DUREES[studioMedia.DUREES.length - 1];
-    const sc = P.scene(prod, q.texte, duree);
+    /* La suite : la derniere scene de la production (son texte), et la camera choisie. */
+    const derniere = (prod.scenes || []).filter((x) => x && x.texte).slice(-1)[0];
+    const sc = P.scene(prod, q.texte, duree, { camera: q.camera, precedente: q.suite === false ? '' : (derniere && derniere.texte) });
     if (sc.erreur) return json(400, { ok: false, raison: sc.erreur });
     const deps = Object.assign(depsMedia(), {
       referenceOk: (x) => x === P.SWOGE || (String(x).startsWith(P.IMAGE_PREFIXE) && !!S.litImage(String(x).slice(P.IMAGE_PREFIXE.length))),
@@ -4380,7 +4405,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (!r.ok) return json(r.code || 500, r);
     const idScene = require('crypto').randomBytes(6).toString('hex');
-    S.noteScene(addr, prod.id, { id: idScene, texte: sc.texte, video: r.id, statut: 'pending', duree, t: Date.now() });
+    S.noteScene(addr, prod.id, { id: idScene, texte: sc.texte, camera: sc.camera, video: r.id, statut: 'pending', duree, t: Date.now() });
     return json(200, Object.assign({}, r, { scene: idScene, production: prod.id }));
   }
   /* ---- STUDIO : ESSAI DE MONTAGE (xAI video edits), PROPRIETAIRE SEUL ----

@@ -101,11 +101,40 @@ function valide(p, { image, voixOk }) {
   return out;
 }
 
+/* ---- LA CAMERA ET LA SUITE (27 septembre 2026) ----
+ * Mesure sur deux videos du proprietaire, le meme jour. Scene 1 : SWOGE
+ * repris (visage, costume) mais camera presque fixe. Scene 2, « fais la
+ * suite » : le costume rouge garde, le VISAGE perdu (un autre chien), et une
+ * demi-douzaine de chiens inventes autour de la table. Cause : le prompt
+ * disait « seuls les personnages NOMMES apparaissent » ; « fais la suite » ne
+ * nomme personne, donc le modele ignorait que SWOGE etait dans la scene, et
+ * rien ne lui disait ce que racontait la precedente.
+ *   - personne n'est nomme : toute la distribution est dans la scene ;
+ *   - chaque personnage garde son visage DANS CHAQUE PLAN, et les figurants ne
+ *     lui ressemblent pas ;
+ *   - la scene precedente est rappelee (meme decor, memes tenues) ;
+ *   - un mouvement de camera cinematique est demande, choisi ou automatique. */
+const CAMERAS = {
+  auto: 'Cinematic camera: one smooth, motivated camera move (slow push-in, tracking or orbit), shallow depth of field, film lighting.',
+  pushin: 'Camera: slow dolly push-in toward the main character, shallow depth of field.',
+  tracking: 'Camera: smooth tracking shot that follows the action at the characters\' height.',
+  orbit: 'Camera: slow orbit around the main character, keeping them centred.',
+  crane: 'Camera: crane shot that rises to reveal the whole scene.',
+  handheld: 'Camera: energetic handheld action camera, quick but readable.',
+  static: 'Camera: locked-off static shot, the action moves inside the frame.',
+};
+const nomme = (texte, nom) => { const n = String(nom || '').trim(); if (!n) return false;
+  return new RegExp('(^|[^\\p{L}\\p{N}])' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^\\p{L}\\p{N}])', 'iu').test(texte); };
+
 /**
  * Le prompt et les références d'une scène. Les références partent dans le même
  * ORDRE à chaque scène : <IMAGE_n> et <AUDIO_n> désignent toujours la même chose.
+ * opts : { camera: une cle de CAMERAS, precedente: le texte de la scene d'avant }
  */
-function scene(prod, texte, duree) {
+function scene(prod, texte, duree, opts) {
+  opts = opts || {};
+  const camera = CAMERAS[opts.camera] ? opts.camera : 'auto';
+  const avant = propre(opts.precedente || '', 400);
   const t = propre(texte, TEXTE_MAX);
   if (!t && prod.mode === 'serie') return { erreur: 'describe the scene' };
   const references = [], voix = [];
@@ -118,9 +147,15 @@ function scene(prod, texte, duree) {
       return c.nom + ' is the character in <IMAGE_' + references.length + '>' + (c.description ? ' (' + c.description + ')' : '')
         + (iv !== null ? ' and speaks with the voice from <AUDIO_' + iv + '>' : '');
     });
-    prompt = 'A scene from the series "' + prod.titre + '". Characters — keep each one\'s face, fur or skin, body and build from its reference image; their clothes and poses follow the scene unless it says otherwise: '
-      + roles.join('; ') + '. Scene: ' + t
-      + ' Only characters named in the scene appear. A line in quotes is spoken aloud, in that character\'s voice.'
+    const nommes = prod.personnages.filter((c) => nomme(t, c.nom));
+    prompt = 'A scene from the series "' + prod.titre + '". Main characters — keep each one\'s face, fur or skin, body and build from its reference image in EVERY shot, never a different animal, breed or face; their clothes and poses follow the scene unless it says otherwise: '
+      + roles.join('; ') + '.'
+      + (avant ? ' This scene follows directly from the previous one: "' + avant + '" — same setting, lighting and outfits unless the scene says otherwise.' : '')
+      + ' Scene: ' + t + (/[.!?"”]$/.test(t) ? '' : '.')
+      + (nommes.length ? ' Only the main characters named in the scene appear.' : ' All the main characters above are in this scene.')
+      + ' Any other people or animals are unnamed background extras and must not look like the main characters.'
+      + ' A line in quotes is spoken aloud, in that character\'s voice.'
+      + ' ' + CAMERAS[camera]
       + (prod.style ? ' Visual style: ' + prod.style + '.' : '');
   } else {
     const p = prod.produit;
@@ -139,9 +174,10 @@ function scene(prod, texte, duree) {
       + rolePres + decor + (t ? ' ' + t : '')
       + (p.slogan ? ' The line "' + p.slogan + '" is said aloud.' : '')
       + (p.appel ? ' End on the product with the call to action: "' + p.appel + '".' : '')
+      + ' ' + CAMERAS[camera]
       + (prod.style ? ' Visual style: ' + prod.style + '.' : '');
   }
-  return { prompt: prompt.slice(0, 3900), references, voix, texte: t };
+  return { prompt: prompt.slice(0, 3900), references, voix, texte: t, camera };
 }
 
 /** Toutes les images qu'une production designe. */
@@ -245,4 +281,4 @@ function cree({ dossier, maintenant }) {
   return { liste, une, pose, supprime, noteScene, rangeImage, litImage, oublieImages, outilImage, menage };
 }
 
-module.exports = { valide, scene, cree, images, MODES, PERSONNAGES_MAX, SCENES_MAX, PRODUCTIONS_MAX, IMAGE_PREFIXE, IMAGE_NOM, SWOGE };
+module.exports = { valide, scene, cree, images, MODES, PERSONNAGES_MAX, SCENES_MAX, PRODUCTIONS_MAX, IMAGE_PREFIXE, IMAGE_NOM, SWOGE, CAMERAS };

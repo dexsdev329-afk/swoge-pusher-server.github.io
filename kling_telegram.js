@@ -38,8 +38,49 @@ const PROGRAMME = [
       + 'then turns his cards over to reveal a royal flush and grins; the casino lights flicker, other players gasp, cinematic slow camera push-in.',
     legende: '🎬 <b>SWOGE goes all-in</b>\nFirst video made with <b>Kling AI</b>, from the picture posted at 20:00.\n\n♠️ Play live: https://swoleeswoge.dog/swoge_poker.html',
     modele: 'kling-2.6', duree: 5, resolution: '720p', audio: 'off' },
+  /* « Fais 4 videos programmees pour 20 h 30, episodes 1 2 3 4 : tu as toutes
+     les API, essaie de creer une serie entierement avec l'IA, inventee, avec le
+     personnage de SWOGE, en automatique, juste pour le test. » (27/09)
+     Claude ecrit la serie (4 episodes : image cle, mouvement, legende) ; Kling
+     Image dessine chaque image cle sur la reference officielle ; Kling Video
+     l'anime (kling-2.6, 10 s, 720p sans son) ; chaque episode part sur
+     Telegram des qu'il est pret, dans l'ordre. Cout : 4 × (0,028 + 0,42) =
+     1,79 $ sur le compte Kling, ~0,01 $ de Claude. */
+  { cle: 'serie-2026-09-27', a: Date.parse('2026-09-27T18:30:00Z'), type: 'serie', episodes: 4,
+    modele: 'kling-2.6', duree: 10, resolution: '720p', audio: 'off', format: '16:9' },
 ];
 const RETARD_MAX_MS = 60 * 60e3;
+
+/* ---- LA SERIE ECRITE PAR CLAUDE ----
+ * Un JSON strict ; s'il ne vient pas (cle absente, panne, JSON illisible), une
+ * serie de secours ecrite ici part quand meme : le test mesure la chaine
+ * image → video → Telegram, et le dit dans la legende. */
+const SWOGE_MOT = 'SWOGE, a very muscular, bodybuilder-build shiba inu (keep his face, fur colours and build from the reference picture)';
+const SERIE_SYSTEME = 'You write tiny animated web series. Answer with JSON only, no prose, no code fence.';
+function consigneSerie(n) {
+  return 'Invent an original ' + n + '-episode micro-series starring ' + SWOGE_MOT + '. Fun, epic, a clear story arc with a twist in episode ' + Math.max(2, n - 1)
+    + ' and a payoff in episode ' + n + '. Each episode is ONE 10-second shot. Return exactly: '
+    + '{"titre":"series title","episodes":[{"titre":"episode title","image":"the key frame: who, where, what, the light, 1-2 sentences","mouvement":"what moves in 10 seconds and ONE cinematic camera move (push-in, tracking, orbit, crane or low angle), 1-2 sentences","legende":"one short hook line for Telegram"}]} '
+    + 'with ' + n + ' episodes. Always name SWOGE in image and mouvement. English.';
+}
+const SERIE_SECOURS = { titre: 'SWOGE: The Golden Barbell', secours: true, episodes: [
+  { titre: 'The Map', image: 'SWOGE finds an old treasure map in a neon-lit gym at night, holding it up under a single spotlight.', mouvement: 'SWOGE unfolds the map and grins; slow push-in on his face as the map glows.', legende: 'It starts with a map.' },
+  { titre: 'The Jungle Gym', image: 'SWOGE runs through a jungle full of ancient stone weights and vines at golden hour.', mouvement: 'SWOGE leaps over a fallen stone column; tracking shot at his height.', legende: 'The jungle tests every muscle.' },
+  { titre: 'The Trap', image: 'SWOGE in a torch-lit temple, a giant stone door closing behind him.', mouvement: 'SWOGE holds the closing stone door up with both arms; low-angle shot, dust falling.', legende: 'Twist: the temple fights back.' },
+  { titre: 'The Golden Barbell', image: 'SWOGE lifts a glowing golden barbell over his head in the temple treasure room.', mouvement: 'SWOGE lifts the golden barbell and roars; crane shot rising as gold light fills the room.', legende: 'Legend unlocked.' },
+] };
+function lisSerie(txt, n) {
+  try {
+    const m = /\{[\s\S]*\}/.exec(String(txt || '')); if (!m) return null;
+    const j = JSON.parse(m[0]);
+    const eps = (Array.isArray(j.episodes) ? j.episodes : []).slice(0, n).map((e) => ({
+      titre: String(e.titre || '').slice(0, 60), image: String(e.image || '').slice(0, 600),
+      mouvement: String(e.mouvement || '').slice(0, 600), legende: String(e.legende || '').slice(0, 140) }));
+    if (eps.length < n || eps.some((e) => !e.image || !e.mouvement)) return null;
+    return { titre: String(j.titre || 'SWOGE').slice(0, 80), episodes: eps };
+  } catch (e) { return null; }
+}
+const echappe = (s) => String(s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
 /**
  * deps : { kling (kling.js), telegram ({ notifyPhoto }), dossier, site, journal(o),
@@ -69,6 +110,7 @@ function cree(deps) {
     const source = du.depuis ? faits[du.depuis] : null;
     if (du.depuis && source && source.etat === 'lance') return null;
     if (du.type === 'video') return video(du, t, source);
+    if (du.type === 'serie') return serie(du, t);
     enCours = true;
     faits[du.cle] = { etat: 'lance', t }; ecrit();  // ecrit AVANT : un redemarrage pendant l'attente ne relance pas
     try {
@@ -103,6 +145,46 @@ function cree(deps) {
     } finally { enCours = false; }
   }
 
+  async function ecritSerie(n) {
+    const client = deps.claude ? deps.claude() : null;
+    if (!client) return SERIE_SECOURS;
+    try {
+      const r = await client.messages.create({ model: 'claude-haiku-4-5', max_tokens: 1500, system: SERIE_SYSTEME,
+        messages: [{ role: 'user', content: consigneSerie(n) }] });
+      const txt = (r.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+      return lisSerie(txt, n) || SERIE_SECOURS;
+    } catch (e) { return SERIE_SECOURS; }
+  }
+
+  /* La serie : ecrite, puis chaque episode image → video → Telegram, dans l'ordre.
+     L'etat est ecrit a chaque episode : un redemarrage n'en rejoue aucun. */
+  async function serie(du, t) {
+    enCours = true;
+    faits[du.cle] = { etat: 'lance', t, episodes: [] }; ecrit();
+    try {
+      const s = await ecritSerie(du.episodes);
+      faits[du.cle].titre = s.titre; faits[du.cle].secours = !!s.secours; ecrit();
+      journal({ programme: du.cle, type: 'serie', titre: s.titre, secours: !!s.secours, episodes: s.episodes.map((e) => e.titre) });
+      let postes = 0;
+      for (let i = 0; i < s.episodes.length; i++) {
+        const e = s.episodes[i], nom = 'Episode ' + (i + 1) + '/' + s.episodes.length;
+        const im = await deps.kling.image({ prompt: e.image + ' ' + SWOGE_MOT + '. Cinematic, detailed, film lighting.', image: deps.site + '/img/site/swoge_reference.jpg', reference: 'subject', format: du.format }, deps.attente);
+        const depart = im.ok && im.url ? im.url : deps.site + '/img/site/swoge_reference.jpg';
+        const v = await deps.kling.video({ prompt: e.mouvement + ' Keep SWOGE exactly as in the first frame.', image: depart, modele: du.modele, duree: du.duree, resolution: du.resolution, audio: du.audio }, deps.attente);
+        const ep = { n: i + 1, titre: e.titre, image: im.ok ? im.url : null, video: v.ok ? v.url : null, raison: v.ok ? null : v.raison };
+        faits[du.cle].episodes.push(ep); ecrit();
+        journal({ programme: du.cle, type: 'episode', n: i + 1, titre: e.titre, statut: v.ok ? 'succeeded' : 'failed', url: v.url || null, image: ep.image, message: v.ok ? null : v.raison });
+        if (!v.ok) continue;                         /* un episode rate ne publie rien ; les suivants continuent */
+        postes++;
+        (deps.telegram.notifyVideo || deps.telegram.notifyPhoto)(v.url,
+          '📺 <b>' + echappe(s.titre) + '</b> — ' + nom + ': <b>' + echappe(e.titre) + '</b>\n' + echappe(e.legende)
+          + '\n\n<i>Made automatically: story by Claude' + (s.secours ? ' (backup script)' : '') + ', pictures and video by Kling AI.</i>');
+      }
+      faits[du.cle].etat = postes ? 'poste' : 'echec'; faits[du.cle].postes = postes; ecrit();
+      return { cle: du.cle, ok: postes > 0, postes, titre: s.titre };
+    } finally { enCours = false; }
+  }
+
   let minuteur = null;
   function demarre(pasMs) {
     if (minuteur) return;
@@ -115,4 +197,4 @@ function cree(deps) {
   return { tour, demarre, etat };
 }
 
-module.exports = { cree, PROGRAMME, RETARD_MAX_MS };
+module.exports = { cree, PROGRAMME, RETARD_MAX_MS, lisSerie, SERIE_SECOURS };
