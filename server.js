@@ -1662,6 +1662,9 @@ const observatoire = require('./observatoire').cree({ dossier: require('path').j
 /* Kling : video, en essai proprietaire d'abord (kling.js, route /studio/kling). KLING_API_KEY. */
 const kling = require('./kling').cree({});
 const KLING_JOURNAL = require('path').join(cfg.DATA_DIR, 'kling_essais.jsonl');
+/* Une image Kling postee sur Telegram a heure fixe, une seule fois (kling_telegram.js). KLING_TG=0 la coupe. */
+const klingTg = require('./kling_telegram').cree({ kling, telegram: tg, dossier: cfg.DATA_DIR, site: SITE_URL,
+  journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } } });
 const epreuveSortie = require('./epreuve_sortie').cree({
   epreuve: (a) => aiColonie.epreuveDeSortie(a),
   dossier: cfg.DATA_DIR,
@@ -4415,7 +4418,7 @@ const server = http.createServer(async (req, res) => {
     if (path === '/studio/kling' && req.method === 'GET') {
       let essais = [];
       try { essais = require('fs').readFileSync(KLING_JOURNAL, 'utf8').trim().split('\n').filter(Boolean).slice(-20).map((l) => JSON.parse(l)).reverse(); } catch (e) { essais = []; }
-      return json(200, { ok: true, proprietaire: true, actif: kling.actif(), modeles: require('./kling').MODELES, essais });
+      return json(200, { ok: true, proprietaire: true, actif: kling.actif(), modeles: require('./kling').MODELES, essais, programme: klingTg.etat() });
     }
     const m = /^\/studio\/kling\/([0-9A-Za-z_-]{1,64})$/.exec(path);
     if (m && req.method === 'GET') {
@@ -8705,6 +8708,8 @@ server.listen(cfg.PORT, () => {
       console.warn('[ai] colonie non demarree :', e.message);
     }
   }
+
+  if (process.env.KLING_TG !== '0') klingTg.demarre();
 
   if (process.env.OBSERVATOIRE === '1') {
     observatoire.demarre();

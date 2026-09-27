@@ -25,6 +25,7 @@ process.env.AI_COLONIE = '0'; process.env.PERP_COLONIES = '0'; process.env.PERP_
 process.env.ODDS_API_KEY = ''; process.env.MONITEUR_URL = '';
 process.env.TG_APPELS = '0'; process.env.TG_DECOUVERTE = '0';
 process.env.KLING_API_KEY = 'cle-kling-secrete';
+process.env.KLING_TG = '0';   /* le post programme (kling_telegram.js) a son propre essai */
 const OWNER = ethers.Wallet.createRandom();
 process.env.AI_OWNER = OWNER.address;
 

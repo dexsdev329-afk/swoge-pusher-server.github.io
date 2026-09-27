@@ -58,6 +58,7 @@ lance x402base "$SRV" node x402_base_route.test.js   # USDC sur Base de bout en 
 lance compteurs "$SRV" node compteurs.test.js   # compteurs durables : un fichier par jour UTC, survivent au redemarrage et a SIGTERM, maison a part, jamais l IP
 lance klingjev "$SRV" node kling_jev.test.js   # Kling (nouveau standard, cle API, grille officielle) et Jev (systemone, probabilites, cout) : rien ne part sans cle, jamais la cle dans une reponse
 lance klingrte "$SRV" node kling_route.test.js   # essai Kling sur un vrai serveur : proprietaire seul, 403 avant Kling, journalise, aucun debit
+lance klingtg "$SRV" node kling_telegram.test.js   # image Kling postee sur Telegram a heure fixe : une fois, jamais en retard, rien sur le canal si Kling echoue
 lance observ  "$SRV" node observatoire.test.js   # Solana/Ethereum, observer seulement : decouverte unique, securite sans GoPlus, prix a 30 min par le meme service, disparus a part, rien que 4 services
 lance sortie  "$SRV" node epreuve_sortie.test.js   # can_i_sell : verdict du Cobaye, facture seulement une reponse, 60 s de cache, 2 en vol, journal sans payeur
 lance alerte  "$SRV" node alerte_usage.test.js   # alerte Telegram d un appel paye : scan_token par defaut, jamais les arguments, 12/h puis resume, notre wallet dit tel quel

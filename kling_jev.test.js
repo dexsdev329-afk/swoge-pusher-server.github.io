@@ -61,6 +61,34 @@ const rep = (status, j) => ({ status, ok: status >= 200 && status < 300, json: a
     ok(K.prixUsd('kling-2.6', '720p', 'off', 5) === 0.21, 'le moins cher : 5 s en 720p sans son, 0,21 $');
   }
 
+  console.log('\n-- 2 bis. Kling : l image (ancien standard, meme cle) --');
+  {
+    const vus = []; let etats = ['processing', 'succeed'];
+    const k = K.cree({ cle: () => 'cle-secrete-kling', fetch: async (u, o) => {
+      vus.push({ u, o, b: o.body ? JSON.parse(o.body) : null });
+      if (o.method === 'POST' && vus[vus.length - 1].b.image_reference) return rep(200, { code: 1201, message: 'image_reference is not supported by this model' });
+      if (o.method === 'POST') return rep(200, { code: 0, data: { task_id: 'I7', task_status: 'submitted' } });
+      const s = etats.shift();
+      return rep(200, { code: 0, data: { task_id: 'I7', task_status: s, task_result: s === 'succeed' ? { images: [{ index: 0, url: 'https://cdn.kling.example/i.png' }] } : undefined } });
+    } });
+    const r = await k.image({ prompt: 'SWOGE plays poker', image: 'https://swoleeswoge.dog/img/site/swoge_reference.jpg', reference: 'subject', format: '3:4' }, { dort: async () => {} });
+    ok(vus[0].u === 'https://api-singapore.klingai.com/v1/images/generations' && vus[0].b.model_name === 'kling-v3' && vus[0].b.aspect_ratio === '3:4'
+       && vus[0].b.image === 'https://swoleeswoge.dog/img/site/swoge_reference.jpg' && vus[0].b.image_reference === 'subject' && vus[0].b.n === 1,
+       'POST /v1/images/generations : kling-v3, la reference officielle en URL, subject, une image');
+    ok(!('image_reference' in vus[1].b) && vus[1].b.image === vus[0].b.image && r.essais.length === 1,
+       'image_reference refuse par le modele : on redemande SANS lui, en gardant l image (et le refus est garde)');
+    ok(r.ok && r.url === 'https://cdn.kling.example/i.png' && r.estimationUsd === 0.028 && /\/v1\/images\/generations\/I7$/.test(vus[2].u) && vus.length === 4,
+       'le suivi lit task_result.images jusqu a « succeed » (statut de la doc, pas « succeeded ») : 0,028 $ l image');
+    const echoue = K.cree({ cle: () => 'k', fetch: async (u, o) => o.method === 'POST' ? rep(200, { code: 0, data: { task_id: 'I8' } })
+      : rep(200, { code: 0, data: { task_id: 'I8', task_status: 'failed', task_status_msg: 'content risk' } }) });
+    const re = await echoue.image({ prompt: 'x' }, { dort: async () => {} });
+    ok(!re.ok && /content risk/.test(re.raison), 'un echec de Kling est rendu avec son motif');
+    let n0 = 0;
+    const sans = K.cree({ cle: () => '', fetch: async () => { n0++; return rep(200, {}); } });
+    ok(!(await sans.image({ prompt: 'x' })).ok && n0 === 0, 'sans cle : rien ne part');
+    ok((await k.lanceImage({ prompt: 'x', image: 'data:image/png;base64,AAA' })).code === 400, 'une reference avec prefixe data: est refusee (la doc veut du base64 nu ou une URL)');
+  }
+
   console.log('\n-- 3. Jev --');
   {
     let vu = null;
