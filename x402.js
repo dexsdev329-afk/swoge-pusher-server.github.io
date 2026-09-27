@@ -130,6 +130,13 @@ const DOMAINE_USDC_BASE_SEPOLIA = { name: 'USDC', version: '2' };
    x402/seller/facilitator et x402/support/faq, relus le 26 septembre 2026). On
    compte toujours le pire cas, comme GAZ_UNITES sur Robinhood. */
 const FRAIS_CDP_USD = 0.001;
+/* Le plancher d'un outil sur les reseaux dont le facilitateur paie le gaz (Base,
+   Solana), quand il est plus bas que MIN_USD (0,02 $, qui couvre le gaz de
+   Robinhood Chain, 0,011 $ au 402 du 27/09). token_verdict : 0,01 $, le prix
+   median des 1 206 services d'analyse de jetons du catalogue PayAI (releve du
+   27/09) ; ce que le reglement nous coute la-dessus : 0,001 $ (Coinbase),
+   0,00231 $ (PayAI Base), 0,00152 $ (PayAI Solana). */
+const PLANCHER_FACILITE = Object.freeze({ token_verdict: 0.01 });
 /* Les journaux de l'USDC (EIP-3009, circlefin/stablecoin-evm fc85788b,
    contracts/v2/EIP3009.sol : AuthorizationUsed émis :335-336,
    AuthorizationCanceled :266-267) — keccak256 des signatures, calculés avec
@@ -431,13 +438,13 @@ function cree(deps) {
     }
     let usdBase = null, montantBase = null;
     if (baseActif()) {
-      const ub = Math.max(MIN_USD, base + FRAIS_CDP_USD);
+      const ub = Math.max(PLANCHER_FACILITE[outil] || MIN_USD, base + FRAIS_CDP_USD);
       montantBase = String(Math.ceil(Math.round(ub * 1e9) / 1e3));
       usdBase = Number((Number(montantBase) / 1e6).toFixed(6));
     }
     let usdSolana = null, montantSolana = null;
     if (solanaActif() && !SOLANA_EXCLUS.includes(outil)) {
-      const us = Math.max(MIN_USD, base + FRAIS_SOLANA_USD);
+      const us = Math.max(PLANCHER_FACILITE[outil] || MIN_USD, base + FRAIS_SOLANA_USD);
       montantSolana = String(Math.ceil(Math.round(us * 1e9) / 1e3));
       usdSolana = Number((Number(montantSolana) / 1e6).toFixed(6));
     }

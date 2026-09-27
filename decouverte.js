@@ -89,7 +89,7 @@ const ETIQUETTES = [
 const ETIQUETTES_OUTIL = {
   scan_token: ['token-security', 'crypto', 'robinhood-chain'], colony_activity: ['robinhood-chain', 'crypto'], swoge_economy: ['crypto', 'robinhood-chain'],
   new_launches: ['robinhood-chain', 'crypto', 'token-security'], wallet_intel: ['osint', 'crypto', 'robinhood-chain'], osint_lookup: ['osint', 'research'],
-  can_i_sell: ['token-security', 'crypto', 'robinhood-chain'],
+  can_i_sell: ['token-security', 'crypto', 'robinhood-chain'], token_verdict: ['token-security', 'crypto', 'robinhood-chain'],
   telegram_calls: ['robinhood-chain', 'crypto'], web_search: ['research'], ask_agent: ['research', 'crypto'],
   generate_image: ['images'], generate_video: ['video'], video_status: ['video'],
 };
@@ -189,6 +189,32 @@ const SORTIES = {
       liquidity: { lpTokenRead: true, burnedPct: 100 }, checkedAt: '2026-09-27T12:00:00.000Z',
       limits: 'A read-only simulation of what the pool would return NOW for a small order. It cannot see a blacklist that closes after you buy, liquidity pulled later, or a tax changed later. Measurements, never a buy or sell signal.' },
     texte: 'Exit test for $LOBSTER ' + ADR + ' on Robinhood Chain: SELLABLE — a round trip returns 97.2% of the stake (2.8% in fees and depth)…',
+  },
+  /* token_verdict (27 septembre 2026) : verdict_jeton.js, lu dans son code. */
+  token_verdict: {
+    schema: obj({
+      token: obj({ address: s('token contract, lower case'), symbol: sn('symbol from DexScreener'), name: sn('name from DexScreener'), chain: sn('DexScreener chain id'),
+        priceUsd: nn('price, USD'), liquidityUsd: nn('deepest pool liquidity, USD'), marketCapUsd: nn('market cap, USD'), poolAgeDays: nn('pool age, days'), url: sn('DexScreener pool') },
+        ['address', 'symbol', 'name', 'chain', 'priceUsd', 'liquidityUsd', 'marketCapUsd', 'poolAgeDays', 'url']),
+      verdict: { type: 'string', enum: ['red_flags', 'caution', 'unknown', 'no_red_flag_found'], description: 'red_flags if any red flag; unknown if the market or the contract could not be read; caution if any other flag; else no_red_flag_found (never "safe")' },
+      summary: s('the verdict in one sentence'),
+      flags: tab(obj({ level: { type: 'string', enum: ['red', 'caution', 'unknown'] }, code: s('stable flag code, e.g. honeypot, hidden_owner, thin_pool, colony_negative_trait'),
+        text: s('what fired, with its number and sample size when there is one'), source: s('GoPlus, DexScreener or SWOGE AI colony') }, ['level', 'code', 'text', 'source']), 'every check that fired'),
+      colony: objn({ observations: n('observations in the colony memory'), horizonMinutes: n('the move is measured this many minutes after'), minObservations: n('traits under this count are not used'),
+        negativeTraits: tab(obj({ trait: s(), case: s(), observations: n(), averagePct: n('average move, %') })), positiveTraits: tab(obj({ trait: s(), case: s(), observations: n(), averagePct: n('average move, %') }), 'shown apart, never an endorsement'),
+        scan: sn('the full scan page') }, ['observations', 'horizonMinutes', 'minObservations', 'negativeTraits', 'positiveTraits'], 'Robinhood Chain tokens the colony knows'),
+      attribution: objn({ security: s(), url: s() }, ['security', 'url'], 'set when GoPlus answered'),
+      note: s('what the verdict is not'),
+    }, ['token', 'verdict', 'summary', 'flags', 'colony', 'attribution', 'note']),
+    exemple: { token: { address: ADR, symbol: 'LOBSTER', name: 'Lobster', chain: 'robinhood', priceUsd: 0.000008424, liquidityUsd: 8803.04, marketCapUsd: 8253, poolAgeDays: 1.4,
+        url: 'https://dexscreener.com/robinhood/0x66604bdceb5a54c2c137383171085c3c2260d3d21abe1a77d9180053c9e58c53' },
+      verdict: 'caution', summary: '2 points to check: thin_pool, colony_negative_trait',
+      flags: [{ level: 'caution', code: 'thin_pool', text: 'pool liquidity $8,803, under the $13,000 the SWOGE AI colony requires to buy — SWOGE AI colony paper trades by pool size at buy (16 Sep 2026): pools $6-13k, 28 trades, -7.8% average, 29% winners; $13-25k, 106 trades, +1.2%, 46% winners', source: 'DexScreener + SWOGE AI colony' },
+        { level: 'caution', code: 'colony_negative_trait', text: 'Market cap = cap <$10k: past tokens with this trait moved -4.3% on average in 30 minutes, over 32,821 observations', source: 'SWOGE AI colony' }],
+      colony: { observations: 147292, horizonMinutes: 30, minObservations: 30, negativeTraits: [{ trait: 'Market cap', case: 'cap <$10k', observations: 32821, averagePct: -4.3 }],
+        positiveTraits: [{ trait: 'Contract bytecode', case: 'bytecode: no mint, no blacklist, no pause, no fee setter', observations: 2395, averagePct: 16.9 }], scan: 'https://swoleeswoge.dog/swoge_scan.html?t=' + ADR },
+      attribution: ATTR_EX, note: 'Measurements, never a buy or sell signal. no_red_flag_found means none of these checks fired, not that the token is safe; unknown stays unknown.' },
+    texte: 'Quick verdict for $LOBSTER ' + ADR + ' on robinhood: CAUTION — 2 points to check: thin_pool, colony_negative_trait.…',
   },
   colony_activity: {
     schema: obj({
@@ -562,7 +588,7 @@ function manifeste(c) {
 /* Un exemple VALIDE par outil (les ARGS de decouverte.test.js) : chacun passe
    son schéma d'entrée ET agentic.entreeInvalide — l'essai le vérifie. */
 const EXEMPLES_ENTREE = {
-  scan_token: { address: ADR }, can_i_sell: { address: ADR }, colony_activity: {}, swoge_economy: {}, new_launches: { limit: 5 },
+  scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, colony_activity: {}, swoge_economy: {}, new_launches: { limit: 5 },
   wallet_intel: { address: ADR }, osint_lookup: { target: 'example.com' }, telegram_calls: { hours: 24, limit: 20 },
   web_search: { query: 'robinhood chain' }, generate_image: { prompt: 'a swole doge', count: 1 },
   ask_agent: { task: 'is LOBSTER worth a look?' }, generate_video: { prompt: 'a swole doge lifting' }, video_status: { id: '66f5b1c2d3e4f5a6b7c8d9e0' },

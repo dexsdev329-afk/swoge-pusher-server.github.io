@@ -174,7 +174,7 @@ function valide(sc, v, ch, strict, err) {
     imageHorsSolde: async () => ({ ok: true, urls: ['https://imgen.x.ai/c.png'], compris: 'SWOGE on a boat', reference: 'swoge' }),
     video: async () => ({ ok: true, id: '66f5b1c2d3e4f5a6b7c8d9e0', status: 'pending', duree: 6, resolution: '480p' }),
     etatVideo: () => ({ ok: true, id: '66f5b1c2d3e4f5a6b7c8d9e0', status: 'done', progress: 100, url: 'https://srv.example/v.mp4', duree: 6, resolution: '480p', factureSwoge: '9621.43', factureUsd: 0.24 }) });
-  const ARGS = { scan_token: { address: ADR }, can_i_sell: { address: ADR }, colony_activity: {}, swoge_economy: {}, new_launches: { limit: 5 }, wallet_intel: { address: '0x' + 'cd'.repeat(20) },
+  const ARGS = { scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, colony_activity: {}, swoge_economy: {}, new_launches: { limit: 5 }, wallet_intel: { address: '0x' + 'cd'.repeat(20) },
     osint_lookup: { target: 'example.com' }, web_search: { query: 'robinhood chain' }, generate_image: { prompt: 'a swole doge', count: 1 },
     ask_agent: { task: 'is LOBSTER worth a look?' }, generate_video: { prompt: 'a swole doge lifting' }, video_status: { id: '66f5b1c2d3e4f5a6b7c8d9e0' } };
   for (const o of outils) {
@@ -283,7 +283,7 @@ function valide(sc, v, ch, strict, err) {
   process.env.TG_APPELS_VENTE = '1';
   const tous = require('./agentic').definitions({ recherche: true });
   delete process.env.TG_APPELS_VENTE;
-  ok(tous.length === 13 && tous.every((o) => D.EXEMPLES_ENTREE[o.name]), 'un exemple d entree fixe pour chacun des ' + tous.length + ' outils'
+  ok(tous.length === 14 && tous.every((o) => D.EXEMPLES_ENTREE[o.name]), 'un exemple d entree fixe pour chacun des ' + tous.length + ' outils'
      + (tous.filter((o) => !D.EXEMPLES_ENTREE[o.name]).length ? ' — manque : ' + tous.filter((o) => !D.EXEMPLES_ENTREE[o.name]).map((o) => o.name).join(', ') : ''));
   for (const o of tous) {
     const b = D.bazaar(o.name, o);

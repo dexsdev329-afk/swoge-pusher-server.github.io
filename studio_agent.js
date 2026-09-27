@@ -134,6 +134,10 @@ const NON_OFFERTS = () => (process.env.TG_APPELS_VENTE === '1' ? [] : ['telegram
 /* Les outils que agentic.js ajoute pour l'API (ask_agent, generate_image,
    generate_video, video_status), a la meme regle — agentic.definitions les lit ici. */
 const DESCRIPTIONS_API = Object.freeze({
+  /* 27 septembre 2026 : le verdict rapide, vendu par l'API seulement (verdict_jeton.js). */
+  token_verdict: 'Use this when you must decide fast whether an EVM token is worth a closer look: one verdict you can branch on (red_flags, caution, unknown or no_red_flag_found) with its reasons. '
+    + 'Judges the same data as scan_token: the GoPlus contract checks (Powered by Go+ Security, https://gopluslabs.io), the deepest DexScreener pool and, for Robinhood Chain tokens, the traits the SWOGE AI colony measured on past tokens. '
+    + 'Each flag carries its source, and each colony figure its number of observations. no_red_flag_found only means none of the checks fired; never a buy or sell signal, and unknown stays unknown.',
   ask_agent: 'Use this when a question needs several of these tools chained together and a written answer, for example comparing tokens or researching a launcher. '
     + 'SwogeAgentic, a Claude agent, picks the tools, reads the numbers and answers in Markdown with its sources and sample sizes. '
     + 'API key only: billed at its real cost, up to the quoted maximum ("quote": true gives it). Takes 10 to 60 seconds.',
@@ -294,6 +298,15 @@ function outils(src) {
         texte += '\n\nShareable scan card (PNG): ' + carte.links.card + ' — share page (link preview on X, Telegram, Discord): ' + carte.links.share;
       }
       return { texte, carte, sources: src.Jeton.sources([f]) };
+    },
+    /* Le verdict rapide (verdict_jeton.js, 27/09/2026) : la MEME fiche que
+       scan_token, jugee — vendu par l'API seulement (agentic.definitions),
+       jamais offert a l'agent de la page (sa borne d'outils, OUTILS_JETONS). */
+    async token_verdict(e) {
+      if (!adresseOk(e.address)) return { erreur: 'address must be 0x followed by 40 hex characters' };
+      const V = require('./verdict_jeton');
+      const v = V.juge(await src.fiche(String(e.address).toLowerCase()));
+      return { texte: V.texte(v), donnees: v };
     },
     async can_i_sell(e) {
       if (!src.sortie) return { erreur: 'the exit test is not switched on' };

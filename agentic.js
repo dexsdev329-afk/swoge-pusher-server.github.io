@@ -56,7 +56,13 @@ const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0
      ~3 eth_call, une lecture de journaux, un devis du quoteur, sans fournisseur
      payant. Le prix de scan_token sur Base (0,02 $ USDC, 402 lu le 27/09) :
      un prix de depart, a relire quand de vrais agents l'auront achete. */
-  can_i_sell: 0.02 };
+  can_i_sell: 0.02,
+  /* 27 septembre 2026 : le verdict rapide (verdict_jeton.js), la fiche de
+     scan_token jugee, sans lecture de plus. Le prix median des 1 206 services
+     d'analyse de jetons du catalogue PayAI (releve du 27/09) est 0,01 $ : 0,008 $
+     par cle ; en x402, le plancher de 0,01 $ (x402.PLANCHER_FACILITE) sur Base
+     et Solana, 0,02 $ sur Robinhood Chain (le gaz). Prix de depart. */
+  token_verdict: 0.008 };
 const VARIABLES = ['ask_agent', 'generate_image', 'generate_video'];
 /* `video_status` : gratuit (relire SA vidéo), jamais facturé. */
 const GRATUITS = ['video_status'];
@@ -119,6 +125,9 @@ function definitions(actifs) {
   /* Les quatre descriptions de l'API vivent dans studio_agent.DESCRIPTIONS_API
      (premiere phrase « quand appeler », comme les huit outils de l'agent) :
      studio_agent.test.js juge ce qui est PUBLIE ici, pas la constante. */
+  /* Vendu par l'API seulement : l'agent de la page a deja scan_token. */
+  base.push({ name: 'token_verdict', description: Agent.DESCRIPTIONS_API.token_verdict,
+    inputSchema: { type: 'object', properties: { address: { type: 'string', description: 'EVM contract address, 0x followed by 40 hex characters' } }, required: ['address'] } });
   base.push({ name: 'ask_agent', description: Agent.DESCRIPTIONS_API.ask_agent,
     inputSchema: { type: 'object', properties: { task: { type: 'string', description: 'what you want researched, in any language' },
       model: { type: 'string', enum: Chat.MODELES.filter((m) => m.fournisseur === 'anthropic').map((m) => m.id), description: 'optional Claude model (default sonnet-5)' } }, required: ['task'] } });
@@ -142,7 +151,7 @@ function definitions(actifs) {
 /** Une entrée invalide est refusée AVANT tout débit. Rend une phrase, ou null. */
 function entreeInvalide(outil, a) {
   a = a || {};
-  if ((outil === 'scan_token' || outil === 'can_i_sell') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
+  if ((outil === 'scan_token' || outil === 'can_i_sell' || outil === 'token_verdict') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
   if (outil === 'web_search' && !String(a.query || '').trim()) return 'query is required';
   if (outil === 'ask_agent' && !String(a.task || '').trim()) return 'task is required';
   if (outil === 'ask_agent' && String(a.task).length > TACHE_MAX_CAR) return 'task is too long (max ' + TACHE_MAX_CAR + ' characters)';

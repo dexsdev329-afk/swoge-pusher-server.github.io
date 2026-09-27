@@ -1045,6 +1045,11 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
       ok(so && iSo === 1 && so.asset === X.USDC_SOLANA && so.payTo === PAYTO_SOL && so.extra.feePayer === FEE && so.amount === p0.montantSolana && Number(so.amount) >= 20000,
          'le 402 : Solana juste apres Base, USDC, notre adresse, le feePayer de PayAI, ' + so.amount + ' (prix + 0,002 $, minimum 0,02 $)');
       ok(/in USDC on Base or Solana/.test(q.resource.description), 'la description le dit : « in USDC on Base or Solana »');
+      /* Le plancher de token_verdict (27/09) : 0,01 $ sur Base et Solana (le facilitateur paie le gaz),
+         0,02 $ sur Robinhood Chain ; les autres outils gardent 0,02 $ partout. */
+      const pv = await Ms.x.prix('token_verdict', {}), ps = await Ms.x.prix('scan_token', {});
+      ok(pv.montantBase === '10000' && pv.montantSolana === '10000' && pv.usd >= 0.02 && ps.montantBase === '20000' && ps.montantSolana === '20000',
+         'token_verdict : 0,01 $ sur Base et Solana, ' + pv.usd + ' $ sur Robinhood Chain (gaz) ; scan_token reste a 0,02 $');
       const qa = await entete402(Ms, 'ask_agent', { task: 'x' });
       ok(!qa.accepts.some((a) => a.network === X.RESEAU_SOLANA), 'ask_agent : pas de Solana (sa transaction expirerait avant la fin du travail)');
       const s1 = signeSol(q);
