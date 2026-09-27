@@ -81,6 +81,7 @@ const ETIQUETTES = [
   { name: 'robinhood-chain', description: 'Robinhood Chain (eip155:4663), measured by the SWOGE AI colony with sample sizes' },
   { name: 'token-security', description: 'Contract checks (Powered by Go+ Security) and what similar tokens did' },
   { name: 'research', description: 'Web search, OSINT and a research agent' },
+  { name: 'ai-models', description: 'Frontier AI models (Claude, GPT-6, Grok) paid per call, OpenAI format' },
   { name: 'osint', description: 'Passive reconnaissance on infrastructure and deployer wallets' },
   { name: 'images', description: 'Image generation (Grok Imagine, ChatGPT Image)' },
   { name: 'video', description: 'Short video generation (Grok Imagine)' },
@@ -90,6 +91,7 @@ const ETIQUETTES_OUTIL = {
   scan_token: ['token-security', 'crypto', 'robinhood-chain'], colony_activity: ['robinhood-chain', 'crypto'], swoge_economy: ['crypto', 'robinhood-chain'],
   new_launches: ['robinhood-chain', 'crypto', 'token-security'], wallet_intel: ['osint', 'crypto', 'robinhood-chain'], osint_lookup: ['osint', 'research'],
   can_i_sell: ['token-security', 'crypto', 'robinhood-chain'], token_verdict: ['token-security', 'crypto', 'robinhood-chain'],
+  chat_completion: ['ai-models', 'research'],
   robinhood_rpc: ['robinhood-chain', 'crypto'], robinhood_token: ['robinhood-chain', 'crypto', 'token-security'], robinhood_wallet: ['robinhood-chain', 'crypto'], robinhood_tx: ['robinhood-chain', 'crypto'],
   telegram_calls: ['robinhood-chain', 'crypto'], web_search: ['research'], ask_agent: ['research', 'crypto'],
   generate_image: ['images'], generate_video: ['video'], video_status: ['video'],
@@ -190,6 +192,17 @@ const SORTIES = {
       liquidity: { lpTokenRead: true, burnedPct: 100 }, checkedAt: '2026-09-27T12:00:00.000Z',
       limits: 'A read-only simulation of what the pool would return NOW for a small order. It cannot see a blacklist that closes after you buy, liquidity pulled later, or a tax changed later. Measurements, never a buy or sell signal.' },
     texte: 'Exit test for $LOBSTER ' + ADR + ' on Robinhood Chain: SELLABLE — a round trip returns 97.2% of the stake (2.8% in fees and depth)…',
+  },
+  /* chat_completion (27 septembre 2026) : chat_x402.js, lu dans son code — le format chat.completion d'OpenAI. */
+  chat_completion: {
+    schema: obj({ id: s('chatcmpl-…'), object: s('always chat.completion'), created: n('Unix time'), model: s('the model id asked'), served: s('the provider model that answered'),
+      choices: tab(obj({ index: n(), message: obj({ role: s('always assistant'), content: s('the answer') }, ['role', 'content']),
+        finish_reason: { type: 'string', enum: ['stop', 'length'], description: 'length: max_tokens reached' } }, ['index', 'message', 'finish_reason'])),
+      usage: obj({ prompt_tokens: n(), completion_tokens: n('reasoning included'), total_tokens: n() }, ['prompt_tokens', 'completion_tokens', 'total_tokens']) },
+      ['id', 'object', 'created', 'model', 'served', 'choices', 'usage']),
+    exemple: { id: 'chatcmpl-5b1f0c9e2a7d4e8f9a1b2c3d', object: 'chat.completion', created: 1790550000, model: 'haiku-4-5', served: 'claude-haiku-4-5',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'Hello there, nice to meet!' }, finish_reason: 'stop' }], usage: { prompt_tokens: 16, completion_tokens: 9, total_tokens: 25 } },
+    texte: 'Hello there, nice to meet!',
   },
   /* Les lectures Robinhood Chain (27 septembre 2026) : lectures_rh.js, lu dans son code. */
   robinhood_rpc: {
@@ -635,6 +648,7 @@ function manifeste(c) {
    son schéma d'entrée ET agentic.entreeInvalide — l'essai le vérifie. */
 const EXEMPLES_ENTREE = {
   scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, colony_activity: {},
+  chat_completion: { messages: [{ role: 'user', content: 'Say hello in five words.' }], max_tokens: 64 },
   robinhood_rpc: { method: 'eth_blockNumber' }, robinhood_token: { address: ADR }, robinhood_wallet: { address: ADR }, robinhood_tx: { hash: '0x' + 'ab'.repeat(32) }, swoge_economy: {}, new_launches: { limit: 5 },
   wallet_intel: { address: ADR }, osint_lookup: { target: 'example.com' }, telegram_calls: { hours: 24, limit: 20 },
   web_search: { query: 'robinhood chain' }, generate_image: { prompt: 'a swole doge', count: 1 },

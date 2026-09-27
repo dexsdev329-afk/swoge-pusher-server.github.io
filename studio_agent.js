@@ -134,6 +134,10 @@ const NON_OFFERTS = () => (process.env.TG_APPELS_VENTE === '1' ? [] : ['telegram
 /* Les outils que agentic.js ajoute pour l'API (ask_agent, generate_image,
    generate_video, video_status), a la meme regle — agentic.definitions les lit ici. */
 const DESCRIPTIONS_API = Object.freeze({
+  /* 27 septembre 2026 : les modeles d'IA payes a l'appel (chat_x402.js), vendus par l'API seulement. */
+  chat_completion: 'Use this when you need an answer from a frontier AI model without an account or an API key: Claude (Opus, Fable, Sonnet, Haiku), GPT-6 or Grok, one call. '
+    + 'OpenAI-style messages in, an OpenAI chat.completion out (choices, usage). The price is quoted before the call from your input and max_tokens at the model rate, '
+    + 'plus a small margin; a failed call is not charged. Text only, no tools.',
   /* 27 septembre 2026 : les lectures Robinhood Chain (lectures_rh.js), vendues par l'API seulement. */
   robinhood_rpc: 'Use this when you need a raw read on Robinhood Chain (chain id 4663) without running a node: one read-only JSON-RPC call. '
     + 'Allowed: eth_blockNumber, eth_chainId, eth_gasPrice, eth_getBalance, eth_getCode, eth_getTransactionCount, eth_getStorageAt, eth_call, eth_estimateGas, '

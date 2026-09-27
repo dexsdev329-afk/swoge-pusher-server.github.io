@@ -38,6 +38,7 @@ const Agent = require('./studio_agent');
 const Rech = require('./studio_recherche');
 
 const Media = require('./studio_media');
+const ChatX = require('./chat_x402');
 const Jeton = require('./studio_jeton');
 
 /* Ajoutes le 26 septembre 2026 (etape 3) : les lancements du moment, le
@@ -114,6 +115,8 @@ function prixAgentX402Usd() {
  */
 function prixX402Usd(outil, args) {
   if (outil === 'ask_agent' && agentX402Allume()) return prixAgentX402Usd();
+  /* chat_completion (27/09) : le pire cas de CETTE demande × X402_CHAT_MARGE (chat_x402.js). */
+  if (outil === 'chat_completion') return ChatX.prixUsd(args);
   if (outil === 'generate_image') {
     const a = args || {};
     return Media.prixFixeImageUsd({ fournisseur: a.provider === 'openai' ? 'openai' : 'grok', modele: a.quality === 'speed' ? 'rapide' : 'qualite',
@@ -130,6 +133,12 @@ function definitions(actifs) {
   /* Les quatre descriptions de l'API vivent dans studio_agent.DESCRIPTIONS_API
      (premiere phrase « quand appeler », comme les huit outils de l'agent) :
      studio_agent.test.js juge ce qui est PUBLIE ici, pas la constante. */
+  /* Les modeles d'IA payes a l'appel (chat_x402.js, 27/09) : vendus par l'API seulement. */
+  base.push({ name: 'chat_completion', description: Agent.DESCRIPTIONS_API.chat_completion, inputSchema: { type: 'object', properties: {
+    model: { type: 'string', enum: Chat.MODELES.map((m) => m.id), description: 'the model (default ' + ChatX.DEFAUT + ')' },
+    messages: { type: 'array', items: { type: 'object', properties: { role: { type: 'string', enum: ['system', 'user', 'assistant'] }, content: { type: 'string' } }, required: ['role', 'content'] },
+      description: 'the conversation, OpenAI style, text only, the last message from the user (' + ChatX.MESSAGES_MAX + ' messages, ' + ChatX.ENTREE_MAX_CAR.toLocaleString('en-US') + ' characters at most)' },
+    max_tokens: { type: 'integer', description: 'the most the answer may use, reasoning included (default ' + ChatX.SORTIE_DEFAUT + '); the price is computed from it' } }, required: ['messages'] } });
   /* Les lectures Robinhood Chain (27/09) : vendues par l'API seulement. */
   const ADR_E = { type: 'string', description: 'address on Robinhood Chain, 0x followed by 40 hex characters' };
   base.push({ name: 'robinhood_token', description: Agent.DESCRIPTIONS_API.robinhood_token, inputSchema: { type: 'object', properties: { address: ADR_E }, required: ['address'] } });
@@ -168,6 +177,7 @@ function entreeInvalide(outil, a) {
   a = a || {};
   if ((outil === 'scan_token' || outil === 'can_i_sell' || outil === 'token_verdict') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
   if (outil === 'web_search' && !String(a.query || '').trim()) return 'query is required';
+  if (outil === 'chat_completion') { const d = ChatX.lis(a); if (d.erreur) return d.erreur; }
   if ((outil === 'robinhood_token' || outil === 'robinhood_wallet') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
   if (outil === 'robinhood_wallet' && a.tokens !== undefined && !(Array.isArray(a.tokens) && a.tokens.length <= 20 && a.tokens.every((x) => /^0x[0-9a-fA-F]{40}$/.test(String(x))))) return 'tokens must be a list of at most 20 token addresses';
   if (outil === 'robinhood_tx' && !/^0x[0-9a-fA-F]{64}$/.test(String(a.hash || ''))) return 'hash must be 0x followed by 64 hex characters';
@@ -255,6 +265,10 @@ function cree(deps) {
           return Object.assign({}, d, { prix: { variable: true, maxUsd: Number(mx.toFixed(4)), maxSwoge: enSwoge(mx), note: 'real cost when the video arrives, up to this maximum (Quality, ' + Media.DUREES[Media.DUREES.length - 1] + ' s); nothing if it fails' } });
         }
         if (d.name === 'video_status') return Object.assign({}, d, { prix: { usd: 0, swoge: '0', gratuit: true } });
+        if (d.name === 'chat_completion') {
+          const u = ChatX.prixUsd({});
+          return Object.assign({}, d, { prix: { usd: u, swoge: enSwoge(u), variable: true, note: 'priced per request before the call: its input and max_tokens at the model rate x ' + ChatX.marge() + ' (this is a one-line ' + ChatX.DEFAUT + ' request)' } });
+        }
         if (d.name === 'ask_agent') {
           const m = Chat.modele('sonnet-5');
           const max = Chat.factureUsd(Agent.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], !!act.recherche));
@@ -411,6 +425,23 @@ function cree(deps) {
                texte: r.texte, facture: { swoge, usd: r.factureUsd }, solde: r.solde, recu };
     }
 
+    if (outil === 'chat_completion') {
+      /* Par cle aussi : le devis de CETTE demande, reserve puis debite seulement si le modele a repondu. */
+      const usdC = Math.max(ChatX.prixUsd(args), 0.001);
+      const weiC = studio.montantBaseDe(usdC, cours, dec), swogeC = studio.formateBase(weiC, dec);
+      if (devis) return { ok: true, outil, devis: { swoge: swogeC, usd: usdC } };
+      if (!deps.chat) return { ok: false, code: 503, raison: 'chat completions are not switched on yet' };
+      if (!deps.cles.sousPlafond(cle.h, Number(swogeC))) return echec('plafond', { ok: false, code: 402, raison: 'this key reached its daily spending cap' });
+      if (!rythmeOk(cle.h)) return { ok: false, code: 429, raison: 'too many calls — max ' + APPELS_PAR_MINUTE + ' per minute per key' };
+      if (!deps.solde.reserve(cle.addr, weiC)) return echec('solde', { ok: false, code: 402, raison: 'balance too low — top up $SWOGE in the Wallet', requisSwoge: swogeC });
+      const r = await deps.chat.appelle(args).catch(() => ({ ok: false, code: 502, raison: 'the provider failed - nothing was charged' }));
+      if (!r.ok) { deps.solde.regle(cle.addr, weiC, 0n); return echec('fournisseur', { ok: false, code: r.code || 502, raison: r.raison }); }
+      const soldeC = deps.solde.regle(cle.addr, weiC, weiC);
+      const recuC = crypto.randomBytes(8).toString('hex');
+      deps.cles.depense(cle.h, Number(swogeC), { id: recuC, outil, swoge: swogeC, usd: usdC });
+      paye(usdC);
+      return { ok: true, outil, resultat: r.resultat, texte: r.texte, facture: { swoge: swogeC, usd: usdC }, solde: soldeC, recu: recuC };
+    }
     const usd = prixUsd(outil);
     const wei = studio.montantBaseDe(usd, cours, dec);
     const swoge = studio.formateBase(wei, dec);
@@ -473,6 +504,13 @@ function cree(deps) {
       return { ok: true, outil, resultat: { answer: r.texte, sources: r.sources || [], tokens: r.jetons || [], steps: r.etapes || 1, stoppedByBudget: !!r.arretBudget },
         texte: r.texte, _coutUsd: cout };
     }
+    if (outil === 'chat_completion') {
+      /* Paye d'avance au devis de CETTE demande (x402 exact) : un echec n'est pas regle. */
+      if (!deps.chat) return { ok: false, code: 503, raison: 'chat completions are not switched on yet' };
+      const r = await deps.chat.appelle(args).catch(() => ({ ok: false, code: 502, raison: 'the provider failed - nothing was charged' }));
+      if (!r.ok) return { ok: false, code: r.code || 502, raison: r.raison };
+      return { ok: true, outil, resultat: r.resultat, texte: r.texte, _coutUsd: r.coutUsd };
+    }
     if (VARIABLES.includes(outil) || GRATUITS.includes(outil)) return { ok: false, code: 400, raison: outil + ' needs an API key (x402 pays fixed-price tools and images only)' };
     let r;
     try { r = await deps.outils[outil](args); } catch (e) { return { ok: false, code: 502, raison: 'the tool failed — nothing was charged' }; }
@@ -487,7 +525,7 @@ function cree(deps) {
   const agentX402Ouvert = () => agentX402Allume() && !!deps.agentX402 && !!(deps.agentX402.actif && deps.agentX402.actif())
     && !(deps.agentX402.registre && deps.agentX402.registre.pertes24h() >= perteJourUsd());
   /** Un outil payable en x402 : connu, actif, à prix fixe. */
-  const x402Payable = (outil) => (outil === 'ask_agent' ? agentX402Ouvert()
+  const x402Payable = (outil) => (outil === 'ask_agent' ? agentX402Ouvert() : outil === 'chat_completion' ? !!deps.chat
     : (outil === 'generate_image' || (!VARIABLES.includes(outil) && !GRATUITS.includes(outil) && !!prixUsd(outil))))
     && definitions(deps.actifs ? deps.actifs() : {}).some((d) => d.name === outil);
 

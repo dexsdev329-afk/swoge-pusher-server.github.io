@@ -1791,6 +1791,10 @@ const agentic = () => {
       },
     },
     outils: studioAgent.outils(srcAgent()),
+    /* Les modeles d'IA payes a l'appel (chat_x402.js, 27/09) : le modele BRUT (message
+       systeme de l'appelant), sans outils ; un fournisseur sans cle est « indisponible ». */
+    chat: require('./chat_x402').cree({ actif: (f) => chatActif(f),
+      fournisseur: (p) => (p.m.fournisseur === 'anthropic' ? studioClaude.repond(p) : studioCompat.repond(p)) }),
     actifs: () => ({ recherche: chatActif('perplexity') }),
     /* Une image pour un agent : la MEME fonction que la page (reserve, cout
        reel, reste rendu), au nom de l'adresse de la cle. */

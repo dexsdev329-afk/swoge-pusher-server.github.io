@@ -58,6 +58,7 @@ lance x402base "$SRV" node x402_base_route.test.js   # USDC sur Base de bout en 
 lance solata "$SRV" node solana_ata.test.js   # le compte USDC associe d une adresse Solana (payTo), contre les vecteurs de web3.js : sans lui, pas de Solana dans le 402
 lance verdict "$SRV" node verdict_jeton.test.js   # token_verdict : GoPlus en rouge ou prudence, piscine sous 13 000 $ (mesure du carnet), traits de la colonie a 30 obs et plus ; jamais « safe », inconnu = inconnu
 lance lecturesrh "$SRV" node lectures_rh.test.js   # robinhood_rpc/token/wallet/tx : lecture seule, bornes, le seau (la colonie d abord), decodage sur un faux noeud aux vrais encodages
+lance chatx402 "$SRV" node chat_x402.test.js   # chat_completion : devis = pire cas (ASCII a 1/2, le reste a ses octets) x X402_CHAT_MARGE, modele brut, sortie OpenAI, un echec jamais regle
 lance compteurs "$SRV" node compteurs.test.js   # compteurs durables : un fichier par jour UTC, survivent au redemarrage et a SIGTERM, maison a part, jamais l IP
 lance klingjev "$SRV" node kling_jev.test.js   # Kling (nouveau standard, cle API, grille officielle) et Jev (systemone, probabilites, cout) : rien ne part sans cle, jamais la cle dans une reponse
 lance klingrte "$SRV" node kling_route.test.js   # essai Kling sur un vrai serveur : proprietaire seul, 403 avant Kling, journalise, aucun debit

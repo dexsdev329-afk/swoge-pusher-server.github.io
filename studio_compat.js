@@ -49,7 +49,7 @@ function usageDe(f, u) {
  * reçoit le texte au fil de l'eau ; `surReflexion` est appelé une fois quand le
  * modèle raisonne avant d'écrire (on ne voit pas son raisonnement).
  */
-async function repond({ m, messages, recherche, effort, surTexte, surReflexion, surRecherche, signal }) {
+async function repond({ m, messages, recherche, effort, surTexte, surReflexion, surRecherche, signal, systeme }) {
   const F = FOURNISSEURS[m.fournisseur];
   if (!F) throw new Error('fournisseur inconnu : ' + m.fournisseur);
   /* La recherche web, faite AVANT : ses résultats rejoignent la question, et
@@ -73,7 +73,8 @@ async function repond({ m, messages, recherche, effort, surTexte, surReflexion, 
     model: m.api, stream: true, stream_options: { include_usage: true },
     max_completion_tokens: m.maxTokens,
     /* Une photo jointe devient une partie `image_url` (data URL) ; jamais de PDF ici. */
-    messages: [{ role: 'system', content: SYSTEME }].concat(envoyes.map(Pieces.pourCompat)),
+    /* `systeme` (chat_x402, 27/09) : celui de l'appelant ; '' : aucun. */
+    messages: (typeof systeme === 'string' ? (systeme ? [{ role: 'system', content: systeme }] : []) : [{ role: 'system', content: SYSTEME }]).concat(envoyes.map(Pieces.pourCompat)),
   };
   if (effort && m.effort) corps.reasoning_effort = effort;
   if (surReflexion) surReflexion();

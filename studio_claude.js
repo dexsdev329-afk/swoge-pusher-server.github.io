@@ -66,9 +66,12 @@ function sourcesDe(content) {
  * l'eau ; `surReflexion()` et `surRecherche()` signalent ce que fait le
  * modèle pendant les silences. `deps.client` remplace le SDK dans l'essai.
  */
-async function repond({ m, messages, recherche, effort, surTexte, surReflexion, surRecherche, signal }, deps) {
+async function repond({ m, messages, recherche, effort, surTexte, surReflexion, surRecherche, signal, systeme }, deps) {
   const c = (deps && deps.client) || leClient();
-  const params = { model: m.api, max_tokens: m.maxTokens, system: SYSTEME, messages: messages.map(Pieces.pourClaude) };
+  /* `systeme` (chat_x402, 27/09) : le message systeme de l'appelant — le modele brut, sans la persona SwoleMind ; '' : aucun. */
+  const sys = typeof systeme === 'string' ? systeme : SYSTEME;
+  const params = { model: m.api, max_tokens: m.maxTokens, messages: messages.map(Pieces.pourClaude) };
+  if (sys) params.system = sys;
   if (effort) params.output_config = { effort };
   if (recherche) params.tools = [{ type: m.recherche, name: 'web_search', max_uses: RECHERCHE_MAX }];
   /* `signal` : l'arrêt demandé par le joueur coupe le flux (options du SDK 0.128, `stream(params, { signal })`). */

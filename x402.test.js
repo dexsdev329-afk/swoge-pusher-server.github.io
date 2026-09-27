@@ -1050,6 +1050,12 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
       const pv = await Ms.x.prix('token_verdict', {}), ps = await Ms.x.prix('scan_token', {});
       ok(pv.montantBase === '10000' && pv.montantSolana === '10000' && pv.usd >= 0.02 && ps.montantBase === '20000' && ps.montantSolana === '20000',
          'token_verdict : 0,01 $ sur Base et Solana, ' + pv.usd + ' $ sur Robinhood Chain (gaz) ; scan_token reste a 0,02 $');
+      /* chat_completion (27/09) : le prix suit CETTE demande (modele, entree, max_tokens), plancher 0,005 $. */
+      const petit = { messages: [{ role: 'user', content: 'hi' }], max_tokens: 64 }, gros = { model: 'opus-5-5', messages: [{ role: 'user', content: 'x'.repeat(8000) }], max_tokens: 4000 };
+      const [cp, cg] = [await Ms.x.prix('chat_completion', petit), await Ms.x.prix('chat_completion', gros)];
+      const attenduG = String(Math.ceil(Math.round((require('./chat_x402').prixUsd(gros) + 0.001) * 1e9) / 1e3));
+      ok(cp.montantBase === '5000' && cg.montantBase === attenduG && Number(cg.montantBase) > 100000 && Number(cg.montantSolana) === Number(attenduG) + 1000,
+         'chat_completion : une ligne a Haiku = le plancher (0,005 $) ; Opus, 8 000 caracteres, 4 000 jetons = ' + Number(cg.montantBase) / 1e6 + ' $ sur Base (devis + 0,001), +0,001 sur Solana');
       const pr = await Promise.all(['robinhood_rpc', 'robinhood_token', 'robinhood_wallet', 'robinhood_tx'].map((o) => Ms.x.prix(o, {})));
       ok(pr.every((x) => x.montantBase === '5000' && x.montantSolana === '6000' && x.usd >= 0.02), 'les 4 lectures Robinhood : 0,005 $ sur Base (plancher), 0,006 $ sur Solana (0,004 + 0,002 de PayAI), 0,02 $ et plus sur Robinhood Chain (gaz)');
       const qa = await entete402(Ms, 'ask_agent', { task: 'x' });
