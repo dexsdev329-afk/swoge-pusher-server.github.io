@@ -1712,6 +1712,10 @@ const srcAgent = () => ({
    (AI_OWNER, X402_PAYTO, le portefeuille de gaz, COMPTEURS_MAISON), comptees a
    part — un essai du proprietaire n'est pas un client. */
 const adressesDe = (t) => String(t || '').toLowerCase().split(/[\s,;]+/).filter((a) => /^0x[0-9a-f]{40}$/.test(a));
+/* Nos adresses sans droit particulier (AI_OWNER, COMPTEURS_MAISON, X402_PAYTO) :
+   un paiement de l'une d'elles est un essai de la maison. */
+const adresseMaison = (adr) => !!adr && adressesDe(cfg.AI_OWNER).concat(adressesDe(process.env.COMPTEURS_MAISON), adressesDe(process.env.X402_PAYTO))
+  .indexOf(String(adr).toLowerCase()) >= 0;
 const compteurs = require('./compteurs').cree({
   dossier: require('path').join(cfg.DATA_DIR, 'compteurs'),
   maison: () => {
@@ -1874,8 +1878,11 @@ function baseDepuisEnv(X, tresor, porteGaz) {
       journal: (l) => { if (l.statut !== 200) console.warn('[x402] PayAI ' + l.op + ': ' + l.statut + (l.raison ? ' ' + l.raison : '') + (l.message ? ' - ' + String(l.message).slice(0, 120) : '') + ' (' + l.ms + ' ms)'); } });
   }
   const partSecond = process.env.X402_PAYAI_PART !== undefined && process.env.X402_PAYAI_PART !== '' && Number.isFinite(Number(process.env.X402_PAYAI_PART)) ? Number(process.env.X402_PAYAI_PART) : 0.5;
-  /* Les paiements du proprietaire vont toujours chez PayAI : ils inscrivent nos outils dans son catalogue. */
-  return { second, partSecond, versSecond: proprietaireIA, reseau: sepolia ? X.RESEAU_BASE_SEPOLIA : X.RESEAU_BASE, chainId: sepolia ? 84532 : 8453,
+  /* Les paiements de la maison vont toujours chez PayAI : ils inscrivent nos outils
+     dans son catalogue. Le 27/09 a 19:45, 7 paiements du proprietaire depuis une
+     adresse hors AI_OWNER sont partis a moitie chez Coinbase : 3 outils sur 6
+     inscrits. COMPTEURS_MAISON suffit (il ne donne aucun droit). */
+  return { second, partSecond, versSecond: adresseMaison, reseau: sepolia ? X.RESEAU_BASE_SEPOLIA : X.RESEAU_BASE, chainId: sepolia ? 84532 : 8453,
     usdc: sepolia ? X.USDC_BASE_SEPOLIA : X.USDC_BASE, domaine: sepolia ? X.DOMAINE_USDC_BASE_SEPOLIA : X.DOMAINE_USDC_BASE,
     payTo, facilitateur, rpc: X.rpcBase(String(process.env.X402_BASE_RPC || '').trim() || (sepolia ? 'https://sepolia.base.org' : 'https://mainnet.base.org')),
     /* ESSAIS SEULEMENT : combien de temps relire la chaine apres un « en attente » (60 s par defaut,
