@@ -311,8 +311,8 @@ function valide(sc, v, ch, strict, err) {
     ok(me.resources.includes(BASE + '/esim/buy') && !D.manifeste({ base: BASE, x402, prixX402, preuves: [] }).resources.includes(BASE + '/esim/buy'), 'le manifeste x402 liste /esim/buy seulement boutique ouverte');
     const A2 = require('./agentic');
     const lt = A2.llmsTxt(Object.assign({}, cat, { x402 }), { api: BASE, site: 'https://site', swoge: true, page: 'https://site/p', docs: 'https://site/d', esim: true });
-    ok(/## Travel eSIM \(no account\)/.test(lt) && lt.includes(BASE + '/esim/plans?country=France') && /nothing is charged/.test(lt)
-       && !/Travel eSIM/.test(A2.llmsTxt(Object.assign({}, cat, { x402 }), { api: BASE, site: 'https://site', swoge: true, page: 'https://site/p', docs: 'https://site/d' })), 'llms.txt : la section eSIM, seulement boutique ouverte');
+    ok(/^Travel eSIM, no account/m.test(lt) && lt.includes(BASE + '/esim/plans?country=France') && /nothing is charged/.test(lt) && lt.split('\n').filter((l) => /^## /.test(l)).join() === '## Docs,## Optional'
+       && !/Travel eSIM/.test(A2.llmsTxt(Object.assign({}, cat, { x402 }), { api: BASE, site: 'https://site', swoge: true, page: 'https://site/p', docs: 'https://site/d' })), 'llms.txt : l eSIM en introduction et en lien, sections ## inchangees (format llmstxt.org), seulement boutique ouverte');
   }
   const permis = ['version', 'x402Version', 'name', 'description', 'resources', 'ownershipProofs', 'instructions', 'docs'];
   ok(Object.keys(m).every((k) => permis.includes(k)), 'aucun champ que la spec x402scan ne definit (hors name/description/docs, deja la) : ' + Object.keys(m).join(', '));
