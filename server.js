@@ -3018,6 +3018,12 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const r = await aiColonie.scanJeton(adr);
+      /* Les actions tokenisees (actions_rh.js, 28/09) : ce jeton copie-t-il une action officielle ?
+         La liste de Robinhood en cache ; 4 s au plus, sinon le scan part sans (null = non lu). */
+      if (r && r.jeton) {
+        const id = await Promise.race([actionsRh().identite(adr, r.jeton.sym, r.jeton.nom).catch(() => null), new Promise((ok) => setTimeout(() => ok(undefined), 4000))]);
+        r.action = id === undefined ? null : id ? Object.assign({ statut: id.officielle ? 'official' : 'not_the_stock_token' }, { symbole: id.symbole, adresse: id.adresse }) : { statut: 'none' };
+      }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                            /* Trente secondes : assez pour qu un partage ne
                               refasse pas le travail, assez court pour qu un
