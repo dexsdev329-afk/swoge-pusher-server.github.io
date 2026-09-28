@@ -1972,15 +1972,27 @@ function embauche() {
   }
   return EMBAUCHE;
 }
-/** La facture d'une embauche pour UN joueur : reserve au cours du moment, regle au prix du recu. */
-function factuEmbauche(addr) {
+/* ---- L'eSIM ACHETEE POUR LE JOUEUR (achats.js, 28/09/2026) ----
+   Le meme portefeuille dedie que l'embauche ; le joueur paie en $SWOGE, apres SA
+   confirmation sur la page. ACHATS=0 coupe. */
+let ACHATS = null;
+function achats() {
+  if (ACHATS) return ACHATS;
+  ACHATS = require('./achats').cree({ cle: process.env.AGENT_BUDGET_CLE, dossier: cfg.DATA_DIR,
+    blockhash: () => { const xv = x402(); return xv && xv.blockhashSolana ? xv.blockhashSolana() : { ok: false, raison: 'Solana payments are not set up on this server' }; },
+    rpcSolana: (m, p) => { const xv = x402(); if (!xv || !xv.rpcSolana) throw new Error('no Solana node'); return xv.rpcSolana(m, p); } });
+  if (ACHATS.actif()) console.log('[agent] eSIM purchases on: the agent proposes, the player confirms (' + ACHATS.adresse + ')');
+  return ACHATS;
+}
+/** La facture d'une embauche (ou d'un achat) pour UN joueur : reserve au cours du moment, regle au prix du recu. */
+function factuEmbauche(addr, quoi) {
   const dec = cfg.DECIMALS || 18;
   return {
     reserve: async (usd) => {
       const cours = await studioChat.coursSwoge();
       if (!(cours > 0)) return { ok: false, raison: 'the $SWOGE price is unavailable - nothing was charged' };
       const wei = studio.montantBaseDe(usd, cours, dec);
-      if (!game.studioReserve(addr, wei)) return { ok: false, raison: 'your balance is too low to hire this service (' + studio.formateBase(wei, dec) + ' $SWOGE needed)' };
+      if (!game.studioReserve(addr, wei)) return { ok: false, raison: 'your balance is too low to ' + (quoi || 'hire this service') + ' (' + studio.formateBase(wei, dec) + ' $SWOGE needed)' };
       return { ok: true, jeton: { wei: String(wei), cours } };
     },
     regle: async (j, usd) => {
@@ -2190,6 +2202,7 @@ async function x402Etat(detail) {
               autoInscription: AUTO_INSCRIPTION ? AUTO_INSCRIPTION.etat() : null,
               /* L'agent qui embauche (embauche.js) : adresse publique, depense du jour, plafonds. */
               embauche: embauche().etat(),
+              achats: achats().etat(),
               agent: { actif: agentic().x402Payable('ask_agent') } };
   if (!detail) return e;
   const g = x.MESURE.gasUsed.slice().sort((a, b) => a - b);
@@ -3184,6 +3197,25 @@ const server = http.createServer(async (req, res) => {
     }
     return res.end(JSON.stringify({ ok: true, actif: true, budget: P.budget(), liste: P.historique(20) }));
   }
+  /* ---- MES eSIM (achats.js, 28/09/2026) : GET la liste ; POST { action: 'confirme' | 'livre', id }.
+     Toujours le joueur de la SESSION : l'agent propose, seule cette route paie. ---- */
+  if (path === '/studio/agent/achats') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'authorization, content-type' };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    res.writeHead(addr ? 200 : 401, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors));
+    if (!addr) return res.end(JSON.stringify({ ok: false, raison: 'sign in with your wallet first' }));
+    if (!achats().actif()) return res.end(JSON.stringify({ ok: true, actif: false }));
+    const P = achats().pour(addr, factuEmbauche(addr, 'buy this eSIM'));
+    if (req.method === 'POST') {
+      let q;
+      try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { q = null; }
+      const r = !q ? { ok: false, raison: 'unreadable request' } : q.action === 'confirme' ? await P.confirme(q.id) : q.action === 'livre' ? await P.livre(q.id) : { ok: false, raison: 'unknown action' };
+      return res.end(JSON.stringify(Object.assign({}, r, { actif: true, budget: P.budget(), liste: P.liste(20) })));
+    }
+    return res.end(JSON.stringify({ ok: true, actif: true, budget: P.budget(), liste: P.liste(20) }));
+  }
   if (path === '/studio/agent' || path === '/studio/agent/catalogue') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization' };
@@ -3199,9 +3231,10 @@ const server = http.createServer(async (req, res) => {
         ouvert: chatActif('anthropic') && cours > 0, monnaie: '$SWOGE', coursUsd: cours || null, defaut: 'sonnet-5',
         note: !chatActif('anthropic') ? 'The AI provider key is not set on the server yet.' : !(cours > 0) ? 'The $SWOGE price is unavailable right now.' : null,
         etapesMax: studioAgent.ETAPES_MAX,
-        outils: studioAgent.definitions({ recherche: rech, embauche: embauche().actif() }).map((o) => ({ nom: o.name, description: o.description })),
+        outils: studioAgent.definitions({ recherche: rech, embauche: embauche().actif(), achats: achats().actif() }).map((o) => ({ nom: o.name, description: o.description })),
         /* L'embauche (embauche.js) : la page ne dit « read-only » que si elle est eteinte. */
         embauche: embauche().actif() ? { actif: true, maxAppelUsd: embauche().etat().maxAppelUsd, jourUsd: embauche().etat().maxJoueurUsd, marge: 1.1 } : { actif: false },
+        achats: achats().actif() ? { actif: true, maxAchatUsd: achats().etat().maxAchatUsd, jourUsd: achats().etat().maxJoueurUsd, marge: achats().etat().marge } : { actif: false },
         modeles: studioChat.MODELES.filter((m) => m.fournisseur === 'anthropic').map((m) => ({ id: m.id, nom: m.nom, note: m.note,
           typiqueSwoge: enSwoge(typique(m)), maxSwoge: enSwoge(studioAgent.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], rech)) })),
       });
@@ -3225,6 +3258,8 @@ const server = http.createServer(async (req, res) => {
     /* L'embauche, liee a CE joueur : son adresse de session, jamais une adresse du message. */
     /* Un joueur qui a coupe ses embauches (plafond 0) : les outils ne sont meme pas offerts. */
     if (embauche().actif()) { const P = embauche().pour(addr, factuEmbauche(addr)); if (P.budget().jourUsd > 0) src.embauche = P; }
+    /* L'eSIM : l'agent cherche et PROPOSE ; seule la route /studio/agent/achats (la page) paie. */
+    if (achats().actif()) { const PA = achats().pour(addr, factuEmbauche(addr, 'buy this eSIM')); src.achats = { forfaits: PA.forfaits, propose: PA.propose }; }
     let r;
     try {
       r = await studioChat.repond({ addr, rid, modele: m.id, messages: q.messages, recherche: false }, {

@@ -106,6 +106,14 @@ const SYSTEME_EMBAUCHE = SYSTEME.replace('You can only READ: you cannot buy, sel
   + 'Hire only when your own tools cannot answer, pick the cheapest service that fits, never hire the same service twice for the same question, '
   + 'and always tell the user which service you paid, how much, and what it returned.');
 
+/* L'achat d'une eSIM (achats.js, 28/09/2026) : l'agent PROPOSE, le joueur confirme sur la
+   page. La consigne le dit, pour que l'agent n'annonce jamais un achat qui n'a pas eu lieu. */
+const SYSTEME_ACHATS = ' You can also help the user buy a travel data eSIM: find_esim_plans lists plans with their price, propose_esim_purchase puts ONE offer '
+  + 'on the user\'s screen. Proposing never pays: the user alone confirms with the Buy button on the page, and is charged in $SWOGE only then. '
+  + 'Never say the eSIM is bought; say the offer is on screen. Ask for the destination and how much data or how many days if the user did not say, '
+  + 'mention that the eSIM is data only (no phone number) and that the phone must support eSIM.';
+function systemeDe(src) { return (src && src.embauche ? SYSTEME_EMBAUCHE : SYSTEME) + (src && src.achats ? SYSTEME_ACHATS : ''); }
+
 /* ---- CE QUI N'EST PAS OFFERT (decision du proprietaire, 26 septembre 2026) ----
  * Les conditions de Telegram (« Terms of Service for Content Licensing »,
  * https://telegram.org/tos/content-licensing, relues le 26 septembre 2026)
@@ -239,6 +247,15 @@ function definitions(actifs) {
         method: { type: 'string', enum: ['GET', 'POST'], description: 'optional; the method find_paid_services gave' },
         query: { type: 'object', description: 'optional query parameters, for GET services' },
         body: { type: 'object', description: 'optional JSON body, for POST services' } }, required: ['url'] } });
+  /* ---- L'eSIM (achats.js, 28/09/2026) : comme l'embauche, seulement pour un joueur connecte. */
+  if (actifs && actifs.achats) d.push(
+    { name: 'find_esim_plans', description: 'Use this when the user wants mobile data abroad (a travel eSIM): it lists data-only eSIM plans for a country or region '
+        + 'with data, days and price (USD, and what the user would be charged). Searching is free: nothing is paid.',
+      input_schema: { type: 'object', properties: { country: { type: 'string', description: 'the destination country in English, or its 2-letter code (e.g. "Japan", "FR")' },
+        min_gb: { type: 'number', description: 'optional; at least this many GB' }, min_days: { type: 'integer', description: 'optional; valid at least this many days' } }, required: ['country'] } },
+    { name: 'propose_esim_purchase', description: 'Use this when the user chose a plan from find_esim_plans: it shows the user ONE offer with a Buy button. '
+        + 'It does NOT buy anything: the user confirms on the page, and only then is charged. The offer expires after 15 minutes.',
+      input_schema: { type: 'object', properties: { plan: { type: 'string', description: 'the plan id, exactly as find_esim_plans returned it' } }, required: ['plan'] } });
   if (actifs && actifs.recherche) d.push({ name: 'web_search', description: 'Use this when the answer is outside SWOGE data: news, projects, teams, people, anything on the open web. '
     + 'Returns ranked results with title, URL, date and an extract (Perplexity Search).',
     input_schema: { type: 'object', properties: { query: { type: 'string', description: 'the search query, as you would type it' } }, required: ['query'] } });
@@ -376,6 +393,26 @@ function outils(src) {
             : 'paid ' + c.usd + ' $ to ' + c.url + ' on ' + (c.reseau === 'eip155:8453' ? 'Base' : 'Solana') + ', charged the user ' + c.factureUsd + ' $ in $SWOGE' + (c.tx ? ', transaction ' + c.tx : '') + '.'),
         donnees: c };
     },
+    /* L'eSIM (achats.js, 28/09/2026) : src.achats est lie a l'adresse du joueur. */
+    async find_esim_plans(e) {
+      if (!src.achats) return { erreur: 'eSIM purchases are not available here' };
+      const r = await src.achats.forfaits({ pays: e && e.country, go: e && e.min_gb, jours: e && e.min_days });
+      if (!r || !r.ok) return { erreur: (r && r.raison) || 'the eSIM shop did not answer' };
+      if (!r.forfaits.length) return { texte: 'No priced plan for ' + r.destination.nom + ' within the ' + r.plafondUsd + ' $ limit right now.'
+        + (r.destination.autres.length ? ' Other destinations covering it: ' + r.destination.autres.join('; ') + '.' : '') };
+      return { texte: 'Data-only eSIM plans for ' + r.destination.nom + ' (cheapest per GB first; ' + r.total + ' plans in total, the ones shown were priced just now):\n'
+          + r.forfaits.map((f, i) => (i + 1) + '. ' + f.nom + ' — ' + f.go + ' GB, ' + f.jours + ' days — ' + f.usd + ' $ (the user is charged ' + f.factureUsd + ' $ in $SWOGE) — plan id: ' + f.plan).join('\n')
+          + (r.destination.autres.length ? '\nOther destinations covering it: ' + r.destination.autres.join('; ') + '.' : '')
+          + '\nSeller: CHIPS (terms ' + r.conditions + '); check the phone supports eSIM: ' + r.compatibles + '. Nothing was paid.', donnees: r };
+    },
+    async propose_esim_purchase(e) {
+      if (!src.achats) return { erreur: 'eSIM purchases are not available here' };
+      const r = await src.achats.propose({ plan: e && e.plan });
+      if (!r || !r.ok) return { erreur: (r && r.raison) || 'the offer could not be made - nothing was charged' };
+      const o = r.offre;
+      return { texte: 'Offer shown to the user: ' + o.nom + ' (' + o.go + ' GB, ' + o.jours + ' days) for ' + o.factureUsd + ' $ in $SWOGE. '
+          + 'Nothing is bought yet: the user must press Buy on the page within 15 minutes. Do not say it is bought.', achat: o };
+    },
     /* Le roast (roast.js, 28/09/2026) : vendu par l'API seulement. */
     async roast_token(e) {
       if (!src.roast) return { erreur: 'roasts are not switched on' };
@@ -473,8 +510,8 @@ function outils(src) {
 async function repond({ m, messages, surTexte, surReflexion, surOutil, surResultat, signal }, deps) {
   const c = (deps && deps.client) || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 180000 });
   const O = outils(deps.src);
-  const tools = definitions({ recherche: !!deps.src.recherche, embauche: !!deps.src.embauche });
-  const systeme = deps.src.embauche ? SYSTEME_EMBAUCHE : SYSTEME;
+  const tools = definitions({ recherche: !!deps.src.recherche, embauche: !!deps.src.embauche, achats: !!deps.src.achats });
+  const systeme = systemeDe(deps.src);
   /* Seul un outil DECLARE s'execute : un nom que le modele invente, ou un outil
      non offert (NON_OFFERTS) qu'il appellerait quand meme, est « inconnu ». */
   const declares = new Set(tools.map((t) => t.name));
@@ -600,7 +637,7 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
         if (r.recherche) { usage.recherches_perplexity += r.recherche; depense += r.recherche * PRIX_RECHERCHE_USD; }
         if (r.sources) for (const s of r.sources) if (!sources.some((x) => x.url === s.url)) sources.push(s);
         if (r.carte) cartes.push(r.carte);
-        if (surResultat) surResultat({ id: b.id, nom: b.name, ok: !r.erreur, resume: r.erreur || coupe(r.texte || '', resultatMax).slice(0, 280), carte: r.carte || null });
+        if (surResultat) surResultat({ id: b.id, nom: b.name, ok: !r.erreur, resume: r.erreur || coupe(r.texte || '', resultatMax).slice(0, 280), carte: r.carte || null, achat: r.achat || null });
         resultats.push(r.erreur ? { type: 'tool_result', tool_use_id: b.id, is_error: true, content: r.erreur }
                                 : { type: 'tool_result', tool_use_id: b.id, content: coupe(r.texte || '', resultatMax) });
       }
@@ -619,5 +656,5 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
   return out;
 }
 
-module.exports = { repond, definitions, outils, NON_OFFERTS, pireCasUsd, coutAppelUsd, SYSTEME, SYSTEME_EMBAUCHE, OSINT_TYPES, rapportOsint, ficheEnAnglais, DESCRIPTIONS_API, OUTILS_JETONS, SYSTEME_JETONS,
+module.exports = { repond, definitions, outils, NON_OFFERTS, pireCasUsd, coutAppelUsd, SYSTEME, SYSTEME_EMBAUCHE, SYSTEME_ACHATS, systemeDe, OSINT_TYPES, rapportOsint, ficheEnAnglais, DESCRIPTIONS_API, OUTILS_JETONS, SYSTEME_JETONS,
   ETAPES_MAX, OUTILS_PAR_ETAPE, RESULTAT_CAR_MAX, SORTIE_MAX, PRIX_RECHERCHE_USD, LIMITES_X402, BUDGET_X402_USD, MARGE_COMPTE };

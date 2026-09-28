@@ -216,6 +216,35 @@ const m = C.modele('sonnet-5');
     ok(!require('./agentic').definitions({ recherche: true }).some((t) => /paid_service/.test(t.name)), 'et l API publique ne les liste jamais');
   }
 
+  console.log('\n-- 2e. l eSIM (achats.js, 28/09) : l agent propose, il n achete jamais --');
+  {
+    const appels = [];
+    const achats = { forfaits: async (a) => { appels.push(['forfaits', a]); return { ok: true, destination: { nom: 'Japan', autres: ['Region of 12 countries (China…)'] }, total: 40,
+        forfaits: [{ plan: 'japan-1gb-7days-x', nom: 'Japan 1GB 7Days', go: 1, jours: 7, usd: 1.400141, factureUsd: 1.470148 }], plafondUsd: 15,
+        conditions: 'https://vamoschips.com/legal/terms', compatibles: 'https://vamoschips.com/compatibility' }; },
+      propose: async (a) => { appels.push(['propose', a.plan]); return { ok: true, offre: { id: 'o1', plan: a.plan, nom: 'Japan 1GB 7Days', go: 1, jours: 7, usd: 1.400141, factureUsd: 1.470148 } }; },
+      confirme: async () => { appels.push(['confirme']); return { ok: true }; } };
+    const cl = faux([
+      { stop: 'tool_use', content: [{ type: 'tool_use', id: 's1', name: 'find_esim_plans', input: { country: 'Japan', min_days: 7 } }] },
+      { stop: 'tool_use', content: [{ type: 'tool_use', id: 's2', name: 'propose_esim_purchase', input: { plan: 'japan-1gb-7days-x' } }] },
+      { stop: 'end_turn', content: [{ type: 'text', text: 'The offer is on your screen.' }] }]);
+    const res = [];
+    await A.repond({ m, messages: [{ role: 'user', content: 'I need data in Japan for a week' }], surResultat: (o) => res.push(o) }, { client: cl, src: src({ achats }) });
+    const noms = cl.vus[0].tools.map((t) => t.name);
+    ok(noms.includes('find_esim_plans') && noms.includes('propose_esim_purchase') && /Proposing never pays/.test(cl.vus[0].system) && /Never say the eSIM is bought/.test(cl.vus[0].system),
+       'avec les achats lies au joueur : les deux outils, et une consigne qui dit que proposer ne paie pas');
+    ok(appels[0][1].pays === 'Japan' && appels[0][1].jours === 7 && appels[1][1] === 'japan-1gb-7days-x' && !appels.some((x) => x[0] === 'confirme'),
+       'l agent cherche puis propose ; il n a aucun moyen de confirmer');
+    const t3 = JSON.stringify(cl.vus[2].messages);
+    ok(/plan id: japan-1gb-7days-x/.test(JSON.stringify(cl.vus[1].messages)) && /Nothing is bought yet/.test(t3), 'le modele lit l identifiant du forfait, puis « rien n est achete »');
+    const r2 = res.find((x) => x.nom === 'propose_esim_purchase');
+    ok(r2 && r2.achat && r2.achat.id === 'o1' && r2.achat.factureUsd === 1.470148, 'la page recoit l offre (surResultat.achat) pour afficher le bouton Buy');
+    const cl2 = faux([{ stop: 'end_turn', content: [{ type: 'text', text: 'ok' }] }]);
+    await A.repond({ m, messages: [{ role: 'user', content: 'x' }] }, { client: cl2, src: src() });
+    ok(!cl2.vus[0].tools.some((t) => /esim/.test(t.name)) && !/eSIM/.test(cl2.vus[0].system), 'sans achats (API, MCP, x402) : ni les outils, ni la phrase');
+    ok(!require('./agentic').definitions({ recherche: true }).some((t) => /esim/.test(t.name)), 'et l API publique ne les liste jamais');
+  }
+
   console.log('\n-- 3. les bornes --');
   {
     const cl = faux([{ stop: 'tool_use', content: [

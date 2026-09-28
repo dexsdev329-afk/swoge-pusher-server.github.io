@@ -97,6 +97,16 @@ function requeteEpinglee(url, o, ips) {
 /** La fonction de resolution que `https.request` recoit : toujours l'adresse epinglee. */
 const lookupEpingle = (ip) => (h, opts, cb) => { const fam = net.isIP(ip); if (opts && opts.all) cb(null, [{ address: ip, family: fam }]); else cb(null, ip, fam); };
 
+/** Les adresses d'un hote https, si elles sont TOUTES publiques ; null sinon (partage avec achats.js). */
+async function ipsPubliques(url, resout) {
+  let u; try { u = new URL(url); } catch (e) { return null; }
+  if (u.protocol !== 'https:' || u.username || u.password) return null;
+  const h = u.hostname.replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || /\.(local|internal|localhost)$/i.test(h)) return null;
+  const r = resout || (async (x) => (await dns.promises.lookup(x, { all: true })).map((a) => a.address));
+  try { const ips = net.isIP(h) ? [h] : await r(h); return ips.length > 0 && ips.every((ip) => !privee(ip)) ? ips : null; } catch (e) { return null; }
+}
+
 /** Une entree du catalogue PayAI, reduite a ce qu'on sait payer (null sinon). v1 et v2. */
 function entree(x, reseau) {
   const v = Number(x && x.x402Version);
@@ -185,14 +195,7 @@ function cree(deps) {
     }).filter((x) => x.s > 0).sort((a, b) => (b.s - a.s) || (a.e.usd - b.e.usd)).slice(0, Math.min(10, n || 6)).map((x) => x.e);
   }
 
-  /** Les adresses d'un hote, si elles sont TOUTES publiques ; null sinon. */
-  async function hotePublic(url) {
-    let u; try { u = new URL(url); } catch (e) { return null; }
-    if (u.protocol !== 'https:' || u.username || u.password) return null;
-    const h = u.hostname.replace(/^\[|\]$/g, '');
-    if (h === 'localhost' || /\.(local|internal|localhost)$/i.test(h)) return null;
-    try { const ips = net.isIP(h) ? [h] : await resout(h); return ips.length > 0 && ips.every((ip) => !privee(ip)) ? ips : null; } catch (e) { return null; }
-  }
+  const hotePublic = (url) => ipsPubliques(url, resout);
 
   /**
    * Pour un joueur : { cherche, embauche }. `factu` : { reserve(usd) → { ok, jeton? , raison? }, regle(jeton, usdFacture) }.
@@ -367,4 +370,4 @@ async function cataloguePayai(fetch, base) {
   return items;
 }
 
-module.exports = { cree, entree, privee, cataloguePayai, requeteEpinglee, lookupEpingle, CATALOGUE_TTL_MS, RESULTAT_MAX_CAR };
+module.exports = { cree, entree, privee, ipsPubliques, cataloguePayai, requeteEpinglee, lookupEpingle, CATALOGUE_TTL_MS, RESULTAT_MAX_CAR };

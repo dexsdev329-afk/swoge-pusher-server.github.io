@@ -105,6 +105,12 @@ const fauxMarche = http.createServer((q, r) => {
   const c1 = await J('/agentic/cles', { method: 'POST', headers: S, body: JSON.stringify({ nom: 'my agent', plafondSwoge: 5000 }) });
   ok(c1.status === 200 && /^swg_/.test(c1.b.cle), 'la session cree une cle, montree une fois');
   const K = { authorization: 'Bearer ' + c1.b.cle, 'content-type': 'application/json' };
+  /* Les eSIM (achats.js, 28/09) : la route ne connait que la SESSION ; ici sans AGENT_BUDGET_CLE, eteinte et le dit. */
+  eq((await J('/studio/agent/achats', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"action":"confirme","id":"x"}' })).status, 401, 'achats : sans session, rien ne se confirme');
+  eq((await J('/studio/agent/achats', { headers: K })).status, 401, 'achats : une cle d API (swg_) n est pas une session');
+  const ach = await J('/studio/agent/achats', { method: 'POST', headers: S, body: '{"action":"confirme","id":"x"}' });
+  ok(ach.status === 200 && ach.b.ok === true && ach.b.actif === false, 'achats : avec la session mais sans portefeuille d agent, eteints — rien paye');
+  ok((await J('/studio/agent/catalogue')).b.achats.actif === false && !(await J('/studio/agent/catalogue')).b.outils.some((o) => /esim/.test(o.nom)), 'le catalogue de l agent dit les achats eteints, sans leurs outils');
   const parCle = await J('/agentic/cles', { method: 'POST', headers: K, body: JSON.stringify({ nom: 'evil', plafondSwoge: 100000000 }) });
   ok(parCle.status === 401 && /cannot manage keys/.test(parCle.b.raison), 'une cle ne peut PAS creer de cle');
   const liste = await J('/agentic/cles', { headers: S });
