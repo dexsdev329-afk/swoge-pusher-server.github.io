@@ -264,6 +264,8 @@ const SORTIES = {
         scan: sn('the full scan page') }, ['observations', 'horizonMinutes', 'minObservations', 'negativeTraits', 'positiveTraits'], 'Robinhood Chain tokens the colony knows'),
       attribution: objn({ security: s(), url: s() }, ['security', 'url'], 'set when GoPlus answered'),
       note: s('what the verdict is not'),
+      links: obj({ card: s('shareable card, PNG 1200×630'), share: s('share page whose link preview is the card'), page: s('the scan on swoleeswoge.dog') },
+        ['card', 'share', 'page'], 'when the colony knows the token: post the share link and the preview shows the card'),
     }, ['token', 'verdict', 'summary', 'flags', 'colony', 'attribution', 'note']),
     exemple: { token: { address: ADR, symbol: 'LOBSTER', name: 'Lobster', chain: 'robinhood', priceUsd: 0.000008424, liquidityUsd: 8803.04, marketCapUsd: 8253, poolAgeDays: 1.4,
         url: 'https://dexscreener.com/robinhood/0x66604bdceb5a54c2c137383171085c3c2260d3d21abe1a77d9180053c9e58c53' },

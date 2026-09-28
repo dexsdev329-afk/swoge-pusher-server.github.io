@@ -184,6 +184,12 @@ const m = C.modele('sonnet-5');
     ok(ficheRH.colonie.cases[0].trait === 'octEmit' && ficheRH.colonie.cases.length === 6, 'la fiche en cache n est pas touchee (la page SwoleMind la lit aussi)');
     const sansColonie = await A.outils(src({ liensScan: L })).scan_token({ address: ADR });
     ok(!sansColonie.carte.links && !/scan\/carte/.test(sansColonie.texte), 'hors Robinhood Chain (pas de colonie) : pas de lien vers une carte qui n existe pas');
+    /* token_verdict porte la meme carte (28/09) : le verdict le moins cher devient partageable. */
+    const tv = await A.outils(src({ fiche: async () => ficheRH, liensScan: L })).token_verdict({ address: ADR });
+    ok(tv.donnees.links && tv.donnees.links.share === L(ADR).share && tv.texte.includes(L(ADR).card) && tv.texte.includes(L(ADR).share) && tv.donnees.verdict,
+       'token_verdict : la colonie connait le jeton, le verdict porte les liens de la carte, en donnees ET dans le texte');
+    const tv2 = await A.outils(src({ liensScan: L })).token_verdict({ address: ADR });
+    ok(!tv2.donnees.links && !/scan\/carte/.test(tv2.texte), 'token_verdict hors Robinhood Chain : aucun lien de carte');
   }
 
   console.log('\n-- 3. les bornes --');

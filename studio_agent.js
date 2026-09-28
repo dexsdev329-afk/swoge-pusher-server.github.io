@@ -319,8 +319,19 @@ function outils(src) {
     async token_verdict(e) {
       if (!adresseOk(e.address)) return { erreur: 'address must be 0x followed by 40 hex characters' };
       const V = require('./verdict_jeton');
-      const v = V.juge(await src.fiche(String(e.address).toLowerCase()));
-      return { texte: V.texte(v), donnees: v };
+      const adr = String(e.address).toLowerCase();
+      const f = await src.fiche(adr);
+      const v = V.juge(f);
+      let texte = V.texte(v);
+      /* La carte partageable, comme scan_token (28/09/2026) : un verdict qu'un agent
+         poste sur X ou Telegram porte l'image SWOGE et son lien — c'est l'outil le
+         moins cher, donc le plus appele. Seulement quand la colonie connait le jeton :
+         la route de la carte relit son scan. */
+      if (f && f.colonie && src.liensScan) {
+        v.links = src.liensScan(adr);
+        texte += '\n\nShareable card (PNG): ' + v.links.card + ' — share page (link preview on X, Telegram, Discord): ' + v.links.share;
+      }
+      return { texte, donnees: v };
     },
     /* Les lectures Robinhood Chain (lectures_rh.js) : vendues par l'API seulement. */
     robinhood_rpc: (e) => (src.lectures ? src.lectures.robinhood_rpc(e) : { erreur: 'Robinhood Chain reads are not switched on' }),
