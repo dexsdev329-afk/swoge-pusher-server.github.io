@@ -32,6 +32,12 @@ const CAT = [
   item('https://panne2.example/weather', 1000),
   item('https://appat.example/weather', 1000),
   item('https://gratuit.example/weather', 1000),
+  /* Les exclus (analyse du 28/09) et un service mort avant tout paiement. */
+  item('https://captcha.example/solve', 1000, { description: 'Solve any captcha for your agent' }),
+  item('https://croissance.example/boost', 1000, { description: 'Buy followers and likes for weather accounts' }),
+  item('https://cadeau.example/card', 1000, { description: 'Weather themed gift cards delivered instantly' }),
+  item('https://mort.example/weather', 1000, { description: 'Weather forecast, the dead one' }),
+  item('https://mauvais.example/weather', 1000, { description: 'Weather forecast that rejects bad input' }),
   /* x402 v1 : reseau nomme, maxAmountRequired, offres dans le corps (specs/x402-specification-v1.md). */
   { x402Version: 1, type: 'http', resource: 'https://vieux.example/weather', description: 'Weather v1',
     accepts: [{ scheme: 'exact', network: 'base', maxAmountRequired: '2000', asset: USDC, payTo: PAYTO, resource: 'https://vieux.example/weather', description: 'w', maxTimeoutSeconds: 60, extra: { name: 'USD Coin', version: '2' } }] },
@@ -47,6 +53,8 @@ async function fauxFetch(url, o) {
   const req = (amount) => ({ x402Version: 2, resource: { url: u.origin + u.pathname }, accepts: [offre(amount)] });
   if (u.hostname === 'renvoi.example') return rep(302, '', { location: 'http://169.254.169.254/' });
   if (u.hostname === 'gratuit.example') return rep(200, { free: true });
+  if (u.hostname === 'mort.example') return rep(404, { error: 'not found' });
+  if (u.hostname === 'mauvais.example') return rep(400, { error: 'city is required' });
   if (u.hostname === 'vieux.example') {
     const xp = (o.headers || {})['x-payment'];
     if (!xp) return rep(402, { x402Version: 1, error: 'X-PAYMENT header is required', accepts: CAT[CAT.length - 1].accepts });
@@ -131,6 +139,22 @@ const resout = async (h) => (h === 'interne.example' ? ['10.0.0.5'] : ['93.184.2
      && hi.some((x) => x.etat === 'perte' && x.factureUsd === 0) && hi.some((x) => x.etat === 'rendu' && x.usd === 0) && !hi.some((x) => x.qui),
      'l historique du joueur : un etat par embauche payee ou tentee (paye x2, perte, rendu ; le service gratuit n y est pas), le plus recent d abord, sans l adresse des autres');
   ok(H.pour('0xAUTRE', F).historique().length === 0, 'un autre joueur ne voit rien des embauches de celui-ci');
+
+  console.log('\n-- ce que l agent n achete jamais, et les services morts --');
+  const nomsDe = async (q) => (await H.cherche(q, 10)).map((e) => e.hote || new URL(e.url).hostname);
+  ok(!(await nomsDe('captcha solve')).length && !(await nomsDe('followers likes boost')).length && !(await nomsDe('gift cards')).length && H.MESURE.exclus === 3,
+     'captchas, abonnes et likes, cartes cadeaux : exclus au chargement (3), jamais proposes');
+  ok(/not in the catalogue/.test((await J.embauche({ url: 'https://captcha.example/solve' })).raison), 'et pas embauchables par leur URL');
+  ok((await nomsDe('weather forecast dead')).includes('mort.example'), 'un service pas encore essaye est propose');
+  const km = factu.length;
+  const rm = await J.embauche({ url: 'https://mort.example/weather' });
+  ok(!rm.ok && /HTTP 404 before any payment/.test(rm.raison) && factu.length === km && !(await nomsDe('weather forecast dead')).includes('mort.example') && H.MESURE.morts >= 1,
+     'il rend 404 avant tout paiement : rien reserve, et il n est plus propose');
+  await J.embauche({ url: 'https://mauvais.example/weather' });
+  ok((await nomsDe('weather forecast rejects bad input')).includes('mauvais.example'), 'un 400 (arguments de l agent) ne fait pas un service mort');
+  horloge += 24 * 3600e3 + 1;
+  ok((await nomsDe('weather forecast dead')).includes('mort.example'), 'apres 24 h, il est de nouveau propose (il a pu revenir)');
+  horloge -= 24 * 3600e3 + 1;
 
   console.log('\n-- les plafonds du jour --');
   const b = J.budget();

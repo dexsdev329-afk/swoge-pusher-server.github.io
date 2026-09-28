@@ -41,6 +41,21 @@ const https = require('https');
 const X = require('./x402_client');
 
 const CATALOGUE_TTL_MS = 6 * 3600e3;
+/* ---- CE QUE L'AGENT N'ACHETE JAMAIS (analyse du catalogue du 28/09, mesures/) ----
+   Captchas (contournement anti-robot), SMS et numeros virtuels (creation de comptes
+   en masse, spam), abonnes / likes / « raids » (engagement achete, contraire aux
+   conditions des plateformes), colis et adresses postales (donnees personnelles),
+   cartes cadeaux et recharges (le solde de jeu converti en valeur reelle), recherche
+   sur des personnes. Lu sur l'URL et la description, au chargement : un service
+   exclu n'est ni propose ni embauchable. Mesure sur le catalogue du 28/09 : un premier
+   motif trop large (« likes », « followers », « sms » seuls) excluait 71 services dont
+   51 par le mot anglais « like » (x402factory compris) et des LECTURES de listes
+   d'abonnes : on vise l'ACHAT d'engagement et l'envoi de SMS, pas les mots. */
+const EXCLUS = /captcha|send (an? )?sms|receive (an? )?sms|sms (verification|otp|activation)|\botp (code|verification)|virtual (phone )?numbers?|phone numbers? (rental|rent|purchase|buy)|rent (a )?(phone )?number|textbelt|buy(ing)? (\w+ )?(followers|likes|views|subscribers|retweets|reposts|upvotes)|(followers|likes|views|subscribers) (package|boost|service|order)s?|smm panel|x ?raid|engagement (boost|growth)|social media growth|growth services|dropship|shipping labels?|postage|mailing address|gift ?cards?|top.?up|airtime|voucher|people (search|finder|lookup)|person (search|lookup)|email (finder|lookup)|find (an? )?email|background check|doxx|reverse phone/i;
+/* Un service qui echoue AVANT tout paiement (panne, erreur, redirection, adresse non
+   publique, 402 illisible) n'est plus propose pendant MORT_MS. Releve du 28/09 : 13 %
+   des services sondes etaient morts ou injoignables (IC 9-19 %). */
+const MORT_MS = 24 * 3600e3;
 const CATALOGUE_MAX = 8000;
 const RESULTAT_MAX_CAR = 12000;
 const DELAI_MS = 25000;
@@ -148,7 +163,10 @@ function cree(deps) {
   let PLAFONDS = {};
   try { if (fPlafonds) PLAFONDS = JSON.parse(fs.readFileSync(fPlafonds, 'utf8')) || {}; } catch (e) { PLAFONDS = {}; }
   const plafondDe = (q) => { const v = PLAFONDS[q]; return typeof v === 'number' && v >= 0 ? Math.min(v, maxJoueur()) : maxJoueur(); };
-  const MESURE = { recherches: 0, embauches: 0, payees: 0, refusees: 0, echecs: 0, depenseUsd: 0, factureUsd: 0, sansRecu: 0, retrouvees: 0 };
+  const MESURE = { recherches: 0, embauches: 0, payees: 0, refusees: 0, echecs: 0, depenseUsd: 0, factureUsd: 0, sansRecu: 0, retrouvees: 0, exclus: 0, morts: 0 };
+  const MORTS = new Map();
+  const meurt = (url) => { MORTS.set(url, maintenant() + MORT_MS); MESURE.morts = MORTS.size; };
+  const vivant = (url) => { const t = MORTS.get(url); if (t && t <= maintenant()) { MORTS.delete(url); MESURE.morts = MORTS.size; } return !MORTS.has(url); };
 
   /* Chaque embauche ecrit « en cours » puis son issue : seul son DERNIER etat compte,
      sinon une embauche payee pesait deux fois dans les plafonds. « en cours » compte
@@ -169,13 +187,16 @@ function cree(deps) {
         const items = await deps.catalogue();
         const moi = String(deps.moi || '').replace(/\/+$/, '');
         const l = [];
+        let exclus = 0;
         for (const x of items || []) {
           const e = entree(x, reseau);
           if (!e || (moi && e.url.indexOf(moi) === 0) || e.usd > maxAppel()) continue;
+          if (EXCLUS.test(e.url + ' ' + e.description)) { exclus++; continue; }
           l.push(e);
           if (l.length >= CATALOGUE_MAX) break;
         }
         CAT = { t: maintenant(), liste: l, parUrl: new Map(l.map((e) => [e.url, e])) };
+        MESURE.exclus = exclus;
       } catch (e) { /* on garde l'ancien */ }
       finally { charge = null; }
     })();
@@ -189,7 +210,7 @@ function cree(deps) {
     const C = await catalogue();
     const mots = String(besoin || '').toLowerCase().match(/[a-z0-9]{3,}/g) || [];
     if (!mots.length) return [];
-    return C.liste.map((e) => {
+    return C.liste.filter((e) => vivant(e.url)).map((e) => {
       const t = (e.description + ' ' + e.url).toLowerCase();
       return { e, s: mots.reduce((k, m) => k + (t.indexOf(m) >= 0 ? 1 : 0), 0) };
     }).filter((x) => x.s > 0).sort((a, b) => (b.s - a.s) || (a.e.usd - b.e.usd)).slice(0, Math.min(10, n || 6)).map((x) => x.e);
@@ -211,7 +232,7 @@ function cree(deps) {
       const e = C.parUrl.get(url);
       if (!e) return { ok: false, raison: 'only a service returned by find_paid_services can be hired (this URL is not in the catalogue)' };
       const ips = await hotePublic(url);
-      if (!ips) return { ok: false, raison: 'this service does not resolve to a public https address - refused' };
+      if (!ips) { meurt(url); return { ok: false, raison: 'this service does not resolve to a public https address - refused' }; }
       const methode = a.method ? (String(a.method).toUpperCase() === 'POST' ? 'POST' : 'GET') : e.methode;
       const u = new URL(url);
       if (a.query && typeof a.query === 'object') for (const [k, v] of Object.entries(a.query).slice(0, 20)) u.searchParams.set(String(k).slice(0, 60), String(v).slice(0, 500));
@@ -222,12 +243,12 @@ function cree(deps) {
         headers: Object.assign({ accept: 'application/json, text/plain;q=0.9, */*;q=0.5' }, corps ? { 'content-type': 'application/json' } : {}, h || {}), body: corps }, ips);
       MESURE.embauches++;
       let r1;
-      try { r1 = await appel(); } catch (x) { MESURE.echecs++; return { ok: false, raison: 'the service did not answer - nothing was charged' }; }
-      if (r1.status >= 300 && r1.status < 400) { MESURE.refusees++; return { ok: false, raison: 'the service redirected elsewhere - refused, nothing was charged' }; }
+      try { r1 = await appel(); } catch (x) { MESURE.echecs++; meurt(url); return { ok: false, raison: 'the service did not answer - nothing was charged' }; }
+      if (r1.status >= 300 && r1.status < 400) { MESURE.refusees++; meurt(url); return { ok: false, raison: 'the service redirected elsewhere - refused, nothing was charged' }; }
       if (r1.status === 200) return Object.assign({ ok: true, gratuit: true }, await lit(r1), { recu: { url, usd: 0, factureUsd: 0, reseau: null, tx: null } });
-      if (r1.status !== 402) { MESURE.echecs++; return { ok: false, raison: 'the service answered HTTP ' + r1.status + ' before any payment - nothing was charged' }; }
+      if (r1.status !== 402) { MESURE.echecs++; if (r1.status >= 500 || r1.status === 404 || r1.status === 410) meurt(url); return { ok: false, raison: 'the service answered HTTP ' + r1.status + ' before any payment - nothing was charged' }; }
       const req = await X.lit402(r1);
-      if (!req) { MESURE.refusees++; return { ok: false, raison: 'the service did not send an x402 payment request - nothing was charged' }; }
+      if (!req) { MESURE.refusees++; meurt(url); return { ok: false, raison: 'the service did not send an x402 payment request - nothing was charged' }; }
       const acc = X.offrePour(w, req.accepts);
       if (!acc) { MESURE.refusees++; return { ok: false, raison: 'the service does not take USDC on ' + (w.type === 'solana' ? 'Solana' : 'Base') + ' - nothing was charged' }; }
       const usd = Number(acc.amount) / 1e6;
