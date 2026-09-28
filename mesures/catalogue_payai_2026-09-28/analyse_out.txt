@@ -1,0 +1,135 @@
+## TAILLE
+entrees 7529 resources distinctes 7520
+hotes 924 hotes sans port 923
+payTo distincts 725
+versions Counter({2: 6162, 1: 1367})
+type Counter({'http': 7500, 'mcp': 29})
+scheme Counter({'https': 6742, 'http': 787})
+schemes x402 Counter({'exact': 7527, 'upto': 2})
+methode Counter({'GET': 3907, 'POST': 3575, None: 30, 'HEAD': 16, 'DELETE': 1})
+reseaux [(('Base', 'mainnet'), 5559), (('Solana', 'mainnet'), 1823), (('Base Sepolia (test)', 'test'), 74), (('Polygon', 'mainnet'), 33), (('Solana devnet (test)', 'test'), 17), (('X Layer', 'mainnet'), 8), (('Arbitrum', 'mainnet'), 3), (('Sei', 'mainnet'), 2), (('eip155:1187947933 (SKALE, declare)', 'mainnet'), 2), (('Polygon Amoy (test)', 'test'), 2), (('eip155:1952 (inconnu)', 'inconnu'), 2), (('Avalanche', 'mainnet'), 1), (('X Layer testnet (test)', 'test'), 1), (('Sei testnet (test)', 'test'), 1), (('peaq', 'mainnet'), 1)]
+mainnet 7432 test 95 inconnu 2
+actifs [('USDC', 7514), ('euro5snhrz', 6), ('Bridged USDC (SKALE Bridge)', 2), ('Global Dollar', 2), ('Wrapped SOL', 1), ('so11111111', 1), ('USDC_TEST', 1), ('USD Coin', 1), ('x402 Roshambo', 1)]
+lastUpdated min 2025-10-02T12:06:04.057Z max 2026-09-28T16:41:41.969Z
+maj < 1 j 1071
+maj < 7 j 1467
+maj < 30 j 2488
+maj < 90 j 5751
+sans description 2377
+avec schema bazaar 1843
+avec outputSchema 5415
+## PRIX
+prix mainnet USDC n 7410 {'n': 7410, 'min': 0.0, 'q1': 0.002, 'med': 0.01, 'q3': 0.02, 'max': 100.0, 'moy': 0.2135155155195681}
+prix zero 15
+  =0 15
+  ]0;0.001] 1712
+  ]0.001;0.005] 1553
+  ]0.005;0.01] 1846
+  ]0.01;0.05] 1292
+  ]0.05;0.1] 376
+  ]0.1;1] 508
+  ]1;10] 93
+  ]10;1000000000000.0] 15
+prix Base {'n': 5558, 'min': 0.0, 'q1': 0.001, 'med': 0.01, 'q3': 0.02, 'max': 100.0, 'moy': 0.2264314784094997}
+prix Solana {'n': 1815, 'min': 0.0001, 'q1': 0.005, 'med': 0.01, 'q3': 0.03, 'max': 50.0, 'moy': 0.17812429201101912}
+prix Polygon {'n': 33, 'min': 0.0001, 'q1': 0.001, 'med': 0.005, 'q3': 0.01, 'max': 0.01, 'moy': 0.005673424242424244}
+prix median par hote (un point par hote) {'n': 871, 'min': 0.0, 'q1': 0.005, 'med': 0.01, 'q3': 0.05, 'max': 29.0, 'moy': 0.30542363777267506}
+## CATEGORIES
+outils_dev 1848 hotes 192 top [('api.delx.ai', 786), ('www.cloudworldmodel.ai', 285), ('agent402.tools', 135), ('intel.rallylive.ca', 80)] prix {'n': 1832, 'min': 0.0, 'q1': 0.001, 'med': 0.001, 'q3': 0.005, 'max': 29.0, 'moy': 0.05196}
+prix_marche_crypto 1269 hotes 221 top [('x402.asrai.me', 268), ('api.x402node.dev', 125), ('payai.agentstools.dev', 59), ('mpp.hyreagent.fun', 38)] prix {'n': 1258, 'min': 0.0, 'q1': 0.005, 'med': 0.01, 'q3': 0.02, 'max': 100.0, 'moy': 0.14003}
+recherche_web 859 hotes 179 top [('intel.rallylive.ca', 248), ('changelog-state-api.replit.app', 63), ('payai.agentstools.dev', 50), ('api.x402node.dev', 33)] prix {'n': 852, 'min': 0.0001, 'q1': 0.008, 'med': 0.01, 'q3': 0.015, 'max': 5.0, 'moy': 0.04749}
+donnees_onchain 786 hotes 204 top [('api.delx.ai', 91), ('api.x402node.dev', 56), ('mpp.hyreagent.fun', 55), ('payai.agentstools.dev', 30)] prix {'n': 775, 'min': 0.0001, 'q1': 0.002, 'med': 0.01, 'q3': 0.05, 'max': 100.0, 'moy': 0.63358}
+non_classe 668 hotes 232 top [('x402.aurelianflo.com', 74), ('api.x402node.dev', 52), ('x402.asrai.me', 43), ('chainray.online', 24)] prix {'n': 650, 'min': 0.0, 'q1': 0.005, 'med': 0.01, 'q3': 0.06415, 'max': 100.0, 'moy': 0.68199}
+securite_jeton 404 hotes 131 top [('mpp.hyreagent.fun', 77), ('payai.agentstools.dev', 64), ('base-agent-preflight.bytoken2023.workers.dev', 15), ('agentum.lat', 11)] prix {'n': 393, 'min': 0.0, 'q1': 0.01, 'med': 0.02, 'q3': 0.1, 'max': 3.0, 'moy': 0.10305}
+finance_tradfi 365 hotes 89 top [('api.x402node.dev', 117), ('payai.agentstools.dev', 48), ('agent402.tools', 27), ('api.crushrewards.dev', 16)] prix {'n': 357, 'min': 0.001, 'q1': 0.005, 'med': 0.01, 'q3': 0.02, 'max': 10.0, 'moy': 0.06628}
+osint_infra 280 hotes 68 top [('intel.rallylive.ca', 95), ('api.delx.ai', 48), ('payai.agentstools.dev', 16), ('agent402.tools', 13)] prix {'n': 279, 'min': 0.0, 'q1': 0.002, 'med': 0.01, 'q3': 0.01, 'max': 1.0, 'moy': 0.04575}
+llm_chat 227 hotes 92 top [('gpt55.558686.xyz', 58), ('x402factory.ai', 12), ('intel.rallylive.ca', 10), ('payai.agentstools.dev', 8)] prix {'n': 221, 'min': 0.0, 'q1': 0.005, 'med': 0.01, 'q3': 0.05, 'max': 5.0, 'moy': 0.17664}
+meteo_geo 211 hotes 52 top [('api.x402node.dev', 21), ('intel.rallylive.ca', 16), ('data.intel.rallylive.ca', 15), ('payai.agentstools.dev', 15)] prix {'n': 209, 'min': 0.0, 'q1': 0.005, 'med': 0.01, 'q3': 0.015, 'max': 2.5, 'moy': 0.06474}
+tests_divers 172 hotes 74 top [('aoe-tip-seller.magicalcifer.workers.dev', 39), ('api.agnichub.xyz', 21), ('api.delx.ai', 11), ('clawpay.ai', 6)] prix {'n': 156, 'min': 0.0, 'q1': 0.003, 'med': 0.01, 'q3': 0.5, 'max': 5.0, 'moy': 0.44367}
+social 163 hotes 42 top [('wurkapi.fun', 26), ('x402-x.madnodes.xyz', 16), ('x-data-gateway.annushka1190.workers.dev', 11), ('api.vibe.airforce', 11)] prix {'n': 163, 'min': 0.0, 'q1': 0.007, 'med': 0.01, 'q3': 0.05, 'max': 5.0, 'moy': 0.38172}
+image_video_audio 157 hotes 53 top [('x402.aurelianflo.com', 19), ('api.delx.ai', 15), ('api.x402node.dev', 12), ('intel.rallylive.ca', 11)] prix {'n': 156, 'min': 0.001, 'q1': 0.005, 'med': 0.01, 'q3': 0.03, 'max': 1.8, 'moy': 0.08547}
+paris_prediction_jeux 110 hotes 35 top [('payai.agentstools.dev', 13), ('sol.blockrun.ai', 13), ('api.cn402.com', 13), ('api.nansen.ai', 9)] prix {'n': 100, 'min': 0.001, 'q1': 0.005, 'med': 0.01, 'q3': 0.02, 'max': 5.0, 'moy': 0.08413}
+achats_reels 10 hotes 7 top [('wouldpayagain.com', 4), ('relay402.georgespring.workers.dev', 1), ('api.voipstore.xyz', 1), ('vamoschips.com', 1)] prix {'n': 9, 'min': 0.008, 'q1': 0.2, 'med': 0.25, 'q3': 0.6, 'max': 50.96611, 'moy': 5.92714}
+## CONCENTRATION
+1 api.delx.ai 1012 13.4% cumul 13.4%
+2 api.x402node.dev 492 6.5% cumul 20.0%
+3 intel.rallylive.ca 490 6.5% cumul 26.5%
+4 payai.agentstools.dev 362 4.8% cumul 31.3%
+5 x402.asrai.me 318 4.2% cumul 35.5%
+6 www.cloudworldmodel.ai 311 4.1% cumul 39.6%
+7 agent402.tools 265 3.5% cumul 43.2%
+8 mpp.hyreagent.fun 180 2.4% cumul 45.6%
+9 x402.aurelianflo.com 178 2.4% cumul 47.9%
+10 gpt55.558686.xyz 132 1.8% cumul 49.7%
+11 chainray.online 81 1.1% cumul 50.8%
+12 changelog-state-api.replit.app 63 0.8% cumul 51.6%
+13 api.syraa.fun 58 0.8% cumul 52.4%
+14 x402-zoo.lolagent.workers.dev 49 0.7% cumul 53.0%
+15 aoe-tip-seller.magicalcifer.workers.dev 49 0.7% cumul 53.7%
+16 market2000.xyz 47 0.6% cumul 54.3%
+17 x402.onchainexpat.com 46 0.6% cumul 54.9%
+18 api.nansen.ai 45 0.6% cumul 55.5%
+19 engedi.digi-life17.workers.dev 45 0.6% cumul 56.1%
+20 base-agent-preflight.bytoken2023.workers.dev 43 0.6% cumul 56.7%
+hotes avec >= 100 entrees 10
+hotes avec >= 50 entrees 13
+hotes avec >= 20 entrees 55
+hotes avec >= 10 entrees 103
+hotes avec >= 5 entrees 179
+hotes avec >= 2 entrees 398
+hotes avec >= 1 entrees 924
+hotes a 1 entree 526
+top1 % 13.441360074379068 top5 % 35.51600478151149 top10 % 49.67459157922699
+HHI hotes 364
+payTo top5 [('0x9f8bd987', 973), ('0xfc24fd34', 544), ('9urrvux69h', 533), ('aythnvc6bz', 361), ('0xc66d1757', 309)]
+gabarits de route distincts 6718 pour 7529 entrees
+gabarits les plus repetes [('www.cloudworldmodel.ai/api/simulations/{id}/step-hybrid', 124), ('www.cloudworldmodel.ai/api/simulations/{id}/inject-traffic', 87), ('www.cloudworldmodel.ai/api/simulations/{id}/inject-failure', 62), ('mpp.hyreagent.fun/trenches/token/{id}/verdict', 52), ('aoe-tip-seller.magicalcifer.workers.dev/tip', 39), ('x402.asrai.me/api/td/{paire}/1D', 16), ('x402-x.madnodes.xyz/twitter/user_by_screenname', 16), ('x402.asrai.me/api/superalsat/{paire}', 15), ('x402.asrai.me/api/signal/{paire}/1D', 15), ('x402.asrai.me/api/alphatrend/{paire}/1D', 15), ('x402.asrai.me/api/alsat/{paire}/1D', 15), ('www.cloudworldmodel.ai/api/rl/environments/{id}/step', 13)]
+resources en double exact 9
+descriptions non vides 5152 distinctes 4167 groupes repetes 154 entrees dans un groupe repete 1139
+descriptions les plus repetees [('asrai api', 316), ('inject traffic into a running simulation — provide `targetrps` (absolu', 76), ('advance the cloud simulation by one timestep using the hybrid engine.', 70), ('fail a specific compute node by `resourceid` or `resourcename`; omit b', 57), ('full ai verdict on a solana token combining holders, snipers, dev hist', 53), ('structured recent releases for one tracked vendor.', 34), ('detected changelog update history for one tracked vendor.', 29), ('advance a cloud simulation with hybrid ml/rules stepping to evaluate a', 25), ('pay with base', 17), ('fetches a twitter user’s public profile information using their screen', 16)]
+descriptions identiques sur plusieurs hotes 71 [('transaction api: the brand behind a card or bank statement l', ['api-marco-5156.development.brandfetch.io', 'api.development.brandfetch.io', 'api.staging.brandfetch.io']), ('provision standing brandfetch api access: pay n whole us dol', ['api-marco-5156.development.brandfetch.io', 'api-marco-5323.development.brandfetch.io', 'api.development.brandfetch.io', 'api.staging.brandfetch.io']), ('crédito pré-pago de $1.00 para as apis da casa', ['agentalog.com', 'classificado.app.br', 'commsharbor.com', 'editalmd.com']), ('exa search - neural search across the web', ['stable-enrich-anncfzk3u-merit-systems.vercel.app', 'stable-enrich-ecdu27dk1-merit-systems.vercel.app', 'stable-enrich-git-payai-solana-facilitator-merit-systems.vercel.app', 'stableenrich.dev']), ('claude inference. get this url → http 402 $0.001 usdc solana', ['01a046b2-7104-74c2-8a02-04715d7235e1-1aw0hwejp-xai-org.vercel.app', '01a046b2-7104-74c2-8a02-04715d7235e1-hktfmuhfi-xai-org.vercel.app', '01a046b2-7104-74c2-8a02-04715d7235e1-jmkrdwwwr-xai-org.vercel.app', '01a046b2-7104-74c2-8a02-04715d7235e1-mj99ttjfh-xai-org.vercel.app']), ('codenut credit x402 offer - $0.01 to get 100x worth of coden', ['codenut.ai', 'pay.codenut.ai', 'www.codenut.ai']), ('donate with custom amount and message', ['donation-template-test-2.vercel.app', 'testing-x402-donation.vercel.app', 'token-lemon-eta.vercel.app', 'x402-donation-test-dun.vercel.app']), ('支付 1.0 usdc 获得 888 x402人生代币', ['x402-a6ejpb7i2-howe813s-projects.vercel.app', 'x402-ectu12tiw-howe813s-projects.vercel.app', 'x402-jco1fxiks-howe813s-projects.vercel.app', 'x402-ofpu0ew6t-howe813s-projects.vercel.app'])]
+resources sur plusieurs reseaux 0
+## NOS OUTILS
+nos entrees 16 [('ask_agent', 0.541, 'Base'), ('can_i_sell', 0.022, 'Solana'), ('chat_completion', 0.005, 'Solana'), ('colony_activity', 0.02, 'Solana'), ('new_launches', 0.02, 'Solana'), ('osint_lookup', 0.022, 'Solana'), ('roast_token', 0.02, 'Solana'), ('robinhood_rpc', 0.006, 'Solana'), ('robinhood_token', 0.006, 'Solana'), ('robinhood_tx', 0.006, 'Solana'), ('robinhood_wallet', 0.006, 'Solana'), ('scan_token', 0.02, 'Solana'), ('swoge_economy', 0.02, 'Solana'), ('token_verdict', 0.01, 'Solana'), ('wallet_intel', 0.022, 'Solana'), ('web_search', 0.02, 'Solana')]
+scan_token n 195 hotes 60 notre [0.02] q {'n': 188, 'min': 0.001, 'q1': 0.01, 'med': 0.04, 'q3': 0.15, 'max': 2.0, 'moy': 0.1282} moins chers que nous 59 top [('mpp.hyreagent.fun', 70), ('base-agent-preflight.bytoken2023.workers.dev', 16), ('api.loopholetape.com', 15), ('www.0816.cn', 8), ('aiworker.duckdns.org', 6), ('payai.agentstools.dev', 5)]
+can_i_sell n 34 hotes 22 notre [0.022] q {'n': 29, 'min': 0.001, 'q1': 0.01, 'med': 0.02, 'q3': 0.05, 'max': 1.0, 'moy': 0.07377} moins chers que nous 16 top [('www.0816.cn', 6), ('aiworker.duckdns.org', 6), ('defi-intel-agent-gateway.gg-neo15.workers.dev', 2), ('cryptopulse.saascloud.ai', 2), ('api.x402risk.com', 1), ('payai.agentstools.dev', 1)]
+token_verdict n 86 hotes 15 notre [0.01] q {'n': 81, 'min': 0.002, 'q1': 0.15, 'med': 0.15, 'q3': 0.15, 'max': 0.25, 'moy': 0.12558} moins chers que nous 1 top [('mpp.hyreagent.fun', 63), ('www.0816.cn', 5), ('api.loopholetape.com', 3), ('payai.agentstools.dev', 2), ('chiefofstaff-solana.iodized-lemon.workers.dev', 2), ('aiworker.duckdns.org', 2)]
+roast_token n 2 hotes 2 notre [0.02] q {'n': 2, 'min': 0.02, 'q1': 0.0275, 'med': 0.035, 'q3': 0.0425, 'max': 0.05, 'moy': 0.035} moins chers que nous 0 top [('x402-accelerometer-feed.fly.dev', 1), ('api.anchor-x402.com', 1)]
+wallet_intel n 88 hotes 18 notre [0.022] q {'n': 88, 'min': 0.001, 'q1': 0.04, 'med': 0.15, 'q3': 0.15, 'max': 0.3, 'moy': 0.1077} moins chers que nous 18 top [('mpp.hyreagent.fun', 64), ('sol.blockrun.ai', 4), ('payai.agentstools.dev', 2), ('api.anchor-x402.com', 2), ('x402.onchainexpat.com', 2), ('madeonsol.com', 2)]
+osint_lookup n 135 hotes 26 notre [0.022] q {'n': 135, 'min': 0.0005, 'q1': 0.003, 'med': 0.01, 'q3': 0.01, 'max': 0.08, 'moy': 0.00884} moins chers que nous 129 top [('intel.rallylive.ca', 54), ('api.delx.ai', 22), ('relay402.georgespring.workers.dev', 10), ('dns.intel.rallylive.ca', 9), ('payai.agentstools.dev', 8), ('agent402.tools', 5)]
+web_search n 53 hotes 17 notre [0.02] q {'n': 53, 'min': 0.001, 'q1': 0.003, 'med': 0.01, 'q3': 0.015, 'max': 0.04, 'moy': 0.00998} moins chers que nous 41 top [('api.delx.ai', 21), ('api.x402node.dev', 9), ('payai.agentstools.dev', 3), ('intel.rallylive.ca', 2), ('citable.run', 2), ('aws-bedrock.grok.me', 2)]
+chat_completion n 35 hotes 19 notre [0.005] q {'n': 35, 'min': 6e-05, 'q1': 0.002, 'med': 0.003, 'q3': 0.027, 'max': 0.52389, 'moy': 0.05668} moins chers que nous 19 top [('gpt55.558686.xyz', 13), ('api.xfuel.app', 3), ('yiduochan.com', 2), ('openrelay.hggfffdfy687.workers.dev', 2), ('api.chit402.com', 1), ('sol.mapleai.shop', 1)]
+ask_agent n 13 hotes 10 notre [0.541] q {'n': 13, 'min': 0.001, 'q1': 0.003, 'med': 0.015, 'q3': 0.15, 'max': 2.0, 'moy': 0.25277} moins chers que nous 11 top [('api.syraa.fun', 3), ('relay402.georgespring.workers.dev', 2), ('intel.rallylive.ca', 1), ('agent-product-normalizer.vercel.app', 1), ('payforapi.com', 1), ('api.delx.ai', 1)]
+generate_image n 23 hotes 15 notre None q {'n': 23, 'min': 0.001, 'q1': 0.01, 'med': 0.03, 'q3': 0.045, 'max': 0.2, 'moy': 0.03751} moins chers que nous 0 top [('fal.x402.paysponge.com', 6), ('api.delx.ai', 4), ('sol.mapleai.shop', 1), ('x402.chaly.org', 1), ('www.studio-x.cc', 1), ('www.trezalabs.com', 1)]
+generate_video n 14 hotes 8 notre None q {'n': 14, 'min': 0.01, 'q1': 0.055, 'med': 0.2925, 'q3': 0.52764, 'max': 0.87, 'moy': 0.30922} moins chers que nous 0 top [('www.studio-x.cc', 3), ('fal.x402.paysponge.com', 2), ('clawhunter.fun', 2), ('www.trezalabs.com', 2), ('getvideos.app', 2), ('api.render402.xyz', 1)]
+robinhood_* n 23 hotes 10 notre [0.006] q {'n': 23, 'min': 0.001, 'q1': 0.0075, 'med': 0.01, 'q3': 0.01, 'max': 0.6, 'moy': 0.0403} moins chers que nous 6 top [('www.robinhoodradar.com', 8), ('percall.kimi.pro', 5), ('api.loopholetape.com', 3), ('x402-accelerometer-feed.fly.dev', 1), ('chiefofstaff-solana.iodized-lemon.workers.dev', 1), ('clawhunter.fun', 1)]
+new_launches n 7 hotes 5 notre [0.02] q {'n': 7, 'min': 0.00159, 'q1': 0.01, 'med': 0.05, 'q3': 0.08, 'max': 0.08, 'moy': 0.04451} moins chers que nous 3 top [('mpp.hyreagent.fun', 3), ('launches.lonestaroracle.xyz', 1), ('api.loopholetape.com', 1), ('api.slamai.dev', 1), ('mesh.heurist.xyz', 1)]
+colony_activity n 5 hotes 4 notre [0.02] q {'n': 5, 'min': 0.003, 'q1': 0.006, 'med': 0.031, 'q3': 0.2, 'max': 0.2, 'moy': 0.088} moins chers que nous 2 top [('47620.xyz', 2), ('carry-lens-api.netlify.app', 1), ('api.itsgloria.ai', 1), ('api.x402node.dev', 1)]
+swoge_economy n 9 hotes 3 notre [0.02] q {'n': 9, 'min': 0.005, 'q1': 0.008, 'med': 0.01, 'q3': 0.02, 'max': 0.05, 'moy': 0.01567} moins chers que nous 6 top [('payai.agentstools.dev', 6), ('x402.santyvv.com', 2), ('santyvv-x402.santyvv1993.workers.dev', 1)]
+## BESOINS
+scores sportifs en direct | n 6 | hotes 2 | min 0.001 med 0.005 | [('payai.agentstools.dev', 5), ('api.delx.ai', 1)]
+cotes sportives / bookmakers | n 1 | hotes 1 | min 0.001 med 0.001 | [('api.delx.ai', 1)]
+marches de prediction (Polymarket/Kalshi) | n 82 | hotes 23 | min 0.001 med 0.0075 | [('sol.blockrun.ai', 27), ('api.nansen.ai', 9), ('payai.agentstools.dev', 7), ('api.delx.ai', 7), ('api.predge.io', 5)]
+PancakeSwap Prediction / manches UP-DOWN | n 7 | hotes 2 | min 0.003 med 0.003 | [('api.delx.ai', 6), ('conc-exe.xyz', 1)]
+verification provably-fair de casino | n 0 | hotes 0 | min inconnu med inconnu | []
+hasard verifiable (RNG/VRF) | n 3 | hotes 3 | min 0.001 med 0.01 | [('payai.agentstools.dev', 1), ('api.anchor-x402.com', 1), ('x402-random.vercel.app', 1)]
+Robinhood Chain (toute donnee) | n 23 | hotes 10 | min 0.001 med 0.01 | [('www.robinhoodradar.com', 8), ('percall.kimi.pro', 5), ('api.loopholetape.com', 3), ('x402-accelerometer-feed.fly.dev', 1), ('chiefofstaff-solana.iodized-lemon.workers.dev', 1)]
+actions tokenisees | n 6 | hotes 2 | min 0.001 med 0.01 | [('x402-accelerometer-feed.fly.dev', 4), ('percall.kimi.pro', 2)]
+test de revente / honeypot | n 28 | hotes 19 | min 0.001 med 0.03 | [('aiworker.duckdns.org', 6), ('www.0816.cn', 4), ('cryptopulse.saascloud.ai', 2), ('api.x402risk.com', 1), ('payai.agentstools.dev', 1)]
+historique du deployeur / createur | n 70 | hotes 8 | min 0.002 med 0.15 | [('mpp.hyreagent.fun', 62), ('madeonsol.com', 2), ('chiefofstaff-solana.iodized-lemon.workers.dev', 1), ('origin-mcp.fly.dev', 1), ('robinhood-radar-dsk86hfkw-lightfarm.vercel.app', 1)]
+perps Hyperliquid / funding | n 50 | hotes 18 | min 0.0001 med 0.0065 | [('earn-pulse.haiqingm58.workers.dev', 21), ('payai.agentstools.dev', 7), ('mesh.heurist.xyz', 4), ('api.vibe.airforce', 2), ('hypurrclaw.xyz', 2)]
+gaz multi-chaines | n 38 | hotes 24 | min 0.001 med 0.005 | [('api.delx.ai', 5), ('47620.xyz', 4), ('x402.santyvv.com', 3), ('x402-audit.tatschluizguilherme.workers.dev', 3), ('mesh.heurist.xyz', 3)]
+devis de swap | n 6 | hotes 6 | min 0.001 med 0.01 | [('payai.agentstools.dev', 1), ('app.ravn.exchange', 1), ('x402-audit.tatschluizguilherme.workers.dev', 1), ('mpp.hyreagent.fun', 1), ('x402-api.heyelsa.ai', 1)]
+airdrops | n 11 | hotes 7 | min 0.005 med 0.05 | [('agentlayer.xyz', 4), ('aiworker.duckdns.org', 2), ('agent-guard.annushka1190.workers.dev', 1), ('conc-exe.xyz', 1), ('x402-audit.tatschluizguilherme.workers.dev', 1)]
+NFT floor | n 1 | hotes 1 | min 0.01 med 0.01 | [('payai.agentstools.dev', 1)]
+PnL de portefeuille | n 44 | hotes 17 | min 0.0001 med 0.02 | [('api.nansen.ai', 7), ('api.delx.ai', 7), ('mpp.hyreagent.fun', 7), ('payai.agentstools.dev', 4), ('www.fomoscan.dev', 3)]
+objets de jeux video / skins (Steam, CS2) | n 0 | hotes 0 | min inconnu med inconnu | []
+esports | n 1 | hotes 1 | min 0.005 med 0.005 | [('payai.agentstools.dev', 1)]
+echecs / moteurs de jeu | n 0 | hotes 0 | min inconnu med inconnu | []
+lancer un jeton | n 4 | hotes 4 | min 0.0067 med 0.03 | [('launches.lonestaroracle.xyz', 1), ('clanker-banker.agentfetcher.workers.dev', 1), ('www.capminal.ai', 1), ('x402merchant.fun', 1)]
+confiance / vie d un service x402 | n 44 | hotes 17 | min 0.001 med 0.005 | [('api.delx.ai', 11), ('base-agent-preflight.bytoken2023.workers.dev', 9), ('gpt55.558686.xyz', 4), ('x402-secure-api.t54.ai', 3), ('proxy.x402scan.com', 3)]
+alertes / webhooks | n 44 | hotes 24 | min 0.001 med 0.01 | [('intel.rallylive.ca', 6), ('whale-signals.whalesignals.workers.dev', 6), ('api.delx.ai', 5), ('chainray.online', 3), ('proofwork-the402-webhook.phase-voice.workers.dev', 2)]
+solde multi-chaines / portefeuille | n 56 | hotes 31 | min 0.0001 med 0.01 | [('payai.agentstools.dev', 8), ('market2000.xyz', 6), ('x402.asrai.me', 6), ('api.delx.ai', 3), ('aura.adex.network', 3)]
+memecoins Solana (pump.fun) | n 47 | hotes 13 | min 0.001 med 0.01 | [('api.loopholetape.com', 18), ('mpp.hyreagent.fun', 10), ('temporary-turbo-olive-01ige7u.vercel.app', 3), ('payai.agentstools.dev', 2), ('htrlhl3y49.execute-api.us-east-2.amazonaws.com', 2)]
+memecoins Base / Clanker / Zora | n 2 | hotes 2 | min 0.0067 med 0.253 | [('clanker-banker.agentfetcher.workers.dev', 1), ('www.capminal.ai', 1)]
+Telegram / canaux crypto | n 8 | hotes 6 | min 0.001 med 0.0063 | [('deeptrawler.com', 2), ('x402factory.ai', 2), ('intel.rallylive.ca', 1), ('api.growvib.com', 1), ('defi-intel-agent-gateway.gg-neo15.workers.dev', 1)]

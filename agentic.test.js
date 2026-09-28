@@ -122,8 +122,8 @@ const api = A.cree({ cles, cours: async () => COURS, solde, outils, actifs: () =
   ok((await api.appelle({ cle, outil: 'ask_agent', args: { task: 'x', model: 'gpt-6-sol' } })).code === 400, 'ask_agent ne tourne que sur Claude');
 
   /* Les outils ajoutes le 26 septembre : prix, entrees refusees avant debit, image au reel. */
-  ok(cat.outils.find((o) => o.name === 'new_launches').prix.usd === 0.005 && cat.outils.find((o) => o.name === 'wallet_intel').prix.usd === 0.02 && cat.outils.find((o) => o.name === 'osint_lookup').prix.usd === 0.02,
-     'lancements 0,005 $, lanceur 0,02 $, OSINT 0,02 $ (prix de depart)');
+  ok(cat.outils.find((o) => o.name === 'new_launches').prix.usd === 0.005 && cat.outils.find((o) => o.name === 'wallet_intel').prix.usd === 0.008 && cat.outils.find((o) => o.name === 'osint_lookup').prix.usd === 0.008,
+     'lancements 0,005 $, lanceur 0,008 $, OSINT 0,008 $ (la baisse du 28/09, par cle)');
   const nReg2 = sol.regles.length;
   ok((await api.appelle({ cle, outil: 'wallet_intel', args: { address: 'x' } })).code === 400 && (await api.appelle({ cle, outil: 'generate_image', args: { prompt: 'x', count: 3 } })).code === 400
      && sol.regles.length === nReg2, 'une entree invalide (adresse, nombre d images) est refusee avant tout debit');

@@ -45,8 +45,23 @@ const Jeton = require('./studio_jeton');
    renseignement sur un lanceur, l'OSINT d'infrastructure — memes reperes de
    prix (lire nos propres donnees ne nous coute rien ; l'OSINT interroge des
    services tiers, d'ou un prix plus haut). Prix de depart, pas des mesures. */
+/* ---- LA BAISSE DU 28/09/2026 (une experience, avec un groupe temoin) ----
+   Mesure (compteurs durables, /agentic/x402 → jours.outils, 27-28/09) : 3 796
+   demandes de prix (402) pour 24 paiements exterieurs, ~0,6 %. Le 28/09 :
+   2 842 demandes de 143 demandeurs distincts, 0 paiement exterieur. Releve du
+   catalogue PayAI le meme jour (7 529 services, mesures/catalogue_payai_2026-09-28.md) :
+   mediane 0,01 $, 69 % a 0,01 $ ou moins ; osint_lookup plus cher que 96 % de
+   ses 135 concurrents, web_search 2 a 7 fois (Perplexity vendu 0,01 $ ailleurs),
+   Robinhood Chain battu sur la fiche jeton (0,002 $), can_i_sell a 0,02 contre
+   0,01 $ pour le seul concurrent sur la chaine. BAISSES : wallet_intel,
+   osint_lookup, can_i_sell (→ 0,01 $ en x402), robinhood_* (→ 0,005 $),
+   new_launches et web_search (voir x402.PLANCHER_FACILITE). TEMOINS inchanges :
+   scan_token, colony_activity, swoge_economy, token_verdict, roast_token,
+   chat_completion, ask_agent. A relire : taux paiement/402 des deux groupes,
+   apres ≥ 1 000 demandes chacun. */
 const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0.001,
-  new_launches: 0.005, wallet_intel: 0.02, osint_lookup: 0.02,
+  /* osint_lookup : des sources gratuites (DNS, RDAP, crt.sh…), cout marginal ~0. */
+  new_launches: 0.005, wallet_intel: 0.008, osint_lookup: 0.008,
   /* 26 septembre 2026 : les appels Telegram suivis. Nos propres donnees, lues sans
      appel payant : le prix de depart des lectures, pas une mesure. NON VENDU tant
      que TG_APPELS_VENTE ne vaut pas '1' (conditions de Telegram, meme jour) : le
@@ -57,7 +72,7 @@ const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0
      ~3 eth_call, une lecture de journaux, un devis du quoteur, sans fournisseur
      payant. Le prix de scan_token sur Base (0,02 $ USDC, 402 lu le 27/09) :
      un prix de depart, a relire quand de vrais agents l'auront achete. */
-  can_i_sell: 0.02,
+  can_i_sell: 0.008,
   /* 27 septembre 2026 : le verdict rapide (verdict_jeton.js), la fiche de
      scan_token jugee, sans lecture de plus. Le prix median des 1 206 services
      d'analyse de jetons du catalogue PayAI (releve du 27/09) est 0,01 $ : 0,008 $
@@ -73,7 +88,7 @@ const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0
      vend les memes lectures, brutes, 0,001 a 0,01 $ (llms.txt lu le 27/09) ; les
      notres sont decodees. 0,004 $ par cle ; en x402, plancher de 0,005 $ sur
      Base et Solana (le reglement coute 0,001 a 0,0023 $). Prix de depart. */
-  robinhood_rpc: 0.004, robinhood_token: 0.004, robinhood_wallet: 0.004, robinhood_tx: 0.004 };
+  robinhood_rpc: 0.003, robinhood_token: 0.003, robinhood_wallet: 0.003, robinhood_tx: 0.003 };
 const VARIABLES = ['ask_agent', 'generate_image', 'generate_video'];
 /* `video_status` : gratuit (relire SA vidéo), jamais facturé. */
 const GRATUITS = ['video_status'];

@@ -358,7 +358,7 @@ function valide(sc, v, ch, strict, err) {
         .concat(x402.assets.map((a) => Object.assign({ network: 'eip155:4663' }, a))) });
     const prixB = async (nom, args) => { const p = await prixFaux(nom, args); const u = A.prixX402Usd(nom, args); return p ? Object.assign({ usdBase: Math.max(0.02, u + 0.001) }, p) : null; };
     const pxB = await D.prixX402Annonces({ noms: payables, prix: prixB, base: A.prixX402Usd, minUsd: 0.02 });
-    ok(pxB.scan_token.min === 0.02 && pxB.scan_token.max === prixX402.scan_token.min && pxB.wallet_intel.min === 0.021, 'deux reseaux : min = le prix Base, max = le prix Robinhood (scan_token ' + pxB.scan_token.min + ' / ' + pxB.scan_token.max + ')');
+    ok(pxB.scan_token.min === 0.02 && pxB.scan_token.max === prixX402.scan_token.min && pxB.wallet_intel.min === Math.max(0.02, A.prixX402Usd('wallet_intel', {}) + 0.001), 'deux reseaux : min = le prix Base, max = le prix Robinhood (scan_token ' + pxB.scan_token.min + ' / ' + pxB.scan_token.max + ')');
     const docB = D.openapi({ base: BASE, outils: cat.outils, x402: xB, prixX402: pxB, cours: 0.00002493, preuves: [], page: 'https://site/swogeagentic.html', docs: 'https://site/docs' });
     DOC = docB;
     const stB = docB.paths['/agentic/call/scan_token'].post;

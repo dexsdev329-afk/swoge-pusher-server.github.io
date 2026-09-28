@@ -140,7 +140,11 @@ const PLANCHER_FACILITE = Object.freeze({ token_verdict: 0.01,
   /* Les lectures Robinhood Chain (27/09) : 0,005 $, au-dessus du reglement le plus cher (0,00231 $). */
   robinhood_rpc: 0.005, robinhood_token: 0.005, robinhood_wallet: 0.005, robinhood_tx: 0.005,
   /* chat_completion (27/09) : le devis de la demande, 0,005 $ au moins (BlockRun : 0,002 $ + 0,001 $ de frais). */
-  chat_completion: 0.005 });
+  chat_completion: 0.005,
+  /* La baisse du 28/09 (mesure : agentic.js, PRIX_DEFAUT) : 0,01 $, le prix median du
+     catalogue PayAI, quatre fois le reglement le plus cher (0,00231 $). new_launches :
+     0,005 $, comme les trois flux de lancements Robinhood Chain concurrents (0,005-0,01 $). */
+  can_i_sell: 0.01, wallet_intel: 0.01, osint_lookup: 0.01, web_search: 0.01, new_launches: 0.005 });
 /* Les journaux de l'USDC (EIP-3009, circlefin/stablecoin-evm fc85788b,
    contracts/v2/EIP3009.sol : AuthorizationUsed émis :335-336,
    AuthorizationCanceled :266-267) — keccak256 des signatures, calculés avec

@@ -472,8 +472,10 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
     ok(JSON.stringify(req.accepts[0].extra) === '{"name":"USD Coin","version":"2"}' && req.accepts[0].asset === X.USDC_BASE && req.accepts[0].payTo === TRESOR && req.accepts[0].maxTimeoutSeconds === 120,
        'Base : extra EXACTEMENT {name: USD Coin, version: 2}, sans assetTransferMethod ; l USDC de Base ; la tresorerie ; 120 s');
     /* §A.2 : les montants, calcules par la fonction du depot (prix_base_calc.js, 27 septembre 2026). */
-    const attendus = [['scan_token', undefined, '20000'], ['colony_activity', undefined, '20000'], ['swoge_economy', undefined, '20000'], ['new_launches', undefined, '20000'],
-      ['wallet_intel', undefined, '21000'], ['osint_lookup', undefined, '21000'], ['telegram_calls', undefined, '20000'], ['web_search', undefined, '20000'],
+    /* La baisse du 28/09 (agentic.js, PRIX_DEFAUT ; x402.PLANCHER_FACILITE) : new_launches 0,006 $ (0,005 + 0,001),
+       wallet_intel, osint_lookup et web_search au plancher de 0,01 $. Les temoins restent a 0,02 $. */
+    const attendus = [['scan_token', undefined, '20000'], ['colony_activity', undefined, '20000'], ['swoge_economy', undefined, '20000'], ['new_launches', undefined, '6000'],
+      ['wallet_intel', undefined, '10000'], ['osint_lookup', undefined, '10000'], ['telegram_calls', undefined, '20000'], ['web_search', undefined, '10000'],
       ['generate_image', { prompt: 'a dog', provider: 'grok', quality: 'speed', count: 1 }, '91000'], ['generate_image', { prompt: 'a dog', provider: 'grok', quality: 'quality', count: 1 }, '181000'],
       ['generate_image', { prompt: 'swoge on a boat', provider: 'grok', quality: 'quality', count: 1 }, '365725'], ['generate_image', { prompt: 'a dog', provider: 'openai', quality: 'quality', count: 1 }, '556000'],
       ['generate_image', { prompt: 'swoge on a boat', provider: 'openai', quality: 'quality', count: 4 }, '2324725'], ['ask_agent', undefined, '541000']];
@@ -523,7 +525,7 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
     ok(ri.status === 402 && qi.accepts.length === 1 && qi.accepts[0].network === 'eip155:8453' && pi.usd === null && pi.usdBase === 0.02,
        'Robinhood en panne (gaz et ETH inconnus) : Base reste offerte seule, usd = null, usdBase = 0.02');
     const ann = await D.prixX402Annonces({ noms: ['scan_token', 'wallet_intel'], prix: (o, a) => Mi.x.prix(o, a), base: A.prixX402Usd, minUsd: 0.02 });
-    ok(ann.scan_token && ann.scan_token.min === 0.02 && ann.scan_token.max === 0.02 && ann.wallet_intel.min === 0.021, 'prixX402Annonces avec usd null : le prix Base (avant : l outil disparaissait)');
+    ok(ann.scan_token && ann.scan_token.min === 0.02 && ann.scan_token.max === 0.02 && ann.wallet_intel.min === 0.01, 'prixX402Annonces avec usd null : le prix Base (avant : l outil disparaissait)');
     const annB = await D.prixX402Annonces({ noms: ['scan_token'], prix: (o, a) => M.x.prix(o, a), base: A.prixX402Usd, minUsd: 0.02 });
     ok(annB.scan_token.min === 0.02 && annB.scan_token.max === (await M.x.prix('scan_token')).usd, 'deux reseaux : min = Base, max = Robinhood');
     const Mr = await mondeBase({ sansBase: true });
@@ -770,7 +772,7 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
         }
       };
       await essaisForges('en attente');
-      Mv.R.paye(HASH(44), w.address, sv.auth.nonce, TRESOR, '21000');
+      Mv.R.paye(HASH(44), w.address, sv.auth.nonce, TRESOR, sv.auth.value);
       await essaisForges('confirme sur la chaine');
       const rv = await paie(Mv, 'wallet_intel', sv.entete, argsV);
       const bv = JSON.parse(rv.corps);
@@ -1057,7 +1059,7 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
       ok(cp.montantBase === '5000' && cg.montantBase === attenduG && Number(cg.montantBase) > 100000 && Number(cg.montantSolana) === Number(attenduG) + 1000,
          'chat_completion : une ligne a Haiku = le plancher (0,005 $) ; Opus, 8 000 caracteres, 4 000 jetons = ' + Number(cg.montantBase) / 1e6 + ' $ sur Base (devis + 0,001), +0,001 sur Solana');
       const pr = await Promise.all(['robinhood_rpc', 'robinhood_token', 'robinhood_wallet', 'robinhood_tx'].map((o) => Ms.x.prix(o, {})));
-      ok(pr.every((x) => x.montantBase === '5000' && x.montantSolana === '6000' && x.usd >= 0.02), 'les 4 lectures Robinhood : 0,005 $ sur Base (plancher), 0,006 $ sur Solana (0,004 + 0,002 de PayAI), 0,02 $ et plus sur Robinhood Chain (gaz)');
+      ok(pr.every((x) => x.montantBase === '5000' && x.montantSolana === '5000' && x.usd >= 0.02), 'les 4 lectures Robinhood (baisse du 28/09) : 0,005 $ sur Base et Solana (le plancher, au-dessus du reglement le plus cher), 0,02 $ et plus sur Robinhood Chain (gaz)');
       const qa = await entete402(Ms, 'ask_agent', { task: 'x' });
       ok(!qa.accepts.some((a) => a.network === X.RESEAU_SOLANA), 'ask_agent : pas de Solana (sa transaction expirerait avant la fin du travail)');
       const s1 = signeSol(q);

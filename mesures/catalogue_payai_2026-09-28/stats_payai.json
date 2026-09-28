@@ -1,0 +1,1789 @@
+{
+ "categories": {
+  "outils_dev": {
+   "n": 1848,
+   "hotes": 192,
+   "top": [
+    [
+     "api.delx.ai",
+     786
+    ],
+    [
+     "www.cloudworldmodel.ai",
+     285
+    ],
+    [
+     "agent402.tools",
+     135
+    ],
+    [
+     "intel.rallylive.ca",
+     80
+    ]
+   ],
+   "prix": {
+    "n": 1832,
+    "min": 0.0,
+    "q1": 0.001,
+    "med": 0.001,
+    "q3": 0.005,
+    "max": 29.0,
+    "moy": 0.051962825327510856
+   }
+  },
+  "prix_marche_crypto": {
+   "n": 1269,
+   "hotes": 221,
+   "top": [
+    [
+     "x402.asrai.me",
+     268
+    ],
+    [
+     "api.x402node.dev",
+     125
+    ],
+    [
+     "payai.agentstools.dev",
+     59
+    ],
+    [
+     "mpp.hyreagent.fun",
+     38
+    ]
+   ],
+   "prix": {
+    "n": 1258,
+    "min": 0.0,
+    "q1": 0.005,
+    "med": 0.01,
+    "q3": 0.02,
+    "max": 100.0,
+    "moy": 0.14002929332273453
+   }
+  },
+  "recherche_web": {
+   "n": 859,
+   "hotes": 179,
+   "top": [
+    [
+     "intel.rallylive.ca",
+     248
+    ],
+    [
+     "changelog-state-api.replit.app",
+     63
+    ],
+    [
+     "payai.agentstools.dev",
+     50
+    ],
+    [
+     "api.x402node.dev",
+     33
+    ]
+   ],
+   "prix": {
+    "n": 852,
+    "min": 0.0001,
+    "q1": 0.008,
+    "med": 0.01,
+    "q3": 0.015,
+    "max": 5.0,
+    "moy": 0.047493422535211174
+   }
+  },
+  "donnees_onchain": {
+   "n": 786,
+   "hotes": 204,
+   "top": [
+    [
+     "api.delx.ai",
+     91
+    ],
+    [
+     "api.x402node.dev",
+     56
+    ],
+    [
+     "mpp.hyreagent.fun",
+     55
+    ],
+    [
+     "payai.agentstools.dev",
+     30
+    ]
+   ],
+   "prix": {
+    "n": 775,
+    "min": 0.0001,
+    "q1": 0.002,
+    "med": 0.01,
+    "q3": 0.05,
+    "max": 100.0,
+    "moy": 0.6335792696774193
+   }
+  },
+  "non_classe": {
+   "n": 668,
+   "hotes": 232,
+   "top": [
+    [
+     "x402.aurelianflo.com",
+     74
+    ],
+    [
+     "api.x402node.dev",
+     52
+    ],
+    [
+     "x402.asrai.me",
+     43
+    ],
+    [
+     "chainray.online",
+     24
+    ]
+   ],
+   "prix": {
+    "n": 650,
+    "min": 0.0,
+    "q1": 0.005,
+    "med": 0.01,
+    "q3": 0.0641515,
+    "max": 100.0,
+    "moy": 0.6819878323076922
+   }
+  },
+  "securite_jeton": {
+   "n": 404,
+   "hotes": 131,
+   "top": [
+    [
+     "mpp.hyreagent.fun",
+     77
+    ],
+    [
+     "payai.agentstools.dev",
+     64
+    ],
+    [
+     "base-agent-preflight.bytoken2023.workers.dev",
+     15
+    ],
+    [
+     "agentum.lat",
+     11
+    ]
+   ],
+   "prix": {
+    "n": 393,
+    "min": 0.0,
+    "q1": 0.01,
+    "med": 0.02,
+    "q3": 0.1,
+    "max": 3.0,
+    "moy": 0.10305368956743
+   }
+  },
+  "finance_tradfi": {
+   "n": 365,
+   "hotes": 89,
+   "top": [
+    [
+     "api.x402node.dev",
+     117
+    ],
+    [
+     "payai.agentstools.dev",
+     48
+    ],
+    [
+     "agent402.tools",
+     27
+    ],
+    [
+     "api.crushrewards.dev",
+     16
+    ]
+   ],
+   "prix": {
+    "n": 357,
+    "min": 0.001,
+    "q1": 0.005,
+    "med": 0.01,
+    "q3": 0.02,
+    "max": 10.0,
+    "moy": 0.06627637815126047
+   }
+  },
+  "osint_infra": {
+   "n": 280,
+   "hotes": 68,
+   "top": [
+    [
+     "intel.rallylive.ca",
+     95
+    ],
+    [
+     "api.delx.ai",
+     48
+    ],
+    [
+     "payai.agentstools.dev",
+     16
+    ],
+    [
+     "agent402.tools",
+     13
+    ]
+   ],
+   "prix": {
+    "n": 279,
+    "min": 0.0,
+    "q1": 0.002,
+    "med": 0.01,
+    "q3": 0.01,
+    "max": 1.0,
+    "moy": 0.04574929032258065
+   }
+  },
+  "llm_chat": {
+   "n": 227,
+   "hotes": 92,
+   "top": [
+    [
+     "gpt55.558686.xyz",
+     58
+    ],
+    [
+     "x402factory.ai",
+     12
+    ],
+    [
+     "intel.rallylive.ca",
+     10
+    ],
+    [
+     "payai.agentstools.dev",
+     8
+    ]
+   ],
+   "prix": {
+    "n": 221,
+    "min": 0.0,
+    "q1": 0.005,
+    "med": 0.01,
+    "q3": 0.05,
+    "max": 5.0,
+    "moy": 0.1766440135746606
+   }
+  },
+  "meteo_geo": {
+   "n": 211,
+   "hotes": 52,
+   "top": [
+    [
+     "api.x402node.dev",
+     21
+    ],
+    [
+     "intel.rallylive.ca",
+     16
+    ],
+    [
+     "data.intel.rallylive.ca",
+     15
+    ],
+    [
+     "payai.agentstools.dev",
+     15
+    ]
+   ],
+   "prix": {
+    "n": 209,
+    "min": 0.0,
+    "q1": 0.005,
+    "med": 0.01,
+    "q3": 0.015,
+    "max": 2.5,
+    "moy": 0.06474354066985646
+   }
+  },
+  "tests_divers": {
+   "n": 172,
+   "hotes": 74,
+   "top": [
+    [
+     "aoe-tip-seller.magicalcifer.workers.dev",
+     39
+    ],
+    [
+     "api.agnichub.xyz",
+     21
+    ],
+    [
+     "api.delx.ai",
+     11
+    ],
+    [
+     "clawpay.ai",
+     6
+    ]
+   ],
+   "prix": {
+    "n": 156,
+    "min": 0.0,
+    "q1": 0.003,
+    "med": 0.01,
+    "q3": 0.5,
+    "max": 5.0,
+    "moy": 0.44367115384615385
+   }
+  },
+  "social": {
+   "n": 163,
+   "hotes": 42,
+   "top": [
+    [
+     "wurkapi.fun",
+     26
+    ],
+    [
+     "x402-x.madnodes.xyz",
+     16
+    ],
+    [
+     "x-data-gateway.annushka1190.workers.dev",
+     11
+    ],
+    [
+     "api.vibe.airforce",
+     11
+    ]
+   ],
+   "prix": {
+    "n": 163,
+    "min": 1e-06,
+    "q1": 0.007,
+    "med": 0.01,
+    "q3": 0.05,
+    "max": 5.0,
+    "moy": 0.38171785889570553
+   }
+  },
+  "image_video_audio": {
+   "n": 157,
+   "hotes": 53,
+   "top": [
+    [
+     "x402.aurelianflo.com",
+     19
+    ],
+    [
+     "api.delx.ai",
+     15
+    ],
+    [
+     "api.x402node.dev",
+     12
+    ],
+    [
+     "intel.rallylive.ca",
+     11
+    ]
+   ],
+   "prix": {
+    "n": 156,
+    "min": 0.001,
+    "q1": 0.005,
+    "med": 0.01,
+    "q3": 0.03,
+    "max": 1.8,
+    "moy": 0.08546676282051283
+   }
+  },
+  "paris_prediction_jeux": {
+   "n": 110,
+   "hotes": 35,
+   "top": [
+    [
+     "payai.agentstools.dev",
+     13
+    ],
+    [
+     "sol.blockrun.ai",
+     13
+    ],
+    [
+     "api.cn402.com",
+     13
+    ],
+    [
+     "api.nansen.ai",
+     9
+    ]
+   ],
+   "prix": {
+    "n": 100,
+    "min": 0.001,
+    "q1": 0.005,
+    "med": 0.01,
+    "q3": 0.02,
+    "max": 5.0,
+    "moy": 0.08412500000000002
+   }
+  },
+  "achats_reels": {
+   "n": 10,
+   "hotes": 7,
+   "top": [
+    [
+     "wouldpayagain.com",
+     4
+    ],
+    [
+     "relay402.georgespring.workers.dev",
+     1
+    ],
+    [
+     "api.voipstore.xyz",
+     1
+    ],
+    [
+     "vamoschips.com",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 9,
+    "min": 0.008,
+    "q1": 0.2,
+    "med": 0.25,
+    "q3": 0.6,
+    "max": 50.966109,
+    "moy": 5.927136666666667
+   }
+  }
+ },
+ "nos_outils": {
+  "scan_token": {
+   "n": 195,
+   "hotes": 60,
+   "top": [
+    [
+     "mpp.hyreagent.fun",
+     70
+    ],
+    [
+     "base-agent-preflight.bytoken2023.workers.dev",
+     16
+    ],
+    [
+     "api.loopholetape.com",
+     15
+    ],
+    [
+     "www.0816.cn",
+     8
+    ],
+    [
+     "aiworker.duckdns.org",
+     6
+    ],
+    [
+     "payai.agentstools.dev",
+     5
+    ]
+   ],
+   "prix": {
+    "n": 188,
+    "min": 0.001,
+    "q1": 0.01,
+    "med": 0.04,
+    "q3": 0.15,
+    "max": 2.0,
+    "moy": 0.12819946808510646
+   },
+   "notre": [
+    0.02
+   ],
+   "moins_chers": 59
+  },
+  "can_i_sell": {
+   "n": 34,
+   "hotes": 22,
+   "top": [
+    [
+     "www.0816.cn",
+     6
+    ],
+    [
+     "aiworker.duckdns.org",
+     6
+    ],
+    [
+     "defi-intel-agent-gateway.gg-neo15.workers.dev",
+     2
+    ],
+    [
+     "cryptopulse.saascloud.ai",
+     2
+    ],
+    [
+     "api.x402risk.com",
+     1
+    ],
+    [
+     "payai.agentstools.dev",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 29,
+    "min": 0.001,
+    "q1": 0.01,
+    "med": 0.02,
+    "q3": 0.05,
+    "max": 1.0,
+    "moy": 0.07377241379310345
+   },
+   "notre": [
+    0.022
+   ],
+   "moins_chers": 16
+  },
+  "token_verdict": {
+   "n": 86,
+   "hotes": 15,
+   "top": [
+    [
+     "mpp.hyreagent.fun",
+     63
+    ],
+    [
+     "www.0816.cn",
+     5
+    ],
+    [
+     "api.loopholetape.com",
+     3
+    ],
+    [
+     "payai.agentstools.dev",
+     2
+    ],
+    [
+     "chiefofstaff-solana.iodized-lemon.workers.dev",
+     2
+    ],
+    [
+     "aiworker.duckdns.org",
+     2
+    ]
+   ],
+   "prix": {
+    "n": 81,
+    "min": 0.002,
+    "q1": 0.15,
+    "med": 0.15,
+    "q3": 0.15,
+    "max": 0.25,
+    "moy": 0.12558024691358038
+   },
+   "notre": [
+    0.01
+   ],
+   "moins_chers": 1
+  },
+  "roast_token": {
+   "n": 2,
+   "hotes": 2,
+   "top": [
+    [
+     "x402-accelerometer-feed.fly.dev",
+     1
+    ],
+    [
+     "api.anchor-x402.com",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 2,
+    "min": 0.02,
+    "q1": 0.0275,
+    "med": 0.035,
+    "q3": 0.0425,
+    "max": 0.05,
+    "moy": 0.035
+   },
+   "notre": [
+    0.02
+   ],
+   "moins_chers": 0
+  },
+  "wallet_intel": {
+   "n": 88,
+   "hotes": 18,
+   "top": [
+    [
+     "mpp.hyreagent.fun",
+     64
+    ],
+    [
+     "sol.blockrun.ai",
+     4
+    ],
+    [
+     "payai.agentstools.dev",
+     2
+    ],
+    [
+     "api.anchor-x402.com",
+     2
+    ],
+    [
+     "x402.onchainexpat.com",
+     2
+    ],
+    [
+     "madeonsol.com",
+     2
+    ]
+   ],
+   "prix": {
+    "n": 88,
+    "min": 0.001,
+    "q1": 0.04,
+    "med": 0.15,
+    "q3": 0.15,
+    "max": 0.3,
+    "moy": 0.10770454545454557
+   },
+   "notre": [
+    0.022
+   ],
+   "moins_chers": 18
+  },
+  "osint_lookup": {
+   "n": 135,
+   "hotes": 26,
+   "top": [
+    [
+     "intel.rallylive.ca",
+     54
+    ],
+    [
+     "api.delx.ai",
+     22
+    ],
+    [
+     "relay402.georgespring.workers.dev",
+     10
+    ],
+    [
+     "dns.intel.rallylive.ca",
+     9
+    ],
+    [
+     "payai.agentstools.dev",
+     8
+    ],
+    [
+     "agent402.tools",
+     5
+    ]
+   ],
+   "prix": {
+    "n": 135,
+    "min": 0.0005,
+    "q1": 0.003,
+    "med": 0.01,
+    "q3": 0.01,
+    "max": 0.08,
+    "moy": 0.008838518518518525
+   },
+   "notre": [
+    0.022
+   ],
+   "moins_chers": 129
+  },
+  "web_search": {
+   "n": 53,
+   "hotes": 17,
+   "top": [
+    [
+     "api.delx.ai",
+     21
+    ],
+    [
+     "api.x402node.dev",
+     9
+    ],
+    [
+     "payai.agentstools.dev",
+     3
+    ],
+    [
+     "intel.rallylive.ca",
+     2
+    ],
+    [
+     "citable.run",
+     2
+    ],
+    [
+     "aws-bedrock.grok.me",
+     2
+    ]
+   ],
+   "prix": {
+    "n": 53,
+    "min": 0.001,
+    "q1": 0.003,
+    "med": 0.01,
+    "q3": 0.015,
+    "max": 0.04,
+    "moy": 0.009984905660377364
+   },
+   "notre": [
+    0.02
+   ],
+   "moins_chers": 41
+  },
+  "chat_completion": {
+   "n": 35,
+   "hotes": 19,
+   "top": [
+    [
+     "gpt55.558686.xyz",
+     13
+    ],
+    [
+     "api.xfuel.app",
+     3
+    ],
+    [
+     "yiduochan.com",
+     2
+    ],
+    [
+     "openrelay.hggfffdfy687.workers.dev",
+     2
+    ],
+    [
+     "api.chit402.com",
+     1
+    ],
+    [
+     "sol.mapleai.shop",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 35,
+    "min": 6e-05,
+    "q1": 0.002,
+    "med": 0.003,
+    "q3": 0.027000000000000003,
+    "max": 0.523889,
+    "moy": 0.05667722857142857
+   },
+   "notre": [
+    0.005
+   ],
+   "moins_chers": 19
+  },
+  "ask_agent": {
+   "n": 13,
+   "hotes": 10,
+   "top": [
+    [
+     "api.syraa.fun",
+     3
+    ],
+    [
+     "relay402.georgespring.workers.dev",
+     2
+    ],
+    [
+     "intel.rallylive.ca",
+     1
+    ],
+    [
+     "agent-product-normalizer.vercel.app",
+     1
+    ],
+    [
+     "payforapi.com",
+     1
+    ],
+    [
+     "api.delx.ai",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 13,
+    "min": 0.001,
+    "q1": 0.003,
+    "med": 0.015,
+    "q3": 0.15,
+    "max": 2.0,
+    "moy": 0.25276923076923075
+   },
+   "notre": [
+    0.541
+   ],
+   "moins_chers": 11
+  },
+  "generate_image": {
+   "n": 23,
+   "hotes": 15,
+   "top": [
+    [
+     "fal.x402.paysponge.com",
+     6
+    ],
+    [
+     "api.delx.ai",
+     4
+    ],
+    [
+     "sol.mapleai.shop",
+     1
+    ],
+    [
+     "x402.chaly.org",
+     1
+    ],
+    [
+     "www.studio-x.cc",
+     1
+    ],
+    [
+     "www.trezalabs.com",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 23,
+    "min": 0.001,
+    "q1": 0.01,
+    "med": 0.03,
+    "q3": 0.045,
+    "max": 0.2,
+    "moy": 0.03751426086956521
+   },
+   "notre": null,
+   "moins_chers": 0
+  },
+  "generate_video": {
+   "n": 14,
+   "hotes": 8,
+   "top": [
+    [
+     "www.studio-x.cc",
+     3
+    ],
+    [
+     "fal.x402.paysponge.com",
+     2
+    ],
+    [
+     "clawhunter.fun",
+     2
+    ],
+    [
+     "www.trezalabs.com",
+     2
+    ],
+    [
+     "getvideos.app",
+     2
+    ],
+    [
+     "api.render402.xyz",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 14,
+    "min": 0.01,
+    "q1": 0.05500000000000001,
+    "med": 0.2925,
+    "q3": 0.52763625,
+    "max": 0.87,
+    "moy": 0.30922078571428574
+   },
+   "notre": null,
+   "moins_chers": 0
+  },
+  "robinhood_*": {
+   "n": 23,
+   "hotes": 10,
+   "top": [
+    [
+     "www.robinhoodradar.com",
+     8
+    ],
+    [
+     "percall.kimi.pro",
+     5
+    ],
+    [
+     "api.loopholetape.com",
+     3
+    ],
+    [
+     "x402-accelerometer-feed.fly.dev",
+     1
+    ],
+    [
+     "chiefofstaff-solana.iodized-lemon.workers.dev",
+     1
+    ],
+    [
+     "clawhunter.fun",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 23,
+    "min": 0.001,
+    "q1": 0.0075,
+    "med": 0.01,
+    "q3": 0.01,
+    "max": 0.600001,
+    "moy": 0.04030439130434783
+   },
+   "notre": [
+    0.006
+   ],
+   "moins_chers": 6
+  },
+  "new_launches": {
+   "n": 7,
+   "hotes": 5,
+   "top": [
+    [
+     "mpp.hyreagent.fun",
+     3
+    ],
+    [
+     "launches.lonestaroracle.xyz",
+     1
+    ],
+    [
+     "api.loopholetape.com",
+     1
+    ],
+    [
+     "api.slamai.dev",
+     1
+    ],
+    [
+     "mesh.heurist.xyz",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 7,
+    "min": 0.001585,
+    "q1": 0.01,
+    "med": 0.05,
+    "q3": 0.08,
+    "max": 0.08,
+    "moy": 0.04451214285714287
+   },
+   "notre": [
+    0.02
+   ],
+   "moins_chers": 3
+  },
+  "colony_activity": {
+   "n": 5,
+   "hotes": 4,
+   "top": [
+    [
+     "47620.xyz",
+     2
+    ],
+    [
+     "carry-lens-api.netlify.app",
+     1
+    ],
+    [
+     "api.itsgloria.ai",
+     1
+    ],
+    [
+     "api.x402node.dev",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 5,
+    "min": 0.003,
+    "q1": 0.006,
+    "med": 0.031,
+    "q3": 0.2,
+    "max": 0.2,
+    "moy": 0.08800000000000001
+   },
+   "notre": [
+    0.02
+   ],
+   "moins_chers": 2
+  },
+  "swoge_economy": {
+   "n": 9,
+   "hotes": 3,
+   "top": [
+    [
+     "payai.agentstools.dev",
+     6
+    ],
+    [
+     "x402.santyvv.com",
+     2
+    ],
+    [
+     "santyvv-x402.santyvv1993.workers.dev",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 9,
+    "min": 0.005,
+    "q1": 0.008,
+    "med": 0.01,
+    "q3": 0.02,
+    "max": 0.05,
+    "moy": 0.01566666666666667
+   },
+   "notre": [
+    0.02
+   ],
+   "moins_chers": 6
+  }
+ },
+ "besoins": {
+  "scores sportifs en direct": {
+   "n": 6,
+   "hotes": 2,
+   "top": [
+    [
+     "payai.agentstools.dev",
+     5
+    ],
+    [
+     "api.delx.ai",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 6,
+    "min": 0.001,
+    "q1": 0.00425,
+    "med": 0.005,
+    "q3": 0.005,
+    "max": 0.01,
+    "moy": 0.005
+   }
+  },
+  "cotes sportives / bookmakers": {
+   "n": 1,
+   "hotes": 1,
+   "top": [
+    [
+     "api.delx.ai",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 1,
+    "min": 0.001,
+    "q1": 0.001,
+    "med": 0.001,
+    "q3": 0.001,
+    "max": 0.001,
+    "moy": 0.001
+   }
+  },
+  "marches de prediction (Polymarket/Kalshi)": {
+   "n": 82,
+   "hotes": 23,
+   "top": [
+    [
+     "sol.blockrun.ai",
+     27
+    ],
+    [
+     "api.nansen.ai",
+     9
+    ],
+    [
+     "payai.agentstools.dev",
+     7
+    ],
+    [
+     "api.delx.ai",
+     7
+    ],
+    [
+     "api.predge.io",
+     5
+    ]
+   ],
+   "prix": {
+    "n": 81,
+    "min": 0.001,
+    "q1": 0.005,
+    "med": 0.0075,
+    "q3": 0.01,
+    "max": 0.2,
+    "moy": 0.01615432098765433
+   }
+  },
+  "PancakeSwap Prediction / manches UP-DOWN": {
+   "n": 7,
+   "hotes": 2,
+   "top": [
+    [
+     "api.delx.ai",
+     6
+    ],
+    [
+     "conc-exe.xyz",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 7,
+    "min": 0.003,
+    "q1": 0.003,
+    "med": 0.003,
+    "q3": 0.003,
+    "max": 0.1,
+    "moy": 0.01685714285714286
+   }
+  },
+  "verification provably-fair de casino": {
+   "n": 0,
+   "hotes": 0,
+   "top": [],
+   "prix": null
+  },
+  "hasard verifiable (RNG/VRF)": {
+   "n": 3,
+   "hotes": 3,
+   "top": [
+    [
+     "payai.agentstools.dev",
+     1
+    ],
+    [
+     "api.anchor-x402.com",
+     1
+    ],
+    [
+     "x402-random.vercel.app",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 3,
+    "min": 0.001,
+    "q1": 0.0055000000000000005,
+    "med": 0.01,
+    "q3": 0.015,
+    "max": 0.02,
+    "moy": 0.010333333333333333
+   }
+  },
+  "Robinhood Chain (toute donnee)": {
+   "n": 23,
+   "hotes": 10,
+   "top": [
+    [
+     "www.robinhoodradar.com",
+     8
+    ],
+    [
+     "percall.kimi.pro",
+     5
+    ],
+    [
+     "api.loopholetape.com",
+     3
+    ],
+    [
+     "x402-accelerometer-feed.fly.dev",
+     1
+    ],
+    [
+     "chiefofstaff-solana.iodized-lemon.workers.dev",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 23,
+    "min": 0.001,
+    "q1": 0.0075,
+    "med": 0.01,
+    "q3": 0.01,
+    "max": 0.600001,
+    "moy": 0.04030439130434783
+   }
+  },
+  "actions tokenisees": {
+   "n": 6,
+   "hotes": 2,
+   "top": [
+    [
+     "x402-accelerometer-feed.fly.dev",
+     4
+    ],
+    [
+     "percall.kimi.pro",
+     2
+    ]
+   ],
+   "prix": {
+    "n": 6,
+    "min": 0.001,
+    "q1": 0.004,
+    "med": 0.01,
+    "q3": 0.0175,
+    "max": 0.05,
+    "moy": 0.0155
+   }
+  },
+  "test de revente / honeypot": {
+   "n": 28,
+   "hotes": 19,
+   "top": [
+    [
+     "aiworker.duckdns.org",
+     6
+    ],
+    [
+     "www.0816.cn",
+     4
+    ],
+    [
+     "cryptopulse.saascloud.ai",
+     2
+    ],
+    [
+     "api.x402risk.com",
+     1
+    ],
+    [
+     "payai.agentstools.dev",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 25,
+    "min": 0.001,
+    "q1": 0.01,
+    "med": 0.03,
+    "q3": 0.05,
+    "max": 1.0,
+    "moy": 0.08378000000000001
+   }
+  },
+  "historique du deployeur / createur": {
+   "n": 70,
+   "hotes": 8,
+   "top": [
+    [
+     "mpp.hyreagent.fun",
+     62
+    ],
+    [
+     "madeonsol.com",
+     2
+    ],
+    [
+     "chiefofstaff-solana.iodized-lemon.workers.dev",
+     1
+    ],
+    [
+     "origin-mcp.fly.dev",
+     1
+    ],
+    [
+     "robinhood-radar-dsk86hfkw-lightfarm.vercel.app",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 70,
+    "min": 0.002,
+    "q1": 0.15,
+    "med": 0.15,
+    "q3": 0.15,
+    "max": 0.15,
+    "moy": 0.12031428571428582
+   }
+  },
+  "perps Hyperliquid / funding": {
+   "n": 50,
+   "hotes": 18,
+   "top": [
+    [
+     "earn-pulse.haiqingm58.workers.dev",
+     21
+    ],
+    [
+     "payai.agentstools.dev",
+     7
+    ],
+    [
+     "mesh.heurist.xyz",
+     4
+    ],
+    [
+     "api.vibe.airforce",
+     2
+    ],
+    [
+     "hypurrclaw.xyz",
+     2
+    ]
+   ],
+   "prix": {
+    "n": 50,
+    "min": 0.0001,
+    "q1": 0.005,
+    "med": 0.006500000000000001,
+    "q3": 0.0115,
+    "max": 0.1,
+    "moy": 0.02049064
+   }
+  },
+  "gaz multi-chaines": {
+   "n": 38,
+   "hotes": 24,
+   "top": [
+    [
+     "api.delx.ai",
+     5
+    ],
+    [
+     "47620.xyz",
+     4
+    ],
+    [
+     "x402.santyvv.com",
+     3
+    ],
+    [
+     "x402-audit.tatschluizguilherme.workers.dev",
+     3
+    ],
+    [
+     "mesh.heurist.xyz",
+     3
+    ]
+   ],
+   "prix": {
+    "n": 38,
+    "min": 0.001,
+    "q1": 0.001,
+    "med": 0.005,
+    "q3": 0.01,
+    "max": 1.0,
+    "moy": 0.0395
+   }
+  },
+  "devis de swap": {
+   "n": 6,
+   "hotes": 6,
+   "top": [
+    [
+     "payai.agentstools.dev",
+     1
+    ],
+    [
+     "app.ravn.exchange",
+     1
+    ],
+    [
+     "x402-audit.tatschluizguilherme.workers.dev",
+     1
+    ],
+    [
+     "mpp.hyreagent.fun",
+     1
+    ],
+    [
+     "x402-api.heyelsa.ai",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 6,
+    "min": 0.001,
+    "q1": 0.00625,
+    "med": 0.01,
+    "q3": 0.0175,
+    "max": 0.1,
+    "moy": 0.024333333333333335
+   }
+  },
+  "airdrops": {
+   "n": 11,
+   "hotes": 7,
+   "top": [
+    [
+     "agentlayer.xyz",
+     4
+    ],
+    [
+     "aiworker.duckdns.org",
+     2
+    ],
+    [
+     "agent-guard.annushka1190.workers.dev",
+     1
+    ],
+    [
+     "conc-exe.xyz",
+     1
+    ],
+    [
+     "x402-audit.tatschluizguilherme.workers.dev",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 11,
+    "min": 0.005,
+    "q1": 0.01,
+    "med": 0.05,
+    "q3": 0.1,
+    "max": 100.0,
+    "moy": 9.217272727272727
+   }
+  },
+  "NFT floor": {
+   "n": 1,
+   "hotes": 1,
+   "top": [
+    [
+     "payai.agentstools.dev",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 1,
+    "min": 0.01,
+    "q1": 0.01,
+    "med": 0.01,
+    "q3": 0.01,
+    "max": 0.01,
+    "moy": 0.01
+   }
+  },
+  "PnL de portefeuille": {
+   "n": 44,
+   "hotes": 17,
+   "top": [
+    [
+     "api.nansen.ai",
+     7
+    ],
+    [
+     "api.delx.ai",
+     7
+    ],
+    [
+     "mpp.hyreagent.fun",
+     7
+    ],
+    [
+     "payai.agentstools.dev",
+     4
+    ],
+    [
+     "www.fomoscan.dev",
+     3
+    ]
+   ],
+   "prix": {
+    "n": 44,
+    "min": 0.0001,
+    "q1": 0.01,
+    "med": 0.02,
+    "q3": 0.05,
+    "max": 0.5,
+    "moy": 0.04556136363636365
+   }
+  },
+  "objets de jeux video / skins (Steam, CS2)": {
+   "n": 0,
+   "hotes": 0,
+   "top": [],
+   "prix": null
+  },
+  "esports": {
+   "n": 1,
+   "hotes": 1,
+   "top": [
+    [
+     "payai.agentstools.dev",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 1,
+    "min": 0.005,
+    "q1": 0.005,
+    "med": 0.005,
+    "q3": 0.005,
+    "max": 0.005,
+    "moy": 0.005
+   }
+  },
+  "echecs / moteurs de jeu": {
+   "n": 0,
+   "hotes": 0,
+   "top": [],
+   "prix": null
+  },
+  "lancer un jeton": {
+   "n": 4,
+   "hotes": 4,
+   "top": [
+    [
+     "launches.lonestaroracle.xyz",
+     1
+    ],
+    [
+     "clanker-banker.agentfetcher.workers.dev",
+     1
+    ],
+    [
+     "www.capminal.ai",
+     1
+    ],
+    [
+     "x402merchant.fun",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 4,
+    "min": 0.00675,
+    "q1": 0.009187500000000001,
+    "med": 0.03,
+    "q3": 0.1625,
+    "max": 0.5,
+    "moy": 0.1416875
+   }
+  },
+  "confiance / vie d un service x402": {
+   "n": 44,
+   "hotes": 17,
+   "top": [
+    [
+     "api.delx.ai",
+     11
+    ],
+    [
+     "base-agent-preflight.bytoken2023.workers.dev",
+     9
+    ],
+    [
+     "gpt55.558686.xyz",
+     4
+    ],
+    [
+     "x402-secure-api.t54.ai",
+     3
+    ],
+    [
+     "proxy.x402scan.com",
+     3
+    ]
+   ],
+   "prix": {
+    "n": 44,
+    "min": 0.001,
+    "q1": 0.00275,
+    "med": 0.005,
+    "q3": 0.01,
+    "max": 0.0667,
+    "moy": 0.009697727272727273
+   }
+  },
+  "alertes / webhooks": {
+   "n": 44,
+   "hotes": 24,
+   "top": [
+    [
+     "intel.rallylive.ca",
+     6
+    ],
+    [
+     "whale-signals.whalesignals.workers.dev",
+     6
+    ],
+    [
+     "api.delx.ai",
+     5
+    ],
+    [
+     "chainray.online",
+     3
+    ],
+    [
+     "proofwork-the402-webhook.phase-voice.workers.dev",
+     2
+    ]
+   ],
+   "prix": {
+    "n": 44,
+    "min": 0.001,
+    "q1": 0.0075,
+    "med": 0.01,
+    "q3": 0.0225,
+    "max": 0.25,
+    "moy": 0.023613636363636368
+   }
+  },
+  "solde multi-chaines / portefeuille": {
+   "n": 56,
+   "hotes": 31,
+   "top": [
+    [
+     "payai.agentstools.dev",
+     8
+    ],
+    [
+     "market2000.xyz",
+     6
+    ],
+    [
+     "x402.asrai.me",
+     6
+    ],
+    [
+     "api.delx.ai",
+     3
+    ],
+    [
+     "aura.adex.network",
+     3
+    ]
+   ],
+   "prix": {
+    "n": 55,
+    "min": 0.0001,
+    "q1": 0.005,
+    "med": 0.01,
+    "q3": 0.05,
+    "max": 0.25,
+    "moy": 0.03210363636363637
+   }
+  },
+  "memecoins Solana (pump.fun)": {
+   "n": 47,
+   "hotes": 13,
+   "top": [
+    [
+     "api.loopholetape.com",
+     18
+    ],
+    [
+     "mpp.hyreagent.fun",
+     10
+    ],
+    [
+     "temporary-turbo-olive-01ige7u.vercel.app",
+     3
+    ],
+    [
+     "payai.agentstools.dev",
+     2
+    ],
+    [
+     "htrlhl3y49.execute-api.us-east-2.amazonaws.com",
+     2
+    ]
+   ],
+   "prix": {
+    "n": 47,
+    "min": 0.001,
+    "q1": 0.01,
+    "med": 0.01,
+    "q3": 0.04,
+    "max": 0.600001,
+    "moy": 0.03788697872340426
+   }
+  },
+  "memecoins Base / Clanker / Zora": {
+   "n": 2,
+   "hotes": 2,
+   "top": [
+    [
+     "clanker-banker.agentfetcher.workers.dev",
+     1
+    ],
+    [
+     "www.capminal.ai",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 2,
+    "min": 0.00675,
+    "q1": 0.1300625,
+    "med": 0.253375,
+    "q3": 0.3766875,
+    "max": 0.5,
+    "moy": 0.253375
+   }
+  },
+  "Telegram / canaux crypto": {
+   "n": 8,
+   "hotes": 6,
+   "top": [
+    [
+     "deeptrawler.com",
+     2
+    ],
+    [
+     "x402factory.ai",
+     2
+    ],
+    [
+     "intel.rallylive.ca",
+     1
+    ],
+    [
+     "api.growvib.com",
+     1
+    ],
+    [
+     "defi-intel-agent-gateway.gg-neo15.workers.dev",
+     1
+    ]
+   ],
+   "prix": {
+    "n": 8,
+    "min": 0.001,
+    "q1": 0.001,
+    "med": 0.00625,
+    "q3": 0.01,
+    "max": 1.0,
+    "moy": 0.1294375
+   }
+  }
+ }
+}

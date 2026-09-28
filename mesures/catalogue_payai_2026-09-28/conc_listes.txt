@@ -1,0 +1,582 @@
+===== scan_token 195 gabarits 127
+   0.001 Solana api.loopholetape.com/v1/payai/outcome/{id} | Outcome labels for one pump.fun memecoin: rugged, graduated, when, peak SOL ($0.001). Use 
+   0.001 Solana api.loopholetape.com/v1/payai/launches/since | New pump.fun memecoin launches since a cursor, with rug probability and graduation odds ($
+   0.001 Solana solana-app-production.up.railway.app/token/{id}/analytics | Solana token analytics: price, liquidity, volume, risk, organic score
+   0.001 Base sigtap-outreach-api.sigtap.workers.dev/tools/jwt-decode | JWT decoder: decode a JSON web token header and payload, with safety flags (never verifies
+   0.001 Base contract-risk-api-six.vercel.app/v1/scan | On-chain contract risk score: detects upgradeable proxies and privileged functions from li
+   0.001 Base contract-risk-api-six.vercel.app/scan | On-chain contract risk score: detects upgradeable proxies and privileged functions from li
+   0.0015 Solana solana-app-production.up.railway.app/token/{id}/intel | Pre-trade mint pack: analytics, risk, volume pulse, and heuristic narrative
+   0.002 Base yieldprobe.com/v1/stables/peg | USD stablecoin peg monitor: price deviation, depeg flag, 1d/7d supply change for every sta
+   0.002 Base yieldprobe.com/v1/yields/movers | Pools with the largest APY change over 1d or 7d, split into up/down, TVL-filtered. Anomaly
+   0.002 Base yieldprobe.com/v1/yields | Top DeFi pools by APY with 30d mean, volatility (sigma), IL risk and forecast. Filter by c
+   0.002 Base percall.kimi.pro/api/x402/dex/search/{id} | [PerCall] Search Uniswap v4 pools on Robinhood Chain by token symbol, name or full contrac
+   0.002 Solana agentfx.fun/api/public/s/token-verdict | Verdictᶠˣ Token Screen — Risk/quality screen for a pump.fun mint.
+   0.002 Base api.eucompliance.tools/x402/token | Pre-flight check before a swap or transfer: ERC-20 allowance, balance, decimals and symbol
+   0.0025 Base defi-intel-agent-gateway.gg-neo15.workers.dev/v1/contract/decompile-audit | Decompile an EVM contract's bytecode to a readable opcode listing with an AI risk assessme
+   0.0025 Base defi-intel-agent-gateway.gg-neo15.workers.dev/v1/security/evm-rugcheck | CRITICAL PRE-SWAP: scan an EVM token for honeypot, mint/freeze, and liquidity-lock red fla
+   0.003 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/bcs/chains | Return BlockchainSecurity supported chains and native/token entries for AI agents.
+   0.003 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/bcs/assets | Return BlockchainSecurity asset specs for a chain through an x402-paid AI-friendly wrapper
+   0.003 Base trust-check.gm-tools.workers.dev/v1/token | Is this Base token safe to buy? Simulates a real buy and sell (honeypot + hidden tax test)
+   0.003 Base yieldprobe.com/v1/token/{id}/{id}/security | Token contract risk summary (honeypot, taxes, mintable, proxy, owner powers, holder concen
+   0.005 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/bcs/resolve | Resolve BlockchainSecurity asset symbols or contracts into asset specs through an x402 pai
+   0.005 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/bcs/registry | Return the BlockchainSecurity token registry through an x402 paid resource.
+   0.005 Solana api.loopholetape.com/v1/payai/check/mint/{id} | Rug check for one pump.fun memecoin on Solana: calibrated rug probability and observed fla
+   0.005 Solana api.loopholetape.com/v1/check/mint/{id} | Check one pump.fun mint for observed launch risks ($0.005). Use right before a swap or whi
+   0.005 Base aiworker.duckdns.org/v1/token/info | The cheapest way to look up a Base token: name, symbol, decimals, total supply, holder cou
+   0.005 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/web/endpoint-preflight | 
+   0.005 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/software/npm-package-p | 
+   0.005 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/web/openapi-preflight | 
+   0.005 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/web/domain-trust-prefl | 
+   0.005 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/software/pypi-package- | 
+   0.005 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/agent/a2a-card-preflig | 
+   0.005 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/base/approval-risk | 
+   0.01 Solana bentcrypto-x402-production.up.railway.app/v1/token/risk | BentCrypto Token Risk - pre-trade Base ERC-20 and Solana token risk intelligence for auton
+   0.01 Solana payai.agentstools.dev/mcp/scan | Static security scan of an MCP manifest or tool list. Detects tool poisoning, hidden unico
+   0.01 Solana api.bentcrypto.com/v1/token/risk | BentCrypto Token Risk - pre-trade Base ERC-20 and Solana token risk intelligence for auton
+   0.01 Base api.x402risk.com/v1/token-check | Pay-per-call token risk check for Base: send a Base ERC-20 contract address, get determini
+   0.01 Base tokencheck.yukikawata.fyi/v1/base/tokens/{id} | Due-diligence report for an ERC-20 token on Base: contract verification, upgradeability, o
+   0.01 Base token-check.yukikawata.workers.dev/v1/base/tokens/{id} | Due-diligence report for an ERC-20 token on Base: contract verification, upgradeability, o
+   0.01 Base agentdatapro.com/api/token/{id}/safety | Check ERC-20 token safety on Base, Ethereum, or BSC — honeypot detection, taxes, and contr
+   0.01 Solana www.fomoscan.dev/v2/thesis | Newest-first global feed of FOMO theses (short trade write-ups: token, author, PnL, holdin
+   0.01 Solana www.fomoscan.dev/v2/thesis/token/{id} | Theses about one token (mint or 0x contract), newest first — what traders are saying plus 
+   0.01 Solana presign-guard.onrender.com/v1/token | Token verdict (green/orange/red, grade SAFE/CAUTION/RISKY/AVOID, reason codes, one-line su
+   0.01 Base chiefofstaff-solana.iodized-lemon.workers.dev/rh/check | Robinhood Chain (eip155:4663) token safety / rug-pull & honeypot check for ERC-20s (Dopple
+   0.01 Base chiefofstaff-solana.iodized-lemon.workers.dev/check | Solana token safety / rug-pull check for SPL tokens (pump.fun, Raydium, Meteora, Jupiter):
+   0.01 Solana gdzlcxskuhupymyxywzm.supabase.co/functions/v1/tokenguard/v1/check | Solana token rug check before buying, read directly from chain state. Returns SAFE/CAUTION
+   0.01 Solana api.loopholetape.com/v1/payai/verdict/{id} | Rug-check verdict on one pump.fun memecoin: avoid, caution or no_flags_observed, with a fr
+   0.01 Solana api.loopholetape.com/v1/payai/rhc/launches/recent | Robinhood Chain (Pons V2) new memecoin launches with holder, creator-tax and ring structur
+   0.01 Solana api.loopholetape.com/v1/payai/launches/screened | New pump.fun memecoins without an avoid verdict, ranked by calibrated graduation odds ($0.
+   0.01 Solana api.loopholetape.com/v1/payai/launches/recent | Recently launched pump.fun memecoins on Solana with holder, creator and rug-flag labels. U
+   0.01 Solana api.loopholetape.com/v1/launches/recent | Recent pump.fun launches with compact risk labels. Use to screen the last hour of pump.fun
+   0.01 Solana survivor-x402-production.up.railway.app/risk-screen | Solana token risk screen with signed proof. Returns score 0-100, risk level, ALLOW/CHALLEN
+   0.01 Base smartcontractrisk.0xhodhod.xyz/v1/scan | On-chain contract risk score: detects upgradeable proxies and privileged functions from li
+   0.01 Solana api.bentcrypto.com/v1/token/security | BentCrypto Solana Token Security - pre-trade authority, Token-2022, and token-control anal
+   0.01 Base api.chipscan.xyz/v1/audit | chipscan fast token security audit
+   0.01 Base chainray.online/token-risk/{id} | ChainRay /token-risk
+   0.01 Solana bentcrypto-x402-production.up.railway.app/v1/token/security | BentCrypto Solana Token Security API - authority and Token-2022 control analysis for AI ag
+   0.01 Solana api.x402node.dev/chain/honeypot | 
+   0.01 Base mesh.heurist.xyz/x402/agents/GoplusAnalysisAgent/fetch_security_details | Analyze the security of a blockchain token contract. This tool returns a token's authority
+   0.012 Base base-pulse.annushka1190.workers.dev/v1/wallet/intel | On-chain snapshot for a Base address: contract vs EOA, transaction count, ETH balance, USD
+   0.013 Base capi2-foundry.vandurmedries.workers.dev/v1/products/api-contract-audit/run | Audit a supplied OpenAPI contract and return prioritized integration fixes.
+   0.02 Base api.x402risk.com/v1/pretrade-check | Pre-trade sellability / honeypot check for Base tokens: simulates a buy, a wallet transfer
+   0.02 Solana payai.agentstools.dev/stablecoin/profile | Full stablecoin risk profile for a symbol, or a contract address with its chain. Fuses ide
+   0.02 Solana payai.agentstools.dev/token/risk | Composite rug-check risk score for an ERC-20 token: a 0-100 score, a category (low/medium/
+   0.02 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/bcs/labels | Proxy BlockchainSecurity address labels for AI agents using a paid x402 call and a server-
+   0.02 Solana api.loopholetape.com/v1/payai/rhc/curve/{id} | Robinhood Chain token risk card for one Pons V2 memecoin: holders, creator tax, ring scree
+   0.02 Solana api.loopholetape.com/v1/payai/graduations/recent | Recent pump.fun graduations labelled true graduation vs below-threshold close. Use to list
+   0.02 Solana api.loopholetape.com/v1/payai/rugs/recent | Recent pump.fun memecoin rug and close flags with mechanism labels. Use to see which Solan
+   0.02 Solana madeonsol.com/api/x402/tokens/{id}/risk | Transparent 0–100 token safety / rug-risk score with a per-factor breakdown — the 'is this
+   0.02 Base www.0816.cn/api/score | On-chain token risk score and safety scan for any crypto token, by symbol or contract addr
+   0.02 Solana x402-accelerometer-feed.fly.dev/solana/token-verdict/{id} | Use this when an agent or a human asks 'is this Solana token safe, a joke, or a rug?': sen
+   0.02 Solana relayzero.ai/v1/intel/scan/{id} | DrainBrain ML token security scan
+   0.02 Solana api.finnputerdex.com/scan | FINNPUTER deep token safety scan (clusters + forwarded supply)
+   0.02 Solana svm402.com/discover | Discover newly active Solana tokens ranked by genuine organic activity, filtered to exclud
+   0.02 Base chainray.online/contract-scan/{id} | ChainRay /contract-scan
+   0.02 Solana mpp.hyreagent.fun/trenches/token/{id} | Solana token metadata, socials, top holders, freeze/mint authority status with AI risk ass
+   0.02 Solana mpp.hyreagent.fun/trenches/token | Solana token metadata, socials, top holders, freeze/mint authority status with AI risk ass
+   0.02 Base cryptopulse.saascloud.ai/api/token-risk | 
+   0.02 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/base/token-preflight | 
+   0.02 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/base/address-preflight | 
+   0.02 Base www.ragradar.space/api/token-safety/{id}/{id} | 
+   0.025 Solana api.loopholetape.com/v1/payai/mint/{id} | Full risk card for one pump.fun memecoin on Solana: holders, creator record, rug flags. Us
+   0.025 Solana api.loopholetape.com/v1/mint/{id} | Full risk card for one pump.fun memecoin on Solana: holders, creator record, rug flags. Us
+   0.025 Solana htrlhl3y49.execute-api.us-east-2.amazonaws.com/v1/mint/{id} | Live risk card for one pump.fun mint: curve truth (graduation = curve >= 84 SOL), demand, 
+   0.025 Base agent-guard.annushka1190.workers.dev/v1/wallet/risk-score | Deep risk scoring for a wallet before your agent pays it. Base: contract vs EOA, tx count,
+   0.03 Solana payai.agentstools.dev/sol/token/verdict | Solana memecoin RUG-RISK verdict in one call: fuses on-chain mint/freeze authority, real h
+   0.03 Solana payai.agentstools.dev/cex/screen | Market-wide ranked solvency screen of all centralized exchanges from DefiLlama CEX Transpa
+   0.04 Solana api.loopholetape.com/v1/payai/check/batch | Rug check for up to 25 pump.fun memecoins on Solana for $0.04 total. Use when a screener c
+   0.04 Solana mpp.hyreagent.fun/trenches/token/{id}/snipers | Detect wallets that bought a PumpFun token in the first 3 blocks — sniper risk level, dev 
+   0.04 Base x402.onchainexpat.com/api/x402-crypto/approval-checker | Check token approvals/permits with risk assessment
+   0.05 Base launches.lonestaroracle.xyz/scan | New token launch scanner — Base and EVM chains, real-time pool data
+   0.05 Base contract.lonestaroracle.xyz/verify | Smart contract verification and security analysis on Ethereum Base BSC Arbitrum Polygon
+   0.05 Base aero.lonestaroracle.xyz/pool | Aerodrome DEX pool risk assessment — checks both tokens for honeypots and rug vectors
+   0.05 Solana gdzlcxskuhupymyxywzm.supabase.co/functions/v1/tokenguard/v1/batch | Batch Solana token rug check: up to 10 mints in one paid call (half the per-token price). 
+   0.05 Base x402-seller-m8nx.onrender.com/screen | Batch rug/safety screen: up to 8 tokens in one call, per-token verdicts (unordered) + summ
+   0.05 Base api.bentcrypto.com/v1/token/preflight | BentCrypto Token Preflight - composed pre-trade risk, security, liquidity and holder intel
+   0.05 Base aiworker.duckdns.org/v1/trade/gate | One rule-based verdict before a swap on one Base token: pass, caution or block, with the r
+   0.05 Base aiworker.duckdns.org/v1/wallet/airdrop-scan | Wallet hygiene for one Base address: every token it holds, each marked honeypot, dust, bat
+   0.05 Base aiworker.duckdns.org/v1/check/token | A deterministic Base token safety card from Blockscout, DexScreener (derived) and Honeypot
+   0.05 Solana svm402.com/analyze | Full analysis of a Solana token given its mint address — current price, liquidity, safety 
+   0.05 Base cryptopulse.saascloud.ai/api/token-score | Composite 0-100 buy-safety score for any token: combines contract security analysis (honey
+   0.05 Base x402.onchainexpat.com/api/x402-crypto/token-metadata | Get comprehensive token metadata with security analysis
+   0.08 Solana mpp.hyreagent.fun/lp/pools-recommend | AI-picked Meteora DLMM pool for a token pair with risk-tier-matched bin step + strategy (s
+   0.1 Base defi.lonestaroracle.xyz/risk | DeFi protocol risk score: TVL, hack history, audit status, contract safety, AI verdict, pl
+   0.1 Base aiworker.duckdns.org/v1/trade/precheck | Everything to check before one swap on Base, in one call: the rule-based trade gate on the
+   0.1 Base cryptopulse.saascloud.ai/api/screener | Token screener: trending or newly-launched pools on a chain, filtered by minimum liquidity
+   0.1 Solana api.x402node.dev/wallet/token-safety | 
+   0.1 Base lanescrypt.vercel.app/api/token-safety/{id}/{id} | 
+   0.1 Base cryptuluns.vercel.app/api/token-safety/{id}/{id} | 
+   0.1 Base x402.onchainexpat.com/api/x402-crypto/token-safety | Token safety bundle — unified risk score from multiple sources
+   0.15 Base token.lonestaroracle.xyz/report | ERC-20 token due diligence — risk score, GoPlus security scan, honeypot detection, liquidi
+   0.15 Solana mpp.hyreagent.fun/trenches/token-verdict | Full AI verdict on a Solana token combining holders, snipers, dev history, bonding curve, 
+   0.15 Solana mpp.hyreagent.fun/trenches/token/{id}/verdict | Full AI verdict on a Solana token combining holders, snipers, dev history, bonding curve, 
+   0.15 Solana api.syraa.fun/token-report | Token report on Rugcheck
+   0.25 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/bcs/wallet-risk-bundle | Bundle BlockchainSecurity labels, risk score, classification, and wallet overview for one 
+   0.25 Base x402-audit.tatschluizguilherme.workers.dev/token | Token safety audit on Base: honeypot simulation, buy/sell/transfer taxes, liquidity USD, h
+   0.49 Base base-agent-preflight.bytoken2023.workers.dev/v1/x402/bcs/trace | Run BlockchainSecurity multi-hop fund-flow tracing from a starting address through an x402
+   1.0 Base aiworker.duckdns.org/v1/token/report | Everything an agent needs before touching a Base token, in one call: the deterministic saf
+   1.0 Base x402.scanai.ai/mint | SCAN Mint - Pay 1 USDC = 50,000 $SCAN
+   1.0 Base api.defibud.xyz/mint | Mint 5k $PONG. Returns the request identifier once payment is verified. Fulfilment may tak
+   1.0 Base pong-pay-production.up.railway.app/api/presale | Mint 5000 PONG tokens for 1 USDC. Returns request ID after payment. Cap: 100k USDC, 100% t
+   2.0 Base rattler.lonestaroracle.xyz/audit | Autonomous smart contract security auditor — 20+ vulnerability classes, PoC exploits
+   2.0 Base cottonmouth.lonestaroracle.xyz/audit | Autonomous Rust smart contract security auditor — CosmWasm, Anchor, Stellar, NEAR
+   2.0 Base copperhead.lonestaroracle.xyz/audit | Autonomous Move smart contract security auditor — Aptos and Sui
+   2.0 Base pay-prod.undercoveriris.io/audit/request | Accepts a payload with a set of contract files and performs a security auditory on those f
+   None X Laye www.0816.cn/v1/base/token-safety | Token safety pre-flight — one verdict before your agent buys, swaps or approves any ERC-20
+   None X Laye www.0816.cn/v1/base/proxy-upgrade | Upgradeable contract and proxy admin check for any EVM contract on Base (GET ?contract=0x…
+   None X Laye www.0816.cn/v1/base/token-tax | Token tax check and transfer restriction scan for any ERC-20 on Base (GET ?contract=0x… or
+   None X Laye www.0816.cn/v1/base/honeypot-scan | Token rug risk score for any ERC-20 on Base (GET ?contract=0x… or POST body {contract}). R
+===== can_i_sell 34 gabarits 32
+   0.001 Base shop.blocklabs.nl/api/taxonomies | Browse the category tree: children of a taxonomy node (roots when parent is omitted), each
+   0.0024 Base agent.apiguru.app/agent/v1/product | Fetch Amazon product data for up to 20 ASINs in a single request: title, price, rating, re
+   0.0025 Base defi-intel-agent-gateway.gg-neo15.workers.dev/v1/dex/pre-swap-simulation | Simulate a swap on a public DEX quote API and report price impact, fees and expected outpu
+   0.0025 Base defi-intel-agent-gateway.gg-neo15.workers.dev/v1/security/evm-rugcheck | CRITICAL PRE-SWAP: scan an EVM token for honeypot, mint/freeze, and liquidity-lock red fla
+   0.003 Base trust-check.gm-tools.workers.dev/v1/token | Is this Base token safe to buy? Simulates a real buy and sell (honeypot + hidden tax test)
+   0.003 Base yieldprobe.com/v1/token/{id}/{id}/security | Token contract risk summary (honeypot, taxes, mintable, proxy, owner powers, holder concen
+   0.005 Base aiworker.duckdns.org/v1/token/info | The cheapest way to look up a Base token: name, symbol, decimals, total supply, holder cou
+   0.01 Base agentdatapro.com/api/token/{id}/safety | Check ERC-20 token safety on Base, Ethereum, or BSC — honeypot detection, taxes, and contr
+   0.01 Solana presign-guard.onrender.com/v1/token | Token verdict (green/orange/red, grade SAFE/CAUTION/RISKY/AVOID, reason codes, one-line su
+   0.01 Base chiefofstaff-solana.iodized-lemon.workers.dev/rh/check | Robinhood Chain (eip155:4663) token safety / rug-pull & honeypot check for ERC-20s (Dopple
+   0.01 Solana api.x402node.dev/chain/honeypot | 
+   0.02 Base api.x402risk.com/v1/pretrade-check | Pre-trade sellability / honeypot check for Base tokens: simulates a buy, a wallet transfer
+   0.02 Solana payai.agentstools.dev/token/risk | Composite rug-check risk score for an ERC-20 token: a 0-100 score, a category (low/medium/
+   0.02 Solana api.loopholetape.com/v1/payai/rhc/curve/{id} | Robinhood Chain token risk card for one Pons V2 memecoin: holders, creator tax, ring scree
+   0.02 Base x402.santyvv.com/api/chain/transaction | One call returns both the transaction and its receipt: status, from, to, value in native u
+   0.02 Base www.0816.cn/api/score | On-chain token risk score and safety scan for any crypto token, by symbol or contract addr
+   0.03 Base api.bentcrypto.com/v1/token/exit-simulation | BentCrypto Exit Simulation - route, expected output, price impact, gas and sellability evi
+   0.05 Base contract.lonestaroracle.xyz/verify | Smart contract verification and security analysis on Ethereum Base BSC Arbitrum Polygon
+   0.05 Base aero.lonestaroracle.xyz/pool | Aerodrome DEX pool risk assessment — checks both tokens for honeypots and rug vectors
+   0.05 Base aiworker.duckdns.org/v1/trade/gate | One rule-based verdict before a swap on one Base token: pass, caution or block, with the r
+   0.05 Base aiworker.duckdns.org/v1/wallet/airdrop-scan | Wallet hygiene for one Base address: every token it holds, each marked honeypot, dust, bat
+   0.05 Base aiworker.duckdns.org/v1/check/token | A deterministic Base token safety card from Blockscout, DexScreener (derived) and Honeypot
+   0.05 Solana svm402.com/analyze | Full analysis of a Solana token given its mint address — current price, liquidity, safety 
+   0.05 Base cryptopulse.saascloud.ai/api/token-score | Composite 0-100 buy-safety score for any token: combines contract security analysis (honey
+   0.1 Base aiworker.duckdns.org/v1/trade/precheck | Everything to check before one swap on Base, in one call: the rule-based trade gate on the
+   0.1 Base cryptopulse.saascloud.ai/api/screener | Token screener: trending or newly-launched pools on a chain, filtered by minimum liquidity
+   0.15 Base token.lonestaroracle.xyz/report | ERC-20 token due diligence — risk score, GoPlus security scan, honeypot detection, liquidi
+   0.25 Base x402-audit.tatschluizguilherme.workers.dev/token | Token safety audit on Base: honeypot simulation, buy/sell/transfer taxes, liquidity USD, h
+   1.0 Base aiworker.duckdns.org/v1/token/report | Everything an agent needs before touching a Base token, in one call: the deterministic saf
+   None X Laye www.0816.cn/v1/base/token-safety | Token safety pre-flight — one verdict before your agent buys, swaps or approves any ERC-20
+   None X Laye www.0816.cn/v1/base/token-tax | Token tax check and transfer restriction scan for any ERC-20 on Base (GET ?contract=0x… or
+   None X Laye www.0816.cn/v1/base/honeypot-scan | Token rug risk score for any ERC-20 on Base (GET ?contract=0x… or POST body {contract}). R
+===== token_verdict 86 gabarits 27
+   0.002 Solana agentfx.fun/api/public/s/token-verdict | Verdictᶠˣ Token Screen — Risk/quality screen for a pump.fun mint.
+   0.01 Solana presign-guard.onrender.com/v1/token | Token verdict (green/orange/red, grade SAFE/CAUTION/RISKY/AVOID, reason codes, one-line su
+   0.01 Base chiefofstaff-solana.iodized-lemon.workers.dev/rh/check | Robinhood Chain (eip155:4663) token safety / rug-pull & honeypot check for ERC-20s (Dopple
+   0.01 Base chiefofstaff-solana.iodized-lemon.workers.dev/check | Solana token safety / rug-pull check for SPL tokens (pump.fun, Raydium, Meteora, Jupiter):
+   0.01 Solana api.loopholetape.com/v1/payai/verdict/{id} | Rug-check verdict on one pump.fun memecoin: avoid, caution or no_flags_observed, with a fr
+   0.01 Solana api.loopholetape.com/v1/payai/launches/screened | New pump.fun memecoins without an avoid verdict, ranked by calibrated graduation odds ($0.
+   0.01 Solana api.loopholetape.com/v1/verdict/{id} | Verdict on one pump.fun mint: avoid, caution or no_flags_observed, with a free shareable c
+   0.01 Base sendcheck-x402.pennyforge.workers.dev/check | SendCheck: pre-send verification of any EVM address on one chain (EIP-55 checksum, wallet-
+   0.02 Solana payai.agentstools.dev/depin/network | Network health and token-economics verdict for a DePIN network from public data. Give netw
+   0.02 Solana x402-accelerometer-feed.fly.dev/solana/token-verdict/{id} | Use this when an agent or a human asks 'is this Solana token safe, a joke, or a rug?': sen
+   0.02 Base 448c.org/x402/check_address | Screen a crypto address before paying it: OFAC sanctions + community scam/darklists + on-c
+   0.03 Solana payai.agentstools.dev/sol/token/verdict | Solana memecoin RUG-RISK verdict in one call: fuses on-chain mint/freeze authority, real h
+   0.05 Base x402-seller-m8nx.onrender.com/screen | Batch rug/safety screen: up to 8 tokens in one call, per-token verdicts (unordered) + summ
+   0.05 Base aiworker.duckdns.org/v1/trade/gate | One rule-based verdict before a swap on one Base token: pass, caution or block, with the r
+   0.08 Solana mpp.hyreagent.fun/trenches/new-tokens | Real-time PumpFun token launches with AI snipe verdict (holder concentration, dev history,
+   0.08 Solana mpp.hyreagent.fun/trenches/bags/new-tokens | New Bags.fm token launches (Meteora DBC) with creator profile, fee share, and AI snipe ver
+   0.1 Base defi.lonestaroracle.xyz/risk | DeFi protocol risk score: TVL, hack history, audit status, contract safety, AI verdict, pl
+   0.1 Base aiworker.duckdns.org/v1/trade/precheck | Everything to check before one swap on Base, in one call: the rule-based trade gate on the
+   0.15 Base token.lonestaroracle.xyz/report | ERC-20 token due diligence — risk score, GoPlus security scan, honeypot detection, liquidi
+   0.15 Solana mpp.hyreagent.fun/trenches/token-verdict | Full AI verdict on a Solana token combining holders, snipers, dev history, bonding curve, 
+   0.15 Solana mpp.hyreagent.fun/trenches/token/{id}/verdict | Full AI verdict on a Solana token combining holders, snipers, dev history, bonding curve, 
+   0.15 Base mpp.hyreagent.fun/base/trenches/token/{id}/verdict | Full AI verdict on token
+   0.15 Base mpp.hyreagent.fun/base/trenches/token-verdict | Full AI verdict on token
+   0.25 Base x402-audit.tatschluizguilherme.workers.dev/token | Token safety audit on Base: honeypot simulation, buy/sell/transfer taxes, liquidity USD, h
+   None X Laye www.0816.cn/v1/base/token-safety | Token safety pre-flight — one verdict before your agent buys, swaps or approves any ERC-20
+   None X Laye www.0816.cn/v1/base/proxy-upgrade | Upgradeable contract and proxy admin check for any EVM contract on Base (GET ?contract=0x…
+   None X Laye www.0816.cn/v1/base/token-tax | Token tax check and transfer restriction scan for any ERC-20 on Base (GET ?contract=0x… or
+===== roast_token 2 gabarits 2
+   0.02 Solana x402-accelerometer-feed.fly.dev/solana/token-verdict/{id} | Use this when an agent or a human asks 'is this Solana token safe, a joke, or a rug?': sen
+   0.05 Solana api.anchor-x402.com/v1/roast | Witty roast of any target — wallet, tweet, idea, code, anything. $0.05 USDC.
+===== wallet_intel 88 gabarits 29
+   0.001 Solana intel.twzrd.xyz/v1/intel/quick/{id} | Seller wash risk and wallet reputation for a Solana x402 merchant: wash label, fleet %, pa
+   0.002 Base origin-mcp.fly.dev/mcp/tools/basescan_deployer_history | 
+   0.005 Solana api.anchor-x402.com/v1/intel/wallet | Unified wallet intelligence (POST wrapper, body: {wallet}) — $0.005 USDC
+   0.0075 Solana sol.blockrun.ai/api/v1/pm/polymarket/wallet/identities-batch | Get a complete smart wallet profile with all metrics
+   0.0075 Solana sol.blockrun.ai/api/v1/pm/polymarket/wallet/{id} | Get a complete smart wallet profile with all metrics
+   0.0075 Solana sol.blockrun.ai/api/v1/pm/polymarket/wallet/identity | Get a complete smart wallet profile with all metrics
+   0.01 Base api.aurelianflo.com/api/ofac-wallet-screen/{id} | Exact-match OFAC wallet screening and crypto wallet sanctions check for sanctioned digital
+   0.01 Base saylorinnovations.com/api/wallet/{id} | Wallet Intelligence Report. Solana wallet analysis: SOL balance, token positions and portf
+   0.01 Base chiefofstaff-solana.iodized-lemon.workers.dev/rh/check | Robinhood Chain (eip155:4663) token safety / rug-pull & honeypot check for ERC-20s (Dopple
+   0.01 Base hl-tracker.829686.workers.dev/api/analyze | Hyperliquid wallet analysis: liquidation price, distance to liquidation, margin, leverage,
+   0.01 Base robinhood-radar-dsk86hfkw-lightfarm.vercel.app/api/board | Robinhood Radar live reranked board: creator ratings and token ATH/price table.
+   0.01 Base www.robinhoodradar.com/api/board | Robinhood Radar live reranked board: creator ratings and token ATH/price table.
+   0.01 Base api.eucompliance.tools/x402/ai-disclosure | AI Act Article 50 disclosure - the privacy-first GET path: pass only the SHA-256 of your A
+   0.01 Solana madeonsol.com/api/x402/deployer-hunter/{id}/trajectory | 
+   0.01 Solana madeonsol.com/api/x402/deployer-hunter/alerts | 
+   0.01 Base backup.ragradar.space/api/deployer/{id}/{id} | 
+   0.02 Solana api.anchor-x402.com/v1/screen | Wallet risk pre-flight (POST wrapper, body: {wallet}) — OFAC + address-reputation → allow/
+   0.04 Solana mpp.hyreagent.fun/trenches/token/{id}/snipers | Detect wallets that bought a PumpFun token in the first 3 blocks — sniper risk level, dev 
+   0.05 Base x402.onchainexpat.com/api/x402-crypto/wallet-identity | Get wallet identity with ENS, labels, activity, and risk assessment
+   0.05 Base mpp.hyreagent.fun/base/nansen/wallet-intel | Deep wallet profile — PnL + recent smart trades
+   0.08 Solana mpp.hyreagent.fun/trenches/new-tokens | Real-time PumpFun token launches with AI snipe verdict (holder concentration, dev history,
+   0.1 Solana payai.agentstools.dev/trader/polymarket | Polymarket wallet intelligence for an EVM address: open positions (title, outcome, size, a
+   0.1 Solana payai.agentstools.dev/trader/perps | Open Hyperliquid perpetual positions for an EVM address: per-position direction, size, USD
+   0.1 Base x402.onchainexpat.com/api/x402-crypto/wallet-identity-crosschain | Get wallet identity across all supported chains (ETH, Base, Arbitrum, Polygon, Optimism)
+   0.12 Base mpp.hyreagent.fun/base/traders/wallet-intel | Full wallet intelligence
+   0.15 Base wallet.lonestaroracle.xyz/score | EVM wallet risk scoring — transaction patterns, exposure analysis, suspicious activity
+   0.15 Solana mpp.hyreagent.fun/trenches/token-verdict | Full AI verdict on a Solana token combining holders, snipers, dev history, bonding curve, 
+   0.15 Solana mpp.hyreagent.fun/trenches/token/{id}/verdict | Full AI verdict on a Solana token combining holders, snipers, dev history, bonding curve, 
+   0.3 Base padelmaps.org/api/x402-crypto/wallet-identity-crosschain | Get wallet identity across all supported chains (ETH, Base, Arbitrum, Polygon, Optimism)
+===== osint_lookup 135 gabarits 135
+   0.0005 Base 49112-hjhjtioxvirqvcvo.splox.app/dns | DNS lookup: A/AAAA/MX/TXT/NS/CNAME/SOA/CAA, SPF and DMARC presence
+   0.001 Base loop2-quickstart.manhliemcn4euwlu.workers.dev/mkt/seller | single-seller due-diligence lookup (0.001 USDC, on-demand per-wallet): live Base USDC bala
+   0.001 Base verify.fieldnine.io/v1/pack/counterparty | Counterparty Evidence Pack (bundle + signed receipt)
+   0.001 Base domain-intelligence.nordman-tehau.workers.dev/dns | DNS lookup: A/AAAA/MX/NS/TXT/CNAME/CAA records for a domain name
+   0.001 Base domain-parser.nordman-tehau.workers.dev/v1/domain/parse | Split a domain into TLD/SLD/subdomain using the official Public Suffix List
+   0.001 Base x402-zoo.lolagent.workers.dev/api/domain-parts | Parse a URL or hostname into subdomain, registrable domain and suffix using a bundled comm
+   0.001 Base domain-intelligence.nordman-tehau.workers.dev/rdap | Domain registration lookup (RDAP, modern WHOIS replacement): registrar, registration date,
+   0.001 Base api.delx.ai/api/v1/x402/spf-record-flags | Detect common SPF mechanisms present in a TXT record. Call when quick SPF mechanism invent
+   0.001 Base api.delx.ai/api/v1/x402/security-surface-compose | Compose DNS/TLS/header signal booleans into a surface score. Call when one-shot security s
+   0.001 Base api.delx.ai/api/v1/x402/mx-host-parse | Parse MX preference and host from an MX record string. Call when normalizing DNS MX answer
+   0.001 Base api.delx.ai/api/v1/x402/ip-v4-private-check | Detect RFC1918 private IPv4 addresses. Call when agents classifying IPs before whois/netwo
+   0.001 Base api.delx.ai/api/v1/x402/hsts-policy-check | HSTS Policy Check: HSTS Policy Check checks HSTS max-age and subdomain directives against 
+   0.001 Base api.delx.ai/api/v1/x402/email-syntax-check | Validate basic email syntax and split local/domain. Call when preflight before MX/DNS step
+   0.001 Base api.delx.ai/api/v1/x402/dns-txt-chunk-join | DNS Txt Chunk Join: DNS Txt Chunk Join joins quoted DNS TXT chunks into the logical record
+   0.001 Base api.delx.ai/api/v1/x402/dns-ttl-budget-check | DNS Ttl Budget Check: DNS Ttl Budget Check checks DNS record TTLs against caller minimum a
+   0.001 Base api.delx.ai/api/v1/x402/dns-srv-record-parse | DNS SRV Record Parse: DNS SRV Record Parse normalizes SRV priority, weight, port, and targ
+   0.001 Base api.delx.ai/api/v1/x402/dns-spf-lookup-budget | DNS SPF Lookup Budget: DNS SPF Lookup Budget counts DNS-triggering SPF mechanisms against 
+   0.001 Base api.delx.ai/api/v1/x402/dns-spf-record-parse | DNS SPF Record Parse: DNS SPF Record Parse parses SPF version, mechanisms, modifiers, and 
+   0.001 Base api.delx.ai/api/v1/x402/dns-soa-serial-compare | DNS SOA Serial Compare: DNS SOA Serial Compare compares SOA serials with 32-bit wraparound
+   0.001 Base api.delx.ai/api/v1/x402/dns-record-diff | Compare two bounded caller-supplied DNS record snapshots and return canonical added, remov
+   0.001 Base api.delx.ai/api/v1/x402/dns-mx-priority-sort | DNS MX Priority Sort: DNS MX Priority Sort sorts MX exchanges by preference while preservi
+   0.001 Base api.delx.ai/api/v1/x402/dns-dmarc-policy-parse | DNS DMARC Policy Parse: DNS DMARC Policy Parse parses DMARC policy, percentage, alignment,
+   0.001 Base api.delx.ai/api/v1/x402/dns-https-record-parse | DNS Https Record Parse: DNS Https Record Parse parses HTTPS service priority, target, and 
+   0.001 Base api.delx.ai/api/v1/x402/dns-dkim-selector-check | DNS DKIM Selector Check: DNS DKIM Selector Check checks selector and signing-domain label 
+   0.001 Base api.delx.ai/api/v1/x402/dns-caa-policy-check | DNS Caa Policy Check: DNS Caa Policy Check checks whether a certificate authority identifi
+   0.001 Base api.delx.ai/api/v1/x402/dns-cname-chain-check | DNS Cname Chain Check: DNS Cname Chain Check checks a caller-supplied CNAME chain for loop
+   0.001 Base cloud.hyrule.host/v1/dns/lookup | 
+   0.002 Base 49110-a2faebhnaj4vebqe.splox.app/trust | Pre-payment trust check of a paid API endpoint: reachability, 402 handshake, registrable-d
+   0.002 Base agentgate-x402.netlify.app/api/dns | 
+   0.002 Base defi-intel-agent-gateway.gg-neo15.workers.dev/v1/net/dns-security-audit | Audit a domain's DNS security posture: SPF, DKIM, DMARC, DNSSEC and TLS in one compact JSO
+   0.002 Base agent402.tools/api/dns-lookup | 
+   0.0022 Solana api.x402node.dev/url/dns-lookup | 
+   0.0025 Base defi-intel-agent-gateway.gg-neo15.workers.dev/v1/b2b/tech-stack-fingerprint | Identify a website's CMS, CDN, framework, analytics and hosting from HTTP headers + DNS. R
+   0.003 Base relay402.georgespring.workers.dev/api/security-cve-lookup | CVE lookup for agents: checks OSV.dev for a CVE identifier and returns severity, summary, 
+   0.003 Base relay402.georgespring.workers.dev/api/web-dns-lookup | DNS-over-HTTPS lookup for common record types, normalized into a risk report for web and e
+   0.003 Base sigtap-outreach-api.sigtap.workers.dev/tools/domain-age | Domain age checker: registration date, age in days and registrar via RDAP lookup
+   0.003 Base cloud.hyrule.host/v1/rdap/lookup | 
+   0.003 Base agent402.tools/api/dns-propagation | 
+   0.003 Base agent402.tools/api/asn-info | 
+   0.003 Base agent402.tools/api/whois | 
+   0.005 Solana payai.agentstools.dev/fraud/ip | Reputation of a public IP address for anti-abuse and KYC. Returns ASN, AS-org, country, da
+   0.005 Solana payai.agentstools.dev/enrich/email | Validate and classify an email DOMAIN from public DNS: MX hosts + mail-provider, SPF and D
+   0.005 Base relay402.georgespring.workers.dev/api/web-ssl-cert-info | SSL certificate signal check using public Certificate Transparency records, including issu
+   0.005 Base relay402.georgespring.workers.dev/api/web-email-deliverability | email deliverability and spoofing check from DNS: MX, SPF and DMARC records with concise r
+   0.005 Base relay402.georgespring.workers.dev/api/web-dmarc-check | DMARC check for a domain: finds the TXT record, policy mode and aggregate-reporting signal
+   0.005 Base ai.rjhsignaltech.workers.dev/api/email-validate | Validate one email address without sending mail: RFC 5321 and 5322 syntax with a specific 
+   0.005 Base dns.use.x402atlas.com/whois | 
+   0.005 Solana api.x402node.dev/domain/dns | 
+   0.005 Base cloud.hyrule.host/v1/whois/lookup | 
+   0.01 Base ip.intel.rallylive.ca/ip/asn/as1273 | AS1273 (Vodafone): the autonomous system's name, country and RIR from Team Cymru, plus its
+   0.01 Base ip.intel.rallylive.ca/ip/is/alibaba | Is this IPv4 address announced by alibaba? Resolves the address to its origin ASN (Team Cy
+   0.01 Base intel.rallylive.ca/whois | WHOIS / RDAP domain registration lookup: registrar, creation (registration) date, expiry d
+   0.01 Base intel.rallylive.ca/subdomains | Subdomain finder from certificate-transparency logs: every hostname under a domain that ha
+   0.01 Base intel.rallylive.ca/site/hsts-preload | HSTS check: the Strict-Transport-Security header on the site (max-age, includeSubDomains, 
+   0.01 Base intel.rallylive.ca/monitor/http3 | HTTP/3 and modern-transport support: checks the DNS HTTPS record (alpn, ech, ipv4hint), th
+   0.01 Base intel.rallylive.ca/monitor/domain-expiry | Domain registration expiry: days until the domain expires, the expiry/registration/last-up
+   0.01 Base intel.rallylive.ca/monitor/dns-vs-http | DNS vs HTTP consistency: resolves the domain's A/AAAA records, fetches the site over HTTPS
+   0.01 Base intel.rallylive.ca/ip/rdap | IP WHOIS via RDAP: the registered netblock for an address with its name, handle, allocatio
+   0.01 Base intel.rallylive.ca/dns/propagation | DNS propagation check: resolves a domain's A and MX records through three independent publ
+   0.01 Base intel.rallylive.ca/ip/ipv6-support | IPv6 readiness check for a domain: AAAA records for the site, IPv6 on its mail exchangers 
+   0.01 Base intel.rallylive.ca/ip/info | IP address intelligence in one call: reverse DNS hostname, ASN number and owner name, anno
+   0.01 Base intel.rallylive.ca/ip/geo | IP to country: the country an IPv4 address is registered to, from the regional internet re
+   0.01 Base intel.rallylive.ca/ip/cloud | Cloud / hosting provider detection for an IP or hostname: AWS, Google Cloud, Azure, Cloudf
+   0.01 Base intel.rallylive.ca/ip/bulk | Bulk IP enrichment: up to 20 IPv4 addresses in one $0.01 call, each with public/private cl
+   0.01 Base intel.rallylive.ca/ip/asn-prefixes | Announced IP prefixes for an ASN: IPv4 and IPv6 ranges currently announced in BGP (from RI
+   0.01 Base intel.rallylive.ca/ip/asn-info | ASN lookup: the name, country, regional registry and allocation date of an autonomous syst
+   0.01 Base intel.rallylive.ca/ip/asn | IP to ASN lookup: the autonomous system number and name that announces an IP, the BGP pref
+   0.01 Base intel.rallylive.ca/host/ips | Hostname to IPs with hosting attribution: all IPv4 and IPv6 addresses for a hostname, and 
+   0.01 Base intel.rallylive.ca/email/syntax | Fast email syntax check (no DNS): validates local part and domain shape per RFC 5322 pract
+   0.01 Base intel.rallylive.ca/email/spf | SPF record check for a domain: fetches and parses the SPF record (all qualifier, includes,
+   0.01 Base intel.rallylive.ca/email/mta-sts | MTA-STS and TLS-RPT check for a domain: the _mta-sts DNS record, the published policy file
+   0.01 Base intel.rallylive.ca/email/dmarc | DMARC record check for a domain: fetches _dmarc TXT, parses policy (none/quarantine/reject
+   0.01 Base intel.rallylive.ca/email/dkim | DKIM check for a domain: tests the most common DKIM selectors (google, selector1/selector2
+   0.01 Base intel.rallylive.ca/email/catch-all-hint | Catch-all mailbox hint (no SMTP probing): estimates whether a domain accepts mail to any a
+   0.01 Base intel.rallylive.ca/email/bimi | BIMI record check for a domain: whether a Brand Indicators for Message Identification reco
+   0.01 Base intel.rallylive.ca/email-verify | Email address and email domain verification: syntax check, DNS MX and A records, mail prov
+   0.01 Base intel.rallylive.ca/domain-expiry | When does this domain expire? Returns the domain expiration date, days until expiry, regis
+   0.01 Base intel.rallylive.ca/dns/zone-diff | DNS change detection: snapshots a domain's A, AAAA, MX, NS, TXT and CAA records, compares 
+   0.01 Base intel.rallylive.ca/dns/wildcard | Wildcard DNS check: resolves a random non-existent subdomain to see whether the zone answe
+   0.01 Base intel.rallylive.ca/dns/typosquats | Typosquat finder: generates the most likely typo, transposition, omission, doubled-letter,
+   0.01 Base intel.rallylive.ca/dns/txt-verification | Which SaaS vendors a company uses, from DNS TXT verification tokens: Google Workspace, Mic
+   0.01 Base intel.rallylive.ca/dns/txt | DNS TXT record lookup: all TXT records for a domain (SPF, site-verification tokens for Goo
+   0.01 Base intel.rallylive.ca/dns/ttl | DNS TTL audit: the cache time-to-live for A, AAAA, MX, NS and TXT records with plain-Engli
+   0.01 Base intel.rallylive.ca/dns/tld-info | TLD information: the registry's RDAP server from the IANA bootstrap file, whether the TLD 
+   0.01 Base intel.rallylive.ca/dns/srv | DNS SRV record lookup: service records (SIP, XMPP, LDAP, Minecraft, Kerberos and others) w
+   0.01 Base intel.rallylive.ca/dns/spf-flatten | SPF flattener: recursively expands a domain's SPF includes and redirects into the final li
+   0.01 Base intel.rallylive.ca/dns/soa | DNS SOA record lookup: zone start-of-authority with primary nameserver, admin contact emai
+   0.01 Base intel.rallylive.ca/dns/reverse | Reverse DNS (PTR) lookup: the hostname for an IPv4 or IPv6 address, with the arpa name and
+   0.01 Base intel.rallylive.ca/dns/ns-provider | DNS hosting provider detection: who hosts a domain's DNS (Cloudflare, AWS Route 53, Google
+   0.01 Base intel.rallylive.ca/dns/ns | DNS NS record lookup: the authoritative nameservers for a domain and the detected DNS host
+   0.01 Base intel.rallylive.ca/dns/nameserver-health | Nameserver health for a domain: every NS hostname resolves to an address, SOA serial and p
+   0.01 Base intel.rallylive.ca/dns/mx | DNS MX record lookup: the mail exchanger hosts and priorities for a domain, TTL, plus the 
+   0.01 Base intel.rallylive.ca/dns/mail-provider | Mail provider detection for a domain: the primary inbound provider from MX (Google Workspa
+   0.01 Base intel.rallylive.ca/dns/idn | IDN / punycode converter and homograph check: converts between Unicode and ASCII (xn--) do
+   0.01 Base intel.rallylive.ca/dns/https | DNS HTTPS/SVCB record lookup: service binding records that advertise HTTP/3 and HTTP/2 (AL
+   0.01 Base intel.rallylive.ca/dns/dnssec | DNSSEC check for a domain: whether DS and DNSKEY records exist, whether the resolver valid
+   0.01 Base intel.rallylive.ca/dns/dmarc-parse | DMARC record parser and validator: paste any DMARC TXT string and get the policy, subdomai
+   0.01 Base intel.rallylive.ca/dns/dkim-selectors | DKIM selector scan: tests 50 common DKIM selectors (Google, Microsoft 365, Mailchimp, Send
+   0.01 Base intel.rallylive.ca/dns/cname | DNS CNAME record lookup for a hostname: the alias target chain, TTL, and a dangling-CNAME 
+   0.01 Base intel.rallylive.ca/dns/blacklist | IP blacklist (DNSBL) check: is an IPv4 address listed on Spamhaus ZEN, SpamCop, Barracuda,
+   0.01 Base intel.rallylive.ca/dns/all | All common DNS records for a domain in one call: A, AAAA, MX, TXT, NS, SOA, CNAME, CAA and
+   0.01 Base intel.rallylive.ca/dns/aaaa | DNS AAAA record lookup: resolve a domain name to its IPv6 addresses with TTL and DNSSEC va
+   0.01 Base intel.rallylive.ca/dns/a | DNS A record lookup: resolve a domain name to its IPv4 addresses with TTL, record count, D
+   0.01 Base intel.rallylive.ca/dns | DNS lookup for any domain in one call: A records (IPv4), MX records with priority, all TXT
+   0.01 Base intel.rallylive.ca/dev/npm-vulns-hint | Maintenance-risk hints for an npm package: is the latest version deprecated (with the mess
+   0.01 Base dns.intel.rallylive.ca/dns/tld/aero | About the .aero top-level domain: registry operator, type (generic, country-code, sponsore
+   0.01 Base dns.intel.rallylive.ca/dns/dkim/sendgrid | DKIM public key for selector "sendgrid" of a domain: looks up sendgrid._domainkey.<domain>
+   0.01 Base relay402.georgespring.workers.dev/api/package-vulns | Known-vulnerability check for a software dependency before installing it: queries the OSV.
+   0.01 Base dns.intel.rallylive.ca/dns/tlsa/via/nextdns | TLSA records for a domain as answered by NextDNS (DNS over HTTPS): the records, TTL, respo
+   0.01 Base dns.intel.rallylive.ca/dns/srv/sips-tcp | SIPS service discovery (_sips._tcp.<domain>): SRV records with priority, weight, port and 
+   0.01 Base dns.intel.rallylive.ca/dns/host/remote/txt | TXT record of remote.<domain>: looks up the remote host under the domain you give (TXT via
+   0.01 Base dns.intel.rallylive.ca/dns/host/mx/cname | CNAME record of mx.<domain>: looks up the mx host under the domain you give (CNAME via Clo
+   0.01 Base dns.intel.rallylive.ca/dns/host/internal/txt | TXT record of internal.<domain>: looks up the internal host under the domain you give (TXT
+   0.01 Base dns.intel.rallylive.ca/dns/host/imap/cname | CNAME record of imap.<domain>: looks up the imap host under the domain you give (CNAME via
+   0.01 Base dns.intel.rallylive.ca/dns/host/autodiscover/a | A record of autodiscover.<domain>: looks up the autodiscover host under the domain you giv
+   0.01 Solana payai.agentstools.dev/threat/ioc | Type-agnostic threat-intelligence enrichment for a SOC or DFIR agent. Give one indicator o
+   0.01 Solana payai.agentstools.dev/netintel/asn | Registry and routing metadata for an autonomous system: the AS name, the Regional Internet
+   0.01 Solana payai.agentstools.dev/cve/lookup | Vulnerability intelligence for a single CVE id. Fuses NVD (CVSS base score and vector, CWE
+   0.01 Base relay402.georgespring.workers.dev/api/npm-package-check | Typosquat and quality signals for an npm package before installing it: weekly downloads, l
+   0.01 Base relay402.georgespring.workers.dev/api/web-domain-risk | domain risk report from DNS signals: address records, nameservers, MX records and high-abu
+   0.01 Base dns-lookup.x402.paysponge.com/ | Service: DNS Record & Whois Lookup (https://dns-lookup.x402.paysponge.com/)
+   0.01 Base api.delx.ai/api/v1/x402/rdap-lookup | Fetch registrar, status, and registration dates for trust, compliance, and domain ops for 
+   0.01 Base api.delx.ai/api/v1/x402/domain-trust-report | One-call domain trust report and security audit with TLS, headers, security.txt, RDAP, DNS
+   0.01 Base api.delx.ai/api/v1/x402/dns-lookup | Delx Commerce DNS lookup API for agents at $0.01 USDC. Call when you need a dns lookup of 
+   0.01 Base delx.ai/mcp/tools/util_dns_lookup | DNS lookup API for agents at $0.01 USDC. Call when you need A/AAAA/CNAME/MX/TXT/NS for dom
+   0.01 Solana api.x402node.dev/domain/whois | 
+   0.015 Solana payai.agentstools.dev/enrich/domain | Enrich a domain / company / email into one aggregated profile from public sources: registr
+   0.02 Solana payai.agentstools.dev/domain/trust | Phishing/trust verdict for a website domain before an agent transacts with an unfamiliar m
+   0.02 Solana payai.agentstools.dev/cve/scan | Vulnerability scan for a software package by ecosystem, name and version, or by package-UR
+   0.023 Base api.avedaris.com/v1/paid/vendor-intelligence | One-call public vendor due-diligence packet: normalize the vendor, inspect DNS and HTTP, r
+   0.03 Base relay402.georgespring.workers.dev/api/compose-email-trust-report | composed email trust report from MX, SPF and DMARC DNS records for outreach, onboarding an
+   0.04 Base relay402.georgespring.workers.dev/api/compose-domain-threat-report | composed domain threat report from DNS infrastructure signals and high-abuse TLD heuristic
+   0.04 Base x402.onchainexpat.com/api/x402-crypto/site-trust | Get website/domain trust score with WHOIS, SSL, and pattern analysis
+   0.05 Base agentkyb.andy229651.workers.dev/mcp-x402 | Pre-transaction business counterparty check for AI agents. Combines legal-entity resolutio
+   0.08 Base agent402.tools/api/skill/dns-network-ops | 
+===== web_search 53 gabarits 53
+   0.001 Solana aws-bedrock.grok.me/api/v1/chat | Agent data APIs: web search, page crawl, company enrich, X/Twitter mentions — plus cheap L
+   0.001 Base api.delx.ai/api/v1/x402/open-knowledge-search | Search bounded English Wikipedia metadata for $0.001 USDC through the public Wikimedia API
+   0.001 Base api.delx.ai/api/v1/x402/open-entities-search | Search bounded Wikidata entity metadata for $0.001 USDC. Returns stable IDs, labels, descr
+   0.003 Solana payai.agentstools.dev/search | Free-text web search for AI agents: ranked title/url/snippet results fused across multiple
+   0.003 Base api.delx.ai/api/v1/x402/timestamp-align | Align ISO-8601 timestamps down to fixed UTC interval buckets — call when bucket-aligning I
+   0.003 Base api.delx.ai/api/v1/x402/text-chunk-plan | Plan overlapping character chunks for RAG without storing the text — call when planning ov
+   0.003 Base api.delx.ai/api/v1/x402/success-rate | Compute success and failure rates from success and total counts — call when computing succ
+   0.003 Base api.delx.ai/api/v1/x402/spread-bps | Compute mid price and bid-ask spread in basis points — call when computing mid and bid-ask
+   0.003 Base api.delx.ai/api/v1/x402/sla-breach-count | Count SLA breaches in a latency sample against a millisecond threshold — call when countin
+   0.003 Base api.delx.ai/api/v1/x402/score-clip | Clip a score into an inclusive numeric range — call when clipping a score into an inclusiv
+   0.003 Base api.delx.ai/api/v1/x402/saturation-ratio | Compute capacity saturation from in-flight work and capacity — call when measuring in-flig
+   0.003 Base api.delx.ai/api/v1/x402/return-pct | Compute percent return between start and end values — call when computing percent return b
+   0.003 Base api.delx.ai/api/v1/x402/queue-wait-estimate | Estimate queue wait from depth, mean service time, and workers — call when estimating wait
+   0.003 Base api.delx.ai/api/v1/x402/p95-estimate | Estimate p95 latency from a bounded numeric sample — call when estimating p95 from a bound
+   0.003 Base api.delx.ai/api/v1/x402/markdown-heading-index | Index markdown ATX headings from caller-supplied text only — call when indexing ATX headin
+   0.003 Base api.delx.ai/api/v1/x402/language-script-detect | Detect dominant Unicode script families in a text sample — call when detecting dominant Un
+   0.003 Base api.delx.ai/api/v1/x402/latency-sla-check | Compare observed latency against an SLA threshold in milliseconds — call when comparing ob
+   0.003 Base api.delx.ai/api/v1/x402/keyword-density | Measure keyword density inside caller-supplied text — call when measuring keyword density 
+   0.003 Base api.delx.ai/api/v1/x402/jsonld-key-list | List top-level keys from JSON-LD or JSON objects the caller already holds — call when list
+   0.003 Base api.delx.ai/api/v1/x402/cost-per-success | Compute cost per successful delivery from total cost and success count — call when dividin
+   0.003 Base api.delx.ai/api/v1/x402/content-type-guess | Guess a MIME type from a filename, path, or URL extension — call when guessing MIME type f
+   0.003 Base defi-intel-agent-gateway.gg-neo15.workers.dev/v1/web/serp-clean-proxy | Top-10 clean organic search results for a query (title, url, snippet) with NO tracking pix
+   0.005 Solana payai.agentstools.dev/aeo/crawlers | robots.txt AI-crawler access matrix: for the 2026 cohort of AI and answer-engine crawlers 
+   0.005 Solana aws-bedrock.grok.me/api/v1/search | Tavily Search. GET /api/v1/search?q= → 402 $0.005 USDC Solana or Base. Real Tavily, no API
+   0.008 Solana citable.run/v1/serp | The raw Google results page: organic, People-Also-Ask, related searches.
+   0.008 Base one-search.one-engine.workers.dev/v1/search/basic | Fast web search returning 10 compact agent-ready results
+   0.01 Base intel.rallylive.ca/dev/robots-for-bot | Is a specific bot allowed to fetch a URL? Fetches the site's robots.txt and evaluates the 
+   0.01 Base intel.rallylive.ca/dev/ai-crawler-policy | AI-crawler policy of a website: reads robots.txt and reports, for 20 known AI/LLM crawlers
+   0.01 Base funding.payforapi.com/web-search | Global web search for AI agents (OneShot upstream)
+   0.01 Solana stable-enrich-anncfzk3u-merit-systems.vercel.app/api/exa/search | Exa Search - Neural search across the web
+   0.01 Solana stable-enrich-git-payai-solana-facilitator-merit-systems.vercel.app/api/exa | Exa Search - Neural search across the web
+   0.01 Solana stable-enrich-ecdu27dk1-merit-systems.vercel.app/api/exa/search | Exa Search - Neural search across the web
+   0.01 Solana stableenrich.dev/api/exa/search | Exa Search - Neural search across the web
+   0.01 Base api.delx.ai/api/v1/x402/website-intelligence-report | One-call website intelligence report and website content extraction API for agents: $0.01 
+   0.01 Base api.delx.ai/api/v1/x402/page-extract | Extract clean title, host, and bounded main text from one public URL for $0.01 USDC. Call 
+   0.01 Base mesh.heurist.xyz/x402/agents/FirecrawlSearchDigestAgent/firecrawl_web_searc | Search the web with advanced filtering. MANDATORY: Use time_filter parameter for ANY time-
+   0.01 Base mesh.heurist.xyz/x402/agents/ExaSearchDigestAgent/exa_web_search | Search the web for any topics. MANDATORY: Use time_filter for ANY time-sensitive requests.
+   0.012 Solana citable.run/v1/rank-check | Google organic position of a domain for a keyword, via a licensed SERP feed.
+   0.015 Solana api.x402node.dev/serp/cn-shopping | 
+   0.015 Solana api.x402node.dev/serp/cn-news | 
+   0.015 Solana api.x402node.dev/serp/cn | 
+   0.02 Base bp3ocaveiu74yyrd35hyt4b6j4.srv.us/v1/concierge | Ask for anything, get the result, one endpoint. render402 concierge is an aggregator: desc
+   0.02 Base payforapi.com/v1/web-search | Global web search for AI agents (Tavily aggregation via x402) (Глобальный веб-поиск для аг
+   0.02 Base payforapi.com/v1/ru-search | Cyrillic (Runet) web search for AI agents (Кириллический веб-поиск для агентов)
+   0.02 Solana api.x402node.dev/serp/images | 
+   0.02 Solana api.x402node.dev/serp/news | 
+   0.02 Solana api.x402node.dev/serp/maps | 
+   0.02 Solana api.x402node.dev/serp/shopping | 
+   0.02 Solana api.x402node.dev/serp/geo | 
+   0.02 Solana api.x402node.dev/serp/web | 
+   0.0252 Solana stableenrich.dev/api/firecrawl/search | Firecrawl Search - Search the web
+   0.031 Base api.itsgloria.ai/news-ticker-summary | Get a 24-hour news summary for a specific token/ticker, combining internal news data with 
+   0.04 Solana payai.agentstools.dev/attention/index | Attention index for any word/entity fusing Wikipedia readership (Wikimedia pageviews, reso
+===== chat_completion 35 gabarits 35
+   6e-05 Base devnet.aimo.network/api/v1/chat/completions | LLM Generation endpoint
+   0.001 Base redrobotrouges.ca/x402/v1/chat/completions | OpenAI-compatible chat completions (local GPU, Quebec/CA)
+   0.001 Base openrelay.hggfffdfy687.workers.dev/v1/premium/chat/completions | OpenAI-compatible chat completion (branded tier). $0.10/1M tokens, min $0.0010/request. US
+   0.001 Solana openrelay.hggfffdfy687.workers.dev/v1/chat/completions | OpenAI-compatible chat completion. $0.10/1M tokens (input+max_tokens). USDC on Solana or B
+   0.001602 Solana sol.mapleai.shop/v1/chat/completions | OpenAI-compatible chat completion, priced by counted input tokens + max output tokens at p
+   0.001623 Polygo polygon.mapleai.shop/api/v1/chat/completions | OpenAI-compatible chat completion, priced by counted input tokens + max output tokens at p
+   0.002 Solana api.chit402.com/v1/chat/completions | Signed spend receipts for agent x402 payments — who paid which call, verifiable by a third
+   0.002 Solana api.xfuel.app/a2a-message | Treasury desk and possession book for agent spend. Who paid which call — export, policy, e
+   0.002 Solana api.xfuel.app/v1/chat/completions | Paid inference via x402 USDC on Base and Solana. Cost-plus, quoted, receipted. POST /v1/ch
+   0.002 Base x402.freeq.one/tools/llm_chat | LLM Chat: Chat with a language model. OpenAI-compatible /v1/chat/completions interface. Su
+   0.002134 Base gpt55.558686.xyz/v1/chat/completions/long | 
+   0.00293 Base gpt55.558686.xyz/v1/chat/completions | 
+   0.00293 Base gpt55.558686.xyz/v1/chat/completions/gpt-5.4-mini | 
+   0.00293 Base gpt55.558686.xyz/v1/chat/completions/standard | 
+   0.00293 Base gpt55.558686.xyz/v1/chat/completions/mini | 
+   0.003 Solana blockrun-sol-staging-vbsbhh7lea-uc.a.run.app/api/v1/chat/completions | 
+   0.003 Solana blockrun-sol-vbsbhh7lea-an.a.run.app/api/v1/chat/completions | 
+   0.003 Solana blockrun-sol-vbsbhh7lea-uc.a.run.app/api/v1/chat/completions | 
+   0.004591 Solana sol.blockrun.ai/api/v1/chat/completions | 
+   0.01 Base api.paysponge.com/chat/completions | Service: OpenRouter API (https://api.paysponge.com/chat/completions)
+   0.01 Base 3-112-175-64.nip.io/v1/chat/completions | OpenRouter  inference via x402
+   0.01 Arbitr yiduochan.com/api/x402/chat/completions | OpenAI-compatible LLM inference, paid per call. POST a standard chat completion body with 
+   0.01 Solana clawhunter.fun/api/v1/chat/completions | OpenAI-compatible chat completions, billed per token under each provider's list price — mo
+   0.01 Solana api.xfuel.app/task-request | OpenAI-compatible paid inference via x402 USDC on Base and Solana ($0.01). POST /v1/chat/c
+   0.01375 Base 1rpc.ai/v1/chat/completions | Payment required for 1RPC AI service access
+   0.02 Solana api.solrouter.com/api/v1/x402/chat/completions | 
+   0.034 Base gpt55.558686.xyz/v1/chat/completions/gpt-5.3-codex | 
+   0.066667 Base gpt55.558686.xyz/v1/chat/completions/max | 
+   0.066667 Base gpt55.558686.xyz/v1/chat/completions/max-output | 
+   0.091 Base gpt55.558686.xyz/v1/chat/completions/gpt-5.5 | 
+   0.1 Arbitr yiduochan.com/api/x402/credits/0.10 | Buy $0.10 of prepaid credits for the YiduoChan inference gateway and receive a working API
+   0.194 Base gpt55.558686.xyz/v1/chat/completions/gpt-5.5-1k | 
+   0.293 Base gpt55.558686.xyz/v1/chat/completions/gpt-5.5-2k | 
+   0.489 Base gpt55.558686.xyz/v1/chat/completions/gpt-5.5-4k | 
+   0.523889 Base gpt55.558686.xyz/v1/chat/completions/metered | 
+===== ask_agent 13 gabarits 13
+   0.001 Base relay402.georgespring.workers.dev/api/robots-check | Checks whether a given user agent may fetch a given path on a host, per the site's robots.
+   0.001 Base relay402.georgespring.workers.dev/api/wayback-snapshot | Finds the closest archived snapshot of any public URL in the Internet Archive Wayback Mach
+   0.001 Base www.capminal.ai/api/x402/research | AI-powered Token Deep Research API
+   0.003 Base api.delx.ai/api/v1/x402/task-priority-score | Score task priority from urgency, impact, and effort into an ordered band — call when rank
+   0.005 Base agent-product-normalizer.vercel.app/api/v1/clarify | Turn a messy human request into an execution-ready goal, constraints, ambiguity signals an
+   0.01 Base intel.rallylive.ca/page-text-bulk | Bulk web page text extraction: up to 5 URLs in one $0.01 call. For each page returns the r
+   0.015 Base otaku.so/api/messaging/jobs | Access AI-powered research and news processing capabilities. Submit queries for research a
+   0.05 Base payforapi.com/v1/research/deep | Deep research pack: 3 searches + up to 10 pages as Markdown (Research-пакет deep: 3 поиска
+   0.15 Solana api.syraa.fun/gems | Deep research on X platform for a hidden gem project
+   0.15 Solana api.syraa.fun/x-search | Deep research on X platform for a specific topic
+   0.15 Solana api.syraa.fun/x-kol | Deep research on X platform for a KOL/Influencer
+   0.75 Base build-4c941cab041172e9439ece2f.emblem.build/pub/tasks/x402-onchain/api/rese | Agent researches a topic (web) and returns a concise, structured, cited brief. ?topic=. Pa
+   2.0 Base x402.onchainexpat.com/api/x402-research/deep-research | General-purpose deep research with sourced AI report
+===== generate_image 23 gabarits 23
+   0.001 Base x402.chaly.org/generate | AI image generation - low quality, 1K resolution.
+   0.005 Base x402.freeq.one/mcp | MCP server for AI agents: 27 tools (blockchain data, web scraping, ZK proofs, image genera
+   0.005 Base api.delx.ai/api/v1/x402/image-budget | Delx Commerce budget image generation API for $0.005 USDC (FLUX Schnell entry tier). Call 
+   0.01 Base fal.x402.paysponge.com/fal-ai/flux/schnell | Service: fal.ai (https://fal.x402.paysponge.com/fal-ai/flux/schnell)
+   0.01 Solana fal.x402.paysponge.com/fal-ai/fast-sdxl | Service: fal.ai (https://fal.x402.paysponge.com/fal-ai/fast-sdxl)
+   0.01 Base api.delx.ai/api/v1/x402/image | Delx Commerce cheap image generation API for agents at $0.01 USDC. Call when you need a pr
+   0.01 Base freepik.x402.paysponge.com/v1/ai/text-to-image | 
+   0.0132 Base www.studio-x.cc/api/generate/image | Studio X uncensored NSFW image generation with Flux Dev
+   0.017028 Solana x402factory.ai/solana/llm/gpt/KR92MHBFNW9Z7MST4E | Solana GPT wrapper API using x402 payments. Default direct call: model gpt-5-mini, max_out
+   0.02 Base api.delx.ai/api/v1/x402/narrated-post | Create one narrated still-image MP4 for $0.02 USDC: a bounded FLUX Schnell visual, Kokoro 
+   0.0216 Solana sol.mapleai.shop/api/v1/images/generations | Generate images, priced per image and size
+   0.03 Base x402.onchainexpat.com/api/x402-uncensored/image | Venice AI Uncensored Image Generation (Chroma, Lustify). Premium tiers: /image-pro ($0.20)
+   0.03 Base fal.x402.paysponge.com/fal-ai/flux/dev | 
+   0.03 Base padelmaps.org/api/x402-uncensored/image | Venice AI Uncensored Image Generation (Chroma, Lustify)
+   0.04 Base fal.x402.paysponge.com/fal-ai/flux-pro/v1.1 | Service: fal.ai (https://fal.x402.paysponge.com/fal-ai/flux-pro/v1.1)
+   0.04 Solana clawhunter.fun/api/v1/tools/image | Generate finished images from a prompt or brief — hosted URLs; can match a real logo or ma
+   0.04 Base fal.x402.paysponge.com/fal-ai/stable-diffusion-v35-large | 
+   0.05 Arbitr api.xona-agent.com/arbitrum/image/nano-banana | 
+   0.06 Solana www.trezalabs.com/api/x402/image | Image generation: a prompt in, one image back in the same response. 7 models including Goo
+   0.06 Base fal.x402.paysponge.com/fal-ai/flux-pro/v1.1-ultra | Service: fal.ai (https://fal.x402.paysponge.com/fal-ai/flux-pro/v1.1-ultra)
+   0.06 Base api.delx.ai/api/v1/x402/image-hq | Pro-grade FLUX 1.1 Pro images for agents at $0.06 USDC. Call when the $0.01 draft is not g
+   0.1 Solana conc-exe.xyz/api/resource-image | Generate one image from a text prompt (base64 data URLs)
+   0.2 Base www.agentgram.site/api/generate/image | AI image generation via AgentGram
+===== generate_video 14 gabarits 14
+   0.01 Arbitr yiduochan.com/api/x402/chat/completions | OpenAI-compatible LLM inference, paid per call. POST a standard chat completion body with 
+   0.023 Base api.render402.xyz/v1/generate | Generate 1-15 second AI videos with MiniMax H3 from text, reference images, first and last
+   0.03 Base api.delx.ai/api/v1/x402/video-draft | 4-second 720p video drafts for agents at $0.03 USDC. Call when you need a fast text-to-vid
+   0.05 Solana clawhunter.fun/api/v1/tools/video-director | Direct a short-form video from a brief — treatment, timed shot list, paste-ready Kling pro
+   0.07 Base fal.x402.paysponge.com/fal-ai/minimax/video-01 | Service: fal.ai (https://fal.x402.paysponge.com/fal-ai/minimax/video-01)
+   0.07 Base fal.x402.paysponge.com/fal-ai/stable-video | 
+   0.165 Base www.studio-x.cc/api/generate/video-fast | Studio X uncensored NSFW video generation with Wan 2.2 Spicy I2V
+   0.42 Solana www.trezalabs.com/api/x402/video | Generate a video from a text prompt, or animate an image_url from its first frame. The pai
+   0.460545 Solana getvideos.app/api/harness/mcp | GetVideos real fixed-parameter Seedance video generation
+   0.460545 Solana getvideos.app/api/mcp | GetVideos fixed-parameter video generation dry run
+   0.55 Base www.studio-x.cc/api/generate/video-pro | Studio X uncensored NSFW video generation with Wan 2.6 Spicy I2V
+   0.55 Base www.studio-x.cc/api/generate/video-ultra | Studio X uncensored NSFW video generation with Wan 2.7 Spicy I2V
+   0.600001 Solana clawhunter.fun/api/v1/videos/generations | Video generation from a text prompt, a start image, reference images, or a reference clip 
+   0.87 Solana www.trezalabs.com/api/x402/short | Narrated short video from a topic: a finished 30-second vertical (9:16) video with a writt
+===== robinhood_* 23 gabarits 23
+   0.001 Solana x402-accelerometer-feed.fly.dev/tokenized-equities/st0x/registry | Use this when you need to resolve a stock ticker to its ST0x on-chain token, or check whet
+   0.002 Base percall.kimi.pro/api/x402/dex/token/{id} | [PerCall] Live USD price and all Uniswap v4 pools for any token on Robinhood Chain, by con
+   0.002 Base percall.kimi.pro/api/x402/stock/{id} | [PerCall] Live quote for a tokenized stock or ETF on Robinhood Chain (AAPL, NVDA, TSLA, et
+   0.002 Base percall.kimi.pro/api/x402/dex/search/{id} | [PerCall] Search Uniswap v4 pools on Robinhood Chain by token symbol, name or full contrac
+   0.005 Base percall.kimi.pro/api/x402/dex/new | [PerCall] Newest Uniswap v4 pools on Robinhood Chain (eip155:4663): token symbol, contract
+   0.005 Base robinhood-radar-nu4yz7wqv-lightfarm.vercel.app/api/newpools | Robinhood Radar on-chain new-pool feed (every new Robinhood-chain launch).
+   0.01 Base chiefofstaff-solana.iodized-lemon.workers.dev/rh/check | Robinhood Chain (eip155:4663) token safety / rug-pull & honeypot check for ERC-20s (Dopple
+   0.01 Solana api.loopholetape.com/v1/payai/rhc/launches/recent | Robinhood Chain (Pons V2) new memecoin launches with holder, creator-tax and ring structur
+   0.01 Base percall.kimi.pro/api/x402/equity/spreads | [PerCall] ARBITRAGE MONITOR — tokenized stock spreads: Robinhood's official oracle quote (
+   0.01 Base www.robinhoodradar.com/api/quote | Robinhood Radar aggregator swap-quote proxy (KyberSwap / OpenOcean).
+   0.01 Base www.robinhoodradar.com/api/discovery-newcoins | Robinhood Radar new-coin discovery snapshot.
+   0.01 Base www.robinhoodradar.com/api/discovery-board | Robinhood Radar board snapshot (build-time discovery artefact).
+   0.01 Base www.robinhoodradar.com/api/data | Robinhood Radar base dataset snapshot (creators + tokens).
+   0.01 Base www.robinhoodradar.com/api/newpools | Robinhood Radar on-chain new-pool feed (every new Robinhood-chain launch).
+   0.01 Base www.robinhoodradar.com/api/newcoins | Robinhood Radar tracked new-coin feed with liquidity/volume/holder enrichment.
+   0.01 Base www.robinhoodradar.com/api/calls | Robinhood Radar live event log: calls, new coins and ATH breaks.
+   0.01 Base robinhood-radar-dsk86hfkw-lightfarm.vercel.app/api/board | Robinhood Radar live reranked board: creator ratings and token ATH/price table.
+   0.01 Base www.robinhoodradar.com/api/board | Robinhood Radar live reranked board: creator ratings and token ATH/price table.
+   0.02 Solana api.loopholetape.com/v1/payai/rhc/curve/{id}/trades | Robinhood Chain Pons V2 memecoin curve: reserves and price after every trade. Use when you
+   0.02 Solana api.loopholetape.com/v1/payai/rhc/curve/{id} | Robinhood Chain token risk card for one Pons V2 memecoin: holders, creator tax, ring scree
+   0.05 Base whale.lonestaroracle.xyz/whales | Large on-chain transaction monitor — whale movements on Base, Ethereum, and Robinhood Chai
+   0.1 Solana conc-exe.xyz/api/concierge-intel-momentum | Large-move candidates (up or down). Optional theme:robinhood for Robinhood Chain meme rota
+   0.600001 Solana clawhunter.fun/api/v1/videos/generations | Video generation from a text prompt, a start image, reference images, or a reference clip 
+===== new_launches 7 gabarits 7
+   0.001585 Base api.slamai.dev/chain/tokens/newest | Returns the newest tokens minted on the blockchain based on mint timestamp, filtered by an
+   0.01 Solana api.loopholetape.com/v1/payai/launches/recent | Recently launched pump.fun memecoins on Solana with holder, creator and rug-flag labels. U
+   0.01 Base mesh.heurist.xyz/x402/agents/TokenResolverAgent/search | Find tokens by address, ticker/symbol, or token name. Returns up to 5 concise candidates w
+   0.05 Base launches.lonestaroracle.xyz/scan | New token launch scanner — Base and EVM chains, real-time pool data
+   0.08 Solana mpp.hyreagent.fun/trenches/new-tokens | Real-time PumpFun token launches with AI snipe verdict (holder concentration, dev history,
+   0.08 Solana mpp.hyreagent.fun/trenches/bags/new-tokens | New Bags.fm token launches (Meteora DBC) with creator profile, fee share, and AI snipe ver
+   0.08 Base mpp.hyreagent.fun/base/trenches/bags/new-tokens | New tokens from Bags.fm
+===== colony_activity 5 gabarits 5
+   0.003 Base carry-lens-api.netlify.app/v1/perps/pulse | Cost-aware perpetual funding pulse for trading agents. Returns three interval-normalized c
+   0.006 Solana api.x402node.dev/chain/whale-alert | Detect the largest recent transfers of a token to spot whale accumulation or dumping befor
+   0.031 Base api.itsgloria.ai/news-ticker-summary | Get a 24-hour news summary for a specific token/ticker, combining internal news data with 
+   0.2 Base 47620.xyz/x/solana/market-overview | One call: network health (slot, epoch %, SOL/USD) plus the current trending DEX pairs. The
+   0.2 Base 47620.xyz/x/solana-fac/market-overview | One call: network health (slot, epoch %, SOL/USD) plus the current trending DEX pairs. The
+===== swoge_economy 9 gabarits 9
+   0.005 Solana payai.agentstools.dev/stablecoin/list | Catalog of covered stablecoins ranked by market cap, from the DefiLlama stablecoins feed. 
+   0.008 Solana payai.agentstools.dev/unlock/next | The single next token unlock for one crypto token, cheapest actionable signal. Give a tick
+   0.008 Solana payai.agentstools.dev/stablecoin/supply | Supply facet for a stablecoin: total circulating supply plus the per-chain breakdown from 
+   0.01 Base x402.santyvv.com/api/crypto/markets | Market table of the top coins by market capitalisation: price, market cap, volume, circula
+   0.01 Base x402.santyvv.com/api/defi/stablecoins | Every tracked stablecoin with circulating supply, supply yesterday and a week ago, chain b
+   0.01 Base santyvv-x402.santyvv1993.workers.dev/api/defi/stablecoin-chains | Stablecoin circulating supply by chain
+   0.02 Solana payai.agentstools.dev/unlock/calendar | Forward-looking token unlock and vesting calendar for one crypto token. Give a ticker, nam
+   0.02 Solana payai.agentstools.dev/depin/network | Network health and token-economics verdict for a DePIN network from public data. Give netw
+   0.05 Solana payai.agentstools.dev/unlock/upcoming | Market-wide screener of the biggest upcoming token unlocks across many crypto tokens in a 
+===== web_search_hors_delx 32 gabarits 32
+   0.001 Solana aws-bedrock.grok.me/api/v1/chat | Agent data APIs: web search, page crawl, company enrich, X/Twitter mentions — plus cheap L
+   0.003 Solana payai.agentstools.dev/search | Free-text web search for AI agents: ranked title/url/snippet results fused across multiple
+   0.003 Base defi-intel-agent-gateway.gg-neo15.workers.dev/v1/web/serp-clean-proxy | Top-10 clean organic search results for a query (title, url, snippet) with NO tracking pix
+   0.005 Solana payai.agentstools.dev/aeo/crawlers | robots.txt AI-crawler access matrix: for the 2026 cohort of AI and answer-engine crawlers 
+   0.005 Solana aws-bedrock.grok.me/api/v1/search | Tavily Search. GET /api/v1/search?q= → 402 $0.005 USDC Solana or Base. Real Tavily, no API
+   0.008 Solana citable.run/v1/serp | The raw Google results page: organic, People-Also-Ask, related searches.
+   0.008 Base one-search.one-engine.workers.dev/v1/search/basic | Fast web search returning 10 compact agent-ready results
+   0.01 Base intel.rallylive.ca/dev/robots-for-bot | Is a specific bot allowed to fetch a URL? Fetches the site's robots.txt and evaluates the 
+   0.01 Base intel.rallylive.ca/dev/ai-crawler-policy | AI-crawler policy of a website: reads robots.txt and reports, for 20 known AI/LLM crawlers
+   0.01 Base funding.payforapi.com/web-search | Global web search for AI agents (OneShot upstream)
+   0.01 Solana stable-enrich-anncfzk3u-merit-systems.vercel.app/api/exa/search | Exa Search - Neural search across the web
+   0.01 Solana stable-enrich-git-payai-solana-facilitator-merit-systems.vercel.app/api/exa | Exa Search - Neural search across the web
+   0.01 Solana stable-enrich-ecdu27dk1-merit-systems.vercel.app/api/exa/search | Exa Search - Neural search across the web
+   0.01 Solana stableenrich.dev/api/exa/search | Exa Search - Neural search across the web
+   0.01 Base mesh.heurist.xyz/x402/agents/FirecrawlSearchDigestAgent/firecrawl_web_searc | Search the web with advanced filtering. MANDATORY: Use time_filter parameter for ANY time-
+   0.01 Base mesh.heurist.xyz/x402/agents/ExaSearchDigestAgent/exa_web_search | Search the web for any topics. MANDATORY: Use time_filter for ANY time-sensitive requests.
+   0.012 Solana citable.run/v1/rank-check | Google organic position of a domain for a keyword, via a licensed SERP feed.
+   0.015 Solana api.x402node.dev/serp/cn-shopping | 
+   0.015 Solana api.x402node.dev/serp/cn-news | 
+   0.015 Solana api.x402node.dev/serp/cn | 
+   0.02 Base bp3ocaveiu74yyrd35hyt4b6j4.srv.us/v1/concierge | Ask for anything, get the result, one endpoint. render402 concierge is an aggregator: desc
+   0.02 Base payforapi.com/v1/web-search | Global web search for AI agents (Tavily aggregation via x402) (Глобальный веб-поиск для аг
+   0.02 Base payforapi.com/v1/ru-search | Cyrillic (Runet) web search for AI agents (Кириллический веб-поиск для агентов)
+   0.02 Solana api.x402node.dev/serp/images | 
+   0.02 Solana api.x402node.dev/serp/news | 
+   0.02 Solana api.x402node.dev/serp/maps | 
+   0.02 Solana api.x402node.dev/serp/shopping | 
+   0.02 Solana api.x402node.dev/serp/geo | 
+   0.02 Solana api.x402node.dev/serp/web | 
+   0.0252 Solana stableenrich.dev/api/firecrawl/search | Firecrawl Search - Search the web
+   0.031 Base api.itsgloria.ai/news-ticker-summary | Get a 24-hour news summary for a specific token/ticker, combining internal news data with 
+   0.04 Solana payai.agentstools.dev/attention/index | Attention index for any word/entity fusing Wikipedia readership (Wikimedia pageviews, reso
