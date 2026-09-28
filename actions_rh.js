@@ -192,7 +192,20 @@ function cree(deps) {
     return { tokens: l.slice(0, n), compared: l.length, officialTokens: C.total, withOracle: C.avecOracle, minLiquidityUsd: liqMin, measuredAt: new Date(C.ecartsT).toISOString(), note: NOTE };
   }
 
-  return { verifie, ecarts, registre, MESURE };
+  /** L'identite d'un jeton deja lu (symbole et nom de DexScreener) : officiel, copie, ou rien —
+      sans appel de plus que la liste officielle (en cache 6 h). null si la liste ne repond pas. */
+  async function identite(adresse, sym, nom) {
+    let R;
+    try { R = await registre(); } catch (e) { return null; }
+    const a = String(adresse || '').toLowerCase();
+    const f = R.parAdr.get(a);
+    if (f) return { officielle: true, symbole: f.symbole, adresse: f.adresse };
+    const s = normSym(sym), n = String(nom || '').trim().toLowerCase();
+    const imite = (s && R.parSym.get(s)) || (n ? [...R.parAdr.values()].find((x) => x.nom && x.nom.toLowerCase() === n) : null);
+    return imite ? { imposteur: true, symbole: imite.symbole, adresse: imite.adresse } : null;
+  }
+
+  return { verifie, ecarts, registre, identite, MESURE };
 }
 const NOTE = 'Official list: Robinhood (api.robinhood.com/rhj/assets). Oracle: the Chainlink Robinhood feed on Robinhood Chain (value per token, multiplier included); its value is not republished here, read it at the feed address. '
   + 'Pool: the deepest DexScreener pool with the token as base. Off market hours the oracle does not move. A premium is a measurement, never a trade signal.';

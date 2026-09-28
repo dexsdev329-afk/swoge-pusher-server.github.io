@@ -1610,7 +1610,7 @@ const studioAgent = require('./studio_agent');
 /* roast_token (roast.js, 28/09/2026) : la fiche de token_verdict, mise en mots par
    Claude Haiku (sinon un gabarit tire des memes faits) et dessinee en carte PNG. */
 const roastTokens = require('./roast').cree({
-  fiche: (a) => studioJeton.fiche(a, { scan: (y) => aiColonie.scanJeton(y) }),
+  fiche: (a) => studioJeton.fiche(a, { scan: (y) => aiColonie.scanJeton(y), actions: actionsRh() }),
   juge: (f) => require('./verdict_jeton').juge(f),
   redige: async ({ systeme, texte }) => {
     if (!chatActif('anthropic')) return null;
@@ -1759,7 +1759,7 @@ const srcAgent = () => ({
   /* Les liens d'un scan (image de la carte, page de partage) : scan_token les rend (carte_scan.liens). */
   liensScan: (a) => carteScan.liens(a, { api: MOI_URL, site: SITE_URL }),
   roast: roastTokens,
-  fiche: (a) => studioJeton.fiche(a, { scan: (y) => aiColonie.scanJeton(y) }),
+  fiche: (a) => studioJeton.fiche(a, { scan: (y) => aiColonie.scanJeton(y), actions: actionsRh() }),
   vue: () => Object.assign({ pause: cfg.AI_COLONIE !== '1' }, aiColonie.vue()),
   economie: () => economie.etat(), cours: () => studioChat.coursSwoge(),
   cherche: (x) => studioRecherche.cherche(x), contexteRecherche: (r) => studioRecherche.contexte(r),
@@ -3437,7 +3437,7 @@ const server = http.createServer(async (req, res) => {
         surRecherche: () => envoie('etape', { quoi: 'recherche' }),
         /* Une adresse de jeton collee : DexScreener, GoPlus, et le scan de la
            colonie (memes caches que /scan) — voir studio_jeton.js. */
-        jetons: (a) => Promise.all(a.map((x) => studioJeton.fiche(x, { scan: (y) => aiColonie.scanJeton(y) }))),
+        jetons: (a) => Promise.all(a.map((x) => studioJeton.fiche(x, { scan: (y) => aiColonie.scanJeton(y), actions: actionsRh() }))),
         surJeton: () => envoie('etape', { quoi: 'jeton' }),
       });
     } catch (e) {

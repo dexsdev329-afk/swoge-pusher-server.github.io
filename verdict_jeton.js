@@ -68,6 +68,12 @@ function juge(f) {
       if (s.taxeAchat == null || s.taxeVente == null) drapeau('unknown', 'tax_unknown', 'buy or sell tax not reported by GoPlus', 'GoPlus');
       if (s.lpVerrouillee === 0) drapeau('caution', 'lp_not_locked', 'no LP locked or burnt', 'GoPlus');
     }
+    /* L'identite (28/09) : un jeton qui copie le symbole ou le nom d'une action tokenisee
+       officielle n'est PAS cette action — Robinhood l'ecrit (docs.robinhood.com/chain/contracts).
+       Rouge, comme ce qui empeche de revendre : l'acheteur ne detient pas ce qu'il croit.
+       Releve du 28/09 : une copie de NVDA a 0,000000324 $ et 30 386 $ de liquidite. */
+    if (f.action && f.action.imposteur) drapeau('red', 'impostor_stock_token', 'copies the ticker or name of the Robinhood Stock Token ' + f.action.symbole
+      + ' but is not it — the official contract is ' + f.action.adresse, 'Robinhood official stock token list');
     if (m.chaine === 'robinhood') {
       if (m.liqUsd == null) drapeau('unknown', 'liquidity_unknown', 'pool liquidity not reported', 'DexScreener');
       else if (m.liqUsd < liqMin()) drapeau('caution', 'thin_pool', 'pool liquidity $' + Math.round(m.liqUsd).toLocaleString('en-US') + ', under the $'

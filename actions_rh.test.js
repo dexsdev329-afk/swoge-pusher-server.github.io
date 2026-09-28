@@ -88,6 +88,13 @@ async function fetch(u) {
   const n0 = vus.dex; await X.ecarts({}); ok(vus.dex === n0, 'une seconde demande dans la minute : le cache, aucun appel');
   ok(vus.reg === 1 && vus.flux === 1, 'la liste officielle et les flux lus une fois (6 h et 24 h de cache)');
 
+  console.log('\n-- l identite d un jeton deja lu (pour scan_token et token_verdict) --');
+  ok((await X.identite(NVDA, 'NVDA', 'NVIDIA')).officielle === true, 'l adresse officielle : officielle');
+  const id = await X.identite(COPIE, 'NVDA', 'NVDA');
+  ok(id && id.imposteur && id.adresse === NVDA && id.symbole === 'NVDA', 'meme symbole, autre adresse : imposteur, l officielle donnee');
+  ok((await X.identite(AUTRE, 'X', 'Tesla \u2022 Robinhood Token')).adresse === TSLA, 'le NOM officiel copie : imposteur aussi');
+  ok((await X.identite(AUTRE, 'DOGE2', 'Doge Two')) === null, 'un jeton sans rapport : rien');
+
   console.log('\n-- les pannes --');
   horloge += 7 * 3600e3; registreEnPanne = true;
   ok(/did not answer/.test((await X.verifie({ symbol: 'NVDA' })).erreur), 'la liste officielle en panne (cache expire) : dit, rien d invente');

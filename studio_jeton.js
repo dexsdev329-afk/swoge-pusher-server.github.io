@@ -160,6 +160,9 @@ function fiche(addr, deps) {
     try { f.securite = await lisSecurite(f.marche.chaine, addr); } catch (e) { f.manque.push('GoPlus'); }
     if (f.marche.chaine === 'robinhood') {
       try { f.colonie = await lisColonie(addr, deps && deps.scan); } catch (e) { f.manque.push('SWOGE AI colony'); }
+      /* Les actions tokenisees (actions_rh.js, 28/09) : ce jeton est-il l'action officielle, ou
+         en copie-t-il le symbole ou le nom ? La liste officielle de Robinhood, en cache. */
+      if (deps && deps.actions) { try { f.action = await deps.actions.identite(addr, f.marche.sym, f.marche.nom); } catch (e) { f.action = null; } }
     }
     return f;
   })();
@@ -200,6 +203,9 @@ function contexte(fiches) {
         + ', top 10 free wallets ' + (s.dixPremiers == null ? 'unknown' : s.dixPremiers + '%')
         + ' (contracts, locks and burns excluded), LP locked or burnt ' + (s.lpVerrouillee == null ? 'unknown' : s.lpVerrouillee + '%') + '.');
     }
+    if (f.action && f.action.imposteur) l.push('- WARNING: this token copies the ticker or name of the Robinhood Stock Token ' + f.action.symbole
+      + ' but is NOT it (not on Robinhood\'s official list). The official ' + f.action.symbole + ' contract is ' + f.action.adresse + '.');
+    else if (f.action && f.action.officielle) l.push('- Robinhood Stock Token: this is the OFFICIAL ' + f.action.symbole + ' contract (Robinhood\'s official list).');
     const c = f.colonie;
     if (c) {
       l.push('- SWOGE AI colony (' + c.observations.toLocaleString('en-US') + ' observations in memory; average ' + (c.echeance || 30) + '-minute move of past tokens that shared each trait):');

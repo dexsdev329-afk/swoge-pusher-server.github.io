@@ -66,5 +66,15 @@ for (const [k, code] of [['venteBloquee', 'cannot_sell_all'], ['achatBloque', 'c
      'les traits positifs sont rendus a part (le bytecode, une seule ligne), jamais comme une recommandation');
   ok(/not an endorsement/.test(V.texte(v)) && /QUICK VERDICT|CAUTION/.test(V.texte(v)), 'le texte : verdict en tete, les traits positifs « not an endorsement »');
 }
+/* L'identite (28/09) : une copie d'action tokenisee est rouge, avec l'adresse officielle. */
+{
+  const NV = '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec';
+  const v = V.juge(fiche({ marche: marche({ sym: 'NVDA', nom: 'NVDA', liqUsd: 30386 }), action: { imposteur: true, symbole: 'NVDA', adresse: NV } }));
+  const d = v.flags.find((x) => x.code === 'impostor_stock_token');
+  ok(v.verdict === 'red_flags' && d && d.level === 'red' && d.text.includes(NV) && /official stock token list/.test(d.source),
+     'une copie du symbole NVDA : rouge, avec l adresse officielle et sa source');
+  const o = V.juge(fiche({ marche: marche({ sym: 'NVDA', nom: 'NVIDIA Robinhood Token', liqUsd: 5169580 }), action: { officielle: true, symbole: 'NVDA', adresse: NV } }));
+  ok(!o.flags.some((x) => x.code === 'impostor_stock_token') && o.verdict === 'no_red_flag_found', 'l action officielle : aucun drapeau d identite');
+}
 console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
 process.exit(rates ? 1 : 0);
