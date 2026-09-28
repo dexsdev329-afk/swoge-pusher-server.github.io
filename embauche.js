@@ -138,7 +138,7 @@ function cree(deps) {
   let PLAFONDS = {};
   try { if (fPlafonds) PLAFONDS = JSON.parse(fs.readFileSync(fPlafonds, 'utf8')) || {}; } catch (e) { PLAFONDS = {}; }
   const plafondDe = (q) => { const v = PLAFONDS[q]; return typeof v === 'number' && v >= 0 ? Math.min(v, maxJoueur()) : maxJoueur(); };
-  const MESURE = { recherches: 0, embauches: 0, payees: 0, refusees: 0, echecs: 0, depenseUsd: 0, factureUsd: 0 };
+  const MESURE = { recherches: 0, embauches: 0, payees: 0, refusees: 0, echecs: 0, depenseUsd: 0, factureUsd: 0, sansRecu: 0, retrouvees: 0 };
 
   /* Chaque embauche ecrit « en cours » puis son issue : seul son DERNIER etat compte,
      sinon une embauche payee pesait deux fois dans les plafonds. « en cours » compte
@@ -239,7 +239,7 @@ function cree(deps) {
       if (sg.erreur) { await factu.regle(res.jeton, 0); MESURE.echecs++; return { ok: false, raison: sg.erreur + ' - nothing was charged' }; }
       /* Au registre AVANT d'envoyer : un redemarrage pendant l'appel compte la depense. */
       const id = maintenant().toString(36) + Math.random().toString(36).slice(2, 6);
-      note({ id, t: maintenant(), qui: q, url, usd, etat: 'en cours', reseau: acc.network });
+      note({ id, t: maintenant(), qui: q, url, usd, etat: 'en cours', reseau: acc.network, sig: sg.signature || null });
       let r2;
       try { r2 = await appel(X.enteteDe(req, acc, sg.payload)); } catch (x) { r2 = null; }
       const tx = r2 ? X.txDe(r2) : null;
@@ -252,8 +252,10 @@ function cree(deps) {
       }
       const sortie = await lit(r2);
       await factu.regle(res.jeton, factureUsd);
-      note({ id, t: maintenant(), qui: q, url, usd, factureUsd, etat: 'paye', tx, reseau: acc.network });
+      note({ id, t: maintenant(), qui: q, url, usd, factureUsd, etat: 'paye', tx, reseau: acc.network, sig: sg.signature || null });
       MESURE.payees++; MESURE.depenseUsd += usd; MESURE.factureUsd += factureUsd;
+      /* Pas de recu (le 28/09, x402factory.ai n'en renvoyait pas) : on la retrouve sur la chaine, sans faire attendre l'agent. */
+      if (!tx) { MESURE.sansRecu++; planifieRattrapage(); }
       return Object.assign({ ok: true }, sortie, { recu: { url, usd, factureUsd, reseau: acc.network, tx } });
     }
     /** Les dernieres embauches de CE joueur (le dernier etat de chacune), les plus recentes d'abord. */
@@ -278,6 +280,66 @@ function cree(deps) {
     return { cherche, embauche, historique, budget, fixe };
   }
 
+  /* ---- LA TRANSACTION RETROUVEE SUR LA CHAINE (28/09/2026) ----
+     Mesure du 28/09 : les deux premieres embauches reelles (x402factory.ai, x402 v1) ont
+     ete reglees (0,001 USDC chacune, visibles sur Solana) sans en-tete X-PAYMENT-RESPONSE :
+     le registre n'avait pas la transaction, la page pas de lien. Le recu du service n'est
+     donc qu'un raccourci. Sur Solana, notre signature est connue avant l'envoi : la
+     transaction qui la porte est la bonne, sans ambiguite. Pour une embauche plus ancienne
+     (sans signature notee), on prend la transaction de NOTRE portefeuille, dans les
+     3 minutes AVANT, qui a sorti exactement le montant, qu'aucune autre embauche n'a deja,
+     et, s'il y a deux embauches possibles, la plus proche dans le temps. */
+  const RATTRAPE_FENETRE_MS = 180e3;
+  let rattrapeEnCours = null;
+  function aRattraper() {
+    const der = new Map();
+    for (const l of lignes) der.set(l.id, Object.assign({}, der.get(l.id) || {}, l));
+    return [...der.values()].filter((l) => l.etat === 'paye' && !l.tx && /^solana:/.test(String(l.reseau || '')) && maintenant() - l.t < 7 * JOUR_MS);
+  }
+  async function rattrape() {
+    if (!deps.rpcSolana || !w || w.type !== 'solana') return 0;
+    if (rattrapeEnCours) return rattrapeEnCours;
+    rattrapeEnCours = (async () => {
+      const manque = aRattraper();
+      if (!manque.length) return 0;
+      const pris = new Set(lignes.map((l) => l.tx).filter(Boolean));
+      let trouves = 0;
+      let sigs;
+      try { sigs = await deps.rpcSolana('getSignaturesForAddress', [w.address, { limit: 50, commitment: 'confirmed' }]); } catch (e) { return 0; }
+      for (const s of sigs || []) {
+        if (!manque.length) break;
+        if (!s || s.err || pris.has(s.signature)) continue;
+        const bt = (Number(s.blockTime) || 0) * 1000;
+        /* Le reglement precede le 200, donc l'enregistrement « paye » (60 s de marge pour les horloges). */
+        const proche = (l) => bt && bt <= l.t + 60e3 && l.t - bt < RATTRAPE_FENETRE_MS;
+        const cands = manque.filter((l) => l.sig || proche(l));
+        if (!cands.length) continue;
+        let t;
+        try { t = await deps.rpcSolana('getTransaction', [s.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]); } catch (e) { continue; }
+        if (!t || !t.transaction || (t.meta && t.meta.err)) continue;
+        const signes = t.transaction.signatures || [];
+        const solde = (l) => { const b = (l || []).find((x) => x.owner === w.address && x.mint === X.USDC_SOLANA); return b ? Number(b.uiTokenAmount && b.uiTokenAmount.amount) || 0 : 0; };
+        const sorti = (solde(t.meta && t.meta.preTokenBalances) - solde(t.meta && t.meta.postTokenBalances)) / 1e6;
+        /* Notre signature d'abord ; sinon le montant exact, et la plus proche dans le temps
+           (deux embauches au meme prix a 3 min d'ecart ne s'echangent pas leurs transactions). */
+        const l = cands.find((c) => c.sig && signes.includes(c.sig))
+          || cands.filter((c) => !c.sig && Math.abs(sorti - c.usd) < 1e-9).sort((x, y) => Math.abs(bt - x.t) - Math.abs(bt - y.t))[0];
+        if (!l) continue;
+        /* Le meme enregistrement, avec la transaction : meme heure, donc memes plafonds du jour. */
+        note(Object.assign({}, l, { tx: s.signature, retrouvee: true }));
+        pris.add(s.signature); manque.splice(manque.indexOf(l), 1);
+        trouves++; MESURE.retrouvees++;
+      }
+      return trouves;
+    })().finally(() => { rattrapeEnCours = null; });
+    return rattrapeEnCours;
+  }
+  /* Le reglement peut etre confirme un peu apres le 200 : trois essais, espaces. */
+  function planifieRattrapage() {
+    if (!deps.rpcSolana) return;
+    [3e3, 20e3, 90e3].forEach((ms) => { const h = setTimeout(() => { if (aRattraper().length) rattrape().catch(() => {}); }, ms); if (h.unref) h.unref(); });
+  }
+
   /** Le corps d'une reponse : du JSON si c'en est, sinon du texte, borne. */
   async function lit(r) {
     const type = String(r.headers.get('content-type') || '');
@@ -287,7 +349,7 @@ function cree(deps) {
     return { type, resultat: txt.length > RESULTAT_MAX_CAR ? txt.slice(0, RESULTAT_MAX_CAR) + '\n[truncated]' : txt };
   }
 
-  return { pour, cherche, catalogue, actif: () => !!w, adresse: w ? w.address : null, reseau: w ? reseau.network : null, MESURE,
+  return { pour, cherche, catalogue, rattrape, actif: () => !!w, adresse: w ? w.address : null, reseau: w ? reseau.network : null, MESURE,
     etat: () => ({ actif: !!w, adresse: w ? w.address : null, reseau: w ? reseau.network : null, services: CAT.liste.length,
       aujourdhuiUsd: Math.round(depuis(jour0(), null) * 1e6) / 1e6, maxJourUsd: maxJour(), maxJoueurUsd: maxJoueur(), maxAppelUsd: maxAppel(), mesure: Object.assign({}, MESURE) }) };
 }

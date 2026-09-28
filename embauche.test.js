@@ -176,6 +176,81 @@ const resout = async (h) => (h === 'interne.example' ? ['10.0.0.5'] : ['93.184.2
   ok(E.privee('127.0.0.1') && E.privee('169.254.169.254') && E.privee('::1') && E.privee('fd00::1') && E.privee('100.64.1.1') && !E.privee('93.184.215.14'), 'les adresses privees, locales et reservees sont reconnues');
   fs.rmSync(dos, { recursive: true, force: true });
 
+  console.log('\n-- un service qui ne renvoie pas de recu : la transaction est retrouvee sur la chaine (Solana) --');
+  {
+    /* Mesure du 28/09 : x402factory.ai (x402 v1, Solana) regle sans X-PAYMENT-RESPONSE. */
+    const cr = require('crypto');
+    const kp = cr.generateKeyPairSync('ed25519');
+    const graine = kp.privateKey.export({ format: 'der', type: 'pkcs8' }).slice(-32);
+    const pub = kp.publicKey.export({ format: 'der', type: 'spki' }).slice(-32);
+    const CLE_SOL = ethers.utils.base58.encode(Buffer.concat([graine, pub]));
+    const MOI_SOL = ethers.utils.base58.encode(pub);
+    const PAYTO_SOL = 'AGENTxr77msTPAmGk4DwdumueVAa3SvtyrpTf6tWMeWD', FEE = 'CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww';
+    const URL_SOL = 'https://prix.example/solana/coinprice';
+    const offreSol = { scheme: 'exact', network: 'solana', maxAmountRequired: '1000', asset: X.USDC_SOLANA, payTo: PAYTO_SOL, resource: URL_SOL, maxTimeoutSeconds: 60, extra: { feePayer: FEE } };
+    let envoyee = null;
+    const fauxSol = async (url, o) => {
+      const xp = (o.headers || {})['x-payment'];
+      if (!xp) return rep(402, { x402Version: 1, error: 'X-PAYMENT header is required', accepts: [offreSol] });
+      envoyee = Buffer.from(JSON.parse(Buffer.from(xp, 'base64').toString()).payload.transaction, 'base64');
+      return rep(200, { ok: true, price: 119.53 });                       /* aucun en-tete de recu */
+    };
+    const usdc = (owner, montant) => ({ owner, mint: X.USDC_SOLANA, uiTokenAmount: { amount: String(montant) } });
+    const txAvec = (signes, sortie) => ({ transaction: { signatures: signes }, meta: { err: null, preTokenBalances: [usdc(MOI_SOL, 5000000)], postTokenBalances: [usdc(MOI_SOL, 5000000 - sortie)] } });
+    let T0 = horloge;
+    const rpcVus = [];
+    let CHAINE = {};
+    const fauxRpc = async (m, p) => {
+      rpcVus.push(m);
+      if (m === 'getSignaturesForAddress') return CHAINE.sigs.map((x) => ({ signature: x.id, blockTime: Math.floor(x.t / 1000), err: null }));
+      if (m === 'getTransaction') { const x = CHAINE.sigs.find((y) => y.id === p[0]); return x ? x.tx() : null; }
+      throw new Error('methode inattendue');
+    };
+    const dos3 = fs.mkdtempSync(path.join(os.tmpdir(), 'emb-sol-'));
+    const mkSol = () => E.cree({ cle: CLE_SOL, fetch: fauxSol, dossier: dos3, resout, maintenant: () => horloge, rpcSolana: fauxRpc,
+      catalogue: async () => [{ x402Version: 1, type: 'http', resource: URL_SOL, description: 'Solana coin price', accepts: [offreSol] }],
+      blockhash: async () => ({ ok: true, blockhash: ethers.utils.base58.encode(Buffer.alloc(32, 7)) }) });
+    const HS = mkSol();
+    const JS = HS.pour('0xsol', F);
+    const rs = await JS.embauche({ url: URL_SOL });
+    ok(rs.ok && rs.recu.usd === 0.001 && rs.recu.tx === null && HS.MESURE.sansRecu === 1, 'le service rend 200 sans recu : paye, la transaction est encore inconnue');
+    const notre = envoyee ? ethers.utils.base58.encode(envoyee.slice(1 + 64, 1 + 128)) : null;
+    /* Un leurre : meme heure, meme montant, mais pas notre signature. */
+    CHAINE = { sigs: [
+      { id: 'LEURRE', t: T0, tx: () => txAvec(['f1', 'autre'], 1000) },
+      { id: 'LABONNE', t: T0, tx: () => txAvec(['f2', notre], 1000) }] };
+    ok((await HS.rattrape()) === 1 && JS.historique()[0].tx === 'LABONNE', 'retrouvee par NOTRE signature (connue avant l envoi), pas par le leurre au meme montant');
+    ok(Math.abs(JS.budget().depenseUsd - 0.001) < 1e-9 && JS.historique().length === 1, 'la transaction ajoutee ne compte pas deux fois dans le plafond du jour');
+    const nRpc = rpcVus.length;
+    ok((await HS.rattrape()) === 0 && rpcVus.length === nRpc, 'plus rien a rattraper : le noeud n est plus interroge');
+    ok(!JSON.stringify(JS.historique()).includes(notre), 'la signature interne n est pas dans l historique montre au joueur');
+
+    /* Une embauche d'avant la correction : pas de signature notee. On la reconnait par l'heure et le montant exact. */
+    horloge += 3600e3; T0 = horloge;
+    fs.appendFileSync(path.join(dos3, 'embauches.jsonl'), JSON.stringify({ id: 'vieille', t: T0, qui: '0xsol', url: URL_SOL, usd: 0.001, factureUsd: 0.0011, etat: 'paye', tx: null, reseau: X.RESEAU_SOLANA }) + '\n');
+    CHAINE = { sigs: [
+      { id: 'MAUVAISMONTANT', t: T0 - 5e3, tx: () => txAvec(['a', 'b'], 2000) },
+      { id: 'TROPLOIN', t: T0 - 600e3, tx: () => txAvec(['c', 'd'], 1000) },
+      { id: 'LABONNE', t: T0, tx: () => txAvec(['f2', notre], 1000) },
+      { id: 'VIEILLE', t: T0 - 8e3, tx: () => txAvec(['e', 'g'], 1000) }] };
+    const HS2 = mkSol();
+    ok((await HS2.rattrape()) === 1 && HS2.pour('0xsol', F).historique().find((l) => l.t === T0).tx === 'VIEILLE',
+       'sans signature : la transaction de notre portefeuille a moins de 3 min, au montant exact, pas deja prise (ni 0,002, ni 10 min avant, ni celle d une autre embauche)');
+    /* Le cas reel du 28/09 : deux embauches au meme prix a 3 min d'ecart, sans signature. */
+    horloge += 3600e3; const TA = horloge, TB = horloge + 175e3;
+    for (const [id, t] of [['A', TA], ['B', TB]]) fs.appendFileSync(path.join(dos3, 'embauches.jsonl'), JSON.stringify({ id, t, qui: '0xsol', url: URL_SOL, usd: 0.001, factureUsd: 0.0011, etat: 'paye', tx: null, reseau: X.RESEAU_SOLANA }) + '\n');
+    CHAINE = { sigs: [{ id: 'TXB', t: TB - 2e3, tx: () => txAvec(['h', 'i'], 1000) }, { id: 'TXA', t: TA - 2e3, tx: () => txAvec(['j', 'k'], 1000) }] };
+    const HS4 = mkSol();
+    const hA = () => HS4.pour('0xsol', F).historique();
+    ok((await HS4.rattrape()) === 2 && hA().find((l) => l.t === TA).tx === 'TXA' && hA().find((l) => l.t === TB).tx === 'TXB',
+       'deux embauches au meme prix a 3 min d ecart : chacune garde SA transaction (la plus proche, et avant le « paye »)');
+    const HS3 = mkSol();
+    ok(HS3.pour('0xsol', F).historique().every((l) => l.tx) && (await HS3.rattrape()) === 0, 'relu apres un redemarrage : toutes ont leur transaction, rien a refaire');
+    const HB = E.cree({ cle: CLE_SOL, fetch: fauxSol, dossier: dos3, resout, maintenant: () => horloge, catalogue: async () => [] });
+    ok((await HB.rattrape()) === 0, 'sans noeud Solana configure : rien ne se passe, rien ne casse');
+    fs.rmSync(dos3, { recursive: true, force: true });
+  }
+
   console.log('\n-- l appel part vers l adresse VERIFIEE, pas vers une seconde resolution DNS --');
   {
     const lk = E.lookupEpingle('93.184.215.14');

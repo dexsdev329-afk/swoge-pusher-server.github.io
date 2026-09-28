@@ -97,8 +97,11 @@ async function signe(w, acc, o) {
     if (!bh || !bh.ok) return { erreur: 'no recent Solana blockhash' + (bh && bh.raison ? ' (' + bh.raison + ')' : '') };
     const t = await Sol.construit(acc, { payeur: w.address, blockhash: bh.blockhash });
     const octets = Buffer.from(t.octets);
-    w.signe(octets.slice(1 + 128)).copy(octets, 1 + 64);            /* le payeur est le 2e signataire, apres le feePayer */
-    return { payload: { transaction: octets.toString('base64') } };
+    const sig = w.signe(octets.slice(1 + 128));
+    sig.copy(octets, 1 + 64);                                         /* le payeur est le 2e signataire, apres le feePayer */
+    /* Notre signature (base58) : connue AVANT l'envoi, elle retrouve la transaction sur la
+       chaine quand le service ne renvoie pas de recu (embauche.js, 28/09). */
+    return { payload: { transaction: octets.toString('base64') }, signature: ethers.utils.base58.encode(sig) };
   }
   const s = Math.floor((o.maintenant ? o.maintenant() : Date.now()) / 1000);
   const auth = { from: w.address, to: acc.payTo, value: String(acc.amount), validAfter: String(s - 600),

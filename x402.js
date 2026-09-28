@@ -1151,7 +1151,9 @@ function cree(deps) {
     bh = { t, p };
     return p;
   }
-  return { prix, exige, verifie, paie, traite, MESURE, enFile, sondeBase, baseActif, pauseBase, propre, sondeSolana, solanaActif, blockhashSolana };
+  /* Une lecture du noeud Solana deja configure (SOLANA_RPC_URL), pour retrouver une transaction (embauche.js). */
+  const rpcSolana = SOL && SOL.rpc ? (m, p) => SOL.rpc(m, p) : null;
+  return { prix, exige, verifie, paie, traite, MESURE, enFile, sondeBase, baseActif, pauseBase, propre, sondeSolana, solanaActif, blockhashSolana, rpcSolana };
 }
 
 

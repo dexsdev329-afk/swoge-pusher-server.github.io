@@ -1962,8 +1962,14 @@ function embauche() {
      (requeteEpinglee), jamais vers une seconde resolution DNS. */
   EMBAUCHE = require('./embauche').cree({ cle: process.env.AGENT_BUDGET_CLE, dossier: cfg.DATA_DIR, moi: MOI_URL,
     catalogue: () => require('./embauche').cataloguePayai((u, o) => fetch(u, o), String(process.env.PAYAI_FACILITATOR_URL || 'https://facilitator.payai.network').trim()),
-    blockhash: () => { const xv = x402(); return xv && xv.blockhashSolana ? xv.blockhashSolana() : { ok: false, raison: 'Solana payments are not set up on this server' }; } });
-  if (EMBAUCHE.actif()) console.log('[agent] hiring on: pays x402 services from ' + EMBAUCHE.adresse + ' (' + EMBAUCHE.reseau + ', dedicated wallet)');
+    blockhash: () => { const xv = x402(); return xv && xv.blockhashSolana ? xv.blockhashSolana() : { ok: false, raison: 'Solana payments are not set up on this server' }; },
+    /* Retrouver sur la chaine une embauche reglee sans recu du service. */
+    rpcSolana: (m, p) => { const xv = x402(); if (!xv || !xv.rpcSolana) throw new Error('no Solana node'); return xv.rpcSolana(m, p); } });
+  if (EMBAUCHE.actif()) {
+    console.log('[agent] hiring on: pays x402 services from ' + EMBAUCHE.adresse + ' (' + EMBAUCHE.reseau + ', dedicated wallet)');
+    /* Les embauches reglees sans recu avant le redemarrage : une fois, en fond. */
+    setTimeout(() => { EMBAUCHE.rattrape().then((k) => { if (k) console.log('[agent] hiring: ' + k + ' paid hire(s) matched to their Solana transaction'); }).catch(() => {}); }, 15000).unref();
+  }
   return EMBAUCHE;
 }
 /** La facture d'une embauche pour UN joueur : reserve au cours du moment, regle au prix du recu. */
