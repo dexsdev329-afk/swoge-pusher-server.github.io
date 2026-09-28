@@ -88,6 +88,10 @@ const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0
      du 28/09 : 0 service de verification, 3 de hasard a 0,001-0,01 $. 0,001 $ par cle ;
      en x402, le plancher de 0,003 $ (au-dessus du reglement le plus cher, 0,00231 $). */
   fair_commit: 0.001, fair_draw: 0.001, fair_verify: 0.001,
+  /* 28 septembre 2026 : les lancements de Base (base_lancements.js), nos propres lectures de
+     la chaine. Catalogue PayAI du 28/09 : lancements Base 0,0067-0,25 $ (mediane 0,25 $),
+     deployeurs EVM 2-3 routes. 0,005 $ par cle ; en x402 0,006-0,007 $ (plancher 0,005 $). */
+  base_launches: 0.005, base_deployer: 0.005,
   /* 27 septembre 2026 : les lectures Robinhood Chain (lectures_rh.js). OneSource
      vend les memes lectures, brutes, 0,001 a 0,01 $ (llms.txt lu le 27/09) ; les
      notres sont decodees. 0,004 $ par cle ; en x402, plancher de 0,005 $ sur
@@ -176,6 +180,13 @@ function definitions(actifs) {
   /* Vendu par l'API seulement : l'agent de la page a deja scan_token. */
   base.push({ name: 'token_verdict', description: Agent.DESCRIPTIONS_API.token_verdict,
     inputSchema: { type: 'object', properties: { address: { type: 'string', description: 'EVM contract address, 0x followed by 40 hex characters' } }, required: ['address'] } });
+  /* Les lancements de Base (base_lancements.js, 28/09) : vendus par l'API seulement. */
+  base.push({ name: 'base_launches', description: Agent.DESCRIPTIONS_API.base_launches, inputSchema: { type: 'object', properties: {
+    platform: { type: 'string', enum: ['all', 'clanker', 'zora'], description: 'default all' },
+    limit: { type: 'integer', minimum: 1, maximum: 25, description: 'how many launches, newest first (default 10)' },
+    traded_only: { type: 'boolean', description: 'only launches swapped at least once after their launch block' } } } });
+  base.push({ name: 'base_deployer', description: Agent.DESCRIPTIONS_API.base_deployer, inputSchema: { type: 'object', properties: {
+    address: { type: 'string', description: 'the deployer address on Base, 0x followed by 40 hex characters' } }, required: ['address'] } });
   /* Le hasard prouvable (hasard.js, 28/09) : vendu par l'API seulement. */
   base.push({ name: 'fair_commit', description: Agent.DESCRIPTIONS_API.fair_commit, inputSchema: { type: 'object', properties: {} } });
   base.push({ name: 'fair_draw', description: Agent.DESCRIPTIONS_API.fair_draw, inputSchema: { type: 'object', properties: {
@@ -218,6 +229,8 @@ function entreeInvalide(outil, a) {
   a = a || {};
   if ((outil === 'scan_token' || outil === 'can_i_sell' || outil === 'token_verdict' || outil === 'roast_token') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
   if (outil === 'web_search' && !String(a.query || '').trim()) return 'query is required';
+  if (outil === 'base_deployer' && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
+  if (outil === 'base_launches' && a.platform !== undefined && !['all', 'clanker', 'zora'].includes(a.platform)) return 'platform must be all, clanker or zora';
   if (outil === 'fair_draw' && !/^[0-9a-f]{24}$/.test(String(a.commitment_id || ''))) return 'commitment_id must be the id fair_commit returned';
   if ((outil === 'fair_draw' || outil === 'fair_verify') && !(typeof a.client_seed === 'string' && /^[\x20-\x7e]{1,128}$/.test(a.client_seed))) return 'client_seed must be 1 to 128 printable ASCII characters';
   if (outil === 'fair_verify' && !(typeof a.server_seed === 'string' && a.server_seed.length >= 1 && a.server_seed.length <= 256)) return 'server_seed is required (at most 256 characters)';

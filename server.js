@@ -1720,9 +1720,19 @@ function lecturesRh() {
 }
 /* Le hasard prouvable (hasard.js, 28/09/2026) : fair_commit / fair_draw / fair_verify, vendus par l'API. */
 const hasardProuvable = require('./hasard').cree({ dossier: cfg.DATA_DIR, shoe: require('./casino').shoe });
+/* Les lancements Clanker/Zora de Base, lus sur la chaine (base_lancements.js, 28/09/2026). BASE_RPC_URL, BASE_LANCEMENTS=0. */
+const baseLancements = require('./base_lancements').cree({ dossier: cfg.DATA_DIR,
+  rpc: async (methode, params) => {
+    const r = await fetch(String(process.env.BASE_RPC_URL || 'https://mainnet.base.org').trim(), { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: methode, params }), signal: AbortSignal.timeout(20000) });
+    const j = await r.json();
+    if (j.error) throw new Error('rpc ' + (j.error.code || '') + ' ' + String(j.error.message || '').slice(0, 100));
+    return j.result;
+  } });
 const srcAgent = () => ({
   lectures: lecturesRh(),
   hasard: hasardProuvable,
+  base: baseLancements,
   /* L'epreuve de sortie (can_i_sell) : { resultat } ou { erreur }, jamais facturee sur erreur. */
   sortie: epreuveSortie,
   /* Les appels Telegram suivis (outil telegram_calls) ; null si le suivi est eteint.
@@ -2218,6 +2228,8 @@ async function x402Etat(detail) {
               /* L'agent qui embauche (embauche.js) : adresse publique, depense du jour, plafonds. */
               embauche: embauche().etat(),
               achats: achats().etat(),
+              /* Les lancements de Base (base_lancements.js) : bloc lu, reference mesuree, erreurs du noeud. */
+              baseLancements: baseLancements.etat(),
               agent: { actif: agentic().x402Payable('ask_agent') } };
   if (!detail) return e;
   const g = x.MESURE.gasUsed.slice().sort((a, b) => a - b);
@@ -9055,6 +9067,8 @@ server.listen(cfg.PORT, () => {
   }
 
   if (process.env.KLING_TG !== '0') klingTg.demarre();
+  /* Les lancements de Base : un tour toutes les 30 s (une lecture de journaux), la derniere heure au premier demarrage. */
+  baseLancements.demarre();
   /* Les annonces d'outils : premier releve 2 min apres le demarrage (tout est cable), puis chaque minute. */
   if (process.env.ANNONCES !== '0') setTimeout(() => annonces.demarre(), 2 * 60e3).unref();
 

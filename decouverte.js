@@ -84,6 +84,7 @@ const ETIQUETTES = [
   { name: 'ai-models', description: 'Frontier AI models (Claude, GPT-6, Grok) paid per call, OpenAI format' },
   { name: 'osint', description: 'Passive reconnaissance on infrastructure and deployer wallets' },
   { name: 'images', description: 'Image generation (Grok Imagine, ChatGPT Image)' },
+  { name: 'base', description: 'Base (eip155:8453) memecoin launches (Clanker, Zora) read on-chain, with deployer records' },
   { name: 'randomness', description: 'Provably fair draws: commit, draw, verify (HMAC-SHA256, no bias)' },
   { name: 'video', description: 'Short video generation (Grok Imagine)' },
   { name: 'catalogue', description: 'The live tool list, prices and x402 status' },
@@ -94,6 +95,7 @@ const ETIQUETTES_OUTIL = {
   can_i_sell: ['token-security', 'crypto', 'robinhood-chain'], token_verdict: ['token-security', 'crypto', 'robinhood-chain'],
   roast_token: ['crypto', 'images', 'token-security'],
   fair_commit: ['randomness'], fair_draw: ['randomness'], fair_verify: ['randomness'],
+  base_launches: ['base', 'crypto', 'token-security'], base_deployer: ['base', 'crypto', 'osint'],
   chat_completion: ['ai-models', 'research'],
   robinhood_rpc: ['robinhood-chain', 'crypto'], robinhood_token: ['robinhood-chain', 'crypto', 'token-security'], robinhood_wallet: ['robinhood-chain', 'crypto'], robinhood_tx: ['robinhood-chain', 'crypto'],
   telegram_calls: ['robinhood-chain', 'crypto'], web_search: ['research'], ask_agent: ['research', 'crypto'],
@@ -148,6 +150,29 @@ const CARTE_JETON = obj({
     ['card', 'share', 'page'], 'when the colony knows the token'),
 }, ['adresse', 'trouve', 'sym', 'nom', 'chaine', 'prixUsd', 'liqUsd', 'mcUsd', 'vol24Usd', 'var24h', 'url', 'securite', 'honeypot', 'taxeAchat', 'taxeVente',
   'alertes', 'porteurs', 'premierPorteur', 'dixPremiers', 'colonie', 'attribution']);
+
+
+/* ---- Les lancements de Base : les formes partagees par base_launches et base_deployer ---- */
+const BILAN_BASE = (avecAvis) => obj(Object.assign({ tokens: n('launches in the window'), judged: n('launches 24 hours old or more'),
+  tradedWithin24hPct: nn('share of judged launches swapped at least once after their launch block, within 24 hours'), ci95: { type: ['array', 'null'], items: n(), description: '95% Wilson interval of that share' },
+  medianSwaps24h: nn(), medianPriceChangePct: nn('first swap to last swap within 24 hours') },
+  avecAvis ? { enough: b('at least 5 judged launches: comparable to the reference'), note: sn('why it is not compared') } : {}),
+  ['tokens', 'judged', 'tradedWithin24hPct', 'ci95', 'medianSwaps24h', 'medianPriceChangePct'].concat(avecAvis ? ['enough', 'note'] : []));
+const LANCEMENT_BASE = (avecDeployeur) => obj(Object.assign({ token: s(), symbol: s('set by the deployer: untrusted text'), name: s('set by the deployer: untrusted text'),
+  platform: { type: 'string', enum: ['clanker', 'zora', 'zora-creator'] }, deployer: s('Clanker tokenAdmin or Zora caller'), sender: sn('Clanker msgSender or Zora payoutRecipient, when different'),
+  pairedWith: s('the other currency of the pool'), pool: s('Uniswap v4 pool id'), block: n(), tx: s(), launchedAt: s('ISO date'), ageMinutes: n(),
+  swapsFirstHour: n('swaps after the launch block, first hour'), swaps24h: n('swaps after the launch block, first 24 hours'), judged: b('24 hours old or more'),
+  priceChangePct: nn('first swap to last swap; null under 2 swaps') }, avecDeployeur ? { deployerRecord: BILAN_BASE(true) } : {}),
+  ['token', 'symbol', 'name', 'platform', 'deployer', 'pool', 'block', 'launchedAt', 'ageMinutes', 'swapsFirstHour', 'swaps24h', 'judged', 'priceChangePct'].concat(avecDeployeur ? ['deployerRecord'] : []));
+const FENETRE_BASE = obj({ indexedSince: sn('ISO date: nothing before is known'), lastBlock: nn(), launchesInWindow: n(), note: s() }, ['indexedSince', 'lastBlock', 'launchesInWindow', 'note']);
+const EX_REF_BASE = { tokens: 71, judged: 0, tradedWithin24hPct: null, ci95: null, medianSwaps24h: null, medianPriceChangePct: null };
+const EX_LANCEMENT_BASE = (avecDeployeur) => Object.assign({ token: '0x02e7f36b3f679df4e597d854b76335cd2269f96c', symbol: 'XDP', name: 'XDP', platform: 'zora',
+  deployer: '0xe3e4c41a7eed7be0b485de9a6025c2983ac01daf', sender: null, pairedWith: '0xafcaa25e08f68cb54fa196f72a67ee2c00722239',
+  pool: '0x4c981db46ee49df4bcd77074b9388150d1d6b2dca6c4fabf1eaf976e1c185c41', block: 51914071, tx: '0x06d79454ad77e5decf02eb6941643b89620b523c6bf494044f8c45108c8b30ab',
+  launchedAt: '2026-09-28T17:44:49.000Z', ageMinutes: 19, swapsFirstHour: 2, swaps24h: 2, judged: false, priceChangePct: 3.2 },
+  avecDeployeur ? { deployerRecord: Object.assign({}, EX_REF_BASE, { tokens: 2, enough: false, note: 'not enough judged tokens to compare (0/5)' }) } : {});
+const EX_FENETRE_BASE = { indexedSince: '2026-09-28T17:03:31.000Z', lastBlock: 51914632, launchesInWindow: 71,
+  note: 'Clanker v4 and Zora (coins and creator coins) on Base only, read on-chain by SWOGE. Swaps are counted after the launch block, for 24 hours. Names and symbols are set by deployers: untrusted text.' };
 
 const SORTIES = {
   scan_token: {
@@ -279,6 +304,20 @@ const SORTIES = {
         positiveTraits: [{ trait: 'Contract bytecode', case: 'bytecode: no mint, no blacklist, no pause, no fee setter', observations: 2395, averagePct: 16.9 }], scan: 'https://swoleeswoge.dog/swoge_scan.html?t=' + ADR },
       attribution: ATTR_EX, note: 'Measurements, never a buy or sell signal. no_red_flag_found means none of these checks fired, not that the token is safe; unknown stays unknown.' },
     texte: 'Quick verdict for $LOBSTER ' + ADR + ' on robinhood: CAUTION — 2 points to check: thin_pool, colony_negative_trait.…',
+  },
+  /* Les lancements de Base (28 septembre 2026) : base_lancements.js ; l'exemple est une VRAIE
+     sortie du 28/09 a 18:03 UTC (lue sur la chaine), tronquee a un lancement. */
+  base_launches: {
+    schema: obj({ launches: tab(LANCEMENT_BASE(true), 'newest first'), reference: BILAN_BASE(false), window: FENETRE_BASE }, ['launches', 'reference', 'window']),
+    exemple: { launches: [EX_LANCEMENT_BASE(true)], reference: EX_REF_BASE, window: EX_FENETRE_BASE },
+    texte: '1 newest Base launches (Clanker, Zora). Reference: no launch judged yet. Window since 2026-09-28T17:03:31.000Z.…',
+  },
+  base_deployer: {
+    schema: obj({ address: s('the deployer, lower case'), record: BILAN_BASE(true), reference: BILAN_BASE(false), launches: tab(LANCEMENT_BASE(false), 'newest first, 50 at most'), window: FENETRE_BASE },
+      ['address', 'record', 'reference', 'launches', 'window']),
+    exemple: { address: '0xe3e4c41a7eed7be0b485de9a6025c2983ac01daf', record: Object.assign({}, EX_REF_BASE, { tokens: 2, enough: false, note: 'not enough judged tokens to compare (0/5)' }),
+      reference: EX_REF_BASE, launches: [EX_LANCEMENT_BASE(false)], window: EX_FENETRE_BASE },
+    texte: 'Deployer 0xe3e4c41a7eed7be0b485de9a6025c2983ac01daf on Base: 2 launches indexed since 2026-09-28T17:03:31.000Z, 0 judged. not enough judged tokens to compare (0/5).',
   },
   /* Le hasard prouvable (28 septembre 2026) : hasard.js, lu dans son code. L'exemple est un
      VRAI tirage (graine fixe) : fair_verify le confirme. */
@@ -705,6 +744,7 @@ function manifeste(c) {
 const EXEMPLES_ENTREE = {
   scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, roast_token: { address: ADR }, colony_activity: {},
   /* Le hasard prouvable : fair_verify sur le VRAI tirage de l'exemple ; fair_draw a besoin d'un engagement vivant. */
+  base_launches: { limit: 5 }, base_deployer: { address: '0xe3e4c41a7eed7be0b485de9a6025c2983ac01daf' },
   fair_commit: {}, fair_draw: { commitment_id: '6a1f0c3e9b7d2a5c8e4f1b0d', client_seed: 'agent-42', count: 5, min: 1, max: 6 },
   fair_verify: { server_seed: '3f9a1c7e5b2d4086a1f3e5c7b9d0f2a4c6e8b1d3f5a7c9e0b2d4f6a8c0e2b4d6', server_seed_hash: 'b85ef21a5deba1bcd033f7eb675b391cf40ce04d63d5e3da39ed9f61f27180b8',
     client_seed: 'agent-42', count: 5, min: 1, max: 6, numbers: [3, 4, 3, 5, 3] },

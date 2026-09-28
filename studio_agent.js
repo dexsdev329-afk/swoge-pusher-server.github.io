@@ -170,6 +170,13 @@ const DESCRIPTIONS_API = Object.freeze({
   roast_token: 'Use this when you want a funny, shareable take on an EVM token for a post or a chat: SWOGE, a very muscular shiba inu, roasts it in 2 or 3 sentences built only on its real data. '
     + 'The facts are the same as token_verdict (DexScreener pool, GoPlus contract checks, Powered by Go+ Security, https://gopluslabs.io, and the SWOGE AI colony for Robinhood Chain tokens); the roast repeats a red flag only when a check actually raised it. '
     + 'Returns the roast, the facts behind it and a shareable 1200×630 PNG card with a share link whose preview is the card. Entertainment, never a buy or sell signal.',
+  /* 28 septembre 2026 : les lancements de Base (base_lancements.js), vendus par l'API seulement. */
+  base_launches: 'Use this when you want the newest memecoin launches on Base (Clanker v4 and Zora coins), read on-chain: each with its deployer and the deployer\'s MEASURED record. '
+    + 'For each launch: platform, deployer, age, swaps since the launch block (first hour and 24 hours, from the Uniswap v4 PoolManager) and price change; for its deployer: how many of their earlier tokens were traded within 24 hours, '
+    + 'against the reference of all launches (most get no swap at all). Below 5 judged tokens the record says so instead of comparing. Measurements, never a buy or sell signal.',
+  base_deployer: 'Use this when you need the track record of an address that launches tokens on Base (Clanker v4 or Zora). '
+    + 'Returns every launch we indexed with its swaps in the first hour and 24 hours and its price change, and the share traded within 24 hours against all launches, with its 95% interval. '
+    + 'The window is what SWOGE indexed on-chain (it says since when); below 5 judged tokens it does not compare.',
   /* 28 septembre 2026 : le hasard prouvable (hasard.js), vendu par l'API seulement. */
   fair_commit: 'Use this before any draw other players must trust (a game between agents, a raffle, a giveaway): the server picks a secret seed and publishes its SHA-256 hash now, so it cannot change the seed later. '
     + 'Returns a commitment_id and the server_seed_hash to share with the players. Then call fair_draw.',
@@ -420,6 +427,24 @@ function outils(src) {
       const o = r.offre;
       return { texte: 'Offer shown to the user: ' + o.nom + ' (' + o.go + ' GB, ' + o.jours + ' days) for ' + o.factureUsd + ' $ in $SWOGE. '
           + 'Nothing is bought yet: the user must press Buy on the page within 15 minutes. Do not say it is bought.', achat: o };
+    },
+    /* Les lancements de Base (base_lancements.js, 28/09/2026) : vendus par l'API seulement. */
+    async base_launches(e) {
+      if (!src.base) return { erreur: 'Base launches are not available here' };
+      const r = src.base.recents({ platform: e && e.platform, limit: e && e.limit, traded_only: !!(e && e.traded_only) });
+      const ref = r.reference;
+      return { texte: r.launches.length + ' newest Base launches (Clanker, Zora). Reference: ' + (ref.judged ? ref.tradedWithin24hPct + '% of ' + ref.judged + ' judged launches were traded within 24 h' : 'no launch judged yet')
+          + '. Window since ' + r.window.indexedSince + '.\n' + r.launches.map((l) => '- ' + l.symbol + ' (' + l.platform + ', ' + l.ageMinutes + ' min) ' + l.token + ', deployer ' + l.deployer
+            + ': ' + l.swaps24h + ' swaps; deployer record ' + (l.deployerRecord.enough ? l.deployerRecord.tradedWithin24hPct + '% traded of ' + l.deployerRecord.judged : l.deployerRecord.note)).join('\n'),
+        donnees: r };
+    },
+    async base_deployer(e) {
+      if (!src.base) return { erreur: 'Base launches are not available here' };
+      if (!adresseOk(e && e.address)) return { erreur: 'address must be 0x followed by 40 hex characters' };
+      const r = src.base.createur(e.address);
+      const b = r.record;
+      return { texte: 'Deployer ' + r.address + ' on Base: ' + b.tokens + ' launches indexed since ' + r.window.indexedSince + ', ' + b.judged + ' judged. '
+          + (b.enough ? b.tradedWithin24hPct + '% traded within 24 h (95% ' + b.ci95.join('-') + '%), against ' + r.reference.tradedWithin24hPct + '% for all launches.' : b.note + '.'), donnees: r };
     },
     /* Le hasard prouvable (hasard.js, 28/09/2026) : vendu par l'API seulement. */
     async fair_commit() {
