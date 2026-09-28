@@ -162,6 +162,9 @@ function valide(sc, v, ch, strict, err) {
     detecte: (x) => (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(x) ? { type: 'domaine', valeur: x } : null),
     osint: async (type, valeur) => ({ cible: { type, valeur }, faits: [{ predicat: 'A', valeur: '93.184.215.14', sources: ['dns.google'] }], constats: [{ etiquette: 'NOTE', dit: 'Hosted on a CDN.' }] }),
     liensScan: (a) => ({ card: BASE + '/scan/carte/' + a + '.png', share: BASE + '/s/' + a, page: 'https://swoleeswoge.dog/swoge_scan.html?t=' + a }),
+    /* roast_token : le VRAI module roast.js, sur la meme fiche, avec un faux modele. */
+    roast: require('./roast').cree({ fiche: async () => fiche, juge: require('./verdict_jeton').juge, api: BASE,
+      redige: async () => ({ texte: 'LOBSTER lifts less than my warm-up set. The pool is thinner than my patience on leg day.' }) }),
     /* can_i_sell : le VRAI module epreuve_sortie, sur une epreuve fixe (la chaine est hors de l essai). */
     sortie: require('./epreuve_sortie').cree({ epreuve: async () => ({ trouve: true, retourMax: 4,
       jeton: { sym: 'LOBSTER', pool: '0x2dc0fb72d9284228046cc95910eeaabebfe48456', minutes: 42.3, liq: 21000, mc: 64000 },
@@ -177,7 +180,7 @@ function valide(sc, v, ch, strict, err) {
     imageHorsSolde: async () => ({ ok: true, urls: ['https://imgen.x.ai/c.png'], compris: 'SWOGE on a boat', reference: 'swoge' }),
     video: async () => ({ ok: true, id: '66f5b1c2d3e4f5a6b7c8d9e0', status: 'pending', duree: 6, resolution: '480p' }),
     etatVideo: () => ({ ok: true, id: '66f5b1c2d3e4f5a6b7c8d9e0', status: 'done', progress: 100, url: 'https://srv.example/v.mp4', duree: 6, resolution: '480p', factureSwoge: '9621.43', factureUsd: 0.24 }) });
-  const ARGS = { scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, colony_activity: {},
+  const ARGS = { scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, roast_token: { address: ADR }, colony_activity: {},
     chat_completion: { messages: [{ role: 'user', content: 'Say hello in five words.' }], max_tokens: 64 }, robinhood_rpc: { method: 'eth_chainId' }, robinhood_token: { address: RH.JETON }, robinhood_wallet: { address: RH.PORTEUR }, robinhood_tx: { hash: '0x' + 'ab'.repeat(32) }, swoge_economy: {}, new_launches: { limit: 5 }, wallet_intel: { address: '0x' + 'cd'.repeat(20) },
     osint_lookup: { target: 'example.com' }, web_search: { query: 'robinhood chain' }, generate_image: { prompt: 'a swole doge', count: 1 },
     ask_agent: { task: 'is LOBSTER worth a look?' }, generate_video: { prompt: 'a swole doge lifting' }, video_status: { id: '66f5b1c2d3e4f5a6b7c8d9e0' } };
@@ -287,7 +290,7 @@ function valide(sc, v, ch, strict, err) {
   process.env.TG_APPELS_VENTE = '1';
   const tous = require('./agentic').definitions({ recherche: true });
   delete process.env.TG_APPELS_VENTE;
-  ok(tous.length === 19 && tous.every((o) => D.EXEMPLES_ENTREE[o.name]), 'un exemple d entree fixe pour chacun des ' + tous.length + ' outils'
+  ok(tous.length === 20 && tous.every((o) => D.EXEMPLES_ENTREE[o.name]), 'un exemple d entree fixe pour chacun des ' + tous.length + ' outils'
      + (tous.filter((o) => !D.EXEMPLES_ENTREE[o.name]).length ? ' — manque : ' + tous.filter((o) => !D.EXEMPLES_ENTREE[o.name]).map((o) => o.name).join(', ') : ''));
   for (const o of tous) {
     const b = D.bazaar(o.name, o);

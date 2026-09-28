@@ -152,6 +152,10 @@ const DESCRIPTIONS_API = Object.freeze({
   token_verdict: 'Use this when you must decide fast whether an EVM token is worth a closer look: one verdict you can branch on (red_flags, caution, unknown or no_red_flag_found) with its reasons. '
     + 'Judges the same data as scan_token: the GoPlus contract checks (Powered by Go+ Security, https://gopluslabs.io), the deepest DexScreener pool and, for Robinhood Chain tokens, the traits the SWOGE AI colony measured on past tokens. '
     + 'Each flag carries its source, and each colony figure its number of observations. no_red_flag_found only means none of the checks fired; never a buy or sell signal, and unknown stays unknown.',
+  /* 28 septembre 2026 : le roast, vendu par l'API seulement (roast.js). */
+  roast_token: 'Use this when you want a funny, shareable take on an EVM token for a post or a chat: SWOGE, a very muscular shiba inu, roasts it in 2 or 3 sentences built only on its real data. '
+    + 'The facts are the same as token_verdict (DexScreener pool, GoPlus contract checks, Powered by Go+ Security, https://gopluslabs.io, and the SWOGE AI colony for Robinhood Chain tokens); the roast repeats a red flag only when a check actually raised it. '
+    + 'Returns the roast, the facts behind it and a shareable 1200×630 PNG card with a share link whose preview is the card. Entertainment, never a buy or sell signal.',
   ask_agent: 'Use this when a question needs several of these tools chained together and a written answer, for example comparing tokens or researching a launcher. '
     + 'SwogeAgentic, a Claude agent, picks the tools, reads the numbers and answers in Markdown with its sources and sample sizes. '
     + 'API key only: billed at its real cost, up to the quoted maximum ("quote": true gives it). Takes 10 to 60 seconds.',
@@ -332,6 +336,13 @@ function outils(src) {
         texte += '\n\nShareable card (PNG): ' + v.links.card + ' — share page (link preview on X, Telegram, Discord): ' + v.links.share;
       }
       return { texte, donnees: v };
+    },
+    /* Le roast (roast.js, 28/09/2026) : vendu par l'API seulement. */
+    async roast_token(e) {
+      if (!src.roast) return { erreur: 'roasts are not switched on' };
+      const r = await src.roast.roast(e && e.address);
+      if (!r || r.erreur) return { erreur: (r && r.erreur) || 'the roast failed - nothing was charged' };
+      return { texte: r.texte, donnees: r.donnees };
     },
     /* Les lectures Robinhood Chain (lectures_rh.js) : vendues par l'API seulement. */
     robinhood_rpc: (e) => (src.lectures ? src.lectures.robinhood_rpc(e) : { erreur: 'Robinhood Chain reads are not switched on' }),

@@ -1607,6 +1607,19 @@ const studioChat = require('./studio_chat');
 const studioJeton = require('./studio_jeton');
 const studioHisto = require('./studio_histo').cree();
 const studioAgent = require('./studio_agent');
+/* roast_token (roast.js, 28/09/2026) : la fiche de token_verdict, mise en mots par
+   Claude Haiku (sinon un gabarit tire des memes faits) et dessinee en carte PNG. */
+const roastTokens = require('./roast').cree({
+  fiche: (a) => studioJeton.fiche(a, { scan: (y) => aiColonie.scanJeton(y) }),
+  juge: (f) => require('./verdict_jeton').juge(f),
+  redige: async ({ systeme, texte }) => {
+    if (!chatActif('anthropic')) return null;
+    const m = Object.assign({}, studioChat.modele('haiku-4-5'), { maxTokens: 200 });
+    const r = await studioClaude.repond({ m, messages: [{ role: 'user', content: texte }], systeme });
+    return { texte: r && r.texte, coutUsd: studioChat.coutUsd(m, r && r.usage) };
+  },
+  api: MOI_URL, site: SITE_URL, dossier: cfg.DATA_DIR,
+});
 const studioComprend = require('./studio_comprend');
 /* Ce que lisent les outils de l'agent (la page SwogeAgentic ET l'API des
    autres agents) : un seul endroit, les memes lectures. */
@@ -1704,6 +1717,7 @@ const srcAgent = () => ({
   recherche: chatActif('perplexity'), Jeton: studioJeton,
   /* Les liens d'un scan (image de la carte, page de partage) : scan_token les rend (carte_scan.liens). */
   liensScan: (a) => carteScan.liens(a, { api: MOI_URL, site: SITE_URL }),
+  roast: roastTokens,
   fiche: (a) => studioJeton.fiche(a, { scan: (y) => aiColonie.scanJeton(y) }),
   vue: () => Object.assign({ pause: cfg.AI_COLONIE !== '1' }, aiColonie.vue()),
   economie: () => economie.etat(), cours: () => studioChat.coursSwoge(),
@@ -2801,6 +2815,47 @@ const server = http.createServer(async (req, res) => {
    * JavaScript n y verra jamais que le titre generique.
    *
    * Un humain qui l ouvre est envoye sur la vraie page, avec son jeton. */
+  /* ---- LE ROAST : SA CARTE ET SA PAGE DE PARTAGE (roast.js, 28/09/2026) ----
+   * Redessines depuis le roast garde : aucun service rappele. `/rt/<id>` : les
+   * balises og: montrent la carte ; un humain qui clique arrive sur SwogeAgentic. */
+  if (path.startsWith('/roast/')) {
+    const id = path.slice('/roast/'.length).replace(/\.png$/i, '');
+    res.setHeader('access-control-allow-origin', '*');
+    const cle = 'roast:' + id, vu = CARTES.get(cle);
+    const png = (vu && vu.png) || roastTokens.carte(id);
+    if (!png) { res.writeHead(404); return res.end(); }
+    if (!vu) { CARTES.set(cle, { t: Date.now(), png }); if (CARTES.size > 200) for (const [k, v] of CARTES) if (Date.now() - v.t > 5 * 60000) CARTES.delete(k); }
+    res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' });
+    return res.end(png);
+  }
+  if (path.startsWith('/rt/')) {
+    const r = roastTokens.lit(path.slice('/rt/'.length).replace(/\/$/, ''));
+    const page = SITE_URL + '/swogeagentic.html';
+    if (!r) { res.writeHead(302, { location: page }); return res.end(); }
+    const ech = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const titre = 'SWOGE roasts $' + String(r.symbol || 'TOKEN').replace(/[^\w$.-]/g, '').slice(0, 16);
+    const img = MOI_URL + '/roast/' + r.id + '.png';
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600' });
+    return res.end('<!doctype html><html lang="en"><meta charset="utf-8">'
+      + '<title>' + ech(titre) + '</title>'
+      + '<meta name="description" content="' + ech(r.roast) + '">'
+      + '<meta property="og:type" content="website">'
+      + '<meta property="og:site_name" content="SWOGE AI">'
+      + '<meta property="og:title" content="' + ech(titre) + '">'
+      + '<meta property="og:description" content="' + ech(r.roast) + '">'
+      + '<meta property="og:url" content="' + ech(MOI_URL + '/rt/' + r.id) + '">'
+      + '<meta property="og:image" content="' + ech(img) + '">'
+      + '<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">'
+      + '<meta name="twitter:card" content="summary_large_image">'
+      + '<meta name="twitter:site" content="@SwoleDogeSwoge">'
+      + '<meta name="twitter:title" content="' + ech(titre) + '">'
+      + '<meta name="twitter:description" content="' + ech(r.roast) + '">'
+      + '<meta name="twitter:image" content="' + ech(img) + '">'
+      + '<meta http-equiv="refresh" content="0; url=' + ech(page) + '">'
+      + '<body style="font:16px/1.6 system-ui,sans-serif;padding:24px"><p>' + ech(r.roast) + '</p>'
+      + '<a href="' + ech(page) + '">Hire SWOGE AI agents</a></body></html>');
+  }
+
   if (path.startsWith('/s/')) {
     const adr = path.slice('/s/'.length).replace(/\/$/, '');
     if (!/^0x[0-9a-fA-F]{40}$/.test(adr)) {

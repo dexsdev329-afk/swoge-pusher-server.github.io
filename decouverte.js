@@ -91,6 +91,7 @@ const ETIQUETTES_OUTIL = {
   scan_token: ['token-security', 'crypto', 'robinhood-chain'], colony_activity: ['robinhood-chain', 'crypto'], swoge_economy: ['crypto', 'robinhood-chain'],
   new_launches: ['robinhood-chain', 'crypto', 'token-security'], wallet_intel: ['osint', 'crypto', 'robinhood-chain'], osint_lookup: ['osint', 'research'],
   can_i_sell: ['token-security', 'crypto', 'robinhood-chain'], token_verdict: ['token-security', 'crypto', 'robinhood-chain'],
+  roast_token: ['crypto', 'images', 'token-security'],
   chat_completion: ['ai-models', 'research'],
   robinhood_rpc: ['robinhood-chain', 'crypto'], robinhood_token: ['robinhood-chain', 'crypto', 'token-security'], robinhood_wallet: ['robinhood-chain', 'crypto'], robinhood_tx: ['robinhood-chain', 'crypto'],
   telegram_calls: ['robinhood-chain', 'crypto'], web_search: ['research'], ask_agent: ['research', 'crypto'],
@@ -276,6 +277,27 @@ const SORTIES = {
         positiveTraits: [{ trait: 'Contract bytecode', case: 'bytecode: no mint, no blacklist, no pause, no fee setter', observations: 2395, averagePct: 16.9 }], scan: 'https://swoleeswoge.dog/swoge_scan.html?t=' + ADR },
       attribution: ATTR_EX, note: 'Measurements, never a buy or sell signal. no_red_flag_found means none of these checks fired, not that the token is safe; unknown stays unknown.' },
     texte: 'Quick verdict for $LOBSTER ' + ADR + ' on robinhood: CAUTION — 2 points to check: thin_pool, colony_negative_trait.…',
+  },
+  /* roast_token (28 septembre 2026) : roast.js, lu dans son code. */
+  roast_token: {
+    schema: obj({
+      token: obj({ address: s('token contract, lower case'), symbol: sn('symbol from DexScreener'), chain: sn('DexScreener chain id') }, ['address', 'symbol', 'chain']),
+      roast: s('the roast, 2 or 3 sentences, at most 240 characters, ASCII'),
+      verdict: { type: 'string', enum: ['red_flags', 'caution', 'unknown', 'no_red_flag_found'], description: 'the token_verdict of the same data' },
+      writer: s('SWOGE AI (Claude Haiku), or template when the model did not answer: the template is built from the same facts'),
+      facts: obj({ symbol: sn(), name: sn(), chain: sn(), priceUsd: nn(), liquidityUsd: nn('deepest pool, USD'), marketCapUsd: nn(), poolAgeDays: nn(), change24hPct: nn(),
+        verdict: s(), flags: tab(s(), 'level: what fired') }, ['symbol', 'liquidityUsd', 'marketCapUsd', 'verdict', 'flags'], 'the only facts the roast may use'),
+      links: obj({ card: s('shareable card, PNG 1200×630'), share: s('share page whose link preview is the card') }, ['card', 'share']),
+      note: s('what the roast is not'),
+    }, ['token', 'roast', 'verdict', 'writer', 'facts', 'links', 'note']),
+    exemple: { token: { address: ADR, symbol: 'LOBSTER', chain: 'robinhood' },
+      roast: 'LOBSTER runs on $8.8k of liquidity and a dream. My protein tub is deeper than this pool, and it has never skipped leg day.',
+      verdict: 'caution', writer: 'SWOGE AI (Claude Haiku)',
+      facts: { symbol: 'LOBSTER', name: 'Lobster', chain: 'robinhood', priceUsd: 0.000008424, liquidityUsd: 8803.04, marketCapUsd: 8253, poolAgeDays: 1.4, change24hPct: -12.4,
+        verdict: 'caution', flags: ['caution: pool liquidity $8,803, under the $13,000 the SWOGE AI colony requires to buy'] },
+      links: { card: 'https://web-production-220a3.up.railway.app/roast/3f2a9c1b7d4e.png', share: 'https://web-production-220a3.up.railway.app/rt/3f2a9c1b7d4e' },
+      note: 'Entertainment built on real data: never a buy or sell signal.' },
+    texte: 'SWOGE roasts $LOBSTER: LOBSTER runs on $8.8k of liquidity and a dream.…',
   },
   colony_activity: {
     schema: obj({
@@ -649,7 +671,7 @@ function manifeste(c) {
 /* Un exemple VALIDE par outil (les ARGS de decouverte.test.js) : chacun passe
    son schéma d'entrée ET agentic.entreeInvalide — l'essai le vérifie. */
 const EXEMPLES_ENTREE = {
-  scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, colony_activity: {},
+  scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, roast_token: { address: ADR }, colony_activity: {},
   chat_completion: { messages: [{ role: 'user', content: 'Say hello in five words.' }], max_tokens: 64 },
   robinhood_rpc: { method: 'eth_blockNumber' }, robinhood_token: { address: ADR }, robinhood_wallet: { address: ADR }, /* Une VRAIE transaction de Robinhood Chain (decodee le 27/09 : 2 transferts VAULT, un swap v4) : l'inscription
      automatique paie avec cet exemple, et un hash invente rendait « no such transaction » (27/09, 22 h 17). */

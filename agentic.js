@@ -64,6 +64,11 @@ const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0
      par cle ; en x402, le plancher de 0,01 $ (x402.PLANCHER_FACILITE) sur Base
      et Solana, 0,02 $ sur Robinhood Chain (le gaz). Prix de depart. */
   token_verdict: 0.008,
+  /* 28 septembre 2026 : le roast (roast.js), la fiche de token_verdict mise en
+     mots par Claude Haiku (~0,001 $ l'appel : ~700 jetons d'entree, ~80 de
+     sortie) et dessinee en carte PNG. 0,015 $ par cle ; en x402, le minimum de
+     0,02 $ (MIN_USD) sur Base et Solana. Prix de depart. */
+  roast_token: 0.015,
   /* 27 septembre 2026 : les lectures Robinhood Chain (lectures_rh.js). OneSource
      vend les memes lectures, brutes, 0,001 a 0,01 $ (llms.txt lu le 27/09) ; les
      notres sont decodees. 0,004 $ par cle ; en x402, plancher de 0,005 $ sur
@@ -152,6 +157,9 @@ function definitions(actifs) {
   /* Vendu par l'API seulement : l'agent de la page a deja scan_token. */
   base.push({ name: 'token_verdict', description: Agent.DESCRIPTIONS_API.token_verdict,
     inputSchema: { type: 'object', properties: { address: { type: 'string', description: 'EVM contract address, 0x followed by 40 hex characters' } }, required: ['address'] } });
+  /* Vendu par l'API seulement, comme token_verdict (roast.js, 28/09). */
+  base.push({ name: 'roast_token', description: Agent.DESCRIPTIONS_API.roast_token,
+    inputSchema: { type: 'object', properties: { address: { type: 'string', description: 'EVM contract address, 0x followed by 40 hex characters' } }, required: ['address'] } });
   base.push({ name: 'ask_agent', description: Agent.DESCRIPTIONS_API.ask_agent,
     inputSchema: { type: 'object', properties: { task: { type: 'string', description: 'what you want researched, in any language' },
       model: { type: 'string', enum: Chat.MODELES.filter((m) => m.fournisseur === 'anthropic').map((m) => m.id), description: 'optional Claude model (default sonnet-5)' } }, required: ['task'] } });
@@ -175,7 +183,7 @@ function definitions(actifs) {
 /** Une entrée invalide est refusée AVANT tout débit. Rend une phrase, ou null. */
 function entreeInvalide(outil, a) {
   a = a || {};
-  if ((outil === 'scan_token' || outil === 'can_i_sell' || outil === 'token_verdict') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
+  if ((outil === 'scan_token' || outil === 'can_i_sell' || outil === 'token_verdict' || outil === 'roast_token') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
   if (outil === 'web_search' && !String(a.query || '').trim()) return 'query is required';
   if (outil === 'chat_completion') { const d = ChatX.lis(a); if (d.erreur) return d.erreur; }
   if ((outil === 'robinhood_token' || outil === 'robinhood_wallet') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
