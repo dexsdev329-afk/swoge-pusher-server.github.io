@@ -256,6 +256,8 @@ const m = C.modele('sonnet-5');
     const noms = cl.vus[0].tools.map((t) => t.name);
     ok(noms.includes('find_esim_plans') && noms.includes('propose_esim_purchase') && /Proposing never pays/.test(cl.vus[0].system) && /Never say the eSIM is bought/.test(cl.vus[0].system),
        'avec les achats lies au joueur : les deux outils, et une consigne qui dit que proposer ne paie pas');
+    ok(/ONLY when propose_esim_purchase succeeded in this answer/.test(A.SYSTEME_ACHATS) && /call find_esim_plans again, then propose_esim_purchase/.test(A.SYSTEME_ACHATS),
+       'essai du proprietaire (28/09) : l agent a dit « offre a l ecran » sans l avoir creee ; la consigne le lui interdit et lui dit de rechercher le forfait (les ids ne passent pas d un message a l autre)');
     ok(appels[0][1].pays === 'Japan' && appels[0][1].jours === 7 && appels[1][1] === 'japan-1gb-7days-x' && !appels.some((x) => x[0] === 'confirme'),
        'l agent cherche puis propose ; il n a aucun moyen de confirmer');
     const t3 = JSON.stringify(cl.vus[2].messages);

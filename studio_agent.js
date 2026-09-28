@@ -110,7 +110,9 @@ const SYSTEME_EMBAUCHE = SYSTEME.replace('You can only READ: you cannot buy, sel
    page. La consigne le dit, pour que l'agent n'annonce jamais un achat qui n'a pas eu lieu. */
 const SYSTEME_ACHATS = ' You can also help the user buy a travel data eSIM: find_esim_plans lists plans with their price, propose_esim_purchase puts ONE offer '
   + 'on the user\'s screen. Proposing never pays: the user alone confirms with the Buy button on the page, and is charged in $SWOGE only then. '
-  + 'Never say the eSIM is bought; say the offer is on screen. Ask for the destination and how much data or how many days if the user did not say, '
+  + 'Never say the eSIM is bought. Say the offer is on screen ONLY when propose_esim_purchase succeeded in this answer; plan ids are not kept '
+  + 'between messages, so when the user picks a plan from an earlier answer, call find_esim_plans again, then propose_esim_purchase. '
+  + 'Ask for the destination and how much data or how many days if the user did not say, '
   + 'mention that the eSIM is data only (no phone number) and that the phone must support eSIM.';
 function systemeDe(src) { return (src && src.embauche ? SYSTEME_EMBAUCHE : SYSTEME) + (src && src.achats ? SYSTEME_ACHATS : ''); }
 
@@ -460,12 +462,13 @@ function outils(src) {
       if (!src.achats) return { erreur: 'eSIM purchases are not available here' };
       const r = await src.achats.forfaits({ pays: e && e.country, go: e && e.min_gb, jours: e && e.min_days });
       if (!r || !r.ok) return { erreur: (r && r.raison) || 'the eSIM shop did not answer' };
-      if (!r.forfaits.length) return { texte: 'No priced plan for ' + r.destination.nom + ' within the ' + r.plafondUsd + ' $ limit right now.'
+      const hf = r.horsFonds ? ' ' + r.horsFonds + ' more plan(s) cost more than the shop can pay right now: they cannot be offered, do not mention them as options.' : '';
+      if (!r.forfaits.length) return { texte: 'No plan for ' + r.destination.nom + ' can be bought right now within the ' + r.plafondUsd + ' $ limit.' + hf
         + (r.destination.autres.length ? ' Other destinations covering it: ' + r.destination.autres.join('; ') + '.' : '') };
       return { texte: 'Data-only eSIM plans for ' + r.destination.nom + ' (cheapest per GB first; ' + r.total + ' plans in total, the ones shown were priced just now):\n'
           + r.forfaits.map((f, i) => (i + 1) + '. ' + f.nom + ' — ' + f.go + ' GB, ' + f.jours + ' days — ' + f.usd + ' $ (the user is charged ' + f.factureUsd + ' $ in $SWOGE) — plan id: ' + f.plan).join('\n')
           + (r.destination.autres.length ? '\nOther destinations covering it: ' + r.destination.autres.join('; ') + '.' : '')
-          + '\nSeller: CHIPS (terms ' + r.conditions + '); check the phone supports eSIM: ' + r.compatibles + '. Nothing was paid.', donnees: r };
+          + hf + '\nSeller: CHIPS (terms ' + r.conditions + '); check the phone supports eSIM: ' + r.compatibles + '. Nothing was paid.', donnees: r };
     },
     async propose_esim_purchase(e) {
       if (!src.achats) return { erreur: 'eSIM purchases are not available here' };

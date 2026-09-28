@@ -146,6 +146,14 @@ async function fauxChips(url, o) {
   usdcMaison = 1e6;
   horloge += 61e3;
   ok(/short on funds/.test((await J.propose({ plan: 'europe-1gb-7days-x2' })).raison), 'le portefeuille de la boutique n a pas assez d USDC : dit avant l offre');
+  /* Essai du proprietaire, 28/09 au soir : 1,60 USDC dans la boutique, des forfaits a 3,38 $
+     et 2 $ proposes puis refuses. La recherche ne montre plus ce qu'elle ne peut pas payer. */
+  usdcMaison = 6e6; horloge += 61e3;
+  const fp = await J.forfaits({ pays: 'france' });
+  ok(fp.ok && fp.forfaits.length && fp.forfaits.every((x) => x.usd <= 6) && fp.horsFonds >= 1 && !fp.forfaits.some((x) => x.plan === 'europe-3gb-30days-x3' && x.usd > 6),
+     'la boutique a 6 USDC : seuls les forfaits qu elle peut payer sont montres, les autres comptes (horsFonds ' + fp.horsFonds + ')');
+  usdcMaison = 50e6; horloge += 61e3;
+  ok((await J.forfaits({ pays: 'france' })).horsFonds === 0, 'renflouee : tout revient');
   usdcMaison = 50e6;
 
   console.log('\n-- les plafonds --');

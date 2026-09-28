@@ -7987,6 +7987,30 @@ function partRefus() {
 /* Au-dessus, une note basse ne dit plus grand-chose du jeton. */
 const REFUS_AVEUGLE = nEnv('REFUS_AVEUGLE_PART', 0.5);
 
+/* ---- LA GRAVITE DU SILENCE SUIT LE RYTHME MESURE (28/09/2026 au soir) ----
+ * Releves du 24 au 28/09 (_releves/, compteurs entre instantanes) : 2 a 13 achats
+ * par jour, ~2,5 depuis le 27 — le flux a baisse (scoutOk 100 → 65 par heure,
+ * oracleOk 1 a 2 par heure), le seuil est a son plancher (45) et les bornes aux
+ * leurs. A 2,5 achats par jour, 9,5 h sans achat arrive 37 % du temps (Poisson) :
+ * l'alerte « haute » s'allumait sur un creux ordinaire, et une alerte qui s'allume
+ * pour rien apprend a ne plus la lire. Le silence est donc juge contre les achats
+ * des RYTHME_JOURS derniers jours : haute sous 1 %, moyenne sous 5 %, basse
+ * au-dessus. Sous RYTHME_ASSEZ achats, pas de rythme mesure : haute, comme avant.
+ * Seule la GRAVITE change : le desserrage (SANS_ACHAT_DESSERRE) et la faim gardent
+ * leur compteur de tours, rien d'autre ne lit cette gravite. */
+const RYTHME_JOURS = 7, RYTHME_ASSEZ = 10;
+function rythmeSilence(heures, maintenant) {
+  const t = maintenant || Date.now(), depuis = t - RYTHME_JOURS * 86400e3;
+  const n = (E.carnet || []).filter((x) => x && x.t0 >= depuis).length + (E.positions || []).filter((p) => p && p.t0 >= depuis).length;
+  if (n < RYTHME_ASSEZ) return { gravite: 'haute', n, parJour: null, p: null,
+    phrase: 'Only ' + n + ' buy(s) over the last ' + RYTHME_JOURS + ' days: no measured pace to judge this silence against.' };
+  const parJour = n / RYTHME_JOURS, p = Math.exp(-parJour * heures / 24);
+  const pct = p >= 0.1 ? Math.round(p * 100) : Math.round(p * 1000) / 10;
+  return { gravite: p < 0.01 ? 'haute' : p < 0.05 ? 'moyenne' : 'basse', n, parJour, p,
+    phrase: 'At the pace of the last ' + RYTHME_JOURS + ' days (' + n + ' buys, ' + (Math.round(parJour * 10) / 10) + ' a day), a silence this long happens '
+      + pct + '% of the time' + (p >= 0.05 ? ': it is ordinary.' : p >= 0.01 ? ': unusual, not alarming yet.' : ': it is NOT ordinary — look at what changed.') };
+}
+
 function revoitStrategie() {
   const avant = seuilCourant();
 
@@ -8603,8 +8627,9 @@ function alertes() {
       + '% of refusals (setting: ' + reglageDe(f.k) + ')' + ditVerdict(f.a));
     const chere = fam.find((f) => f.a.verdict === 'costs');
     const heures = Math.round(sansAchat * (CADENCE_MS / 3600000) * 10) / 10;
-    dis('haute', 'Nothing bought for ' + sansAchat + ' turns (' + heures + ' h)',
-      'This is not a fault: every token is read properly and judged properly.'
+    const ry = rythmeSilence(heures);
+    dis(ry.gravite, 'Nothing bought for ' + sansAchat + ' turns (' + heures + ' h)',
+      ry.phrase + ' This is not a fault: every token is read properly and judged properly.'
       + (reports ? ' Of the last ' + vus + ' examined, ' + reports + ' are only SET ASIDE until '
         + 'they reach the required age — they come back, they are not lost.' : '')
       + (dit.length ? ' What REALLY stops them, on the other ' + fermes + ' — '
@@ -10591,7 +10616,7 @@ module.exports = {
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
   seuilsAudit, refMontes, REF_PROTEGE, auditDe, SANS_ACHAT_DESSERRE, recadreLesBornes, buteesDuCode, BUTEES_AVANT,
   deriveDuPrix, noteDerive, DERIVE_MAX,
-  noteCarnet, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, CARNET_LIQ, CARNET_MC, ALLER_RETOUR_MAX, coutAllerRetour,
+  noteCarnet, rythmeSilence, RYTHME_JOURS, RYTHME_ASSEZ, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, CARNET_LIQ, CARNET_MC, ALLER_RETOUR_MAX, coutAllerRetour,
   TENUES, TENUE_EXPLORE, tenueAExplorer, cestUnTourDExploration,
   verdictsDesSorties, noteVerdictSortie,
   executionReelle, coutReel, entreeReelle, ecartEntree, ENTREE_RATIO_MIN, ENTREE_RATIO_MAX,

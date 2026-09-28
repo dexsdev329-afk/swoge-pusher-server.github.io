@@ -207,8 +207,15 @@ function cree(deps) {
     const prixs = await Promise.all(choisis.map((p) => prix(p.slug).catch(() => null)));
     const liste = choisis.map((p, i) => (prixs[i] ? vuePlan(p, prixs[i]) : null)).filter((x) => x && x.usd <= maxAchat())
       .sort((x, y) => (x.usd / (x.go || 1)) - (y.usd / (y.go || 1)) || x.usd - y.usd);
-    return { ok: true, destination: { nom: nomDe(d), genre: d.kind, autres: [...new Set(dests.slice(1).map(nomDe))] }, forfaits: liste,
-      total: fixes.length, plafondUsd: maxAchat(), conditions: CONDITIONS, compatibles: COMPATIBLES };
+    /* Ce que la boutique peut payer MAINTENANT (28/09 au soir, essai du proprietaire) : le
+       portefeuille de l'agent tenait 1,60 USDC ; l'agent a propose un forfait a 3,38 $, refuse
+       a l'offre, puis un a 2 $ qui l'aurait ete aussi. Un forfait que la boutique ne peut pas
+       payer n'est plus montre : il est compte (horsFonds), jamais propose. Solde illisible : on
+       montre tout, et l'offre revérifie. */
+    const solde = await soldeUsdc();
+    const payables = solde === null ? liste : liste.filter((x) => x.usd <= solde);
+    return { ok: true, destination: { nom: nomDe(d), genre: d.kind, autres: [...new Set(dests.slice(1).map(nomDe))] }, forfaits: payables,
+      horsFonds: liste.length - payables.length, total: fixes.length, plafondUsd: maxAchat(), conditions: CONDITIONS, compatibles: COMPATIBLES };
   }
 
   /* Les plafonds se lisent au registre : le DERNIER etat de chaque achat compte. */

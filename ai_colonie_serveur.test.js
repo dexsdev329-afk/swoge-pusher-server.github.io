@@ -3418,6 +3418,27 @@ async function pairesEthSeulement() {
   ok(/pool below the buy floor » : 29%[^—]*— the panel has not followed enough of them yet \(5\)/.test(al4.pourquoi) && /None of these/.test(al4.quoiFaire),
      'cinq ombres ne font pas un verdict : « pas assez suivies », et rien n est designe');
   delete G2.audit;
+
+  console.log('\n-- la gravite du silence suit le rythme mesure (28/09 au soir) --');
+  /* Releves du 24 au 28/09 : ~2,5 achats par jour ; 9,5 h sans achat arrive alors 37 % du
+     temps. L'alerte reste, mais un creux ordinaire n'est plus « haute ». */
+  const maint = Date.now(), H = 3600e3;
+  const carnetDe = (n) => Array.from({ length: n }, (_, i) => ({ sym: 'R' + i, t0: maint - (i + 1) * 8 * H, t: maint - (i + 1) * 8 * H + 20 * 60e3, r: 1 }));
+  G2.carnet = carnetDe(18);                                /* 18 achats en 6 jours : ~2,6 par jour sur 7 */
+  G2.toursSansAchat = 228;                                 /* 9,5 h */
+  const r1 = C.alertes().find((x) => /Nothing bought for/.test(x.quoi));
+  ok(r1 && r1.gravite === 'basse' && /18 buys, 2\.6 a day\), a silence this long happens 3\d% of the time: it is ordinary/.test(r1.pourquoi),
+     '9,5 h au rythme mesure : basse, et elle dit pourquoi : « ' + (r1 ? r1.pourquoi.slice(0, 120) : '') + ' »');
+  G2.toursSansAchat = 1152;                                /* 48 h */
+  const r2 = C.alertes().find((x) => /Nothing bought for/.test(x.quoi));
+  ok(r2 && r2.gravite === 'haute' && /NOT ordinary/.test(r2.pourquoi), '48 h au meme rythme : haute (moins de 1 %)');
+  G2.carnet = carnetDe(6); G2.toursSansAchat = 228;
+  const r3 = C.alertes().find((x) => /Nothing bought for/.test(x.quoi));
+  ok(r3 && r3.gravite === 'haute' && /Only 6 buy\(s\) over the last 7 days: no measured pace/.test(r3.pourquoi), 'moins de 10 achats sur 7 jours : pas de rythme, haute comme avant');
+  ok(C.rythmeSilence(9.5).p === null, 'et aucune probabilite inventee');
+  G2.carnet = carnetDe(18);
+  ok(Math.abs(C.rythmeSilence(9.5).p - Math.exp(-18 / 7 * 9.5 / 24)) < 1e-12, 'la probabilite est celle de Poisson au rythme des 7 jours');
+  delete G2.carnet;
 }
 
 /* ==========================================================================
