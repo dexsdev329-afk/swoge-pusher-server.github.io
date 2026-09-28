@@ -208,6 +208,8 @@ const tout = (dossier) => fs.readdirSync(dossier).map((f) => fs.readFileSync(pat
     ok(p.parJour[0].evenements.echec.n === 1 && p.total.image_facturee.coutUsd === 0.2 && p.total.image_facturee.usdAvecCout === 0.3 && p.outils.generate_image.image_facturee.maison.n === 1,
        'mais les nombres : par jour, sur la periode, par outil, cout contre facture');
     ok(/do not add them up/.test(p.note), 'et la regle de lecture (les facturations recoupent les paiements)');
+    ok(p.parJour[0].outils.scan_token.echec.n === 1 && p.parJour[0].outils.scan_token.echec.exterieur.n === 1 && p.parJour[0].outils.generate_image.image_facturee.maison.n === 1,
+       'par outil ET par jour (28/09 : juger une experience de prix avant/apres), les nombres seulement');
     K.ferme();
   }
 

@@ -281,7 +281,10 @@ function cree(opts) {
       depuis: v.depuis, jusqua: v.jusqua,
       note: 'UTC days. exterieur = not one of our own addresses (an IP-only requester always counts as exterieur). coutUsd is summed only over the coutN events whose real cost is known; usdAvecCout is what those same events billed. chat_facture, image_facturee and video_facturee measure billing against provider cost and overlap paye_cle / paye_x402: do not add them up.',
       parJour: v.jours.map((r) => ({ jour: r.jour, evenements: Object.fromEntries(Object.entries(r.evenements).map(([k, e]) =>
-        [k, Object.assign(court(e), { distincts: e.distincts, distinctsApprox: e.distinctsApprox, canaux: e.canaux })])) })),
+        [k, Object.assign(court(e), { distincts: e.distincts, distinctsApprox: e.distinctsApprox, canaux: e.canaux })])),
+        /* Par outil et par jour (28/09) : ce qu'il faut pour juger une experience de prix
+           avant/apres, outil par outil (releve_x402.js). Les nombres seulement. */
+        outils: Object.fromEntries(Object.entries(r.outils || {}).map(([nom, evs]) => [nom, Object.fromEntries(Object.entries(evs).map(([k, c]) => [k, court(c)]))])) })),
       total: Object.fromEntries(Object.entries(v.total.evenements).map(([k, e]) => [k, Object.assign(avecCout(e), { canaux: e.canaux })])),
       outils: Object.fromEntries(Object.entries(v.total.outils).map(([nom, evs]) => [nom, Object.fromEntries(Object.entries(evs).map(([k, c]) => [k, avecCout(c)]))])),
     };

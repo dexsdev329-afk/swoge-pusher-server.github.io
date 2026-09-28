@@ -59,6 +59,11 @@ const Jeton = require('./studio_jeton');
    scan_token, colony_activity, swoge_economy, token_verdict, roast_token,
    chat_completion, ask_agent. A relire : taux paiement/402 des deux groupes,
    apres ≥ 1 000 demandes chacun. */
+/* L'experience elle-meme, lue par releve_x402.js : la date (le deploiement du 28/09 vers
+   18 h UTC ; le 28/09 est MIXTE et n'entre ni avant ni apres), les deux groupes. */
+const EXPERIENCE_PRIX = Object.freeze({ nom: 'baisse du 28/09/2026', jour: '2026-09-28', demandesAssez: 1000,
+  baisses: ['can_i_sell', 'wallet_intel', 'osint_lookup', 'web_search', 'new_launches', 'robinhood_token', 'robinhood_wallet', 'robinhood_tx', 'robinhood_rpc'],
+  temoins: ['scan_token', 'colony_activity', 'swoge_economy', 'token_verdict', 'roast_token', 'chat_completion', 'ask_agent'] });
 const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0.001,
   /* osint_lookup : des sources gratuites (DNS, RDAP, crt.sh…), cout marginal ~0. */
   new_launches: 0.005, wallet_intel: 0.008, osint_lookup: 0.008,
@@ -653,5 +658,5 @@ function llmsTxt(cat, u) {
     '']).join('\n');
 }
 
-module.exports = { cree, definitions, prixUsd, prixX402Usd, entreeInvalide, entreeInvalideX402, llmsTxt, PRIX_DEFAUT, VARIABLES, GRATUITS, APPELS_PAR_MINUTE, DEVIS_PAR_MINUTE,
+module.exports = { cree, definitions, prixUsd, EXPERIENCE_PRIX, prixX402Usd, entreeInvalide, entreeInvalideX402, llmsTxt, PRIX_DEFAUT, VARIABLES, GRATUITS, APPELS_PAR_MINUTE, DEVIS_PAR_MINUTE,
   budgetAgentUsd, perteJourUsd, agentEnVolMax, prixAgentX402Usd, agentX402Allume };

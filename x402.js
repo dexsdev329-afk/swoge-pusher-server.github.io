@@ -291,7 +291,9 @@ function cree(deps) {
   const enAttente = new Map();     /* base|from|nonce → un résultat retenu pendant qu'un règlement est « en attente » (10 min) */
   const MESURE = { devis: 0, payes: 0, refuses: 0, echecsReglement: 0, gasUsed: [], gazParMethode: {}, parReseau: {},
     base: { etat: 'off', raison: deps.base ? 'not probed yet' : 'no CDP key', derniereSonde: null, jusqua: 0, lieuxDeSuite: 0,
-      bazaar: { success: 0, processing: 0, rejected: 0, dernierRejet: null },
+      /* En memoire : remis a zero a chaque demarrage. `depuis` le dit (28/09 : un « 0 » lu
+         apres une douzaine de redeploiements avait passe pour une mesure sur 30 jours). */
+      bazaar: { success: 0, processing: 0, rejected: 0, dernierRejet: null, depuis: new Date().toISOString() },
       /* ---- LE SECOND FACILITATEUR (PayAI, 27 septembre 2026) ----
          « Rendre notre agentic mieux que PayAI » : leur catalogue public liste
          6 968 services payables par des agents (discovery/resources, releve
