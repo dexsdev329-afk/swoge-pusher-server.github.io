@@ -32,18 +32,21 @@ const PLANS = [
   { slug: 'europe-5gb-30days-panne', name: 'Europe 5GB 30Days', isDaily: false, dataBytes: 5 * G, durationDays: 30 },
   { slug: 'Mauvais Slug', name: 'Bad', isDaily: false, dataBytes: 2 * G, durationDays: 10 },
 ];
-const PRIX = { 'europe-1gb-7days-x2': 5800581, 'europe-3gb-30days-x3': 12500000, 'europe-20gb-30days-x4': 40000000, 'europe-5gb-30days-panne': 9000000 };
+const PRIX = { 'eu33-3gb-15days-r1': 3383000, 'europe-1gb-7days-x2': 5800581, 'europe-3gb-30days-x3': 12500000, 'europe-20gb-30days-x4': 40000000, 'europe-5gb-30days-panne': 9000000 };
 const CH = { idem: [], payes: [], installs: [], pasPret: 0, horsHote: [] };
 async function fauxChips(url, o) {
   const u = new URL(url);
   if (u.origin !== BASE) { CH.horsHote.push(url); return rep(404, {}); }
   const h = o.headers || {};
   if (u.pathname === '/api/v1/destinations') return rep(200, { total: 3, limit: 100, offset: 0, items: [
-    { slug: 'europe-region', kind: 'region', name: 'Europe', countryCodes: ['FR', 'DE', 'ES'] },
+    { slug: 'europe-region', kind: 'region', name: 'Europe', countryCodes: ['FR', 'DE', 'ES', 'IT'] },
     { slug: 'fr-country', kind: 'country', name: 'France', countryCodes: ['FR'] },
     { slug: 'us-country', kind: 'country', name: 'United States', countryCodes: ['US'] }] });
   if (u.pathname === '/api/v1/destinations/us-country/plans') return rep(200, { total: 0, limit: 100, offset: 0, items: [] });
   if (u.pathname === '/api/v1/destinations/fr-country/plans') return rep(200, { total: PLANS.length, limit: 100, offset: 0, items: PLANS });
+  /* La region qui couvre la France (28/09 au soir) : un forfait moins cher par Go, et un doublon de la France. */
+  if (u.pathname === '/api/v1/destinations/europe-region/plans') return rep(200, { total: 2, limit: 100, offset: 0, items: [
+    { slug: 'eu33-3gb-15days-r1', name: 'Region 33 3GB 15Days', isDaily: false, dataBytes: 3 * G, durationDays: 15 }, PLANS[2]] });
   if (u.pathname === '/api/v1/x402/orders' && o.method === 'POST') {
     const b = JSON.parse(o.body);
     CH.idem.push(h['idempotency-key']);
@@ -88,17 +91,24 @@ async function fauxChips(url, o) {
 
   console.log('\n-- chercher : le pays, les forfaits a duree fixe, leur prix (402 non paye) --');
   const f = await J.forfaits({ pays: 'france' });
-  ok(f.ok && f.destination.nom === 'France' && f.destination.autres.includes('Europe') && !f.destination.autres.includes('United States'),
-     'France (le pays) d abord ; Europe, la region qui couvre la France, proposee aussi ; pas les Etats-Unis');
-  ok(f.forfaits.map((x) => x.plan).join(',') === 'europe-5gb-30days-panne,europe-3gb-30days-x3,europe-1gb-7days-x2',
+  /* Reecrit le 28/09 au soir sur son intention : la region qui couvre la France n'est plus
+     seulement NOMMEE, ses forfaits sont lus et montres avec ceux du pays. */
+  ok(f.ok && f.destination.nom === 'France' && f.forfaits.some((x) => x.couvre === 'Europe') && f.forfaits.some((x) => x.couvre === 'France')
+     && !JSON.stringify(f).includes('United States'),
+     'France (le pays) d abord ; les forfaits de l Europe, la region qui la couvre, montres avec les siens ; pas les Etats-Unis');
+  ok(f.forfaits.map((x) => x.plan).join(',') === 'eu33-3gb-15days-r1,europe-5gb-30days-panne,europe-3gb-30days-x3,europe-1gb-7days-x2',
      'forfaits a duree fixe, le moins cher par Go d abord ; sans le forfait par jour, sans le slug invalide, sans celui au-dessus de 15 $ : ' + f.forfaits.map((x) => x.plan).join(','));
   const p1 = f.forfaits.find((x) => x.plan === 'europe-1gb-7days-x2');
   ok(p1.usd === 5.800581 && p1.factureUsd === 6.09061 && p1.go === 1 && p1.jours === 7, 'le prix lu dans le 402 (5,800581 $), facture +5 % (6,09061 $), 1 Go, 7 jours');
   ok(CH.payes.length === 0 && new Set(CH.idem).size === CH.idem.length, 'chercher ne paie rien ; chaque sonde a sa propre Idempotency-Key');
   const f3 = await J.forfaits({ pays: 'fr', go: 3 });
-  ok(f3.ok && f3.destination.nom === 'France' && f3.forfaits.length === 2 && f3.forfaits.every((x) => x.go >= 3), 'le code pays et « au moins 3 Go » filtrent');
+  ok(f3.ok && f3.destination.nom === 'France' && f3.forfaits.length === 3 && f3.forfaits.every((x) => x.go >= 3), 'le code pays et « au moins 3 Go » filtrent (la region comprise)');
   ok((await J.forfaits({ pays: 'us' })).destination.nom === 'United States', '« us » est un code pays, pas un bout de nom (ni Austria, ni Australia)');
   ok(!(await J.forfaits({ pays: 'atlantide' })).ok, 'un pays inconnu : dit, rien d invente');
+  /* 28/09 au soir : CHIPS ne nomme ses regions que par leurs pays, « Europe » ne trouvait rien. */
+  const fe = await J.forfaits({ pays: 'Europe' });
+  ok(fe.ok && fe.destination.nom === 'Europe' && fe.destination.genre === 'continent' && fe.forfaits.length && fe.forfaits.every((x) => x.couvre === 'Europe'),
+     '« Europe » : les regions qui couvrent France, Allemagne, Italie et Espagne (codes CHIPS en majuscules)');
 
   console.log('\n-- proposer : seulement un forfait trouve, dans les plafonds --');
   ok(/find_esim_plans/.test((await J.propose({ plan: 'europe-99gb-x9' })).raison), 'un forfait que la recherche n a pas rendu : refuse');

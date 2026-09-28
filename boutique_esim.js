@@ -54,7 +54,7 @@ function cree(deps) {
     const r = await deps.achats.forfaits({ pays: a && a.country, go: a && a.min_gb, jours: a && a.min_days });
     if (!r || !r.ok) return { ok: false, raison: (r && r.raison) || 'the eSIM shop did not answer - try again' };
     return { ok: true, destination: r.destination.nom, otherDestinations: r.destination.autres,
-      plans: r.forfaits.map((f) => ({ plan: f.plan, name: f.nom, gb: f.go, days: f.jours, priceUsd: arrondi(f.usd * marge()) })),
+      plans: r.forfaits.map((f) => ({ plan: f.plan, name: f.nom, covers: f.couvre || null, gb: f.go, days: f.jours, priceUsd: arrondi(f.usd * marge()) })),
       unavailable: r.horsFonds || 0, terms: r.conditions, compatibility: r.compatibles,
       note: 'Data only (no phone number). Paid in USDC from your wallet on Base or Solana; you are charged only if the eSIM is bought.' };
   }

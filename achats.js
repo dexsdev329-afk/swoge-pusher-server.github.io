@@ -113,11 +113,23 @@ function cree(deps) {
     DEST = { t: maintenant(), liste: l };
     return l;
   }
+  /* Les continents (28/09 au soir) : CHIPS ne nomme ses regions que par la liste de leurs pays
+     (« Austria, Belgium, Bulgaria… », 43 regions relevees le 28/09) — « Europe » ne trouvait
+     rien. Un continent = les regions qui couvrent TOUS ses pays reperes, les plus petites d'abord. */
+  const CONTINENTS = { europe: ['fr', 'de', 'it', 'es'], asia: ['jp', 'th', 'sg'], 'middle east': ['ae', 'sa', 'qa'],
+    'south america': ['br', 'ar', 'cl'], 'north america': ['us', 'ca'], global: ['us', 'fr', 'jp', 'br'], world: ['us', 'fr', 'jp', 'br'] };
+  const NOMS_CONTINENT = { europe: 'Europe', asia: 'Asia', 'middle east': 'Middle East', 'south america': 'South America', 'north america': 'North America', global: 'Global', world: 'Global' };
   /** Les destinations qui correspondent a un pays (nom, code a deux lettres ou slug) : les pays d'abord. */
   async function chercheDestination(q) {
     const s = String(q || '').trim().toLowerCase();
     if (!s) return [];
     const l = await destinations();
+    if (CONTINENTS[s]) {
+      /* Les codes de CHIPS sont en majuscules (« FR », releve du 28/09). */
+      return l.filter((d) => d.kind !== 'country' && CONTINENTS[s].every((c) => (d.countryCodes || []).map((x) => String(x).toLowerCase()).includes(c)))
+        .sort((a, b) => (a.countryCodes || []).length - (b.countryCodes || []).length).slice(0, 5)
+        .map((d) => Object.assign({}, d, { continent: NOMS_CONTINENT[s] }));
+    }
     const score = (d) => {
       const nom = String(d.name || '').toLowerCase();
       const codes = (d.countryCodes || []).map((c) => String(c).toLowerCase());
@@ -167,7 +179,7 @@ function cree(deps) {
   /* Le nom d'une region CHIPS est la liste de ses pays : illisible au-dela de quelques-uns. */
   const nomDe = (d) => { const nom = String(d.name || ''); const k = (d.countryCodes || []).length;
     return d.kind === 'country' || nom.length <= 40 ? nom : 'Region of ' + k + ' countries (' + nom.split(',').slice(0, 3).map((x) => x.trim()).join(', ') + '…)'; };
-  const vuePlan = (p, usd) => ({ plan: p.slug, nom: p.name, go: p.dataBytes ? Math.round(p.dataBytes / GO * 100) / 100 : null, jours: p.durationDays,
+  const vuePlan = (p, usd) => ({ plan: p.slug, nom: p.name, couvre: (PLANS.get(p.slug) || {}).destination || null, go: p.dataBytes ? Math.round(p.dataBytes / GO * 100) / 100 : null, jours: p.durationDays,
     usd, factureUsd: arrondi(usd * marge()), vitesse: p.speed || null, activation: p.activationRule || null });
 
   /**
@@ -182,9 +194,18 @@ function cree(deps) {
     try { dests = await chercheDestination(a.pays); } catch (e) { return { ok: false, raison: 'the eSIM shop did not answer - try again' }; }
     if (!dests.length) return { ok: false, raison: 'no eSIM destination matches "' + String(a.pays || '').slice(0, 40) + '"' };
     const d = dests[0];
-    let plans;
-    try { plans = (await lisJson(base + '/api/v1/destinations/' + encodeURIComponent(d.slug) + '/plans?limit=100')).items || []; }
-    catch (e) { return { ok: false, raison: 'the eSIM shop did not answer - try again' }; }
+    /* Le pays ET les deux plus petites regions qui le couvrent (28/09 au soir : « France » ne
+       montrait que 3 Go a 7,40 $, quand la region de 33 pays vendait 3 Go a 3,38 $). Chaque
+       forfait garde SA destination. */
+    const lues = dests.slice(0, 3);
+    let plans = [];
+    const origine = new Map();
+    try {
+      /* La premiere destination doit repondre ; une region en plus qui ne repond pas est sautee. */
+      const listes = await Promise.all(lues.map((x, i) => lisJson(base + '/api/v1/destinations/' + encodeURIComponent(x.slug) + '/plans?limit=100')
+        .then((r) => ({ x, l: r.items || [] }), (e) => { if (i === 0) throw e; return { x, l: [] }; })));
+      for (const { x, l } of listes) for (const p of l) if (!origine.has(p.slug)) { origine.set(p.slug, x); plans.push(p); }
+    } catch (e) { return { ok: false, raison: 'the eSIM shop did not answer - try again' }; }
     const minJ = Number(a.jours) > 0 ? Number(a.jours) : 0;
     const minGo = Number(a.go) > 0 ? Number(a.go) : 0;
     const tous = plans.filter((p) => !p.isDaily && p.dataBytes > 0 && p.durationDays > 0 && p.durationDays >= minJ && p.dataBytes >= minGo * GO * 0.999
@@ -203,7 +224,7 @@ function cree(deps) {
       choisis.push(p);
       if (choisis.length >= Math.min(8, Number(a.n) || 8)) break;
     }
-    for (const p of choisis) PLANS.set(p.slug, { p, destination: d.name });
+    for (const p of choisis) PLANS.set(p.slug, { p, destination: nomDe(origine.get(p.slug) || d) });
     const prixs = await Promise.all(choisis.map((p) => prix(p.slug).catch(() => null)));
     const liste = choisis.map((p, i) => (prixs[i] ? vuePlan(p, prixs[i]) : null)).filter((x) => x && x.usd <= maxAchat())
       .sort((x, y) => (x.usd / (x.go || 1)) - (y.usd / (y.go || 1)) || x.usd - y.usd);
@@ -214,7 +235,7 @@ function cree(deps) {
        montre tout, et l'offre revérifie. */
     const solde = await soldeUsdc();
     const payables = solde === null ? liste : liste.filter((x) => x.usd <= solde);
-    return { ok: true, destination: { nom: nomDe(d), genre: d.kind, autres: [...new Set(dests.slice(1).map(nomDe))] }, forfaits: payables,
+    return { ok: true, destination: { nom: d.continent || nomDe(d), genre: d.continent ? 'continent' : d.kind, autres: [...new Set(dests.slice(lues.length).map(nomDe))] }, forfaits: payables,
       horsFonds: liste.length - payables.length, total: fixes.length, plafondUsd: maxAchat(), conditions: CONDITIONS, compatibles: COMPATIBLES };
   }
 
