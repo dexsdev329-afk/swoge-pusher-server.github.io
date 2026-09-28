@@ -56,6 +56,8 @@ const fs = require('fs');
 const path = require('path');
 const cfg = require('./config');
 const tgCanal = require('./tg_canal');   /* un canal Telegram public comme source d'adresses */
+/* Qui avait achete avant le regard, juge au resultat du jeton (voir portefeuilles.js) : une mesure, aucune decision. */
+const PF = require('./portefeuilles').cree({ fichier: path.join(cfg.DATA_DIR, 'portefeuilles.json') });
 
 const FICHIER = path.join(cfg.DATA_DIR, 'ai_colonie.json');
 const TMP = FICHIER + '.tmp';
@@ -918,6 +920,7 @@ function etatNeuf() {
 let E = etatNeuf();
 
 function charge() {
+  PF.charge();
   let brut = null;
   try { brut = JSON.parse(fs.readFileSync(FICHIER, 'utf8')); } catch (e) { brut = null; }
   if (!brut || typeof brut !== 'object') return;
@@ -1173,6 +1176,7 @@ function sauve() {
     fs.writeFileSync(TMP, JSON.stringify(E));
     fs.renameSync(TMP, FICHIER);
   } catch (e) { /* disque plein ou volume absent : on continue sans garder */ }
+  PF.sauve();                    /* son propre fichier, au plus toutes les dix minutes */
 }
 
 /* La memoire des jetons deja juges ne peut pas grossir sans fin : on garde les
@@ -2443,6 +2447,8 @@ async function lisTrades(pool) {
     return garde(CACHE.trades, pool, {
       vu: true, n: l.length, achats: ach, acheteurs: acheteurs.size, vendeurs: vendeurs.size,
       portefeuilles: Object.keys(parPortefeuille).length,
+      /* Les acheteurs eux-memes, pour les juger au resultat du jeton (portefeuilles.js). */
+      quiAchete: PF.acheteursDe(l),
       volume: Math.round(volume * 100) / 100,
       moyen: l.length ? Math.round(volume / l.length * 100) / 100 : 0,
       partDuPlusGros: volume > 0 ? Math.round(gros / volume * 1000) / 10 : 0,
@@ -5220,6 +5226,10 @@ const OMBRE_TENUE_MIN = 20;     /* la meme echeance qu'une position, pour compar
 function noteOmbre(t, an, refus, quiRefuse) {
   if (!Array.isArray(E.ombres)) E.ombres = [];
   if (!(t.prix > 0) || !an) return;
+  /* Ceux qui avaient achete avant ce regard attendent le jugement du jeton —
+     au premier regard ou ses trades ont ete lus, jamais pour une observation
+     (un jeton trop vieux ne dit rien de qui achete TOT). */
+  if (!t.observation && t.trades && t.trades.vu && t.trades.quiAchete) PF.note(t.addr, t.sym, t.trades.quiAchete);
   /* ---- UNE OMBRE PAR JETON ET PAR VERDICT, PAS UNE PAR JETON ----
    * Releve du 13 septembre : 549 achats depuis le 1er, et la ligne de
    * reference « achete ou retenu » — celle contre laquelle TOUTE regle se
@@ -5263,6 +5273,8 @@ function noteOmbre(t, an, refus, quiRefuse) {
     /* Ce que la sonde DexScreener a vu d'un jeton refuse « not indexed »
        (voir `sondeDexJeune`) : c'est ce qui decoupe sa ligne d'audit. */
     dexSonde: t.dexSonde ? t.dexSonde.v : null,
+    /* Et la sonde des moins de 4 min (voir `sondeDexAge`) : une mesure a cote de l'audit. */
+    sondeAge: t.dexSondeAge ? t.dexSondeAge.v : null,
     /* La case (age×mc) a l'entree : elle sert a netter l'audit du coût
        d'aller-retour mesuré pour cette case (voir `coutCelluleDe`). */
     caseFrott: litTrait(CASE_ESPERANCE_TRAIT, t),
@@ -5291,7 +5303,7 @@ function rejoueLOmbre(o) {
     return;
   }
   const rs = rejoue(o.jalons);
-  if (rs !== null) noteAuditStrat(cleAudit(o), rs);
+  if (rs !== null) { noteAuditStrat(cleAudit(o), rs); noteSondeAgeStrat(o, rs); }
   /* Et les jeux concurrents, sur les MEMES jalons : c'est la seule facon de
      les comparer sans qu'aucun ne trade. */
   /* `o.refus` porte la raison qui l'a ecarte, et vaut null quand rien ne l'a
@@ -5785,10 +5797,12 @@ function regleLesOmbres(marche) {
          la case ; les courbes, la memoire des agents et le frottement restent
          BRUTS, eux, pour ne pas se compter deux fois. Voir `coutCelluleDe`. */
       noteAudit(cleAudit(o), r - coutCelluleDe(o));
+      noteSondeAge(o, r - coutCelluleDe(o));
+      if (!o.hors) PF.juge(o.adr, r, o.t);
       /* Une piscine evaporee : la strategie aurait tout perdu aussi, moins
          ce que les paliers avaient encaisse avant. */
       const rs0 = rejoue(o.jalons);
-      if (rs0 !== null) { noteAuditStrat(cleAudit(o), rs0); o.rejouee = true; }
+      if (rs0 !== null) { noteAuditStrat(cleAudit(o), rs0); noteSondeAgeStrat(o, rs0); o.rejouee = true; }
       compte('ombresJugees'); compte('ombreDisparue');
       n++;
       return age <= dernier + Math.max(5, dernier * 0.5);
@@ -5840,6 +5854,10 @@ function regleLesOmbres(marche) {
              `cleAudit` separe de la reference depuis le 20/09 (quota : 0
              achat au 26/09, donc aucune observation deplacee). */
           noteAudit(cleAudit(o), r - coutCelluleDe(o));
+          noteSondeAge(o, r - coutCelluleDe(o));
+          /* Les acheteurs d'avant le regard recoivent le rendement BRUT
+             vendable, comme les agents : le cout d'aller-retour est le notre. */
+          if (!o.hors) PF.juge(o.adr, r, o.t);
           compte('ombresJugees');
           n++;
         }
@@ -8967,6 +8985,69 @@ async function sondeDexJeune(t) {
   compte('dexSonde_' + v);
   return { v, liens, minutes: Math.round(t.minutes || 0) };
 }
+/* ==========================================================================
+ * LES JETONS DE MOINS DE 4 MINUTES : AVEC OU SANS LIEN PUBLIC ? — MESURE SEULE
+ *
+ * Releve du 28 septembre 2026, 06:40 UTC (en direct) : « scout · too young:
+ * under 10 min » n=393, 68 % de montees a 30 min, contre 26 % pour « achete
+ * ou retenu » (n=279). Mais « no public presence at all » est la regle la plus
+ * protectrice mesuree (4 % sur 1 565), et l'essai des jeunes du 27/09 a trouve
+ * 207 jeunes sur 212 SANS aucun lien sur DexScreener (5 passes, 0 achete).
+ * Les 68 % viennent-ils des jeunes qui ont un lien, ou de tous ? Personne ne
+ * le sait : sous 4 min, DexScreener n'est jamais lu (`peutRepondre`).
+ *
+ * Donc, a chaque tour, jusqu'a DEX_SONDE_AGE_PAR_TOUR (2) jetons refuses pour
+ * leur age dans la premiere tranche sont demandes a DexScreener, APRES le
+ * verdict, qui ne change pas, et sans ecrire le cache (`sansCache`, comme
+ * `sondeDexJeune`). Leur ombre porte ce qu'on a vu : connu sans lien, connu
+ * avec au moins un lien, inconnu. La ligne d'audit N'EST PAS decoupee : la
+ * borne d'age et le quota des jeunes la lisent pour DECIDER, la couper
+ * changerait leurs decisions. La mesure vit a cote, dans `E.sondeAge`, jugee
+ * comme l'audit : net du cout de la case a 30 min, montees >= +20 %,
+ * effondrements <= -30 %, strategie rejouee. Rien d'autre ne la lit. */
+const DEX_SONDE_AGE_PAR_TOUR = Math.max(0, Math.min(2, Math.round(nEnv('DEX_SONDE_AGE_PAR_TOUR', 2))));
+const SONDE_AGE_LIGNES = { jeuneSansLien: 'known, no public link', jeuneAvecLien: 'known, 1+ public link', jeuneInconnu: 'unknown to DexScreener' };
+async function sondeDexAge(t) {
+  compte('dexSondeAge');
+  let d = null;
+  try { d = await lisDex(t.addr, { sansCache: true }); } catch (e) { d = null; }
+  let v, liens = null;
+  if (!d || !d.vu) v = 'jeuneInconnu';
+  else { liens = typesDeLiens(d); v = liens >= 1 ? 'jeuneAvecLien' : 'jeuneSansLien'; }
+  compte('dexSondeAge_' + v);
+  return { v, liens, minutes: Math.round(t.minutes || 0) };
+}
+function ligneSondeAge(v) {
+  if (!E.sondeAge || typeof E.sondeAge !== 'object') E.sondeAge = { depuis: Date.now(), lignes: {} };
+  return E.sondeAge.lignes[v] || (E.sondeAge.lignes[v] = { n: 0, s: 0, montes: 0, effondres: 0, nStrat: 0, strat: 0 });
+}
+function noteSondeAge(o, r) {
+  if (!o || !SONDE_AGE_LIGNES[o.sondeAge]) return;
+  const a = ligneSondeAge(o.sondeAge);
+  a.n++; a.s += r;
+  if (r >= 20) a.montes++;
+  if (r <= -30) a.effondres++;
+}
+function noteSondeAgeStrat(o, rs) {
+  if (!o || !SONDE_AGE_LIGNES[o.sondeAge]) return;
+  const a = ligneSondeAge(o.sondeAge);
+  a.nStrat++; a.strat += rs;
+}
+/** Ce que la page montre : chaque sous-ligne, et la ligne entiere et la reference pour comparer. */
+function sondeAgeBilan() {
+  const S = E.sondeAge || { depuis: null, lignes: {} };
+  const c = E.compteurs || {};
+  const lig = (nom, a) => ({ nom, n: a ? a.n : 0,
+    partMontes: a && a.n ? Math.round(a.montes / a.n * 100) : null,
+    partEffondres: a && a.n ? Math.round(a.effondres / a.n * 100) : null,
+    moyenne: a && a.n ? Math.round(a.s / a.n * 10) / 10 : null,
+    nStrat: a ? a.nStrat || 0 : 0, strat: a && a.nStrat ? Math.round(a.strat / a.nStrat * 10) / 10 : null });
+  const cleLigne = 'scout · ' + bandeAge(0);
+  return { depuis: S.depuis, sondes: c.dexSondeAge || 0, parTour: DEX_SONDE_AGE_PAR_TOUR,
+    lignes: Object.keys(SONDE_AGE_LIGNES).map((k) => lig(SONDE_AGE_LIGNES[k], S.lignes[k])),
+    ligneEntiere: lig(cleLigne, (E.audit || {})[cleLigne]), reference: lig('achete ou retenu', (E.audit || {})['achete ou retenu']) };
+}
+
 /* ---- ET CE QU'ILS DEVIENNENT ENSUITE ----
  * « D'abord, compter combien de ces jetons ont ete repris plus tard, puis
  * achetes : la reponse est peut-etre deja la » (rapport du 27/09). Par jeton
@@ -9524,7 +9605,16 @@ const TG_PAR_TOUR = 6;   /* comme un flux DexScreener : le canal ne monopolise p
  * joueur est celle de sa session (server.js, ws.addr), jamais un champ.
  * ======================================================================== */
 const SOUMIS_PAR_TOUR = 3, SOUMIS_FILE_MAX = 20, SOUMIS_PAR_JOUR = 5;
-const SOUMIS = { file: [], vus: new Map(), parQui: new Map() };
+/* ---- UN SOUMIS QUE LE BUDGET N'A PAS ATTEINT REVIENT ----
+ * Trouve par le banc le 28/09 : lus APRES les flux, les soumis sont en queue
+ * du tour ; quand les places payantes (EXAMENS_TOUR) ou le budget d'appels
+ * sont epuises avant eux, ils etaient lus, jamais examines — et perdus, le
+ * joueur lisant « not examined this round » pour toujours. Un soumis jeune,
+ * assez liquide, et absent des examines du tour revient donc en file, au plus
+ * SOUMIS_ESSAIS fois ; des le deuxieme essai il passe EN TETE du tour. Au plus
+ * SOUMIS_PAR_TOUR (3) a la fois : les flux gardent le reste des places. */
+const SOUMIS_ESSAIS = 3;
+const SOUMIS = { file: [], vus: new Map(), parQui: new Map(), duTour: [] };
 function soumets(adr, qui, sansLimite) {
   const a = String(adr || '').trim().toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(a)) return { ok: false, raison: 'a token address is 0x followed by 40 hex characters' };
@@ -9559,6 +9649,18 @@ function etatSoumission(v) {
   if (v.minutes != null && v.minutes > AGE_MAX_MIN) return Object.assign(o, { status: 'too_old', text: 'read but not examined: its pool is ' + Math.round(v.minutes / 60) + ' h old, the colony only takes tokens under ' + Math.round(AGE_MAX_MIN / 60) + ' h' });
   if (v.liq != null && v.liq < 500) return Object.assign(o, { status: 'too_thin', text: 'read but not examined: pool liquidity $' + Math.round(v.liq) + ', under $500' });
   return Object.assign(o, { status: 'read', text: 'read; not examined this round (the round budget went to other tokens)' });
+}
+/** Apres les examens du tour : un soumis que le tour n'a pas atteint revient en file (voir SOUMIS_ESSAIS). */
+function reprendSoumis(examines) {
+  const vus = new Set(examines.map((x) => x.t.addr));
+  const l = SOUMIS.duTour; SOUMIS.duTour = [];
+  for (const v of l) {
+    if (vus.has(v.adr) || v.etat !== 'lu' || (v.essais || 0) >= SOUMIS_ESSAIS) continue;
+    if (v.minutes == null || v.minutes > AGE_MAX_MIN || !(v.liq >= 500)) continue;   /* un refus d'entree est definitif */
+    v.etat = 'en file';
+    SOUMIS.file.unshift(v);
+    compte('soumisRepris');
+  }
 }
 function soumissions(qui) {
   const q = String(qui || '').toLowerCase();
@@ -9612,6 +9714,7 @@ async function rassemble() {
     }
   } catch (e) { noteService('telegram', false, String(e.message || e).slice(0, 50)); }
   /* ---- LES CONTRATS SOUMIS PAR LES JOUEURS (voir `soumets`) ---- */
+  SOUMIS.duTour = [];
   for (let pris = 0; SOUMIS.file.length && pris < SOUMIS_PAR_TOUR; pris++) {
     const v = SOUMIS.file.shift();
     const c = E.connus[v.adr];
@@ -9621,7 +9724,10 @@ async function rassemble() {
     const t = deja || await jetonDepuisDex(v.adr, 'soumis');
     compte('soumisLu');
     if (t && t.prix > 0) {
+      v.essais = (v.essais || 0) + 1;
       Object.assign(v, { etat: 'lu', sym: t.sym, minutes: t.minutes, liq: t.liq });
+      if (v.essais > 1) t.soumisEnTete = true;
+      SOUMIS.duTour.push(v);
       if (!deja) parAdresse.set(v.adr, t);
     } else v.etat = 'hors robinhood';
     await dors(250);
@@ -9676,6 +9782,8 @@ async function tour() {
      * suffit a fausser ce que les agents apprennent. */
     const tout = (await rassemble()).filter((t) => t.liq >= 500 && t.prix > 0);
     const liste = parBandes(tout.filter((t) => t.minutes !== null && t.minutes <= AGE_MAX_MIN));
+    /* Un soumis deja passe une fois sans etre atteint : en tete (voir SOUMIS_ESSAIS). */
+    for (let i = liste.length - 1, k = 0; i >= k; i--) if (liste[i].soumisEnTete) { liste.unshift(liste.splice(i, 1)[0]); k++; i++; }
     /* ---- ET LES OBSERVES, EN QUEUE ----
      * Les plus jeunes des trop vieux d'abord : ce sont eux qui repondent a la
      * question posee — « six heures, est-ce trop tot ? ». Ils sont ajoutes
@@ -9795,7 +9903,7 @@ async function tour() {
      * tout de suite : les services des gardes suivants ne sont pas appeles. */
     const gardes = gardesEnOrdre();
     const examines = [];
-    let ouvertes = 0, appelsTotal = 0, conseils = 0, sondesDex = 0;
+    let ouvertes = 0, appelsTotal = 0, conseils = 0, sondesDex = 0, sondesAge = 0;
     let budgetDit = false;
     for (const t of aVoir) {
       /* ---- LE BUDGET COMPTE DES APPELS, PAS DES JETONS ----
@@ -9958,6 +10066,11 @@ async function tour() {
            mesure ne doit pas retirer un examen a un autre jeton. */
         t.dexSonde = await sondeDexJeune(t);
       }
+      /* La sonde des moins de 4 min : mesure seule, apres le verdict. Voir `sondeDexAge`. */
+      if (refus && sondesAge < DEX_SONDE_AGE_PAR_TOUR && familleRefus(refus) === bandeAge(0)) {
+        sondesAge++;
+        t.dexSondeAge = await sondeDexAge(t);
+      }
       noteConnu(t, refus, an.score);
       /* Achete ou refuse, il laisse une ombre : c'est de la que viendra le
          gros de l'apprentissage, et l'audit des vetos avec. */
@@ -9983,6 +10096,7 @@ async function tour() {
     engendre();
     elague();
 
+    reprendSoumis(examines);
     E.candidats = examines.map((x) => ({
       sym: x.t.sym, addr: x.t.addr, pool: x.t.pool, minutes: Math.round(x.t.minutes),
       liq: Math.round(x.t.liq), mc: Math.round(x.t.mc), prix: x.t.prix,
@@ -10148,6 +10262,8 @@ function vue() {
               /* Rejoues contre gardes : l'ecart entre les deux est ce qui a
                  cache deux fuites pendant des semaines. */
               rejeux: rejeuxBilan() },
+    /* Les portefeuilles juges au resultat des jetons qu'ils avaient achetes avant le regard. */
+    portefeuilles: PF.resume(),
     /* Le fond que toute case se compare a : sans lui a l'ecran, un
        ajustement de zero se lirait comme « rien appris ». */
     base: E.base && E.base.n > 0
@@ -10240,6 +10356,7 @@ function vue() {
     /* Ce que DexScreener sait des 4-10 min refuses « not indexed », et ce
        qu'ils deviennent (rapport du 27/09, proposition 4). */
     nonIndexe: nonIndexeBilan(),
+    sondeAge: sondeAgeBilan(),
     /* ---- LES JEUX DE REGLES QUI COURENT EN PARALLELE ----
        Ils ne tradent rien : ils rejouent les memes ombres et disent ce qu'ils
        auraient rendu. C'est ce qui remplace seize trades mesures a la main par
@@ -10441,7 +10558,9 @@ function arrete() {
 }
 
 module.exports = {
-  soumets, soumissions, etatSoumission, SOUMIS, SOUMIS_PAR_TOUR, SOUMIS_FILE_MAX, SOUMIS_PAR_JOUR,
+  portefeuilles: PF,
+  sondeDexAge, sondeAgeBilan, noteSondeAge, SONDE_AGE_LIGNES, DEX_SONDE_AGE_PAR_TOUR,
+  soumets, soumissions, etatSoumission, SOUMIS, SOUMIS_PAR_TOUR, SOUMIS_FILE_MAX, SOUMIS_PAR_JOUR, SOUMIS_ESSAIS,
   budgetCg, cleDansLeBudget,
   epreuveDeSortie,
   demarre, arrete, vue, tour, charge, sauve, reprendSansMethode, veille,

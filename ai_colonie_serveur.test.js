@@ -223,7 +223,8 @@ function tradesDe(t) {
   const out = [];
   const n = t.tradesN === undefined ? 24 : t.tradesN;
   for (let i = 0; i < n; i++) {
-    const qui = t.lavage ? '0xwash' : '0xw' + (i % (t.tradeurs || 12));
+    /* De vraies adresses (portefeuilles.js les valide) : le meme nombre de portefeuilles distincts qu'avant. */
+    const qui = t.lavage ? '0x' + 'ee'.repeat(20) : '0x' + ((i % (t.tradeurs || 12)) + 1).toString(16).padStart(40, '0');
     out.push({ attributes: { kind: i % 3 === 2 ? 'sell' : 'buy',
                              volume_in_usd: String(t.lavage && i % 2 ? 400 : 60),
                              tx_from_address: qui } });
@@ -594,6 +595,7 @@ function remise(jetons, extra) {
   for (const k of Object.keys(C._cache)) for (const j of Object.keys(C._cache[k])) delete C._cache[k][j];
   for (const k of Object.keys(C._prix)) delete C._prix[k];
   C._pose(C.etatNeuf());
+  C.portefeuilles.vide();
   C._poseporte(null);            /* la porte CoinGecko est resondee a chaque scenario */
   C._posejeton({ valeur: null, jusqua: 0, essaye: false });
   delete process.env.COINGECKO_API_KEY;
@@ -8178,9 +8180,12 @@ async function soumissionsDeJoueurs() {
   const vide = () => { C.SOUMIS.file.length = 0; C.SOUMIS.vus.clear(); C.SOUMIS.parQui.clear(); };
   console.log('\n-- un jeton soumis entre dans le tour, et il y est juge comme les autres --');
   const jeune = jeton(7), vieux = jeton(8, { minutes: 3000 });
-  remise(sains().concat([jeune, vieux]));
+  /* Deux jetons de flux seulement : ici on juge le chemin du soumis, pas le budget
+     du tour (qui a son propre cas plus bas). */
+  const flux2 = [jeton(0), jeton(1)];
+  remise(flux2.concat([jeune, vieux]));
   vide();
-  poolsPageFiltre = sains().map((t) => t.addr);          /* le flux ne les sert pas : seule la soumission les amene */
+  poolsPageFiltre = flux2.map((t) => t.addr);          /* le flux ne les sert pas : seule la soumission les amene */
   const JOUEUR = '0x' + 'ab'.repeat(20), INCONNU = '0x' + '99'.repeat(20);
   ok(!C.soumets('0x1234', JOUEUR).ok && !C.soumets('pas une adresse', JOUEUR).ok, 'une adresse qui n en est pas une est refusee');
   const r1 = C.soumets(jeune.addr.toUpperCase().replace('0X', '0x'), JOUEUR);
@@ -8215,8 +8220,105 @@ async function soumissionsDeJoueurs() {
   for (let i = 0; C.SOUMIS.file.length < C.SOUMIS_FILE_MAX; i++) C.soumets('0x' + (160 + i).toString(16).repeat(20), JOUEUR, true);
   const rp = C.soumets('0x' + 'fe'.repeat(20), JOUEUR, true);
   ok(!rp.ok && /queue is full/.test(rp.raison), 'file pleine a ' + C.SOUMIS_FILE_MAX + ' : refus, meme pour le proprietaire');
+
+  console.log('\n-- un tour plein : le soumis n est pas perdu, il revient en tete --');
+  /* 24 jetons de flux pour 20 places payantes (EXAMENS_TOUR) : le soumis, lu apres
+     les flux, n a pas de place, quel que soit le nombre d appels par jeton. Le banc
+     l a trouve le 28/09 : il etait lu, jamais examine, et perdu. */
+  const plein = Array.from({ length: 24 }, (_, i) => jeton(10 + i));
+  remise(plein.concat([jeune]));
+  vide();
+  poolsPageFiltre = plein.map((t) => t.addr);
+  C.soumets(jeune.addr, JOUEUR);
+  await C.tour();
+  const c1 = C.vue().candidats.find((c) => c.addr === jeune.addr);
+  const s1 = C.soumissions(JOUEUR)[0];
+  ok(!c1 && s1.status === 'queued' && C.SOUMIS.file.length === 1 && C._etat().compteurs.soumisRepris === 1,
+     'premier tour plein : pas examine, et remis en file (' + s1.status + ') au lieu d etre perdu');
+  await C.tour();
+  const c2 = C.vue().candidats.find((c) => c.addr === jeune.addr);
+  ok(!!c2 && c2.origine === 'soumis', 'deuxieme tour : en tete, il est examine (' + (c2 && (c2.refus || 'passed')) + ')');
+  const cs = C.vue().candidats;
+  ok(cs.length > 1 && cs.filter((c) => c.origine === 'soumis').length === 1,
+     'une seule place pour le soumis, les flux ont les autres : ' + (cs.length - 1) + ' jeton(s) de flux examines avec lui');
   vide();
   poolsPageFiltre = null;
+}
+
+/* ==========================================================================
+ * LES PORTEFEUILLES QUI ACHETENT AVANT LE REGARD
+ *
+ * La case « smart money » : ceux qui avaient achete un jeton avant que la
+ * colonie le regarde recoivent, a trente minutes, le resultat du jeton. Une
+ * mesure, et aucune decision n'en depend.
+ * ======================================================================== */
+async function portefeuillesAvantLeRegard() {
+  console.log('\n-- un tour note les acheteurs des jetons dont il a lu les trades --');
+  remise(sains());
+  await C.tour();
+  const P = C.portefeuilles._etat();
+  const listes = Object.keys(P.attente).map((k) => P.attente[k].w);
+  ok(listes.length > 0 && listes.every((w) => w.length > 0 && w.every((a) => /^0x[0-9a-f]{40}$/.test(a))),
+     listes.length + ' jeton(s) en attente de jugement, chacun avec ses acheteurs (' + (listes[0] || []).length + ' pour le premier)');
+  ok(C.vue().portefeuilles && C.vue().portefeuilles.waiting === listes.length, 'et la vue le publie (waiting ' + (C.vue().portefeuilles || {}).waiting + ')');
+
+  console.log('\n-- a l echeance de reference, le resultat du jeton leur est credite --');
+  remise(sains());
+  const E = C._etat();
+  const A = '0x' + 'a1'.repeat(20), B = '0x' + 'b2'.repeat(20), V = '0x' + 'c3'.repeat(20);
+  const W1 = '0x' + '11'.repeat(20), W2 = '0x' + '22'.repeat(20);
+  C.noteOmbre({ addr: A, sym: 'AAA', prix: 1, trades: { vu: true, quiAchete: [W1, W2] } }, { traits: {}, score: 20 }, 'un porteur tient 90% du circulant', 'whale');
+  C.noteOmbre({ addr: B, sym: 'BBB', prix: 1, trades: { vu: true, quiAchete: [W1] } }, { traits: {}, score: 20 }, null, null);
+  C.noteOmbre({ addr: V, sym: 'OLD', prix: 1, observation: true, minutes: 900, trades: { vu: true, quiAchete: [W2] } }, { traits: {}, score: 20 }, 'too old', 'scout');
+  ok(!C.portefeuilles._etat().attente[V], 'un jeton en observation (trop vieux) ne note personne : il ne dit rien de qui achete tot');
+  for (const o of E.ombres) o.t = Date.now() - C.HORIZON_REF * 60000;
+  C.portefeuilles._etat().attente[A].t = Date.now() - C.HORIZON_REF * 60000;
+  C.portefeuilles._etat().attente[B].t = Date.now() - C.HORIZON_REF * 60000;
+  C.regleLesOmbres({ [A]: { prix: 1.5, liq: 1e6 }, [B]: { prix: 0.5, liq: 1e6 }, [V]: { prix: 2, liq: 1e6 } });
+  const f1 = C.portefeuilles.fiche(W1), f2 = C.portefeuilles.fiche(W2);
+  console.log('   W1 : ' + JSON.stringify(f1.recent) + '\n   W2 : ' + JSON.stringify(f2.recent));
+  ok(f1.tokensJudged === 2 && f1.risePct === 50 && f1.collapsePct === 50, 'W1 : AAA (+50 %) et BBB (-50 %), juges au prix relu');
+  ok(f2.tokensJudged === 1 && f2.recent[0].symbol === 'AAA', 'W2 : AAA seulement — le vieux jeton ne lui est pas credite');
+  ok(f1.verdict === 'not_enough_data', 'deux jetons : pas de verdict');
+  ok(E.positions.length === 0 && !E.memoire.portefeuilles, 'aucune decision ni aucune memoire d agent n en depend');
+  ok(C.vue().portefeuilles.wallets === 2 && C.vue().portefeuilles.reference.pairs === 3, 'la vue : 2 portefeuilles, 3 couples dans la reference');
+}
+
+/* ==========================================================================
+ * LES MOINS DE 4 MINUTES : AVEC OU SANS LIEN PUBLIC ? (mesure seule)
+ *
+ * « too young: under 10 min » monte a 68 % contre 26 % pour ce qu'on achete,
+ * et presque aucun jeune n'a de lien. La sonde dit lesquels montent, sans
+ * changer un verdict ni decouper la ligne que la borne d'age lit.
+ * ======================================================================== */
+async function sondeDesMoinsDeQuatre() {
+  console.log('\n-- les refuses pour leur age sont demandes a DexScreener, deux par tour --');
+  remise([jeton(0, { minutes: 2 }), jeton(1, { minutes: 2, aucunLien: true }), jeton(2, { minutes: 2 }), jeton(3)]);
+  MONDE.jetons[2].dexMuet = true;          /* `jeton()` ne recopie pas l option : posee sur le jeton du monde */
+  const E = C._etat();
+  await C.tour();
+  const v = C.vue();
+  const jeunes = v.candidats.filter((c) => c.minutes < 4);
+  ok(jeunes.length === 3 && jeunes.every((c) => /too young/.test(c.refus || '')), 'les trois jeunes restent refuses pour leur age : la sonde ne change aucun verdict');
+  ok((E.compteurs.dexSondeAge || 0) === C.DEX_SONDE_AGE_PAR_TOUR, C.DEX_SONDE_AGE_PAR_TOUR + ' sondes ce tour, pas trois');
+  const vus = E.ombres.filter((o) => o.sondeAge).map((o) => o.sym + ':' + o.sondeAge);
+  console.log('   ' + vus.join(' · '));
+  const attendu = { TOK0: 'jeuneAvecLien', TOK1: 'jeuneSansLien', TOK2: 'jeuneInconnu' };
+  ok(vus.length === 2 && E.ombres.filter((o) => o.sondeAge).every((o) => attendu[o.sym] === o.sondeAge),
+     'deux ombres portent ce que DexScreener a vu, chacune dans la bonne case (trois liens, aucun lien, inconnu)');
+  /* Les trois cases, sans dependre de l ordre du tour : la sonde elle-meme sur chaque jeton. */
+  const cas = await Promise.all([0, 1, 2].map((i) => C.sondeDexAge({ addr: MONDE.jetons[i].addr, minutes: 2 })));
+  ok(cas.map((x) => x.v).join(',') === 'jeuneAvecLien,jeuneSansLien,jeuneInconnu', 'la sonde : ' + cas.map((x) => x.v + '(' + x.liens + ')').join(', '));
+  for (const o of E.ombres) { o.t = Date.now() - C.HORIZON_REF * 60000; o.echeance = Date.now(); }
+  const m = {};
+  for (const o of E.ombres) m[o.adr] = { prix: o.sym === 'TOK0' ? 1.6 : 0.5, liq: 1e6 };
+  C.regleLesOmbres(m);
+  const b = C.sondeAgeBilan();
+  console.log('   ' + JSON.stringify(b.lignes));
+  const tot = b.lignes.reduce((x, l) => x + l.n, 0);
+  ok(tot === 2 && b.ligneEntiere.n === 3, 'jugees a 30 min : 2 dans les sous-lignes, et la ligne « ' + b.ligneEntiere.nom + ' » garde ses 3 — elle n est pas decoupee');
+  ok(!!C.vue().sondeAge && C.vue().sondeAge.lignes.length === 3, 'la vue publie les trois sous-lignes, la ligne entiere et la reference');
+  ok(Object.keys(E.audit).every((k) => !/no public link|1\+ public link/.test(k)), 'aucune cle d audit nouvelle : rien de ce que les decisions lisent ne bouge');
 }
 
 
@@ -8412,6 +8514,8 @@ async function baleineParTranche() {
   await noeudsDates();
   await baleineParTranche();
   await soumissionsDeJoueurs();
+  await portefeuillesAvantLeRegard();
+  await sondeDesMoinsDeQuatre();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

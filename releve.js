@@ -35,6 +35,11 @@ const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnante
   console.log('audit cap ', marge(/buy ceiling|cap below/));
   console.log('audit pisc', marge(/pool below|nothing to sell/));
   console.log('portes    ', marge(/too volatile|too few public|round trip too costly/) || '(rien encore)');
+  /* Les moins de 4 min selon DexScreener (mesure seule, 28/09) et les portefeuilles juges. */
+  const SA = d.sondeAge;
+  if (SA) console.log('jeunes<4  ', SA.lignes.map((l) => `${l.nom} n=${l.n} ${l.partMontes ?? '—'}%`).join(' | ') + ` · ligne entiere n=${SA.ligneEntiere.n} ${SA.ligneEntiere.partMontes ?? '—'}%`);
+  const PFv = d.portefeuilles;
+  if (PFv) console.log('portef.   ', `${PFv.wallets} portefeuilles, ${PFv.measured} mesures (10 jetons et plus), ${PFv.waiting} jetons en attente · reference ${PFv.reference.pairs} couples, ${PFv.reference.risePct ?? '—'}% de montees`);
   const c = d.carnet || {};
   console.log(`\nCARNET ${bil(c.tout)}`);
   for (const k of ['parTenue', 'parLiq', 'parMc', 'parAllerRetour', 'parSortie'])
