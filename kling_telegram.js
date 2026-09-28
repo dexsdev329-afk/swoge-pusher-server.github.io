@@ -81,19 +81,23 @@ const PROGRAMME = [
      disent token_verdict 0,01 $ (Base, Solana), robinhood_* 0,005 $ sur Base,
      et chaque outil se paie aussi en USDG ou en $SWOGE sur Robinhood Chain.
      Le LOGO : Kling Image ne prend qu'UNE image de reference (le personnage),
-     il ne peut donc pas reproduire le logo graphique de PayAI — il le
-     dessinerait de travers. SWOGE brandit un panneau ou « PayAI » est ECRIT :
-     le nom, pour dire un fait (on est au catalogue), sans « × » qui ferait
-     croire a un partenariat. Video : kling-3.0-turbo, la seule a 6 s ; son
+     il ne peut donc pas recevoir le logo de PayAI en image. Le proprietaire a
+     envoye le logo (28/09, 09 h 35 a Paris) : il est DECRIT dans la consigne —
+     trois couches en losange arrondies, empilees, en degrade de bleu, au-dessus
+     du mot « PayAI » en bleu roi, sur fond blanc. On dit un fait (on est au
+     catalogue), sans « × » ni « partner » qui feraient croire a un partenariat.
+     Heure decalee a 08:15 UTC : le deploiement qui porte la consigne doit etre
+     en ligne bien avant (un redeploiement pendant l'attente perd la video). Video : kling-3.0-turbo, la seule a 6 s ; son
      natif impose par le modele, donc la consigne dit « aucune voix, musique et
      bruitages seulement ». Cout : 0,028 $ + 6 s × 0,14 $ = 0,87 $. */
-  { cle: 'agents15-image-2026-09-28', a: Date.parse('2026-09-28T07:55:00Z'), muet: true, format: '9:16', reference: 'subject',
+  { cle: 'agents15-image-2026-09-28', a: Date.parse('2026-09-28T08:15:00Z'), muet: true, format: '9:16', reference: 'subject',
     prompt: 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build. '
-      + 'He stands on a futuristic neon stage at night and proudly holds up, with both hands above his chest, a large glowing sign with the single word "PayAI" written on it in bold clean white letters. '
+      + 'He stands on a futuristic neon stage at night and proudly holds up, with both hands in front of his chest, a large glossy white square sign showing the PayAI logo: '
+      + 'three stacked rounded diamond-shaped layers in a light-to-royal-blue gradient at the top, and below them the word "PayAI" in bold rounded royal-blue letters. '
       + 'Behind him, a wall of holographic screens with green crypto charts, and a swarm of small friendly robot agents flying toward him carrying glowing blue coins. '
-      + 'Vertical cinematic shot, dramatic rim lighting, premium 3D render quality, highly detailed, sharp focus. The only text in the image is "PayAI" on the sign.' },
-  { cle: 'agents15-video-2026-09-28', a: Date.parse('2026-09-28T07:55:00Z'), type: 'video', depuis: 'agents15-image-2026-09-28',
-    prompt: 'SWOGE, the muscular shiba inu, lifts the glowing PayAI sign higher and flexes with a confident grin; the small robot agents swoop in and drop glowing blue coins around him, '
+      + 'Vertical cinematic shot, dramatic rim lighting, premium 3D render quality, highly detailed, sharp focus. The only text in the image is "PayAI" on the sign; the sign is sharp, flat and fully readable.' },
+  { cle: 'agents15-video-2026-09-28', a: Date.parse('2026-09-28T08:15:00Z'), type: 'video', depuis: 'agents15-image-2026-09-28',
+    prompt: 'SWOGE, the muscular shiba inu, lifts the white PayAI logo sign higher, keeping the logo readable and unchanged, and flexes with a confident grin; the small robot agents swoop in and drop glowing blue coins around him, '
       + 'the holographic charts spike upward. Slow cinematic push-in. No dialogue and no voice at all: only an energetic electronic beat, whooshes and coin sound effects.',
     legende: '🤖 <b>SWOGE AI: 15 tools live on PayAI</b>\n\n'
       + 'Any AI agent can hire SWOGE AI and pay per call with x402: USDC on <b>Base</b> or <b>Solana</b>, or USDG / $SWOGE on <b>Robinhood Chain</b>. No account, no API key.\n\n'
