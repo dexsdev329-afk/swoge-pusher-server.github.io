@@ -59,6 +59,7 @@ lance solata "$SRV" node solana_ata.test.js   # le compte USDC associe d une adr
 lance verdict "$SRV" node verdict_jeton.test.js   # token_verdict : GoPlus en rouge ou prudence, piscine sous 13 000 $ (mesure du carnet), traits de la colonie a 30 obs et plus ; jamais « safe », inconnu = inconnu
 lance portef "$SRV" node portefeuilles.test.js   # smart money mesuree : acheteurs d avant le regard credites a 30 min, une fois ; aucun verdict sous 10 jetons ; montees ET effondrements contre un acheteur au hasard
 lance roast   "$SRV" node roast.test.js   # roast_token : les faits seuls, pas de scam sans drapeau, texte nettoye et borne, modele muet = gabarit vrai, carte PNG relue par son id
+lance embauche "$SRV" node embauche.test.js   # l agent embauche un service x402 : catalogue seulement, pas d adresse privee ni de redirection, plafonds appel/joueur/jour, reserve avant, facture sur 200 seulement, vraie signature EIP-3009
 lance lecturesrh "$SRV" node lectures_rh.test.js   # robinhood_rpc/token/wallet/tx : lecture seule, bornes, le seau (la colonie d abord), decodage sur un faux noeud aux vrais encodages
 lance chatx402 "$SRV" node chat_x402.test.js   # chat_completion : devis = pire cas (ASCII a 1/2, le reste a ses octets) x X402_CHAT_MARGE, modele brut, sortie OpenAI, un echec jamais regle
 lance autoinsc "$SRV" node auto_inscription.test.js   # inscription PayAI automatique : notre serveur et notre tresorerie seulement, plafonds, une fois par outil, la cle ne sort jamais

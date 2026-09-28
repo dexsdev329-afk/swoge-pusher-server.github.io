@@ -192,6 +192,30 @@ const m = C.modele('sonnet-5');
     ok(!tv2.donnees.links && !/scan\/carte/.test(tv2.texte), 'token_verdict hors Robinhood Chain : aucun lien de carte');
   }
 
+  console.log('\n-- 2d. l agent qui embauche (embauche.js, 28/09) : offert au joueur seulement, et il le dit --');
+  {
+    const appels = [];
+    const embauche = { cherche: async (q) => { appels.push(['cherche', q]); return [{ url: 'https://meteo.example/forecast', usd: 0.01, methode: 'GET', description: 'Weather forecast', entree: { queryParams: { city: 'Paris' } } }]; },
+      embauche: async (a) => { appels.push(['embauche', a.url]); return { ok: true, type: 'application/json', resultat: '{"tempC":21}', recu: { url: a.url, usd: 0.01, factureUsd: 0.011, reseau: 'eip155:8453', tx: '0xcd' } }; },
+      budget: () => ({ jourUsd: 1, depenseUsd: 0, maxAppelUsd: 0.1 }) };
+    const cl = faux([
+      { stop: 'tool_use', content: [{ type: 'tool_use', id: 'e1', name: 'find_paid_services', input: { need: 'weather forecast city' } }] },
+      { stop: 'tool_use', content: [{ type: 'tool_use', id: 'e2', name: 'hire_paid_service', input: { url: 'https://meteo.example/forecast', query: { city: 'Lyon' } } }] },
+      { stop: 'end_turn', content: [{ type: 'text', text: 'It is 21 °C in Lyon. I paid 0.01 $ to meteo.example.' }] }]);
+    const res = [];
+    await A.repond({ m, messages: [{ role: 'user', content: 'weather in Lyon?' }], surResultat: (o) => res.push(o) }, { client: cl, src: src({ embauche }) });
+    const noms = cl.vus[0].tools.map((t) => t.name);
+    ok(noms.includes('find_paid_services') && noms.includes('hire_paid_service') && /hire_paid_service, which charges the user's balance/.test(cl.vus[0].system) && !/You can only READ/.test(cl.vus[0].system),
+       'avec une embauche liee au joueur : les deux outils, et une consigne qui dit ce que l agent peut payer');
+    const t3 = JSON.stringify(cl.vus[2].messages);
+    ok(appels[0][0] === 'cherche' && appels[1][1] === 'https://meteo.example/forecast' && /tempC/.test(t3) && /paid 0.01 \$ to https:\/\/meteo.example\/forecast on Base, charged the user 0.011 \$/.test(t3),
+       'le modele recoit la reponse du service ET le recu (paye, facture, reseau)');
+    const cl2 = faux([{ stop: 'end_turn', content: [{ type: 'text', text: 'ok' }] }]);
+    await A.repond({ m, messages: [{ role: 'user', content: 'x' }] }, { client: cl2, src: src() });
+    ok(!cl2.vus[0].tools.some((t) => /paid_service/.test(t.name)) && /You can only READ/.test(cl2.vus[0].system), 'sans embauche (API, MCP, x402) : ni les outils, ni la phrase');
+    ok(!require('./agentic').definitions({ recherche: true }).some((t) => /paid_service/.test(t.name)), 'et l API publique ne les liste jamais');
+  }
+
   console.log('\n-- 3. les bornes --');
   {
     const cl = faux([{ stop: 'tool_use', content: [

@@ -1952,6 +1952,38 @@ const BASE_SONDE_MS = 10 * 60 * 1000;
    serveur joignable), chaque outil payable absent du catalogue PayAI est paye
    une fois, par Base, vers la tresorerie. Les outils trop chers pour le plafond
    par appel ne sont pas tentes. */
+/* ---- L'AGENT QUI EMBAUCHE D'AUTRES AGENTS (embauche.js, 28/09/2026) ----
+   AGENT_BUDGET_CLE : un portefeuille DEDIE, finance par le proprietaire ; le joueur est
+   debite en $SWOGE sur son solde de jeu. Sans la cle, les outils ne sont pas offerts. */
+let EMBAUCHE = null;
+function embauche() {
+  if (EMBAUCHE) return EMBAUCHE;
+  EMBAUCHE = require('./embauche').cree({ cle: process.env.AGENT_BUDGET_CLE, fetch: (u, o) => fetch(u, o), dossier: cfg.DATA_DIR, moi: MOI_URL,
+    catalogue: () => require('./embauche').cataloguePayai((u, o) => fetch(u, o), String(process.env.PAYAI_FACILITATOR_URL || 'https://facilitator.payai.network').trim()),
+    blockhash: () => { const xv = x402(); return xv && xv.blockhashSolana ? xv.blockhashSolana() : { ok: false, raison: 'Solana payments are not set up on this server' }; } });
+  if (EMBAUCHE.actif()) console.log('[agent] hiring on: pays x402 services from ' + EMBAUCHE.adresse + ' (' + EMBAUCHE.reseau + ', dedicated wallet)');
+  return EMBAUCHE;
+}
+/** La facture d'une embauche pour UN joueur : reserve au cours du moment, regle au prix du recu. */
+function factuEmbauche(addr) {
+  const dec = cfg.DECIMALS || 18;
+  return {
+    reserve: async (usd) => {
+      const cours = await studioChat.coursSwoge();
+      if (!(cours > 0)) return { ok: false, raison: 'the $SWOGE price is unavailable - nothing was charged' };
+      const wei = studio.montantBaseDe(usd, cours, dec);
+      if (!game.studioReserve(addr, wei)) return { ok: false, raison: 'your balance is too low to hire this service (' + studio.formateBase(wei, dec) + ' $SWOGE needed)' };
+      return { ok: true, jeton: { wei: String(wei), cours } };
+    },
+    regle: async (j, usd) => {
+      if (!j) return;
+      const fw = usd > 0 ? studio.montantBaseDe(usd, j.cours, dec) : 0n;
+      const s2 = game.studioRegle(addr, j.wei, String(fw));
+      persistSoon(); toAddr(addr, { type: 'balance', balance: s2 });
+    },
+  };
+}
+
 let AUTO_INSCRIPTION = null;
 function demarreAutoInscription(x) {
   if (!process.env.X402_AUTO_CLE || AUTO_INSCRIPTION) return;
@@ -2148,6 +2180,8 @@ async function x402Etat(detail) {
                 confirmes: (x.MESURE.solana || {}).confirmes, nonConfirmes: (x.MESURE.solana || {}).nonConfirmes, exclus: X.SOLANA_EXCLUS,
                 compteUsdc: (x.MESURE.solana || {}).compteUsdc, compteExiste: (x.MESURE.solana || {}).compteExiste } : null,
               autoInscription: AUTO_INSCRIPTION ? AUTO_INSCRIPTION.etat() : null,
+              /* L'agent qui embauche (embauche.js) : adresse publique, depense du jour, plafonds. */
+              embauche: embauche().etat(),
               agent: { actif: agentic().x402Payable('ask_agent') } };
   if (!detail) return e;
   const g = x.MESURE.gasUsed.slice().sort((a, b) => a - b);
@@ -3137,7 +3171,9 @@ const server = http.createServer(async (req, res) => {
         ouvert: chatActif('anthropic') && cours > 0, monnaie: '$SWOGE', coursUsd: cours || null, defaut: 'sonnet-5',
         note: !chatActif('anthropic') ? 'The AI provider key is not set on the server yet.' : !(cours > 0) ? 'The $SWOGE price is unavailable right now.' : null,
         etapesMax: studioAgent.ETAPES_MAX,
-        outils: studioAgent.definitions({ recherche: rech }).map((o) => ({ nom: o.name, description: o.description })),
+        outils: studioAgent.definitions({ recherche: rech, embauche: embauche().actif() }).map((o) => ({ nom: o.name, description: o.description })),
+        /* L'embauche (embauche.js) : la page ne dit « read-only » que si elle est eteinte. */
+        embauche: embauche().actif() ? { actif: true, maxAppelUsd: embauche().etat().maxAppelUsd, jourUsd: embauche().etat().maxJoueurUsd, marge: 1.1 } : { actif: false },
         modeles: studioChat.MODELES.filter((m) => m.fournisseur === 'anthropic').map((m) => ({ id: m.id, nom: m.nom, note: m.note,
           typiqueSwoge: enSwoge(typique(m)), maxSwoge: enSwoge(studioAgent.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], rech)) })),
       });
@@ -3158,6 +3194,8 @@ const server = http.createServer(async (req, res) => {
     const rid = reprises.ridOk(q.rid) ? q.rid : null;
     if (rid) reprises.note(addr, rid, { genre: 'chat', status: 'pending', texte: '' });
     const src = srcAgent();
+    /* L'embauche, liee a CE joueur : son adresse de session, jamais une adresse du message. */
+    if (embauche().actif()) src.embauche = embauche().pour(addr, factuEmbauche(addr));
     let r;
     try {
       r = await studioChat.repond({ addr, rid, modele: m.id, messages: q.messages, recherche: false }, {

@@ -99,6 +99,12 @@ const SYSTEME = [
   'Never give financial advice, price predictions or buy/sell calls. Never call a token safe; "unknown" is unknown, not good news.',
   'You can only READ: you cannot buy, sell, sign or post anything. If asked to, say so.',
 ].join(' ');
+/* L'embauche (embauche.js, 28/09/2026) : quand elle est offerte, la consigne dit la
+   verite sur ce que l'agent peut PAYER — et seulement cela. */
+const SYSTEME_EMBAUCHE = SYSTEME.replace('You can only READ: you cannot buy, sell, sign or post anything. If asked to, say so.',
+  'You cannot buy, sell, sign or post anything, with one exception: you may pay an outside service through hire_paid_service, which charges the user\'s balance. '
+  + 'Hire only when your own tools cannot answer, pick the cheapest service that fits, never hire the same service twice for the same question, '
+  + 'and always tell the user which service you paid, how much, and what it returned.');
 
 /* ---- CE QUI N'EST PAS OFFERT (decision du proprietaire, 26 septembre 2026) ----
  * Les conditions de Telegram (« Terms of Service for Content Licensing »,
@@ -220,6 +226,19 @@ function definitions(actifs) {
         hours: { type: 'integer', minimum: 1, maximum: 168, description: 'look back this many hours (default 24)' },
         limit: { type: 'integer', minimum: 1, maximum: 50, description: 'how many calls (default 20)' } } } },
   ];
+  /* ---- L'EMBAUCHE (embauche.js, 28/09/2026) : offerte seulement a une tache d'un joueur
+     connecte (src.embauche lie a SON adresse) — jamais a l'API, au MCP ni en x402. */
+  if (actifs && actifs.embauche) d.push(
+    { name: 'find_paid_services', description: 'Use this when none of your own tools can answer and an outside paid service might: it searches the public catalogue of x402 services (PayAI) for your need. '
+        + 'Returns up to 6 services with their URL, what they do, their price in USD per call and how to call them (method and example inputs). Searching is free: nothing is paid.',
+      input_schema: { type: 'object', properties: { need: { type: 'string', description: 'what you need, in a few English keywords (e.g. "weather forecast city")' } }, required: ['need'] } },
+    { name: 'hire_paid_service', description: 'Use this when a service found with find_paid_services is worth its price for the task: the agent pays it in USDC from its own wallet and the user\'s balance is charged the price plus 10%. '
+        + 'Only a URL returned by find_paid_services can be hired, at most 0.10 $ per call and 1 $ per user per day; nothing is charged if the service fails. '
+        + 'Returns the service answer and a receipt (price, charge, network, transaction).',
+      input_schema: { type: 'object', properties: { url: { type: 'string', description: 'the service URL, exactly as find_paid_services returned it' },
+        method: { type: 'string', enum: ['GET', 'POST'], description: 'optional; the method find_paid_services gave' },
+        query: { type: 'object', description: 'optional query parameters, for GET services' },
+        body: { type: 'object', description: 'optional JSON body, for POST services' } }, required: ['url'] } });
   if (actifs && actifs.recherche) d.push({ name: 'web_search', description: 'Use this when the answer is outside SWOGE data: news, projects, teams, people, anything on the open web. '
     + 'Returns ranked results with title, URL, date and an extract (Perplexity Search).',
     input_schema: { type: 'object', properties: { query: { type: 'string', description: 'the search query, as you would type it' } }, required: ['query'] } });
@@ -337,6 +356,26 @@ function outils(src) {
       }
       return { texte, donnees: v };
     },
+    /* L'embauche (embauche.js, 28/09/2026) : src.embauche est lie a l'adresse du joueur. */
+    async find_paid_services(e) {
+      if (!src.embauche) return { erreur: 'hiring outside services is not available here' };
+      const l = await src.embauche.cherche(e && e.need, 6);
+      if (!l.length) return { texte: 'No paid service in the catalogue matches "' + String((e && e.need) || '').slice(0, 80) + '". Nothing was paid.' };
+      const b = src.embauche.budget ? src.embauche.budget() : null;
+      return { texte: l.map((s, i) => (i + 1) + '. ' + s.url + ' — ' + s.usd + ' $ per call, ' + s.methode + (s.description ? ' — ' + s.description : '')
+          + ((s.entree.queryParams || s.entree.body) ? '\n   example inputs: ' + JSON.stringify(s.entree.queryParams || s.entree.body).slice(0, 300) : '')).join('\n')
+        + (b ? '\n\nUser budget today: ' + b.depenseUsd + ' $ spent of ' + b.jourUsd + ' $ (at most ' + b.maxAppelUsd + ' $ per call). Searching was free.' : '') };
+    },
+    async hire_paid_service(e) {
+      if (!src.embauche) return { erreur: 'hiring outside services is not available here' };
+      const r = await src.embauche.embauche(e || {});
+      if (!r || !r.ok) return { erreur: (r && r.raison) || 'the service could not be hired - nothing was charged' };
+      const c = r.recu;
+      return { texte: 'Service answer (' + (r.type || 'unknown type') + '):\n' + r.resultat
+          + '\n\nReceipt: ' + (r.gratuit ? 'the service answered without asking for payment; nothing was charged.'
+            : 'paid ' + c.usd + ' $ to ' + c.url + ' on ' + (c.reseau === 'eip155:8453' ? 'Base' : 'Solana') + ', charged the user ' + c.factureUsd + ' $ in $SWOGE' + (c.tx ? ', transaction ' + c.tx : '') + '.'),
+        donnees: c };
+    },
     /* Le roast (roast.js, 28/09/2026) : vendu par l'API seulement. */
     async roast_token(e) {
       if (!src.roast) return { erreur: 'roasts are not switched on' };
@@ -434,7 +473,8 @@ function outils(src) {
 async function repond({ m, messages, surTexte, surReflexion, surOutil, surResultat, signal }, deps) {
   const c = (deps && deps.client) || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 180000 });
   const O = outils(deps.src);
-  const tools = definitions({ recherche: !!deps.src.recherche });
+  const tools = definitions({ recherche: !!deps.src.recherche, embauche: !!deps.src.embauche });
+  const systeme = deps.src.embauche ? SYSTEME_EMBAUCHE : SYSTEME;
   /* Seul un outil DECLARE s'execute : un nom que le modele invente, ou un outil
      non offert (NON_OFFERTS) qu'il appellerait quand meme, est « inconnu ». */
   const declares = new Set(tools.map((t) => t.name));
@@ -469,10 +509,10 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
   const toolsCompte = tools.map((t) => { const x = Object.assign({}, t); delete x.eager_input_streaming; return x; });
   const compte = async () => {
     try {
-      const r = await c.messages.countTokens({ model: m.api, system: SYSTEME, tools: toolsCompte, messages: fil });
+      const r = await c.messages.countTokens({ model: m.api, system: systeme, tools: toolsCompte, messages: fil });
       if (r && r.input_tokens > 0) return r.input_tokens;
     } catch (e) { /* compte impossible : un jeton par caractere, pessimiste expres */ }
-    return JSON.stringify([SYSTEME, toolsCompte, fil]).length;
+    return JSON.stringify([systeme, toolsCompte, fil]).length;
   };
 
   try {
@@ -499,7 +539,7 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
         if (!dernier && depense + pireAppel + pireFinal > plafond) dernier = true;
       }
       etapes++;
-      const params = { model: m.api, max_tokens: maxTok, system: SYSTEME, messages: fil, tools };
+      const params = { model: m.api, max_tokens: maxTok, system: systeme, messages: fil, tools };
       if (dernier) params.tool_choice = { type: 'none' };
       const opts = signalAppel ? { signal: signalAppel } : undefined;
       let texteEtape = '', msg;
@@ -579,5 +619,5 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
   return out;
 }
 
-module.exports = { repond, definitions, outils, NON_OFFERTS, pireCasUsd, coutAppelUsd, SYSTEME, OSINT_TYPES, rapportOsint, ficheEnAnglais, DESCRIPTIONS_API, OUTILS_JETONS, SYSTEME_JETONS,
+module.exports = { repond, definitions, outils, NON_OFFERTS, pireCasUsd, coutAppelUsd, SYSTEME, SYSTEME_EMBAUCHE, OSINT_TYPES, rapportOsint, ficheEnAnglais, DESCRIPTIONS_API, OUTILS_JETONS, SYSTEME_JETONS,
   ETAPES_MAX, OUTILS_PAR_ETAPE, RESULTAT_CAR_MAX, SORTIE_MAX, PRIX_RECHERCHE_USD, LIMITES_X402, BUDGET_X402_USD, MARGE_COMPTE };
