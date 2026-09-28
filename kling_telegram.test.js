@@ -99,6 +99,25 @@ const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; c
        'la legende : sous la limite de Telegram (' + l.length + '/1024), PayAI, Base et Solana, la mention GoPlus, le lien — et rien de ce qui n est pas encore en ligne');
     ok(!/logo/i.test(P[0].prompt.replace(/no logos/, '')) && /no text, no logos/.test(P[0].prompt), 'aucun logo de tiers demande a Kling (« no text, no logos »)');
   }
+  console.log('\n-- 3c. l annonce des 15 outils (28/09) : 6 s, sans voix, le nom PayAI ecrit --');
+  {
+    const P = KT.PROGRAMME.filter((p) => /^agents15-/.test(p.cle));
+    const videos = [], demandes = [], photos = [];
+    const kt = KT.cree({ dossier: fs.mkdtempSync('/tmp/kling-tg-'), site: 'https://swoleeswoge.dog', programme: P, maintenant: () => P[0].a + 1000, journal: () => {},
+      telegram: { notifyPhoto: (u) => photos.push(u), notifyVideo: (u, l) => videos.push({ u, l }) },
+      kling: { actif: () => true, image: async (q) => { demandes.push(q); return { ok: true, id: 'I', url: 'https://cdn.kling.example/k15.png' }; },
+               video: async (q) => { demandes.push(q); return { ok: true, id: 'V', url: 'https://cdn.kling.example/a15.mp4' }; } } });
+    await kt.tour(); await kt.tour();
+    ok(P.length === 2 && photos.length === 0 && videos.length === 1, 'l image cle reste muette ; seule la video part');
+    const K = require('./kling');
+    ok(demandes[1].modele === 'kling-3.0-turbo' && demandes[1].duree === 6 && K.prixUsd(demandes[1].modele, demandes[1].resolution, demandes[1].audio, demandes[1].duree) === 0.84,
+       '6 s en kling-3.0-turbo 1080p : une combinaison que Kling vend (0,84 $)');
+    ok(/No dialogue and no voice/.test(demandes[1].prompt) && /"PayAI"/.test(demandes[0].prompt) && !/×|partner/i.test(demandes[0].prompt + videos[0].l),
+       'aucune voix demandee ; « PayAI » ecrit sur le panneau, sans « × » ni « partner »');
+    const l = videos[0].l;
+    ok(l.length <= 1024 && /15 tools live on PayAI/.test(l) && /token_verdict<\/b> — a fast verdict on any token for \$0\.01/.test(l) && /From \$0\.005 a call/.test(l)
+       && /Powered by Go\+ Security/.test(l) && /swogeagentic\.html/.test(l), 'la legende : ' + l.length + '/1024, les prix relus en direct, la mention GoPlus, le lien');
+  }
   console.log('\n-- 4. la serie automatique de 20 h 30 --');
   {
     const C = Date.parse('2026-09-27T18:30:00Z');

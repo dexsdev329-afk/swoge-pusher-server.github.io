@@ -72,6 +72,41 @@ const PROGRAMME = [
       + '🧠 <b>colony_activity</b> · <b>new_launches</b> · <b>swoge_economy</b> — live data from the SWOGE AI colony\n\n'
       + '💸 From $0.02 a call\n👉 https://swoleeswoge.dog/swogeagentic.html',
     modele: 'kling-2.6', duree: 10, resolution: '1080p', audio: 'native' },
+  /* « Le post avec la video a fait 250 vues meme si le produit n'est pas bien
+     mis en avant ; refais-en un dans le Telegram avec les nouvelles
+     informations, une image de qualite animee 6 secondes, sans voix, juste du
+     son, et SWOGE qui tient le logo de PayAI. » (28/09, 09 h 30 a Paris)
+     Les chiffres de la legende sont relus EN DIRECT le 28/09 a 07:30 UTC :
+     /.well-known/x402 sert 16 outils, 15 sont au catalogue PayAI ; les 402
+     disent token_verdict 0,01 $ (Base, Solana), robinhood_* 0,005 $ sur Base,
+     et chaque outil se paie aussi en USDG ou en $SWOGE sur Robinhood Chain.
+     Le LOGO : Kling Image ne prend qu'UNE image de reference (le personnage),
+     il ne peut donc pas reproduire le logo graphique de PayAI — il le
+     dessinerait de travers. SWOGE brandit un panneau ou « PayAI » est ECRIT :
+     le nom, pour dire un fait (on est au catalogue), sans « × » qui ferait
+     croire a un partenariat. Video : kling-3.0-turbo, la seule a 6 s ; son
+     natif impose par le modele, donc la consigne dit « aucune voix, musique et
+     bruitages seulement ». Cout : 0,028 $ + 6 s × 0,14 $ = 0,87 $. */
+  { cle: 'agents15-image-2026-09-28', a: Date.parse('2026-09-28T07:55:00Z'), muet: true, format: '9:16', reference: 'subject',
+    prompt: 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build. '
+      + 'He stands on a futuristic neon stage at night and proudly holds up, with both hands above his chest, a large glowing sign with the single word "PayAI" written on it in bold clean white letters. '
+      + 'Behind him, a wall of holographic screens with green crypto charts, and a swarm of small friendly robot agents flying toward him carrying glowing blue coins. '
+      + 'Vertical cinematic shot, dramatic rim lighting, premium 3D render quality, highly detailed, sharp focus. The only text in the image is "PayAI" on the sign.' },
+  { cle: 'agents15-video-2026-09-28', a: Date.parse('2026-09-28T07:55:00Z'), type: 'video', depuis: 'agents15-image-2026-09-28',
+    prompt: 'SWOGE, the muscular shiba inu, lifts the glowing PayAI sign higher and flexes with a confident grin; the small robot agents swoop in and drop glowing blue coins around him, '
+      + 'the holographic charts spike upward. Slow cinematic push-in. No dialogue and no voice at all: only an energetic electronic beat, whooshes and coin sound effects.',
+    legende: '🤖 <b>SWOGE AI: 15 tools live on PayAI</b>\n\n'
+      + 'Any AI agent can hire SWOGE AI and pay per call with x402: USDC on <b>Base</b> or <b>Solana</b>, or USDG / $SWOGE on <b>Robinhood Chain</b>. No account, no API key.\n\n'
+      + '🆕 <b>token_verdict</b> — a fast verdict on any token for $0.01\n'
+      + '🧠 <b>chat_completion</b> — 10 AI models, OpenAI format, pay per call\n'
+      + '⛓️ <b>robinhood_token · wallet · tx · rpc</b> — Robinhood Chain data, decoded\n'
+      + '🔎 <b>scan_token</b> — market + contract checks (Powered by Go+ Security)\n'
+      + '🚪 <b>can_i_sell</b> — can you exit before you buy?\n'
+      + '🕵️ <b>wallet_intel</b> · <b>osint_lookup</b> · <b>web_search</b>\n'
+      + '📊 <b>colony_activity</b> · <b>new_launches</b> · <b>swoge_economy</b> — live from the SWOGE AI colony\n'
+      + '🤝 <b>ask_agent</b> — a research agent that chains the tools\n\n'
+      + '💸 From $0.005 a call\n👉 https://swoleeswoge.dog/swogeagentic.html',
+    modele: 'kling-3.0-turbo', duree: 6, resolution: '1080p', audio: 'native' },
 ];
 const RETARD_MAX_MS = 60 * 60e3;
 
