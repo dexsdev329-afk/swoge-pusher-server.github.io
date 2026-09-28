@@ -189,20 +189,14 @@ function definitions(actifs) {
   /* Vendu par l'API seulement : l'agent de la page a deja scan_token. */
   base.push({ name: 'token_verdict', description: Agent.DESCRIPTIONS_API.token_verdict,
     inputSchema: { type: 'object', properties: { address: { type: 'string', description: 'EVM contract address, 0x followed by 40 hex characters' } }, required: ['address'] } });
-  /* Les actions tokenisees (actions_rh.js, 28/09) : vendues par l'API seulement. */
-  base.push({ name: 'stock_token_check', description: Agent.DESCRIPTIONS_API.stock_token_check, inputSchema: { type: 'object', properties: {
-    address: { type: 'string', description: 'a token contract on Robinhood Chain, 0x followed by 40 hex characters' },
-    symbol: { type: 'string', description: 'or a ticker (NVDA, TSLA, SPY…) to get the official contract' } } } });
+  /* Les actions tokenisees (actions_rh.js, 28/09) : vendues par l'API ; stock_token_check offert aussi au joueur (studio_agent). */
+  base.push({ name: 'stock_token_check', description: Agent.DESCRIPTIONS_API.stock_token_check, inputSchema: Agent.SCHEMAS_API.stock_token_check });
   base.push({ name: 'stock_tokens_premium', description: Agent.DESCRIPTIONS_API.stock_tokens_premium, inputSchema: { type: 'object', properties: {
     limit: { type: 'integer', minimum: 1, maximum: 50, description: 'how many tokens (default 15)' },
     min_liquidity_usd: { type: 'number', minimum: 0, description: 'minimum pool liquidity (default 10,000 $)' } } } });
-  /* Les lancements de Base (base_lancements.js, 28/09) : vendus par l'API seulement. */
-  base.push({ name: 'base_launches', description: Agent.DESCRIPTIONS_API.base_launches, inputSchema: { type: 'object', properties: {
-    platform: { type: 'string', enum: ['all', 'clanker', 'zora'], description: 'default all' },
-    limit: { type: 'integer', minimum: 1, maximum: 25, description: 'how many launches, newest first (default 10)' },
-    traded_only: { type: 'boolean', description: 'only launches swapped at least once after their launch block' } } } });
-  base.push({ name: 'base_deployer', description: Agent.DESCRIPTIONS_API.base_deployer, inputSchema: { type: 'object', properties: {
-    address: { type: 'string', description: 'the deployer address on Base, 0x followed by 40 hex characters' } }, required: ['address'] } });
+  /* Les lancements de Base (base_lancements.js, 28/09) : vendus par l'API, offerts aussi au joueur (studio_agent). */
+  base.push({ name: 'base_launches', description: Agent.DESCRIPTIONS_API.base_launches, inputSchema: Agent.SCHEMAS_API.base_launches });
+  base.push({ name: 'base_deployer', description: Agent.DESCRIPTIONS_API.base_deployer, inputSchema: Agent.SCHEMAS_API.base_deployer });
   /* Le hasard prouvable (hasard.js, 28/09) : vendu par l'API seulement. */
   base.push({ name: 'fair_commit', description: Agent.DESCRIPTIONS_API.fair_commit, inputSchema: { type: 'object', properties: {} } });
   base.push({ name: 'fair_draw', description: Agent.DESCRIPTIONS_API.fair_draw, inputSchema: { type: 'object', properties: {

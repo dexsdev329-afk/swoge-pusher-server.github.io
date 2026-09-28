@@ -73,6 +73,29 @@ const m = C.modele('sonnet-5');
     ok(/Powered by Go\+ Security, https:\/\/gopluslabs\.io/.test(sc.split('. ')[0]),
        'scan_token dit « Powered by Go+ Security » avec son lien, dans sa PREMIERE phrase (celle que reprennent llms.txt et openapi)');
     ok(!A.definitions({ recherche: false }).some((x) => x.name === 'web_search'), 'sans cle Perplexity : pas de recherche web');
+    /* ---- LE JOUEUR LE PLUS EQUIPE (28/09/2026 au soir) ----
+     * La borne ci-dessus ne jugeait que le catalogue d'ask_agent. Un joueur connecte
+     * recevait en plus l'embauche et l'eSIM : 4 253 jetons d'outils, 660 de consigne,
+     * contre 3 000 et 500 au pire cas — et la facture est plafonnee a la reserve. */
+    const plein = { recherche: true, embauche: {}, achats: {}, joueur: true, actions: {}, base: {} };
+    const dp = A.definitions(A.actifsDe(plein)), jp = A.jetonsDe(plein);
+    ok(['stock_token_check', 'base_launches', 'base_deployer'].every((n) => dp.some((x) => x.name === n))
+       && !A.definitions(A.actifsDe(Object.assign({}, plein, { joueur: false }))).some((x) => /^(stock_|base_)/.test(x.name)),
+       'la page offre au joueur l officielle ou la copie et les lancements Base ; sans src.joueur (ask_agent, MCP) : non');
+    ok(!A.definitions(A.actifsDe({ recherche: true, joueur: true })).some((x) => /^(stock_|base_)/.test(x.name)),
+       'un module absent (BASE_LANCEMENTS=0, pas de noeud) : l outil n est pas offert');
+    ok(Math.ceil(JSON.stringify(dp).length / 2) <= jp.outilsJetons && Math.ceil(A.systemeDe(plein).length / 2) <= jp.systemeJetons,
+       'le pire cas du joueur le plus equipe couvre SES outils et SA consigne [' + Math.ceil(JSON.stringify(dp).length / 2) + ' ≤ ' + jp.outilsJetons + ', '
+       + Math.ceil(A.systemeDe(plein).length / 2) + ' ≤ ' + jp.systemeJetons + ']');
+    const mS = C.modele('sonnet-5'), tache = [{ content: 'x'.repeat(2000) }];
+    ok(A.pireCasUsd(mS, tache, true, jp) > A.pireCasUsd(mS, tache, true), 'sa reserve monte avec ce qu il relit');
+    const j0 = A.jetonsDe({ recherche: true });
+    ok(j0.outilsJetons === A.OUTILS_JETONS && j0.systemeJetons === A.SYSTEME_JETONS
+       && A.pireCasUsd(mS, tache, true, Object.assign({}, A.LIMITES_X402, j0)) === A.pireCasUsd(mS, tache, true, A.LIMITES_X402),
+       'ask_agent (sans joueur) : les bornes mesurees, son prix x402 ne bouge pas');
+    ok(dp.find((x) => x.name === 'base_launches').input_schema === A.SCHEMAS_API.base_launches
+       && require('./agentic').definitions({ recherche: true }).find((x) => x.name === 'base_launches').inputSchema === A.SCHEMAS_API.base_launches,
+       'un seul schema pour l API et la page');
     /* ---- QUAND APPELER (decouverte, 26 septembre 2026) ----
      * Un annuaire d'outils se parcourt par la tache : la PREMIERE phrase de
      * chaque description vendue (celle que reprennent openapi.json et llms.txt)
@@ -311,6 +334,10 @@ const m = C.modele('sonnet-5');
     const i = srv.indexOf("path === '/studio/agent' ||"), bloc = srv.slice(i, srv.indexOf('SWOLEMIND — L\'HISTORIQUE', i));
     ok(/sessionJoueur\.lire\(game\.sessionSecret, jeton\)/.test(bloc) && /fournisseur !== 'anthropic'/.test(bloc) && !/q\.addr|q\.adresse/.test(bloc),
        'la route prend l adresse dans la session, jamais dans le corps, et ne sert que Claude');
+    ok(/src\.joueur = true/.test(bloc) && /pireCasUsd\(mm, msgs, rech, studioAgent\.jetonsDe\(src\)\)/.test(bloc),
+       'la route du joueur marque la page (src.joueur) et reserve sur ce que SA tache relit (jetonsDe)');
+    ok((srv.match(/studioAgent\.pireCasUsd\(mm, msgs[^)]*\)/g) || []).every((x) => /jetonsDe/.test(srv.slice(srv.indexOf(x), srv.indexOf(x) + 200))),
+       'chaque reserve de l agent passe par jetonsDe');
   }
 
   console.log('\n-- 6. les appels Telegram suivis : offerts seulement avec TG_APPELS_VENTE=1 (26 septembre 2026) --');

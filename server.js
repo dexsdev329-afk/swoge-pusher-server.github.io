@@ -1883,7 +1883,7 @@ const agentic = () => {
       const src = srcAgent();
       return studioChat.repond({ addr, modele: limites.modele, messages: [{ role: 'user', content: tache }], recherche: false, canal: 'rest' }, {
         horsSolde: true, prixUsd, actif: chatActif,
-        pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, src.recherche, limites),
+        pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, src.recherche, Object.assign({}, limites, studioAgent.jetonsDe(src))),
         fournisseur: (p) => studioAgent.repond(p, { src, limites, budgetUsd }) });
     },
     agent: ({ addr, tache, modele, canal }) => {
@@ -1891,7 +1891,7 @@ const agentic = () => {
       const src = srcAgent();
       return studioChat.repond({ addr, modele, messages: [{ role: 'user', content: tache }], recherche: false, canal }, {
         cours: () => studioChat.coursSwoge(), solde: { reserve: (a, w) => game.studioReserve(a, w), regle }, actif: chatActif,
-        pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, src.recherche),
+        pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, src.recherche, studioAgent.jetonsDe(src)),
         fournisseur: (p) => studioAgent.repond(p, { src }) });
     },
   });
@@ -3276,16 +3276,18 @@ const server = http.createServer(async (req, res) => {
       const enSwoge = (usd) => (cours > 0 ? Math.ceil(studioChat.factureUsd(usd) / cours) : null);
       /* « Typique » : trois appels, une recherche, une reponse moyenne. */
       const typique = (m) => (3 * 6000 * m.entree + 3 * 900 * m.sortie) / 1e6 + (rech ? 0.005 : 0);
+      /* Le joueur connecte le plus equipe (embauche et eSIM allumees) : ses outils, et son pire cas sur ce qu'il relit. */
+      const srcPage = Object.assign(srcAgent(), { joueur: true, embauche: embauche().actif() || null, achats: achats().actif() || null });
       return json(200, {
         ouvert: chatActif('anthropic') && cours > 0, monnaie: '$SWOGE', coursUsd: cours || null, defaut: 'sonnet-5',
         note: !chatActif('anthropic') ? 'The AI provider key is not set on the server yet.' : !(cours > 0) ? 'The $SWOGE price is unavailable right now.' : null,
         etapesMax: studioAgent.ETAPES_MAX,
-        outils: studioAgent.definitions({ recherche: rech, embauche: embauche().actif(), achats: achats().actif() }).map((o) => ({ nom: o.name, description: o.description })),
+        outils: studioAgent.definitions(studioAgent.actifsDe(srcPage)).map((o) => ({ nom: o.name, description: o.description })),
         /* L'embauche (embauche.js) : la page ne dit « read-only » que si elle est eteinte. */
         embauche: embauche().actif() ? { actif: true, maxAppelUsd: embauche().etat().maxAppelUsd, jourUsd: embauche().etat().maxJoueurUsd, marge: 1.1 } : { actif: false },
         achats: achats().actif() ? { actif: true, maxAchatUsd: achats().etat().maxAchatUsd, jourUsd: achats().etat().maxJoueurUsd, marge: achats().etat().marge } : { actif: false },
         modeles: studioChat.MODELES.filter((m) => m.fournisseur === 'anthropic').map((m) => ({ id: m.id, nom: m.nom, note: m.note,
-          typiqueSwoge: enSwoge(typique(m)), maxSwoge: enSwoge(studioAgent.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], rech)) })),
+          typiqueSwoge: enSwoge(typique(m)), maxSwoge: enSwoge(studioAgent.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], rech, studioAgent.jetonsDe(srcPage))) })),
       });
     }
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
@@ -3304,6 +3306,8 @@ const server = http.createServer(async (req, res) => {
     const rid = reprises.ridOk(q.rid) ? q.rid : null;
     if (rid) reprises.note(addr, rid, { genre: 'chat', status: 'pending', texte: '' });
     const src = srcAgent();
+    /* La page : les marches voisins (actions tokenisees, lancements Base) sont offerts au joueur. */
+    src.joueur = true;
     /* L'embauche, liee a CE joueur : son adresse de session, jamais une adresse du message. */
     /* Un joueur qui a coupe ses embauches (plafond 0) : les outils ne sont meme pas offerts. */
     if (embauche().actif()) { const P = embauche().pour(addr, factuEmbauche(addr)); if (P.budget().jourUsd > 0) src.embauche = P; }
@@ -3318,7 +3322,8 @@ const server = http.createServer(async (req, res) => {
           regle: (a, rw, fw) => { const s2 = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s2 }); return s2; },
         },
         actif: chatActif,
-        pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, rech),
+        /* Ce que CETTE tache relit (outils et consigne du joueur), pas une constante : la facture est plafonnee a la reserve. */
+        pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, rech, studioAgent.jetonsDe(src)),
         fournisseur: (p) => studioAgent.repond(p, { src }),
         surTexte: (t) => { if (rid) reprises.ajoute(addr, rid, t); envoie('texte', { t }); },
         surReflexion: () => envoie('etape', { quoi: 'reflexion' }),
