@@ -72,7 +72,7 @@ const fauxMarche = http.createServer((q, r) => {
   console.log('-- 1. le catalogue, public --');
   const cat = await J('/agentic/tools');
   /* Sans TG_APPELS_VENTE=1, les appels Telegram ne sont pas vendus (conditions de Telegram, 26 septembre 2026). */
-  ok(cat.status === 200 && cat.b.outils.map((o) => o.name).join(',') === 'scan_token,can_i_sell,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,chat_completion,robinhood_token,robinhood_wallet,robinhood_tx,robinhood_rpc,token_verdict,base_launches,base_deployer,fair_commit,fair_draw,fair_verify,roast_token,ask_agent,generate_image,generate_video,video_status',
+  ok(cat.status === 200 && cat.b.outils.map((o) => o.name).join(',') === 'scan_token,can_i_sell,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,chat_completion,robinhood_token,robinhood_wallet,robinhood_tx,robinhood_rpc,token_verdict,stock_token_check,stock_tokens_premium,base_launches,base_deployer,fair_commit,fair_draw,fair_verify,roast_token,ask_agent,generate_image,generate_video,video_status',
      'les outils et leurs prix (sans cle Perplexity : pas de recherche web ; sans TG_APPELS_VENTE : pas d appels Telegram) [' + cat.b.outils.map((o) => o.name).join(',') + ']');
   ok(/Powered by Go\+ Security, https:\/\/gopluslabs\.io/.test(cat.b.outils[0].description), 'le catalogue : scan_token dit « Powered by Go+ Security » avec son lien');
 
@@ -272,7 +272,7 @@ const fauxMarche = http.createServer((q, r) => {
     /* Allume : il revient partout, a sa place ; la couverture d'avant tient (suivi eteint dans l essai). */
     process.env.TG_APPELS_VENTE = '1';
     const cat1 = await J('/agentic/tools');
-    ok(cat1.b.outils.map((o) => o.name).join(',') === 'scan_token,can_i_sell,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,telegram_calls,chat_completion,robinhood_token,robinhood_wallet,robinhood_tx,robinhood_rpc,token_verdict,base_launches,base_deployer,fair_commit,fair_draw,fair_verify,roast_token,ask_agent,generate_image,generate_video,video_status',
+    ok(cat1.b.outils.map((o) => o.name).join(',') === 'scan_token,can_i_sell,colony_activity,swoge_economy,new_launches,wallet_intel,osint_lookup,telegram_calls,chat_completion,robinhood_token,robinhood_wallet,robinhood_tx,robinhood_rpc,token_verdict,stock_token_check,stock_tokens_premium,base_launches,base_deployer,fair_commit,fair_draw,fair_verify,roast_token,ask_agent,generate_image,generate_video,video_status',
        'TG_APPELS_VENTE=1 : au catalogue, a sa place');
     const oa1 = await (await fetch(base + '/openapi.json')).json();
     ok(oa1.paths['/agentic/call/telegram_calls'] && /`telegram_calls\(channel\?, hours\?, limit\?\)`/.test(await (await fetch(base + '/llms.txt')).text()), 'TG_APPELS_VENTE=1 : dans /openapi.json et /llms.txt');

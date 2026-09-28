@@ -92,6 +92,10 @@ const PRIX_DEFAUT = { scan_token: 0.01, colony_activity: 0.005, swoge_economy: 0
      la chaine. Catalogue PayAI du 28/09 : lancements Base 0,0067-0,25 $ (mediane 0,25 $),
      deployeurs EVM 2-3 routes. 0,005 $ par cle ; en x402 0,006-0,007 $ (plancher 0,005 $). */
   base_launches: 0.005, base_deployer: 0.005,
+  /* 28 septembre 2026 : les actions tokenisees (actions_rh.js). Catalogue PayAI du 28/09 :
+     6 entrees « actions tokenisees » chez 2 hotes (0,001-0,01 $), aucune ne dit l'officielle
+     de la copie. 0,005 $ par cle ; en x402 0,006-0,007 $ (plancher 0,005 $). */
+  stock_token_check: 0.005, stock_tokens_premium: 0.005,
   /* 27 septembre 2026 : les lectures Robinhood Chain (lectures_rh.js). OneSource
      vend les memes lectures, brutes, 0,001 a 0,01 $ (llms.txt lu le 27/09) ; les
      notres sont decodees. 0,004 $ par cle ; en x402, plancher de 0,005 $ sur
@@ -180,6 +184,13 @@ function definitions(actifs) {
   /* Vendu par l'API seulement : l'agent de la page a deja scan_token. */
   base.push({ name: 'token_verdict', description: Agent.DESCRIPTIONS_API.token_verdict,
     inputSchema: { type: 'object', properties: { address: { type: 'string', description: 'EVM contract address, 0x followed by 40 hex characters' } }, required: ['address'] } });
+  /* Les actions tokenisees (actions_rh.js, 28/09) : vendues par l'API seulement. */
+  base.push({ name: 'stock_token_check', description: Agent.DESCRIPTIONS_API.stock_token_check, inputSchema: { type: 'object', properties: {
+    address: { type: 'string', description: 'a token contract on Robinhood Chain, 0x followed by 40 hex characters' },
+    symbol: { type: 'string', description: 'or a ticker (NVDA, TSLA, SPY…) to get the official contract' } } } });
+  base.push({ name: 'stock_tokens_premium', description: Agent.DESCRIPTIONS_API.stock_tokens_premium, inputSchema: { type: 'object', properties: {
+    limit: { type: 'integer', minimum: 1, maximum: 50, description: 'how many tokens (default 15)' },
+    min_liquidity_usd: { type: 'number', minimum: 0, description: 'minimum pool liquidity (default 10,000 $)' } } } });
   /* Les lancements de Base (base_lancements.js, 28/09) : vendus par l'API seulement. */
   base.push({ name: 'base_launches', description: Agent.DESCRIPTIONS_API.base_launches, inputSchema: { type: 'object', properties: {
     platform: { type: 'string', enum: ['all', 'clanker', 'zora'], description: 'default all' },
@@ -229,6 +240,8 @@ function entreeInvalide(outil, a) {
   a = a || {};
   if ((outil === 'scan_token' || outil === 'can_i_sell' || outil === 'token_verdict' || outil === 'roast_token') && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
   if (outil === 'web_search' && !String(a.query || '').trim()) return 'query is required';
+  if (outil === 'stock_token_check' && !a.address && !String(a.symbol || '').trim()) return 'give address or symbol';
+  if (outil === 'stock_token_check' && a.address && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address))) return 'address must be 0x followed by 40 hex characters';
   if (outil === 'base_deployer' && !/^0x[0-9a-fA-F]{40}$/.test(String(a.address || ''))) return 'address must be 0x followed by 40 hex characters';
   if (outil === 'base_launches' && a.platform !== undefined && !['all', 'clanker', 'zora'].includes(a.platform)) return 'platform must be all, clanker or zora';
   if (outil === 'fair_draw' && !/^[0-9a-f]{24}$/.test(String(a.commitment_id || ''))) return 'commitment_id must be the id fair_commit returned';

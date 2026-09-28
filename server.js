@@ -1718,6 +1718,20 @@ function lecturesRh() {
   });
   return LECTURES_RH;
 }
+/* Les actions tokenisees de Robinhood Chain (actions_rh.js, 28/09/2026) : l'officielle, la copie, l'ecart a l'oracle. */
+let ACTIONS_RH = null;
+function actionsRh() {
+  if (ACTIONS_RH) return ACTIONS_RH;
+  const url = String(process.env.RH_LECTURES_RPC_URL || cfg.RPC_URL || '').trim();
+  ACTIONS_RH = require('./actions_rh').cree({ fetch: (u, o) => fetch(u, o),
+    rpc: async (m, p) => {
+      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: m, params: p }), signal: AbortSignal.timeout(10000) });
+      const j = await r.json();
+      if (j.error) throw new Error(String(j.error.message || j.error.code).slice(0, 120));
+      return j.result;
+    } });
+  return ACTIONS_RH;
+}
 /* Le hasard prouvable (hasard.js, 28/09/2026) : fair_commit / fair_draw / fair_verify, vendus par l'API. */
 const hasardProuvable = require('./hasard').cree({ dossier: cfg.DATA_DIR, shoe: require('./casino').shoe });
 /* Les lancements Clanker/Zora de Base, lus sur la chaine (base_lancements.js, 28/09/2026). BASE_RPC_URL, BASE_LANCEMENTS=0. */
@@ -1733,6 +1747,8 @@ const srcAgent = () => ({
   lectures: lecturesRh(),
   hasard: hasardProuvable,
   base: baseLancements,
+  /* Les actions tokenisees (actions_rh.js, 28/09/2026) : le noeud des lectures Robinhood Chain. */
+  actions: actionsRh(),
   /* L'epreuve de sortie (can_i_sell) : { resultat } ou { erreur }, jamais facturee sur erreur. */
   sortie: epreuveSortie,
   /* Les appels Telegram suivis (outil telegram_calls) ; null si le suivi est eteint.

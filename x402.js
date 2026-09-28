@@ -148,7 +148,9 @@ const PLANCHER_FACILITE = Object.freeze({ token_verdict: 0.01,
   /* Le hasard prouvable (28/09) : du calcul pur, 0,003 $ (au-dessus du reglement le plus cher). */
   fair_commit: 0.003, fair_draw: 0.003, fair_verify: 0.003,
   /* Les lancements de Base (28/09) : nos lectures de la chaine, 0,005 $ comme les lectures Robinhood Chain. */
-  base_launches: 0.005, base_deployer: 0.005 });
+  base_launches: 0.005, base_deployer: 0.005,
+  /* Les actions tokenisees (28/09) : nos lectures, 0,005 $ comme les lectures Robinhood Chain. */
+  stock_token_check: 0.005, stock_tokens_premium: 0.005 });
 /* Les journaux de l'USDC (EIP-3009, circlefin/stablecoin-evm fc85788b,
    contracts/v2/EIP3009.sol : AuthorizationUsed émis :335-336,
    AuthorizationCanceled :266-267) — keccak256 des signatures, calculés avec

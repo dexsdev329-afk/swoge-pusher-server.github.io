@@ -166,6 +166,18 @@ function valide(sc, v, ch, strict, err) {
   const BASE_L = BL.cree({ rpc: async (m) => (m === 'eth_blockNumber' ? '0x' + (100 + 50).toString(16) : m === 'eth_getBlockByNumber' ? { timestamp: '0x' + Math.floor(Date.now() / 1000).toString(16) }
     : m === 'eth_getLogs' ? [zoraLog] : null) });
   await BASE_L.tour();
+  /* Les actions tokenisees : le VRAI module, sur de fausses sources (la liste officielle, un flux, une piscine). */
+  const { ethers: E5 } = require('ethers');
+  const I_MC = new E5.utils.Interface(['function aggregate3((address target, bool allowFailure, bytes callData)[] calls) payable returns ((bool success, bytes returnData)[] returnData)']);
+  const I_AGG = new E5.utils.Interface(['function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)']);
+  const NV = '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec';
+  const ACTIONS = require('./actions_rh').cree({
+    fetch: async (u) => ({ ok: true, json: async () => (u === require('./actions_rh').REGISTRE ? { assets: [{ tokenSymbol: 'NVDA', tokenName: 'NVIDIA Robinhood Token', isin: 'US67066G1040',
+      deployments: [{ contractAddress: NV, chainId: 4663 }], currentMultiplier: '1.0007', status: 'ASSET_STATUS_ACTIVE', tradingCapabilities: { market: { whole: 'TRADING_STATUS_TRADABLE' } } }] }
+      : u === require('./actions_rh').FLUX ? [{ name: 'Robinhood NVDA / USD', proxyAddress: '0x379EC4f7C378F34a1B47E4F3cbeBCbAC3E8E9F15', decimals: 8, heartbeat: 86400 }]
+        : [{ baseToken: { address: NV }, quoteToken: { symbol: 'USDG' }, priceUsd: '230.42', liquidity: { usd: 5169589 }, pairAddress: '0xd4EB21209C4D6093f80B5b84f5C45cc093EA14a3', dexId: 'uniswap' }]) }),
+    rpc: async (m, p) => { const c = I_MC.decodeFunctionData('aggregate3', p[0].data)[0];
+      return I_MC.encodeFunctionResult('aggregate3', [c.map(() => [true, I_AGG.encodeFunctionResult('latestRoundData', [1, 23066866643, 0, Math.floor(Date.now() / 1000) - 60, 1])])]); } });
   const ENG = HZ.engage();
   const src = { recherche: true, Jeton, fiche: async () => fiche, lectures: RH.faux().X, vue: () => vue, economie: async () => eco, cours: async () => 0.00002493,
     cherche: async () => [{ url: 'https://news.example/a', titre: 'News', extrait: 'x', date: null }], contexteRecherche: (r) => 'RESULTS ' + r.length,
@@ -173,7 +185,7 @@ function valide(sc, v, ch, strict, err) {
     osint: async (type, valeur) => ({ cible: { type, valeur }, faits: [{ predicat: 'A', valeur: '93.184.215.14', sources: ['dns.google'] }], constats: [{ etiquette: 'NOTE', dit: 'Hosted on a CDN.' }] }),
     liensScan: (a) => ({ card: BASE + '/scan/carte/' + a + '.png', share: BASE + '/s/' + a, page: 'https://swoleeswoge.dog/swoge_scan.html?t=' + a }),
     /* Le hasard prouvable : le VRAI module hasard.js (un engagement cree avant le tirage). */
-    hasard: HZ, base: BASE_L,
+    hasard: HZ, base: BASE_L, actions: ACTIONS,
     /* roast_token : le VRAI module roast.js, sur la meme fiche, avec un faux modele. */
     roast: require('./roast').cree({ fiche: async () => fiche, juge: require('./verdict_jeton').juge, api: BASE,
       redige: async () => ({ texte: 'LOBSTER lifts less than my warm-up set. The pool is thinner than my patience on leg day.' }) }),
@@ -196,7 +208,7 @@ function valide(sc, v, ch, strict, err) {
     chat_completion: { messages: [{ role: 'user', content: 'Say hello in five words.' }], max_tokens: 64 }, robinhood_rpc: { method: 'eth_chainId' }, robinhood_token: { address: RH.JETON }, robinhood_wallet: { address: RH.PORTEUR }, robinhood_tx: { hash: '0x' + 'ab'.repeat(32) }, swoge_economy: {}, new_launches: { limit: 5 }, wallet_intel: { address: '0x' + 'cd'.repeat(20) },
     osint_lookup: { target: 'example.com' }, web_search: { query: 'robinhood chain' }, generate_image: { prompt: 'a swole doge', count: 1 },
     ask_agent: { task: 'is LOBSTER worth a look?' }, generate_video: { prompt: 'a swole doge lifting' }, video_status: { id: '66f5b1c2d3e4f5a6b7c8d9e0' },
-    base_launches: { limit: 5 }, base_deployer: { address: '0x' + 'e3'.repeat(20) },
+    base_launches: { limit: 5 }, base_deployer: { address: '0x' + 'e3'.repeat(20) }, stock_token_check: { symbol: 'NVDA' }, stock_tokens_premium: { limit: 10 },
     fair_commit: {}, fair_draw: { commitment_id: ENG.commitment_id, client_seed: 'agent-42', count: 5, min: 1, max: 6 }, fair_verify: D.EXEMPLES_ENTREE.fair_verify };
   for (const o of outils) {
     const payable = !!prixX402[o.name];
@@ -304,7 +316,7 @@ function valide(sc, v, ch, strict, err) {
   process.env.TG_APPELS_VENTE = '1';
   const tous = require('./agentic').definitions({ recherche: true });
   delete process.env.TG_APPELS_VENTE;
-  ok(tous.length === 25 && tous.every((o) => D.EXEMPLES_ENTREE[o.name]), 'un exemple d entree fixe pour chacun des ' + tous.length + ' outils'
+  ok(tous.length === 27 && tous.every((o) => D.EXEMPLES_ENTREE[o.name]), 'un exemple d entree fixe pour chacun des ' + tous.length + ' outils'
      + (tous.filter((o) => !D.EXEMPLES_ENTREE[o.name]).length ? ' — manque : ' + tous.filter((o) => !D.EXEMPLES_ENTREE[o.name]).map((o) => o.name).join(', ') : ''));
   for (const o of tous) {
     const b = D.bazaar(o.name, o);

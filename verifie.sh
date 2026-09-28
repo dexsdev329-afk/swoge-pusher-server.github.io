@@ -64,6 +64,7 @@ lance achats "$SRV" node achats.test.js   # l eSIM : l agent propose, seul le jo
 lance annonces "$SRV" node annonces.test.js   # un outil nouveau : un post Telegram (tweet + image haussiere), une fois, groupe 10 min, espace 3 h, sans promesse de prix ni partenariat
 lance hasard  "$SRV" node hasard.test.js   # hasard prouvable : engagement avant tirage, un tirage par engagement, le code publie refait les memes nombres, sans biais (chi2), sabot du casino
 lance baselanc "$SRV" node base_lancements.test.js   # lancements Base (Clanker, Zora) lus sur la chaine : echanges apres le bloc de lancement, 1 h / 24 h, bilan du deployeur contre tous, fenetre dite
+lance actions  "$SRV" node actions_rh.test.js   # actions tokenisees : l officielle contre la copie (liste Robinhood), ecart piscine/Chainlink sans republier la valeur de l oracle
 lance lecturesrh "$SRV" node lectures_rh.test.js   # robinhood_rpc/token/wallet/tx : lecture seule, bornes, le seau (la colonie d abord), decodage sur un faux noeud aux vrais encodages
 lance chatx402 "$SRV" node chat_x402.test.js   # chat_completion : devis = pire cas (ASCII a 1/2, le reste a ses octets) x X402_CHAT_MARGE, modele brut, sortie OpenAI, un echec jamais regle
 lance autoinsc "$SRV" node auto_inscription.test.js   # inscription PayAI automatique : notre serveur et notre tresorerie seulement, plafonds, une fois par outil, la cle ne sort jamais

@@ -170,6 +170,12 @@ const DESCRIPTIONS_API = Object.freeze({
   roast_token: 'Use this when you want a funny, shareable take on an EVM token for a post or a chat: SWOGE, a very muscular shiba inu, roasts it in 2 or 3 sentences built only on its real data. '
     + 'The facts are the same as token_verdict (DexScreener pool, GoPlus contract checks, Powered by Go+ Security, https://gopluslabs.io, and the SWOGE AI colony for Robinhood Chain tokens); the roast repeats a red flag only when a check actually raised it. '
     + 'Returns the roast, the facts behind it and a shareable 1200×630 PNG card with a share link whose preview is the card. Entertainment, never a buy or sell signal.',
+  /* 28 septembre 2026 : les actions tokenisees de Robinhood Chain (actions_rh.js), vendues par l'API seulement. */
+  stock_token_check: 'Use this before touching a stock token on Robinhood Chain (NVDA, TSLA, SPY…): it tells whether a contract is the official Robinhood Stock Token or a copy using the same ticker. '
+    + 'Returns the verdict (official, impostor with the official address, or not a stock token), the official ISIN, status, multiplier and any pending corporate action, '
+    + 'the deepest pool price and liquidity, and the premium of that pool to the Chainlink feed of the token (the feed address and its last update; its value is not republished).',
+  stock_tokens_premium: 'Use this when you want the Robinhood Chain stock tokens whose on-chain pools trade furthest from their Chainlink feed. '
+    + 'Returns the official tokens with both a feed and a pool above a minimum liquidity, sorted by absolute premium, with pool price, liquidity, quote currency and feed freshness. A premium is a measurement, never a trade signal.',
   /* 28 septembre 2026 : les lancements de Base (base_lancements.js), vendus par l'API seulement. */
   base_launches: 'Use this when you want the newest memecoin launches on Base (Clanker v4 and Zora coins), read on-chain: each with its deployer and the deployer\'s MEASURED record. '
     + 'For each launch: platform, deployer, age, swaps since the launch block (first hour and 24 hours, from the Uniswap v4 PoolManager) and price change; for its deployer: how many of their earlier tokens were traded within 24 hours, '
@@ -427,6 +433,24 @@ function outils(src) {
       const o = r.offre;
       return { texte: 'Offer shown to the user: ' + o.nom + ' (' + o.go + ' GB, ' + o.jours + ' days) for ' + o.factureUsd + ' $ in $SWOGE. '
           + 'Nothing is bought yet: the user must press Buy on the page within 15 minutes. Do not say it is bought.', achat: o };
+    },
+    /* Les actions tokenisees (actions_rh.js, 28/09/2026) : vendues par l'API seulement. */
+    async stock_token_check(e) {
+      if (!src.actions) return { erreur: 'stock token checks are not available here' };
+      const r = await src.actions.verifie({ address: e && e.address, symbol: e && e.symbol });
+      if (r.erreur) return { erreur: r.erreur };
+      const m = r.market || {};
+      return { texte: (r.verdict === 'official' ? 'OFFICIAL Robinhood Stock Token ' + r.official.symbol + ' (' + r.official.address + ')'
+          : r.verdict === 'impostor' ? 'IMPOSTOR: ' + r.warning : 'Not a Robinhood Stock Token (' + r.checked + ').')
+          + (r.official ? ' Pool ' + (m.pool ? m.pool.priceUsd + ' $ (' + m.pool.liquidityUsd + ' $ liquidity)' : 'unknown') + ', premium to the Chainlink feed ' + (m.premiumToOraclePct === null ? 'unknown' : m.premiumToOraclePct + '%')
+            + (r.official.corporateActionPending ? '. Corporate action pending (multiplier ' + r.official.multiplier + ' → ' + r.official.pendingMultiplier + ').' : '.') : ''), donnees: r };
+    },
+    async stock_tokens_premium(e) {
+      if (!src.actions) return { erreur: 'stock token checks are not available here' };
+      const r = await src.actions.ecarts({ limit: e && e.limit, min_liquidity_usd: e && e.min_liquidity_usd });
+      if (r.erreur) return { erreur: r.erreur };
+      return { texte: r.compared + ' official stock tokens compared (' + r.officialTokens + ' official, ' + r.withOracle + ' with a feed). '
+        + r.tokens.map((t) => t.symbol + ' ' + t.premiumToOraclePct + '%').join(', '), donnees: r };
     },
     /* Les lancements de Base (base_lancements.js, 28/09/2026) : vendus par l'API seulement. */
     async base_launches(e) {

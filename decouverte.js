@@ -96,6 +96,7 @@ const ETIQUETTES_OUTIL = {
   roast_token: ['crypto', 'images', 'token-security'],
   fair_commit: ['randomness'], fair_draw: ['randomness'], fair_verify: ['randomness'],
   base_launches: ['base', 'crypto', 'token-security'], base_deployer: ['base', 'crypto', 'osint'],
+  stock_token_check: ['robinhood-chain', 'token-security', 'crypto'], stock_tokens_premium: ['robinhood-chain', 'crypto'],
   chat_completion: ['ai-models', 'research'],
   robinhood_rpc: ['robinhood-chain', 'crypto'], robinhood_token: ['robinhood-chain', 'crypto', 'token-security'], robinhood_wallet: ['robinhood-chain', 'crypto'], robinhood_tx: ['robinhood-chain', 'crypto'],
   telegram_calls: ['robinhood-chain', 'crypto'], web_search: ['research'], ask_agent: ['research', 'crypto'],
@@ -151,6 +152,16 @@ const CARTE_JETON = obj({
 }, ['adresse', 'trouve', 'sym', 'nom', 'chaine', 'prixUsd', 'liqUsd', 'mcUsd', 'vol24Usd', 'var24h', 'url', 'securite', 'honeypot', 'taxeAchat', 'taxeVente',
   'alertes', 'porteurs', 'premierPorteur', 'dixPremiers', 'colonie', 'attribution']);
 
+
+/* ---- Les actions tokenisees : les formes partagees (actions_rh.js, 28/09/2026) ---- */
+const ORACLE_ACTION = objn({ feed: s('Chainlink feed address on Robinhood Chain: read its value there'), updatedAt: s('ISO date of its last update'), stale: b('older than its heartbeat') },
+  ['feed', 'updatedAt', 'stale'], 'the Chainlink feed of the token; its value is not republished');
+const OFFICIELLE_ACTION = objn({ address: s(), symbol: s(), name: s(), isin: sn(), status: sn(), multiplier: sn('shares per token (corporate actions)'), pendingMultiplier: sn('the next multiplier, when announced'),
+  corporateActionPending: b(), sessions: tab(s(), 'sessions where the stock trades: market, extended, overnight') },
+  ['address', 'symbol', 'name', 'isin', 'status', 'multiplier', 'pendingMultiplier', 'corporateActionPending', 'sessions'], 'the official Robinhood Stock Token (api.robinhood.com/rhj/assets)');
+const EX_OFFICIELLE_NVDA = { address: '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec', symbol: 'NVDA', name: 'NVIDIA \u2022 Robinhood Token', isin: 'US67066G1040', status: 'ASSET_STATUS_ACTIVE',
+  multiplier: '1.000775159164630595', pendingMultiplier: null, corporateActionPending: false, sessions: ['market', 'extended', 'overnight'] };
+const EX_ORACLE_NVDA = { feed: '0x379EC4f7C378F34a1B47E4F3cbeBCbAC3E8E9F15', updatedAt: '2026-09-28T17:07:42.000Z', stale: false };
 
 /* ---- Les lancements de Base : les formes partagees par base_launches et base_deployer ---- */
 const BILAN_BASE = (avecAvis) => obj(Object.assign({ tokens: n('launches in the window'), judged: n('launches 24 hours old or more'),
@@ -304,6 +315,31 @@ const SORTIES = {
         positiveTraits: [{ trait: 'Contract bytecode', case: 'bytecode: no mint, no blacklist, no pause, no fee setter', observations: 2395, averagePct: 16.9 }], scan: 'https://swoleeswoge.dog/swoge_scan.html?t=' + ADR },
       attribution: ATTR_EX, note: 'Measurements, never a buy or sell signal. no_red_flag_found means none of these checks fired, not that the token is safe; unknown stays unknown.' },
     texte: 'Quick verdict for $LOBSTER ' + ADR + ' on robinhood: CAUTION — 2 points to check: thin_pool, colony_negative_trait.…',
+  },
+  /* Les actions tokenisees (28 septembre 2026) : actions_rh.js ; exemples = VRAIES sorties du 28/09
+     (la copie de NVDA a 0,000000324 $ existe sur la chaine). */
+  stock_token_check: {
+    schema: obj({ verdict: { type: 'string', enum: ['official', 'impostor', 'not_a_stock_token'] }, checked: sn('the address checked, when one was given'),
+      onchain: objn({ symbol: sn(), name: sn() }, ['symbol', 'name'], 'what the checked contract says about itself'), official: OFFICIELLE_ACTION,
+      warning: s('impostor only'), market: obj({ pool: objn({ priceUsd: n(), liquidityUsd: n(), address: sn(), quotedIn: s(), dex: s() }, ['priceUsd', 'liquidityUsd', 'address', 'quotedIn', 'dex'], 'deepest pool, the token as base'),
+        oracle: ORACLE_ACTION, premiumToOraclePct: nn('pool price vs feed, in %') }, ['pool', 'oracle', 'premiumToOraclePct']),
+      impostorPool: objn({ priceUsd: n(), liquidityUsd: n(), address: sn() }, ['priceUsd', 'liquidityUsd', 'address'], 'impostor only: its own pool'), note: s() },
+      ['verdict', 'checked', 'onchain', 'official', 'note']),
+    exemple: { verdict: 'impostor', checked: '0xdecf74e4aa6ff30b1612e65665aaf650bedecba3', onchain: { symbol: 'NVDA', name: 'NVDA' }, official: EX_OFFICIELLE_NVDA,
+      warning: 'This contract copies the ticker or name of NVDA but is NOT the Robinhood Stock Token. The official contract is 0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec.',
+      market: { pool: { priceUsd: 230.42, liquidityUsd: 5169589, address: '0xd4EB21209C4D6093f80B5b84f5C45cc093EA14a3', quotedIn: 'USDG', dex: 'uniswap' }, oracle: EX_ORACLE_NVDA, premiumToOraclePct: -0.11 },
+      impostorPool: { priceUsd: 0.000000324, liquidityUsd: 30386, address: '0xd9ea532d4b342ae5eef42517474a9ceda952d43febbd39c265f3cdd14de75b9d' }, note: 'Official list: Robinhood (api.robinhood.com/rhj/assets)…' },
+    texte: 'IMPOSTOR: This contract copies the ticker or name of NVDA but is NOT the Robinhood Stock Token.…',
+  },
+  stock_tokens_premium: {
+    schema: obj({ tokens: tab(obj({ address: s(), symbol: s(), name: s(), premiumToOraclePct: n(), poolPriceUsd: n(), liquidityUsd: n(), quotedIn: s(), oracle: ORACLE_ACTION, corporateActionPending: b() },
+        ['address', 'symbol', 'name', 'premiumToOraclePct', 'poolPriceUsd', 'liquidityUsd', 'quotedIn', 'oracle', 'corporateActionPending']), 'sorted by absolute premium'),
+      compared: n(), officialTokens: n(), withOracle: n(), minLiquidityUsd: n(), measuredAt: s(), note: s() },
+      ['tokens', 'compared', 'officialTokens', 'withOracle', 'minLiquidityUsd', 'measuredAt', 'note']),
+    exemple: { tokens: [{ address: '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec', symbol: 'NVDA', name: 'NVIDIA \u2022 Robinhood Token', premiumToOraclePct: -0.11, poolPriceUsd: 230.42,
+      liquidityUsd: 5169589, quotedIn: 'USDG', oracle: EX_ORACLE_NVDA, corporateActionPending: false }], compared: 28, officialTokens: 195, withOracle: 32, minLiquidityUsd: 10000,
+      measuredAt: '2026-09-28T18:20:00.000Z', note: 'Official list: Robinhood (api.robinhood.com/rhj/assets)…' },
+    texte: '28 official stock tokens compared (195 official, 32 with a feed). RKLB -0.83%, ASML -0.69%…',
   },
   /* Les lancements de Base (28 septembre 2026) : base_lancements.js ; l'exemple est une VRAIE
      sortie du 28/09 a 18:03 UTC (lue sur la chaine), tronquee a un lancement. */
@@ -744,6 +780,7 @@ function manifeste(c) {
 const EXEMPLES_ENTREE = {
   scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, roast_token: { address: ADR }, colony_activity: {},
   /* Le hasard prouvable : fair_verify sur le VRAI tirage de l'exemple ; fair_draw a besoin d'un engagement vivant. */
+  stock_token_check: { symbol: 'NVDA' }, stock_tokens_premium: { limit: 10 },
   base_launches: { limit: 5 }, base_deployer: { address: '0xe3e4c41a7eed7be0b485de9a6025c2983ac01daf' },
   fair_commit: {}, fair_draw: { commitment_id: '6a1f0c3e9b7d2a5c8e4f1b0d', client_seed: 'agent-42', count: 5, min: 1, max: 6 },
   fair_verify: { server_seed: '3f9a1c7e5b2d4086a1f3e5c7b9d0f2a4c6e8b1d3f5a7c9e0b2d4f6a8c0e2b4d6', server_seed_hash: 'b85ef21a5deba1bcd033f7eb675b391cf40ce04d63d5e3da39ed9f61f27180b8',
