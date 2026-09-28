@@ -61,6 +61,7 @@ lance portef "$SRV" node portefeuilles.test.js   # smart money mesuree : acheteu
 lance roast   "$SRV" node roast.test.js   # roast_token : les faits seuls, pas de scam sans drapeau, texte nettoye et borne, modele muet = gabarit vrai, carte PNG relue par son id
 lance embauche "$SRV" node embauche.test.js   # l agent embauche un service x402 : catalogue seulement, pas d adresse privee ni de redirection, plafonds appel/joueur/jour, reserve avant, facture sur 200 seulement, vraie signature EIP-3009
 lance achats "$SRV" node achats.test.js   # l eSIM : l agent propose, seul le joueur confirme ; prix reverifie, un double clic ne paie qu une fois, facture sur 200, code rendu au seul payeur
+lance boutique "$SRV" node boutique_esim.test.js   # boutique eSIM sans compte : x402 depuis le portefeuille, eSIM achetee AVANT le reglement, prix qui monte refuse, code par lien secret seulement
 lance annonces "$SRV" node annonces.test.js   # un outil nouveau : un post Telegram (tweet + image haussiere), une fois, groupe 10 min, espace 3 h, sans promesse de prix ni partenariat
 lance hasard  "$SRV" node hasard.test.js   # hasard prouvable : engagement avant tirage, un tirage par engagement, le code publie refait les memes nombres, sans biais (chi2), sabot du casino
 lance baselanc "$SRV" node base_lancements.test.js   # lancements Base (Clanker, Zora) lus sur la chaine : echanges apres le bloc de lancement, 1 h / 24 h, bilan du deployeur contre tous, fenetre dite
@@ -111,6 +112,7 @@ lance prodpage "$SITE" node production_page.test.js   # SwoleMind series et pubs
 lance essaipage "$SITE" node essai_montage_page.test.js   # SwoleMind essai de montage : proprietaire seul, longueur refusee dans la page, jeton jamais adresse, 320 px
 lance agentpage "$SITE" node agent_page.test.js   # SwogeAgentic : chaque geste visible, echappe, jeton jamais adresse, reprise par rid
 lance agentqr  "$SITE" node agent_qr.test.js   # le QR de la carte eSIM = le generateur prouve du portefeuille (200 empreintes segno), jamais un faux QR
+lance esimpage "$SITE" node esim_page.test.js   # boutique eSIM : chercher, payer Base (EIP-3009) ou Solana, lien secret, QR, ?order= retrouve, echappe, 320 px
 lance x402page "$SITE" node x402_essai_page.test.js   # payer un appel en USDC sur Base depuis son portefeuille : offre Base du 402, EIP-3009 signe et verifie, resultat echappe, 320 px
 lance x402sol "$SITE" node x402_solana.test.js   # la transaction Solana de la page : octet pour octet celle de web3.js (vecteurs figes), comptes USDC associes, memo aleatoire
 lance ecopage "$SITE" node economie_page.test.js   # la carte $SWOGE ECONOMY et le whitepaper suivent /economie.json

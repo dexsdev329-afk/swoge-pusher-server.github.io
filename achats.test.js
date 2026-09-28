@@ -179,6 +179,22 @@ async function fauxChips(url, o) {
   ok(!lignes.includes(CLE) && !lignes.includes(graine.toString('hex')), 'la cle du portefeuille n est jamais au registre');
   ok(CH.horsHote.length === 0, 'aucune requete ailleurs que chez le vendeur');
 
+  console.log('\n-- la boutique sans compte (boutique_esim.js, 28/09 au soir) : sa marge, son lien secret --');
+  {
+    const LIEN = 'c'.repeat(32), NOOP = { reserve: async () => ({ ok: true, jeton: 0 }), regle: async () => {} };
+    const W = H2.pour('wallet:0xpayeur', NOOP, { marge: 1.25, lien: LIEN });
+    await W.forfaits({ pays: 'france' });
+    ok(H2.prixConnu('europe-1gb-7days-x2') === 5.800581 && H2.prixConnu('europe-99gb-x9') === null, 'le prix connu, sans reseau : celui de la derniere sonde (30 min), rien pour un forfait jamais vu');
+    const ow = await W.propose({ plan: 'europe-1gb-7days-x2' });
+    ok(ow.ok && ow.offre.factureUsd === 7.250726, 'l offre de la boutique : CHIPS × 1,25 (5,800581 $ → 7,250726 $)');
+    const cw = await W.confirme(ow.offre.id);
+    ok(cw.ok && cw.livree && cw.achat.go === 1 && cw.achat.jours === 7, 'achete et livre, avec sa taille et sa duree');
+    const pl = await H2.parLien(LIEN);
+    ok(pl.ok && pl.achat.activation && /^LPA:1\$/.test(pl.achat.activation.uri), 'le lien secret rend le code d activation');
+    ok(!(await H2.parLien('d'.repeat(32))).ok && !(await H2.parLien('pas-un-lien')).ok, 'un autre lien, ou un lien mal forme : rien');
+    ok(!JSON.stringify(W.liste()).includes(LIEN) && !JSON.stringify(cw).includes(LIEN), 'le lien n est jamais rendu par les vues (seule la boutique le donne, une fois)');
+  }
+
   console.log('\n-- sans cle, ou coupe --');
   ok(!mk({ cle: '' }).actif() && !(await mk({ cle: '' }).pour('0xj', F).propose({ plan: 'x' })).ok, 'sans AGENT_BUDGET_CLE : rien ne s achete');
   process.env.ACHATS = '0';

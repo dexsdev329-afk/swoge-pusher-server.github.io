@@ -2027,6 +2027,15 @@ function achats() {
   if (ACHATS.actif()) console.log('[agent] eSIM purchases on: the agent proposes, the player confirms (' + ACHATS.adresse + ')');
   return ACHATS;
 }
+/* ---- LA BOUTIQUE eSIM SANS COMPTE (boutique_esim.js, 28/09 au soir) ----
+   Paye en USDC depuis le portefeuille du joueur (x402, Base ou Solana), marge ESIM_MARGE
+   (1,25). Meme portefeuille d'achat, memes plafonds qu'achats.js. ACHATS=0 la ferme aussi. */
+let BOUTIQUE = null;
+function boutiqueEsim() {
+  if (!BOUTIQUE) BOUTIQUE = require('./boutique_esim').cree({ achats: achats(), x402: () => x402(), url: MOI_URL + '/esim/buy' });
+  return BOUTIQUE;
+}
+const RECHERCHES_ESIM = new Map();            /* empreinte d'IP → instants : 20 recherches par 10 min */
 /** La facture d'une embauche (ou d'un achat) pour UN joueur : reserve au cours du moment, regle au prix du recu. */
 function factuEmbauche(addr, quoi) {
   const dec = cfg.DECIMALS || 18;
@@ -2144,14 +2153,15 @@ const x402 = () => {
     cours: () => studioChat.coursSwoge(),
     /* L'ETH en $ (pour le gaz), 60 s en cache ; STUDIO_DEX=0 (essais) : le reglage ETH_PRIX_USD, aucune lecture reseau. */
     ethUsd: () => ethUsdPartage(),
-    prixOutilUsd: (o, a) => require('./agentic').prixX402Usd(o, a),
+    prixOutilUsd: (o, a) => (o === 'esim' ? boutiqueEsim().prixUsd(a) : require('./agentic').prixX402Usd(o, a)),
     /* Base (USDC, Coinbase) : null sans cle CDP valide — tout est alors comme avant. */
     base,
     /* Solana (USDC, PayAI) : null sans X402_SOLANA_PAYTO. */
     solana,
     /* La premiere phrase de l'outil ouvre resource.description (Base allumee) ; les
        details de service (bazaar.md « Service Metadata on `resource` »). */
-    description: (o) => ((require('./agentic').definitions({ recherche: !!chatActif('perplexity') }).find((d) => d.name === o) || {}).description || ''),
+    description: (o) => (o === 'esim' ? 'Use this to buy a travel data eSIM (data only, no phone number) from SWOGE, paid in USDC; the activation code comes back with the answer.'
+      : (require('./agentic').definitions({ recherche: !!chatActif('perplexity') }).find((d) => d.name === o) || {}).description || ''),
     service: { nom: 'SwogeAgentic', etiquettes: (o) => require('./decouverte').ETIQUETTES_OUTIL[o] || [], icone: require('./decouverte').ICONE },
     /* ask_agent en x402 (X402_AGENT=1) : 150 s de travail au plus, 3 en vol, payeurs
        bloques et pertes au registre durable (x402_agent.js). */
@@ -3283,6 +3293,37 @@ const server = http.createServer(async (req, res) => {
   }
   /* ---- MES eSIM (achats.js, 28/09/2026) : GET la liste ; POST { action: 'confirme' | 'livre', id }.
      Toujours le joueur de la SESSION : l'agent propose, seule cette route paie. ---- */
+  /* ==================== LA BOUTIQUE eSIM SANS COMPTE ====================
+   * GET /esim/plans?country=&min_gb=&min_days= : les forfaits, au prix de la boutique (rien n'est paye).
+   * POST /esim/buy {plan} : x402 — le 402, puis PAYMENT-SIGNATURE ; l'eSIM est achetee AVANT le reglement.
+   * GET /esim/order/<lien> : le code d'activation, pour qui tient le lien secret rendu avec l'achat. */
+  if (path === '/esim/plans' || path === '/esim/buy' || path.startsWith('/esim/order/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+                   'access-control-allow-headers': 'content-type, payment-signature', 'access-control-expose-headers': 'payment-required, payment-response' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const quiIp = compteurs.ip(qui(req));
+    if (path === '/esim/plans') {
+      const t = Date.now(), l = (RECHERCHES_ESIM.get(quiIp) || []).filter((x) => t - x < 10 * 60e3);
+      if (l.length >= 20) return json(429, { ok: false, raison: 'too many searches - try again in a few minutes' });
+      l.push(t); RECHERCHES_ESIM.set(quiIp, l);
+      if (RECHERCHES_ESIM.size > 5000) for (const [k, v] of RECHERCHES_ESIM) if (!v.some((x) => t - x < 10 * 60e3)) RECHERCHES_ESIM.delete(k);
+      const qs = new URLSearchParams(req.url.split('?')[1] || '');
+      const r = await boutiqueEsim().plans({ country: qs.get('country'), min_gb: qs.get('min_gb'), min_days: qs.get('min_days') });
+      return json(r.ok ? 200 : 400, r);
+    }
+    if (path === '/esim/buy') {
+      if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+      let q;
+      try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { q = null; }
+      if (!q) return json(400, { ok: false, raison: 'unreadable request' });
+      const x = await boutiqueEsim().achete({ entete: req.headers['payment-signature'], plan: q.plan, qui: quiIp });
+      res.writeHead(x.status, Object.assign({ 'cache-control': 'no-store' }, cors, x.entetes));
+      return res.end(x.corps);
+    }
+    const r = await boutiqueEsim().commande(decodeURIComponent(path.slice('/esim/order/'.length)));
+    return json(r.ok ? 200 : (r.achat ? 202 : 404), r);
+  }
   if (path === '/studio/agent/achats') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'authorization, content-type' };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }

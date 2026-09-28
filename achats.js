@@ -230,7 +230,13 @@ function cree(deps) {
   function dernier(id) { let x = null; for (const l of lignes) if (l.id === id) x = Object.assign({}, x || {}, l); return x; }
   function actif() { return !!w && w.type === 'solana' && !coupe; }
 
-  function pour(qui, factu) {
+  /**
+   * qui : l'adresse de la session (page SwogeAgentic) ou 'wallet:<payeur>' (la boutique, 28/09).
+   * opts.marge : la marge de la boutique sans compte (paye en USDC, ESIM_MARGE) au lieu d'ACHAT_MARGE.
+   * opts.lien : un secret de 128 bits, garde au registre, qui seul rend le code d'activation (parLien).
+   */
+  function pour(qui, factu, opts) {
+    opts = opts || {};
     const q = String(qui || '').toLowerCase();
 
     /** L'agent propose : une offre de 15 min que SEUL le joueur peut confirmer. */
@@ -250,6 +256,7 @@ function cree(deps) {
       const solde = await soldeUsdc();
       if (solde !== null && solde < usd) { MESURE.refusees++; return { ok: false, raison: 'the shop wallet is short on funds for this plan right now - nothing was charged' }; }
       const v = vuePlan(info.p, usd);
+      if (opts.marge >= 1) v.factureUsd = arrondi(usd * opts.marge);
       const o = Object.assign({ id: crypto.randomBytes(8).toString('hex'), qui: q, destination: info.destination, t: maintenant(), expire: maintenant() + OFFRE_MS,
         cle: cleIdem(), etat: 'propose' }, v);
       OFFRES.set(o.id, o);
@@ -285,7 +292,8 @@ function cree(deps) {
       const sg = await X.signe(w, acc, { blockhash: deps.blockhash, maintenant });
       if (sg.erreur) { await factu.regle(res.jeton, 0); MESURE.echecs++; return rend({ garde: true, r: { ok: false, raison: sg.erreur + ' - nothing was charged' } }); }
       /* Au registre AVANT d'envoyer : un redemarrage pendant l'appel compte la depense. */
-      const base0 = { id: o.id, qui: q, plan: o.plan, nom: o.nom, destination: o.destination, usd, factureUsd: o.factureUsd, reseau: acc.network, sig: sg.signature || null };
+      const base0 = Object.assign({ id: o.id, qui: q, plan: o.plan, nom: o.nom, destination: o.destination, usd, factureUsd: o.factureUsd, reseau: acc.network, sig: sg.signature || null },
+        opts.lien ? { lien: opts.lien, go: o.go, jours: o.jours } : {});
       note(Object.assign({ t: maintenant(), etat: 'en cours' }, base0));
       let r2;
       try { r2 = await commande(o.plan, o.cle, X.enteteDe(req, acc, sg.payload)); } catch (e) { r2 = null; }
@@ -335,8 +343,8 @@ function cree(deps) {
 
     /** Ce que le joueur voit : jamais le jeton de livraison ni la signature. */
     function vue(a) {
-      return { id: a.id, t: a.t, nom: a.nom, destination: a.destination || null, usd: a.usd || 0, factureUsd: a.factureUsd || 0, etat: a.etat, tx: a.tx || null,
-        reseau: a.reseau || null, activation: a.etat === 'livre' ? a.activation : null };
+      return { id: a.id, t: a.t, nom: a.nom, destination: a.destination || null, go: a.go || null, jours: a.jours || null, usd: a.usd || 0, factureUsd: a.factureUsd || 0,
+        etat: a.etat, tx: a.tx || null, reseau: a.reseau || null, activation: a.etat === 'livre' ? a.activation : null };
     }
     function liste(n) {
       const der = new Map();
@@ -347,7 +355,22 @@ function cree(deps) {
     return { forfaits, propose, confirme, livre, liste, budget };
   }
 
-  return { pour, forfaits, actif, MESURE, adresse: w ? w.address : null,
+  /** Le prix CHIPS d'un forfait deja sonde (30 min), sans reseau : le devis x402 est synchrone. */
+  function prixConnu(slug) {
+    const c = PRIX.get(String(slug || ''));
+    return PLANS.has(String(slug || '')) && c && maintenant() - c.t < PRIX_TTL_MS ? c.usd : null;
+  }
+  /** Le lien secret de la boutique : le dernier etat de l'achat qui le porte, puis sa livraison. */
+  async function parLien(lien) {
+    const k = String(lien || '');
+    if (!/^[0-9a-f]{32}$/.test(k)) return { ok: false, raison: 'unknown order link' };
+    let id = null, qui = null;
+    for (const l of lignes) if (l.lien === k) { id = l.id; qui = l.qui; }
+    if (!id) return { ok: false, raison: 'unknown order link' };
+    return pour(qui, { reserve: async () => ({ ok: true, jeton: 0 }), regle: async () => {} }).livre(id);
+  }
+
+  return { pour, forfaits, prixConnu, parLien, actif, MESURE, adresse: w ? w.address : null,
     etat: () => ({ actif: actif(), vendeur: hote, reseau: w ? reseau.network : null, maxAchatUsd: maxAchat(), maxJoueurUsd: maxJoueur(), maxJourUsd: maxJour(), marge: marge(),
       aujourdhuiUsd: arrondi(depuis(jour0(), null)), mesure: Object.assign({}, MESURE) }) };
 }
