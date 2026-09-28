@@ -13,15 +13,17 @@
  *
  * Ce qu'on peut embaucher (releve du 28/09 : 7 444 services au catalogue PayAI,
  * 6 077 en x402 v2 — 82 % — surtout en USDC sur Base et Solana) : un service
- * du CATALOGUE PayAI seulement, en x402 v2, payable par notre portefeuille (son
- * reseau, USDC, « exact »). La v1 (1 367 services) attendra que son format soit
- * verifie dans la specification.
+ * du CATALOGUE PayAI seulement, payable par notre portefeuille (son reseau,
+ * USDC, « exact »). La v1 (1 367 services) aussi depuis le 28/09 au soir, son
+ * format verifie dans la specification (x402_client.js, offreV1).
  *
  * Garde-fous, TOUS verifies avant de signer :
  *   - l'URL est une ressource du catalogue (l'agent ne peut pas inventer une
  *     adresse), en https, dont l'hote ne se resout que vers des adresses
  *     publiques, sans suivre de redirection (pas de SSRF vers le reseau de
- *     Railway) ; notre propre serveur exclu ;
+ *     Railway) ; notre propre serveur exclu. L'appel part vers l'adresse IP
+ *     VERIFIEE (requeteEpinglee), pas vers une seconde resolution DNS qui
+ *     pourrait, entre-temps, pointer ailleurs ;
  *   - le prix du 402 ≤ EMBAUCHE_MAX_APPEL_USD (0,10 $) ;
  *   - par joueur et par jour UTC ≤ EMBAUCHE_JOUR_JOUEUR_USD (1,00 $) ;
  *   - pour toute la maison et par jour ≤ EMBAUCHE_JOUR_USD (5,00 $) ;
@@ -35,6 +37,7 @@ const fs = require('fs');
 const path = require('path');
 const dns = require('dns');
 const net = require('net');
+const https = require('https');
 const X = require('./x402_client');
 
 const CATALOGUE_TTL_MS = 6 * 3600e3;
@@ -60,12 +63,47 @@ function privee(ip) {
   return x === '::' || x === '::1' || /^f[cd]/.test(x) || /^fe[89ab]/.test(x) || /^ff/.test(x);
 }
 
-/** Une entree du catalogue PayAI, reduite a ce qu'on sait payer (null sinon). */
+/**
+ * Une requete HTTPS vers l'adresse IP deja verifiee (`ips[0]`) : le nom d'hote sert au
+ * certificat (SNI) et a l'en-tete Host, jamais a une seconde resolution DNS. Rend un
+ * objet qui se lit comme une Response (status, headers.get, text, json). Corps borne a 1 Mo,
+ * aucune redirection suivie (https.request n'en suit pas).
+ */
+function requeteEpinglee(url, o, ips) {
+  return new Promise((ok, ko) => {
+    const u = new URL(url);
+    /* IPv4 d'abord : la sortie IPv6 de l'hebergeur n'est pas garantie. Toutes les adresses ont ete verifiees. */
+    const ip = (ips || []).find((x) => net.isIPv4(x)) || (ips || [])[0];
+    if (!ip) return ko(new Error('no verified address'));
+    const fam = net.isIP(ip);
+    const req = https.request({ hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: o.method || 'GET',
+      headers: o.headers || {}, servername: net.isIP(u.hostname) ? undefined : u.hostname, signal: o.signal, ca: o.ca,
+      lookup: (h, opts, cb) => { if (opts && opts.all) cb(null, [{ address: ip, family: fam }]); else cb(null, ip, fam); } });
+    req.on('response', (res) => {
+      const morceaux = []; let n = 0;
+      res.on('data', (d) => { n += d.length; if (n <= 1e6) morceaux.push(d); else res.destroy(); });
+      res.on('error', ko);
+      res.on('end', () => {
+        const corps = Buffer.concat(morceaux);
+        ok({ status: res.statusCode, headers: { get: (k) => { const v = res.headers[String(k).toLowerCase()]; return v == null ? null : Array.isArray(v) ? v.join(', ') : String(v); } },
+          text: async () => corps.toString('utf8'), json: async () => JSON.parse(corps.toString('utf8')) });
+      });
+    });
+    req.on('error', ko);
+    if (o.body) req.write(o.body);
+    req.end();
+  });
+}
+/** La fonction de resolution que `https.request` recoit : toujours l'adresse epinglee. */
+const lookupEpingle = (ip) => (h, opts, cb) => { const fam = net.isIP(ip); if (opts && opts.all) cb(null, [{ address: ip, family: fam }]); else cb(null, ip, fam); };
+
+/** Une entree du catalogue PayAI, reduite a ce qu'on sait payer (null sinon). v1 et v2. */
 function entree(x, reseau) {
-  if (!x || Number(x.x402Version) !== 2 || (x.type && x.type !== 'http')) return null;
+  const v = Number(x && x.x402Version);
+  if (!x || (v !== 1 && v !== 2) || (x.type && x.type !== 'http')) return null;
   const url = String(x.resource || '');
   if (!/^https:\/\//.test(url) || url.length > 500) return null;
-  const offres = (x.accepts || []).filter((a) => a && (a.scheme || 'exact') === 'exact' && a.network === reseau.network
+  const offres = (x.accepts || []).map((a) => (v === 1 ? X.offreV1(a) : a)).filter((a) => a && (a.scheme || 'exact') === 'exact' && a.network === reseau.network
     && String(a.asset).toLowerCase() === reseau.asset.toLowerCase() && Number(a.amount) > 0);
   if (!offres.length) return null;
   const usd = Math.min.apply(null, offres.map((a) => Number(a.amount) / 1e6));
@@ -84,7 +122,8 @@ function cree(deps) {
   const w = X.portefeuille(deps.cle);
   const reseau = X.reseauDe(w);
   const maintenant = deps.maintenant || Date.now;
-  const fetch = deps.fetch || globalThis.fetch;
+  /* deps.fetch (les essais) ; sinon la requete epinglee sur l'adresse verifiee. */
+  const appelHttp = deps.fetch ? (u, o) => deps.fetch(u, o) : (u, o, ips) => requeteEpinglee(u, o, ips);
   const resout = deps.resout || (async (h) => (await dns.promises.lookup(h, { all: true })).map((a) => a.address));
   const registre = deps.dossier ? path.join(deps.dossier, 'embauches.jsonl') : null;
   let CAT = { t: 0, liste: [], parUrl: new Map() };
@@ -140,13 +179,13 @@ function cree(deps) {
     }).filter((x) => x.s > 0).sort((a, b) => (b.s - a.s) || (a.e.usd - b.e.usd)).slice(0, Math.min(10, n || 6)).map((x) => x.e);
   }
 
-  /** L'hote d'une URL se resout-il vers des adresses publiques seulement ? */
+  /** Les adresses d'un hote, si elles sont TOUTES publiques ; null sinon. */
   async function hotePublic(url) {
-    let u; try { u = new URL(url); } catch (e) { return false; }
-    if (u.protocol !== 'https:' || u.username || u.password) return false;
+    let u; try { u = new URL(url); } catch (e) { return null; }
+    if (u.protocol !== 'https:' || u.username || u.password) return null;
     const h = u.hostname.replace(/^\[|\]$/g, '');
-    if (h === 'localhost' || /\.(local|internal|localhost)$/i.test(h)) return false;
-    try { const ips = net.isIP(h) ? [h] : await resout(h); return ips.length > 0 && ips.every((ip) => !privee(ip)); } catch (e) { return false; }
+    if (h === 'localhost' || /\.(local|internal|localhost)$/i.test(h)) return null;
+    try { const ips = net.isIP(h) ? [h] : await resout(h); return ips.length > 0 && ips.every((ip) => !privee(ip)) ? ips : null; } catch (e) { return null; }
   }
 
   /**
@@ -161,13 +200,16 @@ function cree(deps) {
       const C = await catalogue();
       const e = C.parUrl.get(url);
       if (!e) return { ok: false, raison: 'only a service returned by find_paid_services can be hired (this URL is not in the catalogue)' };
-      if (!(await hotePublic(url))) return { ok: false, raison: 'this service does not resolve to a public https address - refused' };
+      const ips = await hotePublic(url);
+      if (!ips) return { ok: false, raison: 'this service does not resolve to a public https address - refused' };
       const methode = a.method ? (String(a.method).toUpperCase() === 'POST' ? 'POST' : 'GET') : e.methode;
       const u = new URL(url);
       if (a.query && typeof a.query === 'object') for (const [k, v] of Object.entries(a.query).slice(0, 20)) u.searchParams.set(String(k).slice(0, 60), String(v).slice(0, 500));
-      const corps = methode === 'POST' ? JSON.stringify(a.body && typeof a.body === 'object' ? a.body : {}).slice(0, 8000) : undefined;
-      const appel = (h) => fetch(u.toString(), { method: methode, redirect: 'manual', signal: AbortSignal.timeout(DELAI_MS),
-        headers: Object.assign({ accept: 'application/json, text/plain;q=0.9, */*;q=0.5' }, corps ? { 'content-type': 'application/json' } : {}, h || {}), body: corps });
+      const corps = methode === 'POST' ? JSON.stringify(a.body && typeof a.body === 'object' ? a.body : {}) : undefined;
+      /* Un JSON coupe ne serait plus du JSON : trop long, on refuse plutot que d'envoyer du faux. */
+      if (corps && corps.length > 8000) return { ok: false, raison: 'the request body is too long (8,000 characters at most) - nothing was charged' };
+      const appel = (h) => appelHttp(u.toString(), { method: methode, redirect: 'manual', signal: AbortSignal.timeout(DELAI_MS),
+        headers: Object.assign({ accept: 'application/json, text/plain;q=0.9, */*;q=0.5' }, corps ? { 'content-type': 'application/json' } : {}, h || {}), body: corps }, ips);
       MESURE.embauches++;
       let r1;
       try { r1 = await appel(); } catch (x) { MESURE.echecs++; return { ok: false, raison: 'the service did not answer - nothing was charged' }; }
@@ -175,7 +217,7 @@ function cree(deps) {
       if (r1.status === 200) return Object.assign({ ok: true, gratuit: true }, await lit(r1), { recu: { url, usd: 0, factureUsd: 0, reseau: null, tx: null } });
       if (r1.status !== 402) { MESURE.echecs++; return { ok: false, raison: 'the service answered HTTP ' + r1.status + ' before any payment - nothing was charged' }; }
       const req = await X.lit402(r1);
-      if (!req) { MESURE.refusees++; return { ok: false, raison: 'the service did not send an x402 v2 payment request - nothing was charged' }; }
+      if (!req) { MESURE.refusees++; return { ok: false, raison: 'the service did not send an x402 payment request - nothing was charged' }; }
       const acc = X.offrePour(w, req.accepts);
       if (!acc) { MESURE.refusees++; return { ok: false, raison: 'the service does not take USDC on ' + (w.type === 'solana' ? 'Solana' : 'Base') + ' - nothing was charged' }; }
       const usd = Number(acc.amount) / 1e6;
@@ -192,7 +234,7 @@ function cree(deps) {
       const id = maintenant().toString(36) + Math.random().toString(36).slice(2, 6);
       note({ id, t: maintenant(), qui: q, url, usd, etat: 'en cours', reseau: acc.network });
       let r2;
-      try { r2 = await appel({ 'payment-signature': X.entete(req, acc, sg.payload) }); } catch (x) { r2 = null; }
+      try { r2 = await appel(X.enteteDe(req, acc, sg.payload)); } catch (x) { r2 = null; }
       const tx = r2 ? X.txDe(r2) : null;
       if (!r2 || r2.status !== 200) {
         await factu.regle(res.jeton, 0);
@@ -207,7 +249,16 @@ function cree(deps) {
       MESURE.payees++; MESURE.depenseUsd += usd; MESURE.factureUsd += factureUsd;
       return Object.assign({ ok: true }, sortie, { recu: { url, usd, factureUsd, reseau: acc.network, tx } });
     }
-    return { cherche, embauche, budget: () => ({ jourUsd: maxJoueur(), depenseUsd: Math.round(depuis(jour0(), q) * 1e6) / 1e6, maxAppelUsd: maxAppel() }) };
+    /** Les dernieres embauches de CE joueur (le dernier etat de chacune), les plus recentes d'abord. */
+    function historique(n) {
+      const der = new Map();
+      for (const l of lignes) if (l.qui === q) der.set(l.id, Object.assign({}, der.get(l.id) || {}, l));
+      return [...der.values()].sort((x, y) => y.t - x.t).slice(0, n || 20).map((l) => {
+        let hote = ''; try { hote = new URL(l.url).hostname; } catch (e) { hote = ''; }
+        return { t: l.t, hote, url: l.url, usd: l.usd || 0, factureUsd: l.factureUsd || 0, etat: l.etat, tx: l.tx || null, reseau: l.reseau || null };
+      });
+    }
+    return { cherche, embauche, historique, budget: () => ({ jourUsd: maxJoueur(), depenseUsd: Math.round(depuis(jour0(), q) * 1e6) / 1e6, maxAppelUsd: maxAppel() }) };
   }
 
   /** Le corps d'une reponse : du JSON si c'en est, sinon du texte, borne. */
@@ -237,4 +288,4 @@ async function cataloguePayai(fetch, base) {
   return items;
 }
 
-module.exports = { cree, entree, privee, cataloguePayai, CATALOGUE_TTL_MS, RESULTAT_MAX_CAR };
+module.exports = { cree, entree, privee, cataloguePayai, requeteEpinglee, lookupEpingle, CATALOGUE_TTL_MS, RESULTAT_MAX_CAR };

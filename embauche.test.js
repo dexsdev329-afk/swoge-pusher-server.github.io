@@ -32,6 +32,9 @@ const CAT = [
   item('https://panne2.example/weather', 1000),
   item('https://appat.example/weather', 1000),
   item('https://gratuit.example/weather', 1000),
+  /* x402 v1 : reseau nomme, maxAmountRequired, offres dans le corps (specs/x402-specification-v1.md). */
+  { x402Version: 1, type: 'http', resource: 'https://vieux.example/weather', description: 'Weather v1',
+    accepts: [{ scheme: 'exact', network: 'base', maxAmountRequired: '2000', asset: USDC, payTo: PAYTO, resource: 'https://vieux.example/weather', description: 'w', maxTimeoutSeconds: 60, extra: { name: 'USD Coin', version: '2' } }] },
 ];
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64');
@@ -44,6 +47,12 @@ async function fauxFetch(url, o) {
   const req = (amount) => ({ x402Version: 2, resource: { url: u.origin + u.pathname }, accepts: [offre(amount)] });
   if (u.hostname === 'renvoi.example') return rep(302, '', { location: 'http://169.254.169.254/' });
   if (u.hostname === 'gratuit.example') return rep(200, { free: true });
+  if (u.hostname === 'vieux.example') {
+    const xp = (o.headers || {})['x-payment'];
+    if (!xp) return rep(402, { x402Version: 1, error: 'X-PAYMENT header is required', accepts: CAT[CAT.length - 1].accepts });
+    fauxFetch.v1 = JSON.parse(Buffer.from(xp, 'base64').toString());
+    return rep(200, { tempC: 18 }, { 'x-payment-response': b64({ success: true, transaction: '0xv1tx', network: 'base' }) });
+  }
   if (u.hostname === 'appat.example') return sig ? rep(200, {}) : rep(402, '', { 'payment-required': b64(req(90000000)) });
   if (!sig) return rep(402, { error: 'payment required' }, { 'payment-required': b64(req(u.hostname === 'cheap.example' ? 5000 : 10000)) });
   const p = JSON.parse(Buffer.from(sig, 'base64').toString());
@@ -64,8 +73,10 @@ const resout = async (h) => (h === 'interne.example' ? ['10.0.0.5'] : ['93.184.2
   const C = await H.catalogue();
   const urls = C.liste.map((e) => e.url);
   ok(urls.includes('https://meteo.example/forecast') && urls.includes('https://cheap.example/weather'), 'les services v2, USDC sur Base, sous le plafond');
-  ok(!urls.some((x) => /v1\.example|sol\.example|cher\.example|http:\/\/|api\.moi\.example/.test(x)),
-     'exclus : x402 v1, un autre reseau que le notre, au-dessus de 0,10 $, http en clair, notre propre serveur');
+  ok(!urls.some((x) => /sol\.example|cher\.example|http:\/\/|api\.moi\.example/.test(x)),
+     'exclus : un autre reseau que le notre, au-dessus de 0,10 $, http en clair, notre propre serveur');
+  ok(urls.includes('https://v1.example/weather') === false && urls.includes('https://vieux.example/weather'),
+     'x402 v1 (28/09, format verifie dans la specification) : pris quand l offre est sur notre reseau (« base »), pas quand elle est mal formee');
   const r0 = await H.cherche('weather forecast city', 3);
   ok(r0[0].url === 'https://meteo.example/forecast' && r0.every((e) => e.usd > 0), 'la recherche : le plus pertinent d abord (' + r0.map((e) => e.url.split('/')[2] + ' ' + e.usd + '$').join(', ') + ')');
   ok((await H.cherche('zz', 3)).length === 0, 'un besoin sans mot utile ne rend rien');
@@ -85,6 +96,13 @@ const resout = async (h) => (h === 'interne.example' ? ['10.0.0.5'] : ['93.184.2
   const qui = ethers.utils.verifyTypedData(Object.assign({}, X.DOMAINE), X.TYPES_3009, a, p.payload.signature);
   ok(qui === W.address && a.to === PAYTO && a.value === '10000' && p.accepted.network === 'eip155:8453', 'la vraie signature EIP-3009 : notre portefeuille, vers le payTo du 402, le montant exact');
   ok(vus.every((v) => v.redirect === 'manual'), 'aucune redirection n est jamais suivie');
+
+  console.log('\n-- x402 v1 : le 402 dans le corps, le paiement dans X-PAYMENT --');
+  const rv = await J.embauche({ url: 'https://vieux.example/weather' });
+  const v1 = fauxFetch.v1 || {};
+  ok(rv.ok && rv.recu.usd === 0.002 && rv.recu.tx === '0xv1tx' && v1.x402Version === 1 && v1.scheme === 'exact' && v1.network === 'base'
+     && v1.payload && v1.payload.authorization.value === '2000' && ethers.utils.verifyTypedData(X.DOMAINE, X.TYPES_3009, v1.payload.authorization, v1.payload.signature) === W.address,
+     'X-PAYMENT = { x402Version 1, scheme, network « base », payload EIP-3009 } signe pour maxAmountRequired ; recu lu dans X-PAYMENT-RESPONSE');
 
   console.log('\n-- les refus, tous AVANT de signer --');
   const nSig = () => vus.filter((v) => v.sig).length;
@@ -108,9 +126,15 @@ const resout = async (h) => (h === 'interne.example' ? ['10.0.0.5'] : ['93.184.2
   const g = await J.embauche({ url: 'https://gratuit.example/weather' });
   ok(g.ok && g.gratuit && g.recu.usd === 0 && factu.length === k0 + 4, 'un service qui rend 200 sans paiement : rien reserve, rien paye');
 
+  const hi = J.historique(10);
+  ok(hi.length === 4 && hi[0].t >= hi[hi.length - 1].t && hi.some((x) => x.etat === 'paye' && x.hote === 'meteo.example' && x.factureUsd > 0 && x.tx)
+     && hi.some((x) => x.etat === 'perte' && x.factureUsd === 0) && hi.some((x) => x.etat === 'rendu' && x.usd === 0) && !hi.some((x) => x.qui),
+     'l historique du joueur : un etat par embauche payee ou tentee (paye x2, perte, rendu ; le service gratuit n y est pas), le plus recent d abord, sans l adresse des autres');
+  ok(H.pour('0xAUTRE', F).historique().length === 0, 'un autre joueur ne voit rien des embauches de celui-ci');
+
   console.log('\n-- les plafonds du jour --');
   const b = J.budget();
-  ok(Math.abs(b.depenseUsd - 0.02) < 1e-9, 'le budget du joueur compte le paye (0,01 $) et la perte (0,01 $), pas le rendu : ' + b.depenseUsd);
+  ok(Math.abs(b.depenseUsd - 0.022) < 1e-9, 'le budget du joueur compte les payes (0,01 $ en v2, 0,002 $ en v1) et la perte (0,01 $), pas le rendu : ' + b.depenseUsd);
   process.env.EMBAUCHE_JOUR_JOUEUR_USD = '0.02';
   await pas({ url: 'https://meteo.example/forecast' }, /daily hiring budget \(0\.02 \$\) is used up/, 'le plafond du joueur (0,02 $ ici) : refuse');
   delete process.env.EMBAUCHE_JOUR_JOUEUR_USD;
@@ -125,7 +149,7 @@ const resout = async (h) => (h === 'interne.example' ? ['10.0.0.5'] : ['93.184.2
   console.log('\n-- le registre survit a un redemarrage --');
   horloge -= 24 * 3600e3;
   const H2 = mk(CLE);
-  ok(Math.abs(H2.pour('0xJOUEUR', F).budget().depenseUsd - 0.02) < 1e-9, 'relu depuis embauches.jsonl : la depense du jour est la meme');
+  ok(Math.abs(H2.pour('0xJOUEUR', F).budget().depenseUsd - 0.022) < 1e-9, 'relu depuis embauches.jsonl : la depense du jour est la meme');
   const lignes = fs.readFileSync(path.join(dos, 'embauches.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   ok(lignes.some((l) => l.etat === 'paye' && l.tx) && lignes.some((l) => l.etat === 'perte') && lignes.some((l) => l.etat === 'rendu') && !JSON.stringify(lignes).includes(CLE.slice(2)),
      'chaque embauche est au registre (paye, perte, rendu), et la cle n y est jamais');
@@ -133,6 +157,30 @@ const resout = async (h) => (h === 'interne.example' ? ['10.0.0.5'] : ['93.184.2
   ok(!(await S.pour('0xJ', F).embauche({ url: 'https://meteo.example/forecast' })).ok && S.etat().actif === false, 'sans AGENT_BUDGET_CLE : rien ne s embauche');
   ok(E.privee('127.0.0.1') && E.privee('169.254.169.254') && E.privee('::1') && E.privee('fd00::1') && E.privee('100.64.1.1') && !E.privee('93.184.215.14'), 'les adresses privees, locales et reservees sont reconnues');
   fs.rmSync(dos, { recursive: true, force: true });
+
+  console.log('\n-- l appel part vers l adresse VERIFIEE, pas vers une seconde resolution DNS --');
+  {
+    const lk = E.lookupEpingle('93.184.215.14');
+    let a1, a2;
+    lk('x', {}, (e, ip) => { a1 = ip; }); lk('x', { all: true }, (e, l) => { a2 = l; });
+    ok(a1 === '93.184.215.14' && a2[0].address === '93.184.215.14' && a2[0].family === 4, 'la resolution rendue a https.request est toujours l adresse epinglee');
+    /* Un vrai serveur HTTPS local, un certificat pour « pin.example » — un nom qu aucun DNS ne connait :
+       la requete doit l atteindre par l adresse epinglee, et verifier le certificat sur le nom. */
+    const { execFileSync } = require('child_process');
+    const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pin-'));
+    execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(d2, 'k.pem'), '-out', path.join(d2, 'c.pem'), '-days', '1', '-subj', '/CN=pin.example', '-addext', 'subjectAltName=DNS:pin.example'], { stdio: 'ignore' });
+    const cert = fs.readFileSync(path.join(d2, 'c.pem'));
+    const srv = require('https').createServer({ key: fs.readFileSync(path.join(d2, 'k.pem')), cert }, (q, r) => { r.writeHead(402, { 'payment-required': b64({ x402Version: 2, accepts: [] }) }); r.end('{"host":"' + q.headers.host + '"}'); });
+    await new Promise((s) => srv.listen(0, '127.0.0.1', s));
+    const port = srv.address().port;
+    const r = await E.requeteEpinglee('https://pin.example:' + port + '/w?x=1', { method: 'GET', ca: cert, signal: AbortSignal.timeout(5000) }, ['127.0.0.1']);
+    const corps = await r.json();
+    ok(r.status === 402 && corps.host === 'pin.example:' + port && r.headers.get('payment-required'), 'pin.example (sans DNS) atteint par 127.0.0.1, certificat verifie sur le nom, en-tetes lus');
+    let refuse = false;
+    try { await E.requeteEpinglee('https://autre.example:' + port + '/w', { method: 'GET', ca: cert, signal: AbortSignal.timeout(5000) }, ['127.0.0.1']); } catch (e) { refuse = true; }
+    ok(refuse, 'un certificat qui ne porte pas le nom demande est refuse : epingler l adresse ne desactive pas TLS');
+    srv.close(); fs.rmSync(d2, { recursive: true, force: true });
+  }
 
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
   process.exit(rates ? 1 : 0);

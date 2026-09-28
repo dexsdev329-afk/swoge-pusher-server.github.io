@@ -60,11 +60,29 @@ function offrePour(w, accepts) {
     && (w.type === 'solana' ? a.asset === r.asset : String(a.asset).toLowerCase() === r.asset.toLowerCase())) || null;
 }
 
-/** Le 402 v2 lu dans une reponse : l'en-tete PAYMENT-REQUIRED, sinon le corps JSON. null s'il n'y en a pas. */
+/* ---- x402 v1 (specs/x402-specification-v1.md et specs/transports-v1/http.md du depot
+   coinbase/x402, lus le 28/09/2026) : le 402 porte ses offres dans le CORPS JSON
+   ({ x402Version: 1, error, accepts }), le montant s'appelle `maxAmountRequired`, les
+   reseaux ont des noms (« base », « solana »), le paiement part dans l'en-tete
+   X-PAYMENT (base64 de { x402Version: 1, scheme, network, payload }) et le recu revient
+   dans X-PAYMENT-RESPONSE. Le `payload` est le meme qu'en v2 (EIP-3009 ; transaction
+   Solana). On ramene chaque offre v1 a la forme v2 (`amount`, reseau CAIP-2) en gardant
+   l'originale dans `v1`, pour que tout le reste — choix de l'offre, plafonds, signature
+   — soit le meme code. ---- */
+const RESEAUX_V1 = { base: RESEAU_BASE, solana: RESEAU_SOLANA };
+function offreV1(a) {
+  if (!a || !RESEAUX_V1[a.network]) return null;
+  return Object.assign({}, a, { network: RESEAUX_V1[a.network], amount: String(a.maxAmountRequired), v1: a });
+}
+/** Le 402 lu dans une reponse : v2 (en-tete PAYMENT-REQUIRED, sinon corps) ou v1 (corps). null s'il n'y en a pas. */
 async function lit402(r) {
   const h = r.headers.get('payment-required');
-  if (h) { try { const q = de64(h); if (q && Array.isArray(q.accepts)) return q; } catch (e) { /* on essaie le corps */ } }
-  try { const q = await r.json(); if (q && Number(q.x402Version) === 2 && Array.isArray(q.accepts)) return q; } catch (e) { /* pas de JSON */ }
+  if (h) { try { const q = de64(h); if (q && Array.isArray(q.accepts)) return Object.assign({ x402Version: 2 }, q); } catch (e) { /* on essaie le corps */ } }
+  try {
+    const q = await r.json();
+    if (q && Number(q.x402Version) === 2 && Array.isArray(q.accepts)) return q;
+    if (q && Number(q.x402Version) === 1 && Array.isArray(q.accepts)) return { x402Version: 1, accepts: q.accepts.map(offreV1).filter(Boolean) };
+  } catch (e) { /* pas de JSON */ }
   return null;
 }
 
@@ -89,12 +107,20 @@ async function signe(w, acc, o) {
   return { payload: { signature, authorization: auth } };
 }
 
-/** L'en-tete PAYMENT-SIGNATURE d'un paiement signe. */
+/** L'en-tete PAYMENT-SIGNATURE d'un paiement signe (v2). */
 const entete = (req, acc, payload) => b64({ x402Version: 2, resource: req.resource, accepted: acc, payload, extensions: req.extensions });
-/** La transaction reglee, lue dans PAYMENT-RESPONSE, ou null. */
+/** L'en-tete a envoyer : { nom: valeur }, selon la version du 402. */
+function enteteDe(req, acc, payload) {
+  if (Number(req.x402Version) === 1) return { 'x-payment': b64({ x402Version: 1, scheme: 'exact', network: (acc.v1 || acc).network, payload }) };
+  return { 'payment-signature': entete(req, acc, payload) };
+}
+/** La transaction reglee, lue dans PAYMENT-RESPONSE (v2) ou X-PAYMENT-RESPONSE (v1), ou null. */
 function txDe(r) {
-  try { const rep = r.headers.get('payment-response'); return rep ? de64(rep).transaction || null : null; } catch (e) { return null; }
+  for (const n of ['payment-response', 'x-payment-response']) {
+    try { const rep = r.headers.get(n); if (rep) { const t = de64(rep).transaction; if (t) return t; } } catch (e) { /* suivant */ }
+  }
+  return null;
 }
 
-module.exports = { portefeuille, reseauDe, offrePour, lit402, signe, entete, txDe, b64, de64,
+module.exports = { portefeuille, reseauDe, offrePour, lit402, signe, entete, enteteDe, txDe, offreV1, RESEAUX_V1, b64, de64,
   USDC_BASE, USDC_SOLANA, RESEAU_BASE, RESEAU_SOLANA, DOMAINE, TYPES_3009 };

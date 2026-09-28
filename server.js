@@ -3156,6 +3156,19 @@ const server = http.createServer(async (req, res) => {
    * avec le pire cas de l'agent (plusieurs appels). Claude seul : c'est le
    * fournisseur dont la boucle d'outils est ecrite et essayee ici. Les outils
    * ne font que LIRE — voir studio_agent.js. */
+  /* ---- MES EMBAUCHES (embauche.js, 28/09/2026) : le budget du jour et l'historique du
+     joueur de la SESSION, jamais d'une adresse passee en parametre. ---- */
+  if (path === '/studio/agent/embauches') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS', 'access-control-allow-headers': 'authorization' };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    res.writeHead(addr ? 200 : 401, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors));
+    if (!addr) return res.end(JSON.stringify({ ok: false, raison: 'sign in with your wallet first' }));
+    if (!embauche().actif()) return res.end(JSON.stringify({ ok: true, actif: false }));
+    const P = embauche().pour(addr, factuEmbauche(addr));
+    return res.end(JSON.stringify({ ok: true, actif: true, budget: P.budget(), liste: P.historique(20) }));
+  }
   if (path === '/studio/agent' || path === '/studio/agent/catalogue') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization' };
