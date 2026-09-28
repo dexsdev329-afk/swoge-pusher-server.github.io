@@ -1683,6 +1683,18 @@ const klingTg = require('./kling_telegram').cree({ kling, telegram: tg, dossier:
   /* la serie automatique ecrit son histoire avec Claude (lu au moment voulu : les deux sont declares plus bas) */
   claude: () => (chatActif('anthropic') ? clientComprend() : null),
   journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } } });
+/* L'annonce automatique d'un nouvel outil : tweet + image haussiere dans Telegram (annonces.js). ANNONCES=0 coupe.
+   La liste : les outils de l'API publique et ceux de l'agent des joueurs, tels qu'ils sont offerts EN CE MOMENT. */
+const annonces = require('./annonces').cree({ kling, telegram: tg, dossier: cfg.DATA_DIR, site: SITE_URL,
+  claude: () => (chatActif('anthropic') ? clientComprend() : null),
+  outils: () => {
+    const A = require('./agentic'), D = require('./decouverte'), rech = chatActif('perplexity');
+    const l = A.definitions({ recherche: rech }).map((d) => { let p = null; try { p = Number(A.prixX402Usd(d.name, D.EXEMPLES_ENTREE[d.name] || {})) || null; } catch (e) { p = null; }
+      return { nom: d.name, description: d.description, prixUsd: p }; });
+    for (const d of studioAgent.definitions({ recherche: rech, embauche: embauche().actif(), achats: achats().actif() })) if (!l.some((x) => x.nom === d.name)) l.push({ nom: d.name, description: d.description });
+    return l;
+  },
+  journal: (o) => console.log('[annonces] ' + JSON.stringify(o).slice(0, 400)) });
 const epreuveSortie = require('./epreuve_sortie').cree({
   epreuve: (a) => aiColonie.epreuveDeSortie(a),
   dossier: cfg.DATA_DIR,
@@ -4706,6 +4718,18 @@ const server = http.createServer(async (req, res) => {
    * aucun debit (c'est le compte Kling du proprietaire qui paie), chaque essai
    * journalise avec son estimation d'apres la grille officielle, pour mesurer
    * qualite, attente et cout avant de rien proposer aux joueurs. */
+  /* ---- LES ANNONCES (annonces.js) : l'etat, et « publier maintenant » — proprietaire seulement. ---- */
+  if (path === '/studio/annonces') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    if (!proprietaireIA(addr)) return json(403, { ok: false, raison: 'owner only (AI_OWNER on the server)' });
+    if (req.method === 'POST') { annonces.releve(); const r = await annonces.tour({ maintenant: true }); return json(200, { ok: true, resultat: r, etat: annonces.etat() }); }
+    return json(200, Object.assign({ ok: true }, annonces.etat()));
+  }
   if (path === '/studio/kling' || path.startsWith('/studio/kling/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization' };
@@ -9028,6 +9052,8 @@ server.listen(cfg.PORT, () => {
   }
 
   if (process.env.KLING_TG !== '0') klingTg.demarre();
+  /* Les annonces d'outils : premier releve 2 min apres le demarrage (tout est cable), puis chaque minute. */
+  if (process.env.ANNONCES !== '0') setTimeout(() => annonces.demarre(), 2 * 60e3).unref();
 
   if (process.env.OBSERVATOIRE === '1') {
     observatoire.demarre();
