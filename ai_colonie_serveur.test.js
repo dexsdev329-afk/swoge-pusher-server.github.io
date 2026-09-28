@@ -8164,6 +8164,61 @@ async function noeudsDates() {
   ok(!!a && !/keyed node/.test(a.pourquoi), 'sans le noeud a cle, qui n est plus appele : il n est plus dans `noeuds()`');
 }
 
+/* ==========================================================================
+ * LES CONTRATS SOUMIS PAR LES JOUEURS
+ *
+ * « Sur le scanner, quand on met un contrat a la main, ce serait cool de
+ *   pouvoir le soumettre a la colonie. »
+ *
+ * Une source qui PROPOSE : la colonie juge un jeton soumis avec ses regles,
+ * sans passe-droit. Ce que le joueur lit ensuite est ce que la colonie en a
+ * fait, et les bornes (par tour, par file, par jour) tiennent.
+ * ======================================================================== */
+async function soumissionsDeJoueurs() {
+  const vide = () => { C.SOUMIS.file.length = 0; C.SOUMIS.vus.clear(); C.SOUMIS.parQui.clear(); };
+  console.log('\n-- un jeton soumis entre dans le tour, et il y est juge comme les autres --');
+  const jeune = jeton(7), vieux = jeton(8, { minutes: 3000 });
+  remise(sains().concat([jeune, vieux]));
+  vide();
+  poolsPageFiltre = sains().map((t) => t.addr);          /* le flux ne les sert pas : seule la soumission les amene */
+  const JOUEUR = '0x' + 'ab'.repeat(20), INCONNU = '0x' + '99'.repeat(20);
+  ok(!C.soumets('0x1234', JOUEUR).ok && !C.soumets('pas une adresse', JOUEUR).ok, 'une adresse qui n en est pas une est refusee');
+  const r1 = C.soumets(jeune.addr.toUpperCase().replace('0X', '0x'), JOUEUR);
+  ok(r1.ok && r1.soumission.status === 'queued' && r1.soumission.address === jeune.addr, 'soumis : en file, adresse ramenee en minuscules (' + r1.soumission.text + ')');
+  const r1b = C.soumets(jeune.addr, JOUEUR);
+  ok(r1b.ok && r1b.deja && C.SOUMIS.file.length === 1, 'la meme adresse deux fois : une seule place dans la file');
+  ok(C.soumets(vieux.addr, JOUEUR).ok && C.soumets(INCONNU, JOUEUR).ok && C.SOUMIS.file.length === 3, 'trois jetons en file');
+  await C.tour();
+  const v = C.vue();
+  const c7 = v.candidats.find((c) => c.addr === jeune.addr);
+  ok(!!c7 && c7.origine === 'soumis', 'le jeune jeton est examine, origine « ' + (c7 && c7.origine) + ' » — le trait que l audit mesurera');
+  ok(!v.candidats.find((c) => c.addr === vieux.addr), 'le jeton de 50 h n entre pas : rien de vieux n entre, soumis ou non');
+  ok(C.SOUMIS.file.length === 0, 'la file est videe (3 lus, borne ' + C.SOUMIS_PAR_TOUR + ' par tour)');
+  const s = C.soumissions(JOUEUR), de = (a) => s.find((x) => x.address === a) || {};
+  console.log('   ' + s.map((x) => x.status + ' — ' + x.text).join('\n   '));
+  ok(['refused', 'passed', 'bought'].indexOf(de(jeune.addr).status) >= 0 && de(jeune.addr).symbol === 'TOK7', 'le joueur lit le verdict de la colonie sur le jeune (' + de(jeune.addr).status + ')');
+  ok(de(vieux.addr).status === 'too_old' && /50 h old/.test(de(vieux.addr).text), 'le vieux : lu, pas examine, et la raison est dite');
+  ok(de(INCONNU).status === 'not_found', 'l adresse sans piscine Robinhood : not_found');
+  ok(C.soumissions('0x' + 'cd'.repeat(20)).length === 0, 'un autre portefeuille ne voit pas les soumissions de celui-ci');
+  const k = C._etat().compteurs;
+  ok(k.soumisRecu === 3 && k.soumisLu === 3, 'compte : ' + k.soumisRecu + ' recus, ' + k.soumisLu + ' lus');
+
+  console.log('\n-- les bornes --');
+  ok(C.soumets('0x' + '91'.repeat(20), JOUEUR).ok && C.soumets('0x' + '92'.repeat(20), JOUEUR).ok, 'quatrieme et cinquieme soumission du jour : acceptees');
+  const r6 = C.soumets('0x' + '93'.repeat(20), JOUEUR);
+  ok(!r6.ok && /5 submissions a day/.test(r6.raison), 'la sixieme : refusee (« ' + r6.raison + ' »)');
+  ok(C.soumets('0x' + '93'.repeat(20), JOUEUR, true).ok, 'le proprietaire n a pas de limite par jour');
+  const BANNI = '0x' + '94'.repeat(20);
+  C._etat().connus[BANNI] = { permanent: true, raison: 'honeypot' };
+  const rb = C.soumets(BANNI, '0x' + 'cd'.repeat(20));
+  ok(!rb.ok && /rejected this token for good/.test(rb.raison), 'un jeton banni pour de bon ne rentre pas par la soumission');
+  for (let i = 0; C.SOUMIS.file.length < C.SOUMIS_FILE_MAX; i++) C.soumets('0x' + (160 + i).toString(16).repeat(20), JOUEUR, true);
+  const rp = C.soumets('0x' + 'fe'.repeat(20), JOUEUR, true);
+  ok(!rp.ok && /queue is full/.test(rp.raison), 'file pleine a ' + C.SOUMIS_FILE_MAX + ' : refus, meme pour le proprietaire');
+  vide();
+  poolsPageFiltre = null;
+}
+
 
 /* 8. La baleine par tranche (50-70, 70-90, 90 et plus), le motif « none of
  *    them holds it », un regard qui voit l'Oracle et le Cobaye, et le Scout
@@ -8356,6 +8411,7 @@ async function baleineParTranche() {
   await auditSurSeptJours();
   await noeudsDates();
   await baleineParTranche();
+  await soumissionsDeJoueurs();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

@@ -2569,7 +2569,7 @@ const MOTS = {
   'explosion': 'exploding',
   /* origine */
   'trouve par pools': 'found via pools', 'trouve par profils': 'found via profiles',
-  'trouve par recherche': 'found via search',
+  'trouve par recherche': 'found via search', 'trouve par soumis': 'submitted by a player',
   /* conseiller */
   /* Les trois valeurs que le Conseiller peut rendre sont bornees dans le code
      (`['favorable','reserve','defavorable']`) — pas devinees ici. « prudent »
@@ -9508,6 +9508,63 @@ async function poussePads(parAdresse) {
 
 const TG_PAR_TOUR = 6;   /* comme un flux DexScreener : le canal ne monopolise pas le budget */
 
+/* ==========================================================================
+ * LES CONTRATS SOUMIS PAR LES JOUEURS (28 septembre 2026)
+ *
+ * « Sur le scanner, quand on met un contrat a la main, ce serait cool de
+ *   pouvoir le soumettre a la colonie. »
+ *
+ * Une source de plus, comme Telegram : elle PROPOSE, la colonie juge avec
+ * ses regles, sans passe-droit — ni achat force, ni plancher desserre, ni
+ * exception a « rien de vieux n'entre ». Le trait `origine = 'soumis'` dira
+ * ce que valent les jetons des joueurs, a l'audit, au lieu qu'on en decide.
+ * Bornes : SOUMIS_PAR_TOUR (3) lus par tour — les flux gardent le budget ;
+ * SOUMIS_FILE_MAX (20) en attente ; SOUMIS_PAR_JOUR (5) par portefeuille
+ * connecte et par jour UTC (le proprietaire : sans limite). L'adresse du
+ * joueur est celle de sa session (server.js, ws.addr), jamais un champ.
+ * ======================================================================== */
+const SOUMIS_PAR_TOUR = 3, SOUMIS_FILE_MAX = 20, SOUMIS_PAR_JOUR = 5;
+const SOUMIS = { file: [], vus: new Map(), parQui: new Map() };
+function soumets(adr, qui, sansLimite) {
+  const a = String(adr || '').trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(a)) return { ok: false, raison: 'a token address is 0x followed by 40 hex characters' };
+  const q = String(qui || '').toLowerCase();
+  const deja = SOUMIS.vus.get(a);
+  if (deja && (deja.etat === 'en file' || Date.now() - deja.t < 30 * 60e3)) return { ok: true, deja: true, soumission: etatSoumission(deja) };
+  const c = E.connus[a];
+  if (c && c.permanent) return { ok: false, raison: 'the colony already rejected this token for good' + (c.raison ? ' (' + String(c.raison).slice(0, 80) + ')' : '') };
+  const jour = new Date().toISOString().slice(0, 10);
+  const n = SOUMIS.parQui.get(q);
+  const compteJour = n && n.jour === jour ? n.n : 0;
+  if (!sansLimite && compteJour >= SOUMIS_PAR_JOUR) return { ok: false, raison: SOUMIS_PAR_JOUR + ' submissions a day per wallet - come back tomorrow' };
+  if (SOUMIS.file.length >= SOUMIS_FILE_MAX) return { ok: false, raison: 'the queue is full (' + SOUMIS_FILE_MAX + ' tokens) - try again in a few minutes' };
+  SOUMIS.parQui.set(q, { jour, n: compteJour + 1 });
+  const v = { adr: a, qui: q, t: Date.now(), etat: 'en file' };
+  SOUMIS.vus.set(a, v);
+  SOUMIS.file.push(v);
+  for (const [k, x] of SOUMIS.vus) if (x.etat !== 'en file' && Date.now() - x.t > 24 * 3600e3) SOUMIS.vus.delete(k);
+  compte('soumisRecu');
+  return { ok: true, soumission: etatSoumission(v), place: SOUMIS.file.length };
+}
+/** Ce que la colonie a fait d'une soumission, lu au moment ou on le demande (en anglais : la page le montre). */
+function etatSoumission(v) {
+  const o = { address: v.adr, symbol: v.sym || null, submittedAt: new Date(v.t).toISOString() };
+  if (v.etat === 'en file') return Object.assign(o, { status: 'queued', text: 'queued: the colony reads it at its next round' });
+  if (v.etat === 'hors robinhood') return Object.assign(o, { status: 'not_found', text: 'no Robinhood Chain pool found on DexScreener' });
+  if (v.etat === 'banni') return Object.assign(o, { status: 'rejected', text: 'the colony already rejected this token for good' });
+  const pos = E.positions.find((p) => p.adr === v.adr);
+  if (pos) return Object.assign(o, { status: 'bought', text: 'bought on paper by the colony' });
+  const c = (E.candidats || []).find((x) => x.addr === v.adr);
+  if (c) return Object.assign(o, c.refus ? { status: 'refused', text: 'examined and refused: ' + String(c.refus).slice(0, 160) } : { status: 'passed', text: 'examined: passed the checks this round' + (c.score != null ? ' (score ' + c.score + ')' : '') });
+  if (v.minutes != null && v.minutes > AGE_MAX_MIN) return Object.assign(o, { status: 'too_old', text: 'read but not examined: its pool is ' + Math.round(v.minutes / 60) + ' h old, the colony only takes tokens under ' + Math.round(AGE_MAX_MIN / 60) + ' h' });
+  if (v.liq != null && v.liq < 500) return Object.assign(o, { status: 'too_thin', text: 'read but not examined: pool liquidity $' + Math.round(v.liq) + ', under $500' });
+  return Object.assign(o, { status: 'read', text: 'read; not examined this round (the round budget went to other tokens)' });
+}
+function soumissions(qui) {
+  const q = String(qui || '').toLowerCase();
+  return [...SOUMIS.vus.values()].filter((v) => !q || v.qui === q).sort((a, b) => b.t - a.t).slice(0, 10).map(etatSoumission);
+}
+
 async function rassemble() {
   const parAdresse = new Map();
   for (const t of await lisPools()) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
@@ -9554,6 +9611,21 @@ async function rassemble() {
       await dors(250);
     }
   } catch (e) { noteService('telegram', false, String(e.message || e).slice(0, 50)); }
+  /* ---- LES CONTRATS SOUMIS PAR LES JOUEURS (voir `soumets`) ---- */
+  for (let pris = 0; SOUMIS.file.length && pris < SOUMIS_PAR_TOUR; pris++) {
+    const v = SOUMIS.file.shift();
+    const c = E.connus[v.adr];
+    if (c && c.permanent) { v.etat = 'banni'; continue; }
+    const deja = parAdresse.get(v.adr);
+    /* Deja dans le tour par un flux : l'origine reste celle du premier qui l'a vu. */
+    const t = deja || await jetonDepuisDex(v.adr, 'soumis');
+    compte('soumisLu');
+    if (t && t.prix > 0) {
+      Object.assign(v, { etat: 'lu', sym: t.sym, minutes: t.minutes, liq: t.liq });
+      if (!deja) parAdresse.set(v.adr, t);
+    } else v.etat = 'hors robinhood';
+    await dors(250);
+  }
   /* ---- LES GRADUES PONS DES SIX DERNIERES HEURES ----
    * Ils ont un pool depuis leur graduation, donc DexScreener les sert ; on
    * les pousse dans le tour, les plus frais d'abord, au plus six a la fois. */
@@ -10369,6 +10441,7 @@ function arrete() {
 }
 
 module.exports = {
+  soumets, soumissions, etatSoumission, SOUMIS, SOUMIS_PAR_TOUR, SOUMIS_FILE_MAX, SOUMIS_PAR_JOUR,
   budgetCg, cleDansLeBudget,
   epreuveDeSortie,
   demarre, arrete, vue, tour, charge, sauve, reprendSansMethode, veille,

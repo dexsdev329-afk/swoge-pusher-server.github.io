@@ -5640,6 +5640,20 @@ wss.on('connection', (ws) => {
        * AI_OWNER nomme les adresses qui peuvent tenir ou fermer une position
        * de la colonie. L'etat du miroir le dit a la page, qui montre alors les
        * boutons ; le serveur le REVERIFIE a chaque geste. */
+      /* ---- SOUMETTRE UN CONTRAT A LA COLONIE (28/09/2026, ai_colonie.soumets) ----
+       * Un joueur CONNECTE propose un jeton ; la colonie le lit a son prochain
+       * tour et le juge avec ses regles, sans passe-droit. Compte par
+       * `ws.addr` (l'adresse prouvee par signature), jamais par un champ du
+       * message ; le proprietaire (AI_OWNER) sans limite quotidienne. */
+      if (m.type === 'colonieSoumets' || m.type === 'colonieSoumissions') {
+        if (!ws.addr) return send(ws, { type: 'error', error: 'connect your wallet to submit a token to the colony' });
+        if (m.type === 'colonieSoumets') {
+          const r = aiColonie.soumets(String(m.adr || ''), ws.addr, proprietaireIA(ws.addr));
+          send(ws, Object.assign({ type: 'colonieSoumis' }, r));
+        }
+        send(ws, { type: 'colonieSoumissions', liste: aiColonie.soumissions(ws.addr) });
+        return;
+      }
       if (m.type === 'colonieTiens' || m.type === 'colonieFerme') {
         if (!proprietaireIA(ws.addr)) return send(ws, { type: 'error', error: 'only the colony owner can steer the paper book (AI_OWNER on the server)' });
         try {
