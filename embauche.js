@@ -252,7 +252,9 @@ function cree(deps) {
       const acc = X.offrePour(w, req.accepts);
       if (!acc) { MESURE.refusees++; return { ok: false, raison: 'the service does not take USDC on ' + (w.type === 'solana' ? 'Solana' : 'Base') + ' - nothing was charged' }; }
       const usd = Number(acc.amount) / 1e6;
-      if (!(usd > 0) || usd > maxAppel()) { MESURE.refusees++; return { ok: false, raison: 'price ' + usd + ' $ above the ' + maxAppel() + ' $ per-call cap - nothing was charged' }; }
+      /* a.maxUsd : un plafond par appel plus bas, celui d'une cle (passerelle.js) — jamais plus haut. */
+      const cap = Number(a.maxUsd) > 0 ? Math.min(maxAppel(), Number(a.maxUsd)) : maxAppel();
+      if (!(usd > 0) || usd > cap) { MESURE.refusees++; return { ok: false, raison: 'price ' + usd + ' $ above the ' + cap + ' $ per-call cap - nothing was charged' }; }
       const t0 = jour0();
       if (depuis(t0, q) + usd > plafondDe(q)) { MESURE.refusees++; return { ok: false, raison: 'your daily hiring budget (' + plafondDe(q) + ' $) is used up - nothing was charged' }; }
       if (depuis(t0, null) + usd > maxJour()) { MESURE.refusees++; return { ok: false, raison: 'the agent\'s daily hiring budget is used up - try again tomorrow, nothing was charged' }; }

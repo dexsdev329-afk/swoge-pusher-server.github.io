@@ -88,6 +88,7 @@ const ETIQUETTES = [
   { name: 'randomness', description: 'Provably fair draws: commit, draw, verify (HMAC-SHA256, no bias)' },
   { name: 'video', description: 'Short video generation (Grok Imagine)' },
   { name: 'esim', description: 'Travel data eSIM: free search, bought per purchase in USDC with x402, no account' },
+  { name: 'payments', description: 'Pay other x402 services with your API key, within the owner\'s limits, with a hash-chained audit' },
   { name: 'catalogue', description: 'The live tool list, prices and x402 status' },
 ];
 const ETIQUETTES_OUTIL = {
@@ -712,6 +713,23 @@ function openapi(c) {
      facilement ». Ses routes ne sont pas des outils /agentic/call (la recherche est gratuite, le
      prix de l'achat est celui du forfait choisi) : elles sont decrites a part. */
   if (c.esim) Object.assign(paths, pathsEsim(c));
+  /* La passerelle de depense (passerelle.js, 28/09 au soir) : payer un AUTRE service x402 avec sa cle. */
+  paths['/agentic/pay'] = { post: { operationId: 'payService', summary: 'Use this when your agent must pay another x402 service: SWOGE pays it for you, within the limits the key owner set', tags: ['payments'],
+    description: 'With your API key and an Idempotency-Key header. The key owner first turns payments on for that key (per-call cap up to $0.10, optional allowed sites) on the SwogeAgentic page: off by default. '
+      + 'Only services of the public x402 catalogue, public https addresses, no redirects; the price in the 402 must fit the per-call cap (and max_usd if sent) and the key\'s daily cap. '
+      + 'Paid only if the service answers 200; the owner is billed in $SWOGE. The same Idempotency-Key never pays twice. Every attempt writes a hash-chained audit line: GET /agentic/audit.',
+    parameters: [{ name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', minLength: 8, maxLength: 100 } }],
+    requestBody: { required: true, content: { 'application/json': { schema: obj({ url: s('https URL of the paid service'), method: s('GET or POST'), query: { type: 'object' }, body: { type: 'object' },
+      max_usd: n('optional: a lower cap for this call') }, ['url']), example: { url: 'https://x402factory.ai/solana/coinprice', query: { symbol: 'SOL' }, max_usd: 0.01 } } } },
+    responses: { 200: { description: 'Paid (or free): the service answer, the receipt and the audit line', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, resultat: { description: 'the service answer' },
+      recu: { type: 'object', description: 'url, usd, factureUsd, reseau, tx' }, audit: { type: 'object', description: 'seq and h (SHA-256) of the audit line' }, rejoue: b('true: this Idempotency-Key was already used, original answer') }, ['ok']) } } },
+      400: { description: 'Bad request or missing Idempotency-Key - nothing is charged' }, 401: { description: 'No key, or unknown or revoked key' }, 402: { description: 'Refused before or after the call - nothing is charged' },
+      403: { description: 'Payments are off for this key, or the site is not allowed' }, 409: { description: 'A payment with this Idempotency-Key is still running' } },
+    security: [{ cleApi: [] }, { cleEnTete: [] }] } };
+  paths['/agentic/audit'] = { get: { operationId: 'audit', summary: 'The hash-chained audit of the payments made with your key (or all your keys, signed in)', tags: ['payments'],
+    responses: { 200: { description: 'Lines, newest first, and the state of the whole chain', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, lignes: tab({ type: 'object' }),
+      chaine: obj({ ok: { type: 'boolean' }, lignes: n(), casseA: nn('seq of the first broken line') }, ['ok']) }, ['ok', 'lignes', 'chaine']) } } }, 401: { description: 'No key' } },
+    security: [{ cleApi: [] }, { cleEnTete: [] }] } };
   const doc = {
     openapi: '3.1.0',
     info: {

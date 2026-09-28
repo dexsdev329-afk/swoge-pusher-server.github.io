@@ -640,6 +640,8 @@ function llmsTxt(cat, u) {
    .concat(u.esim ? ['', 'Travel eSIM, no account: `GET ' + u.api + '/esim/plans?country=France` (free) lists data-only eSIM plans for a country or a region (Europe, Asia, Middle East, South America, North America, Global), cheapest per GB first, each with `priceUsd`. '
       + '`POST ' + u.api + '/esim/buy` with `{"plan": "<plan id>"}` answers 402 (x402 v2, USDC on Base or Solana, the plan price); sign and retry with `PAYMENT-SIGNATURE` and the same plan. '
       + 'The eSIM is bought before the payment settles: if it cannot be bought, nothing is charged. The answer carries the activation (LPA code) and `orderLink`, a secret: `GET ' + u.api + '/esim/order/<orderLink>` returns it again. Data only, no phone number; check the device supports eSIM.'] : [])
+   /* La passerelle de depense (28/09 au soir). */
+   .concat(['', 'Pay other x402 services with your key: `POST ' + u.api + '/agentic/pay` with `{"url": "...", "query": {...}, "max_usd": 0.01}` and an `Idempotency-Key` header. The key owner turns payments on for that key first (per-call cap up to $0.10, optional allowed sites); SWOGE pays, only if the service answers 200, and bills the owner in $SWOGE. The same Idempotency-Key never pays twice. Every attempt is on a hash-chained audit: `GET ' + u.api + '/agentic/audit`.'])
    .concat(['',
     '## Docs',
     '',

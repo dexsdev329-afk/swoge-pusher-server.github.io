@@ -2036,6 +2036,13 @@ function boutiqueEsim() {
   return BOUTIQUE;
 }
 const RECHERCHES_ESIM = new Map();            /* empreinte d'IP → instants : 20 recherches par 10 min */
+/* ---- LA PASSERELLE DE DEPENSE DES AGENTS (passerelle.js, 28/09 au soir) ---- */
+let PASSERELLE = null;
+function passerelle() {
+  if (!PASSERELLE) PASSERELLE = require('./passerelle').cree({ embauche: () => embauche(), cles: agenticCles,
+    factuPour: (addr) => factuEmbauche(addr, 'pay a service through the SWOGE gateway'), cours: () => studioChat.coursSwoge(), dossier: cfg.DATA_DIR });
+  return PASSERELLE;
+}
 /** La facture d'une embauche (ou d'un achat) pour UN joueur : reserve au cours du moment, regle au prix du recu. */
 function factuEmbauche(addr, quoi) {
   const dec = cfg.DECIMALS || 18;
@@ -3192,9 +3199,10 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=300' });
     return res.end(txt);
   }
-  if (path === '/agentic/tools' || path === '/agentic/x402' || path === '/agentic/solana/blockhash' || path.startsWith('/agentic/call/') || path === '/agentic/recus' || path === '/agentic/cles' || path.startsWith('/agentic/cles/')) {
+  if (path === '/agentic/tools' || path === '/agentic/x402' || path === '/agentic/solana/blockhash' || path.startsWith('/agentic/call/') || path === '/agentic/recus' || path === '/agentic/cles' || path.startsWith('/agentic/cles/')
+      || path === '/agentic/pay' || path === '/agentic/audit') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
-                   'access-control-allow-headers': 'content-type, authorization, x-api-key, payment-signature',
+                   'access-control-allow-headers': 'content-type, authorization, x-api-key, payment-signature, idempotency-key',
                    'access-control-expose-headers': 'payment-required, payment-response' };
     const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
@@ -3242,6 +3250,23 @@ const server = http.createServer(async (req, res) => {
         const r = await agentic().appelle({ cle, clePresentee: !!cleTexte, outil, args: q.arguments || {}, devis, canal: 'rest', qui: quiIp });
         return json(r.ok ? 200 : (r.code || 500), r);
       }
+      /* ---- LA PASSERELLE DE DEPENSE (passerelle.js, 28/09 au soir) : un agent paie un service x402
+         avec SA cle, dans les limites que le proprietaire a mises a cette cle. Jamais avec une session :
+         c'est la cle qui porte la permission, le plafond par appel et les sites autorises. */
+      if (path === '/agentic/pay') {
+        if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+        if (!cle) return json(401, { ok: false, raison: cleTexte ? 'this API key is unknown or revoked' : 'send your API key (Authorization: Bearer swg_...): payments are made for the key owner, within the limits they set' });
+        if (!embauche().actif()) return json(503, { ok: false, raison: 'paying other services is not switched on right now' });
+        let q;
+        try { q = JSON.parse((await corps(req, 16 * 1024)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+        const r = await passerelle().paie(cle, q, req.headers['idempotency-key']);
+        return json(r.code, r.corps);
+      }
+      if (path === '/agentic/audit') {
+        const addr = cle ? cle.addr : session;
+        if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet, or send your API key' });
+        return json(200, passerelle().audit(addr, cle ? cle.id : null, 100));
+      }
       if (path === '/agentic/recus') {
         const addr = cle ? cle.addr : session;
         if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet, or send your API key' });
@@ -3253,6 +3278,13 @@ const server = http.createServer(async (req, res) => {
         let q;
         try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
         const r = agenticCles.nouvelle(session, q.nom, q.plafondSwoge);
+        return json(r.ok ? 200 : r.code, r);
+      }
+      /* La permission de payer d'une cle : la SESSION du proprietaire seulement (une cle ne se l'accorde jamais). */
+      if (/^\/agentic\/cles\/[0-9a-f]{12}\/paiements$/.test(path) && req.method === 'POST') {
+        let q;
+        try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+        const r = agenticCles.fixePaiement(session, path.split('/')[3], q);
         return json(r.ok ? 200 : r.code, r);
       }
       if (path.startsWith('/agentic/cles/') && req.method === 'DELETE') {

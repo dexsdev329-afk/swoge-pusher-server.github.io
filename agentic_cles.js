@@ -32,6 +32,8 @@ const PREFIXE = 'swg_';
 const RECUS_MAX = 50;
 const PLAFOND_MIN = 1;                  /* en $SWOGE entiers, par jour */
 const PLAFOND_MAX = 100000000;
+const PAIE_MIN_APPEL_USD = 0.001;       /* payer un service : le plafond par appel que le proprietaire choisit… */
+const PAIE_MAX_APPEL_USD = 0.1;         /* …jamais au-dessus de celui de l'embauche (EMBAUCHE_MAX_APPEL_USD, 0,10 $) */
 
 const empreinte = (cle) => crypto.createHash('sha256').update(String(cle)).digest('hex');
 const jourDe = (t) => new Date(t).toISOString().slice(0, 10);
@@ -59,7 +61,8 @@ function cree(opts) {
     fs.renameSync(tmp, fichier);
   }
   const vue = (h, c) => ({ id: h.slice(0, 12), nom: c.nom, debut: c.debut, cree: c.cree, derniere: c.derniere || null,
-    plafondSwoge: c.plafondSwoge, depenseAujourdhui: c.jour === jourDe(maintenant()) ? c.depenseSwoge : 0, revoquee: !!c.revoquee });
+    plafondSwoge: c.plafondSwoge, depenseAujourdhui: c.jour === jourDe(maintenant()) ? c.depenseSwoge : 0, revoquee: !!c.revoquee,
+    paiements: c.paie && c.paie.actif ? { actif: true, maxAppelUsd: c.paie.maxAppelUsd, hotes: c.paie.hotes.slice() } : { actif: false } });
 
   /** Crée une clé pour l'adresse de la SESSION. Rend la clé en clair une seule fois. */
   function nouvelle(addr, nom, plafondSwoge) {
@@ -121,7 +124,29 @@ function cree(opts) {
   }
   function recus(addr) { return (charge().recus[addr] || []).slice(); }
 
-  return { nouvelle, liste, revoque, resout, sousPlafond, depense, recus, _etat: () => charge() };
+  /* ---- PAYER D'AUTRES SERVICES AVEC LA CLE (passerelle.js, 28/09/2026 au soir) ----
+     Une clé ne sert qu'a LIRE, c'est sa promesse : payer un service exterieur est une
+     permission que le proprietaire active LUI-MEME, cle par cle, avec un plafond par appel
+     (au plus PAIE_MAX_APPEL_USD, le plafond de l'embauche) et, s'il le veut, les seuls
+     sites autorises. Eteinte par defaut, et pour toute cle creee avant. */
+  function fixePaiement(addr, id, p) {
+    const S = charge();
+    const h = Object.keys(S.cles).find((k) => k.slice(0, 12) === String(id || '') && S.cles[k].addr === addr && !S.cles[k].revoquee);
+    if (!h) return { ok: false, code: 404, raison: 'no such key' };
+    p = p || {};
+    if (!p.actif) { S.cles[h].paie = { actif: false, maxAppelUsd: 0, hotes: [] }; sauve(); return { ok: true, cle: vue(h, S.cles[h]) }; }
+    const m = Number(p.maxAppelUsd);
+    if (!(m >= PAIE_MIN_APPEL_USD && m <= PAIE_MAX_APPEL_USD)) return { ok: false, code: 400, raison: 'set a per-call payment cap between $' + PAIE_MIN_APPEL_USD + ' and $' + PAIE_MAX_APPEL_USD };
+    const hotes = Array.isArray(p.hotes) ? p.hotes.map((x) => String(x || '').trim().toLowerCase()).filter(Boolean) : [];
+    if (hotes.length > 20 || !hotes.every((x) => /^(?=.{1,120}$)([a-z0-9-]+\.)+[a-z]{2,}$/.test(x))) return { ok: false, code: 400, raison: 'allowed sites: up to 20 host names like api.example.com' };
+    S.cles[h].paie = { actif: true, maxAppelUsd: Math.round(m * 1e6) / 1e6, hotes: [...new Set(hotes)] };
+    sauve();
+    return { ok: true, cle: vue(h, S.cles[h]) };
+  }
+  /** La politique de paiement d'une cle (par son empreinte), ou null si les paiements sont eteints. */
+  function paiementDe(h) { const c = charge().cles[h]; return c && !c.revoquee && c.paie && c.paie.actif ? Object.assign({}, c.paie, { hotes: c.paie.hotes.slice() }) : null; }
+
+  return { nouvelle, liste, revoque, resout, sousPlafond, depense, recus, fixePaiement, paiementDe, _etat: () => charge() };
 }
 
 module.exports = { cree, empreinte, MAX_ACTIVES, PREFIXE, PLAFOND_MIN, PLAFOND_MAX };
