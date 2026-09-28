@@ -101,7 +101,7 @@ const monde = (o) => {
     ok(P.S.vus.paiements.length === 1 && d.every((x) => x.corps.arguments.commitment_id === 'vivant-1' && x.corps.arguments.client_seed === 'agent-42'),
        'une preparation versionnee : les essais rates avec l exemple mort ne comptent plus, l engagement vivant part (et le reste de l exemple)');
     const Q = monde({ outils: ['fair_draw'], dossier, prepares }); await Q.A.passe();
-    ok(Q.S.vus.demandes.length === 0 && P.A.etat().faits.fair_draw.etat === 'paye', 'paye une fois : plus jamais');
+    ok(Q.S.vus.demandes.length === 0 && P.A.etat().faits.fair_draw.etat === 'paye' && P.A.etat().faits.fair_draw.raison === null, 'paye une fois : plus jamais, et l ancienne raison d echec effacee');
     const R1 = monde({ refus: true, outils: ['fair_draw'], prepares: { fair_draw: { version: 'v2', args: async (a) => a } } });
     await R1.A.passe(); await monde({ refus: true, outils: ['fair_draw'], dossier: R1.dossier, prepares: { fair_draw: { version: 'v2', args: async (a) => a } } }).A.passe();
     const R3 = monde({ refus: true, outils: ['fair_draw'], dossier: R1.dossier, prepares: { fair_draw: { version: 'v2', args: async (a) => a } } }); await R3.A.passe();

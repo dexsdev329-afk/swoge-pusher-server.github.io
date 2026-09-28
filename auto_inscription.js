@@ -120,7 +120,7 @@ function cree(deps) {
           const ex = (deps.exemples || {})[outil];
           r = await paieUn(outil, prep ? await prep.args(Object.assign({}, ex || {})) : ex);
         } catch (e) { r = { ok: false, raison: String(e && e.message || e).slice(0, 160) }; }
-        etat.faits[outil] = Object.assign(etat.faits[outil], r.ok ? { etat: 'paye', tx: r.tx, usd: r.usd } : { etat: 'echec', raison: r.raison, tx: r.tx || null }); ecrit();
+        etat.faits[outil] = Object.assign(etat.faits[outil], r.ok ? { etat: 'paye', tx: r.tx, usd: r.usd, raison: null } : { etat: 'echec', raison: r.raison, tx: r.tx || null }); ecrit();
         journal({ outil, ok: r.ok, usd: r.usd || 0, tx: r.tx || null, raison: r.ok ? null : r.raison });
         faits.push({ outil, ok: r.ok, raison: r.ok ? null : r.raison });
         if (r.stop) break;
