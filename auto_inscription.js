@@ -49,6 +49,8 @@ function cree(deps) {
   const fichier = path.join(deps.dossier, 'auto_inscription.json');
   let etat = { faits: {}, depenseUsd: 0 };
   try { etat = Object.assign(etat, JSON.parse(fs.readFileSync(fichier, 'utf8'))); } catch (e) { /* premier demarrage */ }
+  /* Les fiches payees avant le 28/09 au soir gardaient la raison d'un essai rate d'avant. */
+  for (const f of Object.values(etat.faits || {})) if (f && f.etat === 'paye' && f.raison) f.raison = null;
   const ecrit = () => { try { fs.mkdirSync(deps.dossier, { recursive: true }); fs.writeFileSync(fichier, JSON.stringify(etat, null, 2)); } catch (e) { /* le prochain passage reessaie */ } };
   const journal = (o) => { try { (deps.journal || (() => {}))(o); } catch (e) { /* jamais bloquant */ } };
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64');

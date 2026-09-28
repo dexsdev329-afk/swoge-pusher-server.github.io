@@ -100,7 +100,10 @@ const monde = (o) => {
     const d = P.S.vus.demandes.filter((x) => x.outil === 'fair_draw');
     ok(P.S.vus.paiements.length === 1 && d.every((x) => x.corps.arguments.commitment_id === 'vivant-1' && x.corps.arguments.client_seed === 'agent-42'),
        'une preparation versionnee : les essais rates avec l exemple mort ne comptent plus, l engagement vivant part (et le reste de l exemple)');
+    const fic = path.join(dossier, fs.readdirSync(dossier).find((x) => /\.json$/.test(x)));
+    const e0 = JSON.parse(fs.readFileSync(fic, 'utf8')); e0.faits.fair_draw.raison = 'HTTP 400 - vieux'; fs.writeFileSync(fic, JSON.stringify(e0));
     const Q = monde({ outils: ['fair_draw'], dossier, prepares }); await Q.A.passe();
+    ok(Q.A.etat().faits.fair_draw.raison === null, 'une fiche payee ecrite avant la correction : sa vieille raison d echec est effacee au chargement');
     ok(Q.S.vus.demandes.length === 0 && P.A.etat().faits.fair_draw.etat === 'paye' && P.A.etat().faits.fair_draw.raison === null, 'paye une fois : plus jamais, et l ancienne raison d echec effacee');
     const R1 = monde({ refus: true, outils: ['fair_draw'], prepares: { fair_draw: { version: 'v2', args: async (a) => a } } });
     await R1.A.passe(); await monde({ refus: true, outils: ['fair_draw'], dossier: R1.dossier, prepares: { fair_draw: { version: 'v2', args: async (a) => a } } }).A.passe();
