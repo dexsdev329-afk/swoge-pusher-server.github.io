@@ -132,6 +132,12 @@ function cree(deps) {
   try { if (registre) for (const l of fs.readFileSync(registre, 'utf8').split('\n')) if (l.trim()) lignes.push(JSON.parse(l)); } catch (e) { /* premier demarrage */ }
   const note = (o) => { lignes.push(o); if (lignes.length > 20000) lignes.splice(0, lignes.length - 20000);
     if (registre) try { fs.appendFileSync(registre, JSON.stringify(o) + '\n'); } catch (e) { /* jamais bloquant */ } };
+  /* Le plafond du jour que le JOUEUR choisit sur la page (28/09) : entre 0 (embauches
+     coupees) et EMBAUCHE_JOUR_JOUEUR_USD, jamais au-dessus. Absent = le plafond serveur. */
+  const fPlafonds = deps.dossier ? path.join(deps.dossier, 'embauche_plafonds.json') : null;
+  let PLAFONDS = {};
+  try { if (fPlafonds) PLAFONDS = JSON.parse(fs.readFileSync(fPlafonds, 'utf8')) || {}; } catch (e) { PLAFONDS = {}; }
+  const plafondDe = (q) => { const v = PLAFONDS[q]; return typeof v === 'number' && v >= 0 ? Math.min(v, maxJoueur()) : maxJoueur(); };
   const MESURE = { recherches: 0, embauches: 0, payees: 0, refusees: 0, echecs: 0, depenseUsd: 0, factureUsd: 0 };
 
   /* Chaque embauche ecrit « en cours » puis son issue : seul son DERNIER etat compte,
@@ -196,6 +202,7 @@ function cree(deps) {
     async function embauche(a) {
       a = a || {};
       if (!w) return { ok: false, raison: 'hiring is not switched on (no agent budget wallet)' };
+      if (!(plafondDe(q) > 0)) return { ok: false, raison: 'you switched paid hires off on the SwogeAgentic page - nothing was charged' };
       const url = String(a.url || '').trim();
       const C = await catalogue();
       const e = C.parUrl.get(url);
@@ -223,7 +230,7 @@ function cree(deps) {
       const usd = Number(acc.amount) / 1e6;
       if (!(usd > 0) || usd > maxAppel()) { MESURE.refusees++; return { ok: false, raison: 'price ' + usd + ' $ above the ' + maxAppel() + ' $ per-call cap - nothing was charged' }; }
       const t0 = jour0();
-      if (depuis(t0, q) + usd > maxJoueur()) { MESURE.refusees++; return { ok: false, raison: 'your daily hiring budget (' + maxJoueur() + ' $) is used up - nothing was charged' }; }
+      if (depuis(t0, q) + usd > plafondDe(q)) { MESURE.refusees++; return { ok: false, raison: 'your daily hiring budget (' + plafondDe(q) + ' $) is used up - nothing was charged' }; }
       if (depuis(t0, null) + usd > maxJour()) { MESURE.refusees++; return { ok: false, raison: 'the agent\'s daily hiring budget is used up - try again tomorrow, nothing was charged' }; }
       const factureUsd = Math.round(usd * marge() * 1e6) / 1e6;
       const res = await factu.reserve(factureUsd);
@@ -258,7 +265,17 @@ function cree(deps) {
         return { t: l.t, hote, url: l.url, usd: l.usd || 0, factureUsd: l.factureUsd || 0, etat: l.etat, tx: l.tx || null, reseau: l.reseau || null };
       });
     }
-    return { cherche, embauche, historique, budget: () => ({ jourUsd: maxJoueur(), depenseUsd: Math.round(depuis(jour0(), q) * 1e6) / 1e6, maxAppelUsd: maxAppel() }) };
+    const budget = () => ({ jourUsd: plafondDe(q), maxJoueurUsd: maxJoueur(), depenseUsd: Math.round(depuis(jour0(), q) * 1e6) / 1e6, maxAppelUsd: maxAppel() });
+    /** Le joueur fixe SON plafond du jour : 0 coupe les embauches, jamais au-dessus du plafond serveur. */
+    function fixe(usd) {
+      const v = Number(usd);
+      if (!Number.isFinite(v) || v < 0) return { ok: false, raison: 'the daily budget must be a number of dollars, 0 or more' };
+      if (v > maxJoueur()) return { ok: false, raison: 'the daily budget cannot be above ' + maxJoueur() + ' $' };
+      PLAFONDS[q] = Math.round(v * 100) / 100;
+      if (fPlafonds) try { fs.mkdirSync(deps.dossier, { recursive: true }); fs.writeFileSync(fPlafonds, JSON.stringify(PLAFONDS)); } catch (e) { /* garde en memoire */ }
+      return { ok: true, budget: budget() };
+    }
+    return { cherche, embauche, historique, budget, fixe };
   }
 
   /** Le corps d'une reponse : du JSON si c'en est, sinon du texte, borne. */

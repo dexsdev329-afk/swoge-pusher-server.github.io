@@ -146,6 +146,20 @@ const resout = async (h) => (h === 'interne.example' ? ['10.0.0.5'] : ['93.184.2
   horloge += 24 * 3600e3;
   ok(J.budget().depenseUsd === 0, 'le lendemain (jour UTC), le budget repart');
 
+  console.log('\n-- le plafond que le joueur choisit --');
+  ok(J.budget().jourUsd === 1 && J.budget().maxJoueurUsd === 1, 'sans choix du joueur, son plafond est celui du serveur (1 $)');
+  ok(!J.fixe(1.5).ok && !J.fixe(-1).ok && !J.fixe('beaucoup').ok && J.budget().jourUsd === 1, 'au-dessus du plafond serveur, negatif ou illisible : refuse, rien ne change');
+  const k1 = factu.length;
+  ok(J.fixe(0).ok && J.budget().jourUsd === 0, 'le joueur coupe ses embauches (0 $)');
+  const rc = await J.embauche({ url: 'https://meteo.example/forecast' });
+  ok(!rc.ok && /switched paid hires off/.test(rc.raison) && factu.length === k1, 'coupees : refuse avant tout appel, rien reserve');
+  ok(J.fixe(0.5).ok && J.budget().jourUsd === 0.5 && H.pour('0xAUTRE', F).budget().jourUsd === 1, 'le plafond choisi (0,50 $) ne vaut que pour ce joueur');
+  process.env.EMBAUCHE_JOUR_JOUEUR_USD = '0.2';
+  ok(J.budget().jourUsd === 0.2, 'le serveur baisse son plafond sous le choix du joueur : le plus bas des deux s applique');
+  delete process.env.EMBAUCHE_JOUR_JOUEUR_USD;
+  ok(mk(CLE).pour('0xJOUEUR', F).budget().jourUsd === 0.5, 'relu depuis embauche_plafonds.json apres un redemarrage');
+  J.fixe(1);
+
   console.log('\n-- le registre survit a un redemarrage --');
   horloge -= 24 * 3600e3;
   const H2 = mk(CLE);
@@ -153,6 +167,10 @@ const resout = async (h) => (h === 'interne.example' ? ['10.0.0.5'] : ['93.184.2
   const lignes = fs.readFileSync(path.join(dos, 'embauches.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   ok(lignes.some((l) => l.etat === 'paye' && l.tx) && lignes.some((l) => l.etat === 'perte') && lignes.some((l) => l.etat === 'rendu') && !JSON.stringify(lignes).includes(CLE.slice(2)),
      'chaque embauche est au registre (paye, perte, rendu), et la cle n y est jamais');
+  /* Le 28/09, le serveur passait encore `fetch` : tout l'epinglage etait contourne en production. */
+  const srv = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const inst = (srv.match(/EMBAUCHE = require\('\.\/embauche'\)\.cree\(\{([^\n]*)/) || [])[1] || '';
+  ok(inst && !/(^|[\s,{])fetch\s*:/.test(inst.split('catalogue:')[0]), 'server.js ne passe pas `fetch` a embauche : l appel part par la requete epinglee');
   const S = mk('');
   ok(!(await S.pour('0xJ', F).embauche({ url: 'https://meteo.example/forecast' })).ok && S.etat().actif === false, 'sans AGENT_BUDGET_CLE : rien ne s embauche');
   ok(E.privee('127.0.0.1') && E.privee('169.254.169.254') && E.privee('::1') && E.privee('fd00::1') && E.privee('100.64.1.1') && !E.privee('93.184.215.14'), 'les adresses privees, locales et reservees sont reconnues');

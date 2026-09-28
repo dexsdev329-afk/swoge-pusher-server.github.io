@@ -1958,7 +1958,9 @@ const BASE_SONDE_MS = 10 * 60 * 1000;
 let EMBAUCHE = null;
 function embauche() {
   if (EMBAUCHE) return EMBAUCHE;
-  EMBAUCHE = require('./embauche').cree({ cle: process.env.AGENT_BUDGET_CLE, fetch: (u, o) => fetch(u, o), dossier: cfg.DATA_DIR, moi: MOI_URL,
+  /* Pas de `fetch` ici : sans lui, chaque appel part vers l'adresse IP deja verifiee
+     (requeteEpinglee), jamais vers une seconde resolution DNS. */
+  EMBAUCHE = require('./embauche').cree({ cle: process.env.AGENT_BUDGET_CLE, dossier: cfg.DATA_DIR, moi: MOI_URL,
     catalogue: () => require('./embauche').cataloguePayai((u, o) => fetch(u, o), String(process.env.PAYAI_FACILITATOR_URL || 'https://facilitator.payai.network').trim()),
     blockhash: () => { const xv = x402(); return xv && xv.blockhashSolana ? xv.blockhashSolana() : { ok: false, raison: 'Solana payments are not set up on this server' }; } });
   if (EMBAUCHE.actif()) console.log('[agent] hiring on: pays x402 services from ' + EMBAUCHE.adresse + ' (' + EMBAUCHE.reseau + ', dedicated wallet)');
@@ -3157,9 +3159,10 @@ const server = http.createServer(async (req, res) => {
    * fournisseur dont la boucle d'outils est ecrite et essayee ici. Les outils
    * ne font que LIRE — voir studio_agent.js. */
   /* ---- MES EMBAUCHES (embauche.js, 28/09/2026) : le budget du jour et l'historique du
-     joueur de la SESSION, jamais d'une adresse passee en parametre. ---- */
+     joueur de la SESSION, jamais d'une adresse passee en parametre. POST { plafondUsd } :
+     le joueur fixe son propre plafond du jour (0 = coupe), borne par le serveur. ---- */
   if (path === '/studio/agent/embauches') {
-    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS', 'access-control-allow-headers': 'authorization' };
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'authorization, content-type' };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
     const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
     const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
@@ -3167,6 +3170,12 @@ const server = http.createServer(async (req, res) => {
     if (!addr) return res.end(JSON.stringify({ ok: false, raison: 'sign in with your wallet first' }));
     if (!embauche().actif()) return res.end(JSON.stringify({ ok: true, actif: false }));
     const P = embauche().pour(addr, factuEmbauche(addr));
+    if (req.method === 'POST') {
+      let q;
+      try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { q = null; }
+      const f = q ? P.fixe(q.plafondUsd) : { ok: false, raison: 'unreadable request' };
+      if (!f.ok) return res.end(JSON.stringify(f));
+    }
     return res.end(JSON.stringify({ ok: true, actif: true, budget: P.budget(), liste: P.historique(20) }));
   }
   if (path === '/studio/agent' || path === '/studio/agent/catalogue') {
@@ -3208,7 +3217,8 @@ const server = http.createServer(async (req, res) => {
     if (rid) reprises.note(addr, rid, { genre: 'chat', status: 'pending', texte: '' });
     const src = srcAgent();
     /* L'embauche, liee a CE joueur : son adresse de session, jamais une adresse du message. */
-    if (embauche().actif()) src.embauche = embauche().pour(addr, factuEmbauche(addr));
+    /* Un joueur qui a coupe ses embauches (plafond 0) : les outils ne sont meme pas offerts. */
+    if (embauche().actif()) { const P = embauche().pour(addr, factuEmbauche(addr)); if (P.budget().jourUsd > 0) src.embauche = P; }
     let r;
     try {
       r = await studioChat.repond({ addr, rid, modele: m.id, messages: q.messages, recherche: false }, {
