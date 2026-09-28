@@ -113,6 +113,7 @@ lance essaipage "$SITE" node essai_montage_page.test.js   # SwoleMind essai de m
 lance agentpage "$SITE" node agent_page.test.js   # SwogeAgentic : chaque geste visible, echappe, jeton jamais adresse, reprise par rid
 lance agentqr  "$SITE" node agent_qr.test.js   # le QR de la carte eSIM = le generateur prouve du portefeuille (200 empreintes segno), jamais un faux QR
 lance esimpage "$SITE" node esim_page.test.js   # boutique eSIM : chercher, payer Base (EIP-3009) ou Solana, lien secret, QR, ?order= retrouve, echappe, 320 px
+lance navliens "$SITE" node nav_liens.test.js   # aucun lien muet sur les pages qui eteignent leurs liens par defaut ; chaque entree du menu recoit un VRAI clic, 1280 et 390 px
 lance x402page "$SITE" node x402_essai_page.test.js   # payer un appel en USDC sur Base depuis son portefeuille : offre Base du 402, EIP-3009 signe et verifie, resultat echappe, 320 px
 lance x402sol "$SITE" node x402_solana.test.js   # la transaction Solana de la page : octet pour octet celle de web3.js (vecteurs figes), comptes USDC associes, memo aleatoire
 lance ecopage "$SITE" node economie_page.test.js   # la carte $SWOGE ECONOMY et le whitepaper suivent /economie.json
