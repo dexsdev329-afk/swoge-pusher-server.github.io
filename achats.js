@@ -214,17 +214,20 @@ function cree(deps) {
     /* Sans quantite demandee : 1 Go au moins d'abord (releve du 28/09 : 100 Mo a 0,60 $ passaient
        devant tout), les plus petits seulement s'il n'y a rien d'autre. */
     const fixes = minGo ? tous : tous.filter((p) => p.dataBytes >= GO * 0.999).concat(tous.filter((p) => p.dataBytes < GO * 0.999));
-    /* Deux forfaits au plus par taille : sinon huit sondes ne montraient que du 1 Go. */
     const parTaille = new Map();
     const choisis = [];
     for (const p of fixes) {
       const k = Math.round(p.dataBytes / GO * 10);
-      if ((parTaille.get(k) || 0) >= 2) continue;
+      /* Trois par taille, douze en tout (28/09 au soir : a deux et huit, les forfaits de la France,
+         lus les premiers, prenaient toutes les places et le 3 Go regional a 3,38 $ n'etait jamais
+         sonde). La liste de CHIPS ne porte aucun prix : seule une sonde le dit (gardee 30 min). */
+      if ((parTaille.get(k) || 0) >= 3) continue;
       parTaille.set(k, (parTaille.get(k) || 0) + 1);
       choisis.push(p);
-      if (choisis.length >= Math.min(8, Number(a.n) || 8)) break;
+      if (choisis.length >= Math.min(12, Number(a.n) || 12)) break;
     }
-    for (const p of choisis) PLANS.set(p.slug, { p, destination: nomDe(origine.get(p.slug) || d) });
+    /* Ce que couvre le forfait : SA destination (la liste d'un pays porte aussi les forfaits regionaux). */
+    for (const p of choisis) PLANS.set(p.slug, { p, destination: nomDe(p.destination && p.destination.name ? p.destination : (origine.get(p.slug) || d)) });
     const prixs = await Promise.all(choisis.map((p) => prix(p.slug).catch(() => null)));
     const liste = choisis.map((p, i) => (prixs[i] ? vuePlan(p, prixs[i]) : null)).filter((x) => x && x.usd <= maxAchat())
       .sort((x, y) => (x.usd / (x.go || 1)) - (y.usd / (y.go || 1)) || x.usd - y.usd);

@@ -26,7 +26,8 @@ const rep = (status, corps, h) => new Response(typeof corps === 'string' ? corps
 const G = 1073741824;
 const PLANS = [
   { slug: 'europe-1gb-day-x1', name: 'Europe 1GB/Day', isDaily: true, dataBytes: null, dailyDataBytes: G, durationDays: null },
-  { slug: 'europe-3gb-30days-x3', name: 'Europe 3GB 30Days', isDaily: false, dataBytes: 3 * G, durationDays: 30, speed: '4G/5G' },
+  { slug: 'europe-3gb-30days-x3', name: 'Europe 3GB 30Days', isDaily: false, dataBytes: 3 * G, durationDays: 30, speed: '4G/5G',
+    destination: { slug: 'europe-region', kind: 'region', name: 'Europe' } },
   { slug: 'europe-1gb-7days-x2', name: 'Europe 1GB 7Days', isDaily: false, dataBytes: G, durationDays: 7, speed: '4G/5G', activationRule: 'first-network-connection' },
   { slug: 'europe-20gb-30days-x4', name: 'Europe 20GB 30Days', isDaily: false, dataBytes: 20 * G, durationDays: 30 },
   { slug: 'europe-5gb-30days-panne', name: 'Europe 5GB 30Days', isDaily: false, dataBytes: 5 * G, durationDays: 30 },
@@ -96,6 +97,8 @@ async function fauxChips(url, o) {
   ok(f.ok && f.destination.nom === 'France' && f.forfaits.some((x) => x.couvre === 'Europe') && f.forfaits.some((x) => x.couvre === 'France')
      && !JSON.stringify(f).includes('United States'),
      'France (le pays) d abord ; les forfaits de l Europe, la region qui la couvre, montres avec les siens ; pas les Etats-Unis');
+  ok(f.forfaits.find((x) => x.plan === 'europe-3gb-30days-x3').couvre === 'Europe',
+     'un forfait regional que CHIPS range dans la liste de la France dit SA destination (vu en direct le 28/09 : tout etait « France »)');
   ok(f.forfaits.map((x) => x.plan).join(',') === 'eu33-3gb-15days-r1,europe-5gb-30days-panne,europe-3gb-30days-x3,europe-1gb-7days-x2',
      'forfaits a duree fixe, le moins cher par Go d abord ; sans le forfait par jour, sans le slug invalide, sans celui au-dessus de 15 $ : ' + f.forfaits.map((x) => x.plan).join(','));
   const p1 = f.forfaits.find((x) => x.plan === 'europe-1gb-7days-x2');
