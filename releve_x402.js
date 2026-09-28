@@ -73,5 +73,11 @@ if (require.main === module) (async () => {
   console.log(`ACHATS    ${JSON.stringify(a.mesure || {})} · aujourd'hui ${a.aujourdhuiUsd ?? '—'} $`);
   const ref = b.reference || {};
   console.log(`BASE      ${b.lancements ?? '—'} lancements · juges ${ref.judged ?? '—'} · echanges en 24 h ${ref.tradedWithin24hPct ?? '—'}% ${ref.ci95 ? '[' + ref.ci95.join(' ; ') + ']' : ''} · erreurs noeud ${(b.mesure || {}).erreurs ?? '—'}`);
+  /* Les echecs de paiement, par jour et par raison (codes seulement, compteurs.publique). */
+  for (const j of ((d.jours || {}).parJour || []).slice(-7)) {
+    const e = j.evenements && j.evenements.echec;
+    if (!e || !e.raisons) continue;
+    console.log(`ECHECS    ${j.jour} ${e.n} (exterieur ${e.exterieur.n}) : ` + Object.entries(e.raisons).map(([k, r]) => `${k} ${r.n}` + (r.exterieur === null ? ' (part exterieure inconnue)' : ` (ext. ${r.exterieur})`)).join(' · '));
+  }
   console.log(`BAZAAR    success ${z.success ?? '—'} · processing ${z.processing ?? '—'} · rejected ${z.rejected ?? '—'} · depuis ${z.depuis || 'le dernier demarrage'}${z.dernierRejet ? ' · dernier refus : ' + z.dernierRejet : ''}`);
 })().catch((e) => { console.error('RATE : ' + e.message); process.exit(1); });

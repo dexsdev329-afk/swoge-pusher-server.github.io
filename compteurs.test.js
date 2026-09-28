@@ -199,16 +199,31 @@ const tout = (dossier) => fs.readdirSync(dossier).map((f) => fs.readFileSync(pat
     const d = path.join(racine, 'h');
     const K = C.cree({ dossier: d, signaux: false, delaiMs: 0, sel: 'essai', maison: () => new Set([NOUS]) });
     K.note('echec', { outil: 'scan_token', canal: 'rest', qui: K.ip(IP), sorte: 'paiement_refuse:invalid_payload' });
+    K.note('echec', { outil: 'scan_token', canal: 'rest', qui: NOUS, sorte: 'paiement_refuse:Bad Thing from 0xabc' });
     K.note('image_facturee', { outil: 'generate_image', canal: 'studio', qui: NOUS, usd: 0.3, coutUsd: 0.2, sorte: 'grok/qualite' });
     const p = K.publique(30);
     const texte = JSON.stringify(p);
     const empreintes = JSON.parse(tout(d).split('\n').find((l) => l.startsWith('{'))).evenements.echec.distincts.h;
-    ok(empreintes.length === 1 && !texte.includes(empreintes[0]) && !texte.includes(IP) && !texte.toLowerCase().includes(NOUS.slice(2)), 'aucune empreinte, aucune IP, aucune adresse dans le resume public');
-    ok(!/sortes|paiement_refuse/.test(texte), 'ni les sous-comptes');
-    ok(p.parJour[0].evenements.echec.n === 1 && p.total.image_facturee.coutUsd === 0.2 && p.total.image_facturee.usdAvecCout === 0.3 && p.outils.generate_image.image_facturee.maison.n === 1,
+    ok(empreintes.length === 2 && empreintes.every((h) => !texte.includes(h)) && !texte.includes(IP) && !texte.toLowerCase().includes(NOUS.slice(2)), 'aucune empreinte, aucune IP, aucune adresse dans le resume public');
+    /* Reecrit le 28/09 sur son intention (jamais de sous-compte LIBRE) : les raisons d'echec
+       sont publiees, mais seulement sous forme de codes ; le reste devient « other ». */
+    ok(!/sortes|grok|qualite|Bad Thing|0xabc/.test(texte), 'ni les sous-comptes libres (fournisseur d une image, texte d une raison)');
+    eq(JSON.stringify(p.parJour[0].evenements.echec.raisons), '{"paiement_refuse:invalid_payload":{"n":1,"exterieur":1},"paiement_refuse:other":{"n":1,"exterieur":0}}',
+       'les raisons d echec, en codes seulement, exterieur a part : ce qui rate chez un payeur se lit sans le disque');
+    ok(!('raisons' in p.parJour[0].evenements.image_facturee), 'seulement pour les echecs');
+    /* Un jour ecrit avant la separation : la part exterieure est inconnue, pas zero. */
+    const dv = path.join(racine, 'v'); fs.mkdirSync(dv, { recursive: true });
+    fs.writeFileSync(path.join(dv, '2026-09-27.json'), JSON.stringify({ jour: '2026-09-27', evenements: { echec: { n: 3, usd: 0, coutUsd: 0, coutN: 0, usdAvecCout: 0,
+      exterieur: { n: 3, usd: 0, coutUsd: 0, coutN: 0, usdAvecCout: 0 }, maison: { n: 0, usd: 0, coutUsd: 0, coutN: 0, usdAvecCout: 0 }, canaux: { rest: 3 },
+      sortes: { 'paiement_refuse:invalid_payload': { n: 3, usd: 0, coutUsd: 0, coutN: 0, usdAvecCout: 0 } }, outils: {}, distincts: { n: 0, h: [] } } } }));
+    const KV = C.cree({ dossier: dv, maintenant: () => Date.UTC(2026, 8, 28, 12), signaux: false, delaiMs: 0, sel: 'essai' });
+    eq(JSON.stringify(KV.publique(30).parJour.find((j) => j.jour === '2026-09-27').evenements.echec.raisons), '{"paiement_refuse:invalid_payload":{"n":3,"exterieur":null}}',
+       'un jour ecrit avant la separation : exterieur null (inconnu), pas zero');
+    KV.ferme();
+    ok(p.parJour[0].evenements.echec.n === 2 && p.total.image_facturee.coutUsd === 0.2 && p.total.image_facturee.usdAvecCout === 0.3 && p.outils.generate_image.image_facturee.maison.n === 1,
        'mais les nombres : par jour, sur la periode, par outil, cout contre facture');
     ok(/do not add them up/.test(p.note), 'et la regle de lecture (les facturations recoupent les paiements)');
-    ok(p.parJour[0].outils.scan_token.echec.n === 1 && p.parJour[0].outils.scan_token.echec.exterieur.n === 1 && p.parJour[0].outils.generate_image.image_facturee.maison.n === 1,
+    ok(p.parJour[0].outils.scan_token.echec.n === 2 && p.parJour[0].outils.scan_token.echec.exterieur.n === 1 && p.parJour[0].outils.generate_image.image_facturee.maison.n === 1,
        'par outil ET par jour (28/09 : juger une experience de prix avant/apres), les nombres seulement');
     K.ferme();
   }

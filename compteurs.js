@@ -202,7 +202,9 @@ function cree(opts) {
     ajoute(e, usd, cout); ajoute(e[part], usd, cout);
     const canal = CANAUX.includes(i.canal) ? i.canal : 'autre';
     e.canaux[canal] = (e.canaux[canal] || 0) + 1;
-    if (i.sorte) { const s = String(i.sorte).slice(0, 60); ajoute(e.sortes[s] || (e.sortes[s] = compteVide()), usd, cout); }
+    /* Depuis le 28/09 au soir, un sous-compte separe aussi exterieur et maison ; un sous-compte
+       ecrit avant (sans la separation) reste tel quel ce jour-la : sa part exterieure est inconnue. */
+    if (i.sorte) { const s = String(i.sorte).slice(0, 60), so = e.sortes[s] || (e.sortes[s] = compteSepare()); ajoute(so, usd, cout); if (so.exterieur) ajoute(so[part], usd, cout); }
     const outil = String(i.outil || '-').slice(0, 60);
     const t = e.outils[outil] || (e.outils[outil] = compteSepare());
     ajoute(t, usd, cout); ajoute(t[part], usd, cout);
@@ -227,7 +229,7 @@ function cree(opts) {
       const dd = e.distincts || {};
       out.evenements[k] = Object.assign(net(e), { exterieur: net(e.exterieur || compteVide()), maison: net(e.maison || compteVide()),
         distincts: dd.ens ? dd.ens.size : (dd.n || 0), distinctsApprox: !!dd.approx, canaux: Object.assign({}, e.canaux),
-        sortes: Object.fromEntries(Object.entries(e.sortes || {}).map(([s, c]) => [s, net(c)])) });
+        sortes: Object.fromEntries(Object.entries(e.sortes || {}).map(([s, c]) => [s, Object.assign(net(c), c.exterieur ? { exterieur: net(c.exterieur) } : {})])) });
       for (const [nom, c] of Object.entries(e.outils || {})) {
         (out.outils[nom] = out.outils[nom] || {})[k] = Object.assign(net(c), { exterieur: net(c.exterieur || compteVide()), maison: net(c.maison || compteVide()) });
       }
@@ -275,13 +277,28 @@ function cree(opts) {
    */
   function publique(jours) {
     const v = vue(jours);
+    /* Pourquoi un paiement echoue (28/09) : le 27/09, 14 echecs exterieurs de 2 payeurs, et
+       aucune raison lisible hors du disque. Les raisons sont des CODES (x402 : invalid_payload,
+       invalid_exact_evm_payload_signature… ; les notres : outil, reglement, paiement_refuse:<code>) ;
+       tout ce qui n'a pas la forme d'un code devient « other » : jamais de texte libre. */
+    const code = (s) => String(s).split(':').map((x) => (/^[a-z0-9_]{1,60}$/.test(x) ? x : 'other')).join(':');
+    const raisons = (so) => {
+      const o = {};
+      /* exterieur : null quand un des sous-comptes date d'avant la separation (inconnu, pas zero). */
+      for (const [s, c] of Object.entries(so || {})) {
+        const k = code(s), r = o[k] || (o[k] = { n: 0, exterieur: 0 });
+        r.n += c.n || 0;
+        r.exterieur = r.exterieur === null || !c.exterieur ? null : r.exterieur + (c.exterieur.n || 0);
+      }
+      return o;
+    };
     const court = (c) => ({ n: c.n, usd: c.usd, exterieur: { n: c.exterieur.n, usd: c.exterieur.usd }, maison: { n: c.maison.n, usd: c.maison.usd } });
     const avecCout = (c) => Object.assign(court(c), c.coutN ? { coutUsd: c.coutUsd, coutN: c.coutN, usdAvecCout: c.usdAvecCout } : {});
     return {
       depuis: v.depuis, jusqua: v.jusqua,
       note: 'UTC days. exterieur = not one of our own addresses (an IP-only requester always counts as exterieur). coutUsd is summed only over the coutN events whose real cost is known; usdAvecCout is what those same events billed. chat_facture, image_facturee and video_facturee measure billing against provider cost and overlap paye_cle / paye_x402: do not add them up.',
       parJour: v.jours.map((r) => ({ jour: r.jour, evenements: Object.fromEntries(Object.entries(r.evenements).map(([k, e]) =>
-        [k, Object.assign(court(e), { distincts: e.distincts, distinctsApprox: e.distinctsApprox, canaux: e.canaux })])),
+        [k, Object.assign(court(e), { distincts: e.distincts, distinctsApprox: e.distinctsApprox, canaux: e.canaux }, k === 'echec' ? { raisons: raisons(e.sortes) } : {})])),
         /* Par outil et par jour (28/09) : ce qu'il faut pour juger une experience de prix
            avant/apres, outil par outil (releve_x402.js). Les nombres seulement. */
         outils: Object.fromEntries(Object.entries(r.outils || {}).map(([nom, evs]) => [nom, Object.fromEntries(Object.entries(evs).map(([k, c]) => [k, court(c)]))])) })),
