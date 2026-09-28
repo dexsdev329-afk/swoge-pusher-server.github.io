@@ -108,10 +108,18 @@ function cree(deps) {
       const faits = [];
       for (const outil of deps.outils()) {
         const f = etat.faits[outil] || {};
-        if (inscrits.has(outil) || f.etat === 'paye' || (f.essais || 0) >= ESSAIS_MAX) continue;
-        etat.faits[outil] = Object.assign({}, f, { etat: 'lance', t: maintenant(), essais: (f.essais || 0) + 1 }); ecrit();
+        /* Une preparation (deps.prepares) : des arguments vivants, qu'un exemple fige ne peut
+           pas donner (fair_draw veut un engagement qui existe). Ses echecs d'avant, faits avec
+           l'exemple mort, ne comptent pas contre la nouvelle version. */
+        const prep = (deps.prepares || {})[outil] || null;
+        const essais = prep && f.version !== prep.version ? 0 : (f.essais || 0);
+        if (inscrits.has(outil) || f.etat === 'paye' || essais >= ESSAIS_MAX) continue;
+        etat.faits[outil] = Object.assign({}, f, { etat: 'lance', t: maintenant(), essais: essais + 1 }, prep ? { version: prep.version } : {}); ecrit();
         let r;
-        try { r = await paieUn(outil, (deps.exemples || {})[outil]); } catch (e) { r = { ok: false, raison: String(e && e.message || e).slice(0, 160) }; }
+        try {
+          const ex = (deps.exemples || {})[outil];
+          r = await paieUn(outil, prep ? await prep.args(Object.assign({}, ex || {})) : ex);
+        } catch (e) { r = { ok: false, raison: String(e && e.message || e).slice(0, 160) }; }
         etat.faits[outil] = Object.assign(etat.faits[outil], r.ok ? { etat: 'paye', tx: r.tx, usd: r.usd } : { etat: 'echec', raison: r.raison, tx: r.tx || null }); ecrit();
         journal({ outil, ok: r.ok, usd: r.usd || 0, tx: r.tx || null, raison: r.ok ? null : r.raison });
         faits.push({ outil, ok: r.ok, raison: r.ok ? null : r.raison });

@@ -35,7 +35,8 @@ const monde = (o) => {
   const S = serveur(o), dossier = o.dossier || fs.mkdtempSync(path.join(os.tmpdir(), 'autoinsc-')), journal = [];
   const A = AI.cree({ cle: o.cle === undefined ? W.privateKey : o.cle, api: API, payTo: TRESOR, fetch: S.fetch, dossier, journal: (x) => journal.push(x),
     outils: () => o.outils || ['scan_token', 'token_verdict', 'robinhood_token', 'chat_completion'],
-    inscrits: async () => new Set(o.inscrits || ['scan_token']), exemples: { robinhood_token: { address: '0x' + '8a'.repeat(20) }, chat_completion: { messages: [{ role: 'user', content: 'hi' }] } } });
+    inscrits: async () => new Set(o.inscrits || ['scan_token']), prepares: o.prepares,
+    exemples: { robinhood_token: { address: '0x' + '8a'.repeat(20) }, chat_completion: { messages: [{ role: 'user', content: 'hi' }] }, fair_draw: { commitment_id: 'mort', client_seed: 'agent-42' } } });
   return { A, S, dossier, journal };
 };
 
@@ -87,6 +88,24 @@ const monde = (o) => {
     const B = monde({ refus: true, outils: ['token_verdict'], dossier }); await B.A.passe();
     const C = monde({ refus: true, outils: ['token_verdict'], dossier }); await C.A.passe();
     ok(B.S.vus.paiements.length === 1 && C.S.vus.paiements.length === 0, 'deux essais rates au plus par outil, puis plus jamais');
+  }
+  {
+    /* fair_draw (28/09) : l'exemple publie ne designe aucun engagement vivant ; 2 essais rates en production. */
+    const { A, dossier } = monde({ refus: true, outils: ['fair_draw'] });
+    await A.passe(); await monde({ refus: true, outils: ['fair_draw'], dossier }).A.passe();
+    let n = 0;
+    const prepares = { fair_draw: { version: 'v1', args: async (a) => Object.assign(a, { commitment_id: 'vivant-' + (++n) }) } };
+    const P = monde({ outils: ['fair_draw'], dossier, prepares });
+    await P.A.passe();
+    const d = P.S.vus.demandes.filter((x) => x.outil === 'fair_draw');
+    ok(P.S.vus.paiements.length === 1 && d.every((x) => x.corps.arguments.commitment_id === 'vivant-1' && x.corps.arguments.client_seed === 'agent-42'),
+       'une preparation versionnee : les essais rates avec l exemple mort ne comptent plus, l engagement vivant part (et le reste de l exemple)');
+    const Q = monde({ outils: ['fair_draw'], dossier, prepares }); await Q.A.passe();
+    ok(Q.S.vus.demandes.length === 0 && P.A.etat().faits.fair_draw.etat === 'paye', 'paye une fois : plus jamais');
+    const R1 = monde({ refus: true, outils: ['fair_draw'], prepares: { fair_draw: { version: 'v2', args: async (a) => a } } });
+    await R1.A.passe(); await monde({ refus: true, outils: ['fair_draw'], dossier: R1.dossier, prepares: { fair_draw: { version: 'v2', args: async (a) => a } } }).A.passe();
+    const R3 = monde({ refus: true, outils: ['fair_draw'], dossier: R1.dossier, prepares: { fair_draw: { version: 'v2', args: async (a) => a } } }); await R3.A.passe();
+    ok(R3.S.vus.demandes.length === 0, 'la meme version : deux essais rates au plus, comme les autres');
   }
   {
     const { A } = monde({ cle: 'pas-une-cle' });

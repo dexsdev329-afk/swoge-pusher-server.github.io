@@ -2055,6 +2055,9 @@ function demarreAutoInscription(x) {
   AUTO_INSCRIPTION = AI.cree({ cle: process.env.X402_AUTO_CLE, api: MOI_URL, payTo: x.basePayTo, payToSolana: x.solanaPayTo,
     blockhash: () => x.blockhashSolana(), fetch: (u, o) => fetch(u, o), dossier: cfg.DATA_DIR,
     exemples: D.EXEMPLES_ENTREE,
+    /* fair_draw : l'exemple publie ne designe aucun engagement vivant (28/09 : 2 essais, 2 echecs,
+       rien regle). Un engagement frais, pris juste avant de payer ; l'exemple publie ne change pas. */
+    prepares: { fair_draw: { version: 'engagement-vivant-1', args: (a) => Object.assign(a, { commitment_id: hasardProuvable.engage().commitment_id }) } },
     outils: () => A.definitions({ recherche: chatActif('perplexity') }).map((d) => d.name)
       .filter((nom) => agentic().x402Payable(nom) && !(sol && nom === 'ask_agent') && (Number(A.prixX402Usd(nom, D.EXEMPLES_ENTREE[nom] || {})) || 0) + (sol ? 0.002 : 0.001) <= maxAppel()),
     inscrits: () => AI.inscritsPayai(MOI_URL, (u, o) => fetch(u, o), String(process.env.PAYAI_FACILITATOR_URL || 'https://facilitator.payai.network').trim()),
