@@ -644,6 +644,11 @@ function llmsTxt(cat, u) {
     '- [Live llms.txt](' + u.api + '/llms.txt): this file, generated from the live catalogue',
   ])
    .concat(cat && cat.x402 && cat.x402.actif ? ['- [x402 discovery manifest](' + u.api + '/.well-known/x402): the resources payable per call'] : [])
+   /* La boutique eSIM (28/09 au soir) : les agents aussi, sans compte. */
+   .concat(u.esim ? ['', '## Travel eSIM (no account)', '',
+    '`GET ' + u.api + '/esim/plans?country=France` (free) lists data-only eSIM plans for a country or a region (Europe, Asia, Middle East, South America, North America, Global), cheapest per GB first, each with `priceUsd`. '
+      + '`POST ' + u.api + '/esim/buy` with `{"plan": "<plan id>"}` answers 402 (x402 v2, USDC on Base or Solana, the plan price); sign and retry with `PAYMENT-SIGNATURE` and the same plan. '
+      + 'The eSIM is bought before the payment settles: if it cannot be bought, nothing is charged. The answer carries the activation (LPA code) and `orderLink`, a secret: `GET ' + u.api + '/esim/order/<orderLink>` returns it again. Data only, no phone number; check the device supports eSIM.'] : [])
    .concat(['',
     '## Optional',
     '',

@@ -3179,7 +3179,8 @@ const server = http.createServer(async (req, res) => {
     const cat = await agentic().catalogue();
     const email = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(String(process.env.DECOUVERTE_EMAIL || '')) ? process.env.DECOUVERTE_EMAIL : null;
     const c = { base: MOI_URL, outils: cat.outils, x402: x, cours: cat.coursUsd, email, icone: SITE_URL + '/img/site/icone-192.png',
-      prixX402: await prixDecouverte(), preuves: preuvesX402(), page: SITE_URL + '/swogeagentic.html', docs: SITE_URL + '/swogeagentic_api.html' };
+      prixX402: await prixDecouverte(), preuves: preuvesX402(), page: SITE_URL + '/swogeagentic.html', docs: SITE_URL + '/swogeagentic_api.html',
+      esim: boutiqueEsim().actif() ? { maxUsd: achats().etat().maxAchatUsd * boutiqueEsim().marge() } : null };
     if (path === '/openapi.json') return envoieJ(200, D.openapi(c));
     if (!x) return envoieJ(404, { ok: false, raison: 'x402 is not switched on on this server' });
     return envoieJ(200, D.manifeste(c));
@@ -3187,7 +3188,7 @@ const server = http.createServer(async (req, res) => {
   /* L'API decrite aux agents, en direct depuis le catalogue (format llmstxt.org). */
   if (path === '/llms.txt') {
     const txt = require('./agentic').llmsTxt(Object.assign(await agentic().catalogue(), { x402: await x402Etat(false) }), { api: MOI_URL, site: SITE_URL, swoge: true,
-      page: SITE_URL + '/swogeagentic.html', docs: SITE_URL + '/swogeagentic_api.html' });
+      page: SITE_URL + '/swogeagentic.html', docs: SITE_URL + '/swogeagentic_api.html', esim: boutiqueEsim().actif() });
     res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=300' });
     return res.end(txt);
   }

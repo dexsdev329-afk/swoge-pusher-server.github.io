@@ -29,7 +29,8 @@ const config = require('../config');
 
 const API = 'https://web-production-220a3.up.railway.app';
 const SITE = 'https://swoleeswoge.dog';
-const U = { api: API, site: SITE, swoge: false, page: SITE + '/swogeagentic.html', docs: SITE + '/swogeagentic_api.html' };
+/* esim : la boutique sans compte (boutique_esim.js), ouverte en production depuis le 28/09 au soir. */
+const U = { api: API, site: SITE, swoge: false, page: SITE + '/swogeagentic.html', docs: SITE + '/swogeagentic_api.html', esim: true };
 
 /* L'etat x402 public de la production, dans la forme de server.js (x402Etat) : ce que llmsTxt en lit. */
 const X402 = { actif: true, x402Version: X.X402_VERSION, scheme: 'exact', network: X.RESEAU, asset: config.SWOGE_TOKEN, minimumUsd: X.MIN_USD,

@@ -295,6 +295,25 @@ function valide(sc, v, ch, strict, err) {
   ok(m.version === 1 && m.x402Version === 2 && Array.isArray(m.resources), 'la forme lue par x402scan : version 1, x402Version 2, resources');
   eq(m.resources.join(','), payables.map((nom) => BASE + '/agentic/call/' + nom).join(','), 'les ressources : les outils payables d avance, en URL absolues');
   ok(m.ownershipProofs[0] === bonne && !('ownershipProofs' in D.manifeste({ base: BASE, prixX402, preuves: [] })), 'la preuve y est quand elle existe, absente sinon');
+  /* ---- LA BOUTIQUE eSIM, POUR LES AGENTS (28/09 au soir) ---- */
+  {
+    const avecE = D.openapi({ base: BASE, outils, x402, prixX402, esim: { maxUsd: 18.75 } }), sansE = D.openapi({ base: BASE, outils, x402, prixX402 });
+    const pe = avecE.paths['/esim/plans'] && avecE.paths['/esim/plans'].get, pb = avecE.paths['/esim/buy'] && avecE.paths['/esim/buy'].post;
+    ok(pe && pb && avecE.paths['/esim/order/{orderLink}'] && !sansE.paths['/esim/buy'], 'boutique ouverte : /esim/plans, /esim/buy et /esim/order decrits ; fermee : absents');
+    ok(/^Use this when/.test(pe.summary) && /Free: nothing is paid/.test(pe.description) && pe.security.length === 0, 'la recherche : quand l appeler, gratuite, sans cle');
+    ok(pb['x-payment-info'].price.mode === 'dynamic' && pb['x-payment-info'].price.max === '18.750000' && /only then settles/.test(pb.description) && pb.requestBody.content['application/json'].schema.required.join() === 'plan',
+       'l achat : x402 a prix variable (le forfait), plafond dit, reglement APRES l achat, un seul argument (plan)');
+    const ex = pe.responses['200'].content['application/json'].example;
+    ok(ex.plans.every((p) => ['plan', 'name', 'priceUsd'].every((k) => k in p)) && pe.responses['200'].content['application/json'].schema.properties.plans.items.required.join() === 'plan,name,priceUsd',
+       'l exemple de reponse porte les champs requis par son schema');
+    ok(avecE.tags.some((t) => t.name === 'esim') && [pe, pb].every((o) => o.tags.join() === 'esim'), 'l etiquette esim est declaree');
+    const me = D.manifeste({ base: BASE, x402, prixX402, preuves: [], esim: { maxUsd: 18.75 } });
+    ok(me.resources.includes(BASE + '/esim/buy') && !D.manifeste({ base: BASE, x402, prixX402, preuves: [] }).resources.includes(BASE + '/esim/buy'), 'le manifeste x402 liste /esim/buy seulement boutique ouverte');
+    const A2 = require('./agentic');
+    const lt = A2.llmsTxt(Object.assign({}, cat, { x402 }), { api: BASE, site: 'https://site', swoge: true, page: 'https://site/p', docs: 'https://site/d', esim: true });
+    ok(/## Travel eSIM \(no account\)/.test(lt) && lt.includes(BASE + '/esim/plans?country=France') && /nothing is charged/.test(lt)
+       && !/Travel eSIM/.test(A2.llmsTxt(Object.assign({}, cat, { x402 }), { api: BASE, site: 'https://site', swoge: true, page: 'https://site/p', docs: 'https://site/d' })), 'llms.txt : la section eSIM, seulement boutique ouverte');
+  }
   const permis = ['version', 'x402Version', 'name', 'description', 'resources', 'ownershipProofs', 'instructions', 'docs'];
   ok(Object.keys(m).every((k) => permis.includes(k)), 'aucun champ que la spec x402scan ne definit (hors name/description/docs, deja la) : ' + Object.keys(m).join(', '));
   ok(/Robinhood Chain/.test(m.description) && /sample size/.test(m.description) && /observations/.test(m.instructions) && /402/.test(m.instructions) && /PAYMENT-SIGNATURE/.test(m.instructions)

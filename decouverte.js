@@ -87,6 +87,7 @@ const ETIQUETTES = [
   { name: 'base', description: 'Base (eip155:8453) memecoin launches (Clanker, Zora) read on-chain, with deployer records' },
   { name: 'randomness', description: 'Provably fair draws: commit, draw, verify (HMAC-SHA256, no bias)' },
   { name: 'video', description: 'Short video generation (Grok Imagine)' },
+  { name: 'esim', description: 'Travel data eSIM: free search, bought per purchase in USDC with x402, no account' },
   { name: 'catalogue', description: 'The live tool list, prices and x402 status' },
 ];
 const ETIQUETTES_OUTIL = {
@@ -706,6 +707,11 @@ function openapi(c) {
   if (c.x402) paths['/agentic/x402'] = { get: { operationId: 'x402Status', summary: 'x402 status: networks, assets, prices now, what was collected', tags: ['catalogue'],
     responses: { 200: { description: 'Public status (never a key)', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, actif: { type: 'boolean' }, network: s(), payTo: s(),
       assets: tab({ type: 'object' }), outils: tab({ type: 'object', description: '{name, usd, gazUsd, amount, amountUsdg}' }) }, ['ok', 'actif']) } } } }, security: [] } };
+  /* ---- LA BOUTIQUE eSIM, POUR LES AGENTS AUSSI (28/09 au soir) ----
+     Demande du proprietaire : « le but est que les agents aussi puissent utiliser nos services
+     facilement ». Ses routes ne sont pas des outils /agentic/call (la recherche est gratuite, le
+     prix de l'achat est celui du forfait choisi) : elles sont decrites a part. */
+  if (c.esim) Object.assign(paths, pathsEsim(c));
   const doc = {
     openapi: '3.1.0',
     info: {
@@ -744,9 +750,42 @@ function openapi(c) {
  * ownershipProofs, instructions). `name`, `description` et `docs` y étaient
  * déjà ; lus par personne, ignorés sans dommage.
  */
+/** Les routes de la boutique eSIM (boutique_esim.js), decrites pour un agent. */
+const PLAN_ESIM = obj({ plan: s('plan id: pass it to /esim/buy'), name: s(), covers: sn('the country, or the region that contains it'), gb: nn(), days: nn(), priceUsd: n('USD, paid in USDC') }, ['plan', 'name', 'priceUsd']);
+const EX_PLANS_ESIM = { ok: true, destination: 'France', otherDestinations: [], unavailable: 0,
+  plans: [{ plan: 'europe-33-areas-1gb-7days-example', name: 'Europe 1GB 7 Days', covers: 'Region of 33 countries (Austria, Belgium, Bulgaria…)', gb: 1, days: 7, priceUsd: 1.6 }],
+  terms: 'https://vamoschips.com/legal/terms', compatibility: 'https://vamoschips.com/compatibility',
+  note: 'Data only (no phone number). Paid in USDC from your wallet on Base or Solana; you are charged only if the eSIM is bought.' };
+function pathsEsim(c) {
+  const erreur = { description: 'Refused - nothing is charged', content: { 'application/json': { schema: obj({ ok: { type: 'boolean', const: false }, raison: s('what went wrong') }, ['ok', 'raison']) } } };
+  return {
+    '/esim/plans': { get: { operationId: 'esimPlans', summary: 'Use this when you need mobile data abroad: travel data eSIM plans for a country or region, with their price', tags: ['esim'],
+      description: 'Free: nothing is paid. Returns data-only eSIM plans (no phone number) for a country (name or 2-letter code) or a region (Europe, Asia, Middle East, South America, North America, Global), '
+        + 'including the regional plans that cover the country, cheapest per GB first, each with its price in USD paid in USDC. At most 20 searches per 10 minutes per IP. Seller: CHIPS.',
+      parameters: [{ name: 'country', in: 'query', required: true, schema: { type: 'string', maxLength: 40 }, description: 'e.g. France, JP, Europe' },
+        { name: 'min_gb', in: 'query', required: false, schema: { type: 'number' } }, { name: 'min_days', in: 'query', required: false, schema: { type: 'integer' } }],
+      responses: { 200: { description: 'The plans', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, destination: s(), plans: tab(PLAN_ESIM),
+        unavailable: n('plans the shop cannot sell right now'), terms: s(), compatibility: s('check the device supports eSIM'), note: s() }, ['ok', 'plans']), example: EX_PLANS_ESIM } } },
+        400: erreur, 429: { description: 'Too many searches' } }, security: [] } },
+    '/esim/buy': { post: { operationId: 'esimBuy', summary: 'Use this to buy a travel data eSIM chosen with /esim/plans, paid per purchase in USDC with x402 (Base or Solana), no account', tags: ['esim'],
+      description: 'POST {"plan": "<plan id from /esim/plans>"} without payment: 402 with PAYMENT-REQUIRED (x402 v2, scheme exact, USDC on Base or Solana, the plan price). Sign and retry with PAYMENT-SIGNATURE and the SAME plan. '
+        + 'The server verifies the payment, buys the eSIM, and only then settles it: an eSIM that could not be bought is never charged. Returns the activation (LPA code, SM-DP+ address, activation code) and orderLink, '
+        + 'a secret: GET /esim/order/<orderLink> returns the activation again (no account). Limits: 15 $ per purchase, 30 $ per payer per day.',
+      requestBody: { required: true, content: { 'application/json': { schema: obj({ plan: s('plan id from /esim/plans') }, ['plan']), example: { plan: EX_PLANS_ESIM.plans[0].plan } } } },
+      responses: { 200: { description: 'Bought: activation and orderLink', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, delivered: b('false: being prepared, poll /esim/order'), orderLink: s('secret, 32 hex'),
+        achat: { type: 'object', description: 'name, gb, days, activation {uri, code, smdp, iccid4} or null while prepared' } }, ['ok', 'orderLink']) } } },
+        400: erreur, 402: { description: 'Payment Required: the x402 v2 challenge for this plan (also in the PAYMENT-REQUIRED header)', headers: { 'PAYMENT-REQUIRED': { description: 'base64 JSON of the x402 v2 PaymentRequired object', schema: { type: 'string' } } } },
+        409: { description: 'No current price for this plan: search /esim/plans again' }, 502: { description: 'The eSIM could not be bought - nothing is charged' }, 503: { description: 'The shop is closed right now' } },
+      'x-payment-info': { protocols: [{ x402: {} }], price: { mode: 'dynamic', currency: 'USD', min: '0.500000', max: usd6(c.esim.maxUsd || 15) } }, security: [] } },
+    '/esim/order/{orderLink}': { get: { operationId: 'esimOrder', summary: 'The activation of an eSIM bought with /esim/buy, by its secret order link', tags: ['esim'],
+      parameters: [{ name: 'orderLink', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-f]{32}$' } }],
+      responses: { 200: { description: 'Ready: the activation' }, 202: { description: 'Paid, being prepared: try again in a minute' }, 404: { description: 'Unknown order link' } }, security: [] } },
+  };
+}
+
 function manifeste(c) {
   const m = { version: 1, x402Version: 2, name: 'SwogeAgentic', description: RESUME,
-    resources: Object.keys(c.prixX402 || {}).map((n) => c.base + '/agentic/call/' + n),
+    resources: Object.keys(c.prixX402 || {}).map((n) => c.base + '/agentic/call/' + n).concat(c.esim ? [c.base + '/esim/buy'] : []),
     instructions: DESCRIPTION + ' How to pay: POST the resource with {"arguments": {...}} and no key; the 402 PAYMENT-REQUIRED header (x402 v2, scheme exact'
       + (baseOn(c) ? '; USDC on Base (' + c.x402.base.network + ') first, then on Robinhood Chain (' + c.x402.network + ') ' + (c.x402.assets || []).filter((a) => a.symbol !== 'USDC').map((a) => a.symbol + ' via ' + a.assetTransferMethod).join(' or ')
         : c.x402 ? ', ' + c.x402.network + ', ' + (c.x402.assets || []).map((a) => a.symbol + ' via ' + a.assetTransferMethod).join(' or ') : '')
