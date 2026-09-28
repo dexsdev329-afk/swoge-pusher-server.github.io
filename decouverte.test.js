@@ -157,11 +157,15 @@ function valide(sc, v, ch, strict, err) {
     coffreAdresse: '0x5593c8141303D14999Df7aa03dd3d3a6d4335fAb', offre: 1e9, brule: 13389118.44, brulePct: 1.34, coffre: 15155373.09, coffrePct: 1.52, stakingAprPct: 100, stakingPlafond: 2e8 };
   /* Les lectures Robinhood Chain : le VRAI module, sur le faux noeud des essais (faux_noeud_rh.js). */
   const RH = require('./faux_noeud_rh');
+  const HZ = require('./hasard').cree({ shoe: require('./casino').shoe });
+  const ENG = HZ.engage();
   const src = { recherche: true, Jeton, fiche: async () => fiche, lectures: RH.faux().X, vue: () => vue, economie: async () => eco, cours: async () => 0.00002493,
     cherche: async () => [{ url: 'https://news.example/a', titre: 'News', extrait: 'x', date: null }], contexteRecherche: (r) => 'RESULTS ' + r.length,
     detecte: (x) => (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(x) ? { type: 'domaine', valeur: x } : null),
     osint: async (type, valeur) => ({ cible: { type, valeur }, faits: [{ predicat: 'A', valeur: '93.184.215.14', sources: ['dns.google'] }], constats: [{ etiquette: 'NOTE', dit: 'Hosted on a CDN.' }] }),
     liensScan: (a) => ({ card: BASE + '/scan/carte/' + a + '.png', share: BASE + '/s/' + a, page: 'https://swoleeswoge.dog/swoge_scan.html?t=' + a }),
+    /* Le hasard prouvable : le VRAI module hasard.js (un engagement cree avant le tirage). */
+    hasard: HZ,
     /* roast_token : le VRAI module roast.js, sur la meme fiche, avec un faux modele. */
     roast: require('./roast').cree({ fiche: async () => fiche, juge: require('./verdict_jeton').juge, api: BASE,
       redige: async () => ({ texte: 'LOBSTER lifts less than my warm-up set. The pool is thinner than my patience on leg day.' }) }),
@@ -183,7 +187,8 @@ function valide(sc, v, ch, strict, err) {
   const ARGS = { scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, roast_token: { address: ADR }, colony_activity: {},
     chat_completion: { messages: [{ role: 'user', content: 'Say hello in five words.' }], max_tokens: 64 }, robinhood_rpc: { method: 'eth_chainId' }, robinhood_token: { address: RH.JETON }, robinhood_wallet: { address: RH.PORTEUR }, robinhood_tx: { hash: '0x' + 'ab'.repeat(32) }, swoge_economy: {}, new_launches: { limit: 5 }, wallet_intel: { address: '0x' + 'cd'.repeat(20) },
     osint_lookup: { target: 'example.com' }, web_search: { query: 'robinhood chain' }, generate_image: { prompt: 'a swole doge', count: 1 },
-    ask_agent: { task: 'is LOBSTER worth a look?' }, generate_video: { prompt: 'a swole doge lifting' }, video_status: { id: '66f5b1c2d3e4f5a6b7c8d9e0' } };
+    ask_agent: { task: 'is LOBSTER worth a look?' }, generate_video: { prompt: 'a swole doge lifting' }, video_status: { id: '66f5b1c2d3e4f5a6b7c8d9e0' },
+    fair_commit: {}, fair_draw: { commitment_id: ENG.commitment_id, client_seed: 'agent-42', count: 5, min: 1, max: 6 }, fair_verify: D.EXEMPLES_ENTREE.fair_verify };
   for (const o of outils) {
     const payable = !!prixX402[o.name];
     /* Ce que la route ENVOIE : du JSON (un champ `undefined` n'y existe pas). */
@@ -290,7 +295,7 @@ function valide(sc, v, ch, strict, err) {
   process.env.TG_APPELS_VENTE = '1';
   const tous = require('./agentic').definitions({ recherche: true });
   delete process.env.TG_APPELS_VENTE;
-  ok(tous.length === 20 && tous.every((o) => D.EXEMPLES_ENTREE[o.name]), 'un exemple d entree fixe pour chacun des ' + tous.length + ' outils'
+  ok(tous.length === 23 && tous.every((o) => D.EXEMPLES_ENTREE[o.name]), 'un exemple d entree fixe pour chacun des ' + tous.length + ' outils'
      + (tous.filter((o) => !D.EXEMPLES_ENTREE[o.name]).length ? ' — manque : ' + tous.filter((o) => !D.EXEMPLES_ENTREE[o.name]).map((o) => o.name).join(', ') : ''));
   for (const o of tous) {
     const b = D.bazaar(o.name, o);

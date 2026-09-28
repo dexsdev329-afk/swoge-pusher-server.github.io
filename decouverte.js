@@ -84,6 +84,7 @@ const ETIQUETTES = [
   { name: 'ai-models', description: 'Frontier AI models (Claude, GPT-6, Grok) paid per call, OpenAI format' },
   { name: 'osint', description: 'Passive reconnaissance on infrastructure and deployer wallets' },
   { name: 'images', description: 'Image generation (Grok Imagine, ChatGPT Image)' },
+  { name: 'randomness', description: 'Provably fair draws: commit, draw, verify (HMAC-SHA256, no bias)' },
   { name: 'video', description: 'Short video generation (Grok Imagine)' },
   { name: 'catalogue', description: 'The live tool list, prices and x402 status' },
 ];
@@ -92,6 +93,7 @@ const ETIQUETTES_OUTIL = {
   new_launches: ['robinhood-chain', 'crypto', 'token-security'], wallet_intel: ['osint', 'crypto', 'robinhood-chain'], osint_lookup: ['osint', 'research'],
   can_i_sell: ['token-security', 'crypto', 'robinhood-chain'], token_verdict: ['token-security', 'crypto', 'robinhood-chain'],
   roast_token: ['crypto', 'images', 'token-security'],
+  fair_commit: ['randomness'], fair_draw: ['randomness'], fair_verify: ['randomness'],
   chat_completion: ['ai-models', 'research'],
   robinhood_rpc: ['robinhood-chain', 'crypto'], robinhood_token: ['robinhood-chain', 'crypto', 'token-security'], robinhood_wallet: ['robinhood-chain', 'crypto'], robinhood_tx: ['robinhood-chain', 'crypto'],
   telegram_calls: ['robinhood-chain', 'crypto'], web_search: ['research'], ask_agent: ['research', 'crypto'],
@@ -277,6 +279,36 @@ const SORTIES = {
         positiveTraits: [{ trait: 'Contract bytecode', case: 'bytecode: no mint, no blacklist, no pause, no fee setter', observations: 2395, averagePct: 16.9 }], scan: 'https://swoleeswoge.dog/swoge_scan.html?t=' + ADR },
       attribution: ATTR_EX, note: 'Measurements, never a buy or sell signal. no_red_flag_found means none of these checks fired, not that the token is safe; unknown stays unknown.' },
     texte: 'Quick verdict for $LOBSTER ' + ADR + ' on robinhood: CAUTION — 2 points to check: thin_pool, colony_negative_trait.…',
+  },
+  /* Le hasard prouvable (28 septembre 2026) : hasard.js, lu dans son code. L'exemple est un
+     VRAI tirage (graine fixe) : fair_verify le confirme. */
+  fair_commit: {
+    schema: obj({ commitment_id: s('24 hex characters, for fair_draw'), server_seed_hash: s('SHA-256 of the secret server seed (hex); share it before the draw'),
+      algorithm: s('swoge-hmac-sha256-v1'), committed_at: s('ISO date'), expires_at: s('ISO date, 7 days later'), next: s('what to do next') },
+      ['commitment_id', 'server_seed_hash', 'algorithm', 'committed_at', 'expires_at', 'next']),
+    exemple: { commitment_id: '6a1f0c3e9b7d2a5c8e4f1b0d', server_seed_hash: 'b85ef21a5deba1bcd033f7eb675b391cf40ce04d63d5e3da39ed9f61f27180b8', algorithm: 'swoge-hmac-sha256-v1',
+      committed_at: '2026-09-28T21:00:00.000Z', expires_at: '2026-10-05T21:00:00.000Z',
+      next: 'Share server_seed_hash with the other players now. Then call fair_draw with this commitment_id and your client_seed: the server reveals its seed and draws once.' },
+    texte: 'Commitment 6a1f0c3e9b7d2a5c8e4f1b0d: server_seed_hash b85ef21a5deba1bc… (swoge-hmac-sha256-v1)…',
+  },
+  fair_draw: {
+    schema: obj({ commitment_id: s(), algorithm: s(), server_seed_hash: s('the hash published by fair_commit'), server_seed: s('the revealed seed: SHA-256 of it is server_seed_hash'),
+      client_seed: s(), count: n(), min: n(), max: n(), numbers: tab(n(), 'uniform integers in [min, max]'), committed_at: s(), drawn_at: s(),
+      verify_code: s('Node.js code that redoes the draw'), already_drawn: b('true when this commitment was drawn before: the original draw is returned'), note: sn() },
+      ['commitment_id', 'algorithm', 'server_seed_hash', 'server_seed', 'client_seed', 'count', 'min', 'max', 'numbers', 'drawn_at', 'verify_code', 'already_drawn']),
+    exemple: { commitment_id: '6a1f0c3e9b7d2a5c8e4f1b0d', algorithm: 'swoge-hmac-sha256-v1', server_seed_hash: 'b85ef21a5deba1bcd033f7eb675b391cf40ce04d63d5e3da39ed9f61f27180b8',
+      server_seed: '3f9a1c7e5b2d4086a1f3e5c7b9d0f2a4c6e8b1d3f5a7c9e0b2d4f6a8c0e2b4d6', client_seed: 'agent-42', count: 5, min: 1, max: 6, numbers: [3, 4, 3, 5, 3],
+      committed_at: '2026-09-28T21:00:00.000Z', drawn_at: '2026-09-28T21:02:00.000Z', verify_code: 'const c=require("crypto");function draw(s,cs,n,min,max){…}', already_drawn: false },
+    texte: 'Draw: 3, 4, 3, 5, 3 in [1, 6]. server_seed 3f9a1c7e… (hash b85ef21a…), client_seed "agent-42".',
+  },
+  fair_verify: {
+    schema: obj({ algorithm: s(), server_seed_hash_computed: s('SHA-256 of server_seed'), hash_matches: { type: ['boolean', 'null'], description: 'null when no hash was given' },
+      count: n(), min: n(), max: n(), numbers: tab(n()), numbers_match: { type: ['boolean', 'null'], description: 'null when no numbers were given' },
+      nonce: n('swoge-casino-shoe only'), deck: tab(n(), 'swoge-casino-shoe only: card ids 0-51, rank = id % 13 (0 = 2 … 12 = ace), suit = id / 13'), cards: tab(s(), 'swoge-casino-shoe only: e.g. As, Td') },
+      ['algorithm', 'server_seed_hash_computed', 'hash_matches']),
+    exemple: { algorithm: 'swoge-hmac-sha256-v1', server_seed_hash_computed: 'b85ef21a5deba1bcd033f7eb675b391cf40ce04d63d5e3da39ed9f61f27180b8', hash_matches: true,
+      count: 5, min: 1, max: 6, numbers: [3, 4, 3, 5, 3], numbers_match: true },
+    texte: 'Hash matches. Numbers: 3, 4, 3, 5, 3 (match the claimed draw).',
   },
   /* roast_token (28 septembre 2026) : roast.js, lu dans son code. */
   roast_token: {
@@ -672,6 +704,10 @@ function manifeste(c) {
    son schéma d'entrée ET agentic.entreeInvalide — l'essai le vérifie. */
 const EXEMPLES_ENTREE = {
   scan_token: { address: ADR }, can_i_sell: { address: ADR }, token_verdict: { address: ADR }, roast_token: { address: ADR }, colony_activity: {},
+  /* Le hasard prouvable : fair_verify sur le VRAI tirage de l'exemple ; fair_draw a besoin d'un engagement vivant. */
+  fair_commit: {}, fair_draw: { commitment_id: '6a1f0c3e9b7d2a5c8e4f1b0d', client_seed: 'agent-42', count: 5, min: 1, max: 6 },
+  fair_verify: { server_seed: '3f9a1c7e5b2d4086a1f3e5c7b9d0f2a4c6e8b1d3f5a7c9e0b2d4f6a8c0e2b4d6', server_seed_hash: 'b85ef21a5deba1bcd033f7eb675b391cf40ce04d63d5e3da39ed9f61f27180b8',
+    client_seed: 'agent-42', count: 5, min: 1, max: 6, numbers: [3, 4, 3, 5, 3] },
   chat_completion: { messages: [{ role: 'user', content: 'Say hello in five words.' }], max_tokens: 64 },
   robinhood_rpc: { method: 'eth_blockNumber' }, robinhood_token: { address: ADR }, robinhood_wallet: { address: ADR }, /* Une VRAIE transaction de Robinhood Chain (decodee le 27/09 : 2 transferts VAULT, un swap v4) : l'inscription
      automatique paie avec cet exemple, et un hash invente rendait « no such transaction » (27/09, 22 h 17). */

@@ -1718,8 +1718,11 @@ function lecturesRh() {
   });
   return LECTURES_RH;
 }
+/* Le hasard prouvable (hasard.js, 28/09/2026) : fair_commit / fair_draw / fair_verify, vendus par l'API. */
+const hasardProuvable = require('./hasard').cree({ dossier: cfg.DATA_DIR, shoe: require('./casino').shoe });
 const srcAgent = () => ({
   lectures: lecturesRh(),
+  hasard: hasardProuvable,
   /* L'epreuve de sortie (can_i_sell) : { resultat } ou { erreur }, jamais facturee sur erreur. */
   sortie: epreuveSortie,
   /* Les appels Telegram suivis (outil telegram_calls) ; null si le suivi est eteint.

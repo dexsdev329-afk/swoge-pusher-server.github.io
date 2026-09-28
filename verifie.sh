@@ -62,6 +62,7 @@ lance roast   "$SRV" node roast.test.js   # roast_token : les faits seuls, pas d
 lance embauche "$SRV" node embauche.test.js   # l agent embauche un service x402 : catalogue seulement, pas d adresse privee ni de redirection, plafonds appel/joueur/jour, reserve avant, facture sur 200 seulement, vraie signature EIP-3009
 lance achats "$SRV" node achats.test.js   # l eSIM : l agent propose, seul le joueur confirme ; prix reverifie, un double clic ne paie qu une fois, facture sur 200, code rendu au seul payeur
 lance annonces "$SRV" node annonces.test.js   # un outil nouveau : un post Telegram (tweet + image haussiere), une fois, groupe 10 min, espace 3 h, sans promesse de prix ni partenariat
+lance hasard  "$SRV" node hasard.test.js   # hasard prouvable : engagement avant tirage, un tirage par engagement, le code publie refait les memes nombres, sans biais (chi2), sabot du casino
 lance lecturesrh "$SRV" node lectures_rh.test.js   # robinhood_rpc/token/wallet/tx : lecture seule, bornes, le seau (la colonie d abord), decodage sur un faux noeud aux vrais encodages
 lance chatx402 "$SRV" node chat_x402.test.js   # chat_completion : devis = pire cas (ASCII a 1/2, le reste a ses octets) x X402_CHAT_MARGE, modele brut, sortie OpenAI, un echec jamais regle
 lance autoinsc "$SRV" node auto_inscription.test.js   # inscription PayAI automatique : notre serveur et notre tresorerie seulement, plafonds, une fois par outil, la cle ne sort jamais

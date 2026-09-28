@@ -170,6 +170,14 @@ const DESCRIPTIONS_API = Object.freeze({
   roast_token: 'Use this when you want a funny, shareable take on an EVM token for a post or a chat: SWOGE, a very muscular shiba inu, roasts it in 2 or 3 sentences built only on its real data. '
     + 'The facts are the same as token_verdict (DexScreener pool, GoPlus contract checks, Powered by Go+ Security, https://gopluslabs.io, and the SWOGE AI colony for Robinhood Chain tokens); the roast repeats a red flag only when a check actually raised it. '
     + 'Returns the roast, the facts behind it and a shareable 1200×630 PNG card with a share link whose preview is the card. Entertainment, never a buy or sell signal.',
+  /* 28 septembre 2026 : le hasard prouvable (hasard.js), vendu par l'API seulement. */
+  fair_commit: 'Use this before any draw other players must trust (a game between agents, a raffle, a giveaway): the server picks a secret seed and publishes its SHA-256 hash now, so it cannot change the seed later. '
+    + 'Returns a commitment_id and the server_seed_hash to share with the players. Then call fair_draw.',
+  fair_draw: 'Use this after fair_commit, once every player has seen the server_seed_hash: give your client_seed and get uniform random integers in [min, max]. '
+    + 'The server reveals its seed with the draw; a commitment draws once (a second call returns the original draw). '
+    + 'Algorithm ' + require('./hasard').ALGO + ': HMAC-SHA256(server_seed, client_seed:counter) read 4 bytes at a time, rejection sampling, no bias; the answer carries code that redoes it.',
+  fair_verify: 'Use this to check a draw independently: recomputes the SHA-256 of a revealed server_seed against its hash, and the numbers of a ' + require('./hasard').ALGO + ' draw, '
+    + 'or the 52-card shoe of a SWOGE casino hand (scheme swoge-casino-shoe with its nonce). Pure computation: nothing is stored.',
   ask_agent: 'Use this when a question needs several of these tools chained together and a written answer, for example comparing tokens or researching a launcher. '
     + 'SwogeAgentic, a Claude agent, picks the tools, reads the numbers and answers in Markdown with its sources and sample sizes. '
     + 'API key only: billed at its real cost, up to the quoted maximum ("quote": true gives it). Takes 10 to 60 seconds.',
@@ -412,6 +420,29 @@ function outils(src) {
       const o = r.offre;
       return { texte: 'Offer shown to the user: ' + o.nom + ' (' + o.go + ' GB, ' + o.jours + ' days) for ' + o.factureUsd + ' $ in $SWOGE. '
           + 'Nothing is bought yet: the user must press Buy on the page within 15 minutes. Do not say it is bought.', achat: o };
+    },
+    /* Le hasard prouvable (hasard.js, 28/09/2026) : vendu par l'API seulement. */
+    async fair_commit() {
+      if (!src.hasard) return { erreur: 'provably fair draws are not available here' };
+      const r = src.hasard.engage();
+      const d = Object.assign({}, r); delete d.ok;
+      return { texte: 'Commitment ' + r.commitment_id + ': server_seed_hash ' + r.server_seed_hash + ' (' + r.algorithm + '), valid until ' + r.expires_at + '. ' + r.next, donnees: d };
+    },
+    async fair_draw(e) {
+      if (!src.hasard) return { erreur: 'provably fair draws are not available here' };
+      const r = src.hasard.tire(e || {});
+      if (!r.ok) return { erreur: r.erreur };
+      const d = Object.assign({}, r); delete d.ok;
+      return { texte: (r.already_drawn ? 'Already drawn (original draw): ' : 'Draw: ') + r.numbers.join(', ') + ' in [' + r.min + ', ' + r.max + ']. server_seed ' + r.server_seed
+        + ' (hash ' + r.server_seed_hash + '), client_seed "' + r.client_seed + '".', donnees: d };
+    },
+    async fair_verify(e) {
+      if (!src.hasard) return { erreur: 'provably fair draws are not available here' };
+      const r = src.hasard.verifie(e || {});
+      if (!r.ok) return { erreur: r.erreur };
+      const d = Object.assign({}, r); delete d.ok;
+      return { texte: 'Hash ' + (r.hash_matches === null ? 'not given' : r.hash_matches ? 'matches' : 'does NOT match') + '. '
+        + (r.cards ? 'Shoe: ' + r.cards.join(' ') : 'Numbers: ' + r.numbers.join(', ') + (r.numbers_match === null ? '' : r.numbers_match ? ' (match the claimed draw)' : ' (do NOT match the claimed draw)')) + '.', donnees: d };
     },
     /* Le roast (roast.js, 28/09/2026) : vendu par l'API seulement. */
     async roast_token(e) {
