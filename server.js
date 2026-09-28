@@ -1731,13 +1731,15 @@ const srcAgent = () => ({
    redeploiement : on ne pouvait rien juger. `maison` : nos propres adresses
    (AI_OWNER, X402_PAYTO, le portefeuille de gaz, COMPTEURS_MAISON), comptees a
    part — un essai du proprietaire n'est pas un client. */
-const adressesDe = (t) => String(t || '').toLowerCase().split(/[\s,;]+/).filter((a) => /^0x[0-9a-f]{40}$/.test(a));
+/* EVM (0x…) ou Solana (base58, 32-44 caracteres) — en minuscules, comme les compteurs les comparent (28/09). */
+const adressesDe = (t) => String(t || '').split(/[\s,;]+/).filter((a) => /^0x[0-9a-fA-F]{40}$/.test(a) || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a)).map((a) => a.toLowerCase());
 /* Nos adresses sans droit particulier (AI_OWNER, COMPTEURS_MAISON, X402_PAYTO) :
    un paiement de l'une d'elles est un essai de la maison. */
 /* Le portefeuille dedie de l'inscription automatique (auto_inscription.js) : son
    ADRESSE seule, derivee une fois — la cle ne sort pas de ce module. */
 const AUTO_ADRESSE = (() => { const w = require('./auto_inscription').portefeuille(process.env.X402_AUTO_CLE); return w ? w.address.toLowerCase() : null; })();
-const adressesMaison = () => adressesDe(cfg.AI_OWNER).concat(adressesDe(process.env.COMPTEURS_MAISON), adressesDe(process.env.X402_PAYTO), AUTO_ADRESSE ? [AUTO_ADRESSE] : []);
+const adressesMaison = () => adressesDe(cfg.AI_OWNER).concat(adressesDe(process.env.COMPTEURS_MAISON), adressesDe(process.env.X402_PAYTO),
+  adressesDe(process.env.X402_SOLANA_PAYTO), AUTO_ADRESSE ? [AUTO_ADRESSE] : []);
 const adresseMaison = (adr) => !!adr && adressesMaison().indexOf(String(adr).toLowerCase()) >= 0;
 const compteurs = require('./compteurs').cree({
   dossier: require('path').join(cfg.DATA_DIR, 'compteurs'),

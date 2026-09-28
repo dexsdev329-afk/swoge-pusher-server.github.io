@@ -193,7 +193,9 @@ function cree(opts) {
     const usd = nombre(i.usd), cout = nombre(i.coutUsd);
     const qui = i.qui ? String(i.qui).toLowerCase() : null;
     const adr = qui ? qui.replace(/^x402:/, '') : null;
-    const chezNous = !!(adr && /^0x[0-9a-f]{40}$/.test(adr) && maison().has(adr));
+    /* Une adresse EVM, ou Solana (base58, mise en minuscules comme tout le reste : 28/09,
+       les paiements Solana du proprietaire comptaient comme des clients). Une IP, jamais. */
+    const chezNous = !!(adr && (/^0x[0-9a-f]{40}$/.test(adr) || /^[1-9a-z]{32,44}$/.test(adr)) && maison().has(adr));
     const part = chezNous ? 'maison' : 'exterieur';
     const e = d.evenements[evenement] || (d.evenements[evenement] = Object.assign(compteSepare(),
       { canaux: {}, sortes: {}, outils: {}, distincts: { n: 0, approx: false, debordes: 0, ens: new Set() } }));

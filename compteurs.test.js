@@ -121,6 +121,14 @@ const tout = (dossier) => fs.readdirSync(dossier).map((f) => fs.readFileSync(pat
     K.note('paye_x402', { outil: 'scan_token', canal: 'rest', qui: EUX, usd: 0.03, coutUsd: 0.006 });
     K.note('devis', { outil: 'scan_token', canal: 'rest', qui: K.ip(IP) });
     const e = K.vue(1).jours[0].evenements;
+    /* Solana (28/09) : une adresse base58 de la maison, en minuscules dans l'ensemble, comptee a la maison. */
+    const SOL = 'CFg86EW2ZSAgGpf4o2XAt3gU59fgMfsuZyM6QDuDTmoM';
+    const KS = C.cree({ dossier: path.join(racine, 'ds'), signaux: false, delaiMs: 60000, sel: 'essai', maison: () => new Set([SOL.toLowerCase()]) });
+    KS.note('paye_x402', { outil: 'token_verdict', canal: 'rest', qui: SOL, usd: 0.01 });
+    KS.note('paye_x402', { outil: 'token_verdict', canal: 'rest', qui: 'AUiwVyWsDbrUQK7vprhpgS6KEZGQt5zEDxiK4fM2fZ8c', usd: 0.01 });
+    const es = KS.vue(1).jours[0].evenements;
+    ok(es.paye_x402.maison.n === 1 && es.paye_x402.exterieur.n === 1, 'une adresse Solana de la maison compte a la maison, une autre dehors');
+    KS.ferme();
     ok(e.paye_x402.maison.n === 2 && e.paye_x402.maison.usd === 0.04 && e.paye_x402.exterieur.n === 1 && e.paye_x402.exterieur.usd === 0.03,
        'nos adresses (casse ou prefixe x402: indifferents) comptent a la maison, les autres dehors');
     ok(e.paye_x402.coutN === 2 && e.paye_x402.coutUsd === 0.013 && e.paye_x402.usdAvecCout === 0.05, 'le cout ne se somme que sur les observations ou il est connu (2 sur 3)');
