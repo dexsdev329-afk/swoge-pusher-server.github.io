@@ -46,7 +46,8 @@ function cree(deps) {
   const maintenant = deps.maintenant || Date.now;
   const maxAppel = () => { const v = Number(process.env.AUTO_MAX_APPEL_USD); return v > 0 ? v : 0.03; };
   const maxTotal = () => { const v = Number(process.env.AUTO_MAX_TOTAL_USD); return v > 0 ? v : 0.2; };
-  const fichier = path.join(deps.dossier, 'auto_inscription.json');
+  /* Deux inscriptions possibles (PayAI, puis le Bazaar de Coinbase) : un etat chacune. */
+  const fichier = path.join(deps.dossier, 'auto_inscription' + (deps.nom ? '_' + deps.nom : '') + '.json');
   let etat = { faits: {}, depenseUsd: 0 };
   try { etat = Object.assign(etat, JSON.parse(fs.readFileSync(fichier, 'utf8'))); } catch (e) { /* premier demarrage */ }
   /* Les fiches payees avant le 28/09 au soir gardaient la raison d'un essai rate d'avant. */
@@ -148,4 +149,20 @@ async function inscritsPayai(api, fetch, base) {
   return noms;
 }
 
-module.exports = { cree, portefeuille, inscritsPayai, USDC_BASE, USDC_SOLANA, RESEAU_SOLANA, DOMAINE, TYPES_3009, ESSAIS_MAX };
+/** Les outils deja au Bazaar de Coinbase (discovery/resources public, 18 980 entrees le
+ *  28/09, 1 000 par page au plus). */
+async function inscritsCdp(api, fetch, base) {
+  const pref = api.replace(/\/$/, '') + '/agentic/call/';
+  const noms = new Set();
+  for (let off = 0; off < 100000; off += 1000) {
+    const r = await fetch((base || 'https://api.cdp.coinbase.com/platform/v2/x402') + '/discovery/resources?limit=1000&offset=' + off, { signal: AbortSignal.timeout(30000) });
+    if (!r.ok) throw new Error('the Coinbase Bazaar answered ' + r.status);
+    const d = await r.json();
+    const l = d.items || [];
+    for (const x of l) if (String(x.resource || '').indexOf(pref) === 0) noms.add(String(x.resource).slice(pref.length));
+    if (l.length < 1000) break;
+  }
+  return noms;
+}
+
+module.exports = { cree, portefeuille, inscritsPayai, inscritsCdp, USDC_BASE, USDC_SOLANA, RESEAU_SOLANA, DOMAINE, TYPES_3009, ESSAIS_MAX };

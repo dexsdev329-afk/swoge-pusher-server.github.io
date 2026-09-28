@@ -1793,8 +1793,10 @@ const adressesDe = (t) => String(t || '').split(/[\s,;]+/).filter((a) => /^0x[0-
 /* Le portefeuille dedie de l'inscription automatique (auto_inscription.js) : son
    ADRESSE seule, derivee une fois — la cle ne sort pas de ce module. */
 const AUTO_ADRESSE = (() => { const w = require('./auto_inscription').portefeuille(process.env.X402_AUTO_CLE); return w ? w.address.toLowerCase() : null; })();
+/* Le portefeuille d'inscription au Bazaar de Coinbase (28/09 au soir) : EVM seulement, regle chez Coinbase. */
+const AUTO_ADRESSE_BASE = (() => { const w = require('./auto_inscription').portefeuille(process.env.X402_AUTO_CLE_BASE); return w && w.type !== 'solana' ? w.address.toLowerCase() : null; })();
 const adressesMaison = () => adressesDe(cfg.AI_OWNER).concat(adressesDe(process.env.COMPTEURS_MAISON), adressesDe(process.env.X402_PAYTO),
-  adressesDe(process.env.X402_SOLANA_PAYTO), AUTO_ADRESSE ? [AUTO_ADRESSE] : []);
+  adressesDe(process.env.X402_SOLANA_PAYTO), AUTO_ADRESSE ? [AUTO_ADRESSE] : [], AUTO_ADRESSE_BASE ? [AUTO_ADRESSE_BASE] : []);
 const adresseMaison = (adr) => !!adr && adressesMaison().indexOf(String(adr).toLowerCase()) >= 0;
 const compteurs = require('./compteurs').cree({
   dossier: require('path').join(cfg.DATA_DIR, 'compteurs'),
@@ -1975,7 +1977,7 @@ function baseDepuisEnv(X, tresor, porteGaz) {
      dans son catalogue. Le 27/09 a 19:45, 7 paiements du proprietaire depuis une
      adresse hors AI_OWNER sont partis a moitie chez Coinbase : 3 outils sur 6
      inscrits. COMPTEURS_MAISON suffit (il ne donne aucun droit). */
-  return { second, partSecond, versSecond: adresseMaison, reseau: sepolia ? X.RESEAU_BASE_SEPOLIA : X.RESEAU_BASE, chainId: sepolia ? 84532 : 8453,
+  return { second, partSecond, versSecond: adresseMaison, versCdp: (a) => !!AUTO_ADRESSE_BASE && String(a).toLowerCase() === AUTO_ADRESSE_BASE, reseau: sepolia ? X.RESEAU_BASE_SEPOLIA : X.RESEAU_BASE, chainId: sepolia ? 84532 : 8453,
     usdc: sepolia ? X.USDC_BASE_SEPOLIA : X.USDC_BASE, domaine: sepolia ? X.DOMAINE_USDC_BASE_SEPOLIA : X.DOMAINE_USDC_BASE,
     payTo, facilitateur, rpc: X.rpcBase(String(process.env.X402_BASE_RPC || '').trim() || (sepolia ? 'https://sepolia.base.org' : 'https://mainnet.base.org')),
     /* ESSAIS SEULEMENT : combien de temps relire la chaine apres un « en attente » (60 s par defaut,
@@ -2045,8 +2047,39 @@ function factuEmbauche(addr, quoi) {
   };
 }
 
-let AUTO_INSCRIPTION = null;
+let AUTO_INSCRIPTION = null, AUTO_BAZAAR = null;
+/* ---- LE BAZAAR DE COINBASE (X402_AUTO_CLE_BASE, 28/09 au soir) ----
+   18 980 services, 4 des notres : il n'inscrit qu'au reglement par Coinbase, et la
+   maison regle chez PayAI. Un portefeuille Base DEDIE, aiguille vers Coinbase
+   (versCdp), paie une fois chaque outil absent du Bazaar. Memes garde-fous que
+   X402_AUTO_CLE (notre serveur, notre tresorerie, 0,03 $ par appel, 0,20 $ en tout),
+   son propre etat (auto_inscription_bazaar.json). Une cle Solana est refusee. */
+function demarreAutoBazaar(x) {
+  if (!process.env.X402_AUTO_CLE_BASE || AUTO_BAZAAR) return;
+  const AI = require('./auto_inscription');
+  if (!AUTO_ADRESSE_BASE) { console.error('[x402] X402_AUTO_CLE_BASE must be an EVM private key (Base) - Bazaar listing off'); return; }
+  const D = require('./decouverte'), A = require('./agentic');
+  const maxAppel = () => (Number(process.env.AUTO_MAX_APPEL_USD) > 0 ? Number(process.env.AUTO_MAX_APPEL_USD) : 0.03);
+  AUTO_BAZAAR = AI.cree({ nom: 'bazaar', cle: process.env.X402_AUTO_CLE_BASE, api: MOI_URL, payTo: x.basePayTo, fetch: (u, o) => fetch(u, o), dossier: cfg.DATA_DIR,
+    exemples: D.EXEMPLES_ENTREE, prepares: PREPARES_INSCRIPTION,
+    outils: () => A.definitions({ recherche: chatActif('perplexity') }).map((d) => d.name)
+      .filter((nom) => agentic().x402Payable(nom) && (Number(A.prixX402Usd(nom, D.EXEMPLES_ENTREE[nom] || {})) || 0) + 0.001 <= maxAppel()),
+    inscrits: () => AI.inscritsCdp(MOI_URL, (u, o) => fetch(u, o)),
+    journal: (l) => console.log('[x402] Bazaar listing ' + l.outil + ': ' + (l.ok ? 'paid ' + l.usd + ' $' + (l.tx ? ' (' + l.tx + ')' : '') : 'not paid - ' + l.raison)) });
+  console.log('[x402] Bazaar listing on, paying in USDC on Base from ' + AUTO_BAZAAR.adresse + ' (dedicated wallet, settled by Coinbase)');
+  /* La sonde de Base est asynchrone : on juge qu'elle est allumee au moment du passage, pas au demarrage
+     (sans offre Base dans le 402, chaque outil userait un de ses deux essais pour rien). */
+  setTimeout(() => {
+    if (!x.baseActif || !x.baseActif()) { console.error('[x402] Base is off - Bazaar listing waits for the next start'); return; }
+    AUTO_BAZAAR.passe().then((r) => console.log('[x402] Bazaar listing done: ' + JSON.stringify(r).slice(0, 400)))
+      .catch((e) => console.error('[x402] Bazaar listing: ' + (e && e.message || e)));
+  }, 4 * 60e3).unref();
+}
+/* fair_draw : l'exemple publie ne designe aucun engagement vivant (28/09 : 2 essais, 2 echecs,
+   rien regle). Un engagement frais, pris juste avant de payer ; l'exemple publie ne change pas. */
+const PREPARES_INSCRIPTION = { fair_draw: { version: 'engagement-vivant-1', args: (a) => Object.assign(a, { commitment_id: hasardProuvable.engage().commitment_id }) } };
 function demarreAutoInscription(x) {
+  demarreAutoBazaar(x);
   if (!process.env.X402_AUTO_CLE || AUTO_INSCRIPTION) return;
   const AI = require('./auto_inscription');
   const D = require('./decouverte'), A = require('./agentic');
@@ -2055,9 +2088,7 @@ function demarreAutoInscription(x) {
   AUTO_INSCRIPTION = AI.cree({ cle: process.env.X402_AUTO_CLE, api: MOI_URL, payTo: x.basePayTo, payToSolana: x.solanaPayTo,
     blockhash: () => x.blockhashSolana(), fetch: (u, o) => fetch(u, o), dossier: cfg.DATA_DIR,
     exemples: D.EXEMPLES_ENTREE,
-    /* fair_draw : l'exemple publie ne designe aucun engagement vivant (28/09 : 2 essais, 2 echecs,
-       rien regle). Un engagement frais, pris juste avant de payer ; l'exemple publie ne change pas. */
-    prepares: { fair_draw: { version: 'engagement-vivant-1', args: (a) => Object.assign(a, { commitment_id: hasardProuvable.engage().commitment_id }) } },
+    prepares: PREPARES_INSCRIPTION,
     outils: () => A.definitions({ recherche: chatActif('perplexity') }).map((d) => d.name)
       .filter((nom) => agentic().x402Payable(nom) && !(sol && nom === 'ask_agent') && (Number(A.prixX402Usd(nom, D.EXEMPLES_ENTREE[nom] || {})) || 0) + (sol ? 0.002 : 0.001) <= maxAppel()),
     inscrits: () => AI.inscritsPayai(MOI_URL, (u, o) => fetch(u, o), String(process.env.PAYAI_FACILITATOR_URL || 'https://facilitator.payai.network').trim()),
@@ -2244,6 +2275,7 @@ async function x402Etat(detail) {
                 confirmes: (x.MESURE.solana || {}).confirmes, nonConfirmes: (x.MESURE.solana || {}).nonConfirmes, exclus: X.SOLANA_EXCLUS,
                 compteUsdc: (x.MESURE.solana || {}).compteUsdc, compteExiste: (x.MESURE.solana || {}).compteExiste } : null,
               autoInscription: AUTO_INSCRIPTION ? AUTO_INSCRIPTION.etat() : null,
+              autoBazaar: AUTO_BAZAAR ? AUTO_BAZAAR.etat() : null,
               /* L'agent qui embauche (embauche.js) : adresse publique, depense du jour, plafonds. */
               embauche: embauche().etat(),
               achats: achats().etat(),

@@ -444,7 +444,7 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
         agent: o.agent,
         solana: o.sol,
         base: o.sansBase ? undefined : { reseau: X.RESEAU_BASE, chainId: 8453, usdc: X.USDC_BASE, domaine: X.DOMAINE_USDC_BASE, payTo: TRESOR, facilitateur: F, rpc: R, attenteMs: 40, cadenceMs: 5,
-          second: o.S, partSecond: o.part, versSecond: o.versSecond } });
+          second: o.S, partSecond: o.part, versSecond: o.versSecond, versCdp: o.versCdp } });
       if (!o.sansBase) { await x.sondeBase(); await dort(10); }
       return { x, chaine, journal, notes, F, R, avance: (ms) => { t += ms; }, s: () => Math.floor(t / 1000) };
     }
@@ -962,6 +962,16 @@ const sert = (compte) => async () => { compte.n = (compte.n || 0) + 1; return { 
       const q8 = await entete402(Mo, 'scan_token', {}); const s8 = await signeBase(w, q8, { s: Mo.s() });
       ok((await paie(Mo, 'scan_token', s8.entete, {})).status === 200 && S5.verifies.length === 1 && Mo.F.regles.length === 1,
          'part 0, un autre payeur : Coinbase, comme avant');
+      /* Le portefeuille d'inscription au Bazaar : maison lui aussi, mais TOUJOURS chez Coinbase
+         (le Bazaar n'inscrit qu'au reglement par Coinbase), meme a part 1. */
+      const S6 = Object.assign(fauxFac(), { nom: 'payai' });
+      const bazaar = ethers.Wallet.createRandom();
+      const Mb = await mondeBase({ S: S6, part: 1, versSecond: () => true, versCdp: (adr) => String(adr).toLowerCase() === bazaar.address.toLowerCase() });
+      const qb = await entete402(Mb, 'scan_token', {}); const sb = await signeBase(bazaar, qb, { s: Mb.s() });
+      ok((await paie(Mb, 'scan_token', sb.entete, {})).status === 200 && S6.verifies.length === 0 && Mb.F.regles.length === 1 && Mb.F.verifies[0].p.extensions.bazaar,
+         'le portefeuille du Bazaar (X402_AUTO_CLE_BASE) : regle chez Coinbase, avec le bloc bazaar, meme maison et part 1');
+      const qb2 = await entete402(Mb, 'scan_token', {}); const sb2 = await signeBase(proprio, qb2, { s: Mb.s() });
+      ok((await paie(Mb, 'scan_token', sb2.entete, {})).status === 200 && S6.regles.length === 1, 'la maison ordinaire : PayAI, comme avant');
       S5.verifyRep = { etat: 'carte' };
       const q9 = await entete402(Mo, 'scan_token', {}); const s9 = await signeBase(proprio, q9, { s: Mo.s() });
       ok((await paie(Mo, 'scan_token', s9.entete, {})).status === 200 && Mo.F.regles.length === 2 && Mo.x.MESURE.base.second.etat === 'suspendu',

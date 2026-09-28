@@ -276,7 +276,8 @@ const MESSAGES_CDP = {
  *          description(outil) — la description publique de l'outil (sa première phrase ouvre resource.description, Base allumé),
  *          service: { nom, etiquettes(outil), icone } — resource.serviceName/tags/iconUrl, Base allumé,
  *          base: { reseau, chainId, usdc, domaine, payTo, facilitateur (facilitateur_cdp), rpc (rpcBase),
- *                  attenteMs, cadenceMs, second (un autre facilitateur, PayAI), partSecond (0..1) }
+ *                  attenteMs, cadenceMs, second (un autre facilitateur, PayAI), partSecond (0..1),
+ *                  versSecond(from) / versCdp(from) : forcer un facilitateur pour un payeur }
  *                — optionnel : sans lui, AUCUNE option Base,
  *          agent: { dureeMaxS, enVolMax, bloque(addr), nonRegle(addr, coutUsd, raison) } — ask_agent, optionnel }
  * chaine = { gazPrix() (wei), soldeGaz() (wei), porteGaz (adresse), solde(from), allowance(from),
@@ -332,6 +333,11 @@ function cree(deps) {
        6 970 services a nous le 27/09, 0 reglement PayAI depuis la mise en
        ligne). Le payeur est celui que la signature designe ; le choix du
        facilitateur ne donne aucun droit. */
+    /* L'inscription au Bazaar de Coinbase (X402_AUTO_CLE_BASE, 28/09 au soir) : le
+       Bazaar n'inscrit qu'au reglement par Coinbase (18 980 services, 4 des notres le
+       28/09 — ceux deja regles par Coinbase). Ce portefeuille dedie va donc TOUJOURS
+       chez Coinbase, avant la regle de la maison. Aucun droit, un aiguillage. */
+    if (B.versCdp && from && B.versCdp(from)) return 'cdp';
     if (B.versSecond && from && B.versSecond(from)) return 'second';
     const part = Math.max(0, Math.min(1, Number(B.partSecond == null ? 0.5 : B.partSecond)));
     const h = parseInt(crypto.createHash('sha256').update(String(nonce)).digest('hex').slice(0, 8), 16) / 0xffffffff;

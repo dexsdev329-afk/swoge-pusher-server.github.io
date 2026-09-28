@@ -111,6 +111,31 @@ const monde = (o) => {
     ok(R3.S.vus.demandes.length === 0, 'la meme version : deux essais rates au plus, comme les autres');
   }
   {
+    /* Le Bazaar de Coinbase (28/09 au soir) : un second etat, la liste lue page par page. */
+    const dos = fs.mkdtempSync(path.join(os.tmpdir(), 'autoinsc-'));
+    const P = monde({ outils: ['token_verdict'], dossier: dos, inscrits: [] }); await P.A.passe();
+    const Z = AI.cree({ nom: 'bazaar', cle: W.privateKey, api: API, payTo: TRESOR, fetch: serveur({}).fetch, dossier: dos, outils: () => ['token_verdict'], inscrits: async () => new Set() });
+    ok(P.A.etat().faits.token_verdict.etat === 'paye' && Z.etat().faits.token_verdict === undefined && fs.existsSync(path.join(dos, 'auto_inscription_bazaar.json')) === false,
+       'l inscription du Bazaar a son propre etat : un outil paye chez PayAI reste a payer chez Coinbase');
+    await Z.passe();
+    ok(Z.etat().faits.token_verdict.etat === 'paye' && fs.existsSync(path.join(dos, 'auto_inscription_bazaar.json')) && P.A.etat().depenseUsd === 0.01 && Z.etat().depenseUsd === 0.01,
+       'chacune son fichier et son plafond');
+    const pages = [];
+    const fz = async (u) => { pages.push(u); const off = Number(/offset=(\d+)/.exec(u)[1]);
+      const items = off === 0 ? Array.from({ length: 1000 }, (_, i) => ({ resource: i === 7 ? API + '/agentic/call/scan_token' : 'https://autre.example/' + i }))
+        : [{ resource: API + '/agentic/call/ask_agent' }, { resource: API + '/agentic/call2/x' }];
+      return { ok: true, json: async () => ({ items }) }; };
+    const noms = await AI.inscritsCdp(API, fz);
+    ok([...noms].sort().join() === 'ask_agent,scan_token' && pages.length === 2 && /limit=1000&offset=1000/.test(pages[1]) && /^https:\/\/api\.cdp\.coinbase\.com\/platform\/v2\/x402\/discovery\/resources/.test(pages[0]),
+       'le Bazaar lu par pages de 1 000 : seulement NOS outils');
+    let refus = null; try { await AI.inscritsCdp(API, async () => ({ ok: false, status: 503 })); } catch (e) { refus = e.message; }
+    ok(/503/.test(refus || ''), 'le Bazaar en panne : une erreur, jamais « rien d inscrit » (sinon on repaierait tout)');
+    const srv = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+    ok(/AUTO_ADRESSE_BASE = [^\n]*w\.type !== 'solana'/.test(srv) && /versCdp: \(a\) => !!AUTO_ADRESSE_BASE/.test(srv) && /nom: 'bazaar'[^\n]*X402_AUTO_CLE_BASE/.test(srv)
+       && /inscrits: \(\) => AI\.inscritsCdp/.test(srv) && /AUTO_ADRESSE_BASE \? \[AUTO_ADRESSE_BASE\]/.test(srv),
+       'serveur : X402_AUTO_CLE_BASE (EVM seulement) aiguille vers Coinbase, lit le Bazaar, compte comme la maison');
+  }
+  {
     const { A } = monde({ cle: 'pas-une-cle' });
     const r = await A.passe();
     ok(!r.ok && r.raison === 'X402_AUTO_CLE is not a valid private key' && A.etat().actif === false, 'une cle invalide : rien, et le message ne la repete pas');
