@@ -2090,7 +2090,10 @@ if (process.env.DEPLOIEMENT_V4 !== '0' && require.main === module) deploiementV4
    (liste ou erreur) : un seul signataire a la fois sur ce portefeuille. /launchpad/v4weth. */
 const deploiementV4Weth = require('./deploiement_v4').cree({ dossier: cfg.DATA_DIR, artefact: require('./swogefun_v4weth.json'), nom: 'v4weth',
   pret: () => ['liste', 'erreur'].includes(deploiementV4._etat().etape) });
-if (process.env.DEPLOIEMENT_V4 !== '0' && require.main === module) deploiementV4Weth.demarre(150e3); else deploiementV4Weth.charge();
+/* ARRETE le 29/09 a 19:23 UTC, avant sa mise en ligne : le proprietaire veut le frais du jumeau
+   en ETH (a la tresorerie), pas en $SWOGE brule. L'artefact actuel ne doit jamais partir ; le
+   jumeau ne demarre qu'avec DEPLOIEMENT_V4WETH=1, pose une fois le bon contrat en place. */
+if (process.env.DEPLOIEMENT_V4WETH === '1' && require.main === module) deploiementV4Weth.demarre(150e3); else deploiementV4Weth.charge();
 /* ---- L'eSIM ET LA PASSERELLE DANS LE MCP (mcp_extras.js, 29/09) ---- */
 let MCP_EXTRAS = null;
 function mcpExtras() {
