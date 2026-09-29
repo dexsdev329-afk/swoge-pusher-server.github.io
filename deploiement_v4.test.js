@@ -114,7 +114,11 @@ function monde(o) {
     fs.rmSync(dossier3, { recursive: true, force: true });
   }
   const src = fs.readFileSync(path.join(__dirname, 'deploiement_v4.js'), 'utf8');
-  ok(!/\.transfer\(|value:\s|sendTransaction\((?!new ethers\.ContractFactory)/.test(src), 'le code ne contient aucun transfert d ETH ni de jeton : deployer, autoriser le frais, lancer le test, rien d autre');
+  ok(!/\.transfer\(|value:\s/.test(src) && (src.match(/sendTransaction\(/g) || []).length === 1
+     && /const tx = deploiement\(args\); return w\.sendTransaction\(Object\.assign\(tx, await frais\(tx\)\)\)/.test(src)
+     && /const deploiement = \(args\) => new ethers\.ContractFactory\(/.test(src), 'le code ne contient aucun transfert d ETH ni de jeton : deployer, autoriser le frais, lancer le test, rien d autre');
+  ok((src.match(/await frais\(/g) || []).length === 4 && /gasPrice: px\.mul\(12\)\.div\(10\)/.test(src) && !/maxPriorityFeePerGas/.test(src),
+     'les trois envois (et le cout annonce) portent un prix du gaz pose a la main : jamais le pourboire fige de 1,5 gwei d ethers (29/09 : 70 fois le prix, premier depart refuse)');
   ok(A.constructeur.positionManager.toLowerCase() !== A.constructeur.swoge.toLowerCase() && require('ethers').utils.getAddress(A.constructeur.treasury) === A.constructeur.treasury,
      'l artefact porte des adresses distinctes et a somme EIP-55 valide');
 

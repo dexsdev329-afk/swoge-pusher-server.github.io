@@ -30,8 +30,9 @@ const fs = require('fs');
 const path = require('path');
 
 /* Le seuil de depart n'est plus FIXE (29/09) : 0,002 ETH etait prudent de x10 et le proprietaire
-   a envoye ~1 $ (0,0005 ETH), qui suffit. Mesure du nœud le 29/09 : deploiement 5 314 209 gaz
-   (part donnees comprise) a 0,02091 gwei = 0,000111 ETH. On deploie donc des que le solde couvre
+   a envoye ~1 $ (0,0005 ETH), qui suffit. Mesure du nœud le 29/09 depuis le portefeuille de
+   deploiement : 2 091 266 gaz a 0,02097 gwei ; au prix ou il part (gaz x1,2, prix x1,2, voir
+   frais() plus bas) 0,000063 ETH ; le jeton de test ~5,85 M gaz, ~0,00018 ETH. On deploie donc des que le solde couvre
    MARGE_GAZ fois le cout ESTIME a l'instant par le nœud ; ETH_MIN_WEI ne sert plus que si
    l'estimation echoue (on ne part pas a l'aveugle en dessous). */
 const ETH_MIN_WEI = 2n * 10n ** 15n;
@@ -172,19 +173,29 @@ function chaineEthers(clePrivee, A) {
   const LP = new ethers.utils.Interface(A.launchpad.abi);
   const ERC = new ethers.utils.Interface(['function balanceOf(address) view returns (uint256)', 'function approve(address,uint256) returns (bool)']);
   const swoge = new ethers.Contract(A.constructeur.swoge, ERC, w);
+  /* Le prix du gaz, TOUJOURS pose a la main (29/09). Sans lui, ethers v5 met une transaction
+     EIP-1559 avec un pourboire fige a 1,5 gwei ; le nœud Robinhood en voulait 0,021 (base
+     0,02089) : 70 fois trop. Le premier depart en production a echoue ainsi — le nœud verifie
+     solde >= gaz x maxFeePerGas (2 091 266 x 1,54 gwei = 0,0032 ETH) contre 0,0005 envoyes,
+     et repond « out of gas ». Meme convention que caisse.js, miroir.js et x402.js : prix du
+     nœud x1,2, transaction classique ; gaz estime x1,2. */
+  const frais = async (tx) => {
+    const [g, px] = await Promise.all([w.estimateGas(tx), prov.getGasPrice()]);
+    return { gasLimit: g.mul(12).div(10), gasPrice: px.mul(12).div(10) };
+  };
+  const deploiement = (args) => new ethers.ContractFactory(A.launchpad.abi, A.launchpad.bytecode).getDeployTransaction(...args);
   return {
     adresse: w.address,
     soldeEth: async () => (await prov.getBalance(w.address)).toBigInt(),
     soldeSwoge: async () => (await swoge.balanceOf(w.address)).toBigInt(),
-    deploieLaunchpad: async (args) => w.sendTransaction(new ethers.ContractFactory(A.launchpad.abi, A.launchpad.bytecode).getDeployTransaction(...args)),
-    /* Le cout du deploiement, estime par le nœud (gaz x prix du moment), en wei. */
-    coutDeploiement: async (args) => { const tx = new ethers.ContractFactory(A.launchpad.abi, A.launchpad.bytecode).getDeployTransaction(...args); tx.from = w.address;
-      const [g, px] = await Promise.all([prov.estimateGas(tx), prov.getGasPrice()]); return g.mul(px).toBigInt(); },
+    deploieLaunchpad: async (args) => { const tx = deploiement(args); return w.sendTransaction(Object.assign(tx, await frais(tx))); },
+    /* Le cout du deploiement, au prix EXACT ou il partira (gaz x1,2 au prix du nœud x1,2), en wei. */
+    coutDeploiement: async (args) => { const f = await frais(deploiement(args)); return f.gasLimit.mul(f.gasPrice).toBigInt(); },
     recu: async (hash) => { const r = await prov.getTransactionReceipt(hash); return r && r.blockNumber ? r : null; },
     parametres: async (adr) => { const c = new ethers.Contract(adr, LP, prov);
       return { positionManager: await c.positionManager(), swoge: await c.swoge(), treasury: await c.swogeTreasury(), creationFee: (await c.creationFee()).toString() }; },
-    autoriseFrais: async (launchpad, montant) => swoge.approve(launchpad, montant),
-    lanceTest: async (launchpad, p) => new ethers.Contract(launchpad, LP, w).createToken(p),
+    autoriseFrais: async (launchpad, montant) => swoge.approve(launchpad, montant, await frais(await swoge.populateTransaction.approve(launchpad, montant))),
+    lanceTest: async (launchpad, p) => { const c = new ethers.Contract(launchpad, LP, w); return c.createToken(p, await frais(await c.populateTransaction.createToken(p))); },
     lancementDe: (recu) => {
       for (const l of recu.logs || []) { try { const e = LP.parseLog(l); if (e.name === 'LaunchedInstant') return { token: e.args.token, pool: e.args.pool }; } catch (e) { /* un autre journal */ } }
       return null;
