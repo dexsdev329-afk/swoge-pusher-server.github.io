@@ -127,9 +127,13 @@ const m = C.modele('sonnet-5');
         { type: 'tool_use', id: 't2', name: 'colony_activity', input: { token: 'TELEPAD' } }], usage: { input_tokens: 2000, output_tokens: 150 } },
       { stop: 'tool_use', content: [{ type: 'tool_use', id: 't3', name: 'web_search', input: { query: 'pepe news' } }], usage: { input_tokens: 5000, output_tokens: 80 } },
       { stop: 'end_turn', content: [{ type: 'text', text: 'PEPE has $25M liquidity [1].' }], usage: { input_tokens: 7000, output_tokens: 400 } }]);
-    const outils = [], resultats = []; let texte = '';
+    const outils = [], resultats = [], couts = []; let texte = '';
     const r = await A.repond({ m, messages: [{ role: 'user', content: 'check pepe and the colony' }], surTexte: (t) => { texte += t; },
-      surOutil: (o) => outils.push(o), surResultat: (o) => resultats.push(o) }, { client: cl, src: src() });
+      surOutil: (o) => outils.push(o), surResultat: (o) => resultats.push(o), surEtape: (o) => couts.push(o) }, { client: cl, src: src() });
+    /* La carte de mission (29/09) : le cout REEL de chaque appel, lu dans son usage ; la recherche a son prix. */
+    ok(couts.length === 3 && couts.map((x) => x.etape).join() === '1,2,3' && couts.every((x, i) => Math.abs(x.coutUsd - Math.round((cl.vus.length && [2000, 5000, 7000][i] * m.entree + [150, 80, 400][i] * m.sortie) / 1e6 * 1e6) / 1e6) < 1e-9),
+       'un evenement de cout par appel au modele, au cout reel de son usage');
+    ok(resultats.find((x) => x.nom === 'web_search').coutUsd === A.PRIX_RECHERCHE_USD && resultats.find((x) => x.nom === 'scan_token').coutUsd === 0, 'la recherche porte son prix, un outil gratuit 0');
     eq(cl.vus.length, 3, 'trois appels : deux tours d outils, puis la reponse');
     const t2 = cl.vus[1].messages;
     ok(t2[1].role === 'assistant' && t2[2].role === 'user' && t2[2].content.map((x) => x.tool_use_id).join(',') === 't1,t2', 'chaque tool_use recoit son tool_result, sous le meme id');

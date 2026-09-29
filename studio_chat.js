@@ -407,7 +407,7 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
         surTexte: (t) => { if (!ctl.signal.aborted && deps.surTexte) deps.surTexte(t); },
         surReflexion: deps.surReflexion || (() => {}),
         surRecherche: deps.surRecherche || (() => {}),
-        surOutil: deps.surOutil, surResultat: deps.surResultat });
+        surOutil: deps.surOutil, surResultat: deps.surResultat, surEtape: deps.surEtape });
     })();
     travail.catch(() => {});      /* perdante de la course : son rejet ne doit pas remonter seul */
     r = await Promise.race([travail, arret]);

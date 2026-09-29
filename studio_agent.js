@@ -631,7 +631,7 @@ function outils(src) {
  * les appels, `recherches_perplexity` compté pour la facture. `surOutil`
  * et `surResultat` racontent chaque geste à la page.
  */
-async function repond({ m, messages, surTexte, surReflexion, surOutil, surResultat, signal }, deps) {
+async function repond({ m, messages, surTexte, surReflexion, surOutil, surResultat, surEtape, signal }, deps) {
   const c = (deps && deps.client) || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 180000 });
   const O = outils(deps.src);
   const tools = definitions(actifsDe(deps.src));
@@ -734,8 +734,12 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
       const u = msg.usage || {};
       usage.input_tokens += u.input_tokens || 0; usage.output_tokens += u.output_tokens || 0;
       usage.cache_read_input_tokens += u.cache_read_input_tokens || 0; usage.cache_creation_input_tokens += u.cache_creation_input_tokens || 0;
-      depense += coutAppelUsd(m, u);
+      const coutAppel = coutAppelUsd(m, u);
+      depense += coutAppel;
       servi = msg.model || servi; stop = msg.stop_reason || null;
+      /* La carte de mission de SwoleMind (29/09) : le coût RÉEL de cet appel au modèle, lu dans
+         son usage — la page répartit la facture au prorata, jamais un chiffre inventé. */
+      if (surEtape) surEtape({ etape: etapes, modele: servi, coutUsd: Math.round(coutAppel * 1e6) / 1e6, entree: u.input_tokens || 0, sortie: u.output_tokens || 0 });
       if (texteEtape) textes.push(texteEtape);
 
       const appels = (msg.content || []).filter((b) => b.type === 'tool_use');
@@ -761,7 +765,8 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
         if (r.recherche) { usage.recherches_perplexity += r.recherche; depense += r.recherche * PRIX_RECHERCHE_USD; }
         if (r.sources) for (const s of r.sources) if (!sources.some((x) => x.url === s.url)) sources.push(s);
         if (r.carte) cartes.push(r.carte);
-        if (surResultat) surResultat({ id: b.id, nom: b.name, ok: !r.erreur, resume: r.erreur || coupe(r.texte || '', resultatMax).slice(0, 280), carte: r.carte || null, achat: r.achat || null });
+        if (surResultat) surResultat({ id: b.id, nom: b.name, ok: !r.erreur, resume: r.erreur || coupe(r.texte || '', resultatMax).slice(0, 280), carte: r.carte || null, achat: r.achat || null,
+          coutUsd: r.recherche ? Math.round(r.recherche * PRIX_RECHERCHE_USD * 1e6) / 1e6 : 0 });
         resultats.push(r.erreur ? { type: 'tool_result', tool_use_id: b.id, is_error: true, content: r.erreur }
                                 : { type: 'tool_result', tool_use_id: b.id, content: coupe(r.texte || '', resultatMax) });
       }

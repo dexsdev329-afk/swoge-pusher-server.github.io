@@ -3569,6 +3569,8 @@ const server = http.createServer(async (req, res) => {
         surReflexion: () => envoie('etape', { quoi: 'reflexion' }),
         surOutil: (o) => envoie('outil', o),
         surResultat: (o) => envoie('resultat', o),
+        /* Le cout reel de chaque appel au modele : la carte de mission le repartit (SwoleMind, 29/09). */
+        surEtape: (o) => envoie('cout', o),
       });
     } catch (e) {
       console.error('[agent] ' + (e && e.stack || e));
