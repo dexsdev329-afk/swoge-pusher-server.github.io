@@ -47,7 +47,11 @@ const Jeton = require('./studio_jeton');
    services tiers, d'ou un prix plus haut). Prix de depart, pas des mesures. */
 /* ---- LA BAISSE DU 28/09/2026 (une experience, avec un groupe temoin) ----
    Mesure (compteurs durables, /agentic/x402 → jours.outils, 27-28/09) : 3 796
-   demandes de prix (402) pour 24 paiements exterieurs, ~0,6 %. Le 28/09 :
+   demandes de prix (402) pour 24 paiements exterieurs, ~0,6 %. [RECLASSE le 29/09 :
+   ces 24 venaient de notre portefeuille d'inscription, paye avant d'etre compte comme
+   la maison — journal x402 relu, 55 paiements sur 55 a nous (EXPLOITATION.md, « Les
+   paiements verifiables »). Le point de depart reel est donc 0 paiement exterieur,
+   pas ~0,6 % ; l'experience compare desormais 0 a 0 jusqu'au premier.] Le 28/09 :
    2 842 demandes de 143 demandeurs distincts, 0 paiement exterieur. Releve du
    catalogue PayAI le meme jour (7 529 services, mesures/catalogue_payai_2026-09-28.md) :
    mediane 0,01 $, 69 % a 0,01 $ ou moins ; osint_lookup plus cher que 96 % de

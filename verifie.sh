@@ -124,6 +124,7 @@ lance agentpage "$SITE" node agent_page.test.js   # SwogeAgentic : chaque geste 
 lance agentqr  "$SITE" node agent_qr.test.js   # le QR de la carte eSIM = le generateur prouve du portefeuille (200 empreintes segno), jamais un faux QR
 lance esimpage "$SITE" node esim_page.test.js   # boutique eSIM : chercher, payer Base (EIP-3009) ou Solana, lien secret, QR, ?order= retrouve, echappe, 320 px
 lance storepage "$SITE" node agent_store.test.js   # Agent Store : usage mesure avec son effectif, aucun taux sous 10, mission preremplie, services x402 tels que sondes, https seulement, 360 px
+lance polypage "$SITE" node polymarket_page.test.js   # Polymarket Edge Check : tri par date (jamais les gros gains d abord), pertes non encaissees reintegrees, aucun verdict sous 100, teneur de marche dit, texte seulement, 360 px
 lance passpage "$SITE" node agent_passport.test.js   # Agent Passport : champs en texte, signature verifiee dans le navigateur (ou par le serveur, dit), passeport modifie refuse, publier par la session
 lance navliens "$SITE" node nav_liens.test.js   # aucun lien muet sur les pages qui eteignent leurs liens par defaut ; chaque entree du menu recoit un VRAI clic, 1280 et 390 px
 lance x402page "$SITE" node x402_essai_page.test.js   # payer un appel en USDC sur Base depuis son portefeuille : offre Base du 402, EIP-3009 signe et verifie, resultat echappe, 320 px
