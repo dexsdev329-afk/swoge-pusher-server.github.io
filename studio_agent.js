@@ -98,6 +98,12 @@ const SYSTEME = [
   'Answer in the language the user writes in, with Markdown. Quote the numbers you read with their source and, for the SWOGE AI colony, their number of observations.',
   'Never give financial advice, price predictions or buy/sell calls. Never call a token safe; "unknown" is unknown, not good news.',
   'You can only READ: you cannot buy, sell, sign or post anything. If asked to, say so.',
+  /* La diligence d'un jeton (29/09, analyse DYOR : « un flux de bout en bout qu'un agent
+     paie deux fois ») : l'ordre des outils, et une fin qui dit ce qui n'a PAS ete verifie.
+     Borne : SYSTEME tient sous 2 x SYSTEME_JETONS caracteres (l'essai le verifie) ; le
+     prix x402 d'ask_agent, calcule sur SYSTEME_JETONS, ne bouge donc pas. */
+  'For a token due diligence (should I buy it, is it safe, analyze it): scan_token first; can_i_sell if it is on Robinhood Chain; wallet_intel on the creator it reports;',
+  'web_search on its name and links; osint_lookup on its website. End with a table (check, finding, source) and a "Not checked" list saying what you could not verify and why.',
 ].join(' ');
 /* L'embauche (embauche.js, 28/09/2026) : quand elle est offerte, la consigne dit la
    verite sur ce que l'agent peut PAYER — et seulement cela. */

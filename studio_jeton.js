@@ -28,8 +28,10 @@
 const MAX_ADRESSES = 2;
 /* Le pire cas de ce qu'une fiche ajoute à la question, en jetons : mesuré sur
    la fiche la plus longue de l'essai (~2 400 caractères) à un jeton pour deux
-   caractères, arrondi au-dessus. La réserve de `studio_chat` le compte. */
-const JETONS_PAR_FICHE = 1500;
+   caractères, arrondi au-dessus. La réserve de `studio_chat` le compte.
+   29/09 : le créateur, le propriétaire et quatre liens la portent à 2 996
+   caractères (1 498 jetons) — 1 500 ne laissait plus rien, d'où 1 700. */
+const JETONS_PAR_FICHE = 1700;
 /* En dessous, une case de la colonie se montre, mais comme « trop peu pour
    conclure » : un écart sur une poignée de jetons est de la chance. */
 const OBS_ASSEZ = 30;
@@ -75,6 +77,20 @@ async function json(url) {
   return r.json();
 }
 
+/* Les liens du projet que DexScreener publie (`info.websites[].url`, `info.socials[].{type,url}`,
+   relus le 29/09 sur BRETT) : le site pour osint_lookup, les reseaux pour web_search — la
+   diligence de l'agent (29/09) en a besoin. https seulement, 4 au plus, 120 caracteres chacun :
+   c'est du texte venu d'ailleurs, lu par le modele. */
+const LIENS_MAX = 4, LIEN_CAR = 120;
+function liensDe(paires) {
+  const q = paires.find((x) => x && x.info && (x.info.websites || x.info.socials));
+  if (!q) return [];
+  const l = [];
+  for (const w of q.info.websites || []) if (https(w && w.url)) l.push({ type: 'website', url: String(w.url).slice(0, LIEN_CAR) });
+  for (const x of q.info.socials || []) if (https(x && x.url)) l.push({ type: String(x.type || 'social').replace(/[^a-z]/gi, '').slice(0, 12).toLowerCase() || 'social', url: String(x.url).slice(0, LIEN_CAR) });
+  return l.slice(0, LIENS_MAX);
+}
+
 /** Le marché : la piscine la plus profonde, toutes chaînes confondues. */
 async function lisMarche(addr) {
   const j = await json(DEX() + '/latest/dex/tokens/' + addr);
@@ -93,6 +109,7 @@ async function lisMarche(addr) {
     ageJours: q.pairCreatedAt ? Math.max(0, Math.round((Date.now() - q.pairCreatedAt) / 864e5 * 10) / 10) : null,
     piscines: p.length, chaines: [...new Set(p.map((x) => String(x.chainId || '')))].slice(0, 5),
     url: https(q.url),
+    liens: liensDe(p),
   };
 }
 
@@ -123,6 +140,11 @@ async function lisSecurite(chaine, addr) {
     premierPorteur: libres.length ? Math.round(Math.max(...libres) * 10) / 10 : null,
     dixPremiers: libres.length ? Math.round(libres.sort((a, b) => b - a).slice(0, 10).reduce((a, b) => a + b, 0) * 10) / 10 : null,
     lpVerrouillee: (i.lp_holders || []).length ? Math.round(lpVerrou) : null,
+    /* Le createur et le proprietaire (29/09) : `creator_address`, `creator_percent` (fraction),
+       `owner_address` (l'adresse zero quand la propriete est abandonnee) — relus sur BRETT. */
+    createur: /^0x[0-9a-fA-F]{40}$/.test(String(i.creator_address || '')) ? String(i.creator_address).toLowerCase() : null,
+    createurPct: pct(i.creator_percent),
+    proprio: /^0x[0-9a-fA-F]{40}$/.test(String(i.owner_address || '')) ? String(i.owner_address).toLowerCase() : null,
   };
 }
 
@@ -202,7 +224,11 @@ function contexte(fiches) {
         + ', largest free wallet ' + (s.premierPorteur == null ? 'unknown' : s.premierPorteur + '%')
         + ', top 10 free wallets ' + (s.dixPremiers == null ? 'unknown' : s.dixPremiers + '%')
         + ' (contracts, locks and burns excluded), LP locked or burnt ' + (s.lpVerrouillee == null ? 'unknown' : s.lpVerrouillee + '%') + '.');
+      if (s.createur || s.proprio) l.push('- Creator (GoPlus): ' + (s.createur ? s.createur + (s.createurPct == null ? '' : ', holding ' + s.createurPct + '% of supply') : 'unknown')
+        + '; owner: ' + (s.proprio == null ? 'unknown' : /^0x0{40}$/.test(s.proprio) ? 'renounced (zero address)' : s.proprio) + '.');
     }
+    if (m.liens) l.push(m.liens.length ? '- Project links (DexScreener, as listed by the project, unverified): ' + m.liens.map((x) => x.type + ' ' + x.url).join(', ') + '.'
+      : '- Project links: none listed on DexScreener.');
     if (f.action && f.action.imposteur) l.push('- WARNING: this token copies the ticker or name of the Robinhood Stock Token ' + f.action.symbole
       + ' but is NOT it (not on Robinhood\'s official list). The official ' + f.action.symbole + ' contract is ' + f.action.adresse + '.');
     else if (f.action && f.action.officielle) l.push('- Robinhood Stock Token: this is the OFFICIAL ' + f.action.symbole + ' contract (Robinhood\'s official list).');

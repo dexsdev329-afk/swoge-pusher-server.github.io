@@ -69,6 +69,11 @@ const m = C.modele('sonnet-5');
     /* La borne se juge sur le catalogue le plus long : reglage allume. */
     ok(Math.ceil(JSON.stringify(dv).length / 2) <= A.OUTILS_JETONS && Math.ceil(A.SYSTEME.length / 2) <= A.SYSTEME_JETONS,
        'le pire cas couvre les definitions et la consigne, a un jeton pour deux caracteres [' + Math.ceil(JSON.stringify(dv).length / 2) + ' ≤ ' + A.OUTILS_JETONS + ']');
+    /* La diligence d'un jeton (29/09) : l'ordre des outils et la fin « Not checked », pour la page, l'embauche
+       et ask_agent — sous la borne, donc sans toucher au prix x402 (verifie juste au-dessus et plus bas). */
+    ok([A.SYSTEME, A.SYSTEME_EMBAUCHE].every((t) => /scan_token first; can_i_sell if it is on Robinhood Chain; wallet_intel on the creator it reports/.test(t)
+       && /osint_lookup on its website/.test(t) && /"Not checked" list saying what you could not verify and why/.test(t)),
+       'la diligence d un jeton : les outils dans l ordre, et ce qui n a pas ete verifie, dit [' + A.SYSTEME.length + ' caracteres]');
     const sc = d.find((x) => x.name === 'scan_token').description;
     ok(/Powered by Go\+ Security, https:\/\/gopluslabs\.io/.test(sc.split('. ')[0]),
        'scan_token dit « Powered by Go+ Security » avec son lien, dans sa PREMIERE phrase (celle que reprennent llms.txt et openapi)');

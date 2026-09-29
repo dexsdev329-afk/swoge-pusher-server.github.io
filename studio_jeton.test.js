@@ -41,7 +41,10 @@ const PANNE = '0x5555555555555555555555555555555555555555';
           priceUsd: '0.000004429', liquidity: { usd: 1000 }, fdv: 1, volume: { h24: 1 }, priceChange: {}, txns: { h24: { buys: 1, sells: 1 } } },
         { chainId: 'ethereum', dexId: 'uniswap', url: 'https://dexscreener.com/ethereum/0xprofonde', baseToken: { address: '0x6982508145454Ce325dDbE47a25d4ec3d2311933', symbol: 'PEPE', name: 'Pepe' },
           priceUsd: '0.000004431', liquidity: { usd: 25000000 }, fdv: 1860000000, marketCap: 1860000000, volume: { h24: 9100000 },
-          priceChange: { h1: -0.4, h24: 3.2 }, txns: { h24: { buys: 1200, sells: 900 } }, pairCreatedAt: Date.now() - 900 * 864e5 },
+          priceChange: { h1: -0.4, h24: 3.2 }, txns: { h24: { buys: 1200, sells: 900 } }, pairCreatedAt: Date.now() - 900 * 864e5,
+          /* La forme relue sur BRETT le 29/09 ; un lien qui n'est pas https ne passe pas. */
+          info: { imageUrl: 'https://cdn/x.png', websites: [{ label: 'Website', url: 'https://www.pepe.vip/' }, { url: 'http://pas-https.example' }],
+            socials: [{ type: 'twitter', url: 'https://twitter.com/pepecoineth' }, { type: 'telegram', url: 'https://t.me/pepecoineth' }, { type: 'discord', url: 'https://discord.gg/p' }, { type: 'x', url: 'https://x.com/5e' }] } },
         /* Une piscine ou PEPE est la monnaie d'echange, pas le jeton : elle ne compte pas. */
         { chainId: 'bsc', dexId: 'pancakeswap', url: 'https://dexscreener.com/bsc/0xautre', baseToken: { address: '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', symbol: 'X' },
           quoteToken: { address: ETH }, priceUsd: '9', liquidity: { usd: 99000000 } }] });
@@ -56,6 +59,7 @@ const PANNE = '0x5555555555555555555555555555555555555555';
       if (g[2] === ETH && g[1] === '1') return rend({ code: 1, message: 'OK', result: { [ETH]: {
         is_honeypot: '0', cannot_sell_all: '0', cannot_buy: '0', buy_tax: '0', sell_tax: '0.05', is_mintable: '0', transfer_pausable: '1',
         is_blacklisted: '1', is_open_source: '1', hidden_owner: '0', owner_change_balance: '0', holder_count: '593837',
+        creator_address: '0xF4D2888D29D722226FafA5d9B24F9164c092421E', creator_percent: '0.012', owner_address: '0x0000000000000000000000000000000000000000',
         holders: [
           { address: '0xcex', tag: '', is_contract: 0, percent: '0.088302969162162680', is_locked: 0 },
           { address: '0xlock', tag: 'UNCX lock', is_contract: 0, percent: '0.30', is_locked: 1 },
@@ -88,6 +92,9 @@ const PANNE = '0x5555555555555555555555555555555555555555';
     ok(mk.piscines === 2 && mk.chaine === 'ethereum' && mk.sym === 'PEPE', 'la piscine ou le jeton n est que la monnaie d echange ne compte pas [' + mk.piscines + ']');
     ok(mk.var24h === 3.2 && mk.achats24 === 1200 && mk.ventes24 === 900 && mk.ageJours >= 899 && mk.mcUsd === 1860000000, 'variation, achats/ventes, age, capitalisation lus');
     eq((await J.lisMarche(RH)).url, null, 'une adresse de service qui n est pas https ne sort jamais');
+    eq(mk.liens.map((x) => x.type + ' ' + x.url).join(' | '), 'website https://www.pepe.vip/ | twitter https://twitter.com/pepecoineth | telegram https://t.me/pepecoineth | discord https://discord.gg/p',
+       'les liens du projet pour la diligence (29/09) : https seulement, quatre au plus');
+    eq((await J.lisMarche(RH)).liens.length, 0, 'aucun lien publie : une liste vide, pas une invention');
     eq(await J.lisMarche(INCONNU), null, 'un jeton sans piscine : rien, pas des zeros');
   }
 
@@ -98,6 +105,8 @@ const PANNE = '0x5555555555555555555555555555555555555555';
     ok(s.taxeAchat === 0 && s.taxeVente === 5, 'les taxes en fraction deviennent des pourcents [' + s.taxeVente + ']');
     ok(s.premierPorteur === 8.8 && s.dixPremiers === 15.4, 'porteurs : fraction → %, verrou, contrat et adresse nulle exclus [' + s.premierPorteur + ' / ' + s.dixPremiers + ']');
     ok(s.porteurs === 593837 && s.lpVerrouillee === 90, 'nombre de porteurs, part de liquidite brulee');
+    ok(s.createur === '0xf4d2888d29d722226fafa5d9b24f9164c092421e' && s.createurPct === 1.2 && /^0x0{40}$/.test(s.proprio),
+       'le createur (pour wallet_intel), sa part, et le proprietaire (29/09)');
     const vide = await J.lisSecurite('robinhood', RH);
     ok(vide.couverte && vide.connu === false && vide.honeypot === undefined, 'une fiche GoPlus vide : « inconnu », jamais « pas de honeypot »');
     const hors = await J.lisSecurite('zkfoo', SOLANA_SEUL);
@@ -149,6 +158,9 @@ const PANNE = '0x5555555555555555555555555555555555555555';
     ok(/deployeur = 4\+: -43\.7% average over 642 observations\n/.test(ctx) && /liq = <5k: \+18\.2% average over 12 observations \(too few to conclude\)/.test(ctx),
        'chaque case avec son effectif, « too few to conclude » sous le seuil');
     ok(/GoPlus has no record of this token yet — unknown, NOT safe/.test(ctx), 'GoPlus muet : « inconnu, PAS sur »');
+    ok(/Creator \(GoPlus\): 0xf4d2888d29d722226fafa5d9b24f9164c092421e, holding 1\.2% of supply; owner: renounced \(zero address\)\./.test(ctx)
+       && /Project links \(DexScreener, as listed by the project, unverified\): website https:\/\/www\.pepe\.vip\/, twitter/.test(ctx) && /Project links: none listed on DexScreener\./.test(ctx),
+       'le modele lit le createur, le proprietaire abandonne et les liens « non verifies » — ou qu il n y en a pas');
     ok(/transfers can be paused; has a blacklist/.test(ctx) && /largest free wallet 8\.8%/.test(ctx) && /buy\/sell tax 0%\/5%/.test(ctx), 'les drapeaux, les porteurs et les taxes, lus');
     eq(J.sources([f, fe]).map((x) => x.url).join(','), 'https://site.example/swoge_scan.html?t=' + RH + ',https://dexscreener.com/ethereum/0xprofonde',
        'les sources : le scan de la colonie, la piscine DexScreener (https seulement)');
@@ -175,6 +187,9 @@ const PANNE = '0x5555555555555555555555555555555555555555';
     pire.colonie = { observations: 9e6, echeance: 30, scan: f.colonie.scan, faits: Array(6).fill('the contract can mint more tokens (GoPlus)'),
       cases: Array(6).fill({ trait: 'une_case_au_nom_long', case: 'une valeur longue', n: 123456, moyenne: -99.9, assez: true }) };
     pire.manque = ['DexScreener', 'GoPlus', 'SWOGE AI colony'];
+    /* La diligence (29/09) : le createur, le proprietaire et les liens du projet, au plus long. */
+    Object.assign(pire.securite, { createur: '0x' + 'c'.repeat(40), createurPct: 99.9, proprio: '0x' + 'd'.repeat(40) });
+    pire.marche.liens = Array(4).fill({ type: 'x'.repeat(12), url: 'https://' + 'u'.repeat(112) });
     const car = J.contexte([pire]).length;
     ok(Math.ceil(car / 2) <= J.JETONS_PAR_FICHE, 'la fiche la plus longue (' + car + ' caracteres) tient dans ' + J.JETONS_PAR_FICHE + ' jetons de reserve a 2 caracteres par jeton');
   }
