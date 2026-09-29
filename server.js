@@ -2071,6 +2071,13 @@ if (process.env.SONDES_SERVICES !== '0' && require.main === module) {
   setInterval(tourSondes, 10 * 60e3).unref();
 }
 const RECHERCHES_SERVICES = new Map();        /* empreinte d'IP → instants : 30 recherches par 10 min */
+/* ---- POLYMARKET AI (poly_papier.js, 29/09) : la colonie PAPIER des marches crypto de 15 min ----
+   Aucune cle, aucun ordre : des lectures publiques (gamma, carnet CLOB, Hyperliquid) toutes les
+   15 s, et des achats SIMULES au prix demande. Allumee en production (demande du proprietaire,
+   argent fictif, rien a proteger) ; POLY_PAPIER=0 la coupe ; jamais dans un essai qui charge
+   ce fichier (require.main). Coupee, /poly/etat sert le dernier releve relu sur le disque. */
+const polyPapier = require('./poly_papier').cree({ dossier: cfg.DATA_DIR });
+if (process.env.POLY_PAPIER !== '0' && require.main === module) polyPapier.demarre(); else polyPapier.charge();
 /* ---- L'eSIM ET LA PASSERELLE DANS LE MCP (mcp_extras.js, 29/09) ---- */
 let MCP_EXTRAS = null;
 function mcpExtras() {
@@ -3483,7 +3490,14 @@ const server = http.createServer(async (req, res) => {
   }
   /* ---- LE CREDIT EN DOLLARS (credits.js) : GET /credit (solde, historique), POST /credit/topup {usd}
      paye en x402 (USDC Base ou Solana, ou $SWOGE sur Robinhood Chain). Toujours l'adresse de SESSION. */
-  if (path === '/credit' || path === '/credit/topup') {
+  /* ---- /credit A DEUX PROPRIETAIRES (constate le 29/09, acces.test.js) ----
+     Le credit en dollars (ci-dessous) a pris `/credit` le 29/09 au matin ; or `/credit` etait deja
+     le robinet ADMIN (POST, x-admin-key : crediter un joueur, admin.js). Depuis, toute requete admin
+     tombait ici et recevait 401 « sign in with your wallet » : le robinet etait injoignable (ferme,
+     pas ouvert). Une requete qui porte une cle admin ou les parametres du robinet (joueur, key)
+     va donc a la porte admin, qui la juge ; un joueur qui imite ces en-tetes n'y gagne qu'un refus. */
+  const credAdmin = path === '/credit' && !!(req.headers['x-admin-key'] || /[?&](?:joueur|key)=/.test(req.url));
+  if ((path === '/credit' || path === '/credit/topup') && !credAdmin) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization, x-api-key, payment-signature', 'access-control-expose-headers': 'payment-required, payment-response' };
     const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
@@ -3887,6 +3901,13 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(predictPancake.etat()));
+  }
+
+  /* Polymarket AI : le releve de la colonie papier (poly_papier.js). Public, lisible depuis le site. */
+  if (path === '/poly/etat') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(polyPapier.etat()));
   }
 
   /* ---- LE RELEVE D UN DOMAINE ----

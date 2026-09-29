@@ -102,9 +102,13 @@ const ok = (c, m) => { n++; if (!c) rates++; console.log((c ? '  ok   ' : '  RAT
 
   console.log('\n-- le serveur --');
   const srv = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  const route = srv.slice(srv.indexOf("if (path === '/credit' || path === '/credit/topup')"), srv.indexOf("if (path === '/esim/plans' || path === '/esim/buy'"));
+  const route = srv.slice(srv.indexOf("if ((path === '/credit' || path === '/credit/topup') && !credAdmin)"), srv.indexOf("if (path === '/esim/plans' || path === '/esim/buy'"));
   ok(/sessionJoueur\.lire\(game\.sessionSecret, jeton\)/.test(route) && /recharge\(\{ entete: req\.headers\['payment-signature'\], usd: q\.usd, addr, qui/.test(route) && !/q\.addr/.test(route),
      '/credit/topup credite la session, jamais une adresse du corps');
+  /* 29/09 : /credit etait deja le robinet admin (POST, x-admin-key, admin.js) ; le credit en dollars l'avait
+     rendu injoignable (acces.test.js). Une requete admin passe a la porte admin, qui la juge. */
+  ok(route.length > 1000 && /const credAdmin = path === '\/credit' && !!\(req\.headers\['x-admin-key'\] \|\| \/\[\?&\]\(\?:joueur\|key\)=\/\.test\(req\.url\)\)/.test(srv),
+     '/credit : une requete qui porte la cle admin ou les parametres du robinet va a la porte admin');
   ok(/o === 'credit' \? credits\(\)\.prixUsd\(a\)/.test(srv), 'le prix x402 de la recharge vient du module');
   ok((srv.match(/const pay = payeurDe\(addr, q\.payeur/g) || []).length === 2 && (srv.match(/if \(pay\.credit\) r = enCredit\(r, addr\);/g) || []).length === 3,
      'l\'agent, le chat et les images : le payeur choisi, et la reponse en dollars quand c\'est le credit');

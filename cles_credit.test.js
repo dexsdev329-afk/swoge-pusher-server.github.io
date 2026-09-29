@@ -99,7 +99,7 @@ const ok = (c, m) => { n++; if (!c) rates++; console.log((c ? '  ok   ' : '  RAT
 
   console.log('\n-- 7. le serveur --');
   const srv = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  const route = srv.slice(srv.indexOf("if (path === '/credit' || path === '/credit/topup')"), srv.indexOf("if (path === '/esim/plans' || path === '/esim/buy'"));
+  const route = srv.slice(srv.indexOf("if ((path === '/credit' || path === '/credit/topup') && !credAdmin)"), srv.indexOf("if (path === '/esim/plans' || path === '/esim/buy'"));
   ok(/agenticCles\.resout\(cleT\)/.test(route) && /cleC && cleC\.addr/.test(route) && !/q\.addr/.test(route), '/credit : une cle lit et recharge le credit de SON proprietaire, jamais une adresse du corps');
   const iPayeur = srv.indexOf("/^\\/agentic\\/cles\\/[0-9a-f]{12}\\/payeur$/"), iSession = srv.indexOf("if (!session) return json(401, { ok: false, raison: 'sign in with your wallet first (API keys cannot manage keys)' });");
   ok(iPayeur > 0 && iSession > 0 && iPayeur > iSession && /agenticCles\.fixePayeur\(session,/.test(srv), 'changer le payeur : la session seulement, apres le refus des cles (une cle ne gere pas les cles)');

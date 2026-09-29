@@ -77,6 +77,7 @@ function lance(port, cle) {
     PORT: String(port), DATA_DIR: bac,
     RPC_URL: 'http://127.0.0.1:1', VAULT_ADDRESS: '', SWOGE_TOKEN: '',
     AI_COLONIE: '0', TG_BOT_TOKEN: '', TG_CHAT_ID: '', ODDS_API_KEY: '', MONITEUR_URL: '',
+    POLY_PAPIER: '0',   /* la colonie papier Polymarket lit le reseau : jamais dans cet essai */
   });
   if (cle) env.ADMIN_KEY = cle; else delete env.ADMIN_KEY;
   const p = spawn(process.execPath, ['server.js'], { cwd: __dirname, env, stdio: ['ignore', 'pipe', 'pipe'] });
