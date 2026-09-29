@@ -289,7 +289,8 @@ function definitions(actifs) {
     { name: 'find_esim_plans', description: 'Use this when the user wants mobile data abroad (a travel eSIM): it lists data-only eSIM plans for a country or region '
         + 'with data, days and price (USD, and what the user would be charged). Searching is free: nothing is paid.',
       input_schema: { type: 'object', properties: { country: { type: 'string', description: 'the destination country in English, or its 2-letter code (e.g. "Japan", "FR")' },
-        min_gb: { type: 'number', description: 'optional; at least this many GB' }, min_days: { type: 'integer', description: 'optional; valid at least this many days' } }, required: ['country'] } },
+        min_gb: { type: 'number', description: 'optional; at least this many GB' }, min_days: { type: 'integer', description: 'optional; valid at least this many days' },
+        max_usd: { type: 'number', description: 'optional; only plans the user would be charged at most this many USD for (use it when the user gives a budget)' } }, required: ['country'] } },
     { name: 'propose_esim_purchase', description: 'Use this when the user chose a plan from find_esim_plans: it shows the user ONE offer with a Buy button. '
         + 'It does NOT buy anything: the user confirms on the page, and only then is charged. The offer expires after 15 minutes.',
       input_schema: { type: 'object', properties: { plan: { type: 'string', description: 'the plan id, exactly as find_esim_plans returned it' } }, required: ['plan'] } });
@@ -460,15 +461,24 @@ function outils(src) {
     /* L'eSIM (achats.js, 28/09/2026) : src.achats est lie a l'adresse du joueur. */
     async find_esim_plans(e) {
       if (!src.achats) return { erreur: 'eSIM purchases are not available here' };
-      const r = await src.achats.forfaits({ pays: e && e.country, go: e && e.min_gb, jours: e && e.min_days });
+      let r = await src.achats.forfaits({ pays: e && e.country, go: e && e.min_gb, jours: e && e.min_days });
       if (!r || !r.ok) return { erreur: (r && r.raison) || 'the eSIM shop did not answer' };
       const hf = r.horsFonds ? ' ' + r.horsFonds + ' more plan(s) cost more than the shop can pay right now: they cannot be offered, do not mention them as options.' : '';
-      if (!r.forfaits.length) return { texte: 'No plan for ' + r.destination.nom + ' can be bought right now within the ' + r.plafondUsd + ' $ limit.' + hf
+      /* max_usd (29/09) : le budget du joueur porte sur ce qu'il paie (factureUsd), et l'ecart est dit au modele. */
+      const max = Number(e && e.max_usd) > 0 ? Number(e.max_usd) : null;
+      if (max) {
+        const dedans = r.forfaits.filter((f) => (f.factureUsd != null ? f.factureUsd : f.usd) <= max);
+        const hors = r.forfaits.length - dedans.length;
+        r = Object.assign({}, r, { forfaits: dedans });
+        if (hors) r.horsBudget = hors;
+      }
+      const hb = r.horsBudget ? ' ' + r.horsBudget + ' more plan(s) cost the user more than ' + max + ' $: say so if nothing below fits.' : '';
+      if (!r.forfaits.length) return { texte: 'No plan for ' + r.destination.nom + ' can be bought right now within the ' + (max && r.horsBudget ? max + ' $ budget' : r.plafondUsd + ' $ limit') + '.' + hf + hb
         + (r.destination.autres.length ? ' Other destinations covering it: ' + r.destination.autres.join('; ') + '.' : '') };
       return { texte: 'Data-only eSIM plans for ' + r.destination.nom + ' (cheapest per GB first; ' + r.total + ' plans in total, the ones shown were priced just now):\n'
           + r.forfaits.map((f, i) => (i + 1) + '. ' + f.nom + ' — ' + f.go + ' GB, ' + f.jours + ' days — ' + f.usd + ' $ (the user is charged ' + f.factureUsd + ' $ in $SWOGE) — plan id: ' + f.plan).join('\n')
           + (r.destination.autres.length ? '\nOther destinations covering it: ' + r.destination.autres.join('; ') + '.' : '')
-          + hf + '\nSeller: CHIPS (terms ' + r.conditions + '); check the phone supports eSIM: ' + r.compatibles + '. Nothing was paid.', donnees: r };
+          + hf + hb + '\nSeller: CHIPS (terms ' + r.conditions + '); check the phone supports eSIM: ' + r.compatibles + '. Nothing was paid.', donnees: r };
     },
     async propose_esim_purchase(e) {
       if (!src.achats) return { erreur: 'eSIM purchases are not available here' };

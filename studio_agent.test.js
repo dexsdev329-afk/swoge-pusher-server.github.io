@@ -272,6 +272,16 @@ const m = C.modele('sonnet-5');
     await A.repond({ m, messages: [{ role: 'user', content: 'x' }] }, { client: cl2, src: src() });
     ok(!cl2.vus[0].tools.some((t) => /esim/.test(t.name)) && !/eSIM/.test(cl2.vus[0].system), 'sans achats (API, MCP, x402) : ni les outils, ni la phrase');
     ok(!require('./agentic').definitions({ recherche: true }).some((t) => /esim/.test(t.name)), 'et l API publique ne les liste jamais');
+    /* max_usd (29/09) : le budget porte sur ce que paie le joueur (factureUsd 1,47 $), l ecart est dit au modele. */
+    const cl3 = faux([
+      { stop: 'tool_use', content: [{ type: 'tool_use', id: 'b1', name: 'find_esim_plans', input: { country: 'Japan', max_usd: 1.45 } }] },
+      { stop: 'tool_use', content: [{ type: 'tool_use', id: 'b2', name: 'find_esim_plans', input: { country: 'Japan', max_usd: 1.5 } }] },
+      { stop: 'end_turn', content: [{ type: 'text', text: 'ok' }] }]);
+    await A.repond({ m, messages: [{ role: 'user', content: 'Japan, under $1.45' }] }, { client: cl3, src: src({ achats }) });
+    const b1 = JSON.stringify(cl3.vus[1].messages), b2 = JSON.stringify(cl3.vus[2].messages);
+    ok(cl3.vus[0].tools.find((t) => t.name === 'find_esim_plans').input_schema.properties.max_usd && /within the 1.45 \$ budget/.test(b1) && /1 more plan\(s\) cost the user more than 1.45 \$/.test(b1),
+       'un budget sous le prix paye (1,47 $) : aucun forfait, et le modele sait pourquoi');
+    ok(!/plan id: japan-1gb-7days-x/.test(b1) && /plan id: japan-1gb-7days-x/.test(b2) && !/cost the user more than 1.5 /.test(b2), 'un budget au-dessus : le forfait est rendu, rien d ecarte');
   }
 
   console.log('\n-- 3. les bornes --');

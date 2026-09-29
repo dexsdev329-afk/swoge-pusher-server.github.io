@@ -39,6 +39,9 @@ const ok = (c, m) => { n++; if (!c) rates++; console.log((c ? '  ok   ' : '  RAT
   const p = await S.plans({ country: 'france' });
   ok(p.ok && p.plans[0].priceUsd === 2.5 && p.plans[1].priceUsd === 4.23 && p.unavailable === 1 && /you are charged only if the eSIM is bought/.test(p.note),
      'CHIPS × 1,25, au cent (2 $ → 2,50 $ ; 3,383 $ → 4,23 $), les forfaits impayables comptes');
+  const pm = await S.plans({ country: 'france', max_usd: 3 });
+  ok(pm.ok && pm.plans.length === 1 && pm.plans[0].plan === 'europe-1gb-7days' && pm.overMax === 1 && pm.maxUsd === 3 && p.overMax === 0 && p.maxUsd === null,
+     'max_usd (mission « sous 10 $ », 29/09) : le plafond porte sur le prix PAYE (2,50 $ garde, 4,23 $ ecarte), et l ecart est compte');
   ok(B.MARGE_DEFAUT === 1.25 && S.marge() === 1.25, 'la marge choisie par le proprietaire le 28/09 : 25 %');
   process.env.ESIM_MARGE = '1.4'; ok(S.marge() === 1.4, 'ESIM_MARGE la change sans deploiement'); delete process.env.ESIM_MARGE;
   ok(S.prixUsd({ plan: 'europe-1gb-7days' }) === 2.5 && S.prixUsd({ plan: 'inconnu' }) === null, 'le prix x402 : celui du forfait connu, rien sinon');

@@ -811,7 +811,8 @@ function pathsEsim(c) {
       description: 'Free: nothing is paid. Returns data-only eSIM plans (no phone number) for a country (name or 2-letter code) or a region (Europe, Asia, Middle East, South America, North America, Global), '
         + 'including the regional plans that cover the country, cheapest per GB first, each with its price in USD paid in USDC. At most 20 searches per 10 minutes per IP. Seller: CHIPS.',
       parameters: [{ name: 'country', in: 'query', required: true, schema: { type: 'string', maxLength: 40 }, description: 'e.g. France, JP, Europe' },
-        { name: 'min_gb', in: 'query', required: false, schema: { type: 'number' } }, { name: 'min_days', in: 'query', required: false, schema: { type: 'integer' } }],
+        { name: 'min_gb', in: 'query', required: false, schema: { type: 'number' } }, { name: 'min_days', in: 'query', required: false, schema: { type: 'integer' } },
+        { name: 'max_usd', in: 'query', required: false, description: 'only plans at or under this price (USD, the price you pay)', schema: { type: 'number' } }],
       responses: { 200: { description: 'The plans', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, destination: s(), plans: tab(PLAN_ESIM),
         unavailable: n('plans the shop cannot sell right now'), terms: s(), compatibility: s('check the device supports eSIM'), note: s() }, ['ok', 'plans']), example: EX_PLANS_ESIM } } },
         400: erreur, 429: { description: 'Too many searches' } }, security: [] } },

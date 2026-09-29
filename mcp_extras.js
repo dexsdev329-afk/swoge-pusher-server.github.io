@@ -35,7 +35,8 @@ function cree(deps) {
         + '(Europe, Asia, Middle East, South America, North America, Global), cheapest per GB first, each with its price in USD. Free: nothing is paid. '
         + 'To buy one, POST ' + deps.api + '/esim/buy {"plan": id} and pay the x402 request in USDC on Base or Solana, no account; the eSIM is bought before the payment settles.',
       inputSchema: { type: 'object', properties: { country: { type: 'string', description: 'e.g. France, JP, Europe' },
-        min_gb: { type: 'number', description: 'optional: at least this many GB' }, min_days: { type: 'integer', description: 'optional: valid at least this many days' } }, required: ['country'] },
+        min_gb: { type: 'number', description: 'optional: at least this many GB' }, min_days: { type: 'integer', description: 'optional: valid at least this many days' },
+        max_usd: { type: 'number', description: 'optional: only plans at or under this price in USD (the price you pay)' } }, required: ['country'] },
       annotations: { readOnlyHint: true, openWorldHint: true } });
     if (deps.services) d.push({ name: 'search_x402_services', title: 'search x402 services',
       description: 'Use this when you need a paid API an agent can pay per call (x402): searches the public x402 catalogue and returns each service with what SWOGE MEASURED without paying '
@@ -62,10 +63,12 @@ function cree(deps) {
     const devis = args.quote === true; delete args.quote;
     if (nom === 'find_esim_plans') {
       if (devis) return { content: texte('Price: free.'), structuredContent: { quote: true, tool: nom, priceUsd: 0 }, isError: false };
-      const r = await deps.boutique().plans({ country: args.country, min_gb: args.min_gb, min_days: args.min_days });
+      const r = await deps.boutique().plans({ country: args.country, min_gb: args.min_gb, min_days: args.min_days, max_usd: args.max_usd });
       if (!r.ok) return erreurOutil(r.raison);
       const l = r.plans.map((p, i) => (i + 1) + '. ' + p.name + (p.covers ? ' (covers ' + p.covers + ')' : '') + ' - ' + (p.gb || '?') + ' GB, ' + (p.days || '?') + ' days - $' + p.priceUsd + ' - plan id: ' + p.plan);
-      return { content: texte((r.plans.length ? 'Data-only eSIM plans for ' + r.destination + ':\n' + l.join('\n') : 'No plan for ' + r.destination + ' right now.')
+      const au = r.overMax ? '\n' + r.overMax + ' more plan(s) cost more than $' + r.maxUsd + ' and are not listed.' : '';
+      return { content: texte((r.plans.length ? 'Data-only eSIM plans for ' + r.destination + (r.maxUsd ? ' at or under $' + r.maxUsd : '') + ':\n' + l.join('\n')
+          : 'No plan for ' + r.destination + (r.maxUsd ? ' at or under $' + r.maxUsd : '') + ' right now.') + au
         + '\nBuy: POST ' + deps.api + '/esim/buy {"plan": "<plan id>"} and pay the x402 request (USDC, Base or Solana). Check the device supports eSIM: ' + r.compatibility), structuredContent: r, isError: false };
     }
     if (nom === 'search_x402_services') {

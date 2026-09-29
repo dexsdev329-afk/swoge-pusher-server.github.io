@@ -53,8 +53,13 @@ function cree(deps) {
     if (!actif()) return { ok: false, raison: 'the eSIM shop is closed right now' };
     const r = await deps.achats.forfaits({ pays: a && a.country, go: a && a.min_gb, jours: a && a.min_days });
     if (!r || !r.ok) return { ok: false, raison: (r && r.raison) || 'the eSIM shop did not answer - try again' };
+    /* max_usd (29/09, mission « eSIM US 15 jours sous 10 $ ») : le plafond porte sur le prix
+       PAYE (marge comprise), et le nombre de forfaits ecartes est dit, pas tu. */
+    const max = Number(a && a.max_usd) > 0 ? Number(a.max_usd) : null;
+    const tous = r.forfaits.map((f) => ({ plan: f.plan, name: f.nom, covers: f.couvre || null, gb: f.go, days: f.jours, priceUsd: arrondi(f.usd * marge()) }));
+    const plans = max ? tous.filter((p) => p.priceUsd <= max) : tous;
     return { ok: true, destination: r.destination.nom, otherDestinations: r.destination.autres,
-      plans: r.forfaits.map((f) => ({ plan: f.plan, name: f.nom, covers: f.couvre || null, gb: f.go, days: f.jours, priceUsd: arrondi(f.usd * marge()) })),
+      plans, maxUsd: max, overMax: tous.length - plans.length,
       unavailable: r.horsFonds || 0, terms: r.conditions, compatibility: r.compatibles,
       note: 'Data only (no phone number). Paid in USDC from your wallet on Base or Solana; you are charged only if the eSIM is bought.' };
   }

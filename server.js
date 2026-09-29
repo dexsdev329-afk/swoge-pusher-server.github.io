@@ -3455,7 +3455,7 @@ const server = http.createServer(async (req, res) => {
   /* ---- MES eSIM (achats.js, 28/09/2026) : GET la liste ; POST { action: 'confirme' | 'livre', id }.
      Toujours le joueur de la SESSION : l'agent propose, seule cette route paie. ---- */
   /* ==================== LA BOUTIQUE eSIM SANS COMPTE ====================
-   * GET /esim/plans?country=&min_gb=&min_days= : les forfaits, au prix de la boutique (rien n'est paye).
+   * GET /esim/plans?country=&min_gb=&min_days=&max_usd= : les forfaits, au prix de la boutique (rien n'est paye).
    * POST /esim/buy {plan} : x402 — le 402, puis PAYMENT-SIGNATURE ; l'eSIM est achetee AVANT le reglement.
    * GET /esim/order/<lien> : le code d'activation, pour qui tient le lien secret rendu avec l'achat. */
   /* Le catalogue x402 note par nos mesures (sonde_services.js) : public, gratuit, borne par IP. */
@@ -3526,7 +3526,7 @@ const server = http.createServer(async (req, res) => {
       l.push(t); RECHERCHES_ESIM.set(quiIp, l);
       if (RECHERCHES_ESIM.size > 5000) for (const [k, v] of RECHERCHES_ESIM) if (!v.some((x) => t - x < 10 * 60e3)) RECHERCHES_ESIM.delete(k);
       const qs = new URLSearchParams(req.url.split('?')[1] || '');
-      const r = await boutiqueEsim().plans({ country: qs.get('country'), min_gb: qs.get('min_gb'), min_days: qs.get('min_days') });
+      const r = await boutiqueEsim().plans({ country: qs.get('country'), min_gb: qs.get('min_gb'), min_days: qs.get('min_days'), max_usd: qs.get('max_usd') });
       return json(r.ok ? 200 : 400, r);
     }
     if (path === '/esim/buy') {
