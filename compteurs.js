@@ -59,6 +59,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+const SORTES_MAX = 200;
 const EVENEMENTS = ['devis', 'demande402', 'paye_x402', 'paye_cle', 'refus_sans_cle', 'echec', 'chat_facture', 'image_facturee', 'video_facturee'];
 const CANAUX = ['rest', 'mcp', 'chat', 'agent', 'studio'];
 const DELAI_MS = 5000;
@@ -204,7 +205,13 @@ function cree(opts) {
     e.canaux[canal] = (e.canaux[canal] || 0) + 1;
     /* Depuis le 28/09 au soir, un sous-compte separe aussi exterieur et maison ; un sous-compte
        ecrit avant (sans la separation) reste tel quel ce jour-la : sa part exterieure est inconnue. */
-    if (i.sorte) { const s = String(i.sorte).slice(0, 60), so = e.sortes[s] || (e.sortes[s] = compteSepare()); ajoute(so, usd, cout); if (so.exterieur) ajoute(so[part], usd, cout); }
+    /* Au plus SORTES_MAX sous-comptes par evenement et par jour (29/09) : un client qui invente un nom
+       a chaque appel ne gonfle pas le fichier — au-dela, tout tombe dans « other ». */
+    if (i.sorte) {
+      let s = String(i.sorte).slice(0, 60);
+      if (!e.sortes[s] && Object.keys(e.sortes).length >= SORTES_MAX) s = 'other';
+      const so = e.sortes[s] || (e.sortes[s] = compteSepare()); ajoute(so, usd, cout); if (so.exterieur) ajoute(so[part], usd, cout);
+    }
     const outil = String(i.outil || '-').slice(0, 60);
     const t = e.outils[outil] || (e.outils[outil] = compteSepare());
     ajoute(t, usd, cout); ajoute(t[part], usd, cout);

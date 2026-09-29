@@ -12,9 +12,12 @@ const ok = (c, m) => { n++; if (!c) rates++; console.log((c ? '  ok   ' : '  RAT
 const cas = [['x402scan/1.0 (+https://x402scan.com)', 'x402scan'], ['AgentCash-Validator/2', 'agentcash'], ['Coinbase-Bazaar-Indexer', 'coinbase'],
   ['python-requests/2.32', 'python'], ['node-fetch/1.0', 'node'], ['undici', 'node'], ['Go-http-client/2.0', 'go'], ['curl/8.5.0', 'curl'],
   ['Mozilla/5.0 (Windows NT 10.0) Chrome/140', 'browser'], ['Mozilla/5.0 (compatible; Googlebot/2.1)', 'bot'], ['Claude-User', 'claude'],
-  ['', 'none'], [undefined, 'none'], ['WeirdClient 0.1', 'other']];
+  ['', 'none'], [undefined, 'none'], ['WeirdClient 0.1 (secret-host; user 42)', 'other:weirdclient'], ['okhttp/4.12.0', 'java'], ['UptimeRobot/2.0', 'uptime'],
+  ['x402-fetch/0.3', 'x402client'], ['Deno/1.46', 'deno'], ['reqwest/0.12', 'rust'], ['!!!', 'other']];
 ok(cas.every(([ua, f]) => F.famille(ua) === f), 'chaque User-Agent tombe dans sa famille : ' + cas.map(([ua]) => F.famille(ua)).join(','));
-ok(cas.every(([ua]) => F.CODES.includes(F.famille(ua))) && F.CODES.every((c) => /^[a-z0-9]+$/.test(c)), 'toujours un code de la liste fixe, jamais le texte');
+ok(cas.every(([ua]) => { const f = F.famille(ua); return F.CODES.includes(f) || /^other:[a-z][a-z0-9_]{0,19}$/.test(f); }) && F.CODES.every((c) => /^[a-z0-9]+$/.test(c)),
+   'toujours un code fixe, ou « other: » et le seul nom du produit (jamais la version ni le reste)');
+ok(!/secret|host|user|42|0_1/.test(F.famille('WeirdClient 0.1 (secret-host; user 42)')), 'rien d autre que le premier mot d un client inconnu');
 
 const d = fs.mkdtempSync(path.join(os.tmpdir(), 'famille-'));
 const t = Date.UTC(2026, 8, 29, 12);
@@ -29,6 +32,9 @@ ok(j.demande402.sortes['sonde:x402scan'].n === 2 && j.demande402.sortes['demande
    'les demandes de prix se lisent : sonde ou demande, et la famille du client');
 ok(!JSON.stringify(j).includes('Mozilla') && !JSON.stringify(j).includes('<script>') && j.demande402.sortes.other.n === 1, 'un texte libre devient « other » : jamais publie tel quel');
 ok(!JSON.stringify(K.publique(1)).match(/ip1|ip2|ip3/), 'jamais l IP ni son empreinte');
+for (let k = 0; k < 400; k++) K.note('demande402', { outil: 'scan_token', canal: 'rest', qui: 'ipx', sorte: 'sonde:other:c' + k });
+const so = K.publique(1).parJour[0].evenements.demande402.sortes;
+ok(Object.keys(so).length <= 201 && so.other.n >= 200, 'un client qui invente un nom a chaque appel : au plus 200 sous-comptes, le reste dans « other »');
 fs.rmSync(d, { recursive: true, force: true });
 
 const x = fs.readFileSync(path.join(__dirname, 'x402.js'), 'utf8'), srv = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
