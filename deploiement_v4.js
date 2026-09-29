@@ -16,7 +16,14 @@
  *      « a l'air sain » et dont chaque lancement revert pour toujours ;
  *   2. autoriser le launchpad a prelever le frais de lancement (10 000 $SWOGE,
  *      brules par le contrat) ;
- *   3. lancer UN jeton de test, pour lire ce que GoPlus en dit.
+ *   3. lancer UN jeton de test, pour lire ce que GoPlus en dit ;
+ *   4. (ajoute le 29/09, confirme par le proprietaire : « oui, fais l'achat auto de 1 000
+ *      $SWOGE ») ACHETER ce jeton de test pour 1 000 $SWOGE puis en REVENDRE la moitie, par le
+ *      routeur Uniswap, pour SON PROPRE compte. Mesure du 29/09 : 3 min apres le lancement,
+ *      GoPlus disait « is_in_dex 0 », taxes vides, et DexScreener « pairs: null » — sans un
+ *      echange, aucun scanner ne calcule taxe ni honeypot. Le destinataire de chaque echange est
+ *      fixe dans chaineEthers (le portefeuille lui-meme), jamais un parametre ; les deux seuls
+ *      jetons echanges sont $SWOGE et le jeton de test.
  * Aucune autre transaction n'existe dans ce fichier : pas de transfert d'ETH ni
  * de $SWOGE vers qui que ce soit. Il ne touche ni aux fonds des joueurs
  * (MIROIR_CLE), ni au portefeuille de gaz x402, ni a aucune autre cle.
@@ -39,6 +46,11 @@ const ETH_MIN_WEI = 2n * 10n ** 15n;
 const MARGE_GAZ = 1.5;
 const GOPLUS = 'https://api.gopluslabs.io/api/v1/token_security/4663?contract_addresses=';
 const RELECTURE_SCANNERS_MS = 30 * 60e3;
+/* L'achat de listage : 1 000 $SWOGE (sur les 20 000 restants apres le frais), la moitie des jetons
+   recus revendue. Devis du quoter le 29/09 : 1 000 $SWOGE -> 98 457 SWV4TEST, 162 014 gaz. Minimum
+   accepte : 95 % du devis (le pool n'a personne d'autre que nous, l'ecart ne vient que du bloc). */
+const ACHAT_SWOGE_WEI = 1000n * 10n ** 18n;
+const GLISSEMENT_BPS = 500n;
 const CHAMPS_GOPLUS = ['external_call', 'owner_address', 'creator_address', 'is_open_source', 'hidden_owner', 'can_take_back_ownership',
   'is_mintable', 'is_proxy', 'is_honeypot', 'buy_tax', 'sell_tax', 'transfer_pausable', 'is_blacklisted', 'is_in_dex', 'holder_count'];
 
@@ -126,8 +138,47 @@ function cree(deps) {
       E.jetonTest = l.token; E.poolTest = l.pool; E.etape = 'jeton_test'; note('test token ' + l.token + ', pool ' + l.pool); ecrit();
     }
 
-    /* 4. ce que dit GoPlus, relu toutes les 30 min (il indexe avec du retard) */
-    if (E.etape === 'jeton_test' && (!E.goplusLu || maintenant() - Date.parse(E.goplusLu) >= RELECTURE_SCANNERS_MS)) {
+    /* 4. l'achat puis la revente de listage, chacun attendu avant le suivant */
+    const S = P.swoge, J = E.jetonTest;
+    if (E.etape === 'jeton_test' && !E.txAchat && soldes.swoge >= ACHAT_SWOGE_WEI) {
+      const tx = await c.autoriseRouteur(S, ACHAT_SWOGE_WEI);
+      E.etape = 'appro_achat'; E.txApproAchat = tx.hash; note('router approval for the listing buy sent ' + tx.hash); ecrit();
+    }
+    if (E.etape === 'appro_achat') {
+      const r = await c.recu(E.txApproAchat);
+      if (!r) return;
+      if (r.status !== 1) { E.etape = 'erreur'; E.erreur = 'buy approval reverted'; note(E.erreur); ecrit(); return; }
+      const d = await c.devis(S, J, ACHAT_SWOGE_WEI);
+      const tx = await c.echange(S, J, ACHAT_SWOGE_WEI, d * (10000n - GLISSEMENT_BPS) / 10000n);
+      E.etape = 'achat'; E.txAchat = tx.hash; note('listing buy sent: 1000 SWOGE for ~' + String(d / 10n ** 18n) + ' ' + tx.hash); ecrit();
+    }
+    if (E.etape === 'achat') {
+      const r = await c.recu(E.txAchat);
+      if (!r) return;
+      if (r.status !== 1) { E.etape = 'erreur'; E.erreur = 'listing buy reverted'; note(E.erreur); ecrit(); return; }
+      const bal = await c.soldeJeton(J);
+      E.venteWei = String(bal / 2n);
+      const tx = await c.autoriseRouteur(J, bal / 2n);
+      E.etape = 'appro_vente'; E.txApproVente = tx.hash; note('bought ' + String(bal / 10n ** 18n) + ' test tokens; sell approval sent ' + tx.hash); ecrit();
+    }
+    if (E.etape === 'appro_vente') {
+      const r = await c.recu(E.txApproVente);
+      if (!r) return;
+      if (r.status !== 1) { E.etape = 'erreur'; E.erreur = 'sell approval reverted'; note(E.erreur); ecrit(); return; }
+      const m = BigInt(E.venteWei);
+      const d = await c.devis(J, S, m);
+      const tx = await c.echange(J, S, m, d * (10000n - GLISSEMENT_BPS) / 10000n);
+      E.etape = 'vente'; E.txVente = tx.hash; note('listing sell sent: half the tokens for ~' + String(d / 10n ** 18n) + ' SWOGE ' + tx.hash); ecrit();
+    }
+    if (E.etape === 'vente') {
+      const r = await c.recu(E.txVente);
+      if (!r) return;
+      if (r.status !== 1) { E.etape = 'erreur'; E.erreur = 'listing sell reverted'; note(E.erreur); ecrit(); return; }
+      E.etape = 'liste'; note('listing trades done: bought and sold on Uniswap, the scanners can now measure taxes'); ecrit();
+    }
+
+    /* 5. ce que dit GoPlus, relu toutes les 30 min (il indexe avec du retard) */
+    if ((E.etape === 'jeton_test' || E.etape === 'liste') && (!E.goplusLu || maintenant() - Date.parse(E.goplusLu) >= RELECTURE_SCANNERS_MS)) {
       try {
         const j = await lis(GOPLUS + E.jetonTest.toLowerCase());
         const i = (j && j.result && j.result[E.jetonTest.toLowerCase()]) || null;
@@ -147,7 +198,8 @@ function cree(deps) {
       launchpad: E.launchpad || null, parametersReadBack: E.parametresLus || null, testToken: E.jetonTest || null, testPool: E.poolTest || null,
       goplus: E.goplus || null, goplusReadAt: E.goplusLu || null, error: E.erreur || null,
       links: { deployer: adresse ? x + 'address/' + adresse : null, launchpad: E.launchpad ? x + 'address/' + E.launchpad : null, testToken: E.jetonTest ? x + 'token/' + E.jetonTest : null,
-        deployTx: E.txDeploiement ? x + 'tx/' + E.txDeploiement : null, launchTx: E.txLancement ? x + 'tx/' + E.txLancement : null },
+        deployTx: E.txDeploiement ? x + 'tx/' + E.txDeploiement : null, launchTx: E.txLancement ? x + 'tx/' + E.txLancement : null,
+        buyTx: E.txAchat ? x + 'tx/' + E.txAchat : null, sellTx: E.txVente ? x + 'tx/' + E.txVente : null },
       compiler: A.compilateur, sourceSha256: A.sourceSha256, history: E.historique || [] };
   }
 
@@ -183,6 +235,10 @@ function chaineEthers(clePrivee, A) {
     const [g, px] = await Promise.all([w.estimateGas(tx), prov.getGasPrice()]);
     return { gasLimit: g.mul(12).div(10), gasPrice: px.mul(12).div(10) };
   };
+  /* Uniswap v3 sur Robinhood Chain : les adresses que launchpad.html emploie en production. */
+  const ROUTEUR = '0xcaf681a66d020601342297493863e78c959e5cb2', QUOTER = '0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7';
+  const routeur = new ethers.Contract(ROUTEUR, ['function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) payable returns (uint256)'], w);
+  const quoter = new ethers.Contract(QUOTER, ['function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96)) returns (uint256 amountOut,uint160,uint32,uint256)'], prov);
   const deploiement = (args) => new ethers.ContractFactory(A.launchpad.abi, A.launchpad.bytecode).getDeployTransaction(...args);
   return {
     adresse: w.address,
@@ -196,6 +252,12 @@ function chaineEthers(clePrivee, A) {
       return { positionManager: await c.positionManager(), swoge: await c.swoge(), treasury: await c.swogeTreasury(), creationFee: (await c.creationFee()).toString() }; },
     autoriseFrais: async (launchpad, montant) => swoge.approve(launchpad, montant, await frais(await swoge.populateTransaction.approve(launchpad, montant))),
     lanceTest: async (launchpad, p) => { const c = new ethers.Contract(launchpad, LP, w); return c.createToken(p, await frais(await c.populateTransaction.createToken(p))); },
+    soldeJeton: async (adr) => (await new ethers.Contract(adr, ERC, prov).balanceOf(w.address)).toBigInt(),
+    autoriseRouteur: async (jeton, montant) => { const t = new ethers.Contract(jeton, ERC, w); return t.approve(ROUTEUR, montant, await frais(await t.populateTransaction.approve(ROUTEUR, montant))); },
+    devis: async (entree, sortie, montant) => (await quoter.callStatic.quoteExactInputSingle({ tokenIn: entree, tokenOut: sortie, amountIn: montant, fee: 10000, sqrtPriceLimitX96: 0 })).amountOut.toBigInt(),
+    /* recipient : le portefeuille LUI-MEME, fixe ici — l'appelant ne peut pas le changer. */
+    echange: async (entree, sortie, montant, minimum) => { const p = { tokenIn: entree, tokenOut: sortie, fee: 10000, recipient: w.address, amountIn: montant, amountOutMinimum: minimum, sqrtPriceLimitX96: 0 };
+      return routeur.exactInputSingle(p, await frais(await routeur.populateTransaction.exactInputSingle(p))); },
     lancementDe: (recu) => {
       for (const l of recu.logs || []) { try { const e = LP.parseLog(l); if (e.name === 'LaunchedInstant') return { token: e.args.token, pool: e.args.pool }; } catch (e) { /* un autre journal */ } }
       return null;

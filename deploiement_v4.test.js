@@ -16,7 +16,7 @@ const LP = '0x' + 'a'.repeat(40), JETON = '0x' + 'b'.repeat(40), POOL = '0x' + '
 
 function monde(o) {
   o = o || {};
-  const w = { eth: 0n, swoge: 0n, envoyees: [], recus: {}, faux: !!o.faux };
+  const w = { eth: 0n, swoge: 0n, jet: 0n, envoyees: [], recus: {}, faux: !!o.faux, nRouteur: 0 };
   w.chaine = () => ({
     adresse: '0x' + 'd'.repeat(40),
     soldeEth: async () => w.eth, soldeSwoge: async () => w.swoge,
@@ -25,6 +25,10 @@ function monde(o) {
     parametres: async () => ({ positionManager: w.faux ? A.constructeur.swoge : A.constructeur.positionManager, swoge: A.constructeur.swoge, treasury: A.constructeur.treasury, creationFee: A.constructeur.creationFeeWei }),
     autoriseFrais: async (lp, m) => { w.envoyees.push(['autorise', lp, m]); return { hash: '0xapp' }; },
     lanceTest: async (lp, p) => { w.envoyees.push(['lance', lp, p]); return { hash: '0xlan' }; },
+    soldeJeton: async (j) => { w.envoyees.push(['lecture', j]); return w.jet; },
+    autoriseRouteur: async (j, m) => { w.envoyees.push(['routeur', j, m]); return { hash: '0xra' + (++w.nRouteur) }; },
+    devis: async (a, b, m) => (b === JETON ? 98457n * 10n ** 18n : 490n * 10n ** 18n),
+    echange: async (a, b, m, min) => { w.envoyees.push(['echange', a, b, m, min]); return { hash: b === JETON ? '0xach' : '0xven' }; },
     lancementDe: (r) => (r.logs && r.logs.length ? { token: JETON, pool: POOL } : null),
   });
   return w;
@@ -67,11 +71,52 @@ function monde(o) {
   const l = w.envoyees.find((x) => x[0] === 'lance');
   ok(l && l[1] === LP && l[2].symbol === 'SWV4TEST' && /^0x[0-9a-f]{64}$/.test(l[2].salt), 'le jeton de test part, avec un sel aleatoire');
   w.recus['0xlan'] = { status: 1, logs: [{}] };
+  w.swoge = 0n;                                           /* le frais est parti (le faux nœud ne debite pas seul) */
   await d.tour();
   const e = d.etat();
   ok(e.step === 'jeton_test' && e.testToken === JETON && e.testPool === POOL, 'le jeton de test et son pool sont enregistres');
   ok(e.goplus && e.goplus.external_call === '0' && !('secret' in e.goplus) && e.goplusReadAt, 'GoPlus est relu, seulement les champs utiles');
-  ok(w.envoyees.length === 3, 'en tout : trois transactions, jamais davantage');
+  ok(w.envoyees.length === 3, 'jusqu au jeton de test : trois transactions, jamais davantage');
+
+  console.log('\n-- 3c. l achat de listage : 1 000 $SWOGE achetes, la moitie revendue (confirme par le proprietaire le 29/09) --');
+  const tx = () => w.envoyees.filter((x) => x[0] !== 'lecture');
+  w.swoge = 999n * 10n ** 18n;
+  await d.tour();
+  ok(tx().length === 3 && d.etat().step === 'jeton_test', 'sous 1 000 $SWOGE : aucun achat, on attend');
+  w.swoge = 20000n * 10n ** 18n;
+  await d.tour();
+  const ar = tx()[3];
+  ok(ar && ar[0] === 'routeur' && ar[1] === A.constructeur.swoge && ar[2] === 1000n * 10n ** 18n && d.etat().step === 'appro_achat', 'd abord l autorisation du routeur : 1 000 $SWOGE exactement, pas un de plus');
+  d = mk(); d.charge();                                   /* redemarrage : l'autorisation n'est pas minee */
+  await d.tour(); await d.tour();
+  ok(tx().filter((x) => x[0] === 'routeur').length === 1, 'apres un redemarrage, la MEME autorisation est attendue — jamais une seconde');
+  w.recus['0xra1'] = { status: 1 };
+  await d.tour();
+  const ach = tx().find((x) => x[0] === 'echange' && x[2] === JETON);
+  ok(ach && ach[1] === A.constructeur.swoge && ach[3] === 1000n * 10n ** 18n && ach[4] === 98457n * 10n ** 18n * 9500n / 10000n,
+     'l achat : $SWOGE -> jeton de test, 1 000, minimum 95 % du devis du quoter');
+  ok(ach.length === 5, 'l echange ne recoit AUCUN destinataire : il est fixe dans chaineEthers (le portefeuille lui-meme)');
+  w.jet = 98000n * 10n ** 18n;
+  w.recus['0xach'] = { status: 1 };
+  await d.tour();
+  const av = tx()[5];
+  ok(av && av[0] === 'routeur' && av[1] === JETON && av[2] === 49000n * 10n ** 18n, 'puis l autorisation de revendre la MOITIE des jetons recus');
+  w.recus['0xra2'] = { status: 1 };
+  await d.tour();
+  const ven = tx().find((x) => x[0] === 'echange' && x[2] === A.constructeur.swoge);
+  ok(ven && ven[1] === JETON && ven[3] === 49000n * 10n ** 18n && ven[4] === 490n * 10n ** 18n * 9500n / 10000n, 'la revente : jeton de test -> $SWOGE, la moitie, minimum 95 % du devis');
+  w.recus['0xven'] = { status: 1 };
+  goplus.is_in_dex = '1';
+  const avantGp = d.etat().goplusReadAt;
+  await d.tour();
+  const e2 = d.etat();
+  ok(e2.step === 'liste' && /\/tx\/0xach$/.test(e2.links.buyTx) && /\/tx\/0xven$/.test(e2.links.sellTx), 'fini : etape « liste », les deux echanges ont leur lien');
+  await d.tour(); await d.tour();
+  ok(tx().length === 7, 'en tout : sept transactions, et plus rien ensuite');
+  ok(tx().every((x) => x[0] !== 'echange' || [A.constructeur.swoge, JETON].includes(x[1]) && [A.constructeur.swoge, JETON].includes(x[2])), 'seuls $SWOGE et le jeton de test sont echanges');
+  const d6 = D.cree({ dossier, artefact: A, chaine: w.chaine, lis: async () => ({ result: { [JETON]: goplus } }), maintenant: () => Date.now() + 31 * 60e3 });
+  d6.charge(); await d6.tour();
+  ok(d6.etat().goplus.is_in_dex === '1' && d6.etat().goplusReadAt !== avantGp, 'GoPlus est encore relu toutes les 30 min apres le listage');
 
   console.log('\n-- 3b. le seuil suit le cout estime par le nœud (29/09 : 0,0005 ETH envoyes, 0,000111 estime) --');
   {
@@ -116,9 +161,11 @@ function monde(o) {
   const src = fs.readFileSync(path.join(__dirname, 'deploiement_v4.js'), 'utf8');
   ok(!/\.transfer\(|value:\s/.test(src) && (src.match(/sendTransaction\(/g) || []).length === 1
      && /const tx = deploiement\(args\); return w\.sendTransaction\(Object\.assign\(tx, await frais\(tx\)\)\)/.test(src)
-     && /const deploiement = \(args\) => new ethers\.ContractFactory\(/.test(src), 'le code ne contient aucun transfert d ETH ni de jeton : deployer, autoriser le frais, lancer le test, rien d autre');
-  ok((src.match(/await frais\(/g) || []).length === 4 && /gasPrice: px\.mul\(12\)\.div\(10\)/.test(src) && !/maxPriorityFeePerGas/.test(src),
-     'les trois envois (et le cout annonce) portent un prix du gaz pose a la main : jamais le pourboire fige de 1,5 gwei d ethers (29/09 : 70 fois le prix, premier depart refuse)');
+     && /const deploiement = \(args\) => new ethers\.ContractFactory\(/.test(src), 'le code ne contient aucun transfert d ETH ni de jeton : deployer, autoriser, lancer le test, l echanger pour soi-meme, rien d autre');
+  ok((src.match(/await frais\(/g) || []).length === 6 && /gasPrice: px\.mul\(12\)\.div\(10\)/.test(src) && !/maxPriorityFeePerGas/.test(src),
+     'chaque envoi (et le cout annonce) porte un prix du gaz pose a la main : jamais le pourboire fige de 1,5 gwei d ethers (29/09 : 70 fois le prix, premier depart refuse)');
+  ok((src.match(/recipient:/g) || []).length === 1 && /recipient: w\.address, amountIn/.test(src) && /echange: async \(entree, sortie, montant, minimum\)/.test(src),
+     'un seul destinataire d echange dans tout le fichier : le portefeuille lui-meme');
   ok(A.constructeur.positionManager.toLowerCase() !== A.constructeur.swoge.toLowerCase() && require('ethers').utils.getAddress(A.constructeur.treasury) === A.constructeur.treasury,
      'l artefact porte des adresses distinctes et a somme EIP-55 valide');
 
