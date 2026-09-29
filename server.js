@@ -2094,6 +2094,20 @@ const deploiementV4Weth = require('./deploiement_v4').cree({ dossier: cfg.DATA_D
    jumeau en ETH a la tresorerie (demande du proprietaire) ; l'artefact est desormais celui-la
    (fraisEnEth, 0,0001 ETH). DEPLOIEMENT_V4WETH=0 le coupe seul, DEPLOIEMENT_V4=0 coupe les deux. */
 if (process.env.DEPLOIEMENT_V4 !== '0' && process.env.DEPLOIEMENT_V4WETH !== '0' && require.main === module) deploiementV4Weth.demarre(150e3); else deploiementV4Weth.charge();
+/* ---- LANCER UN JETON V4 DEPUIS L'AGENT (lancement_v4.js, 29/09) ----
+   L'agent prepare une carte ; le PORTEFEUILLE du joueur signe createToken. Une offre ne vise qu'un
+   launchpad dont deploiement_v4 a relu les parametres sur la chaine (jeton de test lance ou au-dela). */
+const PRETS_V4 = ['deploye', 'autorisation', 'lancement', 'jeton_test', 'enveloppe', 'appro_achat', 'achat', 'appro_vente', 'vente', 'liste'];
+function launchpadPret(dep, A) {
+  const e = dep.etat();
+  if (!e.launchpad || !e.parametersReadBack || e.error || !PRETS_V4.includes(e.step)) return null;
+  return { adresse: e.launchpad, fraisWei: A.constructeur.creationFeeWei, swoge: A.constructeur.swoge || null };
+}
+const lancementV4 = require('./lancement_v4').cree({
+  launchpads: () => ({ swoge: launchpadPret(deploiementV4, require('./swogefun_v4.json')), eth: launchpadPret(deploiementV4Weth, require('./swogefun_v4weth.json')) }),
+  /* la liste officielle d'abord (elle leve si injoignable) : « pas une copie » ne doit jamais vouloir dire « pas lu » */
+  identite: async (a, s, nom) => { await actionsRh().registre(); return actionsRh().identite(a, s, nom); },
+});
 /* ---- L'eSIM ET LA PASSERELLE DANS LE MCP (mcp_extras.js, 29/09) ---- */
 let MCP_EXTRAS = null;
 function mcpExtras() {
@@ -3612,7 +3626,7 @@ const server = http.createServer(async (req, res) => {
       /* « Typique » : trois appels, une recherche, une reponse moyenne. */
       const typique = (m) => (3 * 6000 * m.entree + 3 * 900 * m.sortie) / 1e6 + (rech ? 0.005 : 0);
       /* Le joueur connecte le plus equipe (embauche et eSIM allumees) : ses outils, et son pire cas sur ce qu'il relit. */
-      const srcPage = Object.assign(srcAgent(), { joueur: true, embauche: embauche().actif() || null, achats: achats().actif() || null });
+      const srcPage = Object.assign(srcAgent(), { joueur: true, embauche: embauche().actif() || null, achats: achats().actif() || null, lancements: lancementV4 });
       return json(200, {
         ouvert: chatActif('anthropic') && cours > 0, monnaie: '$SWOGE', coursUsd: cours || null, defaut: 'sonnet-5',
         note: !chatActif('anthropic') ? 'The AI provider key is not set on the server yet.' : !(cours > 0) ? 'The $SWOGE price is unavailable right now.' : null,
@@ -3653,6 +3667,8 @@ const server = http.createServer(async (req, res) => {
     if (embauche().actif()) { const P = embauche().pour(addr, pay.factu()); if (P.budget().jourUsd > 0) src.embauche = P; }
     /* L'eSIM : l'agent cherche et PROPOSE ; seule la route /studio/agent/achats (la page) paie. */
     if (achats().actif()) { const PA = achats().pour(addr, pay.factu('buy this eSIM')); src.achats = { forfaits: PA.forfaits, propose: PA.propose }; }
+    /* Le lancement V4 : une carte seulement ; la page la fait signer par le portefeuille connecte du joueur. */
+    src.lancements = lancementV4;
     let r;
     try {
       r = await studioChat.repond({ addr, rid, modele: m.id, messages: q.messages, recherche: false }, {

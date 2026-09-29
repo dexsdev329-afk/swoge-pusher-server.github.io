@@ -120,7 +120,13 @@ const SYSTEME_ACHATS = ' You can also help the user buy a travel data eSIM: find
   + 'between messages, so when the user picks a plan from an earlier answer, call find_esim_plans again, then propose_esim_purchase. '
   + 'Ask for the destination and how much data or how many days if the user did not say, '
   + 'mention that the eSIM is data only (no phone number) and that the phone must support eSIM.';
-function systemeDe(src) { return (src && src.embauche ? SYSTEME_EMBAUCHE : SYSTEME) + (src && src.achats ? SYSTEME_ACHATS : ''); }
+/* Lancer un jeton V4 (lancement_v4.js, 29/09/2026) : l'agent PREPARE, le joueur signe avec SON portefeuille. */
+const SYSTEME_LANCEMENT = ' You can also help the user launch their own token on SWOGE Fun V4 (Robinhood Chain): propose_token_launch puts ONE launch card on the '
+  + 'user\'s screen. Ask for the name, the symbol and the pool if the user did not give them: pool "swoge" pairs the token with $SWOGE (fee 10,000 $SWOGE, burned), '
+  + 'pool "eth" pairs it with ETH (fee 0.0001 ETH). Both: 1 billion supply, all of it in the pool, liquidity locked forever, no owner, no tax; the creator earns 50% '
+  + 'of the trading fees. Proposing launches nothing: the user signs with their own wallet on the card. Never say the token is launched. Never suggest copying a '
+  + 'stock, a major coin or SWOGE itself: the launchpad refuses them.';
+function systemeDe(src) { return (src && src.embauche ? SYSTEME_EMBAUCHE : SYSTEME) + (src && src.achats ? SYSTEME_ACHATS : '') + (src && src.joueur && src.lancements ? SYSTEME_LANCEMENT : ''); }
 
 /* ---- CE QUI N'EST PAS OFFERT (decision du proprietaire, 26 septembre 2026) ----
  * Les conditions de Telegram (« Terms of Service for Content Licensing »,
@@ -305,6 +311,14 @@ function definitions(actifs) {
      qui tombe sur la copie de NVDA (30 386 $ de liquidite le 28/09, a cote de
      l'officielle) ou qui achete un lancement Base. Seulement a la page (actifs.actions,
      actifs.base : src.joueur) : ask_agent garde son catalogue, donc son prix x402. */
+  if (actifs && actifs.lancements) d.push({ name: 'propose_token_launch', description: 'Use this when the user wants to create (launch) their own token: it shows ONE launch card '
+      + 'that the user signs with their own wallet. It launches nothing by itself. Refused: copies of stock tokens, major coin tickers, names with SWOGE.',
+    input_schema: { type: 'object', properties: {
+      name: { type: 'string', description: 'token name, 1 to 32 characters' },
+      symbol: { type: 'string', description: 'ticker, 2 to 10 letters or digits, e.g. "PEPE"' },
+      pool: { type: 'string', enum: ['swoge', 'eth'], description: '"swoge": paired with $SWOGE, fee 10,000 $SWOGE burned; "eth": paired with ETH, fee 0.0001 ETH' },
+      website: { type: 'string', description: 'optional https:// link' }, twitter: { type: 'string', description: 'optional X link or @handle' },
+      telegram: { type: 'string', description: 'optional Telegram link or @handle' } }, required: ['name', 'symbol', 'pool'] } });
   if (actifs && actifs.actions) d.push({ name: 'stock_token_check', description: DESCRIPTIONS_API.stock_token_check, input_schema: SCHEMAS_API.stock_token_check });
   if (actifs && actifs.base) d.push(
     { name: 'base_launches', description: DESCRIPTIONS_API.base_launches, input_schema: SCHEMAS_API.base_launches },
@@ -318,7 +332,7 @@ function definitions(actifs) {
 
 /* Les outils qu'une tache recoit, lus sur SA source (src de server.srcAgent). */
 const actifsDe = (src) => ({ recherche: !!(src && src.recherche), embauche: !!(src && src.embauche), achats: !!(src && src.achats),
-  actions: !!(src && src.joueur && src.actions), base: !!(src && src.joueur && src.base) });
+  actions: !!(src && src.joueur && src.actions), base: !!(src && src.joueur && src.base), lancements: !!(src && src.joueur && src.lancements) });
 
 /* ---- CE QUE CHAQUE APPEL RELIT VRAIMENT (28/09/2026 au soir) ----
    Mesure : un joueur connecte avec l'embauche, l'eSIM et la recherche recevait 13
@@ -493,6 +507,16 @@ function outils(src) {
       const o = r.offre;
       return { texte: 'Offer shown to the user: ' + o.nom + ' (' + o.go + ' GB, ' + o.jours + ' days) for ' + o.factureUsd + ' $ in $SWOGE. '
           + 'Nothing is bought yet: the user must press Buy on the page within 15 minutes. Do not say it is bought.', achat: o };
+    },
+    /* Le lancement V4 : une carte que SEUL le portefeuille du joueur peut signer. */
+    async propose_token_launch(e) {
+      if (!src.lancements) return { erreur: 'token launches are not available here' };
+      const r = await src.lancements.propose(e || {});
+      if (!r || !r.ok) return { erreur: (r && r.raison) || 'the launch card could not be prepared - nothing was launched' };
+      const o = r.offre;
+      return { texte: 'Launch card shown to the user: ' + o.name + ' (' + o.symbol + '), pool ' + (o.pool === 'eth' ? 'ETH' : '$SWOGE') + ', fee ' + o.fee + ' ' + o.feeToken
+          + (o.feeGoesTo === 'burned' ? ' (burned)' : ' (to the SWOGE treasury)') + '. Nothing is launched yet: the user must press Launch and sign with their own wallet within '
+          + '15 minutes; they become the creator and earn 50% of trading fees. Do not say it is launched.', lancement: o };
     },
     /* Les actions tokenisees (actions_rh.js, 28/09/2026) : l'API, et le joueur pour stock_token_check. */
     async stock_token_check(e) {
@@ -781,7 +805,7 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
         if (r.recherche) { usage.recherches_perplexity += r.recherche; depense += r.recherche * PRIX_RECHERCHE_USD; }
         if (r.sources) for (const s of r.sources) if (!sources.some((x) => x.url === s.url)) sources.push(s);
         if (r.carte) cartes.push(r.carte);
-        if (surResultat) surResultat({ id: b.id, nom: b.name, ok: !r.erreur, resume: r.erreur || coupe(r.texte || '', resultatMax).slice(0, 280), carte: r.carte || null, achat: r.achat || null,
+        if (surResultat) surResultat({ id: b.id, nom: b.name, ok: !r.erreur, resume: r.erreur || coupe(r.texte || '', resultatMax).slice(0, 280), carte: r.carte || null, achat: r.achat || null, lancement: r.lancement || null,
           coutUsd: r.recherche ? Math.round(r.recherche * PRIX_RECHERCHE_USD * 1e6) / 1e6 : 0 });
         resultats.push(r.erreur ? { type: 'tool_result', tool_use_id: b.id, is_error: true, content: r.erreur }
                                 : { type: 'tool_result', tool_use_id: b.id, content: coupe(r.texte || '', resultatMax) });
@@ -801,5 +825,5 @@ async function repond({ m, messages, surTexte, surReflexion, surOutil, surResult
   return out;
 }
 
-module.exports = { repond, definitions, actifsDe, jetonsDe, SCHEMAS_API, outils, NON_OFFERTS, pireCasUsd, coutAppelUsd, SYSTEME, SYSTEME_EMBAUCHE, SYSTEME_ACHATS, systemeDe, OSINT_TYPES, rapportOsint, ficheEnAnglais, DESCRIPTIONS_API, OUTILS_JETONS, SYSTEME_JETONS,
+module.exports = { repond, definitions, actifsDe, jetonsDe, SCHEMAS_API, outils, NON_OFFERTS, pireCasUsd, coutAppelUsd, SYSTEME, SYSTEME_EMBAUCHE, SYSTEME_ACHATS, SYSTEME_LANCEMENT, systemeDe, OSINT_TYPES, rapportOsint, ficheEnAnglais, DESCRIPTIONS_API, OUTILS_JETONS, SYSTEME_JETONS,
   ETAPES_MAX, OUTILS_PAR_ETAPE, RESULTAT_CAR_MAX, SORTIE_MAX, PRIX_RECHERCHE_USD, LIMITES_X402, BUDGET_X402_USD, MARGE_COMPTE };

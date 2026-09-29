@@ -71,7 +71,8 @@ lance store    "$SRV" node store_agents.test.js   # fiches de l Agent Store : ag
 lance passeport "$SRV" node passeport.test.js   # passeport d une cle : signe Ed25519 par une cle dediee, verifiable avec la seule cle publique, un champ change casse la signature, prive par defaut
 lance preuves  "$SRV" node preuves_x402.test.js   # paiements verifiables : agents exterieurs seulement, reseaux de production, payeur tronque, lien de la transaction
 lance polycol  "$SRV" node poly_papier.test.js   # Polymarket AI papier : achat au prix demande en remontant le carnet, frais officiels lus sur le marche, TWAP 60 s, temoin Coin, Brier, aucun verdict sous 100
-lance depv4   "$SRV" node deploiement_v4.test.js   # launchpad V4 : portefeuille dedie, parametres relus sur la chaine, une transaction jamais renvoyee, trois operations seulement, cle jamais rendue
+lance depv4   "$SRV" node deploiement_v4.test.js   # launchpad V4 et jumeau WETH : portefeuille dedie, parametres relus, une transaction jamais renvoyee, listage, deux envois de valeur seulement, cle jamais rendue
+lance lancv4  "$SRV" node lancement_v4.test.js   # l agent PREPARE un lancement V4 : copies d actions, grands symboles, « SWOGE » et liens douteux refuses ; offert a la page seulement
 lance acces   "$SRV" node acces.test.js   # portes privees fermees sans cle, gestes d argent en POST seulement ; /credit partage entre le robinet admin et le credit en dollars (29/09)
 lance famille  "$SRV" node famille_client.test.js   # qui demande un prix : famille du client en code fixe, sonde ou demande, jamais le User-Agent brut ni l IP
 lance sondes   "$SRV" node sonde_services.test.js   # catalogue x402 note sans payer : une sonde par service et par 20 h, raison de chaque echec, aucun verdict sous 3 sondes, paiements reels comptes
@@ -129,6 +130,7 @@ lance esimpage "$SITE" node esim_page.test.js   # boutique eSIM : chercher, paye
 lance storepage "$SITE" node agent_store.test.js   # Agent Store : usage mesure avec son effectif, aucun taux sous 10, mission preremplie, services x402 tels que sondes, https seulement, 360 px
 lance polypage "$SITE" node polymarket_page.test.js   # Polymarket Edge Check : tri par date (jamais les gros gains d abord), pertes non encaissees reintegrees, aucun verdict sous 100, teneur de marche dit, texte seulement, 360 px
 lance polyai   "$SITE" node polymarket_ai_page.test.js   # Polymarket AI : cinq agents avec effectif, temoin Coin marque, calibration sans gagnant sous 100, liens polymarket.com seulement, 360 px
+lance lancepage "$SITE" node lance_v4.test.js   # carte de lancement : le portefeuille du joueur signe ; offres truquees refusees ; frais $SWOGE autorise au montant exact, frais ETH en valeur
 lance passpage "$SITE" node agent_passport.test.js   # Agent Passport : champs en texte, signature verifiee dans le navigateur (ou par le serveur, dit), passeport modifie refuse, publier par la session
 lance navliens "$SITE" node nav_liens.test.js   # aucun lien muet sur les pages qui eteignent leurs liens par defaut ; chaque entree du menu recoit un VRAI clic, 1280 et 390 px
 lance x402page "$SITE" node x402_essai_page.test.js   # payer un appel en USDC sur Base depuis son portefeuille : offre Base du 402, EIP-3009 signe et verifie, resultat echappe, 320 px
