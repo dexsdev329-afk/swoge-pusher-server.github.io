@@ -184,6 +184,7 @@ function monde(o) {
     ok(dw.etat().step === 'jeton_test' && dw.etat().needs.ethFeeForTestLaunch === 0.0001 && !ww.envoyees.some((x) => x[0] === 'routeur' || x[0] === 'echange'),
        'jeton de test enregistre ; aucun achat de listage pour le jumeau (il faudrait envelopper de l ETH, non confirme)');
     ok(ww.envoyees.length === 2, 'en tout : deux transactions pour le jumeau (deploiement, lancement)');
+    ok(dw.etat().balances.swoge === null && typeof dw.etat().balances.eth === 'number', 'sa vue ne montre pas de solde $SWOGE (null) : le 29/09 elle affichait 0 alors que le portefeuille en avait 19 490');
     /* un WETH faux a la relecture arrete tout */
     const dW2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dep4w-'));
     const w2 = monde(); const b2 = w2.chaine; w2.eth = D.ETH_MIN_WEI;

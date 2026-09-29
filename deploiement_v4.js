@@ -221,7 +221,9 @@ function cree(deps) {
     return { ok: true, contract: A.contrat, pair: JUMEAU_WETH ? 'WETH' : 'SWOGE', step: E.etape, deployer: adresse,
       needs: { ethWei: E.seuilDeploiementWei || String(ETH_MIN_WEI), eth: Number(E.seuilDeploiementWei || ETH_MIN_WEI) / 1e18, estimated: !!E.seuilDeploiementWei,
         ...(FRAIS_ETH ? { ethFeeForTestLaunch: Number(FRAIS) / 1e18 } : { swogeForTestLaunch: Number(FRAIS / 10n ** 18n) }) },
-      balances: soldes.lu ? { eth: soldes.eth == null ? null : Number(soldes.eth) / 1e18, swoge: soldes.swoge == null ? null : Number(soldes.swoge / 10n ** 14n) / 1e4, readAt: soldes.lu } : null,
+      balances: soldes.lu ? { eth: soldes.eth == null ? null : Number(soldes.eth) / 1e18,
+        /* le jumeau ne lit pas le $SWOGE : null (sans objet), jamais un 0 qui ferait croire le portefeuille vide */
+        swoge: JUMEAU_WETH || soldes.swoge == null ? null : Number(soldes.swoge / 10n ** 14n) / 1e4, readAt: soldes.lu } : null,
       launchpad: E.launchpad || null, parametersReadBack: E.parametresLus || null, testToken: E.jetonTest || null, testPool: E.poolTest || null,
       goplus: E.goplus || null, goplusReadAt: E.goplusLu || null, error: E.erreur || null,
       links: { deployer: adresse ? x + 'address/' + adresse : null, launchpad: E.launchpad ? x + 'address/' + E.launchpad : null, testToken: E.jetonTest ? x + 'token/' + E.jetonTest : null,
