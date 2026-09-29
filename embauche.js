@@ -375,7 +375,13 @@ function cree(deps) {
     return { type, resultat: txt.length > RESULTAT_MAX_CAR ? txt.slice(0, RESULTAT_MAX_CAR) + '\n[truncated]' : txt };
   }
 
-  return { pour, cherche, catalogue, rattrape, actif: () => !!w, adresse: w ? w.address : null, reseau: w ? reseau.network : null, MESURE,
+  /** Les paiements reels, le dernier etat de chacun (sonde_services.js : taux d'aboutissement par service). Ni joueur ni signature. */
+  function paiements() {
+    const der = new Map();
+    for (const l of lignes) der.set(l.id, Object.assign({}, der.get(l.id) || {}, l));
+    return [...der.values()].filter((l) => ['paye', 'perte', 'rendu'].includes(l.etat)).map((l) => ({ url: l.url, ok: l.etat === 'paye' }));
+  }
+  return { pour, cherche, catalogue, rattrape, paiements, actif: () => !!w, adresse: w ? w.address : null, reseau: w ? reseau.network : null, MESURE,
     etat: () => ({ actif: !!w, adresse: w ? w.address : null, reseau: w ? reseau.network : null, services: CAT.liste.length,
       aujourdhuiUsd: Math.round(depuis(jour0(), null) * 1e6) / 1e6, maxJourUsd: maxJour(), maxJoueurUsd: maxJoueur(), maxAppelUsd: maxAppel(), mesure: Object.assign({}, MESURE) }) };
 }

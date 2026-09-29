@@ -37,6 +37,11 @@ function cree(deps) {
       inputSchema: { type: 'object', properties: { country: { type: 'string', description: 'e.g. France, JP, Europe' },
         min_gb: { type: 'number', description: 'optional: at least this many GB' }, min_days: { type: 'integer', description: 'optional: valid at least this many days' } }, required: ['country'] },
       annotations: { readOnlyHint: true, openWorldHint: true } });
+    if (deps.services) d.push({ name: 'search_x402_services', title: 'search x402 services',
+      description: 'Use this when you need a paid API an agent can pay per call (x402): searches the public x402 catalogue and returns each service with what SWOGE MEASURED without paying '
+        + '(how many probes, share answered, median latency, last failure) and real paid calls made through SWOGE. No verdict under 3 probes. Free.',
+      inputSchema: { type: 'object', properties: { need: { type: 'string', description: 'what you need, in a few English keywords' }, limit: { type: 'integer', minimum: 1, maximum: 50 } }, required: ['need'] },
+      annotations: { readOnlyHint: true, openWorldHint: true } });
     if (paieOk()) d.push({ name: 'pay_service', title: 'pay service',
       description: 'Use this when your task needs a paid x402 service (a data or AI API that answers 402): SWOGE pays it for you in USDC and bills the key owner in $SWOGE, '
         + 'within the limits the owner set for this API key (payments off by default; per-call cap up to $0.10; optional allowed sites). Only services of the public x402 catalogue; '
@@ -62,6 +67,13 @@ function cree(deps) {
       const l = r.plans.map((p, i) => (i + 1) + '. ' + p.name + (p.covers ? ' (covers ' + p.covers + ')' : '') + ' - ' + (p.gb || '?') + ' GB, ' + (p.days || '?') + ' days - $' + p.priceUsd + ' - plan id: ' + p.plan);
       return { content: texte((r.plans.length ? 'Data-only eSIM plans for ' + r.destination + ':\n' + l.join('\n') : 'No plan for ' + r.destination + ' right now.')
         + '\nBuy: POST ' + deps.api + '/esim/buy {"plan": "<plan id>"} and pay the x402 request (USDC, Base or Solana). Check the device supports eSIM: ' + r.compatibility), structuredContent: r, isError: false };
+    }
+    if (nom === 'search_x402_services') {
+      if (devis) return { content: texte('Price: free.'), structuredContent: { quote: true, tool: nom, priceUsd: 0 }, isError: false };
+      const r = await deps.services().recherche(args.need, args.limit || 10);
+      const l = r.services.map((s, i) => (i + 1) + '. ' + s.url + ' - ' + (s.priceUsd != null ? '$' + s.priceUsd : 'price in its 402') + ' - ' + s.verdict
+        + (s.probes.medianMs != null ? ', median ' + s.probes.medianMs + ' ms' : '') + (s.paidCalls.n ? ', ' + s.paidCalls.n + ' paid calls, ' + s.paidCalls.succeededPct + '% succeeded' : '') + (s.description ? ' - ' + s.description.slice(0, 140) : ''));
+      return { content: texte((l.length ? l.join('\n') : 'No service matches.') + '\n' + r.note), structuredContent: r, isError: false };
     }
     if (nom === 'payment_audit') {
       if (!req.cle) return erreurOutil('send your API key (Authorization: Bearer swg_...): the audit is per key');

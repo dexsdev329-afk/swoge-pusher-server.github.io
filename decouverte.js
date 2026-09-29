@@ -726,6 +726,11 @@ function openapi(c) {
       400: { description: 'Bad request or missing Idempotency-Key - nothing is charged' }, 401: { description: 'No key, or unknown or revoked key' }, 402: { description: 'Refused before or after the call - nothing is charged' },
       403: { description: 'Payments are off for this key, or the site is not allowed' }, 409: { description: 'A payment with this Idempotency-Key is still running' } },
     security: [{ cleApi: [] }, { cleEnTete: [] }] } };
+  paths['/agentic/services'] = { get: { operationId: 'searchServices', summary: 'Use this to find a paid x402 service that actually answers: the public catalogue with what SWOGE measured without paying', tags: ['payments'],
+    description: 'Free, no key, 30 searches per 10 minutes per IP. Each service: price, networks, probes (n, share answered, median latency, last failure) and real paid calls through SWOGE. No verdict under 3 probes.',
+    parameters: [{ name: 'q', in: 'query', required: false, schema: { type: 'string' } }, { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 50 } }],
+    responses: { 200: { description: 'Services, best measured first', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, services: tab({ type: 'object' }), summary: { type: 'object' }, note: s() }, ['ok', 'services']) } } },
+      429: { description: 'Too many searches' } }, security: [] } };
   paths['/agentic/audit'] = { get: { operationId: 'audit', summary: 'The hash-chained audit of the payments made with your key (or all your keys, signed in)', tags: ['payments'],
     responses: { 200: { description: 'Lines, newest first, and the state of the whole chain', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, lignes: tab({ type: 'object' }),
       chaine: obj({ ok: { type: 'boolean' }, lignes: n(), casseA: nn('seq of the first broken line') }, ['ok']) }, ['ok', 'lignes', 'chaine']) } } }, 401: { description: 'No key' } },

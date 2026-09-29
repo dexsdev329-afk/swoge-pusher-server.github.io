@@ -15,14 +15,15 @@ const ok = (c, m) => { n++; if (!c) rates++; console.log((c ? '  ok   ' : '  RAT
       plans: [{ plan: 'eu-1gb', name: 'Europe 1GB', covers: 'Region of 33 countries', gb: 1, days: 7, priceUsd: 1.6 }] }; } }),
     passerelle: () => ({ paie: async (cle, a, idem) => { vus.paie.push({ cle, a, idem }); return { code: 200, corps: { ok: true, resultat: '{"price":119}', recu: { usd: 0.001, factureUsd: 0.0011, tx: '5Tx' }, audit: { seq: 4, h: 'ab' } } }; },
       audit: (addr, id) => ({ ok: true, lignes: [{ t: 0, statut: 'paye', hote: 'x402factory.ai', usd: 0.001, tx: '5Tx' }], chaine: { ok: true, lignes: 4 } }) }),
-    paiementsActifs: () => paiements });
+    paiementsActifs: () => paiements,
+    services: () => ({ recherche: async (q, l) => ({ ok: true, note: 'Measured by SWOGE without paying.', services: [{ url: 'https://ok.example/p', priceUsd: 0.001, verdict: 'answered every probe', probes: { n: 3, medianMs: 120 }, paidCalls: { n: 2, succeededPct: 50 }, description: 'SOL price' }] }) }) });
   const agentic = { appelle: async () => ({ ok: false, code: 404, raison: 'unknown tool' }) };
   const rpc = async (corps, cle) => JSON.parse((await M.traite({ methode: 'POST', entetes: {}, corps: JSON.stringify(Object.assign({ jsonrpc: '2.0', id: 1 }, corps)), cle: cle || null, clePresentee: !!cle, qui: 'ip', origines: [] },
     { agentic, actifs: () => ({}), api: 'https://srv', extras })).corps);
 
   console.log('\n-- la liste et la consigne --');
   const noms = (await rpc({ method: 'tools/list' })).result.tools.map((t) => t.name);
-  ok(['find_esim_plans', 'pay_service', 'payment_audit'].every((x) => noms.includes(x)) && noms.includes('scan_token'), 'les trois outils a cote des outils de lecture');
+  ok(['find_esim_plans', 'search_x402_services', 'pay_service', 'payment_audit'].every((x) => noms.includes(x)) && noms.includes('scan_token'), 'les trois outils a cote des outils de lecture');
   const pay = (await rpc({ method: 'tools/list' })).result.tools.find((t) => t.name === 'pay_service');
   ok(pay.annotations.readOnlyHint === false && pay.annotations.destructiveHint === false && pay.inputSchema.required.join() === 'url,idempotency_key', 'pay_service : pas en lecture seule (dit), url et idempotency_key requises');
   const ins = (await rpc({ method: 'initialize', params: { protocolVersion: '2025-06-18' } })).result.instructions;
@@ -43,6 +44,9 @@ const ok = (c, m) => { n++; if (!c) rates++; console.log((c ? '  ok   ' : '  RAT
      'pay_service avec la cle : la passerelle, son idempotency_key, la reponse et le recu');
   const a = (await rpc({ method: 'tools/call', params: { name: 'payment_audit', arguments: {} } }, CLE)).result;
   ok(!a.isError && /paye x402factory\.ai \$0\.001 tx 5Tx/.test(a.content[0].text) && /intact \(4 lines\)/.test(a.content[0].text), 'payment_audit : les lignes et l etat de la chaine');
+
+  const sx = (await rpc({ method: 'tools/call', params: { name: 'search_x402_services', arguments: { need: 'sol price' } } })).result;
+  ok(!sx.isError && /https:\/\/ok\.example\/p - \$0\.001 - answered every probe, median 120 ms, 2 paid calls, 50% succeeded/.test(sx.content[0].text), 'search_x402_services sans cle : les services et ce que SWOGE a mesure');
 
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
   process.exit(rates ? 1 : 0);

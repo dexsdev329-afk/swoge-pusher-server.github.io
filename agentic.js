@@ -651,6 +651,7 @@ function llmsTxt(cat, u) {
     '- [Live llms.txt](' + u.api + '/llms.txt): this file, generated from the live catalogue',
   ])
    .concat(u.esim ? ['- [Travel eSIM plans (JSON, free)](' + u.api + '/esim/plans?country=France): search, then buy with x402 at /esim/buy'] : [])
+   .concat(['- [x402 services measured by SWOGE (JSON, free)](' + u.api + '/agentic/services?q=price): the public catalogue with probes, latency and real paid calls; no verdict under 3 probes'])
    .concat(cat && cat.x402 && cat.x402.actif ? ['- [x402 discovery manifest](' + u.api + '/.well-known/x402): the resources payable per call'] : [])
    .concat(['',
     '## Optional',

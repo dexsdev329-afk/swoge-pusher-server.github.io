@@ -2043,10 +2043,27 @@ function passerelle() {
     factuPour: (addr) => factuEmbauche(addr, 'pay a service through the SWOGE gateway'), cours: () => studioChat.coursSwoge(), dossier: cfg.DATA_DIR });
   return PASSERELLE;
 }
+/* ---- LE CATALOGUE x402 NOTE PAR NOS MESURES (sonde_services.js, 29/09) ----
+   50 services sondes (sans payer) toutes les 10 min, une fois par 20 h au plus chacun ;
+   premier tour 5 min apres le demarrage. SONDES_SERVICES=0 coupe. */
+let SONDES = null;
+function sondes() {
+  if (!SONDES) SONDES = require('./sonde_services').cree({ dossier: cfg.DATA_DIR,
+    catalogue: () => require('./embauche').cataloguePayai((u, o) => fetch(u, o), String(process.env.PAYAI_FACILITATOR_URL || 'https://facilitator.payai.network').trim()),
+    paiements: () => (embauche().paiements ? embauche().paiements() : []) });
+  return SONDES;
+}
+if (process.env.SONDES_SERVICES !== '0' && require.main === module) {
+  const tourSondes = () => sondes().tour().catch((e) => console.error('[sondes] ' + (e && e.message || e)));
+  setTimeout(tourSondes, 5 * 60e3).unref();
+  setInterval(tourSondes, 10 * 60e3).unref();
+}
+const RECHERCHES_SERVICES = new Map();        /* empreinte d'IP → instants : 30 recherches par 10 min */
 /* ---- L'eSIM ET LA PASSERELLE DANS LE MCP (mcp_extras.js, 29/09) ---- */
 let MCP_EXTRAS = null;
 function mcpExtras() {
-  if (!MCP_EXTRAS) MCP_EXTRAS = require('./mcp_extras').cree({ boutique: () => boutiqueEsim(), passerelle: () => passerelle(), paiementsActifs: () => embauche().actif(), api: MOI_URL });
+  if (!MCP_EXTRAS) MCP_EXTRAS = require('./mcp_extras').cree({ boutique: () => boutiqueEsim(), passerelle: () => passerelle(), paiementsActifs: () => embauche().actif(),
+    services: process.env.SONDES_SERVICES === '0' ? null : () => sondes(), api: MOI_URL });
   return MCP_EXTRAS;
 }
 /** La facture d'une embauche (ou d'un achat) pour UN joueur : reserve au cours du moment, regle au prix du recu. */
@@ -3336,6 +3353,19 @@ const server = http.createServer(async (req, res) => {
    * GET /esim/plans?country=&min_gb=&min_days= : les forfaits, au prix de la boutique (rien n'est paye).
    * POST /esim/buy {plan} : x402 — le 402, puis PAYMENT-SIGNATURE ; l'eSIM est achetee AVANT le reglement.
    * GET /esim/order/<lien> : le code d'activation, pour qui tient le lien secret rendu avec l'achat. */
+  /* Le catalogue x402 note par nos mesures (sonde_services.js) : public, gratuit, borne par IP. */
+  if (path === '/agentic/services') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const ip = compteurs.ip(qui(req)), t = Date.now(), l = (RECHERCHES_SERVICES.get(ip) || []).filter((x) => t - x < 10 * 60e3);
+    if (l.length >= 30) return json(429, { ok: false, raison: 'too many searches - try again in a few minutes' });
+    l.push(t); RECHERCHES_SERVICES.set(ip, l);
+    if (RECHERCHES_SERVICES.size > 5000) for (const [k, v] of RECHERCHES_SERVICES) if (!v.some((x) => t - x < 10 * 60e3)) RECHERCHES_SERVICES.delete(k);
+    const qs = new URLSearchParams(req.url.split('?')[1] || '');
+    try { return json(200, await sondes().recherche(qs.get('q'), qs.get('limit'))); }
+    catch (e) { return json(503, { ok: false, raison: 'the x402 catalogue is unavailable right now' }); }
+  }
   if (path === '/esim/plans' || path === '/esim/buy' || path.startsWith('/esim/order/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
                    'access-control-allow-headers': 'content-type, payment-signature', 'access-control-expose-headers': 'payment-required, payment-response' };
