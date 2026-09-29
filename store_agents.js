@@ -47,12 +47,16 @@ function prixDe(p) {
   return { usd: null };
 }
 
-/** L'usage mesure d'un outil sur la fenetre des compteurs : exterieur seulement. */
-function usageDe(c) {
+/** L'usage mesure d'un outil sur la fenetre des compteurs : exterieur seulement.
+ *  `x402` ({ n, usd }, preuves_x402.usageParOutil) : les paiements x402 relus dans le journal
+ *  avec la maison d'aujourd'hui, a la place du compteur fige (29/09 : 24 paiements « exterieurs »
+ *  qui etaient notre portefeuille d'inscription). Absent : le compteur, faute de mieux. */
+function usageDe(c, x402) {
   c = c || {};
   const ext = (k) => (c[k] && c[k].exterieur ? c[k].exterieur : { n: 0, usd: 0 });
-  const payes = ext('paye_x402').n + ext('paye_cle').n;
-  const usd = Math.round((ext('paye_x402').usd + ext('paye_cle').usd) * 1e4) / 1e4;
+  const px = x402 || ext('paye_x402');
+  const payes = px.n + ext('paye_cle').n;
+  const usd = Math.round((px.usd + ext('paye_cle').usd) * 1e4) / 1e4;
   const rates = ext('echec').n;
   const tentatives = payes + rates;
   return { paidCalls: payes, paidUsd: usd, priceQuotes: ext('demande402').n, attemptsWithoutResult: rates,
@@ -62,7 +66,8 @@ function usageDe(c) {
 
 /**
  * Les fiches des outils de SWOGE.
- * o : { catalogue (agentic().catalogue()), compteurs (compteurs.publique(30)), x402Payable(nom), etiquettes, api, page, solana(nom)? }
+ * o : { catalogue (agentic().catalogue()), compteurs (compteurs.publique(30)), x402Payable(nom), etiquettes, api, page, solana(nom)?,
+ *       x402Journal? (preuves_x402.usageParOutil : les paiements x402 exterieurs relus dans le journal) }
  */
 function fiches(o) {
   const outils = (o.catalogue && o.catalogue.outils) || [];
@@ -86,7 +91,7 @@ function fiches(o) {
       permissions: ['read-only: never buys, sells or signs'].concat(PERMISSIONS_EN_PLUS[d.name] ? [PERMISSIONS_EN_PLUS[d.name]] : []),
       payment: paiement,
       endpoints: { rest: o.api + '/agentic/call/' + d.name, mcp: o.api + '/mcp' },
-      usage: usageDe(parOutil[d.name]),
+      usage: usageDe(parOutil[d.name], o.x402Journal ? (o.x402Journal[d.name] || { n: 0, usd: 0 }) : null),
     };
   });
 }

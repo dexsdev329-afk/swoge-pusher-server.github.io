@@ -49,7 +49,7 @@ function lisible(brut, dec) {
  * Rend { recent: [...], total: { paiements, usd, payeurs, depuis } } — le total porte sur
  * les paiements en dollars (USDC, USDG) ; ceux en $SWOGE sont comptes a part.
  */
-function preuves(lignes, maison, n) {
+function exterieurs(lignes, maison) {
   const ext = [];
   /* Ce qui est ecarte, par raison : des nombres seulement. Le 29/09, la premiere lecture en
      production rendait 0 paiement pour 55 lignes du journal — sans ce decompte, impossible
@@ -67,12 +67,36 @@ function preuves(lignes, maison, n) {
       usd: a.dollar ? montant : null, payer: tronque(l.payer), tx: String(l.transaction), txUrl: RESEAUX[l.network].tx + String(l.transaction),
       _qui: String(l.payer || '').toLowerCase() });
   }
+  return { ext, ecartes };
+}
+
+function preuves(lignes, maison, n) {
+  const { ext, ecartes } = exterieurs(lignes, maison);
   const enDollars = ext.filter((x) => x.usd != null);
   const total = { payments: ext.length, usd: Math.round(enDollars.reduce((s, x) => s + x.usd, 0) * 1e6) / 1e6,
     inSwoge: ext.length - enDollars.length, payers: new Set(ext.map((x) => x._qui)).size,
     since: ext.length ? new Date(ext[0].t).toISOString() : null };
   const recent = ext.slice(-(n || N_DEFAUT)).reverse().map((x) => { const o = Object.assign({}, x); delete o._qui; o.at = new Date(o.t).toISOString(); delete o.t; return o; });
   return { recent, total, skipped: ecartes };
+}
+
+/**
+ * L'usage PAYE en x402 par outil, depuis `depuisMs`, relu dans le journal avec la maison
+ * d'AUJOURD'HUI. Pourquoi pas les compteurs : un compteur fige la part maison/exterieur au
+ * moment du paiement. Mesure du 29/09 : les compteurs donnaient 24 appels payes exterieurs
+ * (1,448 $, tous le 27/09, au plus 3 payeurs, un par outil) ; le journal, relu avec la liste
+ * actuelle, classe les 55 paiements comme les notres — le portefeuille d'inscription
+ * automatique a paye chaque outil avant d'etre compte comme la maison.
+ * Rend { outil: { n, usd } } (usd : la part en dollars seulement).
+ */
+function usageParOutil(lignes, maison, depuisMs) {
+  const out = {};
+  for (const x of exterieurs(lignes, maison).ext) {
+    if (depuisMs && !(x.t >= depuisMs)) continue;
+    const o = out[x.tool] || (out[x.tool] = { n: 0, usd: 0 });
+    o.n++; if (x.usd != null) o.usd = Math.round((o.usd + x.usd) * 1e6) / 1e6;
+  }
+  return out;
 }
 
 /** Lit le journal (JSONL) ; une ligne illisible est sautee, un fichier absent rend []. */
@@ -84,4 +108,4 @@ function lisJournal(fichier) {
   return out;
 }
 
-module.exports = { preuves, lisJournal, lisible, tronque, RESEAUX, ACTIFS, N_DEFAUT };
+module.exports = { preuves, usageParOutil, lisJournal, lisible, tronque, RESEAUX, ACTIFS, N_DEFAUT };

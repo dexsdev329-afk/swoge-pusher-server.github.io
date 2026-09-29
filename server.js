@@ -3289,17 +3289,22 @@ const server = http.createServer(async (req, res) => {
     if (path === '/agentic/store') {
       if (!STORE.v || Date.now() - STORE.t > 60000) {
         const xv = x402(), cpt = compteurs.publique(30);
+        /* Le journal x402, relu avec la maison d'AUJOURD'HUI (preuves_x402.js, 29/09) : il donne
+           les paiements verifiables ET l'usage x402 par outil — un compteur fige la part maison
+           au moment du paiement, et comptait notre portefeuille d'inscription comme un client. */
+        const P = require('./preuves_x402'), mz = new Set(adressesMaison());
+        if (xv && xv.porteGaz) mz.add(xv.porteGaz.toLowerCase());
+        const lignesX = xv && xv.journalFichier ? P.lisJournal(xv.journalFichier) : null;
         STORE.v = { ok: true, window: { from: cpt.depuis, to: cpt.jusqua },
           agents: require('./store_agents').fiches({ catalogue: await agentic().catalogue(), compteurs: cpt, x402Payable: (n) => !!xv && agentic().x402Payable(n),
+            x402Journal: lignesX ? P.usageParOutil(lignesX, (a) => mz.has(a), Date.parse(cpt.depuis + 'T00:00:00Z')) : null,
             solana: (n) => !!(xv && xv.solanaActif && xv.solanaActif()) && !require('./x402').SOLANA_EXCLUS.includes(n),
             etiquettes: require('./decouverte').ETIQUETTES_OUTIL, api: MOI_URL, page: SITE_URL + '/swogeagentic.html' }),
           /* Juste apres un demarrage, le catalogue n'est pas encore relu : pas de resume plutot que « 0 service ». */
           catalogue: process.env.SONDES_SERVICES === '0' ? null : ((r) => (r && r.catalogue > 0 ? r : null))(sondes().resume()),
           /* Les paiements verifiables (preuves_x402.js, 29/09) : chaque paiement regle d'un agent
              exterieur, avec sa transaction ; la maison ecartee, le payeur tronque. */
-          payments: xv && xv.journalFichier ? (() => { const P = require('./preuves_x402'), m = new Set(adressesMaison());
-            if (xv.porteGaz) m.add(xv.porteGaz.toLowerCase());
-            return P.preuves(P.lisJournal(xv.journalFichier), (a) => m.has(a)); })() : null,
+          payments: lignesX ? P.preuves(lignesX, (a) => mz.has(a)) : null,
           note: 'Usage counts only outside agents over the window (our own tests excluded). An attempt without a result is a refused payment, a failed settlement or a tool failure. No rate under ' + require('./store_agents').TENTATIVES_ASSEZ + ' attempts.' };
         STORE.t = Date.now();
       }

@@ -31,6 +31,12 @@ const u = par('scan_token').usage;
 ok(u.paidCalls === 12 && u.attemptsWithoutResult === 2 && u.priceQuotes === 300, 'l usage : agents EXTERIEURS seulement (40 paiements et 5 echecs maison ecartes)');
 ok(u.verdict === 'completed 12 of 14 paid attempts (85.7%)', 'au-dela de 10 tentatives : la part aboutie, avec son effectif');
 ok(par('ask_agent').usage.verdict === 'not enough paid calls yet (3/10)' && par('generate_image').usage.verdict === 'not enough paid calls yet (0/10)', 'sous 10 tentatives : aucun taux, l effectif seulement');
+/* 29/09 : le journal relu avec la maison d'aujourd'hui remplace le compteur x402 fige. Mesure : 24 paiements
+   comptes exterieurs le 27/09 etaient notre portefeuille d'inscription. Le compteur de cle reste. */
+const fj = S.fiches({ catalogue, compteurs, x402Payable: () => true, etiquettes: D.ETIQUETTES_OUTIL, api: 'https://api', page: 'https://p', x402Journal: { ask_agent: { n: 1, usd: 0.5 } } });
+const uj = fj.find((a) => a.name === 'scan_token').usage, ua = fj.find((a) => a.name === 'ask_agent').usage;
+ok(uj.paidCalls === 3 && uj.paidUsd === 0.06 && ua.paidCalls === 1 && ua.paidUsd === 0.5,
+   'avec le journal : les 9 paiements x402 « exterieurs » du compteur ne comptent plus (le journal n en voit aucun), les 3 appels par cle restent');
 ok(par('scan_token').permissions[0] === 'read-only: never buys, sells or signs' && /creates images/.test(par('generate_image').permissions.join()) && par('scan_token').permissions.length === 1,
    'les permissions : lecture seule pour tous, et ce que certains font de plus');
 ok(/USDC on Base or Solana/.test(par('scan_token').payment[0]) && /USDC on Base, or USDG/.test(par('ask_agent').payment[0]) && !/x402/.test(par('video_status').payment.join()),
@@ -42,7 +48,8 @@ const srv = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 ok(/path === '\/agentic\/store'/.test(srv) && /compteurs\.publique\(30\)/.test(srv.slice(srv.indexOf("if (path === '/agentic/store')"))) && /Date\.now\(\) - STORE\.t > 60000/.test(srv), 'la route : les compteurs des 30 jours, 60 s en cache');
 
 { const r = srv.slice(srv.indexOf("if (path === '/agentic/store')"), srv.indexOf("if (path === '/agentic/x402')"));
-  ok(/P\.preuves\(P\.lisJournal\(xv\.journalFichier\), \(a\) => m\.has\(a\)\)/.test(r) && /new Set\(adressesMaison\(\)\)/.test(r) && /m\.add\(xv\.porteGaz\.toLowerCase\(\)\)/.test(r),
+  ok(/P\.preuves\(lignesX, \(a\) => mz\.has\(a\)\)/.test(r) && /P\.usageParOutil\(lignesX, \(a\) => mz\.has\(a\), Date\.parse\(cpt\.depuis/.test(r)
+     && /new Set\(adressesMaison\(\)\)/.test(r) && /mz\.add\(xv\.porteGaz\.toLowerCase\(\)\)/.test(r),
      'les paiements verifiables (29/09) : le journal x402, la maison ET le portefeuille de gaz ecartes, comme dans les compteurs'); }
 ok(/r && r\.catalogue > 0 \? r : null/.test(srv), 'catalogue pas encore relu (apres un demarrage) : pas de resume, jamais « 0 service »');
 

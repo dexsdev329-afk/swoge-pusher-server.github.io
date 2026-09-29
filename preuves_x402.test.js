@@ -38,6 +38,13 @@ ok(JSON.stringify(r.skipped) === JSON.stringify({ noTransaction: 1, otherNetwork
    'ce qui est ecarte est compte par raison (des nombres, aucune adresse) [' + JSON.stringify(r.skipped) + ']');
 ok(P.preuves(L, (a) => a === MAISON, 2).recent.length === 2 && P.preuves([], null).total.since === null, 'n borne la liste ; un journal vide ne rend rien d invente');
 
+console.log('\n-- l usage par outil, pour l Agent Store --');
+const u = P.usageParOutil(L, (a) => a === MAISON, Date.UTC(2026, 8, 27, 11));
+ok(JSON.stringify(u) === JSON.stringify({ can_i_sell: { n: 1, usd: 0.008 }, token_verdict: { n: 1, usd: 0 }, esim: { n: 1, usd: 4.23 } }),
+   'par outil, exterieurs seulement, depuis le debut de la fenetre ; le $SWOGE compte en appels, pas en dollars [' + JSON.stringify(u) + ']');
+const toutMaison = P.usageParOutil(L, () => true);
+ok(Object.keys(toutMaison).length === 0, 'le cas mesure le 29/09 : toutes les lignes sont a nous → aucun usage exterieur, quoi que dise le compteur fige');
+
 console.log('\n-- les unites et la lecture du fichier --');
 ok(P.lisible('1', 18) === 1e-18 && P.lisible('0', 6) === 0 && P.lisible('abc', 6) === null && P.lisible('1000000', 6) === 1, 'unites brutes → nombre, sans flottant intermediaire');
 const d = fs.mkdtempSync(path.join(os.tmpdir(), 'preuves-'));
