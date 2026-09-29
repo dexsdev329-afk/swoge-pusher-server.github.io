@@ -41,5 +41,7 @@ ok(!JSON.stringify(f).match(/reputation|rating|stars/i), 'aucune note ni reputat
 const srv = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 ok(/path === '\/agentic\/store'/.test(srv) && /compteurs\.publique\(30\)/.test(srv.slice(srv.indexOf("if (path === '/agentic/store')"))) && /Date\.now\(\) - STORE\.t > 60000/.test(srv), 'la route : les compteurs des 30 jours, 60 s en cache');
 
+ok(/r && r\.catalogue > 0 \? r : null/.test(srv), 'catalogue pas encore relu (apres un demarrage) : pas de resume, jamais « 0 service »');
+
 console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
 process.exit(rates ? 1 : 0);

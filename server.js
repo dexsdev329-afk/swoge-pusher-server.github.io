@@ -3281,7 +3281,8 @@ const server = http.createServer(async (req, res) => {
           agents: require('./store_agents').fiches({ catalogue: await agentic().catalogue(), compteurs: cpt, x402Payable: (n) => !!xv && agentic().x402Payable(n),
             solana: (n) => !!(xv && xv.solanaActif && xv.solanaActif()) && !require('./x402').SOLANA_EXCLUS.includes(n),
             etiquettes: require('./decouverte').ETIQUETTES_OUTIL, api: MOI_URL, page: SITE_URL + '/swogeagentic.html' }),
-          catalogue: process.env.SONDES_SERVICES === '0' ? null : sondes().resume(),
+          /* Juste apres un demarrage, le catalogue n'est pas encore relu : pas de resume plutot que « 0 service ». */
+          catalogue: process.env.SONDES_SERVICES === '0' ? null : ((r) => (r && r.catalogue > 0 ? r : null))(sondes().resume()),
           note: 'Usage counts only outside agents over the window (our own tests excluded). An attempt without a result is a refused payment, a failed settlement or a tool failure. No rate under ' + require('./store_agents').TENTATIVES_ASSEZ + ' attempts.' };
         STORE.t = Date.now();
       }
