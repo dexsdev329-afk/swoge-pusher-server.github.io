@@ -2126,6 +2126,7 @@ function enCredit(r, addr) {
   return o;
 }
 
+const STORE = { v: null, t: 0 };               /* /agentic/store, 60 s */
 let AUTO_INSCRIPTION = null, AUTO_BAZAAR = null;
 /* ---- LE BAZAAR DE COINBASE (X402_AUTO_CLE_BASE, 28/09 au soir) ----
    18 980 services, 4 des notres : il n'inscrit qu'au reglement par Coinbase, et la
@@ -3263,7 +3264,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=300' });
     return res.end(txt);
   }
-  if (path === '/agentic/tools' || path === '/agentic/x402' || path === '/agentic/solana/blockhash' || path.startsWith('/agentic/call/') || path === '/agentic/recus' || path === '/agentic/cles' || path.startsWith('/agentic/cles/')
+  if (path === '/agentic/tools' || path === '/agentic/store' || path === '/agentic/x402' || path === '/agentic/solana/blockhash' || path.startsWith('/agentic/call/') || path === '/agentic/recus' || path === '/agentic/cles' || path.startsWith('/agentic/cles/')
       || path === '/agentic/pay' || path === '/agentic/audit') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization, x-api-key, payment-signature, idempotency-key',
@@ -3271,6 +3272,21 @@ const server = http.createServer(async (req, res) => {
     const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
     if (path === '/agentic/tools') return json(200, Object.assign(await agentic().catalogue(), { x402: await x402Etat(false) }));
+    /* L'AGENT STORE (store_agents.js, 29/09) : nos outils avec ce qui a ete MESURE (30 jours, agents
+       exterieurs seulement), et le resume du catalogue sonde. 60 s en cache : public et gratuit. */
+    if (path === '/agentic/store') {
+      if (!STORE.v || Date.now() - STORE.t > 60000) {
+        const xv = x402(), cpt = compteurs.publique(30);
+        STORE.v = { ok: true, window: { from: cpt.depuis, to: cpt.jusqua },
+          agents: require('./store_agents').fiches({ catalogue: await agentic().catalogue(), compteurs: cpt, x402Payable: (n) => !!xv && agentic().x402Payable(n),
+            solana: (n) => !!(xv && xv.solanaActif && xv.solanaActif()) && !require('./x402').SOLANA_EXCLUS.includes(n),
+            etiquettes: require('./decouverte').ETIQUETTES_OUTIL, api: MOI_URL, page: SITE_URL + '/swogeagentic.html' }),
+          catalogue: process.env.SONDES_SERVICES === '0' ? null : sondes().resume(),
+          note: 'Usage counts only outside agents over the window (our own tests excluded). An attempt without a result is a refused payment, a failed settlement or a tool failure. No rate under ' + require('./store_agents').TENTATIVES_ASSEZ + ' attempts.' };
+        STORE.t = Date.now();
+      }
+      return json(200, STORE.v);
+    }
     /* `jours` : les compteurs durables des 30 derniers jours (compteurs.js) — des nombres, jamais une identite ni une empreinte. */
     if (path === '/agentic/x402') return json(200, Object.assign({ ok: true }, await x402Etat(true), { jours: compteurs.publique(30) }));
     /* Le blockhash recent pour payer sur Solana sans noeud (x402.js, blockhashSolana). */
