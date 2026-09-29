@@ -73,6 +73,25 @@ function monde(o) {
   ok(e.goplus && e.goplus.external_call === '0' && !('secret' in e.goplus) && e.goplusReadAt, 'GoPlus est relu, seulement les champs utiles');
   ok(w.envoyees.length === 3, 'en tout : trois transactions, jamais davantage');
 
+  console.log('\n-- 3b. le seuil suit le cout estime par le nœud (29/09 : 0,0005 ETH envoyes, 0,000111 estime) --');
+  {
+    const dossier4 = fs.mkdtempSync(path.join(os.tmpdir(), 'dep4-'));
+    const w4 = monde(); const base = w4.chaine;
+    let cout = 111120110190000n;                       /* 5 314 209 gaz x 0,02091 gwei, mesure du 29/09 */
+    w4.chaine = () => Object.assign(base(), { coutDeploiement: async () => cout });
+    const d4 = D.cree({ dossier: dossier4, artefact: A, chaine: w4.chaine });
+    w4.eth = 150000000000000n;                         /* 0,00015 ETH : moins que 1,5 x le cout */
+    await d4.tour();
+    ok(w4.envoyees.length === 0 && d4.etat().needs.estimated && Math.abs(d4.etat().needs.eth - 0.00016668) < 1e-7, 'sous 1,5 x le cout estime : on attend, et la page dit le vrai besoin (0,000167 ETH)');
+    w4.eth = 500000000000000n;                         /* 0,0005 ETH : l'envoi du proprietaire */
+    await d4.tour();
+    ok(w4.envoyees.length === 1 && w4.envoyees[0][0] === 'deploie', '0,0005 ETH couvrent le deploiement : il part, sans attendre les 0,002 d avant');
+    const d5 = D.cree({ dossier: fs.mkdtempSync(path.join(os.tmpdir(), 'dep4-')), artefact: A, chaine: () => Object.assign(monde().chaine(), { soldeEth: async () => 500000000000000n, coutDeploiement: async () => { throw new Error('rpc'); } }) });
+    await d5.tour();
+    ok(d5._etat().etape === 'attente_fonds', 'si l estimation echoue, on retombe sur le seuil prudent (0,002 ETH) : pas de depart a l aveugle');
+    fs.rmSync(dossier4, { recursive: true, force: true });
+  }
+
   console.log('\n-- 4. des parametres faux arretent tout --');
   {
     const dossier2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dep4-'));

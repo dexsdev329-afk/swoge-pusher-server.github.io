@@ -29,7 +29,13 @@
 const fs = require('fs');
 const path = require('path');
 
-const ETH_MIN_WEI = 2n * 10n ** 15n;          /* 0,002 ETH : ~7,7 M de gaz au banc (1,87 M + 5,85 M) a 0,021 gwei ≈ 0,0002 ETH, x10 de marge pour la part donnees */
+/* Le seuil de depart n'est plus FIXE (29/09) : 0,002 ETH etait prudent de x10 et le proprietaire
+   a envoye ~1 $ (0,0005 ETH), qui suffit. Mesure du nœud le 29/09 : deploiement 5 314 209 gaz
+   (part donnees comprise) a 0,02091 gwei = 0,000111 ETH. On deploie donc des que le solde couvre
+   MARGE_GAZ fois le cout ESTIME a l'instant par le nœud ; ETH_MIN_WEI ne sert plus que si
+   l'estimation echoue (on ne part pas a l'aveugle en dessous). */
+const ETH_MIN_WEI = 2n * 10n ** 15n;
+const MARGE_GAZ = 1.5;
 const GOPLUS = 'https://api.gopluslabs.io/api/v1/token_security/4663?contract_addresses=';
 const RELECTURE_SCANNERS_MS = 30 * 60e3;
 const CHAMPS_GOPLUS = ['external_call', 'owner_address', 'creator_address', 'is_open_source', 'hidden_owner', 'can_take_back_ownership',
@@ -73,8 +79,13 @@ function cree(deps) {
     const c = chaine();
     soldes = { eth: await c.soldeEth(), swoge: await c.soldeSwoge(), lu: new Date(maintenant()).toISOString() };
 
-    /* 1. le deploiement, repris s'il etait parti */
-    if (E.etape === 'attente_fonds' && soldes.eth >= ETH_MIN_WEI) {
+    /* 1. le deploiement, repris s'il etait parti. Le seuil : le cout estime a l'instant, x1,5. */
+    let seuil = ETH_MIN_WEI;
+    if (E.etape === 'attente_fonds' && c.coutDeploiement) {
+      try { seuil = BigInt(Math.ceil(Number(await c.coutDeploiement([P.positionManager, P.swoge, P.treasury, FRAIS])) * MARGE_GAZ)); } catch (e) { seuil = ETH_MIN_WEI; }
+      E.seuilDeploiementWei = String(seuil);
+    }
+    if (E.etape === 'attente_fonds' && soldes.eth >= seuil) {
       const tx = await c.deploieLaunchpad([P.positionManager, P.swoge, P.treasury, FRAIS]);
       E.etape = 'deploiement'; E.txDeploiement = tx.hash; note('launchpad deployment sent ' + tx.hash); ecrit();
     }
@@ -130,7 +141,7 @@ function cree(deps) {
     try { adresse = chaine().adresse; } catch (e) { adresse = null; }
     const x = 'https://robinhoodchain.blockscout.com/';
     return { ok: true, step: E.etape, deployer: adresse,
-      needs: { ethWei: String(ETH_MIN_WEI), eth: Number(ETH_MIN_WEI) / 1e18, swogeForTestLaunch: Number(FRAIS / 10n ** 18n) },
+      needs: { ethWei: E.seuilDeploiementWei || String(ETH_MIN_WEI), eth: Number(E.seuilDeploiementWei || ETH_MIN_WEI) / 1e18, estimated: !!E.seuilDeploiementWei, swogeForTestLaunch: Number(FRAIS / 10n ** 18n) },
       balances: soldes.lu ? { eth: soldes.eth == null ? null : Number(soldes.eth) / 1e18, swoge: soldes.swoge == null ? null : Number(soldes.swoge / 10n ** 14n) / 1e4, readAt: soldes.lu } : null,
       launchpad: E.launchpad || null, parametersReadBack: E.parametresLus || null, testToken: E.jetonTest || null, testPool: E.poolTest || null,
       goplus: E.goplus || null, goplusReadAt: E.goplusLu || null, error: E.erreur || null,
@@ -166,6 +177,9 @@ function chaineEthers(clePrivee, A) {
     soldeEth: async () => (await prov.getBalance(w.address)).toBigInt(),
     soldeSwoge: async () => (await swoge.balanceOf(w.address)).toBigInt(),
     deploieLaunchpad: async (args) => w.sendTransaction(new ethers.ContractFactory(A.launchpad.abi, A.launchpad.bytecode).getDeployTransaction(...args)),
+    /* Le cout du deploiement, estime par le nœud (gaz x prix du moment), en wei. */
+    coutDeploiement: async (args) => { const tx = new ethers.ContractFactory(A.launchpad.abi, A.launchpad.bytecode).getDeployTransaction(...args); tx.from = w.address;
+      const [g, px] = await Promise.all([prov.estimateGas(tx), prov.getGasPrice()]); return g.mul(px).toBigInt(); },
     recu: async (hash) => { const r = await prov.getTransactionReceipt(hash); return r && r.blockNumber ? r : null; },
     parametres: async (adr) => { const c = new ethers.Contract(adr, LP, prov);
       return { positionManager: await c.positionManager(), swoge: await c.swoge(), treasury: await c.swogeTreasury(), creationFee: (await c.creationFee()).toString() }; },
