@@ -204,6 +204,17 @@ function monde(o) {
     ok(/^0x[0-9a-fA-F]{40}$/.test(v.deployer) && !JSON.stringify(v).includes(cle.slice(2)), 'la vue publique donne l ADRESSE, jamais la cle');
     fs.rmSync(dossier3, { recursive: true, force: true });
   }
+  {
+    /* Le VRAI adaptateur, sans reseau : le 29/09 il tombait a la construction pour le jumeau (pas de $SWOGE). */
+    const AW = JSON.parse(fs.readFileSync(path.join(__dirname, 'swogefun_v4weth.json'), 'utf8'));
+    const cle = require('ethers').Wallet.createRandom().privateKey;
+    let cw = null, cv = null, e1 = null;
+    try { cw = D.chaineEthers(cle, AW); cv = D.chaineEthers(cle, A); } catch (e) { e1 = e.message; }
+    ok(!e1 && cw.adresse === cv.adresse && /^0x[0-9a-fA-F]{40}$/.test(cw.adresse), 'le vrai adaptateur se construit pour le V4 ET pour le jumeau (meme portefeuille)' + (e1 ? ' — ' + e1 : ''));
+    ok(cw && (await cw.soldeSwoge()) === 0n, 'pour le jumeau, le solde $SWOGE vaut 0 sans aucun appel : il ne connait pas le $SWOGE');
+    const dReel = D.cree({ dossier: fs.mkdtempSync(path.join(os.tmpdir(), 'dep4r-')), artefact: AW, nom: 'v4weth' });
+    ok(/^0x[0-9a-fA-F]{40}$/.test(dReel.etat().deployer || ''), 'la vue du jumeau donne l adresse du deployeur (elle etait vide en production)');
+  }
   const src = fs.readFileSync(path.join(__dirname, 'deploiement_v4.js'), 'utf8');
   ok(!/\.transfer\(/.test(src) && (src.match(/value:\s/g) || []).length === 1
      && /const v = fraisEth \? \{ value: ethers\.BigNumber\.from\(String\(fraisEth\)\) \} : \{\};/.test(src)

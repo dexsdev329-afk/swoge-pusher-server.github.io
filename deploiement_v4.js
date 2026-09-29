@@ -251,7 +251,10 @@ function chaineEthers(clePrivee, A) {
   const w = new ethers.Wallet(clePrivee, prov);
   const LP = new ethers.utils.Interface(A.launchpad.abi);
   const ERC = new ethers.utils.Interface(['function balanceOf(address) view returns (uint256)', 'function approve(address,uint256) returns (bool)']);
-  const swoge = new ethers.Contract(A.constructeur.swoge, ERC, w);
+  /* Le jumeau WETH n'a pas de $SWOGE dans son artefact (frais en ETH) : pas de contrat $SWOGE, solde 0.
+     Le 29/09 a 19:42 UTC, le construire quand meme faisait tomber CHAQUE tour sur « invalid contract
+     address » avant tout envoi — et la page ne donnait plus l'adresse du deployeur. */
+  const swoge = A.constructeur.swoge ? new ethers.Contract(A.constructeur.swoge, ERC, w) : null;
   /* Le prix du gaz, TOUJOURS pose a la main (29/09). Sans lui, ethers v5 met une transaction
      EIP-1559 avec un pourboire fige a 1,5 gwei ; le nœud Robinhood en voulait 0,021 (base
      0,02089) : 70 fois trop. Le premier depart en production a echoue ainsi — le nœud verifie
@@ -270,7 +273,7 @@ function chaineEthers(clePrivee, A) {
   return {
     adresse: w.address,
     soldeEth: async () => (await prov.getBalance(w.address)).toBigInt(),
-    soldeSwoge: async () => (await swoge.balanceOf(w.address)).toBigInt(),
+    soldeSwoge: async () => (swoge ? (await swoge.balanceOf(w.address)).toBigInt() : 0n),
     deploieLaunchpad: async (args) => { const tx = deploiement(args); return w.sendTransaction(Object.assign(tx, await frais(tx))); },
     /* Le cout du deploiement, au prix EXACT ou il partira (gaz x1,2 au prix du nœud x1,2), en wei. */
     coutDeploiement: async (args) => { const f = await frais(deploiement(args)); return f.gasLimit.mul(f.gasPrice).toBigInt(); },
