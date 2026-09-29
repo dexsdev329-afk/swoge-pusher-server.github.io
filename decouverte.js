@@ -738,6 +738,19 @@ function openapi(c) {
     responses: { 200: { description: 'Credited', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, creditedUsd: n(), balanceUsd: n(), alreadyCredited: b() }, ['ok']) } } },
       400: { description: 'Amount out of bounds' }, 401: { description: 'No key, or unknown or revoked key' }, 402: { description: 'Payment required (PAYMENT-REQUIRED header), or refused' } },
     security: [{ cleApi: [] }, { cleEnTete: [] }] } };
+  /* L'Agent Passport (passeport.js, 29/09) : l'identite verifiable d'une cle, signee en Ed25519. */
+  paths['/agentic/passport'] = { get: { operationId: 'myPassport', summary: 'Use this to prove who your agent is to another agent: your API key\'s passport, signed by SWOGE', tags: ['payments'],
+    description: 'With your API key. Returns { passport, signature }: the agent id, its owner wallet, what it pays from, its daily cap, its permissions and its measured history (calls, gateway payments, audit chain head), '
+      + 'signed in Ed25519 over the canonical JSON. Anyone verifies it with the public key at /.well-known/swoge-passport.json, without trusting SWOGE. A snapshot: it expires 24 hours after issuedAt.',
+    responses: { 200: { description: 'The signed passport', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, passport: { type: 'object' }, signature: obj({ alg: s(), keyId: s(), value: s('base64url') }) }, ['ok', 'passport', 'signature']) } } },
+      401: { description: 'No key, or unknown or revoked key' } }, security: [{ cleApi: [] }, { cleEnTete: [] }] } };
+  paths['/agentic/passport/{id}'] = { get: { operationId: 'passport', summary: 'Use this to check another agent before paying it or being paid by it: its public passport, signed by SWOGE', tags: ['payments'],
+    description: 'Public only if the key owner published it; otherwise 404, the same answer as an unknown id.',
+    parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[0-9a-f]{12}$' } }],
+    responses: { 200: { description: 'The signed passport' }, 404: { description: 'No public passport with this id' } }, security: [] } };
+  paths['/agentic/passport/verify'] = { post: { operationId: 'verifyPassport', summary: 'Use this to verify a signed SWOGE agent passport (or verify it yourself with the public key)', tags: ['payments'],
+    requestBody: { required: true, content: { 'application/json': { schema: obj({ passport: { type: 'object' }, signature: { type: 'object' } }, ['passport', 'signature']) } } },
+    responses: { 200: { description: '{ ok, expired, agent } or { ok: false, raison }' } }, security: [] } };
   paths['/agentic/services'] = { get: { operationId: 'searchServices', summary: 'Use this to find a paid x402 service that actually answers: the public catalogue with what SWOGE measured without paying', tags: ['payments'],
     description: 'Free, no key, 30 searches per 10 minutes per IP. Each service: price, networks, probes (n, share answered, median latency, last failure) and real paid calls through SWOGE. No verdict under 3 probes.',
     parameters: [{ name: 'q', in: 'query', required: false, schema: { type: 'string' } }, { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 50 } }],

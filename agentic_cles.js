@@ -70,7 +70,8 @@ function cree(opts) {
   const vue = (h, c) => ({ id: h.slice(0, 12), nom: c.nom, debut: c.debut, cree: c.cree, derniere: c.derniere || null,
     payeur: auCredit(c) ? 'credit' : 'swoge', plafondUsd: auCredit(c) ? c.plafondUsd : null,
     plafondSwoge: c.plafondSwoge, depenseAujourdhui: depenseDuJour(c), revoquee: !!c.revoquee,
-    paiements: c.paie && c.paie.actif ? { actif: true, maxAppelUsd: c.paie.maxAppelUsd, hotes: c.paie.hotes.slice() } : { actif: false } });
+    paiements: c.paie && c.paie.actif ? { actif: true, maxAppelUsd: c.paie.maxAppelUsd, hotes: c.paie.hotes.slice() } : { actif: false },
+    passeportPublic: !!c.passeportPublic });
 
   /* Le payeur et son plafond du jour : { payeur: 'credit', plafondUsd } ou { payeur: 'swoge', plafondSwoge }. */
   function payeurLu(o) {
@@ -154,6 +155,10 @@ function cree(opts) {
     if (auCredit(c)) c.depenseUsd = Math.round(((c.depenseUsd || 0) + montant) * 1e6) / 1e6;
     else c.depenseSwoge = Math.round((c.depenseSwoge + montant) * 1e6) / 1e6;
     c.derniere = maintenant();
+    /* Le passeport (29/09) : ce que la clé a fait depuis qu'on le compte, en appels et en dollars (le reçu porte toujours usd). */
+    c.appels = (c.appels || 0) + 1;
+    c.usdTotal = Math.round(((c.usdTotal || 0) + (Number(recu && recu.usd) || 0)) * 1e6) / 1e6;
+    if (!c.comptesDepuis) c.comptesDepuis = maintenant();
     const l = S.recus[c.addr] || (S.recus[c.addr] = []);
     /* Au crédit : le reçu dit dollars, jamais un montant en $SWOGE qui n'a pas été débité. */
     if (auCredit(c)) { recu = Object.assign({}, recu, { payeur: 'credit' }); delete recu.swoge; }
@@ -185,7 +190,24 @@ function cree(opts) {
   /** La politique de paiement d'une cle (par son empreinte), ou null si les paiements sont eteints. */
   function paiementDe(h) { const c = charge().cles[h]; return c && !c.revoquee && c.paie && c.paie.actif ? Object.assign({}, c.paie, { hotes: c.paie.hotes.slice() }) : null; }
 
-  return { nouvelle, liste, revoque, resout, sousPlafond, depense, recus, fixePaiement, paiementDe, fixePayeur, _etat: () => charge() };
+  /* ---- LE PASSEPORT (passeport.js, 29/09) ----
+     Privé par défaut ; le propriétaire (SA session) le rend public, clé par clé. */
+  function publie(addr, id, oui) {
+    const S = charge();
+    const h = Object.keys(S.cles).find((k) => k.slice(0, 12) === String(id || '') && S.cles[k].addr === addr && !S.cles[k].revoquee);
+    if (!h) return { ok: false, code: 404, raison: 'no such key' };
+    S.cles[h].passeportPublic = !!oui; sauve();
+    return { ok: true, cle: vue(h, S.cles[h]) };
+  }
+  /** Une clé par son identifiant public (12 hexadécimaux) : { h, id, c } ou null. Jamais la clé elle-même. */
+  function parId(id) {
+    if (!/^[0-9a-f]{12}$/.test(String(id || ''))) return null;
+    const S = charge();
+    const h = Object.keys(S.cles).find((k) => k.slice(0, 12) === id);
+    return h ? { h, id, c: Object.assign({}, S.cles[h], { paie: S.cles[h].paie ? Object.assign({}, S.cles[h].paie, { hotes: (S.cles[h].paie.hotes || []).slice() }) : null }) } : null;
+  }
+
+  return { nouvelle, liste, revoque, resout, sousPlafond, depense, recus, fixePaiement, paiementDe, fixePayeur, publie, parId, _etat: () => charge() };
 }
 
 module.exports = { cree, empreinte, MAX_ACTIVES, PREFIXE, PLAFOND_MIN, PLAFOND_MAX, PLAFOND_USD_MIN, PLAFOND_USD_MAX };

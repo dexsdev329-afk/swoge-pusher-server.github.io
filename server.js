@@ -2127,6 +2127,13 @@ function enCredit(r, addr) {
 }
 
 const STORE = { v: null, t: 0 };               /* /agentic/store, 60 s */
+/* ---- L'AGENT PASSPORT (passeport.js, 29/09) : cle Ed25519 DEDIEE, aucun fonds ---- */
+let PASSEPORTS = null;
+function passeports() {
+  if (!PASSEPORTS) PASSEPORTS = require('./passeport').cree({ dossier: cfg.DATA_DIR, cles: agenticCles,
+    audit: (addr, id) => passerelle().audit(addr, id, 100000), api: MOI_URL, site: SITE_URL });
+  return PASSEPORTS;
+}
 let AUTO_INSCRIPTION = null, AUTO_BAZAAR = null;
 /* ---- LE BAZAAR DE COINBASE (X402_AUTO_CLE_BASE, 28/09 au soir) ----
    18 980 services, 4 des notres : il n'inscrit qu'au reglement par Coinbase, et la
@@ -3241,6 +3248,11 @@ const server = http.createServer(async (req, res) => {
     return res.end(r.corps);
   }
   /* ---- SE FAIRE TROUVER : OpenAPI, manifeste x402, fiche du registre MCP (decouverte.js) ---- */
+  /* La cle publique des passeports (passeport.js, 29/09) : n'importe qui verifie un passeport sans nous. */
+  if (path === '/.well-known/swoge-passport.json') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=3600' });
+    return res.end(JSON.stringify(passeports().clePublique(), null, 1));
+  }
   if (path === '/openapi.json' || path === '/.well-known/x402' || path === '/.well-known/x402.json' || path === '/server.json') {
     const D = require('./decouverte');
     const envoieJ = (code, o) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=300' }); return res.end(JSON.stringify(o, null, 1)); };
@@ -3265,7 +3277,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(txt);
   }
   if (path === '/agentic/tools' || path === '/agentic/store' || path === '/agentic/x402' || path === '/agentic/solana/blockhash' || path.startsWith('/agentic/call/') || path === '/agentic/recus' || path === '/agentic/cles' || path.startsWith('/agentic/cles/')
-      || path === '/agentic/pay' || path === '/agentic/audit') {
+      || path === '/agentic/pay' || path === '/agentic/audit' || path === '/agentic/passport' || path.startsWith('/agentic/passport/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization, x-api-key, payment-signature, idempotency-key',
                    'access-control-expose-headers': 'payment-required, payment-response' };
@@ -3348,6 +3360,27 @@ const server = http.createServer(async (req, res) => {
         if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet, or send your API key' });
         return json(200, passerelle().audit(addr, cle ? cle.id : null, 100));
       }
+      /* ---- L'AGENT PASSPORT (passeport.js, 29/09) ----
+         GET /agentic/passport : la CLE lit son passeport signe (a presenter a un autre agent).
+         GET /agentic/passport/<id> : le proprietaire (sa session), ou tout le monde s'il l'a publie ;
+         sinon la meme reponse qu'un identifiant inconnu (rien a deviner). POST .../verify : verifier. */
+      if (path === '/agentic/passport/verify') {
+        if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+        let q;
+        try { q = JSON.parse((await corps(req, 32 * 1024)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+        return json(200, passeports().verifie(q));
+      }
+      if (path === '/agentic/passport') {
+        if (!cle) return json(401, { ok: false, raison: cleTexte ? 'this API key is unknown or revoked' : 'send your API key (Authorization: Bearer swg_...) to read its passport' });
+        return json(200, Object.assign({ ok: true }, passeports().signe(passeports().passeport(cle.id))));
+      }
+      if (path.startsWith('/agentic/passport/')) {
+        const id = decodeURIComponent(path.slice('/agentic/passport/'.length));
+        const x = agenticCles.parId(id);
+        const moi = x && ((session && x.c.addr === session) || (cle && cle.id === id));
+        if (!x || !(moi || (x.c.passeportPublic && !x.c.revoquee))) return json(404, { ok: false, raison: 'no public passport with this id' });
+        return json(200, Object.assign({ ok: true, owned: !!moi }, passeports().signe(passeports().passeport(id))));
+      }
       if (path === '/agentic/recus') {
         const addr = cle ? cle.addr : session;
         if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet, or send your API key' });
@@ -3373,6 +3406,13 @@ const server = http.createServer(async (req, res) => {
         let q;
         try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
         const r = agenticCles.fixePayeur(session, path.split('/')[3], q);
+        return json(r.ok ? 200 : r.code, r);
+      }
+      /* Publier ou retirer le passeport d'une cle : la SESSION du proprietaire seulement. */
+      if (/^\/agentic\/cles\/[0-9a-f]{12}\/passeport$/.test(path) && req.method === 'POST') {
+        let q;
+        try { q = JSON.parse((await corps(req, 1024)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+        const r = agenticCles.publie(session, path.split('/')[3], q.public === true);
         return json(r.ok ? 200 : r.code, r);
       }
       if (path.startsWith('/agentic/cles/') && req.method === 'DELETE') {
