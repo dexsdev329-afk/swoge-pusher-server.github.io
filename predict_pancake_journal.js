@@ -92,7 +92,40 @@ const CANDIDATS = [
   { id: 'inverse', nom: 'Engine inverse', texte: 'the opposite side (what the paper bot is set to bet)' },
   { id: 'outsider', nom: 'Visible underdog', texte: 'the smaller visible pool at decision time' },
   { id: 'bull', nom: 'Always BULL', texte: 'control: no signal at all' },
+  { id: 'oracle', nom: 'Oracle lag', texte: '8 s before the lock, the side Binance is already on versus the Chainlink price the round locks at, only when the gap is at least 0.05% (fixed in advance)' },
 ];
+
+/* ---- LE CINQUIEME CANDIDAT : LE RETARD DE L'ORACLE (29/09/2026) ----
+ * Le lockPrice est la derniere reponse Chainlink BNB/USD au lock ; l'issue, la reponse au close.
+ * Mesure du 29/09 (outils/pancake_oracle_mesure.js, 2 988 rounds, epochs 516 999 → 519 996) :
+ * age de la reponse au lock mediane 10 s, p90 24 s. Signal : le signe de (Binance 1 s a lock − L
+ * − lockPrice), seulement si ce lockPrice etait DEJA publie a lock − L. Il predit la direction :
+ * a L = 8 s et ecart ≥ 0,05 %, 64,3 % gagnes (Wilson 58,2–69,9) sur 252, contre 50,0 % au hasard.
+ * Mais la foule le paie deja : cote finale moyenne 1,71 (1,98 au hasard) ; EV +9,1 % ± 5,3,
+ * t = 1,7 — le meilleur de 16 reglages essayes, donc PAS une preuve (un t ≈ 2 sort par hasard sur
+ * 16). Ce reglage-la, et lui seul, est fixe ICI avant d'observer la suite : seuls les rounds
+ * FUTURS, reglés en direct, le jugent, a la meme regle que les autres (n ≥ 500, t ≥ 2,7, deux
+ * moities > 0). ~25 signaux par jour : ~20 jours pour 500. Il ne touche pas la caisse papier. */
+const ORACLE_L = 8;
+const ORACLE_SEUIL = 0.0005;
+const ORACLE_FEE = 0.03, ORACLE_MISE = 0.002;
+/** Le camp du candidat « retard de l'oracle » pour une ligne de round portant `os` ({ L, px, maj }), ou null. Pur. */
+function signalOracle(l) {
+  const o = l && l.os;
+  if (!o || !(o.px > 0) || !(o.maj > 0) || !(l.lock > 0)) return null;
+  if (o.maj > l.lock - ORACLE_L) return null;                 /* le lockPrice n'etait pas encore publie : pas de pari */
+  const lp = Number(l.lp) / 1e8;
+  if (!(lp > 0)) return null;
+  const ecart = (o.px - lp) / lp;
+  if (Math.abs(ecart) < ORACLE_SEUIL) return null;
+  return ecart > 0 ? 'BULL' : 'BEAR';
+}
+function noteOracle(l) {
+  const side = signalOracle(l);
+  if (!side) return;
+  const x = rendement(side, l, ORACLE_FEE, ORACLE_MISE);
+  if (x) { J.series.oracle.push([Number(l.ep), x.r, x.g ? 1 : 0]); J.cache = null; }
+}
 
 function dossier() { return process.env.DATA_DIR || require('./config').DATA_DIR; }
 function fichierRounds() { return path.join(dossier(), 'pancake_rounds.jsonl'); }
@@ -105,7 +138,7 @@ function neuf() {
     pret: false, indexe: null, attente: [],
     vus: new Set(), plusHaut: 0, plusBas: 0, lignesRounds: 0, lignesDecisions: 0,
     decVues: new Set(), enAttente: new Map(),
-    series: { moteur: [], inverse: [], outsider: [], bull: [] }, annules: 0, cache: null,
+    series: { moteur: [], inverse: [], outsider: [], bull: [], oracle: [] }, annules: 0, cache: null,
     rem: { actif: false, fini: false, cible: 0, plancher: 0, curseur: 0, ecrits: 0, lots: 0, erreurs: 0, derniereErreur: null, maj: 0 },
     minuterie: null, file: Promise.resolve(),
   };
@@ -128,7 +161,8 @@ function ligneRound(ep, r, src) {
            lp: String(r.lockPrice != null ? r.lockPrice : r.lp), cp: String(r.closePrice != null ? r.closePrice : r.cp),
            tot: r.total != null ? r.total : r.tot, bull: r.bull, bear: r.bear,
            rb: r.rb != null ? r.rb : null, rw: r.rw != null ? r.rw : null,
-           oc: !!(r.oracleCalled != null ? r.oracleCalled : r.oc), src, t: Date.now() };
+           oc: !!(r.oracleCalled != null ? r.oracleCalled : r.oc), src, t: Date.now(),
+           ...(r.os ? { os: r.os } : {}) };
 }
 
 /* Réglé = oracle appelé, ou annulé pour de bon (close + buffer dépassé). */
@@ -162,6 +196,7 @@ function noteOmbres(dec, l) {
   const mise = dec.mise > 0 ? dec.mise : 0.002;
   if (gagnantDe(l) === 'CANCELLED') { J.annules++; J.cache = null; return; }
   for (const c of CANDIDATS) {
+    if (c.id === 'oracle') continue;                 /* le sien vient de la ligne du round, pas de la decision */
     const x = rendement(dec.cand[c.id], l, fee, mise);
     if (x) J.series[c.id].push([dec.ep, x.r, x.g ? 1 : 0]);
   }
@@ -179,6 +214,7 @@ function ajouteRound(ep, r, src) {
   if (!J.plusBas || ep < J.plusBas) J.plusBas = ep;
   const dec = J.enAttente.get(ep);
   if (dec) { J.enAttente.delete(ep); noteOmbres(dec, l); }
+  noteOracle(l);
   ecrit(fichierRounds(), JSON.stringify(l) + '\n');
   return true;
 }
@@ -215,6 +251,7 @@ function indexe() {
       if (!J.plusBas || ep < J.plusBas) J.plusBas = ep;
       const dec = J.enAttente.get(ep);
       if (dec) { J.enAttente.delete(ep); noteOmbres(dec, l); }
+      noteOracle(l);
     });
     J.pret = true;
     const a = J.attente; J.attente = [];
@@ -234,7 +271,15 @@ async function regleRecents(ch, e, nowS) {
   for (const k of J.enAttente.keys()) if (k <= e - 2 && k >= e - 300) aLire.add(k);
   let n = 0;
   for (const k of [...aLire].sort((a, b) => a - b)) {
-    try { const r = await ch.round(k); if (regle(r, nowS) && ajouteRound(k, r, 'direct')) n++; } catch (x) { /* au tic suivant */ }
+    try {
+      const r = await ch.round(k);
+      if (!regle(r, nowS)) continue;
+      /* Le retard de l'oracle, relu APRES coup mais sur des donnees d'avant le lock (Binance a
+         lock − L, heure de publication de l'oracle) : jamais l'issue. Une lecture ratee = pas de
+         signal pour ce round (independant de l'issue, donc sans biais). */
+      if (ch.oracleSignal && r.oracleCalled && !r.os) { try { r.os = await ch.oracleSignal(r, ORACLE_L); } catch (x) { r.os = null; } }
+      if (ajouteRound(k, r, 'direct')) n++;
+    } catch (x) { /* au tic suivant */ }
   }
   return n;
 }
@@ -358,7 +403,7 @@ function ombres() {
   const lignes = CANDIDATS.map((c) => { const st = statsSerie(J.series[c.id]); return Object.assign({ id: c.id, nom: c.nom, texte: c.texte }, st, { verdict: verdict(st) }); });
   J.cache = { candidats: lignes, nCandidats: CANDIDATS.length, min: OMBRE_MIN, tMin: OMBRE_T, annules: J.annules,
               enAttente: J.enAttente.size, gazReel: OMBRE_GAZ,
-              regle: 'One paper bet per candidate on every round, paid at the real final odds with our stake diluted in its side, 3% pool fee and ~1% real gas. A lock = close tie counts as LOST (the contract sends the whole pool to the treasury); a cancelled round is refunded and not counted. A verdict needs n ≥ ' + OMBRE_MIN + ', t ≥ ' + OMBRE_T + ' and both halves positive. These shadows never touch the paper bank, which stays at 0 bets on purpose.' };
+              regle: 'One paper bet per candidate on every round (Oracle lag only when its signal fires), paid at the real final odds with our stake diluted in its side, 3% pool fee and ~1% real gas. A lock = close tie counts as LOST (the contract sends the whole pool to the treasury); a cancelled round is refunded and not counted. A verdict needs n ≥ ' + OMBRE_MIN + ', t ≥ ' + OMBRE_T + ' and both halves positive. These shadows never touch the paper bank, which stays at 0 bets on purpose.' };
   return J.cache;
 }
 
@@ -373,7 +418,7 @@ function etat() {
 function _reset() { arreteRemplissage(); J = neuf(); }
 function _vidange() { return J.file; }
 
-module.exports = { indexe, ajouteRound, ajouteDecision, aDecide, regleRecents, regle, annule, gagnantDe, rendement,
+module.exports = { indexe, ajouteRound, ajouteDecision, aDecide, regleRecents, regle, annule, gagnantDe, rendement, signalOracle, ORACLE_L, ORACLE_SEUIL,
                    demarreRemplissage, arreteRemplissage, pasRemplissage, ombres, statsSerie, verdict, wilson, etat,
                    fichierRounds, fichierDecisions, ligneRound,
                    BUFFER_S, OMBRE_MIN, OMBRE_T, OMBRE_GAZ, CANDIDATS, REMPLIT, REMPLIT_JOURS, REMPLIT_LOT, REMPLIT_PAS_MS, RPCS,

@@ -87,12 +87,13 @@ function decision(ep, cand, o) {
     near(c('moteur').ev, 100 * (coteBull - 1 - 0.00002 / 0.002), 0.01, 'le camp du moteur (BULL) gagne à la cote finale diluée, gaz réel 1 % payé');
     near(c('inverse').ev, -101, 0.01, 'son inverse perd la mise et le gaz (−101 %)');
     ok(c('bull').n === 1 && c('outsider').n === 1, 'chaque candidat a son pari fictif sur ce round');
-    ok(o.nCandidats === 4, 'la carte dit combien de candidats sont regardés [' + o.nCandidats + ']');
+    ok(o.nCandidats === 5, 'la carte dit combien de candidats sont regardés : quatre a la decision, plus le retard de l oracle [' + o.nCandidats + ']');
+    ok(c('oracle').n === 0, 'le retard de l oracle ne parie pas sans son signal (ce round n en porte pas)');
     /* ÉGALITÉ : lock = close → tout le pool au trésor → PERDU pour tous. */
     J.ajouteDecision(decision(101));
     J.ajouteRound(101, rond(101, { closePrice: '60000000000' }), 'direct');
     const o2 = J.ombres();
-    ok(o2.candidats.every((x) => x.n === 2 && x.gagnes <= 1), 'une égalité compte : chaque candidat a un pari de plus');
+    ok(o2.candidats.filter((x) => x.id !== 'oracle').every((x) => x.n === 2 && x.gagnes <= 1), 'une égalité compte : chaque candidat de la decision a un pari de plus');
     ok(o2.candidats.find((x) => x.id === 'inverse').gagnes === 0 && o2.candidats.find((x) => x.id === 'moteur').gagnes === 1,
        'et elle est PERDUE pour tous (le contrat V2 donne le pool au trésor)');
     ok(J.gagnantDe({ oc: true, lp: '5', cp: '5' }) === 'TIE', 'gagnantDe : lock = close → TIE');
@@ -101,7 +102,7 @@ function decision(ep, cand, o) {
     J.ajouteDecision(decision(102));
     J.ajouteRound(102, rond(102, { oracleCalled: false, closePrice: '0' }), 'direct');
     const o3 = J.ombres();
-    ok(o3.candidats.every((x) => x.n === 2) && o3.annules === 1, 'un round annulé est remboursé : aucune ombre ne le compte, il est dit à part');
+    ok(o3.candidats.filter((x) => x.id !== 'oracle').every((x) => x.n === 2) && o3.annules === 1, 'un round annulé est remboursé : aucune ombre ne le compte, il est dit à part');
     ok(J.rendement('BULL', { oc: false, lp: '0', cp: '0' }, 0.03, 0.002) === null, 'rendement : annulé → null');
     /* L'outsider VISIBLE : le plus petit pool à la décision, rien si égal. */
     ok(o3.candidats.find((x) => x.id === 'outsider').texte.indexOf('visible') >= 0, 'l outsider est celui du pool VISIBLE à la décision');
@@ -145,6 +146,41 @@ function decision(ep, cand, o) {
     ok(!R.some((l) => l.ep === 112), 'le round encore dans son délai d oracle attend');
     ok(J.annule({ oracleCalled: false, close: t - 31 }, t) && !J.annule({ oracleCalled: false, close: t - 29 }, t) && !J.annule({ oracleCalled: true, close: 1 }, t),
        'annulé = oracle non appelé ET close + bufferSeconds (30 s) dépassé');
+  }
+
+  console.log('\n-- 4b. le retard de l oracle : donnees d AVANT le lock, regle fixee d avance, relu du disque --');
+  {
+    J._reset(); await J.indexe();
+    const lp = 60000000000;                                   /* 600,00 $ en entier Chainlink */
+    const r = (ep, o, os) => Object.assign(rond(ep, o), { os });
+    const L = J.ORACLE_L;
+    /* 120 : Binance 0,1 % AU-DESSUS du lockPrice, publie 15 s avant le lock -> BULL ; BULL gagne */
+    const a = r(120, {}, { L, px: 600.6, maj: 1300 + 120 * 300 - 15 });
+    ok(J.signalOracle({ ep: 120, lock: a.lock, lp: String(lp), os: a.os }) === 'BULL', 'Binance au-dessus du prix oracle de depart : BULL');
+    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: { L, px: 599.4, maj: 900 } }) === 'BEAR', 'en dessous : BEAR');
+    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: { L, px: 600.2, maj: 900 } }) === null, 'ecart de 0,033 % (< 0,05 %) : pas de pari');
+    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: { L, px: 601, maj: 995 } }) === null, 'lockPrice publie APRES lock − 8 s : pas de pari (on ne triche pas)');
+    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp) }) === null && J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: null }) === null, 'lecture ratee : pas de pari');
+    ok(J.ORACLE_L === 8 && J.ORACLE_SEUIL === 0.0005, 'le reglage fixe d avance le 29/09 : 8 s, 0,05 %');
+    /* la boucle : elle relit le signal au reglement, sur un round verrouille, et l ecrit avec le round */
+    const t = nowS(); const lus = [];
+    const chaine = {
+      round: async (k) => ({ 120: rond(120), 121: rond(121, { closePrice: '59900000000' }), 122: rond(122, { oracleCalled: false, closePrice: '0', close: t - 40 }) })[k],
+      oracleSignal: async (rr, LL) => { lus.push([rr.epoch, LL]); return rr.epoch === '120' ? { L: LL, px: 600.6, maj: rr.lock - 15 } : rr.epoch === '121' ? { L: LL, px: 600.9, maj: rr.lock - 20 } : null; },
+    };
+    await J.regleRecents(chaine, 124, t);
+    await J._vidange();
+    const o = J.ombres().candidats.find((x) => x.id === 'oracle');
+    ok(lus.length === 2 && lus.every((x) => x[1] === 8) && !lus.some((x) => x[0] === '122'), 'le signal est relu pour chaque round regle par l oracle, a L = 8 s ; jamais pour un round annule');
+    const coteBull = (1 + 0.002) * 0.97 / (0.5 + 0.002);
+    ok(o.n === 2 && o.gagnes === 1, 'deux paris : 120 gagne (BULL), 121 perdu (BULL, BEAR gagne)');
+    near(o.ev, 100 * ((coteBull - 1 - 0.01) + (-1 - 0.01)) / 2, 0.01, 'paye a la cote finale diluee, 3 % de frais, gaz reel');
+    const R = lignes(J.fichierRounds()).filter((l) => l.ep >= 120);
+    ok(R.find((l) => l.ep === 120).os.px === 600.6 && !('os' in R.find((l) => l.ep === 122)), 'le signal est ECRIT avec la ligne du round (le round annule n en a pas)');
+    const avant = JSON.stringify(o);
+    J._reset(); await J.indexe();
+    ok(JSON.stringify(J.ombres().candidats.find((x) => x.id === 'oracle')) === avant, 'apres un redemarrage, relu du disque a l identique');
+    ok(/Oracle lag only when its signal fires/.test(J.ombres().regle), 'la regle affichee dit que ce candidat ne parie que sur signal');
   }
 
   console.log('\n-- 5. le remplissage : borné, lent, reprenable, jamais bloquant --');

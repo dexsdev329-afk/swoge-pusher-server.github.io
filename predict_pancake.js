@@ -119,6 +119,7 @@ const FICHIER = path.join(cfg.DATA_DIR, 'predict_pancake.json');
 const ABI = [
   'function currentEpoch() view returns (uint256)',
   'function treasuryFee() view returns (uint256)',
+  'function oracle() view returns (address)',
   'function rounds(uint256) view returns (uint256 epoch,uint256 startTimestamp,uint256 lockTimestamp,uint256 closeTimestamp,int256 lockPrice,int256 closePrice,uint256 lockOracleId,uint256 closeOracleId,uint256 totalAmount,uint256 bullAmount,uint256 bearAmount,uint256 rewardBaseCalAmount,uint256 rewardAmount,bool oracleCalled)',
 ];
 
@@ -128,6 +129,7 @@ function chaineReelle() {
   const { ethers } = require('ethers');
   const prov = new ethers.providers.JsonRpcProvider(RPC);
   const c = new ethers.Contract(ADDR, ABI, prov);
+  let oracleC = null;
   return {
     epoch: async () => (await c.currentEpoch()).toNumber(),
     fee: async () => (await c.treasuryFee()).toNumber() / 10000,   /* 300 -> 0.03 */
@@ -142,7 +144,21 @@ function chaineReelle() {
         rb: Number(ethers.utils.formatEther(r.rewardBaseCalAmount)),
         rw: Number(ethers.utils.formatEther(r.rewardAmount)),
         oracleCalled: r.oracleCalled,
+        loid: r.lockOracleId.toString(),
       };
+    },
+    /* Le retard de l'oracle (predict_pancake_journal, 5e candidat) : l'heure ou Chainlink a publie le
+       lockPrice, et le dernier prix Binance BNBUSDT a lock − L (bougies d'une seconde, miroir public
+       data-api.binance.vision, verifie le 29/09 ; api.binance.com repond 451 hors de certains pays). */
+    oracleSignal: async (r, L) => {
+      if (!oracleC) oracleC = new ethers.Contract(await c.oracle(), ['function getRoundData(uint80) view returns (uint80,int256,uint256,uint256,uint80)'], prov);
+      const d = await oracleC.getRoundData(r.loid);
+      const t = r.lock - L;
+      const k = await fetch('https://data-api.binance.vision/api/v3/klines?symbol=BNBUSDT&interval=1s&startTime=' + (t - 10) * 1000 + '&endTime=' + t * 1000 + '&limit=20',
+        { signal: AbortSignal.timeout(10000) }).then((x) => { if (!x.ok) throw new Error('HTTP ' + x.status); return x.json(); });
+      const avant = (Array.isArray(k) ? k : []).filter((x) => Math.floor(x[0] / 1000) <= t);
+      if (!avant.length) return null;
+      return { L, px: Number(avant[avant.length - 1][4]), maj: d[3].toNumber() };
     },
   };
 }
