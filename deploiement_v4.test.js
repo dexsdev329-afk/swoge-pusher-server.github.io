@@ -148,6 +148,47 @@ function monde(o) {
     fs.rmSync(dossier2, { recursive: true, force: true });
   }
 
+  console.log('\n-- 4b. le jumeau WETH : cinq parametres, WETH relu, pas d achat de listage, attend le V4 --');
+  {
+    const AW = JSON.parse(fs.readFileSync(path.join(__dirname, 'swogefun_v4weth.json'), 'utf8'));
+    const PW = AW.constructeur;
+    ok(AW.contrat === 'SwogeFunV4Weth' && PW.weth === '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73' && PW.swoge === A.constructeur.swoge && PW.creationFeeWei === A.constructeur.creationFeeWei,
+       'l artefact du jumeau : WETH9 relu le 29/09, meme frais de 10 000 $SWOGE que le V4');
+    const dW = fs.mkdtempSync(path.join(os.tmpdir(), 'dep4w-'));
+    const ww = monde(); const base = ww.chaine;
+    let pretV4 = false, wethLu = PW.weth;
+    ww.chaine = () => Object.assign(base(), { parametres: async () => ({ positionManager: PW.positionManager, swoge: PW.swoge, weth: wethLu, treasury: PW.treasury, creationFee: PW.creationFeeWei }) });
+    const mkW = () => D.cree({ dossier: dW, artefact: AW, chaine: ww.chaine, nom: 'v4weth', pret: () => pretV4, lis: async () => ({ result: {} }) });
+    let dw = mkW(); dw.charge();
+    ww.eth = D.ETH_MIN_WEI; ww.swoge = FRAIS;
+    await dw.tour();
+    ok(ww.envoyees.length === 0, 'tant que le V4 n a pas fini d envoyer, le jumeau n envoie RIEN (un seul signataire a la fois)');
+    pretV4 = true;
+    await dw.tour();
+    const dp = ww.envoyees.find((x) => x[0] === 'deploie');
+    ok(dp && dp[1].length === 5 && dp[1][0] === PW.positionManager && dp[1][1] === PW.swoge && dp[1][2] === PW.weth && dp[1][3] === PW.treasury && dp[1][4] === FRAIS,
+       'le jumeau part avec CINQ parametres, dans l ordre du contrat (WETH en troisieme)');
+    ok(fs.existsSync(path.join(dW, 'deploiement_v4weth.json')) && !fs.existsSync(path.join(dW, 'deploiement_v4.json')), 'son etat vit dans son propre fichier : le V4 n est jamais ecrase');
+    ww.recus['0xdep'] = { status: 1, contractAddress: LP };
+    await dw.tour();
+    ok(dw.etat().launchpad === LP && !dw.etat().error && dw.etat().pair === 'WETH' && dw.etat().parametersReadBack.weth === PW.weth,
+       'deploye : le WETH est RELU sur la chaine et juste (le frais etant la, l autorisation suit dans le meme tour)');
+    ww.recus['0xapp'] = { status: 1 }; await dw.tour();
+    const lw = ww.envoyees.find((x) => x[0] === 'lance');
+    ok(lw && lw[2].symbol === 'SWV4WTEST' && /WETH/.test(lw[2].name), 'son jeton de test porte son propre nom (SWV4WTEST)');
+    ww.recus['0xlan'] = { status: 1, logs: [{}] }; ww.swoge = 20000n * 10n ** 18n;
+    await dw.tour(); await dw.tour();
+    ok(dw.etat().step === 'jeton_test' && !ww.envoyees.some((x) => x[0] === 'routeur' || x[0] === 'echange'), 'aucun achat de listage pour le jumeau, meme avec 20 000 $SWOGE : il faudrait envelopper de l ETH, non confirme');
+    /* un WETH faux a la relecture arrete tout */
+    const dW2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dep4w-'));
+    const w2 = monde(); const b2 = w2.chaine; w2.eth = D.ETH_MIN_WEI; w2.swoge = FRAIS;
+    w2.chaine = () => Object.assign(b2(), { parametres: async () => ({ positionManager: PW.positionManager, swoge: PW.swoge, weth: PW.swoge, treasury: PW.treasury, creationFee: PW.creationFeeWei }) });
+    const d2w = D.cree({ dossier: dW2, artefact: AW, chaine: w2.chaine, nom: 'v4weth' });
+    await d2w.tour(); w2.recus['0xdep'] = { status: 1, contractAddress: LP }; await d2w.tour(); await d2w.tour();
+    ok(d2w.etat().step === 'erreur' && /WRONG PARAMETERS/.test(d2w.etat().error) && !w2.envoyees.some((x) => x[0] !== 'deploie'), 'un WETH faux a la relecture : erreur, et AUCUN lancement');
+    fs.rmSync(dW, { recursive: true, force: true }); fs.rmSync(dW2, { recursive: true, force: true });
+  }
+
   console.log('\n-- 5. la cle --');
   {
     const dossier3 = fs.mkdtempSync(path.join(os.tmpdir(), 'dep4-'));

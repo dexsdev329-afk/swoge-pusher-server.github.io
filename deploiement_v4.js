@@ -54,15 +54,24 @@ const GLISSEMENT_BPS = 500n;
 const CHAMPS_GOPLUS = ['external_call', 'owner_address', 'creator_address', 'is_open_source', 'hidden_owner', 'can_take_back_ownership',
   'is_mintable', 'is_proxy', 'is_honeypot', 'buy_tax', 'sell_tax', 'transfer_pausable', 'is_blacklisted', 'is_in_dex', 'holder_count'];
 
+/* LE JUMEAU WETH (29/09, demande du proprietaire : « l'utilisateur a le choix entre pool $SWOGE ou
+   WETH normal »). Le meme module deploie SwogeFunV4Weth (swogefun_v4weth.json) par le MEME
+   portefeuille dedie, avec son propre fichier d'etat ; l'artefact porte `constructeur.weth` et c'est
+   lui qui decide des cinq parametres. Pas d'achat de listage pour ce jumeau : il faudrait envelopper
+   de l'ETH (un envoi de valeur), et seul l'achat en $SWOGE du V4 a ete confirme. `pret()` le retient
+   tant que le V4 n'a pas fini d'envoyer : deux instances ne signent jamais en meme temps (nonce). */
+
 /**
- * deps : { dossier, artefact, chaine?(portefeuille) → operations, lis?(url) → json, maintenant?, alea? }
+ * deps : { dossier, artefact, chaine?(portefeuille) → operations, lis?(url) → json, maintenant?, alea?,
+ *          nom? ('v4' | 'v4weth' : le fichier d'etat), pret?() → bool }
  * `chaine` recoit la cle privee et rend les SEULES operations permises (voir chaineEthers).
  */
 function cree(deps) {
   const maintenant = deps.maintenant || Date.now;
   const A = deps.artefact;
   const FCLE = path.join(deps.dossier, 'deployeur_v4.json');
-  const FETAT = path.join(deps.dossier, 'deploiement_v4.json');
+  const NOM = deps.nom || 'v4';
+  const FETAT = path.join(deps.dossier, 'deploiement_' + NOM + '.json');
   const lis = deps.lis || ((u) => fetch(u, { signal: AbortSignal.timeout(15000) }).then((r) => r.json()));
   let E = { etape: 'attente_fonds', historique: [] };
   let C = null;       /* les operations de chaine, construites une fois */
@@ -87,19 +96,24 @@ function cree(deps) {
 
   const P = A.constructeur;
   const FRAIS = BigInt(P.creationFeeWei);
+  const JUMEAU_WETH = !!P.weth;
+  /* Les parametres du constructeur, dans l'ordre du contrat : le jumeau en a cinq (WETH en troisieme). */
+  const ARGS = JUMEAU_WETH ? [P.positionManager, P.swoge, P.weth, P.treasury, FRAIS] : [P.positionManager, P.swoge, P.treasury, FRAIS];
+  const TEST = JUMEAU_WETH ? { name: 'SWOGE V4 WETH Scanner Test', symbol: 'SWV4WTEST' } : { name: 'SWOGE V4 Scanner Test', symbol: 'SWV4TEST' };
 
   async function tour() {
     const c = chaine();
+    if (deps.pret && !deps.pret()) return;              /* le V4 n'a pas fini : on n'envoie rien */
     soldes = { eth: await c.soldeEth(), swoge: await c.soldeSwoge(), lu: new Date(maintenant()).toISOString() };
 
     /* 1. le deploiement, repris s'il etait parti. Le seuil : le cout estime a l'instant, x1,5. */
     let seuil = ETH_MIN_WEI;
     if (E.etape === 'attente_fonds' && c.coutDeploiement) {
-      try { seuil = BigInt(Math.ceil(Number(await c.coutDeploiement([P.positionManager, P.swoge, P.treasury, FRAIS])) * MARGE_GAZ)); } catch (e) { seuil = ETH_MIN_WEI; }
+      try { seuil = BigInt(Math.ceil(Number(await c.coutDeploiement(ARGS)) * MARGE_GAZ)); } catch (e) { seuil = ETH_MIN_WEI; }
       E.seuilDeploiementWei = String(seuil);
     }
     if (E.etape === 'attente_fonds' && soldes.eth >= seuil) {
-      const tx = await c.deploieLaunchpad([P.positionManager, P.swoge, P.treasury, FRAIS]);
+      const tx = await c.deploieLaunchpad(ARGS);
       E.etape = 'deploiement'; E.txDeploiement = tx.hash; note('launchpad deployment sent ' + tx.hash); ecrit();
     }
     if (E.etape === 'deploiement') {
@@ -110,8 +124,9 @@ function cree(deps) {
       /* LA RELECTURE : ce qui est sur la chaine, pas ce qu'on croit avoir envoye. */
       const lu = await c.parametres(E.launchpad);
       const bons = lu.positionManager.toLowerCase() === P.positionManager.toLowerCase() && lu.swoge.toLowerCase() === P.swoge.toLowerCase()
-        && lu.treasury.toLowerCase() === P.treasury.toLowerCase() && BigInt(lu.creationFee) === FRAIS;
-      E.parametresLus = { positionManager: lu.positionManager, swoge: lu.swoge, treasury: lu.treasury, creationFeeWei: String(lu.creationFee) };
+        && lu.treasury.toLowerCase() === P.treasury.toLowerCase() && BigInt(lu.creationFee) === FRAIS
+        && (!JUMEAU_WETH || String(lu.weth || '').toLowerCase() === P.weth.toLowerCase());
+      E.parametresLus = { positionManager: lu.positionManager, swoge: lu.swoge, ...(JUMEAU_WETH ? { weth: lu.weth } : {}), treasury: lu.treasury, creationFeeWei: String(lu.creationFee) };
       if (!bons) { E.etape = 'erreur'; E.erreur = 'WRONG PARAMETERS read back on chain — this launchpad must never be used'; note(E.erreur); ecrit(); return; }
       E.etape = 'deploye'; note('launchpad deployed at ' + E.launchpad + ', parameters read back and correct'); ecrit();
     }
@@ -126,7 +141,7 @@ function cree(deps) {
       if (!r) return;
       if (r.status !== 1) { E.etape = 'erreur'; E.erreur = 'approval reverted'; note(E.erreur); ecrit(); return; }
       const sel = '0x' + require('crypto').randomBytes(32).toString('hex');
-      const tx = await c.lanceTest(E.launchpad, { name: 'SWOGE V4 Scanner Test', symbol: 'SWV4TEST', salt: sel, telegram: '', twitter: '', website: 'https://swoleeswoge.dog', logo: '' });
+      const tx = await c.lanceTest(E.launchpad, { name: TEST.name, symbol: TEST.symbol, salt: sel, telegram: '', twitter: '', website: 'https://swoleeswoge.dog', logo: '' });
       E.etape = 'lancement'; E.txLancement = tx.hash; note('test launch sent ' + tx.hash); ecrit();
     }
     if (E.etape === 'lancement') {
@@ -140,7 +155,7 @@ function cree(deps) {
 
     /* 4. l'achat puis la revente de listage, chacun attendu avant le suivant */
     const S = P.swoge, J = E.jetonTest;
-    if (E.etape === 'jeton_test' && !E.txAchat && soldes.swoge >= ACHAT_SWOGE_WEI) {
+    if (!JUMEAU_WETH && E.etape === 'jeton_test' && !E.txAchat && soldes.swoge >= ACHAT_SWOGE_WEI) {
       const tx = await c.autoriseRouteur(S, ACHAT_SWOGE_WEI);
       E.etape = 'appro_achat'; E.txApproAchat = tx.hash; note('router approval for the listing buy sent ' + tx.hash); ecrit();
     }
@@ -192,7 +207,7 @@ function cree(deps) {
     let adresse = null;
     try { adresse = chaine().adresse; } catch (e) { adresse = null; }
     const x = 'https://robinhoodchain.blockscout.com/';
-    return { ok: true, step: E.etape, deployer: adresse,
+    return { ok: true, contract: A.contrat, pair: JUMEAU_WETH ? 'WETH' : 'SWOGE', step: E.etape, deployer: adresse,
       needs: { ethWei: E.seuilDeploiementWei || String(ETH_MIN_WEI), eth: Number(E.seuilDeploiementWei || ETH_MIN_WEI) / 1e18, estimated: !!E.seuilDeploiementWei, swogeForTestLaunch: Number(FRAIS / 10n ** 18n) },
       balances: soldes.lu ? { eth: soldes.eth == null ? null : Number(soldes.eth) / 1e18, swoge: soldes.swoge == null ? null : Number(soldes.swoge / 10n ** 14n) / 1e4, readAt: soldes.lu } : null,
       launchpad: E.launchpad || null, parametersReadBack: E.parametresLus || null, testToken: E.jetonTest || null, testPool: E.poolTest || null,
@@ -249,7 +264,8 @@ function chaineEthers(clePrivee, A) {
     coutDeploiement: async (args) => { const f = await frais(deploiement(args)); return f.gasLimit.mul(f.gasPrice).toBigInt(); },
     recu: async (hash) => { const r = await prov.getTransactionReceipt(hash); return r && r.blockNumber ? r : null; },
     parametres: async (adr) => { const c = new ethers.Contract(adr, LP, prov);
-      return { positionManager: await c.positionManager(), swoge: await c.swoge(), treasury: await c.swogeTreasury(), creationFee: (await c.creationFee()).toString() }; },
+      return { positionManager: await c.positionManager(), swoge: await c.swoge(), ...(LP.functions['weth()'] ? { weth: await c.weth() } : {}),
+        treasury: await c.swogeTreasury(), creationFee: (await c.creationFee()).toString() }; },
     autoriseFrais: async (launchpad, montant) => swoge.approve(launchpad, montant, await frais(await swoge.populateTransaction.approve(launchpad, montant))),
     lanceTest: async (launchpad, p) => { const c = new ethers.Contract(launchpad, LP, w); return c.createToken(p, await frais(await c.populateTransaction.createToken(p))); },
     soldeJeton: async (adr) => (await new ethers.Contract(adr, ERC, prov).balanceOf(w.address)).toBigInt(),

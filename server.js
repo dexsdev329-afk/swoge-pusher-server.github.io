@@ -2085,6 +2085,12 @@ if (process.env.POLY_PAPIER !== '0' && require.main === module) polyPapier.demar
    a financer et l'etape. DEPLOIEMENT_V4=0 coupe ; jamais dans un essai (require.main). */
 const deploiementV4 = require('./deploiement_v4').cree({ dossier: cfg.DATA_DIR, artefact: require('./swogefun_v4.json') });
 if (process.env.DEPLOIEMENT_V4 !== '0' && require.main === module) deploiementV4.demarre(); else deploiementV4.charge();
+/* Le JUMEAU WETH (29/09) : le choix « pool $SWOGE ou pool WETH ». Meme portefeuille, son propre etat
+   (deploiement_v4weth.json), aucun achat de listage. Il n'envoie rien tant que le V4 n'a pas fini
+   (liste ou erreur) : un seul signataire a la fois sur ce portefeuille. /launchpad/v4weth. */
+const deploiementV4Weth = require('./deploiement_v4').cree({ dossier: cfg.DATA_DIR, artefact: require('./swogefun_v4weth.json'), nom: 'v4weth',
+  pret: () => ['liste', 'erreur'].includes(deploiementV4._etat().etape) });
+if (process.env.DEPLOIEMENT_V4 !== '0' && require.main === module) deploiementV4Weth.demarre(150e3); else deploiementV4Weth.charge();
 /* ---- L'eSIM ET LA PASSERELLE DANS LE MCP (mcp_extras.js, 29/09) ---- */
 let MCP_EXTRAS = null;
 function mcpExtras() {
@@ -3915,6 +3921,11 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(deploiementV4.etat()));
+  }
+  if (path === '/launchpad/v4weth') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(deploiementV4Weth.etat()));
   }
 
   /* Polymarket AI : le releve de la colonie papier (poly_papier.js). Public, lisible depuis le site. */
