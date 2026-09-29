@@ -51,13 +51,18 @@ function lisible(brut, dec) {
  */
 function preuves(lignes, maison, n) {
   const ext = [];
+  /* Ce qui est ecarte, par raison : des nombres seulement. Le 29/09, la premiere lecture en
+     production rendait 0 paiement pour 55 lignes du journal — sans ce decompte, impossible
+     de dire quel filtre les retenait sans lire le fichier. */
+  const ecartes = { noTransaction: 0, otherNetwork: 0, otherAsset: 0, ours: 0, badAmount: 0 };
   for (const l of lignes || []) {
-    if (!l || !l.transaction || !RESEAUX[l.network]) continue;
+    if (!l || !l.transaction) { ecartes.noTransaction++; continue; }
+    if (!RESEAUX[l.network]) { ecartes.otherNetwork++; continue; }
     const a = actifDe(l.asset);
-    if (!a) continue;
-    if (maison && maison(String(l.payer || '').toLowerCase())) continue;
+    if (!a) { ecartes.otherAsset++; continue; }
+    if (maison && maison(String(l.payer || '').toLowerCase())) { ecartes.ours++; continue; }
     const montant = lisible(l.montant, a.dec);
-    if (montant == null) continue;
+    if (montant == null) { ecartes.badAmount++; continue; }
     ext.push({ t: l.t, tool: String(l.outil || '').slice(0, 40), network: RESEAUX[l.network].nom, asset: a.sym, amount: montant,
       usd: a.dollar ? montant : null, payer: tronque(l.payer), tx: String(l.transaction), txUrl: RESEAUX[l.network].tx + String(l.transaction),
       _qui: String(l.payer || '').toLowerCase() });
@@ -67,7 +72,7 @@ function preuves(lignes, maison, n) {
     inSwoge: ext.length - enDollars.length, payers: new Set(ext.map((x) => x._qui)).size,
     since: ext.length ? new Date(ext[0].t).toISOString() : null };
   const recent = ext.slice(-(n || N_DEFAUT)).reverse().map((x) => { const o = Object.assign({}, x); delete o._qui; o.at = new Date(o.t).toISOString(); delete o.t; return o; });
-  return { recent, total };
+  return { recent, total, skipped: ecartes };
 }
 
 /** Lit le journal (JSONL) ; une ligne illisible est sautee, un fichier absent rend []. */

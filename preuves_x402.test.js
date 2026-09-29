@@ -34,6 +34,8 @@ ok(r.recent[2].network === 'Solana' && r.recent[2].amount === 0.008 && r.recent[
    'Solana : l actif en base58 garde sa casse, lien solscan');
 ok(r.total.usd === 4.248 && r.total.inSwoge === 1 && r.total.payers === 3 && r.total.since === '2026-09-27T10:00:00.000Z',
    'le total en dollars (USDC + USDG), les paiements en $SWOGE a part, les payeurs distincts, la date du premier');
+ok(JSON.stringify(r.skipped) === JSON.stringify({ noTransaction: 1, otherNetwork: 1, otherAsset: 0, ours: 1, badAmount: 0 }),
+   'ce qui est ecarte est compte par raison (des nombres, aucune adresse) [' + JSON.stringify(r.skipped) + ']');
 ok(P.preuves(L, (a) => a === MAISON, 2).recent.length === 2 && P.preuves([], null).total.since === null, 'n borne la liste ; un journal vide ne rend rien d invente');
 
 console.log('\n-- les unites et la lecture du fichier --');
