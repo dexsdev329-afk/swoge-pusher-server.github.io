@@ -2085,15 +2085,15 @@ if (process.env.POLY_PAPIER !== '0' && require.main === module) polyPapier.demar
    a financer et l'etape. DEPLOIEMENT_V4=0 coupe ; jamais dans un essai (require.main). */
 const deploiementV4 = require('./deploiement_v4').cree({ dossier: cfg.DATA_DIR, artefact: require('./swogefun_v4.json') });
 if (process.env.DEPLOIEMENT_V4 !== '0' && require.main === module) deploiementV4.demarre(); else deploiementV4.charge();
-/* Le JUMEAU WETH (29/09) : le choix « pool $SWOGE ou pool WETH ». Meme portefeuille, son propre etat
-   (deploiement_v4weth.json), aucun achat de listage. Il n'envoie rien tant que le V4 n'a pas fini
+/* Le JUMEAU WETH (29/09) : le choix « pool $SWOGE ou pool WETH », frais de lancement en ETH au
+   tresor. Meme portefeuille, son propre etat (deploiement_v4weth.json), aucun achat de listage. Il n'envoie rien tant que le V4 n'a pas fini
    (liste ou erreur) : un seul signataire a la fois sur ce portefeuille. /launchpad/v4weth. */
 const deploiementV4Weth = require('./deploiement_v4').cree({ dossier: cfg.DATA_DIR, artefact: require('./swogefun_v4weth.json'), nom: 'v4weth',
   pret: () => ['liste', 'erreur'].includes(deploiementV4._etat().etape) });
-/* ARRETE le 29/09 a 19:23 UTC, avant sa mise en ligne : le proprietaire veut le frais du jumeau
-   en ETH (a la tresorerie), pas en $SWOGE brule. L'artefact actuel ne doit jamais partir ; le
-   jumeau ne demarre qu'avec DEPLOIEMENT_V4WETH=1, pose une fois le bon contrat en place. */
-if (process.env.DEPLOIEMENT_V4WETH === '1' && require.main === module) deploiementV4Weth.demarre(150e3); else deploiementV4Weth.charge();
+/* Arrete le 29/09 a 19:23 UTC (1a12f2e) avant sa mise en ligne, le temps de passer le frais du
+   jumeau en ETH a la tresorerie (demande du proprietaire) ; l'artefact est desormais celui-la
+   (fraisEnEth, 0,0001 ETH). DEPLOIEMENT_V4WETH=0 le coupe seul, DEPLOIEMENT_V4=0 coupe les deux. */
+if (process.env.DEPLOIEMENT_V4 !== '0' && process.env.DEPLOIEMENT_V4WETH !== '0' && require.main === module) deploiementV4Weth.demarre(150e3); else deploiementV4Weth.charge();
 /* ---- L'eSIM ET LA PASSERELLE DANS LE MCP (mcp_extras.js, 29/09) ---- */
 let MCP_EXTRAS = null;
 function mcpExtras() {
