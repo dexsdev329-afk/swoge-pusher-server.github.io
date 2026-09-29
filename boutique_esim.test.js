@@ -64,6 +64,15 @@ const ok = (c, m) => { n++; if (!c) rates++; console.log((c ? '  ok   ' : '  RAT
   ok((await S.achete({ plan: 'europe-1gb-7days', qui: 'ip1' })).status === 503 && !(await S.plans({ country: 'fr' })).ok, 'boutique fermee (ACHATS=0) : 503, rien');
   ouvert = true;
 
+  console.log('\n-- choisir sans taper (29/09) --');
+  achats.pays = async () => [{ code: 'FR', nom: 'France' }, { code: 'JP', nom: 'Japan' }];
+  const dd = await S.destinations();
+  ok(dd.ok && dd.countries.length === 2 && dd.countries[1].code === 'JP' && dd.countries[1].name === 'Japan' && dd.regions.includes('Europe') && dd.regions.includes('Global'),
+     'les pays vendus (code, nom) et les regions que la recherche comprend');
+  achats.pays = async () => { throw new Error('down'); };
+  ok(!(await S.destinations()).ok, 'CHIPS muet : la liste le dit, sans inventer de pays');
+  ouvert = false; ok(!(await S.destinations()).ok, 'boutique fermee : pas de liste'); ouvert = true;
+
   console.log('\n-- le code, par le lien seulement --');
   ok((await S.commande('a'.repeat(32))).ok && !(await S.commande('b'.repeat(32))).ok, 'le bon lien rend le code, un autre non');
 

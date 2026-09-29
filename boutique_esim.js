@@ -84,10 +84,19 @@ function cree(deps) {
     return x.traite({ outil: 'esim', url: deps.url, entete: entete || null, sert, args: { plan: slug }, canal: 'rest', qui });
   }
 
+  /** Les pays vendus et les regions, pour choisir sans taper (29/09, demande du proprietaire). Rien n'est paye. */
+  async function destinations() {
+    if (!actif()) return { ok: false, raison: 'the eSIM shop is closed right now' };
+    let l;
+    try { l = await deps.achats.pays(); } catch (e) { return { ok: false, raison: 'the eSIM shop did not answer - try again' }; }
+    return { ok: true, countries: l.map((x) => ({ code: x.code, name: x.nom })),
+      regions: ['Europe', 'Asia', 'Middle East', 'South America', 'North America', 'Global'] };
+  }
+
   /** Le code d'activation, par le lien secret seulement. */
   async function commande(lien) { return deps.achats.parLien(lien); }
 
-  return { plans, achete, commande, prixUsd, actif, MESURE, marge };
+  return { plans, achete, commande, destinations, prixUsd, actif, MESURE, marge };
 }
 
 module.exports = { cree, MARGE_DEFAUT };

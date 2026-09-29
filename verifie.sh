@@ -62,6 +62,7 @@ lance roast   "$SRV" node roast.test.js   # roast_token : les faits seuls, pas d
 lance embauche "$SRV" node embauche.test.js   # l agent embauche un service x402 : catalogue seulement, pas d adresse privee ni de redirection, plafonds appel/joueur/jour, reserve avant, facture sur 200 seulement, vraie signature EIP-3009
 lance achats "$SRV" node achats.test.js   # l eSIM : l agent propose, seul le joueur confirme ; prix reverifie, un double clic ne paie qu une fois, facture sur 200, code rendu au seul payeur
 lance boutique "$SRV" node boutique_esim.test.js   # boutique eSIM sans compte : x402 depuis le portefeuille, eSIM achetee AVANT le reglement, prix qui monte refuse, code par lien secret seulement
+lance fondsesim "$SRV" node fonds_esim.test.js   # fonds de la page eSIM : 3 images Kling faites une fois, jamais refaites, jamais sans Kling, une reponse qui n est pas une image jamais gardee
 lance passerelle "$SRV" node passerelle.test.js   # passerelle de depense : un agent paie un service avec SA cle, permission du proprietaire, plafond par appel et par jour, Idempotency-Key, audit chaine
 lance mcpextras "$SRV" node mcp_extras.test.js   # MCP : eSIM (gratuite, sans cle) et passerelle (cle + idempotency_key) listees ; la consigne nomme la seule exception a « rien n achete »
 lance credits  "$SRV" node credits.test.js   # credit en dollars : credite apres le reglement seulement, une fois par transaction, a la session ; debit au cout reel, reste rendu ; reserve ouverte rendue au redemarrage

@@ -394,7 +394,17 @@ function cree(deps) {
     return pour(qui, { reserve: async () => ({ ok: true, jeton: 0 }), regle: async () => {} }).livre(id);
   }
 
-  return { pour, forfaits, prixConnu, parLien, actif, MESURE, adresse: w ? w.address : null,
+  /** Les PAYS vendus (la liste de CHIPS, en cache comme les destinations) : [{ code, nom }] par nom — pour choisir sans taper. */
+  async function pays() {
+    const vus = new Set(), l = [];
+    for (const d of await destinations()) {
+      const c = d && d.kind === 'country' && String((d.countryCodes || [])[0] || '').toUpperCase();
+      if (!c || !/^[A-Z]{2}$/.test(c) || vus.has(c)) continue;
+      vus.add(c); l.push({ code: c, nom: String(d.name || c).replace(/[\x00-\x1f<>]/g, '').slice(0, 60) });
+    }
+    return l.sort((a, b) => a.nom.localeCompare(b.nom, 'en'));
+  }
+  return { pour, forfaits, prixConnu, parLien, actif, MESURE, pays, adresse: w ? w.address : null,
     etat: () => ({ actif: actif(), vendeur: hote, reseau: w ? reseau.network : null, maxAchatUsd: maxAchat(), maxJoueurUsd: maxJoueur(), maxJourUsd: maxJour(), marge: marge(),
       aujourdhuiUsd: arrondi(depuis(jour0(), null)), mesure: Object.assign({}, MESURE) }) };
 }

@@ -2041,6 +2041,11 @@ function boutiqueEsim() {
   return BOUTIQUE;
 }
 const RECHERCHES_ESIM = new Map();            /* empreinte d'IP → instants : 20 recherches par 10 min */
+/* ---- LES IMAGES DE FOND DE LA PAGE eSIM (fonds_esim.js, 29/09) : faites UNE fois par Kling ---- */
+const fondsEsim = require('./fonds_esim').cree({ kling, dossier: cfg.DATA_DIR, journal: (t) => console.log(t) });
+if (process.env.ESIM_FONDS !== '0' && require.main === module) {
+  setTimeout(() => { fondsEsim.prepare().then((r) => { if (r.faites) console.log('[esim] ' + r.faites + ' background picture(s) made by Kling'); }).catch(() => {}); }, 120000).unref();
+}
 /* ---- LA PASSERELLE DE DEPENSE DES AGENTS (passerelle.js, 28/09 au soir) ---- */
 let PASSERELLE = null;
 function passerelle() {
@@ -3437,6 +3442,20 @@ const server = http.createServer(async (req, res) => {
     const x = await credits().recharge({ entete: req.headers['payment-signature'], usd: q.usd, addr, qui: compteurs.ip(qui(req)) });
     res.writeHead(x.status, Object.assign({ 'cache-control': 'no-store' }, cors, x.entetes));
     return res.end(x.corps);
+  }
+  /* Les images de fond (publiques, immuables : une image faite n'est jamais refaite) et les pays vendus. */
+  if (/^\/esim\/fond\/[1-9]\.jpg$/.test(path) && (req.method === 'GET' || req.method === 'HEAD')) {
+    const b = fondsEsim.lis(path.slice('/esim/fond/'.length, -4));
+    if (!b) { res.writeHead(404, { 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(); }
+    res.writeHead(200, { 'content-type': b[0] === 0x89 ? 'image/png' : 'image/jpeg', 'content-length': b.length, 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=86400' });
+    return res.end(req.method === 'HEAD' ? undefined : b);
+  }
+  if (path === '/esim/destinations') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS' };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const r = await boutiqueEsim().destinations();
+    res.writeHead(r.ok ? 200 : 503, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': r.ok ? 'public, max-age=3600' : 'no-store' }, cors));
+    return res.end(JSON.stringify(Object.assign(r, { backgrounds: fondsEsim.liste().map((n) => MOI_URL + '/esim/fond/' + n + '.jpg') })));
   }
   if (path === '/esim/plans' || path === '/esim/buy' || path.startsWith('/esim/order/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',

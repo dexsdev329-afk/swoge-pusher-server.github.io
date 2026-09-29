@@ -107,6 +107,9 @@ async function fauxChips(url, o) {
   const f3 = await J.forfaits({ pays: 'fr', go: 3 });
   ok(f3.ok && f3.destination.nom === 'France' && f3.forfaits.length === 3 && f3.forfaits.every((x) => x.go >= 3), 'le code pays et « au moins 3 Go » filtrent (la region comprise)');
   ok((await J.forfaits({ pays: 'us' })).destination.nom === 'United States', '« us » est un code pays, pas un bout de nom (ni Austria, ni Australia)');
+  /* Choisir sans taper (29/09) : les PAYS de CHIPS, par nom, sans les regions. */
+  const lp = await H.pays();
+  ok(JSON.stringify(lp) === JSON.stringify([{ code: 'FR', nom: 'France' }, { code: 'US', nom: 'United States' }]), 'la liste des pays vendus : code et nom, par nom, sans les regions');
   ok(!(await J.forfaits({ pays: 'atlantide' })).ok, 'un pays inconnu : dit, rien d invente');
   /* 28/09 au soir : CHIPS ne nomme ses regions que par leurs pays, « Europe » ne trouvait rien. */
   const fe = await J.forfaits({ pays: 'Europe' });
