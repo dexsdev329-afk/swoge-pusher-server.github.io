@@ -3295,6 +3295,11 @@ const server = http.createServer(async (req, res) => {
             etiquettes: require('./decouverte').ETIQUETTES_OUTIL, api: MOI_URL, page: SITE_URL + '/swogeagentic.html' }),
           /* Juste apres un demarrage, le catalogue n'est pas encore relu : pas de resume plutot que « 0 service ». */
           catalogue: process.env.SONDES_SERVICES === '0' ? null : ((r) => (r && r.catalogue > 0 ? r : null))(sondes().resume()),
+          /* Les paiements verifiables (preuves_x402.js, 29/09) : chaque paiement regle d'un agent
+             exterieur, avec sa transaction ; la maison ecartee, le payeur tronque. */
+          payments: xv && xv.journalFichier ? (() => { const P = require('./preuves_x402'), m = new Set(adressesMaison());
+            if (xv.porteGaz) m.add(xv.porteGaz.toLowerCase());
+            return P.preuves(P.lisJournal(xv.journalFichier), (a) => m.has(a)); })() : null,
           note: 'Usage counts only outside agents over the window (our own tests excluded). An attempt without a result is a refused payment, a failed settlement or a tool failure. No rate under ' + require('./store_agents').TENTATIVES_ASSEZ + ' attempts.' };
         STORE.t = Date.now();
       }
