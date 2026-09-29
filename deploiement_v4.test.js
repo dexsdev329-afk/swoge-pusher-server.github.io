@@ -148,7 +148,7 @@ function monde(o) {
     fs.rmSync(dossier2, { recursive: true, force: true });
   }
 
-  console.log('\n-- 4b. le jumeau WETH : quatre parametres, frais en ETH exact, WETH relu, attend le V4 --');
+  console.log('\n-- 4b. le jumeau WETH : quatre parametres, frais en ETH exact, WETH relu, attend le V4, listage en ETH --');
   {
     const AW = JSON.parse(fs.readFileSync(path.join(__dirname, 'swogefun_v4weth.json'), 'utf8'));
     const PW = AW.constructeur, FW = BigInt(PW.creationFeeWei);
@@ -161,7 +161,8 @@ function monde(o) {
     let pretV4 = false, wethLu = PW.weth;
     ww.chaine = () => Object.assign(base(), {
       parametres: async () => ({ positionManager: PW.positionManager, weth: wethLu, treasury: PW.treasury, creationFee: PW.creationFeeWei }),
-      lanceTest: async (lp, p, v) => { ww.envoyees.push(['lance', lp, p, v]); return { hash: '0xlan' }; } });
+      lanceTest: async (lp, p, v) => { ww.envoyees.push(['lance', lp, p, v]); return { hash: '0xlan' }; },
+      envelopper: async (m) => { ww.envoyees.push(['enveloppe', m]); return { hash: '0xenv' }; } });
     const mkW = () => D.cree({ dossier: dW, artefact: AW, chaine: ww.chaine, nom: 'v4weth', pret: () => pretV4, lis: async () => ({ result: {} }) });
     let dw = mkW(); dw.charge();
     ww.eth = D.ETH_MIN_WEI; ww.swoge = 20000n * 10n ** 18n;
@@ -180,10 +181,37 @@ function monde(o) {
     ok(lw && lw[1] === LP && lw[3] === FW && lw[2].symbol === 'SWV4WTEST', 'le jeton de test part en payant EXACTEMENT 0,0001 ETH au launchpad relu, sous son propre nom');
     ok(!ww.envoyees.some((x) => x[0] === 'autorise'), 'aucune autorisation $SWOGE : le jumeau ne touche pas au $SWOGE');
     ww.recus['0xlan'] = { status: 1, logs: [{}] };
+    ww.eth = 6n * 10n ** 14n;                                /* 0,0006 ETH : sous 0,0005 + 0,0002 de marge */
     await dw.tour(); await dw.tour();
-    ok(dw.etat().step === 'jeton_test' && dw.etat().needs.ethFeeForTestLaunch === 0.0001 && !ww.envoyees.some((x) => x[0] === 'routeur' || x[0] === 'echange'),
-       'jeton de test enregistre ; aucun achat de listage pour le jumeau (il faudrait envelopper de l ETH, non confirme)');
-    ok(ww.envoyees.length === 2, 'en tout : deux transactions pour le jumeau (deploiement, lancement)');
+    ok(dw.etat().step === 'jeton_test' && dw.etat().needs.ethFeeForTestLaunch === 0.0001 && ww.envoyees.length === 2,
+       'jeton de test enregistre ; sous 0,0007 ETH le listage attend (deux transactions seulement)');
+    console.log('\n-- 4c. le listage du jumeau en ETH (confirme par le proprietaire le 29/09) --');
+    ww.eth = 3n * 10n ** 15n;
+    await dw.tour();
+    const env = ww.envoyees[2];
+    ok(env && env[0] === 'enveloppe' && env[1] === 5n * 10n ** 14n && dw.etat().step === 'enveloppe', 'd abord 0,0005 ETH envelopes en WETH, pas un wei de plus');
+    dw = mkW(); dw.charge(); await dw.tour();                /* redemarrage : l'enveloppe n'est pas minee */
+    ok(ww.envoyees.filter((x) => x[0] === 'enveloppe').length === 1, 'apres un redemarrage, la MEME enveloppe est attendue — jamais une seconde');
+    ww.recus['0xenv'] = { status: 1 };
+    await dw.tour();
+    ok(ww.envoyees[3][0] === 'routeur' && ww.envoyees[3][1] === PW.weth && ww.envoyees[3][2] === 5n * 10n ** 14n, 'puis le routeur est autorise pour ces 0,0005 WETH exactement');
+    ww.recus['0xra1'] = { status: 1 };
+    await dw.tour();
+    const aw = ww.envoyees.find((x) => x[0] === 'echange' && x[2] === JETON);
+    ok(aw && aw[1] === PW.weth && aw[3] === 5n * 10n ** 14n && aw[4] === 98457n * 10n ** 18n * 9500n / 10000n && aw.length === 5,
+       'l achat : WETH -> jeton de test, 0,0005, minimum 95 % du devis, sans destinataire en parametre');
+    ww.jet = 1000n * 10n ** 18n; ww.recus['0xach'] = { status: 1 };
+    await dw.tour();
+    ww.recus['0xra2'] = { status: 1 };
+    await dw.tour();
+    const vw = ww.envoyees.find((x) => x[0] === 'echange' && x[2] === PW.weth);
+    ok(vw && vw[1] === JETON && vw[3] === 500n * 10n ** 18n, 'la revente : la moitie des jetons, vers le WETH');
+    ww.recus['0xven'] = { status: 1 };
+    await dw.tour(); await dw.tour();
+    const tw = ww.envoyees.filter((x) => x[0] !== 'lecture');
+    ok(dw.etat().step === 'liste' && tw.length === 7, 'fini : etape « liste », sept transactions en tout pour le jumeau, et plus rien ensuite');
+    ok(tw.every((x) => x[0] !== 'echange' || [PW.weth, JETON].includes(x[1]) && [PW.weth, JETON].includes(x[2])) && !tw.some((x) => x[0] === 'autorise'),
+       'seuls le WETH et le jeton de test sont echanges ; aucun $SWOGE');
     ok(dw.etat().balances.swoge === null && typeof dw.etat().balances.eth === 'number', 'sa vue ne montre pas de solde $SWOGE (null) : le 29/09 elle affichait 0 alors que le portefeuille en avait 19 490');
     /* un WETH faux a la relecture arrete tout */
     const dW2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dep4w-'));
@@ -217,13 +245,15 @@ function monde(o) {
     ok(/^0x[0-9a-fA-F]{40}$/.test(dReel.etat().deployer || ''), 'la vue du jumeau donne l adresse du deployeur (elle etait vide en production)');
   }
   const src = fs.readFileSync(path.join(__dirname, 'deploiement_v4.js'), 'utf8');
-  ok(!/\.transfer\(/.test(src) && (src.match(/value:\s/g) || []).length === 1
+  ok(!/\.transfer\(/.test(src) && (src.match(/value:\s/g) || []).length === 2
      && /const v = fraisEth \? \{ value: ethers\.BigNumber\.from\(String\(fraisEth\)\) \} : \{\};/.test(src)
+     && /const W9 = new ethers\.Contract\(A\.constructeur\.weth, \['function deposit\(\) payable'\], w\); const v = \{ value: /.test(src)
+     && (src.match(/c\.envelopper\(/g) || []).length === 1 && /c\.envelopper\(ACHAT_ETH_WEI\)/.test(src)
      && (src.match(/c\.lanceTest\(/g) || []).length === 2 && /c\.lanceTest\(E\.launchpad, \{[^}]*\}, FRAIS\);/.test(src)
      && (src.match(/sendTransaction\(/g) || []).length === 1
      && /const tx = deploiement\(args\); return w\.sendTransaction\(Object\.assign\(tx, await frais\(tx\)\)\)/.test(src)
-     && /const deploiement = \(args\) => new ethers\.ContractFactory\(/.test(src), 'aucun transfert : un SEUL envoi de valeur, le frais exact du jumeau vers le launchpad deploye et relu ; sinon deployer, autoriser, lancer, echanger pour soi-meme');
-  ok((src.match(/await frais\(/g) || []).length === 6 && /gasPrice: px\.mul\(12\)\.div\(10\)/.test(src) && !/maxPriorityFeePerGas/.test(src),
+     && /const deploiement = \(args\) => new ethers\.ContractFactory\(/.test(src), 'aucun transfert : deux envois de valeur seulement — le frais exact du jumeau vers son launchpad relu, et 0,0005 ETH vers le deposit() du WETH9 de l artefact');
+  ok((src.match(/await frais\(/g) || []).length === 7   /* deploiement, cout annonce, autoriseFrais, lanceTest, autoriseRouteur, echange, envelopper */ && /gasPrice: px\.mul\(12\)\.div\(10\)/.test(src) && !/maxPriorityFeePerGas/.test(src),
      'chaque envoi (et le cout annonce) porte un prix du gaz pose a la main : jamais le pourboire fige de 1,5 gwei d ethers (29/09 : 70 fois le prix, premier depart refuse)');
   ok((src.match(/recipient:/g) || []).length === 1 && /recipient: w\.address, amountIn/.test(src) && /echange: async \(entree, sortie, montant, minimum\)/.test(src),
      'un seul destinataire d echange dans tout le fichier : le portefeuille lui-meme');

@@ -51,6 +51,14 @@ const RELECTURE_SCANNERS_MS = 30 * 60e3;
    accepte : 95 % du devis (le pool n'a personne d'autre que nous, l'ecart ne vient que du bloc). */
 const ACHAT_SWOGE_WEI = 1000n * 10n ** 18n;
 const GLISSEMENT_BPS = 500n;
+/* Le listage du JUMEAU WETH (29/09, confirme par le proprietaire : « oui », a « achat de listage en
+   ETH ») : 0,0005 ETH enveloppe en WETH par deposit() sur le WETH9 relu, achete, moitie revendue.
+   Meme mesure qui l'a decide que pour le V4 : sans echange, DexScreener « pas de paire » et GoPlus
+   « is_in_dex 0 » (relu a 20:05 UTC pour SWV4WTEST). On ne part que s'il reste MARGE_ETH_LISTAGE
+   au-dessus, pour les cinq transactions (~0,00001 ETH de gaz mesure pour les quatre du V4). */
+const ACHAT_ETH_WEI = 5n * 10n ** 14n;
+const MARGE_ETH_LISTAGE = 2n * 10n ** 14n;
+const lisible = (wei) => (Number(wei) / 1e18).toLocaleString('en-US', { maximumFractionDigits: 6 });
 const CHAMPS_GOPLUS = ['external_call', 'owner_address', 'creator_address', 'is_open_source', 'hidden_owner', 'can_take_back_ownership',
   'is_mintable', 'is_proxy', 'is_honeypot', 'buy_tax', 'sell_tax', 'transfer_pausable', 'is_blacklisted', 'is_in_dex', 'holder_count'];
 
@@ -165,18 +173,32 @@ function cree(deps) {
     }
 
     /* 4. l'achat puis la revente de listage, chacun attendu avant le suivant */
-    const S = P.swoge, J = E.jetonTest;
+    /* l'actif de cotation : $SWOGE pour le V4, WETH pour le jumeau */
+    const S = JUMEAU_WETH ? P.weth : P.swoge, J = E.jetonTest, SYM = JUMEAU_WETH ? 'WETH' : 'SWOGE';
+    const ACHAT = JUMEAU_WETH ? ACHAT_ETH_WEI : ACHAT_SWOGE_WEI;
     if (!JUMEAU_WETH && E.etape === 'jeton_test' && !E.txAchat && soldes.swoge >= ACHAT_SWOGE_WEI) {
       const tx = await c.autoriseRouteur(S, ACHAT_SWOGE_WEI);
+      E.etape = 'appro_achat'; E.txApproAchat = tx.hash; note('router approval for the listing buy sent ' + tx.hash); ecrit();
+    }
+    /* le jumeau enveloppe d'abord son ETH en WETH : le seul autre envoi de valeur du fichier */
+    if (JUMEAU_WETH && E.etape === 'jeton_test' && !E.txEnveloppe && soldes.eth >= ACHAT_ETH_WEI + MARGE_ETH_LISTAGE) {
+      const tx = await c.envelopper(ACHAT_ETH_WEI);
+      E.etape = 'enveloppe'; E.txEnveloppe = tx.hash; note('wrapping ' + lisible(ACHAT_ETH_WEI) + ' ETH into WETH for the listing buy ' + tx.hash); ecrit();
+    }
+    if (E.etape === 'enveloppe') {
+      const r = await c.recu(E.txEnveloppe);
+      if (!r) return;
+      if (r.status !== 1) { E.etape = 'erreur'; E.erreur = 'WETH wrap reverted'; note(E.erreur); ecrit(); return; }
+      const tx = await c.autoriseRouteur(S, ACHAT);
       E.etape = 'appro_achat'; E.txApproAchat = tx.hash; note('router approval for the listing buy sent ' + tx.hash); ecrit();
     }
     if (E.etape === 'appro_achat') {
       const r = await c.recu(E.txApproAchat);
       if (!r) return;
       if (r.status !== 1) { E.etape = 'erreur'; E.erreur = 'buy approval reverted'; note(E.erreur); ecrit(); return; }
-      const d = await c.devis(S, J, ACHAT_SWOGE_WEI);
-      const tx = await c.echange(S, J, ACHAT_SWOGE_WEI, d * (10000n - GLISSEMENT_BPS) / 10000n);
-      E.etape = 'achat'; E.txAchat = tx.hash; note('listing buy sent: 1000 SWOGE for ~' + String(d / 10n ** 18n) + ' ' + tx.hash); ecrit();
+      const d = await c.devis(S, J, ACHAT);
+      const tx = await c.echange(S, J, ACHAT, d * (10000n - GLISSEMENT_BPS) / 10000n);
+      E.etape = 'achat'; E.txAchat = tx.hash; note('listing buy sent: ' + lisible(ACHAT) + ' ' + SYM + ' for ~' + lisible(d) + ' ' + tx.hash); ecrit();
     }
     if (E.etape === 'achat') {
       const r = await c.recu(E.txAchat);
@@ -185,7 +207,7 @@ function cree(deps) {
       const bal = await c.soldeJeton(J);
       E.venteWei = String(bal / 2n);
       const tx = await c.autoriseRouteur(J, bal / 2n);
-      E.etape = 'appro_vente'; E.txApproVente = tx.hash; note('bought ' + String(bal / 10n ** 18n) + ' test tokens; sell approval sent ' + tx.hash); ecrit();
+      E.etape = 'appro_vente'; E.txApproVente = tx.hash; note('bought ' + lisible(bal) + ' test tokens; sell approval sent ' + tx.hash); ecrit();
     }
     if (E.etape === 'appro_vente') {
       const r = await c.recu(E.txApproVente);
@@ -194,7 +216,7 @@ function cree(deps) {
       const m = BigInt(E.venteWei);
       const d = await c.devis(J, S, m);
       const tx = await c.echange(J, S, m, d * (10000n - GLISSEMENT_BPS) / 10000n);
-      E.etape = 'vente'; E.txVente = tx.hash; note('listing sell sent: half the tokens for ~' + String(d / 10n ** 18n) + ' SWOGE ' + tx.hash); ecrit();
+      E.etape = 'vente'; E.txVente = tx.hash; note('listing sell sent: half the tokens for ~' + lisible(d) + ' ' + SYM + ' ' + tx.hash); ecrit();
     }
     if (E.etape === 'vente') {
       const r = await c.recu(E.txVente);
@@ -287,6 +309,9 @@ function chaineEthers(clePrivee, A) {
     /* `fraisEth` : seulement pour le jumeau, le frais EXACT lu dans l'artefact ; le contrat refuse tout autre montant. */
     lanceTest: async (launchpad, p, fraisEth) => { const c = new ethers.Contract(launchpad, LP, w); const v = fraisEth ? { value: ethers.BigNumber.from(String(fraisEth)) } : {};
       return c.createToken(p, Object.assign(await frais(await c.populateTransaction.createToken(p, v)), v)); },
+    /* deposit() sur le WETH9 de l'artefact, relu sur la chaine au deploiement du jumeau ; rien d'autre ne recoit de l'ETH ici */
+    envelopper: async (montant) => { const W9 = new ethers.Contract(A.constructeur.weth, ['function deposit() payable'], w); const v = { value: ethers.BigNumber.from(String(montant)) };
+      return W9.deposit(Object.assign(await frais(await W9.populateTransaction.deposit(v)), v)); },
     soldeJeton: async (adr) => (await new ethers.Contract(adr, ERC, prov).balanceOf(w.address)).toBigInt(),
     autoriseRouteur: async (jeton, montant) => { const t = new ethers.Contract(jeton, ERC, w); return t.approve(ROUTEUR, montant, await frais(await t.populateTransaction.approve(ROUTEUR, montant))); },
     devis: async (entree, sortie, montant) => (await quoter.callStatic.quoteExactInputSingle({ tokenIn: entree, tokenOut: sortie, amountIn: montant, fee: 10000, sqrtPriceLimitX96: 0 })).amountOut.toBigInt(),
