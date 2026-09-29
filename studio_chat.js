@@ -304,6 +304,9 @@ function catalogue(cours, cle) {
       recherche: !!m.recherche && (m.recherche !== 'perplexity' || !!a.perplexity),
       typiqueSwoge: enSwoge(factureUsd(typique(m))),
       maxSwoge: enSwoge(factureUsd(pireCasUsd(m, [{ content: 'x'.repeat(4000) }], !!m.recherche))),
+      /* Les memes montants en dollars, pour le credit (credits.js) : il ne depend pas du cours. */
+      typiqueUsd: Math.ceil(factureUsd(typique(m)) * 1e4) / 1e4,
+      maxUsd: Math.ceil(factureUsd(pireCasUsd(m, [{ content: 'x'.repeat(4000) }], !!m.recherche)) * 1e4) / 1e4,
     })),
   };
 }

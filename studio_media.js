@@ -128,6 +128,8 @@ function imageJointe(x) {
 }
 
 function pourSwoge(usd, cours) { return cours > 0 ? Math.ceil(factureUsd(usd) / cours) : null; }
+/* Le meme prix en dollars, pour le credit (credits.js, 29/09) : il ne depend pas du cours. */
+function pourUsd(usd) { return Math.ceil(factureUsd(usd) * 1e4) / 1e4; }
 
 /** Le catalogue montré à la page : modèles, options, prix typiques en $SWOGE. */
 function catalogue(cours, actifs) {
@@ -138,8 +140,8 @@ function catalogue(cours, actifs) {
   const image = {
     fournisseurs: FOURNISSEURS_IMAGE.map((f) => ({ id: f.id, nom: f.nom, actif: !!a[f.id],
       modeles: IMAGE.filter((m) => m.fournisseur === f.id).map((m) => (m.fournisseur === 'openai'
-        ? { id: m.id, nom: m.nom, parImageSwoge: pourSwoge(OPENAI_MESURE_SORTIE * p.o / 1e6, cours), estime: true }
-        : { id: m.id, nom: m.nom, parImageSwoge: pourSwoge(m.usd, cours) })) })),
+        ? { id: m.id, nom: m.nom, parImageSwoge: pourSwoge(OPENAI_MESURE_SORTIE * p.o / 1e6, cours), parImageUsd: pourUsd(OPENAI_MESURE_SORTIE * p.o / 1e6), estime: true }
+        : { id: m.id, nom: m.nom, parImageSwoge: pourSwoge(m.usd, cours), parImageUsd: pourUsd(m.usd) })) })),
     formats: FORMATS_IMAGE, nombres: NOMBRES,
   };
   /* Compatibilite : l'ancienne page lit image.modeles (Grok). */

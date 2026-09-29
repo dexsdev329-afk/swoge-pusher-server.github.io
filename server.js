@@ -2086,6 +2086,34 @@ function factuEmbauche(addr, quoi) {
   };
 }
 
+/* ---- LE CREDIT EN DOLLARS (credits.js, 29/09) ----
+   « Le $SWOGE devrait etre une option » (proprietaire) : une signature USDC (Base ou
+   Solana) recharge un credit en dollars ; l'agent, le chat et les embauches de l'agent
+   s'y debitent au cout reel. Le credit est celui de l'adresse de SESSION. */
+let CREDITS = null;
+function credits() {
+  if (!CREDITS) CREDITS = require('./credits').cree({ dossier: cfg.DATA_DIR, x402: () => x402(), url: MOI_URL + '/credit/topup' });
+  return CREDITS;
+}
+/** Qui paie une reponse de l'agent ou du chat : le credit en dollars ('credit') ou le solde $SWOGE (defaut). */
+function payeurDe(addr, payeur, quoi) {
+  if (payeur === 'credit') {
+    const s = credits().soldeChat(quoi);
+    return { credit: true, cours: s.cours, solde: { reserve: s.reserve, regle: s.regle }, factu: (q) => credits().factu(addr, q) };
+  }
+  return { credit: false, cours: () => studioChat.coursSwoge(), factu: (q) => factuEmbauche(addr, q),
+    solde: { reserve: (a, w) => game.studioReserve(a, w), regle: (a, rw, fw) => { const s2 = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s2 }); return s2; } } };
+}
+/** Une reponse payee au credit : ses montants en dollars, jamais sous les noms $SWOGE (la page les lirait comme tels). */
+function enCredit(r, addr) {
+  if (!r) return r;
+  const o = Object.assign({}, r, { payeur: 'credit', creditUsd: credits().soldeUsd(addr) });
+  if (r.requisSwoge) o.requisUsd = Number(r.requisSwoge);
+  delete o.solde; delete o.factureSwoge; delete o.requisSwoge;
+  if (o.code === 402 && o.requisUsd) o.raison = 'your dollar credit is too low for this ($' + o.requisUsd.toFixed(2) + ' is reserved while it runs, you pay only what is used)';
+  return o;
+}
+
 let AUTO_INSCRIPTION = null, AUTO_BAZAAR = null;
 /* ---- LE BAZAAR DE COINBASE (X402_AUTO_CLE_BASE, 28/09 au soir) ----
    18 980 services, 4 des notres : il n'inscrit qu'au reglement par Coinbase, et la
@@ -2183,7 +2211,7 @@ const x402 = () => {
     cours: () => studioChat.coursSwoge(),
     /* L'ETH en $ (pour le gaz), 60 s en cache ; STUDIO_DEX=0 (essais) : le reglage ETH_PRIX_USD, aucune lecture reseau. */
     ethUsd: () => ethUsdPartage(),
-    prixOutilUsd: (o, a) => (o === 'esim' ? boutiqueEsim().prixUsd(a) : require('./agentic').prixX402Usd(o, a)),
+    prixOutilUsd: (o, a) => (o === 'esim' ? boutiqueEsim().prixUsd(a) : o === 'credit' ? credits().prixUsd(a) : require('./agentic').prixX402Usd(o, a)),
     /* Base (USDC, Coinbase) : null sans cle CDP valide — tout est alors comme avant. */
     base,
     /* Solana (USDC, PayAI) : null sans X402_SOLANA_PAYTO. */
@@ -2191,6 +2219,7 @@ const x402 = () => {
     /* La premiere phrase de l'outil ouvre resource.description (Base allumee) ; les
        details de service (bazaar.md « Service Metadata on `resource` »). */
     description: (o) => (o === 'esim' ? 'Use this to buy a travel data eSIM (data only, no phone number) from SWOGE, paid in USDC; the activation code comes back with the answer.'
+      : o === 'credit' ? 'Use this to top up your SWOGE AI dollar credit, paid in USDC; the credit pays AI answers at real cost.'
       : (require('./agentic').definitions({ recherche: !!chatActif('perplexity') }).find((d) => d.name === o) || {}).description || ''),
     service: { nom: 'SwogeAgentic', etiquettes: (o) => require('./decouverte').ETIQUETTES_OUTIL[o] || [], icone: require('./decouverte').ICONE },
     /* ask_agent en x402 (X402_AGENT=1) : 150 s de travail au plus, 3 en vol, payeurs
@@ -3366,6 +3395,30 @@ const server = http.createServer(async (req, res) => {
     try { return json(200, await sondes().recherche(qs.get('q'), qs.get('limit'))); }
     catch (e) { return json(503, { ok: false, raison: 'the x402 catalogue is unavailable right now' }); }
   }
+  /* ---- LE CREDIT EN DOLLARS (credits.js) : GET /credit (solde, historique), POST /credit/topup {usd}
+     paye en x402 (USDC Base ou Solana, ou $SWOGE sur Robinhood Chain). Toujours l'adresse de SESSION. */
+  if (path === '/credit' || path === '/credit/topup') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization, payment-signature', 'access-control-expose-headers': 'payment-required, payment-response' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    if (path === '/credit') {
+      const xv = x402();
+      return json(200, { ok: true, balanceUsd: credits().soldeUsd(addr), history: credits().historique(addr, 20), limits: credits().LIMITES,
+        networks: { base: !!(xv && xv.baseActif()), solana: !!(xv && xv.solanaActif && xv.solanaActif()) },
+        note: 'Your dollar credit pays SwogeAgentic and SwoleMind answers at real cost, with no new signature. Top it up with USDC from your wallet. It is not withdrawable.' });
+    }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    let q;
+    try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { q = null; }
+    if (!q) return json(400, { ok: false, raison: 'unreadable request' });
+    const x = await credits().recharge({ entete: req.headers['payment-signature'], usd: q.usd, addr, qui: compteurs.ip(qui(req)) });
+    res.writeHead(x.status, Object.assign({ 'cache-control': 'no-store' }, cors, x.entetes));
+    return res.end(x.corps);
+  }
   if (path === '/esim/plans' || path === '/esim/buy' || path.startsWith('/esim/order/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
                    'access-control-allow-headers': 'content-type, payment-signature', 'access-control-expose-headers': 'payment-required, payment-response' };
@@ -3401,10 +3454,12 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(addr ? 200 : 401, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors));
     if (!addr) return res.end(JSON.stringify({ ok: false, raison: 'sign in with your wallet first' }));
     if (!achats().actif()) return res.end(JSON.stringify({ ok: true, actif: false }));
-    const P = achats().pour(addr, factuEmbauche(addr, 'buy this eSIM'));
+    let P = achats().pour(addr, factuEmbauche(addr, 'buy this eSIM'));
     if (req.method === 'POST') {
       let q;
       try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { q = null; }
+      /* Confirmer au credit en dollars : le joueur qui paie l'agent au credit y paie aussi l'eSIM. */
+      if (q && q.payeur === 'credit') P = achats().pour(addr, credits().factu(addr, 'buy this eSIM'));
       const r = !q ? { ok: false, raison: 'unreadable request' } : q.action === 'confirme' ? await P.confirme(q.id) : q.action === 'livre' ? await P.livre(q.id) : { ok: false, raison: 'unknown action' };
       return res.end(JSON.stringify(Object.assign({}, r, { actif: true, budget: P.budget(), liste: P.liste(20) })));
     }
@@ -3432,7 +3487,10 @@ const server = http.createServer(async (req, res) => {
         embauche: embauche().actif() ? { actif: true, maxAppelUsd: embauche().etat().maxAppelUsd, jourUsd: embauche().etat().maxJoueurUsd, marge: 1.1 } : { actif: false },
         achats: achats().actif() ? { actif: true, maxAchatUsd: achats().etat().maxAchatUsd, jourUsd: achats().etat().maxJoueurUsd, marge: achats().etat().marge } : { actif: false },
         modeles: studioChat.MODELES.filter((m) => m.fournisseur === 'anthropic').map((m) => ({ id: m.id, nom: m.nom, note: m.note,
-          typiqueSwoge: enSwoge(typique(m)), maxSwoge: enSwoge(studioAgent.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], rech, studioAgent.jetonsDe(srcPage))) })),
+          typiqueSwoge: enSwoge(typique(m)), maxSwoge: enSwoge(studioAgent.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], rech, studioAgent.jetonsDe(srcPage))),
+          /* En dollars, pour le credit : la reserve d'une tache (pire cas), ce que la page fait signer quand le credit manque. */
+          typiqueUsd: Math.ceil(studioChat.factureUsd(typique(m)) * 1e4) / 1e4,
+          maxUsd: Math.ceil(studioChat.factureUsd(studioAgent.pireCasUsd(m, [{ content: 'x'.repeat(2000) }], rech, studioAgent.jetonsDe(srcPage))) * 1e4) / 1e4 })),
       });
     }
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
@@ -3455,17 +3513,16 @@ const server = http.createServer(async (req, res) => {
     src.joueur = true;
     /* L'embauche, liee a CE joueur : son adresse de session, jamais une adresse du message. */
     /* Un joueur qui a coupe ses embauches (plafond 0) : les outils ne sont meme pas offerts. */
-    if (embauche().actif()) { const P = embauche().pour(addr, factuEmbauche(addr)); if (P.budget().jourUsd > 0) src.embauche = P; }
+    /* Qui paie : le credit en dollars (q.payeur 'credit') ou le $SWOGE du vault — les embauches de l'agent aussi. */
+    const pay = payeurDe(addr, q.payeur, 'agent:' + m.id);
+    if (embauche().actif()) { const P = embauche().pour(addr, pay.factu()); if (P.budget().jourUsd > 0) src.embauche = P; }
     /* L'eSIM : l'agent cherche et PROPOSE ; seule la route /studio/agent/achats (la page) paie. */
-    if (achats().actif()) { const PA = achats().pour(addr, factuEmbauche(addr, 'buy this eSIM')); src.achats = { forfaits: PA.forfaits, propose: PA.propose }; }
+    if (achats().actif()) { const PA = achats().pour(addr, pay.factu('buy this eSIM')); src.achats = { forfaits: PA.forfaits, propose: PA.propose }; }
     let r;
     try {
       r = await studioChat.repond({ addr, rid, modele: m.id, messages: q.messages, recherche: false }, {
-        cours: () => studioChat.coursSwoge(),
-        solde: {
-          reserve: (a, w) => game.studioReserve(a, w),
-          regle: (a, rw, fw) => { const s2 = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s2 }); return s2; },
-        },
+        cours: pay.cours,
+        solde: pay.solde,
         actif: chatActif,
         /* Ce que CETTE tache relit (outils et consigne du joueur), pas une constante : la facture est plafonnee a la reserve. */
         pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, rech, studioAgent.jetonsDe(src)),
@@ -3479,6 +3536,7 @@ const server = http.createServer(async (req, res) => {
       console.error('[agent] ' + (e && e.stack || e));
       r = { ok: false, code: 500, raison: 'server error — you were not charged' };
     }
+    if (pay.credit) r = enCredit(r, addr);
     if (rid) reprises.note(addr, rid, Object.assign({}, r, { genre: 'chat', status: r.ok ? 'done' : 'failed' }));
     envoie(r.ok ? 'fin' : 'erreur', r);
     return res.end();
@@ -3576,14 +3634,13 @@ const server = http.createServer(async (req, res) => {
        la facture quand meme, donc il la GARDE pour qu'elle la retrouve. */
     const rid = reprises.ridOk(q.rid) ? q.rid : null;
     if (rid) reprises.note(addr, rid, { genre: 'chat', status: 'pending', texte: '' });
+    /* Qui paie : le credit en dollars (q.payeur 'credit') ou le $SWOGE du vault. */
+    const pay = payeurDe(addr, q.payeur, 'chat:' + String(q.modele || '').slice(0, 30));
     let r;
     try {
       r = await studioChat.repond({ addr, rid, modele: q.modele, messages: q.messages, recherche: !!q.recherche, effort: q.effort }, {
-        cours: () => studioChat.coursSwoge(),
-        solde: {
-          reserve: (a, w) => game.studioReserve(a, w),
-          regle: (a, rw, fw) => { const s = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s }); return s; },
-        },
+        cours: pay.cours,
+        solde: pay.solde,
         fournisseur: (p) => (p.m.fournisseur === 'anthropic' ? studioClaude.repond(p) : studioCompat.repond(p)),
         /* Un PDF joint : le compte exact de l'entree, demande a Anthropic avant de reserver. */
         compte: (p) => studioClaude.compte(p),
@@ -3600,6 +3657,7 @@ const server = http.createServer(async (req, res) => {
       console.error('[chat] ' + (e && e.stack || e));
       r = { ok: false, code: 500, raison: 'server error — you were not charged' };
     }
+    if (pay.credit) r = enCredit(r, addr);
     if (rid) reprises.note(addr, rid, Object.assign({}, r, { genre: 'chat', status: r.ok ? 'done' : 'failed' }));
     envoie(r.ok ? 'fin' : 'erreur', r);
     return res.end();
@@ -5011,7 +5069,10 @@ const server = http.createServer(async (req, res) => {
     catch (e) { return json(400, { ok: false, raison: 'unreadable request (an attached image must stay under 6 MB)' }); }
     /* Voir depsMedia : la demande comprise avec son fil (Claude Haiku 4.5) et
        l'image officielle de SWOGE, lue sur le site — studio_comprend.js. */
-    const deps = depsMedia();
+    /* Une IMAGE peut se payer au credit en dollars ; une video reste en $SWOGE (un travail long,
+       repris apres un redemarrage, alors que le credit rend ses reserves ouvertes au demarrage). */
+    const pay = path === '/studio/media/image' ? payeurDe(addr, q.payeur, 'image') : { credit: false };
+    const deps = pay.credit ? Object.assign(depsMedia(), { cours: pay.cours, solde: pay.solde }) : depsMedia();
     const base = { addr, modele: q.modele, prompt: q.prompt, format: q.format, image: q.image, contexte: q.contexte };
     const rid = reprises.ridOk(q.rid) ? q.rid : null;
     if (rid) reprises.note(addr, rid, { genre: path === '/studio/media/image' ? 'image' : 'video', status: 'pending' });
@@ -5024,6 +5085,7 @@ const server = http.createServer(async (req, res) => {
       console.error('[studio] ' + (e && e.stack || e));
       r = { ok: false, code: 500, raison: 'server error — you were not charged' };
     }
+    if (pay.credit) r = enCredit(r, addr);
     if (rid) reprises.note(addr, rid, Object.assign({}, r, { status: r.ok ? (r.genre === 'video' ? 'started' : 'done') : 'failed' }));
     return json(r.ok ? 200 : (r.code || 500), r);
   }
