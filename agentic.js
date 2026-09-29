@@ -397,7 +397,7 @@ function cree(deps) {
     const defs = definitions(deps.actifs ? deps.actifs() : {});
     if (!defs.some((d) => d.name === outil)) return { ok: false, code: 404, raison: 'unknown tool: ' + outil };
     if (!cle && !devis) {
-      note('refus_sans_cle', { outil, canal, qui: q.qui });
+      note('refus_sans_cle', { outil, canal, qui: q.qui, sorte: q.client || undefined });
       return { ok: false, code: 401, sansCle: true, raison: 'This call needs payment. ' + commentPayer(outil) + GRATUIT, howToPay: commentPayer(outil) };
     }
     if (!cle && !devisOk(q.qui)) return { ok: false, code: 429, raison: 'too many free quotes — max ' + DEVIS_PAR_MINUTE + ' per minute' };

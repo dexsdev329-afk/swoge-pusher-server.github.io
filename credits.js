@@ -168,7 +168,7 @@ function cree(deps) {
    * (rien n'est encore credite), x402 regle, et SEULEMENT sur 200 le credit est ajoute.
    * addr : l'adresse de SESSION (jamais une adresse du corps ou du payeur).
    */
-  async function recharge({ entete, usd, addr, qui }) {
+  async function recharge({ entete, usd, addr, qui, client }) {
     const json = (status, o) => ({ status, entetes: { 'content-type': 'application/json' }, corps: JSON.stringify(o) });
     const x = deps.x402 && deps.x402();
     if (!x) return json(503, { ok: false, raison: 'wallet payments are not available right now' });
@@ -178,7 +178,7 @@ function cree(deps) {
     if (versMicro(v) + soldeMicro(k) > versMicro(MAX_SOLDE_USD())) return json(400, { ok: false, raison: 'your credit would go above $' + MAX_SOLDE_USD() + ' - spend some first' });
     /* `sert` ne credite pas : il porte l'adresse et le montant jusqu'au reglement. */
     const sert = async () => ({ ok: true, credit: { addr: k, usd: v } });
-    const r = await x.traite({ outil: 'credit', url: deps.url, entete: entete || null, sert, args: { usd: v }, canal: 'rest', qui });
+    const r = await x.traite({ outil: 'credit', url: deps.url, entete: entete || null, sert, args: { usd: v }, canal: 'rest', qui, client });
     if (r.status !== 200) return r;
     let c;
     try { c = JSON.parse(r.corps); } catch (e) { c = null; }

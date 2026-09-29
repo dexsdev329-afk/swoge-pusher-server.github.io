@@ -161,11 +161,11 @@ async function appel(p, req, deps, id) {
     /* Refuser les mauvais arguments AVANT de demander un paiement, comme en REST. */
     const inv = sonde ? null : deps.x402.entreeInvalide(nom, args);
     if (inv) return { content: [{ type: 'text', text: 'Error: ' + inv }], isError: true };
-    const r = await deps.x402.paie({ outil: nom, url: deps.api + '/mcp', paiement, args, canal: 'mcp', qui: req.qui, sonde,
+    const r = await deps.x402.paie({ outil: nom, url: deps.api + '/mcp', paiement, args, canal: 'mcp', qui: req.qui, sonde, client: req.client,
       sert: (payeur) => deps.agentic.sertSansFacture({ outil: nom, args, payeur }) });
     return versMcp(r, nom, deps);
   }
-  const r = await deps.agentic.appelle({ cle: req.cle, clePresentee: !!req.clePresentee, outil: nom, args, devis, canal: 'mcp', qui: req.qui });
+  const r = await deps.agentic.appelle({ cle: req.cle, clePresentee: !!req.clePresentee, outil: nom, args, devis, canal: 'mcp', qui: req.qui, client: req.client });
   if (r.code === 404) return { inconnu: true, content: [{ type: 'text', text: r.raison }], isError: true };
   if (r.sansCle) return { content: [{ type: 'text', text: r.raison }], isError: true };
   if (!r.ok) return { content: [{ type: 'text', text: 'Error: ' + r.raison + (r.code === 401 ? ' (send it as "Authorization: Bearer swg_…")' : '') }], isError: true };

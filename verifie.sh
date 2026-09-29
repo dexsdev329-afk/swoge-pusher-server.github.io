@@ -69,6 +69,7 @@ lance credits  "$SRV" node credits.test.js   # credit en dollars : credite apres
 lance clescred "$SRV" node cles_credit.test.js   # cle swg_ au credit en dollars : payeur choisi par la session, debit et plafond en dollars, reponse sans $SWOGE, passerelle sur le credit, video refusee
 lance store    "$SRV" node store_agents.test.js   # fiches de l Agent Store : agents exterieurs seulement, aucun taux sous 10 tentatives, permissions et paiements vrais, aucune note inventee
 lance passeport "$SRV" node passeport.test.js   # passeport d une cle : signe Ed25519 par une cle dediee, verifiable avec la seule cle publique, un champ change casse la signature, prive par defaut
+lance famille  "$SRV" node famille_client.test.js   # qui demande un prix : famille du client en code fixe, sonde ou demande, jamais le User-Agent brut ni l IP
 lance sondes   "$SRV" node sonde_services.test.js   # catalogue x402 note sans payer : une sonde par service et par 20 h, raison de chaque echec, aucun verdict sous 3 sondes, paiements reels comptes
 lance annonces "$SRV" node annonces.test.js   # un outil nouveau : un post Telegram (tweet + image haussiere), une fois, groupe 10 min, espace 3 h, sans promesse de prix ni partenariat
 lance hasard  "$SRV" node hasard.test.js   # hasard prouvable : engagement avant tirage, un tirage par engagement, le code publie refait les memes nombres, sans biais (chi2), sabot du casino

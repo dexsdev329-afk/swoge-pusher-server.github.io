@@ -3242,7 +3242,7 @@ const server = http.createServer(async (req, res) => {
     /* Sans cle : tools/list et les devis sont servis ; un appel recoit la marche a suivre. Une cle
        envoyee mais inconnue ou revoquee reste refusee. `qui` : l'empreinte salee de l'IP (compteurs). */
     try { r = await agenticMcp.traite({ methode: req.method, entetes: req.headers, corps: texte, cle: cleTexte ? agenticCles.resout(cleTexte) : null, clePresentee: !!cleTexte,
-      qui: compteurs.ip(qui(req)), origines: MCP_ORIGINES }, { agentic: agentic(), actifs: () => ({ recherche: chatActif('perplexity') }), api: MOI_URL, x402: x402Mcp(), extras: mcpExtras() }); }
+      qui: compteurs.ip(qui(req)), client: require('./famille_client').famille(req.headers['user-agent']), origines: MCP_ORIGINES }, { agentic: agentic(), actifs: () => ({ recherche: chatActif('perplexity') }), api: MOI_URL, x402: x402Mcp(), extras: mcpExtras() }); }
     catch (e) { console.error('[mcp] ' + (e && e.stack || e)); r = { status: 500, entetes: { 'content-type': 'application/json' }, corps: JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Internal error' } }) }; }
     res.writeHead(r.status, Object.assign({ 'cache-control': 'no-store' }, r.entetes));
     return res.end(r.corps);
@@ -3333,14 +3333,14 @@ const server = http.createServer(async (req, res) => {
           const inv = sonde ? null : require('./agentic').entreeInvalideX402(outil, q.arguments || {});
           if (inv) return json(400, { ok: false, raison: inv });
           const x = await x402().traite({ outil, url: MOI_URL + path, entete: req.headers['payment-signature'], args: q.arguments || {},
-            canal: 'rest', qui: quiIp, sonde,
+            canal: 'rest', qui: quiIp, sonde, client: require('./famille_client').famille(req.headers['user-agent']),
             sert: (payeur) => agentic().sertSansFacture({ outil, args: q.arguments || {}, payeur }) });
           res.writeHead(x.status, Object.assign({ 'cache-control': 'no-store' }, cors, x.entetes));
           return res.end(x.corps);
         }
         /* Sans cle : un devis est servi (gratuit, borne par IP), un appel recoit 401 et la marche a suivre.
            Une cle envoyee mais inconnue ou revoquee : 401, devis compris. */
-        const r = await agentic().appelle({ cle, clePresentee: !!cleTexte, outil, args: q.arguments || {}, devis, canal: 'rest', qui: quiIp });
+        const r = await agentic().appelle({ cle, clePresentee: !!cleTexte, outil, args: q.arguments || {}, devis, canal: 'rest', qui: quiIp, client: require('./famille_client').famille(req.headers['user-agent']) });
         return json(r.ok ? 200 : (r.code || 500), r);
       }
       /* ---- LA PASSERELLE DE DEPENSE (passerelle.js, 28/09 au soir) : un agent paie un service x402
@@ -3496,7 +3496,7 @@ const server = http.createServer(async (req, res) => {
     let q;
     try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { q = null; }
     if (!q) return json(400, { ok: false, raison: 'unreadable request' });
-    const x = await credits().recharge({ entete: req.headers['payment-signature'], usd: q.usd, addr, qui: compteurs.ip(qui(req)) });
+    const x = await credits().recharge({ entete: req.headers['payment-signature'], usd: q.usd, addr, qui: compteurs.ip(qui(req)), client: require('./famille_client').famille(req.headers['user-agent']) });
     res.writeHead(x.status, Object.assign({ 'cache-control': 'no-store' }, cors, x.entetes));
     return res.end(x.corps);
   }
@@ -3534,7 +3534,7 @@ const server = http.createServer(async (req, res) => {
       let q;
       try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { q = null; }
       if (!q) return json(400, { ok: false, raison: 'unreadable request' });
-      const x = await boutiqueEsim().achete({ entete: req.headers['payment-signature'], plan: q.plan, qui: quiIp });
+      const x = await boutiqueEsim().achete({ entete: req.headers['payment-signature'], plan: q.plan, qui: quiIp, client: require('./famille_client').famille(req.headers['user-agent']) });
       res.writeHead(x.status, Object.assign({ 'cache-control': 'no-store' }, cors, x.entetes));
       return res.end(x.corps);
     }

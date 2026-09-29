@@ -60,7 +60,7 @@ function cree(deps) {
   }
 
   /** L'achat : le 402, puis, paiement verifie, l'eSIM, puis le reglement (x402.traite). */
-  async function achete({ entete, plan, qui }) {
+  async function achete({ entete, plan, qui, client }) {
     const x = deps.x402 && deps.x402();
     if (!actif() || !x) return { status: 503, entetes: { 'content-type': 'application/json' }, corps: JSON.stringify({ ok: false, raison: 'the eSIM shop is closed right now' }) };
     const slug = String(plan || '').trim();
@@ -81,7 +81,7 @@ function cree(deps) {
       return { ok: true, achat: c.achat, delivered: !!c.livree, orderLink: lien,
         texte: 'eSIM bought: ' + c.achat.nom + '. Keep your order link: it is the only way to see your activation code again.' };
     };
-    return x.traite({ outil: 'esim', url: deps.url, entete: entete || null, sert, args: { plan: slug }, canal: 'rest', qui });
+    return x.traite({ outil: 'esim', url: deps.url, entete: entete || null, sert, args: { plan: slug }, canal: 'rest', qui, client });
   }
 
   /** Les pays vendus et les regions, pour choisir sans taper (29/09, demande du proprietaire). Rien n'est paye. */

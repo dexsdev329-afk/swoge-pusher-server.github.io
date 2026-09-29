@@ -961,7 +961,7 @@ function cree(deps) {
    * `sert(payeur)` rend le résultat de l'outil ({ ok, ... }) ; rien n'est réglé s'il échoue.
    * Rend { etape: 'exige'|'refuse'|'indisponible'|'occupe'|'outil'|'reglement'|'attente'|'paye', … }.
    */
-  async function paie({ outil, url, paiement, args, sert, canal, qui, sonde, bazaar }) {
+  async function paie({ outil, url, paiement, args, sert, canal, qui, sonde, bazaar, client }) {
     /* Les compteurs durables (compteurs.js) : 402 émis, payé, échec — `qui` est
        l'empreinte d'IP avant paiement, l'adresse VÉRIFIÉE du payeur après. */
     const note = (ev, info) => { if (deps.note) { try { deps.note(ev, Object.assign({ outil, canal: canal || 'rest' }, info)); } catch (e) { /* jamais bloquant */ } } };
@@ -969,7 +969,8 @@ function cree(deps) {
     if (!paiement) {
       const e = await exige(outil, url, null, args, opts);
       if (!e) return { etape: 'indisponible' };
-      note('demande402', { qui, sorte: sonde ? 'sonde' : 'demande' });
+      /* La famille du client (famille_client.js, 29/09) : un code, jamais le User-Agent brut. */
+      note('demande402', { qui, sorte: (sonde ? 'sonde' : 'demande') + (client ? ':' + client : '') });
       return { etape: 'exige', exige: e };
     }
     /* ask_agent : au plus X402_AGENT_EN_VOL exécutions à la fois — la suivante avant toute vérification. */
@@ -1131,9 +1132,9 @@ function cree(deps) {
    * Un appel payé en x402 sur HTTP : l'enveloppe de `paie`. Rend { status, entetes, corps } —
    * octet pour octet ce qu'attend x402_route.test.js pour Robinhood Chain.
    */
-  async function traite({ outil, url, entete, sert, args, canal, qui, sonde }) {
+  async function traite({ outil, url, entete, sert, args, canal, qui, sonde, client }) {
     const json = (status, corps, entetes) => ({ status, entetes: Object.assign({ 'content-type': 'application/json' }, entetes || {}), corps: JSON.stringify(corps) });
-    const r = await paie({ outil, url, paiement: entete || null, args, sert, canal, qui, sonde });
+    const r = await paie({ outil, url, paiement: entete || null, args, sert, canal, qui, sonde, client });
     switch (r.etape) {
       case 'exige': return json(402, Object.assign({ ok: false }, r.exige), { 'payment-required': b64(r.exige) });
       case 'indisponible': return json(503, { ok: false, raison: 'x402 payment is unavailable right now (price or gas unknown)' });
