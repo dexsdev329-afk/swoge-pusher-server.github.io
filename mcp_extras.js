@@ -43,7 +43,7 @@ function cree(deps) {
       inputSchema: { type: 'object', properties: { need: { type: 'string', description: 'what you need, in a few English keywords' }, limit: { type: 'integer', minimum: 1, maximum: 50 } }, required: ['need'] },
       annotations: { readOnlyHint: true, openWorldHint: true } });
     if (paieOk()) d.push({ name: 'pay_service', title: 'pay service',
-      description: 'Use this when your task needs a paid x402 service (a data or AI API that answers 402): SWOGE pays it for you in USDC and bills the key owner in $SWOGE, '
+      description: 'Use this when your task needs a paid x402 service (a data or AI API that answers 402): SWOGE pays it for you in USDC and bills the key owner (from their dollar credit, or in $SWOGE), '
         + 'within the limits the owner set for this API key (payments off by default; per-call cap up to $0.10; optional allowed sites). Only services of the public x402 catalogue; '
         + 'paid only if the service answers 200. Always send a new idempotency_key per payment: the same key never pays twice. Every attempt is written to a hash-chained audit (payment_audit).',
       inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'https URL of the paid service' }, idempotency_key: { type: 'string', description: '8 to 100 characters, unique per payment' },
@@ -90,7 +90,7 @@ function cree(deps) {
       if (!c.ok) return erreurOutil((c.raison || 'refused') + (c.audit ? ' (audit line ' + c.audit.seq + ')' : ''));
       const rc = c.recu || {};
       const res = typeof c.resultat === 'string' ? c.resultat : JSON.stringify(c.resultat);
-      return { content: texte(String(res).slice(0, 20000) + '\n\n- paid $' + (rc.usd || 0) + (rc.factureUsd ? ', billed $' + rc.factureUsd + ' in $SWOGE' : '') + (rc.tx ? ', transaction ' + rc.tx : '')
+      return { content: texte(String(res).slice(0, 20000) + '\n\n- paid $' + (rc.usd || 0) + (rc.factureUsd ? ', billed $' + rc.factureUsd + (req.cle.payeur === 'credit' ? ' from the dollar credit' : ' in $SWOGE') : '') + (rc.tx ? ', transaction ' + rc.tx : '')
         + ', audit line ' + c.audit.seq + (c.rejoue ? ' (this idempotency_key was already used: original answer)' : '')), structuredContent: c, isError: false };
     }
     return null;

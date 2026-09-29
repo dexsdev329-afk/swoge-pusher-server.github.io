@@ -371,7 +371,7 @@ function cree(deps) {
   };
   /** Comment payer cet outil — le même texte partout (devis, refus REST, refus MCP). */
   function commentPayer(outil) {
-    const cle = 'With an API key: create one at ' + PAGE + ' (sign in with a wallet, set a daily cap; the key is shown once) and send it as "Authorization: Bearer swg_…" — each call is billed from that wallet\'s $SWOGE balance.';
+    const cle = 'With an API key: create one at ' + PAGE + ' (sign in with a wallet, set a daily cap; the key is shown once) and send it as "Authorization: Bearer swg_…" — each call is billed from that wallet\'s dollar credit (topped up with one USDC signature) or its $SWOGE balance, as the owner chose for the key.';
     if (x402Ouvert(outil)) {
       if (baseOn()) {
         return cle + ' Without an account: pay per call with x402 — POST ' + API + '/agentic/call/' + outil + ' with {"arguments": {...}} and no key; the 402 response\'s PAYMENT-REQUIRED header says what to sign (USDC on Base first, or USDG or $SWOGE on Robinhood Chain), then retry the same request with PAYMENT-SIGNATURE. The payer pays no gas on either network.';
@@ -415,14 +415,37 @@ function cree(deps) {
     return r;
   }
 
-  async function execute({ cle, outil, args, devis, canal }) {
+  /* ---- UNE CLÉ PAYÉE AU CRÉDIT EN DOLLARS (credits.js, 29/09/2026) ----
+     « Sortir le $SWOGE du chemin des agents » (propriétaire) : le propriétaire d'une clé
+     choisit de la payer sur son crédit en dollars (rechargé par une signature USDC). Le
+     calcul est le MÊME, au cours 1 : chaque montant « $SWOGE » de ce chemin est alors un
+     montant en dollars, débité du crédit, compté dans le plafond du jour de la clé (en
+     dollars). La réponse le dit en dollars : jamais `swoge` ni `solde` pour un crédit. */
+  async function execute(a) {
+    const credit = !!(a.cle && a.cle.payeur === 'credit' && !a.devis);
+    if (credit && !deps.credit) return { ok: false, code: 503, raison: 'the dollar credit is not available right now - switch this key to $SWOGE on the SwogeAgentic page' };
+    const r = await executeBrut(Object.assign({}, a, { credit }));
+    if (!credit || !r) return r;
+    const o = Object.assign({}, r);
+    if (o.facture) o.facture = Object.assign({ usd: o.facture.usd, paidWith: 'dollar credit' }, o.facture.aLArrivee ? { aLArrivee: true } : {});
+    if (o.solde !== undefined) { if (o.solde !== null && o.solde !== '') o.creditUsd = Number(o.solde); delete o.solde; }
+    if (o.requisSwoge) { o.requisUsd = Number(o.requisSwoge); delete o.requisSwoge; }
+    return o;
+  }
+
+  async function executeBrut({ cle, outil, args, devis, canal, credit }) {
     const echec = (sorte, r) => { note('echec', { outil, canal, qui: cle && cle.addr, sorte }); return r; };
-    const paye = (usd, sorte) => note('paye_cle', { outil, canal, qui: cle.addr, usd, sorte });
+    const paye = (usd, sorte) => note('paye_cle', { outil, canal, qui: cle.addr, usd, sorte: sorte || (credit ? 'credit' : undefined) });
     /* Un devis sans arguments est une question de prix, pas une demande : on ne l'invalide pas. */
     const inv = devis && !Object.keys(args).length ? null : entreeInvalide(outil, args);
     if (inv) return { ok: false, code: 400, raison: inv, facture: null };
-    const cours = await deps.cours();
+    /* Au crédit : le cours vaut 1 (des dollars), le solde est le crédit, l'unité se dit en dollars. */
+    const P = credit ? deps.credit(cle.addr) : null;
+    const S = P ? P.solde : deps.solde;
+    const cours = P ? 1 : await deps.cours();
     if (!(cours > 0)) return echec('cours', { ok: false, code: 503, raison: 'the $SWOGE price is unavailable — try again shortly' });
+    const combien = (x) => (P ? '$' + x : x + ' $SWOGE');
+    const tropBas = P ? 'your dollar credit is too low — top it up with a USDC wallet signature (SwogeAgentic page, or POST /credit/topup with this key)' : 'balance too low — top up $SWOGE in the Wallet';
 
     if (outil === 'video_status') {
       if (devis) return { ok: true, outil, devis: { usd: 0, swoge: '0', gratuit: true } };
@@ -441,6 +464,8 @@ function cree(deps) {
       const maxUsd = Chat.factureUsd(m.usdSeconde * duree * Media.RESERVE_X);
       const maxSwoge = studio.formateBase(studio.montantBaseDe(maxUsd, cours, dec), dec);
       if (devis) return { ok: true, outil, devis: { variable: true, maxSwoge, maxUsd: Number(maxUsd.toFixed(4)) } };
+      /* Une vidéo reste en $SWOGE : un travail long repris après un redémarrage, alors que le crédit rend ses réserves ouvertes au démarrage. */
+      if (P) return { ok: false, code: 400, raison: 'videos are paid in $SWOGE only for now - switch this key to $SWOGE on the SwogeAgentic page, or pay generate_video per call with x402 (no key)' };
       if (!deps.cles.sousPlafond(cle.h, Number(maxSwoge))) return echec('plafond', { ok: false, code: 402, raison: 'this key\'s daily cap does not leave room for this video (up to ' + maxSwoge + ' $SWOGE)' });
       if (!rythmeOk(cle.h)) return { ok: false, code: 429, raison: 'too many calls — max ' + APPELS_PAR_MINUTE + ' per minute per key' };
       if (!deps.video) return { ok: false, code: 503, raison: 'video generation is not switched on yet' };
@@ -462,10 +487,10 @@ function cree(deps) {
       const maxUsd = Media.pireCasImageUsd(fournisseur, modeleImg, nb);
       const maxSwoge = studio.formateBase(studio.montantBaseDe(maxUsd, cours, dec), dec);
       if (devis) return { ok: true, outil, devis: { variable: true, maxSwoge, maxUsd: Number(maxUsd.toFixed(4)) } };
-      if (!deps.cles.sousPlafond(cle.h, Number(maxSwoge))) return echec('plafond', { ok: false, code: 402, raison: 'this key\'s daily cap does not leave room for this image (up to ' + maxSwoge + ' $SWOGE)' });
+      if (!deps.cles.sousPlafond(cle.h, Number(maxSwoge))) return echec('plafond', { ok: false, code: 402, raison: 'this key\'s daily cap does not leave room for this image (up to ' + combien(maxSwoge) + ')' });
       if (!rythmeOk(cle.h)) return { ok: false, code: 429, raison: 'too many calls — max ' + APPELS_PAR_MINUTE + ' per minute per key' };
       if (!deps.image) return { ok: false, code: 503, raison: 'image generation is not switched on yet' };
-      const r = await deps.image({ addr: cle.addr, prompt: String(args.prompt), fournisseur, n: nb, modele: modeleImg, format: args.aspect_ratio, canal });
+      const r = await deps.image({ addr: cle.addr, prompt: String(args.prompt), fournisseur, n: nb, modele: modeleImg, format: args.aspect_ratio, canal, payeur: P ? 'credit' : 'swoge' });
       if (!r || !r.ok) return echec('fournisseur', { ok: false, code: (r && r.code) || 502, raison: (r && r.raison) || 'the image provider failed — you were not charged' });
       const swoge = String(r.factureSwoge);
       const recu = crypto.randomBytes(8).toString('hex');
@@ -482,9 +507,9 @@ function cree(deps) {
       const maxUsd = Chat.factureUsd(Agent.pireCasUsd(m, [{ content: String(args.task || '') }], !!(deps.actifs && deps.actifs().recherche)));
       const maxSwoge = studio.formateBase(studio.montantBaseDe(maxUsd, cours, dec), dec);
       if (devis) return { ok: true, outil, devis: { variable: true, maxSwoge, maxUsd: Number(maxUsd.toFixed(4)) } };
-      if (!deps.cles.sousPlafond(cle.h, Number(maxSwoge))) return echec('plafond', { ok: false, code: 402, raison: 'this key\'s daily cap does not leave room for this task (up to ' + maxSwoge + ' $SWOGE)' });
+      if (!deps.cles.sousPlafond(cle.h, Number(maxSwoge))) return echec('plafond', { ok: false, code: 402, raison: 'this key\'s daily cap does not leave room for this task (up to ' + combien(maxSwoge) + ')' });
       if (!rythmeOk(cle.h)) return { ok: false, code: 429, raison: 'too many calls — max ' + APPELS_PAR_MINUTE + ' per minute per key' };
-      const r = await deps.agent({ addr: cle.addr, tache: String(args.task), modele: m.id, canal });
+      const r = await deps.agent({ addr: cle.addr, tache: String(args.task), modele: m.id, canal, payeur: P ? 'credit' : 'swoge' });
       if (!r.ok) return echec('fournisseur', { ok: false, code: r.code || 502, raison: r.raison || 'the agent failed — you were not charged' });
       const swoge = String(r.factureSwoge);
       const recu = crypto.randomBytes(8).toString('hex');
@@ -502,10 +527,10 @@ function cree(deps) {
       if (!deps.chat) return { ok: false, code: 503, raison: 'chat completions are not switched on yet' };
       if (!deps.cles.sousPlafond(cle.h, Number(swogeC))) return echec('plafond', { ok: false, code: 402, raison: 'this key reached its daily spending cap' });
       if (!rythmeOk(cle.h)) return { ok: false, code: 429, raison: 'too many calls — max ' + APPELS_PAR_MINUTE + ' per minute per key' };
-      if (!deps.solde.reserve(cle.addr, weiC)) return echec('solde', { ok: false, code: 402, raison: 'balance too low — top up $SWOGE in the Wallet', requisSwoge: swogeC });
+      if (!S.reserve(cle.addr, weiC)) return echec('solde', { ok: false, code: 402, raison: tropBas, requisSwoge: swogeC });
       const r = await deps.chat.appelle(args).catch(() => ({ ok: false, code: 502, raison: 'the provider failed - nothing was charged' }));
-      if (!r.ok) { deps.solde.regle(cle.addr, weiC, 0n); return echec('fournisseur', { ok: false, code: r.code || 502, raison: r.raison }); }
-      const soldeC = deps.solde.regle(cle.addr, weiC, weiC);
+      if (!r.ok) { S.regle(cle.addr, weiC, 0n); return echec('fournisseur', { ok: false, code: r.code || 502, raison: r.raison }); }
+      const soldeC = S.regle(cle.addr, weiC, weiC);
       const recuC = crypto.randomBytes(8).toString('hex');
       deps.cles.depense(cle.h, Number(swogeC), { id: recuC, outil, swoge: swogeC, usd: usdC });
       paye(usdC);
@@ -517,12 +542,12 @@ function cree(deps) {
     if (devis) return { ok: true, outil, devis: { swoge, usd } };
     if (!deps.cles.sousPlafond(cle.h, Number(swoge))) return echec('plafond', { ok: false, code: 402, raison: 'this key reached its daily spending cap' });
     if (!rythmeOk(cle.h)) return { ok: false, code: 429, raison: 'too many calls — max ' + APPELS_PAR_MINUTE + ' per minute per key' };
-    if (!deps.solde.reserve(cle.addr, wei)) return echec('solde', { ok: false, code: 402, raison: 'balance too low — top up $SWOGE in the Wallet', requisSwoge: swoge });
+    if (!S.reserve(cle.addr, wei)) return echec('solde', { ok: false, code: 402, raison: tropBas, requisSwoge: swoge });
     let r;
     try { r = await deps.outils[outil](args); }
-    catch (e) { deps.solde.regle(cle.addr, wei, 0n); return echec('outil', { ok: false, code: 502, raison: 'the tool failed — you were not charged' }); }
-    if (!r || r.erreur) { deps.solde.regle(cle.addr, wei, 0n); return echec('outil', { ok: false, code: 400, raison: (r && r.erreur) || 'the tool returned nothing — you were not charged' }); }
-    const solde = deps.solde.regle(cle.addr, wei, wei);
+    catch (e) { S.regle(cle.addr, wei, 0n); return echec('outil', { ok: false, code: 502, raison: 'the tool failed — you were not charged' }); }
+    if (!r || r.erreur) { S.regle(cle.addr, wei, 0n); return echec('outil', { ok: false, code: 400, raison: (r && r.erreur) || 'the tool returned nothing — you were not charged' }); }
+    const solde = S.regle(cle.addr, wei, wei);
     const recu = crypto.randomBytes(8).toString('hex');
     deps.cles.depense(cle.h, Number(swoge), { id: recu, outil, swoge, usd });
     paye(usd);
@@ -614,7 +639,7 @@ function llmsTxt(cat, u) {
   return [
     '# SwogeAgentic',
     '',
-    '> Pay-per-call tools for AI agents from SWOGE WORLD: token scans (market from DexScreener, contract security Powered by Go+ Security, and what the SWOGE AI colony measured on Robinhood Chain, with sample sizes), the colony\'s newest launches and live activity, wallet and infrastructure OSINT (passive), the $SWOGE economy, web search, image generation and a full research agent. Read-only: nothing here buys, sells or signs. Each call is paid from the key owner\'s $SWOGE balance, within a daily cap they set.',
+    '> Pay-per-call tools for AI agents from SWOGE WORLD: token scans (market from DexScreener, contract security Powered by Go+ Security, and what the SWOGE AI colony measured on Robinhood Chain, with sample sizes), the colony\'s newest launches and live activity, wallet and infrastructure OSINT (passive), the $SWOGE economy, web search, image generation and a full research agent. Read-only: nothing here buys, sells or signs. Each call is paid from the key owner\'s dollar credit (topped up with USDC, no $SWOGE needed) or $SWOGE balance, within a daily cap they set.',
     '',
     'Get an API key at ' + u.page + ' (sign in with a wallet, set a daily cap; the key is shown once). Send it as `Authorization: Bearer swg_…`.',
     '',
@@ -641,7 +666,8 @@ function llmsTxt(cat, u) {
       + '`POST ' + u.api + '/esim/buy` with `{"plan": "<plan id>"}` answers 402 (x402 v2, USDC on Base or Solana, the plan price); sign and retry with `PAYMENT-SIGNATURE` and the same plan. '
       + 'The eSIM is bought before the payment settles: if it cannot be bought, nothing is charged. The answer carries the activation (LPA code) and `orderLink`, a secret: `GET ' + u.api + '/esim/order/<orderLink>` returns it again. Data only, no phone number; check the device supports eSIM.'] : [])
    /* La passerelle de depense (28/09 au soir). */
-   .concat(['', 'Pay other x402 services with your key: `POST ' + u.api + '/agentic/pay` with `{"url": "...", "query": {...}, "max_usd": 0.01}` and an `Idempotency-Key` header. The key owner turns payments on for that key first (per-call cap up to $0.10, optional allowed sites); SWOGE pays, only if the service answers 200, and bills the owner in $SWOGE. The same Idempotency-Key never pays twice. Every attempt is on a hash-chained audit: `GET ' + u.api + '/agentic/audit`.'])
+   .concat(['', 'Pay other x402 services with your key: `POST ' + u.api + '/agentic/pay` with `{"url": "...", "query": {...}, "max_usd": 0.01}` and an `Idempotency-Key` header. The key owner turns payments on for that key first (per-call cap up to $0.10, optional allowed sites); SWOGE pays, only if the service answers 200, and bills the owner (dollar credit or $SWOGE). The same Idempotency-Key never pays twice. Every attempt is on a hash-chained audit: `GET ' + u.api + '/agentic/audit`.',
+     '', 'Dollar credit: a key can be set to pay from its owner\'s dollar credit instead of $SWOGE. Read it with `GET ' + u.api + '/credit` and top it up with one x402 payment (USDC on Base or Solana): `POST ' + u.api + '/credit/topup` with `{"usd": 5}` and your key; credited once the payment settles.'])
    .concat(['',
     '## Docs',
     '',

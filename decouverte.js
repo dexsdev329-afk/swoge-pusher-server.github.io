@@ -717,7 +717,7 @@ function openapi(c) {
   paths['/agentic/pay'] = { post: { operationId: 'payService', summary: 'Use this when your agent must pay another x402 service: SWOGE pays it for you, within the limits the key owner set', tags: ['payments'],
     description: 'With your API key and an Idempotency-Key header. The key owner first turns payments on for that key (per-call cap up to $0.10, optional allowed sites) on the SwogeAgentic page: off by default. '
       + 'Only services of the public x402 catalogue, public https addresses, no redirects; the price in the 402 must fit the per-call cap (and max_usd if sent) and the key\'s daily cap. '
-      + 'Paid only if the service answers 200; the owner is billed in $SWOGE. The same Idempotency-Key never pays twice. Every attempt writes a hash-chained audit line: GET /agentic/audit.',
+      + 'Paid only if the service answers 200; the owner is billed from their dollar credit (a key set to pay by credit) or in $SWOGE. The same Idempotency-Key never pays twice. Every attempt writes a hash-chained audit line: GET /agentic/audit.',
     parameters: [{ name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', minLength: 8, maxLength: 100 } }],
     requestBody: { required: true, content: { 'application/json': { schema: obj({ url: s('https URL of the paid service'), method: s('GET or POST'), query: { type: 'object' }, body: { type: 'object' },
       max_usd: n('optional: a lower cap for this call') }, ['url']), example: { url: 'https://x402factory.ai/solana/coinprice', query: { symbol: 'SOL' }, max_usd: 0.01 } } } },
@@ -725,6 +725,18 @@ function openapi(c) {
       recu: { type: 'object', description: 'url, usd, factureUsd, reseau, tx' }, audit: { type: 'object', description: 'seq and h (SHA-256) of the audit line' }, rejoue: b('true: this Idempotency-Key was already used, original answer') }, ['ok']) } } },
       400: { description: 'Bad request or missing Idempotency-Key - nothing is charged' }, 401: { description: 'No key, or unknown or revoked key' }, 402: { description: 'Refused before or after the call - nothing is charged' },
       403: { description: 'Payments are off for this key, or the site is not allowed' }, 409: { description: 'A payment with this Idempotency-Key is still running' } },
+    security: [{ cleApi: [] }, { cleEnTete: [] }] } };
+  /* Le credit en dollars (credits.js, 29/09) : une cle lit et recharge le credit de son proprietaire. */
+  paths['/credit'] = { get: { operationId: 'credit', summary: 'Use this to read the dollar credit that pays your API key (when its owner set it to pay by credit)', tags: ['payments'],
+    description: 'With your API key (or a signed-in session): the balance in USD, the last top-ups and spends, the top-up limits. Free.',
+    responses: { 200: { description: 'The credit', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, balanceUsd: n('USD'), history: tab({ type: 'object' }), limits: { type: 'object' } }, ['ok', 'balanceUsd']) } } },
+      401: { description: 'No key, or unknown or revoked key' } }, security: [{ cleApi: [] }, { cleEnTete: [] }] } };
+  paths['/credit/topup'] = { post: { operationId: 'creditTopup', summary: 'Use this to top up the dollar credit of your key owner with one x402 payment (USDC on Base or Solana)', tags: ['payments'],
+    description: 'With your API key. Send {"usd": 5} without payment: the 402 PAYMENT-REQUIRED header says what to sign; retry the same request with PAYMENT-SIGNATURE. '
+      + 'Credited to the key owner once the payment settles, once per transaction. $0.10 to $50 per top-up, not withdrawable. Money only goes in: a key cannot spend the credit beyond its daily cap.',
+    requestBody: { required: true, content: { 'application/json': { schema: obj({ usd: n('0.10 to 50') }, ['usd']), example: { usd: 5 } } } },
+    responses: { 200: { description: 'Credited', content: { 'application/json': { schema: obj({ ok: { type: 'boolean' }, creditedUsd: n(), balanceUsd: n(), alreadyCredited: b() }, ['ok']) } } },
+      400: { description: 'Amount out of bounds' }, 401: { description: 'No key, or unknown or revoked key' }, 402: { description: 'Payment required (PAYMENT-REQUIRED header), or refused' } },
     security: [{ cleApi: [] }, { cleEnTete: [] }] } };
   paths['/agentic/services'] = { get: { operationId: 'searchServices', summary: 'Use this to find a paid x402 service that actually answers: the public catalogue with what SWOGE measured without paying', tags: ['payments'],
     description: 'Free, no key, 30 searches per 10 minutes per IP. Each service: price, networks, probes (n, share answered, median latency, last failure) and real paid calls through SWOGE. No verdict under 3 probes.',

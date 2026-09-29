@@ -32,6 +32,10 @@ const PREFIXE = 'swg_';
 const RECUS_MAX = 50;
 const PLAFOND_MIN = 1;                  /* en $SWOGE entiers, par jour */
 const PLAFOND_MAX = 100000000;
+/* Le crédit en dollars (credits.js, 29/09/2026) : une clé peut se payer sur le crédit du
+   propriétaire au lieu de son $SWOGE. Son plafond du jour est alors en DOLLARS. */
+const PLAFOND_USD_MIN = 0.01;
+const PLAFOND_USD_MAX = 1000;
 const PAIE_MIN_APPEL_USD = 0.001;       /* payer un service : le plafond par appel que le proprietaire choisit… */
 const PAIE_MAX_APPEL_USD = 0.1;         /* …jamais au-dessus de celui de l'embauche (EMBAUCHE_MAX_APPEL_USD, 0,10 $) */
 
@@ -60,24 +64,57 @@ function cree(opts) {
     try { fs.writeSync(fd, JSON.stringify(E)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     fs.renameSync(tmp, fichier);
   }
+  const auCredit = (c) => c.payeur === 'credit';
+  /* La dépense du jour, dans l'UNITÉ de la clé ($SWOGE, ou dollars pour une clé au crédit). */
+  const depenseDuJour = (c) => (c.jour === jourDe(maintenant()) ? (auCredit(c) ? c.depenseUsd || 0 : c.depenseSwoge) : 0);
   const vue = (h, c) => ({ id: h.slice(0, 12), nom: c.nom, debut: c.debut, cree: c.cree, derniere: c.derniere || null,
-    plafondSwoge: c.plafondSwoge, depenseAujourdhui: c.jour === jourDe(maintenant()) ? c.depenseSwoge : 0, revoquee: !!c.revoquee,
+    payeur: auCredit(c) ? 'credit' : 'swoge', plafondUsd: auCredit(c) ? c.plafondUsd : null,
+    plafondSwoge: c.plafondSwoge, depenseAujourdhui: depenseDuJour(c), revoquee: !!c.revoquee,
     paiements: c.paie && c.paie.actif ? { actif: true, maxAppelUsd: c.paie.maxAppelUsd, hotes: c.paie.hotes.slice() } : { actif: false } });
 
-  /** Crée une clé pour l'adresse de la SESSION. Rend la clé en clair une seule fois. */
-  function nouvelle(addr, nom, plafondSwoge) {
+  /* Le payeur et son plafond du jour : { payeur: 'credit', plafondUsd } ou { payeur: 'swoge', plafondSwoge }. */
+  function payeurLu(o) {
+    o = o || {};
+    if (o.payeur === 'credit') {
+      const u = Math.round(Number(o.plafondUsd) * 100) / 100;
+      if (!(u >= PLAFOND_USD_MIN && u <= PLAFOND_USD_MAX)) return { erreur: 'set a daily spending cap between $' + PLAFOND_USD_MIN + ' and $' + PLAFOND_USD_MAX };
+      return { payeur: 'credit', plafondUsd: u };
+    }
+    const p = Math.floor(Number(o.plafondSwoge));
+    if (!(p >= PLAFOND_MIN && p <= PLAFOND_MAX)) return { erreur: 'set a daily spending cap between ' + PLAFOND_MIN + ' and ' + PLAFOND_MAX.toLocaleString('en-US') + ' $SWOGE' };
+    return { payeur: 'swoge', plafondSwoge: p };
+  }
+
+  /** Crée une clé pour l'adresse de la SESSION. Rend la clé en clair une seule fois.
+   *  opts : { payeur: 'credit', plafondUsd } pour une clé payée sur le crédit en dollars. */
+  function nouvelle(addr, nom, plafondSwoge, opts) {
     if (!addr) return { ok: false, code: 401 };
     const S = charge();
     const actives = Object.values(S.cles).filter((c) => c.addr === addr && !c.revoquee).length;
     if (actives >= MAX_ACTIVES) return { ok: false, code: 409, raison: 'at most ' + MAX_ACTIVES + ' active keys — revoke one first' };
-    const p = Math.floor(Number(plafondSwoge));
-    if (!(p >= PLAFOND_MIN && p <= PLAFOND_MAX)) return { ok: false, code: 400, raison: 'set a daily spending cap between ' + PLAFOND_MIN + ' and ' + PLAFOND_MAX.toLocaleString('en-US') + ' $SWOGE' };
+    const pl = payeurLu(Object.assign({ plafondSwoge }, opts || {}));
+    if (pl.erreur) return { ok: false, code: 400, raison: pl.erreur };
     const cle = PREFIXE + crypto.randomBytes(32).toString('base64url');
     const h = empreinte(cle);
     S.cles[h] = { addr, nom: String(nom || 'agent').replace(/[^\w .-]/g, '').slice(0, 40) || 'agent', debut: cle.slice(0, 8),
-                  cree: maintenant(), plafondSwoge: p, jour: null, depenseSwoge: 0 };
+                  cree: maintenant(), plafondSwoge: pl.plafondSwoge || null, jour: null, depenseSwoge: 0 };
+    if (pl.payeur === 'credit') Object.assign(S.cles[h], { payeur: 'credit', plafondUsd: pl.plafondUsd, depenseUsd: 0 });
     sauve();
     return { ok: true, cle, cleVue: vue(h, S.cles[h]) };
+  }
+
+  /** Le propriétaire (SESSION) change le payeur d'une de ses clés, et son plafond du jour dans la nouvelle unité. */
+  function fixePayeur(addr, id, o) {
+    const S = charge();
+    const h = Object.keys(S.cles).find((k) => k.slice(0, 12) === String(id || '') && S.cles[k].addr === addr && !S.cles[k].revoquee);
+    if (!h) return { ok: false, code: 404, raison: 'no such key' };
+    const pl = payeurLu(o);
+    if (pl.erreur) return { ok: false, code: 400, raison: pl.erreur };
+    const c = S.cles[h];
+    if (pl.payeur === 'credit') { if (!auCredit(c)) c.depenseUsd = 0; c.payeur = 'credit'; c.plafondUsd = pl.plafondUsd; }
+    else { if (auCredit(c)) c.depenseSwoge = 0; delete c.payeur; delete c.plafondUsd; c.plafondSwoge = pl.plafondSwoge; }
+    sauve();
+    return { ok: true, cle: vue(h, c) };
   }
 
   /** Les clés d'une adresse, sans jamais la clé elle-même. */
@@ -100,24 +137,26 @@ function cree(opts) {
     const S = charge();
     const h = empreinte(cle), c = S.cles[h];
     if (!c || c.revoquee) return null;
-    return { id: h.slice(0, 12), h, addr: c.addr, plafondSwoge: c.plafondSwoge };
+    return { id: h.slice(0, 12), h, addr: c.addr, plafondSwoge: c.plafondSwoge, payeur: auCredit(c) ? 'credit' : 'swoge', plafondUsd: auCredit(c) ? c.plafondUsd : null };
   }
 
-  /** Reste-t-il `swoge` sous le plafond du jour ? */
-  function sousPlafond(h, swoge) {
+  /** Reste-t-il `montant` sous le plafond du jour ? `montant` est dans l'UNITÉ de la clé :
+   *  $SWOGE, ou dollars pour une clé au crédit (l'appelant facture alors au cours 1). */
+  function sousPlafond(h, montant) {
     const c = charge().cles[h]; if (!c) return false;
-    const j = jourDe(maintenant());
-    const deja = c.jour === j ? c.depenseSwoge : 0;
-    return deja + swoge <= c.plafondSwoge;
+    return depenseDuJour(c) + montant <= (auCredit(c) ? c.plafondUsd : c.plafondSwoge) + 1e-9;
   }
-  /** Compte une dépense réglée, et garde le reçu. */
-  function depense(h, swoge, recu) {
+  /** Compte une dépense réglée (dans l'unité de la clé), et garde le reçu. */
+  function depense(h, montant, recu) {
     const S = charge(), c = S.cles[h]; if (!c) return;
     const j = jourDe(maintenant());
-    if (c.jour !== j) { c.jour = j; c.depenseSwoge = 0; }
-    c.depenseSwoge = Math.round((c.depenseSwoge + swoge) * 1e6) / 1e6;
+    if (c.jour !== j) { c.jour = j; c.depenseSwoge = 0; c.depenseUsd = 0; }
+    if (auCredit(c)) c.depenseUsd = Math.round(((c.depenseUsd || 0) + montant) * 1e6) / 1e6;
+    else c.depenseSwoge = Math.round((c.depenseSwoge + montant) * 1e6) / 1e6;
     c.derniere = maintenant();
     const l = S.recus[c.addr] || (S.recus[c.addr] = []);
+    /* Au crédit : le reçu dit dollars, jamais un montant en $SWOGE qui n'a pas été débité. */
+    if (auCredit(c)) { recu = Object.assign({}, recu, { payeur: 'credit' }); delete recu.swoge; }
     l.unshift(Object.assign({ cle: h.slice(0, 12), t: maintenant() }, recu));
     if (l.length > RECUS_MAX) l.length = RECUS_MAX;
     sauve();
@@ -146,7 +185,7 @@ function cree(opts) {
   /** La politique de paiement d'une cle (par son empreinte), ou null si les paiements sont eteints. */
   function paiementDe(h) { const c = charge().cles[h]; return c && !c.revoquee && c.paie && c.paie.actif ? Object.assign({}, c.paie, { hotes: c.paie.hotes.slice() }) : null; }
 
-  return { nouvelle, liste, revoque, resout, sousPlafond, depense, recus, fixePaiement, paiementDe, _etat: () => charge() };
+  return { nouvelle, liste, revoque, resout, sousPlafond, depense, recus, fixePaiement, paiementDe, fixePayeur, _etat: () => charge() };
 }
 
-module.exports = { cree, empreinte, MAX_ACTIVES, PREFIXE, PLAFOND_MIN, PLAFOND_MAX };
+module.exports = { cree, empreinte, MAX_ACTIVES, PREFIXE, PLAFOND_MIN, PLAFOND_MAX, PLAFOND_USD_MIN, PLAFOND_USD_MAX };

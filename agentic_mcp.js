@@ -179,9 +179,14 @@ async function appel(p, req, deps, id) {
     if (r.x402) quote.x402 = r.x402;
     return { content: [{ type: 'text', text: t + x + (req.cle ? '' : ' How to pay: ' + r.howToPay) }], structuredContent: quote, isError: false };
   }
-  const pied = '\n\n— billed ' + r.facture.swoge + ' $SWOGE ($' + r.facture.usd + '), receipt ' + r.recu + ', balance ' + r.solde + ' $SWOGE';
+  /* Une clé payée au crédit en dollars (29/09) : le pied le dit en dollars, jamais en $SWOGE. */
+  const auCredit = !!(r.facture && r.facture.paidWith);
+  const pied = auCredit
+    ? '\n\n— billed $' + r.facture.usd + ' from your dollar credit, receipt ' + r.recu + (r.creditUsd != null ? ', credit left $' + r.creditUsd : '')
+    : '\n\n— billed ' + r.facture.swoge + ' $SWOGE ($' + r.facture.usd + '), receipt ' + r.recu + ', balance ' + r.solde + ' $SWOGE';
   return { content: [{ type: 'text', text: String(r.texte || '') + pied }],
-           structuredContent: { result: r.resultat, billed: r.facture, receipt: r.recu, balance: r.solde }, isError: false };
+           structuredContent: auCredit ? { result: r.resultat, billed: r.facture, receipt: r.recu, creditUsd: r.creditUsd != null ? r.creditUsd : null }
+             : { result: r.resultat, billed: r.facture, receipt: r.recu, balance: r.solde }, isError: false };
 }
 
 /* Une option de paiement dite par réseau ET actif (contrat §C.3) : avant, toute option sans

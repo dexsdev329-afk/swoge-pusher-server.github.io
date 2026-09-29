@@ -1860,10 +1860,14 @@ const agentic = () => {
     actifs: () => ({ recherche: chatActif('perplexity') }),
     /* Une image pour un agent : la MEME fonction que la page (reserve, cout
        reel, reste rendu), au nom de l'adresse de la cle. */
-    image: ({ addr, prompt, fournisseur, n, modele, format, canal }) => {
+    image: ({ addr, prompt, fournisseur, n, modele, format, canal, payeur }) => {
       if (!studioXai.actif() && !studioOpenai.actif()) return Promise.resolve({ ok: false, code: 503, raison: 'image generation is not switched on yet' });
-      return studioMedia.images({ addr, modele: modele || 'qualite', prompt, n, fournisseur, format: format || 'auto', canal }, depsMedia());
+      const p = payeurDe(addr, payeur, 'key:image');
+      return studioMedia.images({ addr, modele: modele || 'qualite', prompt, n, fournisseur, format: format || 'auto', canal },
+        p.credit ? Object.assign(depsMedia(), { cours: p.cours, solde: p.solde }) : depsMedia());
     },
+    /* Une cle payee au credit en dollars (credits.js, 29/09) : le cours 1 et le credit comme solde. */
+    credit: (addr) => payeurDe(addr, 'credit', 'key'),
     /* Une image payee D'AVANCE (x402) : meme fonction, hors solde de jeu, au nom du payeur. */
     imageHorsSolde: ({ addr, prompt, fournisseur, n, modele, format, prixUsd }) => {
       if (!studioXai.actif() && !studioOpenai.actif()) return Promise.resolve({ ok: false, code: 503, raison: 'image generation is not switched on yet' });
@@ -1888,11 +1892,12 @@ const agentic = () => {
         pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, src.recherche, Object.assign({}, limites, studioAgent.jetonsDe(src))),
         fournisseur: (p) => studioAgent.repond(p, { src, limites, budgetUsd }) });
     },
-    agent: ({ addr, tache, modele, canal }) => {
+    agent: ({ addr, tache, modele, canal, payeur }) => {
       if (!chatActif('anthropic')) return Promise.resolve({ ok: false, code: 503, raison: 'the agent is not switched on yet' });
       const src = srcAgent();
+      const p = payeurDe(addr, payeur, 'key:ask_agent:' + modele);
       return studioChat.repond({ addr, modele, messages: [{ role: 'user', content: tache }], recherche: false, canal }, {
-        cours: () => studioChat.coursSwoge(), solde: { reserve: (a, w) => game.studioReserve(a, w), regle }, actif: chatActif,
+        cours: p.cours, solde: p.solde, actif: chatActif,
         pireCas: (mm, msgs) => studioAgent.pireCasUsd(mm, msgs, src.recherche, studioAgent.jetonsDe(src)),
         fournisseur: (p) => studioAgent.repond(p, { src }) });
     },
@@ -2039,8 +2044,10 @@ const RECHERCHES_ESIM = new Map();            /* empreinte d'IP → instants : 2
 /* ---- LA PASSERELLE DE DEPENSE DES AGENTS (passerelle.js, 28/09 au soir) ---- */
 let PASSERELLE = null;
 function passerelle() {
+  /* Une cle payee au credit en dollars (29/09) : la passerelle debite le credit, au cours 1 (des dollars). */
   if (!PASSERELLE) PASSERELLE = require('./passerelle').cree({ embauche: () => embauche(), cles: agenticCles,
-    factuPour: (addr) => factuEmbauche(addr, 'pay a service through the SWOGE gateway'), cours: () => studioChat.coursSwoge(), dossier: cfg.DATA_DIR });
+    factuPour: (addr, cle) => (cle && cle.payeur === 'credit' ? credits().factu(addr, 'pay a service through the SWOGE gateway') : factuEmbauche(addr, 'pay a service through the SWOGE gateway')),
+    cours: (cle) => (cle && cle.payeur === 'credit' ? 1 : studioChat.coursSwoge()), dossier: cfg.DATA_DIR });
   return PASSERELLE;
 }
 /* ---- LE CATALOGUE x402 NOTE PAR NOS MESURES (sonde_services.js, 29/09) ----
@@ -3329,7 +3336,7 @@ const server = http.createServer(async (req, res) => {
       if (path === '/agentic/cles' && req.method === 'POST') {
         let q;
         try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
-        const r = agenticCles.nouvelle(session, q.nom, q.plafondSwoge);
+        const r = agenticCles.nouvelle(session, q.nom, q.plafondSwoge, q.payeur === 'credit' ? { payeur: 'credit', plafondUsd: q.plafondUsd } : null);
         return json(r.ok ? 200 : r.code, r);
       }
       /* La permission de payer d'une cle : la SESSION du proprietaire seulement (une cle ne se l'accorde jamais). */
@@ -3337,6 +3344,13 @@ const server = http.createServer(async (req, res) => {
         let q;
         try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
         const r = agenticCles.fixePaiement(session, path.split('/')[3], q);
+        return json(r.ok ? 200 : r.code, r);
+      }
+      /* Le payeur d'une cle (credit en dollars ou $SWOGE) et son plafond du jour : la SESSION seulement. */
+      if (/^\/agentic\/cles\/[0-9a-f]{12}\/payeur$/.test(path) && req.method === 'POST') {
+        let q;
+        try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+        const r = agenticCles.fixePayeur(session, path.split('/')[3], q);
         return json(r.ok ? 200 : r.code, r);
       }
       if (path.startsWith('/agentic/cles/') && req.method === 'DELETE') {
@@ -3399,12 +3413,17 @@ const server = http.createServer(async (req, res) => {
      paye en x402 (USDC Base ou Solana, ou $SWOGE sur Robinhood Chain). Toujours l'adresse de SESSION. */
   if (path === '/credit' || path === '/credit/topup') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
-                   'access-control-allow-headers': 'content-type, authorization, payment-signature', 'access-control-expose-headers': 'payment-required, payment-response' };
+                   'access-control-allow-headers': 'content-type, authorization, x-api-key, payment-signature', 'access-control-expose-headers': 'payment-required, payment-response' };
     const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
     const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
-    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    /* La session du joueur, OU une cle d'API (swg_) : un agent lit le credit de son proprietaire et
+       peut le recharger avec SON portefeuille (l'argent ne fait qu'entrer). Toujours l'adresse de la
+       session ou celle de la cle — jamais une adresse du corps. */
+    const cleT = jeton.startsWith(require('./agentic_cles').PREFIXE) ? jeton : String(req.headers['x-api-key'] || '').trim();
+    const cleC = cleT ? agenticCles.resout(cleT) : null;
+    const addr = cleT ? (cleC && cleC.addr) : (jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null);
+    if (!addr) return json(401, { ok: false, raison: cleT ? 'this API key is unknown or revoked' : 'sign in with your wallet first, or send your API key' });
     if (path === '/credit') {
       const xv = x402();
       return json(200, { ok: true, balanceUsd: credits().soldeUsd(addr), history: credits().historique(addr, 20), limits: credits().LIMITES,

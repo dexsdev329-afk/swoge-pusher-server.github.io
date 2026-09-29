@@ -48,8 +48,8 @@ function verifie(lignes) {
 }
 
 /**
- * deps : { embauche() → l'instance embauche.js, cles (agentic_cles), factuPour(addr) → { reserve, regle },
- *          cours() → USD par $SWOGE, dossier, maintenant? }
+ * deps : { embauche() → l'instance embauche.js, cles (agentic_cles), factuPour(addr, cle) → { reserve, regle },
+ *          cours(cle) → USD par unite de la cle ($SWOGE ; 1 pour une cle payee au credit en dollars), dossier, maintenant? }
  */
 function cree(deps) {
   const maintenant = deps.maintenant || Date.now;
@@ -107,12 +107,13 @@ function cree(deps) {
     const max = Number(a.max_usd) > 0 ? Math.min(pol.maxAppelUsd, Number(a.max_usd)) : pol.maxAppelUsd;
     IDEM[ik] = { t: maintenant(), etat: 'en cours' };
     ecritIdem();
-    /* La facture de l'embauche, bornee par le plafond du jour de la CLE (en $SWOGE, au cours du moment). */
-    const inner = deps.factuPour(cle.addr);
+    /* La facture de l'embauche, bornee par le plafond du jour de la CLE : en $SWOGE au cours du
+       moment, ou en dollars (cours 1) pour une cle payee au credit (credits.js, 29/09). */
+    const inner = deps.factuPour(cle.addr, cle);
     let cours = null;
     const factu = {
       reserve: async (usd) => {
-        cours = await deps.cours();
+        cours = await deps.cours(cle);
         if (!(cours > 0)) return { ok: false, raison: 'the $SWOGE price is unavailable right now - nothing was charged' };
         if (!deps.cles.sousPlafond(cle.h, usd / cours)) return { ok: false, raison: 'this key reached its daily spending cap - nothing was charged' };
         return inner.reserve(usd);
