@@ -2043,6 +2043,12 @@ function passerelle() {
     factuPour: (addr) => factuEmbauche(addr, 'pay a service through the SWOGE gateway'), cours: () => studioChat.coursSwoge(), dossier: cfg.DATA_DIR });
   return PASSERELLE;
 }
+/* ---- L'eSIM ET LA PASSERELLE DANS LE MCP (mcp_extras.js, 29/09) ---- */
+let MCP_EXTRAS = null;
+function mcpExtras() {
+  if (!MCP_EXTRAS) MCP_EXTRAS = require('./mcp_extras').cree({ boutique: () => boutiqueEsim(), passerelle: () => passerelle(), paiementsActifs: () => embauche().actif(), api: MOI_URL });
+  return MCP_EXTRAS;
+}
 /** La facture d'une embauche (ou d'un achat) pour UN joueur : reserve au cours du moment, regle au prix du recu. */
 function factuEmbauche(addr, quoi) {
   const dec = cfg.DECIMALS || 18;
@@ -3170,7 +3176,7 @@ const server = http.createServer(async (req, res) => {
     /* Sans cle : tools/list et les devis sont servis ; un appel recoit la marche a suivre. Une cle
        envoyee mais inconnue ou revoquee reste refusee. `qui` : l'empreinte salee de l'IP (compteurs). */
     try { r = await agenticMcp.traite({ methode: req.method, entetes: req.headers, corps: texte, cle: cleTexte ? agenticCles.resout(cleTexte) : null, clePresentee: !!cleTexte,
-      qui: compteurs.ip(qui(req)), origines: MCP_ORIGINES }, { agentic: agentic(), actifs: () => ({ recherche: chatActif('perplexity') }), api: MOI_URL, x402: x402Mcp() }); }
+      qui: compteurs.ip(qui(req)), origines: MCP_ORIGINES }, { agentic: agentic(), actifs: () => ({ recherche: chatActif('perplexity') }), api: MOI_URL, x402: x402Mcp(), extras: mcpExtras() }); }
     catch (e) { console.error('[mcp] ' + (e && e.stack || e)); r = { status: 500, entetes: { 'content-type': 'application/json' }, corps: JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Internal error' } }) }; }
     res.writeHead(r.status, Object.assign({ 'cache-control': 'no-store' }, r.entetes));
     return res.end(r.corps);

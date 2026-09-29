@@ -36,7 +36,12 @@ const META = 'io.modelcontextprotocol/';
 const SERVEUR = { name: 'swogeagentic', title: 'SwogeAgentic — SWOGE WORLD tools', version: '1.0.1' };
 /* 26 septembre 2026 : le devis est GRATUIT et sans clé (l'audit du jour l'a
    trouvé promis ici mais refusé) ; la clé n'est requise que pour être servi. */
-const instructions = (api, x402Mcp) => 'SWOGE WORLD tools for crypto research on Robinhood Chain and beyond: token scans (market from DexScreener, contract security Powered by Go+ Security (https://gopluslabs.io), and what the SWOGE AI colony measured, with sample sizes), the colony\'s live activity, the $SWOGE economy, web search, and a full research agent. Read-only: nothing here buys, sells or signs. No key needed to list the tools or to get a price: call any tool with {"quote": true} in its arguments — free, nothing runs. To run a tool, send an API key (create one at https://swoleeswoge.dog/swogeagentic.html, header "Authorization: Bearer swg_…"): each call is billed from the key owner\'s $SWOGE balance, within a daily cap. Fixed-price tools and images can also be paid per call without an account via x402 over REST: POST ' + (api || '') + '/agentic/call/<tool> (the quote says when that is open).'
+const instructions = (api, x402Mcp, extras) => 'SWOGE WORLD tools for crypto research on Robinhood Chain and beyond: token scans (market from DexScreener, contract security Powered by Go+ Security (https://gopluslabs.io), and what the SWOGE AI colony measured, with sample sizes), the colony\'s live activity, the $SWOGE economy, web search, and a full research agent. '
+  /* 29/09 : une seule exception a « rien n'achete », et elle est dite. */
+  + (extras && extras.gere('pay_service') ? 'Read-only except pay_service, which pays another x402 service only when the API key owner turned payments on for that key, within their per-call cap; nothing here sells or signs for itself.'
+    : 'Read-only: nothing here buys, sells or signs.')
+  + (extras && extras.gere('find_esim_plans') ? ' find_esim_plans finds travel data eSIMs (free).' : '')
+  + ' No key needed to list the tools or to get a price: call any tool with {"quote": true} in its arguments — free, nothing runs. To run a tool, send an API key (create one at https://swoleeswoge.dog/swogeagentic.html, header "Authorization: Bearer swg_…"): each call is billed from the key owner\'s $SWOGE balance, within a daily cap. Fixed-price tools and images can also be paid per call without an account via x402 over REST: POST ' + (api || '') + '/agentic/call/<tool> (the quote says when that is open).'
   /* x402 sur MCP allumé (Base allumée et X402_MCP != '0', lot Base du 27 septembre 2026). */
   + (x402Mcp ? ' Fixed-price tools and images (and ask_agent when enabled) can also be paid per call without an account with x402 over MCP (_meta["x402/payment"], USDC on Base first): call the tool, read the PaymentRequired in structuredContent, sign it and call again with the payment.' : '');
 
@@ -91,7 +96,9 @@ async function traite(req, deps) {
   const meta = (p._meta && typeof p._meta === 'object') ? p._meta : {};
   const moderne = typeof meta[META + 'protocolVersion'] === 'string';
   const x402Mcp = !!(deps.x402 && deps.x402.actif && deps.x402.actif());
-  const defs = () => outilsMcp(require('./agentic').definitions(deps.actifs ? deps.actifs() : {}), x402Mcp && deps.x402.prixBase ? deps.x402.prixBase : null);
+  /* deps.extras (mcp_extras.js, 29/09) : l'eSIM et la passerelle de depense, a cote des outils de lecture. */
+  const defs = () => outilsMcp(require('./agentic').definitions(deps.actifs ? deps.actifs() : {}), x402Mcp && deps.x402.prixBase ? deps.x402.prixBase : null)
+    .concat(deps.extras ? deps.extras.defs() : []);
 
   if (moderne) {
     const v = meta[META + 'protocolVersion'];
@@ -106,7 +113,7 @@ async function traite(req, deps) {
     if (!MODERNES.includes(v)) return json(400, erreur(m.id, -32022, 'Unsupported protocol version', { supported: MODERNES.concat(HERITEES), requested: v }));
     if (m.method === 'server/discover') {
       return json(200, { jsonrpc: '2.0', id: m.id, result: { resultType: 'complete', supportedVersions: MODERNES.concat(HERITEES),
-        capabilities: { tools: {} }, _meta: { [META + 'serverInfo']: SERVEUR }, instructions: instructions(deps.api, x402Mcp) } });
+        capabilities: { tools: {} }, _meta: { [META + 'serverInfo']: SERVEUR }, instructions: instructions(deps.api, x402Mcp, deps.extras) } });
     }
     if (m.method === 'tools/list') return json(200, { jsonrpc: '2.0', id: m.id, result: { resultType: 'complete', tools: defs() } });
     if (m.method === 'tools/call') {
@@ -120,7 +127,7 @@ async function traite(req, deps) {
   /* ---- HÉRITÉ (2025-11-25 et avant) ---- */
   if (m.method === 'initialize') {
     const v = HERITEES.includes(p.protocolVersion) ? p.protocolVersion : HERITEES[0];
-    return json(200, { jsonrpc: '2.0', id: m.id, result: { protocolVersion: v, capabilities: { tools: { listChanged: false } }, serverInfo: SERVEUR, instructions: instructions(deps.api, x402Mcp) } });
+    return json(200, { jsonrpc: '2.0', id: m.id, result: { protocolVersion: v, capabilities: { tools: { listChanged: false } }, serverInfo: SERVEUR, instructions: instructions(deps.api, x402Mcp, deps.extras) } });
   }
   if (m.method === 'ping') return json(200, { jsonrpc: '2.0', id: m.id, result: {} });
   if (m.method === 'tools/list') return json(200, { jsonrpc: '2.0', id: m.id, result: { tools: defs() } });
@@ -137,6 +144,7 @@ async function traite(req, deps) {
    d'outil qui dit EXACTEMENT comment payer (clé, ou x402 en REST). */
 async function appel(p, req, deps, id) {
   const nom = String(p.name || ''), args = Object.assign({}, p.arguments || {});
+  if (deps.extras && deps.extras.gere(nom)) return deps.extras.appelle(nom, args, req);
   const devis = args.quote === true; delete args.quote;
   /* ---- x402 SUR MCP (contrat §C, 27 septembre 2026 ; x402-foundation
    * specs/transports-v2/mcp.md) : sans clé, Base allumée, outil payable. Le
