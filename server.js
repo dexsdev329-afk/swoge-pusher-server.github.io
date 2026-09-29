@@ -2078,6 +2078,13 @@ const RECHERCHES_SERVICES = new Map();        /* empreinte d'IP → instants : 3
    ce fichier (require.main). Coupee, /poly/etat sert le dernier releve relu sur le disque. */
 const polyPapier = require('./poly_papier').cree({ dossier: cfg.DATA_DIR });
 if (process.env.POLY_PAPIER !== '0' && require.main === module) polyPapier.demarre(); else polyPapier.charge();
+/* ---- LE LAUNCHPAD V4 « ZERO ALERTE » (deploiement_v4.js, 29/09) ----
+   Un portefeuille DEDIE, genere sur ce serveur (cle dans DATA_DIR, jamais rendue), deploie
+   SwogeFunV4 des qu'il recoit 0,002 ETH, relit ses parametres, puis lance UN jeton de test
+   des qu'il recoit 10 000 $SWOGE, et lit GoPlus. Rien d'autre. /launchpad/v4 dit l'adresse
+   a financer et l'etape. DEPLOIEMENT_V4=0 coupe ; jamais dans un essai (require.main). */
+const deploiementV4 = require('./deploiement_v4').cree({ dossier: cfg.DATA_DIR, artefact: require('./swogefun_v4.json') });
+if (process.env.DEPLOIEMENT_V4 !== '0' && require.main === module) deploiementV4.demarre(); else deploiementV4.charge();
 /* ---- L'eSIM ET LA PASSERELLE DANS LE MCP (mcp_extras.js, 29/09) ---- */
 let MCP_EXTRAS = null;
 function mcpExtras() {
@@ -3901,6 +3908,13 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(predictPancake.etat()));
+  }
+
+  /* Le launchpad V4 : l'adresse du portefeuille de deploiement et l'etape. Public, jamais la cle. */
+  if (path === '/launchpad/v4') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
+                         'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(deploiementV4.etat()));
   }
 
   /* Polymarket AI : le releve de la colonie papier (poly_papier.js). Public, lisible depuis le site. */

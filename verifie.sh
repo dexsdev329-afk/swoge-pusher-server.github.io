@@ -71,6 +71,7 @@ lance store    "$SRV" node store_agents.test.js   # fiches de l Agent Store : ag
 lance passeport "$SRV" node passeport.test.js   # passeport d une cle : signe Ed25519 par une cle dediee, verifiable avec la seule cle publique, un champ change casse la signature, prive par defaut
 lance preuves  "$SRV" node preuves_x402.test.js   # paiements verifiables : agents exterieurs seulement, reseaux de production, payeur tronque, lien de la transaction
 lance polycol  "$SRV" node poly_papier.test.js   # Polymarket AI papier : achat au prix demande en remontant le carnet, frais officiels lus sur le marche, TWAP 60 s, temoin Coin, Brier, aucun verdict sous 100
+lance depv4   "$SRV" node deploiement_v4.test.js   # launchpad V4 : portefeuille dedie, parametres relus sur la chaine, une transaction jamais renvoyee, trois operations seulement, cle jamais rendue
 lance acces   "$SRV" node acces.test.js   # portes privees fermees sans cle, gestes d argent en POST seulement ; /credit partage entre le robinet admin et le credit en dollars (29/09)
 lance famille  "$SRV" node famille_client.test.js   # qui demande un prix : famille du client en code fixe, sonde ou demande, jamais le User-Agent brut ni l IP
 lance sondes   "$SRV" node sonde_services.test.js   # catalogue x402 note sans payer : une sonde par service et par 20 h, raison de chaque echec, aucun verdict sous 3 sondes, paiements reels comptes
