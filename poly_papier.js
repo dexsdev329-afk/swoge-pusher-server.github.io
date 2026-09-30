@@ -60,6 +60,19 @@ const path = require('path');
 const polySt = require('./poly_strategies');
 
 const GAMMA = 'https://gamma-api.polymarket.com', CLOB = 'https://clob.polymarket.com', HL = 'https://api.hyperliquid.xyz/info';
+/* ---- LE CONTROLE CONTRE LES VRAIS ECHANGES (30/09/2026) ----
+ * Question du proprietaire : « comment verifier que les marches ou on mise existent reellement
+ * sur Polymarket et qu on pourra reellement miser avec ces strategies ? ». Le marche, le carnet
+ * et la resolution viennent deja de Polymarket (gamma, CLOB). Ce qui manquait : savoir si notre
+ * prix aurait ete OBTENU. Apres chaque reglement, on lit les echanges reels du marche
+ * (data-api, /trades) et, pour chaque pari : y a-t-il eu une vraie execution de notre cote a
+ * notre prix (+1 ¢) dans les 15 s apres la decision ? et quel gain au PREMIER prix reellement
+ * echange apres elle (dans les 30 s) ? Controle a la main du 30/09 sur les 60 derniers paris :
+ * 60 marches existants, 60 resolutions identiques, echanges reels dans la minute pour tous,
+ * 16 734 $ echanges sur la fenetre BTC — mais dans la derniere minute le prix du Down passait
+ * de 0,73 a 0,99 : la latence y coute cher, c est ce que ce controle chiffre. */
+const DATA = 'https://data-api.polymarket.com';
+const REEL_DELAI_S = 15, REEL_APRES_S = 30, REEL_TOLERANCE = 0.01, REEL_PAGES = 5;
 const FENETRE_S = 900;
 const ACTIFS = [['btc', 'BTC', 'Bitcoin'], ['eth', 'ETH', 'Ethereum'], ['sol', 'SOL', 'Solana'], ['xrp', 'XRP', 'XRP']];
 const TIC_MS = Math.max(5, Number(process.env.POLY_PAPIER_TIC_S || 15)) * 1000;
@@ -377,7 +390,13 @@ function verdictAgent(a, essayees) {
   const nf = a.nf || 0;
   if (nf < FENETRES_ASSEZ) return 'Too few independent windows to judge (' + nf + '/' + FENETRES_ASSEZ + ' counted since 30 Sep): the four coins move together, so bets in the same 15 minutes count as one.';
   const z = zFenetre(a) || 0, N = Math.max(1, essayees || 1), b = barre(N), dit = 'skill ' + z.toFixed(1) + ' per window over ' + nf + ' windows';
-  if (z >= b && a.pnl > 0) return 'Evidence of an edge after fees: ' + dit + ', above the ' + b.toFixed(1) + ' bar that testing ' + N + ' strategies requires.';
+  if (z >= b && a.pnl > 0) {
+    /* Un edge de papier n est un resultat que s il tient aux prix REELLEMENT echanges (voir REEL_DELAI_S). */
+    const ve = a.ve || 0, sur = ', above the ' + b.toFixed(1) + ' bar that testing ' + N + ' strategies requires';
+    if (ve < RESOLUS_ASSEZ) return 'Edge on paper: ' + dit + sur + '. Not confirmed yet: ' + ve + '/' + RESOLUS_ASSEZ + ' bets checked against real Polymarket trades.';
+    if ((a.veReel || 0) <= 0) return 'Edge on paper only: ' + dit + sur + ', but at the prices really traded next it makes ' + (a.veReel < 0 ? '−$' : '$') + Math.abs(a.veReel || 0).toFixed(2) + ' over ' + ve + ' checked bets. Not tradable as is.';
+    return 'Evidence of an edge after fees: ' + dit + sur + ', and it holds at the prices really traded next ($' + a.veReel.toFixed(2) + ' over ' + ve + ' checked bets).';
+  }
   if (z >= 2) return 'Promising, not proven: ' + dit + ', below the ' + b.toFixed(1) + ' bar that testing ' + N + ' strategies requires — could still be luck.';
   if (a.pnl < 0) return 'No edge: loses after the spread and fees (' + dit + ').';
   return 'No evidence of an edge (' + dit + ').';
@@ -478,6 +497,17 @@ function cree(deps) {
   }
 
   const slug = (actif, debut) => actif + '-updown-15m-' + debut;
+  /* Les echanges reels d un marche (voir REEL_DELAI_S), du plus ancien au plus recent. */
+  async function echanges(cid) {
+    let tout = [];
+    for (let i = 0; i < REEL_PAGES; i++) {
+      const b = await lire(DATA + '/trades?market=' + cid + '&limit=1000&offset=' + i * 1000);
+      if (!Array.isArray(b) || !b.length) break;
+      tout = tout.concat(b.map((x) => ({ o: x.outcome, t: Number(x.timestamp), p: Number(x.price), s: Number(x.size) })).filter((x) => x.t > 0 && x.p > 0 && x.p < 1));
+      if (b.length < 1000) break;
+    }
+    return tout.sort((a, b) => a.t - b.t);
+  }
   async function evenement(actif, debut) {
     const r = await lire(GAMMA + '/events?slug=' + slug(actif, debut));
     const e = Array.isArray(r) ? r[0] : null, m = e && e.markets && e.markets[0];
@@ -622,6 +652,22 @@ function cree(deps) {
     ecrit();
   }
 
+  function realite() { return E.realite || (E.realite = { marches: 0, paris: 0, ok: 0, sans: 0, avecPrix: 0, ecartPrix: 0, papier: 0, reel: 0, volumes: [] }); }
+  /* Un pari regle, contre les echanges reels qui ont suivi la decision (voir REEL_DELAI_S). */
+  function controle(A, p, y, gain, reels) {
+    const R = realite(), t0 = Number(p.t) || 0;
+    const apres = reels.filter((x) => x.o === p.cote && x.t >= t0 && x.t <= t0 + REEL_APRES_S);
+    A.ve = (A.ve || 0) + 1; R.paris++;
+    if (apres.some((x) => x.t <= t0 + REEL_DELAI_S && x.p <= p.prix + REEL_TOLERANCE)) { A.veOk = (A.veOk || 0) + 1; R.ok++; }
+    if (!apres.length) { A.veSans = (A.veSans || 0) + 1; R.sans++; return; }
+    /* Au premier prix reellement echange : memes dollars, parts et frais recalcules a ce prix. */
+    const pr = Math.min(0.99, Math.max(0.01, apres[0].p)), parts = p.depense / pr;
+    const taux = p.parts > 0 && p.prix > 0 && p.prix < 1 ? p.frais / (p.parts * p.prix * (1 - p.prix)) : 0;
+    const gainReel = y * parts - p.depense - parts * taux * pr * (1 - pr);
+    A.vePapier = (A.vePapier || 0) + gain; A.veReel = (A.veReel || 0) + gainReel;
+    R.avecPrix++; R.ecartPrix += pr - p.prix; R.papier += gain; R.reel += gainReel;
+  }
+
   /* Regler : une fenetre resolue paie ses paris et note sa calibration. */
   async function resous() {
     const t = Math.floor(maintenant() / 1000);
@@ -629,11 +675,17 @@ function cree(deps) {
     for (const p of E.ouverts) if (p.debut + FENETRE_S + 30 <= t) cles.set(p.actif + ':' + p.debut, [p.actif, p.debut]);
     for (const c of E.calib.attente) if (c.debut + FENETRE_S + 30 <= t) cles.set(c.actif + ':' + c.debut, [c.actif, c.debut]);
     for (const [k, [actif, debut]] of cles) {
-      let issue = null;
+      let issue = null, m = null;
       try {
-        const m = await evenement(actif, debut);
+        m = await evenement(actif, debut);
         if (m && m.closed) { const noms = JSON.parse(m.outcomes || '[]'), px = JSON.parse(m.outcomePrices || '[]').map(Number); const i = px.indexOf(1); if (i >= 0 && px.filter((x) => x === 0).length === px.length - 1) issue = noms[i]; }
       } catch (e) { MESURE.erreurs++; continue; }
+      /* Les vrais echanges : jamais bloquants, un echec laisse simplement ces paris non controles. */
+      let reels = null;
+      if (issue && m && m.conditionId && E.ouverts.some((x) => x.actif + ':' + x.debut === k)) {
+        try { reels = await echanges(m.conditionId); } catch (e) { reels = null; }
+        if (reels) { const R = realite(); R.marches++; R.volumes.push(Math.round(reels.reduce((t, x) => t + x.s * x.p, 0))); if (R.volumes.length > 200) R.volumes.shift(); }
+      }
       const abandon = !issue && t - (debut + FENETRE_S) > ABANDON_S;
       if (!issue && !abandon) continue;
       const touches = new Set();
@@ -648,6 +700,7 @@ function cree(deps) {
           /* La grappe de la fenetre (voir FENETRES_ASSEZ) : close quand tous ses paris sont regles. */
           const G = (A.gr || (A.gr = {}))[debut] || (A.gr[debut] = 0);
           A.gr[debut] = G + y - p.prix;
+          if (reels) controle(A, p, y, gain, reels);
           A.cum += gain; if (A.cum > A.pic) A.pic = A.cum; if (A.pic - A.cum > A.creux) A.creux = A.pic - A.cum;
           p.issue = issue; p.gain = Math.round(gain * 100) / 100;
         }
@@ -679,6 +732,14 @@ function cree(deps) {
 
   function etat() {
     const r2 = (x) => Math.round(x * 100) / 100, C = E.calib;
+    /* Le controle contre les vrais echanges (voir REEL_DELAI_S), par strategie et en tout. */
+    const reelDe = (a) => (a.ve ? { checked: a.ve, fillable: a.veOk || 0, noTrade: a.veSans || 0, paperPnl: r2(a.vePapier || 0), realPnl: r2(a.veReel || 0) } : null);
+    const R = realite(), vols = R.volumes.slice().sort((x, y) => x - y);
+    const reality = { marketsChecked: R.marches, betsChecked: R.paris, fillableAtOurPrice: R.ok, noTradeWithin: R.sans, withinSeconds: REEL_DELAI_S, nextTradeSeconds: REEL_APRES_S,
+      avgGapToNextRealPrice: R.avecPrix ? Math.round(R.ecartPrix / R.avecPrix * 1000) / 1000 : null, paperPnl: r2(R.papier), pnlAtNextRealPrice: r2(R.reel), pricedBets: R.avecPrix,
+      medianMarketVolumeUsd: vols.length ? vols[vols.length >> 1] : null,
+      rule: 'Every market, order book and result comes from Polymarket itself (each bet links to its market). After settlement, each bet is also checked against the trades really made on Polymarket: was our side traded at our price (within 1¢) in the ' + REEL_DELAI_S +
+        ' seconds after the decision, and what would the bet have made at the first price really traded after it? Paper bets do not include the time a real order takes to arrive.' };
     /* LE CLASSEMENT, DU PLUS GAGNANT AU PLUS PERDANT (30/09/2026) ----
        Demande du proprietaire : « classe du plus gagnant au plus perdant, la on dirait qu il
        n y a pas d ordre ». La vue montrait les 5 d origine PUIS 20 strategies triees par gain
@@ -689,7 +750,7 @@ function cree(deps) {
     const ouvertsPar = {}; for (const p of E.ouverts) ouvertsPar[p.agent] = (ouvertsPar[p.agent] || 0) + 1;
     const ligneC = (ag) => { const a = E.agents[ag.id]; return { id: ag.id, name: ag.nom, type: ag.type, bets: a.paris, resolved: a.resolus, won: a.gagnes,
       pnl: r2(a.pnl), open: ouvertsPar[ag.id] || 0, nextJudgedAt: estTemoin(ag.id) ? null : (a.palier || SEUIL_TOURNOI),
-      windows: a.nf || 0, skillPerWindow: rz(a) }; };
+      windows: a.nf || 0, skillPerWindow: rz(a), real: reelDe(a) }; };
     const parGain = (x, y) => y.pnl - x.pnl || y.resolved - x.resolved;
     const AG = actifs();
     const classement = AG.map(ligneC).sort(parGain);
@@ -717,7 +778,7 @@ function cree(deps) {
     const evidence = { since: new Date(E.fenetresDepuis).toISOString(), minWindows: FENETRES_ASSEZ, tested: essayees, bar: r2(b),
       measured: mesurees.length, proven: mesurees.filter((c) => c.skillPerWindow >= b && c.pnl > 0).length,
       promising: mesurees.filter((c) => c.skillPerWindow >= 2 && c.skillPerWindow < b).length,
-      leaders: mesurees.slice(0, 10).map((c) => ({ id: c.id, name: c.name, windows: c.windows, skillPerWindow: c.skillPerWindow, resolved: c.resolved, pnl: c.pnl })),
+      leaders: mesurees.slice(0, 10).map((c) => ({ id: c.id, name: c.name, windows: c.windows, skillPerWindow: c.skillPerWindow, resolved: c.resolved, pnl: c.pnl, real: c.real })),
       /* Celles qui approchent du seuil de mesure : on voit venir les prochaines a juger. */
       closest: classement.filter((c) => c.windows < FENETRES_ASSEZ).sort((x, y) => y.windows - x.windows).slice(0, 5)
         .map((c) => ({ id: c.id, name: c.name, windows: c.windows, skillPerWindow: c.skillPerWindow, pnl: c.pnl })),
@@ -725,12 +786,12 @@ function cree(deps) {
         ' windows counted since ' + new Date(E.fenetresDepuis).toISOString().slice(0, 10) + ', and only called an edge above the bar set by the number of strategies tested (' + essayees + ' so far: ' + b.toFixed(2) + '), and in profit after fees.' };
 
     return { ok: true, depuis: new Date(E.depuis).toISOString(), stakeUsd: MISE_USD, bankUsd: BANQUE0, minResolved: RESOLUS_ASSEZ,
-      totalStrategies: AG.length, displayedStrategies: aAfficher.length, ranking: classement, summary: resume, tournament, evidence,
+      totalStrategies: AG.length, displayedStrategies: aAfficher.length, ranking: classement, summary: resume, tournament, evidence, reality,
       parametric: { running: E.params.length, distinct: PARAM.distincts, combinations: PARAM.combinaisons,
         note: 'Kelly sizing, profit targets and stop-losses are not simulated: every agent stakes the same amount and holds to resolution.' },
       agents: aAfficher.map((ag) => { const a = E.agents[ag.id], w = wilson(a.gagnes, a.resolus), z = a.v > 0 ? (a.sy - a.sp) / Math.sqrt(a.v) : null;
         return { id: ag.id, name: ag.nom, role: ag.role, bank: r2(a.banque), bets: a.paris, resolved: a.resolus, won: a.gagnes, voided: a.annules,
-          winRate: w ? { p: w.p, low: w.bas, high: w.haut } : null, skill: z == null ? null : Math.round(z * 100) / 100, skillPerWindow: rz(a), windows: a.nf || 0,
+          winRate: w ? { p: w.p, low: w.bas, high: w.haut } : null, skill: z == null ? null : Math.round(z * 100) / 100, skillPerWindow: rz(a), windows: a.nf || 0, real: reelDe(a),
           avgPricePaid: a.resolus ? Math.round(a.sp / a.resolus * 1000) / 1000 : null, pnl: r2(a.pnl), fees: r2(a.frais), drawdown: r2(a.creux),
           open: ouvertsPar[ag.id] || 0, verdict: verdictAgent(a, essayees), type: ag.type }; }),
       calibration: { n: C.n, pending: C.attente.length, brierModel: C.n ? Math.round(C.brierModele / C.n * 10000) / 10000 : null, brierMarket: C.n ? Math.round(C.brierMarche / C.n * 10000) / 10000 : null,

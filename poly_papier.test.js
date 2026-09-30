@@ -292,7 +292,10 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
     const v315 = P.verdictAgent(Object.assign({}, base, z315), 405);
     ok(/^Promising, not proven: skill 3\.1 per window over 60 windows, below the 3\.7 bar that testing 405 strategies requires/.test(v315),
        'le cas du 30/09 (3,15, en gain) sur 405 essayees : « prometteur », pas « un edge » [' + v315.slice(0, 60) + ']');
-    ok(/^Evidence of an edge after fees: skill 4\.0/.test(P.verdictAgent(Object.assign({}, base, { nf: 80, fs: 4, fs2: 1 }), 405)), 'au-dessus de la barre et en gain : la seule phrase qui dit « edge »');
+    const fort = Object.assign({}, base, { nf: 80, fs: 4, fs2: 1 });
+    ok(/^Edge on paper: skill 4\.0.*Not confirmed yet: 0\/100 bets checked against real Polymarket trades/.test(P.verdictAgent(fort, 405)), 'au-dessus de la barre sur le papier : « edge de papier », pas encore confirme par les vrais echanges');
+    ok(/^Edge on paper only: .*makes −\$12\.00 over 120 checked bets\. Not tradable as is\.$/.test(P.verdictAgent(Object.assign({}, fort, { ve: 120, veReel: -12 }), 405)), 'au premier prix reellement echange il perd : « pas jouable tel quel »');
+    ok(/^Evidence of an edge after fees: skill 4\.0.*holds at the prices really traded next \(\$55\.00 over 120/.test(P.verdictAgent(Object.assign({}, fort, { ve: 120, veReel: 55 }), 405)), 'et seulement s il tient aux vrais prix : la phrase qui dit « edge »');
     const perd = (z) => P.verdictAgent(Object.assign({}, base, { pnl: -5, nf: 80, fs: z, fs2: 1 }), 405);
     ok(!/edge after fees/.test(perd(4)) && /^No edge: loses after the spread and fees \(skill 0\.5/.test(perd(0.5)),
        'bat les prix mais perd apres frais : jamais « edge »');
@@ -333,6 +336,48 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
     const carte = c9.etat().agents.find((a) => a.id === idc);
     ok(carte && carte.windows === 60 && carte.skillPerWindow === 3.15 && /^Promising, not proven/.test(carte.verdict), 'la carte : score par fenetre, nombre de fenetres, verdict prudent');
     fs.rmSync(d9, { recursive: true, force: true });
+  }
+
+  /* ---- 9. LE CONTROLE CONTRE LES VRAIS ECHANGES (30/09/2026) ----
+     « Comment verifier que les marches existent reellement et qu on pourra reellement miser ? » */
+  console.log('\n-- 9. chaque pari regle, compare aux vrais echanges de Polymarket --');
+  {
+    const W = DEBUT + 18000, t0 = W + 900 - 120;
+    const echanges = [
+      { outcome: 'Up', timestamp: t0 + 4, price: 0.60, size: 100 },    /* Up : echange a notre prix 4 s apres */
+      { outcome: 'Up', timestamp: t0 + 20, price: 0.70, size: 50 },
+      { outcome: 'Down', timestamp: t0 + 40, price: 0.30, size: 10 },  /* Down : rien dans les 30 s */
+      { outcome: 'Up', timestamp: t0 - 5, price: 0.50, size: 20 } ];  /* avant la decision : ne compte pas */
+    const vus9 = [];
+    const lire9 = async (u) => {
+      if (u.includes('data-api.polymarket.com/trades')) { vus9.push(u); return /offset=0$/.test(u) ? echanges : []; }
+      const m = u.match(/events\?slug=(\w+)-updown-15m-(\d+)/);
+      if (m && Number(m[2]) === W) return [{ markets: [Object.assign({}, marche, { conditionId: '0xC' + m[1], closed: true, outcomePrices: '["1", "0"]' })] }];
+      return lire(u);
+    };
+    const c9 = P.cree({ lire: lire9, hl, maintenant: () => T * 1000, alea: () => 0.3 });
+    c9.etat();
+    const E9 = c9._etat();
+    const pari = (agent, cote, prix) => ({ id: agent + ':btc:' + W, agent, actif: 'btc', debut: W, titre: 't', cote, parts: 10 / prix, prix, depense: 10, frais: (10 / prix) * 0.07 * prix * (1 - prix), t: t0, resteS: 120 });
+    E9.ouverts.push(pari('crowd', 'Up', 0.60), pari('fair', 'Up', 0.55), pari('fade', 'Down', 0.40));
+    T = W + 900 + 60;
+    await c9.resous();
+    const A = E9.agents;
+    ok(vus9.length === 1 && /market=0xCbtc&limit=1000&offset=0$/.test(vus9[0]), 'les echanges reels sont lus une fois par marche regle (data-api, par conditionId)');
+    ok(A.crowd.ve === 1 && A.crowd.veOk === 1, 'Crowd a 0,60 : un vrai echange de son cote a son prix 4 s apres — obtenable');
+    ok(A.fair.ve === 1 && !A.fair.veOk, 'Fair Value a 0,55 : le premier vrai prix apres lui est 0,60 — pas obtenu a son prix');
+    const gainReel = (10 / 0.60) - 10 - (10 / 0.60) * 0.07 * 0.60 * 0.40;
+    ok(pres(A.fair.veReel, gainReel, 1e-6) && A.fair.vePapier > A.fair.veReel, 'son gain au premier prix reellement echange (0,60) : ' + A.fair.veReel.toFixed(2) + ' $ contre ' + A.fair.vePapier.toFixed(2) + ' $ sur le papier');
+    ok(A.fade.ve === 1 && A.fade.veSans === 1 && A.fade.veReel == null, 'Longshot : aucun echange de son cote dans les 30 s — compte a part, pas de prix invente');
+    const R = c9.etat().reality;
+    ok(R.marketsChecked === 1 && R.betsChecked === 3 && R.fillableAtOurPrice === 1 && R.noTradeWithin === 1 && R.pricedBets === 2 && R.medianMarketVolumeUsd === 60 + 35 + 3 + 10
+       && pres(R.avgGapToNextRealPrice, ((0.60 - 0.60) + (0.60 - 0.55)) / 2, 1e-3) && /first price really traded/.test(R.rule),
+       'la vue : 1 marche, 3 paris controles, 1 obtenable, 1 sans echange, ecart moyen au prix reel suivant, volume du marche');
+    ok(c9.etat().ranking.find((c) => c.id === 'fair').real.checked === 1, 'chaque ligne du classement porte son controle');
+    const c10 = P.cree({ lire: async (u) => { if (u.includes('data-api')) throw new Error('503'); return lire9(u); }, hl, maintenant: () => T * 1000, alea: () => 0.3 });
+    c10.etat(); c10._etat().ouverts.push(pari('crowd', 'Up', 0.60));
+    await c10.resous();
+    ok(c10._etat().agents.crowd.resolus === 1 && !c10._etat().agents.crowd.ve, 'data-api en panne : le pari se regle quand meme, simplement non controle');
   }
 
   fs.rmSync(dossier, { recursive: true, force: true });
