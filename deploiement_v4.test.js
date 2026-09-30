@@ -117,6 +117,16 @@ function monde(o) {
   const d6 = D.cree({ dossier, artefact: A, chaine: w.chaine, lis: async () => ({ result: { [JETON]: goplus } }), maintenant: () => Date.now() + 31 * 60e3 });
   d6.charge(); await d6.tour();
   ok(d6.etat().goplus.is_in_dex === '1' && d6.etat().goplusReadAt !== avantGp, 'GoPlus est encore relu toutes les 30 min apres le listage');
+  ok(e2.deployedSourceSha256 === A.sourceSha256 && e2.deployedIsCurrent === true && !e2.outdated, 'la vue dit le source DEPLOYE, et il est celui du depot');
+  {
+    /* 30/09 : l etat reel du serveur — deploye le 29/09 sans empreinte enregistree, relu avec un artefact recompile. */
+    const fe = path.join(dossier, 'deploiement_v4.json'), j = JSON.parse(fs.readFileSync(fe, 'utf8'));
+    delete j.sourceDeploye; fs.writeFileSync(fe, JSON.stringify(j));
+    const d7 = D.cree({ dossier, artefact: Object.assign({}, A, { sourceSha256: 'f'.repeat(64) }), chaine: w.chaine });
+    d7.charge(); const e7 = d7.etat();
+    ok(e7.deployedSourceSha256 === 'd12954fe62b19a0f7d4d51eb15bedd20777e1934beaaf64fdeb9a8ae08628df8' && e7.deployedIsCurrent === false && /older source/.test(e7.outdated || ''),
+       'un launchpad du 29/09 relu avec un source plus recent : la vue dit qu il est perime, au lieu d afficher la nouvelle empreinte a cote de l ancien code');
+  }
 
   console.log('\n-- 3b. le seuil suit le cout estime par le nœud (29/09 : 0,0005 ETH envoyes, 0,000111 estime) --');
   {

@@ -71,8 +71,118 @@ const CALIB_ASSEZ = 100;
 const TAUX_DEFAUT = 0.07;      /* seulement si le marche ne publie pas son feeSchedule */
 const ABANDON_S = 6 * 3600;    /* une fenetre non resolue apres 6 h : le pari est annule (rembourse) */
 const RECENTS_MAX = 120;
+const SIG_REF_POIDS = 1 / 1000;
 
 /* Les agents. 'bande' : [debut, fin] en secondes restantes ou il peut decider ; un pari par fenetre et par actif. */
+/* ---- LES STRATEGIES PARAMETRIQUES : 100 COMPORTEMENTS DISTINCTS ----
+ * Mesure du 30/09/2026 sur poly_strategies.js : 110 700 combinaisons, mais trois
+ * de ses axes — Kelly, prise de profit, stop-loss — ne sont PAS simules ici
+ * (mise fixe de MISE_USD pour tous, position gardee jusqu a l echeance). Une
+ * fois ces trois axes retires, il reste 2 460 comportements distincts.
+ *
+ * La version precedente chargeait « les 100 meilleures par edge » : le
+ * classement ne recevait jamais de resultat (compteurs a zero), il rendait donc
+ * toujours les 100 PREMIERES de la liste — cent fois Fair Value 0,5 % sur
+ * 10–8 min, ne differant que par ces trois axes — et aucune ne pariait : le
+ * type 'parametric' n etait traite nulle part dans la decision.
+ *
+ * Ici : 100 comportements distincts, repartis sur les six types au prorata de
+ * leur nombre, parametres et fenetres pris a intervalles reguliers. L identifiant
+ * est l empreinte de ce qui est simule : il survit aux redemarrages. « Les
+ * meilleures par edge » se lisent ensuite sur la page, a partir de leurs propres
+ * paris resolus — jamais avant RESOLUS_ASSEZ. */
+const PARAM_N = 100;
+const empreinte = (c) => require('crypto').createHash('sha1').update(JSON.stringify(c)).digest('hex').slice(0, 10);
+function choisisParametriques(toutes, n) {
+  const vus = new Map();
+  for (const s of toutes) {
+    const { kelly, profitTarget, stopLoss, banque0, ...simule } = s.config;   // eslint-disable-line no-unused-vars
+    const k = JSON.stringify(simule);
+    if (!vus.has(k)) vus.set(k, simule);
+  }
+  const parType = new Map();
+  for (const c of vus.values()) { if (!parType.has(c.type)) parType.set(c.type, []); parType.get(c.type).push(c); }
+  /* Quotas au prorata, plus grands restes. */
+  const q = [...parType].map(([t, l]) => { const x = n * l.length / vus.size; return { t, l, k: Math.floor(x), r: x - Math.floor(x) }; });
+  let manque = n - q.reduce((a, x) => a + x.k, 0);
+  for (const x of q.slice().sort((a, b) => b.r - a.r)) { if (manque <= 0) break; x.k++; manque--; }
+  const choisis = [];
+  for (const x of q) for (let i = 0; i < x.k; i++) choisis.push(x.l[Math.floor(i * x.l.length / x.k)]);
+  return { choisis, distincts: vus.size, combinaisons: toutes.length };
+}
+const PARAM = choisisParametriques(polySt.creeStrategies(), PARAM_N);
+
+const cents = (x) => Math.round(x * 100) + '¢';
+function nomParam(c) {
+  const w = ' · ' + fen(c.fenetre), f = (c.volFilter ? ' · calm' : '') + (c.priceFilter ? ' · 10–90¢' : '');
+  switch (c.type) {
+    case 'fair_value': return 'P·FV ' + (c.marge * 100).toFixed(1) + 'pt' + w + f;
+    case 'crowd': return 'P·Crowd>' + cents(c.seuil) + w + f;
+    case 'fade': return 'P·Fade>' + cents(c.seuil) + w + f;
+    case 'momentum': return 'P·Momentum ' + (c.force * 100).toFixed(1) + 'pt' + w + f;
+    case 'meanrev': return 'P·MeanRev ' + cents(c.seuilBas) + '/' + cents(c.seuilHaut) + w + f;
+    case 'vol_weighted': return 'P·VolFV σ<' + c.volThreshold + '×' + w + f;
+  }
+  return 'P·' + c.type + w;
+}
+function roleParam(c) {
+  const w = ' Between ' + fen(c.fenetre) + '.';
+  const f = (c.volFilter ? ' Skips when volatility is above its long-run average.' : '') + (c.priceFilter ? ' Never buys below 10¢ or above 90¢.' : '');
+  switch (c.type) {
+    case 'fair_value': return 'Fair Value: buys when the model beats the ask by ' + (c.marge * 100).toFixed(1) + ' points after fees.' + w + f;
+    case 'crowd': return 'Buys the favourite when it trades above ' + cents(c.seuil) + '.' + w + f;
+    case 'fade': return 'Buys the underdog when the favourite trades above ' + cents(c.seuil) + '.' + w + f;
+    case 'momentum': return 'Momentum: buys the side whose price rose at least ' + (c.force * 100).toFixed(1) + ' points over the last minute.' + w + f;
+    case 'meanrev': return 'Mean reversion: buys Down when Up trades above ' + cents(c.seuilHaut) + ', Up when below ' + cents(c.seuilBas) + '.' + w + f;
+    case 'vol_weighted': return 'Fair Value (2-point margin), only while volatility is under ' + c.volThreshold + '× its long-run average.' + w + f;
+  }
+  return c.type + '.' + w;
+}
+
+/* ---- LA DECISION D UNE STRATEGIE PARAMETRIQUE ----
+ * o : { mUp, modele, aUp, aDown, sig, sigRef, mUpAvant }. Rend 'Up' ou 'Down' ;
+ * 'attend' si elle doit revoir la fenetre au tic suivant (donnee absente, ou
+ * rien de declenche pour une regle « achete QUAND… », comme Fair Value a la
+ * main) ; null si elle a regarde et ne parie pas dans cette fenetre (Crowd et
+ * Fade decident une fois, comme leurs versions a la main).
+ * `sigRef` : moyenne longue de σ par actif (voir SIG_REF_POIDS). `mUpAvant` :
+ * le prix du Up une minute plus tot dans la MEME fenetre — sans lui, pas de
+ * momentum, on attend. */
+const prixNet = (a) => a.prix + a.frais / a.parts;
+function decide(c, o) {
+  const retente = c.type === 'fair_value' || c.type === 'vol_weighted' || c.type === 'momentum' || c.type === 'meanrev';
+  const rien = retente ? 'attend' : null;
+  if (c.volFilter || c.type === 'vol_weighted') {
+    if (!(o.sig > 0 && o.sigRef > 0)) return 'attend';
+    if (c.volFilter && o.sig > o.sigRef) return rien;
+    if (c.type === 'vol_weighted' && !(o.sig < c.volThreshold * o.sigRef)) return rien;
+  }
+  let cote = null;
+  if (c.type === 'fair_value' || c.type === 'vol_weighted') {
+    if (o.modele == null) return 'attend';
+    const marge = c.type === 'vol_weighted' ? 0.02 : c.marge;
+    const gU = o.aUp ? o.modele - prixNet(o.aUp) : -1, gD = o.aDown ? (1 - o.modele) - prixNet(o.aDown) : -1;
+    if (gU >= marge && gU >= gD) cote = 'Up'; else if (gD >= marge) cote = 'Down';
+  } else {
+    if (o.mUp == null) return 'attend';
+    if (c.type === 'crowd') { if (o.mUp > c.seuil) cote = 'Up'; else if (o.mUp < 1 - c.seuil) cote = 'Down'; }
+    else if (c.type === 'fade') { if (o.mUp > c.seuil) cote = 'Down'; else if (o.mUp < 1 - c.seuil) cote = 'Up'; }
+    else if (c.type === 'meanrev') { if (o.mUp > c.seuilHaut) cote = 'Down'; else if (o.mUp < c.seuilBas) cote = 'Up'; }
+    else if (c.type === 'momentum') {
+      if (o.mUpAvant == null) return 'attend';
+      const d = o.mUp - o.mUpAvant;
+      if (d >= c.force) cote = 'Up'; else if (d <= -c.force) cote = 'Down';
+    } else return null;
+  }
+  if (cote && c.priceFilter) { const a = cote === 'Up' ? o.aUp : o.aDown; if (!a || a.prix < 0.10 || a.prix > 0.90) cote = null; }
+  return cote || rien;
+}
+
+/* Une fenetre en clair : « 7:20–7:00 left ». Les noms disaient « [0m] » : la
+   plupart des bandes font 20 s, arrondies a zero minute. */
+const mmss = (s) => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+const fen = (b) => mmss(b[0]) + '–' + mmss(b[1]) + ' left';
+
 function creeAgents() {
   const agents = [
     /* Les 5 baseline pour temoin */
@@ -89,11 +199,10 @@ function creeAgents() {
   const bandesFair = [[440, 420], [380, 360], [320, 300], [260, 240], [200, 180]];
   for (const bande of bandesFair) {
     for (const marge of marges) {
-      const reste = bande[0] - bande[1];
       agents.push({
         id: `fair_m${Math.round(marge*100)}_t${bande[0]}`,
-        nom: `FV±${Math.round(marge*100)}% [${Math.floor(reste/60)}m]`,
-        role: `Fair Value model with ${(marge*100).toFixed(1)}% margin, ${Math.floor(reste/60)}-minute window.`,
+        nom: `FV±${Math.round(marge*100)}% · ${fen(bande)}`,
+        role: `Fair Value model with a ${(marge*100).toFixed(1)}-point margin after fees, between ${fen(bande)}.`,
         bande, marge, type: "fair_var"
       });
     }
@@ -104,11 +213,10 @@ function creeAgents() {
   const bandesCrowd = [[240, 220], [200, 180], [160, 140], [80, 60]];
   for (const bande of bandesCrowd) {
     for (const seuil of seuilsCrowd) {
-      const reste = bande[0] - bande[1];
       agents.push({
         id: `crowd_s${Math.round(seuil*100)}_t${bande[0]}`,
-        nom: `Crowd>${(seuil*100).toFixed(0)}% [${Math.floor(reste/60)}m]`,
-        role: `Buys favourite when price > ${(seuil*100).toFixed(1)}%, window ${Math.floor(reste/60)}m.`,
+        nom: `Crowd>${(seuil*100).toFixed(0)}¢ · ${fen(bande)}`,
+        role: `Buys the favourite when it trades above ${(seuil*100).toFixed(0)}¢, between ${fen(bande)}.`,
         bande, seuil, type: "crowd_var"
       });
     }
@@ -119,24 +227,25 @@ function creeAgents() {
   const bandesFade = [[160, 140], [130, 110], [100, 80], [50, 30]];
   for (const bande of bandesFade) {
     for (const seuil of seuilsFade) {
-      const reste = bande[0] - bande[1];
       agents.push({
         id: `fade_s${Math.round(seuil*100)}_t${bande[0]}`,
-        nom: `Fade>${(seuil*100).toFixed(0)}% [${Math.floor(reste/60)}m]`,
-        role: `Buys underdog when favourite > ${(seuil*100).toFixed(1)}%, window ${Math.floor(reste/60)}m.`,
+        nom: `Fade>${(seuil*100).toFixed(0)}¢ · ${fen(bande)}`,
+        role: `Buys the underdog when the favourite trades above ${(seuil*100).toFixed(0)}¢, between ${fen(bande)}.`,
         bande, seuil, type: 'fade_var'
       });
     }
   }
 
-  /* Stratégies Momentum : achète si le prix monte, vend si baisse */
+  /* « Momentum » a la main : il n a AUCUN historique de prix — il achete le cote
+     au-dessus de 50 ¢, c est-a-dire le favori. Son texte disait « suit le
+     mouvement » : corrige le 30/09, comportement et identifiant inchanges.
+     Le vrai momentum est dans les parametriques (variation sur une minute). */
   const bandesMom = [[420, 400], [340, 320], [260, 240], [70, 50]];
   for (const bande of bandesMom) {
-    const reste = bande[0] - bande[1];
     agents.push({
       id: `momentum_t${bande[0]}`,
-      nom: `Momentum [${Math.floor(reste/60)}m]`,
-      role: `Follows price movement: Up if price rising, Down if falling, ${Math.floor(reste/60)}-minute window.`,
+      nom: `Favourite>50¢ · ${fen(bande)}`,
+      role: `Buys whichever side trades above 50¢ (the favourite), between ${fen(bande)}. No price history.`,
       bande, type: 'momentum'
     });
   }
@@ -144,11 +253,10 @@ function creeAgents() {
   /* Stratégies Mean Reversion : achète les extrêmes (trop chers ou trop bon marché) */
   const bandesMR = [[440, 420], [360, 340], [280, 260], [40, 20]];
   for (const bande of bandesMR) {
-    const reste = bande[0] - bande[1];
     agents.push({
       id: `meanrev_t${bande[0]}`,
-      nom: `MeanRev [${Math.floor(reste/60)}m]`,
-      role: `Bets against extremes: Up if favourite < 40¢, Down if > 60¢, ${Math.floor(reste/60)}-minute window.`,
+      nom: `MeanRev 40/60¢ · ${fen(bande)}`,
+      role: `Bets against extremes: buys Down when Up trades above 60¢, Up when below 40¢, between ${fen(bande)}.`,
       bande, type: 'meanrev'
     });
   }
@@ -156,59 +264,18 @@ function creeAgents() {
   /* Stratégies Vol-weighted : achète quand vol est basse */
   const bandesVol = [[400, 380], [320, 300], [240, 220], [140, 120]];
   for (const bande of bandesVol) {
-    const reste = bande[0] - bande[1];
     agents.push({
       id: `vol_t${bande[0]}`,
-      nom: `VolFair [${Math.floor(reste/60)}m]`,
-      role: `Fair Value but only when volatility is low, ${Math.floor(reste/60)}-minute window.`,
+      nom: `VolFair · ${fen(bande)}`,
+      role: `Fair Value with a 2-point margin when 1-minute volatility is under 1.5 %, between ${fen(bande)}.`,
       bande, type: 'vol_weighted'
     });
   }
 
-  /* Charger les TOP 100 stratégies paramétriques par edge */
-  try {
-    const toutesStrategies = polySt.creeStrategies();
-    /* rankStrategies() retourne [] si aucune stratégie n'a assez de resolus.
-       On startup, prendre les 100 premières pour les tester. */
-    let top100 = polySt.rankStrategies(toutesStrategies);
-    if (top100.length === 0 && toutesStrategies.length > 0) {
-      top100 = toutesStrategies.slice(0, 100);
-    }
-    for (const strat of top100) {
-      const cfg = strat.config;
-      const reste = cfg.fenetre ? cfg.fenetre[0] - cfg.fenetre[1] : 60;
-      let nom = strat.name || `Strat${strat.id}`;
-      let role = `Parametric strategy (${cfg.type})`;
-
-      /* Adapter le rôle selon le type */
-      if (cfg.type === 'fair_value') {
-        role = `Fair Value with ${(cfg.marge*100).toFixed(1)}% margin, ${Math.floor(reste/60)}m window.`;
-      } else if (cfg.type === 'crowd') {
-        role = `Buys favourite at ${(cfg.seuil*100).toFixed(0)}%, ${Math.floor(reste/60)}m window.`;
-      } else if (cfg.type === 'fade') {
-        role = `Buys underdog, ${Math.floor(reste/60)}m window.`;
-      } else if (cfg.type === 'momentum') {
-        role = `Momentum strategy, force ${cfg.force?.toFixed(3) || 'auto'}, ${Math.floor(reste/60)}m window.`;
-      } else if (cfg.type === 'meanrev') {
-        role = `Mean reversion [${(cfg.seuilBas*100).toFixed(0)}%-${(cfg.seuilHaut*100).toFixed(0)}%], ${Math.floor(reste/60)}m window.`;
-      } else if (cfg.type === 'vol_weighted') {
-        role = `Vol-weighted Fair Value, vol>${(cfg.volThreshold*100).toFixed(0)}%, ${Math.floor(reste/60)}m window.`;
-      }
-
-      agents.push({
-        id: `param_${strat.id}_${strat.hash}`,
-        nom: nom,
-        role: role,
-        bande: cfg.fenetre || [300, 180],
-        type: 'parametric',
-        config: cfg
-      });
-    }
-  } catch (e) {
-    /* Stratégies non disponibles : continuer avec baseline + variations */
-    console.warn('[poly] Top 100 strategies not available:', e.message);
+  /* Les strategies parametriques : 100 comportements DISTINCTS (voir choisisParametriques). */
+  for (const c of PARAM.choisis) {
+    agents.push({ id: 'p_' + empreinte(c), nom: nomParam(c), role: roleParam(c), bande: c.fenetre, type: 'parametric', config: c });
   }
-
   return agents;
 }
 const AGENTS = creeAgents();
@@ -274,14 +341,14 @@ function cree(deps) {
   const JOURNAL = dossier ? path.join(dossier, 'poly_papier.jsonl') : null;
 
   const vide = () => ({ banque: BANQUE0, paris: 0, resolus: 0, gagnes: 0, annules: 0, pnl: 0, frais: 0, sy: 0, sp: 0, v: 0, cum: 0, pic: 0, creux: 0 });
-  let E = { depuis: maintenant(), agents: Object.fromEntries(AGENTS.map((a) => [a.id, vide()])), ouverts: [], recents: [],
+  let E = { depuis: maintenant(), agents: Object.fromEntries(AGENTS.map((a) => [a.id, vide()])), ouverts: [], recents: [], sigRef: {},
     calib: { n: 0, brierModele: 0, brierMarche: 0, attente: [], seaux: {} } };
   const fenetres = new Map();   /* transitoire : actif:debut → { marche, jetons, taux, min, S0, decides:Set } */
   const MESURE = { tics: 0, erreurs: 0, derniereErreur: null, livres: 0 };
 
   function charge() {
     if (!FICHIER) return;
-    try { const j = JSON.parse(fs.readFileSync(FICHIER, 'utf8')); if (j && j.agents) { E = Object.assign(E, j); for (const a of AGENTS) if (!E.agents[a.id]) E.agents[a.id] = vide(); } }
+    try { const j = JSON.parse(fs.readFileSync(FICHIER, 'utf8')); if (j && j.agents) { E = Object.assign(E, j); for (const a of AGENTS) if (!E.agents[a.id]) E.agents[a.id] = vide(); if (!E.sigRef) E.sigRef = {}; } }
     catch (e) { if (e.code !== 'ENOENT') console.warn('[poly] etat illisible, repart de zero :', e.message); }
   }
   let aEcrire = false;
@@ -309,7 +376,7 @@ function cree(deps) {
       const fs2 = m.feeSchedule && Number(m.feeSchedule.rate) >= 0 ? Number(m.feeSchedule.rate) : TAUX_DEFAUT;
       const cfg = m.cryptoMarketConfig || {};
       f = { actif, debut, titre: m.question || m.title || slug(actif, debut), jetons: { Up: jetons[iUp], Down: jetons[iDown] }, taux: m.feesEnabled === false ? 0 : fs2,
-        min: Number(m.orderMinSize) || 5, L: cfg.twapEnabled ? Math.max(1, Number(cfg.twapLookbackSeconds) || 60) : 0, S0: null, decides: new Set(), calibre: false };
+        min: Number(m.orderMinSize) || 5, L: cfg.twapEnabled ? Math.max(1, Number(cfg.twapLookbackSeconds) || 60) : 0, S0: null, decides: new Set(), calibre: false, traces: [] };
       fenetres.set(k, f);
       for (const [kk, ff] of fenetres) if (ff.debut < debut - 2 * FENETRE_S) fenetres.delete(kk);
     }
@@ -354,19 +421,33 @@ function cree(deps) {
         if (sig[coin] === undefined) {
           const b = await hl({ type: 'candleSnapshot', req: { coin, interval: '1m', startTime: (t - 90 * 60) * 1000, endTime: t * 1000 } });
           sig[coin] = sigma(b);
+          /* La moyenne longue de σ, par actif, que lisent les filtres de volatilite
+             des parametriques : σ est deja une moyenne de 90 min ; un poids de
+             1/1000 par tic de 15 s donne environ quatre heures de memoire. */
+          if (sig[coin] > 0) { const r = E.sigRef[coin]; E.sigRef[coin] = r > 0 ? r + (sig[coin] - r) * SIG_REF_POIDS : sig[coin]; }
         }
         const modele = probaUp(S, f.S0, sig[coin], resteS, f.L);
         const [lUp, lDown] = await Promise.all([livre(f.jetons.Up), livre(f.jetons.Down)]);
         const mUp = milieu(lUp);
+        /* Le prix du Up au fil de la fenetre : le momentum le compare a celui d une minute plus tot. */
+        if (mUp != null) { f.traces.push([t, mUp]); if (f.traces.length > 80) f.traces.shift(); }
+        let mUpAvant = null;
+        for (const [tt, m] of f.traces) if (tt <= t - 60) mUpAvant = m;
+        const aUp = remplit(lUp.asks, MISE_USD, f.taux), aDown = remplit(lDown.asks, MISE_USD, f.taux);
         if (calibrer && modele != null && mUp != null) {
           f.calibre = true;
           E.calib.attente.push({ actif, debut, modele, marche: mUp }); aEcrire = true;
         }
         for (const ag of aDecider) {
-          const aUp = remplit(lUp.asks, MISE_USD, f.taux), aDown = remplit(lDown.asks, MISE_USD, f.taux);
           let cote = null;
 
-          if (ag.type === 'baseline' && ag.id === 'coin') {
+          if (ag.type === 'parametric') {
+            const d = decide(ag.config, { mUp, modele, aUp, aDown, sig: sig[coin], sigRef: E.sigRef[coin], mUpAvant });
+            if (d === 'attend') continue;
+            cote = d;
+          }
+
+          else if (ag.type === 'baseline' && ag.id === 'coin') {
             cote = alea() < 0.5 ? 'Up' : 'Down';
           }
           else if ((ag.type === 'baseline' || ag.type === 'crowd_var') && (ag.id === 'crowd' || ag.type === 'crowd_var')) {
@@ -471,6 +552,8 @@ function cree(deps) {
 
     return { ok: true, depuis: new Date(E.depuis).toISOString(), stakeUsd: MISE_USD, bankUsd: BANQUE0, minResolved: RESOLUS_ASSEZ,
       totalStrategies: AGENTS.length, displayedStrategies: aAfficher.length,
+      parametric: { running: PARAM.choisis.length, distinct: PARAM.distincts, combinations: PARAM.combinaisons,
+        note: 'Kelly sizing, profit targets and stop-losses are not simulated: every agent stakes the same amount and holds to resolution.' },
       agents: aAfficher.map((ag) => { const a = E.agents[ag.id], w = wilson(a.gagnes, a.resolus), z = a.v > 0 ? (a.sy - a.sp) / Math.sqrt(a.v) : null;
         return { id: ag.id, name: ag.nom, role: ag.role, bank: r2(a.banque), bets: a.paris, resolved: a.resolus, won: a.gagnes, voided: a.annules,
           winRate: w ? { p: w.p, low: w.bas, high: w.haut } : null, skill: z == null ? null : Math.round(z * 100) / 100,
@@ -506,4 +589,4 @@ function cree(deps) {
   return { tic, resous, etat, charge, demarre, arrete, MESURE, _etat: () => E };
 }
 
-module.exports = { cree, phi, probaUp, varianceRestante, sigma, remplit, wilson, verdictAgent, AGENTS, RESOLUS_ASSEZ, MISE_USD, FENETRE_S };
+module.exports = { cree, decide, choisisParametriques, PARAM, phi, probaUp, varianceRestante, sigma, remplit, wilson, verdictAgent, AGENTS, RESOLUS_ASSEZ, MISE_USD, FENETRE_S };

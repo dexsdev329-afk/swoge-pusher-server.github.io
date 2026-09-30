@@ -126,7 +126,7 @@ function cree(deps) {
     }
     if (E.etape === 'attente_fonds' && soldes.eth >= seuil) {
       const tx = await c.deploieLaunchpad(ARGS);
-      E.etape = 'deploiement'; E.txDeploiement = tx.hash; note('launchpad deployment sent ' + tx.hash); ecrit();
+      E.etape = 'deploiement'; E.txDeploiement = tx.hash; E.sourceDeploye = A.sourceSha256; note('launchpad deployment sent ' + tx.hash); ecrit();
     }
     if (E.etape === 'deploiement') {
       const r = await c.recu(E.txDeploiement);
@@ -236,6 +236,15 @@ function cree(deps) {
     }
   }
 
+  /* LE SOURCE DEPLOYE, PAS CELUI DU DEPOT (30/09/2026) ----
+   * Le correctif « hidden owner » a change le source et l artefact, mais un
+   * launchpad deja deploye garde son code : la vue affichait l empreinte du
+   * NOUVEAU source a cote de l ANCIEN contrat. Les deux launchpads en service
+   * ont ete deployes le 29/09 depuis les artefacts de main de ce jour-la
+   * (empreintes relues dans l historique git) ; les suivants l enregistrent. */
+  const SOURCE_29_09 = { v4: 'd12954fe62b19a0f7d4d51eb15bedd20777e1934beaaf64fdeb9a8ae08628df8', v4weth: 'eb3756832bd01b429832a7c115be3fb3eb48f5752190e578363c11d4946b7f2e' };
+  function sourceDeploye() { return E.sourceDeploye || (E.txDeploiement ? SOURCE_29_09[NOM] || null : null); }
+
   function etat() {
     let adresse = null;
     try { adresse = chaine().adresse; } catch (e) { adresse = null; }
@@ -251,7 +260,10 @@ function cree(deps) {
       links: { deployer: adresse ? x + 'address/' + adresse : null, launchpad: E.launchpad ? x + 'address/' + E.launchpad : null, testToken: E.jetonTest ? x + 'token/' + E.jetonTest : null,
         deployTx: E.txDeploiement ? x + 'tx/' + E.txDeploiement : null, launchTx: E.txLancement ? x + 'tx/' + E.txLancement : null,
         buyTx: E.txAchat ? x + 'tx/' + E.txAchat : null, sellTx: E.txVente ? x + 'tx/' + E.txVente : null },
-      compiler: A.compilateur, sourceSha256: A.sourceSha256, history: E.historique || [] };
+      compiler: A.compilateur, sourceSha256: A.sourceSha256, deployedSourceSha256: sourceDeploye(),
+      deployedIsCurrent: sourceDeploye() == null ? null : sourceDeploye() === A.sourceSha256,
+      ...(sourceDeploye() && sourceDeploye() !== A.sourceSha256 ? { outdated: 'The deployed launchpad was compiled from an older source: tokens it creates keep that code. A new deployment is needed to use the current source.' } : {}),
+      history: E.historique || [] };
   }
 
   let minuterie = null, enCours = false;

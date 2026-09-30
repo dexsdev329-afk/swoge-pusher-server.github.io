@@ -126,6 +126,71 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
     ok(c4._etat().ouverts.length === 0 && c4.etat().agents.find((a) => a.id === 'coin').bets === 0, 'moins de 5 parts disponibles (le minimum du marche) : pas de pari, rien de compte');
   }
 
+  /* ---- 6. LES STRATEGIES PARAMETRIQUES PARIENT VRAIMENT ----
+     La premiere version en chargeait 100 dont AUCUNE ne pariait (type non traite dans la
+     decision), et qui etaient cent copies du meme comportement. */
+  console.log('\n-- 6. les strategies parametriques --');
+  {
+    const PR = P.AGENTS.filter((a) => a.type === 'parametric');
+    const cles = new Set(PR.map((a) => JSON.stringify(a.config)));
+    const types = new Set(PR.map((a) => a.config.type));
+    ok(PR.length === 100 && cles.size === 100, '100 strategies parametriques, 100 comportements distincts');
+    ok(types.size === 6, 'les six types sont representes : ' + [...types].join(', '));
+    ok(P.PARAM.combinaisons === 110700 && P.PARAM.distincts === 2460, 'sur 110 700 combinaisons, 2 460 comportements distincts une fois retires Kelly, prise de profit et stop-loss (non simules)');
+    ok(PR.every((a) => !('kelly' in a.config) && !('profitTarget' in a.config) && !('stopLoss' in a.config)), 'aucune ne pretend un reglage que le moteur ne simule pas');
+    const P2 = P.choisisParametriques(require('./poly_strategies').creeStrategies(), 100);
+    ok(JSON.stringify(P2.choisis) === JSON.stringify(PR.map((a) => a.config)), 'le choix est deterministe : les identifiants survivent a un redemarrage');
+
+    /* La decision, cas par cas. */
+    const d = P.decide, A = (prix) => ({ prix, frais: 0, parts: 10 });
+    ok(d({ type: 'crowd', seuil: 0.6 }, { mUp: 0.65 }) === 'Up' && d({ type: 'crowd', seuil: 0.6 }, { mUp: 0.3 }) === 'Down' && d({ type: 'crowd', seuil: 0.6 }, { mUp: 0.55 }) === null,
+       'Crowd : le favori au-dessus du seuil, sinon rien (et elle ne revient pas)');
+    ok(d({ type: 'fade', seuil: 0.8 }, { mUp: 0.85 }) === 'Down' && d({ type: 'fade', seuil: 0.8 }, { mUp: 0.7 }) === null, 'Fade : l outsider quand le favori depasse le seuil');
+    ok(d({ type: 'meanrev', seuilBas: 0.3, seuilHaut: 0.65 }, { mUp: 0.7 }) === 'Down' && d({ type: 'meanrev', seuilBas: 0.3, seuilHaut: 0.65 }, { mUp: 0.25 }) === 'Up'
+       && d({ type: 'meanrev', seuilBas: 0.3, seuilHaut: 0.65 }, { mUp: 0.5 }) === 'attend', 'MeanRev : contre les extremes, sinon elle revient au tic suivant');
+    ok(d({ type: 'momentum', force: 0.02 }, { mUp: 0.6, mUpAvant: null }) === 'attend', 'Momentum sans prix d il y a une minute : elle attend, elle ne devine pas');
+    ok(d({ type: 'momentum', force: 0.02 }, { mUp: 0.6, mUpAvant: 0.55 }) === 'Up' && d({ type: 'momentum', force: 0.02 }, { mUp: 0.5, mUpAvant: 0.55 }) === 'Down'
+       && d({ type: 'momentum', force: 0.02 }, { mUp: 0.56, mUpAvant: 0.55 }) === 'attend', 'Momentum : le cote qui a monte d au moins la force en une minute');
+    ok(d({ type: 'fair_value', marge: 0.03 }, { modele: 0.7, aUp: A(0.6), aDown: A(0.42) }) === 'Up' && d({ type: 'fair_value', marge: 0.03 }, { modele: 0.61, aUp: A(0.6), aDown: A(0.42) }) === 'attend',
+       'Fair Value : quand le modele bat le prix demande de la marge, sinon elle revient');
+    ok(d({ type: 'vol_weighted', volThreshold: 0.8 }, { modele: 0.9, aUp: A(0.6), sig: 0.001, sigRef: null }) === 'attend'
+       && d({ type: 'vol_weighted', volThreshold: 0.8 }, { modele: 0.9, aUp: A(0.6), sig: 0.001, sigRef: 0.001 }) === 'attend'
+       && d({ type: 'vol_weighted', volThreshold: 0.8 }, { modele: 0.9, aUp: A(0.6), sig: 0.0007, sigRef: 0.001 }) === 'Up', 'VolFV : seulement sous le multiple de la moyenne longue, et jamais sans elle');
+    ok(d({ type: 'crowd', seuil: 0.6, volFilter: true }, { mUp: 0.65, sig: 0.002, sigRef: 0.001 }) === null && d({ type: 'crowd', seuil: 0.6, volFilter: true }, { mUp: 0.65, sig: 0.001, sigRef: 0.001 }) === 'Up',
+       'filtre de volatilite : rien quand σ depasse sa moyenne longue');
+    ok(d({ type: 'crowd', seuil: 0.6, priceFilter: true }, { mUp: 0.95, aUp: A(0.96) }) === null && d({ type: 'crowd', seuil: 0.6, priceFilter: true }, { mUp: 0.7, aUp: A(0.71) }) === 'Up',
+       'filtre de prix : jamais au-dessus de 90 ¢');
+
+    /* Une fenetre entiere, le prix du Up monte de 0,50 a 0,80 et BTC de 100 a 100,3. */
+    const D6 = DEBUT + 2700;
+    let pUp = 0.5, S6 = 100;
+    const lire6 = async (u) => {
+      if (u.includes('btc-updown-15m-' + D6)) return [{ markets: [Object.assign({}, marche, { closed: false })] }];
+      if (/events\?slug=/.test(u)) return [];
+      const m = u.match(/book\?token_id=(\w+)/);
+      const p = m[1] === 'U' ? pUp : 1 - pUp;
+      return { asks: [{ price: (p + 0.01).toFixed(3), size: '1000' }], bids: [{ price: (p - 0.01).toFixed(3), size: '1000' }] };
+    };
+    const hl6 = async (b) => (b.type === 'allMids' ? { BTC: String(S6), ETH: '1', SOL: '1', XRP: '1' } : hl(b));
+    const c6 = P.cree({ lire: lire6, hl: hl6, maintenant: () => T * 1000, alea: () => 0.3 });
+    for (let reste = 600; reste >= 20; reste -= 15) {
+      const x = (600 - reste) / 580; pUp = 0.5 + 0.3 * x; S6 = 100 + 0.3 * x; T = D6 + 900 - reste;
+      await c6.tic();
+    }
+    const ouv = c6._etat().ouverts.filter((p) => p.agent.startsWith('p_'));
+    const parAgent = new Map(PR.map((a) => [a.id, a]));
+    const typesParies = new Set(ouv.map((p) => parAgent.get(p.agent).config.type));
+    ok(ouv.length >= 20, ouv.length + ' paris places par ' + new Set(ouv.map((p) => p.agent)).size + ' strategies parametriques sur une seule fenetre');
+    ok(typesParies.size === 6, 'chacun des six types a parie au moins une fois : ' + [...typesParies].join(', '));
+    ok(ouv.every((p) => { const b = parAgent.get(p.agent).bande; return p.resteS <= b[0] && p.resteS >= b[1]; }), 'chaque pari tombe dans la fenetre de sa strategie');
+    ok(new Set(ouv.map((p) => p.agent)).size === ouv.length, 'une strategie, un pari par fenetre et par actif');
+    ok(ouv.filter((p) => parAgent.get(p.agent).config.type === 'momentum').every((p) => p.resteS <= 540 && p.cote === 'Up'), 'Momentum : jamais avant une minute d historique, et du cote qui monte');
+    ok(ouv.filter((p) => parAgent.get(p.agent).config.priceFilter).every((p) => p.prix >= 0.10 && p.prix <= 0.90), 'filtre de prix tenu sur les paris reels');
+    const v6 = c6.etat();
+    ok(v6.totalStrategies === 200 && v6.parametric.running === 100 && v6.parametric.distinct === 2460 && /not simulated/.test(v6.parametric.note),
+       'la vue dit ce qui tourne : 200 strategies, dont 100 parametriques sur 2 460 distinctes, et ce qui n est pas simule');
+  }
+
   fs.rmSync(dossier, { recursive: true, force: true });
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  ' + rates + ' RATE(S)' : '  —  tout passe'));
   process.exit(rates ? 1 : 0);
