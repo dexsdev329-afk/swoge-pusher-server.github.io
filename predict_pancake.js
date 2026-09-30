@@ -33,6 +33,7 @@ const path = require('path');
 const cfg = require('./config');
 const E = require('./predict_moteur');   /* le même moteur que la page */
 const J = require('./predict_pancake_journal');   /* le journal durable des rounds, les ombres, le remplissage */
+const STRAT = require('./predict_pancake_strategies');   /* stratégies paramétriques (milliers de variations) */
 
 const RPC = process.env.BSC_RPC || 'https://bsc-dataseed.binance.org';
 const ADDR = process.env.PANCAKE_PREDICTION || '0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA';
@@ -213,7 +214,10 @@ function etatNeuf() {
            round: null, service: { ok: null, quand: 0, message: null },
            miseCourante: STAKE, mart: { palier: 0, palierMax: 0, busts: 0 }, gen: GEN,
            finales: { BULL: [], BEAR: [], dernierEp: 0 },
-           porte: { evaluees: 0, passees: 0, maxProduit: null, derniere: null }, dernierEpDecide: 0 };
+           porte: { evaluees: 0, passees: 0, maxProduit: null, derniere: null }, dernierEpDecide: 0,
+           strategies: null,
+           strategieStats: {},
+           roundCount: 0 };
 }
 let boucle = null;
 
@@ -234,6 +238,9 @@ function charge() {
   if (!S.porte) S.porte = { evaluees: 0, passees: 0, maxProduit: null, derniere: null };
   if (!S.dernierEpDecide) S.dernierEpDecide = 0;
   if (!S.refunds) S.refunds = 0;
+  if (!S.strategies) { S.strategies = STRAT.creeStrategies(); console.log('[pancake] généré ' + S.strategies.length + ' stratégies'); }
+  if (!S.strategieStats) S.strategieStats = {};
+  if (!S.roundCount) S.roundCount = 0;
   J.indexe();   /* le journal durable : relu en flux, sans bloquer */
 }
 function note(ok, m) { S.service = { ok, quand: Date.now(), message: m || null }; }
@@ -260,36 +267,41 @@ const mediane = (a) => { const b = a.slice().sort((x, y) => x - y); const k = b.
 
 /* La cote finale attendue d'un camp, NOTRE mise diluee dedans : pool median,
  * part du camp tiree de la cote mediane. null sous FINALES_MIN observations. */
-function coteEstimee(side, fee, stake, fin) {
+function coteEstimee(side, fee, stake, fin, finMin) {
   const L = fin && fin[side];
-  if (!L || L.length < FINALES_MIN) return null;
+  const minObs = finMin || FINALES_MIN;
+  if (!L || L.length < minObs) return null;
   const c = mediane(L.map((o) => o.c)), T = mediane(L.map((o) => o.t));
   const partCamp = T * (1 - fee) / c;
   return { cote: cote(partCamp, T, fee, stake), n: L.length };
 }
 
 /* La décision, sur un round en cours de mise. `stake` = la mise (martingale
- * incluse) ; `fin` = les cotes finales observees (par defaut, celles de l'état). */
-function decide(pred, r, fee, stake, fin) {
-  const s = stake > 0 ? stake : STAKE;
+ * incluse) ; `fin` = les cotes finales observees (par defaut, celles de l'état).
+ * `cfg` = config stratégie (optionnel : utilise les globales si absent). */
+function decide(pred, r, fee, stake, fin, cfg) {
+  const s = stake > 0 ? stake : (cfg && cfg.stake) || STAKE;
+  const marge = (cfg && cfg.marge) || MARGE;
+  const gaz = (cfg && cfg.gaz) || GAZ;
+  const finMin = (cfg && cfg.finalesMin) || FINALES_MIN;
   const side = pred.sens === 'UP' ? 'BULL' : pred.sens === 'DOWN' ? 'BEAR' : null;
   if (!side || !pred.assez) return { side: side, wouldBet: false, cote: null, ev: null, mise: s, raison: 'no clear prediction' };
   const vue = cote(side === 'BULL' ? r.bull : r.bear, r.total, fee, s);
   if (vue == null) return { side, wouldBet: false, cote: null, ev: null, mise: s, raison: 'empty side' };
-  const est = coteEstimee(side, fee, s, fin || S.finales);
+  const est = coteEstimee(side, fee, s, fin || S.finales, finMin);
   const coteVue = Math.round(vue * 100) / 100;
   if (!est) {
     const n = ((fin || S.finales || {})[side] || []).length;
     return { side, cote: null, coteVue, ev: null, prob: pred.prob, mise: Math.round(s * 1e6) / 1e6, wouldBet: false,
-             raison: 'learning the final payouts (' + n + '/' + FINALES_MIN + ' rounds) — the pool before lock is not the final one' };
+             raison: 'learning the final payouts (' + n + '/' + finMin + ' rounds) — the pool before lock is not the final one' };
   }
   const m = Math.min(vue, est.cote);
   const p = pred.prob / 100;
-  const ev = p * m - 1 - GAZ / s;
+  const ev = p * m - 1 - gaz / s;
   return { side, cote: Math.round(m * 100) / 100, coteVue, coteEstimee: Math.round(est.cote * 100) / 100, nFinales: est.n,
            ev: Math.round(ev * 1000) / 1000, prob: pred.prob, mise: Math.round(s * 1e6) / 1e6,
-           wouldBet: ev > MARGE,
-           raison: ev > MARGE ? 'EV +' + Math.round(ev * 100) + '% at an expected ' + m.toFixed(2) + 'x final payout'
+           wouldBet: ev > marge,
+           raison: ev > marge ? 'EV +' + Math.round(ev * 100) + '% at an expected ' + m.toFixed(2) + 'x final payout'
                               : 'skip: EV ' + Math.round(ev * 100) + '% — the expected ' + m.toFixed(2) + 'x final payout is not worth it' };
 }
 
@@ -381,9 +393,18 @@ function resous(ep, r, fee) {
     S.bank += pl; S.pl += pl;
     escalade(issue);   /* la martingale monte/redescend selon l'issue ; un remboursement ne la bouge pas */
   } else { S.skips++; }
+  /* Mise à jour des stats par stratégie. */
+  if (d.strategyId != null && S.strategieStats != null) {
+    const sId = String(d.strategyId);
+    if (!S.strategieStats[sId]) S.strategieStats[sId] = { n_trades: 0, pnl_total: 0, pnl_pct: 0, edge: 0, busts: 0 };
+    if (d.wouldBet) {
+      S.strategieStats[sId].n_trades++;
+      S.strategieStats[sId].pnl_total += pl;
+    }
+  }
   S.dernier.unshift({ epoch: ep, side: d.side, cote: d.cote, ev: d.ev, prob: d.prob, mise: Math.round(stake * 1e6) / 1e6,
     gagnant, issue, pl: Math.round(pl * 1e6) / 1e6, coteFinale: gagnant === 'CANCELLED' ? null : cote(d.side === 'BULL' ? r.bull : r.bear, r.total, fee, stake),
-    bank: Math.round(S.bank * 1e6) / 1e6, palier: S.mart.palier, t: Date.now() });
+    bank: Math.round(S.bank * 1e6) / 1e6, palier: S.mart.palier, t: Date.now(), strategyId: d.strategyId });
   if (S.dernier.length > HISTO_MAX) S.dernier.pop();
 }
 
@@ -409,7 +430,11 @@ async function jugeRound(e, r, now) {
   S.dernierEpDecide = e;
   const brut = await preditMoteur();
   const pred = INVERSE ? inverse(brut) : brut;
-  const d = decide(pred, r, S.fee, S.miseCourante);
+  /* Sélection de stratégie : rotation simple sur les milliers. */
+  const strat = S.strategies && PARIE ? STRAT.selectStrategy(S.strategies, S.roundCount) : null;
+  const d = decide(pred, r, S.fee, S.miseCourante, null, strat && strat.config);
+  d.strategyId = strat && strat.id;
+  d.strategyName = strat && strat.name;
   const pt = resumePorte(d, S.miseCourante);
   S.porte.evaluees++;
   if (pt.passe) S.porte.passees++;
@@ -424,6 +449,7 @@ async function jugeRound(e, r, now) {
             outsider: r.bull < r.bear ? 'BULL' : r.bear < r.bull ? 'BEAR' : null, bull: 'BULL' },
     porte: Object.assign({}, pt, { raison: undefined }), parie: PARIE, modeInverse: INVERSE,   /* la raison se relit de ses chiffres */
   });
+  S.roundCount++;
   return d;
 }
 
@@ -504,6 +530,19 @@ function etat() {
       o[side] = { n: L.length, mediane: L.length ? Math.round(mediane(L.map((x) => x.c)) * 100) / 100 : null, min: FINALES_MIN };
       return o;
     }, {}),
+    /* Top 20 stratégies par edge, calculé à la volée. */
+    topStrategies: S.strategies && S.strategieStats ? (() => {
+      const ranked = S.strategies.filter((s) => {
+        const st = S.strategieStats[String(s.id)];
+        return st && st.n_trades > 0;
+      }).map((s) => {
+        const st = S.strategieStats[String(s.id)];
+        const edge = st.n_trades > 0 ? st.pnl_total / st.n_trades : 0;
+        const pnl_pct = st.n_trades > 0 ? (st.pnl_total / (STAKE * st.n_trades) * 100) : 0;
+        return Object.assign({}, s, { stats: { n_trades: st.n_trades, pnl_total: Math.round(st.pnl_total * 1e6) / 1e6, edge: Math.round(edge * 1e6) / 1e6, pnl_pct: Math.round(pnl_pct * 100) / 100 } });
+      }).sort((a, b) => (b.stats.edge || 0) - (a.stats.edge || 0)).slice(0, 20);
+      return ranked;
+    })() : [],
     note: !PARIE
       ? 'Betting is OFF. The card reads the real PancakeSwap rounds and odds, but places no bet — paper or real. Measured verdict: 5-min direction is a coin flip (49%), the inverse and near-lock momentum do not beat the 3% fee, and a martingale craters its own odds on thin pools. Set PREDICT_PANCAKE_PARIE=1 only to re-open a paper measurement.'
       : MART
