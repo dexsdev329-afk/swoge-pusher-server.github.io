@@ -542,16 +542,27 @@ function cree(deps) {
 
   function etat() {
     const r2 = (x) => Math.round(x * 100) / 100, C = E.calib;
-    /* Afficher les 5 baseline + les top 20 stratégies non-baseline par edge */
-    const baseline = AGENTS.filter((ag) => ag.type === 'baseline');
-    const autres = AGENTS.filter((ag) => ag.type !== 'baseline').map((ag) => {
-      const a = E.agents[ag.id];
-      return { ag, a, score: a.resolus >= 10 ? a.pnl / a.paris : -999 };
-    }).sort((x, y) => y.score - x.score).slice(0, 20).map((x) => x.ag);
-    const aAfficher = baseline.concat(autres);
+    /* LE CLASSEMENT, DU PLUS GAGNANT AU PLUS PERDANT (30/09/2026) ----
+       Demande du proprietaire : « classe du plus gagnant au plus perdant, la on dirait qu il
+       n y a pas d ordre ». La vue montrait les 5 d origine PUIS 20 strategies triees par gain
+       MOYEN par pari — et seulement les gagnantes : 20 cartes vertes sur 195, choisies apres
+       coup. Maintenant : le classement COMPLET par gain total, un resume (combien en gain, en
+       perte), et en cartes les 5 d origine, les 10 meilleures et les 10 pires. */
+    const ligneC = (ag) => { const a = E.agents[ag.id]; return { id: ag.id, name: ag.nom, type: ag.type, bets: a.paris, resolved: a.resolus, won: a.gagnes,
+      pnl: r2(a.pnl), open: E.ouverts.filter((p) => p.agent === ag.id).length }; };
+    const parGain = (x, y) => y.pnl - x.pnl || y.resolved - x.resolved;
+    const classement = AGENTS.map(ligneC).sort(parGain);
+    const regles = classement.filter((c) => c.resolved > 0);
+    const resume = { total: classement.length, inProfit: regles.filter((c) => c.pnl > 0).length, inLoss: regles.filter((c) => c.pnl < 0).length,
+      noSettledBet: classement.length - regles.length, totalPnl: r2(classement.reduce((t, c) => t + c.pnl, 0)),
+      judgeable: classement.filter((c) => c.resolved >= RESOLUS_ASSEZ).length };
+    const autres = regles.filter((c) => AGENTS.find((ag) => ag.id === c.id).type !== 'baseline');
+    const choisis = new Set(AGENTS.filter((ag) => ag.type === 'baseline').map((ag) => ag.id)
+      .concat(autres.slice(0, 10).map((c) => c.id), autres.slice(-10).map((c) => c.id)));
+    const aAfficher = AGENTS.filter((ag) => choisis.has(ag.id)).sort((x, y) => E.agents[y.id].pnl - E.agents[x.id].pnl);
 
     return { ok: true, depuis: new Date(E.depuis).toISOString(), stakeUsd: MISE_USD, bankUsd: BANQUE0, minResolved: RESOLUS_ASSEZ,
-      totalStrategies: AGENTS.length, displayedStrategies: aAfficher.length,
+      totalStrategies: AGENTS.length, displayedStrategies: aAfficher.length, ranking: classement, summary: resume,
       parametric: { running: PARAM.choisis.length, distinct: PARAM.distincts, combinations: PARAM.combinaisons,
         note: 'Kelly sizing, profit targets and stop-losses are not simulated: every agent stakes the same amount and holds to resolution.' },
       agents: aAfficher.map((ag) => { const a = E.agents[ag.id], w = wilson(a.gagnes, a.resolus), z = a.v > 0 ? (a.sy - a.sp) / Math.sqrt(a.v) : null;

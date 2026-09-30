@@ -94,6 +94,15 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
   ok(v.calibration.n === 1 && v.calibration.brierMarket === Math.round((0.54 - 1) ** 2 * 10000) / 10000 && v.calibration.enough === false,
      'la calibration : score de Brier du marche (0,2116) et du modele, et « pas assez » sous 100');
   ok(v.recent.length === avant && /^https:\/\/polymarket\.com\/event\/btc-updown-15m-\d+$/.test(v.recent[0].url) && !JSON.stringify(v).includes('NaN'), 'la vue : les paris regles, le lien du marche, aucun NaN');
+  /* 30/09 : « classe du plus gagnant au plus perdant ». */
+  const trie = (l) => l.every((x, i) => i === 0 || l[i - 1].pnl >= x.pnl);
+  ok(v.ranking.length === P.AGENTS.length && trie(v.ranking) && v.ranking[0].pnl > 0 && v.ranking[0].id === 'coin',
+     'le classement : les ' + v.ranking.length + ' strategies, du plus gagnant au plus perdant (en tete : ' + v.ranking[0].id + ', ' + v.ranking[0].pnl + ' $)');
+  ok(trie(v.agents), 'les cartes aussi, dans le meme ordre');
+  const RES = v.summary, regles = v.ranking.filter((c) => c.resolved > 0);
+  ok(RES.total === P.AGENTS.length && RES.inProfit === regles.filter((c) => c.pnl > 0).length && RES.inLoss === regles.filter((c) => c.pnl < 0).length
+     && RES.noSettledBet === P.AGENTS.length - regles.length && RES.judgeable === 0,
+     'le resume compte gagnantes (' + RES.inProfit + '), perdantes (' + RES.inLoss + '), sans pari regle (' + RES.noSettledBet + '), et aucune jugeable sous 100');
 
   console.log('\n-- 4. persistance, abandon, frais lus sur le marche --');
   c.arrete();
