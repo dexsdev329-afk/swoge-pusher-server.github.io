@@ -1607,6 +1607,7 @@ const studioChat = require('./studio_chat');
 const studioJeton = require('./studio_jeton');
 const studioHisto = require('./studio_histo').cree();
 const studioAgent = require('./studio_agent');
+const navigue = require('./navigue');   /* l'onglet Browse : lire une page publique, en securite */
 /* roast_token (roast.js, 28/09/2026) : la fiche de token_verdict, mise en mots par
    Claude Haiku (sinon un gabarit tire des memes faits) et dessinee en carte PNG. */
 const roastTokens = require('./roast').cree({
@@ -3660,15 +3661,21 @@ const server = http.createServer(async (req, res) => {
     const src = srcAgent();
     /* La page : les marches voisins (actions tokenisees, lancements Base) sont offerts au joueur. */
     src.joueur = true;
+    /* L'onglet Browse (navigue.js, 30/09) : lire le web, et RIEN qui depense — une page piegee
+       n'a ni embauche, ni eSIM, ni lancement a declencher (voir studio_agent, SYSTEME_NAVIGUE). */
+    const navigueMode = q.mode === 'browse';
+    if (navigueMode) { src.navigue = true; src.lisPage = (u) => navigue.lisPage(u); }
     /* L'embauche, liee a CE joueur : son adresse de session, jamais une adresse du message. */
     /* Un joueur qui a coupe ses embauches (plafond 0) : les outils ne sont meme pas offerts. */
     /* Qui paie : le credit en dollars (q.payeur 'credit') ou le $SWOGE du vault — les embauches de l'agent aussi. */
-    const pay = payeurDe(addr, q.payeur, 'agent:' + m.id);
-    if (embauche().actif()) { const P = embauche().pour(addr, pay.factu()); if (P.budget().jourUsd > 0) src.embauche = P; }
-    /* L'eSIM : l'agent cherche et PROPOSE ; seule la route /studio/agent/achats (la page) paie. */
-    if (achats().actif()) { const PA = achats().pour(addr, pay.factu('buy this eSIM')); src.achats = { forfaits: PA.forfaits, propose: PA.propose }; }
-    /* Le lancement V4 : une carte seulement ; la page la fait signer par le portefeuille connecte du joueur. */
-    src.lancements = lancementV4;
+    const pay = payeurDe(addr, q.payeur, 'agent:' + (navigueMode ? 'browse:' : '') + m.id);
+    if (!navigueMode) {
+      if (embauche().actif()) { const P = embauche().pour(addr, pay.factu()); if (P.budget().jourUsd > 0) src.embauche = P; }
+      /* L'eSIM : l'agent cherche et PROPOSE ; seule la route /studio/agent/achats (la page) paie. */
+      if (achats().actif()) { const PA = achats().pour(addr, pay.factu('buy this eSIM')); src.achats = { forfaits: PA.forfaits, propose: PA.propose }; }
+      /* Le lancement V4 : une carte seulement ; la page la fait signer par le portefeuille connecte du joueur. */
+      src.lancements = lancementV4;
+    }
     let r;
     try {
       r = await studioChat.repond({ addr, rid, modele: m.id, messages: q.messages, recherche: false }, {
