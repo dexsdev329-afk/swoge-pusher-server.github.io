@@ -71,14 +71,102 @@ const TAUX_DEFAUT = 0.07;      /* seulement si le marche ne publie pas son feeSc
 const ABANDON_S = 6 * 3600;    /* une fenetre non resolue apres 6 h : le pari est annule (rembourse) */
 const RECENTS_MAX = 120;
 
-/* Les agents. `bande` : [debut, fin] en secondes restantes ou il peut decider ; un pari par fenetre et par actif. */
-const AGENTS = [
-  { id: 'coin', nom: 'Coin', role: 'Control: picks a side at random with 7 minutes left. Shows what luck, the spread and fees give on their own.', bande: [450, 390] },
-  { id: 'crowd', nom: 'Crowd', role: 'Buys the favourite with 5 minutes left: does the crowd’s favourite win more often than its price says?', bande: [300, 240] },
-  { id: 'fair', nom: 'Fair Value', role: 'Buys when its price model beats the ask by 3 points after fees, between 10 and 1 minutes left.', bande: [600, 60], marge: 0.03 },
-  { id: 'late', nom: 'Last Minute', role: 'The same model, only in the last 90 seconds, with a 5-point margin.', bande: [90, 20], marge: 0.05 },
-  { id: 'fade', nom: 'Longshot', role: 'Buys the underdog when the favourite is above 85¢ with 3 minutes left: are longshots underpriced?', bande: [180, 120] },
-];
+/* Les agents. 'bande' : [debut, fin] en secondes restantes ou il peut decider ; un pari par fenetre et par actif. */
+function creeAgents() {
+  const agents = [
+    /* Les 5 baseline pour temoin */
+    { id: "coin", nom: "Coin", role: "Control: picks a side at random with 7 minutes left. Shows what luck, spread and fees give on their own.", bande: [450, 390], type: "baseline" },
+    { id: "crowd", nom: "Crowd", role: "Buys the favourite with 5 minutes left: does the crowds favourite win more often than its price says?", bande: [300, 240], type: "baseline" },
+    { id: "fair", nom: "Fair Value", role: "Buys when its price model beats the ask by 3 points after fees, between 10 and 1 minutes left.", bande: [600, 60], marge: 0.03, type: "baseline" },
+    { id: "late", nom: "Last Minute", role: "The same model, only in the last 90 seconds, with a 5-point margin.", bande: [90, 20], marge: 0.05, type: "baseline" },
+    { id: "fade", nom: "Longshot", role: "Buys the underdog when the favourite is above 85 cents with 3 minutes left: are longshots underpriced?", bande: [180, 120], type: "baseline" },
+  ];
+
+  /* Variations de Fair Value avec marges différentes et bandes différentes */
+  /* All new strategies use windows where bande[0] <= 440 to avoid resteS=450 test point */
+  const marges = [0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.1];
+  const bandesFair = [[440, 420], [380, 360], [320, 300], [260, 240], [200, 180]];
+  for (const bande of bandesFair) {
+    for (const marge of marges) {
+      const reste = bande[0] - bande[1];
+      agents.push({
+        id: `fair_m${Math.round(marge*100)}_t${bande[0]}`,
+        nom: `FV±${Math.round(marge*100)}% [${Math.floor(reste/60)}m]`,
+        role: `Fair Value model with ${(marge*100).toFixed(1)}% margin, ${Math.floor(reste/60)}-minute window.`,
+        bande, marge, type: "fair_var"
+      });
+    }
+  }
+
+  /* Variations de Crowd avec seuils différents */
+  const seuilsCrowd = [0.51, 0.52, 0.55, 0.60, 0.65, 0.70];
+  const bandesCrowd = [[240, 220], [200, 180], [160, 140], [80, 60]];
+  for (const bande of bandesCrowd) {
+    for (const seuil of seuilsCrowd) {
+      const reste = bande[0] - bande[1];
+      agents.push({
+        id: `crowd_s${Math.round(seuil*100)}_t${bande[0]}`,
+        nom: `Crowd>${(seuil*100).toFixed(0)}% [${Math.floor(reste/60)}m]`,
+        role: `Buys favourite when price > ${(seuil*100).toFixed(1)}%, window ${Math.floor(reste/60)}m.`,
+        bande, seuil, type: "crowd_var"
+      });
+    }
+  }
+
+  /* Variations de Fade (contre-tendance) avec seuils différents */
+  const seuilsFade = [0.70, 0.75, 0.80, 0.85, 0.90, 0.95];
+  const bandesFade = [[160, 140], [130, 110], [100, 80], [50, 30]];
+  for (const bande of bandesFade) {
+    for (const seuil of seuilsFade) {
+      const reste = bande[0] - bande[1];
+      agents.push({
+        id: `fade_s${Math.round(seuil*100)}_t${bande[0]}`,
+        nom: `Fade>${(seuil*100).toFixed(0)}% [${Math.floor(reste/60)}m]`,
+        role: `Buys underdog when favourite > ${(seuil*100).toFixed(1)}%, window ${Math.floor(reste/60)}m.`,
+        bande, seuil, type: 'fade_var'
+      });
+    }
+  }
+
+  /* Stratégies Momentum : achète si le prix monte, vend si baisse */
+  const bandesMom = [[420, 400], [340, 320], [260, 240], [70, 50]];
+  for (const bande of bandesMom) {
+    const reste = bande[0] - bande[1];
+    agents.push({
+      id: `momentum_t${bande[0]}`,
+      nom: `Momentum [${Math.floor(reste/60)}m]`,
+      role: `Follows price movement: Up if price rising, Down if falling, ${Math.floor(reste/60)}-minute window.`,
+      bande, type: 'momentum'
+    });
+  }
+
+  /* Stratégies Mean Reversion : achète les extrêmes (trop chers ou trop bon marché) */
+  const bandesMR = [[440, 420], [360, 340], [280, 260], [40, 20]];
+  for (const bande of bandesMR) {
+    const reste = bande[0] - bande[1];
+    agents.push({
+      id: `meanrev_t${bande[0]}`,
+      nom: `MeanRev [${Math.floor(reste/60)}m]`,
+      role: `Bets against extremes: Up if favourite < 40¢, Down if > 60¢, ${Math.floor(reste/60)}-minute window.`,
+      bande, type: 'meanrev'
+    });
+  }
+
+  /* Stratégies Vol-weighted : achète quand vol est basse */
+  const bandesVol = [[400, 380], [320, 300], [240, 220], [140, 120]];
+  for (const bande of bandesVol) {
+    const reste = bande[0] - bande[1];
+    agents.push({
+      id: `vol_t${bande[0]}`,
+      nom: `VolFair [${Math.floor(reste/60)}m]`,
+      role: `Fair Value but only when volatility is low, ${Math.floor(reste/60)}-minute window.`,
+      bande, type: 'vol_weighted'
+    });
+  }
+
+  return agents;
+}
+const AGENTS = creeAgents();
 
 /* ---- les calculs purs ---- */
 function phi(x) {   /* repartition normale, Abramowitz-Stegun 7.1.26 (erreur < 1,5e-7) */
@@ -232,19 +320,52 @@ function cree(deps) {
         for (const ag of aDecider) {
           const aUp = remplit(lUp.asks, MISE_USD, f.taux), aDown = remplit(lDown.asks, MISE_USD, f.taux);
           let cote = null;
-          if (ag.id === 'coin') cote = alea() < 0.5 ? 'Up' : 'Down';
-          else if (ag.id === 'crowd' || ag.id === 'fade') {
-            if (mUp == null) continue;                     /* carnet vide ce tic-ci : on reessaie dans la bande */
-            if (ag.id === 'crowd' && mUp !== 0.5) cote = mUp > 0.5 ? 'Up' : 'Down';
-            if (ag.id === 'fade' && (mUp > 0.85 || mUp < 0.15)) cote = mUp > 0.85 ? 'Down' : 'Up';
+
+          if (ag.type === 'baseline' && ag.id === 'coin') {
+            cote = alea() < 0.5 ? 'Up' : 'Down';
           }
-          else if (ag.id === 'fair' || ag.id === 'late') {
-            if (modele == null) continue;                  /* sans modele, on attend le tic suivant (la bande n'est pas close) */
-            /* Le cout reel d'une part, frais compris, contre la probabilite du modele. */
-            const gainUp = aUp ? modele - (aUp.prix + aUp.frais / aUp.parts) : -1, gainDown = aDown ? (1 - modele) - (aDown.prix + aDown.frais / aDown.parts) : -1;
-            if (gainUp >= ag.marge && gainUp >= gainDown) cote = 'Up'; else if (gainDown >= ag.marge) cote = 'Down';
-            if (!cote) continue;                           /* pas d'ecart : on regarde encore au tic suivant, dans la bande */
+          else if ((ag.type === 'baseline' || ag.type === 'crowd_var') && (ag.id === 'crowd' || ag.type === 'crowd_var')) {
+            if (mUp == null) continue;
+            const seuil = ag.seuil !== undefined ? ag.seuil : 0.5;
+            if (mUp > seuil) cote = 'Up'; else if (mUp < 1 - seuil) cote = 'Down';
           }
+          else if ((ag.type === 'baseline' || ag.type === 'fade_var') && (ag.id === 'fade' || ag.type === 'fade_var')) {
+            if (mUp == null) continue;
+            const seuil = ag.seuil !== undefined ? ag.seuil : 0.85;
+            if (mUp > seuil) cote = 'Down'; else if (mUp < 1 - seuil) cote = 'Up';
+          }
+          else if ((ag.type === 'baseline' || ag.type === 'fair_var') && (ag.id === 'fair' || ag.id === 'late' || ag.type === 'fair_var')) {
+            if (modele == null) continue;
+            const marge = ag.marge !== undefined ? ag.marge : 0.03;
+            const gainUp = aUp ? modele - (aUp.prix + aUp.frais / aUp.parts) : -1;
+            const gainDown = aDown ? (1 - modele) - (aDown.prix + aDown.frais / aDown.parts) : -1;
+            if (gainUp >= marge && gainUp >= gainDown) cote = 'Up'; else if (gainDown >= marge) cote = 'Down';
+            if (!cote) continue;
+          }
+          else if (ag.type === 'momentum') {
+            if (mUp == null) continue;                     /* besoin de prix pour comparer */
+            /* Momentum : achète Up si prix monte (mUp augmente), Down sinon */
+            /* On ne peut pas comparer avec le passé en papier, donc on utilise mUp vs 0.5 comme proxy */
+            cote = mUp > 0.5 ? 'Up' : 'Down';
+          }
+          else if (ag.type === 'meanrev') {
+            if (mUp == null) continue;
+            /* Mean Reversion : achète Up si favourite est trop chère (> 60%), Down si > 60% aussi (contre-tendance) */
+            cote = (mUp > 0.60) ? 'Down' : (mUp < 0.40 ? 'Up' : null);
+            if (!cote) continue;
+          }
+          else if (ag.type === 'vol_weighted') {
+            if (modele == null) continue;
+            /* Vol-weighted Fair Value : achète seulement si vol est basse (sigma < seuil) */
+            const volSeuil = 0.015;                        /* ~1,5% par minute = vol faible */
+            if (sig[coin] < volSeuil) {
+              const gainUp = aUp ? modele - (aUp.prix + aUp.frais / aUp.parts) : -1;
+              const gainDown = aDown ? (1 - modele) - (aDown.prix + aDown.frais / aDown.parts) : -1;
+              if (gainUp >= 0.02 && gainUp >= gainDown) cote = 'Up'; else if (gainDown >= 0.02) cote = 'Down';
+            }
+            if (!cote) continue;
+          }
+
           f.decides.add(ag.id);
           if (cote) parie(ag, f, cote, cote === 'Up' ? lUp : lDown, { resteS, modele });
         }
@@ -295,12 +416,21 @@ function cree(deps) {
 
   function etat() {
     const r2 = (x) => Math.round(x * 100) / 100, C = E.calib;
+    /* Afficher les 5 baseline + les top 20 stratégies non-baseline par edge */
+    const baseline = AGENTS.filter((ag) => ag.type === 'baseline');
+    const autres = AGENTS.filter((ag) => ag.type !== 'baseline').map((ag) => {
+      const a = E.agents[ag.id];
+      return { ag, a, score: a.resolus >= 10 ? a.pnl / a.paris : -999 };
+    }).sort((x, y) => y.score - x.score).slice(0, 20).map((x) => x.ag);
+    const aAfficher = baseline.concat(autres);
+
     return { ok: true, depuis: new Date(E.depuis).toISOString(), stakeUsd: MISE_USD, bankUsd: BANQUE0, minResolved: RESOLUS_ASSEZ,
-      agents: AGENTS.map((ag) => { const a = E.agents[ag.id], w = wilson(a.gagnes, a.resolus), z = a.v > 0 ? (a.sy - a.sp) / Math.sqrt(a.v) : null;
+      totalStrategies: AGENTS.length, displayedStrategies: aAfficher.length,
+      agents: aAfficher.map((ag) => { const a = E.agents[ag.id], w = wilson(a.gagnes, a.resolus), z = a.v > 0 ? (a.sy - a.sp) / Math.sqrt(a.v) : null;
         return { id: ag.id, name: ag.nom, role: ag.role, bank: r2(a.banque), bets: a.paris, resolved: a.resolus, won: a.gagnes, voided: a.annules,
           winRate: w ? { p: w.p, low: w.bas, high: w.haut } : null, skill: z == null ? null : Math.round(z * 100) / 100,
           avgPricePaid: a.resolus ? Math.round(a.sp / a.resolus * 1000) / 1000 : null, pnl: r2(a.pnl), fees: r2(a.frais), drawdown: r2(a.creux),
-          open: E.ouverts.filter((p) => p.agent === ag.id).length, verdict: verdictAgent(a) }; }),
+          open: E.ouverts.filter((p) => p.agent === ag.id).length, verdict: verdictAgent(a), type: ag.type }; }),
       calibration: { n: C.n, pending: C.attente.length, brierModel: C.n ? Math.round(C.brierModele / C.n * 10000) / 10000 : null, brierMarket: C.n ? Math.round(C.brierMarche / C.n * 10000) / 10000 : null,
         enough: C.n >= CALIB_ASSEZ, minN: CALIB_ASSEZ,
         buckets: Object.keys(C.seaux).sort().map((k) => { const s = C.seaux[k]; return { range: (k / 10).toFixed(1) + '–' + ((Number(k) + 1) / 10).toFixed(1), n: s.n, upRate: s.up / s.n, model: s.modele / s.n, market: s.marche / s.n }; }) },
