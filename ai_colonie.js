@@ -4749,6 +4749,62 @@ function carnetBilan() {
 }
 
 /* ==========================================================================
+ * LE CARNET NET DE L'ALLER-RETOUR : LA COLONIE GAGNE-T-ELLE UNE FOIS PAYEE ?
+ *
+ * Releve du 30 septembre 2026 (`releve.js --depuis 24h`, 300 dernieres lignes du
+ * carnet, 13 → 30/09) : les 239 positions qui ont un devis d'aller-retour font
+ * +0,37 % BRUT en moyenne, pour un aller-retour devise de 4,79 % : -4,42 % NET.
+ * Le reel dit la meme chose par l'autre bout : 287 fermetures, -3,8 % par trade,
+ * et sur les 58 dernieres l'ecart reel − papier (-3,6 points) est l'aller-retour
+ * (3,05) a 0,55 point pres. Le carnet, lui, ne montrait que le brut (`r` est le
+ * prix relu contre le prix d'entree) : la colonie se lisait en gain.
+ *
+ * Et aucune case ne sauve la mise : sur les 74 cases « agent.trait » a 20
+ * positions et plus, 4 sont positives nettes, la meilleure a t = 0,63.
+ *
+ * Ce bilan ne change RIEN a ce qu'on achete : il dit la verite a cote du brut.
+ * Il juge les cases comme les ombres : n ≥ NET_CASE_MIN, et un « edge » seulement
+ * au-dessus de la barre du nombre de cases regardees (Bonferroni, 5 %
+ * unilateral) avec les deux moities (dans l'ordre du temps) positives. Les
+ * lignes SANS devis restent a part : leur cout est inconnu, pas nul. */
+const NET_CASE_MIN = 50;   /* sous 50 positions, l'ecart-type d'une case (≈ 20 points) laisse ±5,6 points a 95 % : plus que tout l'aller-retour */
+function phiNet(x) { const t = 1 / (1 + 0.3275911 * Math.abs(x) / Math.SQRT2), y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x / 2); return x >= 0 ? (1 + y) / 2 : (1 - y) / 2; }
+function barreNet(n) { const c = 0.05 / Math.max(1, n); let a = 0, b = 10; for (let i = 0; i < 60; i++) { const m = (a + b) / 2; if (1 - phiNet(m) > c) a = m; else b = m; } return b; }
+function serieNet(v) {
+  /* v : rendements nets dans l'ordre du temps */
+  const n = v.length; if (!n) return { n: 0 };
+  const m = v.reduce((a, x) => a + x, 0) / n;
+  const sd = n > 1 ? Math.sqrt(v.reduce((a, x) => a + (x - m) * (x - m), 0) / (n - 1)) : null;
+  const h = n >> 1, moy = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : null), r1 = (x) => (x == null ? null : Math.round(x * 10) / 10);
+  return { n, net: r1(m), t: sd ? Math.round(m / (sd / Math.sqrt(n)) * 100) / 100 : null, moitie1: r1(moy(v.slice(0, h))), moitie2: r1(moy(v.slice(h))) };
+}
+function carnetNet() {
+  const tout = (E.carnet || []).filter((x) => !x.aberrant && typeof x.r === 'number' && isFinite(x.r));
+  const l = tout.filter((x) => typeof x.allerRetour === 'number' && isFinite(x.allerRetour)).sort((a, b) => (a.t || 0) - (b.t || 0));
+  const sans = tout.filter((x) => !(typeof x.allerRetour === 'number' && isFinite(x.allerRetour)));
+  const r1 = (x) => Math.round(x * 10) / 10, moy = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : null);
+  const net = (x) => x.r - x.allerRetour;
+  const g = serieNet(l.map(net));
+  /* Les cases : chaque « agent.trait = valeur » portee par une position. */
+  const cases = new Map();
+  for (const x of l) for (const ag in (x.traits || {})) for (const k in x.traits[ag]) {
+    const cle = ag + '.' + k + ' = ' + x.traits[ag][k];
+    (cases.get(cle) || cases.set(cle, []).get(cle)).push(net(x));
+  }
+  const jugees = [...cases].filter(([, v]) => v.length >= NET_CASE_MIN).map(([cle, v]) => Object.assign({ cle }, serieNet(v)));
+  const b = barreNet(jugees.length);
+  const prouvees = jugees.filter((c) => c.t != null && c.t >= b && c.moitie1 > 0 && c.moitie2 > 0);
+  return {
+    n: l.length, brut: l.length ? r1(moy(l.map((x) => x.r))) : null, cout: l.length ? r1(moy(l.map((x) => x.allerRetour))) : null,
+    net: g.net === undefined ? null : g.net, t: g.t || null, moitie1: g.moitie1 === undefined ? null : g.moitie1, moitie2: g.moitie2 === undefined ? null : g.moitie2,
+    depuis: l.length ? l[0].t0 || l[0].t : null,
+    sansDevis: { n: sans.length, brut: sans.length ? r1(moy(sans.map((x) => x.r))) : null },
+    cases: { min: NET_CASE_MIN, jugees: jugees.length, positives: jugees.filter((c) => c.net > 0).length, barre: jugees.length ? Math.round(b * 100) / 100 : null,
+             prouvees: prouvees.length, meilleures: jugees.sort((x, y) => (y.t || -99) - (x.t || -99)).slice(0, 5) },
+  };
+}
+
+/* ==========================================================================
  * LE PRIX D'ENTREE DU PAPIER EST CELUI QUE LE MIROIR A PAYE
  *
  * BANGERCAT, 12 septembre, 17 h 32. La page montre :
@@ -10354,6 +10410,8 @@ function vue() {
     verdicts: verdictsDesSorties(),
     /* ---- LE CARNET : CE QUE CHAQUE TRADE A VRAIMENT FAIT ----
        Les compteurs disaient combien de trades ; le carnet dit lesquels. */
+    /* ---- LE CARNET NET DE L'ALLER-RETOUR ---- voir `carnetNet` */
+    carnetNet: carnetNet(),
     carnet: Object.assign(carnetBilan(), {
       /* Les 300 dernieres lignes, telles quelles : une moyenne qu'on ne
          peut pas verifier ligne a ligne n'est pas une mesure. */
@@ -10616,7 +10674,7 @@ module.exports = {
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
   seuilsAudit, refMontes, REF_PROTEGE, auditDe, SANS_ACHAT_DESSERRE, recadreLesBornes, buteesDuCode, BUTEES_AVANT,
   deriveDuPrix, noteDerive, DERIVE_MAX,
-  noteCarnet, rythmeSilence, RYTHME_JOURS, RYTHME_ASSEZ, carnetBilan, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, CARNET_LIQ, CARNET_MC, ALLER_RETOUR_MAX, coutAllerRetour,
+  noteCarnet, rythmeSilence, RYTHME_JOURS, RYTHME_ASSEZ, carnetBilan, carnetNet, barreNet, NET_CASE_MIN, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, CARNET_LIQ, CARNET_MC, ALLER_RETOUR_MAX, coutAllerRetour,
   TENUES, TENUE_EXPLORE, tenueAExplorer, cestUnTourDExploration,
   verdictsDesSorties, noteVerdictSortie,
   executionReelle, coutReel, entreeReelle, ecartEntree, ENTREE_RATIO_MIN, ENTREE_RATIO_MAX,

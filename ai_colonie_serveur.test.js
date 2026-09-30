@@ -8312,6 +8312,39 @@ async function portefeuillesAvantLeRegard() {
  * et presque aucun jeune n'a de lien. La sonde dit lesquels montent, sans
  * changer un verdict ni decouper la ligne que la borne d'age lit.
  * ======================================================================== */
+async function carnetNetDuCout() {
+  /* 30/09/2026 : « ameliore SWOGE AI ». Le carnet ne montrait que le BRUT ; 239 positions a
+     +0,37 % brut pour 4,79 % d aller-retour devise font -4,42 % net. Le bilan net le dit, sans
+     rien changer a ce qu on achete, et juge les cases contre la barre du nombre regarde. */
+  console.log('\n-- le carnet net de l aller-retour : la colonie gagne-t-elle une fois payee ? --');
+  const E = C._etat();
+  const avant = E.carnet;
+  const L = [];
+  for (let i = 0; i < 120; i++) {
+    /* case A : +8 brut, 3 de cout -> +5 net, toujours ; case B : +2 brut, 6 de cout -> -4 net */
+    const a = i % 2 === 0;
+    L.push({ sym: 'T' + i, t0: 1e12 + i * 1000, t: 1e12 + i * 1000 + 600000, r: a ? 8 + (i % 4) : 2 - (i % 4), allerRetour: a ? 3 : 6,
+             traits: { scout: { lot: a ? 'A' : 'B' } } });
+  }
+  L.push({ sym: 'SANS', t0: 1e12, t: 1e12 + 5, r: 40, allerRetour: null, traits: {} });
+  L.push({ sym: 'FAUX', t0: 1e12, t: 1e12 + 5, r: 0, allerRetour: 2, aberrant: '+900%', traits: {} });
+  E.carnet = L;
+  const N = C.carnetNet();
+  const brut = L.slice(0, 120).reduce((s, x) => s + x.r, 0) / 120, cout = 4.5;
+  ok(N.n === 120 && Math.abs(N.brut - Math.round(brut * 10) / 10) < 1e-9 && N.cout === cout && Math.abs(N.net - Math.round((brut - cout) * 10) / 10) < 0.051,
+     'le net = brut − aller-retour devise, sur les seules positions qui ont un devis (' + N.brut + ' − ' + N.cout + ' = ' + N.net + ')');
+  ok(N.sansDevis.n === 1 && N.sansDevis.brut === 40, 'une position sans devis reste a part : son cout est inconnu, pas nul');
+  ok(!JSON.stringify(N).includes('+900'), 'une lecture aberrante n entre nulle part');
+  const A = N.cases.meilleures.find((c) => /lot = A/.test(c.cle)), B = N.cases.meilleures.find((c) => /lot = B/.test(c.cle));
+  ok(N.cases.jugees === 2 && A && A.n === 60 && A.net > 0 && B.net < 0, 'les cases a ' + C.NET_CASE_MIN + '+ positions sont jugees : A nette positive (' + A.net + '), B negative (' + B.net + ')');
+  ok(Math.abs(N.cases.barre - C.barreNet(2)) < 0.01 && N.cases.prouvees === 1 && N.cases.positives === 1,
+     'la barre tient compte du nombre de cases regardees (' + N.cases.barre + ' pour 2) ; A la passe, deux moities positives');
+  E.carnet = L.slice(0, 60);
+  ok(C.carnetNet().cases.jugees === 0, 'sous ' + C.NET_CASE_MIN + ' positions par case, aucune case n est jugee');
+  ok(C.vue().carnetNet && typeof C.vue().carnetNet.n === 'number', 'la vue publique porte le bilan net');
+  E.carnet = avant;
+}
+
 async function sondeDesMoinsDeQuatre() {
   console.log('\n-- les refuses pour leur age sont demandes a DexScreener, deux par tour --');
   remise([jeton(0, { minutes: 2 }), jeton(1, { minutes: 2, aucunLien: true }), jeton(2, { minutes: 2 }), jeton(3)]);
@@ -8537,6 +8570,7 @@ async function baleineParTranche() {
   await soumissionsDeJoueurs();
   await portefeuillesAvantLeRegard();
   await sondeDesMoinsDeQuatre();
+  await carnetNetDuCout();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
