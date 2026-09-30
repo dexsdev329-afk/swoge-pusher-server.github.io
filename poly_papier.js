@@ -57,7 +57,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const { creeStrategies, computeEdge, rankStrategies } = require('./poly_strategies');
 
 const GAMMA = 'https://gamma-api.polymarket.com', CLOB = 'https://clob.polymarket.com', HL = 'https://api.hyperliquid.xyz/info';
 const FENETRE_S = 900;
@@ -165,18 +164,6 @@ function creeAgents() {
     });
   }
 
-  /* ---- 110 700 stratégies paramétriques (30 sept 2026) ---- */
-  const strategies = creeStrategies();
-  for (const strategy of strategies) {
-    agents.push({
-      id: `strat_${strategy.hash}`,
-      nom: strategy.name,
-      role: `Parametric strategy: ${strategy.config.type}. Edge: ${(strategy.stats.edge || 0).toFixed(4)}.`,
-      type: 'parametric',
-      strategy: strategy.config,
-      strategyStats: strategy.stats
-    });
-  }
 
   return agents;
 }
@@ -430,24 +417,21 @@ function cree(deps) {
 
   function etat() {
     const r2 = (x) => Math.round(x * 100) / 100, C = E.calib;
-    /* Afficher les 5 baseline + les top 50 stratégies par edge (résolus >= 20) */
+    /* Afficher les 5 baseline + les top 20 stratégies non-baseline par edge */
     const baseline = AGENTS.filter((ag) => ag.type === 'baseline');
     const autres = AGENTS.filter((ag) => ag.type !== 'baseline').map((ag) => {
       const a = E.agents[ag.id];
-      const edge = ag.type === 'parametric' && ag.strategyStats ? computeEdge(ag.strategyStats) : (a.resolus >= 10 ? a.pnl / a.paris : -999);
-      const minResolus = ag.type === 'parametric' ? 20 : 10;
-      return { ag, a, score: a.resolus >= minResolus ? edge : -999 };
-    }).sort((x, y) => y.score - x.score).slice(0, 50).map((x) => x.ag);
+      return { ag, a, score: a.resolus >= 10 ? a.pnl / a.paris : -999 };
+    }).sort((x, y) => y.score - x.score).slice(0, 20).map((x) => x.ag);
     const aAfficher = baseline.concat(autres);
 
     return { ok: true, depuis: new Date(E.depuis).toISOString(), stakeUsd: MISE_USD, bankUsd: BANQUE0, minResolved: RESOLUS_ASSEZ,
       totalStrategies: AGENTS.length, displayedStrategies: aAfficher.length,
-      agents: aAfficher.map((ag) => { const a = E.agents[ag.id], w = wilson(a.gagnes, a.resolus), z = a.v > 0 ? (a.sy - a.sp) / Math.sqrt(a.v) : null,
-        edge = ag.type === 'parametric' && ag.strategyStats ? computeEdge(ag.strategyStats) : (a.resolus > 0 ? a.pnl / a.resolus : 0);
+      agents: aAfficher.map((ag) => { const a = E.agents[ag.id], w = wilson(a.gagnes, a.resolus), z = a.v > 0 ? (a.sy - a.sp) / Math.sqrt(a.v) : null;
         return { id: ag.id, name: ag.nom, role: ag.role, bank: r2(a.banque), bets: a.paris, resolved: a.resolus, won: a.gagnes, voided: a.annules,
           winRate: w ? { p: w.p, low: w.bas, high: w.haut } : null, skill: z == null ? null : Math.round(z * 100) / 100,
           avgPricePaid: a.resolus ? Math.round(a.sp / a.resolus * 1000) / 1000 : null, pnl: r2(a.pnl), fees: r2(a.frais), drawdown: r2(a.creux),
-          edge: r2(edge), open: E.ouverts.filter((p) => p.agent === ag.id).length, verdict: verdictAgent(a), type: ag.type }; }),
+          open: E.ouverts.filter((p) => p.agent === ag.id).length, verdict: verdictAgent(a), type: ag.type }; }),
       calibration: { n: C.n, pending: C.attente.length, brierModel: C.n ? Math.round(C.brierModele / C.n * 10000) / 10000 : null, brierMarket: C.n ? Math.round(C.brierMarche / C.n * 10000) / 10000 : null,
         enough: C.n >= CALIB_ASSEZ, minN: CALIB_ASSEZ,
         buckets: Object.keys(C.seaux).sort().map((k) => { const s = C.seaux[k]; return { range: (k / 10).toFixed(1) + '–' + ((Number(k) + 1) / 10).toFixed(1), n: s.n, upRate: s.up / s.n, model: s.modele / s.n, market: s.marche / s.n }; }) },
