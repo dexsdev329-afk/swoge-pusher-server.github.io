@@ -34,6 +34,7 @@ const cfg = require('./config');
 const E = require('./predict_moteur');   /* le même moteur que la page */
 const J = require('./predict_pancake_journal');   /* le journal durable des rounds, les ombres, le remplissage */
 const STRAT = require('./predict_pancake_strategies');   /* stratégies paramétriques (milliers de variations) */
+const TOURNOI = require('./predict_tournoi');   /* le tournoi sur les vrais rounds du journal (30/09) */
 
 const RPC = process.env.BSC_RPC || 'https://bsc-dataseed.binance.org';
 const ADDR = process.env.PANCAKE_PREDICTION || '0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA';
@@ -490,6 +491,7 @@ async function tic() {
     }
     /* Le journal durable : chaque round réglé, une ligne (et ses ombres). */
     await J.regleRecents(ch, e, now);
+    TOURNOI.tic();   /* au plus un recalcul par round, en tache de fond */
     S.maj = Date.now(); note(true); sauve();
   } catch (e) {
     /* Une erreur ethers v5 cite l'URL du fournisseur (url="…") : BSC_RPC peut
@@ -530,6 +532,8 @@ function etat() {
       o[side] = { n: L.length, mediane: L.length ? Math.round(mediane(L.map((x) => x.c)) * 100) / 100 : null, min: FINALES_MIN };
       return o;
     }, {}),
+    /* Le tournoi des stratégies sur les vrais rounds (predict_tournoi.js). */
+    tournament: TOURNOI.etat(),
     /* Top 20 stratégies par edge, calculé à la volée. */
     topStrategies: S.strategies && S.strategieStats ? (() => {
       const ranked = S.strategies.filter((s) => {
