@@ -57,6 +57,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const polySt = require('./poly_strategies');
 
 const GAMMA = 'https://gamma-api.polymarket.com', CLOB = 'https://clob.polymarket.com', HL = 'https://api.hyperliquid.xyz/info';
 const FENETRE_S = 900;
@@ -164,6 +165,49 @@ function creeAgents() {
     });
   }
 
+  /* Charger les TOP 100 stratégies paramétriques par edge */
+  try {
+    const toutesStrategies = polySt.creeStrategies();
+    /* rankStrategies() retourne [] si aucune stratégie n'a assez de resolus.
+       On startup, prendre les 100 premières pour les tester. */
+    let top100 = polySt.rankStrategies(toutesStrategies);
+    if (top100.length === 0 && toutesStrategies.length > 0) {
+      top100 = toutesStrategies.slice(0, 100);
+    }
+    for (const strat of top100) {
+      const cfg = strat.config;
+      const reste = cfg.fenetre ? cfg.fenetre[0] - cfg.fenetre[1] : 60;
+      let nom = strat.name || `Strat${strat.id}`;
+      let role = `Parametric strategy (${cfg.type})`;
+
+      /* Adapter le rôle selon le type */
+      if (cfg.type === 'fair_value') {
+        role = `Fair Value with ${(cfg.marge*100).toFixed(1)}% margin, ${Math.floor(reste/60)}m window.`;
+      } else if (cfg.type === 'crowd') {
+        role = `Buys favourite at ${(cfg.seuil*100).toFixed(0)}%, ${Math.floor(reste/60)}m window.`;
+      } else if (cfg.type === 'fade') {
+        role = `Buys underdog, ${Math.floor(reste/60)}m window.`;
+      } else if (cfg.type === 'momentum') {
+        role = `Momentum strategy, force ${cfg.force?.toFixed(3) || 'auto'}, ${Math.floor(reste/60)}m window.`;
+      } else if (cfg.type === 'meanrev') {
+        role = `Mean reversion [${(cfg.seuilBas*100).toFixed(0)}%-${(cfg.seuilHaut*100).toFixed(0)}%], ${Math.floor(reste/60)}m window.`;
+      } else if (cfg.type === 'vol_weighted') {
+        role = `Vol-weighted Fair Value, vol>${(cfg.volThreshold*100).toFixed(0)}%, ${Math.floor(reste/60)}m window.`;
+      }
+
+      agents.push({
+        id: `param_${strat.id}_${strat.hash}`,
+        nom: nom,
+        role: role,
+        bande: cfg.fenetre || [300, 180],
+        type: 'parametric',
+        config: cfg
+      });
+    }
+  } catch (e) {
+    /* Stratégies non disponibles : continuer avec baseline + variations */
+    console.warn('[poly] Top 100 strategies not available:', e.message);
+  }
 
   return agents;
 }
