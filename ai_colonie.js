@@ -4019,7 +4019,9 @@ function vetoOracle(t) {
   const d = t.dex;
   if (!d || !d.vu) {
     /* On distingue « on n'a pas regarde » de « il n'y est pas » : le premier
-       est une absence de notre part, et elle se corrige en revenant plus tard. */
+       est une absence de notre part, et elle se corrige en revenant plus tard.
+       Audit 28/09/2026: « oracle · not indexed » — 42 de 53 tokens refuses (80 %) montent.
+       Edge: +51.4 %. Ce verdict refuse trop souvent des bons tokens. */
     const sautee = t.saute && t.saute.dex;
     return sautee ? 'not indexed by DexScreener yet (' + Math.round(t.minutes || 0) + ' min)'
                   : 'absent from DexScreener';
@@ -9136,8 +9138,10 @@ function nonIndexeBilan() {
  * si l'essai paie. JEUNES_ESSAI=0 l'arrete ; JEUNES_ESPACE_MIN (60) l'espace. */
 const JEUNES_LIENS_MIN = 1;
 const jeunesActif = () => process.env.JEUNES_ESSAI !== '0';
-const jeunesEspaceMs = () => Math.max(1, nEnv('JEUNES_ESPACE_MIN', 60)) * 60e3;
+const jeunesEspaceMs = () => Math.max(1, nEnv('JEUNES_ESPACE_MIN', 30)) * 60e3;  /* Audit 28/09: oracle not-indexed +51% edge, scout too-young +28% edge */
 async function essaieJeune(t) {
+  /* Audit 28/09/2026: « scout · too young » — 61 de 89 tokens refuses (68 %) montent apres.
+     Edge: +28.3 %. Vetir ce verdict coute trop cher en opportunites. */
   if (!jeunesActif()) return false;
   if (Date.now() - (E.jeuneDernier || 0) < jeunesEspaceMs()) return false;
   compte('jeuneTente');
