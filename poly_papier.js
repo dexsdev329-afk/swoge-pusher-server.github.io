@@ -68,6 +68,32 @@ const BANQUE0 = 1000;          /* par agent, papier */
 /* Sous 100 paris resolus, aucun verdict : a 50 %, l'intervalle a 95 % fait encore ±10 points. */
 const RESOLUS_ASSEZ = 100;
 const CALIB_ASSEZ = 100;
+/* ---- LE SCORE PAR FENETRE (30/09/2026) ----
+ * Mesure du 30/09 (Hyperliquid, bougies de 15 min, 3 jours, 289 fenetres) : BTC, ETH, SOL et
+ * XRP finissent dans le meme sens 72 % du temps ; correlation moyenne des issues 0,69. Deux
+ * paris pris dans la meme fenetre sur deux actifs ne sont donc pas deux observations. Le score
+ * par pari z = Σ(y − p)/√Σp(1 − p) les comptait comme independants : « P·FV 0.5pt ·
+ * 10:00–8:00 » affichait 3,15 et « Evidence of an edge » sur 100 paris, ce que la correlation
+ * ramene vers 1,8–2,2 a 2 a 4 paris par fenetre.
+ * Score par fenetre : s = Σ(y − p) sur les paris d une meme fenetre (tous actifs), puis
+ * zF = Σs / √Σs² (variance en grappes, robuste a la correlation entre actifs). Compte a partir
+ * du 30/09 seulement : pour les strategies deja en tete, c est un echantillon NEUF, pris apres
+ * leur selection — le seul qui puisse confirmer.
+ * FENETRES_ASSEZ : regle usuelle, pas une mesure — la variance en grappes est trop optimiste
+ * sous une cinquantaine de grappes. */
+const FENETRES_ASSEZ = 50;
+/* Le seuil qui tient compte du nombre de strategies essayees (Bonferroni, 5 % unilateral) :
+ * sur N strategies SANS avantage, la probabilite qu une seule le depasse par hasard est ≤ 5 %.
+ * 405 essayees : 3,67 ; les 2 460 + les 100 a la main : ~4,1. Plus on en essaie, plus la barre
+ * monte — c est le prix de la recherche, et ce qui rend un resultat qui la passe credible. */
+function barre(n) {
+  const cible = 0.05 / Math.max(1, n);
+  let bas = 0, haut = 10;
+  for (let i = 0; i < 60; i++) { const m = (bas + haut) / 2; if (1 - phi(m) > cible) bas = m; else haut = m; }
+  return haut;
+}
+const zFenetre = (a) => (a.nf && a.fs2 > 0 ? a.fs / Math.sqrt(a.fs2) : null);
+const rz = (A) => { const z = zFenetre(A); return z == null ? null : Math.round(z * 100) / 100; };
 const TAUX_DEFAUT = 0.07;      /* seulement si le marche ne publie pas son feeSchedule */
 const ABANDON_S = 6 * 3600;    /* une fenetre non resolue apres 6 h : le pari est annule (rembourse) */
 const RECENTS_MAX = 120;
@@ -344,13 +370,17 @@ function wilson(k, n) {
   const z = 1.96, p = k / n, d = 1 + z * z / n, c = (p + z * z / (2 * n)) / d, m = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d;
   return { p, bas: Math.max(0, c - m), haut: Math.min(1, c + m) };
 }
-function verdictAgent(a) {
+/* Le verdict se lit sur le score PAR FENETRE, contre la barre du nombre de strategies essayees
+   (voir FENETRES_ASSEZ et barre). `essayees` : combien de strategies ont ete mises a l essai. */
+function verdictAgent(a, essayees) {
   if (a.resolus < RESOLUS_ASSEZ) return 'Too few resolved bets to judge (' + a.resolus + '/' + RESOLUS_ASSEZ + ').';
-  const z = a.v > 0 ? (a.sy - a.sp) / Math.sqrt(a.v) : 0;
-  if (z >= 3 && a.pnl > 0) return 'Evidence of an edge after fees in this sample (skill score ' + z.toFixed(1) + ').';
-  if (z >= 2) return 'Some evidence, could still be luck (skill score ' + z.toFixed(1) + ').';
-  if (a.pnl < 0) return 'No edge: loses after the spread and fees (skill score ' + z.toFixed(1) + ').';
-  return 'No evidence of an edge (skill score ' + z.toFixed(1) + ').';
+  const nf = a.nf || 0;
+  if (nf < FENETRES_ASSEZ) return 'Too few independent windows to judge (' + nf + '/' + FENETRES_ASSEZ + ' counted since 30 Sep): the four coins move together, so bets in the same 15 minutes count as one.';
+  const z = zFenetre(a) || 0, N = Math.max(1, essayees || 1), b = barre(N), dit = 'skill ' + z.toFixed(1) + ' per window over ' + nf + ' windows';
+  if (z >= b && a.pnl > 0) return 'Evidence of an edge after fees: ' + dit + ', above the ' + b.toFixed(1) + ' bar that testing ' + N + ' strategies requires.';
+  if (z >= 2) return 'Promising, not proven: ' + dit + ', below the ' + b.toFixed(1) + ' bar that testing ' + N + ' strategies requires — could still be luck.';
+  if (a.pnl < 0) return 'No edge: loses after the spread and fees (' + dit + ').';
+  return 'No evidence of an edge (' + dit + ').';
 }
 
 /* ---- la colonie ---- */
@@ -398,6 +428,7 @@ function cree(deps) {
     if (!E.essayes) E.essayes = {};
     if (!Array.isArray(E.horsJeu)) E.horsJeu = [];
     if (!Array.isArray(E.retraites)) E.retraites = [];
+    if (!E.fenetresDepuis) E.fenetresDepuis = maintenant();   /* debut du compte par fenetre (voir FENETRES_ASSEZ) */
     for (const c of E.params) if (!E.agents[idParam(c)]) E.agents[idParam(c)] = vide();
     complete();
   }
@@ -418,7 +449,8 @@ function cree(deps) {
   function retire(ag, raison) {
     const A = E.agents[ag.id];
     E.essayes[ag.id] = { name: ag.nom, type: ag.type, config: ag.config || null, bets: A.paris, resolved: A.resolus, won: A.gagnes,
-      pnl: Math.round(A.pnl * 100) / 100, fees: Math.round(A.frais * 100) / 100, retiredAt: new Date(maintenant()).toISOString(), reason: raison, final: false };
+      pnl: Math.round(A.pnl * 100) / 100, fees: Math.round(A.frais * 100) / 100, windows: A.nf || 0, skillPerWindow: rz(A),
+      retiredAt: new Date(maintenant()).toISOString(), reason: raison, final: false };
     if (ag.type === 'parametric') E.params = E.params.filter((c) => idParam(c) !== ag.id); else E.horsJeu.push(ag.id);
     E.retraites.push(ag.id); cacheActifs = null; aEcrire = true;
     journal({ type: 'retrait', agent: ag.id, nom: ag.nom, resolus: A.resolus, pnl: A.pnl, raison, t: maintenant() });
@@ -438,7 +470,8 @@ function cree(deps) {
     for (const id of E.retraites.slice()) {
       if (E.ouverts.some((p) => p.agent === id)) continue;
       const A = E.agents[id], r = E.essayes[id];
-      if (A && r) Object.assign(r, { bets: A.paris, resolved: A.resolus, won: A.gagnes, pnl: Math.round(A.pnl * 100) / 100, fees: Math.round(A.frais * 100) / 100, final: true });
+      if (A && r) Object.assign(r, { bets: A.paris, resolved: A.resolus, won: A.gagnes, pnl: Math.round(A.pnl * 100) / 100, fees: Math.round(A.frais * 100) / 100,
+        windows: A.nf || 0, skillPerWindow: rz(A), final: true });
       delete E.agents[id]; E.retraites = E.retraites.filter((x) => x !== id); aEcrire = true;
     }
     complete();
@@ -603,20 +636,35 @@ function cree(deps) {
       } catch (e) { MESURE.erreurs++; continue; }
       const abandon = !issue && t - (debut + FENETRE_S) > ABANDON_S;
       if (!issue && !abandon) continue;
+      const touches = new Set();
       for (const p of E.ouverts.filter((x) => x.actif + ':' + x.debut === k)) {
         const A = E.agents[p.agent];
+        touches.add(p.agent);
         if (abandon) { A.annules++; A.paris--; A.banque += p.depense + p.frais; p.issue = 'void'; }
         else {
           const y = issue === p.cote ? 1 : 0, gain = y * p.parts - p.depense - p.frais;
           A.resolus++; A.gagnes += y; A.pnl += gain; A.frais += p.frais; A.banque += y * p.parts;
           A.sy += y; A.sp += p.prix; A.v += p.prix * (1 - p.prix);
+          /* La grappe de la fenetre (voir FENETRES_ASSEZ) : close quand tous ses paris sont regles. */
+          const G = (A.gr || (A.gr = {}))[debut] || (A.gr[debut] = 0);
+          A.gr[debut] = G + y - p.prix;
           A.cum += gain; if (A.cum > A.pic) A.pic = A.cum; if (A.pic - A.cum > A.creux) A.creux = A.pic - A.cum;
           p.issue = issue; p.gain = Math.round(gain * 100) / 100;
         }
-        if (!String(p.agent).startsWith('p_')) journal(p);   /* le tournoi : le registre fait foi (volume, voir SEUIL_TOURNOI) */
+        /* Le tournoi : le registre fait foi (volume, voir SEUIL_TOURNOI). Mais une strategie qui
+           passe RESOLUS_ASSEZ en gain devient une candidate : ses paris sont de nouveau ecrits un
+           par un, pour pouvoir la verifier a la main (une par pari et par fenetre). */
+        if (!String(p.agent).startsWith('p_') || (A.resolus >= RESOLUS_ASSEZ && A.pnl > 0)) journal(p);
         E.recents.unshift(p);
       }
       E.ouverts = E.ouverts.filter((x) => x.actif + ':' + x.debut !== k);
+      const restent = new Set(E.ouverts.filter((x) => x.debut === debut).map((x) => x.agent));
+      for (const id of touches) {
+        const A = E.agents[id];
+        if (!A || !A.gr || !(debut in A.gr) || restent.has(id)) continue;
+        const g = A.gr[debut]; delete A.gr[debut];
+        A.fs = (A.fs || 0) + g; A.fs2 = (A.fs2 || 0) + g * g; A.nf = (A.nf || 0) + 1;
+      }
       E.recents = E.recents.slice(0, RECENTS_MAX);
       if (issue) for (const c of E.calib.attente.filter((x) => x.actif + ':' + x.debut === k)) {
         const y = issue === 'Up' ? 1 : 0, C = E.calib;
@@ -640,7 +688,8 @@ function cree(deps) {
     assureTournoi();
     const ouvertsPar = {}; for (const p of E.ouverts) ouvertsPar[p.agent] = (ouvertsPar[p.agent] || 0) + 1;
     const ligneC = (ag) => { const a = E.agents[ag.id]; return { id: ag.id, name: ag.nom, type: ag.type, bets: a.paris, resolved: a.resolus, won: a.gagnes,
-      pnl: r2(a.pnl), open: ouvertsPar[ag.id] || 0, nextJudgedAt: estTemoin(ag.id) ? null : (a.palier || SEUIL_TOURNOI) }; };
+      pnl: r2(a.pnl), open: ouvertsPar[ag.id] || 0, nextJudgedAt: estTemoin(ag.id) ? null : (a.palier || SEUIL_TOURNOI),
+      windows: a.nf || 0, skillPerWindow: rz(a) }; };
     const parGain = (x, y) => y.pnl - x.pnl || y.resolved - x.resolved;
     const AG = actifs();
     const classement = AG.map(ligneC).sort(parGain);
@@ -652,23 +701,38 @@ function cree(deps) {
     const choisis = new Set(AG.filter((ag) => ag.type === 'baseline').map((ag) => ag.id)
       .concat(autres.slice(0, 10).map((c) => c.id), autres.slice(-10).map((c) => c.id)));
     const aAfficher = AG.filter((ag) => choisis.has(ag.id)).sort((x, y) => E.agents[y.id].pnl - E.agents[x.id].pnl);
-    const retires = Object.entries(E.essayes).map(([id, r]) => ({ id, name: r.name, type: r.type, bets: r.bets, resolved: r.resolved, won: r.won, pnl: r.pnl, retiredAt: r.retiredAt, reason: r.reason, final: r.final }))
+    const retires = Object.entries(E.essayes).map(([id, r]) => ({ id, name: r.name, type: r.type, bets: r.bets, resolved: r.resolved, won: r.won, pnl: r.pnl,
+      windows: r.windows || 0, skillPerWindow: r.skillPerWindow == null ? null : r.skillPerWindow, retiredAt: r.retiredAt, reason: r.reason, final: r.final }))
       .sort((x, y) => Date.parse(y.retiredAt) - Date.parse(x.retiredAt));
     const essayesParam = new Set(Object.keys(E.essayes).filter((id) => id.startsWith('p_')).concat(E.params.map(idParam)));
     const tournament = { threshold: SEUIL_TOURNOI, slots: SLOTS_STRATEGIES, controls: AG.filter((a) => estTemoin(a.id)).length,
       running: AG.length, retired: retires.length, parametricTried: essayesParam.size, parametricUntried: PARAM.distincts - essayesParam.size,
       rule: 'A strategy still in the red after ' + SEUIL_TOURNOI + ' settled bets is retired and replaced by a parameter set never tried before; one in profit is judged again ' + SEUIL_TOURNOI + ' bets later. The 5 original agents are controls and are never retired. Surviving a check is not proof of an edge: with fees and the spread, roughly 1 strategy in 8 with no edge still passes 500 bets by luck — the skill score is what counts.',
       recentlyRetired: retires.slice(0, 30) };
+    /* La preuve (voir FENETRES_ASSEZ et barre) : ou en est-on d un resultat ? Les strategies qui
+       ont assez de fenetres, classees par score par fenetre, contre la barre du nombre essaye. */
+    const essayees = AG.length + retires.length, b = barre(essayees);
+    const mesurees = classement.filter((c) => c.windows >= FENETRES_ASSEZ && c.skillPerWindow != null)
+      .sort((x, y) => y.skillPerWindow - x.skillPerWindow || y.windows - x.windows);
+    const evidence = { since: new Date(E.fenetresDepuis).toISOString(), minWindows: FENETRES_ASSEZ, tested: essayees, bar: r2(b),
+      measured: mesurees.length, proven: mesurees.filter((c) => c.skillPerWindow >= b && c.pnl > 0).length,
+      promising: mesurees.filter((c) => c.skillPerWindow >= 2 && c.skillPerWindow < b).length,
+      leaders: mesurees.slice(0, 10).map((c) => ({ id: c.id, name: c.name, windows: c.windows, skillPerWindow: c.skillPerWindow, resolved: c.resolved, pnl: c.pnl })),
+      /* Celles qui approchent du seuil de mesure : on voit venir les prochaines a juger. */
+      closest: classement.filter((c) => c.windows < FENETRES_ASSEZ).sort((x, y) => y.windows - x.windows).slice(0, 5)
+        .map((c) => ({ id: c.id, name: c.name, windows: c.windows, skillPerWindow: c.skillPerWindow, pnl: c.pnl })),
+      rule: 'Bets placed in the same 15 minutes count as one observation: BTC, ETH, SOL and XRP finish the same way about 72% of the time. A strategy is only measured after ' + FENETRES_ASSEZ +
+        ' windows counted since ' + new Date(E.fenetresDepuis).toISOString().slice(0, 10) + ', and only called an edge above the bar set by the number of strategies tested (' + essayees + ' so far: ' + b.toFixed(2) + '), and in profit after fees.' };
 
     return { ok: true, depuis: new Date(E.depuis).toISOString(), stakeUsd: MISE_USD, bankUsd: BANQUE0, minResolved: RESOLUS_ASSEZ,
-      totalStrategies: AG.length, displayedStrategies: aAfficher.length, ranking: classement, summary: resume, tournament,
+      totalStrategies: AG.length, displayedStrategies: aAfficher.length, ranking: classement, summary: resume, tournament, evidence,
       parametric: { running: E.params.length, distinct: PARAM.distincts, combinations: PARAM.combinaisons,
         note: 'Kelly sizing, profit targets and stop-losses are not simulated: every agent stakes the same amount and holds to resolution.' },
       agents: aAfficher.map((ag) => { const a = E.agents[ag.id], w = wilson(a.gagnes, a.resolus), z = a.v > 0 ? (a.sy - a.sp) / Math.sqrt(a.v) : null;
         return { id: ag.id, name: ag.nom, role: ag.role, bank: r2(a.banque), bets: a.paris, resolved: a.resolus, won: a.gagnes, voided: a.annules,
-          winRate: w ? { p: w.p, low: w.bas, high: w.haut } : null, skill: z == null ? null : Math.round(z * 100) / 100,
+          winRate: w ? { p: w.p, low: w.bas, high: w.haut } : null, skill: z == null ? null : Math.round(z * 100) / 100, skillPerWindow: rz(a), windows: a.nf || 0,
           avgPricePaid: a.resolus ? Math.round(a.sp / a.resolus * 1000) / 1000 : null, pnl: r2(a.pnl), fees: r2(a.frais), drawdown: r2(a.creux),
-          open: ouvertsPar[ag.id] || 0, verdict: verdictAgent(a), type: ag.type }; }),
+          open: ouvertsPar[ag.id] || 0, verdict: verdictAgent(a, essayees), type: ag.type }; }),
       calibration: { n: C.n, pending: C.attente.length, brierModel: C.n ? Math.round(C.brierModele / C.n * 10000) / 10000 : null, brierMarket: C.n ? Math.round(C.brierMarche / C.n * 10000) / 10000 : null,
         enough: C.n >= CALIB_ASSEZ, minN: CALIB_ASSEZ,
         buckets: Object.keys(C.seaux).sort().map((k) => { const s = C.seaux[k]; return { range: (k / 10).toFixed(1) + '–' + ((Number(k) + 1) / 10).toFixed(1), n: s.n, upRate: s.up / s.n, model: s.modele / s.n, market: s.marche / s.n }; }) },
@@ -699,4 +763,4 @@ function cree(deps) {
   return { tic, resous, etat, charge, demarre, arrete, MESURE, _etat: () => E, _tournoi: tournoi };
 }
 
-module.exports = { cree, decide, choisisParametriques, PARAM, agentParam, SEUIL_TOURNOI, SLOTS_STRATEGIES, phi, probaUp, varianceRestante, sigma, remplit, wilson, verdictAgent, AGENTS, RESOLUS_ASSEZ, MISE_USD, FENETRE_S };
+module.exports = { cree, decide, choisisParametriques, PARAM, agentParam, SEUIL_TOURNOI, SLOTS_STRATEGIES, phi, probaUp, varianceRestante, sigma, remplit, wilson, verdictAgent, barre, FENETRES_ASSEZ, AGENTS, RESOLUS_ASSEZ, MISE_USD, FENETRE_S };

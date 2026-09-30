@@ -276,6 +276,65 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
     fs.rmSync(d7, { recursive: true, force: true });
   }
 
+  /* ---- 8. LE SCORE PAR FENETRE (30/09/2026) ----
+     « P·FV 0.5pt · 10:00–8:00 » affichait « Evidence of an edge » (3,15 sur 100 paris) : les quatre
+     actifs finissent dans le meme sens 72 % du temps, ces paris ne sont pas independants, et elle
+     etait la meilleure de centaines. Le verdict se lit par fenetre, contre une barre qui monte
+     avec le nombre de strategies essayees. */
+  console.log('\n-- 8. le score par fenetre, la barre des strategies essayees --');
+  {
+    ok(pres(P.barre(1), 1.645, 0.01) && pres(P.barre(405), 3.66, 0.02) && P.barre(2560) > P.barre(405),
+       'la barre : 1,64 pour une seule strategie, ' + P.barre(405).toFixed(2) + ' pour 405, ' + P.barre(2560).toFixed(2) + ' pour 2 560 — plus on cherche, plus elle monte');
+    const base = { resolus: 100, pnl: 307, sy: 51, sp: 37.8, v: 17.5 };
+    ok(/Too few independent windows to judge \(30\/50/.test(P.verdictAgent(Object.assign({}, base, { nf: 30, fs: 5, fs2: 2.5 }), 405)),
+       '100 paris mais 30 fenetres : pas de verdict, et on dit pourquoi (les actifs bougent ensemble)');
+    const z315 = { nf: 60, fs: 3.15, fs2: 1 };
+    const v315 = P.verdictAgent(Object.assign({}, base, z315), 405);
+    ok(/^Promising, not proven: skill 3\.1 per window over 60 windows, below the 3\.7 bar that testing 405 strategies requires/.test(v315),
+       'le cas du 30/09 (3,15, en gain) sur 405 essayees : « prometteur », pas « un edge » [' + v315.slice(0, 60) + ']');
+    ok(/^Evidence of an edge after fees: skill 4\.0/.test(P.verdictAgent(Object.assign({}, base, { nf: 80, fs: 4, fs2: 1 }), 405)), 'au-dessus de la barre et en gain : la seule phrase qui dit « edge »');
+    const perd = (z) => P.verdictAgent(Object.assign({}, base, { pnl: -5, nf: 80, fs: z, fs2: 1 }), 405);
+    ok(!/edge after fees/.test(perd(4)) && /^No edge: loses after the spread and fees \(skill 0\.5/.test(perd(0.5)),
+       'bat les prix mais perd apres frais : jamais « edge »');
+
+    /* Le reglement regroupe par fenetre, tous actifs confondus. */
+    const W1 = DEBUT + 9000, W2 = W1 + 900, W3 = W2 + 900;
+    const fermes = new Set(['btc-' + W1, 'eth-' + W1, 'sol-' + W1, 'btc-' + W2, 'btc-' + W3]);
+    const lire9 = async (u) => { const m = u.match(/events\?slug=(\w+)-updown-15m-(\d+)/); if (!m) return lire(u);
+      return [{ markets: [Object.assign({}, marche, { closed: fermes.has(m[1] + '-' + m[2]), outcomePrices: fermes.has(m[1] + '-' + m[2]) ? '["1", "0"]' : '["0.5", "0.5"]' })] }]; };
+    const d9 = fs.mkdtempSync(path.join(os.tmpdir(), 'poly9-'));
+    const c9 = P.cree({ dossier: d9, lire: lire9, hl, maintenant: () => T * 1000, alea: () => 0.3 });
+    c9.etat();
+    const E9 = c9._etat(), cand = E9.params[0], idc = P.agentParam(cand).id;
+    const pari = (agent, actif, debut, cote, prix) => ({ id: agent + ':' + actif + ':' + debut, agent, actif, debut, titre: 't', cote, parts: 10 / prix, prix, depense: 10, frais: 0.1, t: debut, resteS: 500 });
+    E9.ouverts.push(pari('crowd', 'btc', W1, 'Up', 0.6), pari('crowd', 'eth', W1, 'Up', 0.7), pari('crowd', 'sol', W1, 'Down', 0.4), pari('crowd', 'btc', W2, 'Up', 0.5),
+      pari('crowd', 'btc', W3, 'Up', 0.5), pari('crowd', 'eth', W3, 'Up', 0.5));
+    Object.assign(E9.agents[idc], { resolus: 150, paris: 150, pnl: 40 });
+    E9.ouverts.push(pari(idc, 'btc', W1, 'Up', 0.5));
+    T = W3 + 900 + 60;
+    await c9.resous();
+    const cr = E9.agents.crowd;
+    ok(cr.nf === 2 && pres(cr.fs, (0.4 + 0.3 - 0.4) + 0.5) && pres(cr.fs2, 0.3 * 0.3 + 0.5 * 0.5),
+       'trois paris dans une fenetre = une observation : 2 fenetres closes, Σs = 0,8, Σs² = 0,34 (et non 4 paris independants)');
+    ok(cr.gr && Math.abs(cr.gr[W3] - 0.5) < 1e-9 && E9.ouverts.some((p) => p.agent === 'crowd' && p.actif === 'eth' && p.debut === W3),
+       'une fenetre dont un actif n est pas encore regle reste ouverte : rien de compte a moitie');
+    fermes.add('eth-' + W3);
+    await c9.resous();
+    ok(cr.nf === 3 && pres(cr.fs, 0.8 + 1.0) && !(W3 in cr.gr), 'l autre actif regle : la fenetre se ferme (Σs + 1,0)');
+    const jl = fs.readFileSync(path.join(d9, 'poly_papier.jsonl'), 'utf8');
+    ok(jl.includes('"agent":"' + idc + '"'), 'une parametrique a 100+ paris regles en gain : ses paris sont de nouveau au journal, pour la verifier');
+
+    Object.assign(E9.agents[idc], { nf: 60, fs: 3.15, fs2: 1 });
+    const ev = c9.etat().evidence;
+    ok(ev.minWindows === 50 && ev.tested === 405 && pres(ev.bar, 3.66, 0.02) && ev.measured === 1 && ev.proven === 0 && ev.promising === 1
+       && ev.leaders[0].id === idc && ev.leaders[0].skillPerWindow === 3.15 && /72%/.test(ev.rule),
+       'la vue : 1 strategie mesuree, 0 prouvee, 1 prometteuse, la barre (3,66 pour 405), la regle en clair');
+    ok(ev.closest.length === 5 && ev.closest[0].id === 'crowd' && ev.closest[0].windows === 3, 'et celles qui approchent des 50 fenetres, pour voir venir les suivantes');
+    const carte = c9.etat().agents.find((a) => a.id === idc);
+    ok(carte && carte.windows === 60 && carte.skillPerWindow === 3.15 && /^Promising, not proven/.test(carte.verdict), 'la carte : score par fenetre, nombre de fenetres, verdict prudent');
+    fs.rmSync(d9, { recursive: true, force: true });
+  }
+
   fs.rmSync(dossier, { recursive: true, force: true });
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  ' + rates + ' RATE(S)' : '  —  tout passe'));
   process.exit(rates ? 1 : 0);
