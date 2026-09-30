@@ -127,6 +127,42 @@ function monde(o) {
     ok(e7.deployedSourceSha256 === 'd12954fe62b19a0f7d4d51eb15bedd20777e1934beaaf64fdeb9a8ae08628df8' && e7.deployedIsCurrent === false && /older source/.test(e7.outdated || ''),
        'un launchpad du 29/09 relu avec un source plus recent : la vue dit qu il est perime, au lieu d afficher la nouvelle empreinte a cote de l ancien code');
   }
+  {
+    /* 30/09 : « refais les deux ». L etat reel du serveur (29/09, fini, sans empreinte) relu avec l artefact corrige. */
+    const fe = path.join(dossier, 'deploiement_v4.json'), j = JSON.parse(fs.readFileSync(fe, 'utf8'));
+    const ancienLp = j.launchpad; delete j.sourceDeploye; j.etape = 'liste';
+    const dR = fs.mkdtempSync(path.join(os.tmpdir(), 'dep4r-'));
+    fs.writeFileSync(path.join(dR, 'deploiement_v4.json'), JSON.stringify(j));
+    fs.copyFileSync(path.join(dossier, 'deployeur_v4.json'), path.join(dR, 'deployeur_v4.json'));
+    const wR = monde(); wR.eth = 10n ** 18n; wR.recus['0xdep'] = { status: 1, contractAddress: '0x' + 'b'.repeat(40) };
+    const dr = D.cree({ dossier: dR, artefact: A, chaine: wR.chaine, lis: async () => ({ result: {} }) });
+    dr.charge();
+    ok(dr.etat().deployedIsCurrent === false && dr.etat().step === 'liste', 'avant le tour : l ancien launchpad, signale perime');
+    await dr.tour();
+    const eR = dr.etat();
+    ok(eR.previous.length === 1 && eR.previous[0].launchpad === ancienLp && eR.previous[0].sourceSha256 === 'd12954fe62b19a0f7d4d51eb15bedd20777e1934beaaf64fdeb9a8ae08628df8',
+       'le source corrige est autorise : l ancien launchpad passe dans « previous », avec son empreinte');
+    ok(eR.launchpad !== ancienLp && eR.deployedSourceSha256 === A.sourceSha256 && eR.deployedIsCurrent === true, 'et un nouveau launchpad part du source corrige, dans le meme tour');
+    ok(/redeploying; previous launchpad/.test(JSON.stringify(eR.history)), 'le journal dit pourquoi');
+    await dr.tour();
+    ok(dr.etat().previous.length === 1, 'une fois, pas a chaque tour : c est une generation, pas une boucle');
+
+    /* Un source que personne n a autorise : rien ne part. */
+    const dN = fs.mkdtempSync(path.join(os.tmpdir(), 'dep4n-'));
+    fs.writeFileSync(path.join(dN, 'deploiement_v4.json'), JSON.stringify(Object.assign({}, j, { sourceDeploye: A.sourceSha256 })));
+    fs.copyFileSync(path.join(dossier, 'deployeur_v4.json'), path.join(dN, 'deployeur_v4.json'));
+    const wN = monde(), dn = D.cree({ dossier: dN, artefact: Object.assign({}, A, { sourceSha256: 'e'.repeat(64) }), chaine: wN.chaine, lis: async () => ({ result: {} }) });
+    dn.charge(); await dn.tour();
+    ok(dn.etat().launchpad === ancienLp && dn.etat().previous.length === 0 && wN.envoyees.length === 0, 'un source NON inscrit : aucun redeploiement, aucune transaction — seulement « perime » dans la vue');
+
+    /* Une transaction en vol : on ne coupe pas un cycle. */
+    const dV = fs.mkdtempSync(path.join(os.tmpdir(), 'dep4v-'));
+    fs.writeFileSync(path.join(dV, 'deploiement_v4.json'), JSON.stringify(Object.assign({}, j, { etape: 'achat', txAchat: '0xenvol' })));
+    fs.copyFileSync(path.join(dossier, 'deployeur_v4.json'), path.join(dV, 'deployeur_v4.json'));
+    const dv = D.cree({ dossier: dV, artefact: A, chaine: monde().chaine, lis: async () => ({ result: {} }) });
+    dv.charge(); try { await dv.tour(); } catch (e) { /* le faux monde ne connait pas 0xenvol */ }
+    ok(dv.etat().previous.length === 0 && dv._etat().etape !== 'attente_fonds', 'un achat de listage en vol : on attend la fin du cycle avant de redeployer');
+  }
 
   console.log('\n-- 3b. le seuil suit le cout estime par le nœud (29/09 : 0,0005 ETH envoyes, 0,000111 estime) --');
   {

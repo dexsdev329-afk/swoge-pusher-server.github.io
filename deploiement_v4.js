@@ -115,6 +115,7 @@ function cree(deps) {
 
   async function tour() {
     const c = chaine();
+    nouvelleGeneration();
     if (deps.pret && !deps.pret()) return;              /* le V4 n'a pas fini : on n'envoie rien */
     soldes = { eth: await c.soldeEth(), swoge: await c.soldeSwoge(), lu: new Date(maintenant()).toISOString() };
 
@@ -245,6 +246,33 @@ function cree(deps) {
   const SOURCE_29_09 = { v4: 'd12954fe62b19a0f7d4d51eb15bedd20777e1934beaaf64fdeb9a8ae08628df8', v4weth: 'eb3756832bd01b429832a7c115be3fb3eb48f5752190e578363c11d4946b7f2e' };
   function sourceDeploye() { return E.sourceDeploye || (E.txDeploiement ? SOURCE_29_09[NOM] || null : null); }
 
+  /* ---- LE REDEPLOIEMENT (30/09/2026, le proprietaire : « refais les deux ») ----
+   * Les jetons de test du 29/09 sont notes « hidden_owner: 1 » par GoPlus : leur owner() etait
+   * une constante (`pure`). Le source corrige (variable en stockage, OwnershipTransferred a la
+   * creation) passe les bancs sur fork (contrats/banc_fork_v4*.js, 35 et 45 verifications, dont
+   * les deux qui refusent l ancien jeton), et son bytecode recompile est celui des artefacts.
+   * Sur les anciens launchpads : deux jetons en tout, nos deux jetons de test (relu sur la chaine).
+   *
+   * Un nouveau source ne redeploie RIEN de lui-meme : il faut que son empreinte EXACTE soit
+   * inscrite ici — chaque redeploiement brule 10 000 $SWOGE (jeton de test du V4) et du gaz. On
+   * ne repart que d un etat final (aucune transaction en vol) ; l ancien launchpad reste dans
+   * `anciens` : il n est plus propose, mais ses jetons y gardent leurs frais (collectFees). */
+  const REDEPLOIEMENT_AUTORISE = {
+    v4: '4bb7c51fd5070c404489980350ea3334fc4b004ccf1a556097e80615a8291097',
+    v4weth: '23ca3253fa1b74726b92afce01b8376d04ac5be77b35ae31b3ab198f98ff424d',
+  };
+  function nouvelleGeneration() {
+    const dep = sourceDeploye();
+    if (!E.txDeploiement || !dep || dep === A.sourceSha256 || REDEPLOIEMENT_AUTORISE[NOM] !== A.sourceSha256) return false;
+    if (!['liste', 'erreur'].includes(E.etape)) return false;
+    const ancien = { sourceSha256: dep, launchpad: E.launchpad || null, testToken: E.jetonTest || null, testPool: E.poolTest || null,
+      deployTx: E.txDeploiement, step: E.etape, goplus: E.goplus || null, retiredAt: new Date(maintenant()).toISOString() };
+    E = { etape: 'attente_fonds', historique: E.historique || [], anciens: (E.anciens || []).concat([ancien]) };
+    note('source ' + A.sourceSha256.slice(0, 8) + ' authorised: redeploying; previous launchpad ' + ancien.launchpad + ' retired (kept for its tokens\' fees)');
+    ecrit();
+    return true;
+  }
+
   function etat() {
     let adresse = null;
     try { adresse = chaine().adresse; } catch (e) { adresse = null; }
@@ -263,7 +291,7 @@ function cree(deps) {
       compiler: A.compilateur, sourceSha256: A.sourceSha256, deployedSourceSha256: sourceDeploye(),
       deployedIsCurrent: sourceDeploye() == null ? null : sourceDeploye() === A.sourceSha256,
       ...(sourceDeploye() && sourceDeploye() !== A.sourceSha256 ? { outdated: 'The deployed launchpad was compiled from an older source: tokens it creates keep that code. A new deployment is needed to use the current source.' } : {}),
-      history: E.historique || [] };
+      previous: E.anciens || [], history: E.historique || [] };
   }
 
   let minuterie = null, enCours = false;
