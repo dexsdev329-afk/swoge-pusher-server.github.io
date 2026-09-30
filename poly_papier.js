@@ -108,9 +108,33 @@ function choisisParametriques(toutes, n) {
   for (const x of q.slice().sort((a, b) => b.r - a.r)) { if (manque <= 0) break; x.k++; manque--; }
   const choisis = [];
   for (const x of q) for (let i = 0; i < x.k; i++) choisis.push(x.l[Math.floor(i * x.l.length / x.k)]);
-  return { choisis, distincts: vus.size, combinaisons: toutes.length };
+  return { choisis, pool: [...vus.values()], distincts: vus.size, combinaisons: toutes.length };
 }
 const PARAM = choisisParametriques(polySt.creeStrategies(), PARAM_N);
+
+/* L empreinte se calcule une fois par objet : tirer un neuf parcourt les 2 460 a chaque fois. */
+const IDS = new WeakMap();
+const idParam = (c) => { let i = IDS.get(c); if (!i) { i = 'p_' + empreinte(c); IDS.set(c, i); } return i; };
+const agentParam = (c) => ({ id: idParam(c), nom: nomParam(c), role: roleParam(c), bande: c.fenetre, type: 'parametric', config: c });
+
+/* ---- LE TOURNOI (30/09/2026, regle du proprietaire) ----
+ * « Au bout de 500 bets, s il est toujours en negatif, l agent se supprime et un nouveau,
+ * avec des parametres jamais essayes, apparait ; retenir tous les agents et parametres
+ * essayes ; en faire tourner beaucoup plus. »
+ * - Juge a SEUIL_TOURNOI paris REGLES (le gain n existe qu une fois regle) : en perte, il
+ *   est retire ; en gain, il est rejuge 500 plus loin (1 000, 1 500…), pour qu une chance
+ *   de depart ne suffise pas a rester. Les 5 d origine ne sont jamais juges : ce sont les
+ *   temoins (Coin mesure ce que coutent le spread et les frais).
+ * - Chaque place liberee recoit un comportement JAMAIS essaye, tire au hasard parmi les
+ *   2 460 distincts. Tout retire va dans le registre `essayes`, avec son bilan.
+ * - Un retire ne mise plus, mais garde ses paris ouverts jusqu a leur reglement : son
+ *   bilan au registre est donc complet.
+ * Mesures du 30/09 (16 h UTC, en ligne) : 9,3 paris regles par heure et par strategie
+ * parametrique, soit ~2 jours 1/4 pour atteindre 500 ; journal ~14 Mo/jour pour 195
+ * strategies — les paris des strategies du tournoi n y sont plus ecrits un par un, le
+ * registre fait foi. SLOTS_STRATEGIES : 400 (contre 195), hors temoins. */
+const SEUIL_TOURNOI = 500;
+const SLOTS_STRATEGIES = 400;
 
 const cents = (x) => Math.round(x * 100) + '¢';
 function nomParam(c) {
@@ -273,12 +297,12 @@ function creeAgents() {
   }
 
   /* Les strategies parametriques : 100 comportements DISTINCTS (voir choisisParametriques). */
-  for (const c of PARAM.choisis) {
-    agents.push({ id: 'p_' + empreinte(c), nom: nomParam(c), role: roleParam(c), bande: c.fenetre, type: 'parametric', config: c });
-  }
+  for (const c of PARAM.choisis) agents.push(agentParam(c));
   return agents;
 }
 const AGENTS = creeAgents();
+/* Les agents ecrits a la main (temoins et variations) : la liste vivante y ajoute les parametriques de l etat. */
+const AGENTS_FIXES = AGENTS.filter((a) => a.type !== 'parametric');
 
 /* ---- les calculs purs ---- */
 function phi(x) {   /* repartition normale, Abramowitz-Stegun 7.1.26 (erreur < 1,5e-7) */
@@ -348,7 +372,7 @@ function cree(deps) {
 
   function charge() {
     if (!FICHIER) return;
-    try { const j = JSON.parse(fs.readFileSync(FICHIER, 'utf8')); if (j && j.agents) { E = Object.assign(E, j); for (const a of AGENTS) if (!E.agents[a.id]) E.agents[a.id] = vide(); if (!E.sigRef) E.sigRef = {}; } }
+    try { const j = JSON.parse(fs.readFileSync(FICHIER, 'utf8')); if (j && j.agents) { E = Object.assign(E, j); for (const a of AGENTS_FIXES) if (!E.agents[a.id]) E.agents[a.id] = vide(); if (!E.sigRef) E.sigRef = {}; cacheActifs = null; tournoiPret = false; assureTournoi(); } }
     catch (e) { if (e.code !== 'ENOENT') console.warn('[poly] etat illisible, repart de zero :', e.message); }
   }
   let aEcrire = false;
@@ -357,6 +381,68 @@ function cree(deps) {
     try { fs.mkdirSync(dossier, { recursive: true }); fs.writeFileSync(FICHIER + '.tmp', JSON.stringify(E)); fs.renameSync(FICHIER + '.tmp', FICHIER); } catch (e) { console.warn('[poly] ecriture :', e.message); }
   }
   function journal(o) { if (!JOURNAL) return; try { fs.appendFileSync(JOURNAL, JSON.stringify(o) + '\n'); } catch (e) { /* jamais bloquant */ } }
+
+  /* ---- le tournoi (voir SEUIL_TOURNOI) : la liste VIVANTE des agents ---- */
+  let cacheActifs = null, tournoiPret = false;
+  const estTemoin = (id) => AGENTS_FIXES.some((a) => a.id === id && a.type === 'baseline');
+  function actifs() {
+    if (!cacheActifs) cacheActifs = AGENTS_FIXES.filter((a) => !E.horsJeu.includes(a.id)).concat(E.params.map(agentParam));
+    return cacheActifs;
+  }
+  function assureTournoi() {
+    if (tournoiPret) return;
+    tournoiPret = true;
+    /* Premier demarrage du tournoi : les 100 parametriques deja en course gardent leur place
+       et leur bilan ; les places libres se remplissent de comportements jamais essayes. */
+    if (!Array.isArray(E.params)) E.params = PARAM.choisis.slice();
+    if (!E.essayes) E.essayes = {};
+    if (!Array.isArray(E.horsJeu)) E.horsJeu = [];
+    if (!Array.isArray(E.retraites)) E.retraites = [];
+    for (const c of E.params) if (!E.agents[idParam(c)]) E.agents[idParam(c)] = vide();
+    complete();
+  }
+  function tireNeuf() {
+    const pris = new Set(Object.keys(E.essayes).concat(E.params.map(idParam)));
+    const libres = PARAM.pool.filter((c) => !pris.has(idParam(c)));
+    return libres.length ? libres[Math.floor(alea() * libres.length)] : null;
+  }
+  function complete() {
+    const enJeu = () => actifs().filter((a) => !estTemoin(a.id)).length;
+    while (enJeu() < SLOTS_STRATEGIES) {
+      const c = tireNeuf(); if (!c) break;          /* les 2 460 ont tous ete essayes : les places restent vides */
+      E.params.push(c); cacheActifs = null;
+      if (!E.agents[idParam(c)]) E.agents[idParam(c)] = vide();
+      aEcrire = true;
+    }
+  }
+  function retire(ag, raison) {
+    const A = E.agents[ag.id];
+    E.essayes[ag.id] = { name: ag.nom, type: ag.type, config: ag.config || null, bets: A.paris, resolved: A.resolus, won: A.gagnes,
+      pnl: Math.round(A.pnl * 100) / 100, fees: Math.round(A.frais * 100) / 100, retiredAt: new Date(maintenant()).toISOString(), reason: raison, final: false };
+    if (ag.type === 'parametric') E.params = E.params.filter((c) => idParam(c) !== ag.id); else E.horsJeu.push(ag.id);
+    E.retraites.push(ag.id); cacheActifs = null; aEcrire = true;
+    journal({ type: 'retrait', agent: ag.id, nom: ag.nom, resolus: A.resolus, pnl: A.pnl, raison, t: maintenant() });
+  }
+  /* Apres chaque reglement : juger ceux qui ont atteint leur palier, finaliser les retires
+     dont plus aucun pari n est ouvert, remplir les places liberees. */
+  function tournoi() {
+    assureTournoi();
+    for (const ag of actifs().slice()) {
+      if (estTemoin(ag.id)) continue;
+      const A = E.agents[ag.id]; if (!A) continue;
+      const palier = A.palier || SEUIL_TOURNOI;
+      if (A.resolus < palier) continue;
+      if (A.pnl < 0) retire(ag, 'still in the red after ' + A.resolus + ' settled bets');
+      else { A.palier = palier + SEUIL_TOURNOI; aEcrire = true; }
+    }
+    for (const id of E.retraites.slice()) {
+      if (E.ouverts.some((p) => p.agent === id)) continue;
+      const A = E.agents[id], r = E.essayes[id];
+      if (A && r) Object.assign(r, { bets: A.paris, resolved: A.resolus, won: A.gagnes, pnl: Math.round(A.pnl * 100) / 100, fees: Math.round(A.frais * 100) / 100, final: true });
+      delete E.agents[id]; E.retraites = E.retraites.filter((x) => x !== id); aEcrire = true;
+    }
+    complete();
+  }
 
   const slug = (actif, debut) => actif + '-updown-15m-' + debut;
   async function evenement(actif, debut) {
@@ -407,6 +493,7 @@ function cree(deps) {
 
   async function tic() {
     MESURE.tics++;
+    assureTournoi();
     const t = Math.floor(maintenant() / 1000), debut = Math.floor(t / FENETRE_S) * FENETRE_S, resteS = debut + FENETRE_S - t;
     let mids = null, sig = {};
     try { mids = await hl({ type: 'allMids' }); } catch (e) { mids = null; }
@@ -414,7 +501,7 @@ function cree(deps) {
       try {
         const f = await fenetre(actif, coin, debut);
         if (!f) continue;
-        const aDecider = AGENTS.filter((a) => !f.decides.has(a.id) && resteS <= a.bande[0] && resteS >= a.bande[1]);
+        const aDecider = actifs().filter((a) => !f.decides.has(a.id) && resteS <= a.bande[0] && resteS >= a.bande[1]);
         const calibrer = !f.calibre && resteS <= 300 && resteS >= 240;
         if (!aDecider.length && !calibrer) continue;
         const S = mids && Number(mids[coin]);
@@ -498,6 +585,7 @@ function cree(deps) {
       } catch (e) { MESURE.erreurs++; MESURE.derniereErreur = String(e && e.message || e).slice(0, 160); }
     }
     await resous();
+    tournoi();
     ecrit();
   }
 
@@ -525,7 +613,8 @@ function cree(deps) {
           A.cum += gain; if (A.cum > A.pic) A.pic = A.cum; if (A.pic - A.cum > A.creux) A.creux = A.pic - A.cum;
           p.issue = issue; p.gain = Math.round(gain * 100) / 100;
         }
-        journal(p); E.recents.unshift(p);
+        if (!String(p.agent).startsWith('p_')) journal(p);   /* le tournoi : le registre fait foi (volume, voir SEUIL_TOURNOI) */
+        E.recents.unshift(p);
       }
       E.ouverts = E.ouverts.filter((x) => x.actif + ':' + x.debut !== k);
       E.recents = E.recents.slice(0, RECENTS_MAX);
@@ -548,28 +637,38 @@ function cree(deps) {
        MOYEN par pari — et seulement les gagnantes : 20 cartes vertes sur 195, choisies apres
        coup. Maintenant : le classement COMPLET par gain total, un resume (combien en gain, en
        perte), et en cartes les 5 d origine, les 10 meilleures et les 10 pires. */
+    assureTournoi();
+    const ouvertsPar = {}; for (const p of E.ouverts) ouvertsPar[p.agent] = (ouvertsPar[p.agent] || 0) + 1;
     const ligneC = (ag) => { const a = E.agents[ag.id]; return { id: ag.id, name: ag.nom, type: ag.type, bets: a.paris, resolved: a.resolus, won: a.gagnes,
-      pnl: r2(a.pnl), open: E.ouverts.filter((p) => p.agent === ag.id).length }; };
+      pnl: r2(a.pnl), open: ouvertsPar[ag.id] || 0, nextJudgedAt: estTemoin(ag.id) ? null : (a.palier || SEUIL_TOURNOI) }; };
     const parGain = (x, y) => y.pnl - x.pnl || y.resolved - x.resolved;
-    const classement = AGENTS.map(ligneC).sort(parGain);
+    const AG = actifs();
+    const classement = AG.map(ligneC).sort(parGain);
     const regles = classement.filter((c) => c.resolved > 0);
     const resume = { total: classement.length, inProfit: regles.filter((c) => c.pnl > 0).length, inLoss: regles.filter((c) => c.pnl < 0).length,
       noSettledBet: classement.length - regles.length, totalPnl: r2(classement.reduce((t, c) => t + c.pnl, 0)),
       judgeable: classement.filter((c) => c.resolved >= RESOLUS_ASSEZ).length };
-    const autres = regles.filter((c) => AGENTS.find((ag) => ag.id === c.id).type !== 'baseline');
-    const choisis = new Set(AGENTS.filter((ag) => ag.type === 'baseline').map((ag) => ag.id)
+    const autres = regles.filter((c) => !estTemoin(c.id));
+    const choisis = new Set(AG.filter((ag) => ag.type === 'baseline').map((ag) => ag.id)
       .concat(autres.slice(0, 10).map((c) => c.id), autres.slice(-10).map((c) => c.id)));
-    const aAfficher = AGENTS.filter((ag) => choisis.has(ag.id)).sort((x, y) => E.agents[y.id].pnl - E.agents[x.id].pnl);
+    const aAfficher = AG.filter((ag) => choisis.has(ag.id)).sort((x, y) => E.agents[y.id].pnl - E.agents[x.id].pnl);
+    const retires = Object.entries(E.essayes).map(([id, r]) => ({ id, name: r.name, type: r.type, bets: r.bets, resolved: r.resolved, won: r.won, pnl: r.pnl, retiredAt: r.retiredAt, reason: r.reason, final: r.final }))
+      .sort((x, y) => Date.parse(y.retiredAt) - Date.parse(x.retiredAt));
+    const essayesParam = new Set(Object.keys(E.essayes).filter((id) => id.startsWith('p_')).concat(E.params.map(idParam)));
+    const tournament = { threshold: SEUIL_TOURNOI, slots: SLOTS_STRATEGIES, controls: AG.filter((a) => estTemoin(a.id)).length,
+      running: AG.length, retired: retires.length, parametricTried: essayesParam.size, parametricUntried: PARAM.distincts - essayesParam.size,
+      rule: 'A strategy still in the red after ' + SEUIL_TOURNOI + ' settled bets is retired and replaced by a parameter set never tried before; one in profit is judged again ' + SEUIL_TOURNOI + ' bets later. The 5 original agents are controls and are never retired. Surviving a check is not proof of an edge: with fees and the spread, roughly 1 strategy in 8 with no edge still passes 500 bets by luck — the skill score is what counts.',
+      recentlyRetired: retires.slice(0, 30) };
 
     return { ok: true, depuis: new Date(E.depuis).toISOString(), stakeUsd: MISE_USD, bankUsd: BANQUE0, minResolved: RESOLUS_ASSEZ,
-      totalStrategies: AGENTS.length, displayedStrategies: aAfficher.length, ranking: classement, summary: resume,
-      parametric: { running: PARAM.choisis.length, distinct: PARAM.distincts, combinations: PARAM.combinaisons,
+      totalStrategies: AG.length, displayedStrategies: aAfficher.length, ranking: classement, summary: resume, tournament,
+      parametric: { running: E.params.length, distinct: PARAM.distincts, combinations: PARAM.combinaisons,
         note: 'Kelly sizing, profit targets and stop-losses are not simulated: every agent stakes the same amount and holds to resolution.' },
       agents: aAfficher.map((ag) => { const a = E.agents[ag.id], w = wilson(a.gagnes, a.resolus), z = a.v > 0 ? (a.sy - a.sp) / Math.sqrt(a.v) : null;
         return { id: ag.id, name: ag.nom, role: ag.role, bank: r2(a.banque), bets: a.paris, resolved: a.resolus, won: a.gagnes, voided: a.annules,
           winRate: w ? { p: w.p, low: w.bas, high: w.haut } : null, skill: z == null ? null : Math.round(z * 100) / 100,
           avgPricePaid: a.resolus ? Math.round(a.sp / a.resolus * 1000) / 1000 : null, pnl: r2(a.pnl), fees: r2(a.frais), drawdown: r2(a.creux),
-          open: E.ouverts.filter((p) => p.agent === ag.id).length, verdict: verdictAgent(a), type: ag.type }; }),
+          open: ouvertsPar[ag.id] || 0, verdict: verdictAgent(a), type: ag.type }; }),
       calibration: { n: C.n, pending: C.attente.length, brierModel: C.n ? Math.round(C.brierModele / C.n * 10000) / 10000 : null, brierMarket: C.n ? Math.round(C.brierMarche / C.n * 10000) / 10000 : null,
         enough: C.n >= CALIB_ASSEZ, minN: CALIB_ASSEZ,
         buckets: Object.keys(C.seaux).sort().map((k) => { const s = C.seaux[k]; return { range: (k / 10).toFixed(1) + '–' + ((Number(k) + 1) / 10).toFixed(1), n: s.n, upRate: s.up / s.n, model: s.modele / s.n, market: s.marche / s.n }; }) },
@@ -597,7 +696,7 @@ function cree(deps) {
   }
   function arrete() { if (minuterie && minuterie !== true) clearInterval(minuterie); minuterie = null; ecrit(); }
 
-  return { tic, resous, etat, charge, demarre, arrete, MESURE, _etat: () => E };
+  return { tic, resous, etat, charge, demarre, arrete, MESURE, _etat: () => E, _tournoi: tournoi };
 }
 
-module.exports = { cree, decide, choisisParametriques, PARAM, phi, probaUp, varianceRestante, sigma, remplit, wilson, verdictAgent, AGENTS, RESOLUS_ASSEZ, MISE_USD, FENETRE_S };
+module.exports = { cree, decide, choisisParametriques, PARAM, agentParam, SEUIL_TOURNOI, SLOTS_STRATEGIES, phi, probaUp, varianceRestante, sigma, remplit, wilson, verdictAgent, AGENTS, RESOLUS_ASSEZ, MISE_USD, FENETRE_S };

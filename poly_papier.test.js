@@ -57,12 +57,15 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
   const c = mk();
   await c.tic();
   let E = c._etat();
-  ok(E.ouverts.length === 1 && E.ouverts[0].agent === 'coin' && E.ouverts[0].cote === 'Up', 'a 7 min 30, prix immobile : seul le temoin Coin parie (au hasard : 0,3 → Up) ; Fair Value ne voit aucun ecart');
+  /* Les agents ecrits a la main (les 5 d origine et leurs variations) ; les parametriques du
+     tournoi sont tires au hasard et testes a part (section 6). */
+  const fixes = (l) => l.filter((p) => !p.agent.startsWith('p_'));
+  ok(fixes(E.ouverts).length === 1 && E.ouverts.find((p) => p.agent === 'coin').cote === 'Up', 'a 7 min 30, prix immobile : seul le temoin Coin parie (au hasard : 0,3 → Up) ; Fair Value ne voit aucun ecart');
   ok(vu.bougies.some((r) => r.startTime === (DEBUT - 60) * 1000 && r.endTime - r.startTime === 60000), 'TWAP 60 s : le prix de reference est la minute AVANT l ouverture');
-  const p0 = E.ouverts[0];
+  const p0 = E.ouverts.find((p) => p.agent === 'coin'), nAvant = E.ouverts.length;
   ok(pres(p0.parts, 10 / 0.55) && pres(p0.frais, 10 / 0.55 * 0.07 * 0.55 * 0.45) && pres(p0.prix, 0.55), 'achat de 10 $ au prix demande (0,55), frais officiels : ' + p0.frais.toFixed(4) + ' $');
   await c.tic();
-  ok(c._etat().ouverts.length === 1, 'un seul pari par agent et par fenetre, meme si le tic se repete dans la bande');
+  ok(c._etat().ouverts.length === nAvant, 'un seul pari par agent et par fenetre, meme si le tic se repete dans la bande');
 
   T = DEBUT + 900 - 280; S = 100.3;
   await c.tic(); E = c._etat();
@@ -93,15 +96,17 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
   ok(coin.bank > 1000 && /Too few resolved bets to judge \(1\/100\)/.test(coin.verdict), 'la banque bouge, mais aucun verdict sur 1 pari');
   ok(v.calibration.n === 1 && v.calibration.brierMarket === Math.round((0.54 - 1) ** 2 * 10000) / 10000 && v.calibration.enough === false,
      'la calibration : score de Brier du marche (0,2116) et du modele, et « pas assez » sous 100');
-  ok(v.recent.length === avant && /^https:\/\/polymarket\.com\/event\/btc-updown-15m-\d+$/.test(v.recent[0].url) && !JSON.stringify(v).includes('NaN'), 'la vue : les paris regles, le lien du marche, aucun NaN');
+  ok(v.recent.length === Math.min(avant, 60) && /^https:\/\/polymarket\.com\/event\/btc-updown-15m-\d+$/.test(v.recent[0].url) && !JSON.stringify(v).includes('NaN'), 'la vue : les paris regles, le lien du marche, aucun NaN');
   /* 30/09 : « classe du plus gagnant au plus perdant ». */
   const trie = (l) => l.every((x, i) => i === 0 || l[i - 1].pnl >= x.pnl);
-  ok(v.ranking.length === P.AGENTS.length && trie(v.ranking) && v.ranking[0].pnl > 0 && v.ranking[0].id === 'coin',
-     'le classement : les ' + v.ranking.length + ' strategies, du plus gagnant au plus perdant (en tete : ' + v.ranking[0].id + ', ' + v.ranking[0].pnl + ' $)');
+  /* Le tournoi : 5 temoins + SLOTS_STRATEGIES places (variations a la main + parametriques). */
+  const ATTENDU = P.AGENTS.filter((a) => a.type === 'baseline').length + P.SLOTS_STRATEGIES;
+  ok(v.ranking.length === ATTENDU && trie(v.ranking) && v.ranking[0].pnl > 0,
+     'le classement : les ' + v.ranking.length + ' strategies en course, du plus gagnant au plus perdant (en tete : ' + v.ranking[0].id + ', ' + v.ranking[0].pnl + ' $)');
   ok(trie(v.agents), 'les cartes aussi, dans le meme ordre');
   const RES = v.summary, regles = v.ranking.filter((c) => c.resolved > 0);
-  ok(RES.total === P.AGENTS.length && RES.inProfit === regles.filter((c) => c.pnl > 0).length && RES.inLoss === regles.filter((c) => c.pnl < 0).length
-     && RES.noSettledBet === P.AGENTS.length - regles.length && RES.judgeable === 0,
+  ok(RES.total === ATTENDU && RES.inProfit === regles.filter((c) => c.pnl > 0).length && RES.inLoss === regles.filter((c) => c.pnl < 0).length
+     && RES.noSettledBet === ATTENDU - regles.length && RES.judgeable === 0,
      'le resume compte gagnantes (' + RES.inProfit + '), perdantes (' + RES.inLoss + '), sans pari regle (' + RES.noSettledBet + '), et aucune jugeable sous 100');
 
   console.log('\n-- 4. persistance, abandon, frais lus sur le marche --');
@@ -187,7 +192,7 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
       await c6.tic();
     }
     const ouv = c6._etat().ouverts.filter((p) => p.agent.startsWith('p_'));
-    const parAgent = new Map(PR.map((a) => [a.id, a]));
+    const parAgent = new Map(c6._etat().params.map(P.agentParam).map((a) => [a.id, a]));
     const typesParies = new Set(ouv.map((p) => parAgent.get(p.agent).config.type));
     ok(ouv.length >= 20, ouv.length + ' paris places par ' + new Set(ouv.map((p) => p.agent)).size + ' strategies parametriques sur une seule fenetre');
     ok(typesParies.size === 6, 'chacun des six types a parie au moins une fois : ' + [...typesParies].join(', '));
@@ -196,8 +201,79 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
     ok(ouv.filter((p) => parAgent.get(p.agent).config.type === 'momentum').every((p) => p.resteS <= 540 && p.cote === 'Up'), 'Momentum : jamais avant une minute d historique, et du cote qui monte');
     ok(ouv.filter((p) => parAgent.get(p.agent).config.priceFilter).every((p) => p.prix >= 0.10 && p.prix <= 0.90), 'filtre de prix tenu sur les paris reels');
     const v6 = c6.etat();
-    ok(v6.totalStrategies === 200 && v6.parametric.running === 100 && v6.parametric.distinct === 2460 && /not simulated/.test(v6.parametric.note),
-       'la vue dit ce qui tourne : 200 strategies, dont 100 parametriques sur 2 460 distinctes, et ce qui n est pas simule');
+    ok(v6.totalStrategies === 405 && v6.parametric.running === 305 && v6.parametric.distinct === 2460 && /not simulated/.test(v6.parametric.note),
+       'la vue dit ce qui tourne : 405 strategies (5 temoins, 95 a la main, 305 parametriques sur 2 460 distinctes), et ce qui n est pas simule');
+  }
+
+  /* ---- 7. LE TOURNOI (30/09/2026) ----
+     « Au bout de 500 bets, s il est toujours en negatif, l agent se supprime et un nouveau avec
+     des parametres jamais essayes apparait ; retenir tous les agents et parametres essayes. » */
+  console.log('\n-- 7. le tournoi : retire en perte a 500, remplace par du jamais essaye --');
+  {
+    const d7 = fs.mkdtempSync(path.join(os.tmpdir(), 'poly7-'));
+    let graine = 7; const lcg = () => { graine = (graine * 1103515245 + 12345) % 2147483648; return graine / 2147483648; };
+    const c7 = P.cree({ dossier: d7, lire, hl, maintenant: () => T * 1000, alea: lcg });
+    let v7 = c7.etat(); const E7 = c7._etat();
+    const nonTemoins = () => c7.etat().ranking.filter((r) => r.type !== 'baseline').length;
+    ok(nonTemoins() === P.SLOTS_STRATEGIES && v7.tournament.controls === 5 && v7.tournament.threshold === 500,
+       'au depart : ' + P.SLOTS_STRATEGIES + ' places hors temoins, les 5 d origine en temoins, jugement a 500 paris regles');
+    const tousVus = new Set(E7.params.map((c) => P.agentParam(c).id));
+    ok(tousVus.size === E7.params.length, 'aucun comportement en double parmi les ' + E7.params.length + ' parametriques en course');
+
+    const [X, Y, Z] = E7.params.slice(0, 3).map(P.agentParam);
+    const H = P.AGENTS.find((a) => a.type !== 'baseline' && a.type !== 'parametric');
+    const pose = (id, resolus, pnl) => Object.assign(E7.agents[id], { resolus, paris: resolus, pnl });
+    pose(X.id, 500, -3.5); pose(Y.id, 500, 2); pose(Z.id, 499, -50); pose(H.id, 520, -1); pose('coin', 5000, -100);
+    E7.ouverts.push({ id: X.id + ':btc:1', agent: X.id, actif: 'btc', debut: DEBUT, cote: 'Up', parts: 1, prix: 0.5, depense: 0.5, frais: 0 });
+    c7._tournoi();
+    const enCourse = (id) => c7.etat().ranking.some((r) => r.id === id);
+    ok(!enCourse(X.id) && E7.essayes[X.id] && E7.essayes[X.id].pnl === -3.5 && E7.essayes[X.id].resolved === 500 && /red after 500/.test(E7.essayes[X.id].reason),
+       'en perte a 500 paris regles : retire, et inscrit au registre avec son bilan (−3,50 $)');
+    ok(enCourse(Y.id) && E7.agents[Y.id].palier === 1000, 'en gain a 500 : il reste, et sera rejuge a 1 000');
+    ok(enCourse(Z.id), 'a 499 paris, meme a −50 $ : pas encore juge (le hasard domine sous 500)');
+    ok(!enCourse(H.id) && E7.horsJeu.includes(H.id) && E7.essayes[H.id], 'une variation ecrite a la main suit la meme regle : retiree, gardee au registre');
+    ok(enCourse('coin'), 'le temoin Coin n est jamais retire, meme a −100 $ sur 5 000 paris');
+    ok(nonTemoins() === P.SLOTS_STRATEGIES, 'les deux places liberees sont reprises : toujours ' + P.SLOTS_STRATEGIES + ' hors temoins');
+    const neufs = E7.params.map((c) => P.agentParam(c).id).filter((id) => !tousVus.has(id));
+    ok(neufs.length === 2 && neufs.every((id) => !E7.essayes[id] && E7.agents[id] && E7.agents[id].paris === 0), 'les remplacants sont deux comportements jamais essayes, partis de zero');
+
+    ok(E7.agents[X.id] && E7.essayes[X.id].final === false, 'un pari encore ouvert : le retire garde son compte jusqu au reglement');
+    E7.ouverts = E7.ouverts.filter((p) => p.agent !== X.id); E7.agents[X.id].resolus = 501; E7.agents[X.id].pnl = -4;
+    c7._tournoi();
+    ok(!E7.agents[X.id] && E7.essayes[X.id].final === true && E7.essayes[X.id].resolved === 501 && E7.essayes[X.id].pnl === -4, 'regle : bilan definitif au registre (501 paris, −4 $), compte libere');
+
+    pose(Y.id, 999, -1); c7._tournoi();
+    ok(enCourse(Y.id), 'a 999 paris, passe en perte : pas encore rejuge');
+    pose(Y.id, 1000, -1); c7._tournoi();
+    ok(!enCourse(Y.id) && E7.essayes[Y.id].resolved === 1000, 'a 1 000, en perte : retire a son tour');
+
+    v7 = c7.etat();
+    ok(v7.tournament.retired === 3 && v7.tournament.recentlyRetired.some((r) => r.id === X.id && r.pnl === -4) && /never tried/.test(v7.tournament.rule),
+       'la vue : 3 retires, le registre recent avec leur bilan, la regle en clair');
+    ok(v7.ranking.filter((r) => r.type !== 'baseline').every((r) => r.nextJudgedAt >= 500) && v7.ranking.find((r) => r.id === 'coin').nextJudgedAt === null,
+       'chaque strategie dit a quel palier elle sera jugee ; un temoin, jamais');
+
+    c7.arrete();
+    const c8 = P.cree({ dossier: d7, lire, hl, maintenant: () => T * 1000, alea: lcg }); c8.charge();
+    const E8 = c8._etat();
+    ok(Object.keys(E8.essayes).length === 3 && E8.params.length === E7.params.length && E8.horsJeu.includes(H.id) && c8.etat().ranking.length === v7.ranking.length,
+       'un redemarrage relit le registre, les parametriques en course et les retires');
+
+    /* Tout epuiser : jamais deux fois le meme comportement, et plus de place que de neufs ne casse rien. */
+    const deja = new Set(Object.keys(E8.essayes).concat(E8.params.map((c) => P.agentParam(c).id)));
+    let doublon = false, tours = 0;
+    while (E8.params.length && tours++ < 20) {
+      for (const c of E8.params) { const id = P.agentParam(c).id; pose8(id); }
+      for (const a of P.AGENTS) if (a.type !== 'baseline' && a.type !== 'parametric' && E8.agents[a.id]) pose8(a.id);
+      c8._tournoi();
+      for (const c of E8.params) { const id = P.agentParam(c).id; if (deja.has(id)) doublon = true; deja.add(id); }
+    }
+    function pose8(id) { Object.assign(E8.agents[id], { resolus: 500, paris: 500, pnl: -1 }); }
+    const vp = c8.etat().tournament;
+    ok(!doublon && vp.parametricTried === 2460 && vp.parametricUntried === 0 && E8.params.length === 0,
+       'en ' + tours + ' tours, les 2 460 comportements distincts ont tous ete essayes, aucun deux fois ; les places restent vides ensuite');
+    ok(Object.keys(E8.essayes).filter((id) => id.startsWith('p_')).length === 2460, 'le registre les retient tous (2 460)');
+    fs.rmSync(d7, { recursive: true, force: true });
   }
 
   fs.rmSync(dossier, { recursive: true, force: true });
