@@ -73,6 +73,17 @@ const GAMMA = 'https://gamma-api.polymarket.com', CLOB = 'https://clob.polymarke
  * de 0,73 a 0,99 : la latence y coute cher, c est ce que ce controle chiffre. */
 const DATA = 'https://data-api.polymarket.com';
 const REEL_DELAI_S = 15, REEL_APRES_S = 30, REEL_TOLERANCE = 0.01, REEL_PAGES = 5;
+/* ---- LE CARNET RELU APRES LE DELAI D UN VRAI ORDRE (30/09/2026) ----
+ * Premier controle en ligne (XRP, fenetre de 17 h 15 UTC) : 166 paris, 40 echanges reels et
+ * 335 $ sur toute la fenetre ; 124 paris sans aucun echange de leur cote dans les 30 s. Mais
+ * « personne d autre n a achete » ne dit pas « on n aurait pas ete servi » : l offre etait dans
+ * le carnet. Ce qui compte pour un vrai ordre, c est le carnet AU MOMENT OU IL ARRIVE. Chaque
+ * tic qui a parie relit donc, DELAI_ORDRE_MS plus tard, le carnet des cotes achetes, et chaque
+ * pari recoit le prix qu il aurait paye a ce moment-la (ou « plus rien a vendre »). Ce controle
+ * couvre TOUS les paris, meme la ou personne n echange.
+ * DELAI_ORDRE_MS : hypothese, pas mesure — le temps de signer et poster un ordre depuis un
+ * serveur, pris large. */
+const DELAI_ORDRE_MS = 2000;
 const FENETRE_S = 900;
 const ACTIFS = [['btc', 'BTC', 'Bitcoin'], ['eth', 'ETH', 'Ethereum'], ['sol', 'SOL', 'Solana'], ['xrp', 'XRP', 'XRP']];
 const TIC_MS = Math.max(5, Number(process.env.POLY_PAPIER_TIC_S || 15)) * 1000;
@@ -392,10 +403,10 @@ function verdictAgent(a, essayees) {
   const z = zFenetre(a) || 0, N = Math.max(1, essayees || 1), b = barre(N), dit = 'skill ' + z.toFixed(1) + ' per window over ' + nf + ' windows';
   if (z >= b && a.pnl > 0) {
     /* Un edge de papier n est un resultat que s il tient aux prix REELLEMENT echanges (voir REEL_DELAI_S). */
-    const ve = a.ve || 0, sur = ', above the ' + b.toFixed(1) + ' bar that testing ' + N + ' strategies requires';
-    if (ve < RESOLUS_ASSEZ) return 'Edge on paper: ' + dit + sur + '. Not confirmed yet: ' + ve + '/' + RESOLUS_ASSEZ + ' bets checked against real Polymarket trades.';
-    if ((a.veReel || 0) <= 0) return 'Edge on paper only: ' + dit + sur + ', but at the prices really traded next it makes ' + (a.veReel < 0 ? '−$' : '$') + Math.abs(a.veReel || 0).toFixed(2) + ' over ' + ve + ' checked bets. Not tradable as is.';
-    return 'Evidence of an edge after fees: ' + dit + sur + ', and it holds at the prices really traded next ($' + a.veReel.toFixed(2) + ' over ' + ve + ' checked bets).';
+    const la = a.la || 0, sur = ', above the ' + b.toFixed(1) + ' bar that testing ' + N + ' strategies requires', d = DELAI_ORDRE_MS / 1000;
+    if (la < RESOLUS_ASSEZ) return 'Edge on paper: ' + dit + sur + '. Not confirmed yet: ' + la + '/' + RESOLUS_ASSEZ + ' bets re-priced on the real order book ' + d + ' s later.';
+    if ((a.laReel || 0) <= 0) return 'Edge on paper only: ' + dit + sur + ', but at the order book ' + d + ' s later it makes ' + (a.laReel < 0 ? '−$' : '$') + Math.abs(a.laReel || 0).toFixed(2) + ' over ' + la + ' bets. Not tradable as is.';
+    return 'Evidence of an edge after fees: ' + dit + sur + ', and it holds on the real order book ' + d + ' s later ($' + a.laReel.toFixed(2) + ' over ' + la + ' bets).';
   }
   if (z >= 2) return 'Promising, not proven: ' + dit + ', below the ' + b.toFixed(1) + ' bar that testing ' + N + ' strategies requires — could still be luck.';
   if (a.pnl < 0) return 'No edge: loses after the spread and fees (' + dit + ').';
@@ -407,6 +418,8 @@ function cree(deps) {
   deps = deps || {};
   const maintenant = deps.maintenant || Date.now;
   const alea = deps.alea || Math.random;
+  const attente = deps.attente || ((ms) => new Promise((r) => { const x = setTimeout(r, ms); if (x.unref) x.unref(); }));
+  let placesTic = null;   /* les paris du tic en cours, relus apres DELAI_ORDRE_MS */
   const lire = deps.lire || ((u) => fetch(u, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(10000) }).then((r) => { if (!r.ok) throw new Error(u.split('/')[2] + ' ' + r.status); return r.json(); }));
   const hl = deps.hl || ((body) => fetch(HL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) }).then((r) => r.json()));
   const dossier = deps.dossier || null;
@@ -551,12 +564,14 @@ function cree(deps) {
     const p = { id: ag.id + ':' + f.actif + ':' + f.debut, agent: ag.id, actif: f.actif, debut: f.debut, titre: f.titre, cote, parts: r.parts, prix: r.prix, depense: r.depense, frais: r.frais,
       t: Math.floor(maintenant() / 1000), resteS: contexte.resteS, modele: contexte.modele == null ? null : Math.round(contexte.modele * 1000) / 1000 };
     E.ouverts.push(p); aEcrire = true;
+    if (placesTic) placesTic.push({ p, f });
     return true;
   }
 
   async function tic() {
     MESURE.tics++;
     assureTournoi();
+    placesTic = [];
     const t = Math.floor(maintenant() / 1000), debut = Math.floor(t / FENETRE_S) * FENETRE_S, resteS = debut + FENETRE_S - t;
     let mids = null, sig = {};
     try { mids = await hl({ type: 'allMids' }); } catch (e) { mids = null; }
@@ -647,11 +662,27 @@ function cree(deps) {
         }
       } catch (e) { MESURE.erreurs++; MESURE.derniereErreur = String(e && e.message || e).slice(0, 160); }
     }
+    await relit(placesTic); placesTic = null;
     await resous();
     tournoi();
     ecrit();
   }
 
+  /* Voir DELAI_ORDRE_MS : ce qu un vrai ordre, arrive apres le delai, aurait paye. */
+  async function relit(places) {
+    if (!places || !places.length) return;
+    await attente(DELAI_ORDRE_MS);
+    const livres = new Map();
+    for (const { p, f } of places) livres.set(f.jetons[p.cote], null);
+    await Promise.all([...livres.keys()].map(async (j) => { try { livres.set(j, await livre(j)); } catch (e) { /* non relu : pari non controle */ } }));
+    for (const { p, f } of places) {
+      const l = livres.get(f.jetons[p.cote]); if (!l) continue;
+      const r = remplit(l.asks, p.depense, f.taux);
+      if (!r || r.parts < f.min) { p.prix2 = 0; continue; }          /* plus rien a vendre a ce moment-la */
+      p.prix2 = r.prix; p.parts2 = r.parts; p.dep2 = r.depense; p.frais2 = r.frais;
+    }
+    aEcrire = true;
+  }
   function realite() { return E.realite || (E.realite = { marches: 0, paris: 0, ok: 0, sans: 0, avecPrix: 0, ecartPrix: 0, papier: 0, reel: 0, volumes: [] }); }
   /* Un pari regle, contre les echanges reels qui ont suivi la decision (voir REEL_DELAI_S). */
   function controle(A, p, y, gain, reels) {
@@ -684,7 +715,7 @@ function cree(deps) {
       let reels = null;
       if (issue && m && m.conditionId && E.ouverts.some((x) => x.actif + ':' + x.debut === k)) {
         try { reels = await echanges(m.conditionId); } catch (e) { reels = null; }
-        if (reels) { const R = realite(); R.marches++; R.volumes.push(Math.round(reels.reduce((t, x) => t + x.s * x.p, 0))); if (R.volumes.length > 200) R.volumes.shift(); }
+        if (reels) { const R = realite(); R.marches++; R.volumes.push([actif, Math.round(reels.reduce((t, x) => t + x.s * x.p, 0))]); if (R.volumes.length > 200) R.volumes.shift(); }
       }
       const abandon = !issue && t - (debut + FENETRE_S) > ABANDON_S;
       if (!issue && !abandon) continue;
@@ -701,6 +732,15 @@ function cree(deps) {
           const G = (A.gr || (A.gr = {}))[debut] || (A.gr[debut] = 0);
           A.gr[debut] = G + y - p.prix;
           if (reels) controle(A, p, y, gain, reels);
+          if (p.prix2 != null) {
+            const R = realite(); A.la = (A.la || 0) + 1; R.la = (R.la || 0) + 1;
+            if (!p.prix2) { A.laSans = (A.laSans || 0) + 1; R.laSans = (R.laSans || 0) + 1; }
+            else {
+              const g2 = y * p.parts2 - p.dep2 - p.frais2;
+              A.laPapier = (A.laPapier || 0) + gain; A.laReel = (A.laReel || 0) + g2;
+              R.laPapier = (R.laPapier || 0) + gain; R.laReel = (R.laReel || 0) + g2; R.laEcart = (R.laEcart || 0) + p.prix2 - p.prix; R.laPrix = (R.laPrix || 0) + 1;
+            }
+          }
           A.cum += gain; if (A.cum > A.pic) A.pic = A.cum; if (A.pic - A.cum > A.creux) A.creux = A.pic - A.cum;
           p.issue = issue; p.gain = Math.round(gain * 100) / 100;
         }
@@ -733,13 +773,16 @@ function cree(deps) {
   function etat() {
     const r2 = (x) => Math.round(x * 100) / 100, C = E.calib;
     /* Le controle contre les vrais echanges (voir REEL_DELAI_S), par strategie et en tout. */
-    const reelDe = (a) => (a.ve ? { checked: a.ve, fillable: a.veOk || 0, noTrade: a.veSans || 0, paperPnl: r2(a.vePapier || 0), realPnl: r2(a.veReel || 0) } : null);
-    const R = realite(), vols = R.volumes.slice().sort((x, y) => x - y);
-    const reality = { marketsChecked: R.marches, betsChecked: R.paris, fillableAtOurPrice: R.ok, noTradeWithin: R.sans, withinSeconds: REEL_DELAI_S, nextTradeSeconds: REEL_APRES_S,
-      avgGapToNextRealPrice: R.avecPrix ? Math.round(R.ecartPrix / R.avecPrix * 1000) / 1000 : null, paperPnl: r2(R.papier), pnlAtNextRealPrice: r2(R.reel), pricedBets: R.avecPrix,
-      medianMarketVolumeUsd: vols.length ? vols[vols.length >> 1] : null,
-      rule: 'Every market, order book and result comes from Polymarket itself (each bet links to its market). After settlement, each bet is also checked against the trades really made on Polymarket: was our side traded at our price (within 1¢) in the ' + REEL_DELAI_S +
-        ' seconds after the decision, and what would the bet have made at the first price really traded after it? Paper bets do not include the time a real order takes to arrive.' };
+    const reelDe = (a) => (a.la || a.ve ? { repriced: a.la || 0, emptyBook: a.laSans || 0, paperPnl: r2(a.laPapier || 0), pnlAfterDelay: r2(a.laReel || 0),
+      tradeChecked: a.ve || 0, confirmedByTrade: a.veOk || 0 } : null);
+    const R = realite(), med = (l) => { const x = l.slice().sort((u, v) => u - v); return x.length ? x[x.length >> 1] : null; };
+    const volumes = {}; for (const v of R.volumes) if (Array.isArray(v)) (volumes[v[0]] || (volumes[v[0]] = [])).push(v[1]);
+    const reality = { orderDelaySeconds: DELAI_ORDRE_MS / 1000, repriced: R.la || 0, emptyBook: R.laSans || 0, paperPnl: r2(R.laPapier || 0), pnlAfterDelay: r2(R.laReel || 0),
+      avgPriceMoveAfterDelay: R.laPrix ? Math.round(R.laEcart / R.laPrix * 1000) / 1000 : null,
+      trades: { marketsChecked: R.marches, betsChecked: R.paris, confirmedAtOurPrice: R.ok, noTradeWithin: R.sans, withinSeconds: REEL_DELAI_S, nextTradeSeconds: REEL_APRES_S },
+      medianVolumeUsd: Object.fromEntries(ACTIFS.map(([a]) => [a.toUpperCase(), volumes[a] ? med(volumes[a]) : null])), marketsWithVolume: Object.fromEntries(ACTIFS.map(([a]) => [a.toUpperCase(), volumes[a] ? volumes[a].length : 0])),
+      rule: 'Every market, order book and result comes from Polymarket itself (each bet links to its market). A real order takes time to arrive: ' + DELAI_ORDRE_MS / 1000 +
+        ' s after each decision, the real order book is read again and the bet is re-priced at what it would have paid then (or nothing left to buy). After settlement, each bet is also compared with the trades really made on Polymarket.' };
     /* LE CLASSEMENT, DU PLUS GAGNANT AU PLUS PERDANT (30/09/2026) ----
        Demande du proprietaire : « classe du plus gagnant au plus perdant, la on dirait qu il
        n y a pas d ordre ». La vue montrait les 5 d origine PUIS 20 strategies triees par gain

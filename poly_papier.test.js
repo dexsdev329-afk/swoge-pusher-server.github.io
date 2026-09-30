@@ -50,7 +50,7 @@ const hl = async (b) => {
   throw new Error('hl inattendu');
 };
 const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'poly-'));
-const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: () => 0.3 });
+const mk = () => P.cree({ attente: async () => {}, dossier, lire, hl, maintenant: () => T * 1000, alea: () => 0.3 });
 
 (async () => {
   console.log('\n-- 2. une fenetre, cinq agents --');
@@ -118,7 +118,7 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
   marche = Object.assign({}, marche, { closed: false, feeSchedule: { rate: 0.02 } });
   const lire2 = async (u) => (u.includes('btc-updown-15m-' + D2) ? [{ markets: [marche] }] : lire(u));
   T = D2 + 900 - 450;
-  const c3 = P.cree({ dossier, lire: lire2, hl, maintenant: () => T * 1000, alea: () => 0.9 });
+  const c3 = P.cree({ attente: async () => {}, dossier, lire: lire2, hl, maintenant: () => T * 1000, alea: () => 0.9 });
   c3.charge();
   await c3.tic();
   const p3 = c3._etat().ouverts.find((p) => p.debut === D2);
@@ -135,7 +135,7 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
     const livresMinces = { U: { asks: [{ price: '0.55', size: '2' }], bids: [{ price: '0.53', size: '2' }] }, D: { asks: [{ price: '0.47', size: '2' }], bids: [{ price: '0.45', size: '2' }] } };
     const D4 = DEBUT + 1800; T = D4 + 900 - 450;
     const lire4 = async (u) => { if (u.includes('btc-updown-15m-' + D4)) return [{ markets: [Object.assign({}, marche, { closed: false })] }]; const m = u.match(/book\?token_id=(\w+)/); if (m) return livresMinces[m[1]]; return lire(u); };
-    const c4 = P.cree({ lire: lire4, hl, maintenant: () => T * 1000, alea: () => 0.3 });
+    const c4 = P.cree({ attente: async () => {}, lire: lire4, hl, maintenant: () => T * 1000, alea: () => 0.3 });
     await c4.tic();
     ok(c4._etat().ouverts.length === 0 && c4.etat().agents.find((a) => a.id === 'coin').bets === 0, 'moins de 5 parts disponibles (le minimum du marche) : pas de pari, rien de compte');
   }
@@ -186,7 +186,7 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
       return { asks: [{ price: (p + 0.01).toFixed(3), size: '1000' }], bids: [{ price: (p - 0.01).toFixed(3), size: '1000' }] };
     };
     const hl6 = async (b) => (b.type === 'allMids' ? { BTC: String(S6), ETH: '1', SOL: '1', XRP: '1' } : hl(b));
-    const c6 = P.cree({ lire: lire6, hl: hl6, maintenant: () => T * 1000, alea: () => 0.3 });
+    const c6 = P.cree({ attente: async () => {}, lire: lire6, hl: hl6, maintenant: () => T * 1000, alea: () => 0.3 });
     for (let reste = 600; reste >= 20; reste -= 15) {
       const x = (600 - reste) / 580; pUp = 0.5 + 0.3 * x; S6 = 100 + 0.3 * x; T = D6 + 900 - reste;
       await c6.tic();
@@ -212,7 +212,7 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
   {
     const d7 = fs.mkdtempSync(path.join(os.tmpdir(), 'poly7-'));
     let graine = 7; const lcg = () => { graine = (graine * 1103515245 + 12345) % 2147483648; return graine / 2147483648; };
-    const c7 = P.cree({ dossier: d7, lire, hl, maintenant: () => T * 1000, alea: lcg });
+    const c7 = P.cree({ attente: async () => {}, dossier: d7, lire, hl, maintenant: () => T * 1000, alea: lcg });
     let v7 = c7.etat(); const E7 = c7._etat();
     const nonTemoins = () => c7.etat().ranking.filter((r) => r.type !== 'baseline').length;
     ok(nonTemoins() === P.SLOTS_STRATEGIES && v7.tournament.controls === 5 && v7.tournament.threshold === 500,
@@ -254,7 +254,7 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
        'chaque strategie dit a quel palier elle sera jugee ; un temoin, jamais');
 
     c7.arrete();
-    const c8 = P.cree({ dossier: d7, lire, hl, maintenant: () => T * 1000, alea: lcg }); c8.charge();
+    const c8 = P.cree({ attente: async () => {}, dossier: d7, lire, hl, maintenant: () => T * 1000, alea: lcg }); c8.charge();
     const E8 = c8._etat();
     ok(Object.keys(E8.essayes).length === 3 && E8.params.length === E7.params.length && E8.horsJeu.includes(H.id) && c8.etat().ranking.length === v7.ranking.length,
        'un redemarrage relit le registre, les parametriques en course et les retires');
@@ -293,9 +293,9 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
     ok(/^Promising, not proven: skill 3\.1 per window over 60 windows, below the 3\.7 bar that testing 405 strategies requires/.test(v315),
        'le cas du 30/09 (3,15, en gain) sur 405 essayees : « prometteur », pas « un edge » [' + v315.slice(0, 60) + ']');
     const fort = Object.assign({}, base, { nf: 80, fs: 4, fs2: 1 });
-    ok(/^Edge on paper: skill 4\.0.*Not confirmed yet: 0\/100 bets checked against real Polymarket trades/.test(P.verdictAgent(fort, 405)), 'au-dessus de la barre sur le papier : « edge de papier », pas encore confirme par les vrais echanges');
-    ok(/^Edge on paper only: .*makes −\$12\.00 over 120 checked bets\. Not tradable as is\.$/.test(P.verdictAgent(Object.assign({}, fort, { ve: 120, veReel: -12 }), 405)), 'au premier prix reellement echange il perd : « pas jouable tel quel »');
-    ok(/^Evidence of an edge after fees: skill 4\.0.*holds at the prices really traded next \(\$55\.00 over 120/.test(P.verdictAgent(Object.assign({}, fort, { ve: 120, veReel: 55 }), 405)), 'et seulement s il tient aux vrais prix : la phrase qui dit « edge »');
+    ok(/^Edge on paper: skill 4\.0.*Not confirmed yet: 0\/100 bets re-priced on the real order book 2 s later/.test(P.verdictAgent(fort, 405)), 'au-dessus de la barre sur le papier : « edge de papier », pas encore confirme sur le vrai carnet');
+    ok(/^Edge on paper only: .*at the order book 2 s later it makes −\$12\.00 over 120 bets\. Not tradable as is\.$/.test(P.verdictAgent(Object.assign({}, fort, { la: 120, laReel: -12 }), 405)), 'au carnet relu 2 s plus tard il perd : « pas jouable tel quel »');
+    ok(/^Evidence of an edge after fees: skill 4\.0.*holds on the real order book 2 s later \(\$55\.00 over 120/.test(P.verdictAgent(Object.assign({}, fort, { la: 120, laReel: 55 }), 405)), 'et seulement s il tient sur le vrai carnet : la phrase qui dit « edge »');
     const perd = (z) => P.verdictAgent(Object.assign({}, base, { pnl: -5, nf: 80, fs: z, fs2: 1 }), 405);
     ok(!/edge after fees/.test(perd(4)) && /^No edge: loses after the spread and fees \(skill 0\.5/.test(perd(0.5)),
        'bat les prix mais perd apres frais : jamais « edge »');
@@ -306,7 +306,7 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
     const lire9 = async (u) => { const m = u.match(/events\?slug=(\w+)-updown-15m-(\d+)/); if (!m) return lire(u);
       return [{ markets: [Object.assign({}, marche, { closed: fermes.has(m[1] + '-' + m[2]), outcomePrices: fermes.has(m[1] + '-' + m[2]) ? '["1", "0"]' : '["0.5", "0.5"]' })] }]; };
     const d9 = fs.mkdtempSync(path.join(os.tmpdir(), 'poly9-'));
-    const c9 = P.cree({ dossier: d9, lire: lire9, hl, maintenant: () => T * 1000, alea: () => 0.3 });
+    const c9 = P.cree({ attente: async () => {}, dossier: d9, lire: lire9, hl, maintenant: () => T * 1000, alea: () => 0.3 });
     c9.etat();
     const E9 = c9._etat(), cand = E9.params[0], idc = P.agentParam(cand).id;
     const pari = (agent, actif, debut, cote, prix) => ({ id: agent + ':' + actif + ':' + debut, agent, actif, debut, titre: 't', cote, parts: 10 / prix, prix, depense: 10, frais: 0.1, t: debut, resteS: 500 });
@@ -355,7 +355,7 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
       if (m && Number(m[2]) === W) return [{ markets: [Object.assign({}, marche, { conditionId: '0xC' + m[1], closed: true, outcomePrices: '["1", "0"]' })] }];
       return lire(u);
     };
-    const c9 = P.cree({ lire: lire9, hl, maintenant: () => T * 1000, alea: () => 0.3 });
+    const c9 = P.cree({ attente: async () => {}, lire: lire9, hl, maintenant: () => T * 1000, alea: () => 0.3 });
     c9.etat();
     const E9 = c9._etat();
     const pari = (agent, cote, prix) => ({ id: agent + ':btc:' + W, agent, actif: 'btc', debut: W, titre: 't', cote, parts: 10 / prix, prix, depense: 10, frais: (10 / prix) * 0.07 * prix * (1 - prix), t: t0, resteS: 120 });
@@ -370,14 +370,59 @@ const mk = () => P.cree({ dossier, lire, hl, maintenant: () => T * 1000, alea: (
     ok(pres(A.fair.veReel, gainReel, 1e-6) && A.fair.vePapier > A.fair.veReel, 'son gain au premier prix reellement echange (0,60) : ' + A.fair.veReel.toFixed(2) + ' $ contre ' + A.fair.vePapier.toFixed(2) + ' $ sur le papier');
     ok(A.fade.ve === 1 && A.fade.veSans === 1 && A.fade.veReel == null, 'Longshot : aucun echange de son cote dans les 30 s — compte a part, pas de prix invente');
     const R = c9.etat().reality;
-    ok(R.marketsChecked === 1 && R.betsChecked === 3 && R.fillableAtOurPrice === 1 && R.noTradeWithin === 1 && R.pricedBets === 2 && R.medianMarketVolumeUsd === 60 + 35 + 3 + 10
-       && pres(R.avgGapToNextRealPrice, ((0.60 - 0.60) + (0.60 - 0.55)) / 2, 1e-3) && /first price really traded/.test(R.rule),
-       'la vue : 1 marche, 3 paris controles, 1 obtenable, 1 sans echange, ecart moyen au prix reel suivant, volume du marche');
-    ok(c9.etat().ranking.find((c) => c.id === 'fair').real.checked === 1, 'chaque ligne du classement porte son controle');
-    const c10 = P.cree({ lire: async (u) => { if (u.includes('data-api')) throw new Error('503'); return lire9(u); }, hl, maintenant: () => T * 1000, alea: () => 0.3 });
+    ok(R.trades.marketsChecked === 1 && R.trades.betsChecked === 3 && R.trades.confirmedAtOurPrice === 1 && R.trades.noTradeWithin === 1 && R.medianVolumeUsd.BTC === 60 + 35 + 3 + 10
+       && R.medianVolumeUsd.XRP === null && /read again/.test(R.rule),
+       'la vue : 1 marche, 3 paris compares aux echanges, 1 confirme, 1 sans echange, le volume du marche par actif');
+    ok(c9.etat().ranking.find((c) => c.id === 'fair').real.tradeChecked === 1, 'chaque ligne du classement porte son controle');
+    const c10 = P.cree({ attente: async () => {}, lire: async (u) => { if (u.includes('data-api')) throw new Error('503'); return lire9(u); }, hl, maintenant: () => T * 1000, alea: () => 0.3 });
     c10.etat(); c10._etat().ouverts.push(pari('crowd', 'Up', 0.60));
     await c10.resous();
     ok(c10._etat().agents.crowd.resolus === 1 && !c10._etat().agents.crowd.ve, 'data-api en panne : le pari se regle quand meme, simplement non controle');
+  }
+
+  /* ---- 10. LE CARNET RELU APRES LE DELAI D UN VRAI ORDRE (30/09/2026) ----
+     « Personne d autre n a achete » ne dit pas « on n aurait pas ete servi » : on relit le carnet
+     2 s apres la decision, et chaque pari recoit le prix qu un vrai ordre aurait paye. */
+  console.log('\n-- 10. le carnet relu 2 s apres chaque decision --');
+  {
+    const W = DEBUT + 27000;
+    let phase = 'decision', attendu = [];
+    const livres10 = { decision: { U: [{ price: '0.55', size: '1000' }], D: [{ price: '0.47', size: '1000' }] },
+                       apres: { U: [{ price: '0.60', size: '1000' }], D: [{ price: '0.47', size: '3' }] } };
+    const lire10 = async (u) => {
+      const m = u.match(/book\?token_id=(\w+)/);
+      if (m) return { asks: livres10[phase][m[1]], bids: [{ price: '0.40', size: '1000' }] };
+      if (u.includes('btc-updown-15m-' + W)) return [{ markets: [Object.assign({}, marche, { closed: phase === 'fin', outcomePrices: phase === 'fin' ? '["1", "0"]' : '["0.5", "0.5"]' })] }];
+      if (/events\?slug=/.test(u)) return [];
+      return lire(u);
+    };
+    const c10 = P.cree({ lire: lire10, hl, maintenant: () => T * 1000, alea: () => 0.3, attente: async (ms) => { attendu.push(ms); phase = 'apres'; } });
+    T = W + 900 - 450;
+    await c10.tic();
+    const E10 = c10._etat(), coin = E10.ouverts.find((p) => p.agent === 'coin');
+    ok(attendu.length === 1 && attendu[0] === 2000, 'un tic qui a parie attend 2 s, une seule fois, puis relit le carnet');
+    ok(coin && coin.cote === 'Up' && pres(coin.prix, 0.55) && pres(coin.prix2, 0.60), 'Coin a pris Up a 0,55 ; 2 s plus tard, le vrai carnet vendait a 0,60 : c est ce qu un vrai ordre aurait paye');
+    phase = 'decision'; attendu = [];
+    await c10.tic();
+    ok(attendu.length === 0, 'un tic sans nouveau pari n attend pas');
+    /* Le carnet vide entre-temps : 3 parts a vendre, sous le minimum de 5 du marche. */
+    const W2 = W + 900; let ph2 = 'decision';
+    const lire11 = async (u) => { const m = u.match(/book\?token_id=(\w+)/);
+      if (m) return { asks: ph2 === 'decision' ? [{ price: '0.55', size: '1000' }] : [{ price: '0.55', size: '3' }], bids: [{ price: '0.40', size: '1000' }] };
+      if (u.includes('btc-updown-15m-' + W2)) return [{ markets: [Object.assign({}, marche, { closed: ph2 === 'fin', outcomePrices: ph2 === 'fin' ? '["1", "0"]' : '["0.5", "0.5"]' })] }];
+      if (/events\?slug=/.test(u)) return []; return lire(u); };
+    const c11 = P.cree({ lire: lire11, hl, maintenant: () => T * 1000, alea: () => 0.3, attente: async () => { ph2 = 'apres'; } });
+    T = W2 + 900 - 450; await c11.tic();
+    const coin11 = c11._etat().ouverts.find((p) => p.agent === 'coin');
+    ph2 = 'fin'; T = W2 + 900 + 60; await c11.resous();
+    ok(coin11.prix2 === 0 && c11._etat().agents.coin.laSans === 1 && c11.etat().reality.emptyBook >= 1, 'plus assez a vendre 2 s plus tard : le pari est compte « carnet vide », sans prix invente');
+    phase = 'fin'; T = W + 900 + 60;
+    await c10.resous();
+    const A = E10.agents.coin, Rv = c10.etat().reality;
+    const g2 = (coin.parts2) - coin.dep2 - coin.frais2;
+    ok(A.la === 1 && pres(A.laReel, g2, 1e-9) && A.laPapier > A.laReel, 'regle (Up gagne) : ' + A.laReel.toFixed(2) + ' $ au carnet relu contre ' + A.laPapier.toFixed(2) + ' $ sur le papier');
+    ok(Rv.orderDelaySeconds === 2 && Rv.repriced >= 1 && pres(Rv.avgPriceMoveAfterDelay, 0.05, 0.001) && /read again/.test(Rv.rule), 'la vue : delai de 2 s, paris reevalues, deplacement moyen du prix (+5 ¢)');
+    ok(c10.etat().ranking.find((c) => c.id === 'coin').real.repriced === 1, 'et par strategie');
   }
 
   fs.rmSync(dossier, { recursive: true, force: true });
