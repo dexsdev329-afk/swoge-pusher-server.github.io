@@ -139,6 +139,7 @@ lance ecopage "$SITE" node economie_page.test.js   # la carte $SWOGE ECONOMY et 
 lance predictpage "$SITE" node predict_page.test.js
 lance accueil  "$SITE" node accueil_refonte.test.js      # accueil en douze sections : tout ce qui vivait reste, colonie lue avec son effectif, aucune promesse inverifiable, 360 px
 lance vitrine  "$SITE" node wallet_vitrine.test.js      # portefeuille : six cartes a cote du telephone sans le couvrir, rien d invente (« -- »), la visite au defilement s arrete au premier geste
+lance fond     "$SITE" node fond_anime.test.js         # fond d ecran anime : sur les neuf pages du menu, il JOUE, derriere tout, dans son budget ; rien sous 700 px ni pour moins de mouvement
 # Elle criait dans le vide : 30 echecs sur 617, jamais lus, parce qu elle
 # n etait pas dans cette boucle — exactement la panne de miroir_reel.test.js.
 lance reference "$SITE" node referencement.test.js
