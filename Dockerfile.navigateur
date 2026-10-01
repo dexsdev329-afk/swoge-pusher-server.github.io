@@ -1,0 +1,11 @@
+# Le navigateur de SWOGE Agents : un service Railway A PART (voir navigateur_serveur.js).
+# Sur le service Railway : RAILWAY_DOCKERFILE_PATH=Dockerfile.navigateur (documentation Railway,
+# « Dockerfiles », relue le 30/09/2026), NAVIGATEUR_SECRET = le meme que sur le serveur du jeu.
+# Image officielle Playwright 1.56.1 (tag verifie sur mcr.microsoft.com le 30/09/2026) : Chromium et
+# ses dependances systeme y sont deja, sous /ms-playwright ; meme version que les essais.
+FROM mcr.microsoft.com/playwright:v1.56.1-noble
+WORKDIR /app
+RUN npm init -y >/dev/null && npm install --omit=dev --no-audit --no-fund playwright-core@1.56.1
+COPY navigue.js navigateur_serveur.js ./
+ENV NODE_ENV=production
+CMD ["node", "navigateur_serveur.js"]

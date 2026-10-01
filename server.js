@@ -1608,6 +1608,7 @@ const studioJeton = require('./studio_jeton');
 const studioHisto = require('./studio_histo').cree();
 const studioAgent = require('./studio_agent');
 const navigue = require('./navigue');   /* l'onglet Browse : lire une page publique, en securite */
+const navigateurRelais = require('./navigateur_relais').cree();   /* le Chromium du service a part (NAVIGATEUR_URL) */
 /* roast_token (roast.js, 28/09/2026) : la fiche de token_verdict, mise en mots par
    Claude Haiku (sinon un gabarit tire des memes faits) et dessinee en carte PNG. */
 const roastTokens = require('./roast').cree({
@@ -3614,6 +3615,23 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify(Object.assign({}, r, { actif: true, budget: P.budget(), liste: P.liste(20) })));
     }
     return res.end(JSON.stringify({ ok: true, actif: true, budget: P.budget(), liste: P.liste(20) }));
+  }
+  /* ==================== LE NAVIGATEUR DE SWOGE AGENTS (navigateur_relais.js, 30/09) ====================
+   * Le joueur navigue sur un Chromium d'un service a part ; ici, on lit SA session et on relaie.
+   * L'analyse d'une capture passe par /studio/chat (vision, historique, credit) : rien a facturer ici. */
+  if (path === '/navigateur/etat' || path === '/navigateur/geste' || path === '/navigateur/ferme') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (path === '/navigateur/etat') return json(200, { ok: true, actif: navigateurRelais.actif() });
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    let q;
+    try { q = JSON.parse((await corps(req, 8192)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    const r = path === '/navigateur/ferme' ? await navigateurRelais.ferme(addr) : await navigateurRelais.geste(addr, q || {});
+    return json(r.code, r.corps);
   }
   if (path === '/studio/agent' || path === '/studio/agent/catalogue') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
