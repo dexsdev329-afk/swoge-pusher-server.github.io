@@ -3623,7 +3623,7 @@ const server = http.createServer(async (req, res) => {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' };
     const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
-    if (path === '/navigateur/etat') return json(200, { ok: true, actif: navigateurRelais.actif() });
+    if (path === '/navigateur/etat') return json(200, Object.assign({ ok: true, actif: navigateurRelais.actif() }, await navigateurRelais.sante()));
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
     const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
     const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;

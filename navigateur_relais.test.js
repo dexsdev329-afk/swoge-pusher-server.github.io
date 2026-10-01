@@ -27,12 +27,22 @@ const A = '0x' + 'a'.repeat(40);
   const Rp = R.cree({ url: 'http://n', secret: 's', fetch: async () => { throw new Error('ECONNREFUSED'); }, maintenant: () => t });
   ok((await Rp.geste(A, { action: 'capture' })).code === 502, 'service injoignable : 502 lisible, pas d exception');
 
+  console.log('\n-- 2 bis. le diagnostic : un code, jamais l adresse --');
+  const enPanne = R.cree({ url: 'http://navigateur.railway.internal:8080', secret: 's', fetch: async () => { const e = new TypeError('fetch failed'); e.cause = { code: 'ENOTFOUND' }; throw e; }, maintenant: () => t });
+  const d = await enPanne.sante();
+  ok(d.joignable === false && d.code === 'ENOTFOUND' && !JSON.stringify(d).includes('railway.internal'), 'nom introuvable : ENOTFOUND, sans l adresse');
+  t += 300;
+  ok(/\(ENOTFOUND\)/.test((await enPanne.geste(A, { action: 'capture' })).corps.raison), 'le message du geste porte le code');
+  const enForme = R.cree({ url: 'http://n', secret: 's', fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, sessions: 1, max: 3 }) }), maintenant: () => t });
+  const d2 = await enForme.sante();
+  ok(d2.joignable && d2.pret && d2.max === 3 && (await vide.sante()).code === 'NOT_CONFIGURED', 'joignable et pret : dit ; pas configure : dit');
+
   console.log('\n-- 3. la route --');
   const srv = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   const i = srv.indexOf("if (path === '/navigateur/etat' ||"), bloc = srv.slice(i, i + 1800);
   ok(i > 0 && /sessionJoueur\.lire\(game\.sessionSecret, jeton\)/.test(bloc) && /navigateurRelais\.geste\(addr, q/.test(bloc) && !/q\.joueur|q\.addr/.test(bloc),
      'la route lit l adresse dans la session et la passe au relais ; jamais celle du corps');
-  ok(/'\/navigateur\/etat'\) return json\(200, \{ ok: true, actif: navigateurRelais\.actif\(\) \}\)/.test(bloc), '/navigateur/etat dit seulement si le navigateur est branche');
+  ok(/'\/navigateur\/etat'\) return json\(200, Object\.assign\(\{ ok: true, actif: navigateurRelais\.actif\(\) \}, await navigateurRelais\.sante\(\)\)\)/.test(bloc), '/navigateur/etat dit si le navigateur est branche, et s il repond');
   console.log('\nVERIFICATIONS : ' + n + (rates ? ' — ' + rates + ' RATE(S)' : ' — tout passe'));
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

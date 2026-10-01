@@ -49,13 +49,29 @@ function cree(deps) {
       const r = await appelle('/geste', corps);
       if (!r.j) { MESURE.erreurs++; return { code: 502, corps: { ok: false, raison: 'The browser did not answer.' } }; }
       return { code: r.code, corps: r.j };
-    } catch (e) { MESURE.erreurs++; return { code: 502, corps: { ok: false, raison: 'The browser is not reachable right now.' } }; }
+    } catch (e) { MESURE.erreurs++; return { code: 502, corps: { ok: false, raison: 'The browser is not reachable right now (' + codeDe(e) + ').' } }; }
   }
   async function ferme(addr) {
     if (!actif()) return { code: 200, corps: { ok: true } };
     try { await appelle('/ferme', { joueur: addr }); } catch (e) { /* il fermera seul apres son delai */ }
     return { code: 200, corps: { ok: true } };
   }
-  return { actif, geste, ferme, MESURE };
+  /* Le diagnostic (01/10) : au premier branchement en ligne, « The browser is not reachable » sans
+     autre detail. Ce qui coince se dit par un CODE (nom introuvable, connexion refusee, delai) —
+     jamais l'adresse ni le secret. Lu au plus toutes les 15 s. */
+  let diag = null, diagT = 0;
+  const codeDe = (e) => { const c = e && (e.cause && (e.cause.code || e.cause.name) || e.code || e.name); return String(c || 'ERROR').slice(0, 40); };
+  async function sante() {
+    if (!actif()) return { joignable: false, code: 'NOT_CONFIGURED' };
+    if (diag && maintenant() - diagT < 15000) return diag;
+    diagT = maintenant();
+    try {
+      const r = await lire(url() + '/sante', { signal: AbortSignal.timeout(5000) });
+      const j = await r.json().catch(() => null);
+      diag = r.ok && j ? { joignable: true, pret: !!j.ok, sessions: j.sessions, max: j.max } : { joignable: false, code: 'HTTP_' + r.status };
+    } catch (e) { diag = { joignable: false, code: codeDe(e) }; }
+    return diag;
+  }
+  return { actif, geste, ferme, sante, MESURE, _codeDe: codeDe };
 }
 module.exports = { cree, ACTIONS, GESTE_MIN_MS };
