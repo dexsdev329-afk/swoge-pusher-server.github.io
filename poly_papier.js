@@ -92,6 +92,13 @@ const BANQUE0 = 1000;          /* par agent, papier */
 /* Sous 100 paris resolus, aucun verdict : a 50 %, l'intervalle a 95 % fait encore ±10 points. */
 const RESOLUS_ASSEZ = 100;
 const CALIB_ASSEZ = 100;
+/* ---- LA CALIBRATION PAR HEURE (01/10/2026) ----
+ * Le total (558 fenetres le 01/10 : modele 0,1073, marche 0,1036) dit QUI est mieux calibre,
+ * pas QUAND. La page « Model vs market » demande des periodes (6 h, 24 h, 7 j) : chaque fenetre
+ * notee s'ajoute a la case de son heure de depart (n, Σ(modele − y)², Σ(marche − y)²) ; 168
+ * cases gardees, une semaine. L'historique commence au deploiement : les fenetres notees avant
+ * n'ont pas d'heure, la vue le dit (hourlySince). */
+const CALIB_HEURES = 168;
 /* ---- LE SCORE PAR FENETRE (30/09/2026) ----
  * Mesure du 30/09 (Hyperliquid, bougies de 15 min, 3 jours, 289 fenetres) : BTC, ETH, SOL et
  * XRP finissent dans le meme sens 72 % du temps ; correlation moyenne des issues 0,69. Deux
@@ -764,6 +771,11 @@ function cree(deps) {
         C.n++; C.brierModele += (c.modele - y) ** 2; C.brierMarche += (c.marche - y) ** 2;
         const s = String(Math.min(9, Math.floor(c.modele * 10))), S = C.seaux[s] || (C.seaux[s] = { n: 0, up: 0, modele: 0, marche: 0 });
         S.n++; S.up += y; S.modele += c.modele; S.marche += c.marche;
+        const h = String(Math.floor(c.debut / 3600) * 3600), H = (C.heures || (C.heures = {}))[h] || (C.heures[h] = { n: 0, bm: 0, bk: 0 });
+        H.n++; H.bm += (c.modele - y) ** 2; H.bk += (c.marche - y) ** 2;
+        if (!C.heuresDepuis) C.heuresDepuis = maintenant();
+        const ks = Object.keys(C.heures);
+        if (ks.length > CALIB_HEURES) ks.map(Number).sort((x, y2) => x - y2).slice(0, ks.length - CALIB_HEURES).forEach((k2) => delete C.heures[k2]);
       }
       E.calib.attente = E.calib.attente.filter((x) => x.actif + ':' + x.debut !== k || (!issue && !abandon));
       aEcrire = true;
@@ -839,7 +851,10 @@ function cree(deps) {
           open: ouvertsPar[ag.id] || 0, verdict: verdictAgent(a, essayees), type: ag.type }; }),
       calibration: { n: C.n, pending: C.attente.length, brierModel: C.n ? Math.round(C.brierModele / C.n * 10000) / 10000 : null, brierMarket: C.n ? Math.round(C.brierMarche / C.n * 10000) / 10000 : null,
         enough: C.n >= CALIB_ASSEZ, minN: CALIB_ASSEZ,
-        buckets: Object.keys(C.seaux).sort().map((k) => { const s = C.seaux[k]; return { range: (k / 10).toFixed(1) + '–' + ((Number(k) + 1) / 10).toFixed(1), n: s.n, upRate: s.up / s.n, model: s.modele / s.n, market: s.marche / s.n }; }) },
+        buckets: Object.keys(C.seaux).sort().map((k) => { const s = C.seaux[k]; return { range: (k / 10).toFixed(1) + '–' + ((Number(k) + 1) / 10).toFixed(1), n: s.n, upRate: s.up / s.n, model: s.modele / s.n, market: s.marche / s.n }; }),
+        /* Par heure de depart, la plus ancienne d'abord : sommes brutes, la page agrege sur la periode choisie. */
+        hourlySince: C.heuresDepuis ? new Date(C.heuresDepuis).toISOString() : null,
+        hourly: Object.keys(C.heures || {}).map(Number).sort((x, y) => x - y).map((k) => { const H = C.heures[k]; return { t: new Date(k * 1000).toISOString(), n: H.n, sqModel: Math.round(H.bm * 10000) / 10000, sqMarket: Math.round(H.bk * 10000) / 10000 }; }) },
       open: E.ouverts.slice(-40).reverse().map(vueP), recent: E.recents.slice(0, 60).map(vueP),
       health: { ticks: MESURE.tics, errors: MESURE.erreurs, lastError: MESURE.derniereErreur } };
   }

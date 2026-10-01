@@ -96,6 +96,11 @@ const mk = () => P.cree({ attente: async () => {}, dossier, lire, hl, maintenant
   ok(coin.bank > 1000 && /Too few resolved bets to judge \(1\/100\)/.test(coin.verdict), 'la banque bouge, mais aucun verdict sur 1 pari');
   ok(v.calibration.n === 1 && v.calibration.brierMarket === Math.round((0.54 - 1) ** 2 * 10000) / 10000 && v.calibration.enough === false,
      'la calibration : score de Brier du marche (0,2116) et du modele, et « pas assez » sous 100');
+  /* 01/10 : la page veut des periodes (6 h, 24 h, 7 j) ; le serveur garde les sommes par heure de depart. */
+  const hh = v.calibration.hourly || [];
+  ok(hh.length === 1 && hh[0].t === new Date(Math.floor(DEBUT / 3600) * 3600 * 1000).toISOString() && hh[0].n === 1
+     && pres(hh[0].sqMarket, (0.54 - 1) ** 2, 0.0001) && pres(hh[0].sqModel / hh[0].n, v.calibration.brierModel, 0.0001) && !!v.calibration.hourlySince,
+     'la calibration par heure : la fenetre notee tombe dans la case de son heure de depart, memes sommes que le total');
   ok(v.recent.length === Math.min(avant, 60) && /^https:\/\/polymarket\.com\/event\/btc-updown-15m-\d+$/.test(v.recent[0].url) && !JSON.stringify(v).includes('NaN'), 'la vue : les paris regles, le lien du marche, aucun NaN');
   /* 30/09 : « classe du plus gagnant au plus perdant ». */
   const trie = (l) => l.every((x, i) => i === 0 || l[i - 1].pnl >= x.pnl);
