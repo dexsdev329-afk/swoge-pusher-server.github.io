@@ -19,11 +19,16 @@ const J1 = '0x' + '1'.repeat(40), J2 = '0x' + '2'.repeat(40), J3 = '0x' + '3'.re
   if (!pw) { console.log('playwright absent : essai ignore'); return fin(); }
   let interne = 0;
   const secret = http.createServer((q, r) => { interne++; console.log('   [interne] ' + q.method + ' ' + q.url + ' via ' + (q.headers['proxy-connection'] ? 'proxy' : 'direct')); r.end('SECRET'); });
+  let videos = 0;
   const site = http.createServer((q, r) => {
     const html = (b) => { r.writeHead(200, { 'content-type': 'text/html' }); r.end('<!doctype html><html><head><title>' + q.url + '</title></head><body style="margin:0;height:3000px">' + b + '</body></html>'); };
     if (q.url === '/') return html('<a id="l" href="/deux" style="position:absolute;left:100px;top:100px;width:200px;height:50px;display:block;background:#09f">next</a>'
       + '<input id="i" style="position:absolute;left:100px;top:300px;width:300px;height:40px" oninput="document.title=this.value">');
     if (q.url === '/deux') return html('<h1>deux</h1>');
+    /* 01/10 : ce que la page voit de qui la visite (agent, webdriver), et un flux video. */
+    if (q.url === '/qui') return html('<script>document.title = navigator.userAgent + "|" + navigator.webdriver;</script>');
+    if (q.url === '/film') return html('<video src="/v.mp4" autoplay muted></video><audio src="/a.mp3" autoplay></audio>');
+    if (q.url === '/v.mp4' || q.url === '/a.mp3') { videos++; r.writeHead(200, { 'content-type': 'video/mp4' }); return r.end(Buffer.alloc(2000)); }
     if (q.url === '/cache') return html('<img src="http://127.0.0.2/secret.png"><script>fetch("http://127.0.0.2/fuite").catch(()=>{});var w=new WebSocket("ws://127.0.0.2/ws");</script>');
     if (q.url === '/redir') { r.writeHead(302, { location: 'http://127.0.0.2/secret' }); return r.end(); }
     if (q.url === '/popup') return html('<a id="p" href="/deux" target="_blank" style="position:absolute;left:0;top:0;width:300px;height:100px;display:block">open</a>');
@@ -61,6 +66,14 @@ const J1 = '0x' + '1'.repeat(40), J2 = '0x' + '2'.repeat(40), J3 = '0x' + '3'.re
   r = await appel('/geste', { joueur: J1, action: 'defile', dy: 800 });
   ok(r.ok && !!r.image, 'defiler rend la nouvelle vue');
   ok((await appel('/geste', { joueur: J1, action: 'clic', x: 5000, y: 10 })).note === 'click outside the page', 'un clic hors de la fenetre est refuse');
+
+  /* 01/10 : « plein de verifications pour voir si on est pas un bot ». */
+  r = await appel('/geste', { joueur: J1, action: 'goto', url: 'http://127.0.0.1/qui' });
+  const [ua, wd] = String(r.titre || '').split('|');
+  ok(/Chrome\/\d+\.0\.0\.0/.test(ua) && !/Headless/i.test(ua) && wd === 'false', 'le site visite voit un Chrome ordinaire : pas de « HeadlessChrome », webdriver faux [' + r.titre + ']');
+  await appel('/geste', { joueur: J1, action: 'goto', url: 'http://127.0.0.1/film' });
+  ok(videos === 0, 'les flux audio et video ne se chargent pas : une capture n en montre qu une image (' + videos + ' requete)');
+  ok(NS.MESURE.msMax > 0 && NS.MESURE.msTotal >= NS.MESURE.msMax, 'la duree de chaque geste est mesuree (max ' + NS.MESURE.msMax + ' ms)');
 
   console.log('\n-- 3. rien d interne, jamais --');
   const avant = interne;

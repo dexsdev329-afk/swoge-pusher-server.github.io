@@ -75,15 +75,31 @@ function creeMandataire() {
 /* ---- les sessions : un contexte par joueur ---- */
 let navigateur = null, mandatairePort = 0;
 const SESSIONS = new Map();   /* joueur → { ctx, page, dernier, ecran, file } */
-const MESURE = { gestes: 0, refus: 0, fermees: 0, erreurs: 0, derniereErreur: null };
+const MESURE = { gestes: 0, refus: 0, fermees: 0, erreurs: 0, derniereErreur: null, msTotal: 0, msMax: 0 };
+const AGENTS = { bureau: null, telephone: null };
 
 async function lance(pw) {
   const mand = creeMandataire();
   await new Promise((ok) => mand.listen(0, '127.0.0.1', ok));
   mandatairePort = mand.address().port;
-  navigateur = await pw.chromium.launch({ args: [
-    '--proxy-server=http://127.0.0.1:' + mandatairePort, '--proxy-bypass-list=<-loopback>',
-    '--disable-quic', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--disable-dev-shm-usage' ] });
+  /* ---- MOINS DE « ETES-VOUS UN ROBOT ? » (01/10/2026) ----
+   * Signale par le proprietaire : « plein de verifications pour voir si on est pas un bot ».
+   * Trois signaux que Chromium donnait lui-meme : l'executable « headless shell » (Playwright
+   * le choisit par defaut sans canal, lib/server/chromium/chromium.js getExecutableName), la
+   * marque « HeadlessChrome » dans l'agent utilisateur, et navigator.webdriver = true. Le canal
+   * « chromium » lance le Chromium complet en mode sans tete ; l'agent utilisateur dit la meme
+   * version, sans « Headless », et le meme systeme (Linux : il ne ment pas sur la plateforme) ;
+   * AutomationControlled n'est plus annonce. Ce qui reste et ne se corrige pas d'ici : l'adresse
+   * IP est celle d'un centre de donnees (Railway). Le joueur resout la case lui-meme, au doigt. */
+  const args = ['--proxy-server=http://127.0.0.1:' + mandatairePort, '--proxy-bypass-list=<-loopback>',
+    '--disable-quic', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--disable-dev-shm-usage',
+    '--disable-blink-features=AutomationControlled'];
+  const canal = process.env.NAVIGATEUR_CANAL === undefined ? 'chromium' : process.env.NAVIGATEUR_CANAL;
+  try { navigateur = await pw.chromium.launch(canal ? { channel: canal, args } : { args }); }
+  catch (e) { console.warn('[navigateur] canal « ' + canal + ' » indisponible, headless shell :', String(e.message || e).split('\n')[0]); navigateur = await pw.chromium.launch({ args }); }
+  const majeure = String(navigateur.version() || '').split('.')[0] || '141';
+  AGENTS.bureau = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + majeure + '.0.0.0 Safari/537.36';
+  AGENTS.telephone = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + majeure + '.0.0.0 Mobile Safari/537.36';
   navigateur.on('disconnected', () => { navigateur = null; SESSIONS.clear(); });
   return mand;
 }
@@ -108,9 +124,11 @@ async function session(joueur, ecran) {
   if (SESSIONS.size >= SESSIONS_MAX) { const err = new Error('the browser is busy: ' + SESSIONS_MAX + ' people are using it — try again in a few minutes'); err.code = 503; throw err; }
   if (!navigateur) { const err = new Error('the browser is restarting — try again in a moment'); err.code = 503; throw err; }
   const ctx = await navigateur.newContext({ viewport: ECRANS[e], isMobile: e === 'telephone', hasTouch: e === 'telephone', deviceScaleFactor: 1,
-    acceptDownloads: false, serviceWorkers: 'block', locale: 'en-US' });
-  /* Seuls http(s), data: et blob: se chargent ; le mandataire juge ensuite l'adresse. */
-  await ctx.route('**/*', (r) => (/^(https?|data|blob):/i.test(r.request().url()) ? r.continue() : r.abort()));
+    acceptDownloads: false, serviceWorkers: 'block', locale: 'en-US', userAgent: AGENTS[e] || undefined });
+  /* Seuls http(s), data: et blob: se chargent ; le mandataire juge ensuite l'adresse.
+     01/10 : les flux audio/video (« media ») ne se chargent plus — une capture n'en montre
+     qu'une image, et ils occupaient le tuyau pendant que la page attendait. */
+  await ctx.route('**/*', (r) => (/^(https?|data|blob):/i.test(r.request().url()) && r.request().resourceType() !== 'media' ? r.continue() : r.abort()));
   const page = await ctx.newPage();
   /* Une fenetre surgissante devient la page courante, apres la meme garde. */
   ctx.on('page', async (p) => { if (p === page) return; const u = p.url(); try { await p.close(); } catch (x) {} try { if (/^https?:/i.test(u)) await page.goto(navigue.urlSure(u).href, { timeout: GESTE_MS }); } catch (x) {} });
@@ -124,6 +142,7 @@ async function session(joueur, ecran) {
 async function geste(joueur, a) {
   const s = await session(joueur, a.ecran);
   const tour = s.file.then(async () => {
+    const t0 = Date.now();
     s.dernier = Date.now(); MESURE.gestes++;
     const p = s.page, fin = { timeout: GESTE_MS };
     let note = null;
@@ -133,7 +152,9 @@ async function geste(joueur, a) {
           let brut = String(a.url || '').trim();
           if (brut && !/^[a-z]+:\/\//i.test(brut)) brut = /\s/.test(brut) || !/\./.test(brut) ? 'https://duckduckgo.com/html/?q=' + encodeURIComponent(brut) : 'https://' + brut;
           await p.goto(navigue.urlSure(brut).href, Object.assign({ waitUntil: 'domcontentloaded' }, fin));
-          await p.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+          /* 01/10 : 2,5 s au plus apres le DOM, et non 5 : la page continue de charger, et le
+             client redemande une capture 1,5 s apres chaque geste (outils/browse_onglet.html). */
+          await p.waitForLoadState('load', { timeout: 2500 }).catch(() => {});
           break;
         }
         case 'clic': {
@@ -141,7 +162,7 @@ async function geste(joueur, a) {
           if (!(x >= 0 && y >= 0 && x <= V.width && y <= V.height)) throw new Error('click outside the page');
           await p.mouse.click(x, y);
           await p.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
-          await p.waitForTimeout(400);
+          await p.waitForTimeout(250);
           break;
         }
         case 'defile': await p.mouse.wheel(0, Math.max(-4000, Math.min(4000, Number(a.dy) || 600))); await p.waitForTimeout(300); break;
@@ -162,7 +183,12 @@ async function geste(joueur, a) {
       note = /ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY|403|not on the public internet|blocked/i.test(String(e && e.message)) ? 'This address cannot be opened (only public websites are allowed).'
         : /Timeout/i.test(String(e && e.message)) ? 'The page took too long to load; this is what it shows so far.' : String(e && e.message || e).split('\n')[0].slice(0, 160);
     }
-    const image = await p.screenshot({ type: 'jpeg', quality: 70, timeout: GESTE_MS }).catch(() => null);
+    /* Qualite 60 et non 70. Mesure du 01/10 (1280 × 800, trois pages du site) : 118 Ko contre
+       139, 76 contre 89, 74 contre 85 — 13 a 15 % de moins, le texte reste net. La taille n'etait
+       donc PAS la cause de la lenteur ; les attentes l'etaient (jusqu'a 5 s de « load » par
+       ouverture), d'ou les 2,5 s plus haut et la capture de suivi cote client. */
+    const image = await p.screenshot({ type: 'jpeg', quality: 60, timeout: GESTE_MS }).catch(() => null);
+    const ms = Date.now() - t0; MESURE.msTotal += ms; if (ms > MESURE.msMax) MESURE.msMax = ms;
     return { url: p.url(), titre: await p.title().catch(() => ''), image: image ? image.toString('base64') : null, ecran: ECRANS[s.ecran], note };
   });
   s.file = tour.catch(() => {});
