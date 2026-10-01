@@ -138,6 +138,7 @@ lance x402sol "$SITE" node x402_solana.test.js   # la transaction Solana de la p
 lance ecopage "$SITE" node economie_page.test.js   # la carte $SWOGE ECONOMY et le whitepaper suivent /economie.json
 lance predictpage "$SITE" node predict_page.test.js
 lance accueil  "$SITE" node accueil_refonte.test.js      # accueil en douze sections : tout ce qui vivait reste, colonie lue avec son effectif, aucune promesse inverifiable, 360 px
+lance vitrine  "$SITE" node wallet_vitrine.test.js      # portefeuille : six cartes a cote du telephone sans le couvrir, rien d invente (« -- »), la visite au defilement s arrete au premier geste
 # Elle criait dans le vide : 30 echecs sur 617, jamais lus, parce qu elle
 # n etait pas dans cette boucle — exactement la panne de miroir_reel.test.js.
 lance reference "$SITE" node referencement.test.js
