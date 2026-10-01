@@ -235,6 +235,11 @@ const mk = () => P.cree({ attente: async () => {}, dossier, lire, hl, maintenant
     ok(!enCourse(X.id) && E7.essayes[X.id] && E7.essayes[X.id].pnl === -3.5 && E7.essayes[X.id].resolved === 500 && /red after 500/.test(E7.essayes[X.id].reason),
        'en perte a 500 paris regles : retire, et inscrit au registre avec son bilan (−3,50 $)');
     ok(enCourse(Y.id) && E7.agents[Y.id].palier === 1000, 'en gain a 500 : il reste, et sera rejuge a 1 000');
+    /* 01/10 : « si on garde les gagnants, le P&L ne devrait-il pas remonter ? » — on mesure ce
+       que les gardees font APRES leur selection, contre Coin sur la meme periode. */
+    let sv = c7.etat().survivors;
+    ok(sv.kept === 1 && sv.resolved === 0 && sv.pnl === 0 && sv.enough === false && sv.strategies[0].id === Y.id && sv.strategies[0].pnlBefore === 2,
+       'gardee a 500 avec +2 $ : ce gain-la ne compte pas, le compteur part de zero');
     ok(enCourse(Z.id), 'a 499 paris, meme a −50 $ : pas encore juge (le hasard domine sous 500)');
     ok(!enCourse(H.id) && E7.horsJeu.includes(H.id) && E7.essayes[H.id], 'une variation ecrite a la main suit la meme regle : retiree, gardee au registre');
     ok(enCourse('coin'), 'le temoin Coin n est jamais retire, meme a −100 $ sur 5 000 paris');
@@ -247,10 +252,16 @@ const mk = () => P.cree({ attente: async () => {}, dossier, lire, hl, maintenant
     c7._tournoi();
     ok(!E7.agents[X.id] && E7.essayes[X.id].final === true && E7.essayes[X.id].resolved === 501 && E7.essayes[X.id].pnl === -4, 'regle : bilan definitif au registre (501 paris, −4 $), compte libere');
 
-    pose(Y.id, 999, -1); c7._tournoi();
+    pose(Y.id, 999, -1); pose('coin', 5499, -150); c7._tournoi();
     ok(enCourse(Y.id), 'a 999 paris, passe en perte : pas encore rejuge');
+    sv = c7.etat().survivors;
+    ok(sv.resolved === 499 && sv.pnl === -3 && sv.coin.resolved === 499 && sv.coin.pnl === -50 && sv.enough === false,
+       'apres la selection : 499 paris, −3 $ ; Coin sur la meme periode : 499 paris, −50 $ ; pas de verdict sous 500');
     pose(Y.id, 1000, -1); c7._tournoi();
     ok(!enCourse(Y.id) && E7.essayes[Y.id].resolved === 1000, 'a 1 000, en perte : retire a son tour');
+    sv = c7.etat().survivors;
+    ok(sv.kept === 1 && sv.retiredAfterKept === 1 && sv.stillRunning === 0 && sv.resolved === 500 && sv.pnl === -3 && sv.enough === true,
+       'une gardee retiree plus tard GARDE sa part dans le total (500 paris, −3 $) : l oublier rejouerait le biais du survivant');
 
     v7 = c7.etat();
     ok(v7.tournament.retired === 3 && v7.tournament.recentlyRetired.some((r) => r.id === X.id && r.pnl === -4) && /never tried/.test(v7.tournament.rule),

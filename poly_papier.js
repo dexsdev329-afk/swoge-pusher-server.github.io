@@ -504,11 +504,26 @@ function cree(deps) {
       const palier = A.palier || SEUIL_TOURNOI;
       if (A.resolus < palier) continue;
       if (A.pnl < 0) retire(ag, 'still in the red after ' + A.resolus + ' settled bets');
-      else { A.palier = palier + SEUIL_TOURNOI; aEcrire = true; }
+      else {
+        A.palier = palier + SEUIL_TOURNOI; aEcrire = true;
+        /* ---- APRES LA SELECTION (01/10/2026) ----
+         * Question du proprietaire : « si on garde les gagnants et supprime les perdants, le
+         * P&L ne devrait-il pas remonter ? » Le P&L d'une gagnante AVANT son jugement est ce
+         * qui l'a fait garder : il ne prouve rien. Ce qui compte, c'est ce qu'elle fait APRES.
+         * Instantane au PREMIER jugement passe (P&L, paris, gagnes, score par fenetre), et
+         * Coin au meme instant, pour comparer sur la meme periode. Une gardee retiree plus
+         * tard garde sa part dans le total (E.gardeRetires) : l'oublier rejouerait le biais. */
+        if (!A.garde) A.garde = { t: maintenant(), pnl: A.pnl, resolus: A.resolus, gagnes: A.gagnes || 0, fs: A.fs || 0, fs2: A.fs2 || 0, nf: A.nf || 0 };
+        if (!E.gardeDepuis) { E.gardeDepuis = maintenant(); const C = E.agents.coin; E.coinGarde = C ? { pnl: C.pnl, resolus: C.resolus } : null; }
+      }
     }
     for (const id of E.retraites.slice()) {
       if (E.ouverts.some((p) => p.agent === id)) continue;
       const A = E.agents[id], r = E.essayes[id];
+      if (A && A.garde) {
+        const G = E.gardeRetires || (E.gardeRetires = { n: 0, pnl: 0, resolus: 0, gagnes: 0 });
+        G.n++; G.pnl += A.pnl - A.garde.pnl; G.resolus += A.resolus - A.garde.resolus; G.gagnes += (A.gagnes || 0) - A.garde.gagnes;
+      }
       if (A && r) Object.assign(r, { bets: A.paris, resolved: A.resolus, won: A.gagnes, pnl: Math.round(A.pnl * 100) / 100, fees: Math.round(A.frais * 100) / 100,
         windows: A.nf || 0, skillPerWindow: rz(A), final: true });
       delete E.agents[id]; E.retraites = E.retraites.filter((x) => x !== id); aEcrire = true;
@@ -821,6 +836,21 @@ function cree(deps) {
       windows: r.windows || 0, skillPerWindow: r.skillPerWindow == null ? null : r.skillPerWindow, retiredAt: r.retiredAt, reason: r.reason, final: r.final }))
       .sort((x, y) => Date.parse(y.retiredAt) - Date.parse(x.retiredAt));
     const essayesParam = new Set(Object.keys(E.essayes).filter((id) => id.startsWith('p_')).concat(E.params.map(idParam)));
+    /* Les gardees, APRES leur selection (voir tournoi()). */
+    const apres = AG.filter((ag) => E.agents[ag.id] && E.agents[ag.id].garde).map((ag) => {
+      const a = E.agents[ag.id], g = a.garde, nf = (a.nf || 0) - g.nf, fs = (a.fs || 0) - g.fs, fs2 = (a.fs2 || 0) - g.fs2;
+      return { id: ag.id, name: ag.nom, keptAt: new Date(g.t).toISOString(), resolved: a.resolus - g.resolus, won: (a.gagnes || 0) - g.gagnes,
+        pnl: r2(a.pnl - g.pnl), windows: nf, skillPerWindow: nf && fs2 > 0 ? Math.round(fs / Math.sqrt(fs2) * 100) / 100 : null, pnlBefore: r2(g.pnl) };
+    }).sort((x, y) => y.resolved - x.resolved);
+    const GR = E.gardeRetires || { n: 0, pnl: 0, resolus: 0, gagnes: 0 };
+    const aRes = apres.reduce((t, x) => t + x.resolved, 0) + GR.resolus, aPnl = apres.reduce((t, x) => t + x.pnl, 0) + GR.pnl;
+    const CG = E.coinGarde, C0 = E.agents.coin;
+    const coinApres = CG && C0 ? { resolved: C0.resolus - CG.resolus, pnl: r2(C0.pnl - CG.pnl) } : null;
+    const survivors = { since: E.gardeDepuis ? new Date(E.gardeDepuis).toISOString() : null, kept: apres.length + GR.n, stillRunning: apres.length, retiredAfterKept: GR.n,
+      resolved: aRes, pnl: r2(aPnl), pnlPerBet: aRes ? Math.round(aPnl / aRes * 1000) / 1000 : null, coin: coinApres,
+      coinPerBet: coinApres && coinApres.resolved ? Math.round(coinApres.pnl / coinApres.resolved * 1000) / 1000 : null,
+      minResolved: SEUIL_TOURNOI, enough: aRes >= SEUIL_TOURNOI, strategies: apres.slice(0, 20),
+      rule: 'Only bets settled AFTER a strategy passed its first check count here; what it made before is what got it kept, and proves nothing. A kept strategy retired later still counts. Coin, over the same period, shows what luck and fees give. No verdict under ' + SEUIL_TOURNOI + ' settled bets after selection.' };
     const tournament = { threshold: SEUIL_TOURNOI, slots: SLOTS_STRATEGIES, controls: AG.filter((a) => estTemoin(a.id)).length,
       running: AG.length, retired: retires.length, parametricTried: essayesParam.size, parametricUntried: PARAM.distincts - essayesParam.size,
       rule: 'A strategy still in the red after ' + SEUIL_TOURNOI + ' settled bets is retired and replaced by a parameter set never tried before; one in profit is judged again ' + SEUIL_TOURNOI + ' bets later. The 5 original agents are controls and are never retired. Surviving a check is not proof of an edge: with fees and the spread, roughly 1 strategy in 8 with no edge still passes 500 bets by luck — the skill score is what counts.',
@@ -841,7 +871,7 @@ function cree(deps) {
         ' windows counted since ' + new Date(E.fenetresDepuis).toISOString().slice(0, 10) + ', and only called an edge above the bar set by the number of strategies tested (' + essayees + ' so far: ' + b.toFixed(2) + '), and in profit after fees.' };
 
     return { ok: true, depuis: new Date(E.depuis).toISOString(), stakeUsd: MISE_USD, bankUsd: BANQUE0, minResolved: RESOLUS_ASSEZ,
-      totalStrategies: AG.length, displayedStrategies: aAfficher.length, ranking: classement, summary: resume, tournament, evidence, reality,
+      totalStrategies: AG.length, displayedStrategies: aAfficher.length, ranking: classement, summary: resume, tournament, survivors, evidence, reality,
       parametric: { running: E.params.length, distinct: PARAM.distincts, combinations: PARAM.combinaisons,
         note: 'Kelly sizing, profit targets and stop-losses are not simulated: every agent stakes the same amount and holds to resolution.' },
       agents: aAfficher.map((ag) => { const a = E.agents[ag.id], w = wilson(a.gagnes, a.resolus), z = a.v > 0 ? (a.sy - a.sp) / Math.sqrt(a.v) : null;
