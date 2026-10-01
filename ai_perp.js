@@ -556,7 +556,8 @@ const AGENTS = [
   { key: 'journee', nom: 'Session', emoji: '🕐', role: 'specialiste', traits: ['jour'],
     quoi: 'what the last twenty-four hours already did' },
   { key: 'banquier', nom: 'Banker', emoji: '🏦', role: 'banque', traits: ['marche'],
-    quoi: 'sizes the paper position against the book' },
+    /* 01/10 : « against the book » ne decrivait pas le code — ouvre() mise 10 % de la tresorerie, rien d autre. */
+    quoi: 'stakes a fixed 10% of the paper treasury per position' },
   { key: 'closer', nom: 'Closer', emoji: '🚪', role: 'execution', traits: [],
     quoi: 'the stop, the target, and the clock' },
 ];
