@@ -110,8 +110,9 @@ const ok = (c, m) => { n++; if (!c) rates++; console.log((c ? '  ok   ' : '  RAT
   ok(route.length > 1000 && /const credAdmin = path === '\/credit' && !!\(req\.headers\['x-admin-key'\] \|\| \/\[\?&\]\(\?:joueur\|key\)=\/\.test\(req\.url\)\)/.test(srv),
      '/credit : une requete qui porte la cle admin ou les parametres du robinet va a la porte admin');
   ok(/o === 'credit' \? credits\(\)\.prixUsd\(a\)/.test(srv), 'le prix x402 de la recharge vient du module');
-  ok((srv.match(/const pay = payeurDe\(addr, q\.payeur/g) || []).length === 2 && (srv.match(/if \(pay\.credit\) r = enCredit\(r, addr\);/g) || []).length === 3,
-     'l\'agent, le chat et les images : le payeur choisi, et la reponse en dollars quand c\'est le credit');
+  /* 02/10 : le pilote du navigateur (/navigateur/pilote) est une route payante de plus : meme payeur, meme reponse en dollars. */
+  ok((srv.match(/const pay = payeurDe\(addr, q\.payeur/g) || []).length === 3 && (srv.match(/if \(pay\.credit\) r = enCredit\(r, addr\);/g) || []).length === 4,
+     'l\'agent, le chat, le pilote et les images : le payeur choisi, et la reponse en dollars quand c\'est le credit');
   ok(/const pay = path === '\/studio\/media\/image' \? payeurDe\(addr, q\.payeur, 'image'\) : \{ credit: false \};/.test(srv), 'une video reste en $SWOGE (ses reserves survivent a un redemarrage)');
   ok(/embauche\(\)\.pour\(addr, pay\.factu\(\)\)/.test(srv) && /achats\(\)\.pour\(addr, pay\.factu\('buy this eSIM'\)\)/.test(srv), 'les embauches de l\'agent paient comme l\'agent');
   const ec = srv.slice(srv.indexOf('function enCredit'), srv.indexOf('let AUTO_INSCRIPTION'));

@@ -324,8 +324,12 @@ function catalogue(cours, cle) {
 async function repond(q, deps) {
   const addr = q && q.addr;
   if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
-  const m = modele(q.modele || DEFAUT);
-  if (!m) return { ok: false, code: 400, raison: 'unknown model' };
+  const m0 = modele(q.modele || DEFAUT);
+  if (!m0) return { ok: false, code: 400, raison: 'unknown model' };
+  /* `sortieMax` (le pilote du navigateur, 02/10) : une sortie plus courte que celle du modele.
+     Le pire cas, donc la reserve, baisse d'autant ; les prix ne changent pas. Interne : la
+     route du chat ne le transmet pas. */
+  const m = q.sortieMax > 0 && q.sortieMax < m0.maxTokens ? Object.assign({}, m0, { maxTokens: Math.floor(q.sortieMax) }) : m0;
   if (deps.actif && !deps.actif(m.fournisseur)) return { ok: false, code: 503, raison: m.nom + ' is not switched on yet — pick another model.' };
   /* Les pieces jointes, verifiees AVANT tout : forme, taille, dimensions. */
   const vp = Pieces.verifie(q.messages);
@@ -340,7 +344,9 @@ async function repond(q, deps) {
   const cle = cleArret(addr, q.rid || ('x' + Math.random()));
   if (q.rid && ARRETES_AVANT.has(cle)) { ARRETES_AVANT.delete(cle); return { ok: false, code: 409, arrete: true, raison: 'stopped before it started — nothing was charged' }; }
   if (EN_VOL.has(addr)) return { ok: false, code: 429, raison: 'too many answers at once — wait for one to finish' };
-  if (!rythmeOk(addr, q.maintenant)) return { ok: false, code: 429, raison: 'too many questions — wait a minute' };
+  /* `horsRythme` : le pilote a sa propre cadence et ses bornes (navigateur_pilote.js) — huit
+     questions par minute arreteraient un jeu au milieu d'une main. Interne, comme sortieMax. */
+  if (!q.horsRythme && !rythmeOk(addr, q.maintenant)) return { ok: false, code: 429, raison: 'too many questions — wait a minute' };
 
   const ctl = new AbortController();
   ARRETS.set(cle, ctl);

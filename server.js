@@ -1609,6 +1609,9 @@ const studioHisto = require('./studio_histo').cree();
 const studioAgent = require('./studio_agent');
 const navigue = require('./navigue');   /* l'onglet Browse : lire une page publique, en securite */
 const navigateurRelais = require('./navigateur_relais').cree();   /* le Chromium du service a part (NAVIGATEUR_URL) */
+const Pilote = require('./navigateur_pilote');
+/* Le pilote (02/10) : il ne parle au navigateur que par le relais, au nom de la session. */
+const pilote = Pilote.cree({ image: (addr, q) => navigateurRelais.image(addr, q), geste: (addr, q) => navigateurRelais.geste(addr, q) });
 /* roast_token (roast.js, 28/09/2026) : la fiche de token_verdict, mise en mots par
    Claude Haiku (sinon un gabarit tire des memes faits) et dessinee en carte PNG. */
 const roastTokens = require('./roast').cree({
@@ -3623,7 +3626,7 @@ const server = http.createServer(async (req, res) => {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' };
     const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
-    if (path === '/navigateur/etat') return json(200, Object.assign({ ok: true, actif: navigateurRelais.actif() }, await navigateurRelais.sante()));
+    if (path === '/navigateur/etat') return json(200, Object.assign({ ok: true, actif: navigateurRelais.actif() }, await navigateurRelais.sante(), { pilote: pilote.mesure() }));
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
     const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
     const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
@@ -3635,6 +3638,53 @@ const server = http.createServer(async (req, res) => {
             : path === '/navigateur/image' ? await navigateurRelais.image(addr, q || {})
             : await navigateurRelais.geste(addr, q || {});
     return json(r.code, r.corps);
+  }
+  /* ==================== LE PILOTE DU NAVIGATEUR (navigateur_pilote.js, 02/10) ====================
+   * Le joueur ecrit un but ; le modele qu'il choisit (Claude, ChatGPT ou Grok) voit l'ecran de SA
+   * session et joue une action par etape. Chaque appel est facture comme une question du chat
+   * (reserve, reel, reste rendu) ; le budget, les etapes et la duree sont bornes ICI. */
+  if (path === '/navigateur/pilote' || path === '/navigateur/pilote/stop') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    let q;
+    try { q = JSON.parse((await corps(req, 8192)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    if (path === '/navigateur/pilote/stop') return json(200, { ok: true, arrete: pilote.arrete(addr) });
+    if (!navigateurRelais.actif()) return json(503, { ok: false, raison: 'The browser is not connected yet.' });
+    const m = studioChat.modele(String(q.modele || ''));
+    if (!m) return json(400, { ok: false, raison: 'pick a model for the autopilot' });
+    if (!chatActif(m.fournisseur)) return json(503, { ok: false, raison: m.nom + ' is not switched on yet — pick another model.' });
+    const v = pilote.verifie(addr, q);
+    if (!v.ok) return json(v.code, v);
+    const pay = payeurDe(addr, q.payeur, 'pilot:' + m.id);
+    const mc = Object.assign({}, m, { maxTokens: Math.min(m.maxTokens, Pilote.SORTIE_JETONS) });
+    const avecSysteme = (p) => Object.assign({}, p, { systeme: Pilote.SYSTEME });
+    res.writeHead(200, Object.assign({ 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no' }, cors));
+    const envoie = (type, d) => { try { res.write('event: ' + type + '\ndata: ' + JSON.stringify(d) + '\n\n'); } catch (e) { /* client parti */ } };
+    /* La page fermee, le pilote s'arrete : il ne joue jamais sans personne devant l'ecran. */
+    res.on('close', () => pilote.arrete(addr));
+    let r;
+    try {
+      r = await pilote.lance(addr, q, {
+        emet: envoie,
+        pireCasUsd: (msgs) => studioChat.factureUsd(studioChat.pireCasUsd(mc, msgs, false)),
+        appelle: (messages) => studioChat.repond({ addr, modele: m.id, messages, recherche: false, effort: m.effort ? 'low' : undefined,
+          sortieMax: Pilote.SORTIE_JETONS, horsRythme: true, canal: 'pilot' }, {
+          cours: pay.cours, solde: pay.solde, actif: chatActif,
+          fournisseur: (p) => (p.m.fournisseur === 'anthropic' ? studioClaude.repond(avecSysteme(p)) : studioCompat.repond(avecSysteme(p))),
+        }),
+      });
+    } catch (e) {
+      console.error('[pilote] ' + (e && e.stack || e));
+      r = { ok: false, raison: 'error', detail: 'server error' };
+    }
+    if (pay.credit) r = enCredit(r, addr);
+    envoie(r.ok ? 'fin' : 'erreur', Object.assign({ modele: m.id }, r));
+    return res.end();
   }
   if (path === '/studio/agent' || path === '/studio/agent/catalogue') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',

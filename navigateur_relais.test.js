@@ -63,7 +63,8 @@ const A = '0x' + 'a'.repeat(40);
   ok(i > 0 && /sessionJoueur\.lire\(game\.sessionSecret, jeton\)/.test(bloc) && /navigateurRelais\.geste\(addr, q/.test(bloc) && !/q\.joueur|q\.addr/.test(bloc),
      'la route lit l adresse dans la session et la passe au relais ; jamais celle du corps');
   ok(/'\/navigateur\/image'/.test(bloc) && /navigateurRelais\.image\(addr, q/.test(bloc), '/navigateur/image passe par la meme session, la meme adresse');
-  ok(/'\/navigateur\/etat'\) return json\(200, Object\.assign\(\{ ok: true, actif: navigateurRelais\.actif\(\) \}, await navigateurRelais\.sante\(\)\)\)/.test(bloc), '/navigateur/etat dit si le navigateur est branche, et s il repond');
+  /* 02/10 : la mesure du pilote s'y ajoute (navigateur_pilote.js) — des compteurs, sans adresse. */
+  ok(/'\/navigateur\/etat'\) return json\(200, Object\.assign\(\{ ok: true, actif: navigateurRelais\.actif\(\) \}, await navigateurRelais\.sante\(\)(, \{ pilote: pilote\.mesure\(\) \})?\)\)/.test(bloc), '/navigateur/etat dit si le navigateur est branche, et s il repond');
   console.log('\nVERIFICATIONS : ' + n + (rates ? ' — ' + rates + ' RATE(S)' : ' — tout passe'));
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
