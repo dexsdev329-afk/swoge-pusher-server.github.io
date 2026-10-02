@@ -5365,11 +5365,61 @@ function rejoueLOmbre(o) {
   /* `o.refus` porte la raison qui l'a ecarte, et vaut null quand rien ne l'a
      ecarte : c'est exactement la separation qui compte. */
   const retenu = !o.refus;
+  const paire = {};
   for (const v of VARIANTES) {
     const r2 = rejoue(o.jalons, v.E || undefined);
-    if (r2 !== null) noteVariante(v.cle, r2, retenu);
+    if (r2 !== null) { noteVariante(v.cle, r2, retenu); paire[v.cle] = r2; }
   }
+  if (retenu) noteBancSerie(paire);
   o.rejouee = true;
+}
+
+/* ==========================================================================
+ * LE BANC DEVIENT JUGEABLE (02/10/2026)
+ *
+ * Releve du 2 octobre : sur les 195 jetons qu'on aurait achetes, « laisser
+ * courir » rend +13,1 % en moyenne contre -4,9 % aux regles en vigueur. Mais
+ * le banc ne gardait que des sommes — ni ecart-type, ni ordre dans le temps :
+ * ce chiffre n'avait pas de t, et il ne pouvait rien decider. Il rend aussi
+ * +4,2 % sur les 70 187 ecartes, ce qui ressemble plus a un biais du rejeu
+ * (des jalons espaces, qui ne voient pas ce qui se passe entre deux) qu'a un
+ * avantage.
+ *
+ * On garde donc, pour chaque ombre qu'on AURAIT achetee, les quatre rendements
+ * cote a cote, dans l'ordre du temps. Deux lectures en sortent :
+ *   - le NET de chaque jeu : rendement moins l'aller-retour moyen mesure sur le
+ *     carnet (`carnetNet().cout`) — une sortie qui gagne brut et perd net ne
+ *     sert a rien ;
+ *   - l'ecart APPARIE avec « en vigueur », sur les MEMES jetons : c'est la seule
+ *     question qu'un changement de sortie pose, et l'appariement retire tout ce
+ *     qui tient au jeton lui-meme.
+ * Un jeu n'est « meilleur » qu'au-dessus de la barre de Bonferroni pour trois
+ * comparaisons, avec les deux moities positives et au moins NET_CASE_MIN
+ * jetons. Rien n'est applique : le banc compte, il ne trade pas. */
+const BANC_SERIE_MAX = 3000;
+function noteBancSerie(paire) {
+  if (!paire || paire['en vigueur'] === undefined) return;
+  if (!Array.isArray(E.bancSerie)) { E.bancSerie = []; E.bancSerieDepuis = Date.now(); }
+  E.bancSerie.push({ t: Date.now(), r: paire });
+  if (E.bancSerie.length > BANC_SERIE_MAX) E.bancSerie.splice(0, E.bancSerie.length - BANC_SERIE_MAX);
+}
+function bancMesure() {
+  const S = Array.isArray(E.bancSerie) ? E.bancSerie : [];
+  const cout = (carnetNet() || {}).cout;
+  const barre = Math.round(barreNet(VARIANTES.length - 1) * 100) / 100;
+  const jeux = VARIANTES.map((v) => {
+    const l = S.filter((x) => typeof x.r[v.cle] === 'number');
+    const brut = serieNet(l.map((x) => x.r[v.cle]));
+    const net = typeof cout === 'number' ? serieNet(l.map((x) => x.r[v.cle] - cout)) : null;
+    const ecart = v.cle === 'en vigueur' ? null
+      : serieNet(l.filter((x) => typeof x.r['en vigueur'] === 'number').map((x) => x.r[v.cle] - x.r['en vigueur']));
+    const meilleur = !!(ecart && ecart.n >= NET_CASE_MIN && ecart.t != null && ecart.t >= barre
+                        && ecart.moitie1 > 0 && ecart.moitie2 > 0);
+    return { cle: v.cle, n: l.length, brut: brut.n ? brut.net : null, net: net && net.n ? net : null,
+             ecart: ecart && ecart.n ? ecart : null, meilleur };
+  });
+  return { depuis: E.bancSerieDepuis || null, n: S.length, cout: typeof cout === 'number' ? cout : null,
+           min: NET_CASE_MIN, barre, jeux };
 }
 
 /* L'audit des vetos : par raison de refus, ce que les jetons ecartes ont fait.
@@ -10445,6 +10495,8 @@ function vue() {
        auraient rendu. C'est ce qui remplace seize trades mesures a la main par
        des centaines. */
     bancs: bancsDEssai(),
+    /* ---- LE BANC, APPARIE ET NET ---- voir `bancMesure` */
+    bancMesure: bancMesure(),
     /* ---- LES PONTS DU MIROIR ----
        La liste des monnaies qu'il sait franchir, et ce qu'il a mesure de
        chacune : c'est ce qui dit, a l'ecran, pourquoi une paire cotee en USDG
@@ -10674,7 +10726,7 @@ module.exports = {
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
   seuilsAudit, refMontes, REF_PROTEGE, auditDe, SANS_ACHAT_DESSERRE, recadreLesBornes, buteesDuCode, BUTEES_AVANT,
   deriveDuPrix, noteDerive, DERIVE_MAX,
-  noteCarnet, rythmeSilence, RYTHME_JOURS, RYTHME_ASSEZ, carnetBilan, carnetNet, barreNet, NET_CASE_MIN, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, CARNET_LIQ, CARNET_MC, ALLER_RETOUR_MAX, coutAllerRetour,
+  noteCarnet, bancMesure, noteBancSerie, BANC_SERIE_MAX, rythmeSilence, RYTHME_JOURS, RYTHME_ASSEZ, carnetBilan, carnetNet, barreNet, NET_CASE_MIN, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, CARNET_LIQ, CARNET_MC, ALLER_RETOUR_MAX, coutAllerRetour,
   TENUES, TENUE_EXPLORE, tenueAExplorer, cestUnTourDExploration,
   verdictsDesSorties, noteVerdictSortie,
   executionReelle, coutReel, entreeReelle, ecartEntree, ENTREE_RATIO_MIN, ENTREE_RATIO_MAX,

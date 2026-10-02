@@ -4065,6 +4065,7 @@ async function rejeuDeLaStrategie() {
        l audit dit que ce sont deux populations sans rapport : 4 % de ce qui est
        ecarte monte, contre 36 % de ce qui est achete. */
     F3.variantes = {};
+    F3.bancSerie = [];   /* la serie appariee repart avec le lot : RUN et CHUTE, plus haut, n avaient pas de refus */
     const cours = { 5: 20, 15: 60, 30: 200, 60: 400, 120: 330 };
     const meurt2 = { 5: -5, 15: -18, 30: -25, 60: -60, 120: -80 };
     F3.ombres = [
@@ -4105,6 +4106,40 @@ async function rejeuDeLaStrategie() {
        'tous les jeux rejouent exactement les memes ombres, dans les memes deux colonnes');
     ok(h3.retenus.moyenne !== v3.retenus.moyenne,
        'et ils s y separent : ' + h3.retenus.moyenne + ' % contre ' + v3.retenus.moyenne + ' % sur ce qu on aurait achete');
+
+    /* ---- LE BANC DEVIENT JUGEABLE (02/10/2026) ----
+       Releve du 2 octobre : « laisser courir » +13,1 % contre -4,9 % en vigueur sur
+       195 jetons achetes — mais sans ecart-type ni ordre dans le temps, ce chiffre
+       n avait pas de t. Le banc garde maintenant, pour chaque ombre ACHETEE, les
+       quatre rendements cote a cote : net de l aller-retour mesure, et ecart
+       APPARIE avec les regles en vigueur, sur les memes jetons. */
+    const m3 = C.bancMesure();
+    console.log('   ' + JSON.stringify({ n: m3.n, cout: m3.cout, barre: m3.barre, jeux: m3.jeux.map((j) => [j.cle, j.n, j.brut, j.ecart && j.ecart.net]) }));
+    ok(m3.n === 2, 'seules les deux ombres ACHETEES entrent dans la serie appariee (' + m3.n + '), pas les trois ecartees');
+    const lc3 = m3.jeux.find((j) => j.cle === 'laisser courir'), vg3 = m3.jeux.find((j) => j.cle === 'en vigueur');
+    ok(lc3.n === 2 && lc3.ecart && Math.abs(lc3.ecart.net - Math.round((lc3.brut - vg3.brut) * 10) / 10) <= 0.11,
+       'l ecart est apparie : la moyenne des differences vaut la difference des moyennes (' + (lc3.ecart && lc3.ecart.net) + ')');
+    ok(vg3.ecart === null, 'en vigueur ne se compare pas a lui-meme');
+    ok(m3.jeux.every((j) => !j.meilleur), 'deux jetons ne designent aucun meilleur jeu : il en faut ' + m3.min);
+    ok(m3.barre > 2.1 && m3.barre < 2.4, 'la barre est celle de trois comparaisons (Bonferroni, 5 % unilateral) : ' + m3.barre);
+    /* Un jeu reellement meilleur, regulierement, sur 60 jetons : il est designe. */
+    const F4 = C._etat();
+    const sauveSerie = F4.bancSerie;
+    const fab = (k, d) => ({ t: k, r: { 'en vigueur': -5 + (k % 7), 'paliers hauts': -5 + (k % 7) + (k % 3) - 1,
+                                         'laisser courir': -5 + (k % 7) + d + (k % 5) - 2, 'scalp + moon bag': -5 + (k % 7) } });
+    F4.bancSerie = Array.from({ length: 60 }, (_, k) => fab(k, 6));
+    const m4 = C.bancMesure();
+    const lc4 = m4.jeux.find((j) => j.cle === 'laisser courir');
+    ok(lc4.meilleur && lc4.ecart.net === 6 && lc4.ecart.moitie1 > 0 && lc4.ecart.moitie2 > 0,
+       'un jeu qui bat les regles en vigueur de 6 points sur 60 jetons, dans les deux moities, est designe (t = ' + lc4.ecart.t + ')');
+    ok(!m4.jeux.find((j) => j.cle === 'scalp + moon bag').meilleur, 'un jeu identique aux regles en vigueur ne l est pas');
+    /* Le meme gain, mais tout dans la premiere moitie : ce n est pas une regle,
+       c est une semaine. */
+    F4.bancSerie = Array.from({ length: 60 }, (_, k) => fab(k, k < 30 ? 14 : -2));
+    const lc5 = C.bancMesure().jeux.find((j) => j.cle === 'laisser courir');
+    ok(!lc5.meilleur && lc5.ecart.moitie2 < 0,
+       'le meme ecart concentre dans la premiere moitie ne designe rien (moities ' + lc5.ecart.moitie1 + ' / ' + lc5.ecart.moitie2 + ')');
+    F4.bancSerie = sauveSerie;
     F3.variantes = {};
     F3.ombres = [];
   }

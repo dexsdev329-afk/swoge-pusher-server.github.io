@@ -680,6 +680,49 @@ const neuf = () => { P._pose(P.etatNeuf()); return P.etat(); };
     eq(forfait, '[0.04,0.04,0.08]', 'PERP_FRAIS pose : le forfait s applique partout, les frais reels restent calculables');
   }
 
+  /* ======================================================================
+   * 13 bis. LE MEME TRADE, PRIS DANS L AUTRE SENS (02/10/2026)
+   * Releve du 2 octobre : 114 trades a -0,364 % net (t -2,8), -0,288 % deja
+   * avant frais ; a l envers, +0,21 % (t +1,65) — trouve en cherchant, donc
+   * une hypothese. On la mesure sur les trades A VENIR, sans rien trader.
+   * ==================================================================== */
+  console.log('\n-- 13 bis. le trade miroir est compte a chaque fermeture --');
+  {
+    const S = neuf();
+    eq(P.vue().inverse.verdict, 'collecting', 'avant toute fermeture : rien a dire');
+    const x = P.mesures(marche({ prix: 100, financement: 0 })); x.sym = SYM;
+    const p1 = P.ouvre(x, 1, { score: 60, traits: {} });
+    P.ferme(p1, p1.cible, 'target');
+    const p2 = P.ouvre(x, 1, { score: 60, traits: {} });
+    P.ferme(p2, p2.stop, 'stop');
+    const [stop, cible] = S.carnet;
+    eq(S.inverse.n, 2, 'deux fermetures, deux trades miroirs');
+    /* La cible de l original est le stop du miroir : il paie taker des deux cotes. */
+    eq(P.rendementMiroir(cible.brut, cible.financement, 'target'),
+       Math.round((-(cible.brut + cible.financement) - 0.12) * 1000) / 1000,
+       'quand l original touche sa cible, le miroir touche son stop au meme instant : -(mouvement) - 0,12 %');
+    eq(P.rendementMiroir(stop.brut, stop.financement, 'stop'),
+       Math.round((-(stop.brut + stop.financement) - 0.08) * 1000) / 1000,
+       'quand l original est stoppe, le miroir prend sa cible (ordre pose, maker) : -(mouvement) - 0,08 %');
+    ok(P.rendementMiroir(stop.brut, stop.financement, 'stop') > 0 && P.rendementMiroir(cible.brut, cible.financement, 'target') < 0,
+       'le miroir gagne ce que l original perd, moins SES frais');
+    eq(P.rendementMiroir(1, 0.01, 'time'), Math.round((-1.01 - 0.12) * 1000) / 1000,
+       'le financement change de signe avec le sens : un long qui en touchait, le short le paie');
+    eq(P.vue().inverse.verdict, 'collecting', 'deux trades ne jugent rien (seuil ' + P.vue().inverse.seuil + ')');
+    /* Au seuil, sur dix jours : un miroir qui gagne regulierement est dit gagnant. */
+    const T0 = Date.now() - 10 * 86400000;
+    for (let i = 0; i < P.vue().inverse.seuil; i++) {
+      const p = P.ouvre(x, 1, { score: 60, traits: {} });
+      P.ferme(p, i % 10 === 0 ? p.cible : p.stop, i % 10 === 0 ? 'target' : 'stop', T0 + i * 86400000 / 15);
+    }
+    const iv = P.vue().inverse;
+    console.log('   ' + JSON.stringify(iv));
+    ok(iv.jugeable && iv.verdict === 'opposite side wins' && iv.net > 0,
+       'quand l original perd neuf fois sur dix, le miroir est juge gagnant au seuil (t = ' + iv.t + ')');
+    ok(iv.jours >= 9 && iv.se > 0, 'erreur-type groupee par jour, comme le bilan des vrais trades (' + iv.jours + ' jours)');
+    ok(S.bilan.n === S.inverse.n, 'chaque vrai trade a exactement un miroir, ni plus ni moins');
+  }
+
   console.log('\n-- 14. la periode de financement vient du contrat --');
   {
     const S = neuf();

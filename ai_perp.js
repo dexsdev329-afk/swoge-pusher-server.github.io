@@ -1268,6 +1268,51 @@ function rReelDe(c) {
   if (typeof c.brut !== 'number') return c.r;
   return Math.round((c.brut + (c.financement || 0) - fraisReels(c.pourquoi)) * 1000) / 1000;
 }
+/* ==========================================================================
+ * LE MEME TRADE, PRIS DANS L'AUTRE SENS (02/10/2026)
+ *
+ * Releve du 2 octobre, 114 trades fermes depuis le 24/09 : net -0,364 % par
+ * trade (t = -2,8), et deja -0,288 % AVANT frais (t = -2,25). Plus la note est
+ * haute, pire est le trade ; la composante « tendance » est correlee a -0,31
+ * avec le resultat brut, « couloir » a -0,26. Pris a l'envers, ces 114 trades
+ * auraient rendu +0,21 % net (t = +1,65) — mais ce chiffre a ete TROUVE en
+ * cherchant dans le passe, et il ne prouve rien : c'est une hypothese.
+ * (Et ce n'est pas la premiere fois que le sens bascule : la note a
+ * contre-mouvement perdait elle aussi, voir plus haut. Deux bascules sur si peu
+ * de trades, c'est le profil du bruit.)
+ *
+ * On la met donc a l'epreuve sur les trades A VENIR, sans rien trader : chaque
+ * fermeture compte aussi le trade miroir. Les bornes n'etant pas symetriques
+ * (stop a STOP_VOL σ, cible a CIBLE_VOL σ), le miroir est le meme trajet de prix
+ * pris dans l'autre sens, cadre retourne : quand l'original touche son stop, le
+ * miroir touche sa cible au meme instant, et inversement. Son rendement est
+ * donc -(mouvement + financement) — le financement change de signe avec le
+ * sens — moins les frais REELS de SA sortie (cible = maker, stop = taker).
+ * Le bilan est le meme que celui des vrais trades : erreur-type groupee par
+ * jour, jugeable a TRADES_JUGEABLES. */
+function sortieMiroir(pourquoi) { return pourquoi === 'stop' ? 'target' : (pourquoi === 'target' ? 'stop' : pourquoi); }
+function rendementMiroir(brut, fin, pourquoi) {
+  return Math.round((-(brut + fin) - fraisReels(sortieMiroir(pourquoi))) * 1000) / 1000;
+}
+function noteInverse(S, brut, fin, pourquoi, quand) {
+  if (!isFinite(brut) || !isFinite(fin)) return;
+  if (!S.inverse) S.inverse = Object.assign(bilanNeuf(), { depuis: quand || Date.now() });
+  const r = rendementMiroir(brut, fin, pourquoi);
+  ajouteBilan(S.inverse, { r, rReel: r, pourquoi: sortieMiroir(pourquoi), t: quand || Date.now() });
+}
+function inverseVue() {
+  const B = etat().inverse;
+  if (!B || !B.n) return { depuis: null, n: 0, net: null, se: null, t: null, seuil: TRADES_JUGEABLES, jugeable: false, verdict: 'collecting' };
+  const m = B.s / B.n, se = seGroupe(B.jours, 's', B.n, m);
+  const t = se ? Math.round(m / se * 100) / 100 : null;
+  const jugeable = B.n >= TRADES_JUGEABLES;
+  /* Un verdict seulement au seuil, et dans les deux sens : unilateral a 5 %
+     (z 1,645), comme le calcul de puissance qui a fixe le seuil. */
+  const verdict = !jugeable ? 'collecting' : (t !== null && t >= 1.645 ? 'opposite side wins' : (t !== null && t <= -1.645 ? 'opposite side loses' : 'no difference'));
+  return { depuis: B.depuis || null, n: B.n, gagnants: B.gagnants, part: Math.round(B.gagnants / B.n * 1000) / 10,
+           net: r3(m), se: r3(se), t, jours: Object.keys(B.jours).length, seuil: TRADES_JUGEABLES, jugeable, verdict };
+}
+
 function rebatitBilan(S) {
   S.bilan = bilanNeuf();
   for (const c of S.carnet.slice().reverse()) ajouteBilan(S.bilan, Object.assign({}, c, { rReel: rReelDe(c) }));
@@ -1298,6 +1343,7 @@ function ferme(p, prix, pourquoi, quand) {
   if (S.carnet.length > 200) S.carnet.length = 200;
   if (!S.bilan) S.bilan = bilanNeuf();
   ajouteBilan(S.bilan, ligne);
+  noteInverse(S, brut, fin, pourquoi, tFin);
   S.positions = S.positions.filter((q) => q !== p);
   S.flux.unshift({ t: Date.now(), sym: p.sym,
                    quoi: 'CLOSED ' + String(p.sym).replace(/USDT$/, '') + ' ' + r.toFixed(2) + '% · ' + pourquoi });
@@ -1672,6 +1718,8 @@ function vue() {
        Chaque ligne porte son net aux frais REELS, meme les anciennes. */
     carnet: S.carnet.map((c) => Object.assign({}, c, { rReel: rReelDe(c) })),
     bilan: bilanVue(),
+    /* le meme trade pris dans l autre sens : voir `noteInverse` */
+    inverse: inverseVue(),
     parMarche: parMarche(),
     soupape: soupapeBilan(), positionsMax: POSITIONS_MAX, memeSensMax: MEME_SENS_MAX, fondMur: FOND_MUR,
     agents: AGENTS.map((x) => ({ key: x.key, nom: x.nom, emoji: x.emoji, role: x.role, quoi: x.quoi, traits: x.traits })),
@@ -1722,6 +1770,7 @@ module.exports = {
   charge, etat, etatNeuf, vue, tour, demarre, litMarche,
   mesures, traitsDe, note, noteOmbre, regleLesOmbres, noteAudit, ecartGroupe, CRENEAU_AUDIT_MS, auditDesRefus,
   reference, verdictRegle, coutFinancement, ouvre, ferme, surveille,
+  rendementMiroir, sortieMiroir, inverseVue,
   parMarche, soupapeBilan, caseProfil, noteProfil, marcheRefuse,
   volatilite, position, ema,
   /* 27 septembre 2026 : frais par ordre, periodes, bougies fines, audit en σ, bilan */
