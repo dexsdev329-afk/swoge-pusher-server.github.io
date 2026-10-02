@@ -44,12 +44,32 @@ function cree(deps) {
     if (a === 'defile') corps.dy = Number(q.dy);
     if (a === 'tape') corps.texte = String(q.texte || '').slice(0, 500);
     if (a === 'touche') corps.touche = String(q.touche || '').slice(0, 20);
+    /* 02/10 : le client recoit les images par /image — le geste ne les attend plus. */
+    if (q.flux === true) corps.flux = true;
     MESURE.gestes++;
     try {
       const r = await appelle('/geste', corps);
       if (!r.j) { MESURE.erreurs++; return { code: 502, corps: { ok: false, raison: 'The browser did not answer.' } }; }
       return { code: r.code, corps: r.j };
     } catch (e) { MESURE.erreurs++; return { code: 502, corps: { ok: false, raison: 'The browser is not reachable right now (' + codeDe(e) + ').' } }; }
+  }
+  /* ---- LE FLUX (02/10/2026) : la derniere image, en longue attente ----
+   * Pas la cadence des gestes (une image n'agit sur rien), mais deux demandes en vol au plus
+   * par joueur : un onglet ouvert deux fois ne double pas le debit, il attend son tour. */
+  const enVol = new Map();
+  async function image(addr, q) {
+    if (!actif()) return { code: 503, corps: { ok: false, raison: 'The browser is not connected yet.' } };
+    const n = enVol.get(addr) || 0;
+    if (n >= 2) { MESURE.refusRythme++; return { code: 429, corps: { ok: false, raison: 'slow down' } }; }
+    enVol.set(addr, n + 1);
+    try {
+      const corps = { joueur: addr, apres: Math.max(0, Number(q && q.apres) || 0), attente: Math.max(0, Math.min(10000, Number(q && q.attente) || 0)) };
+      const r = await appelle('/image', corps);
+      if (!r.j) { MESURE.erreurs++; return { code: 502, corps: { ok: false, raison: 'The browser did not answer.' } }; }
+      MESURE.images = (MESURE.images || 0) + (r.j.image ? 1 : 0);
+      return { code: r.code, corps: r.j };
+    } catch (e) { MESURE.erreurs++; return { code: 502, corps: { ok: false, raison: 'The browser is not reachable right now (' + codeDe(e) + ').' } }; }
+    finally { const m = (enVol.get(addr) || 1) - 1; if (m > 0) enVol.set(addr, m); else enVol.delete(addr); }
   }
   async function ferme(addr) {
     if (!actif()) return { code: 200, corps: { ok: true } };
@@ -68,10 +88,17 @@ function cree(deps) {
     try {
       const r = await lire(url() + '/sante', { signal: AbortSignal.timeout(5000) });
       const j = await r.json().catch(() => null);
-      diag = r.ok && j ? { joignable: true, pret: !!j.ok, sessions: j.sessions, max: j.max } : { joignable: false, code: 'HTTP_' + r.status };
+      /* Les durees des gestes (02/10) : moyenne et pire par action, rien d'autre — ni adresse,
+         ni page, ni erreur detaillee. C'est ce qui permet de dire si « lent » a change. */
+      const m = (j && j.mesure) || {}, pa = {};
+      for (const k in (m.parAction || {})) { const o = m.parAction[k]; if (o && o.n) pa[k] = { n: o.n, msMoyen: Math.round(o.ms / o.n), msMax: o.max }; }
+      diag = r.ok && j ? { joignable: true, pret: !!j.ok, sessions: j.sessions, max: j.max,
+                           mesure: { gestes: m.gestes || 0, msMoyen: m.gestes ? Math.round((m.msTotal || 0) / m.gestes) : null,
+                                     images: m.images || 0, dnsCache: m.dnsCache || 0, parAction: pa } }
+                       : { joignable: false, code: 'HTTP_' + r.status };
     } catch (e) { diag = { joignable: false, code: codeDe(e) }; }
     return diag;
   }
-  return { actif, geste, ferme, sante, MESURE, _codeDe: codeDe };
+  return { actif, geste, image, ferme, sante, MESURE, _codeDe: codeDe };
 }
 module.exports = { cree, ACTIONS, GESTE_MIN_MS };

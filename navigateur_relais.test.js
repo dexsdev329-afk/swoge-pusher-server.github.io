@@ -37,11 +37,32 @@ const A = '0x' + 'a'.repeat(40);
   const d2 = await enForme.sante();
   ok(d2.joignable && d2.pret && d2.max === 3 && (await vide.sante()).code === 'NOT_CONFIGURED', 'joignable et pret : dit ; pas configure : dit');
 
+  console.log('\n-- 2 ter. le flux d images (02/10) --');
+  const vusF = []; let lacher = null;
+  const fauxF = async (u, o) => { vusF.push({ u, b: JSON.parse(o.body) }); if (lacher === 'attend') await new Promise((s) => setTimeout(s, 50));
+    return { status: 200, json: async () => ({ ok: true, seq: 3, image: 'BBB', url: 'https://x.org/' }) }; };
+  const Rf = R.cree({ url: 'http://n', secret: 's', fetch: fauxF, maintenant: () => t });
+  const ri = await Rf.image(A, { apres: 2, attente: 99999, joueur: '0x' + 'b'.repeat(40) });
+  ok(ri.code === 200 && vusF[0].u === 'http://n/image' && vusF[0].b.joueur === A && vusF[0].b.attente === 10000 && !('x' in vusF[0].b),
+     'l image est demandee pour le joueur de la SESSION, attente bornee a 10 s');
+  lacher = 'attend';
+  const trois = await Promise.all([Rf.image(A, {}), Rf.image(A, {}), Rf.image(A, {})]);
+  ok(trois.filter((x) => x.code === 429).length === 1, 'deux demandes en vol au plus par joueur : la troisieme attend (429)');
+  t += 300;
+  await Rf.geste(A, { action: 'clic', x: 1, y: 2, flux: true });
+  ok(vusF[vusF.length - 1].b.flux === true, 'le geste dit au service que le client recoit le flux');
+  const enFormeF = R.cree({ url: 'http://n', secret: 's', fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, sessions: 1, max: 3,
+    mesure: { gestes: 4, msTotal: 2000, images: 9, dnsCache: 5, parAction: { 'flux:clic': { n: 2, ms: 300, max: 200 } }, derniereErreur: 'https://secret.example/page' } }) }), maintenant: () => t });
+  const dF = await enFormeF.sante();
+  ok(dF.mesure && dF.mesure.msMoyen === 500 && dF.mesure.parAction['flux:clic'].msMoyen === 150 && !JSON.stringify(dF).includes('secret.example'),
+     'le diagnostic porte les durees par action, jamais la derniere erreur ni une adresse');
+
   console.log('\n-- 3. la route --');
   const srv = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   const i = srv.indexOf("if (path === '/navigateur/etat' ||"), bloc = srv.slice(i, i + 1800);
   ok(i > 0 && /sessionJoueur\.lire\(game\.sessionSecret, jeton\)/.test(bloc) && /navigateurRelais\.geste\(addr, q/.test(bloc) && !/q\.joueur|q\.addr/.test(bloc),
      'la route lit l adresse dans la session et la passe au relais ; jamais celle du corps');
+  ok(/'\/navigateur\/image'/.test(bloc) && /navigateurRelais\.image\(addr, q/.test(bloc), '/navigateur/image passe par la meme session, la meme adresse');
   ok(/'\/navigateur\/etat'\) return json\(200, Object\.assign\(\{ ok: true, actif: navigateurRelais\.actif\(\) \}, await navigateurRelais\.sante\(\)\)\)/.test(bloc), '/navigateur/etat dit si le navigateur est branche, et s il repond');
   console.log('\nVERIFICATIONS : ' + n + (rates ? ' — ' + rates + ' RATE(S)' : ' — tout passe'));
   process.exit(rates ? 1 : 0);

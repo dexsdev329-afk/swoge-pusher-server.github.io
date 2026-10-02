@@ -101,6 +101,49 @@ const J1 = '0x' + '1'.repeat(40), J2 = '0x' + '2'.repeat(40), J3 = '0x' + '3'.re
   const sante = await (await fetch(B + '/sante')).json();
   ok(sante.ok && sante.max === 2 && !('image' in sante), '/sante dit l etat sans secret, et rien d un joueur');
 
+  /* ---- 5. LE FLUX (02/10/2026) ----
+     « Le navigateur est vraiment lent » : la machine n y etait pour rien (1,3 % d un processeur
+     au pire sur 24 h). C etait la forme de l echange — attendre le chargement, capturer, renvoyer,
+     redemander. Le flux d images de Chromium arrive des que la page se repeint. */
+  console.log('\n-- 5. le flux d images, et des gestes qui n attendent plus --');
+  for (const j of [J1, J2, J3]) await NS.ferme(j);
+  ok((await appel('/image', { joueur: J1, apres: 0 })).code === 404, 'sans session ouverte : rien a montrer (404), aucune session creee');
+  /* L ancien geste, pour comparer : il attend le chargement et capture. */
+  let t0 = Date.now();
+  await appel('/geste', { joueur: J1, action: 'goto', url: 'http://127.0.0.1/' });
+  await appel('/geste', { joueur: J1, action: 'clic', x: 150, y: 120 });
+  const msAncien = Date.now() - t0;
+  await appel('/geste', { joueur: J1, action: 'retour' });
+  let im = await appel('/image', { joueur: J1, apres: 0, attente: 2000 });
+  const j0 = im.image ? Buffer.from(im.image, 'base64') : Buffer.alloc(0);
+  ok(im.ok && im.seq >= 1 && j0[0] === 0xff && j0[1] === 0xd8 && im.url === 'http://127.0.0.1/', 'la premiere image arrive tout de suite, en JPEG, avec l adresse de la page (seq ' + im.seq + ')');
+  const vide = await appel('/image', { joueur: J1, apres: im.seq, attente: 600 });
+  ok(vide.ok && vide.image === null && vide.seq === im.seq, 'une page immobile ne renvoie rien de neuf : la longue attente se termine sans image');
+  t0 = Date.now();
+  r = await appel('/geste', { joueur: J1, action: 'clic', x: 150, y: 120, flux: true });
+  const msClic = Date.now() - t0;
+  ok(r.ok && r.image === null, 'en flux, le geste ne capture plus : il rend la main (' + msClic + ' ms)');
+  let vu = null;
+  for (let k = 0; k < 10 && !(vu && vu.url === 'http://127.0.0.1/deux' && vu.image); k++) vu = await appel('/image', { joueur: J1, apres: im.seq, attente: 3000 });
+  ok(vu && vu.url === 'http://127.0.0.1/deux' && vu.seq > im.seq && !!vu.image, 'et l image suivante montre la page ou le clic a mene (seq ' + (vu && vu.seq) + ')');
+  t0 = Date.now();
+  await appel('/geste', { joueur: J1, action: 'goto', url: 'http://127.0.0.1/', flux: true });
+  await appel('/geste', { joueur: J1, action: 'clic', x: 150, y: 120, flux: true });
+  const msFlux = Date.now() - t0;
+  console.log('   ouvrir + cliquer : ' + msAncien + ' ms en attendant les captures, ' + msFlux + ' ms en flux');
+  ok(msFlux < msAncien, 'ouvrir une page et cliquer rend la main plus tot en flux (' + msFlux + ' contre ' + msAncien + ' ms)');
+  r = await appel('/geste', { joueur: J1, action: 'capture', flux: true });
+  ok(!!r.image, '« capture » rend toujours une image nette : c est elle que « Screen » envoie');
+  ok(NS.MESURE.images > 0 && NS.MESURE.parAction['flux:clic'] && NS.MESURE.parAction['flux:clic'].n >= 1, 'les images et la duree de chaque geste, par action, sont comptees');
+  ok(NS.MESURE.dnsCache > 0, 'le mandataire resout un nom une fois, puis le relit en cache (' + NS.MESURE.dnsCache + ' fois)');
+  const att = appel('/image', { joueur: J1, apres: 1e9, attente: 8000 });
+  await new Promise((s) => setTimeout(s, 200));
+  await NS.ferme(J1);
+  const fini = await att;
+  ok(fini.ok === true && fini.image === null, 'fermer la session libere une longue attente en cours, sans erreur');
+  const sante2 = await (await fetch(B + '/sante')).json();
+  ok(sante2.mesure && sante2.mesure.parAction && !JSON.stringify(sante2).includes('127.0.0.1/'), '/sante porte les durees, jamais une adresse visitee');
+
   for (const j of [J1, J2, J3]) await NS.ferme(j);
   const { navigateur } = NS._etat(); await navigateur.close();
   srv.close(); mand.close(); site.close(); secret.close();

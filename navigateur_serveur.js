@@ -40,6 +40,26 @@ const ECRANS = { bureau: { width: 1280, height: 800 }, telephone: { width: 390, 
 
 /* ---- le mandataire : la seule porte de Chromium vers le reseau ---- */
 function portOk(p) { return p === 80 || p === 443; }
+/* ---- UNE RESOLUTION PAR NOM, PAS PAR CONNEXION (02/10/2026) ----
+ * « Le navigateur est vraiment lent. » Une page ouvre des dizaines de connexions vers les
+ * memes noms ; chacune passait par `dns.lookup`, qui tourne dans le pool de libuv (4 fils par
+ * defaut) : les resolutions faisaient la queue avant meme le premier octet. On garde 30 s le
+ * resultat DEJA VALIDE par `lookupSur` (adresses publiques seulement) — un echec ou un refus
+ * n'est jamais garde, il est redemande. La garde reste entiere : on ne met en cache que ce
+ * qu'elle a accepte, et seulement 30 s (un nom qui changerait d'adresse vers le prive est
+ * relu a l'expiration, comme le ferait n'importe quel cache DNS). */
+const DNS_TTL_MS = 30000, DNS_MAX = 2000;
+const DNS = new Map();
+function lookupCache(hote, opts, cb) {
+  if (typeof opts === 'function') { cb = opts; opts = {}; }
+  const tous = !!(opts && opts.all), cle = String(hote).toLowerCase() + (tous ? '|*' : '');
+  const c = DNS.get(cle);
+  if (c && Date.now() - c.t < DNS_TTL_MS) { MESURE.dnsCache++; return tous ? cb(null, c.v) : cb(null, c.v, c.f); }
+  navigue.lookupSur(hote, opts || {}, (err, v, f) => {
+    if (!err) { if (DNS.size >= DNS_MAX) DNS.clear(); DNS.set(cle, { t: Date.now(), v, f }); }
+    cb(err, v, f);
+  });
+}
 function creeMandataire() {
   const srv = http.createServer((req, res) => {
     /* HTTP en clair : l'adresse absolue arrive dans la ligne de requete. */
@@ -49,7 +69,7 @@ function creeMandataire() {
     try { u = navigue.urlSure(req.url); } catch (e) { res.writeHead(403); return res.end('blocked'); }
     const port = Number(u.port || 80);
     if (u.protocol !== 'http:' || !portOk(port)) { res.writeHead(403); return res.end('blocked'); }
-    const amont = http.request({ hostname: u.hostname, port, path: u.pathname + u.search, method: req.method, headers: req.headers, lookup: navigue.lookupSur, timeout: GESTE_MS }, (r) => {
+    const amont = http.request({ hostname: u.hostname, port, path: u.pathname + u.search, method: req.method, headers: req.headers, lookup: lookupCache, timeout: GESTE_MS }, (r) => {
       res.writeHead(r.statusCode || 502, r.headers); r.pipe(res);
     });
     amont.on('error', () => { if (!res.headersSent) res.writeHead(403); res.end('blocked'); });
@@ -61,7 +81,7 @@ function creeMandataire() {
     const m = String(req.url || '').match(/^\[?([^\]]+?)\]?:(\d+)$/);
     const port = m ? Number(m[2]) : 0;
     if (!m || !portOk(port)) { client.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
-    navigue.lookupSur(m[1], {}, (err, ip) => {
+    lookupCache(m[1], {}, (err, ip) => {
       if (err) { client.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
       const amont = net.connect(port, ip, () => { client.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (tete && tete.length) amont.write(tete); amont.pipe(client); client.pipe(amont); });
       amont.setTimeout(120000, () => amont.destroy());
@@ -75,7 +95,8 @@ function creeMandataire() {
 /* ---- les sessions : un contexte par joueur ---- */
 let navigateur = null, mandatairePort = 0;
 const SESSIONS = new Map();   /* joueur → { ctx, page, dernier, ecran, file } */
-const MESURE = { gestes: 0, refus: 0, fermees: 0, erreurs: 0, derniereErreur: null, msTotal: 0, msMax: 0 };
+const MESURE = { gestes: 0, refus: 0, fermees: 0, erreurs: 0, derniereErreur: null, msTotal: 0, msMax: 0,
+                 dnsCache: 0, images: 0, parAction: {} };
 const AGENTS = { bureau: null, telephone: null };
 
 async function lance(pw) {
@@ -108,6 +129,7 @@ async function ferme(joueur) {
   const s = SESSIONS.get(joueur);
   if (!s) return;
   SESSIONS.delete(joueur); MESURE.fermees++;
+  if (s.flux) { const w = s.flux.attentes; s.flux = null; w.forEach((f) => f()); }
   try { await s.ctx.close(); } catch (e) { /* deja ferme */ }
 }
 function balaie() {
@@ -145,36 +167,42 @@ async function geste(joueur, a) {
     const t0 = Date.now();
     s.dernier = Date.now(); MESURE.gestes++;
     const p = s.page, fin = { timeout: GESTE_MS };
+    /* `flux` : le client recoit les images par /image ; le geste n'attend plus le chargement et
+       ne fait plus de capture — sauf « capture », qui en veut une, nette, pour « Screen ». */
+    const flux = a.flux === true && a.action !== 'capture';
+    if (flux) demarreFlux(s).catch(() => {});
     let note = null;
     try {
       switch (a.action) {
         case 'goto': {
           let brut = String(a.url || '').trim();
           if (brut && !/^[a-z]+:\/\//i.test(brut)) brut = /\s/.test(brut) || !/\./.test(brut) ? 'https://duckduckgo.com/html/?q=' + encodeURIComponent(brut) : 'https://' + brut;
-          await p.goto(navigue.urlSure(brut).href, Object.assign({ waitUntil: 'domcontentloaded' }, fin));
+          /* En flux (02/10), on rend la main des que la navigation est ENGAGEE : la suite
+             du chargement arrive en images, au fil de l'eau, au lieu d'attendre la fin. */
+          await p.goto(navigue.urlSure(brut).href, Object.assign({ waitUntil: flux ? 'commit' : 'domcontentloaded' }, fin));
           /* 01/10 : 2,5 s au plus apres le DOM, et non 5 : la page continue de charger, et le
              client redemande une capture 1,5 s apres chaque geste (outils/browse_onglet.html). */
-          await p.waitForLoadState('load', { timeout: 2500 }).catch(() => {});
+          if (!flux) await p.waitForLoadState('load', { timeout: 2500 }).catch(() => {});
           break;
         }
         case 'clic': {
           const x = Number(a.x), y = Number(a.y), V = p.viewportSize();
           if (!(x >= 0 && y >= 0 && x <= V.width && y <= V.height)) throw new Error('click outside the page');
           await p.mouse.click(x, y);
-          await p.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
-          await p.waitForTimeout(250);
+          if (!flux) { await p.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {}); await p.waitForTimeout(250); }
           break;
         }
-        case 'defile': await p.mouse.wheel(0, Math.max(-4000, Math.min(4000, Number(a.dy) || 600))); await p.waitForTimeout(300); break;
-        case 'tape': await p.keyboard.type(String(a.texte || '').slice(0, 500), { delay: 10 }); break;
+        case 'defile': await p.mouse.wheel(0, Math.max(-4000, Math.min(4000, Number(a.dy) || 600))); if (!flux) await p.waitForTimeout(300); break;
+        /* 10 ms par caractere : 500 caracteres coutaient 5 s. En flux, le texte part d'un coup. */
+        case 'tape': await p.keyboard.type(String(a.texte || '').slice(0, 500), { delay: flux ? 0 : 10 }); break;
         case 'touche': {
           const k = String(a.touche || '');
           if (!/^(Enter|Tab|Escape|Backspace|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End)$/.test(k)) throw new Error('this key is not allowed');
-          await p.keyboard.press(k); await p.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {}); break;
+          await p.keyboard.press(k); if (!flux) await p.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {}); break;
         }
-        case 'retour': await p.goBack(fin).catch(() => {}); break;
-        case 'avance': await p.goForward(fin).catch(() => {}); break;
-        case 'recharge': await p.reload(fin); break;
+        case 'retour': await p.goBack(flux ? { waitUntil: 'commit', timeout: GESTE_MS } : fin).catch(() => {}); break;
+        case 'avance': await p.goForward(flux ? { waitUntil: 'commit', timeout: GESTE_MS } : fin).catch(() => {}); break;
+        case 'recharge': await p.reload(flux ? { waitUntil: 'commit', timeout: GESTE_MS } : fin); break;
         case 'capture': break;
         default: throw new Error('unknown action');
       }
@@ -187,12 +215,78 @@ async function geste(joueur, a) {
        139, 76 contre 89, 74 contre 85 — 13 a 15 % de moins, le texte reste net. La taille n'etait
        donc PAS la cause de la lenteur ; les attentes l'etaient (jusqu'a 5 s de « load » par
        ouverture), d'ou les 2,5 s plus haut et la capture de suivi cote client. */
-    const image = await p.screenshot({ type: 'jpeg', quality: 60, timeout: GESTE_MS }).catch(() => null);
+    const image = flux ? null : await p.screenshot({ type: 'jpeg', quality: 60, timeout: GESTE_MS }).catch(() => null);
     const ms = Date.now() - t0; MESURE.msTotal += ms; if (ms > MESURE.msMax) MESURE.msMax = ms;
-    return { url: p.url(), titre: await p.title().catch(() => ''), image: image ? image.toString('base64') : null, ecran: ECRANS[s.ecran], note };
+    const pa = MESURE.parAction[(flux ? 'flux:' : '') + a.action] || (MESURE.parAction[(flux ? 'flux:' : '') + a.action] = { n: 0, ms: 0, max: 0 });
+    pa.n++; pa.ms += ms; if (ms > pa.max) pa.max = ms;
+    return { url: p.url(), titre: await p.title().catch(() => ''), image: image ? image.toString('base64') : null, ecran: ECRANS[s.ecran], note,
+             seq: s.flux ? s.flux.seq : 0 };
   });
   s.file = tour.catch(() => {});
   return tour;
+}
+
+/* ==================================================================
+ * LE FLUX D'IMAGES (02/10/2026)
+ * ==================================================================
+ * « Le navigateur est vraiment lent » — et ce n'etait pas la machine : sur 24 h, le service a
+ * plafonne a 1,3 % d'un processeur et 0,43 Go. C'etait la FORME de l'echange : chaque geste
+ * attendait le chargement (jusqu'a 2,5 s apres le DOM), faisait une capture, la renvoyait en
+ * Californie → Europe, puis le client en redemandait une 1,5 s plus tard. On voyait la page
+ * par a-coups, et toujours en retard.
+ *
+ * Chromium sait diffuser son ecran (CDP `Page.startScreencast`) : il envoie une image chaque
+ * fois que la page se repeint, et SEULEMENT alors. On garde la derniere ; le client la demande
+ * par /image en « longue attente » (il passe le numero de la derniere qu'il a vue, on repond
+ * des qu'une plus recente existe, ou au bout de `attente`). Chaque image recue est donc la
+ * plus recente : pas de file qui s'allonge, et le rythme se regle tout seul sur le reseau.
+ * Une page qui ne bouge pas ne coute rien.
+ *
+ * L'inactivite se compte sur les GESTES, pas sur les images : un onglet ouvert qui regarde ne
+ * garde pas une session au-dela de NAVIGATEUR_INACTIF_S. */
+const FLUX_QUALITE = 55;
+const FLUX_ATTENTE_MAX = 10000;
+async function demarreFlux(s) {
+  if (s.flux) return s.flux;
+  if (s.fluxEnCours) return s.fluxEnCours;
+  s.fluxEnCours = (async () => {
+    const V = ECRANS[s.ecran];
+    const cdp = await s.ctx.newCDPSession(s.page);
+    const F = { cdp, seq: 0, image: null, t: 0, attentes: [] };
+    cdp.on('Page.screencastFrame', (f) => {
+      /* Sans accuse de reception, Chromium n'envoie plus rien. */
+      cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
+      if (s.flux !== F) return;
+      F.seq++; F.image = f.data; F.t = Date.now(); MESURE.images++;
+      const w = F.attentes; F.attentes = []; w.forEach((r) => r());
+    });
+    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: FLUX_QUALITE, maxWidth: V.width, maxHeight: V.height, everyNthFrame: 1 });
+    s.flux = F;
+    return F;
+  })();
+  try { return await s.fluxEnCours; } finally { s.fluxEnCours = null; }
+}
+/** La derniere image de la session du joueur, plus recente que `apres` — ou rien au bout de `attente`. */
+async function image(joueur, q) {
+  const s = SESSIONS.get(joueur);
+  if (!s) { const e = new Error('no browser session: open a page first'); e.code = 404; throw e; }
+  const F = await demarreFlux(s);
+  /* Au demarrage, Chromium envoie lui-meme une premiere image — mais une page immobile ne se
+     repeint plus ensuite. On lui laisse 400 ms ; sans rien, on en prend une pour commencer.
+     (Prendre la capture tout de suite faisait arriver DEUX images d une page immobile : la
+     notre, puis la sienne.) */
+  if (!F.seq) await new Promise((ok) => { const t = setTimeout(ok, 400); F.attentes.push(() => { clearTimeout(t); ok(); }); });
+  if (!F.seq) {
+    const b = await s.page.screenshot({ type: 'jpeg', quality: FLUX_QUALITE, timeout: GESTE_MS }).catch(() => null);
+    if (b && !F.seq && s.flux === F) { F.seq = 1; F.image = b.toString('base64'); F.t = Date.now(); }
+  }
+  const apres = Number(q.apres) || 0;
+  const attente = Math.max(0, Math.min(FLUX_ATTENTE_MAX, Number(q.attente) || 0));
+  if (F.seq <= apres && attente > 0 && F.attentes.length < 4) {
+    await new Promise((ok) => { const t = setTimeout(ok, attente); F.attentes.push(() => { clearTimeout(t); ok(); }); });
+  }
+  const neuve = s.flux === F && F.seq > apres;
+  return { seq: F.seq, image: neuve ? F.image : null, url: s.page.url(), titre: await s.page.title().catch(() => ''), ecran: ECRANS[s.ecran] };
 }
 
 /* ---- le petit serveur, pour le serveur du jeu seulement ---- */
@@ -214,12 +308,13 @@ function creeServeur() {
     try {
       if (chemin === '/ferme') { await ferme(joueur); return json(200, { ok: true }); }
       if (chemin === '/geste') return json(200, Object.assign({ ok: true }, await geste(joueur, q)));
+      if (chemin === '/image') return json(200, Object.assign({ ok: true }, await image(joueur, q)));
       return json(404, { ok: false });
-    } catch (e) { return json(e && e.code === 503 ? 503 : 500, { ok: false, raison: String(e && e.message || e).slice(0, 200) }); }
+    } catch (e) { return json(e && (e.code === 503 || e.code === 404) ? e.code : 500, { ok: false, raison: String(e && e.message || e).slice(0, 200) }); }
   });
 }
 
-module.exports = { creeMandataire, creeServeur, lance, geste, ferme, SESSIONS, MESURE, ECRANS, _etat: () => ({ navigateur, mandatairePort }) };
+module.exports = { creeMandataire, creeServeur, lance, geste, image, ferme, SESSIONS, MESURE, ECRANS, DNS, lookupCache, _etat: () => ({ navigateur, mandatairePort }) };
 
 if (require.main === module) {
   if (!SECRET) { console.error('[navigateur] NAVIGATEUR_SECRET manquant : refus de demarrer'); process.exit(1); }

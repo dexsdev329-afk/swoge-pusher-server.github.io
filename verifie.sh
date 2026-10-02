@@ -37,6 +37,8 @@ lance tgcanal "$SRV" node tg_canal.test.js   # canaux Telegram publics : Robinho
 lance tgappel "$SRV" node tg_appels.test.js   # les appels Telegram : prix a la detection, frais seulement, aucun score sous 10, une requete pour 30
 lance tgdecouv "$SRV" node tg_decouverte.test.js   # nouveaux canaux sur mesure : public, actif 48 h, >= 2 jetons Robinhood, max 10, retrait apres 7 jours
 lance goplus  "$SRV" node goplus_mesure.test.js   # GoPlus : appels reseau vs cache, deux lectures simultanees = un appel, delai silence -> reponse
+lance navig   "$SRV" node navigateur.test.js   # le navigateur Browse : vrai Chromium, rien d interne, flux d images, gestes qui n attendent plus (02/10)
+lance navrel  "$SRV" node navigateur_relais.test.js   # le relais : le joueur de la SESSION, deux images en vol au plus, durees sans adresse
 lance osinttel "$SRV" node osint_tel.test.js   # le plan de numerotation FR : type + region, deterministes, sans cle
 lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route publique du releve
 lance osintv2 "$SRV" node osint_v2.test.js   # un vrai serveur : la route v2, exports, historique
