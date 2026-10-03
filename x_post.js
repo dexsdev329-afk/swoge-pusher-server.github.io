@@ -530,13 +530,20 @@ async function genereImage(prompt, prendre) {
  * /v1/videos/{id} (specification OpenAPI xAI relue le 26 septembre 2026, voir
  * studio_xai.js) ; « grok-imagine-video-1.5 » a 0,08 $ la seconde, soit
  * environ 0,48 $ pour 6 s (prix du catalogue de studio_media.js). */
+/* 03/10 : la deuxieme annonce, meme mecanisme (« le prochain tweet, explique que les gens peuvent
+ * lancer un token via le launchpad ou directement via SwoleMind »). Un nouveau `nom` : celle de
+ * SwoleMind est partie le 27/09 (journal : status/2104195640398164440) et reste notee partie. Le
+ * texte ne promet que ce qui est vrai des DEUX chemins : un jeton sur Robinhood Chain, signe par le
+ * portefeuille du joueur, en une transaction (launchpad.html ; SwoleMind via l outil
+ * propose_token_launch, studio_agent.js). Aucun chiffre de frais : ils different entre les deux. */
 const ANNONCE = {
-  nom: 'swolemind',
+  nom: 'launchpad',
   duree: 6,
-  lien: 'https://swoleeswoge.dog/swolemind.html',
-  sujet: 'SwoleMind is live: SWOGE\'s own AI app. Chat with Claude, ChatGPT and Grok in one place, create images and 6-second videos, and make mini-series or ads where the characters and their voices stay the same in every scene. Pay with $SWOGE.',
-  reserve: 'SwoleMind is live 🧠💪 Claude, ChatGPT and Grok in one app, plus images, videos and mini-series where every character keeps their face and voice. Built by the dog. $SWOGE',
-  prompt: 'Cinematic 6-second shot, smooth camera push-in. The famous buff Doge meme character: a Shiba Inu head with a calm, confident expression on an extremely muscular bodybuilder body, cream and tan fur, wearing a sleek black hoodie with the sleeves pushed up. He sits in a dark room in front of a glowing holographic screen, taps it once, and a burst of light pours out and forms floating panels around him: a painting coming to life, a tiny movie scene, a speech bubble. He turns to the camera and smirks. Neon blue and warm gold light, shallow depth of field. No text, no letters, no numbers, no logos, no watermark.',
+  lien: 'https://swoleeswoge.dog/launchpad.html',
+  scene: 'in a short video announcing that anyone can launch their own token with SWOGE',
+  sujet: 'Anyone can now launch their own token on Robinhood Chain with SWOGE, two ways: on the SWOGE FUN launchpad, or simply by asking SwoleMind, the SWOGE AI app, in plain words (for example "launch a token called Moon Dog"). Either way the player signs once from their own wallet and the token goes live on Uniswap.',
+  reserve: 'Launch your own token on Robinhood Chain 🚀 Use the SWOGE FUN launchpad, or just tell SwoleMind "launch a token called…" and sign once from your wallet. Built by the dog. $SWOGE',
+  prompt: 'Cinematic 6-second shot, smooth camera push-in. The famous buff Doge meme character: a Shiba Inu head with a calm, confident expression on an extremely muscular bodybuilder body, cream and tan fur, wearing a sleek black hoodie. He stands in a neon-lit control room, presses one big glowing round button, and a shining golden coin rockets upward out of a launch pad in a trail of light and sparks. He looks at the camera and grins. Neon blue and warm gold light, shallow depth of field. No text, no letters, no numbers, no logos, no watermark.',
 };
 function cleXai() { return (process.env.XAI_API_KEY || process.env.GROK_API_KEY || '').trim(); }
 function annonceEnAttente(journal) {
@@ -805,7 +812,7 @@ async function posteAnnonce(cle, entree, journal, t, o) {
     journal.jours[cle] = entree; ecritJournal(journal);
   }
   if (!entree.texte) {
-    const r = await ecritTexte(faitsDuJour(t), { scene: { nom: entree.scene, prompt: 'in a short video announcing SwoleMind' }, cle, maintenant: t,
+    const r = await ecritTexte(faitsDuJour(t), { scene: { nom: entree.scene, prompt: ANNONCE.scene }, cle, maintenant: t,
       angle: 'viral launch announcement: hype, one clear hook, make people want to try it now', sujet: ANNONCE.sujet, reserve: ANNONCE.reserve,
       lien: ANNONCE.lien, precedents: dernieres(journal, 5).map((x) => x.texte) }, o.prendre);
     entree.texte = r.texte; entree.via = r.via;

@@ -374,7 +374,7 @@ const x = require('./x_post');
     const T1 = Date.parse('2026-10-01T13:05:00Z');          // 09:05 a New York
     let r = await x.tache({ maintenant: T1, prendre: faux, pause });
     eq(r.etat, 'poste', 'le prochain creneau part');
-    eq(r.annonce, 'swolemind', 'et c est l annonce SwoleMind');
+    eq(r.annonce, x.ANNONCE.nom, 'et c est l annonce en attente (' + x.ANNONCE.nom + ')');
     const gen = appels.find((a) => /videos\/generations/.test(a.u));
     ok(gen && gen.corps.duration === 6 && gen.corps.model === 'grok-imagine-video-1.5' && /buff Doge/.test(gen.corps.prompt) && /No text/.test(gen.corps.prompt),
        'une video Grok Imagine de 6 s, le SWOGE musclé, sans texte a l image');
@@ -386,10 +386,13 @@ const x = require('./x_post');
     const st = appels.filter((a) => /command=STATUS/.test(a.u));
     ok(st.length === 2 && st.every((a) => a.methode === 'GET' && /oauth_signature=/.test(a.auth) && /media_id=v99/.test(a.u)), 'le traitement est suivi (STATUS, GET signe) jusqu a « succeeded »');
     const tw = appels.filter((a) => /2\/tweets/.test(a.u)).pop();
-    ok(tw.corps.media.media_ids[0] === 'v99' && /swoleeswoge\.dog\/swolemind\.html/.test(tw.corps.text) && tw.corps.text.length <= 280, 'le tweet porte la video et le lien de SwoleMind');
-    ok(/Today's announcement.*SwoleMind is live/.test(appels.find((a) => /anthropic/.test(a.u)).corps.messages[0].content), 'le texte est ecrit sur le sujet de l annonce');
+    ok(tw.corps.media.media_ids[0] === 'v99' && tw.corps.text.includes(x.ANNONCE.lien) && tw.corps.text.length <= 280, 'le tweet porte la video et le lien de l annonce');
+    const consigneAnnonce = appels.find((a) => /anthropic/.test(a.u)).corps.messages[0].content;
+    ok(/Today's announcement/.test(consigneAnnonce) && consigneAnnonce.includes(x.ANNONCE.sujet.slice(0, 40)), 'le texte est ecrit sur le sujet de l annonce');
+    ok(/launchpad/i.test(x.ANNONCE.sujet) && /SwoleMind/.test(x.ANNONCE.sujet) && /launchpad/i.test(x.ANNONCE.reserve) && /SwoleMind/.test(x.ANNONCE.reserve) && x.ANNONCE.reserve.length + x.ANNONCE.lien.length + 2 <= 280,
+       '03/10 : l annonce dit les DEUX chemins (launchpad et SwoleMind), et le texte de secours tient avec son lien');
     const j1 = x.litJournal();
-    ok(j1.annonces.swolemind && j1.annonces.swolemind.id, 'le journal retient l annonce partie');
+    ok(j1.annonces[x.ANNONCE.nom] && j1.annonces[x.ANNONCE.nom].id, 'le journal retient l annonce partie');
     ok(!appels.some((a) => /openai/.test(a.u)), 'aucune image payee pour ce creneau');
     const nVid = appels.filter((a) => /videos\/generations/.test(a.u)).length;
     r = await x.tache({ maintenant: Date.parse('2026-10-01T16:35:00Z'), prendre: faux, pause });   // 12:35
@@ -400,7 +403,7 @@ const x = require('./x_post');
     videoRate = true;
     const T2 = Date.parse('2026-10-02T13:05:00Z');
     for (let i = 0; i < 3; i++) r = await x.tache({ maintenant: T2, prendre: faux, pause });
-    ok(r.etat === 'rate' && x.litJournal().annonces.swolemind.abandon === true, 'trois echecs de la video : l annonce est abandonnee (jamais une boucle de videos payees)');
+    ok(r.etat === 'rate' && x.litJournal().annonces[x.ANNONCE.nom].abandon === true, 'trois echecs de la video : l annonce est abandonnee (jamais une boucle de videos payees)');
     videoRate = false;
     r = await x.tache({ maintenant: Date.parse('2026-10-02T16:35:00Z'), prendre: faux, pause });
     ok(r.etat === 'poste' && !r.annonce, 'et le creneau suivant part normalement');
