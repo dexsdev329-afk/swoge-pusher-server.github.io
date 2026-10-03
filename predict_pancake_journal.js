@@ -92,7 +92,7 @@ const CANDIDATS = [
   { id: 'inverse', nom: 'Engine inverse', texte: 'the opposite side (what the paper bot is set to bet)' },
   { id: 'outsider', nom: 'Visible underdog', texte: 'the smaller visible pool at decision time' },
   { id: 'bull', nom: 'Always BULL', texte: 'control: no signal at all' },
-  { id: 'oracle', nom: 'Oracle lag', texte: '8 s before the lock, the side Binance is already on versus the Chainlink price the round locks at, only when the gap is at least 0.05% (fixed in advance)' },
+  { id: 'oracle', nom: 'Oracle lag', texte: '8 s before the lock, the side Binance is already on versus the latest Chainlink price published at that moment, when the gap is at least 0.05% (fixed in advance). Counted from 3 Oct 2026 only: earlier rows used information from after the decision' },
 ];
 
 /* ---- LE CINQUIEME CANDIDAT : LE RETARD DE L'ORACLE (29/09/2026) ----
@@ -110,13 +110,24 @@ const ORACLE_L = 8;
 const ORACLE_SEUIL = 0.0005;
 const ORACLE_FEE = 0.03, ORACLE_MISE = 0.002;
 /** Le camp du candidat « retard de l'oracle » pour une ligne de round portant `os` ({ L, px, maj }), ou null. Pur. */
+/* 03/10/2026 : le signal ne lit plus que ce qui etait CONNU a lock − L (voir `oracleSignal` dans
+ * predict_pancake.js) — la reponse oracle publiee a cet instant, pas celle devenue lockPrice — et ne
+ * filtre plus les rounds rafraichis entre-temps : il parie, et le round est juge sur ses vrais
+ * lockPrice et closePrice. Les lignes d'avant (sans v: 2) portaient les deux informations du futur :
+ * elles ne jugent plus rien, la serie repart du 03/10. Les 64,3 % / +9,1 % du 29/09 sont une borne
+ * HAUTE : a une cote finale de ~1,71, un round rafraichi est une piece (~ -14,5 %), et l'EV melangee
+ * tombe a zero au-dela de ~39 % de rounds signales rafraichis (recherche du 03/10, derive).
+ * MESURE DU 03/10 (outils/pancake_oracle_mesure.js v2, 2 998 rounds regles, epochs 518 119 → 521 117,
+ * meme regle L = 8 s, ecart ≥ 0,05 %) : v2 honnete n=666, 54,4 % gagnes, EV -1,71 %, t -0,48 ; 49,8 % des
+ * rounds signales rafraichis APRES la decision (50,0 %, -6,65 %, n=332) contre 58,7 %, +3,19 %, t 0,65
+ * (n=334) pour les autres. La v1 biaisee, sur les MEMES rounds : n=347, 59,7 %, +4,67 %. Le biais valait
+ * ~6 points d'EV ; sans lui, rien. Temoin au hasard : 49,6 %, -4,33 % (n=2 998). Le candidat reste
+ * mesure en direct (gratuit, papier), sans esperance particuliere. */
 function signalOracle(l) {
   const o = l && l.os;
-  if (!o || !(o.px > 0) || !(o.maj > 0) || !(l.lock > 0)) return null;
-  if (o.maj > l.lock - ORACLE_L) return null;                 /* le lockPrice n'etait pas encore publie : pas de pari */
-  const lp = Number(l.lp) / 1e8;
-  if (!(lp > 0)) return null;
-  const ecart = (o.px - lp) / lp;
+  if (!o || o.v !== 2 || !(o.px > 0) || !(o.connu > 0) || !(o.majConnu > 0) || !(l.lock > 0)) return null;
+  if (o.majConnu > l.lock - ORACLE_L) return null;           /* garde-fou : jamais une reponse publiee apres t */
+  const ecart = (o.px - o.connu) / o.connu;
   if (Math.abs(ecart) < ORACLE_SEUIL) return null;
   return ecart > 0 ? 'BULL' : 'BEAR';
 }
@@ -124,7 +135,7 @@ function noteOracle(l) {
   const side = signalOracle(l);
   if (!side) return;
   const x = rendement(side, l, ORACLE_FEE, ORACLE_MISE);
-  if (x) { J.series.oracle.push([Number(l.ep), x.r, x.g ? 1 : 0]); J.cache = null; }
+  if (x) { J.series.oracle.push([Number(l.ep), x.r, x.g ? 1 : 0, l.os.rafraichi ? 1 : 0]); J.cache = null; }
 }
 
 function dossier() { return process.env.DATA_DIR || require('./config').DATA_DIR; }
@@ -401,6 +412,13 @@ function verdict(st) {
 function ombres() {
   if (J.cache) return J.cache;
   const lignes = CANDIDATS.map((c) => { const st = statsSerie(J.series[c.id]); return Object.assign({ id: c.id, nom: c.nom, texte: c.texte }, st, { verdict: verdict(st) }); });
+  /* Le retard de l'oracle, coupe en deux (03/10) : le round a-t-il ete rafraichi entre la decision et
+     l'execution ? Connu APRES coup, donc jamais un filtre — seulement la part q qui dit si le signal
+     survit (au-dela de ~39 % de rounds rafraichis, l'EV melangee tombe a zero). */
+  const so = J.series.oracle || [];
+  const o = lignes.find((x) => x.id === 'oracle');
+  if (o) o.rafraichis = { part: so.length ? Math.round(so.filter((x) => x[3]).length / so.length * 1000) / 10 : null,
+                          oui: statsSerie(so.filter((x) => x[3])), non: statsSerie(so.filter((x) => !x[3])) };
   J.cache = { candidats: lignes, nCandidats: CANDIDATS.length, min: OMBRE_MIN, tMin: OMBRE_T, annules: J.annules,
               enAttente: J.enAttente.size, gazReel: OMBRE_GAZ,
               regle: 'One paper bet per candidate on every round (Oracle lag only when its signal fires), paid at the real final odds with our stake diluted in its side, 3% pool fee and ~1% real gas. A lock = close tie counts as LOST (the contract sends the whole pool to the treasury); a cancelled round is refunded and not counted. A verdict needs n ≥ ' + OMBRE_MIN + ', t ≥ ' + OMBRE_T + ' and both halves positive. These shadows never touch the paper bank, which stays at 0 bets on purpose.' };

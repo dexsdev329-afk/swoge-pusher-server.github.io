@@ -155,23 +155,42 @@ function decision(ep, cand, o) {
     const r = (ep, o, os) => Object.assign(rond(ep, o), { os });
     const L = J.ORACLE_L;
     /* 120 : Binance 0,1 % AU-DESSUS du lockPrice, publie 15 s avant le lock -> BULL ; BULL gagne */
-    const a = r(120, {}, { L, px: 600.6, maj: 1300 + 120 * 300 - 15 });
-    ok(J.signalOracle({ ep: 120, lock: a.lock, lp: String(lp), os: a.os }) === 'BULL', 'Binance au-dessus du prix oracle de depart : BULL');
-    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: { L, px: 599.4, maj: 900 } }) === 'BEAR', 'en dessous : BEAR');
-    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: { L, px: 600.2, maj: 900 } }) === null, 'ecart de 0,033 % (< 0,05 %) : pas de pari');
-    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: { L, px: 601, maj: 995 } }) === null, 'lockPrice publie APRES lock − 8 s : pas de pari (on ne triche pas)');
+    /* 03/10 : seul ce qui etait CONNU a lock − L compte (v: 2) — la reponse oracle publiee a cet instant
+       (connu), jamais celle devenue lockPrice ; un round rafraichi ensuite est PARIE quand meme. */
+    const os2 = (px, connu, majConnu, rafraichi) => ({ v: 2, L, px, connu, majConnu, rafraichi: !!rafraichi });
+    const a = r(120, {}, os2(600.6, 600, 1300 + 120 * 300 - 15));
+    ok(J.signalOracle({ ep: 120, lock: a.lock, lp: String(lp), os: a.os }) === 'BULL', 'Binance au-dessus du prix oracle CONNU a lock − 8 s : BULL');
+    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: os2(599.4, 600, 900) }) === 'BEAR', 'en dessous : BEAR');
+    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: os2(600.2, 600, 900) }) === null, 'ecart de 0,033 % (< 0,05 %) : pas de pari');
+    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(61000000000), os: os2(601, 600, 900, true) }) === 'BULL',
+       'rafraichi APRES la decision (le lockPrice finit a 610) : le pari est fait quand meme, contre le prix connu a t (600) — plus de filtre sur le futur');
+    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: os2(601, 600, 995) }) === null, 'garde-fou : une reponse publiee apres lock − 8 s n est jamais lue comme connue');
+    ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: { L, px: 601, maj: 900 } }) === null, 'une ligne d avant le 03/10 (sans v: 2, avec les deux informations du futur) ne juge plus rien');
     ok(J.signalOracle({ ep: 1, lock: 1000, lp: String(lp) }) === null && J.signalOracle({ ep: 1, lock: 1000, lp: String(lp), os: null }) === null, 'lecture ratee : pas de pari');
+    /* Les deux regles, pures : la reponse connue a t, la bougie fermee a t. */
+    const P = require('./predict_pancake');
+    const rep = { 10: { prix: 610, maj: 1000 }, 9: { prix: 605, maj: 985 }, 8: { prix: 600, maj: 960 } };
+    const lire = async (id) => rep[String(id)];
+    const k1 = await P.oracleConnuA(lire, '10', 992);
+    ok(k1 && k1.prix === 605 && k1.maj === 985 && k1.rafraichi === true, 'a t = 992 : la reponse 9 (publiee a 985) est la derniere connue ; la 10 (a 1000) est venue APRES — rafraichi, garde pour le compte rendu');
+    const k2 = await P.oracleConnuA(lire, '10', 1005);
+    ok(k2 && k2.prix === 610 && k2.rafraichi === false, 'a t = 1005 : la reponse devenue lockPrice etait deja publiee — pas rafraichi');
+    ok((await P.oracleConnuA(lire, '8', 950)) === null, 'rien de publie avant t : null, pas de pari');
+    const kl = [[990000, 0, 0, 0, '600.1'], [991000, 0, 0, 0, '600.2'], [992000, 0, 0, 0, '600.9']];
+    ok(P.clotureFermeeA(kl, 992) === 600.2, 'a t = 992 : la bougie ouverte a 991 (fermee a 992), pas celle ouverte a 992 (fermee a 993 — une seconde du futur)');
+    ok(P.clotureFermeeA([], 992) === null && P.clotureFermeeA(null, 992) === null, 'sans bougie fermee : null');
     ok(J.ORACLE_L === 8 && J.ORACLE_SEUIL === 0.0005, 'le reglage fixe d avance le 29/09 : 8 s, 0,05 %');
     /* la boucle : elle relit le signal au reglement, sur un round verrouille, et l ecrit avec le round */
     const t = nowS(); const lus = [];
     const chaine = {
       round: async (k) => ({ 120: rond(120), 121: rond(121, { closePrice: '59900000000' }), 122: rond(122, { oracleCalled: false, closePrice: '0', close: t - 40 }) })[k],
-      oracleSignal: async (rr, LL) => { lus.push([rr.epoch, LL]); return rr.epoch === '120' ? { L: LL, px: 600.6, maj: rr.lock - 15 } : rr.epoch === '121' ? { L: LL, px: 600.9, maj: rr.lock - 20 } : null; },
+      oracleSignal: async (rr, LL) => { lus.push([rr.epoch, LL]); return rr.epoch === '120' ? { v: 2, L: LL, px: 600.6, connu: 600, majConnu: rr.lock - 15, rafraichi: false } : rr.epoch === '121' ? { v: 2, L: LL, px: 600.9, connu: 600, majConnu: rr.lock - 20, rafraichi: true } : null; },
     };
     await J.regleRecents(chaine, 124, t);
     await J._vidange();
     const o = J.ombres().candidats.find((x) => x.id === 'oracle');
     ok(lus.length === 2 && lus.every((x) => x[1] === 8) && !lus.some((x) => x[0] === '122'), 'le signal est relu pour chaque round regle par l oracle, a L = 8 s ; jamais pour un round annule');
+    ok(o.rafraichis && o.rafraichis.part === 50 && o.rafraichis.oui.n === 1 && o.rafraichis.non.n === 1, 'la vue coupe en deux : 1 round rafraichi apres la decision, 1 non — part q = 50 % (jamais un filtre)');
     const coteBull = (1 + 0.002) * 0.97 / (0.5 + 0.002);
     ok(o.n === 2 && o.gagnes === 1, 'deux paris : 120 gagne (BULL), 121 perdu (BULL, BEAR gagne)');
     near(o.ev, 100 * ((coteBull - 1 - 0.01) + (-1 - 0.01)) / 2, 0.01, 'paye a la cote finale diluee, 3 % de frais, gaz reel');

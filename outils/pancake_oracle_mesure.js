@@ -12,9 +12,18 @@
  * du marche (Binance, bougies d'une seconde) est deja loin de la reponse de l'oracle, le
  * round demarre sur un prix EN RETARD : le close, lui, aura rattrape le marche.
  *
- * Pour chaque round : la reponse oracle deja publiee a (lock - L) — on ne garde que les rounds
- * ou le lockPrice etait DEJA connu a cet instant (updatedAt <= lock - L), sinon on
- * tricherait — et le prix Binance a (lock - L). Signal : le signe de (Binance - lockPrice).
+ * Pour chaque round : la reponse oracle publiee a (lock - L) et le prix Binance a (lock - L).
+ * Signal : le signe de (Binance - reponse connue). Juge sur les VRAIS lockPrice et closePrice.
+ *
+ * 03/10/2026 — v2, DEUX INFORMATIONS DU FUTUR RETIREES (recherche du 03/10, verifiee dans ce code) :
+ *   1. la v1 ne gardait que les rounds ou la reponse DEVENUE lockPrice etait deja publiee a lock - L :
+ *      un conditionnement sur « pas de rafraichissement avant l'execution », connu seulement apres, et
+ *      plus rare justement quand l'ecart est grand (declencheur de deviation de Chainlink). La v2 prend
+ *      la derniere reponse publiee a lock - L (on remonte les rounds Chainlink), parie que le round soit
+ *      rafraichi ensuite ou non, et publie les deux moities ;
+ *   2. chaque bougie d'une seconde etait rangee a son heure d'OUVERTURE avec son prix de CLOTURE : le
+ *      « prix a lock - L » etait celui de lock - L + 1 s. Elle est rangee a son heure de cloture.
+ * La v1 est gardee a cote (« v1, biaise ») pour mesurer ce que le biais valait.
  * Paye a la cote FINALE reelle du camp (pools finaux + notre mise, 3 % de frais), gaz reel
  * 0,00002 BNB par aller-retour (recus du 24/09), egalite perdue, round annule exclu.
  *
@@ -61,7 +70,7 @@ async function prixBinance(t0, t1) {
       if (r.status === 429 || r.status === 418) { await dort(5000 * (essai + 1)); continue; }
       const k = await r.json();
       const m = new Map();
-      for (const x of k) m.set(Math.floor(x[0] / 1000), Number(x[4]));   /* cloture de chaque seconde */
+      for (const x of k) m.set(Math.floor(x[0] / 1000) + 1, Number(x[4]));   /* rangee a l'heure ou elle se FERME (v2) */
       return m;
     } catch (e) { await dort(1000 * (essai + 1)); }
   }
@@ -95,11 +104,23 @@ function stats(l) {
     if (i % 500 === 0) process.stdout.write('  rounds ' + rounds.length + '\r');
   }
   const bons = rounds.filter((r) => r.oc && r.lp > 0 && r.cp > 0 && r.lock > 0);
-  /* l'instant ou l'oracle a publie le lockPrice */
-  for (let i = 0; i < bons.length; i += 50) {
-    const res = await lot(bons.slice(i, i + 50).map((r) => ({ to: ORACLE, data: IO.encodeFunctionData('getRoundData', [r.lid]) })));
-    res.forEach((x, k) => { const d = IO.decodeFunctionResult('getRoundData', x); bons[i + k].maj = d.updatedAt.toNumber(); bons[i + k].rep = Number(d.answer) / 1e8; });
+  /* l'instant ou l'oracle a publie le lockPrice, et les trois reponses d'avant (v2 : la reponse CONNUE a lock - L) */
+  for (let i = 0; i < bons.length; i += 12) {
+    const tranche = bons.slice(i, i + 12);
+    const appels = [];
+    for (const r of tranche) for (let d = 0; d < 4; d++) appels.push({ to: ORACLE, data: IO.encodeFunctionData('getRoundData', [r.lid.sub(d)]) });
+    let res;
+    try { res = await lot(appels); } catch (e) { res = null; }
+    tranche.forEach((r, k) => {
+      r.reps = [];
+      for (let d = 0; d < 4; d++) {
+        try { const x = IO.decodeFunctionResult('getRoundData', res[k * 4 + d]); r.reps.push({ maj: x.updatedAt.toNumber(), rep: Number(x.answer) / 1e8 }); } catch (e) { /* debut de phase */ }
+      }
+      if (r.reps[0]) { r.maj = r.reps[0].maj; r.rep = r.reps[0].rep; }
+    });
   }
+  /** v2 : la derniere reponse publiee a t, et si une plus recente est arrivee ensuite. */
+  const connueA = (r, t) => { const c = (r.reps || []).find((x) => x.maj <= t); return c ? { prix: c.rep, rafraichi: !!(r.reps[0] && r.reps[0].maj > t) } : null; };
   console.log('\nrounds regles', bons.length, '— lockPrice = reponse de l oracle :', bons.filter((r) => Math.abs(r.rep - r.lp) < 1e-9).length);
   const retards = bons.map((r) => r.lock - r.maj).sort((x, y) => x - y);
   console.log('age de la reponse oracle au lock : mediane', retards[Math.floor(retards.length / 2)], 's, p90', retards[Math.floor(retards.length * 0.9)], 's, max', retards[retards.length - 1], 's');
@@ -111,29 +132,42 @@ function stats(l) {
     faits += 5; if (faits % 250 === 0) process.stdout.write('  binance ' + faits + '/' + bons.length + '\r');
     await dort(120);
   }
-  const resultats = {};
+  const pari = (r, camp) => {
+    const pool = camp === 'BULL' ? r.bull : r.bear;
+    const cote = (r.total + MISE) * (1 - FRAIS) / (pool + MISE);
+    const gagne = camp === 'BULL' ? r.cp > r.lp : r.cp < r.lp;   /* egalite : perdue */
+    return { epoch: r.epoch, gagne, cote, ev: (gagne ? cote : 0) - 1 - GAZ / MISE };
+  };
+  const resultats = {}, v1 = {};
   for (const L of LEADS) for (const th of SEUILS) {
-    const paris = [];
+    const paris = [], oui = [], non = [], biais = [];
     for (const r of bons) {
-      if (!r.bn || r.maj > r.lock - L) continue;                 /* le lockPrice n'etait pas encore connu : on ne triche pas */
+      if (!r.bn) continue;
+      /* v1, biaise, gardee pour la comparaison : bougie a l'ouverture (+1 s du futur) et filtre sur le futur */
+      const s1 = a(r.bn, r.lock - L + 1);
+      if (s1 != null && !(r.maj > r.lock - L)) { const e1 = (s1 - r.lp) / r.lp; if (Math.abs(e1) > th && e1 !== 0) biais.push(pari(r, e1 > 0 ? 'BULL' : 'BEAR')); }
+      /* v2 : seulement ce qui etait connu a lock - L */
+      const k = connueA(r, r.lock - L); if (!k) continue;
       const s = a(r.bn, r.lock - L); if (s == null) continue;
-      const ecart = (s - r.lp) / r.lp;
+      const ecart = (s - k.prix) / k.prix;
       if (Math.abs(ecart) <= th || ecart === 0) continue;
-      const camp = ecart > 0 ? 'BULL' : 'BEAR', pool = camp === 'BULL' ? r.bull : r.bear;
-      const cote = (r.total + MISE) * (1 - FRAIS) / (pool + MISE);
-      const gagne = camp === 'BULL' ? r.cp > r.lp : r.cp < r.lp;   /* egalite : perdue */
-      paris.push({ epoch: r.epoch, gagne, cote, ev: (gagne ? cote : 0) - 1 - GAZ / MISE });
+      const p = pari(r, ecart > 0 ? 'BULL' : 'BEAR');
+      paris.push(p); (k.rafraichi ? oui : non).push(p);
     }
-    resultats['L' + L + '_seuil' + th] = stats(paris);
+    resultats['L' + L + '_seuil' + th] = Object.assign(stats(paris), { rafraichisPct: paris.length ? +(100 * oui.length / paris.length).toFixed(1) : null, rafraichis: stats(oui), nonRafraichis: stats(non) });
+    v1['L' + L + '_seuil' + th] = stats(biais);
   }
   /* temoin : le meme calcul, camp tire au hasard (graine fixe) */
   let g = 42; const hasard = () => ((g = (g * 1103515245 + 12345) % 2147483648) / 2147483648);
   const t = bons.filter((r) => r.bn).map((r) => { const camp = hasard() < 0.5 ? 'BULL' : 'BEAR', pool = camp === 'BULL' ? r.bull : r.bear, cote = (r.total + MISE) * (1 - FRAIS) / (pool + MISE);
     const gagne = camp === 'BULL' ? r.cp > r.lp : r.cp < r.lp; return { gagne, cote, ev: (gagne ? cote : 0) - 1 - GAZ / MISE }; });
   resultats.temoin_hasard = stats(t);
-  console.log('\n' + Object.entries(resultats).map(([k, v]) => k.padEnd(22) + JSON.stringify(v)).join('\n'));
+  const court = (v) => v && v.n ? 'n=' + v.n + ' gagnes=' + v.taux + '% ev=' + v.evPct + '% t=' + v.t + ' cote=' + v.coteMoy : 'n=0';
+  console.log('\nreglage                v2 (connu a lock - L)                                 | rafraichis | v1, biaise');
+  for (const k of Object.keys(v1)) { const r = resultats[k]; console.log(k.padEnd(22), court(r).padEnd(52), '|', String(r.rafraichisPct) + '% (' + court(r.rafraichis) + ' / non : ' + court(r.nonRafraichis) + ')', '|', court(v1[k])); }
+  console.log('temoin_hasard          ' + court(resultats.temoin_hasard));
   const dos = path.join(__dirname, '..', '_releves'); fs.mkdirSync(dos, { recursive: true });
   const f = path.join(dos, 'pancake_oracle_' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.json');
-  fs.writeFileSync(f, JSON.stringify({ quand: new Date().toISOString(), epochs: [epochs[0], epochs[epochs.length - 1]], regles: bons.length, retardOracle: { mediane: retards[Math.floor(retards.length / 2)], p90: retards[Math.floor(retards.length * 0.9)] }, resultats }, null, 1));
+  fs.writeFileSync(f, JSON.stringify({ quand: new Date().toISOString(), epochs: [epochs[0], epochs[epochs.length - 1]], regles: bons.length, retardOracle: { mediane: retards[Math.floor(retards.length / 2)], p90: retards[Math.floor(retards.length * 0.9)] }, resultats, v1Biaise: v1 }, null, 1));
   console.log('detail :', f);
 })().catch((e) => { console.error(e); process.exit(1); });

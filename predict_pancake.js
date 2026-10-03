@@ -127,6 +127,27 @@ const ABI = [
 
 /* ---- Le lecteur de chaîne, injectable pour les essais (aucun appel réel) ---- */
 let _chaine = null;
+/** La reponse oracle CONNUE a l'instant t : on part de la reponse devenue lockPrice (loid) et on
+ *  remonte les rounds Chainlink (consecutifs dans une phase) tant qu'ils sont publies apres t.
+ *  `lire(id)` → { prix, maj }. `rafraichi` : une reponse plus recente est arrivee apres t (connu
+ *  APRES coup : pour le compte rendu, jamais pour choisir). null si rien n'etait connu. Pur, a lire injecte. */
+async function oracleConnuA(lire, loid, t) {
+  /* Un round Chainlink qui n'existe pas (debut de phase) revert : on s'arrete, rien de connu. */
+  const lis = async (id) => { try { const d = await lire(id); return d && typeof d.maj === 'number' ? d : null; } catch (e) { return null; } };
+  let id = BigInt(String(loid)), d = await lis(id);
+  if (!d) return null;
+  const rafraichi = d.maj > t;
+  for (let pas = 0; pas < 6 && d && d.maj > t; pas++) { id -= 1n; d = await lis(id); }
+  if (!d || !(d.maj <= t) || !(d.prix > 0)) return null;
+  return { prix: d.prix, maj: d.maj, rafraichi };
+}
+/** La cloture de la derniere bougie d'une seconde FERMEE a t (ouverte a t − 1 au plus tard) — la
+ *  bougie ouverte a t se ferme a t + 1 : la prendre, c'est lire une seconde du futur. Pur. */
+function clotureFermeeA(klines, t) {
+  const f = (Array.isArray(klines) ? klines : []).filter((x) => Math.floor(Number(x[0]) / 1000) + 1 <= t);
+  return f.length ? Number(f[f.length - 1][4]) : null;
+}
+
 function chaineReelle() {
   const { ethers } = require('ethers');
   const prov = new ethers.providers.JsonRpcProvider(RPC);
@@ -152,15 +173,25 @@ function chaineReelle() {
     /* Le retard de l'oracle (predict_pancake_journal, 5e candidat) : l'heure ou Chainlink a publie le
        lockPrice, et le dernier prix Binance BNBUSDT a lock − L (bougies d'une seconde, miroir public
        data-api.binance.vision, verifie le 29/09 ; api.binance.com repond 451 hors de certains pays). */
+    /* 03/10/2026 — DEUX INFORMATIONS VENUES DU FUTUR, retirees (recherche du 03/10, verifiee dans ce
+       code) : (1) l'heure de publication lue etait celle de la reponse DEVENUE lockPrice, et le journal
+       ne gardait que les rounds ou elle etait deja publiee a lock − L — un conditionnement sur « pas de
+       rafraichissement avant l'execution », connu seulement apres, et plus rare justement quand l'ecart
+       est grand ; (2) la bougie d'une seconde etait prise par son heure d'OUVERTURE avec son prix de
+       CLOTURE : le « prix a lock − L » etait celui de lock − L + 1 s. Desormais, a t = lock − L : la
+       derniere reponse oracle publiee a t (on remonte getRoundData depuis lockOracleId), et la cloture de
+       la derniere bougie FERMEE a t. Le rafraichissement eventuel est garde pour le compte rendu, jamais
+       pour choisir le round. v: 2 marque ces lignes ; les anciennes ne jugent plus rien. */
     oracleSignal: async (r, L) => {
       if (!oracleC) oracleC = new ethers.Contract(await c.oracle(), ['function getRoundData(uint80) view returns (uint80,int256,uint256,uint256,uint80)'], prov);
-      const d = await oracleC.getRoundData(r.loid);
       const t = r.lock - L;
+      const o = await oracleConnuA(async (id) => { const d = await oracleC.getRoundData(id); return { prix: Number(d[1].toString()) / 1e8, maj: d[3].toNumber() }; }, r.loid, t);
+      if (!o) return null;
       const k = await fetch('https://data-api.binance.vision/api/v3/klines?symbol=BNBUSDT&interval=1s&startTime=' + (t - 10) * 1000 + '&endTime=' + t * 1000 + '&limit=20',
         { signal: AbortSignal.timeout(10000) }).then((x) => { if (!x.ok) throw new Error('HTTP ' + x.status); return x.json(); });
-      const avant = (Array.isArray(k) ? k : []).filter((x) => Math.floor(x[0] / 1000) <= t);
-      if (!avant.length) return null;
-      return { L, px: Number(avant[avant.length - 1][4]), maj: d[3].toNumber() };
+      const px = clotureFermeeA(k, t);
+      if (px == null) return null;
+      return { v: 2, L, px, connu: o.prix, majConnu: o.maj, rafraichi: o.rafraichi };
     },
   };
 }
@@ -562,7 +593,7 @@ function demarre() {
 function arrete() { if (boucle) { clearInterval(boucle); boucle = null; } J.arreteRemplissage(); }
 function _reset() { S = etatNeuf(); }
 
-module.exports = { demarre, arrete, charge, etat, tic, decide, cote, resous, predit, preditMoteur, prochaineMise, inverse,
+module.exports = { oracleConnuA, clotureFermeeA, demarre, arrete, charge, etat, tic, decide, cote, resous, predit, preditMoteur, prochaineMise, inverse,
                    noteFinale, coteEstimee, FINALES_MIN, annule, resumePorte, rejouePorte,
                    ADDR, RPC, STAKE, GAZ, MARGE, MART, MART_FACTEUR, MART_PALIERS, INVERSE, PARIE,
                    _chaineTest, _reseau, _reset, _S: () => S };
