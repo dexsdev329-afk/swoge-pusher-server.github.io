@@ -135,6 +135,9 @@ lance storepage "$SITE" node agent_store.test.js   # Agent Store : usage mesure 
 lance polypage "$SITE" node polymarket_page.test.js   # Polymarket Edge Check : tri par date (jamais les gros gains d abord), pertes non encaissees reintegrees, aucun verdict sous 100, teneur de marche dit, texte seulement, 360 px
 lance polyai   "$SITE" node polymarket_ai_page.test.js   # Polymarket AI : cinq agents avec effectif, temoin Coin marque, calibration sans gagnant sous 100, liens polymarket.com seulement, 360 px
 lance lancepage "$SITE" node lance_v4.test.js   # carte de lancement : le portefeuille du joueur signe ; offres truquees refusees ; frais $SWOGE autorise au montant exact, frais ETH en valeur
+lance dexmc   "$SITE" node dexscreener_mcap.test.js   # capitalisation : le chiffre de DexScreener tel quel, aucun dollar invente, le taux choisi par l actif de cotation (V3 et V4 $SWOGE)
+[ $VITE -eq 1 ] || lance lpv3 "$SITE" node launchpad_v3.test.js   # VRAIE chaine : frais V3 lu sur le contrat, grille V2/V3, cotation ETH d un V2
+[ $VITE -eq 1 ] || lance lpv4ch "$SITE" node launchpad_v4_frais.test.js   # VRAIE chaine : les jetons V4 dans Explore et dans l echange (actif de cotation, 50 %), Collect vers le bon launchpad
 lance lpv4page "$SITE" node launchpad_v4_page.test.js   # launchpad.html : choix du pool ($SWOGE, ETH, V3), fiche GoPlus lue (cases vides dites « not readable »), copies refusees par le vrai propose, kit du createur, portefeuille de la page
 lance passpage "$SITE" node agent_passport.test.js   # Agent Passport : champs en texte, signature verifiee dans le navigateur (ou par le serveur, dit), passeport modifie refuse, publier par la session
 lance navliens "$SITE" node nav_liens.test.js   # aucun lien muet sur les pages qui eteignent leurs liens par defaut ; chaque entree du menu recoit un VRAI clic, 1280 et 390 px
