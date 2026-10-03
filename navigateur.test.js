@@ -171,6 +171,31 @@ const J1 = '0x' + '1'.repeat(40), J2 = '0x' + '2'.repeat(40), J3 = '0x' + '3'.re
   const imD = await pub('/p/image', { apres: 0, attente: 2000 }, tk);
   ok(imD.code === 200 && !!imD.image && imD.seq > 0, 'l image arrive en direct, au nom du ticket');
   ok((await pub('/p/image', { apres: 0 }, D.signe(S, J3).ticket)).code === 404 && !NS.SESSIONS.has(J3), 'le ticket d un joueur sans session : rien a montrer, aucune session ouverte');
+  console.log('\n-- 7. le clavier (03/10) : raccourcis, copier, et des frappes qui n attendent plus --');
+  ok(D.toucheOk('Control+a') && D.toucheOk('Control+c') && D.toucheOk('Shift+ArrowLeft') && D.toucheOk('Control+Shift+ArrowRight') && D.toucheOk('Delete')
+     && !D.toucheOk('Control+t') && !D.toucheOk('Control+w') && !D.toucheOk('Control+l') && !D.toucheOk('F12') && !D.toucheOk('Alt+F4'),
+     'Ctrl+A/C/V/X/Z/Y, la selection au clavier passent ; jamais une combinaison du navigateur lui-meme (Ctrl+T, Ctrl+W, Ctrl+L, F12)');
+  await new Promise((s2) => setTimeout(s2, 300));
+  await pub('/p/geste', { action: 'goto', url: 'http://127.0.0.1/' }, tk);
+  await new Promise((s2) => setTimeout(s2, 300));
+  await pub('/p/geste', { action: 'clic', x: 150, y: 320 }, tk);
+  const t0k = Date.now();
+  /* Au rythme de la page (35 ms entre deux envois de frappes) : rien n est refuse, et c est bien
+     moins que les 250 ms imposees a un geste qui charge. */
+  const f1 = await pub('/p/geste', { action: 'tape', texte: 'swoge', flux: true }, tk);
+  await new Promise((s2) => setTimeout(s2, 35));
+  const f2 = await pub('/p/geste', { action: 'tape', texte: ' dog', flux: true }, tk);
+  const dk = Date.now() - t0k;
+  ok(f1.ok && f2.ok && dk < 250, 'deux frappes a 35 ms d intervalle passent toutes les deux (' + dk + ' ms au total, sous les 250 d un geste)');
+  await new Promise((s2) => setTimeout(s2, 40));
+  const tout = await pub('/p/geste', { action: 'touche', touche: 'Control+a', flux: true }, tk);
+  await new Promise((s2) => setTimeout(s2, 40));
+  const cp = await pub('/p/geste', { action: 'copie' }, tk);
+  ok(tout.ok && !tout.note && cp.ok && cp.copie === 'swoge dog', 'Ctrl+A puis copier : la selection du champ revient a la page (« ' + cp.copie + ' »)');
+  await new Promise((s2) => setTimeout(s2, 300));
+  const interdit = await pub('/p/geste', { action: 'touche', touche: 'Control+w' }, tk);
+  ok(interdit.ok && interdit.note === 'this key is not allowed' && NS.SESSIONS.has(J1), 'Ctrl+W est refuse : l onglet ne se ferme pas');
+
   const sante3 = await (await fetch(B + '/sante')).json();
   ok(!('derniereErreur' in sante3.mesure) && sante3.mesure.gestesDirects >= 1 && sante3.mesure.refusTicket >= 4, '/sante, desormais publique, ne dit plus la derniere erreur ; elle compte gestes directs et tickets refuses');
 

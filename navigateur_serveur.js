@@ -172,7 +172,7 @@ async function geste(joueur, a) {
        ne fait plus de capture — sauf « capture », qui en veut une, nette, pour « Screen ». */
     const flux = a.flux === true && a.action !== 'capture';
     if (flux) demarreFlux(s).catch(() => {});
-    let note = null;
+    let note = null, copie = null;
     try {
       switch (a.action) {
         case 'goto': {
@@ -198,8 +198,20 @@ async function geste(joueur, a) {
         case 'tape': await p.keyboard.type(String(a.texte || '').slice(0, 500), { delay: flux ? 0 : 10 }); break;
         case 'touche': {
           const k = String(a.touche || '');
-          if (!/^(Enter|Tab|Escape|Backspace|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End)$/.test(k)) throw new Error('this key is not allowed');
+          if (!Direct.toucheOk(k)) throw new Error('this key is not allowed');
           await p.keyboard.press(k); if (!flux) await p.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {}); break;
+        }
+        /* 03/10 : copier. Le presse-papiers du navigateur distant n'est pas celui du joueur : on
+           LIT la selection (champ actif ou page) et on la rend ; la page l'ecrit dans le sien. */
+        case 'copie': {
+          copie = await p.evaluate(() => {
+            const e = document.activeElement;
+            if (e && (e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') && typeof e.selectionStart === 'number' && e.type !== 'password')
+              return String(e.value || '').slice(e.selectionStart, e.selectionEnd);
+            return String(window.getSelection ? window.getSelection() : '');
+          }).catch(() => '');
+          copie = String(copie || '').slice(0, 20000);
+          break;
         }
         case 'retour': await p.goBack(flux ? { waitUntil: 'commit', timeout: GESTE_MS } : fin).catch(() => {}); break;
         case 'avance': await p.goForward(flux ? { waitUntil: 'commit', timeout: GESTE_MS } : fin).catch(() => {}); break;
@@ -221,7 +233,7 @@ async function geste(joueur, a) {
     const pa = MESURE.parAction[(flux ? 'flux:' : '') + a.action] || (MESURE.parAction[(flux ? 'flux:' : '') + a.action] = { n: 0, ms: 0, max: 0 });
     pa.n++; pa.ms += ms; if (ms > pa.max) pa.max = ms;
     return { url: p.url(), titre: await p.title().catch(() => ''), image: image ? image.toString('base64') : null, ecran: ECRANS[s.ecran], note,
-             seq: s.flux ? s.flux.seq : 0 };
+             seq: s.flux ? s.flux.seq : 0, copie: copie === null ? undefined : copie };
   });
   s.file = tour.catch(() => {});
   return tour;
@@ -302,7 +314,7 @@ function corps(req, max) {
  * directement (navigateur_direct.js). Pas de secret dans la page — un TICKET signe par le
  * serveur du jeu pour la session du joueur. Le joueur est celui du ticket, jamais celui du
  * corps. Les memes bornes que le relais : un geste par 250 ms, deux images en vol. */
-const DIRECT_GESTE_MIN_MS = 250;
+const DIRECT_GESTE_MIN_MS = 250, DIRECT_CLAVIER_MIN_MS = 30;
 const directDernier = new Map(), directEnVol = new Map();
 async function routeDirecte(req, res, chemin) {
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS',
@@ -319,7 +331,8 @@ async function routeDirecte(req, res, chemin) {
       const o = Direct.champs(q);
       if (!o) return json(400, { ok: false, raison: 'unknown action' });
       const t = Date.now();
-      if (t - (directDernier.get(joueur) || 0) < DIRECT_GESTE_MIN_MS) return json(429, { ok: false, raison: 'slow down' });
+      /* 03/10 : « ca ecrit super lentement ». Une frappe ne charge rien : 30 ms entre deux, pas 250. */
+      if (t - (directDernier.get(joueur) || 0) < (Direct.CLAVIER.has(o.action) ? DIRECT_CLAVIER_MIN_MS : DIRECT_GESTE_MIN_MS)) return json(429, { ok: false, raison: 'slow down' });
       directDernier.set(joueur, t);
       if (directDernier.size > 5000) directDernier.clear();
       MESURE.gestesDirects = (MESURE.gestesDirects || 0) + 1;

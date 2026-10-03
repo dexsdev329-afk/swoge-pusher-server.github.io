@@ -9,7 +9,7 @@
  * Un geste par joueur toutes les GESTE_MIN_MS (le service fait deja la file) : un clic
  * frenetique ne coute pas une capture chacun.
  * ================================================================== */
-const GESTE_MIN_MS = 250;
+const GESTE_MIN_MS = 250, CLAVIER_MIN_MS = 30;
 /* La liste des gestes et le filtre des champs vivent dans navigateur_direct.js (02/10) : le
    navigateur, qui recoit maintenant aussi les gestes en direct, filtre avec le meme code. */
 const Direct = require('./navigateur_direct');
@@ -39,7 +39,8 @@ function cree(deps) {
     const champs = Direct.champs(q);
     if (!champs) return { code: 400, corps: { ok: false, raison: 'unknown action' } };
     const t = maintenant(), d = dernier.get(addr) || 0;
-    if (t - d < GESTE_MIN_MS) { MESURE.refusRythme++; return { code: 429, corps: { ok: false, raison: 'slow down' } }; }
+    /* 03/10 : une frappe ne charge rien et ne capture rien (flux) : 30 ms entre deux, pas 250. */
+    if (t - d < (Direct.CLAVIER.has(champs.action) ? CLAVIER_MIN_MS : GESTE_MIN_MS)) { MESURE.refusRythme++; return { code: 429, corps: { ok: false, raison: 'slow down' } }; }
     dernier.set(addr, t);
     if (dernier.size > 5000) dernier.clear();
     /* Seuls les champs d'un geste passent ; le joueur est celui de la session.

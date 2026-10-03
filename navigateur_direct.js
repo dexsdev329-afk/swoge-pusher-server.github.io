@@ -20,7 +20,20 @@
 const crypto = require('crypto');
 
 const DUREE_MS = 15 * 60 * 1000;
-const ACTIONS = ['goto', 'clic', 'defile', 'tape', 'touche', 'retour', 'avance', 'recharge', 'capture'];
+const ACTIONS = ['goto', 'clic', 'defile', 'tape', 'touche', 'retour', 'avance', 'recharge', 'capture', 'copie'];
+/* 03/10 : « Ctrl+A pour tout selectionner et copier ne fonctionne pas ». Les touches, avec leurs
+   combinaisons : Control (le Cmd d'un Mac devient Control, le navigateur distant est sous Linux),
+   Shift pour etendre une selection. Une liste fermee : jamais une combinaison du navigateur
+   lui-meme (Ctrl+T, Ctrl+W, Ctrl+L, F12…). */
+const TOUCHE_BASE = /^(Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End)$/;
+function toucheOk(k) {
+  const t = String(k || '');
+  if (/^Control\+[acvxzy]$/.test(t)) return true;
+  if (/^(Control\+)?(Shift\+)?(ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|Backspace|Delete|Tab)$/.test(t)) return true;
+  return TOUCHE_BASE.test(t);
+}
+/* Les gestes du clavier vont vite : une frappe ne coute ni chargement ni capture. */
+const CLAVIER = new Set(['tape', 'touche', 'copie']);
 
 function mac(secret, addr, exp) {
   /* Préfixe propre aux tickets : une autre signature faite avec le même secret ne vaut pas ticket. */
@@ -57,9 +70,9 @@ function champs(q) {
   if (a === 'clic') { o.x = Number(q.x); o.y = Number(q.y); }
   if (a === 'defile') o.dy = Number(q.dy);
   if (a === 'tape') o.texte = String(q.texte || '').slice(0, 500);
-  if (a === 'touche') o.touche = String(q.touche || '').slice(0, 20);
+  if (a === 'touche') o.touche = String(q.touche || '').slice(0, 32);
   if (q.flux === true) o.flux = true;
   return o;
 }
 
-module.exports = { signe, verifie, champs, ACTIONS, DUREE_MS };
+module.exports = { signe, verifie, champs, toucheOk, ACTIONS, CLAVIER, DUREE_MS };
