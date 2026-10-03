@@ -2595,6 +2595,18 @@ function osintDebit(req) {
   if (osintsVus.size > 5000) for (const [k, v] of osintsVus) if (now - v.t > 60000) osintsVus.delete(k);
   return true;
 }
+/* Les offres de lancement V4 (03/10) : gratuites a preparer, mais chacune lit la liste des actions
+   tokenisees — 20 par minute et par adresse IP. */
+const offresVues = new Map();
+function offreDebit(req) {
+  const ip = qui(req), now = Date.now();
+  const e = offresVues.get(ip);
+  if (!e || now - e.t > 60000) offresVues.set(ip, { n: 1, t: now });
+  else if (e.n >= 20) return false;
+  else e.n++;
+  if (offresVues.size > 5000) for (const [k, v] of offresVues) if (now - v.t > 60000) offresVues.delete(k);
+  return true;
+}
 const scansVus = new Map();
 function scanDebit(req) {
   const ip = qui(req);
@@ -4025,6 +4037,24 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
                          'access-control-allow-origin': '*', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(deploiementV4Weth.etat()));
+  }
+
+  /* ---- LANCER UN JETON V4 DEPUIS LA PAGE DU LAUNCHPAD (03/10) ----
+   * « Je vois pas le bouton pour choisir de lancer avec un pool WETH ou $SWOGE. » La page pose le
+   * pool, le nom, le symbole et les liens ; le serveur prepare l'offre avec les MEMES refus que
+   * l'agent (lancement_v4.propose : copies d'actions tokenisees, grands tickers, « SWOGE », liens).
+   * Il ne signe rien et ne voit aucune cle : c'est le portefeuille du joueur qui envoie
+   * createToken (lance_v4.js), et la page refuse toute offre hors des deux launchpads relus. */
+  if (path === '/launchpad/v4/offre') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    if (!offreDebit(req)) return json(429, { ok: false, raison: 'too many tries - wait a minute' });
+    let q;
+    try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    const r = await lancementV4.propose({ pool: q.pool, name: q.name, symbol: q.symbol, website: q.website, twitter: q.twitter, telegram: q.telegram });
+    return json(r.ok ? 200 : 400, r);
   }
 
   /* Polymarket AI : le releve de la colonie papier (poly_papier.js). Public, lisible depuis le site. */

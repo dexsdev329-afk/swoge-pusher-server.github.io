@@ -69,6 +69,22 @@ const identite = async (a, s, nom) => (s === 'NVDA' || /^nvidia$/i.test(nom || '
   const src = require('fs').readFileSync(require('path').join(__dirname, 'studio_agent.js'), 'utf8');
   ok(/achat: r\.achat \|\| null, lancement: r\.lancement \|\| null,/.test(src), 'la boucle transmet la carte a la page avec le resultat de l outil');
 
+  console.log('\n-- 5. la page du launchpad (03/10) : la route /launchpad/v4/offre --');
+  /* « Je vois pas le bouton pour choisir un pool WETH ou $SWOGE. » La page passe par le MEME propose :
+     memes refus que l'agent. La route ne signe rien, ne lit aucune session, et ne transmet que les
+     six champs connus (jamais l'objet recu tel quel : un « launchpad » ou un « feeWei » glisse dans
+     la requete ne doit pas atteindre l'offre). */
+  const srv = require('fs').readFileSync(require('path').join(__dirname, 'server.js'), 'utf8');
+  const i = srv.indexOf("if (path === '/launchpad/v4/offre')"), bloc = i < 0 ? '' : srv.slice(i, srv.indexOf('\n  }\n', i));
+  ok(i > 0, 'la route existe');
+  ok(/req\.method !== 'POST'/.test(bloc) && /!offreDebit\(req\)\) return json\(429/.test(bloc), 'POST seulement, 20 par minute et par IP (offreDebit)');
+  ok(/corps\(req, 4096\)/.test(bloc), 'corps borne a 4 Ko');
+  ok(/lancementV4\.propose\(\{ pool: q\.pool, name: q\.name, symbol: q\.symbol, website: q\.website, twitter: q\.twitter, telegram: q\.telegram \}\)/.test(bloc),
+     'seuls les six champs connus passent a propose');
+  ok(!/signer|Wallet|privateKey|MIROIR_CLE|sessionDe|ws\.addr/.test(bloc), 'aucune signature, aucune cle, aucune session dans la route');
+  const triche = await P.propose({ pool: 'eth', name: 'Moon Dog', symbol: 'MDOG', launchpad: '0x' + '9'.repeat(40), feeWei: '1' });
+  ok(triche.ok && triche.offre.launchpad === ETHLP && triche.offre.feeWei !== '1', 'meme passe tel quel, propose ignore un launchpad ou un frais venus de la requete');
+
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  ' + rates + ' RATE(S)' : '  —  tout passe'));
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
