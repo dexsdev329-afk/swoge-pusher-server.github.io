@@ -536,19 +536,26 @@ async function genereImage(prompt, prendre) {
  * texte ne promet que ce qui est vrai des DEUX chemins : un jeton sur Robinhood Chain, signe par le
  * portefeuille du joueur, en une transaction (launchpad.html ; SwoleMind via l outil
  * propose_token_launch, studio_agent.js). Aucun chiffre de frais : ils different entre les deux. */
+/* 03/10 (soir) : la troisieme, « sur l un des prochains tweets, poste le nouveau design de SWOGE
+ * wallet ». Celle du launchpad est partie le 03/10 a 09:00 (status/2106370028996350032). Ici PAS de
+ * video generee : une video inventee ne montrerait pas le vrai design. L image est une CAPTURE de
+ * swoge_wallet.html (1600 x 900, x1,5), prise le 03/10 vers 15 h UTC avec les vraies lectures du
+ * moment (DexScreener : $0.00002785, liquidite $14.0K ; bloc #79,177,262) — `annonces/wallet_design.png`.
+ * Le texte ne decrit que ce qui se voit dessus. */
 const ANNONCE = {
-  nom: 'launchpad',
-  duree: 6,
-  lien: 'https://swoleeswoge.dog/launchpad.html',
-  scene: 'in a short video announcing that anyone can launch their own token with SWOGE',
-  sujet: 'Anyone can now launch their own token on Robinhood Chain with SWOGE, two ways: on the SWOGE FUN launchpad, or simply by asking SwoleMind, the SWOGE AI app, in plain words (for example "launch a token called Moon Dog"). Either way the player signs once from their own wallet and the token goes live on Uniswap.',
-  reserve: 'Launch your own token on Robinhood Chain 🚀 Use the SWOGE FUN launchpad, or just tell SwoleMind "launch a token called…" and sign once from your wallet. Built by the dog. $SWOGE',
-  prompt: 'Cinematic 6-second shot, smooth camera push-in. The famous buff Doge meme character: a Shiba Inu head with a calm, confident expression on an extremely muscular bodybuilder body, cream and tan fur, furry dog paws with paw pads, never human hands or fingers, wearing a sleek black hoodie. He stands in a neon-lit control room, presses one big glowing round button, and a shining golden coin rockets upward out of a launch pad in a trail of light and sparks. He looks at the camera and grins. Neon blue and warm gold light, shallow depth of field. No text, no letters, no numbers, no logos, no watermark.',
+  nom: 'wallet-design',
+  image: 'annonces/wallet_design.png',
+  lien: 'https://swoleeswoge.dog/swoge_wallet.html',
+  scene: 'showing a screenshot of the redesigned SWOGE Wallet web page',
+  sujet: 'The SWOGE Wallet has a brand new design: the wallet app sits in the middle of the page, with live cards around it: the $SWOGE market from DexScreener, Robinhood Chain live block and gas, quick actions (send, receive, swap, bridge, buy $SWOGE), your tokens, and the casino game vault. Sign in with email or a browser wallet; the player keeps their own keys.',
+  reserve: 'The new SWOGE Wallet is live 🐾 Send, receive, swap and bridge on Robinhood Chain, with the live $SWOGE market and the casino vault right next to your wallet. Sign in with email or your browser wallet. $SWOGE',
 };
 function cleXai() { return (process.env.XAI_API_KEY || process.env.GROK_API_KEY || '').trim(); }
-function annonceEnAttente(journal) {
-  if (process.env.X_ANNONCE === '0' || !ANNONCE || !cleXai()) return false;
-  return !((journal.annonces || {})[ANNONCE.nom]);
+/* Une annonce en IMAGE (un fichier du depot) n a pas besoin de xAI ; une annonce en video, si. */
+function annonceEnAttente(journal, a) {
+  a = a || ANNONCE;
+  if (process.env.X_ANNONCE === '0' || !a || (!a.image && !cleXai())) return false;
+  return !((journal.annonces || {})[a.nom]);
 }
 async function genereVideo(prompt, duree, prendre, pause) {
   const f = prendre || fetch;
@@ -734,7 +741,7 @@ async function tache(opts) {
   if (enCours) return { etat: 'en cours' };
   enCours = true;
   try {
-    if (!o.special && (entree.annonce || annonceEnAttente(journal))) return await posteAnnonce(cle, entree, journal, t, o);
+    if (!o.special && (entree.annonce || annonceEnAttente(journal, o.annonce))) return await posteAnnonce(cle, entree, journal, t, o);
     const scene = o.special && o.special.prompt ? { nom: o.special.nom, prompt: o.special.prompt }
                 : entree.scene ? (SCENES.find((s) => s.nom === entree.scene) || sceneSuivante(cle, journal))
                 : sceneSuivante(cle, journal);
@@ -800,37 +807,42 @@ async function tache(opts) {
  *  plus loin ne la fait pas payer deux fois), puis le texte, puis X. */
 async function posteAnnonce(cle, entree, journal, t, o) {
   const e = env();
-  entree.annonce = ANNONCE.nom; entree.scene = 'annonce-' + ANNONCE.nom;
+  const a = o.annonce || ANNONCE;   /* `o.annonce` : les essais rejouent une annonce en video */
+  entree.annonce = a.nom; entree.scene = 'annonce-' + a.nom;
+  /* Une annonce en image : le fichier du depot, tel quel — rien a generer, rien a payer. */
+  const img = a.image ? fs.readFileSync(path.join(__dirname, a.image)) : null;
+  if (img) entree.imageAnnonce = a.image;
   fs.mkdirSync(DOSSIER_IMAGES(), { recursive: true });
   const fichier = path.join(DOSSIER_IMAGES(), nomImage(cle) + '.mp4');
   let mp4;
-  if (entree.video && fs.existsSync(fichier)) mp4 = fs.readFileSync(fichier);
+  if (img) mp4 = null;
+  else if (entree.video && fs.existsSync(fichier)) mp4 = fs.readFileSync(fichier);
   else {
-    const v = await genereVideo(ANNONCE.prompt, ANNONCE.duree, o.prendre, o.pause);
+    const v = await genereVideo(a.prompt, a.duree, o.prendre, o.pause);
     mp4 = v.mp4; fs.writeFileSync(fichier, mp4);
     entree.video = nomImage(cle) + '.mp4'; entree.coutVideoUsd = v.coutUsd;
     journal.jours[cle] = entree; ecritJournal(journal);
   }
   if (!entree.texte) {
-    const r = await ecritTexte(faitsDuJour(t), { scene: { nom: entree.scene, prompt: ANNONCE.scene }, cle, maintenant: t,
-      angle: 'viral launch announcement: hype, one clear hook, make people want to try it now', sujet: ANNONCE.sujet, reserve: ANNONCE.reserve,
-      lien: ANNONCE.lien, precedents: dernieres(journal, 5).map((x) => x.texte) }, o.prendre);
+    const r = await ecritTexte(faitsDuJour(t), { scene: { nom: entree.scene, prompt: a.scene }, cle, maintenant: t,
+      angle: 'viral launch announcement: hype, one clear hook, make people want to try it now', sujet: a.sujet, reserve: a.reserve,
+      lien: a.lien, precedents: dernieres(journal, 5).map((x) => x.texte) }, o.prendre);
     entree.texte = r.texte; entree.via = r.via;
     journal.jours[cle] = entree; ecritJournal(journal);
   }
-  const mediaId = await televerseVideo(mp4, o.prendre, o.pause);
+  const mediaId = img ? await televerse(img, o.prendre) : await televerseVideo(mp4, o.prendre, o.pause);
   const id = await publie(entree.texte, mediaId, o.prendre);
   entree.id = id; entree.quand = new Date(t).toISOString(); delete entree.erreur;
   journal.jours[cle] = entree;
-  journal.annonces = Object.assign(journal.annonces || {}, { [ANNONCE.nom]: { cle, id, quand: entree.quand } });
+  journal.annonces = Object.assign(journal.annonces || {}, { [a.nom]: { cle, id, quand: entree.quand } });
   ecritJournal(journal);
   purgeImages();
-  console.log(`[x] annonce ${ANNONCE.nom} postee en video ${cle} · https://x.com/${e.compte}/status/${id}`);
+  console.log(`[x] annonce ${a.nom} postee en ${img ? 'image' : 'video'} ${cle} · https://x.com/${e.compte}/status/${id}`);
   if (o.signale) {
     try { o.signale({ cle, texte: entree.texte, id, image: null, url: `https://x.com/${e.compte}/status/${id}` }); }
     catch (x) { /* le Telegram ne fait pas rater le post */ }
   }
-  return { etat: 'poste', cle, id, texte: entree.texte, scene: entree.scene, annonce: ANNONCE.nom };
+  return { etat: 'poste', cle, id, texte: entree.texte, scene: entree.scene, annonce: a.nom };
 }
 
 /** Remet a zero les essais des creneaux non partis — apres une cle ou une

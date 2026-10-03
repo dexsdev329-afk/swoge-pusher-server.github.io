@@ -171,6 +171,9 @@ const x = require('./x_post');
   }
 
   console.log('\n-- 6. des tours complets, contre de faux serveurs --');
+  /* 03/10 (soir) : l annonce en image n attend plus de cle xAI ; ces tours portent sur les posts
+     ORDINAIRES, l annonce est donc coupee ici (elle a ses blocs, 8 et 9). */
+  process.env.X_ANNONCE = '0';
   {
     Object.assign(process.env, { X_CONSUMER_KEY: 'ck', X_CONSUMER_SECRET: 'cs', X_ACCESS_TOKEN: 'at', X_ACCESS_SECRET: 'as',
                                  OPENAI_API_KEY: 'ok', ANTHROPIC_API_KEY: 'ak',
@@ -319,6 +322,7 @@ const x = require('./x_post');
        'le vrai post x402/PayAI : ' + (reel.texte.length + reel.lien.length + 2) + ' caracteres avec le lien (<= 280), les faits verifies (15 outils, Base ou Solana)');
   }
 
+  delete process.env.X_ANNONCE;
   console.log('\n-- 7. jamais la meme image (27 septembre 2026) --');
   {
     /* « J ai deja vu plusieurs fois des images similaires » : le debardeur bleu
@@ -346,11 +350,17 @@ const x = require('./x_post');
     ok(a.rendu === b.rendu && a.cadrage === b.cadrage, 'une reprise du meme creneau refait la meme image (rien paye deux fois pour rien)');
   }
 
-  console.log('\n-- 8. l annonce SwoleMind, une fois, en video --');
+  console.log('\n-- 8. une annonce en video, une fois --');
   {
     fs.readdirSync(VOL).forEach((f) => { if (f === 'x_posts.json') fs.unlinkSync(path.join(VOL, f)); });
     process.env.XAI_API_KEY = 'xai-test';
     process.env.X_HEURES = '09:00,12:30,17:00,20:30'; process.env.X_FUSEAU = 'America/New_York';
+    /* 03/10 (soir) : l annonce courante est une IMAGE (le design du portefeuille, bloc 9). Le chemin
+       video reste, et se joue ici avec l annonce du launchpad, partie le 03/10 a 09:00. */
+    const VIDEO = { nom: 'launchpad-essai', duree: 6, lien: 'https://swoleeswoge.dog/launchpad.html', scene: 'in a short video announcing that anyone can launch their own token with SWOGE',
+      sujet: 'Anyone can now launch their own token on Robinhood Chain with SWOGE, on the SWOGE FUN launchpad or by asking SwoleMind.',
+      reserve: 'Launch your own token on Robinhood Chain 🚀 Use the SWOGE FUN launchpad, or just tell SwoleMind. $SWOGE',
+      prompt: 'Cinematic 6-second shot. The famous buff Doge meme character: a Shiba Inu head on an extremely muscular bodybuilder body, furry dog paws with paw pads, never human hands or fingers. No text, no letters, no numbers, no logos, no watermark.' };
     const MP4 = Buffer.alloc(9 * 1024 * 1024, 7);          // 9 Mo : trois morceaux de 4 Mo
     const appels = []; let statuts = 0; let videoRate = false;
     const faux = async (url, o) => {
@@ -372,9 +382,9 @@ const x = require('./x_post');
     };
     const pause = async () => {};
     const T1 = Date.parse('2026-10-01T13:05:00Z');          // 09:05 a New York
-    let r = await x.tache({ maintenant: T1, prendre: faux, pause });
+    let r = await x.tache({ maintenant: T1, prendre: faux, pause, annonce: VIDEO });
     eq(r.etat, 'poste', 'le prochain creneau part');
-    eq(r.annonce, x.ANNONCE.nom, 'et c est l annonce en attente (' + x.ANNONCE.nom + ')');
+    eq(r.annonce, VIDEO.nom, 'et c est l annonce en attente (' + VIDEO.nom + ')');
     const gen = appels.find((a) => /videos\/generations/.test(a.u));
     ok(gen && gen.corps.duration === 6 && gen.corps.model === 'grok-imagine-video-1.5' && /buff Doge/.test(gen.corps.prompt) && /No text/.test(gen.corps.prompt),
        'une video Grok Imagine de 6 s, le SWOGE musclé, sans texte a l image');
@@ -386,7 +396,7 @@ const x = require('./x_post');
     const st = appels.filter((a) => /command=STATUS/.test(a.u));
     ok(st.length === 2 && st.every((a) => a.methode === 'GET' && /oauth_signature=/.test(a.auth) && /media_id=v99/.test(a.u)), 'le traitement est suivi (STATUS, GET signe) jusqu a « succeeded »');
     const tw = appels.filter((a) => /2\/tweets/.test(a.u)).pop();
-    ok(tw.corps.media.media_ids[0] === 'v99' && tw.corps.text.includes(x.ANNONCE.lien) && tw.corps.text.length <= 280, 'le tweet porte la video et le lien de l annonce');
+    ok(tw.corps.media.media_ids[0] === 'v99' && tw.corps.text.includes(VIDEO.lien) && tw.corps.text.length <= 280, 'le tweet porte la video et le lien de l annonce');
     /* 03/10 : « pour les prochaines images et videos, faut que SWOGE ait des pattes de chien ».
        Chaque description de SWOGE, dans chaque module qui en fabrique, le dit. */
     {
@@ -399,29 +409,60 @@ const x = require('./x_post');
       ok(sans.length === 0, 'SWOGE a des pattes de chien (coussinets, jamais de mains ni de doigts) dans chaque description' + (sans.length ? ' — manque : ' + sans.join(', ') : ''));
     }
     const consigneAnnonce = appels.find((a) => /anthropic/.test(a.u)).corps.messages[0].content;
-    ok(/Today's announcement/.test(consigneAnnonce) && consigneAnnonce.includes(x.ANNONCE.sujet.slice(0, 40)), 'le texte est ecrit sur le sujet de l annonce');
-    ok(/launchpad/i.test(x.ANNONCE.sujet) && /SwoleMind/.test(x.ANNONCE.sujet) && /launchpad/i.test(x.ANNONCE.reserve) && /SwoleMind/.test(x.ANNONCE.reserve) && x.ANNONCE.reserve.length + x.ANNONCE.lien.length + 2 <= 280,
-       '03/10 : l annonce dit les DEUX chemins (launchpad et SwoleMind), et le texte de secours tient avec son lien');
+    ok(/Today's announcement/.test(consigneAnnonce) && consigneAnnonce.includes(VIDEO.sujet.slice(0, 40)), 'le texte est ecrit sur le sujet de l annonce');
+
     const j1 = x.litJournal();
-    ok(j1.annonces[x.ANNONCE.nom] && j1.annonces[x.ANNONCE.nom].id, 'le journal retient l annonce partie');
+    ok(j1.annonces[VIDEO.nom] && j1.annonces[VIDEO.nom].id, 'le journal retient l annonce partie');
     ok(!appels.some((a) => /openai/.test(a.u)), 'aucune image payee pour ce creneau');
     const nVid = appels.filter((a) => /videos\/generations/.test(a.u)).length;
-    r = await x.tache({ maintenant: Date.parse('2026-10-01T16:35:00Z'), prendre: faux, pause });   // 12:35
+    r = await x.tache({ maintenant: Date.parse('2026-10-01T16:35:00Z'), prendre: faux, pause, annonce: VIDEO });   // 12:35
     ok(r.etat === 'poste' && !r.annonce, 'le creneau suivant redevient un post normal');
     ok(appels.filter((a) => /videos\/generations/.test(a.u)).length === nVid && appels.some((a) => /openai/.test(a.u)), 'avec une image, et plus aucune video');
     /* Une annonce qui rate trois fois : abandonnee, le creneau d apres est normal. */
     fs.unlinkSync(path.join(VOL, 'x_posts.json'));
     videoRate = true;
     const T2 = Date.parse('2026-10-02T13:05:00Z');
-    for (let i = 0; i < 3; i++) r = await x.tache({ maintenant: T2, prendre: faux, pause });
-    ok(r.etat === 'rate' && x.litJournal().annonces[x.ANNONCE.nom].abandon === true, 'trois echecs de la video : l annonce est abandonnee (jamais une boucle de videos payees)');
+    for (let i = 0; i < 3; i++) r = await x.tache({ maintenant: T2, prendre: faux, pause, annonce: VIDEO });
+    ok(r.etat === 'rate' && x.litJournal().annonces[VIDEO.nom].abandon === true, 'trois echecs de la video : l annonce est abandonnee (jamais une boucle de videos payees)');
     videoRate = false;
-    r = await x.tache({ maintenant: Date.parse('2026-10-02T16:35:00Z'), prendre: faux, pause });
+    r = await x.tache({ maintenant: Date.parse('2026-10-02T16:35:00Z'), prendre: faux, pause, annonce: VIDEO });
     ok(r.etat === 'poste' && !r.annonce, 'et le creneau suivant part normalement');
     process.env.X_ANNONCE = '0'; fs.unlinkSync(path.join(VOL, 'x_posts.json'));
-    ok(!x.annonceEnAttente(x.litJournal()), 'X_ANNONCE=0 l eteint');
+    ok(!x.annonceEnAttente(x.litJournal(), VIDEO) && !x.annonceEnAttente(x.litJournal()), 'X_ANNONCE=0 l eteint');
     delete process.env.X_ANNONCE; delete process.env.XAI_API_KEY;
-    ok(!x.annonceEnAttente(x.litJournal()), 'et sans cle xAI, pas d annonce video (le post reste une image)');
+    ok(!x.annonceEnAttente(x.litJournal(), VIDEO), 'et sans cle xAI, pas d annonce video (le post reste une image)');
+  }
+
+  console.log('\n-- 9. l annonce du nouveau design du portefeuille, en IMAGE (03/10) --');
+  {
+    /* « Sur l un des prochains tweets, poste le nouveau design de SWOGE wallet. » Une video inventee
+       ne montrerait pas le vrai design : l image est une capture de la page, dans le depot. */
+    fs.readdirSync(VOL).forEach((f) => { if (f === 'x_posts.json') fs.unlinkSync(path.join(VOL, f)); });
+    const A = x.ANNONCE, PNG = fs.readFileSync(path.join(__dirname, A.image));
+    ok(A.nom === 'wallet-design' && A.lien === 'https://swoleeswoge.dog/swoge_wallet.html' && !A.prompt, 'l annonce courante : le design du portefeuille, son lien, aucune video a generer');
+    ok(PNG.slice(1, 4).toString() === 'PNG' && PNG.readUInt32BE(16) === 2400 && PNG.readUInt32BE(20) === 1350 && PNG.length < 5 * 1024 * 1024,
+       'l image est un vrai PNG 2400 x 1350 (16:9), sous la limite de 5 Mo de X (' + Math.round(PNG.length / 1024) + ' Ko)');
+    ok(A.reserve.length + A.lien.length + 2 <= 280 && /Wallet/.test(A.reserve) && !/\$[0-9]/.test(A.reserve), 'le texte de secours tient avec son lien, et ne cite aucun prix (il changera)');
+    ok(x.annonceEnAttente(x.litJournal()), 'sans cle xAI, l annonce en image reste en attente : elle n en a pas besoin');
+    const appels = [];
+    const faux = async (url, o) => {
+      const u = String(url); let corps = null; try { corps = o && o.body ? JSON.parse(o.body) : null; } catch (e) {}
+      appels.push({ u, corps });
+      const rep = (statut, j) => ({ ok: statut < 300, status: statut, json: async () => j, text: async () => JSON.stringify(j) });
+      if (/anthropic/.test(u)) return rep(200, { content: [{ type: 'text', text: 'The new SWOGE Wallet is here 🐾 Swap, bridge and play from one place. $SWOGE' }] });
+      if (/media\/upload$/.test(u)) return rep(200, { data: { id: 'img7' } });
+      if (/2\/tweets/.test(u)) return rep(201, { data: { id: '7777' } });
+      throw new Error('url inattendue ' + u);
+    };
+    let r = await x.tache({ maintenant: Date.parse('2026-10-04T13:05:00Z'), prendre: faux, pause: async () => {} });
+    ok(r.etat === 'poste' && r.annonce === 'wallet-design', 'le prochain creneau poste l annonce du portefeuille');
+    const up = appels.find((a) => /media\/upload$/.test(a.u));
+    ok(up && up.corps.media_category === 'tweet_image' && Buffer.from(up.corps.media, 'base64').equals(PNG), 'l image televersee est EXACTEMENT la capture du depot');
+    ok(!appels.some((a) => /videos\/generations|openai|x\.ai/.test(a.u)), 'rien de genere, rien de paye (ni video, ni image)');
+    const tw = appels.find((a) => /2\/tweets/.test(a.u));
+    ok(tw.corps.media.media_ids[0] === 'img7' && tw.corps.text.includes(A.lien) && tw.corps.text.length <= 280, 'le tweet porte la capture et le lien du portefeuille');
+    r = await x.tache({ maintenant: Date.parse('2026-10-04T16:35:00Z'), prendre: faux, pause: async () => {} });
+    ok(!r.annonce, 'une seule fois : le creneau suivant n est plus l annonce');
   }
 
   console.log(`\nx_post.test.js : ${n} verifications OK`);
