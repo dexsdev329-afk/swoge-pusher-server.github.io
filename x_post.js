@@ -180,7 +180,7 @@ function jourDe(t) { return new Date(t).toISOString().slice(0, 10); }
    meme a chaque fois, quel que soit le decor : c est lui qui faisait le « deja
    vu ». Le corps et la tete restent (on doit reconnaitre SWOGE), la tenue suit
    la scene — la meme lecon que pour les images de SwoleMind. */
-const PERSONNAGE = "the famous 'buff Doge' meme character: a Shiba Inu head with a calm, confident expression on an extremely muscular bodybuilder torso, cream and tan fur. His clothes fit this particular scene (never a plain blue tank top). He is the subject of the picture";
+const PERSONNAGE = "the famous 'buff Doge' meme character: a Shiba Inu head with a calm, confident expression on an extremely muscular bodybuilder torso, cream and tan fur, and furry dog paws with paw pads, never human hands or fingers. His clothes fit this particular scene (never a plain blue tank top). He is the subject of the picture";
 
 /* Le cadrage : la meme scene vue de pres, de loin, d en bas ou de dos n est pas
    la meme image. Tire en evitant les FENETRE_CADRAGE derniers. */
@@ -543,7 +543,7 @@ const ANNONCE = {
   scene: 'in a short video announcing that anyone can launch their own token with SWOGE',
   sujet: 'Anyone can now launch their own token on Robinhood Chain with SWOGE, two ways: on the SWOGE FUN launchpad, or simply by asking SwoleMind, the SWOGE AI app, in plain words (for example "launch a token called Moon Dog"). Either way the player signs once from their own wallet and the token goes live on Uniswap.',
   reserve: 'Launch your own token on Robinhood Chain 🚀 Use the SWOGE FUN launchpad, or just tell SwoleMind "launch a token called…" and sign once from your wallet. Built by the dog. $SWOGE',
-  prompt: 'Cinematic 6-second shot, smooth camera push-in. The famous buff Doge meme character: a Shiba Inu head with a calm, confident expression on an extremely muscular bodybuilder body, cream and tan fur, wearing a sleek black hoodie. He stands in a neon-lit control room, presses one big glowing round button, and a shining golden coin rockets upward out of a launch pad in a trail of light and sparks. He looks at the camera and grins. Neon blue and warm gold light, shallow depth of field. No text, no letters, no numbers, no logos, no watermark.',
+  prompt: 'Cinematic 6-second shot, smooth camera push-in. The famous buff Doge meme character: a Shiba Inu head with a calm, confident expression on an extremely muscular bodybuilder body, cream and tan fur, furry dog paws with paw pads, never human hands or fingers, wearing a sleek black hoodie. He stands in a neon-lit control room, presses one big glowing round button, and a shining golden coin rockets upward out of a launch pad in a trail of light and sparks. He looks at the camera and grins. Neon blue and warm gold light, shallow depth of field. No text, no letters, no numbers, no logos, no watermark.',
 };
 function cleXai() { return (process.env.XAI_API_KEY || process.env.GROK_API_KEY || '').trim(); }
 function annonceEnAttente(journal) {

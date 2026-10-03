@@ -39,7 +39,7 @@ const REFERENCE_TTL_MS = 3600e3;
    rouge comme la reference : « il me faut un Swoge, meme corpulence, un shiba muscle,
    mais pas forcement la meme position ni le meme habit a chaque fois ». Le personnage,
    c'est le visage, le pelage et la carrure ; la tenue et la pose suivent la scene. */
-const SWOGE_DECRIT = 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build; '
+const SWOGE_DECRIT = 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build, and his furry dog paws with paw pads, never human hands or fingers; '
   + 'dress and pose him for this scene (the red suit in the reference is one example, not a uniform — keep it only if asked)';
 
 const SYSTEME = [

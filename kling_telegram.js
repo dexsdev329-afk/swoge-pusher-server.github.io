@@ -24,7 +24,7 @@ const path = require('path');
 /* 20 h a Paris le 27/09/2026 = 18 h UTC (heure d'ete, UTC+2). */
 const PROGRAMME = [
   { cle: 'poker-2026-09-27', a: Date.parse('2026-09-27T18:00:00Z'),
-    prompt: 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build. '
+    prompt: 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build, and his furry dog paws with paw pads, never human hands or fingers. '
       + 'He sits at a high-stakes poker table in a luxurious neon-lit casino at night, calmly revealing a royal flush of spades, '
       + 'tall stacks of gold chips in front of him, other players in shadow, green felt, warm cinematic lighting, confident smirk, highly detailed, sharp focus.',
     legende: '🃏 <b>SWOGE at the poker table</b>\nFirst picture made with <b>Kling AI</b> from the official SWOGE character.\n\n♠️ Play live: https://swoleeswoge.dog/swoge_poker.html',
@@ -58,7 +58,7 @@ const PROGRAMME = [
      pas postee ; la video part d'elle, avec le son natif de Kling (une replique
      de SWOGE). Cout : 0,028 $ + 10 s × 0,14 $ = 1,43 $ sur le compte Kling. */
   { cle: 'payai-image-2026-09-27', a: Date.parse('2026-09-27T21:20:00Z'), muet: true, format: '9:16', reference: 'subject',
-    prompt: 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build. '
+    prompt: 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build, and his furry dog paws with paw pads, never human hands or fingers. '
       + 'He stands in a futuristic neon trading command center at night, wearing a sleek black hoodie, surrounded by floating holographic screens of green crypto charts; '
       + 'three small glowing robot drones hover around him, each carrying a shining blue coin. Vertical cinematic shot, dramatic rim lighting, highly detailed, sharp focus, no text, no logos.' },
   { cle: 'payai-video-2026-09-27', a: Date.parse('2026-09-27T21:20:00Z'), type: 'video', depuis: 'payai-image-2026-09-27',
@@ -91,7 +91,7 @@ const PROGRAMME = [
      natif impose par le modele, donc la consigne dit « aucune voix, musique et
      bruitages seulement ». Cout : 0,028 $ + 6 s × 0,14 $ = 0,87 $. */
   { cle: 'agents15-image-2026-09-28', a: Date.parse('2026-09-28T08:15:00Z'), muet: true, format: '9:16', reference: 'subject',
-    prompt: 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build. '
+    prompt: 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build, and his furry dog paws with paw pads, never human hands or fingers. '
       + 'He stands on a futuristic neon stage at night and proudly holds up, with both hands in front of his chest, a large glossy white square sign showing the PayAI logo: '
       + 'three stacked rounded diamond-shaped layers in a light-to-royal-blue gradient at the top, and below them the word "PayAI" in bold rounded royal-blue letters. '
       + 'Behind him, a wall of holographic screens with green crypto charts, and a swarm of small friendly robot agents flying toward him carrying glowing blue coins. '
@@ -118,7 +118,7 @@ const RETARD_MAX_MS = 60 * 60e3;
  * Un JSON strict ; s'il ne vient pas (cle absente, panne, JSON illisible), une
  * serie de secours ecrite ici part quand meme : le test mesure la chaine
  * image → video → Telegram, et le dit dans la legende. */
-const SWOGE_MOT = 'SWOGE, a very muscular, bodybuilder-build shiba inu (keep his face, fur colours and build from the reference picture)';
+const SWOGE_MOT = 'SWOGE, a very muscular, bodybuilder-build shiba inu (keep his face, fur colours and build from the reference picture; furry dog paws with paw pads, never human hands or fingers)';
 const SERIE_SYSTEME = 'You write tiny animated web series. Answer with JSON only, no prose, no code fence.';
 function consigneSerie(n) {
   return 'Invent an original ' + n + '-episode micro-series starring ' + SWOGE_MOT + '. Fun, epic, a clear story arc with a twist in episode ' + Math.max(2, n - 1)

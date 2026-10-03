@@ -387,6 +387,17 @@ const x = require('./x_post');
     ok(st.length === 2 && st.every((a) => a.methode === 'GET' && /oauth_signature=/.test(a.auth) && /media_id=v99/.test(a.u)), 'le traitement est suivi (STATUS, GET signe) jusqu a « succeeded »');
     const tw = appels.filter((a) => /2\/tweets/.test(a.u)).pop();
     ok(tw.corps.media.media_ids[0] === 'v99' && tw.corps.text.includes(x.ANNONCE.lien) && tw.corps.text.length <= 280, 'le tweet porte la video et le lien de l annonce');
+    /* 03/10 : « pour les prochaines images et videos, faut que SWOGE ait des pattes de chien ».
+       Chaque description de SWOGE, dans chaque module qui en fabrique, le dit. */
+    {
+      const fs2 = require('fs'), path2 = require('path');
+      const sans = ['annonces.js', 'kling_telegram.js', 'studio_comprend.js', 'studio_production.js', 'x_post.js'].filter((f) => {
+        const t = fs2.readFileSync(path2.join(__dirname, f), 'utf8');
+        const descr = t.match(/bodybuilder[^'"\n]{0,400}/g) || [];
+        return !descr.length || !descr.every((d) => /paw pads/.test(d));
+      });
+      ok(sans.length === 0, 'SWOGE a des pattes de chien (coussinets, jamais de mains ni de doigts) dans chaque description' + (sans.length ? ' — manque : ' + sans.join(', ') : ''));
+    }
     const consigneAnnonce = appels.find((a) => /anthropic/.test(a.u)).corps.messages[0].content;
     ok(/Today's announcement/.test(consigneAnnonce) && consigneAnnonce.includes(x.ANNONCE.sujet.slice(0, 40)), 'le texte est ecrit sur le sujet de l annonce');
     ok(/launchpad/i.test(x.ANNONCE.sujet) && /SwoleMind/.test(x.ANNONCE.sujet) && /launchpad/i.test(x.ANNONCE.reserve) && /SwoleMind/.test(x.ANNONCE.reserve) && x.ANNONCE.reserve.length + x.ANNONCE.lien.length + 2 <= 280,

@@ -42,7 +42,7 @@ const IMAGE_PREFIXE = '/studio/production/image/';
 const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 const TYPE = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp' };
 const SWOGE = 'swoge';
-const SWOGE_DESCRIPTION = 'a very muscular, bodybuilder-build shiba inu — his outfit follows the scene';
+const SWOGE_DESCRIPTION = 'a very muscular, bodybuilder-build shiba inu with furry dog paws with paw pads, never human hands or fingers — his outfit follows the scene';
 
 const propre = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 

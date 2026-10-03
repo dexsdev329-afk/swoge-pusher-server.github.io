@@ -38,7 +38,7 @@ const LIEN = 'https://swoleeswoge.dog/swogeagentic.html';
 const TWEET_MAX = 280;
 /* Ce qu'un post de SWOGE ne dit jamais : une promesse de prix, de gain ou un partenariat. */
 const INTERDIT = /\b(guarantee[ds]?|risk[- ]?free|\d+\s?x\b|to the moon|moon(ing)?|price (will|going)|financial advice|partner(ship|ed)?|collab(oration)?|official .*payai|payai official)\b|×/i;
-const SWOGE_MOT = 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build.';
+const SWOGE_MOT = 'SWOGE, the character in the reference image: a very muscular, bodybuilder-build shiba inu — keep his face, fur colours and muscular build, and his furry dog paws with paw pads, never human hands or fingers.';
 const AMBIANCE = ' Bullish, triumphant mood: glowing green candlestick charts shooting upward behind him, golden confetti, neon city lights, cinematic lighting, highly detailed, sharp focus, no text, no letters, no logos.';
 
 const SYSTEME = 'You write launch posts for X (Twitter) for SWOGE WORLD, a crypto gaming site whose mascot is SWOGE, a very muscular shiba inu. '
