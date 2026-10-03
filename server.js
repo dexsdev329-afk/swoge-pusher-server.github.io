@@ -3622,7 +3622,7 @@ const server = http.createServer(async (req, res) => {
   /* ==================== LE NAVIGATEUR DE SWOGE AGENTS (navigateur_relais.js, 30/09) ====================
    * Le joueur navigue sur un Chromium d'un service a part ; ici, on lit SA session et on relaie.
    * L'analyse d'une capture passe par /studio/chat (vision, historique, credit) : rien a facturer ici. */
-  if (path === '/navigateur/etat' || path === '/navigateur/geste' || path === '/navigateur/ferme' || path === '/navigateur/image') {
+  if (path === '/navigateur/etat' || path === '/navigateur/geste' || path === '/navigateur/ferme' || path === '/navigateur/image' || path === '/navigateur/ticket') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' };
     const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
@@ -3634,7 +3634,9 @@ const server = http.createServer(async (req, res) => {
     let q;
     try { q = JSON.parse((await corps(req, 8192)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
     /* /image (02/10) : la derniere image de SA session, en longue attente — voir navigateur_serveur.js. */
-    const r = path === '/navigateur/ferme' ? await navigateurRelais.ferme(addr)
+    /* /ticket (02/10) : la liaison directe page → navigateur (navigateur_direct.js), pour l'adresse de SA session. */
+    const r = path === '/navigateur/ticket' ? navigateurRelais.ticket(addr)
+            : path === '/navigateur/ferme' ? await navigateurRelais.ferme(addr)
             : path === '/navigateur/image' ? await navigateurRelais.image(addr, q || {})
             : await navigateurRelais.geste(addr, q || {});
     return json(r.code, r.corps);

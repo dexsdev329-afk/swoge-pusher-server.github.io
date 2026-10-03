@@ -31,6 +31,7 @@ const http = require('http');
 const net = require('net');
 const crypto = require('crypto');
 const navigue = require('./navigue');
+const Direct = require('./navigateur_direct');
 
 const SECRET = String(process.env.NAVIGATEUR_SECRET || '');
 const SESSIONS_MAX = Math.max(1, Number(process.env.NAVIGATEUR_SESSIONS_MAX) || 3);
@@ -294,11 +295,54 @@ function egal(a, b) { const x = Buffer.from(String(a)), y = Buffer.from(String(b
 function corps(req, max) {
   return new Promise((ok, ko) => { const m = []; let n = 0; req.on('data', (c) => { n += c.length; if (n > max) { ko(new Error('too large')); req.destroy(); } else m.push(c); }); req.on('end', () => ok(Buffer.concat(m).toString('utf8'))); req.on('error', ko); });
 }
+/* ==================================================================
+ * LA LIAISON DIRECTE (02/10/2026) : /p/geste et /p/image, pour la page du joueur
+ * ==================================================================
+ * Le navigateur est a Amsterdam, le serveur du jeu en Californie : la page parle ici
+ * directement (navigateur_direct.js). Pas de secret dans la page — un TICKET signe par le
+ * serveur du jeu pour la session du joueur. Le joueur est celui du ticket, jamais celui du
+ * corps. Les memes bornes que le relais : un geste par 250 ms, deux images en vol. */
+const DIRECT_GESTE_MIN_MS = 250;
+const directDernier = new Map(), directEnVol = new Map();
+async function routeDirecte(req, res, chemin) {
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS',
+                 'access-control-allow-headers': 'content-type, authorization', 'access-control-max-age': '600' };
+  const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); res.end(JSON.stringify(o)); };
+  if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+  if (req.method !== 'POST') return json(405, { ok: false });
+  const joueur = Direct.verifie(SECRET, String(req.headers.authorization || '').replace(/^Ticket\s+/i, ''));
+  if (!joueur) { MESURE.refusTicket = (MESURE.refusTicket || 0) + 1; return json(401, { ok: false, raison: 'ticket missing or expired' }); }
+  let q;
+  try { q = JSON.parse(await corps(req, 16384) || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+  try {
+    if (chemin === '/p/geste') {
+      const o = Direct.champs(q);
+      if (!o) return json(400, { ok: false, raison: 'unknown action' });
+      const t = Date.now();
+      if (t - (directDernier.get(joueur) || 0) < DIRECT_GESTE_MIN_MS) return json(429, { ok: false, raison: 'slow down' });
+      directDernier.set(joueur, t);
+      if (directDernier.size > 5000) directDernier.clear();
+      MESURE.gestesDirects = (MESURE.gestesDirects || 0) + 1;
+      return json(200, Object.assign({ ok: true }, await geste(joueur, o)));
+    }
+    const n = directEnVol.get(joueur) || 0;
+    if (n >= 2) return json(429, { ok: false, raison: 'slow down' });
+    directEnVol.set(joueur, n + 1);
+    try {
+      MESURE.imagesDirectes = (MESURE.imagesDirectes || 0) + 1;
+      return json(200, Object.assign({ ok: true }, await image(joueur, { apres: Math.max(0, Number(q.apres) || 0), attente: Number(q.attente) || 0 })));
+    } finally { const m = (directEnVol.get(joueur) || 1) - 1; if (m > 0) directEnVol.set(joueur, m); else directEnVol.delete(joueur); }
+  } catch (e) { return json(e && (e.code === 503 || e.code === 404) ? e.code : 500, { ok: false, raison: String(e && e.message || e).slice(0, 200) }); }
+}
+
 function creeServeur() {
   return http.createServer(async (req, res) => {
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(o)); };
     const chemin = req.url.split('?')[0];
-    if (chemin === '/sante') return json(200, { ok: !!navigateur, sessions: SESSIONS.size, max: SESSIONS_MAX, mesure: MESURE });
+    /* 02/10 : le service a une adresse publique (liaison directe) — /sante ne dit plus la derniere
+       erreur, qui peut citer une page visitee. Le relais ne la lisait deja pas. */
+    if (chemin === '/sante') return json(200, { ok: !!navigateur, sessions: SESSIONS.size, max: SESSIONS_MAX, mesure: Object.assign({}, MESURE, { derniereErreur: undefined }) });
+    if (chemin === '/p/geste' || chemin === '/p/image') return routeDirecte(req, res, chemin);
     if (!SECRET || !egal(req.headers['x-navigateur-secret'] || '', SECRET)) { MESURE.refus++; return json(401, { ok: false }); }
     if (req.method !== 'POST') return json(405, { ok: false });
     let q;

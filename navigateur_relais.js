@@ -10,12 +10,17 @@
  * frenetique ne coute pas une capture chacun.
  * ================================================================== */
 const GESTE_MIN_MS = 250;
-const ACTIONS = ['goto', 'clic', 'defile', 'tape', 'touche', 'retour', 'avance', 'recharge', 'capture'];
+/* La liste des gestes et le filtre des champs vivent dans navigateur_direct.js (02/10) : le
+   navigateur, qui recoit maintenant aussi les gestes en direct, filtre avec le meme code. */
+const Direct = require('./navigateur_direct');
+const ACTIONS = Direct.ACTIONS;
 
 function cree(deps) {
   deps = deps || {};
   const url = () => String(deps.url != null ? deps.url : process.env.NAVIGATEUR_URL || '').replace(/\/$/, '');
   const secret = () => String(deps.secret != null ? deps.secret : process.env.NAVIGATEUR_SECRET || '');
+  /* L'adresse PUBLIQUE du navigateur (02/10) : sans elle, pas de ticket, la page passe par le relais. */
+  const publique = () => String(deps.publique != null ? deps.publique : process.env.NAVIGATEUR_PUBLIC_URL || '').replace(/\/$/, '');
   const lire = deps.fetch || fetch;
   const maintenant = deps.maintenant || Date.now;
   const dernier = new Map();
@@ -31,21 +36,15 @@ function cree(deps) {
   /** Un geste du joueur `addr` (adresse de SESSION). Rend { code, corps }. */
   async function geste(addr, q) {
     if (!actif()) return { code: 503, corps: { ok: false, raison: 'The browser is not connected yet.' } };
-    const a = String((q && q.action) || '');
-    if (!ACTIONS.includes(a)) return { code: 400, corps: { ok: false, raison: 'unknown action' } };
+    const champs = Direct.champs(q);
+    if (!champs) return { code: 400, corps: { ok: false, raison: 'unknown action' } };
     const t = maintenant(), d = dernier.get(addr) || 0;
     if (t - d < GESTE_MIN_MS) { MESURE.refusRythme++; return { code: 429, corps: { ok: false, raison: 'slow down' } }; }
     dernier.set(addr, t);
     if (dernier.size > 5000) dernier.clear();
-    /* Seuls les champs d'un geste passent ; le joueur est celui de la session. */
-    const corps = { joueur: addr, action: a, ecran: q.ecran === 'telephone' ? 'telephone' : 'bureau' };
-    if (a === 'goto') corps.url = String(q.url || '').slice(0, 2000);
-    if (a === 'clic') { corps.x = Number(q.x); corps.y = Number(q.y); }
-    if (a === 'defile') corps.dy = Number(q.dy);
-    if (a === 'tape') corps.texte = String(q.texte || '').slice(0, 500);
-    if (a === 'touche') corps.touche = String(q.touche || '').slice(0, 20);
-    /* 02/10 : le client recoit les images par /image — le geste ne les attend plus. */
-    if (q.flux === true) corps.flux = true;
+    /* Seuls les champs d'un geste passent ; le joueur est celui de la session.
+       02/10 : `flux` — le client recoit les images par /image, le geste ne les attend plus. */
+    const corps = Object.assign({ joueur: addr }, champs);
     MESURE.gestes++;
     try {
       const r = await appelle('/geste', corps);
@@ -70,6 +69,14 @@ function cree(deps) {
       return { code: r.code, corps: r.j };
     } catch (e) { MESURE.erreurs++; return { code: 502, corps: { ok: false, raison: 'The browser is not reachable right now (' + codeDe(e) + ').' } }; }
     finally { const m = (enVol.get(addr) || 1) - 1; if (m > 0) enVol.set(addr, m); else enVol.delete(addr); }
+  }
+  /** Le ticket de la liaison directe (navigateur_direct.js) pour le joueur `addr` (SESSION). */
+  function ticket(addr) {
+    if (!actif() || !publique()) return { code: 404, corps: { ok: false, raison: 'no direct link — use the relay' } };
+    const t = Direct.signe(secret(), addr, maintenant());
+    if (!t) return { code: 400, corps: { ok: false, raison: 'no player' } };
+    MESURE.tickets = (MESURE.tickets || 0) + 1;
+    return { code: 200, corps: { ok: true, url: publique(), ticket: t.ticket, dureeMs: t.dureeMs } };
   }
   async function ferme(addr) {
     if (!actif()) return { code: 200, corps: { ok: true } };
@@ -99,6 +106,6 @@ function cree(deps) {
     } catch (e) { diag = { joignable: false, code: codeDe(e) }; }
     return diag;
   }
-  return { actif, geste, image, ferme, sante, MESURE, _codeDe: codeDe };
+  return { actif, geste, image, ferme, sante, ticket, MESURE, _codeDe: codeDe };
 }
 module.exports = { cree, ACTIONS, GESTE_MIN_MS };

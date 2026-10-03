@@ -183,10 +183,11 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: { notify() {}
 
 (async () => {
   const noeud = fauxNoeud(), cb = fauxCoinbase(), rpc = fauxRpcBase();
-  const [pn, pc, pr] = [await libre(), await libre(), await libre()];
-  await new Promise((r) => noeud.srv.listen(pn, '127.0.0.1', r));
-  await new Promise((r) => cb.srv.listen(pc, '127.0.0.1', r));
-  await new Promise((r) => rpc.srv.listen(pr, '127.0.0.1', r));
+  /* 03/10 : chaque faux serveur prend SON port (0), sans fenetre entre le choix et l ecoute. Trois
+     `libre()` d affilee pouvaient rendre deux fois le meme port (chacun est relache avant le suivant) :
+     EADDRINUSE sur 127.0.0.1:43271 dans ./verifie.sh --vite du 03/10. */
+  const ecoute = (srv) => new Promise((r, k) => { srv.once('error', k); srv.listen(0, '127.0.0.1', () => r(srv.address().port)); });
+  const pn = await ecoute(noeud.srv), pc = await ecoute(cb.srv), pr = await ecoute(rpc.srv);
   process.env.X402_RPC = 'http://127.0.0.1:' + pn;
   process.env.X402_PAYTO = TRESOR;
   process.env.X402_CLE = GAZ.privateKey;

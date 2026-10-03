@@ -144,6 +144,36 @@ const J1 = '0x' + '1'.repeat(40), J2 = '0x' + '2'.repeat(40), J3 = '0x' + '3'.re
   const sante2 = await (await fetch(B + '/sante')).json();
   ok(sante2.mesure && sante2.mesure.parAction && !JSON.stringify(sante2).includes('127.0.0.1/'), '/sante porte les durees, jamais une adresse visitee');
 
+  console.log('\n-- 6. la liaison directe (02/10) : un ticket signe, jamais une adresse du corps --');
+  for (const j of [J1, J2, J3]) await NS.ferme(j);
+  const D = require('./navigateur_direct');
+  const S = process.env.NAVIGATEUR_SECRET;
+  const pub = async (chemin, corps, tk) => {
+    const rr = await fetch(B + chemin, { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, tk ? { authorization: 'Ticket ' + tk } : {}), body: JSON.stringify(corps) });
+    return Object.assign({ code: rr.status, cors: rr.headers.get('access-control-allow-origin') }, await rr.json().catch(() => ({})));
+  };
+  const tk = D.signe(S, J1).ticket;
+  ok((await pub('/p/geste', { action: 'capture' })).code === 401, 'sans ticket : 401');
+  ok((await pub('/p/geste', { action: 'capture' }, D.signe('un-autre-secret', J1).ticket)).code === 401, 'un ticket signe avec un autre secret : 401');
+  ok((await pub('/p/geste', { action: 'capture' }, D.signe(S, J1, Date.now() - D.DUREE_MS - 1000).ticket)).code === 401, 'un ticket echu : 401');
+  ok((await pub('/p/geste', { action: 'capture' }, tk.replace(J1, J2))).code === 401, 'un ticket dont on a change l adresse : 401');
+  ok((await pub('/p/geste', { action: 'capture' }, 'x-navigateur-secret')).code === 401 && NS.SESSIONS.size === 0, 'aucun refus n ouvre de session');
+  const pre = await fetch(B + '/p/geste', { method: 'OPTIONS' });
+  ok(pre.status === 204 && /authorization/.test(pre.headers.get('access-control-allow-headers') || ''), 'la page peut appeler depuis le site (CORS, en-tete authorization)');
+  r = await pub('/p/geste', { joueur: J2, action: 'goto', url: 'http://127.0.0.1/', flux: true }, tk);
+  ok(r.code === 200 && r.ok && NS.SESSIONS.has(J1) && !NS.SESSIONS.has(J2) && r.cors === '*', 'avec le ticket : le geste agit pour le joueur DU TICKET, pas pour celui du corps');
+  ok((await pub('/p/geste', { action: 'capture' }, tk)).code === 429, 'deux gestes a moins de 250 ms : le second attend (429), comme par le relais');
+  ok((await pub('/p/geste', { action: 'eval', code: 'x' }, tk)).code === 400, 'une action inconnue : 400');
+  await new Promise((s2) => setTimeout(s2, 300));
+  const avantD = interne;
+  r = await pub('/p/geste', { action: 'goto', url: 'http://127.0.0.2/secret' }, tk);
+  ok(r.ok && !!r.note && interne === avantD, 'la garde reseau tient en direct aussi : rien d interne (' + r.note + ')');
+  const imD = await pub('/p/image', { apres: 0, attente: 2000 }, tk);
+  ok(imD.code === 200 && !!imD.image && imD.seq > 0, 'l image arrive en direct, au nom du ticket');
+  ok((await pub('/p/image', { apres: 0 }, D.signe(S, J3).ticket)).code === 404 && !NS.SESSIONS.has(J3), 'le ticket d un joueur sans session : rien a montrer, aucune session ouverte');
+  const sante3 = await (await fetch(B + '/sante')).json();
+  ok(!('derniereErreur' in sante3.mesure) && sante3.mesure.gestesDirects >= 1 && sante3.mesure.refusTicket >= 4, '/sante, desormais publique, ne dit plus la derniere erreur ; elle compte gestes directs et tickets refuses');
+
   for (const j of [J1, J2, J3]) await NS.ferme(j);
   const { navigateur } = NS._etat(); await navigateur.close();
   srv.close(); mand.close(); site.close(); secret.close();

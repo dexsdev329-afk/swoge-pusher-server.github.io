@@ -57,11 +57,23 @@ const A = '0x' + 'a'.repeat(40);
   ok(dF.mesure && dF.mesure.msMoyen === 500 && dF.mesure.parAction['flux:clic'].msMoyen === 150 && !JSON.stringify(dF).includes('secret.example'),
      'le diagnostic porte les durees par action, jamais la derniere erreur ni une adresse');
 
+  console.log('\n-- 2 quater. le ticket de la liaison directe (02/10) --');
+  const Dt = require('./navigateur_direct');
+  ok(R.cree({ url: 'http://n', secret: 's', publique: '' }).ticket(A).code === 404, 'sans adresse publique du navigateur : pas de ticket, la page reste sur le relais');
+  const Rt = R.cree({ url: 'http://n', secret: 's3cr3t', publique: 'https://nav.example/', maintenant: () => Date.now() });
+  const tt = Rt.ticket(A);
+  ok(tt.code === 200 && tt.corps.url === 'https://nav.example' && Dt.verifie('s3cr3t', tt.corps.ticket) === A && tt.corps.dureeMs === Dt.DUREE_MS,
+     'le ticket porte l adresse de la session, signe avec le secret partage, et l adresse publique du navigateur');
+  ok(!JSON.stringify(tt.corps).includes('s3cr3t'), 'le secret ne part jamais dans la reponse');
+  ok(Rt.ticket('pas-une-adresse').code === 400, 'pas d adresse de joueur : pas de ticket');
+
   console.log('\n-- 3. la route --');
   const srv = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  const i = srv.indexOf("if (path === '/navigateur/etat' ||"), bloc = srv.slice(i, i + 1800);
+  /* Le bloc entier de la route, jusqu'a la suivante (le pilote) — et non 1 800 caracteres fixes. */
+  const i = srv.indexOf("if (path === '/navigateur/etat' ||"), bloc = srv.slice(i, srv.indexOf("if (path === '/navigateur/pilote' ||", i));
   ok(i > 0 && /sessionJoueur\.lire\(game\.sessionSecret, jeton\)/.test(bloc) && /navigateurRelais\.geste\(addr, q/.test(bloc) && !/q\.joueur|q\.addr/.test(bloc),
      'la route lit l adresse dans la session et la passe au relais ; jamais celle du corps');
+  ok(/'\/navigateur\/ticket' \? navigateurRelais\.ticket\(addr\)/.test(bloc), '/navigateur/ticket : le ticket est fait pour l adresse de la session, apres la verification de session');
   ok(/'\/navigateur\/image'/.test(bloc) && /navigateurRelais\.image\(addr, q/.test(bloc), '/navigateur/image passe par la meme session, la meme adresse');
   /* 02/10 : la mesure du pilote s'y ajoute (navigateur_pilote.js) — des compteurs, sans adresse. */
   ok(/'\/navigateur\/etat'\) return json\(200, Object\.assign\(\{ ok: true, actif: navigateurRelais\.actif\(\) \}, await navigateurRelais\.sante\(\)(, \{ pilote: pilote\.mesure\(\) \})?\)\)/.test(bloc), '/navigateur/etat dit si le navigateur est branche, et s il repond');

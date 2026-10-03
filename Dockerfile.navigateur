@@ -7,6 +7,8 @@ FROM mcr.microsoft.com/playwright:v1.56.1-noble
 WORKDIR /app
 RUN npm init -y >/dev/null && npm install --omit=dev --no-audit --no-fund playwright-core@1.56.1
 COPY navigue.js ./
+# 02/10 : le ticket et le filtre des gestes, le meme code que le serveur du jeu (liaison directe).
+COPY navigateur_direct.js ./
 # Sous le nom server.js : Railway lance la commande du Procfile du depot (« web: node server.js »)
 # meme quand il construit avec ce Dockerfile — constate le 01/10 au premier deploiement
 # (« Cannot find module '/app/server.js' »). Le navigateur demarre donc quelle que soit la commande.

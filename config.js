@@ -197,7 +197,10 @@ module.exports = {
    * elle on n'envoie rien du tout, plutot que de risquer une fuite qui ne se
    * rattrape pas.
    */
-  TG_BACKUP_CHAT_ID: env('TG_BACKUP_CHAT_ID', ''),
+  /* 02/10 : la variable posee sur Railway s'appelle TG_BACKUP_ID — le code ne lisait que
+     TG_BACKUP_CHAT_ID, et AUCUNE sauvegarde quotidienne n'est partie du 30/09 au 02/10 (journal :
+     « document NON ENVOYE : ce canal est public », six fois). Les deux noms sont lus. */
+  TG_BACKUP_CHAT_ID: env('TG_BACKUP_CHAT_ID', '') || env('TG_BACKUP_ID', ''),
   BACKUP_HEURES: parseFloat(env('BACKUP_HEURES', '24')),
   VOUCHER_TTL_SEC: parseInt(env('VOUCHER_TTL_SEC', '3600'), 10),
 

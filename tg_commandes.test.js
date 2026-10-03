@@ -42,5 +42,12 @@ const c = require('./tg_commandes');
   r = await c.tour({ prendre: faux });
   ok(/offset=13/.test(appels[appels.length - 1].u), 'la lecture suivante reprend apres la derniere mise a jour : rien n est relu');
   eq(r.repondus, 0, 'et ne repond a rien');
+  /* 02/10 : la variable posee sur Railway s'appelait TG_BACKUP_ID ; le code ne lisait que
+     TG_BACKUP_CHAT_ID, et aucune sauvegarde n'est partie pendant trois jours. Les deux noms valent. */
+  const lit = (env) => { const { execFileSync } = require('child_process');
+    return execFileSync(process.execPath, ['-e', 'process.stdout.write(String(require("./config").TG_BACKUP_CHAT_ID))'],
+      { cwd: __dirname, env: Object.assign({}, process.env, { TG_BACKUP_CHAT_ID: '', TG_BACKUP_ID: '' }, env) }).toString(); };
+  ok(lit({ TG_BACKUP_ID: '-100123' }) === '-100123', 'TG_BACKUP_ID seul : le canal prive des sauvegardes est lu');
+  ok(lit({ TG_BACKUP_CHAT_ID: '-100999', TG_BACKUP_ID: '-100123' }) === '-100999', 'les deux poses : TG_BACKUP_CHAT_ID, le nom documente, l emporte');
   console.log(`tg_commandes.test.js : ${n} verifications OK`);
 })().catch((e) => { console.error('  RATE ' + (e.message || e)); process.exit(1); });
