@@ -141,12 +141,21 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
     ok(gardes >= 2, gardes + ' lectures sous garde : un service muet ne fait pas tomber la page');
   }
 
+  /* 03/10 : ces trois blocs scannaient LOBSTER EN DIRECT. Ce jour-la DexScreener ne lui connait plus
+     aucune paire (« pairs: null ») : la route rendait 404 — a raison, un jeton sans piscine n a pas
+     de carte — et l essai tombait pour une raison qui n avait rien a voir avec ce qu il mesure (le
+     PNG, son cache, ses liens). LOBSTER vient donc de son releve du 26/09 (scan_lobster.essai) ; tout
+     autre jeton passe par le vrai scan, et le jeton inconnu rend toujours 404. */
+  const LOBF = require('./scan_lobster.essai');
+  const scanDirect = A.scanJeton;
+  A.scanJeton = async (adr) => (String(adr).toLowerCase() === LOBF.jeton.adr ? LOBF : scanDirect(adr));
+
   console.log('\n-- la carte en PNG, ecrite sans une seule dependance --');
   {
     /* Le site est statique sur GitHub Pages et les robots de X ne lisent pas
        le JavaScript : la carte dessinee dans la page ne sera jamais vue par
        eux. Celle-ci est ecrite par le serveur, pixel par pixel. */
-    const A = '0x254afb9fd36789bea39fb5656ba6fdb827be8dc5';
+    const A = LOBF.jeton.adr;
     const r = await fetch('http://127.0.0.1:' + port + '/scan/carte/' + A + '.png');
     const b = Buffer.from(await r.arrayBuffer());
     eq(r.status, 200, 'la carte est servie');
@@ -179,7 +188,7 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
 
   console.log('\n-- le lien qu on partage porte la mesure --');
   {
-    const A = '0x254afb9fd36789bea39fb5656ba6fdb827be8dc5';
+    const A = LOBF.jeton.adr;
     const r = await fetch('http://127.0.0.1:' + port + '/s/' + A);
     const h = await r.text();
     eq(r.status, 200, 'la page d apercu repond');
@@ -236,7 +245,7 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
     /* Audit du 26 septembre 2026 : un agent (ou la page) qui lisait le scan
        n avait aucun moyen de trouver l image partageable ni la page de
        partage. Elles existaient ; le JSON ne les disait pas. */
-    const A = '0x254afb9fd36789bea39fb5656ba6fdb827be8dc5';
+    const A = LOBF.jeton.adr;
     const r = await lit('/scan/' + A);
     eq(r.code, 200, 'le scan de LOBSTER repond');
     const l = (r.j && r.j.links) || {};
@@ -248,6 +257,8 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
     ok(img.status === 200 && img.headers.get('content-type') === 'image/png' && part.status === 200 && h.includes('og:image" content="' + l.card + '"'),
        'et ils menent quelque part : le PNG, et la page dont l apercu EST cette carte');
   }
+
+  A.scanJeton = scanDirect;
 
   console.log('\n-- le scan de LOBSTER, en anglais : le JSON, et l apercu partage --');
   {
