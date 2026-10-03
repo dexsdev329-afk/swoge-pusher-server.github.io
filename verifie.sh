@@ -92,7 +92,7 @@ lance compteurs "$SRV" node compteurs.test.js   # compteurs durables : un fichie
 lance klingjev "$SRV" node kling_jev.test.js   # Kling (nouveau standard, cle API, grille officielle) et Jev (systemone, probabilites, cout) : rien ne part sans cle, jamais la cle dans une reponse
 lance klingrte "$SRV" node kling_route.test.js   # essai Kling sur un vrai serveur : proprietaire seul, 403 avant Kling, journalise, aucun debit
 lance klingtg "$SRV" node kling_telegram.test.js   # image Kling postee sur Telegram a heure fixe : une fois, jamais en retard, rien sur le canal si Kling echoue
-lance observ  "$SRV" node observatoire.test.js   # Solana/Ethereum, observer seulement : decouverte unique, securite sans GoPlus, prix a 30 min par le meme service, disparus a part, rien que 4 services
+lance observ  "$SRV" node observatoire.test.js   # Solana/Ethereum/Robinhood, observer seulement : moyenne bornee a +300 % et recalculee depuis les .jsonl, devs qui poussent sur lancements plausibles, decouverte unique, securite sans GoPlus, prix a 30 min par le meme service, disparus a part, rien que 4 services
 lance sortie  "$SRV" node epreuve_sortie.test.js   # can_i_sell : verdict du Cobaye, facture seulement une reponse, 60 s de cache, 2 en vol, journal sans payeur
 lance alerte  "$SRV" node alerte_usage.test.js   # alerte Telegram d un appel paye : scan_token par defaut, jamais les arguments, 12/h puis resume, notre wallet dit tel quel
 lance fermes  "$SRV" node fermetures.test.js   # 27/09 : SWOGE FLIX servi vide et ferme a l ajout (manga/series intacts) ; staking ferme aux nouvelles mises, reclamer et sortir ouverts
@@ -134,6 +134,8 @@ lance esimpage "$SITE" node esim_page.test.js   # boutique eSIM : chercher, paye
 lance storepage "$SITE" node agent_store.test.js   # Agent Store : usage mesure avec son effectif, aucun taux sous 10, mission preremplie, services x402 tels que sondes, https seulement, 360 px
 lance polypage "$SITE" node polymarket_page.test.js   # Polymarket Edge Check : tri par date (jamais les gros gains d abord), pertes non encaissees reintegrees, aucun verdict sous 100, teneur de marche dit, texte seulement, 360 px
 lance polyai   "$SITE" node polymarket_ai_page.test.js   # Polymarket AI : cinq agents avec effectif, temoin Coin marque, calibration sans gagnant sous 100, liens polymarket.com seulement, 360 px
+lance colpage "$SITE" node colonies_page.test.js   # Solana & ETH : barre de Bonferroni sur les cases jugees, moyenne bornee > 0 exigee, « not enough » sous 30, pousseurs avec lien explorateur seulement pour une adresse valide, 360 px
+lance onglets "$SITE" node onglets_ia.test.js   # les cinq pages AI Trading portent la meme barre, rien ne deborde a 360 px
 lance lancepage "$SITE" node lance_v4.test.js   # carte de lancement : le portefeuille du joueur signe ; offres truquees refusees ; frais $SWOGE autorise au montant exact, frais ETH en valeur
 lance dexmc   "$SITE" node dexscreener_mcap.test.js   # capitalisation : le chiffre de DexScreener tel quel, aucun dollar invente, le taux choisi par l actif de cotation (V3 et V4 $SWOGE)
 [ $VITE -eq 1 ] || lance lpv3 "$SITE" node launchpad_v3.test.js   # VRAIE chaine : frais V3 lu sur le contrat, grille V2/V3, cotation ETH d un V2

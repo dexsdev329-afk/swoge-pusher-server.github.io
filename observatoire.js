@@ -73,6 +73,33 @@ const JEV_PAR_CYCLE = 20;
 const HORIZON_MIN = 30;             /* la colonie juge a 30 min */
 const MONTE = 20, EFFONDRE = -30;   /* ai_colonie, memes seuils */
 const ASSEZ = 30;                   /* sous 30 observations, une case ne conclut pas (BANCS_ASSEZ, le meme ordre) */
+/* ---- 03/10 : LA MOYENNE ETAIT FAUSSE ----
+ * Releve du 03/10, Solana : « moyenne » +4 393 112 750 % sur 29 730 jetons. Quelques jetons lus a
+ * un premier prix quasi nul (un pool a peine amorce) rendent des milliards de % a 30 min, et une
+ * somme brute les laisse ecraser tout le reste. Un acheteur ne touche jamais ca : il n'entre pas a
+ * ce prix. Chaque rendement est donc BORNE a [-100 %, +PLAFOND %] — 300 : la pompe maximale que la
+ * colonie accepte (pumpMax) — pour une moyenne, son ecart-type (le t de la case) et une mediane
+ * lue par tranches. La moyenne brute n'est plus montree. */
+const PLAFOND = 300;
+const TRANCHES = [-90, -70, -50, -30, -20, -10, -5, -2, 0, 2, 5, 10, 20, 30, 50, 100, 200];
+function trancheDe(r) { let i = 0; while (i < TRANCHES.length && r >= TRANCHES[i]) i++; return i; }
+function libelleTranche(i) {
+  const bas = i === 0 ? -100 : TRANCHES[i - 1], haut = i === TRANCHES.length ? PLAFOND : TRANCHES[i];
+  return (bas > 0 ? '+' : '') + bas + ' to ' + (haut > 0 ? '+' : '') + haut + '%';
+}
+/** Ajoute un rendement borne aux compteurs d'une case. */
+function noteBorne(b, r) {
+  const x = Math.max(-100, Math.min(PLAFOND, r));
+  b.nb = (b.nb || 0) + 1; b.sb = (b.sb || 0) + x; b.ss = (b.ss || 0) + x * x;
+  (b.h || (b.h = new Array(TRANCHES.length + 1).fill(0)))[trancheDe(x)]++;
+}
+/** Moyenne bornee, son t, et la tranche de la mediane — null sans rendement borne. */
+function lisBorne(b) {
+  if (!b.nb) return { avgCapped: null, t: null, median: null, nCapped: 0 };
+  const m = b.sb / b.nb, v = b.nb > 1 ? Math.max(0, (b.ss - b.nb * m * m) / (b.nb - 1)) : 0;
+  let cumul = 0, i = 0; for (; i < b.h.length; i++) { cumul += b.h[i]; if (cumul * 2 >= b.nb) break; }
+  return { avgCapped: arr1(m), t: v > 0 ? Math.round(m / Math.sqrt(v / b.nb) * 100) / 100 : null, median: libelleTranche(i), nCapped: b.nb };
+}
 const CYCLE_MS = 3 * 60e3;
 const SECU_PAR_CYCLE = 6;           /* lectures de securite par chaine et par cycle */
 const LOTS_PAR_CYCLE = 6;           /* lots DexScreener (30 jetons) par chaine et par cycle — jalons de 24 h compris */
@@ -168,6 +195,29 @@ function cree(deps) {
     }
   }
   for (const c of noms) E[c] = charge(c);
+  /* Les bilans d'avant le 03/10 n'ont pas de rendements bornes : on les relit UNE fois dans les
+     lignes completes gardees sur le disque (observatoire/<chaine>/AAAA-MM-JJ.jsonl). Un jeton encore
+     suivi (jalons de 24 h) n'y est pas encore : `nCapped` le dit, a cote de `n`. */
+  for (const c of noms) {
+    const S = E[c];
+    if (S.bornes) continue;
+    let lus = 0;
+    try {
+      const d = path.join(deps.dossier, c);
+      for (const f of fs.readdirSync(d).filter((x) => /\.jsonl$/.test(x)).sort()) {
+        for (const l of fs.readFileSync(path.join(d, f), 'utf8').split('\n')) {
+          if (!l) continue;
+          let o; try { o = JSON.parse(l); } catch (e) { continue; }
+          if (o.r30 == null) continue;
+          const note = (cle) => { const b = S.bilans[cle]; if (b) noteBorne(b, o.r30); };
+          note('all tokens');
+          for (const [k, v] of Object.entries(traitsDe(Object.assign({ chaine: c }, o)))) if (v) note(k + ' = ' + v);
+          lus++;
+        }
+      }
+    } catch (e) { /* pas encore de fichier : rien a relire */ }
+    S.bornes = { depuis: maintenant(), relus: lus };
+  }
 
   async function json(u, o) {
     const r = await chercher(u, o);
@@ -358,7 +408,7 @@ function cree(deps) {
     const note = (cle) => {
       const b = S.bilans[cle] || (S.bilans[cle] = { n: 0, s: 0, montes: 0, effondres: 0, disparus: 0 });
       if (r == null) { b.disparus++; return; }
-      b.n++; b.s += r;
+      b.n++; b.s += r; noteBorne(b, r);
       if (r >= MONTE) b.montes++;
       if (r <= EFFONDRE) b.effondres++;
     };
@@ -434,9 +484,26 @@ function cree(deps) {
     } finally { enCours = false; }
   }
 
+  /* ---- 03/10 : QUI POUSSE VRAIMENT SES JETONS ----
+   * « Sur Robinhood, tu as repere des developpeurs qui poussent fort les jetons ? » Le classement
+   * par « plus haut moyen » mettait en tete des jetons nes a 15 000 milliards de $ (releve du 03/10 :
+   * 0x43375ce5…, quatre jetons, quatre disparus) — une offre absurde fois un prix, pas une pompe.
+   * Un jeton ne compte donc que si sa capitalisation au premier prix est plausible pour un
+   * lancement (CAP_LANCEMENT) ; ce qu'on mesure, c'est la MONTEE depuis ce premier prix
+   * (plus haut vu aux jalons / premier prix) : a-t-il au moins double, et le multiple median. */
+  const CAP_LANCEMENT = [1e3, 2e6], CAP_ABSURDE = 1e9;
   function ficheDev(c, d, adr) {
-    return { dev: adr, tokens: d.n, avgPeakCapUsd: d.n ? Math.round(d.athSomme / d.n) : null, reached100k: d.au100k, vanished: d.rugs,
-             latest: d.jetons.slice(0, 10).map((x) => ({ token: x.addr, capAtFirstPrice: x.mc0, peakCap: x.pic, move30mPct: x.r30, vanished: x.rug })) };
+    const js = d.jetons || [];
+    const plausibles = js.filter((x) => x.mc0 >= CAP_LANCEMENT[0] && x.mc0 <= CAP_LANCEMENT[1]);
+    const multiples = plausibles.map((x) => (x.rug || !(x.pic > 0) ? 0 : x.pic / x.mc0)).sort((a, b) => a - b);
+    const med = multiples.length ? multiples[Math.floor((multiples.length - 1) / 2)] : null;
+    const pics = js.filter((x) => x.pic > 0 && x.pic < CAP_ABSURDE).map((x) => x.pic);
+    return { dev: adr, tokens: d.n, avgPeakCapUsd: pics.length ? Math.round(pics.reduce((a, b) => a + b, 0) / pics.length) : null,
+             reached100k: js.filter((x) => x.pic >= 1e5 && x.pic < CAP_ABSURDE).length, vanished: d.rugs,
+             absurdCaps: js.filter((x) => x.mc0 >= CAP_ABSURDE || x.pic >= CAP_ABSURDE).length,
+             plausibleLaunches: plausibles.length, doubled: multiples.filter((m) => m >= 2).length,
+             medianMultiple: med == null ? null : Math.round(med * 100) / 100,
+             latest: js.slice(0, 10).map((x) => ({ token: x.addr, capAtFirstPrice: x.mc0, peakCap: x.pic, move30mPct: x.r30, vanished: x.rug })) };
   }
   /** Un dev, sur une chaine : sa fiche, ou null. */
   function dev(c, adr) {
@@ -447,24 +514,29 @@ function cree(deps) {
   function vue() {
     const out = { note: 'Observation only: no buy, no paper trade, no key. Each new token is read at its first price and again 30 minutes later. '
       + 'Rise = +' + MONTE + '% or more, collapse = ' + EFFONDRE + '% or worse, the same definitions as the Robinhood colony. '
-      + 'A case under ' + ASSEZ + ' observations does not conclude. Dev records (Robinhood, Ethereum): the peak is the highest market cap seen at 30 min, 2 h, 6 h and 24 h — a lower bound of the real ATH.',
+      + 'A case under ' + ASSEZ + ' observations does not conclude. Each return is capped at -100% and +' + PLAFOND + '% before averaging (a token first read at a near-zero price would otherwise count for billions of %); the median is the 30-minute return range where half the tokens sit. Dev records (Robinhood, Ethereum): the peak is the highest market cap seen at 30 min, 2 h, 6 h and 24 h — a lower bound of the real ATH.',
       horizonMin: HORIZON_MIN, jalonsMin: JALONS, chaines: {} };
     for (const c of noms) {
       const S = E[c];
       const cases = Object.entries(S.bilans).map(([cle, b]) => {
         const i = cle.indexOf(' = ');
-        return { trait: i > 0 ? cle.slice(0, i) : cle, case: i > 0 ? cle.slice(i + 3) : cle, n: b.n,
-                 moyenne: b.n ? arr1(b.s / b.n) : null, partMontes: b.n ? Math.round(b.montes / b.n * 100) : null,
-                 partEffondres: b.n ? Math.round(b.effondres / b.n * 100) : null, disparus: b.disparus, assez: b.n >= ASSEZ };
+        return Object.assign({ trait: i > 0 ? cle.slice(0, i) : cle, case: i > 0 ? cle.slice(i + 3) : cle, n: b.n,
+                 partMontes: b.n ? Math.round(b.montes / b.n * 100) : null,
+                 partEffondres: b.n ? Math.round(b.effondres / b.n * 100) : null, disparus: b.disparus, assez: b.n >= ASSEZ }, lisBorne(b));
       }).sort((x, y) => (x.trait === 'all tokens' ? -1 : y.trait === 'all tokens' ? 1 : x.trait.localeCompare(y.trait) || y.n - x.n));
       const lesDevs = Object.entries(S.devs);
       const classes = lesDevs.filter(([, d]) => d.n >= 3).map(([a, d]) => ficheDev(c, d, a))
-        .sort((x, y) => y.avgPeakCapUsd - x.avgPeakCapUsd);
-      out.chaines[c] = { nom: CHAINES[c].nom, depuis: new Date(S.depuis).toISOString(), cycles: S.cycles,
+        .sort((x, y) => (y.avgPeakCapUsd || 0) - (x.avgPeakCapUsd || 0));
+      /* Ceux qui poussent : 3 lancements plausibles ou plus, classes par la part qui a double, puis
+         par le multiple median (un rug compte zero). Un dev ne vaut une regle que mesure en trait. */
+      const pousseurs = classes.filter((x) => x.plausibleLaunches >= 3)
+        .sort((x, y) => y.doubled / y.plausibleLaunches - x.doubled / x.plausibleLaunches || y.medianMultiple - x.medianMultiple);
+      out.chaines[c] = { nom: CHAINES[c].nom, depuis: new Date(S.depuis).toISOString(), cycles: S.cycles, recompute: S.bornes || null,
         enCours: Object.keys(S.suivis).length, compte: S.compte, holders: c === 'solana' ? (solPrive ? 'read (SOLANA_RPC_URL)' : 'unknown: the public Solana node refuses holder reads — set SOLANA_RPC_URL') : null,
         cases, derniers: S.derniers, jev: deps.jev ? { actif: deps.jev.actif(), mesure: deps.jev.MESURE } : null,
         devs: CHAINES[c].evm ? { recorded: lesDevs.length, withThreeTokensOrMore: classes.length,
-          bestAvgPeak: classes.slice(0, 10), mostVanished: classes.filter((x) => x.vanished).sort((x, y) => y.vanished / y.tokens - x.vanished / x.tokens).slice(0, 10) } : null };
+          withThreePlausibleLaunches: pousseurs.length, pushers: pousseurs.slice(0, 15),
+          bestAvgPeak: classes.filter((x) => !x.absurdCaps).slice(0, 10), mostVanished: classes.filter((x) => x.vanished).sort((x, y) => y.vanished / y.tokens - x.vanished / x.tokens).slice(0, 10) } : null };
     }
     return out;
   }
@@ -481,4 +553,4 @@ function cree(deps) {
   return { cycle, vue, dev, demarre, arrete, _etat: (c) => E[c] };
 }
 
-module.exports = { cree, traitsDe, CHAINES, HORIZON_MIN, JALONS, MONTE, EFFONDRE, ASSEZ };
+module.exports = { cree, traitsDe, CHAINES, HORIZON_MIN, JALONS, MONTE, EFFONDRE, ASSEZ, PLAFOND, lisBorne, noteBorne };

@@ -234,9 +234,52 @@ const nouveau = (c, a, prix, t) => { M.gt[c].push(a); M.pools[a] = 'pool-' + a; 
   const v = ob.vue();
   const sol = v.chaines.solana;
   ok(/Observation only/.test(v.note) && /\+20%/.test(v.note) && /-30%/.test(v.note), 'la vue dit ce qu elle est, et les seuils');
-  ok(sol.cases[0].trait === 'all tokens' && sol.cases[0].n === 2 && sol.cases[0].moyenne === -10 && sol.cases[0].assez === false, 'la reference d abord ; sous 30 observations, « assez » est faux');
+  ok(sol.cases[0].trait === 'all tokens' && sol.cases[0].n === 2 && sol.cases[0].avgCapped === -10 && !('moyenne' in sol.cases[0]) && sol.cases[0].assez === false, 'la reference d abord ; sous 30 observations, « assez » est faux');
   ok(/unknown: the public Solana node/.test(sol.holders) && v.chaines.eth.holders === null, 'elle dit pourquoi les porteurs Solana sont inconnus');
   ok(!/[àâçéèêëîïôûùüÿœ]/i.test(JSON.stringify(v)), 'tout en anglais');
+
+  console.log('\n-- 7. la moyenne bornee (03/10) --');
+  {
+    /* Releve du 03/10 : la « moyenne » Solana valait +4 393 112 750 % sur 29 730 jetons — quelques
+       premiers prix quasi nuls. Bornee a +PLAFOND, elle redevient une mesure. */
+    const b = { n: 0 };
+    [-50, -10, 0, 5, 1e9].forEach((r) => O.noteBorne(b, r));
+    const l = O.lisBorne(b);
+    ok(l.avgCapped === Math.round((-50 - 10 + 0 + 5 + O.PLAFOND) / 5 * 10) / 10 && l.nCapped === 5, 'un rendement d un milliard de % compte pour +' + O.PLAFOND + ' % (moyenne ' + l.avgCapped + ')');
+    ok(l.median === '+0 to +2%' || l.median === '0 to +2%', 'la mediane est la tranche du milieu (' + l.median + ')');
+    ok(typeof l.t === 'number', 'et la case porte son t (' + l.t + ')');
+    /* Le recalcul unique : des bilans d avant (sans bornes) relus dans les lignes du disque. */
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-bornes-'));
+    fs.mkdirSync(path.join(dir2, 'solana'), { recursive: true });
+    const vieux = { chaine: 'solana', depuis: Date.now(), cycles: 1, suivis: {}, finis: [], devs: {}, derniers: [],
+      compte: { decouverts: 2, observes: 2, jamaisIndexes: 0, disparus: 0, pleins: 0, erreurs: {} },
+      bilans: { 'all tokens': { n: 2, s: 1e9 + 20, montes: 2, effondres: 0, disparus: 0 } } };
+    fs.writeFileSync(path.join(dir2, 'solana.json'), JSON.stringify(vieux));
+    fs.writeFileSync(path.join(dir2, 'solana', '2026-10-01.jsonl'), JSON.stringify({ addr: 'A', r30: 1e9 }) + '\n' + JSON.stringify({ addr: 'B', r30: 20 }) + '\n' + JSON.stringify({ addr: 'C', r30: null, rug: true }) + '\n');
+    const ob2 = O.cree({ dossier: dir2, chaines: ['solana'], fetch: async () => { throw new Error('hors ligne'); } });
+    const c0 = ob2.vue().chaines.solana.cases[0];
+    ok(c0.nCapped === 2 && c0.avgCapped === Math.round((O.PLAFOND + 20) / 2 * 10) / 10 && ob2.vue().chaines.solana.recompute.relus === 2,
+       'au demarrage, les bilans d avant sont relus UNE fois dans les fichiers : ' + c0.avgCapped + ' % au lieu de 500 millions');
+    fs.rmSync(dir2, { recursive: true, force: true });
+  }
+
+  console.log('\n-- 8. qui pousse vraiment ses jetons (03/10) --');
+  {
+    /* Releve du 03/10 : le « plus haut moyen » mettait en tete des jetons nes a 15 000 milliards de $. */
+    const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-devs-'));
+    const ob3 = O.cree({ dossier: dir3, chaines: ['robinhood'], fetch: async () => { throw new Error('hors ligne'); } });
+    const S = ob3._etat('robinhood');
+    const j = (mc0, pic, rug) => ({ addr: '0x' + Math.random().toString(16).slice(2).padEnd(40, '0'), mc0, pic, r30: 0, rug: !!rug, t0: 1 });
+    S.devs['0xfaux'] = { n: 4, athSomme: 6e13, au100k: 4, rugs: 4, jetons: [j(6e13, 6e13, true), j(5e13, 5e13, true), j(4e13, 4e13, true), j(3e13, 3e13, true)], vu: 1 };
+    S.devs['0xpousse'] = { n: 4, athSomme: 0, au100k: 1, rugs: 0, jetons: [j(10000, 50000), j(20000, 45000), j(15000, 160000), j(30000, 31000)], vu: 1 };
+    S.devs['0xtiede'] = { n: 3, athSomme: 0, au100k: 0, rugs: 1, jetons: [j(50000, 52000), j(40000, 41000), j(60000, 0, true)], vu: 1 };
+    const dv = ob3.vue().chaines.robinhood.devs;
+    ok(dv.pushers[0].dev === '0xpousse' && dv.pushers[0].doubled === 3 && dv.pushers[0].plausibleLaunches === 4 && dv.pushers[0].medianMultiple === 2.25,
+       'en tete : le dev dont 3 lancements sur 4 ont au moins double (multiple median ' + dv.pushers[0].medianMultiple + ')');
+    ok(!dv.pushers.some((x) => x.dev === '0xfaux') && !dv.bestAvgPeak.some((x) => x.dev === '0xfaux'), 'les jetons nes a 60 000 milliards de $ ne classent personne');
+    ok(dv.pushers.find((x) => x.dev === '0xtiede').doubled === 0, 'un rug compte zero, un jeton plat ne double pas');
+    fs.rmSync(dir3, { recursive: true, force: true });
+  }
 
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
   process.exit(rates ? 1 : 0);
