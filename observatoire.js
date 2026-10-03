@@ -87,6 +87,9 @@ function libelleTranche(i) {
   const bas = i === 0 ? -100 : TRANCHES[i - 1], haut = i === TRANCHES.length ? PLAFOND : TRANCHES[i];
   return (bas > 0 ? '+' : '') + bas + ' to ' + (haut > 0 ? '+' : '') + haut + '%';
 }
+function phiObs(x) { const t = 1 / (1 + 0.3275911 * Math.abs(x) / Math.SQRT2), y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x / 2); return x >= 0 ? (1 + y) / 2 : (1 - y) / 2; }
+/** La barre de la page : 5 % bilateral partage entre k cases (Bonferroni). */
+function barreBilaterale(k) { const c = 0.05 / (2 * Math.max(1, k)); let a = 0, b = 10; for (let i = 0; i < 60; i++) { const m = (a + b) / 2; if (1 - phiObs(m) > c) a = m; else b = m; } return Math.round(b * 100) / 100; }
 /** Ajoute un rendement borne aux compteurs d'une case. */
 function noteBorne(b, r) {
   const x = Math.max(-100, Math.min(PLAFOND, r));
@@ -373,6 +376,8 @@ function cree(deps) {
               Object.assign(o, { p0: Number(p.priceUsd), t0: t, jalon: 0, liq0: (p.liquidity && p.liquidity.usd) || null, mc0: mc, mcMax: mc,
                 age0: ne ? arr1((t - ne) / 60e3) : null,
                 dexId: p.dexId || o.gtDex, quote: (p.quoteToken && p.quoteToken.symbol) || null, sociaux: so, pool: o.pool || p.pairAddress });
+              /* Etape 2 (03/10) : la banque papier recoit chaque premier prix ; elle seule decide, sur devis. */
+              if (deps.banque) deps.banque.propose(c, o, casesDe(c, o));
             } else if (t - o.decouvert > JAMAIS_INDEXE_MIN * 60e3) {
               S.compte.jamaisIndexes++; sort(c, o, 'never indexed');
             }
@@ -400,6 +405,24 @@ function cree(deps) {
         }
       }
     }
+  }
+
+  /** Les « trait = valeur » d'un jeton, les cles meme des bilans. */
+  function casesDe(c, o) {
+    return Object.entries(traitsDe(Object.assign({ chaine: c }, o))).filter(([, v]) => v).map(([k, v]) => k + ' = ' + v);
+  }
+  /* Les cases qui sortent du lot — la regle de la page (swoge_colonies.html), ici pour que la banque
+     papier l'applique : jugees (≥ ASSEZ, t connu), moyenne bornee > 0, t au-dessus de la barre de
+     Bonferroni bilaterale pour le nombre de cases jugees ; et pas collee au plafond (≥ 80 % de
+     PLAFOND : releve du 03/10, Solana « fluxbeam », 82 jetons, 100 % de montees, +293,9 % — un premier
+     prix mal lu, pas une pompe). */
+  function sortants(c) {
+    const S = E[c];
+    const jugees = Object.entries(S.bilans).filter(([k]) => k !== 'all tokens')
+      .map(([k, b]) => Object.assign({ cle: k, n: b.n }, lisBorne(b))).filter((x) => x.n >= ASSEZ && x.nCapped >= ASSEZ && x.t != null);
+    if (!jugees.length) return [];
+    const b = barreBilaterale(jugees.length);
+    return jugees.filter((x) => x.t >= b && x.avgCapped > 0 && x.avgCapped < 0.8 * PLAFOND).sort((x, y) => y.t - x.t).map((x) => x.cle);
   }
 
   function noteBilans(c, o, r) {
@@ -479,6 +502,7 @@ function cree(deps) {
         await devs(c);
         await prix(c);
         await jevDemande(c);
+        if (deps.banque) { try { await deps.banque.tour(c, sortants(c)); } catch (e) { erreur(c, 'banque', e); } }
         sauve(c);
       }
     } finally { enCours = false; }
@@ -515,7 +539,7 @@ function cree(deps) {
     const out = { note: 'Observation only: no buy, no paper trade, no key. Each new token is read at its first price and again 30 minutes later. '
       + 'Rise = +' + MONTE + '% or more, collapse = ' + EFFONDRE + '% or worse, the same definitions as the Robinhood colony. '
       + 'A case under ' + ASSEZ + ' observations does not conclude. Each return is capped at -100% and +' + PLAFOND + '% before averaging (a token first read at a near-zero price would otherwise count for billions of %); the median is the 30-minute return range where half the tokens sit. Dev records (Robinhood, Ethereum): the peak is the highest market cap seen at 30 min, 2 h, 6 h and 24 h — a lower bound of the real ATH.',
-      horizonMin: HORIZON_MIN, jalonsMin: JALONS, chaines: {} };
+      horizonMin: HORIZON_MIN, jalonsMin: JALONS, bankNote: deps.banque ? require('./banque_papier').NOTE : null, chaines: {} };
     for (const c of noms) {
       const S = E[c];
       const cases = Object.entries(S.bilans).map(([cle, b]) => {
@@ -534,6 +558,7 @@ function cree(deps) {
       out.chaines[c] = { nom: CHAINES[c].nom, depuis: new Date(S.depuis).toISOString(), cycles: S.cycles, recompute: S.bornes || null,
         enCours: Object.keys(S.suivis).length, compte: S.compte, holders: c === 'solana' ? (solPrive ? 'read (SOLANA_RPC_URL)' : 'unknown: the public Solana node refuses holder reads — set SOLANA_RPC_URL') : null,
         cases, derniers: S.derniers, jev: deps.jev ? { actif: deps.jev.actif(), mesure: deps.jev.MESURE } : null,
+        standouts: sortants(c), bank: deps.banque ? deps.banque.vue(c) : null,
         devs: CHAINES[c].evm ? { recorded: lesDevs.length, withThreeTokensOrMore: classes.length,
           withThreePlausibleLaunches: pousseurs.length, pushers: pousseurs.slice(0, 15),
           bestAvgPeak: classes.filter((x) => !x.absurdCaps).slice(0, 10), mostVanished: classes.filter((x) => x.vanished).sort((x, y) => y.vanished / y.tokens - x.vanished / x.tokens).slice(0, 10) } : null };
@@ -553,4 +578,4 @@ function cree(deps) {
   return { cycle, vue, dev, demarre, arrete, _etat: (c) => E[c] };
 }
 
-module.exports = { cree, traitsDe, CHAINES, HORIZON_MIN, JALONS, MONTE, EFFONDRE, ASSEZ, PLAFOND, lisBorne, noteBorne };
+module.exports = { cree, traitsDe, CHAINES, HORIZON_MIN, JALONS, MONTE, EFFONDRE, ASSEZ, PLAFOND, lisBorne, noteBorne, barreBilaterale };

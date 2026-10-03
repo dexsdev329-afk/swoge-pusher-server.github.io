@@ -1676,7 +1676,16 @@ tgAppels();
    OBSERVATOIRE=1 (voir observatoire.js). */
 /* Jev (TypeSafe) : decisions typees, en test fantome dans l'observatoire (jev.js). TYPESAFE_API_KEY. */
 const jev = require('./jev').cree({});
-const observatoire = require('./observatoire').cree({ dossier: require('path').join(cfg.DATA_DIR, 'observatoire'), jev });
+/* La banque papier (03/10/2026, etape 2) : chaque premier prix de l'observatoire peut devenir un achat
+   PAPIER chiffre comme un ordre — devis d'achat et de revente (Jupiter, KyberSwap, les quoteurs du
+   miroir en lecture seule), ventes chiffrees a 10, 30 et 60 min. Rien n'est signe, et le miroir ne
+   la suit jamais : elle n'ecrit que dans DATA_DIR/observatoire/banque_<chaine>.json. BANQUE_PAPIER=0 l'eteint. */
+const banquePapier = process.env.BANQUE_PAPIER === '0' ? null : (() => {
+  const B = require('./banque_papier');
+  return B.cree({ dossier: require('path').join(cfg.DATA_DIR, 'observatoire'),
+    quoteurs: { solana: B.quoteurSolana(), eth: B.quoteurEth(), robinhood: B.quoteurRobinhood({ miroir }) } });
+})();
+const observatoire = require('./observatoire').cree({ dossier: require('path').join(cfg.DATA_DIR, 'observatoire'), jev, banque: banquePapier });
 /* Kling : video, en essai proprietaire d'abord (kling.js, route /studio/kling). KLING_API_KEY. */
 const kling = require('./kling').cree({});
 const KLING_JOURNAL = require('path').join(cfg.DATA_DIR, 'kling_essais.jsonl');
@@ -9626,7 +9635,7 @@ server.listen(cfg.PORT, () => {
 
   if (process.env.OBSERVATOIRE === '1') {
     observatoire.demarre();
-    console.log('[observatoire] Solana et Ethereum : observation seule (aucun achat, aucun papier) — vue publique sur /ai/observatoire');
+    console.log('[observatoire] Solana, Ethereum, Robinhood : observation' + (banquePapier ? ' + banque PAPIER sur devis (rien n est signe, le miroir ne la suit pas)' : ' seule') + ' — vue publique sur /ai/observatoire');
   }
 
   /* ---- LE RELEVE PAPIER PARTAGE DE PREDICT ----

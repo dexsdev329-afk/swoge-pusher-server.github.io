@@ -93,6 +93,7 @@ lance klingjev "$SRV" node kling_jev.test.js   # Kling (nouveau standard, cle AP
 lance klingrte "$SRV" node kling_route.test.js   # essai Kling sur un vrai serveur : proprietaire seul, 403 avant Kling, journalise, aucun debit
 lance klingtg "$SRV" node kling_telegram.test.js   # image Kling postee sur Telegram a heure fixe : une fois, jamais en retard, rien sur le canal si Kling echoue
 lance observ  "$SRV" node observatoire.test.js   # Solana/Ethereum/Robinhood, observer seulement : moyenne bornee a +300 % et recalculee depuis les .jsonl, devs qui poussent sur lancements plausibles, decouverte unique, securite sans GoPlus, prix a 30 min par le meme service, disparus a part, rien que 4 services
+lance banque  "$SRV" node banque_papier.test.js   # banque papier : achat seulement sur devis d achat ET de revente, temoin et bras, ventes a 10/30/60 min, invendable = 0, panne != pas de route, aucune signature
 lance sortie  "$SRV" node epreuve_sortie.test.js   # can_i_sell : verdict du Cobaye, facture seulement une reponse, 60 s de cache, 2 en vol, journal sans payeur
 lance alerte  "$SRV" node alerte_usage.test.js   # alerte Telegram d un appel paye : scan_token par defaut, jamais les arguments, 12/h puis resume, notre wallet dit tel quel
 lance fermes  "$SRV" node fermetures.test.js   # 27/09 : SWOGE FLIX servi vide et ferme a l ajout (manga/series intacts) ; staking ferme aux nouvelles mises, reclamer et sortir ouverts
