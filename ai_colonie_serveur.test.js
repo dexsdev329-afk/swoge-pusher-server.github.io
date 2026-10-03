@@ -8347,6 +8347,60 @@ async function portefeuillesAvantLeRegard() {
  * et presque aucun jeune n'a de lien. La sonde dit lesquels montent, sans
  * changer un verdict ni decouper la ligne que la borne d'age lit.
  * ======================================================================== */
+/* LA BANQUE PAPIER LIT LA COLONIE (03/10/2026) : apres chaque verdict, une ADRESSE part vers la banque
+   papier (cinq bras, ceux du diagnostic du 03/10). Ce que l'essai tient : le bras est le bon ; rien de la
+   colonie ne bouge (positions, tresor, carnet, verdicts) ; le miroir n'est jamais appele pour un jeton
+   refuse ; une banque en panne ne change aucun verdict. */
+async function banquePapierLitLaColonie() {
+  console.log('\n-- la banque papier lit la colonie : une adresse, rien d autre --');
+  const B = C.BRAS_COLONIE;
+  const P = C.vue().planchers;
+  /* 1. le classement, sur des jetons fabriques */
+  const jeune = (liens, min) => ({ addr: '0x' + 'a1'.repeat(20), liq: P.liq + 1000, mc: P.mc + 5000, minutes: min, dexSondeAge: { v: 'x', liens, minutes: min } });
+  ok(C._brasColonie(jeune(0, 2), 'too young (2 min): set aside', false) === B.jeuneSansLien, 'trop jeune, sonde DexScreener sans lien, dans les planchers : « ' + B.jeuneSansLien + ' »');
+  ok(C._brasColonie(jeune(2, 2), 'too young (2 min): set aside', false) === B.jeuneAvecLien, 'avec deux liens : « ' + B.jeuneAvecLien + ' »');
+  ok(C._brasColonie(Object.assign(jeune(0, 6), { dexSondeAge: null, dexSonde: { v: 'connuMoins', liens: 0, minutes: 6 } }), 'not indexed by DexScreener yet (6 min)', false) === B.jeuneSansLien, '4-10 min « not indexed », sonde sans lien : meme bras');
+  ok(C._brasColonie(Object.assign(jeune(0, 2), { liq: P.liq - 1 }), 'too young (2 min): set aside', false) === null, 'sous le plancher de piscine : aucun bras (la banque ne mesure que ce que la colonie pourrait acheter)');
+  ok(C._brasColonie(Object.assign(jeune(0, 2), { dexSondeAge: null }), 'too young (2 min): set aside', false) === null, 'jeune SANS sonde : aucun bras (on ne devine pas les liens)');
+  ok(C._brasColonie({ addr: 'x', liq: P.liq, mc: 20000 }, '$20000 cap: below the buy floor ($25000)', false) === B.cap
+     && C._brasColonie({ addr: 'x', liq: P.liq, mc: 12000 }, '$12000 cap: below the buy floor ($25000)', false) === null, 'plancher de cap : 15-25 k$ seulement');
+  const ar = (pct) => ({ addr: 'x', liq: 50000, mc: 60000, epreuve: { retour: { pct } } });
+  ok(C._brasColonie(ar(94.5), 'round trip too costly: fees and depth would eat 5.5% of a 0.01 ETH order', false) === B.allerRetour
+     && C._brasColonie(ar(92), 'round trip too costly: fees and depth would eat 8% of a 0.01 ETH order', false) === null, 'aller-retour : 4-7 % seulement (5,5 % oui, 8 % non)');
+  ok(C._brasColonie({ addr: 'x' }, null, true) === B.achete && C._brasColonie({ addr: 'x' }, 'score too low', false) === null, 'achete : le temoin ; un autre refus : rien');
+
+  /* 2. un vrai tour : sept jetons sains et un sous le plancher de cap */
+  const proposes = [], appelsMiroir = [];
+  C.poseMiroir({ surAchat: async (x) => { appelsMiroir.push(x); return 0; }, surVente: async () => 0 });
+  C.poseBanquePapier({ propose: (c, o, cases, x) => proposes.push({ c, o, x }) });
+  remise(sains().concat([jeton(7, { mc: 20000 })]));
+  await C.tour();
+  await new Promise((r) => setTimeout(r, 50));
+  const G = C._etat(), v = C.vue();
+  const cap = v.candidats.find((x) => x.sym === 'TOK7');
+  ok(!!cap && /cap: below the buy floor/.test(cap.refus || ''), 'TOK7 (20 k$) est refuse par le plancher de cap : « ' + (cap && cap.refus) + ' »');
+  const pCap = proposes.find((p) => p.o.addr === jeton(7).addr);
+  ok(!!pCap && pCap.c === 'robinhood' && pCap.x.bras === B.cap && !pCap.x.controle && pCap.o.pool === jeton(7).pool, 'il part a la banque, bras « ' + B.cap + ' », avec son pool');
+  const achetes = G.positions.map((p) => p.adr);
+  ok(achetes.every((a) => proposes.some((p) => p.o.addr === a && p.x.bras === B.achete && p.x.controle === true)), 'chaque achat de la colonie (' + achetes.length + ') part aussi, dans le temoin « ' + B.achete + ' »');
+  ok(!appelsMiroir.some((x) => x && x.adr === jeton(7).addr), 'le miroir n est jamais appele pour un jeton refuse propose a la banque');
+  ok(appelsMiroir.length <= achetes.length, 'le miroir ne recoit pas plus de signaux que la colonie n a ouvert de positions (' + appelsMiroir.length + ' / ' + achetes.length + ')');
+  ok(Object.keys(proposes[0] || {}).join() === 'c,o,x' && Object.keys(pCap.o).sort().join() === 'addr,dexId,pool', 'la banque ne recoit qu une adresse, un pool et un bras — aucun etat de la colonie');
+  ok(G.compteurs.banquePropose === proposes.length, 'compte : ' + G.compteurs.banquePropose + ' propositions');
+
+  /* 3. memes jetons, une banque en panne : les verdicts sont identiques */
+  const verdicts = v.candidats.map((x) => x.sym + ':' + (x.refus || 'ok')).sort().join('|');
+  C.poseBanquePapier({ propose: () => { throw new Error('panne banque'); } });
+  remise(sains().concat([jeton(7, { mc: 20000 })]));
+  await C.tour();
+  const v2 = C.vue();
+  ok(v2.candidats.map((x) => x.sym + ':' + (x.refus || 'ok')).sort().join('|') === verdicts && C._etat().positions.length === achetes.length,
+     'une banque qui leve : memes verdicts, memes positions — elle ne change rien a la colonie');
+  ok(C._etat().compteurs.banqueErreur >= 1, 'et la panne est comptee (banqueErreur)');
+  C.poseBanquePapier(null);
+  C.poseMiroir(null);
+}
+
 async function carnetNetDuCout() {
   /* 30/09/2026 : « ameliore SWOGE AI ». Le carnet ne montrait que le BRUT ; 239 positions a
      +0,37 % brut pour 4,79 % d aller-retour devise font -4,42 % net. Le bilan net le dit, sans
@@ -8606,6 +8660,7 @@ async function baleineParTranche() {
   await portefeuillesAvantLeRegard();
   await sondeDesMoinsDeQuatre();
   await carnetNetDuCout();
+  await banquePapierLitLaColonie();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

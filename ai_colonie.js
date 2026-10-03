@@ -7180,6 +7180,60 @@ try { tg = require('./telegram.js'); } catch (e) { tg = null; }
 let miroir = null;
 function poseMiroir(m) { miroir = m; }
 
+/* ---- LA BANQUE PAPIER LIT LA COLONIE (03/10/2026) ----
+ * Diagnostic du 03/10 (relevés du 23/09 au 03/10, carnet de 313 lignes, verifie par une contre-enquete) :
+ * la colonie achete 3,7 jetons par jour, et c'est rationnel — son carnet perd 4,3 % net par trade
+ * (n=250, t -2,45) et aucune porte appuyee sur assez d'observations n'affame demontrablement. Mais a
+ * ce rythme, une question coute un a trois mois : la colonie n'apprend plus de ses propres achats.
+ * Le volume vient donc du PAPIER : apres chaque verdict, certains jetons sont proposes a la banque
+ * papier (banque_papier.js), qui les chiffre sur les vrais devis du miroir (lecture seule) et les
+ * vend a 10/30/60 min. Cinq bras, ceux que le diagnostic designe :
+ *   - « colony · bought » : ce que la colonie achete — le temoin ; il dit si le reglement a 30 min de
+ *     la banque reproduit la perte connue (sinon aucun autre bras ne se lit) ;
+ *   - « colony · young, no public link » : refuse pour l'age (< 4 min) ou « not indexed » (4-10 min),
+ *     sonde DexScreener sans lien, et dans les planchers liq / cap. La seule ligne encore au-dessus de
+ *     la reference (73 % de montees, n=1 826 ; 33 % en comptant les non-lus) — mesuree sur un prix que
+ *     la colonie ne paie pas ; la banque, elle, le paie au devis ;
+ *   - « colony · young, 1+ public link » : la population de l'essai « jeune » (papier -10,7 %, n=6 ;
+ *     reel -27,2 %, n=5) — la preuve en papier pour la decision du proprietaire ;
+ *   - « colony · cap $15-25k » : refuse par le plancher de capitalisation, piscine au plancher
+ *     (7 j : 41 % de montees, n7=1 326 ; vie : strat +0,2, n=2 370 — mixte) ;
+ *   - « colony · round trip 4-7% » : refuse seulement par le plafond d'aller-retour (carnet -5,9 %
+ *     net, n=60 ; reel 4-6 % : -10,5, n=6) — dit si 4 % est le bon plafond.
+ * Ce que la banque ne touche JAMAIS : E.positions, E.tresor, E.carnet, la reference et l'audit, le
+ * seuil, toursSansAchat, le signal, le miroir, Telegram. Elle n'est pas appelee par `ouvre` ni par
+ * `signal` : elle recoit une adresse, et c'est tout. Une banque en panne ne change aucun verdict. */
+let banquePapier = null;
+function poseBanquePapier(b) { banquePapier = b; }
+const BRAS_COLONIE = { achete: 'colony · bought', jeuneSansLien: 'colony · young, no public link', jeuneAvecLien: 'colony · young, 1+ public link',
+                       cap: 'colony · cap $15-25k', allerRetour: 'colony · round trip 4-7%' };
+/** Le bras de la colonie d'un jeton juge, ou null. */
+function brasColonie(t, refus, ouvert) {
+  if (ouvert) return BRAS_COLONIE.achete;
+  if (!t || !refus) return null;
+  const P = planchers();
+  const fam = familleRefus(refus);
+  const dansLesPlanchers = t.liq >= P.liq && t.mc >= P.mc && t.mc <= P.mcMax;
+  const sonde = t.dexSondeAge || t.dexSonde;
+  if (sonde && typeof sonde.liens === 'number' && (fam === NON_INDEXE || /too young/.test(fam)) && (t.minutes || 0) < 10 && dansLesPlanchers)
+    return sonde.liens >= 1 ? BRAS_COLONIE.jeuneAvecLien : BRAS_COLONIE.jeuneSansLien;
+  if (fam === 'cap below the buy floor' && t.mc >= 15000 && t.mc < 25000 && t.liq >= P.liq) return BRAS_COLONIE.cap;
+  if (/^round trip too costly/.test(String(refus))) {
+    const c = coutAllerRetour(t.epreuve && t.epreuve.retour);
+    if (c > 4 && c <= 7) return BRAS_COLONIE.allerRetour;
+  }
+  return null;
+}
+function proposeALaBanque(t, refus, ouvert) {
+  if (!banquePapier || !t || !t.addr) return;
+  try {
+    const bras = brasColonie(t, refus, ouvert);
+    if (!bras) return;
+    banquePapier.propose('robinhood', { addr: t.addr, pool: t.pool || null, dexId: 'colony' }, [], { bras, controle: bras === BRAS_COLONIE.achete });
+    compte('banquePropose');
+  } catch (e) { compte('banqueErreur'); }
+}
+
 /* ---- ET C'EST LE BANQUIER QUI DIMENSIONNE, PAS LE MIROIR ----
  *
  * Le miroir avait sa propre regle — une part fixe du solde — et c'etait une
@@ -10209,6 +10263,8 @@ async function tour() {
       examines.push({ t, refus, quiRefuse, an });
       const ouvert = !refus && ouvre(t);
       if (ouvert) ouvertes++;
+      /* Apres le verdict, qui ne change pas : la banque papier recoit l'adresse (voir `proposeALaBanque`). */
+      proposeALaBanque(t, refus, ouvert);
       suitLesNonIndexes(t, refus, ouvert);
       await dors(200);
     }
@@ -10699,7 +10755,7 @@ module.exports = {
   budgetCg, cleDansLeBudget,
   epreuveDeSortie,
   demarre, arrete, vue, tour, charge, sauve, reprendSansMethode, veille,
-  poseMiroir, _suitLeMiroir: suitLeMiroir, _partDuBanquier: partDuBanquier, MIROIR_PART_MAX,
+  poseMiroir, poseBanquePapier, _brasColonie: brasColonie, BRAS_COLONIE, _suitLeMiroir: suitLeMiroir, _partDuBanquier: partDuBanquier, MIROIR_PART_MAX,
   motifDevisRate, devisManquant, devisBilan, suiviDuMiroir, DEVIS_MOTIFS,
   fouleDe, noeudsSurFenetre, noteNoeudDate, NOEUDS_FENETRE_H,
   bandeBaleine, trancheBaleineDe, etatDuRegard, BALEINE_TRANCHES,

@@ -70,6 +70,20 @@ function serie(v) {
            gagnants: Math.round(v.filter((x) => x > 0).length / n * 100) };
 }
 
+/* Par JETON distinct : un jeton rachete trois fois n'est pas trois observations (diagnostic du
+   03/10 : la colonie, fenetre E, 25 achats sur 16 jetons — les rachats gonflent t). Chaque jeton
+   compte une fois, pour la moyenne de ses achats, dans l'ordre de son premier achat. */
+function serieParJeton(positions) {
+  const par = new Map();
+  for (const p of positions.slice().sort((a, b) => a.t0 - b.t0)) {
+    if (!par.has(p.addr)) par.set(p.addr, []);
+    par.get(p.addr).push(p.r30);
+  }
+  const s = serie([...par.values()].map((v) => v.reduce((a, x) => a + x, 0) / v.length));
+  s.buys = positions.length;
+  return s;
+}
+
 /* ======================= LES QUOTEURS =======================
  * Interface commune, en dollars :
  *   achat(adresse, miseUsd, o)  → { ok:true, recu:'<unites du jeton>', fraisUsd } | { ok:false, raison }
@@ -215,7 +229,7 @@ function cree(deps) {
   const fichier = (c) => path.join(deps.dossier, 'banque_' + c + '.json');
   function neuve(c) {
     return { chaine: c, depuis: maintenant(), depart: DEPART_USD, cash: DEPART_USD, mise: mises[c], ouvertes: [], fermees: [],
-             bras: {}, temoinDernier: 0, file: [],
+             bras: {}, temoinDernier: 0, file: [], fileImposee: [],
              compte: { proposes: 0, achats: 0, temoins: 0, refus: {}, devis: 0, quota: 0, erreurs: 0, derniereErreur: null } };
   }
   function etat(c) {
@@ -223,7 +237,7 @@ function cree(deps) {
     let s = null;
     try { s = JSON.parse(fs.readFileSync(fichier(c), 'utf8')); } catch (e) { s = null; }
     B[c] = Object.assign(neuve(c), s || {});
-    B[c].file = [];   /* la file ne survit pas a un redemarrage : ses premiers prix seraient perimes */
+    B[c].file = []; B[c].fileImposee = [];   /* les files ne survivent pas a un redemarrage : leurs premiers prix seraient perimes */
     return B[c];
   }
   function sauve(c) {
@@ -239,12 +253,21 @@ function cree(deps) {
     if (via) { const m = S.refusParPlace || (S.refusParPlace = {}); const c = k + ' · ' + via; m[c] = (m[c] || 0) + 1; }
   };
 
-  /** Au premier prix d'un jeton : le garder pour le tour. `cases` : ses « trait = valeur ». */
-  function propose(c, o, cases) {
+  /** Au premier prix d'un jeton : le garder pour le tour. `cases` : ses « trait = valeur ».
+   *  `x.bras` : un bras IMPOSE par l'appelant (la colonie, 03/10) — file a part, jamais le temoin,
+   *  hors du plafond BRAS_MAX ; `x.controle` : le bras temoin de l'appelant, jamais retire. */
+  function propose(c, o, cases, x) {
     if (!deps.quoteurs || !deps.quoteurs[c] || !o || !o.addr) return;
     const S = etat(c);
     S.compte.proposes++;
-    S.file.push({ addr: o.addr, pool: o.pool || null, dex: o.dexId || null, cases: cases || [], vu: maintenant() });
+    const item = { addr: o.addr, pool: o.pool || null, dex: o.dexId || null, cases: cases || [], vu: maintenant() };
+    if (x && x.bras) {
+      item.bras = String(x.bras); item.controle = !!x.controle;
+      S.fileImposee.push(item);
+      if (S.fileImposee.length > FILE_MAX) S.fileImposee.splice(0, S.fileImposee.length - FILE_MAX);
+      return;
+    }
+    S.file.push(item);
     if (S.file.length > FILE_MAX) S.file.splice(0, S.file.length - FILE_MAX);
   }
 
@@ -253,19 +276,23 @@ function cree(deps) {
     const t = maintenant();
     for (const s of sortants || []) {
       if (S.bras[s]) continue;
-      const actifs = Object.values(S.bras).filter((b) => b.etat === 'actif').length;
+      const actifs = Object.values(S.bras).filter((b) => b.etat === 'actif' && !b.impose).length;
       if (actifs >= BRAS_MAX) break;
       S.bras[s] = { etat: 'actif', depuis: t, dernier: 0 };
     }
   }
 
   function statsBras(S, cle) {
-    const l = S.fermees.concat(S.ouvertes).filter((p) => p.r30 != null && (cle === null ? p.temoin : p.cases.includes(cle)));
-    return serie(l.sort((a, b) => a.t0 - b.t0).map((p) => p.r30));
+    const b = cle === null ? null : S.bras[cle];
+    /* Un bras impose ne compte que SES achats ; un bras de l'observatoire, tout achat de sa case
+       (temoin compris : il a ete pris sans regarder ses traits, c'est un echantillon de la case). */
+    const l = S.fermees.concat(S.ouvertes).filter((p) => p.r30 != null
+      && (cle === null ? p.temoin : b && b.impose ? p.bras === cle : (p.cases || []).includes(cle)));
+    return serieParJeton(l);
   }
   function juge(S) {
     for (const [k, b] of Object.entries(S.bras)) {
-      if (b.etat !== 'actif') continue;
+      if (b.etat !== 'actif' || b.controle) continue;
       const s = statsBras(S, k);
       if (s.n >= BRAS_RETRAIT_N && s.t != null && s.t <= BRAS_RETRAIT_T) { b.etat = 'retire'; b.retireLe = maintenant(); b.raison = 'losing beyond chance: ' + s.net + '% net over ' + s.n + ' buys, t ' + s.t; }
     }
@@ -354,6 +381,20 @@ function cree(deps) {
         if (temoin) S.temoinDernier = t;     /* tente ou non : le temoin ne choisit pas le suivant */
         if (ok && cle) S.bras[cle].dernier = t;
       }
+      /* 4. les bras imposes (la colonie) : leur propre file, leur propre cadence */
+      while (S.fileImposee.length && reste >= 2) {
+        const x = S.fileImposee.shift();
+        if (t - x.vu > FILE_AGE_MIN * 60e3) { refus(S, 'too late after first price', x); continue; }
+        if (S.ouvertes.some((p) => p.addr === x.addr)) continue;
+        const b = S.bras[x.bras] || (S.bras[x.bras] = { etat: 'actif', depuis: t, dernier: 0, impose: true, controle: x.controle });
+        if (b.etat !== 'actif') continue;
+        if (!b.controle && t - (b.dernier || 0) < BRAS_ECART_MIN * 60e3) continue;
+        reste -= 2;
+        let ok = false;
+        try { ok = await achete(c, S, x, false, x.bras); }
+        catch (e) { if (e && e.quota) throw e; S.compte.erreurs++; S.compte.derniereErreur = String((e && e.message) || e).slice(0, 160); }
+        if (ok) b.dernier = t;
+      }
     } catch (e) {
       if (e && e.quota) S.compte.quota++;
       else { S.compte.erreurs++; S.compte.derniereErreur = String((e && e.message) || e).slice(0, 160); }
@@ -372,7 +413,8 @@ function cree(deps) {
     const bras = Object.entries(S.bras).map(([k, x]) => {
       const s = statsBras(S, k);
       const tient = s.n >= BRAS_PREUVE_N && s.t != null && s.t >= b && s.moitie1 > 0 && s.moitie2 > 0;
-      return Object.assign({ case: k, state: x.etat === 'retire' ? 'retired' : tient ? 'holds in paper' : 'testing', since: new Date(x.depuis).toISOString(),
+      return Object.assign({ case: k, source: x.impose ? 'colony' : 'observatory', control: !!x.controle,
+                             state: x.etat === 'retire' ? 'retired' : x.controle ? 'control' : tient ? 'holds in paper' : 'testing', since: new Date(x.depuis).toISOString(),
                              retiredBecause: x.raison || null }, s);
     }).sort((x, y) => (y.n || 0) - (x.n || 0));
     /* Le banc : les memes achats lus a 10, 30 et 60 min — l'ecart apparie, pas deux echantillons. */
@@ -386,7 +428,7 @@ function cree(deps) {
     return {
       quoter: deps.quoteurs[c].nom, since: new Date(S.depuis).toISOString(), stakeUsd: S.mise, startUsd: S.depart,
       cashUsd: r2(S.cash), openUsd: r2(enCours), valueUsd: r2(S.cash + enCours), pnlUsd: r2(S.cash + enCours - S.depart),
-      open: S.ouvertes.length, closed: S.fermees.length, all: serie(toutes.map((p) => p.r30)), control: statsBras(S, null),
+      open: S.ouvertes.length, closed: S.fermees.length, all: serieParJeton(toutes), control: statsBras(S, null),
       bar: b, arms: bras, bench: banc,
       entryCost: { n: rts.length, medianPct: rts.length ? rts[rts.length >> 1] : null, refusedMedianPct: S.rtRefuses && S.rtRefuses.length ? S.rtRefuses.slice().sort((a, b) => a - b)[S.rtRefuses.length >> 1] : null },
       refusedByVenue: S.refusParPlace || {}, recentRefusals: (S.refusRecents || []).slice(0, 12),
@@ -400,10 +442,10 @@ function cree(deps) {
   return { propose, tour, vue, _etat: etat };
 }
 
-const NOTE = 'Paper only: no key, no signature, no order. Each buy is priced like a real order — a buy quote AND a sell-back quote for the tokens received (no sell route, no buy), '
+const NOTE = 'Paper only: no key, no signature, no order. Results count each token once (re-buys of the same token are averaged). Each buy is priced like a real order — a buy quote AND a sell-back quote for the tokens received (no sell route, no buy), '
   + 'then sell quotes at 10, 30 and 60 minutes on the same buy. The bank settles at 30 minutes, net of the quoted price impact, DEX fees and network costs. '
   + 'The control buys the first token after every 15 minutes without looking at it; each arm buys the tokens of one case the observatory sees standing out. '
   + 'An arm losing beyond chance (' + BRAS_RETRAIT_N + '+ buys, t ≤ ' + BRAS_RETRAIT_T + ') is retired; one only "holds in paper" with ' + BRAS_PREUVE_N + '+ buys, t above the bar and both halves positive.';
 
-module.exports = { cree, quoteurSolana, quoteurEth, quoteurRobinhood, serie, barre, NOTE,
+module.exports = { cree, quoteurSolana, quoteurEth, quoteurRobinhood, serie, serieParJeton, barre, NOTE,
   HORIZONS, HORIZON_BANQUE, DEPART_USD, MISES, RETOUR_MIN, TEMOIN_MIN, BRAS_ECART_MIN, BRAS_MAX, BRAS_RETRAIT_N, BRAS_RETRAIT_T, BRAS_PREUVE_N, ESSAIS_SORTIE };

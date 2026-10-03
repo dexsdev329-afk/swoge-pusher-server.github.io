@@ -210,6 +210,42 @@ function fauxQuoteur() {
   ok(vp.counts.refused['cannot sell'] === 1 && vp.refusedByVenue['cannot sell · uniswap-v4-fee'] === 1 && vp.recentRefusals[0].via === 'uniswap-v4-fee', 'le tour continue : le jeton suivant est juge, et son refus garde sa place (« cannot sell · uniswap-v4-fee »)');
   ok(vp.open === 1 && Bp._etat('eth').ouvertes[0].addr === 'OK2', 'et le troisieme est achete par le bras, dans le meme tour');
 
+  console.log('\n-- 6b. les bras imposes par la colonie : file a part, jamais le temoin, un jeton compte une fois --');
+  let Tc = Date.UTC(2026, 9, 6, 12, 0, 0);
+  const Qc = fauxQuoteur(); ['C1', 'C2', 'C3', 'K1'].forEach((a) => { Qc.valeur[a] = 97; });
+  const Bc = BP.cree({ dossier: fs.mkdtempSync(path.join(os.tmpdir(), 'banque-c-')), quoteurs: { robinhood: Qc }, maintenant: () => Tc });
+  const JEUNE = 'colony · young, no public link', ACHETE = 'colony · bought';
+  Bc.propose('robinhood', jeton('C1'), [], { bras: JEUNE });
+  Bc.propose('robinhood', jeton('C2'), [], { bras: JEUNE });
+  Bc.propose('robinhood', jeton('K1'), [], { bras: ACHETE, controle: true });
+  await Bc.tour('robinhood', []);
+  let Sc = Bc._etat('robinhood');
+  ok(Sc.ouvertes.length === 2 && Sc.ouvertes.every((p) => !p.temoin) && Bc.vue('robinhood').counts.control === 0,
+     'le temoin etait du, mais une proposition de la colonie ne le devient jamais : C1 et K1 achetes sous leur bras, le temoin a 0');
+  ok(Sc.ouvertes.find((p) => p.addr === 'C1').bras === JEUNE && !Sc.ouvertes.some((p) => p.addr === 'C2'), 'un bras impose garde ses 20 min entre deux achats : C2 attend son tour (et est perdu, pas rejoue)');
+  Tc += 5 * MIN; Bc.propose('robinhood', jeton('C3'), [], { bras: ACHETE, controle: true });
+  await Bc.tour('robinhood', []);
+  ok(Bc._etat('robinhood').ouvertes.some((p) => p.addr === 'C3'), 'le bras temoin de la colonie (ses propres achats) n a pas d espacement : chaque achat de la colonie est suivi');
+  const vc = Bc.vue('robinhood');
+  const ba = vc.arms.find((x) => x.case === ACHETE), bj = vc.arms.find((x) => x.case === JEUNE);
+  ok(ba && ba.source === 'colony' && ba.state === 'control' && bj && bj.source === 'colony' && bj.state === 'testing', 'la vue dit d ou vient chaque bras (« colony ») et marque le temoin de la colonie « control »');
+  /* Hors plafond : 6 bras de l observatoire s arment quand meme. */
+  await Bc.tour('robinhood', ['a = 1', 'b = 2', 'c = 3', 'd = 4', 'e = 5', 'f = 6', 'g = 7']);
+  ok(Object.values(Bc._etat('robinhood').bras).filter((b) => !b.impose && b.etat === 'actif').length === 6, 'les bras de la colonie ne prennent pas de place sous BRAS_MAX : 6 bras de l observatoire encore');
+  /* Le temoin de la colonie n est jamais retire, meme perdant au-dela du hasard ; un bras impose ordinaire l est. */
+  Sc = Bc._etat('robinhood');
+  for (let i = 0; i < 70; i++) {
+    Sc.fermees.push({ addr: 'P' + i, cases: [], bras: ACHETE, temoin: false, t0: Tc - (200 - i) * MIN, depense: 25, r30: -9 + (i % 3), valeurs: { 10: { usd: 1 }, 30: { usd: 1 }, 60: { usd: 1 } } });
+    Sc.fermees.push({ addr: 'Q' + i, cases: [], bras: JEUNE, temoin: false, t0: Tc - (200 - i) * MIN, depense: 25, r30: -9 + (i % 3), valeurs: { 10: { usd: 1 }, 30: { usd: 1 }, 60: { usd: 1 } } });
+  }
+  await Bc.tour('robinhood', []);
+  const v6 = Bc.vue('robinhood');
+  ok(v6.arms.find((x) => x.case === ACHETE).state === 'control' && v6.arms.find((x) => x.case === JEUNE).state === 'retired', 'perdant au-dela du hasard : le bras « jeune » est retire, le temoin de la colonie reste (c est la reference)');
+  /* Un jeton rachete compte une fois. */
+  const Sr = { fermees: [{ addr: 'R', t0: 1, r30: 30 }, { addr: 'R', t0: 2, r30: 30 }, { addr: 'R', t0: 3, r30: 30 }, { addr: 'U', t0: 4, r30: -10 }] };
+  const sr = BP.serieParJeton(Sr.fermees);
+  ok(sr.n === 2 && sr.buys === 4 && sr.net === 10, 'trois achats du meme jeton a +30 % et un autre a -10 % : n = 2 jetons, 4 achats, moyenne +10 % (pas +20 %)');
+
   console.log('\n-- 7. l observatoire passe chaque premier prix ; rien n est signe --');
   const O = require('./observatoire');
   const recus = [], tours = [];

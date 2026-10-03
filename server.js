@@ -9591,6 +9591,10 @@ server.listen(cfg.PORT, () => {
    * Le mode est ecrit au demarrage, en toutes lettres. Un serveur qui signerait
    * des transactions avec l'argent de joueurs sans le dire dans son journal de
    * demarrage est un serveur dont personne ne sait ce qu'il fait. */
+  /* La banque papier lit la colonie (03/10/2026) : apres chaque verdict, les jetons de cinq bras lui
+     sont proposes (voir `proposeALaBanque` dans ai_colonie.js). Elle chiffre et vend en papier, sur
+     les quoteurs du miroir en lecture seule ; le miroir ne la voit pas. Posee avant le premier tour. */
+  if (banquePapier) aiColonie.poseBanquePapier(banquePapier);
   try {
     miroir.charge();
     aiColonie.poseMiroir(miroir);

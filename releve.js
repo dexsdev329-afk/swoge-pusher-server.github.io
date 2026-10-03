@@ -4,14 +4,18 @@
  * bornes, alertes, journal. Chaque appel garde un instantane dans _releves/
  * (hors depot), pour comparer deux moments sans refaire les calculs a la main.
  *   node releve.js                 les dernieres 24 h
- *   node releve.js --depuis 6h     les dernieres 6 h (ou 3j)
+ *   node releve.js --depuis 6h     les dernieres 6 h (ou 3j, 7d)
  *   node releve.js --url https://…/ai/colonie */
 const fs = require('fs'), path = require('path');
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf('--' + k); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
 const URL = opt('url', process.env.COLONIE_URL || 'https://web-production-220a3.up.railway.app/ai/colonie');
-const dep = String(opt('depuis', '24h')); const m = dep.match(/^(\d+)([hj])$/);
-const DEPUIS_MS = m ? Number(m[1]) * (m[2] === 'j' ? 86400e3 : 3600e3) : 24 * 3600e3;
+/* 03/10 : « --depuis 7d » retombait EN SILENCE sur 24 h (seuls h et j etaient lus) — le releve
+   annoncait 6 trades « en 7 jours » quand il y en avait 26. j et d valent un jour ; une unite
+   inconnue arrete tout, jamais une fenetre devinee. */
+const dep = String(opt('depuis', '24h')); const m = dep.match(/^(\d+)([hjd])$/);
+if (!m) { console.error('--depuis ' + dep + ' : unite inconnue (ecrire 6h, 3j ou 7d)'); process.exit(2); }
+const DEPUIS_MS = Number(m[1]) * (m[2] === 'h' ? 3600e3 : 86400e3);
 const h = (t) => new Date(t).toISOString().slice(5, 16).replace('T', ' ');
 const n1 = (x) => (typeof x === 'number' ? Math.round(x * 10) / 10 : x);
 const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnantes}% gain=${n1(b.gain)}` : '—';
