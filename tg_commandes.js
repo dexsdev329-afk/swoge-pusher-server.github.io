@@ -20,6 +20,10 @@
  * Tout le reste est ignore, et rien n est jamais repondu dans un canal ou un
  * groupe : la commande y serait une invitation a la copier.
  *
+ * 03/10 : une exception voulue, /launch (tg_lance.js) — prive ET groupe, puisque
+ * l'interet est de lancer un jeton la ou la communaute parle. Le bot y repond par
+ * un lien a signer ; il ne signe rien et ne voit aucune cle.
+ *
  * ---- pourquoi ca ne gene pas les autres services ----
  *
  * Le bot n a pas de webhook (verifie le 18 septembre 2026, `getWebhookInfo`),
@@ -55,6 +59,7 @@ async function envoie(chatId, texte, prendre) {
 }
 
 let enCours = false;
+let LANCEUR = null;   /* tg_lance.cree(...), pose par planifie */
 /** Un tour : lit ce qui est arrive depuis le dernier decalage, repond, avance. */
 async function tour(opts) {
   const o = opts || {};
@@ -69,10 +74,15 @@ async function tour(opts) {
     const j = await r.json().catch(() => ({}));
     if (!j.ok) return { etat: 'erreur', detail: String(j.description || r.status).slice(0, 100) };
     let repondus = 0;
+    const lanceur = o.lanceur || LANCEUR;
     for (const u of j.result || []) {
       etat.decalage = u.update_id + 1;
-      const rep = reponseA(u.message);
-      if (rep) { await envoie(u.message.chat.id, rep, o.prendre); repondus++; }
+      /* Un message qui echoue ne bloque pas les suivants, ni le decalage : sinon il serait relu et repondu en boucle. */
+      try {
+        let rep = reponseA(u.message);
+        if (!rep && lanceur && u.message) rep = await lanceur.commande(u.message);
+        if (rep) { await envoie(u.message.chat.id, rep, o.prendre); repondus++; }
+      } catch (e) { console.error('[tg] commande : ' + String(e.message || e).slice(0, 120)); }
     }
     if ((j.result || []).length) ecritEtat(etat);
     return { etat: 'lu', messages: (j.result || []).length, repondus };
@@ -81,13 +91,14 @@ async function tour(opts) {
   }
 }
 
-function planifie() {
+function planifie(deps) {
   if (!enabled()) { console.log('[tg] commandes ETEINTES : TG_BOT_TOKEN absent'); return null; }
-  console.log('[tg] commandes ARMEES : /id en prive');
+  LANCEUR = (deps && deps.lanceur) || null;
+  console.log('[tg] commandes ARMEES : /id en prive' + (LANCEUR ? ', /launch partout' : ''));
   const t = () => tour().catch((e) => console.error('[tg] commandes : ' + (e.message || e)));
   const premier = setTimeout(t, 20000);
   const minuterie = setInterval(t, 30000);
   return { arrete() { clearTimeout(premier); clearInterval(minuterie); } };
 }
 
-module.exports = { enabled, reponseA, tour, planifie };
+module.exports = { enabled, reponseA, tour, planifie, envoie };

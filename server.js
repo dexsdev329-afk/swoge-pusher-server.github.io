@@ -2113,6 +2113,29 @@ const lancementV4 = require('./lancement_v4').cree({
   /* la liste officielle d'abord (elle leve si injoignable) : « pas une copie » ne doit jamais vouloir dire « pas lu » */
   identite: async (a, s, nom) => { await actionsRh().registre(); return actionsRh().identite(a, s, nom); },
 });
+/* ---- LANCER UN JETON DEPUIS TELEGRAM (tg_lance.js, 03/10) ----
+ * /launch dans le bot → une offre de lancementV4 et un lien a signer ; l'annonce du jeton
+ * dans le chat n'est faite qu'apres relecture du recu sur la chaine. Le bot ne signe rien. */
+const EVT_LANCE = new ethers.utils.Interface(['event LaunchedInstant(address indexed token, address indexed creator, address pool, uint256 lpTokenId)']);
+let lecteurLance = null;
+const lecteurRh = () => lecteurLance || (lecteurLance = new ethers.providers.StaticJsonRpcProvider(cfg.RPC_URL, cfg.CHAIN_ID));
+const tgLance = require('./tg_lance').cree({
+  propose: (e) => lancementV4.propose(e), site: SITE_URL, dossier: cfg.DATA_DIR,
+  envoie: (chat, texte) => tgCommandes.envoie(chat, texte),
+  lis: {
+    recu: async (h) => { const x = await lecteurRh().getTransactionReceipt(h); return x && x.blockNumber && x.status === 1 ? x : null; },
+    /* Seul un journal EMIS par le launchpad de l'offre compte : un faux evenement d'un autre contrat ne passe pas. */
+    lancementDe: (recu, launchpad) => {
+      for (const l of recu.logs || []) {
+        if (String(l.address).toLowerCase() !== launchpad) continue;
+        try { const e = EVT_LANCE.parseLog(l); if (e.name === 'LaunchedInstant') return { token: e.args.token, pool: e.args.pool }; } catch (x) { /* un autre journal */ }
+      }
+      return null;
+    },
+    jeton: async (adr) => { const c = new ethers.Contract(adr, ['function name() view returns (string)', 'function symbol() view returns (string)'], lecteurRh());
+      return { name: await c.name(), symbol: await c.symbol() }; },
+  },
+});
 /* ---- L'eSIM ET LA PASSERELLE DANS LE MCP (mcp_extras.js, 29/09) ---- */
 let MCP_EXTRAS = null;
 function mcpExtras() {
@@ -4055,6 +4078,19 @@ const server = http.createServer(async (req, res) => {
     try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
     const r = await lancementV4.propose({ pool: q.pool, name: q.name, symbol: q.symbol, website: q.website, twitter: q.twitter, telegram: q.telegram });
     return json(r.ok ? 200 : 400, r);
+  }
+  /* La page dit qu'un lancement demande sur Telegram est parti (tx). Rien n'est annonce sans
+     relecture du recu sur la chaine (tg_lance.annonce) ; meme debit que les offres. */
+  if (path === '/launchpad/v4/lance') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    if (!offreDebit(req)) return json(429, { ok: false, raison: 'too many tries - wait a minute' });
+    let q;
+    try { q = JSON.parse((await corps(req, 1024)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    try { const r = await tgLance.annonce({ tg: q.tg, tx: q.tx }); return json(r.ok ? 200 : 400, r); }
+    catch (e) { return json(502, { ok: false, raison: 'could not read the chain right now' }); }
   }
 
   /* Polymarket AI : le releve de la colonie papier (poly_papier.js). Public, lisible depuis le site. */
@@ -9754,8 +9790,8 @@ server.listen(cfg.PORT, () => {
   /* Le post quotidien sur X, arme seulement si ses cinq cles sont la ; la
      copie part sur le Telegram avec le lien du post. */
   xQuotidien = xPost.planifie((p) => tg.notifyPhoto(p.image, p.texte + '\n' + p.url));
-  /* Le bot repond a /id en prive. */
-  tgCmd = tgCommandes.planifie();
+  /* Le bot repond a /id en prive, et a /launch partout (tg_lance.js, 03/10). */
+  tgCmd = tgCommandes.planifie({ lanceur: tgLance });
 });
 
 function shutdown() {

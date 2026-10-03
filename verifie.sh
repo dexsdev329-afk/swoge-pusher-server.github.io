@@ -22,6 +22,7 @@ lance etalonnage "$SRV" node etalonnage_boot.test.js
 lance tv_vues "$SRV" node tv_vues.test.js
 lance x_post  "$SRV" node x_post.test.js
 lance tg_cmd  "" node tg_commandes.test.js
+lance tglance  "$SRV" node tg_lance.test.js   # /launch sur Telegram : un lien a signer (jamais une signature), les refus de l agent, annonce SEULEMENT apres relecture du recu sur la chaine, une fois
 lance perp    "$SRV" node ai_perp.test.js
 lance journal "$SRV" node perp_journal.test.js
 lance rejeu   "$SRV" node perp_rejeu.test.js   # la porte perp : sans chevauchement, frais reels, aucune fuite du futur, une marche aleatoire ne passe jamais
