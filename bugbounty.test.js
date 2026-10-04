@@ -119,6 +119,19 @@ const fauxOsint = { osint: async () => { appele = true; return { domaine: 'x' };
   ok((bb.expositionIpDevice = (await bb.expositionIp('8.8.8.8', { fetch: fauxIDB({ ok: true, status: 200, json: async () => ({ ports: [443], cpes: ['nginx'], hostnames: ['dns.google'] }) }) })).device) && bb.expositionIpDevice.type,
      'expositionIp rend desormais un champ device avec le type estime');
 
+  console.log('\n-- 10. d autres sources passives (CertSpotter, urlscan, OSV) --');
+  const rep = (o) => async () => ({ ok: true, status: 200, json: async () => o });
+  let s = await bb.sousDomaines('example.com', { fetch: rep([{ dns_names: ['a.example.com', '*.example.com', 'autre.net'] }]) });
+  ok(s.ok && s.sousDomaines.includes('a.example.com') && !s.sousDomaines.includes('autre.net'), 'CertSpotter : sous-domaines du domaine seulement (wildcard deplie, hors-domaine ecarte)');
+  s = await bb.sousDomaines('pas un domaine', {});
+  ok(!s.ok, 'un non-domaine est refuse sans reseau');
+  let sc = await bb.scansConnus('example.com', { fetch: rep({ results: [{ page: { url: 'https://example.com/a', ip: '1.2.3.4', server: 'nginx' }, task: { time: 't' } }] }) });
+  ok(sc.ok && sc.scans[0].url === 'https://example.com/a' && /search only/.test(sc.source), 'urlscan : scans publics deja faits (search only, jamais submit)');
+  let v = await bb.vulnsPaquet({ ecosystem: 'npm', name: 'lodash', version: '4.17.0' }, { fetch: rep({ vulns: [{ id: 'GHSA-xxxx', summary: 'proto pollution', aliases: ['CVE-2020-8203'] }] }) });
+  ok(v.ok && v.vulns[0].id === 'GHSA-xxxx' && v.vulns[0].alias[0] === 'CVE-2020-8203', 'OSV : vulnerabilites d une dependance (npm lodash), avec alias CVE');
+  v = await bb.vulnsPaquet({ name: 'x' }, {});
+  ok(!v.ok && /ecosystem/.test(v.raison), 'OSV sans ecosystem : refuse proprement, sans reseau');
+
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
   process.exit(rates ? 1 : 0);
 })();

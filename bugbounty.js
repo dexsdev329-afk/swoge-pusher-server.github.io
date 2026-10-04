@@ -239,6 +239,63 @@ async function expositionIp(ip, deps) {
   return expo;
 }
 
+/* --------------------------------- d'autres sources PASSIVES, gratuites (04/10) */
+
+/* Sous-domaines via la transparence des certificats — CertSpotter (SSLMate),
+ * keyless pour l'eval. Redondance de crt.sh (deja dans osint.js), plus stable.
+ * PASSIF : on lit des logs publics, aucun paquet vers la cible. */
+async function sousDomaines(domaine, deps) {
+  const d = String(domaine || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)) return { ok: false, raison: 'not a domain' };
+  const f = (deps && deps.fetch) || fetch;
+  let r, j;
+  try { r = await f('https://api.certspotter.com/v1/issuances?domain=' + encodeURIComponent(d) + '&include_subdomains=true&expand=dns_names', { signal: AbortSignal.timeout(12000) }); }
+  catch (e) { return { ok: false, raison: 'CertSpotter unreachable' }; }
+  if (r.status === 429) return { ok: false, raison: 'CertSpotter rate-limited — try again in a minute' };
+  try { j = await r.json(); } catch (e) { j = null; }
+  if (!r.ok || !Array.isArray(j)) return { ok: false, raison: 'CertSpotter HTTP ' + (r && r.status) };
+  const vus = new Set();
+  for (const it of j) for (const n of (it.dns_names || [])) { const h = String(n).toLowerCase().replace(/^\*\./, ''); if (h.endsWith(d)) vus.add(h); }
+  return { ok: true, domaine: d, sousDomaines: [...vus].sort(), n: vus.size, source: 'CertSpotter certificate transparency (passive)' };
+}
+
+/* Scans PUBLICS deja faits par urlscan.io — SEARCH seulement (lecture). Le
+ * submit (qui charge l'URL en vrai) est ACTIF : on ne l'appelle jamais. */
+async function scansConnus(domaine, deps) {
+  const d = String(domaine || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)) return { ok: false, raison: 'not a domain' };
+  const f = (deps && deps.fetch) || fetch;
+  let r, j;
+  try { r = await f('https://urlscan.io/api/v1/search/?q=domain:' + encodeURIComponent(d) + '&size=20', { signal: AbortSignal.timeout(12000) }); }
+  catch (e) { return { ok: false, raison: 'urlscan unreachable' }; }
+  if (r.status === 429) return { ok: false, raison: 'urlscan rate-limited' };
+  try { j = await r.json(); } catch (e) { j = null; }
+  if (!r.ok || !j || !Array.isArray(j.results)) return { ok: false, raison: 'urlscan HTTP ' + (r && r.status) };
+  const scans = j.results.slice(0, 20).map((x) => ({ url: x.page && x.page.url, ip: x.page && x.page.ip, pays: x.page && x.page.country,
+    serveur: x.page && x.page.server, quand: x.task && x.task.time, apercu: x.result }));
+  return { ok: true, domaine: d, n: scans.length, scans, source: 'urlscan.io public scans (search only, no submit)' };
+}
+
+/* Vulnerabilites d'une DEPENDANCE — OSV.dev, keyless. Donnee de reference
+ * publique (comme NVD), aucune cible contactee. Utile pour auditer les paquets
+ * d'un projet (npm, PyPI, Go, crates, Maven…). */
+async function vulnsPaquet(o, deps) {
+  o = o || {};
+  const eco = String(o.ecosystem || '').trim(), nom = String(o.name || '').trim(), ver = String(o.version || '').trim();
+  if (!eco || !nom) return { ok: false, raison: 'need {ecosystem, name, version?}' };
+  const f = (deps && deps.fetch) || fetch;
+  const corps = { package: { name: nom, ecosystem: eco } };
+  if (ver) corps.version = ver;
+  let r, j;
+  try { r = await f('https://api.osv.dev/v1/query', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(corps), signal: AbortSignal.timeout(12000) }); }
+  catch (e) { return { ok: false, raison: 'OSV unreachable' }; }
+  try { j = await r.json(); } catch (e) { j = null; }
+  if (!r.ok || !j) return { ok: false, raison: 'OSV HTTP ' + (r && r.status) };
+  const vulns = (j.vulns || []).map((v) => ({ id: v.id, resume: v.summary || (v.details || '').slice(0, 140),
+    gravite: (v.severity && v.severity[0] && v.severity[0].score) || null, alias: v.aliases || [] }));
+  return { ok: true, ecosystem: eco, name: nom, version: ver || null, n: vulns.length, vulns, source: 'OSV.dev (public vulnerability database)' };
+}
+
 /* --------------------------------------------------- le pre-audit de contrat */
 
 /* Analyse STATIQUE d'une source Solidity fournie. Precision avant rappel :
@@ -335,4 +392,5 @@ module.exports = {
   ATTESTATION_TEXTE, PRIME_FORTE,
   typeCible, couvre, dansScope, autorisation, journaliseAttestation,
   classeProgrammes, recon, preAudit, fonctions, expositionIp, classeAppareil,
+  sousDomaines, scansConnus, vulnsPaquet,
 };

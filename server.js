@@ -3987,6 +3987,19 @@ const server = http.createServer(async (req, res) => {
         if (a.mode === 'attested' && a.journal) { try { bugbounty.journaliseAttestation(Object.assign({ via: 'exposure', ip: compteurs.ip(qui(req)) }, a.journal)); } catch (e) { return json(503, { ok: false, raison: 'could not log the attestation; nothing fetched' }); } }
         return json(200, await bugbounty.expositionIp(q.ip));
       }
+      if (path === '/bugbounty/pkgvulns') {
+        /* Vulnerabilites d'une dependance (OSV.dev) : donnee publique, comme NVD — aucune cible, pas d'autorisation. */
+        return json(200, await bugbounty.vulnsPaquet({ ecosystem: q.ecosystem, name: q.name, version: q.version }));
+      }
+      if (path === '/bugbounty/subdomains' || path === '/bugbounty/scans') {
+        /* Decouverte de surface PASSIVE d'un domaine (CT logs / scans publics) :
+           meme garde que la recon (le domaine est la cible). */
+        const a = bugbounty.autorisation({ cible: q.domaine || q.cible, programme: q.programme, attestation: q.attestation });
+        if (!a.ok) return json(403, { ok: false, raison: a.raison, attestationTexte: bugbounty.ATTESTATION_TEXTE });
+        if (a.mode === 'attested' && a.journal) { try { bugbounty.journaliseAttestation(Object.assign({ via: path.slice(11), ip: compteurs.ip(qui(req)) }, a.journal)); } catch (e) { return json(503, { ok: false, raison: 'could not log the attestation; nothing fetched' }); } }
+        const cible = q.domaine || q.cible;
+        return json(200, await (path === '/bugbounty/subdomains' ? bugbounty.sousDomaines(cible) : bugbounty.scansConnus(cible)));
+      }
       if (path === '/bugbounty/onion') {
         /* Veille .onion DEFENSIVE (tor.js) : desactivee sans TOR_SOCKS, meme garde
            que la recon (programme OU case attestee), lecture seule (GET). */
