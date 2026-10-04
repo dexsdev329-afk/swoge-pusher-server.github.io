@@ -1602,6 +1602,7 @@ const SCAN_PAR_MIN = Math.max(1, Number(process.env.SCAN_PAR_MIN || 20));
  * travail sur le dos du site vise. */
 const osint = require('./osint');
 const osintNoyau = require('./osint_noyau');
+const bugbounty = require('./bugbounty');
 const studio = require('./studio');
 const studioChat = require('./studio_chat');
 const studioJeton = require('./studio_jeton');
@@ -3948,6 +3949,46 @@ const server = http.createServer(async (req, res) => {
    * `.csv` et `.pdf` ne sont pas des routes separees : c est la MEME
    * enquete, rendue autrement. Un export qui relancerait le travail ferait
    * payer au site vise le fait qu on veuille un tableur. */
+  /* ==================== BUG BOUNTY + OSINT (bugbounty.js) ====================
+   * GET  /bugbounty                 → le texte de la case d'autorisation, ce que ca fait.
+   * POST /bugbounty/preaudit {source} → audit statique d'une source Solidity (pas de cible, pas d'auth).
+   * POST /bugbounty/recon {cible, programme?, attestation?} → recon LECTURE SEULE, si autorisee.
+   * POST /bugbounty/watch {programmes, connus?} → classe la veille.
+   * Une case ne rend rien legal : elle ATTESTE une autorisation (voir bugbounty.js). Aucune action
+   * intrusive ici — recon via osint.js (robots.txt, UA, 403 = refus) et lecture de source. */
+  if (path === '/bugbounty' || path.startsWith('/bugbounty/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (path === '/bugbounty' && req.method === 'GET') {
+      return json(200, { ok: true, attestationTexte: bugbounty.ATTESTATION_TEXTE, primeForte: bugbounty.PRIME_FORTE,
+        note: 'Non-intrusive recon and static code review only. A target must be in a bug-bounty program scope, '
+          + 'OR you must tick the authorization box (which attests you own the target or have written permission).' });
+    }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    const ip = compteurs.ip(qui(req)), t = Date.now(), l = (RECHERCHES_SERVICES.get('bb:' + ip) || []).filter((x) => t - x < 10 * 60e3);
+    if (l.length >= 20) return json(429, { ok: false, raison: 'too many requests - try again in a few minutes' });
+    l.push(t); RECHERCHES_SERVICES.set('bb:' + ip, l);
+    let q; try { q = JSON.parse((await corps(req, 262144)).toString('utf8') || '{}'); } catch (e) { q = null; }
+    if (!q) return json(400, { ok: false, raison: 'unreadable request' });
+    try {
+      if (path === '/bugbounty/preaudit') {
+        if (!q.source || String(q.source).length < 20) return json(400, { ok: false, raison: 'paste the Solidity source in "source"' });
+        return json(200, Object.assign({ ok: true }, bugbounty.preAudit(String(q.source).slice(0, 200000))));
+      }
+      if (path === '/bugbounty/watch') {
+        return json(200, { ok: true, programmes: bugbounty.classeProgrammes(q.programmes || [], q.connus || []) });
+      }
+      if (path === '/bugbounty/recon') {
+        const a = bugbounty.autorisation({ cible: q.cible, programme: q.programme, attestation: q.attestation });
+        if (!a.ok) return json(403, { ok: false, raison: a.raison, attestationTexte: bugbounty.ATTESTATION_TEXTE });
+        if (a.mode === 'attested' && a.journal) { try { bugbounty.journaliseAttestation(Object.assign({ ip: compteurs.ip(qui(req)) }, a.journal)); } catch (e) { return json(503, { ok: false, raison: 'could not log the attestation; recon not run' }); } }
+        const r = await bugbounty.recon({ cible: q.cible, programme: q.programme, attestation: q.attestation });
+        return json(r.ok ? 200 : 403, r);
+      }
+      return json(404, { ok: false, raison: 'unknown bugbounty route' });
+    } catch (e) { return json(503, { ok: false, raison: 'bugbounty error: ' + String((e && e.message) || e).slice(0, 120) }); }
+  }
   if (path === '/osint/v2' || path.startsWith('/osint/v2/')) {
     const q = new URLSearchParams(req.url.split('?')[1] || '');
     let brut = path === '/osint/v2' ? String(q.get('q') || '').trim()
