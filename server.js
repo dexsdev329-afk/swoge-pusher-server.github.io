@@ -1603,6 +1603,8 @@ const SCAN_PAR_MIN = Math.max(1, Number(process.env.SCAN_PAR_MIN || 20));
 const osint = require('./osint');
 const osintNoyau = require('./osint_noyau');
 const bugbounty = require('./bugbounty');
+const repere = require('./repere');
+const REPERES = repere.bancs();   /* les trois bancs pre-enregistres (chasse a l'edge, 04/10) */
 const studio = require('./studio');
 const studioChat = require('./studio_chat');
 const studioJeton = require('./studio_jeton');
@@ -3956,6 +3958,21 @@ const server = http.createServer(async (req, res) => {
    * POST /bugbounty/watch {programmes, connus?} → classe la veille.
    * Une case ne rend rien legal : elle ATTESTE une autorisation (voir bugbounty.js). Aucune action
    * intrusive ici — recon via osint.js (robots.txt, UA, 403 = refus) et lecture de source. */
+  /* ==================== LES BANCS PAPIER PRE-ENREGISTRES (repere.js) ====================
+   * Suite de la chasse a l'edge (04/10) : AUCUN edge prouve. On mesure en papier,
+   * regles figees d'avance, et tout se compare au taux sans risque (« ne rien faire »).
+   * GET /reperes : l'etat des trois bancs + la ligne de repere. Lecture publique. */
+  if (path === '/reperes') {
+    res.setHeader('access-control-allow-origin', '*');
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify({
+      ok: true,
+      riskFree: { annualPct: repere.TAUX_SANS_RISQUE * 100, note: 'Doing nothing earns this. Every bench is compared to it.' },
+      enregistreLe: repere.ENREGISTRE_LE,
+      benches: Object.values(REPERES).map((b) => b.vue()),
+      note: 'Paper only, pre-registered (hours/thresholds fixed in advance). The edge hunt found nothing proven net of costs; these benches test the two closest leads without risking a cent.',
+    }));
+  }
   if (path === '/bugbounty' || path.startsWith('/bugbounty/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
     const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };

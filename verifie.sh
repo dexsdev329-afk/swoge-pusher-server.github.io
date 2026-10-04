@@ -46,6 +46,7 @@ lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route pu
 lance bugb    "$SRV" node bugbounty.test.js   # bug bounty + osint : la garde d autorisation (programme ou case attestee), le pre-audit statique
 lance bugbrte "$SRV" node bugbounty_route.test.js   # la route /bugbounty : refus sans autorisation avant tout appel, case attestee journalisee
 lance tor     "$SRV" node tor.test.js   # .onion defensif : desactive sans Tor, meme garde que le bug bounty, lecture seule (GET)
+lance repere  "$SRV" node repere.test.js   # bancs papier pre-enregistres + repere sans risque (chasse a l edge, 04/10)
 lance osintv2 "$SRV" node osint_v2.test.js   # un vrai serveur : la route v2, exports, historique
 lance studio  "$SRV" node studio.test.js   # le paiement : double depense, fausse confirmation
 lance studiochat "$SRV" node studio_chat.test.js   # SWOGE AI Chat : jamais sous le cout, tout rendu si le fournisseur echoue, bout en bout
