@@ -81,6 +81,7 @@ function env() {
     lien: process.env.X_LIEN === '1',
     qualite: process.env.X_QUALITE || 'high',
     modeleImage: process.env.X_MODELE_IMAGE || 'gpt-image-1.5',
+    modeleVision: process.env.X_MODELE_VISION || 'gpt-4o-mini',
     modeleTexte: process.env.X_MODELE_TEXTE || 'claude-sonnet-5',
     compte: process.env.X_COMPTE || 'SwoleDogeSwoge',
     domaine: process.env.RAILWAY_PUBLIC_DOMAIN || '',
@@ -518,6 +519,71 @@ async function genereImage(prompt, prendre) {
   return { png: Buffer.from(b64, 'base64'), jetons: (j.usage && j.usage.output_tokens) || null };
 }
 
+/* ---- LE CONTROLE DES PATTES ----
+ * Demande du proprietaire, 04/10 : « les images que tu generes pour les tweets,
+ * verifie qu il n a pas des MAINS mais des PATTES de chien ». Le prompt le
+ * demande deja (PERSONNAGE : « furry dog paws, never human hands or fingers »),
+ * mais les modeles d images derapent. On REGARDE donc l image avec un modele de
+ * vision et on refuse celle ou le personnage a des mains ou des doigts humains.
+ *
+ * Reponse stricte en JSON { hands:boolean, why:string }. On ne bloque QUE sur
+ * un « oui » clair : si le verificateur lui-meme echoue (reseau, cle, reponse
+ * illisible), on laisse passer et on le dit — une panne du controleur ne doit
+ * pas eteindre toute la file. `X_PATTES=0` desactive le controle.
+ * Teste avec un faux fetch (`prendre`) dans x_post.test.js. */
+async function verifiePattes(png, prendre) {
+  if (process.env.X_PATTES === '0') return { ok: true, saute: 'desactive' };
+  const e = env();
+  if (!e.openai) return { ok: true, saute: 'pas de cle vision' };
+  const f = prendre || fetch;
+  const b64 = Buffer.isBuffer(png) ? png.toString('base64') : String(png || '');
+  let r, j;
+  try {
+    r = await f('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + e.openai },
+      body: JSON.stringify({
+        model: e.modeleVision, max_tokens: 120, temperature: 0,
+        messages: [{ role: 'user', content: [
+          { type: 'text', text: 'This is a cartoon of a muscular Shiba Inu dog character. Look only at his hands. '
+            + 'Does he have HUMAN hands or human fingers instead of dog paws? A correct image has furry dog paws with paw pads, no separate fingers. '
+            + 'Answer ONLY with JSON: {"hands": true or false, "why": "a few words"}. "hands" is true if you see any human hand or human fingers.' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,' + b64 } },
+        ] }],
+      }),
+      signal: AbortSignal.timeout(60000),
+    });
+    j = await r.json();
+  } catch (err) {
+    return { ok: true, saute: 'controleur injoignable : ' + String(err && err.message || err).slice(0, 80) };
+  }
+  if (!r.ok) return { ok: true, saute: 'controleur HTTP ' + r.status };
+  const txt = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content || '';
+  const m = String(txt).match(/\{[\s\S]*\}/);
+  if (!m) return { ok: true, saute: 'reponse illisible' };
+  let verdict; try { verdict = JSON.parse(m[0]); } catch (x) { return { ok: true, saute: 'JSON illisible' }; }
+  /* On ne bloque que sur un oui franc. */
+  return verdict.hands === true ? { ok: false, raison: String(verdict.why || 'human hands').slice(0, 120) } : { ok: true };
+}
+
+/* Generer une image ET s assurer qu elle a des pattes : jusqu a `essais`
+ * tentatives, le prompt renforce apres un refus. Rend { png, jetons, controle }.
+ * Si toutes echouent, LEVE : le creneau abandonne plutot que de poster une
+ * image a mains humaines (le vrai but du controle). */
+async function genereImageVerifiee(prompt, prendre, essais) {
+  const n = essais || 2;
+  let dernier = null;
+  for (let i = 0; i < n; i++) {
+    const renfort = i === 0 ? '' : ' IMPORTANT: the character MUST have furry dog paws with paw pads, absolutely NO human hands and NO human fingers.';
+    const g = await genereImage(prompt + renfort, prendre);
+    const c = await verifiePattes(g.png, prendre);
+    if (c.ok) return { png: g.png, jetons: g.jetons, controle: c.saute ? 'non verifie (' + c.saute + ')' : 'pattes ok' };
+    dernier = c.raison;
+    console.error(`[x] image refusee (${i + 1}/${n}) : mains humaines — ${dernier}`);
+  }
+  throw new Error('image : mains humaines detectees apres ' + n + ' essais (' + (dernier || '') + ')');
+}
+
 // ------------------------------------------------------------ l annonce en video
 
 /* ---- UNE ANNONCE, UNE FOIS, EN VIDEO ----
@@ -758,9 +824,9 @@ async function tache(opts) {
         const ch = choixImage(cle, scene, journal);
         entree.rendu = ch.rendu; entree.cadrage = ch.cadrage;
       }
-      const g = await genereImage(promptImage(scene, cle, { rendu: entree.rendu, cadrage: entree.cadrage }), o.prendre);
+      const g = await genereImageVerifiee(promptImage(scene, cle, { rendu: entree.rendu, cadrage: entree.cadrage }), o.prendre);
       png = g.png; fs.writeFileSync(fichierImage, png);
-      entree.image = nomImage(cle) + '.png'; entree.jetonsImage = g.jetons;
+      entree.image = nomImage(cle) + '.png'; entree.jetonsImage = g.jetons; entree.pattes = g.controle;
       journal.jours[cle] = entree; ecritJournal(journal);
     }
     /* `special.texte` (27/09) : un texte ecrit a l avance part tel quel (nettoie seul : longueur, lien). */
@@ -908,7 +974,7 @@ function planifie(signale) {
 
 module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, RENDUS, CADRAGES, NEGATIF, ANGLES, renduDe, sceneSuivante, promptImage, choixImage,
                    ANNONCE, annonceEnAttente, genereVideo, televerseVideo, appelXGet, FENETRE_SCENES, FENETRE_RENDUS, FENETRE_CADRAGE, faitsDuJour, etiquettes,
-                   nettoie, ecritTexte, genereImage, televerse, publie, tache, planifie, derniere, reprend, programmes, PROGRAMMES, PROGRAMME_RETARD_MS,
+                   nettoie, ecritTexte, genereImage, verifiePattes, genereImageVerifiee, televerse, publie, tache, planifie, derniere, reprend, programmes, PROGRAMMES, PROGRAMME_RETARD_MS,
                    heureLocale, creneauDu, jourDe, litJournal, dernieres, DOSSIER_IMAGES, RESERVE };
 
 // ------------------------------------------------------------ en ligne de commande

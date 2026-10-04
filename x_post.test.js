@@ -188,6 +188,8 @@ const x = require('./x_post');
       const u = String(url); const corps = o && o.body ? JSON.parse(o.body) : null;
       appels.push({ u, corps, auth: (o && o.headers && (o.headers.authorization || o.headers['x-api-key'])) || '' });
       const rep = (statut, j) => ({ ok: statut < 300, status: statut, json: async () => j, text: async () => JSON.stringify(j) });
+      /* Le controle des pattes (vision) : avant la branche image, car les deux sont chez openai. */
+      if (/chat\/completions/.test(u)) return rep(200, { choices: [{ message: { content: '{"hands": false, "why": "furry dog paws"}' } }] });
       if (/openai/.test(u)) return rep(200, { data: [{ b64_json: Buffer.from('PNG-factice').toString('base64') }], usage: { output_tokens: 6893 } });
       if (/anthropic/.test(u)) { nTexte++; return rep(200, { content: [{ type: 'text', text: `"Post number ${nTexte}, one very buff dog. $SWOGE Bet is LIVE 🏟️🐕 https://spam.example"` }] }); }
       if (/media\/upload/.test(u)) return rep(200, { data: { id: '777', media_key: '3_777' } });
@@ -243,7 +245,7 @@ const x = require('./x_post');
     let signale = null;
     r = await x.tache({ maintenant: MIDI + 600000, prendre: faux, signale: (s) => { signale = s; } });
     eq(r.etat, 'poste', 'au tour suivant, poste');
-    eq(appels.filter((a) => /openai/.test(a.u)).length, 2, 'deux images payees en tout : 10 h, midi — pas une de plus pour la reprise');
+    eq(appels.filter((a) => /images\/generations/.test(a.u)).length, 2, 'deux images payees en tout : 10 h, midi — pas une de plus pour la reprise');
     eq(appels.filter((a) => /anthropic/.test(a.u)).length, 2, 'deux textes');
     const j = x.litJournal();
     ok(j.jours['2026-09-19#10:00'].scene !== j.jours['2026-09-19#12:00'].scene, 'deux scenes differentes le meme jour : ' + j.jours['2026-09-19#10:00'].scene + ' puis ' + j.jours['2026-09-19#12:00'].scene);
@@ -277,11 +279,11 @@ const x = require('./x_post');
     r = await x.tache({ maintenant: MINUIT, prendre: faux });
     eq(r.etat, 'abandon', 'au quatrieme, on abandonne le creneau en le disant');
     refuseTweet = false;
-    const imagesAvant = appels.filter((a) => /openai/.test(a.u)).length;
+    const imagesAvant = appels.filter((a) => /images\/generations/.test(a.u)).length;
     eq(x.reprend(), 1, 'reprendre remet a zero le creneau rate');
     r = await x.tache({ maintenant: MINUIT + 60000, prendre: faux });
     eq(r.etat, 'poste', 'et le post part sans attendre le creneau suivant');
-    eq(appels.filter((a) => /openai/.test(a.u)).length, imagesAvant, 'avec l image deja payee');
+    eq(appels.filter((a) => /images\/generations/.test(a.u)).length, imagesAvant, 'avec l image deja payee');
     eq(x.reprend(), 0, 'plus rien a reprendre');
 
     /* Un post special : sujet impose, image a lui, hors creneau. */
@@ -291,7 +293,7 @@ const x = require('./x_post');
     eq(r.etat, 'poste', 'un post special part meme quand le creneau est deja servi');
     eq(r.cle, '2026-09-19#agent', 'sous sa propre cle');
     ok(/Today's announcement.*AI agent now writes/.test(appels.slice(avantSpecial).find((a) => /anthropic/.test(a.u)).corps.messages[0].content), 'le modele recoit le sujet impose');
-    ok(/at a desk with a robot painter/.test(appels.slice(avantSpecial).find((a) => /openai/.test(a.u)).corps.prompt), 'et l image, sa scene a elle');
+    ok(/at a desk with a robot painter/.test(appels.slice(avantSpecial).find((a) => /images\/generations/.test(a.u)).corps.prompt), 'et l image, sa scene a elle');
     r = await x.tache({ maintenant: MINUIT + 180000, prendre: faux, special: { nom: 'agent', sujet: 'encore' } });
     eq(r.etat, 'deja', 'le meme post special ne part pas deux fois le meme jour');
     r = await x.tache({ maintenant: MINUIT + 180000, prendre: faux, special: { nom: 'sans-sujet' } });
@@ -308,7 +310,7 @@ const x = require('./x_post');
     eq(rp[0] && rp[0].etat, 'poste', 'a son heure : poste');
     eq(tweetProg.corps.text, 'Line one 🤖\n\nLine two.\n\nLine three $SWOGE\n\nhttps://swoleeswoge.dog/swogeagentic.html', 'le texte IMPOSE part mot pour mot, paragraphes gardes, lien a la fin');
     ok(!appels.slice(avantProg).some((a) => /anthropic/.test(a.u)), 'aucun modele n ecrit (le texte est impose)');
-    ok(/at an API shop counter with robots/.test(appels.slice(avantProg).find((a) => /openai/.test(a.u)).corps.prompt), 'l image : sa scene a lui');
+    ok(/at an API shop counter with robots/.test(appels.slice(avantProg).find((a) => /images\/generations/.test(a.u)).corps.prompt), 'l image : sa scene a lui');
     const nTweets = appels.filter((a) => /2\/tweets/.test(a.u)).length;
     await x.programmes({ maintenant: P.a + 4 * 3600e3 * 0.4, prendre: faux, liste: [P] });
     await x.programmes({ maintenant: Date.parse('2026-09-20T00:10:00Z'), prendre: faux, liste: [P] });
@@ -413,11 +415,11 @@ const x = require('./x_post');
 
     const j1 = x.litJournal();
     ok(j1.annonces[VIDEO.nom] && j1.annonces[VIDEO.nom].id, 'le journal retient l annonce partie');
-    ok(!appels.some((a) => /openai/.test(a.u)), 'aucune image payee pour ce creneau');
+    ok(!appels.some((a) => /images\/generations/.test(a.u)), 'aucune image payee pour ce creneau');
     const nVid = appels.filter((a) => /videos\/generations/.test(a.u)).length;
     r = await x.tache({ maintenant: Date.parse('2026-10-01T16:35:00Z'), prendre: faux, pause, annonce: VIDEO });   // 12:35
     ok(r.etat === 'poste' && !r.annonce, 'le creneau suivant redevient un post normal');
-    ok(appels.filter((a) => /videos\/generations/.test(a.u)).length === nVid && appels.some((a) => /openai/.test(a.u)), 'avec une image, et plus aucune video');
+    ok(appels.filter((a) => /videos\/generations/.test(a.u)).length === nVid && appels.some((a) => /images\/generations/.test(a.u)), 'avec une image, et plus aucune video');
     /* Une annonce qui rate trois fois : abandonnee, le creneau d apres est normal. */
     fs.unlinkSync(path.join(VOL, 'x_posts.json'));
     videoRate = true;
@@ -463,6 +465,50 @@ const x = require('./x_post');
     ok(tw.corps.media.media_ids[0] === 'img7' && tw.corps.text.includes(A.lien) && tw.corps.text.length <= 280, 'le tweet porte la capture et le lien du portefeuille');
     r = await x.tache({ maintenant: Date.parse('2026-10-04T16:35:00Z'), prendre: faux, pause: async () => {} });
     ok(!r.annonce, 'une seule fois : le creneau suivant n est plus l annonce');
+  }
+
+  console.log('\n-- 9. le controle des pattes : pas de mains humaines sur SWOGE --');
+  {
+    process.env.OPENAI_API_KEY = 'sk-test';
+    const vision = (verdict) => async (u) => ({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content: JSON.stringify(verdict) } }] }) });
+    let r = await x.verifiePattes(Buffer.from('PNG'), vision({ hands: false, why: 'furry paws' }));
+    ok(r.ok === true && !r.raison, 'des pattes : l image passe');
+    r = await x.verifiePattes(Buffer.from('PNG'), vision({ hands: true, why: 'five fingers' }));
+    ok(r.ok === false && /finger/.test(r.raison), 'des mains humaines : l image est refusee, avec la raison');
+
+    process.env.X_PATTES = '0';
+    r = await x.verifiePattes(Buffer.from('PNG'), vision({ hands: true }));
+    ok(r.ok === true && r.saute === 'desactive', 'X_PATTES=0 : le controle est eteint, l image passe');
+    delete process.env.X_PATTES;
+
+    /* Une panne du controleur ne doit pas eteindre toute la file : on laisse passer, on le dit. */
+    r = await x.verifiePattes(Buffer.from('PNG'), async () => { throw new Error('reseau'); });
+    ok(r.ok === true && /injoignable/.test(r.saute), 'controleur injoignable : on laisse passer (pas de blocage), et on le note');
+
+    /* genereImageVerifiee : regenere apres un refus, et renforce le prompt. */
+    let nGen = 0; const prompts = [];
+    const fauxGV = async (u, o) => {
+      const c = o && o.body ? JSON.parse(o.body) : null;
+      if (/chat\/completions/.test(String(u))) {
+        /* le premier rendu a des mains, le second non */
+        const mains = nGen <= 1;
+        return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: JSON.stringify({ hands: mains, why: mains ? 'hands' : 'paws' }) } }] }) };
+      }
+      nGen++; prompts.push(c.prompt);
+      return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: Buffer.from('PNG' + nGen).toString('base64') }], usage: { output_tokens: 10 } }) };
+    };
+    const g = await x.genereImageVerifiee('a buff shiba', fauxGV, 2);
+    ok(nGen === 2 && g.controle === 'pattes ok', 'une image a mains est regeneree une fois, la seconde passe');
+    ok(/MUST have furry dog paws/.test(prompts[1]), 'le second essai renforce le prompt sur les pattes');
+
+    /* Deux echecs de suite : on LEVE, le creneau abandonnera plutot que de poster des mains. */
+    const toujoursMains = async (u) => /chat\/completions/.test(String(u))
+      ? { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '{"hands":true,"why":"hands"}' } }] }) }
+      : { ok: true, status: 200, json: async () => ({ data: [{ b64_json: Buffer.from('PNG').toString('base64') }] }) };
+    let leve = false;
+    try { await x.genereImageVerifiee('x', toujoursMains, 2); } catch (e) { leve = /mains humaines/.test(e.message); }
+    ok(leve, 'deux refus de suite : on leve, aucune image a mains n est postee');
+    delete process.env.OPENAI_API_KEY;
   }
 
   console.log(`\nx_post.test.js : ${n} verifications OK`);
