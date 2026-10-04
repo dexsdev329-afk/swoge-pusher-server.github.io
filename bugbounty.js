@@ -388,9 +388,48 @@ function preAudit(src) {
   };
 }
 
+/* ------------------------------- la couche d'EXPLICATION IA (defensive) */
+
+/* Demande du proprietaire (04/10) + recherche du jour : pas de « modele pour le
+ * hack ». Le pre-audit TROUVE deja la faille ; ici un modele fort (Claude Haiku,
+ * deja dans le projet, ~0,01 $/faille) l'EXPLIQUE, note son exploitabilite (CVSS)
+ * et propose le CORRECTIF. Jamais de code d'exploitation : le systeme l'interdit.
+ * deps.client injectable (essais) ; sans ANTHROPIC_API_KEY, on le DIT, rien ne part. */
+const EXPLI_MODELE = 'claude-haiku-4-5';
+const EXPLI_PRIX = { entree: 1, sortie: 5 };   /* $/million, grille publique */
+const EXPLI_SYS = [
+  'You are a DEFENSIVE smart-contract security reviewer. A static tool already FOUND a potential issue.',
+  'Explain it to the developer in plain English, estimate its exploitability as a CVSS 3.1 vector and base score, and give a concrete FIX (secure code or a precise change).',
+  'NEVER write exploit code, attack payloads, or step-by-step attack instructions. You help fix, not attack.',
+  'Answer ONLY as JSON: {"explanation": "...", "cvss_vector": "CVSS:3.1/...", "cvss_score": 0.0, "fix": "..."}. English only.',
+].join(' ');
+
+async function expliqueFinding(finding, source, deps) {
+  deps = deps || {};
+  const f = finding || {};
+  let client = deps.client;
+  if (!client) {
+    if (!process.env.ANTHROPIC_API_KEY) return { ok: false, raison: 'AI explanation needs ANTHROPIC_API_KEY on the server' };
+    try { const Anthropic = require('@anthropic-ai/sdk'); client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 60000 }); }
+    catch (e) { return { ok: false, raison: 'Anthropic SDK unavailable' }; }
+  }
+  const extrait = String(source || f.extrait || '').slice(0, 4000);
+  const msg = 'Finding class: ' + (f.classe || '?') + '\nSeverity (static): ' + (f.gravite || '?')
+    + '\nWhy the tool flagged it: ' + (f.pourquoi || '?') + '\nCode (line ' + (f.ligne || '?') + '):\n' + extrait;
+  let r;
+  try { r = await client.messages.create({ model: EXPLI_MODELE, max_tokens: 700, system: EXPLI_SYS, messages: [{ role: 'user', content: msg }] }); }
+  catch (e) { return { ok: false, raison: 'model error: ' + String((e && e.message) || e).slice(0, 100) }; }
+  const texte = (r.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+  const u = r.usage || {};
+  const coutUsd = Math.round((((u.input_tokens || 0) * EXPLI_PRIX.entree + (u.output_tokens || 0) * EXPLI_PRIX.sortie) / 1e6) * 1e6) / 1e6;
+  let j = null; const m = texte.match(/\{[\s\S]*\}/); if (m) { try { j = JSON.parse(m[0]); } catch (e) { j = null; } }
+  if (j) return { ok: true, explanation: j.explanation || '', cvss: { vector: j.cvss_vector || null, score: j.cvss_score != null ? Number(j.cvss_score) : null }, fix: j.fix || '', coutUsd };
+  return { ok: true, explanation: texte.slice(0, 2000), cvss: { vector: null, score: null }, fix: '', coutUsd };
+}
+
 module.exports = {
-  ATTESTATION_TEXTE, PRIME_FORTE,
+  ATTESTATION_TEXTE, PRIME_FORTE, EXPLI_MODELE,
   typeCible, couvre, dansScope, autorisation, journaliseAttestation,
   classeProgrammes, recon, preAudit, fonctions, expositionIp, classeAppareil,
-  sousDomaines, scansConnus, vulnsPaquet,
+  sousDomaines, scansConnus, vulnsPaquet, expliqueFinding,
 };

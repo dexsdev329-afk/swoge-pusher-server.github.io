@@ -18,6 +18,7 @@ process.env.DATA_DIR = BAC;
 process.env.RPC_URL = ''; process.env.ADMIN_KEY = 'k';
 process.env.AI_COLONIE = '0'; process.env.PERP_COLONIES = '0'; process.env.PERP_JOURNAL = '0';
 process.env.ODDS_API_KEY = ''; process.env.MONITEUR_URL = '';
+delete process.env.ANTHROPIC_API_KEY;   /* l explication IA doit DIRE qu il manque la cle, sans reseau */
 
 const tg = require.resolve('./telegram');
 require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
@@ -96,6 +97,12 @@ const bb = require('./bugbounty');
   /* Avec attestation mais sans TOR_SOCKS, le .onion repond 503 « Tor non configure » (toujours pas de reseau). */
   r = await post('/bugbounty/onion', { url: 'http://abcdefghij234567abcdefghij234567abcdefghij234567abcdefgh.onion/', attestation: { autorise: true, texte: bb.ATTESTATION_TEXTE } });
   ok(r.code === 503 && /Tor is not configured/.test(r.j.raison), 'onion autorise mais sans demon Tor : 503, il le dit (rien ne sort)');
+
+  console.log('\n-- l explication IA : sans cle, on le dit (aucun reseau) --');
+  r = await post('/bugbounty/explain', { finding: { classe: 'reentrancy', gravite: 'high', ligne: 12, extrait: 'x' } });
+  ok(r.code === 200 && r.j && r.j.ok === false && /ANTHROPIC_API_KEY/.test(r.j.raison), 'explain sans cle serveur : ok:false, raison claire, rien ne part');
+  r = await post('/bugbounty/explain', {});
+  ok(r.code === 400, 'explain sans finding : 400');
 
   console.log('\n-- mon exposition (mon IP, autorisee par construction) + type d appareil --');
   r = await get('/bugbounty/myexposure');

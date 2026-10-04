@@ -132,6 +132,20 @@ const fauxOsint = { osint: async () => { appele = true; return { domaine: 'x' };
   v = await bb.vulnsPaquet({ name: 'x' }, {});
   ok(!v.ok && /ecosystem/.test(v.raison), 'OSV sans ecosystem : refuse proprement, sans reseau');
 
+  console.log('\n-- 11. la couche d explication IA (defensive) --');
+  const finding = { classe: 'reentrancy', gravite: 'high', ligne: 12, pourquoi: 'external call before state write', extrait: 'msg.sender.call{value: bal}("")' };
+  /* Faux client Claude : on verifie qu il recoit la consigne defensive et qu on lit le JSON. */
+  let vuSys = '';
+  const fauxClient = { messages: { create: async (p) => { vuSys = p.system; return { content: [{ type: 'text', text: '{"explanation":"Checks-effects-interactions is violated.","cvss_vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:H","cvss_score":8.1,"fix":"Write state before the external call, or add nonReentrant."}' }], usage: { input_tokens: 500, output_tokens: 200 } }; } } };
+  let ex = await bb.expliqueFinding(finding, null, { client: fauxClient });
+  ok(ex.ok && /violated/.test(ex.explanation) && ex.cvss.score === 8.1 && /nonReentrant/.test(ex.fix), 'explication + CVSS + correctif lus depuis le modele');
+  ok(ex.coutUsd > 0 && ex.coutUsd < 0.01, 'le cout est mesure et faible (~0,01 $) : ' + ex.coutUsd);
+  ok(/DEFENSIVE/.test(vuSys) && /NEVER write exploit code/.test(vuSys), 'le systeme impose une posture defensive et interdit le code d exploitation');
+  const sansCle = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY;
+  ex = await bb.expliqueFinding(finding, null, {});
+  ok(!ex.ok && /ANTHROPIC_API_KEY/.test(ex.raison), 'sans cle : on le DIT, rien ne part');
+  if (sansCle) process.env.ANTHROPIC_API_KEY = sansCle;
+
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
   process.exit(rates ? 1 : 0);
 })();

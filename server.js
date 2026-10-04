@@ -3997,6 +3997,12 @@ const server = http.createServer(async (req, res) => {
         if (a.mode === 'attested' && a.journal) { try { bugbounty.journaliseAttestation(Object.assign({ via: 'exposure', ip: compteurs.ip(qui(req)) }, a.journal)); } catch (e) { return json(503, { ok: false, raison: 'could not log the attestation; nothing fetched' }); } }
         return json(200, await bugbounty.expositionIp(q.ip));
       }
+      if (path === '/bugbounty/explain') {
+        /* Couche d'explication IA (Claude) sur une faille DEJA trouvee : explication,
+           CVSS, correctif. Defensif (pas d'exploit). Pas de cible, pas d'autorisation. */
+        if (!q.finding) return json(400, { ok: false, raison: 'send the finding to explain' });
+        return json(200, await bugbounty.expliqueFinding(q.finding, q.source));
+      }
       if (path === '/bugbounty/pkgvulns') {
         /* Vulnerabilites d'une dependance (OSV.dev) : donnee publique, comme NVD — aucune cible, pas d'autorisation. */
         return json(200, await bugbounty.vulnsPaquet({ ecosystem: q.ecosystem, name: q.name, version: q.version }));
