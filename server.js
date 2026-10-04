@@ -3965,6 +3965,16 @@ const server = http.createServer(async (req, res) => {
         note: 'Non-intrusive recon and static code review only. A target must be in a bug-bounty program scope, '
           + 'OR you must tick the authorization box (which attests you own the target or have written permission).' });
     }
+    if (path === '/bugbounty/myexposure' && req.method === 'GET') {
+      /* TON reseau vu de l'exterieur : l'IP de TA connexion (autorisee par
+         construction — c'est toi), lue passivement sur InternetDB. Aucun scan. */
+      const moi = String(qui(req)).replace(/^::ffff:/, '');
+      if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(moi)) return json(200, { ok: true, ip: moi, ports: [], vulns: [], hostnames: [], device: { type: 'your connection is IPv6 or behind a proxy — InternetDB covers public IPv4', confidence: 'low', evidence: [] }, note: 'Could not read a public IPv4 for your connection.' });
+      const l2 = (RECHERCHES_SERVICES.get('me:' + moi) || []).filter((x) => Date.now() - x < 60e3);
+      if (l2.length >= 6) return json(429, { ok: false, raison: 'slow down' });
+      l2.push(Date.now()); RECHERCHES_SERVICES.set('me:' + moi, l2);
+      return json(200, Object.assign({ mine: true }, await bugbounty.expositionIp(moi)));
+    }
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
     const ip = compteurs.ip(qui(req)), t = Date.now(), l = (RECHERCHES_SERVICES.get('bb:' + ip) || []).filter((x) => t - x < 10 * 60e3);
     if (l.length >= 20) return json(429, { ok: false, raison: 'too many requests - try again in a few minutes' });
