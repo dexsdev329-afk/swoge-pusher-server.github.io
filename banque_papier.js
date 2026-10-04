@@ -314,7 +314,18 @@ function cree(deps) {
     const depense = S.mise + (a.fraisUsd || 0);
     const rt0 = venteUsd / depense;
     if (!(rt0 >= RETOUR_MIN)) { refus(S, 'round trip too costly', x, a.via); (S.rtRefuses || (S.rtRefuses = [])).push(r1((1 - rt0) * 100)); if (S.rtRefuses.length > 200) S.rtRefuses.shift(); return false; }
-    if (S.cash < depense) { refus(S, 'bank empty', x); return false; }
+    /* Caisse a sec : on RECHARGE, on ne s'arrete pas. Releve du 04/10, 6 h apres l'ouverture : Solana
+       de 1 000 a 20 $ (52 jetons, -71,8 % net par jeton, t -10,68), Robinhood a 57 $ (64 jetons,
+       -58,8 %, t -3,32) — des piscines videes en moins de 30 min, pas un defaut de devis (Jupiter
+       relu a la main : 3e-9 SOL dans la piscine PumpSwap, 1 922 achats pour 212 ventes en 1 h). Sur
+       « bank empty », plus aucun achat : les bras restaient a n < 60, ni retirables ni jugeables. Une
+       recharge est comptee et montree, et le resultat reste cumule sur toutes les recharges. */
+    if (S.cash < depense) {
+      S.cash += S.depart;
+      S.recharges = (S.recharges || 0) + 1;
+      (S.rechargesLe || (S.rechargesLe = [])).push(maintenant());
+      if (S.rechargesLe.length > 50) S.rechargesLe.shift();
+    }
     S.cash -= depense;
     S.ouvertes.push({ addr: x.addr, pool: a.pool || x.pool, dex: x.dex, cases: x.cases, temoin: !!temoin, bras: brasCle || null,
                       t0: maintenant(), mise: S.mise, depense, recu: a.recu, rt0: r1((1 - rt0) * 100), via: a.via || null,
@@ -425,9 +436,12 @@ function cree(deps) {
     banc.min60vs30 = serie(complets.map((p) => rr(p, 60) - rr(p, 30)));
     banc.min10vs30 = serie(complets.map((p) => rr(p, 10) - rr(p, 30)));
     const rts = toutes.map((p) => p.rt0).filter((x) => x != null).sort((a, b) => a - b);
+    const apporte = S.depart * (1 + (S.recharges || 0));
     return {
       quoter: deps.quoteurs[c].nom, since: new Date(S.depuis).toISOString(), stakeUsd: S.mise, startUsd: S.depart,
-      cashUsd: r2(S.cash), openUsd: r2(enCours), valueUsd: r2(S.cash + enCours), pnlUsd: r2(S.cash + enCours - S.depart),
+      refills: S.recharges || 0, lastRefill: S.rechargesLe && S.rechargesLe.length ? new Date(S.rechargesLe[S.rechargesLe.length - 1]).toISOString() : null,
+      investedUsd: r2(apporte),
+      cashUsd: r2(S.cash), openUsd: r2(enCours), valueUsd: r2(S.cash + enCours), pnlUsd: r2(S.cash + enCours - apporte),
       open: S.ouvertes.length, closed: S.fermees.length, all: serieParJeton(toutes), control: statsBras(S, null),
       bar: b, arms: bras, bench: banc,
       entryCost: { n: rts.length, medianPct: rts.length ? rts[rts.length >> 1] : null, refusedMedianPct: S.rtRefuses && S.rtRefuses.length ? S.rtRefuses.slice().sort((a, b) => a - b)[S.rtRefuses.length >> 1] : null },
@@ -445,6 +459,7 @@ function cree(deps) {
 const NOTE = 'Paper only: no key, no signature, no order. Results count each token once (re-buys of the same token are averaged). Each buy is priced like a real order — a buy quote AND a sell-back quote for the tokens received (no sell route, no buy), '
   + 'then sell quotes at 10, 30 and 60 minutes on the same buy. The bank settles at 30 minutes, net of the quoted price impact, DEX fees and network costs. '
   + 'The control buys the first token after every 15 minutes without looking at it; each arm buys the tokens of one case the observatory sees standing out. '
+  + 'When the bank runs dry it is refilled with another $' + DEPART_USD.toLocaleString('en-US') + ' so the measurement never stops; every refill is counted and the profit / loss covers all of them. '
   + 'An arm losing beyond chance (' + BRAS_RETRAIT_N + '+ buys, t ≤ ' + BRAS_RETRAIT_T + ') is retired; one only "holds in paper" with ' + BRAS_PREUVE_N + '+ buys, t above the bar and both halves positive.';
 
 module.exports = { cree, quoteurSolana, quoteurEth, quoteurRobinhood, serie, serieParJeton, barre, NOTE,

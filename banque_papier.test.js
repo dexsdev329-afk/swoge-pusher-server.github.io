@@ -23,6 +23,7 @@ const BP = require('./banque_papier');
 let n = 0, rates = 0;
 const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; console.log('  RATE ' + m); } };
 const MIN = 60e3;
+const r2t = (x) => Math.round(x * 100) / 100;
 
 /* Un quoteur factice : par adresse, combien vaut la position en % de la mise (null = pas de route). */
 function fauxQuoteur() {
@@ -144,7 +145,12 @@ function fauxQuoteur() {
   const Bv2 = BP.cree({ dossier: fs.mkdtempSync(path.join(os.tmpdir(), 'banque-vide2-')), quoteurs: { solana: Qv }, maintenant: () => T });
   Bv2._etat('solana').cash = 10;
   Bv2.propose('solana', jeton('Z'), []); await Bv2.tour('solana', []);
-  ok(Bv2.vue('solana').counts.refused['bank empty'] === 1 && Bv2.vue('solana').open === 0, 'banque a 10 $ pour une mise de 25 $ : « bank empty », rien d achete');
+  /* Intention (reecrite le 04/10) : une caisse a sec ne doit ni acheter a credit en cachette, ni
+     arreter la mesure. Elle est rechargee de 1 000 $, la recharge est comptee, et la perte reste. */
+  const vv = Bv2.vue('solana');
+  ok(!vv.counts.refused['bank empty'] && vv.open === 1, 'banque a 10 $ pour une mise de 25 $ : rechargee, l achat a lieu (la mesure continue)');
+  ok(vv.refills === 1 && vv.investedUsd === 2000 && vv.lastRefill === new Date(T).toISOString(), 'la recharge est comptee et datee : 2 000 $ apportes');
+  ok(vv.cashUsd === 10 + 1000 - 25.5 && vv.pnlUsd === r2t(vv.valueUsd - 2000), 'le resultat se mesure contre TOUT l argent apporte, recharges comprises');
   ok(B.vue('eth') === null, 'une chaine sans quoteur : pas de banque, pas de vue');
 
   console.log('\n-- 6. les quoteurs lisent les vraies formes de reponse --');
