@@ -4014,6 +4014,16 @@ const server = http.createServer(async (req, res) => {
         if (a.mode === 'attested' && a.journal) { try { bugbounty.journaliseAttestation(Object.assign({ via: 'exposure', ip: compteurs.ip(qui(req)) }, a.journal)); } catch (e) { return json(503, { ok: false, raison: 'could not log the attestation; nothing fetched' }); } }
         return json(200, await bugbounty.expositionIp(q.ip));
       }
+      if (path === '/bugbounty/cansell') {
+        /* « Puis-je revendre ? » (can_i_sell) sur un jeton Robinhood Chain : l'epreuve de
+           sortie de la colonie, LECTURE SEULE (devis d'aller-retour, LP brulee). Pas de cible
+           a autoriser : on lit une piscine publique, comme le scan. Payant pour les agents via
+           /agentic/call/can_i_sell ; ici, gratuit pour la page, borne par le debit /bugbounty. */
+        const adr = String(q.address || q.addr || '').toLowerCase();
+        if (!/^0x[0-9a-f]{40}$/.test(adr)) return json(400, { ok: false, raison: 'address must be 0x followed by 40 hex characters' });
+        try { const r = await aiColonie.epreuveDeSortie(adr); return json(200, Object.assign({ ok: true }, r)); }
+        catch (e) { return json(503, { ok: false, raison: 'can_i_sell unavailable: ' + String((e && e.message) || e).slice(0, 120) }); }
+      }
       if (path === '/bugbounty/explain') {
         /* Couche d'explication IA (Claude) sur une faille DEJA trouvee : explication,
            CVSS, correctif. Defensif (pas d'exploit). Pas de cible, pas d'autorisation. */

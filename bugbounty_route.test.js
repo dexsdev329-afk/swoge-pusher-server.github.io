@@ -98,6 +98,10 @@ const bb = require('./bugbounty');
   r = await post('/bugbounty/onion', { url: 'http://abcdefghij234567abcdefghij234567abcdefghij234567abcdefgh.onion/', attestation: { autorise: true, texte: bb.ATTESTATION_TEXTE } });
   ok(r.code === 503 && /Tor is not configured/.test(r.j.raison), 'onion autorise mais sans demon Tor : 503, il le dit (rien ne sort)');
 
+  console.log('\n-- can_i_sell : une adresse invalide est refusee sans reseau --');
+  r = await post('/bugbounty/cansell', { address: 'pas-une-adresse' });
+  ok(r.code === 400 && /0x/.test(r.j.raison), 'cansell sans 0x valide : 400, aucun appel on-chain');
+
   console.log('\n-- l explication IA : sans cle, on le dit (aucun reseau) --');
   r = await post('/bugbounty/explain', { finding: { classe: 'reentrancy', gravite: 'high', ligne: 12, extrait: 'x' } });
   ok(r.code === 200 && r.j && r.j.ok === false && /ANTHROPIC_API_KEY/.test(r.j.raison), 'explain sans cle serveur : ok:false, raison claire, rien ne part');
