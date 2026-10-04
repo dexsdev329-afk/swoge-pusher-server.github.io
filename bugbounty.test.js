@@ -107,6 +107,18 @@ const fauxOsint = { osint: async () => { appele = true; return { domaine: 'x' };
   e = await bb.expositionIp('pas-une-ip', {});
   ok(!e.ok && /not an IPv4/.test(e.raison), 'ce qui n est pas une IPv4 est refuse sans reseau');
 
+  console.log('\n-- 9. le TYPE d appareil, deduit du passif --');
+  ok(bb.classeAppareil({ ports: [80, 443], cpes: ['cpe:/a:nginx:nginx'], hostnames: ['www.site.com'] }).type === 'website / web server', 'ports 80/443 + nginx + www → site web');
+  ok(bb.classeAppareil({ ports: [7547, 53], hostnames: ['gateway.isp.net'], tags: ['router'] }).type === 'router / gateway', 'port 7547 + tag router + hostname gateway → routeur');
+  ok(bb.classeAppareil({ ports: [25, 587, 993], hostnames: ['mail.site.com'] }).type === 'mail server', 'ports mail + mx hostname → serveur mail');
+  ok(bb.classeAppareil({ ports: [22], cpes: ['cpe:/o:canonical:ubuntu_linux'] }).type === 'remote access / PC / server', 'SSH + Ubuntu → PC/serveur');
+  const cam = bb.classeAppareil({ ports: [554], cpes: ['cpe:/a:hikvision:webcam'], tags: ['webcam'] });
+  ok(cam.type === 'camera / IoT device' && cam.confidence === 'high' && cam.evidence.length >= 2, 'RTSP + hikvision + tag webcam → camera/IoT, confiance haute, preuves listees');
+  const nat = bb.classeAppareil({ ports: [], cpes: [], hostnames: [] });
+  ok(/behind NAT/.test(nat.type) && nat.confidence === 'low', 'aucun port public → appareil grand public derriere NAT (telephone/PC), confiance basse');
+  ok((bb.expositionIpDevice = (await bb.expositionIp('8.8.8.8', { fetch: fauxIDB({ ok: true, status: 200, json: async () => ({ ports: [443], cpes: ['nginx'], hostnames: ['dns.google'] }) }) })).device) && bb.expositionIpDevice.type,
+     'expositionIp rend desormais un champ device avec le type estime');
+
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
   process.exit(rates ? 1 : 0);
 })();

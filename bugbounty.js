@@ -166,6 +166,56 @@ async function recon(o, deps) {
   return { ok: true, mode: a.mode, cible: t.v, avertissement: a.avertissement || null, releve };
 }
 
+/* ------------------------------------------- reconnaitre le TYPE d'appareil */
+
+/* Demande du proprietaire (04/10) : « quand on cherche par IP, reconnaitre le
+ * type — telephone, PC, routeur, site web… ». On le DEDUIT des donnees PASSIVES
+ * (ports ouverts, CPE, hostnames, tags d'InternetDB) : aucune sonde. C'est une
+ * ESTIMATION, dite telle — un NAT domestique cache souvent le vrai appareil.
+ *
+ * Chaque type marque des points selon des indices ; on rend le plus probable,
+ * les autres, et les preuves. Deterministe, testable, sans reseau. */
+const INDICES = [
+  { type: 'website / web server', ports: [80, 443, 8080, 8443, 8000], cpe: /nginx|apache|openresty|litespeed|iis|caddy|cloudflare|tomcat|haproxy/i, host: /(^|\.)www\.|web|cdn/i, tag: /web/i },
+  { type: 'router / gateway', ports: [7547, 161, 1900, 2000], cpe: /mikrotik|routeros|ubiquiti|edgeos|fritz|avm|tp-link|tplink|netgear|dd-wrt|openwrt|zyxel|draytek|huawei.*(hg|router)/i, host: /gateway|router|gw[-.]|\bbbox\b|livebox|freebox/i, tag: /router/i },
+  { type: 'mail server', ports: [25, 465, 587, 110, 143, 993, 995], cpe: /postfix|exim|dovecot|exchange|zimbra/i, host: /(^|\.)mail\.|smtp|mx\d?\./i, tag: /mail/i },
+  { type: 'name server (DNS)', ports: [53], cpe: /bind|powerdns|unbound|dnsmasq/i, host: /(^|\.)ns\d?\.|dns/i, tag: /dns/i },
+  { type: 'remote access / PC / server', ports: [22, 3389, 5900, 23], cpe: /openssh|windows|ubuntu|debian|centos|realvnc|xrdp/i, host: /vps|srv|server|host/i, tag: /ssh|rdp|vnc/i },
+  { type: 'database', ports: [3306, 5432, 1433, 27017, 6379, 9200, 5984, 11211, 9300], cpe: /mysql|mariadb|postgres|mssql|mongodb|redis|elasticsearch|memcached/i, host: /db[-.]|database/i, tag: /database|elastic/i },
+  { type: 'camera / IoT device', ports: [554, 8554, 37777, 1935], cpe: /hikvision|dahua|axis|reolink|webcam|camera|gocoax/i, host: /cam\d?\.|ipcam|dvr|nvr/i, tag: /webcam|iot|ics|scada/i },
+  { type: 'phone / mobile endpoint', ports: [], cpe: /android|ios|iphone/i, host: /mobile|cellular|lte|gprs|3g|4g|5g|\bwireless\b|\bgsm\b/i, tag: /mobile/i },
+];
+
+function classeAppareil(expo) {
+  const ports = (expo && expo.ports || []).map(Number);
+  const cpes = (expo && expo.cpes || []).join(' ');
+  const hosts = (expo && expo.hostnames || []).join(' ');
+  const tags = (expo && expo.tags || []).join(' ');
+  const scores = INDICES.map((ind) => {
+    const preuves = [];
+    const pp = ind.ports.filter((p) => ports.includes(p));
+    if (pp.length) preuves.push('port ' + pp.join(', '));
+    if (ind.cpe.test(cpes)) preuves.push('software fingerprint');
+    if (ind.host.test(hosts)) preuves.push('hostname');
+    if (ind.tag.test(tags)) preuves.push('tag');
+    const score = pp.length * 2 + (ind.cpe.test(cpes) ? 3 : 0) + (ind.host.test(hosts) ? 2 : 0) + (ind.tag.test(tags) ? 2 : 0);
+    return { type: ind.type, score, preuves };
+  }).filter((s) => s.score > 0).sort((a, b) => b.score - a.score);
+
+  if (!scores.length) {
+    /* Aucun service notable : souvent un appareil grand public derriere un NAT. */
+    const guess = ports.length === 0
+      ? 'consumer endpoint behind NAT (phone, PC or home device — not directly exposed)'
+      : 'unknown device (open ports with no recognised fingerprint)';
+    return { type: guess, confidence: 'low', evidence: ports.length ? ['ports ' + ports.join(', ')] : ['no open ports in passive data'], all: [] };
+  }
+  const top = scores[0];
+  const confiance = top.score >= 5 ? 'high' : top.score >= 3 ? 'medium' : 'low';
+  return { type: top.type, confidence: confiance, evidence: top.preuves,
+    all: scores.map((s) => ({ type: s.type, score: s.score })),
+    note: 'Best guess from passive data (ports, software, hostnames). A NAT or proxy can hide the real device.' };
+}
+
 /* ------------------------------------------------ l'exposition passive d'une IP */
 
 /* Shodan InternetDB (confirme le 04/10, recherche Maltego/recon passive) :
@@ -180,11 +230,13 @@ async function expositionIp(ip, deps) {
   let r, j;
   try { r = await f('https://internetdb.shodan.io/' + t.v, { signal: AbortSignal.timeout(12000) }); }
   catch (e) { return { ok: false, raison: 'InternetDB unreachable: ' + String((e && e.message) || e).slice(0, 80) }; }
-  if (r.status === 404) return { ok: true, ip: t.v, ports: [], vulns: [], cpes: [], hostnames: [], note: 'InternetDB knows nothing about this IP (no collected exposure).' };
+  if (r.status === 404) { const vide = { ok: true, ip: t.v, ports: [], vulns: [], cpes: [], hostnames: [], tags: [], note: 'InternetDB knows nothing about this IP (no collected exposure).' }; vide.device = classeAppareil(vide); return vide; }
   try { j = await r.json(); } catch (e) { j = null; }
   if (!r.ok || !j) return { ok: false, raison: 'InternetDB HTTP ' + (r && r.status) };
-  return { ok: true, ip: t.v, ports: j.ports || [], vulns: j.vulns || [], cpes: j.cpes || [], hostnames: j.hostnames || [], tags: j.tags || [],
+  const expo = { ok: true, ip: t.v, ports: j.ports || [], vulns: j.vulns || [], cpes: j.cpes || [], hostnames: j.hostnames || [], tags: j.tags || [],
     source: 'Shodan InternetDB (already-collected, no packet sent to the target)' };
+  expo.device = classeAppareil(expo);   /* le type d'appareil, deduit du passif */
+  return expo;
 }
 
 /* --------------------------------------------------- le pre-audit de contrat */
@@ -282,5 +334,5 @@ function preAudit(src) {
 module.exports = {
   ATTESTATION_TEXTE, PRIME_FORTE,
   typeCible, couvre, dansScope, autorisation, journaliseAttestation,
-  classeProgrammes, recon, preAudit, fonctions, expositionIp,
+  classeProgrammes, recon, preAudit, fonctions, expositionIp, classeAppareil,
 };
