@@ -79,15 +79,16 @@ function connecteViaSocks(hote, port, deps) {
  * Rend { ok, statut?, type?, corps? } | { ok:false, raison }.
  */
 async function litOnion(url, o, deps) {
-  if (!disponible()) return { ok: false, raison: 'Tor is not configured — set TOR_SOCKS (e.g. 127.0.0.1:9050) and run a Tor daemon' };
   let u; try { u = new URL(String(url)); } catch (e) { return { ok: false, raison: 'not a URL' }; }
   if (u.protocol !== 'http:') return { ok: false, raison: 'only http:// .onion is supported here (https would need TLS wrapping)' };
   if (!estOnion(u.hostname)) return { ok: false, raison: 'not a .onion address' };
 
-  /* La garde : on traite le .onion comme une cible, via bugbounty.autorisation.
-     Pour la veille de notre propre exposition, l'utilisateur coche la case. */
+  /* La garde D'ABORD : on refuse le non-autorise avant tout, meme avant de
+     regarder si Tor est configure. On traite le .onion comme une cible. */
   const a = bugbounty.autorisation({ cible: u.hostname, programme: (o && o.programme), attestation: (o && o.attestation) });
   if (!a.ok) return { ok: false, raison: a.raison, attestationTexte: bugbounty.ATTESTATION_TEXTE };
+  /* Puis seulement : Tor doit etre la (sinon rien ne sort). */
+  if (!disponible()) return { ok: false, raison: 'Tor is not configured — set TOR_SOCKS (e.g. 127.0.0.1:9050) and run a Tor daemon' };
   if (a.mode === 'attested' && a.journal) { try { bugbounty.journaliseAttestation(Object.assign({ via: 'tor' }, a.journal)); } catch (e) { return { ok: false, raison: 'could not log the attestation; nothing fetched' }; } }
 
   const port = u.port ? Number(u.port) : 80;

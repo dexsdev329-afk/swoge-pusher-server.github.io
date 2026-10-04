@@ -55,6 +55,7 @@ const PRIME_FORTE = Number(process.env.BB_PRIME_FORTE || 50000);
 function typeCible(c) {
   c = String(c || '').trim();
   if (/^0x[0-9a-fA-F]{40}$/.test(c)) return { type: 'evm', v: c.toLowerCase() };
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(c) && c.split('.').every((o) => Number(o) <= 255)) return { type: 'ip', v: c };
   if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(c) && !/^0x/.test(c)) return { type: 'svm', v: c };
   const d = c.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/:\d+$/, '').toLowerCase();
   if (/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)) return { type: 'domaine', v: d };
@@ -68,6 +69,7 @@ function couvre(entree, cible) {
   const e = String(entree || '').trim();
   const t = typeCible(cible);
   if (t.type === 'evm') return e.toLowerCase() === t.v;
+  if (t.type === 'ip') return e.trim() === t.v;
   if (t.type === 'svm') return e === t.v;
   if (t.type === 'domaine') {
     const base = e.replace(/^\*\./, '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').toLowerCase();
@@ -162,6 +164,27 @@ async function recon(o, deps) {
   else if (t.type === 'evm' || t.type === 'svm') releve = await osint.adresse(t.v);
   else return { ok: false, raison: 'nothing to recon for this target type' };
   return { ok: true, mode: a.mode, cible: t.v, avertissement: a.avertissement || null, releve };
+}
+
+/* ------------------------------------------------ l'exposition passive d'une IP */
+
+/* Shodan InternetDB (confirme le 04/10, recherche Maltego/recon passive) :
+ *   GET https://internetdb.shodan.io/<ip>  — SANS cle, et surtout PASSIF : c'est
+ *   Shodan qui a scanne, pas nous. Aucun paquet ne part vers la cible ; on LIT
+ *   ce qui est deja collecte (ports ouverts, CVE connues, CPE, hostnames). C'est
+ *   l'equivalent SUR d'un « scan de ports » — sans scanner. deps.fetch injectable. */
+async function expositionIp(ip, deps) {
+  const t = typeCible(ip);
+  if (t.type !== 'ip') return { ok: false, raison: 'not an IPv4 address' };
+  const f = (deps && deps.fetch) || fetch;
+  let r, j;
+  try { r = await f('https://internetdb.shodan.io/' + t.v, { signal: AbortSignal.timeout(12000) }); }
+  catch (e) { return { ok: false, raison: 'InternetDB unreachable: ' + String((e && e.message) || e).slice(0, 80) }; }
+  if (r.status === 404) return { ok: true, ip: t.v, ports: [], vulns: [], cpes: [], hostnames: [], note: 'InternetDB knows nothing about this IP (no collected exposure).' };
+  try { j = await r.json(); } catch (e) { j = null; }
+  if (!r.ok || !j) return { ok: false, raison: 'InternetDB HTTP ' + (r && r.status) };
+  return { ok: true, ip: t.v, ports: j.ports || [], vulns: j.vulns || [], cpes: j.cpes || [], hostnames: j.hostnames || [], tags: j.tags || [],
+    source: 'Shodan InternetDB (already-collected, no packet sent to the target)' };
 }
 
 /* --------------------------------------------------- le pre-audit de contrat */
@@ -259,5 +282,5 @@ function preAudit(src) {
 module.exports = {
   ATTESTATION_TEXTE, PRIME_FORTE,
   typeCible, couvre, dansScope, autorisation, journaliseAttestation,
-  classeProgrammes, recon, preAudit, fonctions,
+  classeProgrammes, recon, preAudit, fonctions, expositionIp,
 };

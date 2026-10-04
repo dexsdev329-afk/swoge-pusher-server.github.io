@@ -3979,6 +3979,21 @@ const server = http.createServer(async (req, res) => {
       if (path === '/bugbounty/watch') {
         return json(200, { ok: true, programmes: bugbounty.classeProgrammes(q.programmes || [], q.connus || []) });
       }
+      if (path === '/bugbounty/exposure') {
+        /* Exposition PASSIVE (Shodan InternetDB) : deja collectee, aucun paquet
+           vers la cible. Memegarde que la recon (l'IP est la cible). */
+        const a = bugbounty.autorisation({ cible: q.ip, programme: q.programme, attestation: q.attestation });
+        if (!a.ok) return json(403, { ok: false, raison: a.raison, attestationTexte: bugbounty.ATTESTATION_TEXTE });
+        if (a.mode === 'attested' && a.journal) { try { bugbounty.journaliseAttestation(Object.assign({ via: 'exposure', ip: compteurs.ip(qui(req)) }, a.journal)); } catch (e) { return json(503, { ok: false, raison: 'could not log the attestation; nothing fetched' }); } }
+        return json(200, await bugbounty.expositionIp(q.ip));
+      }
+      if (path === '/bugbounty/onion') {
+        /* Veille .onion DEFENSIVE (tor.js) : desactivee sans TOR_SOCKS, meme garde
+           que la recon (programme OU case attestee), lecture seule (GET). */
+        const tor = require('./tor');
+        const r = await tor.litOnion(q.url, { programme: q.programme, attestation: q.attestation });
+        return json(r.ok ? 200 : (/Tor is not configured/.test(r.raison || '') ? 503 : 403), r);
+      }
       if (path === '/bugbounty/recon') {
         const a = bugbounty.autorisation({ cible: q.cible, programme: q.programme, attestation: q.attestation });
         if (!a.ok) return json(403, { ok: false, raison: a.raison, attestationTexte: bugbounty.ATTESTATION_TEXTE });

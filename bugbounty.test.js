@@ -96,6 +96,17 @@ const fauxOsint = { osint: async () => { appele = true; return { domaine: 'x' };
   ok(classes.includes('oracle'), 'oracle : balanceOf(address(this)) comme prix est signale');
   ok(/not a verdict/.test(au.note) && au.horsScope.includes('private-keys'), 'le pre-audit DIT que ce n est pas un verdict, et exclut le hors-code (cles, insiders, gouvernance)');
 
+  console.log('\n-- 8. l exposition PASSIVE (Shodan InternetDB) --');
+  ok(bb.typeCible('8.8.8.8').type === 'ip' && bb.typeCible('999.1.1.1').type !== 'ip', 'une IPv4 valide est reconnue, une invalide non');
+  const fauxIDB = (rep) => async (u) => { fauxIDB.u = String(u); return rep; };
+  let e = await bb.expositionIp('8.8.8.8', { fetch: fauxIDB({ ok: true, status: 200, json: async () => ({ ports: [80, 443], vulns: ['CVE-2021-1234'], cpes: ['cpe:/a:x'], hostnames: ['dns.google'] }) }) });
+  ok(e.ok && e.ports.join() === '80,443' && e.vulns[0] === 'CVE-2021-1234' && /no packet sent/.test(e.source), 'une IP connue : ports et CVE DEJA collectes (aucun paquet envoye a la cible)');
+  ok(/internetdb\.shodan\.io\/8\.8\.8\.8/.test(fauxIDB.u), 'l appel vise bien InternetDB (lecture seule)');
+  e = await bb.expositionIp('10.0.0.1', { fetch: fauxIDB({ status: 404, ok: false, json: async () => ({}) }) });
+  ok(e.ok && e.ports.length === 0 && /knows nothing/.test(e.note), 'une IP inconnue d InternetDB : vide, et on le dit (pas une erreur)');
+  e = await bb.expositionIp('pas-une-ip', {});
+  ok(!e.ok && /not an IPv4/.test(e.raison), 'ce qui n est pas une IPv4 est refuse sans reseau');
+
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
   process.exit(rates ? 1 : 0);
 })();

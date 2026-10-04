@@ -81,6 +81,16 @@ const bb = require('./bugbounty');
   r = await post('/bugbounty/preaudit', { source: 'x' });
   ok(r.code === 400, 'une source vide est refusee proprement');
 
+  console.log('\n-- l exposition passive et le .onion : la meme garde, aucun reseau sans autorisation --');
+  APPELS.length = 0;
+  r = await post('/bugbounty/exposure', { ip: '8.8.8.8' });
+  ok(r.code === 403 && /tick the authorization box/.test(r.j.raison), 'exposure sans autorisation : 403 (aucun appel a InternetDB)');
+  r = await post('/bugbounty/onion', { url: 'http://abcdefghij234567abcdefghij234567abcdefghij234567abcdefgh.onion/' });
+  ok(r.code === 403 && /tick the authorization box/.test(r.j.raison), 'onion sans autorisation : 403, avant tout');
+  /* Avec attestation mais sans TOR_SOCKS, le .onion repond 503 « Tor non configure » (toujours pas de reseau). */
+  r = await post('/bugbounty/onion', { url: 'http://abcdefghij234567abcdefghij234567abcdefghij234567abcdefgh.onion/', attestation: { autorise: true, texte: bb.ATTESTATION_TEXTE } });
+  ok(r.code === 503 && /Tor is not configured/.test(r.j.raison), 'onion autorise mais sans demon Tor : 503, il le dit (rien ne sort)');
+
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error('RATE ' + (e && e.message || e)); process.exit(1); });
