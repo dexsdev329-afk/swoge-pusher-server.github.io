@@ -1625,6 +1625,7 @@ const agentModele = require('./agent_modele');
 const agentMemoire = require('./agent_memoire');
 const agentEvenements = require('./agent_evenements');
 const agentTg = require('./agent_tg');
+const agentCaisse = require('./agent_caisse');
 /* Le self-service du createur : il attache l agent de SON jeton sans cle admin,
    la preuve etant une signature + la lecture du createur on-chain (agent_createur). */
 const agentCreateur = require('./agent_createur');
@@ -1647,6 +1648,8 @@ const POLICY_AGENTS = policyArgent.cree({});
 const SIGNER_AGENTS = signerPapier.cree({});
 /* La memoire de chaque agent (continuite + anti-repetition). */
 const MEMOIRE_AGENTS = agentMemoire.cree({});
+/* Le cumul deja recu par la caisse de chaque agent (pour les paliers de la cascade). */
+const CAISSE_RECU = agentFuel.cree({ fichier: require('path').join(cfg.DATA_DIR, 'agent_caisse_recu.json'), grantInitialUsd: 0 });
 /* Le cout estime d une pensee (post) en dollars, et le plancher sous lequel l agent dort. */
 const COUT_POST_USD = Number(process.env.AGENT_COUT_POST_USD || 0.005);
 /* Les faits live d un agent, montes sur son pool/jeton (reutilise par l apercu ET l ordonnanceur).
@@ -4334,8 +4337,14 @@ const server = http.createServer(async (req, res) => {
         trades: SIGNER_AGENTS.journal(mTrades[1], Math.min(50, Math.max(1, Number(q.get('n')) || 20))) });
     }
     const mRead = path.match(/^\/agent\/jeton\/(0x[0-9a-fA-F]{40})$/);
-    if (mRead && req.method === 'GET') return json(200, { ok: true, agent: REGISTRE_AGENTS.parJeton(mRead[1]), hasX: COMPTES_X.aDesCreds(mRead[1]), handle: COMPTES_X.handleDe(mRead[1]),
-      hasTg: COMPTES_TG.aDesCreds(mRead[1]), telegram: COMPTES_TG.chatDe(mRead[1]), fuel: FUEL_AGENTS.vue(mRead[1]), tresor: TRESOR_AGENTS.vue(mRead[1]) });
+    if (mRead && req.method === 'GET') {
+      const ag = REGISTRE_AGENTS.parJeton(mRead[1]);
+      /* L autonomie (runway) : combien de temps l agent peut penser avec son carburant. */
+      const runway = agentCaisse.autonomie(FUEL_AGENTS.vue(mRead[1]).soldeUsd, COUT_POST_USD, ag && ag.cadenceMin);
+      return json(200, { ok: true, agent: ag, hasX: COMPTES_X.aDesCreds(mRead[1]), handle: COMPTES_X.handleDe(mRead[1]),
+        hasTg: COMPTES_TG.aDesCreds(mRead[1]), telegram: COMPTES_TG.chatDe(mRead[1]),
+        fuel: FUEL_AGENTS.vue(mRead[1]), tresor: TRESOR_AGENTS.vue(mRead[1]), runway, recuTotalUsd: CAISSE_RECU.vue(mRead[1]).soldeUsd });
+    }
     if (path === '/agent/jetons' && req.method === 'GET') {
       const c = String((new URLSearchParams(req.url.split('?')[1] || '')).get('creator') || '');
       if (!/^0x[0-9a-fA-F]{40}$/.test(c)) return json(400, { ok: false, raison: 'pass ?creator=0x...' });
@@ -4496,6 +4505,27 @@ const server = http.createServer(async (req, res) => {
         /* Verser au TRESOR papier d un jeton (fonds investissables). Comptabilite, pas d argent on-chain. */
         const r = TRESOR_AGENTS.credite(q.token, Number(q.usd), q.source === 'fees' ? 'fees' : 'topup');
         return json(r.ok ? 200 : 400, r);
+      }
+      if (path === '/agent/caisse/alimente') {
+        /* Alimenter la caisse d un agent : on repartit le montant via la cascade
+           (carburant d abord = notre revenu, puis tresor, puis rachat au-dela d un seuil).
+           Source = les frais de trading du jeton (le proprietaire recolte sa part de
+           tresor on-chain et l affecte ici) OU une recharge. Comptabilite, pas d argent
+           deplace ici. Le cumul recu borne les paliers. */
+        const token = String(q.token || '').toLowerCase();
+        if (!/^0x[0-9a-f]{40}$/.test(token)) return json(400, { ok: false, raison: 'token must be 0x + 40 hex' });
+        const usd = Number(q.usd);
+        if (!(usd > 0)) return json(400, { ok: false, raison: 'usd must be positive' });
+        const part = agentCaisse.repartit(usd, CAISSE_RECU.vue(token).soldeUsd);
+        const source = q.source === 'fees' ? 'fees' : 'topup';
+        if (part.fuel > 0) FUEL_AGENTS.credite(token, part.fuel, source);
+        /* tresor + part de rachat (fléchée rachat) vont au tresor papier : le rachat
+           s execute depuis le tresor via la boucle trader (papier), declenche par l esprit. */
+        if (part.tresor > 0) TRESOR_AGENTS.credite(token, part.tresor, source);
+        if (part.rachat > 0) TRESOR_AGENTS.credite(token, part.rachat, 'rachat-earmark');
+        CAISSE_RECU.credite(token, usd, source);
+        return json(200, { ok: true, token, recu: usd, repartition: part,
+          fuel: FUEL_AGENTS.vue(token).soldeUsd, tresor: TRESOR_AGENTS.vue(token).soldeUsd, recuTotalUsd: CAISSE_RECU.vue(token).soldeUsd });
       }
       if (path === '/agent/trader/decide') {
         /* La boucle trader EN PAPIER : pare-feu → policy → signer papier → compta. Rien de reel.

@@ -184,6 +184,17 @@ const CREA = '0x' + 'c'.repeat(40);
   r = await post('/agent/tg/unlink', { token: T2, ts, signature: sig }, false);
   ok(r.code === 503, 'tg/unlink : meme preuve on-chain requise');
 
+  console.log('\n-- 13. la caisse : alimente -> cascade carburant/tresor/rachat + runway --');
+  r = await post('/agent/caisse/alimente', { token: TOKEN, usd: 50, source: 'fees' }, true);
+  ok(r.code === 200 && r.j.ok && Math.abs((r.j.repartition.fuel + r.j.repartition.tresor + r.j.repartition.rachat) - 50) < 0.011, 'alimenter 50 $ : la cascade somme a 50');
+  ok(r.j.repartition.fuel > r.j.repartition.tresor && r.j.recuTotalUsd === 50, 'carburant d abord (plus que le tresor), cumul recu = 50');
+  r = await post('/agent/caisse/alimente', { token: TOKEN, usd: 0 }, true);
+  ok(r.code === 400, 'alimenter 0 $ : refuse');
+  r = await post('/agent/caisse/alimente', { token: TOKEN, usd: 10 }, false);
+  ok(r.code === 403, 'alimenter la caisse sans cle admin : 403 (owner)');
+  r = await get('/agent/jeton/' + TOKEN);
+  ok(r.code === 200 && r.j.runway && typeof r.j.runway.pensees === 'number' && r.j.recuTotalUsd === 50, 'GET agent : runway (autonomie) + cumul recu exposes');
+
   global.fetch = vrai;
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
   process.exit(rates ? 1 : 0);
