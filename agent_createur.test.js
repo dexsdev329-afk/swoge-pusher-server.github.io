@@ -27,8 +27,8 @@ const recupere = (msg, sig) => ethers.utils.verifyMessage(msg, sig);
 const POOL = '0x4e3e90b3352dcd8aef04ae8afa90d62743452584';
 const onchainEst = (adr) => async (token) => (token && token.toLowerCase() === TOKEN.toLowerCase()) ? { creator: adr, pool: POOL } : null;
 
-async function signe(wallet, token, ts) {
-  return wallet.signMessage(ac.message(token, ts));
+async function signe(wallet, token, ts, action) {
+  return wallet.signMessage(ac.message(token, ts, action));
 }
 
 async function main() {
@@ -94,6 +94,30 @@ async function main() {
   r = await ac.verifie({ token: TOKEN, ts: ts, signature: await signe(createur, TOKEN, ts - 1), },
     { recupere, createurOnchain: onchainEst(createur.address), maintenant: () => ts });
   ok(!r.ok && r.code === 403, 'signature pour un autre horodatage → signataire récupéré faux → refus');
+
+  console.log('\n-- le GESTE entre dans la signature (une signature ne vaut que pour SON geste) --');
+  ok(ac.message(TOKEN, ts, 'pause') !== ac.message(TOKEN, ts, 'configure'), 'le message depend du geste');
+  ok(/Action: configure/.test(ac.message(TOKEN, ts)), 'sans geste precise, defaut = configure');
+  ok(ac.message(TOKEN, ts, 'inconnu') === ac.message(TOKEN, ts, 'configure'), 'un geste inconnu retombe sur configure');
+  /* Une signature faite pour « pause » ne doit pas autoriser « configure ». */
+  r = await ac.verifie({ token: TOKEN, ts, action: 'configure', signature: await signe(createur, TOKEN, ts, 'pause') },
+    { recupere, createurOnchain: onchainEst(createur.address), maintenant: () => ts });
+  ok(!r.ok && r.code === 403, 'signature pour « pause » presentee comme « configure » → signataire faux → refus');
+  /* La meme signature, pour SON geste, passe. */
+  r = await ac.verifie({ token: TOKEN, ts, action: 'pause', signature: await signe(createur, TOKEN, ts, 'pause') },
+    { recupere, createurOnchain: onchainEst(createur.address), maintenant: () => ts });
+  ok(r.ok, 'signature pour « pause » presentee comme « pause » → ok');
+
+  console.log('\n-- rejeu : une signature deja vue ne resert pas --');
+  const sigR = await signe(createur, TOKEN, ts, 'configure');
+  const vues = new Set();
+  const depsR = { recupere, createurOnchain: onchainEst(createur.address), maintenant: () => ts,
+    dejaVu: (s) => vues.has(s) };
+  r = await ac.verifie({ token: TOKEN, ts, action: 'configure', signature: sigR }, depsR);
+  ok(r.ok, 'premiere presentation : acceptee');
+  vues.add(sigR);
+  r = await ac.verifie({ token: TOKEN, ts, action: 'configure', signature: sigR }, depsR);
+  ok(!r.ok && r.code === 409, 'deuxieme presentation de la meme signature : 409 (rejeu refuse)');
 
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
   process.exit(rates ? 1 : 0);

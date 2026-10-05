@@ -1742,6 +1742,21 @@ async function createurOnchain(token) {
   if (!litAuMoinsUne) throw new Error('on-chain read failed');
   return null;
 }
+/* Les signatures createur deja utilisees : une signature ne sert qu UNE fois
+   (constat de l audit, 05/10). En memoire, purge au-dela de la fenetre. */
+const PREUVES_VUES = new Map();
+const PREUVES_VUES_TTL = 20 * 60e3;
+/* Verifie la preuve createur pour UN geste precis (le geste entre dans le message
+   signe) ; rejette une signature deja vue. Rend le resultat de agentCreateur.verifie. */
+function preuveCreateur(q, action) {
+  const t = Date.now();
+  for (const [k, v] of PREUVES_VUES) if (t - v > PREUVES_VUES_TTL) PREUVES_VUES.delete(k);
+  return agentCreateur.verifie({ token: q.token, ts: q.ts, signature: q.signature, action },
+    { recupere: (m, s) => ethers.utils.verifyMessage(m, s), createurOnchain, maintenant: () => Date.now(),
+      dejaVu: (sig) => PREUVES_VUES.has(String(sig)) });
+}
+/* Marque une signature comme utilisee (apres une preuve acceptee). */
+function marquePreuve(q) { if (q && q.signature) PREUVES_VUES.set(String(q.signature), Date.now()); }
 const studio = require('./studio');
 const studioChat = require('./studio_chat');
 const studioJeton = require('./studio_jeton');
@@ -4273,9 +4288,11 @@ const server = http.createServer(async (req, res) => {
       const ipc = compteurs.ip(qui(req)), tc = Date.now(), lc = (RECHERCHES_SERVICES.get('agcr:' + ipc) || []).filter((x) => tc - x < 10 * 60e3);
       if (lc.length >= 20) return json(429, { ok: false, raison: 'too many requests - try again in a few minutes' });
       lc.push(tc); RECHERCHES_SERVICES.set('agcr:' + ipc, lc);
-      const preuve = await agentCreateur.verifie({ token: q.token, ts: q.ts, signature: q.signature },
-        { recupere: (m, s) => ethers.utils.verifyMessage(m, s), createurOnchain, maintenant: () => Date.now() });
+      /* Le geste est lie a la signature : 'pause' pour toggle, 'configure' pour attach. */
+      const geste = path === '/agent/toggle_createur' ? 'pause' : 'configure';
+      const preuve = await preuveCreateur(q, geste);
       if (!preuve.ok) return json(preuve.code || 403, { ok: false, raison: preuve.raison });
+      marquePreuve(q);
       if (path === '/agent/toggle_createur') {
         const r = REGISTRE_AGENTS.bascule(q.token, preuve.createur, !!q.actif);
         return json(r.ok ? 200 : (r.code || 400), r);
@@ -4295,9 +4312,11 @@ const server = http.createServer(async (req, res) => {
       const ipc = compteurs.ip(qui(req)), tc = Date.now(), lc = (RECHERCHES_SERVICES.get('agxl:' + ipc) || []).filter((x) => tc - x < 10 * 60e3);
       if (lc.length >= 20) return json(429, { ok: false, raison: 'too many requests - try again in a few minutes' });
       lc.push(tc); RECHERCHES_SERVICES.set('agxl:' + ipc, lc);
-      const preuve = await agentCreateur.verifie({ token: q.token, ts: q.ts, signature: q.signature },
-        { recupere: (m, s) => ethers.utils.verifyMessage(m, s), createurOnchain, maintenant: () => Date.now() });
+      /* 'unlink-x' pour delier, 'link-x' pour begin/finish : le geste entre dans la signature. */
+      const geste = path === '/agent/x/unlink' ? 'unlink-x' : 'link-x';
+      const preuve = await preuveCreateur(q, geste);
       if (!preuve.ok) return json(preuve.code || 403, { ok: false, raison: preuve.raison });
+      marquePreuve(q);
       const token = String(q.token).toLowerCase();
       xEnCoursNettoie();
       if (path === '/agent/x/unlink') {

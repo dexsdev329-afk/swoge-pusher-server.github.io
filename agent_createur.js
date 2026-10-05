@@ -37,13 +37,22 @@ const bas = (a) => String(a).toLowerCase();
    l'agent de son PROPRE jeton — mais on borne quand même. */
 const FENETRE_MS = 15 * 60 * 1000;
 
+/* Les gestes que le créateur peut signer. Le geste entre DANS le message signé :
+   une signature pour « configure » ne vaut pas pour « unlink-x ». Borne le rejeu
+   (constat de l'audit, 05/10) : une signature captée ne sert qu'à CE geste, sur
+   SON propre jeton, et dans la fenêtre. */
+const GESTES = ['configure', 'pause', 'link-x', 'unlink-x'];
+
 /** Le message EXACT que le portefeuille doit signer. Déterministe : la page et
- *  le serveur le reconstruisent à l'identique à partir du jeton et de l'instant.
- *  Lisible par un humain dans la fenêtre de signature de son portefeuille. */
-function message(token, ts) {
+ *  le serveur le reconstruisent à l'identique à partir du jeton, du geste et de
+ *  l'instant. Lisible par un humain dans la fenêtre de signature de son portefeuille.
+ *  `action` par défaut 'configure' (rétro-compat de l'appel à un argument). */
+function message(token, ts, action) {
+  const geste = GESTES.includes(action) ? action : 'configure';
   return 'SWOGE AI Agent\n'
+    + 'Action: ' + geste + '\n'
     + 'I am the on-chain creator of token ' + bas(token) + '\n'
-    + 'and I authorize configuring its AI agent on swoge.\n'
+    + 'and I authorize this action on its AI agent on swoge.\n'
     + 'This signature moves no funds and grants no spending power.\n'
     + 'Timestamp: ' + Number(ts);
 }
@@ -59,15 +68,18 @@ async function verifie(o, deps) {
   o = o || {}; deps = deps || {};
   const maintenant = deps.maintenant || (() => Date.now());
   if (!estAdresse(o.token)) return { ok: false, code: 400, raison: 'token must be a 0x address' };
+  const action = GESTES.includes(o.action) ? o.action : 'configure';
   const ts = Number(o.ts);
   if (!Number.isFinite(ts)) return { ok: false, code: 400, raison: 'missing or invalid timestamp' };
   const ecart = maintenant() - ts;
   /* Ni trop vieux, ni venu du futur (petite marge d'horloge dans les deux sens). */
   if (ecart > FENETRE_MS || ecart < -FENETRE_MS) return { ok: false, code: 400, raison: 'signature expired — sign again' };
   if (typeof o.signature !== 'string' || !/^0x[0-9a-fA-F]{130}$/.test(o.signature)) return { ok: false, code: 400, raison: 'missing or malformed signature' };
+  /* Rejeu : une signature deja utilisee ne resert pas (jeu de signatures vues, injecte). */
+  if (deps.dejaVu && deps.dejaVu(o.signature)) return { ok: false, code: 409, raison: 'this signature was already used — sign again' };
 
   let signataire;
-  try { signataire = deps.recupere(message(o.token, ts), o.signature); }
+  try { signataire = deps.recupere(message(o.token, ts, action), o.signature); }
   catch (e) { return { ok: false, code: 400, raison: 'could not recover signer from signature' }; }
   if (!estAdresse(signataire)) return { ok: false, code: 400, raison: 'could not recover signer from signature' };
 
@@ -82,4 +94,4 @@ async function verifie(o, deps) {
   return { ok: true, createur: bas(createur), pool };
 }
 
-module.exports = { message, verifie, FENETRE_MS };
+module.exports = { message, verifie, FENETRE_MS, GESTES };
