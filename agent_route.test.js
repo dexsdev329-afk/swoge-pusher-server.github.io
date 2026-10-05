@@ -80,6 +80,12 @@ const CREA = '0x' + 'c'.repeat(40);
   r = await post('/agent/preview', { token: TOKEN }, true);
   ok(r.code === 409, 'agent en pause : preview 409');
 
+  console.log('\n-- 6. apercu AVANT lancement : public, sans jeton attache --');
+  r = await post('/agent/preview_config', { persona: 'hype', objectif: 'make the community laugh', symbole: 'FOO' }, false);
+  ok(r.code === 200 && r.j.ok && r.j.personaLabel === 'Hype' && r.j.post && r.j.post.texte.length > 0, 'POST /agent/preview_config SANS cle admin : 200, un post de la persona choisie');
+  r = await post('/agent/preview_config', { persona: 'inventee', objectif: 'x' }, false);
+  ok(r.code === 400 && /persona/.test(r.j.raison), 'une persona inconnue : 400');
+
   global.fetch = vrai;
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
   process.exit(rates ? 1 : 0);

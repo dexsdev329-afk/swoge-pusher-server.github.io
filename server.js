@@ -4094,9 +4094,23 @@ const server = http.createServer(async (req, res) => {
       return json(200, { ok: true, agents: REGISTRE_AGENTS.parCreateur(c) });
     }
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
-    if (!admin) return json(403, { ok: false, raison: 'owner only for now (x-admin-key)' });
     let q; try { q = JSON.parse((await corps(req, 262144)).toString('utf8') || '{}'); } catch (e) { q = null; }
     if (!q) return json(400, { ok: false, raison: 'unreadable request' });
+    /* PUBLIC, limite : l apercu AVANT lancement. Le createur goute le post de son
+       agent depuis une persona+objectif ad hoc, sans jeton attache, sans faits
+       (pas encore de pool), sans publier. Compose seulement (modele bon marche). */
+    if (path === '/agent/preview_config') {
+      const ipc = compteurs.ip(qui(req)), tc = Date.now(), lc = (RECHERCHES_SERVICES.get('agc:' + ipc) || []).filter((x) => tc - x < 10 * 60e3);
+      if (lc.length >= 20) return json(429, { ok: false, raison: 'too many requests - try again in a few minutes' });
+      lc.push(tc); RECHERCHES_SERVICES.set('agc:' + ipc, lc);
+      const z = '0x' + '0'.repeat(40);
+      const v = agentJeton.valide({ token: z, createur: z, persona: q.persona, modele: q.modele, objectif: q.objectif, langue: q.langue });
+      if (v.erreur) return json(400, { ok: false, raison: v.erreur });
+      const post = await require('./agent_poste').compose({ persona: v.config.persona, objectif: v.config.objectif, langue: v.config.langue,
+        symbole: q.symbole, nom: q.nom, faits: [] });
+      return json(200, { ok: true, persona: v.config.persona, personaLabel: agentJeton.PERSONAS[v.config.persona].label, post });
+    }
+    if (!admin) return json(403, { ok: false, raison: 'owner only for now (x-admin-key)' });
     try {
       if (path === '/agent/attach') {
         const r = REGISTRE_AGENTS.attache({ token: q.token, createur: q.createur, pool: q.pool, persona: q.persona,
