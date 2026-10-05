@@ -50,6 +50,11 @@ function creeStrategies() {
   /* Momentum : force minimale pour decider */
   const MOMENTUM_FORCES = [0.001, 0.002, 0.003, 0.005, 0.008, 0.010, 0.015, 0.020, 0.025, 0.030, 0.040, 0.050];
 
+  /* Lead-lag : combien BTC (le meneur) doit pencher — |prix du marche BTC − 0,5| — pour qu on
+     copie SON cote sur les autres actifs de la MEME fenetre. Hypothese : les quatre jetons
+     co-varient (mesure 30/09 : meme sens 72 % du temps). Information contemporaine, pas de futur. */
+  const LEADLAG_FORCES = [0.03, 0.05, 0.08, 0.10, 0.15, 0.20];
+
   /* Profit-taking : a quel gain % se retirer d'une position */
   const PROFIT_TARGETS = [0.02, 0.03, 0.05, 0.07, 0.10];
 
@@ -267,6 +272,40 @@ function creeStrategies() {
                 id: id++,
                 hash: hashConfig(cfg),
                 name: `vol_v${(volThreshold*100).toFixed(0)}_t${fenetre[0]}_k${(kelly*100).toFixed(0)}_pt${(profitTarget*100).toFixed(0)}_sl${(stopLoss*100).toFixed(0)}`,
+                config: cfg,
+                stats: { n_paris: 0, pnl_total: 0, pnl_pct: 0, edge: 0, resolus: 0, gagnes: 0 }
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /* ---- LEAD-LAG : copier la direction du meneur (BTC) sur les autres actifs ----
+   * Parie le MEME cote que le marche de BTC quand celui-ci penche d au moins `force`, sur
+   * ETH/SOL/XRP de la meme fenetre de 15 min (resolue au meme instant : aucune fuite du futur).
+   * L edge n est pas promis — il est mesure comme les autres, contre Coin ET le marche (Crowd). */
+  for (const force of LEADLAG_FORCES) {
+    for (const fenetre of FENETRES) {
+      for (const kelly of KELLY_FACTORS) {
+        for (const priceFilter of WITH_PRICE_FILTER) {
+          for (const profitTarget of PROFIT_TARGETS) {
+            for (const stopLoss of STOP_LOSSES) {
+              const cfg = {
+                type: 'leadlag',
+                force,
+                fenetre,
+                kelly,
+                priceFilter,
+                profitTarget,
+                stopLoss,
+                banque0: 1000
+              };
+              strategies.push({
+                id: id++,
+                hash: hashConfig(cfg),
+                name: `ll_f${(force*100).toFixed(0)}_t${fenetre[0]}_k${(kelly*100).toFixed(0)}_pt${(profitTarget*100).toFixed(0)}_sl${(stopLoss*100).toFixed(0)}`,
                 config: cfg,
                 stats: { n_paris: 0, pnl_total: 0, pnl_pct: 0, edge: 0, resolus: 0, gagnes: 0 }
               });

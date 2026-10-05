@@ -154,8 +154,8 @@ const mk = () => P.cree({ attente: async () => {}, dossier, lire, hl, maintenant
     const cles = new Set(PR.map((a) => JSON.stringify(a.config)));
     const types = new Set(PR.map((a) => a.config.type));
     ok(PR.length === 100 && cles.size === 100, '100 strategies parametriques, 100 comportements distincts');
-    ok(types.size === 6, 'les six types sont representes : ' + [...types].join(', '));
-    ok(P.PARAM.combinaisons === 110700 && P.PARAM.distincts === 2460, 'sur 110 700 combinaisons, 2 460 comportements distincts une fois retires Kelly, prise de profit et stop-loss (non simules)');
+    ok(types.size === 7, 'les sept types sont representes : ' + [...types].join(', '));
+    ok(P.PARAM.combinaisons === 118800 && P.PARAM.distincts === 2640, 'sur 118 800 combinaisons, 2 640 comportements distincts une fois retires Kelly, prise de profit et stop-loss (non simules)');
     ok(PR.every((a) => !('kelly' in a.config) && !('profitTarget' in a.config) && !('stopLoss' in a.config)), 'aucune ne pretend un reglage que le moteur ne simule pas');
     const P2 = P.choisisParametriques(require('./poly_strategies').creeStrategies(), 100);
     ok(JSON.stringify(P2.choisis) === JSON.stringify(PR.map((a) => a.config)), 'le choix est deterministe : les identifiants survivent a un redemarrage');
@@ -170,6 +170,12 @@ const mk = () => P.cree({ attente: async () => {}, dossier, lire, hl, maintenant
     ok(d({ type: 'momentum', force: 0.02 }, { mUp: 0.6, mUpAvant: null }) === 'attend', 'Momentum sans prix d il y a une minute : elle attend, elle ne devine pas');
     ok(d({ type: 'momentum', force: 0.02 }, { mUp: 0.6, mUpAvant: 0.55 }) === 'Up' && d({ type: 'momentum', force: 0.02 }, { mUp: 0.5, mUpAvant: 0.55 }) === 'Down'
        && d({ type: 'momentum', force: 0.02 }, { mUp: 0.56, mUpAvant: 0.55 }) === 'attend', 'Momentum : le cote qui a monte d au moins la force en une minute');
+    ok(d({ type: 'leadlag', force: 0.05 }, { mUp: 0.5, actif: 'eth', lead: { dir: 1, force: 0.08 } }) === 'Up'
+       && d({ type: 'leadlag', force: 0.05 }, { mUp: 0.5, actif: 'sol', lead: { dir: -1, force: 0.08 } }) === 'Down'
+       && d({ type: 'leadlag', force: 0.05 }, { mUp: 0.5, actif: 'eth', lead: { dir: 1, force: 0.02 } }) === 'attend'
+       && d({ type: 'leadlag', force: 0.05 }, { mUp: 0.5, actif: 'btc', lead: { dir: 1, force: 0.3 } }) === 'attend'
+       && d({ type: 'leadlag', force: 0.05 }, { mUp: 0.5, actif: 'eth', lead: null }) === 'attend',
+       'Lead-lag : copie le cote du meneur (BTC) sur un AUTRE actif si BTC penche assez ; BTC ne se suit pas, et sans meneur elle attend');
     ok(d({ type: 'fair_value', marge: 0.03 }, { modele: 0.7, aUp: A(0.6), aDown: A(0.42) }) === 'Up' && d({ type: 'fair_value', marge: 0.03 }, { modele: 0.61, aUp: A(0.6), aDown: A(0.42) }) === 'attend',
        'Fair Value : quand le modele bat le prix demande de la marge, sinon elle revient');
     ok(d({ type: 'vol_weighted', volThreshold: 0.8 }, { modele: 0.9, aUp: A(0.6), sig: 0.001, sigRef: null }) === 'attend'
@@ -180,34 +186,61 @@ const mk = () => P.cree({ attente: async () => {}, dossier, lire, hl, maintenant
     ok(d({ type: 'crowd', seuil: 0.6, priceFilter: true }, { mUp: 0.95, aUp: A(0.96) }) === null && d({ type: 'crowd', seuil: 0.6, priceFilter: true }, { mUp: 0.7, aUp: A(0.71) }) === 'Up',
        'filtre de prix : jamais au-dessus de 90 ¢');
 
-    /* Une fenetre entiere, le prix du Up monte de 0,50 a 0,80 et BTC de 100 a 100,3. */
+    /* DEUX fenetres (BTC + ETH) de la meme tranche de 15 min : le prix du Up monte de 0,50 a
+       0,66 et le sous-jacent de 100 a 101 (modele >> prix demande). Deux actifs sont NECESSAIRES
+       pour que le lead-lag (inter-actifs) parie : BTC est le meneur, ETH suit. Les strategies sont
+       SEMEES (une par type) : le test ne depend plus du tirage de la colonie. */
     const D6 = DEBUT + 2700;
-    let pUp = 0.5, S6 = 100;
+    let mUpP = 0.5, S6 = 100;
+    const mBTC = Object.assign({}, marche, { closed: false, clobTokenIds: '["U", "D"]', question: 'Bitcoin Up or Down - test' });
+    const mETH = Object.assign({}, marche, { closed: false, clobTokenIds: '["EU", "ED"]', question: 'Ethereum Up or Down - test' });
     const lire6 = async (u) => {
-      if (u.includes('btc-updown-15m-' + D6)) return [{ markets: [Object.assign({}, marche, { closed: false })] }];
+      if (u.includes('btc-updown-15m-' + D6)) return [{ markets: [mBTC] }];
+      if (u.includes('eth-updown-15m-' + D6)) return [{ markets: [mETH] }];
       if (/events\?slug=/.test(u)) return [];
       const m = u.match(/book\?token_id=(\w+)/);
-      const p = m[1] === 'U' ? pUp : 1 - pUp;
+      const up = (m[1] === 'U' || m[1] === 'EU');
+      const p = up ? mUpP : 1 - mUpP;
       return { asks: [{ price: (p + 0.01).toFixed(3), size: '1000' }], bids: [{ price: (p - 0.01).toFixed(3), size: '1000' }] };
     };
-    const hl6 = async (b) => (b.type === 'allMids' ? { BTC: String(S6), ETH: '1', SOL: '1', XRP: '1' } : hl(b));
+    const hl6 = async (b) => (b.type === 'allMids' ? { BTC: String(S6), ETH: String(S6), SOL: '1', XRP: '1' } : hl(b));
+    /* Une strategie par type, bande large, de quoi parier dans ce scenario. */
+    const SEED = [
+      { type: 'fair_value', marge: 0.01, fenetre: [600, 60] },
+      /* crowd/fade ne sont pas dans `retente` : ils tranchent UNE fois, quand leur bande s ouvre.
+         On ouvre leur bande apres que le prix a depasse leur seuil, sinon ils passent leur tour une
+         fois pour toutes (c est la semantique du moteur, pas un reglage). */
+      { type: 'crowd', seuil: 0.51, fenetre: [450, 60] },
+      { type: 'fade', seuil: 0.52, fenetre: [350, 60] },
+      { type: 'meanrev', seuilBas: 0.30, seuilHaut: 0.60, fenetre: [600, 60] },
+      { type: 'momentum', force: 0.01, fenetre: [540, 60] },
+      { type: 'vol_weighted', volThreshold: 1.5, fenetre: [600, 60] },
+      { type: 'leadlag', force: 0.03, fenetre: [600, 60] },
+    ];
     const c6 = P.cree({ attente: async () => {}, lire: lire6, hl: hl6, maintenant: () => T * 1000, alea: () => 0.3 });
+    c6._etat().params = SEED.slice();   /* semees AVANT le premier tic ; la colonie complete les places restantes */
     for (let reste = 600; reste >= 20; reste -= 15) {
-      const x = (600 - reste) / 580; pUp = 0.5 + 0.3 * x; S6 = 100 + 0.3 * x; T = D6 + 900 - reste;
+      const x = (600 - reste) / 580; mUpP = 0.5 + 0.16 * x; S6 = 100 + 1 * x; T = D6 + 900 - reste;
       await c6.tic();
     }
-    const ouv = c6._etat().ouverts.filter((p) => p.agent.startsWith('p_'));
+    const semees = new Map(SEED.map(P.agentParam).map((a) => [a.id, a]));
+    const ouv = c6._etat().ouverts.filter((p) => semees.has(p.agent));
     const parAgent = new Map(c6._etat().params.map(P.agentParam).map((a) => [a.id, a]));
-    const typesParies = new Set(ouv.map((p) => parAgent.get(p.agent).config.type));
-    ok(ouv.length >= 20, ouv.length + ' paris places par ' + new Set(ouv.map((p) => p.agent)).size + ' strategies parametriques sur une seule fenetre');
-    ok(typesParies.size === 6, 'chacun des six types a parie au moins une fois : ' + [...typesParies].join(', '));
-    ok(ouv.every((p) => { const b = parAgent.get(p.agent).bande; return p.resteS <= b[0] && p.resteS >= b[1]; }), 'chaque pari tombe dans la fenetre de sa strategie');
-    ok(new Set(ouv.map((p) => p.agent)).size === ouv.length, 'une strategie, un pari par fenetre et par actif');
-    ok(ouv.filter((p) => parAgent.get(p.agent).config.type === 'momentum').every((p) => p.resteS <= 540 && p.cote === 'Up'), 'Momentum : jamais avant une minute d historique, et du cote qui monte');
-    ok(ouv.filter((p) => parAgent.get(p.agent).config.priceFilter).every((p) => p.prix >= 0.10 && p.prix <= 0.90), 'filtre de prix tenu sur les paris reels');
+    const typesParies = new Set(ouv.map((p) => semees.get(p.agent).config.type));
+    ok(ouv.length >= 7, ouv.length + ' paris places par les strategies semees sur deux fenetres (BTC + ETH)');
+    ok(typesParies.size === 7, 'chacun des sept types a parie au moins une fois : ' + [...typesParies].join(', '));
+    /* LEAD-LAG MESURE ICI : il parie, jamais sur BTC (le meneur ne se suit pas), et du cote du meneur
+       (BTC monte -> Up). C est la preuve que l hypothese inter-actifs est bien cablee et sans fuite du futur. */
+    const ll = ouv.filter((p) => semees.get(p.agent).config.type === 'leadlag');
+    ok(ll.length >= 1 && ll.every((p) => p.actif !== 'btc' && p.cote === 'Up'), 'Lead-lag : parie (sur ETH, jamais BTC), du cote du meneur — ' + ll.length + ' pari(s)');
+    const tous = c6._etat().ouverts.filter((p) => p.agent.startsWith('p_'));
+    ok(tous.every((p) => { const b = parAgent.get(p.agent).bande; return p.resteS <= b[0] && p.resteS >= b[1]; }), 'chaque pari tombe dans la fenetre de sa strategie');
+    ok(new Set(tous.map((p) => p.agent + ':' + p.actif)).size === tous.length, 'une strategie, un pari par fenetre et par actif');
+    ok(tous.filter((p) => parAgent.get(p.agent).config.type === 'momentum').every((p) => p.resteS <= 540 && p.cote === 'Up'), 'Momentum : jamais avant une minute d historique, et du cote qui monte');
+    ok(tous.filter((p) => parAgent.get(p.agent).config.priceFilter).every((p) => p.prix >= 0.10 && p.prix <= 0.90), 'filtre de prix tenu sur les paris reels');
     const v6 = c6.etat();
-    ok(v6.totalStrategies === 405 && v6.parametric.running === 305 && v6.parametric.distinct === 2460 && /not simulated/.test(v6.parametric.note),
-       'la vue dit ce qui tourne : 405 strategies (5 temoins, 95 a la main, 305 parametriques sur 2 460 distinctes), et ce qui n est pas simule');
+    ok(v6.totalStrategies === 405 && v6.parametric.running === 305 && v6.parametric.distinct === 2640 && /not simulated/.test(v6.parametric.note),
+       'la vue dit ce qui tourne : 405 strategies (5 temoins, 95 a la main, 305 parametriques sur 2 640 distinctes), et ce qui n est pas simule');
   }
 
   /* ---- 7. LE TOURNOI (30/09/2026) ----
@@ -286,9 +319,9 @@ const mk = () => P.cree({ attente: async () => {}, dossier, lire, hl, maintenant
     }
     function pose8(id) { Object.assign(E8.agents[id], { resolus: 500, paris: 500, pnl: -1 }); }
     const vp = c8.etat().tournament;
-    ok(!doublon && vp.parametricTried === 2460 && vp.parametricUntried === 0 && E8.params.length === 0,
-       'en ' + tours + ' tours, les 2 460 comportements distincts ont tous ete essayes, aucun deux fois ; les places restent vides ensuite');
-    ok(Object.keys(E8.essayes).filter((id) => id.startsWith('p_')).length === 2460, 'le registre les retient tous (2 460)');
+    ok(!doublon && vp.parametricTried === 2640 && vp.parametricUntried === 0 && E8.params.length === 0,
+       'en ' + tours + ' tours, les 2 640 comportements distincts ont tous ete essayes, aucun deux fois ; les places restent vides ensuite');
+    ok(Object.keys(E8.essayes).filter((id) => id.startsWith('p_')).length === 2640, 'le registre les retient tous (2 640)');
     fs.rmSync(d7, { recursive: true, force: true });
   }
 

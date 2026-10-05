@@ -135,7 +135,9 @@ const SIG_REF_POIDS = 1 / 1000;
  * Mesure du 30/09/2026 sur poly_strategies.js : 110 700 combinaisons, mais trois
  * de ses axes — Kelly, prise de profit, stop-loss — ne sont PAS simules ici
  * (mise fixe de MISE_USD pour tous, position gardee jusqu a l echeance). Une
- * fois ces trois axes retires, il reste 2 460 comportements distincts.
+ * fois ces trois axes retires, il reste 2 460 comportements distincts. 05/10 : un
+ * septieme type, lead-lag (copie le cote de BTC sur les autres actifs de la meme
+ * fenetre), ajoute 180 distincts → 2 640, pour 118 800 combinaisons.
  *
  * La version precedente chargeait « les 100 meilleures par edge » : le
  * classement ne recevait jamais de resultat (compteurs a zero), il rendait donc
@@ -143,7 +145,7 @@ const SIG_REF_POIDS = 1 / 1000;
  * 10–8 min, ne differant que par ces trois axes — et aucune ne pariait : le
  * type 'parametric' n etait traite nulle part dans la decision.
  *
- * Ici : 100 comportements distincts, repartis sur les six types au prorata de
+ * Ici : 100 comportements distincts, repartis sur les sept types au prorata de
  * leur nombre, parametres et fenetres pris a intervalles reguliers. L identifiant
  * est l empreinte de ce qui est simule : il survit aux redemarrages. « Les
  * meilleures par edge » se lisent ensuite sur la page, a partir de leurs propres
@@ -231,7 +233,7 @@ function roleParam(c) {
  * momentum, on attend. */
 const prixNet = (a) => a.prix + a.frais / a.parts;
 function decide(c, o) {
-  const retente = c.type === 'fair_value' || c.type === 'vol_weighted' || c.type === 'momentum' || c.type === 'meanrev';
+  const retente = c.type === 'fair_value' || c.type === 'vol_weighted' || c.type === 'momentum' || c.type === 'meanrev' || c.type === 'leadlag';
   const rien = retente ? 'attend' : null;
   if (c.volFilter || c.type === 'vol_weighted') {
     if (!(o.sig > 0 && o.sigRef > 0)) return 'attend';
@@ -253,6 +255,13 @@ function decide(c, o) {
       if (o.mUpAvant == null) return 'attend';
       const d = o.mUp - o.mUpAvant;
       if (d >= c.force) cote = 'Up'; else if (d <= -c.force) cote = 'Down';
+    }
+    else if (c.type === 'leadlag') {
+      /* Copie le cote du MENEUR (BTC) sur un AUTRE actif de la meme fenetre. Le meneur ne se
+         suit pas lui-meme. Information contemporaine : aucune fuite du futur. */
+      if (o.actif === 'btc') return rien;
+      if (!o.lead || !o.lead.dir) return rien;
+      if (o.lead.force >= c.force) cote = o.lead.dir > 0 ? 'Up' : 'Down';
     } else return null;
   }
   if (cote && c.priceFilter) { const a = cote === 'Up' ? o.aUp : o.aDown; if (!a || a.prix < 0.10 || a.prix > 0.90) cote = null; }
@@ -597,6 +606,10 @@ function cree(deps) {
     const t = Math.floor(maintenant() / 1000), debut = Math.floor(t / FENETRE_S) * FENETRE_S, resteS = debut + FENETRE_S - t;
     let mids = null, sig = {};
     try { mids = await hl({ type: 'allMids' }); } catch (e) { mids = null; }
+    /* LE MENEUR (lead-lag) : le penchant du marche de BTC dans la fenetre en cours, capte
+       pendant le passage de BTC (toujours en premier dans ACTIFS) et offert aux autres actifs
+       de la MEME fenetre. Contemporain, jamais du futur ; remis a null a chaque tic. */
+    let lead = null;
     for (const [actif, coin] of ACTIFS) {
       try {
         const f = await fenetre(actif, coin, debut);
@@ -620,6 +633,8 @@ function cree(deps) {
         if (mUp != null) { f.traces.push([t, mUp]); if (f.traces.length > 80) f.traces.shift(); }
         let mUpAvant = null;
         for (const [tt, m] of f.traces) if (tt <= t - 60) mUpAvant = m;
+        /* BTC est le meneur : on note son penchant du moment pour les actifs suivants du meme tic. */
+        if (actif === 'btc' && mUp != null) lead = { dir: mUp > 0.5 ? 1 : (mUp < 0.5 ? -1 : 0), force: Math.abs(mUp - 0.5) };
         const aUp = remplit(lUp.asks, MISE_USD, f.taux), aDown = remplit(lDown.asks, MISE_USD, f.taux);
         if (calibrer && modele != null && mUp != null) {
           f.calibre = true;
@@ -629,7 +644,7 @@ function cree(deps) {
           let cote = null;
 
           if (ag.type === 'parametric') {
-            const d = decide(ag.config, { mUp, modele, aUp, aDown, sig: sig[coin], sigRef: E.sigRef[coin], mUpAvant });
+            const d = decide(ag.config, { mUp, modele, aUp, aDown, sig: sig[coin], sigRef: E.sigRef[coin], mUpAvant, lead, actif });
             if (d === 'attend') continue;
             cote = d;
           }
