@@ -23,9 +23,16 @@ console.log('-- 1. refus deterministes --');
 ok(!S.evalue({ token: 'pas-0x', action: 'buyback', montantUsd: 1 }, ctx).autorise, 'adresse invalide : refus');
 ok(!S.evalue({ token: T, action: 'rug', montantUsd: 1 }, ctx).autorise, 'action hors liste blanche : refus');
 ok(!S.evalue({ token: T, action: 'buyback', montantUsd: 0 }, ctx).autorise, 'montant 0 : refus');
-ok(/per-action/.test(S.evalue({ token: T, action: 'buyback', montantUsd: 11 }, ctx).raison || ''), 'au-dela du plafond par action : refus');
+ok(/per-action/.test(S.evalue({ token: T, action: 'buyback', montantUsd: 11 }, ctx).raison || ''), 'au-dela du plafond absolu par action (10 $) : refus');
 ok(/price impact/.test(S.evalue({ token: T, action: 'buyback', montantUsd: 5, impactPrixPct: 3 }, ctx).raison || ''), 'impact-prix > 2 % : refus');
-ok(/treasury/.test(S.evalue({ token: T, action: 'buyback', montantUsd: 5 }, { tresorUsd: 2 }).raison || ''), 'plus que le tresor : refus');
+ok(!S.evalue({ token: T, action: 'buyback', montantUsd: 5 }, { tresorUsd: 2 }).autorise, 'plus que la part d un petit tresor : refus');
+
+console.log('\n-- 1b. les plafonds dependent de la TRESORERIE (part %) --');
+const Spart = P.cree({ fichier: path.join(dir, 'part.json'), maintenant: () => horloge,
+  limites: { partParActionPct: 5, partParHeurePct: 10, partParJourPct: 25, maxParActionUsd: 1e9, maxParHeureUsd: 1e9, maxParJourUsd: 1e9, impactMaxPct: 2, cooldownSec: 300 } });
+ok(Spart.evalue({ token: T, action: 'buyback', montantUsd: 5 }, { tresorUsd: 100 }).autorise, 'tresor 100 $ : un geste de 5 $ (= 5 %) passe');
+ok(!Spart.evalue({ token: T, action: 'buyback', montantUsd: 6 }, { tresorUsd: 100 }).autorise, 'tresor 100 $ : 6 $ (> 5 %) refuse');
+ok(Spart.evalue({ token: T, action: 'buyback', montantUsd: 40 }, { tresorUsd: 1000 }).autorise, 'tresor 1000 $ : un geste de 40 $ (< 5 %) passe — un plus gros tresor permet de plus gros gestes');
 
 console.log('\n-- 2. un geste permis, puis cooldown --');
 let r = S.evalue({ token: T, action: 'buyback', montantUsd: 5, impactPrixPct: 1 }, ctx);

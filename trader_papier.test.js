@@ -27,7 +27,7 @@ const T = '0x' + '1'.repeat(40), POOL = '0x' + 'b'.repeat(40), EVIL = '0x' + 'e'
     const policy = Policy.cree({ fichier: path.join(dir, 'p' + horloge + '.json'), maintenant: clock, limites: { maxParActionUsd: 10, maxParHeureUsd: 25, maxParJourUsd: 100, impactMaxPct: 2, cooldownSec: 300 } });
     const signer = Signer.cree({ fichier: path.join(dir, 's' + horloge + '.json'), maintenant: clock });
     const tresor = Fuel.cree({ fichier: path.join(dir, 't' + horloge + '.json'), maintenant: clock, grantInitialUsd: 0 });
-    tresor.credite(T, 50, 'fees');
+    tresor.credite(T, 1000, 'fees');   /* un tresor confortable : 5 $ est bien sous les 5 % */
     return { policy, signer, tresor };
   };
   const devisBon = async (a) => ({ ok: true, pool: a.pool, impactPct: 1, sortie: 100 });
@@ -38,7 +38,7 @@ const T = '0x' + '1'.repeat(40), POOL = '0x' + 'b'.repeat(40), EVIL = '0x' + 'e'
     { pool: POOL, tresor: d.tresor, policy: d.policy, signer: d.signer, devis: devisBon, pareFeu: PareFeu });
   ok(r.decide === 'signed-paper' && r.recu.mode === 'paper', 'buyback sain : signe en PAPIER');
   ok(r.trace.map((e) => e.etape).join(',') === 'firewall,policy,signer', 'la trace passe pare-feu → policy → signer');
-  ok(Math.abs(d.tresor.solde(T) - 45) < 1e-9, 'le tresor papier est debite de 5 $ (50 → 45)');
+  ok(Math.abs(d.tresor.solde(T) - 995) < 1e-9, 'le tresor papier est debite de 5 $ (1000 → 995)');
 
   console.log('\n-- 2. le POOL vient du registre, jamais de l intention --');
   d = neuf();
@@ -66,7 +66,7 @@ const T = '0x' + '1'.repeat(40), POOL = '0x' + 'b'.repeat(40), EVIL = '0x' + 'e'
   console.log('\n-- 4. un refus ne debite rien, ne note rien --');
   d = neuf();
   await TP.decide({ token: T, action: 'buyback', montantUsd: 999 }, { pool: POOL, tresor: d.tresor, policy: d.policy, signer: d.signer, devis: devisBon });
-  ok(d.tresor.solde(T) === 50 && !d.policy.vue(T).dernier, 'apres un rejet : tresor intact, politique sans geste note');
+  ok(d.tresor.solde(T) === 1000 && !d.policy.vue(T).dernier, 'apres un rejet : tresor intact, politique sans geste note');
 
   console.log('\n-- 5. le cooldown de la policy s applique a la chaine --');
   d = neuf();
