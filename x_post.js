@@ -971,6 +971,26 @@ const PROGRAMMES = [
       + 'Live on DexScreener. 🚀',
     prompt: 'pressing a big glowing green launch button on a sleek futuristic mission-control console at night; behind him a small rocket shaped like a dog bone blasts off, '
       + 'trailing bright green light; holographic screens show a candlestick chart spiking and a large green checkmark security shield; confident grin, cinematic neon lighting' },
+  /* 05/10/2026 : « un post pour dire qu en moins de 48 h on a mieux que ca, et prevois de poster bientot » (le proprietaire,
+   * apres avoir montre AgencyPad sur Solana : $17M cap, PumpSwap/Pump.fun, une rangee d agents IA par jeton). Ce qu on affirme
+   * est verifiable et vrai de NOTRE produit — aucun chiffre invente, aucune comparaison de capitalisation (on n en a pas encore) :
+   *   - « built on Robinhood Chain in under 48h » : le portage du modele AgencyPad (un agent par jeton : persona, post autonome,
+   *     garde-fous, tableau de bord createur) a ete fait le 05/10, en bien moins de 48 h (branches + essais verts, ce dossier).
+   *   - « every SWOGE token gets its own AI agent that posts » : agent_jeton + agent_esprit + agent_x, un agent par adresse de jeton,
+   *     qui poste sur son mur et sur X une fois relie ; AGENT_HORLOGE=1 est allume en prod.
+   *   - « the creator owns & controls it from their wallet » : attach_createur / toggle_createur / x/* signes, verifies contre le
+   *     createur on-chain (instant(token).creator) — aucune cle admin, le createur regle/pause/delie depuis son portefeuille.
+   *   - « LP locked forever. 0% tax. » : deja demontre (SwogeFunV4Weth : owner address(0), aucun retrait de LP, collectFees frais
+   *     seulement ; GoPlus 4663 : honeypot 0, buy/sell tax 0). On ne compare PAS les volumes/holders : on n en a pas, on ne ment pas.
+   * Poste SEUL a 12:00 ET (16:00 UTC), entre deux creneaux quotidiens, pour ne pas doubler le tweet de 12:30 ET.
+   * Image : prompt dedie, pattes-de-chien verifiees par genereImageVerifiee. */
+  { nom: 'agents-48h', a: Date.parse('2026-10-05T16:00:00Z'), lien: 'https://swoleeswoge.dog/launchpad.html',
+    sujet: 'AgencyPad-style AI agents for launched tokens, ported to Robinhood Chain in under 48 hours: every token launched on the SWOGE launchpad gets its own autonomous AI agent that posts, and the creator fully owns and controls it from their wallet (configure, pause, link its X account) with no admin key; LP is locked forever and there is 0% tax.',
+    texte: 'They shipped it on Solana. We built the same thing on Robinhood Chain in under 48h 🐕\n\n'
+      + 'Every SWOGE token gets its own AI agent that posts — and the creator owns & controls it from their wallet.\n\n'
+      + 'LP locked forever. 0% tax. 🚀',
+    prompt: 'crossing a glowing neon finish line well ahead of a rival racer at night, carrying a small rocket shaped like a dog bone over his shoulder; a giant holographic countdown '
+      + 'clock reading 48:00 ticking near zero behind him; trailing bright AI chat speech bubbles and green candlestick charts; confident grin, cinematic neon lighting' },
 ];
 async function programmes(o) {
   const t = (o && o.maintenant) || Date.now();
