@@ -991,6 +991,27 @@ const PROGRAMMES = [
       + 'LP locked forever. 0% tax. 🚀',
     prompt: 'crossing a glowing neon finish line well ahead of a rival racer at night, carrying a small rocket shaped like a dog bone over his shoulder; a giant holographic countdown '
       + 'clock reading 48:00 ticking near zero behind him; trailing bright AI chat speech bubbles and green candlestick charts; confident grin, cinematic neon lighting' },
+  /* 05/10/2026, ~19 h UTC : « programme un post qui EXPLIQUE ce que fait l agent » (le proprietaire).
+   * UN seul tweet + image (ce canal ne fait pas de thread). Chaque capacite citee est reelle et branchee :
+   *   - « posts on X + Telegram when something real happens on-chain » : agent_esprit + evenementAgent
+   *     (prix h1, pression acheteuse, paliers de holders) -> posteAgent -> agent_x + agent_tg (poste + epingle).
+   *     AGENT_HORLOGE=1 en prod.
+   *   - « replies to your holders » : outil read_mentions + repond, passe par le pare-feu, dedup par la memoire.
+   *   - « scans the token for red flags » : outil scan_token (GoPlus 4663 via aiColonie.scanJeton).
+   *   - « simulates a sell (can I even exit?) » : outil can_i_sell (aiColonie.epreuveDeSortie, aller-retour devise).
+   *   - « remembers what it said » : agent_memoire (anti-repetition). « learns from its own engagement » :
+   *     agent_mesure (impressions/likes des posts X, note « ce qui marche » dans la memoire).
+   *   - « you own and control it from your wallet » : attach/toggle/x/tg signes, verifies contre le createur on-chain.
+   *   - « Solana + Robinhood Chain » : launchpad V4 (Robinhood) + solana_pump (Pump.fun). Non custodial : la page signe.
+   * On NE dit PAS que le rachat brule du vrai (il est papier/inerte, 8c), ni aucun chiffre de cap/holders (on n en a pas).
+   * Image : prompt dedie, pattes-de-chien verifiees par genereImageVerifiee. */
+  { nom: 'agent-explique', a: Date.parse('2026-10-05T19:40:00Z'), lien: 'https://swoleeswoge.dog/launchpad.html',
+    sujet: 'Every token launched on the SWOGE launchpad gets its own autonomous AI agent: it posts on X and Telegram when a real on-chain event happens (price move, buy pressure, holder milestone), replies to holders, scans the token for security red flags (GoPlus), simulates a sell before trusting a pump (can I exit?), remembers what it said (no repetition) and learns from its own X engagement; the creator fully owns and controls it from their wallet (persona, pause, link X/Telegram). Solana (Pump.fun) and Robinhood Chain. Non-custodial.',
+    texte: 'Every token you launch on SWOGE gets its own AI agent 🧠\n\n'
+      + 'It posts on X + Telegram when something real happens on-chain, replies to your holders, scans the token for red flags, and simulates a sell ("can I even exit?") before trusting a pump.\n\n'
+      + 'It remembers what it said and learns from its own engagement, so it gets sharper over time.\n\n'
+      + 'You own and control it from your wallet. Solana + Robinhood Chain. Non-custodial. 🐕🚀',
+    prompt: 'gently placing a small glowing blue AI brain into a cute coin-shaped robot that springs to life on his workbench; behind him a wall of holographic screens shows an X feed, a Telegram chat, a green candlestick chart and a glowing green security shield, all in neon; warm confident grin, cinematic lighting at night' },
 ];
 async function programmes(o) {
   const t = (o && o.maintenant) || Date.now();
