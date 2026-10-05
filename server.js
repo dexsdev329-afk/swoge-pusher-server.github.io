@@ -1620,6 +1620,11 @@ const pareFeu = require('./pare_feu');
 const policyArgent = require('./policy_argent');
 const signerPapier = require('./signer_papier');
 const traderPapier = require('./trader_papier');
+/* 8c : le VRAI devis (lecture seule) et l executeur REEL (rachat-et-brule), pose INERTE :
+   il refuse tant que le proprietaire n a pas donne le drapeau AGENT_TRADER_EXECUTE, la cle
+   dediee AGENT_CLE (isolee de MIROIR_CLE) et le jeton d essai AGENT_TRADER_TOKEN_TEST. */
+const agentDevis = require('./agent_devis');
+const executeurReel = require('./executeur_reel');
 const agentEsprit = require('./agent_esprit');
 const agentModele = require('./agent_modele');
 const agentMemoire = require('./agent_memoire');
@@ -1649,6 +1654,11 @@ const FUEL_AGENTS = agentFuel.cree({});
 const TRESOR_AGENTS = agentFuel.cree({ fichier: require('path').join(cfg.DATA_DIR, 'agent_tresor.json'), grantInitialUsd: 0 });
 const POLICY_AGENTS = policyArgent.cree({});
 const SIGNER_AGENTS = signerPapier.cree({});
+/* L executeur REEL (8c), INERTE par defaut : sans AGENT_TRADER_EXECUTE=1 + AGENT_CLE + un
+   jeton dans AGENT_TRADER_TOKEN_TEST, actif() est faux et la chaine reste 100 % papier.
+   Meme actif, il refuse tant que l envoyeur on-chain n est pas cable (le dernier geste du
+   proprietaire). On n y branche AUCUN envoyeur ici : rien ne peut depenser de crypto. */
+const EXECUTEUR_REEL = executeurReel.cree({});
 /* La memoire de chaque agent (continuite + anti-repetition). */
 const MEMOIRE_AGENTS = agentMemoire.cree({});
 /* Le cumul deja recu par la caisse de chaque agent (pour les paliers de la cascade). */
@@ -1700,12 +1710,41 @@ async function posteAgent(agent, post) {
   return { surX, url, surTg };
 }
 /* La boucle trader EN PAPIER pour un jeton (reutilisee par la route et par l esprit). */
+/* Le VRAI devis d un geste, LECTURE SEULE (8c piece 1), via le quoteur du miroir. Aucune
+   signature, aucun gaz, aucune cle : on lit le prix a taille reelle vs marginal (l impact).
+   Monte une fois la route du jeton, puis quote en WETH (le montant en dollars / cours ETH).
+   Un pool cote en $SWOGE demandera sa propre conversion (raffinement au feu vert). Protege :
+   toute panne rend { ok:false } — fail-closed, jamais une erreur qui casse le tour. */
+function devisReelDe(agent) {
+  const ethers = require('ethers');
+  let routeP = null;
+  return async (approuve) => {
+    try {
+      if (!routeP) routeP = miroir._routeDe(agent.token, agent.pool);
+      const route = await routeP;
+      const ethUsd = await miroir.litEthUsd();
+      if (!(ethUsd > 0)) return { ok: false, raison: 'no ETH/USD rate to size the quote' };
+      const quote = async (montantQuote) => {
+        const wei = ethers.utils.parseUnits(Number(montantQuote).toFixed(18), 18);
+        const out = await miroir._devisRoute(route, 'achat', agent.token, wei);   /* achat = on rachete le jeton */
+        return Number(ethers.utils.formatUnits(out, 18));   /* l impact est un RATIO : l echelle des decimales s annule */
+      };
+      const entreeQuote = Number(approuve.montantUsd) / ethUsd;   /* le montant en WETH (pour une piscine cotee ETH/WETH) */
+      return await agentDevis.devis({ pool: approuve.pool, entree: entreeQuote }, { quote });
+    } catch (e) { return { ok: false, raison: 'real quote failed: ' + String((e && e.message) || e).slice(0, 80) }; }
+  };
+}
 function traderDecide(token, action, montantUsd, justification) {
   const agent = REGISTRE_AGENTS.parJeton(token);
   if (!agent || !agent.pool) return Promise.resolve({ decide: 'rejected', raison: 'no agent/pool for this token' });
-  const devis = async (a) => ({ ok: true, pool: a.pool, impactPct: 1, sortie: null });   /* placeholder papier ; vrai devis miroir = 8c reel */
+  /* Le devis : placeholder papier (impact 1 %) PAR DEFAUT. Quand l executeur reel est ACTIF
+     (drapeau + cle dediee), on branche le VRAI devis (lecture seule, via le miroir). */
+  const reelActif = EXECUTEUR_REEL.actif();
+  const devis = reelActif ? devisReelDe(agent) : (async (a) => ({ ok: true, pool: a.pool, impactPct: 1, sortie: null }));
   return traderPapier.decide({ token, action, montantUsd, justification },
-    { pool: agent.pool, tresor: TRESOR_AGENTS, policy: POLICY_AGENTS, signer: SIGNER_AGENTS, devis, pareFeu });
+    /* executeReel n est passe que s il est actif ; inerte => la chaine reste 100 % papier. */
+    { pool: agent.pool, tresor: TRESOR_AGENTS, policy: POLICY_AGENTS, signer: SIGNER_AGENTS, devis, pareFeu,
+      executeReel: reelActif ? EXECUTEUR_REEL : null });
 }
 /* L EVENEMENT du moment d un jeton : lu sur un instantane de marche REEL (DexScreener
    + GoPlus), compare au precedent (en memoire du process). Donne a l agent une RAISON

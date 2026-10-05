@@ -17,6 +17,15 @@
  *
  * Rend une TRACE (chaque etape, son verdict) : c'est ce qu'on mesure avant de
  * jamais ouvrir l'execution reelle. Pur + injectable.
+ *
+ * L'EXECUTION REELLE (8c) se branche a l'etape 3, SANS toucher le reste : si
+ * `deps.executeReel` est fourni ET actif (son propre verrou : drapeau + cle dediee),
+ * c'est LUI qui agit a la place du signer papier — rachat-et-brule reel. Il garde ses
+ * garde-fous (meme pool, devis reel, impact borne) et peut refuser (inerte tant que
+ * l'envoyeur on-chain n'est pas cable). Sans lui, ou inerte, la chaine reste 100 %
+ * papier : rien ne bouge de crypto. La policy NOTE le geste dans les deux cas (les
+ * plafonds/cooldown s'appliquent au reel comme au papier) ; seul le tresor PAPIER est
+ * debite en mode papier — le reel se compte sur la chaine (txHash), pas sur le papier.
  * ================================================================== */
 
 /**
@@ -57,7 +66,20 @@ async function decide(intent, deps) {
   if (!ev.autorise) return refus('policy', ev.raison);
   trace.push({ etape: 'policy', ok: true, reste: ev.reste });
 
-  /* 4. signer isole (papier) : resimule et ne signe que l'approuve. */
+  /* 4a. EXECUTION REELLE (8c), si et seulement si un executeur reel est fourni ET actif.
+     Il remplace alors le signer papier (rachat-et-brule reel). Inerte/refus => on rejette :
+     on ne retombe JAMAIS en papier en douce quand le reel est demande mais refuse. */
+  if (deps.executeReel && typeof deps.executeReel.actif === 'function' && deps.executeReel.actif()) {
+    const er = await deps.executeReel.execute(approuve, { devis: deps.devis });
+    if (!er || er.execute !== true) return refus('execute-real', (er && er.raison) || 'real execution refused');
+    trace.push({ etape: 'execute-real', ok: true, recu: er.recu });
+    /* Le reel se compte sur la chaine (txHash), pas sur le tresor papier : on NE debite PAS
+       le papier. Mais la policy note le geste : plafonds/cooldown s'appliquent au reel. */
+    deps.policy.note(approuve);
+    return { decide: 'executed-real', etape: 'done', recu: er.recu, trace };
+  }
+
+  /* 4b. signer isole (papier) : resimule et ne signe que l'approuve. */
   const sg = await deps.signer.signe(approuve, { devis: deps.devis });
   if (!sg.signe) return refus('signer', sg.raison);
   trace.push({ etape: 'signer', ok: true, recu: sg.recu });
