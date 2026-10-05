@@ -1605,6 +1605,11 @@ const osintNoyau = require('./osint_noyau');
 const bugbounty = require('./bugbounty');
 const repere = require('./repere');
 const REPERES = repere.bancs();   /* les trois bancs pre-enregistres (chasse a l'edge, 04/10) */
+/* Un agent IA par jeton lance (modele AgencyPad porte sur Robinhood Chain, 05/10) :
+   le registre persona + l apercu d un post. Rien ne poste ni ne depense encore. */
+const agentJeton = require('./agent_jeton');
+const agentDemo = require('./agent_demo');
+const REGISTRE_AGENTS = agentJeton.cree({});
 const studio = require('./studio');
 const studioChat = require('./studio_chat');
 const studioJeton = require('./studio_jeton');
@@ -4059,6 +4064,68 @@ const server = http.createServer(async (req, res) => {
       }
       return json(404, { ok: false, raison: 'unknown bugbounty route' });
     } catch (e) { return json(503, { ok: false, raison: 'bugbounty error: ' + String((e && e.message) || e).slice(0, 120) }); }
+  }
+  /* ----------------------------------------------------- UN AGENT PAR JETON
+   * Modele AgencyPad porte sur Robinhood Chain (05/10). Phase 1, etape 5 :
+   *   GET  /agent/jeton/<0xtoken>          → l agent d un jeton (lecture publique), ou null
+   *   GET  /agent/jetons?creator=0x..      → les agents d un createur (public)
+   *   GET  /agent/personas                 → les personas et modeles proposes
+   *   POST /agent/attach {token,createur,persona,objectif?,modele?,cadenceMin?,pouvoirs?} → ADMIN
+   *   POST /agent/toggle {token,createur,actif}                                           → ADMIN
+   *   POST /agent/preview {token,symbole?,avecImage?}  → apercu du prochain post, NE PUBLIE RIEN → ADMIN
+   * L attache est reservee au proprietaire (ADMIN_KEY) le temps de la demo ; le
+   * self-service du createur (verifier que la session EST le createur on-chain
+   * via l event LaunchedInstant) viendra a l etape suivante. Rien ici ne poste
+   * ni ne depense : l apercu lit seulement (marche, GoPlus, can_i_sell). */
+  if (path === '/agent' || path.startsWith('/agent/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const admin = !!cfg.ADMIN_KEY && !bloque(req) && memeCle(req.headers['x-admin-key'] || '', cfg.ADMIN_KEY);
+    if (path === '/agent/personas' && req.method === 'GET') {
+      return json(200, { ok: true, personas: agentJeton.PERSONAS, modeles: agentJeton.MODELES, pouvoirs: agentJeton.POUVOIRS,
+        note: 'Money powers (buyback/trade/airdrop) can be declared but are inert until the trader stage ships behind its own execute flag.' });
+    }
+    const mRead = path.match(/^\/agent\/jeton\/(0x[0-9a-fA-F]{40})$/);
+    if (mRead && req.method === 'GET') return json(200, { ok: true, agent: REGISTRE_AGENTS.parJeton(mRead[1]) });
+    if (path === '/agent/jetons' && req.method === 'GET') {
+      const c = String((new URLSearchParams(req.url.split('?')[1] || '')).get('creator') || '');
+      if (!/^0x[0-9a-fA-F]{40}$/.test(c)) return json(400, { ok: false, raison: 'pass ?creator=0x...' });
+      return json(200, { ok: true, agents: REGISTRE_AGENTS.parCreateur(c) });
+    }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    if (!admin) return json(403, { ok: false, raison: 'owner only for now (x-admin-key)' });
+    let q; try { q = JSON.parse((await corps(req, 262144)).toString('utf8') || '{}'); } catch (e) { q = null; }
+    if (!q) return json(400, { ok: false, raison: 'unreadable request' });
+    try {
+      if (path === '/agent/attach') {
+        const r = REGISTRE_AGENTS.attache({ token: q.token, createur: q.createur, pool: q.pool, persona: q.persona,
+          objectif: q.objectif, modele: q.modele, cadenceMin: q.cadenceMin, pouvoirs: q.pouvoirs, langue: q.langue });
+        return json(r.ok ? 200 : (r.code || 400), r);
+      }
+      if (path === '/agent/toggle') {
+        const r = REGISTRE_AGENTS.bascule(q.token, q.createur, !!q.actif);
+        return json(r.ok ? 200 : (r.code || 400), r);
+      }
+      if (path === '/agent/preview') {
+        const token = String(q.token || '').toLowerCase();
+        if (!/^0x[0-9a-f]{40}$/.test(token)) return json(400, { ok: false, raison: 'token must be 0x + 40 hex' });
+        const agent = REGISTRE_AGENTS.parJeton(token);
+        if (!agent) return json(404, { ok: false, raison: 'no agent for this token — attach one first' });
+        /* Les adaptateurs de lecture, montes sur le pool/jeton de cet agent. Chacun
+           est protege dans agent_faits.recolte : une source muette n efface pas les autres. */
+        const recolteDeps = {
+          marche: agent.pool ? (async () => { const r = await fetch('https://api.dexscreener.com/latest/dex/pairs/robinhood/' + agent.pool, { signal: AbortSignal.timeout(12000) }); const j = await r.json().catch(() => ({})); return j.pair || (j.pairs && j.pairs[0]) || null; }) : undefined,
+          goplus: (async () => { const r = await fetch('https://api.gopluslabs.io/api/v1/token_security/4663?contract_addresses=' + token, { signal: AbortSignal.timeout(12000) }); const j = await r.json().catch(() => ({})); return (j.result && (j.result[token] || j.result[token.toLowerCase()])) || null; }),
+          cansell: (async () => { const e = await aiColonie.epreuveDeSortie(token); if (!e || !e.trouve) return null; return { allerRetourPct: e.retour && typeof e.retour.pct === 'number' ? e.retour.pct : undefined, lpVerrouille: !!(e.lp && (e.lp.brulee || e.lp.verrouille || e.lp.locked)) }; }),
+        };
+        const r = await agentDemo.apercu(
+          { token, symbole: q.symbole, nom: q.nom, lien: q.lien, avecImage: !!q.avecImage, precedents: Array.isArray(q.precedents) ? q.precedents.slice(0, 5) : [] },
+          { registre: REGISTRE_AGENTS, recolteDeps, image: q.avecImage ? (p) => require('./x_post').genereImageVerifiee(p) : undefined });
+        return json(r.ok ? 200 : (r.code || 503), r);
+      }
+      return json(404, { ok: false, raison: 'unknown agent route' });
+    } catch (e) { return json(503, { ok: false, raison: 'agent error: ' + String((e && e.message) || e).slice(0, 120) }); }
   }
   if (path === '/osint/v2' || path.startsWith('/osint/v2/')) {
     const q = new URLSearchParams(req.url.split('?')[1] || '');
