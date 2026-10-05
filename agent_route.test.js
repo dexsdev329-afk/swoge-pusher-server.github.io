@@ -162,6 +162,20 @@ const CREA = '0x' + 'c'.repeat(40);
   r = await post('/agent/toggle_createur', { token: T2, ts, signature: sig, actif: false }, false);
   ok(r.code === 503, 'toggle_createur : meme preuve on-chain requise');
 
+  console.log('\n-- 11. le createur relie le compte X (OAuth PIN), SANS cle admin --');
+  /* Sans signature : refuse avant toute poignee de main X. */
+  r = await post('/agent/x/begin', { token: T2, ts }, false);
+  ok(r.code === 400 && /signature/.test(r.j.raison), 'x/begin sans signature : 400');
+  /* Signature valide : la MEME preuve on-chain garde la liaison. RPC injoignable
+     dans l essai → 503 avant d appeler X. Le vrai tango OAuth est couvert par
+     agent_x_oauth.test.js. */
+  r = await post('/agent/x/begin', { token: T2, ts, signature: sig }, false);
+  ok(r.code === 503 && /on-chain/.test(r.j.raison), 'x/begin signe mais RPC muet : 503 (preuve requise avant X)');
+  r = await post('/agent/x/finish', { token: T2, ts, signature: sig, oauth_token: 'TEMP', pin: '1234567' }, false);
+  ok(r.code === 503, 'x/finish : meme preuve on-chain requise');
+  r = await post('/agent/x/unlink', { token: T2, ts, signature: sig }, false);
+  ok(r.code === 503, 'x/unlink : meme preuve on-chain requise');
+
   global.fetch = vrai;
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
   process.exit(rates ? 1 : 0);

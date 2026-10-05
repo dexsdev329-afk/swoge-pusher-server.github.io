@@ -111,6 +111,11 @@ function signeOAuth(methode, url, params, cles, opts) {
     oauth_token: cles.at,
     oauth_version: '1.0',
   };
+  /* Le tango a trois pattes (liaison d un compte) : request_token n a pas encore
+     de jeton (on le retire), et oauth_callback / oauth_verifier entrent dans la
+     signature ET dans l en-tete. Un tweet normal ne passe rien de tout cela. */
+  if (!cles.at) delete oauth.oauth_token;
+  if (o.oauthExtra) Object.assign(oauth, o.oauthExtra);
   const tous = Object.assign({}, params || {}, oauth);
   const paires = Object.keys(tous).map((k) => [enc(k), enc(tous[k])])
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));

@@ -1625,6 +1625,13 @@ const agentModele = require('./agent_modele');
 /* Le self-service du createur : il attache l agent de SON jeton sans cle admin,
    la preuve etant une signature + la lecture du createur on-chain (agent_createur). */
 const agentCreateur = require('./agent_createur');
+/* La liaison du compte X cote createur : tango OAuth 1.0a en mode PIN (agent_x_oauth). */
+const agentXOAuth = require('./agent_x_oauth').cree({});
+/* Les poignees de main X en cours : oauth_token -> { secret, token, createur, t }.
+   Transitoire (quelques minutes), en memoire ; un redemarrage = on recommence. */
+const X_EN_COURS = new Map();
+const X_EN_COURS_TTL = 15 * 60e3;
+function xEnCoursNettoie() { const t = Date.now(); for (const [k, v] of X_EN_COURS) if (t - v.t > X_EN_COURS_TTL) X_EN_COURS.delete(k); }
 const REGISTRE_AGENTS = agentJeton.cree({});
 const MUR_AGENTS = agentFeed.cree({});
 const COMPTES_X = agentX.cree({});
@@ -4279,6 +4286,42 @@ const server = http.createServer(async (req, res) => {
         objectif: q.objectif, modele: q.modele, cadenceMin: q.cadenceMin, pouvoirs: q.pouvoirs, langue: q.langue,
         symbole: q.symbole, nom: q.nom, postsParJourMax: q.postsParJourMax, rachat: q.rachat });
       return json(r.ok ? 200 : (r.code || 400), r);
+    }
+    /* PUBLIC, signé : le CRÉATEUR relie le compte X de SON jeton, sans clé admin.
+       Tango OAuth 1.0a en mode PIN, en deux appels, chacun gardé par la MÊME preuve
+       (signature + createur on-chain). On ne touche jamais aux jetons d accès du
+       créateur : X nous les rend, agent_x les chiffre aussitôt. */
+    if (path === '/agent/x/begin' || path === '/agent/x/finish' || path === '/agent/x/unlink') {
+      const ipc = compteurs.ip(qui(req)), tc = Date.now(), lc = (RECHERCHES_SERVICES.get('agxl:' + ipc) || []).filter((x) => tc - x < 10 * 60e3);
+      if (lc.length >= 20) return json(429, { ok: false, raison: 'too many requests - try again in a few minutes' });
+      lc.push(tc); RECHERCHES_SERVICES.set('agxl:' + ipc, lc);
+      const preuve = await agentCreateur.verifie({ token: q.token, ts: q.ts, signature: q.signature },
+        { recupere: (m, s) => ethers.utils.verifyMessage(m, s), createurOnchain, maintenant: () => Date.now() });
+      if (!preuve.ok) return json(preuve.code || 403, { ok: false, raison: preuve.raison });
+      const token = String(q.token).toLowerCase();
+      xEnCoursNettoie();
+      if (path === '/agent/x/unlink') {
+        const u = COMPTES_X.oublie(token);
+        return json(u.ok ? 200 : (u.code || 400), u);
+      }
+      if (path === '/agent/x/begin') {
+        const d = await agentXOAuth.debut();
+        if (!d.ok) return json(d.code || 502, { ok: false, raison: d.raison });
+        if (X_EN_COURS.size > 500) return json(503, { ok: false, raison: 'too many linking sessions in flight — try again shortly' });
+        X_EN_COURS.set(d.oauth_token, { secret: d.oauth_token_secret, token, createur: preuve.createur, t: Date.now() });
+        /* On ne rend QUE l URL d autorisation et l identifiant de session ; le secret reste ici. */
+        return json(200, { ok: true, oauth_token: d.oauth_token, authorizeUrl: d.authorizeUrl });
+      }
+      /* finish : le PIN + la session ouverte au begin. On vérifie que la session
+         appartient bien à CE jeton et à CE créateur (jamais détourner une autre). */
+      const sess = X_EN_COURS.get(String(q.oauth_token || ''));
+      if (!sess || sess.token !== token || sess.createur !== preuve.createur) return json(400, { ok: false, raison: 'the linking session expired — start again' });
+      const fx = await agentXOAuth.fin(String(q.oauth_token), sess.secret, q.pin);
+      if (!fx.ok) return json(fx.code || 502, { ok: false, raison: fx.raison });
+      X_EN_COURS.delete(String(q.oauth_token));
+      const c = COMPTES_X.connecte(token, { accessToken: fx.accessToken, accessSecret: fx.accessSecret, handle: fx.handle });
+      if (!c.ok) return json(c.code || 400, c);
+      return json(200, { ok: true, handle: c.handle });
     }
     if (!admin) return json(403, { ok: false, raison: 'owner only for now (x-admin-key)' });
     try {
