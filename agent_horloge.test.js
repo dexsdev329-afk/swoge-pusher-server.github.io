@@ -56,6 +56,18 @@ const T1 = '0x' + '1'.repeat(40), T2 = '0x' + '2'.repeat(40), C = '0x' + 'a'.rep
   r = await H.tour({ registre: reg, feed, compose: composeCapricieux, maintenant: () => horloge });
   ok(appels === 2 && r.agis === 1 && r.faits.some((x) => x.erreur), 'FOO echoue, BAR passe quand meme : 1 agi, 1 erreur');
 
+  console.log('\n-- 5b. le carburant : l agent dort a sec, et on debite apres un post --');
+  const AFuel = require('./agent_fuel');
+  const fuel = AFuel.cree({ fichier: path.join(dir, 'fuel.json'), maintenant: () => horloge, grantInitialUsd: 0 });
+  fuel.credite(T1, 0.01, 'topup');   /* FOO a de quoi penser une fois a 0,005 $ */
+  /* BAR reste a 0 → il dort */
+  horloge += 31 * 60000;
+  const compterSimple = async (o) => ({ texte: 'ok $' + (o.symbole || ''), via: 'modele' });
+  r = await H.tour({ registre: reg, feed, compose: compterSimple, fuel, coutPostUsd: 0.005, maintenant: () => horloge });
+  ok(r.agis === 1 && r.dorment === 1, 'un seul agent finance agit, l autre dort');
+  ok(fuel.solde(T1) < 0.01 && fuel.solde(T2) === 0, 'FOO a ete debite apres son post ; BAR, a sec, n a rien depense');
+  ok(r.faits.some((f) => f.token === T2.toLowerCase() && f.dort), 'BAR est marque « dort », sans post ecrit');
+
   console.log('\n-- 6. planifie ne demarre rien sans actif --');
   const h = H.planifie({ registre: reg, feed, compose }, { actif: false });
   ok(typeof h.arrete === 'function', 'sans actif : aucune minuterie, un arrete() inoffensif');

@@ -37,9 +37,16 @@ async function tour(deps) {
   const now = deps.maintenant ? deps.maintenant() : Date.now();
   const compose = deps.compose || require('./agent_poste').compose;
   const dus = deps.registre.dus(now).slice(0, deps.max || MAX_PAR_TOUR);
+  const coutPost = Number(deps.coutPostUsd || 0);
   const faits = [];
   for (const a of dus) {
     try {
+      /* Le carburant (agent_fuel) : sous le cout, l'agent DORT — on ne pense jamais a credit.
+         Garde optionnelle : sans deps.fuel, l'ordonnanceur se comporte comme avant. */
+      if (deps.fuel && !deps.fuel.peutPenser(a.token, coutPost, deps.plancherUsd)) {
+        faits.push({ token: a.token, dort: true });
+        continue;
+      }
       let liste = [];
       if (typeof deps.recolte === 'function') { try { const r = await deps.recolte(a); if (r && Array.isArray(r.faits)) liste = r.faits; } catch (e) { /* pas de faits */ } }
       const precedents = deps.feed.recent(a.token, 3).map((e) => e.texte);
@@ -52,12 +59,13 @@ async function tour(deps) {
       }
       deps.feed.ajoute(a.token, { texte: post.texte, via: post.via, surX, url, faits: liste });
       deps.registre.noteGeste(a.token, 'post', now);
+      if (deps.fuel && coutPost > 0) { try { deps.fuel.debite(a.token, coutPost, 'post'); } catch (e) { /* la compta ne fait pas rater le post */ } }
       faits.push({ token: a.token, surX, via: post.via });
     } catch (e) {
       faits.push({ token: a.token, erreur: String((e && e.message) || e).slice(0, 120) });
     }
   }
-  return { tour: now, agis: faits.filter((f) => !f.erreur).length, faits };
+  return { tour: now, agis: faits.filter((f) => !f.erreur && !f.dort).length, dorment: faits.filter((f) => f.dort).length, faits };
 }
 
 /** Branche un tour periodique. NE FAIT RIEN sans `actif` (le serveur passe le

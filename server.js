@@ -1614,9 +1614,13 @@ const agentFaits = require('./agent_faits');
 const agentFeed = require('./agent_feed');
 const agentHorloge = require('./agent_horloge');
 const agentX = require('./agent_x');
+const agentFuel = require('./agent_fuel');
 const REGISTRE_AGENTS = agentJeton.cree({});
 const MUR_AGENTS = agentFeed.cree({});
 const COMPTES_X = agentX.cree({});
+const FUEL_AGENTS = agentFuel.cree({});
+/* Le cout estime d une pensee (post) en dollars, et le plancher sous lequel l agent dort. */
+const COUT_POST_USD = Number(process.env.AGENT_COUT_POST_USD || 0.005);
 /* Les faits live d un agent, montes sur son pool/jeton (reutilise par l apercu ET l ordonnanceur).
    Chaque source est protegee dans agent_faits.recolte : une qui tombe n efface pas les autres. */
 function faitsDAgent(agent) {
@@ -1633,6 +1637,7 @@ function tourAgents(o) {
     registre: REGISTRE_AGENTS, feed: MUR_AGENTS,
     recolte: (a) => faitsDAgent(a),
     poste: (a, post) => COMPTES_X.poste(a.token, { texte: post.texte }),   /* sur X si le jeton a un compte relie, sinon surX:false */
+    fuel: FUEL_AGENTS, coutPostUsd: COUT_POST_USD,                          /* a sec, l agent dort : jamais a credit */
   }, o || {}));
 }
 const studio = require('./studio');
@@ -4118,7 +4123,7 @@ const server = http.createServer(async (req, res) => {
         posts: MUR_AGENTS.recent(mFeed[1], Math.min(50, Math.max(1, Number(q.get('n')) || 20))) });
     }
     const mRead = path.match(/^\/agent\/jeton\/(0x[0-9a-fA-F]{40})$/);
-    if (mRead && req.method === 'GET') return json(200, { ok: true, agent: REGISTRE_AGENTS.parJeton(mRead[1]), hasX: COMPTES_X.aDesCreds(mRead[1]), handle: COMPTES_X.handleDe(mRead[1]) });
+    if (mRead && req.method === 'GET') return json(200, { ok: true, agent: REGISTRE_AGENTS.parJeton(mRead[1]), hasX: COMPTES_X.aDesCreds(mRead[1]), handle: COMPTES_X.handleDe(mRead[1]), fuel: FUEL_AGENTS.vue(mRead[1]) });
     if (path === '/agent/jetons' && req.method === 'GET') {
       const c = String((new URLSearchParams(req.url.split('?')[1] || '')).get('creator') || '');
       if (!/^0x[0-9a-fA-F]{40}$/.test(c)) return json(400, { ok: false, raison: 'pass ?creator=0x...' });
@@ -4178,6 +4183,12 @@ const server = http.createServer(async (req, res) => {
       if (path === '/agent/x/forget') {
         const r = COMPTES_X.oublie(q.token);
         return json(r.ok ? 200 : (r.code || 400), r);
+      }
+      if (path === '/agent/fuel/topup') {
+        /* Verser du carburant (en dollars) a un agent. Le volume le financera plus tard
+           via collectFees ; ici le proprietaire peut l amorcer. Comptabilite, pas d argent on-chain. */
+        const r = FUEL_AGENTS.credite(q.token, Number(q.usd), 'topup');
+        return json(r.ok ? 200 : 400, r);
       }
       if (path === '/agent/horloge/tour') {
         /* Un tour manuel de l ordonnanceur (pour essayer). Le tour periodique, lui,
@@ -10047,7 +10058,8 @@ server.listen(cfg.PORT, () => {
   tgCmd = tgCommandes.planifie({ lanceur: tgLance });
   /* Les agents par jeton postent tout seuls SEULEMENT si AGENT_HORLOGE=1 : eteint
      par defaut, donc rien ne poste en prod tant que le proprietaire ne l allume pas. */
-  horlogeAgents = agentHorloge.planifie({ registre: REGISTRE_AGENTS, feed: MUR_AGENTS, recolte: (a) => faitsDAgent(a), poste: (a, post) => COMPTES_X.poste(a.token, { texte: post.texte }) },
+  horlogeAgents = agentHorloge.planifie({ registre: REGISTRE_AGENTS, feed: MUR_AGENTS, recolte: (a) => faitsDAgent(a),
+    poste: (a, post) => COMPTES_X.poste(a.token, { texte: post.texte }), fuel: FUEL_AGENTS, coutPostUsd: COUT_POST_USD },
     { actif: process.env.AGENT_HORLOGE === '1', periodeMs: 5 * 60000 });
   if (process.env.AGENT_HORLOGE === '1') console.log('[agent] horloge ARMEE (agents par jeton)'); else console.log('[agent] horloge ETEINTE (AGENT_HORLOGE != 1)');
 });
