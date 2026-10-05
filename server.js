@@ -1623,6 +1623,7 @@ const traderPapier = require('./trader_papier');
 const agentEsprit = require('./agent_esprit');
 const agentModele = require('./agent_modele');
 const agentMemoire = require('./agent_memoire');
+const agentEvenements = require('./agent_evenements');
 /* Le self-service du createur : il attache l agent de SON jeton sans cle admin,
    la preuve etant une signature + la lecture du createur on-chain (agent_createur). */
 const agentCreateur = require('./agent_createur');
@@ -1685,9 +1686,42 @@ function traderDecide(token, action, montantUsd, justification) {
   return traderPapier.decide({ token, action, montantUsd, justification },
     { pool: agent.pool, tresor: TRESOR_AGENTS, policy: POLICY_AGENTS, signer: SIGNER_AGENTS, devis, pareFeu });
 }
-/* L esprit d un agent : vrai modele (tool-use Anthropic) + vraies lectures + actions garde-fou. */
-function penseAgent(agent, extra) {
+/* L EVENEMENT du moment d un jeton : lu sur un instantane de marche REEL (DexScreener
+   + GoPlus), compare au precedent (en memoire du process). Donne a l agent une RAISON
+   de parler. Tout est protege : une panne rend null, jamais une erreur qui casse le tour.
+   L instantane precedent vit en memoire du process (un redemarrage saute un palier, sans gravite). */
+const SNAP_PREV = new Map();
+async function evenementAgent(agent) {
+  if (!agent || !agent.pool) return null;
+  const token = agent.token;
+  let snap = {};
+  try {
+    const r = await fetch('https://api.dexscreener.com/latest/dex/pairs/robinhood/' + agent.pool, { signal: AbortSignal.timeout(12000) });
+    const j = await r.json().catch(() => ({}));
+    const p = j.pair || (j.pairs && j.pairs[0]) || null;
+    if (p) {
+      if (p.priceChange && p.priceChange.h1 != null) snap.priceChangeH1 = Number(p.priceChange.h1);
+      if (p.txns && p.txns.h1) { snap.buysH1 = Number(p.txns.h1.buys); snap.sellsH1 = Number(p.txns.h1.sells); }
+      if (p.volume && p.volume.h24 != null) snap.volume24hUsd = Number(p.volume.h24);
+      if (p.liquidity && p.liquidity.usd != null) snap.liqUsd = Number(p.liquidity.usd);
+    }
+  } catch (e) { /* DexScreener muet : on tente les holders seuls */ }
+  try {
+    const r = await fetch('https://api.gopluslabs.io/api/v1/token_security/4663?contract_addresses=' + token, { signal: AbortSignal.timeout(12000) });
+    const j = await r.json().catch(() => ({}));
+    const g = (j.result && (j.result[token] || j.result[token.toLowerCase()])) || null;
+    if (g && g.holder_count != null) snap.holders = Number(g.holder_count);
+  } catch (e) { /* GoPlus muet */ }
+  const prev = SNAP_PREV.get(token) || null;
+  SNAP_PREV.set(token, snap);
+  try { return agentEvenements.detecte(prev, snap).evenement; } catch (e) { return null; }
+}
+/* L esprit d un agent : vrai modele (tool-use Anthropic) + vraies lectures + actions garde-fou.
+   Il recoit l EVENEMENT du moment (la raison de parler) et sa MEMOIRE (la continuite). */
+async function penseAgent(agent, extra) {
   extra = extra || {};
+  let evenement = extra.evenement || null;
+  if (!evenement) { try { evenement = await evenementAgent(agent); } catch (e) { evenement = null; } }
   return agentEsprit.pense(agent, {
     modele: (ctx) => agentModele.decide(ctx, {}),
     outils: {
@@ -1702,7 +1736,7 @@ function penseAgent(agent, extra) {
        pas ce qui est trop proche d un post recent (memoire OU mur). L evenement du
        moment, s il y en a un, donne la raison de parler (passe par l ordonnanceur). */
     memoire: MEMOIRE_AGENTS.rappel(agent.token, 8),
-    evenement: extra.evenement || null,
+    evenement: evenement,
     estRedondant: (t) => MEMOIRE_AGENTS.estRedondant(agent.token, t, { recentsExtra: MUR_AGENTS.recent(agent.token, 8).map((e) => e.texte) }),
     noteMemoire: (e) => { try { MEMOIRE_AGENTS.note(agent.token, e); } catch (x) {} },
     fuel: FUEL_AGENTS, coutParPenseeUsd: COUT_POST_USD, plancherUsd: 0, maxEtapes: Number(process.env.AGENT_ETAPES_MAX || 4),
