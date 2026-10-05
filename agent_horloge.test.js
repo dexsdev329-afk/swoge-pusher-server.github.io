@@ -79,6 +79,19 @@ const T1 = '0x' + '1'.repeat(40), T2 = '0x' + '2'.repeat(40), C = '0x' + 'a'.rep
   r = await H.tour({ registre: reg2, feed: feed2, compose: compterSimple, maintenant: () => horloge });
   ok(r.agis === 0 && r.faits.some((f) => f.dort && /daily post budget/.test(f.raison || '')), 'budget du jour atteint : l agent dort, raison claire');
 
+  console.log('\n-- 5d. l ordonnanceur lance l ESPRIT quand il est branche --');
+  const reg3 = AJ.cree({ fichier: path.join(dir, 'r3.json'), maintenant: () => horloge });
+  const feed3 = AF.cree({ fichier: path.join(dir, 'f3.json'), maintenant: () => horloge });
+  const A1 = '0x' + 'd'.repeat(40), A2 = '0x' + 'e'.repeat(40);
+  reg3.attache({ token: A1, createur: C, persona: 'hype', cadenceMin: 5 });
+  reg3.attache({ token: A2, createur: C, persona: 'stoic', cadenceMin: 5 });
+  horloge += 10 * 60000;
+  const espritFaux = async (a) => (a.token === A1 ? { actions: [{ action: 'post', surX: false }] } : { dort: true, raison: 'out of fuel' });
+  r = await H.tour({ registre: reg3, feed: feed3, pense: espritFaux, maintenant: () => horloge });
+  ok(r.faits.find((f) => f.token === A1 && f.pense), 'l esprit a tourne pour A1 (branche deps.pense)');
+  ok(reg3.parJeton(A1).dernierGeste && reg3.parJeton(A1).dernierGeste.quoi === 'post', 'un post de l esprit note le geste (cadence)');
+  ok(r.faits.find((f) => f.token === A2 && f.dort), 'A2 : l esprit a dit qu il dort, rapporte tel quel');
+
   console.log('\n-- 6. planifie ne demarre rien sans actif --');
   const h = H.planifie({ registre: reg, feed, compose }, { actif: false });
   ok(typeof h.arrete === 'function', 'sans actif : aucune minuterie, un arrete() inoffensif');

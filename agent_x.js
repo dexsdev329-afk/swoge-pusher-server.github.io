@@ -136,7 +136,47 @@ function cree(opts) {
     return { surX: true, id: String(id), url: 'https://x.com/' + h + '/status/' + id };
   }
 
-  return { connecte, oublie, aDesCreds, handleDe, poste };
+  /* Un appel X signe avec les cles DU JETON (pour televerser un media sur SON compte). */
+  async function appel(token, chemin, corps, f) {
+    const cles = clesDe(token); if (!cles) throw new Error('no usable X account');
+    if (!cles.ck || !cles.cs) throw new Error('house X app keys not configured');
+    const url = API + chemin;
+    const s = xp.signeOAuth('POST', url, {}, cles);
+    const r = await (f || fetch)(url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: s.entete }, body: JSON.stringify(corps), signal: AbortSignal.timeout(60000) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error('X ' + chemin + ' HTTP ' + r.status);
+    return j;
+  }
+  /** Televerse une image sur le compte X du jeton. Rend l id media (string). */
+  async function televerse(token, png, deps) {
+    const j = await appel(token, '/2/media/upload', { media: png.toString('base64'), media_category: 'tweet_image' }, deps && deps.fetch);
+    const id = (j.data && (j.data.id || j.data.media_key)) || j.id || j.media_id_string;
+    if (!id) throw new Error('X media: no id');
+    return String(id);
+  }
+  /** Televerse une video (en morceaux) sur le compte X du jeton. Rend l id media. */
+  async function televerseVideo(token, mp4, deps) {
+    const f = deps && deps.fetch, dors = (deps && deps.pause) || ((ms) => new Promise((r) => setTimeout(r, ms)));
+    const MORCEAU = 4 * 1024 * 1024;
+    const i = await appel(token, '/2/media/upload/initialize', { media_type: 'video/mp4', total_bytes: mp4.length, media_category: 'tweet_video' }, f);
+    const id = String((i.data && (i.data.id || i.data.media_key)) || i.id || i.media_id_string || '');
+    if (!id) throw new Error('X media: initialize without id');
+    for (let k = 0, m = 0; k < mp4.length; k += MORCEAU, m++) await appel(token, '/2/media/upload/' + id + '/append', { media: mp4.slice(k, k + MORCEAU).toString('base64'), segment_index: m }, f);
+    const fin = await appel(token, '/2/media/upload/' + id + '/finalize', {}, f);
+    let info = (fin.data || fin).processing_info;
+    for (let tour = 0; info && (info.state === 'pending' || info.state === 'in_progress'); tour++) {
+      if (tour >= 60) throw new Error('X media: video not ready');
+      await dors(Math.min(30, Math.max(1, Number(info.check_after_secs) || 5)) * 1000);
+      const cles = clesDe(token); const url = API + '/2/media/upload';
+      const s = xp.signeOAuth('GET', url, { command: 'STATUS', media_id: id }, cles);
+      const q = await (f || fetch)(url + '?command=STATUS&media_id=' + id, { headers: { authorization: s.entete }, signal: AbortSignal.timeout(30000) });
+      info = ((await q.json().catch(() => ({}))).data || {}).processing_info;
+    }
+    if (info && info.state === 'failed') throw new Error('X media: video processing failed');
+    return id;
+  }
+
+  return { connecte, oublie, aDesCreds, handleDe, poste, televerse, televerseVideo };
 }
 
 module.exports = { cree, API };

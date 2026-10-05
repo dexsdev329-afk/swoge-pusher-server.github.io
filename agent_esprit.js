@@ -32,7 +32,7 @@ const OUTILS = [
   { nom: 'market', agir: false, desc: 'Read live price, liquidity, 24h volume for your token.' },
   { nom: 'read_feed', agir: false, desc: 'Read your own recent posts (do not repeat them).' },
   { nom: 'web_search', agir: false, desc: 'Search the web for context (news, narratives).' },
-  { nom: 'post', agir: true, desc: 'Publish a post in your persona. Facts only, never invent numbers.' },
+  { nom: 'post', agir: true, desc: 'Publish a post in your persona (args: texte, media: "none"|"image"|"video"). Facts only, never invent numbers. An image/video costs more fuel.' },
   { nom: 'propose_buyback', agir: true, desc: 'Propose a buy-back-and-burn (goes through policy + signer).' },
   { nom: 'wait', agir: true, desc: 'Do nothing this pulse.' },
 ];
@@ -87,9 +87,10 @@ async function pense(agent, deps) {
       if (aPoste) { trace.push({ etape: i, outil: 'post', saute: 'deja poste ce tour' }); continue; }
       const texte = String((d.args && d.args.texte) || '').trim();
       if (!texte) { trace.push({ etape: i, outil: 'post', saute: 'texte vide' }); continue; }
+      const media = ['image', 'video'].includes(d.args && d.args.media) ? d.args.media : 'none';   /* l agent peut joindre une image/video */
       let r = { surX: false };
-      if (typeof deps.poste === 'function') { try { r = await deps.poste(agent, { texte }); } catch (e) { r = { surX: false, erreur: String((e && e.message) || e).slice(0, 80) }; } }
-      aPoste = true; actions.push({ action: 'post', surX: !!r.surX, url: r.url || null });
+      if (typeof deps.poste === 'function') { try { r = await deps.poste(agent, { texte, media }); } catch (e) { r = { surX: false, erreur: String((e && e.message) || e).slice(0, 80) }; } }
+      aPoste = true; actions.push({ action: 'post', surX: !!r.surX, url: r.url || null, media });
       trace.push({ etape: i, outil: 'post', ok: true });
       continue;
     }

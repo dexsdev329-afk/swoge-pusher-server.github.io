@@ -1620,6 +1620,8 @@ const pareFeu = require('./pare_feu');
 const policyArgent = require('./policy_argent');
 const signerPapier = require('./signer_papier');
 const traderPapier = require('./trader_papier');
+const agentEsprit = require('./agent_esprit');
+const agentModele = require('./agent_modele');
 const REGISTRE_AGENTS = agentJeton.cree({});
 const MUR_AGENTS = agentFeed.cree({});
 const COMPTES_X = agentX.cree({});
@@ -1640,13 +1642,56 @@ function faitsDAgent(agent) {
     cansell: (async () => { const e = await aiColonie.epreuveDeSortie(token); if (!e || !e.trouve) return null; return { allerRetourPct: e.retour && typeof e.retour.pct === 'number' ? e.retour.pct : undefined, lpVerrouille: !!(e.lp && (e.lp.brulee || e.lp.verrouille || e.lp.locked)) }; }),
   });
 }
-/* Un tour de l ordonnanceur, avec toutes les dependances reelles montees. */
+const COUT_IMAGE_USD = Number(process.env.AGENT_COUT_IMAGE_USD || 0.04);   /* une image gpt-image : ~0,04 $ */
+const COUT_VIDEO_USD = Number(process.env.AGENT_COUT_VIDEO_USD || 0.30);   /* une video xAI : plus chere */
+/* L action POST de l esprit : texte, et option image/video generee (controle pattes-de-chien),
+   televersee sur le compte X DU JETON. Ecrit toujours sur le mur ; le media coute du carburant. */
+async function posteAgent(agent, post) {
+  const token = agent.token, media = post && post.media;
+  let mediaId = null;
+  if ((media === 'image' || media === 'video') && COMPTES_X.aDesCreds(token)) {
+    const cout = media === 'video' ? COUT_VIDEO_USD : COUT_IMAGE_USD;
+    if (FUEL_AGENTS.peutPenser(token, cout)) {
+      try {
+        if (media === 'image') { const g = await xPost.genereImageVerifiee(agentDemo.promptImage(agent.persona, agent.symbole)); if (g && g.png) { mediaId = await COMPTES_X.televerse(token, g.png); } }
+        else { const v = await xPost.genereVideo(agentDemo.promptImage(agent.persona, agent.symbole), 6); if (v && v.mp4) { mediaId = await COMPTES_X.televerseVideo(token, v.mp4); } }
+        if (mediaId) FUEL_AGENTS.debite(token, cout, media);
+      } catch (e) { mediaId = null; /* media en echec : on poste en texte */ }
+    }
+  }
+  let surX = false, url = null;
+  if (COMPTES_X.aDesCreds(token)) { try { const p = await COMPTES_X.poste(token, { texte: post.texte, mediaId }); surX = !!p.surX; url = p.url || null; } catch (e) { /* X en echec : reste sur le mur */ } }
+  MUR_AGENTS.ajoute(token, { texte: post.texte, via: 'esprit', surX, url, faits: [] });
+  return { surX, url };
+}
+/* La boucle trader EN PAPIER pour un jeton (reutilisee par la route et par l esprit). */
+function traderDecide(token, action, montantUsd, justification) {
+  const agent = REGISTRE_AGENTS.parJeton(token);
+  if (!agent || !agent.pool) return Promise.resolve({ decide: 'rejected', raison: 'no agent/pool for this token' });
+  const devis = async (a) => ({ ok: true, pool: a.pool, impactPct: 1, sortie: null });   /* placeholder papier ; vrai devis miroir = 8c reel */
+  return traderPapier.decide({ token, action, montantUsd, justification },
+    { pool: agent.pool, tresor: TRESOR_AGENTS, policy: POLICY_AGENTS, signer: SIGNER_AGENTS, devis, pareFeu });
+}
+/* L esprit d un agent : vrai modele (tool-use Anthropic) + vraies lectures + actions garde-fou. */
+function penseAgent(agent) {
+  return agentEsprit.pense(agent, {
+    modele: (ctx) => agentModele.decide(ctx, {}),
+    outils: {
+      scan_token: async () => { try { return await aiColonie.scanJeton(agent.token); } catch (e) { return null; } },
+      can_i_sell: async () => { try { return await aiColonie.epreuveDeSortie(agent.token); } catch (e) { return null; } },
+      market: async () => { try { return (await faitsDAgent(agent)).faits; } catch (e) { return null; } },
+      read_feed: async () => MUR_AGENTS.recent(agent.token, 5).map((e) => e.texte),
+    },
+    poste: (a, p) => posteAgent(a, p),
+    traite: (intent) => traderDecide(intent.token, intent.action, intent.montantUsd, intent.justification),
+    fuel: FUEL_AGENTS, coutParPenseeUsd: COUT_POST_USD, plancherUsd: 0, maxEtapes: Number(process.env.AGENT_ETAPES_MAX || 4),
+  });
+}
+/* Un tour de l ordonnanceur : l ESPRIT autonome par agent du. */
 function tourAgents(o) {
   return agentHorloge.tour(Object.assign({
-    registre: REGISTRE_AGENTS, feed: MUR_AGENTS,
-    recolte: (a) => faitsDAgent(a),
-    poste: (a, post) => COMPTES_X.poste(a.token, { texte: post.texte }),   /* sur X si le jeton a un compte relie, sinon surX:false */
-    fuel: FUEL_AGENTS, coutPostUsd: COUT_POST_USD,                          /* a sec, l agent dort : jamais a credit */
+    registre: REGISTRE_AGENTS, feed: MUR_AGENTS, fuel: FUEL_AGENTS,
+    pense: (a) => penseAgent(a),
   }, o || {}));
 }
 const studio = require('./studio');
@@ -4219,11 +4264,18 @@ const server = http.createServer(async (req, res) => {
         const agent = REGISTRE_AGENTS.parJeton(token);
         if (!agent) return json(404, { ok: false, raison: 'no agent for this token' });
         if (!agent.pool) return json(400, { ok: false, raison: 'this token has no pool on record' });
-        const devis = async (a) => ({ ok: true, pool: a.pool, impactPct: 1, sortie: null });   /* paper placeholder */
-        const r = await traderPapier.decide(
-          { token, action: q.action, montantUsd: Number(q.montantUsd), justification: q.justification },
-          { pool: agent.pool, tresor: TRESOR_AGENTS, policy: POLICY_AGENTS, signer: SIGNER_AGENTS, devis, pareFeu });
+        const r = await traderDecide(token, q.action, Number(q.montantUsd), q.justification);
         return json(200, Object.assign({ ok: r.decide === 'signed-paper', mode: 'paper' }, r));
+      }
+      if (path === '/agent/esprit/tour') {
+        /* Une pulsation de l esprit d UN agent (pour essayer). Il pense avec le vrai modele,
+           lit ses outils, et agit (post / rachat papier), finance par le carburant. */
+        const token = String(q.token || '').toLowerCase();
+        const agent = REGISTRE_AGENTS.parJeton(token);
+        if (!agent) return json(404, { ok: false, raison: 'no agent for this token' });
+        if (!agent.actif) return json(409, { ok: false, raison: 'this agent is paused' });
+        const r = await penseAgent(agent);
+        return json(200, Object.assign({ ok: true }, r));
       }
       if (path === '/agent/horloge/tour') {
         /* Un tour manuel de l ordonnanceur (pour essayer). Le tour periodique, lui,
@@ -10093,8 +10145,7 @@ server.listen(cfg.PORT, () => {
   tgCmd = tgCommandes.planifie({ lanceur: tgLance });
   /* Les agents par jeton postent tout seuls SEULEMENT si AGENT_HORLOGE=1 : eteint
      par defaut, donc rien ne poste en prod tant que le proprietaire ne l allume pas. */
-  horlogeAgents = agentHorloge.planifie({ registre: REGISTRE_AGENTS, feed: MUR_AGENTS, recolte: (a) => faitsDAgent(a),
-    poste: (a, post) => COMPTES_X.poste(a.token, { texte: post.texte }), fuel: FUEL_AGENTS, coutPostUsd: COUT_POST_USD },
+  horlogeAgents = agentHorloge.planifie({ registre: REGISTRE_AGENTS, feed: MUR_AGENTS, fuel: FUEL_AGENTS, pense: (a) => penseAgent(a) },
     { actif: process.env.AGENT_HORLOGE === '1', periodeMs: 5 * 60000 });
   if (process.env.AGENT_HORLOGE === '1') console.log('[agent] horloge ARMEE (agents par jeton)'); else console.log('[agent] horloge ETEINTE (AGENT_HORLOGE != 1)');
 });

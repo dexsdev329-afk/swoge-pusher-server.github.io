@@ -104,10 +104,11 @@ const CREA = '0x' + 'c'.repeat(40);
   r = await post('/agent/x/connect', { token: TOKEN }, false);
   ok(r.code === 403, 'relier un compte X sans cle admin : 403');
   r = await post('/agent/horloge/tour', {}, true);
-  ok(r.code === 200 && r.j.ok && r.j.agis >= 1, 'un tour manuel : au moins un agent a agi');
+  ok(r.code === 200 && r.j.ok && typeof r.j.agis === 'number' && Array.isArray(r.j.faits), 'un tour manuel : l ordonnanceur lance l esprit de chaque agent du');
+  /* Sans cle Anthropic (env de l essai), le modele s arrete : l esprit ne poste rien.
+     La vraie boucle de pensee/post est couverte par agent_esprit.test.js + agent_modele.test.js. */
   r = await get('/agent/jeton/' + TOKEN + '/feed');
-  ok(r.j.posts.length >= 1 && typeof r.j.posts[0].texte === 'string' && r.j.posts[0].texte.length > 0, 'le mur porte maintenant un post non vide');
-  ok(r.j.posts[0].surX === true && /status\/999/.test(r.j.posts[0].url || ''), 'le jeton a un compte X relie : le post est parti sur X (stub), avec son url');
+  ok(r.code === 200 && Array.isArray(r.j.posts), 'le mur se lit (vide sans modele : fail-safe)');
 
   console.log('\n-- 8. la boucle trader EN PAPIER (pare-feu → policy → signer) --');
   r = await post('/agent/treasury/topup', { token: TOKEN, usd: 200 }, true);
@@ -123,6 +124,13 @@ const CREA = '0x' + 'c'.repeat(40);
   ok(r.code === 200 && r.j.mode === 'paper' && r.j.trades.length >= 1 && r.j.tresor.soldeUsd < 200, 'le journal papier porte le geste signe, et le tresor est debite');
   r = await post('/agent/trader/decide', { token: TOKEN, action: 'buyback', montantUsd: 5 }, false);
   ok(r.code === 403, 'decider un geste sans cle admin : 403');
+
+  console.log('\n-- 9. une pulsation de l esprit (sans cle IA : s arrete proprement) --');
+  r = await post('/agent/esprit/tour', { token: TOKEN }, true);
+  ok(r.code === 200 && r.j.ok && Array.isArray(r.j.actions), 'POST /agent/esprit/tour : 200, l esprit tourne (sans cle IA, aucune action)');
+  ok(r.j.actions.length === 0, 'sans modele (cle absente), l esprit ne fait rien — fail-safe');
+  r = await post('/agent/esprit/tour', { token: TOKEN }, false);
+  ok(r.code === 403, 'lancer l esprit sans cle admin : 403');
 
   global.fetch = vrai;
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));

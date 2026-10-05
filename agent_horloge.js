@@ -47,6 +47,18 @@ async function tour(deps) {
         faits.push({ token: a.token, dort: true, raison: 'daily post budget reached' });
         continue;
       }
+      /* L'ESPRIT autonome (agent_esprit), si branche : il pense, lit ses outils et agit
+         lui-meme (post / rachat), en metrant son propre carburant. L'ordonnanceur ne fait
+         plus que l'appeler et noter le geste. Sans deps.pense : l'ancien pipeline fige. */
+      if (typeof deps.pense === 'function') {
+        let res;
+        try { res = await deps.pense(a); } catch (e) { faits.push({ token: a.token, erreur: String((e && e.message) || e).slice(0, 120) }); continue; }
+        if (res && res.dort) { faits.push({ token: a.token, dort: true, raison: res.raison || 'asleep' }); continue; }
+        const aPoste = !!(res && res.actions && res.actions.some((x) => x.action === 'post'));
+        if (aPoste) deps.registre.noteGeste(a.token, 'post', now);
+        faits.push({ token: a.token, pense: true, actions: (res && res.actions) || [] });
+        continue;
+      }
       /* Le carburant (agent_fuel) : sous le cout, l'agent DORT — on ne pense jamais a credit.
          Garde optionnelle : sans deps.fuel, l'ordonnanceur se comporte comme avant. */
       if (deps.fuel && !deps.fuel.peutPenser(a.token, coutPost, deps.plancherUsd)) {
