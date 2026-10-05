@@ -194,6 +194,16 @@ const CREA = '0x' + 'c'.repeat(40);
   ok(r.code === 403, 'alimenter la caisse sans cle admin : 403 (owner)');
   r = await get('/agent/jeton/' + TOKEN);
   ok(r.code === 200 && r.j.runway && typeof r.j.runway.pensees === 'number' && r.j.recuTotalUsd === 50, 'GET agent : runway (autonomie) + cumul recu exposes');
+  /* Auto-financement : on passe NOTRE part de frais, le serveur en prend le % configure (15 %). */
+  r = await post('/agent/caisse/alimente', { token: TOKEN, ofFeeShareUsd: 100, source: 'fees' }, true);
+  ok(r.code === 200 && r.j.ok && Math.abs((r.j.repartition.fuel + r.j.repartition.tresor + r.j.repartition.rachat) - 15) < 0.011 && r.j.recuTotalUsd === 65,
+     'ofFeeShareUsd=100 → 15 $ affectes (15 % de notre part), cumul 65');
+
+  console.log('\n-- 14. recharge payante du createur (credit en dollars -> carburant), signee --');
+  r = await post('/agent/fuel/buy', { token: TOKEN, ts, usd: 5 }, false);
+  ok(r.code === 400 && /signature/.test(r.j.raison), 'fuel/buy sans signature : 400');
+  r = await post('/agent/fuel/buy', { token: TOKEN, ts, signature: sig, usd: 5 }, false);
+  ok(r.code === 503 && /on-chain/.test(r.j.raison), 'fuel/buy signe mais RPC muet : 503 (preuve requise avant tout debit)');
 
   global.fetch = vrai;
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));

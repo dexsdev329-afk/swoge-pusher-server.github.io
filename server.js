@@ -1662,6 +1662,9 @@ function faitsDAgent(agent) {
     cansell: (async () => { const e = await aiColonie.epreuveDeSortie(token); if (!e || !e.trouve) return null; return { allerRetourPct: e.retour && typeof e.retour.pct === 'number' ? e.retour.pct : undefined, lpVerrouille: !!(e.lp && (e.lp.brulee || e.lp.verrouille || e.lp.locked)) }; }),
   });
 }
+/* Part de NOTRE moitie des frais de trading auto-affectee au carburant de l agent
+   (demande du proprietaire : « une petite part, 10-20 % »). Reglable ; defaut 15 %. */
+const AGENT_FEE_TO_FUEL_PCT = Math.max(0, Math.min(100, Number(process.env.AGENT_FEE_TO_FUEL_PCT || 15)));
 const COUT_IMAGE_USD = Number(process.env.AGENT_COUT_IMAGE_USD || 0.04);   /* une image gpt-image : ~0,04 $ */
 const COUT_VIDEO_USD = Number(process.env.AGENT_COUT_VIDEO_USD || 0.30);   /* une video xAI : plus chere */
 /* L action POST de l esprit : texte, et option image/video generee (controle pattes-de-chien),
@@ -4457,6 +4460,34 @@ const server = http.createServer(async (req, res) => {
       COMPTES_TG.majTitre(token, info.titre || null);
       return json(200, { ok: true, chatId: c.chatId, titre: info.titre || null, type: info.type || null });
     }
+    /* PUBLIC, signé : le CRÉATEUR recharge le carburant de SON agent avec son CRÉDIT
+       en dollars (lui-meme alimente en USDC via x402 sur /credit/topup). C est NOTRE
+       revenu : il paie nos API. Le montant passe par la cascade (carburant d abord).
+       On debite le credit du portefeuille qui a prouve etre le createur on-chain. */
+    if (path === '/agent/fuel/buy') {
+      const ipc = compteurs.ip(qui(req)), tc = Date.now(), lc = (RECHERCHES_SERVICES.get('agfb:' + ipc) || []).filter((x) => tc - x < 10 * 60e3);
+      if (lc.length >= 20) return json(429, { ok: false, raison: 'too many requests - try again in a few minutes' });
+      lc.push(tc); RECHERCHES_SERVICES.set('agfb:' + ipc, lc);
+      const preuve = await preuveCreateur(q, 'fuel');
+      if (!preuve.ok) return json(preuve.code || 403, { ok: false, raison: preuve.raison });
+      marquePreuve(q);
+      const token = String(q.token).toLowerCase();
+      const usd = Math.round(Number(q.usd) * 100) / 100;
+      if (!(usd > 0) || usd > 1000) return json(400, { ok: false, raison: 'usd must be between 0 and 1000' });
+      /* On debite le credit en dollars du createur (achete en USDC via x402). */
+      const f = credits().factu(preuve.createur, 'fuel its AI agent');
+      const rs = await f.reserve(usd);
+      if (!rs.ok) return json(402, { ok: false, raison: rs.raison, topup: MOI_URL + '/credit/topup' });
+      await f.regle(rs.jeton, usd);
+      /* La cascade : carburant d abord (notre revenu), puis tresor, puis rachat. */
+      const part = agentCaisse.repartit(usd, CAISSE_RECU.vue(token).soldeUsd);
+      if (part.fuel > 0) FUEL_AGENTS.credite(token, part.fuel, 'buy');
+      if (part.tresor > 0) TRESOR_AGENTS.credite(token, part.tresor, 'buy');
+      if (part.rachat > 0) TRESOR_AGENTS.credite(token, part.rachat, 'rachat-earmark');
+      CAISSE_RECU.credite(token, usd, 'buy');
+      return json(200, { ok: true, token, paidUsd: usd, repartition: part,
+        fuel: FUEL_AGENTS.vue(token).soldeUsd, creditRestantUsd: credits().soldeUsd(preuve.createur) });
+    }
     if (!admin) return json(403, { ok: false, raison: 'owner only for now (x-admin-key)' });
     try {
       if (path === '/agent/attach') {
@@ -4514,8 +4545,10 @@ const server = http.createServer(async (req, res) => {
            deplace ici. Le cumul recu borne les paliers. */
         const token = String(q.token || '').toLowerCase();
         if (!/^0x[0-9a-f]{40}$/.test(token)) return json(400, { ok: false, raison: 'token must be 0x + 40 hex' });
-        const usd = Number(q.usd);
-        if (!(usd > 0)) return json(400, { ok: false, raison: 'usd must be positive' });
+        /* Deux facons d appeler : `usd` (montant direct a affecter), ou `ofFeeShareUsd`
+           (notre part de frais pour ce jeton → on en prend AGENT_FEE_TO_FUEL_PCT %). */
+        const usd = Number(q.ofFeeShareUsd) > 0 ? Math.round(Number(q.ofFeeShareUsd) * (AGENT_FEE_TO_FUEL_PCT / 100) * 100) / 100 : Number(q.usd);
+        if (!(usd > 0)) return json(400, { ok: false, raison: 'pass usd>0, or ofFeeShareUsd>0 (we take ' + AGENT_FEE_TO_FUEL_PCT + '% of it)' });
         const part = agentCaisse.repartit(usd, CAISSE_RECU.vue(token).soldeUsd);
         const source = q.source === 'fees' ? 'fees' : 'topup';
         if (part.fuel > 0) FUEL_AGENTS.credite(token, part.fuel, source);
