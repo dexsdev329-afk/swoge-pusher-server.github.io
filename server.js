@@ -1624,6 +1624,7 @@ const agentEsprit = require('./agent_esprit');
 const agentModele = require('./agent_modele');
 const agentMemoire = require('./agent_memoire');
 const agentEvenements = require('./agent_evenements');
+const agentMesure = require('./agent_mesure');
 const agentTg = require('./agent_tg');
 const agentCaisse = require('./agent_caisse');
 /* Lancer un token sur Solana via Pump.fun (PumpPortal, non custodial : la page signe). */
@@ -1695,7 +1696,7 @@ async function posteAgent(agent, post) {
       if (t && t.ok) { surTg = true; if (surX && t.messageId) { try { await COMPTES_TG.pinne(token, t.messageId); } catch (e) {} } } }
     catch (e) { /* Telegram en echec : on garde le reste */ }
   }
-  MUR_AGENTS.ajoute(token, { texte: post.texte, via: 'esprit', surX, url, surTg, faits: [] });
+  MUR_AGENTS.ajoute(token, { texte: post.texte, via: 'esprit', surX, url, surTg, media: media || 'none', faits: [] });
   return { surX, url, surTg };
 }
 /* La boucle trader EN PAPIER pour un jeton (reutilisee par la route et par l esprit). */
@@ -1783,6 +1784,22 @@ async function penseAgent(agent, extra) {
     noteMemoire: (e) => { try { MEMOIRE_AGENTS.note(agent.token, e); } catch (x) {} },
     fuel: FUEL_AGENTS, coutParPenseeUsd: COUT_POST_USD, plancherUsd: 0, maxEtapes: Number(process.env.AGENT_ETAPES_MAX || 4),
   });
+}
+/* LA MESURE : lit les metriques publiques des posts X de l agent, en tire un resume
+   (ce qui marche), et note une ligne « ce qui marche » dans sa memoire pour qu il
+   apprenne. Protege : sans compte X ou sans posts, rend un resume vide. */
+async function mesureAgent(token) {
+  token = String(token || '').toLowerCase();
+  const recent = MUR_AGENTS.recent(token, 50).filter((e) => e.surX && e.url);
+  const ids = [], parId = {};
+  recent.forEach((e) => { const m = String(e.url).match(/status\/(\d+)/); if (m) { ids.push(m[1]); parId[m[1]] = { texte: e.texte, media: e.media || 'none', quand: e.quand || null }; } });
+  if (!ids.length || !COMPTES_X.aDesCreds(token)) return { ok: true, resume: agentMesure.resume([]), posts: [] };
+  let metr = {}; try { metr = await COMPTES_X.metriques(token, ids); } catch (e) { metr = {}; }
+  const posts = ids.map((id) => Object.assign({}, parId[id], { metrics: metr[id] || null }));
+  const res = agentMesure.resume(posts);
+  const ph = agentMesure.phrase(res);
+  if (ph) { try { MEMOIRE_AGENTS.note(token, { quoi: 'mesure', texte: ph }); } catch (e) {} }
+  return { ok: true, resume: res, posts: posts.filter((p) => p.metrics).slice(0, 20) };
 }
 /* Un tour de l ordonnanceur : l ESPRIT autonome par agent du. */
 function tourAgents(o) {
@@ -4340,6 +4357,13 @@ const server = http.createServer(async (req, res) => {
       const q = new URLSearchParams(req.url.split('?')[1] || '');
       return json(200, { ok: true, token: mTrades[1].toLowerCase(), mode: 'paper', tresor: TRESOR_AGENTS.vue(mTrades[1]),
         trades: SIGNER_AGENTS.journal(mTrades[1], Math.min(50, Math.max(1, Number(q.get('n')) || 20))) });
+    }
+    const mMetr = path.match(/^\/agent\/jeton\/(0x[0-9a-fA-F]{40})\/metrics$/);
+    if (mMetr && req.method === 'GET') {
+      /* Les metriques X de l agent (impressions/likes) + le resume « ce qui marche ».
+         Public (lecture). Sans compte X relie : resume vide, aucune erreur. */
+      try { const r = await mesureAgent(mMetr[1]); return json(200, Object.assign({ ok: true, token: mMetr[1].toLowerCase() }, r)); }
+      catch (e) { return json(200, { ok: true, token: mMetr[1].toLowerCase(), resume: agentMesure.resume([]), posts: [] }); }
     }
     const mRead = path.match(/^\/agent\/jeton\/(0x[0-9a-fA-F]{40})$/);
     if (mRead && req.method === 'GET') {

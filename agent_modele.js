@@ -57,6 +57,9 @@ function demande(ctx) {
     parts.push('A notable event just happened on your token: ' + JSON.stringify(ctx.evenement).slice(0, 220)
       + '. If it is worth sharing honestly (facts only), consider posting about THIS.');
   }
+  /* LA MESURE : ce qui marche (engagement mesure), pour apprendre. */
+  const mesure = (ctx.memoire || []).filter((x) => x.quoi === 'mesure' && x.texte)[0];
+  if (mesure) parts.push('What works so far (measured): ' + mesure.texte);
   /* LA MEMOIRE : ce que l'agent a deja dit — pour ne pas se repeter. */
   const mem = (ctx.memoire || []).filter((x) => x.quoi === 'post' && x.texte).map((x) => x.texte).slice(0, 6);
   if (mem.length) parts.push('You recently posted (do NOT repeat these — say something new):\n- ' + mem.join('\n- '));

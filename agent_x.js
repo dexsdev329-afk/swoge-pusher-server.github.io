@@ -167,6 +167,18 @@ function cree(opts) {
     return (j.data || []).map((t) => ({ id: String(t.id), texte: String(t.text || ''), auteur: users[String(t.author_id)] || null, auteurId: String(t.author_id || ''), quand: t.created_at || null }))
       .filter((m) => m.auteurId !== me.id);   /* on ne se repond pas a soi-meme */
   }
+  /** Les metriques publiques de plusieurs tweets du jeton. Rend { id: public_metrics }.
+   *  impression_count n est visible que pour l auteur — on l est (cles du jeton). */
+  async function metriques(token, ids, f) {
+    if (!aDesCreds(token) || !Array.isArray(ids) || !ids.length) return {};
+    const liste = ids.filter((x) => /^[0-9]{1,25}$/.test(String(x))).slice(0, 100).join(',');
+    if (!liste) return {};
+    let j; try { j = await appelGet(token, '/2/tweets', { ids: liste, 'tweet.fields': 'public_metrics' }, f); } catch (e) { return {}; }
+    const out = {};
+    ((j && j.data) || []).forEach((t) => { if (t && t.id) out[String(t.id)] = t.public_metrics || {}; });
+    return out;
+  }
+
   /** Repond (publiquement) a un tweet, sur le compte X du jeton. { texte, replyToId }. */
   async function repond(token, o, f) {
     o = o || {};
@@ -227,7 +239,7 @@ function cree(opts) {
     return id;
   }
 
-  return { connecte, oublie, aDesCreds, handleDe, poste, televerse, televerseVideo, moi, mentions, repond, appelGet };
+  return { connecte, oublie, aDesCreds, handleDe, poste, televerse, televerseVideo, moi, mentions, repond, metriques, appelGet };
 }
 
 module.exports = { cree, API };

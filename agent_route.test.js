@@ -205,6 +205,11 @@ const CREA = '0x' + 'c'.repeat(40);
   r = await post('/agent/fuel/buy', { token: TOKEN, ts, signature: sig, usd: 5 }, false);
   ok(r.code === 503 && /on-chain/.test(r.j.raison), 'fuel/buy signe mais RPC muet : 503 (preuve requise avant tout debit)');
 
+  console.log('\n-- 15. la mesure : metriques d engagement (lecture publique) --');
+  r = await get('/agent/jeton/' + TOKEN + '/metrics');
+  ok(r.code === 200 && r.j.ok && r.j.resume && typeof r.j.resume.n === 'number' && Array.isArray(r.j.posts), 'GET /metrics : un resume d engagement (vide ici, aucun post X)');
+  ok(r.j.resume.assez === false, 'sous le seuil d observations : on ne conclut pas (assez=false)');
+
   global.fetch = vrai;
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
   process.exit(rates ? 1 : 0);
