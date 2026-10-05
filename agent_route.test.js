@@ -8,6 +8,8 @@
  * Le faux internet est pose AVANT server.js : aucun essai ne sort de la machine.
  */
 const fs = require('fs'), os = require('os'), path = require('path'), net = require('net');
+const ethers = require('ethers');
+const agentCreateur = require('./agent_createur');
 let n = 0, rates = 0;
 const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; console.log('  RATE ' + m); } };
 
@@ -133,6 +135,32 @@ const CREA = '0x' + 'c'.repeat(40);
   ok(r.j.actions.length === 0, 'sans modele (cle absente), l esprit ne fait rien — fail-safe');
   r = await post('/agent/esprit/tour', { token: TOKEN }, false);
   ok(r.code === 403, 'lancer l esprit sans cle admin : 403');
+
+  console.log('\n-- 10. le CREATEUR se sert lui-meme (signe, SANS cle admin) --');
+  const w = ethers.Wallet.createRandom();
+  const T2 = '0x' + 'd'.repeat(40);
+  const ts = Date.now();
+  const sig = await w.signMessage(agentCreateur.message(T2, ts));
+  /* Sans signature (mais avec horodatage) : refuse avant toute lecture de chaine. */
+  r = await post('/agent/attach_createur', { token: T2, ts, persona: 'builder', objectif: 'ship' }, false);
+  ok(r.code === 400 && /signature/.test(r.j.raison), 'attach_createur sans signature : 400 (public, mais la preuve manque)');
+  /* Une signature mal formee : refusee a la recuperation, toujours sans chaine. */
+  r = await post('/agent/attach_createur', { token: T2, ts, signature: '0xdead', persona: 'builder', objectif: 'ship' }, false);
+  ok(r.code === 400 && /signature/.test(r.j.raison), 'signature mal formee : 400');
+  /* Signature valide : le signataire est recupere (local), puis la porte de la CHAINE
+     est atteinte. Dans l essai le RPC est injoignable → la lecture echoue → 503
+     (« reessaie »), jamais 404 a tort. La concordance signataire == createur on-chain
+     (succes, imposteur 403, jeton hors launchpad 404, pool) est couverte hors-ligne par
+     agent_createur.test.js. Ici on prouve seulement que la route est PUBLIQUE, qu elle
+     VERIFIE la signature, et qu elle n attache JAMAIS sans confirmer le createur on-chain. */
+  r = await post('/agent/attach_createur', { token: T2, ts, signature: sig, persona: 'builder', objectif: 'ship' }, false);
+  ok(r.code === 503 && /on-chain/.test(r.j.raison), 'signature OK mais RPC injoignable : 503 (jamais d attache sans createur on-chain confirme)');
+  /* Et surtout : rien n a ete attache (aucune porte derobee sans la preuve on-chain). */
+  r = await get('/agent/jeton/' + T2);
+  ok(r.code === 200 && r.j.agent === null, 'aucun agent attache sans confirmation on-chain');
+  /* Le toggle du createur passe par la MEME preuve. */
+  r = await post('/agent/toggle_createur', { token: T2, ts, signature: sig, actif: false }, false);
+  ok(r.code === 503, 'toggle_createur : meme preuve on-chain requise');
 
   global.fetch = vrai;
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));

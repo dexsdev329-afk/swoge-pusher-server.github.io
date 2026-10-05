@@ -1622,6 +1622,9 @@ const signerPapier = require('./signer_papier');
 const traderPapier = require('./trader_papier');
 const agentEsprit = require('./agent_esprit');
 const agentModele = require('./agent_modele');
+/* Le self-service du createur : il attache l agent de SON jeton sans cle admin,
+   la preuve etant une signature + la lecture du createur on-chain (agent_createur). */
+const agentCreateur = require('./agent_createur');
 const REGISTRE_AGENTS = agentJeton.cree({});
 const MUR_AGENTS = agentFeed.cree({});
 const COMPTES_X = agentX.cree({});
@@ -1693,6 +1696,44 @@ function tourAgents(o) {
     registre: REGISTRE_AGENTS, feed: MUR_AGENTS, fuel: FUEL_AGENTS,
     pense: (a) => penseAgent(a),
   }, o || {}));
+}
+/* LE CREATEUR ON-CHAIN d un jeton lance par un launchpad SWOGE V4. On lit
+   `instant(token).creator` sur CHAQUE launchpad relu (ETH et $SWOGE) ; le
+   premier qui connait le jeton (exists) donne son createur. C est le MEME champ
+   que l evenement LaunchedInstant, mais lu sur l etat, donc indemnisable d un
+   recu perdu. Rend l adresse en minuscules, ou null si aucun launchpad ne l a lance.
+   Repli sur les adresses connues si la relecture d etat n a pas encore fini. */
+const ABI_INSTANT = ['function instant(address) view returns (address token, address creator, address pool, uint256 lpTokenId, bool exists)'];
+const LAUNCHPADS_CONNUS = ['0xe3fB4f9790504D2F95D022d73993eb916f407759', '0xF090C095ae6F1c75F382Ce1Feb07626460996549'];
+async function createurOnchain(token) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(token)) return null;
+  /* Les adresses des deux launchpads : celles relues sur la chaine si le deploiement
+     a fini (launchpadPret), plus les adresses connues en repli. Deduplique. */
+  const live = [];
+  try { const e = launchpadPret(deploiementV4Weth, require('./swogefun_v4weth.json')); if (e && e.adresse) live.push(e.adresse); } catch (e) { /* pas encore pret */ }
+  try { const s = launchpadPret(deploiementV4, require('./swogefun_v4.json')); if (s && s.adresse) live.push(s.adresse); } catch (e) { /* pas encore pret */ }
+  const adresses = live.concat(LAUNCHPADS_CONNUS).filter(Boolean);
+  const vues = new Set();
+  /* `instant` est un getter de mapping public : pour un jeton inconnu il REND une
+     struct a zero (exists=false), il ne reverte pas. Donc une lecture qui aboutit
+     mais ne connait pas le jeton → on continue ; une lecture qui ECHOUE (RPC muet,
+     reseau) → on la compte comme non-aboutie. Si AUCUNE n aboutit, on leve : l appelant
+     rendra 503 (« reessaie »), jamais 404 (« pas ton jeton ») a tort. */
+  let litAuMoinsUne = false;
+  for (const adr of adresses) {
+    const a = String(adr).toLowerCase();
+    if (vues.has(a)) continue; vues.add(a);
+    try {
+      const c = new ethers.Contract(adr, ABI_INSTANT, lecteurRh());
+      const inst = await c.instant(token);
+      litAuMoinsUne = true;
+      if (inst && inst.exists && /^0x[0-9a-fA-F]{40}$/.test(inst.creator) && Number(inst.creator) !== 0) {
+        return { creator: inst.creator.toLowerCase(), pool: /^0x[0-9a-fA-F]{40}$/.test(inst.pool) ? inst.pool.toLowerCase() : null };
+      }
+    } catch (e) { /* ce launchpad n a pas repondu : on tente le suivant */ }
+  }
+  if (!litAuMoinsUne) throw new Error('on-chain read failed');
+  return null;
 }
 const studio = require('./studio');
 const studioChat = require('./studio_chat');
@@ -4214,6 +4255,30 @@ const server = http.createServer(async (req, res) => {
       const post = await require('./agent_poste').compose({ persona: v.config.persona, objectif: v.config.objectif, langue: v.config.langue,
         symbole: q.symbole, nom: q.nom, faits: [] });
       return json(200, { ok: true, persona: v.config.persona, personaLabel: agentJeton.PERSONAS[v.config.persona].label, post });
+    }
+    /* PUBLIC, signé : le CRÉATEUR du jeton attache/règle/met en pause SON agent
+       sans clé admin. La preuve est revérifiée côté serveur à chaque geste :
+       (1) le portefeuille a signé message(token, ts) → on récupère le signataire ;
+       (2) on lit `instant(token).creator` sur la chaîne ; on n agit que s ils
+       concordent. Le créateur stocké est TOUJOURS celui lu on-chain, jamais une
+       adresse prise dans la requête. */
+    if (path === '/agent/attach_createur' || path === '/agent/toggle_createur') {
+      const ipc = compteurs.ip(qui(req)), tc = Date.now(), lc = (RECHERCHES_SERVICES.get('agcr:' + ipc) || []).filter((x) => tc - x < 10 * 60e3);
+      if (lc.length >= 20) return json(429, { ok: false, raison: 'too many requests - try again in a few minutes' });
+      lc.push(tc); RECHERCHES_SERVICES.set('agcr:' + ipc, lc);
+      const preuve = await agentCreateur.verifie({ token: q.token, ts: q.ts, signature: q.signature },
+        { recupere: (m, s) => ethers.utils.verifyMessage(m, s), createurOnchain, maintenant: () => Date.now() });
+      if (!preuve.ok) return json(preuve.code || 403, { ok: false, raison: preuve.raison });
+      if (path === '/agent/toggle_createur') {
+        const r = REGISTRE_AGENTS.bascule(q.token, preuve.createur, !!q.actif);
+        return json(r.ok ? 200 : (r.code || 400), r);
+      }
+      /* Le pool vient de la chaîne (preuve.pool), jamais de la requête : on ne laisse
+         pas le créateur pointer son agent sur un autre pool que celui de son jeton. */
+      const r = REGISTRE_AGENTS.attache({ token: q.token, createur: preuve.createur, pool: preuve.pool || undefined, persona: q.persona,
+        objectif: q.objectif, modele: q.modele, cadenceMin: q.cadenceMin, pouvoirs: q.pouvoirs, langue: q.langue,
+        symbole: q.symbole, nom: q.nom, postsParJourMax: q.postsParJourMax, rachat: q.rachat });
+      return json(r.ok ? 200 : (r.code || 400), r);
     }
     if (!admin) return json(403, { ok: false, raison: 'owner only for now (x-admin-key)' });
     try {
