@@ -95,6 +95,7 @@ lance policy  "$SRV" node policy_argent.test.js # policy engine (8b papier) : li
 lance signerp "$SRV" node signer_papier.test.js # signer isole (8b papier) : resimule, ne signe que l approuve (meme pool, impact borne), journal papier, aucune cle ni envoi reel
 lance traderp "$SRV" node trader_papier.test.js # la boucle trader EN PAPIER (8b-ii) : pare-feu -> policy -> signer -> compta, pool du registre jamais de l intention, refus a chaque etage, cooldown
 lance agdevis "$SRV" node agent_devis.test.js   # le vrai devis (8c piece 1, LECTURE SEULE) : impact-prix estime (prix reel vs marginal), grandit avec la taille, refus si zero, aucune cle
+lance agesprit "$SRV" node agent_esprit.test.js # l esprit autonome : choisit ses outils (lecture puis action), au plus 1 post/1 rachat par pulse, finance par le carburant, rachat via la boucle trader seulement si active, aucune cle
 lance acces   "$SRV" node acces.test.js   # portes privees fermees sans cle, gestes d argent en POST seulement ; /credit partage entre le robinet admin et le credit en dollars (29/09)
 lance famille  "$SRV" node famille_client.test.js   # qui demande un prix : famille du client en code fixe, sonde ou demande, jamais le User-Agent brut ni l IP
 lance sondes   "$SRV" node sonde_services.test.js   # catalogue x402 note sans payer : une sonde par service et par 20 h, raison de chaque echec, aucun verdict sous 3 sondes, paiements reels comptes
