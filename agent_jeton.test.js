@@ -41,13 +41,15 @@ let horloge = Date.parse('2026-10-05T12:00:00Z');
 const S = R.cree({ fichier: path.join(dir, 'a.json'), maintenant: () => horloge });
 
 console.log('\n-- 3. attache : un agent par jeton, propriété du créateur --');
-let r = S.attache({ token: T1, createur: C1, pool: POOL, persona: 'builder', modele: 'claude', objectif: 'ship in public', cadenceMin: 30 });
+let r = S.attache({ token: T1, createur: C1, pool: POOL, persona: 'builder', modele: 'claude', objectif: 'ship in public', cadenceMin: 30, symbole: '$foo!', nom: 'Foo Inu' });
 ok(r.ok && r.agent.token === T1.toLowerCase() && r.agent.personaLabel === 'Builder', 'le créateur attache l agent de son jeton');
 ok(r.agent.actif === true && r.agent.pool === POOL.toLowerCase(), 'né actif, avec le pool');
+ok(r.agent.symbole === 'FOO' && r.agent.nom === 'Foo Inu', 'le symbole est assaini (sans $, majuscules) et le nom porte');
 r = S.attache({ token: T1, createur: C2, persona: 'hype' });
 ok(!r.ok && r.code === 403, 'un AUTRE que le créateur ne peut pas réattacher le jeton : 403');
 r = S.attache({ token: T1, createur: C1, persona: 'stoic', objectif: 'hold the line' });
 ok(r.ok && r.agent.persona === 'stoic' && r.agent.objectif === 'hold the line', 'le créateur met à jour sa persona et son objectif');
+ok(r.agent.symbole === 'FOO' && r.agent.nom === 'Foo Inu', 'une mise à jour partielle préserve symbole et nom');
 ok(S.parJeton(T1).cree <= S.parJeton(T1).maj, 'la date de création est conservée, maj avance');
 
 console.log('\n-- 4. le plafond par créateur --');

@@ -84,8 +84,11 @@ function valide(o) {
   pouvoirs = POUVOIRS.filter((p) => pouvoirs.includes(p));   /* ordre figé, pas de doublon, pas d'inconnu */
   if (!pouvoirs.includes('post')) pouvoirs.unshift('post');  /* poster est le minimum d'un agent */
   const langue = o.langue === 'fr' ? 'fr' : 'en';            /* le texte joueur est anglais par défaut */
+  /* Symbole et nom du jeton : le peintre doit pouvoir le nommer. Optionnels, assainis. */
+  const symbole = String(o.symbole || '').trim().replace(/^\$/, '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || null;
+  const nom = String(o.nom || '').trim().replace(/[^\w .&!-]/g, '').slice(0, 40) || null;
   return { config: { token: bas(o.token), createur: bas(o.createur), pool: o.pool ? bas(o.pool) : null,
-                     persona, modele, objectif, cadenceMin: cadence, pouvoirs, langue } };
+                     persona, modele, objectif, cadenceMin: cadence, pouvoirs, langue, symbole, nom } };
 }
 
 /** Les pouvoirs RÉELLEMENT exécutables aujourd'hui : seulement le social.
@@ -120,7 +123,7 @@ function cree(opts) {
   const vue = (a) => a && ({ token: a.token, pool: a.pool, createur: a.createur, persona: a.persona,
     personaLabel: PERSONAS[a.persona] && PERSONAS[a.persona].label, modele: a.modele, modeleLabel: MODELES[a.modele],
     objectif: a.objectif, cadenceMin: a.cadenceMin, pouvoirs: a.pouvoirs.slice(), pouvoirsActifs: pouvoirsActifs(a.pouvoirs),
-    langue: a.langue, actif: !!a.actif, cree: a.cree, maj: a.maj || a.cree, dernierGeste: a.dernierGeste || null });
+    langue: a.langue, symbole: a.symbole || null, nom: a.nom || null, actif: !!a.actif, cree: a.cree, maj: a.maj || a.cree, dernierGeste: a.dernierGeste || null });
 
   /** Attache (ou met à jour) l'agent d'un jeton. Seul le créateur du jeton le peut :
    *  l'appelant a DÉJÀ vérifié que `createur` est bien la session signée.
@@ -135,11 +138,11 @@ function cree(opts) {
     /* Mise à jour : les champs non fournis GARDENT leur valeur actuelle — modifier la
        persona ne doit pas remettre la cadence au défaut. On valide le résultat fusionné. */
     const defini = {};
-    for (const k of ['pool', 'persona', 'modele', 'objectif', 'cadenceMin', 'pouvoirs', 'langue']) if (o[k] !== undefined) defini[k] = o[k];
+    for (const k of ['pool', 'persona', 'modele', 'objectif', 'cadenceMin', 'pouvoirs', 'langue', 'symbole', 'nom']) if (o[k] !== undefined) defini[k] = o[k];
     const base = existant
       ? Object.assign({ token: existant.token, createur: existant.createur, pool: existant.pool, persona: existant.persona,
                         modele: existant.modele, objectif: existant.objectif, cadenceMin: existant.cadenceMin,
-                        pouvoirs: existant.pouvoirs, langue: existant.langue }, defini)
+                        pouvoirs: existant.pouvoirs, langue: existant.langue, symbole: existant.symbole, nom: existant.nom }, defini)
       : Object.assign({ token: o.token, createur: o.createur }, defini);
     const v = valide(base);
     if (v.erreur) return { ok: false, code: 400, raison: v.erreur };
