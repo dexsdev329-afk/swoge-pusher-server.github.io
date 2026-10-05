@@ -93,6 +93,7 @@ lance agfuel  "$SRV" node agent_fuel.test.js    # le carburant par jeton : verse
 lance parefeu "$SRV" node pare_feu.test.js      # pare-feu de prompt (8b papier) : bloque fonds/cles/injection/usurpation/cache, retire les adresses, deux classifieurs fail-closed
 lance policy  "$SRV" node policy_argent.test.js # policy engine (8b papier) : liste blanche, plafonds action/heure/jour, impact-prix, cooldown, tresor ; deterministe et persistant
 lance signerp "$SRV" node signer_papier.test.js # signer isole (8b papier) : resimule, ne signe que l approuve (meme pool, impact borne), journal papier, aucune cle ni envoi reel
+lance traderp "$SRV" node trader_papier.test.js # la boucle trader EN PAPIER (8b-ii) : pare-feu -> policy -> signer -> compta, pool du registre jamais de l intention, refus a chaque etage, cooldown
 lance acces   "$SRV" node acces.test.js   # portes privees fermees sans cle, gestes d argent en POST seulement ; /credit partage entre le robinet admin et le credit en dollars (29/09)
 lance famille  "$SRV" node famille_client.test.js   # qui demande un prix : famille du client en code fixe, sonde ou demande, jamais le User-Agent brut ni l IP
 lance sondes   "$SRV" node sonde_services.test.js   # catalogue x402 note sans payer : une sonde par service et par 20 h, raison de chaque echec, aucun verdict sous 3 sondes, paiements reels comptes

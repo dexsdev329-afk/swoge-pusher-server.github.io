@@ -1615,10 +1615,19 @@ const agentFeed = require('./agent_feed');
 const agentHorloge = require('./agent_horloge');
 const agentX = require('./agent_x');
 const agentFuel = require('./agent_fuel');
+/* Les garde-fous trader (etape 8b), EN PAPIER : pare-feu, policy, signer isole. */
+const pareFeu = require('./pare_feu');
+const policyArgent = require('./policy_argent');
+const signerPapier = require('./signer_papier');
+const traderPapier = require('./trader_papier');
 const REGISTRE_AGENTS = agentJeton.cree({});
 const MUR_AGENTS = agentFeed.cree({});
 const COMPTES_X = agentX.cree({});
 const FUEL_AGENTS = agentFuel.cree({});
+/* Le tresor (fonds investissables du jeton) et les garde-fous : argent EN PAPIER. */
+const TRESOR_AGENTS = agentFuel.cree({ fichier: require('path').join(cfg.DATA_DIR, 'agent_tresor.json'), grantInitialUsd: 0 });
+const POLICY_AGENTS = policyArgent.cree({});
+const SIGNER_AGENTS = signerPapier.cree({});
 /* Le cout estime d une pensee (post) en dollars, et le plancher sous lequel l agent dort. */
 const COUT_POST_USD = Number(process.env.AGENT_COUT_POST_USD || 0.005);
 /* Les faits live d un agent, montes sur son pool/jeton (reutilise par l apercu ET l ordonnanceur).
@@ -4122,8 +4131,15 @@ const server = http.createServer(async (req, res) => {
       return json(200, { ok: true, token: mFeed[1].toLowerCase(), handle: COMPTES_X.handleDe(mFeed[1]),
         posts: MUR_AGENTS.recent(mFeed[1], Math.min(50, Math.max(1, Number(q.get('n')) || 20))) });
     }
+    const mTrades = path.match(/^\/agent\/jeton\/(0x[0-9a-fA-F]{40})\/trades$/);
+    if (mTrades && req.method === 'GET') {
+      /* Le journal des gestes d argent — EN PAPIER (signer_papier). Rien de reel. */
+      const q = new URLSearchParams(req.url.split('?')[1] || '');
+      return json(200, { ok: true, token: mTrades[1].toLowerCase(), mode: 'paper', tresor: TRESOR_AGENTS.vue(mTrades[1]),
+        trades: SIGNER_AGENTS.journal(mTrades[1], Math.min(50, Math.max(1, Number(q.get('n')) || 20))) });
+    }
     const mRead = path.match(/^\/agent\/jeton\/(0x[0-9a-fA-F]{40})$/);
-    if (mRead && req.method === 'GET') return json(200, { ok: true, agent: REGISTRE_AGENTS.parJeton(mRead[1]), hasX: COMPTES_X.aDesCreds(mRead[1]), handle: COMPTES_X.handleDe(mRead[1]), fuel: FUEL_AGENTS.vue(mRead[1]) });
+    if (mRead && req.method === 'GET') return json(200, { ok: true, agent: REGISTRE_AGENTS.parJeton(mRead[1]), hasX: COMPTES_X.aDesCreds(mRead[1]), handle: COMPTES_X.handleDe(mRead[1]), fuel: FUEL_AGENTS.vue(mRead[1]), tresor: TRESOR_AGENTS.vue(mRead[1]) });
     if (path === '/agent/jetons' && req.method === 'GET') {
       const c = String((new URLSearchParams(req.url.split('?')[1] || '')).get('creator') || '');
       if (!/^0x[0-9a-fA-F]{40}$/.test(c)) return json(400, { ok: false, raison: 'pass ?creator=0x...' });
@@ -4189,6 +4205,25 @@ const server = http.createServer(async (req, res) => {
            via collectFees ; ici le proprietaire peut l amorcer. Comptabilite, pas d argent on-chain. */
         const r = FUEL_AGENTS.credite(q.token, Number(q.usd), 'topup');
         return json(r.ok ? 200 : 400, r);
+      }
+      if (path === '/agent/treasury/topup') {
+        /* Verser au TRESOR papier d un jeton (fonds investissables). Comptabilite, pas d argent on-chain. */
+        const r = TRESOR_AGENTS.credite(q.token, Number(q.usd), q.source === 'fees' ? 'fees' : 'topup');
+        return json(r.ok ? 200 : 400, r);
+      }
+      if (path === '/agent/trader/decide') {
+        /* La boucle trader EN PAPIER : pare-feu → policy → signer papier → compta. Rien de reel.
+           Le pool vient du REGISTRE (jamais de l intention). Le devis est un placeholder papier
+           (impact modele a 1 %) ; le vrai devis miroir viendra avec l execution reelle (8c). */
+        const token = String(q.token || '').toLowerCase();
+        const agent = REGISTRE_AGENTS.parJeton(token);
+        if (!agent) return json(404, { ok: false, raison: 'no agent for this token' });
+        if (!agent.pool) return json(400, { ok: false, raison: 'this token has no pool on record' });
+        const devis = async (a) => ({ ok: true, pool: a.pool, impactPct: 1, sortie: null });   /* paper placeholder */
+        const r = await traderPapier.decide(
+          { token, action: q.action, montantUsd: Number(q.montantUsd), justification: q.justification },
+          { pool: agent.pool, tresor: TRESOR_AGENTS, policy: POLICY_AGENTS, signer: SIGNER_AGENTS, devis, pareFeu });
+        return json(200, Object.assign({ ok: r.decide === 'signed-paper', mode: 'paper' }, r));
       }
       if (path === '/agent/horloge/tour') {
         /* Un tour manuel de l ordonnanceur (pour essayer). Le tour periodique, lui,
