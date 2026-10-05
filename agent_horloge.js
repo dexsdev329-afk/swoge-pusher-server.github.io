@@ -41,10 +41,16 @@ async function tour(deps) {
   const faits = [];
   for (const a of dus) {
     try {
+      /* Le budget de posts du jour (regle par le createur) : atteint → l'agent DORT.
+         (le mur garde l'heure de chaque post ; on compte ceux des dernieres 24 h.) */
+      if (a.postsParJourMax && typeof deps.feed.depuis === 'function' && deps.feed.depuis(a.token, 86400000, now) >= a.postsParJourMax) {
+        faits.push({ token: a.token, dort: true, raison: 'daily post budget reached' });
+        continue;
+      }
       /* Le carburant (agent_fuel) : sous le cout, l'agent DORT — on ne pense jamais a credit.
          Garde optionnelle : sans deps.fuel, l'ordonnanceur se comporte comme avant. */
       if (deps.fuel && !deps.fuel.peutPenser(a.token, coutPost, deps.plancherUsd)) {
-        faits.push({ token: a.token, dort: true });
+        faits.push({ token: a.token, dort: true, raison: 'out of fuel' });
         continue;
       }
       let liste = [];

@@ -35,6 +35,10 @@ horloge = 3000; S.ajoute(T2, { texte: 'other token' });
 ok(S.tout(10).some((x) => x.token === T2.toLowerCase()) && S.tout(10)[0].token === T2.toLowerCase(), 'le mur global melange les jetons, plus recent en tete, avec le token');
 ok(S.compte(T1) === 3 && S.compte() === 2, 'compte par jeton, et nombre de jetons avec un mur');
 
+console.log('\n-- 4b. depuis : compter les posts d une fenetre --');
+ok(S.depuis(T1, 86400000, horloge) === 3 && S.depuis(T2, 86400000, horloge) === 1, 'depuis() compte les posts recents par jeton (mur borne a 3)');
+ok(S.depuis(T1, 0, horloge) === 0, 'une fenetre nulle ne compte rien');
+
 console.log('\n-- 5. persistance --');
 const relu = F.cree({ fichier: path.join(dir, 'f.json'), maintenant: () => horloge, max: 3 });
 ok(relu.recent(T1, 10).length === 3 && relu.recent(T1, 10)[0].texte === 'fourth', 'le mur survit a un redemarrage');

@@ -68,6 +68,17 @@ const T1 = '0x' + '1'.repeat(40), T2 = '0x' + '2'.repeat(40), C = '0x' + 'a'.rep
   ok(fuel.solde(T1) < 0.01 && fuel.solde(T2) === 0, 'FOO a ete debite apres son post ; BAR, a sec, n a rien depense');
   ok(r.faits.some((f) => f.token === T2.toLowerCase() && f.dort), 'BAR est marque « dort », sans post ecrit');
 
+  console.log('\n-- 5c. le budget de posts du jour (regle du createur) : atteint → dort --');
+  const reg2 = AJ.cree({ fichier: path.join(dir, 'r2.json'), maintenant: () => horloge });
+  const feed2 = AF.cree({ fichier: path.join(dir, 'f2.json'), maintenant: () => horloge });
+  const T3 = '0x' + '3'.repeat(40);
+  reg2.attache({ token: T3, createur: C, persona: 'hype', cadenceMin: 5, postsParJourMax: 1 });
+  r = await H.tour({ registre: reg2, feed: feed2, compose: compterSimple, maintenant: () => horloge });
+  ok(r.agis === 1 && feed2.depuis(T3, 86400000, horloge) === 1, 'premier post : 1 geste, 1 au mur');
+  horloge += 6 * 60000;   /* la cadence est passee, mais le budget du jour (1) est atteint */
+  r = await H.tour({ registre: reg2, feed: feed2, compose: compterSimple, maintenant: () => horloge });
+  ok(r.agis === 0 && r.faits.some((f) => f.dort && /daily post budget/.test(f.raison || '')), 'budget du jour atteint : l agent dort, raison claire');
+
   console.log('\n-- 6. planifie ne demarre rien sans actif --');
   const h = H.planifie({ registre: reg, feed, compose }, { actif: false });
   ok(typeof h.arrete === 'function', 'sans actif : aucune minuterie, un arrete() inoffensif');

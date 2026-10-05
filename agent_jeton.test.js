@@ -50,6 +50,13 @@ ok(!r.ok && r.code === 403, 'un AUTRE que le créateur ne peut pas réattacher l
 r = S.attache({ token: T1, createur: C1, persona: 'stoic', objectif: 'hold the line' });
 ok(r.ok && r.agent.persona === 'stoic' && r.agent.objectif === 'hold the line', 'le créateur met à jour sa persona et son objectif');
 ok(r.agent.symbole === 'FOO' && r.agent.nom === 'Foo Inu', 'une mise à jour partielle préserve symbole et nom');
+
+console.log('\n-- 3b. réglages du créateur : posts/jour et rachat --');
+ok(r.agent.postsParJourMax === R.POSTS_JOUR_DEFAUT && r.agent.rachat.actif === false, 'par défaut : posts/jour au défaut, rachat éteint');
+let rr = S.attache({ token: T1, createur: C1, postsParJourMax: 9999, rachat: { actif: true, budgetPctJour: 200 } });
+ok(rr.agent.postsParJourMax === R.POSTS_JOUR_MAX, 'posts/jour démesuré : ramené au plafond');
+ok(rr.agent.rachat.actif === true && rr.agent.rachat.budgetPctJour === 100, 'le créateur active le rachat ; le budget % est borné à 100');
+ok(S.attache({ token: T1, createur: C1, objectif: 'still shipping' }).agent.rachat.actif === true, 'une mise à jour partielle préserve les réglages de rachat');
 ok(S.parJeton(T1).cree <= S.parJeton(T1).maj, 'la date de création est conservée, maj avance');
 
 console.log('\n-- 4. le plafond par créateur --');

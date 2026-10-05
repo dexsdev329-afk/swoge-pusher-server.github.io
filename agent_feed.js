@@ -77,7 +77,13 @@ function cree(opts) {
 
   function compte(token) { return token ? (charge().mur[bas(token)] || []).length : Object.keys(charge().mur).length; }
 
-  return { ajoute, recent, tout, compte };
+  /** Combien de posts pour ce jeton depuis `sinceMs` ms (p. ex. les dernieres 24 h). */
+  function depuis(token, sinceMs, now) {
+    const t = (now || maintenant()) - Math.max(0, sinceMs || 0);
+    return (charge().mur[bas(token)] || []).filter((e) => e.quand >= t).length;
+  }
+
+  return { ajoute, recent, tout, compte, depuis };
 }
 
 module.exports = { cree, MAX_PAR_JETON };

@@ -41,6 +41,10 @@ const OBJECTIF_MAX = 280;
 const CADENCE_MIN = 5;                 /* minutes entre deux gestes autonomes */
 const CADENCE_MAX = 1440;              /* une fois par jour au plus lent */
 const CADENCE_DEFAUT = 60;
+/* Le createur regle son agent : combien de posts par jour au plus. */
+const POSTS_JOUR_MIN = 1;
+const POSTS_JOUR_MAX = 96;
+const POSTS_JOUR_DEFAUT = 24;
 
 /* Les personas : étiquette montrée au joueur (anglais) + un brief qui guide le
    modèle. Figées ici, jamais en dur dans le peintre, comme la table ph(...). */
@@ -87,8 +91,16 @@ function valide(o) {
   /* Symbole et nom du jeton : le peintre doit pouvoir le nommer. Optionnels, assainis. */
   const symbole = String(o.symbole || '').trim().replace(/^\$/, '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12) || null;
   const nom = String(o.nom || '').trim().replace(/[^\w .&!-]/g, '').slice(0, 40) || null;
+  /* Reglages que le CREATEUR controle : combien de posts par jour, et le rachat-et-brule
+     (declare ici ; inerte tant que l etage trader reel n est pas ouvert, derriere son drapeau). */
+  let postsJour = Math.round(Number(o.postsParJourMax));
+  if (!Number.isFinite(postsJour)) postsJour = POSTS_JOUR_DEFAUT;
+  postsJour = Math.min(POSTS_JOUR_MAX, Math.max(POSTS_JOUR_MIN, postsJour));
+  const rachat = { actif: !!(o.rachat && o.rachat.actif),
+    budgetPctJour: Math.min(100, Math.max(0, Number(o.rachat && o.rachat.budgetPctJour) || 0)) };
   return { config: { token: bas(o.token), createur: bas(o.createur), pool: o.pool ? bas(o.pool) : null,
-                     persona, modele, objectif, cadenceMin: cadence, pouvoirs, langue, symbole, nom } };
+                     persona, modele, objectif, cadenceMin: cadence, pouvoirs, langue, symbole, nom,
+                     postsParJourMax: postsJour, rachat } };
 }
 
 /** Les pouvoirs RÉELLEMENT exécutables aujourd'hui : seulement le social.
@@ -123,7 +135,10 @@ function cree(opts) {
   const vue = (a) => a && ({ token: a.token, pool: a.pool, createur: a.createur, persona: a.persona,
     personaLabel: PERSONAS[a.persona] && PERSONAS[a.persona].label, modele: a.modele, modeleLabel: MODELES[a.modele],
     objectif: a.objectif, cadenceMin: a.cadenceMin, pouvoirs: a.pouvoirs.slice(), pouvoirsActifs: pouvoirsActifs(a.pouvoirs),
-    langue: a.langue, symbole: a.symbole || null, nom: a.nom || null, actif: !!a.actif, cree: a.cree, maj: a.maj || a.cree, dernierGeste: a.dernierGeste || null });
+    langue: a.langue, symbole: a.symbole || null, nom: a.nom || null,
+    postsParJourMax: a.postsParJourMax != null ? a.postsParJourMax : POSTS_JOUR_DEFAUT,
+    rachat: a.rachat || { actif: false, budgetPctJour: 0 },
+    actif: !!a.actif, cree: a.cree, maj: a.maj || a.cree, dernierGeste: a.dernierGeste || null });
 
   /** Attache (ou met à jour) l'agent d'un jeton. Seul le créateur du jeton le peut :
    *  l'appelant a DÉJÀ vérifié que `createur` est bien la session signée.
@@ -138,11 +153,12 @@ function cree(opts) {
     /* Mise à jour : les champs non fournis GARDENT leur valeur actuelle — modifier la
        persona ne doit pas remettre la cadence au défaut. On valide le résultat fusionné. */
     const defini = {};
-    for (const k of ['pool', 'persona', 'modele', 'objectif', 'cadenceMin', 'pouvoirs', 'langue', 'symbole', 'nom']) if (o[k] !== undefined) defini[k] = o[k];
+    for (const k of ['pool', 'persona', 'modele', 'objectif', 'cadenceMin', 'pouvoirs', 'langue', 'symbole', 'nom', 'postsParJourMax', 'rachat']) if (o[k] !== undefined) defini[k] = o[k];
     const base = existant
       ? Object.assign({ token: existant.token, createur: existant.createur, pool: existant.pool, persona: existant.persona,
                         modele: existant.modele, objectif: existant.objectif, cadenceMin: existant.cadenceMin,
-                        pouvoirs: existant.pouvoirs, langue: existant.langue, symbole: existant.symbole, nom: existant.nom }, defini)
+                        pouvoirs: existant.pouvoirs, langue: existant.langue, symbole: existant.symbole, nom: existant.nom,
+                        postsParJourMax: existant.postsParJourMax, rachat: existant.rachat }, defini)
       : Object.assign({ token: o.token, createur: o.createur }, defini);
     const v = valide(base);
     if (v.erreur) return { ok: false, code: 400, raison: v.erreur };
@@ -204,4 +220,5 @@ function cree(opts) {
 }
 
 module.exports = { cree, valide, pouvoirsActifs, PERSONAS, MODELES, POUVOIRS, POUVOIRS_SOCIAUX,
-                   MAX_PAR_CREATEUR, OBJECTIF_MAX, CADENCE_MIN, CADENCE_MAX, CADENCE_DEFAUT };
+                   MAX_PAR_CREATEUR, OBJECTIF_MAX, CADENCE_MIN, CADENCE_MAX, CADENCE_DEFAUT,
+                   POSTS_JOUR_MIN, POSTS_JOUR_MAX, POSTS_JOUR_DEFAUT };
