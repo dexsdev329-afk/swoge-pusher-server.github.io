@@ -82,6 +82,7 @@ lance polycol  "$SRV" node poly_papier.test.js   # Polymarket AI papier : achat 
 lance depv4   "$SRV" node deploiement_v4.test.js   # launchpad V4 et jumeau WETH : portefeuille dedie, parametres relus, une transaction jamais renvoyee, listage, deux envois de valeur seulement, cle jamais rendue
 lance lancv4  "$SRV" node lancement_v4.test.js   # l agent PREPARE un lancement V4 : copies d actions, grands symboles, « SWOGE » et liens douteux refuses ; offert a la page seulement
 lance agjeton "$SRV" node agent_jeton.test.js   # un agent par jeton lance : un seul par jeton, seul le createur le modifie, pouvoirs d argent inertes, du selon la cadence, persistance
+lance agposte "$SRV" node agent_poste.test.js   # l agent d un jeton compose un post dans sa persona : faits recus seulement (aucun chiffre invente), fetch injectable, reserve sans cle, liens nettoyes
 lance acces   "$SRV" node acces.test.js   # portes privees fermees sans cle, gestes d argent en POST seulement ; /credit partage entre le robinet admin et le credit en dollars (29/09)
 lance famille  "$SRV" node famille_client.test.js   # qui demande un prix : famille du client en code fixe, sonde ou demande, jamais le User-Agent brut ni l IP
 lance sondes   "$SRV" node sonde_services.test.js   # catalogue x402 note sans payer : une sonde par service et par 20 h, raison de chaque echec, aucun verdict sous 3 sondes, paiements reels comptes
