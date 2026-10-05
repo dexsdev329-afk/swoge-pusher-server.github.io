@@ -4170,6 +4170,14 @@ const server = http.createServer(async (req, res) => {
       return json(200, { ok: true, personas: agentJeton.PERSONAS, modeles: agentJeton.MODELES, pouvoirs: agentJeton.POUVOIRS,
         note: 'Money powers (buyback/trade/airdrop) can be declared but are inert until the trader stage ships behind its own execute flag.' });
     }
+    if (path === '/agent/annuaire' && req.method === 'GET') {
+      /* L annuaire public des agents : pour la page du site. Lecture seule, jamais les secrets. */
+      const agents = REGISTRE_AGENTS.toutes().slice(0, 100).map((a) => Object.assign({}, a, {
+        hasX: COMPTES_X.aDesCreds(a.token), handle: COMPTES_X.handleDe(a.token),
+        posts: MUR_AGENTS.compte(a.token), dernierPost: MUR_AGENTS.recent(a.token, 1)[0] || null,
+        fuelUsd: FUEL_AGENTS.vue(a.token).soldeUsd, tresorUsd: TRESOR_AGENTS.vue(a.token).soldeUsd }));
+      return json(200, { ok: true, agents, total: REGISTRE_AGENTS.compte(), horloge: process.env.AGENT_HORLOGE === '1' });
+    }
     const mFeed = path.match(/^\/agent\/jeton\/(0x[0-9a-fA-F]{40})\/feed$/);
     if (mFeed && req.method === 'GET') {
       const q = new URLSearchParams(req.url.split('?')[1] || '');

@@ -51,9 +51,11 @@ const CREA = '0x' + 'c'.repeat(40);
     return { code: r.status, j: await r.json().catch(() => null) };
   };
 
-  console.log('-- 1. personas publiques --');
+  console.log('-- 1. personas publiques + annuaire --');
   let r = await get('/agent/personas');
   ok(r.code === 200 && r.j.personas.stoic && r.j.modeles.claude && /inert/.test(r.j.note), 'GET /agent/personas : personas, modeles, et la note que les pouvoirs d argent sont inertes');
+  r = await get('/agent/annuaire');
+  ok(r.code === 200 && r.j.ok && Array.isArray(r.j.agents) && typeof r.j.horloge === 'boolean', 'GET /agent/annuaire : la liste publique des agents + l etat de l horloge');
 
   console.log('\n-- 2. attacher est reserve au proprietaire --');
   r = await post('/agent/attach', { token: TOKEN, createur: CREA, pool: POOL, persona: 'builder', objectif: 'ship weekly' }, false);

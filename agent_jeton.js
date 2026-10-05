@@ -216,7 +216,10 @@ function cree(opts) {
 
   function compte() { return Object.keys(charge().agents).length; }
 
-  return { attache, bascule, noteGeste, parJeton, parCreateur, dus, compte, vue };
+  /** Tous les agents (vue publique), du plus recent au plus ancien — pour l annuaire du site. */
+  function toutes() { return Object.values(charge().agents).map(vue).sort((x, y) => y.cree - x.cree); }
+
+  return { attache, bascule, noteGeste, parJeton, parCreateur, dus, compte, toutes, vue };
 }
 
 module.exports = { cree, valide, pouvoirsActifs, PERSONAS, MODELES, POUVOIRS, POUVOIRS_SOCIAUX,
