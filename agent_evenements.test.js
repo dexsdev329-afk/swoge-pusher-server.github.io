@@ -39,5 +39,19 @@ console.log('\n-- entrees absentes : aucun faux evenement --');
 ok(ev.detecte(null, {}).evenement === null, 'instantane vide → rien');
 ok(ev.detecte(null, { priceChangeH1: 'NaNish' }).evenement === null, 'valeur non numerique → ignoree, rien');
 
+console.log('\n-- la veille securite : alerte sur une TRANSITION vers le pire, jamais sur un etat --');
+ok(ev.detecte({ secu: { honeypot: 0 } }, { secu: { honeypot: 1 } }).evenement.type === 'security_alert', 'honeypot 0 → 1 : alerte securite');
+ok(ev.detecte({ secu: { honeypot: 1 } }, { secu: { honeypot: 1 } }).evenement === null, 'honeypot deja a 1 : aucune alerte (pas de spam, c est un etat)');
+ok(ev.detecte(null, { secu: { honeypot: 1 } }).evenement === null, 'sans instantane precedent : pas d alerte (on ne connait pas la base)');
+ok(ev.detecte({ secu: { canExit: true } }, { secu: { canExit: false } }).evenement.detail.quoi === 'exit_closed', 'la vente qui se ferme (canExit true → false) : alerte');
+ok(ev.detecte({ secu: { sellTaxPct: 2 } }, { secu: { sellTaxPct: 15 } }).evenement.detail.quoi === 'sell_tax', 'taxe de vente 2 % → 15 % : alerte (saut net au-dela du seuil)');
+ok(ev.detecte({ secu: { sellTaxPct: 2 } }, { secu: { sellTaxPct: 7 } }).evenement === null, 'taxe 2 % → 7 % : sous le seuil d alerte, rien');
+ok(ev.detecte({ liqUsd: 50000 }, { liqUsd: 20000 }).evenement.detail.quoi === 'liquidity', 'liquidite 50k → 20k (-60 %) : alerte retrait de liquidite');
+ok(ev.detecte({ liqUsd: 50000 }, { liqUsd: 40000 }).evenement === null, 'liquidite 50k → 40k (-20 %) : sous le seuil, rien');
+ok(/SECURITY ALERT/.test(ev.phrase({ type: 'security_alert', detail: { quoi: 'honeypot' } })), 'la phrase securite est explicite (SECURITY ALERT)');
+/* La securite PRIME sur un post de prix : meme avec une forte hausse, l alerte passe devant. */
+const rs = ev.detecte({ secu: { honeypot: 0 }, liqUsd: 50000 }, { secu: { honeypot: 1 }, priceChangeH1: 35 });
+ok(rs.evenement.type === 'security_alert', 'une alerte securite passe AVANT une vantardise de prix (+35 %)');
+
 console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
 process.exit(rates ? 1 : 0);

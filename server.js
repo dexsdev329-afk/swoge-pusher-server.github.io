@@ -167,6 +167,7 @@ let calendrierAuto = null;          // les minuteries de l alimentation
 let xQuotidien = null;
 let tgCmd = null;
 let horlogeAgents = null;           // les agents par jeton (AGENT_HORLOGE)
+let financeInterval = null;         // l auto-financement du carburant depuis les frais (#6)
 const journal = require('./journal');
 const adminlog = require('./adminlog');
 const reglages = require('./reglages');
@@ -1632,6 +1633,8 @@ const agentEvenements = require('./agent_evenements');
 const agentMesure = require('./agent_mesure');
 const agentTg = require('./agent_tg');
 const agentCaisse = require('./agent_caisse');
+/* L auto-financement du carburant depuis les frais (#6) : pur, injectable, essai par defaut. */
+const agentFinance = require('./agent_finance');
 /* Lancer un token sur Solana via Pump.fun (PumpPortal, non custodial : la page signe). */
 const solanaPump = require('./solana_pump');
 /* Le self-service du createur : il attache l agent de SON jeton sans cle admin,
@@ -1784,6 +1787,16 @@ async function evenementAgent(agent) {
     const j = await r.json().catch(() => ({}));
     const g = (j.result && (j.result[token] || j.result[token.toLowerCase()])) || null;
     if (g && g.holder_count != null) snap.holders = Number(g.holder_count);
+    /* VEILLE SECURITE (#7) : on tire du MEME appel GoPlus (aucun appel en plus) les champs
+       qui exposent le holder — honeypot / vente bloquee et taxe de vente. Lus seulement s ils
+       sont nets (une panne laisse secu vide → aucune fausse alerte). agent_evenements compare
+       au precedent et n alerte que sur une transition vers le pire. */
+    if (g) {
+      const secu = {};
+      if (g.is_honeypot != null || g.cannot_sell_all != null) secu.honeypot = (String(g.is_honeypot) === '1' || String(g.cannot_sell_all) === '1') ? 1 : 0;
+      if (g.sell_tax != null && g.sell_tax !== '' && isFinite(Number(g.sell_tax))) secu.sellTaxPct = Number(g.sell_tax) * 100;
+      if (Object.keys(secu).length) snap.secu = secu;
+    }
   } catch (e) { /* GoPlus muet */ }
   const prev = SNAP_PREV.get(token) || null;
   SNAP_PREV.set(token, snap); snapSauve();
@@ -1889,6 +1902,67 @@ function tourAgents(o) {
     registre: REGISTRE_AGENTS, feed: MUR_AGENTS, fuel: FUEL_AGENTS,
     pense: (a) => penseAgent(a),
   }, o || {}));
+}
+/* LA CAISSE (partagee par la recharge manuelle ET l auto-financement #6) : affecte un montant
+   USD a un agent via la cascade (carburant d abord = notre revenu, puis tresor, puis rachat).
+   Comptabilite pure, rien d on-chain. Le cumul recu borne les paliers. */
+function crediteCaisse(token, usd, source) {
+  token = String(token).toLowerCase();
+  const part = agentCaisse.repartit(usd, CAISSE_RECU.vue(token).soldeUsd);
+  const src = source === 'fees' ? 'fees' : 'topup';
+  if (part.fuel > 0) FUEL_AGENTS.credite(token, part.fuel, src);
+  if (part.tresor > 0) TRESOR_AGENTS.credite(token, part.tresor, src);
+  if (part.rachat > 0) TRESOR_AGENTS.credite(token, part.rachat, 'rachat-earmark');
+  CAISSE_RECU.credite(token, usd, src);
+  return { repartition: part, fuel: FUEL_AGENTS.vue(token).soldeUsd, tresor: TRESOR_AGENTS.vue(token).soldeUsd, recuTotalUsd: CAISSE_RECU.vue(token).soldeUsd };
+}
+/* ---- AUTO-FINANCEMENT DU CARBURANT DEPUIS LES FRAIS (#6) ----
+   Par defaut en ESSAI (AGENT_FEE_AUTO != 1) : le passage JOURNALISE ce qu il crediterait,
+   sans rien crediter — « mesurer avant de bouger de l argent ». A 1, il credite reellement.
+   Le carburant est un credit en dollars (il paie NOTRE API) : rien d on-chain n est signe ici. */
+const AGENT_FEE_AUTO = String(process.env.AGENT_FEE_AUTO || '0') === '1';
+const FEE_CURSEUR_FICHIER = require('path').join(cfg.DATA_DIR, 'agent_fee_curseur.json');
+const FEE_CURSEUR = (() => { try { return new Map(Object.entries(JSON.parse(require('fs').readFileSync(FEE_CURSEUR_FICHIER, 'utf8')))); } catch (e) { return new Map(); } })();
+function feeCurseurSauve() {
+  try { const fs = require('fs'); fs.mkdirSync(cfg.DATA_DIR, { recursive: true });
+    const tmp = FEE_CURSEUR_FICHIER + '.' + process.pid + '.tmp'; const fd = fs.openSync(tmp, 'w');
+    try { fs.writeSync(fd, JSON.stringify(Object.fromEntries(FEE_CURSEUR))); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, FEE_CURSEUR_FICHIER); } catch (e) { /* jamais bloquant */ }
+}
+/* NOTRE part de frais (ethToSwoge) d un jeton DEPUIS le dernier bloc lu, en USD. Scanne le
+   launchpad ETH (FeesCollected). Au premier passage, pose le curseur au bloc courant (on part
+   de maintenant, sans scanner l historique). Fenetre bornee. Fail-closed : toute panne → null. */
+const FEE_ABI = ['event FeesCollected(address indexed token, uint256 ethToCreator, uint256 ethToSwoge, uint256 tokToCreator, uint256 tokToSwoge)'];
+async function feesDepuisDe(token) {
+  try {
+    const t = String(token).toLowerCase();
+    const prov = lecteurRh();
+    const dernier = await prov.getBlockNumber();
+    const depuis = FEE_CURSEUR.has(t) ? Number(FEE_CURSEUR.get(t)) : null;
+    if (depuis == null) { FEE_CURSEUR.set(t, dernier); feeCurseurSauve(); return { feeShareUsd: 0, curseur: dernier }; }
+    if (!(dernier > depuis)) return { feeShareUsd: 0, curseur: dernier };
+    const from = Math.max(depuis + 1, dernier - 50000);   /* fenetre bornee : jamais un scan du genesis */
+    const iface = new ethers.utils.Interface(FEE_ABI);
+    const logs = await prov.getLogs({ address: LAUNCHPADS_CONNUS[0], topics: [iface.getEventTopic('FeesCollected'), ethers.utils.hexZeroPad(t, 32)], fromBlock: from, toBlock: dernier });
+    let wei = ethers.BigNumber.from(0);
+    for (const l of logs) { try { wei = wei.add(iface.parseLog(l).args.ethToSwoge); } catch (e) {} }
+    const ethUsd = await miroir.litEthUsd();
+    if (!(ethUsd > 0)) return null;   /* sans cours, on ne devine pas un montant USD */
+    return { feeShareUsd: Number(ethers.utils.formatEther(wei)) * ethUsd, curseur: dernier };
+  } catch (e) { return null; }
+}
+async function financeAgents() {
+  const tokens = REGISTRE_AGENTS.toutes().filter((a) => a.pool).map((a) => a.token);
+  if (!tokens.length) return { faits: [] };
+  const r = await agentFinance.alimente({
+    tokens, pctFuel: AGENT_FEE_TO_FUEL_PCT, applique: AGENT_FEE_AUTO,
+    feesDepuis: feesDepuisDe,
+    credite: async (t, usd) => crediteCaisse(t, usd, 'fees').repartition,
+    poseCurseur: async (t, c) => { FEE_CURSEUR.set(String(t).toLowerCase(), c); feeCurseurSauve(); },
+  });
+  const faits = r.faits.filter((f) => f.credite || f.auraitCredite || f.erreur);
+  if (faits.length) console.log('[finance] ' + (AGENT_FEE_AUTO ? 'credite' : 'ESSAI (AGENT_FEE_AUTO!=1, rien credite)') + ' : ' + JSON.stringify(faits).slice(0, 500));
+  return r;
 }
 /* LE CREATEUR ON-CHAIN d un jeton lance par un launchpad SWOGE V4. On lit
    `instant(token).creator` sur CHAQUE launchpad relu (ETH et $SWOGE) ; le
@@ -4657,16 +4731,10 @@ const server = http.createServer(async (req, res) => {
            (notre part de frais pour ce jeton → on en prend AGENT_FEE_TO_FUEL_PCT %). */
         const usd = Number(q.ofFeeShareUsd) > 0 ? Math.round(Number(q.ofFeeShareUsd) * (AGENT_FEE_TO_FUEL_PCT / 100) * 100) / 100 : Number(q.usd);
         if (!(usd > 0)) return json(400, { ok: false, raison: 'pass usd>0, or ofFeeShareUsd>0 (we take ' + AGENT_FEE_TO_FUEL_PCT + '% of it)' });
-        const part = agentCaisse.repartit(usd, CAISSE_RECU.vue(token).soldeUsd);
-        const source = q.source === 'fees' ? 'fees' : 'topup';
-        if (part.fuel > 0) FUEL_AGENTS.credite(token, part.fuel, source);
-        /* tresor + part de rachat (fléchée rachat) vont au tresor papier : le rachat
-           s execute depuis le tresor via la boucle trader (papier), declenche par l esprit. */
-        if (part.tresor > 0) TRESOR_AGENTS.credite(token, part.tresor, source);
-        if (part.rachat > 0) TRESOR_AGENTS.credite(token, part.rachat, 'rachat-earmark');
-        CAISSE_RECU.credite(token, usd, source);
-        return json(200, { ok: true, token, recu: usd, repartition: part,
-          fuel: FUEL_AGENTS.vue(token).soldeUsd, tresor: TRESOR_AGENTS.vue(token).soldeUsd, recuTotalUsd: CAISSE_RECU.vue(token).soldeUsd });
+        /* La MEME cascade que l auto-financement (#6), factorisee dans crediteCaisse. */
+        const c = crediteCaisse(token, usd, q.source);
+        return json(200, { ok: true, token, recu: usd, repartition: c.repartition,
+          fuel: c.fuel, tresor: c.tresor, recuTotalUsd: c.recuTotalUsd });
       }
       if (path === '/agent/trader/decide') {
         /* La boucle trader EN PAPIER : pare-feu → policy → signer papier → compta. Rien de reel.
@@ -10585,6 +10653,14 @@ server.listen(cfg.PORT, () => {
   horlogeAgents = agentHorloge.planifie({ registre: REGISTRE_AGENTS, feed: MUR_AGENTS, fuel: FUEL_AGENTS, pense: (a) => penseAgent(a) },
     { actif: process.env.AGENT_HORLOGE === '1', periodeMs: 5 * 60000 });
   if (process.env.AGENT_HORLOGE === '1') console.log('[agent] horloge ARMEE (agents par jeton)'); else console.log('[agent] horloge ETEINTE (AGENT_HORLOGE != 1)');
+  /* AUTO-FINANCEMENT DU CARBURANT DEPUIS LES FRAIS (#6), seulement si l horloge est armee.
+     Toutes les 30 min : NOTRE part de frais par jeton → carburant (cascade). Par defaut en ESSAI
+     (AGENT_FEE_AUTO != 1) : il JOURNALISE ce qu il crediterait, sans rien crediter — mesurer d abord. */
+  if (process.env.AGENT_HORLOGE === '1') {
+    financeInterval = setInterval(() => { financeAgents().catch((e) => console.error('[finance] ' + ((e && e.message) || e))); }, 30 * 60000);
+    if (financeInterval.unref) financeInterval.unref();
+    console.log('[finance] auto-financement ' + (AGENT_FEE_AUTO ? 'ACTIF (credite)' : 'en ESSAI (AGENT_FEE_AUTO!=1 : journalise seulement)'));
+  }
 });
 
 function shutdown() {
@@ -10593,6 +10669,7 @@ function shutdown() {
   if (xQuotidien) xQuotidien.arrete();
   if (tgCmd) tgCmd.arrete();
   if (horlogeAgents) horlogeAgents.arrete();
+  if (financeInterval) clearInterval(financeInterval);
   persistComplet(); // instantane complet : rien ne se perd au redeploiement
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
      qui attend encore doit partir maintenant, sinon les dernieres manches
