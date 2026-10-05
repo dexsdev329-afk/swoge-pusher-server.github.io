@@ -41,7 +41,7 @@ const FENETRE_MS = 15 * 60 * 1000;
    une signature pour « configure » ne vaut pas pour « unlink-x ». Borne le rejeu
    (constat de l'audit, 05/10) : une signature captée ne sert qu'à CE geste, sur
    SON propre jeton, et dans la fenêtre. */
-const GESTES = ['configure', 'pause', 'link-x', 'unlink-x'];
+const GESTES = ['configure', 'pause', 'link-x', 'unlink-x', 'link-tg', 'unlink-tg'];
 
 /** Le message EXACT que le portefeuille doit signer. Déterministe : la page et
  *  le serveur le reconstruisent à l'identique à partir du jeton, du geste et de

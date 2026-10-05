@@ -176,6 +176,14 @@ const CREA = '0x' + 'c'.repeat(40);
   r = await post('/agent/x/unlink', { token: T2, ts, signature: sig }, false);
   ok(r.code === 503, 'x/unlink : meme preuve on-chain requise');
 
+  console.log('\n-- 12. le createur relie un BOT TELEGRAM (signe, sans cle admin) --');
+  r = await post('/agent/tg/connect', { token: T2, ts, botToken: '123:AAAbbbcccDDDeeeFFFggghhhIIIjjjkkk111', chatId: '-100123' }, false);
+  ok(r.code === 400 && /signature/.test(r.j.raison), 'tg/connect sans signature : 400');
+  r = await post('/agent/tg/connect', { token: T2, ts, signature: sig, botToken: '123:AAAbbbcccDDDeeeFFFggghhhIIIjjjkkk111', chatId: '-100123' }, false);
+  ok(r.code === 503 && /on-chain/.test(r.j.raison), 'tg/connect signe mais RPC muet : 503 (preuve requise avant tout stockage)');
+  r = await post('/agent/tg/unlink', { token: T2, ts, signature: sig }, false);
+  ok(r.code === 503, 'tg/unlink : meme preuve on-chain requise');
+
   global.fetch = vrai;
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));
   process.exit(rates ? 1 : 0);

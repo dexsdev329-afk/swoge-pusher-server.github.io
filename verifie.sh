@@ -91,6 +91,7 @@ lance agfeed  "$SRV" node agent_feed.test.js    # le mur d un agent : plus recen
 lance aghorl  "$SRV" node agent_horloge.test.js # l ordonnanceur : seulement les dus, post sur le mur (surX si compte relie, jamais le maison), precedents transmis, un echec n arrete pas les autres, planifie inerte sans actif
 lance agx     "$SRV" node agent_x.test.js       # compte X par jeton : creds chiffrees (fail-closed sans cle), handle public jamais les secrets, publication signee app+jeton, refus propres
 lance agxoauth "$SRV" node agent_x_oauth.test.js # liaison X cote createur : tango OAuth 1.0a PIN (request_token sans jeton + oauth_callback oob, puis access_token + oauth_verifier), refus propres, aucun secret ecrit
+lance agtg    "$SRV" node agent_tg.test.js      # bot Telegram par jeton : jeton du bot chiffre (fail-closed sans cle), groupe public jamais le secret, poste + epingle, formes refusees, refus propres
 lance agfuel  "$SRV" node agent_fuel.test.js    # le carburant par jeton : versement de bienvenue une fois, credite (volume/versement) / debite au cout, jamais a credit, peutPenser garde l avance, persistance
 lance parefeu "$SRV" node pare_feu.test.js      # pare-feu de prompt (8b papier) : bloque fonds/cles/injection/usurpation/cache, retire les adresses, deux classifieurs fail-closed
 lance policy  "$SRV" node policy_argent.test.js # policy engine (8b papier) : liste blanche, plafonds action/heure/jour, impact-prix, cooldown, tresor ; deterministe et persistant

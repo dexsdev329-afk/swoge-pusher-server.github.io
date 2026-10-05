@@ -1624,6 +1624,7 @@ const agentEsprit = require('./agent_esprit');
 const agentModele = require('./agent_modele');
 const agentMemoire = require('./agent_memoire');
 const agentEvenements = require('./agent_evenements');
+const agentTg = require('./agent_tg');
 /* Le self-service du createur : il attache l agent de SON jeton sans cle admin,
    la preuve etant une signature + la lecture du createur on-chain (agent_createur). */
 const agentCreateur = require('./agent_createur');
@@ -1637,6 +1638,8 @@ function xEnCoursNettoie() { const t = Date.now(); for (const [k, v] of X_EN_COU
 const REGISTRE_AGENTS = agentJeton.cree({});
 const MUR_AGENTS = agentFeed.cree({});
 const COMPTES_X = agentX.cree({});
+/* Le bot Telegram par jeton : poste/epingle dans le groupe du jeton (miroir de X). */
+const COMPTES_TG = agentTg.cree({});
 const FUEL_AGENTS = agentFuel.cree({});
 /* Le tresor (fonds investissables du jeton) et les garde-fous : argent EN PAPIER. */
 const TRESOR_AGENTS = agentFuel.cree({ fichier: require('path').join(cfg.DATA_DIR, 'agent_tresor.json'), grantInitialUsd: 0 });
@@ -1675,8 +1678,17 @@ async function posteAgent(agent, post) {
   }
   let surX = false, url = null;
   if (COMPTES_X.aDesCreds(token)) { try { const p = await COMPTES_X.poste(token, { texte: post.texte, mediaId }); surX = !!p.surX; url = p.url || null; } catch (e) { /* X en echec : reste sur le mur */ } }
-  MUR_AGENTS.ajoute(token, { texte: post.texte, via: 'esprit', surX, url, faits: [] });
-  return { surX, url };
+  /* MIROIR TELEGRAM : si un bot est relie, on poste aussi dans le groupe du jeton,
+     et si c est parti sur X on EPINGLE ce message (« pin nos post x »). Un echec TG
+     ne fait jamais rater le post : il reste sur le mur et sur X. */
+  let surTg = false;
+  if (COMPTES_TG.aDesCreds(token)) {
+    try { const t = await COMPTES_TG.poste(token, { texte: post.texte, lien: url || undefined });
+      if (t && t.ok) { surTg = true; if (surX && t.messageId) { try { await COMPTES_TG.pinne(token, t.messageId); } catch (e) {} } } }
+    catch (e) { /* Telegram en echec : on garde le reste */ }
+  }
+  MUR_AGENTS.ajoute(token, { texte: post.texte, via: 'esprit', surX, url, surTg, faits: [] });
+  return { surX, url, surTg };
 }
 /* La boucle trader EN PAPIER pour un jeton (reutilisee par la route et par l esprit). */
 function traderDecide(token, action, montantUsd, justification) {
@@ -4322,7 +4334,8 @@ const server = http.createServer(async (req, res) => {
         trades: SIGNER_AGENTS.journal(mTrades[1], Math.min(50, Math.max(1, Number(q.get('n')) || 20))) });
     }
     const mRead = path.match(/^\/agent\/jeton\/(0x[0-9a-fA-F]{40})$/);
-    if (mRead && req.method === 'GET') return json(200, { ok: true, agent: REGISTRE_AGENTS.parJeton(mRead[1]), hasX: COMPTES_X.aDesCreds(mRead[1]), handle: COMPTES_X.handleDe(mRead[1]), fuel: FUEL_AGENTS.vue(mRead[1]), tresor: TRESOR_AGENTS.vue(mRead[1]) });
+    if (mRead && req.method === 'GET') return json(200, { ok: true, agent: REGISTRE_AGENTS.parJeton(mRead[1]), hasX: COMPTES_X.aDesCreds(mRead[1]), handle: COMPTES_X.handleDe(mRead[1]),
+      hasTg: COMPTES_TG.aDesCreds(mRead[1]), telegram: COMPTES_TG.chatDe(mRead[1]), fuel: FUEL_AGENTS.vue(mRead[1]), tresor: TRESOR_AGENTS.vue(mRead[1]) });
     if (path === '/agent/jetons' && req.method === 'GET') {
       const c = String((new URLSearchParams(req.url.split('?')[1] || '')).get('creator') || '');
       if (!/^0x[0-9a-fA-F]{40}$/.test(c)) return json(400, { ok: false, raison: 'pass ?creator=0x...' });
@@ -4408,6 +4421,32 @@ const server = http.createServer(async (req, res) => {
       const c = COMPTES_X.connecte(token, { accessToken: fx.accessToken, accessSecret: fx.accessSecret, handle: fx.handle });
       if (!c.ok) return json(c.code || 400, c);
       return json(200, { ok: true, handle: c.handle });
+    }
+    /* PUBLIC, signé : le CRÉATEUR relie (ou délie) le BOT TELEGRAM de SON jeton.
+       Pas d OAuth : il fournit un jeton de bot (BotFather) + l id du groupe. On
+       confirme en direct (getChat) que le bot atteint le groupe, puis on chiffre le
+       jeton du bot au repos. Même preuve que les autres gestes (signature + créateur
+       on-chain). Le jeton du bot ne ressort jamais. */
+    if (path === '/agent/tg/connect' || path === '/agent/tg/unlink') {
+      const ipc = compteurs.ip(qui(req)), tc = Date.now(), lc = (RECHERCHES_SERVICES.get('agtg:' + ipc) || []).filter((x) => tc - x < 10 * 60e3);
+      if (lc.length >= 20) return json(429, { ok: false, raison: 'too many requests - try again in a few minutes' });
+      lc.push(tc); RECHERCHES_SERVICES.set('agtg:' + ipc, lc);
+      const geste = path === '/agent/tg/unlink' ? 'unlink-tg' : 'link-tg';
+      const preuve = await preuveCreateur(q, geste);
+      if (!preuve.ok) return json(preuve.code || 403, { ok: false, raison: preuve.raison });
+      marquePreuve(q);
+      const token = String(q.token).toLowerCase();
+      if (path === '/agent/tg/unlink') {
+        const u = COMPTES_TG.oublie(token);
+        return json(u.ok ? 200 : (u.code || 400), u);
+      }
+      const c = COMPTES_TG.connecte(token, { botToken: q.botToken, chatId: q.chatId });
+      if (!c.ok) return json(c.code || 400, c);
+      /* On confirme que le bot atteint vraiment le groupe (et on recupere le titre). */
+      const info = await COMPTES_TG.chatInfo(token);
+      if (!info || info.erreur) { COMPTES_TG.oublie(token); return json(502, { ok: false, raison: 'the bot could not reach that group — add it to the group (as admin to pin). ' + ((info && info.erreur) || '') }); }
+      COMPTES_TG.majTitre(token, info.titre || null);
+      return json(200, { ok: true, chatId: c.chatId, titre: info.titre || null, type: info.type || null });
     }
     if (!admin) return json(403, { ok: false, raison: 'owner only for now (x-admin-key)' });
     try {
