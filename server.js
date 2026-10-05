@@ -1626,6 +1626,8 @@ const agentMemoire = require('./agent_memoire');
 const agentEvenements = require('./agent_evenements');
 const agentTg = require('./agent_tg');
 const agentCaisse = require('./agent_caisse');
+/* Lancer un token sur Solana via Pump.fun (PumpPortal, non custodial : la page signe). */
+const solanaPump = require('./solana_pump');
 /* Le self-service du createur : il attache l agent de SON jeton sans cle admin,
    la preuve etant une signature + la lecture du createur on-chain (agent_createur). */
 const agentCreateur = require('./agent_createur');
@@ -4742,6 +4744,31 @@ const server = http.createServer(async (req, res) => {
     try { q = JSON.parse((await corps(req, 1024)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
     try { const r = await tgLance.annonce({ tg: q.tg, tx: q.tx }); return json(r.ok ? 200 : 400, r); }
     catch (e) { return json(502, { ok: false, raison: 'could not read the chain right now' }); }
+  }
+
+  /* ---- LANCER UN JETON SUR SOLANA via Pump.fun (05/10) ----
+     NON CUSTODIAL : la page genere le mint et signe avec le portefeuille Solana du
+     createur. Le serveur ne fait que RELAYER les deux appels Pump.fun/PumpPortal
+     (eviter le CORS cote navigateur) ; aucune cle ici. Public, debite comme les offres. */
+  if (path === '/launchpad/solana/metadata' || path === '/launchpad/solana/offre') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    if (!offreDebit(req)) return json(429, { ok: false, raison: 'too many tries - wait a minute' });
+    if (path === '/launchpad/solana/metadata') {
+      let q; try { q = JSON.parse((await corps(req, 6 * 1024 * 1024)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request (image too large? keep it under ~4 MB)' }); }
+      const image = Buffer.from(String(q.imageBase64 || '').replace(/^data:[^,]+,/, ''), 'base64');
+      try {
+        const r = await solanaPump.metadataIpfs({ name: q.name, symbol: q.symbol, description: q.description, twitter: q.twitter, telegram: q.telegram, website: q.website, image, imageType: q.imageType }, {});
+        return json(r.ok ? 200 : 502, r);
+      } catch (e) { return json(502, { ok: false, raison: 'pump.fun metadata error' }); }
+    }
+    let q; try { q = JSON.parse((await corps(req, 8192)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    try {
+      const r = await solanaPump.offreCreation({ publicKey: q.publicKey, mint: q.mint, name: q.name, symbol: q.symbol, uri: q.uri, devBuySol: q.devBuySol }, {});
+      return json(r.ok ? 200 : 502, r);
+    } catch (e) { return json(502, { ok: false, raison: 'PumpPortal error' }); }
   }
 
   /* Polymarket AI : le releve de la colonie papier (poly_papier.js). Public, lisible depuis le site. */

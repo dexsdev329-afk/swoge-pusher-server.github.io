@@ -81,6 +81,7 @@ lance preuves  "$SRV" node preuves_x402.test.js   # paiements verifiables : agen
 lance polycol  "$SRV" node poly_papier.test.js   # Polymarket AI papier : achat au prix demande en remontant le carnet, frais officiels lus sur le marche, TWAP 60 s, temoin Coin, Brier, aucun verdict sous 100
 lance depv4   "$SRV" node deploiement_v4.test.js   # launchpad V4 et jumeau WETH : portefeuille dedie, parametres relus, une transaction jamais renvoyee, listage, deux envois de valeur seulement, cle jamais rendue
 lance lancv4  "$SRV" node lancement_v4.test.js   # l agent PREPARE un lancement V4 : copies d actions, grands symboles, « SWOGE » et liens douteux refuses ; offert a la page seulement
+lance solpump "$SRV" node solana_pump.test.js    # lancer sur Solana via Pump.fun (PumpPortal) : non custodial, metadataIpfs + offreCreation (create pool=pump), refus propres, fetch injecte
 lance agjeton "$SRV" node agent_jeton.test.js   # un agent par jeton lance : un seul par jeton, seul le createur le modifie, pouvoirs d argent inertes, du selon la cadence, persistance
 lance agposte "$SRV" node agent_poste.test.js   # l agent d un jeton compose un post dans sa persona : faits recus seulement (aucun chiffre invente), fetch injectable, reserve sans cle, liens nettoyes
 lance agfaits "$SRV" node agent_faits.test.js   # les faits live d un jeton : une valeur absente ne cree aucun fait, GoPlus tri-etat (inconnu != vert), une source qui tombe n efface pas les autres
