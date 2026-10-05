@@ -54,9 +54,13 @@ async function tour(deps) {
         let res;
         try { res = await deps.pense(a); } catch (e) { faits.push({ token: a.token, erreur: String((e && e.message) || e).slice(0, 120) }); continue; }
         if (res && res.dort) { faits.push({ token: a.token, dort: true, raison: res.raison || 'asleep' }); continue; }
-        const aPoste = !!(res && res.actions && res.actions.some((x) => x.action === 'post'));
-        if (aPoste) deps.registre.noteGeste(a.token, 'post', now);
-        faits.push({ token: a.token, pense: true, actions: (res && res.actions) || [] });
+        const actions = (res && res.actions) || [];
+        /* La cadence du createur avance a CHAQUE pulse EXECUTE (penser coute du carburant), pas
+           seulement quand un post part : sinon un agent qui lit, repond ou attend se redeclenche
+           a chaque tour (jusqu a toutes les 60 s) et vide le carburant plus vite que la cadence
+           reglee (constat de l audit, 05/10). Un pulse qui a poste garde le geste « post ». */
+        deps.registre.noteGeste(a.token, actions.some((x) => x.action === 'post') ? 'post' : 'pulse', now);
+        faits.push({ token: a.token, pense: true, actions });
         continue;
       }
       /* Le carburant (agent_fuel) : sous le cout, l'agent DORT — on ne pense jamais a credit.

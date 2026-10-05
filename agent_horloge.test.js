@@ -92,6 +92,19 @@ const T1 = '0x' + '1'.repeat(40), T2 = '0x' + '2'.repeat(40), C = '0x' + 'a'.rep
   ok(reg3.parJeton(A1).dernierGeste && reg3.parJeton(A1).dernierGeste.quoi === 'post', 'un post de l esprit note le geste (cadence)');
   ok(r.faits.find((f) => f.token === A2 && f.dort), 'A2 : l esprit a dit qu il dort, rapporte tel quel');
 
+  console.log('\n-- 5e. un pulse SANS post (reponse / attente) avance quand meme la cadence --');
+  /* Correctif audit 05/10 : penser coute du carburant ; un agent qui repond ou attend ne doit pas
+     se redeclencher a chaque tour. Le geste avance (quoi « pulse »), donc il n est plus du tout de suite. */
+  const B1 = '0x' + 'f'.repeat(40);
+  const reg4 = AJ.cree({ fichier: path.join(dir, 'r4.json'), maintenant: () => horloge });
+  const feed4 = AF.cree({ fichier: path.join(dir, 'f4.json'), maintenant: () => horloge });
+  reg4.attache({ token: B1, createur: C, persona: 'stoic', cadenceMin: 5 });
+  horloge += 10 * 60000;
+  const repondSeul = async () => ({ actions: [{ action: 'reply' }] });
+  r = await H.tour({ registre: reg4, feed: feed4, pense: repondSeul, maintenant: () => horloge });
+  ok(reg4.parJeton(B1).dernierGeste && reg4.parJeton(B1).dernierGeste.quoi === 'pulse', 'une reponse seule note le geste « pulse » (la cadence avance)');
+  ok(reg4.dus(horloge).length === 0, 'et l agent n est plus du tout de suite : la cadence le protege du re-pulse');
+
   console.log('\n-- 6. planifie ne demarre rien sans actif --');
   const h = H.planifie({ registre: reg, feed, compose }, { actif: false });
   ok(typeof h.arrete === 'function', 'sans actif : aucune minuterie, un arrete() inoffensif');

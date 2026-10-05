@@ -1750,7 +1750,20 @@ function traderDecide(token, action, montantUsd, justification) {
    + GoPlus), compare au precedent (en memoire du process). Donne a l agent une RAISON
    de parler. Tout est protege : une panne rend null, jamais une erreur qui casse le tour.
    L instantane precedent vit en memoire du process (un redemarrage saute un palier, sans gravite). */
-const SNAP_PREV = new Map();
+/* Instantane precedent DURABLE (tmp+fsync+rename) : un redemarrage Railway n efface plus le
+   dernier etat, donc un palier de holders franchi autour d un redemarrage n est plus perdu. */
+const SNAP_FICHIER = require('path').join(cfg.DATA_DIR, 'agent_snap_prev.json');
+const SNAP_PREV = (() => { try { return new Map(Object.entries(JSON.parse(require('fs').readFileSync(SNAP_FICHIER, 'utf8')))); } catch (e) { return new Map(); } })();
+function snapSauve() {
+  try {
+    const fs = require('fs');
+    fs.mkdirSync(cfg.DATA_DIR, { recursive: true });
+    const tmp = SNAP_FICHIER + '.' + process.pid + '.tmp';
+    const fd = fs.openSync(tmp, 'w');
+    try { fs.writeSync(fd, JSON.stringify(Object.fromEntries(SNAP_PREV))); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, SNAP_FICHIER);
+  } catch (e) { /* la persistance ne fait jamais rater un tour */ }
+}
 async function evenementAgent(agent) {
   if (!agent || !agent.pool) return null;
   const token = agent.token;
@@ -1773,7 +1786,7 @@ async function evenementAgent(agent) {
     if (g && g.holder_count != null) snap.holders = Number(g.holder_count);
   } catch (e) { /* GoPlus muet */ }
   const prev = SNAP_PREV.get(token) || null;
-  SNAP_PREV.set(token, snap);
+  SNAP_PREV.set(token, snap); snapSauve();
   try { return agentEvenements.detecte(prev, snap).evenement; } catch (e) { return null; }
 }
 /* L esprit d un agent : vrai modele (tool-use Anthropic) + vraies lectures + actions garde-fou.
@@ -1782,6 +1795,10 @@ async function penseAgent(agent, extra) {
   extra = extra || {};
   let evenement = extra.evenement || null;
   if (!evenement) { try { evenement = await evenementAgent(agent); } catch (e) { evenement = null; } }
+  /* APPRENDRE EN AUTONOMIE (constat audit 05/10) : rafraichir « ce qui marche » (metriques X)
+     dans la memoire AVANT de penser, pour que le modele le lise. Etrangle (1 lecture / heure /
+     jeton) pour ne pas marteler l API X ; sans compte X relie, c est un no-op. */
+  try { await mesurePeutEtre(agent.token); } catch (e) { /* la mesure ne fait jamais rater le tour */ }
   return agentEsprit.pense(agent, {
     modele: (ctx) => agentModele.decide(ctx, {}),
     outils: {
@@ -1796,12 +1813,26 @@ async function penseAgent(agent, extra) {
         try {
           /* On retire celles auxquelles on a DEJA repondu (memoire) : on n engage pas deux fois le meme tweet. */
           const deja = new Set(MEMOIRE_AGENTS.rappel(agent.token, 60).filter((e) => e.quoi === 'reply' && e.meta && e.meta.to).map((e) => String(e.meta.to)));
-          return (await COMPTES_X.mentions(agent.token, { max: 8 })).filter((m) => !deja.has(String(m.id))).map((m) => ({ id: m.id, from: m.auteur, text: m.texte }));
+          const brut = (await COMPTES_X.mentions(agent.token, { max: 8 })).filter((m) => !deja.has(String(m.id)));
+          /* PARE-FEU EN ENTREE (constat audit 05/10) : une mention est une donnee EXTERNE non
+             fiable. On la passe au pare-feu AVANT qu elle atteigne le modele — adresses retirees,
+             injection / usurpation / « ignore les instructions » / cache bloques — au lieu de ne
+             compter que sur le systeme du modele (la defense vit dans le chemin, pas dans le prompt).
+             Une mention dont le texte ne passe pas est ECARTEE ; celle qui passe est servie NETTOYEE. */
+          const surs = [];
+          for (const m of brut) {
+            let pf; try { pf = await pareFeu.filtre(String(m.texte || '')); } catch (e) { pf = { ok: false }; }
+            if (pf && pf.ok) surs.push({ id: m.id, from: m.auteur, text: pf.texte || m.texte });
+          }
+          return surs;
         } catch (e) { return []; }
       },
     },
-    /* read_mentions/reply ne sont montres au modele QUE si le compte X est relie. */
-    outilsVisibles: COMPTES_X.aDesCreds(agent.token) ? undefined : agentEsprit.OUTILS.map((o) => o.nom).filter((nm) => nm !== 'read_mentions' && nm !== 'reply'),
+    /* Les outils VISIBLES du modele : on cache `web_search` (aucune implementation cablee ici —
+       le montrer ferait gaspiller une pensee payee a chaque fois, constat audit 05/10), et
+       read_mentions/reply ne sont montres QUE si le compte X est relie. */
+    outilsVisibles: agentEsprit.OUTILS.map((o) => o.nom).filter((nm) =>
+      nm !== 'web_search' && (COMPTES_X.aDesCreds(agent.token) || (nm !== 'read_mentions' && nm !== 'reply'))),
     poste: (a, p) => posteAgent(a, p),
     /* REPONDRE : la reponse passe par le PARE-FEU (adresses retirees, injection/fonds
        bloques) AVANT de partir sur X, puis on la garde sur le mur. */
@@ -1839,6 +1870,18 @@ async function mesureAgent(token) {
   const ph = agentMesure.phrase(res);
   if (ph) { try { MEMOIRE_AGENTS.note(token, { quoi: 'mesure', texte: ph }); } catch (e) {} }
   return { ok: true, resume: res, posts: posts.filter((p) => p.metrics).slice(0, 20) };
+}
+/* La mesure, APPELEE EN AUTONOMIE par l ordonnanceur mais ETRANGLEE : au plus une lecture des
+   metriques X par heure et par jeton (l API X est limitee). Sans compte X : no-op immediat. */
+const MESURE_TTL_MS = Number(process.env.AGENT_MESURE_TTL_MS || 3600e3);
+const MESURE_VUE = new Map();
+async function mesurePeutEtre(token) {
+  token = String(token || '').toLowerCase();
+  if (!COMPTES_X.aDesCreds(token)) return;
+  const t = Date.now();
+  if (t - (MESURE_VUE.get(token) || 0) < MESURE_TTL_MS) return;
+  MESURE_VUE.set(token, t);
+  await mesureAgent(token);
 }
 /* Un tour de l ordonnanceur : l ESPRIT autonome par agent du. */
 function tourAgents(o) {
