@@ -939,6 +939,25 @@ const PROGRAMMES = [
       + 'No account. No API key. Just USDC, Base or Solana.\n\nThe dog has an API now. $SWOGE',
     prompt: 'standing behind the counter of a futuristic neon "API shop" at night, calmly serving a long queue of small friendly robot AI agents; each robot drops a glowing blue coin '
       + 'into a slot and receives a glowing data cube from him; holographic screens behind him show charts and a big glowing padlock opening; confident smirk, cinematic lighting' },
+  /* 05/10/2026 : « un post pour dire que notre launchpad est pas cher, rapide, sans alerte, et s affiche sur DexScreener ».
+   * Chaque affirmation a ete verifiee AVANT d etre ecrite, sur la vraie paire test que le proprietaire a montree
+   * (DexScreener robinhood/0x4e3e…2584, c est le POOL ; token derriere : 0xaba8…b16d « SWV4WTEST », pair WETH, UniswapV3, fee 1 %) :
+   *   - PRIX : launchpad.html → « 0.0001 ETH, or 10,000 $SWOGE burned » (lu, pas devine).
+   *   - SANS ALERTE : GoPlus chaine 4663 sur le token, le 05/10 — honeypot 0, mintable 0, open_source 1, owner 0x0 (renonce),
+   *     takeback 0, hidden_owner 0, selfdestruct 0, blacklist 0, pausable 0, anti_whale 0. Sur une paire WETH GoPlus SIMULE le
+   *     swap : buy_tax « 0 » / sell_tax « 0 » — connus et NULS (contrairement a la paire a quote Robinhood ou la taxe reste « inconnu »).
+   *     Donc ici « every flag green, 0 % tax » est litteralement vrai, verifiable par n importe qui sur GoPlus.
+   *   - DEXSCREENER : la page du pool s affiche (is_in_dex 1, UniV3). On evite « instant » : l API token de DexScreener
+   *     n indexe pas encore les pools v3/v4 de test (0 paire renvoyee), donc on dit « live on DexScreener », pas « indexe a la seconde ».
+   * Image : prompt dedie, passe par genereImageVerifiee → le controle pattes-de-chien (verifiePattes) s applique tout seul. */
+  { nom: 'launchpad-cheap', a: Date.parse('2026-10-06T16:00:00Z'), lien: 'https://swoleeswoge.dog/launchpad.html',
+    sujet: 'Launching a token on the SWOGE launchpad is cheap (0.0001 ETH or 10,000 $SWOGE burned), fast, has a clean GoPlus security report (no honeypot, not mintable, open-source, ownership renounced, 0% tax) and the pool shows up on DexScreener.',
+    texte: 'Launch your token on SWOGE 🐕\n\n'
+      + 'Cheap: 0.0001 ETH or 10,000 $SWOGE burned. No subscription, no hidden cut.\n'
+      + 'Clean: every GoPlus flag green — no honeypot, not mintable, open-source, ownership renounced, 0% tax.\n'
+      + 'Live on DexScreener. 🚀',
+    prompt: 'pressing a big glowing green launch button on a sleek futuristic mission-control console at night; behind him a small rocket shaped like a dog bone blasts off, '
+      + 'trailing bright green light; holographic screens show a candlestick chart spiking and a large green checkmark security shield; confident grin, cinematic neon lighting' },
 ];
 async function programmes(o) {
   const t = (o && o.maintenant) || Date.now();
