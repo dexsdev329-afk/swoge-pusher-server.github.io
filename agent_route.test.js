@@ -17,6 +17,8 @@ process.env.RPC_URL = ''; process.env.ADMIN_KEY = 'k';
 process.env.AI_COLONIE = '0'; process.env.PERP_COLONIES = '0'; process.env.PERP_JOURNAL = '0';
 process.env.ODDS_API_KEY = ''; process.env.MONITEUR_URL = '';
 delete process.env.ANTHROPIC_API_KEY;   /* l apercu doit partir en reserve, sans reseau IA */
+process.env.AGENT_X_CLE = 'test-enc-key';   /* pour chiffrer les creds X de l essai */
+process.env.X_CONSUMER_KEY = 'APPKEY'; process.env.X_CONSUMER_SECRET = 'APPSECRET';   /* cles d app maison (fausses) */
 
 const tg = require.resolve('./telegram');
 require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
@@ -38,6 +40,7 @@ const CREA = '0x' + 'c'.repeat(40);
     const s = String(u);
     if (/dexscreener\.com/.test(s)) return Promise.resolve({ ok: true, status: 200, json: async () => ({ pair: { priceUsd: '0.01', liquidity: { usd: 5000 }, volume: { h24: 12000 }, pairCreatedAt: Date.now() - 2 * 86400000 } }) });
     if (/gopluslabs\.io/.test(s)) return Promise.resolve({ ok: true, status: 200, json: async () => ({ result: { [TOKEN]: { is_honeypot: '0', is_mintable: '0', owner_address: '0x0000000000000000000000000000000000000000', buy_tax: '0', sell_tax: '0', holder_count: '3' } } }) });
+    if (/api\.x\.com\/2\/tweets/.test(s)) return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: { id: '999' } }) });
     return vrai(u, o);
   };
 
@@ -85,6 +88,22 @@ const CREA = '0x' + 'c'.repeat(40);
   ok(r.code === 200 && r.j.ok && r.j.personaLabel === 'Hype' && r.j.post && r.j.post.texte.length > 0, 'POST /agent/preview_config SANS cle admin : 200, un post de la persona choisie');
   r = await post('/agent/preview_config', { persona: 'inventee', objectif: 'x' }, false);
   ok(r.code === 400 && /persona/.test(r.j.raison), 'une persona inconnue : 400');
+
+  console.log('\n-- 7. compte X par jeton + mur + un tour de l ordonnanceur --');
+  await post('/agent/toggle', { token: TOKEN, createur: CREA, actif: true }, true);   /* reactive l agent (mis en pause en 5) */
+  r = await get('/agent/jeton/' + TOKEN + '/feed');
+  ok(r.code === 200 && Array.isArray(r.j.posts) && r.j.posts.length === 0, 'le mur est vide au depart');
+  r = await post('/agent/x/connect', { token: TOKEN, accessToken: 'AT-1', accessSecret: 'AS-1', handle: '@foocoin' }, true);
+  ok(r.code === 200 && r.j.handle === 'foocoin', 'le proprietaire relie le compte X du jeton (creds chiffrees), handle rendu');
+  r = await get('/agent/jeton/' + TOKEN);
+  ok(r.j.hasX === true && r.j.handle === 'foocoin', 'GET agent : hasX vrai, handle public (jamais les secrets)');
+  r = await post('/agent/x/connect', { token: TOKEN }, false);
+  ok(r.code === 403, 'relier un compte X sans cle admin : 403');
+  r = await post('/agent/horloge/tour', {}, true);
+  ok(r.code === 200 && r.j.ok && r.j.agis >= 1, 'un tour manuel : au moins un agent a agi');
+  r = await get('/agent/jeton/' + TOKEN + '/feed');
+  ok(r.j.posts.length >= 1 && typeof r.j.posts[0].texte === 'string' && r.j.posts[0].texte.length > 0, 'le mur porte maintenant un post non vide');
+  ok(r.j.posts[0].surX === true && /status\/999/.test(r.j.posts[0].url || ''), 'le jeton a un compte X relie : le post est parti sur X (stub), avec son url');
 
   global.fetch = vrai;
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'VERIFICATIONS : ' + n + ' — tout passe'));

@@ -166,6 +166,7 @@ const skins = require('./skins');
 let calendrierAuto = null;          // les minuteries de l alimentation
 let xQuotidien = null;
 let tgCmd = null;
+let horlogeAgents = null;           // les agents par jeton (AGENT_HORLOGE)
 const journal = require('./journal');
 const adminlog = require('./adminlog');
 const reglages = require('./reglages');
@@ -1606,10 +1607,34 @@ const bugbounty = require('./bugbounty');
 const repere = require('./repere');
 const REPERES = repere.bancs();   /* les trois bancs pre-enregistres (chasse a l'edge, 04/10) */
 /* Un agent IA par jeton lance (modele AgencyPad porte sur Robinhood Chain, 05/10) :
-   le registre persona + l apercu d un post. Rien ne poste ni ne depense encore. */
+   registre persona + apercu + mur + compte X par jeton + ordonnanceur. */
 const agentJeton = require('./agent_jeton');
 const agentDemo = require('./agent_demo');
+const agentFaits = require('./agent_faits');
+const agentFeed = require('./agent_feed');
+const agentHorloge = require('./agent_horloge');
+const agentX = require('./agent_x');
 const REGISTRE_AGENTS = agentJeton.cree({});
+const MUR_AGENTS = agentFeed.cree({});
+const COMPTES_X = agentX.cree({});
+/* Les faits live d un agent, montes sur son pool/jeton (reutilise par l apercu ET l ordonnanceur).
+   Chaque source est protegee dans agent_faits.recolte : une qui tombe n efface pas les autres. */
+function faitsDAgent(agent) {
+  const token = agent.token;
+  return agentFaits.recolte(token, {
+    marche: agent.pool ? (async () => { const r = await fetch('https://api.dexscreener.com/latest/dex/pairs/robinhood/' + agent.pool, { signal: AbortSignal.timeout(12000) }); const j = await r.json().catch(() => ({})); return j.pair || (j.pairs && j.pairs[0]) || null; }) : undefined,
+    goplus: (async () => { const r = await fetch('https://api.gopluslabs.io/api/v1/token_security/4663?contract_addresses=' + token, { signal: AbortSignal.timeout(12000) }); const j = await r.json().catch(() => ({})); return (j.result && (j.result[token] || j.result[token.toLowerCase()])) || null; }),
+    cansell: (async () => { const e = await aiColonie.epreuveDeSortie(token); if (!e || !e.trouve) return null; return { allerRetourPct: e.retour && typeof e.retour.pct === 'number' ? e.retour.pct : undefined, lpVerrouille: !!(e.lp && (e.lp.brulee || e.lp.verrouille || e.lp.locked)) }; }),
+  });
+}
+/* Un tour de l ordonnanceur, avec toutes les dependances reelles montees. */
+function tourAgents(o) {
+  return agentHorloge.tour(Object.assign({
+    registre: REGISTRE_AGENTS, feed: MUR_AGENTS,
+    recolte: (a) => faitsDAgent(a),
+    poste: (a, post) => COMPTES_X.poste(a.token, { texte: post.texte }),   /* sur X si le jeton a un compte relie, sinon surX:false */
+  }, o || {}));
+}
 const studio = require('./studio');
 const studioChat = require('./studio_chat');
 const studioJeton = require('./studio_jeton');
@@ -4086,8 +4111,14 @@ const server = http.createServer(async (req, res) => {
       return json(200, { ok: true, personas: agentJeton.PERSONAS, modeles: agentJeton.MODELES, pouvoirs: agentJeton.POUVOIRS,
         note: 'Money powers (buyback/trade/airdrop) can be declared but are inert until the trader stage ships behind its own execute flag.' });
     }
+    const mFeed = path.match(/^\/agent\/jeton\/(0x[0-9a-fA-F]{40})\/feed$/);
+    if (mFeed && req.method === 'GET') {
+      const q = new URLSearchParams(req.url.split('?')[1] || '');
+      return json(200, { ok: true, token: mFeed[1].toLowerCase(), handle: COMPTES_X.handleDe(mFeed[1]),
+        posts: MUR_AGENTS.recent(mFeed[1], Math.min(50, Math.max(1, Number(q.get('n')) || 20))) });
+    }
     const mRead = path.match(/^\/agent\/jeton\/(0x[0-9a-fA-F]{40})$/);
-    if (mRead && req.method === 'GET') return json(200, { ok: true, agent: REGISTRE_AGENTS.parJeton(mRead[1]) });
+    if (mRead && req.method === 'GET') return json(200, { ok: true, agent: REGISTRE_AGENTS.parJeton(mRead[1]), hasX: COMPTES_X.aDesCreds(mRead[1]), handle: COMPTES_X.handleDe(mRead[1]) });
     if (path === '/agent/jetons' && req.method === 'GET') {
       const c = String((new URLSearchParams(req.url.split('?')[1] || '')).get('creator') || '');
       if (!/^0x[0-9a-fA-F]{40}$/.test(c)) return json(400, { ok: false, raison: 'pass ?creator=0x...' });
@@ -4137,6 +4168,22 @@ const server = http.createServer(async (req, res) => {
           { token, symbole: q.symbole, nom: q.nom, lien: q.lien, avecImage: !!q.avecImage, precedents: Array.isArray(q.precedents) ? q.precedents.slice(0, 5) : [] },
           { registre: REGISTRE_AGENTS, recolteDeps, image: q.avecImage ? (p) => require('./x_post').genereImageVerifiee(p) : undefined });
         return json(r.ok ? 200 : (r.code || 503), r);
+      }
+      if (path === '/agent/x/connect') {
+        /* Relie le compte X d un jeton (owner-only le temps de la demo ; le flux OAuth
+           cote createur viendra). Les secrets sont chiffres au repos (agent_x). */
+        const r = COMPTES_X.connecte(q.token, { accessToken: q.accessToken, accessSecret: q.accessSecret, handle: q.handle });
+        return json(r.ok ? 200 : (r.code || 400), r);
+      }
+      if (path === '/agent/x/forget') {
+        const r = COMPTES_X.oublie(q.token);
+        return json(r.ok ? 200 : (r.code || 400), r);
+      }
+      if (path === '/agent/horloge/tour') {
+        /* Un tour manuel de l ordonnanceur (pour essayer). Le tour periodique, lui,
+           ne tourne que si AGENT_HORLOGE=1 (voir le demarrage). */
+        const r = await tourAgents({ max: Math.min(8, Math.max(1, Number(q.max) || 8)) });
+        return json(200, Object.assign({ ok: true }, r));
       }
       return json(404, { ok: false, raison: 'unknown agent route' });
     } catch (e) { return json(503, { ok: false, raison: 'agent error: ' + String((e && e.message) || e).slice(0, 120) }); }
@@ -9998,6 +10045,11 @@ server.listen(cfg.PORT, () => {
   xQuotidien = xPost.planifie((p) => tg.notifyPhoto(p.image, p.texte + '\n' + p.url));
   /* Le bot repond a /id en prive, et a /launch partout (tg_lance.js, 03/10). */
   tgCmd = tgCommandes.planifie({ lanceur: tgLance });
+  /* Les agents par jeton postent tout seuls SEULEMENT si AGENT_HORLOGE=1 : eteint
+     par defaut, donc rien ne poste en prod tant que le proprietaire ne l allume pas. */
+  horlogeAgents = agentHorloge.planifie({ registre: REGISTRE_AGENTS, feed: MUR_AGENTS, recolte: (a) => faitsDAgent(a), poste: (a, post) => COMPTES_X.poste(a.token, { texte: post.texte }) },
+    { actif: process.env.AGENT_HORLOGE === '1', periodeMs: 5 * 60000 });
+  if (process.env.AGENT_HORLOGE === '1') console.log('[agent] horloge ARMEE (agents par jeton)'); else console.log('[agent] horloge ETEINTE (AGENT_HORLOGE != 1)');
 });
 
 function shutdown() {
@@ -10005,6 +10057,7 @@ function shutdown() {
   if (calendrierAuto) calendrierAuto.arrete();
   if (xQuotidien) xQuotidien.arrete();
   if (tgCmd) tgCmd.arrete();
+  if (horlogeAgents) horlogeAgents.arrete();
   persistComplet(); // instantane complet : rien ne se perd au redeploiement
   /* Le journal ecrit en differe pour ne pas ouvrir mille descripteurs : ce
      qui attend encore doit partir maintenant, sinon les dernieres manches
