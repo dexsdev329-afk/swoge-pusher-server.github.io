@@ -949,12 +949,20 @@ const PROGRAMMES = [
    *     Donc ici « every flag green, 0 % tax » est litteralement vrai, verifiable par n importe qui sur GoPlus.
    *   - DEXSCREENER : la page du pool s affiche (is_in_dex 1, UniV3). On evite « instant » : l API token de DexScreener
    *     n indexe pas encore les pools v3/v4 de test (0 paire renvoyee), donc on dit « live on DexScreener », pas « indexe a la seconde ».
+   *   - LP LOCKED FOREVER (ajoute le 05/10, verifie dans la SOURCE du contrat, exact_match Sourcify : SwogeFunV4Weth.sol).
+   *     GoPlus affiche « lp_holder 0xe3fB… a 100 %, is_locked 0 » : FAUX NEGATIF — 0xe3fB4f97… EST notre contrat launchpad ETH
+   *     (lance_v4.js, LAUNCHPADS.eth, frais 0,0001 ETH), pas un portefeuille. Il detient le NFT de position V3 (lpTokenId) et :
+   *     owner = address(0) des la construction (aucun owner jamais) ; AUCUN decreaseLiquidity ; AUCUN transfert sortant du NFT ;
+   *     la seule fonction qui touche la position, collectFees(), est ouverte a tous et ne recolte que les FRAIS (moitie createur /
+   *     moitie tresor en WETH, cote jeton brule a DEAD), jamais le principal. La LP ne peut donc JAMAIS sortir : « LP locked
+   *     forever » est demontrable, pas marketing. (05/10 : le proprietaire a dit « c est impossible » que GoPlus voie le LP non
+   *     verrouille — il avait raison, c est une limite de lecture V3 de GoPlus.)
    * Image : prompt dedie, passe par genereImageVerifiee → le controle pattes-de-chien (verifiePattes) s applique tout seul. */
   { nom: 'launchpad-cheap', a: Date.parse('2026-10-06T16:00:00Z'), lien: 'https://swoleeswoge.dog/launchpad.html',
-    sujet: 'Launching a token on the SWOGE launchpad is cheap (0.0001 ETH or 10,000 $SWOGE burned), fast, has a clean GoPlus security report (no honeypot, not mintable, open-source, ownership renounced, 0% tax) and the pool shows up on DexScreener.',
+    sujet: 'Launching a token on the SWOGE launchpad is cheap (0.0001 ETH or 10,000 $SWOGE burned), fast, and safe: the LP is locked forever inside the launchpad contract, ownership is renounced, 0% tax, not a honeypot, and the pool shows up on DexScreener.',
     texte: 'Launch your token on SWOGE 🐕\n\n'
-      + 'Cheap: 0.0001 ETH or 10,000 $SWOGE burned. No subscription, no hidden cut.\n'
-      + 'Clean: every GoPlus flag green — no honeypot, not mintable, open-source, ownership renounced, 0% tax.\n'
+      + 'Cheap: 0.0001 ETH or 10,000 $SWOGE burned. No hidden cut.\n'
+      + 'Safe: LP locked forever in the launchpad, ownership renounced, 0% tax, not a honeypot.\n'
       + 'Live on DexScreener. 🚀',
     prompt: 'pressing a big glowing green launch button on a sleek futuristic mission-control console at night; behind him a small rocket shaped like a dog bone blasts off, '
       + 'trailing bright green light; holographic screens show a candlestick chart spiking and a large green checkmark security shield; confident grin, cinematic neon lighting' },
