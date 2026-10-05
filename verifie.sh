@@ -90,6 +90,9 @@ lance agfeed  "$SRV" node agent_feed.test.js    # le mur d un agent : plus recen
 lance aghorl  "$SRV" node agent_horloge.test.js # l ordonnanceur : seulement les dus, post sur le mur (surX si compte relie, jamais le maison), precedents transmis, un echec n arrete pas les autres, planifie inerte sans actif
 lance agx     "$SRV" node agent_x.test.js       # compte X par jeton : creds chiffrees (fail-closed sans cle), handle public jamais les secrets, publication signee app+jeton, refus propres
 lance agfuel  "$SRV" node agent_fuel.test.js    # le carburant par jeton : versement de bienvenue une fois, credite (volume/versement) / debite au cout, jamais a credit, peutPenser garde l avance, persistance
+lance parefeu "$SRV" node pare_feu.test.js      # pare-feu de prompt (8b papier) : bloque fonds/cles/injection/usurpation/cache, retire les adresses, deux classifieurs fail-closed
+lance policy  "$SRV" node policy_argent.test.js # policy engine (8b papier) : liste blanche, plafonds action/heure/jour, impact-prix, cooldown, tresor ; deterministe et persistant
+lance signerp "$SRV" node signer_papier.test.js # signer isole (8b papier) : resimule, ne signe que l approuve (meme pool, impact borne), journal papier, aucune cle ni envoi reel
 lance acces   "$SRV" node acces.test.js   # portes privees fermees sans cle, gestes d argent en POST seulement ; /credit partage entre le robinet admin et le credit en dollars (29/09)
 lance famille  "$SRV" node famille_client.test.js   # qui demande un prix : famille du client en code fixe, sonde ou demande, jamais le User-Agent brut ni l IP
 lance sondes   "$SRV" node sonde_services.test.js   # catalogue x402 note sans payer : une sonde par service et par 20 h, raison de chaque echec, aucun verdict sous 3 sondes, paiements reels comptes
