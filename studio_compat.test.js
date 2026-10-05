@@ -25,7 +25,7 @@ process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801'; process
   const faux = http.createServer((q, r) => {
     let b = ''; q.on('data', (c) => { b += c; }); q.on('end', () => {
       const corps = JSON.parse(b || '{}');
-      vus.push({ hote: q.headers.host, url: q.url, auth: q.headers.authorization, corps });
+      vus.push({ hote: q.headers.host, url: q.url, auth: q.headers.authorization, entetes: q.headers, corps });
       /* La Search API de Perplexity (forme de sa specification). */
       if (q.url === '/search') {
         if (/panne/.test(corps.query)) { r.writeHead(500, { 'content-type': 'application/json' }); return r.end('{}'); }
@@ -38,12 +38,14 @@ process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801'; process
       if (corps.model === 'modele-panne') { r.writeHead(429, { 'content-type': 'application/json' }); return r.end(JSON.stringify({ error: { message: 'rate limited' } })); }
       r.writeHead(200, { 'content-type': 'text/event-stream' });
       const xai = /grok/.test(corps.model);
+      /* OpenRouter rend le cout exact dans usage.cost (credits = $). */
+      const openrouter = /dolphin-mistral-24b-venice/.test(corps.model);
       const morceaux = [
         { model: corps.model, choices: [{ delta: { role: 'assistant', content: '' } }] },
         { choices: [{ delta: { content: 'Hello ' } }] },
         { choices: [{ delta: { content: 'SWOGE.' }, finish_reason: 'stop' }] },
         { choices: [], usage: Object.assign({ prompt_tokens: 1200, completion_tokens: 900, prompt_tokens_details: { cached_tokens: 200 } },
-          xai ? { cost_in_usd_ticks: 55555000 } : {}) },
+          xai ? { cost_in_usd_ticks: 55555000 } : openrouter ? { cost: 0.0042 } : {}) },
       ];
       r.end(morceaux.map((x) => 'data: ' + JSON.stringify(x) + '\n\n').join('') + 'data: [DONE]\n\n');
     });
@@ -51,6 +53,12 @@ process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801'; process
   const port = await libre(); await new Promise((r) => faux.listen(port, r));
   process.env.OPENAI_BASE_URL = process.env.XAI_BASE_URL = 'http://127.0.0.1:' + port;
   process.env.OPENAI_API_KEY = 'sk-oa-test'; process.env.XAI_API_KEY = 'xai-test';
+  /* Les modeles peu censures (05/10) visent le MEME faux serveur ; leurs bases
+     sont choisies pour que base + chemin tombe sur l'URL de leur doc. */
+  process.env.VENICE_BASE_URL = process.env.OPENROUTER_BASE_URL = process.env.MISTRAL_BASE_URL = process.env.DEEPSEEK_BASE_URL = 'http://127.0.0.1:' + port;
+  process.env.VENICE_API_KEY = 'vn-test'; process.env.OPENROUTER_API_KEY = 'or-test';
+  process.env.DEEPSEEK_API_KEY = 'ds-test'; process.env.MISTRAL_API_KEY = 'ms-test';
+  process.env.OPENROUTER_REFERER = 'https://swoleeswoge.dog';
   process.env.PERPLEXITY_API_KEY = 'pplx-test'; process.env.PERPLEXITY_BASE_URL = 'http://127.0.0.1:' + port;
   const P = require('./studio_compat');
   const C = require('./studio_chat');
@@ -102,6 +110,56 @@ process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801'; process
     ok(!cat.modeles.find((x) => x.id === 'grok-4-3').recherche && cat.modeles.find((x) => x.id === 'opus-5-5').recherche, 'sans cle Perplexity : « Search » eteint pour GPT et Grok, Claude garde le sien');
     const cat2 = C.catalogue(0.00002801, { anthropic: true, openai: true, xai: true, perplexity: true });
     ok(cat2.modeles.filter((x) => x.fournisseur !== 'anthropic').every((x) => x.recherche), 'avec la cle : « Search » pour tous les modeles');
+  }
+
+  console.log('\n-- 1 ter. les modeles peu censures : chemin, en-tetes, cout exact, texte seul (05/10) --');
+  {
+    /* Le piege central : base + chemin doit tomber JUSTE sur l'URL de la doc.
+       On verifie les bases PAR DEFAUT (sans l'override du faux serveur). */
+    const sauve = { v: process.env.VENICE_BASE_URL, o: process.env.OPENROUTER_BASE_URL, d: process.env.DEEPSEEK_BASE_URL, m: process.env.MISTRAL_BASE_URL };
+    delete process.env.VENICE_BASE_URL; delete process.env.OPENROUTER_BASE_URL; delete process.env.DEEPSEEK_BASE_URL; delete process.env.MISTRAL_BASE_URL;
+    const url = (f) => { const F = P.FOURNISSEURS[f]; return String(F.base()).replace(/\/$/, '') + (F.chemin || '/v1/chat/completions'); };
+    eq(url('venice'), 'https://api.venice.ai/api/v1/chat/completions', 'Venice : base .../api + /v1/chat/completions = l URL de la doc');
+    eq(url('openrouter'), 'https://openrouter.ai/api/v1/chat/completions', 'OpenRouter : base .../api + /v1/chat/completions');
+    eq(url('deepseek'), 'https://api.deepseek.com/chat/completions', 'DeepSeek : base nue + chemin SANS /v1 (doc 05/10)');
+    eq(url('mistral'), 'https://api.mistral.ai/v1/chat/completions', 'Mistral : base nue + /v1/chat/completions');
+    process.env.VENICE_BASE_URL = sauve.v; process.env.OPENROUTER_BASE_URL = sauve.o; process.env.DEEPSEEK_BASE_URL = sauve.d; process.env.MISTRAL_BASE_URL = sauve.m;
+
+    /* Chaque fournisseur frappe le bon chemin, avec sa cle. */
+    const rv = await P.repond({ m: C.modele('venice-uncensored'), messages: [{ role: 'user', content: 'Hi' }] });
+    const vv = vus.pop();
+    ok(vv.url === '/v1/chat/completions' && vv.corps.model === 'venice-uncensored-1-2' && vv.auth === 'Bearer vn-test', 'Venice : /v1/chat/completions, le bon modele, la cle Venice');
+    ok(rv.texte === 'Hello SWOGE.', 'Venice : le texte arrive au fil de l eau');
+
+    const rd = await P.repond({ m: C.modele('deepseek-flash'), messages: [{ role: 'user', content: 'Hi' }] });
+    const vd = vus.pop();
+    ok(vd.url === '/chat/completions' && vd.corps.model === 'deepseek-flash' && vd.auth === 'Bearer ds-test', 'DeepSeek : /chat/completions (sans /v1), le bon modele, la cle DeepSeek');
+
+    const rm = await P.repond({ m: C.modele('mistral-large'), messages: [{ role: 'user', content: 'Hi' }] });
+    const vm = vus.pop();
+    ok(vm.url === '/v1/chat/completions' && vm.corps.model === 'mistral-large-latest' && vm.auth === 'Bearer ms-test', 'Mistral : /v1/chat/completions, le bon modele, la cle Mistral');
+
+    /* OpenRouter : les en-tetes d identite, et le cout EXACT lu dans usage.cost. */
+    const ro = await P.repond({ m: C.modele('dolphin-venice'), messages: [{ role: 'user', content: 'Hi' }] });
+    const vo = vus.pop();
+    ok(vo.url === '/v1/chat/completions' && vo.corps.model === 'cognitivecomputations/dolphin-mistral-24b-venice-edition' && vo.auth === 'Bearer or-test', 'OpenRouter : /v1/chat/completions, le slug complet, la cle OpenRouter');
+    ok(vo.entetes['http-referer'] === 'https://swoleeswoge.dog' && vo.entetes['x-title'] === 'SWOGE AI', 'OpenRouter : les en-tetes HTTP-Referer et X-Title identifient notre site');
+    ok(Math.abs(ro.usage.coutExactUsd - 0.0042) < 1e-12 && !ro.usage.cost_in_usd_ticks, 'OpenRouter : usage.cost (credits = $) devient le cout EXACT');
+
+    /* reasoning_effort n est PAS envoye (effort: false sur ces modeles). */
+    const re = await P.repond({ m: C.modele('venice-uncensored'), effort: 'high', messages: [{ role: 'user', content: 'Hi' }] });
+    ok(!('reasoning_effort' in vus.pop().corps), 'Venice : pas de reasoning_effort (effort false)');
+
+    /* Texte seul : une photo jointe est refusee cote serveur (studio_chat.repond). */
+    const cours = 0.00002801;
+    const photo = Buffer.alloc(48); photo.writeUInt32BE(0x89504e47, 0); photo.write('IHDR', 12, 'latin1'); photo.writeUInt32BE(8, 16); photo.writeUInt32BE(8, 20);
+    const rr = await C.repond({ addr: '0xpic', modele: 'venice-uncensored',
+      messages: [{ role: 'user', content: 'what is this', pieces: [{ media: 'image/png', data: photo.toString('base64'), nom: 'p.png' }] }] },
+      { cours: async () => cours, solde: { reserve: () => true, regle: () => '0' }, actif: () => true, fournisseur: (p) => P.repond(p) });
+    ok(rr.code === 400 && /can't read photos/.test(rr.raison), 'Venice (texte seul) refuse une photo jointe, et le dit');
+    const cat = C.catalogue(cours, { anthropic: true, venice: true, openrouter: true, deepseek: true, mistral: true });
+    ok(cat.modeles.find((x) => x.id === 'venice-uncensored').pieces.images === false && cat.modeles.find((x) => x.id === 'opus-5-5').pieces.images === true, 'le catalogue : pas de photo pour les modeles texte seul, oui pour Claude');
+    ok(cat.modeles.filter((x) => ['venice', 'openrouter', 'deepseek', 'mistral'].includes(x.fournisseur)).length === 5, 'les cinq modeles peu censures sont au catalogue');
   }
 
   console.log('\n-- 2. la facture : jamais sous le cout, le cout exact quand il est rendu --');

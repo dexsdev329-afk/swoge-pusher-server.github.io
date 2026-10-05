@@ -80,8 +80,40 @@ const MODELES = [
   { id: 'grok-4-3', nom: 'Grok 4.3', api: 'grok-4.3', fournisseur: 'xai',
     entree: 1.25, sortie: 2.5, maxTokens: 6000, recherche: 'perplexity', effort: false,
     note: 'Fast and cheap from xAI' },
+  /* ---- MODELES PEU CENSURES, ajoutes le 5 octobre 2026 (studio_compat.js) ----
+   * Prix par million de jetons releves le meme jour dans la doc de chaque
+   * fournisseur. Ils ne lisent PAS les pieces jointes (texte seul) : `vision:
+   * false` les refuse a la page ET au serveur (voir repond). `effort: false` :
+   * on n'envoie pas reasoning_effort (non garanti sur ces modeles).
+   *   - Venice : « venice-uncensored-1-2 » (Dolphin Mistral 24B, Venice edition),
+   *     0,20 $ / 0,90 $ (grille Venice).
+   *   - OpenRouter : Dolphin Mistral 24B (Venice edition), 0,20 $ / 0,90 $. MAIS
+   *     OpenRouter rend le cout EXACT dans `usage.cost` (usageDe) : la grille ici
+   *     ne sert qu'a la reserve du pire cas, jamais a la facture.
+   *   - DeepSeek : « flash » et « v4-pro ». DeepSeek a un tarif HEURE PLEINE /
+   *     heure creuse ; on facture au tarif PLEIN (flash 0,30 $ / 1,20 $ ;
+   *     v4-pro 1,32 $ / 3,96 $) pour ne JAMAIS facturer sous le cout reel.
+   *   - Mistral : « mistral-large-latest », 0,50 $ / 1,50 $ (grille Mistral).
+   * Peu censures cote app : AUCUN filtre de sortie ici (choix du proprietaire,
+   * 05/10). Les fournisseurs amont gardent leur propre plancher legal. */
+  { id: 'venice-uncensored', nom: 'Venice Uncensored', api: 'venice-uncensored-1-2', fournisseur: 'venice',
+    entree: 0.2, sortie: 0.9, maxTokens: 4000, recherche: 'perplexity', effort: false, vision: false,
+    note: 'Least filtered — Dolphin Mistral, Venice edition' },
+  { id: 'dolphin-venice', nom: 'Dolphin (Venice Edition)', api: 'cognitivecomputations/dolphin-mistral-24b-venice-edition', fournisseur: 'openrouter',
+    entree: 0.2, sortie: 0.9, maxTokens: 8000, recherche: 'perplexity', effort: false, vision: false,
+    note: 'Uncensored, routed through OpenRouter' },
+  { id: 'deepseek-flash', nom: 'DeepSeek Flash', api: 'deepseek-flash', fournisseur: 'deepseek',
+    entree: 0.3, sortie: 1.2, maxTokens: 8000, recherche: 'perplexity', effort: false, vision: false,
+    note: 'Fast and very cheap, lightly filtered' },
+  { id: 'deepseek-v4-pro', nom: 'DeepSeek V4 Pro', api: 'deepseek-v4-pro', fournisseur: 'deepseek',
+    entree: 1.32, sortie: 3.96, maxTokens: 8000, recherche: 'perplexity', effort: false, vision: false,
+    note: 'DeepSeek\'s most capable' },
+  { id: 'mistral-large', nom: 'Mistral Large', api: 'mistral-large-latest', fournisseur: 'mistral',
+    entree: 0.5, sortie: 1.5, maxTokens: 8000, recherche: 'perplexity', effort: false, vision: false,
+    note: 'Open-weights flagship, EU-based' },
 ];
-const NOMS_FOURNISSEURS = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok' };
+const NOMS_FOURNISSEURS = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok',
+  venice: 'Venice', openrouter: 'OpenRouter', deepseek: 'DeepSeek', mistral: 'Mistral' };
 const DEFAUT = 'opus-5-5';
 const EFFORTS = ['low', 'medium', 'high'];
 
@@ -299,8 +331,9 @@ function catalogue(cours, cle) {
     modeles: MODELES.map((m) => ({
       id: m.id, nom: m.nom, note: m.note, fournisseur: m.fournisseur, nomFournisseur: NOMS_FOURNISSEURS[m.fournisseur],
       actif: !!a[m.fournisseur], effort: m.effort,
-      /* Ce que le modele sait lire en piece jointe : tous les photos, Claude seul les PDF. */
-      pieces: { images: true, pdf: m.fournisseur === 'anthropic' },
+      /* Ce que le modele sait lire en piece jointe : les photos SAUF les modeles
+         texte seul (vision === false), les PDF chez Claude seul. */
+      pieces: { images: m.vision !== false, pdf: m.fournisseur === 'anthropic' },
       recherche: !!m.recherche && (m.recherche !== 'perplexity' || !!a.perplexity),
       typiqueSwoge: enSwoge(factureUsd(typique(m))),
       maxSwoge: enSwoge(factureUsd(pireCasUsd(m, [{ content: 'x'.repeat(4000) }], !!m.recherche))),
@@ -338,6 +371,9 @@ async function repond(q, deps) {
   if (!messages) return { ok: false, code: 400, raison: 'empty question' };
   const pdf = Pieces.aUnPdf(messages);
   if (pdf && m.fournisseur !== 'anthropic') return { ok: false, code: 400, raison: 'PDFs are read by Claude models — pick Opus, Fable, Sonnet or Haiku.' };
+  /* Les modeles texte seul (vision === false) refusent une photo jointe, comme
+     les PDF chez les non-Claude : on le dit plutot que de laisser l'appel echouer. */
+  if (m.vision === false && Pieces.aUneImage(messages)) return { ok: false, code: 400, raison: m.nom + ' can\'t read photos — pick another model, or remove the image.' };
   const recherche = !!q.recherche && !!m.recherche
     && (m.recherche !== 'perplexity' || !deps.actif || !!deps.actif('perplexity'));
   const effort = m.effort && EFFORTS.includes(q.effort) ? q.effort : null;

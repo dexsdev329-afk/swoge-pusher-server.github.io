@@ -133,8 +133,13 @@ const b64 = (b) => b.toString('base64');
     ok(/---\nToken data/.test(vu7[0].messages[0].content) && vu7[0].messages[0].pieces.length === 1, 'la fiche d un jeton rejoint la question sans perdre la photo');
 
     const cat = C.catalogue(cours, { anthropic: true, openai: true, xai: true });
-    ok(cat.modeles.every((x) => x.pieces.images) && cat.modeles.filter((x) => x.pieces.pdf).every((x) => x.fournisseur === 'anthropic') && cat.modeles.some((x) => x.pieces.pdf),
-       'le catalogue dit ce que chaque modele lit : photos partout, PDF chez Claude');
+    /* Les photos partout SAUF les modeles texte seul (vision === false, ajoutes
+       le 05/10) ; les PDF chez Claude seul. Le catalogue dit exactement ce que
+       chaque modele sait lire — la page ne propose pas une piece qui echouerait. */
+    ok(cat.modeles.every((x) => x.pieces.images === (C.modele(x.id).vision !== false))
+       && cat.modeles.filter((x) => x.pieces.pdf).every((x) => x.fournisseur === 'anthropic') && cat.modeles.some((x) => x.pieces.pdf)
+       && cat.modeles.some((x) => !x.pieces.images),
+       'le catalogue dit ce que chaque modele lit : photos sauf les modeles texte seul, PDF chez Claude');
   }
 
   console.log('\n-- 6. jusqu au fournisseur --');

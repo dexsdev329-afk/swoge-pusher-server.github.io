@@ -106,6 +106,7 @@ function jetonsImages(messages) {
   return t;
 }
 const aUnPdf = (messages) => (messages || []).some((x) => (x.pieces || []).some((p) => p.genre === 'pdf'));
+const aUneImage = (messages) => (messages || []).some((x) => (x.pieces || []).some((p) => p.genre === 'image'));
 
 /** Un message pour Anthropic : les pièces d'abord (ce que la doc recommande), puis le texte. */
 function pourClaude(x) {
@@ -124,5 +125,5 @@ function pourCompat(x) {
     .concat([{ type: 'text', text: x.content }]) };
 }
 
-module.exports = { verifie, dimensions, jetonsImage, jetonsImages, aUnPdf, pourClaude, pourCompat,
+module.exports = { verifie, dimensions, jetonsImage, jetonsImages, aUnPdf, aUneImage, pourClaude, pourCompat,
   MAX_IMAGES, MAX_PDF, IMAGE_OCTETS_MAX, PDF_OCTETS_MAX, IMAGE_COTE_MAX, PDF_JETONS_MAX };

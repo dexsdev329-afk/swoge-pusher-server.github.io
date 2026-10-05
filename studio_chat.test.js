@@ -46,10 +46,14 @@ const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(
   console.log('-- 1. on ne facture jamais sous le coût --');
   {
     /* Chaque modele porte les prix PUBLICS de son fournisseur (entree/sortie $/M),
-       relus le 26 septembre 2026 : Anthropic ; OpenAI (standard) ; xAI (< 200 k). */
+       relus le 26 septembre 2026 : Anthropic ; OpenAI (standard) ; xAI (< 200 k).
+       Modeles peu censures ajoutes le 5 octobre 2026 : grilles Venice, OpenRouter,
+       DeepSeek (tarif HEURE PLEINE, pour ne jamais facturer sous le cout) et Mistral. */
     const grille = { 'opus-5-5': [4, 20], 'fable-5-1': [10, 50], 'sonnet-5': [2, 10], 'haiku-4-5': [1, 5],
       'gpt-6-astra': [10, 50], 'gpt-6-sol': [2, 10], 'gpt-6-luna': [0.1, 0.5],
-      'grok-4-7': [2, 6], 'grok-4-20-reasoning': [1.25, 2.5], 'grok-4-3': [1.25, 2.5] };
+      'grok-4-7': [2, 6], 'grok-4-20-reasoning': [1.25, 2.5], 'grok-4-3': [1.25, 2.5],
+      'venice-uncensored': [0.2, 0.9], 'dolphin-venice': [0.2, 0.9],
+      'deepseek-flash': [0.3, 1.2], 'deepseek-v4-pro': [1.32, 3.96], 'mistral-large': [0.5, 1.5] };
     for (const m of C.MODELES) {
       eq(JSON.stringify([m.entree, m.sortie]), JSON.stringify(grille[m.id]), m.nom + ' : tarifs = grille publique de ' + m.fournisseur + ' (entrée/sortie $/M)');
       /* Le pire cas RÉEL : historique au plafond (4 caractères par jeton, la

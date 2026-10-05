@@ -4298,7 +4298,8 @@ const server = http.createServer(async (req, res) => {
     if (path === '/studio/chat/catalogue') {
       const cours = await studioChat.coursSwoge();
       const M = studioChat.MESURE;
-      return json(200, Object.assign(studioChat.catalogue(cours, { anthropic: chatActif('anthropic'), openai: chatActif('openai'), xai: chatActif('xai'), perplexity: chatActif('perplexity') }), {
+      return json(200, Object.assign(studioChat.catalogue(cours, { anthropic: chatActif('anthropic'), openai: chatActif('openai'), xai: chatActif('xai'),
+        venice: chatActif('venice'), openrouter: chatActif('openrouter'), deepseek: chatActif('deepseek'), mistral: chatActif('mistral'), perplexity: chatActif('perplexity') }), {
         /* Ce qu'on mesure, public : coût réel payé contre facturé. */
         mesure: { requetes: M.requetes, echecs: M.echecs, depassements: M.depassements,
                   coutUsd: Number(M.coutUsd.toFixed(4)), factureUsd: Number(M.factureUsd.toFixed(4)) },
@@ -4312,7 +4313,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
     if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
-    if (!chatActif('anthropic') && !chatActif('openai') && !chatActif('xai')) return json(503, { ok: false, raison: 'The AI provider key is not set on the server yet.' });
+    if (!['anthropic', 'openai', 'xai', 'venice', 'openrouter', 'deepseek', 'mistral'].some(chatActif)) return json(503, { ok: false, raison: 'The AI provider key is not set on the server yet.' });
     let q;
     /* 20 Mo : un PDF de 10 Mo en base64 (13,4 Mo) et quatre photos reduites
        par la page. Lu APRES la session : un inconnu ne peut rien envoyer. */
