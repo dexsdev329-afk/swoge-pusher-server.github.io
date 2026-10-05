@@ -99,6 +99,7 @@ lance traderp "$SRV" node trader_papier.test.js # la boucle trader EN PAPIER (8b
 lance agdevis "$SRV" node agent_devis.test.js   # le vrai devis (8c piece 1, LECTURE SEULE) : impact-prix estime (prix reel vs marginal), grandit avec la taille, refus si zero, aucune cle
 lance agesprit "$SRV" node agent_esprit.test.js # l esprit autonome : choisit ses outils (lecture puis action), au plus 1 post/1 rachat par pulse, finance par le carburant, rachat via la boucle trader seulement si active, aucune cle
 lance agmodele "$SRV" node agent_modele.test.js # le modele de l esprit (tool-use Anthropic) : choisit un outil ou s arrete, persona+regles dans le systeme, option media du post, fail-safe sans cle, bout en bout
+lance agmem   "$SRV" node agent_memoire.test.js # la memoire d un agent : note/rappel durables et bornes, anti-repetition (mots en commun) qui refuse le quasi-doublon mais laisse passer le neuf, seuls les posts comptent
 lance acces   "$SRV" node acces.test.js   # portes privees fermees sans cle, gestes d argent en POST seulement ; /credit partage entre le robinet admin et le credit en dollars (29/09)
 lance famille  "$SRV" node famille_client.test.js   # qui demande un prix : famille du client en code fixe, sonde ou demande, jamais le User-Agent brut ni l IP
 lance sondes   "$SRV" node sonde_services.test.js   # catalogue x402 note sans payer : une sonde par service et par 20 h, raison de chaque echec, aucun verdict sous 3 sondes, paiements reels comptes

@@ -71,6 +71,33 @@ function fuelInfini() { let debits = 0; return { peutPenser: () => true, debite:
     outils: { market: async () => ({}) }, fuel: f, coutParPenseeUsd: 0.002, maxEtapes: 4 });
   ok(r.etapes <= 4 && f._debits() <= 4, 'au plus maxEtapes pensees, et chacune a coute du carburant');
 
+  console.log('\n-- 8. anti-repetition + memoire (continuite) --');
+  posts = [];
+  var notes = [];
+  r = await E.pense(agent, {
+    modele: modeleScript([{ outil: 'post', args: { texte: 'liquidity is deep today' } }, { fin: true }]),
+    poste: async (a, p) => { posts.push(p.texte); return { surX: false }; },
+    estRedondant: function (t) { return /liquidity is deep/.test(t); },    /* le serveur branche la vraie mesure */
+    noteMemoire: function (e) { notes.push(e); },
+    fuel: fuelInfini(), coutParPenseeUsd: 0,
+  });
+  ok(posts.length === 0 && r.trace.some((x) => /redondant/.test(x.saute || '')), 'un texte redondant n est PAS poste (mieux vaut se taire)');
+  posts = []; notes = [];
+  r = await E.pense(agent, {
+    modele: modeleScript([{ outil: 'post', args: { texte: 'new holders are joining fast' } }, { fin: true }]),
+    poste: async (a, p) => { posts.push(p.texte); return { surX: true, url: 'u' }; },
+    estRedondant: function () { return false; }, noteMemoire: function (e) { notes.push(e); },
+    fuel: fuelInfini(), coutParPenseeUsd: 0,
+  });
+  ok(posts.length === 1 && notes.some((e) => e.quoi === 'post' && /new holders/.test(e.texte)), 'un post neuf part ET entre en memoire');
+  /* La memoire et l evenement passent au modele (continuite + raison de parler). */
+  var vus = null;
+  await E.pense(agent, { modele: async (ctx) => { vus = ctx; return { fin: true }; },
+    memoire: [{ quoi: 'post', texte: 'earlier post' }], evenement: { type: 'price_up', pct: 10 },
+    fuel: fuelInfini(), coutParPenseeUsd: 0 });
+  ok(vus && Array.isArray(vus.memoire) && vus.memoire.length === 1 && vus.evenement && vus.evenement.type === 'price_up',
+     'le modele recoit la memoire et l evenement du moment');
+
   console.log('\n-- 7. aucun outil ne prend d adresse, aucune cle dans le module --');
   const fs = require('fs'), path = require('path');
   const src = fs.readFileSync(path.join(__dirname, 'agent_esprit.js'), 'utf8');

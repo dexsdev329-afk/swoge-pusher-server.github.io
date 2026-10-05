@@ -40,15 +40,27 @@ function systeme(agent) {
     + (agent && agent.objectif ? `Your standing objective: ${agent.objectif}\n` : '')
     + `You act on your own, no human in the loop. Each pulse: optionally read a tool or two to inform yourself, then either post once or do nothing. `
     + `Hard rules: English; posts <= 240 chars, 1-3 emojis, no links, no hashtags; NEVER invent a number (use only what your read-tools returned); no promises of returns. `
+    + `You have a memory: never repeat a recent post — build on what you have said, bring something new. If nothing is new, call "wait". `
     + `Call ONE tool per step. When you have nothing useful to do, call "wait". You never handle addresses or keys.`;
 }
 
-/* La demande : l'etat, ce qui a ete lu et fait ce tour. */
+/* La demande : l'evenement du moment, la memoire (continuite), puis l'etat du tour. */
 function demande(ctx) {
+  const parts = [];
+  /* L'EVENEMENT : la raison de parler maintenant (poste du prix, gros achat, palier). */
+  if (ctx.evenement) {
+    parts.push('A notable event just happened on your token: ' + JSON.stringify(ctx.evenement).slice(0, 220)
+      + '. If it is worth sharing honestly (facts only), consider posting about THIS.');
+  }
+  /* LA MEMOIRE : ce que l'agent a deja dit — pour ne pas se repeter. */
+  const mem = (ctx.memoire || []).filter((x) => x.quoi === 'post' && x.texte).map((x) => x.texte).slice(0, 6);
+  if (mem.length) parts.push('You recently posted (do NOT repeat these — say something new):\n- ' + mem.join('\n- '));
   const l = [];
   (ctx.lectures || []).forEach((x) => l.push('read ' + x.outil + ': ' + JSON.stringify(x.res).slice(0, 300)));
   (ctx.actions || []).forEach((x) => l.push('did ' + x.action + (x.decide ? ' (' + x.decide + ')' : '')));
-  return (l.length ? 'So far this pulse:\n- ' + l.join('\n- ') + '\n\n' : '') + 'Choose your next tool, or wait.';
+  if (l.length) parts.push('So far this pulse:\n- ' + l.join('\n- '));
+  parts.push('Choose your next tool, or wait.');
+  return parts.join('\n\n');
 }
 
 /**

@@ -1622,6 +1622,7 @@ const signerPapier = require('./signer_papier');
 const traderPapier = require('./trader_papier');
 const agentEsprit = require('./agent_esprit');
 const agentModele = require('./agent_modele');
+const agentMemoire = require('./agent_memoire');
 /* Le self-service du createur : il attache l agent de SON jeton sans cle admin,
    la preuve etant une signature + la lecture du createur on-chain (agent_createur). */
 const agentCreateur = require('./agent_createur');
@@ -1640,6 +1641,8 @@ const FUEL_AGENTS = agentFuel.cree({});
 const TRESOR_AGENTS = agentFuel.cree({ fichier: require('path').join(cfg.DATA_DIR, 'agent_tresor.json'), grantInitialUsd: 0 });
 const POLICY_AGENTS = policyArgent.cree({});
 const SIGNER_AGENTS = signerPapier.cree({});
+/* La memoire de chaque agent (continuite + anti-repetition). */
+const MEMOIRE_AGENTS = agentMemoire.cree({});
 /* Le cout estime d une pensee (post) en dollars, et le plancher sous lequel l agent dort. */
 const COUT_POST_USD = Number(process.env.AGENT_COUT_POST_USD || 0.005);
 /* Les faits live d un agent, montes sur son pool/jeton (reutilise par l apercu ET l ordonnanceur).
@@ -1683,7 +1686,8 @@ function traderDecide(token, action, montantUsd, justification) {
     { pool: agent.pool, tresor: TRESOR_AGENTS, policy: POLICY_AGENTS, signer: SIGNER_AGENTS, devis, pareFeu });
 }
 /* L esprit d un agent : vrai modele (tool-use Anthropic) + vraies lectures + actions garde-fou. */
-function penseAgent(agent) {
+function penseAgent(agent, extra) {
+  extra = extra || {};
   return agentEsprit.pense(agent, {
     modele: (ctx) => agentModele.decide(ctx, {}),
     outils: {
@@ -1694,6 +1698,13 @@ function penseAgent(agent) {
     },
     poste: (a, p) => posteAgent(a, p),
     traite: (intent) => traderDecide(intent.token, intent.action, intent.montantUsd, intent.justification),
+    /* MEMOIRE (continuite) + ANTI-REPETITION : l esprit se souvient, et ne reposte
+       pas ce qui est trop proche d un post recent (memoire OU mur). L evenement du
+       moment, s il y en a un, donne la raison de parler (passe par l ordonnanceur). */
+    memoire: MEMOIRE_AGENTS.rappel(agent.token, 8),
+    evenement: extra.evenement || null,
+    estRedondant: (t) => MEMOIRE_AGENTS.estRedondant(agent.token, t, { recentsExtra: MUR_AGENTS.recent(agent.token, 8).map((e) => e.texte) }),
+    noteMemoire: (e) => { try { MEMOIRE_AGENTS.note(agent.token, e); } catch (x) {} },
     fuel: FUEL_AGENTS, coutParPenseeUsd: COUT_POST_USD, plancherUsd: 0, maxEtapes: Number(process.env.AGENT_ETAPES_MAX || 4),
   });
 }

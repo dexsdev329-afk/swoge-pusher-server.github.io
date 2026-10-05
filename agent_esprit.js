@@ -65,7 +65,11 @@ async function pense(agent, deps) {
       break;
     }
     let d;
-    try { d = await deps.modele({ agent: agent, lectures, actions, outils: OUTILS }); }
+    /* La MÉMOIRE (continuité) et l'ÉVÉNEMENT du moment (la raison de parler) entrent
+       dans le contexte du modèle, s'ils sont fournis. Optionnels : sans eux, l'esprit
+       se comporte comme avant (l'essai injecte un modèle sans mémoire). */
+    try { d = await deps.modele({ agent: agent, lectures, actions, outils: OUTILS,
+      memoire: Array.isArray(deps.memoire) ? deps.memoire : [], evenement: deps.evenement || null }); }
     catch (e) { trace.push({ etape: i, erreur: 'model: ' + String((e && e.message) || e).slice(0, 80) }); break; }
     if (deps.fuel && cout > 0) { try { deps.fuel.debite(agent.token, cout, 'thought'); } catch (e) {} }
     if (!d || d.fin || !d.outil) { trace.push({ etape: i, fin: true }); break; }
@@ -87,10 +91,16 @@ async function pense(agent, deps) {
       if (aPoste) { trace.push({ etape: i, outil: 'post', saute: 'deja poste ce tour' }); continue; }
       const texte = String((d.args && d.args.texte) || '').trim();
       if (!texte) { trace.push({ etape: i, outil: 'post', saute: 'texte vide' }); continue; }
+      /* ANTI-RÉPÉTITION : on refuse un texte trop proche d'un post récent. Mieux vaut
+         ne rien dire que se répéter. Le modèle peut réessayer sous un autre angle. */
+      if (typeof deps.estRedondant === 'function' && deps.estRedondant(texte)) {
+        trace.push({ etape: i, outil: 'post', saute: 'redondant (trop proche d un post recent)' }); continue;
+      }
       const media = ['image', 'video'].includes(d.args && d.args.media) ? d.args.media : 'none';   /* l agent peut joindre une image/video */
       let r = { surX: false };
       if (typeof deps.poste === 'function') { try { r = await deps.poste(agent, { texte, media }); } catch (e) { r = { surX: false, erreur: String((e && e.message) || e).slice(0, 80) }; } }
       aPoste = true; actions.push({ action: 'post', surX: !!r.surX, url: r.url || null, media });
+      if (typeof deps.noteMemoire === 'function') { try { deps.noteMemoire({ quoi: 'post', texte }); } catch (e) {} }   /* on s en souvient */
       trace.push({ etape: i, outil: 'post', ok: true });
       continue;
     }
@@ -104,6 +114,7 @@ async function pense(agent, deps) {
         catch (e) { r = { decide: 'rejected', raison: String((e && e.message) || e).slice(0, 80) }; }
       }
       actions.push({ action: 'propose_buyback', decide: r.decide, recu: r.recu || null, raison: r.raison || null });
+      if (typeof deps.noteMemoire === 'function') { try { deps.noteMemoire({ quoi: 'buyback', meta: { decide: r.decide, montantUsd: Number(d.args && d.args.montantUsd) || null } }); } catch (e) {} }
       trace.push({ etape: i, outil: 'propose_buyback', decide: r.decide });
       continue;
     }
