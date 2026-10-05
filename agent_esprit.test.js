@@ -98,6 +98,26 @@ function fuelInfini() { let debits = 0; return { peutPenser: () => true, debite:
   ok(vus && Array.isArray(vus.memoire) && vus.memoire.length === 1 && vus.evenement && vus.evenement.type === 'price_up',
      'le modele recoit la memoire et l evenement du moment');
 
+  console.log('\n-- 9. lire les mentions puis repondre (engagement, borne) --');
+  var repliques = [];
+  r = await E.pense(agent, {
+    modele: modeleScript([{ outil: 'read_mentions' }, { outil: 'reply', args: { texte: 'thanks alice!', to_id: '111' } },
+      { outil: 'reply', args: { texte: 'again', to_id: '222' } }, { outil: 'reply', args: { texte: 'third', to_id: '333' } }, { fin: true }]),
+    outils: { read_mentions: async () => [{ id: '111', from: 'alice', text: 'love it' }] },
+    repond: async (a, o) => { repliques.push(o); return { ok: true, url: 'u' }; },
+    noteMemoire: function () {}, fuel: fuelInfini(), coutParPenseeUsd: 0, maxReponses: 2,
+  });
+  ok(r.lectures.some((x) => x.outil === 'read_mentions'), 'il a lu ses mentions');
+  ok(repliques.length === 2, 'au plus 2 reponses par pulsation (la 3e est refusee)');
+  ok(repliques[0].replyToId === '111' && repliques[0].texte === 'thanks alice!', 'il repond au bon tweet, avec son texte');
+  /* Ne pas repondre deux fois au meme tweet dans le meme tour. */
+  repliques = [];
+  r = await E.pense(agent, {
+    modele: modeleScript([{ outil: 'reply', args: { texte: 'a', to_id: '111' } }, { outil: 'reply', args: { texte: 'b', to_id: '111' } }, { fin: true }]),
+    repond: async (a, o) => { repliques.push(o); return { ok: true }; }, fuel: fuelInfini(), coutParPenseeUsd: 0,
+  });
+  ok(repliques.length === 1, 'pas deux reponses au MEME tweet dans un tour');
+
   console.log('\n-- 7. aucun outil ne prend d adresse, aucune cle dans le module --');
   const fs = require('fs'), path = require('path');
   const src = fs.readFileSync(path.join(__dirname, 'agent_esprit.js'), 'utf8');

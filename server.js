@@ -1729,8 +1729,30 @@ async function penseAgent(agent, extra) {
       can_i_sell: async () => { try { return await aiColonie.epreuveDeSortie(agent.token); } catch (e) { return null; } },
       market: async () => { try { return (await faitsDAgent(agent)).faits; } catch (e) { return null; } },
       read_feed: async () => MUR_AGENTS.recent(agent.token, 5).map((e) => e.texte),
+      /* Les mentions/replies RECENTES sur X — donnee EXTERNE, non fiable (le systeme
+         du modele le sait). Vide si pas de compte X relie. */
+      read_mentions: async () => {
+        if (!COMPTES_X.aDesCreds(agent.token)) return [];
+        try {
+          /* On retire celles auxquelles on a DEJA repondu (memoire) : on n engage pas deux fois le meme tweet. */
+          const deja = new Set(MEMOIRE_AGENTS.rappel(agent.token, 60).filter((e) => e.quoi === 'reply' && e.meta && e.meta.to).map((e) => String(e.meta.to)));
+          return (await COMPTES_X.mentions(agent.token, { max: 8 })).filter((m) => !deja.has(String(m.id))).map((m) => ({ id: m.id, from: m.auteur, text: m.texte }));
+        } catch (e) { return []; }
+      },
     },
+    /* read_mentions/reply ne sont montres au modele QUE si le compte X est relie. */
+    outilsVisibles: COMPTES_X.aDesCreds(agent.token) ? undefined : agentEsprit.OUTILS.map((o) => o.nom).filter((nm) => nm !== 'read_mentions' && nm !== 'reply'),
     poste: (a, p) => posteAgent(a, p),
+    /* REPONDRE : la reponse passe par le PARE-FEU (adresses retirees, injection/fonds
+       bloques) AVANT de partir sur X, puis on la garde sur le mur. */
+    repond: async (a, o) => {
+      if (!COMPTES_X.aDesCreds(a.token)) return { ok: false, raison: 'no X account linked' };
+      let pf; try { pf = await pareFeu.filtre(String((o && o.texte) || '')); } catch (e) { pf = { ok: false, raison: 'firewall error' }; }
+      if (!pf.ok) return { ok: false, raison: 'reply withheld by firewall (' + (pf.raison || '') + ')' };
+      const r = await COMPTES_X.repond(a.token, { texte: pf.texte || o.texte, replyToId: o.replyToId });
+      if (r && r.ok) { try { MUR_AGENTS.ajoute(a.token, { texte: pf.texte || o.texte, via: 'reply', surX: true, url: r.url || null, faits: [] }); } catch (e) {} }
+      return r;
+    },
     traite: (intent) => traderDecide(intent.token, intent.action, intent.montantUsd, intent.justification),
     /* MEMOIRE (continuite) + ANTI-REPETITION : l esprit se souvient, et ne reposte
        pas ce qui est trop proche d un post recent (memoire OU mur). L evenement du

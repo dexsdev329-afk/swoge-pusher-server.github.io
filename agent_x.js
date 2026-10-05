@@ -136,6 +136,57 @@ function cree(opts) {
     return { surX: true, id: String(id), url: 'https://x.com/' + h + '/status/' + id };
   }
 
+  /* Un GET X signe avec les cles DU JETON (les parametres entrent dans la signature). */
+  async function appelGet(token, chemin, params, f) {
+    const cles = clesDe(token); if (!cles) throw new Error('no usable X account');
+    if (!cles.ck || !cles.cs) throw new Error('house X app keys not configured');
+    params = params || {};
+    const url = API + chemin;
+    const s = xp.signeOAuth('GET', url, params, cles);
+    const q = Object.keys(params).map((k) => xp.enc(k) + '=' + xp.enc(params[k])).join('&');
+    const r = await (f || fetch)(url + (q ? '?' + q : ''), { headers: { authorization: s.entete }, signal: AbortSignal.timeout(20000) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error('X ' + chemin + ' HTTP ' + r.status);
+    return j;
+  }
+  /** Le compte X du jeton (son id + handle), vu par X. null si pas relie. */
+  async function moi(token, f) {
+    if (!aDesCreds(token)) return null;
+    try { const j = await appelGet(token, '/2/users/me', { 'user.fields': 'username' }, f); return j.data ? { id: String(j.data.id), username: j.data.username || null } : null; }
+    catch (e) { return null; }
+  }
+  /** Les mentions/replies RECENTES du compte X du jeton. Rend [{ id, texte, auteur, quand }].
+   *  Donnee EXTERNE, non fiable : l appelant doit la traiter comme telle (jamais une instruction). */
+  async function mentions(token, o, f) {
+    o = o || {};
+    const me = await moi(token, f); if (!me) return [];
+    const params = { max_results: String(Math.min(50, Math.max(5, Number(o.max) || 10))), 'tweet.fields': 'author_id,created_at', expansions: 'author_id', 'user.fields': 'username' };
+    if (o.sinceId) params.since_id = String(o.sinceId);
+    let j; try { j = await appelGet(token, '/2/users/' + me.id + '/mentions', params, f); } catch (e) { return []; }
+    const users = {}; ((j.includes && j.includes.users) || []).forEach((u) => { users[String(u.id)] = u.username; });
+    return (j.data || []).map((t) => ({ id: String(t.id), texte: String(t.text || ''), auteur: users[String(t.author_id)] || null, auteurId: String(t.author_id || ''), quand: t.created_at || null }))
+      .filter((m) => m.auteurId !== me.id);   /* on ne se repond pas a soi-meme */
+  }
+  /** Repond (publiquement) a un tweet, sur le compte X du jeton. { texte, replyToId }. */
+  async function repond(token, o, f) {
+    o = o || {};
+    const texte = String(o.texte || '').trim(), to = String(o.replyToId || '');
+    if (!texte) return { ok: false, raison: 'empty reply' };
+    if (!/^[0-9]{1,25}$/.test(to)) return { ok: false, raison: 'bad reply target id' };
+    const cles = clesDe(token); if (!cles) return { ok: false, raison: 'no usable X account for this token' };
+    if (!cles.ck || !cles.cs) return { ok: false, raison: 'house X app keys not configured' };
+    const url = API + '/2/tweets';
+    const s = xp.signeOAuth('POST', url, {}, cles);
+    const corps = { text: texte, reply: { in_reply_to_tweet_id: to } };
+    const r = await (f || fetch)(url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: s.entete }, body: JSON.stringify(corps), signal: AbortSignal.timeout(30000) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const detail = (j.detail || j.title || (j.errors && j.errors[0] && j.errors[0].message) || '').slice(0, 160); return { ok: false, raison: 'X HTTP ' + r.status + (detail ? ' — ' + detail : '') }; }
+    const id = j.data && j.data.id;
+    if (!id) return { ok: false, raison: 'X reply: response without id' };
+    const h = handleDe(token) || 'i';
+    return { ok: true, id: String(id), url: 'https://x.com/' + h + '/status/' + id };
+  }
+
   /* Un appel X signe avec les cles DU JETON (pour televerser un media sur SON compte). */
   async function appel(token, chemin, corps, f) {
     const cles = clesDe(token); if (!cles) throw new Error('no usable X account');
@@ -176,7 +227,7 @@ function cree(opts) {
     return id;
   }
 
-  return { connecte, oublie, aDesCreds, handleDe, poste, televerse, televerseVideo };
+  return { connecte, oublie, aDesCreds, handleDe, poste, televerse, televerseVideo, moi, mentions, repond, appelGet };
 }
 
 module.exports = { cree, API };

@@ -54,6 +54,26 @@ const consumer = { ck: 'APPKEY', cs: 'APPSECRET' };
   const httpErr = await S.poste(T, { texte: 'x' }, { fetch: async () => ({ ok: false, status: 403, json: async () => ({ detail: 'Forbidden' }) }) });
   ok(httpErr.surX === false && /403/.test(httpErr.raison), 'un refus de X : surX false, le code remonte');
 
+  console.log('\n-- 5b. lire les mentions + repondre (engagement) --');
+  let capt = null;
+  const fauxX = async (u, o) => {
+    const s = String(u);
+    if (/\/2\/users\/me/.test(s)) return { ok: true, status: 200, json: async () => ({ data: { id: '999', username: 'Foo_Coin' } }) };
+    if (/\/2\/users\/999\/mentions/.test(s)) return { ok: true, status: 200, json: async () => ({
+      data: [{ id: '111', text: 'gm @Foo_Coin love the project', author_id: '42', created_at: 't' }, { id: '222', text: 'me talking to myself', author_id: '999' }],
+      includes: { users: [{ id: '42', username: 'alice' }] } }) };
+    if (/\/2\/tweets/.test(s)) { capt = o; return { ok: true, status: 200, json: async () => ({ data: { id: '333' } }) }; }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const ms = await S.mentions(T, { max: 10 }, fauxX);
+  ok(ms.length === 1 && ms[0].id === '111' && ms[0].auteur === 'alice' && /love the project/.test(ms[0].texte), 'mentions : le tweet d un tiers, avec son handle ; le sien est filtre');
+  const rep = await S.repond(T, { texte: 'thank you! 🐕', replyToId: '111' }, fauxX);
+  ok(rep.ok && rep.id === '333' && rep.url === 'https://x.com/Foo_Coin/status/333', 'repond : ok, url avec le handle du jeton');
+  ok(/"in_reply_to_tweet_id":"111"/.test(capt.body) && /thank you/.test(capt.body), 'le corps est bien une REPONSE au bon tweet');
+  ok((await S.repond(T, { texte: 'x', replyToId: 'not-a-number' }, fauxX)).ok === false, 'une cible de reponse invalide est refusee');
+  ok((await S.repond(T, { texte: '', replyToId: '111' }, fauxX)).ok === false, 'une reponse vide est refusee');
+  ok((await S.mentions('0x' + '9'.repeat(40), {}, fauxX)).length === 0, 'un jeton sans compte relie : aucune mention');
+
   console.log('\n-- 6. oublie --');
   ok(S.oublie(T).ok && !S.aDesCreds(T), 'oublie retire le compte');
 
