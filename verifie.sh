@@ -84,6 +84,7 @@ lance lancv4  "$SRV" node lancement_v4.test.js   # l agent PREPARE un lancement 
 lance agjeton "$SRV" node agent_jeton.test.js   # un agent par jeton lance : un seul par jeton, seul le createur le modifie, pouvoirs d argent inertes, du selon la cadence, persistance
 lance agposte "$SRV" node agent_poste.test.js   # l agent d un jeton compose un post dans sa persona : faits recus seulement (aucun chiffre invente), fetch injectable, reserve sans cle, liens nettoyes
 lance agfaits "$SRV" node agent_faits.test.js   # les faits live d un jeton : une valeur absente ne cree aucun fait, GoPlus tri-etat (inconnu != vert), une source qui tombe n efface pas les autres
+lance agdemo  "$SRV" node agent_demo.test.js    # apercu d un post d agent : registre -> faits -> compositeur (+ image a pattes), rien publie, pause/sans-agent refuses, recolte/image en panne n arretent pas
 lance acces   "$SRV" node acces.test.js   # portes privees fermees sans cle, gestes d argent en POST seulement ; /credit partage entre le robinet admin et le credit en dollars (29/09)
 lance famille  "$SRV" node famille_client.test.js   # qui demande un prix : famille du client en code fixe, sonde ou demande, jamais le User-Agent brut ni l IP
 lance sondes   "$SRV" node sonde_services.test.js   # catalogue x402 note sans payer : une sonde par service et par 20 h, raison de chaque echec, aucun verdict sous 3 sondes, paiements reels comptes
