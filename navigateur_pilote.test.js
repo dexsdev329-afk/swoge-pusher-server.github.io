@@ -205,6 +205,7 @@ const sansAttente = { dors: async () => {} };
     ok(r3.bilan && r3.bilan.net === 1 && r3.bilan.gagnees === 1 && r3.bilan.perdues === 1 && r3.bilan.mains === 2,
        'le bilan compte gagnees/perdues et le net (+1 $, 1 gagnee / 1 perdue)');
     ok(r3.bilan && r3.bilan.soldeNet === 1, 'le net par DELTA de solde (101 - 100) est calcule : fiable meme si une main manque (' + (r3.bilan && r3.bilan.soldeNet) + ')');
+    ok(r3.bilan && r3.bilan.solde === 101, 'le bilan porte le SOLDE TOTAL courant (101), pas seulement le net — affiche dans le tableau (' + (r3.bilan && r3.bilan.solde) + ')');
     /* Hors mode blackjack : aucune ligne BLACKJACK, la mise reste au modele. */
     const vLibre = P.verifie(ADDR, { but: 'play' });
     ok(!/BLACKJACK MODE/.test(Pilote.consigne(vLibre.P, { ecran: { width: 1280, height: 800 }, url: 'x' }, 1)), 'sans mode blackjack : pas de martingale imposee');

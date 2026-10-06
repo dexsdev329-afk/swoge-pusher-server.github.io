@@ -178,7 +178,9 @@ function consigne(P, im, n) {
       + 'Your bet for the NEXT hand MUST be exactly ' + P.bj.mise + ' — set the bet field to ' + P.bj.mise + ' (x2/÷2 buttons, or type; if it is in ETH, convert) before you Deal. '
       + 'DO NOT change the bet yourself: I size it for you with the chosen betting system (' + (P.bj.strategie || 'martingale') + '). Play the cards with basic strategy. '
       + 'WAIT for the hand to fully resolve before reporting: if the dealer is still drawing cards, answer "phase":"play" and look again next step; '
-      + 'only answer "phase":"result" with the outcome once the win/loss/push is clearly shown on screen, so no result is missed.' : null),
+      + 'only answer "phase":"result" with the outcome once the win/loss/push is clearly shown on screen, so no result is missed. '
+      + 'TAKE YOUR TIME — accuracy matters more than speed. Before every Deal, check that the bet field really reads ' + P.bj.mise + ' (fix it if not), '
+      + 'and report EXACTLY ONE "result" per hand, no hand skipped and none counted twice, so the tally stays true and we build the most data to play well over time.' : null),
     /* Ce que le pilote a appris de CETTE table lors des parties précédentes, et
        comment il en ajoute — il repart avec ses repères, donc plus vite. */
     ((P.notesTable && P.notesTable.length)
@@ -269,6 +271,7 @@ function cree(deps) {
          « combien on a gagné » : net en dollars et nombre de mains. */
       const bilan = P.bj ? { net: Math.round(P.bj.net * 100) / 100, mains: P.bj.mains, base: P.bj.base, derniereMise: P.bj.mise,
                              gagnees: P.bj.gagnees, perdues: P.bj.perdues, nulles: P.bj.nulles,
+                             solde: P.bj.soldeActuel != null ? Math.round(P.bj.soldeActuel * 100) / 100 : null,
                              soldeNet: (P.bj.soldeActuel != null && P.bj.soldeDepart != null) ? Math.round((P.bj.soldeActuel - P.bj.soldeDepart) * 100) / 100 : null } : null;
       return { ok: raison === 'done' || raison === 'stopped' || raison === 'budget' || raison === 'steps' || raison === 'time',
                raison, detail: quoi || null, memo: P.memo || null, bilan,
@@ -388,6 +391,7 @@ function cree(deps) {
         if (P.souvenirs.length > SOUVENIRS) P.souvenirs.shift();
         emet('etape', { n, action: decrit(a), pourquoi: a.pourquoi, note, factureUsd: facture, totalUsd: P.totalUsd,
                         bj: P.bj ? { net: P.bj.net, mains: P.bj.mains, mise: P.bj.mise, gagnees: P.bj.gagnees, perdues: P.bj.perdues, nulles: P.bj.nulles,
+                                     solde: P.bj.soldeActuel != null ? Math.round(P.bj.soldeActuel * 100) / 100 : null,
                                      soldeNet: (P.bj.soldeActuel != null && P.bj.soldeDepart != null) ? Math.round((P.bj.soldeActuel - P.bj.soldeDepart) * 100) / 100 : null } : undefined });
       }
     } catch (e) {
