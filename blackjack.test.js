@@ -42,5 +42,20 @@ console.log('\n-- 4. une vraie série (départ, 3 pertes, 1 gain, reprise) --');
   ok(JSON.stringify(suite) === JSON.stringify([1, 2, 4, 8, 1, 2]), 'série 1,2,4,8 puis gain -> 1 puis perte -> 2 : ' + suite.join(','));
 }
 
+console.log('\n-- 5. les stratégies au choix --');
+ok(BJ.litStrategie('pirolie') === 'paroli' && BJ.litStrategie('anti-martingale') === 'paroli', 'pirolie / anti-martingale -> paroli');
+ok(BJ.litStrategie('flat') === 'plat' && BJ.litStrategie("d'alembert") === 'dalembert' && BJ.litStrategie('xyz') === 'martingale', 'flat -> plat, d alembert, defaut martingale');
+/* Plate : toujours la base. */
+ok(BJ.prochaineMise({ base: 2, cap: 100, mise: 8, issue: 'lose', strategie: 'plat' }) === 2 &&
+   BJ.prochaineMise({ base: 2, cap: 100, mise: 2, issue: 'win', strategie: 'plat' }) === 2, 'plate : la mise ne bouge jamais (base)');
+/* Paroli : double après un GAIN, base après une perte. */
+ok(BJ.prochaineMise({ base: 1, cap: 100, mise: 1, issue: 'win', strategie: 'paroli' }) === 2 &&
+   BJ.prochaineMise({ base: 1, cap: 100, mise: 4, issue: 'lose', strategie: 'paroli' }) === 1, 'paroli : gain -> double, perte -> base (on parie gros avec l argent gagne)');
+ok(BJ.prochaineMise({ base: 1, cap: 6, mise: 4, issue: 'win', strategie: 'paroli' }) === 1, 'paroli : au-dela du plafond, retour base');
+/* D'Alembert : +1 unité après une perte, -1 après un gain, plancher base. */
+ok(BJ.prochaineMise({ base: 1, cap: 100, mise: 3, issue: 'lose', strategie: 'dalembert' }) === 4 &&
+   BJ.prochaineMise({ base: 1, cap: 100, mise: 3, issue: 'win', strategie: 'dalembert' }) === 2, 'd alembert : perte +1, gain -1');
+ok(BJ.prochaineMise({ base: 1, cap: 100, mise: 1, issue: 'win', strategie: 'dalembert' }) === 1, 'd alembert : on ne descend jamais sous la base');
+
 console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
 process.exit(rates ? 1 : 0);

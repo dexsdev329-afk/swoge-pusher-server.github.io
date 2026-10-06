@@ -92,7 +92,9 @@ function litAction(texte, ecran) {
   const bjIssue = typeof o.outcome === 'string' ? o.outcome.slice(0, 20) : null;
   const bjTour = Number.isFinite(Number(o.hand)) ? Number(o.hand) : null;
   const bjPhase = typeof o.phase === 'string' ? o.phase.slice(0, 16).toLowerCase() : null;
-  const base = { type, pourquoi, memo, bjIssue, bjTour, bjPhase };
+  /* `learn` : un repère durable de la table, mémorisé pour les parties suivantes. */
+  const apprend = typeof o.learn === 'string' && o.learn.trim() ? o.learn.trim().slice(0, 200) : null;
+  const base = { type, pourquoi, memo, bjIssue, bjTour, bjPhase, apprend };
   const W = (ecran && ecran.width) || 1280, H = (ecran && ecran.height) || 800;
   switch (type) {
     case 'click': {
@@ -170,9 +172,16 @@ function consigne(P, im, n) {
       + 'EVERY step you MUST add "phase": "bet" (about to place the bet), "play" (cards dealt, you are deciding), or "result" (a hand just finished). '
       + 'When "phase":"result", you MUST also add "outcome":"win"|"lose"|"push" — this is how I update the bet. If you forget it, the bet will NOT change. '
       + 'Your bet for the NEXT hand MUST be exactly ' + P.bj.mise + ' — set the bet field to ' + P.bj.mise + ' (x2/÷2 buttons, or type; if it is in ETH, convert) before you Deal. '
-      + 'DO NOT change the bet yourself: I double after a loss and reset to base after a win. Play the cards with basic strategy. '
+      + 'DO NOT change the bet yourself: I size it for you with the chosen betting system (' + (P.bj.strategie || 'martingale') + '). Play the cards with basic strategy. '
       + 'WAIT for the hand to fully resolve before reporting: if the dealer is still drawing cards, answer "phase":"play" and look again next step; '
       + 'only answer "phase":"result" with the outcome once the win/loss/push is clearly shown on screen, so no result is missed.' : null),
+    /* Ce que le pilote a appris de CETTE table lors des parties précédentes, et
+       comment il en ajoute — il repart avec ses repères, donc plus vite. */
+    ((P.notesTable && P.notesTable.length)
+      ? 'WHAT YOU ALREADY LEARNED ON THIS PAGE (from past sessions — trust it, but verify on screen):\n- ' + P.notesTable.join('\n- ')
+      : null),
+    'LEARN: when you find where a control is or how this table behaves (e.g. "Deal button bottom-left ~150,700", "result shows top-right after ~2s"), '
+      + 'add "learn":"..." (one short durable fact) so next time is faster. Only lasting layout facts, never the score of one hand.',
     'PREVIOUS STEPS: ' + (P.souvenirs.length ? '\n' + P.souvenirs.join('\n') : 'none, this is the first step.'),
     'Answer with ONE JSON object and nothing else, like {"why":"press Hit, I have 12 against a 10","action":"click","x":640,"y":512,"memo":"start 1000 | now 1000 | net 0 | hands 0"}.',
     'Actions: "click" (x, y) · "scroll" (dy: positive goes down) · "type" (text — click the field first) · "key" (key: Enter, Tab, Escape, Backspace, arrows, PageUp, PageDown, Home, End) · '
@@ -195,7 +204,10 @@ function cree(deps) {
   function verifie(addr, q) {
     q = q || {};
     if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
-    const but = String(q.but || '').trim();
+    const estBlackjack = String(q.mode || '').toLowerCase() === 'blackjack';
+    /* En mode blackjack, le but n'est pas obligatoire : le mode EST le but. */
+    let but = String(q.but || '').trim();
+    if (!but && estBlackjack) but = 'Play blackjack with basic strategy.';
     if (but.length < 3) return { ok: false, code: 400, raison: 'write what the autopilot should do' };
     if (but.length > BUT_MAX_CAR) return { ok: false, code: 400, raison: 'the goal is too long (' + BUT_MAX_CAR + ' characters at most)' };
     if (EN_COURS.has(addr)) return { ok: false, code: 409, raison: 'your autopilot is already running — stop it first' };
@@ -218,16 +230,17 @@ function cree(deps) {
        revenir à la base après un gain. base = miseBase (défaut 1), plafond =
        miseMax si donné (sinon base*64). `tour` dédoublonne les résultats. */
     let bj = null;
-    if (String(q.mode || '').toLowerCase() === 'blackjack') {
+    if (estBlackjack) {
       const base = Number(q.miseBase) > 0 ? Number(q.miseBase) : 1;
       const cap = Number(q.miseMax) > 0 ? Number(q.miseMax) : base * 64;
-      /* `net` et `mains` : le serveur les tient lui-même à partir des mises
-         qu'il impose et des résultats rapportés — le gain/perte en dollars ne
-         dépend donc PAS du carnet du modèle (« on sait pas combien on a gagné »). */
-      bj = { base, cap, mise: blackjack.premiereMise({ base }), tour: 0, net: 0, mains: 0,
-             gagnees: 0, perdues: 0, nulles: 0, compte: false };
+      /* `net`/`mains`/compteurs : tenus par le serveur depuis les mises qu'il
+         impose et les résultats rapportés. `strategie` : le système de mise
+         choisi par le joueur (martingale par défaut). */
+      bj = { base, cap, strategie: blackjack.litStrategie(q.strategie), mise: blackjack.premiereMise({ base }),
+             tour: 0, net: 0, mains: 0, gagnees: 0, perdues: 0, nulles: 0, compte: false };
     }
-    return { ok: true, P: { but, etapesMax, budgetUsd, argent, url, ethUsd, bj, ecran: q.ecran === 'telephone' ? 'telephone' : 'bureau',
+    return { ok: true, P: { but, etapesMax, budgetUsd, argent, url, ethUsd, bj, cleTable: null, notesTable: [],
+                            ecran: q.ecran === 'telephone' ? 'telephone' : 'bureau',
                             memo: '', souvenirs: [], totalUsd: 0, arret: false } };
   }
 
@@ -283,6 +296,11 @@ function cree(deps) {
         const im = await ecran(seq, n === 0 ? 0 : ATTENTE_IMAGE_MS);
         if (!im.ok) return fin('error', /no browser session/.test(im.raison) ? 'open a page in the browser first' : im.raison);
         seq = Number(im.seq) || seq;
+        /* Ce qu'on a appris de CETTE table (par URL) : on le rappelle au modèle. */
+        if (deps.tables) {
+          const cle = deps.tables.cleDe(im.url || P.url);
+          if (cle) { P.cleTable = cle; P.notesTable = deps.tables.notes(cle, 10); }
+        }
         const messages = [{ role: 'user', content: consigne(P, im, n + 1), pieces: [{ media: 'image/jpeg', data: im.image, nom: 'screen.jpg' }] }];
         /* LA borne d'argent : le déjà facturé plus le PIRE cas de cet appel tient dans le budget. */
         if (P.totalUsd + outils.pireCasUsd(messages) > P.budgetUsd) return fin('budget');
@@ -310,6 +328,8 @@ function cree(deps) {
         }
         rates = 0;
         if (a.memo !== null) P.memo = a.memo;
+        /* Un repère durable de la table : mémorisé pour les parties suivantes. */
+        if (a.apprend && deps.tables && P.cleTable) { try { deps.tables.apprend(P.cleTable, a.apprend); } catch (e) {} }
         /* MODE BLACKJACK : une main finie (résultat + numéro NOUVEAU) -> le
            serveur calcule la mise suivante. Le numéro évite de doubler deux fois
            sur un résultat affiché pendant plusieurs captures. */
@@ -332,7 +352,7 @@ function cree(deps) {
             else { P.bj.nulles++; }   /* push : net inchangé */
             P.bj.net = Math.round(P.bj.net * 100) / 100;
             P.bj.mains++;
-            P.bj.mise = blackjack.prochaineMise({ base: P.bj.base, cap: P.bj.cap, mise: P.bj.mise, issue });
+            P.bj.mise = blackjack.prochaineMise({ base: P.bj.base, cap: P.bj.cap, mise: P.bj.mise, issue, strategie: P.bj.strategie });
             P.bj.compte = true;
           }
         }

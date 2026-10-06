@@ -2033,8 +2033,12 @@ const studioAgent = require('./studio_agent');
 const navigue = require('./navigue');   /* l'onglet Browse : lire une page publique, en securite */
 const navigateurRelais = require('./navigateur_relais').cree();   /* le Chromium du service a part (NAVIGATEUR_URL) */
 const Pilote = require('./navigateur_pilote');
+/* Ce que le pilote apprend d'une table (par URL), durable : il rejoue ses
+   repères aux parties suivantes — il jouera surtout sur la meme table 1win. */
+const piloteTables = require('./pilote_tables');
+const PILOTE_TABLES = piloteTables.cree({ fichier: require('path').join(cfg.DATA_DIR, 'pilote_tables.json') });
 /* Le pilote (02/10) : il ne parle au navigateur que par le relais, au nom de la session. */
-const pilote = Pilote.cree({ image: (addr, q) => navigateurRelais.image(addr, q), geste: (addr, q) => navigateurRelais.geste(addr, q) });
+const pilote = Pilote.cree({ image: (addr, q) => navigateurRelais.image(addr, q), geste: (addr, q) => navigateurRelais.geste(addr, q), tables: PILOTE_TABLES });
 /* roast_token (roast.js, 28/09/2026) : la fiche de token_verdict, mise en mots par
    Claude Haiku (sinon un gabarit tire des memes faits) et dessinee en carte PNG. */
 const roastTokens = require('./roast').cree({

@@ -209,6 +209,44 @@ const sansAttente = { dors: async () => {} };
     ok(!/BLACKJACK MODE/.test(Pilote.consigne(vLibre.P, { ecran: { width: 1280, height: 800 }, url: 'x' }, 1)), 'sans mode blackjack : pas de martingale imposee');
   }
 
+  console.log('\n-- 5c. but par defaut, strategie au choix, apprentissage de la table --');
+  {
+    const P = Pilote.cree(Object.assign(fauxNavigateur(), sansAttente));
+    const v = P.verifie(ADDR, { mode: 'blackjack' });
+    ok(v.ok && /blackjack/i.test(v.P.but) && v.P.bj.strategie === 'martingale', 'sans but, en mode blackjack : un but par defaut, martingale par defaut');
+    ok(P.verifie(ADDR, { mode: 'blackjack', strategie: 'pirolie' }).P.bj.strategie === 'paroli', '« pirolie » choisit la Paroli (anti-martingale)');
+
+    /* Paroli en action : gain -> double, perte -> base. */
+    const nav = fauxNavigateur();
+    const Pp = Pilote.cree(Object.assign({ image: nav.image, geste: nav.geste }, sansAttente));
+    const modp = fauxModele([
+      { action: 'click', x: 1, y: 1, phase: 'play' },
+      { action: 'click', x: 1, y: 1, phase: 'result', outcome: 'win' },    /* paroli -> 2 */
+      { action: 'click', x: 1, y: 1, phase: 'play' },
+      { action: 'click', x: 1, y: 1, phase: 'result', outcome: 'lose' },   /* paroli -> base 1 */
+      { action: 'done', result: 'x' },
+    ]);
+    await Pp.lance(ADDR, { mode: 'blackjack', strategie: 'paroli', miseBase: 1, miseMax: 100, url: 'casino.example' },
+      { appelle: modp.appelle, pireCasUsd: () => 0, emet: () => {} });
+    const cp = (k) => modp.appels[k][0].content;
+    ok(/paroli/i.test(cp(0)) && /exactly 2\b/.test(cp(2)), 'paroli : la consigne la nomme, et apres un gain la mise double (2)');
+    ok(/exactly 1\b/.test(cp(4)), 'paroli : apres une perte, retour a la base (1)');
+
+    /* Apprentissage : un faux magasin de tables ; le repère est appris, puis rappelé. */
+    const appris = [];
+    const tables = { cleDe: (u) => u ? 'cle:' + u : null, notes: () => appris.slice(), apprend: (cle, t) => { appris.unshift(t); return { ok: true }; } };
+    const nav2 = fauxNavigateur();
+    const Pt = Pilote.cree(Object.assign({ image: nav2.image, geste: nav2.geste, tables: tables }, sansAttente));
+    const modt = fauxModele([
+      { action: 'click', x: 1, y: 1, learn: 'Deal button bottom-left ~150,700' },
+      { action: 'done', result: 'x' },
+    ]);
+    await Pt.lance(ADDR, { but: 'play', url: 'casino.example' }, { appelle: modt.appelle, pireCasUsd: () => 0, emet: () => {} });
+    ok(appris.indexOf('Deal button bottom-left ~150,700') >= 0, 'un repère rapporté (learn) est appris pour la table');
+    ok(/LEARN:/.test(modt.appels[0][0].content), 'la consigne invite a apprendre des reperes durables');
+    ok(/WHAT YOU ALREADY LEARNED/.test(modt.appels[1][0].content), 'le repère appris est rappelé a l etape suivante');
+  }
+
   console.log('\n-- 6. ce qui ne joue pas --');
   {
     const nav = fauxNavigateur();

@@ -42,7 +42,8 @@ lance navig   "$SRV" node navigateur.test.js   # le navigateur Browse : vrai Chr
 lance navsortie "$SRV" node navigateur_sortie.test.js   # la sortie par proxy amont (NAVIGATEUR_SORTIE, IP bresilienne) : HTTP et CONNECT confies au proxy avec auth, la garde anti-SSRF refuse le prive AVANT le proxy, direct sans la variable
 lance navrel  "$SRV" node navigateur_relais.test.js   # le relais : le joueur de la SESSION, deux images en vol au plus, durees sans adresse
 lance pilote  "$SRV" node navigateur_pilote.test.js   # le pilote (02/10) : budget d IA jamais depasse, Stop sans geste apres, rien tape que le joueur n a ecrit, la session seule
-lance blackjack "$SRV" node blackjack.test.js   # la martingale du mode blackjack : perte double, gain revient a la base, plafond casse -> base, issues lues, serie
+lance blackjack "$SRV" node blackjack.test.js   # les strategies de mise du mode blackjack : martingale, paroli, d alembert, plate ; plafond casse -> base, issues lues, serie
+lance pilotetables "$SRV" node pilote_tables.test.js   # ce que le pilote apprend d une table (par URL) : cle normalisee, reperes bornes, dedoublonnes, durables
 lance osinttel "$SRV" node osint_tel.test.js   # le plan de numerotation FR : type + region, deterministes, sans cle
 lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route publique du releve
 lance bugb    "$SRV" node bugbounty.test.js   # bug bounty + osint : la garde d autorisation (programme ou case attestee), le pre-audit statique

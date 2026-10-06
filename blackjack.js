@@ -35,14 +35,33 @@ function litIssue(x) {
   return null;
 }
 
+/* Les stratégies de MISE proposées au joueur (il choisit). Chacune ne touche QUE
+ * la mise, jamais le jeu des cartes (toujours basic strategy). */
+const STRATEGIES = {
+  plat: 'Flat — same bet every hand',
+  martingale: 'Martingale — double after a loss, back to base after a win',
+  paroli: 'Paroli (anti-martingale) — double after a WIN, back to base after a loss',
+  dalembert: "D'Alembert — +1 unit after a loss, -1 after a win",
+};
+
+/** Normalise le nom de stratégie ; défaut 'martingale'. */
+function litStrategie(x) {
+  const t = String(x || '').toLowerCase().trim();
+  if (t === 'plat' || t === 'flat' || t === 'fixe' || t === 'none') return 'plat';
+  if (t === 'paroli' || t === 'anti' || t === 'anti-martingale' || t === 'antimartingale' || t === 'pirolie' || t === 'reverse') return 'paroli';
+  if (t === 'dalembert' || t === "d'alembert" || t === 'alembert') return 'dalembert';
+  return 'martingale';
+}
+
 /**
- * prochaineMise({ base, cap, mise, issue }) : la mise de la PROCHAINE main.
+ * prochaineMise({ base, cap, mise, issue, strategie }) : la mise de la PROCHAINE main.
  *   base  — la mise de départ (défaut 1) ;
  *   cap   — le plafond de mise (défaut base*64) ;
  *   mise  — la mise de la main qui vient de finir (défaut base) ;
- *   issue — 'win' | 'lose' | 'push' | 'blackjack' (ou null : inchangée).
- * Perte -> double (ou retour base si ça dépasse le plafond) ; gain/blackjack ->
- * base ; push/inconnu -> inchangée.
+ *   issue — 'win' | 'lose' | 'push' | 'blackjack' (ou null : inchangée) ;
+ *   strategie — 'plat' | 'martingale' | 'paroli' | 'dalembert' (défaut martingale).
+ * Un push (ou rien de rapporté) ne change jamais la mise. Au-delà du plafond, la
+ * progression casse et repart de la base.
  */
 function prochaineMise(o) {
   o = o || {};
@@ -50,12 +69,18 @@ function prochaineMise(o) {
   const cap = Math.max(base, nombrePositif(o.cap, base * 64));
   const mise = Math.min(cap, nombrePositif(o.mise, base));
   const issue = litIssue(o.issue);
-  if (issue === 'lose') { const d = mise * 2; return d > cap ? base : d; }
-  if (issue === 'win' || issue === 'blackjack') return base;
-  return mise;   /* push, ou rien de rapporté : on ne bouge pas */
+  const s = litStrategie(o.strategie);
+  if (!issue || issue === 'push') return mise;
+  const gagne = issue === 'win' || issue === 'blackjack';
+  if (s === 'plat') return base;
+  if (s === 'paroli') { if (gagne) { const d = mise * 2; return d > cap ? base : d; } return base; }
+  if (s === 'dalembert') { return gagne ? Math.max(base, mise - base) : Math.min(cap, mise + base); }
+  /* martingale (défaut) */
+  if (gagne) return base;
+  const d = mise * 2; return d > cap ? base : d;
 }
 
 /** La mise d'ouverture : toujours la base. */
 function premiereMise(o) { return nombrePositif((o || {}).base, 1); }
 
-module.exports = { prochaineMise, premiereMise, litIssue, ISSUES };
+module.exports = { prochaineMise, premiereMise, litIssue, litStrategie, STRATEGIES, ISSUES };
