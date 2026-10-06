@@ -4166,8 +4166,9 @@ const server = http.createServer(async (req, res) => {
         emet: envoie,
         pireCasUsd: (msgs) => studioChat.factureUsd(studioChat.pireCasUsd(mc, msgs, false)),
         appelle: (messages) => studioChat.repond({ addr, modele: m.id, messages, recherche: false, effort: m.effort ? 'low' : undefined,
-          sortieMax: Pilote.SORTIE_JETONS, horsRythme: true, canal: 'pilot', horsSolde: gratuit || undefined }, {
-          cours: pay.cours, solde: pay.solde, actif: chatActif,
+          sortieMax: Pilote.SORTIE_JETONS, horsRythme: true, canal: 'pilot' }, {
+          /* `horsSolde` se lit dans les DEPS (2e argument), comme x402/ask_agent. */
+          cours: pay.cours, solde: pay.solde, actif: chatActif, horsSolde: gratuit || undefined,
           fournisseur: (p) => (p.m.fournisseur === 'anthropic' ? studioClaude.repond(avecSysteme(p)) : studioCompat.repond(avecSysteme(p))),
         }),
       });
