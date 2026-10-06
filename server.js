@@ -41,6 +41,14 @@ const aiPerp = require('./ai_perp');
 /* Les adresses qui ont la main sur le papier de la colonie (AI_OWNER). */
 const proprietaireIA = (adr) => !!adr && String(cfg.AI_OWNER || '').toLowerCase().split(/[\s,;]+/)
   .filter(Boolean).indexOf(String(adr).toLowerCase()) >= 0;
+/* Les adresses pour qui le PILOTE du navigateur est GRATUIT (PILOTE_GRATUIT, liste
+   séparée par virgules) : leurs étapes passent « hors solde » — le coût réel est
+   quand même mesuré, mais rien n'est réservé ni débité, et la porte « balance too
+   low » ne s'applique pas. Le propriétaire (AI_OWNER) l'est toujours. Les bornes
+   restent entières : 30 min, étapes max, budget. */
+const piloteGratuit = (adr) => !!adr && (proprietaireIA(adr) ||
+  String(process.env.PILOTE_GRATUIT || '').toLowerCase().split(/[\s,;]+/)
+    .filter(Boolean).indexOf(String(adr).toLowerCase()) >= 0);
 async function etatMiroirPour(ws) {
   return Object.assign({ type: 'miroirEtat', proprietaire: proprietaireIA(ws.addr) }, await miroir.etat(ws.addr));
 }
@@ -4143,6 +4151,9 @@ const server = http.createServer(async (req, res) => {
     const v = pilote.verifie(addr, q);
     if (!v.ok) return json(v.code, v);
     const pay = payeurDe(addr, q.payeur, 'pilot:' + m.id);
+    /* Gratuit pour les adresses de la liste (et le propriétaire) : les étapes
+       passent « hors solde » — ni réserve, ni débit, ni porte « balance too low ». */
+    const gratuit = piloteGratuit(addr);
     const mc = Object.assign({}, m, { maxTokens: Math.min(m.maxTokens, Pilote.SORTIE_JETONS) });
     const avecSysteme = (p) => Object.assign({}, p, { systeme: Pilote.SYSTEME });
     res.writeHead(200, Object.assign({ 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no' }, cors));
@@ -4155,7 +4166,7 @@ const server = http.createServer(async (req, res) => {
         emet: envoie,
         pireCasUsd: (msgs) => studioChat.factureUsd(studioChat.pireCasUsd(mc, msgs, false)),
         appelle: (messages) => studioChat.repond({ addr, modele: m.id, messages, recherche: false, effort: m.effort ? 'low' : undefined,
-          sortieMax: Pilote.SORTIE_JETONS, horsRythme: true, canal: 'pilot' }, {
+          sortieMax: Pilote.SORTIE_JETONS, horsRythme: true, canal: 'pilot', horsSolde: gratuit || undefined }, {
           cours: pay.cours, solde: pay.solde, actif: chatActif,
           fournisseur: (p) => (p.m.fournisseur === 'anthropic' ? studioClaude.repond(avecSysteme(p)) : studioCompat.repond(avecSysteme(p))),
         }),
