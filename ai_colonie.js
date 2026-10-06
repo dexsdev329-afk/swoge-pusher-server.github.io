@@ -3277,9 +3277,24 @@ const BORNES = {
    * n'est PAS `sansAbandons`.
    *
    * `sens: -1` : resserrer, ici, c'est BAISSER le plafond. L'heure d'apres
-   * reste toujours accrochee au double, comme aujourd'hui (100 / 200) : c'est
-   * un rapport qui n'a jamais ete mis en cause, et un seul bouton se juge. */
-  pumpMax:    { env: 'PUMP_MAX_M5', defaut: 100, min: 50, max: 300, pas: 25, sens: -1 },
+   * reste toujours accrochee au double (300 / 600 aujourd'hui) : c'est un
+   * rapport qui n'a jamais ete mis en cause, et un seul bouton se juge.
+   *
+   * ---- 6 octobre 2026 : le plafond atteint sa butee, et il coute ENCORE ----
+   * La colonie a monte `pumpMax` jusqu'a 300 (la butee d'alors), toute seule, et
+   * il est reste coince la. Releve en direct ce jour (20 453 tours) : la regle
+   * « already up too far » ecarte n=3 441 jetons (670 sur 7 jours) qui montent
+   * dans 41 % des cas (48 % sur 7 j), +39,4 % de moyenne (+34,5 %), et dont la
+   * sortie capterait 6,6 % (10,6 % sur 7 j). La reference « achete ou retenu »,
+   * elle : n=299, montent 26 % (20 % sur 7 j), +18,8 %, sortie 4,1 % (2,1 %).
+   * Ses refus battent ce qu'on achete sur la frequence, la moyenne ET la sortie,
+   * sur gros echantillon. Seul bemol mesure : ils s'effondrent plus souvent
+   * (33 % contre 21 %) — plus de variance, mais la sortie les met quand meme
+   * devant. Le plafond du proprietaire monte donc de 300 a 500 (1 h = 1 000),
+   * pour rendre a la boucle la marge que la mesure a gagnee ; elle y montera par
+   * pas de 25, un cran toutes les 24 tours, gouvernee par le taux d'abandon. Un
+   * jeton deja +500 % en cinq minutes reste refuse : c'est le garde-fou garde. */
+  pumpMax:    { env: 'PUMP_MAX_M5', defaut: 100, min: 50, max: 500, pas: 25, sens: -1 },
 };
 /* La valeur en vigueur : ce que la colonie a appris, ou l'environnement tant
    qu'elle n'a rien appris. Toujours ramenee entre les butees — un etat relu
