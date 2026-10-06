@@ -3009,6 +3009,26 @@ const studioOpenai = require('./studio_openai');
 const studioCompat = require('./studio_compat');   /* le chat ChatGPT et Grok (Chat Completions) */
 const studioRecherche = require('./studio_recherche');   /* la recherche web pour GPT et Grok (Perplexity Search API) */
 const studioVoix = require('./studio_voix');   /* le vocal du chat : transcription, repli serveur quand le navigateur ne sait pas */
+/* ---- LE VERROU BIOMÉTRIQUE DU PORTEFEUILLE (Face ID / passkey, 06/10) ----
+ * WebAuthn verifie par wallet_passkey.js. C'est un verrou de CONFORT : il ne
+ * garde JAMAIS les fonds (toute transaction passe par la signature du
+ * portefeuille). Les cles enregistrees vivent par adresse, de facon durable. */
+const walletPasskey = require('./wallet_passkey');
+const PASSKEY_FICHIER = require('path').join(cfg.DATA_DIR, 'wallet_passkey.json');
+const PASSKEYS = (() => { try { return new Map(Object.entries(JSON.parse(require('fs').readFileSync(PASSKEY_FICHIER, 'utf8')))); } catch (e) { return new Map(); } })();
+function passkeySauve() {
+  try { const fs = require('fs'); fs.mkdirSync(cfg.DATA_DIR, { recursive: true });
+    const tmp = PASSKEY_FICHIER + '.' + process.pid + '.tmp'; const fd = fs.openSync(tmp, 'w');
+    try { fs.writeSync(fd, JSON.stringify(Object.fromEntries(PASSKEYS))); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, PASSKEY_FICHIER); } catch (e) { /* jamais bloquant */ }
+}
+/* Les nonces de propriete : addr -> { nonce, exp }. L'inscription exige une
+   SIGNATURE du portefeuille sur ce nonce, pour prouver qu'on controle l'adresse
+   (une fois, a l'activation). Usage unique, 5 min. */
+const PASSKEY_NONCES = new Map();
+const PASSKEY_RP_ID = String(process.env.PASSKEY_RP_ID || 'swoleeswoge.dog').trim();
+const PASSKEY_ORIGINES = String(process.env.PASSKEY_ORIGINES || 'https://swoleeswoge.dog').split(',').map((s) => s.trim()).filter(Boolean);
+const passkeyMessage = (addr, nonce) => 'SWOGE Wallet — Face ID setup\naddress: ' + String(addr).toLowerCase() + '\nnonce: ' + nonce;
 const chatActif = (f) => (f === 'anthropic' ? studioClaude.actif() : f === 'perplexity' ? studioRecherche.actif() : studioCompat.actif(f));   /* « ChatGPT Image » */
 /* Series et pubs : les memes personnages et les memes voix a chaque scene (studio_production.js). */
 const studioProductionMod = require('./studio_production');
@@ -4290,6 +4310,81 @@ const server = http.createServer(async (req, res) => {
     let n = 0;
     for (const x of rids) n += studioChat.arrete(qui, x);
     return json(200, { ok: true, arretes: n });
+  }
+  /* ==================== LE VERROU BIOMÉTRIQUE DU PORTEFEUILLE ====================
+   * Face ID / Touch ID / passkey (WebAuthn), verifie par wallet_passkey.js. Verrou
+   * de CONFORT : il cache l'ecran du portefeuille, il ne garde JAMAIS les fonds
+   * (toute transaction passe par la signature du portefeuille). L'inscription
+   * exige une SIGNATURE du portefeuille (preuve qu'on controle l'adresse) ; le
+   * deverrouillage, lui, se prouve par le passkey. L'origine vient du client mais
+   * n'est acceptee que si elle est dans notre liste (pas d'usurpation). */
+  if (path === '/wallet/passkey/etat' || path === '/wallet/passkey/inscription/options'
+      || path === '/wallet/passkey/inscription/verifie' || path === '/wallet/passkey/auth/options'
+      || path === '/wallet/passkey/auth/verifie' || path === '/wallet/passkey/retire') {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    let q;
+    try { q = JSON.parse((await corps(req, 64 * 1024)).toString('utf8') || '{}'); } catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    const addr = /^0x[0-9a-fA-F]{40}$/.test(String(q.addr || '')) ? String(q.addr).toLowerCase() : null;
+    if (!addr) return json(400, { ok: false, raison: 'a wallet address is required' });
+    const creds = PASSKEYS.get(addr) || [];
+    const origine = PASSKEY_ORIGINES.indexOf(String(q.origine || '')) >= 0 ? String(q.origine) : null;
+    const besoinOrigine = /options\/?$|verifie$/.test(path);   /* la ceremonie WebAuthn a besoin de l'origine */
+    if (besoinOrigine && !origine) return json(400, { ok: false, raison: 'this origin is not allowed for passkeys' });
+    /* La preuve de propriete : une signature du portefeuille sur le nonce qu'on a emis. */
+    const prouvePropriete = () => {
+      const e = PASSKEY_NONCES.get(addr); PASSKEY_NONCES.delete(addr);
+      if (!e || e.exp < Date.now()) return false;
+      let who = null;
+      try { who = ethers.utils.verifyMessage(passkeyMessage(addr, e.nonce), String(q.sig || '')); } catch (x) {}
+      return who && who.toLowerCase() === addr;
+    };
+    try {
+      if (path === '/wallet/passkey/etat') return json(200, { ok: true, actif: creds.length > 0 });
+
+      if (path === '/wallet/passkey/inscription/options') {
+        const nonce = require('crypto').randomBytes(16).toString('hex');
+        PASSKEY_NONCES.set(addr, { nonce, exp: Date.now() + 5 * 60 * 1000 });
+        const options = await walletPasskey.optionsInscription({ addr, rpId: PASSKEY_RP_ID, nom: q.nom, existantes: creds });
+        return json(200, { ok: true, options, aSigner: passkeyMessage(addr, nonce) });
+      }
+
+      if (path === '/wallet/passkey/inscription/verifie') {
+        if (!prouvePropriete()) return json(401, { ok: false, raison: 'enable Face ID again — the signature did not match this wallet, or it expired' });
+        const cle = await walletPasskey.verifieInscription({ addr, reponse: q.reponse, rpId: PASSKEY_RP_ID, origin: origine });
+        PASSKEYS.set(addr, (PASSKEYS.get(addr) || []).filter((c) => c.id !== cle.id).concat([cle])); passkeySauve();
+        return json(200, { ok: true, actif: true });
+      }
+
+      if (path === '/wallet/passkey/auth/options') {
+        if (!creds.length) return json(404, { ok: false, raison: 'no passkey registered for this wallet' });
+        const options = await walletPasskey.optionsAuth({ addr, rpId: PASSKEY_RP_ID, existantes: creds });
+        return json(200, { ok: true, options });
+      }
+
+      if (path === '/wallet/passkey/auth/verifie') {
+        const credit = creds.find((c) => c.id === (q.reponse && q.reponse.id));
+        if (!credit) return json(404, { ok: false, raison: 'unknown passkey' });
+        const r = await walletPasskey.verifieAuth({ addr, reponse: q.reponse, rpId: PASSKEY_RP_ID, origin: origine, credit });
+        credit.counter = r.newCounter; passkeySauve();
+        return json(200, { ok: true });
+      }
+
+      if (path === '/wallet/passkey/retire') {
+        /* Oublier les passkeys exige la MEME preuve d'adresse que l'inscription
+           (la page demande d'abord un nonce par /inscription/options, le signe,
+           et appelle ici). Sinon n'importe qui couperait le Face ID d'autrui. */
+        if (!prouvePropriete()) return json(401, { ok: false, raison: 'the signature did not match this wallet, or it expired' });
+        PASSKEYS.delete(addr); passkeySauve();
+        return json(200, { ok: true, actif: false });
+      }
+    } catch (e) {
+      console.error('[passkey] ' + (e && e.stack || e));
+      return json(400, { ok: false, raison: String((e && e.message) || e).slice(0, 120) });
+    }
+    return json(404, { ok: false, raison: 'unknown passkey route' });
   }
   if (path === '/studio/chat' || path === '/studio/chat/catalogue' || path === '/studio/chat/solde' || path === '/studio/chat/voix') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',

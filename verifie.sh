@@ -108,6 +108,7 @@ lance agmem   "$SRV" node agent_memoire.test.js # la memoire d un agent : note/r
 lance agevt   "$SRV" node agent_evenements.test.js # les evenements d un jeton : prix h1 net seulement, pression acheteuse (assez d obs + domination), palier de holders franchi une fois vers le haut, tri par force, aucun faux evenement
 lance voix    "$SRV" node studio_voix.test.js # le vocal du chat : transcription compatible OpenAI (Groq defaut), facture la duree RENDUE (pas celle annoncee), minimum facturable, 503/413/502, jamais sous le cout
 lance passkey "$SRV" node wallet_passkey.test.js # le verrou biometrique du wallet (WebAuthn, @simplewebauthn) : defi a usage unique + expire, cle en base64url, fail-closed ; NE garde JAMAIS les fonds (verrou de confort)
+lance passkeyrte "$SRV" node wallet_passkey_route.test.js # les routes /wallet/passkey/* sur le vrai serveur : origine en liste blanche, preuve de propriete (signature) AVANT le WebAuthn, 404 sans passkey
 lance agmesure "$SRV" node agent_mesure.test.js # la mesure : agrege impressions/likes, meilleur post, classement par format SEULEMENT si assez d observations, aucun chiffre invente
 lance acces   "$SRV" node acces.test.js   # portes privees fermees sans cle, gestes d argent en POST seulement ; /credit partage entre le robinet admin et le credit en dollars (29/09)
 lance famille  "$SRV" node famille_client.test.js   # qui demande un prix : famille du client en code fixe, sonde ou demande, jamais le User-Agent brut ni l IP
