@@ -39,6 +39,31 @@ const INACTIF_MS = Math.max(30, Number(process.env.NAVIGATEUR_INACTIF_S) || 300)
 const GESTE_MS = 20000;
 const ECRANS = { bureau: { width: 1280, height: 800 }, telephone: { width: 390, height: 844 } };
 
+/* ---- LA SORTIE PAR UN PROXY AMONT (ex. une IP bresilienne) ----
+ * Par defaut le mandataire se connecte EN DIRECT a la destination : la sortie
+ * est l'IP du centre de donnees (Railway, US), et certains sites ferment la
+ * porte aux IP US/datacentre. `NAVIGATEUR_SORTIE=http://user:pass@hote:port`
+ * (un proxy residentiel bresilien) fait sortir TOUT le trafic par ce proxy :
+ * l'IP vue par les sites devient bresilienne. Absent -> direct, inchange.
+ *
+ * La garde reste ENTIERE : on valide toujours le nom avec `lookupSur` (adresses
+ * publiques seulement) AVANT de confier la connexion au proxy. Le proxy, lui,
+ * est distant : il ne peut de toute facon pas joindre le reseau prive de
+ * Railway. On ne confie donc au proxy qu'un nom deja juge public, et c'est lui
+ * qui resout et sort au Bresil. */
+function sortieAmont() {
+  const brut = String(process.env.NAVIGATEUR_SORTIE || '').trim();
+  if (!brut) return null;
+  let u; try { u = new URL(brut); } catch (e) { return null; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;   /* proxy HTTP (CONNECT) ici */
+  const port = Number(u.port || (u.protocol === 'https:' ? 443 : 80));
+  if (!(port > 0)) return null;
+  const auth = (u.username || u.password)
+    ? 'Basic ' + Buffer.from(decodeURIComponent(u.username) + ':' + decodeURIComponent(u.password)).toString('base64')
+    : null;
+  return { host: u.hostname, port, auth };
+}
+
 /* ---- le mandataire : la seule porte de Chromium vers le reseau ---- */
 function portOk(p) { return p === 80 || p === 443; }
 /* ---- UNE RESOLUTION PAR NOM, PAS PAR CONNEXION (02/10/2026) ----
@@ -61,7 +86,9 @@ function lookupCache(hote, opts, cb) {
     cb(err, v, f);
   });
 }
-function creeMandataire() {
+function creeMandataire(amont) {
+  /* `amont` injectable pour l'essai ; sinon lu dans l'environnement. */
+  const SORTIE = amont !== undefined ? amont : sortieAmont();
   const srv = http.createServer((req, res) => {
     /* HTTP en clair : l'adresse absolue arrive dans la ligne de requete. */
     let u;
@@ -70,24 +97,61 @@ function creeMandataire() {
     try { u = navigue.urlSure(req.url); } catch (e) { res.writeHead(403); return res.end('blocked'); }
     const port = Number(u.port || 80);
     if (u.protocol !== 'http:' || !portOk(port)) { res.writeHead(403); return res.end('blocked'); }
-    const amont = http.request({ hostname: u.hostname, port, path: u.pathname + u.search, method: req.method, headers: req.headers, lookup: lookupCache, timeout: GESTE_MS }, (r) => {
+    /* Avec un proxy amont : on lui confie la requete ABSOLUE (il resout et sort au Bresil).
+       Le nom est deja juge public par `urlSure`. Sans proxy : direct, comme avant. */
+    const opts = SORTIE
+      ? { host: SORTIE.host, port: SORTIE.port, path: req.url, method: req.method,
+          headers: SORTIE.auth ? Object.assign({}, req.headers, { 'proxy-authorization': SORTIE.auth }) : req.headers,
+          timeout: GESTE_MS }
+      : { hostname: u.hostname, port, path: u.pathname + u.search, method: req.method, headers: req.headers, lookup: lookupCache, timeout: GESTE_MS };
+    const amontReq = http.request(opts, (r) => {
       res.writeHead(r.statusCode || 502, r.headers); r.pipe(res);
     });
-    amont.on('error', () => { if (!res.headersSent) res.writeHead(403); res.end('blocked'); });
-    amont.on('timeout', () => amont.destroy());
-    req.pipe(amont);
+    amontReq.on('error', () => { if (!res.headersSent) res.writeHead(403); res.end('blocked'); });
+    amontReq.on('timeout', () => amontReq.destroy());
+    req.pipe(amontReq);
   });
   /* HTTPS : un tunnel CONNECT vers l'adresse RESOLUE et validee, jamais vers le nom brut. */
   srv.on('connect', (req, client, tete) => {
     const m = String(req.url || '').match(/^\[?([^\]]+?)\]?:(\d+)$/);
     const port = m ? Number(m[2]) : 0;
     if (!m || !portOk(port)) { client.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
+    client.on('error', () => {});
+    /* Le nom est valide public (lookupSur) AVANT tout — direct comme via proxy. */
     lookupCache(m[1], {}, (err, ip) => {
       if (err) { client.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
-      const amont = net.connect(port, ip, () => { client.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (tete && tete.length) amont.write(tete); amont.pipe(client); client.pipe(amont); });
-      amont.setTimeout(120000, () => amont.destroy());
-      amont.on('error', () => client.destroy());
-      client.on('error', () => amont.destroy());
+      if (SORTIE) {
+        /* On ouvre un tunnel CONNECT A TRAVERS le proxy amont : c'est LUI qui
+           joint la destination et sort au Bresil. On relaie sa reponse. */
+        const px = net.connect(SORTIE.port, SORTIE.host, () => {
+          let t = 'CONNECT ' + m[1] + ':' + port + ' HTTP/1.1\r\nHost: ' + m[1] + ':' + port + '\r\n';
+          if (SORTIE.auth) t += 'Proxy-Authorization: ' + SORTIE.auth + '\r\n';
+          px.write(t + '\r\n');
+        });
+        let etabli = false, buf = Buffer.alloc(0);
+        px.on('data', function onData(d) {
+          if (etabli) return;
+          buf = Buffer.concat([buf, d]);
+          const fin = buf.indexOf('\r\n\r\n');
+          if (fin < 0) { if (buf.length > 65536) px.destroy(); return; }
+          const premiere = buf.slice(0, buf.indexOf('\r\n')).toString();
+          if (!/^HTTP\/1\.[01] 200\b/.test(premiere)) { client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'); px.destroy(); return; }
+          etabli = true; px.removeListener('data', onData);
+          client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+          const reste = buf.slice(fin + 4);
+          if (reste.length) client.write(reste);
+          if (tete && tete.length) px.write(tete);
+          px.pipe(client); client.pipe(px);
+        });
+        px.setTimeout(120000, () => px.destroy());
+        px.on('error', () => client.destroy());
+        client.on('error', () => px.destroy());
+        return;
+      }
+      const amont2 = net.connect(port, ip, () => { client.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (tete && tete.length) amont2.write(tete); amont2.pipe(client); client.pipe(amont2); });
+      amont2.setTimeout(120000, () => amont2.destroy());
+      amont2.on('error', () => client.destroy());
+      client.on('error', () => amont2.destroy());
     });
   });
   return srv;
