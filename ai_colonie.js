@@ -5578,7 +5578,25 @@ const FAMILLES = [
  * les deux. Si le quota perd, il se referme tout seul (la condition ci-dessous
  * cesse d etre vraie). S il gagne, c est la borne qu il faudra revoir.
  * ======================================================================== */
-const QUOTA_JEUNE_PAR_TOUR = Math.max(0, nEnv('ACHATS_JEUNES_PAR_TOUR', 1));
+/* ---- 6 octobre 2026 : le quota passe de 1 a 3 par tour ----
+ * Releve en direct (20 453 tours) : la tranche sous la borne d'age (« under 10
+ * min », celle qui JUGE ageMin, coincee a son plancher de 4) montre n=2 942
+ * (2 043 sur 7 jours), montent 76 % (79 % sur 7 j), strategie rejouee +38 %
+ * (+41,5 % sur 7 j) ; la reference « achete ou retenu » monte 26 % (20 % sur
+ * 7 j) pour une strategie de 4,1 % (2,1 %). Sur gros echantillon recent, la
+ * meilleure tranche d'age reste la plus jeune — et la colonie ne pouvait y
+ * entrer qu'au compte-gouttes d'UN achat par tour.
+ *
+ * On ne touche PAS a la borne (on ne descend pas sous 4 min) : la courbe age→
+ * rendement n'est pas monotone (le creux des 30-60 min), et le +strat des
+ * jeunes est optimiste d'un montant inconnu — un jeton qui s'effondre en trois
+ * minutes ne laisse aucun jalon a rejouer, donc seul un vrai achat le mesure.
+ * C'est exactement pourquoi le quota existe. On l'ouvre a 3/tour : trois fois
+ * plus vite a mesurer sur de l'argent reel, et toujours self-closing — s'il
+ * perd, les quatre conditions ci-dessus cessent d'etre vraies et il se referme
+ * seul. Un achat du quota passe quand meme TOUS les autres gardes (cap, piscine,
+ * baleine, oracle, epreuve de sortie) : seule la borne d'age est levee pour lui. */
+const QUOTA_JEUNE_PAR_TOUR = Math.max(0, nEnv('ACHATS_JEUNES_PAR_TOUR', 3));
 /* Sous ce nombre de rejeux, une tranche n est pas une tranche : le quota ne
    s ouvre pas sur une impression. */
 const QUOTA_JEUNE_MIN_OBS = Math.max(20, nEnv('ACHATS_JEUNES_MIN_OBS', 100));
