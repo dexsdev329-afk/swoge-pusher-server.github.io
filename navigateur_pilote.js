@@ -94,7 +94,10 @@ function litAction(texte, ecran) {
   const bjPhase = typeof o.phase === 'string' ? o.phase.slice(0, 16).toLowerCase() : null;
   /* `learn` : un repère durable de la table, mémorisé pour les parties suivantes. */
   const apprend = typeof o.learn === 'string' && o.learn.trim() ? o.learn.trim().slice(0, 200) : null;
-  const base = { type, pourquoi, memo, bjIssue, bjTour, bjPhase, apprend };
+  /* `balance` : le solde lu à l'écran (en dollars). Le net par DELTA de solde
+     est fiable même si une main a été loupée dans le comptage. */
+  const bjSolde = Number.isFinite(Number(o.balance)) ? Number(o.balance) : null;
+  const base = { type, pourquoi, memo, bjIssue, bjTour, bjPhase, apprend, bjSolde };
   const W = (ecran && ecran.width) || 1280, H = (ecran && ecran.height) || 800;
   switch (type) {
     case 'click': {
@@ -171,6 +174,7 @@ function consigne(P, im, n) {
       + ' over ' + P.bj.mains + ' hand(s) (' + P.bj.gagnees + ' won / ' + P.bj.perdues + ' lost / ' + P.bj.nulles + ' push). Base ' + P.bj.base + ', cap ' + P.bj.cap + '. '
       + 'EVERY step you MUST add "phase": "bet" (about to place the bet), "play" (cards dealt, you are deciding), or "result" (a hand just finished). '
       + 'When "phase":"result", you MUST also add "outcome":"win"|"lose"|"push" — this is how I update the bet. If you forget it, the bet will NOT change. '
+      + 'Whenever you can read the balance on screen, also add "balance": the number shown IN US DOLLARS (convert from ETH with the rate above if needed) — I use it to know the real win/loss even if a hand was missed. '
       + 'Your bet for the NEXT hand MUST be exactly ' + P.bj.mise + ' — set the bet field to ' + P.bj.mise + ' (x2/÷2 buttons, or type; if it is in ETH, convert) before you Deal. '
       + 'DO NOT change the bet yourself: I size it for you with the chosen betting system (' + (P.bj.strategie || 'martingale') + '). Play the cards with basic strategy. '
       + 'WAIT for the hand to fully resolve before reporting: if the dealer is still drawing cards, answer "phase":"play" and look again next step; '
@@ -237,7 +241,8 @@ function cree(deps) {
          impose et les résultats rapportés. `strategie` : le système de mise
          choisi par le joueur (martingale par défaut). */
       bj = { base, cap, strategie: blackjack.litStrategie(q.strategie), mise: blackjack.premiereMise({ base }),
-             tour: 0, net: 0, mains: 0, gagnees: 0, perdues: 0, nulles: 0, compte: false };
+             tour: 0, net: 0, mains: 0, gagnees: 0, perdues: 0, nulles: 0, compte: false,
+             soldeDepart: null, soldeActuel: null };
     }
     return { ok: true, P: { but, etapesMax, budgetUsd, argent, url, ethUsd, bj, cleTable: null, notesTable: [],
                             ecran: q.ecran === 'telephone' ? 'telephone' : 'bureau',
@@ -263,7 +268,8 @@ function cree(deps) {
          résultats rapportés), donc fiable et toujours là — c'est la réponse à
          « combien on a gagné » : net en dollars et nombre de mains. */
       const bilan = P.bj ? { net: Math.round(P.bj.net * 100) / 100, mains: P.bj.mains, base: P.bj.base, derniereMise: P.bj.mise,
-                             gagnees: P.bj.gagnees, perdues: P.bj.perdues, nulles: P.bj.nulles } : null;
+                             gagnees: P.bj.gagnees, perdues: P.bj.perdues, nulles: P.bj.nulles,
+                             soldeNet: (P.bj.soldeActuel != null && P.bj.soldeDepart != null) ? Math.round((P.bj.soldeActuel - P.bj.soldeDepart) * 100) / 100 : null } : null;
       return { ok: raison === 'done' || raison === 'stopped' || raison === 'budget' || raison === 'steps' || raison === 'time',
                raison, detail: quoi || null, memo: P.memo || null, bilan,
                etapes: n, totalUsd: Number(P.totalUsd.toFixed(5)), dureeS: Math.round((maintenant() - t0) / 1000) };
@@ -333,6 +339,8 @@ function cree(deps) {
         /* MODE BLACKJACK : une main finie (résultat + numéro NOUVEAU) -> le
            serveur calcule la mise suivante. Le numéro évite de doubler deux fois
            sur un résultat affiché pendant plusieurs captures. */
+        /* Le solde lu à l'écran : net par delta, fiable même si une main manque. */
+        if (P.bj && a.bjSolde != null) { P.bj.soldeActuel = a.bjSolde; if (P.bj.soldeDepart == null) P.bj.soldeDepart = a.bjSolde; }
         if (P.bj && (a.bjIssue || a.bjPhase)) {
           /* NOUVELLE MAIN : le modèle dit « bet/play/deal » OU donne un numéro de
              main qui avance. Ça rouvre le comptage pour le prochain résultat —
@@ -379,7 +387,8 @@ function cree(deps) {
         P.souvenirs.push(n + '. ' + decrit(a) + (a.pourquoi ? ' — ' + a.pourquoi.slice(0, 120) : '') + (note ? ' [' + note + ']' : ''));
         if (P.souvenirs.length > SOUVENIRS) P.souvenirs.shift();
         emet('etape', { n, action: decrit(a), pourquoi: a.pourquoi, note, factureUsd: facture, totalUsd: P.totalUsd,
-                        bj: P.bj ? { net: P.bj.net, mains: P.bj.mains, mise: P.bj.mise, gagnees: P.bj.gagnees, perdues: P.bj.perdues, nulles: P.bj.nulles } : undefined });
+                        bj: P.bj ? { net: P.bj.net, mains: P.bj.mains, mise: P.bj.mise, gagnees: P.bj.gagnees, perdues: P.bj.perdues, nulles: P.bj.nulles,
+                                     soldeNet: (P.bj.soldeActuel != null && P.bj.soldeDepart != null) ? Math.round((P.bj.soldeActuel - P.bj.soldeDepart) * 100) / 100 : null } : undefined });
       }
     } catch (e) {
       return fin('error', String(e && e.message || e).slice(0, 160));

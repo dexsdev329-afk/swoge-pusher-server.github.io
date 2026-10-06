@@ -187,13 +187,13 @@ const sansAttente = { dors: async () => {} };
     const nav3 = fauxNavigateur();
     const P3 = Pilote.cree(Object.assign({ image: nav3.image, geste: nav3.geste }, sansAttente));
     const mod3 = fauxModele([
-      { action: 'click', x: 1, y: 1, phase: 'bet' },                                 /* mise 1 */
+      { action: 'click', x: 1, y: 1, phase: 'bet', balance: 100 },                   /* mise 1, solde depart 100 */
       { action: 'click', x: 1, y: 1, phase: 'play' },
       { action: 'click', x: 1, y: 1, phase: 'result', outcome: 'lose' },             /* -> mise 2 */
       { action: 'click', x: 1, y: 1, phase: 'result', outcome: 'lose' },             /* MEME ecran : ignore */
       { action: 'click', x: 1, y: 1, phase: 'bet' },                                 /* mise 2 */
       { action: 'click', x: 1, y: 1, phase: 'play' },
-      { action: 'click', x: 1, y: 1, phase: 'result', outcome: 'win' },              /* -> mise 1 */
+      { action: 'click', x: 1, y: 1, phase: 'result', outcome: 'win', balance: 101 },/* -> mise 1, solde 101 */
       { action: 'done', result: 'x' },
     ]);
     const r3 = await P3.lance(ADDR, { but: 'play blackjack', mode: 'blackjack', miseBase: 1, miseMax: 100, url: 'casino.example' },
@@ -204,6 +204,7 @@ const sansAttente = { dors: async () => {} };
     ok(/exactly 1\b/.test(c3(7)), 'apres le gain : retour a la base');
     ok(r3.bilan && r3.bilan.net === 1 && r3.bilan.gagnees === 1 && r3.bilan.perdues === 1 && r3.bilan.mains === 2,
        'le bilan compte gagnees/perdues et le net (+1 $, 1 gagnee / 1 perdue)');
+    ok(r3.bilan && r3.bilan.soldeNet === 1, 'le net par DELTA de solde (101 - 100) est calcule : fiable meme si une main manque (' + (r3.bilan && r3.bilan.soldeNet) + ')');
     /* Hors mode blackjack : aucune ligne BLACKJACK, la mise reste au modele. */
     const vLibre = P.verifie(ADDR, { but: 'play' });
     ok(!/BLACKJACK MODE/.test(Pilote.consigne(vLibre.P, { ecran: { width: 1280, height: 800 }, url: 'x' }, 1)), 'sans mode blackjack : pas de martingale imposee');

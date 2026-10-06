@@ -4114,11 +4114,17 @@ const server = http.createServer(async (req, res) => {
   /* ==================== LE NAVIGATEUR DE SWOGE AGENTS (navigateur_relais.js, 30/09) ====================
    * Le joueur navigue sur un Chromium d'un service a part ; ici, on lit SA session et on relaie.
    * L'analyse d'une capture passe par /studio/chat (vision, historique, credit) : rien a facturer ici. */
-  if (path === '/navigateur/etat' || path === '/navigateur/geste' || path === '/navigateur/ferme' || path === '/navigateur/image' || path === '/navigateur/ticket') {
+  if (path === '/navigateur/etat' || path === '/navigateur/geste' || path === '/navigateur/ferme' || path === '/navigateur/image' || path === '/navigateur/ticket' || path === '/navigateur/appris') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' };
     const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
     if (path === '/navigateur/etat') return json(200, Object.assign({ ok: true, actif: navigateurRelais.actif() }, await navigateurRelais.sante(), { pilote: pilote.mesure() }));
+    /* Ce que le pilote a appris d'une table (repères d'interface, publics) : lecture seule. */
+    if (path === '/navigateur/appris') {
+      const u = String((require('url').parse(req.url, true).query || {}).url || '');
+      const cle = PILOTE_TABLES.cleDe(u);
+      return json(200, { ok: true, cle: cle, notes: cle ? PILOTE_TABLES.notes(cle, 30) : [] });
+    }
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
     const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
     const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
