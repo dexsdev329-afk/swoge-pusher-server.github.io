@@ -3008,6 +3008,7 @@ const reprises = require('./reprises');
 const studioOpenai = require('./studio_openai');
 const studioCompat = require('./studio_compat');   /* le chat ChatGPT et Grok (Chat Completions) */
 const studioRecherche = require('./studio_recherche');   /* la recherche web pour GPT et Grok (Perplexity Search API) */
+const studioVoix = require('./studio_voix');   /* le vocal du chat : transcription, repli serveur quand le navigateur ne sait pas */
 const chatActif = (f) => (f === 'anthropic' ? studioClaude.actif() : f === 'perplexity' ? studioRecherche.actif() : studioCompat.actif(f));   /* « ChatGPT Image » */
 /* Series et pubs : les memes personnages et les memes voix a chaque scene (studio_production.js). */
 const studioProductionMod = require('./studio_production');
@@ -4290,7 +4291,7 @@ const server = http.createServer(async (req, res) => {
     for (const x of rids) n += studioChat.arrete(qui, x);
     return json(200, { ok: true, arretes: n });
   }
-  if (path === '/studio/chat' || path === '/studio/chat/catalogue' || path === '/studio/chat/solde') {
+  if (path === '/studio/chat' || path === '/studio/chat/catalogue' || path === '/studio/chat/solde' || path === '/studio/chat/voix') {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization' };
     const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
@@ -4303,6 +4304,9 @@ const server = http.createServer(async (req, res) => {
         /* Ce qu'on mesure, public : coût réel payé contre facturé. */
         mesure: { requetes: M.requetes, echecs: M.echecs, depassements: M.depassements,
                   coutUsd: Number(M.coutUsd.toFixed(4)), factureUsd: Number(M.factureUsd.toFixed(4)) },
+        /* Le repli vocal serveur : la page s'en sert quand le navigateur ne sait
+           pas transcrire (sinon elle prend son micro, gratuit). */
+        voix: studioVoix.etat(cours),
       }));
     }
     const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
@@ -4313,6 +4317,28 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
     if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    /* ---- LE VOCAL (repli serveur) ----
+     * La page envoie un clip (base64) quand le navigateur ne sait pas transcrire.
+     * On transcrit, on facture la duree REELLE (comme le chat), on rend le texte :
+     * la page le pose dans le composeur, le joueur l'envoie au modele de son choix. */
+    if (path === '/studio/chat/voix') {
+      if (!studioVoix.actif()) return json(503, { ok: false, raison: 'Voice is not switched on yet — type your message, or use your browser mic.' });
+      let qv;
+      try { qv = JSON.parse((await corps(req, 12 * 1024 * 1024)).toString('utf8') || '{}'); }
+      catch (e) { return json(e && e.message === 'body too large' ? 413 : 400, { ok: false,
+        raison: e && e.message === 'body too large' ? 'this clip is too long (keep it under 2 minutes)' : 'unreadable request' }); }
+      const payV = payeurDe(addr, qv.payeur, 'voix');
+      let rv;
+      try {
+        rv = await studioVoix.repond({ addr, audio: qv.audio, mime: qv.mime, secondesEstimees: qv.secondes },
+          { cours: payV.cours, solde: payV.solde, fournit: (p) => studioVoix.transcris(p), canal: 'chat' });
+      } catch (e) {
+        console.error('[voix] ' + (e && e.stack || e));
+        rv = { ok: false, code: 500, raison: 'server error — you were not charged' };
+      }
+      if (payV.credit) rv = enCredit(rv, addr);
+      return json(rv.ok ? 200 : (rv.code || 500), rv);
+    }
     if (!['anthropic', 'openai', 'xai', 'venice', 'openrouter', 'deepseek', 'mistral'].some(chatActif)) return json(503, { ok: false, raison: 'The AI provider key is not set on the server yet.' });
     let q;
     /* 20 Mo : un PDF de 10 Mo en base64 (13,4 Mo) et quatre photos reduites
