@@ -4148,6 +4148,10 @@ const server = http.createServer(async (req, res) => {
     const m = studioChat.modele(String(q.modele || ''));
     if (!m) return json(400, { ok: false, raison: 'pick a model for the autopilot' });
     if (!chatActif(m.fournisseur)) return json(503, { ok: false, raison: m.nom + ' is not switched on yet — pick another model.' });
+    /* Le cours ETH/USD du moment (jamais lu sur le site du casino) : certains
+       casinos montrent le solde en ETH alors qu'on joue en dollars — le modèle
+       convertit avec ce taux. Une panne ne bloque pas le pilote. */
+    try { const e = await miroir.litEthUsd(); if (e > 0) q.ethUsd = e; } catch (e) { /* pas de cours : le pilote marche sans */ }
     const v = pilote.verifie(addr, q);
     if (!v.ok) return json(v.code, v);
     const pay = payeurDe(addr, q.payeur, 'pilot:' + m.id);

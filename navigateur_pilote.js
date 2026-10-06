@@ -27,11 +27,15 @@
  * ================================================================== */
 
 const PILOTES_MAX = 8;                 /* autant que de sessions Chromium, au plus */
-const ETAPES_DEFAUT = 40;
-const ETAPES_MAX = 150;
+/* 06/10 : 40 étapes ne faisaient qu'une dizaine de mains de blackjack (le signalé
+   « c'est pas assez »), la moitié des pas partant en « wait ». Plafond relevé, et
+   la consigne dit au modèle que l'écran attend déjà ~2,5 s — moins de « wait »,
+   plus de mains par étape. Le budget reste le vrai garde-fou du coût d'IA. */
+const ETAPES_DEFAUT = 60;
+const ETAPES_MAX = 300;
 const BUDGET_DEFAUT_USD = 1;
 const BUDGET_MIN_USD = 0.05;
-const BUDGET_MAX_USD = 10;
+const BUDGET_MAX_USD = 20;
 const DUREE_MAX_MS = 30 * 60 * 1000;
 /* La sortie d'un appel : une action JSON tient en 100 jetons, mais les modèles qui
    raisonnent comptent leur raisonnement dedans (OpenAI : max_completion_tokens). 2 500
@@ -139,12 +143,26 @@ function consigne(P, im, n) {
     'SCREEN: the attached screenshot is ' + im.ecran.width + ' x ' + im.ecran.height + ' pixels (x from the left, y from the top). Page: '
       + (im.titre ? im.titre + ' — ' : '') + (im.url || '(blank)'),
     'STEP ' + n + ' of ' + P.etapesMax + '. Your memo: ' + (P.memo || '(empty)'),
+    /* Le carnet de bord : le solde tenu dans le memo rend le gain/perte lisible à
+       l'arrêt (le serveur ne lit JAMAIS le solde du site). */
+    'KEEP A TALLY in "memo" every step when the goal involves a balance, bankroll or score: the balance shown at step 1 (start), '
+      + 'the balance shown now, the net result (now minus start) in the currency the site shows, and how many rounds/hands are done. '
+      + 'Example memo: "start 1000 | now 1012 | net +12 | hands 7". When you answer "done", put this tally in "result" too.',
+    /* Moins de « wait » gaspillés : l'écran attend déjà avant chaque capture. */
+    'TIMING: before each screenshot the browser already waits about 2.5 seconds, so the table has usually finished updating. '
+      + 'Do not use "wait" unless cards are still visibly being dealt — read the screen and act instead, to make the steps count.',
+    /* Conversion ETH/USD : le solde peut être en ETH, le jeu en dollars. */
+    (P.ethUsd ? 'CURRENCY: this site may show the balance or bets in ETH while you think in US dollars. Right now 1 ETH is about $'
+      + (Math.round(P.ethUsd * 100) / 100) + '. To convert: dollars = ETH x ' + (Math.round(P.ethUsd * 100) / 100)
+      + ' ; ETH = dollars / ' + (Math.round(P.ethUsd * 100) / 100) + '. If the balance is only shown after opening a wallet or balance panel, '
+      + 'open it once to read it, convert to dollars, and keep the tally in dollars. To place a $1 bet when the field is in ETH, enter about '
+      + (Math.round((1 / P.ethUsd) * 1e6) / 1e6) + ' ETH.' : null),
     'PREVIOUS STEPS: ' + (P.souvenirs.length ? '\n' + P.souvenirs.join('\n') : 'none, this is the first step.'),
-    'Answer with ONE JSON object and nothing else, like {"why":"press Hit, I have 12 against a 10","action":"click","x":640,"y":512,"memo":"start balance 1000"}.',
+    'Answer with ONE JSON object and nothing else, like {"why":"press Hit, I have 12 against a 10","action":"click","x":640,"y":512,"memo":"start 1000 | now 1000 | net 0 | hands 0"}.',
     'Actions: "click" (x, y) · "scroll" (dy: positive goes down) · "type" (text — click the field first) · "key" (key: Enter, Tab, Escape, Backspace, arrows, PageUp, PageDown, Home, End) · '
       + '"goto" (url) · "back" · "wait" (seconds, 5 at most) · "done" (result: what was achieved) · "stuck" (reason). "memo" is optional and carried to the next step.',
   ];
-  return l.join('\n\n');
+  return l.filter(Boolean).join('\n\n');
 }
 
 /**
@@ -175,7 +193,11 @@ function cree(deps) {
       argent = { reel: true, miseMax: mise, perteMax: perte };
     }
     const url = typeof q.url === 'string' && q.url.trim() ? q.url.trim().slice(0, 2000) : null;
-    return { ok: true, P: { but, etapesMax, budgetUsd, argent, url, ecran: q.ecran === 'telephone' ? 'telephone' : 'bureau',
+    /* Le cours ETH/USD, fourni par le serveur (jamais lu sur le site) : certains
+       casinos montrent le solde et les mises en ETH alors qu'on raisonne en
+       dollars. Le modèle convertit avec ce taux. */
+    const ethUsd = Number(q.ethUsd) > 0 ? Number(q.ethUsd) : null;
+    return { ok: true, P: { but, etapesMax, budgetUsd, argent, url, ethUsd, ecran: q.ecran === 'telephone' ? 'telephone' : 'bureau',
                             memo: '', souvenirs: [], totalUsd: 0, arret: false } };
   }
 
@@ -190,8 +212,13 @@ function cree(deps) {
     let n = 0;
     const fin = (raison, quoi) => {
       MESURE.fins[raison] = (MESURE.fins[raison] || 0) + 1;
+      /* `memo` est le carnet de bord du modèle (solde de départ, solde actuel,
+         gain/perte, mains jouées). On le rend TOUJOURS — surtout sur un arrêt
+         forcé (steps/time/budget), où il n'y a pas de « done » pour résumer :
+         sans lui, « on sait pas combien on a gagné ». */
       return { ok: raison === 'done' || raison === 'stopped' || raison === 'budget' || raison === 'steps' || raison === 'time',
-               raison, detail: quoi || null, etapes: n, totalUsd: Number(P.totalUsd.toFixed(5)), dureeS: Math.round((maintenant() - t0) / 1000) };
+               raison, detail: quoi || null, memo: P.memo || null,
+               etapes: n, totalUsd: Number(P.totalUsd.toFixed(5)), dureeS: Math.round((maintenant() - t0) / 1000) };
     };
     /* Un geste ou une image refusés pour la cadence (250 ms par joueur, deux images en vol) : une
        seconde chance, le joueur peut avoir cliqué au même moment. */

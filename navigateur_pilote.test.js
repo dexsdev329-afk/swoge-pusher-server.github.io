@@ -59,6 +59,7 @@ const sansAttente = { dors: async () => {} };
     const r = await P.lance(ADDR, { but: 'Play one hand of blackjack in demo mode', url: 'casino.example', ecran: 'bureau' },
       { appelle: mod.appelle, pireCasUsd: () => 0.02, emet: (t, d) => evts.push([t, d]) });
     ok(r.raison === 'done' && r.detail === 'played one hand, balance 1010' && r.etapes === 5, 'il va au bout et rend le resultat du modele (' + r.raison + ', ' + r.etapes + ' etapes)');
+    ok(r.memo === 'start balance 1000', 'le carnet de bord (memo) est rendu dans le resultat — le gain/perte reste lisible a l arret');
     const acts = nav.gestes.map((g) => g.action).join();
     ok(acts === 'goto,clic,tape,touche,defile', 'les actions du modele deviennent des gestes, dans l ordre [' + acts + ']');
     ok(nav.gestes.every((g) => g.addr === ADDR && g.flux === true && g.ecran === 'bureau'), 'chaque geste part pour l adresse de la session, en flux, sur l ecran de la page');
@@ -81,7 +82,7 @@ const sansAttente = { dors: async () => {} };
     const r = await P.lance(ADDR, { but: 'keep playing', budgetUsd: 1 }, { appelle: mod.appelle, pireCasUsd: () => { pire = 0.3; return 0.3; } });
     ok(r.raison === 'budget' && r.etapes === 3 && r.totalUsd <= 1 && r.totalUsd + pire > 1, 'arret « budget » AVANT l appel qui pourrait depasser : 3 etapes, ' + r.totalUsd + ' $ sur 1 $');
     const r2 = await P.lance(ADDR, { but: 'keep playing', budgetUsd: 999 }, { appelle: mod.appelle, pireCasUsd: () => 0.01 });
-    ok(r2.etapes === 40 && r2.raison === 'steps', 'budget demande trop haut : ramene a ' + Pilote.BUDGET_MAX_USD + ' $, et 40 etapes par defaut');
+    ok(r2.etapes === Pilote.ETAPES_DEFAUT && r2.raison === 'steps', 'budget demande trop haut : ramene a ' + Pilote.BUDGET_MAX_USD + ' $, et ' + Pilote.ETAPES_DEFAUT + ' etapes par defaut');
     const r3 = await P.lance(ADDR, { but: 'keep playing', etapesMax: 100000 }, { appelle: fauxModele([{ action: 'done', result: 'x' }]).appelle, pireCasUsd: () => 0 });
     ok(r3.etapes === 1 && P.verifie(ADDR, { but: 'abc', etapesMax: 100000 }).P.etapesMax === Pilote.ETAPES_MAX, 'etapes demandees : ramenees a ' + Pilote.ETAPES_MAX);
   }
@@ -134,6 +135,12 @@ const sansAttente = { dors: async () => {} };
     ok(v.ok && v.P.argent.reel && v.P.argent.miseMax === 5, 'argent reel coche avec ses deux limites : accepte');
     const t = Pilote.consigne(v.P, { ecran: { width: 1280, height: 800 }, url: 'https://x.example' }, 1);
     ok(/at most 5 per bet/.test(t) && /50 or more below the balance at your first step/.test(t) && /Never deposit, withdraw, transfer/.test(t), 'la consigne porte la mise et la perte maximales, et l interdit de deposer ou retirer');
+    ok(/KEEP A TALLY/.test(t) && /TIMING: before each screenshot/.test(t), 'la consigne demande le carnet de bord (gain/perte) et dit que l ecran attend deja (moins de wait)');
+    /* Conversion ETH/USD quand le serveur fournit le cours ; absente sinon. */
+    const vEth = P.verifie(ADDR, { but: 'Play blackjack', ethUsd: 4000 });
+    const tEth = Pilote.consigne(vEth.P, { ecran: { width: 1280, height: 800 }, url: 'https://x.example' }, 1);
+    ok(/1 ETH is about \$4000/.test(tEth) && /0\.00025 ETH/.test(tEth), 'avec un cours ETH/USD : la consigne convertit (1 $ ≈ 0,00025 ETH a 4000 $)');
+    ok(!/CURRENCY:/.test(t), 'sans cours fourni : pas de ligne de conversion');
   }
 
   console.log('\n-- 6. ce qui ne joue pas --');
