@@ -106,6 +106,8 @@ lance agesprit "$SRV" node agent_esprit.test.js # l esprit autonome : choisit se
 lance agmodele "$SRV" node agent_modele.test.js # le modele de l esprit (tool-use Anthropic) : choisit un outil ou s arrete, persona+regles dans le systeme, option media du post, fail-safe sans cle, bout en bout
 lance agmem   "$SRV" node agent_memoire.test.js # la memoire d un agent : note/rappel durables et bornes, anti-repetition (mots en commun) qui refuse le quasi-doublon mais laisse passer le neuf, seuls les posts comptent
 lance agevt   "$SRV" node agent_evenements.test.js # les evenements d un jeton : prix h1 net seulement, pression acheteuse (assez d obs + domination), palier de holders franchi une fois vers le haut, tri par force, aucun faux evenement
+lance voix    "$SRV" node studio_voix.test.js # le vocal du chat : transcription compatible OpenAI (Groq defaut), facture la duree RENDUE (pas celle annoncee), minimum facturable, 503/413/502, jamais sous le cout
+lance passkey "$SRV" node wallet_passkey.test.js # le verrou biometrique du wallet (WebAuthn, @simplewebauthn) : defi a usage unique + expire, cle en base64url, fail-closed ; NE garde JAMAIS les fonds (verrou de confort)
 lance agmesure "$SRV" node agent_mesure.test.js # la mesure : agrege impressions/likes, meilleur post, classement par format SEULEMENT si assez d observations, aucun chiffre invente
 lance acces   "$SRV" node acces.test.js   # portes privees fermees sans cle, gestes d argent en POST seulement ; /credit partage entre le robinet admin et le credit en dollars (29/09)
 lance famille  "$SRV" node famille_client.test.js   # qui demande un prix : famille du client en code fixe, sonde ou demande, jamais le User-Agent brut ni l IP
