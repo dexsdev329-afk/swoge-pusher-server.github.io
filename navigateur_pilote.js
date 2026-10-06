@@ -91,7 +91,8 @@ function litAction(texte, ecran) {
      numéro (pour dédoublonner) ; le serveur en déduit la mise suivante. */
   const bjIssue = typeof o.outcome === 'string' ? o.outcome.slice(0, 20) : null;
   const bjTour = Number.isFinite(Number(o.hand)) ? Number(o.hand) : null;
-  const base = { type, pourquoi, memo, bjIssue, bjTour };
+  const bjPhase = typeof o.phase === 'string' ? o.phase.slice(0, 16).toLowerCase() : null;
+  const base = { type, pourquoi, memo, bjIssue, bjTour, bjPhase };
   const W = (ecran && ecran.width) || 1280, H = (ecran && ecran.height) || 800;
   switch (type) {
     case 'click': {
@@ -164,13 +165,14 @@ function consigne(P, im, n) {
       + 'open it once to read it, convert to dollars, and keep the tally in dollars. To place a $1 bet when the field is in ETH, enter about '
       + (Math.round((1 / P.ethUsd) * 1e6) / 1e6) + ' ETH.' : null),
     /* Mode blackjack : la mise est tenue par le serveur, pas par le modèle. */
-    (P.bj ? 'BLACKJACK MODE — THE BET IS MANAGED FOR YOU. Base bet ' + P.bj.base + ', cap ' + P.bj.cap
-      + '. So far: net ' + (P.bj.net >= 0 ? '+' : '') + P.bj.net + ' over ' + P.bj.mains + ' hand(s) (I track this from your reported results). '
-      + 'Your bet for the NEXT hand MUST be exactly ' + P.bj.mise + ' (in the site currency; if the field is in ETH, convert). '
-      + 'Set the bet field to ' + P.bj.mise + ' before you Deal — use the x2/÷2 buttons from the current value, or type it. '
-      + 'DO NOT change the bet yourself after a win or a loss: I apply the martingale (double after a loss, back to base after a win). '
-      + 'When a hand FINISHES, in that step add "outcome":"win"|"lose"|"push" and "hand":N (N = how many hands are now complete, counting up). '
-      + 'I then give you the next bet. Play the cards with basic strategy (hit/stand/double), and still keep the dollar tally in "memo".' : null),
+    (P.bj ? 'BLACKJACK MODE — I MANAGE THE BET, YOU JUST REPORT. So far: net ' + (P.bj.net >= 0 ? '+' : '') + P.bj.net
+      + ' over ' + P.bj.mains + ' hand(s) (' + P.bj.gagnees + ' won / ' + P.bj.perdues + ' lost / ' + P.bj.nulles + ' push). Base ' + P.bj.base + ', cap ' + P.bj.cap + '. '
+      + 'EVERY step you MUST add "phase": "bet" (about to place the bet), "play" (cards dealt, you are deciding), or "result" (a hand just finished). '
+      + 'When "phase":"result", you MUST also add "outcome":"win"|"lose"|"push" — this is how I update the bet. If you forget it, the bet will NOT change. '
+      + 'Your bet for the NEXT hand MUST be exactly ' + P.bj.mise + ' — set the bet field to ' + P.bj.mise + ' (x2/÷2 buttons, or type; if it is in ETH, convert) before you Deal. '
+      + 'DO NOT change the bet yourself: I double after a loss and reset to base after a win. Play the cards with basic strategy. '
+      + 'WAIT for the hand to fully resolve before reporting: if the dealer is still drawing cards, answer "phase":"play" and look again next step; '
+      + 'only answer "phase":"result" with the outcome once the win/loss/push is clearly shown on screen, so no result is missed.' : null),
     'PREVIOUS STEPS: ' + (P.souvenirs.length ? '\n' + P.souvenirs.join('\n') : 'none, this is the first step.'),
     'Answer with ONE JSON object and nothing else, like {"why":"press Hit, I have 12 against a 10","action":"click","x":640,"y":512,"memo":"start 1000 | now 1000 | net 0 | hands 0"}.',
     'Actions: "click" (x, y) · "scroll" (dy: positive goes down) · "type" (text — click the field first) · "key" (key: Enter, Tab, Escape, Backspace, arrows, PageUp, PageDown, Home, End) · '
@@ -222,7 +224,8 @@ function cree(deps) {
       /* `net` et `mains` : le serveur les tient lui-même à partir des mises
          qu'il impose et des résultats rapportés — le gain/perte en dollars ne
          dépend donc PAS du carnet du modèle (« on sait pas combien on a gagné »). */
-      bj = { base, cap, mise: blackjack.premiereMise({ base }), tour: 0, net: 0, mains: 0 };
+      bj = { base, cap, mise: blackjack.premiereMise({ base }), tour: 0, net: 0, mains: 0,
+             gagnees: 0, perdues: 0, nulles: 0, compte: false };
     }
     return { ok: true, P: { but, etapesMax, budgetUsd, argent, url, ethUsd, bj, ecran: q.ecran === 'telephone' ? 'telephone' : 'bureau',
                             memo: '', souvenirs: [], totalUsd: 0, arret: false } };
@@ -246,7 +249,8 @@ function cree(deps) {
       /* En mode blackjack, le bilan est calculé par le serveur (mises imposées +
          résultats rapportés), donc fiable et toujours là — c'est la réponse à
          « combien on a gagné » : net en dollars et nombre de mains. */
-      const bilan = P.bj ? { net: Math.round(P.bj.net * 100) / 100, mains: P.bj.mains, base: P.bj.base, derniereMise: P.bj.mise } : null;
+      const bilan = P.bj ? { net: Math.round(P.bj.net * 100) / 100, mains: P.bj.mains, base: P.bj.base, derniereMise: P.bj.mise,
+                             gagnees: P.bj.gagnees, perdues: P.bj.perdues, nulles: P.bj.nulles } : null;
       return { ok: raison === 'done' || raison === 'stopped' || raison === 'budget' || raison === 'steps' || raison === 'time',
                raison, detail: quoi || null, memo: P.memo || null, bilan,
                etapes: n, totalUsd: Number(P.totalUsd.toFixed(5)), dureeS: Math.round((maintenant() - t0) / 1000) };
@@ -309,21 +313,27 @@ function cree(deps) {
         /* MODE BLACKJACK : une main finie (résultat + numéro NOUVEAU) -> le
            serveur calcule la mise suivante. Le numéro évite de doubler deux fois
            sur un résultat affiché pendant plusieurs captures. */
-        if (P.bj && a.bjIssue && a.bjTour != null && a.bjTour > P.bj.tour) {
+        if (P.bj && (a.bjIssue || a.bjPhase)) {
+          /* NOUVELLE MAIN : le modèle dit « bet/play/deal » OU donne un numéro de
+             main qui avance. Ça rouvre le comptage pour le prochain résultat —
+             sans dépendre d'un numéro que le modèle oublie souvent. */
+          const ph = a.bjPhase || '';
+          const nouvelle = /^(bet|play|playing|deal|dealing|new)/.test(ph) || (a.bjTour != null && a.bjTour > P.bj.tour);
+          if (nouvelle) { P.bj.compte = false; if (a.bjTour != null) P.bj.tour = a.bjTour; }
           const issue = blackjack.litIssue(a.bjIssue);
-          if (issue) {
-            /* La mise ACTUELLE est celle qui était en jeu sur la main finie
-               (on ne calcule la suivante qu'après). Le gain/perte s'en déduit :
-               un blackjack paie 3:2. Le serveur tient le net en dollars. */
-            const miseEnJeu = P.bj.mise;
-            if (issue === 'win') P.bj.net += miseEnJeu;
-            else if (issue === 'blackjack') P.bj.net += miseEnJeu * 1.5;
-            else if (issue === 'lose') P.bj.net -= miseEnJeu;
-            /* push : net inchangé */
+          /* UN résultat par main (anti double-comptage : l'écran de résultat
+             reste affiché sur plusieurs captures). `compte` se referme ici et ne
+             se rouvre qu'à la main suivante. */
+          if (issue && !P.bj.compte) {
+            const miseEnJeu = P.bj.mise;   /* la mise était en jeu sur la main finie ; on calcule la suivante après */
+            if (issue === 'win') { P.bj.net += miseEnJeu; P.bj.gagnees++; }
+            else if (issue === 'blackjack') { P.bj.net += miseEnJeu * 1.5; P.bj.gagnees++; }
+            else if (issue === 'lose') { P.bj.net -= miseEnJeu; P.bj.perdues++; }
+            else { P.bj.nulles++; }   /* push : net inchangé */
             P.bj.net = Math.round(P.bj.net * 100) / 100;
             P.bj.mains++;
             P.bj.mise = blackjack.prochaineMise({ base: P.bj.base, cap: P.bj.cap, mise: P.bj.mise, issue });
-            P.bj.tour = a.bjTour;
+            P.bj.compte = true;
           }
         }
         MESURE.actions[a.type] = (MESURE.actions[a.type] || 0) + 1;
@@ -349,7 +359,7 @@ function cree(deps) {
         P.souvenirs.push(n + '. ' + decrit(a) + (a.pourquoi ? ' — ' + a.pourquoi.slice(0, 120) : '') + (note ? ' [' + note + ']' : ''));
         if (P.souvenirs.length > SOUVENIRS) P.souvenirs.shift();
         emet('etape', { n, action: decrit(a), pourquoi: a.pourquoi, note, factureUsd: facture, totalUsd: P.totalUsd,
-                        bj: P.bj ? { net: P.bj.net, mains: P.bj.mains, mise: P.bj.mise } : undefined });
+                        bj: P.bj ? { net: P.bj.net, mains: P.bj.mains, mise: P.bj.mise, gagnees: P.bj.gagnees, perdues: P.bj.perdues, nulles: P.bj.nulles } : undefined });
       }
     } catch (e) {
       return fin('error', String(e && e.message || e).slice(0, 160));
