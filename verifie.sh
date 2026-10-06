@@ -187,6 +187,7 @@ lance fusion   "$SITE" node agents_fusion.test.js   # swoge_agents.html = ses so
 lance vitrine  "$SITE" node wallet_vitrine.test.js      # portefeuille : six cartes a cote du telephone sans le couvrir, rien d invente (« -- »), la visite au defilement s arrete au premier geste
 lance walassist "$SITE" node wallet_assistant_page.test.js   # l assistant du portefeuille dans la page : comprend et pre-remplit (send/swap/burn), jamais de signature, phrase sans adresse = aucun envoi
 lance walpk    "$SITE" node wallet_passkey_page.test.js   # le verrou Face ID dans la page : voile a la reprise d un portefeuille a passkey, Face ID le retire, l interrupteur SECURITY le pose ; fail-open sans @simplewebauthn ; le verrou cache l ecran, il ne garde JAMAIS les fonds
+lance walapercu "$SITE" node wallet_apercu_page.test.js   # l apercu avant signature : la revue rejoue l envoi (estimateGas) — « expected to succeed » + gaz reel, ou « would FAIL » + la raison du revert AVANT de signer ; la page montre, le bouton reste actif
 lance fond     "$SITE" node fond_anime.test.js         # fond d ecran anime : sur les neuf pages du menu, il JOUE, derriere tout, dans son budget ; rien sous 700 px ni pour moins de mouvement
 # Elle criait dans le vide : 30 echecs sur 617, jamais lus, parce qu elle
 # n etait pas dans cette boucle — exactement la panne de miroir_reel.test.js.
