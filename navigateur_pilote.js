@@ -26,6 +26,8 @@
  * dit au joueur en ces termes, et l'écran reste sous ses yeux, en direct.
  * ================================================================== */
 
+const blackjack = require('./blackjack');
+
 const PILOTES_MAX = 8;                 /* autant que de sessions Chromium, au plus */
 /* 06/10 : 40 étapes ne faisaient qu'une dizaine de mains de blackjack (le signalé
    « c'est pas assez »), la moitié des pas partant en « wait ». Plafond relevé, et
@@ -85,7 +87,11 @@ function litAction(texte, ecran) {
   const type = String(o.action || '').toLowerCase().trim();
   const pourquoi = String(o.why || '').slice(0, 240);
   const memo = typeof o.memo === 'string' ? o.memo.slice(0, 300) : null;
-  const base = { type, pourquoi, memo };
+  /* Mode blackjack : le modèle rapporte le résultat d'une main finie et son
+     numéro (pour dédoublonner) ; le serveur en déduit la mise suivante. */
+  const bjIssue = typeof o.outcome === 'string' ? o.outcome.slice(0, 20) : null;
+  const bjTour = Number.isFinite(Number(o.hand)) ? Number(o.hand) : null;
+  const base = { type, pourquoi, memo, bjIssue, bjTour };
   const W = (ecran && ecran.width) || 1280, H = (ecran && ecran.height) || 800;
   switch (type) {
     case 'click': {
@@ -157,6 +163,14 @@ function consigne(P, im, n) {
       + ' ; ETH = dollars / ' + (Math.round(P.ethUsd * 100) / 100) + '. If the balance is only shown after opening a wallet or balance panel, '
       + 'open it once to read it, convert to dollars, and keep the tally in dollars. To place a $1 bet when the field is in ETH, enter about '
       + (Math.round((1 / P.ethUsd) * 1e6) / 1e6) + ' ETH.' : null),
+    /* Mode blackjack : la mise est tenue par le serveur, pas par le modèle. */
+    (P.bj ? 'BLACKJACK MODE — THE BET IS MANAGED FOR YOU. Base bet ' + P.bj.base + ', cap ' + P.bj.cap
+      + '. So far: net ' + (P.bj.net >= 0 ? '+' : '') + P.bj.net + ' over ' + P.bj.mains + ' hand(s) (I track this from your reported results). '
+      + 'Your bet for the NEXT hand MUST be exactly ' + P.bj.mise + ' (in the site currency; if the field is in ETH, convert). '
+      + 'Set the bet field to ' + P.bj.mise + ' before you Deal — use the x2/÷2 buttons from the current value, or type it. '
+      + 'DO NOT change the bet yourself after a win or a loss: I apply the martingale (double after a loss, back to base after a win). '
+      + 'When a hand FINISHES, in that step add "outcome":"win"|"lose"|"push" and "hand":N (N = how many hands are now complete, counting up). '
+      + 'I then give you the next bet. Play the cards with basic strategy (hit/stand/double), and still keep the dollar tally in "memo".' : null),
     'PREVIOUS STEPS: ' + (P.souvenirs.length ? '\n' + P.souvenirs.join('\n') : 'none, this is the first step.'),
     'Answer with ONE JSON object and nothing else, like {"why":"press Hit, I have 12 against a 10","action":"click","x":640,"y":512,"memo":"start 1000 | now 1000 | net 0 | hands 0"}.',
     'Actions: "click" (x, y) · "scroll" (dy: positive goes down) · "type" (text — click the field first) · "key" (key: Enter, Tab, Escape, Backspace, arrows, PageUp, PageDown, Home, End) · '
@@ -197,7 +211,20 @@ function cree(deps) {
        casinos montrent le solde et les mises en ETH alors qu'on raisonne en
        dollars. Le modèle convertit avec ce taux. */
     const ethUsd = Number(q.ethUsd) > 0 ? Number(q.ethUsd) : null;
-    return { ok: true, P: { but, etapesMax, budgetUsd, argent, url, ethUsd, ecran: q.ecran === 'telephone' ? 'telephone' : 'bureau',
+    /* Le MODE BLACKJACK : le serveur tient la martingale (le modèle ne décide
+       plus la mise), pour qu'il n'oublie jamais de doubler après une perte ni de
+       revenir à la base après un gain. base = miseBase (défaut 1), plafond =
+       miseMax si donné (sinon base*64). `tour` dédoublonne les résultats. */
+    let bj = null;
+    if (String(q.mode || '').toLowerCase() === 'blackjack') {
+      const base = Number(q.miseBase) > 0 ? Number(q.miseBase) : 1;
+      const cap = Number(q.miseMax) > 0 ? Number(q.miseMax) : base * 64;
+      /* `net` et `mains` : le serveur les tient lui-même à partir des mises
+         qu'il impose et des résultats rapportés — le gain/perte en dollars ne
+         dépend donc PAS du carnet du modèle (« on sait pas combien on a gagné »). */
+      bj = { base, cap, mise: blackjack.premiereMise({ base }), tour: 0, net: 0, mains: 0 };
+    }
+    return { ok: true, P: { but, etapesMax, budgetUsd, argent, url, ethUsd, bj, ecran: q.ecran === 'telephone' ? 'telephone' : 'bureau',
                             memo: '', souvenirs: [], totalUsd: 0, arret: false } };
   }
 
@@ -216,8 +243,12 @@ function cree(deps) {
          gain/perte, mains jouées). On le rend TOUJOURS — surtout sur un arrêt
          forcé (steps/time/budget), où il n'y a pas de « done » pour résumer :
          sans lui, « on sait pas combien on a gagné ». */
+      /* En mode blackjack, le bilan est calculé par le serveur (mises imposées +
+         résultats rapportés), donc fiable et toujours là — c'est la réponse à
+         « combien on a gagné » : net en dollars et nombre de mains. */
+      const bilan = P.bj ? { net: Math.round(P.bj.net * 100) / 100, mains: P.bj.mains, base: P.bj.base, derniereMise: P.bj.mise } : null;
       return { ok: raison === 'done' || raison === 'stopped' || raison === 'budget' || raison === 'steps' || raison === 'time',
-               raison, detail: quoi || null, memo: P.memo || null,
+               raison, detail: quoi || null, memo: P.memo || null, bilan,
                etapes: n, totalUsd: Number(P.totalUsd.toFixed(5)), dureeS: Math.round((maintenant() - t0) / 1000) };
     };
     /* Un geste ou une image refusés pour la cadence (250 ms par joueur, deux images en vol) : une
@@ -275,6 +306,26 @@ function cree(deps) {
         }
         rates = 0;
         if (a.memo !== null) P.memo = a.memo;
+        /* MODE BLACKJACK : une main finie (résultat + numéro NOUVEAU) -> le
+           serveur calcule la mise suivante. Le numéro évite de doubler deux fois
+           sur un résultat affiché pendant plusieurs captures. */
+        if (P.bj && a.bjIssue && a.bjTour != null && a.bjTour > P.bj.tour) {
+          const issue = blackjack.litIssue(a.bjIssue);
+          if (issue) {
+            /* La mise ACTUELLE est celle qui était en jeu sur la main finie
+               (on ne calcule la suivante qu'après). Le gain/perte s'en déduit :
+               un blackjack paie 3:2. Le serveur tient le net en dollars. */
+            const miseEnJeu = P.bj.mise;
+            if (issue === 'win') P.bj.net += miseEnJeu;
+            else if (issue === 'blackjack') P.bj.net += miseEnJeu * 1.5;
+            else if (issue === 'lose') P.bj.net -= miseEnJeu;
+            /* push : net inchangé */
+            P.bj.net = Math.round(P.bj.net * 100) / 100;
+            P.bj.mains++;
+            P.bj.mise = blackjack.prochaineMise({ base: P.bj.base, cap: P.bj.cap, mise: P.bj.mise, issue });
+            P.bj.tour = a.bjTour;
+          }
+        }
         MESURE.actions[a.type] = (MESURE.actions[a.type] || 0) + 1;
         if (a.type === 'done') { emet('etape', { n, action: 'done', pourquoi: a.pourquoi, factureUsd: facture, totalUsd: P.totalUsd }); return fin('done', a.resultat); }
         if (a.type === 'stuck') { emet('etape', { n, action: 'stuck', pourquoi: a.pourquoi, factureUsd: facture, totalUsd: P.totalUsd }); return fin('stuck', a.raison); }
@@ -297,7 +348,8 @@ function cree(deps) {
         }
         P.souvenirs.push(n + '. ' + decrit(a) + (a.pourquoi ? ' — ' + a.pourquoi.slice(0, 120) : '') + (note ? ' [' + note + ']' : ''));
         if (P.souvenirs.length > SOUVENIRS) P.souvenirs.shift();
-        emet('etape', { n, action: decrit(a), pourquoi: a.pourquoi, note, factureUsd: facture, totalUsd: P.totalUsd });
+        emet('etape', { n, action: decrit(a), pourquoi: a.pourquoi, note, factureUsd: facture, totalUsd: P.totalUsd,
+                        bj: P.bj ? { net: P.bj.net, mains: P.bj.mains, mise: P.bj.mise } : undefined });
       }
     } catch (e) {
       return fin('error', String(e && e.message || e).slice(0, 160));

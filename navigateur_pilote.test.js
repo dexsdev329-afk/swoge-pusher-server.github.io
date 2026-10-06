@@ -143,6 +143,49 @@ const sansAttente = { dors: async () => {} };
     ok(!/CURRENCY:/.test(t), 'sans cours fourni : pas de ligne de conversion');
   }
 
+  console.log('\n-- 5b. mode blackjack : la martingale est tenue par le SERVEUR --');
+  {
+    const nav = fauxNavigateur();
+    const P = Pilote.cree(Object.assign({ image: nav.image, geste: nav.geste }, sansAttente));
+    const mod = fauxModele([
+      { why: 'bet base', action: 'click', x: 100, y: 700 },                                    /* etape 1 : miser 1 */
+      { why: 'hit', action: 'click', x: 200, y: 700 },                                          /* etape 2 */
+      { why: 'lost the hand', action: 'click', x: 100, y: 700, outcome: 'lose', hand: 1 },       /* etape 3 -> mise 2 */
+      { why: 'bet again', action: 'click', x: 100, y: 700 },                                     /* etape 4 : miser 2 */
+      { why: 'lost again', action: 'click', x: 100, y: 700, outcome: 'lose', hand: 2 },           /* etape 5 -> mise 4 */
+      { why: 'won it back', action: 'click', x: 100, y: 700, outcome: 'win', hand: 3 },           /* etape 6 -> mise 1 */
+      { why: 'done', action: 'done', result: 'played a few hands' },                             /* etape 7 */
+    ]);
+    const r = await P.lance(ADDR, { but: 'play blackjack', mode: 'blackjack', miseBase: 1, miseMax: 100, url: 'casino.example' },
+      { appelle: mod.appelle, pireCasUsd: () => 0, emet: () => {} });
+    const c = (k) => mod.appels[k][0].content;
+    ok(/BLACKJACK MODE/.test(c(0)) && /NEXT hand MUST be exactly 1\b/.test(c(0)), 'etape 1 : le serveur impose la mise de base (1)');
+    ok(/NEXT hand MUST be exactly 2\b/.test(c(3)), 'apres UNE perte : le serveur double a 2 (le modele ne calcule plus la mise)');
+    ok(/NEXT hand MUST be exactly 4\b/.test(c(5)), 'apres DEUX pertes : 4');
+    ok(/NEXT hand MUST be exactly 1\b/.test(c(6)), 'apres un gain : retour a la base (1) — jamais oublie');
+    ok(r.raison === 'done', 'il va au bout');
+    /* Le BILAN en dollars, calculé par le SERVEUR : perte 1 (bet 1) + perte 2
+       (bet 2) + gain 4 (bet 4) = +1 net sur 3 mains. Fiable, sans le carnet. */
+    ok(r.bilan && r.bilan.net === 1 && r.bilan.mains === 3, 'le bilan serveur dit combien on a gagne : net +1 $ sur 3 mains (' + (r.bilan && r.bilan.net) + ')');
+
+    /* Dédoublonnage : un même résultat rapporté deux fois (même numéro de main)
+       ne double qu'une fois — le résultat reste affiché sur plusieurs captures. */
+    const nav2 = fauxNavigateur();
+    const P2 = Pilote.cree(Object.assign({ image: nav2.image, geste: nav2.geste }, sansAttente));
+    const mod2 = fauxModele([
+      { action: 'click', x: 1, y: 1, outcome: 'lose', hand: 1 },   /* mise 1 -> 2 */
+      { action: 'click', x: 1, y: 1, outcome: 'lose', hand: 1 },   /* MEME main : reste 2 */
+      { action: 'done', result: 'x' },
+    ]);
+    await P2.lance(ADDR, { but: 'play blackjack', mode: 'blackjack', miseBase: 1, miseMax: 100, url: 'casino.example' },
+      { appelle: mod2.appelle, pireCasUsd: () => 0, emet: () => {} });
+    const c2 = (k) => mod2.appels[k][0].content;
+    ok(/exactly 2\b/.test(c2(1)) && /exactly 2\b/.test(c2(2)), 'un resultat rejoue (meme numero de main) ne double pas deux fois');
+    /* Hors mode blackjack : aucune ligne BLACKJACK, la mise reste au modele. */
+    const vLibre = P.verifie(ADDR, { but: 'play' });
+    ok(!/BLACKJACK MODE/.test(Pilote.consigne(vLibre.P, { ecran: { width: 1280, height: 800 }, url: 'x' }, 1)), 'sans mode blackjack : pas de martingale imposee');
+  }
+
   console.log('\n-- 6. ce qui ne joue pas --');
   {
     const nav = fauxNavigateur();
