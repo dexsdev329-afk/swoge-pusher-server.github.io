@@ -322,6 +322,16 @@ const x = require('./x_post');
     const reel = x.PROGRAMMES.find((p) => p.nom === 'x402-payai');
     ok(reel && reel.texte.length + reel.lien.length + 2 <= 280 && /PayAI x402/.test(reel.texte) && /Base or Solana/.test(reel.texte) && /15 tools/.test(reel.texte),
        'le vrai post x402/PayAI : ' + (reel.texte.length + reel.lien.length + 2) + ' caracteres avec le lien (<= 280), les faits verifies (15 outils, Base ou Solana)');
+    /* 08/10 : le casino en $SWOGEBET. Part tel quel (paragraphes + lien) seulement s il tient ; les libelles sont ceux
+     * du selecteur (coffre.js) ; le Boulier, le Pusher, le jackpot et le classement restent $SWOGE : jamais cites. */
+    const cs = x.PROGRAMMES.find((p) => p.nom === 'casino-swogebet');
+    ok(cs && cs.texte.length + cs.lien.length + 2 <= 280 && /Stake from: Bet \$SWOGEBET/.test(cs.texte) && /same token/.test(cs.texte)
+         && /SWOGE World/.test(cs.texte) && !/boulier|pusher|jackpot|leaderboard/i.test(cs.texte + cs.sujet) && /\/games\.html$/.test(cs.lien),
+       'le post casino $SWOGEBET : ' + (cs && cs.texte.length + cs.lien.length + 2) + ' caracteres avec le lien (<= 280), libelles du selecteur, rien sur les cagnottes $SWOGE');
+    const heureNY = cs && new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(cs.a);
+    ok(heureNY > '12:30' && heureNY < '17:00', 'le post casino tombe seul entre les creneaux de 12:30 et 17:00 ET (' + heureNY + ')');
+    const cles = x.PROGRAMMES.map((p) => new Date(p.a).toISOString().slice(0, 10) + '#' + p.nom.slice(0, 24));
+    ok(new Set(cles).size === cles.length, 'chaque post programme a sa propre cle de journal (' + cles.length + ')');
   }
 
   delete process.env.X_ANNONCE;

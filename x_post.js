@@ -1012,6 +1012,27 @@ const PROGRAMMES = [
       + 'It remembers what it said and learns from its own engagement, so it gets sharper over time.\n\n'
       + 'You own and control it from your wallet. Solana + Robinhood Chain. Non-custodial. 🐕🚀',
     prompt: 'gently placing a small glowing blue AI brain into a cute coin-shaped robot that springs to life on his workbench; behind him a wall of holographic screens shows an X feed, a Telegram chat, a green candlestick chart and a glowing green security shield, all in neon; warm confident grin, cinematic lighting at night' },
+  /* 08/10/2026 : « fais un tweet auto pour expliquer qu on peut jouer avec le swogebet meme au casino » (le proprietaire).
+   * Chaque affirmation verifiee dans le code pousse sur main le meme jour :
+   *   - les jeux cites prennent { jeton: 'swogebet' } cote serveur (game.js : spin Smash, volcanoSpin, plinkoDrop, crash
+   *     parier, casinoDeal/hilo/mines, blackjack) et la page charge coffre.js : crash, plinko, swoge_blackjack, swoge_bonanza,
+   *     swoge_casino (Hold'em, Three Card, Hi-Lo, Mines), swoge_chenil, swoge_dod, swoge_smash, swoge_spin, et nexus (la table
+   *     de blackjack de SWOGE World). Tous lies depuis games.html, d ou le lien.
+   *   - « Stake from: Bet $SWOGEBET » : les libelles exacts du selecteur (coffre.js : « Stake from », « Bet $SWOGEBET »).
+   *     Il n apparait qu a qui a un solde $SWOGEBET — d ou « before you play », sans promettre qu il est toujours visible.
+   *   - « Wins land in the same token » : _payeGain paie dans le jeton fige a l ouverture de la manche
+   *     (casino_deux_coffres.test.js, conservation 218 controles).
+   * On NE cite PAS le Boulier ni le Coin Pusher (cagnottes partagees, restes $SWOGE seulement), ni jackpot ni classement
+   * (restes $SWOGE, comme le sport). 269 caracteres avec le lien (<= 280, essai). Poste SEUL a 15:00 ET (19:00 UTC), entre
+   * les creneaux de 12:30 et 17:00. Lien : 0,20 $ au lieu de 0,015 $, c est une annonce, elle doit mener aux jeux.
+   * Image : prompt dedie, pattes-de-chien verifiees par genereImageVerifiee. */
+  { nom: 'casino-swogebet', a: Date.parse('2026-10-08T19:00:00Z'), lien: 'https://swoleeswoge.dog/games.html',
+    sujet: 'The $SWOGEBET balance from the sports-betting vault can now be staked in the SWOGE casino: Smash, Spin, Plinko, Crash, Mines, Blackjack, Hold\'em, Three Card, Hi-Lo, Kennel, Dead Swoge, Bonanza and the SWOGE World blackjack table. Players pick "Stake from: Vault $SWOGE or Bet $SWOGEBET" before playing, and wins are paid back in the same token.',
+    texte: 'Your $SWOGEBET isn\'t just for sports anymore 🎰🐕\n\n'
+      + 'Play it on Smash, Spin, Plinko, Crash, Mines, Blackjack, Hold\'em and more — even the SWOGE World table.\n\n'
+      + 'Tap "Stake from: Bet $SWOGEBET" before you play. Wins land in the same token.',
+    prompt: 'sliding two stacks of casino chips onto a glowing green felt table at night, one stack gold, the other stack bright green; a football resting on the table edge; '
+      + 'behind him a neon-lit casino with a plinko board, a slot machine and a rising crash chart glowing on a big screen; confident grin, cinematic neon lighting' },
 ];
 async function programmes(o) {
   const t = (o && o.maintenant) || Date.now();
