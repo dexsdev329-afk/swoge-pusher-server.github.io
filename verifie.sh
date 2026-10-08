@@ -13,7 +13,7 @@ RATE=0; T0=$(date +%s)
 lance() {  # nom · dossier · commande…
   local nom=$1 dossier=$2; shift 2; local log="$SRV/_logs/$nom.log"; local t=$(date +%s)
   (cd "$dossier" && "$@" > "$log" 2>&1); local code=$?
-  local fin; fin=$(grep -E "verifications OK|tout passe|^RATES" "$log" | tail -1)
+  local fin; fin=$(grep -E "verifications OK|verifications passees|tout passe|^RATES" "$log" | tail -1)
   printf '  %-8s %-6s %4ss  %s\n' "$nom" "$([ $code -eq 0 ] && echo vert || echo ROUGE)" "$(( $(date +%s) - t ))" "${fin:-$(tail -1 "$log")}"
   [ $code -eq 0 ] || { RATE=1; grep -m3 "  RATE \|EXCEPTION\|Error" "$log" | sed 's/^/           /'; }
 }
@@ -49,6 +49,20 @@ lance crash   "$SRV" node crash.test.js   # le moteur du Crash : point de ruptur
 lance crashjeu "$SRV" node crash_game.test.js   # le Crash cable au solde : debit a la mise, credit au retrait (ou jamais), reconnexion, redemarrage
 lance vaultbet "$SRV" node vault_swogebet.test.js   # les paris sportifs en $SWOGEBET uniquement : les deux coffres isoles, le ticket paye dans sa propre monnaie, signature dans le bon domaine
 lance bilanparis "$SRV" node bilan_paris.test.js   # le bilan des paris : mises/rendus, le jeton de chaque ticket
+# Les paris eux-memes n'etaient PAS dans cette boucle (08/10/2026) : cotes, reglement, import, scores
+# gratuits — exactement la panne de miroir_reel. L'essai du direct de la page etait rouge depuis fin
+# septembre (un mois ecrit en dur), et personne ne l'avait vu.
+lance paris    "$SRV" node paris.test.js          # le pari se vend, se regle sur le score, se paie dans sa monnaie
+lance pariferme "$SRV" node paris_fermeture.test.js   # UN critere « ouvert » : coup d envoi, rencontre fermee par l import (deplacee), commencee selon ESPN
+lance pariauto "$SRV" node paris_auto.test.js     # le reglement automatique et ses verrous
+lance parihors "$SRV" node paris_hors_calendrier.test.js   # une rencontre sortie du calendrier reste affichable et reglable
+lance pariimp  "$SRV" node paris_import.test.js   # l import : credits, ODDS_API_FIN passee, rencontre deplacee fermee, foot de The Odds API a la main
+lance espn     "$SRV" node scores_espn.test.js    # scores gratuits : jours/mois (plus de fenetre), 90 minutes, match le plus proche d une serie, refus comptes
+lance cotes    "$SRV" node cotes.test.js
+lance cotesbuts "$SRV" node cotes_buts.test.js
+lance cotesnoms "$SRV" node cotes_noms.test.js
+lance cotesrisq "$SRV" node cotes_risque.test.js
+lance betachat "$SRV" node swogebet_achats.test.js
 lance profilparis "$SRV" node profil_paris.test.js   # le profil paris d un joueur (ignore proprement si moins de 3 matchs au calendrier)
 lance pilotetables "$SRV" node pilote_tables.test.js   # ce que le pilote apprend d une table (par URL) : cle normalisee, reperes bornes, dedoublonnes, durables
 lance osinttel "$SRV" node osint_tel.test.js   # le plan de numerotation FR : type + region, deterministes, sans cle
@@ -204,6 +218,9 @@ lance fond     "$SITE" node fond_anime.test.js         # fond d ecran anime : su
 lance reference "$SITE" node referencement.test.js
 lance coffre  "$SITE" node coffre.test.js   # le choix du coffre sur les jeux casino : cache sans $SWOGEBET (defaut $SWOGE), apparait avec, retombe sur $SWOGE si le bet vault se vide, choix retenu
 lance casinopages "$SITE" node casino_coffre_pages.test.js   # les 9 pages casino de bout en bout (faux serveur) : chaque mise d ouverture porte le jeton du coffre choisi ; un joueur a 0 $SWOGE / 500 $SWOGEBET peut miser ; sans $SWOGEBET, rien ne change
+lance paripage "$SITE" node paris_page.test.js   # la page des paris
+lance paridirect "$SITE" node paris_direct.test.js   # le score en direct, du tableau d ESPN jusqu a la ligne de la page ; aucun bouton sur un match commence
+lance pariaccueil "$SITE" node paris_accueil.test.js
 lance marqueur "$SITE" node cache_marqueur.test.js
 lance minifie "$SITE" node minifie.test.js
 echo "  $(( $(date +%s) - T0 )) s au total · $([ $RATE -eq 0 ] && echo 'TOUT VERT : on peut commettre' || echo 'ROUGE : on ne commet pas')"

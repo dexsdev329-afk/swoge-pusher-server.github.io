@@ -442,6 +442,9 @@ function etatImport() {
     quota: { reste: q.reste, utilise: q.utilise, depenseDuJour: q.depenseDuJour,
              partDuJour: partDuJour(q.reste), vu: q.vu },
     auto: { actif: AUTO_ACTIF, plafond: AUTO_PLAFOND, delaiMin: AUTO_DELAI_MIN },
+    /* Les refus du tableau d'ESPN aujourd'hui, par tableau : une panne qui ne
+       se lit que dans le journal ne se voit pas (08/10/2026). */
+    espnRefus: espn.refusDuJour(),
     dernier: litDernier(),
   };
 }
@@ -545,6 +548,11 @@ async function importeMatchs() {
   const sports = new Set();
 
   const echouees = new Set(), erreurs = [], parLigueCompte = {};
+  /* Tout ce que le fournisseur rend, COMMENCE OU NON, par identifiant
+     d'evenement : c'est ce qui dit qu'une rencontre deja au calendrier a ete
+     deplacee (voir plus bas). Seules les ligues qui ont rendu au moins une
+     rencontre comptent : une reponse vide ne prouve rien. */
+  const parEvenement = new Map(), liguesVues = new Set();
   let repondues = 0;
   for (const l of await liguesEnService()) {
     let evs;
@@ -563,6 +571,10 @@ async function importeMatchs() {
       continue;
     }
     let pris = 0;
+    for (const ev of evs || []) {
+      const tv = Date.parse(ev.commence_time);
+      if (ev && ev.id && isFinite(tv)) { parEvenement.set(String(ev.id), tv); liguesVues.add(l.clef); }
+    }
     for (const ev of evs || []) {
       const t = Date.parse(ev.commence_time);
       if (!isFinite(t) || t <= Date.now() || t > limite) continue;
@@ -586,11 +598,31 @@ async function importeMatchs() {
   /* Un identifiant en double ferait exploser le validateur. Deux rencontres du
      meme jour entre deux equipes dont les trois premieres lettres coincident,
      ca arrive — on desambigue plutot que de perdre le match. */
+  /* ---- ET UN IDENTIFIANT RESTE A SON EVENEMENT (08/10/2026) ----
+   * Le suffixe « -2 » suivait l'ORDRE de la reponse. Programme double reel,
+   * TOR@BAL du 23/09 (17:35Z et 22:35Z) : match 1 = bal-tor, match 2 =
+   * bal-tor-2. L'import suivant tombe pendant le match 1, qui n'est plus
+   * importe puisque commence : le match 2 prenait « bal-tor » et ECRASAIT
+   * l'entree du match 1 — ses paris se seraient regles avec le score du
+   * match 2. Une rencontre reprend donc l'identifiant qu'elle portait deja (meme
+   * evenement du fournisseur, meme base), et un suffixe n'est jamais donne a un
+   * identifiant deja porte par un AUTRE evenement de l'ancien calendrier. */
+  const anciens = new Map(), anciensParEv = new Map();
+  try {
+    for (const a of (JSON.parse(fs.readFileSync(paris.fichier(), 'utf8')).matchs || [])) {
+      const ev = String((a.source && a.source.evenement) || '');
+      anciens.set(a.id, ev);
+      if (ev) anciensParEv.set(ev, a.id);
+    }
+  } catch (e) { /* pas d'ancien calendrier */ }
   const vus = new Map();
   for (const m of matchs) {
-    if (!vus.has(m.id)) { vus.set(m.id, m); continue; }
-    let n = 2, cand;
-    do { cand = (m.id + '-' + n).slice(0, 64); n++; } while (vus.has(cand));
+    const ev = String(m.source.evenement || ''), base = m.id;
+    const sien = anciensParEv.get(ev);
+    if (sien && (sien === base || sien.startsWith(base + '-')) && !vus.has(sien)) { m.id = sien; vus.set(sien, m); continue; }
+    const libre = (id) => !vus.has(id) && (!anciens.has(id) || anciens.get(id) === ev);
+    let cand = base, n = 2;
+    while (!libre(cand)) { cand = (base + '-' + n).slice(0, 64); n++; }
     m.id = cand; vus.set(cand, m);
   }
 
@@ -665,6 +697,7 @@ async function importeMatchs() {
   const RETENTION_JOURS = Number(process.env.ODDS_API_RETENTION || 45);
   {
     let repris = 0, vieilles = 0;
+    const fermees = [];
     try {
       /* On relit le calendrier EN SERVICE, pas la cible d'ecriture : au
          premier import qui suit la bascule sur le volume, le fichier du
@@ -672,16 +705,65 @@ async function importeMatchs() {
          reprendre — sinon ses rencontres seraient perdues. */
       const avant = JSON.parse(fs.readFileSync(paris.fichier(), 'utf8'));
       const limiteBasse = Date.now() - RETENTION_JOURS * 86400000;
-      for (const m of avant.matchs || []) {
-        if (vus.has(m.id)) continue;                 // remplacee par la version fraiche
-        const t = Date.parse(m.debut);
+      const fraisParEvenement = new Map();
+      for (const f of vus.values()) if (f.source && f.source.evenement) fraisParEvenement.set(String(f.source.evenement), f.id);
+      for (const m0 of avant.matchs || []) {
+        if (vus.has(m0.id)) continue;                // remplacee par la version fraiche
+        const t = Date.parse(m0.debut);
         if (!isFinite(t)) continue;
         if (t < limiteBasse) { vieilles++; continue; }
+        /* ---- UNE RENCONTRE DEPLACEE NE RESTE PAS OUVERTE (08/10/2026) ----
+         * L'identifiant porte la DATE (voir `identifiant`). Quand le
+         * fournisseur deplace une rencontre d'un jour, la version fraiche
+         * arrive sous un AUTRE identifiant, et l'ancienne etait conservee ici,
+         * ouverte jusqu'a son ancienne heure et retarifee a chaque import. Si
+         * le match etait AVANCE, elle acceptait encore des paris apres le vrai
+         * coup de sifflet final, puis ESPN (qui apparie a 36 h pres) la
+         * reglait avec le vrai score : un pari sur un resultat connu. Rejoue
+         * sur un Real–Villarreal avance du dimanche au samedi 14:00 : ouvert
+         * le samedi a 18:00, match joue, a 1,45 / 3,97 / 6,03.
+         * Desormais, si le meme evenement du fournisseur est rendu sous une
+         * autre heure, sous un autre identifiant, ou n'est plus rendu du tout
+         * par une ligue qui a repondu, l'ancienne entree est FERMEE : plus
+         * aucun pari, ses tickets restent affichables, et son reglement passe
+         * a la main (`trieReglements`) — c'est au proprietaire de dire si les
+         * paris d'avant le deplacement tiennent. Elle prend la VRAIE heure
+         * quand on la connait, pour qu'ESPN la retrouve et que le ticket dise
+         * la verite. Aucune cote n'est touchee. */
+        /* ---- L'HEURE NE FAIT QUE RECULER ----
+         * Avancee, l'entree prend la vraie heure : ESPN la retrouve, le ticket
+         * dit vrai, et « a regler » la montre des que le match est joue.
+         * Reportee, elle GARDE la sienne : si le report est annule et que le
+         * match se joue a son heure, ses gagnants doivent remonter dans « a
+         * regler » ce jour-la — une heure annoncee plus tard les en sortait
+         * jusqu'a une date ou ni ESPN (36 h) ni /scores (3 jours) ne les
+         * retrouvaient plus. Et une entree DEJA fermee suit encore les
+         * avances du fournisseur, jamais ses reports. */
+        let m = m0;
+        const src = m0.source || {};
+        if (src.fournisseur === 'the-odds-api' && src.evenement && liguesVues.has(src.ligue)) {
+          const vrai = parEvenement.get(String(src.evenement));
+          const autre = fraisParEvenement.get(String(src.evenement));
+          const avance = vrai !== undefined && vrai <= t - 60000;
+          if (isFinite(Date.parse(m0.ferme))) {
+            if (avance) m = Object.assign({}, m0, { debut: new Date(vrai).toISOString() });
+          } else if (t > Date.now()) {
+            let raison = null;
+            if (vrai === undefined) raison = 'plus rendue par le fournisseur du calendrier';
+            else if (Math.abs(vrai - t) >= 60000) raison = (vrai < t ? 'avancee au ' : 'reportee au ') + new Date(vrai).toISOString();
+            else if (autre && autre !== m0.id) raison = 'reprise sous l identifiant ' + autre;
+            if (raison) {
+              m = Object.assign({}, m0, { debut: avance ? new Date(vrai).toISOString() : m0.debut,
+                                          ferme: new Date().toISOString(), fermeRaison: raison });
+              fermees.push(`${m0.domicile} – ${m0.exterieur} (${m0.id}) : ${raison}`);
+            }
+          }
+        }
         /* Une rencontre conservee dont la cote est FABRIQUEE se retarife :
            les forces ont pu changer depuis. Celle qui a commence, non — les
            paris y sont poses a la cote affichee. */
         let g = m;
-        if (m.cotesGenerees && t > Date.now()) {
+        if (m.cotesGenerees && t > Date.now() && !isFinite(Date.parse(m.ferme))) {
           try { g = cotes.habille(m); }
           catch (e) { /* devenue incotable : on la garde telle quelle plutot
                          que de la faire disparaitre avec ses paris */ }
@@ -691,6 +773,13 @@ async function importeMatchs() {
     } catch (e) { /* pas de catalogue precedent : rien a reprendre */ }
     if (repris) console.log(`[odds] ${repris} rencontre(s) precedente(s) conservee(s)` +
       (vieilles ? `, ${vieilles} trop ancienne(s) retiree(s)` : ''));
+    if (fermees.length) {
+      /* On le DIT, rencontre par rencontre : une fermeture silencieuse se lit
+         comme une panne de la page le jour ou un joueur ne trouve plus son
+         match. */
+      console.log(`[odds] ${fermees.length} rencontre(s) FERMEE(S) aux paris, deplacee(s) ou retiree(s) par le fournisseur :`);
+      for (const f of fermees) console.log('   · ' + f);
+    }
   }
 
   if (!habilles.length) {
@@ -869,18 +958,44 @@ async function importeScores(aRegler) {
       const a = Number(dom.score), b = Number(ext.score);
       if (!isFinite(a) || !isFinite(b)) continue;
       const resultat = a > b ? '1' : b > a ? '2' : 'N';
-      const cible = paris.catalogue().matchs.find((m) =>
+      /* TOUTES les entrees de cet evenement, pas la premiere : une rencontre
+         deplacee laisse une ancienne entree (fermee) a cote de la nouvelle, et
+         `find` ne reglait que l'une des deux. */
+      const cibles = paris.catalogue().matchs.filter((m) =>
         m.source && m.source.evenement === ev.id);
-      if (!cible || !ouverts.has(cible.id)) continue;
-      if (dejaVues.has(cible.id)) continue;      // ESPN l'a deja tranchee
-      finis.push({ id: cible.id, sport: cible.sport, domicile: ev.home_team,
-                   exterieur: ev.away_team, score: `${a}-${b}`, resultat });
+      for (const cible of cibles) {
+        if (!ouverts.has(cible.id)) continue;
+        if (dejaVues.has(cible.id)) continue;    // ESPN l'a deja tranchee
+        const f = { id: cible.id, sport: cible.sport, domicile: ev.home_team,
+                    exterieur: ev.away_team, score: `${a}-${b}`, resultat };
+        /* ---- LE FOOTBALL A 90 MINUTES (08/10/2026) ----
+         * `/scores` rend le score FINAL, prolongation comprise, sans dire s'il
+         * y en a eu une. Nos marches de football se reglent a 90 minutes : sur
+         * la finale de la Coupe du Roi 2025, 3-2 apres prolongation, 2-2 a 90',
+         * le 1-N-2 aurait paye « 1 » au lieu de « N ». ESPN, lui, le dit
+         * (STATUS_FULL_TIME / STATUS_FINAL_AET / STATUS_FINAL_PEN). Un score
+         * de football qui n'a pas pu passer par ESPN part donc a la main, MAIS
+         * seulement la ou une prolongation peut exister : en championnat il
+         * n'y en a jamais, et tout envoyer a la main aurait mis a la main des
+         * saisons entieres d'equipes qu'ESPN nomme autrement (Rennes, Koln,
+         * Slavia Praha… — relecture du 08/10). */
+        if (cible.sport === 'foot' && prolongationPossible(cible))
+          f.aMain = 'score de football venu de The Odds API : il peut compter la prolongation, regler sur le score a 90 minutes';
+        finis.push(f);
+      }
     }
   }
 
   if (!finis.length) { console.log('[odds] aucune rencontre finie a regler'); return finis; }
   console.log('\n[odds] a REGLER — verifiez le score avant d appeler :');
   for (const f of finis) {
+    if (f.aMain) {
+      /* Le score rendu peut compter la prolongation : on ne propose PAS de
+         commande qui le paierait tel quel. */
+      console.log(`  ${f.domicile} ${f.score} ${f.exterieur}  →  A LA MAIN : ${f.aMain}`);
+      console.log(`    curl -H "x-admin-key: $ADMIN_KEY" "$URL/paris/regle?match=${f.id}&score=<score a 90 minutes>"`);
+      continue;
+    }
     console.log(`  ${f.domicile} ${f.score} ${f.exterieur}  →  resultat=${f.resultat}`);
     /* ---- ON ENVOIE LE SCORE, PLUS LA LETTRE ----
      * Il etait lu, affiche sur la ligne du dessus, puis jete. Le serveur en
@@ -949,6 +1064,17 @@ const AUTO_DELAI_MIN = Number(process.env.PARIS_AUTO_DELAI_MIN || 90);
 /* Le coupe-circuit. `0` remet tout a la main, sans redeployer. */
 const AUTO_ACTIF = String(process.env.PARIS_AUTO || '1') !== '0';
 
+/* Les competitions ou un match de football peut aller en prolongation : la C1
+   (barrages et elimination directe), les series MLS (meme cle que la saison
+   reguliere), et toute coupe. Une liste, pas une devinette : une cle inconnue
+   qui ressemble a une coupe compte comme une coupe. */
+const PROLONGATION_LIGUES = new Set(['soccer_uefa_champs_league', 'soccer_uefa_europa_league',
+  'soccer_uefa_europa_conference_league', 'soccer_usa_mls']);
+function prolongationPossible(m) {
+  const l = String((m && m.source && m.source.ligue) || '');
+  return PROLONGATION_LIGUES.has(l) || /cup|copa|coupe|pokal|coppa|trophy|playoff|knockout|_fa_|super_?cup/i.test(l);
+}
+
 /**
  * Trier les rencontres finies : celles qu'on regle, celles qui attendent.
  *
@@ -963,6 +1089,18 @@ function trieReglements(finis, expositionDe, now) {
     const depuis = m && m.debut ? (t - m.debut) / 60000 : null;
     const expo = Number(expositionDe(f.id)) || 0;
 
+    /* ---- CE QUE LA SOURCE OU L'IMPORT ONT MARQUE « A LA MAIN » (08/10/2026) ----
+     * Une rencontre FERMEE par l'import a ete deplacee ou retiree : ses paris
+     * ont pu etre poses sous une heure fausse, c'est au proprietaire de dire
+     * s'ils tiennent. Et `aMain` vient de la releve des scores : un football
+     * fini apres prolongation ou tirs au but (le score rendu les compte, nos
+     * marches se reglent a 90 minutes), ou un score de football de The Odds
+     * API dans une competition ou la prolongation existe.
+     * Teste AVANT les autres raisons : avec PARIS_AUTO=0, « reglement
+     * automatique desactive » cachait l'avertissement sur la prolongation, et
+     * le proprietaire aurait regle a la main sur le score prolonge. */
+    if (m && m.ferme) { mains.push(Object.assign({}, f, { raison: 'rencontre fermee par l import : ' + (m.fermeRaison || 'deplacee') })); continue; }
+    if (f.aMain) { mains.push(Object.assign({}, f, { raison: String(f.aMain) })); continue; }
     if (!AUTO_ACTIF) { mains.push(Object.assign({ raison: 'reglement automatique desactive' }, f)); continue; }
     if (depuis === null) { mains.push(Object.assign({ raison: 'rencontre absente du calendrier' }, f)); continue; }
     /* Le delai se compte depuis le COUP D'ENVOI, faute de mieux : le
@@ -1225,6 +1363,6 @@ if (require.main === module) {
 module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie, delaiAvantEtalonnage,
                    finDuMois, fin,
                    etatImport, noteDernier,
-                   trieReglements, AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
+                   trieReglements, prolongationPossible, AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
                    partDuJour, joursRestants, autorise, identifiant, etatQuota };

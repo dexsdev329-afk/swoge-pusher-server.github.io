@@ -228,6 +228,87 @@ console.log('\n-- qui recoit quel score --');
       async (u) => (/20261008/.test(u) ? { ok: false, status: 503 } : { ok: true, json: async () => ({ events: [finis[2]] }) }));
     eq(troue.length, 1, 'une journee qui tombe n emporte qu elle-meme, pas les autres');
 
+    // ================== 10. LE FOOTBALL SE REGLE A 90 MINUTES (08/10/2026)
+    /* Statuts relus le 08/10 sur de vraies reponses : finale de la Coupe du Roi
+     * 2025, Barcelona 3-2 Real Madrid, STATUS_FINAL_AET (2-2 a 90') ; C1 du
+     * 11/03/2025, Liverpool–PSG et Atletico–Real, STATUS_FINAL_PEN ; tout le
+     * reste STATUS_FULL_TIME. Le score rendu compte la prolongation. */
+    console.log('\n-- le football se regle a 90 minutes --');
+    const avecStatut = (x, nom) => Object.assign(x, { status: { type: Object.assign({}, x.status.type, { name: nom }) } });
+    const finale = [avecStatut(evId('cdr', 'Barcelona', 'Real Madrid', '3', '2', '2025-04-26T20:00Z', 'post', true), 'STATUS_FINAL_AET')];
+    const nous = (dom, ext, quand, id, sport, ligue) => ({ id, sport: sport || 'foot', domicile: dom, exterieur: ext,
+      debut: Date.parse(quand), source: { ligue: ligue || 'soccer_spain_la_liga' } });
+    const aet = await e.finies([nous('Barcelona', 'Real Madrid', '2025-04-26T20:00Z', 'cdr')], { prendre: commeLeVrai(finale) });
+    eq(aet.length, 1, 'la finale prolongee RESTE dans la liste — sinon The Odds API la reprendrait, prolongation comprise');
+    ok(aet[0].aMain && /STATUS_FINAL_AET/.test(aet[0].aMain), 'mais marquee a regler a la main : ' + (aet[0].aMain || 'rien'));
+    const tab = [avecStatut(evId('pen', 'Atletico Madrid', 'Real Madrid', '1', '0', '2025-03-12T20:00Z', 'post', true), 'STATUS_FINAL_PEN')];
+    const pen = await e.finies([nous('Atletico Madrid', 'Real Madrid', '2025-03-12T20:00Z', 'pen', 'foot', 'soccer_uefa_champs_league')],
+                               { prendre: commeLeVrai(tab) });
+    ok(pen[0] && /STATUS_FINAL_PEN/.test(pen[0].aMain || ''), 'les tirs au but aussi');
+    const ft = [avecStatut(evId('ft', 'Barcelona', 'Getafe', '2', '0', '2026-10-10T19:00Z', 'post', true), 'STATUS_FULL_TIME')];
+    const net = await e.finies([nous('Barcelona', 'Getafe', '2026-10-10T19:00Z', 'ft')], { prendre: commeLeVrai(ft) });
+    ok(net[0] && !net[0].aMain && net[0].score === '2-0', 'un temps reglementaire declare se regle seul, comme avant');
+    const sansNom = await e.finies([nous('Barcelona', 'Getafe', '2026-10-10T19:00Z', 'sn')],
+      { prendre: commeLeVrai([evId('sn', 'Barcelona', 'Getafe', '2', '0', '2026-10-10T19:00Z', 'post', true)]) });
+    ok(sansNom[0] && sansNom[0].aMain, 'un football fini SANS statut lisible part a la main (liste blanche, pas liste noire)');
+    const nhl = await e.finies([nous('Boston Bruins', 'Toronto Maple Leafs', '2026-10-10T23:00Z', 'h', 'nhl', 'icehockey_nhl')],
+      { prendre: commeLeVrai([avecStatut(evId('h', 'Boston Bruins', 'Toronto Maple Leafs', '3', '2', '2026-10-10T23:00Z', 'post', true), 'STATUS_FINAL_OT')]) });
+    ok(nhl[0] && !nhl[0].aMain, 'la NHL n est pas concernee : son vainqueur se regle prolongation comprise, comme tous les livres');
+
+    // ================== 11. UNE SERIE : LE MATCH LE PLUS PROCHE, PAS LE PREMIER
+    /* MLB en octobre : les memes equipes jouent trois jours de suite. Le
+     * match 1 est a 24 h du match 2, dans la tolerance de 36 h. On prenait le
+     * premier venu : le match 2 du catalogue se serait regle avec le score de
+     * la veille. */
+    console.log('\n-- une serie de matchs consecutifs --');
+    const serie = [
+      avecStatut(evId('g1', 'New York Yankees', 'Boston Red Sox', '7', '1', '2026-10-09T23:08Z', 'post', true), 'STATUS_FINAL'),
+      evId('g2', 'New York Yankees', 'Boston Red Sox', '0', '0', '2026-10-10T23:08Z', 'pre', false),
+    ];
+    const deux = await e.releve([nous('New York Yankees', 'Boston Red Sox', '2026-10-10T23:08Z', 'm2', 'mlb', 'baseball_mlb')],
+                                { prendre: commeLeVrai(serie) });
+    eq(deux.get('m2') && deux.get('m2').etat, 'pre', 'le match 2 est apparie au match 2 d ESPN, pas au match 1 deja fini');
+    const regle2 = await e.finies([nous('New York Yankees', 'Boston Red Sox', '2026-10-10T23:08Z', 'm2', 'mlb', 'baseball_mlb')],
+                                  { prendre: commeLeVrai(serie) });
+    eq(regle2.length, 0, 'et il ne se regle PAS avec le 7-1 de la veille');
+    const double = [
+      evId('d1', 'New York Yankees', 'Boston Red Sox', '3', '1', '2026-10-11T17:05Z', 'post', true),
+      evId('d2', 'New York Yankees', 'Boston Red Sox', '0', '0', '2026-10-11T18:20Z', 'pre', false),
+    ];
+    const ambigu = await e.releve([nous('New York Yankees', 'Boston Red Sox', '2026-10-11T17:40Z', 'dd', 'mlb', 'baseball_mlb')],
+                                  { prendre: commeLeVrai(double) });
+    eq(ambigu.size, 0, 'deux candidats a moins de deux heures l un de l autre : on n apparie PAS, la main tranchera');
+    ok(deux.get('m2').quand === Date.parse('2026-10-10T23:08Z'), 'la releve rend l heure prevue par ESPN (le second verrou la lit)');
+    /* La journee du match 2 ne repond pas (503) : le match 1, a 24 h, restait
+       seul candidat — donc « le plus proche ». Hors football, 12 h de tolerance. */
+    const troueSerie = async (u) => (/dates=20261010/.test(String(u)) ? { ok: false, status: 503 } : commeLeVrai(serie)(u));
+    const seul = await e.finies([nous('New York Yankees', 'Boston Red Sox', '2026-10-10T23:08Z', 'm2', 'mlb', 'baseball_mlb')],
+                                { prendre: troueSerie });
+    eq(seul.length, 0, 'journee du match 2 tombee : le match 2 ne se regle PAS avec le score du match 1');
+    /* Programme double : 13:05 (fini) et 17:10 (a venir), 4 h 05 d'ecart ; le
+       catalogue dit 15:30. Les deux candidats sont bien distincts : on prend le
+       plus proche (17:10), on ne refuse pas. */
+    const asym = [
+      evId('a1', 'New York Yankees', 'Boston Red Sox', '4', '2', '2026-10-12T13:05Z', 'post', true),
+      evId('a2', 'New York Yankees', 'Boston Red Sox', '0', '0', '2026-10-12T17:10Z', 'pre', false),
+    ];
+    const pris = await e.releve([nous('New York Yankees', 'Boston Red Sox', '2026-10-12T15:30Z', 'as', 'mlb', 'baseball_mlb')],
+                                { prendre: commeLeVrai(asym) });
+    eq(pris.get('as') && pris.get('as').quand, Date.parse('2026-10-12T17:10Z'),
+       'deux candidats a plus de 2 h l un de l autre : le plus proche, meme s il n est pas a moins de 2 h de nous');
+
+    // ================== 12. UN REFUS SE COMPTE
+    console.log('\n-- un refus se compte --');
+    const avantRefus = (e.refusDuJour()['soccer/esp.1'] || { refus: 0 }).refus;
+    await e.tableau('soccer/esp.1', Date.parse('2026-10-08T00:00Z'), Date.parse('2026-10-08T00:00Z'),
+                    async () => ({ ok: false, status: 400 }));
+    const apresRefus = e.refusDuJour()['soccer/esp.1'];
+    ok(apresRefus && apresRefus.refus === avantRefus + 1 && /400/.test(apresRefus.dernier),
+       'un 400 d ESPN est compte et garde sa raison : ' + JSON.stringify(apresRefus));
+    await e.tableau('soccer/esp.1', Date.parse('2026-10-08T00:00Z'), Date.parse('2026-10-08T00:00Z'),
+                    async () => { throw new Error('reseau coupe'); });
+    eq(e.refusDuJour()['soccer/esp.1'].refus, avantRefus + 2, 'une coupure aussi');
+
     console.log(`\nscores_espn.test.js : ${n} verifications OK`);
   });
 }

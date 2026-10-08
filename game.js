@@ -3581,7 +3581,10 @@ class Game {
     const jambes = sel.map((x) => {
       const m = paris.match(x && x.match);
       if (!m) throw new Error('unknown match');
-      if (m.debut <= t) throw new Error('betting is closed on ' + m.domicile + ' v ' + m.exterieur);
+      /* `paris.ouvert` et non plus `m.debut <= t` : la meme regle que la liste
+         des rencontres ouvertes — coup d'envoi du catalogue, rencontre fermee
+         par l'import (deplacee), ou commencee selon ESPN (08/10/2026). */
+      if (!paris.ouvert(m, t)) throw new Error('betting is closed on ' + m.domicile + ' v ' + m.exterieur);
       /* Deux jambes sur le meme match : soit contradictoires, soit un simple
          deguise en combine pour contourner le plafond de gain. */
       if (vus.has(m.id)) throw new Error('only one selection per match');

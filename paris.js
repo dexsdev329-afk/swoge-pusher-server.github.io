@@ -374,6 +374,15 @@ function valide(brut) {
       /* Une cote fabriquee se dit. Le jour ou un pari se conteste, on veut
          savoir si le chiffre venait d'un bookmaker ou de notre modele. */
       cotesGenerees: !!m.cotesGenerees,
+      /* ---- FERMEE AVANT SON COUP D'ENVOI (08/10/2026) ----
+       * L'import la pose quand le fournisseur a DEPLACE la rencontre (l'ancienne
+       * entree porte l'ancienne date dans son identifiant) ou ne la rend plus.
+       * Une rencontre avancee restait ouverte sous son ancienne date APRES le
+       * vrai match, puis se reglait avec le vrai score : un pari sur un
+       * resultat connu. Fermee, elle reste affichable et reglable — a la main,
+       * voir `trieReglements`. */
+      ferme: isFinite(Date.parse(m.ferme)) ? Date.parse(m.ferme) : null,
+      fermeRaison: isFinite(Date.parse(m.ferme)) ? String(m.fermeRaison || '').slice(0, 160) : '',
     };
   });
 
@@ -429,7 +438,59 @@ function match(id) { return catalogue().parId.get(String(id)) || null; }
  */
 function ouverts(now) {
   const t = now || Date.now();
-  return catalogue().matchs.filter((m) => m.debut > t);
+  return catalogue().matchs.filter((m) => ouvert(m, t));
+}
+
+/* ---- L'HEURE REELLE, VUE PAR LE TABLEAU DES SCORES (08/10/2026) ----
+ *
+ * Le seul verrou etait `debut`, le `commence_time` de The Odds API relu toutes
+ * les 12 h. Il ne suit pas le terrain : en NHL, 10 rencontres sur 11 du
+ * calendrier du 08/10 portaient une heure 9 a 10 min APRES celle d'ESPN, et
+ * sur 12 matchs des 06-07/10 la mise en jeu reelle est tombee de +1,5 a
+ * +17,1 min apres l'heure d'ESPN (mediane +8,8) — soit d'environ 2 min AVANT a
+ * 7 min apres l'heure du catalogue. Un match peut aussi etre avance d'un jour
+ * entre deux imports, et ESPN le sait avant nous.
+ *
+ * Le serveur pose ici, a chaque releve, l'heure prevue par ESPN et son etat
+ * pour les rencontres qu'il a appariees. On ferme au PREMIER des deux : notre
+ * heure, ou celle d'ESPN moins une minute (le palet le plus precoce de
+ * l'echantillon : +1,5 min) — et des qu'ESPN voit la rencontre commencee.
+ *
+ * ---- ET CE QUI EST FERME LE RESTE ----
+ * La table se FUSIONNE, elle ne se remplace pas : une releve qui echoue (503,
+ * abandon a 8 s, appariement refuse) rendait une Map vide, et un match qu'ESPN
+ * avait vu commencer se rouvrait a la cote d'avant-match jusqu'a l'heure du
+ * catalogue. Ce qu'une releve n'a pas relu reste tel qu'on l'a vu, douze
+ * heures ; un etat « commence » ne revient jamais a « pas commence ». */
+const AVANCE_REELLE_MS = 60000;
+const GARDE_REELLE_MS = 12 * 3600000;
+let HEURES_REELLES = new Map();
+/** `lot` : Map id -> { quand (ms), etat ('pre'|'in'|'post') }. Fusionne. */
+function poseHeuresReelles(lot, now) {
+  const t = now || Date.now();
+  const neuf = new Map();
+  for (const [id, s] of (lot instanceof Map ? lot : new Map())) {
+    if (!s) continue;
+    const k = String(id), ancien = HEURES_REELLES.get(k);
+    let etat = String(s.etat || '');
+    if (ancien && (ancien.etat === 'in' || ancien.etat === 'post') && etat !== 'in' && etat !== 'post') etat = ancien.etat;
+    neuf.set(k, { quand: Number(s.quand) || 0, etat, vu: t });
+  }
+  for (const [k, a] of HEURES_REELLES) if (!neuf.has(k) && t - (a.vu || 0) < GARDE_REELLE_MS) neuf.set(k, a);
+  HEURES_REELLES = neuf;
+}
+
+/** Le pari est-il encore acceptable sur cette rencontre ? UN seul endroit le dit. */
+function ouvert(m, now) {
+  const t = now || Date.now();
+  if (!m || !(m.debut > t)) return false;
+  if (m.ferme && m.ferme <= t) return false;
+  const r = HEURES_REELLES.get(m.id);
+  if (r) {
+    if (r.etat === 'in' || r.etat === 'post') return false;
+    if (r.quand > 0 && r.quand - AVANCE_REELLE_MS <= t) return false;
+  }
+  return true;
 }
 
 /* ================== LE SCORE, ET CE QU'ON EN DEDUIT ==================
@@ -521,14 +582,15 @@ function vue(m, now) {
      * Ce n'est PAS une seconde source : il est recopie ici, a un seul endroit,
      * depuis le marche de base. Le catalogue, lui, n'en porte plus qu'une. */
     cotes: (m.marches && m.marches[MARCHE_BASE] && m.marches[MARCHE_BASE].cotes) || {},
-    ouvert: m.debut > (now || Date.now()),
+    ouvert: ouvert(m, now),
   };
 }
 
 module.exports = {
   ISSUES, ISSUES_PAR_SPORT, SPORTS_EQUIPE, SPORTS, sportConnu, issues,
   COTE_MIN, COTE_MAX, MARGE_MIN,
-  charge, catalogue, match, ouverts, rapport, vue, marge, margeDe, valide,
+  charge, catalogue, match, ouverts, ouvert, poseHeuresReelles, AVANCE_REELLE_MS,
+  rapport, vue, marge, margeDe, valide,
   scoreLu, resultatDuScore,
   MARCHES, MARCHE_BASE, SCORES, marchesDuSport, coteDe, gagne,
   FICHIER_DEPOT, FICHIER_VOLUME, fichier,

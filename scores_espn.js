@@ -222,6 +222,9 @@ function mois(t) {
  * 08/10 rend aussi des rencontres datees du 09 en temps universel) : une
  * rencontre vue deux fois n'est gardee qu'une fois. */
 const JOURS_MAX = 7;
+/* Les statuts d'ESPN qui disent « fini a 90 minutes », et eux seuls (relu le
+   08/10 sur la Liga, la C1 et la Coupe du Roi 2025). */
+const FOOT_REGLEMENTAIRE = ['STATUS_FULL_TIME'];
 function requetes(deb, fin) {
   const j0 = Date.parse(new Date(deb).toISOString().slice(0, 10) + 'T00:00:00Z');
   const jn = Date.parse(new Date(fin).toISOString().slice(0, 10) + 'T00:00:00Z');
@@ -240,6 +243,34 @@ function requetes(deb, fin) {
   return out;
 }
 
+/* ---- UN REFUS SE COMPTE, ET SE DIT (08/10/2026) ----
+ * Le 400 des fenetres de dates est reste invisible trois semaines : chaque
+ * refus etait avale en liste vide, et une liste vide ressemble a une journee
+ * sans match. On compte donc, par tableau et par jour (UTC), les requetes et
+ * les refus (statut non-200, abandon a 8 s, reponse illisible), et l'on ecrit
+ * une ligne au journal au PREMIER refus de chaque tableau et de chaque jour —
+ * pas a chaque requete : le direct relit toutes les 45 s. */
+const REFUS = new Map();
+function compte(u, refus, pourquoi) {
+  const m = /sports\/(.+?)\/scoreboard/.exec(String(u));
+  const cle = new Date().toISOString().slice(0, 10) + '|' + (m ? m[1] : '?');
+  const e = REFUS.get(cle) || { requetes: 0, refus: 0, dernier: '' };
+  e.requetes++;
+  if (refus) {
+    if (!e.refus) console.log(`[espn] refus sur ${m ? m[1] : u} : ${pourquoi} — ${String(u).split('?')[1] || ''}`);
+    e.refus++; e.dernier = pourquoi;
+  }
+  REFUS.set(cle, e);
+  if (REFUS.size > 400) REFUS.delete(REFUS.keys().next().value);
+}
+/** Les compteurs du jour (UTC) : { 'soccer/esp.1': { requetes, refus, dernier } }. */
+function refusDuJour(jourIso) {
+  const j = jourIso || new Date().toISOString().slice(0, 10);
+  const out = {};
+  for (const [cle, e] of REFUS) if (cle.startsWith(j + '|')) out[cle.slice(j.length + 1)] = Object.assign({}, e);
+  return out;
+}
+
 async function uneRequete(u, prendre) {
   const f = prendre || fetch;
   /* Un tableau de scores n'est JAMAIS une raison de faire attendre le serveur.
@@ -249,10 +280,12 @@ async function uneRequete(u, prendre) {
   const minuterie = ctl ? setTimeout(() => ctl.abort(), 8000) : null;
   try {
     const rep = await f(u, ctl ? { signal: ctl.signal } : undefined);
-    if (!rep || !rep.ok) return [];
+    if (!rep || !rep.ok) { compte(u, true, 'statut ' + ((rep && rep.status) || '?')); return []; }
     const j = await rep.json();
+    compte(u, false);
     return Array.isArray(j && j.events) ? j.events : [];
   } catch (e) {
+    compte(u, true, (e && e.name === 'AbortError') ? 'abandon a 8 s' : String((e && e.message) || e).slice(0, 80));
     return [];
   } finally { if (minuterie) clearTimeout(minuterie); }
 }
@@ -284,8 +317,11 @@ function lis(ev) {
   const a = camp(c.competitors[0]), b = camp(c.competitors[1]);
   if (!a.nom || !b.nom) return null;
   const st = (ev.status && ev.status.type) || {};
+  /* `statut` : le nom exact (STATUS_FULL_TIME, STATUS_FINAL_AET,
+     STATUS_FINAL_PEN...). `fini` ne distingue pas un match regle a 90 minutes
+     d'un match prolonge, et le score rendu compte la prolongation. */
   return { a, b, quand: Date.parse(ev.date) || 0,
-           etat: st.state || 'pre', fini: !!st.completed,
+           etat: st.state || 'pre', fini: !!st.completed, statut: String(st.name || ''),
            detail: st.shortDetail || st.detail || st.description || '' };
 }
 
@@ -322,27 +358,46 @@ async function releve(matchs, opts) {
                               Math.max(...debuts) + 86400000, o.prendre);
     const lus = evs.map(lis).filter(Boolean);
     for (const m of lot) {
+      /* La MEME rencontre, c'est les deux memes noms ET la meme journee.
+         Deux clubs se rencontrent deux fois par saison : sans la date, on
+         reglerait le match aller avec le score du retour. Trente-six heures
+         de tolerance — un report de quelques heures reste la meme
+         rencontre, un match aller-retour en est a des mois.
+         ---- ET LA PLUS PROCHE, PAS LA PREMIERE (08/10/2026) ----
+         En MLB et en NHL, les memes equipes jouent des jours CONSECUTIFS
+         (series, playoffs MLB en ce moment) : le match 1 est a 24 h du match
+         2, dans la tolerance. On prenait le premier venu dans l'ordre d'ESPN,
+         donc le match 1 — et le match 2 du catalogue se serait regle avec le
+         score de la veille, puis ferme des la veille par le second verrou.
+         On garde donc le candidat le plus proche de notre heure, et si les
+         deux plus proches se jouent a moins de deux heures l'un de l'autre (un
+         programme double mal date), on n'apparie PAS : la rencontre part a la
+         main. Ne rien rendre coute moins cher que rendre faux.
+         Hors football et tennis, la tolerance tombe a DOUZE heures : si la
+         journee du match 2 ne repond pas (503, abandon a 8 s), le match 1
+         restait seul candidat a 24 h, donc « le plus proche », et se reglait
+         a sa place (relecture du 08/10). Une heure ESPN « a fixer » (04:00Z
+         en MLB) reste a moins de 12 h de la notre. */
+      const tolerance = (m.sport === 'foot' || m.sport === 'tennis') ? 36 * 3600000 : 12 * 3600000;
+      const cands = [];
       for (const e of lus) {
-        /* La MEME rencontre, c'est les deux memes noms ET la meme journee.
-           Deux clubs se rencontrent deux fois par saison : sans la date, on
-           reglerait le match aller avec le score du retour. Trente-six heures
-           de tolerance — un report de quelques heures reste la meme
-           rencontre, un match aller-retour en est a des mois. */
-        if (Math.abs(e.quand - m.debut) > 36 * 3600000) continue;
-        let dom, ext;
-        if (meme(m.domicile, e.a.nom) && meme(m.exterieur, e.b.nom)) { dom = e.a; ext = e.b; }
-        else if (meme(m.domicile, e.b.nom) && meme(m.exterieur, e.a.nom)) { dom = e.b; ext = e.a; }
-        else continue;
-        const su = { fini: e.fini, etat: e.etat, detail: e.detail,
-                     dom: m.domicile, ext: m.exterieur };
-        if (isFinite(dom.points) && isFinite(ext.points)) {
-          su.score = `${dom.points}-${ext.points}`;
-          su.resultat = dom.points > ext.points ? '1'
-                      : ext.points > dom.points ? '2' : 'N';
-        }
-        out.set(m.id, su);
-        break;
+        const d = Math.abs(e.quand - m.debut);
+        if (d > tolerance) continue;
+        if (meme(m.domicile, e.a.nom) && meme(m.exterieur, e.b.nom)) cands.push({ d, e, dom: e.a, ext: e.b });
+        else if (meme(m.domicile, e.b.nom) && meme(m.exterieur, e.a.nom)) cands.push({ d, e, dom: e.b, ext: e.a });
       }
+      if (!cands.length) continue;
+      cands.sort((x, y) => x.d - y.d);
+      if (cands.length > 1 && Math.abs(cands[1].e.quand - cands[0].e.quand) < 2 * 3600000) continue;
+      const { e, dom, ext } = cands[0];
+      const su = { fini: e.fini, etat: e.etat, detail: e.detail, statut: e.statut, quand: e.quand,
+                   dom: m.domicile, ext: m.exterieur };
+      if (isFinite(dom.points) && isFinite(ext.points)) {
+        su.score = `${dom.points}-${ext.points}`;
+        su.resultat = dom.points > ext.points ? '1'
+                    : ext.points > dom.points ? '2' : 'N';
+      }
+      out.set(m.id, su);
     }
   }
   return out;
@@ -470,8 +525,22 @@ async function finies(matchs, opts) {
   for (const m of matchs || []) {
     const s = vus.get(m.id);
     if (!s || !s.fini || !s.score) continue;
-    out.push({ id: m.id, sport: m.sport, domicile: m.domicile, exterieur: m.exterieur,
-               score: s.score, resultat: s.resultat, source: 'espn' });
+    const f = { id: m.id, sport: m.sport, domicile: m.domicile, exterieur: m.exterieur,
+                score: s.score, resultat: s.resultat, source: 'espn' };
+    /* ---- LE FOOTBALL SE REGLE A 90 MINUTES (08/10/2026) ----
+     * Le score d'ESPN compte la prolongation : finale de la Coupe du Roi 2025,
+     * « 3-2 », STATUS_FINAL_AET — 2-2 a 90 minutes, donc « N » pour nos
+     * marches, pas « 1 ». En C1 le 11/03/2025, deux huitiemes finis aux tirs
+     * au but rendaient STATUS_FINAL_PEN. Le football ne se regle donc SEUL
+     * que sur un temps reglementaire declare (liste blanche) ; tout le reste
+     * part a la main, avec sa raison. Il reste DANS la liste : sinon la
+     * releve payante de The Odds API le reprendrait, prolongation comprise.
+     * Echeance : les series MLS (prolongation des les demi-finales de
+     * conference, 5-6/12/2026) entrent au calendrier vers le 28/11, la C1 a
+     * elimination directe en fevrier. */
+    if (m.sport === 'foot' && FOOT_REGLEMENTAIRE.indexOf(s.statut) < 0)
+      f.aMain = `football fini en ${s.statut || 'statut inconnu'} (ESPN) : regler sur le score a 90 minutes`;
+    out.push(f);
   }
   /* ---- ET LE TENNIS, QUI N'A PAS DE SCORE MAIS UN VAINQUEUR ----
    * Ses marches n'ont que deux issues — pas de « les deux marquent », pas de
@@ -516,5 +585,6 @@ async function reprise(ligues, opts) {
   return tot;
 }
 
-module.exports = { CHEMINS, ALIAS, normalise, meme, lis, tableau, requetes, JOURS_MAX, releve, finies, reprise,
+module.exports = { CHEMINS, ALIAS, normalise, meme, lis, tableau, requetes, JOURS_MAX, FOOT_REGLEMENTAIRE, refusDuJour,
+                   releve, finies, reprise,
                    releveTennis, tourDe };

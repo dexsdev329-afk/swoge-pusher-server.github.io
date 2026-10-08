@@ -116,9 +116,21 @@ function enDirect(t) {
   const vus = directCache.par;
   if (!vus.size) return [];
   const out = [];
+  /* Une rencontre deplacee laisse une ancienne entree FERMEE a cote de la
+     nouvelle (08/10/2026) : les deux s'apparient au meme match d'ESPN, et le
+     tableau l'afficherait deux fois. On ne montre l'ancienne que si elle est
+     seule. */
+  const vivants = new Set();
+  for (const m of paris.catalogue().matchs)
+    if (!m.ferme && m.source && m.source.evenement) vivants.add(m.source.evenement);
   for (const m of paris.catalogue().matchs) {
-    if (m.debut > t || t - m.debut > 4 * 3600000) continue;
+    if (m.ferme && m.source && vivants.has(m.source.evenement)) continue;
     const s = vus.get(m.id);
+    /* Commencee pour nous, ou pour ESPN : une NHL qu'ESPN voit en jeu 10 min
+       avant l'heure du catalogue est fermee aux paris (second verrou) — sans
+       ce second test, elle disparaissait des DEUX listes de la page. */
+    const commencee = m.debut <= t || (s && (s.etat === 'in' || s.etat === 'post'));
+    if (!commencee || t - m.debut > 4 * 3600000) continue;
     if (!s || !s.score) continue;
     out.push({ id: m.id, sport: m.sport, competition: m.competition,
                domicile: m.domicile, exterieur: m.exterieur, debut: m.debut,
@@ -126,6 +138,40 @@ function enDirect(t) {
   }
   out.sort((a, b) => a.debut - b.debut);
   return out;
+}
+
+/* ---- LE SECOND VERROU A SA PROPRE RELEVE (08/10/2026) ----
+ *
+ * La releve de l'affichage ne partait que lorsqu'une page la demandait, et ne
+ * regardait qu'un quart d'heure devant l'heure du catalogue. Le verrou de
+ * `paris.ouvert` en a besoin sans visiteur, et plus loin : une rencontre
+ * AVANCEE d'un jour apres le dernier import (toutes les 12 h) restait pariable
+ * apres le vrai match, faute d'avoir ete demandee a ESPN — qui l'apparie a
+ * 36 h pres et l'aurait vue « post ». D'ou deux passes, sur les seules
+ * rencontres encore ouvertes au catalogue (jamais celles d'il y a 4 h) :
+ *   - PROCHE, chaque minute : ce qui commence dans la demi-heure ;
+ *   - LARGE, chaque quart d'heure : tout ce qui commence dans les 36 h.
+ * Et une passe des le demarrage : un redeploiement laissait le verrou vide
+ * pendant la premiere minute. Les requetes sont faites PAR JOUR : la passe
+ * large coute environ quatre journees par ligue, soit ~80 requetes par quart
+ * d'heure sur le calendrier du 08/10. */
+const VERROU_PROCHE_MS = Number(process.env.PARIS_VERROU_PROCHE_MS) || 60000;
+const VERROU_LARGE_MS = Number(process.env.PARIS_VERROU_LARGE_MS) || 15 * 60000;
+const verrouCache = { proche: 0, large: 0, enVol: false };
+function verrouFrais(t) {
+  if (verrouCache.enVol) return Promise.resolve(false);
+  const large = t - verrouCache.large >= VERROU_LARGE_MS;
+  if (!large && t - verrouCache.proche < VERROU_PROCHE_MS) return Promise.resolve(false);
+  const horizon = large ? 36 * 3600000 : 30 * 60000;
+  const lot = paris.catalogue().matchs.filter((m) => m.debut > t && m.debut <= t + horizon && !m.ferme);
+  verrouCache.enVol = true;
+  return (async () => {
+    if (lot.length) paris.poseHeuresReelles(await espn.releve(lot, { maintenant: t }), t);
+    verrouCache.proche = t;
+    if (large) verrouCache.large = t;
+    return true;
+  })().catch((e) => { console.log('[espn] verrou : ' + (e && e.message)); return false; })
+      .finally(() => { verrouCache.enVol = false; });
 }
 
 function directFrais(t) {
@@ -144,6 +190,9 @@ function directFrais(t) {
       directCache.par = encours.length ? await espn.releve(encours, { maintenant: t })
                                        : new Map();
       directCache.t = t;
+      /* Ce que l'affichage a lu sert aussi le second verrou (paris.ouvert) :
+         la table se fusionne, rien n'y est perdu. */
+      paris.poseHeuresReelles(directCache.par, t);
     }
     if (vieillesReprises) {
       /* Pour chaque sport SANS rencontre ouverte, la date de son retour. On ne
@@ -10767,9 +10816,18 @@ server.listen(cfg.PORT, () => {
     /* Ce qui n'a PAS ete regle doit ressortir aussi visiblement que le
        reste, avec sa raison : sinon on croit que tout est fait. */
     for (const f of mains) {
+      /* Un score marque « a la main » peut compter la prolongation : on ne
+         l'annonce PAS comme un resultat a payer (08/10/2026). Et pour une
+         rencontre fermee par l'import, combien de tickets ont ete poses
+         apres son heure reelle — ceux-la n'ont pas ete pris a l'aveugle. */
+      const m = paris.match(f.id);
+      const tard = m && m.ferme ? (game.paris || []).filter((p) => !p.regle && p.t >= m.debut
+        && (p.jambes || [{ match: p.match }]).some((j) => j.match === f.id)).length : 0;
       l.push(`⏸️ ${escHtml(f.domicile)} <b>${escHtml(f.score)}</b> ${escHtml(f.exterieur)}` +
-             ` · <code>${escHtml(f.id)}</code> → <b>${escHtml(f.resultat)}</b>` +
-             ` · <i>${escHtml(f.raison)}</i>`);
+             ` · <code>${escHtml(f.id)}</code>` +
+             (f.aMain ? ` → <b>score à 90' à saisir</b>` : ` → <b>${escHtml(f.resultat)}</b>`) +
+             ` · <i>${escHtml(f.raison)}</i>` +
+             (tard ? ` · ⚠️ ${tard} ticket(s) posé(s) après l'heure réelle` : ''));
     }
     for (const { f, erreur } of rates) {
       l.push(`⚠️ <code>${escHtml(f.id)}</code> · ${escHtml(erreur)}`);
@@ -10786,6 +10844,10 @@ server.listen(cfg.PORT, () => {
               (l.length > 14 ? `\n• … et ${l.length - 14} autre(s)` : '') + pied);
   };
   global.__swogeReglementAuto = reglementAuto;
+  /* Le second verrou ne depend plus d'un visiteur : une passe tout de suite,
+     puis la cadence de `verrouFrais` (voir sa tete). */
+  verrouFrais(Date.now());
+  setInterval(() => verrouFrais(Date.now()), Math.min(VERROU_PROCHE_MS, VERROU_LARGE_MS)).unref();
   /* ---- ON NE PAIE PLUS DE SCORE POUR CE QUI NE PORTE AUCUN PARI ----
    * Un score ne sert qu'a regler. `engagementMatch` rend ce que la maison
    * devrait SORTIR sur cette rencontre si la pire issue tombait, en ne

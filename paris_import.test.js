@@ -403,6 +403,16 @@ const cotes = require('./cotes');
     eq(appels[0].cout, 2, 'a 2 credits — daysFrom est necessaire pour voir les finies');
     eq(finis.length, 1, 'une rencontre a regler est remontee');
     eq(finis[0].resultat, '1', 'Chelsea 2 – 1 Everton donne le resultat « 1 »');
+    /* 08/10/2026 : `/scores` rend le score final, prolongation comprise, sans
+       le dire. Mais en CHAMPIONNAT il n'y a pas de prolongation : le banc
+       d'ESPN de ce fichier rend un tableau vide, et ce Chelsea–Everton de
+       Premier League se regle seul, comme avant. */
+    ok(!finis[0].aMain, 'un football de championnat venu de The Odds API se regle seul');
+    ok(imp.prolongationPossible({ source: { ligue: 'soccer_uefa_champs_league' } })
+       && imp.prolongationPossible({ source: { ligue: 'soccer_usa_mls' } })
+       && imp.prolongationPossible({ source: { ligue: 'soccer_spain_copa_del_rey' } })
+       && !imp.prolongationPossible({ source: { ligue: 'soccer_epl' } }),
+       'la C1, les series MLS et toute coupe peuvent aller en prolongation ; la Premier League non');
 
     /* ---- ET SEULEMENT LA OU DE L ARGENT ATTEND ----
      *
@@ -700,6 +710,140 @@ const cotes = require('./cotes');
     process.env.ODDS_API_LIGUES = frais;
     delete require.cache[require.resolve('./paris_import')];
     require('./paris_import');
+  }
+
+  // ==== 9. UNE RENCONTRE DEPLACEE NE RESTE PAS OUVERTE (08/10/2026)
+  {
+    /* L'identifiant porte la DATE. Une rencontre deplacee d'un jour revient
+     * sous un AUTRE identifiant, et l'ancienne entree restait ouverte jusqu'a
+     * son ancienne heure : avancee, elle acceptait des paris apres le vrai
+     * match, puis ESPN la reglait avec le vrai score. Trois cas, et le
+     * quatrieme qui ne doit RIEN fermer. */
+    console.log('\n-- une rencontre deplacee ne reste pas ouverte --');
+    const garde = JSON.parse(JSON.stringify(EVENTS));
+    const LOIN = Date.now() + 4 * 86400000;
+    EVENTS.soccer_epl = [evenement('dep1', 'Arsenal', 'Liverpool', LOIN),
+                         evenement('dep2', 'Manchester City', 'Luton Town', LOIN + 3600000),
+                         evenement('dep3', 'Chelsea', 'Everton', LOIN + 7200000)];
+    EVENTS.soccer_france_ligue_one = [evenement('f1', 'Lyon', 'Monaco', DEMAIN)];
+    await imp.importeMatchs();
+    const lis = () => JSON.parse(fs.readFileSync(CAT, 'utf8')).matchs;
+    const de = (ev, l) => (l || lis()).filter((m) => m.source && m.source.evenement === ev);
+    const [a1] = de('dep1'), [a2] = de('dep2'), [a3] = de('dep3'), [lyon] = de('f1');
+    ok(a1 && a2 && a3 && lyon && !a1.ferme && !a2.ferme && !a3.ferme, 'les quatre rencontres sont au calendrier, ouvertes');
+
+    const AVANCEE = Date.now() + 30 * 3600000;      // un autre jour : un autre identifiant
+    const REPORTEE = LOIN + 2 * 86400000;
+    EVENTS.soccer_epl = [evenement('dep1', 'Arsenal', 'Liverpool', AVANCEE),
+                         evenement('dep2', 'Manchester City', 'Luton Town', REPORTEE)];   // dep3 n'est plus rendue
+    EVENTS.soccer_france_ligue_one = [];                                                 // une reponse vide ne prouve rien
+    await imp.importeMatchs();
+    let l = lis();
+    const v1 = l.find((m) => m.id === a1.id), n1 = de('dep1', l).find((m) => m.id !== a1.id);
+    ok(v1 && v1.ferme && /avancee/.test(v1.fermeRaison), 'AVANCEE : l ancienne entree est fermee — ' + (v1 && v1.fermeRaison));
+    eq(Date.parse(v1.debut), AVANCEE, 'et prend la vraie heure, pour qu ESPN la retrouve et que le ticket dise vrai');
+    ok(n1 && !n1.ferme, 'la nouvelle entree, elle, est ouverte');
+    const v2 = l.find((m) => m.id === a2.id);
+    ok(v2 && v2.ferme && /reportee/.test(v2.fermeRaison), 'REPORTEE : fermee aussi — ' + (v2 && v2.fermeRaison));
+    const v3 = l.find((m) => m.id === a3.id);
+    ok(v3 && v3.ferme && /plus rendue/.test(v3.fermeRaison), 'PLUS RENDUE par une ligue qui a repondu : fermee — ' + (v3 && v3.fermeRaison));
+    const v4 = l.find((m) => m.id === lyon.id);
+    ok(v4 && !v4.ferme, 'une ligue qui rend une liste VIDE ne ferme rien : un trou de reponse n est pas un deplacement');
+
+    paris.charge(CAT);
+    ok(!paris.ouvert(paris.match(a1.id)), 'le serveur la voit fermee aux paris');
+    ok(paris.ouvert(paris.match(n1.id)), 'et la nouvelle ouverte');
+    const t5 = Date.parse(v1.debut) + 5 * 3600000;
+    let r = imp.trieReglements([{ id: a1.id, sport: 'foot', domicile: 'Arsenal', exterieur: 'Liverpool',
+                                 score: '2-1', resultat: '1' }], () => 0, t5);
+    eq(r.auto.length, 0, 'une rencontre fermee par l import ne se regle jamais seule');
+    ok(/fermee/.test(r.mains[0].raison), 'elle attend la main, et le dit : ' + r.mains[0].raison);
+    r = imp.trieReglements([{ id: n1.id, sport: 'foot', domicile: 'Arsenal', exterieur: 'Liverpool',
+                              score: '2-2', resultat: 'N', aMain: 'football fini en STATUS_FINAL_AET (ESPN)' }], () => 0, t5);
+    eq(r.auto.length, 0, 'un resultat marque « a la main » par la releve non plus');
+    ok(/AET/.test(r.mains[0].raison), 'avec la raison de la releve : ' + r.mains[0].raison);
+
+    await imp.importeMatchs();
+    l = lis();
+    const w1 = l.find((m) => m.id === a1.id);
+    ok(w1 && w1.ferme === v1.ferme && w1.fermeRaison === v1.fermeRaison, 'un import de plus ne refait rien : la fermeture reste la premiere');
+    ok(JSON.stringify(w1.marches) === JSON.stringify(v1.marches), 'et ses cotes ne bougent plus : une rencontre fermee n est jamais retarifee');
+
+    /* ---- REPORTEE : ELLE GARDE SON HEURE ----
+       Si le report est annule et que le match se joue a son heure, ses
+       gagnants doivent remonter dans « a regler » ce jour-la. */
+    eq(Date.parse(v2.debut), Date.parse(a2.debut), 'REPORTEE : l entree fermee garde son heure d origine, pas l heure annoncee');
+    EVENTS.soccer_epl = [evenement('dep1', 'Arsenal', 'Liverpool', AVANCEE - 3600000),
+                         evenement('dep2', 'Manchester City', 'Luton Town', Date.parse(a2.debut) + 3 * 86400000)];
+    await imp.importeMatchs();
+    l = lis();
+    eq(Date.parse(l.find((m) => m.id === a1.id).debut), AVANCEE - 3600000, 'une entree DEJA fermee suit encore une avance du fournisseur');
+    eq(Date.parse(l.find((m) => m.id === a2.id).debut), Date.parse(a2.debut), 'mais jamais un report');
+    /* Le report ANNULE : l'evenement revient a son jour d'origine. La version
+       fraiche reprend l'identifiant de sa premiere entree (meme evenement, meme
+       base) : c'est elle qui porte les paris d'avant, rouverte a son heure. */
+    EVENTS.soccer_epl = [evenement('dep1', 'Arsenal', 'Liverpool', AVANCEE - 3600000),
+                         evenement('dep2', 'Manchester City', 'Luton Town', Date.parse(a2.debut))];
+    await imp.importeMatchs();
+    l = lis();
+    const r2 = l.find((m) => m.id === a2.id);
+    ok(r2 && !r2.ferme && r2.source.evenement === 'dep2' && Date.parse(r2.debut) === Date.parse(a2.debut),
+       'report annule : la premiere entree revient, ouverte, a son heure');
+    ok(de('dep2', l).filter((m) => !m.ferme).length === 1, 'et une seule entree de l evenement reste ouverte');
+
+    /* ---- LES DEUX ENTREES D'UN MEME EVENEMENT SE REGLENT ----
+       Joue, l'evenement porte l'ancienne entree (fermee) et la nouvelle : `find`
+       n'en reglait qu'une. */
+    const cat9 = JSON.parse(fs.readFileSync(CAT, 'utf8'));
+    for (const m of cat9.matchs) if (m.id === a1.id || m.id === n1.id) m.debut = new Date(HIER).toISOString();
+    fs.writeFileSync(CAT, JSON.stringify(cat9, null, 1));
+    paris.charge(CAT);
+    SCORES.soccer_epl.push({ id: 'dep1', completed: true, home_team: 'Arsenal', away_team: 'Liverpool',
+                             scores: [{ name: 'Arsenal', score: '1' }, { name: 'Liverpool', score: '1' }] });
+    const regles9 = await imp.importeScores();
+    const ids9 = regles9.filter((f) => f.score === '1-1').map((f) => f.id).sort();
+    eq(ids9.join(','), [a1.id, n1.id].sort().join(','), 'les deux entrees de l evenement recoivent le score');
+    r = imp.trieReglements(regles9.filter((f) => f.score === '1-1'), () => 0, Date.now() + 3600000);
+    ok(r.mains.some((f) => f.id === a1.id) && r.auto.some((f) => f.id === n1.id),
+       'l ancienne (fermee) part a la main, la nouvelle se regle seule');
+    SCORES.soccer_epl.pop();
+
+    /* ---- RENOMMEE, MEME HEURE : un autre identifiant, la meme rencontre ---- */
+    const LOIN3 = Date.now() + 5 * 86400000;
+    EVENTS.soccer_epl = [evenement('ren', 'Tottenham Hotspur', 'Everton', LOIN3)];
+    await imp.importeMatchs();
+    const [tot] = de('ren');
+    EVENTS.soccer_epl = [evenement('ren', 'Spurs', 'Everton', LOIN3)];
+    await imp.importeMatchs();
+    l = lis();
+    const totV = l.find((m) => m.id === tot.id), totN = de('ren', l).find((m) => m.id !== tot.id);
+    ok(totV && totV.ferme && /reprise sous l identifiant/.test(totV.fermeRaison),
+       'equipe RENOMMEE par le fournisseur : l ancienne entree est fermee — ' + (totV && totV.fermeRaison));
+    ok(totN && !totN.ferme, 'la nouvelle est ouverte : jamais deux entrees ouvertes pour un meme match');
+
+    /* ---- UN PROGRAMME DOUBLE GARDE SES IDENTIFIANTS ----
+       Le suffixe « -2 » suivait l'ordre de la reponse : le match 2 prenait
+       l'identifiant du match 1 des que celui-ci, commence, n'etait plus
+       importe — et ses paris se seraient regles avec le score du match 2. */
+    const J = Date.parse(new Date(Date.now() + 6 * 86400000).toISOString().slice(0, 10) + 'T06:00:00Z');
+    EVENTS.soccer_epl = [evenement('dh1', 'Arsenal', 'Chelsea', J), evenement('dh2', 'Arsenal', 'Chelsea', J + 5 * 3600000)];
+    await imp.importeMatchs();
+    const id1 = de('dh1')[0].id, id2 = de('dh2')[0].id;
+    ok(id1 !== id2 && id2 === id1 + '-2', `deux matchs le meme jour : ${id1} et ${id2}`);
+    EVENTS.soccer_epl = [evenement('dh2', 'Arsenal', 'Chelsea', J + 5 * 3600000), evenement('dh1', 'Arsenal', 'Chelsea', J)];
+    await imp.importeMatchs();
+    l = lis();
+    eq(de('dh1', l).map((m) => m.id).join(','), id1, 'la reponse dans l autre ordre : chacun garde SON identifiant (match 1)');
+    eq(de('dh2', l).map((m) => m.id).join(','), id2, '(match 2)');
+    EVENTS.soccer_epl = [evenement('dh1', 'Arsenal', 'Chelsea', Date.now() - 600000), evenement('dh2', 'Arsenal', 'Chelsea', J + 5 * 3600000)];
+    await imp.importeMatchs();
+    l = lis();
+    const e1 = l.find((m) => m.id === id1), e2 = l.find((m) => m.id === id2);
+    ok(e1 && e1.source.evenement === 'dh1', 'le match 1 commence (plus importe) garde son entree : ' + (e1 && e1.source.evenement));
+    ok(e2 && e2.source.evenement === 'dh2' && !e2.ferme, 'et le match 2 garde la sienne, ouverte — il ne prend pas celle du match 1');
+
+    for (const k of Object.keys(EVENTS)) delete EVENTS[k];
+    Object.assign(EVENTS, garde);
   }
 
   console.log(`paris_import.test.js : ${n} verifications OK`);
