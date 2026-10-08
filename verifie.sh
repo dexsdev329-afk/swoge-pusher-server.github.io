@@ -202,6 +202,7 @@ lance fond     "$SITE" node fond_anime.test.js         # fond d ecran anime : su
 # Elle criait dans le vide : 30 echecs sur 617, jamais lus, parce qu elle
 # n etait pas dans cette boucle — exactement la panne de miroir_reel.test.js.
 lance reference "$SITE" node referencement.test.js
+lance coffre  "$SITE" node coffre.test.js   # le choix du coffre sur les jeux casino : cache sans $SWOGEBET (defaut $SWOGE), apparait avec, retombe sur $SWOGE si le bet vault se vide, choix retenu
 lance marqueur "$SITE" node cache_marqueur.test.js
 lance minifie "$SITE" node minifie.test.js
 echo "  $(( $(date +%s) - T0 )) s au total · $([ $RATE -eq 0 ] && echo 'TOUT VERT : on peut commettre' || echo 'ROUGE : on ne commet pas')"
