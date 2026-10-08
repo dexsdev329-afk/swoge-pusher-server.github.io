@@ -1134,26 +1134,34 @@ function derives(sport, p, margeVoulue, sortie, marges) {
      * L'import appelle `habille(m)` sans marge : `undefined * margeX` valait
      * NaN, `habilleUnMarche` retombait sur MARGE_DEFAUT, et les x3 et x1,5 du
      * registre n'atteignaient AUCUNE rencontre de l'Elo. Calendrier public du
-     * 08/10, 138 rencontres de onze championnats a l'Elo : score exact a
-     * 24,4-25,1 % de marge reelle (le rabot, pas la marge), handicap a
-     * 10,8-12,1 %. Decision du proprietaire : les marges du registre partout.
-     * Mesure (football-data 2018/19-2025/26, 24 142 matchs des neuf
-     * championnats a l'Elo E1 F2 D2 SP2 I2 N1 P1 B1 T1, Elo rejoue comme
-     * `calibre`, refaite par un second calcul independant) :
+     * 08/10, 138 rencontres de onze championnats a l'Elo, marge reelle mediane
+     * par championnat : score exact 24,4-25,1 % (rencontres 20,1-25,4 % ; le
+     * rabot remonte les 10 %), handicap 10,8-12,1 % (rencontres 9,8-13,3 %).
+     * Decision du proprietaire : les marges du registre partout.
+     * Mesure (football-data 2018/19-2025/26, 24 142 matchs de E1 F2 D2 SP2 I2
+     * N1 P1 B1 T1, Elo simule a la maniere de `calibre` ; chiffres refaits par
+     * un second calcul independant ; +- = intervalle a 95 %) :
      *   score x1 -> x3 : marge reelle 24,4 -> 31,6 % ; miser les huit scores
-     *     courants en dutching rend -12,3 +-0,8 -> -17,7 +-0,7 % au parieur ;
-     *     un parieur qui compare au 1-N-2 Pinnacle tire 0,161 -> 0,111 unite
-     *     par match offert. Aucun marche de score ecarte (0 sur 138).
+     *     courants pour gagner la meme somme quel que soit le score rend
+     *     -12,3 +-0,8 -> -17,7 +-0,7 % au parieur ; un parieur qui compare au
+     *     1-N-2 Pinnacle tire 0,161 +-0,062 -> 0,111 +-0,055 unite par match
+     *     (baisse appariee -0,050 +-0,029), encore gagnant a 30 % par le 1-0.
+     *     Aucun marche de score ecarte (0 sur 138).
      *   handicap x1 -> x1,5 : l'issue « 2 » rend -3,4 -> -4,4 +-0,7 % ; issues
-     *     battables 7,8 -> 4,2 % contre la grille Pinnacle (47 778 issues),
-     *     12,2 -> 3,3 % contre la vraie ligne asiatique -1,5 (806, gros
-     *     favoris seulement) ; rendement realise non concluant. Le marche est
-     *     ecarte sur 1,4 % des rencontres au lieu de 1,1 % (7 098 rencontres).
-     * CE QUE LA MARGE NE FERME PAS : le 1-0. Sa cote est celle du rabot aux
-     * deux marges (~9,7) ; la grille lui donne ~7,9 % partout quand il sort a
-     * 14,1 % en Liga 2 et 13,0 % en Ligue 2 : mise a chaque match, +37 +-12 %
-     * en SP2 (3 400 matchs), +27 +-13 % en F2 (2 563). C'est le modele de buts
-     * (total identique partout), pas la marge — decision separee. */
+     *     battables 7,8 -> 4,2 % contre la grille Pinnacle (47 778 issues). Le
+     *     marche est ecarte sur 1,4 % des rencontres au lieu de 1,0 % (340
+     *     contre 253) : un favori deja a 1,03 a 10 % passe sous le plancher.
+     * CE QUE LA MARGE NE FERME PAS — decisions separees :
+     *   le 1-0 : sa cote est celle du rabot aux deux marges (~9,7) ; la grille
+     *     lui donne ~7,9 % quand il sort a 14,1 % en Liga 2 et 13,0 % en
+     *     Ligue 2 : mise a chaque match, +37 +-12 % en SP2 (3 400 matchs), +27
+     *     +-13 % en F2 (2 563). Notre total de buts vaut ~2,8 partout quand le
+     *     reel, sur ces memes matchs, va de 2,27 (SP2) et 2,37 (F2) a 3,11 (N1) :
+     *     c'est le modele de buts, pas la marge ;
+     *   le handicap meme a 15 % : sur les 111 rencontres reellement a l'Elo le
+     *     08/10 (un seul releve), 27 -> 22 issues battables sur 222 ; la cote
+     *     de l'issue « 2 » ne bouge pas entre 10 et 15 % sur 84 des 138
+     *     rencontres (plancher par issue). Voir EXPLOITATION.md, 8.8. */
     const lot = habilleUnMarche(tout[k], iss, M.couverture,
                                 (marges && marges[k] !== undefined) ? marges[k]
                                   : (Number(margeVoulue) || MARGE_DEFAUT) * (M.margeX || 1),

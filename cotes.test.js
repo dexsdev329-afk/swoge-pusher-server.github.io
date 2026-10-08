@@ -364,35 +364,49 @@ cotes.chargeNotes(TMP);
    * cotes_buts.test.js pose lui-meme MARGE_DEFAUT x margeX et passait : il
    * verifiait la marge VOULUE. L'import n'en passait aucune, `undefined x 3`
    * faisait NaN, et le x3 du score exact n'atteignait aucune rencontre de l'Elo
-   * (calendrier public du 08/10/2026 : score a 24,4-25,1 %, handicap a
-   * 10,8-12,1 %). Ce bloc tombait sur l'ancien code : « au moins 19,7 % ». */
+   * (calendrier public du 08/10/2026, medianes par championnat : score a
+   * 24,4-25,1 %, handicap a 10,8-12,1 %). Ce bloc tombait sur l'ancien code :
+   * « au moins 19,7 % ». */
   {
     const mgDe = (x, k) => paris.margeDe(x.marches[k].cotes, paris.MARCHES[k].issues('foot'),
                                          paris.MARCHES[k].couverture);
-    let sMin = 1, hMin = 1, vues = 0, sVus = 0, hVus = 0, hAvant = 0;
-    for (let d = -500; d <= 500; d += 50) {
+    /* La reference : les MEMES probabilites, les marges du registre posees a
+       la main (x3 et x1,5 sur les 10 % de base, le reste a 10 %). L'import doit
+       rendre exactement cela — ni moins (le defaut), ni plus. Une egalite, pas
+       des bornes : une marge trop forte passerait des bornes basses. */
+    const REGISTRE = { dc: 0.10, btts: 0.10, ou25: 0.10, score: 0.30, hand: 0.15 };
+    const ecarts = [], horsPlancher = [], gagnes = [];
+    let vues = 0, sMin = 1, hMin = 1, perdus = 0;
+    for (let d = -500; d <= 500; d += 10) {
       cotes.poseNote('foot', 'Marge-A', 1500 + d / 2);
       cotes.poseNote('foot', 'Marge-B', 1500 - d / 2);
       const h = cotes.habille({ id: 'marge-' + vues, sport: 'foot', domicile: 'Marge-A',
                                 exterieur: 'Marge-B', debut: '2030-01-01T12:00:00Z' });
       vues++;
-      if (h.marches.score) { sVus++; sMin = Math.min(sMin, mgDe(h, 'score')); }
-      if (h.marches.hand) { hVus++; hMin = Math.min(hMin, mgDe(h, 'hand')); }
-      /* L'ancienne marge (10 % sur les deux), par le meme calcul : la plus
-         forte ne doit faire perdre aucun marche sur ces affiches. */
-      const avant = cotes.derives('foot', cotes.probabilites('foot', 'Marge-A', 'Marge-B'), undefined, {},
-                                  { score: 0.10, hand: 0.10 });
-      if (avant.hand) hAvant++;
+      const p = cotes.probabilites('foot', 'Marge-A', 'Marge-B');
+      const ref = cotes.derives('foot', p, undefined, {}, REGISTRE);
+      for (const k of Object.keys(REGISTRE)) {
+        if (JSON.stringify(h.marches[k]) !== JSON.stringify(ref[k])) ecarts.push(d + ':' + k);
+      }
+      if (h.marches.score) sMin = Math.min(sMin, mgDe(h, 'score'));
+      if (h.marches.hand) hMin = Math.min(hMin, mgDe(h, 'hand'));
+      /* Une marge plus forte raccourcit toutes les cotes : un handicap dont le
+         favori etait DEJA au plancher (1,03) a 10 % passe dessous a 15 % et
+         disparait — c'est la perte acceptee (1,0 -> 1,4 % des rencontres,
+         24 142 matchs). Aucun autre ne doit disparaitre, aucun apparaitre. */
+      const avant = cotes.derives('foot', p, undefined, {}, { score: 0.10, hand: 0.10 });
+      if (avant.hand && !h.marches.hand) {
+        perdus++;
+        if (Math.min(...Object.values(avant.hand.cotes)) > cotes.COTE_PLANCHER + 1e-9) horsPlancher.push(d);
+      }
+      if (h.marches.hand && !avant.hand) gagnes.push(d);
     }
-    ok(sVus === vues && sMin >= 0.30, `score exact : au moins ${(100 * sMin).toFixed(1)} % sur ${sVus}/${vues} affiches`
-       + ' — trois fois la marge de base, sur le chemin de l import, et aucun marche perdu');
-    ok(hVus === hAvant && hMin >= 0.14, `handicap : au moins ${(100 * hMin).toFixed(1)} % — une fois et demie — `
-       + `sur ${hVus} affiches, autant qu a 10 % (${hAvant} ; les plus desequilibrees n en ont jamais eu)`);
-    const b = cotes.habille({ id: 'marge-b', sport: 'foot', domicile: 'Marge-A', exterieur: 'Marge-B', debut: '2030-01-01T12:00:00Z' });
-    for (const k of ['ou25', 'btts', 'dc']) {
-      ok(Math.abs(mgDe(b, k) - 0.10) < 0.03,
-         `${k} : ${(100 * mgDe(b, k)).toFixed(1)} % — la marge de base, que cette decision ne touche pas`);
-    }
+    eq(ecarts.length, 0, `sur ${vues} affiches, habille sans marge rend EXACTEMENT les marches au registre `
+       + `(score x3, handicap x1,5, double chance et buts a 10 %) ${ecarts.slice(0, 6).join(' ')}`);
+    ok(sMin >= 0.30 && hMin >= 0.14, `marge reelle : score exact au moins ${(100 * sMin).toFixed(1)} %, `
+       + `handicap au moins ${(100 * hMin).toFixed(1)} %`);
+    ok(!horsPlancher.length && !gagnes.length, `handicap : ${perdus} perdu(s) sur ${vues} affiches, tous deja au `
+       + `plancher de 1,03 a 10 % ; aucun autre perdu (${horsPlancher.join(',')}), aucun apparu (${gagnes.join(',')})`);
   }
 
   /* Une cote PARTIELLE est un piege : deux issues sur trois relevees, la

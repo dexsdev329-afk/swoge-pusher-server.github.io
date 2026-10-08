@@ -741,8 +741,13 @@ const cotes = require('./cotes');
        + 30 h » : lance entre 18 h et 19 h UTC, maintenant + 30 h tombait apres
        minuit et l'avance d'une heure plus bas (AVANCEE - 1 h) avant — un jour,
        donc un identifiant, de plus, et un troisieme ticket regle au score
-       (releve du 08/10 : rouge a 18 h, vert a 19 h 22, meme code). */
-    const AVANCEE = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 2, 12);
+       (releve du 08/10 : rouge a 18 h, vert a 19 h 22, meme code).
+       A J+1 et non J+2 : DEMAIN met e1 (Arsenal–Liverpool lui aussi) a J+2, la
+       nouvelle entree aurait pris le suffixe -2 et l'essai n'aurait plus jamais
+       exerce l'identifiant sans collision. Une seule lecture de l'horloge : lue
+       trois fois, un passage de mois entre deux lectures donnait une date
+       passee de quatre semaines. */
+    const J0 = new Date(), AVANCEE = Date.UTC(J0.getUTCFullYear(), J0.getUTCMonth(), J0.getUTCDate() + 1, 12);
     const REPORTEE = LOIN + 2 * 86400000;
     EVENTS.soccer_epl = [evenement('dep1', 'Arsenal', 'Liverpool', AVANCEE),
                          evenement('dep2', 'Manchester City', 'Luton Town', REPORTEE)];   // dep3 n'est plus rendue
