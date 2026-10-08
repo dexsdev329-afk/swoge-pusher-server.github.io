@@ -356,7 +356,24 @@ class Table {
   }
 }
 
+/**
+ * La copie d'un encaissement qu'on DIFFUSE a toute la table. Le joueur recoit
+ * la sienne a part (avec `moi`) ; les autres n'ont a voir que le spectacle :
+ * qui, combien mise, a quel multiplicateur, combien rendu.
+ *
+ * Jamais les soldes ni le coffre. Le 08/10/2026, `betBalance` (ajoute au retrait
+ * pour le casino a deux coffres) partait a TOUS les clients dans cette copie :
+ * le solde $SWOGEBET d'un joueur etait lisible par n'importe qui, et les pages
+ * qui le lisaient l'auraient pris pour le leur. Trouve par la revue adverse,
+ * avant tout signalement. Tout ce qui est personnel est retire ICI, au seul
+ * endroit qui fabrique la copie publique.
+ */
+function retraitPublic(ev) {
+  const { balance, betBalance, jeton, moi, ...publique } = ev || {};
+  return publique;
+}
+
 module.exports = {
   ESPACE, ATTENTE, VOL, APRES,
-  chaine, verifie, pointDeCrash, multiA, msPour, retour, Table,
+  chaine, verifie, pointDeCrash, multiA, msPour, retour, Table, retraitPublic,
 };

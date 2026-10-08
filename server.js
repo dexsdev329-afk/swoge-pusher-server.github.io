@@ -1373,7 +1373,8 @@ function diffuseSalles() { broadcast(Object.assign({ type: 'cinema' }, filSalles
  * regarde que son proprietaire, donc il ne voyage que vers lui.
  */
 function crashDiffuse(ev) {
-  const { balance, ...publique } = ev;
+  /* La copie publique ne porte ni solde ni coffre : voir retraitPublic (crash.js). */
+  const publique = require('./crash').retraitPublic(ev);
   broadcast({ ...publique, name: game._p(ev.addr).name });
   toAddr(ev.addr, { type: 'crashRetrait', ...ev, moi: true });
   notifyTableWin(ev.addr, 'crash', { net: ev.net, staked: ev.mise, payout: ev.payout,

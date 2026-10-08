@@ -189,7 +189,9 @@ console.log('-- 3. jeux a plusieurs temps : debit et reglement isoles --');
   const s0 = snapSwoge(g, A);
   const b0 = bet(g, A);
   let st = g.bjBet(A, 50, {}, 'swogebet');
-  eq(bet(g, A), b0 - 50, 'blackjack : la mise part du coffre des paris');
+  /* Un naturel se regle des la donne : ce qui est deja rendu revient au MEME coffre. */
+  eq(bet(g, A).toFixed(6), (b0 - 50 + (st.stage === 'done' ? (st.payout || 0) : 0)).toFixed(6),
+     'blackjack : la mise part du coffre des paris (et un naturel y revient)');
   if (st.stage !== 'done') st = g.bjStand(A);
   memeSwoge(g, A, s0, 'blackjack fin');
   eq(bet(g, A).toFixed(6), (b0 - 50 + (st.payout || 0)).toFixed(6), 'blackjack : conservation du coffre des paris');
@@ -203,7 +205,14 @@ console.log('-- 3. jeux a plusieurs temps : debit et reglement isoles --');
   const s0 = snapSwoge(g, A);
   const b0 = bet(g, A);
   let st = g.bjBet(A, 50, { pp: 10, tp: 10 }, 'swogebet');
-  eq(bet(g, A), b0 - 70, 'blackjack+annexes : mise principale + 2 annexes toutes du coffre des paris');
+  /* Les annexes se reglent A LA DONNE (elles ne lisent que les trois premieres
+     cartes) : un 21+3 gagnant est deja paye quand bjBet rend la main. On
+     verifie donc debit ET premiers reglements, tous sur le coffre des paris. */
+  const a0 = st.annexes || {};
+  const dejaRendu = ((a0.pp && a0.pp.gain) || 0) + ((a0.tp && a0.tp.gain) || 0) + (st.stage === 'done' ? (st.payout || 0) : 0);
+  eq(bet(g, A).toFixed(6), (b0 - 70 + dejaRendu).toFixed(6),
+     'blackjack+annexes : mise principale + 2 annexes debitees du coffre des paris, gains de la donne rendus au meme coffre');
+  memeSwoge(g, A, s0, 'blackjack+annexes donne');
   if (st.stage !== 'done') st = g.bjStand(A);
   const a = st.annexes || {};
   const gainAnn = (a.pp.gain || 0) + (a.tp.gain || 0);
@@ -230,6 +239,41 @@ console.log('-- 3. jeux a plusieurs temps : debit et reglement isoles --');
   memeSwoge(g, A, s0, 'crash apres le crash');
   eq(bet(g, A), b0 - 50, 'crash : mise perdue uniquement sur le coffre des paris');
   ok(true, 'crash OK');
+}
+
+/* ----------------------------------------------------------------------------
+ * 3bis. La copie PUBLIQUE d'un encaissement Crash ne porte ni solde ni coffre.
+ *    Le 08/10, `betBalance` partait a toute la table dans cette copie : le solde
+ *    $SWOGEBET d'un joueur lisible par n'importe qui. On encaisse pour de vrai,
+ *    en $SWOGEBET, et on verifie ce qui partirait a tout le monde.
+ * -------------------------------------------------------------------------- */
+console.log('-- 3bis. la copie publique d un encaissement Crash ne porte ni solde ni coffre --');
+{
+  const g = neuf();
+  let t = 1000000;
+  g.crashTick(t);
+  if (g.crash.phase !== C.ATTENTE) g.crashTick(g.crash.jusqua + 1);
+  g.crashMise(A, 50, 1.01, t, 'swogebet');            // retrait automatique a 1,01x
+  let ev = null, garde = 0, now = g.crash.jusqua;
+  while (!ev && garde++ < 20000) {
+    for (const e of g.crashTick(now)) if (e.type === 'crashRetrait' && e.addr === A) ev = e;
+    now += 50;
+  }
+  if (ev) {
+    ok(ev.betBalance != null && ev.jeton === 'swogebet', 'le joueur, lui, recoit son solde $SWOGEBET et son coffre');
+    const pub = C.retraitPublic(ev);
+    for (const k of ['balance', 'betBalance', 'jeton', 'moi'])
+      ok(!(k in pub), 'copie publique : pas de ' + k);
+    for (const k of ['addr', 'mise', 'multi', 'payout', 'net'])
+      ok(k in pub, 'copie publique : garde ' + k + ' (le spectacle de la table)');
+  } else {
+    /* La courbe a pu casser sous 1,01x : on verifie alors la fonction sur un
+       evenement construit — elle ne doit rien laisser passer de personnel. */
+    const pub = C.retraitPublic({ type: 'crashRetrait', addr: A, mise: 50, multi: 2, payout: 100, net: 50,
+                                  balance: '1', betBalance: '2', jeton: 'swogebet', moi: true });
+    for (const k of ['balance', 'betBalance', 'jeton', 'moi']) ok(!(k in pub), 'copie publique : pas de ' + k);
+  }
+  console.log('  ok   rien de personnel dans ce que voit la table');
 }
 
 /* ----------------------------------------------------------------------------
