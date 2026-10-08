@@ -188,7 +188,19 @@ const MARCHES = {
     issues: () => ['oui', 'non'],
     gagne: (i, a, b) => ((a > 0 && b > 0) === (i === 'oui')),
   },
+  /* ---- LE PLUS/MOINS PORTE 2,2 FOIS LA MARGE DE BASE (08/10/2026) ----
+   * Son total de buts est tire du seul nul (cotes.ajusteButs) : l'Elo donne
+   * 52,5 a 55 % de « plus » partout quand le marche va de 44 a 61 %. Mesure
+   * contre la cloture du marche elle-meme, sans modele (neuf championnats a
+   * l'Elo E1 F2 D2 SP2 I2 N1 P1 B1 T1, 7 098 matchs d'aout 2024 a octobre 2026,
+   * refaite par un second calcul independant ; +- = IC 95 %) : a 10 %, 31,3 %
+   * des issues battables (4 443 sur 14 196), +9,8 +-2,8 % pour le parieur ;
+   * a 22 %, 12,9 %, +5,0 +-3,8 %. Decision du proprietaire : 22 %, la marge
+   * du chemin du prix du marche (cotes.MARGES_AU_MARCHE), en attendant de
+   * corriger le modele de buts — la marge ne ferme pas la fuite, elle la
+   * reduit. Les-deux-marquent reste a 10 % : non mesure sur ce chemin. */
   ou25: {
+    margeX: 2.2,
     nom: 'Total goals', court: 'O/U 2.5', couverture: 1, sports: ['foot'], ligne: 2.5,
     issues: () => ['plus', 'moins'],
     gagne: (i, a, b) => ((a + b > 2.5) === (i === 'plus')),

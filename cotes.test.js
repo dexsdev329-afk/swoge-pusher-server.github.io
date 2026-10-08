@@ -371,10 +371,10 @@ cotes.chargeNotes(TMP);
     const mgDe = (x, k) => paris.margeDe(x.marches[k].cotes, paris.MARCHES[k].issues('foot'),
                                          paris.MARCHES[k].couverture);
     /* La reference : les MEMES probabilites, les marges du registre posees a
-       la main (x3 et x1,5 sur les 10 % de base, le reste a 10 %). L'import doit
-       rendre exactement cela — ni moins (le defaut), ni plus. Une egalite, pas
-       des bornes : une marge trop forte passerait des bornes basses. */
-    const REGISTRE = { dc: 0.10, btts: 0.10, ou25: 0.10, score: 0.30, hand: 0.15 };
+       la main (x3, x1,5 et x2,2 sur les 10 % de base, le reste a 10 %). L'import
+       doit rendre exactement cela — ni moins (le defaut), ni plus. Une egalite,
+       pas des bornes : une marge trop forte passerait des bornes basses. */
+    const REGISTRE = { dc: 0.10, btts: 0.10, ou25: 0.22, score: 0.30, hand: 0.15 };
     const ecarts = [], horsPlancher = [], gagnes = [];
     let vues = 0, sMin = 1, hMin = 1, perdus = 0;
     for (let d = -500; d <= 500; d += 10) {
@@ -402,7 +402,7 @@ cotes.chargeNotes(TMP);
       if (h.marches.hand && !avant.hand) gagnes.push(d);
     }
     eq(ecarts.length, 0, `sur ${vues} affiches, habille sans marge rend EXACTEMENT les marches au registre `
-       + `(score x3, handicap x1,5, double chance et buts a 10 %) ${ecarts.slice(0, 6).join(' ')}`);
+       + `(score x3, handicap x1,5, plus/moins x2,2, double chance et les-deux-marquent a 10 %) ${ecarts.slice(0, 6).join(' ')}`);
     ok(sMin >= 0.30 && hMin >= 0.14, `marge reelle : score exact au moins ${(100 * sMin).toFixed(1)} %, `
        + `handicap au moins ${(100 * hMin).toFixed(1)} %`);
     ok(!horsPlancher.length && !gagnes.length, `handicap : ${perdus} perdu(s) sur ${vues} affiches, tous deja au `
