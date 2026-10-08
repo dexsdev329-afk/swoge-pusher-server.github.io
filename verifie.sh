@@ -58,6 +58,7 @@ lance pariauto "$SRV" node paris_auto.test.js     # le reglement automatique et 
 lance parihors "$SRV" node paris_hors_calendrier.test.js   # une rencontre sortie du calendrier reste affichable et reglable
 lance pariimp  "$SRV" node paris_import.test.js   # l import : credits, ODDS_API_FIN passee, rencontre deplacee fermee, foot de The Odds API a la main
 lance espn     "$SRV" node scores_espn.test.js    # scores gratuits : jours/mois (plus de fenetre), 90 minutes, match le plus proche d une serie, refus comptes
+lance prixmarche "$SRV" node prix_marche.test.js   # le prix du marche : reference Betfair/Pinnacle/mediane, AUCUNE issue gagnante au prix de reference, sans prix frais = suspendue, 1 credit/jour/championnat ecrit sur le volume
 lance cotes    "$SRV" node cotes.test.js
 lance cotesbuts "$SRV" node cotes_buts.test.js
 lance cotesnoms "$SRV" node cotes_noms.test.js

@@ -29,6 +29,11 @@ process.env.ODDS_API_FIN = new Date(Date.now() + 20 * 86400000).toISOString().sl
 process.env.ODDS_API_TOTAL = '500';
 process.env.ODDS_API_LIGUES = 'foot=soccer_epl,foot=soccer_france_ligue_one,tennis=tennis_atp_us_open';
 process.env.ODDS_API_HORIZON = '7';
+/* Le prix du marche (08/10/2026) a son propre essai, prix_marche.test.js, qui
+   l'exerce AVEC l'import. Ici on mesure la mecanique de l'import (credits,
+   identifiants, rencontres deplacees) : sans prix releve, les grands
+   championnats seraient suspendus et chaque essai d'ouverture le verrait. */
+process.env.PARIS_PRIX_LIGUES = '';
 
 /* ---- OU LE CATALOGUE S'ECRIT ----
  *

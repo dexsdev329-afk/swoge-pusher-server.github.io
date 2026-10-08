@@ -383,6 +383,19 @@ function valide(brut) {
        * voir `trieReglements`. */
       ferme: isFinite(Date.parse(m.ferme)) ? Date.parse(m.ferme) : null,
       fermeRaison: isFinite(Date.parse(m.ferme)) ? String(m.fermeRaison || '').slice(0, 160) : '',
+      /* ---- LE PRIX DU MARCHE, ET LA SUSPENSION (08/10/2026) ----
+       * Sur les grands championnats, les cotes descendent du prix du marche
+       * (prix_marche.js) ; `prixMarche` dit d'ou (betfair, pinnacle, mediane)
+       * et de quand. Sans prix assez frais, la rencontre est SUSPENDUE : plus
+       * de pari, jamais de retour silencieux aux cotes de l'Elo, qu'on a
+       * mesurees battables. Une suspension n'est pas une fermeture : elle se
+       * leve au prix suivant et ne touche pas au reglement. */
+      suspendu: !!m.suspendu,
+      suspenduRaison: m.suspendu ? String(m.suspenduRaison || '').slice(0, 160) : '',
+      prixMarche: (m.prixMarche && typeof m.prixMarche === 'object') ? {
+        ref: String(m.prixMarche.ref || ''), t: String(m.prixMarche.t || ''),
+        livres: Number(m.prixMarche.livres) || 0,
+      } : null,
     };
   });
 
@@ -463,6 +476,31 @@ function ouverts(now) {
  * catalogue. Ce qu'une releve n'a pas relu reste tel qu'on l'a vu, douze
  * heures ; un etat « commence » ne revient jamais a « pas commence ». */
 const AVANCE_REELLE_MS = 60000;
+/* La meme borne que prix_marche.js (qui ne peut pas etre requis ici : il
+   requiert cotes.js, qui requiert ce fichier). */
+const AGE_PRIX_MS = (Number(process.env.PARIS_PRIX_AGE_MAX_H) || 36) * 3600000;
+
+/* ---- PRES DU COUP D'ENVOI, UN PRIX FRAIS (08/10/2026) ----
+ * Le releve quotidien laisse un prix d'environ un jour : 14,8 % des rencontres
+ * du samedi offraient alors un choix gagnant, a +4,0 % (203 rencontres de
+ * Liga, ouverture contre cloture Pinnacle). C'est dans les dernieres heures que
+ * l'argent se pose et que les compositions tombent. A moins de PRES_MS du coup
+ * d'envoi, un pari sur un prix de plus de FRAIS_MS est donc refuse, et son
+ * championnat DEMANDE : la minuterie de 10 min le releve (un credit, sous le
+ * garde-fou du jour), et le joueur reessaie au prix frais. La relève ne se
+ * paie que si quelqu'un veut parier : le forfait gratuit ne permet pas de
+ * tout relever avant chaque coup d'envoi. */
+const PRES_MS = 3 * 3600000, FRAIS_MS = 3 * 3600000;
+const DEMANDES = new Set();
+/** Le prix de cette rencontre est-il trop vieux pour vendre maintenant ? */
+function prixTropVieux(m, now) {
+  const t = now || Date.now();
+  if (!m || !m.prixMarche) return false;
+  return m.debut - t < PRES_MS && t - Date.parse(m.prixMarche.t) > FRAIS_MS;
+}
+function demandePrix(m) { if (m && m.source && m.source.ligue) DEMANDES.add(m.source.ligue); }
+/** Les championnats demandes depuis le dernier appel (la liste se vide). */
+function prixDemandes() { const a = [...DEMANDES]; DEMANDES.clear(); return a; }
 const GARDE_REELLE_MS = 12 * 3600000;
 let HEURES_REELLES = new Map();
 /** `lot` : Map id -> { quand (ms), etat ('pre'|'in'|'post') }. Fusionne. */
@@ -485,6 +523,14 @@ function ouvert(m, now) {
   const t = now || Date.now();
   if (!m || !(m.debut > t)) return false;
   if (m.ferme && m.ferme <= t) return false;
+  if (m.suspendu) return false;
+  /* Le prix du marche est revérifié ICI, pas seulement a l'import : si
+     l'import tombe (cle revoquee, panne du fournisseur), rien n'est reecrit et
+     la suspension n'arrive jamais — un prix de 2, 3, 4 jours se serait vendu
+     jusqu'au coup d'envoi. Mesure : vieux de 1 a 4 jours, il laisse un choix
+     gagnant sur 16,7 % des rencontres de Liga, a +4,1 % (568 rencontres,
+     relecture du 08/10). */
+  if (m.prixMarche && !(t - Date.parse(m.prixMarche.t) <= AGE_PRIX_MS)) return false;
   const r = HEURES_REELLES.get(m.id);
   if (r) {
     if (r.etat === 'in' || r.etat === 'post') return false;
@@ -590,6 +636,7 @@ module.exports = {
   ISSUES, ISSUES_PAR_SPORT, SPORTS_EQUIPE, SPORTS, sportConnu, issues,
   COTE_MIN, COTE_MAX, MARGE_MIN,
   charge, catalogue, match, ouverts, ouvert, poseHeuresReelles, AVANCE_REELLE_MS,
+  AGE_PRIX_MS, prixTropVieux, demandePrix, prixDemandes, PRES_MS, FRAIS_MS,
   rapport, vue, marge, margeDe, valide,
   scoreLu, resultatDuScore,
   MARCHES, MARCHE_BASE, SCORES, marchesDuSport, coteDe, gagne,

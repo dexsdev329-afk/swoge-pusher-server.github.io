@@ -3585,6 +3585,12 @@ class Game {
          des rencontres ouvertes — coup d'envoi du catalogue, rencontre fermee
          par l'import (deplacee), ou commencee selon ESPN (08/10/2026). */
       if (!paris.ouvert(m, t)) throw new Error('betting is closed on ' + m.domicile + ' v ' + m.exterieur);
+      /* Pres du coup d'envoi, le prix du marche doit etre frais : sinon on le
+         fait relever et le joueur reessaie (voir paris.prixTropVieux). */
+      if (paris.prixTropVieux(m, t)) {
+        paris.demandePrix(m);
+        throw new Error('the odds on ' + m.domicile + ' v ' + m.exterieur + ' are being refreshed — try again in a few minutes');
+      }
       /* Deux jambes sur le meme match : soit contradictoires, soit un simple
          deguise en combine pour contourner le plafond de gain. */
       if (vus.has(m.id)) throw new Error('only one selection per match');

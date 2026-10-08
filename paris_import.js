@@ -58,6 +58,7 @@ const fs = require('fs');
 const path = require('path');
 const cotes = require('./cotes');
 const espn = require('./scores_espn');
+const prixMarche = require('./prix_marche');
 const paris = require('./paris');
 
 const BASE = 'https://api.the-odds-api.com/v4';
@@ -378,13 +379,21 @@ function etatQuota() {
 /* Avant chaque appel PAYANT. On refuse plutot que de depasser : un quota
    epuise le 5 septembre ne se recharge pas, et le calendrier se figerait
    jusqu'a la fin du mois. */
-function autorise(cout, quoi) {
+function autorise(cout, quoi, prioritaire) {
   const q = etatQuota();
   const part = partDuJour(q.reste);
   if (cout > q.reste) {
     throw new Error(`[odds] REFUSE ${quoi} : ${cout} credit(s) demande(s), ` +
                     `${q.reste} restant(s) en tout`);
   }
+  /* ---- LE PRIX DU MARCHE PASSE EN PRIORITE (08/10/2026) ----
+   * L'etalonnage hebdomadaire (~23 ligues) epuise la part du jour : la releve
+   * des prix etait alors refusee jusqu'a minuit — au premier demarrage, les six
+   * grands championnats restaient suspendus le reste de la journee. Une releve
+   * de prix passe donc au-dela de la part tant qu'il reste de quoi en faire une
+   * par grand championnat et par jour jusqu'a la fin de la periode. Simulation
+   * de la relecture : le mois finit avec au moins 95 credits. */
+  if (prioritaire && q.reste - cout >= prioritaire * joursRestants()) return q;
   if (q.depenseDuJour + cout > part) {
     throw new Error(`[odds] REFUSE ${quoi} : ${cout} credit(s) demande(s), ` +
       `${q.depenseDuJour} deja depense(s) aujourd hui, part du jour = ${part} ` +
@@ -445,16 +454,20 @@ function etatImport() {
     /* Les refus du tableau d'ESPN aujourd'hui, par tableau : une panne qui ne
        se lit que dans le journal ne se voit pas (08/10/2026). */
     espnRefus: espn.refusDuJour(),
+    /* Le prix du marche, championnat par championnat : derniere releve, et
+       combien de rencontres a venir sont au prix ou SUSPENDUES — une
+       suspension ne se voit pas sur la page, qui n'affiche que l'ouvert. */
+    prix: etatPrix(),
     dernier: litDernier(),
   };
 }
 
 // ------------------------------------------------------------- les appels
 
-async function appel(chemin, params, coutAttendu, quoi) {
+async function appel(chemin, params, coutAttendu, quoi, prioritaire) {
   if (!CLE) throw new Error('[odds] ODDS_API_KEY absente — rien ne peut etre demande');
   const paye = coutAttendu > 0;
-  const q = paye ? autorise(coutAttendu, quoi) : etatQuota();
+  const q = paye ? autorise(coutAttendu, quoi, prioritaire) : etatQuota();
 
   const u = new URL(BASE + chemin);
   u.searchParams.set('apiKey', CLE);
@@ -607,9 +620,10 @@ async function importeMatchs() {
    * match 2. Une rencontre reprend donc l'identifiant qu'elle portait deja (meme
    * evenement du fournisseur, meme base), et un suffixe n'est jamais donne a un
    * identifiant deja porte par un AUTRE evenement de l'ancien calendrier. */
-  const anciens = new Map(), anciensParEv = new Map();
+  const anciens = new Map(), anciensParEv = new Map(), anciensBruts = new Map();
   try {
     for (const a of (JSON.parse(fs.readFileSync(paris.fichier(), 'utf8')).matchs || [])) {
+      anciensBruts.set(a.id, a);
       const ev = String((a.source && a.source.evenement) || '');
       anciens.set(a.id, ev);
       if (ev) anciensParEv.set(ev, a.id);
@@ -633,8 +647,22 @@ async function importeMatchs() {
   const habilles = [], ecartes = [];
   for (const m of [...vus.values()].sort((a, b) => Date.parse(a.debut) - Date.parse(b.debut))) {
     let h;
-    try { h = cotes.habille(m); }
-    catch (e) { ecartes.push(`${m.domicile} – ${m.exterieur} : ${e.message.split('— ')[1] || e.message}`); continue; }
+    try { h = cotes.habille(avecPrix(m)); }
+    catch (e) {
+      /* ---- UNE RENCONTRE DEJA AU CALENDRIER N'EN SORT PAS ----
+       * Une rencontre cotee par le seul marche (equipe que l'Elo ne connait
+       * pas, favori a 97 %) qui perd son prix ne se cote plus a l'Elo. L'ecarter
+       * la faisait sortir du calendrier AVEC ses paris : ni ESPN ni /scores ne
+       * la reglaient plus. On garde son ancienne entree, SUSPENDUE (relecture du
+       * 08/10). */
+      const ancien = anciensBruts.get(m.id);
+      if (ancien && prixMarche.ligues().has(m.source && m.source.ligue)) {
+        habilles.push(Object.assign({}, ancien, { debut: m.debut, prixMarche: undefined, suspendu: true,
+          suspenduRaison: (e.message.split('— ')[1] || e.message).slice(0, 120) }));
+        continue;
+      }
+      ecartes.push(`${m.domicile} – ${m.exterieur} : ${e.message.split('— ')[1] || e.message}`); continue;
+    }
     habilles.push({ id: h.id, sport: h.sport, competition: h.competition, pays: h.pays,
                     domicile: h.domicile, exterieur: h.exterieur,
                     paysDomicile: h.paysDomicile || null, paysExterieur: h.paysExterieur || null,
@@ -646,7 +674,9 @@ async function importeMatchs() {
                        cote relevee a la main reste ou elle est, on ne la
                        reecrit pas pour le plaisir de la ranger. */
                     marches: h.marches, cotes: h.marches ? undefined : h.cotes,
-                    cotesGenerees: !!h.cotesGenerees, source: h.source });
+                    cotesGenerees: !!h.cotesGenerees, source: h.source,
+                    prixMarche: h.prixMarche || undefined,
+                    suspendu: h.suspendu || undefined, suspenduRaison: h.suspendu ? h.suspenduRaison : undefined });
   }
   if (ecartes.length) {
     /* On NOMME ce qui a ete jete. Un import qui rogne en silence se lit comme
@@ -763,10 +793,20 @@ async function importeMatchs() {
            les forces ont pu changer depuis. Celle qui a commence, non — les
            paris y sont poses a la cote affichee. */
         let g = m;
-        if (m.cotesGenerees && t > Date.now() && !isFinite(Date.parse(m.ferme))) {
-          try { g = cotes.habille(m); }
-          catch (e) { /* devenue incotable : on la garde telle quelle plutot
-                         que de la faire disparaitre avec ses paris */ }
+        if (t > Date.now() && !isFinite(Date.parse(m.ferme))) {
+          /* Le prix du marche se repose a chaque import (frais, ou suspendue). */
+          const mp = avecPrix(m);
+          g = mp;
+          if (mp.cotesGenerees) {
+            try { g = cotes.habille(mp); }
+            catch (e) {
+              /* devenue incotable : on la garde telle quelle plutot que de la
+                 faire disparaitre avec ses paris — mais SUSPENDUE si elle est
+                 au prix du marche : ses anciennes cotes ne valent plus rien. */
+              if (mp.prixMarche) g = Object.assign({}, mp, { prixMarche: undefined, suspendu: true,
+                suspenduRaison: 'trop desequilibre au prix du marche' });
+            }
+          }
         }
         habilles.push(g); repris++;
       }
@@ -816,10 +856,23 @@ async function importeMatchs() {
   try { fs.mkdirSync(path.dirname(FICHIER_CAT), { recursive: true }); } catch (e) {}
   fs.writeFileSync(FICHIER_CAT, JSON.stringify(catalogue, null, 1) + '\n');
   console.log(`[odds] catalogue ecrit : ${habilles.length} rencontre(s), 0 credit depense`);
+  /* Les suspensions se DISENT : par championnat, et fort quand il l'est en
+     entier — la page n'affiche que l'ouvert, la Premier League disparaitrait
+     sans un mot. */
+  const suspendues = {}, aVenir = {};
+  for (const m of habilles) {
+    const l = m.source && m.source.ligue;
+    if (!l || !prixMarche.ligues().has(l) || !(Date.parse(m.debut) > Date.now())) continue;
+    aVenir[l] = (aVenir[l] || 0) + 1;
+    if (m.suspendu) suspendues[l] = (suspendues[l] || 0) + 1;
+  }
+  for (const [l, k] of Object.entries(suspendues)) {
+    console.log(`[odds] ${k === aVenir[l] ? 'CHAMPIONNAT ENTIER SUSPENDU' : 'suspendue(s)'} — ${l} : ${k}/${aVenir[l]} rencontre(s) sans prix du marche frais`);
+  }
   noteDernier('matchs', { ok: true, ecrit: true, rencontres: habilles.length,
     importees: vus.size, repondues, parLigue: parLigueCompte,
     echouees: [...echouees], erreurs: erreurs.slice(0, 12),
-    ecartees: ecartes.slice(0, 12) });
+    ecartees: ecartes.slice(0, 12), suspendues });
   return habilles.length;
 }
 
@@ -1064,6 +1117,110 @@ const AUTO_DELAI_MIN = Number(process.env.PARIS_AUTO_DELAI_MIN || 90);
 /* Le coupe-circuit. `0` remet tout a la main, sans redeployer. */
 const AUTO_ACTIF = String(process.env.PARIS_AUTO || '1') !== '0';
 
+/* ======================= LE PRIX DU MARCHE (08/10/2026) =======================
+ *
+ * Sur les grands championnats (prix_marche.ligues()), chaque rencontre a venir
+ * prend le prix du marche s'il a moins de 36 h ; sinon elle est SUSPENDUE —
+ * jamais rendue a l'Elo en silence. Les autres championnats restent a l'Elo.
+ * Une rencontre commencee ne bouge plus (ses paris sont poses).
+ */
+function avecPrix(m, now) {
+  const t = now || Date.now();
+  const l = m && m.source && m.source.ligue;
+  const sortie = Object.assign({}, m);
+  delete sortie.prixMarche; delete sortie.suspendu; delete sortie.suspenduRaison;
+  if (!l || !prixMarche.ligues().has(l) || !(Date.parse(m.debut) > t)) return sortie;
+  const r = prixMarche.pour(m.source.evenement, t);
+  if (!r) return Object.assign(sortie, { cotesGenerees: true, suspendu: true,
+    suspenduRaison: 'pas de prix du marche de moins de ' + Math.round(prixMarche.AGE_MAX_MS / 3600000) + ' h' });
+  /* Le prix est range sur les equipes du releve : si le fournisseur a inverse
+     domicile et exterieur depuis, le « 1 » du marche n'est plus le notre. */
+  if (r.dom && (r.dom !== m.domicile || r.ext !== m.exterieur)) return Object.assign(sortie, { cotesGenerees: true,
+    suspendu: true, suspenduRaison: 'prix releve dans l autre orientation' });
+  return Object.assign(sortie, { cotesGenerees: true,
+    prixMarche: { ref: r.ref, t: new Date(r.t).toISOString(), livres: r.livres, p: r.p } });
+}
+
+/* Relever le prix d'une liste de championnats : 1 credit chacun, sous le
+   garde-fou de la part du jour (`appel`). Rend le nombre de releves reussis. */
+/* UNE releve a la fois : les minuteries de 30 et de 10 min tombent au meme
+   instant toutes les demi-heures, et deux releves paralleles payaient deux
+   fois le meme championnat (relecture du 08/10). Chaque championnat est
+   relu juste avant l'appel : releve depuis moins de `ageMin`, il passe. */
+let filePrix = Promise.resolve();
+function rafraichitPrix(clefs, pourquoi, ageMin) {
+  const tour = filePrix.then(async () => {
+    let ok = 0;
+    for (const clef of clefs) {
+      if (Date.now() - prixMarche.derniere(clef) < (ageMin || 0)) continue;
+      try {
+        const evs = await appel(`/sports/${clef}/odds`, { regions: REGION, markets: MARCHE, oddsFormat: 'decimal' },
+                                1, 'prix ' + clef, prixMarche.ligues().size);
+        const c = prixMarche.note(evs, clef);
+        console.log(`[odds] prix du marche ${clef} (${pourquoi}) : ${JSON.stringify(c)}`);
+        ok++;
+      } catch (e) { console.log('[odds] prix ' + clef + ' : ' + (e.message || e)); }
+    }
+    return ok;
+  });
+  filePrix = tour.catch(() => 0);
+  return tour;
+}
+
+/* ---- QUAND RELEVER ----
+ * Une fois par jour et par championnat (22 h d'ecart), date ecrite sur le
+ * volume : un redeploiement ne repaie rien (118 redeploiements en 17 jours en
+ * septembre). Et avant le coup d'envoi — 15 min a 2 h — pour un championnat
+ * dont une rencontre PORTE DES PARIS, si son dernier releve a plus de 3 h :
+ * c'est la que l'argent se pose, et qu'un prix d'un jour peut avoir bouge
+ * (blessure, composition). Budget mesure sur le forfait gratuit : 6 credits
+ * par jour pour les six championnats, ~186 par mois, plus les passages
+ * d'avant-match (rares : 2 rencontres portaient des paris le 08/10). */
+const PRIX_JOUR_MS = 22 * 3600000, PRIX_AVANT_MS = 2 * 3600000, PRIX_DEMANDE_MS = 3600000;
+/* Seulement les championnats qui ont une rencontre a venir au calendrier : en
+   treve internationale, six credits par jour partaient pour rien — et une cle
+   mal ecrite dans PARIS_PRIX_LIGUES n'est jamais payee. */
+function liguesAvecRencontre(now) {
+  const t = now || Date.now(), out = new Set();
+  for (const m of paris.catalogue().matchs) if (m.debut > t && m.source && m.source.ligue) out.add(m.source.ligue);
+  return out;
+}
+function etatPrix(now) {
+  const t = now || Date.now(), out = {};
+  for (const c of prixMarche.ligues()) {
+    const d = prixMarche.derniere(c);
+    out[c] = { releve: d ? new Date(d).toISOString() : null, auPrix: 0, suspendues: 0 };
+  }
+  try {
+    for (const m of paris.catalogue().matchs) {
+      const l = m.source && m.source.ligue;
+      if (!out[l] || !(m.debut > t)) continue;
+      if (m.suspendu) out[l].suspendues++; else if (m.prixMarche) out[l].auPrix++;
+    }
+  } catch (e) { /* catalogue illisible : les dates suffisent */ }
+  return out;
+}
+function prixPerimes(now) {
+  const t = now || Date.now(), avec = liguesAvecRencontre(t);
+  return [...prixMarche.ligues()].filter((c) => avec.has(c) && t - prixMarche.derniere(c) >= PRIX_JOUR_MS);
+}
+/* Avant le coup d'envoi : de 75 a 20 min avant (les compositions tombent
+   environ une heure avant), pour un championnat dont une rencontre porte des
+   paris et dont le dernier releve a plus de 2 h. */
+function prixAvantMatch(aDesParis, now) {
+  const t = now || Date.now();
+  const lg = prixMarche.ligues(), out = new Set();
+  if (typeof aDesParis !== 'function') return [];
+  for (const m of paris.catalogue().matchs) {
+    const l = m.source && m.source.ligue;
+    if (!l || !lg.has(l) || out.has(l)) continue;
+    if (!(m.debut >= t + 20 * 60000 && m.debut <= t + 75 * 60000)) continue;
+    if (t - prixMarche.derniere(l) < PRIX_AVANT_MS) continue;
+    if (aDesParis(m.id)) out.add(l);
+  }
+  return [...out];
+}
+
 /* Les competitions ou un match de football peut aller en prolongation : la C1
    (barrages et elimination directe), les series MLS (meme cle que la saison
    reguliere), et toute coupe. Une liste, pas une devinette : une cle inconnue
@@ -1136,11 +1293,23 @@ async function calibre(ligueDemandee) {
   let bouges = 0;
 
   for (const l of cibles) {
+    /* Un grand championnat au prix du marche frais n'a rien a apprendre a
+       l'Elo (on ne vend plus son Elo) : son credit sert aux ligues qui
+       vendent encore l'Elo, que la part du jour coupait (08/10/2026). */
+    if (!ligueDemandee && prixMarche.ligues().has(l.clef) && Date.now() - prixMarche.derniere(l.clef) < PRIX_JOUR_MS) continue;
     let evs;
     try {
       evs = await appel(`/sports/${l.clef}/odds`,
         { regions: REGION, markets: MARCHE, oddsFormat: 'decimal' }, 1, 'odds ' + l.clef);
     } catch (e) { console.log('[odds] ' + e.message); continue; }
+    /* La meme reponse porte le prix du marche des grands championnats : on le
+       note au passage, sans un credit de plus (08/10/2026). */
+    if (prixMarche.ligues().has(l.clef)) {
+      try {
+        const c = prixMarche.note(evs, l.clef);
+        console.log(`[odds] prix du marche ${l.clef} (etalonnage) : ${JSON.stringify(c)}`);
+      } catch (e) { console.log('[odds] prix du marche ' + l.clef + ' illisible : ' + (e.message || e)); }
+    }
 
     for (const ev of evs || []) {
       /* ---- LA MEDIANE DES BOOKMAKERS, PAS LE PREMIER ----
@@ -1317,10 +1486,37 @@ function planifie(signale, aRegler) {
     await rafraichit();     // les cotes se refont avec les forces corrigees
   });
 
+  /* Le prix du marche : releve ce qui est perime, puis refait le calendrier
+     (0 credit) pour que les cotes en descendent. */
+  const prix = (clefs, pourquoi, ageMin) => sur('prix', async () => {
+    if (!clefs.length) return;
+    if (await rafraichitPrix(clefs, pourquoi, ageMin)) await rafraichit();
+  });
+  {
+    const connues = new Set(LIGUES.map((l) => l.clef));
+    const inconnues = [...prixMarche.ligues()].filter((c) => !connues.has(c) && !LIGUES.some((l) => l.clef === '*'));
+    if (inconnues.length) console.log('[odds] PARIS_PRIX_LIGUES : ' + inconnues.join(', ') + ' absente(s) des ligues importees — jamais relevee(s)');
+  }
   const premier = delaiAvantEtalonnage();
   const minuteries = [
-    setTimeout(rafraichit, 30000),
+    /* Au demarrage : d'abord les prix perimes, puis le calendrier — sinon le
+       premier import suspendrait les grands championnats le temps du releve. */
+    setTimeout(() => sur('demarrage', async () => {
+      /* Le calendrier d'abord s'il est vide (premier demarrage : prixPerimes
+         lit les rencontres a venir), les prix perimes, puis le calendrier qui
+         en descend — dans un finally : un releve qui echoue ne doit pas
+         priver TOUS les sports de leur import. */
+      try {
+        if (!paris.catalogue().matchs.some((m) => m.debut > Date.now())) await importeMatchs();
+        const p = prixPerimes();
+        if (p.length) await rafraichitPrix(p, 'demarrage', PRIX_JOUR_MS);
+      } finally { await rafraichit(); }
+    }), 30000),
     setInterval(rafraichit, 12 * H),
+    setInterval(() => prix(prixPerimes(), 'quotidien', PRIX_JOUR_MS), 30 * 60000),
+    /* Decalee de 5 min : elle ne tombe plus en meme temps que la quotidienne. */
+    setTimeout(() => minuteries.push(setInterval(() => prix(
+      [...new Set(prixAvantMatch(aRegler).concat(paris.prixDemandes()))], 'avant le coup d envoi', PRIX_DEMANDE_MS), 10 * 60000)), 5 * 60000),
     setTimeout(releve, 5 * 60000),
     setInterval(releve, 24 * H),
     /* Le premier etalonnage attend ce qui reste des sept jours depuis le
@@ -1340,7 +1536,7 @@ function planifie(signale, aRegler) {
               `part du jour ${partDuJour(etatQuota().reste)} jusqu au ${fin()}`);
   /* On rend les minuteries : une minuterie oubliee garde le processus en
      vie a l arret et peut refaire un appel reseau en plein redeploiement. */
-  return { rafraichit, releve, etalonne, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
+  return { rafraichit, releve, etalonne, prix, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
 }
 
 // ---------------------------------------------------------------- l'appel
@@ -1350,10 +1546,13 @@ if (require.main === module) {
   const quoi = a.find((x) => x.startsWith('--')) || '--quota';
   const suite = { '--matchs': importeMatchs, '--scores': importeScores,
                   '--calibre': () => calibre(a.find((x) => !x.startsWith('--'))),
+                  /* Le prix du marche des grands championnats (1 credit chacun),
+                     puis le calendrier qui en descend (0 credit). */
+                  '--prix': async () => { await rafraichitPrix([...prixMarche.ligues()], 'a la main'); await importeMatchs(); },
                   '--sports': () => listeSports(a.find((x) => !x.startsWith('--'))),
                   '--quota': async () => montreQuota() }[quoi];
   if (!suite) {
-    console.error('usage : --quota | --sports [filtre] | --matchs | --scores | --calibre [ligue]');
+    console.error('usage : --quota | --sports [filtre] | --matchs | --scores | --calibre [ligue] | --prix');
     process.exit(2);
   }
   suite().then(() => process.exit(0))
@@ -1363,6 +1562,7 @@ if (require.main === module) {
 module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie, delaiAvantEtalonnage,
                    finDuMois, fin,
                    etatImport, noteDernier,
-                   trieReglements, prolongationPossible, AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
+                   trieReglements, prolongationPossible, avecPrix, rafraichitPrix, prixPerimes, prixAvantMatch, etatPrix, PRIX_JOUR_MS,
+                   AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
                    partDuJour, joursRestants, autorise, identifiant, etatQuota };

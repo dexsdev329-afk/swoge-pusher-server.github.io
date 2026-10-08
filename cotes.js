@@ -635,6 +635,20 @@ function habille(m, margeVoulue, now) {
      contournerait sans qu'on s'en apercoive. */
   if (deja && commence) return m;
 
+  /* ---- LE PRIX DU MARCHE PASSE AVANT L'ELO (08/10/2026) ----
+   * Pose par l'import sur les grands championnats (prix_marche.js) : les
+   * probabilites du marche, marge retiree. Les cotes en descendent, toutes,
+   * et se refont a chaque nouveau prix tant que la rencontre n'a pas commence.
+   * `cotesGenerees` reste vrai : ce n'est pas un lot recopie tel quel, et si
+   * le prix disparait (championnat retire de la liste), l'Elo reprend. */
+  if (m.prixMarche && m.prixMarche.p && !commence) {
+    const mm = marchesDuMarche(m.sport, m.prixMarche.p, margeVoulue);
+    if (!mm) throw new Error(`cotes : ${m.domicile} v ${m.exterieur} — trop desequilibre au prix du marche`);
+    const sortie = Object.assign({}, m, { marches: mm, cotesGenerees: true });
+    delete sortie.cotes;
+    return sortie;
+  }
+
   /* ---- UNE COTE RELEVEE EST INTOUCHABLE, LES CINQ AUTRES MARCHES NON ----
    * `if (deja && !cotesGenerees) return m` protegeait bien le 1-N-2 releve a
    * la main — et privait la rencontre des cinq marches, puisqu'il rendait
@@ -1067,8 +1081,7 @@ function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase) {
   const base = (cotesBase && iss1.every((i) => isFinite(Number(cotesBase[i]))))
     ? cotesBase : cotesDe(sport, domicile, exterieur, margeVoulue);
   const sortie = { [paris.MARCHE_BASE]: { cotes: base } };
-  const dispo = paris.marchesDuSport(sport).filter((k) => k !== paris.MARCHE_BASE);
-  if (!dispo.length) return sortie;
+  if (!paris.marchesDuSport(sport).some((k) => k !== paris.MARCHE_BASE)) return sortie;
   /* ---- ET LES CINQ AUTRES DESCENDENT DE CELUI-LA, PAS DE L'ELO ----
    * Sur une rencontre dont le 1-N-2 vient d'un bookmaker, un « les deux
    * marquent » calcule sur notre Elo exprimerait un AUTRE avis que celui
@@ -1097,6 +1110,15 @@ function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase) {
   const p = (cotesBase && base === cotesBase)
     ? (probasImplicites(base, iss1, 1) || probabilites(sport, domicile, exterieur))
     : probabilites(sport, domicile, exterieur);
+  return derives(sport, p, margeVoulue, sortie);
+}
+
+/* Les marches qui descendent d'un 1-N-2 donne en probabilites : `marchesDe`
+   (l'Elo, ou un lot releve) et `marchesDuMarche` (le prix du marche) passent
+   par le MEME calcul, pour qu'ils ne divergent jamais. */
+function derives(sport, p, margeVoulue, sortie, marges) {
+  const dispo = paris.marchesDuSport(sport).filter((k) => k !== paris.MARCHE_BASE);
+  if (!dispo.length) return sortie;
   if (!isFinite(p.N)) return sortie;             // deux issues : pas de buts a modeliser
   const { lh, la } = ajusteButs(p[1], p.N, p[2]);
   const tout = probasDesMarches(lh, la);
@@ -1109,7 +1131,7 @@ function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase) {
      * de Poisson et d'un rho estime. Prendre la meme marge sur les deux revient
      * a vendre au meme prix ce qu'on sait et ce qu'on suppose. */
     const lot = habilleUnMarche(tout[k], iss, M.couverture,
-                                margeVoulue * (M.margeX || 1),
+                                (marges && marges[k] !== undefined) ? marges[k] : margeVoulue * (M.margeX || 1),
                                 k === 'score' ? scoresPrudents(lh, la) : null);
     /* Un marche qui ne tient pas est ECARTE, pas force. La rencontre garde les
        autres — refuser tout le match parce qu'un handicap sort des bornes
@@ -1119,7 +1141,50 @@ function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase) {
   return sortie;
 }
 
+/**
+ * TOUS LES MARCHES D'UNE RENCONTRE, au prix du MARCHE (08/10/2026).
+ *
+ * `p` : les probabilites du marche, marge retiree (voir prix_marche.js). Le
+ * 1-N-2 prend notre marge par le meme exposant et le meme rabot que tous les
+ * autres marches ; les marches derives descendent de ces memes probabilites —
+ * on ne re-inverse pas nos propres cotes (l'aller-retour, casse par le rabot,
+ * avait deja fait sortir un score exact a 65,87 au lieu de 46,58).
+ * Rend null si le favori est trop court pour porter une marge au-dessus du
+ * plancher de 1,03 : la rencontre n'est alors pas un marche.
+ */
+/* ---- LES MARGES DES MARCHES DERIVES, AU PRIX DU MARCHE (08/10/2026) ----
+ * Le 1-N-2 vient du marche ; les buts, non : leur total est REDEDUIT du nul
+ * du marche (ajusteButs), faute de relever les totaux (un credit de plus par
+ * releve — hors du forfait gratuit). Mesure, Liga, 829 rencontres
+ * (football-data, prix de 1 a 4 jours) : a 10 %, 55 issues plus/moins 2,5 et
+ * les-deux-marquent sur 458 restaient battables (12 %, +3,9 a +8,7 %), 32,9 %
+ * des rencontres avec au moins une ; il faut environ 22 % pour descendre a
+ * 2 % (marge_buts.js, relecture du 08/10). Le score exact et le handicap
+ * prennent les marges que le registre leur DEMANDAIT (margeX x3 et x1,5,
+ * paris.js) et que l'import n'appliquait pas — sur ce chemin seulement : le
+ * chemin Elo garde les siennes tant que le proprietaire n'a pas tranche.
+ * La double chance n'a rien a deduire : elle est EXACTEMENT fixee par le 1-N-2
+ * du marche, on la cote dessus a la marge ordinaire. */
+const MARGES_AU_MARCHE = { ou25: 0.22, btts: 0.22, score: 0.30, hand: 0.15 };
+function marchesDuMarche(sport, p, margeVoulue) {
+  const iss1 = paris.issues(sport);
+  if (!p || !iss1.every((i) => Number(p[i]) > 0 && Number(p[i]) < 1)) return null;
+  const q = {};
+  for (const i of iss1) q[i] = Number(p[i]);
+  const base = habilleUnMarche(q, iss1, 1, margeVoulue);
+  if (!base) return null;
+  const sortie = derives(sport, q, margeVoulue, { [paris.MARCHE_BASE]: { cotes: base.cotes } }, MARGES_AU_MARCHE);
+  if (sortie.dc && isFinite(q.N)) {
+    const Mdc = paris.MARCHES.dc;
+    const pdc = { '1X': q[1] + q.N, 12: q[1] + q[2], X2: q.N + q[2] };
+    const lot = habilleUnMarche(pdc, Mdc.issues(sport), Mdc.couverture, margeVoulue);
+    if (lot) sortie.dc = { cotes: lot.cotes }; else delete sortie.dc;
+  }
+  return sortie;
+}
+
 module.exports = {
+  marchesDuMarche, derives, MARGES_AU_MARCHE,
   noteDe, reduit, pourquoiPasCotable, sansForce,
   NOTE_DEFAUT, TERRAIN, NUL_MAX, NUL_PENTE, MARGE_DEFAUT, MARGE_PLANCHER, COTE_PLANCHER,
   MARGE_ISSUE_MIN, MARGE_ISSUE_QUEUE, plancherDe, raboteIssues, exposant, tarife, cotable,
