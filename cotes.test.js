@@ -359,6 +359,42 @@ cotes.chargeNotes(TMP);
   eq(Object.keys(g.marches).sort().join(','), '1n2,btts,dc,hand,ou25,score',
      'une rencontre de football fabriquee porte les six marches');
 
+  /* ---- ET LEURS MARGES SONT CELLES DU REGISTRE, PAR LE CHEMIN DE L'IMPORT ----
+   * `habille(m)` SANS marge, exactement comme paris_import.js l'appelle.
+   * cotes_buts.test.js pose lui-meme MARGE_DEFAUT x margeX et passait : il
+   * verifiait la marge VOULUE. L'import n'en passait aucune, `undefined x 3`
+   * faisait NaN, et le x3 du score exact n'atteignait aucune rencontre de l'Elo
+   * (calendrier public du 08/10/2026 : score a 24,4-25,1 %, handicap a
+   * 10,8-12,1 %). Ce bloc tombait sur l'ancien code : « au moins 19,7 % ». */
+  {
+    const mgDe = (x, k) => paris.margeDe(x.marches[k].cotes, paris.MARCHES[k].issues('foot'),
+                                         paris.MARCHES[k].couverture);
+    let sMin = 1, hMin = 1, vues = 0, sVus = 0, hVus = 0, hAvant = 0;
+    for (let d = -500; d <= 500; d += 50) {
+      cotes.poseNote('foot', 'Marge-A', 1500 + d / 2);
+      cotes.poseNote('foot', 'Marge-B', 1500 - d / 2);
+      const h = cotes.habille({ id: 'marge-' + vues, sport: 'foot', domicile: 'Marge-A',
+                                exterieur: 'Marge-B', debut: '2030-01-01T12:00:00Z' });
+      vues++;
+      if (h.marches.score) { sVus++; sMin = Math.min(sMin, mgDe(h, 'score')); }
+      if (h.marches.hand) { hVus++; hMin = Math.min(hMin, mgDe(h, 'hand')); }
+      /* L'ancienne marge (10 % sur les deux), par le meme calcul : la plus
+         forte ne doit faire perdre aucun marche sur ces affiches. */
+      const avant = cotes.derives('foot', cotes.probabilites('foot', 'Marge-A', 'Marge-B'), undefined, {},
+                                  { score: 0.10, hand: 0.10 });
+      if (avant.hand) hAvant++;
+    }
+    ok(sVus === vues && sMin >= 0.30, `score exact : au moins ${(100 * sMin).toFixed(1)} % sur ${sVus}/${vues} affiches`
+       + ' — trois fois la marge de base, sur le chemin de l import, et aucun marche perdu');
+    ok(hVus === hAvant && hMin >= 0.14, `handicap : au moins ${(100 * hMin).toFixed(1)} % — une fois et demie — `
+       + `sur ${hVus} affiches, autant qu a 10 % (${hAvant} ; les plus desequilibrees n en ont jamais eu)`);
+    const b = cotes.habille({ id: 'marge-b', sport: 'foot', domicile: 'Marge-A', exterieur: 'Marge-B', debut: '2030-01-01T12:00:00Z' });
+    for (const k of ['ou25', 'btts', 'dc']) {
+      ok(Math.abs(mgDe(b, k) - 0.10) < 0.03,
+         `${k} : ${(100 * mgDe(b, k)).toFixed(1)} % — la marge de base, que cette decision ne touche pas`);
+    }
+  }
+
   /* Une cote PARTIELLE est un piege : deux issues sur trois relevees, la
      troisieme oubliee. Elle doit etre completee, pas laissee telle quelle —
      sinon le validateur jette au demarrage. */

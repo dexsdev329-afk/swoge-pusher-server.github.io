@@ -737,7 +737,12 @@ const cotes = require('./cotes');
     const [a1] = de('dep1'), [a2] = de('dep2'), [a3] = de('dep3'), [lyon] = de('f1');
     ok(a1 && a2 && a3 && lyon && !a1.ferme && !a2.ferme && !a3.ferme, 'les quatre rencontres sont au calendrier, ouvertes');
 
-    const AVANCEE = Date.now() + 30 * 3600000;      // un autre jour : un autre identifiant
+    /* Un autre jour que LOIN : un autre identifiant. A MIDI UTC, pas « maintenant
+       + 30 h » : lance entre 18 h et 19 h UTC, maintenant + 30 h tombait apres
+       minuit et l'avance d'une heure plus bas (AVANCEE - 1 h) avant — un jour,
+       donc un identifiant, de plus, et un troisieme ticket regle au score
+       (releve du 08/10 : rouge a 18 h, vert a 19 h 22, meme code). */
+    const AVANCEE = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 2, 12);
     const REPORTEE = LOIN + 2 * 86400000;
     EVENTS.soccer_epl = [evenement('dep1', 'Arsenal', 'Liverpool', AVANCEE),
                          evenement('dep2', 'Manchester City', 'Luton Town', REPORTEE)];   // dep3 n'est plus rendue

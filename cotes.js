@@ -1130,8 +1130,33 @@ function derives(sport, p, margeVoulue, sortie, marges) {
      * trois issues sur un 1-N-2, dix-sept sur un score exact tire d'une grille
      * de Poisson et d'un rho estime. Prendre la meme marge sur les deux revient
      * a vendre au meme prix ce qu'on sait et ce qu'on suppose. */
+    /* ---- MEME QUAND L'APPELANT NE DONNE AUCUNE MARGE (08/10/2026) ----
+     * L'import appelle `habille(m)` sans marge : `undefined * margeX` valait
+     * NaN, `habilleUnMarche` retombait sur MARGE_DEFAUT, et les x3 et x1,5 du
+     * registre n'atteignaient AUCUNE rencontre de l'Elo. Calendrier public du
+     * 08/10, 138 rencontres de onze championnats a l'Elo : score exact a
+     * 24,4-25,1 % de marge reelle (le rabot, pas la marge), handicap a
+     * 10,8-12,1 %. Decision du proprietaire : les marges du registre partout.
+     * Mesure (football-data 2018/19-2025/26, 24 142 matchs des neuf
+     * championnats a l'Elo E1 F2 D2 SP2 I2 N1 P1 B1 T1, Elo rejoue comme
+     * `calibre`, refaite par un second calcul independant) :
+     *   score x1 -> x3 : marge reelle 24,4 -> 31,6 % ; miser les huit scores
+     *     courants en dutching rend -12,3 +-0,8 -> -17,7 +-0,7 % au parieur ;
+     *     un parieur qui compare au 1-N-2 Pinnacle tire 0,161 -> 0,111 unite
+     *     par match offert. Aucun marche de score ecarte (0 sur 138).
+     *   handicap x1 -> x1,5 : l'issue « 2 » rend -3,4 -> -4,4 +-0,7 % ; issues
+     *     battables 7,8 -> 4,2 % contre la grille Pinnacle (47 778 issues),
+     *     12,2 -> 3,3 % contre la vraie ligne asiatique -1,5 (806, gros
+     *     favoris seulement) ; rendement realise non concluant. Le marche est
+     *     ecarte sur 1,4 % des rencontres au lieu de 1,1 % (7 098 rencontres).
+     * CE QUE LA MARGE NE FERME PAS : le 1-0. Sa cote est celle du rabot aux
+     * deux marges (~9,7) ; la grille lui donne ~7,9 % partout quand il sort a
+     * 14,1 % en Liga 2 et 13,0 % en Ligue 2 : mise a chaque match, +37 +-12 %
+     * en SP2 (3 400 matchs), +27 +-13 % en F2 (2 563). C'est le modele de buts
+     * (total identique partout), pas la marge — decision separee. */
     const lot = habilleUnMarche(tout[k], iss, M.couverture,
-                                (marges && marges[k] !== undefined) ? marges[k] : margeVoulue * (M.margeX || 1),
+                                (marges && marges[k] !== undefined) ? marges[k]
+                                  : (Number(margeVoulue) || MARGE_DEFAUT) * (M.margeX || 1),
                                 k === 'score' ? scoresPrudents(lh, la) : null);
     /* Un marche qui ne tient pas est ECARTE, pas force. La rencontre garde les
        autres — refuser tout le match parce qu'un handicap sort des bornes
@@ -1161,8 +1186,8 @@ function derives(sport, p, margeVoulue, sortie, marges) {
  * des rencontres avec au moins une ; il faut environ 22 % pour descendre a
  * 2 % (marge_buts.js, relecture du 08/10). Le score exact et le handicap
  * prennent les marges que le registre leur DEMANDAIT (margeX x3 et x1,5,
- * paris.js) et que l'import n'appliquait pas — sur ce chemin seulement : le
- * chemin Elo garde les siennes tant que le proprietaire n'a pas tranche.
+ * paris.js) et que l'import n'appliquait pas. Le chemin Elo les prend aussi
+ * depuis le 08/10 (decision du proprietaire ; la mesure est dans `derives`).
  * La double chance n'a rien a deduire : elle est EXACTEMENT fixee par le 1-N-2
  * du marche, on la cote dessus a la marge ordinaire. */
 const MARGES_AU_MARCHE = { ou25: 0.22, btts: 0.22, score: 0.30, hand: 0.15 };
