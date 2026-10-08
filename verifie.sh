@@ -43,6 +43,13 @@ lance navsortie "$SRV" node navigateur_sortie.test.js   # la sortie par proxy am
 lance navrel  "$SRV" node navigateur_relais.test.js   # le relais : le joueur de la SESSION, deux images en vol au plus, durees sans adresse
 lance pilote  "$SRV" node navigateur_pilote.test.js   # le pilote (02/10) : budget d IA jamais depasse, Stop sans geste apres, rien tape que le joueur n a ecrit, la session seule
 lance blackjack "$SRV" node blackjack.test.js   # les strategies de mise du mode blackjack : martingale, paroli, d alembert, plate ; plafond casse -> base, issues lues, serie
+lance casino  "$SRV" node casino.test.js   # Three Card et Casino Hold'em : retours mesures sur 300 000 mains, commission maison
+lance deuxcoffres "$SRV" node casino_deux_coffres.test.js   # casino a deux coffres (08/10) : une manche $SWOGEBET ne touche AUCUNE economie $SWOGE (net du jour, jackpot, revenu, volume, record) ; MEME jeton entree/sortie ; conservation du coffre des paris sur chaque jeu ; le Boulier reste $SWOGE-only
+lance crash   "$SRV" node crash.test.js   # le moteur du Crash : point de rupture provably-fair, retour mesure
+lance crashjeu "$SRV" node crash_game.test.js   # le Crash cable au solde : debit a la mise, credit au retrait (ou jamais), reconnexion, redemarrage
+lance vaultbet "$SRV" node vault_swogebet.test.js   # les paris sportifs en $SWOGEBET uniquement : les deux coffres isoles, le ticket paye dans sa propre monnaie, signature dans le bon domaine
+lance bilanparis "$SRV" node bilan_paris.test.js   # le bilan des paris : mises/rendus, le jeton de chaque ticket
+lance profilparis "$SRV" node profil_paris.test.js   # le profil paris d un joueur (ignore proprement si moins de 3 matchs au calendrier)
 lance pilotetables "$SRV" node pilote_tables.test.js   # ce que le pilote apprend d une table (par URL) : cle normalisee, reperes bornes, dedoublonnes, durables
 lance osinttel "$SRV" node osint_tel.test.js   # le plan de numerotation FR : type + region, deterministes, sans cle
 lance osintrte "$SRV" node osint_route.test.js   # un vrai serveur : la route publique du releve

@@ -7137,22 +7137,25 @@ wss.on('connection', (ws) => {
       if (m.type === 'spin') {
         // SWOGE Smash: 1 spin = SPIN_COST $SWOGE, provably-fair, RTP 50%.
         // Shares the exact same balance as the Pusher (same game.players map).
-        const r = game.spin(ws.addr, m.bet);
+        const r = game.spin(ws.addr, m.bet, m.jeton);
         if (r === null) return send(ws, { type: 'need_deposit', balance: game.balanceStr(ws.addr) });
         if (r.error) return send(ws, { type: 'error', error: r.error });
         persistSoon();
-        notifyTableWin(ws.addr, 'smash', { net: r.payout - r.bet, staked: r.bet,
+        // Une manche $SWOGEBET ne nourrit NI le canal $SWOGE NI le classement.
+        if (m.jeton !== 'swogebet') notifyTableWin(ws.addr, 'smash', { net: r.payout - r.bet, staked: r.bet,
                                            payout: r.payout, note: `${r.mult}×` });
-        return send(ws, { type: 'spinResult', mult: r.mult, payout: r.payout, bet: r.bet, balance: game.balanceStr(ws.addr), fairness: game.fairness(ws.addr) });
+        return send(ws, { type: 'spinResult', mult: r.mult, payout: r.payout, bet: r.bet,
+                          jeton: m.jeton === 'swogebet' ? 'swogebet' : 'swoge',
+                          balance: game.balanceStr(ws.addr), betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
       }
       if (m.type === 'volcanoSpin' || m.type === 'volcanoBuyBonus') {
         // SWOGE Spin (Volcano). Server-authoritative, provably fair, RTP ~70%.
         // Shares the same balance as every other game.
         try {
-          const r = m.type === 'volcanoSpin' ? game.volcanoSpin(ws.addr, m.bet) : game.volcanoBuyBonus(ws.addr, m.bet);
+          const r = m.type === 'volcanoSpin' ? game.volcanoSpin(ws.addr, m.bet, m.jeton) : game.volcanoBuyBonus(ws.addr, m.bet, m.jeton);
           if (r.error) return send(ws, { type: 'need_deposit', balance: game.balanceStr(ws.addr) });
           persistSoon();
-          notifyTableWin(ws.addr, 'spin', { net: r.payout - r.bet, staked: r.bet, payout: r.payout });
+          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'spin', { net: r.payout - r.bet, staked: r.bet, payout: r.payout });
           send(ws, { type: 'volcanoResult', ...r });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
@@ -7161,7 +7164,7 @@ wss.on('connection', (ws) => {
         // SWOGE Blackjack — same shared balance, provably-fair, server-authoritative.
         try {
           let st;
-          if (m.type === 'bj_bet') st = game.bjBet(ws.addr, m.amount, m.annexes);
+          if (m.type === 'bj_bet') st = game.bjBet(ws.addr, m.amount, m.annexes, m.jeton);
           else if (m.type === 'bj_insure') st = game.bjInsure(ws.addr, m.amount);
           else if (m.type === 'bj_hit') st = game.bjHit(ws.addr);
           else if (m.type === 'bj_stand') st = game.bjStand(ws.addr);
@@ -7178,7 +7181,7 @@ wss.on('connection', (ws) => {
             const gainAnn = (a.pp ? a.pp.gain : 0) + (a.tp ? a.tp.gain : 0) + (a.ins ? a.ins.gain : 0);
             const engage = (st.doubled ? st.bet * 2 : st.bet) + miseAnn;
             const rendu = st.payout + gainAnn;
-            notifyTableWin(ws.addr, 'bj', { net: rendu - engage, staked: engage,
+            if (st.jeton !== 'swogebet') notifyTableWin(ws.addr, 'bj', { net: rendu - engage, staked: engage,
                                             payout: rendu, note: st.result });
           }
           send(ws, { type: 'bj', state: st });
@@ -9037,12 +9040,12 @@ wss.on('connection', (ws) => {
       if (m.type === 'casinoState') return send(ws, { type: 'casino', state: game.casinoState(ws.addr) });
       if (m.type === 'casinoDeal') {
         try {
-          const st = game.casinoDeal(ws.addr, String(m.game || ''), m.ante, m.side);
+          const st = game.casinoDeal(ws.addr, String(m.game || ''), m.ante, m.side, m.jeton);
           persistSoon();
           // Une main peut se conclure des la donne (Pair Plus / bonus AA paye
           // alors que le joueur se couche) : le gain doit s'annoncer ici aussi.
-          if (st.stage === 'done' && st.result) notifyTableWin(ws.addr, st.game, st.result);
-          send(ws, { type: 'casino', state: st, balance: game.balanceStr(ws.addr) });
+          if (st.stage === 'done' && st.result && st.jeton !== 'swogebet') notifyTableWin(ws.addr, st.game, st.result);
+          send(ws, { type: 'casino', state: st, balance: game.balanceStr(ws.addr), betBalance: game.betBalanceStr(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9050,9 +9053,9 @@ wss.on('connection', (ws) => {
         try {
           const st = game.casinoDecide(ws.addr, !!m.play);
           persistSoon();
-          if (st.result) notifyTableWin(ws.addr, st.game, st.result);
+          if (st.result && st.jeton !== 'swogebet') notifyTableWin(ws.addr, st.game, st.result);
           send(ws, { type: 'casino', state: st, balance: game.balanceStr(ws.addr),
-                     fairness: game.fairness(ws.addr) });
+                     betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9061,9 +9064,9 @@ wss.on('connection', (ws) => {
       if (m.type === 'hiloState') return send(ws, { type: 'hilo', state: game.hiloState(ws.addr) });
       if (m.type === 'hiloStart') {
         try {
-          const st = game.hiloStart(ws.addr, m.bet);
+          const st = game.hiloStart(ws.addr, m.bet, m.jeton);
           persistSoon();
-          send(ws, { type: 'hilo', state: st, balance: game.balanceStr(ws.addr) });
+          send(ws, { type: 'hilo', state: st, balance: game.balanceStr(ws.addr), betBalance: game.betBalanceStr(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9072,7 +9075,7 @@ wss.on('connection', (ws) => {
           const st = game.hiloStep(ws.addr, String(m.dir || ''));
           persistSoon();
           send(ws, { type: 'hilo', state: st, balance: game.balanceStr(ws.addr),
-                     fairness: game.fairness(ws.addr) });
+                     betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9082,10 +9085,10 @@ wss.on('connection', (ws) => {
           persistSoon();
           // Le multiplicateur atteint est ce qui rend l'annonce interessante :
           // «+3000» dit combien, «x16.20 en 4 pas» dit comment.
-          notifyTableWin(ws.addr, 'hilo', { net: st.net, staked: st.mise, payout: st.payout,
+          if (st.jeton !== 'swogebet') notifyTableWin(ws.addr, 'hilo', { net: st.net, staked: st.mise, payout: st.payout,
                                             note: `${st.multi.toFixed(2)}× in ${st.pas} step${st.pas > 1 ? 's' : ''}` });
           send(ws, { type: 'hilo', state: st, balance: game.balanceStr(ws.addr),
-                     fairness: game.fairness(ws.addr) });
+                     betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9094,9 +9097,9 @@ wss.on('connection', (ws) => {
       if (m.type === 'minesState') return send(ws, { type: 'mines', state: game.minesState(ws.addr) });
       if (m.type === 'minesStart') {
         try {
-          const st = game.minesStart(ws.addr, m.bet, m.mines);
+          const st = game.minesStart(ws.addr, m.bet, m.mines, m.jeton);
           persistSoon();
-          send(ws, { type: 'mines', state: st, balance: game.balanceStr(ws.addr) });
+          send(ws, { type: 'mines', state: st, balance: game.balanceStr(ws.addr), betBalance: game.betBalanceStr(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9105,7 +9108,7 @@ wss.on('connection', (ws) => {
           const st = game.minesPick(ws.addr, m.pos);
           persistSoon();
           send(ws, { type: 'mines', state: st, balance: game.balanceStr(ws.addr),
-                     fairness: game.fairness(ws.addr) });
+                     betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9114,10 +9117,10 @@ wss.on('connection', (ws) => {
           const st = game.minesCashOut(ws.addr);
           persistSoon();
           // le nombre de bombes et de cases dit tout du risque pris
-          notifyTableWin(ws.addr, 'mines', { net: st.net, staked: st.mise, payout: st.payout,
+          if (st.jeton !== 'swogebet') notifyTableWin(ws.addr, 'mines', { net: st.net, staked: st.mise, payout: st.payout,
                                              note: `${st.multi.toFixed(2)}× on ${st.ouvertes.length} tile${st.ouvertes.length > 1 ? 's' : ''}, ${st.nbMines} mine${st.nbMines > 1 ? 's' : ''}` });
           send(ws, { type: 'mines', state: st, balance: game.balanceStr(ws.addr),
-                     fairness: game.fairness(ws.addr) });
+                     betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9145,12 +9148,12 @@ wss.on('connection', (ws) => {
       // ---- plinko ----
       if (m.type === 'plinkoDrop') {
         try {
-          const r = game.plinkoDrop(ws.addr, m.bet, m.rows, m.risk);
+          const r = game.plinkoDrop(ws.addr, m.bet, m.rows, m.risk, m.jeton);
           persistSoon();
-          notifyTableWin(ws.addr, 'plinko', { net: r.net, staked: r.mise, payout: r.payout,
+          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'plinko', { net: r.net, staked: r.mise, payout: r.payout,
                                               note: `${r.multi.toFixed(2)}× on ${r.rangees} rows, ${r.risque} risk` });
           send(ws, { type: 'plinko', drop: r, balance: game.balanceStr(ws.addr),
-                     fairness: game.fairness(ws.addr) });
+                     betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9158,14 +9161,14 @@ wss.on('connection', (ws) => {
       // ---- swoge le chenil ----
       if (m.type === 'chenilSpin') {
         try {
-          const r = game.chenilSpin(ws.addr, m.bet);
+          const r = game.chenilSpin(ws.addr, m.bet, m.jeton);
           persistSoon();
-          notifyTableWin(ws.addr, 'chenil', { net: r.net, staked: r.mise, payout: r.payout,
+          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'chenil', { net: r.net, staked: r.mise, payout: r.payout,
                                               note: r.ouvre
                                                 ? `${r.multi.toFixed(2)}× · ${r.toursGratuits} free spins`
                                                 : `${r.multi.toFixed(2)}×` });
           send(ws, { type: 'chenil', tour: r, balance: game.balanceStr(ws.addr),
-                     fairness: game.fairness(ws.addr) });
+                     betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9173,25 +9176,25 @@ wss.on('connection', (ws) => {
       // ---- dead or doge ----
       if (m.type === 'dodSpin') {
         try {
-          const r = game.dodSpin(ws.addr, m.bet);
+          const r = game.dodSpin(ws.addr, m.bet, m.jeton);
           persistSoon();
-          notifyTableWin(ws.addr, 'dod', { net: r.net, staked: r.mise, payout: r.payout,
+          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'dod', { net: r.net, staked: r.mise, payout: r.payout,
                                            note: r.mode
                                              ? `${r.multi.toFixed(2)}× · ${r.mode === 'deader' ? 'Deader' : 'Dead'} Spins`
                                              : `${r.multi.toFixed(2)}×` });
           send(ws, { type: 'dod', tour: r, balance: game.balanceStr(ws.addr),
-                     fairness: game.fairness(ws.addr) });
+                     betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
       if (m.type === 'dodAchat') {
         try {
-          const r = game.dodAchat(ws.addr, m.bet, m.cran);
+          const r = game.dodAchat(ws.addr, m.bet, m.cran, m.jeton);
           persistSoon();
-          notifyTableWin(ws.addr, 'dod', { net: r.net, staked: r.cout, payout: r.payout,
+          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'dod', { net: r.net, staked: r.cout, payout: r.payout,
                                            note: `${r.cran} bought · ${r.multi.toFixed(2)}×` });
           send(ws, { type: 'dod', tour: r, balance: game.balanceStr(ws.addr),
-                     fairness: game.fairness(ws.addr) });
+                     betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9199,14 +9202,14 @@ wss.on('connection', (ws) => {
       // ---- bonanza ----
       if (m.type === 'bonanzaSpin') {
         try {
-          const r = game.bonanzaSpin(ws.addr, m.bet);
+          const r = game.bonanzaSpin(ws.addr, m.bet, m.jeton);
           persistSoon();
-          notifyTableWin(ws.addr, 'bonanza', { net: r.net, staked: r.mise, payout: r.payout,
+          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'bonanza', { net: r.net, staked: r.mise, payout: r.payout,
                                                note: r.toursGratuits
                                                  ? `${r.multi.toFixed(2)}× with ${r.toursGratuits} free spins`
                                                  : `${r.multi.toFixed(2)}×` });
           send(ws, { type: 'bonanza', tour: r, balance: game.balanceStr(ws.addr),
-                     fairness: game.fairness(ws.addr) });
+                     betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9214,12 +9217,12 @@ wss.on('connection', (ws) => {
       // ---- bonanza : l'achat du bonus ----
       if (m.type === 'bonanzaAchat') {
         try {
-          const r = game.bonanzaAchat(ws.addr, m.bet);
+          const r = game.bonanzaAchat(ws.addr, m.bet, m.jeton);
           persistSoon();
-          notifyTableWin(ws.addr, 'bonanza', { net: r.net, staked: r.cout, payout: r.payout,
+          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'bonanza', { net: r.net, staked: r.cout, payout: r.payout,
                                                note: `bonus bought · ${r.multi.toFixed(2)}×` });
           send(ws, { type: 'bonanza', tour: r, balance: game.balanceStr(ws.addr),
-                     fairness: game.fairness(ws.addr) });
+                     betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
@@ -9227,7 +9230,7 @@ wss.on('connection', (ws) => {
       // ---- crash ----
       if (m.type === 'crashBet') {
         try {
-          const r = game.crashMise(ws.addr, m.bet, m.auto, Date.now());
+          const r = game.crashMise(ws.addr, m.bet, m.auto, Date.now(), m.jeton);
           send(ws, { type: 'crashBet', ...r });
           // La table est le spectacle : les autres doivent voir la mise arriver.
           broadcast({ type: 'crashJoueur', addr: ws.addr, name: game._p(ws.addr).name,

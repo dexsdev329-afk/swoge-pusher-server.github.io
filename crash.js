@@ -281,7 +281,8 @@ class Table {
     p.payout = Math.floor(p.mise * multi);
     p.retireA = quand;
     return { type: 'crashRetrait', addr, manche: this.manche, mise: p.mise,
-             multi, payout: p.payout, net: p.payout - p.mise, auto: true };
+             multi, payout: p.payout, net: p.payout - p.mise, auto: true,
+             jeton: p.jeton || 'swoge' };
   }
 
   // ------------------------------------------------------------ les mises
@@ -290,14 +291,18 @@ class Table {
    * Poser une mise. Seulement pendant l'attente : une mise acceptee apres le
    * depart serait une mise prise en connaissance de la courbe.
    */
-  parier(addr, mise, auto, now) {
+  parier(addr, mise, auto, now, jeton) {
     if (this.phase !== ATTENTE) throw new Error('bets are closed');
     if (this.paris.has(addr)) throw new Error('already in this round');
     const a = auto == null || auto === '' ? 0 : Number(auto);
     if (a && !(a >= 1.01)) throw new Error('auto cash out must be at least 1.01x');
     if (a && a > this.plafond) throw new Error('auto cash out above the ' + this.plafond + 'x cap');
+    /* Le coffre mise ($SWOGE ou $SWOGEBET) voyage avec le pari : il est FIXE
+       ici et relu au credit, pour qu'une manche ouverte en $SWOGEBET se paie
+       en $SWOGEBET — jamais une passerelle entre les deux coffres. */
     this.paris.set(addr, { mise, auto: a ? Math.floor(a * 100) / 100 : 0,
-                           multi: null, payout: 0, retireA: 0 });
+                           multi: null, payout: 0, retireA: 0,
+                           jeton: jeton === 'swogebet' ? 'swogebet' : 'swoge' });
     return { manche: this.manche, mise, auto: a };
   }
 
@@ -321,7 +326,7 @@ class Table {
   /** Le pari d'un joueur, ou null. */
   pari(addr) {
     const p = this.paris.get(addr);
-    return p ? { mise: p.mise, auto: p.auto, multi: p.multi, payout: p.payout } : null;
+    return p ? { mise: p.mise, auto: p.auto, multi: p.multi, payout: p.payout, jeton: p.jeton || 'swoge' } : null;
   }
 
   /** La table telle qu'on l'affiche : mises et encaissements de tout le monde. */

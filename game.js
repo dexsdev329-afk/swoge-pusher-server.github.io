@@ -1966,18 +1966,30 @@ class Game {
   _manche(p, jeu, mise, rendu, opts) {
     if (!p || !jeu) return;
     const suite = !!(opts && opts.suite);
+    /* 08/10 : la monnaie de la manche. Une manche de casino jouee avec des
+       jetons de PARIS ($SWOGEBET) ne doit polluer AUCUNE economie $SWOGE. */
+    const jeton = (opts && opts.jeton === 'swogebet') ? 'swogebet' : 'swoge';
     /* Le seul point de passage de TOUTES les manches, tous jeux confondus :
        c'est donc ici que le journal se remplit, et nulle part ailleurs. Un
        nouveau jeu qui appelle _manche est journalise sans rien avoir a
        ajouter — et un jeu qui oublierait de l'appeler ne compterait deja pas
        dans les statistiques, ce qui se voit. */
-    if (p.addr && !(opts && opts.sansJournal)) journal.ajoute(p.addr, { k: 'r', g: jeu, m: Number(mise) || 0, p: Number(rendu) || 0,
+    if (p.addr && !(opts && opts.sansJournal)) journal.ajoute(p.addr, Object.assign({ k: 'r', g: jeu, m: Number(mise) || 0, p: Number(rendu) || 0,
       /* De quoi refaire le calcul soi-meme, une fois la graine du serveur
          revelee : son empreinte, la graine du joueur, et les numeros utilises
          par cette manche. */
       sh: this.serverSeedHash, cs: p.clientSeed,
-      n0: p.nonceDebut == null ? p.nonce : p.nonceDebut, n1: p.nonce });
+      n0: p.nonceDebut == null ? p.nonce : p.nonceDebut, n1: p.nonce }, jeton === 'swogebet' ? { j: 'swogebet' } : {}));
     this.manchesGraine = (this.manchesGraine || 0) + 1;
+    if (jeton === 'swogebet') {
+      /* $SWOGEBET : ni revenu maison, ni parrainage, ni volume du mois, ni
+         record, ni jackpot, ni classement $SWOGE, ni stats par jeu $SWOGE.
+         Comptabilite SEPAREE pour ne pas etre aveugle (voir releve). */
+      this.note('misesBet', Number(mise) || 0, p.addr);
+      this.note('rendusBet', Number(rendu) || 0, p.addr);
+      if (!suite) this.note('manchesBet', 1);
+      return;
+    }
     this.noteJeu(p, jeu, mise, rendu, suite);
     /* LE point de passage du revenu. Il vaut pour les jeux contre la banque
        comme pour le 1v1 : la somme des mises moins la somme des rendus EST ce
@@ -4225,6 +4237,42 @@ class Game {
     else { q.balance = q.balance.add(wei); q.dayNet = q.dayNet.add(wei); }
   }
 
+  /* ---- Casino a deux coffres (08/10/2026) ----------------------------------
+   * Le joueur peut miser une manche de casino depuis son $SWOGE (coffre
+   * principal) OU son $SWOGEBET (coffre des paris). Regle de surete : MEME
+   * jeton a l'entree et a la sortie — une manche ouverte en $SWOGEBET se paie
+   * en $SWOGEBET, jamais en $SWOGE (sinon c'est une passerelle de conversion).
+   * Le jeton est FIXE a l'ouverture, pose sur l'etat de la manche, et relu au
+   * paiement — jamais pris dans un message ulterieur. La page ne fait que
+   * montrer le choix ; c'est ici, cote serveur, que le bon coffre est debite,
+   * sur `ws.addr` et nulle part ailleurs.
+   *
+   * Pour $SWOGE le comportement est STRICTEMENT identique a avant (net du jour).
+   * Pour $SWOGEBET : ni net du jour, ni jackpot, ni classement $SWOGE — comme un
+   * pari (le volume `_markWager` et les stats par jeu $SWOGEBET restent a part). */
+  static jetonMise(j) { return j === 'swogebet' ? 'swogebet' : 'swoge'; }
+  /** Debite la mise `wei` sur le coffre du jeton. Garde et debit sur le MEME
+      coffre ; leve avec le bon symbole si le solde est trop juste. Ne touche ni
+      drops ni markWager (laisses a l'appelant, inchanges cote $SWOGE). */
+  _debiteMise(p, wei, jeton) {
+    if (Game.jetonMise(jeton) === 'swogebet') {
+      if ((p.betBalance || BN(0)).lt(wei)) throw new Error('not enough $SWOGEBET');
+      p.betBalance = (p.betBalance || BN(0)).sub(wei);
+    } else {
+      if (p.balance.lt(wei)) throw new Error('not enough $SWOGE');
+      p.balance = p.balance.sub(wei);
+      this._bumpDay(p); p.dayNet = p.dayNet.sub(wei);
+    }
+  }
+  /** Verse le gain/retour `wei` sur le MEME coffre que la mise. 0 est permis. */
+  _payeGain(p, wei, jeton) {
+    if (!wei || wei.lte(BN(0))) return;
+    if (Game.jetonMise(jeton) === 'swogebet') p.betBalance = (p.betBalance || BN(0)).add(wei);
+    else { p.balance = p.balance.add(wei); this._bumpDay(p); p.dayNet = p.dayNet.add(wei); }
+  }
+  /** Le solde du coffre d'un jeton, en texte (pour borner la mise cote serveur). */
+  soldeDuJeton(addr, jeton) { return Game.jetonMise(jeton) === 'swogebet' ? this.betBalanceStr(addr) : this.balanceStr(addr); }
+
   /** Ce que la maison doit encore sur l'ensemble des paris non regles. */
   engagementTotal() {
     const vus = new Set();
@@ -5888,17 +5936,19 @@ class Game {
    * pass the balance check (Node is single-threaded; the second sees the
    * already-deducted balance). Returns { mult, payout } or null if too poor.
    */
-  spin(addr, betRaw) {
+  spin(addr, betRaw, jetonRaw) {
     const p = this._p(addr);
+    const jeton = Game.jetonMise(jetonRaw);     // 08/10 : coffre choisi, fixe pour CETTE manche
     // Mise variable (defaut : l'ancien cout fixe, pour les clients pas encore a jour)
     let bet = Math.floor(Number(betRaw));
     if (!(bet >= 1)) bet = Number(cfg.SPIN_COST || '1');
     if (bet < cfg.SMASH_MIN_BET) bet = cfg.SMASH_MIN_BET;
-    if (bet > cfg.SMASH_MAX_BET) return { error: 'max bet is ' + cfg.SMASH_MAX_BET + ' $SWOGE' };
+    if (bet > cfg.SMASH_MAX_BET) return { error: 'max bet is ' + cfg.SMASH_MAX_BET + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE') };
     const betWei = WEI(bet);
-    if (p.balance.lt(betWei)) return null;
-    p.balance = p.balance.sub(betWei);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++; this._markWager(p, betWei, 'smash');
+    if ((jeton === 'swogebet' ? (p.betBalance || BN(0)) : p.balance).lt(betWei)) return null;
+    this._debiteMise(p, betWei, jeton);         // garde + debit sur le bon coffre (net du jour cote $SWOGE seul)
+    p.dropsToday++;
+    this._markWager(p, betWei, 'smash');
     const h = crypto.createHmac('sha256', this.serverSeed)
       .update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
@@ -5907,12 +5957,11 @@ class Game {
     for (let i = 0; i < cfg.SPIN_PRIZES.length; i++) { r -= cfg.SPIN_PRIZES[i][1]; if (r < 0) { mult = cfg.SPIN_PRIZES[i][0]; break; } }
     let payout = 0;
     if (mult > 0) {
-      const pay = betWei.mul(mult);
-      p.balance = p.balance.add(pay);
-      this._bumpDay(p); p.dayNet = p.dayNet.add(pay); p.winsToday++;
+      this._payeGain(p, betWei.mul(mult), jeton);
+      p.winsToday++;
       payout = mult * bet;
     }
-    this._manche(p, 'smash', bet, payout);
+    this._manche(p, 'smash', bet, payout, { jeton });
     return { mult, payout, bet };
   }
 
@@ -5924,51 +5973,53 @@ class Game {
    * faked), tracks the per-player collect meter, and credits base×bet. RTP ~70%.
    * Returns { outcome, bet, payout, balance, fairness } or { error }.
    */
-  volcanoSpin(addr, bet) {
+  volcanoSpin(addr, bet, jetonRaw) {
     const p = this._p(addr);
+    const jeton = Game.jetonMise(jetonRaw);
     bet = Math.floor(Number(bet));
     if (!cfg.VOLCANO_BETS.includes(bet)) throw new Error('invalid bet');
     const betWei = WEI(bet);
-    if (p.balance.lt(betWei)) return { error: 'need_deposit' };
-    p.balance = p.balance.sub(betWei);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(betWei); p.dropsToday++; this._markWager(p, betWei, 'spin');
+    if ((jeton === 'swogebet' ? (p.betBalance || BN(0)) : p.balance).lt(betWei)) return { error: 'need_deposit' };
+    this._debiteMise(p, betWei, jeton);
+    p.dropsToday++;
+    this._markWager(p, betWei, 'spin');
     const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
     const out = volcano.spinAll(volcano.rngFrom(h), p.volcanoMeter || 0);
     p.volcanoMeter = out.meter;
     let payout = 0;
     if (out.totalInternal > 0) {
-      const payWei = WEI(out.totalInternal * bet);
-      p.balance = p.balance.add(payWei);
-      this._bumpDay(p); p.dayNet = p.dayNet.add(payWei); p.winsToday++;
+      this._payeGain(p, WEI(out.totalInternal * bet), jeton);
+      p.winsToday++;
       payout = out.totalInternal * bet;
     }
-    this._manche(p, 'spin', bet, payout);
-    return { outcome: out, bet, payout, balance: this.balanceStr(addr), fairness: this.fairness(addr) };
+    this._manche(p, 'spin', bet, payout, { jeton });
+    return { outcome: out, bet, payout, jeton, balance: this.balanceStr(addr), betBalance: this.betBalanceStr(addr), fairness: this.fairness(addr) };
   }
 
   /** Buy the bonus directly: costs bet × VOLCANO_BONUS_COST_MULT, runs a guaranteed bonus. */
-  volcanoBuyBonus(addr, bet) {
+  volcanoBuyBonus(addr, bet, jetonRaw) {
     const p = this._p(addr);
+    const jeton = Game.jetonMise(jetonRaw);
     bet = Math.floor(Number(bet));
     if (!cfg.VOLCANO_BETS.includes(bet)) throw new Error('invalid bet');
     const cost = bet * cfg.VOLCANO_BONUS_COST_MULT;
     const costWei = WEI(cost);
-    if (p.balance.lt(costWei)) return { error: 'need_deposit' };
-    p.balance = p.balance.sub(costWei);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(costWei); p.dropsToday++; this._markWager(p, costWei, 'spin');
+    if ((jeton === 'swogebet' ? (p.betBalance || BN(0)) : p.balance).lt(costWei)) return { error: 'need_deposit' };
+    this._debiteMise(p, costWei, jeton);
+    p.dropsToday++;
+    this._markWager(p, costWei, 'spin');
     const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':' + p.nonce).digest('hex');
     p.nonce++;
     const bonus = volcano.runBonus(3, volcano.rngFrom(h));
     let payout = 0;
     if (bonus.total > 0) {
-      const payWei = WEI(bonus.total * bet);
-      p.balance = p.balance.add(payWei);
-      this._bumpDay(p); p.dayNet = p.dayNet.add(payWei); p.winsToday++;
+      this._payeGain(p, WEI(bonus.total * bet), jeton);
+      p.winsToday++;
       payout = bonus.total * bet;
     }
-    this._manche(p, 'spinBonus', cost, payout);
-    return { outcome: { bonus }, bet, cost, payout, balance: this.balanceStr(addr), fairness: this.fairness(addr) };
+    this._manche(p, 'spinBonus', cost, payout, { jeton });
+    return { outcome: { bonus }, bet, cost, payout, jeton, balance: this.balanceStr(addr), betBalance: this.betBalanceStr(addr), fairness: this.fairness(addr) };
   }
 
   // ===== SWOGE Blackjack (provably-fair, infinite deck, dealer stands on 17) =====
@@ -6074,7 +6125,8 @@ class Game {
       bet: b.bet, doubled: !!b.doubled, stage: b.stage,
       player: { cards: b.pc.slice(), value: this._bjVal(b.pc) },
       dealer: { cards: show ? b.dc.slice() : [b.dc[0]], value: show ? this._bjVal(b.dc) : this._bjVal([b.dc[0]]), hidden: !show },
-      canDouble: b.stage === 'player' && b.pc.length === 2 && p.balance.gte(WEI(b.bet)),
+      canDouble: b.stage === 'player' && b.pc.length === 2 &&
+        (Game.jetonMise(b.jeton) === 'swogebet' ? (p.betBalance || BN(0)) : p.balance).gte(WEI(b.bet)),
       result: b.result || null, payout: b.payout || 0,
       /* Les annexes voyagent toujours, meme vides : la page peut alors les
          peindre sans se demander si le champ existe. */
@@ -6087,39 +6139,44 @@ class Game {
          page ne recalcule pas la moitie de la mise dans son coin : elle
          afficherait un maximum que le serveur refuse des que le solde manque. */
       insuranceMax: b.stage === 'insurance' ? this._bjAssuranceMax(p) : 0,
+      jeton: Game.jetonMise(b.jeton),
       balance: ethers.utils.formatUnits(p.balance, cfg.DECIMALS),
+      betBalance: ethers.utils.formatUnits(p.betBalance || BN(0), cfg.DECIMALS),
       fairness: { serverSeedHash: this.serverSeedHash, nonce: p.nonce },
     };
   }
   /** Mise annexe acceptable, ou l'erreur exacte qui dit pourquoi elle ne l'est pas. */
-  _bjMiseAnnexe(v, nom) {
+  _bjMiseAnnexe(v, nom, sym) {
     if (v == null || v === '') return 0;
     const m = Math.floor(Number(v));
     if (!isFinite(m) || m < 0) throw new Error('bad ' + nom + ' side bet');
     if (m === 0) return 0;
-    if (m > cfg.BJ_SIDE_MAX_BET) throw new Error('side bets are capped at ' + cfg.BJ_SIDE_MAX_BET + ' $SWOGE');
+    if (m > cfg.BJ_SIDE_MAX_BET) throw new Error('side bets are capped at ' + cfg.BJ_SIDE_MAX_BET + (sym || ' $SWOGE'));
     return m;
   }
   _bjAssuranceMax(p) {
     const moitie = Math.floor(p.bj.bet / 2);
-    const solde = Math.floor(Number(ethers.utils.formatUnits(p.balance, cfg.DECIMALS)));
+    /* La moitie est bornee par le solde du MEME coffre que la main. */
+    const soldeWei = Game.jetonMise(p.bj.jeton) === 'swogebet' ? (p.betBalance || BN(0)) : p.balance;
+    const solde = Math.floor(Number(ethers.utils.formatUnits(soldeWei, cfg.DECIMALS)));
     return Math.max(0, Math.min(moitie, solde));
   }
   /** Credite un pari annexe et l'inscrit sous son propre nom de jeu. */
   _bjPaieAnnexe(p, cle, jeu, rang, mult) {
     const a = Game._bjAnn(p.bj)[cle];
     if (!(a.mise > 0)) return;
+    const jeton = Game.jetonMise(p.bj.jeton);     // l'annexe se paie dans le MEME coffre que la main
     a.rang = rang;
     a.gain = rang ? a.mise * (mult + 1) : 0;
     if (a.gain > 0) {
-      p.balance = p.balance.add(WEI(a.gain));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(a.gain)); p.winsToday++;
+      this._payeGain(p, WEI(a.gain), jeton);
+      p.winsToday++;
     }
     /* Chaque annexe tient SON compte, sous son propre nom. Les noyer dans
        « bj » cacherait exactement ce qu'on a besoin de surveiller : une table
        de gain trop genereuse se voit sur la ligne du pari concerne, pas sur
        celle de la main principale qui, elle, est saine. */
-    this._manche(p, jeu, a.mise, a.gain);
+    this._manche(p, jeu, a.mise, a.gain, { jeton });
   }
   /* Les deux annexes d'avant-donne, reglees d'un coup. Elles ne lisent que
      pc[0], pc[1] et dc[0] : la carte cachee n'entre pas dans le calcul. */
@@ -6138,20 +6195,22 @@ class Game {
      sur un As decouvert, on demande d'abord au joueur, ON REGARDE ENSUITE. */
   _bjNaturels(p) {
     const b = p.bj, amt = b.bet, w = WEI(amt);
+    const jeton = Game.jetonMise(b.jeton);     // coffre FIXE pose a la mise, relu ici
     const pv = this._bjVal(b.pc), dv = this._bjVal(b.dc);
     if (pv !== 21 && dv !== 21) { b.stage = 'player'; return; }
     if (pv === 21 && dv === 21) {
       b.stage = 'done'; b.result = 'push'; b.payout = amt;
-      p.balance = p.balance.add(w); this._bumpDay(p); p.dayNet = p.dayNet.add(w);
-      this._manche(p, 'bj', amt, amt);
+      this._payeGain(p, w, jeton);
+      this._manche(p, 'bj', amt, amt, { jeton });
     } else if (pv === 21) {
       const credit = amt * 2.5;
-      p.balance = p.balance.add(WEI(credit)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(credit)); p.winsToday++;
+      this._payeGain(p, WEI(credit), jeton);
+      p.winsToday++;
       b.stage = 'done'; b.result = 'blackjack'; b.payout = credit;
-      this._manche(p, 'bj', amt, credit);
+      this._manche(p, 'bj', amt, credit, { jeton });
     } else {
       b.stage = 'done'; b.result = 'dealer_blackjack'; b.payout = 0;
-      this._manche(p, 'bj', amt, 0);
+      this._manche(p, 'bj', amt, 0, { jeton });
     }
   }
   /* L'assurance non repondue vaut REFUS. Un client qui ignore l'etape (une
@@ -6169,15 +6228,16 @@ class Game {
     return p.bj.stage === 'done';
   }
   _bjSettle(p, stake) {   // stake already deducted; credit the return
+    const jeton = Game.jetonMise(p.bj.jeton);
     const pv = this._bjVal(p.bj.pc), dv = this._bjVal(p.bj.dc);
     let res, credit = 0;
     if (pv > 21) res = 'bust';
     else if (dv > 21 || pv > dv) { res = 'win'; credit = stake * 2; }
     else if (pv < dv) res = 'lose';
     else { res = 'push'; credit = stake; }
-    if (credit > 0) { p.balance = p.balance.add(WEI(credit)); this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(credit)); if (res === 'win') p.winsToday++; }
+    if (credit > 0) { this._payeGain(p, WEI(credit), jeton); if (res === 'win') p.winsToday++; }
     p.bj.stage = 'done'; p.bj.result = res; p.bj.payout = credit;
-    this._manche(p, 'bj', stake, credit);
+    this._manche(p, 'bj', stake, credit, { jeton });
   }
 
   bjState(addr) { const p = this._p(addr); return p.bj ? this._bjPublic(p, false) : null; }
@@ -6193,7 +6253,7 @@ class Game {
     if (!s) return null;
     const v = {
       game: s.game, stage: fini ? 'done' : s.stage,
-      ante: s.ante, side: s.side,
+      ante: s.ante, side: s.side, jeton: Game.jetonMise(s.jeton),
       player: s.player.slice(),
       board: s.board ? s.board.slice() : [],
       result: null,
@@ -6220,36 +6280,39 @@ class Game {
    * (Hold'em). Les mises partent tout de suite : rien ne doit pouvoir etre
    * distribue sans que le solde ait deja ete debite.
    */
-  casinoDeal(addr, gameId, anteRaw, sideRaw) {
+  casinoDeal(addr, gameId, anteRaw, sideRaw, jetonRaw) {
     const p = this._p(addr);
     if (p.casino && p.casino.stage !== 'done') throw new Error('hand in progress');
     if (gameId !== 'holdem' && gameId !== 'three') throw new Error('unknown game');
+    const jeton = Game.jetonMise(jetonRaw);        // 08/10 : coffre FIXE pour toute la main
+    const sym = jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE';
 
     const ante = Math.floor(Number(anteRaw));
     const side = Math.max(0, Math.floor(Number(sideRaw) || 0));
     if (!(ante >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
-    if (ante > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
+    if (ante > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + sym);
     if (side > cfg.CASINO_MAX_BET) throw new Error('side bet too large');
 
     // Hold'em : suivre coute 2x l'Ante, on exige donc 3x l'Ante des le depart,
     // sinon le joueur decouvre son flop sans pouvoir payer la suite.
     const requis = ante * (gameId === 'holdem' ? 3 : 2) + side;
-    if (p.balance.lt(WEI(requis))) throw new Error('not enough $SWOGE to see the hand through');
+    if ((jeton === 'swogebet' ? (p.betBalance || BN(0)) : p.balance).lt(WEI(requis)))
+      throw new Error('not enough' + sym + ' to see the hand through');
 
-    const debit = WEI(ante + side);
-    p.balance = p.balance.sub(debit);
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(debit); p.dropsToday++; this._markWager(p, debit, gameId);
+    this._debiteMise(p, WEI(ante + side), jeton);
+    p.dropsToday++;
+    this._markWager(p, WEI(ante + side), gameId);
 
     p.nonce++;
     const graine = { serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':casino', nonce: p.nonce };
 
     if (gameId === 'three') {
       const d = casino.shoe(graine.serverSeed, graine.clientSeed, graine.nonce);
-      p.casino = { game: 'three', stage: 'decide', ante, side, graine,
+      p.casino = { game: 'three', stage: 'decide', ante, side, graine, jeton,
                    player: [d[0], d[1], d[2]], dealer: [d[3], d[4], d[5]], board: [] };
     } else {
       const deal = casino.holdemDeal(graine);
-      p.casino = { game: 'holdem', stage: 'decide', ante, side, graine, deal,
+      p.casino = { game: 'holdem', stage: 'decide', ante, side, graine, deal, jeton,
                    player: deal.player, dealer: deal.dealer, board: deal.board };
     }
     return this._casinoPublic(p, false);
@@ -6261,14 +6324,17 @@ class Game {
     const s = p.casino;
     if (!s || s.stage !== 'decide') throw new Error('no hand to decide');
 
+    // Le jeton est celui FIXE a la distribution — jamais pris d'un message.
+    const jeton = Game.jetonMise(s.jeton);
     // Suivre engage une mise supplementaire : elle doit etre debitee AVANT que
     // le resultat soit connu, sinon un joueur a sec pourrait suivre gratuitement.
     let extra = 0;
     if (suit) extra = s.game === 'holdem' ? s.ante * 2 : s.ante;
     if (extra > 0) {
-      if (p.balance.lt(WEI(extra))) throw new Error('not enough $SWOGE to call');
-      p.balance = p.balance.sub(WEI(extra));
-      this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(extra)); this._markWager(p, WEI(extra), s.game);
+      if ((jeton === 'swogebet' ? (p.betBalance || BN(0)) : p.balance).lt(WEI(extra)))
+        throw new Error('not enough' + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE') + ' to call');
+      this._debiteMise(p, WEI(extra), jeton);
+      this._markWager(p, WEI(extra), s.game);
     }
 
     const feeBps = cfg.CASINO_WIN_FEE_BPS;
@@ -6277,13 +6343,12 @@ class Game {
       : casino.holdemResolve({ deal: s.deal, ante: s.ante, aa: s.side, call: !!suit, feeBps });
 
     if (r.payout > 0) {
-      p.balance = p.balance.add(WEI(r.payout));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      this._payeGain(p, WEI(r.payout), jeton);
       if (r.outcome === 'win' || r.outcome === 'dealer_not_qualified') p.winsToday++;
     }
     s.result = r; s.stage = 'done'; s.called = !!suit;
     const vue = this._casinoPublic(p, true);
-    this._manche(p, s.game, vue.result.staked, r.payout);
+    this._manche(p, s.game, vue.result.staked, r.payout, { jeton });
     return vue;
   }
 
@@ -6305,27 +6370,29 @@ class Game {
       multLower: e.peutDescendre ? hilo.multiplicateur(e.rang, 'lower', cfg.HILO_EDGE_BPS) : 0,
       gain: Math.floor(e.mise * e.multi),
       dernier: s.dernier || null,
+      jeton: Game.jetonMise(s.jeton),
     };
   }
 
   hiloState(addr) { const p = this._p(addr); return this._hiloPublic(p); }
 
   /** Ouvre une partie : la mise est debitee tout de suite. */
-  hiloStart(addr, miseRaw) {
+  hiloStart(addr, miseRaw, jetonRaw) {
     const p = this._p(addr);
     if (p.hilo && !p.hilo.etat.fini) throw new Error('game in progress');
+    const jeton = Game.jetonMise(jetonRaw);        // coffre FIXE pour toute la partie
 
     const mise = Math.floor(Number(miseRaw));
     if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
-    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
-    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE'));
 
-    p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise), 'hilo');
+    this._debiteMise(p, WEI(mise), jeton);
+    p.dropsToday++;
+    this._markWager(p, WEI(mise), 'hilo');
 
     p.nonce++;
     const graine = { serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':hilo', nonce: p.nonce };
-    p.hilo = { graine, etat: hilo.ouvrir(Object.assign({ mise }, graine)), dernier: null };
+    p.hilo = { graine, etat: hilo.ouvrir(Object.assign({ mise }, graine)), dernier: null, jeton };
     return this._hiloPublic(p);
   }
 
@@ -6341,7 +6408,7 @@ class Game {
                   egalites: r.egalites, mult: r.multiplicateurDuPas };
     // une partie perdue se conclut ICI, pas a l'encaissement : sans ca on ne
     // compterait que les parties gagnantes et le taux serait de 100 %
-    if (s.etat.fini && s.etat.perdu) this._manche(p, 'hilo', s.etat.mise, 0);
+    if (s.etat.fini && s.etat.perdu) this._manche(p, 'hilo', s.etat.mise, 0, { jeton: Game.jetonMise(s.jeton) });
     return this._hiloPublic(p);
   }
 
@@ -6350,16 +6417,16 @@ class Game {
     const p = this._p(addr);
     const s = p.hilo;
     if (!s || s.etat.fini) throw new Error('no game to cash out');
+    const jeton = Game.jetonMise(s.jeton);
     const r = hilo.encaisser(s.etat);
     s.etat = r.etat;
     if (r.payout > 0) {
-      p.balance = p.balance.add(WEI(r.payout));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      this._payeGain(p, WEI(r.payout), jeton);
       if (r.net > 0) p.winsToday++;
     }
     const v = this._hiloPublic(p);
     v.payout = r.payout; v.net = r.net;
-    this._manche(p, 'hilo', v.mise, r.payout);
+    this._manche(p, 'hilo', v.mise, r.payout, { jeton });
     return v;
   }
 
@@ -6386,6 +6453,7 @@ class Game {
         : mines.multiplicateur(e.nbMines, e.ouvertes.length + 1, e.edgeBps),
       gain: Math.floor(e.mise * e.multi),
       maximum: mines.maximum(e.nbMines, e.edgeBps),
+      jeton: Game.jetonMise(s.jeton),
     };
     if (e.fini) {
       v.bombes = e.bombes.slice();          // la grille se decouvre a la fin
@@ -6409,9 +6477,10 @@ class Game {
   }
 
   /** Ouvre une partie : la mise est debitee tout de suite. */
-  minesStart(addr, miseRaw, nbMinesRaw) {
+  minesStart(addr, miseRaw, nbMinesRaw, jetonRaw) {
     const p = this._p(addr);
     if (p.mines && !p.mines.etat.fini) throw new Error('game in progress');
+    const jeton = Game.jetonMise(jetonRaw);        // coffre FIXE pour toute la partie
 
     /* Pas de Math.floor ici, contrairement a la mise : le nombre de bombes est
        un choix pris dans une liste, pas un montant. Recevoir 2,5 veut dire que
@@ -6423,15 +6492,15 @@ class Game {
 
     const mise = Math.floor(Number(miseRaw));
     if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
-    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
-    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE'));
 
-    p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise), 'mines');
+    this._debiteMise(p, WEI(mise), jeton);
+    p.dropsToday++;
+    this._markWager(p, WEI(mise), 'mines');
 
     p.nonce++;
     const graine = { serverSeed: this.serverSeed, clientSeed: p.clientSeed + ':mines', nonce: p.nonce };
-    p.mines = { graine, etat: mines.ouvrir(Object.assign({ mise, nbMines, edgeBps: cfg.MINES_EDGE_BPS }, graine)) };
+    p.mines = { graine, etat: mines.ouvrir(Object.assign({ mise, nbMines, edgeBps: cfg.MINES_EDGE_BPS }, graine)), jeton };
     return this._minesPublic(p);
   }
 
@@ -6442,7 +6511,7 @@ class Game {
     if (!s || s.etat.fini) throw new Error('no game in progress');
     const r = mines.jouer({ etat: s.etat, position });
     s.etat = r.etat;
-    if (s.etat.fini && s.etat.perdu) this._manche(p, 'mines', s.etat.mise, 0);
+    if (s.etat.fini && s.etat.perdu) this._manche(p, 'mines', s.etat.mise, 0, { jeton: Game.jetonMise(s.jeton) });
     const v = this._minesPublic(p);
     v.dernier = { position: r.position, sure: r.sure };
     return v;
@@ -6453,16 +6522,16 @@ class Game {
     const p = this._p(addr);
     const s = p.mines;
     if (!s || s.etat.encaisse || s.etat.perdu) throw new Error('no game to cash out');
+    const jeton = Game.jetonMise(s.jeton);
     const r = mines.encaisser(s.etat);
     s.etat = r.etat;
     if (r.payout > 0) {
-      p.balance = p.balance.add(WEI(r.payout));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      this._payeGain(p, WEI(r.payout), jeton);
       if (r.net > 0) p.winsToday++;
     }
     const v = this._minesPublic(p);
     v.payout = r.payout; v.net = r.net;
-    this._manche(p, 'mines', v.mise, r.payout);
+    this._manche(p, 'mines', v.mise, r.payout, { jeton });
     return v;
   }
 
@@ -6485,8 +6554,9 @@ class Game {
   }
 
   /** Lache une bille. La mise part et le gain revient dans le meme geste. */
-  plinkoDrop(addr, miseRaw, rangeesRaw, risqueRaw) {
+  plinkoDrop(addr, miseRaw, rangeesRaw, risqueRaw, jetonRaw) {
     const p = this._p(addr);
+    const jeton = Game.jetonMise(jetonRaw);
 
     const rangees = Number(rangeesRaw);
     if (!Number.isInteger(rangees) || plinko.RANGEES.indexOf(rangees) < 0)
@@ -6497,11 +6567,11 @@ class Game {
 
     const mise = Math.floor(Number(miseRaw));
     if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
-    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
-    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE'));
 
-    p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise)); p.dropsToday++; this._markWager(p, WEI(mise), 'plinko');
+    this._debiteMise(p, WEI(mise), jeton);
+    p.dropsToday++;
+    this._markWager(p, WEI(mise), 'plinko');
 
     p.nonce++;
     const r = plinko.lancer({
@@ -6509,14 +6579,14 @@ class Game {
       mise, rangees, risque, edgeBps: cfg.PLINKO_EDGE_BPS,
     });
     if (r.payout > 0) {
-      p.balance = p.balance.add(WEI(r.payout));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      this._payeGain(p, WEI(r.payout), jeton);
       if (r.net > 0) p.winsToday++;
     }
-    this._manche(p, 'plinko', r.mise, r.payout);
+    this._manche(p, 'plinko', r.mise, r.payout, { jeton });
     return { mise: r.mise, rangees: r.rangees, risque: r.risque,
              chemin: r.chemin, case: r.case, multi: r.multi,
-             payout: r.payout, net: r.net, table: r.table };
+             payout: r.payout, net: r.net, table: r.table, jeton,
+             balance: this.balanceStr(addr), betBalance: this.betBalanceStr(addr) };
   }
 
   // ---------------------------------------------------------------- bonanza
@@ -6546,15 +6616,14 @@ class Game {
     };
   }
 
-  bonanzaSpin(addr, miseRaw) {
+  bonanzaSpin(addr, miseRaw, jetonRaw) {
     const p = this._p(addr);
+    const jeton = Game.jetonMise(jetonRaw);
     const mise = Math.floor(Number(miseRaw));
     if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
-    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
-    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE'));
 
-    p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise));
+    this._debiteMise(p, WEI(mise), jeton);
     this._markWager(p, WEI(mise), 'bonanza');
 
     p.nonce++;
@@ -6563,11 +6632,11 @@ class Game {
       nonce: p.nonce, mise,
     });
     if (r.payout > 0) {
-      p.balance = p.balance.add(WEI(r.payout));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      this._payeGain(p, WEI(r.payout), jeton);
       if (r.net > 0) p.winsToday++;
     }
-    this._manche(p, 'bonanza', r.mise, r.payout);
+    this._manche(p, 'bonanza', r.mise, r.payout, { jeton });
+    r.jeton = jeton; r.balance = this.balanceStr(addr); r.betBalance = this.betBalanceStr(addr);
     return r;
   }
 
@@ -6625,15 +6694,14 @@ class Game {
     };
   }
 
-  chenilSpin(addr, miseRaw) {
+  chenilSpin(addr, miseRaw, jetonRaw) {
     const p = this._p(addr);
+    const jeton = Game.jetonMise(jetonRaw);
     const mise = Math.floor(Number(miseRaw));
     if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
-    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
-    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE'));
 
-    p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise));
+    this._debiteMise(p, WEI(mise), jeton);
     this._markWager(p, WEI(mise), 'chenil');
 
     p.nonce++;
@@ -6642,23 +6710,22 @@ class Game {
       nonce: p.nonce, mise,
     });
     if (r.payout > 0) {
-      p.balance = p.balance.add(WEI(r.payout));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      this._payeGain(p, WEI(r.payout), jeton);
       if (r.net > 0) p.winsToday++;
     }
-    this._manche(p, 'chenil', r.mise, r.payout);
+    this._manche(p, 'chenil', r.mise, r.payout, { jeton });
+    r.jeton = jeton; r.balance = this.balanceStr(addr); r.betBalance = this.betBalanceStr(addr);
     return r;
   }
 
-  dodSpin(addr, miseRaw) {
+  dodSpin(addr, miseRaw, jetonRaw) {
     const p = this._p(addr);
+    const jeton = Game.jetonMise(jetonRaw);
     const mise = Math.floor(Number(miseRaw));
     if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
-    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
-    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE'));
 
-    p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise));
+    this._debiteMise(p, WEI(mise), jeton);
     this._markWager(p, WEI(mise), 'dod');
 
     p.nonce++;
@@ -6667,11 +6734,11 @@ class Game {
       nonce: p.nonce, mise,
     });
     if (r.payout > 0) {
-      p.balance = p.balance.add(WEI(r.payout));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      this._payeGain(p, WEI(r.payout), jeton);
       if (r.net > 0) p.winsToday++;
     }
-    this._manche(p, 'dod', r.mise, r.payout);
+    this._manche(p, 'dod', r.mise, r.payout, { jeton });
+    r.jeton = jeton; r.balance = this.balanceStr(addr); r.betBalance = this.betBalanceStr(addr);
     return r;
   }
 
@@ -6681,8 +6748,9 @@ class Game {
    * engage 108 000. Un plafond de table qui ne regarderait que la mise
    * nominale ne voudrait plus rien dire.
    */
-  dodAchat(addr, miseRaw, cranRaw) {
+  dodAchat(addr, miseRaw, cranRaw, jetonRaw) {
     const p = this._p(addr);
+    const jeton = Game.jetonMise(jetonRaw);
     const cran = String(cranRaw || '');
     const c = dod.CRANS[cran];
     if (!c) throw new Error('unknown buy tier');
@@ -6690,12 +6758,10 @@ class Game {
     if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
     const cout = Math.floor(mise * c.prix);
     if (cout > cfg.CASINO_MAX_BET) {
-      throw new Error('buy costs ' + cout + ' $SWOGE — max is ' + cfg.CASINO_MAX_BET);
+      throw new Error('buy costs ' + cout + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE') + ' — max is ' + cfg.CASINO_MAX_BET);
     }
-    if (p.balance.lt(WEI(cout))) throw new Error('not enough $SWOGE');
 
-    p.balance = p.balance.sub(WEI(cout));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(cout));
+    this._debiteMise(p, WEI(cout), jeton);
     this._markWager(p, WEI(cout), 'dod');
 
     p.nonce++;
@@ -6704,13 +6770,13 @@ class Game {
       nonce: p.nonce, mise, cran,
     });
     if (r.payout > 0) {
-      p.balance = p.balance.add(WEI(r.payout));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      this._payeGain(p, WEI(r.payout), jeton);
       if (r.net > 0) p.winsToday++;
     }
     /* La manche est enregistree sur le COUT, pas sur la mise : c'est ce que le
        joueur a reellement risque. */
-    this._manche(p, 'dod', r.cout, r.payout);
+    this._manche(p, 'dod', r.cout, r.payout, { jeton });
+    r.jeton = jeton; r.balance = this.balanceStr(addr); r.betBalance = this.betBalanceStr(addr);
     return r;
   }
 
@@ -6726,19 +6792,18 @@ class Game {
    * COUT depasse le maximum de la table, comme pour n'importe quel autre
    * engagement.
    */
-  bonanzaAchat(addr, miseRaw) {
+  bonanzaAchat(addr, miseRaw, jetonRaw) {
     const p = this._p(addr);
+    const jeton = Game.jetonMise(jetonRaw);
     const mise = Math.floor(Number(miseRaw));
     const cout = mise * bonanza.PRIX_BONUS;
     if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
     if (cout > cfg.CASINO_MAX_BET) {
       throw new Error('buying the bonus costs ' + bonanza.PRIX_BONUS + '× the bet — max bet for a buy is '
-                      + Math.floor(cfg.CASINO_MAX_BET / bonanza.PRIX_BONUS) + ' $SWOGE');
+                      + Math.floor(cfg.CASINO_MAX_BET / bonanza.PRIX_BONUS) + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE'));
     }
-    if (p.balance.lt(WEI(cout))) throw new Error('not enough $SWOGE');
 
-    p.balance = p.balance.sub(WEI(cout));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(cout));
+    this._debiteMise(p, WEI(cout), jeton);
     this._markWager(p, WEI(cout), 'bonanza');
 
     p.nonce++;
@@ -6747,13 +6812,13 @@ class Game {
       nonce: p.nonce, mise,
     });
     if (r.payout > 0) {
-      p.balance = p.balance.add(WEI(r.payout));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(r.payout));
+      this._payeGain(p, WEI(r.payout), jeton);
       if (r.net > 0) p.winsToday++;
     }
     /* La manche est enregistree sur le COUT, pas sur la mise nominale :
        c'est ce que le joueur a reellement engage. */
-    this._manche(p, 'bonanza', r.cout, r.payout);
+    this._manche(p, 'bonanza', r.cout, r.payout, { jeton });
+    r.jeton = jeton; r.balance = this.balanceStr(addr); r.betBalance = this.betBalanceStr(addr);
     return r;
   }
 
@@ -6924,21 +6989,23 @@ class Game {
    * un solde qui ne bougerait qu'au crash laisserait le joueur miser deux fois
    * le meme jeton sur deux onglets.
    */
-  crashMise(addr, miseRaw, autoRaw, now) {
+  crashMise(addr, miseRaw, autoRaw, now, jetonRaw) {
     const p = this._p(addr);
+    const jeton = Game.jetonMise(jetonRaw);       // coffre FIXE, pose sur le pari, relu au credit
     const mise = Math.floor(Number(miseRaw));
     if (!(mise >= cfg.CASINO_MIN_BET)) throw new Error('bet too small');
-    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + ' $SWOGE');
-    if (p.balance.lt(WEI(mise))) throw new Error('not enough $SWOGE');
+    if (mise > cfg.CASINO_MAX_BET) throw new Error('max bet is ' + cfg.CASINO_MAX_BET + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE'));
+    if ((jeton === 'swogebet' ? (p.betBalance || BN(0)) : p.balance).lt(WEI(mise)))
+      throw new Error('not enough' + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE'));
 
     // parier() est ce qui peut encore refuser (mises fermees, deja en table) :
     // on l'appelle AVANT de toucher au solde, pour n'avoir rien a annuler.
-    const r = this.crash.parier(addr, mise, autoRaw, now || Date.now());
+    const r = this.crash.parier(addr, mise, autoRaw, now || Date.now(), jeton);
 
-    p.balance = p.balance.sub(WEI(mise));
-    this._bumpDay(p); p.dayNet = p.dayNet.sub(WEI(mise));
-    p.dropsToday++; this._markWager(p, WEI(mise), 'crash');
-    return { manche: r.manche, mise, auto: r.auto, balance: this.balanceStr(addr) };
+    this._debiteMise(p, WEI(mise), jeton);
+    p.dropsToday++;
+    this._markWager(p, WEI(mise), 'crash');
+    return { manche: r.manche, mise, auto: r.auto, jeton, balance: this.balanceStr(addr), betBalance: this.betBalanceStr(addr) };
   }
 
   /** Encaisser a la main. Le multiplicateur vient de l'horloge du serveur. */
@@ -6951,13 +7018,15 @@ class Game {
   /** Le credit d'un encaissement, manuel ou automatique — un seul chemin. */
   _crediteRetrait(ev) {
     const p = this._p(ev.addr);
+    const jeton = Game.jetonMise(ev.jeton);     // le coffre pose a la mise voyage dans l'evenement
     if (ev.payout > 0) {
-      p.balance = p.balance.add(WEI(ev.payout));
-      this._bumpDay(p); p.dayNet = p.dayNet.add(WEI(ev.payout));
+      this._payeGain(p, WEI(ev.payout), jeton);
       if (ev.net > 0) p.winsToday++;
     }
-    this._manche(p, 'crash', ev.mise, ev.payout);
+    this._manche(p, 'crash', ev.mise, ev.payout, { jeton });
+    ev.jeton = jeton;
     ev.balance = this.balanceStr(ev.addr);
+    ev.betBalance = this.betBalanceStr(ev.addr);
     return ev;
   }
 
@@ -6977,7 +7046,8 @@ class Game {
         // la mise perdue est donc encore lisible ici, et nulle part apres.
         for (const addr of ev.perdants) {
           const pari = this.crash.pari(addr);
-          this._manche(this._p(addr), 'crash', pari ? pari.mise : 0, 0);
+          this._manche(this._p(addr), 'crash', pari ? pari.mise : 0, 0,
+                       { jeton: Game.jetonMise(pari && pari.jeton) });
         }
       }
     }
@@ -10476,18 +10546,19 @@ class Game {
    * que le joueur n'a pas les moyens de tenir. On refuse d'abord, on donne
    * ensuite — et le refus ne consomme aucun jeton de la suite provably-fair.
    */
-  bjBet(addr, amountRaw, annexes) {
+  bjBet(addr, amountRaw, annexes, jetonRaw) {
     const p = this._p(addr);
     if (p.bj && p.bj.stage !== 'done') throw new Error('hand in progress');
+    const jeton = Game.jetonMise(jetonRaw);      // coffre FIXE pour toute la main (mise, annexes, assurance, double)
+    const sym = jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE';
     const amt = Math.floor(Number(amountRaw));
     if (!(amt >= cfg.BJ_MIN_BET)) throw new Error('bet too small');
-    if (amt > cfg.BJ_MAX_BET) throw new Error('max bet is ' + cfg.BJ_MAX_BET + ' $SWOGE');
-    const pp = this._bjMiseAnnexe(annexes && annexes.pp, 'perfect pairs');
-    const tp = this._bjMiseAnnexe(annexes && annexes.tp, '21+3');
+    if (amt > cfg.BJ_MAX_BET) throw new Error('max bet is ' + cfg.BJ_MAX_BET + sym);
+    const pp = this._bjMiseAnnexe(annexes && annexes.pp, 'perfect pairs', sym);
+    const tp = this._bjMiseAnnexe(annexes && annexes.tp, '21+3', sym);
     const w = WEI(amt + pp + tp);
-    if (p.balance.lt(w)) throw new Error('not enough $SWOGE');
-    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); p.dropsToday++; this._markWager(p, w, 'bj');
-    p.bj = { bet: amt, pc: [this._bjDraw(p), this._bjDraw(p)], dc: [this._bjDraw(p), this._bjDraw(p)], stage: 'player', doubled: false, result: null, payout: 0,
+    this._debiteMise(p, w, jeton); p.dropsToday++; this._markWager(p, w, 'bj');
+    p.bj = { bet: amt, jeton, pc: [this._bjDraw(p), this._bjDraw(p)], dc: [this._bjDraw(p), this._bjDraw(p)], stage: 'player', doubled: false, result: null, payout: 0,
              ann: { pp: { mise: pp, rang: null, gain: 0 }, tp: { mise: tp, rang: null, gain: 0 }, ins: { mise: 0, rang: null, gain: 0 } } };
     this._bjResoutAnnexes(p);
     /* L'ASSURANCE PASSE AVANT LE NATUREL DU CROUPIER. C'est tout son interet :
@@ -10512,7 +10583,7 @@ class Game {
     if (m > max) throw new Error('insurance is at most half your bet');
     if (m > 0) {
       const w = WEI(m);
-      p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); this._markWager(p, w, 'bj');
+      this._debiteMise(p, w, Game.jetonMise(p.bj.jeton)); this._markWager(p, w, 'bj');
       Game._bjAnn(p.bj).ins.mise = m;
       /* On lit la carte cachee ICI, pour l'assurance seulement. Elle reste
          cachee dans l'etat public : _bjPublic ne la revele qu'a 'done'. */
@@ -10545,9 +10616,10 @@ class Game {
     const p = this._p(addr);
     if (this._bjPasseAssurance(addr, p)) return this._bjPublic(p, true);
     if (!p.bj || p.bj.stage !== 'player' || p.bj.pc.length !== 2) throw new Error('cannot double now');
+    const jeton = Game.jetonMise(p.bj.jeton);
     const w = WEI(p.bj.bet);
-    if (p.balance.lt(w)) throw new Error('not enough to double');
-    p.balance = p.balance.sub(w); this._bumpDay(p); p.dayNet = p.dayNet.sub(w); this._markWager(p, w, 'bj'); p.bj.doubled = true;
+    if ((jeton === 'swogebet' ? (p.betBalance || BN(0)) : p.balance).lt(w)) throw new Error('not enough to double');
+    this._debiteMise(p, w, jeton); this._markWager(p, w, 'bj'); p.bj.doubled = true;
     p.bj.pc.push(this._bjDraw(p));
     if (this._bjVal(p.bj.pc) <= 21) this._bjDealerPlay(p);
     this._bjSettle(p, p.bj.bet * 2);
