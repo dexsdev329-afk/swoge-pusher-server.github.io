@@ -317,7 +317,25 @@ function finDuMois(t) {
   const f = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
   return f.toISOString().slice(0, 10);
 }
-function fin() { return process.env.ODDS_API_FIN || finDuMois(); }
+/* ---- ET UNE DATE POSEE QUI EST DEJA PASSEE NE COMPTE PAS (08/10/2026) ----
+ * Le code calculait la fin du mois, mais la VARIABLE etait restee posee sur
+ * Railway : le journal du 08/10 disait « 469 credit(s), part du jour 422
+ * jusqu au 2026-09-30 ». Exactement la panne decrite au-dessus, arrivee par
+ * l'autre porte — 90 % du solde autorise en un jour, sans un mot. Une echeance
+ * passee (ou illisible) ne vise plus rien : on retombe sur la fin du mois, et
+ * on le dit une fois au journal pour que quelqu'un retire la variable. */
+let finIgnoreeDite = null;
+function fin() {
+  const posee = process.env.ODDS_API_FIN;
+  if (!posee) return finDuMois();
+  const aujourdhui = new Date().toISOString().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(posee) && isFinite(Date.parse(posee + 'T23:59:59Z')) && posee >= aujourdhui) return posee;
+  if (finIgnoreeDite !== posee) {
+    finIgnoreeDite = posee;
+    console.log(`[odds] ODDS_API_FIN=${posee} est passee ou illisible : ignoree, le quota se rationne jusqu a la fin du mois (${finDuMois()}). Retirer la variable.`);
+  }
+  return finDuMois();
+}
 const TOTAL = Number(process.env.ODDS_API_TOTAL || 500);
 /* Combien de jours a l'avance on regarde. Au-dela, les rencontres bougent
    encore et la moitie n'a pas d'adversaire connu (tennis). */

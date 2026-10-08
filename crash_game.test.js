@@ -122,17 +122,21 @@ function envole(g) {
     if (g.crash.phase !== C.ATTENTE) { t += 1000; continue; }
     g.crashMise(A, 400, 1.5, t);
     const apresMise = sol(g, A);
-    const depart = envole(g);
+    /* Trois pour cent des manches cassent a EXACTEMENT 1.00x (l'avantage
+       maison). `tick` enchaine alors attente -> vol -> crash DANS LE TIC DU
+       DEPART : `msPour(1)` vaut zero, la fin tombe a l'instant meme. Ses
+       evenements, `crashFin` et ses perdants compris, sortent de ce tic-la —
+       que `envole` jetait. Les tics suivants ne rendent plus rien, et
+       « le joueur est dans les perdants » tombait chaque fois qu'une manche a
+       1.00x passait avant la premiere a 1.5x : ~4,4 % des executions
+       (0,03 / (0,03 + 0,647)), mesure 2 sur 60 le 08/10/2026. On garde donc
+       les evenements du depart. */
+    const depart = g.crash.jusqua;
+    const auDepart = g.crashTick(depart);
     const point = g.crash.point;
     // on saute directement a la fin de la manche, sans jamais appeler retirer()
     const fin = depart + C.msPour(point, cfg.CRASH_VITESSE);
-    const evs = g.crashTick(fin);
-    /* Quatre pour cent des manches cassent a EXACTEMENT 1.00x — une explosion
-       instantanee. `msPour(1)` vaut alors zero : on vient de tiquer sur
-       l'instant du depart lui-meme, et la manche n'est pas encore finie. Un
-       tour d'horloge de plus la termine. Sans ca, ce controle echouait une
-       fois sur huit, ce qui apprend surtout a ignorer les echecs. */
-    if (!evs.some((e) => e.type === 'crashFin')) evs.push(...g.crashTick(fin + 1));
+    const evs = auDepart.concat(g.crashTick(fin));
     if (point >= 1.5) {
       eq(sol(g, A), apresMise + 600, `cible 1.5x atteinte (crash ${point}x) : 400 a 1.5x = 600`);
       const ev = evs.find((e) => e.type === 'crashRetrait' && e.addr === A);
@@ -236,9 +240,23 @@ function envole(g) {
   eq(g.crashEtat(t, A).moi.auto, 3, 'et sa cible automatique');
   eq(g.crashEtat(t, B).moi, null, 'un autre joueur ne voit pas le pari comme le sien');
 
-  // en vol, le point reste secret jusqu'au bout
-  const d = envole(g);
-  const v = g.crashEtat(d + 1000, A);
+  // en vol, le point reste secret jusqu'au bout.
+  /* L'etat se lisait « 1 s apres le depart ». Or a CRASH_VITESSE 0,00006 la
+     courbe n'atteint 1,06x qu'a la premiere seconde, et P(point < 1,06) =
+     1 − 0,97/1,06 ≈ 8,5 % (3 % de manches a 1,00x, l'avantage maison) : une
+     fois sur douze la manche avait deja crashe, et l'essai tombait sur un
+     tirage, pas sur un defaut (08/10/2026, 1 echec sur 2 passages de
+     verifie.sh). On lit donc AU MILIEU du vol, et une manche qui ne vole pas
+     du tout laisse sa place a la suivante. */
+  let d = envole(g);
+  for (let k = 0; C.msPour(g.crash.point, cfg.CRASH_VITESSE) < 2 && k < 50; k++) {
+    g.crashTick(d);
+    ouvre(g, g.crash.jusqua + 1);
+    d = envole(g);
+  }
+  const vol = C.msPour(g.crash.point, cfg.CRASH_VITESSE);
+  ok(vol >= 2, 'une manche qui vole a ete trouvee (point ' + g.crash.point + 'x)');
+  const v = g.crashEtat(d + Math.min(1000, Math.floor(vol / 2)), A);
   eq(v.phase, C.VOL, 'en vol');
   ok(v.point === null, 'le point reste secret pendant le vol');
   ok(v.multi >= 1, 'le multiplicateur courant est lisible');

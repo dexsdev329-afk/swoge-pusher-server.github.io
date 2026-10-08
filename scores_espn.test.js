@@ -172,6 +172,62 @@ console.log('\n-- qui recoit quel score --');
     eq(inconnue.size, 0,
        'le tennis n est pas demande : le tableau d ESPN ne rend que des tournois');
 
+    // ================== 9. ESPN REFUSE TOUTE FENETRE (08/10/2026)
+    /* Le vrai tableau, relu le 08/10 : `dates=A-B` rend 400 « Failed to get
+     * events endpoint. », meme A-A ; un jour AAAAMMJJ et un mois AAAAMM
+     * passent. Le 400 etait avale en liste vide : plus de direct, plus de
+     * reglement gratuit, plus de dates de reprise, sans un mot au journal.
+     * Ce faux ESPN se comporte comme le vrai, et l'on regarde les trois
+     * chemins rendre quelque chose. */
+    console.log('\n-- ESPN refuse les fenetres de dates --');
+    const urls = [];
+    const commeLeVrai = (evs) => async (u) => {
+      urls.push(String(u));
+      const q = /dates=([^&]+)/.exec(String(u))[1];
+      if (/^\d{8}-\d{8}$/.test(q)) return { ok: false, status: 400 };
+      const garde = evs.filter((x) => (q.length === 8 ? x.date.slice(0, 10).replace(/-/g, '') === q
+                                                        : x.date.slice(0, 7).replace('-', '') === q));
+      return { ok: true, json: async () => ({ events: garde }) };
+    };
+    const evId = (id, dom, ext, sd, se, quand, etat, fini) =>
+      Object.assign(ev(dom, ext, sd, se, quand, etat, fini), { id });
+    const D = (dom, ext, quand, id) => ({ id, sport: 'foot', domicile: dom, exterieur: ext, debut: Date.parse(quand),
+                                           source: { ligue: 'soccer_germany_bundesliga' } });
+    const finis = [evId('1', 'Borussia Dortmund', 'Bayern Munich', '0', '2', '2026-09-12T16:30Z', 'post', true),
+                   evId('2', 'FC Augsburg', 'SC Freiburg', '1', '1', '2026-10-04T13:30Z', 'post', true),
+                   evId('3', 'Werder Bremen', 'VfB Stuttgart', '2', '2', '2026-10-08T18:30Z', 'in', false)];
+
+    const lu = await e.releve([D('Werder Bremen', 'VfB Stuttgart', '2026-10-08T18:30Z', 'w')],
+                              { prendre: commeLeVrai(finis) });
+    eq(lu.get('w') && lu.get('w').score, '2-2', 'le direct revient : la rencontre en cours est vue, avec son score');
+    ok(urls.every((u) => !/dates=\d{8}-\d{8}/.test(u)), 'et plus aucune fenetre n est demandee (' + urls.length + ' requetes)');
+    ok(urls.every((u) => /dates=\d{8}$/.test(u)), 'le direct (trois jours) se demande JOUR par jour, jamais un mois de 7 Mo');
+
+    urls.length = 0;
+    const regles = await e.finies([D('Borussia Dortmund', 'Bayern Munich', '2026-09-12T16:30Z', 'a'),
+                                   D('FC Augsburg', 'SC Freiburg', '2026-10-04T13:30Z', 'b'),
+                                   D('Werder Bremen', 'VfB Stuttgart', '2026-10-08T18:30Z', 'c')],
+                                  { prendre: commeLeVrai(finis) });
+    eq(regles.map((x) => x.id).sort().join(','), 'a,b',
+       'le reglement gratuit revient sur un mois d ecart : les deux finies, pas celle en cours');
+    ok(urls.length && urls.every((u) => /dates=\d{6}&limit=1000$/.test(u)),
+       'une fenetre de plus de ' + e.JOURS_MAX + ' jours se demande MOIS par mois, sans plafond de 25 rencontres');
+
+    const quand = await e.reprise(['soccer_germany_bundesliga'], { maintenant: Date.parse('2026-10-08T12:00Z'),
+      prendre: commeLeVrai([evId('9', 'Hamburger SV', 'Union Berlin', '0', '0', '2026-11-21T14:30Z', 'pre', false)]) });
+    eq(quand, Date.parse('2026-11-21T14:30Z'), 'la date de reprise revient, six semaines plus loin');
+
+    eq(e.requetes(Date.parse('2026-10-07T22:00Z'), Date.parse('2026-10-09T01:00Z')).join(' '), '20261007 20261008 20261009',
+       'trois jours, trois requetes');
+    eq(e.requetes(Date.parse('2026-10-31T23:00Z'), Date.parse('2026-12-02T00:00Z')).join(' '),
+       '202610&limit=1000 202611&limit=1000 202612&limit=1000', 'a cheval sur trois mois, trois mois');
+    const doublon = await e.tableau('soccer/ger.1', Date.parse('2026-10-07T00:00Z'), Date.parse('2026-10-09T00:00Z'),
+      async () => ({ ok: true, json: async () => ({ events: [finis[2]] }) }));
+    eq(doublon.length, 1, 'une rencontre rendue par trois journees qui se recouvrent n est gardee qu une fois');
+    const troue = await e.tableau('soccer/ger.1', Date.parse('2026-10-07T00:00Z'), Date.parse('2026-10-09T00:00Z'),
+      async (u) => (/20261008/.test(u) ? { ok: false, status: 503 } : { ok: true, json: async () => ({ events: [finis[2]] }) }));
+    eq(troue.length, 1, 'une journee qui tombe n emporte qu elle-meme, pas les autres');
+
     console.log(`\nscores_espn.test.js : ${n} verifications OK`);
   });
 }

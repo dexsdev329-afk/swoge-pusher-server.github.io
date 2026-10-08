@@ -58,8 +58,8 @@ const CHEMINS = {
   cricket_international_t20: 'cricket/8039',
   /* Les treize du 18 septembre 2026. Chacune a repondu depuis ce serveur ce
      jour-la, jour par jour — le tableau REFUSE une fenetre de dix jours
-     (400, « Failed to get events endpoint ») ; `releve` n en demande jamais
-     plus de trois, autour de la rencontre. */
+     (400, « Failed to get events endpoint ») ; depuis le 08/10 il refuse
+     toute fenetre : `tableau` demande des jours ou des mois, voir `requetes`. */
   soccer_efl_champ: 'soccer/eng.2',
   soccer_france_ligue_two: 'soccer/fra.2',
   soccer_germany_bundesliga2: 'soccer/ger.2',
@@ -196,11 +196,54 @@ function jour(t) {
        + String(d.getUTCDate()).padStart(2, '0');
 }
 
-async function tableau(chemin, deb, fin, prendre) {
-  const u = `${BASE}/${chemin}/scoreboard?dates=${jour(deb)}-${jour(fin)}`;
+function mois(t) {
+  const d = new Date(t);
+  return d.getUTCFullYear() + String(d.getUTCMonth() + 1).padStart(2, '0');
+}
+
+/* ---- PLUS AUCUNE FENETRE : DES JOURS, OU DES MOIS (08/10/2026) ----
+ *
+ * ESPN refuse desormais TOUTE fenetre `dates=AAAAMMJJ-AAAAMMJJ`, meme d'un jour
+ * sur lui-meme : 400 « Failed to get events endpoint. », 22 requetes sur 22 le
+ * 08/10 (Liga, Premier League, NHL, NBA). Le 18/09, trois jours passaient
+ * encore et dix etaient deja refuses. Un JOUR (AAAAMMJJ) et un MOIS (AAAAMM)
+ * passent toujours, et rendent les memes rencontres (Liga du 19 et du 20/09,
+ * relues des deux facons).
+ *
+ * Le 400 etait avale en liste vide, donc rien ne se voyait : le tableau LIVE
+ * NOW restait vide, `finies` ne reglait plus rien gratuitement (sa fenetre
+ * couvre jusqu'a trente jours : refusee des le 18/09) et les dates de reprise
+ * des sports hors saison n'existaient plus.
+ *
+ * Jour par jour jusqu'a JOURS_MAX jours, mois par mois au-dela. Les poids
+ * mesures le 08/10 decident de la frontiere : une journee de NHL pese 200 Ko,
+ * un mois de MLB 7 Mo — le direct relit trois jours toutes les 45 s, il ne
+ * doit jamais tirer un mois. Les requetes d'un jour se recouvrent (celle du
+ * 08/10 rend aussi des rencontres datees du 09 en temps universel) : une
+ * rencontre vue deux fois n'est gardee qu'une fois. */
+const JOURS_MAX = 7;
+function requetes(deb, fin) {
+  const j0 = Date.parse(new Date(deb).toISOString().slice(0, 10) + 'T00:00:00Z');
+  const jn = Date.parse(new Date(fin).toISOString().slice(0, 10) + 'T00:00:00Z');
+  const n = Math.round((jn - j0) / 86400000) + 1;
+  if (n <= JOURS_MAX) {
+    const out = [];
+    for (let i = 0; i < Math.max(1, n); i++) out.push(jour(j0 + i * 86400000));
+    return out;
+  }
+  const out = [];
+  for (let t = j0; mois(t) <= mois(jn); ) {
+    out.push(mois(t) + '&limit=1000');
+    const d = new Date(t);
+    t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  }
+  return out;
+}
+
+async function uneRequete(u, prendre) {
   const f = prendre || fetch;
   /* Un tableau de scores n'est JAMAIS une raison de faire attendre le serveur.
-     Trois secondes, puis on s'en passe : le calendrier vaut sans le direct, le
+     Huit secondes, puis on s'en passe : le calendrier vaut sans le direct, le
      direct ne vaut rien sans le calendrier. */
   const ctl = typeof AbortController === 'function' ? new AbortController() : null;
   const minuterie = ctl ? setTimeout(() => ctl.abort(), 8000) : null;
@@ -212,6 +255,20 @@ async function tableau(chemin, deb, fin, prendre) {
   } catch (e) {
     return [];
   } finally { if (minuterie) clearTimeout(minuterie); }
+}
+
+/* Une requete qui tombe n'emporte que sa journee (ou son mois) : on regle ce
+   qu'on a vu, le reste repassera par The Odds API ou par la main, comme avant. */
+async function tableau(chemin, deb, fin, prendre) {
+  const lots = await Promise.all(requetes(deb, fin).map((q) =>
+    uneRequete(`${BASE}/${chemin}/scoreboard?dates=${q}`, prendre)));
+  const vus = new Set(), out = [];
+  for (const ev of [].concat(...lots)) {
+    const cle = ev && ev.id != null ? 'id:' + ev.id : JSON.stringify(ev);
+    if (vus.has(cle)) continue;
+    vus.add(cle); out.push(ev);
+  }
+  return out;
 }
 
 /* Ce qu'on retient d'un evenement ESPN : les deux camps NOMMES, leurs points,
@@ -459,5 +516,5 @@ async function reprise(ligues, opts) {
   return tot;
 }
 
-module.exports = { CHEMINS, ALIAS, normalise, meme, lis, tableau, releve, finies, reprise,
+module.exports = { CHEMINS, ALIAS, normalise, meme, lis, tableau, requetes, JOURS_MAX, releve, finies, reprise,
                    releveTennis, tourDe };

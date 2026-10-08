@@ -638,9 +638,20 @@ const cotes = require('./cotes');
     const apres = Math.max(1, Math.ceil((Date.parse(imp.finDuMois(Date.parse('2026-10-01T12:00:00Z')) + 'T23:59:59Z') - Date.parse('2026-10-01T12:00:00Z')) / 86400000));
     ok(avant === 1 && apres === 31,
        `le 1er octobre : la date figee laissait ${avant} jour (450 credits autorises d un coup), celle qui roule en laisse ${apres}`);
-    /* La variable garde la priorite : viser un tournoi reste possible. */
-    process.env.ODDS_API_FIN = '2026-11-15';
-    ok(imp.fin() === '2026-11-15', 'et une date posee a la main l emporte toujours');
+    /* La variable garde la priorite : viser un tournoi reste possible. La date
+       se calcule sur l horloge, sinon l essai tomberait le jour ou elle passe. */
+    const tournoi = new Date(Date.now() + 40 * 86400000).toISOString().slice(0, 10);
+    process.env.ODDS_API_FIN = tournoi;
+    ok(imp.fin() === tournoi, 'et une date A VENIR posee a la main l emporte toujours');
+    /* 08/10/2026 : la variable etait restee posee sur 2026-09-30 en production —
+       « 469 credit(s), part du jour 422 jusqu au 2026-09-30 » au journal. Une
+       echeance passee ne vise plus rien : elle retombe sur la fin du mois. */
+    process.env.ODDS_API_FIN = '2026-09-30';
+    ok(imp.fin() === imp.finDuMois(), 'une date DEJA PASSEE est ignoree : retour a la fin du mois en cours');
+    ok(imp.partDuJour(469) === Math.max(1, Math.floor(469 * 0.9 / attendus)),
+       `et la part du jour redevient ${imp.partDuJour(469)} sur 469, pas ${Math.floor(469 * 0.9)} d un coup`);
+    process.env.ODDS_API_FIN = '30/09/2026';
+    ok(imp.fin() === imp.finDuMois(), 'une date illisible aussi');
     if (fixe === undefined) delete process.env.ODDS_API_FIN; else process.env.ODDS_API_FIN = fixe;
   }
 
