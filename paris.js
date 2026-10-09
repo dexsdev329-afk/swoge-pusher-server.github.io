@@ -198,7 +198,11 @@ const MARCHES = {
    * a 22 %, 12,9 %, +5,0 +-3,8 %. Decision du proprietaire : 22 %, la marge
    * du chemin du prix du marche (cotes.MARGES_AU_MARCHE), en attendant de
    * corriger le modele de buts — la marge ne ferme pas la fuite, elle la
-   * reduit. Les-deux-marquent reste a 10 % : non mesure sur ce chemin. */
+   * reduit. Les-deux-marquent reste a 10 % : non mesure sur ce chemin.
+   * Modele de buts CORRIGE le 09/10/2026 (cotes.totalDe, EXPLOITATION 8.8ter) :
+   * a 22 % sur l'Elo, 13,6 -> 4,7 % d'issues battables (test 2023-26, 10 480
+   * rencontres). Les 22 % sont gardes ; une marge plus basse se mesure
+   * d'abord sur le banc. */
   ou25: {
     margeX: 2.2,
     nom: 'Total goals', court: 'O/U 2.5', couverture: 1, sports: ['foot'], ligne: 2.5,

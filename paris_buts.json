@@ -1,0 +1,178 @@
+{
+ "calcule": "2026-10-09",
+ "jusqua": "2026-10-05",
+ "source": "football-data.co.uk (mmz4281, new/USA, new/MEX) — outils/buts_ligue.js",
+ "fenetre": 365,
+ "k": 40,
+ "pente": 1.44,
+ "compressionElo": 0.805,
+ "poidsMarche": 0.75,
+ "global": {
+  "a": 2.6568,
+  "b": 0.1748,
+  "buts": 2.8169,
+  "n": 5560
+ },
+ "ligues": {
+  "soccer_efl_champ": {
+   "a": 2.5703,
+   "b": 0.2396,
+   "buts": 2.6778,
+   "d2": 0.0791,
+   "n": 540,
+   "nb": 540,
+   "fd": "E1",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_france_ligue_two": {
+   "a": 2.4733,
+   "b": 0.2105,
+   "buts": 2.5366,
+   "d2": 0.0617,
+   "n": 287,
+   "nb": 287,
+   "fd": "F2",
+   "jusqua": "2026-09-19"
+  },
+  "soccer_germany_bundesliga2": {
+   "a": 2.9137,
+   "b": 0.2026,
+   "buts": 3.0313,
+   "d2": 0.0569,
+   "n": 288,
+   "nb": 288,
+   "fd": "D2",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_spain_segunda_division": {
+   "a": 2.5306,
+   "b": 0.1025,
+   "buts": 2.6255,
+   "d2": 0.0735,
+   "n": 462,
+   "nb": 462,
+   "fd": "SP2",
+   "jusqua": "2026-10-05"
+  },
+  "soccer_italy_serie_b": {
+   "a": 2.4913,
+   "b": 0.0543,
+   "buts": 2.575,
+   "d2": 0.0709,
+   "n": 360,
+   "nb": 360,
+   "fd": "I2",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_netherlands_eredivisie": {
+   "a": 2.999,
+   "b": 0.1287,
+   "buts": 3.2727,
+   "d2": 0.1581,
+   "n": 297,
+   "nb": 297,
+   "fd": "N1",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_portugal_primeira_liga": {
+   "a": 2.4626,
+   "b": 0.1894,
+   "buts": 2.7297,
+   "d2": 0.2037,
+   "n": 296,
+   "nb": 296,
+   "fd": "P1",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_belgium_first_div": {
+   "a": 2.6273,
+   "b": 0.2502,
+   "buts": 2.7653,
+   "d2": 0.0986,
+   "n": 294,
+   "nb": 294,
+   "fd": "B1",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_turkey_super_league": {
+   "a": 2.5755,
+   "b": 0.2316,
+   "buts": 2.7586,
+   "d2": 0.1349,
+   "n": 290,
+   "nb": 290,
+   "fd": "T1",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_epl": {
+   "a": 2.6057,
+   "b": 0.3236,
+   "buts": 2.7889,
+   "d2": 0.1312,
+   "n": 360,
+   "nb": 360,
+   "fd": "E0",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_spain_la_liga": {
+   "a": 2.5896,
+   "b": 0.1017,
+   "buts": 2.7615,
+   "d2": 0.1245,
+   "n": 369,
+   "nb": 369,
+   "fd": "SP1",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_italy_serie_a": {
+   "a": 2.3249,
+   "b": 0.2181,
+   "buts": 2.4973,
+   "d2": 0.1446,
+   "n": 370,
+   "nb": 370,
+   "fd": "I1",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_germany_bundesliga": {
+   "a": 3.0572,
+   "b": -0.0173,
+   "buts": 3.3056,
+   "d2": 0.1338,
+   "n": 288,
+   "nb": 288,
+   "fd": "D1",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_france_ligue_one": {
+   "a": 2.6299,
+   "b": 0.2554,
+   "buts": 2.8229,
+   "d2": 0.1366,
+   "n": 288,
+   "nb": 288,
+   "fd": "F1",
+   "jusqua": "2026-09-20"
+  },
+  "soccer_usa_mls": {
+   "a": 3.0528,
+   "b": 0.0892,
+   "buts": 3.2242,
+   "d2": 0.0948,
+   "n": 455,
+   "nb": 455,
+   "fd": "new/USA",
+   "jusqua": "2026-10-02"
+  },
+  "soccer_mexico_ligamx": {
+   "a": 2.6774,
+   "b": 0.2438,
+   "buts": 2.8576,
+   "d2": 0.1233,
+   "n": 316,
+   "nb": 313,
+   "fd": "new/MEX",
+   "jusqua": "2026-09-28"
+  }
+ }
+}

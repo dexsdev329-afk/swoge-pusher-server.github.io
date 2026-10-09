@@ -458,6 +458,10 @@ function etatImport() {
        combien de rencontres a venir sont au prix ou SUSPENDUES — une
        suspension ne se voit pas sur la page, qui n'affiche que l'ouvert. */
     prix: etatPrix(),
+    /* Le total de buts par championnat (09/10/2026) : l'age de la table
+       paris_buts.json, et ce que le modele en a fait depuis le demarrage —
+       nul de l'Elo manque, total cede au marche, championnat inconnu. */
+    buts: cotes.etatButs(),
     dernier: litDernier(),
   };
 }

@@ -642,7 +642,7 @@ function habille(m, margeVoulue, now) {
    * `cotesGenerees` reste vrai : ce n'est pas un lot recopie tel quel, et si
    * le prix disparait (championnat retire de la liste), l'Elo reprend. */
   if (m.prixMarche && m.prixMarche.p && !commence) {
-    const mm = marchesDuMarche(m.sport, m.prixMarche.p, margeVoulue);
+    const mm = marchesDuMarche(m.sport, m.prixMarche.p, margeVoulue, m.source && m.source.ligue);
     if (!mm) throw new Error(`cotes : ${m.domicile} v ${m.exterieur} — trop desequilibre au prix du marche`);
     const sortie = Object.assign({}, m, { marches: mm, cotesGenerees: true });
     delete sortie.cotes;
@@ -668,7 +668,7 @@ function habille(m, margeVoulue, now) {
     if (refus) throw new Error(`cotes : ${m.domicile} v ${m.exterieur} — ${refus}`);
   }
   const marches = marchesDe(m.sport, m.domicile, m.exterieur, margeVoulue,
-                            garde ? lot : null);
+                            garde ? lot : null, m.source && m.source.ligue);
   /* ---- ET SEULEMENT ALORS, ON GARDE CE QUI ETAIT DEJA ECRIT ----
    * Un marche deja la n'est pas remplace, pour la meme raison que le 1-N-2 :
    * s'il a ete releve, il vaut mieux que le notre.
@@ -828,11 +828,23 @@ const RHO_PLAGE = [0, -0.08, -0.13, -0.18];
 
 /** Pour chaque score, la probabilite la PLUS FORTE sur toute la plage de rho.
  *  C'est la borne contre laquelle le rabot travaille : si aucun rho plausible
- *  ne rend ce score plus probable que ca, aucun ne rend la cote perdante. */
-function scoresPrudents(lh, la) {
+ *  ne rend ce score plus probable que ca, aucun ne rend la cote perdante.
+ *  `rho` (facultatif) : le rho de la grille VENDUE, quand il n'est plus -0,13
+ *  (`ajusteRho`). Il s'AJOUTE a la plage, il ne la remplace pas : la grille
+ *  vendue ne peut jamais etre moins prudente que le rabot qui la borne, et la
+ *  plage d'avant reste couverte — un rho ajuste sur un nul Elo trop bas
+ *  (Liga 2 : +0,02 de mediane) ne fait pas descendre la borne du 0-0.
+ *  Dixon-Coles ne touche que 0-0, 0-1, 1-0 et 1-1, et la somme de ces quatre
+ *  cases ne bouge pas : les treize autres sont les memes pour tout rho. Pour
+ *  elles, cette borne EST la grille vendue, et seuls la marge et le plancher
+ *  par issue les protegent, pas la plage de rho ; a rho = +0,10, c'est aussi
+ *  le cas du 1-0 et du 0-1 (relecture du 09/10, voir `derives`). */
+function scoresPrudents(lh, la, rho) {
   const out = {};
   for (const s of paris.SCORES) out[s] = 0;
-  for (const r of RHO_PLAGE) {
+  const plage = (rho === undefined || !isFinite(Number(rho)) || RHO_PLAGE.includes(Number(rho)))
+    ? RHO_PLAGE : RHO_PLAGE.concat([Number(rho)]);
+  for (const r of plage) {
     const g = grilleDesScores(lh, la, r);
     const e = {};
     for (const s of paris.SCORES) e[s] = 0;
@@ -949,11 +961,173 @@ function ajusteButs(p1, pN, p2) {
    *
    * Les bornes ne sont pas choisies au doigt : 1,9 et 3,6 encadrent ce qu'on
    * observe en championnat, moyenne 2,7. */
-  const TOTAL_PLANCHER = 1.9, TOTAL_PLAFOND = 3.6;
   if (T > TOTAL_PLAFOND) T = TOTAL_PLAFOND;
   else if (T < TOTAL_PLANCHER) T = TOTAL_PLANCHER;
   const x = partPour(T);
   return { lh: T * x, la: T * (1 - x), total: T };
+}
+const TOTAL_PLANCHER = 1.9, TOTAL_PLAFOND = 3.6;
+
+/* ============ LE TOTAL DU CHAMPIONNAT, ET RHO POUR LE NUL (09/10/2026) ============
+ *
+ * ---- CE QUE `ajusteButs` NE PEUT PAS SAVOIR ----
+ *
+ * Il tire le TOTAL de buts du seul nul du 1-N-2. Or le nul de l'Elo ne connait
+ * pas le championnat (NUL_MAX x exp(-NUL_PENTE x ecart), le meme partout) :
+ * le total sortait a ~2,8 en Liga 2 comme aux Pays-Bas, quand le reel va de
+ * 2,27 a 3,11. Tout ce qui descend de la grille suivait : le 1-0 a ~7,9 % au
+ * lieu de 14,1 % en Liga 2 (mise a chaque match a sa cote : +37 +-12 % au
+ * parieur, 3 400 matchs), le plus/moins 2,5 a 52,5-55 % de « plus » partout.
+ *
+ * ---- TROIS CIBLES, TROIS INCONNUES ----
+ *
+ * Le TOTAL vient de ce que le championnat marque vraiment (`totalDe`, table
+ * `paris_buts.json`), la PART du domicile et rho viennent du 1-N-2 vendu. La
+ * correction de Dixon-Coles a une propriete qui rend le calcul exact : pour un
+ * couple (lh, la) donne, elle ajoute la MEME quantite d = e^-T lh la rho aux
+ * deux victoires (par le 1-0 et le 0-1) et retire 2d au nul (par le 0-0 et le
+ * 1-1) — la somme des quatre cases ne bouge pas. Donc :
+ *   - la part se lit sur l'ECART p1 - p2 de la grille SANS correction (rho
+ *     n'y touche pas) : une dichotomie, monotone ;
+ *   - rho se lit ensuite sur le nul, en forme fermee.
+ * La grille reproduit alors le 1-N-2 vendu EXACTEMENT, les trois issues
+ * (ecart mesure 6,5e-13 sur 3 000 tirages, verif_solveur.js).
+ *
+ * ---- QUAND LE NUL EST HORS D'ATTEINTE, LE CHEMIN DECIDE ----
+ *
+ * rho n'est pas libre : RHO_BORNES, et une garde qui laisse un dixieme de
+ * marge aux quatre facteurs de Dixon-Coles (la formule devient negative a
+ * rho = -1/lh ; la garde est relue apres chaque part refaite). Quand le nul
+ * vendu demande plus que rho ne donne :
+ *   - au PRIX DU MARCHE, le TOTAL cede (`options.cede`) : moins de buts si le
+ *     nul vendu est trop haut, plus s'il est trop bas, juste assez pour que
+ *     rho a sa borne rende le nul. Le nul d'un bookmaker connait les deux
+ *     equipes : c'est une information sur les buts. Banc du 09/10, cinq grands
+ *     championnats, rencontres ou il cede : total 3,41 -> 3,62 pour 4,04 buts
+ *     reels (apprentissage, 96 matchs), 3,49 -> 3,87 pour 3,89 (test, 116) ;
+ *     issues plus/moins battables 45 -> 30 sur 144 et 42 -> 12 sur 232. Sur
+ *     tout le chemin de production : -0,0007 +-0,0004 issue battable par
+ *     rencontre (apprentissage, 20 362) et -0,0019 +-0,0007 (test, 15 986).
+ *   - a l'ELO, le total NE cede PAS : rho reste a sa borne, la part est
+ *     refaite sur le RAPPORT p1/(p1+p2), et la grille s'ecarte du nul vendu
+ *     (`nulAtteint` faux, `ecartNul` dit de combien). Le nul de l'Elo est une
+ *     courbe de l'ecart de force, trop haute sur les gros favoris (|p1 - p2|
+ *     >= 0,6 : 17,8 % vendu, 11,8 % reel) ; le reproduire retire des buts a
+ *     des matchs qui en marquent. Ceder y a ete mesure, et rejete : total
+ *     3,62 -> 3,37 pour 4,07 buts reels (apprentissage, 161 matchs), 3,57 ->
+ *     3,38 pour 3,68 (test, 108) ; issues plus/moins battables 36 -> 52 sur
+ *     238 et 27 -> 46 sur 216 ; handicap « 1 » a plat au parieur -11,0 ->
+ *     -7,9 % et +4,8 -> +7,3 %. L'ecart garde : 1,0 % des rencontres Elo
+ *     (108 sur 10 480 au test, 0,95 point en moyenne, 2,86 au plus ;
+ *     Eredivisie 74 sur 981) — sur un banc SANS la MLS : au calendrier du
+ *     09/10, 3 des 30 rencontres de MLS (0,09 a 0,26 point), rho a -0,29 ou
+ *     moins sur 395 des 3 686 du rejeu MLS ; la marge du score exact y monte
+ *     jusqu'a 37,4 %. Le 17,8 / 11,8 % : apprentissage, chemin Elo, 1 334
+ *     rencontres. La double chance ne descend plus de la grille
+ *     (voir `derives`) : elle ne peut pas se payer sur cet ecart.
+ *
+ * Mesure (banc du 09/10, football-data, TEST 2023/24-2026/27) : rho median
+ * -0,08 a l'Elo (p5 -0,23, p95 +0,01 ; 10 480 rencontres), -0,07 au marche
+ * (p5 -0,12, p95 +0,04 ; 5 506) ; Liga 2 a l'Elo -0,03 (+0,02 a
+ * l'apprentissage), parce que le nul de l'Elo y est trop bas (27,6 % vendu,
+ * 31,3 % reel, 2 310 matchs) ; Eredivisie -0,16.
+ * Bornes essayees sur l'apprentissage (25 420 rencontres, total de la ligue
+ * seul sur les deux chemins, log-loss du score exact) : [-0,20 ; 0] 2,8665 et
+ * 7,9 % des grilles a plus d'un point du 1-N-2 vendu ; [-0,30 ; +0,10] 2,8669
+ * et 0,2 % ; [-0,40 ; +0,20] 2,8669 et 0,1 %, pour un rho qui efface la case
+ * 0-1 d'un favori a deux buts (1 + lh rho = 0,2). Le milieu est garde. */
+const RHO_BORNES = [-0.30, 0.10];
+/* ---- ET LE TOTAL N'Y EST PLUS PLAFONNE A 3,6 ----
+ * Le plafond de 3,6 protegeait `ajusteButs` d'un total tire d'un nul trop bas
+ * (« du handball »). Ici le total vient de ce que le championnat marque : il
+ * n'a plus de raison de s'arreter a 3,6. Banc du 08/10, apprentissage, chemin
+ * Elo, rencontres dont le total demande depassait 3,6 : 4,08 +-0,28 buts reels
+ * (143 matchs, total demande moyen 3,80). Relever a 4,5 : log-loss du total
+ * -0,0003 +-0,0002 et issues plus/moins battables -0,0006 +-0,0005 par match
+ * (16 392 matchs). */
+const TOTAL_BORNES_LIGUE = [1.9, 4.5];
+
+/** La part du domicile qui reproduit le rapport p1/(p1+p2) a total et rho fixes. */
+function partAuRapport(total, rapportVoulu, rho) {
+  let bas = 0.05, haut = 0.95;
+  for (let t = 0; t < 40; t++) {
+    const x = (bas + haut) / 2;
+    const q = issuesDeLaGrille(grilleDesScores(total * x, total * (1 - x), rho));
+    if (q[1] / Math.max(1e-9, q[1] + q[2]) < rapportVoulu) bas = x; else haut = x;
+  }
+  return (bas + haut) / 2;
+}
+
+/** A total T impose : la part du domicile tiree de l'ECART p1 - p2 (rho n'y
+ *  touche pas), puis le rho qui rend le nul, en forme fermee. Rend aussi les
+ *  bornes de rho admissibles A CE (lh, la) : RHO_BORNES, et la garde qui
+ *  laisse un dixieme de marge aux quatre facteurs de Dixon-Coles. */
+function rhoAuTotal(v1, vN, v2, T, rMin0, rMax0) {
+  let bas = 0.05, haut = 0.95;
+  for (let t = 0; t < 40; t++) {
+    const x = (bas + haut) / 2;
+    const q = issuesDeLaGrille(grilleDesScores(T * x, T * (1 - x), 0));
+    if ((q[1] - q[2]) / (q[1] + q.N + q[2]) < v1 - v2) bas = x; else haut = x;
+  }
+  const x = (bas + haut) / 2;
+  const lh = T * x, la = T * (1 - x);
+  const g0 = grilleDesScores(lh, la, 0);
+  const q0 = issuesDeLaGrille(g0);
+  const S0 = q0[1] + q0.N + q0[2];
+  /* le nul de la grille vaut (N0 - 2d) / S0, d = g0[1][1] x rho (la grille
+     s'arrete a BUTS_MAX buts : elle somme a S0, un poil sous 1) */
+  const rho = (q0.N - vN * S0) / (2 * g0[1][1]);
+  const lo = Math.max(rMin0, -0.9 / Math.max(lh, la));
+  const hi = Math.min(rMax0, 0.9 / (lh * la));
+  return { lh, la, rho, lo, hi };
+}
+
+/** lh, la et rho qui reproduisent le 1-N-2 (p1, pN, p2) a TOTAL DEMANDE.
+ *  `options.cede` : le total cede quand rho ne suffit pas (prix du marche).
+ *  Rend { lh, la, rho, total, demande, cede, nulAtteint, ecartNul } ; `cede`
+ *  vaut null, 'moins' ou 'plus'. */
+function ajusteRho(p1, pN, p2, total, bornes, bornesTotal, options) {
+  const s = p1 + pN + p2;
+  const v1 = p1 / s, vN = pN / s, v2 = p2 / s;
+  const [tMin, tMax] = bornesTotal || TOTAL_BORNES_LIGUE;
+  const demande = Math.min(tMax, Math.max(tMin, Number(total) || 0));
+  const [rMin0, rMax0] = bornes || RHO_BORNES;
+  const S = (T) => rhoAuTotal(v1, vN, v2, T, rMin0, rMax0);
+  /* la grille finale est RELUE : ce qui est dit est ce qui est vendu */
+  const rend = (lh, la, rho, T, sens) => {
+    const q = issuesDeLaGrille(grilleDesScores(lh, la, rho));
+    const ecart = Math.max(Math.abs(q[1] - v1), Math.abs(q.N - vN), Math.abs(q[2] - v2));
+    return { lh, la, rho, total: T, demande, cede: sens, nulAtteint: ecart < 1e-6, ecartNul: q.N - vN };
+  };
+  let T = demande, r = S(T), sens = null;
+  if (r.rho >= r.lo && r.rho <= r.hi) return rend(r.lh, r.la, r.rho, T, null);
+  /* ---- LE NUL HORS D'ATTEINTE A CE TOTAL ---- */
+  const bas0 = r.rho < r.lo;            // il faut PLUS de nuls que rho n'en donne : moins de buts
+  if (options && options.cede) {
+    const bout = bas0 ? tMin : tMax;
+    const marge = (T2) => { const q = S(T2); return bas0 ? q.rho - q.lo : q.hi - q.rho; };
+    sens = bas0 ? 'moins' : 'plus';
+    if (marge(bout) >= 0) {
+      let a = T, b = bout;              // marge(a) < 0 <= marge(b) : le total le plus proche du demande
+      for (let t = 0; t < 40; t++) { const m = (a + b) / 2; if (marge(m) >= 0) b = m; else a = m; }
+      T = b; r = S(T);
+      return rend(r.lh, r.la, Math.min(r.hi, Math.max(r.lo, r.rho)), T, sens);
+    }
+    T = bout; r = S(T);                 // meme au bout des bornes : rho a sa borne, comme a l'Elo
+  }
+  /* rho a sa borne, la part refaite sur le RAPPORT p1/(p1+p2) ; la garde de
+     Dixon-Coles est relue au (lh, la) refait, jusqu'a ce qu'elle tienne */
+  const rapport = v1 / Math.max(1e-9, v1 + v2);
+  let rb = (r.rho < r.lo) ? r.lo : r.hi, lh = r.lh, la = r.la;
+  for (let it = 0; it < 8; it++) {
+    const xb = partAuRapport(T, rapport, rb);
+    lh = T * xb; la = T * (1 - xb);
+    const lo = Math.max(rMin0, -0.9 / Math.max(lh, la)), hi = Math.min(rMax0, 0.9 / (lh * la));
+    const rb2 = Math.min(hi, Math.max(lo, rb));
+    if (rb2 === rb) break;
+    rb = rb2;
+  }
+  return rend(lh, la, rb, T, sens);
 }
 
 /**
@@ -963,8 +1137,8 @@ function ajusteButs(p1, pN, p2) {
  * marquent » et « plus de 2,5 buts » ne sont pas deux estimations separees,
  * ce sont deux facons de sommer les memes cases.
  */
-function probasDesMarches(lh, la) {
-  const g = grilleDesScores(lh, la);
+function probasDesMarches(lh, la, rho) {
+  const g = grilleDesScores(lh, la, rho);
   const iss = issuesDeLaGrille(g);
   let btts = 0, plus = 0, hand1 = 0;
   const exact = {};
@@ -1073,7 +1247,7 @@ function probasImplicites(cotes, iss, couverture) {
  * grille : il est deja calcule, deja eprouve, et le recalculer autrement le
  * ferait diverger de lui-meme au troisieme chiffre. Les autres en descendent.
  */
-function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase) {
+function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase, ligue) {
   const iss1 = paris.issues(sport);
   /* ---- LE 1-N-2 RELEVE PREND LE PAS SUR LE NOTRE ----
    * `cotesBase` est le lot qui sera AFFICHE quand il vient d'un bookmaker.
@@ -1107,21 +1281,193 @@ function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase) {
    *
    * On garde donc l'original quand il est a nous, et on n'inverse que le lot
    * releve chez un bookmaker, pour qui on n'a rien d'autre. */
-  const p = (cotesBase && base === cotesBase)
-    ? (probasImplicites(base, iss1, 1) || probabilites(sport, domicile, exterieur))
-    : probabilites(sport, domicile, exterieur);
-  return derives(sport, p, margeVoulue, sortie);
+  const releve = (cotesBase && base === cotesBase) ? probasImplicites(base, iss1, 1) : null;
+  const p = releve || probabilites(sport, domicile, exterieur);
+  /* `chemin` : un lot releve est un prix de bookmaker (aussi tranche que le
+     marche), le notre sort de l'Elo (moins tranche : voir `totalDe`) */
+  return derives(sport, p, margeVoulue, sortie, undefined, { ligue, chemin: releve ? 'marche' : 'elo' });
+}
+
+/* ================== LA TABLE DES TOTAUX PAR CHAMPIONNAT ==================
+ * `paris_buts.json`, a cote du code, ecrit par `node outils/buts_ligue.js`
+ * depuis les CSV publics de football-data.co.uk (aucun credit The Odds API,
+ * aucune cle) : quatorze championnats europeens, la MLS et la Liga MX. A
+ * refaire une fois par mois, puis committer. Son age se lit dans
+ * etatImport().buts (`etatButs`) ; `cotes_ligue.test.js` rougit apres 400
+ * jours et donne la commande.
+ * Lue une fois. Un fichier absent ou illisible n'est pas une erreur : chaque
+ * rencontre retombe sur `ajusteButs`, exactement comme avant. Meme chose avec
+ * PARIS_BUTS_LIGUE=0 dans l'environnement : le retour arriere, sans commit.
+ *
+ * ---- FRAICHEUR : POURQUOI 400 JOURS, ET PAS 60 ----
+ * Banc du 09/10, test 2023/24-2026/27, chemin de production (15 986
+ * rencontres), ecart apparie de log-loss du score exact a ajusteButs : table
+ * du jour -0,0138 +-0,0030 (3,6 % d'issues plus/moins battables), vieille de
+ * 60 jours -0,0133 +-0,0031 (3,8 %), de 400 jours -0,0120 +-0,0032 (4,5 %) —
+ * contre 10,1 % avec ajusteButs. Vieillir coute peu : un essai rouge a 60
+ * jours aurait bloque tous les commits des deux depots pour 0,0005.
+ *
+ * ---- LA MLS ET LA LIGA MX, MESUREES HORS DU BANC (09/10/2026) ----
+ * football-data n'a pour elles que la cloture : pas de plus/moins, donc pas
+ * d'issues battables a compter. Elo rejoue comme `calibre`, etalonne sur la
+ * cote moyenne de cloture des jours ANTERIEURS seulement (moins informe que
+ * la production), depuis le 01/01/2019 ; ecart apparie au modele d'avant,
+ * log-loss du score exact : MLS -0,0069 +-0,0048 (3 686 matchs ; total de la
+ * grille 2,79 -> 2,89 pour 2,97 +-0,06 reels ; « plus de 2,5 » a plat au
+ * parieur -7,6 -> -10,9 %), Liga MX -0,0078 +-0,0063 (2 570 ; 2,84 -> 2,70
+ * pour 2,72 +-0,06 ; 1-0 a plat -1,0 -> -11,9 +-10,4 %). Les retirer de la
+ * table (niveau commun) ferait moins bien : MLS -0,0016 +-0,0032 seulement.
+ * Elles restent (mls_mex_elo.js). */
+const FICHIER_BUTS = path.join(__dirname, 'paris_buts.json');
+let BUTS = null;
+/* Ce que le modele a fait depuis le demarrage : la regle se juge en direct
+   (etatImport().buts), pas seulement sur le banc. */
+const COMPTE = { depuis: new Date().toISOString(), elo: 0, marche: 0, ligueInconnue: 0, sansTable: 0,
+                 nulManque: 0, ecartNulMax: 0, totalCede: 0 };
+/* Un NOMBRE, pas une valeur que Number() rend finie : Number(null) vaut 0 et
+   passait, et une table aux champs nuls se vendait (relecture du 09/10). */
+const nombre = (x) => typeof x === 'number' && isFinite(x);
+function chargeButs(fichier) {
+  try {
+    const t = JSON.parse(fs.readFileSync(fichier || FICHIER_BUTS, 'utf8'));
+    BUTS = (t && t.ligues && nombre(t.pente) && t.global && nombre(t.global.a)) ? t : {};
+  } catch (e) { BUTS = {}; }
+  console.log(BUTS.ligues
+    ? `[buts] table du ${BUTS.calcule} (donnees jusqu'au ${BUTS.jusqua || '?'}), ${Object.keys(BUTS.ligues).length} championnats`
+    : '[buts] pas de table des totaux : ajusteButs partout, comme avant le 09/10/2026');
+  return BUTS;
+}
+/** L'etat de la table et les compteurs, pour etatImport(). */
+function etatButs(now) {
+  const t = BUTS || chargeButs();
+  const n = Number(now) || Date.now();
+  const age = (d) => (d && isFinite(Date.parse(d)) ? Math.floor((n - Date.parse(d)) / 86400000) : null);
+  /* Le `jusqua` de la table est le PLUS RECENT des championnats : un
+     championnat fige derriere un autre a jour ne s'y voyait pas. */
+  let vieux = null;
+  for (const [k, L] of Object.entries(t.ligues || {})) {
+    if (L && L.jusqua && (!vieux || L.jusqua < vieux.jusqua)) vieux = { ligue: k, jusqua: L.jusqua };
+  }
+  return {
+    coupe: process.env.PARIS_BUTS_LIGUE === '0',
+    table: !!t.ligues,
+    partiel: t.partiel || null,
+    calcule: t.calcule || null, ageJours: age(t.calcule),
+    jusqua: t.jusqua || null, ageDonneesJours: age(t.jusqua),
+    plusVieilleDonnee: vieux ? Object.assign(vieux, { ageJours: age(vieux.jusqua) }) : null,
+    championnats: t.ligues ? Object.keys(t.ligues).length : 0,
+    /* des APPELS : une rencontre compte a chaque import qui la retarife */
+    depuisDemarrage: Object.assign({}, COMPTE),
+  };
+}
+/** Le total de buts attendu d'une rencontre de `ligue` (cle The Odds API),
+ *  ou null sans table (`ajusteButs` reprend).
+ *  `chemin` : 'elo' (1-N-2 de notre Elo) ou 'marche' (1-N-2 d'un bookmaker). */
+function totalDe(ligue, p, chemin) {
+  /* le retour arriere, sans commit : PARIS_BUTS_LIGUE=0 remet ajusteButs partout */
+  if (process.env.PARIS_BUTS_LIGUE === '0') return null;
+  const t = BUTS || chargeButs();
+  if (!t.ligues || !ligue || !p || !isFinite(p[1]) || !isFinite(p[2])) return null;
+  /* ---- UN CHAMPIONNAT QUE LA TABLE NE CONNAIT PAS ----
+   * (Ligue des champions, une coupe, un championnat ajoute a l'import) : le
+   * niveau et le biais de TOUS les championnats ensemble (`global`). Banc du
+   * 08/10, chaque ligue cotee comme si elle etait inconnue : log-loss du
+   * score exact 2,8717 contre 2,8858 pour ajusteButs (apprentissage, 25 420),
+   * 2,8911 contre 2,9008 (test, 15 986) — moins bien que la ligue connue
+   * (2,8640 / 2,8874), mieux que l'actuel. Jamais mesure sur de vrais matchs
+   * de coupe, ou les deux equipes viennent de championnats differents. */
+  const connue = t.ligues[ligue];
+  const L = connue || t.global;
+  if (!L || !nombre(L.a)) return null;
+  if (!connue) COMPTE.ligueInconnue++;
+  /* ---- LE NIVEAU DU CHAMPIONNAT, ET UN GROS FAVORI FAIT PLUS DE BUTS ----
+   * Le nul de l'Elo ne connait que l'ecart de force (NUL_MAX, NUL_PENTE) : il
+   * n'apprend rien sur les buts. a = le niveau du championnat, d2 = (p1 - p2)^2
+   * du 1-N-2 vendu. Mesure (apprentissage 2018/19-2022/23, 25 362 matchs, ecart
+   * a la moyenne de la ligue) : -0,16 +-0,04 but quand |p1 - p2| < 0,1, +0,51
+   * +-0,07 au-dela de 0,6 ; pente 1,44 +-0,14 par unite de d2 (1,54 +-0,17 sur
+   * le test). L'Elo est moins tranche que le marche (d2 Elo / d2 marche =
+   * 0,805 sur ces memes matchs) : sur le chemin Elo, d2 est ramene a l'echelle
+   * du marche. */
+  const d2 = Math.pow(p[1] - p[2], 2) / (chemin === 'elo' && nombre(t.compressionElo) && t.compressionElo > 0 ? t.compressionElo : 1);
+  const ligueSeule = L.a + t.pente * d2;
+  /* ---- AU PRIX DU MARCHE : LE NUL DU MARCHE SAIT DES CHOSES ----
+   * Le nul d'un bookmaker n'est pas une courbe : il connait les deux equipes.
+   * `ajusteButs` en tire un total qui suit le match (deux equipes offensives,
+   * moins de nuls, plus de buts), mais trop haut de b buts en moyenne, et
+   * d'un b qui depend du championnat (-0,02 en Bundesliga, +0,32 en Premier
+   * League sur les 365 jours au 08/10/2026). On garde le premier, on retire le
+   * second, et on le melange au total de la ligue (poids `poidsMarche`).
+   * Banc du 08/10, chemin du marche, cinq grands championnats, apprentissage
+   * (9 028 matchs) : issues plus/moins battables contre la cloture 3,3 % avec
+   * ajusteButs, 6,3 % avec le total de la ligue seul (comme a l'Elo), 1,6 %
+   * ainsi ; poids 1 / 0,75 / 0,5 essayes, 0,75 garde (log-loss du score
+   * exact -0,0015 +-0,0009 contre 1). */
+  const w = nombre(t.poidsMarche) ? t.poidsMarche : 0;
+  if (chemin === 'marche' && w > 0 && nombre(L.b) && isFinite(p.N))
+    return w * (ajusteButs(p[1], p.N, p[2]).total - L.b) + (1 - w) * ligueSeule;
+  return ligueSeule;
 }
 
 /* Les marches qui descendent d'un 1-N-2 donne en probabilites : `marchesDe`
    (l'Elo, ou un lot releve) et `marchesDuMarche` (le prix du marche) passent
-   par le MEME calcul, pour qu'ils ne divergent jamais. */
-function derives(sport, p, margeVoulue, sortie, marges) {
+   par le MEME calcul, pour qu'ils ne divergent jamais.
+   `contexte` : { ligue, chemin } — sans championnat connu, `ajusteButs`. */
+function derives(sport, p, margeVoulue, sortie, marges, contexte) {
   const dispo = paris.marchesDuSport(sport).filter((k) => k !== paris.MARCHE_BASE);
   if (!dispo.length) return sortie;
   if (!isFinite(p.N)) return sortie;             // deux issues : pas de buts a modeliser
-  const { lh, la } = ajusteButs(p[1], p.N, p[2]);
-  const tout = probasDesMarches(lh, la);
+  /* ---- LE TOTAL DU CHAMPIONNAT QUAND ON LE CONNAIT (09/10/2026) ----
+   * Mesure (banc du 09/10, football-data, TEST 2023/24-2026/27, chemin de
+   * production : Elo sur E1 F2 D2 SP2 I2 N1 P1 B1 T1, marche sur E0 SP1 I1
+   * D1 F1, 15 986 rencontres ; avant -> apres, ecart apparie +- IC 95 %) :
+   *   total de la grille 2,90 -> 2,73 pour 2,75 +-0,03 buts reels ;
+   *   log-loss du score exact 2,9008 -> 2,8871 (-0,0138 +-0,0030), du total
+   *     -0,0143 +-0,0029, du plus/moins -0,0062 +-0,0022 ;
+   *   plus/moins 2,5 a 22 %, issues battables contre la cloture 3 232 ->
+   *     1 144 sur 31 972 (10,1 -> 3,6 %), gain du parieur qui compare +1,39
+   *     -> +0,48 % de mise par rencontre (-0,90 +-0,57) ;
+   *   1-0 mise a chaque rencontre -3,9 -> -18,0 +-4,0 % (-14,0 +-1,0) ; les
+   *     huit scores bas (0-0 a 1-2, dutching) -19,6 -> -23,8 % ; « les deux
+   *     marquent : oui » -13,2 -> -8,2 % (+5,0 +-0,2), « non » -10,4 -> -16,3 % ;
+   *   ecart moyen de la grille au 1-N-2 vendu 0,10 -> 0,01 point.
+   * LES SCORES HAUTS RENDENT PLUS (relecture du 09/10, memes 15 986) : les
+   * 17 cases misees a plat -28,4 -> -27,1 % (+1,3 +-0,3) ; 2-2 -12,5 +-5,4 ->
+   * -5,7 +-5,8 % (+6,8 +-0,8 apparie), devenu la case la plus faible pour la
+   * maison, non concluant (l'IC touche 0) ; 3-3 -32,3 -> -22,0, 3-2 -31,7 ->
+   * -22,5, autre -36,8 -> -28,3. La grille sous-estime le 2-2 (970 reels pour
+   * 765 attendus, 835 avant). Le rabot ne couvre pas ces cases (voir
+   * `scoresPrudents`) : les borner se mesure sur le banc avant tout changement.
+   * Apprentissage 2018/19-2022/23 (25 420 ; les reglages y ont ete choisis) :
+   * battables 11,8 -> 2,6 % (sur les 20 362 qui ont une cloture plus/moins),
+   * log-loss du score -0,0219. Rien n'est concluant championnat par
+   * championnat sur le 1-0 (IC de 12 a 19 points). */
+  const ch = (contexte && contexte.chemin === 'marche') ? 'marche' : 'elo';
+  const T = (contexte && contexte.ligue) ? totalDe(contexte.ligue, p, ch) : null;
+  let lh, la, rho;
+  if (T === null) {
+    ({ lh, la } = ajusteButs(p[1], p.N, p[2]));
+    rho = RHO;
+    if (contexte && contexte.ligue) COMPTE.sansTable++;
+  } else {
+    /* au marche le total cede pour rendre le nul, a l'Elo non : voir RHO_BORNES */
+    const s = ajusteRho(p[1], p.N, p[2], T, undefined, undefined, { cede: ch === 'marche' });
+    ({ lh, la, rho } = s);
+    COMPTE[ch]++;
+    if (s.cede) COMPTE.totalCede++;
+    if (!s.nulAtteint) { COMPTE.nulManque++; COMPTE.ecartNulMax = Math.max(COMPTE.ecartNulMax, Math.abs(s.ecartNul)); }
+  }
+  const tout = probasDesMarches(lh, la, rho);
+  /* ---- LA DOUBLE CHANCE SUIT LE 1-N-2 VENDU, PAS LA GRILLE ----
+   * Avec la table, la grille de l'Elo manque le nul sur 1,0 % des rencontres
+   * (voir RHO_BORNES). La double chance est un 1-N-2 regroupe : la coter sur
+   * le 1-N-2 VENDU la rend exacte meme la, et identique a celle d'avant
+   * partout ailleurs (la grille d'ajusteButs rendait p1 + pN au centime pres :
+   * 9 012 couples (1-N-2, championnat) du banc, 0 lot different, verif_prod.js ;
+   * 1 151 lots sur les ecarts de -900 a +900, 0 different, cotes_ligue.test.js).
+   * Sans table, rien ne change : la grille, comme avant. */
+  const s3 = p[1] + p.N + p[2];
+  const dcVendu = (T === null) ? null : { '1X': (p[1] + p.N) / s3, 12: (p[1] + p[2]) / s3, X2: (p.N + p[2]) / s3 };
   for (const k of dispo) {
     const M = paris.MARCHES[k];
     const iss = M.issues(sport);
@@ -1157,15 +1503,19 @@ function derives(sport, p, margeVoulue, sortie, marges) {
      *     Ligue 2 : mise a chaque match, +37 +-12 % en SP2 (3 400 matchs), +27
      *     +-13 % en F2 (2 563). Notre total de buts vaut ~2,8 partout quand le
      *     reel, sur ces memes matchs, va de 2,27 (SP2) et 2,37 (F2) a 3,11 (N1) :
-     *     c'est le modele de buts, pas la marge ;
+     *     c'est le modele de buts, pas la marge. CORRIGE le 09/10/2026 par
+     *     le total du championnat (voir plus haut) : chemin Elo, test, 10 480
+     *     rencontres, 1-0 reel/proba 1,32 +-0,08 -> 1,11 +-0,06, mise a chaque
+     *     match 0,0 +-5,7 -> -14,6 +-5,0 % ; Liga 2 +24,5 +-16,7 -> -12,6
+     *     +-11,9 % (1 474), Ligue 2 +11,9 +-18,8 -> -11,7 +-14,9 % (1 053) ;
      *   le handicap meme a 15 % : sur les 111 rencontres reellement a l'Elo le
      *     08/10 (un seul releve), 27 -> 22 issues battables sur 222 ; la cote
      *     de l'issue « 2 » ne bouge pas entre 10 et 15 % sur 84 des 138
      *     rencontres (plancher par issue). Voir EXPLOITATION.md, 8.8. */
-    const lot = habilleUnMarche(tout[k], iss, M.couverture,
+    const lot = habilleUnMarche((k === 'dc' && dcVendu) ? dcVendu : tout[k], iss, M.couverture,
                                 (marges && marges[k] !== undefined) ? marges[k]
                                   : (Number(margeVoulue) || MARGE_DEFAUT) * (M.margeX || 1),
-                                k === 'score' ? scoresPrudents(lh, la) : null);
+                                k === 'score' ? scoresPrudents(lh, la, rho) : null);
     /* Un marche qui ne tient pas est ECARTE, pas force. La rencontre garde les
        autres — refuser tout le match parce qu'un handicap sort des bornes
        priverait de pari une affiche parfaitement cotable. */
@@ -1186,9 +1536,13 @@ function derives(sport, p, margeVoulue, sortie, marges) {
  * plancher de 1,03 : la rencontre n'est alors pas un marche.
  */
 /* ---- LES MARGES DES MARCHES DERIVES, AU PRIX DU MARCHE (08/10/2026) ----
- * Le 1-N-2 vient du marche ; les buts, non : leur total est REDEDUIT du nul
+ * Le 1-N-2 vient du marche ; les buts, non : leur total etait REDEDUIT du nul
  * du marche (ajusteButs), faute de relever les totaux (un credit de plus par
- * releve — hors du forfait gratuit). Mesure, Liga, 829 rencontres
+ * releve — hors du forfait gratuit). Depuis le 09/10/2026, il melange ce nul
+ * recentre et le niveau du championnat (`totalDe`), et cede pour rendre le
+ * nul du marche (`ajusteRho`) : issues plus/moins battables 3,4 -> 1,4 % sur
+ * les cinq grands championnats (test, 11 012 issues). Les marges ne bougent
+ * pas. Mesure d'avant, Liga, 829 rencontres
  * (football-data, prix de 1 a 4 jours) : a 10 %, 55 issues plus/moins 2,5 et
  * les-deux-marquent sur 458 restaient battables (12 %, +3,9 a +8,7 %), 32,9 %
  * des rencontres avec au moins une ; il faut environ 22 % pour descendre a
@@ -1199,14 +1553,15 @@ function derives(sport, p, margeVoulue, sortie, marges) {
  * La double chance n'a rien a deduire : elle est EXACTEMENT fixee par le 1-N-2
  * du marche, on la cote dessus a la marge ordinaire. */
 const MARGES_AU_MARCHE = { ou25: 0.22, btts: 0.22, score: 0.30, hand: 0.15 };
-function marchesDuMarche(sport, p, margeVoulue) {
+function marchesDuMarche(sport, p, margeVoulue, ligue) {
   const iss1 = paris.issues(sport);
   if (!p || !iss1.every((i) => Number(p[i]) > 0 && Number(p[i]) < 1)) return null;
   const q = {};
   for (const i of iss1) q[i] = Number(p[i]);
   const base = habilleUnMarche(q, iss1, 1, margeVoulue);
   if (!base) return null;
-  const sortie = derives(sport, q, margeVoulue, { [paris.MARCHE_BASE]: { cotes: base.cotes } }, MARGES_AU_MARCHE);
+  const sortie = derives(sport, q, margeVoulue, { [paris.MARCHE_BASE]: { cotes: base.cotes } }, MARGES_AU_MARCHE,
+                         { ligue, chemin: 'marche' });
   if (sortie.dc && isFinite(q.N)) {
     const Mdc = paris.MARCHES.dc;
     const pdc = { '1X': q[1] + q.N, 12: q[1] + q[2], X2: q.N + q[2] };
@@ -1225,4 +1580,6 @@ module.exports = {
   probabilites, cotesDe, habille, habilleCatalogue,
   BUTS_MAX, RHO, RHO_PLAGE, scoresPrudents, poisson, grilleDesScores, issuesDeLaGrille, ajusteButs,
   probasDesMarches, habilleUnMarche, marchesDe, probasImplicites,
+  RHO_BORNES, TOTAL_PLANCHER, TOTAL_PLAFOND, TOTAL_BORNES_LIGUE, partAuRapport, rhoAuTotal, ajusteRho,
+  chargeButs, totalDe, etatButs,
 };
