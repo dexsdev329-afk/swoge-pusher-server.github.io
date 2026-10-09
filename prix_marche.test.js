@@ -375,5 +375,52 @@ const parEv = (l, e) => l.find((m) => m.source && m.source.evenement === e);
     ok(a1 && a1.prixMarche && !a1.suspendu && paris.ouvert(paris.match(a1.id)), 'sa voisine au prix frais : vendue');
   }
 
+  console.log('\n-- 16. observer sans vendre, et la cadence (forfait paye, 09/10) --');
+  {
+    /* La Ligue 1 du banc est a l'Elo : on l'OBSERVE. Son prix se releve, sa
+       couverture et l'ecart de nos cotes se lisent — rien ne se vend au marche. */
+    process.env.PARIS_PRIX_OBSERVE = 'soccer_france_ligue_one';
+    try {
+      appels.length = 0;
+      eq(await imp.rafraichitPrix(['soccer_france_ligue_one'], 'essai'), 1, 'un championnat observe se releve');
+      eq(credits(), 1, 'pour un credit');
+      ok(pm.pour('f1') && pm.lis().couverture.soccer_france_ligue_one && pm.lis().couverture.soccer_france_ligue_one.pinnacle === 1,
+         'son prix et sa couverture sont notes (pinnacle 1)');
+      await imp.importeMatchs();
+      paris.charge();
+      const f1 = parEv(lisCat(), 'f1');
+      ok(f1 && !f1.suspendu && !f1.prixMarche && paris.ouvert(paris.match(f1.id)), 'observe n est pas vendu : Lyon–Monaco reste a l Elo, ouverte, jamais suspendue');
+      const e = imp.etatPrix().soccer_france_ligue_one;
+      /* l'attendu, refait a la main : nos cotes Elo x le prix du marche */
+      const c = paris.match(f1.id).marches['1n2'].cotes, p = pm.pour('f1').p;
+      const attendu = ['1', 'N', '2'].filter((i) => c[i] * p[i] > 1).length;
+      ok(e && e.observe === true && e.ecart.avecPrix === 1 && e.ecart.issues === 3 && e.ecart.battables === attendu,
+         `etatPrix dit l ecart de nos cotes au marche : ${e && e.ecart.battables}/3 issues battables (attendu ${attendu}), meilleure esperance ${e && e.ecart.esperanceMoyenne}`);
+      ok(imp.etatPrix().soccer_epl && !imp.etatPrix().soccer_epl.observe, 'un championnat vendu n est pas marque observe');
+      ok(imp.prixPerimes(Date.now() + 23 * 3600000).includes('soccer_france_ligue_one'), 'un championnat observe se releve aussi chaque jour');
+    } finally { delete process.env.PARIS_PRIX_OBSERVE; }
+
+    /* La cadence : 22 h par defaut, reglable ; jamais plus espacee que l'age de vente. */
+    eq(pm.releveMs(), 22 * 3600000, 'cadence par defaut : 22 h, le forfait gratuit');
+    process.env.PARIS_PRIX_RELEVE_H = '3';
+    try {
+      eq(pm.releveMs(), 3 * 3600000, 'PARIS_PRIX_RELEVE_H=3 : toutes les trois heures');
+      ok(imp.prixPerimes(Date.now() + 4 * 3600000).includes('soccer_epl') && !imp.prixPerimes(Date.now() + 3600000).includes('soccer_epl'),
+         'a 3 h de cadence : quatre heures plus tard on releve, une heure plus tard non');
+      process.env.PARIS_PRIX_RELEVE_H = '99';
+      eq(pm.releveMs(), pm.AGE_MAX_MS - 2 * 3600000, 'une cadence plus longue que l age de vente est ramenee sous lui (sinon tout serait suspendu entre deux releves)');
+    } finally { delete process.env.PARIS_PRIX_RELEVE_H; }
+
+    /* Avant chaque coup d'envoi, paris ou non, quand on le paie. */
+    const b1 = parEv(lisCat(), 'a1');
+    const avant = Date.parse(b1.debut) - 3600000;
+    const c2 = JSON.parse(fs.readFileSync(pm.fichier(), 'utf8')); c2.ligues.soccer_epl = avant - 4 * 3600000; fs.writeFileSync(pm.fichier(), JSON.stringify(c2));
+    eq(imp.prixAvantMatch(() => false, avant).length, 0, 'sans paris : rien avant le coup d envoi (forfait gratuit)');
+    process.env.PARIS_PRIX_AVANT_TOUS = '1';
+    try {
+      eq(imp.prixAvantMatch(() => false, avant).join(','), 'soccer_epl', 'PARIS_PRIX_AVANT_TOUS=1 : on releve avant le coup d envoi, paris ou non');
+    } finally { delete process.env.PARIS_PRIX_AVANT_TOUS; }
+  }
+
   console.log(`\nprix_marche.test.js : ${n} verifications OK`);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -63,6 +63,31 @@ function ligues() {
    marge ; un releve refuse par la part du jour ne l'atteint pas, la releve
    des prix passant en PRIORITE dans le garde-fou (paris_import.autorise). */
 const AGE_MAX_MS = (Number(process.env.PARIS_PRIX_AGE_MAX_H) || 36) * 3600000;
+
+/* ---- OBSERVER SANS VENDRE (09/10/2026) ----
+ * `PARIS_PRIX_OBSERVE` (cles separees par des virgules) : des championnats
+ * dont on RELEVE le prix du marche sans le vendre — l'Elo continue d'y coter.
+ * Pour juger un championnat AVANT de le basculer : la couverture des livres
+ * (betfair / pinnacle / mediane / aucun, gardee par `note`) et l'ecart REEL de
+ * nos cotes au marche (paris_import.ecartAuMarche). Mesure du banc du 09/10 :
+ * sur les neuf championnats Elo, 20 % des issues 1-N-2 battables (test
+ * 2023-26) ; c'est ce chiffre qu'on veut voir en direct avant de payer. */
+function observees() {
+  return new Set(String(process.env.PARIS_PRIX_OBSERVE || '').split(',').map((x) => x.trim()).filter(Boolean));
+}
+/** Ce qui se releve : ce qui se vend, plus ce qu'on observe. */
+function aRelever() { return new Set([...ligues(), ...observees()]); }
+/* ---- LA CADENCE DU RELEVE ----
+ * `PARIS_PRIX_RELEVE_H` : 22 h par defaut (une fois par jour, le forfait
+ * gratuit de 500 credits). Avec un forfait paye, plus souvent : vieux de 1 a
+ * 4 jours, le prix laissait un choix gagnant sur 16 % des rencontres de Liga
+ * contre 0 a 2 sur 471 frais (mesure du 08/10). Jamais plus espace que l'age
+ * de vente moins deux heures : sinon tout serait suspendu entre deux releves. */
+function releveMs() {
+  const h = Number(process.env.PARIS_PRIX_RELEVE_H);
+  const ms = (isFinite(h) && h >= 1 ? h : 22) * 3600000;
+  return Math.min(ms, AGE_MAX_MS - 2 * 3600000);
+}
 const ECART_MAX = 0.05;
 const BOURSE = 'betfair_ex_eu', PINNACLE = 'pinnacle';
 
@@ -125,8 +150,8 @@ function fichier() { return path.join(DOSSIER, 'paris_prix.json'); }
 function lis() {
   try {
     const j = JSON.parse(fs.readFileSync(fichier(), 'utf8'));
-    return { evenements: j.evenements || {}, ligues: j.ligues || {} };
-  } catch (e) { return { evenements: {}, ligues: {} }; }
+    return { evenements: j.evenements || {}, ligues: j.ligues || {}, couverture: j.couverture || {} };
+  } catch (e) { return { evenements: {}, ligues: {}, couverture: {} }; }
 }
 /* Ecrit en deux temps (fichier temporaire puis renommage) : un volume plein
    ou une ecriture coupee ne laisse jamais un carnet a moitie ecrit. Rend
@@ -185,6 +210,8 @@ function note(evs, ligue, now) {
     }
   }
   c.ligues[L] = t;
+  /* la couverture du dernier releve : de quoi juger un championnat observe */
+  c.couverture[L] = Object.assign({ t: new Date(t).toISOString() }, compte);
   for (const [k, e] of Object.entries(c.evenements)) if (t - e.t > 10 * 86400000) delete c.evenements[k];
   /* La date ne vit en memoire QUE si l'ecriture a echoue. */
   if (ecris(c)) delete MEMOIRE[L]; else MEMOIRE[L] = t;
@@ -204,4 +231,4 @@ function derniere(ligue) {
   return Math.max(Number(lis().ligues[L]) || 0, MEMOIRE[L] || 0);
 }
 
-module.exports = { LIGUES_DEFAUT, ligues, AGE_MAX_MS, ECART_MAX, referenceDe, note, pour, derniere, fichier, lis };
+module.exports = { LIGUES_DEFAUT, ligues, observees, aRelever, releveMs, AGE_MAX_MS, ECART_MAX, referenceDe, note, pour, derniere, fichier, lis };
