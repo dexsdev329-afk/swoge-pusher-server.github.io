@@ -29,6 +29,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const prixLigues = require('./prix_ligues');
 
 /* Les issues, PAR SPORT. Une liste fermee : ce qui traverse le reseau ne peut
    etre que l'une d'elles.
@@ -547,6 +548,18 @@ function ouvert(m, now) {
      gagnant sur 16,7 % des rencontres de Liga, a +4,1 % (568 rencontres,
      relecture du 08/10). */
   if (m.prixMarche && !(t - Date.parse(m.prixMarche.t) <= AGE_PRIX_MS)) return false;
+  /* ---- UN CHAMPIONNAT VENDU AU MARCHE NE SE VEND JAMAIS A L'ELO (09/10/2026) ----
+   * La liste change par une variable (`PARIS_PRIX_LIGUES`), et un
+   * redemarrage repart du catalogue d'avant : cote a l'Elo jusqu'a l'import
+   * suivant — 30 s au mieux, douze heures si le fournisseur est en panne a ce
+   * moment-la (relecture contradictoire du 09/10). Mesure du meme jour, a
+   * l'observation des onze championnats secondaires : 103 issues 1-N-2 Elo
+   * sur 414 battables face au marche, la meilleure a +37,6 %. Une rencontre
+   * FABRIQUEE d'un championnat vendu, sans prix du marche, est donc fermee ici
+   * comme a l'import. Une cote relevee a la main (`cotesGenerees` faux) n'est
+   * pas concernee. */
+  if (m.cotesGenerees && !m.prixMarche && m.source && m.source.ligue
+      && prixLigues.ligues().has(m.source.ligue)) return false;
   const r = HEURES_REELLES.get(m.id);
   if (r) {
     if (r.etat === 'in' || r.etat === 'post') return false;

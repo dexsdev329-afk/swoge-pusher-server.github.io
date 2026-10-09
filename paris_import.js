@@ -1225,6 +1225,18 @@ function ecartAuMarche(ligue, now) {
   if (out.avecPrix) out.esperanceMoyenne = Math.round(somme / out.avecPrix * 1000) / 1000;
   return out;
 }
+/* ---- UNE CLE MAL ECRITE SE DIT, MEME AVEC LE JOKER (09/10/2026) ----
+ * Les cles de PARIS_PRIX_LIGUES / PARIS_PRIX_OBSERVE absentes des ligues
+ * importees : jamais relevees, donc jamais vendues au marche. Le joker
+ * `tennis=*` (liste par defaut) taisait TOUT avertissement — une cle mal
+ * recopiee renvoyait son championnat a l'Elo sans un mot (relecture
+ * contradictoire du 09/10). Le joker ne couvre que le tennis : lui seul excuse
+ * une cle absente de la liste. */
+function prixInconnues() {
+  const connues = new Set(LIGUES.map((l) => l.clef));
+  const joker = LIGUES.some((l) => l.clef === '*');
+  return [...prixMarche.aRelever()].filter((c) => !connues.has(c) && !(joker && /^tennis_/.test(c)));
+}
 function etatPrix(now) {
   const t = now || Date.now(), out = {};
   const vendues = prixMarche.ligues(), couv = prixMarche.lis().couverture || {};
@@ -1539,10 +1551,11 @@ function planifie(signale, aRegler) {
     if (await rafraichitPrix(clefs, pourquoi, ageMin)) await rafraichit();
   });
   {
-    const connues = new Set(LIGUES.map((l) => l.clef));
-    const inconnues = [...prixMarche.aRelever()].filter((c) => !connues.has(c) && !LIGUES.some((l) => l.clef === '*'));
+    const inconnues = prixInconnues();
     if (inconnues.length) console.log('[odds] PARIS_PRIX_LIGUES / PARIS_PRIX_OBSERVE : ' + inconnues.join(', ') + ' absente(s) des ligues importees — jamais relevee(s)');
-    if (prixMarche.observees().size || process.env.PARIS_PRIX_RELEVE_H) console.log('[odds] prix du marche : vendu sur ' + prixMarche.ligues().size
+    /* Toujours ecrit : c'est la seule ligne qui dit, apres un changement de
+       variable, ce qui se vend vraiment au prix du marche. */
+    console.log('[odds] prix du marche : vendu sur ' + prixMarche.ligues().size + ' (' + [...prixMarche.ligues()].join(', ') + ')'
       + ', observe sur ' + prixMarche.observees().size + ', releve toutes les ' + Math.round(prixMarche.releveMs() / 3600000) + ' h');
   }
   const premier = delaiAvantEtalonnage();
@@ -1610,7 +1623,7 @@ if (require.main === module) {
 module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie, delaiAvantEtalonnage,
                    finDuMois, fin,
                    etatImport, noteDernier,
-                   trieReglements, prolongationPossible, avecPrix, rafraichitPrix, prixPerimes, prixAvantMatch, etatPrix, ecartAuMarche, PRIX_JOUR_MS,
+                   trieReglements, prolongationPossible, avecPrix, rafraichitPrix, prixPerimes, prixAvantMatch, etatPrix, ecartAuMarche, prixInconnues, PRIX_JOUR_MS,
                    AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
                    partDuJour, joursRestants, autorise, identifiant, etatQuota };

@@ -422,5 +422,82 @@ const parEv = (l, e) => l.find((m) => m.source && m.source.evenement === e);
     } finally { delete process.env.PARIS_PRIX_AVANT_TOUS; }
   }
 
+  /* ================================================================ 17 ====
+   * LA BASCULE DES ONZE CHAMPIONNATS, ET CE QUE LA RELECTURE Y A TROUVE
+   * (09/10/2026). La liste vendue change par une variable : une liste mal
+   * collee, un catalogue d'avant le redemarrage ou une cle mal ecrite
+   * rendaient l'Elo en silence — 103 issues 1-N-2 sur 414 battables face au
+   * marche, mesurees le meme jour sur ces onze championnats. */
+  {
+    /* Les separateurs : une liste collee avec des « ; » ou des espaces. */
+    const ligues = (v) => { process.env.PARIS_PRIX_LIGUES = v; return [...pm.ligues()].join(','); };
+    try {
+      eq(ligues('soccer_epl;soccer_france_ligue_one  soccer_usa_mls'), 'soccer_epl,soccer_france_ligue_one,soccer_usa_mls',
+         'point-virgule et espaces separent comme la virgule (une liste collee avec des « ; » ne devient plus UNE cle fausse)');
+      eq(ligues(' soccer_epl , soccer_usa_mls ,'), 'soccer_epl,soccer_usa_mls', 'espaces et virgule finale ignores');
+      eq(ligues(''), '', 'la liste VIDE coupe toujours tout (retour arriere)');
+      delete process.env.PARIS_PRIX_LIGUES;
+      eq(pm.ligues().size, pm.LIGUES_DEFAUT.length, 'sans variable : les six grands par defaut');
+      process.env.PARIS_PRIX_OBSERVE = 'soccer_efl_champ; soccer_usa_mls';
+      eq([...pm.observees()].join(','), 'soccer_efl_champ,soccer_usa_mls', 'meme decoupage pour PARIS_PRIX_OBSERVE');
+    } finally { process.env.PARIS_PRIX_LIGUES = 'soccer_epl'; delete process.env.PARIS_PRIX_OBSERVE; }
+
+    /* La porte de vente : un championnat VENDU ne se vend jamais a l'Elo, meme
+       si le catalogue d'avant le redemarrage est encore en memoire. */
+    paris.charge();
+    const f1 = paris.match(parEv(lisCat(), 'f1').id);
+    ok(f1 && f1.cotesGenerees && !f1.prixMarche && paris.ouvert(f1), 'Lyon–Monaco, a l Elo, est ouverte tant que la Ligue 1 n est pas vendue au marche');
+    process.env.PARIS_PRIX_LIGUES = 'soccer_epl;soccer_france_ligue_one';
+    try {
+      ok(!paris.ouvert(f1), 'la Ligue 1 posee dans la liste : la rencontre FABRIQUEE sans prix du marche est fermee a la vente avant meme l import');
+      ok(paris.ouvert(Object.assign({}, f1, { cotesGenerees: false })), 'une cote relevee a la main (cotesGenerees faux) reste vendable');
+      ok(paris.ouvert(Object.assign({}, f1, { prixMarche: { p: { 1: 0.5, N: 0.3, 2: 0.2 }, t: new Date().toISOString() } })),
+         'avec un prix du marche frais, elle se vend');
+      const a1 = paris.match(parEv(lisCat(), 'a1').id);
+      ok(a1 && a1.prixMarche && paris.ouvert(a1), 'la Premier League au prix du marche reste ouverte');
+    } finally { process.env.PARIS_PRIX_LIGUES = 'soccer_epl'; }
+    ok(paris.ouvert(f1), 'retire de la liste, le championnat se revend a l Elo');
+
+    /* La lecture du carnet est gardee entre deux rencontres, mais toute
+       ecriture la renouvelle, et ce qu'elle rend est une copie. */
+    const r1 = pm.pour('a1');
+    ok(r1 && r1.p, 'a1 a un prix');
+    r1.p['1'] = 0.0123; r1.t = 1;
+    ok(pm.pour('a1').p['1'] !== 0.0123 && pm.pour('a1').t !== 1, 'pour() rend une COPIE : la modifier ne touche pas la lecture partagee');
+    const brut = fs.readFileSync(pm.fichier(), 'utf8');
+    try {
+      const c = JSON.parse(brut); c.evenements.a1.p['1'] = 0.4321; fs.writeFileSync(pm.fichier(), JSON.stringify(c));
+      eq(pm.pour('a1').p['1'], 0.4321, 'un carnet reecrit par un autre processus (releve a la main) est relu');
+      const d = JSON.parse(fs.readFileSync(pm.fichier(), 'utf8')); delete d.evenements.a1; fs.writeFileSync(pm.fichier(), JSON.stringify(d));
+      eq(pm.pour('a1'), null, 'un evenement retire du carnet disparait de la vente');
+    } finally { fs.writeFileSync(pm.fichier(), brut); }
+    ok(pm.pour('a1') && pm.pour('a1').p['1'] !== 0.4321, 'le carnet remis, son prix revient');
+    /* Un volume dont l'heure des fichiers est grossiere (a la seconde) : deux
+       ecritures de meme taille dans la meme seconde ont la meme signature. Nos
+       propres ecritures renouvellent quand meme la lecture. */
+    const statVrai = fs.statSync;
+    fs.statSync = function (f, ...r) {
+      const st = statVrai.call(fs, f, ...r);
+      return f === pm.fichier() ? Object.assign(Object.create(Object.getPrototypeOf(st)), st, { mtimeMs: 1, size: 1 }) : st;
+    };
+    try {
+      const avant = pm.pour('a1').p['1'];
+      const e0 = EVENTS.soccer_epl[0];
+      pm.note([Object.assign({}, e0, { bookmakers: [livre('betfair_ex_eu', e0, 1.5, 4.2, 6.5), livre('pinnacle', e0, 1.5, 4.2, 6.5),
+        livre('unibet_eu', e0, 1.48, 4.1, 6.3)] })], 'soccer_epl');
+      const apres = pm.pour('a1').p['1'];
+      ok(apres < avant - 0.1, `heure de fichier figee : le prix neuf se vend quand meme apres notre propre ecriture (${avant} -> ${apres})`);
+    } finally { fs.statSync = statVrai; fs.writeFileSync(pm.fichier(), brut); }
+
+    /* Une cle mal ecrite se dit au demarrage, meme avec le joker du tennis. */
+    const { execFileSync } = require('child_process');
+    const inconnues = (liste, observe) => execFileSync(process.execPath, ['-e',
+      "process.stdout.write(JSON.stringify(require('./paris_import').prixInconnues()))"],
+      { cwd: __dirname, env: Object.assign({}, process.env, { DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'prix-inc-')),
+        ODDS_API_LIGUES: 'foot=soccer_epl,foot=soccer_efl_champ,tennis=*', PARIS_PRIX_LIGUES: liste, PARIS_PRIX_OBSERVE: observe || '' }) }).toString();
+    eq(inconnues('soccer_epl,soccer_efl_champion'), '["soccer_efl_champion"]', 'avec le joker tennis=*, une cle de football mal ecrite est signalee');
+    eq(inconnues('soccer_epl;soccer_efl_champ', 'tennis_atp_paris'), '[]', 'les bonnes cles, et une cle de tennis couverte par le joker : rien a signaler');
+  }
+
   console.log(`\nprix_marche.test.js : ${n} verifications OK`);
 })().catch((e) => { console.error(e); process.exit(1); });

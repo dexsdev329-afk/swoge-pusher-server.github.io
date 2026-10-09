@@ -47,15 +47,11 @@ const cotes = require('./cotes');
 
 const ISSUES = ['1', 'N', '2'];
 
-/* Les six grands championnats, ceux ou l'argent se pose et ou l'Elo perd le
-   plus. `PARIS_PRIX_LIGUES` vide COUPE tout (retour a l'Elo partout). */
-const LIGUES_DEFAUT = ['soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
-  'soccer_germany_bundesliga', 'soccer_france_ligue_one', 'soccer_uefa_champs_league'];
-function ligues() {
-  const v = process.env.PARIS_PRIX_LIGUES;
-  if (v === undefined) return new Set(LIGUES_DEFAUT);
-  return new Set(String(v).split(',').map((x) => x.trim()).filter(Boolean));
-}
+/* La liste vendue et la liste observee vivent dans `prix_ligues.js`, sans
+   dependance : `paris.js` (la porte de vente) lit la meme. Defaut : les six
+   grands championnats ; `PARIS_PRIX_LIGUES` vide COUPE tout (retour a l'Elo
+   partout). Separateurs : virgule, point-virgule, espaces. */
+const { LIGUES_DEFAUT, ligues, observees } = require('./prix_ligues');
 
 /* Au-dela, le prix ne se vend plus : la rencontre est SUSPENDUE, jamais
    rendue a l'Elo en silence — a l'import ET a la vente (paris.ouvert, qui lit
@@ -72,9 +68,6 @@ const AGE_MAX_MS = (Number(process.env.PARIS_PRIX_AGE_MAX_H) || 36) * 3600000;
  * nos cotes au marche (paris_import.ecartAuMarche). Mesure du banc du 09/10 :
  * sur les neuf championnats Elo, 20 % des issues 1-N-2 battables (test
  * 2023-26) ; c'est ce chiffre qu'on veut voir en direct avant de payer. */
-function observees() {
-  return new Set(String(process.env.PARIS_PRIX_OBSERVE || '').split(',').map((x) => x.trim()).filter(Boolean));
-}
 /** Ce qui se releve : ce qui se vend, plus ce qu'on observe. */
 function aRelever() { return new Set([...ligues(), ...observees()]); }
 /* ---- LA CADENCE DU RELEVE ----
@@ -153,6 +146,26 @@ function lis() {
     return { evenements: j.evenements || {}, ligues: j.ligues || {}, couverture: j.couverture || {} };
   } catch (e) { return { evenements: {}, ligues: {}, couverture: {} }; }
 }
+/* ---- LA LECTURE DE VENTE, GARDEE TANT QUE LE FICHIER NE CHANGE PAS ----
+ * `pour` est appele pour CHAQUE rencontre de chaque import, et relisait puis
+ * decodait tout le carnet a chaque fois. A dix-sept championnats (09/10/2026),
+ * relecture contradictoire : 400 lectures d'un carnet de 750 rencontres,
+ * 596 ms ou le serveur de jeux ne repond plus — a chaque import, soit apres
+ * chaque releve. Remesure sur un carnet de 750 rencontres (149 Ko) : 400
+ * lectures 580 ms avant, 13,5 ms avec la lecture gardee. On garde donc la
+ * derniere lecture, invalidee par tout changement de date ou de taille du
+ * fichier (une releve a la main, `node paris_import.js --prix`, l'ecrit d'un
+ * autre processus) — et nos propres ecritures la renouvellent meme sur un volume
+ * dont l'heure des fichiers est a la seconde. `note` et `lis` relisent
+ * toujours le fichier : seule la vente passe par ici, et elle ne modifie rien
+ * (`pour` rend une copie). */
+let VU = null;
+function luPourVendre() {
+  let sig = 'absent';
+  try { const st = fs.statSync(fichier()); sig = st.mtimeMs + ':' + st.size; } catch (e) { /* pas encore de carnet */ }
+  if (!VU || VU.sig !== sig) VU = { sig, c: lis() };
+  return VU.c;
+}
 /* Ecrit en deux temps (fichier temporaire puis renommage) : un volume plein
    ou une ecriture coupee ne laisse jamais un carnet a moitie ecrit. Rend
    false en cas d'echec — l'appelant garde alors la date en memoire, pour ne
@@ -164,6 +177,7 @@ function ecris(c) {
     const tmp = fichier() + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(c) + '\n');
     fs.renameSync(tmp, fichier());
+    VU = null;
     return true;
   } catch (e) {
     console.log('[odds] carnet des prix illisible ou plein : ' + (e.message || e));
@@ -220,15 +234,16 @@ function note(evs, ligue, now) {
 
 /** Le prix d'un evenement s'il est assez frais pour etre vendu, sinon null. */
 function pour(evenement, now) {
-  const e = lis().evenements[String(evenement || '')];
+  const e = luPourVendre().evenements[String(evenement || '')];
   if (!e) return null;
-  return (now || Date.now()) - e.t <= AGE_MAX_MS ? e : null;
+  /* une COPIE : la lecture est partagee entre toutes les rencontres */
+  return (now || Date.now()) - e.t <= AGE_MAX_MS ? Object.assign({}, e, { p: Object.assign({}, e.p) }) : null;
 }
 /** Quand ce championnat a ete releve pour la derniere fois (0 si jamais) —
     la date ecrite, ou celle gardee en memoire si l'ecriture a echoue. */
 function derniere(ligue) {
   const L = String(ligue || '');
-  return Math.max(Number(lis().ligues[L]) || 0, MEMOIRE[L] || 0);
+  return Math.max(Number(luPourVendre().ligues[L]) || 0, MEMOIRE[L] || 0);
 }
 
 module.exports = { LIGUES_DEFAUT, ligues, observees, aRelever, releveMs, AGE_MAX_MS, ECART_MAX, referenceDe, note, pour, derniere, fichier, lis };
