@@ -13,9 +13,15 @@
  * frais, il devient le createur, il touche 50 % des frais de trading. Aucune
  * cle, aucun fonds de la maison n'est engage.
  *
- * Les deux launchpads deployes le 29/09 (deploiement_v4.js) :
- *   - pool $SWOGE : 0x6532C42a..., frais 10 000 $SWOGE BRULES (approve puis createToken) ;
- *   - pool ETH    : 0xEfD0fd35..., frais 0,0001 ETH au tresor (createToken payable).
+ * Les deux launchpads EN SERVICE, redeployes le 30/09 (deploiement_v4.js), relus sur la
+ * chaine et verifies exact_match sur Sourcify (audit du 09/10) :
+ *   - pool $SWOGE : 0xF090C095ae6F1c75F382Ce1Feb07626460996549, frais 10 000 $SWOGE
+ *     transferes vers 0x...dEaD (approve puis createToken) ;
+ *   - pool ETH    : 0xe3fB4f9790504D2F95D022d73993eb916f407759, frais 0,0001 ETH exactement
+ *     au tresor (createToken payable).
+ * Ceux du 29/09 (0x6532C42a..., 0xEfD0fd35...) sont RETIRES depuis le 30/09 (owner()
+ * constant, note « hidden owner ») : la page les refuse (lance_v4.js), ne jamais les viser.
+ * L'adresse vient de l'etat du deploiement (server.js, launchpadPret), jamais de ce commentaire.
  * Une offre n'est faite que sur un launchpad dont le serveur a RELU les parametres
  * sur la chaine (etape au-dela de « deploye ») : jamais sur une adresse devinee.
  *
