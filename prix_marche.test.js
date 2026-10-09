@@ -451,6 +451,9 @@ const parEv = (l, e) => l.find((m) => m.source && m.source.evenement === e);
     try {
       ok(!paris.ouvert(f1), 'la Ligue 1 posee dans la liste : la rencontre FABRIQUEE sans prix du marche est fermee a la vente avant meme l import');
       ok(paris.ouvert(Object.assign({}, f1, { cotesGenerees: false })), 'une cote relevee a la main (cotesGenerees faux) reste vendable');
+      eq(JSON.stringify(imp.fermeesParLaPorte()), '{"soccer_france_ligue_one":1}', 'la porte se compte par championnat (ecrit au demarrage et apres un import sans reponse)');
+      eq(imp.etatPrix().soccer_france_ligue_one.fermeesSansPrix, 1, 'et etatImport().prix le dit : fermeesSansPrix');
+      eq(imp.ditLaPorte('essai'), 1, 'ditLaPorte ecrit la ligne et rend le compte');
       ok(paris.ouvert(Object.assign({}, f1, { prixMarche: { p: { 1: 0.5, N: 0.3, 2: 0.2 }, t: new Date().toISOString() } })),
          'avec un prix du marche frais, elle se vend');
       const a1 = paris.match(parEv(lisCat(), 'a1').id);
@@ -460,11 +463,22 @@ const parEv = (l, e) => l.find((m) => m.source && m.source.evenement === e);
 
     /* La lecture du carnet est gardee entre deux rencontres, mais toute
        ecriture la renouvelle, et ce qu'elle rend est une copie. */
-    const r1 = pm.pour('a1');
-    ok(r1 && r1.p, 'a1 a un prix');
-    r1.p['1'] = 0.0123; r1.t = 1;
-    ok(pm.pour('a1').p['1'] !== 0.0123 && pm.pour('a1').t !== 1, 'pour() rend une COPIE : la modifier ne touche pas la lecture partagee');
     const brut = fs.readFileSync(pm.fichier(), 'utf8');
+    {
+      /* un carnet « ancien » (plus de deux secondes) : la lecture est bien gardee */
+      const statVrai = fs.statSync;
+      fs.statSync = function (f, ...r) {
+        const st = statVrai.call(fs, f, ...r);
+        return f === pm.fichier() ? Object.assign(Object.create(Object.getPrototypeOf(st)), st, { mtimeMs: 1, size: 3 }) : st;
+      };
+      try {
+        const r1 = pm.pour('a1');
+        ok(r1 && r1.p, 'a1 a un prix');
+        r1.p['1'] = 0.0123; r1.t = 1;
+        const r2 = pm.pour('a1');
+        ok(r2 && r2.p['1'] !== 0.0123 && r2.t !== 1, 'pour() rend une COPIE : la modifier ne touche pas la lecture partagee');
+      } finally { fs.statSync = statVrai; }
+    }
     try {
       const c = JSON.parse(brut); c.evenements.a1.p['1'] = 0.4321; fs.writeFileSync(pm.fichier(), JSON.stringify(c));
       eq(pm.pour('a1').p['1'], 0.4321, 'un carnet reecrit par un autre processus (releve a la main) est relu');
@@ -489,6 +503,38 @@ const parEv = (l, e) => l.find((m) => m.source && m.source.evenement === e);
       ok(apres < avant - 0.1, `heure de fichier figee : le prix neuf se vend quand meme apres notre propre ecriture (${avant} -> ${apres})`);
     } finally { fs.statSync = statVrai; fs.writeFileSync(pm.fichier(), brut); }
 
+    /* Une lecture RATEE ne se garde pas (relecture du 09/10) : sinon les dix-sept
+       championnats etaient suspendus au prochain import sur une seule erreur. */
+    const lireVrai = fs.readFileSync;
+    let taille = 1, rate = 0;
+    fs.statSync = function (f, ...r) {
+      const st = statVrai.call(fs, f, ...r);
+      return f === pm.fichier() ? Object.assign(Object.create(Object.getPrototypeOf(st)), st, { mtimeMs: 1, size: taille }) : st;
+    };
+    try {
+      ok(pm.pour('a1'), 'lecture gardee amorcee');
+      taille = 2;                          // le fichier « change » : il faut le relire...
+      fs.readFileSync = function (f, ...r) {
+        if (f === pm.fichier() && rate++ === 0) { const e = new Error('EMFILE: too many open files'); e.code = 'EMFILE'; throw e; }
+        return lireVrai.call(fs, f, ...r);
+      };
+      eq(pm.pour('a1'), null, '...et la relecture echoue une fois (EMFILE) : rien a vendre pour cet appel');
+      ok(pm.pour('a1') && pm.derniere('soccer_epl') > 0, 'l appel suivant relit le carnet : l erreur n a pas ete gardee (sinon dix-sept championnats suspendus)');
+    } finally { fs.readFileSync = lireVrai; fs.statSync = statVrai; }
+
+    /* Un fichier ecrit il y a moins de deux secondes se relit a chaque fois :
+       un autre processus, meme taille, meme seconde sur un volume grossier. */
+    const fige = Date.now() - 500;
+    fs.statSync = function (f, ...r) {
+      const st = statVrai.call(fs, f, ...r);
+      return f === pm.fichier() ? Object.assign(Object.create(Object.getPrototypeOf(st)), st, { mtimeMs: fige, size: 7 }) : st;
+    };
+    try {
+      ok(pm.pour('a1'), 'lecture amorcee sur un fichier tout recent');
+      const c = JSON.parse(brut); c.evenements.a1.p['1'] = 0.3141; fs.writeFileSync(pm.fichier(), JSON.stringify(c));
+      eq(pm.pour('a1').p['1'], 0.3141, 'meme signature (heure a la seconde, meme taille) : le fichier recent est relu, l ecrit d un autre processus est vu');
+    } finally { fs.statSync = statVrai; fs.writeFileSync(pm.fichier(), brut); }
+
     /* Une cle mal ecrite se dit au demarrage, meme avec le joker du tennis. */
     const { execFileSync } = require('child_process');
     const inconnues = (liste, observe) => execFileSync(process.execPath, ['-e',
@@ -497,6 +543,8 @@ const parEv = (l, e) => l.find((m) => m.source && m.source.evenement === e);
         ODDS_API_LIGUES: 'foot=soccer_epl,foot=soccer_efl_champ,tennis=*', PARIS_PRIX_LIGUES: liste, PARIS_PRIX_OBSERVE: observe || '' }) }).toString();
     eq(inconnues('soccer_epl,soccer_efl_champion'), '["soccer_efl_champion"]', 'avec le joker tennis=*, une cle de football mal ecrite est signalee');
     eq(inconnues('soccer_epl;soccer_efl_champ', 'tennis_atp_paris'), '[]', 'les bonnes cles, et une cle de tennis couverte par le joker : rien a signaler');
+    eq(inconnues('soccer_epl', 'tennis_atp_wimbledon_winner,tennis_itf_men'), '["tennis_atp_wimbledon_winner","tennis_itf_men"]',
+       'le joker n excuse que ce qu il suivra : ni un classement (_winner) ni un tournoi ITF');
   }
 
   console.log(`\nprix_marche.test.js : ${n} verifications OK`);

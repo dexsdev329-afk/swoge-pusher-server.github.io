@@ -141,10 +141,11 @@ function referenceDe(ev) {
 const DOSSIER = (process.env.DATA_DIR || './data').trim();
 function fichier() { return path.join(DOSSIER, 'paris_prix.json'); }
 function lis() {
-  try {
-    const j = JSON.parse(fs.readFileSync(fichier(), 'utf8'));
-    return { evenements: j.evenements || {}, ligues: j.ligues || {}, couverture: j.couverture || {} };
-  } catch (e) { return { evenements: {}, ligues: {}, couverture: {} }; }
+  try { return lisOuLeve(); } catch (e) { return { evenements: {}, ligues: {}, couverture: {} }; }
+}
+function lisOuLeve() {
+  const j = JSON.parse(fs.readFileSync(fichier(), 'utf8'));
+  return { evenements: j.evenements || {}, ligues: j.ligues || {}, couverture: j.couverture || {} };
 }
 /* ---- LA LECTURE DE VENTE, GARDEE TANT QUE LE FICHIER NE CHANGE PAS ----
  * `pour` est appele pour CHAQUE rencontre de chaque import, et relisait puis
@@ -155,16 +156,39 @@ function lis() {
  * lectures 580 ms avant, 13,5 ms avec la lecture gardee. On garde donc la
  * derniere lecture, invalidee par tout changement de date ou de taille du
  * fichier (une releve a la main, `node paris_import.js --prix`, l'ecrit d'un
- * autre processus) — et nos propres ecritures la renouvellent meme sur un volume
- * dont l'heure des fichiers est a la seconde. `note` et `lis` relisent
+ * autre processus), relue tant que le fichier a moins de deux secondes, et
+ * renouvelee par nos propres ecritures. `note` et `lis` relisent
  * toujours le fichier : seule la vente passe par ici, et elle ne modifie rien
  * (`pour` rend une copie). */
 let VU = null;
+/* ---- DEUX REGLES DE LA RELECTURE DU 09/10 ----
+ * 1. Une lecture RATEE ne se garde pas. `lis` rend un carnet vide sur toute
+ *    erreur (EMFILE, EIO, fichier coupe) ; gardee sous la signature d'un
+ *    fichier intact, elle resservait ce vide a chaque rencontre : les dix-sept
+ *    championnats, six grands compris, suspendus au prochain import, et
+ *    `derniere` a 0 partout. Avant la lecture gardee, la meme erreur ne
+ *    touchait qu'une rencontre.
+ * 2. Un fichier ecrit il y a moins de deux secondes se relit a chaque fois (la
+ *    regle de git pour les horodatages trop recents) : sur un volume dont
+ *    l'heure des fichiers est a la seconde, deux ecritures de meme taille par
+ *    un autre processus dans la meme seconde ont la meme signature. Simule a
+ *    la relecture : l'essai des dates du carnet (section 5) rougissait a
+ *    chaque fois a la seconde, trois fois sur cinq a 10 ms. Le cout : une
+ *    relecture par rencontre dans les deux secondes qui suivent une ecriture. */
+const RECENT_MS = 2000;
 function luPourVendre() {
-  let sig = 'absent';
-  try { const st = fs.statSync(fichier()); sig = st.mtimeMs + ':' + st.size; } catch (e) { /* pas encore de carnet */ }
-  if (!VU || VU.sig !== sig) VU = { sig, c: lis() };
-  return VU.c;
+  let sig = 'absent', mtime = 0;
+  try { const st = fs.statSync(fichier()); mtime = st.mtimeMs; sig = mtime + ':' + st.size; } catch (e) { /* pas encore de carnet */ }
+  if (VU && VU.sig === sig && VU.lu - mtime > RECENT_MS) return VU.c;
+  const lu = Date.now();
+  let c;
+  try { c = lisOuLeve(); } catch (e) {
+    VU = null;
+    /* absent : rien a vendre, c'est un etat stable ; illisible : on ne garde rien */
+    return { evenements: {}, ligues: {}, couverture: {} };
+  }
+  VU = { sig, c, lu };
+  return c;
 }
 /* Ecrit en deux temps (fichier temporaire puis renommage) : un volume plein
    ou une ecriture coupee ne laisse jamais un carnet a moitie ecrit. Rend

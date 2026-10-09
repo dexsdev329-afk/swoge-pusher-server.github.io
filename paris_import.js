@@ -700,6 +700,7 @@ async function importeMatchs() {
   if (!repondues) {
     console.error(`[odds] AUCUNE ligue n a repondu (${echouees.size} en echec) — ` +
                   'le calendrier existant est CONSERVE, rien n a ete ecrit');
+    ditLaPorte('import sans reponse');
     noteDernier('matchs', { ok: false, ecrit: false, repondues: 0,
       echouees: [...echouees], erreurs: erreurs.slice(0, 12),
       pourquoi: 'no league answered — the existing calendar was kept' });
@@ -1230,19 +1231,46 @@ function ecartAuMarche(ligue, now) {
  * importees : jamais relevees, donc jamais vendues au marche. Le joker
  * `tennis=*` (liste par defaut) taisait TOUT avertissement — une cle mal
  * recopiee renvoyait son championnat a l'Elo sans un mot (relecture
- * contradictoire du 09/10). Le joker ne couvre que le tennis : lui seul excuse
- * une cle absente de la liste. */
+ * contradictoire du 09/10). Une cle n'est excusee que si le joker la suivra
+ * vraiment. */
 function prixInconnues() {
   const connues = new Set(LIGUES.map((l) => l.clef));
-  const joker = LIGUES.some((l) => l.clef === '*');
-  return [...prixMarche.aRelever()].filter((c) => !connues.has(c) && !(joker && /^tennis_/.test(c)));
+  /* exactement ce que le joker suivra : `tennis_atp_…` / `tennis_wta_…`, sans
+     les classements `_winner` (JOKERS) */
+  const jokers = LIGUES.filter((l) => l.clef === '*' && JOKERS[l.sport]).map((l) => JOKERS[l.sport]);
+  return [...prixMarche.aRelever()].filter((c) => !connues.has(c) && !jokers.some((j) => j({ key: c })));
+}
+/* ---- LA PORTE DE VENTE SE DIT (09/10/2026) ----
+ * `paris.ouvert` ferme une rencontre FABRIQUEE d'un championnat vendu qui n'a
+ * pas de prix du marche — le catalogue d'avant une bascule, tant que l'import
+ * ne l'a pas refait. Relecture du 09/10 : rien ne l'ecrivait, et une ligue
+ * entiere pouvait disparaitre de la page douze heures si l'import du
+ * demarrage echouait. Compte par championnat, ecrit au demarrage et apres un
+ * import qui n'a rien obtenu. */
+function fermeesParLaPorte(now) {
+  const t = now || Date.now(), lg = prixMarche.ligues(), out = {};
+  try {
+    for (const m of paris.catalogue().matchs) {
+      const l = m.source && m.source.ligue;
+      if (!l || !lg.has(l) || !(m.debut > t) || m.suspendu || m.prixMarche || !m.cotesGenerees) continue;
+      out[l] = (out[l] || 0) + 1;
+    }
+  } catch (e) { /* catalogue illisible */ }
+  return out;
+}
+function ditLaPorte(quand) {
+  const f = fermeesParLaPorte();
+  const n = Object.values(f).reduce((a, b) => a + b, 0);
+  if (n) console.log(`[odds] porte de vente (${quand}) : ${n} rencontre(s) fermee(s), catalogue sans prix du marche — `
+    + Object.entries(f).map(([k, v]) => k + ' ' + v).join(', '));
+  return n;
 }
 function etatPrix(now) {
   const t = now || Date.now(), out = {};
   const vendues = prixMarche.ligues(), couv = prixMarche.lis().couverture || {};
   for (const c of prixMarche.aRelever()) {
     const d = prixMarche.derniere(c);
-    out[c] = { releve: d ? new Date(d).toISOString() : null, auPrix: 0, suspendues: 0,
+    out[c] = { releve: d ? new Date(d).toISOString() : null, auPrix: 0, suspendues: 0, fermeesSansPrix: 0,
                couverture: couv[c] || null };
     if (!vendues.has(c)) Object.assign(out[c], { observe: true, ecart: ecartAuMarche(c, t) });
   }
@@ -1251,6 +1279,7 @@ function etatPrix(now) {
       const l = m.source && m.source.ligue;
       if (!out[l] || !(m.debut > t)) continue;
       if (m.suspendu) out[l].suspendues++; else if (m.prixMarche) out[l].auPrix++;
+      else if (m.cotesGenerees && vendues.has(l)) out[l].fermeesSansPrix++;
     }
   } catch (e) { /* catalogue illisible : les dates suffisent */ }
   return out;
@@ -1557,6 +1586,7 @@ function planifie(signale, aRegler) {
        variable, ce qui se vend vraiment au prix du marche. */
     console.log('[odds] prix du marche : vendu sur ' + prixMarche.ligues().size + ' (' + [...prixMarche.ligues()].join(', ') + ')'
       + ', observe sur ' + prixMarche.observees().size + ', releve toutes les ' + Math.round(prixMarche.releveMs() / 3600000) + ' h');
+    ditLaPorte('demarrage');
   }
   const premier = delaiAvantEtalonnage();
   const minuteries = [
@@ -1623,7 +1653,7 @@ if (require.main === module) {
 module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie, delaiAvantEtalonnage,
                    finDuMois, fin,
                    etatImport, noteDernier,
-                   trieReglements, prolongationPossible, avecPrix, rafraichitPrix, prixPerimes, prixAvantMatch, etatPrix, ecartAuMarche, prixInconnues, PRIX_JOUR_MS,
+                   trieReglements, prolongationPossible, avecPrix, rafraichitPrix, prixPerimes, prixAvantMatch, etatPrix, ecartAuMarche, prixInconnues, fermeesParLaPorte, ditLaPorte, PRIX_JOUR_MS,
                    AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
                    partDuJour, joursRestants, autorise, identifiant, etatQuota };
