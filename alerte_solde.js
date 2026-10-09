@@ -247,10 +247,17 @@ function cree(deps) {
     if (marque) marque();
     let p;
     try { p = d.notifyPrive ? Promise.resolve(d.notifyPrive(texte)) : Promise.resolve(false); } catch (e) { p = Promise.resolve(false); }
-    p.then((ok) => {
-      if (ok) MESURE.envoyees++;
-      else { MESURE.rates++; if (annule) { annule(); sauve(); } }
-    }, () => { MESURE.rates++; if (annule) { annule(); sauve(); } });
+    /* un refus se dit au journal de l'hote (09/10 : le message « armees » du
+       premier demarrage a ete refuse — @padswoge est public — sans une ligne
+       dans les journaux Railway ; seul /tg/journal le savait). Au plus
+       MAX_HEURE lignes par heure : le plafond compte aussi les tentatives. */
+    const rate = () => {
+      MESURE.rates++;
+      console.warn('[solde] alerte NON envoyee (canal prive refuse ou Telegram muet — /tg/journal, route « prive ») : '
+        + String(texte || '').split('\n')[0].replace(/<[^>]+>/g, '').slice(0, 120));
+      if (annule) { annule(); sauve(); }
+    };
+    p.then((ok) => { if (ok) MESURE.envoyees++; else rate(); }, rate);
     return true;
   }
 

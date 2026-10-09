@@ -163,10 +163,17 @@ const J = 86400000;
   let telegramOk = false;
   const recus8 = [];
   const R = AS.cree({ notifyPrive: (txt) => { recus8.push(txt); return Promise.resolve(telegramOk); }, dossier: D8, maintenant: () => horloge });
-  ok(R.erreur('deepseek', Object.assign(new Error('402'), { statut: 402, message: 'Insufficient Balance' })), 'DeepSeek a sec : tentative');
-  ok(R.bonjour('armé'), 'message « armees » : tentative');
-  await flush();
+  const warnVrai = console.warn, avertis = [];
+  console.warn = (...a) => { avertis.push(a.join(' ')); };
+  try {
+    ok(R.erreur('deepseek', Object.assign(new Error('402'), { statut: 402, message: 'Insufficient Balance' })), 'DeepSeek a sec : tentative');
+    ok(R.bonjour('armé'), 'message « armees » : tentative');
+    await flush();
+  } finally { console.warn = warnVrai; }
   eq(R.MESURE.rates, 2, 'Telegram a refuse les deux');
+  const refusLus = avertis.filter((l) => /^\[solde\] alerte NON envoyee/.test(l));
+  ok(refusLus.length === 2 && /DeepSeek — crédit épuisé/.test(refusLus[0]) && !/<b>/.test(refusLus[0]),
+    'chaque refus laisse une ligne au journal de l hote, premiere ligne du message sans balise : ' + (refusLus[0] || '(aucune)'));
   horloge += 60000;
   telegramOk = true;
   ok(R.erreur('deepseek', Object.assign(new Error('402'), { statut: 402, message: 'Insufficient Balance' })), 'une minute plus tard, Telegram repond : l alerte part (le refus n a pas consomme 24 h)');
