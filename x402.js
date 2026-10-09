@@ -345,6 +345,8 @@ function cree(deps) {
   }
   function pauseSecond(raison, ms) {
     Object.assign(S2, { etat: 'suspendu', raison, jusqua: maintenant() + (ms || PAUSE_BASE_MS) });
+    /* credits du facilitateur epuises (402) : alerte privee au proprietaire (09/10) */
+    if (/\(402\)|\(401\)|\(cle\)|\(carte\)/.test(String(raison))) require('./alerte_solde').signale('payai', /401|\(cle\)/.test(String(raison)) ? 'cle' : 'vide', String(S2.nom || 'second facilitator') + ' : ' + raison);
     console.warn('[x402] ' + (S2.nom || 'second facilitator') + ': ' + raison + ' - its share goes to CDP for ' + Math.round((ms || PAUSE_BASE_MS) / 60000) + ' min');
   }
   async function sondeSecond() {
@@ -389,6 +391,7 @@ function cree(deps) {
   }
   function pauseSolana(raison, ms) {
     Object.assign(MS, { etat: 'suspendu', raison, jusqua: maintenant() + (ms || PAUSE_BASE_MS) });
+    if (/\(402\)|\(401\)|\(cle\)|\(carte\)/.test(String(raison))) require('./alerte_solde').signale('payai', /401|\(cle\)/.test(String(raison)) ? 'cle' : 'vide', 'Solana : ' + raison);
     console.warn('[x402] Solana: ' + raison + ' - off for ' + Math.round((ms || PAUSE_BASE_MS) / 60000) + ' min');
   }
   async function sondeBase() {
@@ -417,8 +420,8 @@ function cree(deps) {
   }
   /* Ce que Coinbase dit d'une réponse (401, 402, 403 lieu) : suspendre Base. */
   function pauseSelon(p) {
-    if (p === 'cle') { pauseBase('key refused (401)', 0); sondeBase().catch(() => {}); }
-    else if (p === 'carte') pauseBase('payment method required', PAUSE_BASE_MS);
+    if (p === 'cle') { pauseBase('key refused (401)', 0); sondeBase().catch(() => {}); require('./alerte_solde').signale('cdp', 'cle', 'clé CDP refusée (401) : Base suspendu'); }
+    else if (p === 'carte') { pauseBase('payment method required', PAUSE_BASE_MS); require('./alerte_solde').signale('cdp', 'vide', '402 payment_method_required : Coinbase demande un moyen de paiement sur le compte CDP — Base suspendu'); }
     else if (p === 'lieu') {
       MESURE.base.lieuxDeSuite++;
       if (MESURE.base.lieuxDeSuite >= LIEUX_DE_SUITE_MAX) pauseBase('request_blocked_by_location ' + LIEUX_DE_SUITE_MAX + ' times in a row', PAUSE_BASE_MS);

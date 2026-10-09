@@ -8986,6 +8986,9 @@ async function conseille(t) {
     return { avis, points: pts, pourquoi: String(a.pourquoi || '').slice(0, 90) };
   } catch (e) {
     noteService('conseil', false, String(e.message || e).slice(0, 60));
+    /* credit Anthropic epuise : le Conseiller tourne plus souvent que le chat,
+       il le voit le premier — alerte privee au proprietaire (09/10/2026) */
+    require('./alerte_solde').erreur('anthropic', e);
     return null;
   }
 }

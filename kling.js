@@ -75,7 +75,10 @@ function cree(deps) {
     if (!j || j.code !== 0) {
       /* Le message du fournisseur (solde, contenu refuse, cle) est rendu tel quel, borne ; jamais la cle. */
       const m = String((j && (j.message || j.msg)) || ('HTTP ' + r.status)).slice(0, 200);
-      const e = new Error(m); e.code = j && j.code; e.statut = r.status; throw e;
+      const e = new Error(m); e.code = j && j.code; e.statut = r.status;
+      /* 1102 pack epuise, 1101 compte en impaye (doc Kling) : alerte privee (09/10) */
+      require('./alerte_solde').erreur('kling', e);
+      throw e;
     }
     return j.data;
   }

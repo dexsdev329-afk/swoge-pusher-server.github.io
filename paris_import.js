@@ -59,6 +59,7 @@ const path = require('path');
 const cotes = require('./cotes');
 const espn = require('./scores_espn');
 const prixMarche = require('./prix_marche');
+const AlerteSolde = require('./alerte_solde');   /* credits bas : alerte privee au proprietaire */
 const paris = require('./paris');
 
 const BASE = 'https://api.the-odds-api.com/v4';
@@ -383,6 +384,7 @@ function autorise(cout, quoi, prioritaire) {
   const q = etatQuota();
   const part = partDuJour(q.reste);
   if (cout > q.reste) {
+    AlerteSolde.oddsEvenement('vide', `${quoi} refusé : ${q.reste} crédit(s) restant(s) en tout`);
     throw new Error(`[odds] REFUSE ${quoi} : ${cout} credit(s) demande(s), ` +
                     `${q.reste} restant(s) en tout`);
   }
@@ -395,6 +397,10 @@ function autorise(cout, quoi, prioritaire) {
    * de la relecture : le mois finit avec au moins 95 credits. */
   if (prioritaire && q.reste - cout >= prioritaire * joursRestants()) return q;
   if (q.depenseDuJour + cout > part) {
+    /* Une releve de PRIX refusee : les championnats vendus au marche vont vers
+       la suspension — le proprietaire est prevenu en prive (09/10/2026). Un
+       etalonnage refuse, lui, n'est pas une alerte. */
+    if (prioritaire) AlerteSolde.oddsEvenement('refus', `${quoi} — ${q.reste} restants, part du jour ${part}`);
     throw new Error(`[odds] REFUSE ${quoi} : ${cout} credit(s) demande(s), ` +
       `${q.depenseDuJour} deja depense(s) aujourd hui, part du jour = ${part} ` +
       `(${q.reste} restants pour ${joursRestants()} jour(s) jusqu au ${fin()})`);
@@ -503,6 +509,11 @@ async function appel(chemin, params, coutAttendu, quoi, prioritaire) {
 
   if (!rep.ok) {
     const t = await rep.text();
+    /* Cle refusee (401), desactivee (DEACTIVATED_KEY) ou forfait epuise
+       (OUT_OF_USAGE_CREDITS, statut non documente) : alerte privee (09/10).
+       Seul `chemin` est ecrit : l'URL porte la cle. */
+    if (/OUT_OF_USAGE_CREDITS/.test(t)) AlerteSolde.oddsEvenement('vide', `${rep.status} OUT_OF_USAGE_CREDITS sur ${chemin}`);
+    else if (rep.status === 401 || /DEACTIVATED_KEY/.test(t)) AlerteSolde.oddsEvenement('cle', `${rep.status}${/DEACTIVATED_KEY/.test(t) ? ' DEACTIVATED_KEY' : ''} sur ${chemin}`);
     throw new Error(`[odds] ${rep.status} sur ${chemin} : ${t.slice(0, 200)}`);
   }
   const j = await rep.json();

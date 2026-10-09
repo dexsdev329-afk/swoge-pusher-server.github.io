@@ -50,6 +50,7 @@
 
 const { SYSTEME } = require('./studio_claude');
 const Rech = require('./studio_recherche');
+const AlerteSolde = require('./alerte_solde');
 const Pieces = require('./studio_pieces');
 
 /* Chaque fournisseur : `base()` l'origine (sans le chemin), `cle()` sa clé
@@ -114,7 +115,11 @@ async function repond({ m, messages, recherche, effort, surTexte, surReflexion, 
         const der = messages[messages.length - 1];
         envoyes = messages.slice(0, -1).concat([Object.assign({}, der, { content: der.content + '\n\n---\n' + Rech.contexte(res) })]);
       }
-    } catch (e) { console.warn('[chat] recherche web ratee (' + String(e.message || e).slice(0, 80) + ') : reponse sans'); }
+    } catch (e) {
+      console.warn('[chat] recherche web ratee (' + String(e.message || e).slice(0, 80) + ') : reponse sans');
+      /* un 401 de Perplexity : cle refusee OU compte sans credit (indistinguables) */
+      AlerteSolde.erreur('perplexity', e);
+    }
   }
   const corps = {
     model: m.api, stream: true, stream_options: { include_usage: true },
@@ -138,10 +143,22 @@ async function repond({ m, messages, recherche, effort, surTexte, surReflexion, 
     /* L'arrêt du joueur OU le délai : AbortSignal.any (Node ≥ 20.3) ; sans lui, le délai seul (l'arrêt libère quand même la place). */
     signal: signal && AbortSignal.any ? AbortSignal.any([AbortSignal.timeout(180000), signal]) : AbortSignal.timeout(180000),
   });
+  /* Venice donne son solde sur CHAQUE reponse (x-venice-balance-usd, « before the
+     request was processed », docs.venice.ai/api-reference/api-spec) : l'alerte de
+     solde bas le lit au passage (09/10/2026). */
+  if (m.fournisseur === 'venice') AlerteSolde.venice(r.headers.get('x-venice-balance-usd'));
   if (!r.ok || !r.body) {
-    let msg = '';
-    try { const j = await r.json(); msg = (j.error && (j.error.message || j.error)) || j.message || ''; } catch (e) { /* corps illisible */ }
-    throw new Error(m.fournisseur + ' ' + r.status + (msg ? ' — ' + String(msg).slice(0, 160) : ''));
+    let msg = '', code = null, type = null;
+    try {
+      const j = await r.json();
+      msg = (j.error && (j.error.message || j.error)) || j.message || '';
+      if (j.error && typeof j.error === 'object') { code = j.error.code || null; type = j.error.type || null; }
+    } catch (e) { /* corps illisible */ }
+    /* statut, code et type gardes sur l'erreur : l'alerte de solde les classe
+       sur ce que la doc du fournisseur ecrit (alerte_solde.classe), au lieu d'un
+       simple texte (09/10/2026). */
+    throw Object.assign(new Error(m.fournisseur + ' ' + r.status + (msg ? ' — ' + String(msg).slice(0, 160) : '')),
+      { statut: r.status, code: code === null ? null : String(code), type, message_fournisseur: String(msg).slice(0, 300) });
   }
   const lecteur = r.body.getReader(), dec = new TextDecoder();
   let tampon = '', texte = '', usage = null, stop = null, servi = m.api;

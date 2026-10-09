@@ -138,18 +138,85 @@ const _publics = new Map();
  * exposerait l'adresse et le solde de chaque joueur, et ne se rattraperait
  * pas.
  */
+/* ---- CE QUE TELEGRAM DIT D'UN CHAT, GARDE SEULEMENT S'IL EST DEFINITIF ----
+ * Relecture du 09/10 : un getChat en 429 ou 5xx etait garde comme « public »
+ * pour toute la vie du processus — plus une sauvegarde ni une alerte jusqu'au
+ * redeploiement. On ne garde que les reponses definitives : ok, ou 400/403
+ * (chat introuvable, bot exclu). */
+const _chats = new Map();
+async function infoChat(chatId) {
+  if (_chats.has(chatId)) return _chats.get(chatId);
+  const r = await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/getChat?chat_id=${encodeURIComponent(chatId)}`);
+  const j = await r.json();
+  if (j && (j.ok || j.error_code === 400 || j.error_code === 403)) _chats.set(chatId, j);
+  return j || { ok: false };
+}
 async function chatEstPublic(chatId) {
   if (_publics.has(chatId)) return _publics.get(chatId);
   try {
-    const r = await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/getChat?chat_id=${encodeURIComponent(chatId)}`);
-    const j = await r.json();
+    const j = await infoChat(chatId);
     /* Si Telegram ne repond pas clairement, on considere que c'est public :
-       en cas de doute sur une fuite, on s'abstient. */
-    const pub = !j.ok || !!(j.result && j.result.username);
-    _publics.set(chatId, pub);
-    if (pub) console.warn(`[tg] canal ${chatId} joignable publiquement (@${j.result && j.result.username || '?'}) — aucune sauvegarde n y sera envoyee`);
+       en cas de doute sur une fuite, on s'abstient.
+       ---- UNE CONVERSATION PRIVEE AVEC LE BOT N'EST PAS PUBLIQUE (09/10) ----
+       getChat rend aussi le @nom d'une PERSONNE (« for private chats,
+       supergroups and channels if available », Bot API) : un proprietaire qui
+       a un @nom voyait son chat prive juge public. Seul un groupe ou un canal
+       a @nom est joignable par tous. */
+    const res = j && j.result;
+    const pub = !j.ok || !!(res && res.username && res.type !== 'private');
+    if (j.ok || j.error_code === 400 || j.error_code === 403) _publics.set(chatId, pub);
+    if (pub) console.warn(`[tg] canal ${chatId} joignable publiquement (@${res && res.username || '?'}) — aucune sauvegarde n y sera envoyee`);
     return pub;
   } catch (e) { return true; }
+}
+/** Est-ce une conversation PRIVEE (une seule personne) ? Pour les alertes
+ *  d'exploitation : ni groupe ni canal, meme sans @nom (relecture du 09/10). */
+async function chatEstPrive(chatId) {
+  try { const j = await infoChat(chatId); return !!(j.ok && j.result && j.result.type === 'private'); }
+  catch (e) { return false; }
+}
+
+/* ---- UN MESSAGE AU SEUL PROPRIETAIRE (09/10/2026) ----
+ * Les alertes d'exploitation (credit d'API bas) n'ont rien a faire dans le
+ * canal public : TG_BACKUP_CHAT_ID SEULEMENT — celui que donne `/id` en prive
+ * a @SwogeBot —, sans repli sur TG_CHAT_ID, et seulement si Telegram confirme
+ * une conversation PRIVEE (type « private » : ni groupe ni canal, meme sans
+ * @nom). Dans le doute, rien ne part, et le carnet le dit (route « prive »).
+ * Meme file que `notify` (400 ms). Rend une promesse : vrai si Telegram a pris
+ * le message. */
+function notifyPrive(text) {
+  const cible = cfg.TG_BACKUP_CHAT_ID;
+  if (!cfg.TG_BOT_TOKEN || !cible) {
+    note('prive', false, 'config', 'TG_BOT_TOKEN ou TG_BACKUP_CHAT_ID absent', text);
+    return Promise.resolve(false);
+  }
+  if (cfg.TG_CHAT_ID && String(cible) === String(cfg.TG_CHAT_ID)) {
+    note('prive', false, 'public', 'TG_BACKUP_CHAT_ID est le canal public TG_CHAT_ID', text);
+    return Promise.resolve(false);
+  }
+  let rendu;
+  const fini = new Promise((r) => { rendu = r; });
+  chain = chain.then(async () => {
+    let ok = false;
+    try {
+      if (!(await chatEstPrive(cible))) {
+        note('prive', false, 'public', 'TG_BACKUP_CHAT_ID n est pas une conversation privee : rien envoye', text);
+      } else {
+        const res = await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: cible, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+        });
+        const j = await res.json().catch(() => ({}));
+        ok = !!j.ok;
+        if (!ok) console.warn(`[tg] message prive refuse : ${j.error_code} ${j.description}`);
+        note('prive', ok, j.error_code, j.description, text);
+      }
+    } catch (e) { note('prive', false, 'reseau', e.message, text); }
+    rendu(ok);
+    await new Promise((r) => setTimeout(r, 400));
+  }).catch(() => { rendu(false); });
+  return fini;
 }
 
 async function sendDocument(buffer, nom, legende, chatId) {
@@ -177,4 +244,4 @@ async function sendDocument(buffer, nom, legende, chatId) {
   } catch (e) { console.warn('[tg] document echoue :', e.message); return false; }
 }
 
-module.exports = { notify, notifyPhoto, notifyVideo, sendDocument, chatEstPublic, enabled, journal };
+module.exports = { notify, notifyPrive, notifyPhoto, notifyVideo, sendDocument, chatEstPublic, chatEstPrive, enabled, journal };

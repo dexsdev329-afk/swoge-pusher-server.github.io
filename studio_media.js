@@ -33,6 +33,7 @@ const crypto = require('crypto');
 const config = require('./config');
 const studio = require('./studio');
 const Comp = require('./studio_comprend');   /* la demande comprise avec son fil, et la reference SWOGE */
+const AlerteSolde = require('./alerte_solde'); /* credit epuise chez un fournisseur : alerte privee */
 
 const IMAGE = [
   { id: 'rapide', fournisseur: 'grok', nom: 'Speed', api: 'grok-imagine-image', usd: 0.02 },
@@ -264,6 +265,7 @@ async function images(q, deps) {
     rep = await four.images({ api: m.api || modeleOpenai(), prompt: compris.prompt.slice(0, PROMPT_MAX), n, format, image: envoyee, qualite: m.qualite });
   } catch (e) {
     rend(); MESURE.echecs++; EN_VOL.delete(addr);
+    AlerteSolde.erreur(fid === 'openai' ? 'openai' : 'xai', e);   /* credit epuise : alerte privee (09/10) */
     return { ok: false, code: 502, raison: 'the image provider failed — you were not charged', detail: String(e && e.message || e).slice(0, 200) };
   }
   EN_VOL.delete(addr);
@@ -272,6 +274,7 @@ async function images(q, deps) {
     return { ok: false, code: 502, raison: 'no image came back (possibly refused by moderation) — you were not charged' };
   }
   MESURE.images += rep.urls.length;
+  AlerteSolde.succes(fid === 'openai' ? 'openai' : 'xai');
   /* La reecriture est un vrai cout : elle s'ajoute a celui de l'image. */
   const brut = fid === 'openai' ? coutOpenai(rep.usage) : coutDe(rep.usage);
   let f;
@@ -346,10 +349,12 @@ async function lanceVideo(q, deps) {
     }
     if (e2) {
       deps.solde.regle(addr, r.wei, 0n); MESURE.echecs++;
+      AlerteSolde.erreur('xai', e2);   /* credit epuise : alerte privee (09/10) */
       return { ok: false, code: 502, raison: 'the video provider failed — you were not charged', detail: String(e2 && e2.message || e2).slice(0, 200) };
     }
   }
   const id = crypto.randomBytes(12).toString('hex');
+  AlerteSolde.succes('xai');
   const job = { id, rid, addr, canal: q.canal || 'studio', modele: m.id, duree, resolution, t0: t, status: 'pending', progress: 0,
                 reserveWei: r.wei, cours: r.cours, listeUsd, url: null, factureSwoge: null, solde: null, raison: null };
   JOBS.set(id, job);

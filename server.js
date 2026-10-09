@@ -2305,6 +2305,13 @@ const alerteUsage = require('./alerte_usage').cree({
   maison: () => new Set(adressesMaison()),
 });
 const noteCompteur = (e, i) => { compteurs.note(e, i); alerteUsage.note(e, i); };
+/* Une alerte Telegram PRIVEE quand une de nos API n'a plus de credit — demande
+   du proprietaire du 9 octobre 2026, voir alerte_solde.js. TG_BACKUP_CHAT_ID
+   seulement (tg.notifyPrive), jamais le canal public ; etat sur le volume. */
+const alerteSolde = require('./alerte_solde').configure({
+  notifyPrive: (t) => tg.notifyPrive(t),
+  dossier: cfg.DATA_DIR,
+});
 studioChat.COMPTEUR.note = noteCompteur;
 /* Les dependances des images : la page (route /studio/media) et l'API des agents. */
 const depsMedia = () => ({
@@ -10857,6 +10864,19 @@ server.listen(cfg.PORT, () => {
    * module ne connait pas le moteur — d'ou ce rappel. */
   calendrierAuto = parisImport.planifie(reglementAuto,
                                         (id) => game.engagementMatch(id) > 0);
+  /* Le solde The Odds API, lu dans le compteur que les en-tetes tiennent deja a
+     jour (0 credit) : toutes les 30 min, premiere lecture 2 min apres le
+     demarrage (alerte_solde.odds). */
+  {
+    const litOdds = () => { try { alerteSolde.odds(parisImport.etatQuota()); } catch (e) { /* jamais bloquant */ } };
+    setTimeout(() => {
+      litOdds();
+      /* une seule fois dans la vie du volume : la preuve que le canal prive recoit */
+      alerteSolde.bonjour('🔔 <b>Alertes de solde bas armées</b> (message unique).\nTu seras prévenu ici, en privé, quand une API n’a plus de crédit : '
+        + 'The Odds API (sous 20 % ou au rythme qui n’atteint pas le 1er), Anthropic, OpenAI, xAI, OpenRouter, DeepSeek, Mistral, Venice, Perplexity, Kling, facilitateurs x402.');
+    }, 2 * 60000).unref();
+    setInterval(litOdds, 30 * 60000).unref();
+  }
   /* Le post quotidien sur X, arme seulement si ses cinq cles sont la ; la
      copie part sur le Telegram avec le lien du post. */
   xQuotidien = xPost.planifie((p) => tg.notifyPhoto(p.image, p.texte + '\n' + p.url));

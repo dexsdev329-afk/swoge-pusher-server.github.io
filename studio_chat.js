@@ -134,6 +134,7 @@ const MIN_USD = 0.001;
 const Rech = require('./studio_recherche');   /* la recherche web des modeles sans outil (Perplexity) */
 const Jeton = require('./studio_jeton');       /* une adresse de jeton collee : marche, securite, colonie */
 const Pieces = require('./studio_pieces');     /* une photo ou un PDF joint a la question */
+const AlerteSolde = require('./alerte_solde'); /* credit epuise chez un fournisseur : alerte privee */
 
 function modele(id) { return MODELES.find((m) => m.id === id) || null; }
 
@@ -469,6 +470,10 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
     /* Échec avant toute réponse facturable : on rend TOUT. */
     solde0.regle(addr, reserveWei, 0n);
     MESURE.echecs++;
+    /* Un crédit épuisé ou une clé refusée chez le fournisseur : le propriétaire
+       est prévenu en privé (alerte_solde, 09/10/2026) — le joueur, lui, n'a vu
+       que « the AI provider failed ». */
+    AlerteSolde.erreur(m.fournisseur, e);
     EN_VOL.delete(addr);
     /* Hors solde (x402) : ce que l'execution a deja coute avant la panne (studio_agent le
        joint a l'erreur) remonte, pour le registre des pertes (contrat §D.6). */
@@ -476,6 +481,7 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
       coutUsd: hors ? (Number(e && e.coutUsd) || null) : null };
   }
   EN_VOL.delete(addr);
+  AlerteSolde.succes(m.fournisseur);   /* le fournisseur a repondu : une nouvelle panne se redira vite */
   if (hors) {
     /* Payé d'avance : le coût RÉEL (appels finis + recherches + pire cas d'un appel coupé
        par le délai) contre le prix encaissé. `chat_facture` note le PRIX x402 (ou 0) en
