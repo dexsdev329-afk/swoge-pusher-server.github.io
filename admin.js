@@ -2036,7 +2036,32 @@ function impRend(e){
   l+='<div class="impl">Leagues followed: '+e.ligues.map(function(x){ return '<code>'+esc(x)+'</code>'; }).join(' ')+
      '<br><span class="muted2" style="padding:0;text-align:left;display:inline">'+
      'Tennis keys are per tournament — they disappear when the tournament ends.</span></div>';
+  l+=jpRend(e.journalPrix);
   $("#impBody").innerHTML='<div class="impg">'+cartes+'</div>'+l;
+}
+/* ---- LE JOURNAL DES RELEVES DE PRIX (lot 1, 10/10/2026) ----
+ * Une ligne : actif ou coupe, combien de fichiers et d'octets, les lignes par
+ * cause (comptees sur le disque par le serveur), les echecs. Des COMPTES, donc
+ * ent(), jamais fmt() (« 165.00 paid fetches », « 1.2k » qui cache 1 249 :
+ * relecture du lot 1). AUCUNE part ni
+ * verdict : le serveur n'en calcule pas, la mesure se fait hors serveur
+ * (outils/age_prix.js) et refuse de conclure sous son echantillon minimal. */
+var JP_CAUSES={periodique:'periodic',avant:'pre-kickoff',demande:'on request',demarrage:'startup',etalonnage:'calibration','a la main':'manual'};
+function jpRend(j){
+  if(!j) return '';
+  if(!j.actif) return '<div class="impl impwarn">Price-age journal: <b>OFF</b> (PARIS_PRIX_JOURNAL=0) — nothing is recorded; sales and credits are unaffected.</div>';
+  var ech=0; Object.keys(j.echecs||{}).forEach(function(k){ ech+=Number(j.echecs[k])||0; });
+  var q=j.lignesParQuoi||{};
+  var causes=Object.keys(q).sort().map(function(k){ return esc(JP_CAUSES[k]||k)+' '+ent(q[k]); }).join(' · ');
+  var mo=(Number(j.octets)||0)/1048576;
+  var s='<div class="impl'+(ech?' impwarn':'')+'">Price-age journal (0 credits, read-only): <b>'+ent(j.fichiers)+'</b> day file(s) · '+
+    (mo>=0.1?mo.toFixed(1)+' MB':Math.round((Number(j.octets)||0)/1024)+' KB')+
+    (j.premier?' · since '+esc(j.premier):'')+' · kept '+ent(j.joursGardes)+' days · <b>'+ent(j.lignes)+'</b> paid fetch(es) logged'+
+    (causes?' — '+causes:'');
+  if(j.illisibles) s+=' · <span class="impwarn">unreadable lines: '+ent(j.illisibles)+'</span>';
+  if(ech) s+='<br><span class="impbad">write failures: '+ent(ech)+(j.dernierEchec?' (last: '+esc(j.dernierEchec.quoi)+' — '+esc(j.dernierEchec.message)+')':'')+'</span>';
+  s+='<br><span class="muted2" style="padding:0;text-align:left;display:inline">Measured off-server with <code>node outils/age_prix.js</code> — no rate or verdict is computed here.</span></div>';
+  return s;
 }
 /* ================= L'AGENT X =================
  * L'etat du posteur quotidien, de /x/derniere : le dernier post parti, les

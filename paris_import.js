@@ -59,6 +59,13 @@ const path = require('path');
 const cotes = require('./cotes');
 const espn = require('./scores_espn');
 const prixMarche = require('./prix_marche');
+/* Le journal des releves deja payees (lot 1 de la cle 20K, 10/10/2026) :
+   abonne au crochet `apresNote`, il garde chaque reponse /odds notee, a 0
+   credit, sans rien changer a ce qui se vend (prix_journal.js, EXPLOITATION
+   8.8septies). Branche ici : toute releve payee passe par ce module
+   (rafraichitPrix, calibre, `--prix`). PARIS_PRIX_JOURNAL=0 le coupe. */
+const prixJournal = require('./prix_journal');
+prixJournal.branche();
 const AlerteSolde = require('./alerte_solde');   /* credits bas : alerte privee au proprietaire */
 const paris = require('./paris');
 
@@ -631,6 +638,10 @@ function etatImport() {
        combien de rencontres a venir sont au prix ou SUSPENDUES — une
        suspension ne se voit pas sur la page, qui n'affiche que l'ouvert. */
     prix: etatPrix(),
+    /* Le journal des releves payees (lot 1, 10/10/2026) : fichiers, octets,
+       lignes par cause LUES SUR LE DISQUE, echecs, illisibles. Aucun verdict :
+       la mesure se fait hors serveur (outils/age_prix.js). */
+    journalPrix: prixJournal.etat(),
     /* Le total de buts par championnat (09/10/2026) : l'age de la table
        paris_buts.json, et ce que le modele en a fait depuis le demarrage —
        nul de l'Elo manque, total cede au marche, championnat inconnu. */
@@ -1617,6 +1628,23 @@ function prixAvantMatch(aDesParis, now) {
   }
   return [...out];
 }
+/* ---- LE TIC DE 10 MIN, CAUSE PAR CAUSE (lot 1, 10/10/2026) ----
+ * Il relevait `[...new Set(prixAvantMatch(...).concat(paris.prixDemandes()))]`
+ * sous une seule cause, « avant le coup d envoi » : le journal ne pouvait pas
+ * dire combien de releves viennent de l'avant-match (PARIS_PRIX_AVANT_TOUS)
+ * et combien des paris refuses faute de prix frais (`paris.prixDemandes`).
+ * La recherche estimait les premieres a 506-520 par mois et jugeait ce
+ * chiffre surestime : c'est lui qu'il faut lire avant de toucher a la cadence
+ * pres du coup d'envoi. Deux lots : `avant`, puis `demande` SANS ce que
+ * `avant` releve deja — exactement l'ordre et le contenu de l'ancien
+ * ensemble ; `planifie` les met dans la file `filePrix` au meme instant, rien
+ * ne s'intercale, et un championnat n'est jamais paye deux fois (essai T2
+ * de prix_journal.test.js). `prixDemandes` vide la liste, comme avant. */
+function causesAvantMatch(aDesParis, now) {
+  const avant = prixAvantMatch(aDesParis, now);
+  const demande = paris.prixDemandes().filter((c) => !avant.includes(c));
+  return [{ quoi: 'avant', clefs: avant }, { quoi: 'demande', clefs: demande }].filter((x) => x.clefs.length);
+}
 
 /* Les competitions ou un match de football peut aller en prolongation : la C1
    (barrages et elimination directe), les series MLS (meme cle que la saison
@@ -1891,6 +1919,14 @@ function planifie(signale, aRegler) {
     if (!clefs.length) return;
     if (await rafraichitPrix(clefs, pourquoi, ageMin)) await rafraichit();
   });
+  /* Le tic de 10 min, cause par cause (`causesAvantMatch`). Les deux tours
+     entrent dans `filePrix` au meme instant (rien ne s'intercale), et le
+     calendrier ne se refait qu'UNE fois, comme avant, si un vendu a bouge. */
+  const avantMatch = () => sur('prix', async () => {
+    const tours = causesAvantMatch(aRegler).map((x) => rafraichitPrix(x.clefs, x.quoi, PRIX_DEMANDE_MS));
+    const vendues = (await Promise.all(tours)).reduce((a, b) => a + b, 0);
+    if (vendues) await rafraichit();
+  });
   {
     const inconnues = prixInconnues();
     if (inconnues.length) console.log('[odds] PARIS_PRIX_LIGUES / PARIS_PRIX_OBSERVE : ' + inconnues.join(', ') + ' absente(s) des ligues importees — jamais relevee(s)');
@@ -1899,6 +1935,9 @@ function planifie(signale, aRegler) {
     console.log('[odds] prix du marche : vendu sur ' + prixMarche.ligues().size + ' (' + [...prixMarche.ligues()].join(', ') + ')'
       + ', observe sur ' + prixMarche.observees().size + ', releve toutes les ' + Math.round(prixMarche.releveMs() / 3600000) + ' h');
     ditLaPorte('demarrage');
+    /* Le journal des releves : actif ou coupe, ce qu'il garde. Lire son etat
+       ici remplit aussi le compte par fichier (une fois par processus). */
+    try { console.log(prixJournal.ligneDemarrage()); } catch (e) { /* jamais bloquant */ }
   }
   const premier = delaiAvantEtalonnage();
   const minuteries = [
@@ -1918,8 +1957,7 @@ function planifie(signale, aRegler) {
     setInterval(rafraichit, 12 * H),
     setInterval(() => prix(prixPerimes(), 'periodique', prixMarche.releveMs()), 30 * 60000),
     /* Decalee de 5 min : elle ne tombe plus en meme temps que la quotidienne. */
-    setTimeout(() => minuteries.push(setInterval(() => prix(
-      [...new Set(prixAvantMatch(aRegler).concat(paris.prixDemandes()))], 'avant le coup d envoi', PRIX_DEMANDE_MS), 10 * 60000)), 5 * 60000),
+    setTimeout(() => minuteries.push(setInterval(avantMatch, 10 * 60000)), 5 * 60000),
     setTimeout(releve, 5 * 60000),
     setInterval(releve, 24 * H),
     /* Le premier etalonnage attend ce qui reste des sept jours depuis le
@@ -1939,7 +1977,7 @@ function planifie(signale, aRegler) {
               `part du jour ${partDuJour(etatQuota().reste)} jusqu au ${fin()}`);
   /* On rend les minuteries : une minuterie oubliee garde le processus en
      vie a l arret et peut refaire un appel reseau en plein redeploiement. */
-  return { rafraichit, releve, etalonne, prix, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
+  return { rafraichit, releve, etalonne, prix, avantMatch, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
 }
 
 // ---------------------------------------------------------------- l'appel
@@ -1965,7 +2003,7 @@ if (require.main === module) {
 module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, importeScores, calibre, montreQuota, listeSports, planifie, delaiAvantEtalonnage,
                    finDuMois, fin,
                    etatImport, noteDernier,
-                   trieReglements, prolongationPossible, avecPrix, rafraichitPrix, prixPerimes, prixAvantMatch, etatPrix, ecartAuMarche, prixInconnues, fermeesParLaPorte, ditLaPorte, PRIX_JOUR_MS,
+                   trieReglements, prolongationPossible, avecPrix, rafraichitPrix, prixPerimes, prixAvantMatch, causesAvantMatch, etatPrix, ecartAuMarche, prixInconnues, fermeesParLaPorte, ditLaPorte, PRIX_JOUR_MS,
                    AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
                    partDuJour, joursRestants, autorise, identifiant, etatQuota,

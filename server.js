@@ -33,6 +33,9 @@ const paris = require('./paris');
    que si ODDS_API_KEY est posee — sans elle il le dit au demarrage et ne
    fait rien, le calendrier reste celui du depot. */
 const parisImport = require('./paris_import');
+/* Le journal des releves de prix deja payees (lot 1 de la cle 20K) : branche
+   par paris_import ; ici, seulement la route admin qui en rend un jour brut. */
+const prixJournal = require('./prix_journal');
 const xPost = require('./x_post');
 const tgCommandes = require('./tg_commandes');
 const espn = require('./scores_espn');
@@ -6539,6 +6542,23 @@ const server = http.createServer(async (req, res) => {
     }
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify(parisImport.etatImport()));
+  }
+
+  /* ---- LE JOURNAL DES RELEVES DE PRIX, UN JOUR BRUT (lot 1, 10/10/2026) ----
+   * `GET /paris/journal-prix?jour=AAAA-MM-JJ` : le fichier .jsonl d'un jour,
+   * tel quel, pour `outils/age_prix.js --telecharge`, qui le fige hors du
+   * volume avant la purge. Lecture seule, aucun geste, aucun credit ; le
+   * journal ne porte ni cle ni URL d'appel. Protegee comme /paris/import : il
+   * dit ce qu'on vend et a quel prix. Le jour est valide par
+   * `prixJournal.reponseJour` AVANT tout acces au disque (400), un jour
+   * absent rend 404. La liste des jours est dans /paris/import
+   * (`journalPrix.jours`). */
+  if (path === '/paris/journal-prix') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const r = prixJournal.reponseJour(new URLSearchParams(req.url.split('?')[1] || '').get('jour'));
+    res.writeHead(r.code, { 'content-type': r.type, 'cache-control': 'no-store' });
+    return res.end(r.corps);
   }
 
   /* ---- LES TRENTE DERNIERS ENVOIS VERS TELEGRAM ----
