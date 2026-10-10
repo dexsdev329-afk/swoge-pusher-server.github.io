@@ -380,9 +380,21 @@ const parEv = (l, e) => l.find((m) => m.source && m.source.evenement === e);
     /* La Ligue 1 du banc est a l'Elo : on l'OBSERVE. Son prix se releve, sa
        couverture et l'ecart de nos cotes se lisent — rien ne se vend au marche. */
     process.env.PARIS_PRIX_OBSERVE = 'soccer_france_ligue_one';
+    /* Socle (10/10/2026) : une cle observee est en classe 3 du garde-fou (part
+       du jour moins 160), jamais prioritaire. Sur ce banc a 500 credits, la
+       part du jour est d'une vingtaine : l'observation y est toujours
+       refusee, et c'est voulu (socle.test.js §6). Elle se fait sur la cle 20K
+       (8.8quater) : on pose ici le compteur d'un forfait de 20 000 le temps de
+       la section, et on rend l'ancien apres. */
+    const fq16 = path.join(BAC, 'odds_quota.json'), sauve16 = fs.readFileSync(fq16, 'utf8');
+    fs.writeFileSync(fq16, JSON.stringify(Object.assign(JSON.parse(sauve16), { reste: 20000, depenseDuJour: 0, jour: new Date().toISOString().slice(0, 10) })));
     try {
       appels.length = 0;
-      eq(await imp.rafraichitPrix(['soccer_france_ligue_one'], 'essai'), 1, 'un championnat observe se releve');
+      /* Socle (10/10/2026) : `rafraichitPrix` ne compte plus que les cles
+         VENDUES releves — c'est ce compte qui fait refaire le calendrier, et
+         le prix d'un observe n'entre dans aucune cote. Que la cle observee se
+         releve bien, c'est le credit paye et le carnet ecrit, juste dessous. */
+      eq(await imp.rafraichitPrix(['soccer_france_ligue_one'], 'essai'), 0, 'un championnat observe se releve sans compter comme vendu');
       eq(credits(), 1, 'pour un credit');
       ok(pm.pour('f1') && pm.lis().couverture.soccer_france_ligue_one && pm.lis().couverture.soccer_france_ligue_one.pinnacle === 1,
          'son prix et sa couverture sont notes (pinnacle 1)');
@@ -398,7 +410,7 @@ const parEv = (l, e) => l.find((m) => m.source && m.source.evenement === e);
          `etatPrix dit l ecart de nos cotes au marche : ${e && e.ecart.battables}/3 issues battables (attendu ${attendu}), meilleure esperance ${e && e.ecart.esperanceMoyenne}`);
       ok(imp.etatPrix().soccer_epl && !imp.etatPrix().soccer_epl.observe, 'un championnat vendu n est pas marque observe');
       ok(imp.prixPerimes(Date.now() + 23 * 3600000).includes('soccer_france_ligue_one'), 'un championnat observe se releve aussi chaque jour');
-    } finally { delete process.env.PARIS_PRIX_OBSERVE; }
+    } finally { delete process.env.PARIS_PRIX_OBSERVE; fs.writeFileSync(fq16, sauve16); }
 
     /* La cadence : 22 h par defaut, reglable ; jamais plus espacee que l'age de vente. */
     eq(pm.releveMs(), 22 * 3600000, 'cadence par defaut : 22 h, le forfait gratuit');

@@ -1,0 +1,719 @@
+{
+ "sports": [
+  {
+   "cle": "foot",
+   "nom": "Football",
+   "actif": true
+  },
+  {
+   "cle": "tennis",
+   "nom": "Tennis",
+   "actif": true
+  },
+  {
+   "cle": "nba",
+   "nom": "NBA",
+   "actif": false
+  },
+  {
+   "cle": "nfl",
+   "nom": "NFL",
+   "actif": false
+  },
+  {
+   "cle": "cricket",
+   "nom": "Cricket",
+   "actif": false
+  },
+  {
+   "cle": "nhl",
+   "nom": "NHL",
+   "actif": true
+  },
+  {
+   "cle": "mlb",
+   "nom": "MLB",
+   "actif": false
+  }
+ ],
+ "matchs": [
+  {
+   "id": "epl-20261010-ars-eve",
+   "sport": "foot",
+   "competition": "Premier League",
+   "pays": "England",
+   "domicile": "Arsenal",
+   "exterieur": "Everton",
+   "paysDomicile": "GB",
+   "paysExterieur": "GB",
+   "debut": "2026-10-10T12:05:00.000Z",
+   "marches": {
+    "1n2": {
+     "cotes": {
+      "1": 1.52,
+      "2": 5.52,
+      "N": 3.75
+     }
+    },
+    "dc": {
+     "cotes": {
+      "12": 1.22,
+      "1X": 1.11,
+      "X2": 2.31
+     }
+    },
+    "btts": {
+     "cotes": {
+      "oui": 1.68,
+      "non": 1.6
+     }
+    },
+    "ou25": {
+     "cotes": {
+      "plus": 1.61,
+      "moins": 1.67
+     }
+    },
+    "score": {
+     "cotes": {
+      "0-0": 10.36,
+      "0-1": 14.1,
+      "0-2": 30.22,
+      "0-3": 97.38,
+      "1-0": 6.82,
+      "1-1": 7.29,
+      "1-2": 17.13,
+      "1-3": 54.71,
+      "2-0": 6.79,
+      "2-1": 8.08,
+      "2-2": 17.92,
+      "2-3": 57.28,
+      "3-0": 10.23,
+      "3-1": 12.18,
+      "3-2": 26.73,
+      "3-3": 86.3,
+      "autre": 6.07
+     }
+    },
+    "hand": {
+     "cotes": {
+      "1": 2.17,
+      "2": 1.45
+     }
+    }
+   },
+   "cotesGenerees": true,
+   "source": {
+    "fournisseur": "the-odds-api",
+    "ligue": "soccer_epl",
+    "evenement": "epl-1"
+   },
+   "prixMarche": {
+    "ref": "betfair",
+    "t": "2026-10-10T11:30:00.000Z",
+    "livres": 4,
+    "p": {
+     "1": 0.62083,
+     "2": 0.14935,
+     "N": 0.22982
+    }
+   }
+  },
+  {
+   "id": "atpparis-20261010-cri-iva",
+   "sport": "tennis",
+   "competition": "ATP Paris",
+   "pays": "",
+   "domicile": "Cristina Bucsa",
+   "exterieur": "Iva Jovic",
+   "paysDomicile": null,
+   "paysExterieur": null,
+   "debut": "2026-10-10T14:00:00.000Z",
+   "marches": {
+    "1n2": {
+     "cotes": {
+      "1": 3.22,
+      "2": 1.25
+     }
+    }
+   },
+   "cotesGenerees": true,
+   "source": {
+    "fournisseur": "the-odds-api",
+    "ligue": "tennis_atp_paris",
+    "evenement": "atp-1"
+   }
+  },
+  {
+   "id": "spainlaliga-20261010-rea-get",
+   "sport": "foot",
+   "competition": "La Liga",
+   "pays": "Spain",
+   "domicile": "Real Madrid",
+   "exterieur": "Getafe",
+   "paysDomicile": "ES",
+   "paysExterieur": "ES",
+   "debut": "2026-10-10T15:00:00.000Z",
+   "marches": {
+    "1n2": {
+     "cotes": {
+      "1": 1.17,
+      "2": 10.38,
+      "N": 5.9
+     }
+    },
+    "dc": {
+     "cotes": {
+      "12": 1.08,
+      "1X": 1.03,
+      "X2": 3.88
+     }
+    },
+    "btts": {
+     "cotes": {
+      "oui": 1.73,
+      "non": 1.56
+     }
+    },
+    "ou25": {
+     "cotes": {
+      "plus": 1.32,
+      "moins": 2.17
+     }
+    },
+    "score": {
+     "cotes": {
+      "0-0": 17.34,
+      "0-1": 30.59,
+      "0-2": 78.37,
+      "0-3": 100,
+      "1-0": 8.75,
+      "1-1": 11.67,
+      "1-2": 31.62,
+      "1-3": 100,
+      "2-0": 6.5,
+      "2-1": 9.11,
+      "2-2": 23.57,
+      "2-3": 87.34,
+      "3-0": 6.94,
+      "3-1": 9.72,
+      "3-2": 25.16,
+      "3-3": 93.23,
+      "autre": 2.83
+     }
+    },
+    "hand": {
+     "cotes": {
+      "1": 1.48,
+      "2": 2.11
+     }
+    }
+   },
+   "cotesGenerees": true,
+   "source": {
+    "fournisseur": "the-odds-api",
+    "ligue": "soccer_spain_la_liga",
+    "evenement": "liga-1"
+   },
+   "prixMarche": {
+    "ref": "pinnacle",
+    "t": "2026-10-10T13:00:00.000Z",
+    "livres": 3,
+    "p": {
+     "1": 0.80911,
+     "2": 0.06507,
+     "N": 0.12582
+    }
+   }
+  },
+  {
+   "id": "icehockeynhl-20261010-bos-tor",
+   "sport": "nhl",
+   "competition": "NHL",
+   "pays": "USA",
+   "domicile": "Boston Bruins",
+   "exterieur": "Toronto Maple Leafs",
+   "paysDomicile": "US",
+   "paysExterieur": "CA",
+   "debut": "2026-10-10T21:00:00.000Z",
+   "marches": {
+    "1n2": {
+     "cotes": {
+      "1": 1.73,
+      "2": 1.92
+     }
+    }
+   },
+   "cotesGenerees": true,
+   "source": {
+    "fournisseur": "the-odds-api",
+    "ligue": "icehockey_nhl",
+    "evenement": "nhl-1"
+   }
+  },
+  {
+   "id": "epl-20261011-che-liv",
+   "sport": "foot",
+   "competition": "Premier League",
+   "pays": "England",
+   "domicile": "Chelsea",
+   "exterieur": "Liverpool",
+   "paysDomicile": "GB",
+   "paysExterieur": "GB",
+   "debut": "2026-10-11T11:00:00.000Z",
+   "marches": {
+    "1n2": {
+     "cotes": {
+      "1": 2.41,
+      "2": 2.68,
+      "N": 3.21
+     }
+    },
+    "dc": {
+     "cotes": {
+      "12": 1.31,
+      "1X": 1.43,
+      "X2": 1.52
+     }
+    },
+    "btts": {
+     "cotes": {
+      "oui": 1.58,
+      "non": 1.71
+     }
+    },
+    "ou25": {
+     "cotes": {
+      "plus": 1.71,
+      "moins": 1.58
+     }
+    },
+    "score": {
+     "cotes": {
+      "0-0": 9.38,
+      "0-1": 8.9,
+      "0-2": 12.85,
+      "0-3": 27.81,
+      "1-0": 8.33,
+      "1-1": 6.17,
+      "1-2": 9.96,
+      "1-3": 21.61,
+      "2-0": 11.36,
+      "2-1": 9.37,
+      "2-2": 14.43,
+      "2-3": 31.3,
+      "3-0": 23.13,
+      "3-1": 19.2,
+      "3-2": 29.39,
+      "3-3": 67,
+      "autre": 9.63
+     }
+    },
+    "hand": {
+     "cotes": {
+      "1": 3.56,
+      "2": 1.14
+     }
+    }
+   },
+   "cotesGenerees": true,
+   "source": {
+    "fournisseur": "the-odds-api",
+    "ligue": "soccer_epl",
+    "evenement": "epl-2"
+   },
+   "prixMarche": {
+    "ref": "pinnacle",
+    "t": "2026-10-10T13:00:00.000Z",
+    "livres": 3,
+    "p": {
+     "1": 0.38109,
+     "2": 0.33982,
+     "N": 0.27909
+    }
+   }
+  },
+  {
+   "id": "franceligueo-20261011-lyo-mon",
+   "sport": "foot",
+   "competition": "Ligue 1",
+   "pays": "France",
+   "domicile": "Lyon",
+   "exterieur": "Monaco",
+   "paysDomicile": "FR",
+   "paysExterieur": "FR",
+   "debut": "2026-10-11T13:00:00.000Z",
+   "marches": {
+    "1n2": {
+     "cotes": {
+      "1": 2.46,
+      "2": 2.78,
+      "N": 3
+     }
+    },
+    "dc": {
+     "cotes": {
+      "12": 1.35,
+      "1X": 1.4,
+      "X2": 1.5
+     }
+    },
+    "btts": {
+     "cotes": {
+      "oui": 1.66,
+      "non": 2.01
+     }
+    },
+    "ou25": {
+     "cotes": {
+      "plus": 1.66,
+      "moins": 1.62
+     }
+    },
+    "score": {
+     "cotes": {
+      "0-0": 8.67,
+      "0-1": 9.9,
+      "0-2": 13.13,
+      "0-3": 27.82,
+      "1-0": 9.52,
+      "1-1": 5.75,
+      "1-2": 9.9,
+      "1-3": 21.06,
+      "2-0": 11.46,
+      "2-1": 9.25,
+      "2-2": 13.96,
+      "2-3": 29.61,
+      "3-0": 22.71,
+      "3-1": 18.49,
+      "3-2": 27.65,
+      "3-3": 61.79,
+      "autre": 8.97
+     }
+    },
+    "hand": {
+     "cotes": {
+      "1": 3.5,
+      "2": 1.15
+     }
+    }
+   },
+   "cotesGenerees": true,
+   "source": {
+    "fournisseur": "the-odds-api",
+    "ligue": "soccer_france_ligue_one",
+    "evenement": "l1-1"
+   }
+  },
+  {
+   "id": "spainlaliga-20261011-bar-sev",
+   "sport": "foot",
+   "competition": "La Liga",
+   "pays": "Spain",
+   "domicile": "Barcelona",
+   "exterieur": "Sevilla",
+   "paysDomicile": "ES",
+   "paysExterieur": "ES",
+   "debut": "2026-10-11T15:00:00.000Z",
+   "marches": {
+    "1n2": {
+     "cotes": {
+      "1": 1.67,
+      "2": 4.13,
+      "N": 3.81
+     }
+    },
+    "dc": {
+     "cotes": {
+      "12": 1.22,
+      "1X": 1.19,
+      "X2": 2.06
+     }
+    },
+    "btts": {
+     "cotes": {
+      "oui": 1.43,
+      "non": 1.93
+     }
+    },
+    "ou25": {
+     "cotes": {
+      "plus": 1.41,
+      "moins": 1.97
+     }
+    },
+    "score": {
+     "cotes": {
+      "0-0": 13.21,
+      "0-1": 15.42,
+      "0-2": 24.44,
+      "0-3": 58.45,
+      "1-0": 10.16,
+      "1-1": 7.64,
+      "1-2": 13.25,
+      "1-3": 30.43,
+      "2-0": 9.28,
+      "2-1": 8.08,
+      "2-2": 13.13,
+      "2-3": 30.16,
+      "3-0": 13.26,
+      "3-1": 11.54,
+      "3-2": 18.54,
+      "3-3": 43.94,
+      "autre": 4.86
+     }
+    },
+    "hand": {
+     "cotes": {
+      "1": 2.32,
+      "2": 1.39
+     }
+    }
+   },
+   "cotesGenerees": true,
+   "source": {
+    "fournisseur": "the-odds-api",
+    "ligue": "soccer_spain_la_liga",
+    "evenement": "liga-2"
+   },
+   "prixMarche": {
+    "ref": "betfair",
+    "t": "2026-10-10T13:00:00.000Z",
+    "livres": 4,
+    "p": {
+     "1": 0.56378,
+     "2": 0.20828,
+     "N": 0.22794
+    }
+   }
+  },
+  {
+   "id": "epl-20261012-man-tot",
+   "sport": "foot",
+   "competition": "Premier League",
+   "pays": "England",
+   "domicile": "Manchester City",
+   "exterieur": "Tottenham",
+   "paysDomicile": "GB",
+   "paysExterieur": "GB",
+   "debut": "2026-10-12T11:00:00.000Z",
+   "marches": {
+    "1n2": {
+     "cotes": {
+      "1": 1.41,
+      "2": 5.83,
+      "N": 4.35
+     }
+    },
+    "dc": {
+     "cotes": {
+      "12": 1.17,
+      "1X": 1.1,
+      "X2": 2.58
+     }
+    },
+    "btts": {
+     "cotes": {
+      "oui": 1.53,
+      "non": 1.77
+     }
+    },
+    "ou25": {
+     "cotes": {
+      "plus": 1.4,
+      "moins": 1.98
+     }
+    },
+    "score": {
+     "cotes": {
+      "0-0": 13.71,
+      "0-1": 18.74,
+      "0-2": 36.85,
+      "0-3": 100,
+      "1-0": 8.85,
+      "1-1": 8.67,
+      "1-2": 17.69,
+      "1-3": 50.03,
+      "2-0": 7.62,
+      "2-1": 8.05,
+      "2-2": 15.82,
+      "2-3": 44.74,
+      "3-0": 9.81,
+      "3-1": 10.35,
+      "3-2": 20.27,
+      "3-3": 57.55,
+      "autre": 4.12
+     }
+    },
+    "hand": {
+     "cotes": {
+      "1": 1.92,
+      "2": 1.59
+     }
+    }
+   },
+   "cotesGenerees": true,
+   "source": {
+    "fournisseur": "the-odds-api",
+    "ligue": "soccer_epl",
+    "evenement": "epl-3"
+   },
+   "prixMarche": {
+    "ref": "mediane",
+    "t": "2026-10-10T13:00:00.000Z",
+    "livres": 3,
+    "p": {
+     "1": 0.66854,
+     "2": 0.13875,
+     "N": 0.19271
+    }
+   }
+  },
+  {
+   "id": "franceligueo-20261012-mar-lil",
+   "sport": "foot",
+   "competition": "Ligue 1",
+   "pays": "France",
+   "domicile": "Marseille",
+   "exterieur": "Lille",
+   "paysDomicile": "FR",
+   "paysExterieur": "FR",
+   "debut": "2026-10-12T13:00:00.000Z",
+   "marches": {
+    "1n2": {
+     "cotes": {
+      "1": 2.04,
+      "2": 3.31,
+      "N": 3.26
+     }
+    },
+    "dc": {
+     "cotes": {
+      "12": 1.3,
+      "1X": 1.29,
+      "X2": 1.71
+     }
+    },
+    "btts": {
+     "cotes": {
+      "oui": 1.68,
+      "non": 1.98
+     }
+    },
+    "ou25": {
+     "cotes": {
+      "plus": 1.63,
+      "moins": 1.65
+     }
+    },
+    "score": {
+     "cotes": {
+      "0-0": 9.96,
+      "0-1": 10.94,
+      "0-2": 16.64,
+      "0-3": 39.97,
+      "1-0": 8.41,
+      "1-1": 6.28,
+      "1-2": 11.27,
+      "1-3": 26.28,
+      "2-0": 9.58,
+      "2-1": 8.52,
+      "2-2": 14.14,
+      "2-3": 33.09,
+      "3-0": 17.16,
+      "3-1": 15.41,
+      "3-2": 24.94,
+      "3-3": 61.26,
+      "autre": 8.03
+     }
+    },
+    "hand": {
+     "cotes": {
+      "1": 2.97,
+      "2": 1.23
+     }
+    }
+   },
+   "cotesGenerees": true,
+   "source": {
+    "fournisseur": "the-odds-api",
+    "ligue": "soccer_france_ligue_one",
+    "evenement": "l1-2"
+   }
+  },
+  {
+   "id": "epl-20261013-bre-ful",
+   "sport": "foot",
+   "competition": "Premier League",
+   "pays": "England",
+   "domicile": "Brentford",
+   "exterieur": "Fulham",
+   "paysDomicile": "GB",
+   "paysExterieur": "GB",
+   "debut": "2026-10-13T11:00:00.000Z",
+   "marches": {
+    "1n2": {
+     "cotes": {
+      "1": 2.25,
+      "2": 3,
+      "N": 3.11
+     }
+    },
+    "dc": {
+     "cotes": {
+      "12": 1.32,
+      "1X": 1.35,
+      "X2": 1.59
+     }
+    },
+    "btts": {
+     "cotes": {
+      "oui": 1.69,
+      "non": 1.97
+     }
+    },
+    "ou25": {
+     "cotes": {
+      "plus": 1.67,
+      "moins": 1.61
+     }
+    },
+    "score": {
+     "cotes": {
+      "0-0": 9.14,
+      "0-1": 10.21,
+      "0-2": 14.54,
+      "0-3": 32.61,
+      "1-0": 8.81,
+      "1-1": 5.99,
+      "1-2": 10.5,
+      "1-3": 23.5,
+      "2-0": 10.44,
+      "2-1": 8.9,
+      "2-2": 14.17,
+      "2-3": 31.77,
+      "3-0": 19.91,
+      "3-1": 17.13,
+      "3-2": 26.87,
+      "3-3": 63.35,
+      "autre": 8.87
+     }
+    },
+    "hand": {
+     "cotes": {
+      "1": 3.26,
+      "2": 1.19
+     }
+    }
+   },
+   "cotesGenerees": true,
+   "source": {
+    "fournisseur": "the-odds-api",
+    "ligue": "soccer_epl",
+    "evenement": "epl-4"
+   },
+   "suspendu": true,
+   "suspenduRaison": "pas de prix du marche de moins de 36 h"
+  }
+ ]
+}

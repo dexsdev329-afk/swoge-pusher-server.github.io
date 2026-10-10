@@ -1,0 +1,280 @@
+[
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports",
+  "params": {
+   "all": "true"
+  },
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/soccer_epl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/soccer_spain_la_liga/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/soccer_france_ligue_one/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/icehockey_nhl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/tennis_atp_paris/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/soccer_epl/odds",
+  "params": {
+   "markets": "h2h",
+   "oddsFormat": "decimal",
+   "regions": "eu"
+  },
+  "cout": 1
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/soccer_spain_la_liga/odds",
+  "params": {
+   "markets": "h2h",
+   "oddsFormat": "decimal",
+   "regions": "eu"
+  },
+  "cout": 1
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/soccer_epl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/soccer_spain_la_liga/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/soccer_france_ligue_one/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/icehockey_nhl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T09:00:00.000Z",
+  "chemin": "/v4/sports/tennis_atp_paris/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T11:30:00.000Z",
+  "chemin": "/v4/sports/soccer_epl/odds",
+  "params": {
+   "markets": "h2h",
+   "oddsFormat": "decimal",
+   "regions": "eu"
+  },
+  "cout": 1
+ },
+ {
+  "t": "2026-10-10T11:30:00.000Z",
+  "chemin": "/v4/sports/soccer_spain_la_liga/odds",
+  "params": {
+   "markets": "h2h",
+   "oddsFormat": "decimal",
+   "regions": "eu"
+  },
+  "cout": 1
+ },
+ {
+  "t": "2026-10-10T11:30:00.000Z",
+  "chemin": "/v4/sports/soccer_epl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T11:30:00.000Z",
+  "chemin": "/v4/sports/soccer_spain_la_liga/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T11:30:00.000Z",
+  "chemin": "/v4/sports/soccer_france_ligue_one/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T11:30:00.000Z",
+  "chemin": "/v4/sports/icehockey_nhl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T11:30:00.000Z",
+  "chemin": "/v4/sports/tennis_atp_paris/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T12:00:00.000Z",
+  "chemin": "/v4/sports/soccer_france_ligue_one/odds",
+  "params": {
+   "markets": "h2h",
+   "oddsFormat": "decimal",
+   "regions": "eu"
+  },
+  "cout": 1
+ },
+ {
+  "t": "2026-10-10T12:00:00.000Z",
+  "chemin": "/v4/sports/icehockey_nhl/odds",
+  "params": {
+   "markets": "h2h",
+   "oddsFormat": "decimal",
+   "regions": "eu"
+  },
+  "cout": 1
+ },
+ {
+  "t": "2026-10-10T12:00:00.000Z",
+  "chemin": "/v4/sports/tennis_atp_paris/odds",
+  "params": {
+   "markets": "h2h",
+   "oddsFormat": "decimal",
+   "regions": "eu"
+  },
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T12:00:00.000Z",
+  "chemin": "/v4/sports/soccer_epl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T12:00:00.000Z",
+  "chemin": "/v4/sports/soccer_spain_la_liga/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T12:00:00.000Z",
+  "chemin": "/v4/sports/soccer_france_ligue_one/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T12:00:00.000Z",
+  "chemin": "/v4/sports/icehockey_nhl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T12:00:00.000Z",
+  "chemin": "/v4/sports/tennis_atp_paris/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T13:00:00.000Z",
+  "chemin": "/v4/sports/soccer_epl/odds",
+  "params": {
+   "markets": "h2h",
+   "oddsFormat": "decimal",
+   "regions": "eu"
+  },
+  "cout": 1
+ },
+ {
+  "t": "2026-10-10T13:00:00.000Z",
+  "chemin": "/v4/sports/soccer_spain_la_liga/odds",
+  "params": {
+   "markets": "h2h",
+   "oddsFormat": "decimal",
+   "regions": "eu"
+  },
+  "cout": 1
+ },
+ {
+  "t": "2026-10-10T13:00:00.000Z",
+  "chemin": "/v4/sports/soccer_epl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T13:00:00.000Z",
+  "chemin": "/v4/sports/soccer_spain_la_liga/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T13:00:00.000Z",
+  "chemin": "/v4/sports/soccer_france_ligue_one/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T13:00:00.000Z",
+  "chemin": "/v4/sports/icehockey_nhl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T13:00:00.000Z",
+  "chemin": "/v4/sports/tennis_atp_paris/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T14:00:00.000Z",
+  "chemin": "/v4/sports/soccer_epl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T14:00:00.000Z",
+  "chemin": "/v4/sports/soccer_spain_la_liga/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T14:00:00.000Z",
+  "chemin": "/v4/sports/soccer_france_ligue_one/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T14:00:00.000Z",
+  "chemin": "/v4/sports/icehockey_nhl/events",
+  "params": {},
+  "cout": 0
+ },
+ {
+  "t": "2026-10-10T14:00:00.000Z",
+  "chemin": "/v4/sports/tennis_atp_paris/events",
+  "params": {},
+  "cout": 0
+ }
+]

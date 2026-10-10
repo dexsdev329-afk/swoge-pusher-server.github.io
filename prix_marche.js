@@ -209,17 +209,58 @@ function ecris(c) {
   }
 }
 
+/* ---- LE CROCHET apresNote (socle, 10/10/2026) ----
+ * Plusieurs lots veulent voir chaque reponse `/odds` deja payee : le journal
+ * des releves (lot 1), l'index de cloture qu'il tient pour la CLV (lot 2) et
+ * la derive des coupes (lot 6). Les loger DANS `note` mettait leur code — et
+ * leurs exceptions — dans le chemin d'ecriture du prix vendu. Ils s'abonnent
+ * donc ici, et sont appeles APRES l'ecriture du carnet, chacun dans son
+ * try/catch : un abonne qui leve, ou rend une promesse rejetee, ne change ni
+ * le carnet, ni la date, ni le compte rendu. Chacun recoit SA copie, la
+ * reponse brute `evs` comprise : un abonne qui la touche ne fausse ni le
+ * compte rendu, ni ce que voit le suivant, ni l'etalonnage, qui relit `evs`
+ * juste apres `note` pour recaler les forces Elo (`paris_import.calibre`).
+ * Avant, `evs` etait passe tel quel : un journal qui l'aurait trie aurait
+ * change l'etalonnage sans que rien ne le dise (relecture du socle). Une copie
+ * par abonne et par releve payee : trois abonnes au plus sont prevus (lots 1,
+ * 2 et 6).
+ * Sans abonne (le cas de ce lot), `note` fait exactement ce qu'elle faisait :
+ * essais/reference/ le prouve octet pour octet. */
+const ABONNES = [];
+function apresNote(fn) {
+  if (typeof fn !== 'function') throw new TypeError('apresNote : une fonction est attendue');
+  ABONNES.push(fn);
+  return function desabonne() { const i = ABONNES.indexOf(fn); if (i >= 0) ABONNES.splice(i, 1); };
+}
+function previens(fait) {
+  for (const fn of ABONNES.slice()) {
+    try {
+      const r = fn(Object.assign({}, fait, { compte: Object.assign({}, fait.compte), evs: structuredClone(fait.evs),
+        refs: fait.refs.map((x) => Object.assign({}, x, { p: x.p && Object.assign({}, x.p) })) }));
+      if (r && typeof r.then === 'function') r.then(null, (e) => console.log('[odds] apresNote (' + (fn.name || 'abonne') + ') : ' + ((e && e.message) || e)));
+    } catch (e) { console.log('[odds] apresNote (' + (fn.name || 'abonne') + ') : ' + ((e && e.message) || e)); }
+  }
+}
+
 /**
  * Noter la reponse `/odds` d'un championnat. Rend le compte par reference.
  * Garde dix jours d'historique : assez pour l'audit, pas un fichier qui
  * grossit sans fin.
+ * `opts` (socle, 10/10/2026) : { quoi, sport }. `quoi` est la cause de la
+ * releve (« periodique », « avant le coup d envoi », « etalonnage »…) pour le
+ * journal ; `sport` est le sport de la cle, pour le lot des deux issues. Ni
+ * l'un ni l'autre ne change le carnet dans ce lot : ils sont transmis aux
+ * abonnes. Une chaine seule vaut `{ quoi }`.
  */
-function note(evs, ligue, now) {
+function note(evs, ligue, now, opts) {
   const t = now || Date.now();
   const L = String(ligue || '');
+  const o = typeof opts === 'string' ? { quoi: opts } : (opts && typeof opts === 'object' ? opts : {});
   const c = lis();
   const compte = { betfair: 0, pinnacle: 0, mediane: 0, aucun: 0, retires: 0 };
   const vus = new Set();
+  /* Ce que les abonnes recoivent par rencontre : rien de plus que le carnet. */
+  const refs = [];
   for (const ev of evs || []) {
     if (!ev || !ev.id) continue;
     const k = String(ev.id);
@@ -230,7 +271,11 @@ function note(evs, ligue, now) {
      * sur la tenue du match) ; il disparait de la reponse. Garder l'ancien
      * prix, c'etait le vendre precisement quand il est faux (relecture du
      * 08/10). Sans reference, on EFFACE : la rencontre sera suspendue. */
-    if (!r) { compte.aucun++; if (c.evenements[k]) { delete c.evenements[k]; compte.retires++; } continue; }
+    if (!r) {
+      compte.aucun++; if (c.evenements[k]) { delete c.evenements[k]; compte.retires++; }
+      refs.push({ id: k, debut: Date.parse(ev.commence_time) || 0, ref: null, p: null, livres: 0 });
+      continue;
+    }
     compte[r.ref]++;
     const p = {};
     for (const i of ISSUES) p[i] = Math.round(r.p[i] * 1e5) / 1e5;
@@ -239,6 +284,7 @@ function note(evs, ligue, now) {
     c.evenements[k] = { t, ref: r.ref, p, livres: r.livres, ecart: r.ecart, ligue: L,
                         dom: String(ev.home_team || ''), ext: String(ev.away_team || ''),
                         debut: Date.parse(ev.commence_time) || 0 };
+    refs.push({ id: k, debut: c.evenements[k].debut, ref: r.ref, p: Object.assign({}, p), livres: r.livres });
   }
   /* Une rencontre a venir de ce championnat ABSENTE d'une reponse non vide :
      son marche a ete retire. Meme regle. */
@@ -252,7 +298,11 @@ function note(evs, ligue, now) {
   c.couverture[L] = Object.assign({ t: new Date(t).toISOString() }, compte);
   for (const [k, e] of Object.entries(c.evenements)) if (t - e.t > 10 * 86400000) delete c.evenements[k];
   /* La date ne vit en memoire QUE si l'ecriture a echoue. */
-  if (ecris(c)) delete MEMOIRE[L]; else MEMOIRE[L] = t;
+  const ecrit = ecris(c);
+  if (ecrit) delete MEMOIRE[L]; else MEMOIRE[L] = t;
+  /* Le carnet d'abord, les abonnes ensuite (voir `apresNote`). */
+  if (ABONNES.length) previens({ ligue: L, t, quoi: o.quoi === undefined ? null : String(o.quoi), sport: o.sport === undefined ? null : o.sport,
+                                 ecrit, evs: evs || [], refs, compte });
   return compte;
 }
 
@@ -270,4 +320,6 @@ function derniere(ligue) {
   return Math.max(Number(luPourVendre().ligues[L]) || 0, MEMOIRE[L] || 0);
 }
 
-module.exports = { LIGUES_DEFAUT, ligues, observees, aRelever, releveMs, AGE_MAX_MS, ECART_MAX, referenceDe, note, pour, derniere, fichier, lis };
+module.exports = { LIGUES_DEFAUT, ligues, observees, aRelever, releveMs, AGE_MAX_MS, ECART_MAX, referenceDe, note, pour, derniere, fichier, lis,
+                   /* le socle (10/10/2026) : le crochet, et la lecture d'un livre pour qui doit lire la bourse avec le MEME code */
+                   apresNote, lotDuLivre, sansMarge, BOURSE };

@@ -59,6 +59,7 @@ lance parihors "$SRV" node paris_hors_calendrier.test.js   # une rencontre sorti
 lance pariimp  "$SRV" node paris_import.test.js   # l import : credits, ODDS_API_FIN passee, rencontre deplacee fermee, foot de The Odds API a la main
 lance espn     "$SRV" node scores_espn.test.js    # scores gratuits : jours/mois (plus de fenetre), 90 minutes, match le plus proche d une serie, refus comptes
 lance prixmarche "$SRV" node prix_marche.test.js   # le prix du marche : reference Betfair/Pinnacle/mediane, AUCUNE issue gagnante au prix de reference, sans prix frais = suspendue, 1 credit/jour/championnat ecrit sur le volume
+lance socle    "$SRV" node socle.test.js   # le socle de la cle 20K : drapeaux vides, sortie du chemin des prix IDENTIQUE octet pour octet a main d avant (essais/reference, refus compris) ; classes 0-3 et reserves 0/0/80/160 ; info d un appel ; delai 15 s, compte par prudence s il est payant ; compteur relu avant ecriture, credits en vol ; priorite aux seules cles vendues ; apresNote apres le carnet, chacun sa copie ; compte par classe (porte des reserves)
 lance soldebas "$SRV" node alerte_solde.test.js   # alerte de solde bas : classement documente des erreurs, Odds/Venice sur le solde lu, une par 24 h, JAMAIS le canal public
 lance cotes    "$SRV" node cotes.test.js
 lance cotesbuts "$SRV" node cotes_buts.test.js

@@ -352,12 +352,36 @@ const FICHIER_CAT = paris.FICHIER_VOLUME;
 
 // ------------------------------------------------------------- le compteur
 
+/* ---- UN COMPTEUR ILLISIBLE SE DIT (socle, 10/10/2026) ----
+ * Absent (premier demarrage), le compteur repart de zero sans un mot : c'est
+ * normal. ILLISIBLE (JSON coupe), il repart aussi de zero — la part du jour se
+ * rouvre jusqu'a minuit — mais on le dit une fois au journal : c'est une
+ * panne, pas un debut (relecture du socle). */
+let quotaIlisibleDit = null;
 function litQuota() {
-  try { return JSON.parse(fs.readFileSync(FICHIER_QUOTA, 'utf8')); }
-  catch (e) { return { reste: TOTAL, utilise: 0, vu: null, depenseDuJour: 0, jour: null }; }
+  const neuf = () => ({ reste: TOTAL, utilise: 0, vu: null, depenseDuJour: 0, jour: null });
+  let brut;
+  try { brut = fs.readFileSync(FICHIER_QUOTA, 'utf8'); } catch (e) { return neuf(); }
+  try { return JSON.parse(brut); }
+  catch (e) {
+    if (quotaIlisibleDit !== brut) {
+      quotaIlisibleDit = brut;
+      console.log(`[odds] compteur illisible (${FICHIER_QUOTA}, ${brut.length} octet(s)) : repart de zero, la part du jour se rouvre jusqu a la prochaine reponse du fournisseur`);
+    }
+    return neuf();
+  }
 }
+/* ---- ECRIT EN DEUX TEMPS (socle, 10/10/2026) ----
+ * Le socle reecrit ce fichier a chaque appel, gratuit compris, et tout le
+ * garde-fou repose sur lui. Ecrit directement, un redeploiement pendant
+ * l'ecriture (118 en 17 jours en septembre, voir « QUAND RELEVER ») laissait un JSON
+ * coupe, relu comme un compteur neuf : depenseDuJour = 0, la part du jour
+ * rouverte. Fichier temporaire puis renommage, comme le carnet des prix
+ * (`prix_marche.ecris`) : le compteur est entier, l'ancien ou le nouveau. Le
+ * contenu ecrit est le meme octet pour octet (essais/reference). */
 function ecritQuota(q) {
-  try { fs.writeFileSync(FICHIER_QUOTA, JSON.stringify(q, null, 2) + '\n'); }
+  const tmp = FICHIER_QUOTA + '.tmp';
+  try { fs.writeFileSync(tmp, JSON.stringify(q, null, 2) + '\n'); fs.renameSync(tmp, FICHIER_QUOTA); }
   catch (e) { console.error('[odds] impossible d ecrire le compteur :', e.message); }
 }
 function jourCourant() { return new Date().toISOString().slice(0, 10); }
@@ -377,16 +401,120 @@ function etatQuota() {
   return q;
 }
 
+/* ---- LES QUATRE CLASSES DU GARDE-FOU (socle, 10/10/2026) ----
+ *
+ * Avec la cle 20K, d'autres depenses que le prix du marche arrivent (totaux,
+ * deux issues, coupes, reglement, direct). Elles ne doivent JAMAIS passer
+ * avant le prix de ce qui est vendu, et l'observation ne doit jamais manger
+ * ce que le reglement et l'etalonnage attendent. D'ou une classe par appel,
+ * passee dans `info.classe` d'`appel` :
+ *   0  le prix de ce qui est VENDU : passe au-dela de la part du jour tant
+ *      qu'il reste `prioritaire` x jours restants (regle du 08/10, ci-dessous) ;
+ *      son refus previent le proprietaire ;
+ *   1  reglement et etalonnage (/scores de repli, calibre, totaux d'une cle
+ *      vendue) : jusqu'a la part du jour, comme tout appel d'avant le socle ;
+ *   2  mesures datees (clotures des totaux, releve T-45 des coupes, direct) :
+ *      jusqu'a la part moins 80 ;
+ *   3  observation a basse cadence : jusqu'a la part moins 160.
+ * Sans classe dite, rien ne change : `prioritaire` vrai = classe 0, sinon 1.
+ * Un refus hors classe 0 n'alerte pas (un etalonnage refuse n'en est pas une).
+ *
+ * D'ou viennent 80 et 160 : plan du 09/10 (budget, « ORDRE DANS autorise() »),
+ * sur la part du jour d'un debut de mois a 20 000 credits, ~600
+ * (0,9 x 20 000 / 30). Les 80 laissent passer l'etalonnage (~23 credits une
+ * fois par semaine) et le /scores de repli (jusqu'a ~48 par jour : il part a
+ * chaque demarrage) quand la classe 2 a deja pris sa part ; la classe 3 en
+ * laisse 80 de plus a la classe 2. Un samedi de vente coute ~545 (h2h ~163,
+ * avant-match 43, deux issues ~29, totaux 17 au plus, direct ~290 pour trois
+ * rencontres). CE NE SONT PAS ENCORE DES MESURES : aucune ligne par cause
+ * n'existe avant le journal du lot 1. Les revoir sur lui (EXPLOITATION
+ * 8.8sexies), jamais a l'oeil. */
+const RESERVES_CLASSE = Object.freeze([0, 0, 80, 160]);
+/* Une classe ecrite de travers (« 2 » en chaine, 4, -1) est un REFUS, pas une
+   devinette : prise pour 0 elle passerait devant le prix vendu, prise pour 3
+   elle se tairait. Le refus ne coute rien et l'essai qui l'ecrit tombe. */
+function classeDe(prioritaire, classe) {
+  if (classe === undefined || classe === null) return prioritaire ? 0 : 1;
+  return Number.isInteger(classe) && classe >= 0 && classe < RESERVES_CLASSE.length ? classe : -1;
+}
+
+/* ---- CE QUE CHAQUE CLASSE DEPENSE, ET CE QU'ON LUI REFUSE (socle, 10/10/2026) ----
+ * Les reserves 80 / 160 ne se jugent que si l'on sait, jour par jour, QUELLE
+ * classe a depense et QUELLE classe a ete refusee (porte 3 d'EXPLOITATION
+ * 8.8sexies : « aucun appel de classe 1 refuse un jour ou les classes 2 ou 3
+ * ont depense »). Le journal du lot 1 ne voit que les reponses `/odds` notees :
+ * ni un refus, ni un `/scores`, ni la classe d'un appel (relecture du socle).
+ * Et apres le socle plus aucun lot ne retouche `appel` ni `autorise` : ce
+ * compte ne peut naitre qu'ici. Par jour (UTC) et par classe :
+ *   appels  appels payants revenus (une reponse recue, erreur comprise) ;
+ *   depense credits ajoutes a `depenseDuJour` (x-requests-last, ou le cout
+ *           attendu d'un appel abandonne au delai, compte par prudence) ;
+ *   refus   appels payants refuses par le garde-fou (rien n'est parti) ;
+ *   delais  appels abandonnes au bout de DELAI_APPEL_MS.
+ * Fichier A PART (`odds_classes.json`) : `odds_quota.json` fait partie de la
+ * reference octet pour octet. Ecrit en deux temps, garde 40 jours (un mois
+ * entier plus la fenetre de 14 jours de la porte, sans grossir sans fin). */
+const FICHIER_CLASSES = path.join(process.env.DATA_DIR || __dirname, 'odds_classes.json');
+const CLASSES_JOURS = 40;
+function litClasses() {
+  try {
+    const c = JSON.parse(fs.readFileSync(FICHIER_CLASSES, 'utf8'));
+    if (c && typeof c === 'object' && c.jours && typeof c.jours === 'object') return c;
+  } catch (e) { /* absent ou illisible : un compte neuf, rien de plus a faire */ }
+  return { jours: {} };
+}
+function compteClasse(k, ajout) {
+  if (!(k >= 0)) return;
+  const c = litClasses();
+  const j = jourCourant();
+  const jour = c.jours[j] || (c.jours[j] = {});
+  const ligne = jour[k] || (jour[k] = { appels: 0, depense: 0, refus: 0, delais: 0 });
+  for (const [champ, n] of Object.entries(ajout)) if (n) ligne[champ] = (Number(ligne[champ]) || 0) + n;
+  const gardes = new Set(Object.keys(c.jours).sort().slice(-CLASSES_JOURS));
+  for (const d of Object.keys(c.jours)) if (!gardes.has(d)) delete c.jours[d];
+  const tmp = FICHIER_CLASSES + '.tmp';
+  try { fs.writeFileSync(tmp, JSON.stringify(c) + '\n'); fs.renameSync(tmp, FICHIER_CLASSES); }
+  catch (e) { console.error('[odds] impossible d ecrire le compte par classe :', e.message); }
+}
+/* La porte 3, calculee pour ne pas la refaire a la main : les jours ou la
+   classe 1 a ete refusee alors que les classes 2 ou 3 avaient depense. Elle
+   ne conclut rien sous 14 jours de compte (la fenetre ecrite de la porte). */
+const PORTE_RESERVES_JOURS = 14;
+function etatClasses() {
+  const jours = litClasses().jours;
+  const n = (j, k, champ) => Number(((jours[j] || {})[k] || {})[champ]) || 0;
+  const dates = Object.keys(jours).sort();
+  const conflits = dates.filter((j) => n(j, 1, 'refus') > 0 && (n(j, 2, 'depense') > 0 || n(j, 3, 'depense') > 0));
+  return { jours, joursComptes: dates.length, joursMin: PORTE_RESERVES_JOURS,
+           classe1RefuseeQuand23Depensent: conflits,
+           tiennent: dates.length < PORTE_RESERVES_JOURS ? null : conflits.length === 0 };
+}
+
+/* ---- LES CREDITS EN VOL (socle, 10/10/2026) ----
+ * `autorise` lit `depenseDuJour` AVANT le `fetch`, et le cout n'y entre qu'au
+ * retour. N appels partis ensemble a la limite passaient donc tous (sonde de
+ * la relecture du socle : 3 en vol a limite - 1, la depense finit a
+ * limite + 2). Aujourd'hui c'est borne (filePrix serialise les prix, calibre
+ * et les scores sont des boucles), mais le direct (lot 7) reverifie sa
+ * classe a chaque releve et compte sur ce controle. Le cout attendu d'un
+ * appel accepte est donc tenu ici jusqu'a ce que sa reponse soit comptee (ou
+ * qu'il echoue), et `autorise` le compte comme deja depense. Appels un par un
+ * (le cas de la reference) : toujours 0, rien ne change. */
+let enVolCredits = 0;
+
 /* Avant chaque appel PAYANT. On refuse plutot que de depasser : un quota
    epuise le 5 septembre ne se recharge pas, et le calendrier se figerait
    jusqu'a la fin du mois. */
-function autorise(cout, quoi, prioritaire) {
+function autorise(cout, quoi, prioritaire, classe) {
+  const k = classeDe(prioritaire, classe);
+  if (k < 0) throw new Error(`[odds] REFUSE ${quoi} : classe ${JSON.stringify(classe)} inconnue (0 a 3)`);
   const q = etatQuota();
   const part = partDuJour(q.reste);
   if (cout > q.reste) {
+    compteClasse(k, { refus: 1 });
     AlerteSolde.oddsEvenement('vide', `${quoi} refusé : ${q.reste} crédit(s) restant(s) en tout`);
     throw new Error(`[odds] REFUSE ${quoi} : ${cout} credit(s) demande(s), ` +
-                    `${q.reste} restant(s) en tout`);
+                    `${q.reste} restant(s) en tout (classe ${k})`);
   }
   /* ---- LE PRIX DU MARCHE PASSE EN PRIORITE (08/10/2026) ----
    * L'etalonnage hebdomadaire (~23 ligues) epuise la part du jour : la releve
@@ -394,15 +522,21 @@ function autorise(cout, quoi, prioritaire) {
    * grands championnats restaient suspendus le reste de la journee. Une releve
    * de prix passe donc au-dela de la part tant qu'il reste de quoi en faire une
    * par grand championnat et par jour jusqu'a la fin de la periode. Simulation
-   * de la relecture : le mois finit avec au moins 95 credits. */
-  if (prioritaire && q.reste - cout >= prioritaire * joursRestants()) return q;
-  if (q.depenseDuJour + cout > part) {
+   * de la relecture : le mois finit avec au moins 95 credits.
+   * Socle (10/10) : seule la classe 0 y a droit — une classe 1 a 3 qui
+   * passerait un `prioritaire` ne passe pas pour autant. */
+  if (k === 0 && prioritaire && q.reste - enVolCredits - cout >= prioritaire * joursRestants()) return q;
+  const reserve = RESERVES_CLASSE[k];
+  if (q.depenseDuJour + enVolCredits + cout > part - reserve) {
+    compteClasse(k, { refus: 1 });
     /* Une releve de PRIX refusee : les championnats vendus au marche vont vers
        la suspension — le proprietaire est prevenu en prive (09/10/2026). Un
        etalonnage refuse, lui, n'est pas une alerte. */
-    if (prioritaire) AlerteSolde.oddsEvenement('refus', `${quoi} — ${q.reste} restants, part du jour ${part}`);
+    if (k === 0) AlerteSolde.oddsEvenement('refus', `${quoi} — ${q.reste} restants, part du jour ${part}`);
     throw new Error(`[odds] REFUSE ${quoi} : ${cout} credit(s) demande(s), ` +
-      `${q.depenseDuJour} deja depense(s) aujourd hui, part du jour = ${part} ` +
+      `${q.depenseDuJour} deja depense(s) aujourd hui` + (enVolCredits ? ` (+ ${enVolCredits} en vol)` : '') +
+      `, part du jour = ${part}` +
+      (reserve ? ` moins ${reserve} reserve(s) aux classes 0 a ${k - 1}` : '') + ` (classe ${k}) ` +
       `(${q.reste} restants pour ${joursRestants()} jour(s) jusqu au ${fin()})`);
   }
   return q;
@@ -437,6 +571,35 @@ function noteDernier(quoi, info) {
   return d[quoi];
 }
 
+/* ---- LA PROJECTION DU MOIS (socle, 10/10/2026) ----
+ * La porte du budget (EXPLOITATION 8.8sexies) : x-requests-used x 30 / jour
+ * du mois. Au-dela de 16 000 sur le forfait de 20 000, on coupe dans l'ordre
+ * ecrit la-bas. Calculee ici pour ne pas la refaire a la main, avec le jour
+ * sur lequel elle porte. null tant que le fournisseur n'a rien dit (`vu`), ou
+ * si sa derniere reponse date d'un autre mois (le compteur repart le 1er).
+ * `vu` n'avance qu'avec un en-tete de compteur (voir `appel`) : une erreur sans
+ * en-tete, le 1er du mois, ne projette plus le compteur du mois d'avant.
+ * D'ou vient 16 000 : le plan du 09/10 (budget), PAS une mesure — 80 % du
+ * forfait de 20 000, sous le pire cas de la phase de vente (~17 500) et
+ * au-dessus du realiste (~12 800) ; c'est le seuil ou le garde-fou se relit.
+ * Et elle ne CONCLUT pas avant le 7 du mois (`depasse` null) : une semaine
+ * complete porte son samedi de vente (~545 credits, meme plan) et ses jours
+ * sans grand match ; avant, un seul samedi pese d'un sixieme a la totalite
+ * de l'echantillon, et le 1er il suffisait d'un samedi charge pour « couper »
+ * (relecture du socle : 700 utilises le 1er = 21 000, depasse). Le chiffre
+ * reste lisible, avec son jour ; c'est la conclusion qui attend. */
+const PROJECTION_SEUIL = 16000;
+const PROJECTION_JOURS_MIN = 7;
+function projectionMois(q, now) {
+  if (!q || !q.vu || q.utilise === null || q.utilise === undefined || q.utilise === '' || !(Number(q.utilise) >= 0)) return null;
+  const vu = new Date(q.vu), d = new Date(now || Date.now());
+  if (!isFinite(vu.getTime()) || vu.getUTCFullYear() !== d.getUTCFullYear() || vu.getUTCMonth() !== d.getUTCMonth()) return null;
+  const jour = vu.getUTCDate();
+  return { credits: Math.round(Number(q.utilise) * 30 / jour), utilise: Number(q.utilise), jourDuMois: jour,
+           seuil: PROJECTION_SEUIL, joursMin: PROJECTION_JOURS_MIN,
+           depasse: jour < PROJECTION_JOURS_MIN ? null : Number(q.utilise) * 30 / jour > PROJECTION_SEUIL };
+}
+
 /** Tout ce qu'il faut pour comprendre l'etat de l'alimentation, sans journaux. */
 function etatImport() {
   const q = etatQuota();
@@ -455,7 +618,11 @@ function etatImport() {
     fin: fin(),
     joursRestants: joursRestants(),
     quota: { reste: q.reste, utilise: q.utilise, depenseDuJour: q.depenseDuJour,
-             partDuJour: partDuJour(q.reste), vu: q.vu },
+             partDuJour: partDuJour(q.reste), vu: q.vu, projection: projectionMois(q),
+             /* socle (10/10/2026) : les credits partis sans reponse encore,
+                et ce que chaque classe a depense ou s'est vu refuser par jour
+                (la porte 3 des reserves, EXPLOITATION 8.8sexies) */
+             enVol: enVolCredits, parClasse: etatClasses() },
     auto: { actif: AUTO_ACTIF, plafond: AUTO_PLAFOND, delaiMin: AUTO_DELAI_MIN },
     /* Les refus du tableau d'ESPN aujourd'hui, par tableau : une panne qui ne
        se lit que dans le journal ne se voit pas (08/10/2026). */
@@ -474,54 +641,174 @@ function etatImport() {
 
 // ------------------------------------------------------------- les appels
 
-async function appel(chemin, params, coutAttendu, quoi, prioritaire) {
+/* ---- LE DELAI D'UN APPEL (socle, 10/10/2026) ----
+ * `fetch` partait sans delai. Relecture du 09/10 : une releve bloquee (totaux,
+ * cloture, direct) tient la file `filePrix`, donc retarde la releve h2h
+ * d'avant-match, et `paris.js` refuse alors les paris faute de prix frais
+ * (« the odds are being refreshed »). Le delai couvre la reponse ET la lecture
+ * du corps. 15 s : la valeur du plan, tres au-dessus d'une reponse normale et
+ * tres en dessous du tic de 10 min d'avant-match. Aucune latence du
+ * fournisseur n'est mesuree dans ce depot : le journal (lot 1) et le compte
+ * par classe (`delais`) diront si des appels l'atteignent (`info.code ===
+ * 'DELAI'`, ligne `[odds] ... (delai)`).
+ * CE QUE LE DELAI COUTE. Avant le socle, une reponse arrivee entre 15 s et le
+ * delai de Node (~300 s) etait lue et comptee ; desormais elle est abandonnee.
+ * Le fournisseur a pu facturer la requete (il l'a recue ; ce que sa doc en
+ * dit n'est pas verifie ici) et la cle, non notee, est redemandee au tic suivant (10 min
+ * avant-match, 30 min periodique). Un appel PAYANT abandonne avant ses
+ * en-tetes est donc compte PAR PRUDENCE dans `depenseDuJour`, a son cout
+ * attendu (x-requests-last est inconnu) : sinon un fournisseur durablement
+ * lent percait la part du jour d'un credit par delai, sans un mot et sans
+ * qu'aucun en-tete ne remette le reste a jour (relecture du socle : 5 appels
+ * abandonnes, depenseDuJour = 0). Un appel abandonne APRES ses en-tetes est
+ * deja compte par eux. Un gratuit ne compte rien. Une erreur reseau
+ * immediate (« fetch failed » : la connexion n'a pas abouti) n'est ni un
+ * delai ni un credit. */
+const DELAI_APPEL_MS = 15000;
+
+/* Le code d'erreur du fournisseur dans un corps d'erreur. D'abord le champ
+   `error_code` d'un corps JSON (OUT_OF_USAGE_CREDITS, DEACTIVATED_KEY…) ; a
+   defaut, le premier mot en MAJUSCULES_SOULIGNEES d'un corps qui n'est pas une
+   page HTML. Avant : le premier mot en majuscules, n'importe ou — « DOCTYPE »
+   sur la page d'une passerelle en 502, un mot du message place avant
+   error_code (relecture du socle). Le reglement (lot 9) range ses causes sur
+   ce code. */
+function codeDuCorps(t) {
+  const brut = String(t || '');
+  try {
+    const j = JSON.parse(brut);
+    if (j && typeof j === 'object' && typeof j.error_code === 'string' && /^[A-Za-z][A-Za-z0-9_]*$/.test(j.error_code)) return j.error_code;
+  } catch (e) { /* pas du JSON : on lit le texte, comme avant */ }
+  if (/^\s*</.test(brut)) return null;
+  const c = brut.match(/[A-Z][A-Z_]{5,}/);
+  return c ? c[0] : null;
+}
+
+/**
+ * Un appel a The Odds API. `info` (facultatif, 6e argument, socle du 10/10) :
+ *  - en ENTREE `info.classe` (0 a 3, voir `autorise`) ;
+ *  - en SORTIE, remis a null a chaque appel puis rempli :
+ *      dernier = cout = x-requests-last (null si l'en-tete manque, JAMAIS 0
+ *                par defaut : une erreur n'en porte pas) ;
+ *      reste = x-requests-remaining, utilise = x-requests-used ;
+ *      statut = statut HTTP (null sans reponse) ;
+ *      code = le code d'erreur du fournisseur lu dans le corps (`codeDuCorps`),
+ *             'REFUSE' si le garde-fou a refuse (rien n'est parti),
+ *             'DELAI' si la reponse n'est pas venue en DELAI_APPEL_MS ;
+ *      comptePrudent = credits comptes par prudence sur un delai (0 sinon).
+ * L'URL, qui porte la cle, n'y est jamais mise.
+ */
+async function appel(chemin, params, coutAttendu, quoi, prioritaire, info) {
+  const sortie = info && typeof info === 'object' ? info : null;
+  if (sortie) Object.assign(sortie, { dernier: null, cout: null, reste: null, utilise: null, statut: null, code: null, comptePrudent: 0 });
   if (!CLE) throw new Error('[odds] ODDS_API_KEY absente — rien ne peut etre demande');
   const paye = coutAttendu > 0;
-  const q = paye ? autorise(coutAttendu, quoi, prioritaire) : etatQuota();
+  const classe = sortie ? sortie.classe : undefined;
+  const k = classeDe(prioritaire, classe);
+  if (paye) {
+    try { autorise(coutAttendu, quoi, prioritaire, classe); }
+    catch (e) { if (sortie) sortie.code = 'REFUSE'; throw e; }
+  }
 
   const u = new URL(BASE + chemin);
   u.searchParams.set('apiKey', CLE);
-  for (const [k, v] of Object.entries(params || {})) if (v != null) u.searchParams.set(k, String(v));
+  for (const [cle, v] of Object.entries(params || {})) if (v != null) u.searchParams.set(cle, String(v));
 
-  const rep = await fetch(u.toString());
-  /* Les compteurs sont dans les EN-TETES, y compris sur les appels gratuits :
-     c'est la seule mesure fiable, la notre n'est qu'une prevision.
-     ATTENTION au piege : une reponse d'ERREUR — 401 sur une cle invalide,
-     502 passager — ne porte AUCUN de ces en-tetes. Or `Number(null)` vaut
-     ZERO, et zero est fini : on ecrivait donc « 0 credit restant » a la
-     premiere erreur venue. Le garde-fou refusait ensuite tout appel payant,
-     et plus rien ne se reglait — pour une cle mal recopiee. On exige donc
-     que l'en-tete SOIT LA avant de lire quoi que ce soit. */
-  const lis = (nom) => {
-    const brut = rep.headers.get(nom);
-    if (brut === null || brut === undefined || brut === '') return null;
-    const v = Number(brut);
-    return isFinite(v) ? v : null;
+  const coupe = new AbortController();
+  const minuterie = setTimeout(() => coupe.abort(), DELAI_APPEL_MS);
+  /* Le cout attendu est tenu « en vol » des l'accord — rien n'est attendu
+     depuis `autorise`, et le `try` qui le rend commence juste dessous (voir
+     `enVolCredits`) — puis rendu une seule fois : quand la reponse est
+     comptee, ou quand l'appel echoue. */
+  let tenu = paye ? coutAttendu : 0;
+  enVolCredits += tenu;
+  const rends = () => { enVolCredits -= tenu; tenu = 0; };
+  let compte = false;   // vrai des que la reponse a ete comptee (en-tetes lus)
+  /* Toute erreur levee APRES la coupure (reponse ou lecture du corps) se dit
+     comme un delai : c'est la seule cause qu'on connaisse a ce moment. Un
+     appel payant coupe avant ses en-tetes est compte par prudence (voir
+     DELAI_APPEL_MS) ; relu juste avant d'etre ecrit, comme a la reponse. */
+  const delai = (e) => {
+    if (!coupe.signal.aborted) return e;
+    if (sortie) sortie.code = 'DELAI';
+    let prudence = 0;
+    if (!compte && paye) {
+      const q = etatQuota();
+      q.depenseDuJour += coutAttendu;
+      rends();
+      ecritQuota(q);
+      prudence = coutAttendu;
+      if (sortie) sortie.comptePrudent = prudence;
+    }
+    compteClasse(k, { depense: prudence, delais: 1 });
+    return new Error(`[odds] ${quoi || chemin} : pas de reponse en ${DELAI_APPEL_MS / 1000} s sur ${chemin} — abandonne` +
+                     (prudence ? `, ${prudence} credit(s) compte(s) par prudence` : '') + ' (delai)');
   };
-  const reste = lis('x-requests-remaining');
-  const utilise = lis('x-requests-used');
-  const dernier = lis('x-requests-last');
-  if (reste !== null) q.reste = reste;
-  if (utilise !== null) q.utilise = utilise;
-  if (dernier !== null && dernier > 0) q.depenseDuJour += dernier;
-  q.vu = new Date().toISOString();
-  ecritQuota(q);
+  try {
+    let rep;
+    try { rep = await fetch(u.toString(), { signal: coupe.signal }); }
+    catch (e) { throw delai(e); }
+    /* Les compteurs sont dans les EN-TETES, y compris sur les appels gratuits :
+       c'est la seule mesure fiable, la notre n'est qu'une prevision.
+       ATTENTION au piege : une reponse d'ERREUR — 401 sur une cle invalide,
+       502 passager — ne porte AUCUN de ces en-tetes. Or `Number(null)` vaut
+       ZERO, et zero est fini : on ecrivait donc « 0 credit restant » a la
+       premiere erreur venue. Le garde-fou refusait ensuite tout appel payant,
+       et plus rien ne se reglait — pour une cle mal recopiee. On exige donc
+       que l'en-tete SOIT LA avant de lire quoi que ce soit. */
+    const lis = (nom) => {
+      const brut = rep.headers.get(nom);
+      if (brut === null || brut === undefined || brut === '') return null;
+      const v = Number(brut);
+      return isFinite(v) ? v : null;
+    };
+    const reste = lis('x-requests-remaining');
+    const utilise = lis('x-requests-used');
+    const dernier = lis('x-requests-last');
+    /* ---- LE COMPTEUR SE RELIT JUSTE AVANT D'ETRE ECRIT (socle, 10/10/2026) ----
+     * Il etait lu AVANT le `fetch` et reecrit apres : deux appels en vol en meme
+     * temps (une releve de prix et l'import gratuit, l'etalonnage et le /scores
+     * de repli) ecrivaient chacun leur copie, et le second effacait l'increment
+     * de `depenseDuJour` du premier. Le garde-fou de la part du jour se percait
+     * d'un credit par collision, sans un mot (relecture du 09/10). On relit
+     * donc le fichier ici, apres la reponse, et on n'y AJOUTE que le cout de
+     * CET appel ; `reste` et `utilise` restent ceux du fournisseur. Rien n'est
+     * attendu entre la relecture et l'ecriture : Node ne peut pas s'y glisser.
+     * `vu` (la derniere lecture du compteur du fournisseur) n'avance que si un
+     * en-tete de compteur est la : une erreur sans en-tete ne dit rien du
+     * compteur, et le 1er du mois elle faisait projeter celui du mois d'avant
+     * sur un seul jour (`projectionMois`, relecture du socle). */
+    const q = etatQuota();
+    if (reste !== null) q.reste = reste;
+    if (utilise !== null) q.utilise = utilise;
+    if (dernier !== null && dernier > 0) q.depenseDuJour += dernier;
+    if (reste !== null || utilise !== null || dernier !== null) q.vu = new Date().toISOString();
+    compte = true;
+    rends();
+    ecritQuota(q);
+    if (paye || (dernier !== null && dernier > 0)) compteClasse(k, { appels: paye ? 1 : 0, depense: dernier !== null && dernier > 0 ? dernier : 0 });
+    if (sortie) Object.assign(sortie, { dernier, cout: dernier, reste, utilise, statut: rep.status });
 
-  if (!rep.ok) {
-    const t = await rep.text();
-    /* Cle refusee (401), desactivee (DEACTIVATED_KEY) ou forfait epuise
-       (OUT_OF_USAGE_CREDITS, statut non documente) : alerte privee (09/10).
-       Seul `chemin` est ecrit : l'URL porte la cle. */
-    if (/OUT_OF_USAGE_CREDITS/.test(t)) AlerteSolde.oddsEvenement('vide', `${rep.status} OUT_OF_USAGE_CREDITS sur ${chemin}`);
-    else if (rep.status === 401 || /DEACTIVATED_KEY/.test(t)) AlerteSolde.oddsEvenement('cle', `${rep.status}${/DEACTIVATED_KEY/.test(t) ? ' DEACTIVATED_KEY' : ''} sur ${chemin}`);
-    throw new Error(`[odds] ${rep.status} sur ${chemin} : ${t.slice(0, 200)}`);
-  }
-  const j = await rep.json();
-  if (paye) {
-    console.log(`[odds] ${quoi} : ${dernier === null ? '?' : dernier} credit(s), ` +
-                `${q.reste} restant(s), part du jour ${partDuJour(q.reste)}`);
-  }
-  return j;
+    if (!rep.ok) {
+      let t;
+      try { t = await rep.text(); } catch (e) { throw delai(e); }
+      /* Le code du fournisseur, pour qui l'attend (`info.code`), lu avant de lever. */
+      if (sortie) sortie.code = codeDuCorps(t);
+      /* Cle refusee (401), desactivee (DEACTIVATED_KEY) ou forfait epuise
+         (OUT_OF_USAGE_CREDITS, statut non documente) : alerte privee (09/10).
+         Seul `chemin` est ecrit : l'URL porte la cle. */
+      if (/OUT_OF_USAGE_CREDITS/.test(t)) AlerteSolde.oddsEvenement('vide', `${rep.status} OUT_OF_USAGE_CREDITS sur ${chemin}`);
+      else if (rep.status === 401 || /DEACTIVATED_KEY/.test(t)) AlerteSolde.oddsEvenement('cle', `${rep.status}${/DEACTIVATED_KEY/.test(t) ? ' DEACTIVATED_KEY' : ''} sur ${chemin}`);
+      throw new Error(`[odds] ${rep.status} sur ${chemin} : ${t.slice(0, 200)}`);
+    }
+    let j;
+    try { j = await rep.json(); } catch (e) { throw delai(e); }
+    if (paye) {
+      console.log(`[odds] ${quoi} : ${dernier === null ? '?' : dernier} credit(s), ` +
+                  `${q.reste} restant(s), part du jour ${partDuJour(q.reste)} (classe ${k})`);
+    }
+    return j;
+  } finally { clearTimeout(minuterie); rends(); }
 }
 
 // ------------------------------------------------------- les identifiants
@@ -1158,28 +1445,40 @@ function avecPrix(m, now) {
 }
 
 /* Relever le prix d'une liste de championnats : 1 credit chacun, sous le
-   garde-fou de la part du jour (`appel`). Rend le nombre de releves reussis. */
+   garde-fou de la part du jour (`appel`). Rend le nombre de championnats
+   VENDUS releves : c'est lui qui decide de refaire le calendrier (`planifie`). */
 /* UNE releve a la fois : les minuteries de 30 et de 10 min tombent au meme
    instant toutes les demi-heures, et deux releves paralleles payaient deux
    fois le meme championnat (relecture du 08/10). Chaque championnat est
    relu juste avant l'appel : releve depuis moins de `ageMin`, il passe. */
+/* ---- LA PRIORITE EST POUR CE QUI EST VENDU (socle, 10/10/2026) ----
+ * Toute cle relevee passait en priorite, observee comprise, avec
+ * `aRelever().size` pour reserve : une observation (deux issues, coupes)
+ * pouvait passer au-dela de la part du jour et entamer ce qui garantit une
+ * releve par championnat VENDU jusqu'a la fin du mois. Desormais : une cle
+ * vendue est en classe 0, prioritaire avec `ligues().size` (une releve par
+ * championnat vendu et par jour) ; une cle observee est en classe 3, jamais
+ * prioritaire, refusee sans alerte quand le jour est charge. Et le
+ * calendrier ne se refait plus apres une releve qui n'a rien change a ce qui
+ * se vend (le prix d'une cle observee n'entre pas dans les cotes). */
 let filePrix = Promise.resolve();
 function rafraichitPrix(clefs, pourquoi, ageMin) {
   const tour = filePrix.then(async () => {
-    let ok = 0;
+    let vendues = 0;
     for (const clef of clefs) {
       if (Date.now() - prixMarche.derniere(clef) < (ageMin || 0)) continue;
+      const vendue = prixMarche.ligues().has(clef);
       try {
         const evs = await appel(`/sports/${clef}/odds`, { regions: REGION, markets: MARCHE, oddsFormat: 'decimal' },
-                                1, 'prix ' + clef, prixMarche.aRelever().size);
-        const c = prixMarche.note(evs, clef);
+                                1, 'prix ' + clef, vendue ? prixMarche.ligues().size : undefined, { classe: vendue ? 0 : 3 });
+        const c = prixMarche.note(evs, clef, undefined, { quoi: pourquoi });
         console.log(`[odds] prix du marche ${clef} (${pourquoi}) : ${JSON.stringify(c)}`);
         /* un championnat OBSERVE : on dit tout de suite ce que notre Elo y laisse */
-        if (!prixMarche.ligues().has(clef)) console.log(`[odds] observe ${clef} : ${JSON.stringify(ecartAuMarche(clef))}`);
-        ok++;
+        if (!vendue) console.log(`[odds] observe ${clef} : ${JSON.stringify(ecartAuMarche(clef))}`);
+        else vendues++;
       } catch (e) { console.log('[odds] prix ' + clef + ' : ' + (e.message || e)); }
     }
-    return ok;
+    return vendues;
   });
   filePrix = tour.catch(() => 0);
   return tour;
@@ -1404,7 +1703,7 @@ async function calibre(ligueDemandee) {
        note au passage, sans un credit de plus (08/10/2026). */
     if (prixMarche.aRelever().has(l.clef)) {
       try {
-        const c = prixMarche.note(evs, l.clef);
+        const c = prixMarche.note(evs, l.clef, undefined, { quoi: 'etalonnage' });
         console.log(`[odds] prix du marche ${l.clef} (etalonnage) : ${JSON.stringify(c)}`);
       } catch (e) { console.log('[odds] prix du marche ' + l.clef + ' illisible : ' + (e.message || e)); }
     }
@@ -1585,7 +1884,9 @@ function planifie(signale, aRegler) {
   });
 
   /* Le prix du marche : releve ce qui est perime, puis refait le calendrier
-     (0 credit) pour que les cotes en descendent. */
+     (0 credit) pour que les cotes en descendent — seulement si un championnat
+     VENDU a ete releve (`rafraichitPrix` ne compte que ceux-la, socle du
+     10/10) : le prix d'un observe n'entre dans aucune cote. */
   const prix = (clefs, pourquoi, ageMin) => sur('prix', async () => {
     if (!clefs.length) return;
     if (await rafraichitPrix(clefs, pourquoi, ageMin)) await rafraichit();
@@ -1667,4 +1968,7 @@ module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, import
                    trieReglements, prolongationPossible, avecPrix, rafraichitPrix, prixPerimes, prixAvantMatch, etatPrix, ecartAuMarche, prixInconnues, fermeesParLaPorte, ditLaPorte, PRIX_JOUR_MS,
                    AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
-                   partDuJour, joursRestants, autorise, identifiant, etatQuota };
+                   partDuJour, joursRestants, autorise, identifiant, etatQuota,
+                   /* le socle (10/10/2026) : le seul chemin d'un credit, ses classes, son delai */
+                   appel, RESERVES_CLASSE, DELAI_APPEL_MS, projectionMois, PROJECTION_SEUIL, PROJECTION_JOURS_MIN,
+                   etatClasses, codeDuCorps };
